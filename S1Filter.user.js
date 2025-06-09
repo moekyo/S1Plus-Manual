@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         S1Filter - Stage1st帖子屏蔽工具
 // @namespace    http://tampermonkey.net/
-// @version      1.0
-// @description  为Stage1st论坛添加帖子屏蔽功能，可以屏蔽不想看到的帖子
+// @version      1.1
+// @description  为Stage1st论坛添加帖子屏蔽功能，可以屏蔽不想看到的帖子，支持多设备同步
 // @author       moekyo
 // @match        https://stage1st.com/2b/forum.php*
 // @match        https://stage1st.com/2b/forum-*-*.html
@@ -155,6 +155,80 @@
         .s1filter-nav-btn:hover {
             background-color: #e9e9e9;
         }
+        
+        /* 同步功能样式 */
+        .s1filter-sync-section {
+            margin-top: 20px;
+            padding-top: 16px;
+            padding-left: 0;
+            padding-right: 0;
+            border-top: 1px solid #e5e7eb;
+        }
+        
+        .s1filter-sync-title {
+            font-weight: 500;
+            color: #111827;
+            margin-bottom: 8px;
+        }
+        
+        .s1filter-sync-desc {
+            font-size: 14px;
+            color: #6b7280;
+            margin-bottom: 12px;
+            line-height: 1.5;
+        }
+        
+        .s1filter-sync-buttons {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+        
+        .s1filter-sync-btn {
+            padding: 6px 12px;
+            border-radius: 4px;
+            background-color: #f3f4f6;
+            color: #6b7280;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: none;
+        }
+        
+        .s1filter-sync-btn:hover {
+            background-color: #3b82f6;
+            color: white;
+        }
+        
+        .s1filter-sync-textarea {
+            width: 100%;
+            min-height: 80px;
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #e5e7eb;
+            font-family: monospace;
+            font-size: 12px;
+            resize: vertical;
+            margin-bottom: 8px;
+            box-sizing: border-box;
+        }
+        
+        .s1filter-sync-message {
+            font-size: 14px;
+            margin-top: 8px;
+            padding: 8px;
+            border-radius: 4px;
+        }
+        
+        .s1filter-sync-success {
+            background-color: #d1fae5;
+            color: #065f46;
+        }
+        
+        .s1filter-sync-error {
+            background-color: #fee2e2;
+            color: #b91c1c;
+        }
     `);
 
     // 获取屏蔽列表
@@ -165,6 +239,38 @@
     // 保存屏蔽列表
     const saveBlockedThreads = (blockedThreads) => {
         GM_setValue('s1filter_blocked_threads', blockedThreads);
+    };
+    
+    // 导出屏蔽列表为JSON字符串
+    const exportBlockedThreads = () => {
+        const blockedThreads = getBlockedThreads();
+        return JSON.stringify(blockedThreads);
+    };
+    
+    // 从JSON字符串导入屏蔽列表
+    const importBlockedThreads = (jsonStr) => {
+        try {
+            const importedData = JSON.parse(jsonStr);
+            
+            // 验证导入的数据格式是否正确
+            if (typeof importedData !== 'object') {
+                throw new Error('导入的数据格式不正确');
+            }
+            
+            // 合并导入的数据和本地数据
+            const currentData = getBlockedThreads();
+            const mergedData = { ...currentData, ...importedData };
+            
+            // 保存合并后的数据
+            saveBlockedThreads(mergedData);
+            
+            // 刷新页面上的屏蔽状态
+            hideBlockedThreads();
+            
+            return { success: true, message: '导入成功，已合并' + Object.keys(importedData).length + '条屏蔽记录' };
+        } catch (error) {
+            return { success: false, message: '导入失败: ' + error.message };
+        }
     };
 
     // 屏蔽帖子
@@ -295,6 +401,89 @@
 
             modalBody.appendChild(list);
         }
+        
+        // 添加同步功能区域
+        const syncSection = document.createElement('div');
+        syncSection.className = 's1filter-sync-section';
+        
+        const syncTitle = document.createElement('div');
+        syncTitle.className = 's1filter-sync-title';
+        syncTitle.textContent = '多设备同步';
+        syncSection.appendChild(syncTitle);
+        
+        const syncDesc = document.createElement('div');
+        syncDesc.className = 's1filter-sync-desc';
+        syncDesc.innerHTML = '您可以通过复制下方的数据，在其他设备上导入来实现屏蔽列表的同步。<br>每次屏蔽或取消屏蔽操作都会自动保存到本地。';
+        syncSection.appendChild(syncDesc);
+        
+        // 同步按钮区域
+        const syncButtons = document.createElement('div');
+        syncButtons.className = 's1filter-sync-buttons';
+        
+        // 导出按钮
+        const exportBtn = document.createElement('button');
+        exportBtn.className = 's1filter-sync-btn';
+        exportBtn.textContent = '导出数据';
+        exportBtn.addEventListener('click', () => {
+            const jsonData = exportBlockedThreads();
+            syncTextarea.value = jsonData;
+            syncTextarea.select();
+            document.execCommand('copy');
+            
+            // 显示成功消息
+            showSyncMessage('数据已导出并复制到剪贴板', true);
+        });
+        syncButtons.appendChild(exportBtn);
+        
+        // 导入按钮
+        const importBtn = document.createElement('button');
+        importBtn.className = 's1filter-sync-btn';
+        importBtn.textContent = '导入数据';
+        importBtn.addEventListener('click', () => {
+            const jsonStr = syncTextarea.value.trim();
+            if (!jsonStr) {
+                showSyncMessage('请先粘贴要导入的数据', false);
+                return;
+            }
+            
+            const result = importBlockedThreads(jsonStr);
+            showSyncMessage(result.message, result.success);
+            
+            // 如果导入成功，刷新列表
+            if (result.success) {
+                modal.remove();
+                createBlockedThreadsModal();
+            }
+        });
+        syncButtons.appendChild(importBtn);
+        
+        syncSection.appendChild(syncButtons);
+        
+        // 文本区域
+        const syncTextarea = document.createElement('textarea');
+        syncTextarea.className = 's1filter-sync-textarea';
+        syncTextarea.placeholder = '在此粘贴导入数据或复制导出数据';
+        syncSection.appendChild(syncTextarea);
+        
+        // 消息显示区域
+        const syncMessage = document.createElement('div');
+        syncMessage.className = 's1filter-sync-message';
+        syncMessage.style.display = 'none';
+        syncSection.appendChild(syncMessage);
+        
+        // 显示同步消息的函数
+        function showSyncMessage(message, isSuccess) {
+            syncMessage.textContent = message;
+            syncMessage.className = 's1filter-sync-message ' + (isSuccess ? 's1filter-sync-success' : 's1filter-sync-error');
+            syncMessage.style.display = 'block';
+            
+            // 3秒后自动隐藏
+            setTimeout(() => {
+                syncMessage.style.display = 'none';
+            }, 3000);
+        }
+        
+        modalBody.appendChild(syncSection);
 
         modalContent.appendChild(modalHeader);
         modalContent.appendChild(modalBody);
