@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         S1Filter - Stage1st帖子屏蔽工具
 // @namespace    http://tampermonkey.net/
-// @version      1.1
-// @description  为Stage1st论坛添加帖子屏蔽功能，可以屏蔽不想看到的帖子，支持多设备同步
+// @version      1.2
+// @description  为Stage1st论坛添加帖子屏蔽功能，可以屏蔽不想看到的帖子，支持多设备同步和置顶帖屏蔽
 // @author       moekyo
 // @match        https://stage1st.com/2b/forum.php*
 // @match        https://stage1st.com/2b/forum-*-*.html
@@ -289,20 +289,20 @@
         const blockedThreads = getBlockedThreads();
         delete blockedThreads[threadId];
         saveBlockedThreads(blockedThreads);
-        // 如果当前页面有这个帖子，则显示出来
-        const threadElement = document.getElementById(`normalthread_${threadId}`);
-        if (threadElement) {
-            threadElement.style.display = '';
+        // 如果当前页面有这个帖子，则显示出来（同时检查普通帖子和置顶帖）
+        const normalThreadElement = document.getElementById(`normalthread_${threadId}`);
+        const stickThreadElement = document.getElementById(`stickthread_${threadId}`);
+        
+        if (normalThreadElement) {
+            normalThreadElement.style.display = '';
+        }
+        
+        if (stickThreadElement) {
+            stickThreadElement.style.display = '';
         }
     };
 
-    // 隐藏帖子
-    const hideThread = (threadId) => {
-        const threadElement = document.getElementById(`normalthread_${threadId}`);
-        if (threadElement) {
-            threadElement.style.display = 'none';
-        }
-    };
+
 
     // 格式化时间
     const formatDate = (timestamp) => {
@@ -501,9 +501,12 @@
 
     // 添加屏蔽按钮到帖子
     const addBlockButtonsToThreads = () => {
-        const threadRows = document.querySelectorAll('tbody[id^="normalthread_"]');
+        // 同时选择普通帖子和置顶帖
+        const threadRows = document.querySelectorAll('tbody[id^="normalthread_"], tbody[id^="stickthread_"]');
         threadRows.forEach(row => {
-            const threadId = row.id.replace('normalthread_', '');
+            // 根据ID前缀判断是普通帖子还是置顶帖
+            const isStickThread = row.id.startsWith('stickthread_');
+            const threadId = isStickThread ? row.id.replace('stickthread_', '') : row.id.replace('normalthread_', '');
             // 修改选择器，同时支持th.common和th.new类名
             const titleElement = row.querySelector('th.common a.s.xst') || row.querySelector('th.new a.s.xst');
             
@@ -554,6 +557,21 @@
         Object.keys(blockedThreads).forEach(threadId => {
             hideThread(threadId);
         });
+    };
+    
+    // 隐藏帖子
+    const hideThread = (threadId) => {
+        // 同时检查普通帖子和置顶帖
+        const normalThreadElement = document.getElementById(`normalthread_${threadId}`);
+        const stickThreadElement = document.getElementById(`stickthread_${threadId}`);
+        
+        if (normalThreadElement) {
+            normalThreadElement.style.display = 'none';
+        }
+        
+        if (stickThreadElement) {
+            stickThreadElement.style.display = 'none';
+        }
     };
 
     // 初始化
