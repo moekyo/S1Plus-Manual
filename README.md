@@ -83,7 +83,6 @@ A: 请确保脚本已正确安装并启用。如果问题仍然存在，可能�
 如有任何问题或建议，请通过以下方式联系：
 
 - 提交 Issue
-- 发送邮件至：[your-email@example.com](mailto:your-email@example.com)
 
 ## 许可证
 
