@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1Filter - Stage1st帖子屏蔽工具
 // @namespace    http://tampermonkey.net/
-// @version      1.3
+// @version      1.4
 // @description  为Stage1st论坛添加帖子屏蔽功能，可以屏蔽不想看到的帖子，支持多设备同步和置顶帖屏蔽
 // @author       moekyo
 // @match        https://stage1st.com/2b/forum.php*
@@ -28,6 +28,7 @@
             background-color: #f3f4f6;
             color: #6b7280;
             font-size: 12px;
+            font-weight: bold;
             cursor: pointer;
             transition: all 0.2s;
         }
