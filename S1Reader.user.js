@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1Filter - Stage1st帖子屏蔽工具
 // @namespace    http://tampermonkey.net/
-// @version      1.5
+// @version      1.6
 // @description  为Stage1st论坛添加帖子屏蔽功能，可以屏蔽不想看到的帖子，支持多设备同步和置顶帖屏蔽
 // @author       moekyo
 // @match        https://stage1st.com/2b/forum.php*
@@ -232,6 +232,83 @@
             background-color: #fee2e2;
             color: #b91c1c;
         }
+
+        /* 设置区域样式 */
+        .s1filter-settings-section {
+            margin-top: 20px;
+            padding-top: 16px;
+            border-top: 1px solid #e5e7eb;
+        }
+
+        .s1filter-settings-title {
+            font-weight: 500;
+            color: #111827;
+            margin-bottom: 12px;
+        }
+
+        .s1filter-setting {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+        }
+
+        .s1filter-setting-label {
+            font-size: 14px;
+            color: #374151;
+            margin-bottom: 4px;
+        }
+
+        .s1filter-setting-desc {
+            font-size: 12px;
+            color: #6b7280;
+        }
+
+        /* 开关样式 */
+        .s1filter-switch {
+            position: relative;
+            display: inline-block;
+            width: 40px;
+            height: 24px;
+        }
+
+        .s1filter-switch input { 
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .s1filter-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: .4s;
+            border-radius: 34px;
+        }
+
+        .s1filter-slider:before {
+            position: absolute;
+            content: "";
+            height: 16px;
+            width: 16px;
+            left: 4px;
+            bottom: 4px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+
+        input:checked + .s1filter-slider {
+            background-color: #2563eb;
+        }
+
+        input:checked + .s1filter-slider:before {
+            transform: translateX(16px);
+        }
     `);
 
     // 获取屏蔽列表
@@ -334,12 +411,17 @@
         modalTitle.className = 's1filter-modal-title';
         modalTitle.textContent = '屏蔽管理';
 
+        const closeModal = () => {
+            modal.remove();
+            if (settingChanged) {
+                window.location.reload();
+            }
+        };
+
         const modalClose = document.createElement('div');
         modalClose.className = 's1filter-modal-close';
         modalClose.textContent = '×';
-        modalClose.addEventListener('click', () => {
-            modal.remove();
-        });
+        modalClose.addEventListener('click', closeModal);
 
         modalHeader.appendChild(modalTitle);
         modalHeader.appendChild(modalClose);
@@ -404,6 +486,57 @@
 
             modalBody.appendChild(list);
         }
+
+        // 添加设置区域
+        const settingsSection = document.createElement('div');
+        settingsSection.className = 's1filter-settings-section';
+
+        const settingsTitle = document.createElement('div');
+        settingsTitle.className = 's1filter-settings-title';
+        settingsTitle.textContent = '设置';
+        settingsSection.appendChild(settingsTitle);
+
+        let settingChanged = false;
+
+        const buttonPositionSetting = document.createElement('div');
+        buttonPositionSetting.className = 's1filter-setting';
+
+        const buttonPositionLabelContainer = document.createElement('div');
+
+        const buttonPositionLabel = document.createElement('label');
+        buttonPositionLabel.className = 's1filter-setting-label';
+        buttonPositionLabel.textContent = '前置屏蔽按钮';
+        buttonPositionLabelContainer.appendChild(buttonPositionLabel);
+
+        const buttonPositionDesc = document.createElement('div');
+        buttonPositionDesc.className = 's1filter-setting-desc';
+        buttonPositionDesc.textContent = '开启后将会把屏蔽按钮显示在标题前，默认位置为标题后面';
+        buttonPositionLabelContainer.appendChild(buttonPositionDesc);
+
+        const buttonPositionSwitch = document.createElement('label');
+        buttonPositionSwitch.className = 's1filter-switch';
+
+        const buttonPositionInput = document.createElement('input');
+        buttonPositionInput.type = 'checkbox';
+        buttonPositionInput.checked = GM_getValue('s1filter_button_at_start', false);
+        buttonPositionInput.addEventListener('change', (e) => {
+            GM_setValue('s1filter_button_at_start', e.target.checked);
+            settingChanged = true;
+            // 重新渲染帖子列表中的按钮
+            addBlockButtonsToThreads();
+        });
+
+        const buttonPositionSlider = document.createElement('span');
+        buttonPositionSlider.className = 's1filter-slider';
+
+        buttonPositionSwitch.appendChild(buttonPositionInput);
+        buttonPositionSwitch.appendChild(buttonPositionSlider);
+
+        buttonPositionSetting.appendChild(buttonPositionLabelContainer);
+        buttonPositionSetting.appendChild(buttonPositionSwitch);
+        settingsSection.appendChild(buttonPositionSetting);
+
+        modalBody.appendChild(settingsSection);
 
         // 添加同步功能区域
         const syncSection = document.createElement('div');
@@ -497,7 +630,7 @@
         // 点击模态框外部关闭
         modal.addEventListener('click', (e) => {
             if (e.target === modal) {
-                modal.remove();
+                closeModal();
             }
         });
     };
@@ -527,7 +660,11 @@
                 });
 
                 // 将按钮添加到标题元素后面，而不是作为子元素
-                titleElement.parentNode.insertBefore(blockBtn, titleElement.nextSibling);
+                if (GM_getValue('s1filter_button_at_start', false)) {
+                    titleElement.parentNode.insertBefore(blockBtn, titleElement);
+                } else {
+                    titleElement.parentNode.insertBefore(blockBtn, titleElement.nextSibling);
+                }
             }
         });
     };
