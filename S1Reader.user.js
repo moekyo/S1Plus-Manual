@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1Filter - Stage1st帖子屏蔽工具
 // @namespace    http://tampermonkey.net/
-// @version      1.7
+// @version      1.8
 // @description  为Stage1st论坛添加帖子屏蔽功能，可以屏蔽不想看到的帖子，支持多设备同步和置顶帖屏蔽
 // @author       moekyo
 // @match        https://stage1st.com/2b/*
@@ -642,7 +642,7 @@
             const isStickThread = row.id.startsWith('stickthread_');
             const threadId = isStickThread ? row.id.replace('stickthread_', '') : row.id.replace('normalthread_', '');
             // 修改选择器，同时支持th.common和th.new类名
-            const titleElement = row.querySelector('th.common a.s.xst') || row.querySelector('th.new a.s.xst');
+            const titleElement = row.querySelector('th a.s.xst');
 
             // 检查是否已经添加过屏蔽按钮，如果没有则添加
             if (titleElement && !titleElement.parentNode.querySelector('.s1filter-block-btn')) {
@@ -712,8 +712,35 @@
         }
     };
 
+    // 自动签到
+    const autoCheckIn = () => {
+        const today = new Date().toLocaleDateString();
+        const lastCheckIn = GM_getValue('s1filter_last_checkin', '');
+
+        if (lastCheckIn !== today) {
+            const checkInLink = document.querySelector('a[href*="daily_attendance"]');
+
+            if (checkInLink) {
+                fetch(checkInLink.href)
+                    .then(response => {
+                        if (response.ok) {
+                            GM_setValue('s1filter_last_checkin', today);
+                            console.log('S1Filter: Auto check-in successful.');
+                        } else {
+                            console.error('S1Filter: Auto check-in failed with status: ', response.status);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('S1Filter: Auto check-in request failed.', error);
+                    });
+            }
+        }
+    };
+
     // 初始化
     const init = () => {
+        // 自动签到
+        autoCheckIn();
         // 添加屏蔽管理按钮到导航栏
         addBlockManagerToNav();
 
