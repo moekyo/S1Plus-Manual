@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1Filter - Stage1st帖子屏蔽工具
 // @namespace    http://tampermonkey.net/
-// @version      1.8
+// @version      1.9
 // @description  为Stage1st论坛添加帖子屏蔽功能，可以屏蔽不想看到的帖子，支持多设备同步和置顶帖屏蔽
 // @author       moekyo
 // @match        https://stage1st.com/2b/*
@@ -714,26 +714,51 @@
 
     // 自动签到
     const autoCheckIn = () => {
+        console.log('S1Filter: 正在检查是否需要自动签到...');
+
+        // 1. 获取用户ID
+        const userLink = document.querySelector('div#um a[href*="space-uid-"]');
+        if (!userLink) {
+            console.log('S1Filter: 未找到用户链接，无法确定用户ID。');
+            return;
+        }
+        const uidMatch = userLink.href.match(/space-uid-(\d+)\.html/);
+        if (!uidMatch) {
+            console.log('S1Filter: 无法从用户链接中解析用户ID。');
+            return;
+        }
+        const userId = uidMatch[1];
+        console.log(`S1Filter: 当前用户ID: ${userId}`);
+
+        // 2. 检查该用户今天是否已签到
         const today = new Date().toLocaleDateString();
-        const lastCheckIn = GM_getValue('s1filter_last_checkin', '');
+        const lastCheckIn = GM_getValue(`s1filter_last_checkin_${userId}`, '');
 
-        if (lastCheckIn !== today) {
-            const checkInLink = document.querySelector('a[href*="daily_attendance"]');
+        if (lastCheckIn === today) {
+            console.log(`S1Filter: 用户 ${userId} 今天已经签到过了。`);
+            return;
+        }
 
-            if (checkInLink) {
-                fetch(checkInLink.href)
-                    .then(response => {
-                        if (response.ok) {
-                            GM_setValue('s1filter_last_checkin', today);
-                            console.log('S1Filter: Auto check-in successful.');
-                        } else {
-                            console.error('S1Filter: Auto check-in failed with status: ', response.status);
-                        }
-                    })
-                    .catch(error => {
-                        console.error('S1Filter: Auto check-in request failed.', error);
-                    });
-            }
+        // 3. 查找并执行签到
+        const checkInLink = document.querySelector('a[href*="daily_attendance"]');
+        if (checkInLink) {
+            console.log('S1Filter: 找到签到链接，正在尝试签到...');
+            fetch(checkInLink.href, { credentials: 'include' })
+                .then(response => {
+                    if (response.ok) {
+                        // 4. 记录该用户的签到状态
+                        GM_setValue(`s1filter_last_checkin_${userId}`, today);
+                        console.log(`S1Filter: 用户 ${userId} 自动签到成功！`);
+                        checkInLink.style.display = 'none';
+                    } else {
+                        console.error('S1Filter: 自动签到失败，服务器响应状态：', response.status);
+                    }
+                })
+                .catch(error => {
+                    console.error('S1Filter: 自动签到请求失败。', error);
+                });
+        } else {
+            console.log('S1Filter: 未找到签到链接。');
         }
     };
 
