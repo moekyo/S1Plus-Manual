@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      2.4
+// @version      2.5
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到等多种功能，全方位优化你的论坛体验。
 // @author       moekyo & Elence_ylns1314 (Merged and enhanced by Gemini)
 // @match        https://stage1st.com/2b/*
@@ -14,7 +14,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '2.4';
+    const SCRIPT_VERSION = '2.5';
     const SCRIPT_RELEASE_DATE = '2025-07-26';
 
     // --- 样式注入 ---
@@ -26,9 +26,43 @@
         .s1plus-btn { display: inline-flex; align-items: center; justify-content: center; border-radius: 4px; background-color: #f3f4f6; color: #374151; font-size: 12px; font-weight: bold; cursor: pointer; user-select: none; white-space: nowrap; border: none; }
         .s1plus-btn:hover { background-color: #ef4444; color: white; }
 
-        /* --- 帖子屏蔽按钮动画与布局 --- */
-        .thread-block-btn { opacity: 0; visibility: hidden; max-width: 0; margin: 0; padding: 0; overflow: hidden; vertical-align: middle; transition: opacity 0.2s ease, max-width 0.3s ease, margin 0.3s ease, padding 0.3s ease; }
-        tbody[id^="normalthread_"]:hover .thread-block-btn, tbody[id^="stickthread_"]:hover .thread-block-btn { opacity: 1; visibility: visible; max-width: 50px; margin: 0 8px 0 4px; padding: 2px 8px; transition-delay: 0.4s; }
+        /* --- 帖子屏蔽按钮动画与布局 (基于v2.4的标签样式) --- */
+        .thread-block-btn {
+            /* 悬浮定位样式，居中于父容器(td.icn) */
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            z-index: 5;
+
+            /* 新的标签外观 */
+            padding: 5px 10px 5px 12px;
+            border-radius: 0 30px 30px 0; /* 左侧直角，右侧半圆 */
+            background-color: #f87171; /* 调整为更柔和的浅红色 */
+            color: white;
+            font-size: 12px;
+            border: none;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+
+            /* 动画初始状态：隐藏、缩小 */
+            opacity: 0;
+            visibility: hidden;
+            transform: translate(-50%, -50%) scale(0.85);
+            transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+        /* 鼠标悬浮于整行时，显示按钮 */
+        tbody[id^="normalthread_"]:hover .thread-block-btn,
+        tbody[id^="stickthread_"]:hover .thread-block-btn {
+            opacity: 1;
+            visibility: visible;
+            transform: translate(-50%, -50%) scale(1);
+            transition-delay: 0.1s;
+        }
+        /* 鼠标悬浮于按钮本身时，进一步放大突出显示 */
+        .thread-block-btn:hover {
+            background-color: #ef4444; /* 悬浮颜色也相应变浅 */
+            transform: translate(-50%, -50%) scale(1.1);
+        }
+
 
         /* --- 用户屏蔽悬停交互样式 --- */
         .s1plus-avatar-overlay-container { position: absolute; display: flex; align-items: center; justify-content: center; background-color: rgba(0, 0, 0, 0.55); opacity: 0; visibility: hidden; transition: opacity 0.2s ease-in-out, visibility 0.2s ease-in-out; pointer-events: auto; z-index: 10; }
@@ -333,16 +367,29 @@
 
     const addBlockButtonsToThreads = () => {
         document.querySelectorAll('tbody[id^="normalthread_"], tbody[id^="stickthread_"]').forEach(row => {
-            if(row.querySelector('.s1plus-btn.thread-block-btn')) return;
+            if (row.querySelector('.s1plus-btn.thread-block-btn')) return;
+
+            const iconCell = row.querySelector('td.icn');
             const titleElement = row.querySelector('th a.s.xst');
-            if (titleElement) {
+
+            if (iconCell && titleElement) {
+                iconCell.style.position = 'relative';
+
                 const threadId = row.id.replace(/^(normalthread_|stickthread_)/, '');
                 const threadTitle = titleElement.textContent.trim();
+
                 const blockBtn = document.createElement('span');
                 blockBtn.className = 's1plus-btn thread-block-btn';
                 blockBtn.textContent = '屏蔽';
-                blockBtn.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); blockThread(threadId, threadTitle); });
-                titleElement.parentNode.insertBefore(blockBtn, titleElement);
+                blockBtn.title = '屏蔽此贴';
+
+                blockBtn.addEventListener('click', e => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    blockThread(threadId, threadTitle);
+                });
+                
+                iconCell.appendChild(blockBtn);
             }
         });
     };
