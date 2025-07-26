@@ -1,8 +1,8 @@
-# S1Reader - Stage1st 阅读增强工具
+# S1 Plus - Stage1st 体验增强套件
 
 ## 简介
 
-S1Reader 是一个为 Stage1st 论坛（S1）设计的用户脚本，提供强大的屏蔽功能，让您可以轻松屏蔽不想看到的 **帖子** 和 **用户**，使浏览体验更加个性化和舒适。
+S1 Plus 是一个为 Stage1st 论坛（S1）设计的用户脚本，提供强大的屏蔽功能，让您可以轻松屏蔽不想看到的 **帖子** 和 **用户**，使浏览体验更加个性化和舒适。
 
 ## 功能特点
 
@@ -20,9 +20,9 @@ S1Reader 是一个为 Stage1st 论坛（S1）设计的用户脚本，提供强�
    - Firefox: [Greasemonkey](https://addons.mozilla.org/en-US/firefox/addon/greasemonkey/) 或 [Tampermonkey](https://www.tampermonkey.net/)
    - Safari: [Tampermonkey](https://www.tampermonkey.net/)
 
-2. 安装 S1Reader 脚本：
-   - 点击 [S1Reader.user.js](https://github.com/yourusername/S1Reader/raw/main/S1Reader.user.js) 安装
-   - 或者复制 `S1Reader.user.js` 文件内容，在用户脚本管理器中手动创建新脚本
+2. 安装 S1 Plus 脚本：
+   - 点击 [S1 Plus.user.js](https://github.com/yourusername/S1 Plus/raw/main/S1 Plus.user.js) 安装
+   - 或者复制 `S1 Plus.user.js` 文件内容，在用户脚本管理器中手动创建新脚本
 
 ## 使用说明
 
