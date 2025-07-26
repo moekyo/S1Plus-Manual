@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      2.6
+// @version      2.7
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到等多种功能，全方位优化你的论坛体验。
 // @author       moekyo & Elence_ylns1314 (Merged and enhanced by Gemini)
 // @match        https://stage1st.com/2b/*
@@ -14,7 +14,7 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '2.6';
+    const SCRIPT_VERSION = '2.7';
     const SCRIPT_RELEASE_DATE = '2025-07-27';
 
     // --- 样式注入 ---
