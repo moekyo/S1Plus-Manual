@@ -21,7 +21,7 @@ S1 Plus 是一个为 Stage1st 论坛（S1）设计的用户脚本，提供强大
    - Safari: [Tampermonkey](https://www.tampermonkey.net/)
 
 2. 安装 S1 Plus 脚本：
-   - 点击 [S1 Plus.user.js](https://github.com/yourusername/S1 Plus/raw/main/S1 Plus.user.js) 安装
+   - 点击 [S1 Plus.user.js](https://github.com/moekyo/S1Plus-Manual/raw/refs/heads/main/S1Plus.user.js) 安装
    - 或者复制 `S1 Plus.user.js` 文件内容，在用户脚本管理器中手动创建新脚本
 
 ## 使用说明
