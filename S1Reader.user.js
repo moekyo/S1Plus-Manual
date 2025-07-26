@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1Filter - Stage1st 帖子与用户屏蔽工具
 // @namespace    http://tampermonkey.net/
-// @version      2.2
+// @version      2.3
 // @description  为Stage1st论坛添加帖子和用户屏蔽功能。用户屏蔽按钮会在鼠标悬停于头像时出现。帖子屏蔽按钮固定显示在标题前，鼠标悬停片刻后会平滑出现。
 // @author       moekyo (modified by Gemini)
 // @match        https://stage1st.com/2b/*
@@ -13,7 +13,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '2.2';
+    const SCRIPT_VERSION = '2.3';
     const SCRIPT_RELEASE_DATE = '2025-07-26';
 
     // --- 样式注入 ---
@@ -41,27 +41,24 @@
             color: white;
         }
 
-        /* --- (新) 帖子屏蔽按钮动画与布局 --- */
+        /* --- (新) 帖子屏蔽按钮动画与布局 (兼容 S1 NUX) --- */
         .thread-block-btn {
             opacity: 0;
             visibility: hidden;
             max-width: 0;
-            margin-right: 0;
-            padding-left: 0;
-            padding-right: 0;
+            margin: 0; /* 重置外边距 */
+            padding: 0; /* 重置内边距 */
             overflow: hidden;
-            /* 消失动画：立即执行，速度稍快 */
-            transition: opacity 0.2s ease, max-width 0.3s ease, margin-right 0.3s ease, padding 0.3s ease;
+            vertical-align: middle; /* 确保垂直对齐 */
+            transition: opacity 0.2s ease, max-width 0.3s ease, margin 0.3s ease, padding 0.3s ease;
         }
         tbody[id^="normalthread_"]:hover .thread-block-btn,
         tbody[id^="stickthread_"]:hover .thread-block-btn {
             opacity: 1;
             visibility: visible;
-            max-width: 50px; /* 足够容纳"屏蔽"二字 */
-            margin-right: 6px;
-            padding-left: 8px;
-            padding-right: 8px;
-            /* 出现动画：延迟0.4秒后执行 */
+            max-width: 50px;
+            margin: 0 8px 0 4px; /* 核心修复：使用 margin 提供一致的左右间距 */
+            padding: 2px 8px;
             transition-delay: 0.4s;
         }
 
@@ -179,7 +176,7 @@
         }
         .s1filter-confirm-footer {
             padding: 12px 16px;
-            background-color: #f9fafb;
+            background-color: #f3f3f3ff;
             display: flex;
             justify-content: flex-end;
             gap: 12px;
