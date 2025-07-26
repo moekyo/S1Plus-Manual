@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         S1Filter - Stage1st 帖子与用户屏蔽工具
+// @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
 // @version      2.3
-// @description  为Stage1st论坛添加帖子和用户屏蔽功能。用户屏蔽按钮会在鼠标悬停于头像时出现。帖子屏蔽按钮固定显示在标题前，鼠标悬停片刻后会平滑出现。
+// @description  为Stage1st论坛提供帖子/用户屏蔽、自动签到等多种功能，全方位优化你的论坛体验。
 // @author       moekyo (modified by Gemini)
 // @match        https://stage1st.com/2b/*
 // @grant        GM_setValue
