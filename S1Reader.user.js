@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1Filter - Stage1st 帖子与用户屏蔽工具
 // @namespace    http://tampermonkey.net/
-// @version      2.1
+// @version      2.2
 // @description  为Stage1st论坛添加帖子和用户屏蔽功能。用户屏蔽按钮会在鼠标悬停于头像时出现。帖子屏蔽按钮固定显示在标题前，鼠标悬停片刻后会平滑出现。
 // @author       moekyo (modified by Gemini)
 // @match        https://stage1st.com/2b/*
@@ -13,7 +13,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '2.1';
+    const SCRIPT_VERSION = '2.2';
     const SCRIPT_RELEASE_DATE = '2025-07-26';
 
     // --- 样式注入 ---
@@ -132,6 +132,89 @@
         .s1filter-sync-message { font-size: 14px; margin-top: 8px; padding: 8px; border-radius: 4px; }
         .s1filter-sync-success { background-color: #d1fae5; color: #065f46; }
         .s1filter-sync-error { background-color: #fee2e2; color: #b91c1c; }
+
+        /* --- (新) 确认弹窗样式 (v2) --- */
+        @keyframes s1filter-fade-in { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes s1filter-scale-in { from { transform: scale(0.95); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+        @keyframes s1filter-fade-out { from { opacity: 1; } to { opacity: 0; } }
+        @keyframes s1filter-scale-out { from { transform: scale(1); opacity: 1; } to { transform: scale(0.97); opacity: 0; } }
+
+        .s1filter-confirm-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.65);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 10000;
+            animation: s1filter-fade-in 0.2s ease-out;
+        }
+        .s1filter-confirm-content {
+            background-color: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+            width: 420px;
+            max-width: 90%;
+            text-align: left; /* 改为左对齐 */
+            overflow: hidden;
+            animation: s1filter-scale-in 0.25s ease-out;
+        }
+        .s1filter-confirm-body {
+            padding: 20px 24px;
+            font-size: 16px;
+            color: #1f2937;
+            line-height: 1.6;
+        }
+        .s1filter-confirm-body .confirm-title {
+            font-weight: 600;
+            font-size: 18px;
+            margin-bottom: 8px;
+        }
+        .s1filter-confirm-body .confirm-subtitle {
+            font-size: 14px;
+            color: #6b7280;
+        }
+        .s1filter-confirm-footer {
+            padding: 12px 16px;
+            background-color: #f9fafb;
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+        }
+        .s1filter-confirm-btn {
+            padding: 9px 18px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            border: 1px solid transparent;
+            transition: all 0.15s ease-in-out;
+            box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+        }
+        .s1filter-confirm-btn:active {
+            transform: translateY(1px);
+        }
+        .s1filter-confirm-btn.cancel {
+            background-color: white;
+            color: #374151;
+            border-color: #d1d5db;
+        }
+        .s1filter-confirm-btn.cancel:hover {
+            background-color: #f9fafb;
+            border-color: #b0b8c2;
+        }
+        .s1filter-confirm-btn.confirm {
+            background-color: #ef4444;
+            color: white;
+            border-color: #ef4444;
+        }
+        .s1filter-confirm-btn.confirm:hover {
+            background-color: #dc2626;
+            border-color: #dc2626;
+        }
     `);
 
     // --- 数据处理 & 核心功能 ---
@@ -165,6 +248,50 @@
 
     // --- UI 创建 ---
     const formatDate = (timestamp) => new Date(timestamp).toLocaleString('zh-CN');
+
+    const createConfirmationModal = (title, subtitle, onConfirm) => {
+        document.querySelector('.s1filter-confirm-modal')?.remove(); // 移除已存在的确认弹窗
+        const modal = document.createElement('div');
+        modal.className = 's1filter-confirm-modal';
+        
+        modal.innerHTML = `
+            <div class="s1filter-confirm-content">
+                <div class="s1filter-confirm-body">
+                    <div class="confirm-title">${title}</div>
+                    <div class="confirm-subtitle">${subtitle}</div>
+                </div>
+                <div class="s1filter-confirm-footer">
+                    <button class="s1filter-confirm-btn cancel">取消</button>
+                    <button class="s1filter-confirm-btn confirm">确定屏蔽</button>
+                </div>
+            </div>
+        `;
+
+        const closeModal = () => {
+            const content = modal.querySelector('.s1filter-confirm-content');
+            // 确保动画属性存在
+            if (content) {
+                content.style.animation = 's1filter-scale-out 0.25s ease-out forwards';
+            }
+            modal.style.animation = 's1filter-fade-out 0.25s ease-out forwards';
+            setTimeout(() => modal.remove(), 250); // 匹配动画时长
+        };
+        
+        modal.querySelector('.confirm').addEventListener('click', () => {
+            onConfirm();
+            closeModal();
+        });
+
+        modal.querySelector('.cancel').addEventListener('click', closeModal);
+        
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                closeModal();
+            }
+        });
+
+        document.body.appendChild(modal);
+    };
 
     const createManagementModal = () => {
         document.querySelector('.s1filter-modal')?.remove();
@@ -256,9 +383,13 @@
                 blockBtn.addEventListener('click', e => {
                     e.preventDefault();
                     e.stopPropagation();
-                    if (confirm(`确定要屏蔽用户 "${userName}" 吗？该用户的所有帖子都将被隐藏。`)) {
-                        blockUser(userId, userName);
-                    }
+                    createConfirmationModal(
+                        `确定要屏蔽用户 "${userName}" 吗？`,
+                        '该用户的所有帖子都将被隐藏，此操作可在屏蔽管理中撤销。',
+                        () => {
+                            blockUser(userId, userName);
+                        }
+                    );
                 });
 
                 overlayContainer.appendChild(blockBtn);
