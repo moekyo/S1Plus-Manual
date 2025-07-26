@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         S1Filter - Stage1st 帖子与作者屏蔽工具
+// @name         S1Filter - Stage1st 帖子与用户屏蔽工具
 // @namespace    http://tampermonkey.net/
-// @version      2.0
-// @description  为Stage1st论坛添加帖子和作者屏蔽功能。作者屏蔽按钮会在鼠标悬停于头像时出现。帖子屏蔽按钮固定显示在标题前，鼠标悬停片刻后会平滑出现。
+// @version      2.1
+// @description  为Stage1st论坛添加帖子和用户屏蔽功能。用户屏蔽按钮会在鼠标悬停于头像时出现。帖子屏蔽按钮固定显示在标题前，鼠标悬停片刻后会平滑出现。
 // @author       moekyo (modified by Gemini)
 // @match        https://stage1st.com/2b/*
 // @grant        GM_setValue
@@ -12,6 +12,9 @@
 
 (function() {
     'use strict';
+
+    const SCRIPT_VERSION = '2.1';
+    const SCRIPT_RELEASE_DATE = '2025-07-26';
 
     // --- 样式注入 ---
     GM_addStyle(`
@@ -76,14 +79,14 @@
             z-index: 10;
         }
 
-        /* 作者屏蔽按钮在遮罩内的特定样式 */
+        /* 用户屏蔽按钮在遮罩内的特定样式 */
         .s1filter-avatar-overlay-container .s1filter-block-btn {
             color: white;
             background-color: rgba(0, 0, 0, 0.4);
             border: 1px solid rgba(255, 255, 255, 0.5);
             transform: scale(1);
             transition: all 0.2s ease-in-out;
-            padding: 4px 8px; /* 确保作者屏蔽按钮有正确的padding */
+            padding: 4px 8px; /* 确保用户屏蔽按钮有正确的padding */
         }
         
         .s1filter-avatar-overlay-container .s1filter-block-btn:hover {
@@ -104,6 +107,7 @@
         .s1filter-modal-title { font-size: 18px; font-weight: bold; color: #111827; }
         .s1filter-modal-close { cursor: pointer; font-size: 20px; color: #6b7280; }
         .s1filter-modal-body { padding: 0 16px 16px; overflow-y: auto; flex-grow: 1; }
+        .s1filter-modal-footer { padding: 12px 16px; border-top: 1px solid #e5e7eb; text-align: right; font-size: 12px; color: #9ca3af; }
         .s1filter-empty { text-align: center; padding: 24px; color: #6b7280; }
         .s1filter-list { display: flex; flex-direction: column; gap: 8px; }
         .s1filter-item { display: flex; justify-content: space-between; align-items: center; padding: 12px; border-radius: 6px; background-color: #f9fafb; border: 1px solid #e5e7eb; }
@@ -167,15 +171,15 @@
         const modal = document.createElement('div');
         modal.className = 's1filter-modal';
         const closeModal = () => modal.remove();
-        modal.innerHTML = `<div class="s1filter-modal-content"><div class="s1filter-modal-header"><div class="s1filter-modal-title">屏蔽管理</div><div class="s1filter-modal-close">×</div></div><div class="s1filter-modal-body"><div class="s1filter-tabs"><button class="s1filter-tab-btn active" data-tab="threads">帖子屏蔽</button><button class="s1filter-tab-btn" data-tab="users">用户屏蔽</button></div><div id="s1-tab-threads" class="s1filter-tab-content active"></div><div id="s1-tab-users" class="s1filter-tab-content"></div><div id="s1-sync-container"><div class="s1filter-sync-section"><div class="s1filter-sync-title">多设备同步</div><div class="s1filter-sync-desc">通过复制/粘贴数据，在其他设备上同步屏蔽列表。</div><div class="s1filter-sync-buttons"><button id="s1-export-btn" class="s1filter-sync-btn">导出数据</button><button id="s1-import-btn" class="s1filter-sync-btn">导入数据</button></div><textarea id="s1-sync-textarea" class="s1filter-sync-textarea" placeholder="在此粘贴导入数据或从此处复制导出数据"></textarea><div id="s1-sync-message" class="s1filter-sync-message" style="display: none;"></div></div></div></div></div>`;
+        modal.innerHTML = `<div class="s1filter-modal-content"><div class="s1filter-modal-header"><div class="s1filter-modal-title">屏蔽管理</div><div class="s1filter-modal-close">×</div></div><div class="s1filter-modal-body"><div class="s1filter-tabs"><button class="s1filter-tab-btn active" data-tab="threads">帖子屏蔽</button><button class="s1filter-tab-btn" data-tab="users">用户屏蔽</button></div><div id="s1-tab-threads" class="s1filter-tab-content active"></div><div id="s1-tab-users" class="s1filter-tab-content"></div><div id="s1-sync-container"><div class="s1filter-sync-section"><div class="s1filter-sync-title">多设备同步</div><div class="s1filter-sync-desc">通过复制/粘贴数据，在其他设备上同步屏蔽列表。</div><div class="s1filter-sync-buttons"><button id="s1-export-btn" class="s1filter-sync-btn">导出数据</button><button id="s1-import-btn" class="s1filter-sync-btn">导入数据</button></div><textarea id="s1-sync-textarea" class="s1filter-sync-textarea" placeholder="在此粘贴导入数据或从此处复制导出数据"></textarea><div id="s1-sync-message" class="s1filter-sync-message" style="display: none;"></div></div></div></div><div class="s1filter-modal-footer">版本: ${SCRIPT_VERSION} (${SCRIPT_RELEASE_DATE})</div></div>`;
         document.body.appendChild(modal);
         const threadsTab = modal.querySelector('#s1-tab-threads');
         const usersTab = modal.querySelector('#s1-tab-users');
         const syncContainer = modal.querySelector('#s1-sync-container');
         const renderList = (container, blockedItems, type) => {
             const itemIds = Object.keys(blockedItems).sort((a, b) => blockedItems[b].timestamp - blockedItems[a].timestamp);
-            if (itemIds.length === 0) { container.innerHTML = `<div class="s1filter-empty">暂无屏蔽的${type === 'thread' ? '帖子' : '作者'}</div>`; return; }
-            container.innerHTML = `<div class="s1filter-list">${itemIds.map(id => { const item = blockedItems[id]; const title = type === 'thread' ? (item.title || `帖子 #${id}`) : (item.name || `作者 #${id}`); return `<div class="s1filter-item" data-${type}-id="${id}"><div class="s1filter-item-info"><div class="s1filter-item-title">${title}</div><div class="s1filter-item-meta">屏蔽时间: ${formatDate(item.timestamp)}</div></div><button class="s1filter-unblock-btn" data-unblock-${type}-id="${id}">取消屏蔽</button></div>`; }).join('')}</div>`;
+            if (itemIds.length === 0) { container.innerHTML = `<div class="s1filter-empty">暂无屏蔽的${type === 'thread' ? '帖子' : '用户'}</div>`; return; }
+            container.innerHTML = `<div class="s1filter-list">${itemIds.map(id => { const item = blockedItems[id]; const title = type === 'thread' ? (item.title || `帖子 #${id}`) : (item.name || `用户 #${id}`); return `<div class="s1filter-item" data-${type}-id="${id}"><div class="s1filter-item-info"><div class="s1filter-item-title">${title}</div><div class="s1filter-item-meta">屏蔽时间: ${formatDate(item.timestamp)}</div></div><button class="s1filter-unblock-btn" data-unblock-${type}-id="${id}">取消屏蔽</button></div>`; }).join('')}</div>`;
         };
         renderList(threadsTab, getBlockedThreads(), 'thread');
         renderList(usersTab, getBlockedUsers(), 'user');
@@ -247,12 +251,12 @@
 
                 const blockBtn = document.createElement('span');
                 blockBtn.className = 's1filter-block-btn';
-                blockBtn.textContent = '屏蔽作者';
+                blockBtn.textContent = '屏蔽用户';
                 
                 blockBtn.addEventListener('click', e => {
                     e.preventDefault();
                     e.stopPropagation();
-                    if (confirm(`确定要屏蔽作者 "${userName}" 吗？该作者的所有帖子都将被隐藏。`)) {
+                    if (confirm(`确定要屏蔽用户 "${userName}" 吗？该用户的所有帖子都将被隐藏。`)) {
                         blockUser(userId, userName);
                     }
                 });
