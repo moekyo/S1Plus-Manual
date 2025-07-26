@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      2.5
+// @version      2.6
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到等多种功能，全方位优化你的论坛体验。
 // @author       moekyo & Elence_ylns1314 (Merged and enhanced by Gemini)
 // @match        https://stage1st.com/2b/*
@@ -14,8 +14,8 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '2.5';
-    const SCRIPT_RELEASE_DATE = '2025-07-26';
+    const SCRIPT_VERSION = '2.6';
+    const SCRIPT_RELEASE_DATE = '2025-07-27';
 
     // --- 样式注入 ---
     GM_addStyle(`
@@ -427,8 +427,38 @@
         });
     };
 
+        // 自动签到
+    const autoCheckIn = () => {
+        const today = new Date().toLocaleDateString();
+        const lastCheckIn = GM_getValue('s1filter_last_checkin', '');
+
+        if (lastCheckIn !== today) {
+            const checkInLink = document.querySelector('a[href*="daily_attendance"]');
+
+            if (checkInLink) {
+                fetch(checkInLink.href)
+                    .then(response => {
+                        if (response.ok) {
+                            GM_setValue('s1filter_last_checkin', today);
+                            console.log('S1Filter: Auto check-in successful.');
+                        } else {
+                            console.error('S1Filter: Auto check-in failed with status: ', response.status);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('S1Filter: Auto check-in request failed.', error);
+                    });
+            }
+        }
+    };
+
+
     // --- 初始化 ---
     const init = () => {
+
+        // 自动签到
+        autoCheckIn();
+        
         applyInterfaceCustomizations();
         initializeNavbar();
 
