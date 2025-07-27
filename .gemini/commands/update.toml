@@ -1,0 +1,5 @@
+# In: ~/.gemini/commands/update.toml
+# Invoked via: /update
+
+description = "更新版本和 readme，并提交所有改动"
+prompt = "更新版本和 readme，并提交所有改动。"
