@@ -15,7 +15,7 @@
     'use strict';
 
     const SCRIPT_VERSION = '2.8';
-    const SCRIPT_RELEASE_DATE = '2025-07-26';
+    const SCRIPT_RELEASE_DATE = '2025-07-27';
 
     // --- 样式注入 ---
     GM_addStyle(`
@@ -85,7 +85,6 @@
         .s1-settings-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; }
         .s1-settings-label { color: #374151; font-size: 14px; }
         .s1-settings-checkbox { transform: scale(1.2); }
-        /* [NEW] 新增的说明文本样式 */
         .s1plus-setting-desc { font-size: 12px; color: #6b7280; margin: -12px 0 16px 4px; padding: 0; line-height: 1.5; }
         .s1-nav-editor-item { display: grid; grid-template-columns: auto 1fr 1fr auto; gap: 8px; align-items: center; padding: 8px; border-radius: 4px; background: #f9fafb; user-select: none; }
         .s1-nav-editor-item:not(:last-child) { margin-bottom: 8px; }
@@ -306,7 +305,6 @@
             const settings = getSettings();
             const blockedUsers = getBlockedUsers();
             const userItemIds = Object.keys(blockedUsers).sort((a, b) => blockedUsers[b].timestamp - blockedUsers[a].timestamp);
-            // [MODIFIED] 增加了包含提示信息的 <p> 标签
             tabs.users.innerHTML = `
                 <div class="s1-settings-group" style="margin-bottom: 16px; padding-bottom: 0;">
                     <div class="s1-settings-item">
@@ -429,17 +427,11 @@
                     renderThreadTab();
                 }
             }
+            // [MODIFIED] 移除了此处的提示逻辑
             else if(target.matches('#s1-blockThreadsOnUserBlock')) {
                 const currentSettings = getSettings();
                 currentSettings.blockThreadsOnUserBlock = target.checked;
                 saveSettings(currentSettings);
-                const msgContainer = document.createElement('div');
-                msgContainer.style.position = 'absolute';
-                msgContainer.style.bottom = '10px';
-                msgContainer.style.right = '10px';
-                target.closest('.s1-settings-item').appendChild(msgContainer);
-                showMessage(msgContainer, '默认设置已保存', true);
-                setTimeout(()=>msgContainer.remove(), 3100);
             }
         });
 
