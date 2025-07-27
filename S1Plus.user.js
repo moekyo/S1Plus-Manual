@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      2.8
-// @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到等多种功能，全方位优化你的论坛体验。
-// @author       moekyo
+// @version      3.0
+// @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪等多种功能，全方位优化你的论坛体验。
+// @author       moekyo & Elence_ylns1314 (Merged and enhanced by Gemini)
 // @match        https://stage1st.com/2b/*
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -14,7 +14,7 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '2.8';
+    const SCRIPT_VERSION = '3.0';
     const SCRIPT_RELEASE_DATE = '2025-07-27';
 
     // --- 样式注入 ---
@@ -26,10 +26,31 @@
         .s1plus-btn { display: inline-flex; align-items: center; justify-content: center; border-radius: 4px; background-color: #f3f4f6; color: #374151; font-size: 12px; font-weight: bold; cursor: pointer; user-select: none; white-space: nowrap; border: none; }
         .s1plus-btn:hover { background-color: #ef4444; color: white; }
 
-        /* --- 帖子屏蔽按钮动画与布局 (基于v2.4的标签样式) --- */
+        /* --- 帖子屏蔽按钮动画与布局 --- */
         .thread-block-btn { position: absolute; top: 50%; left: 50%; z-index: 5; padding: 5px 10px 5px 12px; border-radius: 0 30px 30px 0; background-color: #f87171; color: white; font-size: 12px; border: none; box-shadow: 0 1px 3px rgba(0,0,0,0.2); opacity: 0; visibility: hidden; transform: translate(-50%, -50%) scale(0.85); transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
         tbody[id^="normalthread_"]:hover .thread-block-btn, tbody[id^="stickthread_"]:hover .thread-block-btn { opacity: 1; visibility: visible; transform: translate(-50%, -50%) scale(1); transition-delay: 0.1s; }
         .thread-block-btn:hover { background-color: #ef4444; transform: translate(-50%, -50%) scale(1.1); }
+
+        /* 阅读进度跳转按钮样式 */
+        .s1plus-progress-jump-btn {
+            display: inline-block;
+            margin: 0 8px;
+            font-size: 12px;
+            font-weight: normal;
+            color: #6b7280;
+            text-decoration: none;
+            border: 1px solid #e5e7eb;
+            background-color: #f9fafb;
+            border-radius: 4px;
+            padding: 1px 6px;
+            transition: all 0.2s ease-in-out;
+            vertical-align: middle;
+        }
+        .s1plus-progress-jump-btn:hover {
+            color: white;
+            background-color: #3b82f6;
+            border-color: #3b82f6;
+        }
 
         /* --- 用户屏蔽悬停交互样式 --- */
         .s1plus-avatar-overlay-container { position: absolute; display: flex; align-items: center; justify-content: center; background-color: rgba(0, 0, 0, 0.55); opacity: 0; visibility: hidden; transition: opacity 0.2s ease-in-out, visibility 0.2s ease-in-out; pointer-events: auto; z-index: 10; }
@@ -117,6 +138,16 @@
     const showUserPosts = (id) => { document.querySelectorAll(`a[href*="space-uid-${id}.html"]`).forEach(l => l.closest('table.plhin')?.removeAttribute('style')); };
     const hideBlockedUsersPosts = () => Object.keys(getBlockedUsers()).forEach(hideUserPosts);
 
+    const getReadProgress = () => GM_getValue('s1plus_read_progress', {});
+    const saveReadProgress = (progress) => GM_setValue('s1plus_read_progress', progress);
+    const updateThreadProgress = (threadId, postId, page) => {
+        if (!postId || !page) return;
+        const progress = getReadProgress();
+        progress[threadId] = { postId, page, timestamp: Date.now() };
+        saveReadProgress(progress);
+    };
+
+
     const applyUserThreadBlocklist = () => {
         const blockedUsers = getBlockedUsers();
         const usersToBlockThreads = Object.keys(blockedUsers).filter(uid => blockedUsers[uid].blockThreads);
@@ -148,11 +179,18 @@
         });
     };
 
-    const exportData = () => JSON.stringify({ version: 3.0, settings: getSettings(), threads: getBlockedThreads(), users: getBlockedUsers() }, null, 2);
+    const exportData = () => JSON.stringify({
+        version: 3.1,
+        settings: getSettings(),
+        threads: getBlockedThreads(),
+        users: getBlockedUsers(),
+        read_progress: getReadProgress()
+    }, null, 2);
+
     const importData = (jsonStr) => {
         try {
             const imported = JSON.parse(jsonStr); if (typeof imported !== 'object' || imported === null) throw new Error("无效数据格式");
-            let threadsImported = 0, usersImported = 0;
+            let threadsImported = 0, usersImported = 0, progressImported = 0;
 
             const upgradeAndMerge = (type, importedData, getter, saver) => {
                 if (!importedData || typeof importedData !== 'object') return 0;
@@ -173,13 +211,19 @@
             threadsImported = upgradeAndMerge('threads', imported.threads, getBlockedThreads, saveBlockedThreads);
             usersImported = upgradeAndMerge('users', imported.users, getBlockedUsers, saveBlockedUsers);
 
+            if (imported.read_progress) {
+                const mergedProgress = { ...getReadProgress(), ...imported.read_progress };
+                saveReadProgress(mergedProgress);
+                progressImported = Object.keys(imported.read_progress).length;
+            }
+
             hideBlockedThreads();
             hideBlockedUsersPosts();
             applyUserThreadBlocklist();
             initializeNavbar();
             applyInterfaceCustomizations();
 
-            return { success: true, message: `成功导入 ${threadsImported} 条帖子、${usersImported} 条用户记录及相关设置。` };
+            return { success: true, message: `成功导入 ${threadsImported} 条帖子、${usersImported} 条用户、${progressImported} 条阅读进度及相关设置。` };
         } catch (e) { return { success: false, message: `导入失败: ${e.message}` }; }
     };
 
@@ -281,7 +325,7 @@
                 <div id="s1-tab-settings" class="s1plus-tab-content"></div>
                 <div id="s1-tab-sync" class="s1plus-tab-content">
                     <div class="s1plus-sync-title">全量设置同步</div>
-                    <div class="s1plus-sync-desc">通过复制/粘贴数据，在不同浏览器或设备间同步你的所有S1 Plus配置，包括屏蔽列表、导航栏和各项开关设置。</div>
+                    <div class="s1plus-sync-desc">通过复制/粘贴数据，在不同浏览器或设备间同步你的所有S1 Plus配置，包括屏蔽列表、导航栏、阅读进度和各项开关设置。</div>
                     <div class="s1plus-sync-buttons">
                         <button id="s1-export-btn" class="s1plus-sync-btn">导出数据</button>
                         <button id="s1-import-btn" class="s1plus-sync-btn">导入数据</button>
@@ -427,7 +471,6 @@
                     renderThreadTab();
                 }
             }
-            // [MODIFIED] 移除了此处的提示逻辑
             else if(target.matches('#s1-blockThreadsOnUserBlock')) {
                 const currentSettings = getSettings();
                 currentSettings.blockThreadsOnUserBlock = target.checked;
@@ -523,6 +566,72 @@
         });
     };
 
+    const addProgressJumpButtons = () => {
+        const progressData = getReadProgress();
+        if (Object.keys(progressData).length === 0) return;
+
+        document.querySelectorAll('tbody[id^="normalthread_"]').forEach(row => {
+            if (row.querySelector('.s1plus-progress-jump-btn')) return;
+
+            const threadIdMatch = row.id.match(/normalthread_(\d+)/);
+            if (!threadIdMatch) return;
+            const threadId = threadIdMatch[1];
+
+            if (progressData[threadId] && progressData[threadId].page) {
+                const { postId, page } = progressData[threadId];
+                const titleLink = row.querySelector('th a.s.xst');
+                if (titleLink) {
+                    const jumpBtn = document.createElement('a');
+                    jumpBtn.className = 's1plus-progress-jump-btn';
+                    jumpBtn.textContent = `上次阅读: P${page}`;
+                    jumpBtn.href = `forum.php?mod=redirect&goto=findpost&ptid=${threadId}&pid=${postId}`;
+                    jumpBtn.title = `跳转到上次阅读的页面 (第 ${page} 页)`;
+                    jumpBtn.target = '_blank';
+                    jumpBtn.onclick = (e) => e.stopPropagation();
+
+                    titleLink.insertAdjacentElement('afterend', jumpBtn);
+                }
+            }
+        });
+    };
+
+    // [MODIFIED] 更新了跟踪进度的逻辑，现在记录页面上第一个可见的帖子
+    const initReadProgressTracker = () => {
+        const threadIdMatch = window.location.href.match(/thread-(\d+)-/);
+        if (!threadIdMatch) return;
+        const threadId = threadIdMatch[1];
+
+        const pageMatch = window.location.href.match(/thread-\d+-(\d+)-/);
+        const currentPage = pageMatch ? pageMatch[1] : '1';
+
+        let currentProgressPostId = null;
+
+        const observer = new IntersectionObserver((entries) => {
+            const visiblePosts = entries.filter(entry => entry.isIntersecting);
+
+            if (visiblePosts.length > 0) {
+                // 从所有可见的帖子中，找到ID（即楼层）最小的那个
+                const firstVisiblePost = visiblePosts.reduce((first, current) => {
+                    const firstId = parseInt(first.target.id.replace('pid', ''));
+                    const currentId = parseInt(current.target.id.replace('pid', ''));
+                    return currentId < firstId ? current : first;
+                });
+                currentProgressPostId = firstVisiblePost.target.id.replace('pid', '');
+            }
+        }, { threshold: 0.1 });
+
+        document.querySelectorAll('table[id^="pid"]').forEach(post => observer.observe(post));
+
+        const saveProgress = () => {
+            if (document.visibilityState === 'hidden' && currentProgressPostId) {
+                updateThreadProgress(threadId, currentProgressPostId, currentPage);
+            }
+        };
+
+        document.addEventListener('visibilitychange', saveProgress);
+    };
+
+
     // 自动签到
     const autoCheckIn = () => {
         const userLink = document.querySelector('div#um a[href*="space-uid-"]');
@@ -560,10 +669,12 @@
             if (window.location.href.includes('thread-')) {
                 hideBlockedUsersPosts();
                 addBlockButtonsToUsers();
+                initReadProgressTracker();
             } else if (window.location.href.includes('forum-')) {
                 hideBlockedThreads();
                 applyUserThreadBlocklist();
                 addBlockButtonsToThreads();
+                addProgressJumpButtons();
             }
             applyInterfaceCustomizations();
         };
