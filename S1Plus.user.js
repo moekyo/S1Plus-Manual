@@ -295,11 +295,11 @@
     const formatDate = (timestamp) => new Date(timestamp).toLocaleString('zh-CN');
     const showMessage = (msgEl, message, isSuccess) => { msgEl.textContent = message; msgEl.className = `s1plus-message ${isSuccess ? 'success' : 'error'}`; msgEl.style.display = 'block'; setTimeout(() => { msgEl.style.display = 'none'; }, 3000); };
 
-    const createConfirmationModal = (title, subtitle, onConfirm) => {
+    const createConfirmationModal = (title, subtitle, onConfirm, confirmText = '确定') => {
         document.querySelector('.s1plus-confirm-modal')?.remove();
         const modal = document.createElement('div');
         modal.className = 's1plus-confirm-modal';
-        modal.innerHTML = `<div class="s1plus-confirm-content"><div class="s1plus-confirm-body"><div class="confirm-title">${title}</div><div class="confirm-subtitle">${subtitle}</div></div><div class="s1plus-confirm-footer"><button class="s1plus-confirm-btn cancel">取消</button><button class="s1plus-confirm-btn confirm">确定屏蔽</button></div></div>`;
+        modal.innerHTML = `<div class="s1plus-confirm-content"><div class="s1plus-confirm-body"><div class="confirm-title">${title}</div><div class="confirm-subtitle">${subtitle}</div></div><div class="s1plus-confirm-footer"><button class="s1plus-confirm-btn cancel">取消</button><button class="s1plus-confirm-btn confirm">${confirmText}</button></div></div>`;
         const closeModal = () => { modal.querySelector('.s1plus-confirm-content').style.animation = 's1plus-scale-out 0.25s ease-out forwards'; modal.style.animation = 's1plus-fade-out 0.25s ease-out forwards'; setTimeout(() => modal.remove(), 250); };
         modal.querySelector('.confirm').addEventListener('click', () => { onConfirm(); closeModal(); });
         modal.querySelector('.cancel').addEventListener('click', closeModal);
@@ -347,6 +347,12 @@
                     </div>
                     <textarea id="s1-sync-textarea" class="s1plus-sync-textarea" placeholder="在此粘贴导入数据或从此处复制导出数据"></textarea>
                     <div id="s1-sync-message" class="s1plus-message"></div>
+                    <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 20px 0;">
+                    <div class="s1plus-sync-title">危险操作</div>
+                    <div class="s1plus-sync-desc">以下操作会立即清空脚本在<b>当前浏览器</b>中的所有数据（包括屏蔽列表、设置和阅读进度），且无法撤销。请在操作前务必通过“导出数据”功能进行备份。</div>
+                    <div style="margin-top: 12px;">
+                        <button id="s1-reset-btn" class="s1plus-sync-btn" style="background-color: #ef4444; color: white;">清除并重置所有本地数据</button>
+                    </div>
                 </div>
             </div>
             <div class="s1plus-modal-footer">版本: ${SCRIPT_VERSION} (${SCRIPT_RELEASE_DATE})</div>
@@ -523,6 +529,31 @@
                     renderSettingsTab();
                 }
             }
+            if(e.target.id === 's1-reset-btn') {
+                createConfirmationModal(
+                    '确认要清除所有数据吗？',
+                    '此操作不可逆！将删除所有屏蔽列表、阅读进度和自定义设置。强烈建议先导出备份。',
+                    () => {
+                        saveBlockedThreads({});
+                        saveBlockedUsers({});
+                        saveReadProgress({});
+                        saveSettings(defaultSettings);
+
+                        hideBlockedThreads();
+                        hideBlockedUsersPosts();
+                        applyUserThreadBlocklist();
+                        initializeNavbar();
+                        applyInterfaceCustomizations();
+
+                        renderThreadTab();
+                        renderUserTab();
+                        renderSettingsTab();
+
+                        showMessage(syncMessageEl, '所有本地数据已成功清除。', true);
+                    },
+                    '确认清除'
+                );
+            }
         });
     };
 
@@ -573,7 +604,7 @@
                     const subtitle = getSettings().blockThreadsOnUserBlock
                         ? '该用户的所有帖子和主题帖都将被隐藏，此操作可在设置面板中撤销。'
                         : '该用户的所有帖子都将被隐藏，此操作可在设置面板中撤销。';
-                    createConfirmationModal(`确定要屏蔽用户 "${userName}" 吗？`, subtitle, () => blockUser(userId, userName));
+                    createConfirmationModal(`确定要屏蔽用户 "${userName}" 吗？`, subtitle, () => blockUser(userId, userName), '确定屏蔽');
                 });
                 overlayContainer.appendChild(blockBtn);
                 plsCell.appendChild(overlayContainer);
