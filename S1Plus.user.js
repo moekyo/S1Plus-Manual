@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      2.7
+// @version      2.8
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到等多种功能，全方位优化你的论坛体验。
 // @author       moekyo & Elence_ylns1314 (Merged and enhanced by Gemini)
 // @match        https://stage1st.com/2b/*
@@ -14,8 +14,8 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '2.7';
-    const SCRIPT_RELEASE_DATE = '2025-07-27';
+    const SCRIPT_VERSION = '2.8';
+    const SCRIPT_RELEASE_DATE = '2025-07-26';
 
     // --- 样式注入 ---
     GM_addStyle(`
@@ -27,42 +27,9 @@
         .s1plus-btn:hover { background-color: #ef4444; color: white; }
 
         /* --- 帖子屏蔽按钮动画与布局 (基于v2.4的标签样式) --- */
-        .thread-block-btn {
-            /* 悬浮定位样式，居中于父容器(td.icn) */
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            z-index: 5;
-
-            /* 新的标签外观 */
-            padding: 5px 10px 5px 12px;
-            border-radius: 0 30px 30px 0; /* 左侧直角，右侧半圆 */
-            background-color: #f87171; /* 调整为更柔和的浅红色 */
-            color: white;
-            font-size: 12px;
-            border: none;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
-
-            /* 动画初始状态：隐藏、缩小 */
-            opacity: 0;
-            visibility: hidden;
-            transform: translate(-50%, -50%) scale(0.85);
-            transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-        }
-        /* 鼠标悬浮于整行时，显示按钮 */
-        tbody[id^="normalthread_"]:hover .thread-block-btn,
-        tbody[id^="stickthread_"]:hover .thread-block-btn {
-            opacity: 1;
-            visibility: visible;
-            transform: translate(-50%, -50%) scale(1);
-            transition-delay: 0.1s;
-        }
-        /* 鼠标悬浮于按钮本身时，进一步放大突出显示 */
-        .thread-block-btn:hover {
-            background-color: #ef4444; /* 悬浮颜色也相应变浅 */
-            transform: translate(-50%, -50%) scale(1.1);
-        }
-
+        .thread-block-btn { position: absolute; top: 50%; left: 50%; z-index: 5; padding: 5px 10px 5px 12px; border-radius: 0 30px 30px 0; background-color: #f87171; color: white; font-size: 12px; border: none; box-shadow: 0 1px 3px rgba(0,0,0,0.2); opacity: 0; visibility: hidden; transform: translate(-50%, -50%) scale(0.85); transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+        tbody[id^="normalthread_"]:hover .thread-block-btn, tbody[id^="stickthread_"]:hover .thread-block-btn { opacity: 1; visibility: visible; transform: translate(-50%, -50%) scale(1); transition-delay: 0.1s; }
+        .thread-block-btn:hover { background-color: #ef4444; transform: translate(-50%, -50%) scale(1.1); }
 
         /* --- 用户屏蔽悬停交互样式 --- */
         .s1plus-avatar-overlay-container { position: absolute; display: flex; align-items: center; justify-content: center; background-color: rgba(0, 0, 0, 0.55); opacity: 0; visibility: hidden; transition: opacity 0.2s ease-in-out, visibility 0.2s ease-in-out; pointer-events: auto; z-index: 10; }
@@ -82,17 +49,18 @@
         .s1plus-tab-btn { padding: 12px 16px; cursor: pointer; border: none; background-color: transparent; font-size: 14px; color: #6b7280; border-bottom: 2px solid transparent; transition: all 0.2s; }
         .s1plus-tab-btn:hover { color: #111827; }
         .s1plus-tab-btn.active { color: #3b82f6; border-bottom-color: #3b82f6; font-weight: 500; }
-        .s1plus-tab-content { display: none; }
+        .s1plus-tab-content { display: none; padding-top: 8px; }
         .s1plus-tab-content.active { display: block; }
         .s1plus-empty { text-align: center; padding: 24px; color: #6b7280; }
         .s1plus-list { display: flex; flex-direction: column; gap: 8px; }
-        .s1plus-item { display: flex; justify-content: space-between; align-items: center; padding: 12px; border-radius: 6px; background-color: #f9fafb; border: 1px solid #e5e7eb; }
+        .s1plus-item { display: flex; justify-content: space-between; align-items: flex-start; padding: 12px; border-radius: 6px; background-color: #f9fafb; border: 1px solid #e5e7eb; }
         .s1plus-item-info { flex-grow: 1; min-width: 0; }
         .s1plus-item-title { font-weight: 500; color: #111827; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .s1plus-item-meta { font-size: 12px; color: #6b7280; }
-        .s1plus-unblock-btn { padding: 6px 12px; border-radius: 4px; background-color: #f3f4f6; color: #6b7280; font-size: 14px; cursor: pointer; transition: all 0.2s; border: none; flex-shrink: 0; }
+        .s1plus-item-meta { font-size: 12px; color: #6b7280; margin-bottom: 8px; }
+        .s1plus-item-toggle { font-size: 12px; color: #374151; display: flex; align-items: center; }
+        .s1plus-item-toggle input { margin-right: 6px; transform: scale(1.1); }
+        .s1plus-unblock-btn { padding: 6px 12px; border-radius: 4px; background-color: #f3f4f6; color: #6b7280; font-size: 14px; cursor: pointer; transition: all 0.2s; border: none; flex-shrink: 0; align-self: center; }
         .s1plus-unblock-btn:hover { background-color: #10b981; color: white; }
-        #s1-sync-container { margin-top: 20px; padding-top: 16px; border-top: 1px solid #e5e7eb; }
         .s1plus-sync-title { font-weight: 500; color: #111827; margin-bottom: 8px; }
         .s1plus-sync-desc { font-size: 14px; color: #6b7280; margin-bottom: 12px; line-height: 1.5; }
         .s1plus-sync-buttons { display: flex; gap: 8px; margin-bottom: 16px; }
@@ -117,6 +85,8 @@
         .s1-settings-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; }
         .s1-settings-label { color: #374151; font-size: 14px; }
         .s1-settings-checkbox { transform: scale(1.2); }
+        /* [NEW] 新增的说明文本样式 */
+        .s1plus-setting-desc { font-size: 12px; color: #6b7280; margin: -12px 0 16px 4px; padding: 0; line-height: 1.5; }
         .s1-nav-editor-item { display: grid; grid-template-columns: auto 1fr 1fr auto; gap: 8px; align-items: center; padding: 8px; border-radius: 4px; background: #f9fafb; user-select: none; }
         .s1-nav-editor-item:not(:last-child) { margin-bottom: 8px; }
         .s1-nav-editor-item.dragging { opacity: 0.5; background: #dbeafe; }
@@ -137,27 +107,80 @@
     const saveBlockedThreads = (threads) => GM_setValue('s1plus_blocked_threads', threads);
     const getBlockedUsers = () => GM_getValue('s1plus_blocked_users', {});
     const saveBlockedUsers = (users) => GM_setValue('s1plus_blocked_users', users);
-    const blockThread = (id, title) => { const b = getBlockedThreads(); b[id] = { title, timestamp: Date.now() }; saveBlockedThreads(b); hideThread(id); };
+    const blockThread = (id, title, reason = 'manual') => { const b = getBlockedThreads(); if (b[id]) return; b[id] = { title, timestamp: Date.now(), reason }; saveBlockedThreads(b); hideThread(id); };
     const unblockThread = (id) => { const b = getBlockedThreads(); delete b[id]; saveBlockedThreads(b); showThread(id); };
     const hideThread = (id) => { (document.getElementById(`normalthread_${id}`) || document.getElementById(`stickthread_${id}`))?.setAttribute('style', 'display: none !important'); };
     const showThread = (id) => { (document.getElementById(`normalthread_${id}`) || document.getElementById(`stickthread_${id}`))?.removeAttribute('style'); }
     const hideBlockedThreads = () => Object.keys(getBlockedThreads()).forEach(hideThread);
-    const blockUser = (id, name) => { const b = getBlockedUsers(); b[id] = { name, timestamp: Date.now() }; saveBlockedUsers(b); hideUserPosts(id); };
-    const unblockUser = (id) => { const b = getBlockedUsers(); delete b[id]; saveBlockedUsers(b); showUserPosts(id); };
+    const blockUser = (id, name) => { const settings = getSettings(); const b = getBlockedUsers(); b[id] = { name, timestamp: Date.now(), blockThreads: settings.blockThreadsOnUserBlock }; saveBlockedUsers(b); hideUserPosts(id); if (b[id].blockThreads) applyUserThreadBlocklist(); };
+    const unblockUser = (id) => { const b = getBlockedUsers(); delete b[id]; saveBlockedUsers(b); showUserPosts(id); unblockThreadsByUser(id); };
     const hideUserPosts = (id) => { document.querySelectorAll(`a[href*="space-uid-${id}.html"]`).forEach(l => l.closest('table.plhin')?.setAttribute('style', 'display: none !important')); };
     const showUserPosts = (id) => { document.querySelectorAll(`a[href*="space-uid-${id}.html"]`).forEach(l => l.closest('table.plhin')?.removeAttribute('style')); };
     const hideBlockedUsersPosts = () => Object.keys(getBlockedUsers()).forEach(hideUserPosts);
-    const exportData = () => JSON.stringify({ version: 2.0, threads: getBlockedThreads(), users: getBlockedUsers() }, null, 2);
+
+    const applyUserThreadBlocklist = () => {
+        const blockedUsers = getBlockedUsers();
+        const usersToBlockThreads = Object.keys(blockedUsers).filter(uid => blockedUsers[uid].blockThreads);
+        if (usersToBlockThreads.length === 0) return;
+
+        document.querySelectorAll('tbody[id^="normalthread_"]').forEach(row => {
+            const authorLink = row.querySelector('td.by cite a[href*="space-uid-"]');
+            if (authorLink) {
+                const uidMatch = authorLink.href.match(/space-uid-(\d+)\.html/);
+                const authorId = uidMatch ? uidMatch[1] : null;
+                if (authorId && usersToBlockThreads.includes(authorId)) {
+                    const threadId = row.id.replace('normalthread_', '');
+                    const titleElement = row.querySelector('th a.s.xst');
+                    if (threadId && titleElement) {
+                        blockThread(threadId, titleElement.textContent.trim(), `user_${authorId}`);
+                    }
+                }
+            }
+        });
+    };
+
+    const unblockThreadsByUser = (userId) => {
+        const allBlockedThreads = getBlockedThreads();
+        const reason = `user_${userId}`;
+        Object.keys(allBlockedThreads).forEach(threadId => {
+            if (allBlockedThreads[threadId].reason === reason) {
+                unblockThread(threadId);
+            }
+        });
+    };
+
+    const exportData = () => JSON.stringify({ version: 3.0, settings: getSettings(), threads: getBlockedThreads(), users: getBlockedUsers() }, null, 2);
     const importData = (jsonStr) => {
         try {
             const imported = JSON.parse(jsonStr); if (typeof imported !== 'object' || imported === null) throw new Error("无效数据格式");
             let threadsImported = 0, usersImported = 0;
-            if (imported.version === 2.0) {
-                if (imported.threads) { const merged = { ...getBlockedThreads(), ...imported.threads }; threadsImported = Object.keys(imported.threads).length; saveBlockedThreads(merged); }
-                if (imported.users) { const merged = { ...getBlockedUsers(), ...imported.users }; usersImported = Object.keys(imported.users).length; saveBlockedUsers(merged); }
-            } else { const merged = { ...getBlockedThreads(), ...imported }; threadsImported = Object.keys(imported).length; saveBlockedThreads(merged); }
-            hideBlockedThreads(); hideBlockedUsersPosts();
-            return { success: true, message: `成功导入 ${threadsImported} 条帖子和 ${usersImported} 条用户记录。` };
+
+            const upgradeAndMerge = (type, importedData, getter, saver) => {
+                if (!importedData || typeof importedData !== 'object') return 0;
+                Object.keys(importedData).forEach(id => {
+                    const item = importedData[id];
+                    if (type === 'users' && typeof item.blockThreads === 'undefined') item.blockThreads = false;
+                    if (type === 'threads' && typeof item.reason === 'undefined') item.reason = 'manual';
+                });
+                const merged = { ...getter(), ...importedData };
+                saver(merged);
+                return Object.keys(importedData).length;
+            };
+
+            if(imported.settings) {
+                saveSettings({...getSettings(), ...imported.settings});
+            }
+
+            threadsImported = upgradeAndMerge('threads', imported.threads, getBlockedThreads, saveBlockedThreads);
+            usersImported = upgradeAndMerge('users', imported.users, getBlockedUsers, saveBlockedUsers);
+
+            hideBlockedThreads();
+            hideBlockedUsersPosts();
+            applyUserThreadBlocklist();
+            initializeNavbar();
+            applyInterfaceCustomizations();
+
+            return { success: true, message: `成功导入 ${threadsImported} 条帖子、${usersImported} 条用户记录及相关设置。` };
         } catch (e) { return { success: false, message: `导入失败: ${e.message}` }; }
     };
 
@@ -166,6 +189,7 @@
         enableNavCustomization: true,
         changeLogoLink: true,
         hideBlacklistTip: true,
+        blockThreadsOnUserBlock: true,
         customNavLinks: [
             { name: '论坛', href: 'forum.php' },
             { name: '归墟', href: 'forum-157-1.html' },
@@ -176,7 +200,10 @@
             { name: '黑名单', href: 'home.php?mod=space&do=friend&view=blacklist' }
         ]
     };
-    const getSettings = () => GM_getValue('s1plus_settings', defaultSettings);
+    const getSettings = () => {
+        const saved = GM_getValue('s1plus_settings', {});
+        return {...defaultSettings, ...saved};
+    };
     const saveSettings = (settings) => GM_setValue('s1plus_settings', settings);
 
     // --- 界面定制功能 ---
@@ -206,7 +233,8 @@
 
         if (settings.enableNavCustomization) {
             navUl.innerHTML = '';
-            settings.customNavLinks.forEach(link => {
+            (settings.customNavLinks || []).forEach(link => {
+                if(!link.name || !link.href) return;
                 const li = document.createElement('li');
                 if (window.location.href.includes(link.href)) li.className = 'a';
                 const a = document.createElement('a');
@@ -247,11 +275,21 @@
                     <button class="s1plus-tab-btn active" data-tab="threads">帖子屏蔽</button>
                     <button class="s1plus-tab-btn" data-tab="users">用户屏蔽</button>
                     <button class="s1plus-tab-btn" data-tab="settings">界面定制</button>
+                    <button class="s1plus-tab-btn" data-tab="sync">设置同步</button>
                 </div>
                 <div id="s1-tab-threads" class="s1plus-tab-content active"></div>
                 <div id="s1-tab-users" class="s1plus-tab-content"></div>
                 <div id="s1-tab-settings" class="s1plus-tab-content"></div>
-                <div id="s1-sync-container"><div class="s1plus-sync-section"><div class="s1plus-sync-title">屏蔽列表同步</div><div class="s1plus-sync-desc">通过复制/粘贴数据，在其他设备上同步屏蔽列表。</div><div class="s1plus-sync-buttons"><button id="s1-export-btn" class="s1plus-sync-btn">导出数据</button><button id="s1-import-btn" class="s1plus-sync-btn">导入数据</button></div><textarea id="s1-sync-textarea" class="s1plus-sync-textarea" placeholder="在此粘贴导入数据或从此处复制导出数据"></textarea><div id="s1-sync-message" class="s1plus-message"></div></div></div>
+                <div id="s1-tab-sync" class="s1plus-tab-content">
+                    <div class="s1plus-sync-title">全量设置同步</div>
+                    <div class="s1plus-sync-desc">通过复制/粘贴数据，在不同浏览器或设备间同步你的所有S1 Plus配置，包括屏蔽列表、导航栏和各项开关设置。</div>
+                    <div class="s1plus-sync-buttons">
+                        <button id="s1-export-btn" class="s1plus-sync-btn">导出数据</button>
+                        <button id="s1-import-btn" class="s1plus-sync-btn">导入数据</button>
+                    </div>
+                    <textarea id="s1-sync-textarea" class="s1plus-sync-textarea" placeholder="在此粘贴导入数据或从此处复制导出数据"></textarea>
+                    <div id="s1-sync-message" class="s1plus-message"></div>
+                </div>
             </div>
             <div class="s1plus-modal-footer">版本: ${SCRIPT_VERSION} (${SCRIPT_RELEASE_DATE})</div>
         </div>`;
@@ -260,14 +298,45 @@
         const tabs = {
             threads: modal.querySelector('#s1-tab-threads'),
             users: modal.querySelector('#s1-tab-users'),
-            settings: modal.querySelector('#s1-tab-settings')
+            settings: modal.querySelector('#s1-tab-settings'),
+            sync: modal.querySelector('#s1-tab-sync'),
         };
-        const syncContainer = modal.querySelector('#s1-sync-container');
 
-        const renderBlockedList = (container, blockedItems, type) => {
-            const itemIds = Object.keys(blockedItems).sort((a, b) => blockedItems[b].timestamp - blockedItems[a].timestamp);
-            if (itemIds.length === 0) { container.innerHTML = `<div class="s1plus-empty">暂无屏蔽的${type === 'thread' ? '帖子' : '用户'}</div>`; return; }
-            container.innerHTML = `<div class="s1plus-list">${itemIds.map(id => { const item = blockedItems[id]; const title = type === 'thread' ? (item.title || `帖子 #${id}`) : (item.name || `用户 #${id}`); return `<div class="s1plus-item" data-${type}-id="${id}"><div class="s1plus-item-info"><div class="s1plus-item-title">${title}</div><div class="s1plus-item-meta">屏蔽时间: ${formatDate(item.timestamp)}</div></div><button class="s1plus-unblock-btn" data-unblock-${type}-id="${id}">取消屏蔽</button></div>`; }).join('')}</div>`;
+        const renderUserTab = () => {
+            const settings = getSettings();
+            const blockedUsers = getBlockedUsers();
+            const userItemIds = Object.keys(blockedUsers).sort((a, b) => blockedUsers[b].timestamp - blockedUsers[a].timestamp);
+            // [MODIFIED] 增加了包含提示信息的 <p> 标签
+            tabs.users.innerHTML = `
+                <div class="s1-settings-group" style="margin-bottom: 16px; padding-bottom: 0;">
+                    <div class="s1-settings-item">
+                        <label class="s1-settings-label" for="s1-blockThreadsOnUserBlock">屏蔽用户时，默认屏蔽其所有主题帖</label>
+                        <input type="checkbox" id="s1-blockThreadsOnUserBlock" class="s1-settings-checkbox" ${settings.blockThreadsOnUserBlock ? 'checked' : ''}>
+                    </div>
+                </div>
+                <p class="s1plus-setting-desc">
+                    <strong>提示</strong>：顶部总开关仅影响<strong>未来新屏蔽用户</strong>的默认设置。每个用户下方的独立开关，才是控制该用户主题帖的<strong>最终开关</strong>，拥有最高优先级。
+                </p>
+                ${userItemIds.length === 0
+                    ? `<div class="s1plus-empty">暂无屏蔽的用户</div>`
+                    : `<div class="s1plus-list">${userItemIds.map(id => {
+                        const item = blockedUsers[id];
+                        return `<div class="s1plus-item" data-user-id="${id}"><div class="s1plus-item-info"><div class="s1plus-item-title">${item.name || `用户 #${id}`}</div><div class="s1plus-item-meta">屏蔽时间: ${formatDate(item.timestamp)}</div><div class="s1plus-item-toggle"><label><input type="checkbox" class="user-thread-block-toggle" data-user-id="${id}" ${item.blockThreads ? 'checked' : ''}> 屏蔽该用户的主题帖</label></div></div><button class="s1plus-unblock-btn" data-unblock-user-id="${id}">取消屏蔽</button></div>`;
+                    }).join('')}</div>`
+                }
+            `;
+        };
+
+        const renderThreadTab = () => {
+            const blockedThreads = getBlockedThreads();
+            const itemIds = Object.keys(blockedThreads).sort((a, b) => blockedThreads[b].timestamp - blockedThreads[a].timestamp);
+            if (itemIds.length === 0) { tabs.threads.innerHTML = `<div class="s1plus-empty">暂无屏蔽的帖子</div>`; }
+            else {
+                tabs.threads.innerHTML = `<div class="s1plus-list">${itemIds.map(id => {
+                    const item = blockedThreads[id];
+                    return `<div class="s1plus-item" data-thread-id="${id}"><div class="s1plus-item-info"><div class="s1plus-item-title">${item.title || `帖子 #${id}`}</div><div class="s1plus-item-meta">屏蔽时间: ${formatDate(item.timestamp)} ${item.reason && item.reason !== 'manual' ? `(因屏蔽用户${item.reason.replace('user_','')})` : ''}</div></div><button class="s1plus-unblock-btn" data-unblock-thread-id="${id}">取消屏蔽</button></div>`;
+                }).join('')}</div>`;
+            }
         };
 
         const renderSettingsTab = () => {
@@ -288,13 +357,13 @@
                     </div>
                 </div>
                 <div style="text-align: right; margin-top: 24px; border-top: 1px solid #e5e7eb; padding-top: 16px;">
-                     <button id="s1-settings-save-btn" class="s1-settings-action-btn primary">保存设置</button>
+                     <button id="s1-settings-save-btn" class="s1-settings-action-btn primary">保存界面与导航设置</button>
                 </div>
                 <div id="s1-settings-message" class="s1plus-message"></div>`;
 
             const navListContainer = tabs.settings.querySelector('.s1-nav-editor-list');
             const renderNavList = (links) => {
-                navListContainer.innerHTML = links.map((link, index) => `
+                navListContainer.innerHTML = (links || []).map((link, index) => `
                     <div class="s1-nav-editor-item" draggable="true" data-index="${index}">
                         <div class="drag-handle">::</div>
                         <input type="text" class="nav-name" placeholder="名称" value="${link.name || ''}">
@@ -306,7 +375,7 @@
             renderNavList(settings.customNavLinks);
 
             let draggedItem = null;
-            navListContainer.addEventListener('dragstart', e => { draggedItem = e.target; e.target.classList.add('dragging'); });
+            navListContainer.addEventListener('dragstart', e => { draggedItem = e.target.closest('.s1-nav-editor-item'); e.target.classList.add('dragging'); });
             navListContainer.addEventListener('dragend', e => { e.target.classList.remove('dragging'); });
             navListContainer.addEventListener('dragover', e => { e.preventDefault(); const afterElement = [...navListContainer.querySelectorAll('.s1-nav-editor-item:not(.dragging)')].reduce((closest, child) => { const box = child.getBoundingClientRect(); const offset = e.clientY - box.top - box.height / 2; return (offset < 0 && offset > closest.offset) ? { offset: offset, element: child } : closest; }, { offset: Number.NEGATIVE_INFINITY }).element; if (afterElement == null) { navListContainer.appendChild(draggedItem); } else { navListContainer.insertBefore(draggedItem, afterElement); } });
 
@@ -327,10 +396,11 @@
                     showMessage(modal.querySelector('#s1-settings-message'), '已恢复默认设置！', true);
                 } else if (target.id === 's1-settings-save-btn') {
                     const newSettings = {
+                        ...getSettings(),
                         changeLogoLink: tabs.settings.querySelector('#s1-changeLogoLink').checked,
                         hideBlacklistTip: tabs.settings.querySelector('#s1-hideBlacklistTip').checked,
                         enableNavCustomization: tabs.settings.querySelector('#s1-enableNavCustomization').checked,
-                        customNavLinks: Array.from(navListContainer.querySelectorAll('.s1-nav-editor-item')).map(item => ({ name: item.querySelector('.nav-name').value.trim(), href: item.querySelector('.nav-href').value.trim() }))
+                        customNavLinks: Array.from(navListContainer.querySelectorAll('.s1-nav-editor-item')).map(item => ({ name: item.querySelector('.nav-name').value.trim(), href: item.querySelector('.nav-href').value.trim() })).filter(l=>l.name && l.href)
                     };
                     saveSettings(newSettings);
                     applyInterfaceCustomizations();
@@ -340,10 +410,38 @@
             });
         };
 
-        renderBlockedList(tabs.threads, getBlockedThreads(), 'thread');
-        renderBlockedList(tabs.users, getBlockedUsers(), 'user');
+        // --- 初始化渲染和事件绑定 ---
+        renderThreadTab();
+        renderUserTab();
         renderSettingsTab();
-        tabs.threads.appendChild(syncContainer);
+
+        modal.addEventListener('change', e => {
+            const target = e.target;
+            if(target.matches('.user-thread-block-toggle')) {
+                const userId = target.dataset.userId;
+                const blockThreads = target.checked;
+                const users = getBlockedUsers();
+                if(users[userId]) {
+                    users[userId].blockThreads = blockThreads;
+                    saveBlockedUsers(users);
+                    if(blockThreads) applyUserThreadBlocklist();
+                    else unblockThreadsByUser(userId);
+                    renderThreadTab();
+                }
+            }
+            else if(target.matches('#s1-blockThreadsOnUserBlock')) {
+                const currentSettings = getSettings();
+                currentSettings.blockThreadsOnUserBlock = target.checked;
+                saveSettings(currentSettings);
+                const msgContainer = document.createElement('div');
+                msgContainer.style.position = 'absolute';
+                msgContainer.style.bottom = '10px';
+                msgContainer.style.right = '10px';
+                target.closest('.s1-settings-item').appendChild(msgContainer);
+                showMessage(msgContainer, '默认设置已保存', true);
+                setTimeout(()=>msgContainer.remove(), 3100);
+            }
+        });
 
         modal.addEventListener('click', (e) => {
             if (e.target.matches('.s1plus-modal, .s1plus-modal-close')) modal.remove();
@@ -351,44 +449,47 @@
                 modal.querySelectorAll('.s1plus-tab-btn, .s1plus-tab-content').forEach(el => el.classList.remove('active'));
                 e.target.classList.add('active');
                 const activeTab = tabs[e.target.dataset.tab];
-                activeTab.classList.add('active');
-                if (e.target.dataset.tab !== 'settings') {
-                    activeTab.appendChild(syncContainer);
+                if(activeTab) activeTab.classList.add('active');
+            }
+            const unblockThreadId = e.target.dataset.unblockThreadId; if (unblockThreadId) { unblockThread(unblockThreadId); renderThreadTab(); }
+            const unblockUserId = e.target.dataset.unblockUserId; if (unblockUserId) { unblockUser(unblockUserId); renderUserTab(); renderThreadTab(); }
+
+            const syncTextarea = modal.querySelector('#s1-sync-textarea');
+            const syncMessageEl = modal.querySelector('#s1-sync-message');
+            if(e.target.id === 's1-export-btn') {
+                syncTextarea.value = exportData();
+                syncTextarea.select();
+                try { document.execCommand('copy'); showMessage(syncMessageEl, '数据已导出并复制到剪贴板', true); }
+                catch (err) { showMessage(syncMessageEl, '复制失败，请手动复制', false); }
+            }
+            if(e.target.id === 's1-import-btn') {
+                const jsonStr = syncTextarea.value.trim();
+                if (!jsonStr) return showMessage(syncMessageEl, '请先粘贴要导入的数据', false);
+                const result = importData(jsonStr);
+                showMessage(syncMessageEl, result.message, result.success);
+                if (result.success) {
+                    renderThreadTab();
+                    renderUserTab();
+                    renderSettingsTab();
                 }
             }
-            const unblockThreadId = e.target.dataset.unblockThreadId; if (unblockThreadId) { unblockThread(unblockThreadId); renderBlockedList(tabs.threads, getBlockedThreads(), 'thread'); tabs.threads.appendChild(syncContainer); }
-            const unblockUserId = e.target.dataset.unblockUserId; if (unblockUserId) { unblockUser(unblockUserId); renderBlockedList(tabs.users, getBlockedUsers(), 'user'); tabs.users.appendChild(syncContainer); }
         });
-
-        const syncTextarea = modal.querySelector('#s1-sync-textarea'); const syncMessageEl = modal.querySelector('#s1-sync-message');
-        modal.querySelector('#s1-export-btn').addEventListener('click', () => { syncTextarea.value = exportData(); syncTextarea.select(); try { document.execCommand('copy'); showMessage(syncMessageEl, '数据已导出并复制到剪贴板', true); } catch (err) { showMessage(syncMessageEl, '复制失败，请手动复制', false); } });
-        modal.querySelector('#s1-import-btn').addEventListener('click', () => { const jsonStr = syncTextarea.value.trim(); if (!jsonStr) return showMessage(syncMessageEl, '请先粘贴要导入的数据', false); const result = importData(jsonStr); showMessage(syncMessageEl, result.message, result.success); if (result.success) { renderBlockedList(tabs.threads, getBlockedThreads(), 'thread'); renderBlockedList(tabs.users, getBlockedUsers(), 'user'); } });
     };
 
     const addBlockButtonsToThreads = () => {
         document.querySelectorAll('tbody[id^="normalthread_"], tbody[id^="stickthread_"]').forEach(row => {
             if (row.querySelector('.s1plus-btn.thread-block-btn')) return;
-
             const iconCell = row.querySelector('td.icn');
             const titleElement = row.querySelector('th a.s.xst');
-
             if (iconCell && titleElement) {
                 iconCell.style.position = 'relative';
-
                 const threadId = row.id.replace(/^(normalthread_|stickthread_)/, '');
                 const threadTitle = titleElement.textContent.trim();
-
                 const blockBtn = document.createElement('span');
                 blockBtn.className = 's1plus-btn thread-block-btn';
                 blockBtn.textContent = '屏蔽';
                 blockBtn.title = '屏蔽此贴';
-
-                blockBtn.addEventListener('click', e => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    blockThread(threadId, threadTitle);
-                });
-
+                blockBtn.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); blockThread(threadId, threadTitle); });
                 iconCell.appendChild(blockBtn);
             }
         });
@@ -419,7 +520,10 @@
                 blockBtn.textContent = '屏蔽用户';
                 blockBtn.addEventListener('click', e => {
                     e.preventDefault(); e.stopPropagation();
-                    createConfirmationModal(`确定要屏蔽用户 "${userName}" 吗？`, '该用户的所有帖子都将被隐藏，此操作可在设置面板中撤销。', () => blockUser(userId, userName));
+                    const subtitle = getSettings().blockThreadsOnUserBlock
+                        ? '该用户的所有帖子和主题帖都将被隐藏，此操作可在设置面板中撤销。'
+                        : '该用户的所有帖子都将被隐藏，此操作可在设置面板中撤销。';
+                    createConfirmationModal(`确定要屏蔽用户 "${userName}" 吗？`, subtitle, () => blockUser(userId, userName));
                 });
                 overlayContainer.appendChild(blockBtn);
                 plsCell.appendChild(overlayContainer);
@@ -429,62 +533,34 @@
 
     // 自动签到
     const autoCheckIn = () => {
-        console.log('S1Filter: 正在检查是否需要自动签到...');
-
-        // 1. 获取用户ID
         const userLink = document.querySelector('div#um a[href*="space-uid-"]');
-        if (!userLink) {
-            console.log('S1Filter: 未找到用户链接，无法确定用户ID。');
-            return;
-        }
+        if (!userLink) return;
         const uidMatch = userLink.href.match(/space-uid-(\d+)\.html/);
-        if (!uidMatch) {
-            console.log('S1Filter: 无法从用户链接中解析用户ID。');
-            return;
-        }
+        if (!uidMatch) return;
         const userId = uidMatch[1];
-        console.log(`S1Filter: 当前用户ID: ${userId}`);
-
-        // 2. 检查该用户今天是否已签到
         const today = new Date().toLocaleDateString();
         const lastCheckIn = GM_getValue(`s1filter_last_checkin_${userId}`, '');
+        if (lastCheckIn === today) return;
 
-        if (lastCheckIn === today) {
-            console.log(`S1Filter: 用户 ${userId} 今天已经签到过了。`);
-            return;
-        }
-
-        // 3. 查找并执行签到
-        const checkInLink = document.querySelector('a[href*="daily_attendance"]');
-        if (checkInLink) {
-            console.log('S1Filter: 找到签到链接，正在尝试签到...');
+        const checkInLink = Array.from(document.querySelectorAll('a')).find(a => a.textContent.includes('签到'));
+        if (checkInLink && checkInLink.href.includes('daily_attendance')) {
+            console.log('S1 Plus: 找到签到链接，正在尝试自动签到...');
             fetch(checkInLink.href, { credentials: 'include' })
                 .then(response => {
                     if (response.ok) {
-                        // 4. 记录该用户的签到状态
                         GM_setValue(`s1filter_last_checkin_${userId}`, today);
-                        console.log(`S1Filter: 用户 ${userId} 自动签到成功！`);
-                        checkInLink.style.display = 'none';
-                    } else {
-                        console.error('S1Filter: 自动签到失败，服务器响应状态：', response.status);
-                    }
-                })
-                .catch(error => {
-                    console.error('S1Filter: 自动签到请求失败。', error);
-                });
-        } else {
-            console.log('S1Filter: 未找到签到链接。');
+                        console.log(`S1 Plus: 用户 ${userId} 自动签到成功！`);
+                        checkInLink.style.fontWeight = 'normal';
+                        checkInLink.style.color = 'gray';
+                        checkInLink.textContent = '已签到';
+                    } else { console.error('S1 Plus: 自动签到失败，服务器响应状态：', response.status); }
+                }).catch(error => { console.error('S1 Plus: 自动签到请求失败。', error); });
         }
     };
 
-
-
     // --- 初始化 ---
     const init = () => {
-
-        // 自动签到
         autoCheckIn();
-
         applyInterfaceCustomizations();
         initializeNavbar();
 
@@ -494,6 +570,7 @@
                 addBlockButtonsToUsers();
             } else if (window.location.href.includes('forum-')) {
                 hideBlockedThreads();
+                applyUserThreadBlocklist();
                 addBlockButtonsToThreads();
             }
             applyInterfaceCustomizations();
