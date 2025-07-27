@@ -3,7 +3,7 @@
 // @namespace    http://tampermonkey.net/
 // @version      2.8
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到等多种功能，全方位优化你的论坛体验。
-// @author       moekyo & Elence_ylns1314 (Merged and enhanced by Gemini)
+// @author       moekyo
 // @match        https://stage1st.com/2b/*
 // @grant        GM_setValue
 // @grant        GM_getValue
