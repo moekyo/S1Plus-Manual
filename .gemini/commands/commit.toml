@@ -1,0 +1,5 @@
+# In: ~/.gemini/commands/commit.toml
+# Invoked via: /commit
+
+description = "提交所有改动"
+prompt = "根据代码改动，生成合适的提交信息并提交所有改动"
