@@ -324,23 +324,8 @@
                 <div id="s1-tab-users" class="s1plus-tab-content"></div>
                 <div id="s1-tab-settings" class="s1plus-tab-content"></div>
                 <div id="s1-tab-sync" class="s1plus-tab-content">
-                    <div class="s1plus-sync-title">自动云同步 (推荐)</div>
-                    <div class="s1plus-sync-desc">
-                        本脚本兼容 Tampermonkey 的内置同步功能，可实现全自动、跨设备无缝同步。无需手动导入/导出。
-                        <p style="font-weight: bold; margin-top: 8px; margin-bottom: 4px;">如何开启：</p>
-                        <ol style="margin: 0; padding-left: 20px; line-height: 1.6;">
-                            <li>点击浏览器右上角的 Tampermonkey 扩展图标，选择 “管理面板”。</li>
-                            <li>在管理面板顶部的标签页中，找到并点击 “设置”。</li>
-                            <li>在设置页面中，将 “配置模式” 从 “新手” 切换为 “高级”。</li>
-                            <li>找到 “同步功能” (TESLA)，选择您偏好的云服务 (如 Google Drive, Dropbox, OneDrive) 并授权。</li>
-                        </ol>
-                        <p style="margin-top: 8px; font-size: 12px; color: #6b7280;">
-                            说明：同步频率和冲突解决由 Tampermonkey 自动管理，通常以最新版本为准。开启后，所有设置（黑名单、UI定制等）都将自动同步。
-                        </p>
-                    </div>
-                    <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 20px 0;">
-                    <div class="s1plus-sync-title">手动设置同步</div>
-                    <div class="s1plus-sync-desc">若不便使用云同步，你仍可通过手动复制/粘贴数据，在不同浏览器或设备间同步你的所有S1 Plus配置。</div>
+                    <div class="s1plus-sync-title">全量设置同步</div>
+                    <div class="s1plus-sync-desc">通过复制/粘贴数据，在不同浏览器或设备间同步你的所有S1 Plus配置，包括屏蔽列表、导航栏、阅读进度和各项开关设置。</div>
                     <div class="s1plus-sync-buttons">
                         <button id="s1-export-btn" class="s1plus-sync-btn">导出数据</button>
                         <button id="s1-import-btn" class="s1plus-sync-btn">导入数据</button>
