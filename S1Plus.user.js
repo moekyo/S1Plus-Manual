@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      3.1.0
+// @version      3.2.1
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪等多种功能，全方位优化你的论坛体验。
 // @author       moekyo & Elence_ylns1314 (Merged and enhanced by Gemini)
 // @match        https://stage1st.com/2b/*
@@ -14,7 +14,7 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '3.1.0';
+    const SCRIPT_VERSION = '3.2.1';
     const SCRIPT_RELEASE_DATE = '2025-07-29';
 
     // --- 样式注入 ---
@@ -507,11 +507,10 @@
             tabs.threads.innerHTML = `
                 <div class="s1-settings-group">
                     <div class="s1-settings-group-title">标题关键字屏蔽规则</div>
-                    <p class="s1plus-setting-desc">将自动屏蔽标题匹配已启用规则的帖子，支持正则表达式。</p>
+                    <p class="s1plus-setting-desc">将自动屏蔽标题匹配已启用规则的帖子，支持正则表达式。规则实时保存生效。</p>
                     <div id="s1-keyword-rules-list" style="display: flex; flex-direction: column; gap: 8px;"></div>
                     <div class="s1-editor-footer" style="justify-content: flex-start; gap: 8px;">
                          <button id="s1-keyword-rule-add-btn" class="s1plus-sync-btn">添加新规则</button>
-                         <button id="s1-keyword-rules-save-btn" class="s1plus-sync-btn">保存规则</button>
                     </div>
                     <div id="s1-keywords-message" class="s1plus-message"></div>
                 </div>
@@ -543,24 +542,6 @@
                 </div>
             `;
 
-            const renderRules = () => {
-                const rules = getTitleFilterRules();
-                const container = tabs.threads.querySelector('#s1-keyword-rules-list');
-                container.innerHTML = rules.map(rule => `
-                    <div class="s1-editor-item" data-rule-id="${rule.id}">
-                        <input type="checkbox" class="s1-settings-checkbox keyword-rule-enable" ${rule.enabled ? 'checked' : ''}>
-                        <input type="text" class="keyword-rule-pattern" placeholder="输入关键字或正则表达式" value="${rule.pattern || ''}">
-                        <div class="s1-editor-item-controls">
-                            <button class="s1-editor-btn keyword-rule-delete" style="color: #ef4444;">✖</button>
-                        </div>
-                    </div>
-                `).join('');
-                 if (rules.length === 0) {
-                    container.innerHTML = `<div class="s1plus-empty" style="padding: 12px;">暂无规则</div>`;
-                }
-            };
-            renderRules();
-
             const renderDynamicallyHiddenList = () => {
                 const listContainer = tabs.threads.querySelector('#s1-dynamically-hidden-list');
                 const hiddenItems = Object.entries(dynamicallyHiddenThreads);
@@ -577,7 +558,43 @@
                     `).join('')}</div>`;
                 }
             };
+
+            const renderRules = () => {
+                const rules = getTitleFilterRules();
+                const container = tabs.threads.querySelector('#s1-keyword-rules-list');
+                container.innerHTML = rules.map(rule => `
+                    <div class="s1-editor-item" data-rule-id="${rule.id}">
+                        <input type="checkbox" class="s1-settings-checkbox keyword-rule-enable" ${rule.enabled ? 'checked' : ''}>
+                        <input type="text" class="keyword-rule-pattern" placeholder="输入关键字或正则表达式" value="${rule.pattern || ''}">
+                        <div class="s1-editor-item-controls">
+                            <button class="s1-editor-btn keyword-rule-delete" style="color: #ef4444;">✖</button>
+                        </div>
+                    </div>
+                `).join('');
+                 if (rules.length === 0) {
+                    container.innerHTML = `<div class="s1plus-empty" style="padding: 12px;">暂无规则</div>`;
+                }
+            };
+            
+            renderRules();
             renderDynamicallyHiddenList();
+
+            const saveAndApplyKeywordRules = () => {
+                const newRules = [];
+                tabs.threads.querySelectorAll('#s1-keyword-rules-list .s1-editor-item').forEach(item => {
+                    const pattern = item.querySelector('.keyword-rule-pattern').value.trim();
+                    if (pattern) {
+                        newRules.push({
+                            id: item.dataset.ruleId,
+                            enabled: item.querySelector('.keyword-rule-enable').checked,
+                            pattern: pattern
+                        });
+                    }
+                });
+                saveTitleFilterRules(newRules);
+                hideThreadsByTitleKeyword();
+                renderDynamicallyHiddenList();
+            };
 
             tabs.threads.addEventListener('click', e => {
                 const target = e.target;
@@ -603,7 +620,7 @@
                     }
                 } else if (target.id === 's1-keyword-rule-add-btn') {
                     const rules = getTitleFilterRules();
-                    rules.push({ id: `rule_${Date.now()}_${Math.random()}`, pattern: '', enabled: true });
+                    rules.push({ id: `rule_${Date.now()}_${Math.random()}`, pattern: '', enabled: false });
                     saveTitleFilterRules(rules);
                     renderRules();
                 } else if (target.classList.contains('keyword-rule-delete')) {
@@ -612,22 +629,24 @@
                     rules = rules.filter(r => r.id !== ruleId);
                     saveTitleFilterRules(rules);
                     renderRules();
-                } else if (target.id === 's1-keyword-rules-save-btn') {
-                    const newRules = [];
-                    tabs.threads.querySelectorAll('#s1-keyword-rules-list .s1-editor-item').forEach(item => {
-                        const pattern = item.querySelector('.keyword-rule-pattern').value.trim();
-                        if (pattern) {
-                            newRules.push({
-                                id: item.dataset.ruleId,
-                                enabled: item.querySelector('.keyword-rule-enable').checked,
-                                pattern: pattern
-                            });
-                        }
-                    });
-                    saveTitleFilterRules(newRules);
                     hideThreadsByTitleKeyword();
-                    showMessage(modal.querySelector('#s1-keywords-message'), '屏蔽规则已保存！', true);
-                    renderThreadTab();
+                    renderDynamicallyHiddenList();
+                }
+            });
+            
+            let keywordInputDebounceTimer;
+            tabs.threads.addEventListener('input', e => {
+                if (e.target.classList.contains('keyword-rule-pattern')) {
+                    clearTimeout(keywordInputDebounceTimer);
+                    keywordInputDebounceTimer = setTimeout(() => {
+                        saveAndApplyKeywordRules();
+                    }, 400);
+                }
+            });
+
+            tabs.threads.addEventListener('change', e => {
+                if (e.target.classList.contains('keyword-rule-enable')) {
+                    saveAndApplyKeywordRules();
                 }
             });
         };
