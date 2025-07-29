@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      3.0.1
+// @version      3.1.0
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪等多种功能，全方位优化你的论坛体验。
 // @author       moekyo & Elence_ylns1314 (Merged and enhanced by Gemini)
 // @match        https://stage1st.com/2b/*
@@ -14,13 +14,16 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '3.0.1';
-    const SCRIPT_RELEASE_DATE = '2025-07-28';
+    const SCRIPT_VERSION = '3.1.0';
+    const SCRIPT_RELEASE_DATE = '2025-07-29';
 
     // --- 样式注入 ---
     GM_addStyle(`
         /* --- 核心修复：禁用论坛自带的用户信息悬浮窗 --- */
         #p_pop { display: none !important; }
+
+        /* --- 关键字屏蔽样式 --- */
+        .s1plus-hidden-by-keyword { display: none !important; }
 
         /* --- 按钮通用样式 --- */
         .s1plus-btn { display: inline-flex; align-items: center; justify-content: center; border-radius: 4px; background-color: #f3f4f6; color: #374151; font-size: 12px; font-weight: bold; cursor: pointer; user-select: none; white-space: nowrap; border: none; }
@@ -63,7 +66,22 @@
         .s1plus-modal-content { background-color: white; border-radius: 8px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); width: 600px; max-width: 90%; max-height: 80vh; overflow: hidden; display: flex; flex-direction: column; }
         .s1plus-modal-header { padding: 16px; border-bottom: 1px solid #e5e7eb; display: flex; justify-content: space-between; align-items: center; }
         .s1plus-modal-title { font-size: 18px; font-weight: bold; color: #111827; }
-        .s1plus-modal-close { cursor: pointer; font-size: 20px; color: #6b7280; }
+        .s1plus-modal-close {
+            width: 12px;
+            height: 12px;
+            cursor: pointer;
+            color: #9ca3af;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2 2L14 14M14 2L2 14' stroke='currentColor' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: center;
+            background-size: contain;
+            transition: color 0.2s ease-in-out, transform 0.2s ease-in-out;
+            transform: rotate(0deg);
+        }
+        .s1plus-modal-close:hover {
+            color: #ef4444;
+            transform: rotate(90deg);
+        }
         .s1plus-modal-body { padding: 0 16px 16px; overflow-y: auto; flex-grow: 1; }
         .s1plus-modal-footer { padding: 12px 16px; border-top: 1px solid #e5e7eb; text-align: right; font-size: 12px; color: #9ca3af; }
         .s1plus-tabs { display: flex; border-bottom: 1px solid #e5e7eb; margin-bottom: 16px; }
@@ -100,33 +118,63 @@
         .s1plus-confirm-footer { padding: 12px 16px; background-color: #f3f3f3ff; display: flex; justify-content: flex-end; gap: 12px; }
         .s1plus-confirm-btn { padding: 9px 18px; border-radius: 6px; font-size: 14px; font-weight: 500; cursor: pointer; border: 1px solid transparent; transition: all 0.15s ease-in-out; box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05); } .s1plus-confirm-btn:active { transform: translateY(1px); } .s1plus-confirm-btn.cancel { background-color: white; color: #374151; border-color: #d1d5db; } .s1plus-confirm-btn.cancel:hover { background-color: #f9fafb; border-color: #b0b8c2; } .s1plus-confirm-btn.confirm { background-color: #ef4444; color: white; border-color: #ef4444; } .s1plus-confirm-btn.confirm:hover { background-color: #dc2626; border-color: #dc2626; }
 
+        /* --- Collapsible Section --- */
+        .s1plus-collapsible-header { display: flex; align-items: center; justify-content: space-between; cursor: pointer; user-select: none; transition: color 0.2s ease; }
+        .s1-settings-group-title.s1plus-collapsible-header { margin-bottom: 0; }
+        .s1plus-collapsible-header:hover { color: #3b82f6; }
+        .s1plus-collapsible-header:hover .s1plus-expander-arrow { color: #3b82f6; }
+        .s1plus-expander-arrow { 
+            display: inline-block; width: 12px; height: 12px; color: #6b7280;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 16'%3E%3Cpath d='M2 2L8 8L2 14' stroke='currentColor' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E");
+            background-repeat: no-repeat; background-position: center; background-size: contain; transition: transform 0.3s ease-in-out, color 0.2s ease;
+        }
+        .s1plus-expander-arrow.expanded { transform: rotate(90deg); }
+        .s1plus-collapsible-content { max-height: 0; overflow: hidden; transition: max-height 0.3s ease-out; }
+        .s1plus-collapsible-content.expanded { max-height: 500px; transition: max-height 0.4s ease-in; padding-top: 12px; }
+
         /* --- 界面定制设置样式 --- */
         .s1-settings-group { margin-bottom: 24px; }
         .s1-settings-group-title { font-size: 16px; font-weight: 500; color: #111827; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; margin-bottom: 12px; }
         .s1-settings-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; }
         .s1-settings-label { color: #374151; font-size: 14px; }
         .s1-settings-checkbox { transform: scale(1.2); }
-        .s1plus-setting-desc { font-size: 12px; color: #6b7280; margin: -12px 0 16px 4px; padding: 0; line-height: 1.5; }
-        .s1-nav-editor-item { display: grid; grid-template-columns: auto 1fr 1fr auto; gap: 8px; align-items: center; padding: 8px; border-radius: 4px; background: #f9fafb; user-select: none; }
-        .s1-nav-editor-item:not(:last-child) { margin-bottom: 8px; }
-        .s1-nav-editor-item.dragging { opacity: 0.5; background: #dbeafe; }
-        .s1-nav-editor-item .drag-handle { cursor: grab; color: #9ca3af; padding: 0 8px; }
-        .s1-nav-editor-item .drag-handle:active { cursor: grabbing; }
-        .s1-nav-editor-item input { width: 100%; border: 1px solid #d1d5db; border-radius: 4px; padding: 6px 8px; font-size: 14px; box-sizing: border-box; }
-        .s1-nav-editor-controls { display: flex; align-items: center; gap: 4px; }
-        .s1-nav-editor-btn { padding: 4px; font-size: 18px; line-height: 1; cursor: pointer; border-radius: 4px; border:none; background: transparent; color: #9ca3af; }
-        .s1-nav-editor-btn:hover { background: #e5e7eb; color: #374151; }
-        .s1-nav-editor-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; }
+        .s1plus-setting-desc { font-size: 12px; color: #6b7280; margin: -4px 0 12px 0; padding: 0; line-height: 1.5; }
+        .s1-editor-item { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; padding: 8px; border-radius: 4px; background: #f9fafb; }
+        .s1-editor-item:not(:last-child) { margin-bottom: 8px; }
+        .s1-editor-item input[type="text"] { width: 100%; border: 1px solid #d1d5db; border-radius: 4px; padding: 6px 8px; font-size: 14px; box-sizing: border-box; }
+        .s1-editor-item-controls { display: flex; align-items: center; gap: 4px; }
+        .s1-editor-btn { padding: 4px; font-size: 18px; line-height: 1; cursor: pointer; border-radius: 4px; border:none; background: transparent; color: #9ca3af; }
+        .s1-editor-btn:hover { background: #e5e7eb; color: #374151; }
+        .s1-editor-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; }
         .s1-settings-action-btn { display: inline-block; padding: 10px 20px; border-radius: 6px; font-size: 14px; font-weight: 500; cursor: pointer; transition: background-color 0.2s; border: none; }
         .s1-settings-action-btn.primary { background-color: #3b82f6; color: white; } .s1-settings-action-btn.primary:hover { background-color: #2563eb; }
         .s1-settings-action-btn.secondary { background-color: #e5e7eb; color: #374151; } .s1-settings-action-btn.secondary:hover { background-color: #d1d5db; }
     `);
+
+    let dynamicallyHiddenThreads = {};
 
     // --- 数据处理 & 核心功能 ---
     const getBlockedThreads = () => GM_getValue('s1plus_blocked_threads', {});
     const saveBlockedThreads = (threads) => GM_setValue('s1plus_blocked_threads', threads);
     const getBlockedUsers = () => GM_getValue('s1plus_blocked_users', {});
     const saveBlockedUsers = (users) => GM_setValue('s1plus_blocked_users', users);
+
+    const getTitleFilterRules = () => {
+        const rules = GM_getValue('s1plus_title_filter_rules', null);
+        if (rules !== null) return rules;
+
+        // --- 向下兼容：迁移旧的关键字数据 ---
+        const oldKeywords = GM_getValue('s1plus_title_keywords', null);
+        if (Array.isArray(oldKeywords)) {
+            const newRules = oldKeywords.map(k => ({ pattern: k, enabled: true, id: `rule_${Date.now()}_${Math.random()}` }));
+            saveTitleFilterRules(newRules);
+            GM_setValue('s1plus_title_keywords', null); // 清理旧数据
+            return newRules;
+        }
+        return [];
+    };
+    const saveTitleFilterRules = (rules) => GM_setValue('s1plus_title_filter_rules', rules);
+
     const blockThread = (id, title, reason = 'manual') => { const b = getBlockedThreads(); if (b[id]) return; b[id] = { title, timestamp: Date.now(), reason }; saveBlockedThreads(b); hideThread(id); };
     const unblockThread = (id) => { const b = getBlockedThreads(); delete b[id]; saveBlockedThreads(b); showThread(id); };
     const hideThread = (id) => { (document.getElementById(`normalthread_${id}`) || document.getElementById(`stickthread_${id}`))?.setAttribute('style', 'display: none !important'); };
@@ -137,6 +185,68 @@
     const hideUserPosts = (id) => { document.querySelectorAll(`a[href*="space-uid-${id}.html"]`).forEach(l => l.closest('table.plhin')?.setAttribute('style', 'display: none !important')); };
     const showUserPosts = (id) => { document.querySelectorAll(`a[href*="space-uid-${id}.html"]`).forEach(l => l.closest('table.plhin')?.removeAttribute('style')); };
     const hideBlockedUsersPosts = () => Object.keys(getBlockedUsers()).forEach(hideUserPosts);
+
+    // [NEW] 屏蔽评分记录
+    const hideBlockedUserRatings = () => {
+        const blockedUserIds = Object.keys(getBlockedUsers());
+        if (blockedUserIds.length === 0) return;
+
+        document.querySelectorAll('tbody.ratl_l tr').forEach(row => {
+            const userLink = row.querySelector('a[href*="space-uid-"]');
+            if (userLink) {
+                const uidMatch = userLink.href.match(/space-uid-(\d+)/);
+                if (uidMatch && uidMatch[1] && blockedUserIds.includes(uidMatch[1])) {
+                    row.style.display = 'none';
+                    const tbody = row.parentElement;
+                    const allRows = tbody.querySelectorAll('tr');
+                    const visibleRows = Array.from(allRows).filter(r => r.style.display !== 'none');
+                    if (visibleRows.length === 0) {
+                        const rateLogContainer = tbody.closest('dl.rate');
+                        if (rateLogContainer) {
+                            rateLogContainer.style.display = 'none';
+                        }
+                    }
+                }
+            }
+        });
+    };
+
+    const hideThreadsByTitleKeyword = () => {
+        const rules = getTitleFilterRules().filter(r => r.enabled && r.pattern);
+        const newHiddenThreads = {};
+
+        const regexes = rules.map(r => {
+            try {
+                return { regex: new RegExp(r.pattern), pattern: r.pattern };
+            } catch (e) {
+                console.error(`S1 Plus: 屏蔽规则 "${r.pattern}" 不是一个有效的正则表达式，将被忽略。`, e);
+                return null;
+            }
+        }).filter(Boolean);
+
+        document.querySelectorAll('tbody[id^="normalthread_"]').forEach(row => {
+            const titleElement = row.querySelector('th a.s.xst');
+            if (!titleElement) return;
+
+            const title = titleElement.textContent.trim();
+            const threadId = row.id.replace('normalthread_', '');
+            let isHidden = false;
+
+            if (regexes.length > 0) {
+                const matchingRule = regexes.find(r => r.regex.test(title));
+                if (matchingRule) {
+                    newHiddenThreads[threadId] = { title, pattern: matchingRule.pattern };
+                    row.classList.add('s1plus-hidden-by-keyword');
+                    isHidden = true;
+                }
+            }
+
+            if (!isHidden) {
+                row.classList.remove('s1plus-hidden-by-keyword');
+            }
+        });
+        dynamicallyHiddenThreads = newHiddenThreads;
+    };
 
     const getReadProgress = () => GM_getValue('s1plus_read_progress', {});
     const saveReadProgress = (progress) => GM_setValue('s1plus_read_progress', progress);
@@ -180,17 +290,18 @@
     };
 
     const exportData = () => JSON.stringify({
-        version: 3.1,
+        version: 3.2,
         settings: getSettings(),
         threads: getBlockedThreads(),
         users: getBlockedUsers(),
+        title_filter_rules: getTitleFilterRules(),
         read_progress: getReadProgress()
     }, null, 2);
 
     const importData = (jsonStr) => {
         try {
             const imported = JSON.parse(jsonStr); if (typeof imported !== 'object' || imported === null) throw new Error("无效数据格式");
-            let threadsImported = 0, usersImported = 0, progressImported = 0;
+            let threadsImported = 0, usersImported = 0, progressImported = 0, rulesImported = 0;
 
             const upgradeAndMerge = (type, importedData, getter, saver) => {
                 if (!importedData || typeof importedData !== 'object') return 0;
@@ -211,6 +322,16 @@
             threadsImported = upgradeAndMerge('threads', imported.threads, getBlockedThreads, saveBlockedThreads);
             usersImported = upgradeAndMerge('users', imported.users, getBlockedUsers, saveBlockedUsers);
 
+            if (imported.title_filter_rules && Array.isArray(imported.title_filter_rules)) {
+                saveTitleFilterRules(imported.title_filter_rules);
+                rulesImported = imported.title_filter_rules.length;
+            } else if (imported.title_keywords && Array.isArray(imported.title_keywords)) { // 向后兼容导入旧格式
+                const newRules = imported.title_keywords.map(k => ({ pattern: k, enabled: true, id: `rule_${Date.now()}_${Math.random()}` }));
+                saveTitleFilterRules(newRules);
+                rulesImported = newRules.length;
+            }
+
+
             if (imported.read_progress) {
                 const mergedProgress = { ...getReadProgress(), ...imported.read_progress };
                 saveReadProgress(mergedProgress);
@@ -220,10 +341,11 @@
             hideBlockedThreads();
             hideBlockedUsersPosts();
             applyUserThreadBlocklist();
+            hideThreadsByTitleKeyword();
             initializeNavbar();
             applyInterfaceCustomizations();
 
-            return { success: true, message: `成功导入 ${threadsImported} 条帖子、${usersImported} 条用户、${progressImported} 条阅读进度及相关设置。` };
+            return { success: true, message: `成功导入 ${threadsImported} 条帖子、${usersImported} 条用户、${rulesImported} 条标题规则、${progressImported} 条阅读进度及相关设置。` };
         } catch (e) { return { success: false, message: `导入失败: ${e.message}` }; }
     };
 
@@ -233,6 +355,8 @@
         changeLogoLink: true,
         hideBlacklistTip: true,
         blockThreadsOnUserBlock: true,
+        showBlockedByKeywordList: false,
+        showManuallyBlockedList: false,
         customNavLinks: [
             { name: '论坛', href: 'forum.php' },
             { name: '归墟', href: 'forum-157-1.html' },
@@ -312,7 +436,7 @@
         const modal = document.createElement('div');
         modal.className = 's1plus-modal';
         modal.innerHTML = `<div class="s1plus-modal-content">
-            <div class="s1plus-modal-header"><div class="s1plus-modal-title">S1 Plus 设置</div><div class="s1plus-modal-close">×</div></div>
+            <div class="s1plus-modal-header"><div class="s1plus-modal-title">S1 Plus 设置</div><div class="s1plus-modal-close"></div></div>
             <div class="s1plus-modal-body">
                 <div class="s1plus-tabs">
                     <button class="s1plus-tab-btn active" data-tab="threads">帖子屏蔽</button>
@@ -362,7 +486,7 @@
                         <input type="checkbox" id="s1-blockThreadsOnUserBlock" class="s1-settings-checkbox" ${settings.blockThreadsOnUserBlock ? 'checked' : ''}>
                     </div>
                 </div>
-                <p class="s1plus-setting-desc">
+                <p class="s1plus-setting-desc" style="margin-top: -4px; margin-bottom: 16px;">
                     <strong>提示</strong>：顶部总开关仅影响<strong>未来新屏蔽用户</strong>的默认设置。每个用户下方的独立开关，才是控制该用户主题帖的<strong>最终开关</strong>，拥有最高优先级。
                 </p>
                 ${userItemIds.length === 0
@@ -376,15 +500,136 @@
         };
 
         const renderThreadTab = () => {
+            const settings = getSettings();
             const blockedThreads = getBlockedThreads();
-            const itemIds = Object.keys(blockedThreads).sort((a, b) => blockedThreads[b].timestamp - blockedThreads[a].timestamp);
-            if (itemIds.length === 0) { tabs.threads.innerHTML = `<div class="s1plus-empty">暂无屏蔽的帖子</div>`; }
-            else {
-                tabs.threads.innerHTML = `<div class="s1plus-list">${itemIds.map(id => {
-                    const item = blockedThreads[id];
-                    return `<div class="s1plus-item" data-thread-id="${id}"><div class="s1plus-item-info"><div class="s1plus-item-title">${item.title || `帖子 #${id}`}</div><div class="s1plus-item-meta">屏蔽时间: ${formatDate(item.timestamp)} ${item.reason && item.reason !== 'manual' ? `(因屏蔽用户${item.reason.replace('user_','')})` : ''}</div></div><button class="s1plus-unblock-btn" data-unblock-thread-id="${id}">取消屏蔽</button></div>`;
-                }).join('')}</div>`;
-            }
+            const manualItemIds = Object.keys(blockedThreads).sort((a, b) => blockedThreads[b].timestamp - blockedThreads[a].timestamp);
+
+            tabs.threads.innerHTML = `
+                <div class="s1-settings-group">
+                    <div class="s1-settings-group-title">标题关键字屏蔽规则</div>
+                    <p class="s1plus-setting-desc">将自动屏蔽标题匹配已启用规则的帖子，支持正则表达式。</p>
+                    <div id="s1-keyword-rules-list" style="display: flex; flex-direction: column; gap: 8px;"></div>
+                    <div class="s1-editor-footer" style="justify-content: flex-start; gap: 8px;">
+                         <button id="s1-keyword-rule-add-btn" class="s1plus-sync-btn">添加新规则</button>
+                         <button id="s1-keyword-rules-save-btn" class="s1plus-sync-btn">保存规则</button>
+                    </div>
+                    <div id="s1-keywords-message" class="s1plus-message"></div>
+                </div>
+
+                <div class="s1-settings-group">
+                    <div id="s1-blocked-by-keyword-header" class="s1-settings-group-title s1plus-collapsible-header">
+                        <span>当前页面被关键字屏蔽的帖子</span>
+                        <span class="s1plus-expander-arrow ${settings.showBlockedByKeywordList ? 'expanded' : ''}"></span>
+                    </div>
+                    <div id="s1-dynamically-hidden-list-container" class="s1plus-collapsible-content ${settings.showBlockedByKeywordList ? 'expanded' : ''}">
+                        <div id="s1-dynamically-hidden-list"></div>
+                    </div>
+                </div>
+
+                <div class="s1-settings-group">
+                     <div id="s1-manually-blocked-header" class="s1-settings-group-title s1plus-collapsible-header">
+                        <span>手动屏蔽的帖子列表</span>
+                        <span class="s1plus-expander-arrow ${settings.showManuallyBlockedList ? 'expanded' : ''}"></span>
+                    </div>
+                    <div id="s1-manually-blocked-list-container" class="s1plus-collapsible-content ${settings.showManuallyBlockedList ? 'expanded' : ''}">
+                    ${manualItemIds.length === 0
+                        ? `<div class="s1plus-empty">暂无手动屏蔽的帖子</div>`
+                        : `<div class="s1plus-list">${manualItemIds.map(id => {
+                            const item = blockedThreads[id];
+                            return `<div class="s1plus-item" data-thread-id="${id}"><div class="s1plus-item-info"><div class="s1plus-item-title">${item.title || `帖子 #${id}`}</div><div class="s1plus-item-meta">屏蔽时间: ${formatDate(item.timestamp)} ${item.reason && item.reason !== 'manual' ? `(因屏蔽用户${item.reason.replace('user_','')})` : ''}</div></div><button class="s1plus-unblock-btn" data-unblock-thread-id="${id}">取消屏蔽</button></div>`;
+                        }).join('')}</div>`
+                    }
+                    </div>
+                </div>
+            `;
+
+            const renderRules = () => {
+                const rules = getTitleFilterRules();
+                const container = tabs.threads.querySelector('#s1-keyword-rules-list');
+                container.innerHTML = rules.map(rule => `
+                    <div class="s1-editor-item" data-rule-id="${rule.id}">
+                        <input type="checkbox" class="s1-settings-checkbox keyword-rule-enable" ${rule.enabled ? 'checked' : ''}>
+                        <input type="text" class="keyword-rule-pattern" placeholder="输入关键字或正则表达式" value="${rule.pattern || ''}">
+                        <div class="s1-editor-item-controls">
+                            <button class="s1-editor-btn keyword-rule-delete" style="color: #ef4444;">✖</button>
+                        </div>
+                    </div>
+                `).join('');
+                 if (rules.length === 0) {
+                    container.innerHTML = `<div class="s1plus-empty" style="padding: 12px;">暂无规则</div>`;
+                }
+            };
+            renderRules();
+
+            const renderDynamicallyHiddenList = () => {
+                const listContainer = tabs.threads.querySelector('#s1-dynamically-hidden-list');
+                const hiddenItems = Object.entries(dynamicallyHiddenThreads);
+                if (hiddenItems.length === 0) {
+                    listContainer.innerHTML = `<div class="s1plus-empty" style="padding-top: 12px;">当前页面没有被关键字屏蔽的帖子</div>`;
+                } else {
+                    listContainer.innerHTML = `<div class="s1plus-list">${hiddenItems.map(([id, item]) => `
+                        <div class="s1plus-item" data-thread-id="${id}">
+                            <div class="s1plus-item-info">
+                                <div class="s1plus-item-title" title="${item.title}">${item.title}</div>
+                                <div class="s1plus-item-meta">匹配规则: <code style="background: #eee; padding: 2px 4px; border-radius: 3px;">${item.pattern}</code></div>
+                            </div>
+                        </div>
+                    `).join('')}</div>`;
+                }
+            };
+            renderDynamicallyHiddenList();
+
+            tabs.threads.addEventListener('click', e => {
+                const target = e.target;
+                const header = target.closest('.s1plus-collapsible-header');
+
+                if (header) {
+                    if (header.id === 's1-blocked-by-keyword-header') {
+                        const currentSettings = getSettings();
+                        const isNowExpanded = !currentSettings.showBlockedByKeywordList;
+                        currentSettings.showBlockedByKeywordList = isNowExpanded;
+                        saveSettings(currentSettings);
+
+                        header.querySelector('.s1plus-expander-arrow').classList.toggle('expanded', isNowExpanded);
+                        tabs.threads.querySelector('#s1-dynamically-hidden-list-container').classList.toggle('expanded', isNowExpanded);
+                    } else if (header.id === 's1-manually-blocked-header') {
+                        const currentSettings = getSettings();
+                        const isNowExpanded = !currentSettings.showManuallyBlockedList;
+                        currentSettings.showManuallyBlockedList = isNowExpanded;
+                        saveSettings(currentSettings);
+
+                        header.querySelector('.s1plus-expander-arrow').classList.toggle('expanded', isNowExpanded);
+                        tabs.threads.querySelector('#s1-manually-blocked-list-container').classList.toggle('expanded', isNowExpanded);
+                    }
+                } else if (target.id === 's1-keyword-rule-add-btn') {
+                    const rules = getTitleFilterRules();
+                    rules.push({ id: `rule_${Date.now()}_${Math.random()}`, pattern: '', enabled: true });
+                    saveTitleFilterRules(rules);
+                    renderRules();
+                } else if (target.classList.contains('keyword-rule-delete')) {
+                    const ruleId = target.closest('.s1-editor-item').dataset.ruleId;
+                    let rules = getTitleFilterRules();
+                    rules = rules.filter(r => r.id !== ruleId);
+                    saveTitleFilterRules(rules);
+                    renderRules();
+                } else if (target.id === 's1-keyword-rules-save-btn') {
+                    const newRules = [];
+                    tabs.threads.querySelectorAll('#s1-keyword-rules-list .s1-editor-item').forEach(item => {
+                        const pattern = item.querySelector('.keyword-rule-pattern').value.trim();
+                        if (pattern) {
+                            newRules.push({
+                                id: item.dataset.ruleId,
+                                enabled: item.querySelector('.keyword-rule-enable').checked,
+                                pattern: pattern
+                            });
+                        }
+                    });
+                    saveTitleFilterRules(newRules);
+                    hideThreadsByTitleKeyword();
+                    showMessage(modal.querySelector('#s1-keywords-message'), '屏蔽规则已保存！', true);
+                    renderThreadTab();
+                }
+            });
         };
 
         const renderSettingsTab = () => {
@@ -398,44 +643,45 @@
                 <div class="s1-settings-group">
                     <div class="s1-settings-group-title">导航栏定制</div>
                     <div class="s1-settings-item"><label class="s1-settings-label" for="s1-enableNavCustomization">启用自定义导航栏</label><input type="checkbox" id="s1-enableNavCustomization" class="s1-settings-checkbox" ${settings.enableNavCustomization ? 'checked' : ''}></div>
-                    <div class="s1-nav-editor-list" style="margin-top: 12px;"></div>
-                    <div class="s1-nav-editor-footer">
-                        <button class="s1plus-sync-btn" id="s1-nav-add-btn">添加新链接</button>
-                        <button class="s1plus-sync-btn" id="s1-nav-restore-btn" style="background-color: #fca5a5; color: #991b1b;">恢复默认</button>
-                    </div>
+                    <div class="s1-nav-editor-list" style="margin-top: 12px; display: flex; flex-direction: column; gap: 8px;"></div>
                 </div>
-                <div style="text-align: right; margin-top: 24px; border-top: 1px solid #e5e7eb; padding-top: 16px;">
-                     <button id="s1-settings-save-btn" class="s1-settings-action-btn primary">保存界面与导航设置</button>
+                <div class="s1-editor-footer" style="border-top: 1px solid #e5e7eb; padding-top: 16px; margin-top: 24px;">
+                    <div style="display: flex; gap: 8px;">
+                        <button id="s1-nav-add-btn" class="s1plus-sync-btn">添加新链接</button>
+                        <button id="s1-settings-save-btn" class="s1plus-sync-btn">保存设置</button>
+                    </div>
+                    <button id="s1-nav-restore-btn" class="s1plus-sync-btn" style="background-color: #fca5a5; color: #991b1b;">恢复默认</button>
                 </div>
                 <div id="s1-settings-message" class="s1plus-message"></div>`;
 
             const navListContainer = tabs.settings.querySelector('.s1-nav-editor-list');
             const renderNavList = (links) => {
                 navListContainer.innerHTML = (links || []).map((link, index) => `
-                    <div class="s1-nav-editor-item" draggable="true" data-index="${index}">
-                        <div class="drag-handle">::</div>
+                    <div class="s1-editor-item" draggable="true" data-index="${index}" style="grid-template-columns: auto 1fr 1fr auto; user-select: none;">
+                        <div class="drag-handle" style="cursor: grab; color: #9ca3af; padding: 0 8px;">::</div>
                         <input type="text" class="nav-name" placeholder="名称" value="${link.name || ''}">
                         <input type="text" class="nav-href" placeholder="链接" value="${link.href || ''}">
-                        <div class="s1-nav-editor-controls"><button class="s1-nav-editor-btn" data-action="delete" style="color: #ef4444;">✖</button></div>
+                        <div class="s1-editor-item-controls"><button class="s1-editor-btn" data-action="delete" style="color: #ef4444;">✖</button></div>
                     </div>`).join('');
             };
 
             renderNavList(settings.customNavLinks);
 
             let draggedItem = null;
-            navListContainer.addEventListener('dragstart', e => { draggedItem = e.target.closest('.s1-nav-editor-item'); e.target.classList.add('dragging'); });
-            navListContainer.addEventListener('dragend', e => { e.target.classList.remove('dragging'); });
-            navListContainer.addEventListener('dragover', e => { e.preventDefault(); const afterElement = [...navListContainer.querySelectorAll('.s1-nav-editor-item:not(.dragging)')].reduce((closest, child) => { const box = child.getBoundingClientRect(); const offset = e.clientY - box.top - box.height / 2; return (offset < 0 && offset > closest.offset) ? { offset: offset, element: child } : closest; }, { offset: Number.NEGATIVE_INFINITY }).element; if (afterElement == null) { navListContainer.appendChild(draggedItem); } else { navListContainer.insertBefore(draggedItem, afterElement); } });
+            navListContainer.addEventListener('dragstart', e => { if(e.target.classList.contains('s1-editor-item')) { draggedItem = e.target; setTimeout(() => e.target.style.opacity = '0.5', 0); } });
+            navListContainer.addEventListener('dragend', e => { if(draggedItem) { setTimeout(() => draggedItem.style.opacity = '1', 0); draggedItem = null; } });
+            navListContainer.addEventListener('dragover', e => { e.preventDefault(); const afterElement = [...navListContainer.querySelectorAll('.s1-editor-item:not([style*="opacity: 0.5"])')].reduce((closest, child) => { const box = child.getBoundingClientRect(); const offset = e.clientY - box.top - box.height / 2; return (offset < 0 && offset > closest.offset) ? { offset: offset, element: child } : closest; }, { offset: Number.NEGATIVE_INFINITY }).element; if (draggedItem) { if (afterElement == null) { navListContainer.appendChild(draggedItem); } else { navListContainer.insertBefore(draggedItem, afterElement); } } });
 
             tabs.settings.addEventListener('click', e => {
                 const target = e.target;
                 if (target.id === 's1-nav-add-btn') {
                     const newItem = document.createElement('div');
-                    newItem.className = 's1-nav-editor-item'; newItem.draggable = true;
-                    newItem.innerHTML = `<div class="drag-handle">::</div><input type="text" class="nav-name" placeholder="新链接"><input type="text" class="nav-href" placeholder="forum.php"><div class="s1-nav-editor-controls"><button class="s1-nav-editor-btn" data-action="delete" style="color: #ef4444;">✖</button></div>`;
+                    newItem.className = 's1-editor-item'; newItem.draggable = true;
+                    newItem.style.gridTemplateColumns = 'auto 1fr 1fr auto';
+                    newItem.innerHTML = `<div class="drag-handle" style="cursor: grab; color: #9ca3af; padding: 0 8px;">::</div><input type="text" class="nav-name" placeholder="新链接"><input type="text" class="nav-href" placeholder="forum.php"><div class="s1-editor-item-controls"><button class="s1-editor-btn" data-action="delete" style="color: #ef4444;">✖</button></div>`;
                     navListContainer.appendChild(newItem);
                 } else if (target.dataset.action === 'delete') {
-                    target.closest('.s1-nav-editor-item').remove();
+                    target.closest('.s1-editor-item').remove();
                 } else if (target.id === 's1-nav-restore-btn') {
                     saveSettings(defaultSettings);
                     renderSettingsTab();
@@ -448,7 +694,7 @@
                         changeLogoLink: tabs.settings.querySelector('#s1-changeLogoLink').checked,
                         hideBlacklistTip: tabs.settings.querySelector('#s1-hideBlacklistTip').checked,
                         enableNavCustomization: tabs.settings.querySelector('#s1-enableNavCustomization').checked,
-                        customNavLinks: Array.from(navListContainer.querySelectorAll('.s1-nav-editor-item')).map(item => ({ name: item.querySelector('.nav-name').value.trim(), href: item.querySelector('.nav-href').value.trim() })).filter(l=>l.name && l.href)
+                        customNavLinks: Array.from(navListContainer.querySelectorAll('.s1-editor-item')).map(item => ({ name: item.querySelector('.nav-name').value.trim(), href: item.querySelector('.nav-href').value.trim() })).filter(l=>l.name && l.href)
                     };
                     saveSettings(newSettings);
                     applyInterfaceCustomizations();
@@ -522,11 +768,16 @@
                         saveBlockedThreads({});
                         saveBlockedUsers({});
                         saveReadProgress({});
+                        saveTitleFilterRules([]);
                         saveSettings(defaultSettings);
+
+                        // 清理旧的关键字数据（以防万一）
+                        GM_setValue('s1plus_title_keywords', null);
 
                         hideBlockedThreads();
                         hideBlockedUsersPosts();
                         applyUserThreadBlocklist();
+                        hideThreadsByTitleKeyword();
                         initializeNavbar();
                         applyInterfaceCustomizations();
 
@@ -626,7 +877,6 @@
         });
     };
 
-    // [MODIFIED] 更新了跟踪进度的逻辑，现在记录页面上第一个可见的帖子
     const initReadProgressTracker = () => {
         const threadIdMatch = window.location.href.match(/thread-(\d+)-/);
         if (!threadIdMatch) return;
@@ -641,7 +891,6 @@
             const visiblePosts = entries.filter(entry => entry.isIntersecting);
 
             if (visiblePosts.length > 0) {
-                // 从所有可见的帖子中，找到ID（即楼层）最小的那个
                 const firstVisiblePost = visiblePosts.reduce((first, current) => {
                     const firstId = parseInt(first.target.id.replace('pid', ''));
                     const currentId = parseInt(current.target.id.replace('pid', ''));
@@ -701,9 +950,11 @@
                 hideBlockedUsersPosts();
                 addBlockButtonsToUsers();
                 initReadProgressTracker();
+                hideBlockedUserRatings(); // [ADDED]
             } else if (window.location.href.includes('forum-')) {
                 hideBlockedThreads();
                 applyUserThreadBlocklist();
+                hideThreadsByTitleKeyword();
                 addBlockButtonsToThreads();
                 addProgressJumpButtons();
             }
