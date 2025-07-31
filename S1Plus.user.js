@@ -108,7 +108,7 @@
         .s1plus-sync-textarea { width: 100%; min-height: 80px; padding: 8px; border-radius: 4px; border: 1px solid #e5e7eb; font-family: monospace; font-size: 12px; resize: vertical; margin-bottom: 8px; box-sizing: border-box; }
         .s1plus-message { font-size: 14px; margin-top: 8px; padding: 8px; border-radius: 4px; display:none; text-align: center; }
         .s1plus-message.success { background-color: #d1fae5; color: #065f46; }
-        .s1plus-message.error { background-color: #fee2e2; color: #b91c1c; }
+        .s1plus-message.error { background-color: #fee2e2; color: #ef4444; }
 
         /* --- 确认弹窗样式 --- */
         @keyframes s1plus-fade-in { from { opacity: 0; } to { opacity: 1; } } @keyframes s1plus-scale-in { from { transform: scale(0.95); opacity: 0; } to { transform: scale(1); opacity: 1; } } @keyframes s1plus-fade-out { from { opacity: 1; } to { opacity: 0; } } @keyframes s1plus-scale-out { from { transform: scale(1); opacity: 1; } to { transform: scale(0.97); opacity: 0; } }
@@ -145,10 +145,31 @@
         .s1-editor-item-controls { display: flex; align-items: center; gap: 4px; }
         .s1-editor-btn { padding: 4px; font-size: 18px; line-height: 1; cursor: pointer; border-radius: 4px; border:none; background: transparent; color: #9ca3af; }
         .s1-editor-btn:hover { background: #e5e7eb; color: #374151; }
+        .s1-editor-btn.keyword-rule-delete,
+        .s1-editor-btn[data-action="delete"] {
+            font-size: 0;
+            width: 26px;
+            height: 26px;
+            padding: 4px;
+            box-sizing: border-box;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='1.5' stroke='%23374151'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0' /%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: center;
+            background-size: 18px 18px;
+            transition: all 0.2s ease;
+        }
+        .s1-editor-btn.keyword-rule-delete:hover,
+        .s1-editor-btn[data-action="delete"]:hover {
+            background-color: #ef4444;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='1.5' stroke='white'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0' /%3E%3C/svg%3E");
+        }
         .s1-editor-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; }
         .s1-settings-action-btn { display: inline-block; padding: 10px 20px; border-radius: 6px; font-size: 14px; font-weight: 500; cursor: pointer; transition: background-color 0.2s; border: none; }
         .s1-settings-action-btn.primary { background-color: #3b82f6; color: white; } .s1-settings-action-btn.primary:hover { background-color: #2563eb; }
         .s1-settings-action-btn.secondary { background-color: #e5e7eb; color: #374151; } .s1-settings-action-btn.secondary:hover { background-color: #d1d5db; }
+
+        /* --- Nav Editor Dragging --- */
+        .s1-editor-item.dragging { opacity: 0.5; }
     `);
 
     let dynamicallyHiddenThreads = {};
@@ -567,7 +588,7 @@
                         <input type="checkbox" class="s1-settings-checkbox keyword-rule-enable" ${rule.enabled ? 'checked' : ''}>
                         <input type="text" class="keyword-rule-pattern" placeholder="输入关键字或正则表达式" value="${rule.pattern || ''}">
                         <div class="s1-editor-item-controls">
-                            <button class="s1-editor-btn keyword-rule-delete" style="color: #ef4444;">✖</button>
+                            <button class="s1-editor-btn keyword-rule-delete" title="删除规则"></button>
                         </div>
                     </div>
                 `).join('');
@@ -669,7 +690,7 @@
                         <button id="s1-nav-add-btn" class="s1plus-sync-btn">添加新链接</button>
                         <button id="s1-settings-save-btn" class="s1plus-sync-btn">保存设置</button>
                     </div>
-                    <button id="s1-nav-restore-btn" class="s1plus-sync-btn" style="background-color: #fca5a5; color: #991b1b;">恢复默认</button>
+                    <button id="s1-nav-restore-btn" class="s1plus-sync-btn" style="background-color: #ef4444; color: white;">恢复默认</button>
                 </div>
                 <div id="s1-settings-message" class="s1plus-message"></div>`;
 
@@ -680,16 +701,47 @@
                         <div class="drag-handle" style="cursor: grab; color: #9ca3af; padding: 0 8px;">::</div>
                         <input type="text" class="nav-name" placeholder="名称" value="${link.name || ''}">
                         <input type="text" class="nav-href" placeholder="链接" value="${link.href || ''}">
-                        <div class="s1-editor-item-controls"><button class="s1-editor-btn" data-action="delete" style="color: #ef4444;">✖</button></div>
+                        <div class="s1-editor-item-controls"><button class="s1-editor-btn" data-action="delete" title="删除链接"></button></div>
                     </div>`).join('');
             };
 
             renderNavList(settings.customNavLinks);
 
             let draggedItem = null;
-            navListContainer.addEventListener('dragstart', e => { if(e.target.classList.contains('s1-editor-item')) { draggedItem = e.target; setTimeout(() => e.target.style.opacity = '0.5', 0); } });
-            navListContainer.addEventListener('dragend', e => { if(draggedItem) { setTimeout(() => draggedItem.style.opacity = '1', 0); draggedItem = null; } });
-            navListContainer.addEventListener('dragover', e => { e.preventDefault(); const afterElement = [...navListContainer.querySelectorAll('.s1-editor-item:not([style*="opacity: 0.5"])')].reduce((closest, child) => { const box = child.getBoundingClientRect(); const offset = e.clientY - box.top - box.height / 2; return (offset < 0 && offset > closest.offset) ? { offset: offset, element: child } : closest; }, { offset: Number.NEGATIVE_INFINITY }).element; if (draggedItem) { if (afterElement == null) { navListContainer.appendChild(draggedItem); } else { navListContainer.insertBefore(draggedItem, afterElement); } } });
+            navListContainer.addEventListener('dragstart', e => {
+                if (e.target.classList.contains('s1-editor-item')) {
+                    draggedItem = e.target;
+                    setTimeout(() => {
+                        e.target.classList.add('dragging');
+                    }, 0);
+                }
+            });
+
+            navListContainer.addEventListener('dragend', e => {
+                if (draggedItem) {
+                    draggedItem.classList.remove('dragging');
+                    draggedItem = null;
+                }
+            });
+
+            navListContainer.addEventListener('dragover', e => {
+                e.preventDefault();
+                if (!draggedItem) return;
+
+                const container = e.currentTarget;
+                const otherItems = [...container.querySelectorAll('.s1-editor-item:not(.dragging)')];
+
+                const nextSibling = otherItems.find(item => {
+                    const rect = item.getBoundingClientRect();
+                    return e.clientY < rect.top + rect.height / 2;
+                });
+
+                if (nextSibling) {
+                    container.insertBefore(draggedItem, nextSibling);
+                } else {
+                    container.appendChild(draggedItem);
+                }
+            });
 
             tabs.settings.addEventListener('click', e => {
                 const target = e.target;
@@ -697,7 +749,7 @@
                     const newItem = document.createElement('div');
                     newItem.className = 's1-editor-item'; newItem.draggable = true;
                     newItem.style.gridTemplateColumns = 'auto 1fr 1fr auto';
-                    newItem.innerHTML = `<div class="drag-handle" style="cursor: grab; color: #9ca3af; padding: 0 8px;">::</div><input type="text" class="nav-name" placeholder="新链接"><input type="text" class="nav-href" placeholder="forum.php"><div class="s1-editor-item-controls"><button class="s1-editor-btn" data-action="delete" style="color: #ef4444;">✖</button></div>`;
+                    newItem.innerHTML = `<div class="drag-handle" style="cursor: grab; color: #9ca3af; padding: 0 8px;">::</div><input type="text" class="nav-name" placeholder="新链接"><input type="text" class="nav-href" placeholder="forum.php"><div class="s1-editor-item-controls"><button class="s1-editor-btn" data-action="delete" title="删除链接"></button></div>`;
                     navListContainer.appendChild(newItem);
                 } else if (target.dataset.action === 'delete') {
                     target.closest('.s1-editor-item').remove();
@@ -718,7 +770,6 @@
                     saveSettings(newSettings);
                     applyInterfaceCustomizations();
                     initializeNavbar();
-                    showMessage(modal.querySelector('#s1-settings-message'), '设置已保存并立即生效！', true);
                 }
             });
         };
