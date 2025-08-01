@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      3.2.1
+// @version      3.2.2
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪等多种功能，全方位优化你的论坛体验。
 // @author       moekyo & Elence_ylns1314 (Merged and enhanced by Gemini)
 // @match        https://stage1st.com/2b/*
@@ -14,8 +14,8 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '3.2.1';
-    const SCRIPT_RELEASE_DATE = '2025-07-29';
+    const SCRIPT_VERSION = '3.2.2';
+    const SCRIPT_RELEASE_DATE = '2025-08-01';
 
     // --- 样式注入 ---
     GM_addStyle(`
@@ -124,6 +124,10 @@
             gap: 8px;
         }
         .s1plus-popover-actions .s1plus-btn {
+            padding: 7px 14px;
+            font-size: 13px;
+            font-weight: 500;
+            border-radius: 6px;
             gap: 4px;
         }
         .s1plus-btn.s1plus-btn-primary {
@@ -165,7 +169,7 @@
         .s1plus-tab-content.active { display: block; }
         .s1plus-empty { text-align: center; padding: 24px; color: #6b7280; }
         .s1plus-list { display: flex; flex-direction: column; gap: 8px; }
-        .s1plus-item { display: flex; justify-content: space-between; align-items: flex-start; padding: 12px; border-radius: 6px; background-color: #ffffffff; border: 1px solid #e5e7eb; }
+        .s1plus-item { display: flex; justify-content: space-between; align-items: flex-start; padding: 12px; border-radius: 6px; background-color: #f9fafb; border: 1px solid #e5e7eb; }
         .s1plus-item-info { flex-grow: 1; min-width: 0; }
         .s1plus-item-title { font-weight: 500; color: #111827; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .s1plus-item-meta { font-size: 12px; color: #6b7280; margin-bottom: 8px; }
