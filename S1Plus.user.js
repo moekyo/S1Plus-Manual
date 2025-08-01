@@ -108,6 +108,16 @@
             color: #9ca3af;
             font-style: italic;
         }
+        .s1plus-popover-tag-area textarea {
+            width: 100%;
+            height: 60px;
+            border: 1px solid #d1d5db;
+            border-radius: 4px;
+            padding: 6px 8px;
+            font-size: 14px;
+            resize: vertical;
+            box-sizing: border-box;
+        }
         .s1plus-popover-actions {
             display: flex;
             justify-content: flex-end;
@@ -297,6 +307,8 @@
     const saveBlockedThreads = (threads) => GM_setValue('s1plus_blocked_threads', threads);
     const getBlockedUsers = () => GM_getValue('s1plus_blocked_users', {});
     const saveBlockedUsers = (users) => GM_setValue('s1plus_blocked_users', users);
+    const getUserTags = () => GM_getValue('s1plus_user_tags', {});
+    const saveUserTags = (tags) => GM_setValue('s1plus_user_tags', tags);
 
     const getTitleFilterRules = () => {
         const rules = GM_getValue('s1plus_title_filter_rules', null);
@@ -433,6 +445,7 @@
         settings: getSettings(),
         threads: getBlockedThreads(),
         users: getBlockedUsers(),
+        user_tags: getUserTags(),
         title_filter_rules: getTitleFilterRules(),
         read_progress: getReadProgress()
     }, null, 2);
@@ -440,7 +453,7 @@
     const importData = (jsonStr) => {
         try {
             const imported = JSON.parse(jsonStr); if (typeof imported !== 'object' || imported === null) throw new Error("无效数据格式");
-            let threadsImported = 0, usersImported = 0, progressImported = 0, rulesImported = 0;
+            let threadsImported = 0, usersImported = 0, progressImported = 0, rulesImported = 0, tagsImported = 0;
 
             const upgradeAndMerge = (type, importedData, getter, saver) => {
                 if (!importedData || typeof importedData !== 'object') return 0;
@@ -460,6 +473,12 @@
 
             threadsImported = upgradeAndMerge('threads', imported.threads, getBlockedThreads, saveBlockedThreads);
             usersImported = upgradeAndMerge('users', imported.users, getBlockedUsers, saveBlockedUsers);
+
+            if (imported.user_tags && typeof imported.user_tags === 'object') {
+                const mergedTags = { ...getUserTags(), ...imported.user_tags };
+                saveUserTags(mergedTags);
+                tagsImported = Object.keys(imported.user_tags).length;
+            }
 
             if (imported.title_filter_rules && Array.isArray(imported.title_filter_rules)) {
                 saveTitleFilterRules(imported.title_filter_rules);
@@ -484,7 +503,7 @@
             initializeNavbar();
             applyInterfaceCustomizations();
 
-            return { success: true, message: `成功导入 ${threadsImported} 条帖子、${usersImported} 条用户、${rulesImported} 条标题规则、${progressImported} 条阅读进度及相关设置。` };
+            return { success: true, message: `成功导入 ${threadsImported} 条帖子、${usersImported} 条用户、${tagsImported} 条标记、${rulesImported} 条标题规则、${progressImported} 条阅读进度及相关设置。` };
         } catch (e) { return { success: false, message: `导入失败: ${e.message}` }; }
     };
 
@@ -580,11 +599,13 @@
                 <div class="s1plus-tabs">
                     <button class="s1plus-tab-btn active" data-tab="threads">帖子屏蔽</button>
                     <button class="s1plus-tab-btn" data-tab="users">用户屏蔽</button>
+                    <button class="s1plus-tab-btn" data-tab="tags">用户标记</button>
                     <button class="s1plus-tab-btn" data-tab="settings">界面定制</button>
                     <button class="s1plus-tab-btn" data-tab="sync">设置同步</button>
                 </div>
                 <div id="s1-tab-threads" class="s1plus-tab-content active"></div>
                 <div id="s1-tab-users" class="s1plus-tab-content"></div>
+                <div id="s1-tab-tags" class="s1plus-tab-content"></div>
                 <div id="s1-tab-settings" class="s1plus-tab-content"></div>
                 <div id="s1-tab-sync" class="s1plus-tab-content">
                     <div class="s1plus-sync-title">全量设置同步</div>
@@ -610,8 +631,34 @@
         const tabs = {
             threads: modal.querySelector('#s1-tab-threads'),
             users: modal.querySelector('#s1-tab-users'),
+            tags: modal.querySelector('#s1-tab-tags'),
             settings: modal.querySelector('#s1-tab-settings'),
             sync: modal.querySelector('#s1-tab-sync'),
+        };
+
+        const renderTagsTab = () => {
+            const userTags = getUserTags();
+            const tagItems = Object.entries(userTags);
+
+            tabs.tags.innerHTML = `
+                <p class="s1plus-setting-desc" style="margin-top: 0; margin-bottom: 16px;">
+                    在此集中管理您为所有用户添加的标记。
+                </p>
+                ${tagItems.length === 0
+                    ? `<div class="s1plus-empty">暂无用户标记</div>`
+                    : `<div class="s1plus-list">${tagItems.map(([id, tag]) => {
+                        // We may not have the username here, so we just show the ID.
+                        // A more advanced version could store usernames with tags.
+                        return `<div class="s1plus-item" data-user-id="${id}">
+                                    <div class="s1plus-item-info">
+                                        <div class="s1plus-item-title">用户 #${id}</div>
+                                        <div class="s1plus-item-meta" style="white-space: normal;">标记: ${tag}</div>
+                                    </div>
+                                    <button class="s1plus-unblock-btn" data-delete-tag-id="${id}" style="background-color: #ef4444; color: white;">删除标记</button>
+                                </div>`;
+                    }).join('')}</div>`
+                }
+            `;
         };
 
         const renderUserTab = () => {
@@ -909,6 +956,7 @@
         // --- 初始化渲染和事件绑定 ---
         renderThreadTab();
         renderUserTab();
+        renderTagsTab();
         renderSettingsTab();
 
         modal.addEventListener('change', e => {
@@ -1060,6 +1108,7 @@
         }
 
         let hideTimeout;
+        let currentCell = null;
 
         const startHideTimer = () => {
             clearTimeout(hideTimeout);
@@ -1070,11 +1119,96 @@
             clearTimeout(hideTimeout);
         };
 
+        const renderPopoverContent = (userName, userId, tag = '') => {
+            const hasTag = tag.trim() !== '';
+            const tagAreaHTML = hasTag
+                ? `<div class="s1plus-popover-tag-area">${tag}</div>`
+                : `<div class="s1plus-popover-tag-area empty">暂无标记</div>`;
+
+            const actionsHTML = hasTag
+                ? `
+                <button class="s1plus-btn" data-action="delete-tag" data-user-id="${userId}" data-user-name="${userName}">删除</button>
+                <button class="s1plus-btn s1plus-btn-primary" data-action="edit-tag" data-user-id="${userId}" data-user-name="${userName}">编辑</button>
+                `
+                : `
+                <button class="s1plus-btn s1plus-btn-primary" data-action="add-tag" data-user-id="${userId}" data-user-name="${userName}">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" style="width:14px; height:14px;"><path d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z" /></svg>
+                    <span>添加标记</span>
+                </button>
+                `;
+
+            popover.innerHTML = `
+                <div class="s1plus-popover-content">
+                    <div class="s1plus-popover-username">${userName}</div>
+                    ${tagAreaHTML}
+                    <div class="s1plus-popover-actions">${actionsHTML}</div>
+                </div>
+            `;
+        };
+
+        const renderEditMode = (userName, userId, currentTag = '') => {
+            popover.innerHTML = `
+                 <div class="s1plus-popover-content">
+                    <div class="s1plus-popover-username">为 ${userName} 添加标记</div>
+                    <div class="s1plus-popover-tag-area">
+                        <textarea id="s1plus-tag-textarea" placeholder="输入标记内容...">${currentTag}</textarea>
+                    </div>
+                    <div class="s1plus-popover-actions">
+                        <button class="s1plus-btn" data-action="cancel-edit" data-user-id="${userId}" data-user-name="${userName}">取消</button>
+                        <button class="s1plus-btn s1plus-btn-primary" data-action="save-tag" data-user-id="${userId}" data-user-name="${userName}">保存</button>
+                    </div>
+                </div>
+            `;
+            popover.querySelector('#s1plus-tag-textarea').focus();
+        };
+
+
+        popover.addEventListener('click', (event) => {
+            const target = event.target.closest('.s1plus-btn');
+            if (!target) return;
+
+            const { action, userId, userName } = target.dataset;
+            const userTags = getUserTags();
+
+            if (action === 'add-tag' || action === 'edit-tag') {
+                renderEditMode(userName, userId, userTags[userId] || '');
+            } else if (action === 'cancel-edit') {
+                renderPopoverContent(userName, userId, userTags[userId] || '');
+            } else if (action === 'save-tag') {
+                const textarea = popover.querySelector('#s1plus-tag-textarea');
+                const newTag = textarea.value.trim();
+                if (newTag) {
+                    userTags[userId] = newTag;
+                } else {
+                    delete userTags[userId]; // Remove tag if it's empty
+                }
+                saveUserTags(userTags);
+                renderPopoverContent(userName, userId, newTag);
+            } else if (action === 'delete-tag') {
+                createConfirmationModal(
+                    `确认要删除对 "${userName}" 的标记吗？`,
+                    '此操作不可撤销。',
+                    () => {
+                        delete userTags[userId];
+                        saveUserTags(userTags);
+                        renderPopoverContent(userName, userId, '');
+                    },
+                    '确认删除'
+                );
+            }
+        });
+
+
         popover.addEventListener('mouseenter', cancelHideTimer);
         popover.addEventListener('mouseleave', startHideTimer);
 
         const attachPopoverEvents = (cell) => {
             cell.addEventListener('mouseenter', () => {
+                if (cell === currentCell && popover.classList.contains('visible')) {
+                    cancelHideTimer();
+                    return;
+                }
+                currentCell = cell;
                 cancelHideTimer();
 
                 const authorLink = cell.querySelector('.authi > a[href*="space-uid-"]');
@@ -1086,18 +1220,8 @@
                 if (!uidMatch) return;
                 const userId = uidMatch[1];
 
-                popover.innerHTML = `
-                    <div class="s1plus-popover-content">
-                        <div class="s1plus-popover-username">${userName}</div>
-                        <div class="s1plus-popover-tag-area empty">暂无标记</div>
-                        <div class="s1plus-popover-actions">
-                            <button class="s1plus-btn s1plus-btn-primary" data-action="add-tag" data-user-id="${userId}">
-                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" style="width:14px; height:14px;"><path d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z" /></svg>
-                                <span>添加标记</span>
-                            </button>
-                        </div>
-                    </div>
-                `;
+                const userTags = getUserTags();
+                renderPopoverContent(userName, userId, userTags[userId]);
 
                 const rect = avatarImg.getBoundingClientRect();
                 popover.style.left = `${rect.right + window.scrollX + 10}px`;
