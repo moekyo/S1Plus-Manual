@@ -165,7 +165,7 @@
         .s1plus-tab-content.active { display: block; }
         .s1plus-empty { text-align: center; padding: 24px; color: #6b7280; }
         .s1plus-list { display: flex; flex-direction: column; gap: 8px; }
-        .s1plus-item { display: flex; justify-content: space-between; align-items: flex-start; padding: 12px; border-radius: 6px; background-color: #f9fafb; border: 1px solid #e5e7eb; }
+        .s1plus-item { display: flex; justify-content: space-between; align-items: flex-start; padding: 12px; border-radius: 6px; background-color: #ffffffff; border: 1px solid #e5e7eb; }
         .s1plus-item-info { flex-grow: 1; min-width: 0; }
         .s1plus-item-title { font-weight: 500; color: #111827; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .s1plus-item-meta { font-size: 12px; color: #6b7280; margin-bottom: 8px; }
@@ -196,7 +196,7 @@
         .s1-settings-group-title.s1plus-collapsible-header { margin-bottom: 0; }
         .s1plus-collapsible-header:hover { color: #3b82f6; }
         .s1plus-collapsible-header:hover .s1plus-expander-arrow { color: #3b82f6; }
-        .s1plus-expander-arrow { 
+        .s1plus-expander-arrow {
             display: inline-block; width: 12px; height: 12px; color: #6b7280;
             background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 16'%3E%3Cpath d='M2 2L8 8L2 14' stroke='currentColor' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E");
             background-repeat: no-repeat; background-position: center; background-size: contain; transition: transform 0.3s ease-in-out, color 0.2s ease;
@@ -259,9 +259,9 @@
         .s1plus-item-actions { display: flex; align-self: flex-start; flex-shrink: 0; gap: 8px; margin-left: 16px; }
         .s1plus-item-actions .s1plus-btn { padding: 6px 12px; font-size: 14px; background-color: #f3f4f6; color: #6b7280; cursor: pointer; border: none; }
         .s1plus-item-actions .s1plus-btn:hover { background-color: #e5e7eb; color: #1f2937; }
+        .s1plus-item-actions .s1plus-btn[data-action="edit-tag-item"]:hover { background-color: #2563eb; color: white; }
         .s1plus-item-actions .s1plus-btn.primary { background-color: #3b82f6; color: white; }
         .s1plus-item-actions .s1plus-btn.primary:hover { background-color: #2563eb; }
-        .s1plus-item-actions .s1plus-btn.danger { background-color: #fee2e2; color: #ef4444; }
         .s1plus-item-actions .s1plus-btn.danger:hover { background-color: #ef4444; color: white; }
     `);
 
