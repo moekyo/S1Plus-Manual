@@ -61,6 +61,69 @@
         .s1plus-avatar-overlay-container .s1plus-btn { color: white; background-color: rgba(0, 0, 0, 0.4); border: 1px solid rgba(255, 255, 255, 0.5); transform: scale(1); transition: all 0.2s ease-in-out; padding: 4px 8px; }
         .s1plus-avatar-overlay-container .s1plus-btn:hover { background-color: #ef4444; border-color: #ef4444; transform: scale(1.05); }
 
+        /* --- 用户标记悬浮窗 (v3) --- */
+        .s1plus-tag-popover {
+            position: absolute;
+            z-index: 10001;
+            width: 250px;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.12);
+            border: 1px solid #e5e7eb;
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(4px) scale(0.98);
+            transition: opacity 0.15s ease-out, transform 0.15s ease-out, visibility 0.15s;
+            pointer-events: none;
+            font-size: 14px;
+        }
+        .s1plus-tag-popover.visible {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0) scale(1);
+            pointer-events: auto;
+        }
+        .s1plus-popover-content {
+            padding: 12px;
+        }
+        .s1plus-popover-username {
+            font-weight: 600;
+            color: #111827;
+            margin-bottom: 10px;
+            font-size: 15px;
+        }
+        .s1plus-popover-tag-area {
+            background-color: #f9fafb;
+            padding: 10px;
+            border-radius: 5px;
+            color: #374151;
+            margin-bottom: 12px;
+            min-height: 45px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid #f3f4f6;
+        }
+        .s1plus-popover-tag-area.empty {
+            color: #9ca3af;
+            font-style: italic;
+        }
+        .s1plus-popover-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+        }
+        .s1plus-popover-actions .s1plus-btn {
+            gap: 4px;
+        }
+        .s1plus-btn.s1plus-btn-primary {
+            background-color: #3b82f6;
+            color: white;
+        }
+        .s1plus-btn.s1plus-btn-primary:hover {
+            background-color: #2563eb;
+        }
+
         /* --- 设置面板样式 --- */
         .s1plus-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.5); display: flex; justify-content: center; align-items: center; z-index: 9999; }
         .s1plus-modal-content { background-color: white; border-radius: 8px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); width: 600px; max-width: 90%; max-height: 80vh; overflow: hidden; display: flex; flex-direction: column; }
@@ -178,6 +241,53 @@
 
         /* --- Nav Editor Dragging --- */
         .s1-editor-item.dragging { opacity: 0.5; }
+
+        /* --- 用户标记悬浮窗 --- */
+        .s1plus-tag-popover {
+            position: absolute;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            /* top: 0;  JS will set this */
+            /* left: 105%; JS will set this */
+            z-index: 20; /* Higher than the avatar overlay */
+            padding: 12px;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            border: 1px solid #e5e7eb;
+            opacity: 0;
+            visibility: hidden;
+            transform: translateX(0);
+            transition: opacity 0.2s ease-in-out, transform 0.2s ease-in-out, visibility 0.2s ease-in-out;
+            pointer-events: none; /* Allow clicks to pass through when hidden */
+            width: 220px; /* Give it a fixed width */
+        }
+
+        .pls:hover .s1plus-tag-popover {
+            opacity: 1;
+            visibility: visible;
+            transform: translateX(10px); /* Animate it slightly on show */
+            pointer-events: auto; /* Make it interactive when visible */
+            transition-delay: 0.15s;
+        }
+
+        .s1plus-tag-popover .s1plus-tag-info {
+            font-size: 14px;
+            color: #374151;
+            line-height: 1.5;
+        }
+
+        .s1plus-tag-popover .s1plus-tag-actions {
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+        }
+
+        .s1plus-tag-popover .s1plus-btn {
+            padding: 4px 10px;
+            font-size: 12px;
+        }
     `);
 
     let dynamicallyHiddenThreads = {};
@@ -940,6 +1050,91 @@
         });
     };
 
+    const initializeTaggingPopover = () => {
+        let popover = document.getElementById('s1plus-tag-popover-main');
+        if (!popover) {
+            popover = document.createElement('div');
+            popover.id = 's1plus-tag-popover-main';
+            popover.className = 's1plus-tag-popover';
+            document.body.appendChild(popover);
+        }
+
+        let hideTimeout;
+
+        const startHideTimer = () => {
+            clearTimeout(hideTimeout);
+            hideTimeout = setTimeout(() => popover.classList.remove('visible'), 300);
+        };
+
+        const cancelHideTimer = () => {
+            clearTimeout(hideTimeout);
+        };
+
+        popover.addEventListener('mouseenter', cancelHideTimer);
+        popover.addEventListener('mouseleave', startHideTimer);
+
+        const attachPopoverEvents = (cell) => {
+            cell.addEventListener('mouseenter', () => {
+                cancelHideTimer();
+
+                const authorLink = cell.querySelector('.authi > a[href*="space-uid-"]');
+                const avatarImg = cell.querySelector('.avatar img');
+                if (!authorLink || !avatarImg) return;
+
+                const userName = authorLink.textContent.trim();
+                const uidMatch = authorLink.href.match(/space-uid-(\d+)/);
+                if (!uidMatch) return;
+                const userId = uidMatch[1];
+
+                popover.innerHTML = `
+                    <div class="s1plus-popover-content">
+                        <div class="s1plus-popover-username">${userName}</div>
+                        <div class="s1plus-popover-tag-area empty">暂无标记</div>
+                        <div class="s1plus-popover-actions">
+                            <button class="s1plus-btn s1plus-btn-primary" data-action="add-tag" data-user-id="${userId}">
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" style="width:14px; height:14px;"><path d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z" /></svg>
+                                <span>添加标记</span>
+                            </button>
+                        </div>
+                    </div>
+                `;
+
+                const rect = avatarImg.getBoundingClientRect();
+                popover.style.left = `${rect.right + window.scrollX + 10}px`;
+                popover.style.top = `${rect.top + window.scrollY}px`;
+                popover.classList.add('visible');
+            });
+
+            cell.addEventListener('mouseleave', startHideTimer);
+        };
+
+        // Attach events to existing and future .pls cells
+        const observer = new MutationObserver((mutations) => {
+            mutations.forEach(mutation => {
+                mutation.addedNodes.forEach(node => {
+                    if (node.nodeType === 1) {
+                        const cells = node.matches('.pls') ? [node] : node.querySelectorAll('.pls');
+                        cells.forEach(cell => {
+                            if (!cell.dataset.s1plusPopover) {
+                                cell.dataset.s1plusPopover = 'true';
+                                attachPopoverEvents(cell);
+                            }
+                        });
+                    }
+                });
+            });
+        });
+
+        const mainContent = document.getElementById('ct') || document.body;
+        mainContent.querySelectorAll('.pls').forEach(cell => {
+            if (!cell.dataset.s1plusPopover) {
+                cell.dataset.s1plusPopover = 'true';
+                attachPopoverEvents(cell);
+            }
+        });
+        observer.observe(mainContent, { childList: true, subtree: true });
+    };
+
     const addProgressJumpButtons = () => {
         const progressData = getReadProgress();
         if (Object.keys(progressData).length === 0) return;
@@ -1036,6 +1231,7 @@
         autoCheckIn();
         applyInterfaceCustomizations();
         initializeNavbar();
+        initializeTaggingPopover(); // Initialize the new popover system
 
         const runTasks = () => {
             if (window.location.href.includes('thread-') || window.location.href.includes('mod=viewthread')) {
