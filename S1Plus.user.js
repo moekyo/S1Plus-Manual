@@ -1107,12 +1107,15 @@
             document.body.appendChild(popover);
         }
 
-        let hideTimeout;
-        let currentCell = null;
+        let hideTimeout, showTimeout;
 
         const startHideTimer = () => {
+            clearTimeout(showTimeout);
             clearTimeout(hideTimeout);
-            hideTimeout = setTimeout(() => popover.classList.remove('visible'), 300);
+            hideTimeout = setTimeout(() => {
+                popover.classList.remove('visible');
+                delete popover.dataset.currentUserId;
+            }, 300);
         };
 
         const cancelHideTimer = () => {
@@ -1204,29 +1207,32 @@
 
         const attachPopoverEvents = (cell) => {
             cell.addEventListener('mouseenter', () => {
-                if (cell === currentCell && popover.classList.contains('visible')) {
-                    cancelHideTimer();
-                    return;
-                }
-                currentCell = cell;
                 cancelHideTimer();
+                clearTimeout(showTimeout);
 
-                const authorLink = cell.querySelector('.authi > a[href*="space-uid-"]');
-                const avatarImg = cell.querySelector('.avatar img');
-                if (!authorLink || !avatarImg) return;
+                showTimeout = setTimeout(() => {
+                    const authorLink = cell.querySelector('.authi > a[href*="space-uid-"]');
+                    const avatarImg = cell.querySelector('.avatar img');
+                    if (!authorLink || !avatarImg) return;
 
-                const userName = authorLink.textContent.trim();
-                const uidMatch = authorLink.href.match(/space-uid-(\d+)/);
-                if (!uidMatch) return;
-                const userId = uidMatch[1];
+                    const uidMatch = authorLink.href.match(/space-uid-(\d+)/);
+                    if (!uidMatch) return;
+                    const userId = uidMatch[1];
 
-                const userTags = getUserTags();
-                renderPopoverContent(userName, userId, userTags[userId]);
+                    if (popover.classList.contains('visible') && popover.dataset.currentUserId === userId) {
+                        return;
+                    }
 
-                const rect = avatarImg.getBoundingClientRect();
-                popover.style.left = `${rect.right + window.scrollX + 10}px`;
-                popover.style.top = `${rect.top + window.scrollY}px`;
-                popover.classList.add('visible');
+                    const userName = authorLink.textContent.trim();
+                    const userTags = getUserTags();
+                    popover.dataset.currentUserId = userId;
+                    renderPopoverContent(userName, userId, userTags[userId] || '');
+
+                    const rect = avatarImg.getBoundingClientRect();
+                    popover.style.top = `${rect.top + window.scrollY}px`;
+                    popover.style.left = `${rect.right + window.scrollX + 10}px`;
+                    popover.classList.add('visible');
+                }, 150);
             });
 
             cell.addEventListener('mouseleave', startHideTimer);
