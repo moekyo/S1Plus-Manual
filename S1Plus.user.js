@@ -96,8 +96,8 @@
         .s1plus-item-info { flex-grow: 1; min-width: 0; }
         .s1plus-item-title { font-weight: 500; color: #111827; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .s1plus-item-meta { font-size: 12px; color: #6b7280; margin-bottom: 8px; }
-        .s1plus-item-toggle { font-size: 12px; color: #374151; display: flex; align-items: center; }
-        .s1plus-item-toggle input { margin-right: 6px; transform: scale(1.1); }
+        .s1plus-item-toggle { font-size: 12px; color: #374151; display: flex; align-items: center; gap: 8px; }
+        .s1plus-item-toggle input { /* Handled by .s1plus-switch */ }
         .s1plus-unblock-btn { padding: 6px 12px; border-radius: 4px; background-color: #f3f4f6; color: #6b7280; font-size: 14px; cursor: pointer; transition: all 0.2s; border: none; flex-shrink: 0; align-self: center; }
         .s1plus-unblock-btn:hover { background-color: #10b981; color: white; }
         .s1plus-sync-title { font-weight: 500; color: #111827; margin-bottom: 8px; }
@@ -137,7 +137,7 @@
         .s1-settings-group-title { font-size: 16px; font-weight: 500; color: #111827; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; margin-bottom: 12px; }
         .s1-settings-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; }
         .s1-settings-label { color: #374151; font-size: 14px; }
-        .s1-settings-checkbox { transform: scale(1.2); }
+        .s1-settings-checkbox { /* Handled by .s1plus-switch */ }
         .s1plus-setting-desc { font-size: 12px; color: #6b7280; margin: -4px 0 12px 0; padding: 0; line-height: 1.5; }
         .s1-editor-item { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; padding: 8px; border-radius: 4px; background: #f9fafb; }
         .s1-editor-item:not(:last-child) { margin-bottom: 8px; }
@@ -167,6 +167,14 @@
         .s1-settings-action-btn { display: inline-block; padding: 10px 20px; border-radius: 6px; font-size: 14px; font-weight: 500; cursor: pointer; transition: background-color 0.2s; border: none; }
         .s1-settings-action-btn.primary { background-color: #3b82f6; color: white; } .s1-settings-action-btn.primary:hover { background-color: #2563eb; }
         .s1-settings-action-btn.secondary { background-color: #e5e7eb; color: #374151; } .s1-settings-action-btn.secondary:hover { background-color: #d1d5db; }
+
+        /* --- Modern Toggle Switch --- */
+        .s1plus-switch { position: relative; display: inline-block; width: 40px; height: 22px; vertical-align: middle; flex-shrink: 0; }
+        .s1plus-switch input { opacity: 0; width: 0; height: 0; }
+        .s1plus-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #d1d5db; transition: .3s; border-radius: 22px; }
+        .s1plus-slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px; background-color: white; transition: .3s; border-radius: 50%; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        input:checked + .s1plus-slider { background-color: #3b82f6; }
+        input:checked + .s1plus-slider:before { transform: translateX(18px); }
 
         /* --- Nav Editor Dragging --- */
         .s1-editor-item.dragging { opacity: 0.5; }
@@ -504,7 +512,7 @@
                 <div class="s1-settings-group" style="margin-bottom: 16px; padding-bottom: 0;">
                     <div class="s1-settings-item">
                         <label class="s1-settings-label" for="s1-blockThreadsOnUserBlock">屏蔽用户时，默认屏蔽其所有主题帖</label>
-                        <input type="checkbox" id="s1-blockThreadsOnUserBlock" class="s1-settings-checkbox" ${settings.blockThreadsOnUserBlock ? 'checked' : ''}>
+                        <label class="s1plus-switch"><input type="checkbox" id="s1-blockThreadsOnUserBlock" class="s1-settings-checkbox" ${settings.blockThreadsOnUserBlock ? 'checked' : ''}><span class="s1plus-slider"></span></label>
                     </div>
                 </div>
                 <p class="s1plus-setting-desc" style="margin-top: -4px; margin-bottom: 16px;">
@@ -514,7 +522,7 @@
                     ? `<div class="s1plus-empty">暂无屏蔽的用户</div>`
                     : `<div class="s1plus-list">${userItemIds.map(id => {
                         const item = blockedUsers[id];
-                        return `<div class="s1plus-item" data-user-id="${id}"><div class="s1plus-item-info"><div class="s1plus-item-title">${item.name || `用户 #${id}`}</div><div class="s1plus-item-meta">屏蔽时间: ${formatDate(item.timestamp)}</div><div class="s1plus-item-toggle"><label><input type="checkbox" class="user-thread-block-toggle" data-user-id="${id}" ${item.blockThreads ? 'checked' : ''}> 屏蔽该用户的主题帖</label></div></div><button class="s1plus-unblock-btn" data-unblock-user-id="${id}">取消屏蔽</button></div>`;
+                        return `<div class="s1plus-item" data-user-id="${id}"><div class="s1plus-item-info"><div class="s1plus-item-title">${item.name || `用户 #${id}`}</div><div class="s1plus-item-meta">屏蔽时间: ${formatDate(item.timestamp)}</div><div class="s1plus-item-toggle"><label class="s1plus-switch"><input type="checkbox" class="user-thread-block-toggle" data-user-id="${id}" ${item.blockThreads ? 'checked' : ''}><span class="s1plus-slider"></span></label><span>屏蔽该用户的主题帖</span></div></div><button class="s1plus-unblock-btn" data-unblock-user-id="${id}">取消屏蔽</button></div>`;
                     }).join('')}</div>`
                 }
             `;
@@ -528,10 +536,11 @@
             tabs.threads.innerHTML = `
                 <div class="s1-settings-group">
                     <div class="s1-settings-group-title">标题关键字屏蔽规则</div>
-                    <p class="s1plus-setting-desc">将自动屏蔽标题匹配已启用规则的帖子，支持正则表达式。规则实时保存生效。</p>
+                    <p class="s1plus-setting-desc">将自动屏蔽标题匹配已启用规则的帖子，支持正则表达式。修改后请点击“保存规则”以生效。</p>
                     <div id="s1-keyword-rules-list" style="display: flex; flex-direction: column; gap: 8px;"></div>
                     <div class="s1-editor-footer" style="justify-content: flex-start; gap: 8px;">
                          <button id="s1-keyword-rule-add-btn" class="s1plus-sync-btn">添加新规则</button>
+                         <button id="s1-keyword-rules-save-btn" class="s1plus-sync-btn">保存规则</button>
                     </div>
                     <div id="s1-keywords-message" class="s1plus-message"></div>
                 </div>
@@ -585,7 +594,7 @@
                 const container = tabs.threads.querySelector('#s1-keyword-rules-list');
                 container.innerHTML = rules.map(rule => `
                     <div class="s1-editor-item" data-rule-id="${rule.id}">
-                        <input type="checkbox" class="s1-settings-checkbox keyword-rule-enable" ${rule.enabled ? 'checked' : ''}>
+                        <label class="s1plus-switch"><input type="checkbox" class="s1-settings-checkbox keyword-rule-enable" ${rule.enabled ? 'checked' : ''}><span class="s1plus-slider"></span></label>
                         <input type="text" class="keyword-rule-pattern" placeholder="输入关键字或正则表达式" value="${rule.pattern || ''}">
                         <div class="s1-editor-item-controls">
                             <button class="s1-editor-btn keyword-rule-delete" title="删除规则"></button>
@@ -596,7 +605,7 @@
                     container.innerHTML = `<div class="s1plus-empty" style="padding: 12px;">暂无规则</div>`;
                 }
             };
-            
+
             renderRules();
             renderDynamicallyHiddenList();
 
@@ -605,8 +614,12 @@
                 tabs.threads.querySelectorAll('#s1-keyword-rules-list .s1-editor-item').forEach(item => {
                     const pattern = item.querySelector('.keyword-rule-pattern').value.trim();
                     if (pattern) {
+                        let id = item.dataset.ruleId;
+                        if (id.startsWith('new_')) {
+                            id = `rule_${Date.now()}_${Math.random()}`;
+                        }
                         newRules.push({
-                            id: item.dataset.ruleId,
+                            id: id,
                             enabled: item.querySelector('.keyword-rule-enable').checked,
                             pattern: pattern
                         });
@@ -615,6 +628,8 @@
                 saveTitleFilterRules(newRules);
                 hideThreadsByTitleKeyword();
                 renderDynamicallyHiddenList();
+                renderRules(); // Re-render to show the saved state and assign permanent IDs.
+                showMessage(tabs.threads.querySelector('#s1-keywords-message'), '规则已保存！', true);
             };
 
             tabs.threads.addEventListener('click', e => {
@@ -640,33 +655,30 @@
                         tabs.threads.querySelector('#s1-manually-blocked-list-container').classList.toggle('expanded', isNowExpanded);
                     }
                 } else if (target.id === 's1-keyword-rule-add-btn') {
-                    const rules = getTitleFilterRules();
-                    rules.push({ id: `rule_${Date.now()}_${Math.random()}`, pattern: '', enabled: false });
-                    saveTitleFilterRules(rules);
-                    renderRules();
-                } else if (target.classList.contains('keyword-rule-delete')) {
-                    const ruleId = target.closest('.s1-editor-item').dataset.ruleId;
-                    let rules = getTitleFilterRules();
-                    rules = rules.filter(r => r.id !== ruleId);
-                    saveTitleFilterRules(rules);
-                    renderRules();
-                    hideThreadsByTitleKeyword();
-                    renderDynamicallyHiddenList();
-                }
-            });
-            
-            let keywordInputDebounceTimer;
-            tabs.threads.addEventListener('input', e => {
-                if (e.target.classList.contains('keyword-rule-pattern')) {
-                    clearTimeout(keywordInputDebounceTimer);
-                    keywordInputDebounceTimer = setTimeout(() => {
-                        saveAndApplyKeywordRules();
-                    }, 400);
-                }
-            });
+                    const container = tabs.threads.querySelector('#s1-keyword-rules-list');
+                    const emptyMsg = container.querySelector('.s1plus-empty');
+                    if (emptyMsg) emptyMsg.remove();
 
-            tabs.threads.addEventListener('change', e => {
-                if (e.target.classList.contains('keyword-rule-enable')) {
+                    const newItem = document.createElement('div');
+                    newItem.className = 's1-editor-item';
+                    newItem.dataset.ruleId = `new_${Date.now()}`;
+                    newItem.innerHTML = `
+                        <label class="s1plus-switch"><input type="checkbox" class="s1-settings-checkbox keyword-rule-enable" checked><span class="s1plus-slider"></span></label>
+                        <input type="text" class="keyword-rule-pattern" placeholder="输入关键字或正则表达式" value="">
+                        <div class="s1-editor-item-controls">
+                            <button class="s1-editor-btn keyword-rule-delete" title="删除规则"></button>
+                        </div>
+                    `;
+                    container.appendChild(newItem);
+                    newItem.querySelector('input[type="text"]').focus();
+                } else if (target.classList.contains('keyword-rule-delete')) {
+                    const item = target.closest('.s1-editor-item');
+                    item.remove();
+                    const container = tabs.threads.querySelector('#s1-keyword-rules-list');
+                    if (container.children.length === 0) {
+                        container.innerHTML = `<div class="s1plus-empty" style="padding: 12px;">暂无规则</div>`;
+                    }
+                } else if (target.id === 's1-keyword-rules-save-btn') {
                     saveAndApplyKeywordRules();
                 }
             });
@@ -677,12 +689,21 @@
             tabs.settings.innerHTML = `
                 <div class="s1-settings-group">
                     <div class="s1-settings-group-title">通用设置</div>
-                    <div class="s1-settings-item"><label class="s1-settings-label" for="s1-changeLogoLink">修改论坛Logo链接 (指向论坛首页)</label><input type="checkbox" id="s1-changeLogoLink" class="s1-settings-checkbox" ${settings.changeLogoLink ? 'checked' : ''}></div>
-                    <div class="s1-settings-item"><label class="s1-settings-label" for="s1-hideBlacklistTip">隐藏已屏蔽用户发言的黄条提示</label><input type="checkbox" id="s1-hideBlacklistTip" class="s1-settings-checkbox" ${settings.hideBlacklistTip ? 'checked' : ''}></div>
+                    <div class="s1-settings-item">
+                        <label class="s1-settings-label" for="s1-changeLogoLink">修改论坛Logo链接 (指向论坛首页)</label>
+                        <label class="s1plus-switch"><input type="checkbox" id="s1-changeLogoLink" class="s1-settings-checkbox" ${settings.changeLogoLink ? 'checked' : ''}><span class="s1plus-slider"></span></label>
+                    </div>
+                    <div class="s1-settings-item">
+                        <label class="s1-settings-label" for="s1-hideBlacklistTip">隐藏已屏蔽用户发言的黄条提示</label>
+                        <label class="s1plus-switch"><input type="checkbox" id="s1-hideBlacklistTip" class="s1-settings-checkbox" ${settings.hideBlacklistTip ? 'checked' : ''}><span class="s1plus-slider"></span></label>
+                    </div>
                 </div>
                 <div class="s1-settings-group">
                     <div class="s1-settings-group-title">导航栏定制</div>
-                    <div class="s1-settings-item"><label class="s1-settings-label" for="s1-enableNavCustomization">启用自定义导航栏</label><input type="checkbox" id="s1-enableNavCustomization" class="s1-settings-checkbox" ${settings.enableNavCustomization ? 'checked' : ''}></div>
+                    <div class="s1-settings-item">
+                        <label class="s1-settings-label" for="s1-enableNavCustomization">启用自定义导航栏</label>
+                        <label class="s1plus-switch"><input type="checkbox" id="s1-enableNavCustomization" class="s1-settings-checkbox" ${settings.enableNavCustomization ? 'checked' : ''}><span class="s1plus-slider"></span></label>
+                    </div>
                     <div class="s1-nav-editor-list" style="margin-top: 12px; display: flex; flex-direction: column; gap: 8px;"></div>
                 </div>
                 <div class="s1-editor-footer" style="border-top: 1px solid #e5e7eb; padding-top: 16px; margin-top: 24px;">
@@ -770,6 +791,7 @@
                     saveSettings(newSettings);
                     applyInterfaceCustomizations();
                     initializeNavbar();
+                    showMessage(modal.querySelector('#s1-settings-message'), '设置已保存！', true);
                 }
             });
         };
