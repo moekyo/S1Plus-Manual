@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      3.2.1
+// @version      3.2.12
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪等多种功能，全方位优化你的论坛体验。
 // @author       moekyo & Elence_ylns1314 (Merged and enhanced by Gemini)
 // @match        https://stage1st.com/2b/*
@@ -14,8 +14,8 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '3.2.1';
-    const SCRIPT_RELEASE_DATE = '2025-07-29';
+    const SCRIPT_VERSION = '3.2.12';
+    const SCRIPT_RELEASE_DATE = '2025-08-02';
 
     // --- 样式注入 ---
     GM_addStyle(`
@@ -60,6 +60,137 @@
         .pls:hover .s1plus-avatar-overlay-container { opacity: 1; visibility: visible; }
         .s1plus-avatar-overlay-container .s1plus-btn { color: white; background-color: rgba(0, 0, 0, 0.4); border: 1px solid rgba(255, 255, 255, 0.5); transform: scale(1); transition: all 0.2s ease-in-out; padding: 4px 8px; }
         .s1plus-avatar-overlay-container .s1plus-btn:hover { background-color: #ef4444; border-color: #ef4444; transform: scale(1.05); }
+
+        /* --- [MODIFIED] 用户标记悬浮窗 (Style Revamp per Image 2) --- */
+        .s1plus-tag-popover {
+            position: absolute;
+            z-index: 10001;
+            width: 300px;
+            background-color: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+            border: 1px solid #f0f0f0;
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(5px) scale(0.98);
+            transition: opacity 0.2s ease-out, transform 0.2s ease-out, visibility 0.2s;
+            pointer-events: none;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        }
+        .s1plus-tag-popover.visible {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0) scale(1);
+            pointer-events: auto;
+        }
+        .s1plus-popover-content {
+            padding: 16px;
+        }
+        .s1plus-popover-main-content {
+            font-size: 14px;
+            line-height: 1.6;
+            color: #1a1a1a;
+            padding: 4px 4px 20px 4px;
+            min-height: 30px;
+            word-wrap: break-word;
+            white-space: pre-wrap;
+        }
+        .s1plus-popover-main-content.empty {
+            text-align: center;
+            color: #888;
+        }
+        .s1plus-popover-hr {
+            border: none;
+            border-top: 1px solid #f0f0f0;
+            margin: 0;
+        }
+        .s1plus-popover-footer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding-top: 16px;
+        }
+        .s1plus-popover-user-container {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-width: 0;
+        }
+        .s1plus-popover-avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            object-fit: cover;
+            flex-shrink: 0;
+            background-color: #f0f0f0;
+        }
+        .s1plus-popover-user-info {
+            flex-grow: 1;
+            min-width: 0;
+        }
+        .s1plus-popover-username {
+            font-weight: 500;
+            color: #111;
+            font-size: 14px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .s1plus-popover-user-id {
+            font-size: 12px;
+            color: #888;
+            white-space: nowrap;
+        }
+        .s1plus-popover-actions {
+            display: flex;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+        .s1plus-popover-btn {
+            padding: 6px 12px;
+            font-size: 13px;
+            font-weight: 500;
+            border-radius: 6px;
+            cursor: pointer;
+            border: none;
+            transition: background-color 0.2s ease, color 0.2s ease;
+            background-color: #f1f2f3;
+            color: #333;
+            white-space: nowrap;
+        }
+        /* [FIX] Blue hover for most buttons */
+        .s1plus-popover-btn:hover {
+            background-color: #3b82f6;
+            color: white;
+        }
+        /* [FIX] Red hover specifically for the delete button */
+        .s1plus-popover-btn[data-action="delete-tag"]:hover {
+            background-color: #ef4444;
+            color: white;
+        }
+        .s1plus-edit-mode-header {
+            font-weight: 600;
+            color: #111;
+            font-size: 15px;
+            margin-bottom: 12px;
+        }
+        .s1plus-edit-mode-textarea {
+            width: 100%;
+            height: 90px;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            padding: 10px;
+            font-size: 14px;
+            resize: vertical;
+            box-sizing: border-box;
+            margin-bottom: 12px;
+        }
+        .s1plus-edit-mode-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+        }
 
         /* --- 设置面板样式 --- */
         .s1plus-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.5); display: flex; justify-content: center; align-items: center; z-index: 9999; }
@@ -123,7 +254,7 @@
         .s1-settings-group-title.s1plus-collapsible-header { margin-bottom: 0; }
         .s1plus-collapsible-header:hover { color: #3b82f6; }
         .s1plus-collapsible-header:hover .s1plus-expander-arrow { color: #3b82f6; }
-        .s1plus-expander-arrow { 
+        .s1plus-expander-arrow {
             display: inline-block; width: 12px; height: 12px; color: #6b7280;
             background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 16'%3E%3Cpath d='M2 2L8 8L2 14' stroke='currentColor' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E");
             background-repeat: no-repeat; background-position: center; background-size: contain; transition: transform 0.3s ease-in-out, color 0.2s ease;
@@ -178,6 +309,18 @@
 
         /* --- Nav Editor Dragging --- */
         .s1-editor-item.dragging { opacity: 0.5; }
+
+        /* --- [NEW] 用户标记设置面板专属样式 --- */
+        .s1plus-item-meta-id { font-family: monospace; background-color: #e5e7eb; padding: 1px 5px; border-radius: 4px; font-size: 11px; color: #4b5563; }
+        .s1plus-item-content { margin-top: 8px; color: #374151; line-height: 1.6; white-space: pre-wrap; word-break: break-all; }
+        .s1plus-item-editor textarea { width: 100%; min-height: 60px; border: 1px solid #d1d5db; border-radius: 4px; padding: 6px 8px; font-size: 14px; resize: vertical; box-sizing: border-box; margin-top: 8px; }
+        .s1plus-item-actions { display: flex; align-self: flex-start; flex-shrink: 0; gap: 8px; margin-left: 16px; }
+        .s1plus-item-actions .s1plus-btn { padding: 6px 12px; font-size: 14px; background-color: #f3f4f6; color: #6b7280; cursor: pointer; border: none; }
+        .s1plus-item-actions .s1plus-btn:hover { background-color: #e5e7eb; color: #1f2937; }
+        .s1plus-item-actions .s1plus-btn[data-action="edit-tag-item"]:hover { background-color: #2563eb; color: white; }
+        .s1plus-item-actions .s1plus-btn.primary { background-color: #3b82f6; color: white; }
+        .s1plus-item-actions .s1plus-btn.primary:hover { background-color: #2563eb; }
+        .s1plus-item-actions .s1plus-btn.danger:hover { background-color: #ef4444; color: white; }
     `);
 
     let dynamicallyHiddenThreads = {};
@@ -187,6 +330,36 @@
     const saveBlockedThreads = (threads) => GM_setValue('s1plus_blocked_threads', threads);
     const getBlockedUsers = () => GM_getValue('s1plus_blocked_users', {});
     const saveBlockedUsers = (users) => GM_setValue('s1plus_blocked_users', users);
+    const saveUserTags = (tags) => GM_setValue('s1plus_user_tags', tags);
+
+    // [MODIFIED] 升级并获取用户标记，自动迁移旧数据
+    const getUserTags = () => {
+        const tags = GM_getValue('s1plus_user_tags', {});
+        let needsMigration = false;
+        const migratedTags = { ...tags };
+
+        Object.keys(migratedTags).forEach(id => {
+            if (typeof migratedTags[id] === 'string' || !migratedTags[id].timestamp) {
+                needsMigration = true;
+                const oldTag = typeof migratedTags[id] === 'string' ? migratedTags[id] : migratedTags[id].tag;
+                const oldName = (migratedTags[id] && migratedTags[id].name) ? migratedTags[id].name : `用户 #${id}`;
+                migratedTags[id] = {
+                    name: oldName,
+                    tag: oldTag,
+                    timestamp: (migratedTags[id] && migratedTags[id].timestamp) || Date.now()
+                };
+            }
+        });
+
+        if (needsMigration) {
+            console.log('S1 Plus: 正在将用户标记迁移到新版数据结构...');
+            saveUserTags(migratedTags);
+            return migratedTags;
+        }
+
+        return tags;
+    };
+
 
     const getTitleFilterRules = () => {
         const rules = GM_getValue('s1plus_title_filter_rules', null);
@@ -323,6 +496,7 @@
         settings: getSettings(),
         threads: getBlockedThreads(),
         users: getBlockedUsers(),
+        user_tags: getUserTags(),
         title_filter_rules: getTitleFilterRules(),
         read_progress: getReadProgress()
     }, null, 2);
@@ -330,7 +504,7 @@
     const importData = (jsonStr) => {
         try {
             const imported = JSON.parse(jsonStr); if (typeof imported !== 'object' || imported === null) throw new Error("无效数据格式");
-            let threadsImported = 0, usersImported = 0, progressImported = 0, rulesImported = 0;
+            let threadsImported = 0, usersImported = 0, progressImported = 0, rulesImported = 0, tagsImported = 0;
 
             const upgradeAndMerge = (type, importedData, getter, saver) => {
                 if (!importedData || typeof importedData !== 'object') return 0;
@@ -350,6 +524,12 @@
 
             threadsImported = upgradeAndMerge('threads', imported.threads, getBlockedThreads, saveBlockedThreads);
             usersImported = upgradeAndMerge('users', imported.users, getBlockedUsers, saveBlockedUsers);
+
+            if (imported.user_tags && typeof imported.user_tags === 'object') {
+                const mergedTags = { ...getUserTags(), ...imported.user_tags };
+                saveUserTags(mergedTags);
+                tagsImported = Object.keys(imported.user_tags).length;
+            }
 
             if (imported.title_filter_rules && Array.isArray(imported.title_filter_rules)) {
                 saveTitleFilterRules(imported.title_filter_rules);
@@ -374,7 +554,7 @@
             initializeNavbar();
             applyInterfaceCustomizations();
 
-            return { success: true, message: `成功导入 ${threadsImported} 条帖子、${usersImported} 条用户、${rulesImported} 条标题规则、${progressImported} 条阅读进度及相关设置。` };
+            return { success: true, message: `成功导入 ${threadsImported} 条帖子、${usersImported} 条用户、${tagsImported} 条标记、${rulesImported} 条标题规则、${progressImported} 条阅读进度及相关设置。` };
         } catch (e) { return { success: false, message: `导入失败: ${e.message}` }; }
     };
 
@@ -470,11 +650,13 @@
                 <div class="s1plus-tabs">
                     <button class="s1plus-tab-btn active" data-tab="threads">帖子屏蔽</button>
                     <button class="s1plus-tab-btn" data-tab="users">用户屏蔽</button>
+                    <button class="s1plus-tab-btn" data-tab="tags">用户标记</button>
                     <button class="s1plus-tab-btn" data-tab="settings">界面定制</button>
                     <button class="s1plus-tab-btn" data-tab="sync">设置同步</button>
                 </div>
                 <div id="s1-tab-threads" class="s1plus-tab-content active"></div>
                 <div id="s1-tab-users" class="s1plus-tab-content"></div>
+                <div id="s1-tab-tags" class="s1plus-tab-content"></div>
                 <div id="s1-tab-settings" class="s1plus-tab-content"></div>
                 <div id="s1-tab-sync" class="s1plus-tab-content">
                     <div class="s1plus-sync-title">全量设置同步</div>
@@ -500,8 +682,84 @@
         const tabs = {
             threads: modal.querySelector('#s1-tab-threads'),
             users: modal.querySelector('#s1-tab-users'),
+            tags: modal.querySelector('#s1-tab-tags'),
             settings: modal.querySelector('#s1-tab-settings'),
             sync: modal.querySelector('#s1-tab-sync'),
+        };
+
+        // [REFACTORED] 全新用户标记标签页渲染逻辑
+        const renderTagsTab = (options = {}) => {
+            const editingUserId = options.editingUserId;
+            const userTags = getUserTags();
+            const tagItems = Object.entries(userTags).sort(([, a], [, b]) => (b.timestamp || 0) - (a.timestamp || 0));
+
+            tabs.tags.innerHTML = `
+                <div class="s1-settings-group">
+                    <div class="s1plus-sync-title">用户标记管理</div>
+                    <p class="s1plus-setting-desc" style="margin-top: 0; margin-bottom: 16px;">
+                        在此集中管理、编辑、导出或导入您为所有用户添加的标记。
+                    </p>
+                    <div class="s1plus-sync-buttons">
+                        <button id="s1-export-tags-btn" class="s1plus-sync-btn">导出全部标记</button>
+                        <button id="s1-import-tags-btn" class="s1plus-sync-btn">导入标记</button>
+                    </div>
+                    <textarea id="s1-tags-sync-textarea" class="s1plus-sync-textarea" placeholder="在此粘贴导入数据或从此处复制导出数据..."></textarea>
+                    <div id="s1-tags-sync-message" class="s1plus-message"></div>
+                </div>
+
+                <div class="s1-settings-group">
+                    <div class="s1-settings-group-title">已标记用户列表</div>
+                    ${tagItems.length === 0
+                    ? `<div class="s1plus-empty">暂无用户标记</div>`
+                    : `<div class="s1plus-list">${tagItems.map(([id, data]) => {
+                        if (id === editingUserId) {
+                            // --- 编辑模式 ---
+                            return `
+                            <div class="s1plus-item" data-user-id="${id}">
+                                <div class="s1plus-item-info">
+                                    <div class="s1plus-item-title">${data.name}</div>
+                                    <div class="s1plus-item-meta">
+                                        ID: <span class="s1plus-item-meta-id">${id}</span>
+                                    </div>
+                                    <div class="s1plus-item-editor">
+                                        <textarea class="s1plus-tag-edit-area">${data.tag}</textarea>
+                                    </div>
+                                </div>
+                                <div class="s1plus-item-actions">
+                                    <button class="s1plus-btn primary" data-action="save-tag-edit" data-user-id="${id}" data-user-name="${data.name}">保存</button>
+                                    <button class="s1plus-btn" data-action="cancel-tag-edit">取消</button>
+                                </div>
+                            </div>`;
+                        } else {
+                            // --- 正常显示模式 ---
+                            return `
+                            <div class="s1plus-item" data-user-id="${id}">
+                                <div class="s1plus-item-info">
+                                    <div class="s1plus-item-title">${data.name}</div>
+                                    <div class="s1plus-item-meta">
+                                        ID: <span class="s1plus-item-meta-id">${id}</span> &nbsp;
+                                        标记于: ${formatDate(data.timestamp)}
+                                    </div>
+                                    <div class="s1plus-item-content">${data.tag}</div>
+                                </div>
+                                <div class="s1plus-item-actions">
+                                    <button class="s1plus-btn" data-action="edit-tag-item" data-user-id="${id}">编辑</button>
+                                    <button class="s1plus-btn danger" data-action="delete-tag-item" data-user-id="${id}" data-user-name="${data.name}">删除</button>
+                                </div>
+                            </div>`;
+                        }
+                    }).join('')}</div>`
+                }
+                </div>
+            `;
+
+            if (editingUserId) {
+                const textarea = tabs.tags.querySelector('.s1plus-tag-edit-area');
+                if (textarea) {
+                    textarea.focus();
+                    textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
+                }
+            }
         };
 
         const renderUserTab = () => {
@@ -799,6 +1057,7 @@
         // --- 初始化渲染和事件绑定 ---
         renderThreadTab();
         renderUserTab();
+        renderTagsTab();
         renderSettingsTab();
 
         modal.addEventListener('change', e => {
@@ -823,6 +1082,7 @@
         });
 
         modal.addEventListener('click', (e) => {
+            const target = e.target;
             if (e.target.matches('.s1plus-modal, .s1plus-modal-close')) modal.remove();
             if (e.target.matches('.s1plus-tab-btn')) {
                 modal.querySelectorAll('.s1plus-tab-btn, .s1plus-tab-content').forEach(el => el.classList.remove('active'));
@@ -833,6 +1093,7 @@
             const unblockThreadId = e.target.dataset.unblockThreadId; if (unblockThreadId) { unblockThread(unblockThreadId); renderThreadTab(); }
             const unblockUserId = e.target.dataset.unblockUserId; if (unblockUserId) { unblockUser(unblockUserId); renderUserTab(); renderThreadTab(); }
 
+            // --- 全局同步事件 ---
             const syncTextarea = modal.querySelector('#s1-sync-textarea');
             const syncMessageEl = modal.querySelector('#s1-sync-message');
             if(e.target.id === 's1-export-btn') {
@@ -850,6 +1111,7 @@
                     renderThreadTab();
                     renderUserTab();
                     renderSettingsTab();
+                    renderTagsTab();
                 }
             }
             if(e.target.id === 's1-reset-btn') {
@@ -859,28 +1121,89 @@
                     () => {
                         saveBlockedThreads({});
                         saveBlockedUsers({});
+                        saveUserTags({});
                         saveReadProgress({});
                         saveTitleFilterRules([]);
                         saveSettings(defaultSettings);
-
-                        // 清理旧的关键字数据（以防万一）
                         GM_setValue('s1plus_title_keywords', null);
 
-                        hideBlockedThreads();
-                        hideBlockedUsersPosts();
-                        applyUserThreadBlocklist();
-                        hideThreadsByTitleKeyword();
-                        initializeNavbar();
-                        applyInterfaceCustomizations();
-
-                        renderThreadTab();
-                        renderUserTab();
-                        renderSettingsTab();
+                        hideBlockedThreads(); hideBlockedUsersPosts(); applyUserThreadBlocklist(); hideThreadsByTitleKeyword(); initializeNavbar(); applyInterfaceCustomizations();
+                        renderThreadTab(); renderUserTab(); renderSettingsTab(); renderTagsTab();
 
                         showMessage(syncMessageEl, '所有本地数据已成功清除。', true);
                     },
                     '确认清除'
                 );
+            }
+
+            // --- [NEW] 用户标记标签页专属事件 ---
+            const targetTab = target.closest('#s1-tab-tags');
+            if (targetTab) {
+                const action = target.dataset.action;
+                const userId = target.dataset.userId;
+
+                if (action === 'edit-tag-item') renderTagsTab({ editingUserId: userId });
+                if (action === 'cancel-tag-edit') renderTagsTab();
+
+                if (action === 'delete-tag-item') {
+                    const userName = target.dataset.userName;
+                    createConfirmationModal(`确认删除对 "${userName}" 的标记吗?`, '此操作不可撤销。', () => {
+                        const tags = getUserTags();
+                        delete tags[userId];
+                        saveUserTags(tags);
+                        renderTagsTab();
+                        showMessage(targetTab.querySelector('#s1-tags-sync-message'), `已删除对 ${userName} 的标记。`, true);
+                    }, '确认删除');
+                }
+                else if (action === 'save-tag-edit') {
+                    const userName = target.dataset.userName;
+                    const newTag = targetTab.querySelector(`.s1plus-item[data-user-id="${userId}"] .s1plus-tag-edit-area`).value.trim();
+                    const tags = getUserTags();
+                    if (newTag) {
+                        tags[userId] = { ...tags[userId], tag: newTag, timestamp: Date.now(), name: userName };
+                        saveUserTags(tags);
+                        renderTagsTab();
+                        showMessage(targetTab.querySelector('#s1-tags-sync-message'), `已更新对 ${userName} 的标记。`, true);
+                    } else {
+                        createConfirmationModal(`标记内容为空`, '您希望删除对该用户的标记吗？', () => {
+                             delete tags[userId];
+                             saveUserTags(tags);
+                             renderTagsTab();
+                             showMessage(targetTab.querySelector('#s1-tags-sync-message'), `已删除对 ${userName} 的标记。`, true);
+                        }, '确认删除');
+                    }
+                }
+                else if (target.id === 's1-export-tags-btn') {
+                    const textarea = targetTab.querySelector('#s1-tags-sync-textarea');
+                    const messageEl = targetTab.querySelector('#s1-tags-sync-message');
+                    textarea.value = JSON.stringify(getUserTags(), null, 2);
+                    textarea.select();
+                    try { document.execCommand('copy'); showMessage(messageEl, '用户标记已导出并复制到剪贴板。', true); }
+                    catch (err) { showMessage(messageEl, '复制失败，请手动复制。', false); }
+                }
+                else if (target.id === 's1-import-tags-btn') {
+                    const textarea = targetTab.querySelector('#s1-tags-sync-textarea');
+                    const messageEl = targetTab.querySelector('#s1-tags-sync-message');
+                    const jsonStr = textarea.value.trim();
+                    if (!jsonStr) return showMessage(messageEl, '请先粘贴要导入的数据。', false);
+
+                    try {
+                        const imported = JSON.parse(jsonStr);
+                        if (typeof imported !== 'object' || imported === null || Array.isArray(imported)) throw new Error("无效数据格式，应为一个对象。");
+                        for (const key in imported) {
+                            const item = imported[key];
+                            if (typeof item !== 'object' || item === null || typeof item.tag === 'undefined' || typeof item.name === 'undefined') throw new Error(`用户 #${key} 的数据格式不正确。`);
+                        }
+                        createConfirmationModal('确认导入用户标记吗？', '导入的数据将覆盖现有相同用户的标记。', () => {
+                            const currentTags = getUserTags();
+                            const mergedTags = { ...currentTags, ...imported };
+                            saveUserTags(mergedTags);
+                            renderTagsTab();
+                            showMessage(messageEl, `成功导入/更新 ${Object.keys(imported).length} 条用户标记。`, true);
+                            textarea.value = '';
+                        }, '确认导入');
+                    } catch (e) { showMessage(messageEl, `导入失败: ${e.message}`, false); }
+                }
             }
         });
     };
@@ -939,6 +1262,242 @@
             }
         });
     };
+
+    // [MODIFIED] 全新悬浮窗逻辑
+    const initializeTaggingPopover = () => {
+        let popover = document.getElementById('s1plus-tag-popover-main');
+        if (!popover) {
+            popover = document.createElement('div');
+            popover.id = 's1plus-tag-popover-main';
+            popover.className = 's1plus-tag-popover';
+            document.body.appendChild(popover);
+        }
+
+        let hideTimeout, showTimeout;
+        let isComposing = false; // Flag to track IME composition state
+        let currentAnchorElement = null; // To store the element the popover is anchored to
+
+        const startHideTimer = () => {
+            if (isComposing) return; // Don't hide popover during IME composition
+            clearTimeout(showTimeout);
+            clearTimeout(hideTimeout);
+            hideTimeout = setTimeout(() => {
+                popover.classList.remove('visible');
+                delete popover.dataset.currentUserId;
+                delete popover.dataset.currentUserAvatar;
+                currentAnchorElement = null;
+            }, 300);
+        };
+
+        const cancelHideTimer = () => {
+            clearTimeout(hideTimeout);
+        };
+
+        const updatePopoverWidth = (popoverElement) => {
+            popoverElement.style.visibility = 'hidden';
+            popoverElement.style.display = 'block';
+            popoverElement.style.left = '-9999px';
+            popoverElement.style.width = 'auto';
+
+            const footer = popoverElement.querySelector('.s1plus-popover-footer');
+            const actionsContainer = popoverElement.querySelector('.s1plus-popover-actions');
+            const popoverContent = popoverElement.querySelector('.s1plus-popover-content');
+            const avatar = popoverElement.querySelector('.s1plus-popover-avatar');
+            const userContainer = popoverElement.querySelector('.s1plus-popover-user-container');
+            const usernameDiv = popoverElement.querySelector('.s1plus-popover-username');
+            const uidDiv = popoverElement.querySelector('.s1plus-popover-user-id');
+
+            if (footer && actionsContainer && popoverContent && avatar && userContainer && usernameDiv && uidDiv) {
+                const maxTextWidth = Math.max(usernameDiv.offsetWidth, uidDiv.offsetWidth);
+                const userContainerGap = parseFloat(window.getComputedStyle(userContainer).gap);
+                const requiredUserContainerWidth = avatar.offsetWidth + userContainerGap + maxTextWidth;
+                const contentStyle = window.getComputedStyle(popoverContent);
+                const paddingX = parseFloat(contentStyle.paddingLeft) + parseFloat(contentStyle.paddingRight);
+                const footerGap = parseFloat(window.getComputedStyle(footer).gap);
+                const requiredFooterWidth = requiredUserContainerWidth + actionsContainer.offsetWidth + footerGap;
+                const requiredPopoverWidth = requiredFooterWidth + paddingX;
+                const mainContentWidth = popoverElement.querySelector('.s1plus-popover-main-content').offsetWidth + paddingX;
+                const defaultWidth = 300;
+                const finalWidth = Math.ceil(Math.max(defaultWidth, requiredPopoverWidth, mainContentWidth));
+                popoverElement.style.width = `${finalWidth}px`;
+            }
+
+            popoverElement.style.visibility = '';
+            popoverElement.style.display = '';
+            popoverElement.style.left = '';
+        };
+
+        const repositionPopover = (popoverElement, anchorElement) => {
+            if (!anchorElement) return;
+            const rect = anchorElement.getBoundingClientRect();
+            popoverElement.style.top = `${rect.top + window.scrollY}px`;
+            popoverElement.style.left = `${rect.right + window.scrollX + 10}px`;
+        };
+
+        const renderPopoverContent = (userName, userId, tagData = null, avatarUrl) => {
+            const tag = tagData ? tagData.tag : '';
+            const hasTag = tag.trim() !== '';
+            const svgIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="#f0f0f0"/><text x="50%" y="50%" dominant-baseline="central" text-anchor="middle" font-family="sans-serif" font-size="40" fill="#999">S1</text></svg>`;
+            const fallbackAvatar = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgIcon)}`;
+
+
+            const mainContentHTML = hasTag
+                ? `<div class="s1plus-popover-main-content">${tag}</div>`
+                : `<div class="s1plus-popover-main-content empty">目前暂无标记</div>`;
+
+            const actionsHTML = hasTag
+                ? `
+                <button class="s1plus-popover-btn" data-action="edit-tag" data-user-id="${userId}" data-user-name="${userName}">编辑标记</button>
+                <button class="s1plus-popover-btn" data-action="delete-tag" data-user-id="${userId}" data-user-name="${userName}">删除标记</button>
+                `
+                : `
+                <button class="s1plus-popover-btn" data-action="add-tag" data-user-id="${userId}" data-user-name="${userName}">添加标记</button>
+                `;
+
+            popover.innerHTML = `
+                <div class="s1plus-popover-content">
+                    ${mainContentHTML}
+                    <hr class="s1plus-popover-hr" />
+                    <div class="s1plus-popover-footer">
+                        <div class="s1plus-popover-user-container">
+                            <img class="s1plus-popover-avatar" src="${avatarUrl || fallbackAvatar}" onerror="this.onerror=null;this.src='${fallbackAvatar}'">
+                            <div class="s1plus-popover-user-info">
+                                <div class="s1plus-popover-username">${userName}</div>
+                                <div class="s1plus-popover-user-id">UID: ${userId}</div>
+                            </div>
+                        </div>
+                        <div class="s1plus-popover-actions">${actionsHTML}</div>
+                    </div>
+                </div>
+            `;
+        };
+
+        const renderEditMode = (userName, userId, currentTag = '') => {
+            popover.innerHTML = `
+                 <div class="s1plus-popover-content">
+                    <div class="s1plus-edit-mode-header">为 ${userName} ${currentTag ? '编辑' : '添加'}标记</div>
+                    <textarea class="s1plus-edit-mode-textarea" id="s1plus-tag-textarea" placeholder="输入标记内容...">${currentTag}</textarea>
+                    <div class="s1plus-edit-mode-actions">
+                        <button class="s1plus-popover-btn" data-action="cancel-edit" data-user-id="${userId}" data-user-name="${userName}">取消</button>
+                        <button class="s1plus-popover-btn" data-action="save-tag" data-user-id="${userId}" data-user-name="${userName}">保存</button>
+                    </div>
+                </div>
+            `;
+            const textarea = popover.querySelector('#s1plus-tag-textarea');
+            textarea.focus();
+
+            textarea.addEventListener('compositionstart', () => { isComposing = true; });
+            textarea.addEventListener('compositionend', () => { isComposing = false; });
+        };
+
+        popover.addEventListener('click', (event) => {
+            const target = event.target.closest('.s1plus-popover-btn');
+            if (!target) return;
+
+            isComposing = false;
+
+            const { action, userId, userName } = target.dataset;
+            const userTags = getUserTags();
+            const avatarUrl = popover.dataset.currentUserAvatar;
+
+            if (action === 'add-tag' || action === 'edit-tag') {
+                renderEditMode(userName, userId, userTags[userId] ? userTags[userId].tag : '');
+            } else if (action === 'cancel-edit') {
+                renderPopoverContent(userName, userId, userTags[userId] || null, avatarUrl);
+                updatePopoverWidth(popover);
+                repositionPopover(popover, currentAnchorElement);
+            } else if (action === 'save-tag') {
+                const textarea = popover.querySelector('#s1plus-tag-textarea');
+                const newTag = textarea.value.trim();
+                if (newTag) {
+                    userTags[userId] = { name: userName, tag: newTag, timestamp: Date.now() };
+                } else {
+                    delete userTags[userId];
+                }
+                saveUserTags(userTags);
+                renderPopoverContent(userName, userId, userTags[userId] || null, avatarUrl);
+                updatePopoverWidth(popover);
+                repositionPopover(popover, currentAnchorElement);
+            } else if (action === 'delete-tag') {
+                createConfirmationModal(
+                    `确认要删除对 "${userName}" 的标记吗？`,
+                    '此操作不可撤销。',
+                    () => {
+                        delete userTags[userId];
+                        saveUserTags(userTags);
+                        renderPopoverContent(userName, userId, null, avatarUrl);
+                        updatePopoverWidth(popover);
+                        repositionPopover(popover, currentAnchorElement);
+                    },
+                    '确认删除'
+                );
+            }
+        });
+
+        popover.addEventListener('mouseenter', cancelHideTimer);
+        popover.addEventListener('mouseleave', startHideTimer);
+
+        const attachPopoverEvents = (cell) => {
+            cell.addEventListener('mouseenter', () => {
+                cancelHideTimer();
+                clearTimeout(showTimeout);
+
+                showTimeout = setTimeout(() => {
+                    const authorLink = cell.querySelector('.authi > a[href*="space-uid-"]');
+                    const avatarImg = cell.querySelector('.avatar img');
+                    if (!authorLink || !avatarImg) return;
+                    const avatarUrl = avatarImg.src;
+
+                    const uidMatch = authorLink.href.match(/space-uid-(\d+)/);
+                    if (!uidMatch) return;
+                    const userId = uidMatch[1];
+
+                    if (popover.classList.contains('visible') && popover.dataset.currentUserId === userId) {
+                        return;
+                    }
+
+                    const userName = authorLink.textContent.trim();
+                    const userTags = getUserTags();
+                    popover.dataset.currentUserId = userId;
+                    popover.dataset.currentUserAvatar = avatarUrl;
+                    currentAnchorElement = avatarImg;
+
+                    renderPopoverContent(userName, userId, userTags[userId] || null, avatarUrl);
+                    updatePopoverWidth(popover);
+                    repositionPopover(popover, currentAnchorElement);
+                    popover.classList.add('visible');
+                }, 150);
+            });
+
+            cell.addEventListener('mouseleave', startHideTimer);
+        };
+
+        const observer = new MutationObserver((mutations) => {
+            mutations.forEach(mutation => {
+                mutation.addedNodes.forEach(node => {
+                    if (node.nodeType === 1) {
+                        const cells = node.matches('.pls') ? [node] : node.querySelectorAll('.pls');
+                        cells.forEach(cell => {
+                            if (!cell.dataset.s1plusPopover) {
+                                cell.dataset.s1plusPopover = 'true';
+                                attachPopoverEvents(cell);
+                            }
+                        });
+                    }
+                });
+            });
+        });
+
+        const mainContent = document.getElementById('ct') || document.body;
+        mainContent.querySelectorAll('.pls').forEach(cell => {
+            if (!cell.dataset.s1plusPopover) {
+                cell.dataset.s1plusPopover = 'true';
+                attachPopoverEvents(cell);
+            }
+        });
+        observer.observe(mainContent, { childList: true, subtree: true });
+    };
+
 
     const addProgressJumpButtons = () => {
         const progressData = getReadProgress();
@@ -1036,13 +1595,14 @@
         autoCheckIn();
         applyInterfaceCustomizations();
         initializeNavbar();
+        initializeTaggingPopover();
 
         const runTasks = () => {
             if (window.location.href.includes('thread-') || window.location.href.includes('mod=viewthread')) {
                 hideBlockedUsersPosts();
                 addBlockButtonsToUsers();
                 initReadProgressTracker();
-                hideBlockedUserRatings(); // [ADDED]
+                hideBlockedUserRatings();
             } else if (window.location.href.includes('forum-')) {
                 hideBlockedThreads();
                 applyUserThreadBlocklist();
