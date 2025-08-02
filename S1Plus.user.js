@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      3.2.2
+// @version      3.2.12
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪等多种功能，全方位优化你的论坛体验。
 // @author       moekyo & Elence_ylns1314 (Merged and enhanced by Gemini)
 // @match        https://stage1st.com/2b/*
@@ -14,8 +14,8 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '3.2.2';
-    const SCRIPT_RELEASE_DATE = '2025-08-01';
+    const SCRIPT_VERSION = '3.2.12';
+    const SCRIPT_RELEASE_DATE = '2025-08-02';
 
     // --- 样式注入 ---
     GM_addStyle(`
@@ -61,21 +61,21 @@
         .s1plus-avatar-overlay-container .s1plus-btn { color: white; background-color: rgba(0, 0, 0, 0.4); border: 1px solid rgba(255, 255, 255, 0.5); transform: scale(1); transition: all 0.2s ease-in-out; padding: 4px 8px; }
         .s1plus-avatar-overlay-container .s1plus-btn:hover { background-color: #ef4444; border-color: #ef4444; transform: scale(1.05); }
 
-        /* --- 用户标记悬浮窗 (v3) --- */
+        /* --- [MODIFIED] 用户标记悬浮窗 (Style Revamp per Image 2) --- */
         .s1plus-tag-popover {
             position: absolute;
             z-index: 10001;
-            width: 250px;
+            width: 300px;
             background-color: white;
-            border-radius: 8px;
-            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.12);
-            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+            border: 1px solid #f0f0f0;
             opacity: 0;
             visibility: hidden;
-            transform: translateY(4px) scale(0.98);
-            transition: opacity 0.15s ease-out, transform 0.15s ease-out, visibility 0.15s;
+            transform: translateY(5px) scale(0.98);
+            transition: opacity 0.2s ease-out, transform 0.2s ease-out, visibility 0.2s;
             pointer-events: none;
-            font-size: 14px;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
         }
         .s1plus-tag-popover.visible {
             opacity: 1;
@@ -84,58 +84,112 @@
             pointer-events: auto;
         }
         .s1plus-popover-content {
-            padding: 12px;
+            padding: 16px;
         }
-        .s1plus-popover-username {
-            font-weight: 600;
-            color: #111827;
-            margin-bottom: 10px;
-            font-size: 15px;
+        .s1plus-popover-main-content {
+            font-size: 14px;
+            line-height: 1.6;
+            color: #1a1a1a;
+            padding: 4px 4px 20px 4px;
+            min-height: 30px;
+            word-wrap: break-word;
+            white-space: pre-wrap;
         }
-        .s1plus-popover-tag-area {
-            background-color: #f9fafb;
-            padding: 10px;
-            border-radius: 5px;
-            color: #374151;
-            margin-bottom: 12px;
-            min-height: 45px;
+        .s1plus-popover-main-content.empty {
+            text-align: center;
+            color: #888;
+        }
+        .s1plus-popover-hr {
+            border: none;
+            border-top: 1px solid #f0f0f0;
+            margin: 0;
+        }
+        .s1plus-popover-footer {
             display: flex;
             align-items: center;
-            justify-content: center;
-            border: 1px solid #f3f4f6;
+            justify-content: space-between;
+            gap: 12px;
+            padding-top: 16px;
         }
-        .s1plus-popover-tag-area.empty {
-            color: #9ca3af;
-            font-style: italic;
+        .s1plus-popover-user-container {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-width: 0;
         }
-        .s1plus-popover-tag-area textarea {
-            width: 100%;
-            height: 60px;
-            border: 1px solid #d1d5db;
-            border-radius: 4px;
-            padding: 6px 8px;
+        .s1plus-popover-avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            object-fit: cover;
+            flex-shrink: 0;
+            background-color: #f0f0f0;
+        }
+        .s1plus-popover-user-info {
+            flex-grow: 1;
+            min-width: 0;
+        }
+        .s1plus-popover-username {
+            font-weight: 500;
+            color: #111;
             font-size: 14px;
-            resize: vertical;
-            box-sizing: border-box;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .s1plus-popover-user-id {
+            font-size: 12px;
+            color: #888;
+            white-space: nowrap;
         }
         .s1plus-popover-actions {
             display: flex;
-            justify-content: flex-end;
             gap: 8px;
+            flex-shrink: 0;
         }
-        .s1plus-popover-actions .s1plus-btn {
-            padding: 7px 14px;
+        .s1plus-popover-btn {
+            padding: 6px 12px;
             font-size: 13px;
             font-weight: 500;
             border-radius: 6px;
-            gap: 4px;
+            cursor: pointer;
+            border: none;
+            transition: background-color 0.2s ease, color 0.2s ease;
+            background-color: #f1f2f3;
+            color: #333;
+            white-space: nowrap;
         }
-        .s1plus-btn.s1plus-btn-primary {
+        /* [FIX] Blue hover for most buttons */
+        .s1plus-popover-btn:hover {
             background-color: #3b82f6;
             color: white;
         }
-        .s1plus-btn.s1plus-btn-primary:hover {
-            background-color: #2563eb;
+        /* [FIX] Red hover specifically for the delete button */
+        .s1plus-popover-btn[data-action="delete-tag"]:hover {
+            background-color: #ef4444;
+            color: white;
+        }
+        .s1plus-edit-mode-header {
+            font-weight: 600;
+            color: #111;
+            font-size: 15px;
+            margin-bottom: 12px;
+        }
+        .s1plus-edit-mode-textarea {
+            width: 100%;
+            height: 90px;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            padding: 10px;
+            font-size: 14px;
+            resize: vertical;
+            box-sizing: border-box;
+            margin-bottom: 12px;
+        }
+        .s1plus-edit-mode-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
         }
 
         /* --- 设置面板样式 --- */
@@ -1209,7 +1263,7 @@
         });
     };
 
-    // [MODIFIED] 更新悬浮窗以适配新的数据结构
+    // [MODIFIED] 全新悬浮窗逻辑
     const initializeTaggingPopover = () => {
         let popover = document.getElementById('s1plus-tag-popover-main');
         if (!popover) {
@@ -1220,13 +1274,18 @@
         }
 
         let hideTimeout, showTimeout;
+        let isComposing = false; // Flag to track IME composition state
+        let currentAnchorElement = null; // To store the element the popover is anchored to
 
         const startHideTimer = () => {
+            if (isComposing) return; // Don't hide popover during IME composition
             clearTimeout(showTimeout);
             clearTimeout(hideTimeout);
             hideTimeout = setTimeout(() => {
                 popover.classList.remove('visible');
                 delete popover.dataset.currentUserId;
+                delete popover.dataset.currentUserAvatar;
+                currentAnchorElement = null;
             }, 300);
         };
 
@@ -1234,30 +1293,81 @@
             clearTimeout(hideTimeout);
         };
 
-        const renderPopoverContent = (userName, userId, tagData = null) => {
+        const updatePopoverWidth = (popoverElement) => {
+            popoverElement.style.visibility = 'hidden';
+            popoverElement.style.display = 'block';
+            popoverElement.style.left = '-9999px';
+            popoverElement.style.width = 'auto';
+
+            const footer = popoverElement.querySelector('.s1plus-popover-footer');
+            const actionsContainer = popoverElement.querySelector('.s1plus-popover-actions');
+            const popoverContent = popoverElement.querySelector('.s1plus-popover-content');
+            const avatar = popoverElement.querySelector('.s1plus-popover-avatar');
+            const userContainer = popoverElement.querySelector('.s1plus-popover-user-container');
+            const usernameDiv = popoverElement.querySelector('.s1plus-popover-username');
+            const uidDiv = popoverElement.querySelector('.s1plus-popover-user-id');
+
+            if (footer && actionsContainer && popoverContent && avatar && userContainer && usernameDiv && uidDiv) {
+                const maxTextWidth = Math.max(usernameDiv.offsetWidth, uidDiv.offsetWidth);
+                const userContainerGap = parseFloat(window.getComputedStyle(userContainer).gap);
+                const requiredUserContainerWidth = avatar.offsetWidth + userContainerGap + maxTextWidth;
+                const contentStyle = window.getComputedStyle(popoverContent);
+                const paddingX = parseFloat(contentStyle.paddingLeft) + parseFloat(contentStyle.paddingRight);
+                const footerGap = parseFloat(window.getComputedStyle(footer).gap);
+                const requiredFooterWidth = requiredUserContainerWidth + actionsContainer.offsetWidth + footerGap;
+                const requiredPopoverWidth = requiredFooterWidth + paddingX;
+                const mainContentWidth = popoverElement.querySelector('.s1plus-popover-main-content').offsetWidth + paddingX;
+                const defaultWidth = 300;
+                const finalWidth = Math.ceil(Math.max(defaultWidth, requiredPopoverWidth, mainContentWidth));
+                popoverElement.style.width = `${finalWidth}px`;
+            }
+
+            popoverElement.style.visibility = '';
+            popoverElement.style.display = '';
+            popoverElement.style.left = '';
+        };
+
+        const repositionPopover = (popoverElement, anchorElement) => {
+            if (!anchorElement) return;
+            const rect = anchorElement.getBoundingClientRect();
+            popoverElement.style.top = `${rect.top + window.scrollY}px`;
+            popoverElement.style.left = `${rect.right + window.scrollX + 10}px`;
+        };
+
+        const renderPopoverContent = (userName, userId, tagData = null, avatarUrl) => {
             const tag = tagData ? tagData.tag : '';
             const hasTag = tag.trim() !== '';
-            const tagAreaHTML = hasTag
-                ? `<div class="s1plus-popover-tag-area">${tag}</div>`
-                : `<div class="s1plus-popover-tag-area empty">暂无标记</div>`;
+            const svgIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="#f0f0f0"/><text x="50%" y="50%" dominant-baseline="central" text-anchor="middle" font-family="sans-serif" font-size="40" fill="#999">S1</text></svg>`;
+            const fallbackAvatar = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgIcon)}`;
+
+
+            const mainContentHTML = hasTag
+                ? `<div class="s1plus-popover-main-content">${tag}</div>`
+                : `<div class="s1plus-popover-main-content empty">目前暂无标记</div>`;
 
             const actionsHTML = hasTag
                 ? `
-                <button class="s1plus-btn" data-action="delete-tag" data-user-id="${userId}" data-user-name="${userName}">删除</button>
-                <button class="s1plus-btn s1plus-btn-primary" data-action="edit-tag" data-user-id="${userId}" data-user-name="${userName}">编辑</button>
+                <button class="s1plus-popover-btn" data-action="edit-tag" data-user-id="${userId}" data-user-name="${userName}">编辑标记</button>
+                <button class="s1plus-popover-btn" data-action="delete-tag" data-user-id="${userId}" data-user-name="${userName}">删除标记</button>
                 `
                 : `
-                <button class="s1plus-btn s1plus-btn-primary" data-action="add-tag" data-user-id="${userId}" data-user-name="${userName}">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" style="width:14px; height:14px;"><path d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z" /></svg>
-                    <span>添加标记</span>
-                </button>
+                <button class="s1plus-popover-btn" data-action="add-tag" data-user-id="${userId}" data-user-name="${userName}">添加标记</button>
                 `;
 
             popover.innerHTML = `
                 <div class="s1plus-popover-content">
-                    <div class="s1plus-popover-username">${userName}</div>
-                    ${tagAreaHTML}
-                    <div class="s1plus-popover-actions">${actionsHTML}</div>
+                    ${mainContentHTML}
+                    <hr class="s1plus-popover-hr" />
+                    <div class="s1plus-popover-footer">
+                        <div class="s1plus-popover-user-container">
+                            <img class="s1plus-popover-avatar" src="${avatarUrl || fallbackAvatar}" onerror="this.onerror=null;this.src='${fallbackAvatar}'">
+                            <div class="s1plus-popover-user-info">
+                                <div class="s1plus-popover-username">${userName}</div>
+                                <div class="s1plus-popover-user-id">UID: ${userId}</div>
+                            </div>
+                        </div>
+                        <div class="s1plus-popover-actions">${actionsHTML}</div>
+                    </div>
                 </div>
             `;
         };
@@ -1265,30 +1375,37 @@
         const renderEditMode = (userName, userId, currentTag = '') => {
             popover.innerHTML = `
                  <div class="s1plus-popover-content">
-                    <div class="s1plus-popover-username">为 ${userName} 添加标记</div>
-                    <div class="s1plus-popover-tag-area">
-                        <textarea id="s1plus-tag-textarea" placeholder="输入标记内容...">${currentTag}</textarea>
-                    </div>
-                    <div class="s1plus-popover-actions">
-                        <button class="s1plus-btn" data-action="cancel-edit" data-user-id="${userId}" data-user-name="${userName}">取消</button>
-                        <button class="s1plus-btn s1plus-btn-primary" data-action="save-tag" data-user-id="${userId}" data-user-name="${userName}">保存</button>
+                    <div class="s1plus-edit-mode-header">为 ${userName} ${currentTag ? '编辑' : '添加'}标记</div>
+                    <textarea class="s1plus-edit-mode-textarea" id="s1plus-tag-textarea" placeholder="输入标记内容...">${currentTag}</textarea>
+                    <div class="s1plus-edit-mode-actions">
+                        <button class="s1plus-popover-btn" data-action="cancel-edit" data-user-id="${userId}" data-user-name="${userName}">取消</button>
+                        <button class="s1plus-popover-btn" data-action="save-tag" data-user-id="${userId}" data-user-name="${userName}">保存</button>
                     </div>
                 </div>
             `;
-            popover.querySelector('#s1plus-tag-textarea').focus();
+            const textarea = popover.querySelector('#s1plus-tag-textarea');
+            textarea.focus();
+
+            textarea.addEventListener('compositionstart', () => { isComposing = true; });
+            textarea.addEventListener('compositionend', () => { isComposing = false; });
         };
 
         popover.addEventListener('click', (event) => {
-            const target = event.target.closest('.s1plus-btn');
+            const target = event.target.closest('.s1plus-popover-btn');
             if (!target) return;
+
+            isComposing = false;
 
             const { action, userId, userName } = target.dataset;
             const userTags = getUserTags();
+            const avatarUrl = popover.dataset.currentUserAvatar;
 
             if (action === 'add-tag' || action === 'edit-tag') {
                 renderEditMode(userName, userId, userTags[userId] ? userTags[userId].tag : '');
             } else if (action === 'cancel-edit') {
-                renderPopoverContent(userName, userId, userTags[userId] || null);
+                renderPopoverContent(userName, userId, userTags[userId] || null, avatarUrl);
+                updatePopoverWidth(popover);
+                repositionPopover(popover, currentAnchorElement);
             } else if (action === 'save-tag') {
                 const textarea = popover.querySelector('#s1plus-tag-textarea');
                 const newTag = textarea.value.trim();
@@ -1298,7 +1415,9 @@
                     delete userTags[userId];
                 }
                 saveUserTags(userTags);
-                renderPopoverContent(userName, userId, userTags[userId] || null);
+                renderPopoverContent(userName, userId, userTags[userId] || null, avatarUrl);
+                updatePopoverWidth(popover);
+                repositionPopover(popover, currentAnchorElement);
             } else if (action === 'delete-tag') {
                 createConfirmationModal(
                     `确认要删除对 "${userName}" 的标记吗？`,
@@ -1306,7 +1425,9 @@
                     () => {
                         delete userTags[userId];
                         saveUserTags(userTags);
-                        renderPopoverContent(userName, userId, null);
+                        renderPopoverContent(userName, userId, null, avatarUrl);
+                        updatePopoverWidth(popover);
+                        repositionPopover(popover, currentAnchorElement);
                     },
                     '确认删除'
                 );
@@ -1325,6 +1446,7 @@
                     const authorLink = cell.querySelector('.authi > a[href*="space-uid-"]');
                     const avatarImg = cell.querySelector('.avatar img');
                     if (!authorLink || !avatarImg) return;
+                    const avatarUrl = avatarImg.src;
 
                     const uidMatch = authorLink.href.match(/space-uid-(\d+)/);
                     if (!uidMatch) return;
@@ -1337,11 +1459,12 @@
                     const userName = authorLink.textContent.trim();
                     const userTags = getUserTags();
                     popover.dataset.currentUserId = userId;
-                    renderPopoverContent(userName, userId, userTags[userId] || null);
+                    popover.dataset.currentUserAvatar = avatarUrl;
+                    currentAnchorElement = avatarImg;
 
-                    const rect = avatarImg.getBoundingClientRect();
-                    popover.style.top = `${rect.top + window.scrollY}px`;
-                    popover.style.left = `${rect.right + window.scrollX + 10}px`;
+                    renderPopoverContent(userName, userId, userTags[userId] || null, avatarUrl);
+                    updatePopoverWidth(popover);
+                    repositionPopover(popover, currentAnchorElement);
                     popover.classList.add('visible');
                 }, 150);
             });
@@ -1374,6 +1497,7 @@
         });
         observer.observe(mainContent, { childList: true, subtree: true });
     };
+
 
     const addProgressJumpButtons = () => {
         const progressData = getReadProgress();
