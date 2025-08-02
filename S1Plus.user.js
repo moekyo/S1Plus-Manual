@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      4.0.0
+// @version      4.0.1
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪等多种功能，全方位优化你的论坛体验。
-// @author       moekyo
+// @author       moekyo (with fix by Gemini)
 // @match        https://stage1st.com/2b/*
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -14,7 +14,7 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '4.0.0';
+    const SCRIPT_VERSION = '4.0.1';
     const SCRIPT_RELEASE_DATE = '2025-08-02';
 
     // --- 样式注入 ---
@@ -1227,38 +1227,76 @@
         });
     };
 
+    // --- [FIXED] 重构用户屏蔽按钮添加逻辑，解决竞态条件问题 ---
     const addBlockButtonsToUsers = () => {
         document.querySelectorAll('.authi > a[href*="space-uid-"]').forEach(authorLink => {
             const plsCell = authorLink.closest('.pls');
-            if (!plsCell || plsCell.querySelector('.s1plus-avatar-overlay-container')) return;
+            // 如果没有父元素，或已处理过，则跳过
+            if (!plsCell || plsCell.dataset.s1plusBlocked) return;
+            plsCell.dataset.s1plusBlocked = 'true'; // 添加标记，防止重复处理
+
             const avatarImg = plsCell.querySelector('.avatar img');
             if (!avatarImg) return;
-            plsCell.style.position = 'relative';
+
             const uidMatch = authorLink.href.match(/space-uid-(\d+)/);
-            if (uidMatch) {
-                const userId = uidMatch[1];
-                const userName = authorLink.textContent.trim();
-                const overlayContainer = document.createElement('div');
-                overlayContainer.className = 's1plus-avatar-overlay-container';
+            if (!uidMatch) return;
+
+            const userId = uidMatch[1];
+            const userName = authorLink.textContent.trim();
+
+            // 预先创建好元素
+            const overlayContainer = document.createElement('div');
+            overlayContainer.className = 's1plus-avatar-overlay-container';
+
+            const blockBtn = document.createElement('span');
+            blockBtn.className = 's1plus-btn';
+            blockBtn.textContent = '屏蔽用户';
+            blockBtn.addEventListener('click', e => {
+                e.preventDefault();
+                e.stopPropagation();
+                const subtitle = getSettings().blockThreadsOnUserBlock ?
+                    '该用户的所有帖子和主题帖都将被隐藏，此操作可在设置面板中撤销。' :
+                    '该用户的所有帖子都将被隐藏，此操作可在设置面板中撤销。';
+                createConfirmationModal(`确定要屏蔽用户 "${userName}" 吗？`, subtitle, () => blockUser(userId, userName), '确定屏蔽');
+            });
+            overlayContainer.appendChild(blockBtn);
+
+            // 定义一个函数来计算和放置悬浮层
+            // 只有当图片加载完成后（即拥有正确尺寸后）才能执行此函数
+            const placeOverlay = () => {
+                // 为父元素设置相对定位，作为悬浮层的定位基准
+                plsCell.style.position = 'relative';
+
                 const rect = avatarImg.getBoundingClientRect();
                 const parentRect = plsCell.getBoundingClientRect();
+
+                // 如果计算出的尺寸仍然为0，则不显示损坏的悬浮层
+                if (rect.width === 0 || rect.height === 0) {
+                    console.warn(`S1 Plus: 用户 ${userName} 的头像无尺寸，跳过悬浮层。`);
+                    return;
+                }
+
                 overlayContainer.style.top = `${rect.top - parentRect.top}px`;
                 overlayContainer.style.left = `${rect.left - parentRect.left}px`;
                 overlayContainer.style.width = `${rect.width}px`;
                 overlayContainer.style.height = `${rect.height}px`;
                 overlayContainer.style.borderRadius = window.getComputedStyle(avatarImg).borderRadius;
-                const blockBtn = document.createElement('span');
-                blockBtn.className = 's1plus-btn';
-                blockBtn.textContent = '屏蔽用户';
-                blockBtn.addEventListener('click', e => {
-                    e.preventDefault(); e.stopPropagation();
-                    const subtitle = getSettings().blockThreadsOnUserBlock
-                        ? '该用户的所有帖子和主题帖都将被隐藏，此操作可在设置面板中撤销。'
-                        : '该用户的所有帖子都将被隐藏，此操作可在设置面板中撤销。';
-                    createConfirmationModal(`确定要屏蔽用户 "${userName}" 吗？`, subtitle, () => blockUser(userId, userName), '确定屏蔽');
-                });
-                overlayContainer.appendChild(blockBtn);
+
+                // 只有当所有计算完成后，才将悬浮层添加到页面
                 plsCell.appendChild(overlayContainer);
+            };
+
+            // 检查图片是否已经加载完成（例如来自浏览器缓存）
+            // .complete 属性为 true 且 naturalHeight 不为 0 意味着图片已成功加载并有实际尺寸
+            if (avatarImg.complete && avatarImg.naturalHeight !== 0) {
+                placeOverlay();
+            } else {
+                // 如果图片尚未加载，则等待 onload 事件
+                avatarImg.onload = placeOverlay;
+                // 添加一个错误处理，防止因图片加载失败导致脚本问题
+                avatarImg.onerror = () => {
+                   console.warn(`S1 Plus: 无法加载用户 ${userName} 的头像。`);
+                };
             }
         });
     };
@@ -1615,9 +1653,12 @@
 
         runTasks();
 
-        const observer = new MutationObserver(runTasks);
-        const mainContent = document.getElementById('ct') || document.body;
-        observer.observe(mainContent, { childList: true, subtree: true });
+        // 稍微修改 MutationObserver 的逻辑，只对特定容器的子节点变化做出反应，减少不必要的调用
+        const observerTarget = document.getElementById('ct');
+        if (observerTarget) {
+            const observer = new MutationObserver(runTasks);
+            observer.observe(observerTarget, { childList: true, subtree: true });
+        }
     };
 
     if (document.readyState === 'loading') {
