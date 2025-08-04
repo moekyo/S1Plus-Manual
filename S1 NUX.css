@@ -1,11 +1,11 @@
 /* ==UserStyle==
-@name							S1 NUX
-@namespace				userstyles.world
-@author						pgain2004 <pgain2004@gmail.com>
+@name				S1 NUX
+@namespace			userstyles.world
+@author				pgain2004 <pgain2004@gmail.com>
 @description			相对熟悉CSS后新写的，窄屏自适应，适配度高。依赖一些CSS3特性和emoji库，较老系统(如Win7)显示效果可能打折扣。tag:S1 stage1st stage1 saraba1st 泥潭 婆罗门论坛
-@version					2025.6.14
-@supportURL				https://bbs.stage1st.com/2b/thread-1826103-1-1.html
-@license					CC-BY-NC-SA-4.0
+@version			2025.8.4
+@supportURL			https://stage1st.com/2b/thread-1826103-1-1.html
+@license			CC-BY-NC-SA-4.0
 @preprocessor			less
 
 @var checkbox autotheme "自适应色调主题" 1
@@ -662,14 +662,25 @@ shdl(shadow-light)：浅阴影色；
 	.wp {width:auto}
 	.bm_h {background-color:@pri; border:0}
 	.bm, .bn {margin:0}
+	
 	/*1-4-1 统一字色*/
-	input, button, select, textarea, .tl td em, .tl td em a, .xi2, .xi2 a, .xi3 a, .xg2, .tfm .d, .pbw p, .tattl dd {color:@t}
-	a:not([style*="color:"]), .pg_index a, .tps a, .xg1, .xg1 a, .xg1 .xi2, .pinf, .pinf strong {color:@t!important}
-	a:not([style*="color:"]):hover, .tl th a:not([style*="color:"]):visited:hover, .pg_index a:hover {color:@tl!important}
+	a, input, button, select, textarea, .tl td em, .tl td em a, .xi2, .xi2 a, .xi3 a, .xg2, .tfm .d, .pbw p, .tattl dd,.tbmu a,.xlda dd a,.jump_bdl a,.tbmu .a,.tattl a {color:@t}
+	
+	a:hover {color:@tl}
+	
+	.pg_index a, .tps a, .xg1, .xg1 a, .xg1 .xi2, .pinf, .pinf strong {color:@t!important}
+	
+	.tl th a:not([style*="color:"]):visited:hover, .pg_index a:hover {color:@tl!important}	
+
+	.t_f a {color:@sec}
 	.flb em, .ratl th {color:@pt}
+	
 	#nv a, #um a, .vwthd, .vwthd a, .pl .xg1, #uhd .xg1, .card .xg1, .tl .th, .tl .th a, .ttp .a a, .bm_h.cl > h2, .bm_h.cl > h2 a, .pg a:hover, .pgb a:hover, .mt, .p_pop a:hover, .tl tr:hover, .tl tr:hover em, .card a, .tl #threadlisttableid tr:hover em a, #online h3 a, #uhd * :not(.a) a, .edt .bar, .tedt .bar, .edt .bbar, .edt .bar a, .tedt .bar a, .edt .bbar a, .exfm, #post_extra_tb label.a, .ct2_a .mn > .bw0 > .tb :not(.a):not(.y):not(.o) a, .tbn li:not(.a) a, .bbda.xg1, .boardnav .bm.bml.pbn .bm_h.cl a, #postlist .pls.ptn.pbn, #postlist .pls.ptn.pbn a, .ratl th a {color:@pt!important}
-	#nv a:hover, #um a:hover, .tl .th a:hover, .vwthd a:hover, .tl tr:hover a:hover, .card a:hover, #online a:hover, #uhd * :not(.a) a:hover, .edt .bar a:hover, .tedt .bar a:hover, .edt .bbar a:hover, .ct2_a .mn > .bw0 > .tb :not(.a):not(.y):not(.o) a:hover, .tbn li:not(.a) a:hover, .boardnav .bm.bml.pbn .bm_h.cl a:hover, #postlist .pls.ptn.pbn a:hover, .ratl th a:hover, .pg strong {color:@ptl!important}
+	
+	#nv a:hover, #um a:hover, .tl .th a:hover, .vwthd a:hover, .tl tr:hover a:noet(.s1plus-progress-jump-btn):hover, .card a:hover, #online a:hover, #uhd * :not(.a) a:hover, .edt .bar a:hover, .tedt .bar a:hover, .edt .bbar a:hover, .ct2_a .mn > .bw0 > .tb :not(.a):not(.y):not(.o) a:hover, .tbn li:not(.a) a:hover, .boardnav .bm.bml.pbn .bm_h.cl a:hover, #postlist .pls.ptn.pbn a:hover, .ratl th a:hover, .pg strong {color:@ptl!important}
+	
 	.zhichibtn_7ree input {background:0; color:@sec}
+	
 	.rq, .tl tr .xi1 {color:@sec!important}
 	.tl tr:hover .xi1 {color:@secp!important}
 	#postlist .t_fsz a:not([style*="color:"]), .ptm > a:not([style*="color:"]), .ntc_body a:not([style*="color:"]) {color:@sec!important}
@@ -1564,6 +1575,59 @@ shdl(shadow-light)：浅阴影色；
 	#login-dialog #login-confirm {background-color:@bnd!important; background-image:linear-gradient(to bottom, @bn, @bnd); background-position:0; background-repeat:no-repeat; border:1px solid!important; border-color:#00000019 #00000019 #0000003f!important; border-radius:2px; box-shadow:inset 0 1px 0 #ffffff33, 0 1px 2px #0000000c; color:#ddd!important; text-shadow:0 1px 1px #111; transition:all .15s linear}
 	#login-dialog #login-confirm:hover {background-position:0 -10px; color:white!important}
 	#login-dialog input {background: @bg ; border: 1px solid @prid}
+	/*8.5.3 S1Plus*/
+	.s1plus-modal-title {color: @tl}
+	.s1plus-modal-content {background: @bg}
+	
+	.s1-settings-group-title { color:@t ; border-bottom-color: @pri }
+	.s1plus-expander-arrow { background: @t; -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 16'%3E%3Cpath d='M2 2L8 8L2 14' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E") no-repeat center; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 16'%3E%3Cpath d='M2 2L8 8L2 14' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E") no-repeat center;}
+	.s1plus-modal-header{ border-bottom-color: @pri }
+	.s1plus-collapsible-header:hover {color:@tl}
+	.s1plus-modal-close { background: #ef4444; -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2 2L14 14M14 2L2 14' stroke='black' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat center; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2 2L14 14M14 2L2 14' stroke='black' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat center; }
+	
+	.s1plus-tabs { border-bottom-color: @pri }
+	.s1plus-tab-btn { color:@t ;border-bottom-width: 1px}
+	.s1plus-tab-btn.active {color:@sec; border-bottom-color:@sec}
+	.s1plus-tab-btn:hover {color:@sec}
+	
+	.s1plus-modal-footer {border-top-color: @pri}
+	
+	.s1plus-sync-btn {color:@t ;background-color: @pri}
+	.s1plus-sync-title {color:@tl }
+	.s1plus-sync-textarea {background-color: @bg; border-color: @pri}
+	.s1plus-sync-desc {color:@t }
+	
+	.s1plus-setting-desc, .s1-settings-label{color:@t}
+	.s1plus-empty{color:@tg}
+	
+	input:checked + .s1plus-slider {background-color: @sec}
+	.s1plus-slider::before {background-color: @bg}
+	
+	.s1plus-progress-jump-btn {color: @sec; background-color: @bg; border-color: @sec }
+	.s1plus-progress-jump-btn:hover {color: @bg; background-color: @sec; border-color: @sec }
+	
+	.s1plus-item {background-color: @bg; border-color: @pri}
+	.s1plus-item-title {color:@tl}
+	.s1plus-item-meta,.s1plus-item-toggle {color:@t}
+	.s1plus-unblock-btn {color:@t;background-color: @pri}
+	
+	.s1plus-confirm-content,.s1plus-confirm-footer{background-color: @bg}
+	.s1plus-confirm-body {color:@tl}
+	.s1plus-confirm-body .confirm-subtitle {color:@t}
+	.s1plus-confirm-btn.cancel {color:@t;background-color: @pri; border-color: @pri}
+	.s1plus-confirm-btn.cancel:hover {}
+	
+	.s1-editor-item{background-color: @bg}
+	
+	.s1-editor-item input[type="text"] {background-color: @bg; border-color: @pri}
+	.s1-editor-btn.keyword-rule-delete, .s1-editor-btn[data-action="delete"] {background: @t ; -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='1.5' stroke='black'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0'/%3E%3C/svg%3E") no-repeat center; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='1.5' stroke='black'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0'/%3E%3C/svg%3E") no-repeat center;}
+	.s1-editor-btn.keyword-rule-delete:hover, .s1-editor-btn[data-action="delete"]:hover {background: #ef4444}
+	
+	.s1-editor-footer {border-top-color: @pri !important}
+	
+	.s1plus-tag-popover {background-color: @bg; border-color: @pri}
+	.s1plus-popover-hr {border-top-color: @pri}
+	
 	/*9 窄屏适配*/
 	@media(max-width:1360px) and (min-width:910px) {/*页码栏*/
 		#pgt .pg a.nxt {background-image:none}
