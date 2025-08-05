@@ -117,3 +117,33 @@
    再优化一下浮窗内的各个按钮
    1. 各个按钮都如脚本中其余大部分按钮一样，默认是灰色的。
    2. 高亮状态下，除了删除按钮是红色以外，其余按钮都是蓝色的。可以考虑使用脚本中现有的蓝色和红色样式。
+
+
+现在被屏蔽用户评分的帖子会被屏蔽掉,需求是只把被屏蔽用户从评分部分隐藏,对应的帖子不要隐藏,并且确保被屏蔽用户的评分能在屏蔽操作之后马上一并被隐藏。
+边界情况说明：如果所有评分均来自被屏蔽用户，则评分区域应保持可见，但显示为空（不展示任何评分信息）。
+   
+这是对应的评分部分的 html 代码,只把被屏蔽用户从这个 section 中移除就好,但是帖子本身不要做任何操作
+<dl id="ratelog_68216114" class="rate">
+<dd style="margin:0">
+<div id="post_rate_68216114"></div>
+<table class="ratl">
+<tbody><tr>
+<th class="xw1" width="120"><a href="forum.php?mod=misc&amp;action=viewratings&amp;tid=2257044&amp;pid=68216114" onclick="showWindow('viewratings', this.href)" title="查看全部评分"> 参与人数 <span class="xi1">1</span></a></th><th class="xw1" width="80">战斗力 <i><span class="xi1">+2</span></i></th>
+<th>
+<a href="javascript:;" onclick="toggleRatelogCollapse('ratelog_68216114', this);" class="y xi2 op">收起</a>
+<i class="txt_h">理由</i>
+</th>
+</tr>
+</tbody><tbody class="ratl_l"><tr id="rate_68216114_259522">
+<td>
+<a href="space-uid-259522.html" target="_blank"><img src="https://avatar.stage1st.com/000/25/95/22_avatar_small.jpg"></a> <a href="space-uid-259522.html" target="_blank">我王</a>
+</td><td class="xi1"> + 2</td>
+<td class="xg1">欢乐多</td>
+</tr>
+</tbody>
+</table>
+<p class="ratc">
+<a href="forum.php?mod=misc&amp;action=viewratings&amp;tid=2257044&amp;pid=68216114" onclick="showWindow('viewratings', this.href)" title="查看全部评分" class="xi2">查看全部评分</a>
+</p>
+</dd>
+</dl>
