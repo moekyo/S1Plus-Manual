@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      4.0.2
+// @version      4.0.2.1
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪等多种功能，全方位优化你的论坛体验。
-// @author       moekyo (with fix by Gemini)
+// @author       moekyo & Lery
 // @match        https://stage1st.com/2b/*
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -14,19 +14,38 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '4.0.2';
-    const SCRIPT_RELEASE_DATE = '2025-08-04';
+    const SCRIPT_VERSION = '4.0.2.1';
+    const SCRIPT_RELEASE_DATE = '2025-08-06';
 
     // --- 样式注入 ---
     GM_addStyle(`
+        /* --- 通用颜色 --- */
         .root {
+            --s1p-bg: #f9fafb;
+            --s1p-t: #374151;
+            --s1p-title-t: #374151;
+            --s1p-desc-t: #6b7280;
+            --s1p-pri: #D1D9C1;
+            --s1p-sec: #7DA0CC;
+            --s1p-border: #d1d5db;
+            --s1p-cancel: #ef4444;
+            --s1p-cancel-h: #dc2626;
+            --s1p-input-bg: #d1d5db;
+            --s1p-input-t: #374151;
+            --s1p-input-border: #d1d5db;
+            --s1p-btn-bg: #3b82f6;
+            --s1p-btn-bg-h: #2563eb;
+            --s1p-btn-t: white;
+            --s1p-btn-sec-bg: #e5e7eb;
+            --s1p-btn-sec-bg-h: #d1d5db;
+            --s1p-btn-sec-t: #374151;
         }
 
         /* --- 核心修复：禁用论坛自带的用户信息悬浮窗 --- */
         #p_pop { display: none !important; }
 
         /* --- 关键字屏蔽样式 --- */
-        .s1plus-hidden-by-keyword { display: none !important; }
+        .s1plus-hidden-by-keyword, .s1plus-hidden-by-quote { display: none !important; }
 
         /* --- 按钮通用样式 --- */
         .s1plus-btn { display: inline-flex; align-items: center; justify-content: center; border-radius: 4px; background-color: #f3f4f6; color: #374151; font-size: 12px; font-weight: bold; cursor: pointer; user-select: none; white-space: nowrap; border: none; }
@@ -325,6 +344,33 @@
         .s1plus-item-actions .s1plus-btn.primary { background-color: #3b82f6; color: white; }
         .s1plus-item-actions .s1plus-btn.primary:hover { background-color: #2563eb; }
         .s1plus-item-actions .s1plus-btn.danger:hover { background-color: #ef4444; color: white; }
+
+        /* --- [NEW] 引用屏蔽占位符 (Refined Style) --- */
+        .s1plus-quote-placeholder {
+            background-color: #f9fafb;
+            border: 1px solid #e5e7eb;
+            padding: 8px 12px;
+            border-radius: 6px;
+            margin: 10px 0;
+            font-size: 13px;
+            color: #6b7280;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .s1plus-quote-placeholder a {
+            color: #3b82f6;
+            text-decoration: none;
+            font-weight: 500;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 4px;
+            transition: background-color 0.2s ease, color 0.2s ease;
+        }
+        .s1plus-quote-placeholder a:hover {
+            background-color: #e5e7eb;
+            color: #1f2937;
+        }
     `);
 
     let dynamicallyHiddenThreads = {};
@@ -386,31 +432,86 @@
     const hideThread = (id) => { (document.getElementById(`normalthread_${id}`) || document.getElementById(`stickthread_${id}`))?.setAttribute('style', 'display: none !important'); };
     const showThread = (id) => { (document.getElementById(`normalthread_${id}`) || document.getElementById(`stickthread_${id}`))?.removeAttribute('style'); }
     const hideBlockedThreads = () => Object.keys(getBlockedThreads()).forEach(hideThread);
-    const blockUser = (id, name) => { const settings = getSettings(); const b = getBlockedUsers(); b[id] = { name, timestamp: Date.now(), blockThreads: settings.blockThreadsOnUserBlock }; saveBlockedUsers(b); hideUserPosts(id); if (b[id].blockThreads) applyUserThreadBlocklist(); };
-    const unblockUser = (id) => { const b = getBlockedUsers(); delete b[id]; saveBlockedUsers(b); showUserPosts(id); unblockThreadsByUser(id); };
-    const hideUserPosts = (id) => { document.querySelectorAll(`a[href*="space-uid-${id}.html"]`).forEach(l => l.closest('table.plhin')?.setAttribute('style', 'display: none !important')); };
-    const showUserPosts = (id) => { document.querySelectorAll(`a[href*="space-uid-${id}.html"]`).forEach(l => l.closest('table.plhin')?.removeAttribute('style')); };
+    const blockUser = (id, name) => { const settings = getSettings(); const b = getBlockedUsers(); b[id] = { name, timestamp: Date.now(), blockThreads: settings.blockThreadsOnUserBlock }; saveBlockedUsers(b); hideUserPosts(id); hideBlockedUserQuotes(); hideBlockedUserRatings(); if (b[id].blockThreads) applyUserThreadBlocklist(); };
+
+    // [MODIFIED] 增加调用评分刷新函数
+    const unblockUser = (id) => { const b = getBlockedUsers(); delete b[id]; saveBlockedUsers(b); showUserPosts(id); hideBlockedUserQuotes(); hideBlockedUserRatings(); unblockThreadsByUser(id); };
+
+    // [FIX] 更精确地定位帖子作者，避免错误隐藏被评分的帖子
+    const hideUserPosts = (id) => { document.querySelectorAll(`.authi a[href*="space-uid-${id}.html"]`).forEach(l => l.closest('table.plhin')?.setAttribute('style', 'display: none !important')); };
+    const showUserPosts = (id) => { document.querySelectorAll(`.authi a[href*="space-uid-${id}.html"]`).forEach(l => l.closest('table.plhin')?.removeAttribute('style')); };
+
     const hideBlockedUsersPosts = () => Object.keys(getBlockedUsers()).forEach(hideUserPosts);
 
-    // [NEW] 屏蔽评分记录
+    const hideBlockedUserQuotes = () => {
+        const blockedUsers = getBlockedUsers();
+        const blockedUserNames = Object.values(blockedUsers).map(u => u.name);
+
+        document.querySelectorAll('div.quote').forEach(quoteElement => {
+            // 如果元素已经被处理并隐藏，则跳过后续的作者检查，以提高效率
+            if (quoteElement.style.display === 'none' && quoteElement.previousElementSibling?.classList.contains('s1plus-quote-placeholder')) {
+                // 确保在取消屏蔽时，旧的占位符能被正确移除
+                const quoteAuthorElement = quoteElement.querySelector('blockquote font[color="#999999"]');
+                if(quoteAuthorElement) {
+                    const text = quoteAuthorElement.textContent.trim();
+                    const match = text.match(/^(.*)\s发表于\s.*$/);
+                    if (match && match[1] && !blockedUserNames.includes(match[1])) {
+                         quoteElement.previousElementSibling.remove();
+                         quoteElement.style.display = '';
+                    }
+                }
+                return;
+            }
+
+            const quoteAuthorElement = quoteElement.querySelector('blockquote font[color="#999999"]');
+            if (!quoteAuthorElement) return;
+
+            const text = quoteAuthorElement.textContent.trim();
+            const match = text.match(/^(.*)\s发表于\s.*$/);
+            if (!match || !match[1]) return;
+
+            const authorName = match[1];
+            const isBlocked = blockedUserNames.includes(authorName);
+
+            const placeholder = quoteElement.previousElementSibling;
+            const isPlaceholderVisible = placeholder && placeholder.classList.contains('s1plus-quote-placeholder');
+
+            if (isBlocked) {
+                if (!isPlaceholderVisible) {
+                    quoteElement.style.display = 'none';
+                    const newPlaceholder = document.createElement('div');
+                    newPlaceholder.className = 's1plus-quote-placeholder';
+                    newPlaceholder.innerHTML = `<span>一条来自已屏蔽用户的引用已被隐藏。</span><a class="s1plus-quote-toggle">点击展开</a>`;
+                    quoteElement.parentNode.insertBefore(newPlaceholder, quoteElement);
+
+                    newPlaceholder.querySelector('.s1plus-quote-toggle').addEventListener('click', function() {
+                        const isHidden = quoteElement.style.display === 'none';
+                        quoteElement.style.display = isHidden ? '' : 'none';
+                        this.textContent = isHidden ? '点击折叠' : '点击展开';
+                    });
+                }
+            } else {
+                if (isPlaceholderVisible) {
+                    placeholder.remove();
+                    quoteElement.style.display = '';
+                }
+            }
+        });
+    };
+
+    // [MODIFIED] 函数现在可以同时处理隐藏和显示，是一个完整的“刷新”功能
     const hideBlockedUserRatings = () => {
         const blockedUserIds = Object.keys(getBlockedUsers());
-        if (blockedUserIds.length === 0) return;
-
         document.querySelectorAll('tbody.ratl_l tr').forEach(row => {
             const userLink = row.querySelector('a[href*="space-uid-"]');
             if (userLink) {
                 const uidMatch = userLink.href.match(/space-uid-(\d+)/);
-                if (uidMatch && uidMatch[1] && blockedUserIds.includes(uidMatch[1])) {
-                    row.style.display = 'none';
-                    const tbody = row.parentElement;
-                    const allRows = tbody.querySelectorAll('tr');
-                    const visibleRows = Array.from(allRows).filter(r => r.style.display !== 'none');
-                    if (visibleRows.length === 0) {
-                        const rateLogContainer = tbody.closest('dl.rate');
-                        if (rateLogContainer) {
-                            rateLogContainer.style.display = 'none';
-                        }
+                if (uidMatch && uidMatch[1]) {
+                    if (blockedUserIds.includes(uidMatch[1])) {
+                        row.style.display = 'none';
+                    } else {
+                        // [FIX] 增加逻辑，将被取消屏蔽的用户评分重新显示
+                        row.style.display = '';
                     }
                 }
             }
@@ -1568,11 +1669,11 @@
 
             if (progressData[threadId] && progressData[threadId].page) {
                 const { postId, page } = progressData[threadId];
-                const titleLink = row.querySelector('th a.s.xst');
+                const titleLink = row.querySelector('th span.tps');
                 if (titleLink) {
                     const jumpBtn = document.createElement('a');
                     jumpBtn.className = 's1plus-progress-jump-btn';
-                    jumpBtn.textContent = `上次阅读: P${page}`;
+                    jumpBtn.textContent = `回到第${page}页`;
                     jumpBtn.href = `forum.php?mod=redirect&goto=findpost&ptid=${threadId}&pid=${postId}`;
                     jumpBtn.title = `跳转到上次阅读的页面 (第 ${page} 页)`;
                     jumpBtn.target = '_blank';
@@ -1618,7 +1719,6 @@
         document.addEventListener('visibilitychange', saveProgress);
     };
 
-
     // 自动签到
     const autoCheckIn = () => {
         const userLink = document.querySelector('div#um a[href*="space-uid-"]');
@@ -1646,9 +1746,24 @@
         }
     };
 
+        // 点击更换漫区随机图功能 - 修改为DOM加载完成后执行
+    const randomPicChange = () => {
+        const randomPic = document.querySelector('img[src^="https://ac.stage3rd.com/S1_ACG_randpic.asp"]');
+        if (randomPic) {
+            randomPic.addEventListener('click', function() {
+                this.src = `https://ac.stage3rd.com/S1_ACG_randpic.asp?t=${Date.now()}`;
+            });
+
+            // 添加视觉反馈
+            randomPic.style.cursor = 'pointer';
+            randomPic.title = '点击更换图片';
+        }
+    };
+
     // --- 初始化 ---
     const init = () => {
         autoCheckIn();
+        randomPicChange();
         applyInterfaceCustomizations();
         initializeNavbar();
         initializeTaggingPopover();
@@ -1656,6 +1771,7 @@
         const runTasks = () => {
             if (window.location.href.includes('thread-') || window.location.href.includes('mod=viewthread')) {
                 hideBlockedUsersPosts();
+                hideBlockedUserQuotes();
                 addBlockButtonsToUsers();
                 initReadProgressTracker();
                 hideBlockedUserRatings();
