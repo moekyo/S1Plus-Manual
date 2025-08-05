@@ -14,8 +14,8 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '4.0.4';
-    const SCRIPT_RELEASE_DATE = '2025-08-04';
+    const SCRIPT_VERSION = '4.0.2';
+    const SCRIPT_RELEASE_DATE = '2025-08-05';
 
     // --- 样式注入 ---
     GM_addStyle(`
