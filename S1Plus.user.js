@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      4.0.1
+// @version      4.0.2
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪等多种功能，全方位优化你的论坛体验。
 // @author       moekyo (with fix by Gemini)
 // @match        https://stage1st.com/2b/*
@@ -14,11 +14,14 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '4.0.1';
-    const SCRIPT_RELEASE_DATE = '2025-08-02';
+    const SCRIPT_VERSION = '4.0.2';
+    const SCRIPT_RELEASE_DATE = '2025-08-04';
 
     // --- 样式注入 ---
     GM_addStyle(`
+        .root {
+        }
+
         /* --- 核心修复：禁用论坛自带的用户信息悬浮窗 --- */
         #p_pop { display: none !important; }
 
@@ -267,6 +270,7 @@
         .s1-settings-group { margin-bottom: 24px; }
         .s1-settings-group-title { font-size: 16px; font-weight: 500; color: #111827; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; margin-bottom: 12px; }
         .s1-settings-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; }
+        .s1-settings-item .title-suffix-input { width: 100%; border: 1px solid #d1d5db; border-radius: 4px; padding: 6px 8px; font-size: 14px; box-sizing: border-box; }
         .s1-settings-label { color: #374151; font-size: 14px; }
         .s1-settings-checkbox { /* Handled by .s1plus-switch */ }
         .s1plus-setting-desc { font-size: 12px; color: #6b7280; margin: -4px 0 12px 0; padding: 0; line-height: 1.5; }
@@ -566,6 +570,7 @@
         blockThreadsOnUserBlock: true,
         showBlockedByKeywordList: false,
         showManuallyBlockedList: false,
+        customTitleSuffix: ' - STAGE1ₛₜ', // 添加默认标题后缀
         customNavLinks: [
             { name: '论坛', href: 'forum.php' },
             { name: '归墟', href: 'forum-157-1.html' },
@@ -587,6 +592,14 @@
         const settings = getSettings();
         if (settings.changeLogoLink) document.querySelector('#hd h2 a')?.setAttribute('href', './forum.php');
         if (settings.hideBlacklistTip) document.getElementById('hiddenpoststip')?.remove();
+
+        // 添加标题后缀修改
+        if (settings.customTitleSuffix) {
+            const titlePattern = /^(.+?)(?:论坛)?(?:\s*-\s*Stage1st)?\s*-\s*stage1\/s1\s+游戏动漫论坛$/;
+            if (titlePattern.test(document.title)) {
+                document.title = document.title.replace(titlePattern, '$1') + settings.customTitleSuffix;
+            }
+        }
     };
 
     const initializeNavbar = () => {
@@ -955,6 +968,10 @@
                         <label class="s1-settings-label" for="s1-hideBlacklistTip">隐藏已屏蔽用户发言的黄条提示</label>
                         <label class="s1plus-switch"><input type="checkbox" id="s1-hideBlacklistTip" class="s1-settings-checkbox" ${settings.hideBlacklistTip ? 'checked' : ''}><span class="s1plus-slider"></span></label>
                     </div>
+                    <div class="s1-settings-item">
+                        <label class="s1-settings-label" for="s1-customTitleSuffix">自定义标题后缀</label>
+                        <input type="text" id="s1-customTitleSuffix" class="title-suffix-input" value="${settings.customTitleSuffix || ''}" style="width: 200px;">
+                    </div>
                 </div>
                 <div class="s1-settings-group">
                     <div class="s1-settings-group-title">导航栏定制</div>
@@ -1043,6 +1060,7 @@
                         ...getSettings(),
                         changeLogoLink: tabs.settings.querySelector('#s1-changeLogoLink').checked,
                         hideBlacklistTip: tabs.settings.querySelector('#s1-hideBlacklistTip').checked,
+                        customTitleSuffix: tabs.settings.querySelector('#s1-customTitleSuffix').value.trim(), // 保存标题后缀
                         enableNavCustomization: tabs.settings.querySelector('#s1-enableNavCustomization').checked,
                         customNavLinks: Array.from(navListContainer.querySelectorAll('.s1-editor-item')).map(item => ({ name: item.querySelector('.nav-name').value.trim(), href: item.querySelector('.nav-href').value.trim() })).filter(l=>l.name && l.href)
                     };
