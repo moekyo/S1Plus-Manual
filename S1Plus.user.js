@@ -158,11 +158,13 @@
             background-color: #f1f2f3;
             color: #333;
             white-space: nowrap;
+            text-decoration: none !important;
         }
         /* [FIX] Blue hover for most buttons */
         .s1plus-popover-btn:hover {
             background-color: #3b82f6;
             color: white;
+            text-decoration: none !important;
         }
         /* [FIX] Red hover specifically for the delete button */
         .s1plus-popover-btn[data-action="delete-tag"]:hover {
@@ -324,30 +326,23 @@
 
         /* --- [NEW] 引用屏蔽占位符 (Refined Style) --- */
         .s1plus-quote-placeholder {
-            background-color: #f9fafb;
-            border: 1px solid #e5e7eb;
-            padding: 8px 12px;
-            border-radius: 6px;
+            background-color: transparent;
+            border: none;
+            padding: 0;
             margin: 10px 0;
             font-size: 13px;
             color: #6b7280;
             display: flex;
-            justify-content: space-between;
             align-items: center;
+            gap: 8px; /* Add gap between text and link */
         }
-        .s1plus-quote-placeholder a {
-            color: #3b82f6;
-            text-decoration: none;
-            font-weight: 500;
-            cursor: pointer;
-            padding: 4px 8px;
-            border-radius: 4px;
-            transition: background-color 0.2s ease, color 0.2s ease;
+
+        /* --- [NEW] Quote Collapse Animation --- */
+        .s1plus-quote-wrapper {
+            overflow: hidden;
+            transition: max-height 0.35s ease-in-out;
         }
-        .s1plus-quote-placeholder a:hover {
-            background-color: #e5e7eb;
-            color: #1f2937;
-        }
+        
     `);
 
     let dynamicallyHiddenThreads = {};
@@ -425,21 +420,6 @@
         const blockedUserNames = Object.values(blockedUsers).map(u => u.name);
 
         document.querySelectorAll('div.quote').forEach(quoteElement => {
-            // 如果元素已经被处理并隐藏，则跳过后续的作者检查，以提高效率
-            if (quoteElement.style.display === 'none' && quoteElement.previousElementSibling?.classList.contains('s1plus-quote-placeholder')) {
-                // 确保在取消屏蔽时，旧的占位符能被正确移除
-                const quoteAuthorElement = quoteElement.querySelector('blockquote font[color="#999999"]');
-                if(quoteAuthorElement) {
-                    const text = quoteAuthorElement.textContent.trim();
-                    const match = text.match(/^(.*)\s发表于\s.*$/);
-                    if (match && match[1] && !blockedUserNames.includes(match[1])) {
-                         quoteElement.previousElementSibling.remove();
-                         quoteElement.style.display = '';
-                    }
-                }
-                return;
-            }
-
             const quoteAuthorElement = quoteElement.querySelector('blockquote font[color="#999999"]');
             if (!quoteAuthorElement) return;
 
@@ -450,27 +430,43 @@
             const authorName = match[1];
             const isBlocked = blockedUserNames.includes(authorName);
 
-            const placeholder = quoteElement.previousElementSibling;
-            const isPlaceholderVisible = placeholder && placeholder.classList.contains('s1plus-quote-placeholder');
+            const wrapper = quoteElement.parentElement.classList.contains('s1plus-quote-wrapper') ? quoteElement.parentElement : null;
 
             if (isBlocked) {
-                if (!isPlaceholderVisible) {
-                    quoteElement.style.display = 'none';
+                if (!wrapper) {
+                    const newWrapper = document.createElement('div');
+                    newWrapper.className = 's1plus-quote-wrapper';
+                    quoteElement.parentNode.insertBefore(newWrapper, quoteElement);
+                    newWrapper.appendChild(quoteElement);
+                    newWrapper.style.maxHeight = '0';
+
                     const newPlaceholder = document.createElement('div');
                     newPlaceholder.className = 's1plus-quote-placeholder';
-                    newPlaceholder.innerHTML = `<span>一条来自已屏蔽用户的引用已被隐藏。</span><a class="s1plus-quote-toggle">点击展开</a>`;
-                    quoteElement.parentNode.insertBefore(newPlaceholder, quoteElement);
+                    newPlaceholder.innerHTML = `<span>一条来自已屏蔽用户的引用已被隐藏。</span><a class="s1plus-quote-toggle s1plus-popover-btn">点击展开</a>`;
+                    newWrapper.parentNode.insertBefore(newPlaceholder, newWrapper);
 
                     newPlaceholder.querySelector('.s1plus-quote-toggle').addEventListener('click', function() {
-                        const isHidden = quoteElement.style.display === 'none';
-                        quoteElement.style.display = isHidden ? '' : 'none';
-                        this.textContent = isHidden ? '点击折叠' : '点击展开';
+                        const isCollapsed = newWrapper.style.maxHeight === '0px';
+                        if (isCollapsed) {
+                            const style = window.getComputedStyle(quoteElement);
+                            const marginTop = parseFloat(style.marginTop);
+                            const marginBottom = parseFloat(style.marginBottom);
+                            newWrapper.style.maxHeight = (quoteElement.offsetHeight + marginTop + marginBottom) + 'px';
+                            this.textContent = '点击折叠';
+                        } else {
+                            newWrapper.style.maxHeight = '0px';
+                            this.textContent = '点击展开';
+                        }
                     });
                 }
             } else {
-                if (isPlaceholderVisible) {
-                    placeholder.remove();
-                    quoteElement.style.display = '';
+                if (wrapper) {
+                    const placeholder = wrapper.previousElementSibling;
+                    if (placeholder && placeholder.classList.contains('s1plus-quote-placeholder')) {
+                        placeholder.remove();
+                    }
+                    wrapper.parentNode.insertBefore(quoteElement, wrapper);
+                    wrapper.remove();
                 }
             }
         });
