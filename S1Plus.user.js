@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      4.0.1
+// @version      4.0.2
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪等多种功能，全方位优化你的论坛体验。
-// @author       moekyo (with fix by Gemini)
+// @author       moekyo
 // @match        https://stage1st.com/2b/*
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -14,8 +14,8 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '4.0.1';
-    const SCRIPT_RELEASE_DATE = '2025-08-02';
+    const SCRIPT_VERSION = '4.0.4';
+    const SCRIPT_RELEASE_DATE = '2025-08-04';
 
     // --- 样式注入 ---
     GM_addStyle(`
@@ -382,31 +382,30 @@
     const hideThread = (id) => { (document.getElementById(`normalthread_${id}`) || document.getElementById(`stickthread_${id}`))?.setAttribute('style', 'display: none !important'); };
     const showThread = (id) => { (document.getElementById(`normalthread_${id}`) || document.getElementById(`stickthread_${id}`))?.removeAttribute('style'); }
     const hideBlockedThreads = () => Object.keys(getBlockedThreads()).forEach(hideThread);
-    const blockUser = (id, name) => { const settings = getSettings(); const b = getBlockedUsers(); b[id] = { name, timestamp: Date.now(), blockThreads: settings.blockThreadsOnUserBlock }; saveBlockedUsers(b); hideUserPosts(id); if (b[id].blockThreads) applyUserThreadBlocklist(); };
-    const unblockUser = (id) => { const b = getBlockedUsers(); delete b[id]; saveBlockedUsers(b); showUserPosts(id); unblockThreadsByUser(id); };
-    const hideUserPosts = (id) => { document.querySelectorAll(`a[href*="space-uid-${id}.html"]`).forEach(l => l.closest('table.plhin')?.setAttribute('style', 'display: none !important')); };
-    const showUserPosts = (id) => { document.querySelectorAll(`a[href*="space-uid-${id}.html"]`).forEach(l => l.closest('table.plhin')?.removeAttribute('style')); };
+    const blockUser = (id, name) => { const settings = getSettings(); const b = getBlockedUsers(); b[id] = { name, timestamp: Date.now(), blockThreads: settings.blockThreadsOnUserBlock }; saveBlockedUsers(b); hideUserPosts(id); hideBlockedUserRatings(); if (b[id].blockThreads) applyUserThreadBlocklist(); };
+    
+    // [MODIFIED] 增加调用评分刷新函数
+    const unblockUser = (id) => { const b = getBlockedUsers(); delete b[id]; saveBlockedUsers(b); showUserPosts(id); hideBlockedUserRatings(); unblockThreadsByUser(id); };
+    
+    // [FIX] 更精确地定位帖子作者，避免错误隐藏被评分的帖子
+    const hideUserPosts = (id) => { document.querySelectorAll(`.authi a[href*="space-uid-${id}.html"]`).forEach(l => l.closest('table.plhin')?.setAttribute('style', 'display: none !important')); };
+    const showUserPosts = (id) => { document.querySelectorAll(`.authi a[href*="space-uid-${id}.html"]`).forEach(l => l.closest('table.plhin')?.removeAttribute('style')); };
+
     const hideBlockedUsersPosts = () => Object.keys(getBlockedUsers()).forEach(hideUserPosts);
 
-    // [NEW] 屏蔽评分记录
+    // [MODIFIED] 函数现在可以同时处理隐藏和显示，是一个完整的“刷新”功能
     const hideBlockedUserRatings = () => {
         const blockedUserIds = Object.keys(getBlockedUsers());
-        if (blockedUserIds.length === 0) return;
-
         document.querySelectorAll('tbody.ratl_l tr').forEach(row => {
             const userLink = row.querySelector('a[href*="space-uid-"]');
             if (userLink) {
                 const uidMatch = userLink.href.match(/space-uid-(\d+)/);
-                if (uidMatch && uidMatch[1] && blockedUserIds.includes(uidMatch[1])) {
-                    row.style.display = 'none';
-                    const tbody = row.parentElement;
-                    const allRows = tbody.querySelectorAll('tr');
-                    const visibleRows = Array.from(allRows).filter(r => r.style.display !== 'none');
-                    if (visibleRows.length === 0) {
-                        const rateLogContainer = tbody.closest('dl.rate');
-                        if (rateLogContainer) {
-                            rateLogContainer.style.display = 'none';
-                        }
+                if (uidMatch && uidMatch[1]) {
+                    if (blockedUserIds.includes(uidMatch[1])) {
+                        row.style.display = 'none';
+                    } else {
+                        // [FIX] 增加逻辑，将被取消屏蔽的用户评分重新显示
+                        row.style.display = '';
                     }
                 }
             }
