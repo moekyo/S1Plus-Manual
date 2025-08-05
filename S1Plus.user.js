@@ -23,7 +23,7 @@
         #p_pop { display: none !important; }
 
         /* --- 关键字屏蔽样式 --- */
-        .s1plus-hidden-by-keyword { display: none !important; }
+        .s1plus-hidden-by-keyword, .s1plus-hidden-by-quote { display: none !important; }
 
         /* --- 按钮通用样式 --- */
         .s1plus-btn { display: inline-flex; align-items: center; justify-content: center; border-radius: 4px; background-color: #f3f4f6; color: #374151; font-size: 12px; font-weight: bold; cursor: pointer; user-select: none; white-space: nowrap; border: none; }
@@ -321,6 +321,33 @@
         .s1plus-item-actions .s1plus-btn.primary { background-color: #3b82f6; color: white; }
         .s1plus-item-actions .s1plus-btn.primary:hover { background-color: #2563eb; }
         .s1plus-item-actions .s1plus-btn.danger:hover { background-color: #ef4444; color: white; }
+
+        /* --- [NEW] 引用屏蔽占位符 (Refined Style) --- */
+        .s1plus-quote-placeholder {
+            background-color: #f9fafb;
+            border: 1px solid #e5e7eb;
+            padding: 8px 12px;
+            border-radius: 6px;
+            margin: 10px 0;
+            font-size: 13px;
+            color: #6b7280;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .s1plus-quote-placeholder a {
+            color: #3b82f6;
+            text-decoration: none;
+            font-weight: 500;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 4px;
+            transition: background-color 0.2s ease, color 0.2s ease;
+        }
+        .s1plus-quote-placeholder a:hover {
+            background-color: #e5e7eb;
+            color: #1f2937;
+        }
     `);
 
     let dynamicallyHiddenThreads = {};
@@ -382,16 +409,72 @@
     const hideThread = (id) => { (document.getElementById(`normalthread_${id}`) || document.getElementById(`stickthread_${id}`))?.setAttribute('style', 'display: none !important'); };
     const showThread = (id) => { (document.getElementById(`normalthread_${id}`) || document.getElementById(`stickthread_${id}`))?.removeAttribute('style'); }
     const hideBlockedThreads = () => Object.keys(getBlockedThreads()).forEach(hideThread);
-    const blockUser = (id, name) => { const settings = getSettings(); const b = getBlockedUsers(); b[id] = { name, timestamp: Date.now(), blockThreads: settings.blockThreadsOnUserBlock }; saveBlockedUsers(b); hideUserPosts(id); hideBlockedUserRatings(); if (b[id].blockThreads) applyUserThreadBlocklist(); };
-    
+    const blockUser = (id, name) => { const settings = getSettings(); const b = getBlockedUsers(); b[id] = { name, timestamp: Date.now(), blockThreads: settings.blockThreadsOnUserBlock }; saveBlockedUsers(b); hideUserPosts(id); hideBlockedUserQuotes(); hideBlockedUserRatings(); if (b[id].blockThreads) applyUserThreadBlocklist(); };
+
     // [MODIFIED] 增加调用评分刷新函数
-    const unblockUser = (id) => { const b = getBlockedUsers(); delete b[id]; saveBlockedUsers(b); showUserPosts(id); hideBlockedUserRatings(); unblockThreadsByUser(id); };
-    
+    const unblockUser = (id) => { const b = getBlockedUsers(); delete b[id]; saveBlockedUsers(b); showUserPosts(id); hideBlockedUserQuotes(); hideBlockedUserRatings(); unblockThreadsByUser(id); };
+
     // [FIX] 更精确地定位帖子作者，避免错误隐藏被评分的帖子
     const hideUserPosts = (id) => { document.querySelectorAll(`.authi a[href*="space-uid-${id}.html"]`).forEach(l => l.closest('table.plhin')?.setAttribute('style', 'display: none !important')); };
     const showUserPosts = (id) => { document.querySelectorAll(`.authi a[href*="space-uid-${id}.html"]`).forEach(l => l.closest('table.plhin')?.removeAttribute('style')); };
 
     const hideBlockedUsersPosts = () => Object.keys(getBlockedUsers()).forEach(hideUserPosts);
+
+    const hideBlockedUserQuotes = () => {
+        const blockedUsers = getBlockedUsers();
+        const blockedUserNames = Object.values(blockedUsers).map(u => u.name);
+
+        document.querySelectorAll('div.quote').forEach(quoteElement => {
+            // 如果元素已经被处理并隐藏，则跳过后续的作者检查，以提高效率
+            if (quoteElement.style.display === 'none' && quoteElement.previousElementSibling?.classList.contains('s1plus-quote-placeholder')) {
+                // 确保在取消屏蔽时，旧的占位符能被正确移除
+                const quoteAuthorElement = quoteElement.querySelector('blockquote font[color="#999999"]');
+                if(quoteAuthorElement) {
+                    const text = quoteAuthorElement.textContent.trim();
+                    const match = text.match(/^(.*)\s发表于\s.*$/);
+                    if (match && match[1] && !blockedUserNames.includes(match[1])) {
+                         quoteElement.previousElementSibling.remove();
+                         quoteElement.style.display = '';
+                    }
+                }
+                return;
+            }
+
+            const quoteAuthorElement = quoteElement.querySelector('blockquote font[color="#999999"]');
+            if (!quoteAuthorElement) return;
+
+            const text = quoteAuthorElement.textContent.trim();
+            const match = text.match(/^(.*)\s发表于\s.*$/);
+            if (!match || !match[1]) return;
+
+            const authorName = match[1];
+            const isBlocked = blockedUserNames.includes(authorName);
+
+            const placeholder = quoteElement.previousElementSibling;
+            const isPlaceholderVisible = placeholder && placeholder.classList.contains('s1plus-quote-placeholder');
+
+            if (isBlocked) {
+                if (!isPlaceholderVisible) {
+                    quoteElement.style.display = 'none';
+                    const newPlaceholder = document.createElement('div');
+                    newPlaceholder.className = 's1plus-quote-placeholder';
+                    newPlaceholder.innerHTML = `<span>一条来自已屏蔽用户的引用已被隐藏。</span><a class="s1plus-quote-toggle">点击展开</a>`;
+                    quoteElement.parentNode.insertBefore(newPlaceholder, quoteElement);
+
+                    newPlaceholder.querySelector('.s1plus-quote-toggle').addEventListener('click', function() {
+                        const isHidden = quoteElement.style.display === 'none';
+                        quoteElement.style.display = isHidden ? '' : 'none';
+                        this.textContent = isHidden ? '点击折叠' : '点击展开';
+                    });
+                }
+            } else {
+                if (isPlaceholderVisible) {
+                    placeholder.remove();
+                    quoteElement.style.display = '';
+                }
+            }
+        });
+    };
 
     // [MODIFIED] 函数现在可以同时处理隐藏和显示，是一个完整的“刷新”功能
     const hideBlockedUserRatings = () => {
@@ -1637,6 +1720,7 @@
         const runTasks = () => {
             if (window.location.href.includes('thread-') || window.location.href.includes('mod=viewthread')) {
                 hideBlockedUsersPosts();
+                hideBlockedUserQuotes();
                 addBlockButtonsToUsers();
                 initReadProgressTracker();
                 hideBlockedUserRatings();
