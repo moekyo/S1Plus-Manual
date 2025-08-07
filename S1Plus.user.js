@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      4.1.0-Lery
+// @version      4.1.0
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪等多种功能，全方位优化你的论坛体验。
 // @author       moekyo
 // @match        https://stage1st.com/2b/*
@@ -14,8 +14,9 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '4.1.0-Lery';
-    const SCRIPT_RELEASE_DATE = '2025-08-07';
+
+    const SCRIPT_VERSION = '4.1.0';
+    const SCRIPT_RELEASE_DATE = '2025-08-05';
 
     // --- 样式注入 ---
     GM_addStyle(`
@@ -39,6 +40,7 @@
         #p_pop { display: none !important; }
 
         /* --- 关键字屏蔽样式 --- */
+
         .s1p-hidden-by-keyword, .s1p-hidden-by-quote { display: none !important; }
 
         /* --- 按钮通用样式 --- */
@@ -348,20 +350,26 @@
             background-color: var(--s1p-sub);
             color: var(--s1p-sec);
         }
+
+        /* --- [NEW] Quote Collapse Animation --- */
+        .s1p-quote-wrapper {
+            overflow: hidden;
+            transition: max-height 0.35s ease-in-out;
+        }
     `);
 
     let dynamicallyHiddenThreads = {};
 
     // --- 数据处理 & 核心功能 ---
-    const getBlockedThreads = () => GM_getValue('s1plus_blocked_threads', {});
-    const saveBlockedThreads = (threads) => GM_setValue('s1plus_blocked_threads', threads);
-    const getBlockedUsers = () => GM_getValue('s1plus_blocked_users', {});
-    const saveBlockedUsers = (users) => GM_setValue('s1plus_blocked_users', users);
-    const saveUserTags = (tags) => GM_setValue('s1plus_user_tags', tags);
+    const getBlockedThreads = () => GM_getValue('s1p_blocked_threads', {});
+    const saveBlockedThreads = (threads) => GM_setValue('s1p_blocked_threads', threads);
+    const getBlockedUsers = () => GM_getValue('s1p_blocked_users', {});
+    const saveBlockedUsers = (users) => GM_setValue('s1p_blocked_users', users);
+    const saveUserTags = (tags) => GM_setValue('s1p_user_tags', tags);
 
     // [MODIFIED] 升级并获取用户标记，自动迁移旧数据
     const getUserTags = () => {
-        const tags = GM_getValue('s1plus_user_tags', {});
+        const tags = GM_getValue('s1p_user_tags', {});
         let needsMigration = false;
         const migratedTags = { ...tags };
 
@@ -389,20 +397,20 @@
 
 
     const getTitleFilterRules = () => {
-        const rules = GM_getValue('s1plus_title_filter_rules', null);
+        const rules = GM_getValue('s1p_title_filter_rules', null);
         if (rules !== null) return rules;
 
         // --- 向下兼容：迁移旧的关键字数据 ---
-        const oldKeywords = GM_getValue('s1plus_title_keywords', null);
+        const oldKeywords = GM_getValue('s1p_title_keywords', null);
         if (Array.isArray(oldKeywords)) {
             const newRules = oldKeywords.map(k => ({ pattern: k, enabled: true, id: `rule_${Date.now()}_${Math.random()}` }));
             saveTitleFilterRules(newRules);
-            GM_setValue('s1plus_title_keywords', null); // 清理旧数据
+            GM_setValue('s1p_title_keywords', null); // 清理旧数据
             return newRules;
         }
         return [];
     };
-    const saveTitleFilterRules = (rules) => GM_setValue('s1plus_title_filter_rules', rules);
+    const saveTitleFilterRules = (rules) => GM_setValue('s1p_title_filter_rules', rules);
 
     const blockThread = (id, title, reason = 'manual') => { const b = getBlockedThreads(); if (b[id]) return; b[id] = { title, timestamp: Date.now(), reason }; saveBlockedThreads(b); hideThread(id); };
     const unblockThread = (id) => { const b = getBlockedThreads(); delete b[id]; saveBlockedThreads(b); showThread(id); };
@@ -425,21 +433,6 @@
         const blockedUserNames = Object.values(blockedUsers).map(u => u.name);
 
         document.querySelectorAll('div.quote').forEach(quoteElement => {
-            // 如果元素已经被处理并隐藏，则跳过后续的作者检查，以提高效率
-            if (quoteElement.style.display === 'none' && quoteElement.previousElementSibling?.classList.contains('s1p-quote-placeholder')) {
-                // 确保在取消屏蔽时，旧的占位符能被正确移除
-                const quoteAuthorElement = quoteElement.querySelector('blockquote font[color="#999999"]');
-                if(quoteAuthorElement) {
-                    const text = quoteAuthorElement.textContent.trim();
-                    const match = text.match(/^(.*)\s发表于\s.*$/);
-                    if (match && match[1] && !blockedUserNames.includes(match[1])) {
-                         quoteElement.previousElementSibling.remove();
-                         quoteElement.style.display = '';
-                    }
-                }
-                return;
-            }
-
             const quoteAuthorElement = quoteElement.querySelector('blockquote font[color="#999999"]');
             if (!quoteAuthorElement) return;
 
@@ -450,27 +443,43 @@
             const authorName = match[1];
             const isBlocked = blockedUserNames.includes(authorName);
 
-            const placeholder = quoteElement.previousElementSibling;
-            const isPlaceholderVisible = placeholder && placeholder.classList.contains('s1p-quote-placeholder');
+            const wrapper = quoteElement.parentElement.classList.contains('s1p-quote-wrapper') ? quoteElement.parentElement : null;
 
             if (isBlocked) {
-                if (!isPlaceholderVisible) {
-                    quoteElement.style.display = 'none';
+                if (!wrapper) {
+                    const newWrapper = document.createElement('div');
+                    newWrapper.className = 's1p-quote-wrapper';
+                    quoteElement.parentNode.insertBefore(newWrapper, quoteElement);
+                    newWrapper.appendChild(quoteElement);
+                    newWrapper.style.maxHeight = '0';
+
                     const newPlaceholder = document.createElement('div');
                     newPlaceholder.className = 's1p-quote-placeholder';
-                    newPlaceholder.innerHTML = `<span>一条来自已屏蔽用户的引用已被隐藏。</span><a class="s1p-quote-toggle">点击展开</a>`;
-                    quoteElement.parentNode.insertBefore(newPlaceholder, quoteElement);
+                    newPlaceholder.innerHTML = `<span>一条来自已屏蔽用户的引用已被隐藏。</span><a class="s1p-quote-toggle s1p-popover-btn">点击展开</a>`;
+                    newWrapper.parentNode.insertBefore(newPlaceholder, newWrapper);
 
                     newPlaceholder.querySelector('.s1p-quote-toggle').addEventListener('click', function() {
-                        const isHidden = quoteElement.style.display === 'none';
-                        quoteElement.style.display = isHidden ? '' : 'none';
-                        this.textContent = isHidden ? '点击折叠' : '点击展开';
+                        const isCollapsed = newWrapper.style.maxHeight === '0px';
+                        if (isCollapsed) {
+                            const style = window.getComputedStyle(quoteElement);
+                            const marginTop = parseFloat(style.marginTop);
+                            const marginBottom = parseFloat(style.marginBottom);
+                            newWrapper.style.maxHeight = (quoteElement.offsetHeight + marginTop + marginBottom) + 'px';
+                            this.textContent = '点击折叠';
+                        } else {
+                            newWrapper.style.maxHeight = '0px';
+                            this.textContent = '点击展开';
+                        }
                     });
                 }
             } else {
-                if (isPlaceholderVisible) {
-                    placeholder.remove();
-                    quoteElement.style.display = '';
+                if (wrapper) {
+                    const placeholder = wrapper.previousElementSibling;
+                    if (placeholder && placeholder.classList.contains('s1p-quote-placeholder')) {
+                        placeholder.remove();
+                    }
+                    wrapper.parentNode.insertBefore(quoteElement, wrapper);
+                    wrapper.remove();
                 }
             }
         });
@@ -532,8 +541,8 @@
         dynamicallyHiddenThreads = newHiddenThreads;
     };
 
-    const getReadProgress = () => GM_getValue('s1plus_read_progress', {});
-    const saveReadProgress = (progress) => GM_setValue('s1plus_read_progress', progress);
+    const getReadProgress = () => GM_getValue('s1p_read_progress', {});
+    const saveReadProgress = (progress) => GM_setValue('s1p_read_progress', progress);
     const updateThreadProgress = (threadId, postId, page) => {
         if (!postId || !page) return;
         const progress = getReadProgress();
@@ -660,10 +669,10 @@
         ]
     };
     const getSettings = () => {
-        const saved = GM_getValue('s1plus_settings', {});
+        const saved = GM_getValue('s1p_settings', {});
         return {...defaultSettings, ...saved};
     };
-    const saveSettings = (settings) => GM_setValue('s1plus_settings', settings);
+    const saveSettings = (settings) => GM_setValue('s1p_settings', settings);
 
     // --- 界面定制功能 ---
     const applyInterfaceCustomizations = () => {
@@ -1220,7 +1229,7 @@
                         saveReadProgress({});
                         saveTitleFilterRules([]);
                         saveSettings(defaultSettings);
-                        GM_setValue('s1plus_title_keywords', null);
+                        GM_setValue('s1p_title_keywords', null);
 
                         hideBlockedThreads(); hideBlockedUsersPosts(); applyUserThreadBlocklist(); hideThreadsByTitleKeyword(); initializeNavbar(); applyInterfaceCustomizations();
                         renderThreadTab(); renderUserTab(); renderSettingsTab(); renderTagsTab();
@@ -1305,7 +1314,7 @@
 
     const addBlockButtonsToThreads = () => {
         document.querySelectorAll('tbody[id^="normalthread_"], tbody[id^="stickthread_"]').forEach(row => {
-            if (row.querySelector('.s1plus-btn.thread-block-btn')) return;
+            if (row.querySelector('.s1p-btn.thread-block-btn')) return;
             const iconCell = row.querySelector('td.icn');
             const titleElement = row.querySelector('th a.s.xst');
             if (iconCell && titleElement) {
@@ -1313,7 +1322,7 @@
                 const threadId = row.id.replace(/^(normalthread_|stickthread_)/, '');
                 const threadTitle = titleElement.textContent.trim();
                 const blockBtn = document.createElement('span');
-                blockBtn.className = 's1plus-btn thread-block-btn';
+                blockBtn.className = 's1p-btn thread-block-btn';
                 blockBtn.textContent = '屏蔽';
                 blockBtn.title = '屏蔽此贴';
                 blockBtn.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); blockThread(threadId, threadTitle); });
@@ -1327,8 +1336,8 @@
         document.querySelectorAll('.authi > a[href*="space-uid-"]').forEach(authorLink => {
             const plsCell = authorLink.closest('.pls');
             // 如果没有父元素，或已处理过，则跳过
-            if (!plsCell || plsCell.dataset.s1plusBlocked) return;
-            plsCell.dataset.s1plusBlocked = 'true'; // 添加标记，防止重复处理
+            if (!plsCell || plsCell.dataset.s1pBlocked) return;
+            plsCell.dataset.s1pBlocked = 'true'; // 添加标记，防止重复处理
 
             const avatarImg = plsCell.querySelector('.avatar img');
             if (!avatarImg) return;
@@ -1611,8 +1620,8 @@
                     if (node.nodeType === 1) {
                         const cells = node.matches('.pls') ? [node] : node.querySelectorAll('.pls');
                         cells.forEach(cell => {
-                            if (!cell.dataset.s1plusPopover) {
-                                cell.dataset.s1plusPopover = 'true';
+                            if (!cell.dataset.s1pPopover) {
+                                cell.dataset.s1pPopover = 'true';
                                 attachPopoverEvents(cell);
                             }
                         });
@@ -1623,8 +1632,8 @@
 
         const mainContent = document.getElementById('ct') || document.body;
         mainContent.querySelectorAll('.pls').forEach(cell => {
-            if (!cell.dataset.s1plusPopover) {
-                cell.dataset.s1plusPopover = 'true';
+            if (!cell.dataset.s1pPopover) {
+                cell.dataset.s1pPopover = 'true';
                 attachPopoverEvents(cell);
             }
         });

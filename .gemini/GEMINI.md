@@ -1,57 +1,69 @@
-# S1Filter-Manual Project Overview
+# S1Filter-Manual 项目说明
 
-This project, `S1Filter-Manual`, primarily consists of a Tampermonkey/Greasemonkey UserScript (`S1Plus.user.js`) and a UserStyle (`S1 NUX.css`) designed to enhance the browsing experience on the Stage1st forum (saraba1st.com / stage1st.com).
+本项目 `S1Filter-Manual` 包含一个用户脚本（`S1Plus.user.js`）和一个用户样式（`S1 NUX.css`），旨在全方位增强 Stage1st 论坛（saraba1st.com / stage1st.com）的浏览体验。
 
-## Key Components
+## 核心组件
 
-### `S1Plus.user.js` (UserScript)
-This is the core functionality provider. It's a JavaScript file intended to be run by browser extensions like Tampermonkey or Greasemonkey.
+### `S1Plus.user.js` (用户脚本)
 
-**Key Features:**
--   **Thread Blocking:** Allows users to hide specific forum threads from their view.
--   **User Blocking:** Enables hiding all posts from a specified user within a thread.
--   **Blocked User Post/Thread Hiding (New Feature):**
-    -   When blocking a user, there's now an option to hide all their replies (`hidePosts`) and/or all their created threads (`hideThreads`).
-    -   Individual toggles for `hidePosts` and `hideThreads` are available for each blocked user in the settings panel.
-    -   Global toggles (`hideBlockedUserPostsGlobal`, `hideBlockedUserThreadsGlobal`) are available in the settings to apply these hiding rules across all blocked users.
--   **Navigation Bar Customization:** Users can customize the links displayed in the main navigation bar.
--   **Auto Check-in:** Automatically performs daily check-in on the forum.
--   **Interface Customizations:** Includes options like changing the forum logo link and hiding the blacklist tip.
--   **Data Sync:** Provides functionality to export and import blocked lists for synchronization across devices.
+此脚本是功能的核心，通过 Tampermonkey 或 Greasemonkey 等浏览器扩展运行，为论坛添加了大量实用功能。
 
-### `S1 NUX.css` (UserStyle)
-This is a CSS file intended to be used with browser extensions like Stylus. It provides a custom theme and layout adjustments for the Stage1st forum, offering various color schemes, font options, and UI tweaks.
+**主要功能:**
 
-## Installation
+*   **帖子屏蔽**:
+    *   **手动屏蔽**: 在帖子列表页，通过悬浮按钮快速屏蔽不想看到的帖子。
+    *   **关键字/正则表达式屏蔽**: 在设置中添加自定义规则，自动屏蔽标题符合规则的帖子。
 
-### For `S1Plus.user.js` (UserScript):
-1.  Install a UserScript manager extension in your browser (e.g., [Tampermonkey](https://www.tampermonkey.net/) for Chrome/Edge/Opera, [Greasemonkey](https://addons.mozilla.org/en-US/firefox/addon/greasemonkey/) for Firefox).
-2.  Open the `S1Plus.user.js` file in your browser or directly through your UserScript manager's dashboard.
-3.  The extension should prompt you to install the script. Confirm the installation.
+*   **用户屏蔽与管理**:
+    *   **屏蔽用户**: 在帖子中悬停于用户头像上，即可屏蔽该用户的所有发言。
+    *   **屏蔽用户主题帖**: 屏蔽用户的同时，可选择一并屏蔽其发布的所有主题帖。此功能可在设置中对所有用户统一设置默认行为，也可以对单个已屏蔽用户进行独立开关。
+    *   **屏蔽用户评分**: 自动隐藏来自已屏蔽用户的评分记录。
 
-### For `S1 NUX.css` (UserStyle):
-1.  Install a UserStyle manager extension in your browser (e.g., [Stylus](https://add0n.com/stylus.html) for Chrome/Firefox/Opera).
-2.  Open the `S1 NUX.css` file.
-3.  Use the Stylus extension to create a new style and paste the content of `S1 NUX.css` into it, applying it to `saraba1st.com` and `stage1st.com`.
+*   **用户标记系统**:
+    *   **添加/编辑标记**: 悬停于用户头像上，会弹出一个多功能悬浮窗，允许你为该用户添加或编辑备注信息（Tag）。
+    *   **集中管理**: 在设置面板中，可以集中查看、编辑、删除所有用户的标记，并支持数据的导入和导出。
 
-## Usage and Configuration
+*   **阅读进度跟踪**:
+    *   **自动记录**: 自动记录每个帖子的最后阅读位置（页数和楼层）。
+    *   **快速跳转**: 在帖子列表页，为有阅读进度的帖子生成一个快捷跳转按钮，点击可直接到达上次阅读的位置。
 
-After installation, the `S1Plus.user.js` script will automatically run on Stage1st forum pages.
+*   **界面与导航定制**:
+    *   **自定义导航栏**: 在设置中可以自由添加、删除或拖拽排序主导航栏的链接。
+    *   **界面微调**: 提供多种界面定制选项，例如：
+        *   将论坛 Logo 的链接修改为始终指向论坛首页。
+        *   隐藏“黑名单中的用户发言已被屏蔽”的黄色提示条。
 
-### Accessing S1 Plus Settings:
-A new "S1 Plus 设置" link will appear in the main navigation bar. Clicking this link will open a modal dialog where you can:
--   Manage your blocked threads and users.
--   Toggle the new post/thread hiding options for blocked users (both global and individual).
--   Customize the navigation bar links.
--   Export or import your blocked lists.
--   Configure other general interface settings.
+*   **自动签到**:
+    *   访问论坛时，脚本会自动检查并执行每日签到操作。
 
-## Development Notes
+*   **设置同步**:
+    *   提供全功能的导入/导出系统，可通过 JSON 数据在不同设备或浏览器之间同步所有设置，包括屏蔽列表、用户标记、自定义导航栏、阅读进度等。
+    *   提供一键清空所有本地数据并恢复为默认设置的危险操作选项。
 
--   The script uses `GM_setValue` and `GM_getValue` for persistent storage, which are Tampermonkey/Greasemonkey API functions.
--   `GM_addStyle` is used for injecting dynamic CSS.
--   The script observes DOM changes using `MutationObserver` to dynamically apply blocking rules to newly loaded content.
--   The `S1 NUX.css` uses LESS preprocessor syntax, but the provided file is the compiled CSS output.
--   During development, the UI style must align with the current style and maintain a clean, modern aesthetic.
--   During modification or implementation, be careful not to affect existing functionality.
+**实现方式:**
 
+*   使用 `GM_setValue` 和 `GM_getValue` 进行数据的持久化存储。
+*   使用 `GM_addStyle` 动态注入脚本所需的 CSS 样式。
+*   通过 `MutationObserver` 监听页面的 DOM 变化，确保功能（如屏蔽、添加按钮）能正确应用于由 AJAX 动态加载的内容。
+*   内置数据迁移逻辑，可兼容旧版本脚本的数据格式。
+
+
+## 安装与使用
+
+### `S1Plus.user.js` (用户脚本)
+
+1.  在浏览器中安装一个用户脚本管理器（如 [Tampermonkey](https://www.tampermonkey.net/) 或 [Greasemonkey](https://addons.mozilla.org/en-US/firefox/addon/greasemonkey/)）。
+2.  打开 `S1Plus.user.js` 文件，或将其拖拽到浏览器中，脚本管理器会自动弹出安装提示。
+3.  确认安装。
+
+
+### 配置入口
+
+安装完成后，论坛顶部主导航栏会出现一个新的 **“S1 Plus 设置”** 链接。点击此链接即可打开设置面板，对上述所有功能进行详细配置。
+
+## 开发注意事项
+
+*   脚本功能依赖 Greasemonkey API (`GM_*` 函数)，开发和调试时需在对应的环境中进行。
+*   脚本通过 `MutationObserver` 响应页面动态内容，修改时需注意其性能和触发时机。
+*   在修改 UI 相关的功能或样式时，应注意与现有风格保持一致，并确保在不同主题下的显示效果。
+*   进行任何修改前，请充分理解现有代码逻辑，避免引入破坏性变更或影响已有功能。
