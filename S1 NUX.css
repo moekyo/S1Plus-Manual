@@ -1,11 +1,11 @@
 /* ==UserStyle==
-@name				S1 NUX
-@namespace			userstyles.world
-@author				pgain2004 <pgain2004@gmail.com>
+@name							S1 NUX
+@namespace				userstyles.world
+@author						pgain2004 <pgain2004@gmail.com>
 @description			相对熟悉CSS后新写的，窄屏自适应，适配度高。依赖一些CSS3特性和emoji库，较老系统(如Win7)显示效果可能打折扣。tag:S1 stage1st stage1 saraba1st 泥潭 婆罗门论坛
-@version			2025.8.4
-@supportURL			https://stage1st.com/2b/thread-1826103-1-1.html
-@license			CC-BY-NC-SA-4.0
+@version					2025.8.7
+@supportURL				https://stage1st.com/2b/thread-1826103-1-1.html
+@license					CC-BY-NC-SA-4.0
 @preprocessor			less
 
 @var checkbox autotheme "自适应色调主题" 1
@@ -910,7 +910,7 @@ shdl(shadow-light)：浅阴影色；
 	.rfm .px:focus {background:@bg; border-color:@sec}
 	.llst li {border:0; height:auto}
 	.tip {background:@pri; border-color:@prid}
-	.zoominner {background-color:@pri; padding:0 10px}
+	#imgzoom, #imgzoom_zoomlayer, #imgzoom_zoom {transition: none !important}
 	.zoominner p {color:@tl}
 	#e_attach_menu .bbs, #e_attach_menu .bbda, #e_attach_menu .upfl table td {border-bottom:none!important}
 	/*1-4-10-1 私信*/
