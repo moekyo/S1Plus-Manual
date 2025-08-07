@@ -57,7 +57,7 @@
             margin: 0 8px;
             font-size: 12px;
             font-weight: normal;
-            color: var(--s1p-desc-t);
+            color: var(--s1p-t);
             text-decoration: none;
             border: 2px solid var(--s1p-t);
             border-radius: 4px;
@@ -66,7 +66,6 @@
             line-height: 1.6;
         }
         .s1p-progress-jump-btn:hover {
-            color: var(--s1p-bg);
             background-color: var(--s1p-t);
             border-color: var(--s1p-t);
         }
@@ -226,10 +225,10 @@
         .s1p-item-toggle { font-size: 12px; color: var(--s1p-desc-t); display: flex; align-items: center; gap: 8px; }
         .s1p-item-toggle input { /* Handled by .s1p-switch */ }
         .s1p-unblock-btn:hover { background-color: #07855b; border-color: #07855b; }
-        .s1p-sync-title { font-weight: 500; margin-bottom: 8px; }
+        .s1p-sync-title { font-size: 14px; font-weight: 500; margin-bottom: 8px; }
         .s1p-sync-desc { font-size: 14px; color: var(--s1p-desc-t); margin-bottom: 12px; line-height: 1.5; }
         .s1p-sync-buttons { display: flex; gap: 8px; margin-bottom: 16px; }
-        .s1p-sync-textarea { width: 100%; min-height: 80px; margin-bottom: 8px;}
+        .s1p-sync-textarea { width: 100%; min-height: 80px; margin-bottom: 20px;}
         .s1p-message { font-size: 14px; margin-top: 8px; padding: 8px; border-radius: 4px; display:none; text-align: center; }
         .s1p-message.success { background-color: #d1fae5; color: #065f46; }
         .s1p-message.error { background-color: #fee2e2; color: var(--s1p-red); }
@@ -267,12 +266,12 @@
         .s1p-settings-group { margin-bottom: 24px; }
         .s1p-settings-group-title { font-size: 16px; font-weight: 500; border-bottom: 1px solid var(--s1p-pri); padding-bottom: 8px; margin-bottom: 12px; }
         .s1p-settings-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; }
-        .s1p-settings-item .title-suffix-input { width: 100%; border: 1px solid var(--s1p-pri); border-radius: 4px; padding: 6px 8px; font-size: 14px; box-sizing: border-box; }
+        .s1p-settings-item .title-suffix-input { background: var(--s1p-bg); width: 100%; border: 1px solid var(--s1p-pri); border-radius: 4px; padding: 6px 8px; font-size: 14px; box-sizing: border-box; }
         .s1p-settings-label { font-size: 14px; }
         .s1p-settings-checkbox { /* Handled by .s1p-switch */ }
         .s1p-setting-desc { font-size: 12px; color: var(--s1p-desc-t); margin: -4px 0 12px 0; padding: 0; line-height: 1.5; }
         .s1p-editor-item { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; padding: 6px; border-radius: 4px; background: var(--s1p-bg); }
-        .s1p-editor-item input[type="text"] { width: 100%; border: 1px solid var(--s1p-pri); border-radius: 4px; padding: 6px 8px; font-size: 14px; box-sizing: border-box; }
+        .s1p-editor-item input[type="text"] { background: var(--s1p-bg);  width: 100%; border: 1px solid var(--s1p-pri); border-radius: 4px; padding: 6px 8px; font-size: 14px; box-sizing: border-box; }
         .s1p-editor-item-controls { display: flex; align-items: center; gap: 4px; }
         .s1p-editor-btn { padding: 4px; font-size: 18px; line-height: 1; cursor: pointer; border-radius: 4px; border:none; background: transparent; color: #9ca3af; }
         .s1p-editor-btn:hover { background: #e5e7eb; color: #374151; }
@@ -759,7 +758,6 @@
                     </div>
                     <textarea id="s1p-sync-textarea" class="s1p-sync-textarea s1p-textarea" placeholder="在此粘贴导入数据或从此处复制导出数据"></textarea>
                     <div id="s1p-sync-message" class="s1p-message"></div>
-                    <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 20px 0;">
                     <div class="s1p-sync-title">危险操作</div>
                     <div class="s1p-sync-desc">以下操作会立即清空脚本在<b>当前浏览器</b>中的所有数据（包括屏蔽列表、设置和阅读进度），且无法撤销。请在操作前务必通过“导出数据”功能进行备份。</div>
                     <div style="margin-top: 12px;">
