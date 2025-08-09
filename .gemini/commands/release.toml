@@ -19,7 +19,9 @@ prompt = """
 
    1. 定位文件: 目标文件是 S1Plus.user.js。
    2. 更新元数据: 将文件头部的 // @version 从 [上一个版本号] 修改为 {{args}}。
-   3. 更新内部常量: 将文件内的 const SCRIPT_VERSION 的值从 [上一个版本号] 修改为 {{args}}。
+   3. 更新内部常量: 
+      * 将文件内的 const SCRIPT_VERSION 的值从 [上一个版本号] 修改为 {{args}}。
+      * 将文件内的 SCRIPT_RELEASE_DATE 的值变为发布当天。
 
   注意: 必须同时修改这两处，以确保脚本的元数据和内部逻辑版本一致。
 
