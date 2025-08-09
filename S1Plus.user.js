@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      4.1.0
+// @version      4.2.0
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪等多种功能，全方位优化你的论坛体验。
 // @author       moekyo
 // @match        https://stage1st.com/2b/*
@@ -15,8 +15,8 @@
     'use strict';
 
 
-    const SCRIPT_VERSION = '4.1.0';
-    const SCRIPT_RELEASE_DATE = '2025-08-05';
+    const SCRIPT_VERSION = '4.2.0';
+    const SCRIPT_RELEASE_DATE = '2025-08-09';
 
     // --- 样式注入 ---
     GM_addStyle(`
@@ -70,6 +70,7 @@
         .s1p-progress-jump-btn:hover {
             background-color: var(--s1p-t);
             border-color: var(--s1p-t);
+            color: white;
         }
 
         /* --- 用户屏蔽悬停交互样式 --- */
