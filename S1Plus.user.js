@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      4.3.1
+// @version      4.3.3
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪等多种功能，全方位优化你的论坛体验。
 // @author       moekyo
 // @match        https://stage1st.com/2b/*
@@ -15,7 +15,7 @@
     'use strict';
 
 
-    const SCRIPT_VERSION = '4.3.1';
+    const SCRIPT_VERSION = '4.3.3';
     const SCRIPT_RELEASE_DATE = '2025-08-10';
 
     // --- 样式注入 ---
@@ -406,6 +406,33 @@
             overflow: hidden;
             transition: max-height 0.35s ease-in-out;
         }
+
+        /* --- [NEW] Image Hiding --- */
+        .s1p-image-placeholder {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            border-radius: 6px;
+            background-color: var(--s1p-sub);
+            color: var(--s1p-t);
+            border: 1px solid var(--s1p-pri);
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s ease;
+            margin: 4px 0;
+        }
+        .s1p-image-placeholder:hover {
+            background-color: var(--s1p-sub-h);
+            color: var(--s1p-sub-h-t);
+            border-color: var(--s1p-sub-h);
+        }
+        .s1p-image-container.hidden > .zoom {
+            display: none;
+        }
+        .s1p-image-container:not(.hidden) > .s1p-image-placeholder {
+            display: none;
+        }
     `);
 
     let dynamicallyHiddenThreads = {};
@@ -632,6 +659,48 @@
         });
     };
 
+    // [MODIFIED] 图片隐藏功能的核心逻辑 (支持实时切换)
+    const applyImageHiding = () => {
+        const settings = getSettings();
+
+        // 步骤 1: 遍历所有帖子图片，确保它们都被容器包裹
+        document.querySelectorAll('div.t_fsz img.zoom').forEach(img => {
+            if (img.closest('.s1p-image-container')) return; // 如果已被包裹，则跳过
+
+            const targetElement = img.closest('a') || img;
+            const container = document.createElement('div');
+            container.className = 's1p-image-container';
+
+            const placeholder = document.createElement('span');
+            placeholder.className = 's1p-image-placeholder';
+            placeholder.textContent = '图片已隐藏，点击显示';
+
+            targetElement.parentNode.insertBefore(container, targetElement);
+            container.appendChild(placeholder);
+            container.appendChild(targetElement);
+
+            placeholder.addEventListener('click', (e) => {
+                e.preventDefault();
+                container.classList.remove('hidden');
+                // 添加一个标记，表示这张图是用户手动点开的
+                container.dataset.manualShow = 'true';
+            });
+        });
+
+        // 步骤 2: 根据当前设置，对所有已包裹的图片应用显示/隐藏状态
+        document.querySelectorAll('.s1p-image-container').forEach(container => {
+            if (settings.hideImagesByDefault) {
+                // 如果设置是“隐藏”，则隐藏所有未被手动点开的图片
+                if (container.dataset.manualShow !== 'true') {
+                    container.classList.add('hidden');
+                }
+            } else {
+                // 如果设置是“显示”，则移除所有图片的隐藏状态
+                container.classList.remove('hidden');
+            }
+        });
+    };
+
     const exportData = () => JSON.stringify({
         version: 3.2,
         settings: getSettings(),
@@ -711,7 +780,8 @@
         blockThreadsOnUserBlock: true,
         showBlockedByKeywordList: false,
         showManuallyBlockedList: false,
-        customTitleSuffix: ' - STAGE1ₛₜ', // 添加默认标题后缀
+        hideImagesByDefault: false,
+        customTitleSuffix: ' - STAGE1ₛₜ',
         customNavLinks: [
             { name: '论坛', href: 'forum.php' },
             { name: '归墟', href: 'forum-157-1.html' },
@@ -1192,6 +1262,10 @@
                         <label class="s1p-settings-label" for="s1p-enableReadProgress">启用阅读进度跟踪</label>
                         <label class="s1p-switch"><input type="checkbox" id="s1p-enableReadProgress" data-feature="enableReadProgress" class="s1p-feature-toggle" ${settings.enableReadProgress ? 'checked' : ''}><span class="s1p-slider"></span></label>
                     </div>
+                     <div class="s1p-settings-item">
+                        <label class="s1p-settings-label" for="s1p-hideImagesByDefault">默认隐藏帖子图片</label>
+                        <label class="s1p-switch"><input type="checkbox" id="s1p-hideImagesByDefault" class="s1p-settings-checkbox" data-setting="hideImagesByDefault" ${settings.hideImagesByDefault ? 'checked' : ''}><span class="s1p-slider"></span></label>
+                    </div>
                 </div>
                 <div class="s1p-settings-group">
                     <div class="s1p-settings-group-title">通用设置</div>
@@ -1221,6 +1295,10 @@
                     }
                     saveSettings(settings);
                     applyInterfaceCustomizations();
+                    // [NEW] 如果是图片隐藏开关，则立即调用函数刷新页面状态
+                    if (settingKey === 'hideImagesByDefault') {
+                        applyImageHiding();
+                    }
                 }
             });
         };
@@ -2036,6 +2114,8 @@
                 if (settings.enableReadProgress) {
                     initReadProgressTracker();
                 }
+                // 调用图片隐藏功能
+                applyImageHiding();
             } else if (window.location.href.includes('forum-')) {
                 if (settings.enablePostBlocking) {
                     hideBlockedThreads();
