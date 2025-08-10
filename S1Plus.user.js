@@ -53,24 +53,49 @@
         .thread-block-btn { position: absolute; left:0; top: 6px; z-index: 5; width: 26px ; padding: 5px 4px; border-radius: 0 12px 12px 0; background-color: var(--s1p-red); color: white; font-size: 12px; border: none; box-shadow: 0 1px 3px #00000033; opacity: 0; transition: all 0.2s ease-in-out; cursor: pointer}
         .thread-block-btn:hover { background-color: var(--s1p-red-h); opacity: 1}
 
-        /* 阅读进度跳转按钮样式 */
-        .s1p-progress-jump-btn {
-            display: inline-block;
+        /* [MODIFIED] 阅读进度UI样式 */
+        .s1p-progress-container {
+            display: inline-flex;
+            align-items: center;
             margin: 0 8px;
-            font-size: 12px;
-            font-weight: normal;
-            color: var(--s1p-t);
-            text-decoration: none;
-            border: 2px solid var(--s1p-t);
-            border-radius: 4px;
-            padding: 0 4px;
-            transition: all 0.2s ease-in-out;
-            line-height: 1.6;
+            vertical-align: middle;
+            line-height: 1;
         }
-        .s1p-progress-jump-btn:hover {
-            background-color: var(--s1p-t);
-            border-color: var(--s1p-t);
+        .s1p-progress-jump-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 12px;
+            font-weight: bold;
+            text-decoration: none;
+            border: 1px solid; /* Color will be set by JS */
+            border-radius: 4px;
+            padding: 1px 6px 1px 4px;
+            transition: all 0.2s ease-in-out;
+            line-height: 1.4;
+        }
+        .s1p-progress-jump-btn::before {
+            content: '';
+            display: inline-block;
+            width: 1.1em;
+            height: 1.1em;
+            background-color: currentColor;
+            mask-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3e%3cpath d='M19 15l-6 6-1.42-1.42L15.17 16H4V4h2v10h9.17l-3.59-3.58L13 9l6 6z' fill='black'/%3e%3c/svg%3e");
+            mask-size: contain;
+            mask-repeat: no-repeat;
+            mask-position: center;
+        }
+        .s1p-new-replies-badge {
+            display: inline-block;
             color: white;
+            font-size: 12px;
+            font-weight: bold;
+            padding: 1px 5px;
+            border: 1px solid; /* Color will be set by JS */
+            border-left: none;
+            border-radius: 0 4px 4px 0;
+            line-height: 1.4;
+            user-select: none;
         }
 
         /* --- 用户屏蔽悬停交互样式 --- */
@@ -544,10 +569,10 @@
 
     const getReadProgress = () => GM_getValue('s1p_read_progress', {});
     const saveReadProgress = (progress) => GM_setValue('s1p_read_progress', progress);
-    const updateThreadProgress = (threadId, postId, page) => {
+    const updateThreadProgress = (threadId, postId, page, lastReadFloor) => {
         if (!postId || !page) return;
         const progress = getReadProgress();
-        progress[threadId] = { postId, page, timestamp: Date.now() };
+        progress[threadId] = { postId, page, timestamp: Date.now(), lastReadFloor: lastReadFloor };
         saveReadProgress(progress);
     };
 
@@ -1642,30 +1667,84 @@
     };
 
 
+    const getTimeBasedColor = (hours) => {
+        if (hours <= 1) return 'rgb(192, 51, 34)';
+        if (hours <= 24) return `rgb(${Math.round(192 - hours * 4)}, ${Math.round(51 + hours * 2)}, ${Math.round(34 + hours * 2)})`;
+        if (hours <= 168) return `rgb(${Math.round(100 - (hours-24)/3)}, ${Math.round(100 + (hours-24)/4)}, ${Math.round(80 + (hours-24)/4)})`;
+        return 'rgb(107, 114, 128)';
+    };
+
     const addProgressJumpButtons = () => {
         const progressData = getReadProgress();
         if (Object.keys(progressData).length === 0) return;
 
+        const now = Date.now();
+
         document.querySelectorAll('tbody[id^="normalthread_"]').forEach(row => {
-            if (row.querySelector('.s1p-progress-jump-btn')) return;
+            const container = row.querySelector('th');
+            if (!container || container.querySelector('.s1p-progress-container')) return;
 
             const threadIdMatch = row.id.match(/normalthread_(\d+)/);
             if (!threadIdMatch) return;
             const threadId = threadIdMatch[1];
 
-            if (progressData[threadId] && progressData[threadId].page) {
-                const { postId, page } = progressData[threadId];
-                const titleLink = row.querySelector('th span.tps');
-                if (titleLink) {
-                    const jumpBtn = document.createElement('a');
-                    jumpBtn.className = 's1p-progress-jump-btn';
-                    jumpBtn.textContent = `回到P${page}`;
-                    jumpBtn.href = `forum.php?mod=redirect&goto=findpost&ptid=${threadId}&pid=${postId}`;
-                    jumpBtn.title = `跳转至上次离开的第 ${page} 页`;
-                    jumpBtn.target = '_blank';
-                    jumpBtn.onclick = (e) => e.stopPropagation();
+            const progress = progressData[threadId];
+            if (progress && progress.page) {
+                const { postId, page, timestamp, lastReadFloor: savedFloor } = progress;
 
-                    titleLink.insertAdjacentElement('afterend', jumpBtn);
+                const hoursDiff = (now - (timestamp || 0)) / 3600000;
+                const fcolor = getTimeBasedColor(hoursDiff);
+
+                const replyEl = row.querySelector('td.num a.xi2');
+                const currentReplies = replyEl ? parseInt(replyEl.textContent.replace(/,/g, '')) || 0 : 0;
+                const latestFloor = currentReplies + 1;
+                const newReplies = (savedFloor !== undefined && latestFloor > savedFloor) ? latestFloor - savedFloor : 0;
+
+                const progressContainer = document.createElement('span');
+                progressContainer.className = 's1p-progress-container';
+
+                const jumpBtn = document.createElement('a');
+                jumpBtn.className = 's1p-progress-jump-btn';
+
+                if (savedFloor) {
+                    jumpBtn.textContent = `P${page}-#${savedFloor}`;
+                    jumpBtn.title = `跳转至上次离开的第 ${page} 页，第 ${savedFloor} 楼`;
+                } else {
+                    jumpBtn.textContent = `P${page}`;
+                    jumpBtn.title = `跳转至上次离开的第 ${page} 页`;
+                }
+
+                jumpBtn.href = `forum.php?mod=redirect&goto=findpost&ptid=${threadId}&pid=${postId}`;
+                jumpBtn.target = '_blank';
+                jumpBtn.style.borderColor = fcolor;
+                jumpBtn.style.color = fcolor;
+                jumpBtn.onmouseover = () => { jumpBtn.style.backgroundColor = fcolor; jumpBtn.style.color = 'white'; };
+                jumpBtn.onmouseout = () => { jumpBtn.style.backgroundColor = 'transparent'; jumpBtn.style.color = fcolor; };
+                jumpBtn.onclick = (e) => e.stopPropagation();
+                progressContainer.appendChild(jumpBtn);
+
+                if (newReplies > 0) {
+                    const badge = document.createElement('span');
+                    badge.className = 's1p-new-replies-badge';
+                    badge.textContent = `+${newReplies}`;
+                    badge.style.backgroundColor = fcolor;
+                    badge.style.borderColor = fcolor;
+                    badge.title = `有 ${newReplies} 条新回复`;
+                    progressContainer.appendChild(badge);
+                    jumpBtn.style.borderRadius = '4px 0 0 4px';
+                } else {
+                    jumpBtn.style.borderRadius = '4px';
+                }
+
+                const titleSpan = container.querySelector('span.tps');
+                if (titleSpan) {
+                    titleSpan.insertAdjacentElement('afterend', progressContainer);
+                } else {
+                    const titleLink = container.querySelector('a.s.xst');
+                    if (titleLink) {
+                        titleLink.insertAdjacentHTML('afterend', ' ');
+                        titleLink.insertAdjacentElement('afterend', progressContainer);
+                    }
                 }
             }
         });
@@ -1698,7 +1777,16 @@
 
         const saveProgress = () => {
             if (document.visibilityState === 'hidden' && currentProgressPostId) {
-                updateThreadProgress(threadId, currentProgressPostId, currentPage);
+                // [NEW] Get floor number from the first visible post, based on user's feedback.
+                const postElement = document.getElementById('pid' + currentProgressPostId);
+                let lastReadFloor = 0;
+                if (postElement) {
+                    const floorElement = postElement.querySelector('.pi em');
+                    if (floorElement) {
+                        lastReadFloor = parseInt(floorElement.textContent) || 0;
+                    }
+                }
+                updateThreadProgress(threadId, currentProgressPostId, currentPage, lastReadFloor);
             }
         };
 
