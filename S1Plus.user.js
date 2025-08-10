@@ -292,16 +292,26 @@
 
         /* --- [NEW] Feature Content Animation --- */
         .s1p-feature-content {
-            max-height: 0;
-            opacity: 0;
-            overflow: hidden;
-            transition: max-height 0.4s ease-in-out, opacity 0.3s ease-in-out, margin-top 0.4s ease-in-out;
+            display: grid;
+            grid-template-rows: 0fr;
+            transition: grid-template-rows 0.6s ease-in-out, margin-top 0.6s ease-in-out;
             margin-top: 0;
         }
         .s1p-feature-content.expanded {
-            max-height: 2000px; /* A safe, large value to accommodate content */
-            opacity: 1;
+            grid-template-rows: 1fr;
             margin-top: 16px;
+        }
+        .s1p-feature-content > div {
+            overflow: hidden;
+            transition: opacity 0.5s ease-in-out;
+        }
+        .s1p-feature-content:not(.expanded) > div {
+            opacity: 0;
+            transition-duration: 0.25s;
+        }
+        .s1p-feature-content.expanded > div {
+            opacity: 1;
+            transition-delay: 0.15s;
         }
 
         /* --- 界面定制设置样式 --- */
@@ -714,7 +724,11 @@
     };
     const getSettings = () => {
         const saved = GM_getValue('s1p_settings', {});
-        return {...defaultSettings, ...saved};
+        // 如果用户已保存自定义导航，则保留，否则使用默认值
+        if (saved.customNavLinks && Array.isArray(saved.customNavLinks)) {
+            return { ...defaultSettings, ...saved, customNavLinks: saved.customNavLinks };
+        }
+        return { ...defaultSettings, ...saved };
     };
     const saveSettings = (settings) => GM_setValue('s1p_settings', settings);
 
@@ -795,13 +809,15 @@
                     <button class="s1p-tab-btn active" data-tab="threads">帖子屏蔽</button>
                     <button class="s1p-tab-btn" data-tab="users">用户屏蔽</button>
                     <button class="s1p-tab-btn" data-tab="tags">用户标记</button>
-                    <button class="s1p-tab-btn" data-tab="settings">界面定制</button>
+                    <button class="s1p-tab-btn" data-tab="nav-settings">导航栏定制</button>
+                    <button class="s1p-tab-btn" data-tab="general-settings">通用设置</button>
                     <button class="s1p-tab-btn" data-tab="sync">设置同步</button>
                 </div>
                 <div id="s1p-tab-threads" class="s1p-tab-content active"></div>
                 <div id="s1p-tab-users" class="s1p-tab-content"></div>
                 <div id="s1p-tab-tags" class="s1p-tab-content"></div>
-                <div id="s1p-tab-settings" class="s1p-tab-content"></div>
+                <div id="s1p-tab-nav-settings" class="s1p-tab-content"></div>
+                <div id="s1p-tab-general-settings" class="s1p-tab-content"></div>
                 <div id="s1p-tab-sync" class="s1p-tab-content">
                     <div class="s1p-sync-title">全量设置同步</div>
                     <div class="s1p-sync-desc">通过复制/粘贴数据，在不同浏览器或设备间同步你的所有S1 Plus配置，包括屏蔽列表、导航栏、阅读进度和各项开关设置。</div>
@@ -832,11 +848,12 @@
         document.body.appendChild(modal);
 
         const tabs = {
-            threads: modal.querySelector('#s1p-tab-threads'),
-            users: modal.querySelector('#s1p-tab-users'),
-            tags: modal.querySelector('#s1p-tab-tags'),
-            settings: modal.querySelector('#s1p-tab-settings'),
-            sync: modal.querySelector('#s1p-tab-sync'),
+            'threads': modal.querySelector('#s1p-tab-threads'),
+            'users': modal.querySelector('#s1p-tab-users'),
+            'tags': modal.querySelector('#s1p-tab-tags'),
+            'nav-settings': modal.querySelector('#s1p-tab-nav-settings'),
+            'general-settings': modal.querySelector('#s1p-tab-general-settings'),
+            'sync': modal.querySelector('#s1p-tab-sync'),
         };
 
         const dataClearanceConfig = {
@@ -937,15 +954,15 @@
                 </div>
             `;
 
-            tabs.tags.innerHTML = `
+            tabs['tags'].innerHTML = `
                 ${toggleHTML}
                 <div class="s1p-feature-content ${isEnabled ? 'expanded' : ''}">
-                    ${contentHTML}
+                    <div>${contentHTML}</div>
                 </div>
             `;
 
             if (editingUserId) {
-                const textarea = tabs.tags.querySelector('.s1p-tag-edit-area');
+                const textarea = tabs['tags'].querySelector('.s1p-tag-edit-area');
                 if (textarea) {
                     textarea.focus();
                     textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
@@ -985,10 +1002,10 @@
                 }
             `;
 
-            tabs.users.innerHTML = `
+            tabs['users'].innerHTML = `
                 ${toggleHTML}
                 <div class="s1p-feature-content ${isEnabled ? 'expanded' : ''}">
-                    ${contentHTML}
+                    <div>${contentHTML}</div>
                 </div>
             `;
         };
@@ -1046,15 +1063,15 @@
                 </div>
             `;
 
-            tabs.threads.innerHTML = `
+            tabs['threads'].innerHTML = `
                 ${toggleHTML}
                 <div class="s1p-feature-content ${isEnabled ? 'expanded' : ''}">
-                    ${contentHTML}
+                    <div>${contentHTML}</div>
                 </div>
             `;
 
             const renderDynamicallyHiddenList = () => {
-                const listContainer = tabs.threads.querySelector('#s1p-dynamically-hidden-list');
+                const listContainer = tabs['threads'].querySelector('#s1p-dynamically-hidden-list');
                 const hiddenItems = Object.entries(dynamicallyHiddenThreads);
                 if (hiddenItems.length === 0) {
                     listContainer.innerHTML = `<div class="s1p-empty" style="padding-top: 12px;">当前页面没有被关键字屏蔽的帖子</div>`;
@@ -1072,7 +1089,7 @@
 
             const renderRules = () => {
                 const rules = getTitleFilterRules();
-                const container = tabs.threads.querySelector('#s1p-keyword-rules-list');
+                const container = tabs['threads'].querySelector('#s1p-keyword-rules-list');
                 if (!container) return; // Exit if content is not rendered
                 container.innerHTML = rules.map(rule => `
                     <div class="s1p-editor-item" data-rule-id="${rule.id}">
@@ -1093,7 +1110,7 @@
 
             const saveAndApplyKeywordRules = () => {
                 const newRules = [];
-                tabs.threads.querySelectorAll('#s1p-keyword-rules-list .s1p-editor-item').forEach(item => {
+                tabs['threads'].querySelectorAll('#s1p-keyword-rules-list .s1p-editor-item').forEach(item => {
                     const pattern = item.querySelector('.keyword-rule-pattern').value.trim();
                     if (pattern) {
                         let id = item.dataset.ruleId;
@@ -1111,10 +1128,10 @@
                 hideThreadsByTitleKeyword();
                 renderDynamicallyHiddenList();
                 renderRules(); // Re-render to show the saved state and assign permanent IDs.
-                showMessage(tabs.threads.querySelector('#s1p-keywords-message'), '规则已保存！', true);
+                showMessage(tabs['threads'].querySelector('#s1p-keywords-message'), '规则已保存！', true);
             };
 
-            tabs.threads.addEventListener('click', e => {
+            tabs['threads'].addEventListener('click', e => {
                 const target = e.target;
                 const header = target.closest('.s1p-collapsible-header');
 
@@ -1126,7 +1143,7 @@
                         saveSettings(currentSettings);
 
                         header.querySelector('.s1p-expander-arrow').classList.toggle('expanded', isNowExpanded);
-                        tabs.threads.querySelector('#s1p-dynamically-hidden-list-container').classList.toggle('expanded', isNowExpanded);
+                        tabs['threads'].querySelector('#s1p-dynamically-hidden-list-container').classList.toggle('expanded', isNowExpanded);
                     } else if (header.id === 's1p-manually-blocked-header') {
                         const currentSettings = getSettings();
                         const isNowExpanded = !currentSettings.showManuallyBlockedList;
@@ -1134,10 +1151,10 @@
                         saveSettings(currentSettings);
 
                         header.querySelector('.s1p-expander-arrow').classList.toggle('expanded', isNowExpanded);
-                        tabs.threads.querySelector('#s1p-manually-blocked-list-container').classList.toggle('expanded', isNowExpanded);
+                        tabs['threads'].querySelector('#s1p-manually-blocked-list-container').classList.toggle('expanded', isNowExpanded);
                     }
                 } else if (target.id === 's1p-keyword-rule-add-btn') {
-                    const container = tabs.threads.querySelector('#s1p-keyword-rules-list');
+                    const container = tabs['threads'].querySelector('#s1p-keyword-rules-list');
                     const emptyMsg = container.querySelector('.s1p-empty');
                     if (emptyMsg) emptyMsg.remove();
 
@@ -1156,7 +1173,7 @@
                 } else if (target.classList.contains('keyword-rule-delete')) {
                     const item = target.closest('.s1p-editor-item');
                     item.remove();
-                    const container = tabs.threads.querySelector('#s1p-keyword-rules-list');
+                    const container = tabs['threads'].querySelector('#s1p-keyword-rules-list');
                     if (container.children.length === 0) {
                         container.innerHTML = `<div class="s1p-empty" style="padding: 12px;">暂无规则</div>`;
                     }
@@ -1166,12 +1183,12 @@
             });
         };
 
-        const renderSettingsTab = () => {
+        const renderGeneralSettingsTab = () => {
             const settings = getSettings();
-            tabs.settings.innerHTML = `
+            tabs['general-settings'].innerHTML = `
                 <div class="s1p-settings-group">
                     <div class="s1p-settings-group-title">功能开关</div>
-                    <div class="s1p-settings-item">
+                     <div class="s1p-settings-item">
                         <label class="s1p-settings-label" for="s1p-enableReadProgress">启用阅读进度跟踪</label>
                         <label class="s1p-switch"><input type="checkbox" id="s1p-enableReadProgress" data-feature="enableReadProgress" class="s1p-feature-toggle" ${settings.enableReadProgress ? 'checked' : ''}><span class="s1p-slider"></span></label>
                     </div>
@@ -1180,33 +1197,54 @@
                     <div class="s1p-settings-group-title">通用设置</div>
                     <div class="s1p-settings-item">
                         <label class="s1p-settings-label" for="s1p-changeLogoLink">修改论坛Logo链接 (指向论坛首页)</label>
-                        <label class="s1p-switch"><input type="checkbox" id="s1p-changeLogoLink" class="s1p-settings-checkbox" ${settings.changeLogoLink ? 'checked' : ''}><span class="s1p-slider"></span></label>
+                        <label class="s1p-switch"><input type="checkbox" id="s1p-changeLogoLink" class="s1p-settings-checkbox" data-setting="changeLogoLink" ${settings.changeLogoLink ? 'checked' : ''}><span class="s1p-slider"></span></label>
                     </div>
                     <div class="s1p-settings-item">
                         <label class="s1p-settings-label" for="s1p-hideBlacklistTip">隐藏已屏蔽用户发言的黄条提示</label>
-                        <label class="s1p-switch"><input type="checkbox" id="s1p-hideBlacklistTip" class="s1p-settings-checkbox" ${settings.hideBlacklistTip ? 'checked' : ''}><span class="s1p-slider"></span></label>
+                        <label class="s1p-switch"><input type="checkbox" id="s1p-hideBlacklistTip" class="s1p-settings-checkbox" data-setting="hideBlacklistTip" ${settings.hideBlacklistTip ? 'checked' : ''}><span class="s1p-slider"></span></label>
                     </div>
                     <div class="s1p-settings-item">
                         <label class="s1p-settings-label" for="s1p-customTitleSuffix">自定义标题后缀</label>
-                        <input type="text" id="s1p-customTitleSuffix" class="title-suffix-input" value="${settings.customTitleSuffix || ''}" style="width: 200px;">
+                        <input type="text" id="s1p-customTitleSuffix" class="title-suffix-input" data-setting="customTitleSuffix" value="${settings.customTitleSuffix || ''}" style="width: 200px;">
                     </div>
-                </div>
+                </div>`;
+
+            tabs['general-settings'].addEventListener('change', e => {
+                const target = e.target;
+                const settingKey = target.dataset.setting;
+                if (settingKey) {
+                    const settings = getSettings();
+                    if (target.type === 'checkbox') {
+                        settings[settingKey] = target.checked;
+                    } else {
+                        settings[settingKey] = target.value;
+                    }
+                    saveSettings(settings);
+                    applyInterfaceCustomizations();
+                }
+            });
+        };
+
+        const renderNavSettingsTab = () => {
+            const settings = getSettings();
+            tabs['nav-settings'].innerHTML = `
                 <div class="s1p-settings-group">
-                    <div class="s1p-settings-group-title">导航栏定制</div>
                     <div class="s1p-settings-item">
                         <label class="s1p-settings-label" for="s1p-enableNavCustomization">启用自定义导航栏</label>
                         <label class="s1p-switch"><input type="checkbox" id="s1p-enableNavCustomization" class="s1p-settings-checkbox" ${settings.enableNavCustomization ? 'checked' : ''}><span class="s1p-slider"></span></label>
                     </div>
-                    <div class="s1p-feature-content ${settings.enableNavCustomization ? 'expanded' : ''}">
-                        <div class="s1p-nav-editor-list" style="margin-top: 12px; display: flex; flex-direction: column; gap: 8px;"></div>
-                        <div class="s1p-editor-footer">
-                           <button id="s1p-nav-restore-btn" class="s1p-btn s1p-red-btn">恢复默认导航</button>
-                           <button id="s1p-nav-add-btn" class="s1p-btn">添加新链接</button>
-                        </div>
+                    <div class="s1p-nav-editor-list" style="margin-top: 12px; display: flex; flex-direction: column; gap: 8px;"></div>
+                </div>
+                <div class="s1p-editor-footer">
+                    <div style="display: flex; gap: 8px;">
+                        <button id="s1p-nav-add-btn" class="s1p-btn">添加新链接</button>
+                        <button id="s1p-settings-save-btn" class="s1p-btn">保存设置</button>
                     </div>
-                </div>`;
+                    <button id="s1p-nav-restore-btn" class="s1p-btn s1p-red-btn">恢复默认导航</button>
+                </div>
+                <div id="s1p-settings-message" class="s1p-message"></div>`;
 
-            const navListContainer = tabs.settings.querySelector('.s1p-nav-editor-list');
+            const navListContainer = tabs['nav-settings'].querySelector('.s1p-nav-editor-list');
             const renderNavList = (links) => {
                 navListContainer.innerHTML = (links || []).map((link, index) => `
                     <div class="s1p-editor-item" draggable="true" data-index="${index}" style="grid-template-columns: auto 1fr 1fr auto; user-select: none;">
@@ -1255,24 +1293,35 @@
                 }
             });
 
-            tabs.settings.addEventListener('click', e => {
+            tabs['nav-settings'].addEventListener('click', e => {
                 const target = e.target;
                 if (target.id === 's1p-nav-add-btn') {
                     const newItem = document.createElement('div');
                     newItem.className = 's1p-editor-item'; newItem.draggable = true;
                     newItem.style.gridTemplateColumns = 'auto 1fr 1fr auto';
-                    newItem.innerHTML = `<div class="drag-handle" style="cursor: grab; color: #9ca3af; padding: 0 8px;">::</div><input type="text" class="nav-name" placeholder="新链接"><input type="text" class="nav-href" placeholder="forum.php"><div class="s1p-editor-item-controls"><button class="s1p-editor-btn" data-action="delete" title="删除链接"></button></div>`;
+                    newItem.innerHTML = `<div class="s1p-drag-handle">::</div><input type="text" class="nav-name" placeholder="新链接"><input type="text" class="nav-href" placeholder="forum.php"><div class="s1p-editor-item-controls"><button class="s1p-editor-btn" data-action="delete" title="删除链接"></button></div>`;
                     navListContainer.appendChild(newItem);
                 } else if (target.dataset.action === 'delete') {
                     target.closest('.s1p-editor-item').remove();
                 } else if (target.id === 's1p-nav-restore-btn') {
+                    const currentSettings = getSettings();
+                    currentSettings.enableNavCustomization = defaultSettings.enableNavCustomization;
+                    currentSettings.customNavLinks = defaultSettings.customNavLinks;
+                    saveSettings(currentSettings);
+                    renderNavSettingsTab();
+                    applyInterfaceCustomizations();
+                    initializeNavbar();
+                    showMessage(modal.querySelector('#s1p-settings-message'), '导航栏已恢复为默认设置！', true);
+                } else if (target.id === 's1p-settings-save-btn') {
                     const newSettings = {
                         ...getSettings(),
-                        customNavLinks: defaultSettings.customNavLinks
+                        enableNavCustomization: tabs['nav-settings'].querySelector('#s1p-enableNavCustomization').checked,
+                        customNavLinks: Array.from(navListContainer.querySelectorAll('.s1p-editor-item')).map(item => ({ name: item.querySelector('.nav-name').value.trim(), href: item.querySelector('.nav-href').value.trim() })).filter(l=>l.name && l.href)
                     };
                     saveSettings(newSettings);
-                    renderSettingsTab();
+                    applyInterfaceCustomizations();
                     initializeNavbar();
+                    showMessage(modal.querySelector('#s1p-settings-message'), '设置已保存！', true);
                 }
             });
         };
@@ -1281,13 +1330,12 @@
         renderThreadTab();
         renderUserTab();
         renderTagsTab();
-        renderSettingsTab();
+        renderGeneralSettingsTab();
+        renderNavSettingsTab();
 
         modal.addEventListener('change', e => {
             const target = e.target;
             const settings = getSettings();
-            let settingsChanged = false;
-            let navChanged = false;
 
             const featureKey = target.dataset.feature;
             if (featureKey && target.classList.contains('s1p-feature-toggle')) {
@@ -1300,24 +1348,6 @@
                  saveSettings(settings);
                 // We handled it, so we stop here.
                 return;
-            }
-            else if (target.id === 's1p-changeLogoLink') { settings.changeLogoLink = target.checked; settingsChanged = true; }
-            else if (target.id === 's1p-hideBlacklistTip') { settings.hideBlacklistTip = target.checked; settingsChanged = true; }
-            else if (target.id === 's1p-customTitleSuffix') { settings.customTitleSuffix = target.value; settingsChanged = true; }
-            else if (target.id === 's1p-enableNavCustomization') {
-                settings.enableNavCustomization = target.checked;
-                settingsChanged = true;
-                navChanged = true;
-                 // [MODIFIED] Also animate nav editor section
-                const contentWrapper = target.closest('.s1p-settings-item')?.nextElementSibling;
-                if (contentWrapper && contentWrapper.classList.contains('s1p-feature-content')) {
-                    contentWrapper.classList.toggle('expanded', target.checked);
-                }
-            }
-            else if (target.closest('.s1p-nav-editor-list')) {
-                settings.customNavLinks = Array.from(modal.querySelectorAll('.s1p-nav-editor-list .s1p-editor-item')).map(item => ({ name: item.querySelector('.nav-name').value.trim(), href: item.querySelector('.nav-href').value.trim() })).filter(l=>l.name && l.href);
-                settingsChanged = true;
-                navChanged = true;
             }
             else if(target.matches('.user-thread-block-toggle')) {
                 const userId = target.dataset.userId;
@@ -1332,17 +1362,9 @@
                 }
             }
             else if(target.matches('#s1p-blockThreadsOnUserBlock')) {
-                settings.blockThreadsOnUserBlock = target.checked;
-                settingsChanged = true;
-            }
-
-            if (settingsChanged) {
-                saveSettings(settings);
-                if (navChanged) {
-                    initializeNavbar();
-                } else {
-                    applyInterfaceCustomizations();
-                }
+                const currentSettings = getSettings();
+                currentSettings.blockThreadsOnUserBlock = target.checked;
+                saveSettings(currentSettings);
             }
         });
 
