@@ -147,3 +147,41 @@
 </p>
 </dd>
 </dl>
+
+
+在 S1 中可以回复别人，这导致了如果有人回复了被屏蔽用户的帖子，屏蔽用户的回复仍然会被引用而显示出来。需求是如果被屏蔽用户的回复出现在当前帖子中，则将其隐藏。以下是对应的 HTML 代码片段：
+<td class="plc">
+<div class="pi">
+<strong>
+<a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=2257044&amp;pid=68216354" id="postnum68216354" onclick="setCopy(this.href, '帖子地址复制成功');return false;">
+<em>50</em><sup>#</sup></a>
+</strong>
+<div class="pti">
+<div class="pdbt">
+</div>
+<div class="authi">
+<em class="authicn fico-person fic4 fnmr vm" id="authicon68216354" title="楼主"></em>
+&nbsp;楼主<span class="pipe">|</span>
+<em id="authorposton68216354">发表于 2025-8-5 00:10</em>
+<span class="pipe">|</span>
+<a href="forum.php?mod=viewthread&amp;tid=2257044&amp;page=2&amp;authorid=425635" rel="nofollow">只看该作者</a>
+</div>
+</div>
+</div><div class="pct"><div class="pcb">
+<div class="t_fsz"><table cellspacing="0" cellpadding="0"><tbody><tr><td class="t_f" id="postmessage_68216354">
+<div class="quote"><blockquote><font size="2"><a href="https://stage1st.com/2b/forum.php?mod=redirect&amp;goto=findpost&amp;pid=68216114&amp;ptid=2257044" target="_blank"><font color="#999999">pgain2004 发表于 2025-8-4 22:54</font></a></font><br>
+只能屏蔽一小部分，因为引用后缺了很多判断信息，部分客户端的引用更是缺斤少两能看就完事 ...</blockquote></div><br>
+单论回复引用都是固定格式的，截取一下应该挺简单，我后面试试<img src="https://static.stage1st.com/image/smiley/face2017/009.gif" smilieid="723" border="0" alt=""></td></tr></tbody></table>
+
+</div>
+<div id="comment_68216354" class="cm">
+</div>
+
+<div id="post_rate_div_68216354"></div>
+</div>
+</div>
+
+</td>
+
+
+给这个跳转按钮在文字左边增加一个合适的图标，暗示这个按钮的功能（带有跳转功能）。注意要和目前的 UI 风格保持一致。
