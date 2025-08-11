@@ -2300,6 +2300,57 @@
         });
     };
 
+    const addBlockButtonToPostFooter = () => {
+        // Find all the "View author's posts only" links
+        document.querySelectorAll('div.authi a[href*="authorid="]').forEach(authorLink => {
+            const authiDiv = authorLink.closest('.authi');
+            // Prevent duplicate buttons
+            if (!authiDiv || authiDiv.querySelector('.s1p-block-user-in-authi')) {
+                return;
+            }
+
+            // 1. Extract User ID
+            const urlParams = new URLSearchParams(authorLink.href.split('?')[1]);
+            const userId = urlParams.get('authorid');
+            if (!userId) {
+                return;
+            }
+
+            // 2. Find User Name
+            const postContainer = authiDiv.closest('td.plc');
+            if (!postContainer) {
+                return;
+            }
+            const plsCell = postContainer.previousElementSibling;
+            if (!plsCell) {
+                return;
+            }
+            const userLinkInPi = plsCell.querySelector(`.pi .authi a[href*="space-uid-${userId}"]`);
+            const userName = userLinkInPi ? userLinkInPi.textContent.trim() : `用户 #${userId}`;
+
+            // 3. Create and insert the new elements
+            const pipe = document.createElement('span');
+            pipe.className = 'pipe';
+            pipe.textContent = '|';
+
+            const blockLink = document.createElement('a');
+            blockLink.href = 'javascript:void(0);';
+            blockLink.textContent = '屏蔽该用户';
+            blockLink.className = 's1p-block-user-in-authi';
+
+            // 4. Add click listener
+            blockLink.addEventListener('click', (e) => {
+                e.preventDefault();
+                const subtitle = getSettings().blockThreadsOnUserBlock ?
+                    '该用户的所有帖子和主题帖都将被隐藏，此操作可在设置面板中撤销。' :
+                    '该用户的所有帖子都将被隐藏，此操作可在设置面板中撤销。';
+                createConfirmationModal(`确定要屏蔽用户 "${userName}" 吗？`, subtitle, () => blockUser(userId, userName), '确定屏蔽');
+            });
+
+            authorLink.after(pipe, blockLink);
+        });
+    };
+
     // --- 主流程 ---
     function main() {
         initializeNavbar();
@@ -2355,6 +2406,7 @@
         if (settings.enableUserBlocking) {
             hideBlockedUsersPosts();
             addBlockButtonsToUsers();
+            addBlockButtonToPostFooter();
             hideBlockedUserQuotes();
             hideBlockedUserRatings();
         }
