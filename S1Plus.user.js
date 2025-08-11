@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      4.3.3
+// @version      4.3.4
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪等多种功能，全方位优化你的论坛体验。
 // @author       moekyo
 // @match        https://stage1st.com/2b/*
@@ -15,8 +15,8 @@
     'use strict';
 
 
-    const SCRIPT_VERSION = '4.3.3';
-    const SCRIPT_RELEASE_DATE = '2025-08-10';
+    const SCRIPT_VERSION = '4.3.4';
+    const SCRIPT_RELEASE_DATE = '2025-08-11';
 
     // --- 样式注入 ---
     GM_addStyle(`
@@ -408,6 +408,13 @@
         }
 
         /* --- [NEW] Image Hiding --- */
+        .s1p-image-container {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 8px;
+            margin: 8px 0;
+        }
         .s1p-image-placeholder {
             display: inline-flex;
             align-items: center;
@@ -420,7 +427,6 @@
             cursor: pointer;
             font-size: 13px;
             transition: all 0.2s ease;
-            margin: 4px 0;
         }
         .s1p-image-placeholder:hover {
             background-color: var(--s1p-sub-h);
@@ -430,8 +436,28 @@
         .s1p-image-container.hidden > .zoom {
             display: none;
         }
-        .s1p-image-container:not(.hidden) > .s1p-image-placeholder {
-            display: none;
+
+        /* --- [MODIFIED] Image Toggle All Button --- */
+        .s1p-image-toggle-all-container {
+            margin-bottom: 10px;
+        }
+        .s1p-image-toggle-all-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            border-radius: 6px;
+            background-color: var(--s1p-sub);
+            color: var(--s1p-t);
+            border: 1px solid var(--s1p-pri);
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s ease;
+        }
+        .s1p-image-toggle-all-btn:hover {
+            background-color: var(--s1p-sub-h);
+            color: var(--s1p-sub-h-t);
+            border-color: var(--s1p-sub-h);
         }
     `);
 
@@ -659,11 +685,99 @@
         });
     };
 
+    const updatePostImageButtonState = (postContainer) => {
+        const toggleButton = postContainer.querySelector('.s1p-image-toggle-all-btn');
+        if (!toggleButton) return;
+
+        const totalImages = postContainer.querySelectorAll('.s1p-image-container').length;
+        if (totalImages <= 1) {
+            const container = toggleButton.closest('.s1p-image-toggle-all-container');
+            if (container) container.remove();
+            return;
+        }
+
+        const hiddenImages = postContainer.querySelectorAll('.s1p-image-container.hidden').length;
+
+        if (hiddenImages > 0) {
+            toggleButton.textContent = `显示本楼所有图片 (${hiddenImages}/${totalImages})`;
+        } else {
+            toggleButton.textContent = `隐藏本楼所有图片 (${totalImages}/${totalImages})`;
+        }
+    };
+
+    const manageImageToggleAllButtons = () => {
+        const settings = getSettings();
+
+        // 如果没有开启“默认隐藏图片”，则移除所有切换按钮并直接返回
+        if (!settings.hideImagesByDefault) {
+            document.querySelectorAll('.s1p-image-toggle-all-container').forEach(el => el.remove());
+            return;
+        }
+
+        document.querySelectorAll('table.plhin').forEach(postContainer => {
+            const imageContainers = postContainer.querySelectorAll('.s1p-image-container');
+            const postContentArea = postContainer.querySelector('td.t_f');
+
+            if (!postContentArea) return;
+
+            let toggleButtonContainer = postContainer.querySelector('.s1p-image-toggle-all-container');
+
+            if (imageContainers.length <= 1) {
+                if (toggleButtonContainer) toggleButtonContainer.remove();
+                return;
+            }
+
+            if (!toggleButtonContainer) {
+                toggleButtonContainer = document.createElement('div');
+                toggleButtonContainer.className = 's1p-image-toggle-all-container';
+
+                const toggleButton = document.createElement('button');
+                toggleButton.className = 's1p-image-toggle-all-btn';
+                toggleButtonContainer.appendChild(toggleButton);
+
+                toggleButton.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    const imagesInPost = postContainer.querySelectorAll('.s1p-image-container');
+                    const shouldShowAll = postContainer.querySelector('.s1p-image-container.hidden');
+
+                    if (shouldShowAll) {
+                        imagesInPost.forEach(container => {
+                            container.classList.remove('hidden');
+                            container.dataset.manualShow = 'true';
+                        });
+                    } else {
+                        imagesInPost.forEach(container => {
+                            container.classList.add('hidden');
+                            delete container.dataset.manualShow;
+                        });
+                    }
+                    updatePostImageButtonState(postContainer);
+                });
+
+                postContentArea.prepend(toggleButtonContainer);
+            }
+
+            updatePostImageButtonState(postContainer);
+        });
+    };
+
     // [MODIFIED] 图片隐藏功能的核心逻辑 (支持实时切换)
     const applyImageHiding = () => {
         const settings = getSettings();
 
-        // 步骤 1: 遍历所有帖子图片，确保它们都被容器包裹
+        // 如果功能未开启，则移除所有包装和占位符
+        if (!settings.hideImagesByDefault) {
+            document.querySelectorAll('.s1p-image-container').forEach(container => {
+                const originalElement = container.querySelector('img.zoom')?.closest('a') || container.querySelector('img.zoom');
+                if (originalElement) {
+                    container.parentNode.insertBefore(originalElement, container);
+                }
+                container.remove();
+            });
+            return;
+        }
+
+        // 步骤 1: 遍历所有帖子图片，确保它们都被容器包裹并绑定切换事件
         document.querySelectorAll('div.t_fsz img.zoom').forEach(img => {
             if (img.closest('.s1p-image-container')) return; // 如果已被包裹，则跳过
 
@@ -673,7 +787,8 @@
 
             const placeholder = document.createElement('span');
             placeholder.className = 's1p-image-placeholder';
-            placeholder.textContent = '图片已隐藏，点击显示';
+            // 初始文本不重要，会在步骤2中被正确设置
+            placeholder.textContent = '图片处理中...';
 
             targetElement.parentNode.insertBefore(container, targetElement);
             container.appendChild(placeholder);
@@ -681,22 +796,36 @@
 
             placeholder.addEventListener('click', (e) => {
                 e.preventDefault();
-                container.classList.remove('hidden');
-                // 添加一个标记，表示这张图是用户手动点开的
-                container.dataset.manualShow = 'true';
+                const isHidden = container.classList.toggle('hidden');
+
+                if (isHidden) {
+                    placeholder.textContent = '显示图片';
+                    delete container.dataset.manualShow;
+                } else {
+                    placeholder.textContent = '隐藏图片';
+                    container.dataset.manualShow = 'true';
+                }
+
+                const postContainer = container.closest('table.plhin');
+                if (postContainer) {
+                    updatePostImageButtonState(postContainer);
+                }
             });
         });
 
-        // 步骤 2: 根据当前设置，对所有已包裹的图片应用显示/隐藏状态
+        // 步骤 2: 根据当前设置和图片状态，同步所有容器的 class 和占位符文本
         document.querySelectorAll('.s1p-image-container').forEach(container => {
-            if (settings.hideImagesByDefault) {
-                // 如果设置是“隐藏”，则隐藏所有未被手动点开的图片
-                if (container.dataset.manualShow !== 'true') {
-                    container.classList.add('hidden');
-                }
+            const placeholder = container.querySelector('.s1p-image-placeholder');
+            if (!placeholder) return;
+
+            const shouldBeHidden = settings.hideImagesByDefault && container.dataset.manualShow !== 'true';
+
+            container.classList.toggle('hidden', shouldBeHidden);
+
+            if (shouldBeHidden) {
+                placeholder.textContent = '显示图片';
             } else {
-                // 如果设置是“显示”，则移除所有图片的隐藏状态
-                container.classList.remove('hidden');
+                placeholder.textContent = '隐藏图片';
             }
         });
     };
@@ -1298,6 +1427,7 @@
                     // [NEW] 如果是图片隐藏开关，则立即调用函数刷新页面状态
                     if (settingKey === 'hideImagesByDefault') {
                         applyImageHiding();
+                        manageImageToggleAllButtons();
                     }
                 }
             });
@@ -1972,177 +2102,106 @@
                 }
 
                 jumpBtn.href = `forum.php?mod=redirect&goto=findpost&ptid=${threadId}&pid=${postId}`;
-                jumpBtn.target = '_blank';
-                jumpBtn.style.borderColor = fcolor;
                 jumpBtn.style.color = fcolor;
-                jumpBtn.onmouseover = () => { jumpBtn.style.backgroundColor = fcolor; jumpBtn.style.color = 'white'; };
-                jumpBtn.onmouseout = () => { jumpBtn.style.backgroundColor = 'transparent'; jumpBtn.style.color = fcolor; };
-                jumpBtn.onclick = (e) => e.stopPropagation();
+                jumpBtn.style.borderColor = fcolor;
+
+                jumpBtn.addEventListener('mouseover', () => {
+                    jumpBtn.style.backgroundColor = fcolor;
+                    jumpBtn.style.color = 'white';
+                });
+                jumpBtn.addEventListener('mouseout', () => {
+                    jumpBtn.style.backgroundColor = 'transparent';
+                    jumpBtn.style.color = fcolor;
+                });
+
                 progressContainer.appendChild(jumpBtn);
 
                 if (newReplies > 0) {
-                    const badge = document.createElement('span');
-                    badge.className = 's1p-new-replies-badge';
-                    badge.textContent = `+${newReplies}`;
-                    badge.style.backgroundColor = fcolor;
-                    badge.style.borderColor = fcolor;
-                    badge.title = `有 ${newReplies} 条新回复`;
-                    progressContainer.appendChild(badge);
-                    jumpBtn.style.borderRadius = '4px 0 0 4px';
-                } else {
-                    jumpBtn.style.borderRadius = '4px';
+                    const newRepliesBadge = document.createElement('span');
+                    newRepliesBadge.className = 's1p-new-replies-badge';
+                    newRepliesBadge.textContent = `+${newReplies}`;
+                    newRepliesBadge.title = `有 ${newReplies} 条新回复`;
+                    newRepliesBadge.style.backgroundColor = fcolor;
+                    newRepliesBadge.style.borderColor = fcolor;
+                    progressContainer.appendChild(newRepliesBadge);
+                    jumpBtn.style.borderTopRightRadius = '0';
+                    jumpBtn.style.borderBottomRightRadius = '0';
                 }
 
-                const titleSpan = container.querySelector('span.tps');
-                if (titleSpan) {
-                    titleSpan.insertAdjacentElement('afterend', progressContainer);
-                } else {
-                    const titleLink = container.querySelector('a.s.xst');
-                    if (titleLink) {
-                        titleLink.insertAdjacentHTML('afterend', ' ');
-                        titleLink.insertAdjacentElement('afterend', progressContainer);
-                    }
-                }
+                container.appendChild(progressContainer);
             }
         });
     };
 
-    const initReadProgressTracker = () => {
-        const threadIdMatch = window.location.href.match(/thread-(\d+)-/);
-        if (!threadIdMatch) return;
-        const threadId = threadIdMatch[1];
+    // --- 主流程 ---
+    function main() {
+        initializeNavbar();
 
-        const pageMatch = window.location.href.match(/thread-\d+-(\d+)-/);
-        const currentPage = pageMatch ? pageMatch[1] : '1';
-
-        let currentProgressPostId = null;
-
-        const observer = new IntersectionObserver((entries) => {
-            const visiblePosts = entries.filter(entry => entry.isIntersecting);
-
-            if (visiblePosts.length > 0) {
-                const firstVisiblePost = visiblePosts.reduce((first, current) => {
-                    const firstId = parseInt(first.target.id.replace('pid', ''));
-                    const currentId = parseInt(current.target.id.replace('pid', ''));
-                    return currentId < firstId ? current : first;
-                });
-                currentProgressPostId = firstVisiblePost.target.id.replace('pid', '');
-            }
-        }, { threshold: 0.1 });
-
-        document.querySelectorAll('table[id^="pid"]').forEach(post => observer.observe(post));
-
-        const saveProgress = () => {
-            if (document.visibilityState === 'hidden' && currentProgressPostId) {
-                // [NEW] Get floor number from the first visible post, based on user's feedback.
-                const postElement = document.getElementById('pid' + currentProgressPostId);
-                let lastReadFloor = 0;
-                if (postElement) {
-                    const floorElement = postElement.querySelector('.pi em');
-                    if (floorElement) {
-                        lastReadFloor = parseInt(floorElement.textContent) || 0;
-                    }
-                }
-                updateThreadProgress(threadId, currentProgressPostId, currentPage, lastReadFloor);
-            }
+        const observerCallback = (mutations, observer) => {
+            // 在处理DOM变化前先断开观察，防止无限循环
+            observer.disconnect();
+            // 执行所有DOM修改
+            applyChanges();
+            // 完成后再重新连接观察器
+            observer.observe(document.getElementById('ct'), { childList: true, subtree: true });
         };
 
-        document.addEventListener('visibilitychange', saveProgress);
-    };
+        const observer = new MutationObserver(observerCallback);
 
-    // 自动签到
-    const autoCheckIn = () => {
-        const userLink = document.querySelector('div#um a[href*="space-uid-"]');
-        if (!userLink) return;
-        const uidMatch = userLink.href.match(/space-uid-(\d+)\.html/);
-        if (!uidMatch) return;
-        const userId = uidMatch[1];
-        const today = new Date().toLocaleDateString();
-        const lastCheckIn = GM_getValue(`s1filter_last_checkin_${userId}`, '');
-        if (lastCheckIn === today) return;
+        // 首次加载时直接运行一次
+        applyChanges();
 
-        const checkInLink = Array.from(document.querySelectorAll('a')).find(a => a.textContent.includes('签到'));
-        if (checkInLink && checkInLink.href.includes('daily_attendance')) {
-            console.log('S1 Plus: 找到签到链接，正在尝试自动签到...');
-            fetch(checkInLink.href, { credentials: 'include' })
-                .then(response => {
-                    if (response.ok) {
-                        GM_setValue(`s1filter_last_checkin_${userId}`, today);
-                        console.log(`S1 Plus: 用户 ${userId} 自动签到成功！`);
-                        checkInLink.style.fontWeight = 'normal';
-                        checkInLink.style.color = 'gray';
-                        checkInLink.textContent = '已签到';
-                    } else { console.error('S1 Plus: 自动签到失败，服务器响应状态：', response.status); }
-                }).catch(error => { console.error('S1 Plus: 自动签到请求失败。', error); });
+        // 开始观察 #ct 容器的变化
+        observer.observe(document.getElementById('ct'), { childList: true, subtree: true });
+
+        // 记录阅读进度
+        if (getSettings().enableReadProgress && document.getElementById('postlist')) {
+            const threadIdMatch = window.location.href.match(/thread-(\d+)-/);
+            if (threadIdMatch) {
+                const threadId = threadIdMatch[1];
+                const lastPost = Array.from(document.querySelectorAll('div[id^="post_"]')).pop();
+                if (lastPost) {
+                    const postId = lastPost.id.replace('post_', '');
+                    const pageElement = document.querySelector('.pgs .pg a.xw1');
+                    const page = pageElement ? pageElement.textContent : '1';
+                    const lastReadFloor = lastPost.querySelector('td.plc a.xw1[id^="postnum"]')?.textContent?.replace(/#/, '');
+                    updateThreadProgress(threadId, postId, page, lastReadFloor);
+                }
+            }
         }
-    };
 
-        // 点击更换漫区随机图功能 - 修改为DOM加载完成后执行
-    const randomPicChange = () => {
-        const randomPic = document.querySelector('img[src^="https://ac.stage3rd.com/S1_ACG_randpic.asp"]');
-        if (randomPic) {
-            randomPic.addEventListener('click', function() {
-                this.src = `https://ac.stage3rd.com/S1_ACG_randpic.asp?t=${Date.now()}`;
-            });
-
-            // 添加视觉反馈
-            randomPic.style.cursor = 'pointer';
-            randomPic.title = '点击更换图片';
+        // 自动签到
+        const checkinLink = document.querySelector('a[href*="plugin.php?id=dsu_paulsign:sign"]');
+        if (checkinLink && checkinLink.textContent.includes('每日签到')) {
+            fetch(checkinLink.href).then(() => console.log('S1 Plus: 已自动签到。'));
         }
-    };
+    }
 
-    // --- 初始化 ---
-    const init = () => {
+    function applyChanges() {
         const settings = getSettings();
-        autoCheckIn();
-        randomPicChange();
-        applyInterfaceCustomizations();
-        initializeNavbar();
+        if (settings.enablePostBlocking) {
+            hideBlockedThreads();
+            hideThreadsByTitleKeyword();
+            addBlockButtonsToThreads();
+            applyUserThreadBlocklist();
+        }
+        if (settings.enableUserBlocking) {
+            hideBlockedUsersPosts();
+            addBlockButtonsToUsers();
+            hideBlockedUserQuotes();
+            hideBlockedUserRatings();
+        }
         if (settings.enableUserTagging) {
             initializeTaggingPopover();
         }
-
-        const runTasks = () => {
-            const settings = getSettings();
-            if (window.location.href.includes('thread-') || window.location.href.includes('mod=viewthread')) {
-                if (settings.enableUserBlocking) {
-                    hideBlockedUsersPosts();
-                    hideBlockedUserQuotes();
-                    addBlockButtonsToUsers();
-                    hideBlockedUserRatings();
-                }
-                if (settings.enableReadProgress) {
-                    initReadProgressTracker();
-                }
-                // 调用图片隐藏功能
-                applyImageHiding();
-            } else if (window.location.href.includes('forum-')) {
-                if (settings.enablePostBlocking) {
-                    hideBlockedThreads();
-                    applyUserThreadBlocklist();
-                    hideThreadsByTitleKeyword();
-                    addBlockButtonsToThreads();
-                }
-                if (settings.enableReadProgress) {
-                    addProgressJumpButtons();
-                }
-            }
-            applyInterfaceCustomizations();
-        };
-
-        runTasks();
-
-        // 稍微修改 MutationObserver 的逻辑，只对特定容器的子节点变化做出反应，减少不必要的调用
-        const observerTarget = document.getElementById('ct');
-        if (observerTarget) {
-            const observer = new MutationObserver(runTasks);
-            observer.observe(observerTarget, { childList: true, subtree: true });
+        if (settings.enableReadProgress) {
+            addProgressJumpButtons();
         }
-    };
-
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
-    } else {
-        init();
+        applyInterfaceCustomizations();
+        applyImageHiding();
+        manageImageToggleAllButtons();
     }
+
+    main();
+
 })();
