@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      4.3.4
+// @version      4.3.6
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪等多种功能，全方位优化你的论坛体验。
 // @author       moekyo
 // @match        https://stage1st.com/2b/*
@@ -15,7 +15,7 @@
     'use strict';
 
 
-    const SCRIPT_VERSION = '4.3.4';
+    const SCRIPT_VERSION = '4.3.6';
     const SCRIPT_RELEASE_DATE = '2025-08-11';
 
     // --- 样式注入 ---
@@ -49,9 +49,98 @@
         .s1p-red-btn { background-color: var(--s1p-red); color: white; border-color: var(--s1p-red); }
         .s1p-red-btn:hover { background-color: var(--s1p-red-h); border-color: var(--s1p-red-h); }
 
-        /* --- 帖子屏蔽按钮动画与布局 --- */
-        .thread-block-btn { position: absolute; left:0; top: 6px; z-index: 5; width: 26px ; padding: 5px 4px; border-radius: 0 12px 12px 0; background-color: var(--s1p-red); color: white; font-size: 12px; border: none; box-shadow: 0 1px 3px #00000033; opacity: 0; transition: all 0.2s ease-in-out; cursor: pointer}
-        .thread-block-btn:hover { background-color: var(--s1p-red-h); opacity: 1}
+        /* --- [REPLACED] 帖子屏蔽按钮动画与布局 --- */
+        /* 承载所有操作按钮的主容器，它会在悬停时出现 */
+        .s1p-action-container {
+            position: absolute;
+            left: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            z-index: 5;
+            height: 26px;
+            opacity: 0;
+            transition: opacity 0.2s ease-in-out;
+            display: flex;
+            align-items: center;
+            pointer-events: none; /* 隐藏时阻断点击 */
+        }
+
+        /* 当鼠标悬停在图标单元格上时，显示主容器 */
+        tbody.s1p-hover-reveal .s1p-action-container {
+            opacity: 1;
+            pointer-events: auto; /* 可见时允许点击 */
+        }
+
+        /* 初始的“屏蔽”按钮样式 */
+        .thread-block-btn {
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 26px; padding: 5px 4px;
+            border-radius: 0 12px 12px 0;
+            background-color: var(--s1p-red); color: white;
+            font-size: 12px; border: none;
+            box-shadow: 0 1px 3px #00000033;
+            cursor: pointer;
+            transition: background-color 0.2s ease-in-out;
+        }
+        .thread-block-btn:hover { background-color: var(--s1p-red-h); }
+
+        /* --- [REPLACED] 帖子行悬停/确认平移效果 --- */
+        /* 为所有会移动的单元格准备过渡动画 */
+        tbody[id^="normalthread_"] th,
+        tbody[id^="stickthread_"] th,
+        .icn > a {
+            transition: transform 0.2s ease-in-out;
+        }
+
+        /* 鼠标悬停在图标单元格上时，平移帖子内容，为“屏蔽”按钮腾出空间 */
+        tbody.s1p-hover-reveal .icn > a,
+        tbody.s1p-hover-reveal .icn + th {
+            transform: translateX(28px);
+        }
+
+        /* --- [NEW] 屏蔽确认状态的样式 --- */
+        /* 确认/取消按钮的容器，默认隐藏 */
+        .s1p-thread-block-confirm-actions {
+            display: none;
+            align-items: center;
+            gap: 4px;
+            margin-left: 4px;
+        }
+        /* 当帖子行处于确认状态时，显示确认/取消按钮 */
+        tbody.s1p-blocking-confirm .s1p-thread-block-confirm-actions { display: flex; }
+        
+        /* 确认(勾)和取消(叉)按钮本身的样式 */
+        .s1p-confirm-action-btn {
+            display: flex; align-items: center; justify-content: center;
+            width: 28px; height: 28px; /* Make it a square */
+            border: none; border-radius: 50%; /* Make it a circle */
+            cursor: pointer;
+            transition: background-color 0.2s ease, transform 0.1s ease;
+            background-repeat: no-repeat;
+            background-position: center;
+            background-size: 60%;
+        }
+        .s1p-confirm-action-btn:active { transform: scale(0.95); }
+        .s1p-confirm-action-btn.confirm {
+            background-color: transparent;
+            background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='2.5' stroke='%2322c55e'%3e%3cpath stroke-linecap='round' stroke-linejoin='round' d='M4.5 12.75l6 6 9-13.5' /%3e%3c/svg%3e");
+        }
+        .s1p-confirm-action-btn.confirm:hover {
+            background-color: #e0f2e9; /* A light green */
+        }
+        .s1p-confirm-action-btn.cancel {
+            background-color: transparent;
+            background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='2.5' stroke='%23ef4444'%3e%3cpath stroke-linecap='round' stroke-linejoin='round' d='M6 18L18 6M6 6l12 12' /%3e%3c/svg%3e");
+        }
+        .s1p-confirm-action-btn.cancel:hover {
+            background-color: #fee2e2; /* A light red from the theme's error messages */
+        }
+
+        /* 当帖子行处于确认状态时，将内容进一步向右平移，为所有按钮腾出空间 */
+        tbody.s1p-blocking-confirm .icn > a,
+        tbody.s1p-blocking-confirm .icn + th {
+            transform: translateX(94px);
+        }
 
         /* [MODIFIED] 阅读进度UI样式 */
         .s1p-progress-container {
@@ -387,18 +476,17 @@
             justify-content: space-between;
             align-items: center;
         }
-        .s1p-quote-placeholder a {
-            color: var(--s1p-sec);
-            text-decoration: none;
+        div.s1p-quote-placeholder span.s1p-quote-toggle {
+            color: var(--s1p-t);
             font-weight: 500;
             cursor: pointer;
             padding: 4px 8px;
             border-radius: 4px;
             transition: background-color 0.2s ease, color 0.2s ease;
         }
-        .s1p-quote-placeholder a:hover {
+        div.s1p-quote-placeholder span.s1p-quote-toggle:hover {
             background-color: var(--s1p-sub);
-            color: var(--s1p-sec);
+            color: var(--s1p-t);
         }
 
         /* --- [NEW] Quote Collapse Animation --- */
@@ -558,7 +646,7 @@
 
                     const newPlaceholder = document.createElement('div');
                     newPlaceholder.className = 's1p-quote-placeholder';
-                    newPlaceholder.innerHTML = `<span>一条来自已屏蔽用户的引用已被隐藏。</span><a class="s1p-quote-toggle s1p-popover-btn">点击展开</a>`;
+                    newPlaceholder.innerHTML = `<span>一条来自已屏蔽用户的引用已被隐藏。</span><span class="s1p-quote-toggle s1p-popover-btn">点击展开</span>`;
                     newWrapper.parentNode.insertBefore(newPlaceholder, newWrapper);
 
                     newPlaceholder.querySelector('.s1p-quote-toggle').addEventListener('click', function() {
@@ -1725,21 +1813,100 @@
         });
     };
 
+    // [MODIFIED] 增加带二次确认的屏蔽按钮
     const addBlockButtonsToThreads = () => {
         document.querySelectorAll('tbody[id^="normalthread_"], tbody[id^="stickthread_"]').forEach(row => {
-            if (row.querySelector('.s1p-btn.thread-block-btn')) return;
+            // 防止重复添加按钮
+            if (row.querySelector('.s1p-action-container')) return;
+    
             const iconCell = row.querySelector('td.icn');
             const titleElement = row.querySelector('th a.s.xst');
+    
             if (iconCell && titleElement) {
                 iconCell.style.position = 'relative';
+
+                let hoverTimeout;
+                iconCell.addEventListener('mouseenter', () => {
+                    hoverTimeout = setTimeout(() => {
+                        row.classList.add('s1p-hover-reveal');
+                    }, 200);
+                });
+                iconCell.addEventListener('mouseleave', () => {
+                    clearTimeout(hoverTimeout);
+                    row.classList.remove('s1p-hover-reveal');
+                });
+
                 const threadId = row.id.replace(/^(normalthread_|stickthread_)/, '');
                 const threadTitle = titleElement.textContent.trim();
+    
+                // 1. 创建在悬停时出现的主容器
+                const actionContainer = document.createElement('div');
+                actionContainer.className = 's1p-action-container';
+    
+                // 2. 创建初始的“屏蔽”按钮
                 const blockBtn = document.createElement('span');
-                blockBtn.className = 's1p-btn thread-block-btn';
+                blockBtn.className = 'thread-block-btn';
                 blockBtn.textContent = '屏蔽';
                 blockBtn.title = '屏蔽此贴';
-                blockBtn.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); blockThread(threadId, threadTitle); });
-                iconCell.appendChild(blockBtn);
+    
+                // 3. 创建确认/取消按钮的容器 (默认通过CSS隐藏)
+                const confirmActionsContainer = document.createElement('div');
+                confirmActionsContainer.className = 's1p-thread-block-confirm-actions';
+    
+                // 3a. 创建“取消”按钮 (叉)
+                const cancelBtn = document.createElement('button');
+                cancelBtn.className = 's1p-confirm-action-btn cancel';
+                cancelBtn.innerHTML = ''; // '✗'
+                cancelBtn.title = '取消';
+    
+                // 3b. 创建“确认”按钮 (勾)
+                const confirmBtn = document.createElement('button');
+                confirmBtn.className = 's1p-confirm-action-btn confirm';
+                confirmBtn.innerHTML = ''; // '✓'
+                confirmBtn.title = '确认屏蔽';
+    
+                // 组装确认按钮 (顺序：叉，然后是勾)
+                confirmActionsContainer.appendChild(cancelBtn);
+                confirmActionsContainer.appendChild(confirmBtn);
+    
+                // 组装主容器
+                actionContainer.appendChild(blockBtn);
+                actionContainer.appendChild(confirmActionsContainer);
+    
+                // 将完整的UI添加到帖子行中
+                iconCell.appendChild(actionContainer);
+    
+                // --- 事件监听 ---
+    
+                // 点击初始“屏蔽”按钮，为帖子行添加一个class，以触发CSS来显示确认UI
+                blockBtn.addEventListener('click', e => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    row.classList.add('s1p-blocking-confirm');
+                });
+    
+                // 点击“取消”按钮，移除class，恢复UI
+                cancelBtn.addEventListener('click', e => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    row.classList.remove('s1p-blocking-confirm');
+                });
+    
+                // 点击“确认”按钮，执行真正的屏蔽操作
+                confirmBtn.addEventListener('click', e => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    blockThread(threadId, threadTitle);
+                    // 帖子行被隐藏后，无需再清理class
+                });
+                
+                // 为整行添加鼠标移出事件，如果确认UI是打开的，则自动关闭它。
+                // 这是一个优化体验的细节，避免确认状态被卡住。
+                row.addEventListener('mouseleave', () => {
+                    if (row.classList.contains('s1p-blocking-confirm')) {
+                        row.classList.remove('s1p-blocking-confirm');
+                    }
+                });
             }
         });
     };
