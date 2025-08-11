@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      4.2.0
+// @version      4.3.4
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪等多种功能，全方位优化你的论坛体验。
 // @author       moekyo
 // @match        https://stage1st.com/2b/*
@@ -15,8 +15,8 @@
     'use strict';
 
 
-    const SCRIPT_VERSION = '4.2.0';
-    const SCRIPT_RELEASE_DATE = '2025-08-09';
+    const SCRIPT_VERSION = '4.3.4';
+    const SCRIPT_RELEASE_DATE = '2025-08-11';
 
     // --- 样式注入 ---
     GM_addStyle(`
@@ -239,10 +239,10 @@
         }
         .s1p-modal-body { padding: 0 16px 16px; overflow-y: auto; flex-grow: 1; }
         .s1p-modal-footer { padding: 12px 16px; border-top: 1px solid var(--s1p-pri); text-align: right; font-size: 12px; }
-        .s1p-tabs { display: flex; border-bottom: 1px solid var(--s1p-pri); margin-bottom: 16px; }
+        .s1p-tabs { display: flex; border-bottom: 1px solid var(--s1p-pri); }
         .s1p-tab-btn { padding: 12px 16px; cursor: pointer; border: none; background-color: transparent; font-size: 14px; border-bottom: 2px solid transparent; transition: all 0.2s; }
         .s1p-tab-btn.active { color: var(--s1p-sec); border-bottom-color: var(--s1p-sec); font-weight: 500; }
-        .s1p-tab-content { display: none; padding-top: 8px; }
+        .s1p-tab-content { display: none; padding-top: 16px; }
         .s1p-tab-content.active { display: block; }
         .s1p-empty { text-align: center; padding: 24px; color: var(--s1p-desc-t); }
         .s1p-list { display: flex; flex-direction: column; gap: 8px; }
@@ -290,9 +290,33 @@
         .s1p-collapsible-content { max-height: 0; overflow: hidden; transition: max-height 0.3s ease-out; }
         .s1p-collapsible-content.expanded { max-height: 500px; transition: max-height 0.4s ease-in; padding-top: 12px; }
 
+        /* --- [NEW] Feature Content Animation --- */
+        .s1p-feature-content {
+            display: grid;
+            grid-template-rows: 0fr;
+            transition: grid-template-rows 0.6s ease-in-out, margin-top 0.6s ease-in-out;
+            margin-top: 0;
+        }
+        .s1p-feature-content.expanded {
+            grid-template-rows: 1fr;
+            margin-top: 16px;
+        }
+        .s1p-feature-content > div {
+            overflow: hidden;
+            transition: opacity 0.5s ease-in-out;
+        }
+        .s1p-feature-content:not(.expanded) > div {
+            opacity: 0;
+            transition-duration: 0.25s;
+        }
+        .s1p-feature-content.expanded > div {
+            opacity: 1;
+            transition-delay: 0.15s;
+        }
+
         /* --- 界面定制设置样式 --- */
         .s1p-settings-group { margin-bottom: 24px; }
-        .s1p-settings-group-title { font-size: 16px; font-weight: 500; border-bottom: 1px solid var(--s1p-pri); padding-bottom: 8px; margin-bottom: 12px; }
+        .s1p-settings-group-title { font-size: 16px; font-weight: 500; border-bottom: 1px solid var(--s1p-pri); padding-bottom: 16px; margin-bottom: 12px; }
         .s1p-settings-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; }
         .s1p-settings-item .title-suffix-input { background: var(--s1p-bg); width: 100%; border: 1px solid var(--s1p-pri); border-radius: 4px; padding: 6px 8px; font-size: 14px; box-sizing: border-box; }
         .s1p-settings-label { font-size: 14px; }
@@ -381,6 +405,59 @@
         .s1p-quote-wrapper {
             overflow: hidden;
             transition: max-height 0.35s ease-in-out;
+        }
+
+        /* --- [NEW] Image Hiding --- */
+        .s1p-image-container {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 8px;
+            margin: 8px 0;
+        }
+        .s1p-image-placeholder {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            border-radius: 6px;
+            background-color: var(--s1p-sub);
+            color: var(--s1p-t);
+            border: 1px solid var(--s1p-pri);
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s ease;
+        }
+        .s1p-image-placeholder:hover {
+            background-color: var(--s1p-sub-h);
+            color: var(--s1p-sub-h-t);
+            border-color: var(--s1p-sub-h);
+        }
+        .s1p-image-container.hidden > .zoom {
+            display: none;
+        }
+
+        /* --- [MODIFIED] Image Toggle All Button --- */
+        .s1p-image-toggle-all-container {
+            margin-bottom: 10px;
+        }
+        .s1p-image-toggle-all-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            border-radius: 6px;
+            background-color: var(--s1p-sub);
+            color: var(--s1p-t);
+            border: 1px solid var(--s1p-pri);
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s ease;
+        }
+        .s1p-image-toggle-all-btn:hover {
+            background-color: var(--s1p-sub-h);
+            color: var(--s1p-sub-h-t);
+            border-color: var(--s1p-sub-h);
         }
     `);
 
@@ -608,6 +685,151 @@
         });
     };
 
+    const updatePostImageButtonState = (postContainer) => {
+        const toggleButton = postContainer.querySelector('.s1p-image-toggle-all-btn');
+        if (!toggleButton) return;
+
+        const totalImages = postContainer.querySelectorAll('.s1p-image-container').length;
+        if (totalImages <= 1) {
+            const container = toggleButton.closest('.s1p-image-toggle-all-container');
+            if (container) container.remove();
+            return;
+        }
+
+        const hiddenImages = postContainer.querySelectorAll('.s1p-image-container.hidden').length;
+
+        if (hiddenImages > 0) {
+            toggleButton.textContent = `显示本楼所有图片 (${hiddenImages}/${totalImages})`;
+        } else {
+            toggleButton.textContent = `隐藏本楼所有图片 (${totalImages}/${totalImages})`;
+        }
+    };
+
+    const manageImageToggleAllButtons = () => {
+        const settings = getSettings();
+
+        // 如果没有开启“默认隐藏图片”，则移除所有切换按钮并直接返回
+        if (!settings.hideImagesByDefault) {
+            document.querySelectorAll('.s1p-image-toggle-all-container').forEach(el => el.remove());
+            return;
+        }
+
+        document.querySelectorAll('table.plhin').forEach(postContainer => {
+            const imageContainers = postContainer.querySelectorAll('.s1p-image-container');
+            const postContentArea = postContainer.querySelector('td.t_f');
+
+            if (!postContentArea) return;
+
+            let toggleButtonContainer = postContainer.querySelector('.s1p-image-toggle-all-container');
+
+            if (imageContainers.length <= 1) {
+                if (toggleButtonContainer) toggleButtonContainer.remove();
+                return;
+            }
+
+            if (!toggleButtonContainer) {
+                toggleButtonContainer = document.createElement('div');
+                toggleButtonContainer.className = 's1p-image-toggle-all-container';
+
+                const toggleButton = document.createElement('button');
+                toggleButton.className = 's1p-image-toggle-all-btn';
+                toggleButtonContainer.appendChild(toggleButton);
+
+                toggleButton.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    const imagesInPost = postContainer.querySelectorAll('.s1p-image-container');
+                    const shouldShowAll = postContainer.querySelector('.s1p-image-container.hidden');
+
+                    if (shouldShowAll) {
+                        imagesInPost.forEach(container => {
+                            container.classList.remove('hidden');
+                            container.dataset.manualShow = 'true';
+                        });
+                    } else {
+                        imagesInPost.forEach(container => {
+                            container.classList.add('hidden');
+                            delete container.dataset.manualShow;
+                        });
+                    }
+                    updatePostImageButtonState(postContainer);
+                });
+
+                postContentArea.prepend(toggleButtonContainer);
+            }
+
+            updatePostImageButtonState(postContainer);
+        });
+    };
+
+    // [MODIFIED] 图片隐藏功能的核心逻辑 (支持实时切换)
+    const applyImageHiding = () => {
+        const settings = getSettings();
+
+        // 如果功能未开启，则移除所有包装和占位符
+        if (!settings.hideImagesByDefault) {
+            document.querySelectorAll('.s1p-image-container').forEach(container => {
+                const originalElement = container.querySelector('img.zoom')?.closest('a') || container.querySelector('img.zoom');
+                if (originalElement) {
+                    container.parentNode.insertBefore(originalElement, container);
+                }
+                container.remove();
+            });
+            return;
+        }
+
+        // 步骤 1: 遍历所有帖子图片，确保它们都被容器包裹并绑定切换事件
+        document.querySelectorAll('div.t_fsz img.zoom').forEach(img => {
+            if (img.closest('.s1p-image-container')) return; // 如果已被包裹，则跳过
+
+            const targetElement = img.closest('a') || img;
+            const container = document.createElement('div');
+            container.className = 's1p-image-container';
+
+            const placeholder = document.createElement('span');
+            placeholder.className = 's1p-image-placeholder';
+            // 初始文本不重要，会在步骤2中被正确设置
+            placeholder.textContent = '图片处理中...';
+
+            targetElement.parentNode.insertBefore(container, targetElement);
+            container.appendChild(placeholder);
+            container.appendChild(targetElement);
+
+            placeholder.addEventListener('click', (e) => {
+                e.preventDefault();
+                const isHidden = container.classList.toggle('hidden');
+
+                if (isHidden) {
+                    placeholder.textContent = '显示图片';
+                    delete container.dataset.manualShow;
+                } else {
+                    placeholder.textContent = '隐藏图片';
+                    container.dataset.manualShow = 'true';
+                }
+
+                const postContainer = container.closest('table.plhin');
+                if (postContainer) {
+                    updatePostImageButtonState(postContainer);
+                }
+            });
+        });
+
+        // 步骤 2: 根据当前设置和图片状态，同步所有容器的 class 和占位符文本
+        document.querySelectorAll('.s1p-image-container').forEach(container => {
+            const placeholder = container.querySelector('.s1p-image-placeholder');
+            if (!placeholder) return;
+
+            const shouldBeHidden = settings.hideImagesByDefault && container.dataset.manualShow !== 'true';
+
+            container.classList.toggle('hidden', shouldBeHidden);
+
+            if (shouldBeHidden) {
+                placeholder.textContent = '显示图片';
+            } else {
+                placeholder.textContent = '隐藏图片';
+            }
+        });
+    };
+
     const exportData = () => JSON.stringify({
         version: 3.2,
         settings: getSettings(),
@@ -677,13 +899,18 @@
 
     // --- 设置管理 ---
     const defaultSettings = {
+        enablePostBlocking: true,
+        enableUserBlocking: true,
+        enableUserTagging: true,
+        enableReadProgress: true,
         enableNavCustomization: true,
         changeLogoLink: true,
         hideBlacklistTip: true,
         blockThreadsOnUserBlock: true,
         showBlockedByKeywordList: false,
         showManuallyBlockedList: false,
-        customTitleSuffix: ' - STAGE1ₛₜ', // 添加默认标题后缀
+        hideImagesByDefault: false,
+        customTitleSuffix: ' - STAGE1ₛₜ',
         customNavLinks: [
             { name: '论坛', href: 'forum.php' },
             { name: '归墟', href: 'forum-157-1.html' },
@@ -696,7 +923,11 @@
     };
     const getSettings = () => {
         const saved = GM_getValue('s1p_settings', {});
-        return {...defaultSettings, ...saved};
+        // 如果用户已保存自定义导航，则保留，否则使用默认值
+        if (saved.customNavLinks && Array.isArray(saved.customNavLinks)) {
+            return { ...defaultSettings, ...saved, customNavLinks: saved.customNavLinks };
+        }
+        return { ...defaultSettings, ...saved };
     };
     const saveSettings = (settings) => GM_setValue('s1p_settings', settings);
 
@@ -777,13 +1008,15 @@
                     <button class="s1p-tab-btn active" data-tab="threads">帖子屏蔽</button>
                     <button class="s1p-tab-btn" data-tab="users">用户屏蔽</button>
                     <button class="s1p-tab-btn" data-tab="tags">用户标记</button>
-                    <button class="s1p-tab-btn" data-tab="settings">界面定制</button>
+                    <button class="s1p-tab-btn" data-tab="nav-settings">导航栏定制</button>
+                    <button class="s1p-tab-btn" data-tab="general-settings">通用设置</button>
                     <button class="s1p-tab-btn" data-tab="sync">设置同步</button>
                 </div>
                 <div id="s1p-tab-threads" class="s1p-tab-content active"></div>
                 <div id="s1p-tab-users" class="s1p-tab-content"></div>
                 <div id="s1p-tab-tags" class="s1p-tab-content"></div>
-                <div id="s1p-tab-settings" class="s1p-tab-content"></div>
+                <div id="s1p-tab-nav-settings" class="s1p-tab-content"></div>
+                <div id="s1p-tab-general-settings" class="s1p-tab-content"></div>
                 <div id="s1p-tab-sync" class="s1p-tab-content">
                     <div class="s1p-sync-title">全量设置同步</div>
                     <div class="s1p-sync-desc">通过复制/粘贴数据，在不同浏览器或设备间同步你的所有S1 Plus配置，包括屏蔽列表、导航栏、阅读进度和各项开关设置。</div>
@@ -796,8 +1029,7 @@
                     <div class="s1p-sync-title">危险操作</div>
                     <div class="s1p-sync-desc">以下操作会立即清空脚本在<b>当前浏览器</b>中的所选数据，且无法撤销。请在操作前务必通过“导出数据”功能进行备份。</div>
                     <div id="s1p-clear-data-options" style="margin-top: 12px; display: flex; flex-direction: column; gap: 8px; background-color: var(--s1p-bg); border: 1px solid var(--s1p-pri); border-radius: 6px; padding: 12px;">
-                        <!-- Checkboxes are generated by JS -->
-                    </div>
+                        </div>
                     <div style="margin-top: 12px; display: flex; justify-content: space-between; align-items: center;">
                         <div style="display: flex; align-items: center; gap: 12px;">
                             <label class="s1p-settings-label" for="s1p-clear-select-all">全选</label>
@@ -815,11 +1047,12 @@
         document.body.appendChild(modal);
 
         const tabs = {
-            threads: modal.querySelector('#s1p-tab-threads'),
-            users: modal.querySelector('#s1p-tab-users'),
-            tags: modal.querySelector('#s1p-tab-tags'),
-            settings: modal.querySelector('#s1p-tab-settings'),
-            sync: modal.querySelector('#s1p-tab-sync'),
+            'threads': modal.querySelector('#s1p-tab-threads'),
+            'users': modal.querySelector('#s1p-tab-users'),
+            'tags': modal.querySelector('#s1p-tab-tags'),
+            'nav-settings': modal.querySelector('#s1p-tab-nav-settings'),
+            'general-settings': modal.querySelector('#s1p-tab-general-settings'),
+            'sync': modal.querySelector('#s1p-tab-sync'),
         };
 
         const dataClearanceConfig = {
@@ -847,10 +1080,20 @@
         // [REFACTORED] 全新用户标记标签页渲染逻辑
         const renderTagsTab = (options = {}) => {
             const editingUserId = options.editingUserId;
+            const settings = getSettings();
+            const isEnabled = settings.enableUserTagging;
+
+            const toggleHTML = `
+                <div class="s1p-settings-item" style="padding: 0; padding-bottom: 16px; margin-bottom: 10px; border-bottom: 1px solid var(--s1p-pri);">
+                    <label class="s1p-settings-label" for="s1p-enableUserTagging">启用用户标记功能</label>
+                    <label class="s1p-switch"><input type="checkbox" id="s1p-enableUserTagging" data-feature="enableUserTagging" class="s1p-feature-toggle" ${isEnabled ? 'checked' : ''}><span class="s1p-slider"></span></label>
+                </div>
+            `;
+
             const userTags = getUserTags();
             const tagItems = Object.entries(userTags).sort(([, a], [, b]) => (b.timestamp || 0) - (a.timestamp || 0));
 
-            tabs.tags.innerHTML = `
+            const contentHTML = `
                 <div class="s1p-settings-group">
                     <div class="s1p-sync-title">用户标记管理</div>
                     <p class="s1p-setting-desc" style="margin-top: 0; margin-bottom: 16px;">
@@ -910,8 +1153,15 @@
                 </div>
             `;
 
+            tabs['tags'].innerHTML = `
+                ${toggleHTML}
+                <div class="s1p-feature-content ${isEnabled ? 'expanded' : ''}">
+                    <div>${contentHTML}</div>
+                </div>
+            `;
+
             if (editingUserId) {
-                const textarea = tabs.tags.querySelector('.s1p-tag-edit-area');
+                const textarea = tabs['tags'].querySelector('.s1p-tag-edit-area');
                 if (textarea) {
                     textarea.focus();
                     textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
@@ -921,9 +1171,18 @@
 
         const renderUserTab = () => {
             const settings = getSettings();
+            const isEnabled = settings.enableUserBlocking;
+
+            const toggleHTML = `
+                <div class="s1p-settings-item" style="padding: 0; padding-bottom: 16px; margin-bottom: 10px; border-bottom: 1px solid var(--s1p-pri);">
+                    <label class="s1p-settings-label" for="s1p-enableUserBlocking">启用用户屏蔽功能</label>
+                    <label class="s1p-switch"><input type="checkbox" id="s1p-enableUserBlocking" data-feature="enableUserBlocking" class="s1p-feature-toggle" ${isEnabled ? 'checked' : ''}><span class="s1p-slider"></span></label>
+                </div>
+            `;
+
             const blockedUsers = getBlockedUsers();
             const userItemIds = Object.keys(blockedUsers).sort((a, b) => blockedUsers[b].timestamp - blockedUsers[a].timestamp);
-            tabs.users.innerHTML = `
+            const contentHTML = `
                 <div class="s1p-settings-group" style="margin-bottom: 16px; padding-bottom: 0;">
                     <div class="s1p-settings-item">
                         <label class="s1p-settings-label" for="s1p-blockThreadsOnUserBlock">屏蔽用户时，默认屏蔽其所有主题帖</label>
@@ -941,14 +1200,30 @@
                     }).join('')}</div>`
                 }
             `;
+
+            tabs['users'].innerHTML = `
+                ${toggleHTML}
+                <div class="s1p-feature-content ${isEnabled ? 'expanded' : ''}">
+                    <div>${contentHTML}</div>
+                </div>
+            `;
         };
 
         const renderThreadTab = () => {
             const settings = getSettings();
+            const isEnabled = settings.enablePostBlocking;
+
+            const toggleHTML = `
+                <div class="s1p-settings-item" style="padding: 0; padding-bottom: 16px; margin-bottom: 10px; border-bottom: 1px solid var(--s1p-pri);">
+                    <label class="s1p-settings-label" for="s1p-enablePostBlocking">启用帖子屏蔽功能</label>
+                    <label class="s1p-switch"><input type="checkbox" id="s1p-enablePostBlocking" data-feature="enablePostBlocking" class="s1p-feature-toggle" ${isEnabled ? 'checked' : ''}><span class="s1p-slider"></span></label>
+                </div>
+            `;
+
             const blockedThreads = getBlockedThreads();
             const manualItemIds = Object.keys(blockedThreads).sort((a, b) => blockedThreads[b].timestamp - blockedThreads[a].timestamp);
 
-            tabs.threads.innerHTML = `
+            const contentHTML = `
                 <div class="s1p-settings-group">
                     <div class="s1p-settings-group-title">标题关键字屏蔽规则</div>
                     <p class="s1p-setting-desc">将自动屏蔽标题匹配已启用规则的帖子，支持正则表达式。修改后请点击“保存规则”以生效。</p>
@@ -987,8 +1262,15 @@
                 </div>
             `;
 
+            tabs['threads'].innerHTML = `
+                ${toggleHTML}
+                <div class="s1p-feature-content ${isEnabled ? 'expanded' : ''}">
+                    <div>${contentHTML}</div>
+                </div>
+            `;
+
             const renderDynamicallyHiddenList = () => {
-                const listContainer = tabs.threads.querySelector('#s1p-dynamically-hidden-list');
+                const listContainer = tabs['threads'].querySelector('#s1p-dynamically-hidden-list');
                 const hiddenItems = Object.entries(dynamicallyHiddenThreads);
                 if (hiddenItems.length === 0) {
                     listContainer.innerHTML = `<div class="s1p-empty" style="padding-top: 12px;">当前页面没有被关键字屏蔽的帖子</div>`;
@@ -1006,7 +1288,8 @@
 
             const renderRules = () => {
                 const rules = getTitleFilterRules();
-                const container = tabs.threads.querySelector('#s1p-keyword-rules-list');
+                const container = tabs['threads'].querySelector('#s1p-keyword-rules-list');
+                if (!container) return; // Exit if content is not rendered
                 container.innerHTML = rules.map(rule => `
                     <div class="s1p-editor-item" data-rule-id="${rule.id}">
                         <label class="s1p-switch"><input type="checkbox" class="s1p-settings-checkbox keyword-rule-enable" ${rule.enabled ? 'checked' : ''}><span class="s1p-slider"></span></label>
@@ -1026,7 +1309,7 @@
 
             const saveAndApplyKeywordRules = () => {
                 const newRules = [];
-                tabs.threads.querySelectorAll('#s1p-keyword-rules-list .s1p-editor-item').forEach(item => {
+                tabs['threads'].querySelectorAll('#s1p-keyword-rules-list .s1p-editor-item').forEach(item => {
                     const pattern = item.querySelector('.keyword-rule-pattern').value.trim();
                     if (pattern) {
                         let id = item.dataset.ruleId;
@@ -1044,10 +1327,10 @@
                 hideThreadsByTitleKeyword();
                 renderDynamicallyHiddenList();
                 renderRules(); // Re-render to show the saved state and assign permanent IDs.
-                showMessage(tabs.threads.querySelector('#s1p-keywords-message'), '规则已保存！', true);
+                showMessage(tabs['threads'].querySelector('#s1p-keywords-message'), '规则已保存！', true);
             };
 
-            tabs.threads.addEventListener('click', e => {
+            tabs['threads'].addEventListener('click', e => {
                 const target = e.target;
                 const header = target.closest('.s1p-collapsible-header');
 
@@ -1059,7 +1342,7 @@
                         saveSettings(currentSettings);
 
                         header.querySelector('.s1p-expander-arrow').classList.toggle('expanded', isNowExpanded);
-                        tabs.threads.querySelector('#s1p-dynamically-hidden-list-container').classList.toggle('expanded', isNowExpanded);
+                        tabs['threads'].querySelector('#s1p-dynamically-hidden-list-container').classList.toggle('expanded', isNowExpanded);
                     } else if (header.id === 's1p-manually-blocked-header') {
                         const currentSettings = getSettings();
                         const isNowExpanded = !currentSettings.showManuallyBlockedList;
@@ -1067,10 +1350,10 @@
                         saveSettings(currentSettings);
 
                         header.querySelector('.s1p-expander-arrow').classList.toggle('expanded', isNowExpanded);
-                        tabs.threads.querySelector('#s1p-manually-blocked-list-container').classList.toggle('expanded', isNowExpanded);
+                        tabs['threads'].querySelector('#s1p-manually-blocked-list-container').classList.toggle('expanded', isNowExpanded);
                     }
                 } else if (target.id === 's1p-keyword-rule-add-btn') {
-                    const container = tabs.threads.querySelector('#s1p-keyword-rules-list');
+                    const container = tabs['threads'].querySelector('#s1p-keyword-rules-list');
                     const emptyMsg = container.querySelector('.s1p-empty');
                     if (emptyMsg) emptyMsg.remove();
 
@@ -1089,7 +1372,7 @@
                 } else if (target.classList.contains('keyword-rule-delete')) {
                     const item = target.closest('.s1p-editor-item');
                     item.remove();
-                    const container = tabs.threads.querySelector('#s1p-keyword-rules-list');
+                    const container = tabs['threads'].querySelector('#s1p-keyword-rules-list');
                     if (container.children.length === 0) {
                         container.innerHTML = `<div class="s1p-empty" style="padding: 12px;">暂无规则</div>`;
                     }
@@ -1099,26 +1382,61 @@
             });
         };
 
-        const renderSettingsTab = () => {
+        const renderGeneralSettingsTab = () => {
             const settings = getSettings();
-            tabs.settings.innerHTML = `
+            tabs['general-settings'].innerHTML = `
+                <div class="s1p-settings-group">
+                    <div class="s1p-settings-group-title">功能开关</div>
+                     <div class="s1p-settings-item">
+                        <label class="s1p-settings-label" for="s1p-enableReadProgress">启用阅读进度跟踪</label>
+                        <label class="s1p-switch"><input type="checkbox" id="s1p-enableReadProgress" data-feature="enableReadProgress" class="s1p-feature-toggle" ${settings.enableReadProgress ? 'checked' : ''}><span class="s1p-slider"></span></label>
+                    </div>
+                     <div class="s1p-settings-item">
+                        <label class="s1p-settings-label" for="s1p-hideImagesByDefault">默认隐藏帖子图片</label>
+                        <label class="s1p-switch"><input type="checkbox" id="s1p-hideImagesByDefault" class="s1p-settings-checkbox" data-setting="hideImagesByDefault" ${settings.hideImagesByDefault ? 'checked' : ''}><span class="s1p-slider"></span></label>
+                    </div>
+                </div>
                 <div class="s1p-settings-group">
                     <div class="s1p-settings-group-title">通用设置</div>
                     <div class="s1p-settings-item">
                         <label class="s1p-settings-label" for="s1p-changeLogoLink">修改论坛Logo链接 (指向论坛首页)</label>
-                        <label class="s1p-switch"><input type="checkbox" id="s1p-changeLogoLink" class="s1p-settings-checkbox" ${settings.changeLogoLink ? 'checked' : ''}><span class="s1p-slider"></span></label>
+                        <label class="s1p-switch"><input type="checkbox" id="s1p-changeLogoLink" class="s1p-settings-checkbox" data-setting="changeLogoLink" ${settings.changeLogoLink ? 'checked' : ''}><span class="s1p-slider"></span></label>
                     </div>
                     <div class="s1p-settings-item">
                         <label class="s1p-settings-label" for="s1p-hideBlacklistTip">隐藏已屏蔽用户发言的黄条提示</label>
-                        <label class="s1p-switch"><input type="checkbox" id="s1p-hideBlacklistTip" class="s1p-settings-checkbox" ${settings.hideBlacklistTip ? 'checked' : ''}><span class="s1p-slider"></span></label>
+                        <label class="s1p-switch"><input type="checkbox" id="s1p-hideBlacklistTip" class="s1p-settings-checkbox" data-setting="hideBlacklistTip" ${settings.hideBlacklistTip ? 'checked' : ''}><span class="s1p-slider"></span></label>
                     </div>
                     <div class="s1p-settings-item">
                         <label class="s1p-settings-label" for="s1p-customTitleSuffix">自定义标题后缀</label>
-                        <input type="text" id="s1p-customTitleSuffix" class="title-suffix-input" value="${settings.customTitleSuffix || ''}" style="width: 200px;">
+                        <input type="text" id="s1p-customTitleSuffix" class="title-suffix-input" data-setting="customTitleSuffix" value="${settings.customTitleSuffix || ''}" style="width: 200px;">
                     </div>
-                </div>
+                </div>`;
+
+            tabs['general-settings'].addEventListener('change', e => {
+                const target = e.target;
+                const settingKey = target.dataset.setting;
+                if (settingKey) {
+                    const settings = getSettings();
+                    if (target.type === 'checkbox') {
+                        settings[settingKey] = target.checked;
+                    } else {
+                        settings[settingKey] = target.value;
+                    }
+                    saveSettings(settings);
+                    applyInterfaceCustomizations();
+                    // [NEW] 如果是图片隐藏开关，则立即调用函数刷新页面状态
+                    if (settingKey === 'hideImagesByDefault') {
+                        applyImageHiding();
+                        manageImageToggleAllButtons();
+                    }
+                }
+            });
+        };
+
+        const renderNavSettingsTab = () => {
+            const settings = getSettings();
+            tabs['nav-settings'].innerHTML = `
                 <div class="s1p-settings-group">
-                    <div class="s1p-settings-group-title">导航栏定制</div>
                     <div class="s1p-settings-item">
                         <label class="s1p-settings-label" for="s1p-enableNavCustomization">启用自定义导航栏</label>
                         <label class="s1p-switch"><input type="checkbox" id="s1p-enableNavCustomization" class="s1p-settings-checkbox" ${settings.enableNavCustomization ? 'checked' : ''}><span class="s1p-slider"></span></label>
@@ -1130,11 +1448,11 @@
                         <button id="s1p-nav-add-btn" class="s1p-btn">添加新链接</button>
                         <button id="s1p-settings-save-btn" class="s1p-btn">保存设置</button>
                     </div>
-                    <button id="s1p-nav-restore-btn" class="s1p-btn s1p-red-btn">恢复默认</button>
+                    <button id="s1p-nav-restore-btn" class="s1p-btn s1p-red-btn">恢复默认导航</button>
                 </div>
                 <div id="s1p-settings-message" class="s1p-message"></div>`;
 
-            const navListContainer = tabs.settings.querySelector('.s1p-nav-editor-list');
+            const navListContainer = tabs['nav-settings'].querySelector('.s1p-nav-editor-list');
             const renderNavList = (links) => {
                 navListContainer.innerHTML = (links || []).map((link, index) => `
                     <div class="s1p-editor-item" draggable="true" data-index="${index}" style="grid-template-columns: auto 1fr 1fr auto; user-select: none;">
@@ -1183,29 +1501,29 @@
                 }
             });
 
-            tabs.settings.addEventListener('click', e => {
+            tabs['nav-settings'].addEventListener('click', e => {
                 const target = e.target;
                 if (target.id === 's1p-nav-add-btn') {
                     const newItem = document.createElement('div');
                     newItem.className = 's1p-editor-item'; newItem.draggable = true;
                     newItem.style.gridTemplateColumns = 'auto 1fr 1fr auto';
-                    newItem.innerHTML = `<div class="drag-handle" style="cursor: grab; color: #9ca3af; padding: 0 8px;">::</div><input type="text" class="nav-name" placeholder="新链接"><input type="text" class="nav-href" placeholder="forum.php"><div class="s1p-editor-item-controls"><button class="s1p-editor-btn" data-action="delete" title="删除链接"></button></div>`;
+                    newItem.innerHTML = `<div class="s1p-drag-handle">::</div><input type="text" class="nav-name" placeholder="新链接"><input type="text" class="nav-href" placeholder="forum.php"><div class="s1p-editor-item-controls"><button class="s1p-editor-btn" data-action="delete" title="删除链接"></button></div>`;
                     navListContainer.appendChild(newItem);
                 } else if (target.dataset.action === 'delete') {
                     target.closest('.s1p-editor-item').remove();
                 } else if (target.id === 's1p-nav-restore-btn') {
-                    saveSettings(defaultSettings);
-                    renderSettingsTab();
+                    const currentSettings = getSettings();
+                    currentSettings.enableNavCustomization = defaultSettings.enableNavCustomization;
+                    currentSettings.customNavLinks = defaultSettings.customNavLinks;
+                    saveSettings(currentSettings);
+                    renderNavSettingsTab();
                     applyInterfaceCustomizations();
                     initializeNavbar();
-                    showMessage(modal.querySelector('#s1p-settings-message'), '已恢复默认设置！', true);
+                    showMessage(modal.querySelector('#s1p-settings-message'), '导航栏已恢复为默认设置！', true);
                 } else if (target.id === 's1p-settings-save-btn') {
                     const newSettings = {
                         ...getSettings(),
-                        changeLogoLink: tabs.settings.querySelector('#s1p-changeLogoLink').checked,
-                        hideBlacklistTip: tabs.settings.querySelector('#s1p-hideBlacklistTip').checked,
-                        customTitleSuffix: tabs.settings.querySelector('#s1p-customTitleSuffix').value.trim(), // 保存标题后缀
-                        enableNavCustomization: tabs.settings.querySelector('#s1p-enableNavCustomization').checked,
+                        enableNavCustomization: tabs['nav-settings'].querySelector('#s1p-enableNavCustomization').checked,
                         customNavLinks: Array.from(navListContainer.querySelectorAll('.s1p-editor-item')).map(item => ({ name: item.querySelector('.nav-name').value.trim(), href: item.querySelector('.nav-href').value.trim() })).filter(l=>l.name && l.href)
                     };
                     saveSettings(newSettings);
@@ -1220,11 +1538,26 @@
         renderThreadTab();
         renderUserTab();
         renderTagsTab();
-        renderSettingsTab();
+        renderGeneralSettingsTab();
+        renderNavSettingsTab();
 
         modal.addEventListener('change', e => {
             const target = e.target;
-            if(target.matches('.user-thread-block-toggle')) {
+            const settings = getSettings();
+
+            const featureKey = target.dataset.feature;
+            if (featureKey && target.classList.contains('s1p-feature-toggle')) {
+                // [MODIFIED] Handle feature toggles with animation, no full re-render
+                settings[featureKey] = target.checked;
+                const contentWrapper = target.closest('.s1p-settings-item')?.nextElementSibling;
+                if (contentWrapper && contentWrapper.classList.contains('s1p-feature-content')) {
+                    contentWrapper.classList.toggle('expanded', target.checked);
+                }
+                 saveSettings(settings);
+                // We handled it, so we stop here.
+                return;
+            }
+            else if(target.matches('.user-thread-block-toggle')) {
                 const userId = target.dataset.userId;
                 const blockThreads = target.checked;
                 const users = getBlockedUsers();
@@ -1769,163 +2102,106 @@
                 }
 
                 jumpBtn.href = `forum.php?mod=redirect&goto=findpost&ptid=${threadId}&pid=${postId}`;
-                jumpBtn.target = '_blank';
-                jumpBtn.style.borderColor = fcolor;
                 jumpBtn.style.color = fcolor;
-                jumpBtn.onmouseover = () => { jumpBtn.style.backgroundColor = fcolor; jumpBtn.style.color = 'white'; };
-                jumpBtn.onmouseout = () => { jumpBtn.style.backgroundColor = 'transparent'; jumpBtn.style.color = fcolor; };
-                jumpBtn.onclick = (e) => e.stopPropagation();
+                jumpBtn.style.borderColor = fcolor;
+
+                jumpBtn.addEventListener('mouseover', () => {
+                    jumpBtn.style.backgroundColor = fcolor;
+                    jumpBtn.style.color = 'white';
+                });
+                jumpBtn.addEventListener('mouseout', () => {
+                    jumpBtn.style.backgroundColor = 'transparent';
+                    jumpBtn.style.color = fcolor;
+                });
+
                 progressContainer.appendChild(jumpBtn);
 
                 if (newReplies > 0) {
-                    const badge = document.createElement('span');
-                    badge.className = 's1p-new-replies-badge';
-                    badge.textContent = `+${newReplies}`;
-                    badge.style.backgroundColor = fcolor;
-                    badge.style.borderColor = fcolor;
-                    badge.title = `有 ${newReplies} 条新回复`;
-                    progressContainer.appendChild(badge);
-                    jumpBtn.style.borderRadius = '4px 0 0 4px';
-                } else {
-                    jumpBtn.style.borderRadius = '4px';
+                    const newRepliesBadge = document.createElement('span');
+                    newRepliesBadge.className = 's1p-new-replies-badge';
+                    newRepliesBadge.textContent = `+${newReplies}`;
+                    newRepliesBadge.title = `有 ${newReplies} 条新回复`;
+                    newRepliesBadge.style.backgroundColor = fcolor;
+                    newRepliesBadge.style.borderColor = fcolor;
+                    progressContainer.appendChild(newRepliesBadge);
+                    jumpBtn.style.borderTopRightRadius = '0';
+                    jumpBtn.style.borderBottomRightRadius = '0';
                 }
 
-                const titleSpan = container.querySelector('span.tps');
-                if (titleSpan) {
-                    titleSpan.insertAdjacentElement('afterend', progressContainer);
-                } else {
-                    const titleLink = container.querySelector('a.s.xst');
-                    if (titleLink) {
-                        titleLink.insertAdjacentHTML('afterend', ' ');
-                        titleLink.insertAdjacentElement('afterend', progressContainer);
-                    }
-                }
+                container.appendChild(progressContainer);
             }
         });
     };
 
-    const initReadProgressTracker = () => {
-        const threadIdMatch = window.location.href.match(/thread-(\d+)-/);
-        if (!threadIdMatch) return;
-        const threadId = threadIdMatch[1];
-
-        const pageMatch = window.location.href.match(/thread-\d+-(\d+)-/);
-        const currentPage = pageMatch ? pageMatch[1] : '1';
-
-        let currentProgressPostId = null;
-
-        const observer = new IntersectionObserver((entries) => {
-            const visiblePosts = entries.filter(entry => entry.isIntersecting);
-
-            if (visiblePosts.length > 0) {
-                const firstVisiblePost = visiblePosts.reduce((first, current) => {
-                    const firstId = parseInt(first.target.id.replace('pid', ''));
-                    const currentId = parseInt(current.target.id.replace('pid', ''));
-                    return currentId < firstId ? current : first;
-                });
-                currentProgressPostId = firstVisiblePost.target.id.replace('pid', '');
-            }
-        }, { threshold: 0.1 });
-
-        document.querySelectorAll('table[id^="pid"]').forEach(post => observer.observe(post));
-
-        const saveProgress = () => {
-            if (document.visibilityState === 'hidden' && currentProgressPostId) {
-                // [NEW] Get floor number from the first visible post, based on user's feedback.
-                const postElement = document.getElementById('pid' + currentProgressPostId);
-                let lastReadFloor = 0;
-                if (postElement) {
-                    const floorElement = postElement.querySelector('.pi em');
-                    if (floorElement) {
-                        lastReadFloor = parseInt(floorElement.textContent) || 0;
-                    }
-                }
-                updateThreadProgress(threadId, currentProgressPostId, currentPage, lastReadFloor);
-            }
-        };
-
-        document.addEventListener('visibilitychange', saveProgress);
-    };
-
-    // 自动签到
-    const autoCheckIn = () => {
-        const userLink = document.querySelector('div#um a[href*="space-uid-"]');
-        if (!userLink) return;
-        const uidMatch = userLink.href.match(/space-uid-(\d+)\.html/);
-        if (!uidMatch) return;
-        const userId = uidMatch[1];
-        const today = new Date().toLocaleDateString();
-        const lastCheckIn = GM_getValue(`s1filter_last_checkin_${userId}`, '');
-        if (lastCheckIn === today) return;
-
-        const checkInLink = Array.from(document.querySelectorAll('a')).find(a => a.textContent.includes('签到'));
-        if (checkInLink && checkInLink.href.includes('daily_attendance')) {
-            console.log('S1 Plus: 找到签到链接，正在尝试自动签到...');
-            fetch(checkInLink.href, { credentials: 'include' })
-                .then(response => {
-                    if (response.ok) {
-                        GM_setValue(`s1filter_last_checkin_${userId}`, today);
-                        console.log(`S1 Plus: 用户 ${userId} 自动签到成功！`);
-                        checkInLink.style.fontWeight = 'normal';
-                        checkInLink.style.color = 'gray';
-                        checkInLink.textContent = '已签到';
-                    } else { console.error('S1 Plus: 自动签到失败，服务器响应状态：', response.status); }
-                }).catch(error => { console.error('S1 Plus: 自动签到请求失败。', error); });
-        }
-    };
-
-        // 点击更换漫区随机图功能 - 修改为DOM加载完成后执行
-    const randomPicChange = () => {
-        const randomPic = document.querySelector('img[src^="https://ac.stage3rd.com/S1_ACG_randpic.asp"]');
-        if (randomPic) {
-            randomPic.addEventListener('click', function() {
-                this.src = `https://ac.stage3rd.com/S1_ACG_randpic.asp?t=${Date.now()}`;
-            });
-
-            // 添加视觉反馈
-            randomPic.style.cursor = 'pointer';
-            randomPic.title = '点击更换图片';
-        }
-    };
-
-    // --- 初始化 ---
-    const init = () => {
-        autoCheckIn();
-        randomPicChange();
-        applyInterfaceCustomizations();
+    // --- 主流程 ---
+    function main() {
         initializeNavbar();
-        initializeTaggingPopover();
 
-        const runTasks = () => {
-            if (window.location.href.includes('thread-') || window.location.href.includes('mod=viewthread')) {
-                hideBlockedUsersPosts();
-                hideBlockedUserQuotes();
-                addBlockButtonsToUsers();
-                initReadProgressTracker();
-                hideBlockedUserRatings();
-            } else if (window.location.href.includes('forum-')) {
-                hideBlockedThreads();
-                applyUserThreadBlocklist();
-                hideThreadsByTitleKeyword();
-                addBlockButtonsToThreads();
-                addProgressJumpButtons();
-            }
-            applyInterfaceCustomizations();
+        const observerCallback = (mutations, observer) => {
+            // 在处理DOM变化前先断开观察，防止无限循环
+            observer.disconnect();
+            // 执行所有DOM修改
+            applyChanges();
+            // 完成后再重新连接观察器
+            observer.observe(document.getElementById('ct'), { childList: true, subtree: true });
         };
 
-        runTasks();
+        const observer = new MutationObserver(observerCallback);
 
-        // 稍微修改 MutationObserver 的逻辑，只对特定容器的子节点变化做出反应，减少不必要的调用
-        const observerTarget = document.getElementById('ct');
-        if (observerTarget) {
-            const observer = new MutationObserver(runTasks);
-            observer.observe(observerTarget, { childList: true, subtree: true });
+        // 首次加载时直接运行一次
+        applyChanges();
+
+        // 开始观察 #ct 容器的变化
+        observer.observe(document.getElementById('ct'), { childList: true, subtree: true });
+
+        // 记录阅读进度
+        if (getSettings().enableReadProgress && document.getElementById('postlist')) {
+            const threadIdMatch = window.location.href.match(/thread-(\d+)-/);
+            if (threadIdMatch) {
+                const threadId = threadIdMatch[1];
+                const lastPost = Array.from(document.querySelectorAll('div[id^="post_"]')).pop();
+                if (lastPost) {
+                    const postId = lastPost.id.replace('post_', '');
+                    const pageElement = document.querySelector('.pgs .pg a.xw1');
+                    const page = pageElement ? pageElement.textContent : '1';
+                    const lastReadFloor = lastPost.querySelector('td.plc a.xw1[id^="postnum"]')?.textContent?.replace(/#/, '');
+                    updateThreadProgress(threadId, postId, page, lastReadFloor);
+                }
+            }
         }
-    };
 
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
-    } else {
-        init();
+        // 自动签到
+        const checkinLink = document.querySelector('a[href*="plugin.php?id=dsu_paulsign:sign"]');
+        if (checkinLink && checkinLink.textContent.includes('每日签到')) {
+            fetch(checkinLink.href).then(() => console.log('S1 Plus: 已自动签到。'));
+        }
     }
+
+    function applyChanges() {
+        const settings = getSettings();
+        if (settings.enablePostBlocking) {
+            hideBlockedThreads();
+            hideThreadsByTitleKeyword();
+            addBlockButtonsToThreads();
+            applyUserThreadBlocklist();
+        }
+        if (settings.enableUserBlocking) {
+            hideBlockedUsersPosts();
+            addBlockButtonsToUsers();
+            hideBlockedUserQuotes();
+            hideBlockedUserRatings();
+        }
+        if (settings.enableUserTagging) {
+            initializeTaggingPopover();
+        }
+        if (settings.enableReadProgress) {
+            addProgressJumpButtons();
+        }
+        applyInterfaceCustomizations();
+        applyImageHiding();
+        manageImageToggleAllButtons();
+    }
+
+    main();
+
 })();
