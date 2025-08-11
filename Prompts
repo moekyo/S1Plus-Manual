@@ -203,3 +203,9 @@
 ————————————————————————
 在通用设置中，有一个开关“默认隐藏帖子图片”，用于决定是否默认显示帖子的图片内容。默认情况下，这个开关是开启的，即帖子中的图片自动显示，需要用户手动点击查看。如果关闭这个开关，则帖子中每个回复的图片默认不显示，用户需要在对应回复中手动点击查看图片。
 把这基础上，把剩下的需求分解为几个功能点，每次实现一个功能点，让我实际测试没问题再继续下一个功能点。
+
+
+<div class="s1p-image-container" data-manual-show="true"><span class="s1p-image-placeholder">隐藏图片</span><img id="aimg_1923557" aid="1923557" src="https://img.stage1st.com/forum/202508/09/233921ukyxlmrq6qgxgxd4.png" zoomfile="https://img.stage1st.com/forum/202508/09/233921ukyxlmrq6qgxgxd4.png" file="https://img.stage1st.com/forum/202508/09/233921ukyxlmrq6qgxgxd4.png" class="zoom" onclick="zoom(this, this.src, 0, 0, 0)" width="550" inpost="1" onmouseover="showMenu({'ctrlid':this.id,'pos':'12'})" lazyloaded="true" height="230" initialized="true"></div>
+在这里，对应按钮和图片是水平排列的。现在有一个需求是把这个按钮和图片改为垂直排列，按钮在上，图片在下。
+
+帖子屏蔽
