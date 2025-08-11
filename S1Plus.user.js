@@ -1829,7 +1829,7 @@
                 iconCell.addEventListener('mouseenter', () => {
                     hoverTimeout = setTimeout(() => {
                         row.classList.add('s1p-hover-reveal');
-                    }, 200);
+                    }, 1000);
                 });
                 iconCell.addEventListener('mouseleave', () => {
                     clearTimeout(hoverTimeout);
