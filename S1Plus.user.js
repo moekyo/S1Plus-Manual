@@ -54,7 +54,8 @@
         .s1p-action-container {
             position: absolute;
             left: 0;
-            top: 6px;
+            top: 50%;
+            transform: translateY(-50%);
             z-index: 5;
             height: 26px;
             opacity: 0;
@@ -65,7 +66,7 @@
         }
 
         /* 当鼠标悬停在图标单元格上时，显示主容器 */
-        .icn:hover .s1p-action-container {
+        tbody.s1p-hover-reveal .s1p-action-container {
             opacity: 1;
             pointer-events: auto; /* 可见时允许点击 */
         }
@@ -84,22 +85,16 @@
         .thread-block-btn:hover { background-color: var(--s1p-red-h); }
 
         /* --- [REPLACED] 帖子行悬停/确认平移效果 --- */
-        /* 为所有单元格准备过渡动画 */
+        /* 为所有会移动的单元格准备过渡动画 */
         tbody[id^="normalthread_"] th,
-        tbody[id^="normalthread_"] td,
         tbody[id^="stickthread_"] th,
-        tbody[id^="stickthread_"] td,
         .icn > a {
             transition: transform 0.2s ease-in-out;
         }
 
         /* 鼠标悬停在图标单元格上时，平移帖子内容，为“屏蔽”按钮腾出空间 */
-        .icn:hover > a {
-            display: inline-block;
-            transform: translateX(28px);
-        }
-        .icn:hover ~ th,
-        .icn:hover ~ td {
+        tbody.s1p-hover-reveal .icn > a,
+        tbody.s1p-hover-reveal .icn + th {
             transform: translateX(28px);
         }
 
@@ -117,24 +112,33 @@
         /* 确认(勾)和取消(叉)按钮本身的样式 */
         .s1p-confirm-action-btn {
             display: flex; align-items: center; justify-content: center;
-            width: 28px; height: 26px;
-            border: none; border-radius: 6px;
-            color: white; font-size: 16px; font-weight: bold;
+            width: 28px; height: 28px; /* Make it a square */
+            border: none; border-radius: 50%; /* Make it a circle */
             cursor: pointer;
             transition: background-color 0.2s ease, transform 0.1s ease;
+            background-repeat: no-repeat;
+            background-position: center;
+            background-size: 60%;
         }
         .s1p-confirm-action-btn:active { transform: scale(0.95); }
-        .s1p-confirm-action-btn.confirm { background-color: #22c55e; /* 绿色 */ }
-        .s1p-confirm-action-btn.confirm:hover { background-color: #16a34a; }
-        .s1p-confirm-action-btn.cancel { background-color: var(--s1p-red); /* 红色 */ }
-        .s1p-confirm-action-btn.cancel:hover { background-color: var(--s1p-red-h); }
+        .s1p-confirm-action-btn.confirm {
+            background-color: transparent;
+            background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='2.5' stroke='%2322c55e'%3e%3cpath stroke-linecap='round' stroke-linejoin='round' d='M4.5 12.75l6 6 9-13.5' /%3e%3c/svg%3e");
+        }
+        .s1p-confirm-action-btn.confirm:hover {
+            background-color: #e0f2e9; /* A light green */
+        }
+        .s1p-confirm-action-btn.cancel {
+            background-color: transparent;
+            background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='2.5' stroke='%23ef4444'%3e%3cpath stroke-linecap='round' stroke-linejoin='round' d='M6 18L18 6M6 6l12 12' /%3e%3c/svg%3e");
+        }
+        .s1p-confirm-action-btn.cancel:hover {
+            background-color: #fee2e2; /* A light red from the theme's error messages */
+        }
 
         /* 当帖子行处于确认状态时，将内容进一步向右平移，为所有按钮腾出空间 */
-        tbody.s1p-blocking-confirm .icn > a {
-            transform: translateX(94px); /* (原28px + 新增按钮宽度) */
-        }
-        tbody.s1p-blocking-confirm .icn ~ th,
-        tbody.s1p-blocking-confirm .icn ~ td {
+        tbody.s1p-blocking-confirm .icn > a,
+        tbody.s1p-blocking-confirm .icn + th {
             transform: translateX(94px);
         }
 
@@ -472,18 +476,17 @@
             justify-content: space-between;
             align-items: center;
         }
-        .s1p-quote-placeholder a {
-            color: var(--s1p-sec);
-            text-decoration: none;
+        div.s1p-quote-placeholder span.s1p-quote-toggle {
+            color: var(--s1p-t);
             font-weight: 500;
             cursor: pointer;
             padding: 4px 8px;
             border-radius: 4px;
             transition: background-color 0.2s ease, color 0.2s ease;
         }
-        .s1p-quote-placeholder a:hover {
+        div.s1p-quote-placeholder span.s1p-quote-toggle:hover {
             background-color: var(--s1p-sub);
-            color: var(--s1p-sec);
+            color: var(--s1p-t);
         }
 
         /* --- [NEW] Quote Collapse Animation --- */
@@ -643,7 +646,7 @@
 
                     const newPlaceholder = document.createElement('div');
                     newPlaceholder.className = 's1p-quote-placeholder';
-                    newPlaceholder.innerHTML = `<span>一条来自已屏蔽用户的引用已被隐藏。</span><a class="s1p-quote-toggle s1p-popover-btn">点击展开</a>`;
+                    newPlaceholder.innerHTML = `<span>一条来自已屏蔽用户的引用已被隐藏。</span><span class="s1p-quote-toggle s1p-popover-btn">点击展开</span>`;
                     newWrapper.parentNode.insertBefore(newPlaceholder, newWrapper);
 
                     newPlaceholder.querySelector('.s1p-quote-toggle').addEventListener('click', function() {
@@ -1821,6 +1824,18 @@
     
             if (iconCell && titleElement) {
                 iconCell.style.position = 'relative';
+
+                let hoverTimeout;
+                iconCell.addEventListener('mouseenter', () => {
+                    hoverTimeout = setTimeout(() => {
+                        row.classList.add('s1p-hover-reveal');
+                    }, 200);
+                });
+                iconCell.addEventListener('mouseleave', () => {
+                    clearTimeout(hoverTimeout);
+                    row.classList.remove('s1p-hover-reveal');
+                });
+
                 const threadId = row.id.replace(/^(normalthread_|stickthread_)/, '');
                 const threadTitle = titleElement.textContent.trim();
     
@@ -1841,13 +1856,13 @@
                 // 3a. 创建“取消”按钮 (叉)
                 const cancelBtn = document.createElement('button');
                 cancelBtn.className = 's1p-confirm-action-btn cancel';
-                cancelBtn.innerHTML = '&#x2717;'; // '✗'
+                cancelBtn.innerHTML = ''; // '✗'
                 cancelBtn.title = '取消';
     
                 // 3b. 创建“确认”按钮 (勾)
                 const confirmBtn = document.createElement('button');
                 confirmBtn.className = 's1p-confirm-action-btn confirm';
-                confirmBtn.innerHTML = '&#x2713;'; // '✓'
+                confirmBtn.innerHTML = ''; // '✓'
                 confirmBtn.title = '确认屏蔽';
     
                 // 组装确认按钮 (顺序：叉，然后是勾)
