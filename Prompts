@@ -209,3 +209,90 @@
 在这里，对应按钮和图片是水平排列的。现在有一个需求是把这个按钮和图片改为垂直排列，按钮在上，图片在下。
 
 帖子屏蔽
+
+
+> <div class="pi">                                                                                │
+│    <div id="fj" class="y">                                                                         │
+│    <label class="z">电梯直达</label>                                                               │
+│    <input type="text" class="px p_fre z" size="2" onkeyup="$('fj_btn').href='forum.php?mod=redirec │
+│    t&amp;ptid=2259059&amp;authorid=0&amp;postno='+this.value" onkeydown="if(event.keyCode==13)     │
+│    {window.location=$('fj_btn').href;return false;}" title="跳转到指定楼层">                       │
+│    <a href="javascript:;" id="fj_btn" class="z fico-down fc-n" title="跳转到指定楼层"></a>         │
+│    </div>                                                                                          │
+│    <strong>                                                                                        │
+│    <a href="thread-2259059-1-1.html" id="postnum68255314" onclick="setCopy(this.href,              │
+│    '帖子地址复制成功');return false;">                                                             │
+│    楼主</a>                                                                                        │
+│    </strong>                                                                                       │
+│    <div class="pti">                                                                               │
+│    <div class="pdbt">                                                                              │
+│    </div>                                                                                          │
+│    <div class="authi">                                                                             │
+│    <img class="authicn vm" id="authicon68255314"                                                   │
+│    src="https://static.stage1st.com/image/common/online_member.gif">                               │
+│    <em id="authorposton68255314">发表于 2025-8-12 18:30</em>                                       
+│    <span class="xg1">来自手机</span>                                                               
+│    <span class="pipe">|</span>                                                                     
+│    <a href="forum.php?mod=viewthread&amp;tid=2259059&amp;page=1&amp;authorid=570508"               
+│    rel="nofollow">只看该作者</a>                                                                   
+│    <span class="none" title="回帖奖励"></span>                                                     
+│    <span class="pipe show">|</span><a                                                              
+│    href="forum.php?mod=viewthread&amp;tid=2259059&amp;extra=page%3D1&amp;ordertype=1"              
+│    class="show">倒序浏览</a>                                                                       
+│    <span class="pipe show">|</span><a href="javascript:;"                                          
+│    onclick="readmode($('thread_subject').innerHTML, 68255314);" class="show">阅读模式</a>          
+│    </div>                                                                                          
+│    </div>                                                                                          
+│    </div> 
+
+
+
+
+
+<div class="pi">
+<div id="fj" class="y">
+<label class="z">电梯直达</label>
+<input type="text" class="px p_fre z" size="2" onkeyup="$('fj_btn').href='forum.php?mod=redirect&amp;ptid=2259059&amp;authorid=0&amp;postno='+this.value" onkeydown="if(event.keyCode==13) {window.location=$('fj_btn').href;return false;}" title="跳转到指定楼层">
+<a href="javascript:;" id="fj_btn" class="z fico-down fc-n" title="跳转到指定楼层"></a>
+</div>
+<strong>
+<a href="thread-2259059-1-1.html" id="postnum68255314" onclick="setCopy(this.href, '帖子地址复制成功');return false;">
+楼主</a>
+</strong>
+<div class="pti">
+<div class="pdbt">
+</div>
+<div class="authi">
+<img class="authicn vm" id="authicon68255314" src="https://static.stage1st.com/image/common/online_member.gif">
+<em id="authorposton68255314">发表于 2025-8-12 18:30</em>
+<span class="xg1">来自手机</span>
+<span class="pipe">|</span>
+<a href="forum.php?mod=viewthread&amp;tid=2259059&amp;page=1&amp;authorid=570508" rel="nofollow">只看该作者</a>
+<span class="none" title="回帖奖励"></span>
+<span class="pipe show">|</span><a href="forum.php?mod=viewthread&amp;tid=2259059&amp;extra=page%3D1&amp;ordertype=1" class="show">倒序浏览</a>
+<span class="pipe show">|</span><a href="javascript:;" onclick="readmode($('thread_subject').innerHTML, 68255314);" class="show">阅读模式</a>
+</div>
+</div>
+</div>
+
+这个是位于主题帖的顶部工具栏对应的 html 片段，在原始状态下，当鼠标移动到“只看该作者”，在它的右边会出现两 个额外的按钮：“倒序浏览”和“阅读模式”。而当开始了我们这个 S1 Plus 脚本之后，由于我们会在这个“只  
+看该用户”（原本是“只看该作者”，但是被脚本重命名为“只看该用户”了）的后面插入我们自定义两个按钮“屏蔽该用户”和“标记该用户”，这就导致了鼠标只要滑动到“”只看该用户“，”屏蔽该用户“，”标记该用户“的范围后，“倒序浏览”和“阅读模式”被添加到了”标记该用户“的右边而不是在”只看该用户“右边，并且鼠标移  
+动到”屏蔽该用户“，”标记该用户“也会意外触发它们的出现。还有如果使用了@S1\ NUX.css 这个自定义样式，”倒序浏览“会变成常驻按钮（不需要鼠标滑动触发）放在整个左边工具栏的最右边（不是  
+整个工具栏的最右边，因为还是上面提到的”楼主“和”电梯直达“等按钮），而”阅读模式“则会默认隐藏。优化这些问题，如果过于复杂，请分步解决
+
+
+现在还有个问题，在默认状态，“只看该用户”的右边会有一个小三角，如@img5.png 的红框所示，但是如果鼠标移动到“屏蔽该用户”或者“标记该用户”这个小三角就消失了，修复一下，以下是对应的 html 片段
+<div class="pti">
+<div class="pdbt">
+</div>
+<div class="authi">
+<img class="authicn vm" id="authicon68255314" src="https://static.stage1st.com/image/common/online_member.gif">
+<em id="authorposton68255314">发表于 2025-8-12 18:30</em>
+<span class="xg1">来自手机</span>
+<span class="pipe">|</span>
+<a href="forum.php?mod=viewthread&amp;tid=2259059&amp;page=1&amp;authorid=570508" rel="nofollow">只看该用户</a>
+<span class="none" title="回帖奖励"></span>
+<span class="pipe show" style="display: none;">|</span><a href="forum.php?mod=viewthread&amp;tid=2259059&amp;extra=page%3D1&amp;ordertype=1" class="show" style="display: none;">倒序浏览</a>
+<span class="pipe show" style="display: none;">|</span><a href="javascript:;" onclick="readmode($('thread_subject').innerHTML, 68255314);" class="show" style="display: none;">阅读模式</a><span class="s1p-authi-actions-wrapper"><span class="pipe">|</span><a href="javascript:void(0);" class="s1p-authi-action s1p-block-user-in-authi">屏蔽该用户</a><span class="pipe">|</span><a href="javascript:void(0);" class="s1p-authi-action s1p-tag-user-in-authi">标记该用户</a></span>
+</div>
+</div>

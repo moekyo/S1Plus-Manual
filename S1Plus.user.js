@@ -45,7 +45,15 @@
         .pi { overflow: hidden; }
         /* 2. 为 .pti 赋予新的堆叠上下文(z-index)和不透明背景，确保它显示在任何同级元素之上，
            并彻底修正因布局错位导致的链接垂直点击范围偏移、变小的问题。*/
-        .pi > .pti { position: relative; z-index: 1; background: var(--s1p-bg); }
+        .pi > .pti { position: relative; z-index: 1; }
+
+        /* --- [FIX] 修正 .pti 背景遮挡“电梯直达”和“楼主”链接的问题 --- */
+        /* 通过提升这两个元素的堆叠顺序，确保它们显示在 .pti 背景之上 */
+        .pi > #fj,
+        .pi > strong {
+            position: relative;
+            z-index: 2;
+        }
 
 
         /* --- 关键字屏蔽样式 --- */
@@ -399,6 +407,7 @@
             display: flex;
             flex-direction: column;
             gap: 2px;
+            min-width: max-content;
         }
         .s1p-tag-options-menu button {
             background: none;
@@ -409,6 +418,7 @@
             border-radius: 4px;
             font-size: 14px;
             color: var(--s1p-t);
+            white-space: nowrap;
         }
         .s1p-tag-options-menu button:hover {
             background-color: var(--s1p-sub-h);
@@ -2451,7 +2461,11 @@
             availableWidth -= buffer;
 
             if (settings.enableUserBlocking) {
-                wrapper.innerHTML += '<span class="pipe">|</span>';
+                const pipe = document.createElement('span');
+                pipe.className = 'pipe';
+                pipe.textContent = '|';
+                wrapper.appendChild(pipe);
+
                 const blockLink = document.createElement('a');
                 blockLink.href = 'javascript:void(0);';
                 blockLink.textContent = '屏蔽该用户';
@@ -2468,19 +2482,20 @@
             if (settings.enableUserTagging) {
                 const userTags = getUserTags();
                 const userTag = userTags[userId];
-                wrapper.innerHTML += '<span class="pipe">|</span>';
+                const pipe = document.createElement('span');
+                pipe.className = 'pipe';
+                pipe.textContent = '|';
+                wrapper.appendChild(pipe);
                 availableWidth -= 10; // Estimated width for pipe
 
                 if (userTag && userTag.tag) {
                     const tagContainer = document.createElement('span');
                     tagContainer.className = 's1p-authi-action s1p-user-tag-container';
 
-                    const fullTagText = userTag.tag; // [FIX] Removed "用户标记：" prefix for cleaner data
+                    const fullTagText = userTag.tag;
                     const tagDisplay = document.createElement('span');
                     tagDisplay.className = 's1p-user-tag-display';
                     tagDisplay.textContent = `用户标记：${fullTagText}`;
-                    
-                    // [FIX] Use data attribute for full text and remove title to prevent double popover
                     tagDisplay.dataset.fullTag = fullTagText;
                     tagDisplay.removeAttribute('title');
 
@@ -2499,7 +2514,7 @@
                     tagContainer.appendChild(tagDisplay);
                     tagContainer.appendChild(optionsIcon);
 
-                    if (availableWidth > 50) { // Set a minimum width for the tag to appear
+                    if (availableWidth > 50) {
                         tagContainer.style.maxWidth = `${availableWidth}px`;
                     }
 
@@ -2513,14 +2528,41 @@
                         e.preventDefault();
                         const popover = document.getElementById('s1p-tag-popover-main');
                         if (popover && popover.show) {
-                            // [MODIFIED] Call popover.show with startInEditMode = true
                             popover.show(e.currentTarget, userId, userName, userAvatar, 0, true);
                         }
                     });
                     wrapper.appendChild(tagLink);
                 }
             }
-            viewAuthorLink.after(wrapper);
+
+            // --- [S1P-FIX] Take control of native hover buttons to fix layout shifts and CSS conflicts ---
+            const ordertypeLink = authiDiv.querySelector('a[href*="ordertype=1"]');
+            const readmodeLink = authiDiv.querySelector('a[onclick*="readmode"]');
+            
+            const insertionPoint = readmodeLink || viewAuthorLink;
+            insertionPoint.after(wrapper);
+
+            if (ordertypeLink && readmodeLink) {
+                const nativeElements = [
+                    ordertypeLink.previousElementSibling, // pipe
+                    ordertypeLink,
+                    readmodeLink.previousElementSibling, // pipe
+                    readmodeLink
+                ].filter(Boolean); // Filter out nulls if elements don't exist
+
+                // 1. Override any stylesheet by hiding elements by default
+                nativeElements.forEach(el => el.style.display = 'none');
+
+                // 2. Add precise event listeners to show the buttons
+                viewAuthorLink.addEventListener('mouseenter', () => {
+                    nativeElements.forEach(el => el.style.display = 'inline');
+                });
+
+                // 3. Hide buttons when the mouse leaves the entire author info area
+                authiDiv.addEventListener('mouseleave', () => {
+                    nativeElements.forEach(el => el.style.display = 'none');
+                });
+            }
         });
     };
 
