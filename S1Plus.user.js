@@ -8,6 +8,7 @@
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_addStyle
+// @grant        GM_xmlhttpRequest
 // @license      MIT
 // ==/UserScript==
 
@@ -2351,6 +2352,52 @@
         });
     };
 
+    // 自动签到 (适配 study_daily_attendance 插件)
+    function autoSign() {
+        console.log('S1 Plus: Running autoSign...');
+        const checkinLink = document.querySelector('a[href*="study_daily_attendance-daily_attendance.html"]');
+        if (!checkinLink) {
+            console.log('S1 Plus: Check-in link not found. Exiting autoSign.');
+            return;
+        }
+        console.log('S1 Plus: Check-in link found:', checkinLink.href);
+
+        var now = new Date();
+        var date = now.getFullYear() + "-" + (now.getMonth() + 1) + "-" + now.getDate();
+        var signedDate = GM_getValue("signedDate");
+        console.log(`S1 Plus: Today is ${date}. Last signed date is ${signedDate}.`);
+
+        // 如果今天已经签到，直接隐藏链接并返回
+        if (signedDate == date) {
+            console.log('S1 Plus: Already signed in today. Hiding link.');
+            checkinLink.style.display = 'none';
+            return;
+        }
+
+        // 早上6点后才执行签到操作
+        if (now.getHours() < 6) {
+            console.log('S1 Plus: It is before 6 AM. Skipping sign-in action for now.');
+            return;
+        }
+
+        console.log('S1 Plus: Proceeding with check-in request...');
+        // 使用 GM_xmlhttpRequest 访问签到链接
+        GM_xmlhttpRequest({
+            method: "GET",
+            url: checkinLink.href,
+            onload: function (response) {
+                // 标记为已签到，防止重复请求
+                GM_setValue("signedDate", date);
+                // 成功后隐藏链接
+                checkinLink.style.display = 'none';
+                console.log('S1 Plus: Auto check-in request sent. Status:', response.status);
+            },
+            onerror: function(response) {
+                console.error('S1 Plus: Auto check-in request failed.', response);
+            }
+        });
+    }
+
     // --- 主流程 ---
     function main() {
         initializeNavbar();
@@ -2387,12 +2434,6 @@
                 }
             }
         }
-
-        // 自动签到
-        const checkinLink = document.querySelector('a[href*="plugin.php?id=dsu_paulsign:sign"]');
-        if (checkinLink && checkinLink.textContent.includes('每日签到')) {
-            fetch(checkinLink.href).then(() => console.log('S1 Plus: 已自动签到。'));
-        }
     }
 
     function applyChanges() {
@@ -2419,6 +2460,11 @@
         applyInterfaceCustomizations();
         applyImageHiding();
         manageImageToggleAllButtons();
+        try {
+            autoSign();
+        } catch (e) {
+            console.error('S1 Plus: Error caught while running autoSign():', e);
+        }
     }
 
     main();
