@@ -40,6 +40,14 @@
         /* --- 核心修复：禁用论坛自带的用户信息悬浮窗 --- */
         #p_pop { display: none !important; }
 
+        /* --- [FIX] 核心修复：解决主题帖作者栏布局与点击问题 --- */
+        /* 1. 为 .pi 创建BFC，强制其包裹内部浮动的“电梯直达”元素，防止高度塌陷。*/
+        .pi { overflow: hidden; }
+        /* 2. 为 .pti 赋予新的堆叠上下文(z-index)和不透明背景，确保它显示在任何同级元素之上，
+           并彻底修正因布局错位导致的链接垂直点击范围偏移、变小的问题。*/
+        .pi > .pti { position: relative; z-index: 1; background: var(--s1p-bg); }
+
+
         /* --- 关键字屏蔽样式 --- */
 
         .s1p-hidden-by-keyword, .s1p-hidden-by-quote { display: none !important; }
