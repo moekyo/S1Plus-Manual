@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      4.3.6
+// @version      4.3.8
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪等多种功能，全方位优化你的论坛体验。
 // @author       moekyo
 // @match        https://stage1st.com/2b/*
@@ -16,8 +16,8 @@
     'use strict';
 
 
-    const SCRIPT_VERSION = '4.3.6';
-    const SCRIPT_RELEASE_DATE = '2025-08-11';
+    const SCRIPT_VERSION = '4.3.8';
+    const SCRIPT_RELEASE_DATE = '2025-08-12';
 
     // --- 样式注入 ---
     GM_addStyle(`
@@ -306,6 +306,33 @@
             gap: 8px;
         }
 
+        /* --- [NEW] 用户标记显示悬浮窗 --- */
+        .s1p-tag-display-popover {
+            position: absolute;
+            z-index: 10003;
+            max-width: 350px;
+            background-color: var(--s1p-bg);
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.12);
+            border: 1px solid var(--s1p-pri);
+            padding: 10px 14px;
+            font-size: 13px;
+            line-height: 1.6;
+            color: var(--s1p-t);
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(5px);
+            transition: opacity 0.15s ease-out, transform 0.15s ease-out;
+            pointer-events: none;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .s1p-tag-display-popover.visible {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0);
+        }
+
         /* --- [NEW] Authi User Tag Display --- */
         .authi {
             display: flex;
@@ -332,6 +359,7 @@
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
+            cursor: default; /* [FIX] Change cursor to default as it's not a link */
         }
         .s1p-user-tag-options {
             display: flex;
@@ -2080,6 +2108,7 @@
         const startHideTimer = () => {
             if (isComposing) return;
             clearTimeout(showTimeout);
+            clearTimeout(hideTimeout);
             hideTimeout = setTimeout(() => popover.classList.remove('visible'), 300);
         };
 
@@ -2258,6 +2287,69 @@
             cell.addEventListener('mouseleave', startHideTimer);
         });
         observer.observe(mainContent, { childList: true, subtree: true });
+    };
+
+    // --- [NEW/MODIFIED] 用户标记显示悬浮窗 ---
+    const initializeTagDisplayPopover = () => {
+        let popover = document.getElementById('s1p-tag-display-popover');
+        if (!popover) {
+            popover = document.createElement('div');
+            popover.id = 's1p-tag-display-popover';
+            popover.className = 's1p-tag-display-popover';
+            document.body.appendChild(popover);
+        }
+
+        let showTimeout, hideTimeout;
+
+        const show = (anchor, text) => {
+            clearTimeout(hideTimeout);
+            showTimeout = setTimeout(() => {
+                popover.textContent = text;
+                const rect = anchor.getBoundingClientRect();
+
+                // 优先在上方显示
+                let top = rect.top + window.scrollY - popover.offsetHeight - 6;
+                let left = rect.left + window.scrollX + (rect.width / 2) - (popover.offsetWidth / 2);
+
+                // 如果上方空间不足，则在下方显示
+                if (top < window.scrollY) {
+                    top = rect.bottom + window.scrollY + 6;
+                }
+
+                // 边界检测，防止穿出屏幕
+                if (left < 10) left = 10;
+                if (left + popover.offsetWidth > window.innerWidth) {
+                    left = window.innerWidth - popover.offsetWidth - 10;
+                }
+
+                popover.style.top = `${top}px`;
+                popover.style.left = `${left}px`;
+                popover.classList.add('visible');
+            }, 50);
+        };
+
+        const hide = () => {
+            clearTimeout(showTimeout);
+            hideTimeout = setTimeout(() => {
+                 popover.classList.remove('visible');
+            }, 100);
+        };
+
+        // 使用事件委托来处理所有标记的悬停事件
+        document.body.addEventListener('mouseover', e => {
+            const tagDisplay = e.target.closest('.s1p-user-tag-display');
+            // 仅当文本溢出且存在 data-full-tag 属性时才显示悬浮窗
+            if (tagDisplay && tagDisplay.dataset.fullTag && tagDisplay.scrollWidth > tagDisplay.clientWidth) {
+                show(tagDisplay, tagDisplay.dataset.fullTag);
+            }
+        });
+
+        document.body.addEventListener('mouseout', e => {
+            const tagDisplay = e.target.closest('.s1p-user-tag-display');
+            if (tagDisplay) {
+                hide();
+            }
+        });
     };
 
 
@@ -2454,11 +2546,14 @@
                     const tagContainer = document.createElement('span');
                     tagContainer.className = 's1p-authi-action s1p-user-tag-container';
 
-                    const fullTagText = `用户标记：${userTag.tag}`;
+                    const fullTagText = userTag.tag; // [FIX] Removed "用户标记：" prefix for cleaner data
                     const tagDisplay = document.createElement('span');
                     tagDisplay.className = 's1p-user-tag-display';
-                    tagDisplay.title = fullTagText;
-                    tagDisplay.textContent = fullTagText;
+                    tagDisplay.textContent = `用户标记：${fullTagText}`;
+                    
+                    // [FIX] Use data attribute for full text and remove title to prevent double popover
+                    tagDisplay.dataset.fullTag = fullTagText;
+                    tagDisplay.removeAttribute('title');
 
                     const optionsIcon = document.createElement('span');
                     optionsIcon.className = 's1p-user-tag-options';
@@ -2548,6 +2643,7 @@
     // --- 主流程 ---
     function main() {
         initializeNavbar();
+        initializeTagDisplayPopover(); // [NEW] 初始化用户标记显示悬浮窗
 
         const observerCallback = (mutations, observer) => {
             // 在处理DOM变化前先断开观察，防止无限循环
