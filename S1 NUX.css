@@ -3,7 +3,7 @@
 @namespace				userstyles.world
 @author						pgain2004 <pgain2004@gmail.com>
 @description			相对熟悉CSS后新写的，窄屏自适应，适配度高。依赖一些CSS3特性和emoji库，较老系统(如Win7)显示效果可能打折扣。tag:S1 stage1st stage1 saraba1st 泥潭 婆罗门论坛
-@version					2025.8.7
+@version					2025.8.8
 @supportURL				https://stage1st.com/2b/thread-1826103-1-1.html
 @license					CC-BY-NC-SA-4.0
 @preprocessor			less
@@ -738,7 +738,7 @@ shdl(shadow-light)：浅阴影色；
 	#smiliesdiv_table img, #fastpostsmiliesdiv_table img, #postsmiliesdiv_table img, #pmsmiliesdiv_table img, #replysmiliesdiv_table img {max-height:40px; height:auto; width:auto}
 	.sl_pv {background:@bg; border:1px solid @pri}
 	/*1-4-3-1-2 新表情选择*/
-	.n-popover{box-shadow: 0 0 2px 2px @pri}
+	.n-popover{box-shadow: 0 0 1px 2px @shdl}
 	.n-popover:not(.n-popover--raw){background: @bgb;backdrop-filter:blur(24px)}
 	.n-tabs .n-tabs-nav.n-tabs-nav--card-type .n-tabs-tab{color: @t;border-color: @pri;background-color: @pri}
 	.n-tabs .n-tabs-nav.n-tabs-nav--top.n-tabs-nav--card-type .n-tabs-tab-pad{border-color:@pri}
@@ -756,6 +756,7 @@ shdl(shadow-light)：浅阴影色；
 	.n-input{background-color: @bg;margin-bottom: 0.2em !important;--n-border: 1px solid @pri!important; --n-border-disabled: 1px solid @pri!important; --n-border-hover: 1px solid @sec!important; --n-border-focus: 1px solid @sec!important; }
 	.n-input:not(.n-input--disabled).n-input--focus{background-color: @bg}
 	.n-input .n-input__input-el, .n-input .n-input__textarea-el{color:@t;caret-color:@sec}
+	.n-tooltip {color: @t}
 	/*1-4-3-2 文本区*/
 	.tedt {margin:0!important; border-color:@prid; width:100%; height:100%}
 	.edt .area, .tedt .area {background-color:@bg!important}
@@ -1338,7 +1339,7 @@ shdl(shadow-light)：浅阴影色；
 	.pg_space .ct2_a,.pg_magic .ct2_a, .pg_announcement .ct2_a, .pg_spacecp .ct2_a, #nv_plugin .ct2_a ，.pg_medal .ct2_a{background:@pri; border-color:@prid; display:flex; padding:0}
 	.ct2_a{padding-left: 0px}
 	.ct2_a .mn {display:flex; flex-grow:1; background-color:@pril; width:auto; order:1; padding:8px; margin:0}
-	.ct2_a .mn > .bw0 {background-color:@bg; margin:0!important; padding:0 12px 12px; border:1px solid @prid!important; flex-grow:1}
+	.ct2_a .mn > .bw0 {background-color:@bg; margin:0!important; padding:0 12px 12px; border:1px solid @prid!important; flex-grow:0}
 	.ct2_a .mn > .bw0 > .tb {display:flex; margin:-1px -13px 0; background-color:@pril; border-color:@prid; padding:0}
 	.ct2_a .mn > .bw0 > .tb .y {order:1; text-align:right; margin-left:auto}
 	.ct2_a .mn > .bw0 > .tb .y a {display:inline-block; width:auto; background:0}
@@ -1576,57 +1577,28 @@ shdl(shadow-light)：浅阴影色；
 	#login-dialog #login-confirm:hover {background-position:0 -10px; color:white!important}
 	#login-dialog input {background: @bg ; border: 1px solid @prid}
 	/*8.5.3 S1Plus*/
-	.s1plus-modal-title {color: @tl}
-	.s1plus-modal-content {background: @bg}
+
+	.s1p-settings-group-title { color:@t ; border-bottom-color: @pri }
+	.s1p-expander-arrow { background: @t; -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 16'%3E%3Cpath d='M2 2L8 8L2 14' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E") no-repeat center; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 16'%3E%3Cpath d='M2 2L8 8L2 14' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E") no-repeat center;}
+	.s1p-modal-header{ border-bottom-color: @pri }
+	.s1p-collapsible-header:hover {color:@tl}
+	.s1p-modal-close { background: #ef4444; -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2 2L14 14M14 2L2 14' stroke='black' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat center; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2 2L14 14M14 2L2 14' stroke='black' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat center; }
 	
-	.s1-settings-group-title { color:@t ; border-bottom-color: @pri }
-	.s1plus-expander-arrow { background: @t; -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 16'%3E%3Cpath d='M2 2L8 8L2 14' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E") no-repeat center; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 16'%3E%3Cpath d='M2 2L8 8L2 14' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E") no-repeat center;}
-	.s1plus-modal-header{ border-bottom-color: @pri }
-	.s1plus-collapsible-header:hover {color:@tl}
-	.s1plus-modal-close { background: #ef4444; -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2 2L14 14M14 2L2 14' stroke='black' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat center; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2 2L14 14M14 2L2 14' stroke='black' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat center; }
+	.s1p-editor-btn.keyword-rule-delete, .s1p-editor-btn[data-action="delete"] {background: @t ; -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='1.5' stroke='black'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0'/%3E%3C/svg%3E") no-repeat center; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='1.5' stroke='black'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0'/%3E%3C/svg%3E") no-repeat center;}
+	.s1p-editor-btn.keyword-rule-delete:hover, .s1p-editor-btn[data-action="delete"]:hover {background: #ef4444}
 	
-	.s1plus-tabs { border-bottom-color: @pri }
-	.s1plus-tab-btn { color:@t ;border-bottom-width: 1px}
-	.s1plus-tab-btn.active {color:@sec; border-bottom-color:@sec}
-	.s1plus-tab-btn:hover {color:@sec}
-	
-	.s1plus-modal-footer {border-top-color: @pri}
-	
-	.s1plus-sync-btn {color:@t ;background-color: @pri}
-	.s1plus-sync-title {color:@tl }
-	.s1plus-sync-textarea {background-color: @bg; border-color: @pri}
-	.s1plus-sync-desc {color:@t }
-	
-	.s1plus-setting-desc, .s1-settings-label{color:@t}
-	.s1plus-empty{color:@tg}
-	
-	input:checked + .s1plus-slider {background-color: @sec}
-	.s1plus-slider::before {background-color: @bg}
-	
-	.s1plus-progress-jump-btn {color: @sec; background-color: @bg; border-color: @sec }
-	.s1plus-progress-jump-btn:hover {color: @bg; background-color: @sec; border-color: @sec }
-	
-	.s1plus-item {background-color: @bg; border-color: @pri}
-	.s1plus-item-title {color:@tl}
-	.s1plus-item-meta,.s1plus-item-toggle {color:@t}
-	.s1plus-unblock-btn {color:@t;background-color: @pri}
-	
-	.s1plus-confirm-content,.s1plus-confirm-footer{background-color: @bg}
-	.s1plus-confirm-body {color:@tl}
-	.s1plus-confirm-body .confirm-subtitle {color:@t}
-	.s1plus-confirm-btn.cancel {color:@t;background-color: @pri; border-color: @pri}
-	.s1plus-confirm-btn.cancel:hover {}
-	
-	.s1-editor-item{background-color: @bg}
-	
-	.s1-editor-item input[type="text"] {background-color: @bg; border-color: @pri}
-	.s1-editor-btn.keyword-rule-delete, .s1-editor-btn[data-action="delete"] {background: @t ; -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='1.5' stroke='black'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0'/%3E%3C/svg%3E") no-repeat center; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='1.5' stroke='black'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0'/%3E%3C/svg%3E") no-repeat center;}
-	.s1-editor-btn.keyword-rule-delete:hover, .s1-editor-btn[data-action="delete"]:hover {background: #ef4444}
-	
-	.s1-editor-footer {border-top-color: @pri !important}
-	
-	.s1plus-tag-popover {background-color: @bg; border-color: @pri}
-	.s1plus-popover-hr {border-top-color: @pri}
+	:root{
+		--s1p-bg: @bg;
+		--s1p-t: @t;
+		--s1p-desc-t: @tg;
+		--s1p-pri: @pri;
+		--s1p-sec: @sec;
+		--s1p-sec-h: @secp;
+		--s1p-input-bg: @bg;
+		--s1p-sub: @pril;
+		--s1p-sub-h: @sec;
+		
+	}
 	
 	/*9 窄屏适配*/
 	@media(max-width:1360px) and (min-width:910px) {/*页码栏*/

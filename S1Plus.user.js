@@ -109,7 +109,7 @@
         }
         /* 当帖子行处于确认状态时，显示确认/取消按钮 */
         tbody.s1p-blocking-confirm .s1p-thread-block-confirm-actions { display: flex; }
-        
+
         /* 确认(勾)和取消(叉)按钮本身的样式 */
         .s1p-confirm-action-btn {
             display: flex; align-items: center; justify-content: center;
@@ -304,6 +304,83 @@
             display: flex;
             justify-content: flex-end;
             gap: 8px;
+        }
+
+        /* --- [NEW] Authi User Tag Display --- */
+        .authi {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .s1p-authi-actions-wrapper {
+            display: inline-flex;
+            align-items: center;
+            vertical-align: middle;
+        }
+        .s1p-user-tag-container {
+            display: inline-flex;
+            align-items: center;
+            vertical-align: middle;
+            border-radius: 6px;
+            overflow: hidden;
+        }
+        .s1p-user-tag-display {
+            background-color: var(--s1p-sub);
+            color: var(--s1p-t);
+            padding: 2px 8px;
+            font-size: 12px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .s1p-user-tag-options {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background-color: var(--s1p-sub);
+            color: var(--s1p-t);
+            font-size: 14px; /* 稍微增大字体 */
+            font-weight: bold; /* 加粗字体 */
+            padding: 0 8px; /* 增加左右内边距 */
+            flex-shrink: 0;
+            align-self: stretch;
+            cursor: pointer;
+            transition: background-color 0.2s ease-in-out;
+        }
+        .s1p-user-tag-options:hover {
+            background-color: var(--s1p-pri);
+        }
+
+        /* --- [NEW] Tag Options Menu --- */
+        .s1p-tag-options-menu {
+            position: absolute;
+            z-index: 10002;
+            background-color: var(--s1p-bg);
+            border-radius: 6px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            border: 1px solid var(--s1p-pri);
+            padding: 4px;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+        .s1p-tag-options-menu button {
+            background: none;
+            border: none;
+            padding: 6px 12px;
+            text-align: left;
+            cursor: pointer;
+            border-radius: 4px;
+            font-size: 14px;
+            color: var(--s1p-t);
+        }
+        .s1p-tag-options-menu button:hover {
+            background-color: var(--s1p-sub-h);
+            color: var(--s1p-sub-h-t);
+        }
+        .s1p-tag-options-menu button.delete:hover {
+            background-color: var(--s1p-red);
+            color: white;
         }
 
         /* --- 设置面板样式 --- */
@@ -1819,10 +1896,10 @@
         document.querySelectorAll('tbody[id^="normalthread_"], tbody[id^="stickthread_"]').forEach(row => {
             // 防止重复添加按钮
             if (row.querySelector('.s1p-action-container')) return;
-    
+
             const iconCell = row.querySelector('td.icn');
             const titleElement = row.querySelector('th a.s.xst');
-    
+
             if (iconCell && titleElement) {
                 iconCell.style.position = 'relative';
 
@@ -1839,60 +1916,60 @@
 
                 const threadId = row.id.replace(/^(normalthread_|stickthread_)/, '');
                 const threadTitle = titleElement.textContent.trim();
-    
+
                 // 1. 创建在悬停时出现的主容器
                 const actionContainer = document.createElement('div');
                 actionContainer.className = 's1p-action-container';
-    
+
                 // 2. 创建初始的“屏蔽”按钮
                 const blockBtn = document.createElement('span');
                 blockBtn.className = 'thread-block-btn';
                 blockBtn.textContent = '屏蔽';
                 blockBtn.title = '屏蔽此贴';
-    
+
                 // 3. 创建确认/取消按钮的容器 (默认通过CSS隐藏)
                 const confirmActionsContainer = document.createElement('div');
                 confirmActionsContainer.className = 's1p-thread-block-confirm-actions';
-    
+
                 // 3a. 创建“取消”按钮 (叉)
                 const cancelBtn = document.createElement('button');
                 cancelBtn.className = 's1p-confirm-action-btn cancel';
                 cancelBtn.innerHTML = ''; // '✗'
                 cancelBtn.title = '取消';
-    
+
                 // 3b. 创建“确认”按钮 (勾)
                 const confirmBtn = document.createElement('button');
                 confirmBtn.className = 's1p-confirm-action-btn confirm';
                 confirmBtn.innerHTML = ''; // '✓'
                 confirmBtn.title = '确认屏蔽';
-    
+
                 // 组装确认按钮 (顺序：叉，然后是勾)
                 confirmActionsContainer.appendChild(cancelBtn);
                 confirmActionsContainer.appendChild(confirmBtn);
-    
+
                 // 组装主容器
                 actionContainer.appendChild(blockBtn);
                 actionContainer.appendChild(confirmActionsContainer);
-    
+
                 // 将完整的UI添加到帖子行中
                 iconCell.appendChild(actionContainer);
-    
+
                 // --- 事件监听 ---
-    
+
                 // 点击初始“屏蔽”按钮，为帖子行添加一个class，以触发CSS来显示确认UI
                 blockBtn.addEventListener('click', e => {
                     e.preventDefault();
                     e.stopPropagation();
                     row.classList.add('s1p-blocking-confirm');
                 });
-    
+
                 // 点击“取消”按钮，移除class，恢复UI
                 cancelBtn.addEventListener('click', e => {
                     e.preventDefault();
                     e.stopPropagation();
                     row.classList.remove('s1p-blocking-confirm');
                 });
-    
+
                 // 点击“确认”按钮，执行真正的屏蔽操作
                 confirmBtn.addEventListener('click', e => {
                     e.preventDefault();
@@ -1900,7 +1977,7 @@
                     blockThread(threadId, threadTitle);
                     // 帖子行被隐藏后，无需再清理class
                 });
-                
+
                 // 为整行添加鼠标移出事件，如果确认UI是打开的，则自动关闭它。
                 // 这是一个优化体验的细节，避免确认状态被卡住。
                 row.addEventListener('mouseleave', () => {
@@ -1986,7 +2063,7 @@
         });
     };
 
-    // [MODIFIED] 全新悬浮窗逻辑
+    // [REFACTORED] 全新悬浮窗逻辑，支持多锚点类型
     const initializeTaggingPopover = () => {
         let popover = document.getElementById('s1p-tag-popover-main');
         if (!popover) {
@@ -1997,93 +2074,63 @@
         }
 
         let hideTimeout, showTimeout;
-        let isComposing = false; // Flag to track IME composition state
-        let currentAnchorElement = null; // To store the element the popover is anchored to
+        let isComposing = false;
+        let currentAnchorElement = null;
 
         const startHideTimer = () => {
-            if (isComposing) return; // Don't hide popover during IME composition
+            if (isComposing) return;
             clearTimeout(showTimeout);
-            clearTimeout(hideTimeout);
-            hideTimeout = setTimeout(() => {
-                popover.classList.remove('visible');
-                delete popover.dataset.currentUserId;
-                delete popover.dataset.currentUserAvatar;
-                currentAnchorElement = null;
-            }, 300);
+            hideTimeout = setTimeout(() => popover.classList.remove('visible'), 300);
         };
 
-        const cancelHideTimer = () => {
-            clearTimeout(hideTimeout);
-        };
+        const cancelHideTimer = () => clearTimeout(hideTimeout);
 
-        const updatePopoverWidth = (popoverElement) => {
-            popoverElement.style.visibility = 'hidden';
-            popoverElement.style.display = 'block';
-            popoverElement.style.left = '-9999px';
-            popoverElement.style.width = 'auto';
-
-            const footer = popoverElement.querySelector('.s1p-popover-footer');
-            const actionsContainer = popoverElement.querySelector('.s1p-popover-actions');
-            const popoverContent = popoverElement.querySelector('.s1p-popover-content');
-            const avatar = popoverElement.querySelector('.s1p-popover-avatar');
-            const userContainer = popoverElement.querySelector('.s1p-popover-user-container');
-            const usernameDiv = popoverElement.querySelector('.s1p-popover-username');
-            const uidDiv = popoverElement.querySelector('.s1p-popover-user-id');
-
-            if (footer && actionsContainer && popoverContent && avatar && userContainer && usernameDiv && uidDiv) {
-                const maxTextWidth = Math.max(usernameDiv.offsetWidth, uidDiv.offsetWidth);
-                const userContainerGap = parseFloat(window.getComputedStyle(userContainer).gap);
-                const requiredUserContainerWidth = avatar.offsetWidth + userContainerGap + maxTextWidth;
-                const contentStyle = window.getComputedStyle(popoverContent);
-                const paddingX = parseFloat(contentStyle.paddingLeft) + parseFloat(contentStyle.paddingRight);
-                const footerGap = parseFloat(window.getComputedStyle(footer).gap);
-                const requiredFooterWidth = requiredUserContainerWidth + actionsContainer.offsetWidth + footerGap;
-                const requiredPopoverWidth = requiredFooterWidth + paddingX;
-                const mainContentWidth = popoverElement.querySelector('.s1p-popover-main-content').offsetWidth + paddingX;
-                const defaultWidth = 300;
-                const finalWidth = Math.ceil(Math.max(defaultWidth, requiredPopoverWidth, mainContentWidth));
-                popoverElement.style.width = `${finalWidth}px`;
-            }
-
-            popoverElement.style.visibility = '';
-            popoverElement.style.display = '';
-            popoverElement.style.left = '';
-        };
-
-        const repositionPopover = (popoverElement, anchorElement) => {
+        const repositionPopover = (anchorElement) => {
             if (!anchorElement) return;
             const rect = anchorElement.getBoundingClientRect();
-            popoverElement.style.top = `${rect.top + window.scrollY}px`;
-            popoverElement.style.left = `${rect.right + window.scrollX + 10}px`;
+            const popoverRect = popover.getBoundingClientRect();
+
+            // Default: position below the anchor (for links)
+            let top = rect.bottom + window.scrollY + 5;
+            let left = rect.left + window.scrollX;
+
+            // Special case: if anchor is an avatar image, position to the right
+            if (anchorElement.tagName === 'IMG' && anchorElement.closest('.avatar')) {
+                top = rect.top + window.scrollY;
+                left = rect.right + window.scrollX + 10;
+            }
+
+            // Adjust if it goes off-screen
+            if ((left + popoverRect.width) > (window.innerWidth - 10)) {
+                left = window.innerWidth - popoverRect.width - 10;
+            }
+            if (left < 10) {
+                left = 10;
+            }
+
+            popover.style.top = `${top}px`;
+            popover.style.left = `${left}px`;
         };
 
-        const renderPopoverContent = (userName, userId, tagData = null, avatarUrl) => {
+        const renderPopoverContent = (userName, userId, avatarUrl) => {
+            const userTags = getUserTags();
+            const tagData = userTags[userId];
             const tag = tagData ? tagData.tag : '';
             const hasTag = tag.trim() !== '';
-            const svgIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="var(--s1p-pri)"/><text x="50%" y="50%" dominant-baseline="central" text-anchor="middle" font-family="sans-serif" font-size="40" fill="#999">S1</text></svg>`;
-            const fallbackAvatar = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgIcon)}`;
-
 
             const mainContentHTML = hasTag
-                ? `<div class="s1p-popover-main-content">${tag}</div>`
-                : `<div class="s1p-popover-main-content empty">目前暂无标记</div>`;
+                ? `<div class="s1p-popover-main-content">${tag.replace(/\n/g, '<br>')}</div>`
+                : `<div class="s1p-popover-main-content empty">尚未添加标记</div>`;
 
-            const actionsHTML = hasTag
-                ? `
-                <button class="s1p-popover-btn s1p-btn" data-action="edit-tag" data-user-id="${userId}" data-user-name="${userName}">编辑标记</button>
-                <button class="s1p-popover-btn s1p-btn s1p-red-btn" data-action="delete-tag" data-user-id="${userId}" data-user-name="${userName}">清空标记</button>
-                `
-                : `
-                <button class="s1p-popover-btn s1p-btn" data-action="add-tag" data-user-id="${userId}" data-user-name="${userName}">添加标记</button>
-                `;
+            const actionsHTML = `<button class="s1p-btn" data-action="edit">${hasTag ? '编辑' : '添加'}</button>`;
 
             popover.innerHTML = `
                 <div class="s1p-popover-content">
                     ${mainContentHTML}
-                    <hr class="s1p-popover-hr" />
+                    <hr class="s1p-popover-hr">
                     <div class="s1p-popover-footer">
                         <div class="s1p-popover-user-container">
-                            <img class="s1p-popover-avatar" src="${avatarUrl || fallbackAvatar}" onerror="this.onerror=null;this.src='${fallbackAvatar}'">
+                            <img class="s1p-popover-avatar" src="${avatarUrl}" onerror="this.style.display='none'">
                             <div class="s1p-popover-user-info">
                                 <div class="s1p-popover-username">${userName}</div>
                                 <div class="s1p-popover-user-id">UID: ${userId}</div>
@@ -2091,132 +2138,124 @@
                         </div>
                         <div class="s1p-popover-actions">${actionsHTML}</div>
                     </div>
-                </div>
-            `;
+                </div>`;
         };
 
         const renderEditMode = (userName, userId, currentTag = '') => {
             popover.innerHTML = `
                  <div class="s1p-popover-content">
                     <div class="s1p-edit-mode-header">为 ${userName} ${currentTag ? '编辑' : '添加'}标记</div>
-                    <textarea class="s1p-edit-mode-textarea s1p-textarea" id="s1p-tag-textarea" placeholder="输入标记内容...">${currentTag}</textarea>
+                    <textarea class="s1p-edit-mode-textarea s1p-textarea" placeholder="输入标记内容...">${currentTag}</textarea>
                     <div class="s1p-edit-mode-actions">
-                        <button class="s1p-popover-btn s1p-btn" data-action="cancel-edit" data-user-id="${userId}" data-user-name="${userName}">取消</button>
-                        <button class="s1p-popover-btn s1p-btn" data-action="save-tag" data-user-id="${userId}" data-user-name="${userName}">保存</button>
+                        <button class="s1p-btn" data-action="cancel-edit">取消</button>
+                        <button class="s1p-btn" data-action="save">保存</button>
                     </div>
-                </div>
-            `;
-            const textarea = popover.querySelector('#s1p-tag-textarea');
-            textarea.focus();
-
-            textarea.addEventListener('compositionstart', () => { isComposing = true; });
-            textarea.addEventListener('compositionend', () => { isComposing = false; });
+                </div>`;
+            popover.querySelector('textarea').focus();
         };
 
-        popover.addEventListener('click', (event) => {
-            const target = event.target.closest('.s1p-popover-btn');
+        const show = (anchorElement, userId, userName, userAvatar, delay = 0, startInEditMode = false) => {
+            cancelHideTimer();
+            clearTimeout(showTimeout);
+
+            showTimeout = setTimeout(() => {
+                currentAnchorElement = anchorElement;
+                popover.dataset.userId = userId;
+                popover.dataset.userName = userName;
+                popover.dataset.userAvatar = userAvatar;
+
+                if (startInEditMode) {
+                    const userTags = getUserTags();
+                    renderEditMode(userName, userId, userTags[userId]?.tag || '');
+                } else {
+                    renderPopoverContent(userName, userId, userAvatar);
+                }
+
+                popover.classList.add('visible');
+                repositionPopover(anchorElement);
+            }, delay);
+        };
+
+        popover.show = show; // Expose the show function
+
+        popover.addEventListener('click', (e) => {
+            const target = e.target.closest('button[data-action]');
             if (!target) return;
 
-            isComposing = false;
-
-            const { action, userId, userName } = target.dataset;
+            const { userId, userName, userAvatar } = popover.dataset;
             const userTags = getUserTags();
-            const avatarUrl = popover.dataset.currentUserAvatar;
 
-            if (action === 'add-tag' || action === 'edit-tag') {
-                renderEditMode(userName, userId, userTags[userId] ? userTags[userId].tag : '');
-            } else if (action === 'cancel-edit') {
-                renderPopoverContent(userName, userId, userTags[userId] || null, avatarUrl);
-                updatePopoverWidth(popover);
-                repositionPopover(popover, currentAnchorElement);
-            } else if (action === 'save-tag') {
-                const textarea = popover.querySelector('#s1p-tag-textarea');
-                const newTag = textarea.value.trim();
-                if (newTag) {
-                    userTags[userId] = { name: userName, tag: newTag, timestamp: Date.now() };
-                } else {
-                    delete userTags[userId];
-                }
-                saveUserTags(userTags);
-                renderPopoverContent(userName, userId, userTags[userId] || null, avatarUrl);
-                updatePopoverWidth(popover);
-                repositionPopover(popover, currentAnchorElement);
-            } else if (action === 'delete-tag') {
-                createConfirmationModal(
-                    `确认要删除对 "${userName}" 的标记吗？`,
-                    '此操作不可撤销。',
-                    () => {
+            switch (target.dataset.action) {
+                case 'edit':
+                    renderEditMode(userName, userId, userTags[userId]?.tag || '');
+                    repositionPopover(currentAnchorElement);
+                    break;
+                case 'save':
+                    const newTag = popover.querySelector('textarea').value.trim();
+                    if (newTag) {
+                        userTags[userId] = { name: userName, tag: newTag, timestamp: Date.now() };
+                    } else {
                         delete userTags[userId];
-                        saveUserTags(userTags);
-                        renderPopoverContent(userName, userId, null, avatarUrl);
-                        updatePopoverWidth(popover);
-                        repositionPopover(popover, currentAnchorElement);
-                    },
-                    '确认删除'
-                );
+                    }
+                    saveUserTags(userTags);
+                    refreshAllAuthiActions(); // Refresh the UI to show the new tag
+                    popover.classList.remove('visible'); // Force hide popover
+                    break;
+                case 'cancel-edit':
+                    renderPopoverContent(userName, userId, userAvatar);
+                    repositionPopover(currentAnchorElement);
+                    break;
             }
         });
 
         popover.addEventListener('mouseenter', cancelHideTimer);
         popover.addEventListener('mouseleave', startHideTimer);
+        popover.addEventListener('compositionstart', () => isComposing = true);
+        popover.addEventListener('compositionend', () => isComposing = false);
 
-        const attachPopoverEvents = (cell) => {
-            cell.addEventListener('mouseenter', () => {
-                cancelHideTimer();
-                clearTimeout(showTimeout);
-
-                showTimeout = setTimeout(() => {
-                    const authorLink = cell.querySelector('.authi > a[href*="space-uid-"]');
-                    const avatarImg = cell.querySelector('.avatar img');
-                    if (!authorLink || !avatarImg) return;
-                    const avatarUrl = avatarImg.src;
-
-                    const uidMatch = authorLink.href.match(/space-uid-(\d+)/);
-                    if (!uidMatch) return;
-                    const userId = uidMatch[1];
-
-                    if (popover.classList.contains('visible') && popover.dataset.currentUserId === userId) {
-                        return;
-                    }
-
-                    const userName = authorLink.textContent.trim();
-                    const userTags = getUserTags();
-                    popover.dataset.currentUserId = userId;
-                    popover.dataset.currentUserAvatar = avatarUrl;
-                    currentAnchorElement = avatarImg;
-
-                    renderPopoverContent(userName, userId, userTags[userId] || null, avatarUrl);
-                    updatePopoverWidth(popover);
-                    repositionPopover(popover, currentAnchorElement);
-                    popover.classList.add('visible');
-                }, 150);
-            });
-
-            cell.addEventListener('mouseleave', startHideTimer);
-        };
-
-        const observer = new MutationObserver((mutations) => {
-            mutations.forEach(mutation => {
-                mutation.addedNodes.forEach(node => {
+        // Attach hover events to avatars
+        const observer = new MutationObserver(mutations => {
+            for (const mutation of mutations) {
+                for (const node of mutation.addedNodes) {
                     if (node.nodeType === 1) {
                         const cells = node.matches('.pls') ? [node] : node.querySelectorAll('.pls');
                         cells.forEach(cell => {
-                            if (!cell.dataset.s1pPopover) {
-                                cell.dataset.s1pPopover = 'true';
-                                attachPopoverEvents(cell);
-                            }
+                            if (cell.dataset.s1pPopover) return;
+                            cell.dataset.s1pPopover = 'true';
+                            cell.addEventListener('mouseenter', () => {
+                                const authorLink = cell.querySelector('.authi a[href*="space-uid-"]');
+                                const avatarImg = cell.querySelector('.avatar img');
+                                if (!authorLink || !avatarImg) return;
+
+                                const uidMatch = authorLink.href.match(/space-uid-(\d+)/);
+                                const userId = uidMatch ? uidMatch[1] : null;
+                                if (userId) {
+                                    show(avatarImg, userId, authorLink.textContent.trim(), avatarImg.src, 150);
+                                }
+                            });
+                            cell.addEventListener('mouseleave', startHideTimer);
                         });
                     }
-                });
-            });
+                }
+            }
         });
 
         const mainContent = document.getElementById('ct') || document.body;
         mainContent.querySelectorAll('.pls').forEach(cell => {
-            if (!cell.dataset.s1pPopover) {
-                cell.dataset.s1pPopover = 'true';
-                attachPopoverEvents(cell);
-            }
+            if (cell.dataset.s1pPopover) return;
+            cell.dataset.s1pPopover = 'true';
+            cell.addEventListener('mouseenter', () => {
+                const authorLink = cell.querySelector('.authi a[href*="space-uid-"]');
+                const avatarImg = cell.querySelector('.avatar img');
+                if (!authorLink || !avatarImg) return;
+
+                const uidMatch = authorLink.href.match(/space-uid-(\d+)/);
+                const userId = uidMatch ? uidMatch[1] : null;
+                if (userId) {
+                    show(avatarImg, userId, authorLink.textContent.trim(), avatarImg.src, 150);
+                }
+            });
+            cell.addEventListener('mouseleave', startHideTimer);
         });
         observer.observe(mainContent, { childList: true, subtree: true });
     };
@@ -2301,54 +2340,162 @@
         });
     };
 
-    const addBlockButtonToPostFooter = () => {
-        // Find all the "View author's posts only" links
-        document.querySelectorAll('div.authi a[href*="authorid="]').forEach(authorLink => {
-            const authiDiv = authorLink.closest('.authi');
-            // Prevent duplicate buttons
-            if (!authiDiv || authiDiv.querySelector('.s1p-block-user-in-authi')) {
-                return;
+    const refreshAllAuthiActions = () => {
+        document.querySelectorAll('.s1p-authi-actions-wrapper').forEach(el => el.remove());
+        addActionsToPostFooter();
+    };
+
+    const createOptionsMenu = (anchorElement) => {
+        // Remove any existing menu
+        document.querySelector('.s1p-tag-options-menu')?.remove();
+
+        const { userId, userName, userAvatar } = anchorElement.dataset;
+
+        const menu = document.createElement('div');
+        menu.className = 's1p-tag-options-menu';
+        menu.innerHTML = `
+            <button data-action="edit">编辑标记</button>
+            <button data-action="delete" class="delete">删除标记</button>
+        `;
+
+        document.body.appendChild(menu);
+
+        const rect = anchorElement.getBoundingClientRect();
+        menu.style.top = `${rect.bottom + window.scrollY + 2}px`;
+        menu.style.left = `${rect.right + window.scrollX - menu.offsetWidth}px`;
+
+        const closeMenu = () => menu.remove();
+
+        menu.addEventListener('click', (e) => {
+            const action = e.target.dataset.action;
+            if (action === 'edit') {
+                const popover = document.getElementById('s1p-tag-popover-main');
+                if (popover && popover.show) {
+                    popover.show(anchorElement, userId, userName, userAvatar, 0, true); // Directly enter edit mode
+                }
+            } else if (action === 'delete') {
+                createConfirmationModal(`确认删除对 "${userName}" 的标记吗?`, '此操作不可撤销。', () => {
+                    const tags = getUserTags();
+                    delete tags[userId];
+                    saveUserTags(tags);
+                    refreshAllAuthiActions();
+                }, '确认删除');
+            }
+            closeMenu();
+        });
+
+        // Close menu when clicking outside
+        setTimeout(() => {
+            document.addEventListener('click', closeMenu, { once: true });
+        }, 0);
+    };
+
+    const addActionsToPostFooter = () => {
+        const settings = getSettings();
+        if (!settings.enableUserBlocking && !settings.enableUserTagging) return;
+
+        document.querySelectorAll('div.authi a[href*="authorid="]').forEach(viewAuthorLink => {
+            const authiDiv = viewAuthorLink.closest('.authi');
+            if (!authiDiv) return;
+
+            // --- Self-Healing: Clean up old/broken elements before proceeding ---
+            authiDiv.querySelector('.s1p-authi-actions-wrapper')?.remove();
+            const oldBlockLink = authiDiv.querySelector('a.s1p-block-user-in-authi:not(.s1p-authi-action)');
+            if (oldBlockLink) {
+                const precedingPipe = oldBlockLink.previousElementSibling;
+                if (precedingPipe && precedingPipe.classList.contains('pipe')) precedingPipe.remove();
+                oldBlockLink.remove();
             }
 
-            // 1. Extract User ID
-            const urlParams = new URLSearchParams(authorLink.href.split('?')[1]);
+            const urlParams = new URLSearchParams(viewAuthorLink.href.split('?')[1]);
             const userId = urlParams.get('authorid');
-            if (!userId) {
-                return;
-            }
+            if (!userId) return;
 
-            // 2. Find User Name
             const postContainer = authiDiv.closest('td.plc');
-            if (!postContainer) {
-                return;
-            }
-            const plsCell = postContainer.previousElementSibling;
-            if (!plsCell) {
-                return;
-            }
+            const plsCell = postContainer ? postContainer.previousElementSibling : null;
+            if (!plsCell) return;
+
             const userLinkInPi = plsCell.querySelector(`.pi .authi a[href*="space-uid-${userId}"]`);
             const userName = userLinkInPi ? userLinkInPi.textContent.trim() : `用户 #${userId}`;
+            const userAvatar = plsCell.querySelector('.avatar img')?.src;
 
-            // 3. Create and insert the new elements
-            const pipe = document.createElement('span');
-            pipe.className = 'pipe';
-            pipe.textContent = '|';
+            const wrapper = document.createElement('span');
+            wrapper.className = 's1p-authi-actions-wrapper';
 
-            const blockLink = document.createElement('a');
-            blockLink.href = 'javascript:void(0);';
-            blockLink.textContent = '屏蔽该用户';
-            blockLink.className = 's1p-block-user-in-authi';
+            // --- Robust Width Calculation ---
+            const authiRect = authiDiv.getBoundingClientRect();
+            const lastElementRect = viewAuthorLink.getBoundingClientRect();
+            let availableWidth = authiRect.right - lastElementRect.right;
+            const buffer = 15; // Safety margin
+            availableWidth -= buffer;
 
-            // 4. Add click listener
-            blockLink.addEventListener('click', (e) => {
-                e.preventDefault();
-                const subtitle = getSettings().blockThreadsOnUserBlock ?
-                    '该用户的所有帖子和主题帖都将被隐藏，此操作可在设置面板中撤销。' :
-                    '该用户的所有帖子都将被隐藏，此操作可在设置面板中撤销。';
-                createConfirmationModal(`确定要屏蔽用户 "${userName}" 吗？`, subtitle, () => blockUser(userId, userName), '确定屏蔽');
-            });
+            if (settings.enableUserBlocking) {
+                wrapper.innerHTML += '<span class="pipe">|</span>';
+                const blockLink = document.createElement('a');
+                blockLink.href = 'javascript:void(0);';
+                blockLink.textContent = '屏蔽该用户';
+                blockLink.className = 's1p-authi-action s1p-block-user-in-authi';
+                blockLink.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    const subtitle = getSettings().blockThreadsOnUserBlock ? '该用户的所有帖子和主题帖都将被隐藏。' : '该用户的所有帖子都将被隐藏。';
+                    createConfirmationModal(`确定要屏蔽用户 "${userName}" 吗？`, subtitle, () => blockUser(userId, userName), '确定屏蔽');
+                });
+                wrapper.appendChild(blockLink);
+                availableWidth -= 85; // Estimated width for block link + pipe
+            }
 
-            authorLink.after(pipe, blockLink);
+            if (settings.enableUserTagging) {
+                const userTags = getUserTags();
+                const userTag = userTags[userId];
+                wrapper.innerHTML += '<span class="pipe">|</span>';
+                availableWidth -= 10; // Estimated width for pipe
+
+                if (userTag && userTag.tag) {
+                    const tagContainer = document.createElement('span');
+                    tagContainer.className = 's1p-authi-action s1p-user-tag-container';
+
+                    const fullTagText = `用户标记：${userTag.tag}`;
+                    const tagDisplay = document.createElement('span');
+                    tagDisplay.className = 's1p-user-tag-display';
+                    tagDisplay.title = fullTagText;
+                    tagDisplay.textContent = fullTagText;
+
+                    const optionsIcon = document.createElement('span');
+                    optionsIcon.className = 's1p-user-tag-options';
+                    optionsIcon.innerHTML = '&#8942;';
+                    optionsIcon.dataset.userId = userId;
+                    optionsIcon.dataset.userName = userName;
+                    optionsIcon.dataset.userAvatar = userAvatar;
+                    optionsIcon.addEventListener('click', (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        createOptionsMenu(e.currentTarget);
+                    });
+
+                    tagContainer.appendChild(tagDisplay);
+                    tagContainer.appendChild(optionsIcon);
+
+                    if (availableWidth > 50) { // Set a minimum width for the tag to appear
+                        tagContainer.style.maxWidth = `${availableWidth}px`;
+                    }
+
+                    wrapper.appendChild(tagContainer);
+                } else {
+                    const tagLink = document.createElement('a');
+                    tagLink.href = 'javascript:void(0);';
+                    tagLink.textContent = '标记该用户';
+                    tagLink.className = 's1p-authi-action s1p-tag-user-in-authi';
+                    tagLink.addEventListener('click', (e) => {
+                        e.preventDefault();
+                        const popover = document.getElementById('s1p-tag-popover-main');
+                        if (popover && popover.show) {
+                            popover.show(e.currentTarget, userId, userName, userAvatar);
+                        }
+                    });
+                    wrapper.appendChild(tagLink);
+                }
+            }
+            viewAuthorLink.after(wrapper);
         });
     };
 
@@ -2444,10 +2591,10 @@
             addBlockButtonsToThreads();
             applyUserThreadBlocklist();
         }
-        if (settings.enableUserBlocking) {
+        if (settings.enableUserBlocking || settings.enableUserTagging) {
             hideBlockedUsersPosts();
             addBlockButtonsToUsers();
-            addBlockButtonToPostFooter();
+            addActionsToPostFooter();
             hideBlockedUserQuotes();
             hideBlockedUserRatings();
         }
