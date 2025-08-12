@@ -955,6 +955,15 @@
         });
     };
 
+    // --- [新增] 修改“只看该作者”为“只看该用户”的函数 ---
+    const renameAuthorLinks = () => {
+        document.querySelectorAll('div.authi a[href*="authorid="]').forEach(link => {
+            if (link.textContent.trim() === '只看该作者') {
+                link.textContent = '只看该用户';
+            }
+        });
+    };
+
     // [MODIFIED] 图片隐藏功能的核心逻辑 (支持实时切换)
     const applyImageHiding = () => {
         const settings = getSettings();
@@ -2091,7 +2100,7 @@
         });
     };
 
-    // [REFACTORED] 全新悬浮窗逻辑，支持多锚点类型
+    // [MODIFIED] 根据用户需求，简化了浮窗逻辑
     const initializeTaggingPopover = () => {
         let popover = document.getElementById('s1p-tag-popover-main');
         if (!popover) {
@@ -2119,15 +2128,8 @@
             const rect = anchorElement.getBoundingClientRect();
             const popoverRect = popover.getBoundingClientRect();
 
-            // Default: position below the anchor (for links)
             let top = rect.bottom + window.scrollY + 5;
             let left = rect.left + window.scrollX;
-
-            // Special case: if anchor is an avatar image, position to the right
-            if (anchorElement.tagName === 'IMG' && anchorElement.closest('.avatar')) {
-                top = rect.top + window.scrollY;
-                left = rect.right + window.scrollX + 10;
-            }
 
             // Adjust if it goes off-screen
             if ((left + popoverRect.width) > (window.innerWidth - 10)) {
@@ -2140,36 +2142,7 @@
             popover.style.top = `${top}px`;
             popover.style.left = `${left}px`;
         };
-
-        const renderPopoverContent = (userName, userId, avatarUrl) => {
-            const userTags = getUserTags();
-            const tagData = userTags[userId];
-            const tag = tagData ? tagData.tag : '';
-            const hasTag = tag.trim() !== '';
-
-            const mainContentHTML = hasTag
-                ? `<div class="s1p-popover-main-content">${tag.replace(/\n/g, '<br>')}</div>`
-                : `<div class="s1p-popover-main-content empty">尚未添加标记</div>`;
-
-            const actionsHTML = `<button class="s1p-btn" data-action="edit">${hasTag ? '编辑' : '添加'}</button>`;
-
-            popover.innerHTML = `
-                <div class="s1p-popover-content">
-                    ${mainContentHTML}
-                    <hr class="s1p-popover-hr">
-                    <div class="s1p-popover-footer">
-                        <div class="s1p-popover-user-container">
-                            <img class="s1p-popover-avatar" src="${avatarUrl}" onerror="this.style.display='none'">
-                            <div class="s1p-popover-user-info">
-                                <div class="s1p-popover-username">${userName}</div>
-                                <div class="s1p-popover-user-id">UID: ${userId}</div>
-                            </div>
-                        </div>
-                        <div class="s1p-popover-actions">${actionsHTML}</div>
-                    </div>
-                </div>`;
-        };
-
+        
         const renderEditMode = (userName, userId, currentTag = '') => {
             popover.innerHTML = `
                  <div class="s1p-popover-content">
@@ -2193,13 +2166,10 @@
                 popover.dataset.userName = userName;
                 popover.dataset.userAvatar = userAvatar;
 
-                if (startInEditMode) {
-                    const userTags = getUserTags();
-                    renderEditMode(userName, userId, userTags[userId]?.tag || '');
-                } else {
-                    renderPopoverContent(userName, userId, userAvatar);
-                }
-
+                // Per user request, always go to edit mode.
+                const userTags = getUserTags();
+                renderEditMode(userName, userId, userTags[userId]?.tag || '');
+                
                 popover.classList.add('visible');
                 repositionPopover(anchorElement);
             }, delay);
@@ -2211,14 +2181,10 @@
             const target = e.target.closest('button[data-action]');
             if (!target) return;
 
-            const { userId, userName, userAvatar } = popover.dataset;
+            const { userId, userName } = popover.dataset;
             const userTags = getUserTags();
 
             switch (target.dataset.action) {
-                case 'edit':
-                    renderEditMode(userName, userId, userTags[userId]?.tag || '');
-                    repositionPopover(currentAnchorElement);
-                    break;
                 case 'save':
                     const newTag = popover.querySelector('textarea').value.trim();
                     if (newTag) {
@@ -2227,12 +2193,12 @@
                         delete userTags[userId];
                     }
                     saveUserTags(userTags);
-                    refreshAllAuthiActions(); // Refresh the UI to show the new tag
-                    popover.classList.remove('visible'); // Force hide popover
+                    refreshAllAuthiActions();
+                    popover.classList.remove('visible');
                     break;
                 case 'cancel-edit':
-                    renderPopoverContent(userName, userId, userAvatar);
-                    repositionPopover(currentAnchorElement);
+                    // Per user request, cancel closes the popover entirely.
+                    popover.classList.remove('visible');
                     break;
             }
         });
@@ -2241,53 +2207,8 @@
         popover.addEventListener('mouseleave', startHideTimer);
         popover.addEventListener('compositionstart', () => isComposing = true);
         popover.addEventListener('compositionend', () => isComposing = false);
-
-        // Attach hover events to avatars
-        const observer = new MutationObserver(mutations => {
-            for (const mutation of mutations) {
-                for (const node of mutation.addedNodes) {
-                    if (node.nodeType === 1) {
-                        const cells = node.matches('.pls') ? [node] : node.querySelectorAll('.pls');
-                        cells.forEach(cell => {
-                            if (cell.dataset.s1pPopover) return;
-                            cell.dataset.s1pPopover = 'true';
-                            cell.addEventListener('mouseenter', () => {
-                                const authorLink = cell.querySelector('.authi a[href*="space-uid-"]');
-                                const avatarImg = cell.querySelector('.avatar img');
-                                if (!authorLink || !avatarImg) return;
-
-                                const uidMatch = authorLink.href.match(/space-uid-(\d+)/);
-                                const userId = uidMatch ? uidMatch[1] : null;
-                                if (userId) {
-                                    show(avatarImg, userId, authorLink.textContent.trim(), avatarImg.src, 150);
-                                }
-                            });
-                            cell.addEventListener('mouseleave', startHideTimer);
-                        });
-                    }
-                }
-            }
-        });
-
-        const mainContent = document.getElementById('ct') || document.body;
-        mainContent.querySelectorAll('.pls').forEach(cell => {
-            if (cell.dataset.s1pPopover) return;
-            cell.dataset.s1pPopover = 'true';
-            cell.addEventListener('mouseenter', () => {
-                const authorLink = cell.querySelector('.authi a[href*="space-uid-"]');
-                const avatarImg = cell.querySelector('.avatar img');
-                if (!authorLink || !avatarImg) return;
-
-                const uidMatch = authorLink.href.match(/space-uid-(\d+)/);
-                const userId = uidMatch ? uidMatch[1] : null;
-                if (userId) {
-                    show(avatarImg, userId, authorLink.textContent.trim(), avatarImg.src, 150);
-                }
-            });
-            cell.addEventListener('mouseleave', startHideTimer);
-        });
-        observer.observe(mainContent, { childList: true, subtree: true });
     };
+
 
     // --- [NEW/MODIFIED] 用户标记显示悬浮窗 ---
     const initializeTagDisplayPopover = () => {
@@ -2584,7 +2505,8 @@
                         e.preventDefault();
                         const popover = document.getElementById('s1p-tag-popover-main');
                         if (popover && popover.show) {
-                            popover.show(e.currentTarget, userId, userName, userAvatar);
+                            // [MODIFIED] Call popover.show with startInEditMode = true
+                            popover.show(e.currentTarget, userId, userName, userAvatar, 0, true);
                         }
                     });
                     wrapper.appendChild(tagLink);
@@ -2703,6 +2625,7 @@
         applyInterfaceCustomizations();
         applyImageHiding();
         manageImageToggleAllButtons();
+        renameAuthorLinks(); // --- [新增] 调用文本替换函数 ---
         try {
             autoSign();
         } catch (e) {
