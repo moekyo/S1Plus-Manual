@@ -210,89 +210,106 @@
 
 帖子屏蔽
 
+给用户标记功能增加一个入口，现在是需要鼠标移动用户头像才能看到或者编辑用户标记，在以下 html 片段中添加一个新的入口，放到屏蔽该用户后面
+<div class="authi">
+<img class="authicn vm" id="authicon68249997" src="https://static.stage1st.com/image/common/online_member.gif" style="">
+<em id="authorposton68249997">发表于 2025-8-11 19:40</em>
+<span class="xg1">来自手机</span>
+<span class="pipe">|</span>
+<a href="forum.php?mod=viewthread&amp;tid=2258972&amp;page=1&amp;authorid=422297" rel="nofollow">只看该作者</a><span class="pipe">|</span><a href="javascript:void(0);" class="s1p-block-user-in-authi">屏蔽该用户</a>
+</div>
 
-> <div class="pi">                                                                                │
-│    <div id="fj" class="y">                                                                         │
-│    <label class="z">电梯直达</label>                                                               │
-│    <input type="text" class="px p_fre z" size="2" onkeyup="$('fj_btn').href='forum.php?mod=redirec │
-│    t&amp;ptid=2259059&amp;authorid=0&amp;postno='+this.value" onkeydown="if(event.keyCode==13)     │
-│    {window.location=$('fj_btn').href;return false;}" title="跳转到指定楼层">                       │
-│    <a href="javascript:;" id="fj_btn" class="z fico-down fc-n" title="跳转到指定楼层"></a>         │
-│    </div>                                                                                          │
-│    <strong>                                                                                        │
-│    <a href="thread-2259059-1-1.html" id="postnum68255314" onclick="setCopy(this.href,              │
-│    '帖子地址复制成功');return false;">                                                             │
-│    楼主</a>                                                                                        │
-│    </strong>                                                                                       │
-│    <div class="pti">                                                                               │
-│    <div class="pdbt">                                                                              │
-│    </div>                                                                                          │
-│    <div class="authi">                                                                             │
-│    <img class="authicn vm" id="authicon68255314"                                                   │
-│    src="https://static.stage1st.com/image/common/online_member.gif">                               │
-│    <em id="authorposton68255314">发表于 2025-8-12 18:30</em>                                       
-│    <span class="xg1">来自手机</span>                                                               
-│    <span class="pipe">|</span>                                                                     
-│    <a href="forum.php?mod=viewthread&amp;tid=2259059&amp;page=1&amp;authorid=570508"               
-│    rel="nofollow">只看该作者</a>                                                                   
-│    <span class="none" title="回帖奖励"></span>                                                     
-│    <span class="pipe show">|</span><a                                                              
-│    href="forum.php?mod=viewthread&amp;tid=2259059&amp;extra=page%3D1&amp;ordertype=1"              
-│    class="show">倒序浏览</a>                                                                       
-│    <span class="pipe show">|</span><a href="javascript:;"                                          
-│    onclick="readmode($('thread_subject').innerHTML, 68255314);" class="show">阅读模式</a>          
-│    </div>                                                                                          
-│    </div>                                                                                          
-│    </div> 
+有这些需求：
+1. 在屏蔽该用户后面添加一个“标记该用户”的入口，点击之后弹出标记用户的界面（沿用现有 UI 控件）。
+2. 添加后直接在屏蔽该用户的按钮后面常驻显示。同时在最右边有个常见的类似于三个点的图标，点击后可以弹出编辑和删除选项。
+
+分布实现上述需求。每次实现一个功能点，让我实际测试没问题再继续下一个功能点。
+
+这个 S1Plus 脚本，会在以下 HTML 片段中有一个展示用户标记的功能，但是在没有开启 S1-NUX 自定义样式时，这个如果这个标记很长，则用户标记会被挤到下面，而开启之后则会基本正常显示，即在可用宽度以内尽量显示，剩余的截断用...代替，鼠标悬停则会出现一个浮窗显示完整的标记内容。结合 S1-NUX，看看怎么兼容这两种情况
+<div class="authi">
+<img class="authicn vm" id="authicon68250816" src="https://static.stage1st.com/image/common/online_member.gif">
+<em id="authorposton68250816">发表于 2025-8-11 22:25</em>
+<span class="xg1">来自手机</span>
+<span class="pipe">|</span>
+<a href="forum.php?mod=viewthread&amp;tid=2258972&amp;page=1&amp;authorid=509681" rel="nofollow">只看该作者</a><span class="s1p-authi-actions-wrapper"><span class="pipe">|</span><a href="javascript:void(0);" class="s1p-authi-action s1p-block-user-in-authi">屏蔽该用户</a><span class="pipe">|</span><span class="s1p-authi-action s1p-user-tag-container" style="max-width: 601.797px;"><span class="s1p-user-tag-display" title="用户标记：电视魔术是真不行，大部分靠剪辑。
+刘谦春晚大部分是近景不过为了演出效果稳定找了托，比剪辑达人好多了。电视魔术是真不行，大部分靠剪辑。
+刘谦春晚大部分是近景不过为了演出效果稳定找了托，比剪辑达人好多了。">用户标记：电视魔术是真不行，大部分靠剪辑。
+刘谦春晚大部分是近景不过为了演出效果稳定找了托，比剪辑达人好多了。电视魔术是真不行，大部分靠剪辑。
+刘谦春晚大部分是近景不过为了演出效果稳定找了托，比剪辑达人好多了。</span><span class="s1p-user-tag-options" data-user-id="509681" data-user-name="fangJmin" data-user-avatar="https://avatar.stage1st.com/noavatar.svg">⋮</span></span></span>
+</div>
 
 
-
-
-
+为什么在主题贴的“只看该用户”，“屏蔽该用户”，“标记该用户”，“只看到大图”，“倒序浏览” 会有几率不能点击，鼠标指针也不是那种可点击的状态。而在一般回复的楼层就是正常的，各个按钮都可以点击。以下是对应的主题帖的顶栏带有这些按钮的 html 片段：
 <div class="pi">
 <div id="fj" class="y">
 <label class="z">电梯直达</label>
-<input type="text" class="px p_fre z" size="2" onkeyup="$('fj_btn').href='forum.php?mod=redirect&amp;ptid=2259059&amp;authorid=0&amp;postno='+this.value" onkeydown="if(event.keyCode==13) {window.location=$('fj_btn').href;return false;}" title="跳转到指定楼层">
+<input type="text" class="px p_fre z" size="2" onkeyup="$('fj_btn').href='forum.php?mod=redirect&amp;ptid=2258972&amp;authorid=0&amp;postno='+this.value" onkeydown="if(event.keyCode==13) {window.location=$('fj_btn').href;return false;}" title="跳转到指定楼层">
 <a href="javascript:;" id="fj_btn" class="z fico-down fc-n" title="跳转到指定楼层"></a>
 </div>
 <strong>
-<a href="thread-2259059-1-1.html" id="postnum68255314" onclick="setCopy(this.href, '帖子地址复制成功');return false;">
+<a href="thread-2258972-1-1.html" id="postnum68249983" onclick="setCopy(this.href, '帖子地址复制成功');return false;">
 楼主</a>
 </strong>
 <div class="pti">
 <div class="pdbt">
 </div>
 <div class="authi">
-<img class="authicn vm" id="authicon68255314" src="https://static.stage1st.com/image/common/online_member.gif">
-<em id="authorposton68255314">发表于 2025-8-12 18:30</em>
+<img class="authicn vm" id="authicon68249983" src="https://static.stage1st.com/image/common/online_member.gif" style="">
+<em id="authorposton68249983">发表于 2025-8-11 19:36</em>
 <span class="xg1">来自手机</span>
 <span class="pipe">|</span>
-<a href="forum.php?mod=viewthread&amp;tid=2259059&amp;page=1&amp;authorid=570508" rel="nofollow">只看该作者</a>
+<a href="forum.php?mod=viewthread&amp;tid=2258972&amp;page=1&amp;authorid=394758" rel="nofollow">只看该用户</a><span class="s1p-authi-actions-wrapper"><span class="pipe">|</span><a href="javascript:void(0);" class="s1p-authi-action s1p-block-user-in-authi">屏蔽该用户</a><span class="pipe">|</span><a href="javascript:void(0);" class="s1p-authi-action s1p-tag-user-in-authi">标记该用户</a></span>
+<span class="pipe">|</span><a href="forum.php?mod=viewthread&amp;tid=2258972&amp;from=album">只看大图</a>
 <span class="none" title="回帖奖励"></span>
-<span class="pipe show">|</span><a href="forum.php?mod=viewthread&amp;tid=2259059&amp;extra=page%3D1&amp;ordertype=1" class="show">倒序浏览</a>
-<span class="pipe show">|</span><a href="javascript:;" onclick="readmode($('thread_subject').innerHTML, 68255314);" class="show">阅读模式</a>
+<span class="pipe show">|</span><a href="forum.php?mod=viewthread&amp;tid=2258972&amp;extra=page%3D1&amp;ordertype=1" class="show">倒序浏览</a>
+<span class="pipe show">|</span><a href="javascript:;" onclick="readmode($('thread_subject').innerHTML, 68249983);" class="show">阅读模式</a>
 </div>
 </div>
 </div>
 
-这个是位于主题帖的顶部工具栏对应的 html 片段，在原始状态下，当鼠标移动到“只看该作者”，在它的右边会出现两 个额外的按钮：“倒序浏览”和“阅读模式”。而当开始了我们这个 S1 Plus 脚本之后，由于我们会在这个“只  
-看该用户”（原本是“只看该作者”，但是被脚本重命名为“只看该用户”了）的后面插入我们自定义两个按钮“屏蔽该用户”和“标记该用户”，这就导致了鼠标只要滑动到“”只看该用户“，”屏蔽该用户“，”标记该用户“的范围后，“倒序浏览”和“阅读模式”被添加到了”标记该用户“的右边而不是在”只看该用户“右边，并且鼠标移  
-动到”屏蔽该用户“，”标记该用户“也会意外触发它们的出现。还有如果使用了@S1\ NUX.css 这个自定义样式，”倒序浏览“会变成常驻按钮（不需要鼠标滑动触发）放在整个左边工具栏的最右边（不是  
-整个工具栏的最右边，因为还是上面提到的”楼主“和”电梯直达“等按钮），而”阅读模式“则会默认隐藏。优化这些问题，如果过于复杂，请分步解决
+
+还是不是，要不换个思路，对调位置，目前在主题帖是这样的循序：只看该用户 | 屏蔽该用户 | 标记该用户 | 只看大图 | 倒序浏览|，改为  只看大图 | 倒序浏览| 只看该用户 | 屏蔽该用户 | 标记该用户 |。这样就确保标记用户在最后面了
+
+为什么在主题贴的“只看该用户”，“屏蔽该用户”，“标记该用户”，“只看到大图”，“倒序浏览” 会有几率不能点击，鼠标指针也不是那种可点击的状态。有时候鼠标划过去，可以变成可点击状态，有时就不会 而在一般回复的楼层就是正常的，各个按钮都可以点击。以下是对应的主题帖的顶栏带有这些按钮的 html 片段： 
+
+ <div class="pi"> 
+ <div id="fj" class="y"> 
+ <label class="z">电梯直达</label> 
+ <input type="text" class="px p_fre z" size="2" onkeyup="$('fj_btn').href='forum.php?mod=redirect&amp;ptid=2258972&amp;authorid=0&amp;postno='+this.value" onkeydown="if(event.keyCode==13) {window.location=$('fj_btn').href;return false;}" title="跳转到指定楼层"> 
+ <a href="javascript:;" id="fj_btn" class="z fico-down fc-n" title="跳转到指定楼层"></a> 
+ </div> 
+ <strong> 
+ <a href="thread-2258972-1-1.html" id="postnum68249983" onclick="setCopy(this.href, '帖子地址复制成功');return false;"> 
+ 楼主</a> 
+ </strong> 
+ <div class="pti"> 
+ <div class="pdbt"> 
+ </div> 
+ <div class="authi"> 
+ <img class="authicn vm" id="authicon68249983" src="https://static.stage1st.com/image/common/online_member.gif" style=""> 
+ <em id="authorposton68249983">发表于 2025-8-11 19:36</em> 
+ <span class="xg1">来自手机</span> 
+ <span class="pipe">|</span> 
+ <a href="forum.php?mod=viewthread&amp;tid=2258972&amp;page=1&amp;authorid=394758" rel="nofollow">只看该用户</a><span class="s1p-authi-actions-wrapper"><span class="pipe">|</span><a href="javascript:void(0);" class="s1p-authi-action s1p-block-user-in-authi">屏蔽该用户</a><span class="pipe">|</span><a href="javascript:void(0);" class="s1p-authi-action s1p-tag-user-in-authi">标记该用户</a></span> 
+ <span class="pipe">|</span><a href="forum.php?mod=viewthread&amp;tid=2258972&amp;from=album">只看大图</a> 
+ <span class="none" title="回帖奖励"></span> 
+ <span class="pipe show">|</span><a href="forum.php?mod=viewthread&amp;tid=2258972&amp;extra=page%3D1&amp;ordertype=1" class="show">倒序浏览</a> 
+ <span class="pipe show">|</span><a href="javascript:;" onclick="readmode($('thread_subject').innerHTML, 68249983);" class="show">阅读模式</a> 
+ </div> 
+ </div> 
+ </div>
 
 
-现在还有个问题，在默认状态，“只看该用户”的右边会有一个小三角，如@img5.png 的红框所示，但是如果鼠标移动到“屏蔽该用户”或者“标记该用户”这个小三角就消失了，修复一下，以下是对应的 html 片段
+
+以下是位于一般回复的对应的工具栏
 <div class="pti">
 <div class="pdbt">
 </div>
 <div class="authi">
-<img class="authicn vm" id="authicon68255314" src="https://static.stage1st.com/image/common/online_member.gif">
-<em id="authorposton68255314">发表于 2025-8-12 18:30</em>
+<img class="authicn vm" id="authicon68249997" src="https://static.stage1st.com/image/common/online_member.gif" style="">
+<em id="authorposton68249997">发表于 2025-8-11 19:40</em>
 <span class="xg1">来自手机</span>
 <span class="pipe">|</span>
-<a href="forum.php?mod=viewthread&amp;tid=2259059&amp;page=1&amp;authorid=570508" rel="nofollow">只看该用户</a>
-<span class="none" title="回帖奖励"></span>
-<span class="pipe show" style="display: none;">|</span><a href="forum.php?mod=viewthread&amp;tid=2259059&amp;extra=page%3D1&amp;ordertype=1" class="show" style="display: none;">倒序浏览</a>
-<span class="pipe show" style="display: none;">|</span><a href="javascript:;" onclick="readmode($('thread_subject').innerHTML, 68255314);" class="show" style="display: none;">阅读模式</a><span class="s1p-authi-actions-wrapper"><span class="pipe">|</span><a href="javascript:void(0);" class="s1p-authi-action s1p-block-user-in-authi">屏蔽该用户</a><span class="pipe">|</span><a href="javascript:void(0);" class="s1p-authi-action s1p-tag-user-in-authi">标记该用户</a></span>
+<a href="forum.php?mod=viewthread&amp;tid=2258972&amp;page=1&amp;authorid=422297" rel="nofollow">只看该用户</a><span class="s1p-authi-actions-wrapper"><span class="pipe">|</span><a href="javascript:void(0);" class="s1p-authi-action s1p-block-user-in-authi">屏蔽该用户</a><span class="pipe">|</span><span class="s1p-authi-action s1p-user-tag-container" style="max-width: 649.734px;"><span class="s1p-user-tag-display" data-full-tag="12312">用户标记：12312</span><span class="s1p-user-tag-options" data-user-id="422297" data-user-name="qilin" data-user-avatar="https://avatar.stage1st.com/000/42/22/97_avatar_middle.jpg">⋮</span></span></span>
 </div>
 </div>
