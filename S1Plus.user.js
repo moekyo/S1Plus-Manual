@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件 (已修改)
 // @namespace    http://tampermonkey.net/
-// @version      4.4.3
+// @version      4.4.5
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪等多种功能，全方位优化你的论坛体验。
 // @author       moekyo (修改版)
 // @match        https://stage1st.com/2b/*
@@ -16,7 +16,7 @@
     'use strict';
 
 
-    const SCRIPT_VERSION = '4.4.3';
+    const SCRIPT_VERSION = '4.4.5';
     const SCRIPT_RELEASE_DATE = '2025-08-13';
 
     // --- 样式注入 ---
@@ -738,6 +738,7 @@
     const hideBlockedUsersPosts = () => Object.keys(getBlockedUsers()).forEach(hideUserPosts);
 
     const hideBlockedUserQuotes = () => {
+        const settings = getSettings();
         const blockedUsers = getBlockedUsers();
         const blockedUserNames = Object.values(blockedUsers).map(u => u.name);
 
@@ -750,7 +751,7 @@
             if (!match || !match[1]) return;
 
             const authorName = match[1];
-            const isBlocked = blockedUserNames.includes(authorName);
+            const isBlocked = settings.enableUserBlocking && blockedUserNames.includes(authorName);
 
             const wrapper = quoteElement.parentElement.classList.contains('s1p-quote-wrapper') ? quoteElement.parentElement : null;
 
@@ -796,18 +797,15 @@
 
     // [MODIFIED] 函数现在可以同时处理隐藏和显示，是一个完整的“刷新”功能
     const hideBlockedUserRatings = () => {
+        const settings = getSettings();
         const blockedUserIds = Object.keys(getBlockedUsers());
         document.querySelectorAll('tbody.ratl_l tr').forEach(row => {
             const userLink = row.querySelector('a[href*="space-uid-"]');
             if (userLink) {
                 const uidMatch = userLink.href.match(/space-uid-(\d+)/);
                 if (uidMatch && uidMatch[1]) {
-                    if (blockedUserIds.includes(uidMatch[1])) {
-                        row.style.display = 'none';
-                    } else {
-                        // [FIX] 增加逻辑，将被取消屏蔽的用户评分重新显示
-                        row.style.display = '';
-                    }
+                    const isBlocked = settings.enableUserBlocking && blockedUserIds.includes(uidMatch[1]);
+                    row.style.display = isBlocked ? 'none' : '';
                 }
             }
         });
@@ -1212,6 +1210,9 @@
         modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
         document.body.appendChild(modal);
     };
+    
+    const removeProgressJumpButtons = () => document.querySelectorAll('.s1p-progress-container').forEach(el => el.remove());
+    const removeBlockButtonsFromThreads = () => document.querySelectorAll('.s1p-action-container').forEach(el => el.remove());
 
     const createManagementModal = () => {
         document.querySelector('.s1p-modal')?.remove();
@@ -1629,7 +1630,7 @@
                     <div class="s1p-settings-item">
                         <label class="s1p-settings-label" for="s1p-threadBlockHoverDelay">帖子屏蔽按钮悬停延迟</label>
                         <div style="display: flex; align-items: center; gap: 8px;">
-                            <input type="number" id="s1p-threadBlockHoverDelay" data-setting="threadBlockHoverDelay" min="0" max="10" step="1" value="${settings.threadBlockHoverDelay}" class="title-suffix-input" style="width: 50px; text-align: center; padding: 6px 4px;">
+                            <input type="number" id="s1p-threadBlockHoverDelay" data-setting="threadBlockHoverDelay" min="0" max="10" step="1" value="${settings.threadBlockHoverDelay}" class="title-suffix-input" style="width: 45px; text-align: center; padding: 6px 4px;">
                             <span style="font-size: 14px;">秒</span>
                         </div>
                     </div>
@@ -1770,17 +1771,35 @@
         modal.addEventListener('change', e => {
             const target = e.target;
             const settings = getSettings();
-
             const featureKey = target.dataset.feature;
+
             if (featureKey && target.classList.contains('s1p-feature-toggle')) {
-                // [MODIFIED] Handle feature toggles with animation, no full re-render
-                settings[featureKey] = target.checked;
+                const isChecked = target.checked;
+                settings[featureKey] = isChecked;
+
                 const contentWrapper = target.closest('.s1p-settings-item')?.nextElementSibling;
                 if (contentWrapper && contentWrapper.classList.contains('s1p-feature-content')) {
-                    contentWrapper.classList.toggle('expanded', target.checked);
+                    contentWrapper.classList.toggle('expanded', isChecked);
                 }
-                 saveSettings(settings);
-                // We handled it, so we stop here.
+                saveSettings(settings);
+
+                switch(featureKey) {
+                    case 'enablePostBlocking':
+                        isChecked ? addBlockButtonsToThreads() : removeBlockButtonsFromThreads();
+                        break;
+                    case 'enableUserBlocking':
+                        refreshAllAuthiActions();
+                        isChecked ? hideBlockedUsersPosts() : Object.keys(getBlockedUsers()).forEach(showUserPosts);
+                        hideBlockedUserQuotes();
+                        hideBlockedUserRatings();
+                        break;
+                    case 'enableUserTagging':
+                        refreshAllAuthiActions();
+                        break;
+                    case 'enableReadProgress':
+                        isChecked ? addProgressJumpButtons() : removeProgressJumpButtons();
+                        break;
+                }
                 return;
             }
             else if(target.matches('.user-thread-block-toggle')) {
@@ -1895,6 +1914,7 @@
                         delete tags[userId];
                         saveUserTags(tags);
                         renderTagsTab();
+                        refreshAllAuthiActions();
                         showMessage(targetTab.querySelector('#s1p-tags-sync-message'), `已删除对 ${userName} 的标记。`, true);
                     }, '确认删除');
                 }
@@ -1906,12 +1926,14 @@
                         tags[userId] = { ...tags[userId], tag: newTag, timestamp: Date.now(), name: userName };
                         saveUserTags(tags);
                         renderTagsTab();
+                        refreshAllAuthiActions();
                         showMessage(targetTab.querySelector('#s1p-tags-sync-message'), `已更新对 ${userName} 的标记。`, true);
                     } else {
                         createConfirmationModal(`标记内容为空`, '您希望删除对该用户的标记吗？', () => {
                              delete tags[userId];
                              saveUserTags(tags);
                              renderTagsTab();
+                             refreshAllAuthiActions();
                              showMessage(targetTab.querySelector('#s1p-tags-sync-message'), `已删除对 ${userName} 的标记。`, true);
                         }, '确认删除');
                     }
@@ -2609,11 +2631,13 @@
             addBlockButtonsToThreads();
             applyUserThreadBlocklist();
         }
-        if (settings.enableUserBlocking || settings.enableUserTagging) {
+        if (settings.enableUserBlocking) {
             hideBlockedUsersPosts();
-            addActionsToPostFooter();
             hideBlockedUserQuotes();
             hideBlockedUserRatings();
+        }
+        if (settings.enableUserBlocking || settings.enableUserTagging) {
+            addActionsToPostFooter();
         }
         if (settings.enableUserTagging) {
             initializeTaggingPopover();
