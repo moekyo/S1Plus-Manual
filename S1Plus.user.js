@@ -2327,6 +2327,50 @@
         });
     };
 
+    const trackReadProgressInThread = () => {
+        const settings = getSettings();
+        if (!settings.enableReadProgress) return;
+
+        const threadId = window.threadid || (document.querySelector('#thread_subject') ? location.href.match(/thread-(\d+)-/)?.[1] : null);
+        if (!threadId) return;
+
+        const currentPage = parseInt(document.querySelector('#pgt .pg a.xw1')?.textContent || '1');
+        let currentProgressPostId = null;
+        let visiblePosts = [];
+
+        const observer = new IntersectionObserver(entries => {
+            entries.forEach(entry => {
+                const postId = entry.target.id.replace('pid', '');
+                if (entry.isIntersecting) {
+                    if (!visiblePosts.includes(postId)) visiblePosts.push(postId);
+                } else {
+                    visiblePosts = visiblePosts.filter(p => p !== postId);
+                }
+            });
+            if (visiblePosts.length > 0) {
+                currentProgressPostId = visiblePosts[visiblePosts.length - 1];
+            }
+        }, { threshold: 0.1 });
+
+        document.querySelectorAll('table[id^="pid"]').forEach(el => observer.observe(el));
+
+        const saveProgress = () => {
+            if (document.visibilityState === 'hidden' && currentProgressPostId) {
+                const postElement = document.getElementById('pid' + currentProgressPostId);
+                let lastReadFloor = 0;
+                if (postElement) {
+                    const floorElement = postElement.querySelector('.pi em');
+                    if (floorElement) {
+                        lastReadFloor = parseInt(floorElement.textContent) || 0;
+                    }
+                }
+                updateThreadProgress(threadId, currentProgressPostId, currentPage, lastReadFloor);
+            }
+        };
+
+        document.addEventListener('visibilitychange', saveProgress);
+    };
+
     const refreshAllAuthiActions = () => {
         document.querySelectorAll('.s1p-authi-actions-wrapper').forEach(el => el.remove());
         addActionsToPostFooter();
@@ -2649,6 +2693,7 @@
         applyImageHiding();
         manageImageToggleAllButtons();
         renameAuthorLinks(); // --- [新增] 调用文本替换函数 ---
+        trackReadProgressInThread();
         try {
             autoSign();
         } catch (e) {
