@@ -1,9 +1,9 @@
 // ==UserScript==
-// @name         S1 Plus - Stage1st 体验增强套件
+// @name         S1 Plus - Stage1st 体验增强套件 (已修改)
 // @namespace    http://tampermonkey.net/
-// @version      4.4.0
+// @version      4.4.3
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪等多种功能，全方位优化你的论坛体验。
-// @author       moekyo
+// @author       moekyo (修改版)
 // @match        https://stage1st.com/2b/*
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -16,8 +16,8 @@
     'use strict';
 
 
-    const SCRIPT_VERSION = '4.4.0';
-    const SCRIPT_RELEASE_DATE = '2025-08-12';
+    const SCRIPT_VERSION = '4.4.3';
+    const SCRIPT_RELEASE_DATE = '2025-08-13';
 
     // --- 样式注入 ---
     GM_addStyle(`
@@ -203,12 +203,6 @@
             line-height: 1.4;
             user-select: none;
         }
-
-        /* --- 用户屏蔽悬停交互样式 --- */
-        .s1p-avatar-overlay-container { position: absolute; display: flex; align-items: center; justify-content: center; background-color: #0000008c; opacity: 0; visibility: hidden; transition: opacity 0.2s ease-in-out, visibility 0.2s ease-in-out; pointer-events: auto; z-index: 10; }
-        .pls:hover .s1p-avatar-overlay-container { opacity: 1; visibility: visible; }
-        .s1p-avatar-overlay-container .s1p-btn { color: white; background-color: #00000066; border: 1px solid var(--s1p-pri); transform: scale(1); transition: all 0.2s ease-in-out; padding: 4px 8px; }
-        .s1p-avatar-overlay-container .s1p-btn:hover { background-color: var(--s1p-red); border-color: var(--s1p-red); transform: scale(1.05); }
 
         /* --- 文本框基础样式 --- */
         .s1p-textarea {
@@ -1131,6 +1125,7 @@
         showBlockedByKeywordList: false,
         showManuallyBlockedList: false,
         hideImagesByDefault: false,
+        threadBlockHoverDelay: 1,
         customTitleSuffix: ' - STAGE1ₛₜ',
         customNavLinks: [
             { name: '论坛', href: 'forum.php' },
@@ -1631,8 +1626,16 @@
                         <label class="s1p-settings-label" for="s1p-customTitleSuffix">自定义标题后缀</label>
                         <input type="text" id="s1p-customTitleSuffix" class="title-suffix-input" data-setting="customTitleSuffix" value="${settings.customTitleSuffix || ''}" style="width: 200px;">
                     </div>
+                    <div class="s1p-settings-item">
+                        <label class="s1p-settings-label" for="s1p-threadBlockHoverDelay">帖子屏蔽按钮悬停延迟</label>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <input type="number" id="s1p-threadBlockHoverDelay" data-setting="threadBlockHoverDelay" min="0" max="10" step="1" value="${settings.threadBlockHoverDelay}" class="title-suffix-input" style="width: 50px; text-align: center; padding: 6px 4px;">
+                            <span style="font-size: 14px;">秒</span>
+                        </div>
+                    </div>
                 </div>`;
 
+            // 总的设置变更事件监听
             tabs['general-settings'].addEventListener('change', e => {
                 const target = e.target;
                 const settingKey = target.dataset.setting;
@@ -1640,12 +1643,14 @@
                     const settings = getSettings();
                     if (target.type === 'checkbox') {
                         settings[settingKey] = target.checked;
+                    } else if (target.type === 'number') {
+                        settings[settingKey] = parseFloat(target.value);
                     } else {
                         settings[settingKey] = target.value;
                     }
                     saveSettings(settings);
                     applyInterfaceCustomizations();
-                    // [NEW] 如果是图片隐藏开关，则立即调用函数刷新页面状态
+
                     if (settingKey === 'hideImagesByDefault') {
                         applyImageHiding();
                         manageImageToggleAllButtons();
@@ -1948,6 +1953,9 @@
 
     // [MODIFIED] 增加带二次确认的屏蔽按钮
     const addBlockButtonsToThreads = () => {
+        const settings = getSettings();
+        const hoverDelay = settings.threadBlockHoverDelay * 1000;
+
         document.querySelectorAll('tbody[id^="normalthread_"], tbody[id^="stickthread_"]').forEach(row => {
             // 防止重复添加按钮
             if (row.querySelector('.s1p-action-container')) return;
@@ -1962,7 +1970,7 @@
                 iconCell.addEventListener('mouseenter', () => {
                     hoverTimeout = setTimeout(() => {
                         row.classList.add('s1p-hover-reveal');
-                    }, 1000);
+                    }, hoverDelay);
                 });
                 iconCell.addEventListener('mouseleave', () => {
                     clearTimeout(hoverTimeout);
@@ -2040,80 +2048,6 @@
                         row.classList.remove('s1p-blocking-confirm');
                     }
                 });
-            }
-        });
-    };
-
-    // --- [FIXED] 重构用户屏蔽按钮添加逻辑，解决竞态条件问题 ---
-    const addBlockButtonsToUsers = () => {
-        document.querySelectorAll('.authi > a[href*="space-uid-"]').forEach(authorLink => {
-            const plsCell = authorLink.closest('.pls');
-            // 如果没有父元素，或已处理过，则跳过
-            if (!plsCell || plsCell.dataset.s1pBlocked) return;
-            plsCell.dataset.s1pBlocked = 'true'; // 添加标记，防止重复处理
-
-            const avatarImg = plsCell.querySelector('.avatar img');
-            if (!avatarImg) return;
-
-            const uidMatch = authorLink.href.match(/space-uid-(\d+)/);
-            if (!uidMatch) return;
-
-            const userId = uidMatch[1];
-            const userName = authorLink.textContent.trim();
-
-            // 预先创建好元素
-            const overlayContainer = document.createElement('div');
-            overlayContainer.className = 's1p-avatar-overlay-container';
-
-            const blockBtn = document.createElement('span');
-            blockBtn.className = 's1p-btn';
-            blockBtn.textContent = '屏蔽用户';
-            blockBtn.addEventListener('click', e => {
-                e.preventDefault();
-                e.stopPropagation();
-                const subtitle = getSettings().blockThreadsOnUserBlock ?
-                    '该用户的所有帖子和主题帖都将被隐藏，此操作可在设置面板中撤销。' :
-                    '该用户的所有帖子都将被隐藏，此操作可在设置面板中撤销。';
-                createConfirmationModal(`确定要屏蔽用户 "${userName}" 吗？`, subtitle, () => blockUser(userId, userName), '确定屏蔽');
-            });
-            overlayContainer.appendChild(blockBtn);
-
-            // 定义一个函数来计算和放置悬浮层
-            // 只有当图片加载完成后（即拥有正确尺寸后）才能执行此函数
-            const placeOverlay = () => {
-                // 为父元素设置相对定位，作为悬浮层的定位基准
-                plsCell.style.position = 'relative';
-
-                const rect = avatarImg.getBoundingClientRect();
-                const parentRect = plsCell.getBoundingClientRect();
-
-                // 如果计算出的尺寸仍然为0，则不显示损坏的悬浮层
-                if (rect.width === 0 || rect.height === 0) {
-                    console.warn(`S1 Plus: 用户 ${userName} 的头像无尺寸，跳过悬浮层。`);
-                    return;
-                }
-
-                overlayContainer.style.top = `${rect.top - parentRect.top}px`;
-                overlayContainer.style.left = `${rect.left - parentRect.left}px`;
-                overlayContainer.style.width = `${rect.width}px`;
-                overlayContainer.style.height = `${rect.height}px`;
-                overlayContainer.style.borderRadius = window.getComputedStyle(avatarImg).borderRadius;
-
-                // 只有当所有计算完成后，才将悬浮层添加到页面
-                plsCell.appendChild(overlayContainer);
-            };
-
-            // 检查图片是否已经加载完成（例如来自浏览器缓存）
-            // .complete 属性为 true 且 naturalHeight 不为 0 意味着图片已成功加载并有实际尺寸
-            if (avatarImg.complete && avatarImg.naturalHeight !== 0) {
-                placeOverlay();
-            } else {
-                // 如果图片尚未加载，则等待 onload 事件
-                avatarImg.onload = placeOverlay;
-                // 添加一个错误处理，防止因图片加载失败导致脚本问题
-                avatarImg.onerror = () => {
-                   console.warn(`S1 Plus: 无法加载用户 ${userName} 的头像。`);
-                };
             }
         });
     };
@@ -2677,7 +2611,6 @@
         }
         if (settings.enableUserBlocking || settings.enableUserTagging) {
             hideBlockedUsersPosts();
-            addBlockButtonsToUsers();
             addActionsToPostFooter();
             hideBlockedUserQuotes();
             hideBlockedUserRatings();
