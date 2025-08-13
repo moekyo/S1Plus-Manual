@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      4.3.8
+// @version      4.4.0
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪等多种功能，全方位优化你的论坛体验。
 // @author       moekyo
 // @match        https://stage1st.com/2b/*
@@ -16,7 +16,7 @@
     'use strict';
 
 
-    const SCRIPT_VERSION = '4.3.8';
+    const SCRIPT_VERSION = '4.4.0';
     const SCRIPT_RELEASE_DATE = '2025-08-12';
 
     // --- 样式注入 ---
@@ -1826,7 +1826,7 @@
                 if (result.success) {
                     renderThreadTab();
                     renderUserTab();
-                    renderSettingsTab();
+                    renderGeneralSettingsTab();
                     renderTagsTab();
                 }
             }
@@ -1865,7 +1865,7 @@
                         // 重新渲染所有标签页
                         renderThreadTab();
                         renderUserTab();
-                        renderSettingsTab();
+                        renderGeneralSettingsTab();
                         renderTagsTab();
 
                         showMessage(syncMessageEl, '选中的本地数据已成功清除。', true);
@@ -2539,6 +2539,15 @@
             const ordertypeLink = authiDiv.querySelector('a[href*="ordertype=1"]');
             const readmodeLink = authiDiv.querySelector('a[onclick*="readmode"]');
             
+            // --- [MODIFIED] Find the "只看大图" link by its text content ---
+            let viewImagesLink = null;
+            for (const link of authiDiv.querySelectorAll('a')) {
+                if (link.textContent.trim() === '只看大图') {
+                    viewImagesLink = link;
+                    break;
+                }
+            }
+            
             const insertionPoint = readmodeLink || viewAuthorLink;
             insertionPoint.after(wrapper);
 
@@ -2554,9 +2563,16 @@
                 nativeElements.forEach(el => el.style.display = 'none');
 
                 // 2. Add precise event listeners to show the buttons
-                viewAuthorLink.addEventListener('mouseenter', () => {
+                const showNativeButtons = () => {
                     nativeElements.forEach(el => el.style.display = 'inline');
-                });
+                };
+
+                viewAuthorLink.addEventListener('mouseenter', showNativeButtons);
+                
+                // --- [MODIFIED] Add listener to "只看大图" link if found
+                if (viewImagesLink) {
+                    viewImagesLink.addEventListener('mouseenter', showNativeButtons);
+                }
 
                 // 3. Hide buttons when the mouse leaves the entire author info area
                 authiDiv.addEventListener('mouseleave', () => {
