@@ -2329,12 +2329,15 @@
 
     const trackReadProgressInThread = () => {
         const settings = getSettings();
-        if (!settings.enableReadProgress) return;
+        if (!settings.enableReadProgress || !document.getElementById('postlist')) return;
 
-        const threadId = window.threadid || (document.querySelector('#thread_subject') ? location.href.match(/thread-(\d+)-/)?.[1] : null);
-        if (!threadId) return;
+        const threadIdMatch = window.location.href.match(/thread-(\d+)-/);
+        if (!threadIdMatch) return;
+        const threadId = threadIdMatch[1];
 
-        const currentPage = parseInt(document.querySelector('#pgt .pg a.xw1')?.textContent || '1');
+        const pageMatch = window.location.href.match(/thread-\d+-(\d+)-/);
+        const currentPage = pageMatch ? pageMatch[1] : '1';
+
         let currentProgressPostId = null;
         let visiblePosts = [];
 
@@ -2649,22 +2652,6 @@
 
         // 开始观察 #ct 容器的变化
         observer.observe(document.getElementById('ct'), { childList: true, subtree: true });
-
-        // 记录阅读进度
-        if (getSettings().enableReadProgress && document.getElementById('postlist')) {
-            const threadIdMatch = window.location.href.match(/thread-(\d+)-/);
-            if (threadIdMatch) {
-                const threadId = threadIdMatch[1];
-                const lastPost = Array.from(document.querySelectorAll('div[id^="post_"]')).pop();
-                if (lastPost) {
-                    const postId = lastPost.id.replace('post_', '');
-                    const pageElement = document.querySelector('.pgs .pg a.xw1');
-                    const page = pageElement ? pageElement.textContent : '1';
-                    const lastReadFloor = lastPost.querySelector('td.plc a.xw1[id^="postnum"]')?.textContent?.replace(/#/, '');
-                    updateThreadProgress(threadId, postId, page, lastReadFloor);
-                }
-            }
-        }
     }
 
     function applyChanges() {
