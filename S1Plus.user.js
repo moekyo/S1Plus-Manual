@@ -2371,7 +2371,12 @@
             }
         };
 
-        document.addEventListener('visibilitychange', saveProgress);
+        // Add a named function to be able to remove it later
+        if (window.s1p_saveProgressHandler) {
+            document.removeEventListener('visibilitychange', window.s1p_saveProgressHandler);
+        }
+        window.s1p_saveProgressHandler = saveProgress;
+        document.addEventListener('visibilitychange', window.s1p_saveProgressHandler);
     };
 
     const refreshAllAuthiActions = () => {
