@@ -853,13 +853,8 @@
     const updateThreadProgress = (threadId, postId, page, lastReadFloor) => {
         if (!postId || !page || !lastReadFloor) return;
         const progress = getReadProgress();
-        const existingProgress = progress[threadId];
-
-        // 只有当新进度更“远”时才更新，防止因向上滚动导致进度回滚
-        if (!existingProgress || parseInt(page) > parseInt(existingProgress.page) || (parseInt(page) == parseInt(existingProgress.page) && lastReadFloor > existingProgress.lastReadFloor)) {
-            progress[threadId] = { postId, page, timestamp: Date.now(), lastReadFloor: lastReadFloor };
-            saveReadProgress(progress);
-        }
+        progress[threadId] = { postId, page, timestamp: Date.now(), lastReadFloor: lastReadFloor };
+        saveReadProgress(progress);
     };
 
 
@@ -2358,13 +2353,29 @@
         const pageMatch = window.location.href.match(/thread-\d+-(\d+)-/);
         const currentPage = pageMatch ? pageMatch[1] : '1';
 
-        let maxFloorOnPage = 0;
-        let correspondingPostId = null;
+        let visiblePosts = new Map();
         let saveTimeout;
 
+        const getFloorFromElement = (el) => {
+            const floorElement = el.querySelector('.pi em');
+            return floorElement ? parseInt(floorElement.textContent) || 0 : 0;
+        };
+
         const saveCurrentProgress = () => {
-            if (correspondingPostId && maxFloorOnPage > 0) {
-                updateThreadProgress(threadId, correspondingPostId, currentPage, maxFloorOnPage);
+            if (visiblePosts.size === 0) return;
+
+            let maxFloor = 0;
+            let finalPostId = null;
+
+            visiblePosts.forEach((floor, postId) => {
+                if (floor > maxFloor) {
+                    maxFloor = floor;
+                    finalPostId = postId;
+                }
+            });
+
+            if (finalPostId && maxFloor > 0) {
+                updateThreadProgress(threadId, finalPostId, currentPage, maxFloor);
             }
         };
 
@@ -2374,42 +2385,36 @@
         };
 
         const observer = new IntersectionObserver(entries => {
-            let hasIntersectingEntry = false;
             entries.forEach(entry => {
+                const postId = entry.target.id.replace('pid', '');
                 if (entry.isIntersecting) {
-                    hasIntersectingEntry = true;
-                    const postElement = entry.target;
-                    const floorElement = postElement.querySelector('.pi em');
-                    if (floorElement) {
-                        const currentFloor = parseInt(floorElement.textContent) || 0;
-                        if (currentFloor > maxFloorOnPage) {
-                            maxFloorOnPage = currentFloor;
-                            correspondingPostId = postElement.id.replace('pid', '');
-                        }
+                    const floor = getFloorFromElement(entry.target);
+                    if (floor > 0) {
+                        visiblePosts.set(postId, floor);
                     }
+                } else {
+                    visiblePosts.delete(postId);
                 }
             });
-
-            if (hasIntersectingEntry) {
-                debouncedSave();
-            }
+            debouncedSave();
         }, { threshold: 0.1 });
 
         document.querySelectorAll('table[id^="pid"]').forEach(el => observer.observe(el));
 
-        // 当用户离开页面时，作为最后的保险措施立即保存一次
         const finalSave = () => {
-            if (document.visibilityState === 'hidden') {
-                clearTimeout(saveTimeout); // 取消任何待处理的延迟保存
-                saveCurrentProgress(); // 立即保存
-            }
+            clearTimeout(saveTimeout);
+            saveCurrentProgress();
         };
 
-        if (window.s1p_saveProgressHandler) {
-            document.removeEventListener('visibilitychange', window.s1p_saveProgressHandler);
-        }
-        window.s1p_saveProgressHandler = finalSave;
-        document.addEventListener('visibilitychange', window.s1p_saveProgressHandler);
+        // 监听 visibilitychange 用于切换标签页或最小化
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden') {
+                finalSave();
+            }
+        });
+
+        // 监听 beforeunload 用于关闭页面或刷新
+        window.addEventListener('beforeunload', finalSave);
     };
 
     const refreshAllAuthiActions = () => {
