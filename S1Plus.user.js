@@ -851,10 +851,15 @@
     const getReadProgress = () => GM_getValue('s1p_read_progress', {});
     const saveReadProgress = (progress) => GM_setValue('s1p_read_progress', progress);
     const updateThreadProgress = (threadId, postId, page, lastReadFloor) => {
-        if (!postId || !page) return;
+        if (!postId || !page || !lastReadFloor) return;
         const progress = getReadProgress();
-        progress[threadId] = { postId, page, timestamp: Date.now(), lastReadFloor: lastReadFloor };
-        saveReadProgress(progress);
+        const existingProgress = progress[threadId];
+
+        // 只有当新进度更“远”时才更新，防止因向上滚动导致进度回滚
+        if (!existingProgress || parseInt(page) > parseInt(existingProgress.page) || (parseInt(page) == parseInt(existingProgress.page) && lastReadFloor > existingProgress.lastReadFloor)) {
+            progress[threadId] = { postId, page, timestamp: Date.now(), lastReadFloor: lastReadFloor };
+            saveReadProgress(progress);
+        }
     };
 
 
@@ -2353,44 +2358,57 @@
         const pageMatch = window.location.href.match(/thread-\d+-(\d+)-/);
         const currentPage = pageMatch ? pageMatch[1] : '1';
 
-        let currentProgressPostId = null;
-        let visiblePosts = [];
+        let maxFloorOnPage = 0;
+        let correspondingPostId = null;
+        let saveTimeout;
+
+        const saveCurrentProgress = () => {
+            if (correspondingPostId && maxFloorOnPage > 0) {
+                updateThreadProgress(threadId, correspondingPostId, currentPage, maxFloorOnPage);
+            }
+        };
+
+        const debouncedSave = () => {
+            clearTimeout(saveTimeout);
+            saveTimeout = setTimeout(saveCurrentProgress, 1500); // 停止滚动1.5秒后保存
+        };
 
         const observer = new IntersectionObserver(entries => {
+            let hasIntersectingEntry = false;
             entries.forEach(entry => {
-                const postId = entry.target.id.replace('pid', '');
                 if (entry.isIntersecting) {
-                    if (!visiblePosts.includes(postId)) visiblePosts.push(postId);
-                } else {
-                    visiblePosts = visiblePosts.filter(p => p !== postId);
+                    hasIntersectingEntry = true;
+                    const postElement = entry.target;
+                    const floorElement = postElement.querySelector('.pi em');
+                    if (floorElement) {
+                        const currentFloor = parseInt(floorElement.textContent) || 0;
+                        if (currentFloor > maxFloorOnPage) {
+                            maxFloorOnPage = currentFloor;
+                            correspondingPostId = postElement.id.replace('pid', '');
+                        }
+                    }
                 }
             });
-            if (visiblePosts.length > 0) {
-                currentProgressPostId = visiblePosts[visiblePosts.length - 1];
+
+            if (hasIntersectingEntry) {
+                debouncedSave();
             }
         }, { threshold: 0.1 });
 
         document.querySelectorAll('table[id^="pid"]').forEach(el => observer.observe(el));
 
-        const saveProgress = () => {
-            if (document.visibilityState === 'hidden' && currentProgressPostId) {
-                const postElement = document.getElementById('pid' + currentProgressPostId);
-                let lastReadFloor = 0;
-                if (postElement) {
-                    const floorElement = postElement.querySelector('.pi em');
-                    if (floorElement) {
-                        lastReadFloor = parseInt(floorElement.textContent) || 0;
-                    }
-                }
-                updateThreadProgress(threadId, currentProgressPostId, currentPage, lastReadFloor);
+        // 当用户离开页面时，作为最后的保险措施立即保存一次
+        const finalSave = () => {
+            if (document.visibilityState === 'hidden') {
+                clearTimeout(saveTimeout); // 取消任何待处理的延迟保存
+                saveCurrentProgress(); // 立即保存
             }
         };
 
-        // Add a named function to be able to remove it later
         if (window.s1p_saveProgressHandler) {
             document.removeEventListener('visibilitychange', window.s1p_saveProgressHandler);
         }
-        window.s1p_saveProgressHandler = saveProgress;
+        window.s1p_saveProgressHandler = finalSave;
         document.addEventListener('visibilitychange', window.s1p_saveProgressHandler);
     };
 
