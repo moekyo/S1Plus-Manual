@@ -1116,6 +1116,7 @@
         enableUserBlocking: true,
         enableUserTagging: true,
         enableReadProgress: true,
+        openProgressInNewTab: true,
         enableNavCustomization: true,
         changeLogoLink: true,
         hideBlacklistTip: true,
@@ -1607,6 +1608,10 @@
                      <div class="s1p-settings-item">
                         <label class="s1p-settings-label" for="s1p-enableReadProgress">启用阅读进度跟踪</label>
                         <label class="s1p-switch"><input type="checkbox" id="s1p-enableReadProgress" data-feature="enableReadProgress" class="s1p-feature-toggle" ${settings.enableReadProgress ? 'checked' : ''}><span class="s1p-slider"></span></label>
+                    </div>
+                     <div class="s1p-settings-item">
+                        <label class="s1p-settings-label" for="s1p-openProgressInNewTab">在新窗口打开阅读进度</label>
+                        <label class="s1p-switch"><input type="checkbox" id="s1p-openProgressInNewTab" class="s1p-settings-checkbox" data-setting="openProgressInNewTab" ${settings.openProgressInNewTab ? 'checked' : ''}><span class="s1p-slider"></span></label>
                     </div>
                      <div class="s1p-settings-item">
                         <label class="s1p-settings-label" for="s1p-hideImagesByDefault">默认隐藏帖子图片</label>
@@ -2256,6 +2261,7 @@
     };
 
     const addProgressJumpButtons = () => {
+        const settings = getSettings();
         const progressData = getReadProgress();
         if (Object.keys(progressData).length === 0) return;
 
@@ -2298,6 +2304,15 @@
                 jumpBtn.href = `forum.php?mod=redirect&goto=findpost&ptid=${threadId}&pid=${postId}`;
                 jumpBtn.style.color = fcolor;
                 jumpBtn.style.borderColor = fcolor;
+
+                jumpBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    if (settings.openProgressInNewTab) {
+                        window.open(jumpBtn.href, '_blank');
+                    } else {
+                        window.location.href = jumpBtn.href;
+                    }
+                });
 
                 jumpBtn.addEventListener('mouseover', () => {
                     jumpBtn.style.backgroundColor = fcolor;
