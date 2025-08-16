@@ -55,6 +55,8 @@
             z-index: 2;
         }
 
+        
+
 
         /* --- 关键字屏蔽样式 --- */
 
@@ -2498,6 +2500,23 @@
 
             const wrapper = document.createElement('span');
             wrapper.className = 's1p-authi-actions-wrapper';
+
+            // --- [S1P-FIX] Add listeners to prevent script buttons from triggering native hover effects ---
+            // Only apply this fix if S1 NUX is not detected (by checking font-family)
+            if (!window.getComputedStyle(document.body).fontFamily.includes('苹方')) {
+                wrapper.addEventListener('mouseenter', () => {
+                    const triangleSpan = authiDiv.querySelector('.none');
+                    if (triangleSpan) {
+                        triangleSpan.style.display = 'inline';
+                    }
+                });
+                wrapper.addEventListener('mouseleave', () => {
+                    const triangleSpan = authiDiv.querySelector('.none');
+                    if (triangleSpan) {
+                        triangleSpan.style.removeProperty('display');
+                    }
+                });
+            }
 
             // --- Robust Width Calculation ---
             const authiRect = authiDiv.getBoundingClientRect();
