@@ -313,3 +313,27 @@
 <a href="forum.php?mod=viewthread&amp;tid=2258972&amp;page=1&amp;authorid=422297" rel="nofollow">只看该用户</a><span class="s1p-authi-actions-wrapper"><span class="pipe">|</span><a href="javascript:void(0);" class="s1p-authi-action s1p-block-user-in-authi">屏蔽该用户</a><span class="pipe">|</span><span class="s1p-authi-action s1p-user-tag-container" style="max-width: 649.734px;"><span class="s1p-user-tag-display" data-full-tag="12312">用户标记：12312</span><span class="s1p-user-tag-options" data-user-id="422297" data-user-name="qilin" data-user-avatar="https://avatar.stage1st.com/000/42/22/97_avatar_middle.jpg">⋮</span></span></span>
 </div>
 </div>
+
+
+
+在帖子详情页面的主题帖工具栏中，目前默认状态下有“只看该用户”，“只看大图”和脚本添加的“屏蔽该用户”
+和“标记该用户”。并且在“只看大图”的右边会跟有一个小三角暗示能展开更多选项。按照原有的交互，把鼠标
+移动到“只看该用户”和“只看大图”两个按钮的范围，就会在“只看大图”的右边展示“倒序浏览”和“阅读模式”两
+个按钮，同时前面提到的小三角会消失。当鼠标移出“只看该用户”和“只看大图”两个按钮的范围后，“倒序浏览”
+和“阅读模式”两个按钮会消失，同时小三角会再次出现。这是原来（不启用脚本）的效果。
+
+但是在启用脚本之后，当前行为是：把鼠标移动到“只看该用户”和“只看大图”两个按钮的范围，就会在“只看大图”
+的右边展示“倒序浏览”和“阅读模式”两个按钮，同时前面提到的小三角会消失，而在后面则跟有脚本添加的
+“屏蔽该用户”和“标记该用户”。当鼠标移出“只看该用户”和“只看大图”两个按钮的范围后，“倒序浏览”
+和“阅读模式”两个按钮会消失，同时小三角会再次出现。到目前为止是符合需求，但是如果把鼠标移动到“屏蔽该用户”和“标记该用户”
+的范围，此时跟在“只看大图”的右边的一个小三角也会消失。这时是不对的，因为“屏蔽该用户”和“标记该用户”这两个按钮并不会触发
+“倒序浏览”和“阅读模式”两个按钮的展示。在这种情况下，小三角应该保持可见状态。帮我分析出现这个现象的原因，如果需要什么信息可以向我人提问，例如对应的 HTML 结构等。 
+
+对应小三角的的结构
+<span class="none" title="回帖奖励"> == $0
+  :: before
+</span>
+
+展开之后就变成了
+
+<span class="none" title="回帖奖励"></span> == $0
