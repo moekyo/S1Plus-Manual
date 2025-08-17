@@ -3,7 +3,7 @@
 @namespace				userstyles.world
 @author						pgain2004 <pgain2004@gmail.com>
 @description			相对熟悉CSS后新写的，窄屏自适应，适配度高。依赖一些CSS3特性和emoji库，较老系统(如Win7)显示效果可能打折扣。tag:S1 stage1st stage1 saraba1st 泥潭 婆罗门论坛
-@version					2025.8.8
+@version					2025.8.16
 @supportURL				https://stage1st.com/2b/thread-1826103-1-1.html
 @license					CC-BY-NC-SA-4.0
 @preprocessor			less
@@ -1116,6 +1116,8 @@ shdl(shadow-light)：浅阴影色；
 	/*默认显示倒序模式，取消阅读模式*/
 	.authi .show {display:inline; margin-left:4px}
 	.authi .none, .authi .show[onclick^="readmode"]{display:none}
+	/*自动关闭帖子*/
+	.cronclosethread_getbox{ margin: 6px 0; border: 1px solid @prid; border-radius: 4px; box-shadow: inset 0 0 6px @prid; color: @sec; text-align: center}
 	
 	/*4-2 按钮*/
 	/*4-2-1 主楼收藏评按钮*/
@@ -1600,6 +1602,9 @@ shdl(shadow-light)：浅阴影色；
 		
 	}
 	
+	/*8.9.9 字体功能变更标记*/
+	#flk a[href="archiver/"]:before when not (@topicfont = initial) {content:" "}
+	
 	/*9 窄屏适配*/
 	@media(max-width:1360px) and (min-width:910px) {/*页码栏*/
 		#pgt .pg a.nxt {background-image:none}
@@ -1800,10 +1805,11 @@ shdl(shadow-light)：浅阴影色；
 	/*14 滚动条*/
 	/*14-1 滚动条颜色跟随*/
 	html::-webkit-scrollbar-track-piece, html::-webkit-scrollbar-track, textarea::-webkit-scrollbar-track-piece, textarea::-webkit-scrollbar-track {background-color:@bg}
-	html::-webkit-scrollbar-thumb:vertical, html::-webkit-scrollbar-thumb, textarea::-webkit-scrollbar-thumb:vertical, textarea::-webkit-scrollbar-thumb {background-color:@pri}
+	html::-webkit-scrollbar-thumb:vertical, html::-webkit-scrollbar-thumb, textarea::-webkit-scrollbar-thumb:vertical, textarea::-webkit-scrollbar-thumb {background-color:@prid}
+	html,textarea, input {scrollbar-color: @prid @bg}
 	/*14-2 窄滚动条*/
-	html,textarea {
-		& when (@thinscroll = 1) {scrollbar-color:@pri @bg;scrollbar-width:thin}
+	html,textarea, input {
+		& when (@thinscroll = 1) {scrollbar-color:@sec @bg;scrollbar-width:thin}
 	}
 	
 }
