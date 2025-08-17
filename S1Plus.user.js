@@ -669,6 +669,20 @@
         }
     `);
 
+    // --- S1 NUX 兼容性检测 ---
+    let isS1NuxEnabled = false;
+    const detectS1Nux = () => {
+        const archiverLink = document.querySelector('a[href*="archiver"]');
+        if (archiverLink) {
+            const style = window.getComputedStyle(archiverLink, '::before');
+            if (style && style.content.includes('NUXISENABLED')) {
+                isS1NuxEnabled = true;
+            }
+        }
+        // For debugging, you can uncomment the next line
+        // console.log('S1 Plus: S1 NUX detection result:', isS1NuxEnabled);
+    };
+
     let dynamicallyHiddenThreads = {};
 
     // --- 数据处理 & 核心功能 ---
@@ -2502,8 +2516,8 @@
             wrapper.className = 's1p-authi-actions-wrapper';
 
             // --- [S1P-FIX] Add listeners to prevent script buttons from triggering native hover effects ---
-            // Only apply this fix if S1 NUX is not detected (by checking font-family)
-            if (!window.getComputedStyle(document.body).fontFamily.includes('苹方')) {
+            // Only apply this fix if S1 NUX is not detected.
+            if (!isS1NuxEnabled) {
                 wrapper.addEventListener('mouseenter', () => {
                     const triangleSpan = authiDiv.querySelector('.none');
                     if (triangleSpan) {
@@ -2695,6 +2709,7 @@
 
     // --- 主流程 ---
     function main() {
+        detectS1Nux(); // 检测 S1 NUX 是否启用
         initializeNavbar();
         initializeTagDisplayPopover(); // [NEW] 初始化用户标记显示悬浮窗
 
