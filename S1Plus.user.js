@@ -2362,12 +2362,45 @@
         const settings = getSettings();
         if (!settings.enableReadProgress || !document.getElementById('postlist')) return;
 
-        const threadIdMatch = window.location.href.match(/thread-(\d+)-/);
-        if (!threadIdMatch) return;
-        const threadId = threadIdMatch[1];
+        // --- [MODIFIED] Universal Thread ID & Page Number Extraction ---
+        let threadId = null;
 
-        const pageMatch = window.location.href.match(/thread-\d+-(\d+)-/);
-        const currentPage = pageMatch ? pageMatch[1] : '1';
+        // Method 1: Try extracting from URL (thread-xxx-x-x.html format)
+        const threadIdMatch = window.location.href.match(/thread-(\d+)-/);
+        if (threadIdMatch) {
+            threadId = threadIdMatch[1];
+        } else {
+            // Method 2: Try extracting from URL query parameters (forum.php?mod=viewthread...)
+            const params = new URLSearchParams(window.location.search);
+            threadId = params.get('tid') || params.get('ptid');
+        }
+
+        // Method 3: Fallback to finding the thread ID from a hidden input in the page
+        if (!threadId) {
+            const tidInput = document.querySelector('input[name="tid"]#tid');
+            if (tidInput) {
+                threadId = tidInput.value;
+            }
+        }
+
+        if (!threadId) return; // If no thread ID can be found, exit.
+
+        // --- Page Number Extraction ---
+        let currentPage = '1';
+        const threadPageMatch = window.location.href.match(/thread-\d+-(\d+)-/);
+        const params = new URLSearchParams(window.location.search);
+
+        if (threadPageMatch) {
+            currentPage = threadPageMatch[1];
+        } else if (params.has('page')) {
+            currentPage = params.get('page');
+        } else {
+            // Fallback for page number from pagination control if no param exists
+            const currentPageElement = document.querySelector('div.pg strong');
+            if (currentPageElement && !isNaN(currentPageElement.textContent.trim())) {
+                currentPage = currentPageElement.textContent.trim();
+            }
+        }
 
         let visiblePosts = new Map();
         let saveTimeout;
