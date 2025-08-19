@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      4.5.1
+// @version      4.5.1-refactored
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪等多种功能，全方位优化你的论坛体验。
 // @author       moekyo
 // @match        https://stage1st.com/2b/*
@@ -16,7 +16,7 @@
     'use strict';
 
 
-    const SCRIPT_VERSION = '4.5.1';
+    const SCRIPT_VERSION = '4.5.1-refactored';
     const SCRIPT_RELEASE_DATE = '2025-08-19';
 
     // --- 样式注入 ---
@@ -185,18 +185,18 @@
             flex-shrink: 0;
         }
         .s1p-confirm-action-btn:active { transform: scale(0.95); }
-        .s1p-confirm-action-btn.confirm {
+        .s1p-confirm-action-btn.s1p-confirm {
             background-color: transparent;
             background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='2.5' stroke='%2322c55e'%3e%3cpath stroke-linecap='round' stroke-linejoin='round' d='M4.5 12.75l6 6 9-13.5' /%3e%3c/svg%3e");
         }
-        .s1p-confirm-action-btn.confirm:hover {
+        .s1p-confirm-action-btn.s1p-confirm:hover {
             background-color: var(--s1p-confirm-hover-bg);
         }
-        .s1p-confirm-action-btn.cancel {
+        .s1p-confirm-action-btn.s1p-cancel {
             background-color: transparent;
             background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='2.5' stroke='%23ef4444'%3e%3cpath stroke-linecap='round' stroke-linejoin='round' d='M6 18L18 6M6 6l12 12' /%3e%3c/svg%3e");
         }
-        .s1p-confirm-action-btn.cancel:hover {
+        .s1p-confirm-action-btn.s1p-cancel:hover {
             background-color: var(--s1p-cancel-hover-bg);
         }
 
@@ -290,7 +290,7 @@
             word-wrap: break-word;
             white-space: pre-wrap;
         }
-        .s1p-popover-main-content.empty {
+        .s1p-popover-main-content.s1p-empty {
             text-align: center;
             color: var(--s1p-text-empty);
         }
@@ -459,7 +459,7 @@
             background-color: var(--s1p-sub-h);
             color: var(--s1p-sub-h-t);
         }
-        .s1p-tag-options-menu button.delete:hover {
+        .s1p-tag-options-menu button.s1p-delete:hover {
             background-color: var(--s1p-red);
             color: var(--s1p-white);
         }
@@ -514,15 +514,15 @@
         .s1p-confirm-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(var(--s1p-black-rgb), 0.65); display: flex; justify-content: center; align-items: center; z-index: 10000; animation: s1p-fade-in 0.2s ease-out; }
         .s1p-confirm-content { background-color: var(--s1p-bg); border-radius: 12px; box-shadow: 0 10px 25px -5px rgba(var(--s1p-black-rgb), 0.1), 0 10px 10px -5px rgba(var(--s1p-black-rgb), 0.04); width: 420px; max-width: 90%; text-align: left; overflow: hidden; animation: s1p-scale-in 0.25s ease-out; }
         .s1p-confirm-body { padding: 20px 24px; font-size: 16px; line-height: 1.6; }
-        .s1p-confirm-body .confirm-title { font-weight: 600; font-size: 18px; margin-bottom: 8px; }
-        .s1p-confirm-body .confirm-subtitle { font-size: 14px; color: var(--s1p-desc-t); }
+        .s1p-confirm-body .s1p-confirm-title { font-weight: 600; font-size: 18px; margin-bottom: 8px; }
+        .s1p-confirm-body .s1p-confirm-subtitle { font-size: 14px; color: var(--s1p-desc-t); }
         .s1p-confirm-footer { padding: 12px 16px; display: flex; justify-content: flex-end; gap: 12px; }
         .s1p-confirm-btn { padding: 9px 18px; border-radius: 6px; font-size: 14px; font-weight: 500; cursor: pointer; border: 1px solid transparent; transition: all 0.15s ease-in-out; box-shadow: 0 1px 2px 0 rgba(var(--s1p-black-rgb), 0.05); }
         .s1p-confirm-btn:active { transform: translateY(1px); }
-        .s1p-confirm-btn.cancel { background-color: var(--s1p-sub); border-color: var(--s1p-pri); }
-        .s1p-confirm-btn.cancel:hover { border-color: var(--s1p-t); }
-        .s1p-confirm-btn.confirm { background-color: var(--s1p-red); color: var(--s1p-white); border-color: var(--s1p-red); }
-        .s1p-confirm-btn.confirm:hover { background-color: var(--s1p-red-h); border-color: var(--s1p-red-h); }
+        .s1p-confirm-btn.s1p-cancel { background-color: var(--s1p-sub); border-color: var(--s1p-pri); }
+        .s1p-confirm-btn.s1p-cancel:hover { border-color: var(--s1p-t); }
+        .s1p-confirm-btn.s1p-confirm { background-color: var(--s1p-red); color: var(--s1p-white); border-color: var(--s1p-red); }
+        .s1p-confirm-btn.s1p-confirm:hover { background-color: var(--s1p-red-h); border-color: var(--s1p-red-h); }
 
         /* --- Collapsible Section --- */
         .s1p-collapsible-header { display: flex; align-items: center; justify-content: space-between; cursor: pointer; user-select: none; transition: color 0.2s ease; }
@@ -566,7 +566,7 @@
         .s1p-settings-group { margin-bottom: 24px; }
         .s1p-settings-group-title { font-size: 16px; font-weight: 500; border-bottom: 1px solid var(--s1p-pri); padding-bottom: 16px; margin-bottom: 12px; }
         .s1p-settings-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; }
-        .s1p-settings-item .title-suffix-input { background: var(--s1p-bg); width: 100%; border: 1px solid var(--s1p-pri); border-radius: 4px; padding: 6px 8px; font-size: 14px; box-sizing: border-box; }
+        .s1p-settings-item .s1p-title-suffix-input { background: var(--s1p-bg); width: 100%; border: 1px solid var(--s1p-pri); border-radius: 4px; padding: 6px 8px; font-size: 14px; box-sizing: border-box; }
         .s1p-settings-label { font-size: 14px; }
         .s1p-settings-checkbox { /* Handled by .s1p-switch */ }
         .s1p-setting-desc { font-size: 12px; color: var(--s1p-desc-t); margin: -4px 0 12px 0; padding: 0; line-height: 1.5; }
@@ -575,7 +575,7 @@
         .s1p-editor-item-controls { display: flex; align-items: center; gap: 4px; }
         .s1p-editor-btn { padding: 4px; font-size: 18px; line-height: 1; cursor: pointer; border-radius: 4px; border:none; background: transparent; color: #9ca3af; }
         .s1p-editor-btn:hover { background: var(--s1p-secondary-bg); color: var(--s1p-secondary-text); }
-        .s1p-editor-btn.keyword-rule-delete,
+        .s1p-editor-btn.s1p-keyword-rule-delete,
         .s1p-editor-btn[data-action="delete"] {
             font-size: 0;
             width: 26px;
@@ -588,7 +588,7 @@
             background-size: 18px 18px;
             transition: all 0.2s ease;
         }
-        .s1p-editor-btn.keyword-rule-delete:hover,
+        .s1p-editor-btn.s1p-keyword-rule-delete:hover,
         .s1p-editor-btn[data-action="delete"]:hover {
             background-color: var(--s1p-red);
             background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='1.5' stroke='white'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0' /%3E%3C/svg%3E");
@@ -596,10 +596,10 @@
         .s1p-drag-handle { font-size: 18pt; cursor: grab; }
         .s1p-editor-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; }
         .s1p-settings-action-btn { display: inline-block; padding: 10px 20px; border-radius: 6px; font-size: 14px; font-weight: 500; cursor: pointer; transition: background-color 0.2s; border: none; }
-        .s1p-settings-action-btn.primary { background-color: var(--s1p-sec); color: var(--s1p-white); }
-        .s1p-settings-action-btn.primary:hover { background-color: var(--s1p-sec-h); }
-        .s1p-settings-action-btn.secondary { background-color: var(--s1p-secondary-bg); color: var(--s1p-secondary-text); }
-        .s1p-settings-action-btn.secondary:hover { background-color: var(--s1p-secondary-hover-bg); }
+        .s1p-settings-action-btn.s1p-primary { background-color: var(--s1p-sec); color: var(--s1p-white); }
+        .s1p-settings-action-btn.s1p-primary:hover { background-color: var(--s1p-sec-h); }
+        .s1p-settings-action-btn.s1p-secondary { background-color: var(--s1p-secondary-bg); color: var(--s1p-secondary-text); }
+        .s1p-settings-action-btn.s1p-secondary:hover { background-color: var(--s1p-secondary-hover-bg); }
 
         /* --- Modern Toggle Switch --- */
         .s1p-switch { position: relative; display: inline-block; width: 40px; height: 22px; vertical-align: middle; flex-shrink: 0; }
@@ -610,17 +610,17 @@
         input:checked + .s1p-slider:before { transform: translateX(18px); }
 
         /* --- Nav Editor Dragging --- */
-        .s1p-editor-item.dragging { opacity: 0.5; }
+        .s1p-editor-item.s1p-dragging { opacity: 0.5; }
 
         /* --- [NEW] 用户标记设置面板专属样式 --- */
         .s1p-item-meta-id { font-family: monospace; background-color: var(--s1p-bg); padding: 1px 5px; border-radius: 4px; font-size: 11px; color: var(--s1p-t); }
         .s1p-item-content { margin-top: 8px; color: var(--s1p-desc-t); line-height: 1.6; white-space: pre-wrap; word-break: break-all; }
         .s1p-item-editor textarea { width: 100%; min-height: 60px; margin-top: 8px; }
         .s1p-item-actions { display: flex; align-self: flex-start; flex-shrink: 0; gap: 8px; margin-left: 16px; }
-        .s1p-item-actions .s1p-btn.primary { background-color: #3b82f6; color: var(--s1p-white); }
-        .s1p-item-actions .s1p-btn.primary:hover { background-color: #2563eb; }
-        .s1p-item-actions .s1p-btn.danger { background-color: var(--s1p-red); color: var(--s1p-white); }
-        .s1p-item-actions .s1p-btn.danger:hover { background-color: var(--s1p-red-h); border-color: var(--s1p-red-h);}
+        .s1p-item-actions .s1p-btn.s1p-primary { background-color: #3b82f6; color: var(--s1p-white); }
+        .s1p-item-actions .s1p-btn.s1p-primary:hover { background-color: #2563eb; }
+        .s1p-item-actions .s1p-btn.s1p-danger { background-color: var(--s1p-red); color: var(--s1p-white); }
+        .s1p-item-actions .s1p-btn.s1p-danger:hover { background-color: var(--s1p-red-h); border-color: var(--s1p-red-h);}
 
         /* --- [NEW] 引用屏蔽占位符 (Refined Style) --- */
         .s1p-quote-placeholder {
@@ -1259,10 +1259,10 @@
         document.querySelector('.s1p-confirm-modal')?.remove();
         const modal = document.createElement('div');
         modal.className = 's1p-confirm-modal';
-        modal.innerHTML = `<div class="s1p-confirm-content"><div class="s1p-confirm-body"><div class="confirm-title">${title}</div><div class="confirm-subtitle">${subtitle}</div></div><div class="s1p-confirm-footer"><button class="s1p-confirm-btn cancel">取消</button><button class="s1p-confirm-btn confirm">${confirmText}</button></div></div>`;
+        modal.innerHTML = `<div class="s1p-confirm-content"><div class="s1p-confirm-body"><div class="s1p-confirm-title">${title}</div><div class="s1p-confirm-subtitle">${subtitle}</div></div><div class="s1p-confirm-footer"><button class="s1p-confirm-btn s1p-cancel">取消</button><button class="s1p-confirm-btn s1p-confirm">${confirmText}</button></div></div>`;
         const closeModal = () => { modal.querySelector('.s1p-confirm-content').style.animation = 's1p-scale-out 0.25s ease-out forwards'; modal.style.animation = 's1p-fade-out 0.25s ease-out forwards'; setTimeout(() => modal.remove(), 250); };
-        modal.querySelector('.confirm').addEventListener('click', () => { onConfirm(); closeModal(); });
-        modal.querySelector('.cancel').addEventListener('click', closeModal);
+        modal.querySelector('.s1p-confirm').addEventListener('click', () => { onConfirm(); closeModal(); });
+        modal.querySelector('.s1p-cancel').addEventListener('click', closeModal);
         modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
         document.body.appendChild(modal);
     };
@@ -1399,7 +1399,7 @@
                                     </div>
                                 </div>
                                 <div class="s1p-item-actions">
-                                    <button class="s1p-btn primary" data-action="save-tag-edit" data-user-id="${id}" data-user-name="${data.name}">保存</button>
+                                    <button class="s1p-btn s1p-primary" data-action="save-tag-edit" data-user-id="${id}" data-user-name="${data.name}">保存</button>
                                     <button class="s1p-btn" data-action="cancel-tag-edit">取消</button>
                                 </div>
                             </div>`;
@@ -1417,7 +1417,7 @@
                                 </div>
                                 <div class="s1p-item-actions">
                                     <button class="s1p-btn" data-action="edit-tag-item" data-user-id="${id}">编辑</button>
-                                    <button class="s1p-btn danger" data-action="delete-tag-item" data-user-id="${id}" data-user-name="${data.name}">删除</button>
+                                    <button class="s1p-btn s1p-danger" data-action="delete-tag-item" data-user-id="${id}" data-user-name="${data.name}">删除</button>
                                 </div>
                             </div>`;
                         }
@@ -1469,7 +1469,7 @@
                     ? `<div class="s1p-empty">暂无屏蔽的用户</div>`
                     : `<div class="s1p-list">${userItemIds.map(id => {
                         const item = blockedUsers[id];
-                        return `<div class="s1p-item" data-user-id="${id}"><div class="s1p-item-info"><div class="s1p-item-title">${item.name || `用户 #${id}`}</div><div class="s1p-item-meta">屏蔽时间: ${formatDate(item.timestamp)}</div><div class="s1p-item-toggle"><label class="s1p-switch"><input type="checkbox" class="user-thread-block-toggle" data-user-id="${id}" ${item.blockThreads ? 'checked' : ''}><span class="s1p-slider"></span></label><span>屏蔽该用户的主题帖</span></div></div><button class="s1p-unblock-btn s1p-btn" data-unblock-user-id="${id}">取消屏蔽</button></div>`;
+                        return `<div class="s1p-item" data-user-id="${id}"><div class="s1p-item-info"><div class="s1p-item-title">${item.name || `用户 #${id}`}</div><div class="s1p-item-meta">屏蔽时间: ${formatDate(item.timestamp)}</div><div class="s1p-item-toggle"><label class="s1p-switch"><input type="checkbox" class="s1p-user-thread-block-toggle" data-user-id="${id}" ${item.blockThreads ? 'checked' : ''}><span class="s1p-slider"></span></label><span>屏蔽该用户的主题帖</span></div></div><button class="s1p-unblock-btn s1p-btn" data-unblock-user-id="${id}">取消屏蔽</button></div>`;
                     }).join('')}</div>`
                 }
             `;
@@ -1565,10 +1565,10 @@
                 if (!container) return; // Exit if content is not rendered
                 container.innerHTML = rules.map(rule => `
                     <div class="s1p-editor-item" data-rule-id="${rule.id}">
-                        <label class="s1p-switch"><input type="checkbox" class="s1p-settings-checkbox keyword-rule-enable" ${rule.enabled ? 'checked' : ''}><span class="s1p-slider"></span></label>
-                        <input type="text" class="keyword-rule-pattern" placeholder="输入关键字或正则表达式" value="${rule.pattern || ''}">
+                        <label class="s1p-switch"><input type="checkbox" class="s1p-settings-checkbox s1p-keyword-rule-enable" ${rule.enabled ? 'checked' : ''}><span class="s1p-slider"></span></label>
+                        <input type="text" class="s1p-keyword-rule-pattern" placeholder="输入关键字或正则表达式" value="${rule.pattern || ''}">
                         <div class="s1p-editor-item-controls">
-                            <button class="s1p-editor-btn keyword-rule-delete" title="删除规则"></button>
+                            <button class="s1p-editor-btn s1p-keyword-rule-delete" title="删除规则"></button>
                         </div>
                     </div>
                 `).join('');
@@ -1583,7 +1583,7 @@
             const saveAndApplyKeywordRules = () => {
                 const newRules = [];
                 tabs['threads'].querySelectorAll('#s1p-keyword-rules-list .s1p-editor-item').forEach(item => {
-                    const pattern = item.querySelector('.keyword-rule-pattern').value.trim();
+                    const pattern = item.querySelector('.s1p-keyword-rule-pattern').value.trim();
                     if (pattern) {
                         let id = item.dataset.ruleId;
                         if (id.startsWith('new_')) {
@@ -1591,7 +1591,7 @@
                         }
                         newRules.push({
                             id: id,
-                            enabled: item.querySelector('.keyword-rule-enable').checked,
+                            enabled: item.querySelector('.s1p-keyword-rule-enable').checked,
                             pattern: pattern
                         });
                     }
@@ -1634,15 +1634,15 @@
                     newItem.className = 's1p-editor-item';
                     newItem.dataset.ruleId = `new_${Date.now()}`;
                     newItem.innerHTML = `
-                        <label class="s1p-switch"><input type="checkbox" class="s1p-settings-checkbox keyword-rule-enable" checked><span class="s1p-slider"></span></label>
-                        <input type="text" class="keyword-rule-pattern" placeholder="输入关键字或正则表达式" value="">
+                        <label class="s1p-switch"><input type="checkbox" class="s1p-settings-checkbox s1p-keyword-rule-enable" checked><span class="s1p-slider"></span></label>
+                        <input type="text" class="s1p-keyword-rule-pattern" placeholder="输入关键字或正则表达式" value="">
                         <div class="s1p-editor-item-controls">
-                            <button class="s1p-editor-btn keyword-rule-delete" title="删除规则"></button>
+                            <button class="s1p-editor-btn s1p-keyword-rule-delete" title="删除规则"></button>
                         </div>
                     `;
                     container.appendChild(newItem);
                     newItem.querySelector('input[type="text"]').focus();
-                } else if (target.classList.contains('keyword-rule-delete')) {
+                } else if (target.classList.contains('s1p-keyword-rule-delete')) {
                     const item = target.closest('.s1p-editor-item');
                     item.remove();
                     const container = tabs['threads'].querySelector('#s1p-keyword-rules-list');
@@ -1685,7 +1685,7 @@
                     </div>
                     <div class="s1p-settings-item">
                         <label class="s1p-settings-label" for="s1p-customTitleSuffix">自定义标题后缀</label>
-                        <input type="text" id="s1p-customTitleSuffix" class="title-suffix-input" data-setting="customTitleSuffix" value="${settings.customTitleSuffix || ''}" style="width: 200px;">
+                        <input type="text" id="s1p-customTitleSuffix" class="s1p-title-suffix-input" data-setting="customTitleSuffix" value="${settings.customTitleSuffix || ''}" style="width: 200px;">
                     </div>
                 </div>`;
 
@@ -1737,8 +1737,8 @@
                 navListContainer.innerHTML = (links || []).map((link, index) => `
                     <div class="s1p-editor-item" draggable="true" data-index="${index}" style="grid-template-columns: auto 1fr 1fr auto; user-select: none;">
                         <div class="s1p-drag-handle">::</div>
-                        <input type="text" class="nav-name" placeholder="名称" value="${link.name || ''}">
-                        <input type="text" class="nav-href" placeholder="链接" value="${link.href || ''}">
+                        <input type="text" class="s1p-nav-name" placeholder="名称" value="${link.name || ''}">
+                        <input type="text" class="s1p-nav-href" placeholder="链接" value="${link.href || ''}">
                         <div class="s1p-editor-item-controls"><button class="s1p-editor-btn" data-action="delete" title="删除链接"></button></div>
                     </div>`).join('');
             };
@@ -1750,14 +1750,14 @@
                 if (e.target.classList.contains('s1p-editor-item')) {
                     draggedItem = e.target;
                     setTimeout(() => {
-                        e.target.classList.add('dragging');
+                        e.target.classList.add('s1p-dragging');
                     }, 0);
                 }
             });
 
             navListContainer.addEventListener('dragend', e => {
                 if (draggedItem) {
-                    draggedItem.classList.remove('dragging');
+                    draggedItem.classList.remove('s1p-dragging');
                     draggedItem = null;
                 }
             });
@@ -1767,7 +1767,7 @@
                 if (!draggedItem) return;
 
                 const container = e.currentTarget;
-                const otherItems = [...container.querySelectorAll('.s1p-editor-item:not(.dragging)')];
+                const otherItems = [...container.querySelectorAll('.s1p-editor-item:not(.s1p-dragging)')];
 
                 const nextSibling = otherItems.find(item => {
                     const rect = item.getBoundingClientRect();
@@ -1787,7 +1787,7 @@
                     const newItem = document.createElement('div');
                     newItem.className = 's1p-editor-item'; newItem.draggable = true;
                     newItem.style.gridTemplateColumns = 'auto 1fr 1fr auto';
-                    newItem.innerHTML = `<div class="s1p-drag-handle">::</div><input type="text" class="nav-name" placeholder="新链接"><input type="text" class="nav-href" placeholder="forum.php"><div class="s1p-editor-item-controls"><button class="s1p-editor-btn" data-action="delete" title="删除链接"></button></div>`;
+                    newItem.innerHTML = `<div class="s1p-drag-handle">::</div><input type="text" class="s1p-nav-name" placeholder="新链接"><input type="text" class="s1p-nav-href" placeholder="forum.php"><div class="s1p-editor-item-controls"><button class="s1p-editor-btn" data-action="delete" title="删除链接"></button></div>`;
                     navListContainer.appendChild(newItem);
                 } else if (target.dataset.action === 'delete') {
                     target.closest('.s1p-editor-item').remove();
@@ -1804,7 +1804,7 @@
                     const newSettings = {
                         ...getSettings(),
                         enableNavCustomization: tabs['nav-settings'].querySelector('#s1p-enableNavCustomization').checked,
-                        customNavLinks: Array.from(navListContainer.querySelectorAll('.s1p-editor-item')).map(item => ({ name: item.querySelector('.nav-name').value.trim(), href: item.querySelector('.nav-href').value.trim() })).filter(l=>l.name && l.href)
+                        customNavLinks: Array.from(navListContainer.querySelectorAll('.s1p-editor-item')).map(item => ({ name: item.querySelector('.s1p-nav-name').value.trim(), href: item.querySelector('.s1p-nav-href').value.trim() })).filter(l=>l.name && l.href)
                     };
                     saveSettings(newSettings);
                     applyInterfaceCustomizations();
@@ -1855,7 +1855,7 @@
                 }
                 return;
             }
-            else if(target.matches('.user-thread-block-toggle')) {
+            else if(target.matches('.s1p-user-thread-block-toggle')) {
                 const userId = target.dataset.userId;
                 const blockThreads = target.checked;
                 const users = getBlockedUsers();
@@ -2062,11 +2062,11 @@
             separator.className = 's1p-confirm-separator';
             
             const cancelBtn = document.createElement('button');
-            cancelBtn.className = 's1p-confirm-action-btn cancel';
+            cancelBtn.className = 's1p-confirm-action-btn s1p-cancel';
             cancelBtn.title = '取消';
 
             const confirmBtn = document.createElement('button');
-            confirmBtn.className = 's1p-confirm-action-btn confirm';
+            confirmBtn.className = 's1p-confirm-action-btn s1p-confirm';
             confirmBtn.title = '确认屏蔽';
 
             // --- [最终修复] 为取消按钮添加事件监听 ---
@@ -2520,7 +2520,7 @@
         menu.className = 's1p-tag-options-menu';
         menu.innerHTML = `
             <button data-action="edit">编辑标记</button>
-            <button data-action="delete" class="delete">删除标记</button>
+            <button data-action="delete" class="s1p-delete">删除标记</button>
         `;
 
         document.body.appendChild(menu);
