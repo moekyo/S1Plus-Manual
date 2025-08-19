@@ -2506,7 +2506,7 @@
 
         const rect = anchorElement.getBoundingClientRect();
         menu.style.top = `${rect.bottom + window.scrollY + 2}px`;
-        menu.style.left = `${rect.right + window.scrollX - menu.offsetWidth}px`; // Added +10px offset
+        menu.style.left = `${rect.right + window.scrollX - menu.offsetWidth}px`;
 
         const closeMenu = () => menu.remove();
 
