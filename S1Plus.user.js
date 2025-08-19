@@ -119,12 +119,14 @@
             border-radius: 4px;
             cursor: pointer;
             color: var(--s1p-icon-color);
-            transition: background-color 0.2s ease, color 0.2s ease;
+            opacity: 0.4; /* <<< 新增：默认状态为40%透明度 */
+            transition: background-color 0.2s ease, color 0.2s ease, opacity 0.2s ease; /* <<< 修改：为透明度增加过渡动画 */
         }
 
         .s1p-options-cell:hover .s1p-options-btn {
             background-color: var(--s1p-pri);
             color: var(--s1p-t);
+            opacity: 1; /* <<< 新增：悬停时恢复为100%不透明 */
         }
 
         /* --- [MODIFIED] 帖子操作弹出菜单 --- */
