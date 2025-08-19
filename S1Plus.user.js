@@ -2030,14 +2030,13 @@
             const optionsMenu = document.createElement('div');
             optionsMenu.className = 's1p-options-menu';
 
-            // --- [NEW] 创建直接确认UI ---
+            // --- 创建直接确认UI ---
             const directConfirmContainer = document.createElement('div');
             directConfirmContainer.className = 's1p-direct-confirm';
 
             const confirmText = document.createElement('span');
             confirmText.textContent = '屏蔽该帖子吗？';
             
-            // --- [新增] 创建分割线元素 ---
             const separator = document.createElement('span');
             separator.className = 's1p-confirm-separator';
             
@@ -2049,9 +2048,32 @@
             confirmBtn.className = 's1p-confirm-action-btn confirm';
             confirmBtn.title = '确认屏蔽';
 
+            // --- [最终修复] 为取消按钮添加事件监听 ---
+            cancelBtn.addEventListener('click', e => {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                const parentCell = e.currentTarget.closest('.s1p-options-cell');
+                if (parentCell) {
+                    // 步骤1：立即用JS强制隐藏，确保视觉上消失
+                    optionsMenu.style.visibility = 'hidden';
+                    optionsMenu.style.opacity = '0';
+                    
+                    // 步骤2：立即禁用鼠标事件，强制:hover状态重置
+                    parentCell.style.pointerEvents = 'none';
+
+                    // 步骤3：在动画结束后，清除所有临时添加的样式，让组件恢复原状
+                    setTimeout(() => {
+                        optionsMenu.style.removeProperty('visibility');
+                        optionsMenu.style.removeProperty('opacity');
+                        parentCell.style.removeProperty('pointer-events');
+                    }, 200);
+                }
+            });
+
             // 组装直接确认UI
             directConfirmContainer.appendChild(confirmText);
-            directConfirmContainer.appendChild(separator); // <-- 将分割线添加到文本之后
+            directConfirmContainer.appendChild(separator); 
             directConfirmContainer.appendChild(cancelBtn);
             directConfirmContainer.appendChild(confirmBtn);
 
@@ -2065,7 +2087,7 @@
             // 6. 将新的操作单元格插入到行首
             tr.prepend(optionsCell);
 
-            // --- 7. 事件监听 ---
+            // --- 事件监听 ---
             confirmBtn.addEventListener('click', e => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -2484,7 +2506,7 @@
 
         const rect = anchorElement.getBoundingClientRect();
         menu.style.top = `${rect.bottom + window.scrollY + 2}px`;
-        menu.style.left = `${rect.right + window.scrollX - menu.offsetWidth + 10}px`; // Added +10px offset
+        menu.style.left = `${rect.right + window.scrollX - menu.offsetWidth}px`; // Added +10px offset
 
         const closeMenu = () => menu.remove();
 
