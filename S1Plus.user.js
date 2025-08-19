@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      4.5.0
+// @version      4.5.1
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪等多种功能，全方位优化你的论坛体验。
 // @author       moekyo
 // @match        https://stage1st.com/2b/*
@@ -16,39 +16,61 @@
     'use strict';
 
 
-    const SCRIPT_VERSION = '4.5.0';
+    const SCRIPT_VERSION = '4.5.1';
     const SCRIPT_RELEASE_DATE = '2025-08-19';
 
     // --- 样式注入 ---
     GM_addStyle(`
         /* --- 通用颜色 --- */
         :root {
+            /* -- 基础调色板 -- */
             --s1p-bg: #ECEDEB;
+            --s1p-pri: #D1D9C1;
+            --s1p-sub: #e9ebe8;
+            --s1p-input-bg: #d1d5db;
+            --s1p-white: #ffffff;
+            --s1p-black-rgb: 0, 0, 0;
+
+            /* -- 主题色 -- */
             --s1p-t: #022C80;
             --s1p-desc-t: #10388a;
-            --s1p-pri: #D1D9C1;
             --s1p-sec: #2563eb;
             --s1p-sec-h: #306bebff;
+            --s1p-sub-h: #2563eb;
+            --s1p-sub-h-t: var(--s1p-white);
+
+            /* -- 状态色 -- */
             --s1p-red: #ef4444;
             --s1p-red-h: #dc2626;
-            --s1p-input-bg: #d1d5db;
-            --s1p-sub: #e9ebe8;
-            --s1p-sub-h: #2563eb;
-            --s1p-sub-h-t: white;
+            --s1p-success-bg: #d1fae5;
+            --s1p-success-text: #065f46;
+            --s1p-error-bg: #fee2e2;
+
+            /* -- 组件专属 -- */
+            --s1p-text-empty: #888;
+            --s1p-icon-color: #a1a1aa;
+            --s1p-icon-close: #9ca3af;
+            --s1p-icon-arrow: #6b7280;
+            --s1p-confirm-hover-bg: #e0f2e9;
+            --s1p-cancel-hover-bg: #fee2e2;
+            --s1p-secondary-bg: #e5e7eb;
+            --s1p-secondary-text: #374151;
+            --s1p-secondary-hover-bg: #d1d5db;
+            --s1p-code-bg: #eee;
+
+            /* -- 阅读进度 -- */
+            --s1p-progress-hot: rgb(192, 51, 34);
+            --s1p-progress-cold: rgb(107, 114, 128);
         }
 
         /* --- 核心修复：禁用论坛自带的用户信息悬浮窗 --- */
         #p_pop { display: none !important; }
 
         /* --- [FIX] 核心修复：解决主题帖作者栏布局与点击问题 --- */
-        /* 1. 为 .pi 创建BFC，强制其包裹内部浮动的“电梯直达”元素，防止高度塌陷。*/
         .pi { overflow: hidden; }
-        /* 2. 为 .pti 赋予新的堆叠上下文(z-index)和不透明背景，确保它显示在任何同级元素之上，
-           并彻底修正因布局错位导致的链接垂直点击范围偏移、变小的问题。*/
         .pi > .pti { position: relative; z-index: 1; }
 
         /* --- [FIX] 修正 .pti 背景遮挡“电梯直达”和“楼主”链接的问题 --- */
-        /* 通过提升这两个元素的堆叠顺序，确保它们显示在 .pti 背景之上 */
         .pi > #fj,
         .pi > strong {
             position: relative;
@@ -62,31 +84,29 @@
 
 
         /* --- 关键字屏蔽样式 --- */
-
         .s1p-hidden-by-keyword, .s1p-hidden-by-quote { display: none !important; }
 
         /* --- 按钮通用样式 --- */
         .s1p-btn { display: inline-flex; align-items: center; justify-content: center; padding: 5px 10px 5px 12px; border-radius: 4px; background-color: var(--s1p-sub); color: var(--s1p-t); font-size: 14px; font-weight: bold; cursor: pointer; user-select: none; white-space: nowrap; border: 1px solid var(--s1p-pri); transition: all 0.2s ease-in-out;}
-        .s1p-btn:hover { background-color: var(--s1p-sub-h); color: white; border-color: var(--s1p-sub-h); }
-        .s1p-red-btn { background-color: var(--s1p-red); color: white; border-color: var(--s1p-red); }
+        .s1p-btn:hover { background-color: var(--s1p-sub-h); color: var(--s1p-sub-h-t); border-color: var(--s1p-sub-h); }
+        .s1p-red-btn { background-color: var(--s1p-red); color: var(--s1p-white); border-color: var(--s1p-red); }
         .s1p-red-btn:hover { background-color: var(--s1p-red-h); border-color: var(--s1p-red-h); }
         
         /* --- [MODIFIED] 帖子操作按钮 (三点图标) --- */
         .s1p-options-cell {
             position: relative;
-            width: 14px; /* 设定一个紧凑的固定宽度 */
+            width: 14px;
             padding: 0 !important;
             text-align: center;
             vertical-align: middle;
         }
         
-        /* --- [修正代码] 在这里添加一个透明的“桥梁”来连接菜单 --- */
         .s1p-options-cell::after {
             content: '';
             position: absolute;
             top: 0;
             left: 100%;
-            width: 8px; /* 桥梁的宽度，与菜单的间距相同 */
+            width: 6px;
             height: 100%;
         }
 
@@ -94,16 +114,16 @@
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            width: 18px;  /* 按钮变窄 */
-            height: 24px; /* 按钮变高 */
-            border-radius: 4px; /* 直接设为圆角矩形 */
+            width: 18px;
+            height: 24px;
+            border-radius: 4px;
             cursor: pointer;
-            color: #a1a1aa; /* zinc-400 */
+            color: var(--s1p-icon-color);
             transition: background-color 0.2s ease, color 0.2s ease;
         }
 
         .s1p-options-cell:hover .s1p-options-btn {
-            background-color: var(--s1p-pri); /* 恢复原来的悬浮颜色 */
+            background-color: var(--s1p-pri);
             color: var(--s1p-t);
         }
 
@@ -112,13 +132,13 @@
             position: absolute;
             top: 50%;
             left: 100%;
-            margin-left: 8px;
+            margin-left: 6px;
             transform: translateY(-50%);
             z-index: 10;
             background-color: var(--s1p-bg);
             border: 1px solid var(--s1p-pri);
             border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            box-shadow: 0 4px 12px rgba(var(--s1p-black-rgb), 0.1);
             padding: 5px;
             min-width: 110px;
             opacity: 0;
@@ -145,7 +165,6 @@
             white-space: nowrap;
         }
         
-        /* --- [新增] 分割线样式 --- */
         .s1p-confirm-separator {
             border-left: 1px solid var(--s1p-pri);
             height: 20px;
@@ -169,14 +188,14 @@
             background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='2.5' stroke='%2322c55e'%3e%3cpath stroke-linecap='round' stroke-linejoin='round' d='M4.5 12.75l6 6 9-13.5' /%3e%3c/svg%3e");
         }
         .s1p-confirm-action-btn.confirm:hover {
-            background-color: #e0f2e9; /* A light green */
+            background-color: var(--s1p-confirm-hover-bg);
         }
         .s1p-confirm-action-btn.cancel {
             background-color: transparent;
             background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='2.5' stroke='%23ef4444'%3e%3cpath stroke-linecap='round' stroke-linejoin='round' d='M6 18L18 6M6 6l12 12' /%3e%3c/svg%3e");
         }
         .s1p-confirm-action-btn.cancel:hover {
-            background-color: #fee2e2; /* A light red */
+            background-color: var(--s1p-cancel-hover-bg);
         }
 
         /* [MODIFIED] 阅读进度UI样式 */
@@ -194,7 +213,7 @@
             font-size: 12px;
             font-weight: bold;
             text-decoration: none;
-            border: 1px solid; /* Color will be set by JS */
+            border: 1px solid;
             border-radius: 4px;
             padding: 1px 6px 1px 4px;
             transition: all 0.2s ease-in-out;
@@ -213,11 +232,11 @@
         }
         .s1p-new-replies-badge {
             display: inline-block;
-            color: white;
+            color: var(--s1p-white);
             font-size: 12px;
             font-weight: bold;
             padding: 1px 5px;
-            border: 1px solid; /* Color will be set by JS */
+            border: 1px solid;
             border-left: none;
             border-radius: 0 4px 4px 0;
             line-height: 1.4;
@@ -226,7 +245,7 @@
 
         /* --- 文本框基础样式 --- */
         .s1p-textarea {
-            background: var(--s1p-input);
+            background: var(--s1p-input-bg);
             border: 1px solid var(--s1p-pri);
             border-radius: 8px;
             padding: 8px;
@@ -242,7 +261,7 @@
             width: 300px;
             background-color: var(--s1p-bg);
             border-radius: 12px;
-            box-shadow: 0 4px 20px #00000014;
+            box-shadow: 0 4px 20px rgba(var(--s1p-black-rgb), 0.08);
             border: 1px solid var(--s1p-pri);
             opacity: 0;
             visibility: hidden;
@@ -271,7 +290,7 @@
         }
         .s1p-popover-main-content.empty {
             text-align: center;
-            color: #888;
+            color: var(--s1p-text-empty);
         }
         .s1p-popover-hr {
             border: none;
@@ -343,7 +362,7 @@
             max-width: 350px;
             background-color: var(--s1p-bg);
             border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.12);
+            box-shadow: 0 2px 10px rgba(var(--s1p-black-rgb), 0.12);
             border: 1px solid var(--s1p-pri);
             padding: 10px 14px;
             font-size: 13px;
@@ -389,7 +408,7 @@
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
-            cursor: default; /* [FIX] Change cursor to default as it's not a link */
+            cursor: default;
         }
         .s1p-user-tag-options {
             display: flex;
@@ -397,9 +416,9 @@
             justify-content: center;
             background-color: var(--s1p-sub);
             color: var(--s1p-t);
-            font-size: 14px; /* 稍微增大字体 */
-            font-weight: bold; /* 加粗字体 */
-            padding: 0 8px; /* 增加左右内边距 */
+            font-size: 14px;
+            font-weight: bold;
+            padding: 0 8px;
             flex-shrink: 0;
             align-self: stretch;
             cursor: pointer;
@@ -415,7 +434,7 @@
             z-index: 10002;
             background-color: var(--s1p-bg);
             border-radius: 6px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            box-shadow: 0 2px 8px rgba(var(--s1p-black-rgb), 0.15);
             border: 1px solid var(--s1p-pri);
             padding: 4px;
             display: flex;
@@ -440,19 +459,19 @@
         }
         .s1p-tag-options-menu button.delete:hover {
             background-color: var(--s1p-red);
-            color: white;
+            color: var(--s1p-white);
         }
 
         /* --- 设置面板样式 --- */
-        .s1p-modal { display: flex; position: fixed; top: 0; left: 0; width: 100%; height: 100%;  background-color: rgba(0, 0, 0, 0.5); justify-content: center; align-items: center; z-index: 9999; }
-        .s1p-modal-content { background-color: var(--s1p-bg); border-radius: 8px; box-shadow: 0 4px 6px #0000001a; width: 600px; max-width: 90%; max-height: 80vh; overflow: hidden; display: flex; flex-direction: column; }
+        .s1p-modal { display: flex; position: fixed; top: 0; left: 0; width: 100%; height: 100%;  background-color: rgba(var(--s1p-black-rgb), 0.5); justify-content: center; align-items: center; z-index: 9999; }
+        .s1p-modal-content { background-color: var(--s1p-bg); border-radius: 8px; box-shadow: 0 4px 6px rgba(var(--s1p-black-rgb), 0.1); width: 600px; max-width: 90%; max-height: 80vh; overflow: hidden; display: flex; flex-direction: column; }
         .s1p-modal-header { background: var(--s1p-pri) ;padding: 16px; border-bottom: 1px solid var(--s1p-pri); display: flex; justify-content: space-between; align-items: center; }
         .s1p-modal-title { font-size: 18px; font-weight: bold; }
         .s1p-modal-close {
             width: 12px;
             height: 12px;
             cursor: pointer;
-            color: #9ca3af;
+            color: var(--s1p-icon-close);
             background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2 2L14 14M14 2L2 14' stroke='currentColor' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E");
             background-repeat: no-repeat;
             background-position: center;
@@ -485,22 +504,22 @@
         .s1p-sync-buttons { display: flex; gap: 8px; margin-bottom: 16px; }
         .s1p-sync-textarea { width: 100%; min-height: 80px; margin-bottom: 20px;}
         .s1p-message { font-size: 14px; margin-top: 8px; padding: 8px; border-radius: 4px; display:none; text-align: center; }
-        .s1p-message.success { background-color: #d1fae5; color: #065f46; }
-        .s1p-message.error { background-color: #fee2e2; color: var(--s1p-red); }
+        .s1p-message.success { background-color: var(--s1p-success-bg); color: var(--s1p-success-text); }
+        .s1p-message.error { background-color: var(--s1p-error-bg); color: var(--s1p-red); }
 
         /* --- 确认弹窗样式 --- */
         @keyframes s1p-fade-in { from { opacity: 0; } to { opacity: 1; } } @keyframes s1p-scale-in { from { transform: scale(0.95); opacity: 0; } to { transform: scale(1); opacity: 1; } } @keyframes s1p-fade-out { from { opacity: 1; } to { opacity: 0; } } @keyframes s1p-scale-out { from { transform: scale(1); opacity: 1; } to { transform: scale(0.97); opacity: 0; } }
-        .s1p-confirm-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.65); display: flex; justify-content: center; align-items: center; z-index: 10000; animation: s1p-fade-in 0.2s ease-out; }
-        .s1p-confirm-content { background-color: var(--s1p-bg); border-radius: 12px; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04); width: 420px; max-width: 90%; text-align: left; overflow: hidden; animation: s1p-scale-in 0.25s ease-out; }
+        .s1p-confirm-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(var(--s1p-black-rgb), 0.65); display: flex; justify-content: center; align-items: center; z-index: 10000; animation: s1p-fade-in 0.2s ease-out; }
+        .s1p-confirm-content { background-color: var(--s1p-bg); border-radius: 12px; box-shadow: 0 10px 25px -5px rgba(var(--s1p-black-rgb), 0.1), 0 10px 10px -5px rgba(var(--s1p-black-rgb), 0.04); width: 420px; max-width: 90%; text-align: left; overflow: hidden; animation: s1p-scale-in 0.25s ease-out; }
         .s1p-confirm-body { padding: 20px 24px; font-size: 16px; line-height: 1.6; }
         .s1p-confirm-body .confirm-title { font-weight: 600; font-size: 18px; margin-bottom: 8px; }
         .s1p-confirm-body .confirm-subtitle { font-size: 14px; color: var(--s1p-desc-t); }
         .s1p-confirm-footer { padding: 12px 16px; display: flex; justify-content: flex-end; gap: 12px; }
-        .s1p-confirm-btn { padding: 9px 18px; border-radius: 6px; font-size: 14px; font-weight: 500; cursor: pointer; border: 1px solid transparent; transition: all 0.15s ease-in-out; box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05); }
+        .s1p-confirm-btn { padding: 9px 18px; border-radius: 6px; font-size: 14px; font-weight: 500; cursor: pointer; border: 1px solid transparent; transition: all 0.15s ease-in-out; box-shadow: 0 1px 2px 0 rgba(var(--s1p-black-rgb), 0.05); }
         .s1p-confirm-btn:active { transform: translateY(1px); }
         .s1p-confirm-btn.cancel { background-color: var(--s1p-sub); border-color: var(--s1p-pri); }
         .s1p-confirm-btn.cancel:hover { border-color: var(--s1p-t); }
-        .s1p-confirm-btn.confirm { background-color: var(--s1p-red); color: white; border-color: var(--s1p-red); }
+        .s1p-confirm-btn.confirm { background-color: var(--s1p-red); color: var(--s1p-white); border-color: var(--s1p-red); }
         .s1p-confirm-btn.confirm:hover { background-color: var(--s1p-red-h); border-color: var(--s1p-red-h); }
 
         /* --- Collapsible Section --- */
@@ -509,7 +528,7 @@
         .s1p-collapsible-header:hover { color: var(--s1p-sec); }
         .s1p-collapsible-header:hover .s1p-expander-arrow { color: var(--s1p-sec); }
         .s1p-expander-arrow {
-            display: inline-block; width: 12px; height: 12px; color: #6b7280;
+            display: inline-block; width: 12px; height: 12px; color: var(--s1p-icon-arrow);
             background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 16'%3E%3Cpath d='M2 2L8 8L2 14' stroke='currentColor' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E");
             background-repeat: no-repeat; background-position: center; background-size: contain; transition: transform 0.3s ease-in-out, color 0.2s ease;
         }
@@ -553,7 +572,7 @@
         .s1p-editor-item input[type="text"] { background: var(--s1p-bg);  width: 100%; border: 1px solid var(--s1p-pri); border-radius: 4px; padding: 6px 8px; font-size: 14px; box-sizing: border-box; }
         .s1p-editor-item-controls { display: flex; align-items: center; gap: 4px; }
         .s1p-editor-btn { padding: 4px; font-size: 18px; line-height: 1; cursor: pointer; border-radius: 4px; border:none; background: transparent; color: #9ca3af; }
-        .s1p-editor-btn:hover { background: #e5e7eb; color: #374151; }
+        .s1p-editor-btn:hover { background: var(--s1p-secondary-bg); color: var(--s1p-secondary-text); }
         .s1p-editor-btn.keyword-rule-delete,
         .s1p-editor-btn[data-action="delete"] {
             font-size: 0;
@@ -575,16 +594,16 @@
         .s1p-drag-handle { font-size: 18pt; cursor: grab; }
         .s1p-editor-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; }
         .s1p-settings-action-btn { display: inline-block; padding: 10px 20px; border-radius: 6px; font-size: 14px; font-weight: 500; cursor: pointer; transition: background-color 0.2s; border: none; }
-        .s1p-settings-action-btn.primary { background-color: var(--s1p-sec); color: white; }
+        .s1p-settings-action-btn.primary { background-color: var(--s1p-sec); color: var(--s1p-white); }
         .s1p-settings-action-btn.primary:hover { background-color: var(--s1p-sec-h); }
-        .s1p-settings-action-btn.secondary { background-color: #e5e7eb; color: #374151; }
-        .s1p-settings-action-btn.secondary:hover { background-color: #d1d5db; }
+        .s1p-settings-action-btn.secondary { background-color: var(--s1p-secondary-bg); color: var(--s1p-secondary-text); }
+        .s1p-settings-action-btn.secondary:hover { background-color: var(--s1p-secondary-hover-bg); }
 
         /* --- Modern Toggle Switch --- */
         .s1p-switch { position: relative; display: inline-block; width: 40px; height: 22px; vertical-align: middle; flex-shrink: 0; }
         .s1p-switch input { opacity: 0; width: 0; height: 0; }
         .s1p-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: var(--s1p-pri); transition: .3s; border-radius: 22px; }
-        .s1p-slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px; background-color: white; transition: .3s; border-radius: 50%; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .s1p-slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px; background-color: var(--s1p-white); transition: .3s; border-radius: 50%; box-shadow: 0 1px 3px rgba(var(--s1p-black-rgb), 0.1); }
         input:checked + .s1p-slider { background-color: var(--s1p-sec); }
         input:checked + .s1p-slider:before { transform: translateX(18px); }
 
@@ -596,9 +615,9 @@
         .s1p-item-content { margin-top: 8px; color: var(--s1p-desc-t); line-height: 1.6; white-space: pre-wrap; word-break: break-all; }
         .s1p-item-editor textarea { width: 100%; min-height: 60px; margin-top: 8px; }
         .s1p-item-actions { display: flex; align-self: flex-start; flex-shrink: 0; gap: 8px; margin-left: 16px; }
-        .s1p-item-actions .s1p-btn.primary { background-color: #3b82f6; color: white; }
+        .s1p-item-actions .s1p-btn.primary { background-color: #3b82f6; color: var(--s1p-white); }
         .s1p-item-actions .s1p-btn.primary:hover { background-color: #2563eb; }
-        .s1p-item-actions .s1p-btn.danger { background-color: var(--s1p-red); color: white; }
+        .s1p-item-actions .s1p-btn.danger { background-color: var(--s1p-red); color: var(--s1p-white); }
         .s1p-item-actions .s1p-btn.danger:hover { background-color: var(--s1p-red-h); border-color: var(--s1p-red-h);}
 
         /* --- [NEW] 引用屏蔽占位符 (Refined Style) --- */
@@ -1531,7 +1550,7 @@
                         <div class="s1p-item" data-thread-id="${id}">
                             <div class="s1p-item-info">
                                 <div class="s1p-item-title" title="${item.title}">${item.title}</div>
-                                <div class="s1p-item-meta">匹配规则: <code style="background: #eee; padding: 2px 4px; border-radius: 3px;">${item.pattern}</code></div>
+                                <div class="s1p-item-meta">匹配规则: <code style="background: var(--s1p-code-bg); padding: 2px 4px; border-radius: 3px;">${item.pattern}</code></div>
                             </div>
                         </div>
                     `).join('')}</div>`;
@@ -2288,10 +2307,10 @@
 
 
     const getTimeBasedColor = (hours) => {
-        if (hours <= 1) return 'rgb(192, 51, 34)';
+        if (hours <= 1) return 'var(--s1p-progress-hot)';
         if (hours <= 24) return `rgb(${Math.round(192 - hours * 4)}, ${Math.round(51 + hours * 2)}, ${Math.round(34 + hours * 2)})`;
         if (hours <= 168) return `rgb(${Math.round(100 - (hours-24)/3)}, ${Math.round(100 + (hours-24)/4)}, ${Math.round(80 + (hours-24)/4)})`;
-        return 'rgb(107, 114, 128)';
+        return 'var(--s1p-progress-cold)';
     };
 
     const addProgressJumpButtons = () => {
@@ -2350,7 +2369,7 @@
 
                 jumpBtn.addEventListener('mouseover', () => {
                     jumpBtn.style.backgroundColor = fcolor;
-                    jumpBtn.style.color = 'white';
+                    jumpBtn.style.color = 'var(--s1p-white)';
                 });
                 jumpBtn.addEventListener('mouseout', () => {
                     jumpBtn.style.backgroundColor = 'transparent';
