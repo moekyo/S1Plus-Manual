@@ -1311,18 +1311,18 @@
             <div class="s1p-modal-header"><div class="s1p-modal-title">S1 Plus 设置</div><div class="s1p-modal-close"></div></div>
             <div class="s1p-modal-body">
                 <div class="s1p-tabs">
-                    <button class="s1p-tab-btn active" data-tab="threads">帖子屏蔽</button>
+                    <button class="s1p-tab-btn active" data-tab="general-settings">通用设置</button>
+                    <button class="s1p-tab-btn" data-tab="threads">帖子屏蔽</button>
                     <button class="s1p-tab-btn" data-tab="users">用户屏蔽</button>
                     <button class="s1p-tab-btn" data-tab="tags">用户标记</button>
                     <button class="s1p-tab-btn" data-tab="nav-settings">导航栏定制</button>
-                    <button class="s1p-tab-btn" data-tab="general-settings">通用设置</button>
                     <button class="s1p-tab-btn" data-tab="sync">设置同步</button>
                 </div>
-                <div id="s1p-tab-threads" class="s1p-tab-content active"></div>
+                <div id="s1p-tab-general-settings" class="s1p-tab-content active"></div>
+                <div id="s1p-tab-threads" class="s1p-tab-content"></div>
                 <div id="s1p-tab-users" class="s1p-tab-content"></div>
                 <div id="s1p-tab-tags" class="s1p-tab-content"></div>
                 <div id="s1p-tab-nav-settings" class="s1p-tab-content"></div>
-                <div id="s1p-tab-general-settings" class="s1p-tab-content"></div>
                 <div id="s1p-tab-sync" class="s1p-tab-content">
                     <div class="s1p-sync-title">全量设置同步</div>
                     <div class="s1p-sync-desc">通过复制/粘贴数据，在不同浏览器或设备间同步你的所有S1 Plus配置，包括屏蔽列表、导航栏、阅读进度和各项开关设置。</div>
@@ -1353,11 +1353,11 @@
         document.body.appendChild(modal);
 
         const tabs = {
+            'general-settings': modal.querySelector('#s1p-tab-general-settings'),
             'threads': modal.querySelector('#s1p-tab-threads'),
             'users': modal.querySelector('#s1p-tab-users'),
             'tags': modal.querySelector('#s1p-tab-tags'),
             'nav-settings': modal.querySelector('#s1p-tab-nav-settings'),
-            'general-settings': modal.querySelector('#s1p-tab-general-settings'),
             'sync': modal.querySelector('#s1p-tab-sync'),
         };
 
@@ -1788,7 +1788,7 @@
             const settings = getSettings();
             tabs['nav-settings'].innerHTML = `
                 <div class="s1p-settings-group">
-                    <div class="s1p-settings-item">
+                    <div class="s1p-settings-item" style="padding: 0;">
                         <label class="s1p-settings-label" for="s1p-enableNavCustomization">启用自定义导航栏</label>
                         <label class="s1p-switch"><input type="checkbox" id="s1p-enableNavCustomization" class="s1p-settings-checkbox" ${settings.enableNavCustomization ? 'checked' : ''}><span class="s1p-slider"></span></label>
                     </div>
@@ -1886,10 +1886,10 @@
         };
 
         // --- 初始化渲染和事件绑定 ---
+        renderGeneralSettingsTab();
         renderThreadTab();
         renderUserTab();
         renderTagsTab();
-        renderGeneralSettingsTab();
         renderNavSettingsTab();
 
         modal.addEventListener('change', e => {
