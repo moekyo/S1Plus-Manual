@@ -1099,6 +1099,35 @@
         });
     };
 
+    /**
+     * 点击事件处理函数，用于在新标签页打开帖子。
+     * @param {MouseEvent} e - 点击事件对象。
+     */
+    const threadLinkClickHandler = (e) => {
+        const settings = getSettings();
+        // 再次检查设置，确保功能开启
+        if (settings.openThreadsInNewTab) {
+            e.preventDefault();
+            GM_openInTab(e.currentTarget.href, { active: !settings.openThreadsInBackground });
+        }
+    };
+
+    /**
+     * 遍历帖子列表的所有标题链接，并根据用户设置应用或移除“新标签页打开”的行为。
+     */
+    const applyThreadLinkBehavior = () => {
+        const settings = getSettings();
+        document.querySelectorAll('tbody[id^="normalthread_"] th a.s.xst').forEach(link => {
+            // 先移除旧的监听器，以防重复添加或在禁用功能时清理
+            link.removeEventListener('click', threadLinkClickHandler);
+
+            // 如果功能启用，则添加新的监听器
+            if (settings.openThreadsInNewTab) {
+                link.addEventListener('click', threadLinkClickHandler);
+            }
+        });
+    };
+
     const exportData = () => JSON.stringify({
         version: 3.2,
         settings: getSettings(),
@@ -1174,6 +1203,8 @@
         enableReadProgress: true,
         openProgressInNewTab: true,
         openProgressInBackground: false,
+        openThreadsInNewTab: false,
+        openThreadsInBackground: false,
         enableNavCustomization: true,
         changeLogoLink: true,
         hideBlacklistTip: true,
@@ -1662,6 +1693,16 @@
             tabs['general-settings'].innerHTML = `
                 <div class="s1p-settings-group">
                     <div class="s1p-settings-group-title">功能开关</div>
+                    
+                    <div class="s1p-settings-item">
+                        <label class="s1p-settings-label" for="s1p-openThreadsInNewTab">在新窗口打开帖子</label>
+                        <label class="s1p-switch"><input type="checkbox" id="s1p-openThreadsInNewTab" class="s1p-settings-checkbox" data-setting="openThreadsInNewTab" ${settings.openThreadsInNewTab ? 'checked' : ''}><span class="s1p-slider"></span></label>
+                    </div>
+                    <div class="s1p-settings-item" id="s1p-openThreadsInBackground-item" style="padding-left: 20px; ${!settings.openThreadsInNewTab ? 'display: none;' : ''}">
+                        <label class="s1p-settings-label" for="s1p-openThreadsInBackground">后台打开 (不激活新标签页)</label>
+                        <label class="s1p-switch"><input type="checkbox" id="s1p-openThreadsInBackground" class="s1p-settings-checkbox" data-setting="openThreadsInBackground" ${settings.openThreadsInBackground ? 'checked' : ''}><span class="s1p-slider"></span></label>
+                    </div>
+
                      <div class="s1p-settings-item">
                         <label class="s1p-settings-label" for="s1p-enableReadProgress">启用阅读进度跟踪</label>
                         <label class="s1p-switch"><input type="checkbox" id="s1p-enableReadProgress" data-feature="enableReadProgress" class="s1p-feature-toggle" ${settings.enableReadProgress ? 'checked' : ''}><span class="s1p-slider"></span></label>
@@ -1698,9 +1739,14 @@
             // 为“在新窗口打开”开关添加事件，以控制“后台打开”的可见性
             const openInNewTabCheckbox = tabs['general-settings'].querySelector('#s1p-openProgressInNewTab');
             const openInBackgroundItem = tabs['general-settings'].querySelector('#s1p-openProgressInBackground-item');
+            const openThreadsInNewTabCheckbox = tabs['general-settings'].querySelector('#s1p-openThreadsInNewTab');
+            const openThreadsInBackgroundItem = tabs['general-settings'].querySelector('#s1p-openThreadsInBackground-item');
 
             openInNewTabCheckbox.addEventListener('change', (e) => {
                 openInBackgroundItem.style.display = e.target.checked ? 'flex' : 'none';
+            });
+            openThreadsInNewTabCheckbox.addEventListener('change', (e) => {
+                openThreadsInBackgroundItem.style.display = e.target.checked ? 'flex' : 'none';
             });
 
 
@@ -1723,6 +1769,10 @@
                     if (settingKey === 'hideImagesByDefault') {
                         applyImageHiding();
                         manageImageToggleAllButtons();
+                    }
+                    
+                    if (settingKey === 'openThreadsInNewTab' || settingKey === 'openThreadsInBackground') {
+                        applyThreadLinkBehavior();
                     }
 
                     // [FIX] 如果是阅读进度相关的设置变更，则立即刷新按钮
@@ -2850,6 +2900,7 @@
         applyImageHiding();
         manageImageToggleAllButtons();
         renameAuthorLinks(); // --- [新增] 调用文本替换函数 ---
+        applyThreadLinkBehavior();
         trackReadProgressInThread();
         try {
             autoSign();
