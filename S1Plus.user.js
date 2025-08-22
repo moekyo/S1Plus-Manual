@@ -880,12 +880,12 @@
             }
         }).filter(Boolean);
 
-        document.querySelectorAll('tbody[id^="normalthread_"]').forEach(row => {
+        document.querySelectorAll('tbody[id^="normalthread_"], tbody[id^="stickthread_"]').forEach(row => {
             const titleElement = row.querySelector('th a.s.xst');
             if (!titleElement) return;
 
             const title = titleElement.textContent.trim();
-            const threadId = row.id.replace('normalthread_', '');
+            const threadId = row.id.replace(/^(normalthread_|stickthread_)/, '');
             let isHidden = false;
 
             if (regexes.length > 0) {
@@ -919,13 +919,13 @@
         const usersToBlockThreads = Object.keys(blockedUsers).filter(uid => blockedUsers[uid].blockThreads);
         if (usersToBlockThreads.length === 0) return;
 
-        document.querySelectorAll('tbody[id^="normalthread_"]').forEach(row => {
+        document.querySelectorAll('tbody[id^="normalthread_"], tbody[id^="stickthread_"]').forEach(row => {
             const authorLink = row.querySelector('td.by cite a[href*="space-uid-"]');
             if (authorLink) {
                 const uidMatch = authorLink.href.match(/space-uid-(\d+)\.html/);
                 const authorId = uidMatch ? uidMatch[1] : null;
                 if (authorId && usersToBlockThreads.includes(authorId)) {
-                    const threadId = row.id.replace('normalthread_', '');
+                    const threadId = row.id.replace(/^(normalthread_|stickthread_)/, '');
                     const titleElement = row.querySelector('th a.s.xst');
                     if (threadId && titleElement) {
                         blockThread(threadId, titleElement.textContent.trim(), `user_${authorId}`);
@@ -1117,9 +1117,26 @@
      */
     const applyThreadLinkBehavior = () => {
         const settings = getSettings();
-        document.querySelectorAll('tbody[id^="normalthread_"] th a.s.xst').forEach(link => {
+        document.querySelectorAll('tbody[id^="normalthread_"] th a.s.xst, tbody[id^="stickthread_"] th a.s.xst').forEach(link => {
             // 先移除旧的监听器，以防重复添加或在禁用功能时清理
             link.removeEventListener('click', threadLinkClickHandler);
+
+            // 如果功能启用，则添加新的监听器
+            if (settings.openThreadsInNewTab) {
+                link.addEventListener('click', threadLinkClickHandler);
+            }
+        });
+    };
+
+    /**
+     * 遍历帖子列表的所有页码链接，并根据用户设置应用或移除“新标签页打开”的行为。
+     */
+    const applyPageLinkBehavior = () => {
+        const settings = getSettings();
+        document.querySelectorAll('tbody[id^="normalthread_"] span.tps a, tbody[id^="stickthread_"] span.tps a').forEach(link => {
+            // 移除旧的监听器和 onclick 属性
+            link.removeEventListener('click', threadLinkClickHandler);
+            link.removeAttribute('onclick');
 
             // 如果功能启用，则添加新的监听器
             if (settings.openThreadsInNewTab) {
@@ -1773,6 +1790,7 @@
                     
                     if (settingKey === 'openThreadsInNewTab' || settingKey === 'openThreadsInBackground') {
                         applyThreadLinkBehavior();
+                        applyPageLinkBehavior();
                     }
 
                     // [FIX] 如果是阅读进度相关的设置变更，则立即刷新按钮
@@ -2393,11 +2411,11 @@
 
         const now = Date.now();
 
-        document.querySelectorAll('tbody[id^="normalthread_"]').forEach(row => {
+        document.querySelectorAll('tbody[id^="normalthread_"], tbody[id^="stickthread_"]').forEach(row => {
             const container = row.querySelector('th');
             if (!container || container.querySelector('.s1p-progress-container')) return;
 
-            const threadIdMatch = row.id.match(/normalthread_(\d+)/);
+            const threadIdMatch = row.id.match(/(?:normalthread_|stickthread_)(\d+)/);
             if (!threadIdMatch) return;
             const threadId = threadIdMatch[1];
 
@@ -2901,6 +2919,7 @@
         manageImageToggleAllButtons();
         renameAuthorLinks(); // --- [新增] 调用文本替换函数 ---
         applyThreadLinkBehavior();
+        applyPageLinkBehavior();
         trackReadProgressInThread();
         try {
             autoSign();
