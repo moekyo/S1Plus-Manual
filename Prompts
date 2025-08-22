@@ -369,3 +369,51 @@
 虽然只看到边缘一点，但是理论上来说，这个二次确认菜单是要屏蔽之后才能看到的。并且这个二次确认的菜单和屏蔽按钮本身已经要间隔一定距离的，现在屏蔽按钮会叠在二次确认菜单的顶部，虽然二次确认的勾和叉本身没有被挡住，但是按钮和菜单右边的一部分背景重叠了。
 
 
+调整帖子屏蔽按钮的 UI/UX：
+以下是一个帖子列表中，一个帖子的对应的 html 片段，在 icn 元素的前面插入一个新的屏蔽按钮，注意这个按钮要和新窗口打开图标、帖子标题等在同一行水平显示，新添加的这个在所有的元素的最左边。
+使用垂直三点作为图标，当鼠标在上面悬停时，显示二级确认菜单，具体逻辑和目前现有帖子屏蔽相同，整体 UI 样式要和现有的统一且美观简洁。
+<tbody id="normalthread_2259536">
+<tr>
+<td class="icn" style="position: relative;">
+<a href="thread-2259536-1-1.html" title="有新回复 - 新窗口打开" target="_blank">
+<i class="fico-thread fic6 fc-l"></i>
+</a>
+<div class="s1p-action-container"><span class="thread-block-btn" title="屏蔽此贴">屏蔽</span><div class="s1p-thread-block-confirm-actions"><button class="s1p-confirm-action-btn cancel" title="取消"></button><button class="s1p-confirm-action-btn confirm" title="确认屏蔽"></button></div></div></td>
+<th class="new">
+<a href="javascript:;" id="content_2259536" class="showcontent y" title="更多操作" onclick="CONTENT_TID='2259536';CONTENT_ID='normalthread_2259536';showMenu({'ctrlid':this.id,'menuid':'content_menu'})"></a>
+<em>[<a href="forum.php?mod=forumdisplay&amp;fid=157&amp;filter=typeid&amp;typeid=389">生活</a>]</em> <a href="thread-2259536-1-1.html" onclick="atarget(this)" class="s xst">加油站禁用手机这个规定，各位都严格遵守吗？</a>
+<img src="static/image/s1/mobile-attach-1.png" alt="手机发帖" class="vm">
+<span class="tps">&nbsp;...<a href="thread-2259536-2-1.html" onclick="atarget(this)">2</a></span>
+<a href="forum.php?mod=redirect&amp;tid=2259536&amp;goto=lastpost#lastpost" class="xi1">New</a>
+</th>
+<td class="by">
+<cite>
+<a href="space-uid-465969.html" c="1" mid="card_2246">pagedown</a></cite>
+<em><span>2025-8-18 11:49</span></em>
+</td>
+<td class="num"><a href="thread-2259536-1-1.html" class="xi2">53</a><em>5748</em></td>
+<td class="by">
+<cite><a href="space-username-saynie.html" c="1" mid="card_9431">saynie</a></cite>
+<em><a href="forum.php?mod=redirect&amp;tid=2259536&amp;goto=lastpost#lastpost">2025-8-19 12:54</a></em>
+</td>
+</tr>
+</tbody>
+
+
+最后移除目前的帖子屏蔽入口（在帖子最左侧悬停一定时间后触发的，改为由这个常驻的新按钮触发
+
+如截图所示，由于新窗口打开按钮本身就和左边就有间距，导致单纯压缩三点按钮的宽度也不能完全解决问题。
+
+把 s1p-options-cell 改为 14px
+
+可以在保留这个间距的同时，修复这个问题吗
+
+参考这个，给”屏蔽该帖子吗？“和按钮中间添加一个竖线作为分割
+
+现在点了 s1p-confirm-action-btn cancel 页面会跳转到 https://stage1st.com/2b/forum.php?mod=topicadmin&action=moderate&fid=157&infloat=yes&nopost=yes 
+This XML file does not appear to have any style information associated with it. The document tree is shown below.
+<root>
+<![CDATA[ <h3 class="flb"><em>提示信息</em><span><a href="javascript:;" class="flbc" onclick="hideWindow('');" title="关闭">关闭</a></span></h3> <div class="c altw"> <div class="alert_error">抱歉，您没有权限使用管理功能<script type="text/javascript" reload="1">if(typeof errorhandle_=='function') {errorhandle_('抱歉，您没有权限使用管理功能', {});}</script></div> </div> <p class="o pns"> <button type="button" class="pn pnc" id="closebtn" onclick="hideWindow('');"><strong>确定</strong></button> <script type="text/javascript" reload="1">if($('closebtn')) {$('closebtn').focus();}</script> </p> ]]>
+</root>
+
+现在点了取消之后，悬浮窗是消失了，但是再次移动到这个帖子的三点按钮之后，悬浮窗不再触发了， 别的帖子没有点过取消的就是正常的，要重新刷新页面才能再次触发

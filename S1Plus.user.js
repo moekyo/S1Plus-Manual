@@ -9,6 +9,7 @@
 // @grant        GM_getValue
 // @grant        GM_addStyle
 // @grant        GM_xmlhttpRequest
+// @grant        GM_openInTab
 // @license      MIT
 // ==/UserScript==
 
@@ -17,7 +18,7 @@
 
 
     const SCRIPT_VERSION = '4.5.0';
-    const SCRIPT_RELEASE_DATE = '2025-08-19';
+    const SCRIPT_RELEASE_DATE = '2025-08-22';
 
     // --- 样式注入 ---
     GM_addStyle(`
@@ -1172,6 +1173,7 @@
         enableUserTagging: true,
         enableReadProgress: true,
         openProgressInNewTab: true,
+        openProgressInBackground: false,
         enableNavCustomization: true,
         changeLogoLink: true,
         hideBlacklistTip: true,
@@ -1668,6 +1670,10 @@
                         <label class="s1p-settings-label" for="s1p-openProgressInNewTab">在新窗口打开阅读进度</label>
                         <label class="s1p-switch"><input type="checkbox" id="s1p-openProgressInNewTab" class="s1p-settings-checkbox" data-setting="openProgressInNewTab" ${settings.openProgressInNewTab ? 'checked' : ''}><span class="s1p-slider"></span></label>
                     </div>
+                    <div class="s1p-settings-item" id="s1p-openProgressInBackground-item" style="padding-left: 20px; ${!settings.openProgressInNewTab ? 'display: none;' : ''}">
+                        <label class="s1p-settings-label" for="s1p-openProgressInBackground">后台打开 (不激活新标签页)</label>
+                        <label class="s1p-switch"><input type="checkbox" id="s1p-openProgressInBackground" class="s1p-settings-checkbox" data-setting="openProgressInBackground" ${settings.openProgressInBackground ? 'checked' : ''}><span class="s1p-slider"></span></label>
+                    </div>
                      <div class="s1p-settings-item">
                         <label class="s1p-settings-label" for="s1p-hideImagesByDefault">默认隐藏帖子图片</label>
                         <label class="s1p-switch"><input type="checkbox" id="s1p-hideImagesByDefault" class="s1p-settings-checkbox" data-setting="hideImagesByDefault" ${settings.hideImagesByDefault ? 'checked' : ''}><span class="s1p-slider"></span></label>
@@ -1689,6 +1695,15 @@
                     </div>
                 </div>`;
 
+            // 为“在新窗口打开”开关添加事件，以控制“后台打开”的可见性
+            const openInNewTabCheckbox = tabs['general-settings'].querySelector('#s1p-openProgressInNewTab');
+            const openInBackgroundItem = tabs['general-settings'].querySelector('#s1p-openProgressInBackground-item');
+
+            openInNewTabCheckbox.addEventListener('change', (e) => {
+                openInBackgroundItem.style.display = e.target.checked ? 'flex' : 'none';
+            });
+
+
             // 总的设置变更事件监听
             tabs['general-settings'].addEventListener('change', e => {
                 const target = e.target;
@@ -1708,6 +1723,12 @@
                     if (settingKey === 'hideImagesByDefault') {
                         applyImageHiding();
                         manageImageToggleAllButtons();
+                    }
+
+                    // [FIX] 如果是阅读进度相关的设置变更，则立即刷新按钮
+                    if (settingKey === 'openProgressInNewTab' || settingKey === 'openProgressInBackground') {
+                        removeProgressJumpButtons();
+                        addProgressJumpButtons();
                     }
                 }
             });
@@ -2363,7 +2384,7 @@
                 jumpBtn.addEventListener('click', (e) => {
                     e.preventDefault();
                     if (settings.openProgressInNewTab) {
-                        window.open(jumpBtn.href, '_blank');
+                        GM_openInTab(jumpBtn.href, { active: !settings.openProgressInBackground });
                     } else {
                         window.location.href = jumpBtn.href;
                     }
