@@ -52,8 +52,8 @@
             --s1p-icon-color: #a1a1aa;
             --s1p-icon-close: #9ca3af;
             --s1p-icon-arrow: #6b7280;
-            --s1p-confirm-hover-bg: #e0f2e9;
-            --s1p-cancel-hover-bg: #fee2e2;
+            --s1p-confirm-hover-bg: #27da80;
+            --s1p-cancel-hover-bg: #ff6464;
             --s1p-secondary-bg: #e5e7eb;
             --s1p-secondary-text: #374151;
             --s1p-secondary-hover-bg: #d1d5db;
@@ -179,7 +179,7 @@
             width: 32px; height: 32px;
             border: none; border-radius: 50%;
             cursor: pointer;
-            transition: background-color 0.2s ease, transform 0.1s ease;
+            transition: background-color 0.2s ease, transform 0.1s ease, background-image 0.2s ease;
             background-repeat: no-repeat;
             background-position: center;
             background-size: 60%;
@@ -192,6 +192,7 @@
         }
         .s1p-confirm-action-btn.s1p-confirm:hover {
             background-color: var(--s1p-confirm-hover-bg);
+            background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='2.5' stroke='%23ffffff'%3e%3cpath stroke-linecap='round' stroke-linejoin='round' d='M4.5 12.75l6 6 9-13.5' /%3e%3c/svg%3e");
         }
         .s1p-confirm-action-btn.s1p-cancel {
             background-color: transparent;
@@ -199,6 +200,7 @@
         }
         .s1p-confirm-action-btn.s1p-cancel:hover {
             background-color: var(--s1p-cancel-hover-bg);
+            background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='2.5' stroke='%23ffffff'%3e%3cpath stroke-linecap='round' stroke-linejoin='round' d='M6 18L18 6M6 6l12 12' /%3e%3c/svg%3e");
         }
 
         /* [MODIFIED] 阅读进度UI样式 */
