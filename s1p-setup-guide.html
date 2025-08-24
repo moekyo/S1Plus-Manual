@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>S1 Plus 远程同步设置向导</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1, h2 {
+            border-bottom: 1px solid #eee;
+            padding-bottom: 10px;
+        }
+        code {
+            background-color: #f4f4f4;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace;
+        }
+        .step {
+            margin-bottom: 30px;
+        }
+        .step img {
+            max-width: 100%;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            margin-top: 10px;
+        }
+        .button {
+            display: inline-block;
+            padding: 10px 15px;
+            background-color: #007bff;
+            color: #fff;
+            text-decoration: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        .button:hover {
+            background-color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>S1 Plus 远程同步设置向导</h1>
+
+    <p>此向导将帮助您获取用于 S1 Plus 远程同步功能所需的 <strong>Gist ID</strong> 和 <strong>GitHub Personal Access Token</strong>。</p>
+
+    <div class="step">
+        <h2>第一步：创建 Gist</h2>
+        <ol>
+            <li>访问 <a href="https://gist.github.com/" target="_blank">gist.github.com</a> 并登录您的 GitHub 账户。</li>
+            <li>在 "Gist description..." 输入框中，填写一个便于您自己识别的描述，例如：<code>S1 Plus Sync Data</code>。</li>
+            <li>
+                在 "Filename including extension..." 输入框中，<strong>必须</strong> 填写 <code>s1p_export.json</code>。
+            </li>
+            <li>
+                在文件内容区域，输入一个空的JSON对象：<code>{}</code>。
+            </li>
+            <li>
+                点击 "Create secret gist" 按钮创建一个私有的 Gist。
+                <img src="https://i.imgur.com/your-gist-creation-image.png" alt="创建 Gist 的步骤截图">
+            </li>
+            <li>
+                创建成功后，浏览器地址栏的 URL 会变成类似 <code>https://gist.github.com/YourUsername/abcdef1234567890</code> 的格式。<br>
+                这串唯一的字符 <code>abcdef1234567890</code> 就是您的 <strong>Gist ID</strong>。请复制它。
+            </li>
+        </ol>
+    </div>
+
+    <div class="step">
+        <h2>第二步：创建 Personal Access Token</h2>
+        <ol>
+            <li>访问 <a href="https://github.com/settings/tokens" target="_blank">GitHub 的开发者设置页面</a>。</li>
+            <li>点击 "Generate new token" 按钮。</li>
+            <li>在 "Note" 输入框中，填写一个便于您自己识别的描述，例如：<code>S1 Plus Sync</code>。</li>
+            <li>在 "Select scopes" 中，勾选 <code>gist</code> 权限。这是唯一需要的权限。</li>
+            <li>
+                点击页面底部的 "Generate token" 按钮。
+                <img src="https://i.imgur.com/your-token-creation-image.png" alt="创建 Token 的步骤截图">
+            </li>
+            <li>
+                <strong>重要：</strong> 生成的 Token 只会显示一次！请立即复制它，并像密码一样妥善保管。
+            </li>
+        </ol>
+    </div>
+
+    <div class="step">
+        <h2>第三步：完成配置</h2>
+        <ol>
+            <li>回到 Stage1st 论坛的 S1 Plus 设置面板。</li>
+            <li>将您复制的 Gist ID 和 Personal Access Token 粘贴到“远程同步”模块的对应输入框中。</li>
+            <li>点击“测试连接”按钮，确保一切正常。</li>
+            <li>（可选）开启“启用自动同步”以便在每次打开设置时自动获取最新配置。</li>
+        </ol>
+    </div>
+
+</body>
+</html>
