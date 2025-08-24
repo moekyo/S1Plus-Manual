@@ -437,3 +437,9 @@ This XML file does not appear to have any style information associated with it. 
 那按照使用 GitHub Gist 的方案，重构一下上面的提示
 
 创建“S1 Plus Gist 同步助手”页面 这个我可以部署到到哪里
+
+
+增加一个步骤，把现有的设置同步功能的逻辑，方法，UI 控件的 id/class/属性等重构为 含有local sync的关键字，为后面添加的云端同步 remote sync 做区分
+
+是在设置面板中的设置同步 tab 下，把现有的全量设置同步增加相应的说明，变成本地同步。在下面新增一个云端同步的开关以及相关设置项等必要内容。
+不要使用 cloud，改为 remote

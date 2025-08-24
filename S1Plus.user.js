@@ -505,8 +505,8 @@
         .s1p-item-toggle input { /* Handled by .s1p-switch */ }
         .s1p-unblock-btn:hover { background-color: #07855b; border-color: #07855b; }
         .s1p-sync-title { font-size: 14px; font-weight: 500; margin-bottom: 8px; }
-        .s1p-sync-desc { font-size: 14px; color: var(--s1p-desc-t); margin-bottom: 12px; line-height: 1.5; }
-        .s1p-sync-buttons { display: flex; gap: 8px; margin-bottom: 16px; }
+        .s1p-local-sync-desc { font-size: 14px; color: var(--s1p-desc-t); margin-bottom: 12px; line-height: 1.5; }
+        .s1p-local-sync-buttons { display: flex; gap: 8px; margin-bottom: 16px; }
         .s1p-sync-textarea { width: 100%; min-height: 80px; margin-bottom: 20px;}
         .s1p-message { font-size: 14px; margin-top: 8px; padding: 8px; border-radius: 4px; display:none; text-align: center; }
         .s1p-message.success { background-color: var(--s1p-success-bg); color: var(--s1p-success-text); }
@@ -1147,7 +1147,7 @@
         });
     };
 
-    const exportData = () => JSON.stringify({
+    const exportLocalData = () => JSON.stringify({
         version: 3.2,
         settings: getSettings(),
         threads: getBlockedThreads(),
@@ -1157,7 +1157,7 @@
         read_progress: getReadProgress()
     }, null, 2);
 
-    const importData = (jsonStr) => {
+    const importLocalData = (jsonStr) => {
         try {
             const imported = JSON.parse(jsonStr); if (typeof imported !== 'object' || imported === null) throw new Error("无效数据格式");
             let threadsImported = 0, usersImported = 0, progressImported = 0, rulesImported = 0, tagsImported = 0;
@@ -1343,16 +1343,18 @@
                 <div id="s1p-tab-tags" class="s1p-tab-content"></div>
                 <div id="s1p-tab-nav-settings" class="s1p-tab-content"></div>
                 <div id="s1p-tab-sync" class="s1p-tab-content">
-                    <div class="s1p-sync-title">全量设置同步</div>
-                    <div class="s1p-sync-desc">通过复制/粘贴数据，在不同浏览器或设备间同步你的所有S1 Plus配置，包括屏蔽列表、导航栏、阅读进度和各项开关设置。</div>
-                    <div class="s1p-sync-buttons">
-                        <button id="s1p-export-btn" class="s1p-btn">导出数据</button>
-                        <button id="s1p-import-btn" class="s1p-btn">导入数据</button>
+                    <div class="s1p-settings-group">
+                        <div class="s1p-settings-group-title">本地备份与恢复</div>
+                        <div class="s1p-local-sync-desc">通过手动复制/粘贴数据，在不同浏览器或设备间迁移或备份你的所有S1 Plus配置，包括屏蔽列表、导航栏、阅读进度和各项开关设置。</div>
+                        <div class="s1p-local-sync-buttons">
+                            <button id="s1p-local-export-btn" class="s1p-btn">导出数据</button>
+                            <button id="s1p-local-import-btn" class="s1p-btn">导入数据</button>
+                        </div>
+                        <textarea id="s1p-local-sync-textarea" class="s1p-sync-textarea s1p-textarea" placeholder="在此粘贴导入数据或从此处复制导出数据"></textarea>
+                        <div id="s1p-local-sync-message" class="s1p-message"></div>
                     </div>
-                    <textarea id="s1p-sync-textarea" class="s1p-sync-textarea s1p-textarea" placeholder="在此粘贴导入数据或从此处复制导出数据"></textarea>
-                    <div id="s1p-sync-message" class="s1p-message"></div>
                     <div class="s1p-sync-title">危险操作</div>
-                    <div class="s1p-sync-desc">以下操作会立即清空脚本在<b>当前浏览器</b>中的所选数据，且无法撤销。请在操作前务必通过“导出数据”功能进行备份。</div>
+                    <div class="s1p-local-sync-desc">以下操作会立即清空脚本在<b>当前浏览器</b>中的所选数据，且无法撤销。请在操作前务必通过“导出数据”功能进行备份。</div>
                     <div id="s1p-clear-data-options" style="margin-top: 12px; display: flex; flex-direction: column; gap: 8px; background-color: var(--s1p-bg); border: 1px solid var(--s1p-pri); border-radius: 6px; padding: 12px;">
                         </div>
                     <div style="margin-top: 12px; display: flex; justify-content: space-between; align-items: center;">
@@ -1424,7 +1426,7 @@
                     <p class="s1p-setting-desc" style="margin-top: 0; margin-bottom: 16px;">
                         在此集中管理、编辑、导出或导入您为所有用户添加的标记。
                     </p>
-                    <div class="s1p-sync-buttons">
+                    <div class="s1p-local-sync-buttons">
                         <button id="s1p-export-tags-btn" class="s1p-btn">导出全部标记</button>
                         <button id="s1p-import-tags-btn" class="s1p-btn">导入标记</button>
                     </div>
@@ -1977,19 +1979,19 @@
             const unblockThreadId = e.target.dataset.unblockThreadId; if (unblockThreadId) { unblockThread(unblockThreadId); renderThreadTab(); }
             const unblockUserId = e.target.dataset.unblockUserId; if (unblockUserId) { unblockUser(unblockUserId); renderUserTab(); renderThreadTab(); }
 
-            // --- 全局同步事件 ---
-            const syncTextarea = modal.querySelector('#s1p-sync-textarea');
-            const syncMessageEl = modal.querySelector('#s1p-sync-message');
-            if(e.target.id === 's1p-export-btn') {
-                syncTextarea.value = exportData();
+            // --- 本地备份与恢复事件 ---
+            const syncTextarea = modal.querySelector('#s1p-local-sync-textarea');
+            const syncMessageEl = modal.querySelector('#s1p-local-sync-message');
+            if(e.target.id === 's1p-local-export-btn') {
+                syncTextarea.value = exportLocalData();
                 syncTextarea.select();
                 try { document.execCommand('copy'); showMessage(syncMessageEl, '数据已导出并复制到剪贴板', true); }
                 catch (err) { showMessage(syncMessageEl, '复制失败，请手动复制', false); }
             }
-            if(e.target.id === 's1p-import-btn') {
+            if(e.target.id === 's1p-local-import-btn') {
                 const jsonStr = syncTextarea.value.trim();
                 if (!jsonStr) return showMessage(syncMessageEl, '请先粘贴要导入的数据', false);
-                const result = importData(jsonStr);
+                const result = importLocalData(jsonStr);
                 showMessage(syncMessageEl, result.message, result.success);
                 if (result.success) {
                     renderThreadTab();
@@ -2006,7 +2008,8 @@
             if(e.target.id === 's1p-clear-selected-btn') {
                 const selectedKeys = Array.from(modal.querySelectorAll('.s1p-clear-data-checkbox:checked')).map(chk => chk.dataset.clearKey);
                 if (selectedKeys.length === 0) {
-                    return showMessage(syncMessageEl, '请至少选择一个要清除的数据项。', false);
+                    const localSyncMessageEl = modal.querySelector('#s1p-local-sync-message');
+                    return showMessage(localSyncMessageEl, '请至少选择一个要清除的数据项。', false);
                 }
 
                 const itemsToClear = selectedKeys.map(key => `“${dataClearanceConfig[key].label}”`).join('、');
@@ -2035,8 +2038,8 @@
                         renderUserTab();
                         renderGeneralSettingsTab();
                         renderTagsTab();
-
-                        showMessage(syncMessageEl, '选中的本地数据已成功清除。', true);
+                        const localSyncMessageEl = modal.querySelector('#s1p-local-sync-message');
+                        showMessage(localSyncMessageEl, '选中的本地数据已成功清除。', true);
                     },
                     '确认清除'
                 );
