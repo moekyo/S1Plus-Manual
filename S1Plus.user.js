@@ -1353,6 +1353,36 @@
                         <textarea id="s1p-local-sync-textarea" class="s1p-sync-textarea s1p-textarea" placeholder="在此粘贴导入数据或从此处复制导出数据"></textarea>
                         <div id="s1p-local-sync-message" class="s1p-message"></div>
                     </div>
+
+                    <div class="s1p-settings-group">
+                        <div class="s1p-settings-group-title">远程同步 (通过GitHub Gist)</div>
+                        <div class="s1p-settings-item">
+                            <label class="s1p-settings-label" for="s1p-remote-enabled-toggle">启用远程同步</label>
+                            <label class="s1p-switch">
+                                <input type="checkbox" id="s1p-remote-enabled-toggle" class="s1p-settings-checkbox">
+                                <span class="s1p-slider"></span>
+                            </label>
+                        </div>
+                        <p class="s1p-setting-desc">启用后，将在每次打开或关闭设置面板时自动同步。你也可以随时手动同步。</p>
+                        <div class="s1p-settings-item" style="flex-direction: column; align-items: flex-start; gap: 4px;">
+                            <label class="s1p-settings-label" for="s1p-remote-url-input">Gist API URL</label>
+                            <input type="text" id="s1p-remote-url-input" class="s1p-title-suffix-input" placeholder="例如: https://api.github.com/gists/YOUR_GIST_ID" style="width: 100%;">
+                        </div>
+                        <div class="s1p-settings-item" style="flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 12px;">
+                            <label class="s1p-settings-label" for="s1p-remote-pat-input">GitHub Personal Access Token (PAT)</label>
+                            <input type="password" id="s1p-remote-pat-input" class="s1p-title-suffix-input" placeholder="ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" style="width: 100%;">
+                        </div>
+                        <p class="s1p-setting-desc">
+                            <a href="#" id="s1p-remote-helper-link" target="_blank">不知道如何获取URL和Token？点击这里查看教程。</a> 
+                            <br>Token只会保存在你的浏览器本地，不会上传到任何地方。
+                        </p>
+                        <div id="s1p-remote-status" class="s1p-message"></div>
+                        <div class="s1p-editor-footer" style="margin-top: 16px; justify-content: flex-end;">
+                             <button id="s1p-remote-save-btn" class="s1p-btn">保存设置</button>
+                             <button id="s1p-remote-manual-sync-btn" class="s1p-btn">手动同步</button>
+                        </div>
+                    </div>
+                    
                     <div class="s1p-sync-title">危险操作</div>
                     <div class="s1p-local-sync-desc">以下操作会立即清空脚本在<b>当前浏览器</b>中的所选数据，且无法撤销。请在操作前务必通过“导出数据”功能进行备份。</div>
                     <div id="s1p-clear-data-options" style="margin-top: 12px; display: flex; flex-direction: column; gap: 8px; background-color: var(--s1p-bg); border: 1px solid var(--s1p-pri); border-radius: 6px; padding: 12px;">
