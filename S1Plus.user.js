@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      4.5.0
+// @version      4.5.1
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪等多种功能，全方位优化你的论坛体验。
 // @author       moekyo
 // @match        https://stage1st.com/2b/*
@@ -17,8 +17,8 @@
     'use strict';
 
 
-    const SCRIPT_VERSION = '4.5.0';
-    const SCRIPT_RELEASE_DATE = '2025-08-22';
+    const SCRIPT_VERSION = '4.5.1'; // Version bump to reflect sync fix
+    const SCRIPT_RELEASE_DATE = '2025-08-24';
 
     // --- 样式注入 ---
     GM_addStyle(`
@@ -727,12 +727,35 @@
 
     let dynamicallyHiddenThreads = {};
 
+    // [NEW] 为远程推送增加防抖机制，避免过于频繁的API调用
+    let remotePushTimeout;
+    const debouncedTriggerRemoteSyncPush = () => {
+        const settings = getSettings();
+        if (!settings.syncRemoteEnabled || !settings.syncRemoteGistId || !settings.syncRemotePat) {
+            return;
+        }
+        clearTimeout(remotePushTimeout);
+        // 延迟5秒推送，如果在5秒内有新的数据变动，则重新计时
+        remotePushTimeout = setTimeout(() => {
+            triggerRemoteSyncPush();
+        }, 5000);
+    };
+
     // --- 数据处理 & 核心功能 ---
     const getBlockedThreads = () => GM_getValue('s1p_blocked_threads', {});
-    const saveBlockedThreads = (threads) => GM_setValue('s1p_blocked_threads', threads);
+    const saveBlockedThreads = (threads) => {
+        GM_setValue('s1p_blocked_threads', threads);
+        debouncedTriggerRemoteSyncPush();
+    };
     const getBlockedUsers = () => GM_getValue('s1p_blocked_users', {});
-    const saveBlockedUsers = (users) => GM_setValue('s1p_blocked_users', users);
-    const saveUserTags = (tags) => GM_setValue('s1p_user_tags', tags);
+    const saveBlockedUsers = (users) => {
+        GM_setValue('s1p_blocked_users', users);
+        debouncedTriggerRemoteSyncPush();
+    };
+    const saveUserTags = (tags) => {
+        GM_setValue('s1p_user_tags', tags);
+        debouncedTriggerRemoteSyncPush();
+    };
 
     // [MODIFIED] 升级并获取用户标记，自动迁移旧数据
     const getUserTags = () => {
@@ -762,7 +785,6 @@
         return tags;
     };
 
-
     const getTitleFilterRules = () => {
         const rules = GM_getValue('s1p_title_filter_rules', null);
         if (rules !== null) return rules;
@@ -777,7 +799,10 @@
         }
         return [];
     };
-    const saveTitleFilterRules = (rules) => GM_setValue('s1p_title_filter_rules', rules);
+    const saveTitleFilterRules = (rules) => {
+        GM_setValue('s1p_title_filter_rules', rules);
+        debouncedTriggerRemoteSyncPush();
+    };
 
     const blockThread = (id, title, reason = 'manual') => { const b = getBlockedThreads(); if (b[id]) return; b[id] = { title, timestamp: Date.now(), reason }; saveBlockedThreads(b); hideThread(id); };
     const unblockThread = (id) => { const b = getBlockedThreads(); delete b[id]; saveBlockedThreads(b); showThread(id); };
@@ -907,14 +932,16 @@
     };
 
     const getReadProgress = () => GM_getValue('s1p_read_progress', {});
-    const saveReadProgress = (progress) => GM_setValue('s1p_read_progress', progress);
+    const saveReadProgress = (progress) => {
+        GM_setValue('s1p_read_progress', progress);
+        debouncedTriggerRemoteSyncPush();
+    };
     const updateThreadProgress = (threadId, postId, page, lastReadFloor) => {
         if (!postId || !page || !lastReadFloor) return;
         const progress = getReadProgress();
         progress[threadId] = { postId, page, timestamp: Date.now(), lastReadFloor: lastReadFloor };
         saveReadProgress(progress);
     };
-
 
     const applyUserThreadBlocklist = () => {
         const blockedUsers = getBlockedUsers();
@@ -1147,15 +1174,19 @@
         });
     };
 
-    const exportLocalData = () => JSON.stringify({
+    // [MODIFIED] 增加 lastUpdated 时间戳
+    const exportLocalDataObject = () => ({
         version: 3.2,
+        lastUpdated: Date.now(),
         settings: getSettings(),
         threads: getBlockedThreads(),
         users: getBlockedUsers(),
         user_tags: getUserTags(),
         title_filter_rules: getTitleFilterRules(),
         read_progress: getReadProgress()
-    }, null, 2);
+    });
+
+    const exportLocalData = () => JSON.stringify(exportLocalDataObject(), null, 2);
 
     const importLocalData = (jsonStr) => {
         try {
@@ -1196,7 +1227,6 @@
                 rulesImported = newRules.length;
             }
 
-
             if (imported.read_progress) {
                 const mergedProgress = { ...getReadProgress(), ...imported.read_progress };
                 saveReadProgress(mergedProgress);
@@ -1209,10 +1239,174 @@
             hideThreadsByTitleKeyword();
             initializeNavbar();
             applyInterfaceCustomizations();
+            debouncedTriggerRemoteSyncPush();
 
             return { success: true, message: `成功导入 ${threadsImported} 条帖子、${usersImported} 条用户、${tagsImported} 条标记、${rulesImported} 条标题规则、${progressImported} 条阅读进度及相关设置。` };
         } catch (e) { return { success: false, message: `导入失败: ${e.message}` }; }
     };
+
+    const fetchRemoteData = () => new Promise((resolve, reject) => {
+        const { syncRemoteGistId, syncRemotePat } = getSettings();
+        if (!syncRemoteGistId || !syncRemotePat) {
+            return reject(new Error('配置不完整'));
+        }
+        const syncRemoteApiUrl = `https://api.github.com/gists/${syncRemoteGistId}`;
+
+        GM_xmlhttpRequest({
+            method: 'GET',
+            url: syncRemoteApiUrl,
+            headers: {
+                'Authorization': `Bearer ${syncRemotePat}`,
+                'Accept': 'application/vnd.github.v3+json'
+            },
+            onload: (response) => {
+                if (response.status === 200) {
+                    try {
+                        const gistData = JSON.parse(response.responseText);
+                        const fileContent = gistData.files['s1plus_sync.json']?.content;
+                        if (fileContent) {
+                            resolve(JSON.parse(fileContent));
+                        } else {
+                            // If file doesn't exist, it's not an error, just means it's the first sync.
+                            // Return an empty object so it can be populated.
+                            resolve({});
+                        }
+                    } catch (e) {
+                        reject(new Error(`解析Gist数据失败: ${e.message}`));
+                    }
+                } else {
+                    reject(new Error(`GitHub API请求失败，状态码: ${response.status}`));
+                }
+            },
+            onerror: () => {
+                reject(new Error('网络请求失败。'));
+            }
+        });
+    });
+
+    const pushRemoteData = (dataObject) => new Promise((resolve, reject) => {
+        const { syncRemoteGistId, syncRemotePat } = getSettings();
+        if (!syncRemoteGistId || !syncRemotePat) {
+            return reject(new Error('配置不完整'));
+        }
+        const syncRemoteApiUrl = `https://api.github.com/gists/${syncRemoteGistId}`;
+
+        const payload = {
+            files: {
+                's1plus_sync.json': {
+                    content: JSON.stringify(dataObject, null, 2)
+                }
+            }
+        };
+
+        GM_xmlhttpRequest({
+            method: 'PATCH',
+            url: syncRemoteApiUrl,
+            headers: {
+                'Authorization': `Bearer ${syncRemotePat}`,
+                'Accept': 'application/vnd.github.v3+json',
+                'Content-Type': 'application/json'
+            },
+            data: JSON.stringify(payload),
+            onload: (response) => {
+                if (response.status === 200) {
+                    resolve({ success: true, message: '数据已成功推送到Gist。' });
+                } else {
+                    reject(new Error(`Gist更新失败，状态码: ${response.status}, 响应: ${response.responseText}`));
+                }
+            },
+            onerror: () => {
+                reject(new Error('网络请求失败。'));
+            }
+        });
+    });
+
+    // [NEW] 触发式推送函数，用于在数据保存后自动上传
+    const triggerRemoteSyncPush = () => {
+        // 异步执行，不阻塞主流程
+        (async () => {
+            const settings = getSettings();
+            if (!settings.syncRemoteEnabled || !settings.syncRemoteGistId || !settings.syncRemotePat) {
+                return;
+            }
+            console.log('S1 Plus: 检测到数据变更，触发远程同步推送...');
+            try {
+                const dataToPush = exportLocalDataObject();
+                await pushRemoteData(dataToPush);
+                console.log('S1 Plus: 数据已成功推送到远程。');
+            } catch (error) {
+                console.error('S1 Plus: 自动推送数据失败:', error);
+            }
+        })();
+    };
+
+    // [NEW] 主远程同步控制器
+    const performRemoteSync = async (isManual = false) => {
+        const settings = getSettings();
+        if (!settings.syncRemoteEnabled || !settings.syncRemoteGistId || !settings.syncRemotePat) {
+            if (isManual) {
+                const statusEl = document.querySelector('#s1p-remote-status');
+                if (statusEl) showMessage(statusEl, '远程同步未启用或配置不完整。', false);
+            }
+            return;
+        }
+
+        const statusEl = document.querySelector('#s1p-remote-status');
+        const updateStatus = (msg, isSuccess = null) => {
+            if (statusEl) {
+                if (isSuccess === true) showMessage(statusEl, msg, true);
+                else if (isSuccess === false) showMessage(statusEl, msg, false);
+                else {
+                    statusEl.textContent = msg;
+                    statusEl.className = 's1p-message';
+                    statusEl.style.display = 'block';
+                }
+            }
+        };
+
+        if (isManual) updateStatus('正在同步...');
+
+        try {
+            updateStatus('正在同步... (1/3 获取远程数据)');
+            const remoteData = await fetchRemoteData();
+            const remoteTimestamp = remoteData.lastUpdated || 0;
+
+            updateStatus('正在同步... (2/3 获取本地数据)');
+            const localData = exportLocalDataObject();
+            const localTimestamp = localData.lastUpdated || 0;
+
+            updateStatus('正在同步... (3/3 比较数据版本)');
+
+            if (remoteTimestamp > localTimestamp) {
+                console.log(`S1 Plus: 远程数据 (TS: ${remoteTimestamp}) 比本地 (TS: ${localTimestamp}) 更新，正在应用...`);
+                const result = importLocalData(JSON.stringify(remoteData));
+                if (result.success) {
+                    updateStatus('同步成功：已从云端更新本地数据。建议刷新页面以应用所有更改。', true);
+                     // 刷新设置面板UI
+                    if (document.querySelector('.s1p-modal')) {
+                        document.querySelector('.s1p-modal-close').click();
+                        createManagementModal();
+                        document.querySelector('button[data-tab="sync"]').click();
+                    }
+                } else {
+                    throw new Error(`应用远程数据失败: ${result.message}`);
+                }
+            } else if (localTimestamp > remoteTimestamp) {
+                console.log(`S1 Plus: 本地数据 (TS: ${localTimestamp}) 比远程 (TS: ${remoteTimestamp}) 更新，正在上传...`);
+                await pushRemoteData(localData);
+                updateStatus('同步成功：已将本地更新推送到云端。', true);
+            } else {
+                console.log(`S1 Plus: 本地与远程数据版本一致 (TS: ${localTimestamp})，无需同步。`);
+                if (isManual) {
+                    updateStatus('数据已是最新，无需同步。', true);
+                }
+            }
+        } catch (error) {
+            console.error('S1 Plus: 远程同步失败:', error);
+            updateStatus(`同步失败: ${error.message}`, false);
+        }
+    };
+
 
     // --- 设置管理 ---
     const defaultSettings = {
@@ -1241,7 +1435,10 @@
             { name: '影视', href: 'forum-48-1.html' },
             { name: 'PC数码', href: 'forum-51-1.html' },
             { name: '黑名单', href: 'home.php?mod=space&do=friend&view=blacklist' }
-        ]
+        ],
+        syncRemoteEnabled: false,
+        syncRemoteGistId: '',
+        syncRemotePat: '',
     };
     const getSettings = () => {
         const saved = GM_getValue('s1p_settings', {});
@@ -1251,7 +1448,10 @@
         }
         return { ...defaultSettings, ...saved };
     };
-    const saveSettings = (settings) => GM_setValue('s1p_settings', settings);
+    const saveSettings = (settings) => {
+        GM_setValue('s1p_settings', settings);
+        debouncedTriggerRemoteSyncPush();
+    };
 
     // --- 界面定制功能 ---
     const applyInterfaceCustomizations = () => {
@@ -1363,21 +1563,21 @@
                                 <span class="s1p-slider"></span>
                             </label>
                         </div>
-                        <p class="s1p-setting-desc">启用后，将在每次打开或关闭设置面板时自动同步。你也可以随时手动同步。</p>
+                        <p class="s1p-setting-desc">启用后，数据将在停止操作5秒后自动同步。你也可以随时手动同步。</p>
                         <div class="s1p-settings-item" style="flex-direction: column; align-items: flex-start; gap: 4px;">
-                            <label class="s1p-settings-label" for="s1p-remote-url-input">Gist API URL</label>
-                            <input type="text" id="s1p-remote-url-input" class="s1p-title-suffix-input" placeholder="例如: https://api.github.com/gists/YOUR_GIST_ID" style="width: 100%;">
+                            <label class="s1p-settings-label" for="s1p-remote-gist-id-input">Gist ID</label>
+                            <input type="text" id="s1p-remote-gist-id-input" class="s1p-title-suffix-input" placeholder="从 Gist 网址中复制的那一长串 ID" style="width: 100%;">
                         </div>
                         <div class="s1p-settings-item" style="flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 12px;">
                             <label class="s1p-settings-label" for="s1p-remote-pat-input">GitHub Personal Access Token (PAT)</label>
                             <input type="password" id="s1p-remote-pat-input" class="s1p-title-suffix-input" placeholder="ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" style="width: 100%;">
                         </div>
                         <p class="s1p-setting-desc">
-                            <a href="#" id="s1p-remote-helper-link" target="_blank">不知道如何获取URL和Token？点击这里查看教程。</a> 
+                            <a href="https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens" id="s1p-remote-helper-link" target="_blank">不知道如何获取 Gist ID 和 Token？点击这里查看教程。</a> 
                             <br>Token只会保存在你的浏览器本地，不会上传到任何地方。
                         </p>
                         <div id="s1p-remote-status" class="s1p-message"></div>
-                        <div class="s1p-editor-footer" style="margin-top: 16px; justify-content: flex-end;">
+                        <div class="s1p-editor-footer" style="margin-top: 16px; justify-content: flex-end; gap: 8px;">
                              <button id="s1p-remote-save-btn" class="s1p-btn">保存设置</button>
                              <button id="s1p-remote-manual-sync-btn" class="s1p-btn">手动同步</button>
                         </div>
@@ -1433,6 +1633,12 @@
                 </div>
             `).join('');
         }
+        
+        // --- [NEW] 加载远程同步设置到UI ---
+        const settings = getSettings();
+        modal.querySelector('#s1p-remote-enabled-toggle').checked = settings.syncRemoteEnabled;
+        modal.querySelector('#s1p-remote-gist-id-input').value = settings.syncRemoteGistId || '';
+        modal.querySelector('#s1p-remote-pat-input').value = settings.syncRemotePat || '';
 
         // [REFACTORED] 全新用户标记标签页渲染逻辑
         const renderTagsTab = (options = {}) => {
@@ -1997,7 +2203,7 @@
             }
         });
 
-        modal.addEventListener('click', (e) => {
+        modal.addEventListener('click', async (e) => {
             const target = e.target;
             if (e.target.matches('.s1p-modal, .s1p-modal-close')) modal.remove();
             if (e.target.matches('.s1p-tab-btn')) {
@@ -2074,6 +2280,24 @@
                     '确认清除'
                 );
             }
+            
+            // --- [NEW] 远程同步设置保存事件 ---
+            if (e.target.id === 's1p-remote-save-btn') {
+                const currentSettings = getSettings();
+                currentSettings.syncRemoteEnabled = modal.querySelector('#s1p-remote-enabled-toggle').checked;
+                currentSettings.syncRemoteApiUrl = modal.querySelector('#s1p-remote-url-input').value.trim();
+                currentSettings.syncRemotePat = modal.querySelector('#s1p-remote-pat-input').value.trim();
+                saveSettings(currentSettings);
+    
+                const statusEl = modal.querySelector('#s1p-remote-status');
+                showMessage(statusEl, '远程同步设置已保存。', true);
+            }
+            
+            // --- [MODIFIED] 手动同步逻辑 ---
+            if (e.target.id === 's1p-remote-manual-sync-btn') {
+                performRemoteSync(true); // 调用主同步控制器，并标记为手动触发
+            }
+
 
             // --- [NEW] 用户标记标签页专属事件 ---
             const targetTab = target.closest('#s1p-tab-tags');
@@ -2731,9 +2955,7 @@
             // --- Robust Width Calculation ---
             const authiRect = authiDiv.getBoundingClientRect();
             const lastElementRect = viewAuthorLink.getBoundingClientRect();
-            let availableWidth = authiRect.right - lastElementRect.right;
-            const buffer = 15; // Safety margin
-            availableWidth -= buffer;
+            let availableWidth = authiRect.right - lastElementRect.right - 15;
 
             if (settings.enableUserBlocking) {
                 const pipe = document.createElement('span');
@@ -2905,9 +3127,11 @@
 
     // --- 主流程 ---
     function main() {
+        performRemoteSync(); // 实现启动时自动同步
+
         detectS1Nux(); // 检测 S1 NUX 是否启用
         initializeNavbar();
-        initializeTagDisplayPopover(); // [NEW] 初始化用户标记显示悬浮窗
+        initializeTagDisplayPopover();
 
         const observerCallback = (mutations, observer) => {
             // 在处理DOM变化前先断开观察，防止无限循环
@@ -2915,7 +3139,10 @@
             // 执行所有DOM修改
             applyChanges();
             // 完成后再重新连接观察器
-            observer.observe(document.getElementById('ct'), { childList: true, subtree: true });
+            const ctElement = document.getElementById('ct');
+            if (ctElement) {
+                observer.observe(ctElement, { childList: true, subtree: true });
+            }
         };
 
         const observer = new MutationObserver(observerCallback);
@@ -2924,7 +3151,10 @@
         applyChanges();
 
         // 开始观察 #ct 容器的变化
-        observer.observe(document.getElementById('ct'), { childList: true, subtree: true });
+        const ctElement = document.getElementById('ct');
+        if (ctElement) {
+            observer.observe(ctElement, { childList: true, subtree: true });
+        }
     }
 
     function applyChanges() {
@@ -2952,7 +3182,7 @@
         applyInterfaceCustomizations();
         applyImageHiding();
         manageImageToggleAllButtons();
-        renameAuthorLinks(); // --- [新增] 调用文本替换函数 ---
+        renameAuthorLinks();
         applyThreadLinkBehavior();
         applyPageLinkBehavior();
         trackReadProgressInThread();
