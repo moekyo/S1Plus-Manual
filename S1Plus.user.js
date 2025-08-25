@@ -2150,6 +2150,39 @@
         renderTagsTab();
         renderNavSettingsTab();
 
+        // --- [FIX] 关联远程同步开关与输入框状态 ---
+        const remoteToggle = modal.querySelector('#s1p-remote-enabled-toggle');
+        const gistInputItem = modal.querySelector('#s1p-remote-gist-id-input').closest('.s1p-settings-item');
+        const patInputItem = modal.querySelector('#s1p-remote-pat-input').closest('.s1p-settings-item');
+        const remoteFooter = modal.querySelector('#s1p-remote-manual-sync-btn').closest('.s1p-editor-footer');
+        const remoteHelperLink = modal.querySelector('#s1p-remote-helper-link');
+
+        const updateRemoteSyncInputsState = () => {
+            const isEnabled = remoteToggle.checked;
+            const targetOpacity = isEnabled ? '1' : '0.6';
+            const targetPointerEvents = isEnabled ? 'auto' : 'none';
+
+            const elementsToStyle = [gistInputItem, patInputItem, remoteFooter, remoteHelperLink];
+            elementsToStyle.forEach(el => {
+                if (el) {
+                    el.style.opacity = targetOpacity;
+                    el.style.pointerEvents = targetPointerEvents;
+                }
+            });
+
+            if (gistInputItem) gistInputItem.querySelector('input').disabled = !isEnabled;
+            if (patInputItem) patInputItem.querySelector('input').disabled = !isEnabled;
+            if (remoteFooter) {
+                const manualSyncBtn = remoteFooter.querySelector('#s1p-remote-manual-sync-btn');
+                if(manualSyncBtn) manualSyncBtn.disabled = !isEnabled;
+            }
+        };
+
+        if (remoteToggle) {
+            remoteToggle.addEventListener('change', updateRemoteSyncInputsState);
+            updateRemoteSyncInputsState(); // 打开设置时，根据当前状态初始化一次
+        }
+
         modal.addEventListener('change', e => {
             const target = e.target;
             const settings = getSettings();
@@ -2285,7 +2318,7 @@
             if (e.target.id === 's1p-remote-save-btn') {
                 const currentSettings = getSettings();
                 currentSettings.syncRemoteEnabled = modal.querySelector('#s1p-remote-enabled-toggle').checked;
-                currentSettings.syncRemoteApiUrl = modal.querySelector('#s1p-remote-url-input').value.trim();
+                currentSettings.syncRemoteGistId = modal.querySelector('#s1p-remote-gist-id-input').value.trim();
                 currentSettings.syncRemotePat = modal.querySelector('#s1p-remote-pat-input').value.trim();
                 saveSettings(currentSettings);
     
