@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>S1 Plus 远程同步设置向导</title>
+    <style>
+        /* --- 核心：从 S1Plus.user.js 脚本中引用的设计语言 --- */
+        :root {
+            /* -- 基础调色板 -- */
+            --s1p-bg: #ECEDEB;
+            --s1p-pri: #D1D9C1;
+            --s1p-sub: #e9ebe8;
+            --s1p-white: #ffffff;
+            --s1p-black-rgb: 0, 0, 0;
+            /* -- 主题色 -- */
+            --s1p-t: #022C80;
+            --s1p-desc-t: #10388a;
+            --s1p-sec: #2563eb;
+            --s1p-sub-h: #2563eb;
+            --s1p-sub-h-t: var(--s1p-white);
+            /* -- 状态色 -- */
+            --s1p-red: #ef4444;
+            /* -- 组件专属 -- */
+            --s1p-code-bg: #eee;
+        }
+
+        /* --- 基础样式 --- */
+        *, *::before, *::after {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            line-height: 1.6;
+            color: var(--s1p-t);
+            background-color: var(--s1p-bg);
+            margin: 0;
+            padding: 20px;
+        }
+
+        /* --- 主容器 (模仿 .s1p-modal-content) --- */
+        .container {
+            background-color: var(--s1p-bg);
+            border: 1px solid var(--s1p-pri);
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(var(--s1p-black-rgb), 0.1);
+            max-width: 800px;
+            margin: 20px auto;
+            overflow: hidden;
+        }
+        
+        .content-wrapper {
+            padding: 20px 30px 30px;
+        }
+
+        /* --- 标题 (模仿 .s1p-modal-header 和 .s1p-settings-group-title) --- */
+        header {
+            background: var(--s1p-pri);
+            padding: 16px 30px;
+            border-bottom: 1px solid var(--s1p-pri);
+        }
+
+        h1 {
+            font-size: 18px;
+            font-weight: bold;
+            margin: 0;
+            color: var(--s1p-t);
+        }
+
+        h2 {
+            font-size: 16px;
+            font-weight: 500;
+            border-bottom: 1px solid var(--s1p-pri);
+            padding-bottom: 16px;
+            margin-top: 0;
+            margin-bottom: 12px;
+        }
+        
+        p, li {
+            font-size: 14px;
+            color: var(--s1p-desc-t);
+        }
+        
+        .intro {
+            line-height: 1.5;
+            margin-bottom: 24px;
+        }
+
+        /* --- 链接、代码块、按钮 (模仿 .s1p-btn) --- */
+        a {
+            color: var(--s1p-sec);
+            font-weight: 500;
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+        
+        .button {
+            display: inline-flex; 
+            align-items: center; 
+            justify-content: center; 
+            padding: 5px 12px; 
+            border-radius: 4px; 
+            background-color: var(--s1p-sub); 
+            color: var(--s1p-t); 
+            font-size: 14px; 
+            font-weight: bold; 
+            cursor: pointer; 
+            user-select: none; 
+            white-space: nowrap; 
+            border: 1px solid var(--s1p-pri); 
+            transition: all 0.2s ease-in-out;
+        }
+        .button:hover { 
+            background-color: var(--s1p-sub-h); 
+            color: var(--s1p-sub-h-t); 
+            border-color: var(--s1p-sub-h);
+            text-decoration: none;
+        }
+
+        code {
+            background-color: var(--s1p-code-bg);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace;
+            font-size: 0.9em;
+        }
+
+        /* --- 步骤与内容样式 (模仿 .s1p-settings-group) --- */
+        .step {
+            margin-bottom: 30px;
+        }
+        
+        .step ol {
+            padding-left: 20px;
+        }
+
+        .step li {
+            margin-bottom: 16px;
+        }
+        
+        .step li strong {
+            color: var(--s1p-t);
+        }
+        
+        .step .important-note {
+            color: var(--s1p-red);
+            font-weight: bold;
+        }
+
+        /* --- 【新增】内联备注/信息提示框样式 --- */
+        .inline-note {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            background-color: var(--s1p-sub);
+            border-left: 3px solid var(--s1p-pri);
+            border-radius: 0 4px 4px 0;
+            padding: 8px 12px;
+            margin-top: 8px;
+            font-size: 13px;
+            line-height: 1.5;
+            color: var(--s1p-desc-t);
+        }
+        .inline-note svg {
+            flex-shrink: 0;
+            width: 16px;
+            height: 16px;
+            margin-top: 2px;
+            color: var(--s1p-desc-t);
+        }
+        
+        /* --- 图片样式 --- */
+        .step img {
+            max-width: 100%;
+            border: 1px solid var(--s1p-pri);
+            border-radius: 6px;
+            margin-top: 10px;
+        }
+        
+        /* --- 页脚 (模仿 .s1p-modal-footer) --- */
+        footer {
+            padding: 12px 30px;
+            border-top: 1px solid var(--s1p-pri);
+            text-align: right;
+            font-size: 12px;
+            color: var(--s1p-desc-t);
+        }
+        
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <header>
+            <h1>S1 Plus 远程同步设置向导</h1>
+        </header>
+
+        <div class="content-wrapper">
+            <p class="intro">此向导将帮助您获取 S1 Plus 远程同步功能所需的 <strong>Gist ID</strong> 和 <strong>GitHub Personal Access Token</strong>。</p>
+
+            <div class="step">
+                <h2>第一步：创建 Gist</h2>
+                <ol>
+                    <li>
+                        点击下方按钮访问 <a href="https://gist.github.com/" target="_blank">gist.github.com</a> 并登录您的 GitHub 账户。<br>
+                    </li>
+                    <li>在 "Gist description..." 输入框中，填写一个便于您自己识别的描述，例如：<code>S1 Plus Sync Data</code>。</li>
+                    <li>
+                        在文件名和文件内容区域，随意填写一些内容，例如文件名填 <code>s1plus_sync.json</code>，内容填 <code>{}</code>。
+                        <div class="inline-note">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" />
+                            </svg>
+                            <span>仅用于占位，脚本首次成功同步后，会自动覆盖此内容。</span>
+                        </div>
+                    </li>
+                    <li>
+                        点击 <strong>"Create secret gist"</strong> 按钮创建一个私有的 Gist。
+                        <img src="images/step1.png" alt="创建 Gist 的步骤截图">
+                    </li>
+                    <li>
+                        创建成功后，浏览器地址栏的 URL 会变成类似 <code>https://gist.github.com/YourUsername/abcdef1234567890</code> 的格式。<br>
+                        这串唯一的字符 <code>abcdef1234567890</code> 就是您的 <strong>Gist ID</strong>。请复制它。
+                    </li>
+                </ol>
+            </div>
+
+            <div class="step">
+                <h2>第二步：创建 Personal Access Token (PAT)</h2>
+                <ol>
+                    <li>
+                        点击下方按钮访问 <a href="https://github.com/settings/tokens" target="_blank">GitHub 的开发者设置页面</a>。<br>
+                        <a href="https://github.com/settings/tokens" target="_blank" class="button" style="margin-top: 8px;">前往 GitHub 设置</a>
+                    </li>
+                    <li>
+                        点击 <strong>"Generate new token"</strong> -> <strong>"Generate new token (classic)"</strong>。
+                        <img src="images/step2.png" alt="创建 Token 的步骤 1 截图">
+                    </li>
+                    <li>
+                        在 <strong>"Note"</strong> 输入框中填写描述，例如：<code>S1 Plus Sync</code>。<br>
+                        在 <strong>"Expiration"</strong> 处选择一个有效期（推荐90天或更长）。
+                    </li>
+                    <li>在 <strong>"Select scopes"</strong> 中，**仅勾选** <code>gist</code> 权限。这是唯一需要的权限。
+                        <img src="images/step3.png" alt="创建 Token 的步骤 2 截图">
+                    </li>
+                    <li>
+                        点击页面底部的 <strong>"Generate token"</strong> 按钮。
+                    </li>
+                    <li>
+                        <span class="important-note">重要：</span> 生成的 Token 只会显示一次！请立即复制它（以 <code>ghp_</code> 开头），并像密码一样妥善保管。
+                        <img src="images/step4.png" alt="创建 Token 的步骤 3 截图">
+                    </li>
+                </ol>
+            </div>
+
+            <div class="step">
+                <h2>第三步：完成配置</h2>
+                <ol>
+                    <li>回到 Stage1st 论坛的 S1 Plus 设置面板（“设置同步”标签页）。</li>
+                    <li>将您复制的 <strong>Gist ID</strong> 和 <strong>Personal Access Token</strong> 粘贴到“远程同步”模块的对应输入框中。</li>
+                    <li>点击“保存设置”按钮，开启“启用远程同步”的开关。</li>
+                    <li>点击“手动同步”按钮，根据提示完成首次数据同步。</li>
+                </ol>
+            </div>
+        </div>
+        
+        <footer>
+            S1 Plus 脚本辅助工具
+        </footer>
+    </div>
+
+</body>
+</html>
