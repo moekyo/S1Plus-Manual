@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      4.5.1
+// @version      4.5.8
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪等多种功能，全方位优化你的论坛体验。
 // @author       moekyo
 // @match        https://stage1st.com/2b/*
@@ -17,12 +17,12 @@
     'use strict';
 
 
-    const SCRIPT_VERSION = '4.5.1'; // Version bump to reflect sync fix
-    const SCRIPT_RELEASE_DATE = '2025-08-24';
+    const SCRIPT_VERSION = '4.5.8'; // Version bump to reflect UI fixes
+    const SCRIPT_RELEASE_DATE = '2025-08-26';
 
     // --- 样式注入 ---
     GM_addStyle(`
-        /* --- 通用颜色 --- */
+       /* --- 通用颜色 --- */
         :root {
             /* -- 基础调色板 -- */
             --s1p-bg: #ECEDEB;
@@ -62,6 +62,34 @@
             /* -- 阅读进度 -- */
             --s1p-progress-hot: rgb(192, 51, 34);
             --s1p-progress-cold: rgb(107, 114, 128);
+        }
+
+        /* --- 手动同步弹窗样式 --- */
+        .s1p-sync-choice-info {
+            background-color: var(--s1p-sub);
+            border: 1px solid var(--s1p-pri);
+            border-radius: 6px;
+            padding: 12px;
+            margin-top: 12px;
+            font-size: 13px;
+            line-height: 1.7;
+        }
+        .s1p-sync-choice-info-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .s1p-sync-choice-info-label {
+            font-weight: 500;
+            color: var(--s1p-t);
+        }
+        /* [FIXED] 移除了时间戳的背景色、边距和圆角 */
+        .s1p-sync-choice-info-time {
+            font-family: monospace, sans-serif;
+        }
+        .s1p-sync-choice-newer {
+            color: var(--s1p-success-text);
+            font-weight: bold;
         }
 
         /* --- 核心修复：禁用论坛自带的用户信息悬浮窗 --- */
@@ -515,12 +543,15 @@
         /* --- 确认弹窗样式 --- */
         @keyframes s1p-fade-in { from { opacity: 0; } to { opacity: 1; } } @keyframes s1p-scale-in { from { transform: scale(0.95); opacity: 0; } to { transform: scale(1); opacity: 1; } } @keyframes s1p-fade-out { from { opacity: 1; } to { opacity: 0; } } @keyframes s1p-scale-out { from { transform: scale(1); opacity: 1; } to { transform: scale(0.97); opacity: 0; } }
         .s1p-confirm-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(var(--s1p-black-rgb), 0.65); display: flex; justify-content: center; align-items: center; z-index: 10000; animation: s1p-fade-in 0.2s ease-out; }
-        .s1p-confirm-content { background-color: var(--s1p-bg); border-radius: 12px; box-shadow: 0 10px 25px -5px rgba(var(--s1p-black-rgb), 0.1), 0 10px 10px -5px rgba(var(--s1p-black-rgb), 0.04); width: 420px; max-width: 90%; text-align: left; overflow: hidden; animation: s1p-scale-in 0.25s ease-out; }
+        .s1p-confirm-content { background-color: var(--s1p-bg); border-radius: 12px; box-shadow: 0 10px 25px -5px rgba(var(--s1p-black-rgb), 0.1), 0 10px 10px -5px rgba(var(--s1p-black-rgb), 0.04); width: 480px; max-width: 90%; text-align: left; overflow: hidden; animation: s1p-scale-in 0.25s ease-out; }
         .s1p-confirm-body { padding: 20px 24px; font-size: 16px; line-height: 1.6; }
         .s1p-confirm-body .s1p-confirm-title { font-weight: 600; font-size: 18px; margin-bottom: 8px; }
         .s1p-confirm-body .s1p-confirm-subtitle { font-size: 14px; color: var(--s1p-desc-t); }
+        /* [MODIFIED] 恢复默认的靠右对齐 */
         .s1p-confirm-footer { padding: 12px 16px; display: flex; justify-content: flex-end; gap: 12px; }
-        .s1p-confirm-btn { padding: 9px 18px; border-radius: 6px; font-size: 14px; font-weight: 500; cursor: pointer; border: 1px solid transparent; transition: all 0.15s ease-in-out; box-shadow: 0 1px 2px 0 rgba(var(--s1p-black-rgb), 0.05); }
+        /* [NEW] 为需要居中的弹窗（如手动同步）提供单独的居中样式 */
+        .s1p-confirm-footer.s1p-centered { justify-content: center; }
+        .s1p-confirm-btn { padding: 9px 14px; border-radius: 6px; font-size: 14px; font-weight: 500; cursor: pointer; border: 1px solid transparent; transition: all 0.15s ease-in-out; box-shadow: 0 1px 2px 0 rgba(var(--s1p-black-rgb), 0.05); white-space: nowrap; }
         .s1p-confirm-btn:active { transform: translateY(1px); }
         .s1p-confirm-btn.s1p-cancel { background-color: var(--s1p-sub); border-color: var(--s1p-pri); }
         .s1p-confirm-btn.s1p-cancel:hover { border-color: var(--s1p-t); }
@@ -741,20 +772,39 @@
         }, 5000);
     };
 
+    // [FIXED] 只有在数据实际变动时才更新时间戳并触发同步
+    const updateLastModifiedTimestamp = () => {
+        GM_setValue('s1p_last_modified', Date.now());
+        debouncedTriggerRemoteSyncPush();
+    };
+
+    // [NEW] 更新上次同步时间的显示
+    const updateLastSyncTimeDisplay = () => {
+        const container = document.querySelector('#s1p-last-sync-time-container');
+        if (!container) return;
+        const lastSyncTs = GM_getValue('s1p_last_sync_timestamp', 0);
+        if (lastSyncTs > 0) {
+            container.textContent = `上次成功同步于: ${new Date(lastSyncTs).toLocaleString('zh-CN', { hour12: false })}`;
+        } else {
+            container.textContent = '尚未进行过远程同步。';
+        }
+    };
+
+
     // --- 数据处理 & 核心功能 ---
     const getBlockedThreads = () => GM_getValue('s1p_blocked_threads', {});
     const saveBlockedThreads = (threads) => {
         GM_setValue('s1p_blocked_threads', threads);
-        debouncedTriggerRemoteSyncPush();
+        updateLastModifiedTimestamp();
     };
     const getBlockedUsers = () => GM_getValue('s1p_blocked_users', {});
     const saveBlockedUsers = (users) => {
         GM_setValue('s1p_blocked_users', users);
-        debouncedTriggerRemoteSyncPush();
+        updateLastModifiedTimestamp();
     };
     const saveUserTags = (tags) => {
         GM_setValue('s1p_user_tags', tags);
-        debouncedTriggerRemoteSyncPush();
+        updateLastModifiedTimestamp();
     };
 
     // [MODIFIED] 升级并获取用户标记，自动迁移旧数据
@@ -801,7 +851,7 @@
     };
     const saveTitleFilterRules = (rules) => {
         GM_setValue('s1p_title_filter_rules', rules);
-        debouncedTriggerRemoteSyncPush();
+        updateLastModifiedTimestamp();
     };
 
     const blockThread = (id, title, reason = 'manual') => { const b = getBlockedThreads(); if (b[id]) return; b[id] = { title, timestamp: Date.now(), reason }; saveBlockedThreads(b); hideThread(id); };
@@ -934,7 +984,7 @@
     const getReadProgress = () => GM_getValue('s1p_read_progress', {});
     const saveReadProgress = (progress) => {
         GM_setValue('s1p_read_progress', progress);
-        debouncedTriggerRemoteSyncPush();
+        updateLastModifiedTimestamp();
     };
     const updateThreadProgress = (threadId, postId, page, lastReadFloor) => {
         if (!postId || !page || !lastReadFloor) return;
@@ -1174,17 +1224,22 @@
         });
     };
 
-    // [MODIFIED] 增加 lastUpdated 时间戳
-    const exportLocalDataObject = () => ({
-        version: 3.2,
-        lastUpdated: Date.now(),
-        settings: getSettings(),
-        threads: getBlockedThreads(),
-        users: getBlockedUsers(),
-        user_tags: getUserTags(),
-        title_filter_rules: getTitleFilterRules(),
-        read_progress: getReadProgress()
-    });
+    // [FIXED] 导出数据对象，使用持久化的时间戳
+    const exportLocalDataObject = () => {
+        const lastUpdated = GM_getValue('s1p_last_modified', 0);
+        const lastUpdatedFormatted = new Date(lastUpdated).toLocaleString('zh-CN', { hour12: false });
+        return {
+            version: 3.2,
+            lastUpdated,
+            lastUpdatedFormatted,
+            settings: getSettings(),
+            threads: getBlockedThreads(),
+            users: getBlockedUsers(),
+            user_tags: getUserTags(),
+            title_filter_rules: getTitleFilterRules(),
+            read_progress: getReadProgress()
+        }
+    };
 
     const exportLocalData = () => JSON.stringify(exportLocalDataObject(), null, 2);
 
@@ -1233,13 +1288,17 @@
                 progressImported = Object.keys(imported.read_progress).length;
             }
 
+            // [FIXED] 导入成功后，将本地时间戳与导入的时间戳同步
+            GM_setValue('s1p_last_modified', imported.lastUpdated || 0);
+
             hideBlockedThreads();
             hideBlockedUsersPosts();
             applyUserThreadBlocklist();
             hideThreadsByTitleKeyword();
             initializeNavbar();
             applyInterfaceCustomizations();
-            debouncedTriggerRemoteSyncPush();
+            // 导入数据是一次大数据变更，直接触发一次推送
+            triggerRemoteSyncPush();
 
             return { success: true, message: `成功导入 ${threadsImported} 条帖子、${usersImported} 条用户、${tagsImported} 条标记、${rulesImported} 条标题规则、${progressImported} 条阅读进度及相关设置。` };
         } catch (e) { return { success: false, message: `导入失败: ${e.message}` }; }
@@ -1333,6 +1392,8 @@
             try {
                 const dataToPush = exportLocalDataObject();
                 await pushRemoteData(dataToPush);
+                GM_setValue('s1p_last_sync_timestamp', Date.now());
+                updateLastSyncTimeDisplay();
                 console.log('S1 Plus: 数据已成功推送到远程。');
             } catch (error) {
                 console.error('S1 Plus: 自动推送数据失败:', error);
@@ -1340,73 +1401,34 @@
         })();
     };
 
-    // [NEW] 主远程同步控制器
-    const performRemoteSync = async (isManual = false) => {
+    // [MODIFIED] 自动同步控制器，用于页面加载时静默执行
+    const performAutoSync = async () => {
         const settings = getSettings();
         if (!settings.syncRemoteEnabled || !settings.syncRemoteGistId || !settings.syncRemotePat) {
-            if (isManual) {
-                const statusEl = document.querySelector('#s1p-remote-status');
-                if (statusEl) showMessage(statusEl, '远程同步未启用或配置不完整。', false);
-            }
             return;
         }
 
-        const statusEl = document.querySelector('#s1p-remote-status');
-        const updateStatus = (msg, isSuccess = null) => {
-            if (statusEl) {
-                if (isSuccess === true) showMessage(statusEl, msg, true);
-                else if (isSuccess === false) showMessage(statusEl, msg, false);
-                else {
-                    statusEl.textContent = msg;
-                    statusEl.className = 's1p-message';
-                    statusEl.style.display = 'block';
-                }
-            }
-        };
-
-        if (isManual) updateStatus('正在同步...');
-
         try {
-            updateStatus('正在同步... (1/3 获取远程数据)');
             const remoteData = await fetchRemoteData();
             const remoteTimestamp = remoteData.lastUpdated || 0;
-
-            updateStatus('正在同步... (2/3 获取本地数据)');
-            const localData = exportLocalDataObject();
-            const localTimestamp = localData.lastUpdated || 0;
-
-            updateStatus('正在同步... (3/3 比较数据版本)');
+            const localTimestamp = GM_getValue('s1p_last_modified', 0);
 
             if (remoteTimestamp > localTimestamp) {
-                console.log(`S1 Plus: 远程数据 (TS: ${remoteTimestamp}) 比本地 (TS: ${localTimestamp}) 更新，正在应用...`);
-                const result = importLocalData(JSON.stringify(remoteData));
-                if (result.success) {
-                    updateStatus('同步成功：已从云端更新本地数据。建议刷新页面以应用所有更改。', true);
-                     // 刷新设置面板UI
-                    if (document.querySelector('.s1p-modal')) {
-                        document.querySelector('.s1p-modal-close').click();
-                        createManagementModal();
-                        document.querySelector('button[data-tab="sync"]').click();
-                    }
-                } else {
-                    throw new Error(`应用远程数据失败: ${result.message}`);
-                }
+                console.log(`S1 Plus (AutoSync): 远程数据 (TS: ${remoteTimestamp}) 比本地 (TS: ${localTimestamp}) 更新，正在后台应用...`);
+                importLocalData(JSON.stringify(remoteData));
+                GM_setValue('s1p_last_sync_timestamp', Date.now());
             } else if (localTimestamp > remoteTimestamp) {
-                console.log(`S1 Plus: 本地数据 (TS: ${localTimestamp}) 比远程 (TS: ${remoteTimestamp}) 更新，正在上传...`);
+                console.log(`S1 Plus (AutoSync): 本地数据 (TS: ${localTimestamp}) 比远程 (TS: ${remoteTimestamp}) 更新，正在后台推送...`);
+                const localData = exportLocalDataObject();
                 await pushRemoteData(localData);
-                updateStatus('同步成功：已将本地更新推送到云端。', true);
+                GM_setValue('s1p_last_sync_timestamp', Date.now());
             } else {
-                console.log(`S1 Plus: 本地与远程数据版本一致 (TS: ${localTimestamp})，无需同步。`);
-                if (isManual) {
-                    updateStatus('数据已是最新，无需同步。', true);
-                }
+                console.log(`S1 Plus (AutoSync): 本地与远程数据版本一致 (TS: ${localTimestamp})，无需同步。`);
             }
         } catch (error) {
-            console.error('S1 Plus: 远程同步失败:', error);
-            updateStatus(`同步失败: ${error.message}`, false);
+            console.error('S1 Plus: 自动同步失败:', error);
         }
     };
-
 
     // --- 设置管理 ---
     const defaultSettings = {
@@ -1450,7 +1472,7 @@
     };
     const saveSettings = (settings) => {
         GM_setValue('s1p_settings', settings);
-        debouncedTriggerRemoteSyncPush();
+        updateLastModifiedTimestamp();
     };
 
     // --- 界面定制功能 ---
@@ -1556,6 +1578,7 @@
 
                     <div class="s1p-settings-group">
                         <div class="s1p-settings-group-title">远程同步 (通过GitHub Gist)</div>
+                        <div id="s1p-last-sync-time-container" class="s1p-setting-desc" style="margin-top: -8px; margin-bottom: 16px;"></div>
                         <div class="s1p-settings-item">
                             <label class="s1p-settings-label" for="s1p-remote-enabled-toggle">启用远程同步</label>
                             <label class="s1p-switch">
@@ -1572,8 +1595,8 @@
                             <label class="s1p-settings-label" for="s1p-remote-pat-input">GitHub Personal Access Token (PAT)</label>
                             <input type="password" id="s1p-remote-pat-input" class="s1p-title-suffix-input" placeholder="ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" style="width: 100%;">
                         </div>
-                        <p class="s1p-setting-desc">
-                            <a href="https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens" id="s1p-remote-helper-link" target="_blank">不知道如何获取 Gist ID 和 Token？点击这里查看教程。</a> 
+                        <p class="s1p-setting-desc" style="margin-top: 12px;">
+                            <a href="https://silver-s1plus.netlify.app/" id="s1p-remote-helper-link" target="_blank">不知道如何获取 Gist ID 和 Token？点击这里查看教程。</a> 
                             <br>Token只会保存在你的浏览器本地，不会上传到任何地方。
                         </p>
                         <div id="s1p-remote-status" class="s1p-message"></div>
@@ -1602,6 +1625,7 @@
             <div class="s1p-modal-footer">版本: ${SCRIPT_VERSION} (${SCRIPT_RELEASE_DATE})</div>
         </div>`;
         document.body.appendChild(modal);
+        updateLastSyncTimeDisplay();
 
         const tabs = {
             'general-settings': modal.querySelector('#s1p-tab-general-settings'),
@@ -1634,11 +1658,43 @@
             `).join('');
         }
         
-        // --- [NEW] 加载远程同步设置到UI ---
+        const remoteToggle = modal.querySelector('#s1p-remote-enabled-toggle');
+        const gistInputItem = modal.querySelector('#s1p-remote-gist-id-input').closest('.s1p-settings-item');
+        const patInputItem = modal.querySelector('#s1p-remote-pat-input').closest('.s1p-settings-item');
+        const remoteFooter = modal.querySelector('#s1p-remote-manual-sync-btn').closest('.s1p-editor-footer');
+        const remoteHelperLink = modal.querySelector('#s1p-remote-helper-link');
+
+        const updateRemoteSyncInputsState = () => {
+            const isEnabled = remoteToggle.checked;
+            const targetOpacity = isEnabled ? '1' : '0.6';
+            const targetPointerEvents = isEnabled ? 'auto' : 'none';
+
+            const elementsToStyle = [gistInputItem, patInputItem, remoteFooter, remoteHelperLink];
+            elementsToStyle.forEach(el => {
+                if (el) {
+                    el.style.opacity = targetOpacity;
+                    el.style.pointerEvents = targetPointerEvents;
+                }
+            });
+
+            if (gistInputItem) gistInputItem.querySelector('input').disabled = !isEnabled;
+            if (patInputItem) patInputItem.querySelector('input').disabled = !isEnabled;
+            if (remoteFooter) {
+                const manualSyncBtn = remoteFooter.querySelector('#s1p-remote-manual-sync-btn');
+                if(manualSyncBtn) manualSyncBtn.disabled = !isEnabled;
+            }
+        };
+        
+        // --- 加载远程同步设置到UI ---
         const settings = getSettings();
-        modal.querySelector('#s1p-remote-enabled-toggle').checked = settings.syncRemoteEnabled;
+        remoteToggle.checked = settings.syncRemoteEnabled;
         modal.querySelector('#s1p-remote-gist-id-input').value = settings.syncRemoteGistId || '';
         modal.querySelector('#s1p-remote-pat-input').value = settings.syncRemotePat || '';
+        if (remoteToggle) {
+            remoteToggle.addEventListener('change', updateRemoteSyncInputsState);
+            updateRemoteSyncInputsState(); // 打开设置时，根据当前状态初始化一次
+        }
+
 
         // [REFACTORED] 全新用户标记标签页渲染逻辑
         const renderTagsTab = (options = {}) => {
@@ -2150,39 +2206,6 @@
         renderTagsTab();
         renderNavSettingsTab();
 
-        // --- [FIX] 关联远程同步开关与输入框状态 ---
-        const remoteToggle = modal.querySelector('#s1p-remote-enabled-toggle');
-        const gistInputItem = modal.querySelector('#s1p-remote-gist-id-input').closest('.s1p-settings-item');
-        const patInputItem = modal.querySelector('#s1p-remote-pat-input').closest('.s1p-settings-item');
-        const remoteFooter = modal.querySelector('#s1p-remote-manual-sync-btn').closest('.s1p-editor-footer');
-        const remoteHelperLink = modal.querySelector('#s1p-remote-helper-link');
-
-        const updateRemoteSyncInputsState = () => {
-            const isEnabled = remoteToggle.checked;
-            const targetOpacity = isEnabled ? '1' : '0.6';
-            const targetPointerEvents = isEnabled ? 'auto' : 'none';
-
-            const elementsToStyle = [gistInputItem, patInputItem, remoteFooter, remoteHelperLink];
-            elementsToStyle.forEach(el => {
-                if (el) {
-                    el.style.opacity = targetOpacity;
-                    el.style.pointerEvents = targetPointerEvents;
-                }
-            });
-
-            if (gistInputItem) gistInputItem.querySelector('input').disabled = !isEnabled;
-            if (patInputItem) patInputItem.querySelector('input').disabled = !isEnabled;
-            if (remoteFooter) {
-                const manualSyncBtn = remoteFooter.querySelector('#s1p-remote-manual-sync-btn');
-                if(manualSyncBtn) manualSyncBtn.disabled = !isEnabled;
-            }
-        };
-
-        if (remoteToggle) {
-            remoteToggle.addEventListener('change', updateRemoteSyncInputsState);
-            updateRemoteSyncInputsState(); // 打开设置时，根据当前状态初始化一次
-        }
-
         modal.addEventListener('change', e => {
             const target = e.target;
             const settings = getSettings();
@@ -2293,6 +2316,14 @@
                             }
                         });
 
+                        // [FIXED] 清除设置后，立即更新UI
+                        if (selectedKeys.includes('settings')) {
+                            modal.querySelector('#s1p-remote-enabled-toggle').checked = false;
+                            modal.querySelector('#s1p-remote-gist-id-input').value = '';
+                            modal.querySelector('#s1p-remote-pat-input').value = '';
+                            updateRemoteSyncInputsState();
+                        }
+                        
                         // 全局刷新
                         hideBlockedThreads();
                         hideBlockedUsersPosts();
@@ -2314,21 +2345,23 @@
                 );
             }
             
-            // --- [NEW] 远程同步设置保存事件 ---
+            // --- [FIXED] 远程同步设置保存事件（不再错误地更新时间戳） ---
             if (e.target.id === 's1p-remote-save-btn') {
                 const currentSettings = getSettings();
                 currentSettings.syncRemoteEnabled = modal.querySelector('#s1p-remote-enabled-toggle').checked;
                 currentSettings.syncRemoteGistId = modal.querySelector('#s1p-remote-gist-id-input').value.trim();
                 currentSettings.syncRemotePat = modal.querySelector('#s1p-remote-pat-input').value.trim();
-                saveSettings(currentSettings);
-    
+                
+                // 直接保存设置，但不调用会触发时间戳更新的 saveSettings() 函数
+                GM_setValue('s1p_settings', currentSettings);
+
                 const statusEl = modal.querySelector('#s1p-remote-status');
                 showMessage(statusEl, '远程同步设置已保存。', true);
             }
             
-            // --- [MODIFIED] 手动同步逻辑 ---
+            // --- [NEW] 手动同步逻辑，带用户选择 ---
             if (e.target.id === 's1p-remote-manual-sync-btn') {
-                performRemoteSync(true); // 调用主同步控制器，并标记为手动触发
+                handleManualSync();
             }
 
 
@@ -2406,6 +2439,141 @@
             }
         });
     };
+
+    // --- [MODIFIED] 手动同步处理流程 ---
+    const handleManualSync = async () => {
+        const statusEl = document.querySelector('#s1p-remote-status');
+        const updateStatus = (msg, isSuccess = null) => {
+            if (!statusEl) return;
+            if (isSuccess === true) showMessage(statusEl, msg, true);
+            else if (isSuccess === false) showMessage(statusEl, msg, false);
+            else {
+                statusEl.textContent = msg;
+                statusEl.className = 's1p-message';
+                statusEl.style.display = 'block';
+            }
+        };
+
+        const settings = getSettings();
+        if (!settings.syncRemoteEnabled || !settings.syncRemoteGistId || !settings.syncRemotePat) {
+            updateStatus('远程同步未启用或配置不完整。', false);
+            return;
+        }
+
+        updateStatus('正在检查云端数据...');
+
+        try {
+            const remoteData = await fetchRemoteData();
+            const remoteTimestamp = remoteData.lastUpdated || 0;
+            const localTimestamp = GM_getValue('s1p_last_modified', 0);
+            
+            // [MODIFIED] 仅在数据不一致时弹出选择框
+            if (remoteTimestamp === localTimestamp) {
+                updateStatus('数据已是最新，无需同步。', true);
+                GM_setValue('s1p_last_sync_timestamp', Date.now());
+                updateLastSyncTimeDisplay();
+                return;
+            }
+
+            const formatForDisplay = (ts) => {
+                if (!ts) return "无记录 (新设备)";
+                const date = new Date(ts);
+                return `${date.toLocaleString('zh-CN', { hour12: false })} <span class="s1p-sync-choice-newer">${(ts > 0 && Date.now() - ts < 60000 ? '(刚刚)' : '')}</span>`;
+            };
+
+            const localNewer = localTimestamp > remoteTimestamp;
+            
+            const bodyHtml = `
+                <p>检测到本地数据与云端备份不一致，请选择同步方向：</p>
+                <div class="s1p-sync-choice-info">
+                    <div class="s1p-sync-choice-info-row">
+                       <span class="s1p-sync-choice-info-label">本地数据更新于:</span>
+                       <span class="s1p-sync-choice-info-time ${localNewer ? 's1p-sync-choice-newer' : ''}">${formatForDisplay(localTimestamp)}</span>
+                    </div>
+                     <div class="s1p-sync-choice-info-row">
+                       <span class="s1p-sync-choice-info-label">云端备份更新于:</span>
+                       <span class="s1p-sync-choice-info-time ${!localNewer ? 's1p-sync-choice-newer' : ''}">${formatForDisplay(remoteTimestamp)}</span>
+                    </div>
+                </div>
+            `;
+            
+            const pullAction = { text: '从云端拉取 (覆盖本地)', className: 's1p-confirm', action: async () => {
+                updateStatus('正在从云端拉取数据...');
+                const result = importLocalData(JSON.stringify(remoteData));
+                if (result.success) {
+                    GM_setValue('s1p_last_sync_timestamp', Date.now());
+                    updateLastSyncTimeDisplay();
+                    updateStatus('拉取成功！已从云端恢复数据。', true);
+                    if (document.querySelector('.s1p-modal')) {
+                        document.querySelector('.s1p-modal-close').click();
+                        createManagementModal();
+                        document.querySelector('button[data-tab="sync"]').click();
+                    }
+                } else {
+                     updateStatus(`拉取失败: ${result.message}`, false);
+                }
+            }};
+
+            const pushAction = { text: '向云端推送 (覆盖云端)', className: 's1p-confirm', action: async () => {
+                updateStatus('正在向云端推送数据...');
+                try {
+                    const localData = exportLocalDataObject();
+                    await pushRemoteData(localData);
+                    GM_setValue('s1p_last_sync_timestamp', Date.now());
+                    updateLastSyncTimeDisplay();
+                    updateStatus('推送成功！已更新云端备份。', true);
+                } catch(e) {
+                    updateStatus(`推送失败: ${e.message}`, false);
+                }
+            }};
+
+            const cancelAction = { text: '取消', className: 's1p-cancel', action: null };
+            
+            createAdvancedConfirmationModal('手动同步选择', bodyHtml, [pullAction, pushAction, cancelAction]);
+
+        } catch (error) {
+            updateStatus(`操作失败: ${error.message}`, false);
+        }
+    };
+
+    // --- [MODIFIED] 更通用的确认弹窗，支持完全自定义按钮和内容 ---
+    const createAdvancedConfirmationModal = (title, bodyHtml, buttons) => {
+        document.querySelector('.s1p-confirm-modal')?.remove();
+        const modal = document.createElement('div');
+        modal.className = 's1p-confirm-modal';
+        
+        const footerButtons = buttons.map((btn, index) =>
+            `<button class="s1p-confirm-btn ${btn.className || ''}" data-btn-index="${index}">${btn.text}</button>`
+        ).join('');
+
+        modal.innerHTML = `
+            <div class="s1p-confirm-content">
+                <div class="s1p-confirm-body">
+                    <div class="s1p-confirm-title">${title}</div>
+                    <div class="s1p-confirm-subtitle">${bodyHtml}</div>
+                </div>
+                <div class="s1p-confirm-footer s1p-centered">
+                    ${footerButtons}
+                </div>
+            </div>`;
+            
+        const closeModal = () => { modal.querySelector('.s1p-confirm-content').style.animation = 's1p-scale-out 0.25s ease-out forwards'; modal.style.animation = 's1p-fade-out 0.25s ease-out forwards'; setTimeout(() => modal.remove(), 250); };
+
+        modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+        
+        buttons.forEach((btn, index) => {
+            const buttonEl = modal.querySelector(`[data-btn-index="${index}"]`);
+            if (buttonEl) {
+                buttonEl.addEventListener('click', () => {
+                    if (btn.action) btn.action();
+                    closeModal(); // Always close the modal after a button click
+                });
+            }
+        });
+
+        document.body.appendChild(modal);
+    };
+
 
     // --- [REPLACED] 帖子屏蔽交互逻辑重构 ---
     const addBlockButtonsToThreads = () => {
@@ -3160,7 +3328,7 @@
 
     // --- 主流程 ---
     function main() {
-        performRemoteSync(); // 实现启动时自动同步
+        performAutoSync(); // 实现启动时自动同步
 
         detectS1Nux(); // 检测 S1 NUX 是否启用
         initializeNavbar();
