@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      4.5.8
+// @version      4.6.1
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪等多种功能，全方位优化你的论坛体验。
 // @author       moekyo
 // @match        https://stage1st.com/2b/*
@@ -17,8 +17,8 @@
     'use strict';
 
 
-    const SCRIPT_VERSION = '4.5.8'; // Version bump to reflect UI fixes
-    const SCRIPT_RELEASE_DATE = '2025-08-26';
+    const SCRIPT_VERSION = '4.6.1'; // Version bump for UI enhancement
+    const SCRIPT_RELEASE_DATE = '2025-08-27';
 
     // --- 样式注入 ---
     GM_addStyle(`
@@ -91,6 +91,51 @@
             color: var(--s1p-success-text);
             font-weight: bold;
         }
+
+        /* --- [NEW] 滑块式分段控件样式 --- */
+        /* --- [NEW] 滑块式分段控件样式 --- */
+        .s1p-segmented-control {
+            position: relative;
+            display: inline-flex;
+            background-color: var(--s1p-sub);
+            border-radius: 6px;
+            padding: 2px;
+            user-select: none;
+        }
+        .s1p-segmented-control-slider {
+            position: absolute;
+            top: 2px;
+            height: calc(100% - 4px);
+            background-color: var(--s1p-sec);
+            border-radius: 5px;
+            box-shadow: 0 1px 3px rgba(var(--s1p-black-rgb), 0.1);
+            transition: all 0.25s ease-in-out;
+        }
+        .s1p-segmented-control:hover .s1p-segmented-control-slider {
+            box-shadow: 0 2px 6px rgba(var(--s1p-black-rgb), 0.15);
+        }
+        .s1p-segmented-control-option {
+            position: relative;
+            z-index: 1;
+            padding: 4px 12px;
+            color: var(--s1p-desc-t);
+            cursor: pointer;
+            transition: color 0.25s ease-in-out, background-color 0.2s ease-in-out; /* [修改] 增加背景色过渡 */
+            font-size: 13px;
+            line-height: 1.5;
+            white-space: nowrap;
+            border-radius: 4px; /* [新增] 为选项本身也增加圆角，使其在悬停时更好看 */
+        }
+        .s1p-segmented-control-option.active {
+            color: var(--s1p-white);
+            font-weight: 500;
+            cursor: default;
+        }
+        .s1p-segmented-control-option:not(.active):hover {
+            background-color: var(--s1p-pri);
+            color: var(--s1p-t);
+        }
+
 
         /* --- 核心修复：禁用论坛自带的用户信息悬浮窗 --- */
         #p_pop { display: none !important; }
@@ -605,7 +650,7 @@
         .s1p-settings-checkbox { /* Handled by .s1p-switch */ }
         .s1p-setting-desc { font-size: 12px; color: var(--s1p-desc-t); margin: -4px 0 12px 0; padding: 0; line-height: 1.5; }
         .s1p-editor-item { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; padding: 6px; border-radius: 4px; background: var(--s1p-bg); }
-        .s1p-editor-item input[type="text"] { background: var(--s1p-bg);  width: 100%; border: 1px solid var(--s1p-pri); border-radius: 4px; padding: 6px 8px; font-size: 14px; box-sizing: border-box; }
+        .s1p-editor-item input[type="text"], .s1p-settings-item select { background: var(--s1p-bg);  width: 100%; border: 1px solid var(--s1p-pri); border-radius: 4px; padding: 6px 8px; font-size: 14px; box-sizing: border-box; }
         .s1p-editor-item-controls { display: flex; align-items: center; gap: 4px; }
         .s1p-editor-btn { padding: 4px; font-size: 18px; line-height: 1; cursor: pointer; border-radius: 4px; border:none; background: transparent; color: #9ca3af; }
         .s1p-editor-btn:hover { background: var(--s1p-secondary-bg); color: var(--s1p-secondary-text); }
@@ -1436,6 +1481,7 @@
         enableUserBlocking: true,
         enableUserTagging: true,
         enableReadProgress: true,
+        readingProgressCleanupDays: 0,     // [MODIFIED] Default to 0 (Never)
         openProgressInNewTab: true,
         openProgressInBackground: false,
         openThreadsInNewTab: false,
@@ -2020,7 +2066,17 @@
                         <label class="s1p-settings-label" for="s1p-enableReadProgress">启用阅读进度跟踪</label>
                         <label class="s1p-switch"><input type="checkbox" id="s1p-enableReadProgress" data-feature="enableReadProgress" class="s1p-feature-toggle" ${settings.enableReadProgress ? 'checked' : ''}><span class="s1p-slider"></span></label>
                     </div>
-                     <div class="s1p-settings-item">
+                    <div class="s1p-settings-item" id="s1p-readingProgressCleanupContainer" style="padding-left: 20px; ${!settings.enableReadProgress ? 'display: none;' : ''}">
+                        <label class="s1p-settings-label">自动清理超过以下时间的阅读记录</label>
+                        <div id="s1p-readingProgressCleanupDays-control" class="s1p-segmented-control">
+                            <div class="s1p-segmented-control-slider"></div>
+                            <div class="s1p-segmented-control-option ${settings.readingProgressCleanupDays == 30 ? 'active' : ''}" data-value="30">1个月</div>
+                            <div class="s1p-segmented-control-option ${settings.readingProgressCleanupDays == 90 ? 'active' : ''}" data-value="90">3个月</div>
+                            <div class="s1p-segmented-control-option ${settings.readingProgressCleanupDays == 180 ? 'active' : ''}" data-value="180">6个月</div>
+                            <div class="s1p-segmented-control-option ${settings.readingProgressCleanupDays == 0 ? 'active' : ''}" data-value="0">永不</div>
+                        </div>
+                    </div>
+                    <div class="s1p-settings-item">
                         <label class="s1p-settings-label" for="s1p-openProgressInNewTab">在新窗口打开阅读进度</label>
                         <label class="s1p-switch"><input type="checkbox" id="s1p-openProgressInNewTab" class="s1p-settings-checkbox" data-setting="openProgressInNewTab" ${settings.openProgressInNewTab ? 'checked' : ''}><span class="s1p-slider"></span></label>
                     </div>
@@ -2048,7 +2104,18 @@
                         <input type="text" id="s1p-customTitleSuffix" class="s1p-title-suffix-input" data-setting="customTitleSuffix" value="${settings.customTitleSuffix || ''}" style="width: 200px;">
                     </div>
                 </div>`;
-
+            
+            // [NEW] Function to position the slider
+            const moveSlider = (control) => {
+                if (!control) return;
+                const slider = control.querySelector('.s1p-segmented-control-slider');
+                const activeOption = control.querySelector('.s1p-segmented-control-option.active');
+                if (slider && activeOption) {
+                    slider.style.width = `${activeOption.offsetWidth}px`;
+                    slider.style.left = `${activeOption.offsetLeft}px`;
+                }
+            };
+            
             // 为“在新窗口打开”开关添加事件，以控制“后台打开”的可见性
             const openInNewTabCheckbox = tabs['general-settings'].querySelector('#s1p-openProgressInNewTab');
             const openInBackgroundItem = tabs['general-settings'].querySelector('#s1p-openProgressInBackground-item');
@@ -2061,6 +2128,30 @@
             openThreadsInNewTabCheckbox.addEventListener('change', (e) => {
                 openThreadsInBackgroundItem.style.display = e.target.checked ? 'flex' : 'none';
             });
+            
+            const cleanupControl = tabs['general-settings'].querySelector('#s1p-readingProgressCleanupDays-control');
+            if (cleanupControl) {
+                // Initialize slider position
+                setTimeout(() => moveSlider(cleanupControl), 0);
+
+                cleanupControl.addEventListener('click', (e) => {
+                    const target = e.target.closest('.s1p-segmented-control-option');
+                    if (!target || target.classList.contains('active')) return;
+
+                    const newValue = parseInt(target.dataset.value, 10);
+                    
+                    const currentSettings = getSettings();
+                    currentSettings.readingProgressCleanupDays = newValue;
+                    saveSettings(currentSettings);
+
+                    // Update UI
+                    cleanupControl.querySelectorAll('.s1p-segmented-control-option').forEach(opt => opt.classList.remove('active'));
+                    target.classList.add('active');
+                    
+                    // Move slider to new position
+                    moveSlider(cleanupControl);
+                });
+            }
 
 
             // 总的设置变更事件监听
@@ -2071,8 +2162,8 @@
                     const settings = getSettings();
                     if (target.type === 'checkbox') {
                         settings[settingKey] = target.checked;
-                    } else if (target.type === 'number') {
-                        settings[settingKey] = parseFloat(target.value);
+                    } else if (target.type === 'number' || target.tagName === 'SELECT') {
+                        settings[settingKey] = parseInt(target.value, 10);
                     } else {
                         settings[settingKey] = target.value;
                     }
@@ -2235,6 +2326,10 @@
                         refreshAllAuthiActions();
                         break;
                     case 'enableReadProgress':
+                        // [MODIFIED] Link visibility of cleanup settings to this toggle
+                        const cleanupItem = document.getElementById('s1p-readingProgressCleanupContainer');
+                        if(cleanupItem) cleanupItem.style.display = isChecked ? 'flex' : 'none';
+
                         isChecked ? addProgressJumpButtons() : removeProgressJumpButtons();
                         break;
                 }
@@ -3325,10 +3420,45 @@
             }
         });
     }
+    
+    // [MODIFIED] Function to clean up old reading progress records
+    const cleanupOldReadProgress = () => {
+        const settings = getSettings();
+        if (!settings.readingProgressCleanupDays || settings.readingProgressCleanupDays <= 0) {
+            return; // Exit if cleanup is set to "Never" (0)
+        }
+
+        const progress = getReadProgress();
+        const originalCount = Object.keys(progress).length;
+        if (originalCount === 0) return;
+
+        const now = Date.now();
+        const maxAge = settings.readingProgressCleanupDays * 24 * 60 * 60 * 1000;
+        const cleanedProgress = {};
+        let cleanedCount = 0;
+
+        for (const threadId in progress) {
+            if (Object.prototype.hasOwnProperty.call(progress, threadId)) {
+                const record = progress[threadId];
+                if (record.timestamp && (now - record.timestamp < maxAge)) {
+                    cleanedProgress[threadId] = record; // Keep this record
+                } else {
+                    cleanedCount++; // This record is old, discard it
+                }
+            }
+        }
+
+        if (cleanedCount > 0) {
+            console.log(`S1 Plus: Cleaned up ${cleanedCount} old reading progress records (older than ${settings.readingProgressCleanupDays} days).`);
+            saveReadProgress(cleanedProgress);
+        }
+    };
+
 
     // --- 主流程 ---
     function main() {
         performAutoSync(); // 实现启动时自动同步
+        cleanupOldReadProgress(); 
 
         detectS1Nux(); // 检测 S1 NUX 是否启用
         initializeNavbar();
