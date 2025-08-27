@@ -91,8 +91,47 @@
             color: var(--s1p-success-text);
             font-weight: bold;
         }
+        
+        /* --- [NEW] 提示框样式 --- */
+        .s1p-notice {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            background-color: var(--s1p-sub);
+            border: 1px solid var(--s1p-pri);
+            border-radius: 6px;
+            padding: 12px;
+            margin-top: 12px;
+        }
+        .s1p-notice-icon {
+            flex-shrink: 0;
+            width: 20px;
+            height: 20px;
+            background-color: var(--s1p-t);
+            mask-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='currentColor'%3e%3cpath d='M12 22C6.47715 22 2 17.5228 2 12C2 6.47715 6.47715 2 12 2C17.5228 2 22 6.47715 22 12C22 17.5228 17.5228 22 12 22ZM12 20C16.4183 20 20 16.4183 20 12C20 7.58172 16.4183 4 12 4C7.58172 4 4 7.58172 4 12C4 16.4183 7.58172 20 12 20ZM11 7H13V9H11V7ZM11 11H13V17H11V11Z'%3e%3c/path%3e%3c/svg%3e");
+            mask-size: contain;
+            mask-position: center;
+            mask-repeat: no-repeat;
+            margin-top: 1px;
+        }
+        .s1p-notice-content {
+            font-size: 13px;
+            line-height: 1.6;
+            color: var(--s1p-desc-t);
+        }
+        .s1p-notice-content a {
+            color: var(--s1p-t);
+            font-weight: 500;
+            text-decoration: none;
+        }
+        .s1p-notice-content a:hover {
+            text-decoration: underline;
+        }
+        .s1p-notice-content p {
+            margin: 4px 0 0 0;
+            padding: 0;
+        }
 
-        /* --- [NEW] 滑块式分段控件样式 --- */
         /* --- [NEW] 滑块式分段控件样式 --- */
         .s1p-segmented-control {
             position: relative;
@@ -946,7 +985,7 @@
                     newPlaceholder.innerHTML = `<span>一条来自已屏蔽用户的引用已被隐藏。</span><span class="s1p-quote-toggle s1p-popover-btn">点击展开</span>`;
                     newWrapper.parentNode.insertBefore(newPlaceholder, newWrapper);
 
-                    newPlaceholder.querySelector('.s1p-quote-toggle').addEventListener('click', function() {
+                    newPlaceholder.querySelector('.s1p-quote-toggle').addEventListener('click', function () {
                         const isCollapsed = newWrapper.style.maxHeight === '0px';
                         if (isCollapsed) {
                             const style = window.getComputedStyle(quoteElement);
@@ -1305,8 +1344,8 @@
                 return Object.keys(importedData).length;
             };
 
-            if(imported.settings) {
-                saveSettings({...getSettings(), ...imported.settings});
+            if (imported.settings) {
+                saveSettings({ ...getSettings(), ...imported.settings });
             }
 
             threadsImported = upgradeAndMerge('threads', imported.threads, getBlockedThreads, saveBlockedThreads);
@@ -1557,7 +1596,7 @@
         if (settings.enableNavCustomization) {
             navUl.innerHTML = '';
             (settings.customNavLinks || []).forEach(link => {
-                if(!link.name || !link.href) return;
+                if (!link.name || !link.href) return;
                 const li = document.createElement('li');
                 if (window.location.href.includes(link.href)) li.className = 'a';
                 const a = document.createElement('a');
@@ -1586,7 +1625,7 @@
         modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
         document.body.appendChild(modal);
     };
-    
+
     const removeProgressJumpButtons = () => document.querySelectorAll('.s1p-progress-container').forEach(el => el.remove());
     const removeBlockButtonsFromThreads = () => document.querySelectorAll('.s1p-options-cell').forEach(el => el.remove());
 
@@ -1641,10 +1680,13 @@
                             <label class="s1p-settings-label" for="s1p-remote-pat-input">GitHub Personal Access Token (PAT)</label>
                             <input type="password" id="s1p-remote-pat-input" class="s1p-title-suffix-input" placeholder="ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" style="width: 100%;">
                         </div>
-                        <p class="s1p-setting-desc" style="margin-top: 12px;">
-                            <a href="https://silver-s1plus.netlify.app/" id="s1p-remote-helper-link" target="_blank">不知道如何获取 Gist ID 和 Token？点击这里查看教程。</a> 
-                            <br>Token只会保存在你的浏览器本地，不会上传到任何地方。
-                        </p>
+                        <div class="s1p-notice">
+                            <div class="s1p-notice-icon"></div>
+                            <div class="s1p-notice-content">
+                                <a href="https://silver-s1plus.netlify.app/" target="_blank">不知道如何获取 Gist ID 和 Token？点击这里查看教程。</a>
+                                <p>Token只会保存在你的浏览器本地，不会上传到任何地方。</p>
+                            </div>
+                        </div>
                         <div id="s1p-remote-status" class="s1p-message"></div>
                         <div class="s1p-editor-footer" style="margin-top: 16px; justify-content: flex-end; gap: 8px;">
                              <button id="s1p-remote-save-btn" class="s1p-btn">保存设置</button>
@@ -1703,7 +1745,7 @@
                 </div>
             `).join('');
         }
-        
+
         const remoteToggle = modal.querySelector('#s1p-remote-enabled-toggle');
         const gistInputItem = modal.querySelector('#s1p-remote-gist-id-input').closest('.s1p-settings-item');
         const patInputItem = modal.querySelector('#s1p-remote-pat-input').closest('.s1p-settings-item');
@@ -1727,10 +1769,10 @@
             if (patInputItem) patInputItem.querySelector('input').disabled = !isEnabled;
             if (remoteFooter) {
                 const manualSyncBtn = remoteFooter.querySelector('#s1p-remote-manual-sync-btn');
-                if(manualSyncBtn) manualSyncBtn.disabled = !isEnabled;
+                if (manualSyncBtn) manualSyncBtn.disabled = !isEnabled;
             }
         };
-        
+
         // --- 加载远程同步设置到UI ---
         const settings = getSettings();
         remoteToggle.checked = settings.syncRemoteEnabled;
@@ -1917,12 +1959,12 @@
                     </div>
                     <div id="s1p-manually-blocked-list-container" class="s1p-collapsible-content ${settings.showManuallyBlockedList ? 'expanded' : ''}">
                     ${manualItemIds.length === 0
-                        ? `<div class="s1p-empty">暂无手动屏蔽的帖子</div>`
-                        : `<div class="s1p-list">${manualItemIds.map(id => {
-                            const item = blockedThreads[id];
-                            return `<div class="s1p-item" data-thread-id="${id}"><div class="s1p-item-info"><div class="s1p-item-title">${item.title || `帖子 #${id}`}</div><div class="s1p-item-meta">屏蔽时间: ${formatDate(item.timestamp)} ${item.reason && item.reason !== 'manual' ? `(因屏蔽用户${item.reason.replace('user_','')})` : ''}</div></div><button class="s1p-unblock-btn s1p-btn" data-unblock-thread-id="${id}">取消屏蔽</button></div>`;
-                        }).join('')}</div>`
-                    }
+                    ? `<div class="s1p-empty">暂无手动屏蔽的帖子</div>`
+                    : `<div class="s1p-list">${manualItemIds.map(id => {
+                        const item = blockedThreads[id];
+                        return `<div class="s1p-item" data-thread-id="${id}"><div class="s1p-item-info"><div class="s1p-item-title">${item.title || `帖子 #${id}`}</div><div class="s1p-item-meta">屏蔽时间: ${formatDate(item.timestamp)} ${item.reason && item.reason !== 'manual' ? `(因屏蔽用户${item.reason.replace('user_', '')})` : ''}</div></div><button class="s1p-unblock-btn s1p-btn" data-unblock-thread-id="${id}">取消屏蔽</button></div>`;
+                    }).join('')}</div>`
+                }
                     </div>
                 </div>
             `;
@@ -1964,7 +2006,7 @@
                         </div>
                     </div>
                 `).join('');
-                 if (rules.length === 0) {
+                if (rules.length === 0) {
                     container.innerHTML = `<div class="s1p-empty" style="padding: 12px;">暂无规则</div>`;
                 }
             };
@@ -2104,7 +2146,7 @@
                         <input type="text" id="s1p-customTitleSuffix" class="s1p-title-suffix-input" data-setting="customTitleSuffix" value="${settings.customTitleSuffix || ''}" style="width: 200px;">
                     </div>
                 </div>`;
-            
+
             // [NEW] Function to position the slider
             const moveSlider = (control) => {
                 if (!control) return;
@@ -2115,7 +2157,7 @@
                     slider.style.left = `${activeOption.offsetLeft}px`;
                 }
             };
-            
+
             // 为“在新窗口打开”开关添加事件，以控制“后台打开”的可见性
             const openInNewTabCheckbox = tabs['general-settings'].querySelector('#s1p-openProgressInNewTab');
             const openInBackgroundItem = tabs['general-settings'].querySelector('#s1p-openProgressInBackground-item');
@@ -2128,7 +2170,7 @@
             openThreadsInNewTabCheckbox.addEventListener('change', (e) => {
                 openThreadsInBackgroundItem.style.display = e.target.checked ? 'flex' : 'none';
             });
-            
+
             const cleanupControl = tabs['general-settings'].querySelector('#s1p-readingProgressCleanupDays-control');
             if (cleanupControl) {
                 // Initialize slider position
@@ -2139,7 +2181,7 @@
                     if (!target || target.classList.contains('active')) return;
 
                     const newValue = parseInt(target.dataset.value, 10);
-                    
+
                     const currentSettings = getSettings();
                     currentSettings.readingProgressCleanupDays = newValue;
                     saveSettings(currentSettings);
@@ -2147,7 +2189,7 @@
                     // Update UI
                     cleanupControl.querySelectorAll('.s1p-segmented-control-option').forEach(opt => opt.classList.remove('active'));
                     target.classList.add('active');
-                    
+
                     // Move slider to new position
                     moveSlider(cleanupControl);
                 });
@@ -2174,7 +2216,7 @@
                         applyImageHiding();
                         manageImageToggleAllButtons();
                     }
-                    
+
                     if (settingKey === 'openThreadsInNewTab' || settingKey === 'openThreadsInBackground') {
                         applyThreadLinkBehavior();
                         applyPageLinkBehavior();
@@ -2280,7 +2322,7 @@
                     const newSettings = {
                         ...getSettings(),
                         enableNavCustomization: tabs['nav-settings'].querySelector('#s1p-enableNavCustomization').checked,
-                        customNavLinks: Array.from(navListContainer.querySelectorAll('.s1p-editor-item')).map(item => ({ name: item.querySelector('.s1p-nav-name').value.trim(), href: item.querySelector('.s1p-nav-href').value.trim() })).filter(l=>l.name && l.href)
+                        customNavLinks: Array.from(navListContainer.querySelectorAll('.s1p-editor-item')).map(item => ({ name: item.querySelector('.s1p-nav-name').value.trim(), href: item.querySelector('.s1p-nav-href').value.trim() })).filter(l => l.name && l.href)
                     };
                     saveSettings(newSettings);
                     applyInterfaceCustomizations();
@@ -2312,7 +2354,7 @@
                 }
                 saveSettings(settings);
 
-                switch(featureKey) {
+                switch (featureKey) {
                     case 'enablePostBlocking':
                         isChecked ? addBlockButtonsToThreads() : removeBlockButtonsFromThreads();
                         break;
@@ -2328,26 +2370,26 @@
                     case 'enableReadProgress':
                         // [MODIFIED] Link visibility of cleanup settings to this toggle
                         const cleanupItem = document.getElementById('s1p-readingProgressCleanupContainer');
-                        if(cleanupItem) cleanupItem.style.display = isChecked ? 'flex' : 'none';
+                        if (cleanupItem) cleanupItem.style.display = isChecked ? 'flex' : 'none';
 
                         isChecked ? addProgressJumpButtons() : removeProgressJumpButtons();
                         break;
                 }
                 return;
             }
-            else if(target.matches('.s1p-user-thread-block-toggle')) {
+            else if (target.matches('.s1p-user-thread-block-toggle')) {
                 const userId = target.dataset.userId;
                 const blockThreads = target.checked;
                 const users = getBlockedUsers();
-                if(users[userId]) {
+                if (users[userId]) {
                     users[userId].blockThreads = blockThreads;
                     saveBlockedUsers(users);
-                    if(blockThreads) applyUserThreadBlocklist();
+                    if (blockThreads) applyUserThreadBlocklist();
                     else unblockThreadsByUser(userId);
                     renderThreadTab();
                 }
             }
-            else if(target.matches('#s1p-blockThreadsOnUserBlock')) {
+            else if (target.matches('#s1p-blockThreadsOnUserBlock')) {
                 const currentSettings = getSettings();
                 currentSettings.blockThreadsOnUserBlock = target.checked;
                 saveSettings(currentSettings);
@@ -2361,7 +2403,7 @@
                 modal.querySelectorAll('.s1p-tab-btn, .s1p-tab-content').forEach(el => el.classList.remove('active'));
                 e.target.classList.add('active');
                 const activeTab = tabs[e.target.dataset.tab];
-                if(activeTab) activeTab.classList.add('active');
+                if (activeTab) activeTab.classList.add('active');
             }
             const unblockThreadId = e.target.dataset.unblockThreadId; if (unblockThreadId) { unblockThread(unblockThreadId); renderThreadTab(); }
             const unblockUserId = e.target.dataset.unblockUserId; if (unblockUserId) { unblockUser(unblockUserId); renderUserTab(); renderThreadTab(); }
@@ -2369,13 +2411,13 @@
             // --- 本地备份与恢复事件 ---
             const syncTextarea = modal.querySelector('#s1p-local-sync-textarea');
             const syncMessageEl = modal.querySelector('#s1p-local-sync-message');
-            if(e.target.id === 's1p-local-export-btn') {
+            if (e.target.id === 's1p-local-export-btn') {
                 syncTextarea.value = exportLocalData();
                 syncTextarea.select();
                 try { document.execCommand('copy'); showMessage(syncMessageEl, '数据已导出并复制到剪贴板', true); }
                 catch (err) { showMessage(syncMessageEl, '复制失败，请手动复制', false); }
             }
-            if(e.target.id === 's1p-local-import-btn') {
+            if (e.target.id === 's1p-local-import-btn') {
                 const jsonStr = syncTextarea.value.trim();
                 if (!jsonStr) return showMessage(syncMessageEl, '请先粘贴要导入的数据', false);
                 const result = importLocalData(jsonStr);
@@ -2387,12 +2429,12 @@
                     renderTagsTab();
                 }
             }
-            if(e.target.id === 's1p-clear-select-all') {
+            if (e.target.id === 's1p-clear-select-all') {
                 const isChecked = e.target.checked;
                 modal.querySelectorAll('.s1p-clear-data-checkbox').forEach(chk => chk.checked = isChecked);
             }
 
-            if(e.target.id === 's1p-clear-selected-btn') {
+            if (e.target.id === 's1p-clear-selected-btn') {
                 const selectedKeys = Array.from(modal.querySelectorAll('.s1p-clear-data-checkbox:checked')).map(chk => chk.dataset.clearKey);
                 if (selectedKeys.length === 0) {
                     const localSyncMessageEl = modal.querySelector('#s1p-local-sync-message');
@@ -2418,7 +2460,7 @@
                             modal.querySelector('#s1p-remote-pat-input').value = '';
                             updateRemoteSyncInputsState();
                         }
-                        
+
                         // 全局刷新
                         hideBlockedThreads();
                         hideBlockedUsersPosts();
@@ -2439,21 +2481,21 @@
                     '确认清除'
                 );
             }
-            
+
             // --- [FIXED] 远程同步设置保存事件（不再错误地更新时间戳） ---
             if (e.target.id === 's1p-remote-save-btn') {
                 const currentSettings = getSettings();
                 currentSettings.syncRemoteEnabled = modal.querySelector('#s1p-remote-enabled-toggle').checked;
                 currentSettings.syncRemoteGistId = modal.querySelector('#s1p-remote-gist-id-input').value.trim();
                 currentSettings.syncRemotePat = modal.querySelector('#s1p-remote-pat-input').value.trim();
-                
+
                 // 直接保存设置，但不调用会触发时间戳更新的 saveSettings() 函数
                 GM_setValue('s1p_settings', currentSettings);
 
                 const statusEl = modal.querySelector('#s1p-remote-status');
                 showMessage(statusEl, '远程同步设置已保存。', true);
             }
-            
+
             // --- [NEW] 手动同步逻辑，带用户选择 ---
             if (e.target.id === 's1p-remote-manual-sync-btn') {
                 handleManualSync();
@@ -2492,11 +2534,11 @@
                         showMessage(targetTab.querySelector('#s1p-tags-sync-message'), `已更新对 ${userName} 的标记。`, true);
                     } else {
                         createConfirmationModal(`标记内容为空`, '您希望删除对该用户的标记吗？', () => {
-                             delete tags[userId];
-                             saveUserTags(tags);
-                             renderTagsTab();
-                             refreshAllAuthiActions();
-                             showMessage(targetTab.querySelector('#s1p-tags-sync-message'), `已删除对 ${userName} 的标记。`, true);
+                            delete tags[userId];
+                            saveUserTags(tags);
+                            renderTagsTab();
+                            refreshAllAuthiActions();
+                            showMessage(targetTab.querySelector('#s1p-tags-sync-message'), `已删除对 ${userName} 的标记。`, true);
                         }, '确认删除');
                     }
                 }
@@ -2561,7 +2603,7 @@
             const remoteData = await fetchRemoteData();
             const remoteTimestamp = remoteData.lastUpdated || 0;
             const localTimestamp = GM_getValue('s1p_last_modified', 0);
-            
+
             // [MODIFIED] 仅在数据不一致时弹出选择框
             if (remoteTimestamp === localTimestamp) {
                 updateStatus('数据已是最新，无需同步。', true);
@@ -2577,7 +2619,7 @@
             };
 
             const localNewer = localTimestamp > remoteTimestamp;
-            
+
             const bodyHtml = `
                 <p>检测到本地数据与云端备份不一致，请选择同步方向：</p>
                 <div class="s1p-sync-choice-info">
@@ -2591,39 +2633,43 @@
                     </div>
                 </div>
             `;
-            
-            const pullAction = { text: '从云端拉取 (覆盖本地)', className: 's1p-confirm', action: async () => {
-                updateStatus('正在从云端拉取数据...');
-                const result = importLocalData(JSON.stringify(remoteData));
-                if (result.success) {
-                    GM_setValue('s1p_last_sync_timestamp', Date.now());
-                    updateLastSyncTimeDisplay();
-                    updateStatus('拉取成功！已从云端恢复数据。', true);
-                    if (document.querySelector('.s1p-modal')) {
-                        document.querySelector('.s1p-modal-close').click();
-                        createManagementModal();
-                        document.querySelector('button[data-tab="sync"]').click();
-                    }
-                } else {
-                     updateStatus(`拉取失败: ${result.message}`, false);
-                }
-            }};
 
-            const pushAction = { text: '向云端推送 (覆盖云端)', className: 's1p-confirm', action: async () => {
-                updateStatus('正在向云端推送数据...');
-                try {
-                    const localData = exportLocalDataObject();
-                    await pushRemoteData(localData);
-                    GM_setValue('s1p_last_sync_timestamp', Date.now());
-                    updateLastSyncTimeDisplay();
-                    updateStatus('推送成功！已更新云端备份。', true);
-                } catch(e) {
-                    updateStatus(`推送失败: ${e.message}`, false);
+            const pullAction = {
+                text: '从云端拉取 (覆盖本地)', className: 's1p-confirm', action: async () => {
+                    updateStatus('正在从云端拉取数据...');
+                    const result = importLocalData(JSON.stringify(remoteData));
+                    if (result.success) {
+                        GM_setValue('s1p_last_sync_timestamp', Date.now());
+                        updateLastSyncTimeDisplay();
+                        updateStatus('拉取成功！已从云端恢复数据。', true);
+                        if (document.querySelector('.s1p-modal')) {
+                            document.querySelector('.s1p-modal-close').click();
+                            createManagementModal();
+                            document.querySelector('button[data-tab="sync"]').click();
+                        }
+                    } else {
+                        updateStatus(`拉取失败: ${result.message}`, false);
+                    }
                 }
-            }};
+            };
+
+            const pushAction = {
+                text: '向云端推送 (覆盖云端)', className: 's1p-confirm', action: async () => {
+                    updateStatus('正在向云端推送数据...');
+                    try {
+                        const localData = exportLocalDataObject();
+                        await pushRemoteData(localData);
+                        GM_setValue('s1p_last_sync_timestamp', Date.now());
+                        updateLastSyncTimeDisplay();
+                        updateStatus('推送成功！已更新云端备份。', true);
+                    } catch (e) {
+                        updateStatus(`推送失败: ${e.message}`, false);
+                    }
+                }
+            };
 
             const cancelAction = { text: '取消', className: 's1p-cancel', action: null };
-            
+
             createAdvancedConfirmationModal('手动同步选择', bodyHtml, [pullAction, pushAction, cancelAction]);
 
         } catch (error) {
@@ -2636,7 +2682,7 @@
         document.querySelector('.s1p-confirm-modal')?.remove();
         const modal = document.createElement('div');
         modal.className = 's1p-confirm-modal';
-        
+
         const footerButtons = buttons.map((btn, index) =>
             `<button class="s1p-confirm-btn ${btn.className || ''}" data-btn-index="${index}">${btn.text}</button>`
         ).join('');
@@ -2651,11 +2697,11 @@
                     ${footerButtons}
                 </div>
             </div>`;
-            
+
         const closeModal = () => { modal.querySelector('.s1p-confirm-content').style.animation = 's1p-scale-out 0.25s ease-out forwards'; modal.style.animation = 's1p-fade-out 0.25s ease-out forwards'; setTimeout(() => modal.remove(), 250); };
 
         modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
-        
+
         buttons.forEach((btn, index) => {
             const buttonEl = modal.querySelector(`[data-btn-index="${index}"]`);
             if (buttonEl) {
@@ -2701,10 +2747,10 @@
 
             const confirmText = document.createElement('span');
             confirmText.textContent = '屏蔽该帖子吗？';
-            
+
             const separator = document.createElement('span');
             separator.className = 's1p-confirm-separator';
-            
+
             const cancelBtn = document.createElement('button');
             cancelBtn.className = 's1p-confirm-action-btn s1p-cancel';
             cancelBtn.title = '取消';
@@ -2717,13 +2763,13 @@
             cancelBtn.addEventListener('click', e => {
                 e.preventDefault();
                 e.stopPropagation();
-                
+
                 const parentCell = e.currentTarget.closest('.s1p-options-cell');
                 if (parentCell) {
                     // 步骤1：立即用JS强制隐藏，确保视觉上消失
                     optionsMenu.style.visibility = 'hidden';
                     optionsMenu.style.opacity = '0';
-                    
+
                     // 步骤2：立即禁用鼠标事件，强制:hover状态重置
                     parentCell.style.pointerEvents = 'none';
 
@@ -2738,7 +2784,7 @@
 
             // 组装直接确认UI
             directConfirmContainer.appendChild(confirmText);
-            directConfirmContainer.appendChild(separator); 
+            directConfirmContainer.appendChild(separator);
             directConfirmContainer.appendChild(cancelBtn);
             directConfirmContainer.appendChild(confirmBtn);
 
@@ -2773,10 +2819,10 @@
                 separatorRow.prepend(emptyTd);
             }
             // --- 修复结束 ---
-            
+
         });
     };
-    
+
 
     // [MODIFIED] 根据用户需求，简化了浮窗逻辑
     const initializeTaggingPopover = () => {
@@ -2820,7 +2866,7 @@
             popover.style.top = `${top}px`;
             popover.style.left = `${left}px`;
         };
-        
+
         const renderEditMode = (userName, userId, currentTag = '') => {
             popover.innerHTML = `
                  <div class="s1p-popover-content">
@@ -2847,7 +2893,7 @@
                 // Per user request, always go to edit mode.
                 const userTags = getUserTags();
                 renderEditMode(userName, userId, userTags[userId]?.tag || '');
-                
+
                 popover.classList.add('visible');
                 repositionPopover(anchorElement);
             }, delay);
@@ -2930,7 +2976,7 @@
         const hide = () => {
             clearTimeout(showTimeout);
             hideTimeout = setTimeout(() => {
-                 popover.classList.remove('visible');
+                popover.classList.remove('visible');
             }, 100);
         };
 
@@ -2955,7 +3001,7 @@
     const getTimeBasedColor = (hours) => {
         if (hours <= 1) return 'var(--s1p-progress-hot)';
         if (hours <= 24) return `rgb(${Math.round(192 - hours * 4)}, ${Math.round(51 + hours * 2)}, ${Math.round(34 + hours * 2)})`;
-        if (hours <= 168) return `rgb(${Math.round(100 - (hours-24)/3)}, ${Math.round(100 + (hours-24)/4)}, ${Math.round(80 + (hours-24)/4)})`;
+        if (hours <= 168) return `rgb(${Math.round(100 - (hours - 24) / 3)}, ${Math.round(100 + (hours - 24) / 4)}, ${Math.round(80 + (hours - 24) / 4)})`;
         return 'var(--s1p-progress-cold)';
     };
 
@@ -3331,7 +3377,7 @@
             // --- [S1P-FIX] Take control of native hover buttons to fix layout shifts and CSS conflicts ---
             const ordertypeLink = authiDiv.querySelector('a[href*="ordertype=1"]');
             const readmodeLink = authiDiv.querySelector('a[onclick*="readmode"]');
-            
+
             // --- [MODIFIED] Find the "只看大图" link by its text content ---
             let viewImagesLink = null;
             for (const link of authiDiv.querySelectorAll('a')) {
@@ -3340,7 +3386,7 @@
                     break;
                 }
             }
-            
+
             const insertionPoint = readmodeLink || viewAuthorLink;
             insertionPoint.after(wrapper);
 
@@ -3361,7 +3407,7 @@
                 };
 
                 viewAuthorLink.addEventListener('mouseenter', showNativeButtons);
-                
+
                 // --- [MODIFIED] Add listener to "只看大图" link if found
                 if (viewImagesLink) {
                     viewImagesLink.addEventListener('mouseenter', showNativeButtons);
@@ -3415,12 +3461,12 @@
                 checkinLink.style.display = 'none';
                 console.log('S1 Plus: Auto check-in request sent. Status:', response.status);
             },
-            onerror: function(response) {
+            onerror: function (response) {
                 console.error('S1 Plus: Auto check-in request failed.', response);
             }
         });
     }
-    
+
     // [MODIFIED] Function to clean up old reading progress records
     const cleanupOldReadProgress = () => {
         const settings = getSettings();
@@ -3458,7 +3504,7 @@
     // --- 主流程 ---
     function main() {
         performAutoSync(); // 实现启动时自动同步
-        cleanupOldReadProgress(); 
+        cleanupOldReadProgress();
 
         detectS1Nux(); // 检测 S1 NUX 是否启用
         initializeNavbar();
