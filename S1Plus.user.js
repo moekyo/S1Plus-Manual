@@ -1782,7 +1782,7 @@
                         <div class="s1p-notice">
                             <div class="s1p-notice-icon"></div>
                             <div class="s1p-notice-content">
-                                <a href="https://silver-s1plus.netlify.app/" target="_blank">不知道如何获取 Gist ID 和 Token？点击这里查看教程。</a>
+                                <a href="https://silver-s1plus.netlify.app/" target="_blank">点击此处查看设置教程</a>
                                 <p>Token只会保存在你的浏览器本地，不会上传到任何地方。</p>
                             </div>
                         </div>
