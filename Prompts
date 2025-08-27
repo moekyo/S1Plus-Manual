@@ -493,3 +493,19 @@ This XML file does not appear to have any style information associated with it. 
 其中的选项和现在保持一致，即“[ 1个月 | 3个月 | 6个月 | 永不 ]”。左边的标签用”自动清理旧的阅读记录“和”清理超过此时间的记录“整合成一个合适的描述。
 
 这个 Segmented controls 虽然自定义了，但是样式还是简陋了，改成那种带有滑块效果的，切换时这个滑块能够平滑过渡到对应的选项上。带上一点悬浮的效果，但是同时要保持设计和现有界面的一致性。
+
+脚本中用到的 execCommand 函数被标记为 deprecated 了
+
+现在脚本中提示都是用 showMessage 来展示的吗
+
+优化 showMessage，不要在页面中直接插入元素，而是使用悬浮提示的方式展示。一定时间之后自动消失，悬浮窗的锚点要和触发的位置相关联。
+
+我刚才碰到了 自动清理超过以下时间的阅读记录 对应的 Segmented controls 蓝色的滑块效果不见了，只有对应的文字变成了白色，滑块却消失了。刷新之后不能复现，这是什么问题
+
+现在新版的 showMessage 弹窗的交互有点奇怪，可以怎么优化一下
+
+现在的位置是整个窗口的底部，改为在设置面板的底部弹出，这个 showMessage 应该都是在设置面板中用到的把
+
+现在看既然是写死的 modal.querySelector('.s1p-modal-content')，为什么还要外部传入呢
+
+现在 showMessage 提示对应的悬浮窗的位置是整个窗口的底部，改为在设置面板的底部弹出，这个 showMessage 应该都是在设置面板中用到的吧

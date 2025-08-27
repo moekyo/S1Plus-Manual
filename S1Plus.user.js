@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      4.6.1
+// @version      4.6.0
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪等多种功能，全方位优化你的论坛体验。
 // @author       moekyo
 // @match        https://stage1st.com/2b/*
@@ -17,7 +17,7 @@
     'use strict';
 
 
-    const SCRIPT_VERSION = '4.6.1'; // Version bump for UI enhancement
+    const SCRIPT_VERSION = '4.6.0';
     const SCRIPT_RELEASE_DATE = '2025-08-27';
 
     // --- 样式注入 ---
@@ -581,7 +581,7 @@
 
         /* --- 设置面板样式 --- */
         .s1p-modal { display: flex; position: fixed; top: 0; left: 0; width: 100%; height: 100%;  background-color: rgba(var(--s1p-black-rgb), 0.5); justify-content: center; align-items: center; z-index: 9999; }
-        .s1p-modal-content { background-color: var(--s1p-bg); border-radius: 8px; box-shadow: 0 4px 6px rgba(var(--s1p-black-rgb), 0.1); width: 600px; max-width: 90%; max-height: 80vh; overflow: hidden; display: flex; flex-direction: column; }
+        .s1p-modal-content { background-color: var(--s1p-bg); border-radius: 8px; box-shadow: 0 4px 6px rgba(var(--s1p-black-rgb), 0.1); width: 600px; max-width: 90%; max-height: 80vh; overflow: hidden; display: flex; flex-direction: column; position: relative; }
         .s1p-modal-header { background: var(--s1p-pri) ;padding: 16px; border-bottom: 1px solid var(--s1p-pri); display: flex; justify-content: space-between; align-items: center; }
         .s1p-modal-title { font-size: 18px; font-weight: bold; }
         .s1p-modal-close {
@@ -620,9 +620,53 @@
         .s1p-local-sync-desc { font-size: 14px; color: var(--s1p-desc-t); margin-bottom: 12px; line-height: 1.5; }
         .s1p-local-sync-buttons { display: flex; gap: 8px; margin-bottom: 16px; }
         .s1p-sync-textarea { width: 100%; min-height: 80px; margin-bottom: 20px;}
-        .s1p-message { font-size: 14px; margin-top: 8px; padding: 8px; border-radius: 4px; display:none; text-align: center; }
-        .s1p-message.success { background-color: var(--s1p-success-bg); color: var(--s1p-success-text); }
-        .s1p-message.error { background-color: var(--s1p-error-bg); color: var(--s1p-red); }
+
+        /* --- [OPTIMIZED] 悬浮提示框 (Toast Notification) V2 --- */
+        /* 新增一个抖动动画的定义 */
+        @keyframes s1p-toast-shake {
+            10%, 90% { transform: translate(-51%, 0); }
+            20%, 80% { transform: translate(-49%, 0); }
+            30%, 50%, 70% { transform: translate(-52%, 0); }
+            40%, 60% { transform: translate(-48%, 0); }
+        }
+
+        .s1p-toast-notification {
+            position: absolute;
+            /* 核心改动：定位到屏幕底部中央 */
+            left: 50%;
+            bottom: 15px; /* [修改] 调整与面板底部的距离 */
+            /* 初始位置在屏幕外，为向上滑入动画做准备 */
+            transform: translate(-50%, 50px);
+            z-index: 10005;
+            padding: 10px 18px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--s1p-white);
+            background-color: #323232; /* 默认使用一个深灰色背景 */
+            box-shadow: 0 4px 12px rgba(var(--s1p-black-rgb), 0.15);
+            opacity: 0;
+            transition: opacity 0.3s ease-out, transform 0.3s ease-out;
+            pointer-events: none;
+            white-space: nowrap;
+            text-align: center;
+        }
+        .s1p-toast-notification.visible {
+            opacity: 1;
+            /* 最终位置 */
+            transform: translate(-50%, 0);
+        }
+        .s1p-toast-notification.success {
+            background-color: #27da80; /* 成功状态使用绿色 */
+        }
+        .s1p-toast-notification.error {
+            background-color: var(--s1p-red); /* 失败状态使用红色 */
+        }
+        /* 核心改动：为可见的错误提示应用抖动动画 */
+        .s1p-toast-notification.error.visible {
+            animation: s1p-toast-shake 0.5s cubic-bezier(.36,.07,.19,.97) both;
+        }
+
 
         /* --- 确认弹窗样式 --- */
         @keyframes s1p-fade-in { from { opacity: 0; } to { opacity: 1; } } @keyframes s1p-scale-in { from { transform: scale(0.95); opacity: 0; } to { transform: scale(1); opacity: 1; } } @keyframes s1p-fade-out { from { opacity: 1; } to { opacity: 0; } } @keyframes s1p-scale-out { from { transform: scale(1); opacity: 1; } to { transform: scale(0.97); opacity: 0; } }
@@ -632,7 +676,7 @@
         .s1p-confirm-body .s1p-confirm-title { font-weight: 600; font-size: 18px; margin-bottom: 8px; }
         .s1p-confirm-body .s1p-confirm-subtitle { font-size: 14px; color: var(--s1p-desc-t); }
         /* [MODIFIED] 恢复默认的靠右对齐 */
-        .s1p-confirm-footer { padding: 12px 16px; display: flex; justify-content: flex-end; gap: 12px; }
+        .s1p-confirm-footer { padding: 12px 24px 20px; display: flex; justify-content: flex-end; gap: 12px; }
         /* [NEW] 为需要居中的弹窗（如手动同步）提供单独的居中样式 */
         .s1p-confirm-footer.s1p-centered { justify-content: center; }
         .s1p-confirm-btn { padding: 9px 14px; border-radius: 6px; font-size: 14px; font-weight: 500; cursor: pointer; border: 1px solid transparent; transition: all 0.15s ease-in-out; box-shadow: 0 1px 2px 0 rgba(var(--s1p-black-rgb), 0.05); white-space: nowrap; }
@@ -1612,7 +1656,62 @@
 
     // --- UI 创建 ---
     const formatDate = (timestamp) => new Date(timestamp).toLocaleString('zh-CN');
-    const showMessage = (msgEl, message, isSuccess) => { msgEl.textContent = message; msgEl.className = `s1p-message ${isSuccess ? 'success' : 'error'}`; msgEl.style.display = 'block'; setTimeout(() => { msgEl.style.display = 'none'; }, 3000); };
+
+    // --- [OPTIMIZED] 使用悬浮提示框重写 showMessage 函数 ---
+    // 使用 Map 存储当前活跃的提示，防止在同一按钮上短时内触发多条提示重叠
+    const activeToasts = new Map();
+
+    // --- [OPTIMIZED] 替换旧的 showMessage 函数 V2 ---
+
+    let currentToast = null; // 用一个全局变量来管理当前的提示框实例
+
+    /**
+     * 显示消息。如果设置面板打开，则在面板底部显示，否则在屏幕底部显示。
+     * @param {string} message - 要显示的消息内容。
+     * @param {boolean} isSuccess - 消息是否为成功状态（决定颜色和动画）。
+     */
+    const showMessage = (message, isSuccess) => {
+        // 如果上一个提示框还存在，立即移除，防止重叠
+        if (currentToast) {
+            currentToast.remove();
+        }
+
+        // 1. 动态创建提示框元素
+        const toast = document.createElement('div');
+        toast.className = `s1p-toast-notification ${isSuccess ? 'success' : 'error'}`;
+        toast.textContent = message;
+
+        // 2. 决定将提示框附加到哪里
+        const modalContent = document.querySelector('.s1p-modal-content');
+        if (modalContent) {
+            // 如果设置面板存在，附加到面板内部
+            modalContent.appendChild(toast);
+        } else {
+            // 否则，作为备选方案，附加到 body
+            document.body.appendChild(toast);
+        }
+        currentToast = toast;
+
+        // 3. 触发显示动画
+        setTimeout(() => {
+            toast.classList.add('visible');
+        }, 50); // 延迟以确保动画触发
+
+        // 4. 3秒后触发消失动画，并在动画结束后移除元素
+        setTimeout(() => {
+            toast.classList.remove('visible');
+            toast.addEventListener('transitionend', () => {
+                if (toast.parentNode) {
+                    toast.remove();
+                }
+                // 如果被移除的是当前活动的toast，则清空变量
+                if (currentToast === toast) {
+                    currentToast = null;
+                }
+            }, { once: true });
+        }, 3000);
+    };
+
 
     const createConfirmationModal = (title, subtitle, onConfirm, confirmText = '确定') => {
         document.querySelector('.s1p-confirm-modal')?.remove();
@@ -1633,6 +1732,7 @@
         document.querySelector('.s1p-modal')?.remove();
         const modal = document.createElement('div');
         modal.className = 's1p-modal';
+        // --- [OPTIMIZED] 移除所有静态的 message div ---
         modal.innerHTML = `<div class="s1p-modal-content">
             <div class="s1p-modal-header"><div class="s1p-modal-title">S1 Plus 设置</div><div class="s1p-modal-close"></div></div>
             <div class="s1p-modal-body">
@@ -1658,7 +1758,6 @@
                             <button id="s1p-local-import-btn" class="s1p-btn">导入数据</button>
                         </div>
                         <textarea id="s1p-local-sync-textarea" class="s1p-sync-textarea s1p-textarea" placeholder="在此粘贴导入数据或从此处复制导出数据"></textarea>
-                        <div id="s1p-local-sync-message" class="s1p-message"></div>
                     </div>
 
                     <div class="s1p-settings-group">
@@ -1687,7 +1786,6 @@
                                 <p>Token只会保存在你的浏览器本地，不会上传到任何地方。</p>
                             </div>
                         </div>
-                        <div id="s1p-remote-status" class="s1p-message"></div>
                         <div class="s1p-editor-footer" style="margin-top: 16px; justify-content: flex-end; gap: 8px;">
                              <button id="s1p-remote-save-btn" class="s1p-btn">保存设置</button>
                              <button id="s1p-remote-manual-sync-btn" class="s1p-btn">手动同步</button>
@@ -1750,7 +1848,7 @@
         const gistInputItem = modal.querySelector('#s1p-remote-gist-id-input').closest('.s1p-settings-item');
         const patInputItem = modal.querySelector('#s1p-remote-pat-input').closest('.s1p-settings-item');
         const remoteFooter = modal.querySelector('#s1p-remote-manual-sync-btn').closest('.s1p-editor-footer');
-        const remoteHelperLink = modal.querySelector('#s1p-remote-helper-link');
+        const remoteHelperLink = modal.querySelector('.s1p-notice a');
 
         const updateRemoteSyncInputsState = () => {
             const isEnabled = remoteToggle.checked;
@@ -1811,7 +1909,6 @@
                         <button id="s1p-import-tags-btn" class="s1p-btn">导入标记</button>
                     </div>
                     <textarea id="s1p-tags-sync-textarea" class="s1p-sync-textarea s1p-textarea" placeholder="在此粘贴导入数据或从此处复制导出数据..."></textarea>
-                    <div id="s1p-tags-sync-message" class="s1p-message"></div>
                 </div>
 
                 <div class="s1p-settings-group">
@@ -1939,7 +2036,6 @@
                          <button id="s1p-keyword-rule-add-btn" class="s1p-btn">添加新规则</button>
                          <button id="s1p-keyword-rules-save-btn" class="s1p-btn">保存规则</button>
                     </div>
-                    <div id="s1p-keywords-message" class="s1p-message"></div>
                 </div>
 
                 <div class="s1p-settings-group">
@@ -2014,7 +2110,7 @@
             renderRules();
             renderDynamicallyHiddenList();
 
-            const saveAndApplyKeywordRules = () => {
+            const saveKeywordRules = () => {
                 const newRules = [];
                 tabs['threads'].querySelectorAll('#s1p-keyword-rules-list .s1p-editor-item').forEach(item => {
                     const pattern = item.querySelector('.s1p-keyword-rule-pattern').value.trim();
@@ -2034,7 +2130,6 @@
                 hideThreadsByTitleKeyword();
                 renderDynamicallyHiddenList();
                 renderRules(); // Re-render to show the saved state and assign permanent IDs.
-                showMessage(tabs['threads'].querySelector('#s1p-keywords-message'), '规则已保存！', true);
             };
 
             tabs['threads'].addEventListener('click', e => {
@@ -2084,7 +2179,8 @@
                         container.innerHTML = `<div class="s1p-empty" style="padding: 12px;">暂无规则</div>`;
                     }
                 } else if (target.id === 's1p-keyword-rules-save-btn') {
-                    saveAndApplyKeywordRules();
+                    saveKeywordRules();
+                    showMessage('规则已保存！', true);
                 }
             });
         };
@@ -2148,12 +2244,20 @@
                 </div>`;
 
             // [NEW] Function to position the slider
-            const moveSlider = (control) => {
-                if (!control) return;
+            const moveSlider = (control, retries = 3) => { // 新增一个重试计数器
+                if (!control || retries <= 0) return; // 如果重试次数用尽，则停止
+
                 const slider = control.querySelector('.s1p-segmented-control-slider');
                 const activeOption = control.querySelector('.s1p-segmented-control-option.active');
+
                 if (slider && activeOption) {
-                    slider.style.width = `${activeOption.offsetWidth}px`;
+                    const width = activeOption.offsetWidth;
+                    // 如果获取到的宽度无效 (为0)，则延迟后重试
+                    if (width === 0) {
+                        setTimeout(() => moveSlider(control, retries - 1), 50); // 50毫秒后重试
+                        return;
+                    }
+                    slider.style.width = `${width}px`;
                     slider.style.left = `${activeOption.offsetLeft}px`;
                 }
             };
@@ -2247,8 +2351,7 @@
                         <button id="s1p-settings-save-btn" class="s1p-btn">保存设置</button>
                     </div>
                     <button id="s1p-nav-restore-btn" class="s1p-btn s1p-red-btn">恢复默认导航</button>
-                </div>
-                <div id="s1p-settings-message" class="s1p-message"></div>`;
+                </div>`;
 
             const navListContainer = tabs['nav-settings'].querySelector('.s1p-nav-editor-list');
             const renderNavList = (links) => {
@@ -2317,7 +2420,7 @@
                     renderNavSettingsTab();
                     applyInterfaceCustomizations();
                     initializeNavbar();
-                    showMessage(modal.querySelector('#s1p-settings-message'), '导航栏已恢复为默认设置！', true);
+                    showMessage('导航栏已恢复为默认设置！', true);
                 } else if (target.id === 's1p-settings-save-btn') {
                     const newSettings = {
                         ...getSettings(),
@@ -2327,7 +2430,7 @@
                     saveSettings(newSettings);
                     applyInterfaceCustomizations();
                     initializeNavbar();
-                    showMessage(modal.querySelector('#s1p-settings-message'), '设置已保存！', true);
+                    showMessage('设置已保存！', true);
                 }
             });
         };
@@ -2408,20 +2511,24 @@
             const unblockThreadId = e.target.dataset.unblockThreadId; if (unblockThreadId) { unblockThread(unblockThreadId); renderThreadTab(); }
             const unblockUserId = e.target.dataset.unblockUserId; if (unblockUserId) { unblockUser(unblockUserId); renderUserTab(); renderThreadTab(); }
 
-            // --- 本地备份与恢复事件 ---
+            // --- 本地备份与恢复事件 (已优化) ---
             const syncTextarea = modal.querySelector('#s1p-local-sync-textarea');
-            const syncMessageEl = modal.querySelector('#s1p-local-sync-message');
             if (e.target.id === 's1p-local-export-btn') {
-                syncTextarea.value = exportLocalData();
+                const dataToExport = exportLocalData();
+                syncTextarea.value = dataToExport;
                 syncTextarea.select();
-                try { document.execCommand('copy'); showMessage(syncMessageEl, '数据已导出并复制到剪贴板', true); }
-                catch (err) { showMessage(syncMessageEl, '复制失败，请手动复制', false); }
+                // --- [OPTIMIZED] 使用新的 Clipboard API ---
+                navigator.clipboard.writeText(dataToExport).then(() => {
+                    showMessage('数据已导出并复制到剪贴板', true);
+                }).catch(() => {
+                    showMessage('自动复制失败，请手动复制', false);
+                });
             }
             if (e.target.id === 's1p-local-import-btn') {
                 const jsonStr = syncTextarea.value.trim();
-                if (!jsonStr) return showMessage(syncMessageEl, '请先粘贴要导入的数据', false);
+                if (!jsonStr) return showMessage('请先粘贴要导入的数据', false);
                 const result = importLocalData(jsonStr);
-                showMessage(syncMessageEl, result.message, result.success);
+                showMessage(result.message, result.success);
                 if (result.success) {
                     renderThreadTab();
                     renderUserTab();
@@ -2437,8 +2544,7 @@
             if (e.target.id === 's1p-clear-selected-btn') {
                 const selectedKeys = Array.from(modal.querySelectorAll('.s1p-clear-data-checkbox:checked')).map(chk => chk.dataset.clearKey);
                 if (selectedKeys.length === 0) {
-                    const localSyncMessageEl = modal.querySelector('#s1p-local-sync-message');
-                    return showMessage(localSyncMessageEl, '请至少选择一个要清除的数据项。', false);
+                    return showMessage('请至少选择一个要清除的数据项。', false);
                 }
 
                 const itemsToClear = selectedKeys.map(key => `“${dataClearanceConfig[key].label}”`).join('、');
@@ -2475,8 +2581,7 @@
                         renderUserTab();
                         renderGeneralSettingsTab();
                         renderTagsTab();
-                        const localSyncMessageEl = modal.querySelector('#s1p-local-sync-message');
-                        showMessage(localSyncMessageEl, '选中的本地数据已成功清除。', true);
+                        showMessage('选中的本地数据已成功清除。', true);
                     },
                     '确认清除'
                 );
@@ -2492,13 +2597,12 @@
                 // 直接保存设置，但不调用会触发时间戳更新的 saveSettings() 函数
                 GM_setValue('s1p_settings', currentSettings);
 
-                const statusEl = modal.querySelector('#s1p-remote-status');
-                showMessage(statusEl, '远程同步设置已保存。', true);
+                showMessage('远程同步设置已保存。', true);
             }
 
             // --- [NEW] 手动同步逻辑，带用户选择 ---
             if (e.target.id === 's1p-remote-manual-sync-btn') {
-                handleManualSync();
+                handleManualSync(e.target);
             }
 
 
@@ -2519,7 +2623,7 @@
                         saveUserTags(tags);
                         renderTagsTab();
                         refreshAllAuthiActions();
-                        showMessage(targetTab.querySelector('#s1p-tags-sync-message'), `已删除对 ${userName} 的标记。`, true);
+                        showMessage(`已删除对 ${userName} 的标记。`, true);
                     }, '确认删除');
                 }
                 else if (action === 'save-tag-edit') {
@@ -2531,30 +2635,33 @@
                         saveUserTags(tags);
                         renderTagsTab();
                         refreshAllAuthiActions();
-                        showMessage(targetTab.querySelector('#s1p-tags-sync-message'), `已更新对 ${userName} 的标记。`, true);
+                        showMessage(`已更新对 ${userName} 的标记。`, true);
                     } else {
                         createConfirmationModal(`标记内容为空`, '您希望删除对该用户的标记吗？', () => {
                             delete tags[userId];
                             saveUserTags(tags);
                             renderTagsTab();
                             refreshAllAuthiActions();
-                            showMessage(targetTab.querySelector('#s1p-tags-sync-message'), `已删除对 ${userName} 的标记。`, true);
+                            showMessage(`已删除对 ${userName} 的标记。`, true);
                         }, '确认删除');
                     }
                 }
                 else if (target.id === 's1p-export-tags-btn') {
                     const textarea = targetTab.querySelector('#s1p-tags-sync-textarea');
-                    const messageEl = targetTab.querySelector('#s1p-tags-sync-message');
-                    textarea.value = JSON.stringify(getUserTags(), null, 2);
+                    const dataToExport = JSON.stringify(getUserTags(), null, 2);
+                    textarea.value = dataToExport;
                     textarea.select();
-                    try { document.execCommand('copy'); showMessage(messageEl, '用户标记已导出并复制到剪贴板。', true); }
-                    catch (err) { showMessage(messageEl, '复制失败，请手动复制。', false); }
+                    // --- [OPTIMIZED] 使用新的 Clipboard API ---
+                    navigator.clipboard.writeText(dataToExport).then(() => {
+                        showMessage('用户标记已导出并复制到剪贴板。', true);
+                    }).catch(() => {
+                        showMessage('复制失败，请手动复制。', false);
+                    });
                 }
                 else if (target.id === 's1p-import-tags-btn') {
                     const textarea = targetTab.querySelector('#s1p-tags-sync-textarea');
-                    const messageEl = targetTab.querySelector('#s1p-tags-sync-message');
                     const jsonStr = textarea.value.trim();
-                    if (!jsonStr) return showMessage(messageEl, '请先粘贴要导入的数据。', false);
+                    if (!jsonStr) return showMessage('请先粘贴要导入的数据。', false);
 
                     try {
                         const imported = JSON.parse(jsonStr);
@@ -2568,36 +2675,24 @@
                             const mergedTags = { ...currentTags, ...imported };
                             saveUserTags(mergedTags);
                             renderTagsTab();
-                            showMessage(messageEl, `成功导入/更新 ${Object.keys(imported).length} 条用户标记。`, true);
+                            showMessage(`成功导入/更新 ${Object.keys(imported).length} 条用户标记。`, true);
                             textarea.value = '';
                         }, '确认导入');
-                    } catch (e) { showMessage(messageEl, `导入失败: ${e.message}`, false); }
+                    } catch (e) { showMessage(`导入失败: ${e.message}`, false); }
                 }
             }
         });
     };
 
     // --- [MODIFIED] 手动同步处理流程 ---
-    const handleManualSync = async () => {
-        const statusEl = document.querySelector('#s1p-remote-status');
-        const updateStatus = (msg, isSuccess = null) => {
-            if (!statusEl) return;
-            if (isSuccess === true) showMessage(statusEl, msg, true);
-            else if (isSuccess === false) showMessage(statusEl, msg, false);
-            else {
-                statusEl.textContent = msg;
-                statusEl.className = 's1p-message';
-                statusEl.style.display = 'block';
-            }
-        };
-
+    const handleManualSync = async (anchorEl) => {
         const settings = getSettings();
         if (!settings.syncRemoteEnabled || !settings.syncRemoteGistId || !settings.syncRemotePat) {
-            updateStatus('远程同步未启用或配置不完整。', false);
+            showMessage('远程同步未启用或配置不完整。', false);
             return;
         }
 
-        updateStatus('正在检查云端数据...');
+        showMessage('正在检查云端数据...', true);
 
         try {
             const remoteData = await fetchRemoteData();
@@ -2606,7 +2701,7 @@
 
             // [MODIFIED] 仅在数据不一致时弹出选择框
             if (remoteTimestamp === localTimestamp) {
-                updateStatus('数据已是最新，无需同步。', true);
+                showMessage('数据已是最新，无需同步。', true);
                 GM_setValue('s1p_last_sync_timestamp', Date.now());
                 updateLastSyncTimeDisplay();
                 return;
@@ -2621,7 +2716,7 @@
             const localNewer = localTimestamp > remoteTimestamp;
 
             const bodyHtml = `
-                <p>检测到本地数据与云端备份不一致，请选择同步方向：</p>
+                <p>检测到本地数据与云端备份不一致，请选择同步方式：</p>
                 <div class="s1p-sync-choice-info">
                     <div class="s1p-sync-choice-info-row">
                        <span class="s1p-sync-choice-info-label">本地数据更新于:</span>
@@ -2636,44 +2731,44 @@
 
             const pullAction = {
                 text: '从云端拉取 (覆盖本地)', className: 's1p-confirm', action: async () => {
-                    updateStatus('正在从云端拉取数据...');
+                    showMessage('正在从云端拉取数据...', true);
                     const result = importLocalData(JSON.stringify(remoteData));
                     if (result.success) {
                         GM_setValue('s1p_last_sync_timestamp', Date.now());
                         updateLastSyncTimeDisplay();
-                        updateStatus('拉取成功！已从云端恢复数据。', true);
+                        showMessage('拉取成功！已从云端恢复数据。', true);
                         if (document.querySelector('.s1p-modal')) {
                             document.querySelector('.s1p-modal-close').click();
                             createManagementModal();
                             document.querySelector('button[data-tab="sync"]').click();
                         }
                     } else {
-                        updateStatus(`拉取失败: ${result.message}`, false);
+                        showMessage(`拉取失败: ${result.message}`, false);
                     }
                 }
             };
 
             const pushAction = {
                 text: '向云端推送 (覆盖云端)', className: 's1p-confirm', action: async () => {
-                    updateStatus('正在向云端推送数据...');
+                    showMessage('正在向云端推送数据...', true);
                     try {
                         const localData = exportLocalDataObject();
                         await pushRemoteData(localData);
                         GM_setValue('s1p_last_sync_timestamp', Date.now());
                         updateLastSyncTimeDisplay();
-                        updateStatus('推送成功！已更新云端备份。', true);
+                        showMessage('推送成功！已更新云端备份。', true);
                     } catch (e) {
-                        updateStatus(`推送失败: ${e.message}`, false);
+                        showMessage(`推送失败: ${e.message}`, false);
                     }
                 }
             };
 
             const cancelAction = { text: '取消', className: 's1p-cancel', action: null };
 
-            createAdvancedConfirmationModal('手动同步选择', bodyHtml, [pullAction, pushAction, cancelAction]);
+            createAdvancedConfirmationModal('手动同步选择方式', bodyHtml, [pullAction, pushAction, cancelAction]);
 
         } catch (error) {
-            updateStatus(`操作失败: ${error.message}`, false);
+            showMessage(`操作失败: ${error.message}`, false);
         }
     };
 
