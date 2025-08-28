@@ -516,3 +516,49 @@ This XML file does not appear to have any style information associated with it. 
 
 
 把用户屏蔽时和删除用户标记弹出二次确认弹窗改为 s1p-options-menu 样式
+
+把帖子屏蔽的也改成使用 createInlineConfirmMenu 来实现，方便维护
+
+参考现在的实现，在帖子详情的”标记改用户“后面添加一个”收藏该回复“的按钮。被收藏的回复按钮的文本要有对应的说明。例如”该回复已收藏“之类的。注意，主楼及帖子的第一个回复不需要此按钮。在设置面板增加一个新的 tab，专门用于管理收藏的回复。名字叫”回复收藏“。在现在的实现中，如果设置面板中，对应的 tab 太多，会导致各个 tab 的标题文字自动换行
+改为动态计算按钮的宽度，并动态整个设置面板的宽度，以适应不同的内容和多种设置选项。保证所有按钮在同一行内显示。
+每个回复都可以在此 tab 中查看和管理。每个回复的右上角都有一个“取消收藏”按钮，点击后可以将其从收藏中移除。直接点击对应的回复会自动跳转到该回复所在的帖子。（直到这个回复的所在楼层）。
+这个收藏的回复也是支持远程同步的。以下是对应回复工具栏的 html 片段，收藏按钮就跟在”标记该用户“按钮后面，注意第一个回复不用添加这个收藏按钮，因为论坛有自带收藏帖子功能，对应的帖子楼层数也在里面了，可以参考阅读进度保存楼层数的方法，当这个楼层数大于 1 才添加这个”收藏该回复“的按钮
+<div class="pi">
+<strong>
+<a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=2260397&amp;pid=68333229" id="postnum68333229" onclick="setCopy(this.href, '帖子地址复制成功');return false;">
+<em>13</em><sup>#</sup></a>
+</strong>
+<div class="pti">
+<div class="pdbt">
+</div>
+<div class="authi">
+<img class="authicn vm" id="authicon68333229" src="https://static.stage1st.com/image/common/online_member.gif" style="">
+<em id="authorposton68333229">发表于 2025-8-28 12:53</em>
+<span class="pipe">|</span>
+<a href="forum.php?mod=viewthread&amp;tid=2260397&amp;page=1&amp;authorid=63576" rel="nofollow">只看该用户</a><span class="s1p-authi-actions-wrapper"><span class="pipe">|</span><a href="javascript:void(0);" class="s1p-authi-action s1p-block-user-in-authi">屏蔽该用户</a><span class="pipe">|</span><a href="javascript:void(0);" class="s1p-authi-action s1p-tag-user-in-authi">标记该用户</a></span>
+</div>
+</div>
+</div>
+
+
+在”标记该用户“按钮后面没有看到”收藏该回复“的按钮，并且在设置面板中各个 tab 都因为这个新加入的按钮而发生了布局变化。文字都换行了，整体看起来不太美观。可以改为动态计算按钮的宽度，以适应不同的内容和多种设置选项吗，还有关于设置面板的收藏选项，标题应该叫”回复收藏“而不是”收藏“。
+
+<div class="pi">
+<strong>
+<a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=2260397&amp;pid=68333056" id="postnum68333056" onclick="setCopy(this.href, '帖子地址复制成功');return false;">
+<em>4</em><sup>#</sup></a>
+</strong>
+<div class="pti">
+<div class="pdbt">
+</div>
+<div class="authi">
+<img class="authicn vm" id="authicon68333056" src="https://static.stage1st.com/image/common/online_member.gif" style="">
+<em id="authorposton68333056">发表于 2025-8-28 12:20</em>
+<span class="pipe">|</span>
+<a href="forum.php?mod=viewthread&amp;tid=2260397&amp;page=1&amp;authorid=31986" rel="nofollow">只看该用户</a><span class="s1p-authi-actions-wrapper"><span class="pipe">|</span><a href="javascript:void(0);" class="s1p-authi-action s1p-block-user-in-authi">屏蔽该用户</a><span class="pipe">|</span><a href="javascript:void(0);" class="s1p-authi-action s1p-tag-user-in-authi">标记该用户</a></span>
+</div>
+</div>
+</div>
+这个现在加载了新版脚本之后的回复工具栏对应的 html 片段，可以看到没有“收藏该回复”的按钮。
+
+这是完整的 html 文件，完全就搜不到”收藏该回复“
