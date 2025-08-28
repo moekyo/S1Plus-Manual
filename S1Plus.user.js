@@ -314,6 +314,28 @@
             background-color: var(--s1p-cancel-hover-bg);
             background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='2.5' stroke='%23ffffff'%3e%3cpath stroke-linecap='round' stroke-linejoin='round' d='M6 18L18 6M6 6l12 12' /%3e%3c/svg%3e");
         }
+        
+        /* --- [MODIFIED] 行内确认菜单样式 (带动画) --- */
+        .s1p-inline-confirm-menu {
+            transform: translateY(0) !important; /* 覆盖继承的transform */
+            margin-left: 0 !important;
+            z-index: 10004; /* Higher than other popovers */
+            
+            /* 动画初始状态 */
+            opacity: 0;
+            transform: translateX(-8px) scale(0.95) !important;
+            transition: opacity 0.15s ease-out, transform 0.15s ease-out;
+            pointer-events: none;
+            /* 覆盖继承的 visibility，让 opacity 来控制 */
+            visibility: visible !important;
+        }
+
+        .s1p-inline-confirm-menu.visible {
+            /* 动画结束状态 */
+            opacity: 1;
+            transform: translateX(0) scale(1) !important;
+            pointer-events: auto;
+        }
 
         /* [MODIFIED] 阅读进度UI样式 */
         .s1p-progress-container {
@@ -1724,6 +1746,79 @@
         modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
         document.body.appendChild(modal);
     };
+
+    /**
+     * [MODIFIED] 创建一个行内确认菜单 (带动画和右侧定位)
+     * @param {HTMLElement} anchorElement - 菜单定位的锚点元素
+     * @param {string} confirmText - 确认提示文本
+     * @param {Function} onConfirm - 点击确认后执行的回调函数
+     */
+    const createInlineConfirmMenu = (anchorElement, confirmText, onConfirm) => {
+        document.querySelector('.s1p-inline-confirm-menu')?.remove();
+
+        const menu = document.createElement('div');
+        menu.className = 's1p-options-menu s1p-inline-confirm-menu';
+        menu.style.width = 'max-content';
+
+        menu.innerHTML = `
+            <div class="s1p-direct-confirm">
+                <span>${confirmText}</span>
+                <span class="s1p-confirm-separator"></span>
+                <button class="s1p-confirm-action-btn s1p-cancel" title="取消"></button>
+                <button class="s1p-confirm-action-btn s1p-confirm" title="确认"></button>
+            </div>
+        `;
+
+        document.body.appendChild(menu);
+        const anchorRect = anchorElement.getBoundingClientRect();
+        const menuRect = menu.getBoundingClientRect();
+
+        // --- 新的定位逻辑 ---
+        // 1. 垂直居中对齐
+        const top = anchorRect.top + window.scrollY + (anchorRect.height / 2) - (menuRect.height / 2);
+        // 2. 放置在锚点右侧，并留出间隙
+        const left = anchorRect.right + window.scrollX + 8;
+
+        menu.style.top = `${top}px`;
+        menu.style.left = `${left}px`;
+
+        let isClosing = false;
+        const closeMenu = () => {
+            if (isClosing) return;
+            isClosing = true;
+            document.removeEventListener('click', closeMenu); // 立即移除监听器
+            menu.classList.remove('visible'); // 触发消失动画
+
+            // 在动画结束后移除 DOM 元素，设置一个安全的延时
+            setTimeout(() => {
+                if (menu.parentNode) {
+                    menu.remove();
+                }
+            }, 200); // 动画时长为 0.15s，200ms 足够
+        };
+
+        menu.querySelector('.s1p-confirm').addEventListener('click', (e) => {
+            e.stopPropagation();
+            onConfirm();
+            closeMenu();
+        });
+
+        menu.querySelector('.s1p-cancel').addEventListener('click', (e) => {
+            e.stopPropagation();
+            closeMenu();
+        });
+
+        // 触发进入动画
+        requestAnimationFrame(() => {
+            menu.classList.add('visible');
+        });
+
+        // 在下一个事件循环中添加外部点击关闭监听，以防止触发打开的同一次点击立即关闭它
+        setTimeout(() => {
+            document.addEventListener('click', closeMenu, { once: true });
+        }, 0);
+    };
+
 
     const removeProgressJumpButtons = () => document.querySelectorAll('.s1p-progress-container').forEach(el => el.remove());
     const removeBlockButtonsFromThreads = () => document.querySelectorAll('.s1p-options-cell').forEach(el => el.remove());
@@ -3328,21 +3423,39 @@
         const closeMenu = () => menu.remove();
 
         menu.addEventListener('click', (e) => {
+            e.stopPropagation(); // Prevent the outside-click listener from firing immediately
             const action = e.target.dataset.action;
+
             if (action === 'edit') {
                 const popover = document.getElementById('s1p-tag-popover-main');
                 if (popover && popover.show) {
-                    popover.show(anchorElement, userId, userName, userAvatar, 0, true); // Directly enter edit mode
+                    popover.show(anchorElement, userId, userName, userAvatar, 0, true);
                 }
+                closeMenu();
             } else if (action === 'delete') {
-                createConfirmationModal(`确认删除对 "${userName}" 的标记吗?`, '此操作不可撤销。', () => {
+                // [MODIFIED] Replace menu content with confirmation UI
+                menu.innerHTML = `
+                    <div class="s1p-direct-confirm">
+                        <span>确认删除？</span>
+                        <span class="s1p-confirm-separator"></span>
+                        <button class="s1p-confirm-action-btn s1p-cancel" title="取消"></button>
+                        <button class="s1p-confirm-action-btn s1p-confirm" title="确认"></button>
+                    </div>
+                `;
+                // Re-add event listeners for the new buttons
+                menu.querySelector('.s1p-confirm').addEventListener('click', (e) => {
+                    e.stopPropagation();
                     const tags = getUserTags();
                     delete tags[userId];
                     saveUserTags(tags);
                     refreshAllAuthiActions();
-                }, '确认删除');
+                    closeMenu();
+                });
+                menu.querySelector('.s1p-cancel').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    closeMenu();
+                });
             }
-            closeMenu();
         });
 
         // Close menu when clicking outside
@@ -3415,10 +3528,14 @@
                 blockLink.href = 'javascript:void(0);';
                 blockLink.textContent = '屏蔽该用户';
                 blockLink.className = 's1p-authi-action s1p-block-user-in-authi';
+                // [MODIFIED] Use inline confirm menu instead of modal
                 blockLink.addEventListener('click', (e) => {
                     e.preventDefault();
-                    const subtitle = getSettings().blockThreadsOnUserBlock ? '该用户的所有帖子和主题帖都将被隐藏。' : '该用户的所有帖子都将被隐藏。';
-                    createConfirmationModal(`确定要屏蔽用户 "${userName}" 吗？`, subtitle, () => blockUser(userId, userName), '确定屏蔽');
+                    e.stopPropagation();
+                    const confirmText = getSettings().blockThreadsOnUserBlock
+                        ? `屏蔽用户并隐藏其主题帖？`
+                        : `确认屏蔽该用户？`;
+                    createInlineConfirmMenu(e.currentTarget, confirmText, () => blockUser(userId, userName));
                 });
                 wrapper.appendChild(blockLink);
                 availableWidth -= 85; // Estimated width for block link + pipe
