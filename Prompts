@@ -511,3 +511,8 @@ This XML file does not appear to have any style information associated with it. 
 现在 showMessage 提示对应的悬浮窗的位置是整个窗口的底部，改为在设置面板的底部弹出，这个 showMessage 应该都是在设置面板中用到的吧
 
 我想从脚本快速跳转到远程同步的 gist 页面，方便查看和管理备份。比如在设置面板中添加一个“打开 Gist 页面”的按钮，点击后直接打开对应的 Gist 页面。
+
+生成合适的 commit 和 changelog 信息
+
+
+把用户屏蔽时和删除用户标记弹出二次确认弹窗改为 s1p-options-menu 样式
