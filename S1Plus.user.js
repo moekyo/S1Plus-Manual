@@ -18,7 +18,7 @@
 
 
     const SCRIPT_VERSION = '4.6.0';
-    const SCRIPT_RELEASE_DATE = '2025-08-27';
+    const SCRIPT_RELEASE_DATE = '2025-08-28';
 
     // --- 样式注入 ---
     GM_addStyle(`
@@ -1789,6 +1789,7 @@
                         <div class="s1p-editor-footer" style="margin-top: 16px; justify-content: flex-end; gap: 8px;">
                              <button id="s1p-remote-save-btn" class="s1p-btn">保存设置</button>
                              <button id="s1p-remote-manual-sync-btn" class="s1p-btn">手动同步</button>
+                             <button id="s1p-open-gist-page-btn" class="s1p-btn">打开 Gist 页面</button>
                         </div>
                     </div>
                     
@@ -2603,6 +2604,16 @@
             // --- [NEW] 手动同步逻辑，带用户选择 ---
             if (e.target.id === 's1p-remote-manual-sync-btn') {
                 handleManualSync(e.target);
+            }
+            
+            // --- [NEW] 打开 Gist 页面 ---
+            if (e.target.id === 's1p-open-gist-page-btn') {
+                const gistId = modal.querySelector('#s1p-remote-gist-id-input').value.trim();
+                if (gistId) {
+                    GM_openInTab(`https://gist.github.com/${gistId}`, true);
+                } else {
+                    showMessage('请先填写 Gist ID。', false);
+                }
             }
 
 
