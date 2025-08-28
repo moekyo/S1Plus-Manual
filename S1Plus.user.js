@@ -2917,7 +2917,7 @@
     };
 
 
-    // --- [REPLACED] 帖子屏蔽交互逻辑重构 ---
+    // --- [REFACTORED] 帖子屏蔽交互逻辑重构 (使用innerHTML以方便维护) ---
     const addBlockButtonsToThreads = () => {
         document.querySelectorAll('tbody[id^="normalthread_"], tbody[id^="stickthread_"]').forEach(row => {
             const tr = row.querySelector('tr');
@@ -2938,29 +2938,23 @@
             optionsBtn.title = '屏蔽此贴';
             optionsBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>`;
 
-            // 2. 创建弹出菜单
+            // 2. [REFACTORED] 使用innerHTML创建弹出菜单，便于维护
             const optionsMenu = document.createElement('div');
             optionsMenu.className = 's1p-options-menu';
+            optionsMenu.innerHTML = `
+                <div class="s1p-direct-confirm">
+                    <span>屏蔽该帖子吗？</span>
+                    <span class="s1p-confirm-separator"></span>
+                    <button class="s1p-confirm-action-btn s1p-cancel" title="取消"></button>
+                    <button class="s1p-confirm-action-btn s1p-confirm" title="确认屏蔽"></button>
+                </div>
+            `;
 
-            // --- 创建直接确认UI ---
-            const directConfirmContainer = document.createElement('div');
-            directConfirmContainer.className = 's1p-direct-confirm';
+            // 3. 获取菜单内的按钮并绑定事件
+            const cancelBtn = optionsMenu.querySelector('.s1p-cancel');
+            const confirmBtn = optionsMenu.querySelector('.s1p-confirm');
 
-            const confirmText = document.createElement('span');
-            confirmText.textContent = '屏蔽该帖子吗？';
-
-            const separator = document.createElement('span');
-            separator.className = 's1p-confirm-separator';
-
-            const cancelBtn = document.createElement('button');
-            cancelBtn.className = 's1p-confirm-action-btn s1p-cancel';
-            cancelBtn.title = '取消';
-
-            const confirmBtn = document.createElement('button');
-            confirmBtn.className = 's1p-confirm-action-btn s1p-confirm';
-            confirmBtn.title = '确认屏蔽';
-
-            // --- [最终修复] 为取消按钮添加事件监听 ---
+            // 为取消按钮添加事件监听，以解决CSS :hover状态残留的问题
             cancelBtn.addEventListener('click', e => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -2983,28 +2977,20 @@
                 }
             });
 
-            // 组装直接确认UI
-            directConfirmContainer.appendChild(confirmText);
-            directConfirmContainer.appendChild(separator);
-            directConfirmContainer.appendChild(cancelBtn);
-            directConfirmContainer.appendChild(confirmBtn);
-
-            // 将UI添加到菜单
-            optionsMenu.appendChild(directConfirmContainer);
-
-            // 组装单元格
-            optionsCell.appendChild(optionsBtn);
-            optionsCell.appendChild(optionsMenu);
-
-            // 6. 将新的操作单元格插入到行首
-            tr.prepend(optionsCell);
-
-            // --- 事件监听 ---
+            // 为确认按钮添加事件监听
             confirmBtn.addEventListener('click', e => {
                 e.preventDefault();
                 e.stopPropagation();
                 blockThread(threadId, threadTitle);
             });
+
+
+            // 4. 组装单元格
+            optionsCell.appendChild(optionsBtn);
+            optionsCell.appendChild(optionsMenu);
+
+            // 5. 将新的操作单元格插入到行首
+            tr.prepend(optionsCell);
 
             // --- [S1P-FIX] 修复因添加新列导致的表头和分隔行错位问题 ---
             // 修正表头，将第一格的列合并数（colspan）从2增加到3
