@@ -815,8 +815,9 @@
         }
         .s1p-search-input-wrapper .s1p-input {
             padding-left: 34px; /* 为图标腾出空间 */
+            padding-right: 34px; /* [NEW] 为清空按钮腾出空间 */
         }
-        .s1p-search-input-wrapper svg {
+        .s1p-search-input-wrapper svg.s1p-search-icon {
             position: absolute;
             left: 10px;
             top: 50%;
@@ -827,8 +828,51 @@
             pointer-events: none;
             transition: color 0.2s ease-in-out;
         }
-        .s1p-search-input-wrapper .s1p-input:focus + svg {
+        .s1p-search-input-wrapper .s1p-input:focus + svg.s1p-search-icon {
             color: var(--s1p-sec);
+        }
+
+        /* --- [NEW] 搜索框清空按钮 --- */
+        .s1p-search-clear-btn {
+            position: absolute;
+            right: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background-color: transparent;
+            border: none;
+            border-radius: 50%;
+            cursor: pointer;
+            opacity: 1;
+            transition: background-color 0.2s ease, opacity 0.2s ease, transform 0.2s ease;
+            padding: 0;
+        }
+        .s1p-search-clear-btn.hidden {
+            opacity: 0;
+            pointer-events: none;
+            transform: translateY(-50%) scale(0.8);
+        }
+        .s1p-search-clear-btn:hover {
+            background-color: var(--s1p-pri);
+        }
+        .s1p-search-clear-btn svg {
+            width: 12px;
+            height: 12px;
+            color: var(--s1p-icon-arrow);
+        }
+
+       /* --- [MODIFIED] 搜索关键词高亮 --- */
+        mark.s1p-highlight {
+            background-color: var(--s1p-pri); /* 使用脚本主色调之一，更和谐 */
+            color: var(--s1p-t);             /* 确保文本颜色与主题一致 */
+            font-weight: bold;               /* 按要求加粗字体 */
+            padding: 1px 3px;                /* 增加一点内边距，避免拥挤 */
+            border-radius: 3px;              
+            text-decoration: none;           /* 移除可能存在的下划线等装饰 */
         }
 
         /* --- Modern Toggle Switch --- */
@@ -1749,6 +1793,136 @@
         navUl.appendChild(createManagerLink());
     };
 
+    // --- [NEW] Helper function for search component
+    /**
+     * Escapes special characters in a string for use in a regular expression.
+     * @param {string} str The string to escape.
+     * @returns {string} The escaped string.
+     */
+    function escapeRegExp(str) {
+        return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    /**
+     * Recursively finds and highlights text in a DOM node without breaking HTML.
+     * @param {Node} node The starting DOM node.
+     * @param {RegExp} regex The regex to match text with.
+     */
+    function highlightTextInNode(node, regex) {
+        if (node.nodeType === 3) { // Text node
+            const text = node.textContent;
+            const matches = [...text.matchAll(regex)];
+            if (matches.length > 0) {
+                const fragment = document.createDocumentFragment();
+                let lastIndex = 0;
+                matches.forEach(match => {
+                    if (match.index > lastIndex) {
+                        fragment.appendChild(document.createTextNode(text.substring(lastIndex, match.index)));
+                    }
+                    const mark = document.createElement('mark');
+                    mark.className = 's1p-highlight';
+                    mark.textContent = match[0];
+                    fragment.appendChild(mark);
+                    lastIndex = match.index + match[0].length;
+                });
+                if (lastIndex < text.length) {
+                    fragment.appendChild(document.createTextNode(text.substring(lastIndex)));
+                }
+                node.parentNode.replaceChild(fragment, node);
+            }
+        } else if (node.nodeType === 1 && node.childNodes && !/^(script|style)$/i.test(node.tagName)) { // Element node
+            const children = Array.from(node.childNodes);
+            for (const child of children) {
+                highlightTextInNode(child, regex);
+            }
+        }
+    }
+
+    // --- [NEW] Bookmark search component
+    /**
+     * Sets up the interactive search functionality for the bookmarks tab.
+     * @param {HTMLElement} bookmarksTabElement The container element for the bookmarks tab.
+     */
+    // [REPLACED] Bookmark search component with safe highlighting
+    /**
+     * Sets up the interactive search functionality for the bookmarks tab.
+     * @param {HTMLElement} bookmarksTabElement The container element for the bookmarks tab.
+     */
+    function setupBookmarkSearchComponent(bookmarksTabElement) {
+        const searchInput = bookmarksTabElement.querySelector('#s1p-bookmark-search-input');
+        const clearButton = bookmarksTabElement.querySelector('#s1p-bookmark-search-clear-btn');
+        const list = bookmarksTabElement.querySelector('#s1p-bookmarks-list');
+        const noResultsMessage = bookmarksTabElement.querySelector('#s1p-bookmarks-no-results');
+        const emptyMessage = bookmarksTabElement.querySelector('#s1p-bookmarks-empty-message');
+
+        if (!searchInput || !list || !clearButton || !noResultsMessage) return;
+
+        const allItems = Array.from(list.querySelectorAll('.s1p-item'));
+        const itemCache = allItems.map(item => {
+            const contentEl = item.querySelector('.s1p-item-content');
+            const metaEl = item.querySelector('.s1p-item-meta');
+
+            // Store original HTML if not already stored
+            if (!contentEl.dataset.originalHtml) {
+                contentEl.dataset.originalHtml = contentEl.innerHTML;
+            }
+            if (!metaEl.dataset.originalHtml) {
+                metaEl.dataset.originalHtml = metaEl.innerHTML;
+            }
+
+            return {
+                element: item,
+                searchableText: (contentEl.textContent + ' ' + metaEl.textContent).toLowerCase(),
+                contentEl: contentEl,
+                metaEl: metaEl,
+            };
+        });
+
+        const performSearch = () => {
+            const query = searchInput.value.toLowerCase().trim();
+            clearButton.classList.toggle('hidden', query.length === 0);
+
+            const keywords = query.split(/\s+/).filter(k => k);
+            let visibleCount = 0;
+
+            const highlightRegex = keywords.length > 0 ? new RegExp(keywords.map(escapeRegExp).join('|'), 'gi') : null;
+
+            for (const item of itemCache) {
+                const isVisible = keywords.length === 0 || keywords.every(keyword => item.searchableText.includes(keyword));
+
+                // Reset highlights first by restoring original HTML
+                item.contentEl.innerHTML = item.contentEl.dataset.originalHtml;
+                item.metaEl.innerHTML = item.metaEl.dataset.originalHtml;
+                item.element.style.display = isVisible ? 'flex' : 'none';
+
+                if (isVisible) {
+                    visibleCount++;
+                    if (highlightRegex) {
+                        // Apply new, safe highlighting that only targets text nodes
+                        highlightTextInNode(item.contentEl, highlightRegex);
+                        highlightTextInNode(item.metaEl, highlightRegex);
+                    }
+                }
+            }
+
+            const hasAnyItems = allItems.length > 0;
+            list.style.display = hasAnyItems ? 'flex' : 'none';
+            emptyMessage.style.display = !hasAnyItems ? 'block' : 'none';
+            noResultsMessage.style.display = (hasAnyItems && visibleCount === 0 && query.length > 0) ? 'block' : 'none';
+        };
+
+        searchInput.addEventListener('input', performSearch);
+
+        clearButton.addEventListener('click', () => {
+            searchInput.value = '';
+            performSearch();
+            searchInput.focus();
+        });
+
+        clearButton.classList.toggle('hidden', searchInput.value.length === 0);
+    }
+
+
     // --- UI 创建 ---
     const formatDate = (timestamp) => new Date(timestamp).toLocaleString('zh-CN');
 
@@ -2189,7 +2363,7 @@
             }
         };
 
-        // [OPTIMIZED] 优化后的回复收藏列表渲染函数
+        // [MODIFIED] 优化后的回复收藏列表渲染函数
         const renderBookmarksTab = () => {
             const settings = getSettings();
             const isEnabled = settings.enableBookmarkReplies;
@@ -2210,8 +2384,11 @@
             const contentHTML = `
                  <div class="s1p-settings-group" style="margin-bottom: 16px;">
                     <div class="s1p-search-input-wrapper">
-                         <input type="text" id="s1p-bookmark-search-input" class="s1p-input" placeholder="搜索收藏内容、作者或帖子标题...">
-                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" /></svg>
+                         <input type="text" id="s1p-bookmark-search-input" class="s1p-input" placeholder="搜索内容、作者、标题...">
+                         <svg class="s1p-search-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" /></svg>
+                         <button id="s1p-bookmark-search-clear-btn" class="s1p-search-clear-btn hidden" title="清空搜索" aria-label="清空搜索">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" /></svg>
+                         </button>
                     </div>
                 </div>
                 <div class="s1p-list" id="s1p-bookmarks-list" style="${listStyle}">
@@ -2241,10 +2418,9 @@
                 </div>
             `;
 
-            // [OPTIMIZED] 修改事件监听器，不再完全重绘
             tabs['bookmarks'].addEventListener('click', e => {
-                const target = e.target;
-                if (target.dataset.action === 'remove-bookmark') {
+                const target = e.target.closest('[data-action="remove-bookmark"]');
+                if (target) {
                     e.preventDefault();
                     e.stopPropagation();
                     const postIdToRemove = target.dataset.postId;
@@ -2271,32 +2447,11 @@
                     }
                 }
             });
-            
-            const searchInput = tabs['bookmarks'].querySelector('#s1p-bookmark-search-input');
-            if (searchInput) {
-                searchInput.addEventListener('input', () => {
-                    const query = searchInput.value.toLowerCase().trim();
-                    const list = tabs['bookmarks'].querySelector('#s1p-bookmarks-list');
-                    const noResultsMessage = tabs['bookmarks'].querySelector('#s1p-bookmarks-no-results');
-                    if (!list) return;
 
-                    const items = list.querySelectorAll('.s1p-item');
-                    let visibleCount = 0;
-                    items.forEach(item => {
-                        const content = item.querySelector('.s1p-item-info').textContent.toLowerCase();
-                        if (content.includes(query)) {
-                            item.style.display = 'flex';
-                            visibleCount++;
-                        } else {
-                            item.style.display = 'none';
-                        }
-                    });
-                    
-                    // [FIX] 使用 items.length 判断，而不是旧的 bookmarkItems.length
-                    noResultsMessage.style.display = (visibleCount === 0 && items.length > 0) ? 'block' : 'none';
-                });
-            }
+            // Setup the new search component
+            setupBookmarkSearchComponent(tabs['bookmarks']);
         };
+
 
         const renderUserTab = () => {
             const settings = getSettings();
