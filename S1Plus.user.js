@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      4.8.3
+// @version      4.8.4
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪、回复收藏等多种功能，全方位优化你的论坛体验。
 // @author       moekyo & Gemini
 // @match        https://stage1st.com/2b/*
@@ -17,7 +17,7 @@
     'use strict';
 
 
-    const SCRIPT_VERSION = '4.8.3';
+    const SCRIPT_VERSION = '4.8.4';
     const SCRIPT_RELEASE_DATE = '2025-08-29';
 
     // --- 样式注入 ---
@@ -845,14 +845,15 @@
         /* --- [NEW] 用户标记设置面板专属样式 --- */
         .s1p-item-meta-id { font-family: monospace; background-color: var(--s1p-bg); padding: 1px 5px; border-radius: 4px; font-size: 11px; color: var(--s1p-t); }
         .s1p-item-content { margin-top: 8px; color: var(--s1p-desc-t); line-height: 1.6; white-space: pre-wrap; word-break: break-all; }
-        /* [NEW] 为收藏夹的内容增加独立样式 */
+        /* [MODIFIED] 为收藏夹的内容增加独立样式，改为分割线 */
         #s1p-tab-bookmarks .s1p-item-content {
-            background-color: var(--s1p-sub);
-            border: 1px solid var(--s1p-pri);
-            border-radius: 6px;
-            padding: 10px 12px;
+            background-color: transparent;
+            border: none;
+            border-bottom: 1px solid var(--s1p-pri);
+            border-radius: 0;
+            padding: 0 0 10px 0;
             margin-top: 0;
-            margin-bottom: 8px;
+            margin-bottom: 10px;
         }
         .s1p-item-editor textarea { width: 100%; min-height: 60px; margin-top: 8px; }
         .s1p-item-actions { display: flex; align-self: flex-start; flex-shrink: 0; gap: 8px; margin-left: 16px; }
