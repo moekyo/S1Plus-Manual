@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      4.8.4
+// @version      4.8.5
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪、回复收藏等多种功能，全方位优化你的论坛体验。
 // @author       moekyo & Gemini
 // @match        https://stage1st.com/2b/*
@@ -17,7 +17,7 @@
     'use strict';
 
 
-    const SCRIPT_VERSION = '4.8.4';
+    const SCRIPT_VERSION = '4.8.5';
     const SCRIPT_RELEASE_DATE = '2025-08-29';
 
     // --- 样式注入 ---
@@ -2189,12 +2189,11 @@
             }
         };
 
-        // [MODIFIED] Render Bookmarks Tab function with beautified search box
+        // [OPTIMIZED] 优化后的回复收藏列表渲染函数
         const renderBookmarksTab = () => {
             const settings = getSettings();
             const isEnabled = settings.enableBookmarkReplies;
 
-            // Feature toggle HTML
             const toggleHTML = `
                 <div class="s1p-settings-item" style="padding: 0; padding-bottom: 16px; margin-bottom: 10px; border-bottom: 1px solid var(--s1p-pri);">
                     <label class="s1p-settings-label" for="s1p-enableBookmarkReplies">启用回复收藏功能</label>
@@ -2205,7 +2204,9 @@
             const bookmarkedReplies = getBookmarkedReplies();
             const bookmarkItems = Object.values(bookmarkedReplies).sort((a, b) => b.timestamp - a.timestamp);
 
-            // Main content HTML
+            const listStyle = bookmarkItems.length === 0 ? 'display: none;' : '';
+            const emptyStyle = bookmarkItems.length > 0 ? 'display: none;' : '';
+
             const contentHTML = `
                  <div class="s1p-settings-group" style="margin-bottom: 16px;">
                     <div class="s1p-search-input-wrapper">
@@ -2213,9 +2214,8 @@
                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" /></svg>
                     </div>
                 </div>
-                ${bookmarkItems.length === 0
-                ? `<div class="s1p-empty">暂无收藏的回复</div>`
-                : `<div class="s1p-list" id="s1p-bookmarks-list">${bookmarkItems.map(item => `
+                <div class="s1p-list" id="s1p-bookmarks-list" style="${listStyle}">
+                    ${bookmarkItems.map(item => `
                     <div class="s1p-item" data-post-id="${item.postId}" style="position: relative; align-items: flex-start;">
                          <button class="s1p-btn s1p-danger" data-action="remove-bookmark" data-post-id="${item.postId}" style="position: absolute; top: 12px; right: 12px; padding: 4px 8px; font-size: 12px;">取消收藏</button>
                         <a href="forum.php?mod=redirect&goto=findpost&ptid=${item.threadId}&pid=${item.postId}" target="_blank" style="text-decoration: none; color: inherit; display: block; width: 100%;">
@@ -2228,9 +2228,10 @@
                                 </div>
                             </div>
                         </a>
-                    </div>`).join('')}</div>`
-            }
-             <div id="s1p-bookmarks-no-results" class="s1p-empty" style="display: none;">没有找到匹配的收藏</div>
+                    </div>`).join('')}
+                </div>
+                <div id="s1p-bookmarks-empty-message" class="s1p-empty" style="${emptyStyle}">暂无收藏的回复</div>
+                <div id="s1p-bookmarks-no-results" class="s1p-empty" style="display: none;">没有找到匹配的收藏</div>
             `;
 
             tabs['bookmarks'].innerHTML = `
@@ -2240,7 +2241,7 @@
                 </div>
             `;
 
-            // Add event listener for the remove buttons
+            // [OPTIMIZED] 修改事件监听器，不再完全重绘
             tabs['bookmarks'].addEventListener('click', e => {
                 const target = e.target;
                 if (target.dataset.action === 'remove-bookmark') {
@@ -2251,13 +2252,26 @@
                         const bookmarks = getBookmarkedReplies();
                         delete bookmarks[postIdToRemove];
                         saveBookmarkedReplies(bookmarks);
-                        renderBookmarksTab(); // Re-render the tab content
-                        refreshAllAuthiActions(); // Refresh buttons on the page if applicable
+
+                        const itemToRemove = target.closest('.s1p-item');
+                        if (itemToRemove) {
+                            itemToRemove.remove();
+                        }
+
+                        const list = tabs['bookmarks'].querySelector('#s1p-bookmarks-list');
+                        const emptyMessage = tabs['bookmarks'].querySelector('#s1p-bookmarks-empty-message');
+                        
+                        // 检查列表是否变空，并更新显示
+                        if (list && emptyMessage && list.children.length === 0) {
+                            list.style.display = 'none';
+                            emptyMessage.style.display = 'block';
+                        }
+                        
+                        refreshSinglePostActions(postIdToRemove);
                     }
                 }
             });
             
-            // [NEW] Add event listener for search input
             const searchInput = tabs['bookmarks'].querySelector('#s1p-bookmark-search-input');
             if (searchInput) {
                 searchInput.addEventListener('input', () => {
@@ -2278,7 +2292,8 @@
                         }
                     });
                     
-                    noResultsMessage.style.display = visibleCount === 0 && bookmarkItems.length > 0 ? 'block' : 'none';
+                    // [FIX] 使用 items.length 判断，而不是旧的 bookmarkItems.length
+                    noResultsMessage.style.display = (visibleCount === 0 && items.length > 0) ? 'block' : 'none';
                 });
             }
         };
@@ -2941,6 +2956,18 @@
                 if (action === 'edit-tag-item') renderTagsTab({ editingUserId: userId });
                 if (action === 'cancel-tag-edit') renderTagsTab();
 
+                if (action === 'delete-tag-item' || action === 'save-tag-edit') {
+                     // [OPTIMIZED] Call targeted refresh for user's posts
+                    document.querySelectorAll(`.authi a[href*="space-uid-${userId}"]`).forEach(userLink => {
+                        const postTable = userLink.closest('table[id^="pid"]');
+                        if (postTable) {
+                            const postId = postTable.id.replace('pid', '');
+                            refreshSinglePostActions(postId);
+                        }
+                    });
+                }
+
+
                 if (action === 'delete-tag-item') {
                     const userName = target.dataset.userName;
                     createConfirmationModal(`确认删除对 "${userName}" 的标记吗?`, '此操作不可撤销。', () => {
@@ -2948,7 +2975,6 @@
                         delete tags[userId];
                         saveUserTags(tags);
                         renderTagsTab();
-                        refreshAllAuthiActions();
                         showMessage(`已删除对 ${userName} 的标记。`, true);
                     }, '确认删除');
                 }
@@ -2960,14 +2986,12 @@
                         tags[userId] = { ...tags[userId], tag: newTag, timestamp: Date.now(), name: userName };
                         saveUserTags(tags);
                         renderTagsTab();
-                        refreshAllAuthiActions();
                         showMessage(`已更新对 ${userName} 的标记。`, true);
                     } else {
                         createConfirmationModal(`标记内容为空`, '您希望删除对该用户的标记吗？', () => {
                             delete tags[userId];
                             saveUserTags(tags);
                             renderTagsTab();
-                            refreshAllAuthiActions();
                             showMessage(`已删除对 ${userName} 的标记。`, true);
                         }, '确认删除');
                     }
@@ -3309,7 +3333,14 @@
                         delete userTags[userId];
                     }
                     saveUserTags(userTags);
-                    refreshAllAuthiActions();
+                    // [OPTIMIZED] Call targeted refresh instead of global refresh
+                    document.querySelectorAll(`.authi a[href*="space-uid-${userId}"]`).forEach(userLink => {
+                        const postTable = userLink.closest('table[id^="pid"]');
+                        if (postTable) {
+                            const postId = postTable.id.replace('pid', '');
+                            refreshSinglePostActions(postId);
+                        }
+                    });
                     popover.classList.remove('visible');
                     break;
                 case 'cancel-edit':
@@ -3573,10 +3604,28 @@
         window.addEventListener('beforeunload', finalSave);
     };
 
+    // [OPTIMIZED] 全局刷新，用于功能开关等大型变动
     const refreshAllAuthiActions = () => {
         document.querySelectorAll('.s1p-authi-actions-wrapper').forEach(el => el.remove());
         addActionsToPostFooter();
     };
+
+    // [OPTIMIZED] 精准刷新单个帖子的按钮，避免卡顿
+    const refreshSinglePostActions = (postId) => {
+        const postTable = document.querySelector(`table#pid${postId}`);
+        if (!postTable) return;
+
+        const viewAuthorLink = postTable.querySelector('div.authi a[href*="authorid="]');
+        if (!viewAuthorLink) return;
+
+        const authiDiv = viewAuthorLink.closest('.authi');
+        if (authiDiv) {
+            authiDiv.querySelector('.s1p-authi-actions-wrapper')?.remove();
+        }
+        
+        addActionsToSinglePost(viewAuthorLink);
+    };
+
 
     const createOptionsMenu = (anchorElement) => {
         document.querySelector('.s1p-tag-options-menu')?.remove();
@@ -3622,7 +3671,14 @@
                     const tags = getUserTags();
                     delete tags[userId];
                     saveUserTags(tags);
-                    refreshAllAuthiActions();
+                    // [OPTIMIZED] Call targeted refresh
+                    document.querySelectorAll(`.authi a[href*="space-uid-${userId}"]`).forEach(userLink => {
+                        const postTable = userLink.closest('table[id^="pid"]');
+                        if (postTable) {
+                            const postId = postTable.id.replace('pid', '');
+                            refreshSinglePostActions(postId);
+                        }
+                    });
                     closeMenu();
                 });
                 menu.querySelector('.s1p-cancel').addEventListener('click', (e) => {
@@ -3637,249 +3693,252 @@
         }, 0);
     };
 
+    // [REFACTORED] 将单个帖子的按钮添加逻辑提取出来，以便复用
+    const addActionsToSinglePost = (viewAuthorLink) => {
+        const settings = getSettings();
+        const authiDiv = viewAuthorLink.closest('.authi');
+        if (!authiDiv) return;
+
+        const urlParams = new URLSearchParams(viewAuthorLink.href.split('?')[1]);
+        const userId = urlParams.get('authorid');
+        if (!userId) return;
+
+        const postTable = authiDiv.closest('table[id^="pid"]');
+        if (!postTable) return;
+        const postId = postTable.id.replace('pid', '');
+
+        const floorElement = postTable.querySelector(`#postnum${postId} em`);
+        const floor = floorElement ? parseInt(floorElement.textContent, 10) : 0;
+
+        const postContainer = authiDiv.closest('td.plc');
+        const plsCell = postContainer ? postContainer.previousElementSibling : null;
+        if (!plsCell) return;
+
+        const userLinkInPi = plsCell.querySelector(`.pi .authi a[href*="space-uid-${userId}"]`);
+        const userName = userLinkInPi ? userLinkInPi.textContent.trim() : `用户 #${userId}`;
+        const userAvatar = plsCell.querySelector('.avatar img')?.src;
+
+        const wrapper = document.createElement('span');
+        wrapper.className = 's1p-authi-actions-wrapper';
+
+        if (!isS1NuxEnabled) {
+            wrapper.addEventListener('mouseenter', () => {
+                const triangleSpan = authiDiv.querySelector('.none');
+                if (triangleSpan) {
+                    triangleSpan.style.display = 'inline';
+                }
+            });
+            wrapper.addEventListener('mouseleave', () => {
+                const triangleSpan = authiDiv.querySelector('.none');
+                if (triangleSpan) {
+                    triangleSpan.style.removeProperty('display');
+                }
+            });
+        }
+
+        const authiRect = authiDiv.getBoundingClientRect();
+        const lastElementRect = viewAuthorLink.getBoundingClientRect();
+        let availableWidth = authiRect.right - lastElementRect.right - 15;
+
+        if (settings.enableUserBlocking) {
+            const pipe = document.createElement('span');
+            pipe.className = 'pipe';
+            pipe.textContent = '|';
+            wrapper.appendChild(pipe);
+
+            const blockLink = document.createElement('a');
+            blockLink.href = 'javascript:void(0);';
+            blockLink.textContent = '屏蔽该用户';
+            blockLink.className = 's1p-authi-action s1p-block-user-in-authi';
+            blockLink.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const confirmText = getSettings().blockThreadsOnUserBlock
+                    ? `屏蔽用户并隐藏其主题帖？`
+                    : `确认屏蔽该用户？`;
+                createInlineConfirmMenu(e.currentTarget, confirmText, () => blockUser(userId, userName));
+            });
+            wrapper.appendChild(blockLink);
+            availableWidth -= 85;
+        }
+
+        if (settings.enableUserTagging) {
+            const userTags = getUserTags();
+            const userTag = userTags[userId];
+            const pipe = document.createElement('span');
+            pipe.className = 'pipe';
+            pipe.textContent = '|';
+            wrapper.appendChild(pipe);
+            availableWidth -= 10;
+
+            if (userTag && userTag.tag) {
+                const tagContainer = document.createElement('span');
+                tagContainer.className = 's1p-authi-action s1p-user-tag-container';
+
+                const fullTagText = userTag.tag;
+                const tagDisplay = document.createElement('span');
+                tagDisplay.className = 's1p-user-tag-display';
+                tagDisplay.textContent = `用户标记：${fullTagText}`;
+                tagDisplay.dataset.fullTag = fullTagText;
+                tagDisplay.removeAttribute('title');
+
+                const optionsIcon = document.createElement('span');
+                optionsIcon.className = 's1p-user-tag-options';
+                optionsIcon.innerHTML = '&#8942;';
+                optionsIcon.dataset.userId = userId;
+                optionsIcon.dataset.userName = userName;
+                optionsIcon.dataset.userAvatar = userAvatar;
+                optionsIcon.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    createOptionsMenu(e.currentTarget);
+                });
+
+                tagContainer.appendChild(tagDisplay);
+                tagContainer.appendChild(optionsIcon);
+
+                if (availableWidth > 50) {
+                    tagContainer.style.maxWidth = `${availableWidth}px`;
+                }
+
+                wrapper.appendChild(tagContainer);
+            } else {
+                const tagLink = document.createElement('a');
+                tagLink.href = 'javascript:void(0);';
+                tagLink.textContent = '标记该用户';
+                tagLink.className = 's1p-authi-action s1p-tag-user-in-authi';
+                tagLink.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    const popover = document.getElementById('s1p-tag-popover-main');
+                    if (popover && popover.show) {
+                        popover.show(e.currentTarget, userId, userName, userAvatar, 0, true);
+                    }
+                });
+                wrapper.appendChild(tagLink);
+            }
+        }
+
+        if (floor > 1 && settings.enableBookmarkReplies) {
+            const bookmarkedReplies = getBookmarkedReplies();
+            const isBookmarked = !!bookmarkedReplies[postId];
+
+            const pipe = document.createElement('span');
+            pipe.className = 'pipe';
+            pipe.textContent = '|';
+            wrapper.appendChild(pipe);
+
+            const bookmarkLink = document.createElement('a');
+            bookmarkLink.href = 'javascript:void(0);';
+            bookmarkLink.className = 's1p-authi-action s1p-bookmark-reply';
+            bookmarkLink.textContent = isBookmarked ? '该回复已收藏' : '收藏该回复';
+
+            bookmarkLink.addEventListener('click', (e) => {
+                e.preventDefault();
+                const currentBookmarks = getBookmarkedReplies();
+                const wasBookmarked = !!currentBookmarks[postId];
+
+                if (wasBookmarked) {
+                    delete currentBookmarks[postId];
+                    saveBookmarkedReplies(currentBookmarks);
+                    bookmarkLink.textContent = '收藏该回复';
+                    showMessage('已取消收藏该回复。', true);
+                } else {
+                    const threadTitleEl = document.querySelector('#thread_subject');
+                    const threadTitle = threadTitleEl ? threadTitleEl.textContent.trim() : '未知标题';
+
+                    const threadIdMatch = window.location.href.match(/thread-(\d+)-/);
+                    const params = new URLSearchParams(window.location.search);
+                    const threadId = threadIdMatch ? threadIdMatch[1] : (params.get('tid') || params.get('ptid'));
+
+                    const contentEl = postTable.querySelector('td.t_f');
+                    
+                    let postContent = '无法获取内容';
+                    if(contentEl) {
+                        const contentClone = contentEl.cloneNode(true);
+                        contentClone.querySelectorAll('div.quote').forEach(q => q.remove());
+                        postContent = contentClone.innerText.trim().substring(0, 150);
+                        if (contentClone.innerText.trim().length > 150) {
+                            postContent += '...';
+                        }
+                    }
+
+                    if (!threadId) {
+                        showMessage('无法获取帖子ID，收藏失败。', false);
+                        return;
+                    }
+
+                    currentBookmarks[postId] = {
+                        postId,
+                        threadId,
+                        threadTitle,
+                        floor,
+                        authorId: userId,
+                        authorName: userName,
+                        postContent,
+                        timestamp: Date.now()
+                    };
+                    saveBookmarkedReplies(currentBookmarks);
+                    bookmarkLink.textContent = '该回复已收藏';
+                    showMessage('已收藏该回复。', true);
+                }
+            });
+            wrapper.appendChild(bookmarkLink);
+        }
+
+        const ordertypeLink = authiDiv.querySelector('a[href*="ordertype=1"]');
+        const readmodeLink = authiDiv.querySelector('a[onclick*="readmode"]');
+
+        let viewImagesLink = null;
+        for (const link of authiDiv.querySelectorAll('a')) {
+            if (link.textContent.trim() === '只看大图') {
+                viewImagesLink = link;
+                break;
+            }
+        }
+
+        const insertionPoint = readmodeLink || viewAuthorLink;
+        insertionPoint.after(wrapper);
+
+        if (ordertypeLink && readmodeLink) {
+            const nativeElements = [
+                ordertypeLink.previousElementSibling,
+                ordertypeLink,
+                readmodeLink.previousElementSibling,
+                readmodeLink
+            ].filter(Boolean);
+
+            nativeElements.forEach(el => el.style.display = 'none');
+
+            const showNativeButtons = () => {
+                nativeElements.forEach(el => el.style.display = 'inline');
+            };
+
+            viewAuthorLink.addEventListener('mouseenter', showNativeButtons);
+
+            if (viewImagesLink) {
+                viewImagesLink.addEventListener('mouseenter', showNativeButtons);
+            }
+
+            authiDiv.addEventListener('mouseleave', () => {
+                nativeElements.forEach(el => el.style.display = 'none');
+            });
+        }
+    };
+    
+    // [REFACTORED] 主函数，循环调用单个帖子的按钮添加逻辑
     const addActionsToPostFooter = () => {
         const settings = getSettings();
         if (!settings.enableUserBlocking && !settings.enableUserTagging && !settings.enableBookmarkReplies) return;
 
         document.querySelectorAll('div.authi a[href*="authorid="]').forEach(viewAuthorLink => {
             const authiDiv = viewAuthorLink.closest('.authi');
-            if (!authiDiv) return;
-
-            authiDiv.querySelector('.s1p-authi-actions-wrapper')?.remove();
-            const oldBlockLink = authiDiv.querySelector('a.s1p-block-user-in-authi:not(.s1p-authi-action)');
-            if (oldBlockLink) {
-                const precedingPipe = oldBlockLink.previousElementSibling;
-                if (precedingPipe && precedingPipe.classList.contains('pipe')) precedingPipe.remove();
-                oldBlockLink.remove();
+            if (!authiDiv || authiDiv.querySelector('.s1p-authi-actions-wrapper')) {
+                return;
             }
-
-            const urlParams = new URLSearchParams(viewAuthorLink.href.split('?')[1]);
-            const userId = urlParams.get('authorid');
-            if (!userId) return;
-            
-            const postTable = authiDiv.closest('table[id^="pid"]');
-            if (!postTable) return;
-            const postId = postTable.id.replace('pid', '');
-
-            const floorElement = postTable.querySelector(`#postnum${postId} em`);
-            const floor = floorElement ? parseInt(floorElement.textContent, 10) : 0;
-
-            const postContainer = authiDiv.closest('td.plc');
-            const plsCell = postContainer ? postContainer.previousElementSibling : null;
-            if (!plsCell) return;
-
-            const userLinkInPi = plsCell.querySelector(`.pi .authi a[href*="space-uid-${userId}"]`);
-            const userName = userLinkInPi ? userLinkInPi.textContent.trim() : `用户 #${userId}`;
-            const userAvatar = plsCell.querySelector('.avatar img')?.src;
-
-            const wrapper = document.createElement('span');
-            wrapper.className = 's1p-authi-actions-wrapper';
-
-            if (!isS1NuxEnabled) {
-                wrapper.addEventListener('mouseenter', () => {
-                    const triangleSpan = authiDiv.querySelector('.none');
-                    if (triangleSpan) {
-                        triangleSpan.style.display = 'inline';
-                    }
-                });
-                wrapper.addEventListener('mouseleave', () => {
-                    const triangleSpan = authiDiv.querySelector('.none');
-                    if (triangleSpan) {
-                        triangleSpan.style.removeProperty('display');
-                    }
-                });
-            }
-
-            const authiRect = authiDiv.getBoundingClientRect();
-            const lastElementRect = viewAuthorLink.getBoundingClientRect();
-            let availableWidth = authiRect.right - lastElementRect.right - 15;
-
-            if (settings.enableUserBlocking) {
-                const pipe = document.createElement('span');
-                pipe.className = 'pipe';
-                pipe.textContent = '|';
-                wrapper.appendChild(pipe);
-
-                const blockLink = document.createElement('a');
-                blockLink.href = 'javascript:void(0);';
-                blockLink.textContent = '屏蔽该用户';
-                blockLink.className = 's1p-authi-action s1p-block-user-in-authi';
-                blockLink.addEventListener('click', (e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    const confirmText = getSettings().blockThreadsOnUserBlock
-                        ? `屏蔽用户并隐藏其主题帖？`
-                        : `确认屏蔽该用户？`;
-                    createInlineConfirmMenu(e.currentTarget, confirmText, () => blockUser(userId, userName));
-                });
-                wrapper.appendChild(blockLink);
-                availableWidth -= 85;
-            }
-
-            if (settings.enableUserTagging) {
-                const userTags = getUserTags();
-                const userTag = userTags[userId];
-                const pipe = document.createElement('span');
-                pipe.className = 'pipe';
-                pipe.textContent = '|';
-                wrapper.appendChild(pipe);
-                availableWidth -= 10;
-
-                if (userTag && userTag.tag) {
-                    const tagContainer = document.createElement('span');
-                    tagContainer.className = 's1p-authi-action s1p-user-tag-container';
-
-                    const fullTagText = userTag.tag;
-                    const tagDisplay = document.createElement('span');
-                    tagDisplay.className = 's1p-user-tag-display';
-                    tagDisplay.textContent = `用户标记：${fullTagText}`;
-                    tagDisplay.dataset.fullTag = fullTagText;
-                    tagDisplay.removeAttribute('title');
-
-                    const optionsIcon = document.createElement('span');
-                    optionsIcon.className = 's1p-user-tag-options';
-                    optionsIcon.innerHTML = '&#8942;';
-                    optionsIcon.dataset.userId = userId;
-                    optionsIcon.dataset.userName = userName;
-                    optionsIcon.dataset.userAvatar = userAvatar;
-                    optionsIcon.addEventListener('click', (e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        createOptionsMenu(e.currentTarget);
-                    });
-
-                    tagContainer.appendChild(tagDisplay);
-                    tagContainer.appendChild(optionsIcon);
-
-                    if (availableWidth > 50) {
-                        tagContainer.style.maxWidth = `${availableWidth}px`;
-                    }
-
-                    wrapper.appendChild(tagContainer);
-                } else {
-                    const tagLink = document.createElement('a');
-                    tagLink.href = 'javascript:void(0);';
-                    tagLink.textContent = '标记该用户';
-                    tagLink.className = 's1p-authi-action s1p-tag-user-in-authi';
-                    tagLink.addEventListener('click', (e) => {
-                        e.preventDefault();
-                        const popover = document.getElementById('s1p-tag-popover-main');
-                        if (popover && popover.show) {
-                            popover.show(e.currentTarget, userId, userName, userAvatar, 0, true);
-                        }
-                    });
-                    wrapper.appendChild(tagLink);
-                }
-            }
-
-            // [NEW] Add Bookmark Reply button
-            if (floor > 1 && settings.enableBookmarkReplies) {
-                const bookmarkedReplies = getBookmarkedReplies();
-                const isBookmarked = !!bookmarkedReplies[postId];
-
-                const pipe = document.createElement('span');
-                pipe.className = 'pipe';
-                pipe.textContent = '|';
-                wrapper.appendChild(pipe);
-
-                const bookmarkLink = document.createElement('a');
-                bookmarkLink.href = 'javascript:void(0);';
-                bookmarkLink.className = 's1p-authi-action s1p-bookmark-reply';
-                bookmarkLink.textContent = isBookmarked ? '该回复已收藏' : '收藏该回复';
-
-                bookmarkLink.addEventListener('click', (e) => {
-                    e.preventDefault();
-                    const currentBookmarks = getBookmarkedReplies();
-                    const wasBookmarked = !!currentBookmarks[postId];
-
-                    if (wasBookmarked) {
-                        delete currentBookmarks[postId];
-                        saveBookmarkedReplies(currentBookmarks);
-                        bookmarkLink.textContent = '收藏该回复';
-                        showMessage('已取消收藏该回复。', true);
-                    } else {
-                        const threadTitleEl = document.querySelector('#thread_subject');
-                        const threadTitle = threadTitleEl ? threadTitleEl.textContent.trim() : '未知标题';
-
-                        const threadIdMatch = window.location.href.match(/thread-(\d+)-/);
-                        const params = new URLSearchParams(window.location.search);
-                        const threadId = threadIdMatch ? threadIdMatch[1] : (params.get('tid') || params.get('ptid'));
-
-                        const contentEl = postTable.querySelector('td.t_f');
-                        
-                        let postContent = '无法获取内容';
-                        if(contentEl) {
-                            const contentClone = contentEl.cloneNode(true);
-                            contentClone.querySelectorAll('div.quote').forEach(q => q.remove());
-                            postContent = contentClone.innerText.trim().substring(0, 150);
-                            if (contentClone.innerText.trim().length > 150) {
-                                postContent += '...';
-                            }
-                        }
-
-                        if (!threadId) {
-                            showMessage('无法获取帖子ID，收藏失败。', false);
-                            return;
-                        }
-
-                        currentBookmarks[postId] = {
-                            postId,
-                            threadId,
-                            threadTitle,
-                            floor,
-                            authorId: userId,
-                            authorName: userName,
-                            postContent,
-                            timestamp: Date.now()
-                        };
-                        saveBookmarkedReplies(currentBookmarks);
-                        bookmarkLink.textContent = '该回复已收藏';
-                        showMessage('已收藏该回复。', true);
-                    }
-                });
-                wrapper.appendChild(bookmarkLink);
-            }
-
-            const ordertypeLink = authiDiv.querySelector('a[href*="ordertype=1"]');
-            const readmodeLink = authiDiv.querySelector('a[onclick*="readmode"]');
-
-            let viewImagesLink = null;
-            for (const link of authiDiv.querySelectorAll('a')) {
-                if (link.textContent.trim() === '只看大图') {
-                    viewImagesLink = link;
-                    break;
-                }
-            }
-
-            const insertionPoint = readmodeLink || viewAuthorLink;
-            insertionPoint.after(wrapper);
-
-            if (ordertypeLink && readmodeLink) {
-                const nativeElements = [
-                    ordertypeLink.previousElementSibling,
-                    ordertypeLink,
-                    readmodeLink.previousElementSibling,
-                    readmodeLink
-                ].filter(Boolean);
-
-                nativeElements.forEach(el => el.style.display = 'none');
-
-                const showNativeButtons = () => {
-                    nativeElements.forEach(el => el.style.display = 'inline');
-                };
-
-                viewAuthorLink.addEventListener('mouseenter', showNativeButtons);
-
-                if (viewImagesLink) {
-                    viewImagesLink.addEventListener('mouseenter', showNativeButtons);
-                }
-
-                authiDiv.addEventListener('mouseleave', () => {
-                    nativeElements.forEach(el => el.style.display = 'none');
-                });
-            }
+            addActionsToSinglePost(viewAuthorLink);
         });
     };
+
 
     // 自动签到 (适配 study_daily_attendance 插件)
     function autoSign() {
