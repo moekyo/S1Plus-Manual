@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      4.8.1
+// @version      4.8.3
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪、回复收藏等多种功能，全方位优化你的论坛体验。
 // @author       moekyo & Gemini
 // @match        https://stage1st.com/2b/*
@@ -17,7 +17,7 @@
     'use strict';
 
 
-    const SCRIPT_VERSION = '4.8.1';
+    const SCRIPT_VERSION = '4.8.3';
     const SCRIPT_RELEASE_DATE = '2025-08-29';
 
     // --- 样式注入 ---
@@ -387,15 +387,28 @@
             user-select: none;
         }
 
-        /* --- 文本框基础样式 --- */
-        .s1p-textarea {
+        /* --- [NEW] 通用输入框样式 --- */
+        .s1p-input {
+            width: 100%;
             background: var(--s1p-input-bg);
             border: 1px solid var(--s1p-pri);
-            border-radius: 8px;
-            padding: 8px;
+            border-radius: 6px;
+            padding: 8px 12px;
             font-size: 14px;
-            resize: vertical;
             box-sizing: border-box;
+            transition: border-color 0.2s ease-in-out, background-color 0.2s ease-in-out;
+            color: var(--s1p-t);
+        }
+        .s1p-input:focus {
+            outline: none;
+            border-color: var(--s1p-sec);
+            background-color: var(--s1p-white);
+        }
+
+        /* --- [NEW] 文本域专属样式 (继承自 s1p-input) --- */
+        .s1p-textarea {
+            resize: vertical;
+            min-height: 80px;
         }
 
         /* --- [MODIFIED] 用户标记悬浮窗 (Style Revamp per Image 2) --- */
@@ -489,7 +502,6 @@
             margin-bottom: 12px;
         }
         .s1p-edit-mode-textarea {
-            width: 100%;
             height: 90px;
             margin-bottom: 12px;
         }
@@ -759,12 +771,12 @@
         .s1p-settings-group { margin-bottom: 24px; }
         .s1p-settings-group-title { font-size: 16px; font-weight: 500; border-bottom: 1px solid var(--s1p-pri); padding-bottom: 16px; margin-bottom: 12px; }
         .s1p-settings-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; }
-        .s1p-settings-item .s1p-title-suffix-input { background: var(--s1p-bg); width: 100%; border: 1px solid var(--s1p-pri); border-radius: 4px; padding: 6px 8px; font-size: 14px; box-sizing: border-box; }
+        .s1p-settings-item .s1p-input { width: auto; min-width: 200px; }
         .s1p-settings-label { font-size: 14px; }
         .s1p-settings-checkbox { /* Handled by .s1p-switch */ }
         .s1p-setting-desc { font-size: 12px; color: var(--s1p-desc-t); margin: -4px 0 12px 0; padding: 0; line-height: 1.5; }
         .s1p-editor-item { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; padding: 6px; border-radius: 4px; background: var(--s1p-bg); }
-        .s1p-editor-item input[type="text"], .s1p-settings-item select { background: var(--s1p-bg);  width: 100%; border: 1px solid var(--s1p-pri); border-radius: 4px; padding: 6px 8px; font-size: 14px; box-sizing: border-box; }
+        .s1p-editor-item select { background: var(--s1p-bg);  width: 100%; border: 1px solid var(--s1p-pri); border-radius: 4px; padding: 6px 8px; font-size: 14px; box-sizing: border-box; }
         .s1p-editor-item-controls { display: flex; align-items: center; gap: 4px; }
         .s1p-editor-btn { padding: 4px; font-size: 18px; line-height: 1; cursor: pointer; border-radius: 4px; border:none; background: transparent; color: #9ca3af; }
         .s1p-editor-btn:hover { background: var(--s1p-secondary-bg); color: var(--s1p-secondary-text); }
@@ -793,6 +805,31 @@
         .s1p-settings-action-btn.s1p-primary:hover { background-color: var(--s1p-sec-h); }
         .s1p-settings-action-btn.s1p-secondary { background-color: var(--s1p-secondary-bg); color: var(--s1p-secondary-text); }
         .s1p-settings-action-btn.s1p-secondary:hover { background-color: var(--s1p-secondary-hover-bg); }
+
+        /* --- [MODIFIED] 带图标的搜索框 --- */
+        .s1p-search-input-wrapper {
+            position: relative;
+            display: flex;
+            align-items: center;
+            width: 100%;
+        }
+        .s1p-search-input-wrapper .s1p-input {
+            padding-left: 34px; /* 为图标腾出空间 */
+        }
+        .s1p-search-input-wrapper svg {
+            position: absolute;
+            left: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 16px;
+            height: 16px;
+            color: var(--s1p-icon-color);
+            pointer-events: none;
+            transition: color 0.2s ease-in-out;
+        }
+        .s1p-search-input-wrapper .s1p-input:focus + svg {
+            color: var(--s1p-sec);
+        }
 
         /* --- Modern Toggle Switch --- */
         .s1p-switch { position: relative; display: inline-block; width: 40px; height: 22px; vertical-align: middle; flex-shrink: 0; }
@@ -1926,7 +1963,7 @@
                             <button id="s1p-local-export-btn" class="s1p-btn">导出数据</button>
                             <button id="s1p-local-import-btn" class="s1p-btn">导入数据</button>
                         </div>
-                        <textarea id="s1p-local-sync-textarea" class="s1p-sync-textarea s1p-textarea" placeholder="在此粘贴导入数据或从此处复制导出数据"></textarea>
+                        <textarea id="s1p-local-sync-textarea" class="s1p-input s1p-textarea s1p-sync-textarea" placeholder="在此粘贴导入数据或从此处复制导出数据"></textarea>
                     </div>
 
                     <div class="s1p-settings-group">
@@ -1942,11 +1979,11 @@
                         <p class="s1p-setting-desc">启用后，数据将在停止操作5秒后自动同步。你也可以随时手动同步。</p>
                         <div class="s1p-settings-item" style="flex-direction: column; align-items: flex-start; gap: 4px;">
                             <label class="s1p-settings-label" for="s1p-remote-gist-id-input">Gist ID</label>
-                            <input type="text" id="s1p-remote-gist-id-input" class="s1p-title-suffix-input" placeholder="从 Gist 网址中复制的那一长串 ID" style="width: 100%;">
+                            <input type="text" id="s1p-remote-gist-id-input" class="s1p-input" placeholder="从 Gist 网址中复制的那一长串 ID" style="width: 100%;">
                         </div>
                         <div class="s1p-settings-item" style="flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 12px;">
                             <label class="s1p-settings-label" for="s1p-remote-pat-input">GitHub Personal Access Token (PAT)</label>
-                            <input type="password" id="s1p-remote-pat-input" class="s1p-title-suffix-input" placeholder="ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" style="width: 100%;">
+                            <input type="password" id="s1p-remote-pat-input" class="s1p-input" placeholder="ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" style="width: 100%;">
                         </div>
                         <div class="s1p-notice">
                             <div class="s1p-notice-icon"></div>
@@ -2086,7 +2123,7 @@
                         <button id="s1p-export-tags-btn" class="s1p-btn">导出全部标记</button>
                         <button id="s1p-import-tags-btn" class="s1p-btn">导入标记</button>
                     </div>
-                    <textarea id="s1p-tags-sync-textarea" class="s1p-sync-textarea s1p-textarea" placeholder="在此粘贴导入数据或从此处复制导出数据..."></textarea>
+                    <textarea id="s1p-tags-sync-textarea" class="s1p-input s1p-textarea s1p-sync-textarea" placeholder="在此粘贴导入数据或从此处复制导出数据..."></textarea>
                 </div>
 
                 <div class="s1p-settings-group">
@@ -2104,7 +2141,7 @@
                                         ID: <span class="s1p-item-meta-id">${id}</span>
                                     </div>
                                     <div class="s1p-item-editor">
-                                        <textarea class="s1p-tag-edit-area">${data.tag}</textarea>
+                                        <textarea class="s1p-input s1p-textarea s1p-tag-edit-area">${data.tag}</textarea>
                                     </div>
                                 </div>
                                 <div class="s1p-item-actions">
@@ -2151,7 +2188,7 @@
             }
         };
 
-        // [NEW] Render Bookmarks Tab function
+        // [MODIFIED] Render Bookmarks Tab function with beautified search box
         const renderBookmarksTab = () => {
             const settings = getSettings();
             const isEnabled = settings.enableBookmarkReplies;
@@ -2170,7 +2207,10 @@
             // Main content HTML
             const contentHTML = `
                  <div class="s1p-settings-group" style="margin-bottom: 16px;">
-                    <input type="text" id="s1p-bookmark-search-input" class="s1p-title-suffix-input" placeholder="搜索收藏内容、作者或帖子标题..." style="width: 100%;">
+                    <div class="s1p-search-input-wrapper">
+                         <input type="text" id="s1p-bookmark-search-input" class="s1p-input" placeholder="搜索收藏内容、作者或帖子标题...">
+                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" /></svg>
+                    </div>
                 </div>
                 ${bookmarkItems.length === 0
                 ? `<div class="s1p-empty">暂无收藏的回复</div>`
@@ -2365,7 +2405,7 @@
                 container.innerHTML = rules.map(rule => `
                     <div class="s1p-editor-item" data-rule-id="${rule.id}">
                         <label class="s1p-switch"><input type="checkbox" class="s1p-settings-checkbox s1p-keyword-rule-enable" ${rule.enabled ? 'checked' : ''}><span class="s1p-slider"></span></label>
-                        <input type="text" class="s1p-keyword-rule-pattern" placeholder="输入关键字或正则表达式" value="${rule.pattern || ''}">
+                        <input type="text" class="s1p-input s1p-keyword-rule-pattern" placeholder="输入关键字或正则表达式" value="${rule.pattern || ''}">
                         <div class="s1p-editor-item-controls">
                             <button class="s1p-editor-btn s1p-keyword-rule-delete" title="删除规则"></button>
                         </div>
@@ -2433,7 +2473,7 @@
                     newItem.dataset.ruleId = `new_${Date.now()}`;
                     newItem.innerHTML = `
                         <label class="s1p-switch"><input type="checkbox" class="s1p-settings-checkbox s1p-keyword-rule-enable" checked><span class="s1p-slider"></span></label>
-                        <input type="text" class="s1p-keyword-rule-pattern" placeholder="输入关键字或正则表达式" value="">
+                        <input type="text" class="s1p-input s1p-keyword-rule-pattern" placeholder="输入关键字或正则表达式" value="">
                         <div class="s1p-editor-item-controls">
                             <button class="s1p-editor-btn s1p-keyword-rule-delete" title="删除规则"></button>
                         </div>
@@ -2508,7 +2548,7 @@
                     </div>
                     <div class="s1p-settings-item">
                         <label class="s1p-settings-label" for="s1p-customTitleSuffix">自定义标题后缀</label>
-                        <input type="text" id="s1p-customTitleSuffix" class="s1p-title-suffix-input" data-setting="customTitleSuffix" value="${settings.customTitleSuffix || ''}" style="width: 200px;">
+                        <input type="text" id="s1p-customTitleSuffix" class="s1p-input" data-setting="customTitleSuffix" value="${settings.customTitleSuffix || ''}">
                     </div>
                 </div>`;
 
@@ -2627,8 +2667,8 @@
                 navListContainer.innerHTML = (links || []).map((link, index) => `
                     <div class="s1p-editor-item" draggable="true" data-index="${index}" style="grid-template-columns: auto 1fr 1fr auto; user-select: none;">
                         <div class="s1p-drag-handle">::</div>
-                        <input type="text" class="s1p-nav-name" placeholder="名称" value="${link.name || ''}">
-                        <input type="text" class="s1p-nav-href" placeholder="链接" value="${link.href || ''}">
+                        <input type="text" class="s1p-input s1p-nav-name" placeholder="名称" value="${link.name || ''}">
+                        <input type="text" class="s1p-input s1p-nav-href" placeholder="链接" value="${link.href || ''}">
                         <div class="s1p-editor-item-controls"><button class="s1p-editor-btn" data-action="delete" title="删除链接"></button></div>
                     </div>`).join('');
             };
@@ -2677,7 +2717,7 @@
                     const newItem = document.createElement('div');
                     newItem.className = 's1p-editor-item'; newItem.draggable = true;
                     newItem.style.gridTemplateColumns = 'auto 1fr 1fr auto';
-                    newItem.innerHTML = `<div class="s1p-drag-handle">::</div><input type="text" class="s1p-nav-name" placeholder="新链接"><input type="text" class="s1p-nav-href" placeholder="forum.php"><div class="s1p-editor-item-controls"><button class="s1p-editor-btn" data-action="delete" title="删除链接"></button></div>`;
+                    newItem.innerHTML = `<div class="s1p-drag-handle">::</div><input type="text" class="s1p-input s1p-nav-name" placeholder="新链接"><input type="text" class="s1p-input s1p-nav-href" placeholder="forum.php"><div class="s1p-editor-item-controls"><button class="s1p-editor-btn" data-action="delete" title="删除链接"></button></div>`;
                     navListContainer.appendChild(newItem);
                 } else if (target.dataset.action === 'delete') {
                     target.closest('.s1p-editor-item').remove();
@@ -3223,7 +3263,7 @@
             popover.innerHTML = `
                  <div class="s1p-popover-content">
                     <div class="s1p-edit-mode-header">为 ${userName} ${currentTag ? '编辑' : '添加'}标记</div>
-                    <textarea class="s1p-edit-mode-textarea s1p-textarea" placeholder="输入标记内容...">${currentTag}</textarea>
+                    <textarea class="s1p-input s1p-textarea s1p-edit-mode-textarea" placeholder="输入标记内容...">${currentTag}</textarea>
                     <div class="s1p-edit-mode-actions">
                         <button class="s1p-btn" data-action="cancel-edit">取消</button>
                         <button class="s1p-btn" data-action="save">保存</button>
