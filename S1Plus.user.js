@@ -203,6 +203,12 @@
         .s1p-btn:hover { background-color: var(--s1p-sub-h); color: var(--s1p-sub-h-t); border-color: var(--s1p-sub-h); }
         .s1p-red-btn { background-color: var(--s1p-red); color: var(--s1p-white); border-color: var(--s1p-red); }
         .s1p-red-btn:hover { background-color: var(--s1p-red-h); border-color: var(--s1p-red-h); }
+
+        .s1p-btn.s1p-danger:hover {
+            background-color: var(--s1p-red-h); /* 使用危险状态的悬停红色 */
+            border-color: var(--s1p-red-h);     /* 边框也变为同样的红色 */
+            color: var(--s1p-white);            /* 确保文字变为白色以保证清晰可读 */
+        }
         
         /* --- [MODIFIED] 帖子操作按钮 (三点图标) --- */
         .s1p-options-cell {
