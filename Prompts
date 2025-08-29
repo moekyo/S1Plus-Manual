@@ -576,9 +576,7 @@ This XML file does not appear to have any style information associated with it. 
 4. 给设置面板的收藏回复的 s1p-item-content 增加一个带圆角边框的背景，保证与其他内容区分开来。边框颜色要浅浅的就好
 5. 给设置面板的收藏回复的增加一个搜索框，方便用户快速找到想要管理的回复。
 
-1. 这是对应取消收藏按钮的 html 片段，高亮时还是蓝色的，看看为什么用的是 --s1p-sub-h
-<button class="s1p-btn s1p-danger" data-action="remove-bookmark" data-post-id="68333209" style="position: absolute; top: 12px; right: 12px; padding: 4px 8px; font-size: 12px;">取消收藏</button>
-2. 把这个给设置面板的收藏回复的 s1p-item-content 增加一个带圆角边框的背景去掉，改为用分割线分割内容，和作者、时间等元信息明显区分开来。
-3. 回复收藏中的搜索框的样式太简陋了，美化一下。
+
+1. 把这个给设置面板的收藏回复的 s1p-item-content 增加一个带圆角边框的背景去掉，改为用分割线分割内容，和作者、时间等元信息明显区分开来。
 
 
