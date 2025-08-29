@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      4.6.0
-// @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪等多种功能，全方位优化你的论坛体验。
-// @author       moekyo
+// @version      4.8.1
+// @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪、回复收藏等多种功能，全方位优化你的论坛体验。
+// @author       moekyo & Gemini
 // @match        https://stage1st.com/2b/*
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -17,8 +17,8 @@
     'use strict';
 
 
-    const SCRIPT_VERSION = '4.6.0';
-    const SCRIPT_RELEASE_DATE = '2025-08-28';
+    const SCRIPT_VERSION = '4.8.1';
+    const SCRIPT_RELEASE_DATE = '2025-08-29';
 
     // --- 样式注入 ---
     GM_addStyle(`
@@ -56,7 +56,6 @@
             --s1p-cancel-hover-bg: #ff6464;
             --s1p-secondary-bg: #e5e7eb;
             --s1p-secondary-text: #374151;
-            --s1p-secondary-hover-bg: #d1d5db;
             --s1p-code-bg: #eee;
 
             /* -- 阅读进度 -- */
@@ -625,7 +624,7 @@
         .s1p-modal-body { padding: 0 16px 16px; overflow-y: auto; flex-grow: 1; }
         .s1p-modal-footer { padding: 12px 16px; border-top: 1px solid var(--s1p-pri); text-align: right; font-size: 12px; }
         .s1p-tabs { display: flex; border-bottom: 1px solid var(--s1p-pri); }
-        .s1p-tab-btn { padding: 12px 16px; cursor: pointer; border: none; background-color: transparent; font-size: 14px; border-bottom: 2px solid transparent; transition: all 0.2s; }
+        .s1p-tab-btn { padding: 12px 16px; cursor: pointer; border: none; background-color: transparent; font-size: 14px; border-bottom: 2px solid transparent; transition: all 0.2s; white-space: nowrap; }
         .s1p-tab-btn.active { color: var(--s1p-sec); border-bottom-color: var(--s1p-sec); font-weight: 500; }
         .s1p-tab-content { display: none; padding-top: 16px; }
         .s1p-tab-content.active { display: block; }
@@ -643,8 +642,7 @@
         .s1p-local-sync-buttons { display: flex; gap: 8px; margin-bottom: 16px; }
         .s1p-sync-textarea { width: 100%; min-height: 80px; margin-bottom: 20px;}
 
-        /* --- [OPTIMIZED] 悬浮提示框 (Toast Notification) V2 --- */
-        /* 新增一个抖动动画的定义 */
+        /* --- [OPTIMIZED] 悬浮提示框 (Toast Notification) V3 --- */
         @keyframes s1p-toast-shake {
             10%, 90% { transform: translate(-51%, 0); }
             20%, 80% { transform: translate(-49%, 0); }
@@ -653,10 +651,10 @@
         }
 
         .s1p-toast-notification {
-            position: absolute;
-            /* 核心改动：定位到屏幕底部中央 */
+            /* [MODIFIED] 改为 fixed 定位，使其不随页面滚动 */
+            position: fixed;
             left: 50%;
-            bottom: 15px; /* [修改] 调整与面板底部的距离 */
+            bottom: 20px;
             /* 初始位置在屏幕外，为向上滑入动画做准备 */
             transform: translate(-50%, 50px);
             z-index: 10005;
@@ -665,7 +663,7 @@
             font-size: 14px;
             font-weight: 500;
             color: var(--s1p-white);
-            background-color: #323232; /* 默认使用一个深灰色背景 */
+            background-color: #323232;
             box-shadow: 0 4px 12px rgba(var(--s1p-black-rgb), 0.15);
             opacity: 0;
             transition: opacity 0.3s ease-out, transform 0.3s ease-out;
@@ -673,6 +671,13 @@
             white-space: nowrap;
             text-align: center;
         }
+
+        /* [NEW] 在设置面板内，提示信息恢复为 absolute 定位，随面板滚动 */
+        .s1p-modal-content .s1p-toast-notification {
+            position: absolute;
+            bottom: 15px;
+        }
+
         .s1p-toast-notification.visible {
             opacity: 1;
             /* 最终位置 */
@@ -684,7 +689,6 @@
         .s1p-toast-notification.error {
             background-color: var(--s1p-red); /* 失败状态使用红色 */
         }
-        /* 核心改动：为可见的错误提示应用抖动动画 */
         .s1p-toast-notification.error.visible {
             animation: s1p-toast-shake 0.5s cubic-bezier(.36,.07,.19,.97) both;
         }
@@ -697,14 +701,13 @@
         .s1p-confirm-body { padding: 20px 24px; font-size: 16px; line-height: 1.6; }
         .s1p-confirm-body .s1p-confirm-title { font-weight: 600; font-size: 18px; margin-bottom: 8px; }
         .s1p-confirm-body .s1p-confirm-subtitle { font-size: 14px; color: var(--s1p-desc-t); }
-        /* [MODIFIED] 恢复默认的靠右对齐 */
         .s1p-confirm-footer { padding: 12px 24px 20px; display: flex; justify-content: flex-end; gap: 12px; }
-        /* [NEW] 为需要居中的弹窗（如手动同步）提供单独的居中样式 */
         .s1p-confirm-footer.s1p-centered { justify-content: center; }
         .s1p-confirm-btn { padding: 9px 14px; border-radius: 6px; font-size: 14px; font-weight: 500; cursor: pointer; border: 1px solid transparent; transition: all 0.15s ease-in-out; box-shadow: 0 1px 2px 0 rgba(var(--s1p-black-rgb), 0.05); white-space: nowrap; }
         .s1p-confirm-btn:active { transform: translateY(1px); }
         .s1p-confirm-btn.s1p-cancel { background-color: var(--s1p-sub); border-color: var(--s1p-pri); }
-        .s1p-confirm-btn.s1p-cancel:hover { border-color: var(--s1p-t); }
+        /* [MODIFIED] 修改取消按钮的悬停颜色为红色系 */
+        .s1p-confirm-btn.s1p-cancel:hover { border-color: var(--s1p-red); background-color: var(--s1p-error-bg); }
         .s1p-confirm-btn.s1p-confirm { background-color: var(--s1p-red); color: var(--s1p-white); border-color: var(--s1p-red); }
         .s1p-confirm-btn.s1p-confirm:hover { background-color: var(--s1p-red-h); border-color: var(--s1p-red-h); }
 
@@ -799,6 +802,15 @@
         /* --- [NEW] 用户标记设置面板专属样式 --- */
         .s1p-item-meta-id { font-family: monospace; background-color: var(--s1p-bg); padding: 1px 5px; border-radius: 4px; font-size: 11px; color: var(--s1p-t); }
         .s1p-item-content { margin-top: 8px; color: var(--s1p-desc-t); line-height: 1.6; white-space: pre-wrap; word-break: break-all; }
+        /* [NEW] 为收藏夹的内容增加独立样式 */
+        #s1p-tab-bookmarks .s1p-item-content {
+            background-color: var(--s1p-sub);
+            border: 1px solid var(--s1p-pri);
+            border-radius: 6px;
+            padding: 10px 12px;
+            margin-top: 0;
+            margin-bottom: 8px;
+        }
         .s1p-item-editor textarea { width: 100%; min-height: 60px; margin-top: 8px; }
         .s1p-item-actions { display: flex; align-self: flex-start; flex-shrink: 0; gap: 8px; margin-left: 16px; }
         .s1p-item-actions .s1p-btn.s1p-primary { background-color: #3b82f6; color: var(--s1p-white); }
@@ -956,6 +968,13 @@
         GM_setValue('s1p_user_tags', tags);
         updateLastModifiedTimestamp();
     };
+    // [NEW] Bookmarked Replies data functions
+    const getBookmarkedReplies = () => GM_getValue('s1p_bookmarked_replies', {});
+    const saveBookmarkedReplies = (replies) => {
+        GM_setValue('s1p_bookmarked_replies', replies);
+        updateLastModifiedTimestamp();
+    };
+
 
     // [MODIFIED] 升级并获取用户标记，自动迁移旧数据
     const getUserTags = () => {
@@ -1387,7 +1406,8 @@
             users: getBlockedUsers(),
             user_tags: getUserTags(),
             title_filter_rules: getTitleFilterRules(),
-            read_progress: getReadProgress()
+            read_progress: getReadProgress(),
+            bookmarked_replies: getBookmarkedReplies() // [NEW] Add bookmarked replies to export
         }
     };
 
@@ -1396,7 +1416,7 @@
     const importLocalData = (jsonStr) => {
         try {
             const imported = JSON.parse(jsonStr); if (typeof imported !== 'object' || imported === null) throw new Error("无效数据格式");
-            let threadsImported = 0, usersImported = 0, progressImported = 0, rulesImported = 0, tagsImported = 0;
+            let threadsImported = 0, usersImported = 0, progressImported = 0, rulesImported = 0, tagsImported = 0, bookmarksImported = 0;
 
             const upgradeAndMerge = (type, importedData, getter, saver) => {
                 if (!importedData || typeof importedData !== 'object') return 0;
@@ -1437,6 +1457,14 @@
                 saveReadProgress(mergedProgress);
                 progressImported = Object.keys(imported.read_progress).length;
             }
+            
+            // [NEW] Import bookmarked replies
+            if (imported.bookmarked_replies) {
+                const mergedBookmarks = { ...getBookmarkedReplies(), ...imported.bookmarked_replies };
+                saveBookmarkedReplies(mergedBookmarks);
+                bookmarksImported = Object.keys(imported.bookmarked_replies).length;
+            }
+
 
             // [FIXED] 导入成功后，将本地时间戳与导入的时间戳同步
             GM_setValue('s1p_last_modified', imported.lastUpdated || 0);
@@ -1450,7 +1478,7 @@
             // 导入数据是一次大数据变更，直接触发一次推送
             triggerRemoteSyncPush();
 
-            return { success: true, message: `成功导入 ${threadsImported} 条帖子、${usersImported} 条用户、${tagsImported} 条标记、${rulesImported} 条标题规则、${progressImported} 条阅读进度及相关设置。` };
+            return { success: true, message: `成功导入 ${threadsImported} 条帖子、${usersImported} 条用户、${tagsImported} 条标记、${bookmarksImported} 条收藏、${rulesImported} 条标题规则、${progressImported} 条阅读进度及相关设置。` };
         } catch (e) { return { success: false, message: `导入失败: ${e.message}` }; }
     };
 
@@ -1586,6 +1614,7 @@
         enableUserBlocking: true,
         enableUserTagging: true,
         enableReadProgress: true,
+        enableBookmarkReplies: true, // [NEW] Add setting for bookmark feature
         readingProgressCleanupDays: 0,     // [MODIFIED] Default to 0 (Never)
         openProgressInNewTab: true,
         openProgressInBackground: false,
@@ -1824,10 +1853,47 @@
     const removeBlockButtonsFromThreads = () => document.querySelectorAll('.s1p-options-cell').forEach(el => el.remove());
 
     const createManagementModal = () => {
+        /**
+         * [FIXED] 采用离屏预计算方式，彻底解决面板展开动画问题
+         */
+        const calculateModalWidth = () => {
+            const measureContainer = document.createElement('div');
+            measureContainer.style.cssText = 'position: absolute; left: -9999px; top: -9999px; visibility: hidden; pointer-events: none;';
+
+            const tabsDiv = document.createElement('div');
+            tabsDiv.className = 's1p-tabs';
+            tabsDiv.style.display = 'inline-flex';
+            tabsDiv.innerHTML = `
+                <button class="s1p-tab-btn">通用设置</button>
+                <button class="s1p-tab-btn">帖子屏蔽</button>
+                <button class="s1p-tab-btn">用户屏蔽</button>
+                <button class="s1p-tab-btn">用户标记</button>
+                <button class="s1p-tab-btn">回复收藏</button>
+                <button class="s1p-tab-btn">导航栏定制</button>
+                <button class="s1p-tab-btn">设置同步</button>
+            `;
+
+            measureContainer.appendChild(tabsDiv);
+            document.body.appendChild(measureContainer);
+            
+            let totalTabsWidth = 0;
+            tabsDiv.querySelectorAll('.s1p-tab-btn').forEach(btn => {
+                const style = window.getComputedStyle(btn);
+                totalTabsWidth += btn.offsetWidth + parseFloat(style.marginLeft) + parseFloat(style.marginRight);
+            });
+
+            document.body.removeChild(measureContainer);
+
+            return totalTabsWidth + 32; // 32px for padding
+        };
+
+        const requiredWidth = calculateModalWidth();
         document.querySelector('.s1p-modal')?.remove();
+        
         const modal = document.createElement('div');
         modal.className = 's1p-modal';
-        // --- [OPTIMIZED] 移除所有静态的 message div ---
+        modal.style.opacity = '0';
+        
         modal.innerHTML = `<div class="s1p-modal-content">
             <div class="s1p-modal-header"><div class="s1p-modal-title">S1 Plus 设置</div><div class="s1p-modal-close"></div></div>
             <div class="s1p-modal-body">
@@ -1836,6 +1902,7 @@
                     <button class="s1p-tab-btn" data-tab="threads">帖子屏蔽</button>
                     <button class="s1p-tab-btn" data-tab="users">用户屏蔽</button>
                     <button class="s1p-tab-btn" data-tab="tags">用户标记</button>
+                    <button class="s1p-tab-btn" data-tab="bookmarks">回复收藏</button>
                     <button class="s1p-tab-btn" data-tab="nav-settings">导航栏定制</button>
                     <button class="s1p-tab-btn" data-tab="sync">设置同步</button>
                 </div>
@@ -1843,6 +1910,7 @@
                 <div id="s1p-tab-threads" class="s1p-tab-content"></div>
                 <div id="s1p-tab-users" class="s1p-tab-content"></div>
                 <div id="s1p-tab-tags" class="s1p-tab-content"></div>
+                <div id="s1p-tab-bookmarks" class="s1p-tab-content"></div>
                 <div id="s1p-tab-nav-settings" class="s1p-tab-content"></div>
                 <div id="s1p-tab-sync" class="s1p-tab-content">
                     <div class="s1p-settings-group">
@@ -1906,6 +1974,12 @@
             </div>
             <div class="s1p-modal-footer">版本: ${SCRIPT_VERSION} (${SCRIPT_RELEASE_DATE})</div>
         </div>`;
+
+        const modalContent = modal.querySelector('.s1p-modal-content');
+        if (requiredWidth > 600) { // 600 is the default width from CSS
+            modalContent.style.width = `${requiredWidth}px`;
+        }
+
         document.body.appendChild(modal);
         updateLastSyncTimeDisplay();
 
@@ -1914,6 +1988,7 @@
             'threads': modal.querySelector('#s1p-tab-threads'),
             'users': modal.querySelector('#s1p-tab-users'),
             'tags': modal.querySelector('#s1p-tab-tags'),
+            'bookmarks': modal.querySelector('#s1p-tab-bookmarks'), // [NEW]
             'nav-settings': modal.querySelector('#s1p-tab-nav-settings'),
             'sync': modal.querySelector('#s1p-tab-sync'),
         };
@@ -1924,6 +1999,7 @@
             userTags: { label: '全部用户标记', clear: () => saveUserTags({}) },
             titleFilterRules: { label: '标题关键字屏蔽规则', clear: () => { saveTitleFilterRules([]); GM_setValue('s1p_title_keywords', null); } },
             readProgress: { label: '所有帖子阅读进度', clear: () => saveReadProgress({}) },
+            bookmarkedReplies: { label: '收藏的回复', clear: () => saveBookmarkedReplies({}) }, // [NEW]
             settings: { label: '界面、导航栏及其他设置', clear: () => saveSettings(defaultSettings) }
         };
 
@@ -2066,6 +2142,97 @@
                     textarea.focus();
                     textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
                 }
+            }
+        };
+
+        // [NEW] Render Bookmarks Tab function
+        const renderBookmarksTab = () => {
+            const settings = getSettings();
+            const isEnabled = settings.enableBookmarkReplies;
+
+            // Feature toggle HTML
+            const toggleHTML = `
+                <div class="s1p-settings-item" style="padding: 0; padding-bottom: 16px; margin-bottom: 10px; border-bottom: 1px solid var(--s1p-pri);">
+                    <label class="s1p-settings-label" for="s1p-enableBookmarkReplies">启用回复收藏功能</label>
+                    <label class="s1p-switch"><input type="checkbox" id="s1p-enableBookmarkReplies" data-feature="enableBookmarkReplies" class="s1p-feature-toggle" ${isEnabled ? 'checked' : ''}><span class="s1p-slider"></span></label>
+                </div>
+            `;
+
+            const bookmarkedReplies = getBookmarkedReplies();
+            const bookmarkItems = Object.values(bookmarkedReplies).sort((a, b) => b.timestamp - a.timestamp);
+
+            // Main content HTML
+            const contentHTML = `
+                 <div class="s1p-settings-group" style="margin-bottom: 16px;">
+                    <input type="text" id="s1p-bookmark-search-input" class="s1p-title-suffix-input" placeholder="搜索收藏内容、作者或帖子标题..." style="width: 100%;">
+                </div>
+                ${bookmarkItems.length === 0
+                ? `<div class="s1p-empty">暂无收藏的回复</div>`
+                : `<div class="s1p-list" id="s1p-bookmarks-list">${bookmarkItems.map(item => `
+                    <div class="s1p-item" data-post-id="${item.postId}" style="position: relative; align-items: flex-start;">
+                         <button class="s1p-btn s1p-danger" data-action="remove-bookmark" data-post-id="${item.postId}" style="position: absolute; top: 12px; right: 12px; padding: 4px 8px; font-size: 12px;">取消收藏</button>
+                        <a href="forum.php?mod=redirect&goto=findpost&ptid=${item.threadId}&pid=${item.postId}" target="_blank" style="text-decoration: none; color: inherit; display: block; width: 100%;">
+                            <div class="s1p-item-info" style="padding-right: 100px;">
+                                <div class="s1p-item-content">${item.postContent}</div>
+                                <div class="s1p-item-meta" style="margin-top: 0; line-height: 1.6;">
+                                    <strong>${item.authorName}</strong> · 收藏于: ${formatDate(item.timestamp)}
+                                    <br>
+                                    来自帖子: <span style="font-weight: 500;">${item.threadTitle}</span>
+                                </div>
+                            </div>
+                        </a>
+                    </div>`).join('')}</div>`
+            }
+             <div id="s1p-bookmarks-no-results" class="s1p-empty" style="display: none;">没有找到匹配的收藏</div>
+            `;
+
+            tabs['bookmarks'].innerHTML = `
+                ${toggleHTML}
+                <div class="s1p-feature-content ${isEnabled ? 'expanded' : ''}">
+                    <div>${contentHTML}</div>
+                </div>
+            `;
+
+            // Add event listener for the remove buttons
+            tabs['bookmarks'].addEventListener('click', e => {
+                const target = e.target;
+                if (target.dataset.action === 'remove-bookmark') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const postIdToRemove = target.dataset.postId;
+                    if (postIdToRemove) {
+                        const bookmarks = getBookmarkedReplies();
+                        delete bookmarks[postIdToRemove];
+                        saveBookmarkedReplies(bookmarks);
+                        renderBookmarksTab(); // Re-render the tab content
+                        refreshAllAuthiActions(); // Refresh buttons on the page if applicable
+                    }
+                }
+            });
+            
+            // [NEW] Add event listener for search input
+            const searchInput = tabs['bookmarks'].querySelector('#s1p-bookmark-search-input');
+            if (searchInput) {
+                searchInput.addEventListener('input', () => {
+                    const query = searchInput.value.toLowerCase().trim();
+                    const list = tabs['bookmarks'].querySelector('#s1p-bookmarks-list');
+                    const noResultsMessage = tabs['bookmarks'].querySelector('#s1p-bookmarks-no-results');
+                    if (!list) return;
+
+                    const items = list.querySelectorAll('.s1p-item');
+                    let visibleCount = 0;
+                    items.forEach(item => {
+                        const content = item.querySelector('.s1p-item-info').textContent.toLowerCase();
+                        if (content.includes(query)) {
+                            item.style.display = 'flex';
+                            visibleCount++;
+                        } else {
+                            item.style.display = 'none';
+                        }
+                    });
+                    
+                    noResultsMessage.style.display = visibleCount === 0 && bookmarkItems.length > 0 ? 'block' : 'none';
+                });
             }
         };
 
@@ -2536,7 +2703,15 @@
         renderThreadTab();
         renderUserTab();
         renderTagsTab();
+        renderBookmarksTab(); // [NEW]
         renderNavSettingsTab();
+        
+        // --- 触发淡入动画 ---
+        modal.style.transition = 'opacity 0.2s ease-out';
+        requestAnimationFrame(() => {
+            modal.style.opacity = '1';
+        });
+
 
         modal.addEventListener('change', e => {
             const target = e.target;
@@ -2567,11 +2742,13 @@
                         refreshAllAuthiActions();
                         break;
                     case 'enableReadProgress':
-                        // [MODIFIED] Link visibility of cleanup settings to this toggle
                         const cleanupItem = document.getElementById('s1p-readingProgressCleanupContainer');
                         if (cleanupItem) cleanupItem.style.display = isChecked ? 'flex' : 'none';
 
                         isChecked ? addProgressJumpButtons() : removeProgressJumpButtons();
+                        break;
+                    case 'enableBookmarkReplies': // [NEW] Handle bookmark feature toggle
+                        refreshAllAuthiActions();
                         break;
                 }
                 return;
@@ -2613,7 +2790,6 @@
                 const dataToExport = exportLocalData();
                 syncTextarea.value = dataToExport;
                 syncTextarea.select();
-                // --- [OPTIMIZED] 使用新的 Clipboard API ---
                 navigator.clipboard.writeText(dataToExport).then(() => {
                     showMessage('数据已导出并复制到剪贴板', true);
                 }).catch(() => {
@@ -2630,6 +2806,7 @@
                     renderUserTab();
                     renderGeneralSettingsTab();
                     renderTagsTab();
+                    renderBookmarksTab();
                 }
             }
             if (e.target.id === 's1p-clear-select-all') {
@@ -2655,7 +2832,6 @@
                             }
                         });
 
-                        // [FIXED] 清除设置后，立即更新UI
                         if (selectedKeys.includes('settings')) {
                             modal.querySelector('#s1p-remote-enabled-toggle').checked = false;
                             modal.querySelector('#s1p-remote-gist-id-input').value = '';
@@ -2677,31 +2853,28 @@
                         renderUserTab();
                         renderGeneralSettingsTab();
                         renderTagsTab();
+                        renderBookmarksTab();
                         showMessage('选中的本地数据已成功清除。', true);
                     },
                     '确认清除'
                 );
             }
 
-            // --- [FIXED] 远程同步设置保存事件（不再错误地更新时间戳） ---
             if (e.target.id === 's1p-remote-save-btn') {
                 const currentSettings = getSettings();
                 currentSettings.syncRemoteEnabled = modal.querySelector('#s1p-remote-enabled-toggle').checked;
                 currentSettings.syncRemoteGistId = modal.querySelector('#s1p-remote-gist-id-input').value.trim();
                 currentSettings.syncRemotePat = modal.querySelector('#s1p-remote-pat-input').value.trim();
 
-                // 直接保存设置，但不调用会触发时间戳更新的 saveSettings() 函数
                 GM_setValue('s1p_settings', currentSettings);
 
                 showMessage('远程同步设置已保存。', true);
             }
 
-            // --- [NEW] 手动同步逻辑，带用户选择 ---
             if (e.target.id === 's1p-remote-manual-sync-btn') {
                 handleManualSync(e.target);
             }
             
-            // --- [NEW] 打开 Gist 页面 ---
             if (e.target.id === 's1p-open-gist-page-btn') {
                 const gistId = modal.querySelector('#s1p-remote-gist-id-input').value.trim();
                 if (gistId) {
@@ -2712,7 +2885,7 @@
             }
 
 
-            // --- [NEW] 用户标记标签页专属事件 ---
+            // --- 用户标记标签页专属事件 ---
             const targetTab = target.closest('#s1p-tab-tags');
             if (targetTab) {
                 const action = target.dataset.action;
@@ -2757,7 +2930,6 @@
                     const dataToExport = JSON.stringify(getUserTags(), null, 2);
                     textarea.value = dataToExport;
                     textarea.select();
-                    // --- [OPTIMIZED] 使用新的 Clipboard API ---
                     navigator.clipboard.writeText(dataToExport).then(() => {
                         showMessage('用户标记已导出并复制到剪贴板。', true);
                     }).catch(() => {
@@ -2805,7 +2977,6 @@
             const remoteTimestamp = remoteData.lastUpdated || 0;
             const localTimestamp = GM_getValue('s1p_last_modified', 0);
 
-            // [MODIFIED] 仅在数据不一致时弹出选择框
             if (remoteTimestamp === localTimestamp) {
                 showMessage('数据已是最新，无需同步。', true);
                 GM_setValue('s1p_last_sync_timestamp', Date.now());
@@ -2954,21 +3125,15 @@
             const cancelBtn = optionsMenu.querySelector('.s1p-cancel');
             const confirmBtn = optionsMenu.querySelector('.s1p-confirm');
 
-            // 为取消按钮添加事件监听，以解决CSS :hover状态残留的问题
             cancelBtn.addEventListener('click', e => {
                 e.preventDefault();
                 e.stopPropagation();
 
                 const parentCell = e.currentTarget.closest('.s1p-options-cell');
                 if (parentCell) {
-                    // 步骤1：立即用JS强制隐藏，确保视觉上消失
                     optionsMenu.style.visibility = 'hidden';
                     optionsMenu.style.opacity = '0';
-
-                    // 步骤2：立即禁用鼠标事件，强制:hover状态重置
                     parentCell.style.pointerEvents = 'none';
-
-                    // 步骤3：在动画结束后，清除所有临时添加的样式，让组件恢复原状
                     setTimeout(() => {
                         optionsMenu.style.removeProperty('visibility');
                         optionsMenu.style.removeProperty('opacity');
@@ -2977,7 +3142,6 @@
                 }
             });
 
-            // 为确认按钮添加事件监听
             confirmBtn.addEventListener('click', e => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -2993,20 +3157,16 @@
             tr.prepend(optionsCell);
 
             // --- [S1P-FIX] 修复因添加新列导致的表头和分隔行错位问题 ---
-            // 修正表头，将第一格的列合并数（colspan）从2增加到3
             const headerTh = document.querySelector('#threadlist > .th th:first-child');
             if (headerTh) {
                 headerTh.colSpan = 3;
             }
 
-            // 修正“版块主题”分隔行，为其在最前面添加一个空的单元格
             const separatorRow = document.querySelector('#separatorline > tr.ts');
             if (separatorRow && separatorRow.childElementCount < 6) {
                 const emptyTd = document.createElement('td');
                 separatorRow.prepend(emptyTd);
             }
-            // --- 修复结束 ---
-
         });
     };
 
@@ -3042,7 +3202,6 @@
             let top = rect.bottom + window.scrollY + 5;
             let left = rect.left + window.scrollX;
 
-            // Adjust if it goes off-screen
             if ((left + popoverRect.width) > (window.innerWidth - 10)) {
                 left = window.innerWidth - popoverRect.width - 10;
             }
@@ -3077,7 +3236,6 @@
                 popover.dataset.userName = userName;
                 popover.dataset.userAvatar = userAvatar;
 
-                // Per user request, always go to edit mode.
                 const userTags = getUserTags();
                 renderEditMode(userName, userId, userTags[userId]?.tag || '');
 
@@ -3108,7 +3266,6 @@
                     popover.classList.remove('visible');
                     break;
                 case 'cancel-edit':
-                    // Per user request, cancel closes the popover entirely.
                     popover.classList.remove('visible');
                     break;
             }
@@ -3139,16 +3296,13 @@
                 popover.textContent = text;
                 const rect = anchor.getBoundingClientRect();
 
-                // 优先在上方显示
                 let top = rect.top + window.scrollY - popover.offsetHeight - 6;
                 let left = rect.left + window.scrollX + (rect.width / 2) - (popover.offsetWidth / 2);
 
-                // 如果上方空间不足，则在下方显示
                 if (top < window.scrollY) {
                     top = rect.bottom + window.scrollY + 6;
                 }
 
-                // 边界检测，防止穿出屏幕
                 if (left < 10) left = 10;
                 if (left + popover.offsetWidth > window.innerWidth) {
                     left = window.innerWidth - popover.offsetWidth - 10;
@@ -3167,10 +3321,8 @@
             }, 100);
         };
 
-        // 使用事件委托来处理所有标记的悬停事件
         document.body.addEventListener('mouseover', e => {
             const tagDisplay = e.target.closest('.s1p-user-tag-display');
-            // 仅当文本溢出且存在 data-full-tag 属性时才显示悬浮窗
             if (tagDisplay && tagDisplay.dataset.fullTag && tagDisplay.scrollWidth > tagDisplay.clientWidth) {
                 show(tagDisplay, tagDisplay.dataset.fullTag);
             }
@@ -3278,20 +3430,16 @@
         const settings = getSettings();
         if (!settings.enableReadProgress || !document.getElementById('postlist')) return;
 
-        // --- [MODIFIED] Universal Thread ID & Page Number Extraction ---
         let threadId = null;
 
-        // Method 1: Try extracting from URL (thread-xxx-x-x.html format)
         const threadIdMatch = window.location.href.match(/thread-(\d+)-/);
         if (threadIdMatch) {
             threadId = threadIdMatch[1];
         } else {
-            // Method 2: Try extracting from URL query parameters (forum.php?mod=viewthread...)
             const params = new URLSearchParams(window.location.search);
             threadId = params.get('tid') || params.get('ptid');
         }
 
-        // Method 3: Fallback to finding the thread ID from a hidden input in the page
         if (!threadId) {
             const tidInput = document.querySelector('input[name="tid"]#tid');
             if (tidInput) {
@@ -3299,9 +3447,8 @@
             }
         }
 
-        if (!threadId) return; // If no thread ID can be found, exit.
+        if (!threadId) return;
 
-        // --- Page Number Extraction ---
         let currentPage = '1';
         const threadPageMatch = window.location.href.match(/thread-\d+-(\d+)-/);
         const params = new URLSearchParams(window.location.search);
@@ -3311,7 +3458,6 @@
         } else if (params.has('page')) {
             currentPage = params.get('page');
         } else {
-            // Fallback for page number from pagination control if no param exists
             const currentPageElement = document.querySelector('div.pg strong');
             if (currentPageElement && !isNaN(currentPageElement.textContent.trim())) {
                 currentPage = currentPageElement.textContent.trim();
@@ -3346,7 +3492,7 @@
 
         const debouncedSave = () => {
             clearTimeout(saveTimeout);
-            saveTimeout = setTimeout(saveCurrentProgress, 1500); // 停止滚动1.5秒后保存
+            saveTimeout = setTimeout(saveCurrentProgress, 1500);
         };
 
         const observer = new IntersectionObserver(entries => {
@@ -3371,14 +3517,12 @@
             saveCurrentProgress();
         };
 
-        // 监听 visibilitychange 用于切换标签页或最小化
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'hidden') {
                 finalSave();
             }
         });
 
-        // 监听 beforeunload 用于关闭页面或刷新
         window.addEventListener('beforeunload', finalSave);
     };
 
@@ -3388,7 +3532,6 @@
     };
 
     const createOptionsMenu = (anchorElement) => {
-        // Remove any existing menu
         document.querySelector('.s1p-tag-options-menu')?.remove();
 
         const { userId, userName, userAvatar } = anchorElement.dataset;
@@ -3409,7 +3552,7 @@
         const closeMenu = () => menu.remove();
 
         menu.addEventListener('click', (e) => {
-            e.stopPropagation(); // Prevent the outside-click listener from firing immediately
+            e.stopPropagation();
             const action = e.target.dataset.action;
 
             if (action === 'edit') {
@@ -3419,7 +3562,6 @@
                 }
                 closeMenu();
             } else if (action === 'delete') {
-                // [MODIFIED] Replace menu content with confirmation UI
                 menu.innerHTML = `
                     <div class="s1p-direct-confirm">
                         <span>确认删除？</span>
@@ -3428,7 +3570,6 @@
                         <button class="s1p-confirm-action-btn s1p-confirm" title="确认"></button>
                     </div>
                 `;
-                // Re-add event listeners for the new buttons
                 menu.querySelector('.s1p-confirm').addEventListener('click', (e) => {
                     e.stopPropagation();
                     const tags = getUserTags();
@@ -3444,7 +3585,6 @@
             }
         });
 
-        // Close menu when clicking outside
         setTimeout(() => {
             document.addEventListener('click', closeMenu, { once: true });
         }, 0);
@@ -3452,13 +3592,12 @@
 
     const addActionsToPostFooter = () => {
         const settings = getSettings();
-        if (!settings.enableUserBlocking && !settings.enableUserTagging) return;
+        if (!settings.enableUserBlocking && !settings.enableUserTagging && !settings.enableBookmarkReplies) return;
 
         document.querySelectorAll('div.authi a[href*="authorid="]').forEach(viewAuthorLink => {
             const authiDiv = viewAuthorLink.closest('.authi');
             if (!authiDiv) return;
 
-            // --- Self-Healing: Clean up old/broken elements before proceeding ---
             authiDiv.querySelector('.s1p-authi-actions-wrapper')?.remove();
             const oldBlockLink = authiDiv.querySelector('a.s1p-block-user-in-authi:not(.s1p-authi-action)');
             if (oldBlockLink) {
@@ -3470,6 +3609,13 @@
             const urlParams = new URLSearchParams(viewAuthorLink.href.split('?')[1]);
             const userId = urlParams.get('authorid');
             if (!userId) return;
+            
+            const postTable = authiDiv.closest('table[id^="pid"]');
+            if (!postTable) return;
+            const postId = postTable.id.replace('pid', '');
+
+            const floorElement = postTable.querySelector(`#postnum${postId} em`);
+            const floor = floorElement ? parseInt(floorElement.textContent, 10) : 0;
 
             const postContainer = authiDiv.closest('td.plc');
             const plsCell = postContainer ? postContainer.previousElementSibling : null;
@@ -3482,8 +3628,6 @@
             const wrapper = document.createElement('span');
             wrapper.className = 's1p-authi-actions-wrapper';
 
-            // --- [S1P-FIX] Add listeners to prevent script buttons from triggering native hover effects ---
-            // Only apply this fix if S1 NUX is not detected.
             if (!isS1NuxEnabled) {
                 wrapper.addEventListener('mouseenter', () => {
                     const triangleSpan = authiDiv.querySelector('.none');
@@ -3499,7 +3643,6 @@
                 });
             }
 
-            // --- Robust Width Calculation ---
             const authiRect = authiDiv.getBoundingClientRect();
             const lastElementRect = viewAuthorLink.getBoundingClientRect();
             let availableWidth = authiRect.right - lastElementRect.right - 15;
@@ -3514,7 +3657,6 @@
                 blockLink.href = 'javascript:void(0);';
                 blockLink.textContent = '屏蔽该用户';
                 blockLink.className = 's1p-authi-action s1p-block-user-in-authi';
-                // [MODIFIED] Use inline confirm menu instead of modal
                 blockLink.addEventListener('click', (e) => {
                     e.preventDefault();
                     e.stopPropagation();
@@ -3524,7 +3666,7 @@
                     createInlineConfirmMenu(e.currentTarget, confirmText, () => blockUser(userId, userName));
                 });
                 wrapper.appendChild(blockLink);
-                availableWidth -= 85; // Estimated width for block link + pipe
+                availableWidth -= 85;
             }
 
             if (settings.enableUserTagging) {
@@ -3534,7 +3676,7 @@
                 pipe.className = 'pipe';
                 pipe.textContent = '|';
                 wrapper.appendChild(pipe);
-                availableWidth -= 10; // Estimated width for pipe
+                availableWidth -= 10;
 
                 if (userTag && userTag.tag) {
                     const tagContainer = document.createElement('span');
@@ -3583,11 +3725,77 @@
                 }
             }
 
-            // --- [S1P-FIX] Take control of native hover buttons to fix layout shifts and CSS conflicts ---
+            // [NEW] Add Bookmark Reply button
+            if (floor > 1 && settings.enableBookmarkReplies) {
+                const bookmarkedReplies = getBookmarkedReplies();
+                const isBookmarked = !!bookmarkedReplies[postId];
+
+                const pipe = document.createElement('span');
+                pipe.className = 'pipe';
+                pipe.textContent = '|';
+                wrapper.appendChild(pipe);
+
+                const bookmarkLink = document.createElement('a');
+                bookmarkLink.href = 'javascript:void(0);';
+                bookmarkLink.className = 's1p-authi-action s1p-bookmark-reply';
+                bookmarkLink.textContent = isBookmarked ? '该回复已收藏' : '收藏该回复';
+
+                bookmarkLink.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    const currentBookmarks = getBookmarkedReplies();
+                    const wasBookmarked = !!currentBookmarks[postId];
+
+                    if (wasBookmarked) {
+                        delete currentBookmarks[postId];
+                        saveBookmarkedReplies(currentBookmarks);
+                        bookmarkLink.textContent = '收藏该回复';
+                        showMessage('已取消收藏该回复。', true);
+                    } else {
+                        const threadTitleEl = document.querySelector('#thread_subject');
+                        const threadTitle = threadTitleEl ? threadTitleEl.textContent.trim() : '未知标题';
+
+                        const threadIdMatch = window.location.href.match(/thread-(\d+)-/);
+                        const params = new URLSearchParams(window.location.search);
+                        const threadId = threadIdMatch ? threadIdMatch[1] : (params.get('tid') || params.get('ptid'));
+
+                        const contentEl = postTable.querySelector('td.t_f');
+                        
+                        let postContent = '无法获取内容';
+                        if(contentEl) {
+                            const contentClone = contentEl.cloneNode(true);
+                            contentClone.querySelectorAll('div.quote').forEach(q => q.remove());
+                            postContent = contentClone.innerText.trim().substring(0, 150);
+                            if (contentClone.innerText.trim().length > 150) {
+                                postContent += '...';
+                            }
+                        }
+
+                        if (!threadId) {
+                            showMessage('无法获取帖子ID，收藏失败。', false);
+                            return;
+                        }
+
+                        currentBookmarks[postId] = {
+                            postId,
+                            threadId,
+                            threadTitle,
+                            floor,
+                            authorId: userId,
+                            authorName: userName,
+                            postContent,
+                            timestamp: Date.now()
+                        };
+                        saveBookmarkedReplies(currentBookmarks);
+                        bookmarkLink.textContent = '该回复已收藏';
+                        showMessage('已收藏该回复。', true);
+                    }
+                });
+                wrapper.appendChild(bookmarkLink);
+            }
+
             const ordertypeLink = authiDiv.querySelector('a[href*="ordertype=1"]');
             const readmodeLink = authiDiv.querySelector('a[onclick*="readmode"]');
 
-            // --- [MODIFIED] Find the "只看大图" link by its text content ---
             let viewImagesLink = null;
             for (const link of authiDiv.querySelectorAll('a')) {
                 if (link.textContent.trim() === '只看大图') {
@@ -3601,28 +3809,24 @@
 
             if (ordertypeLink && readmodeLink) {
                 const nativeElements = [
-                    ordertypeLink.previousElementSibling, // pipe
+                    ordertypeLink.previousElementSibling,
                     ordertypeLink,
-                    readmodeLink.previousElementSibling, // pipe
+                    readmodeLink.previousElementSibling,
                     readmodeLink
-                ].filter(Boolean); // Filter out nulls if elements don't exist
+                ].filter(Boolean);
 
-                // 1. Override any stylesheet by hiding elements by default
                 nativeElements.forEach(el => el.style.display = 'none');
 
-                // 2. Add precise event listeners to show the buttons
                 const showNativeButtons = () => {
                     nativeElements.forEach(el => el.style.display = 'inline');
                 };
 
                 viewAuthorLink.addEventListener('mouseenter', showNativeButtons);
 
-                // --- [MODIFIED] Add listener to "只看大图" link if found
                 if (viewImagesLink) {
                     viewImagesLink.addEventListener('mouseenter', showNativeButtons);
                 }
 
-                // 3. Hide buttons when the mouse leaves the entire author info area
                 authiDiv.addEventListener('mouseleave', () => {
                     nativeElements.forEach(el => el.style.display = 'none');
                 });
@@ -3632,41 +3836,29 @@
 
     // 自动签到 (适配 study_daily_attendance 插件)
     function autoSign() {
-        console.log('S1 Plus: Running autoSign...');
         const checkinLink = document.querySelector('a[href*="study_daily_attendance-daily_attendance.html"]');
         if (!checkinLink) {
-            console.log('S1 Plus: Check-in link not found. Exiting autoSign.');
             return;
         }
-        console.log('S1 Plus: Check-in link found:', checkinLink.href);
 
         var now = new Date();
         var date = now.getFullYear() + "-" + (now.getMonth() + 1) + "-" + now.getDate();
         var signedDate = GM_getValue("signedDate");
-        console.log(`S1 Plus: Today is ${date}. Last signed date is ${signedDate}.`);
 
-        // 如果今天已经签到，直接隐藏链接并返回
         if (signedDate == date) {
-            console.log('S1 Plus: Already signed in today. Hiding link.');
             checkinLink.style.display = 'none';
             return;
         }
 
-        // 早上6点后才执行签到操作
         if (now.getHours() < 6) {
-            console.log('S1 Plus: It is before 6 AM. Skipping sign-in action for now.');
             return;
         }
 
-        console.log('S1 Plus: Proceeding with check-in request...');
-        // 使用 GM_xmlhttpRequest 访问签到链接
         GM_xmlhttpRequest({
             method: "GET",
             url: checkinLink.href,
             onload: function (response) {
-                // 标记为已签到，防止重复请求
                 GM_setValue("signedDate", date);
-                // 成功后隐藏链接
                 checkinLink.style.display = 'none';
                 console.log('S1 Plus: Auto check-in request sent. Status:', response.status);
             },
@@ -3680,7 +3872,7 @@
     const cleanupOldReadProgress = () => {
         const settings = getSettings();
         if (!settings.readingProgressCleanupDays || settings.readingProgressCleanupDays <= 0) {
-            return; // Exit if cleanup is set to "Never" (0)
+            return;
         }
 
         const progress = getReadProgress();
@@ -3696,9 +3888,9 @@
             if (Object.prototype.hasOwnProperty.call(progress, threadId)) {
                 const record = progress[threadId];
                 if (record.timestamp && (now - record.timestamp < maxAge)) {
-                    cleanedProgress[threadId] = record; // Keep this record
+                    cleanedProgress[threadId] = record;
                 } else {
-                    cleanedCount++; // This record is old, discard it
+                    cleanedCount++;
                 }
             }
         }
@@ -3712,19 +3904,16 @@
 
     // --- 主流程 ---
     function main() {
-        performAutoSync(); // 实现启动时自动同步
+        performAutoSync();
         cleanupOldReadProgress();
 
-        detectS1Nux(); // 检测 S1 NUX 是否启用
+        detectS1Nux();
         initializeNavbar();
         initializeTagDisplayPopover();
 
         const observerCallback = (mutations, observer) => {
-            // 在处理DOM变化前先断开观察，防止无限循环
             observer.disconnect();
-            // 执行所有DOM修改
             applyChanges();
-            // 完成后再重新连接观察器
             const ctElement = document.getElementById('ct');
             if (ctElement) {
                 observer.observe(ctElement, { childList: true, subtree: true });
@@ -3732,11 +3921,8 @@
         };
 
         const observer = new MutationObserver(observerCallback);
-
-        // 首次加载时直接运行一次
         applyChanges();
 
-        // 开始观察 #ct 容器的变化
         const ctElement = document.getElementById('ct');
         if (ctElement) {
             observer.observe(ctElement, { childList: true, subtree: true });
@@ -3756,7 +3942,7 @@
             hideBlockedUserQuotes();
             hideBlockedUserRatings();
         }
-        if (settings.enableUserBlocking || settings.enableUserTagging) {
+        if (settings.enableUserBlocking || settings.enableUserTagging || settings.enableBookmarkReplies) {
             addActionsToPostFooter();
         }
         if (settings.enableUserTagging) {
