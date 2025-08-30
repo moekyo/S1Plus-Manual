@@ -2138,7 +2138,7 @@
                             <button id="s1p-local-export-btn" class="s1p-btn">导出数据</button>
                             <button id="s1p-local-import-btn" class="s1p-btn">导入数据</button>
                         </div>
-                        <textarea id="s1p-local-sync-textarea" class="s1p-input s1p-textarea s1p-sync-textarea" placeholder="在此粘贴导入数据或从此处复制导出数据"></textarea>
+                        <textarea id="s1p-local-sync-textarea" class="s1p-input s1p-textarea s1p-sync-textarea" placeholder="在此粘贴导入数据或从此处复制导出数据" autocomplete="off"></textarea>
                     </div>
 
                     <div class="s1p-settings-group">
@@ -2154,11 +2154,11 @@
                         <p class="s1p-setting-desc">启用后，数据将在停止操作5秒后自动同步。你也可以随时手动同步。</p>
                         <div class="s1p-settings-item" style="flex-direction: column; align-items: flex-start; gap: 4px;">
                             <label class="s1p-settings-label" for="s1p-remote-gist-id-input">Gist ID</label>
-                            <input type="text" id="s1p-remote-gist-id-input" class="s1p-input" placeholder="从 Gist 网址中复制的那一长串 ID" style="width: 100%;">
+                            <input type="text" id="s1p-remote-gist-id-input" class="s1p-input" placeholder="从 Gist 网址中复制的那一长串 ID" style="width: 100%;" autocomplete="off">
                         </div>
                         <div class="s1p-settings-item" style="flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 12px;">
                             <label class="s1p-settings-label" for="s1p-remote-pat-input">GitHub Personal Access Token (PAT)</label>
-                            <input type="password" id="s1p-remote-pat-input" class="s1p-input" placeholder="ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" style="width: 100%;">
+                            <input type="password" id="s1p-remote-pat-input" class="s1p-input" placeholder="ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" style="width: 100%;" autocomplete="new-password">
                         </div>
                         <div class="s1p-notice">
                             <div class="s1p-notice-icon"></div>
@@ -2298,7 +2298,7 @@
                         <button id="s1p-export-tags-btn" class="s1p-btn">导出全部标记</button>
                         <button id="s1p-import-tags-btn" class="s1p-btn">导入标记</button>
                     </div>
-                    <textarea id="s1p-tags-sync-textarea" class="s1p-input s1p-textarea s1p-sync-textarea" placeholder="在此粘贴导入数据或从此处复制导出数据..."></textarea>
+                    <textarea id="s1p-tags-sync-textarea" class="s1p-input s1p-textarea s1p-sync-textarea" placeholder="在此粘贴导入数据或从此处复制导出数据..." autocomplete="off"></textarea>
                 </div>
 
                 <div class="s1p-settings-group">
@@ -2316,7 +2316,7 @@
                                         ID: <span class="s1p-item-meta-id">${id}</span>
                                     </div>
                                     <div class="s1p-item-editor">
-                                        <textarea class="s1p-input s1p-textarea s1p-tag-edit-area">${data.tag}</textarea>
+                                        <textarea class="s1p-input s1p-textarea s1p-tag-edit-area" autocomplete="off">${data.tag}</textarea>
                                     </div>
                                 </div>
                                 <div class="s1p-item-actions">
@@ -2384,7 +2384,7 @@
             const contentHTML = `
                  <div class="s1p-settings-group" style="margin-bottom: 16px;">
                     <div class="s1p-search-input-wrapper">
-                         <input type="text" id="s1p-bookmark-search-input" class="s1p-input" placeholder="搜索内容、作者、标题...">
+                         <input type="text" id="s1p-bookmark-search-input" class="s1p-input" placeholder="搜索内容、作者、标题..." autocomplete="off">
                          <svg class="s1p-search-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" /></svg>
                          <button id="s1p-bookmark-search-clear-btn" class="s1p-search-clear-btn hidden" title="清空搜索" aria-label="清空搜索">
                             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" /></svg>
@@ -2576,7 +2576,7 @@
                 container.innerHTML = rules.map(rule => `
                     <div class="s1p-editor-item" data-rule-id="${rule.id}">
                         <label class="s1p-switch"><input type="checkbox" class="s1p-settings-checkbox s1p-keyword-rule-enable" ${rule.enabled ? 'checked' : ''}><span class="s1p-slider"></span></label>
-                        <input type="text" class="s1p-input s1p-keyword-rule-pattern" placeholder="输入关键字或正则表达式" value="${rule.pattern || ''}">
+                        <input type="text" class="s1p-input s1p-keyword-rule-pattern" placeholder="输入关键字或正则表达式" value="${rule.pattern || ''}" autocomplete="off">
                         <div class="s1p-editor-item-controls">
                             <button class="s1p-editor-btn s1p-keyword-rule-delete" title="删除规则"></button>
                         </div>
@@ -2644,7 +2644,7 @@
                     newItem.dataset.ruleId = `new_${Date.now()}`;
                     newItem.innerHTML = `
                         <label class="s1p-switch"><input type="checkbox" class="s1p-settings-checkbox s1p-keyword-rule-enable" checked><span class="s1p-slider"></span></label>
-                        <input type="text" class="s1p-input s1p-keyword-rule-pattern" placeholder="输入关键字或正则表达式" value="">
+                        <input type="text" class="s1p-input s1p-keyword-rule-pattern" placeholder="输入关键字或正则表达式" value="" autocomplete="off">
                         <div class="s1p-editor-item-controls">
                             <button class="s1p-editor-btn s1p-keyword-rule-delete" title="删除规则"></button>
                         </div>
@@ -2719,7 +2719,7 @@
                     </div>
                     <div class="s1p-settings-item">
                         <label class="s1p-settings-label" for="s1p-customTitleSuffix">自定义标题后缀</label>
-                        <input type="text" id="s1p-customTitleSuffix" class="s1p-input" data-setting="customTitleSuffix" value="${settings.customTitleSuffix || ''}">
+                        <input type="text" id="s1p-customTitleSuffix" class="s1p-input" data-setting="customTitleSuffix" value="${settings.customTitleSuffix || ''}" autocomplete="off">
                     </div>
                 </div>`;
 
@@ -2838,8 +2838,8 @@
                 navListContainer.innerHTML = (links || []).map((link, index) => `
                     <div class="s1p-editor-item" draggable="true" data-index="${index}" style="grid-template-columns: auto 1fr 1fr auto; user-select: none;">
                         <div class="s1p-drag-handle">::</div>
-                        <input type="text" class="s1p-input s1p-nav-name" placeholder="名称" value="${link.name || ''}">
-                        <input type="text" class="s1p-input s1p-nav-href" placeholder="链接" value="${link.href || ''}">
+                        <input type="text" class="s1p-input s1p-nav-name" placeholder="名称" value="${link.name || ''}" autocomplete="off">
+                        <input type="text" class="s1p-input s1p-nav-href" placeholder="链接" value="${link.href || ''}" autocomplete="off">
                         <div class="s1p-editor-item-controls"><button class="s1p-editor-btn" data-action="delete" title="删除链接"></button></div>
                     </div>`).join('');
             };
@@ -2888,7 +2888,7 @@
                     const newItem = document.createElement('div');
                     newItem.className = 's1p-editor-item'; newItem.draggable = true;
                     newItem.style.gridTemplateColumns = 'auto 1fr 1fr auto';
-                    newItem.innerHTML = `<div class="s1p-drag-handle">::</div><input type="text" class="s1p-input s1p-nav-name" placeholder="新链接"><input type="text" class="s1p-input s1p-nav-href" placeholder="forum.php"><div class="s1p-editor-item-controls"><button class="s1p-editor-btn" data-action="delete" title="删除链接"></button></div>`;
+                    newItem.innerHTML = `<div class="s1p-drag-handle">::</div><input type="text" class="s1p-input s1p-nav-name" placeholder="新链接" autocomplete="off"><input type="text" class="s1p-input s1p-nav-href" placeholder="forum.php" autocomplete="off"><div class="s1p-editor-item-controls"><button class="s1p-editor-btn" data-action="delete" title="删除链接"></button></div>`;
                     navListContainer.appendChild(newItem);
                 } else if (target.dataset.action === 'delete') {
                     target.closest('.s1p-editor-item').remove();
@@ -3443,7 +3443,7 @@
             popover.innerHTML = `
                  <div class="s1p-popover-content">
                     <div class="s1p-edit-mode-header">为 ${userName} ${currentTag ? '编辑' : '添加'}标记</div>
-                    <textarea class="s1p-input s1p-textarea s1p-edit-mode-textarea" placeholder="输入标记内容...">${currentTag}</textarea>
+                    <textarea class="s1p-input s1p-textarea s1p-edit-mode-textarea" placeholder="输入标记内容..." autocomplete="off">${currentTag}</textarea>
                     <div class="s1p-edit-mode-actions">
                         <button class="s1p-btn" data-action="cancel-edit">取消</button>
                         <button class="s1p-btn" data-action="save">保存</button>
