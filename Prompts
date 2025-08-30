@@ -338,6 +338,23 @@
 
 <span class="none" title="回帖奖励"></span> == $0
 
+之前我记得是使用以下逻辑修复，但是现在不生效了
+
+if (!isS1NuxEnabled) {
+    wrapper.addEventListener('mouseenter', () => {
+        const triangleSpan = authiDiv.querySelector('.none');
+            if (triangleSpan) {
+                    triangleSpan.style.display = 'inline';
+            }
+        });
+        wrapper.addEventListener('mouseleave', () => {
+            const triangleSpan = authiDiv.querySelector('.none');
+            if (triangleSpan) {
+                    triangleSpan.style.removeProperty('display');
+            }
+     });
+ }
+
 
 关于手动帖子屏蔽，在目前实现中，需要在在帖子列表，把鼠标移动到帖子的最左边（图标）位置悬停 一定时间后，帖子屏蔽按钮会出现。
 同时帖子和图标会一起向右边移动，以免被按钮挡住。在点击这个按钮之后会出现二次确认的选项，分别为勾和叉。
