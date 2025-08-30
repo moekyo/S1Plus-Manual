@@ -510,8 +510,8 @@
             gap: 8px;
         }
 
-        /* --- [NEW] 用户标记显示悬浮窗 --- */
-        .s1p-tag-display-popover {
+        /* --- [NEW] 通用显示悬浮窗 --- */
+        .s1p-generic-display-popover {
             position: absolute;
             z-index: 10003;
             max-width: 350px;
@@ -531,7 +531,7 @@
             white-space: pre-wrap;
             word-wrap: break-word;
         }
-        .s1p-tag-display-popover.visible {
+        .s1p-generic-display-popover.visible {
             opacity: 1;
             visibility: visible;
             transform: translateY(0);
@@ -3514,13 +3514,13 @@
     };
 
 
-    // --- [NEW/MODIFIED] 用户标记显示悬浮窗 ---
-    const initializeTagDisplayPopover = () => {
-        let popover = document.getElementById('s1p-tag-display-popover');
+    // --- [NEW/MODIFIED] 通用显示悬浮窗 ---
+    const initializeGenericDisplayPopover = () => {
+        let popover = document.getElementById('s1p-generic-display-popover');
         if (!popover) {
             popover = document.createElement('div');
-            popover.id = 's1p-tag-display-popover';
-            popover.className = 's1p-tag-display-popover';
+            popover.id = 's1p-generic-display-popover';
+            popover.className = 's1p-generic-display-popover';
             document.body.appendChild(popover);
         }
 
@@ -4165,7 +4165,7 @@
 
         detectS1Nux();
         initializeNavbar();
-        initializeTagDisplayPopover();
+        initializeGenericDisplayPopover();
 
         const observerCallback = (mutations, observer) => {
             observer.disconnect();
