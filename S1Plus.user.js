@@ -2360,11 +2360,13 @@
             const bookmarkedReplies = getBookmarkedReplies();
             const bookmarkItems = Object.values(bookmarkedReplies).sort((a, b) => b.timestamp - a.timestamp);
 
-            const listStyle = bookmarkItems.length === 0 ? 'display: none;' : '';
-            const emptyStyle = bookmarkItems.length > 0 ? 'display: none;' : '';
+            const hasBookmarks = bookmarkItems.length > 0;
+            const searchStyle = hasBookmarks ? '' : 'display: none;'; // 当没有收藏时，隐藏搜索框
+            const listStyle = hasBookmarks ? '' : 'display: none;';   // 当没有收藏时，隐藏列表
+            const emptyStyle = hasBookmarks ? 'display: none;' : '';  // 当没有收藏时，显示空状态提示
 
             const contentHTML = `
-                 <div class="s1p-settings-group" style="margin-bottom: 16px;">
+                  <div class="s1p-settings-group" style="margin-bottom: 16px; ${searchStyle}">
                     <div class="s1p-search-input-wrapper">
                          <input type="text" id="s1p-bookmark-search-input" class="s1p-input" placeholder="搜索内容、作者、标题..." autocomplete="off">
                          <svg class="s1p-search-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" /></svg>
@@ -2423,6 +2425,13 @@
                         if (list && emptyMessage && list.children.length === 0) {
                             list.style.display = 'none';
                             emptyMessage.style.display = 'block';
+                            const searchInputWrapper = tabs['bookmarks'].querySelector('.s1p-search-input-wrapper');
+                            if (searchInputWrapper) {
+                                const searchContainer = searchInputWrapper.closest('.s1p-settings-group');
+                                if (searchContainer) {
+                                    searchContainer.style.display = 'none';
+                                }
+                            }
                         }
 
                         refreshSinglePostActions(postIdToRemove);
