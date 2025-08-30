@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      4.8.6
+// @version      4.8.7
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪、回复收藏等多种功能，全方位优化你的论坛体验。
 // @author       moekyo & Gemini
 // @match        https://stage1st.com/2b/*
@@ -17,8 +17,8 @@
     'use strict';
 
 
-    const SCRIPT_VERSION = '4.8.6';
-    const SCRIPT_RELEASE_DATE = '2025-08-29';
+    const SCRIPT_VERSION = '4.8.7';
+    const SCRIPT_RELEASE_DATE = '2025-08-30';
 
     // --- 样式注入 ---
     GM_addStyle(`
@@ -557,6 +557,7 @@
             border-radius: 6px;
             overflow: hidden;
             min-width: 0; /* Allow the tag container itself to shrink */
+            max-width: 1000px; /* Set a fixed max-width */
         }
         .s1p-user-tag-display {
             background-color: var(--s1p-sub);
@@ -3851,7 +3852,6 @@
     };
 
     // [REFACTORED] 将单个帖子的按钮添加逻辑提取出来，以便复用
-    // [REFACTORED] 将单个帖子的按钮添加逻辑提取出来，以便复用
     const addActionsToSinglePost = (viewAuthorLink) => {
         const settings = getSettings();
         const authiDiv = viewAuthorLink.closest('.authi');
@@ -3894,12 +3894,7 @@
             });
         }
 
-        const authiRect = authiDiv.getBoundingClientRect();
-        const lastElementRect = viewAuthorLink.getBoundingClientRect();
-        let availableWidth = authiRect.right - lastElementRect.right - 15;
-
-        // --- [MODIFICATION START] ---
-        // 1. 将 “收藏该回复” 的逻辑块移动到最前面
+        // --- [REMOVED] Dynamic width calculation is removed for stability ---
 
         if (floor > 1 && settings.enableBookmarkReplies) {
             const bookmarkedReplies = getBookmarkedReplies();
@@ -3968,7 +3963,6 @@
             wrapper.appendChild(bookmarkLink);
         }
 
-        // 2. 保持 “屏蔽该用户” 逻辑块在后面
         if (settings.enableUserBlocking) {
             const pipe = document.createElement('span');
             pipe.className = 'pipe';
@@ -3988,10 +3982,8 @@
                 createInlineConfirmMenu(e.currentTarget, confirmText, () => blockUser(userId, userName));
             });
             wrapper.appendChild(blockLink);
-            availableWidth -= 85;
         }
         
-        // 3. 保持 “用户标记” 逻辑块在最后
         if (settings.enableUserTagging) {
             const userTags = getUserTags();
             const userTag = userTags[userId];
@@ -3999,7 +3991,6 @@
             pipe.className = 'pipe';
             pipe.textContent = '|';
             wrapper.appendChild(pipe);
-            availableWidth -= 10;
 
             if (userTag && userTag.tag) {
                 const tagContainer = document.createElement('span');
@@ -4027,10 +4018,6 @@
                 tagContainer.appendChild(tagDisplay);
                 tagContainer.appendChild(optionsIcon);
 
-                if (availableWidth > 50) {
-                    tagContainer.style.maxWidth = `${availableWidth}px`;
-                }
-
                 wrapper.appendChild(tagContainer);
             } else {
                 const tagLink = document.createElement('a');
@@ -4048,8 +4035,6 @@
             }
         }
         
-        // --- [MODIFICATION END] ---
-
         const ordertypeLink = authiDiv.querySelector('a[href*="ordertype=1"]');
         const readmodeLink = authiDiv.querySelector('a[onclick*="readmode"]');
 
