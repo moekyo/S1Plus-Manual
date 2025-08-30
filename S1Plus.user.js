@@ -81,7 +81,6 @@
             font-weight: 500;
             color: var(--s1p-t);
         }
-        /* [FIXED] 移除了时间戳的背景色、边距和圆角 */
         .s1p-sync-choice-info-time {
             font-family: monospace, sans-serif;
         }
@@ -89,8 +88,8 @@
             color: var(--s1p-success-text);
             font-weight: bold;
         }
-        
-        /* --- [NEW] 提示框样式 --- */
+
+        /* --- 提示框样式 --- */
         .s1p-notice {
             display: flex;
             align-items: flex-start;
@@ -130,7 +129,7 @@
             padding: 0;
         }
 
-        /* --- [NEW] 滑块式分段控件样式 --- */
+        /* --- 滑块式分段控件样式 --- */
         .s1p-segmented-control {
             position: relative;
             display: inline-flex;
@@ -157,11 +156,11 @@
             padding: 4px 12px;
             color: var(--s1p-desc-t);
             cursor: pointer;
-            transition: color 0.25s ease-in-out, background-color 0.2s ease-in-out; /* [修改] 增加背景色过渡 */
+            transition: color 0.25s ease-in-out, background-color 0.2s ease-in-out;
             font-size: 13px;
             line-height: 1.5;
             white-space: nowrap;
-            border-radius: 4px; /* [新增] 为选项本身也增加圆角，使其在悬停时更好看 */
+            border-radius: 4px;
         }
         .s1p-segmented-control-option.active {
             color: var(--s1p-white);
@@ -173,26 +172,17 @@
             color: var(--s1p-t);
         }
 
-
-        /* --- 核心修复：禁用论坛自带的用户信息悬浮窗 --- */
+        /* --- 核心修复与通用布局 --- */
         #p_pop { display: none !important; }
-
-        /* --- [FIX] 核心修复：解决主题帖作者栏布局与点击问题 --- */
-        .pi { overflow: hidden; }
         .pi > .pti { position: relative; z-index: 1; }
-
-        /* --- [FIX] 修正 .pti 背景遮挡“电梯直达”和“楼主”链接的问题 --- */
         .pi > #fj,
         .pi > strong {
             position: relative;
             z-index: 2;
         }
-
-        /* --- [S1P-FIX] 减小帖子图标与左侧的间距 --- */
         #threadlisttableid td.icn {
             padding-left: 2px !important;
         }
-
 
         /* --- 关键字屏蔽样式 --- */
         .s1p-hidden-by-keyword, .s1p-hidden-by-quote { display: none !important; }
@@ -202,14 +192,13 @@
         .s1p-btn:hover { background-color: var(--s1p-sub-h); color: var(--s1p-sub-h-t); border-color: var(--s1p-sub-h); }
         .s1p-red-btn { background-color: var(--s1p-red); color: var(--s1p-white); border-color: var(--s1p-red); }
         .s1p-red-btn:hover { background-color: var(--s1p-red-h); border-color: var(--s1p-red-h); }
-
         .s1p-btn.s1p-danger:hover {
-            background-color: var(--s1p-red-h); /* 使用危险状态的悬停红色 */
-            border-color: var(--s1p-red-h);     /* 边框也变为同样的红色 */
-            color: var(--s1p-white);            /* 确保文字变为白色以保证清晰可读 */
+            background-color: var(--s1p-red-h);
+            border-color: var(--s1p-red-h);
+            color: var(--s1p-white);
         }
-        
-        /* --- [MODIFIED] 帖子操作按钮 (三点图标) --- */
+
+        /* --- 帖子操作按钮 (三点图标) --- */
         .s1p-options-cell {
             position: relative;
             width: 14px;
@@ -217,7 +206,6 @@
             text-align: center;
             vertical-align: middle;
         }
-        
         .s1p-options-cell::after {
             content: '';
             position: absolute;
@@ -226,7 +214,6 @@
             width: 6px;
             height: 100%;
         }
-
         .s1p-options-btn {
             display: inline-flex;
             align-items: center;
@@ -236,17 +223,14 @@
             border-radius: 4px;
             cursor: pointer;
             color: var(--s1p-icon-color);
-            opacity: 0.4; /* <<< 新增：默认状态为40%透明度 */
-            transition: background-color 0.2s ease, color 0.2s ease, opacity 0.2s ease; /* <<< 修改：为透明度增加过渡动画 */
+            opacity: 0.4;
+            transition: background-color 0.2s ease, color 0.2s ease, opacity 0.2s ease;
         }
-
         .s1p-options-cell:hover .s1p-options-btn {
             background-color: var(--s1p-pri);
             color: var(--s1p-t);
-            opacity: 1; /* <<< 新增：悬停时恢复为100%不透明 */
+            opacity: 1;
         }
-
-        /* --- [MODIFIED] 帖子操作弹出菜单 --- */
         .s1p-options-menu {
             position: absolute;
             top: 50%;
@@ -265,14 +249,13 @@
             pointer-events: none;
             transition: opacity 0.15s ease-out, visibility 0.15s;
         }
-
         .s1p-options-cell:hover .s1p-options-menu {
             opacity: 1;
             visibility: visible;
             pointer-events: auto;
         }
-        
-        /* --- [NEW] 直接确认UI --- */
+
+        /* --- 直接确认UI --- */
         .s1p-direct-confirm {
             display: flex;
             align-items: center;
@@ -283,13 +266,11 @@
             padding: 2px 6px;
             white-space: nowrap;
         }
-        
         .s1p-confirm-separator {
             border-left: 1px solid var(--s1p-pri);
             height: 20px;
             margin: 0 2px 0 8px;
         }
-
         .s1p-confirm-action-btn {
             display: flex; align-items: center; justify-content: center;
             width: 32px; height: 32px;
@@ -318,30 +299,25 @@
             background-color: var(--s1p-cancel-hover-bg);
             background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='2.5' stroke='%23ffffff'%3e%3cpath stroke-linecap='round' stroke-linejoin='round' d='M6 18L18 6M6 6l12 12' /%3e%3c/svg%3e");
         }
-        
-        /* --- [MODIFIED] 行内确认菜单样式 (带动画) --- */
+
+        /* --- 行内确认菜单样式 (带动画) --- */
         .s1p-inline-confirm-menu {
-            transform: translateY(0) !important; /* 覆盖继承的transform */
+            transform: translateY(0) !important;
             margin-left: 0 !important;
-            z-index: 10004; /* Higher than other popovers */
-            
-            /* 动画初始状态 */
+            z-index: 10004;
             opacity: 0;
             transform: translateX(-8px) scale(0.95) !important;
             transition: opacity 0.15s ease-out, transform 0.15s ease-out;
             pointer-events: none;
-            /* 覆盖继承的 visibility，让 opacity 来控制 */
             visibility: visible !important;
         }
-
         .s1p-inline-confirm-menu.visible {
-            /* 动画结束状态 */
             opacity: 1;
             transform: translateX(0) scale(1) !important;
             pointer-events: auto;
         }
 
-        /* [MODIFIED] 阅读进度UI样式 */
+        /* --- 阅读进度UI样式 --- */
         .s1p-progress-container {
             display: inline-flex;
             align-items: center;
@@ -386,7 +362,7 @@
             user-select: none;
         }
 
-        /* --- [NEW] 通用输入框样式 --- */
+        /* --- 通用输入框样式 --- */
         .s1p-input {
             width: 100%;
             background: var(--s1p-bg);
@@ -403,14 +379,12 @@
             border-color: var(--s1p-sec);
             background-color: var(--s1p-white);
         }
-
-        /* --- [NEW] 文本域专属样式 (继承自 s1p-input) --- */
         .s1p-textarea {
             resize: vertical;
             min-height: 80px;
         }
 
-        /* --- [MODIFIED] 用户标记悬浮窗 (Style Revamp per Image 2) --- */
+        /* --- 用户标记悬浮窗 --- */
         .s1p-tag-popover {
             position: absolute;
             z-index: 10001;
@@ -537,27 +511,23 @@
             transform: translateY(0);
         }
 
-        /* --- [FIX] Authi User Tag Display --- */
+        /* --- [ULTIMATE FIX] 最终版用户标记栏样式 --- */
         .authi {
-            display: flex;
-            align-items: center;
-            flex-wrap: nowrap; /* Prevent wrapping to a new line */
-            overflow: hidden;   /* Hide any potential overflow from the container itself */
+            white-space: nowrap !important; /* 关键：强制 authi 容器不换行，防止被长内容挤下去 */
+            display: block !important; /* 关键：还原为块级，避免flex冲突 */
         }
         .s1p-authi-actions-wrapper {
-            display: inline-flex;
-            align-items: center;
-            vertical-align: middle;
-            min-width: 0; /* Allow this wrapper to shrink */
+            display: inline-block;
+            vertical-align: middle; /* 与原生元素对齐 */
         }
         .s1p-user-tag-container {
             display: inline-flex;
             align-items: center;
-            vertical-align: middle;
             border-radius: 6px;
             overflow: hidden;
-            min-width: 0; /* Allow the tag container itself to shrink */
-            max-width: 1000px; /* Set a fixed max-width */
+            vertical-align: middle;
+            max-width: 80px; /* 关键：一个足够小的初始安全宽度，防止长标记撑破布局 */
+            transition: max-width 0.2s ease-in-out;
         }
         .s1p-user-tag-display {
             background-color: var(--s1p-sub);
@@ -575,8 +545,6 @@
             justify-content: center;
             background-color: var(--s1p-sub);
             color: var(--s1p-t);
-            font-size: 14px;
-            font-weight: bold;
             padding: 0 8px;
             flex-shrink: 0;
             align-self: stretch;
@@ -587,7 +555,7 @@
             background-color: var(--s1p-pri);
         }
 
-        /* --- [NEW] Tag Options Menu --- */
+        /* --- Tag Options Menu --- */
         .s1p-tag-options-menu {
             position: absolute;
             z-index: 10002;
@@ -663,20 +631,17 @@
         .s1p-local-sync-buttons { display: flex; gap: 8px; margin-bottom: 16px; }
         .s1p-sync-textarea { width: 100%; min-height: 80px; margin-bottom: 20px;}
 
-        /* --- [OPTIMIZED] 悬浮提示框 (Toast Notification) V3 --- */
+        /* --- 悬浮提示框 (Toast Notification) --- */
         @keyframes s1p-toast-shake {
             10%, 90% { transform: translate(-51%, 0); }
             20%, 80% { transform: translate(-49%, 0); }
             30%, 50%, 70% { transform: translate(-52%, 0); }
             40%, 60% { transform: translate(-48%, 0); }
         }
-
         .s1p-toast-notification {
-            /* [MODIFIED] 改为 fixed 定位，使其不随页面滚动 */
             position: fixed;
             left: 50%;
             bottom: 20px;
-            /* 初始位置在屏幕外，为向上滑入动画做准备 */
             transform: translate(-50%, 50px);
             z-index: 10005;
             padding: 10px 18px;
@@ -692,28 +657,23 @@
             white-space: nowrap;
             text-align: center;
         }
-
-        /* [NEW] 在设置面板内，提示信息恢复为 absolute 定位，随面板滚动 */
         .s1p-modal-content .s1p-toast-notification {
             position: absolute;
             bottom: 15px;
         }
-
         .s1p-toast-notification.visible {
             opacity: 1;
-            /* 最终位置 */
             transform: translate(-50%, 0);
         }
         .s1p-toast-notification.success {
-            background-color: #27da80; /* 成功状态使用绿色 */
+            background-color: #27da80;
         }
         .s1p-toast-notification.error {
-            background-color: var(--s1p-red); /* 失败状态使用红色 */
+            background-color: var(--s1p-red);
         }
         .s1p-toast-notification.error.visible {
             animation: s1p-toast-shake 0.5s cubic-bezier(.36,.07,.19,.97) both;
         }
-
 
         /* --- 确认弹窗样式 --- */
         @keyframes s1p-fade-in { from { opacity: 0; } to { opacity: 1; } } @keyframes s1p-scale-in { from { transform: scale(0.95); opacity: 0; } to { transform: scale(1); opacity: 1; } } @keyframes s1p-fade-out { from { opacity: 1; } to { opacity: 0; } } @keyframes s1p-scale-out { from { transform: scale(1); opacity: 1; } to { transform: scale(0.97); opacity: 0; } }
@@ -727,7 +687,6 @@
         .s1p-confirm-btn { padding: 9px 14px; border-radius: 6px; font-size: 14px; font-weight: 500; cursor: pointer; border: 1px solid transparent; transition: all 0.15s ease-in-out; box-shadow: 0 1px 2px 0 rgba(var(--s1p-black-rgb), 0.05); white-space: nowrap; }
         .s1p-confirm-btn:active { transform: translateY(1px); }
         .s1p-confirm-btn.s1p-cancel { background-color: var(--s1p-sub); border-color: var(--s1p-pri); }
-        /* [MODIFIED] 修改取消按钮的悬停颜色为红色系 */
         .s1p-confirm-btn.s1p-cancel:hover { border-color: var(--s1p-red); background-color: var(--s1p-error-bg); }
         .s1p-confirm-btn.s1p-confirm { background-color: var(--s1p-red); color: var(--s1p-white); border-color: var(--s1p-red); }
         .s1p-confirm-btn.s1p-confirm:hover { background-color: var(--s1p-red-h); border-color: var(--s1p-red-h); }
@@ -746,7 +705,7 @@
         .s1p-collapsible-content { max-height: 0; overflow: hidden; transition: max-height 0.3s ease-out; }
         .s1p-collapsible-content.expanded { max-height: 500px; transition: max-height 0.4s ease-in; padding-top: 12px; }
 
-        /* --- [NEW] Feature Content Animation --- */
+        /* --- Feature Content Animation --- */
         .s1p-feature-content {
             display: grid;
             grid-template-rows: 0fr;
@@ -809,7 +768,7 @@
         .s1p-settings-action-btn.s1p-secondary { background-color: var(--s1p-secondary-bg); color: var(--s1p-secondary-text); }
         .s1p-settings-action-btn.s1p-secondary:hover { background-color: var(--s1p-secondary-hover-bg); }
 
-        /* --- [MODIFIED] 带图标的搜索框 --- */
+        /* --- 带图标的搜索框 --- */
         .s1p-search-input-wrapper {
             position: relative;
             display: flex;
@@ -817,8 +776,8 @@
             width: 100%;
         }
         .s1p-search-input-wrapper .s1p-input {
-            padding-left: 34px; /* 为图标腾出空间 */
-            padding-right: 34px; /* [NEW] 为清空按钮腾出空间 */
+            padding-left: 34px;
+            padding-right: 34px;
         }
         .s1p-search-input-wrapper svg.s1p-search-icon {
             position: absolute;
@@ -835,7 +794,7 @@
             color: var(--s1p-sec);
         }
 
-        /* --- [NEW] 搜索框清空按钮 --- */
+        /* --- 搜索框清空按钮 --- */
         .s1p-search-clear-btn {
             position: absolute;
             right: 10px;
@@ -868,14 +827,14 @@
             color: var(--s1p-icon-arrow);
         }
 
-       /* --- [MODIFIED] 搜索关键词高亮 --- */
+       /* --- 搜索关键词高亮 --- */
         mark.s1p-highlight {
-            background-color: var(--s1p-pri); /* 使用脚本主色调之一，更和谐 */
-            color: var(--s1p-t);             /* 确保文本颜色与主题一致 */
-            font-weight: bold;               /* 按要求加粗字体 */
-            padding: 1px 3px;                /* 增加一点内边距，避免拥挤 */
-            border-radius: 3px;              
-            text-decoration: none;           /* 移除可能存在的下划线等装饰 */
+            background-color: var(--s1p-pri);
+            color: var(--s1p-t);
+            font-weight: bold;
+            padding: 1px 3px;
+            border-radius: 3px;
+            text-decoration: none;
         }
 
         /* --- Modern Toggle Switch --- */
@@ -889,10 +848,9 @@
         /* --- Nav Editor Dragging --- */
         .s1p-editor-item.s1p-dragging { opacity: 0.5; }
 
-        /* --- [NEW] 用户标记设置面板专属样式 --- */
+        /* --- 用户标记设置面板专属样式 --- */
         .s1p-item-meta-id { font-family: monospace; background-color: var(--s1p-bg); padding: 1px 5px; border-radius: 4px; font-size: 11px; color: var(--s1p-t); }
         .s1p-item-content { margin-top: 8px; color: var(--s1p-desc-t); line-height: 1.6; white-space: pre-wrap; word-break: break-all; }
-        /* [MODIFIED] 为收藏夹的内容增加独立样式，改为分割线 */
         #s1p-tab-bookmarks .s1p-item-content {
             background-color: transparent;
             border: none;
@@ -909,7 +867,7 @@
         .s1p-item-actions .s1p-btn.s1p-danger { background-color: var(--s1p-red); color: var(--s1p-white); }
         .s1p-item-actions .s1p-btn.s1p-danger:hover { background-color: var(--s1p-red-h); border-color: var(--s1p-red-h);}
 
-        /* --- [NEW] 引用屏蔽占位符 (Refined Style) --- */
+        /* --- 引用屏蔽占位符 --- */
         .s1p-quote-placeholder {
             background-color: var(--s1p-bg);
             border: 1px solid var(--s1p-pri);
@@ -934,14 +892,12 @@
             background-color: var(--s1p-sub);
             color: var(--s1p-t);
         }
-
-        /* --- [NEW] Quote Collapse Animation --- */
         .s1p-quote-wrapper {
             overflow: hidden;
             transition: max-height 0.35s ease-in-out;
         }
 
-        /* --- [NEW] Image Hiding --- */
+        /* --- Image Hiding --- */
         .s1p-image-container {
             display: flex;
             flex-direction: column;
@@ -970,8 +926,6 @@
         .s1p-image-container.hidden > .zoom {
             display: none;
         }
-
-        /* --- [MODIFIED] Image Toggle All Button --- */
         .s1p-image-toggle-all-container {
             margin-bottom: 10px;
         }
@@ -1548,7 +1502,7 @@
                 saveReadProgress(mergedProgress);
                 progressImported = Object.keys(imported.read_progress).length;
             }
-            
+
             // [NEW] Import bookmarked replies
             if (imported.bookmarked_replies) {
                 const mergedBookmarks = { ...getBookmarkedReplies(), ...imported.bookmarked_replies };
@@ -2096,7 +2050,7 @@
 
             measureContainer.appendChild(tabsDiv);
             document.body.appendChild(measureContainer);
-            
+
             let totalTabsWidth = 0;
             tabsDiv.querySelectorAll('.s1p-tab-btn').forEach(btn => {
                 const style = window.getComputedStyle(btn);
@@ -2110,11 +2064,11 @@
 
         const requiredWidth = calculateModalWidth();
         document.querySelector('.s1p-modal')?.remove();
-        
+
         const modal = document.createElement('div');
         modal.className = 's1p-modal';
         modal.style.opacity = '0';
-        
+
         modal.innerHTML = `<div class="s1p-modal-content">
             <div class="s1p-modal-header"><div class="s1p-modal-title">S1 Plus 设置</div><div class="s1p-modal-close"></div></div>
             <div class="s1p-modal-body">
@@ -2176,7 +2130,7 @@
                              <button id="s1p-open-gist-page-btn" class="s1p-btn">打开 Gist 页面</button>
                         </div>
                     </div>
-                    
+
                     <div class="s1p-sync-title">危险操作</div>
                     <div class="s1p-local-sync-desc">以下操作会立即清空脚本在<b>当前浏览器</b>中的所选数据，且无法撤销。请在操作前务必通过“导出数据”功能进行备份。</div>
                     <div id="s1p-clear-data-options" style="margin-top: 12px; display: flex; flex-direction: column; gap: 8px; background-color: var(--s1p-bg); border: 1px solid var(--s1p-pri); border-radius: 6px; padding: 12px;">
@@ -2439,13 +2393,13 @@
 
                         const list = tabs['bookmarks'].querySelector('#s1p-bookmarks-list');
                         const emptyMessage = tabs['bookmarks'].querySelector('#s1p-bookmarks-empty-message');
-                        
+
                         // 检查列表是否变空，并更新显示
                         if (list && emptyMessage && list.children.length === 0) {
                             list.style.display = 'none';
                             emptyMessage.style.display = 'block';
                         }
-                        
+
                         refreshSinglePostActions(postIdToRemove);
                     }
                 }
@@ -2673,7 +2627,7 @@
             tabs['general-settings'].innerHTML = `
                 <div class="s1p-settings-group">
                     <div class="s1p-settings-group-title">功能开关</div>
-                    
+
                     <div class="s1p-settings-item">
                         <label class="s1p-settings-label" for="s1p-openThreadsInNewTab">在新窗口打开帖子</label>
                         <label class="s1p-switch"><input type="checkbox" id="s1p-openThreadsInNewTab" class="s1p-settings-checkbox" data-setting="openThreadsInNewTab" ${settings.openThreadsInNewTab ? 'checked' : ''}><span class="s1p-slider"></span></label>
@@ -2925,7 +2879,7 @@
         renderTagsTab();
         renderBookmarksTab(); // [NEW]
         renderNavSettingsTab();
-        
+
         // --- 触发淡入动画 ---
         modal.style.transition = 'opacity 0.2s ease-out';
         requestAnimationFrame(() => {
@@ -3094,7 +3048,7 @@
             if (e.target.id === 's1p-remote-manual-sync-btn') {
                 handleManualSync(e.target);
             }
-            
+
             if (e.target.id === 's1p-open-gist-page-btn') {
                 const gistId = modal.querySelector('#s1p-remote-gist-id-input').value.trim();
                 if (gistId) {
@@ -3780,7 +3734,7 @@
         if (authiDiv) {
             authiDiv.querySelector('.s1p-authi-actions-wrapper')?.remove();
         }
-        
+
         addActionsToSinglePost(viewAuthorLink);
     };
 
@@ -3851,11 +3805,54 @@
         }, 0);
     };
 
-    // [REFACTORED] 将单个帖子的按钮添加逻辑提取出来，以便复用
+    // [ULTIMATE FIX] 引入布局监视器 (MutationObserver) 来解决脚本冲突
+    const applyTagWidthCalculation = (authiDiv) => {
+        const wrapper = authiDiv.querySelector('.s1p-authi-actions-wrapper');
+        if (!wrapper) return;
+        const tagContainer = wrapper.querySelector('.s1p-user-tag-container');
+        if (!tagContainer) return;
+
+        const piDiv = authiDiv.closest('.pi');
+        if (!piDiv) return;
+
+        const rightControls = piDiv.querySelector('.y');
+        const piWidth = piDiv.clientWidth;
+        const rightControlsWidth = rightControls ? rightControls.offsetWidth : 0;
+
+        let precedingWidth = 0;
+        let currentElement = wrapper.previousSibling;
+        while (currentElement) {
+            if (currentElement.nodeType === 1 && currentElement.offsetWidth > 0) {
+                precedingWidth += currentElement.offsetWidth;
+            } else if (currentElement.nodeType === 3 && currentElement.textContent.trim() === '|') {
+                precedingWidth += 15;
+            }
+            currentElement = currentElement.previousSibling;
+        }
+
+        let wrapperExtraWidth = 0;
+        wrapper.childNodes.forEach(node => {
+            if (node !== tagContainer && node.nodeType === 1) {
+                 wrapperExtraWidth += node.offsetWidth;
+            }
+        });
+
+        const availableWidth = piWidth - rightControlsWidth - precedingWidth - wrapperExtraWidth - 25;
+        const finalWidth = Math.max(80, availableWidth);
+
+        const newMaxWidth = `${finalWidth}px`;
+        if (tagContainer.style.getPropertyValue('max-width') !== newMaxWidth) {
+            tagContainer.style.setProperty('max-width', newMaxWidth, 'important');
+        }
+    };
+
+
     const addActionsToSinglePost = (viewAuthorLink) => {
         const settings = getSettings();
         const authiDiv = viewAuthorLink.closest('.authi');
-        if (!authiDiv) return;
+        if (!authiDiv || authiDiv.querySelector('.s1p-authi-actions-wrapper')) {
+            return;
+        }
 
         const urlParams = new URLSearchParams(viewAuthorLink.href.split('?')[1]);
         const userId = urlParams.get('authorid');
@@ -3894,27 +3891,21 @@
             });
         }
 
-        // --- [REMOVED] Dynamic width calculation is removed for stability ---
-
         if (floor > 1 && settings.enableBookmarkReplies) {
             const bookmarkedReplies = getBookmarkedReplies();
             const isBookmarked = !!bookmarkedReplies[postId];
-
             const pipe = document.createElement('span');
             pipe.className = 'pipe';
             pipe.textContent = '|';
             wrapper.appendChild(pipe);
-
             const bookmarkLink = document.createElement('a');
             bookmarkLink.href = 'javascript:void(0);';
             bookmarkLink.className = 's1p-authi-action s1p-bookmark-reply';
             bookmarkLink.textContent = isBookmarked ? '该回复已收藏' : '收藏该回复';
-
             bookmarkLink.addEventListener('click', (e) => {
                 e.preventDefault();
                 const currentBookmarks = getBookmarkedReplies();
                 const wasBookmarked = !!currentBookmarks[postId];
-
                 if (wasBookmarked) {
                     delete currentBookmarks[postId];
                     saveBookmarkedReplies(currentBookmarks);
@@ -3923,13 +3914,10 @@
                 } else {
                     const threadTitleEl = document.querySelector('#thread_subject');
                     const threadTitle = threadTitleEl ? threadTitleEl.textContent.trim() : '未知标题';
-
                     const threadIdMatch = window.location.href.match(/thread-(\d+)-/);
                     const params = new URLSearchParams(window.location.search);
                     const threadId = threadIdMatch ? threadIdMatch[1] : (params.get('tid') || params.get('ptid'));
-
                     const contentEl = postTable.querySelector('td.t_f');
-                    
                     let postContent = '无法获取内容';
                     if(contentEl) {
                         const contentClone = contentEl.cloneNode(true);
@@ -3939,21 +3927,12 @@
                             postContent += '...';
                         }
                     }
-
                     if (!threadId) {
                         showMessage('无法获取帖子ID，收藏失败。', false);
                         return;
                     }
-
                     currentBookmarks[postId] = {
-                        postId,
-                        threadId,
-                        threadTitle,
-                        floor,
-                        authorId: userId,
-                        authorName: userName,
-                        postContent,
-                        timestamp: Date.now()
+                        postId, threadId, threadTitle, floor, authorId: userId, authorName: userName, postContent, timestamp: Date.now()
                     };
                     saveBookmarkedReplies(currentBookmarks);
                     bookmarkLink.textContent = '该回复已收藏';
@@ -3968,7 +3947,6 @@
             pipe.className = 'pipe';
             pipe.textContent = '|';
             wrapper.appendChild(pipe);
-
             const blockLink = document.createElement('a');
             blockLink.href = 'javascript:void(0);';
             blockLink.textContent = '屏蔽该用户';
@@ -3976,14 +3954,12 @@
             blockLink.addEventListener('click', (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                const confirmText = getSettings().blockThreadsOnUserBlock
-                    ? `屏蔽用户并隐藏其主题帖？`
-                    : `确认屏蔽该用户？`;
+                const confirmText = getSettings().blockThreadsOnUserBlock ? `屏蔽用户并隐藏其主题帖？` : `确认屏蔽该用户？`;
                 createInlineConfirmMenu(e.currentTarget, confirmText, () => blockUser(userId, userName));
             });
             wrapper.appendChild(blockLink);
         }
-        
+
         if (settings.enableUserTagging) {
             const userTags = getUserTags();
             const userTag = userTags[userId];
@@ -3991,18 +3967,15 @@
             pipe.className = 'pipe';
             pipe.textContent = '|';
             wrapper.appendChild(pipe);
-
             if (userTag && userTag.tag) {
                 const tagContainer = document.createElement('span');
                 tagContainer.className = 's1p-authi-action s1p-user-tag-container';
-
                 const fullTagText = userTag.tag;
                 const tagDisplay = document.createElement('span');
                 tagDisplay.className = 's1p-user-tag-display';
                 tagDisplay.textContent = `用户标记：${fullTagText}`;
                 tagDisplay.dataset.fullTag = fullTagText;
                 tagDisplay.removeAttribute('title');
-
                 const optionsIcon = document.createElement('span');
                 optionsIcon.className = 's1p-user-tag-options';
                 optionsIcon.innerHTML = '&#8942;';
@@ -4014,10 +3987,8 @@
                     e.stopPropagation();
                     createOptionsMenu(e.currentTarget);
                 });
-
                 tagContainer.appendChild(tagDisplay);
                 tagContainer.appendChild(optionsIcon);
-
                 wrapper.appendChild(tagContainer);
             } else {
                 const tagLink = document.createElement('a');
@@ -4034,20 +4005,30 @@
                 wrapper.appendChild(tagLink);
             }
         }
-        
+
         const ordertypeLink = authiDiv.querySelector('a[href*="ordertype=1"]');
         const readmodeLink = authiDiv.querySelector('a[onclick*="readmode"]');
-
-        let viewImagesLink = null;
-        for (const link of authiDiv.querySelectorAll('a')) {
-            if (link.textContent.trim() === '只看大图') {
-                viewImagesLink = link;
-                break;
-            }
-        }
-
         const insertionPoint = readmodeLink || viewAuthorLink;
+
         insertionPoint.after(wrapper);
+
+        // --- 布局监视器 ---
+        // 初始计算
+        applyTagWidthCalculation(authiDiv);
+
+        // 设置监视器，防止S1 NUX等脚本覆盖样式
+        const piDiv = authiDiv.closest('.pi');
+        if (piDiv) {
+            const observer = new MutationObserver(() => {
+                applyTagWidthCalculation(authiDiv);
+            });
+            observer.observe(authiDiv, {
+                attributes: true,
+                childList: true,
+                subtree: true,
+                attributeFilter: ['style', 'class']
+            });
+        }
 
         if (ordertypeLink && readmodeLink) {
             const nativeElements = [
@@ -4056,25 +4037,27 @@
                 readmodeLink.previousElementSibling,
                 readmodeLink
             ].filter(Boolean);
-
             nativeElements.forEach(el => el.style.display = 'none');
-
             const showNativeButtons = () => {
                 nativeElements.forEach(el => el.style.display = 'inline');
             };
-
             viewAuthorLink.addEventListener('mouseenter', showNativeButtons);
-
+            let viewImagesLink = null;
+            for (const link of authiDiv.querySelectorAll('a')) {
+                if (link.textContent.trim() === '只看大图') {
+                    viewImagesLink = link;
+                    break;
+                }
+            }
             if (viewImagesLink) {
                 viewImagesLink.addEventListener('mouseenter', showNativeButtons);
             }
-
             authiDiv.addEventListener('mouseleave', () => {
                 nativeElements.forEach(el => el.style.display = 'none');
             });
         }
     };
-    
+
     // [REFACTORED] 主函数，循环调用单个帖子的按钮添加逻辑
     const addActionsToPostFooter = () => {
         const settings = getSettings();
