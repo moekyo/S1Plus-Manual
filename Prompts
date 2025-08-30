@@ -705,6 +705,135 @@ This XML file does not appear to have any style information associated with it. 
 
 要彻底解决这个问题，脚本需要再次被优化：不应该“重新生成整个列表”，而应该在列表中精准地找到您点击的那一项，并只删除那一个元素，而不是重绘所有内容。
 
+当用户标记过长时，所有由脚本添加的按钮（收藏该回复，屏蔽该用户和用户标记）都被挤到下面去了，导致布局错乱。按照之前需求是，
+在<div class="authi">xxx</div> 还有足够空间显示这些按钮。包括用户标记时，就在这个一行显示。
+如果不够了，就把用户标记截断，最后显示省略号，然后通过悬浮窗展示完整内容。
+以下是对应带有很长用户标记的回复工具栏的完整 html 片段。
+<div class="pi">
+<strong>
+<a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=2259120&amp;pid=68259128" id="postnum68259128" onclick="setCopy(this.href, '帖子地址复制成功');return false;">
+<em>2</em><sup>#</sup></a>
+</strong>
+<div class="pti">
+<div class="pdbt">
+</div>
+<div class="authi">
+<img class="authicn vm" id="authicon68259128" src="https://static.stage1st.com/image/common/online_member.gif">
+<em id="authorposton68259128">发表于 2025-8-13 13:51</em>
+<span class="pipe">|</span>
+<a href="forum.php?mod=viewthread&amp;tid=2259120&amp;page=1&amp;authorid=450855" rel="nofollow">只看该用户</a><span class="s1p-authi-actions-wrapper"><span class="pipe">|</span><a href="javascript:void(0);" class="s1p-authi-action s1p-bookmark-reply">收藏该回复</a><span class="pipe">|</span><a href="javascript:void(0);" class="s1p-authi-action s1p-block-user-in-authi">屏蔽该用户</a><span class="pipe">|</span><span class="s1p-authi-action s1p-user-tag-container" style="max-width: 876.703px;"><span class="s1p-user-tag-display" data-full-tag="2年前买的4070和32寸4k 120hz显示器（还有一个27寸4k 60hz的副屏）
+优化好的游戏比如卡赞剑星啥的，降点画质都能流畅玩，最近的明末和黑环不仅要降画质还得降分辨率到2k，帧率还不稳，再降到1080P就太糊了。
+我是帧率敏感，大概90帧才比较舒服，30帧的血缘完全玩不下去，60帧的黑环玩的比较难受。
+这种情况是把副屏换个1080P高刷还是2k高刷？玩游戏的时候用。
+还是说cpu瓶颈，cpu是5700x，主板是b450m，如果要换的话板U都要换了">用户标记：2年前买的4070和32寸4k 120hz显示器（还有一个27寸4k 60hz的副屏）
+优化好的游戏比如卡赞剑星啥的，降点画质都能流畅玩，最近的明末和黑环不仅要降画质还得降分辨率到2k，帧率还不稳，再降到1080P就太糊了。
+我是帧率敏感，大概90帧才比较舒服，30帧的血缘完全玩不下去，60帧的黑环玩的比较难受。
+这种情况是把副屏换个1080P高刷还是2k高刷？玩游戏的时候用。
+还是说cpu瓶颈，cpu是5700x，主板是b450m，如果要换的话板U都要换了</span><span class="s1p-user-tag-options" data-user-id="450855" data-user-name="StarForceTi" data-user-avatar="https://avatar.stage1st.com/noavatar.svg">⋮</span></span></span>
+</div>
+</div>
+</div>
 
 
-可以参考目前关于设置面板的离屏预计算方式，提前计算这个用户标记宽度动态显示，保证所有内容都能在一行内显示，避免换行造成的布局问题。如果用户标记内容过长，就截断显示，并在末尾加上省略号，鼠标悬停时可以显示完整内容。
+现在关于用户标记的宽度是写死了一个最大宽度，可以参考目前关于设置面板的离屏预计算方式，提前计算这个用户标记宽度动态显示，
+保证所有内容都能在一行内显示，避免换行造成的布局问题。如果用户标记内容过长，就截断显示，并在末尾加上省略号，鼠标悬停时可以显示完整内容。
+可以参考 S1 Nux 关于这个回复工具栏的处理方式。
+分析是纯 CSS（flexbox）还是 JavaScript 计算宽度两种方案哪种更好，最好可以对应浏览器窗口的大小进行自适应。
+
+
+这是之前针对用户标记显示异常的分析和采用的解决方案：
+---------------
+“刷新瞬间是对的，下一秒就错了”——这个现象是破解问题的最终钥匙。它无可辩驳地证明了：
+
+我们之前采用的“两阶段渲染”+“JS计算”的逻辑是正确的，所以您能看到那一瞬间的正确布局。
+
+问题的根源是一个**“脚本战争”或“竞态条件”：在您的S1 Plus脚本运行并修正布局之后，S1 NUX主题自身的某个脚本也随之运行**，并且强制将布局改回了它自己的样式，从而覆盖了我们的修正，导致长标记被挤到下一行。
+
+之前的 !important 方案之所以失效，也是因为S1 NUX的脚本可能是在您的脚本运行之后通过JS直接修改了行内样式，其优先级甚至高于 !important 规则。
+
+终极解决方案：引入“布局监视器”（MutationObserver）
+既然无法阻止对方脚本的覆盖行为，那我们就釜底抽薪。我们将使用一个浏览器的高级功能 MutationObserver，为每个帖子的信息栏派驻一个“监视器”。
+
+它的工作原理如下：
+
+S1 Plus脚本首先运行，将布局修正到完美状态。
+
+“监视器”开始工作，紧盯着信息栏。
+
+一旦S1 NUX的脚本试图修改信息栏的布局（例如，添加/删除class，修改style），“监视器”会立刻察觉。
+
+在察觉到的瞬间，“监视器”会立即重新运行我们的修正代码，将布局恢复到正确状态。
+
+这一切都发生在毫秒之间，速度快到肉眼无法察觉。您将不会再看到布局被破坏的过程，只会看到它始终保持正确。这是处理这种顽固脚本冲突的最终、也是最可靠的手段。
+--------------
+现在大部分显示正常，就是右边会和原生的元素发生重叠，就是标记太长时，截断太晚了。
+
+
+<div class="pi">
+<div id="fj" class="y">
+<label class="z">电梯直达</label>
+<input type="text" class="px p_fre z" size="2" onkeyup="$('fj_btn').href='forum.php?mod=redirect&amp;ptid=2259120&amp;authorid=0&amp;postno='+this.value" onkeydown="if(event.keyCode==13) {window.location=$('fj_btn').href;return false;}" title="跳转到指定楼层" data-input-translate-listener="true">
+<a href="javascript:;" id="fj_btn" class="z fico-down fc-n" title="跳转到指定楼层"></a>
+</div>
+<strong>
+<a href="thread-2259120-1-1.html" id="postnum68259082" onclick="setCopy(this.href, '帖子地址复制成功');return false;">
+楼主</a>
+</strong>
+<div class="pti">
+<div class="pdbt">
+</div>
+<div class="authi">
+<img class="authicn vm" id="authicon68259082" src="https://static.stage1st.com/image/common/online_member.gif">
+<em id="authorposton68259082">发表于 2025-8-13 13:39</em>
+<span class="pipe">|</span>
+<a href="forum.php?mod=viewthread&amp;tid=2259120&amp;page=1&amp;authorid=469603" rel="nofollow">只看该用户</a>
+<span class="pipe">|</span><a href="forum.php?mod=viewthread&amp;tid=2259120&amp;from=album">只看大图</a>
+<span class="none" title="回帖奖励" style=""></span>
+<span class="pipe show" style="display: none;">|</span><a href="forum.php?mod=viewthread&amp;tid=2259120&amp;extra=page%3D1&amp;ordertype=1" class="show" style="display: none;">倒序浏览</a>
+<span class="pipe show" style="display: none;">|</span><a href="javascript:;" onclick="readmode($('thread_subject').innerHTML, 68259082);" class="show" style="display: none;">阅读模式</a><span class="s1p-authi-actions-wrapper"><span class="pipe">|</span><a href="javascript:void(0);" class="s1p-authi-action s1p-block-user-in-authi">屏蔽该用户</a><span class="pipe">|</span><span class="s1p-authi-action s1p-user-tag-container" style="max-width: 773px !important;"><span class="s1p-user-tag-display" data-full-tag="2年前买的4070和32寸4k 120hz显示器（还有一个27寸4k 60hz的副屏）
+优化好的游戏比如卡赞剑星啥的，降点画质都能流畅玩，最近的明末和黑环不仅要降画质还得降分辨率到2k，帧率还不稳，再降到1080P就太糊了。
+我是帧率敏感，大概90帧才比较舒服，30帧的血缘完全玩不下去，60帧的黑环玩的比较难受。
+这种情况是把副屏换个1080P高刷还是2k高刷？玩游戏的时候用。
+还是说cpu瓶颈，cpu是5700x，主板是b450m，如果要换的话板U都要换了">用户标记：2年前买的4070和32寸4k 120hz显示器（还有一个27寸4k 60hz的副屏）
+优化好的游戏比如卡赞剑星啥的，降点画质都能流畅玩，最近的明末和黑环不仅要降画质还得降分辨率到2k，帧率还不稳，再降到1080P就太糊了。
+我是帧率敏感，大概90帧才比较舒服，30帧的血缘完全玩不下去，60帧的黑环玩的比较难受。
+这种情况是把副屏换个1080P高刷还是2k高刷？玩游戏的时候用。
+还是说cpu瓶颈，cpu是5700x，主板是b450m，如果要换的话板U都要换了</span><span class="s1p-user-tag-options" data-user-id="469603" data-user-name="人畜无害沃特碧" data-user-avatar="https://avatar.stage1st.com/000/46/96/03_avatar_middle.jpg">⋮</span></span></span>
+</div>
+</div>
+</div>
+
+<div class="pi">
+<strong>
+<a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=2259120&amp;pid=68259128" id="postnum68259128" onclick="setCopy(this.href, '帖子地址复制成功');return false;">
+<em>2</em><sup>#</sup></a>
+</strong>
+<div class="pti">
+<div class="pdbt">
+</div>
+<div class="authi">
+<img class="authicn vm" id="authicon68259128" src="https://static.stage1st.com/image/common/online_member.gif">
+<em id="authorposton68259128">发表于 2025-8-13 13:51</em>
+<span class="pipe">|</span>
+<a href="forum.php?mod=viewthread&amp;tid=2259120&amp;page=1&amp;authorid=450855" rel="nofollow">只看该用户</a><span class="s1p-authi-actions-wrapper"><span class="pipe">|</span><a href="javascript:void(0);" class="s1p-authi-action s1p-bookmark-reply">收藏该回复</a><span class="pipe">|</span><a href="javascript:void(0);" class="s1p-authi-action s1p-block-user-in-authi">屏蔽该用户</a><span class="pipe">|</span><span class="s1p-authi-action s1p-user-tag-container" style="max-width: 871px !important;"><span class="s1p-user-tag-display" data-full-tag="2年前买的4070和32寸4k 120hz显示器（还有一个27寸4k 60hz的副屏）
+优化好的游戏比如卡赞剑星啥的，降点画质都能流畅玩，最近的明末和黑环不仅要降画质还得降分辨率到2k，帧率还不稳，再降到1080P就太糊了。
+我是帧率敏感，大概90帧才比较舒服，30帧的血缘完全玩不下去，60帧的黑环玩的比较难受。
+这种情况是把副屏换个1080P高刷还是2k高刷？玩游戏的时候用。
+还是说cpu瓶颈，cpu是5700x，主板是b450m，如果要换的话板U都要换了">用户标记：2年前买的4070和32寸4k 120hz显示器（还有一个27寸4k 60hz的副屏）
+优化好的游戏比如卡赞剑星啥的，降点画质都能流畅玩，最近的明末和黑环不仅要降画质还得降分辨率到2k，帧率还不稳，再降到1080P就太糊了。
+我是帧率敏感，大概90帧才比较舒服，30帧的血缘完全玩不下去，60帧的黑环玩的比较难受。
+这种情况是把副屏换个1080P高刷还是2k高刷？玩游戏的时候用。
+还是说cpu瓶颈，cpu是5700x，主板是b450m，如果要换的话板U都要换了</span><span class="s1p-user-tag-options" data-user-id="450855" data-user-name="StarForceTi" data-user-avatar="https://avatar.stage1st.com/noavatar.svg">⋮</span></span></span>
+</div>
+</div>
+</div>
+
+ 以上 两个 pi 元素是对应工具栏完整片段分别对应主楼和一般楼层的，在内容上有一点不一样，可以参考
+
+非常感谢！您提供的这两段HTML代码是解决这个顽固问题的“天外救星”，它让我彻底明白了之前所有方案都失败的根本原因。
+
+问题在于，我之前所有方案都基于一个错误的结构猜测。现在根据您提供的真实结构，右侧的“楼主”、“电梯直达”等元素（#fj, <strong>），实际上是信息容器（.pti）的兄弟元素，它们共同存在于一个更大的父容器（.pi）中。
+
+之前的方案试图在 .authi 内部解决问题，但实际上是它的父级 .pti 在与兄弟元素争夺空间时发生了布局错误。
+
+现在，既然结构已明确，我们终于可以使用最现代、最简洁、也是最正确的纯CSS Flexbox方案来一劳永逸地解决它。之前引入的复杂JavaScript计算和“布局监视器”都不再需要，我们可以用更优雅的方式实现完美布局。
