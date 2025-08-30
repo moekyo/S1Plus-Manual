@@ -28,7 +28,6 @@
             --s1p-bg: #ECEDEB;
             --s1p-pri: #D1D9C1;
             --s1p-sub: #e9ebe8;
-            --s1p-input-bg: #d1d5db;
             --s1p-white: #ffffff;
             --s1p-black-rgb: 0, 0, 0;
 
@@ -390,7 +389,7 @@
         /* --- [NEW] 通用输入框样式 --- */
         .s1p-input {
             width: 100%;
-            background: var(--s1p-input-bg);
+            background: var(--s1p-bg);
             border: 1px solid var(--s1p-pri);
             border-radius: 6px;
             padding: 8px 12px;
@@ -3849,6 +3848,7 @@
     };
 
     // [REFACTORED] 将单个帖子的按钮添加逻辑提取出来，以便复用
+    // [REFACTORED] 将单个帖子的按钮添加逻辑提取出来，以便复用
     const addActionsToSinglePost = (viewAuthorLink) => {
         const settings = getSettings();
         const authiDiv = viewAuthorLink.closest('.authi');
@@ -3895,83 +3895,8 @@
         const lastElementRect = viewAuthorLink.getBoundingClientRect();
         let availableWidth = authiRect.right - lastElementRect.right - 15;
 
-        if (settings.enableUserBlocking) {
-            const pipe = document.createElement('span');
-            pipe.className = 'pipe';
-            pipe.textContent = '|';
-            wrapper.appendChild(pipe);
-
-            const blockLink = document.createElement('a');
-            blockLink.href = 'javascript:void(0);';
-            blockLink.textContent = '屏蔽该用户';
-            blockLink.className = 's1p-authi-action s1p-block-user-in-authi';
-            blockLink.addEventListener('click', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                const confirmText = getSettings().blockThreadsOnUserBlock
-                    ? `屏蔽用户并隐藏其主题帖？`
-                    : `确认屏蔽该用户？`;
-                createInlineConfirmMenu(e.currentTarget, confirmText, () => blockUser(userId, userName));
-            });
-            wrapper.appendChild(blockLink);
-            availableWidth -= 85;
-        }
-
-        if (settings.enableUserTagging) {
-            const userTags = getUserTags();
-            const userTag = userTags[userId];
-            const pipe = document.createElement('span');
-            pipe.className = 'pipe';
-            pipe.textContent = '|';
-            wrapper.appendChild(pipe);
-            availableWidth -= 10;
-
-            if (userTag && userTag.tag) {
-                const tagContainer = document.createElement('span');
-                tagContainer.className = 's1p-authi-action s1p-user-tag-container';
-
-                const fullTagText = userTag.tag;
-                const tagDisplay = document.createElement('span');
-                tagDisplay.className = 's1p-user-tag-display';
-                tagDisplay.textContent = `用户标记：${fullTagText}`;
-                tagDisplay.dataset.fullTag = fullTagText;
-                tagDisplay.removeAttribute('title');
-
-                const optionsIcon = document.createElement('span');
-                optionsIcon.className = 's1p-user-tag-options';
-                optionsIcon.innerHTML = '&#8942;';
-                optionsIcon.dataset.userId = userId;
-                optionsIcon.dataset.userName = userName;
-                optionsIcon.dataset.userAvatar = userAvatar;
-                optionsIcon.addEventListener('click', (e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    createOptionsMenu(e.currentTarget);
-                });
-
-                tagContainer.appendChild(tagDisplay);
-                tagContainer.appendChild(optionsIcon);
-
-                if (availableWidth > 50) {
-                    tagContainer.style.maxWidth = `${availableWidth}px`;
-                }
-
-                wrapper.appendChild(tagContainer);
-            } else {
-                const tagLink = document.createElement('a');
-                tagLink.href = 'javascript:void(0);';
-                tagLink.textContent = '标记该用户';
-                tagLink.className = 's1p-authi-action s1p-tag-user-in-authi';
-                tagLink.addEventListener('click', (e) => {
-                    e.preventDefault();
-                    const popover = document.getElementById('s1p-tag-popover-main');
-                    if (popover && popover.show) {
-                        popover.show(e.currentTarget, userId, userName, userAvatar, 0, true);
-                    }
-                });
-                wrapper.appendChild(tagLink);
-            }
-        }
+        // --- [MODIFICATION START] ---
+        // 1. 将 “收藏该回复” 的逻辑块移动到最前面
 
         if (floor > 1 && settings.enableBookmarkReplies) {
             const bookmarkedReplies = getBookmarkedReplies();
@@ -4039,6 +3964,88 @@
             });
             wrapper.appendChild(bookmarkLink);
         }
+
+        // 2. 保持 “屏蔽该用户” 逻辑块在后面
+        if (settings.enableUserBlocking) {
+            const pipe = document.createElement('span');
+            pipe.className = 'pipe';
+            pipe.textContent = '|';
+            wrapper.appendChild(pipe);
+
+            const blockLink = document.createElement('a');
+            blockLink.href = 'javascript:void(0);';
+            blockLink.textContent = '屏蔽该用户';
+            blockLink.className = 's1p-authi-action s1p-block-user-in-authi';
+            blockLink.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const confirmText = getSettings().blockThreadsOnUserBlock
+                    ? `屏蔽用户并隐藏其主题帖？`
+                    : `确认屏蔽该用户？`;
+                createInlineConfirmMenu(e.currentTarget, confirmText, () => blockUser(userId, userName));
+            });
+            wrapper.appendChild(blockLink);
+            availableWidth -= 85;
+        }
+        
+        // 3. 保持 “用户标记” 逻辑块在最后
+        if (settings.enableUserTagging) {
+            const userTags = getUserTags();
+            const userTag = userTags[userId];
+            const pipe = document.createElement('span');
+            pipe.className = 'pipe';
+            pipe.textContent = '|';
+            wrapper.appendChild(pipe);
+            availableWidth -= 10;
+
+            if (userTag && userTag.tag) {
+                const tagContainer = document.createElement('span');
+                tagContainer.className = 's1p-authi-action s1p-user-tag-container';
+
+                const fullTagText = userTag.tag;
+                const tagDisplay = document.createElement('span');
+                tagDisplay.className = 's1p-user-tag-display';
+                tagDisplay.textContent = `用户标记：${fullTagText}`;
+                tagDisplay.dataset.fullTag = fullTagText;
+                tagDisplay.removeAttribute('title');
+
+                const optionsIcon = document.createElement('span');
+                optionsIcon.className = 's1p-user-tag-options';
+                optionsIcon.innerHTML = '&#8942;';
+                optionsIcon.dataset.userId = userId;
+                optionsIcon.dataset.userName = userName;
+                optionsIcon.dataset.userAvatar = userAvatar;
+                optionsIcon.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    createOptionsMenu(e.currentTarget);
+                });
+
+                tagContainer.appendChild(tagDisplay);
+                tagContainer.appendChild(optionsIcon);
+
+                if (availableWidth > 50) {
+                    tagContainer.style.maxWidth = `${availableWidth}px`;
+                }
+
+                wrapper.appendChild(tagContainer);
+            } else {
+                const tagLink = document.createElement('a');
+                tagLink.href = 'javascript:void(0);';
+                tagLink.textContent = '标记该用户';
+                tagLink.className = 's1p-authi-action s1p-tag-user-in-authi';
+                tagLink.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    const popover = document.getElementById('s1p-tag-popover-main');
+                    if (popover && popover.show) {
+                        popover.show(e.currentTarget, userId, userName, userAvatar, 0, true);
+                    }
+                });
+                wrapper.appendChild(tagLink);
+            }
+        }
+        
+        // --- [MODIFICATION END] ---
 
         const ordertypeLink = authiDiv.querySelector('a[href*="ordertype=1"]');
         const readmodeLink = authiDiv.querySelector('a[onclick*="readmode"]');
