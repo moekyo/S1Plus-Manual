@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      4.8.5
+// @version      4.8.6
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪、回复收藏等多种功能，全方位优化你的论坛体验。
 // @author       moekyo & Gemini
 // @match        https://stage1st.com/2b/*
@@ -17,7 +17,7 @@
     'use strict';
 
 
-    const SCRIPT_VERSION = '4.8.5';
+    const SCRIPT_VERSION = '4.8.6';
     const SCRIPT_RELEASE_DATE = '2025-08-29';
 
     // --- 样式注入 ---
@@ -537,16 +537,18 @@
             transform: translateY(0);
         }
 
-        /* --- [NEW] Authi User Tag Display --- */
+        /* --- [FIX] Authi User Tag Display --- */
         .authi {
             display: flex;
             align-items: center;
-            flex-wrap: wrap;
+            flex-wrap: nowrap; /* Prevent wrapping to a new line */
+            overflow: hidden;   /* Hide any potential overflow from the container itself */
         }
         .s1p-authi-actions-wrapper {
             display: inline-flex;
             align-items: center;
             vertical-align: middle;
+            min-width: 0; /* Allow this wrapper to shrink */
         }
         .s1p-user-tag-container {
             display: inline-flex;
@@ -554,6 +556,7 @@
             vertical-align: middle;
             border-radius: 6px;
             overflow: hidden;
+            min-width: 0; /* Allow the tag container itself to shrink */
         }
         .s1p-user-tag-display {
             background-color: var(--s1p-sub);
