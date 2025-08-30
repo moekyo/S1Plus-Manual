@@ -3862,16 +3862,21 @@
         wrapper.className = 's1p-authi-actions-wrapper';
 
         if (!isS1NuxEnabled) {
+            let originalDisplay = ''; // 用于存储原始的display值
             wrapper.addEventListener('mouseenter', () => {
                 const triangleSpan = authiDiv.querySelector('.none');
                 if (triangleSpan) {
-                    triangleSpan.style.display = 'inline';
+                    originalDisplay = triangleSpan.style.display; // 保存进入前的display值
+                    // 使用 setProperty 并添加 !important 来确保最高优先级
+                    triangleSpan.style.setProperty('display', 'inline', 'important');
                 }
             });
+
             wrapper.addEventListener('mouseleave', () => {
                 const triangleSpan = authiDiv.querySelector('.none');
                 if (triangleSpan) {
-                    triangleSpan.style.removeProperty('display');
+                    // 恢复进入前的值，而不是简单地移除
+                    triangleSpan.style.display = originalDisplay;
                 }
             });
         }
