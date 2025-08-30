@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      4.8.7
+// @version      4.9.0
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪、回复收藏等多种功能，全方位优化你的论坛体验。
 // @author       moekyo & Gemini
 // @match        https://stage1st.com/2b/*
@@ -17,10 +17,9 @@
     'use strict';
 
 
-    const SCRIPT_VERSION = '4.8.7';
+    const SCRIPT_VERSION = '4.9.0';
     const SCRIPT_RELEASE_DATE = '2025-08-30';
 
-    // --- 样式注入 ---
     GM_addStyle(`
        /* --- 通用颜色 --- */
         :root {
@@ -174,12 +173,6 @@
 
         /* --- 核心修复与通用布局 --- */
         #p_pop { display: none !important; }
-        .pi > .pti { position: relative; z-index: 1; }
-        .pi > #fj,
-        .pi > strong {
-            position: relative;
-            z-index: 2;
-        }
         #threadlisttableid td.icn {
             padding-left: 2px !important;
         }
@@ -511,32 +504,61 @@
             transform: translateY(0);
         }
 
-        /* --- [ULTIMATE FIX] 最终版用户标记栏样式 --- */
+        /* --- [ULTIMATE FIX V2.1] Flexbox Layout Fix --- */
+        .pi {
+            display: flex !important;
+            align-items: center;
+            gap: 8px;
+        }
+        .pi > .pti {
+            flex-grow: 1;
+            min-width: 0;
+            position: static !important;
+            z-index: auto !important;
+            order: 1; /* [FIX] Set as the first item in the visual order */
+        }
+        .pi > strong {
+            flex-shrink: 0; /* Prevent "楼主" or floor number from being squished */
+            order: 2; /* [FIX] Set as the second item in the visual order */
+        }
+        .pi > #fj {
+            margin-left: auto;
+            order: 3;
+            flex-shrink: 0;
+            position: static !important;
+            z-index: auto !important;
+        }
         .authi {
-            white-space: nowrap !important; /* 关键：强制 authi 容器不换行，防止被长内容挤下去 */
-            display: block !important; /* 关键：还原为块级，避免flex冲突 */
+            display: flex !important;
+            align-items: center;
+            flex-wrap: nowrap;
+            overflow: hidden;
+            white-space: nowrap !important;
         }
         .s1p-authi-actions-wrapper {
-            display: inline-block;
-            vertical-align: middle; /* 与原生元素对齐 */
+            display: inline-flex;
+            align-items: center;
+            min-width: 0;
+            vertical-align: middle;
         }
         .s1p-user-tag-container {
             display: inline-flex;
             align-items: center;
-            border-radius: 6px;
-            overflow: hidden;
+            flex-shrink: 1;
+            min-width: 30px;
             vertical-align: middle;
-            max-width: 80px; /* 关键：一个足够小的初始安全宽度，防止长标记撑破布局 */
-            transition: max-width 0.2s ease-in-out;
+            overflow: hidden;
+            border-radius: 6px;
         }
         .s1p-user-tag-display {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            display: block;
             background-color: var(--s1p-sub);
             color: var(--s1p-t);
             padding: 2px 8px;
             font-size: 12px;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
             cursor: default;
         }
         .s1p-user-tag-options {
@@ -947,7 +969,7 @@
             color: var(--s1p-sub-h-t);
             border-color: var(--s1p-sub-h);
         }
-    `);
+`);
 
     // --- S1 NUX 兼容性检测 ---
     let isS1NuxEnabled = false;
@@ -956,7 +978,10 @@
         if (archiverLink) {
             const style = window.getComputedStyle(archiverLink, '::before');
             if (style && style.content.includes('NUXISENABLED')) {
+                console.log('S1 Plus: S1 NUX is enabled');
                 isS1NuxEnabled = true;
+            } else {
+                console.log('S1 Plus: S1 NUX is not enabled');
             }
         }
         // For debugging, you can uncomment the next line
@@ -3805,47 +3830,7 @@
         }, 0);
     };
 
-    // [ULTIMATE FIX] 引入布局监视器 (MutationObserver) 来解决脚本冲突
-    const applyTagWidthCalculation = (authiDiv) => {
-        const wrapper = authiDiv.querySelector('.s1p-authi-actions-wrapper');
-        if (!wrapper) return;
-        const tagContainer = wrapper.querySelector('.s1p-user-tag-container');
-        if (!tagContainer) return;
-
-        const piDiv = authiDiv.closest('.pi');
-        if (!piDiv) return;
-
-        const rightControls = piDiv.querySelector('.y');
-        const piWidth = piDiv.clientWidth;
-        const rightControlsWidth = rightControls ? rightControls.offsetWidth : 0;
-
-        let precedingWidth = 0;
-        let currentElement = wrapper.previousSibling;
-        while (currentElement) {
-            if (currentElement.nodeType === 1 && currentElement.offsetWidth > 0) {
-                precedingWidth += currentElement.offsetWidth;
-            } else if (currentElement.nodeType === 3 && currentElement.textContent.trim() === '|') {
-                precedingWidth += 15;
-            }
-            currentElement = currentElement.previousSibling;
-        }
-
-        let wrapperExtraWidth = 0;
-        wrapper.childNodes.forEach(node => {
-            if (node !== tagContainer && node.nodeType === 1) {
-                 wrapperExtraWidth += node.offsetWidth;
-            }
-        });
-
-        const availableWidth = piWidth - rightControlsWidth - precedingWidth - wrapperExtraWidth - 25;
-        const finalWidth = Math.max(80, availableWidth);
-
-        const newMaxWidth = `${finalWidth}px`;
-        if (tagContainer.style.getPropertyValue('max-width') !== newMaxWidth) {
-            tagContainer.style.setProperty('max-width', newMaxWidth, 'important');
-        }
-    };
-
+    // [REMOVED] The applyTagWidthCalculation function is no longer needed with the new Flexbox layout.
 
     const addActionsToSinglePost = (viewAuthorLink) => {
         const settings = getSettings();
@@ -4012,23 +3997,8 @@
 
         insertionPoint.after(wrapper);
 
-        // --- 布局监视器 ---
-        // 初始计算
-        applyTagWidthCalculation(authiDiv);
-
-        // 设置监视器，防止S1 NUX等脚本覆盖样式
-        const piDiv = authiDiv.closest('.pi');
-        if (piDiv) {
-            const observer = new MutationObserver(() => {
-                applyTagWidthCalculation(authiDiv);
-            });
-            observer.observe(authiDiv, {
-                attributes: true,
-                childList: true,
-                subtree: true,
-                attributeFilter: ['style', 'class']
-            });
-        }
+        // [REMOVED] The MutationObserver and JS-based width calculation are no longer needed.
+        // The new Flexbox CSS handles the layout automatically and robustly.
 
         if (ordertypeLink && readmodeLink) {
             const nativeElements = [
