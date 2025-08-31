@@ -516,6 +516,7 @@
             position: static !important;
             z-index: auto !important;
             order: 1; /* [FIX] Set as the first item in the visual order */
+            overflow: hidden; /* <-- [最终修复] 阻止容器越界重叠 */
         }
         .pi > strong {
             flex-shrink: 0; /* Prevent "楼主" or floor number from being squished */
@@ -535,6 +536,45 @@
             overflow: hidden;
             white-space: nowrap !important;
         }
+
+        /* --- [FINAL FIX v2] Corrected CSS Selector Specificity --- */
+
+        /* 1. 最外层容器: flex布局，这是基础 */
+        .s1p-authi-container {
+            display: flex;
+            align-items: center;
+            min-width: 0;
+        }
+
+        /* 2. 原生按钮容器: 绝对不允许被压缩 */
+        .s1p-authi-container > .authi {
+            flex-shrink: 0;
+            white-space: nowrap;
+        }
+
+        /* 3. 脚本按钮总容器: 作为被压缩的主要对象，内部强制不换行 */
+        .s1p-authi-container > .s1p-authi-actions-wrapper {
+            display: flex;
+            align-items: center;
+            flex-shrink: 1;
+            min-width: 0;
+            flex-wrap: nowrap;
+        }
+
+        /* 4. [已修正冲突] 脚本容器 *内部* 元素的精确规则: */
+
+        /* a) 用户标记容器(.s1p-user-tag-container): 这是唯一允许被压缩的元素 */
+        .s1p-authi-actions-wrapper > .s1p-user-tag-container {
+            flex-shrink: 1;
+            min-width: 30px;
+        }
+
+        /* b) 其他所有按钮(<a>)和分隔符(<span>): 绝对不允许被压缩 */
+        .s1p-authi-actions-wrapper > a.s1p-authi-action,
+        .s1p-authi-actions-wrapper > span.pipe {
+            flex-shrink: 0;
+        }
+
         .s1p-authi-actions-wrapper {
             display: inline-flex;
             align-items: center;
@@ -3801,20 +3841,13 @@
                 }
                 closeMenu();
             } else if (action === 'delete') {
-                menu.innerHTML = `
-                    <div class="s1p-direct-confirm">
-                        <span>确认删除？</span>
-                        <span class="s1p-confirm-separator"></span>
-                        <button class="s1p-confirm-action-btn s1p-cancel" title="取消"></button>
-                        <button class="s1p-confirm-action-btn s1p-confirm" title="确认"></button>
-                    </div>
-                `;
-                menu.querySelector('.s1p-confirm').addEventListener('click', (e) => {
-                    e.stopPropagation();
+                // [OPTIMIZED] Use the original anchor (the three-dot button) for positioning.
+                // This provides a more stable and intuitive user experience, as the context doesn't shift.
+                createInlineConfirmMenu(anchorElement, '确认删除？', () => {
                     const tags = getUserTags();
                     delete tags[userId];
                     saveUserTags(tags);
-                    // [OPTIMIZED] Call targeted refresh
+                    // Call targeted refresh for user's posts
                     document.querySelectorAll(`.authi a[href*="space-uid-${userId}"]`).forEach(userLink => {
                         const postTable = userLink.closest('table[id^="pid"]');
                         if (postTable) {
@@ -3822,84 +3855,62 @@
                             refreshSinglePostActions(postId);
                         }
                     });
-                    closeMenu();
                 });
-                menu.querySelector('.s1p-cancel').addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    closeMenu();
-                });
+                
+                // Close the old "Edit/Delete" menu
+                closeMenu();
             }
         });
 
         setTimeout(() => {
             document.addEventListener('click', closeMenu, { once: true });
         }, 0);
-    };
-
-    // =================================================================================
-    // ========== S1P-FIX START: REPLACED FUNCTIONS FOR "只看该用户" MODE ==========
-    // =================================================================================
+    };;
 
     /**
-     * [FIXED & RESTORED] Adds action buttons and hover effects to a single post.
-     * This version is more robust, deriving user info directly from the post table.
-     * The hover effect for the dropdown triangle has been restored.
-     * @param {HTMLTableElement} postTable - The main table element for a single post (e.g., <table id="pid12345">).
+     * [FINAL-V5] Implements the user-suggested parent container architecture.
+     * This creates a new container to house both the original .authi and the script's
+     * buttons, solving all hover, wrapping, and duplication issues definitively.
+     * @param {HTMLTableElement} postTable - The main table element for a single post.
      */
     const addActionsToSinglePost = (postTable) => {
         const settings = getSettings();
-        const authiDiv = postTable.querySelector('.plc .authi'); // Target the authi in the main post content cell
-
-        // If there's no authi div or buttons are already there, stop.
-        if (!authiDiv || authiDiv.querySelector('.s1p-authi-actions-wrapper')) {
+        const authiDiv = postTable.querySelector('.plc .authi');
+        if (!authiDiv) {
             return;
         }
 
-        // --- Find user info from a reliable source (the left-side author panel) ---
+        // [DEFINITIVE GUARD CLAUSE]
+        // If the .authi div has already been wrapped by our container, we're done.
+        if (authiDiv.parentElement.classList.contains('s1p-authi-container')) {
+            return; // This robustly prevents any duplication.
+        }
+
+        // --- Get user and post info ---
         const plsCell = postTable.querySelector('td.pls');
         if (!plsCell) return;
-
-        // Use a simpler, more robust selector to find the profile link
         const userProfileLink = plsCell.querySelector('a[href*="space-uid-"]');
         if (!userProfileLink) return;
-
         const uidMatch = userProfileLink.href.match(/space-uid-(\d+)\.html/);
         const userId = uidMatch ? uidMatch[1] : null;
         if (!userId) return;
 
-        // --- Get other necessary post information ---
         const postId = postTable.id.replace('pid', '');
         const floorElement = postTable.querySelector(`#postnum${postId} em`);
         const floor = floorElement ? parseInt(floorElement.textContent, 10) : 0;
         const userName = userProfileLink.textContent.trim();
         const userAvatar = plsCell.querySelector('.avatar img')?.src;
 
-        // --- Create the wrapper for our buttons ---
-        const wrapper = document.createElement('span');
-        wrapper.className = 's1p-authi-actions-wrapper';
+        // --- 1. Create the new parent container as you suggested ---
+        const newContainer = document.createElement('div');
+        newContainer.className = 's1p-authi-container';
 
-        // --- [RESTORED] Add hover effect for the native dropdown menu triangle ---
-        if (!isS1NuxEnabled) {
-            let originalDisplay = ''; // 用于存储原始的display值
-            wrapper.addEventListener('mouseenter', () => {
-                const triangleSpan = authiDiv.querySelector('.none');
-                if (triangleSpan) {
-                    originalDisplay = triangleSpan.style.display; // 保存进入前的display值
-                    // 使用 setProperty 并添加 !important 来确保最高优先级
-                    triangleSpan.style.setProperty('display', 'inline', 'important');
-                }
-            });
+        // --- 2. Create the wrapper for our script's buttons ---
+        const scriptActionsWrapper = document.createElement('span');
+        scriptActionsWrapper.className = 's1p-authi-actions-wrapper';
 
-            wrapper.addEventListener('mouseleave', () => {
-                const triangleSpan = authiDiv.querySelector('.none');
-                if (triangleSpan) {
-                    // 恢复进入前的值，而不是简单地移除
-                    triangleSpan.style.display = originalDisplay;
-                }
-            });
-        }
-
-        // --- Build and add buttons based on settings ---
+        // --- 3. Build and add S1 Plus buttons to our wrapper ---
+        // (The button creation logic itself is unchanged)
 
         // Button: Bookmark Reply
         if (floor > 1 && settings.enableBookmarkReplies) {
@@ -3908,7 +3919,7 @@
             const pipe = document.createElement('span');
             pipe.className = 'pipe';
             pipe.textContent = '|';
-            wrapper.appendChild(pipe);
+            scriptActionsWrapper.appendChild(pipe);
             const bookmarkLink = document.createElement('a');
             bookmarkLink.href = 'javascript:void(0);';
             bookmarkLink.className = 's1p-authi-action s1p-bookmark-reply';
@@ -3950,7 +3961,7 @@
                     showMessage('已收藏该回复。', true);
                 }
             });
-            wrapper.appendChild(bookmarkLink);
+            scriptActionsWrapper.appendChild(bookmarkLink);
         }
 
         // Button: Block User
@@ -3958,7 +3969,7 @@
             const pipe = document.createElement('span');
             pipe.className = 'pipe';
             pipe.textContent = '|';
-            wrapper.appendChild(pipe);
+            scriptActionsWrapper.appendChild(pipe);
             const blockLink = document.createElement('a');
             blockLink.href = 'javascript:void(0);';
             blockLink.textContent = '屏蔽该用户';
@@ -3969,7 +3980,7 @@
                 const confirmText = getSettings().blockThreadsOnUserBlock ? `屏蔽用户并隐藏其主题帖？` : `确认屏蔽该用户？`;
                 createInlineConfirmMenu(e.currentTarget, confirmText, () => blockUser(userId, userName));
             });
-            wrapper.appendChild(blockLink);
+            scriptActionsWrapper.appendChild(blockLink);
         }
 
         // Button: Tag User
@@ -3979,7 +3990,7 @@
             const pipe = document.createElement('span');
             pipe.className = 'pipe';
             pipe.textContent = '|';
-            wrapper.appendChild(pipe);
+            scriptActionsWrapper.appendChild(pipe);
             if (userTag && userTag.tag) {
                 const tagContainer = document.createElement('span');
                 tagContainer.className = 's1p-authi-action s1p-user-tag-container';
@@ -4002,7 +4013,7 @@
                 });
                 tagContainer.appendChild(tagDisplay);
                 tagContainer.appendChild(optionsIcon);
-                wrapper.appendChild(tagContainer);
+                scriptActionsWrapper.appendChild(tagContainer);
             } else {
                 const tagLink = document.createElement('a');
                 tagLink.href = 'javascript:void(0);';
@@ -4015,13 +4026,20 @@
                         popover.show(e.currentTarget, userId, userName, userAvatar, 0, true);
                     }
                 });
-                wrapper.appendChild(tagLink);
+                scriptActionsWrapper.appendChild(tagLink);
             }
         }
-
-        // --- Append the wrapper with all our new buttons to the authi div ---
-        if (wrapper.hasChildNodes()) {
-             authiDiv.appendChild(wrapper);
+        
+        // --- 4. Perform the DOM restructuring ---
+        if (scriptActionsWrapper.hasChildNodes()) {
+            // Insert the new container right before the original .authi div
+            authiDiv.parentElement.insertBefore(newContainer, authiDiv);
+            
+            // Move the original .authi div inside our new container
+            newContainer.appendChild(authiDiv);
+            
+            // Append the script's buttons into the new container, after .authi
+            newContainer.appendChild(scriptActionsWrapper);
         }
     };
 
@@ -4038,11 +4056,6 @@
             addActionsToSinglePost(postTable);
         });
     };
-
-    // ===============================================================================
-    // ========== S1P-FIX END: END OF REPLACED FUNCTIONS =============================
-    // ===============================================================================
-
 
     // 自动签到 (适配 study_daily_attendance 插件)
     function autoSign() {

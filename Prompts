@@ -317,17 +317,13 @@
 
 
 在帖子详情页面的主题帖工具栏中，目前默认状态下有“只看该用户”，“只看大图”和脚本添加的“屏蔽该用户”
-和“标记该用户”。并且在“只看大图”的右边会跟有一个小三角暗示能展开更多选项。按照原有的交互，把鼠标
-移动到“只看该用户”和“只看大图”两个按钮的范围，就会在“只看大图”的右边展示“倒序浏览”和“阅读模式”两
-个按钮，同时前面提到的小三角会消失。当鼠标移出“只看该用户”和“只看大图”两个按钮的范围后，“倒序浏览”
-和“阅读模式”两个按钮会消失，同时小三角会再次出现。这是原来（不启用脚本）的效果。
+和“标记该用户”。并且在“只看大图”的右边会跟有一个小三角暗示能展开更多选项。
+在不开启脚本的情况下，按照原有的交互，把鼠标移动到“只看该用户”和“只看大图”两个按钮的范围，就会在“只看大图”的右边展示“倒序浏览”和“阅读模式”两个按钮，同时前面提到的小三角会消失。当鼠标移出“只看该用户”和“只看大图”两个按钮的范围后，“倒序浏览”和“阅读模式”两个按钮会消失，同时小三角会再次出现。
 
-但是在启用脚本之后，当前行为是：把鼠标移动到“只看该用户”和“只看大图”两个按钮的范围，就会在“只看大图”
-的右边展示“倒序浏览”和“阅读模式”两个按钮，同时前面提到的小三角会消失，而在后面则跟有脚本添加的
-“屏蔽该用户”和“标记该用户”。当鼠标移出“只看该用户”和“只看大图”两个按钮的范围后，“倒序浏览”
-和“阅读模式”两个按钮会消失，同时小三角会再次出现。到目前为止是符合需求，但是如果把鼠标移动到“屏蔽该用户”和“标记该用户”
-的范围，此时跟在“只看大图”的右边的一个小三角也会消失。这时是不对的，因为“屏蔽该用户”和“标记该用户”这两个按钮并不会触发
-“倒序浏览”和“阅读模式”两个按钮的展示。在这种情况下，小三角应该保持可见状态。帮我分析出现这个现象的原因，如果需要什么信息可以向我人提问，例如对应的 HTML 结构等。 
+但是在启用脚本之后，当前行为是：把鼠标移动到“只看该用户”和“只看大图”两个按钮的范围，就会在“只看大图”的右边展示“倒序浏览”和“阅读模式”两个按钮，同时前面提到的小三角会消失，而在后面则跟有脚本添加的“屏蔽该用户”和“标记该用户”。当鼠标移出“只看该用户”和“只看大图”两个按钮的范围后，“倒序浏览”和“阅读模式”两个按钮会消失，同时小三角会再次出现。
+到目前为止是符合需求，但是如果把鼠标移动到“屏蔽该用户”和“标记该用户”的范围，此时跟在“只看大图”的右边的一个小三角也会消失。同时触发“倒序浏览”和“阅读模式”两个按钮的展示，这时是不对的，因为“屏蔽该用户”和“标记该用户”这两个按钮并不会触发“倒序浏览”和“阅读模式”两个按钮的展示。在这种情况下，小三角应该保持可见状态。
+总结起来就是触发“倒序浏览”和“阅读模式”两个按钮的展示的范围，只能是“只看该用户”和“只看大图”两个按钮的范围（同时小三角消失），不能包含“屏蔽该用户”和“标记该用户”等脚本添加的自定义按钮。
+目前脚本应该是使用 addActionsToSinglePost 来添加这些自定义按钮的。
 
 对应小三角的的结构
 <span class="none" title="回帖奖励"> == $0
@@ -337,6 +333,40 @@
 展开之后就变成了
 
 <span class="none" title="回帖奖励"></span> == $0
+结合以上信息，帮我分析出现这个现象的原因，如果需要什么信息可以向我人提问，例如对应的 HTML 结构等。
+
+
+还是这样，把鼠标移动到“屏蔽该用户”和“标记该用户”的范围，此时跟在“只看大图”的右边的一个小三角也会消失。同时触发“倒序浏览”和“阅读模式”两个按钮的展示，以下是对应的 HTML 结构：
+<div class="pi">
+<div id="fj" class="y">
+<label class="z">电梯直达</label>
+<input type="text" class="px p_fre z" size="2" onkeyup="$('fj_btn').href='forum.php?mod=redirect&amp;ptid=2260639&amp;authorid=0&amp;postno='+this.value" onkeydown="if(event.keyCode==13) {window.location=$('fj_btn').href;return false;}" title="跳转到指定楼层" data-input-translate-listener="true">
+<a href="javascript:;" id="fj_btn" class="z fico-down fc-n" title="跳转到指定楼层"></a>
+</div>
+<strong>
+<a href="thread-2260639-1-1.html" id="postnum68346022" onclick="setCopy(this.href, '帖子地址复制成功');return false;">
+楼主</a>
+</strong>
+<div class="pti">
+<div class="pdbt">
+</div>
+<div class="authi"><span class="s1p-native-actions-wrapper" style="display: inline-flex; align-items: center;">
+<img class="authicn vm" id="authicon68346022" src="https://static.stage1st.com/image/common/online_member.gif">
+<em id="authorposton68346022">发表于 2025-8-31 08:25</em>
+<span class="pipe">|</span>
+<a href="forum.php?mod=viewthread&amp;tid=2260639&amp;page=1&amp;authorid=538846" rel="nofollow">只看该用户</a>
+<span class="pipe">|</span><a href="forum.php?mod=viewthread&amp;tid=2260639&amp;from=album">只看大图</a>
+<span class="none" title="回帖奖励" style=""></span>
+<span class="pipe show">|</span><a href="forum.php?mod=viewthread&amp;tid=2260639&amp;extra=page%3D1&amp;ordertype=1" class="show">倒序浏览</a>
+<span class="pipe show">|</span><a href="javascript:;" onclick="readmode($('thread_subject').innerHTML, 68346022);" class="show">阅读模式</a>
+</span><span class="s1p-authi-actions-wrapper"><span class="pipe">|</span><a href="javascript:void(0);" class="s1p-authi-action s1p-block-user-in-authi">屏蔽该用户</a><span class="pipe">|</span><a href="javascript:void(0);" class="s1p-authi-action s1p-tag-user-in-authi">标记该用户</a></span></div>
+</div>
+</div>
+
+
+现在变成这样按钮被挤得换行了，而且触发后，二级显示的“倒序浏览”和“阅读模式”也看不到了，我有个思路，就是把 .authi 提取出来，放在一个新的父容器中，然后脚本添加的也放在这个新的父容器中，这样 .authi 和我们添加的按钮就不会互相影响了。但是要确保放所有元素放在新的父容器之后，原来的样式和行为都能正常工作。
+
+当用户标记过长时，会这把添加自定义按钮挤成换行，同时只看大图还不见了，鼠标移动只看该用户，就把只看大图显示出来，但是“倒序浏览”和“阅读模式”还是看不到，之前修复标记过长时使用了 flexbox 布局来实现动态显示用户标记，现在这样的现象是因为压缩优先级之类导致的吗
 
 之前我记得是使用以下逻辑修复，但是现在不生效了
 
@@ -379,8 +409,6 @@
 感觉是整个列表的背景，所以我推测，这个所谓矩形屏蔽按钮出现时，以新窗口打开按钮的右边缘为基准，带有高亮色背景的容器被切开，之后带动右边的部分即帖子标题等向右移动，而中间便看到原来的默认背景色形成了我们看到的所谓“矩形”。
 而帖子最左边的新窗口打开按钮则保持原地不动，导致它被屏蔽按钮遮挡了。
 而最重要的一点是，如果开启了 S1 NUX 的话，是不会出现这个矩形的。只有在关闭 S1 NUX 的情况下，才会出现这个矩形。帮我分析这个 bug 原因，如果需要我提供对应的 HTML 结构的，可以向我提出。
-
-
 
 
 并且当屏蔽按钮出现后，在屏蔽按钮底下会出现二次确认选项相关的菜单。
