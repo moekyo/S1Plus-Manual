@@ -1009,6 +1009,29 @@
             color: var(--s1p-sub-h-t);
             border-color: var(--s1p-sub-h);
         }
+        /* --- [更新] 回复收藏内容切换 V3 --- */
+        .s1p-bookmark-preview, .s1p-bookmark-full {
+            /* 保留换行和空格，确保纯文本格式正确显示 */
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .s1p-bookmark-full {
+            display: none;
+        }
+        .s1p-bookmark-toggle {
+            /* 保持为行内元素，自然跟在文字后方 */
+            display: inline;
+            margin-left: 4px; /* 与文字稍微隔开 */
+            font-weight: 500;
+            color: var(--s1p-t);
+            cursor: pointer;
+            text-decoration: none;
+            font-size: 13px;
+        }
+        .s1p-bookmark-toggle:hover {
+            color: var(--s1p-sec);
+            text-decoration: underline;
+        }
 `);
 
     // --- S1 NUX 兼容性检测 ---
@@ -2396,7 +2419,7 @@
             }
         };
 
-        // [MODIFIED] 优化后的回复收藏列表渲染函数
+        // [REFACTORED] 回复收藏列表渲染函数 V5 (Stable) - 包含问题修复
         const renderBookmarksTab = () => {
             const settings = getSettings();
             const isEnabled = settings.enableBookmarkReplies;
@@ -2412,35 +2435,46 @@
             const bookmarkItems = Object.values(bookmarkedReplies).sort((a, b) => b.timestamp - a.timestamp);
 
             const hasBookmarks = bookmarkItems.length > 0;
-            const searchStyle = hasBookmarks ? '' : 'display: none;'; // 当没有收藏时，隐藏搜索框
-            const listStyle = hasBookmarks ? '' : 'display: none;';   // 当没有收藏时，隐藏列表
-            const emptyStyle = hasBookmarks ? 'display: none;' : '';  // 当没有收藏时，显示空状态提示
+            const searchStyle = hasBookmarks ? '' : 'display: none;';
+            const listStyle = hasBookmarks ? '' : 'display: none;';
+            const emptyStyle = hasBookmarks ? 'display: none;' : '';
 
             const contentHTML = `
-                  <div class="s1p-settings-group" style="margin-bottom: 16px; ${searchStyle}">
+                <div class="s1p-settings-group" style="margin-bottom: 16px; ${searchStyle}">
                     <div class="s1p-search-input-wrapper">
-                         <input type="text" id="s1p-bookmark-search-input" class="s1p-input" placeholder="搜索内容、作者、标题..." autocomplete="off">
-                         <svg class="s1p-search-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" /></svg>
-                         <button id="s1p-bookmark-search-clear-btn" class="s1p-search-clear-btn hidden" title="清空搜索" aria-label="清空搜索">
+                        <input type="text" id="s1p-bookmark-search-input" class="s1p-input" placeholder="搜索内容、作者、标题..." autocomplete="off">
+                        <svg class="s1p-search-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" /></svg>
+                        <button id="s1p-bookmark-search-clear-btn" class="s1p-search-clear-btn hidden" title="清空搜索" aria-label="清空搜索">
                             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" /></svg>
-                         </button>
+                        </button>
                     </div>
                 </div>
                 <div class="s1p-list" id="s1p-bookmarks-list" style="${listStyle}">
-                    ${bookmarkItems.map(item => `
-                    <div class="s1p-item" data-post-id="${item.postId}" style="position: relative; align-items: flex-start;">
-                         <button class="s1p-btn s1p-danger" data-action="remove-bookmark" data-post-id="${item.postId}" style="position: absolute; top: 12px; right: 12px; padding: 4px 8px; font-size: 12px;">取消收藏</button>
-                        <a href="forum.php?mod=redirect&goto=findpost&ptid=${item.threadId}&pid=${item.postId}" target="_blank" style="text-decoration: none; color: inherit; display: block; width: 100%;">
-                            <div class="s1p-item-info" style="padding-right: 100px;">
-                                <div class="s1p-item-content">${item.postContent}</div>
-                                <div class="s1p-item-meta" style="margin-top: 0; line-height: 1.6;">
+                    ${bookmarkItems.map(item => {
+                        const fullText = item.postContent || '';
+                        const isLong = fullText.length > 150;
+
+                        let contentBlock;
+                        if (isLong) {
+                            const previewText = fullText.substring(0, 150);
+                            contentBlock = `<div class="s1p-bookmark-preview"><span>${previewText}... </span><a href="javascript:void(0);" class="s1p-bookmark-toggle" data-action="toggle-bookmark-content">查看完整回复</a></div><div class="s1p-bookmark-full" style="display: none;"><span>${fullText} </span><a href="javascript:void(0);" class="s1p-bookmark-toggle" data-action="toggle-bookmark-content">收起</a></div>`;
+                        } else {
+                            contentBlock = `<div class="s1p-bookmark-preview"><span>${fullText}</span></div>`;
+                        }
+
+                        return `
+                        <div class="s1p-item" data-post-id="${item.postId}" style="position: relative;">
+                            <button class="s1p-btn s1p-danger" data-action="remove-bookmark" data-post-id="${item.postId}" style="position: absolute; top: 12px; right: 12px; padding: 4px 8px; font-size: 12px;">取消收藏</button>
+                            <div class="s1p-item-info" style="width: 100%; padding-right: 100px;">
+                                <div class="s1p-item-content">${contentBlock}</div>
+                                <div class="s1p-item-meta" style="margin-top: 10px;">
                                     <strong>${item.authorName}</strong> · 收藏于: ${formatDate(item.timestamp)}
                                     <br>
-                                    来自帖子: <span style="font-weight: 500;">${item.threadTitle}</span>
+                                    来自帖子: <a href="forum.php?mod=redirect&goto=findpost&ptid=${item.threadId}&pid=${item.postId}" target="_blank" style="font-weight: 500;">${item.threadTitle}</a>
                                 </div>
                             </div>
-                        </a>
-                    </div>`).join('')}
+                        </div>`;
+                    }).join('')}
                 </div>
                 <div id="s1p-bookmarks-empty-message" class="s1p-empty" style="${emptyStyle}">暂无收藏的回复</div>
                 <div id="s1p-bookmarks-no-results" class="s1p-empty" style="display: none;">没有找到匹配的收藏</div>
@@ -2454,43 +2488,41 @@
             `;
 
             tabs['bookmarks'].addEventListener('click', e => {
-                const target = e.target.closest('[data-action="remove-bookmark"]');
-                if (target) {
+                const removeBtn = e.target.closest('[data-action="remove-bookmark"]');
+                const toggleLink = e.target.closest('[data-action="toggle-bookmark-content"]');
+
+                if (removeBtn) {
                     e.preventDefault();
                     e.stopPropagation();
-                    const postIdToRemove = target.dataset.postId;
+                    const postIdToRemove = removeBtn.dataset.postId;
                     if (postIdToRemove) {
                         const bookmarks = getBookmarkedReplies();
                         delete bookmarks[postIdToRemove];
                         saveBookmarkedReplies(bookmarks);
-
-                        const itemToRemove = target.closest('.s1p-item');
-                        if (itemToRemove) {
-                            itemToRemove.remove();
-                        }
-
-                        const list = tabs['bookmarks'].querySelector('#s1p-bookmarks-list');
-                        const emptyMessage = tabs['bookmarks'].querySelector('#s1p-bookmarks-empty-message');
-
-                        // 检查列表是否变空，并更新显示
-                        if (list && emptyMessage && list.children.length === 0) {
-                            list.style.display = 'none';
-                            emptyMessage.style.display = 'block';
-                            const searchInputWrapper = tabs['bookmarks'].querySelector('.s1p-search-input-wrapper');
-                            if (searchInputWrapper) {
-                                const searchContainer = searchInputWrapper.closest('.s1p-settings-group');
-                                if (searchContainer) {
-                                    searchContainer.style.display = 'none';
-                                }
-                            }
-                        }
-
+                        renderBookmarksTab();
                         refreshSinglePostActions(postIdToRemove);
+                    }
+                } else if (toggleLink) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const contentItem = toggleLink.closest('.s1p-item-content');
+                    if (!contentItem) return;
+                    const preview = contentItem.querySelector('.s1p-bookmark-preview');
+                    const full = contentItem.querySelector('.s1p-bookmark-full');
+                    if (!preview || !full) return;
+                    
+                    const isCurrentlyCollapsed = window.getComputedStyle(full).display === 'none';
+
+                    if (isCurrentlyCollapsed) {
+                        full.style.display = 'block';
+                        preview.style.display = 'none';
+                    } else {
+                        full.style.display = 'none';
+                        preview.style.display = 'block';
                     }
                 }
             });
 
-            // Setup the new search component
             setupBookmarkSearchComponent(tabs['bookmarks']);
         };
 
@@ -3958,21 +3990,25 @@
                     const params = new URLSearchParams(window.location.search);
                     const threadId = threadIdMatch ? threadIdMatch[1] : (params.get('tid') || params.get('ptid'));
                     const contentEl = postTable.querySelector('td.t_f');
+                    
+                    // [MODIFIED] 移除 pstatus 和 quote，并优化换行
                     let postContent = '无法获取内容';
-                    if(contentEl) {
+                    if (contentEl) {
                         const contentClone = contentEl.cloneNode(true);
-                        contentClone.querySelectorAll('div.quote').forEach(q => q.remove());
-                        postContent = contentClone.innerText.trim().substring(0, 150);
-                        if (contentClone.innerText.trim().length > 150) {
-                            postContent += '...';
-                        }
+                        // 根据您的要求，移除 .pstatus, .quote 和脚本自己的按钮
+                        contentClone.querySelectorAll('.pstatus, .quote, .s1p-image-toggle-all-container').forEach(el => el.remove());
+                        let rawText = contentClone.innerText.trim();
+                        postContent = rawText.replace(/\n{3,}/g, '\n\n');
                     }
+
                     if (!threadId) {
                         showMessage('无法获取帖子ID，收藏失败。', false);
                         return;
                     }
                     currentBookmarks[postId] = {
-                        postId, threadId, threadTitle, floor, authorId: userId, authorName: userName, postContent, timestamp: Date.now()
+                        postId, threadId, threadTitle, floor, authorId: userId, authorName: userName, 
+                        postContent: postContent,
+                        timestamp: Date.now()
                     };
                     saveBookmarkedReplies(currentBookmarks);
                     bookmarkLink.textContent = '该回复已收藏';
