@@ -1891,6 +1891,11 @@
         }
     }
 
+    // --- [NEW] Bookmark search component
+    /**
+     * Sets up the interactive search functionality for the bookmarks tab.
+     * @param {HTMLElement} bookmarksTabElement The container element for the bookmarks tab.
+     */
     // [REPLACED] Bookmark search component with safe highlighting
     /**
      * Sets up the interactive search functionality for the bookmarks tab.
@@ -1974,15 +1979,8 @@
     // --- UI 创建 ---
     const formatDate = (timestamp) => new Date(timestamp).toLocaleString('zh-CN');
 
-    let currentToast = null; // 用一个全局变量来管理当前的提示框实例
-
-    /**
-     * 显示消息。如果设置面板打开，则在面板底部显示，否则在屏幕底部显示。
-     * @param {string} message - 要显示的消息内容。
-     * @param {boolean} isSuccess - 消息是否为成功状态（决定颜色和动画）。
-     */
+    let currentToast = null;
     const showMessage = (message, isSuccess) => {
-        // 如果上一个提示框还存在，立即移除，防止重叠
         if (currentToast) {
             currentToast.remove();
         }
@@ -2112,6 +2110,7 @@
     const removeProgressJumpButtons = () => document.querySelectorAll('.s1p-progress-container').forEach(el => el.remove());
     const removeBlockButtonsFromThreads = () => document.querySelectorAll('.s1p-options-cell').forEach(el => el.remove());
 
+    // [BUG FIX] 新增辅助函数，用于根据用户ID刷新页面上该用户的所有帖子UI
     const refreshUserPostsOnPage = (userId) => {
         if (!userId) return;
         document.querySelectorAll(`.authi a[href*="space-uid-${userId}"]`).forEach(userLink => {
@@ -2356,47 +2355,47 @@
                 <div class="s1p-settings-group">
                     <div class="s1p-settings-group-title">已标记用户列表</div>
                     <div id="s1p-tags-list-container">
-                        ${tagItems.length === 0
-                        ? `<div class="s1p-empty">暂无用户标记</div>`
-                        : `<div class="s1p-list">${tagItems.map(([id, data]) => {
-                            if (id === editingUserId) {
-                                // --- 编辑模式 ---
-                                return `
-                                <div class="s1p-item" data-user-id="${id}">
-                                    <div class="s1p-item-info">
-                                        <div class="s1p-item-title">${data.name}</div>
-                                        <div class="s1p-item-meta">
-                                            ID: <span class="s1p-item-meta-id">${id}</span>
-                                        </div>
-                                        <div class="s1p-item-editor">
-                                            <textarea class="s1p-input s1p-textarea s1p-tag-edit-area" autocomplete="off">${data.tag}</textarea>
-                                        </div>
+                    ${tagItems.length === 0
+                    ? `<div class="s1p-empty">暂无用户标记</div>`
+                    : `<div class="s1p-list">${tagItems.map(([id, data]) => {
+                        if (id === editingUserId) {
+                            // --- 编辑模式 ---
+                            return `
+                            <div class="s1p-item" data-user-id="${id}">
+                                <div class="s1p-item-info">
+                                    <div class="s1p-item-title">${data.name}</div>
+                                    <div class="s1p-item-meta">
+                                        ID: <span class="s1p-item-meta-id">${id}</span>
                                     </div>
-                                    <div class="s1p-item-actions">
-                                        <button class="s1p-btn s1p-primary" data-action="save-tag-edit" data-user-id="${id}" data-user-name="${data.name}">保存</button>
-                                        <button class="s1p-btn" data-action="cancel-tag-edit">取消</button>
+                                    <div class="s1p-item-editor">
+                                        <textarea class="s1p-input s1p-textarea s1p-tag-edit-area" autocomplete="off">${data.tag}</textarea>
                                     </div>
-                                </div>`;
-                            } else {
-                                // --- 正常显示模式 ---
-                                return `
-                                <div class="s1p-item" data-user-id="${id}">
-                                    <div class="s1p-item-info">
-                                        <div class="s1p-item-title">${data.name}</div>
-                                        <div class="s1p-item-meta">
-                                            ID: <span class="s1p-item-meta-id">${id}</span> &nbsp;
-                                            标记于: ${formatDate(data.timestamp)}
-                                        </div>
-                                        <div class="s1p-item-content">${data.tag}</div>
+                                </div>
+                                <div class="s1p-item-actions">
+                                    <button class="s1p-btn s1p-primary" data-action="save-tag-edit" data-user-id="${id}" data-user-name="${data.name}">保存</button>
+                                    <button class="s1p-btn" data-action="cancel-tag-edit">取消</button>
+                                </div>
+                            </div>`;
+                        } else {
+                            // --- 正常显示模式 ---
+                            return `
+                            <div class="s1p-item" data-user-id="${id}">
+                                <div class="s1p-item-info">
+                                    <div class="s1p-item-title">${data.name}</div>
+                                    <div class="s1p-item-meta">
+                                        ID: <span class="s1p-item-meta-id">${id}</span> &nbsp;
+                                        标记于: ${formatDate(data.timestamp)}
                                     </div>
-                                    <div class="s1p-item-actions">
-                                        <button class="s1p-btn" data-action="edit-tag-item" data-user-id="${id}">编辑</button>
-                                        <button class="s1p-btn s1p-danger" data-action="delete-tag-item" data-user-id="${id}" data-user-name="${data.name}">删除</button>
-                                    </div>
-                                </div>`;
-                            }
-                        }).join('')}</div>`
-                    }
+                                    <div class="s1p-item-content">${data.tag}</div>
+                                </div>
+                                <div class="s1p-item-actions">
+                                    <button class="s1p-btn" data-action="edit-tag-item" data-user-id="${id}">编辑</button>
+                                    <button class="s1p-btn s1p-danger" data-action="delete-tag-item" data-user-id="${id}" data-user-name="${data.name}">删除</button>
+                                </div>
+                            </div>`;
+                        }
+                    }).join('')}</div>`
+                }
                     </div>
                 </div>
             `;
@@ -2432,10 +2431,12 @@
             const bookmarkItems = Object.values(bookmarkedReplies).sort((a, b) => b.timestamp - a.timestamp);
 
             const hasBookmarks = bookmarkItems.length > 0;
+            const searchStyle = hasBookmarks ? '' : 'display: none;';
+            const listStyle = hasBookmarks ? '' : 'display: none;';
+            const emptyStyle = hasBookmarks ? 'display: none;' : '';
 
             const contentHTML = `
-                ${hasBookmarks ? `
-                <div class="s1p-settings-group" style="margin-bottom: 16px;">
+                <div class="s1p-settings-group" style="margin-bottom: 16px; ${searchStyle}">
                     <div class="s1p-search-input-wrapper">
                         <input type="text" id="s1p-bookmark-search-input" class="s1p-input" placeholder="搜索内容、作者、标题..." autocomplete="off">
                         <svg class="s1p-search-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" /></svg>
@@ -2443,13 +2444,12 @@
                             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" /></svg>
                         </button>
                     </div>
-                </div>` : ''}
-                <div id="s1p-bookmarks-list-container">
-                    ${!hasBookmarks ? `<div id="s1p-bookmarks-empty-message" class="s1p-empty">暂无收藏的回复</div>` :
-                    `<div class="s1p-list" id="s1p-bookmarks-list">
-                        ${bookmarkItems.map(item => {
+                </div>
+                <div class="s1p-list" id="s1p-bookmarks-list" style="${listStyle}">
+                    ${bookmarkItems.map(item => {
                         const fullText = item.postContent || '';
                         const isLong = fullText.length > 150;
+
                         let contentBlock;
                         if (isLong) {
                             const previewText = fullText.substring(0, 150);
@@ -2457,6 +2457,7 @@
                         } else {
                             contentBlock = `<div class="s1p-bookmark-preview"><span>${fullText}</span></div>`;
                         }
+
                         return `
                         <div class="s1p-item" data-post-id="${item.postId}" style="position: relative;">
                             <button class="s1p-btn s1p-danger" data-action="remove-bookmark" data-post-id="${item.postId}" style="position: absolute; top: 12px; right: 12px; padding: 4px 8px; font-size: 12px;">取消收藏</button>
@@ -2470,9 +2471,8 @@
                             </div>
                         </div>`;
                     }).join('')}
-                    </div>`
-                }
                 </div>
+                <div id="s1p-bookmarks-empty-message" class="s1p-empty" style="${emptyStyle}">暂无收藏的回复</div>
                 <div id="s1p-bookmarks-no-results" class="s1p-empty" style="display: none;">没有找到匹配的收藏</div>
             `;
 
@@ -2495,6 +2495,7 @@
                     if (!preview || !full) return;
 
                     const isCurrentlyCollapsed = window.getComputedStyle(full).display === 'none';
+
                     if (isCurrentlyCollapsed) {
                         full.style.display = 'block';
                         preview.style.display = 'none';
@@ -2505,9 +2506,7 @@
                 }
             });
 
-            if (hasBookmarks) {
-                setupBookmarkSearchComponent(tabs['bookmarks']);
-            }
+            setupBookmarkSearchComponent(tabs['bookmarks']);
         };
 
 
@@ -2535,7 +2534,7 @@
                     <strong>提示</strong>：顶部总开关仅影响<strong>未来新屏蔽用户</strong>的默认设置。每个用户下方的独立开关，才是控制该用户主题帖的<strong>最终开关</strong>，拥有最高优先级。
                 </p>
                 <div id="s1p-blocked-user-list-container">
-                    ${userItemIds.length === 0
+                ${userItemIds.length === 0
                     ? `<div class="s1p-empty">暂无屏蔽的用户</div>`
                     : `<div class="s1p-list">${userItemIds.map(id => {
                         const item = blockedUsers[id];
@@ -2828,10 +2827,10 @@
 
                     cleanupControl.querySelectorAll('.s1p-segmented-control-option').forEach(opt => opt.classList.remove('active'));
                     target.classList.add('active');
+
                     moveSlider(cleanupControl);
                 });
             }
-
 
             tabs['general-settings'].addEventListener('change', e => {
                 const target = e.target;
@@ -2920,6 +2919,7 @@
 
                 const container = e.currentTarget;
                 const otherItems = [...container.querySelectorAll('.s1p-editor-item:not(.s1p-dragging)')];
+
                 const nextSibling = otherItems.find(item => {
                     const rect = item.getBoundingClientRect();
                     return e.clientY < rect.top + rect.height / 2;
@@ -2965,7 +2965,6 @@
             });
         };
 
-        // --- 初始化渲染和事件绑定 ---
         renderGeneralSettingsTab();
         renderThreadTab();
         renderUserTab();
@@ -2977,6 +2976,7 @@
         requestAnimationFrame(() => {
             modal.style.opacity = '1';
         });
+
 
         modal.addEventListener('change', e => {
             const target = e.target;
@@ -3007,7 +3007,9 @@
                         refreshAllAuthiActions();
                         break;
                     case 'enableReadProgress':
-                        document.getElementById('s1p-readingProgressCleanupContainer').style.display = isChecked ? 'flex' : 'none';
+                        const cleanupItem = document.getElementById('s1p-readingProgressCleanupContainer');
+                        if (cleanupItem) cleanupItem.style.display = isChecked ? 'flex' : 'none';
+
                         isChecked ? addProgressJumpButtons() : removeProgressJumpButtons();
                         break;
                     case 'enableBookmarkReplies':
@@ -3035,30 +3037,6 @@
             }
         });
 
-        /**
-         * [OPTIMIZED] 从UI列表中移除一个项目，并在列表为空时显示提示信息。
-         * @param {HTMLElement} triggerElement - 触发删除操作的元素（如按钮）。
-         * @param {string} emptyHTML - 当列表为空时，要设置给容器的innerHTML。
-         * @param {function} [onEmptyCallback] - 列表变为空后执行的可选回调函数。
-         */
-        function removeListItem(triggerElement, emptyHTML, onEmptyCallback) {
-            const item = triggerElement.closest('.s1p-item');
-            if (!item) return;
-
-            const list = item.parentElement;
-            item.remove();
-
-            if (list && list.children.length === 0) {
-                const container = list.parentElement;
-                if (container) {
-                    container.innerHTML = emptyHTML;
-                }
-                if (onEmptyCallback) {
-                    onEmptyCallback(container);
-                }
-            }
-        }
-
         modal.addEventListener('click', async (e) => {
             const target = e.target;
             if (e.target.matches('.s1p-modal, .s1p-modal-close')) modal.remove();
@@ -3072,24 +3050,47 @@
             const unblockThreadId = e.target.dataset.unblockThreadId;
             if (unblockThreadId) {
                 unblockThread(unblockThreadId);
-                removeListItem(target, '<div class="s1p-empty">暂无手动屏蔽的帖子</div>');
+                const itemToRemove = target.closest('.s1p-item');
+                if (itemToRemove) {
+                    const list = itemToRemove.parentElement;
+                    itemToRemove.remove();
+                    if (list && list.children.length === 0) {
+                        const container = list.closest('#s1p-manually-blocked-list-container');
+                        if (container) {
+                            container.innerHTML = '<div class="s1p-empty">暂无手动屏蔽的帖子</div>';
+                        }
+                    }
+                }
             }
 
             const unblockUserId = e.target.dataset.unblockUserId;
             if (unblockUserId) {
-                // [OPTIMIZED] 深度联动优化，避免重绘帖子列表
+                // [OPTIMIZATION] Perform targeted removal instead of full re-renders
+                // 1. 缓存即将因本次操作而变化的帖子ID
                 const allBlockedThreads = getBlockedThreads();
                 const threadsToUnblock = Object.keys(allBlockedThreads).filter(threadId => allBlockedThreads[threadId].reason === `user_${unblockUserId}`);
 
+                // 2. 执行核心数据操作
                 unblockUser(unblockUserId);
+                // 3. 从用户列表中精准移除UI元素
+                const userItemToRemove = target.closest('.s1p-item');
+                if (userItemToRemove) {
+                    const list = userItemToRemove.parentElement;
+                    userItemToRemove.remove();
+                    if (list && list.children.length === 0) {
+                        const container = document.getElementById('s1p-blocked-user-list-container');
+                        if(container) container.innerHTML = '<div class="s1p-empty">暂无屏蔽的用户</div>';
+                    }
+                }
 
-                removeListItem(target, '<div class="s1p-empty">暂无屏蔽的用户</div>');
-
+                // 4. 利用缓存的ID，从帖子列表中精准移除关联的UI元素
                 const threadList = document.querySelector('#s1p-manually-blocked-list-container .s1p-list');
                 if (threadList) {
                     threadsToUnblock.forEach(threadId => {
                         const threadItemToRemove = threadList.querySelector(`.s1p-item[data-thread-id="${threadId}"]`);
-                        threadItemToRemove?.remove();
+                        if (threadItemToRemove) {
+                            threadItemToRemove.remove();
+                        }
                     });
                     if (threadList.children.length === 0) {
                         const container = threadList.closest('#s1p-manually-blocked-list-container');
@@ -3100,20 +3101,27 @@
                 }
             }
 
-            const removeBookmarkId = target.closest('[data-action="remove-bookmark"]')?.dataset.postId;
-            if (removeBookmarkId) {
+            const removeBookmarkBtn = e.target.closest('[data-action="remove-bookmark"]');
+            if(removeBookmarkBtn) {
+                const postIdToRemove = removeBookmarkBtn.dataset.postId;
                 const bookmarks = getBookmarkedReplies();
-                delete bookmarks[removeBookmarkId];
+                delete bookmarks[postIdToRemove];
                 saveBookmarkedReplies(bookmarks);
-                refreshSinglePostActions(removeBookmarkId);
-                removeListItem(target, '<div class="s1p-empty">暂无收藏的回复</div>', () => {
-                    // 列表清空后，移除搜索框
-                    document.querySelector('#s1p-bookmark-search-input')?.closest('.s1p-settings-group')?.remove();
-                });
+                const itemToRemove = removeBookmarkBtn.closest('.s1p-item');
+                if (itemToRemove) {
+                    const list = itemToRemove.parentElement;
+                    itemToRemove.remove();
+                    if (list && list.children.length === 0) {
+                        document.querySelector('#s1p-bookmarks-list').style.display = 'none';
+                        const searchGroup = document.querySelector('#s1p-bookmark-search-input')?.closest('.s1p-settings-group');
+                        if(searchGroup) searchGroup.style.display = 'none';
+                        document.querySelector('#s1p-bookmarks-empty-message').style.display = 'block';
+                    }
+                }
+                refreshSinglePostActions(postIdToRemove);
             }
 
-
-            // --- 本地备份与恢复事件 (已优化) ---
+            // --- 本地备份与恢复事件 ---
             const syncTextarea = modal.querySelector('#s1p-local-sync-textarea');
             if (e.target.id === 's1p-local-export-btn') {
                 const dataToExport = exportLocalData();
@@ -3168,7 +3176,6 @@
                             updateRemoteSyncInputsState();
                         }
 
-                        // 全局刷新
                         hideBlockedThreads();
                         hideBlockedUsersPosts();
                         applyUserThreadBlocklist();
@@ -3177,7 +3184,6 @@
                         applyInterfaceCustomizations();
                         document.querySelectorAll('.s1p-progress-container').forEach(el => el.remove());
 
-                        // 重新渲染所有标签页
                         renderThreadTab();
                         renderUserTab();
                         renderGeneralSettingsTab();
@@ -3229,8 +3235,16 @@
                         const tags = getUserTags();
                         delete tags[userId];
                         saveUserTags(tags);
+                        const itemToRemove = target.closest('.s1p-item');
+                        if (itemToRemove) {
+                            const list = itemToRemove.parentElement;
+                            itemToRemove.remove();
+                            if (list && list.children.length === 0) {
+                                 const container = list.closest('#s1p-tags-list-container');
+                                 if (container) container.innerHTML = '<div class="s1p-empty">暂无用户标记</div>';
+                            }
+                        }
                         refreshUserPostsOnPage(userId);
-                        removeListItem(target, `<div class="s1p-empty">暂无用户标记</div>`);
                         showMessage(`已删除对 ${userName} 的标记。`, true);
                     }, '确认删除');
                 }
@@ -3242,14 +3256,14 @@
                         tags[userId] = { ...tags[userId], tag: newTag, timestamp: Date.now(), name: userName };
                         saveUserTags(tags);
                         refreshUserPostsOnPage(userId);
-                        renderTagsTab(); // 保存后需要重绘以退出编辑模式
+                        renderTagsTab(); // Re-render is needed here to switch from edit mode to view mode
                         showMessage(`已更新对 ${userName} 的标记。`, true);
                     } else {
                         createConfirmationModal(`标记内容为空`, '您希望删除对该用户的标记吗？', () => {
                             delete tags[userId];
                             saveUserTags(tags);
                             refreshUserPostsOnPage(userId);
-                            renderTagsTab(); // 删除后需要重绘
+                            renderTagsTab();
                             showMessage(`已删除对 ${userName} 的标记。`, true);
                         }, '确认删除');
                     }
@@ -3474,6 +3488,7 @@
 
             optionsCell.appendChild(optionsBtn);
             optionsCell.appendChild(optionsMenu);
+
             tr.prepend(optionsCell);
 
             const headerTh = document.querySelector('#threadlist > .th th:first-child');
@@ -3543,20 +3558,21 @@
             popover.querySelector('textarea').focus();
         };
 
-        const show = (anchorElement, userId, userName) => {
+        const show = (anchorElement, userId, userName, userAvatar, delay = 0) => {
             cancelHideTimer();
             clearTimeout(showTimeout);
 
             showTimeout = setTimeout(() => {
                 popover.dataset.userId = userId;
                 popover.dataset.userName = userName;
+                popover.dataset.userAvatar = userAvatar;
 
                 const userTags = getUserTags();
                 renderEditMode(userName, userId, userTags[userId]?.tag || '');
 
                 popover.classList.add('visible');
                 repositionPopover(anchorElement);
-            }, 0);
+            }, delay);
         };
 
         popover.show = show;
@@ -3610,9 +3626,9 @@
                 popover.textContent = text;
                 const rect = anchor.getBoundingClientRect();
 
-                popover.style.display = 'block';
                 let top = rect.top + window.scrollY - popover.offsetHeight - 6;
                 let left = rect.left + window.scrollX + (rect.width / 2) - (popover.offsetWidth / 2);
+
                 if (top < window.scrollY) {
                     top = rect.bottom + window.scrollY + 6;
                 }
@@ -3676,6 +3692,7 @@
             const progress = progressData[threadId];
             if (progress && progress.page) {
                 const { postId, page, timestamp, lastReadFloor: savedFloor } = progress;
+
                 const hoursDiff = (now - (timestamp || 0)) / 3600000;
                 const fcolor = getTimeBasedColor(hoursDiff);
 
@@ -3689,6 +3706,7 @@
 
                 const jumpBtn = document.createElement('a');
                 jumpBtn.className = 's1p-progress-jump-btn';
+
                 if (savedFloor) {
                     jumpBtn.textContent = `P${page}-#${savedFloor}`;
                     jumpBtn.title = `跳转至上次离开的第 ${page} 页，第 ${savedFloor} 楼`;
@@ -3709,6 +3727,7 @@
                         window.location.href = jumpBtn.href;
                     }
                 });
+
                 jumpBtn.addEventListener('mouseover', () => {
                     jumpBtn.style.backgroundColor = fcolor;
                     jumpBtn.style.color = 'var(--s1p-white)';
@@ -3719,6 +3738,7 @@
                 });
 
                 progressContainer.appendChild(jumpBtn);
+
                 if (newReplies > 0) {
                     const newRepliesBadge = document.createElement('span');
                     newRepliesBadge.className = 's1p-new-replies-badge';
@@ -3741,6 +3761,7 @@
         if (!settings.enableReadProgress || !document.getElementById('postlist')) return;
 
         let threadId = null;
+
         const threadIdMatch = window.location.href.match(/thread-(\d+)-/);
         if (threadIdMatch) {
             threadId = threadIdMatch[1];
@@ -3757,9 +3778,11 @@
         }
 
         if (!threadId) return;
+
         let currentPage = '1';
         const threadPageMatch = window.location.href.match(/thread-\d+-(\d+)-/);
         const params = new URLSearchParams(window.location.search);
+
         if (threadPageMatch) {
             currentPage = threadPageMatch[1];
         } else if (params.has('page')) {
@@ -3781,6 +3804,7 @@
 
         const saveCurrentProgress = () => {
             if (visiblePosts.size === 0) return;
+
             let maxFloor = 0;
             let finalPostId = null;
 
@@ -3815,6 +3839,7 @@
             });
             debouncedSave();
         }, { threshold: 0.1 });
+
         document.querySelectorAll('table[id^="pid"]').forEach(el => observer.observe(el));
 
         const finalSave = () => {
@@ -3827,6 +3852,7 @@
                 finalSave();
             }
         });
+
         window.addEventListener('beforeunload', finalSave);
     };
 
@@ -3847,23 +3873,28 @@
             }
             container.remove();
         }
+
         addActionsToSinglePost(postTable);
     };
 
     const createOptionsMenu = (anchorElement) => {
         document.querySelector('.s1p-tag-options-menu')?.remove();
-        const { userId, userName } = anchorElement.dataset;
+
+        const { userId, userName, userAvatar } = anchorElement.dataset;
+
         const menu = document.createElement('div');
         menu.className = 's1p-tag-options-menu';
         menu.innerHTML = `
             <button data-action="edit">编辑标记</button>
             <button data-action="delete" class="s1p-delete">删除标记</button>
         `;
+
         document.body.appendChild(menu);
 
         const rect = anchorElement.getBoundingClientRect();
         menu.style.top = `${rect.bottom + window.scrollY + 2}px`;
         menu.style.left = `${rect.right + window.scrollX - menu.offsetWidth}px`;
+
         const closeMenu = () => menu.remove();
 
         menu.addEventListener('click', (e) => {
@@ -3873,7 +3904,7 @@
             if (action === 'edit') {
                 const popover = document.getElementById('s1p-tag-popover-main');
                 if (popover && popover.show) {
-                    popover.show(anchorElement, userId, userName);
+                    popover.show(anchorElement, userId, userName, userAvatar, 0);
                 }
                 closeMenu();
             } else if (action === 'delete') {
@@ -3893,13 +3924,17 @@
     };;
 
     /**
-     * [OPTIMIZED] Adds action buttons to a single post, with a guard to prevent duplication.
+     * [FINAL-V5] Implements the user-suggested parent container architecture.
+     * This creates a new container to house both the original .authi and the script's
+     * buttons, solving all hover, wrapping, and duplication issues definitively.
      * @param {HTMLTableElement} postTable - The main table element for a single post.
      */
     const addActionsToSinglePost = (postTable) => {
         const settings = getSettings();
         const authiDiv = postTable.querySelector('.plc .authi');
-        if (!authiDiv) return;
+        if (!authiDiv) {
+            return;
+        }
 
         if (authiDiv.parentElement.classList.contains('s1p-authi-container')) {
             return;
@@ -3921,6 +3956,7 @@
 
         const newContainer = document.createElement('div');
         newContainer.className = 's1p-authi-container';
+
         const scriptActionsWrapper = document.createElement('span');
         scriptActionsWrapper.className = 's1p-authi-actions-wrapper';
 
@@ -3951,12 +3987,13 @@
                     const params = new URLSearchParams(window.location.search);
                     const threadId = threadIdMatch ? threadIdMatch[1] : (params.get('tid') || params.get('ptid'));
                     const contentEl = postTable.querySelector('td.t_f');
-                    
+
                     let postContent = '无法获取内容';
                     if (contentEl) {
                         const contentClone = contentEl.cloneNode(true);
                         contentClone.querySelectorAll('.pstatus, .quote, .s1p-image-toggle-all-container').forEach(el => el.remove());
-                        postContent = contentClone.innerText.trim().replace(/\n{3,}/g, '\n\n');
+                        let rawText = contentClone.innerText.trim();
+                        postContent = rawText.replace(/\n{3,}/g, '\n\n');
                     }
 
                     if (!threadId) {
@@ -4015,6 +4052,7 @@
                 optionsIcon.innerHTML = '&#8942;';
                 optionsIcon.dataset.userId = userId;
                 optionsIcon.dataset.userName = userName;
+                optionsIcon.dataset.userAvatar = userAvatar;
                 optionsIcon.addEventListener('click', (e) => {
                     e.preventDefault();
                     e.stopPropagation();
@@ -4032,13 +4070,13 @@
                     e.preventDefault();
                     const popover = document.getElementById('s1p-tag-popover-main');
                     if (popover && popover.show) {
-                        popover.show(e.currentTarget, userId, userName, userAvatar);
+                        popover.show(e.currentTarget, userId, userName, userAvatar, 0);
                     }
                 });
                 scriptActionsWrapper.appendChild(tagLink);
             }
         }
-        
+
         if (scriptActionsWrapper.hasChildNodes()) {
             authiDiv.parentElement.insertBefore(newContainer, authiDiv);
             newContainer.appendChild(authiDiv);
@@ -4046,15 +4084,24 @@
         }
     };
 
+    /**
+     * [FIXED] Iterates through all posts on the page and calls the function to add action buttons.
+     * This new logic is robust and works in all page views.
+     */
     const addActionsToPostFooter = () => {
         const settings = getSettings();
         if (!settings.enableUserBlocking && !settings.enableUserTagging && !settings.enableBookmarkReplies) return;
-        document.querySelectorAll('table[id^="pid"]').forEach(addActionsToSinglePost);
+
+        document.querySelectorAll('table[id^="pid"]').forEach(postTable => {
+            addActionsToSinglePost(postTable);
+        });
     };
 
     function autoSign() {
         const checkinLink = document.querySelector('a[href*="study_daily_attendance-daily_attendance.html"]');
-        if (!checkinLink) return;
+        if (!checkinLink) {
+            return;
+        }
 
         var now = new Date();
         var date = now.getFullYear() + "-" + (now.getMonth() + 1) + "-" + now.getDate();
@@ -4065,7 +4112,9 @@
             return;
         }
 
-        if (now.getHours() < 6) return;
+        if (now.getHours() < 6) {
+            return;
+        }
 
         GM_xmlhttpRequest({
             method: "GET",
@@ -4083,7 +4132,10 @@
 
     const cleanupOldReadProgress = () => {
         const settings = getSettings();
-        if (!settings.readingProgressCleanupDays || settings.readingProgressCleanupDays <= 0) return;
+        if (!settings.readingProgressCleanupDays || settings.readingProgressCleanupDays <= 0) {
+            return;
+        }
+
         const progress = getReadProgress();
         const originalCount = Object.keys(progress).length;
         if (originalCount === 0) return;
