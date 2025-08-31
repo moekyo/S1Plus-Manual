@@ -911,8 +911,19 @@
         .s1p-editor-item.s1p-dragging { opacity: 0.5; }
 
         /* --- 用户标记设置面板专属样式 --- */
+        /* --- 用户标记设置面板专属样式 --- */
         .s1p-item-meta-id { font-family: monospace; background-color: var(--s1p-bg); padding: 1px 5px; border-radius: 4px; font-size: 11px; color: var(--s1p-t); }
-        .s1p-item-content { margin-top: 8px; color: var(--s1p-desc-t); line-height: 1.6; white-space: pre-wrap; word-break: break-all; }
+        .s1p-item-content {
+            margin-top: 10px; /* 增加上边距 */
+            padding-top: 10px; /* 增加上内边距，文字与分割线间的空间 */
+            border-top: 1px solid var(--s1p-pri); /* 添加分割线 */
+            color: var(--s1p-t); /* 使用更醒目的主文本颜色 */
+            font-size: 12px; /* 增大字体 */
+            font-weight: bold;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
         #s1p-tab-bookmarks .s1p-item-content {
             background-color: transparent;
             border: none;
@@ -2126,6 +2137,19 @@
     const removeProgressJumpButtons = () => document.querySelectorAll('.s1p-progress-container').forEach(el => el.remove());
     const removeBlockButtonsFromThreads = () => document.querySelectorAll('.s1p-options-cell').forEach(el => el.remove());
 
+    // [BUG FIX] 新增辅助函数，用于根据用户ID刷新页面上该用户的所有帖子UI
+    const refreshUserPostsOnPage = (userId) => {
+        if (!userId) return;
+        // 此选择器会查找用户在帖子作者行的个人空间链接，是识别其所有帖子的可靠方法
+        document.querySelectorAll(`.authi a[href*="space-uid-${userId}"]`).forEach(userLink => {
+            const postTable = userLink.closest('table[id^="pid"]');
+            if (postTable) {
+                const postId = postTable.id.replace('pid', '');
+                refreshSinglePostActions(postId);
+            }
+        });
+    };
+
     const createManagementModal = () => {
         /**
          * [FIXED] 采用离屏预计算方式，彻底解决面板展开动画问题
@@ -3185,24 +3209,14 @@
                 if (action === 'edit-tag-item') renderTagsTab({ editingUserId: userId });
                 if (action === 'cancel-tag-edit') renderTagsTab();
 
-                if (action === 'delete-tag-item' || action === 'save-tag-edit') {
-                     // [OPTIMIZED] Call targeted refresh for user's posts
-                    document.querySelectorAll(`.authi a[href*="space-uid-${userId}"]`).forEach(userLink => {
-                        const postTable = userLink.closest('table[id^="pid"]');
-                        if (postTable) {
-                            const postId = postTable.id.replace('pid', '');
-                            refreshSinglePostActions(postId);
-                        }
-                    });
-                }
-
-
+                // [BUG FIX START] 刷新逻辑移动到数据确认变更后
                 if (action === 'delete-tag-item') {
                     const userName = target.dataset.userName;
                     createConfirmationModal(`确认删除对 "${userName}" 的标记吗?`, '此操作不可撤销。', () => {
                         const tags = getUserTags();
                         delete tags[userId];
                         saveUserTags(tags);
+                        refreshUserPostsOnPage(userId); // 在数据保存后刷新页面UI
                         renderTagsTab();
                         showMessage(`已删除对 ${userName} 的标记。`, true);
                     }, '确认删除');
@@ -3214,17 +3228,20 @@
                     if (newTag) {
                         tags[userId] = { ...tags[userId], tag: newTag, timestamp: Date.now(), name: userName };
                         saveUserTags(tags);
+                        refreshUserPostsOnPage(userId); // 在数据保存后刷新页面UI
                         renderTagsTab();
                         showMessage(`已更新对 ${userName} 的标记。`, true);
                     } else {
                         createConfirmationModal(`标记内容为空`, '您希望删除对该用户的标记吗？', () => {
                             delete tags[userId];
                             saveUserTags(tags);
+                            refreshUserPostsOnPage(userId); // 在数据保存后刷新页面UI
                             renderTagsTab();
                             showMessage(`已删除对 ${userName} 的标记。`, true);
                         }, '确认删除');
                     }
                 }
+                // [BUG FIX END]
                 else if (target.id === 's1p-export-tags-btn') {
                     const textarea = targetTab.querySelector('#s1p-tags-sync-textarea');
                     const dataToExport = JSON.stringify(getUserTags(), null, 2);
@@ -3255,6 +3272,8 @@
                             renderTagsTab();
                             showMessage(`成功导入/更新 ${Object.keys(imported).length} 条用户标记。`, true);
                             textarea.value = '';
+                            // 导入后刷新所有帖子，确保新标记能显示
+                            refreshAllAuthiActions();
                         }, '确认导入');
                     } catch (e) { showMessage(`导入失败: ${e.message}`, false); }
                 }
@@ -3562,14 +3581,8 @@
                         delete userTags[userId];
                     }
                     saveUserTags(userTags);
-                    // [OPTIMIZED] Call targeted refresh instead of global refresh
-                    document.querySelectorAll(`.authi a[href*="space-uid-${userId}"]`).forEach(userLink => {
-                        const postTable = userLink.closest('table[id^="pid"]');
-                        if (postTable) {
-                            const postId = postTable.id.replace('pid', '');
-                            refreshSinglePostActions(postId);
-                        }
-                    });
+                    // 在保存后刷新页面上该用户的所有帖子
+                    refreshUserPostsOnPage(userId);
                     popover.classList.remove('visible');
                     break;
                 case 'cancel-edit':
@@ -3898,13 +3911,7 @@
                     delete tags[userId];
                     saveUserTags(tags);
                     // Call targeted refresh for user's posts
-                    document.querySelectorAll(`.authi a[href*="space-uid-${userId}"]`).forEach(userLink => {
-                        const postTable = userLink.closest('table[id^="pid"]');
-                        if (postTable) {
-                            const postId = postTable.id.replace('pid', '');
-                            refreshSinglePostActions(postId);
-                        }
-                    });
+                    refreshUserPostsOnPage(userId);
                 });
                 
                 // Close the old "Edit/Delete" menu
@@ -3963,7 +3970,7 @@
         // (The button creation logic itself is unchanged)
 
         // Button: Bookmark Reply
-        if (floor > 1 && settings.enableBookmarkReplies) {
+        if (settings.enableBookmarkReplies) {
             const bookmarkedReplies = getBookmarkedReplies();
             const isBookmarked = !!bookmarkedReplies[postId];
             const pipe = document.createElement('span');
