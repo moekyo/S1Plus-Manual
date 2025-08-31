@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      4.9.0
+// @version      4.9.3
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪、回复收藏等多种功能，全方位优化你的论坛体验。
 // @author       moekyo & Gemini
 // @match        https://stage1st.com/2b/*
@@ -17,7 +17,7 @@
     'use strict';
 
 
-    const SCRIPT_VERSION = '4.9.0';
+    const SCRIPT_VERSION = '4.9.3';
     const SCRIPT_RELEASE_DATE = '2025-08-30';
 
     GM_addStyle(`
@@ -3761,15 +3761,12 @@
         const postTable = document.querySelector(`table#pid${postId}`);
         if (!postTable) return;
 
-        const viewAuthorLink = postTable.querySelector('div.authi a[href*="authorid="]');
-        if (!viewAuthorLink) return;
-
-        const authiDiv = viewAuthorLink.closest('.authi');
+        const authiDiv = postTable.querySelector('.authi');
         if (authiDiv) {
             authiDiv.querySelector('.s1p-authi-actions-wrapper')?.remove();
         }
 
-        addActionsToSinglePost(viewAuthorLink);
+        addActionsToSinglePost(postTable);
     };
 
 
@@ -3839,37 +3836,49 @@
         }, 0);
     };
 
-    // [REMOVED] The applyTagWidthCalculation function is no longer needed with the new Flexbox layout.
+    // =================================================================================
+    // ========== S1P-FIX START: REPLACED FUNCTIONS FOR "只看该用户" MODE ==========
+    // =================================================================================
 
-    const addActionsToSinglePost = (viewAuthorLink) => {
+    /**
+     * [FIXED & RESTORED] Adds action buttons and hover effects to a single post.
+     * This version is more robust, deriving user info directly from the post table.
+     * The hover effect for the dropdown triangle has been restored.
+     * @param {HTMLTableElement} postTable - The main table element for a single post (e.g., <table id="pid12345">).
+     */
+    const addActionsToSinglePost = (postTable) => {
         const settings = getSettings();
-        const authiDiv = viewAuthorLink.closest('.authi');
+        const authiDiv = postTable.querySelector('.plc .authi'); // Target the authi in the main post content cell
+
+        // If there's no authi div or buttons are already there, stop.
         if (!authiDiv || authiDiv.querySelector('.s1p-authi-actions-wrapper')) {
             return;
         }
 
-        const urlParams = new URLSearchParams(viewAuthorLink.href.split('?')[1]);
-        const userId = urlParams.get('authorid');
-        if (!userId) return;
-
-        const postTable = authiDiv.closest('table[id^="pid"]');
-        if (!postTable) return;
-        const postId = postTable.id.replace('pid', '');
-
-        const floorElement = postTable.querySelector(`#postnum${postId} em`);
-        const floor = floorElement ? parseInt(floorElement.textContent, 10) : 0;
-
-        const postContainer = authiDiv.closest('td.plc');
-        const plsCell = postContainer ? postContainer.previousElementSibling : null;
+        // --- Find user info from a reliable source (the left-side author panel) ---
+        const plsCell = postTable.querySelector('td.pls');
         if (!plsCell) return;
 
-        const userLinkInPi = plsCell.querySelector(`.pi .authi a[href*="space-uid-${userId}"]`);
-        const userName = userLinkInPi ? userLinkInPi.textContent.trim() : `用户 #${userId}`;
+        // Use a simpler, more robust selector to find the profile link
+        const userProfileLink = plsCell.querySelector('a[href*="space-uid-"]');
+        if (!userProfileLink) return;
+
+        const uidMatch = userProfileLink.href.match(/space-uid-(\d+)\.html/);
+        const userId = uidMatch ? uidMatch[1] : null;
+        if (!userId) return;
+
+        // --- Get other necessary post information ---
+        const postId = postTable.id.replace('pid', '');
+        const floorElement = postTable.querySelector(`#postnum${postId} em`);
+        const floor = floorElement ? parseInt(floorElement.textContent, 10) : 0;
+        const userName = userProfileLink.textContent.trim();
         const userAvatar = plsCell.querySelector('.avatar img')?.src;
 
+        // --- Create the wrapper for our buttons ---
         const wrapper = document.createElement('span');
         wrapper.className = 's1p-authi-actions-wrapper';
 
+        // --- [RESTORED] Add hover effect for the native dropdown menu triangle ---
         if (!isS1NuxEnabled) {
             let originalDisplay = ''; // 用于存储原始的display值
             wrapper.addEventListener('mouseenter', () => {
@@ -3890,6 +3899,9 @@
             });
         }
 
+        // --- Build and add buttons based on settings ---
+
+        // Button: Bookmark Reply
         if (floor > 1 && settings.enableBookmarkReplies) {
             const bookmarkedReplies = getBookmarkedReplies();
             const isBookmarked = !!bookmarkedReplies[postId];
@@ -3941,6 +3953,7 @@
             wrapper.appendChild(bookmarkLink);
         }
 
+        // Button: Block User
         if (settings.enableUserBlocking) {
             const pipe = document.createElement('span');
             pipe.className = 'pipe';
@@ -3959,6 +3972,7 @@
             wrapper.appendChild(blockLink);
         }
 
+        // Button: Tag User
         if (settings.enableUserTagging) {
             const userTags = getUserTags();
             const userTag = userTags[userId];
@@ -4005,56 +4019,29 @@
             }
         }
 
-        const ordertypeLink = authiDiv.querySelector('a[href*="ordertype=1"]');
-        const readmodeLink = authiDiv.querySelector('a[onclick*="readmode"]');
-        const insertionPoint = readmodeLink || viewAuthorLink;
-
-        insertionPoint.after(wrapper);
-
-        // [REMOVED] The MutationObserver and JS-based width calculation are no longer needed.
-        // The new Flexbox CSS handles the layout automatically and robustly.
-
-        if (ordertypeLink && readmodeLink) {
-            const nativeElements = [
-                ordertypeLink.previousElementSibling,
-                ordertypeLink,
-                readmodeLink.previousElementSibling,
-                readmodeLink
-            ].filter(Boolean);
-            nativeElements.forEach(el => el.style.display = 'none');
-            const showNativeButtons = () => {
-                nativeElements.forEach(el => el.style.display = 'inline');
-            };
-            viewAuthorLink.addEventListener('mouseenter', showNativeButtons);
-            let viewImagesLink = null;
-            for (const link of authiDiv.querySelectorAll('a')) {
-                if (link.textContent.trim() === '只看大图') {
-                    viewImagesLink = link;
-                    break;
-                }
-            }
-            if (viewImagesLink) {
-                viewImagesLink.addEventListener('mouseenter', showNativeButtons);
-            }
-            authiDiv.addEventListener('mouseleave', () => {
-                nativeElements.forEach(el => el.style.display = 'none');
-            });
+        // --- Append the wrapper with all our new buttons to the authi div ---
+        if (wrapper.hasChildNodes()) {
+             authiDiv.appendChild(wrapper);
         }
     };
 
-    // [REFACTORED] 主函数，循环调用单个帖子的按钮添加逻辑
+    /**
+     * [FIXED] Iterates through all posts on the page and calls the function to add action buttons.
+     * This new logic is robust and works in all page views.
+     */
     const addActionsToPostFooter = () => {
         const settings = getSettings();
         if (!settings.enableUserBlocking && !settings.enableUserTagging && !settings.enableBookmarkReplies) return;
 
-        document.querySelectorAll('div.authi a[href*="authorid="]').forEach(viewAuthorLink => {
-            const authiDiv = viewAuthorLink.closest('.authi');
-            if (!authiDiv || authiDiv.querySelector('.s1p-authi-actions-wrapper')) {
-                return;
-            }
-            addActionsToSinglePost(viewAuthorLink);
+        // Iterate over each post table element, which is a reliable way to find all posts.
+        document.querySelectorAll('table[id^="pid"]').forEach(postTable => {
+            addActionsToSinglePost(postTable);
         });
     };
+
+    // ===============================================================================
+    // ========== S1P-FIX END: END OF REPLACED FUNCTIONS =============================
+    // ===============================================================================
 
 
     // 自动签到 (适配 study_daily_attendance 插件)
