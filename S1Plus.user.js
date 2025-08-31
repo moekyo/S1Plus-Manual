@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      4.9.3
+// @version      4.9.4
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪、回复收藏等多种功能，全方位优化你的论坛体验。
 // @author       moekyo & Gemini
 // @match        https://stage1st.com/2b/*
@@ -17,8 +17,8 @@
     'use strict';
 
 
-    const SCRIPT_VERSION = '4.9.3';
-    const SCRIPT_RELEASE_DATE = '2025-08-30';
+    const SCRIPT_VERSION = '4.9.4';
+    const SCRIPT_RELEASE_DATE = '2025-08-31';
 
     GM_addStyle(`
        /* --- 通用颜色 --- */
@@ -911,7 +911,6 @@
         .s1p-editor-item.s1p-dragging { opacity: 0.5; }
 
         /* --- 用户标记设置面板专属样式 --- */
-        /* --- 用户标记设置面板专属样式 --- */
         .s1p-item-meta-id { font-family: monospace; background-color: var(--s1p-bg); padding: 1px 5px; border-radius: 4px; font-size: 11px; color: var(--s1p-t); }
         .s1p-item-content {
             margin-top: 10px; /* 增加上边距 */
@@ -1058,8 +1057,6 @@
                 console.log('S1 Plus: S1 NUX is not enabled');
             }
         }
-        // For debugging, you can uncomment the next line
-        // console.log('S1 Plus: S1 NUX detection result:', isS1NuxEnabled);
     };
 
     let dynamicallyHiddenThreads = {};
@@ -1894,11 +1891,6 @@
         }
     }
 
-    // --- [NEW] Bookmark search component
-    /**
-     * Sets up the interactive search functionality for the bookmarks tab.
-     * @param {HTMLElement} bookmarksTabElement The container element for the bookmarks tab.
-     */
     // [REPLACED] Bookmark search component with safe highlighting
     /**
      * Sets up the interactive search functionality for the bookmarks tab.
@@ -1982,12 +1974,6 @@
     // --- UI 创建 ---
     const formatDate = (timestamp) => new Date(timestamp).toLocaleString('zh-CN');
 
-    // --- [OPTIMIZED] 使用悬浮提示框重写 showMessage 函数 ---
-    // 使用 Map 存储当前活跃的提示，防止在同一按钮上短时内触发多条提示重叠
-    const activeToasts = new Map();
-
-    // --- [OPTIMIZED] 替换旧的 showMessage 函数 V2 ---
-
     let currentToast = null; // 用一个全局变量来管理当前的提示框实例
 
     /**
@@ -2001,35 +1987,28 @@
             currentToast.remove();
         }
 
-        // 1. 动态创建提示框元素
         const toast = document.createElement('div');
         toast.className = `s1p-toast-notification ${isSuccess ? 'success' : 'error'}`;
         toast.textContent = message;
 
-        // 2. 决定将提示框附加到哪里
         const modalContent = document.querySelector('.s1p-modal-content');
         if (modalContent) {
-            // 如果设置面板存在，附加到面板内部
             modalContent.appendChild(toast);
         } else {
-            // 否则，作为备选方案，附加到 body
             document.body.appendChild(toast);
         }
         currentToast = toast;
 
-        // 3. 触发显示动画
         setTimeout(() => {
             toast.classList.add('visible');
-        }, 50); // 延迟以确保动画触发
+        }, 50);
 
-        // 4. 3秒后触发消失动画，并在动画结束后移除元素
         setTimeout(() => {
             toast.classList.remove('visible');
             toast.addEventListener('transitionend', () => {
                 if (toast.parentNode) {
                     toast.remove();
                 }
-                // 如果被移除的是当前活动的toast，则清空变量
                 if (currentToast === toast) {
                     currentToast = null;
                 }
@@ -2076,22 +2055,18 @@
         const anchorRect = anchorElement.getBoundingClientRect();
         const menuRect = menu.getBoundingClientRect();
 
-        // --- 智能定位逻辑 ---
         const top = anchorRect.top + window.scrollY + (anchorRect.height / 2) - (menuRect.height / 2);
         let left;
 
         const spaceOnRight = window.innerWidth - anchorRect.right;
-        const requiredSpace = menuRect.width + 16; // 菜单宽度 + 边距
+        const requiredSpace = menuRect.width + 16;
 
         if (spaceOnRight >= requiredSpace) {
-            // 右侧空间充足，正常放右边
             left = anchorRect.right + window.scrollX + 8;
         } else {
-            // 右侧空间不足，改放左边
             left = anchorRect.left + window.scrollX - menuRect.width - 8;
         }
 
-        // 确保菜单不会超出屏幕左边界
         if (left < window.scrollX) {
             left = window.scrollX + 8;
         }
@@ -2137,10 +2112,8 @@
     const removeProgressJumpButtons = () => document.querySelectorAll('.s1p-progress-container').forEach(el => el.remove());
     const removeBlockButtonsFromThreads = () => document.querySelectorAll('.s1p-options-cell').forEach(el => el.remove());
 
-    // [BUG FIX] 新增辅助函数，用于根据用户ID刷新页面上该用户的所有帖子UI
     const refreshUserPostsOnPage = (userId) => {
         if (!userId) return;
-        // 此选择器会查找用户在帖子作者行的个人空间链接，是识别其所有帖子的可靠方法
         document.querySelectorAll(`.authi a[href*="space-uid-${userId}"]`).forEach(userLink => {
             const postTable = userLink.closest('table[id^="pid"]');
             if (postTable) {
@@ -2274,7 +2247,7 @@
         </div>`;
 
         const modalContent = modal.querySelector('.s1p-modal-content');
-        if (requiredWidth > 600) { // 600 is the default width from CSS
+        if (requiredWidth > 600) {
             modalContent.style.width = `${requiredWidth}px`;
         }
 
@@ -2286,7 +2259,7 @@
             'threads': modal.querySelector('#s1p-tab-threads'),
             'users': modal.querySelector('#s1p-tab-users'),
             'tags': modal.querySelector('#s1p-tab-tags'),
-            'bookmarks': modal.querySelector('#s1p-tab-bookmarks'), // [NEW]
+            'bookmarks': modal.querySelector('#s1p-tab-bookmarks'),
             'nav-settings': modal.querySelector('#s1p-tab-nav-settings'),
             'sync': modal.querySelector('#s1p-tab-sync'),
         };
@@ -2297,7 +2270,7 @@
             userTags: { label: '全部用户标记', clear: () => saveUserTags({}) },
             titleFilterRules: { label: '标题关键字屏蔽规则', clear: () => { saveTitleFilterRules([]); GM_setValue('s1p_title_keywords', null); } },
             readProgress: { label: '所有帖子阅读进度', clear: () => saveReadProgress({}) },
-            bookmarkedReplies: { label: '收藏的回复', clear: () => saveBookmarkedReplies({}) }, // [NEW]
+            bookmarkedReplies: { label: '收藏的回复', clear: () => saveBookmarkedReplies({}) },
             settings: { label: '界面、导航栏及其他设置', clear: () => saveSettings(defaultSettings) }
         };
 
@@ -2341,14 +2314,13 @@
             }
         };
 
-        // --- 加载远程同步设置到UI ---
         const settings = getSettings();
         remoteToggle.checked = settings.syncRemoteEnabled;
         modal.querySelector('#s1p-remote-gist-id-input').value = settings.syncRemoteGistId || '';
         modal.querySelector('#s1p-remote-pat-input').value = settings.syncRemotePat || '';
         if (remoteToggle) {
             remoteToggle.addEventListener('change', updateRemoteSyncInputsState);
-            updateRemoteSyncInputsState(); // 打开设置时，根据当前状态初始化一次
+            updateRemoteSyncInputsState();
         }
 
 
@@ -2383,47 +2355,49 @@
 
                 <div class="s1p-settings-group">
                     <div class="s1p-settings-group-title">已标记用户列表</div>
-                    ${tagItems.length === 0
-                    ? `<div class="s1p-empty">暂无用户标记</div>`
-                    : `<div class="s1p-list">${tagItems.map(([id, data]) => {
-                        if (id === editingUserId) {
-                            // --- 编辑模式 ---
-                            return `
-                            <div class="s1p-item" data-user-id="${id}">
-                                <div class="s1p-item-info">
-                                    <div class="s1p-item-title">${data.name}</div>
-                                    <div class="s1p-item-meta">
-                                        ID: <span class="s1p-item-meta-id">${id}</span>
+                    <div id="s1p-tags-list-container">
+                        ${tagItems.length === 0
+                        ? `<div class="s1p-empty">暂无用户标记</div>`
+                        : `<div class="s1p-list">${tagItems.map(([id, data]) => {
+                            if (id === editingUserId) {
+                                // --- 编辑模式 ---
+                                return `
+                                <div class="s1p-item" data-user-id="${id}">
+                                    <div class="s1p-item-info">
+                                        <div class="s1p-item-title">${data.name}</div>
+                                        <div class="s1p-item-meta">
+                                            ID: <span class="s1p-item-meta-id">${id}</span>
+                                        </div>
+                                        <div class="s1p-item-editor">
+                                            <textarea class="s1p-input s1p-textarea s1p-tag-edit-area" autocomplete="off">${data.tag}</textarea>
+                                        </div>
                                     </div>
-                                    <div class="s1p-item-editor">
-                                        <textarea class="s1p-input s1p-textarea s1p-tag-edit-area" autocomplete="off">${data.tag}</textarea>
+                                    <div class="s1p-item-actions">
+                                        <button class="s1p-btn s1p-primary" data-action="save-tag-edit" data-user-id="${id}" data-user-name="${data.name}">保存</button>
+                                        <button class="s1p-btn" data-action="cancel-tag-edit">取消</button>
                                     </div>
-                                </div>
-                                <div class="s1p-item-actions">
-                                    <button class="s1p-btn s1p-primary" data-action="save-tag-edit" data-user-id="${id}" data-user-name="${data.name}">保存</button>
-                                    <button class="s1p-btn" data-action="cancel-tag-edit">取消</button>
-                                </div>
-                            </div>`;
-                        } else {
-                            // --- 正常显示模式 ---
-                            return `
-                            <div class="s1p-item" data-user-id="${id}">
-                                <div class="s1p-item-info">
-                                    <div class="s1p-item-title">${data.name}</div>
-                                    <div class="s1p-item-meta">
-                                        ID: <span class="s1p-item-meta-id">${id}</span> &nbsp;
-                                        标记于: ${formatDate(data.timestamp)}
+                                </div>`;
+                            } else {
+                                // --- 正常显示模式 ---
+                                return `
+                                <div class="s1p-item" data-user-id="${id}">
+                                    <div class="s1p-item-info">
+                                        <div class="s1p-item-title">${data.name}</div>
+                                        <div class="s1p-item-meta">
+                                            ID: <span class="s1p-item-meta-id">${id}</span> &nbsp;
+                                            标记于: ${formatDate(data.timestamp)}
+                                        </div>
+                                        <div class="s1p-item-content">${data.tag}</div>
                                     </div>
-                                    <div class="s1p-item-content">${data.tag}</div>
-                                </div>
-                                <div class="s1p-item-actions">
-                                    <button class="s1p-btn" data-action="edit-tag-item" data-user-id="${id}">编辑</button>
-                                    <button class="s1p-btn s1p-danger" data-action="delete-tag-item" data-user-id="${id}" data-user-name="${data.name}">删除</button>
-                                </div>
-                            </div>`;
-                        }
-                    }).join('')}</div>`
-                }
+                                    <div class="s1p-item-actions">
+                                        <button class="s1p-btn" data-action="edit-tag-item" data-user-id="${id}">编辑</button>
+                                        <button class="s1p-btn s1p-danger" data-action="delete-tag-item" data-user-id="${id}" data-user-name="${data.name}">删除</button>
+                                    </div>
+                                </div>`;
+                            }
+                        }).join('')}</div>`
+                    }
+                    </div>
                 </div>
             `;
 
@@ -2443,7 +2417,6 @@
             }
         };
 
-        // [REFACTORED] 回复收藏列表渲染函数 V5 (Stable) - 包含问题修复
         const renderBookmarksTab = () => {
             const settings = getSettings();
             const isEnabled = settings.enableBookmarkReplies;
@@ -2459,12 +2432,10 @@
             const bookmarkItems = Object.values(bookmarkedReplies).sort((a, b) => b.timestamp - a.timestamp);
 
             const hasBookmarks = bookmarkItems.length > 0;
-            const searchStyle = hasBookmarks ? '' : 'display: none;';
-            const listStyle = hasBookmarks ? '' : 'display: none;';
-            const emptyStyle = hasBookmarks ? 'display: none;' : '';
 
             const contentHTML = `
-                <div class="s1p-settings-group" style="margin-bottom: 16px; ${searchStyle}">
+                ${hasBookmarks ? `
+                <div class="s1p-settings-group" style="margin-bottom: 16px;">
                     <div class="s1p-search-input-wrapper">
                         <input type="text" id="s1p-bookmark-search-input" class="s1p-input" placeholder="搜索内容、作者、标题..." autocomplete="off">
                         <svg class="s1p-search-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" /></svg>
@@ -2472,12 +2443,13 @@
                             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" /></svg>
                         </button>
                     </div>
-                </div>
-                <div class="s1p-list" id="s1p-bookmarks-list" style="${listStyle}">
-                    ${bookmarkItems.map(item => {
+                </div>` : ''}
+                <div id="s1p-bookmarks-list-container">
+                    ${!hasBookmarks ? `<div id="s1p-bookmarks-empty-message" class="s1p-empty">暂无收藏的回复</div>` :
+                    `<div class="s1p-list" id="s1p-bookmarks-list">
+                        ${bookmarkItems.map(item => {
                         const fullText = item.postContent || '';
                         const isLong = fullText.length > 150;
-
                         let contentBlock;
                         if (isLong) {
                             const previewText = fullText.substring(0, 150);
@@ -2485,7 +2457,6 @@
                         } else {
                             contentBlock = `<div class="s1p-bookmark-preview"><span>${fullText}</span></div>`;
                         }
-
                         return `
                         <div class="s1p-item" data-post-id="${item.postId}" style="position: relative;">
                             <button class="s1p-btn s1p-danger" data-action="remove-bookmark" data-post-id="${item.postId}" style="position: absolute; top: 12px; right: 12px; padding: 4px 8px; font-size: 12px;">取消收藏</button>
@@ -2499,8 +2470,9 @@
                             </div>
                         </div>`;
                     }).join('')}
+                    </div>`
+                }
                 </div>
-                <div id="s1p-bookmarks-empty-message" class="s1p-empty" style="${emptyStyle}">暂无收藏的回复</div>
                 <div id="s1p-bookmarks-no-results" class="s1p-empty" style="display: none;">没有找到匹配的收藏</div>
             `;
 
@@ -2512,21 +2484,8 @@
             `;
 
             tabs['bookmarks'].addEventListener('click', e => {
-                const removeBtn = e.target.closest('[data-action="remove-bookmark"]');
                 const toggleLink = e.target.closest('[data-action="toggle-bookmark-content"]');
-
-                if (removeBtn) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    const postIdToRemove = removeBtn.dataset.postId;
-                    if (postIdToRemove) {
-                        const bookmarks = getBookmarkedReplies();
-                        delete bookmarks[postIdToRemove];
-                        saveBookmarkedReplies(bookmarks);
-                        renderBookmarksTab();
-                        refreshSinglePostActions(postIdToRemove);
-                    }
-                } else if (toggleLink) {
+                if (toggleLink) {
                     e.preventDefault();
                     e.stopPropagation();
                     const contentItem = toggleLink.closest('.s1p-item-content');
@@ -2534,9 +2493,8 @@
                     const preview = contentItem.querySelector('.s1p-bookmark-preview');
                     const full = contentItem.querySelector('.s1p-bookmark-full');
                     if (!preview || !full) return;
-                    
-                    const isCurrentlyCollapsed = window.getComputedStyle(full).display === 'none';
 
+                    const isCurrentlyCollapsed = window.getComputedStyle(full).display === 'none';
                     if (isCurrentlyCollapsed) {
                         full.style.display = 'block';
                         preview.style.display = 'none';
@@ -2547,7 +2505,9 @@
                 }
             });
 
-            setupBookmarkSearchComponent(tabs['bookmarks']);
+            if (hasBookmarks) {
+                setupBookmarkSearchComponent(tabs['bookmarks']);
+            }
         };
 
 
@@ -2574,13 +2534,15 @@
                 <p class="s1p-setting-desc" style="margin-top: -4px; margin-bottom: 16px;">
                     <strong>提示</strong>：顶部总开关仅影响<strong>未来新屏蔽用户</strong>的默认设置。每个用户下方的独立开关，才是控制该用户主题帖的<strong>最终开关</strong>，拥有最高优先级。
                 </p>
-                ${userItemIds.length === 0
+                <div id="s1p-blocked-user-list-container">
+                    ${userItemIds.length === 0
                     ? `<div class="s1p-empty">暂无屏蔽的用户</div>`
                     : `<div class="s1p-list">${userItemIds.map(id => {
                         const item = blockedUsers[id];
                         return `<div class="s1p-item" data-user-id="${id}"><div class="s1p-item-info"><div class="s1p-item-title">${item.name || `用户 #${id}`}</div><div class="s1p-item-meta">屏蔽时间: ${formatDate(item.timestamp)}</div><div class="s1p-item-toggle"><label class="s1p-switch"><input type="checkbox" class="s1p-user-thread-block-toggle" data-user-id="${id}" ${item.blockThreads ? 'checked' : ''}><span class="s1p-slider"></span></label><span>屏蔽该用户的主题帖</span></div></div><button class="s1p-unblock-btn s1p-btn" data-unblock-user-id="${id}">取消屏蔽</button></div>`;
                     }).join('')}</div>`
                 }
+                </div>
             `;
 
             tabs['users'].innerHTML = `
@@ -2670,7 +2632,7 @@
             const renderRules = () => {
                 const rules = getTitleFilterRules();
                 const container = tabs['threads'].querySelector('#s1p-keyword-rules-list');
-                if (!container) return; // Exit if content is not rendered
+                if (!container) return;
                 container.innerHTML = rules.map(rule => `
                     <div class="s1p-editor-item" data-rule-id="${rule.id}">
                         <label class="s1p-switch"><input type="checkbox" class="s1p-settings-checkbox s1p-keyword-rule-enable" ${rule.enabled ? 'checked' : ''}><span class="s1p-slider"></span></label>
@@ -2707,7 +2669,7 @@
                 saveTitleFilterRules(newRules);
                 hideThreadsByTitleKeyword();
                 renderDynamicallyHiddenList();
-                renderRules(); // Re-render to show the saved state and assign permanent IDs.
+                renderRules();
             };
 
             tabs['threads'].addEventListener('click', e => {
@@ -2821,18 +2783,16 @@
                     </div>
                 </div>`;
 
-            // [NEW] Function to position the slider
-            const moveSlider = (control, retries = 3) => { // 新增一个重试计数器
-                if (!control || retries <= 0) return; // 如果重试次数用尽，则停止
+            const moveSlider = (control, retries = 3) => {
+                if (!control || retries <= 0) return;
 
                 const slider = control.querySelector('.s1p-segmented-control-slider');
                 const activeOption = control.querySelector('.s1p-segmented-control-option.active');
 
                 if (slider && activeOption) {
                     const width = activeOption.offsetWidth;
-                    // 如果获取到的宽度无效 (为0)，则延迟后重试
                     if (width === 0) {
-                        setTimeout(() => moveSlider(control, retries - 1), 50); // 50毫秒后重试
+                        setTimeout(() => moveSlider(control, retries - 1), 50);
                         return;
                     }
                     slider.style.width = `${width}px`;
@@ -2840,7 +2800,6 @@
                 }
             };
 
-            // 为“在新窗口打开”开关添加事件，以控制“后台打开”的可见性
             const openInNewTabCheckbox = tabs['general-settings'].querySelector('#s1p-openProgressInNewTab');
             const openInBackgroundItem = tabs['general-settings'].querySelector('#s1p-openProgressInBackground-item');
             const openThreadsInNewTabCheckbox = tabs['general-settings'].querySelector('#s1p-openThreadsInNewTab');
@@ -2855,7 +2814,6 @@
 
             const cleanupControl = tabs['general-settings'].querySelector('#s1p-readingProgressCleanupDays-control');
             if (cleanupControl) {
-                // Initialize slider position
                 setTimeout(() => moveSlider(cleanupControl), 0);
 
                 cleanupControl.addEventListener('click', (e) => {
@@ -2868,17 +2826,13 @@
                     currentSettings.readingProgressCleanupDays = newValue;
                     saveSettings(currentSettings);
 
-                    // Update UI
                     cleanupControl.querySelectorAll('.s1p-segmented-control-option').forEach(opt => opt.classList.remove('active'));
                     target.classList.add('active');
-
-                    // Move slider to new position
                     moveSlider(cleanupControl);
                 });
             }
 
 
-            // 总的设置变更事件监听
             tabs['general-settings'].addEventListener('change', e => {
                 const target = e.target;
                 const settingKey = target.dataset.setting;
@@ -2904,7 +2858,6 @@
                         applyPageLinkBehavior();
                     }
 
-                    // [FIX] 如果是阅读进度相关的设置变更，则立即刷新按钮
                     if (settingKey === 'openProgressInNewTab' || settingKey === 'openProgressInBackground') {
                         removeProgressJumpButtons();
                         addProgressJumpButtons();
@@ -2967,7 +2920,6 @@
 
                 const container = e.currentTarget;
                 const otherItems = [...container.querySelectorAll('.s1p-editor-item:not(.s1p-dragging)')];
-
                 const nextSibling = otherItems.find(item => {
                     const rect = item.getBoundingClientRect();
                     return e.clientY < rect.top + rect.height / 2;
@@ -3018,15 +2970,13 @@
         renderThreadTab();
         renderUserTab();
         renderTagsTab();
-        renderBookmarksTab(); // [NEW]
+        renderBookmarksTab();
         renderNavSettingsTab();
 
-        // --- 触发淡入动画 ---
         modal.style.transition = 'opacity 0.2s ease-out';
         requestAnimationFrame(() => {
             modal.style.opacity = '1';
         });
-
 
         modal.addEventListener('change', e => {
             const target = e.target;
@@ -3057,12 +3007,10 @@
                         refreshAllAuthiActions();
                         break;
                     case 'enableReadProgress':
-                        const cleanupItem = document.getElementById('s1p-readingProgressCleanupContainer');
-                        if (cleanupItem) cleanupItem.style.display = isChecked ? 'flex' : 'none';
-
+                        document.getElementById('s1p-readingProgressCleanupContainer').style.display = isChecked ? 'flex' : 'none';
                         isChecked ? addProgressJumpButtons() : removeProgressJumpButtons();
                         break;
-                    case 'enableBookmarkReplies': // [NEW] Handle bookmark feature toggle
+                    case 'enableBookmarkReplies':
                         refreshAllAuthiActions();
                         break;
                 }
@@ -3087,6 +3035,30 @@
             }
         });
 
+        /**
+         * [OPTIMIZED] 从UI列表中移除一个项目，并在列表为空时显示提示信息。
+         * @param {HTMLElement} triggerElement - 触发删除操作的元素（如按钮）。
+         * @param {string} emptyHTML - 当列表为空时，要设置给容器的innerHTML。
+         * @param {function} [onEmptyCallback] - 列表变为空后执行的可选回调函数。
+         */
+        function removeListItem(triggerElement, emptyHTML, onEmptyCallback) {
+            const item = triggerElement.closest('.s1p-item');
+            if (!item) return;
+
+            const list = item.parentElement;
+            item.remove();
+
+            if (list && list.children.length === 0) {
+                const container = list.parentElement;
+                if (container) {
+                    container.innerHTML = emptyHTML;
+                }
+                if (onEmptyCallback) {
+                    onEmptyCallback(container);
+                }
+            }
+        }
+
         modal.addEventListener('click', async (e) => {
             const target = e.target;
             if (e.target.matches('.s1p-modal, .s1p-modal-close')) modal.remove();
@@ -3096,8 +3068,50 @@
                 const activeTab = tabs[e.target.dataset.tab];
                 if (activeTab) activeTab.classList.add('active');
             }
-            const unblockThreadId = e.target.dataset.unblockThreadId; if (unblockThreadId) { unblockThread(unblockThreadId); renderThreadTab(); }
-            const unblockUserId = e.target.dataset.unblockUserId; if (unblockUserId) { unblockUser(unblockUserId); renderUserTab(); renderThreadTab(); }
+
+            const unblockThreadId = e.target.dataset.unblockThreadId;
+            if (unblockThreadId) {
+                unblockThread(unblockThreadId);
+                removeListItem(target, '<div class="s1p-empty">暂无手动屏蔽的帖子</div>');
+            }
+
+            const unblockUserId = e.target.dataset.unblockUserId;
+            if (unblockUserId) {
+                // [OPTIMIZED] 深度联动优化，避免重绘帖子列表
+                const allBlockedThreads = getBlockedThreads();
+                const threadsToUnblock = Object.keys(allBlockedThreads).filter(threadId => allBlockedThreads[threadId].reason === `user_${unblockUserId}`);
+
+                unblockUser(unblockUserId);
+
+                removeListItem(target, '<div class="s1p-empty">暂无屏蔽的用户</div>');
+
+                const threadList = document.querySelector('#s1p-manually-blocked-list-container .s1p-list');
+                if (threadList) {
+                    threadsToUnblock.forEach(threadId => {
+                        const threadItemToRemove = threadList.querySelector(`.s1p-item[data-thread-id="${threadId}"]`);
+                        threadItemToRemove?.remove();
+                    });
+                    if (threadList.children.length === 0) {
+                        const container = threadList.closest('#s1p-manually-blocked-list-container');
+                        if (container) {
+                           container.innerHTML = '<div class="s1p-empty">暂无手动屏蔽的帖子</div>';
+                        }
+                    }
+                }
+            }
+
+            const removeBookmarkId = target.closest('[data-action="remove-bookmark"]')?.dataset.postId;
+            if (removeBookmarkId) {
+                const bookmarks = getBookmarkedReplies();
+                delete bookmarks[removeBookmarkId];
+                saveBookmarkedReplies(bookmarks);
+                refreshSinglePostActions(removeBookmarkId);
+                removeListItem(target, '<div class="s1p-empty">暂无收藏的回复</div>', () => {
+                    // 列表清空后，移除搜索框
+                    document.querySelector('#s1p-bookmark-search-input')?.closest('.s1p-settings-group')?.remove();
+                });
+            }
+
 
             // --- 本地备份与恢复事件 (已优化) ---
             const syncTextarea = modal.querySelector('#s1p-local-sync-textarea');
@@ -3209,15 +3223,14 @@
                 if (action === 'edit-tag-item') renderTagsTab({ editingUserId: userId });
                 if (action === 'cancel-tag-edit') renderTagsTab();
 
-                // [BUG FIX START] 刷新逻辑移动到数据确认变更后
                 if (action === 'delete-tag-item') {
                     const userName = target.dataset.userName;
                     createConfirmationModal(`确认删除对 "${userName}" 的标记吗?`, '此操作不可撤销。', () => {
                         const tags = getUserTags();
                         delete tags[userId];
                         saveUserTags(tags);
-                        refreshUserPostsOnPage(userId); // 在数据保存后刷新页面UI
-                        renderTagsTab();
+                        refreshUserPostsOnPage(userId);
+                        removeListItem(target, `<div class="s1p-empty">暂无用户标记</div>`);
                         showMessage(`已删除对 ${userName} 的标记。`, true);
                     }, '确认删除');
                 }
@@ -3228,20 +3241,19 @@
                     if (newTag) {
                         tags[userId] = { ...tags[userId], tag: newTag, timestamp: Date.now(), name: userName };
                         saveUserTags(tags);
-                        refreshUserPostsOnPage(userId); // 在数据保存后刷新页面UI
-                        renderTagsTab();
+                        refreshUserPostsOnPage(userId);
+                        renderTagsTab(); // 保存后需要重绘以退出编辑模式
                         showMessage(`已更新对 ${userName} 的标记。`, true);
                     } else {
                         createConfirmationModal(`标记内容为空`, '您希望删除对该用户的标记吗？', () => {
                             delete tags[userId];
                             saveUserTags(tags);
-                            refreshUserPostsOnPage(userId); // 在数据保存后刷新页面UI
-                            renderTagsTab();
+                            refreshUserPostsOnPage(userId);
+                            renderTagsTab(); // 删除后需要重绘
                             showMessage(`已删除对 ${userName} 的标记。`, true);
                         }, '确认删除');
                     }
                 }
-                // [BUG FIX END]
                 else if (target.id === 's1p-export-tags-btn') {
                     const textarea = targetTab.querySelector('#s1p-tags-sync-textarea');
                     const dataToExport = JSON.stringify(getUserTags(), null, 2);
@@ -3272,7 +3284,6 @@
                             renderTagsTab();
                             showMessage(`成功导入/更新 ${Object.keys(imported).length} 条用户标记。`, true);
                             textarea.value = '';
-                            // 导入后刷新所有帖子，确保新标记能显示
                             refreshAllAuthiActions();
                         }, '确认导入');
                     } catch (e) { showMessage(`导入失败: ${e.message}`, false); }
@@ -3281,7 +3292,6 @@
         });
     };
 
-    // --- [MODIFIED] 手动同步处理流程 ---
     const handleManualSync = async (anchorEl) => {
         const settings = getSettings();
         if (!settings.syncRemoteEnabled || !settings.syncRemoteGistId || !settings.syncRemotePat) {
@@ -3368,7 +3378,6 @@
         }
     };
 
-    // --- [MODIFIED] 更通用的确认弹窗，支持完全自定义按钮和内容 ---
     const createAdvancedConfirmationModal = (title, bodyHtml, buttons) => {
         document.querySelector('.s1p-confirm-modal')?.remove();
         const modal = document.createElement('div');
@@ -3398,7 +3407,7 @@
             if (buttonEl) {
                 buttonEl.addEventListener('click', () => {
                     if (btn.action) btn.action();
-                    closeModal(); // Always close the modal after a button click
+                    closeModal();
                 });
             }
         });
@@ -3407,7 +3416,6 @@
     };
 
 
-    // --- [REFACTORED] 帖子屏蔽交互逻辑重构 (使用innerHTML以方便维护) ---
     const addBlockButtonsToThreads = () => {
         document.querySelectorAll('tbody[id^="normalthread_"], tbody[id^="stickthread_"]').forEach(row => {
             const tr = row.querySelector('tr');
@@ -3422,13 +3430,11 @@
             const optionsCell = document.createElement('td');
             optionsCell.className = 's1p-options-cell';
 
-            // 1. 创建三点操作按钮
             const optionsBtn = document.createElement('div');
             optionsBtn.className = 's1p-options-btn';
             optionsBtn.title = '屏蔽此贴';
             optionsBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>`;
 
-            // 2. [REFACTORED] 使用innerHTML创建弹出菜单，便于维护
             const optionsMenu = document.createElement('div');
             optionsMenu.className = 's1p-options-menu';
             optionsMenu.innerHTML = `
@@ -3440,7 +3446,6 @@
                 </div>
             `;
 
-            // 3. 获取菜单内的按钮并绑定事件
             const cancelBtn = optionsMenu.querySelector('.s1p-cancel');
             const confirmBtn = optionsMenu.querySelector('.s1p-confirm');
 
@@ -3467,15 +3472,10 @@
                 blockThread(threadId, threadTitle);
             });
 
-
-            // 4. 组装单元格
             optionsCell.appendChild(optionsBtn);
             optionsCell.appendChild(optionsMenu);
-
-            // 5. 将新的操作单元格插入到行首
             tr.prepend(optionsCell);
 
-            // --- [S1P-FIX] 修复因添加新列导致的表头和分隔行错位问题 ---
             const headerTh = document.querySelector('#threadlist > .th th:first-child');
             if (headerTh) {
                 headerTh.colSpan = 3;
@@ -3490,7 +3490,6 @@
     };
 
 
-    // [MODIFIED] 根据用户需求，简化了浮窗逻辑
     const initializeTaggingPopover = () => {
         let popover = document.getElementById('s1p-tag-popover-main');
         if (!popover) {
@@ -3502,7 +3501,6 @@
 
         let hideTimeout, showTimeout;
         let isComposing = false;
-        let currentAnchorElement = null;
 
         const startHideTimer = () => {
             if (isComposing) return;
@@ -3545,25 +3543,23 @@
             popover.querySelector('textarea').focus();
         };
 
-        const show = (anchorElement, userId, userName, userAvatar, delay = 0, startInEditMode = false) => {
+        const show = (anchorElement, userId, userName) => {
             cancelHideTimer();
             clearTimeout(showTimeout);
 
             showTimeout = setTimeout(() => {
-                currentAnchorElement = anchorElement;
                 popover.dataset.userId = userId;
                 popover.dataset.userName = userName;
-                popover.dataset.userAvatar = userAvatar;
 
                 const userTags = getUserTags();
                 renderEditMode(userName, userId, userTags[userId]?.tag || '');
 
                 popover.classList.add('visible');
                 repositionPopover(anchorElement);
-            }, delay);
+            }, 0);
         };
 
-        popover.show = show; // Expose the show function
+        popover.show = show;
 
         popover.addEventListener('click', (e) => {
             const target = e.target.closest('button[data-action]');
@@ -3581,7 +3577,6 @@
                         delete userTags[userId];
                     }
                     saveUserTags(userTags);
-                    // 在保存后刷新页面上该用户的所有帖子
                     refreshUserPostsOnPage(userId);
                     popover.classList.remove('visible');
                     break;
@@ -3598,7 +3593,6 @@
     };
 
 
-    // --- [NEW/MODIFIED] 通用显示悬浮窗 ---
     const initializeGenericDisplayPopover = () => {
         let popover = document.getElementById('s1p-generic-display-popover');
         if (!popover) {
@@ -3616,9 +3610,9 @@
                 popover.textContent = text;
                 const rect = anchor.getBoundingClientRect();
 
+                popover.style.display = 'block';
                 let top = rect.top + window.scrollY - popover.offsetHeight - 6;
                 let left = rect.left + window.scrollX + (rect.width / 2) - (popover.offsetWidth / 2);
-
                 if (top < window.scrollY) {
                     top = rect.bottom + window.scrollY + 6;
                 }
@@ -3682,7 +3676,6 @@
             const progress = progressData[threadId];
             if (progress && progress.page) {
                 const { postId, page, timestamp, lastReadFloor: savedFloor } = progress;
-
                 const hoursDiff = (now - (timestamp || 0)) / 3600000;
                 const fcolor = getTimeBasedColor(hoursDiff);
 
@@ -3696,7 +3689,6 @@
 
                 const jumpBtn = document.createElement('a');
                 jumpBtn.className = 's1p-progress-jump-btn';
-
                 if (savedFloor) {
                     jumpBtn.textContent = `P${page}-#${savedFloor}`;
                     jumpBtn.title = `跳转至上次离开的第 ${page} 页，第 ${savedFloor} 楼`;
@@ -3717,7 +3709,6 @@
                         window.location.href = jumpBtn.href;
                     }
                 });
-
                 jumpBtn.addEventListener('mouseover', () => {
                     jumpBtn.style.backgroundColor = fcolor;
                     jumpBtn.style.color = 'var(--s1p-white)';
@@ -3728,7 +3719,6 @@
                 });
 
                 progressContainer.appendChild(jumpBtn);
-
                 if (newReplies > 0) {
                     const newRepliesBadge = document.createElement('span');
                     newRepliesBadge.className = 's1p-new-replies-badge';
@@ -3751,7 +3741,6 @@
         if (!settings.enableReadProgress || !document.getElementById('postlist')) return;
 
         let threadId = null;
-
         const threadIdMatch = window.location.href.match(/thread-(\d+)-/);
         if (threadIdMatch) {
             threadId = threadIdMatch[1];
@@ -3768,11 +3757,9 @@
         }
 
         if (!threadId) return;
-
         let currentPage = '1';
         const threadPageMatch = window.location.href.match(/thread-\d+-(\d+)-/);
         const params = new URLSearchParams(window.location.search);
-
         if (threadPageMatch) {
             currentPage = threadPageMatch[1];
         } else if (params.has('page')) {
@@ -3794,7 +3781,6 @@
 
         const saveCurrentProgress = () => {
             if (visiblePosts.size === 0) return;
-
             let maxFloor = 0;
             let finalPostId = null;
 
@@ -3829,7 +3815,6 @@
             });
             debouncedSave();
         }, { threshold: 0.1 });
-
         document.querySelectorAll('table[id^="pid"]').forEach(el => observer.observe(el));
 
         const finalSave = () => {
@@ -3842,55 +3827,43 @@
                 finalSave();
             }
         });
-
         window.addEventListener('beforeunload', finalSave);
     };
 
-    // [OPTIMIZED] 全局刷新，用于功能开关等大型变动
     const refreshAllAuthiActions = () => {
         document.querySelectorAll('.s1p-authi-actions-wrapper').forEach(el => el.remove());
         addActionsToPostFooter();
     };
 
-    // [OPTIMIZED] 精准刷新单个帖子的按钮，避免卡顿
     const refreshSinglePostActions = (postId) => {
         const postTable = document.querySelector(`table#pid${postId}`);
         if (!postTable) return;
 
-        // [BUG FIX] 彻底拆除脚本添加的容器，以便后续重建
         const container = postTable.querySelector('.s1p-authi-container');
         if (container) {
             const authiDiv = container.querySelector('.authi');
             if (authiDiv) {
-                // 1. 将原生的 .authi 元素移回其原始位置
                 container.parentElement.insertBefore(authiDiv, container);
             }
-            // 2. 完全移除脚本添加的外部容器
             container.remove();
         }
-
-        // 现在该帖子的 DOM 结构已恢复“干净”，可以安全地重新运行添加逻辑
         addActionsToSinglePost(postTable);
     };
 
     const createOptionsMenu = (anchorElement) => {
         document.querySelector('.s1p-tag-options-menu')?.remove();
-
-        const { userId, userName, userAvatar } = anchorElement.dataset;
-
+        const { userId, userName } = anchorElement.dataset;
         const menu = document.createElement('div');
         menu.className = 's1p-tag-options-menu';
         menu.innerHTML = `
             <button data-action="edit">编辑标记</button>
             <button data-action="delete" class="s1p-delete">删除标记</button>
         `;
-
         document.body.appendChild(menu);
 
         const rect = anchorElement.getBoundingClientRect();
         menu.style.top = `${rect.bottom + window.scrollY + 2}px`;
         menu.style.left = `${rect.right + window.scrollX - menu.offsetWidth}px`;
-
         const closeMenu = () => menu.remove();
 
         menu.addEventListener('click', (e) => {
@@ -3900,21 +3873,16 @@
             if (action === 'edit') {
                 const popover = document.getElementById('s1p-tag-popover-main');
                 if (popover && popover.show) {
-                    popover.show(anchorElement, userId, userName, userAvatar, 0, true);
+                    popover.show(anchorElement, userId, userName);
                 }
                 closeMenu();
             } else if (action === 'delete') {
-                // [OPTIMIZED] Use the original anchor (the three-dot button) for positioning.
-                // This provides a more stable and intuitive user experience, as the context doesn't shift.
                 createInlineConfirmMenu(anchorElement, '确认删除？', () => {
                     const tags = getUserTags();
                     delete tags[userId];
                     saveUserTags(tags);
-                    // Call targeted refresh for user's posts
                     refreshUserPostsOnPage(userId);
                 });
-                
-                // Close the old "Edit/Delete" menu
                 closeMenu();
             }
         });
@@ -3925,25 +3893,18 @@
     };;
 
     /**
-     * [FINAL-V5] Implements the user-suggested parent container architecture.
-     * This creates a new container to house both the original .authi and the script's
-     * buttons, solving all hover, wrapping, and duplication issues definitively.
+     * [OPTIMIZED] Adds action buttons to a single post, with a guard to prevent duplication.
      * @param {HTMLTableElement} postTable - The main table element for a single post.
      */
     const addActionsToSinglePost = (postTable) => {
         const settings = getSettings();
         const authiDiv = postTable.querySelector('.plc .authi');
-        if (!authiDiv) {
+        if (!authiDiv) return;
+
+        if (authiDiv.parentElement.classList.contains('s1p-authi-container')) {
             return;
         }
 
-        // [DEFINITIVE GUARD CLAUSE]
-        // If the .authi div has already been wrapped by our container, we're done.
-        if (authiDiv.parentElement.classList.contains('s1p-authi-container')) {
-            return; // This robustly prevents any duplication.
-        }
-
-        // --- Get user and post info ---
         const plsCell = postTable.querySelector('td.pls');
         if (!plsCell) return;
         const userProfileLink = plsCell.querySelector('a[href*="space-uid-"]');
@@ -3958,18 +3919,11 @@
         const userName = userProfileLink.textContent.trim();
         const userAvatar = plsCell.querySelector('.avatar img')?.src;
 
-        // --- 1. Create the new parent container as you suggested ---
         const newContainer = document.createElement('div');
         newContainer.className = 's1p-authi-container';
-
-        // --- 2. Create the wrapper for our script's buttons ---
         const scriptActionsWrapper = document.createElement('span');
         scriptActionsWrapper.className = 's1p-authi-actions-wrapper';
 
-        // --- 3. Build and add S1 Plus buttons to our wrapper ---
-        // (The button creation logic itself is unchanged)
-
-        // Button: Bookmark Reply
         if (settings.enableBookmarkReplies) {
             const bookmarkedReplies = getBookmarkedReplies();
             const isBookmarked = !!bookmarkedReplies[postId];
@@ -3998,14 +3952,11 @@
                     const threadId = threadIdMatch ? threadIdMatch[1] : (params.get('tid') || params.get('ptid'));
                     const contentEl = postTable.querySelector('td.t_f');
                     
-                    // [MODIFIED] 移除 pstatus 和 quote，并优化换行
                     let postContent = '无法获取内容';
                     if (contentEl) {
                         const contentClone = contentEl.cloneNode(true);
-                        // 根据您的要求，移除 .pstatus, .quote 和脚本自己的按钮
                         contentClone.querySelectorAll('.pstatus, .quote, .s1p-image-toggle-all-container').forEach(el => el.remove());
-                        let rawText = contentClone.innerText.trim();
-                        postContent = rawText.replace(/\n{3,}/g, '\n\n');
+                        postContent = contentClone.innerText.trim().replace(/\n{3,}/g, '\n\n');
                     }
 
                     if (!threadId) {
@@ -4013,7 +3964,7 @@
                         return;
                     }
                     currentBookmarks[postId] = {
-                        postId, threadId, threadTitle, floor, authorId: userId, authorName: userName, 
+                        postId, threadId, threadTitle, floor, authorId: userId, authorName: userName,
                         postContent: postContent,
                         timestamp: Date.now()
                     };
@@ -4025,7 +3976,6 @@
             scriptActionsWrapper.appendChild(bookmarkLink);
         }
 
-        // Button: Block User
         if (settings.enableUserBlocking) {
             const pipe = document.createElement('span');
             pipe.className = 'pipe';
@@ -4044,7 +3994,6 @@
             scriptActionsWrapper.appendChild(blockLink);
         }
 
-        // Button: Tag User
         if (settings.enableUserTagging) {
             const userTags = getUserTags();
             const userTag = userTags[userId];
@@ -4066,7 +4015,6 @@
                 optionsIcon.innerHTML = '&#8942;';
                 optionsIcon.dataset.userId = userId;
                 optionsIcon.dataset.userName = userName;
-                optionsIcon.dataset.userAvatar = userAvatar;
                 optionsIcon.addEventListener('click', (e) => {
                     e.preventDefault();
                     e.stopPropagation();
@@ -4084,46 +4032,29 @@
                     e.preventDefault();
                     const popover = document.getElementById('s1p-tag-popover-main');
                     if (popover && popover.show) {
-                        popover.show(e.currentTarget, userId, userName, userAvatar, 0, true);
+                        popover.show(e.currentTarget, userId, userName, userAvatar);
                     }
                 });
                 scriptActionsWrapper.appendChild(tagLink);
             }
         }
         
-        // --- 4. Perform the DOM restructuring ---
         if (scriptActionsWrapper.hasChildNodes()) {
-            // Insert the new container right before the original .authi div
             authiDiv.parentElement.insertBefore(newContainer, authiDiv);
-            
-            // Move the original .authi div inside our new container
             newContainer.appendChild(authiDiv);
-            
-            // Append the script's buttons into the new container, after .authi
             newContainer.appendChild(scriptActionsWrapper);
         }
     };
 
-    /**
-     * [FIXED] Iterates through all posts on the page and calls the function to add action buttons.
-     * This new logic is robust and works in all page views.
-     */
     const addActionsToPostFooter = () => {
         const settings = getSettings();
         if (!settings.enableUserBlocking && !settings.enableUserTagging && !settings.enableBookmarkReplies) return;
-
-        // Iterate over each post table element, which is a reliable way to find all posts.
-        document.querySelectorAll('table[id^="pid"]').forEach(postTable => {
-            addActionsToSinglePost(postTable);
-        });
+        document.querySelectorAll('table[id^="pid"]').forEach(addActionsToSinglePost);
     };
 
-    // 自动签到 (适配 study_daily_attendance 插件)
     function autoSign() {
         const checkinLink = document.querySelector('a[href*="study_daily_attendance-daily_attendance.html"]');
-        if (!checkinLink) {
-            return;
-        }
+        if (!checkinLink) return;
 
         var now = new Date();
         var date = now.getFullYear() + "-" + (now.getMonth() + 1) + "-" + now.getDate();
@@ -4134,9 +4065,7 @@
             return;
         }
 
-        if (now.getHours() < 6) {
-            return;
-        }
+        if (now.getHours() < 6) return;
 
         GM_xmlhttpRequest({
             method: "GET",
@@ -4152,13 +4081,9 @@
         });
     }
 
-    // [MODIFIED] Function to clean up old reading progress records
     const cleanupOldReadProgress = () => {
         const settings = getSettings();
-        if (!settings.readingProgressCleanupDays || settings.readingProgressCleanupDays <= 0) {
-            return;
-        }
-
+        if (!settings.readingProgressCleanupDays || settings.readingProgressCleanupDays <= 0) return;
         const progress = getReadProgress();
         const originalCount = Object.keys(progress).length;
         if (originalCount === 0) return;

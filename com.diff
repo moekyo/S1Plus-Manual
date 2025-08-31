@@ -1,0 +1,187 @@
+@@ -1,7 +1,7 @@
+// ==UserScript==
+// @name         S1 Plus - Stage1st 体验增强套件
+// @namespace    http://tampermonkey.net/
+// @version      4.9.3
+// @version      4.9.4
+// @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪、回复收藏等多种功能，全方位优化你的论坛体验。
+// @author       moekyo & Gemini
+// @match        https://stage1st.com/2b/*
+@@ -17,8 +17,8 @@
+    'use strict';
+
+
+    const SCRIPT_VERSION = '4.9.3';
+    const SCRIPT_RELEASE_DATE = '2025-08-30';
+    const SCRIPT_VERSION = '4.9.4';
+    const SCRIPT_RELEASE_DATE = '2025-08-31';
+
+    GM_addStyle(`
+       /* --- 通用颜色 --- */
+@@ -910,7 +910,6 @@
+        /* --- Nav Editor Dragging --- */
+        .s1p-editor-item.s1p-dragging { opacity: 0.5; }
+
+        /* --- 用户标记设置面板专属样式 --- */
+        /* --- 用户标记设置面板专属样式 --- */
+        .s1p-item-meta-id { font-family: monospace; background-color: var(--s1p-bg); padding: 1px 5px; border-radius: 4px; font-size: 11px; color: var(--s1p-t); }
+        .s1p-item-content {
+@@ -2523,7 +2522,21 @@
+                        const bookmarks = getBookmarkedReplies();
+                        delete bookmarks[postIdToRemove];
+                        saveBookmarkedReplies(bookmarks);
+                        renderBookmarksTab();
+                        
+                        // [OPTIMIZATION] Replace full re-render with targeted DOM removal
+                        const itemToRemove = removeBtn.closest('.s1p-item');
+                        if (itemToRemove) {
+                            const list = itemToRemove.parentElement;
+                            itemToRemove.remove();
+                            if (list && list.children.length === 0) {
+                                // If the list becomes empty, hide it and the search bar, and show the empty message
+                                document.querySelector('#s1p-bookmarks-list').style.display = 'none';
+                                const searchGroup = document.querySelector('#s1p-bookmark-search-input')?.closest('.s1p-settings-group');
+                                if(searchGroup) searchGroup.style.display = 'none';
+                                document.querySelector('#s1p-bookmarks-empty-message').style.display = 'block';
+                            }
+                        }
+
+                        refreshSinglePostActions(postIdToRemove);
+                    }
+                } else if (toggleLink) {
+@@ -2574,6 +2587,7 @@
+                <p class="s1p-setting-desc" style="margin-top: -4px; margin-bottom: 16px;">
+                    <strong>提示</strong>：顶部总开关仅影响<strong>未来新屏蔽用户</strong>的默认设置。每个用户下方的独立开关，才是控制该用户主题帖的<strong>最终开关</strong>，拥有最高优先级。
+                </p>
+                <div id="s1p-blocked-user-list-container">
+                ${userItemIds.length === 0
+                    ? `<div class="s1p-empty">暂无屏蔽的用户</div>`
+                    : `<div class="s1p-list">${userItemIds.map(id => {
+@@ -2581,6 +2595,7 @@
+                        return `<div class="s1p-item" data-user-id="${id}"><div class="s1p-item-info"><div class="s1p-item-title">${item.name || `用户 #${id}`}</div><div class="s1p-item-meta">屏蔽时间: ${formatDate(item.timestamp)}</div><div class="s1p-item-toggle"><label class="s1p-switch"><input type="checkbox" class="s1p-user-thread-block-toggle" data-user-id="${id}" ${item.blockThreads ? 'checked' : ''}><span class="s1p-slider"></span></label><span>屏蔽该用户的主题帖</span></div></div><button class="s1p-unblock-btn s1p-btn" data-unblock-user-id="${id}">取消屏蔽</button></div>`;
+                    }).join('')}</div>`
+                }
+                </div>
+            `;
+
+            tabs['users'].innerHTML = `
+@@ -3096,8 +3111,62 @@
+                const activeTab = tabs[e.target.dataset.tab];
+                if (activeTab) activeTab.classList.add('active');
+            }
+            const unblockThreadId = e.target.dataset.unblockThreadId; if (unblockThreadId) { unblockThread(unblockThreadId); renderThreadTab(); }
+            const unblockUserId = e.target.dataset.unblockUserId; if (unblockUserId) { unblockUser(unblockUserId); renderUserTab(); renderThreadTab(); }
+
+            const unblockThreadId = e.target.dataset.unblockThreadId;
+            if (unblockThreadId) {
+                unblockThread(unblockThreadId);
+                // [OPTIMIZATION] Replace full re-render with targeted DOM removal
+                const itemToRemove = target.closest('.s1p-item');
+                if (itemToRemove) {
+                    const list = itemToRemove.parentElement;
+                    itemToRemove.remove();
+                    if (list && list.children.length === 0) {
+                        const container = list.closest('#s1p-manually-blocked-list-container');
+                        if (container) {
+                            container.innerHTML = '<div class="s1p-empty">暂无手动屏蔽的帖子</div>';
+                        }
+                    }
+                }
+            }
+
+            const unblockUserId = e.target.dataset.unblockUserId;
+            if (unblockUserId) {
+                // [OPTIMIZATION] Perform targeted removal instead of full re-renders
+                // 1. Find which threads will be unblocked by this action BEFORE unblocking the user
+                const allBlockedThreads = getBlockedThreads();
+                const threadsToUnblock = Object.keys(allBlockedThreads).filter(threadId => allBlockedThreads[threadId].reason === `user_${unblockUserId}`);
+                
+                // 2. Perform the unblock action
+                unblockUser(unblockUserId);
+
+                // 3. Remove the user item from the user list UI
+                const userItemToRemove = target.closest('.s1p-item');
+                if (userItemToRemove) {
+                    const list = userItemToRemove.parentElement;
+                    userItemToRemove.remove();
+                    if (list && list.children.length === 0) {
+                        const container = document.getElementById('s1p-blocked-user-list-container');
+                        if(container) container.innerHTML = '<div class="s1p-empty">暂无屏蔽的用户</div>';
+                    }
+                }
+
+                // 4. Remove the related thread items from the thread list UI
+                const threadList = document.querySelector('#s1p-manually-blocked-list-container .s1p-list');
+                if (threadList) {
+                    threadsToUnblock.forEach(threadId => {
+                        const threadItemToRemove = threadList.querySelector(`.s1p-item[data-thread-id="${threadId}"]`);
+                        if (threadItemToRemove) {
+                            threadItemToRemove.remove();
+                        }
+                    });
+                    if (threadList.children.length === 0) {
+                        const container = threadList.closest('#s1p-manually-blocked-list-container');
+                        if (container) {
+                           container.innerHTML = '<div class="s1p-empty">暂无手动屏蔽的帖子</div>';
+                        }
+                    }
+                }
+            }
+
+            // --- 本地备份与恢复事件 (已优化) ---
+            const syncTextarea = modal.querySelector('#s1p-local-sync-textarea');
+@@ -3209,15 +3278,26 @@
+                if (action === 'edit-tag-item') renderTagsTab({ editingUserId: userId });
+                if (action === 'cancel-tag-edit') renderTagsTab();
+
+                // [BUG FIX START] 刷新逻辑移动到数据确认变更后
+                if (action === 'delete-tag-item') {
+                    const userName = target.dataset.userName;
+                    createConfirmationModal(`确认删除对 "${userName}" 的标记吗?`, '此操作不可撤销。', () => {
+                        const tags = getUserTags();
+                        delete tags[userId];
+                        saveUserTags(tags);
+                        refreshUserPostsOnPage(userId); // 在数据保存后刷新页面UI
+                        renderTagsTab();
+                        refreshUserPostsOnPage(userId);
+                        
+                        // [OPTIMIZATION] Replace full re-render with targeted DOM removal
+                        const itemToRemove = target.closest('.s1p-item');
+                        if (itemToRemove) {
+                            const list = itemToRemove.parentElement;
+                            itemToRemove.remove();
+                            if (list && list.children.length === 0) {
+                                 // If the list is empty, replace it with the empty message.
+                                 const container = list.closest('.s1p-settings-group');
+                                 if (container) container.innerHTML = '<div class="s1p-settings-group-title">已标记用户列表</div><div class="s1p-empty">暂无用户标记</div>';
+                            }
+                        }
+                        
+                        showMessage(`已删除对 ${userName} 的标记。`, true);
+                    }, '确认删除');
+                }
+@@ -3228,20 +3308,19 @@
+                    if (newTag) {
+                        tags[userId] = { ...tags[userId], tag: newTag, timestamp: Date.now(), name: userName };
+                        saveUserTags(tags);
+                        refreshUserPostsOnPage(userId); // 在数据保存后刷新页面UI
+                        renderTagsTab();
+                        refreshUserPostsOnPage(userId);
+                        renderTagsTab(); // Re-render is needed here to switch from edit mode to view mode
+                        showMessage(`已更新对 ${userName} 的标记。`, true);
+                    } else {
+                        createConfirmationModal(`标记内容为空`, '您希望删除对该用户的标记吗？', () => {
+                            delete tags[userId];
+                            saveUserTags(tags);
+                            refreshUserPostsOnPage(userId); // 在数据保存后刷新页面UI
+                            renderTagsTab();
+                            refreshUserPostsOnPage(userId);
+                            renderTagsTab(); // Re-render to show the updated (now empty) list
+                            showMessage(`已删除对 ${userName} 的标记。`, true);
+                        }, '确认删除');
+                    }
+                }
+                // [BUG FIX END]
+                else if (target.id === 's1p-export-tags-btn') {
+                    const textarea = targetTab.querySelector('#s1p-tags-sync-textarea');
+                    const dataToExport = JSON.stringify(getUserTags(), null, 2);
