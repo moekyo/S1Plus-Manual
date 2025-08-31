@@ -340,20 +340,31 @@
 
 之前我记得是使用以下逻辑修复，但是现在不生效了
 
-if (!isS1NuxEnabled) {
-    wrapper.addEventListener('mouseenter', () => {
-        const triangleSpan = authiDiv.querySelector('.none');
-            if (triangleSpan) {
-                    triangleSpan.style.display = 'inline';
-            }
-        });
-        wrapper.addEventListener('mouseleave', () => {
-            const triangleSpan = authiDiv.querySelector('.none');
-            if (triangleSpan) {
-                    triangleSpan.style.removeProperty('display');
-            }
-     });
- }
+        // --- [RESTORED] Add hover effect for the native dropdown menu triangle ---
+        if (!isS1NuxEnabled) {
+            let originalDisplay = ''; // 用于存储原始的display值
+            wrapper.addEventListener('mouseenter', () => {
+                const triangleSpan = authiDiv.querySelector('.none');
+                if (triangleSpan) {
+                    originalDisplay = triangleSpan.style.display; // 保存进入前的display值
+                    // 使用 setProperty 并添加 !important 来确保最高优先级
+                    triangleSpan.style.setProperty('display', 'inline', 'important');
+                }
+            });
+
+            wrapper.addEventListener('mouseleave', () => {
+                const triangleSpan = authiDiv.querySelector('.none');
+                if (triangleSpan) {
+                    // 恢复进入前的值，而不是简单地移除
+                    triangleSpan.style.display = originalDisplay;
+                }
+            });
+        }
+
+
+还是原来一样，如果把鼠标移动到“屏蔽该用户”和“标记该用户”等自定义按钮上时
+的范围，此时跟在“只看大图”的右边的一个小三角也会消失。这时是不对的，因为“屏蔽该用户”和“标记该用户”这两个按钮并不会触发
+“倒序浏览”和“阅读模式”两个按钮的展示。在这种情况下，小三角应该保持可见状态。而且还让用户标记的悬浮窗不出现了
 
 
 关于手动帖子屏蔽，在目前实现中，需要在在帖子列表，把鼠标移动到帖子的最左边（图标）位置悬停 一定时间后，帖子屏蔽按钮会出现。
@@ -966,3 +977,26 @@ S1 Plus脚本首先运行，将布局修正到完美状态。
 </div>
 
 修复这个问题是只需修改 GM_addStyle 定义的样式就好了吗？
+
+还是不行，之前改了一版 addActionsToSinglePost 的实现，调整了添加自定义按钮的实现方式以适配各种页面结构，但是修改之后，原来用于修复这个问题的代码就失效了。
+以下是对一个的代码片段，看看是不是这个新的添加自定义按钮的实现方式导致了问题。根据这个新的添加自定义按钮的实现方式，调整以下的修复的代码实现
+
+if (!isS1NuxEnabled) {
+            let originalDisplay = ''; // 用于存储原始的display值
+            wrapper.addEventListener('mouseenter', () => {
+                const triangleSpan = authiDiv.querySelector('.none');
+                if (triangleSpan) {
+                    originalDisplay = triangleSpan.style.display; // 保存进入前的display值
+                    // 使用 setProperty 并添加 !important 来确保最高优先级
+                    triangleSpan.style.setProperty('display', 'inline', 'important');
+                }
+            });
+
+            wrapper.addEventListener('mouseleave', () => {
+                const triangleSpan = authiDiv.querySelector('.none');
+                if (triangleSpan) {
+                    // 恢复进入前的值，而不是简单地移除
+                    triangleSpan.style.display = originalDisplay;
+                }
+            });
+        }
