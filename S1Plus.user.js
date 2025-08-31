@@ -2017,7 +2017,7 @@
     };
 
     /**
-     * [MODIFIED] 创建一个行内确认菜单 (带动画和右侧定位)
+     * [MODIFIED] 创建一个行内确认菜单 (V2: 带智能定位和动画)
      * @param {HTMLElement} anchorElement - 菜单定位的锚点元素
      * @param {string} confirmText - 确认提示文本
      * @param {Function} onConfirm - 点击确认后执行的回调函数
@@ -2042,11 +2042,25 @@
         const anchorRect = anchorElement.getBoundingClientRect();
         const menuRect = menu.getBoundingClientRect();
 
-        // --- 新的定位逻辑 ---
-        // 1. 垂直居中对齐
+        // --- 智能定位逻辑 ---
         const top = anchorRect.top + window.scrollY + (anchorRect.height / 2) - (menuRect.height / 2);
-        // 2. 放置在锚点右侧，并留出间隙
-        const left = anchorRect.right + window.scrollX + 8;
+        let left;
+
+        const spaceOnRight = window.innerWidth - anchorRect.right;
+        const requiredSpace = menuRect.width + 16; // 菜单宽度 + 边距
+
+        if (spaceOnRight >= requiredSpace) {
+            // 右侧空间充足，正常放右边
+            left = anchorRect.right + window.scrollX + 8;
+        } else {
+            // 右侧空间不足，改放左边
+            left = anchorRect.left + window.scrollX - menuRect.width - 8;
+        }
+
+        // 确保菜单不会超出屏幕左边界
+        if (left < window.scrollX) {
+            left = window.scrollX + 8;
+        }
 
         menu.style.top = `${top}px`;
         menu.style.left = `${left}px`;
@@ -2055,15 +2069,14 @@
         const closeMenu = () => {
             if (isClosing) return;
             isClosing = true;
-            document.removeEventListener('click', closeMenu); // 立即移除监听器
-            menu.classList.remove('visible'); // 触发消失动画
+            document.removeEventListener('click', closeMenu);
+            menu.classList.remove('visible');
 
-            // 在动画结束后移除 DOM 元素，设置一个安全的延时
             setTimeout(() => {
                 if (menu.parentNode) {
                     menu.remove();
                 }
-            }, 200); // 动画时长为 0.15s，200ms 足够
+            }, 200);
         };
 
         menu.querySelector('.s1p-confirm').addEventListener('click', (e) => {
@@ -2077,12 +2090,10 @@
             closeMenu();
         });
 
-        // 触发进入动画
         requestAnimationFrame(() => {
             menu.classList.add('visible');
         });
 
-        // 在下一个事件循环中添加外部点击关闭监听，以防止触发打开的同一次点击立即关闭它
         setTimeout(() => {
             document.addEventListener('click', closeMenu, { once: true });
         }, 0);
@@ -3801,14 +3812,21 @@
         const postTable = document.querySelector(`table#pid${postId}`);
         if (!postTable) return;
 
-        const authiDiv = postTable.querySelector('.authi');
-        if (authiDiv) {
-            authiDiv.querySelector('.s1p-authi-actions-wrapper')?.remove();
+        // [BUG FIX] 彻底拆除脚本添加的容器，以便后续重建
+        const container = postTable.querySelector('.s1p-authi-container');
+        if (container) {
+            const authiDiv = container.querySelector('.authi');
+            if (authiDiv) {
+                // 1. 将原生的 .authi 元素移回其原始位置
+                container.parentElement.insertBefore(authiDiv, container);
+            }
+            // 2. 完全移除脚本添加的外部容器
+            container.remove();
         }
 
+        // 现在该帖子的 DOM 结构已恢复“干净”，可以安全地重新运行添加逻辑
         addActionsToSinglePost(postTable);
     };
-
 
     const createOptionsMenu = (anchorElement) => {
         document.querySelector('.s1p-tag-options-menu')?.remove();
