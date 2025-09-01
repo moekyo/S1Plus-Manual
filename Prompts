@@ -1073,3 +1073,9 @@ if (!isS1NuxEnabled) {
 分析它们各自的实现方式和优化点，找出可以进一步改进的地方。
 
 详细分析两份脚本的实现方式和优化点。各自有什么不同和优缺点？
+
+现在脚本只是用了时间戳来决定同步与否，是否可以加上一个使用全体数据计算出来的哈希值来进一步优化这个判断呢
+
+从这个 diff 文件中整理对应的 changelog 和 commit 信息
+
+git diff v4.4.3..feature/cloud-sync -- S1Plus.user.js > s1plus_diff
