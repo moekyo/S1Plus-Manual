@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      4.9.4
+// @version      5.0.0
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪、回复收藏等多种功能，全方位优化你的论坛体验。
 // @author       moekyo & Gemini
 // @match        https://stage1st.com/2b/*
@@ -17,8 +17,65 @@
     'use strict';
 
 
-    const SCRIPT_VERSION = '4.9.4';
-    const SCRIPT_RELEASE_DATE = '2025-08-31';
+    const SCRIPT_VERSION = '5.0.0';
+    const SCRIPT_RELEASE_DATE = '2025-09-01';
+
+    // --- [新增] SHA-256 哈希计算库 (基于 Web Crypto API) ---
+    /**
+     * 计算字符串的 SHA-256 哈希值。
+     * @param {string} message - 要计算哈希的字符串。
+     * @returns {Promise<string>} 64个字符的十六进制哈希字符串。
+     */
+    const sha256 = async (message) => {
+        // 将消息编码为 Uint8Array
+        const msgUint8 = new TextEncoder().encode(message);
+        // 使用 subtle.digest 进行哈希计算
+        const hashBuffer = await crypto.subtle.digest('SHA-256', msgUint8);
+        // 将 ArrayBuffer 转换为字节数组
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        // 将字节数组转换为十六进制字符串
+        return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    };
+
+    // --- [新增] 确定性JSON序列化与哈希计算辅助函数 ---
+
+    /**
+     * 对对象进行深度排序，确保键的顺序一致，以便生成稳定的哈希值。
+     * @param {any} obj 要排序的对象。
+     * @returns {any} 键已排序的对象。
+     */
+    const deterministicSort = (obj) => {
+        if (typeof obj !== 'object' || obj === null) {
+            return obj;
+        }
+        if (Array.isArray(obj)) {
+            return obj.map(deterministicSort);
+        }
+        const sortedKeys = Object.keys(obj).sort();
+        const newObj = {};
+        for (const key of sortedKeys) {
+            newObj[key] = deterministicSort(obj[key]);
+        }
+        return newObj;
+    };
+
+    // --- [新增] 全局状态标志，用于防止启动时的同步竞态条件 ---
+    let isInitialSyncInProgress = false;
+
+
+    /**
+     * 计算数据对象的 SHA-256 哈希值。
+     * @param {object} dataObject - 要计算哈希的数据对象 (即 `data` 字段的内容)。
+     * @returns {Promise<string>} 计算出的哈希值。
+     */
+    const calculateDataHash = async (dataObject) => {
+        // 1. 深度排序对象键，确保序列化结果的确定性
+        const sortedData = deterministicSort(dataObject);
+        // 2. 序列化为JSON字符串
+        const stringifiedData = JSON.stringify(sortedData);
+        // 3. 计算SHA-256哈希
+        return await sha256(stringifiedData);
+    };
 
     GM_addStyle(`
        /* --- 通用颜色 --- */
@@ -1061,9 +1118,15 @@
 
     let dynamicallyHiddenThreads = {};
 
-    // [NEW] 为远程推送增加防抖机制，避免过于频繁的API调用
+    // [MODIFIED] 为远程推送增加防抖机制，并防止与初始同步冲突
     let remotePushTimeout;
     const debouncedTriggerRemoteSyncPush = () => {
+        // [OPTIMIZATION] 如果初始同步正在进行，则跳过由数据变更触发的推送
+        if (isInitialSyncInProgress) {
+            console.log('S1 Plus: 初始同步进行中，已跳过本次自动推送请求。');
+            return;
+        }
+
         const settings = getSettings();
         if (!settings.syncRemoteEnabled || !settings.syncRemoteGistId || !settings.syncRemotePat) {
             return;
@@ -1534,29 +1597,48 @@
         });
     };
 
-    // [FIXED] 导出数据对象，使用持久化的时间戳
-    const exportLocalDataObject = () => {
+    // [MODIFIED] 导出数据对象，采用新的嵌套结构并包含内容哈希
+    const exportLocalDataObject = async () => {
         const lastUpdated = GM_getValue('s1p_last_modified', 0);
         const lastUpdatedFormatted = new Date(lastUpdated).toLocaleString('zh-CN', { hour12: false });
-        return {
-            version: 3.2,
-            lastUpdated,
-            lastUpdatedFormatted,
-            settings: getSettings(),
+
+        // --- [FIX] 从要同步的设置中排除 Gist ID 和 PAT ---
+        const allSettings = getSettings();
+        const { syncRemoteGistId, syncRemotePat, ...syncedSettings } = allSettings;
+        // -----------------------------------------------------
+
+        const data = {
+            settings: syncedSettings, // 使用过滤后的设置对象
             threads: getBlockedThreads(),
             users: getBlockedUsers(),
             user_tags: getUserTags(),
             title_filter_rules: getTitleFilterRules(),
             read_progress: getReadProgress(),
-            bookmarked_replies: getBookmarkedReplies() // [NEW] Add bookmarked replies to export
-        }
+            bookmarked_replies: getBookmarkedReplies()
+        };
+
+        const contentHash = await calculateDataHash(data);
+
+        return {
+            version: 4.0, // 版本号升级
+            lastUpdated,
+            lastUpdatedFormatted,
+            contentHash, // 新增内容哈希字段
+            data // 所有用户数据被封装在 data 对象中
+        };
     };
 
-    const exportLocalData = () => JSON.stringify(exportLocalDataObject(), null, 2);
+    const exportLocalData = async () => JSON.stringify(await exportLocalDataObject(), null, 2);
 
+    // [MODIFIED] 导入数据，兼容新旧两种数据结构
     const importLocalData = (jsonStr) => {
         try {
-            const imported = JSON.parse(jsonStr); if (typeof imported !== 'object' || imported === null) throw new Error("无效数据格式");
+            const imported = JSON.parse(jsonStr);
+            if (typeof imported !== 'object' || imported === null) throw new Error("无效数据格式");
+
+            // --- 兼容性处理：判断是新结构还是旧结构 ---
+            const dataToImport = imported.data && imported.version >= 4.0 ? imported.data : imported;
+
             let threadsImported = 0, usersImported = 0, progressImported = 0, rulesImported = 0, tagsImported = 0, bookmarksImported = 0;
 
             const upgradeAndMerge = (type, importedData, getter, saver) => {
@@ -1571,39 +1653,43 @@
                 return Object.keys(importedData).length;
             };
 
-            if (imported.settings) {
-                saveSettings({ ...getSettings(), ...imported.settings });
+            if (dataToImport.settings) {
+                // --- [FIX] 导入设置时忽略 Gist ID 和 PAT，保留本地配置 ---
+                const importedSettings = { ...dataToImport.settings };
+                delete importedSettings.syncRemoteGistId;
+                delete importedSettings.syncRemotePat;
+                saveSettings({ ...getSettings(), ...importedSettings });
+                // ----------------------------------------------------------
             }
 
-            threadsImported = upgradeAndMerge('threads', imported.threads, getBlockedThreads, saveBlockedThreads);
-            usersImported = upgradeAndMerge('users', imported.users, getBlockedUsers, saveBlockedUsers);
+            threadsImported = upgradeAndMerge('threads', dataToImport.threads, getBlockedThreads, saveBlockedThreads);
+            usersImported = upgradeAndMerge('users', dataToImport.users, getBlockedUsers, saveBlockedUsers);
 
-            if (imported.user_tags && typeof imported.user_tags === 'object') {
-                const mergedTags = { ...getUserTags(), ...imported.user_tags };
+            if (dataToImport.user_tags && typeof dataToImport.user_tags === 'object') {
+                const mergedTags = { ...getUserTags(), ...dataToImport.user_tags };
                 saveUserTags(mergedTags);
-                tagsImported = Object.keys(imported.user_tags).length;
+                tagsImported = Object.keys(dataToImport.user_tags).length;
             }
 
-            if (imported.title_filter_rules && Array.isArray(imported.title_filter_rules)) {
-                saveTitleFilterRules(imported.title_filter_rules);
-                rulesImported = imported.title_filter_rules.length;
-            } else if (imported.title_keywords && Array.isArray(imported.title_keywords)) { // 向后兼容导入旧格式
-                const newRules = imported.title_keywords.map(k => ({ pattern: k, enabled: true, id: `rule_${Date.now()}_${Math.random()}` }));
+            if (dataToImport.title_filter_rules && Array.isArray(dataToImport.title_filter_rules)) {
+                saveTitleFilterRules(dataToImport.title_filter_rules);
+                rulesImported = dataToImport.title_filter_rules.length;
+            } else if (dataToImport.title_keywords && Array.isArray(dataToImport.title_keywords)) { // 向后兼容导入旧格式
+                const newRules = dataToImport.title_keywords.map(k => ({ pattern: k, enabled: true, id: `rule_${Date.now()}_${Math.random()}` }));
                 saveTitleFilterRules(newRules);
                 rulesImported = newRules.length;
             }
 
-            if (imported.read_progress) {
-                const mergedProgress = { ...getReadProgress(), ...imported.read_progress };
+            if (dataToImport.read_progress) {
+                const mergedProgress = { ...getReadProgress(), ...dataToImport.read_progress };
                 saveReadProgress(mergedProgress);
-                progressImported = Object.keys(imported.read_progress).length;
+                progressImported = Object.keys(dataToImport.read_progress).length;
             }
 
-            // [NEW] Import bookmarked replies
-            if (imported.bookmarked_replies) {
-                const mergedBookmarks = { ...getBookmarkedReplies(), ...imported.bookmarked_replies };
+            if (dataToImport.bookmarked_replies) {
+                const mergedBookmarks = { ...getBookmarkedReplies(), ...dataToImport.bookmarked_replies };
                 saveBookmarkedReplies(mergedBookmarks);
-                bookmarksImported = Object.keys(imported.bookmarked_replies).length;
+                bookmarksImported = Object.keys(dataToImport.bookmarked_replies).length;
             }
 
 
@@ -1699,7 +1785,7 @@
         });
     });
 
-    // [NEW] 触发式推送函数，用于在数据保存后自动上传
+    // [MODIFIED] 触发式推送函数，现在是异步的
     const triggerRemoteSyncPush = () => {
         // 异步执行，不阻塞主流程
         (async () => {
@@ -1709,7 +1795,7 @@
             }
             console.log('S1 Plus: 检测到数据变更，触发远程同步推送...');
             try {
-                const dataToPush = exportLocalDataObject();
+                const dataToPush = await exportLocalDataObject();
                 await pushRemoteData(dataToPush);
                 GM_setValue('s1p_last_sync_timestamp', Date.now());
                 updateLastSyncTimeDisplay();
@@ -1720,32 +1806,115 @@
         })();
     };
 
-    // [MODIFIED] 自动同步控制器，用于页面加载时静默执行
+    /**
+     * [新增] 迁移并校验远程数据
+     * @param {object} remoteGistObject - 从 Gist 拉取的原始对象
+     * @returns {Promise<object>} 返回一个包含 data, version, contentHash, lastUpdated 的规范化对象
+     */
+    const migrateAndValidateRemoteData = async (remoteGistObject) => {
+        if (!remoteGistObject || typeof remoteGistObject !== 'object') {
+            throw new Error("远程数据为空或格式无效");
+        }
+
+        let data, version, contentHash, lastUpdated;
+
+        // 场景1: 新版数据结构 (v4.0+)
+        if (remoteGistObject.data && remoteGistObject.version >= 4.0) {
+            data = remoteGistObject.data;
+            version = remoteGistObject.version;
+            contentHash = remoteGistObject.contentHash;
+            lastUpdated = remoteGistObject.lastUpdated;
+
+            // --- 核心校验逻辑 ---
+            const calculatedHash = await calculateDataHash(data);
+            if (calculatedHash !== contentHash) {
+                throw new Error("云端备份已损坏 (哈希校验失败)，同步已暂停以保护您的本地数据。");
+            }
+
+        // 场景2: 旧版扁平数据结构 (需要迁移)
+        } else {
+            console.log("S1 Plus: 检测到旧版云端数据格式，将进行自动迁移。");
+            version = remoteGistObject.version || 3.2; // 假设旧版版本
+            lastUpdated = remoteGistObject.lastUpdated || 0;
+            // 从顶层属性中提取数据
+            data = {
+                settings: remoteGistObject.settings || defaultSettings,
+                threads: remoteGistObject.threads || {},
+                users: remoteGistObject.users || {},
+                user_tags: remoteGistObject.user_tags || {},
+                title_filter_rules: remoteGistObject.title_filter_rules || [],
+                read_progress: remoteGistObject.read_progress || {},
+                bookmarked_replies: remoteGistObject.bookmarked_replies || {}
+            };
+            // 旧版数据没有哈希，我们计算一个用于后续比较
+            contentHash = await calculateDataHash(data);
+        }
+
+        return { data, version, contentHash, lastUpdated, full: remoteGistObject };
+    };
+
+
+    // [MODIFIED] 自动同步控制器，集成哈希校验逻辑并增加启动时竞态条件处理
     const performAutoSync = async () => {
         const settings = getSettings();
         if (!settings.syncRemoteEnabled || !settings.syncRemoteGistId || !settings.syncRemotePat) {
             return;
         }
 
-        try {
-            const remoteData = await fetchRemoteData();
-            const remoteTimestamp = remoteData.lastUpdated || 0;
-            const localTimestamp = GM_getValue('s1p_last_modified', 0);
+        // [OPTIMIZATION] 开始同步前，设置标志位
+        isInitialSyncInProgress = true;
+        console.log('S1 Plus (AutoSync): 启动初始同步检查...');
 
-            if (remoteTimestamp > localTimestamp) {
-                console.log(`S1 Plus (AutoSync): 远程数据 (TS: ${remoteTimestamp}) 比本地 (TS: ${localTimestamp}) 更新，正在后台应用...`);
-                importLocalData(JSON.stringify(remoteData));
-                GM_setValue('s1p_last_sync_timestamp', Date.now());
-            } else if (localTimestamp > remoteTimestamp) {
-                console.log(`S1 Plus (AutoSync): 本地数据 (TS: ${localTimestamp}) 比远程 (TS: ${remoteTimestamp}) 更新，正在后台推送...`);
-                const localData = exportLocalDataObject();
-                await pushRemoteData(localData);
-                GM_setValue('s1p_last_sync_timestamp', Date.now());
-            } else {
-                console.log(`S1 Plus (AutoSync): 本地与远程数据版本一致 (TS: ${localTimestamp})，无需同步。`);
+        try {
+            const rawRemoteData = await fetchRemoteData();
+            if (Object.keys(rawRemoteData).length === 0) { // Gist为空，首次同步
+                 console.log(`S1 Plus (AutoSync): 远程为空，推送本地数据...`);
+                 const localData = await exportLocalDataObject();
+                 await pushRemoteData(localData);
+                 GM_setValue('s1p_last_sync_timestamp', Date.now());
+                 // 注意：此处直接 return，但 finally 块依然会执行
+                 return;
             }
+
+            // 1. 校验和迁移远程数据
+            const remote = await migrateAndValidateRemoteData(rawRemoteData);
+            const remoteTimestamp = remote.lastUpdated;
+            const remoteHash = remote.contentHash;
+
+            // 2. 计算本地哈希和时间戳
+            const localDataObject = await exportLocalDataObject();
+            const localTimestamp = localDataObject.lastUpdated;
+            const localHash = localDataObject.contentHash;
+
+            // 场景A: 完全一致
+            if (remoteHash === localHash) {
+                console.log(`S1 Plus (AutoSync): 本地与远程数据哈希一致，无需同步。`);
+                return;
+            }
+
+            // 哈希不一致，根据时间戳决策
+            // 场景B: 远程有更新
+            if (remoteTimestamp > localTimestamp) {
+                console.log(`S1 Plus (AutoSync): 远程数据比本地新，正在后台应用...`);
+                importLocalData(JSON.stringify(remote.full));
+                GM_setValue('s1p_last_sync_timestamp', Date.now());
+            // 场景C: 本地有更新
+            } else if (localTimestamp > remoteTimestamp) {
+                console.log(`S1 Plus (AutoSync): 本地数据比远程新，正在后台推送...`);
+                await pushRemoteData(localDataObject);
+                GM_setValue('s1p_last_sync_timestamp', Date.now());
+            // 场景D: 冲突 (时间戳相同但哈希不同)
+            } else {
+                console.warn(`S1 Plus (AutoSync): 检测到同步冲突 (时间戳相同但内容不同)，自动同步已暂停。请手动同步以解决冲突。`);
+            }
+
         } catch (error) {
             console.error('S1 Plus: 自动同步失败:', error);
+            // 在UI中给出提示，但自动同步不应打扰用户
+        } finally {
+            // [OPTIMIZATION] 无论成功或失败，最后都清除标志位，以允许后续正常的防抖同步
+            isInitialSyncInProgress = false;
+            console.log('S1 Plus (AutoSync): 初始同步检查完成。');
         }
     };
 
@@ -1977,9 +2146,9 @@
     let currentToast = null; // 用一个全局变量来管理当前的提示框实例
 
     /**
-     * 显示消息。如果设置面板打开，则在面板底部显示，否则在屏幕底部显示。
+     * [MODIFIED] 显示消息，支持 true(成功)/false(失败)/null(中立) 三种状态
      * @param {string} message - 要显示的消息内容。
-     * @param {boolean} isSuccess - 消息是否为成功状态（决定颜色和动画）。
+     * @param {boolean|null} isSuccess - 消息状态。
      */
     const showMessage = (message, isSuccess) => {
         // 如果上一个提示框还存在，立即移除，防止重叠
@@ -1988,8 +2157,19 @@
         }
 
         const toast = document.createElement('div');
-        toast.className = `s1p-toast-notification ${isSuccess ? 'success' : 'error'}`;
         toast.textContent = message;
+
+        // --- [核心修正] ---
+        // 使用更完善的逻辑来处理三种状态
+        let toastClass = 's1p-toast-notification';
+        if (isSuccess === true) {
+            toastClass += ' success';
+        } else if (isSuccess === false) {
+            toastClass += ' error';
+        }
+        // 如果 isSuccess 是 null 或 undefined，则不添加额外 class，显示默认的黑灰色样式
+        toast.className = toastClass;
+        // --- [修正结束] ---
 
         const modalContent = document.querySelector('.s1p-modal-content');
         if (modalContent) {
@@ -1999,10 +2179,12 @@
         }
         currentToast = toast;
 
+        // 让动画生效
         setTimeout(() => {
             toast.classList.add('visible');
         }, 50);
 
+        // 3秒后自动消失
         setTimeout(() => {
             toast.classList.remove('visible');
             toast.addEventListener('transitionend', () => {
@@ -3116,7 +3298,7 @@
             // --- 本地备份与恢复事件 (已优化) ---
             const syncTextarea = modal.querySelector('#s1p-local-sync-textarea');
             if (e.target.id === 's1p-local-export-btn') {
-                const dataToExport = exportLocalData();
+                const dataToExport = await exportLocalData();
                 syncTextarea.value = dataToExport;
                 syncTextarea.select();
                 navigator.clipboard.writeText(dataToExport).then(() => {
@@ -3292,74 +3474,97 @@
         });
     };
 
-    const handleManualSync = async (anchorEl) => {
+    /**
+     * [FINAL v4] 手动同步处理器，包含了配置预检查和损坏修复流程
+     * @param {HTMLElement} syncBtn - 被点击的同步按钮元素
+     */
+    const handleManualSync = async (syncBtn) => {
+        // 1. [新增] 配置预检查 (Fail-Fast)
+        // 在进行任何操作前，首先确认配置是否完整。
         const settings = getSettings();
         if (!settings.syncRemoteEnabled || !settings.syncRemoteGistId || !settings.syncRemotePat) {
             showMessage('远程同步未启用或配置不完整。', false);
-            return;
+            return; // 配置不完整，直接中断操作
         }
 
-        showMessage('正在检查云端数据...', true);
+        // 2. 检查通过后，才开始真正的同步流程
+        showMessage('正在检查云端数据...', null);
 
         try {
-            const remoteData = await fetchRemoteData();
-            const remoteTimestamp = remoteData.lastUpdated || 0;
-            const localTimestamp = GM_getValue('s1p_last_modified', 0);
+            const rawRemoteData = await fetchRemoteData();
 
-            if (remoteTimestamp === localTimestamp) {
+            // 场景1: 远程为空
+            if (Object.keys(rawRemoteData).length === 0) {
+                const pushAction = {
+                    text: '推送本地数据到云端', className: 's1p-confirm', action: async () => {
+                        showMessage('正在向云端推送数据...', null);
+                        try {
+                            const localData = await exportLocalDataObject();
+                            await pushRemoteData(localData);
+                            GM_setValue('s1p_last_sync_timestamp', Date.now());
+                            updateLastSyncTimeDisplay();
+                            showMessage('推送成功！已初始化云端备份。', true);
+                        } catch (e) { showMessage(`推送失败: ${e.message}`, false); }
+                    }
+                };
+                const cancelAction = { text: '取消', className: 's1p-cancel', action: () => showMessage('操作已取消。', null) };
+                createAdvancedConfirmationModal('初始化云端同步', '<p>检测到云端备份为空，是否将当前本地数据作为初始版本推送到云端？</p>', [pushAction, cancelAction]);
+                return;
+            }
+
+            // 核心校验：如果数据损坏，这行会抛出错误并被 catch 捕获
+            const remote = await migrateAndValidateRemoteData(rawRemoteData);
+            const localDataObject = await exportLocalDataObject();
+
+            // 场景2: 数据完全一致
+            if (remote.contentHash === localDataObject.contentHash) {
                 showMessage('数据已是最新，无需同步。', true);
                 GM_setValue('s1p_last_sync_timestamp', Date.now());
                 updateLastSyncTimeDisplay();
                 return;
             }
 
+            // 场景3: 数据不一致，需要用户选择
             const formatForDisplay = (ts) => {
-                if (!ts) return "无记录 (新设备)";
+                if (!ts) return "无记录";
                 const date = new Date(ts);
-                return `${date.toLocaleString('zh-CN', { hour12: false })} <span class="s1p-sync-choice-newer">${(ts > 0 && Date.now() - ts < 60000 ? '(刚刚)' : '')}</span>`;
+                return `${date.toLocaleString('zh-CN', { hour12: false })}`;
             };
-
-            const localNewer = localTimestamp > remoteTimestamp;
-
-            const bodyHtml = `
-                <p>检测到本地数据与云端备份不一致，请选择同步方式：</p>
+            const localNewer = localDataObject.lastUpdated > remote.lastUpdated;
+            const isConflict = localDataObject.lastUpdated === remote.lastUpdated;
+            let bodyHtml = isConflict
+                ? `<p style="color: var(--s1p-red); font-weight: bold;">警告：检测到同步冲突！</p><p>两份数据的时间戳相同但内容不同。这可能发生在多设备离线修改后。请仔细选择您希望保留的版本以覆盖另一方。</p>`
+                : `<p>检测到本地数据与云端备份不一致，请选择同步方式：</p>`;
+            bodyHtml += `
                 <div class="s1p-sync-choice-info">
                     <div class="s1p-sync-choice-info-row">
-                       <span class="s1p-sync-choice-info-label">本地数据更新于:</span>
-                       <span class="s1p-sync-choice-info-time ${localNewer ? 's1p-sync-choice-newer' : ''}">${formatForDisplay(localTimestamp)}</span>
+                    <span class="s1p-sync-choice-info-label">本地数据更新于:</span>
+                    <span class="s1p-sync-choice-info-time ${localNewer && !isConflict ? 's1p-sync-choice-newer' : ''}">${formatForDisplay(localDataObject.lastUpdated)}</span>
                     </div>
-                     <div class="s1p-sync-choice-info-row">
-                       <span class="s1p-sync-choice-info-label">云端备份更新于:</span>
-                       <span class="s1p-sync-choice-info-time ${!localNewer ? 's1p-sync-choice-newer' : ''}">${formatForDisplay(remoteTimestamp)}</span>
+                    <div class="s1p-sync-choice-info-row">
+                    <span class="s1p-sync-choice-info-label">云端备份更新于:</span>
+                    <span class="s1p-sync-choice-info-time ${!localNewer && !isConflict ? 's1p-sync-choice-newer' : ''}">${formatForDisplay(remote.lastUpdated)}</span>
                     </div>
-                </div>
-            `;
-
+                </div>`;
             const pullAction = {
                 text: '从云端拉取 (覆盖本地)', className: 's1p-confirm', action: async () => {
-                    showMessage('正在从云端拉取数据...', true);
-                    const result = importLocalData(JSON.stringify(remoteData));
+                    showMessage('正在从云端拉取数据...', null);
+                    const result = importLocalData(JSON.stringify(remote.full));
                     if (result.success) {
                         GM_setValue('s1p_last_sync_timestamp', Date.now());
                         updateLastSyncTimeDisplay();
-                        showMessage('拉取成功！已从云端恢复数据。', true);
-                        if (document.querySelector('.s1p-modal')) {
-                            document.querySelector('.s1p-modal-close').click();
-                            createManagementModal();
-                            document.querySelector('button[data-tab="sync"]').click();
-                        }
+                        showMessage(`拉取成功！${result.message}`, true);
+                        setTimeout(() => location.reload(), 800);
                     } else {
-                        showMessage(`拉取失败: ${result.message}`, false);
+                        showMessage(`导入失败: ${result.message}`, false);
                     }
                 }
             };
-
             const pushAction = {
                 text: '向云端推送 (覆盖云端)', className: 's1p-confirm', action: async () => {
-                    showMessage('正在向云端推送数据...', true);
+                    showMessage('正在向云端推送数据...', null);
                     try {
-                        const localData = exportLocalDataObject();
-                        await pushRemoteData(localData);
+                        await pushRemoteData(localDataObject);
                         GM_setValue('s1p_last_sync_timestamp', Date.now());
                         updateLastSyncTimeDisplay();
                         showMessage('推送成功！已更新云端备份。', true);
@@ -3368,16 +3573,43 @@
                     }
                 }
             };
-
-            const cancelAction = { text: '取消', className: 's1p-cancel', action: null };
-
-            createAdvancedConfirmationModal('手动同步选择方式', bodyHtml, [pullAction, pushAction, cancelAction]);
+            const cancelAction = { text: '取消', className: 's1p-cancel', action: () => showMessage('操作已取消。', null) };
+            createAdvancedConfirmationModal('手动同步选择', bodyHtml, [pullAction, pushAction, cancelAction]);
 
         } catch (error) {
-            showMessage(`操作失败: ${error.message}`, false);
+            const corruptionErrorMessage = "云端备份已损坏";
+
+            if (error && error.message && error.message.includes(corruptionErrorMessage)) {
+                const forcePushAction = {
+                    text: '强制推送，覆盖云端备份',
+                    className: 's1p-confirm',
+                    action: async () => {
+                        showMessage('正在强制推送本地数据...', null);
+                        try {
+                            const localDataObjectForPush = await exportLocalDataObject();
+                            await pushRemoteData(localDataObjectForPush);
+                            GM_setValue('s1p_last_sync_timestamp', Date.now());
+                            updateLastSyncTimeDisplay();
+                            showMessage('推送成功！已使用本地数据修复云端备份。', true);
+                        } catch (e) {
+                            showMessage(`强制推送失败: ${e.message}`, false);
+                        }
+                    }
+                };
+
+                const cancelAction = {
+                    text: '暂不处理',
+                    className: 's1p-cancel',
+                    action: () => showMessage('操作已取消。云端备份仍处于损坏状态。', null)
+                };
+                const title = "检测到云端备份损坏";
+                const body = `<p style="color: var(--s1p-red);">你的云端备份文件已损坏（哈希校验失败），脚本已自动保护你的本地数据不受影响。</p><p>是否要用你当前健康的本地数据强制覆盖云端损坏的备份？</p><p style="font-size: 12px; opacity: 0.8;">注意：这将删除云端的所有更改，使其与你当前设备的数据完全一致。</p>`;
+                createAdvancedConfirmationModal(title, body, [forcePushAction, cancelAction]);
+            } else {
+                showMessage(`操作失败: ${error.message}`, false);
+            }
         }
     };
-
     const createAdvancedConfirmationModal = (title, bodyHtml, buttons) => {
         document.querySelector('.s1p-confirm-modal')?.remove();
         const modal = document.createElement('div');
