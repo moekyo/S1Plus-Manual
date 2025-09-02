@@ -18,7 +18,7 @@
 
 
     const SCRIPT_VERSION = '5.0.0';
-    const SCRIPT_RELEASE_DATE = '2025-09-01';
+    const SCRIPT_RELEASE_DATE = '2025-09-02';
 
     // --- [新增] SHA-256 哈希计算库 (基于 Web Crypto API) ---
     /**
