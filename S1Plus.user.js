@@ -117,7 +117,11 @@
             --s1p-progress-hot: rgb(192, 51, 34);
             --s1p-progress-cold: rgb(107, 114, 128);
         }
-
+        /* --- [FIX] 导航栏垂直居中对齐修正 --- */
+        #nv > ul {
+            display: flex !important;
+            align-items: center !important;
+        }
         /* --- [NEW] Manual Sync Nav Button --- */
         #s1p-nav-sync-btn a {
             padding: 0 10px; /* Adjust padding for icon-only button */
@@ -127,10 +131,16 @@
             height: 100%;
         }
         #s1p-nav-sync-btn svg {
-            width: 20px;
-            height: 20px;
-            color: var(--s1p-icon-arrow);
+            width: 14px;
+            height: 14px;
+            color: var(--s1p-t);
             transition: color 0.2s ease, transform 0.2s ease;
+            overflow: visible; /* 防止加粗后的描边被裁切 */
+        }
+        #s1p-nav-sync-btn svg path {
+        stroke: currentColor; /* 描边颜色与填充颜色(currentColor)保持一致 */
+        stroke-width: 0.8;    /* 描边宽度，数值越大越粗 */
+        stroke-linejoin: round; /* 让描边的边角更圆润 */
         }
         #s1p-nav-sync-btn a:hover svg {
             color: var(--s1p-t);
@@ -2013,7 +2023,7 @@
     };
 
     /**
-     * [NEW] Adds or removes the manual sync button from the main navbar.
+     * [MODIFIED] 添加或移除导航栏上的手动同步按钮
      */
     const updateNavbarSyncButton = () => {
         const settings = getSettings();
@@ -2034,14 +2044,20 @@
 
         const a = document.createElement('a');
         a.href = 'javascript:void(0);';
-        // 使用 heroicons 的 cloud-arrow-up 图标
-        a.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z" />
-        </svg>`;
+        // [MODIFIED] 更新为用户提供的新版 SVG 图标
+        a.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 16 16"><path fill="currentColor" d="M0 6c0-3.31 2.69-6 6-6c2.62 0 4.84 1.68 5.66 4.01q.166-.014.337-.014c2.21 0 4 1.79 4 4c0 1.63-.97 3.03-2.36 3.65c-.312.14-.636-.11-.636-.452c0-.222.142-.415.34-.514a2.999 2.999 0 0 0-1.931-5.622a.5.5 0 0 1-.581-.36a5.002 5.002 0 1 0-8.942 4.15a.6.6 0 0 1 .112.346c0 .495-.566.732-.857.332a5.97 5.97 0 0 1-1.14-3.52z"/><path fill="currentColor" d="M5 15.5V8.71L3.85 9.86a.5.5 0 0 1-.707-.707l2-2a.5.5 0 0 1 .35-.147h.006a.5.5 0 0 1 .351.146l2 2a.5.5 0 0 1-.707.707l-1.15-1.15v6.79a.5.5 0 0 1-1 0zM10.5 7a.5.5 0 0 1 .5.5v6.79l1.15-1.15a.5.5 0 0 1 .707.707l-2 2a.5.5 0 0 1-.351.146H10.5a.5.5 0 0 1-.35-.147l-2-2a.5.5 0 0 1 .707-.707l1.15 1.15V7.5a.5.5 0 0 1 .5-.5z"/></svg>`;
 
-        a.addEventListener('click', (e) => {
+        a.addEventListener('click', async (e) => {
             e.preventDefault();
-            handleManualSync();
+            const icon = a.querySelector('svg');
+            if (!icon || icon.classList.contains('s1p-syncing')) return;
+
+            icon.classList.add('s1p-syncing');
+            try {
+                await handleManualSync();
+            } finally {
+                icon.classList.remove('s1p-syncing');
+            }
         });
 
         // Tooltip logic using the generic popover
@@ -2063,7 +2079,6 @@
         managerLink.parentNode.insertBefore(li, managerLink);
     };
 
-
     const initializeNavbar = () => {
         const settings = getSettings();
         const navUl = document.querySelector('#nv > ul');
@@ -2081,6 +2096,7 @@
         };
 
         document.getElementById('s1p-nav-link')?.remove();
+        document.getElementById('s1p-nav-sync-btn')?.remove();
 
         if (settings.enableNavCustomization) {
             navUl.innerHTML = '';
@@ -2571,14 +2587,14 @@
         const gistInputItem = modal.querySelector('#s1p-remote-gist-id-input').closest('.s1p-settings-item');
         const patInputItem = modal.querySelector('#s1p-remote-pat-input').closest('.s1p-settings-item');
         const remoteFooter = modal.querySelector('#s1p-remote-manual-sync-btn').closest('.s1p-editor-footer');
-        const remoteHelperLink = modal.querySelector('.s1p-notice a');
+        const remoteNotice = modal.querySelector('.s1p-notice');
 
         const updateRemoteSyncInputsState = () => {
             const isMasterEnabled = remoteToggle.checked;
             const targetOpacity = isMasterEnabled ? '1' : '0.6';
             const targetPointerEvents = isMasterEnabled ? 'auto' : 'none';
 
-            const elementsToStyle = [autoSyncItem, autoSyncDesc, gistInputItem, patInputItem, remoteFooter, remoteHelperLink];
+            const elementsToStyle = [autoSyncItem, autoSyncDesc, gistInputItem, patInputItem, remoteFooter, remoteNotice];
             elementsToStyle.forEach(el => {
                 if (el) {
                     el.style.opacity = targetOpacity;
@@ -2590,8 +2606,7 @@
             if (gistInputItem) gistInputItem.querySelector('input').disabled = !isMasterEnabled;
             if (patInputItem) patInputItem.querySelector('input').disabled = !isMasterEnabled;
             if (remoteFooter) {
-                const manualSyncBtn = remoteFooter.querySelector('#s1p-remote-manual-sync-btn');
-                if (manualSyncBtn) manualSyncBtn.disabled = !isMasterEnabled;
+                remoteFooter.querySelectorAll('button').forEach(btn => btn.disabled = !isMasterEnabled);
             }
         };
 
@@ -3577,7 +3592,7 @@
     };
 
     /**
-     * [FINAL v4.1] 手动同步处理器，包含了配置预检查、损坏修复流程和UI反馈
+     * [MODIFIED] 手动同步处理器，包含了配置预检查、损坏修复流程和UI反馈
      */
     const handleManualSync = async () => {
         const navSyncIcon = document.querySelector('#s1p-nav-sync-btn svg');

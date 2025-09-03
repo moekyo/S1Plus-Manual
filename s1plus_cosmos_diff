@@ -1,0 +1,337 @@
+diff --git a/S1Plus.user.js b/S1Plus.user.js
+index f14f1f9..ce1d185 100644
+--- a/S1Plus.user.js
++++ b/S1Plus.user.js
+@@ -1,8 +1,8 @@
+ // ==UserScript==
+ // @name         S1 Plus - Stage1st 体验增强套件
+ // @namespace    http://tampermonkey.net/
+-// @version      5.0.0
+-// @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪、回复收藏等多种功能，全方位优化你的论坛体验。
++// @version      5.1.0
++// @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪、回复收藏、远程同步等多种功能，全方位优化你的论坛体验。
+ // @author       moekyo & Gemini
+ // @match        https://stage1st.com/2b/*
+ // @grant        GM_setValue
+@@ -17,8 +17,8 @@
+     'use strict';
+ 
+ 
+-    const SCRIPT_VERSION = '5.0.0';
+-    const SCRIPT_RELEASE_DATE = '2025-09-02';
++    const SCRIPT_VERSION = '5.1.0';
++    const SCRIPT_RELEASE_DATE = '2025-09-03';
+ 
+     // --- [新增] SHA-256 哈希计算库 (基于 Web Crypto API) ---
+     /**
+@@ -118,6 +118,35 @@
+             --s1p-progress-cold: rgb(107, 114, 128);
+         }
+ 
++        /* --- [NEW] Manual Sync Nav Button --- */
++        #s1p-nav-sync-btn a {
++            padding: 0 10px; /* Adjust padding for icon-only button */
++            display: flex;
++            align-items: center;
++            justify-content: center;
++            height: 100%;
++        }
++        #s1p-nav-sync-btn svg {
++            width: 20px;
++            height: 20px;
++            color: var(--s1p-icon-arrow);
++            transition: color 0.2s ease, transform 0.2s ease;
++        }
++        #s1p-nav-sync-btn a:hover svg {
++            color: var(--s1p-t);
++            transform: scale(1.1);
++        }
++
++        /* --- [NEW] Syncing Animation --- */
++        @keyframes s1p-sync-rotate {
++            from { transform: rotate(0deg); }
++            to { transform: rotate(360deg); }
++        }
++        #s1p-nav-sync-btn svg.s1p-syncing {
++            animation: s1p-sync-rotate 1.5s linear infinite;
++        }
++
++
+         /* --- 手动同步弹窗样式 --- */
+         .s1p-sync-choice-info {
+             background-color: var(--s1p-sub);
+@@ -1128,7 +1157,8 @@
+         }
+ 
+         const settings = getSettings();
+-        if (!settings.syncRemoteEnabled || !settings.syncRemoteGistId || !settings.syncRemotePat) {
++        // [MODIFIED] 增加对自动同步子开关的判断
++        if (!settings.syncRemoteEnabled || !settings.syncAutoEnabled || !settings.syncRemoteGistId || !settings.syncRemotePat) {
+             return;
+         }
+         clearTimeout(remotePushTimeout);
+@@ -1857,7 +1887,8 @@
+     // [MODIFIED] 自动同步控制器，集成哈希校验逻辑并增加启动时竞态条件处理
+     const performAutoSync = async () => {
+         const settings = getSettings();
+-        if (!settings.syncRemoteEnabled || !settings.syncRemoteGistId || !settings.syncRemotePat) {
++        // [MODIFIED] 增加对自动同步子开关的判断
++        if (!settings.syncRemoteEnabled || !settings.syncAutoEnabled || !settings.syncRemoteGistId || !settings.syncRemotePat) {
+             return;
+         }
+ 
+@@ -1949,6 +1980,7 @@
+             { name: '黑名单', href: 'home.php?mod=space&do=friend&view=blacklist' }
+         ],
+         syncRemoteEnabled: false,
++        syncAutoEnabled: true, // [NEW] 新增自动同步子开关
+         syncRemoteGistId: '',
+         syncRemotePat: '',
+     };
+@@ -1980,6 +2012,58 @@
+         }
+     };
+ 
++    /**
++     * [NEW] Adds or removes the manual sync button from the main navbar.
++     */
++    const updateNavbarSyncButton = () => {
++        const settings = getSettings();
++        const existingBtn = document.getElementById('s1p-nav-sync-btn');
++        const managerLink = document.getElementById('s1p-nav-link');
++
++        // 如果总开关关闭，则移除按钮
++        if (!settings.syncRemoteEnabled) {
++            if (existingBtn) existingBtn.remove();
++            return;
++        }
++
++        // 如果总开关开启，但按钮已存在或设置菜单链接不存在，则不执行操作
++        if (existingBtn || !managerLink) return;
++
++        const li = document.createElement('li');
++        li.id = 's1p-nav-sync-btn';
++
++        const a = document.createElement('a');
++        a.href = 'javascript:void(0);';
++        // 使用 heroicons 的 cloud-arrow-up 图标
++        a.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
++            <path stroke-linecap="round" stroke-linejoin="round" d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z" />
++        </svg>`;
++
++        a.addEventListener('click', (e) => {
++            e.preventDefault();
++            handleManualSync();
++        });
++
++        // Tooltip logic using the generic popover
++        a.addEventListener('mouseover', (e) => {
++            const popover = document.getElementById('s1p-generic-display-popover');
++            if (popover && popover.s1p_api) {
++                popover.s1p_api.show(e.currentTarget, '手动同步数据');
++            }
++        });
++        a.addEventListener('mouseout', () => {
++            const popover = document.getElementById('s1p-generic-display-popover');
++            if (popover && popover.s1p_api) {
++                popover.s1p_api.hide();
++            }
++        });
++
++        li.appendChild(a);
++        // 将同步按钮插入到“S1 Plus 设置”按钮之前
++        managerLink.parentNode.insertBefore(li, managerLink);
++    };
++
++
+     const initializeNavbar = () => {
+         const settings = getSettings();
+         const navUl = document.querySelector('#nv > ul');
+@@ -2013,6 +2097,7 @@
+             });
+         }
+         navUl.appendChild(createManagerLink());
++        updateNavbarSyncButton(); // [MODIFIED] 更新导航栏同步按钮的状态
+     };
+ 
+     // --- [NEW] Helper function for search component
+@@ -2380,13 +2465,23 @@
+                         <div class="s1p-settings-group-title">远程同步 (通过GitHub Gist)</div>
+                         <div id="s1p-last-sync-time-container" class="s1p-setting-desc" style="margin-top: -8px; margin-bottom: 16px;"></div>
+                         <div class="s1p-settings-item">
+-                            <label class="s1p-settings-label" for="s1p-remote-enabled-toggle">启用远程同步</label>
++                            <label class="s1p-settings-label" for="s1p-remote-enabled-toggle">启用远程同步 (总开关)</label>
+                             <label class="s1p-switch">
+                                 <input type="checkbox" id="s1p-remote-enabled-toggle" class="s1p-settings-checkbox">
+                                 <span class="s1p-slider"></span>
+                             </label>
+                         </div>
+-                        <p class="s1p-setting-desc">启用后，数据将在停止操作5秒后自动同步。你也可以随时手动同步。</p>
++                         <p class="s1p-setting-desc">启用后，你可以在导航栏手动同步，或开启下面的自动同步。</p>
++
++                        <div class="s1p-settings-item">
++                            <label class="s1p-settings-label" for="s1p-auto-sync-enabled-toggle">启用自动后台同步</label>
++                            <label class="s1p-switch">
++                                <input type="checkbox" id="s1p-auto-sync-enabled-toggle" class="s1p-settings-checkbox">
++                                <span class="s1p-slider"></span>
++                            </label>
++                        </div>
++                        <p class="s1p-setting-desc">启用后，数据将在停止操作5秒后自动同步。关闭后将切换为纯手动同步模式。</p>
++
+                         <div class="s1p-settings-item" style="flex-direction: column; align-items: flex-start; gap: 4px;">
+                             <label class="s1p-settings-label" for="s1p-remote-gist-id-input">Gist ID</label>
+                             <input type="text" id="s1p-remote-gist-id-input" class="s1p-input" placeholder="从 Gist 网址中复制的那一长串 ID" style="width: 100%;" autocomplete="off">
+@@ -2470,17 +2565,20 @@
+         }
+ 
+         const remoteToggle = modal.querySelector('#s1p-remote-enabled-toggle');
++        const autoSyncToggle = modal.querySelector('#s1p-auto-sync-enabled-toggle');
++        const autoSyncItem = autoSyncToggle.closest('.s1p-settings-item');
++        const autoSyncDesc = autoSyncItem.nextElementSibling;
+         const gistInputItem = modal.querySelector('#s1p-remote-gist-id-input').closest('.s1p-settings-item');
+         const patInputItem = modal.querySelector('#s1p-remote-pat-input').closest('.s1p-settings-item');
+         const remoteFooter = modal.querySelector('#s1p-remote-manual-sync-btn').closest('.s1p-editor-footer');
+         const remoteHelperLink = modal.querySelector('.s1p-notice a');
+ 
+         const updateRemoteSyncInputsState = () => {
+-            const isEnabled = remoteToggle.checked;
+-            const targetOpacity = isEnabled ? '1' : '0.6';
+-            const targetPointerEvents = isEnabled ? 'auto' : 'none';
++            const isMasterEnabled = remoteToggle.checked;
++            const targetOpacity = isMasterEnabled ? '1' : '0.6';
++            const targetPointerEvents = isMasterEnabled ? 'auto' : 'none';
+ 
+-            const elementsToStyle = [gistInputItem, patInputItem, remoteFooter, remoteHelperLink];
++            const elementsToStyle = [autoSyncItem, autoSyncDesc, gistInputItem, patInputItem, remoteFooter, remoteHelperLink];
+             elementsToStyle.forEach(el => {
+                 if (el) {
+                     el.style.opacity = targetOpacity;
+@@ -2488,24 +2586,26 @@
+                 }
+             });
+ 
+-            if (gistInputItem) gistInputItem.querySelector('input').disabled = !isEnabled;
+-            if (patInputItem) patInputItem.querySelector('input').disabled = !isEnabled;
++            if (autoSyncToggle) autoSyncToggle.disabled = !isMasterEnabled;
++            if (gistInputItem) gistInputItem.querySelector('input').disabled = !isMasterEnabled;
++            if (patInputItem) patInputItem.querySelector('input').disabled = !isMasterEnabled;
+             if (remoteFooter) {
+                 const manualSyncBtn = remoteFooter.querySelector('#s1p-remote-manual-sync-btn');
+-                if (manualSyncBtn) manualSyncBtn.disabled = !isEnabled;
++                if (manualSyncBtn) manualSyncBtn.disabled = !isMasterEnabled;
+             }
+         };
+ 
+         const settings = getSettings();
+         remoteToggle.checked = settings.syncRemoteEnabled;
++        autoSyncToggle.checked = settings.syncAutoEnabled;
+         modal.querySelector('#s1p-remote-gist-id-input').value = settings.syncRemoteGistId || '';
+         modal.querySelector('#s1p-remote-pat-input').value = settings.syncRemotePat || '';
++
+         if (remoteToggle) {
+             remoteToggle.addEventListener('change', updateRemoteSyncInputsState);
+             updateRemoteSyncInputsState();
+         }
+ 
+-
+         // [REFACTORED] 全新用户标记标签页渲染逻辑
+         const renderTagsTab = (options = {}) => {
+             const editingUserId = options.editingUserId;
+@@ -3345,6 +3445,7 @@
+ 
+                         if (selectedKeys.includes('settings')) {
+                             modal.querySelector('#s1p-remote-enabled-toggle').checked = false;
++                            modal.querySelector('#s1p-auto-sync-enabled-toggle').checked = true;
+                             modal.querySelector('#s1p-remote-gist-id-input').value = '';
+                             modal.querySelector('#s1p-remote-pat-input').value = '';
+                             updateRemoteSyncInputsState();
+@@ -3374,16 +3475,17 @@
+             if (e.target.id === 's1p-remote-save-btn') {
+                 const currentSettings = getSettings();
+                 currentSettings.syncRemoteEnabled = modal.querySelector('#s1p-remote-enabled-toggle').checked;
++                currentSettings.syncAutoEnabled = modal.querySelector('#s1p-auto-sync-enabled-toggle').checked;
+                 currentSettings.syncRemoteGistId = modal.querySelector('#s1p-remote-gist-id-input').value.trim();
+                 currentSettings.syncRemotePat = modal.querySelector('#s1p-remote-pat-input').value.trim();
+ 
+-                GM_setValue('s1p_settings', currentSettings);
+-
++                saveSettings(currentSettings);
++                updateNavbarSyncButton(); // 保存后更新导航栏按钮
+                 showMessage('远程同步设置已保存。', true);
+             }
+ 
+             if (e.target.id === 's1p-remote-manual-sync-btn') {
+-                handleManualSync(e.target);
++                handleManualSync();
+             }
+ 
+             if (e.target.id === 's1p-open-gist-page-btn') {
+@@ -3475,19 +3577,20 @@
+     };
+ 
+     /**
+-     * [FINAL v4] 手动同步处理器，包含了配置预检查和损坏修复流程
+-     * @param {HTMLElement} syncBtn - 被点击的同步按钮元素
++     * [FINAL v4.1] 手动同步处理器，包含了配置预检查、损坏修复流程和UI反馈
+      */
+-    const handleManualSync = async (syncBtn) => {
++    const handleManualSync = async () => {
++        const navSyncIcon = document.querySelector('#s1p-nav-sync-btn svg');
++
+         // 1. [新增] 配置预检查 (Fail-Fast)
+-        // 在进行任何操作前，首先确认配置是否完整。
+         const settings = getSettings();
+         if (!settings.syncRemoteEnabled || !settings.syncRemoteGistId || !settings.syncRemotePat) {
+             showMessage('远程同步未启用或配置不完整。', false);
+-            return; // 配置不完整，直接中断操作
++            return;
+         }
+ 
+         // 2. 检查通过后，才开始真正的同步流程
++        if (navSyncIcon) navSyncIcon.classList.add('s1p-syncing');
+         showMessage('正在检查云端数据...', null);
+ 
+         try {
+@@ -3608,8 +3711,11 @@
+             } else {
+                 showMessage(`操作失败: ${error.message}`, false);
+             }
++        } finally {
++            if (navSyncIcon) navSyncIcon.classList.remove('s1p-syncing');
+         }
+     };
++
+     const createAdvancedConfirmationModal = (title, bodyHtml, buttons) => {
+         document.querySelector('.s1p-confirm-modal')?.remove();
+         const modal = document.createElement('div');
+@@ -3867,6 +3973,12 @@
+             }, 100);
+         };
+ 
++        // [MODIFIED] Attach API to the element for external use
++        if (!popover.s1p_api) {
++            popover.s1p_api = { show, hide };
++        }
++
++        // Keep existing listeners for user tags
+         document.body.addEventListener('mouseover', e => {
+             const tagDisplay = e.target.closest('.s1p-user-tag-display');
+             if (tagDisplay && tagDisplay.dataset.fullTag && tagDisplay.scrollWidth > tagDisplay.clientWidth) {
+@@ -4183,7 +4295,7 @@
+                     const params = new URLSearchParams(window.location.search);
+                     const threadId = threadIdMatch ? threadIdMatch[1] : (params.get('tid') || params.get('ptid'));
+                     const contentEl = postTable.querySelector('td.t_f');
+-                    
++
+                     let postContent = '无法获取内容';
+                     if (contentEl) {
+                         const contentClone = contentEl.cloneNode(true);
+@@ -4270,7 +4382,7 @@
+                 scriptActionsWrapper.appendChild(tagLink);
+             }
+         }
+-        
++
+         if (scriptActionsWrapper.hasChildNodes()) {
+             authiDiv.parentElement.insertBefore(newContainer, authiDiv);
+             newContainer.appendChild(authiDiv);
