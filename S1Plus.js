@@ -3,7 +3,7 @@
 // @namespace    http://tampermonkey.net/
 // @version      5.1.0
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪、回复收藏、远程同步等多种功能，全方位优化你的论坛体验。
-// @author       moekyo & Gemini
+// @author       moekyo
 // @match        https://stage1st.com/2b/*
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -18,7 +18,7 @@
 
 
     const SCRIPT_VERSION = '5.1.0';
-    const SCRIPT_RELEASE_DATE = '2025-09-03';
+    const SCRIPT_RELEASE_DATE = '2025-09-06';
 
     // --- [新增] SHA-256 哈希计算库 (基于 Web Crypto API) ---
     /**
@@ -98,6 +98,7 @@
             /* -- 状态色 -- */
             --s1p-red: #ef4444;
             --s1p-red-h: #dc2626;
+            --s1p-green: #22c55e;
             --s1p-success-bg: #d1fae5;
             --s1p-success-text: #065f46;
             --s1p-error-bg: #fee2e2;
@@ -138,22 +139,31 @@
             overflow: visible; /* 防止加粗后的描边被裁切 */
         }
         #s1p-nav-sync-btn svg path {
-        stroke: currentColor; /* 描边颜色与填充颜色(currentColor)保持一致 */
-        stroke-width: 0.8;    /* 描边宽度，数值越大越粗 */
-        stroke-linejoin: round; /* 让描边的边角更圆润 */
+            stroke: currentColor; /* 描边颜色与填充颜色(currentColor)保持一致 */
+            stroke-width: 0.8;    /* 描边宽度，数值越大越粗 */
+            stroke-linejoin: round; /* 让描边的边角更圆润 */
         }
         #s1p-nav-sync-btn a:hover svg {
             color: var(--s1p-t);
             transform: scale(1.1);
         }
 
-        /* --- [NEW] Syncing Animation --- */
-        @keyframes s1p-sync-rotate {
-            from { transform: rotate(0deg); }
-            to { transform: rotate(360deg); }
+        /* --- [NEW & OPTIMIZED V2] Syncing Animation & Status Feedback --- */
+        @keyframes s1p-sync-pulse {
+            0% { transform: scale(1); opacity: 0.7; }
+            50% { transform: scale(1.1); opacity: 1; }
+            100% { transform: scale(1); opacity: 0.7; }
         }
         #s1p-nav-sync-btn svg.s1p-syncing {
-            animation: s1p-sync-rotate 1.5s linear infinite;
+            animation: s1p-sync-pulse 1.5s ease-in-out infinite;
+        }
+        #s1p-nav-sync-btn svg.s1p-sync-success {
+            color: var(--s1p-green) !important;
+            transform: scale(1.2); /* <-- 核心区别在这里 */
+        }
+        #s1p-nav-sync-btn svg.s1p-sync-error {
+            color: var(--s1p-red) !important;
+            transform: scale(1.2); /* <-- 核心区别在这里 */
         }
 
 
@@ -788,6 +798,15 @@
         .s1p-local-sync-desc { font-size: 14px; color: var(--s1p-desc-t); margin-bottom: 12px; line-height: 1.5; }
         .s1p-local-sync-buttons { display: flex; gap: 8px; margin-bottom: 16px; }
         .s1p-sync-textarea { width: 100%; min-height: 80px; margin-bottom: 20px;}
+
+        /* --- [OPTIMIZED] Sync Settings Panel Disabled State --- */
+        #s1p-remote-sync-controls-wrapper {
+            transition: opacity 0.3s ease-out;
+        }
+        #s1p-remote-sync-controls-wrapper.is-disabled {
+            opacity: 0.5;
+            pointer-events: none;
+        }
 
         /* --- 悬浮提示框 (Toast Notification) --- */
         @keyframes s1p-toast-shake {
@@ -1871,7 +1890,7 @@
                 throw new Error("云端备份已损坏 (哈希校验失败)，同步已暂停以保护您的本地数据。");
             }
 
-        // 场景2: 旧版扁平数据结构 (需要迁移)
+            // 场景2: 旧版扁平数据结构 (需要迁移)
         } else {
             console.log("S1 Plus: 检测到旧版云端数据格式，将进行自动迁移。");
             version = remoteGistObject.version || 3.2; // 假设旧版版本
@@ -1909,12 +1928,12 @@
         try {
             const rawRemoteData = await fetchRemoteData();
             if (Object.keys(rawRemoteData).length === 0) { // Gist为空，首次同步
-                 console.log(`S1 Plus (AutoSync): 远程为空，推送本地数据...`);
-                 const localData = await exportLocalDataObject();
-                 await pushRemoteData(localData);
-                 GM_setValue('s1p_last_sync_timestamp', Date.now());
-                 // 注意：此处直接 return，但 finally 块依然会执行
-                 return;
+                console.log(`S1 Plus (AutoSync): 远程为空，推送本地数据...`);
+                const localData = await exportLocalDataObject();
+                await pushRemoteData(localData);
+                GM_setValue('s1p_last_sync_timestamp', Date.now());
+                // 注意：此处直接 return，但 finally 块依然会执行
+                return;
             }
 
             // 1. 校验和迁移远程数据
@@ -1939,12 +1958,12 @@
                 console.log(`S1 Plus (AutoSync): 远程数据比本地新，正在后台应用...`);
                 importLocalData(JSON.stringify(remote.full));
                 GM_setValue('s1p_last_sync_timestamp', Date.now());
-            // 场景C: 本地有更新
+                // 场景C: 本地有更新
             } else if (localTimestamp > remoteTimestamp) {
                 console.log(`S1 Plus (AutoSync): 本地数据比远程新，正在后台推送...`);
                 await pushRemoteData(localDataObject);
                 GM_setValue('s1p_last_sync_timestamp', Date.now());
-            // 场景D: 冲突 (时间戳相同但哈希不同)
+                // 场景D: 冲突 (时间戳相同但哈希不同)
             } else {
                 console.warn(`S1 Plus (AutoSync): 检测到同步冲突 (时间戳相同但内容不同)，自动同步已暂停。请手动同步以解决冲突。`);
             }
@@ -2023,20 +2042,18 @@
     };
 
     /**
-     * [MODIFIED] 添加或移除导航栏上的手动同步按钮
+     * [MODIFIED & OPTIMIZED] 添加或移除导航栏上的手动同步按钮，并增加状态反馈
      */
     const updateNavbarSyncButton = () => {
         const settings = getSettings();
         const existingBtn = document.getElementById('s1p-nav-sync-btn');
         const managerLink = document.getElementById('s1p-nav-link');
 
-        // 如果总开关关闭，则移除按钮
         if (!settings.syncRemoteEnabled) {
             if (existingBtn) existingBtn.remove();
             return;
         }
 
-        // 如果总开关开启，但按钮已存在或设置菜单链接不存在，则不执行操作
         if (existingBtn || !managerLink) return;
 
         const li = document.createElement('li');
@@ -2044,8 +2061,7 @@
 
         const a = document.createElement('a');
         a.href = 'javascript:void(0);';
-        // [MODIFIED] 更新为用户提供的新版 SVG 图标
-        a.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 16 16"><path fill="currentColor" d="M0 6c0-3.31 2.69-6 6-6c2.62 0 4.84 1.68 5.66 4.01q.166-.014.337-.014c2.21 0 4 1.79 4 4c0 1.63-.97 3.03-2.36 3.65c-.312.14-.636-.11-.636-.452c0-.222.142-.415.34-.514a2.999 2.999 0 0 0-1.931-5.622a.5.5 0 0 1-.581-.36a5.002 5.002 0 1 0-8.942 4.15a.6.6 0 0 1 .112.346c0 .495-.566.732-.857.332a5.97 5.97 0 0 1-1.14-3.52z"/><path fill="currentColor" d="M5 15.5V8.71L3.85 9.86a.5.5 0 0 1-.707-.707l2-2a.5.5 0 0 1 .35-.147h.006a.5.5 0 0 1 .351.146l2 2a.5.5 0 0 1-.707.707l-1.15-1.15v6.79a.5.5 0 0 1-1 0zM10.5 7a.5.5 0 0 1 .5.5v6.79l1.15-1.15a.5.5 0 0 1 .707.707l-2 2a.5.5 0 0 1-.351.146H10.5a.5.5 0 0 1-.35-.147l-2-2a.5.5 0 0 1 .707-.707l1.15 1.15V7.5a.5.5 0 0 1 .5-.5z"/></svg>`;
+        a.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 16 16"><path fill="currentColor" d="M0 6c0-3.31 2.69-6 6-6c2.62 0 4.84 1.68 5.66 4.01q.166-.014.337-.014c2.21 0 4 1.79 4 4c0 1.63-.97 3.03-2.36 3.65c-.312.14-.636-.11-.636-.452c0-.222.142-.415.34-.514a2.999 2.999 0 0 0-1.931-5.622a.5.5 0 0 1-.581-.36a5.002 5.002 0 1 0-8.942 4.15a.6.6 0 0 1 .112.346c0 .495-.566.732-.857.332a5.97 5.97 0 0 1-1.14-3.52z"/><path fill="currentColor" d="M5 15.5V8.71L3.85 9.86a.5.5 0 0 1-.707-.707l2-2a.5.5 0 0 1 .35-.147h.006a.5.5 0 0 1 .351.146l2 2a.5.5 0 0 1-.707-.707l-1.15-1.15v6.79a.5.5 0 0 1-1 0zM10.5 7a.5.5 0 0 1 .5.5v6.79l1.15-1.15a.5.5 0 0 1 .707.707l-2 2a.5.5 0 0 1-.351.146H10.5a.5.5 0 0 1-.35-.147l-2-2a.5.5 0 0 1 .707-.707l1.15 1.15V7.5a.5.5 0 0 1 .5-.5z"/></svg>`;
 
         a.addEventListener('click', async (e) => {
             e.preventDefault();
@@ -2053,14 +2069,21 @@
             if (!icon || icon.classList.contains('s1p-syncing')) return;
 
             icon.classList.add('s1p-syncing');
+            let success = false;
             try {
-                await handleManualSync();
+                success = await handleManualSync();
+                // 根据同步结果添加状态类
+                if (success !== null) { // null表示用户取消，不给状态反馈
+                    icon.classList.add(success ? 's1p-sync-success' : 's1p-sync-error');
+                }
             } finally {
-                icon.classList.remove('s1p-syncing');
+                // 动画结束后再移除状态，确保反馈可见
+                setTimeout(() => {
+                    icon.classList.remove('s1p-syncing', 's1p-sync-success', 's1p-sync-error');
+                }, 1500);
             }
         });
 
-        // Tooltip logic using the generic popover
         a.addEventListener('mouseover', (e) => {
             const popover = document.getElementById('s1p-generic-display-popover');
             if (popover && popover.s1p_api) {
@@ -2075,8 +2098,8 @@
         });
 
         li.appendChild(a);
-        // 将同步按钮插入到“S1 Plus 设置”按钮之前
-        managerLink.parentNode.insertBefore(li, managerLink);
+        // [MODIFIED] 将同步按钮插入到“S1 Plus 设置”按钮之后
+        managerLink.insertAdjacentElement('afterend', li);
     };
 
     const initializeNavbar = () => {
@@ -2113,7 +2136,7 @@
             });
         }
         navUl.appendChild(createManagerLink());
-        updateNavbarSyncButton(); // [MODIFIED] 更新导航栏同步按钮的状态
+        updateNavbarSyncButton();
     };
 
     // --- [NEW] Helper function for search component
@@ -2489,34 +2512,36 @@
                         </div>
                          <p class="s1p-setting-desc">启用后，你可以在导航栏手动同步，或开启下面的自动同步。</p>
 
-                        <div class="s1p-settings-item">
-                            <label class="s1p-settings-label" for="s1p-auto-sync-enabled-toggle">启用自动后台同步</label>
-                            <label class="s1p-switch">
-                                <input type="checkbox" id="s1p-auto-sync-enabled-toggle" class="s1p-settings-checkbox">
-                                <span class="s1p-slider"></span>
-                            </label>
-                        </div>
-                        <p class="s1p-setting-desc">启用后，数据将在停止操作5秒后自动同步。关闭后将切换为纯手动同步模式。</p>
-
-                        <div class="s1p-settings-item" style="flex-direction: column; align-items: flex-start; gap: 4px;">
-                            <label class="s1p-settings-label" for="s1p-remote-gist-id-input">Gist ID</label>
-                            <input type="text" id="s1p-remote-gist-id-input" class="s1p-input" placeholder="从 Gist 网址中复制的那一长串 ID" style="width: 100%;" autocomplete="off">
-                        </div>
-                        <div class="s1p-settings-item" style="flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 12px;">
-                            <label class="s1p-settings-label" for="s1p-remote-pat-input">GitHub Personal Access Token (PAT)</label>
-                            <input type="password" id="s1p-remote-pat-input" class="s1p-input" placeholder="ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" style="width: 100%;" autocomplete="new-password">
-                        </div>
-                        <div class="s1p-notice">
-                            <div class="s1p-notice-icon"></div>
-                            <div class="s1p-notice-content">
-                                <a href="https://silver-s1plus.netlify.app/" target="_blank">点击此处查看设置教程</a>
-                                <p>Token只会保存在你的浏览器本地，不会上传到任何地方。</p>
+                        <div id="s1p-remote-sync-controls-wrapper">
+                            <div class="s1p-settings-item">
+                                <label class="s1p-settings-label" for="s1p-auto-sync-enabled-toggle">启用自动后台同步</label>
+                                <label class="s1p-switch">
+                                    <input type="checkbox" id="s1p-auto-sync-enabled-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
+                                    <span class="s1p-slider"></span>
+                                </label>
                             </div>
-                        </div>
-                        <div class="s1p-editor-footer" style="margin-top: 16px; justify-content: flex-end; gap: 8px;">
-                             <button id="s1p-remote-save-btn" class="s1p-btn">保存设置</button>
-                             <button id="s1p-remote-manual-sync-btn" class="s1p-btn">手动同步</button>
-                             <button id="s1p-open-gist-page-btn" class="s1p-btn">打开 Gist 页面</button>
+                            <p class="s1p-setting-desc">启用后，数据将在停止操作5秒后自动同步。关闭后将切换为纯手动同步模式。</p>
+
+                            <div class="s1p-settings-item" style="flex-direction: column; align-items: flex-start; gap: 4px;">
+                                <label class="s1p-settings-label" for="s1p-remote-gist-id-input">Gist ID</label>
+                                <input type="text" id="s1p-remote-gist-id-input" class="s1p-input" placeholder="从 Gist 网址中复制的那一长串 ID" style="width: 100%;" autocomplete="off" data-s1p-sync-control>
+                            </div>
+                            <div class="s1p-settings-item" style="flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 12px;">
+                                <label class="s1p-settings-label" for="s1p-remote-pat-input">GitHub Personal Access Token (PAT)</label>
+                                <input type="password" id="s1p-remote-pat-input" class="s1p-input" placeholder="ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" style="width: 100%;" autocomplete="new-password" data-s1p-sync-control>
+                            </div>
+                            <div class="s1p-notice">
+                                <div class="s1p-notice-icon"></div>
+                                <div class="s1p-notice-content">
+                                    <a href="https://silver-s1plus.netlify.app/" target="_blank">点击此处查看设置教程</a>
+                                    <p>Token只会保存在你的浏览器本地，不会上传到任何地方。</p>
+                                </div>
+                            </div>
+                            <div class="s1p-editor-footer" style="margin-top: 16px; justify-content: flex-end; gap: 8px;">
+                                 <button id="s1p-remote-save-btn" class="s1p-btn" data-s1p-sync-control>保存设置</button>
+                                 <button id="s1p-remote-manual-sync-btn" class="s1p-btn" data-s1p-sync-control>手动同步</button>
+                                 <button id="s1p-open-gist-page-btn" class="s1p-btn" data-s1p-sync-control>打开 Gist 页面</button>
+                            </div>
                         </div>
                     </div>
 
@@ -2581,45 +2606,27 @@
         }
 
         const remoteToggle = modal.querySelector('#s1p-remote-enabled-toggle');
-        const autoSyncToggle = modal.querySelector('#s1p-auto-sync-enabled-toggle');
-        const autoSyncItem = autoSyncToggle.closest('.s1p-settings-item');
-        const autoSyncDesc = autoSyncItem.nextElementSibling;
-        const gistInputItem = modal.querySelector('#s1p-remote-gist-id-input').closest('.s1p-settings-item');
-        const patInputItem = modal.querySelector('#s1p-remote-pat-input').closest('.s1p-settings-item');
-        const remoteFooter = modal.querySelector('#s1p-remote-manual-sync-btn').closest('.s1p-editor-footer');
-        const remoteNotice = modal.querySelector('.s1p-notice');
+        const controlsWrapper = modal.querySelector('#s1p-remote-sync-controls-wrapper');
 
         const updateRemoteSyncInputsState = () => {
             const isMasterEnabled = remoteToggle.checked;
-            const targetOpacity = isMasterEnabled ? '1' : '0.6';
-            const targetPointerEvents = isMasterEnabled ? 'auto' : 'none';
+            // [OPTIMIZED] Toggle a single class on the parent wrapper for visual styles
+            controlsWrapper.classList.toggle('is-disabled', !isMasterEnabled);
 
-            const elementsToStyle = [autoSyncItem, autoSyncDesc, gistInputItem, patInputItem, remoteFooter, remoteNotice];
-            elementsToStyle.forEach(el => {
-                if (el) {
-                    el.style.opacity = targetOpacity;
-                    el.style.pointerEvents = targetPointerEvents;
-                }
+            // [MODIFIED] Use data attribute to toggle the disabled property for accessibility and form behavior
+            controlsWrapper.querySelectorAll('[data-s1p-sync-control]').forEach(el => {
+                el.disabled = !isMasterEnabled;
             });
-
-            if (autoSyncToggle) autoSyncToggle.disabled = !isMasterEnabled;
-            if (gistInputItem) gistInputItem.querySelector('input').disabled = !isMasterEnabled;
-            if (patInputItem) patInputItem.querySelector('input').disabled = !isMasterEnabled;
-            if (remoteFooter) {
-                remoteFooter.querySelectorAll('button').forEach(btn => btn.disabled = !isMasterEnabled);
-            }
         };
 
         const settings = getSettings();
         remoteToggle.checked = settings.syncRemoteEnabled;
-        autoSyncToggle.checked = settings.syncAutoEnabled;
+        modal.querySelector('#s1p-auto-sync-enabled-toggle').checked = settings.syncAutoEnabled;
         modal.querySelector('#s1p-remote-gist-id-input').value = settings.syncRemoteGistId || '';
         modal.querySelector('#s1p-remote-pat-input').value = settings.syncRemotePat || '';
 
-        if (remoteToggle) {
-            remoteToggle.addEventListener('change', updateRemoteSyncInputsState);
-            updateRemoteSyncInputsState();
-        }
+        remoteToggle.addEventListener('change', updateRemoteSyncInputsState);
+        updateRemoteSyncInputsState(); // Initial state setup
 
         // [REFACTORED] 全新用户标记标签页渲染逻辑
         const renderTagsTab = (options = {}) => {
@@ -2654,11 +2661,11 @@
                     <div class="s1p-settings-group-title">已标记用户列表</div>
                     <div id="s1p-tags-list-container">
                         ${tagItems.length === 0
-                        ? `<div class="s1p-empty">暂无用户标记</div>`
-                        : `<div class="s1p-list">${tagItems.map(([id, data]) => {
-                            if (id === editingUserId) {
-                                // --- 编辑模式 ---
-                                return `
+                    ? `<div class="s1p-empty">暂无用户标记</div>`
+                    : `<div class="s1p-list">${tagItems.map(([id, data]) => {
+                        if (id === editingUserId) {
+                            // --- 编辑模式 ---
+                            return `
                                 <div class="s1p-item" data-user-id="${id}">
                                     <div class="s1p-item-info">
                                         <div class="s1p-item-title">${data.name}</div>
@@ -2674,9 +2681,9 @@
                                         <button class="s1p-btn" data-action="cancel-tag-edit">取消</button>
                                     </div>
                                 </div>`;
-                            } else {
-                                // --- 正常显示模式 ---
-                                return `
+                        } else {
+                            // --- 正常显示模式 ---
+                            return `
                                 <div class="s1p-item" data-user-id="${id}">
                                     <div class="s1p-item-info">
                                         <div class="s1p-item-title">${data.name}</div>
@@ -2691,9 +2698,9 @@
                                         <button class="s1p-btn s1p-danger" data-action="delete-tag-item" data-user-id="${id}" data-user-name="${data.name}">删除</button>
                                     </div>
                                 </div>`;
-                            }
-                        }).join('')}</div>`
-                    }
+                        }
+                    }).join('')}</div>`
+                }
                     </div>
                 </div>
             `;
@@ -3391,7 +3398,7 @@
                     if (threadList.children.length === 0) {
                         const container = threadList.closest('#s1p-manually-blocked-list-container');
                         if (container) {
-                           container.innerHTML = '<div class="s1p-empty">暂无手动屏蔽的帖子</div>';
+                            container.innerHTML = '<div class="s1p-empty">暂无手动屏蔽的帖子</div>';
                         }
                     }
                 }
@@ -3592,143 +3599,135 @@
     };
 
     /**
-     * [MODIFIED] 手动同步处理器，包含了配置预检查、损坏修复流程和UI反馈
+     * [OPTIMIZED] 手动同步处理器，解耦UI逻辑并返回布尔值结果。
+     * @returns {Promise<boolean|null>} 返回 true 表示成功, false 表示失败, null 表示用户取消操作。
      */
-    const handleManualSync = async () => {
-        const navSyncIcon = document.querySelector('#s1p-nav-sync-btn svg');
-
-        // 1. [新增] 配置预检查 (Fail-Fast)
-        const settings = getSettings();
-        if (!settings.syncRemoteEnabled || !settings.syncRemoteGistId || !settings.syncRemotePat) {
-            showMessage('远程同步未启用或配置不完整。', false);
-            return;
-        }
-
-        // 2. 检查通过后，才开始真正的同步流程
-        if (navSyncIcon) navSyncIcon.classList.add('s1p-syncing');
-        showMessage('正在检查云端数据...', null);
-
-        try {
-            const rawRemoteData = await fetchRemoteData();
-
-            // 场景1: 远程为空
-            if (Object.keys(rawRemoteData).length === 0) {
-                const pushAction = {
-                    text: '推送本地数据到云端', className: 's1p-confirm', action: async () => {
-                        showMessage('正在向云端推送数据...', null);
-                        try {
-                            const localData = await exportLocalDataObject();
-                            await pushRemoteData(localData);
-                            GM_setValue('s1p_last_sync_timestamp', Date.now());
-                            updateLastSyncTimeDisplay();
-                            showMessage('推送成功！已初始化云端备份。', true);
-                        } catch (e) { showMessage(`推送失败: ${e.message}`, false); }
-                    }
-                };
-                const cancelAction = { text: '取消', className: 's1p-cancel', action: () => showMessage('操作已取消。', null) };
-                createAdvancedConfirmationModal('初始化云端同步', '<p>检测到云端备份为空，是否将当前本地数据作为初始版本推送到云端？</p>', [pushAction, cancelAction]);
-                return;
+    const handleManualSync = () => {
+        return new Promise(async (resolve) => {
+            const settings = getSettings();
+            if (!settings.syncRemoteEnabled || !settings.syncRemoteGistId || !settings.syncRemotePat) {
+                showMessage('远程同步未启用或配置不完整。', false);
+                return resolve(false);
             }
 
-            // 核心校验：如果数据损坏，这行会抛出错误并被 catch 捕获
-            const remote = await migrateAndValidateRemoteData(rawRemoteData);
-            const localDataObject = await exportLocalDataObject();
+            showMessage('正在检查云端数据...', null);
 
-            // 场景2: 数据完全一致
-            if (remote.contentHash === localDataObject.contentHash) {
-                showMessage('数据已是最新，无需同步。', true);
-                GM_setValue('s1p_last_sync_timestamp', Date.now());
-                updateLastSyncTimeDisplay();
-                return;
-            }
+            try {
+                const rawRemoteData = await fetchRemoteData();
 
-            // 场景3: 数据不一致，需要用户选择
-            const formatForDisplay = (ts) => {
-                if (!ts) return "无记录";
-                const date = new Date(ts);
-                return `${date.toLocaleString('zh-CN', { hour12: false })}`;
-            };
-            const localNewer = localDataObject.lastUpdated > remote.lastUpdated;
-            const isConflict = localDataObject.lastUpdated === remote.lastUpdated;
-            let bodyHtml = isConflict
-                ? `<p style="color: var(--s1p-red); font-weight: bold;">警告：检测到同步冲突！</p><p>两份数据的时间戳相同但内容不同。这可能发生在多设备离线修改后。请仔细选择您希望保留的版本以覆盖另一方。</p>`
-                : `<p>检测到本地数据与云端备份不一致，请选择同步方式：</p>`;
-            bodyHtml += `
-                <div class="s1p-sync-choice-info">
-                    <div class="s1p-sync-choice-info-row">
-                    <span class="s1p-sync-choice-info-label">本地数据更新于:</span>
-                    <span class="s1p-sync-choice-info-time ${localNewer && !isConflict ? 's1p-sync-choice-newer' : ''}">${formatForDisplay(localDataObject.lastUpdated)}</span>
-                    </div>
-                    <div class="s1p-sync-choice-info-row">
-                    <span class="s1p-sync-choice-info-label">云端备份更新于:</span>
-                    <span class="s1p-sync-choice-info-time ${!localNewer && !isConflict ? 's1p-sync-choice-newer' : ''}">${formatForDisplay(remote.lastUpdated)}</span>
-                    </div>
-                </div>`;
-            const pullAction = {
-                text: '从云端拉取 (覆盖本地)', className: 's1p-confirm', action: async () => {
-                    showMessage('正在从云端拉取数据...', null);
-                    const result = importLocalData(JSON.stringify(remote.full));
-                    if (result.success) {
-                        GM_setValue('s1p_last_sync_timestamp', Date.now());
-                        updateLastSyncTimeDisplay();
-                        showMessage(`拉取成功！${result.message}`, true);
-                        setTimeout(() => location.reload(), 800);
-                    } else {
-                        showMessage(`导入失败: ${result.message}`, false);
-                    }
+                if (Object.keys(rawRemoteData).length === 0) {
+                    const pushAction = {
+                        text: '推送本地数据到云端', className: 's1p-confirm', action: async () => {
+                            showMessage('正在向云端推送数据...', null);
+                            try {
+                                const localData = await exportLocalDataObject();
+                                await pushRemoteData(localData);
+                                GM_setValue('s1p_last_sync_timestamp', Date.now());
+                                updateLastSyncTimeDisplay();
+                                showMessage('推送成功！已初始化云端备份。', true);
+                                resolve(true);
+                            } catch (e) {
+                                showMessage(`推送失败: ${e.message}`, false);
+                                resolve(false);
+                            }
+                        }
+                    };
+                    const cancelAction = {
+                        text: '取消', className: 's1p-cancel', action: () => {
+                            showMessage('操作已取消。', null);
+                            resolve(null);
+                        }
+                    };
+                    createAdvancedConfirmationModal('初始化云端同步', '<p>检测到云端备份为空，是否将当前本地数据作为初始版本推送到云端？</p>', [pushAction, cancelAction]);
+                    return;
                 }
-            };
-            const pushAction = {
-                text: '向云端推送 (覆盖云端)', className: 's1p-confirm', action: async () => {
-                    showMessage('正在向云端推送数据...', null);
-                    try {
-                        await pushRemoteData(localDataObject);
-                        GM_setValue('s1p_last_sync_timestamp', Date.now());
-                        updateLastSyncTimeDisplay();
-                        showMessage('推送成功！已更新云端备份。', true);
-                    } catch (e) {
-                        showMessage(`推送失败: ${e.message}`, false);
-                    }
+
+                const remote = await migrateAndValidateRemoteData(rawRemoteData);
+                const localDataObject = await exportLocalDataObject();
+
+                if (remote.contentHash === localDataObject.contentHash) {
+                    showMessage('数据已是最新，无需同步。', true);
+                    GM_setValue('s1p_last_sync_timestamp', Date.now());
+                    updateLastSyncTimeDisplay();
+                    return resolve(true);
                 }
-            };
-            const cancelAction = { text: '取消', className: 's1p-cancel', action: () => showMessage('操作已取消。', null) };
-            createAdvancedConfirmationModal('手动同步选择', bodyHtml, [pullAction, pushAction, cancelAction]);
 
-        } catch (error) {
-            const corruptionErrorMessage = "云端备份已损坏";
+                const formatForDisplay = (ts) => new Date(ts || 0).toLocaleString('zh-CN', { hour12: false });
+                const localNewer = localDataObject.lastUpdated > remote.lastUpdated;
+                const isConflict = localDataObject.lastUpdated === remote.lastUpdated;
+                let bodyHtml = isConflict
+                    ? `<p style="color: var(--s1p-red); font-weight: bold;">警告：检测到同步冲突！</p><p>两份数据的时间戳相同但内容不同。请仔细选择您希望保留的版本。</p>`
+                    : `<p>检测到本地数据与云端备份不一致，请选择同步方式：</p>`;
+                bodyHtml += `<div class="s1p-sync-choice-info"><div class="s1p-sync-choice-info-row"><span class="s1p-sync-choice-info-label">本地数据:</span><span class="s1p-sync-choice-info-time ${localNewer && !isConflict ? 's1p-sync-choice-newer' : ''}">${formatForDisplay(localDataObject.lastUpdated)}</span></div><div class="s1p-sync-choice-info-row"><span class="s1p-sync-choice-info-label">云端备份:</span><span class="s1p-sync-choice-info-time ${!localNewer && !isConflict ? 's1p-sync-choice-newer' : ''}">${formatForDisplay(remote.lastUpdated)}</span></div></div>`;
 
-            if (error && error.message && error.message.includes(corruptionErrorMessage)) {
-                const forcePushAction = {
-                    text: '强制推送，覆盖云端备份',
-                    className: 's1p-confirm',
-                    action: async () => {
-                        showMessage('正在强制推送本地数据...', null);
-                        try {
-                            const localDataObjectForPush = await exportLocalDataObject();
-                            await pushRemoteData(localDataObjectForPush);
+                const pullAction = {
+                    text: '从云端拉取', className: 's1p-confirm', action: () => {
+                        const result = importLocalData(JSON.stringify(remote.full));
+                        if (result.success) {
                             GM_setValue('s1p_last_sync_timestamp', Date.now());
                             updateLastSyncTimeDisplay();
-                            showMessage('推送成功！已使用本地数据修复云端备份。', true);
-                        } catch (e) {
-                            showMessage(`强制推送失败: ${e.message}`, false);
+                            showMessage(`拉取成功！页面即将刷新。`, true);
+                            setTimeout(() => location.reload(), 1200);
+                            resolve(true);
+                        } else {
+                            showMessage(`导入失败: ${result.message}`, false);
+                            resolve(false);
                         }
                     }
                 };
-
-                const cancelAction = {
-                    text: '暂不处理',
-                    className: 's1p-cancel',
-                    action: () => showMessage('操作已取消。云端备份仍处于损坏状态。', null)
+                const pushAction = {
+                    text: '向云端推送', className: 's1p-confirm', action: async () => {
+                        try {
+                            await pushRemoteData(localDataObject);
+                            GM_setValue('s1p_last_sync_timestamp', Date.now());
+                            updateLastSyncTimeDisplay();
+                            showMessage('推送成功！已更新云端备份。', true);
+                            resolve(true);
+                        } catch (e) {
+                            showMessage(`推送失败: ${e.message}`, false);
+                            resolve(false);
+                        }
+                    }
                 };
-                const title = "检测到云端备份损坏";
-                const body = `<p style="color: var(--s1p-red);">你的云端备份文件已损坏（哈希校验失败），脚本已自动保护你的本地数据不受影响。</p><p>是否要用你当前健康的本地数据强制覆盖云端损坏的备份？</p><p style="font-size: 12px; opacity: 0.8;">注意：这将删除云端的所有更改，使其与你当前设备的数据完全一致。</p>`;
-                createAdvancedConfirmationModal(title, body, [forcePushAction, cancelAction]);
-            } else {
-                showMessage(`操作失败: ${error.message}`, false);
+                const cancelAction = {
+                    text: '取消', className: 's1p-cancel', action: () => {
+                        showMessage('操作已取消。', null);
+                        resolve(null);
+                    }
+                };
+                createAdvancedConfirmationModal('手动同步选择', bodyHtml, [pullAction, pushAction, cancelAction]);
+
+            } catch (error) {
+                const corruptionErrorMessage = "云端备份已损坏";
+                if (error?.message.includes(corruptionErrorMessage)) {
+                    const forcePushAction = {
+                        text: '强制推送，覆盖云端', className: 's1p-confirm', action: async () => {
+                            try {
+                                const localDataObjectForPush = await exportLocalDataObject();
+                                await pushRemoteData(localDataObjectForPush);
+                                GM_setValue('s1p_last_sync_timestamp', Date.now());
+                                updateLastSyncTimeDisplay();
+                                showMessage('推送成功！已使用本地数据修复云端备份。', true);
+                                resolve(true);
+                            } catch (e) {
+                                showMessage(`强制推送失败: ${e.message}`, false);
+                                resolve(false);
+                            }
+                        }
+                    };
+                    const cancelAction = {
+                        text: '暂不处理', className: 's1p-cancel', action: () => {
+                            showMessage('操作已取消。云端备份仍处于损坏状态。', null);
+                            resolve(null);
+                        }
+                    };
+                    createAdvancedConfirmationModal("检测到云端备份损坏", `<p style="color: var(--s1p-red);">云端备份文件校验失败，为保护数据已暂停同步。</p><p>是否用当前健康的本地数据强制覆盖云端损坏的备份？</p>`, [forcePushAction, cancelAction]);
+                } else {
+                    showMessage(`操作失败: ${error.message}`, false);
+                    resolve(false);
+                }
             }
-        } finally {
-            if (navSyncIcon) navSyncIcon.classList.remove('s1p-syncing');
-        }
+        });
     };
 
     const createAdvancedConfirmationModal = (title, bodyHtml, buttons) => {
