@@ -123,9 +123,9 @@
             display: flex !important;
             align-items: center !important;
         }
-        /* --- [NEW] Manual Sync Nav Button --- */
+        /* --- [NEW & REFINED V3] Manual Sync Nav Button --- */
         #s1p-nav-sync-btn a {
-            padding: 0 10px; /* Adjust padding for icon-only button */
+            padding: 0 10px;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -135,17 +135,50 @@
             width: 14px;
             height: 14px;
             color: var(--s1p-t);
-            transition: color 0.2s ease, transform 0.2s ease;
-            overflow: visible; /* 防止加粗后的描边被裁切 */
+            transition: color 0.3s ease, transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); /* 使用更平滑的缓动函数 */
+            overflow: visible;
         }
         #s1p-nav-sync-btn svg path {
-            stroke: currentColor; /* 描边颜色与填充颜色(currentColor)保持一致 */
-            stroke-width: 0.8;    /* 描边宽度，数值越大越粗 */
-            stroke-linejoin: round; /* 让描边的边角更圆润 */
+            stroke: currentColor;
+            stroke-width: 0.8;
+            stroke-linejoin: round;
         }
         #s1p-nav-sync-btn a:hover svg {
             color: var(--s1p-t);
             transform: scale(1.1);
+        }
+
+        /* --- [NEW & REFINED V3] Syncing Animation & Status Feedback --- */
+        @keyframes s1p-sync-breathing {
+            0% { transform: scale(1) rotate(0deg); opacity: 0.8; }
+            50% { transform: scale(1.1) rotate(180deg); opacity: 1; }
+            100% { transform: scale(1) rotate(360deg); opacity: 0.8; }
+        }
+        @keyframes s1p-sync-success-pop {
+            0% { transform: scale(1); }
+            50% { transform: scale(0.8); }
+            80% { transform: scale(1.2); }
+            100% { transform: scale(1.1); }
+        }
+        @keyframes s1p-sync-error-shake {
+            0%, 100% { transform: translateX(0) scale(1.1); }
+            10%, 30%, 50%, 70%, 90% { transform: translateX(-3px) scale(1.1); }
+            20%, 40%, 60%, 80% { transform: translateX(3px) scale(1.1); }
+        }
+
+        #s1p-nav-sync-btn svg.s1p-syncing {
+            animation: s1p-sync-breathing 2s ease-in-out infinite;
+            pointer-events: none; /* 同步中禁止再次点击 */
+        }
+        #s1p-nav-sync-btn svg.s1p-sync-success {
+            color: var(--s1p-green) !important;
+            transform: scale(1.1); /* 保持一个最终的放大状态 */
+            animation: s1p-sync-success-pop 0.5s cubic-bezier(0.5, -0.75, 0.25, 1.75);
+        }
+        #s1p-nav-sync-btn svg.s1p-sync-error {
+            color: var(--s1p-red) !important;
+            transform: scale(1.1); /* 保持一个最终的放大状态 */
+            animation: s1p-sync-error-shake 0.5s ease-in-out;
         }
 
         /* --- [NEW & OPTIMIZED V2] Syncing Animation & Status Feedback --- */
@@ -1913,27 +1946,29 @@
     };
 
 
-    // [MODIFIED] 自动同步控制器，集成哈希校验逻辑并增加启动时竞态条件处理
+    // [S1 PLUS 整合版]
+// --- 操作: 用下面的完整代码块替换现有的 'performAutoSync' 函数。
+// --- 优点: 返回详细状态对象 (来自双方)，且函数自包含配置检查 (来自 cosmos)，更健壮。
+
+    // 自动同步控制器，集成哈希校验逻辑并返回操作结果
     const performAutoSync = async () => {
         const settings = getSettings();
-        // [MODIFIED] 增加对自动同步子开关的判断
-        if (!settings.syncRemoteEnabled || !settings.syncAutoEnabled || !settings.syncRemoteGistId || !settings.syncRemotePat) {
-            return;
+        if (!settings.syncRemoteEnabled || !settings.syncRemoteGistId || !settings.syncRemotePat) {
+            return { status: 'skipped', reason: 'disabled' };
         }
 
         // [OPTIMIZATION] 开始同步前，设置标志位
         isInitialSyncInProgress = true;
-        console.log('S1 Plus (AutoSync): 启动初始同步检查...');
+        console.log('S1 Plus (Sync): 启动同步检查...');
 
         try {
             const rawRemoteData = await fetchRemoteData();
             if (Object.keys(rawRemoteData).length === 0) { // Gist为空，首次同步
-                console.log(`S1 Plus (AutoSync): 远程为空，推送本地数据...`);
+                console.log(`S1 Plus (Sync): 远程为空，推送本地数据...`);
                 const localData = await exportLocalDataObject();
                 await pushRemoteData(localData);
                 GM_setValue('s1p_last_sync_timestamp', Date.now());
-                // 注意：此处直接 return，但 finally 块依然会执行
-                return;
+                return { status: 'success', action: 'pushed_initial' };
             }
 
             // 1. 校验和迁移远程数据
@@ -1948,35 +1983,42 @@
 
             // 场景A: 完全一致
             if (remoteHash === localHash) {
-                console.log(`S1 Plus (AutoSync): 本地与远程数据哈希一致，无需同步。`);
-                return;
+                console.log(`S1 Plus (Sync): 本地与远程数据哈希一致，无需同步。`);
+                return { status: 'success', action: 'no_change' };
             }
 
             // 哈希不一致，根据时间戳决策
             // 场景B: 远程有更新
             if (remoteTimestamp > localTimestamp) {
-                console.log(`S1 Plus (AutoSync): 远程数据比本地新，正在后台应用...`);
+                console.log(`S1 Plus (Sync): 远程数据比本地新，正在后台应用...`);
                 importLocalData(JSON.stringify(remote.full));
                 GM_setValue('s1p_last_sync_timestamp', Date.now());
-                // 场景C: 本地有更新
+                return { status: 'success', action: 'pulled' };
+            // 场景C: 本地有更新
             } else if (localTimestamp > remoteTimestamp) {
-                console.log(`S1 Plus (AutoSync): 本地数据比远程新，正在后台推送...`);
+                console.log(`S1 Plus (Sync): 本地数据比远程新，正在后台推送...`);
                 await pushRemoteData(localDataObject);
                 GM_setValue('s1p_last_sync_timestamp', Date.now());
-                // 场景D: 冲突 (时间戳相同但哈希不同)
+                return { status: 'success', action: 'pushed' };
+            // 场景D: 冲突 (时间戳相同但哈希不同)
             } else {
-                console.warn(`S1 Plus (AutoSync): 检测到同步冲突 (时间戳相同但内容不同)，自动同步已暂停。请手动同步以解决冲突。`);
+                console.warn(`S1 Plus (Sync): 检测到同步冲突 (时间戳相同但内容不同)，自动同步已暂停。请手动同步以解决冲突。`);
+                return { status: 'conflict', reason: 'timestamps match but hashes differ' };
             }
 
         } catch (error) {
             console.error('S1 Plus: 自动同步失败:', error);
-            // 在UI中给出提示，但自动同步不应打扰用户
+            return { status: 'failure', error: error.message };
         } finally {
             // [OPTIMIZATION] 无论成功或失败，最后都清除标志位，以允许后续正常的防抖同步
             isInitialSyncInProgress = false;
-            console.log('S1 Plus (AutoSync): 初始同步检查完成。');
+            console.log('S1 Plus (Sync): 同步检查完成。');
         }
     };
+
+    // [S1 PLUS 整合版]
+    // --- 操作: 用下面的完整代码块替换现有的 'defaultSettings' 对象。
+    // --- 优点: 结构清晰，为新功能添加了默认设置。
 
     // --- 设置管理 ---
     const defaultSettings = {
@@ -1984,8 +2026,8 @@
         enableUserBlocking: true,
         enableUserTagging: true,
         enableReadProgress: true,
-        enableBookmarkReplies: true, // [NEW] Add setting for bookmark feature
-        readingProgressCleanupDays: 0,     // [MODIFIED] Default to 0 (Never)
+        enableBookmarkReplies: true,
+        readingProgressCleanupDays: 0,
         openProgressInNewTab: true,
         openProgressInBackground: false,
         openThreadsInNewTab: false,
@@ -2009,7 +2051,8 @@
             { name: '黑名单', href: 'home.php?mod=space&do=friend&view=blacklist' }
         ],
         syncRemoteEnabled: false,
-        syncAutoEnabled: true, // [NEW] 新增自动同步子开关
+        syncDailyFirstLoad: true, // [新增] 新增每日首次加载同步开关
+        syncAutoEnabled: true,    // 现有自动后台同步开关
         syncRemoteGistId: '',
         syncRemotePat: '',
     };
@@ -2066,21 +2109,35 @@
         a.addEventListener('click', async (e) => {
             e.preventDefault();
             const icon = a.querySelector('svg');
+            // 如果图标不存在或正在同步中，则直接返回，防止重复触发
             if (!icon || icon.classList.contains('s1p-syncing')) return;
 
+            // 清除可能残留的状态类，并添加同步中动画
+            icon.classList.remove('s1p-sync-success', 's1p-sync-error');
             icon.classList.add('s1p-syncing');
+
             let success = false;
             try {
                 success = await handleManualSync();
-                // 根据同步结果添加状态类
-                if (success !== null) { // null表示用户取消，不给状态反馈
+
+                // 先移除同步中动画，再添加结果动画
+                icon.classList.remove('s1p-syncing');
+
+                // 根据同步结果添加状态类 (null表示用户取消，不给状态反馈)
+                if (success !== null) {
                     icon.classList.add(success ? 's1p-sync-success' : 's1p-sync-error');
                 }
+            } catch (error) {
+                // 即使出现意外错误，也要确保移除同步中状态
+                icon.classList.remove('s1p-syncing');
+                console.error("S1 Plus: Manual sync handler threw an error:", error);
             } finally {
                 // 动画结束后再移除状态，确保反馈可见
                 setTimeout(() => {
-                    icon.classList.remove('s1p-syncing', 's1p-sync-success', 's1p-sync-error');
-                }, 1500);
+                    icon.classList.remove('s1p-sync-success', 's1p-sync-error');
+                    // 动画结束后，将 transform 属性重置，以备下一次 hover 动画
+                    icon.style.transform = '';
+                }, 1200);
             }
         });
 
@@ -2429,10 +2486,12 @@
         });
     };
 
+    // [S1 PLUS 整合版]
+    // --- 操作: 用下面的完整代码块替换现有的 'createManagementModal' 函数。
+    // --- 优点: 添加了新UI开关并提供了清晰的独立性描述 (来自 cosmos)。
+
     const createManagementModal = () => {
-        /**
-         * [FIXED] 采用离屏预计算方式，彻底解决面板展开动画问题
-         */
+        // ... (此处省略 calculateModalWidth 内部代码，与原文件一致) ...
         const calculateModalWidth = () => {
             const measureContainer = document.createElement('div');
             measureContainer.style.cssText = 'position: absolute; left: -9999px; top: -9999px; visibility: hidden; pointer-events: none;';
@@ -2449,7 +2508,6 @@
                 <button class="s1p-tab-btn">导航栏定制</button>
                 <button class="s1p-tab-btn">设置同步</button>
             `;
-
             measureContainer.appendChild(tabsDiv);
             document.body.appendChild(measureContainer);
 
@@ -2458,19 +2516,16 @@
                 const style = window.getComputedStyle(btn);
                 totalTabsWidth += btn.offsetWidth + parseFloat(style.marginLeft) + parseFloat(style.marginRight);
             });
-
             document.body.removeChild(measureContainer);
 
             return totalTabsWidth + 32; // 32px for padding
         };
-
         const requiredWidth = calculateModalWidth();
         document.querySelector('.s1p-modal')?.remove();
 
         const modal = document.createElement('div');
         modal.className = 's1p-modal';
         modal.style.opacity = '0';
-
         modal.innerHTML = `<div class="s1p-modal-content">
             <div class="s1p-modal-header"><div class="s1p-modal-title">S1 Plus 设置</div><div class="s1p-modal-close"></div></div>
             <div class="s1p-modal-body">
@@ -2514,6 +2569,15 @@
 
                         <div id="s1p-remote-sync-controls-wrapper">
                             <div class="s1p-settings-item">
+                                <label class="s1p-settings-label" for="s1p-daily-first-load-sync-enabled-toggle">启用每日首次加载时同步</label>
+                                <label class="s1p-switch">
+                                    <input type="checkbox" id="s1p-daily-first-load-sync-enabled-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
+                                    <span class="s1p-slider"></span>
+                                </label>
+                            </div>
+                            <p class="s1p-setting-desc">启用后，每天第一次打开论坛时会自动检查并同步数据。此功能独立于下方的“自动后台同步”。</p>
+
+                            <div class="s1p-settings-item">
                                 <label class="s1p-settings-label" for="s1p-auto-sync-enabled-toggle">启用自动后台同步</label>
                                 <label class="s1p-switch">
                                     <input type="checkbox" id="s1p-auto-sync-enabled-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
@@ -2521,7 +2585,7 @@
                                 </label>
                             </div>
                             <p class="s1p-setting-desc">启用后，数据将在停止操作5秒后自动同步。关闭后将切换为纯手动同步模式。</p>
-
+                            
                             <div class="s1p-settings-item" style="flex-direction: column; align-items: flex-start; gap: 4px;">
                                 <label class="s1p-settings-label" for="s1p-remote-gist-id-input">Gist ID</label>
                                 <input type="text" id="s1p-remote-gist-id-input" class="s1p-input" placeholder="从 Gist 网址中复制的那一长串 ID" style="width: 100%;" autocomplete="off" data-s1p-sync-control>
@@ -2563,7 +2627,8 @@
             </div>
             <div class="s1p-modal-footer">版本: ${SCRIPT_VERSION} (${SCRIPT_RELEASE_DATE})</div>
         </div>`;
-
+        
+        // ... (此处省略 modal 宽度计算、tabs 定义、渲染逻辑等，与原文件一致) ...
         const modalContent = modal.querySelector('.s1p-modal-content');
         if (requiredWidth > 600) {
             modalContent.style.width = `${requiredWidth}px`;
@@ -2581,7 +2646,6 @@
             'nav-settings': modal.querySelector('#s1p-tab-nav-settings'),
             'sync': modal.querySelector('#s1p-tab-sync'),
         };
-
         const dataClearanceConfig = {
             blockedThreads: { label: '手动屏蔽的帖子和用户主题帖', clear: () => saveBlockedThreads({}) },
             blockedUsers: { label: '屏蔽的用户列表', clear: () => saveBlockedUsers({}) },
@@ -2591,7 +2655,6 @@
             bookmarkedReplies: { label: '收藏的回复', clear: () => saveBookmarkedReplies({}) },
             settings: { label: '界面、导航栏及其他设置', clear: () => saveSettings(defaultSettings) }
         };
-
         const clearDataOptionsContainer = modal.querySelector('#s1p-clear-data-options');
         if (clearDataOptionsContainer) {
             clearDataOptionsContainer.innerHTML = Object.keys(dataClearanceConfig).map(key => `
@@ -2607,13 +2670,9 @@
 
         const remoteToggle = modal.querySelector('#s1p-remote-enabled-toggle');
         const controlsWrapper = modal.querySelector('#s1p-remote-sync-controls-wrapper');
-
         const updateRemoteSyncInputsState = () => {
             const isMasterEnabled = remoteToggle.checked;
-            // [OPTIMIZED] Toggle a single class on the parent wrapper for visual styles
             controlsWrapper.classList.toggle('is-disabled', !isMasterEnabled);
-
-            // [MODIFIED] Use data attribute to toggle the disabled property for accessibility and form behavior
             controlsWrapper.querySelectorAll('[data-s1p-sync-control]').forEach(el => {
                 el.disabled = !isMasterEnabled;
             });
@@ -2621,13 +2680,15 @@
 
         const settings = getSettings();
         remoteToggle.checked = settings.syncRemoteEnabled;
+        modal.querySelector('#s1p-daily-first-load-sync-enabled-toggle').checked = settings.syncDailyFirstLoad;
         modal.querySelector('#s1p-auto-sync-enabled-toggle').checked = settings.syncAutoEnabled;
         modal.querySelector('#s1p-remote-gist-id-input').value = settings.syncRemoteGistId || '';
         modal.querySelector('#s1p-remote-pat-input').value = settings.syncRemotePat || '';
 
         remoteToggle.addEventListener('change', updateRemoteSyncInputsState);
-        updateRemoteSyncInputsState(); // Initial state setup
+        updateRemoteSyncInputsState();
 
+        // ... (此处省略所有 render...Tab 函数的内部代码和事件绑定逻辑，与原文件一致) ...
         // [REFACTORED] 全新用户标记标签页渲染逻辑
         const renderTagsTab = (options = {}) => {
             const editingUserId = options.editingUserId;
@@ -2640,10 +2701,8 @@
                     <label class="s1p-switch"><input type="checkbox" id="s1p-enableUserTagging" data-feature="enableUserTagging" class="s1p-feature-toggle" ${isEnabled ? 'checked' : ''}><span class="s1p-slider"></span></label>
                 </div>
             `;
-
             const userTags = getUserTags();
             const tagItems = Object.entries(userTags).sort(([, a], [, b]) => (b.timestamp || 0) - (a.timestamp || 0));
-
             const contentHTML = `
                 <div class="s1p-settings-group">
                     <div class="s1p-sync-title">用户标记管理</div>
@@ -2704,14 +2763,12 @@
                     </div>
                 </div>
             `;
-
             tabs['tags'].innerHTML = `
                 ${toggleHTML}
                 <div class="s1p-feature-content ${isEnabled ? 'expanded' : ''}">
                     <div>${contentHTML}</div>
                 </div>
             `;
-
             if (editingUserId) {
                 const textarea = tabs['tags'].querySelector('.s1p-tag-edit-area');
                 if (textarea) {
@@ -2720,7 +2777,6 @@
                 }
             }
         };
-
         const renderBookmarksTab = () => {
             const settings = getSettings();
             const isEnabled = settings.enableBookmarkReplies;
@@ -2731,14 +2787,13 @@
                     <label class="s1p-switch"><input type="checkbox" id="s1p-enableBookmarkReplies" data-feature="enableBookmarkReplies" class="s1p-feature-toggle" ${isEnabled ? 'checked' : ''}><span class="s1p-slider"></span></label>
                 </div>
             `;
-
             const bookmarkedReplies = getBookmarkedReplies();
             const bookmarkItems = Object.values(bookmarkedReplies).sort((a, b) => b.timestamp - a.timestamp);
 
             const hasBookmarks = bookmarkItems.length > 0;
-
             const contentHTML = `
-                ${hasBookmarks ? `
+                ${hasBookmarks ?
+                `
                 <div class="s1p-settings-group" style="margin-bottom: 16px;">
                     <div class="s1p-search-input-wrapper">
                         <input type="text" id="s1p-bookmark-search-input" class="s1p-input" placeholder="搜索内容、作者、标题..." autocomplete="off">
@@ -2749,7 +2804,8 @@
                     </div>
                 </div>` : ''}
                 <div id="s1p-bookmarks-list-container">
-                    ${!hasBookmarks ? `<div id="s1p-bookmarks-empty-message" class="s1p-empty">暂无收藏的回复</div>` :
+                    ${!hasBookmarks
+                    ? `<div id="s1p-bookmarks-empty-message" class="s1p-empty">暂无收藏的回复</div>` :
                     `<div class="s1p-list" id="s1p-bookmarks-list">
                         ${bookmarkItems.map(item => {
                         const fullText = item.postContent || '';
@@ -2779,14 +2835,12 @@
                 </div>
                 <div id="s1p-bookmarks-no-results" class="s1p-empty" style="display: none;">没有找到匹配的收藏</div>
             `;
-
             tabs['bookmarks'].innerHTML = `
                 ${toggleHTML}
                 <div class="s1p-feature-content ${isEnabled ? 'expanded' : ''}">
                     <div>${contentHTML}</div>
                 </div>
             `;
-
             tabs['bookmarks'].addEventListener('click', e => {
                 const toggleLink = e.target.closest('[data-action="toggle-bookmark-content"]');
                 if (toggleLink) {
@@ -2808,13 +2862,10 @@
                     }
                 }
             });
-
             if (hasBookmarks) {
                 setupBookmarkSearchComponent(tabs['bookmarks']);
             }
         };
-
-
         const renderUserTab = () => {
             const settings = getSettings();
             const isEnabled = settings.enableUserBlocking;
@@ -2825,7 +2876,6 @@
                     <label class="s1p-switch"><input type="checkbox" id="s1p-enableUserBlocking" data-feature="enableUserBlocking" class="s1p-feature-toggle" ${isEnabled ? 'checked' : ''}><span class="s1p-slider"></span></label>
                 </div>
             `;
-
             const blockedUsers = getBlockedUsers();
             const userItemIds = Object.keys(blockedUsers).sort((a, b) => blockedUsers[b].timestamp - blockedUsers[a].timestamp);
             const contentHTML = `
@@ -2848,7 +2898,6 @@
                 }
                 </div>
             `;
-
             tabs['users'].innerHTML = `
                 ${toggleHTML}
                 <div class="s1p-feature-content ${isEnabled ? 'expanded' : ''}">
@@ -2856,7 +2905,6 @@
                 </div>
             `;
         };
-
         const renderThreadTab = () => {
             const settings = getSettings();
             const isEnabled = settings.enablePostBlocking;
@@ -2867,10 +2915,8 @@
                     <label class="s1p-switch"><input type="checkbox" id="s1p-enablePostBlocking" data-feature="enablePostBlocking" class="s1p-feature-toggle" ${isEnabled ? 'checked' : ''}><span class="s1p-slider"></span></label>
                 </div>
             `;
-
             const blockedThreads = getBlockedThreads();
             const manualItemIds = Object.keys(blockedThreads).sort((a, b) => blockedThreads[b].timestamp - blockedThreads[a].timestamp);
-
             const contentHTML = `
                 <div class="s1p-settings-group">
                     <div class="s1p-settings-group-title">标题关键字屏蔽规则</div>
@@ -2932,7 +2978,6 @@
                     `).join('')}</div>`;
                 }
             };
-
             const renderRules = () => {
                 const rules = getTitleFilterRules();
                 const container = tabs['threads'].querySelector('#s1p-keyword-rules-list');
@@ -2953,7 +2998,6 @@
 
             renderRules();
             renderDynamicallyHiddenList();
-
             const saveKeywordRules = () => {
                 const newRules = [];
                 tabs['threads'].querySelectorAll('#s1p-keyword-rules-list .s1p-editor-item').forEach(item => {
@@ -3028,7 +3072,6 @@
                 }
             });
         };
-
         const renderGeneralSettingsTab = () => {
             const settings = getSettings();
             tabs['general-settings'].innerHTML = `
@@ -3086,10 +3129,8 @@
                         <input type="text" id="s1p-customTitleSuffix" class="s1p-input" data-setting="customTitleSuffix" value="${settings.customTitleSuffix || ''}" autocomplete="off">
                     </div>
                 </div>`;
-
             const moveSlider = (control, retries = 3) => {
                 if (!control || retries <= 0) return;
-
                 const slider = control.querySelector('.s1p-segmented-control-slider');
                 const activeOption = control.querySelector('.s1p-segmented-control-option.active');
 
@@ -3108,18 +3149,15 @@
             const openInBackgroundItem = tabs['general-settings'].querySelector('#s1p-openProgressInBackground-item');
             const openThreadsInNewTabCheckbox = tabs['general-settings'].querySelector('#s1p-openThreadsInNewTab');
             const openThreadsInBackgroundItem = tabs['general-settings'].querySelector('#s1p-openThreadsInBackground-item');
-
             openInNewTabCheckbox.addEventListener('change', (e) => {
                 openInBackgroundItem.style.display = e.target.checked ? 'flex' : 'none';
             });
             openThreadsInNewTabCheckbox.addEventListener('change', (e) => {
                 openThreadsInBackgroundItem.style.display = e.target.checked ? 'flex' : 'none';
             });
-
             const cleanupControl = tabs['general-settings'].querySelector('#s1p-readingProgressCleanupDays-control');
             if (cleanupControl) {
                 setTimeout(() => moveSlider(cleanupControl), 0);
-
                 cleanupControl.addEventListener('click', (e) => {
                     const target = e.target.closest('.s1p-segmented-control-option');
                     if (!target || target.classList.contains('active')) return;
@@ -3169,7 +3207,6 @@
                 }
             });
         };
-
         const renderNavSettingsTab = () => {
             const settings = getSettings();
             tabs['nav-settings'].innerHTML = `
@@ -3187,7 +3224,6 @@
                     </div>
                     <button id="s1p-nav-restore-btn" class="s1p-btn s1p-red-btn">恢复默认导航</button>
                 </div>`;
-
             const navListContainer = tabs['nav-settings'].querySelector('.s1p-nav-editor-list');
             const renderNavList = (links) => {
                 navListContainer.innerHTML = (links || []).map((link, index) => `
@@ -3210,14 +3246,12 @@
                     }, 0);
                 }
             });
-
             navListContainer.addEventListener('dragend', e => {
                 if (draggedItem) {
                     draggedItem.classList.remove('s1p-dragging');
                     draggedItem = null;
                 }
             });
-
             navListContainer.addEventListener('dragover', e => {
                 e.preventDefault();
                 if (!draggedItem) return;
@@ -3235,7 +3269,6 @@
                     container.appendChild(draggedItem);
                 }
             });
-
             tabs['nav-settings'].addEventListener('click', e => {
                 const target = e.target;
                 if (target.id === 's1p-nav-add-btn') {
@@ -3268,7 +3301,6 @@
                 }
             });
         };
-
         // --- 初始化渲染和事件绑定 ---
         renderGeneralSettingsTab();
         renderThreadTab();
@@ -3276,12 +3308,10 @@
         renderTagsTab();
         renderBookmarksTab();
         renderNavSettingsTab();
-
         modal.style.transition = 'opacity 0.2s ease-out';
         requestAnimationFrame(() => {
             modal.style.opacity = '1';
         });
-
         modal.addEventListener('change', e => {
             const target = e.target;
             const settings = getSettings();
@@ -3338,7 +3368,6 @@
                 saveSettings(currentSettings);
             }
         });
-
         /**
          * [OPTIMIZED] 从UI列表中移除一个项目，并在列表为空时显示提示信息。
          * @param {HTMLElement} triggerElement - 触发删除操作的元素（如按钮）。
@@ -3454,7 +3483,6 @@
                 }
 
                 const itemsToClear = selectedKeys.map(key => `“${dataClearanceConfig[key].label}”`).join('、');
-
                 createConfirmationModal(
                     '确认要清除所选数据吗？',
                     `即将删除 ${itemsToClear} 的所有数据，此操作不可逆！`,
@@ -3467,6 +3495,7 @@
 
                         if (selectedKeys.includes('settings')) {
                             modal.querySelector('#s1p-remote-enabled-toggle').checked = false;
+                            modal.querySelector('#s1p-daily-first-load-sync-enabled-toggle').checked = true; // [整合] 重置新开关
                             modal.querySelector('#s1p-auto-sync-enabled-toggle').checked = true;
                             modal.querySelector('#s1p-remote-gist-id-input').value = '';
                             modal.querySelector('#s1p-remote-pat-input').value = '';
@@ -3497,6 +3526,7 @@
             if (e.target.id === 's1p-remote-save-btn') {
                 const currentSettings = getSettings();
                 currentSettings.syncRemoteEnabled = modal.querySelector('#s1p-remote-enabled-toggle').checked;
+                currentSettings.syncDailyFirstLoad = modal.querySelector('#s1p-daily-first-load-sync-enabled-toggle').checked; // [整合] 保存新开关
                 currentSettings.syncAutoEnabled = modal.querySelector('#s1p-auto-sync-enabled-toggle').checked;
                 currentSettings.syncRemoteGistId = modal.querySelector('#s1p-remote-gist-id-input').value.trim();
                 currentSettings.syncRemotePat = modal.querySelector('#s1p-remote-pat-input').value.trim();
@@ -3528,7 +3558,6 @@
 
                 if (action === 'edit-tag-item') renderTagsTab({ editingUserId: userId });
                 if (action === 'cancel-tag-edit') renderTagsTab();
-
                 if (action === 'delete-tag-item') {
                     const userName = target.dataset.userName;
                     createConfirmationModal(`确认删除对 "${userName}" 的标记吗?`, '此操作不可撤销。', () => {
@@ -4468,10 +4497,80 @@
         }
     };
 
+    // [S1 PLUS 整合版]
+// --- 操作: 将这个全新的函数添加到 'main' 函数的正上方。
+// --- 优点: 整合了 kyo 方案的兼容性回退逻辑和优雅中断执行的模式，同时保持了 cosmos 方案的逻辑清晰度。
+
+    /**
+     * [整合版] 脚本启动时的同步总控制器。
+     * 优先执行每日首次同步；如果条件不符，则回退到常规的启动时同步检查（如果开启）。
+     * @returns {Promise<boolean>} - 返回 true 表示页面即将刷新，主流程应中断。
+     */
+    const handleStartupSync = async () => {
+        const settings = getSettings();
+        if (!settings.syncRemoteEnabled) {
+            return false; // 总开关未开，直接跳过所有启动同步。
+        }
+
+        // --- 逻辑1: 检查是否需要执行“每日首次加载同步” ---
+        const today = new Date().toLocaleDateString('sv'); // 使用 YYYY-MM-DD 格式
+        const lastSyncDate = GM_getValue('s1p_last_daily_sync_date', null);
+
+        if (settings.syncDailyFirstLoad && today !== lastSyncDate) {
+            console.log('S1 Plus: 正在执行每日首次加载同步...');
+            showMessage('S1 Plus: 正在执行每日首次自动同步...', null);
+            GM_setValue('s1p_last_daily_sync_date', today); // 立即标记，防止重复触发
+
+            const result = await performAutoSync();
+
+            switch (result.status) {
+                case 'success':
+                    if (result.action === 'pulled') {
+                        showMessage('每日同步完成，正在刷新页面以应用最新数据...', true);
+                        setTimeout(() => location.reload(), 1500);
+                        return true; // 返回true，中断主流程
+                    } else {
+                        showMessage('每日首次同步完成。', true);
+                    }
+                    break;
+                case 'failure':
+                    showMessage(`每日首次同步失败: ${result.error}`, false);
+                    break;
+                case 'conflict':
+                    showMessage('每日首次同步检测到冲突，请手动解决。', false);
+                    break;
+            }
+            // 只要每日同步被触发过（无论成功失败），就结束启动同步流程。
+            return false;
+        }
+
+        // --- 逻辑2: 如果不执行每日同步，则回退到原有的“自动后台同步”的启动检查 ---
+        if (settings.syncAutoEnabled) {
+            console.log('S1 Plus: 执行常规启动时同步检查...');
+            const result = await performAutoSync();
+            if (result.status === 'success' && result.action === 'pulled') {
+                 // 只有在拉取数据时才需要用户反馈和刷新
+                showMessage('检测到云端有更新，正在刷新页面...', true);
+                setTimeout(() => location.reload(), 1500);
+                return true; // 返回true，中断主流程
+            }
+        }
+
+        return false; // 默认不刷新
+    };
+
+    // [S1 PLUS 整合版]
+    // --- 操作: 用下面的完整 async 函数替换现有的 'main' 函数。
+    // --- 优点: 采纳了 kyo 方案的中断逻辑，当页面需要刷新时，停止后续无效操作，提升效率。
 
     // --- 主流程 ---
-    function main() {
-        performAutoSync();
+    async function main() {
+        // [整合] 首先执行启动同步逻辑，并根据结果决定是否中断
+        const isReloading = await handleStartupSync();
+        if (isReloading) {
+            return; // 如果页面即将刷新，则中断后续所有脚本初始化操作
+        }
+
         cleanupOldReadProgress();
 
         detectS1Nux();
