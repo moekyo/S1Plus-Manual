@@ -123,82 +123,53 @@
             display: flex !important;
             align-items: center !important;
         }
-        /* --- [NEW & REFINED V3] Manual Sync Nav Button --- */
+        
+        /* --- [MODIFIED] 手动同步导航按钮 --- */
+        /* 1. 确保导航栏的 ul 容器使用 Flexbox 并垂直居中所有 li 元素 */
+        #nv > ul {
+            display: flex !important;
+            align-items: center !important;
+        }
+
+        /* 2. 针对包含SVG图标的 a 链接，让它也成为一个Flex容器 */
         #s1p-nav-sync-btn a {
-            padding: 0 10px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            height: 100%;
+            display: flex;             /* 将 a 标签设置为 flex 容器 */
+            align-items: center;       /* 垂直居中内部的 SVG 图标 */
+            justify-content: center;   /* 水平居中内部的 SVG 图标 */
+            height: 100%;              /* 让 a 标签的高度撑满 li 元素 */
+            vertical-align: middle;    /* 尝试通过这个属性来改善对齐 */
+
         }
         #s1p-nav-sync-btn svg {
-            width: 14px;
-            height: 14px;
+            width: 16px; /* <-- 已修改 */
+            height: 16px; /* <-- 已修改 */
             color: var(--s1p-t);
-            transition: color 0.3s ease, transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); /* 使用更平滑的缓动函数 */
-            overflow: visible;
-        }
-        #s1p-nav-sync-btn svg path {
-            stroke: currentColor;
-            stroke-width: 0.8;
-            stroke-linejoin: round;
+            transition: color 0.3s ease, transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            /* 在这个 svg 标签的样式里增加两行 */
+            position: relative;
+             top: 1.5px; /* 将图标向下移动 1.5 个像素 */
         }
         #s1p-nav-sync-btn a:hover svg {
             color: var(--s1p-t);
             transform: scale(1.1);
         }
 
-        /* --- [NEW & REFINED V3] Syncing Animation & Status Feedback --- */
-        @keyframes s1p-sync-breathing {
-            0% { transform: scale(1) rotate(0deg); opacity: 0.8; }
-            50% { transform: scale(1.1) rotate(180deg); opacity: 1; }
-            100% { transform: scale(1) rotate(360deg); opacity: 0.8; }
-        }
-        @keyframes s1p-sync-success-pop {
-            0% { transform: scale(1); }
-            50% { transform: scale(0.8); }
-            80% { transform: scale(1.2); }
-            100% { transform: scale(1.1); }
-        }
-        @keyframes s1p-sync-error-shake {
-            0%, 100% { transform: translateX(0) scale(1.1); }
-            10%, 30%, 50%, 70%, 90% { transform: translateX(-3px) scale(1.1); }
-            20%, 40%, 60%, 80% { transform: translateX(3px) scale(1.1); }
+        /* --- [MODIFIED] 最终简化版同步动画 (只有旋转) --- */
+        @keyframes s1p-sync-simple-rotate {
+            from { transform: rotate(0deg); }
+            to   { transform: rotate(360deg); }
         }
 
         #s1p-nav-sync-btn svg.s1p-syncing {
-            animation: s1p-sync-breathing 2s ease-in-out infinite;
-            pointer-events: none; /* 同步中禁止再次点击 */
+            animation: s1p-sync-simple-rotate 0.8s linear infinite;
+            pointer-events: none;
         }
         #s1p-nav-sync-btn svg.s1p-sync-success {
-            color: var(--s1p-green) !important;
-            transform: scale(1.1); /* 保持一个最终的放大状态 */
-            animation: s1p-sync-success-pop 0.5s cubic-bezier(0.5, -0.75, 0.25, 1.75);
+            /* 移除了所有成功状态的视觉效果 */
         }
         #s1p-nav-sync-btn svg.s1p-sync-error {
-            color: var(--s1p-red) !important;
-            transform: scale(1.1); /* 保持一个最终的放大状态 */
-            animation: s1p-sync-error-shake 0.5s ease-in-out;
+            /* 移除了所有失败状态的视觉效果 */
         }
-
-        /* --- [NEW & OPTIMIZED V2] Syncing Animation & Status Feedback --- */
-        @keyframes s1p-sync-pulse {
-            0% { transform: scale(1); opacity: 0.7; }
-            50% { transform: scale(1.1); opacity: 1; }
-            100% { transform: scale(1); opacity: 0.7; }
-        }
-        #s1p-nav-sync-btn svg.s1p-syncing {
-            animation: s1p-sync-pulse 1.5s ease-in-out infinite;
-        }
-        #s1p-nav-sync-btn svg.s1p-sync-success {
-            color: var(--s1p-green) !important;
-            transform: scale(1.2); /* <-- 核心区别在这里 */
-        }
-        #s1p-nav-sync-btn svg.s1p-sync-error {
-            color: var(--s1p-red) !important;
-            transform: scale(1.2); /* <-- 核心区别在这里 */
-        }
-
 
         /* --- 手动同步弹窗样式 --- */
         .s1p-sync-choice-info {
@@ -1190,7 +1161,7 @@
             color: var(--s1p-sec);
             text-decoration: underline;
         }
-`);
+    `);
 
     // --- S1 NUX 兼容性检测 ---
     let isS1NuxEnabled = false;
@@ -2104,7 +2075,7 @@
 
         const a = document.createElement('a');
         a.href = 'javascript:void(0);';
-        a.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 16 16"><path fill="currentColor" d="M0 6c0-3.31 2.69-6 6-6c2.62 0 4.84 1.68 5.66 4.01q.166-.014.337-.014c2.21 0 4 1.79 4 4c0 1.63-.97 3.03-2.36 3.65c-.312.14-.636-.11-.636-.452c0-.222.142-.415.34-.514a2.999 2.999 0 0 0-1.931-5.622a.5.5 0 0 1-.581-.36a5.002 5.002 0 1 0-8.942 4.15a.6.6 0 0 1 .112.346c0 .495-.566.732-.857.332a5.97 5.97 0 0 1-1.14-3.52z"/><path fill="currentColor" d="M5 15.5V8.71L3.85 9.86a.5.5 0 0 1-.707-.707l2-2a.5.5 0 0 1 .35-.147h.006a.5.5 0 0 1 .351.146l2 2a.5.5 0 0 1-.707-.707l-1.15-1.15v6.79a.5.5 0 0 1-1 0zM10.5 7a.5.5 0 0 1 .5.5v6.79l1.15-1.15a.5.5 0 0 1 .707.707l-2 2a.5.5 0 0 1-.351.146H10.5a.5.5 0 0 1-.35-.147l-2-2a.5.5 0 0 1 .707-.707l1.15 1.15V7.5a.5.5 0 0 1 .5-.5z"/></svg>`;
+        a.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4C9.25144 4 6.82508 5.38626 5.38443 7.5H8V9.5H2V3.5H4V5.99936C5.82381 3.57166 8.72764 2 12 2C17.5228 2 22 6.47715 22 12H20C20 7.58172 16.4183 4 12 4ZM4 12C4 16.4183 7.58172 20 12 20C14.7486 20 17.1749 18.6137 18.6156 16.5H16V14.5H22V20.5H20V18.0006C18.1762 20.4283 15.2724 22 12 22C6.47715 22 2 17.5228 2 12H4Z"></path></svg>`;
 
         a.addEventListener('click', async (e) => {
             e.preventDefault();
