@@ -10,6 +10,7 @@
 // @grant        GM_addStyle
 // @grant        GM_xmlhttpRequest
 // @grant        GM_openInTab
+// @connect      api.github.com
 // @license      MIT
 // ==/UserScript==
 
