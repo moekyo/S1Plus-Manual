@@ -8,6 +8,7 @@
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_addStyle
+// @grant        GM_deleteValue
 // @grant        GM_xmlhttpRequest
 // @grant        GM_openInTab
 // @connect      api.github.com
@@ -4893,6 +4894,7 @@
     // [S1 PLUS 整合版]
     // --- 操作: 用下面的完整 async 函数替换现有的 'main' 函数。
     // --- 优点: 采纳了 kyo 方案的中断逻辑，当页面需要刷新时，停止后续无效操作，提升效率。
+    // --- [FIX] 增强了 MutationObserver，使其能够监测并修复因执行时机问题而被重置的导航栏，解决启动同步时的UI Bug。
 
     // --- 主流程 ---
     async function main() {
@@ -4908,22 +4910,37 @@
         initializeNavbar();
         initializeGenericDisplayPopover();
 
+        // --- [FIXED] 增强的 MutationObserver 逻辑 ---
         const observerCallback = (mutations, observer) => {
+            // 检查我们的自定义导航链接是否意外消失。
+            // 这是判断导航栏是否被（因任何原因）重置的最可靠方法。
+            const navNeedsReinit = !document.getElementById('s1p-nav-link');
+
+            // 在我们修改 DOM 之前，先断开观察，防止无限循环。
             observer.disconnect();
-            applyChanges();
-            const ctElement = document.getElementById('ct');
-            if (ctElement) {
-                observer.observe(ctElement, { childList: true, subtree: true });
+
+            // 如果导航栏需要重新初始化，则执行它，进行“自我修复”。
+            if (navNeedsReinit) {
+                console.log('S1 Plus: 检测到导航栏被重置，正在重新应用自定义设置。');
+                initializeNavbar();
             }
+
+            // 运行常规的内容变化应用函数。
+            applyChanges();
+
+            // 将观察器重新附加到更高层级的父元素上，以确保能监听到包括导航栏在内的所有变化。
+            const watchTarget = document.getElementById('wp') || document.body;
+            observer.observe(watchTarget, { childList: true, subtree: true });
         };
 
         const observer = new MutationObserver(observerCallback);
+
+        // 首次加载时，应用所有动态内容变更。
         applyChanges();
 
-        const ctElement = document.getElementById('ct');
-        if (ctElement) {
-            observer.observe(ctElement, { childList: true, subtree: true });
-        }
+        // 开始观察，目标是包含导航栏和内容区的父元素#wp。
+        const watchTarget = document.getElementById('wp') || document.body;
+        observer.observe(watchTarget, { childList: true, subtree: true });
     }
 
     function applyChanges() {
