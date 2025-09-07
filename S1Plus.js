@@ -172,6 +172,51 @@
             /* 移除了所有失败状态的视觉效果 */
         }
 
+        /* --- [NEW] Nav Sync Menu --- */
+        .s1p-nav-sync-menu {
+            position: absolute;
+            z-index: 10002;
+            background-color: var(--s1p-bg);
+            border-radius: 6px;
+            box-shadow: 0 2px 8px rgba(var(--s1p-black-rgb), 0.15);
+            border: 1px solid var(--s1p-pri);
+            padding: 4px;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            min-width: max-content;
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(4px);
+            transition: opacity 0.15s ease-out, transform 0.15s ease-out, visibility 0.15s;
+            pointer-events: none;
+        }
+        .s1p-nav-sync-menu.visible {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0);
+            pointer-events: auto;
+        }
+        .s1p-nav-sync-menu button {
+            background: none;
+            border: none;
+            padding: 6px 12px;
+            text-align: left;
+            cursor: pointer;
+            border-radius: 4px;
+            font-size: 14px;
+            color: var(--s1p-t);
+            white-space: nowrap;
+        }
+        .s1p-nav-sync-menu button:hover {
+            background-color: var(--s1p-sub-h);
+            color: var(--s1p-sub-h-t);
+        }
+        .s1p-nav-sync-menu button.s1p-cancel-btn:hover {
+            background-color: var(--s1p-secondary-bg);
+            color: var(--s1p-secondary-text);
+        }
+
         /* --- 手动同步弹窗样式 --- */
         .s1p-sync-choice-info {
             background-color: var(--s1p-sub);
@@ -419,6 +464,55 @@
             opacity: 1;
             transform: translateX(0) scale(1) !important;
             pointer-events: auto;
+        }
+
+        /* --- [NEW] Inline Action Menu --- */
+        .s1p-inline-action-menu {
+            position: absolute;
+            z-index: 10004;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            background-color: var(--s1p-bg);
+            border: 1px solid var(--s1p-pri);
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(var(--s1p-black-rgb), 0.1);
+            padding: 5px;
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(5px) scale(0.95);
+            transition: opacity 0.15s ease-out, transform 0.15s ease-out, visibility 0.15s;
+            pointer-events: none;
+        }
+        .s1p-inline-action-menu.visible {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0) scale(1);
+            pointer-events: auto;
+        }
+        .s1p-inline-action-menu .s1p-action-btn {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--s1p-t);
+            background-color: transparent;
+            border: none;
+            cursor: pointer;
+            transition: background-color 0.2s ease, color 0.2s ease;
+        }
+        .s1p-inline-action-menu .s1p-action-btn:hover {
+            background-color: var(--s1p-sub);
+        }
+
+        /* --- [MODIFIED] Icon Styling within Action Buttons --- */
+        .s1p-inline-action-menu .s1p-action-btn svg {
+            width: 20px;
+            height: 20px;
+            flex-shrink: 0; /* 防止图标被压缩 */
         }
 
         /* --- 阅读进度UI样式 --- */
@@ -2034,8 +2128,9 @@
             { name: '黑名单', href: 'home.php?mod=space&do=friend&view=blacklist' }
         ],
         syncRemoteEnabled: false,
-        syncDailyFirstLoad: true, // [新增] 新增每日首次加载同步开关
-        syncAutoEnabled: true,    // 现有自动后台同步开关
+        syncDailyFirstLoad: true,
+        syncAutoEnabled: true,
+        syncDirectChoiceMode: false, // [新增] 手动同步高级模式开关
         syncRemoteGistId: '',
         syncRemotePat: '',
     };
@@ -2068,77 +2163,259 @@
     };
 
     /**
+     * [NEW & EXTENDED V6 - SVG & ClassName Support] 创建一个更通用的行内动作菜单
+     * @param {HTMLElement} anchorElement - 菜单定位的锚点元素
+     * @param {Array<Object>} buttons - 按钮配置数组，例如 [{ label, title, action, className, callback }]
+     * @param {Function} [onCloseCallback] - 菜单关闭时执行的回调函数
+     */
+    const createInlineActionMenu = (anchorElement, buttons, onCloseCallback) => {
+        // 确保同一时间只有一个菜单
+        document.querySelector('.s1p-inline-action-menu')?.remove();
+
+        const menu = document.createElement('div');
+        menu.className = 's1p-inline-action-menu';
+
+        let isClosing = false;
+        const closeMenu = () => {
+            if (isClosing) return;
+            isClosing = true;
+            menu.classList.remove('visible');
+            setTimeout(() => {
+                if (menu.parentNode) menu.remove();
+                if (onCloseCallback) onCloseCallback();
+            }, 200);
+        };
+
+        buttons.forEach(btnConfig => {
+            const button = document.createElement('button');
+            button.className = 's1p-action-btn';
+            // [新增] 支持自定义 className
+            if (btnConfig.className) {
+                button.classList.add(...btnConfig.className.split(' '));
+            }
+
+            button.dataset.action = btnConfig.action;
+            // [核心修正] 使用 innerHTML 替代 textContent 来渲染 SVG
+            button.innerHTML = btnConfig.label;
+            menu.appendChild(button);
+
+            button.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (btnConfig.callback) {
+                    btnConfig.callback();
+                }
+                closeMenu();
+            });
+
+            const popover = document.getElementById('s1p-generic-display-popover');
+            if (popover && popover.s1p_api && btnConfig.title) {
+                button.addEventListener('mouseover', (e) => popover.s1p_api.show(e.currentTarget, btnConfig.title));
+                button.addEventListener('mouseout', () => popover.s1p_api.hide());
+            }
+        });
+
+        document.body.appendChild(menu);
+
+        // --- 定位与显示 ---
+        const anchorRect = anchorElement.getBoundingClientRect();
+        const menuRect = menu.getBoundingClientRect();
+
+        const top = anchorRect.top + window.scrollY + (anchorRect.height / 2) - (menuRect.height / 2);
+        let left;
+
+        const spaceOnRight = window.innerWidth - anchorRect.right;
+        const requiredSpace = menuRect.width + 16;
+
+        if (spaceOnRight >= requiredSpace) {
+            left = anchorRect.right + window.scrollX + 8;
+        } else {
+            left = anchorRect.left + window.scrollX - menuRect.width - 8;
+        }
+
+        if (left < window.scrollX) {
+            left = window.scrollX + 8;
+        }
+
+        menu.style.top = `${top}px`;
+        menu.style.left = `${left}px`;
+
+        // --- 交互逻辑 ---
+        let hideTimeout;
+        const startHideTimer = () => {
+            hideTimeout = setTimeout(closeMenu, 300);
+        };
+        const cancelHideTimer = () => {
+            clearTimeout(hideTimeout);
+        };
+
+        anchorElement.addEventListener('mouseleave', startHideTimer);
+        menu.addEventListener('mouseenter', cancelHideTimer);
+        menu.addEventListener('mouseleave', startHideTimer);
+
+        requestAnimationFrame(() => {
+            menu.classList.add('visible');
+        });
+
+        return menu;
+    };
+
+    /**
+     * [NEW] 强制推送处理器，用于手动将本地数据覆盖到云端。
+     */
+    const handleForcePush = async () => {
+        const icon = document.querySelector('#s1p-nav-sync-btn svg');
+        if (icon) icon.classList.add('s1p-syncing');
+        showMessage('正在向云端推送数据...', null);
+        try {
+            const localData = await exportLocalDataObject();
+            await pushRemoteData(localData);
+            GM_setValue('s1p_last_sync_timestamp', Date.now());
+            updateLastSyncTimeDisplay();
+            showMessage('推送成功！已更新云端备份。', true);
+        } catch (e) {
+            showMessage(`推送失败: ${e.message}`, false);
+        } finally {
+             if (icon) {
+                icon.classList.remove('s1p-syncing');
+                setTimeout(() => icon.style.transform = '', 1200); // 重置 transform
+            }
+        }
+    };
+
+    /**
+     * [NEW] 强制拉取处理器，用于手动将云端数据覆盖到本地。
+     */
+    const handleForcePull = async () => {
+        const icon = document.querySelector('#s1p-nav-sync-btn svg');
+        if (icon) icon.classList.add('s1p-syncing');
+        showMessage('正在从云端拉取数据...', null);
+        try {
+            const remoteData = await fetchRemoteData();
+             if (Object.keys(remoteData).length === 0) {
+                throw new Error("云端没有数据，无法拉取。");
+            }
+            const validatedRemote = await migrateAndValidateRemoteData(remoteData);
+            const result = importLocalData(JSON.stringify(validatedRemote.full));
+            if (result.success) {
+                GM_setValue('s1p_last_sync_timestamp', Date.now());
+                updateLastSyncTimeDisplay();
+                showMessage('拉取成功！页面即将刷新以应用新数据。', true);
+                setTimeout(() => location.reload(), 1500);
+            } else {
+                throw new Error(result.message);
+            }
+        } catch (e) {
+            showMessage(`拉取失败: ${e.message}`, false);
+        } finally {
+            if (icon) {
+                icon.classList.remove('s1p-syncing');
+                setTimeout(() => icon.style.transform = '', 1200); // 重置 transform
+            }
+        }
+    };
+
+    /**
      * [MODIFIED & OPTIMIZED] 添加或移除导航栏上的手动同步按钮，并增加状态反馈
      */
     const updateNavbarSyncButton = () => {
         const settings = getSettings();
-        const existingBtn = document.getElementById('s1p-nav-sync-btn');
+        const existingBtnLi = document.getElementById('s1p-nav-sync-btn');
         const managerLink = document.getElementById('s1p-nav-link');
 
         if (!settings.syncRemoteEnabled) {
-            if (existingBtn) existingBtn.remove();
+            if (existingBtnLi) existingBtnLi.remove();
             return;
         }
 
-        if (existingBtn || !managerLink) return;
+        if (existingBtnLi || !managerLink) return;
 
         const li = document.createElement('li');
         li.id = 's1p-nav-sync-btn';
-
         const a = document.createElement('a');
         a.href = 'javascript:void(0);';
         a.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4C9.25144 4 6.82508 5.38626 5.38443 7.5H8V9.5H2V3.5H4V5.99936C5.82381 3.57166 8.72764 2 12 2C17.5228 2 22 6.47715 22 12H20C20 7.58172 16.4183 4 12 4ZM4 12C4 16.4183 7.58172 20 12 20C14.7486 20 17.1749 18.6137 18.6156 16.5H16V14.5H22V20.5H20V18.0006C18.1762 20.4283 15.2724 22 12 22C6.47715 22 2 17.5228 2 12H4Z"></path></svg>`;
-
-        a.addEventListener('click', async (e) => {
-            e.preventDefault();
-            const icon = a.querySelector('svg');
-            // 如果图标不存在或正在同步中，则直接返回，防止重复触发
-            if (!icon || icon.classList.contains('s1p-syncing')) return;
-
-            // 清除可能残留的状态类，并添加同步中动画
-            icon.classList.remove('s1p-sync-success', 's1p-sync-error');
-            icon.classList.add('s1p-syncing');
-
-            let success = false;
-            try {
-                success = await handleManualSync();
-
-                // 先移除同步中动画，再添加结果动画
-                icon.classList.remove('s1p-syncing');
-
-                // 根据同步结果添加状态类 (null表示用户取消，不给状态反馈)
-                if (success !== null) {
-                    icon.classList.add(success ? 's1p-sync-success' : 's1p-sync-error');
-                }
-            } catch (error) {
-                // 即使出现意外错误，也要确保移除同步中状态
-                icon.classList.remove('s1p-syncing');
-                console.error("S1 Plus: Manual sync handler threw an error:", error);
-            } finally {
-                // 动画结束后再移除状态，确保反馈可见
-                setTimeout(() => {
-                    icon.classList.remove('s1p-sync-success', 's1p-sync-error');
-                    // 动画结束后，将 transform 属性重置，以备下一次 hover 动画
-                    icon.style.transform = '';
-                }, 1200);
-            }
-        });
-
-        a.addEventListener('mouseover', (e) => {
-            const popover = document.getElementById('s1p-generic-display-popover');
-            if (popover && popover.s1p_api) {
-                popover.s1p_api.show(e.currentTarget, '手动同步数据');
-            }
-        });
-        a.addEventListener('mouseout', () => {
-            const popover = document.getElementById('s1p-generic-display-popover');
-            if (popover && popover.s1p_api) {
-                popover.s1p_api.hide();
-            }
-        });
-
         li.appendChild(a);
-        // [MODIFIED] 将同步按钮插入到“S1 Plus 设置”按钮之后
+
+        if (settings.syncDirectChoiceMode) {
+            // --- 模式2: 高级模式 (调用新的内联动作菜单) ---
+            a.style.cursor = 'default';
+            let activeMenu = null;
+
+            const pullIconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M1 14.5C1 12.1716 2.22429 10.1291 4.06426 8.9812C4.56469 5.044 7.92686 2 12 2C16.0731 2 19.4353 5.044 19.9357 8.9812C21.7757 10.1291 23 12.1716 23 14.5C23 17.9216 20.3562 20.7257 17 20.9811L7 21C3.64378 20.7257 1 17.9216 1 14.5ZM16.8483 18.9868C19.1817 18.8093 21 16.8561 21 14.5C21 12.927 20.1884 11.4962 18.8771 10.6781L18.0714 10.1754L17.9517 9.23338C17.5735 6.25803 15.0288 4 12 4C8.97116 4 6.42647 6.25803 6.0483 9.23338L5.92856 10.1754L5.12288 10.6781C3.81156 11.4962 3 12.927 3 14.5C3 16.8561 4.81833 18.8093 7.1517 18.9868L7.325 19H16.675L16.8483 18.9868ZM13 12H16L12 17L8 12H11V8H13V12Z"></path></svg>`;
+            const pushIconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M1 14.5C1 12.1716 2.22429 10.1291 4.06426 8.9812C4.56469 5.044 7.92686 2 12 2C16.0731 2 19.4353 5.044 19.9357 8.9812C21.7757 10.1291 23 12.1716 23 14.5C23 17.9216 20.3562 20.7257 17 20.9811L7 21C3.64378 20.7257 1 17.9216 1 14.5ZM16.8483 18.9868C19.1817 18.8093 21 16.8561 21 14.5C21 12.927 20.1884 11.4962 18.8771 10.6781L18.0714 10.1754L17.9517 9.23338C17.5735 6.25803 15.0288 4 12 4C8.97116 4 6.42647 6.25803 6.0483 9.23338L5.92856 10.1754L5.12288 10.6781C3.81156 11.4962 3 12.927 3 14.5C3 16.8561 4.81833 18.8093 7.1517 18.9868L7.325 19H16.675L16.8483 18.9868ZM13 13V17H11V13H8L12 8L16 13H13Z"></path></svg>`;
+
+            li.addEventListener('mouseenter', () => {
+                const existingMenu = document.querySelector('.s1p-inline-action-menu');
+                if (existingMenu) {
+                    existingMenu.dispatchEvent(new MouseEvent('mouseenter'));
+                } else {
+                    activeMenu = createInlineActionMenu(
+                        li,
+                        [
+                            {
+                                // [核心修正] 将图标和文字组合
+                                label: `${pullIconSVG} <span>拉取</span>`,
+                                action: 'pull',
+                                title: '用云端备份覆盖您当前的本地数据，本地未同步的修改将丢失！',
+                                callback: handleForcePull
+                            },
+                            {
+                                // [核心修正] 将图标和文字组合
+                                label: `${pushIconSVG} <span>推送</span>`,
+                                action: 'push',
+                                title: '将您当前的本地数据覆盖到云端备份，此操作不可逆。',
+                                callback: handleForcePush
+                            }
+                        ],
+                        () => {
+                            activeMenu = null;
+                        }
+                    );
+                }
+            });
+
+        } else {
+            // --- 模式1: 默认模式 (点击后智能判断) ---
+            a.addEventListener('click', async (e) => {
+                e.preventDefault();
+                const icon = a.querySelector('svg');
+                if (!icon || icon.classList.contains('s1p-syncing')) return;
+
+                icon.classList.remove('s1p-sync-success', 's1p-sync-error');
+                icon.classList.add('s1p-syncing');
+
+                let success = false;
+                try {
+                    success = await handleManualSync();
+                    icon.classList.remove('s1p-syncing');
+                    if (success !== null) {
+                        icon.classList.add(success ? 's1p-sync-success' : 's1p-sync-error');
+                    }
+                } catch (error) {
+                    icon.classList.remove('s1p-syncing');
+                    console.error("S1 Plus: Manual sync handler threw an error:", error);
+                } finally {
+                    setTimeout(() => {
+                        icon.classList.remove('s1p-sync-success', 's1p-sync-error');
+                        icon.style.transform = '';
+                    }, 1200);
+                }
+            });
+
+            a.addEventListener('mouseover', (e) => {
+                const popover = document.getElementById('s1p-generic-display-popover');
+                if (popover && popover.s1p_api) {
+                    popover.s1p_api.show(e.currentTarget, '手动同步数据 (智能判断)');
+                }
+            });
+            a.addEventListener('mouseout', () => {
+                const popover = document.getElementById('s1p-generic-display-popover');
+                if (popover && popover.s1p_api) {
+                    popover.s1p_api.hide();
+                }
+            });
+        }
+
         managerLink.insertAdjacentElement('afterend', li);
     };
 
@@ -2568,7 +2845,14 @@
                                 </label>
                             </div>
                             <p class="s1p-setting-desc">启用后，数据将在停止操作5秒后自动同步。关闭后将切换为纯手动同步模式。</p>
-                            
+                            <div class="s1p-settings-item">
+                                <label class="s1p-settings-label" for="s1p-direct-choice-mode-toggle">启用手动同步高级模式 (悬停选择)</label>
+                                <label class="s1p-switch">
+                                    <input type="checkbox" id="s1p-direct-choice-mode-toggle" class="s1p-settings-checkbox" data-setting="syncDirectChoiceMode">
+                                    <span class="s1p-slider"></span>
+                                </label>
+                            </div>
+                            <p class="s1p-setting-desc">关闭时，点击同步按钮将智能判断；开启时，悬停同步按钮可直接选择推送或拉取。</p>
                             <div class="s1p-settings-item" style="flex-direction: column; align-items: flex-start; gap: 4px;">
                                 <label class="s1p-settings-label" for="s1p-remote-gist-id-input">Gist ID</label>
                                 <input type="text" id="s1p-remote-gist-id-input" class="s1p-input" placeholder="从 Gist 网址中复制的那一长串 ID" style="width: 100%;" autocomplete="off" data-s1p-sync-control>
@@ -2663,6 +2947,20 @@
 
         const settings = getSettings();
         remoteToggle.checked = settings.syncRemoteEnabled;
+        // --- 在这里新增下面的代码块 ---
+        const directChoiceModeToggle = modal.querySelector('#s1p-direct-choice-mode-toggle');
+        if (directChoiceModeToggle) {
+            directChoiceModeToggle.checked = settings.syncDirectChoiceMode;
+            directChoiceModeToggle.addEventListener('change', (e) => {
+                const currentSettings = getSettings();
+                currentSettings.syncDirectChoiceMode = e.target.checked;
+                saveSettings(currentSettings);
+                // 立即刷新导航栏按钮以应用新模式
+                initializeNavbar(); 
+            });
+        }
+        // --- 新增代码结束 ---
+
         modal.querySelector('#s1p-daily-first-load-sync-enabled-toggle').checked = settings.syncDailyFirstLoad;
         modal.querySelector('#s1p-auto-sync-enabled-toggle').checked = settings.syncAutoEnabled;
         modal.querySelector('#s1p-remote-gist-id-input').value = settings.syncRemoteGistId || '';
