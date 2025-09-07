@@ -829,14 +829,16 @@
             border-radius: 6px;
             font-size: 14px;
             font-weight: 500;
-            color: var(--s1p-white);
-            background-color: #323232;
+            color: var(--s1p-t); /* <-- 修改了此行 */
+            background-color: var(--s1p-bg); /* <-- 修改了此行 */
             box-shadow: 0 4px 12px rgba(var(--s1p-black-rgb), 0.15);
             opacity: 0;
             transition: opacity 0.3s ease-out, transform 0.3s ease-out;
             pointer-events: none;
             white-space: nowrap;
             text-align: center;
+            /* [新增] 为浅色背景增加边框以提高辨识度 */
+            border: 1px solid var(--s1p-pri);
         }
         .s1p-modal-content .s1p-toast-notification {
             position: absolute;
@@ -848,9 +850,13 @@
         }
         .s1p-toast-notification.success {
             background-color: #27da80;
+            color: var(--s1p-white); /* 确保成功状态字体为白色 */
+            border-color: #27da80;   /* 覆盖边框颜色 */
         }
         .s1p-toast-notification.error {
             background-color: var(--s1p-red);
+            color: var(--s1p-white); /* 确保失败状态字体为白色 */
+            border-color: var(--s1p-red);   /* 覆盖边框颜色 */
         }
         .s1p-toast-notification.error.visible {
             animation: s1p-toast-shake 0.5s cubic-bezier(.36,.07,.19,.97) both;
