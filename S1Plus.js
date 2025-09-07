@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      5.1.1
+// @version      5.1.2
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪、回复收藏、远程同步等多种功能，全方位优化你的论坛体验。
 // @author       moekyo
 // @match        https://stage1st.com/2b/*
@@ -18,7 +18,7 @@
     'use strict';
 
 
-    const SCRIPT_VERSION = '5.1.1';
+    const SCRIPT_VERSION = '5.1.2';
     const SCRIPT_RELEASE_DATE = '2025-09-07';
 
     // --- [新增] SHA-256 哈希计算库 (基于 Web Crypto API) ---
@@ -1210,6 +1210,11 @@
 
     // [FIXED] 只有在数据实际变动时才更新时间戳并触发同步
     const updateLastModifiedTimestamp = () => {
+    // [FIX] 如果初始同步正在进行，则阻止更新时间戳，以防因数据迁移导致错误的覆盖。
+        if (isInitialSyncInProgress) {
+            console.log('S1 Plus: 同步进行中，已阻止本次 last_modified 时间戳更新，以防数据覆盖。');
+            return;
+        }
         GM_setValue('s1p_last_modified', Date.now());
         debouncedTriggerRemoteSyncPush();
     };
@@ -3759,7 +3764,16 @@
 
         const closeModal = () => { modal.querySelector('.s1p-confirm-content').style.animation = 's1p-scale-out 0.25s ease-out forwards'; modal.style.animation = 's1p-fade-out 0.25s ease-out forwards'; setTimeout(() => modal.remove(), 250); };
 
-        modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                const cancelButton = modal.querySelector('.s1p-confirm-btn.s1p-cancel');
+                if (cancelButton) {
+                    cancelButton.click();
+                } else {
+                    closeModal();
+                }
+            }
+        });
 
         buttons.forEach((btn, index) => {
             const buttonEl = modal.querySelector(`[data-btn-index="${index}"]`);
@@ -4475,13 +4489,9 @@
         }
     };
 
-    // [S1 PLUS 整合版]
-// --- 操作: 将这个全新的函数添加到 'main' 函数的正上方。
-// --- 优点: 整合了 kyo 方案的兼容性回退逻辑和优雅中断执行的模式，同时保持了 cosmos 方案的逻辑清晰度。
-
     /**
      * [整合版] 脚本启动时的同步总控制器。
-     * 优先执行每日首次同步；如果条件不符，则回退到常规的启动时同步检查（如果开启）。
+     * [优化 v3] 优化了冲突处理方式，使用阻塞式对话框主动引导用户解决。
      * @returns {Promise<boolean>} - 返回 true 表示页面即将刷新，主流程应中断。
      */
     const handleStartupSync = async () => {
@@ -4490,35 +4500,81 @@
             return false; // 总开关未开，直接跳过所有启动同步。
         }
 
-        // --- 逻辑1: 检查是否需要执行“每日首次加载同步” ---
-        const today = new Date().toLocaleDateString('sv'); // 使用 YYYY-MM-DD 格式
+        // --- 跨标签页同步锁 ---
+        const SYNC_LOCK_KEY = 's1p_sync_lock';
+        const SYNC_LOCK_TIMEOUT_MS = 60 * 1000; // 为锁设置1分钟的超时，防止因标签页崩溃导致死锁。
+
+        const today = new Date().toLocaleDateString('sv');
         const lastSyncDate = GM_getValue('s1p_last_daily_sync_date', null);
 
         if (settings.syncDailyFirstLoad && today !== lastSyncDate) {
-            console.log('S1 Plus: 正在执行每日首次加载同步...');
-            showMessage('S1 Plus: 正在执行每日首次自动同步...', null);
-            GM_setValue('s1p_last_daily_sync_date', today); // 立即标记，防止重复触发
-
-            const result = await performAutoSync();
-
-            switch (result.status) {
-                case 'success':
-                    if (result.action === 'pulled') {
-                        showMessage('每日同步完成，正在刷新页面以应用最新数据...', true);
-                        setTimeout(() => location.reload(), 1500);
-                        return true; // 返回true，中断主流程
-                    } else {
-                        showMessage('每日首次同步完成。', true);
-                    }
-                    break;
-                case 'failure':
-                    showMessage(`每日首次同步失败: ${result.error}`, false);
-                    break;
-                case 'conflict':
-                    showMessage('每日首次同步检测到冲突，请手动解决。', false);
-                    break;
+            const lockTimestamp = GM_getValue(SYNC_LOCK_KEY, 0);
+            if (Date.now() - lockTimestamp < SYNC_LOCK_TIMEOUT_MS) {
+                console.log('S1 Plus: 检测到另一个标签页可能正在同步，本次启动同步已跳过。');
+                return false;
             }
-            // 只要每日同步被触发过（无论成功失败），就结束启动同步流程。
+
+            GM_setValue(SYNC_LOCK_KEY, Date.now());
+
+            try {
+                const currentDateAfterLock = GM_getValue('s1p_last_daily_sync_date', null);
+                if (currentDateAfterLock === today) {
+                    console.log('S1 Plus: 在锁定期间检测到同步已完成，已取消重复操作。');
+                    return false;
+                }
+
+                console.log('S1 Plus: 正在执行每日首次加载同步...');
+                showMessage('S1 Plus: 正在执行每日首次自动同步...', null);
+                GM_setValue('s1p_last_daily_sync_date', today);
+
+                const result = await performAutoSync();
+
+                switch (result.status) {
+                    case 'success':
+                        if (result.action === 'pulled') {
+                            showMessage('每日同步完成，正在刷新页面以应用最新数据...', true);
+                            setTimeout(() => location.reload(), 1500);
+                            return true;
+                        } else {
+                            showMessage('每日首次同步完成。', true);
+                        }
+                        break;
+                    case 'failure':
+                        showMessage(`每日首次同步失败: ${result.error}`, false);
+                        break;
+                    
+                    // --- [修复] 冲突处理优化 ---
+                    case 'conflict':
+                        // 使用已有的 createAdvancedConfirmationModal 函数来创建一个阻塞式对话框
+                        createAdvancedConfirmationModal(
+                            '检测到同步冲突',
+                            '<p>S1 Plus在自动同步时发现，您的本地数据和云端备份可能都已更改。</p><p>为防止数据丢失，自动同步已暂停。请手动选择要保留的版本来解决冲突。</p>',
+                            [
+                                {
+                                    text: '稍后处理',
+                                    className: 's1p-cancel',
+                                    action: () => {
+                                        // 如果用户选择稍后处理，给一个标准的提示
+                                        showMessage('同步已暂停，您可以在设置中手动同步。', null);
+                                    }
+                                },
+                                {
+                                    text: '立即解决',
+                                    className: 's1p-confirm',
+                                    action: () => {
+                                        // 调用现有的手动同步函数，它已经内置了完整的冲突解决UI（推送/拉取选择）
+                                        handleManualSync();
+                                    }
+                                }
+                            ]
+                        );
+                        break;
+                    // --- [修复结束] ---
+                }
+            } finally {
+                GM_deleteValue(SYNC_LOCK_KEY);
+                console.log('S1 Plus: 同步锁已释放。');
+            }
             return false;
         }
 
@@ -4527,14 +4583,13 @@
             console.log('S1 Plus: 执行常规启动时同步检查...');
             const result = await performAutoSync();
             if (result.status === 'success' && result.action === 'pulled') {
-                 // 只有在拉取数据时才需要用户反馈和刷新
                 showMessage('检测到云端有更新，正在刷新页面...', true);
                 setTimeout(() => location.reload(), 1500);
-                return true; // 返回true，中断主流程
+                return true;
             }
         }
 
-        return false; // 默认不刷新
+        return false;
     };
 
     // [S1 PLUS 整合版]
