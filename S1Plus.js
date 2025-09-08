@@ -4545,7 +4545,6 @@
     let currentIndicatorParent = null;
     let pageObserver = null;
 
-    // --- 最终版JS(2/2)：操作指南：请用下面的完整函数体整体替换旧的 trackReadProgressInThread 函数 ---
     const trackReadProgressInThread = () => {
         const settings = getSettings();
         if (!settings.enableReadProgress || !document.getElementById('postlist')) return;
@@ -4579,6 +4578,8 @@
                 currentPage = currentPageElement.textContent.trim();
             }
         }
+
+        // --- [核心修改] 确保 pageObserver 只初始化一次，并能监控后续新增的元素 ---
 
         // 仅当 pageObserver 未被创建时才创建，确保全局唯一
         if (!pageObserver) {
@@ -4628,8 +4629,6 @@
                 debouncedSave();
             }, { threshold: 0.3 });
 
-            document.querySelectorAll('table[id^="pid"]').forEach(el => pageObserver.observe(el));
-
             const finalSave = () => {
                 clearTimeout(saveTimeout);
                 saveCurrentProgress();
@@ -4642,6 +4641,15 @@
             });
             window.addEventListener('beforeunload', finalSave);
         }
+
+        // [新增] 每次函数运行时（包括页面动态变化后），都检查并添加未被监控的帖子
+        document.querySelectorAll('table[id^="pid"]').forEach(el => {
+            // 使用一个自定义属性来避免重复添加监控
+            if (!el.dataset.s1pObserved) {
+                pageObserver.observe(el);
+                el.dataset.s1pObserved = 'true';
+            }
+        });
     };
 
     const refreshAllAuthiActions = () => {
