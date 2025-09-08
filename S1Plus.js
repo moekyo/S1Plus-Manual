@@ -115,6 +115,7 @@
             --s1p-secondary-bg: #e5e7eb;
             --s1p-secondary-text: #374151;
             --s1p-code-bg: #eee;
+            --s1p-readprogress-bg: #B8D56F;
 
             /* -- 阅读进度 -- */
             --s1p-progress-hot: rgb(192, 51, 34);
@@ -710,27 +711,33 @@
             transform: translateY(0);
         }
 
-        /* --- [ULTIMATE FIX V2.1] Flexbox Layout Fix --- */
+        /* --- 操作指南：请用下面的CSS规则块，整体替换旧的 .pi 规则 --- */
+        /* --- [ULTIMATE FIX V2.1] Flexbox Layout Fix (Ultimate Version) --- */
         .pi {
             display: flex !important;
             align-items: center;
             gap: 8px;
+            position: relative !important; /* <-- [新增] 为绝对定位的子元素提供定位上下文 */
         }
         .pi > .pti {
-            flex-grow: 1;
             min-width: 0;
             position: static !important;
             z-index: auto !important;
-            order: 1; /* [FIX] Set as the first item in the visual order */
-            overflow: hidden; /* <-- [最终修复] 阻止容器越界重叠 */
+            order: 1;
+            overflow: hidden;
+        }
+        /* [新增] 布局伸缩器，永久固定右侧元素 */
+        .s1p-layout-spacer {
+            margin-left: auto;
+            order: 2;
         }
         .pi > strong {
-            flex-shrink: 0; /* Prevent "楼主" or floor number from being squished */
-            order: 2; /* [FIX] Set as the second item in the visual order */
+            flex-shrink: 0;
+            order: 4;
         }
         .pi > #fj {
-            margin-left: auto;
-            order: 3;
+            margin-left: 0;
+            order: 5;
             flex-shrink: 0;
             position: static !important;
             z-index: auto !important;
@@ -1262,6 +1269,55 @@
         .s1p-bookmark-toggle:hover {
             color: var(--s1p-sec);
             text-decoration: underline;
+        }
+
+        /* --- 最终版CSS：操作指南：请用下面的代码块整体替换旧的 s1p-read-indicator 及相关的 @keyframes 规则 --- */
+        /* --- [NEW FINAL] 阅读进度实时指示器 (V10 Absolute Position) --- */
+        @keyframes s1p-indicator-appear {
+            0% { opacity: 0; transform: translateY(-50%) scale(0.8) rotate(0deg); }
+            50% { opacity: 1; transform: translateY(-50%) scale(1.08) rotate(5deg); }
+            70% { transform: translateY(-50%) scale(0.98) rotate(-3deg); }
+            90% { transform: translateY(-50%) scale(1.02) rotate(1deg); }
+            100% { opacity: 1; transform: translateY(-50%) scale(1) rotate(0deg); }
+        }
+        @keyframes s1p-indicator-disappear {
+            from { opacity: 1; transform: translateY(-50%) scale(1); }
+            to { opacity: 0; transform: translateY(-50%) scale(0.8); }
+        }
+        /* --- 操作指南：请用下面的CSS规则块，整体替换旧的 .s1p-read-indicator 规则 --- */
+        /* --- 操作指南(1/2)：请用下面的CSS规则块，整体替换旧的 .s1p-read-indicator 规则 --- */
+        .s1p-read-indicator {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            display: inline-flex;
+            align-items: center;
+            gap: 4px; /* <-- [修改] 减小图标与文字的间距 */
+            background-color: var(--s1p-readprogress-bg);
+            color: var(--s1p-white);
+            padding: 2px 8px; /* <-- [核心修改] 进一步减少内边距 */
+            border-radius: 16px; /* <-- [修改] 调整圆角以适配新高度 */
+            font-size: 12px; /* <-- [核心修改] 减小字体大小 */
+            font-weight: bold;
+            user-select: none;
+            white-space: nowrap;
+            box-shadow: 0 0 4px rgba(13, 13, 13, 0.1);
+        }
+        .s1p-read-indicator.s1p-anim-appear {
+            animation: s1p-indicator-appear 0.5s cubic-bezier(0.5, 0, 0.1, 1) forwards;
+        }
+        .s1p-read-indicator.s1p-anim-disappear {
+            animation: s1p-indicator-disappear 0.3s ease-out forwards;
+        }
+        /* --- 操作指南(2/2)：请用下面的CSS规则块，整体替换旧的 .s1p-read-indicator-icon 规则 --- */
+        .s1p-read-indicator-icon {
+            width: 13px; /* <-- [核心修改] 减小图标宽度 */
+            height: 13px; /* <-- [核心修改] 减小图标高度 */
+            background-color: currentColor;
+            mask-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='currentColor'%3e%3cpath d='M2 3.9934C2 3.44476 2.45531 3 2.9918 3H21.0082C21.556 3 22 3.44495 22 3.9934V20.0066C22 20.5552 21.5447 21 21.0082 21H2.9918C2.44405 21 2 20.5551 2 20.0066V3.9934ZM11 5H4V19H11V5ZM13 5V19H20V5H13ZM14 7H19V9H14V7ZM14 10H19V12H14V10Z'%3e%3c/path%3e%3c/svg%3e");
+            mask-size: contain;
+            mask-repeat: no-repeat;
+            mask-position: center;
         }
     `);
 
@@ -4415,6 +4471,81 @@
         });
     };
 
+    // --- 最终版JS(1/2)：操作指南：请用下面的完整函数体整体替换旧的 updateReadIndicatorUI 函数 ---
+    const updateReadIndicatorUI = (targetPostId) => {
+        if (!readIndicatorElement) {
+            readIndicatorElement = document.createElement('div');
+            readIndicatorElement.className = 's1p-read-indicator';
+            readIndicatorElement.innerHTML = `
+                <span class="s1p-read-indicator-icon"></span>
+                <span>读到这里</span>
+            `;
+        }
+        const indicator = readIndicatorElement;
+        const currentPostId = currentIndicatorParent?.closest('table[id^="pid"]')?.id.replace('pid', '');
+
+        if (targetPostId === currentPostId) {
+            return;
+        }
+
+        const oldParentPi = currentIndicatorParent;
+        const isVisible = !!currentIndicatorParent;
+
+        if (isVisible) {
+            indicator.classList.remove('s1p-anim-appear');
+            indicator.classList.add('s1p-anim-disappear');
+        }
+
+        setTimeout(() => {
+            let indicatorWidth = 0;
+            if (oldParentPi) {
+                const oldPti = oldParentPi.querySelector('.pti');
+                if (oldPti) {
+                    oldPti.style.paddingRight = '';
+                }
+            }
+            if (indicator.parentElement) {
+                indicatorWidth = indicator.offsetWidth;
+                indicator.parentElement.removeChild(indicator);
+            }
+            currentIndicatorParent = null;
+
+            if (targetPostId) {
+                const postTable = document.getElementById(`pid${targetPostId}`);
+                const newParentPi = postTable?.querySelector('td.plc .pi');
+                if (newParentPi) {
+                    if (indicatorWidth === 0) {
+                        newParentPi.appendChild(indicator);
+                        indicatorWidth = indicator.offsetWidth;
+                    }
+                    const newPti = newParentPi.querySelector('.pti');
+                    const gap = 8;
+                    if (newPti && indicatorWidth > 0) {
+                        newPti.style.paddingRight = `${indicatorWidth + gap}px`;
+                    }
+                    if (!indicator.parentElement) {
+                        newParentPi.appendChild(indicator);
+                    }
+                    const floorEl = newParentPi.querySelector('strong');
+                    const actionsEl = newParentPi.querySelector('#fj');
+                    const rightOffset = (floorEl ? floorEl.offsetWidth : 0) + (actionsEl ? actionsEl.offsetWidth : 0) + gap;
+                    indicator.style.right = `${rightOffset}px`;
+                    currentIndicatorParent = newParentPi;
+
+                    indicator.classList.remove('s1p-anim-disappear');
+                    requestAnimationFrame(() => {
+                        indicator.classList.add('s1p-anim-appear');
+                    });
+                }
+            }
+        }, isVisible ? 300 : 0);
+    };
+
+    let readIndicatorElement = null;
+    let currentIndicatorParent = null;
+    let pageObserver = null;
+
+    // --- 最终版JS(2/2)：操作指南：请用下面的完整函数体整体替换旧的 trackReadProgressInThread 函数 ---
     const trackReadProgressInThread = () => {
         const settings = getSettings();
         if (!settings.enableReadProgress || !document.getElementById('postlist')) return;
@@ -4427,15 +4558,14 @@
             const params = new URLSearchParams(window.location.search);
             threadId = params.get('tid') || params.get('ptid');
         }
-
         if (!threadId) {
             const tidInput = document.querySelector('input[name="tid"]#tid');
             if (tidInput) {
                 threadId = tidInput.value;
             }
         }
-
         if (!threadId) return;
+
         let currentPage = '1';
         const threadPageMatch = window.location.href.match(/thread-\d+-(\d+)-/);
         const params = new URLSearchParams(window.location.search);
@@ -4450,63 +4580,68 @@
             }
         }
 
-        let visiblePosts = new Map();
-        let saveTimeout;
+        // 仅当 pageObserver 未被创建时才创建，确保全局唯一
+        if (!pageObserver) {
+            let visiblePosts = new Map();
+            let saveTimeout;
 
-        const getFloorFromElement = (el) => {
-            const floorElement = el.querySelector('.pi em');
-            return floorElement ? parseInt(floorElement.textContent) || 0 : 0;
-        };
+            const getFloorFromElement = (el) => {
+                const floorElement = el.querySelector('.pi em');
+                return floorElement ? parseInt(floorElement.textContent) || 0 : 0;
+            };
 
-        const saveCurrentProgress = () => {
-            if (visiblePosts.size === 0) return;
-            let maxFloor = 0;
-            let finalPostId = null;
+            const saveCurrentProgress = () => {
+                if (visiblePosts.size === 0) return;
+                let maxFloor = 0;
+                let finalPostId = null;
 
-            visiblePosts.forEach((floor, postId) => {
-                if (floor > maxFloor) {
-                    maxFloor = floor;
-                    finalPostId = postId;
-                }
-            });
-
-            if (finalPostId && maxFloor > 0) {
-                updateThreadProgress(threadId, finalPostId, currentPage, maxFloor);
-            }
-        };
-
-        const debouncedSave = () => {
-            clearTimeout(saveTimeout);
-            saveTimeout = setTimeout(saveCurrentProgress, 1500);
-        };
-
-        const observer = new IntersectionObserver(entries => {
-            entries.forEach(entry => {
-                const postId = entry.target.id.replace('pid', '');
-                if (entry.isIntersecting) {
-                    const floor = getFloorFromElement(entry.target);
-                    if (floor > 0) {
-                        visiblePosts.set(postId, floor);
+                visiblePosts.forEach((floor, postId) => {
+                    if (floor > maxFloor) {
+                        maxFloor = floor;
+                        finalPostId = postId;
                     }
-                } else {
-                    visiblePosts.delete(postId);
+                });
+
+                if (finalPostId && maxFloor > 0) {
+                    updateReadIndicatorUI(finalPostId);
+                    updateThreadProgress(threadId, finalPostId, currentPage, maxFloor);
+                }
+            };
+
+            const debouncedSave = () => {
+                clearTimeout(saveTimeout);
+                saveTimeout = setTimeout(saveCurrentProgress, 1500);
+            };
+
+            pageObserver = new IntersectionObserver(entries => {
+                entries.forEach(entry => {
+                    const postId = entry.target.id.replace('pid', '');
+                    if (entry.isIntersecting) {
+                        const floor = getFloorFromElement(entry.target);
+                        if (floor > 0) {
+                            visiblePosts.set(postId, floor);
+                        }
+                    } else {
+                        visiblePosts.delete(postId);
+                    }
+                });
+                debouncedSave();
+            }, { threshold: 0.3 });
+
+            document.querySelectorAll('table[id^="pid"]').forEach(el => pageObserver.observe(el));
+
+            const finalSave = () => {
+                clearTimeout(saveTimeout);
+                saveCurrentProgress();
+            };
+
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'hidden') {
+                    finalSave();
                 }
             });
-            debouncedSave();
-        }, { threshold: 0.1 });
-        document.querySelectorAll('table[id^="pid"]').forEach(el => observer.observe(el));
-
-        const finalSave = () => {
-            clearTimeout(saveTimeout);
-            saveCurrentProgress();
-        };
-
-        document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'hidden') {
-                finalSave();
-            }
-        });
-        window.addEventListener('beforeunload', finalSave);
+            window.addEventListener('beforeunload', finalSave);
+        }
     };
 
     const refreshAllAuthiActions = () => {
@@ -4572,13 +4707,26 @@
     };;
 
     /**
-     * [OPTIMIZED] Adds action buttons to a single post, with a guard to prevent duplication.
+     * [OPTIMIZED V2] Adds action buttons and layout spacer to a single post.
      * @param {HTMLTableElement} postTable - The main table element for a single post.
      */
     const addActionsToSinglePost = (postTable) => {
         const settings = getSettings();
         const authiDiv = postTable.querySelector('.plc .authi');
         if (!authiDiv) return;
+
+        // --- [核心修改] 将 pi 容器作为操作目标 ---
+        const piContainer = authiDiv.closest('.pi');
+        if (!piContainer) return;
+
+        // --- [这里是新增的“伸缩器”逻辑] ---
+        // 检查并添加永久的布局伸缩器，确保布局稳定
+        if (!piContainer.querySelector('.s1p-layout-spacer')) {
+            const spacer = document.createElement('div');
+            spacer.className = 's1p-layout-spacer';
+            piContainer.appendChild(spacer);
+        }
+        // --- [新增逻辑结束] ---
 
         if (authiDiv.parentElement.classList.contains('s1p-authi-container')) {
             return;
