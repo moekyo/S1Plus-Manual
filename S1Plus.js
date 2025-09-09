@@ -1297,7 +1297,7 @@
             color: var(--s1p-white);
             padding: 2px 8px; /* <-- [核心修改] 进一步减少内边距 */
             border-radius: 16px; /* <-- [修改] 调整圆角以适配新高度 */
-            font-size: 12px; /* <-- [核心修改] 减小字体大小 */
+            font-size: 11px; /* <-- [核心修改] 减小字体大小 */
             font-weight: bold;
             user-select: none;
             white-space: nowrap;
@@ -1311,8 +1311,8 @@
         }
         /* --- 操作指南(2/2)：请用下面的CSS规则块，整体替换旧的 .s1p-read-indicator-icon 规则 --- */
         .s1p-read-indicator-icon {
-            width: 13px; /* <-- [核心修改] 减小图标宽度 */
-            height: 13px; /* <-- [核心修改] 减小图标高度 */
+            width: 14px; /* <-- [核心修改] 减小图标宽度 */
+            height: 14px; /* <-- [核心修改] 减小图标高度 */
             background-color: currentColor;
             mask-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='currentColor'%3e%3cpath d='M2 3.9934C2 3.44476 2.45531 3 2.9918 3H21.0082C21.556 3 22 3.44495 22 3.9934V20.0066C22 20.5552 21.5447 21 21.0082 21H2.9918C2.44405 21 2 20.5551 2 20.0066V3.9934ZM11 5H4V19H11V5ZM13 5V19H20V5H13ZM14 7H19V9H14V7ZM14 10H19V12H14V10Z'%3e%3c/path%3e%3c/svg%3e");
             mask-size: contain;
@@ -4478,7 +4478,7 @@
             readIndicatorElement.className = 's1p-read-indicator';
             readIndicatorElement.innerHTML = `
                 <span class="s1p-read-indicator-icon"></span>
-                <span>读到这里</span>
+                <span>当前阅读位置</span>
             `;
         }
         const indicator = readIndicatorElement;
@@ -5139,3 +5139,31 @@
     main();
 
 })();
+
+
+GM_addStyle(`
+    /* 适用于 Chrome, Edge 等 WebKit 内核浏览器 */
+    html::-webkit-scrollbar-thumb {
+        /* 在这里修改你想要的 “滑块” 颜色 */
+        background-color: #C3D17F !important;
+    }
+
+    html::-webkit-scrollbar-track {
+        /* 在这里修改你想要的 “轨道” 背景色 */
+        background-color: #ECEDEB !important;
+    }
+
+    /* 适用于 Firefox 浏览器 */
+    html {
+        /* 格式为: "滑块颜色 轨道背景颜色" */
+        scrollbar-color: #C3D17F #ECEDEB !important;
+    }
+
+    // /* 强制恢复 S1 Plus 开关的原始高亮颜色 */
+    // .s1p-modal-content input:checked + .s1p-slider {
+    //     background-color: #a4bf7bff !important;
+    // }
+    :root {
+        --s1p-sec: #a4bf7bff !important;
+    }
+`);
