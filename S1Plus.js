@@ -335,6 +335,27 @@
             padding-left: 2px !important;
         }
 
+        /* --- [FIX FINAL v3] 帖子列表对齐与分隔符修正 --- */
+
+        /* 1. [核心修正] 精确隐藏作为“空白分隔符”的 separatorline，
+        通过 .emptb 类来识别，避免隐藏“版块主题”行。*/
+        #separatorline.emptb {
+            display: none !important;
+        }
+
+        /* 2. 为S1Plus注入的表头占位单元格设置宽度 */
+        #threadlisttableid .th .s1p-header-placeholder {
+            width: 14px;
+        }
+
+        /* 3. 统一所有列的对齐方式为左对齐，以匹配原始样式 */
+        #threadlisttableid td.by,
+        #threadlisttableid td.num,
+        #threadlisttableid .th .by,
+        #threadlisttableid .th .num {
+            text-align: left !important;
+        }
+
         /* --- 关键字屏蔽样式 --- */
         .s1p-hidden-by-keyword, .s1p-hidden-by-quote { display: none !important; }
 
@@ -4146,6 +4167,18 @@
 
 
     const addBlockButtonsToThreads = () => {
+        // --- [S1PLUS-FIX START] ---
+        // 核心修复：注入一个空的表头单元格，以匹配内容行的列数。
+        // S1Plus 原脚本会给每个内容行动态添加一个“操作列”单元格，但没有给表头行添加，导致列数不匹配。
+        // 此代码通过给表头也添加一个对应的占位单元格，使得结构恢复一致，从而让浏览器能够正确对齐所有列。
+        const headerTr = document.querySelector('#threadlisttableid .th tr');
+        if (headerTr && !headerTr.querySelector('.s1p-header-placeholder')) {
+            const placeholderCell = document.createElement('td');
+            placeholderCell.className = 's1p-header-placeholder';
+            headerTr.prepend(placeholderCell);
+        }
+        // --- [S1PLUS-FIX END] ---
+
         document.querySelectorAll('tbody[id^="normalthread_"], tbody[id^="stickthread_"]').forEach(row => {
             const tr = row.querySelector('tr');
             if (!tr || row.querySelector('.s1p-options-cell') || tr.classList.contains('ts') || tr.classList.contains('th')) return;
@@ -4205,10 +4238,7 @@
             optionsCell.appendChild(optionsMenu);
             tr.prepend(optionsCell);
 
-            const headerTh = document.querySelector('#threadlist > .th th:first-child');
-            if (headerTh) {
-                headerTh.colSpan = 3;
-            }
+            // [S1PLUS-FIX]: 已移除原始的有问题的 colspan 逻辑，它已被上面的表头单元格注入方案彻底取代。
 
             const separatorRow = document.querySelector('#separatorline > tr.ts');
             if (separatorRow && separatorRow.childElementCount < 6) {
