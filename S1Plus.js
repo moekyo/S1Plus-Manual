@@ -610,6 +610,18 @@
             min-height: 80px;
         }
 
+        /* --- [新增] 优化 Windows 下密码输入框样式 --- */
+        #s1p-remote-pat-input {
+            /* 修正部分 Windows 系统下字体渲染问题 */
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            /* 增加字符间距，让星号 (*) 显示更清晰 */
+            letter-spacing: 1.5px;
+        }
+        #s1p-remote-pat-input::-ms-reveal {
+            /* 隐藏 Windows Edge/IE 浏览器自带的显示密码图标 */
+            display: none;
+        }
+
         /* --- 用户标记悬浮窗 --- */
         .s1p-tag-popover {
             position: absolute;
