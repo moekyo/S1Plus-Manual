@@ -80,7 +80,7 @@
     };
 
     GM_addStyle(`
-       /* --- 通用颜色 --- */
+        /* --- 通用颜色 --- */
         :root {
             /* -- 基础调色板 -- */
             --s1p-bg: #ECEDEB;
@@ -120,6 +120,10 @@
             /* -- 阅读进度 -- */
             --s1p-progress-hot: rgb(192, 51, 34);
             --s1p-progress-cold: rgb(107, 114, 128);
+
+            /* -- [新增] 主题覆写颜色 -- */
+            --s1p-scrollbar-thumb: #C3D17F;
+            --s1p-sec-classic: #a4bf7bff;
         }
         /* --- [FIX] 导航栏垂直居中对齐修正 --- */
         #nv > ul {
@@ -2191,6 +2195,7 @@
         showBlockedByKeywordList: false,
         showManuallyBlockedList: false,
         hideImagesByDefault: false,
+        followS1NuxTheme: true, // <-- [新增]
         threadBlockHoverDelay: 1,
         customTitleSuffix: ' - STAGE1ₛₜ',
         customNavLinks: [
@@ -2221,6 +2226,41 @@
     const saveSettings = (settings) => {
         GM_setValue('s1p_settings', settings);
         updateLastModifiedTimestamp();
+    };
+
+    // --- [新增] 主题覆写样式管理 ---
+    let themeOverrideStyleElement = null;
+    const applyThemeOverrideStyle = () => {
+        const THEME_OVERRIDE_CSS = `
+            /* 适用于 Chrome, Edge 等 WebKit 内核浏览器 */
+            html::-webkit-scrollbar-thumb {
+                background-color: var(--s1p-scrollbar-thumb) !important;
+            }
+            html::-webkit-scrollbar-track {
+                background-color: var(--s1p-bg) !important;
+            }
+            /* 适用于 Firefox 浏览器 */
+            html {
+                scrollbar-color: var(--s1p-scrollbar-thumb) var(--s1p-bg) !important;
+            }
+            /* 强制恢复 S1 Plus 开关的原始高亮颜色 */
+            :root {
+                --s1p-sec: var(--s1p-sec-classic) !important;
+            }
+        `;
+        const settings = getSettings();
+        // 当 "跟随S1Nux主题" 开启时，移除自定义样式
+        if (settings.followS1NuxTheme) {
+            if (themeOverrideStyleElement && themeOverrideStyleElement.parentElement) {
+                themeOverrideStyleElement.remove();
+                themeOverrideStyleElement = null;
+            }
+        } else {
+        // 当 "跟随S1Nux主题" 关闭时，如果样式不存在则添加它
+            if (!themeOverrideStyleElement || !themeOverrideStyleElement.parentElement) {
+                themeOverrideStyleElement = GM_addStyle(THEME_OVERRIDE_CSS);
+            }
+        }
     };
 
     // --- 界面定制功能 ---
@@ -3474,6 +3514,11 @@
                 </div>
                 <div class="s1p-settings-group">
                     <div class="s1p-settings-group-title">界面与个性化</div>
+                     <div class="s1p-settings-item">
+                        <label class="s1p-settings-label" for="s1p-followS1NuxTheme">跟随 S1 NUX 主题颜色</label>
+                        <label class="s1p-switch"><input type="checkbox" id="s1p-followS1NuxTheme" class="s1p-settings-checkbox" data-setting="followS1NuxTheme" ${settings.followS1NuxTheme ? 'checked' : ''}><span class="s1p-slider"></span></label>
+                    </div>
+                    <p class="s1p-setting-desc">启用后，脚本将不强制覆写滚动条和开关高亮颜色，以更好地匹配 S1 NUX 的主题。关闭此选项可恢复 S1 Plus 的经典绿色高亮。</p>
                     <div class="s1p-settings-item">
                         <label class="s1p-settings-label" for="s1p-changeLogoLink">修改论坛Logo链接 (指向论坛首页)</label>
                         <label class="s1p-switch"><input type="checkbox" id="s1p-changeLogoLink" class="s1p-settings-checkbox" data-setting="changeLogoLink" ${settings.changeLogoLink ? 'checked' : ''}><span class="s1p-slider"></span></label>
@@ -3546,6 +3591,13 @@
                         settings[settingKey] = target.value;
                     }
                     saveSettings(settings);
+
+                    // --- [新增] 切换主题覆写时实时应用 ---
+                    if (settingKey === 'followS1NuxTheme') {
+                        applyThemeOverrideStyle();
+                    }
+                    // --- [新增结束] ---
+
                     applyInterfaceCustomizations();
 
                     if (settingKey === 'showReadIndicator' && !target.checked) {
@@ -5110,6 +5162,7 @@
         detectS1Nux();
         initializeNavbar();
         initializeGenericDisplayPopover();
+        applyThemeOverrideStyle(); // <-- [新增] 启动时应用主题样式
 
         // --- [FIXED] 增强的 MutationObserver 逻辑 ---
         const observerCallback = (mutations, observer) => {
@@ -5183,31 +5236,3 @@
     main();
 
 })();
-
-
-GM_addStyle(`
-    /* 适用于 Chrome, Edge 等 WebKit 内核浏览器 */
-    html::-webkit-scrollbar-thumb {
-        /* 在这里修改你想要的 “滑块” 颜色 */
-        background-color: #C3D17F !important;
-    }
-
-    html::-webkit-scrollbar-track {
-        /* 在这里修改你想要的 “轨道” 背景色 */
-        background-color: #ECEDEB !important;
-    }
-
-    /* 适用于 Firefox 浏览器 */
-    html {
-        /* 格式为: "滑块颜色 轨道背景颜色" */
-        scrollbar-color: #C3D17F #ECEDEB !important;
-    }
-
-    // /* 强制恢复 S1 Plus 开关的原始高亮颜色 */
-    // .s1p-modal-content input:checked + .s1p-slider {
-    //     background-color: #a4bf7bff !important;
-    // }
-    :root {
-        --s1p-sec: #a4bf7bff !important;
-    }
-`);
