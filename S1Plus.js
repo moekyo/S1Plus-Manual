@@ -1325,24 +1325,23 @@
             from { opacity: 1; transform: translateY(-50%) scale(1); }
             to { opacity: 0; transform: translateY(-50%) scale(0.8); }
         }
-        /* --- 操作指南：请用下面的CSS规则块，整体替换旧的 .s1p-read-indicator 规则 --- */
-        /* --- 操作指南(1/2)：请用下面的CSS规则块，整体替换旧的 .s1p-read-indicator 规则 --- */
         .s1p-read-indicator {
             position: absolute;
             top: 50%;
             transform: translateY(-50%);
             display: inline-flex;
             align-items: center;
-            gap: 4px; /* <-- [修改] 减小图标与文字的间距 */
+            gap: 4px;
             background-color: var(--s1p-readprogress-bg);
             color: var(--s1p-white);
-            padding: 2px 8px; /* <-- [核心修改] 进一步减少内边距 */
-            border-radius: 16px; /* <-- [修改] 调整圆角以适配新高度 */
-            font-size: 11px; /* <-- [核心修改] 减小字体大小 */
+            padding: 3px 8px 4px; /* <-- [修改] 使用非对称内边距修正视觉重心 */
+            border-radius: 16px;
+            font-size: 11px;
             font-weight: bold;
             user-select: none;
             white-space: nowrap;
             box-shadow: 0 0 4px rgba(13, 13, 13, 0.1);
+            line-height: 1;
         }
         .s1p-read-indicator.s1p-anim-appear {
             animation: s1p-indicator-appear 0.5s cubic-bezier(0.5, 0, 0.1, 1) forwards;
@@ -1350,7 +1349,6 @@
         .s1p-read-indicator.s1p-anim-disappear {
             animation: s1p-indicator-disappear 0.3s ease-out forwards;
         }
-        /* --- 操作指南(2/2)：请用下面的CSS规则块，整体替换旧的 .s1p-read-indicator-icon 规则 --- */
         .s1p-read-indicator-icon {
             width: 14px; /* <-- [核心修改] 减小图标宽度 */
             height: 14px; /* <-- [核心修改] 减小图标高度 */
@@ -1359,6 +1357,9 @@
             mask-size: contain;
             mask-repeat: no-repeat;
             mask-position: center;
+            /* -- [新增] 针对Windows平台的垂直对齐微调 -- */
+            position: relative;
+            top: 1px;
         }
     `);
 
