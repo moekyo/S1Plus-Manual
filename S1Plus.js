@@ -2171,16 +2171,13 @@
         }
     };
 
-    // [S1 PLUS 整合版]
-    // --- 操作: 用下面的完整代码块替换现有的 'defaultSettings' 对象。
-    // --- 优点: 结构清晰，为新功能添加了默认设置。
-
     // --- 设置管理 ---
     const defaultSettings = {
         enablePostBlocking: true,
         enableUserBlocking: true,
         enableUserTagging: true,
         enableReadProgress: true,
+        showReadIndicator: true, // [新增] 阅读进度浮动标识开关
         enableBookmarkReplies: true,
         readingProgressCleanupDays: 0,
         openProgressInNewTab: true,
@@ -2212,6 +2209,7 @@
         syncRemoteGistId: '',
         syncRemotePat: '',
     };
+
     const getSettings = () => {
         const saved = GM_getValue('s1p_settings', {});
         // 如果用户已保存自定义导航，则保留，否则使用默认值
@@ -2825,10 +2823,6 @@
         });
     };
 
-    // [S1 PLUS 整合版]
-    // --- 操作: 用下面的完整代码块替换现有的 'createManagementModal' 函数。
-    // --- 优点: 添加了新UI开关并提供了清晰的独立性描述 (来自 cosmos)。
-
     const createManagementModal = () => {
         // ... (此处省略 calculateModalWidth 内部代码，与原文件一致) ...
         const calculateModalWidth = () => {
@@ -3436,7 +3430,7 @@
             const settings = getSettings();
             tabs['general-settings'].innerHTML = `
                 <div class="s1p-settings-group">
-                    <div class="s1p-settings-group-title">功能开关</div>
+                    <div class="s1p-settings-group-title">阅读/浏览增强</div>
 
                     <div class="s1p-settings-item">
                         <label class="s1p-settings-label" for="s1p-openThreadsInNewTab">在新窗口打开帖子</label>
@@ -3450,6 +3444,10 @@
                      <div class="s1p-settings-item">
                         <label class="s1p-settings-label" for="s1p-enableReadProgress">启用阅读进度跟踪</label>
                         <label class="s1p-switch"><input type="checkbox" id="s1p-enableReadProgress" data-feature="enableReadProgress" class="s1p-feature-toggle" ${settings.enableReadProgress ? 'checked' : ''}><span class="s1p-slider"></span></label>
+                    </div>
+                    <div class="s1p-settings-item" id="s1p-showReadIndicator-container" style="padding-left: 20px; ${!settings.enableReadProgress ? 'display: none;' : ''}">
+                        <label class="s1p-settings-label" for="s1p-showReadIndicator">显示“当前阅读位置”浮动标识</label>
+                        <label class="s1p-switch"><input type="checkbox" id="s1p-showReadIndicator" class="s1p-settings-checkbox" data-setting="showReadIndicator" ${settings.showReadIndicator ? 'checked' : ''}><span class="s1p-slider"></span></label>
                     </div>
                     <div class="s1p-settings-item" id="s1p-readingProgressCleanupContainer" style="padding-left: 20px; ${!settings.enableReadProgress ? 'display: none;' : ''}">
                         <label class="s1p-settings-label">自动清理超过以下时间的阅读记录</label>
@@ -3475,7 +3473,7 @@
                     </div>
                 </div>
                 <div class="s1p-settings-group">
-                    <div class="s1p-settings-group-title">通用设置</div>
+                    <div class="s1p-settings-group-title">界面与个性化</div>
                     <div class="s1p-settings-item">
                         <label class="s1p-settings-label" for="s1p-changeLogoLink">修改论坛Logo链接 (指向论坛首页)</label>
                         <label class="s1p-switch"><input type="checkbox" id="s1p-changeLogoLink" class="s1p-settings-checkbox" data-setting="changeLogoLink" ${settings.changeLogoLink ? 'checked' : ''}><span class="s1p-slider"></span></label>
@@ -3549,6 +3547,10 @@
                     }
                     saveSettings(settings);
                     applyInterfaceCustomizations();
+
+                    if (settingKey === 'showReadIndicator' && !target.checked) {
+                        updateReadIndicatorUI(null);
+                    }
 
                     if (settingKey === 'hideImagesByDefault') {
                         applyImageHiding();
@@ -3701,8 +3703,12 @@
                         refreshAllAuthiActions();
                         break;
                     case 'enableReadProgress':
+                        document.getElementById('s1p-showReadIndicator-container').style.display = isChecked ? 'flex' : 'none';
                         document.getElementById('s1p-readingProgressCleanupContainer').style.display = isChecked ? 'flex' : 'none';
                         isChecked ? addProgressJumpButtons() : removeProgressJumpButtons();
+                        if (!isChecked) {
+                            updateReadIndicatorUI(null);
+                        }
                         break;
                     case 'enableBookmarkReplies':
                         refreshAllAuthiActions();
@@ -4503,6 +4509,12 @@
 
     // --- 最终版JS(1/2)：操作指南：请用下面的完整函数体整体替换旧的 updateReadIndicatorUI 函数 ---
     const updateReadIndicatorUI = (targetPostId) => {
+        // [核心修复] 在函数入口处直接检查设置状态
+        // 如果开关关闭，则强制将目标ID设为null，这将触发后续的隐藏逻辑
+        if (!getSettings().showReadIndicator) {
+            targetPostId = null;
+        }
+
         if (!readIndicatorElement) {
             readIndicatorElement = document.createElement('div');
             readIndicatorElement.className = 's1p-read-indicator';
@@ -4634,7 +4646,9 @@
                 });
 
                 if (finalPostId && maxFloor > 0) {
-                    updateReadIndicatorUI(finalPostId);
+                    if (getSettings().showReadIndicator) {
+                        updateReadIndicatorUI(finalPostId);
+                    }
                     updateThreadProgress(threadId, finalPostId, currentPage, maxFloor);
                 }
             };
