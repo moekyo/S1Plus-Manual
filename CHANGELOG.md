@@ -1,5 +1,7 @@
 
 ## [Unreleased]
+### 🎨 UI/UX 优化 (UI/UX Improvements)
+- **优化远程同步 PAT 密码输入框在 Windows 下的显示效果**：修正部分 Windows 系统下字体渲染问题，提升星号 (*) 显示清晰度，并隐藏 Edge/IE 浏览器自带的显示密码图标。
 ### ✨ 新增与增强 (Features & Enhancements)
 * **【UI/主题】删除按钮主题适配与联动**
     * 删除按钮样式重构，新增 `.s1p-delete-button` 类，支持 S1 NUX 主题与 S1 Plus 经典样式自动切换。
