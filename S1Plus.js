@@ -78,7 +78,8 @@
         // 3. 计算SHA-256哈希
         return await sha256(stringifiedData);
     };
-
+    const SVG_ICON_DELETE_DEFAULT = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='1.5' stroke='%23374151'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0' /%3E%3C/svg%3E`;
+    const SVG_ICON_DELETE_HOVER = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='1.5' stroke='white'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0' /%3E%3C/svg%3E`;
     GM_addStyle(`
         /* --- 通用颜色 --- */
         :root {
@@ -1051,29 +1052,32 @@
         .s1p-settings-item .s1p-input { width: auto; min-width: 200px; }
         .s1p-settings-label { font-size: 14px; }
         .s1p-settings-checkbox { /* Handled by .s1p-switch */ }
-        .s1p-setting-desc { font-size: 12px; color: var(--s1p-desc-t); margin: -4px 0 12px 0; padding: 0; line-height: 1.5; }
+        .s1p-setting-desc { font-size: 12px; color: var(--s1p-desc-t); margin: -4px 0 8px 0; padding: 0; line-height: 1.5; }
         .s1p-editor-item { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; padding: 6px; border-radius: 4px; background: var(--s1p-bg); }
         .s1p-editor-item select { background: var(--s1p-bg);  width: 100%; border: 1px solid var(--s1p-pri); border-radius: 4px; padding: 6px 8px; font-size: 14px; box-sizing: border-box; }
         .s1p-editor-item-controls { display: flex; align-items: center; gap: 4px; }
         .s1p-editor-btn { padding: 4px; font-size: 18px; line-height: 1; cursor: pointer; border-radius: 4px; border:none; background: transparent; color: #9ca3af; }
-        .s1p-editor-btn:hover { background: var(--s1p-secondary-bg); color: var(--s1p-secondary-text); }
-        .s1p-editor-btn.s1p-keyword-rule-delete,
-        .s1p-editor-btn[data-action="delete"] {
-            font-size: 0;
+        /* --- [修正] 使用 :not() 伪类来排除删除按钮，防止其悬浮样式被覆盖 --- */
+        .s1p-editor-btn:not(.s1p-delete-button):hover { background: var(--s1p-secondary-bg); color: var(--s1p-secondary-text); }
+        /* --- [新增] 为删除按钮定义统一的尺寸和边距 (骨架) --- */
+        .s1p-editor-btn.s1p-delete-button {
             width: 26px;
             height: 26px;
             padding: 4px;
             box-sizing: border-box;
-            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='1.5' stroke='%23374151'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0' /%3E%3C/svg%3E");
+            font-size: 0;
+        }
+        /* --- [联动修改] 仅在未启用NUX兼容模式时，应用S1 Plus的背景图标 (皮肤) --- */
+        body:not(.s1p-follow-nux-theme) .s1p-editor-btn.s1p-delete-button {
+            background-image: url("${SVG_ICON_DELETE_DEFAULT}");
             background-repeat: no-repeat;
             background-position: center;
             background-size: 18px 18px;
             transition: all 0.2s ease;
         }
-        .s1p-editor-btn.s1p-keyword-rule-delete:hover,
-        .s1p-editor-btn[data-action="delete"]:hover {
+        body:not(.s1p-follow-nux-theme) .s1p-editor-btn.s1p-delete-button:hover {
             background-color: var(--s1p-red);
-            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='1.5' stroke='white'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0' /%3E%3C/svg%3E");
+            background-image: url("${SVG_ICON_DELETE_HOVER}");
         }
         .s1p-drag-handle { font-size: 18pt; cursor: grab; }
         .s1p-editor-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; }
@@ -2230,6 +2234,7 @@
 
     // --- [新增] 主题覆写样式管理 ---
     let themeOverrideStyleElement = null;
+    let deleteButtonOverrideStyleElement = null;
     const applyThemeOverrideStyle = () => {
         const THEME_OVERRIDE_CSS = `
             /* 适用于 Chrome, Edge 等 WebKit 内核浏览器 */
@@ -2259,6 +2264,50 @@
         // 当 "跟随S1Nux主题" 关闭时，如果样式不存在则添加它
             if (!themeOverrideStyleElement || !themeOverrideStyleElement.parentElement) {
                 themeOverrideStyleElement = GM_addStyle(THEME_OVERRIDE_CSS);
+            }
+        }
+    };
+
+    const applyDeleteButtonThemeStyle = () => {
+        const OVERRIDE_CSS = `
+            .s1p-editor-btn.s1p-delete-button {
+                font-size: 0 !important;
+                width: 26px !important;
+                height: 26px !important;
+                padding: 4px !important;
+                box-sizing: border-box !important;
+                background-image: url("${SVG_ICON_DELETE_DEFAULT}") !important;
+                background-repeat: no-repeat !important;
+                background-position: center !important;
+                background-size: 18px 18px !important;
+                background-color: transparent !important;
+                mask: none !important;
+                transition: all 0.2s ease;
+            }
+            .s1p-editor-btn.s1p-delete-button:hover {
+                background-color: var(--s1p-red) !important;
+                background-image: url("${SVG_ICON_DELETE_HOVER}") !important;
+            }
+        `;
+        const settings = getSettings();
+        
+        // --- [联动修改] 全新逻辑 ---
+        if (settings.followS1NuxTheme) {
+            // 模式：跟随 NUX
+            // 1. 给 body 添加标记类，让标准CSS失效
+            document.body.classList.add('s1p-follow-nux-theme');
+            // 2. 移除 !important 强制规则 (如果存在)，彻底让位给 S1 NUX
+            if (deleteButtonOverrideStyleElement && deleteButtonOverrideStyleElement.parentElement) {
+                deleteButtonOverrideStyleElement.remove();
+                deleteButtonOverrideStyleElement = null;
+            }
+        } else {
+            // 模式：S1 Plus 经典
+            // 1. 从 body 移除标记类，让标准CSS可以先生效
+            document.body.classList.remove('s1p-follow-nux-theme');
+            // 2. 添加 !important 强制规则，确保能覆盖 S1 NUX
+            if (!deleteButtonOverrideStyleElement) {
+                deleteButtonOverrideStyleElement = GM_addStyle(OVERRIDE_CSS);
             }
         }
     };
@@ -3381,7 +3430,7 @@
                         <label class="s1p-switch"><input type="checkbox" class="s1p-settings-checkbox s1p-keyword-rule-enable" ${rule.enabled ? 'checked' : ''}><span class="s1p-slider"></span></label>
                         <input type="text" class="s1p-input s1p-keyword-rule-pattern" placeholder="输入关键字或正则表达式" value="${rule.pattern || ''}" autocomplete="off">
                         <div class="s1p-editor-item-controls">
-                            <button class="s1p-editor-btn s1p-keyword-rule-delete" title="删除规则"></button>
+                            <button class="s1p-editor-btn s1p-delete-button" data-action="delete" title="删除规则"></button>
                         </div>
                     </div>
                 `).join('');
@@ -3448,12 +3497,12 @@
                         <label class="s1p-switch"><input type="checkbox" class="s1p-settings-checkbox s1p-keyword-rule-enable" checked><span class="s1p-slider"></span></label>
                         <input type="text" class="s1p-input s1p-keyword-rule-pattern" placeholder="输入关键字或正则表达式" value="" autocomplete="off">
                         <div class="s1p-editor-item-controls">
-                            <button class="s1p-editor-btn s1p-keyword-rule-delete" title="删除规则"></button>
+                            <button class="s1p-editor-btn s1p-delete-button" data-action="delete" title="删除规则"></button>
                         </div>
                     `;
                     container.appendChild(newItem);
                     newItem.querySelector('input[type="text"]').focus();
-                } else if (target.classList.contains('s1p-keyword-rule-delete')) {
+                } else if (target.classList.contains('s1p-delete-button')) {
                     const item = target.closest('.s1p-editor-item');
                     item.remove();
                     const container = tabs['threads'].querySelector('#s1p-keyword-rules-list');
@@ -3515,10 +3564,10 @@
                 <div class="s1p-settings-group">
                     <div class="s1p-settings-group-title">界面与个性化</div>
                      <div class="s1p-settings-item">
-                        <label class="s1p-settings-label" for="s1p-followS1NuxTheme">跟随 S1 NUX 主题颜色</label>
+                        <label class="s1p-settings-label" for="s1p-followS1NuxTheme">跟随 S1 NUX 视觉风格</label>
                         <label class="s1p-switch"><input type="checkbox" id="s1p-followS1NuxTheme" class="s1p-settings-checkbox" data-setting="followS1NuxTheme" ${settings.followS1NuxTheme ? 'checked' : ''}><span class="s1p-slider"></span></label>
                     </div>
-                    <p class="s1p-setting-desc">启用后，脚本将不强制覆写滚动条和开关高亮颜色，以更好地匹配 S1 NUX 的主题。关闭此选项可恢复 S1 Plus 的经典绿色高亮。</p>
+                    <p class="s1p-setting-desc">UI 兼容模式：<b>开启</b>后，部分UI (如滚动条、删除按钮) 将适配 \`S1 NUX\` 风格；<b>关闭</b>则强制恢复 S1 Plus 的经典独立样式。</p>
                     <div class="s1p-settings-item">
                         <label class="s1p-settings-label" for="s1p-changeLogoLink">修改论坛Logo链接 (指向论坛首页)</label>
                         <label class="s1p-switch"><input type="checkbox" id="s1p-changeLogoLink" class="s1p-settings-checkbox" data-setting="changeLogoLink" ${settings.changeLogoLink ? 'checked' : ''}><span class="s1p-slider"></span></label>
@@ -3592,11 +3641,10 @@
                     }
                     saveSettings(settings);
 
-                    // --- [新增] 切换主题覆写时实时应用 ---
                     if (settingKey === 'followS1NuxTheme') {
                         applyThemeOverrideStyle();
+                        applyDeleteButtonThemeStyle();
                     }
-                    // --- [新增结束] ---
 
                     applyInterfaceCustomizations();
 
@@ -3645,7 +3693,7 @@
                         <div class="s1p-drag-handle">::</div>
                         <input type="text" class="s1p-input s1p-nav-name" placeholder="名称" value="${link.name || ''}" autocomplete="off">
                         <input type="text" class="s1p-input s1p-nav-href" placeholder="链接" value="${link.href || ''}" autocomplete="off">
-                        <div class="s1p-editor-item-controls"><button class="s1p-editor-btn" data-action="delete" title="删除链接"></button></div>
+                        <div class="s1p-editor-item-controls"><button class="s1p-editor-btn s1p-delete-button" data-action="delete" title="删除链接"></button></div>
                     </div>`).join('');
             };
 
@@ -3689,9 +3737,10 @@
                     const newItem = document.createElement('div');
                     newItem.className = 's1p-editor-item'; newItem.draggable = true;
                     newItem.style.gridTemplateColumns = 'auto 1fr 1fr auto';
-                    newItem.innerHTML = `<div class="s1p-drag-handle">::</div><input type="text" class="s1p-input s1p-nav-name" placeholder="新链接" autocomplete="off"><input type="text" class="s1p-input s1p-nav-href" placeholder="forum.php" autocomplete="off"><div class="s1p-editor-item-controls"><button class="s1p-editor-btn" data-action="delete" title="删除链接"></button></div>`;
+                    // --- [联动修改] 同样重新添加 data-action="delete" ---
+                    newItem.innerHTML = `<div class="s1p-drag-handle">::</div><input type="text" class="s1p-input s1p-nav-name" placeholder="新链接" autocomplete="off"><input type="text" class="s1p-input s1p-nav-href" placeholder="forum.php" autocomplete="off"><div class="s1p-editor-item-controls"><button class="s1p-editor-btn s1p-delete-button" data-action="delete" title="删除链接"></button></div>`;
                     navListContainer.appendChild(newItem);
-                } else if (target.dataset.action === 'delete') {
+                } else if (target.classList.contains('s1p-delete-button')) {
                     target.closest('.s1p-editor-item').remove();
                 } else if (target.id === 's1p-nav-restore-btn') {
                     const currentSettings = getSettings();
@@ -5219,6 +5268,7 @@
         if (settings.enableReadProgress) {
             addProgressJumpButtons();
         }
+        applyDeleteButtonThemeStyle();
         applyInterfaceCustomizations();
         applyImageHiding();
         manageImageToggleAllButtons();
