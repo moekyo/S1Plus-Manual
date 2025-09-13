@@ -78,6 +78,9 @@
   };
   const SVG_ICON_DELETE_DEFAULT = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='1.5' stroke='%23374151'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0' /%3E%3C/svg%3E`;
   const SVG_ICON_DELETE_HOVER = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='1.5' stroke='white'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0' /%3E%3C/svg%3E`;
+  const SVG_ICON_ARROW_MASK = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 16'%3E%3Cpath d='M2 2L8 8L2 14' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E`;
+
+  
   GM_addStyle(`
         /* --- 通用颜色 --- */
         :root {
@@ -123,6 +126,7 @@
             /* -- [新增] 主题覆写颜色 -- */
             --s1p-scrollbar-thumb: #C3D17F;
             --s1p-sec-classic: #a4bf7bff;
+            --s1p-sub-h-classic: #b0d440;
         }
         /* --- [FIX] 导航栏垂直居中对齐修正 --- */
         #nv > ul {
@@ -1015,19 +1019,58 @@
         .s1p-confirm-btn.s1p-confirm { background-color: var(--s1p-red); color: var(--s1p-white); border-color: var(--s1p-red); }
         .s1p-confirm-btn.s1p-confirm:hover { background-color: var(--s1p-red-h); border-color: var(--s1p-red-h); }
 
-        /* --- Collapsible Section --- */
-        .s1p-collapsible-header { display: flex; align-items: center; justify-content: space-between; cursor: pointer; user-select: none; transition: color 0.2s ease; }
-        .s1p-settings-group-title.s1p-collapsible-header { margin-bottom: 0; }
-        .s1p-collapsible-header:hover { color: var(--s1p-sec); }
-        .s1p-collapsible-header:hover .s1p-expander-arrow { color: var(--s1p-sec); }
-        .s1p-expander-arrow {
-            display: inline-block; width: 12px; height: 12px; color: var(--s1p-icon-arrow);
-            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 16'%3E%3Cpath d='M2 2L8 8L2 14' stroke='currentColor' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E");
-            background-repeat: no-repeat; background-position: center; background-size: contain; transition: transform 0.3s ease-in-out, color 0.2s ease;
+        /* --- [MODIFIED] Collapsible Section (V7 - Mask Image Fix) --- */
+        .s1p-collapsible-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+            user-select: none;
         }
-        .s1p-expander-arrow.expanded { transform: rotate(90deg); }
-        .s1p-collapsible-content { max-height: 0; overflow: hidden; transition: max-height 0.3s ease-out; }
-        .s1p-collapsible-content.expanded { max-height: 500px; transition: max-height 0.4s ease-in; padding-top: 12px; }
+        .s1p-settings-group-title.s1p-collapsible-header {
+            margin-bottom: 0;
+            transition: color 0.2s ease;
+        }
+        .s1p-settings-group-title.s1p-collapsible-header:hover {
+            color: var(--s1p-sec);
+        }
+        .s1p-expander-arrow {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            /* [NEW METHOD] 使用 mask 定义图标形状 */
+            -webkit-mask-image: url("${SVG_ICON_ARROW_MASK}");
+            mask-image: url("${SVG_ICON_ARROW_MASK}");
+            -webkit-mask-size: contain;
+            mask-size: contain;
+            -webkit-mask-repeat: no-repeat;
+            mask-repeat: no-repeat;
+            -webkit-mask-position: center;
+            mask-position: center;
+            /* [NEW METHOD] 使用 background-color 来上色 */
+            background-color: var(--s1p-icon-arrow); /* 默认颜色 */
+            /* [NEW METHOD] 为 background-color 和 transform 添加过渡效果 */
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.2s ease;
+        }
+        .s1p-settings-group-title.s1p-collapsible-header:hover .s1p-expander-arrow {
+            background-color: var(--s1p-sec); /* 悬停颜色 */
+        }
+        .s1p-expander-arrow.expanded {
+            transform: rotate(90deg);
+        }
+        .s1p-collapsible-content {
+            display: grid;
+            grid-template-rows: 0fr;
+            padding-top: 0;
+            transition: grid-template-rows 0.4s cubic-bezier(0.4, 0, 0.2, 1), padding-top 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .s1p-collapsible-content > div {
+             overflow: hidden;
+        }
+        .s1p-collapsible-content.expanded {
+            grid-template-rows: 1fr;
+            padding-top: 12px;
+        }
 
         /* --- Feature Content Animation --- */
         .s1p-feature-content {
@@ -2319,9 +2362,6 @@
     return { data, version, contentHash, lastUpdated, full: remoteGistObject };
   };
 
-  // [S1 PLUS 整合版]
-  // --- 优点: 返回详细状态对象 (来自双方)，且函数自包含配置检查 (来自 cosmos)，更健壮。
-
   // 自动同步控制器，集成哈希校验逻辑并返回操作结果
   const performAutoSync = async () => {
     const settings = getSettings();
@@ -2473,6 +2513,7 @@
             /* 强制恢复 S1 Plus 开关的原始高亮颜色 */
             :root {
                 --s1p-sec: var(--s1p-sec-classic) !important;
+                --s1p-sub-h: var(--s1p-sub-h-classic) !important;
             }
         `;
     const settings = getSettings();
@@ -3774,7 +3815,7 @@
 
                 <div class="s1p-settings-group">
                     <div id="s1p-blocked-by-keyword-header" class="s1p-settings-group-title s1p-collapsible-header">
-                        <span>当前页面被关键字屏蔽的帖子</span>
+                        <span>关键字/规则的屏蔽帖子列表</span>
                         <span class="s1p-expander-arrow ${
                           settings.showBlockedByKeywordList ? "expanded" : ""
                         }"></span>
@@ -3796,6 +3837,7 @@
                     <div id="s1p-manually-blocked-list-container" class="s1p-collapsible-content ${
                       settings.showManuallyBlockedList ? "expanded" : ""
                     }">
+                    <div>
                     ${
                       manualItemIds.length === 0
                         ? `<div class="s1p-empty">暂无手动屏蔽的帖子</div>`
@@ -3817,6 +3859,7 @@
                             })
                             .join("")}</div>`
                     }
+                    </div>
                     </div>
                 </div>
             `;
