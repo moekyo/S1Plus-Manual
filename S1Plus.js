@@ -81,1529 +81,1968 @@
   const SVG_ICON_ARROW_MASK = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 16'%3E%3Cpath d='M2 2L8 8L2 14' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E`;
 
   GM_addStyle(`
-        /* --- 通用颜色 --- */
-        :root {
-            /* -- 基础调色板 -- */
-            --s1p-bg: #ECEDEB;
-            --s1p-pri: #D1D9C1;
-            --s1p-sub: #e9ebe8;
-            --s1p-white: #ffffff;
-            --s1p-black-rgb: 0, 0, 0;
+    /* --- 通用颜色 --- */
+    :root {
+      /* -- 基础调色板 -- */
+      --s1p-bg: #ecedeb;
+      --s1p-pri: #d1d9c1;
+      --s1p-sub: #e9ebe8;
+      --s1p-white: #ffffff;
+      --s1p-black-rgb: 0, 0, 0;
 
-            /* -- 主题色 -- */
-            --s1p-t: #022C80;
-            --s1p-desc-t: #10388a;
-            --s1p-sec: #2563eb;
-            --s1p-sec-h: #306bebff;
-            --s1p-sub-h: #2563eb;
-            --s1p-sub-h-t: var(--s1p-white);
+      /* -- 主题色 -- */
+      --s1p-t: #022c80;
+      --s1p-desc-t: #10388a;
+      --s1p-sec: #2563eb;
+      --s1p-sec-h: #306bebff;
+      --s1p-sub-h: #2563eb;
+      --s1p-sub-h-t: var(--s1p-white);
 
-            /* -- 状态色 -- */
-            --s1p-red: #ef4444;
-            --s1p-red-h: #dc2626;
-            --s1p-green: #22c55e;
-            --s1p-success-bg: #d1fae5;
-            --s1p-success-text: #065f46;
-            --s1p-error-bg: #fee2e2;
+      /* -- 状态色 -- */
+      --s1p-red: #ef4444;
+      --s1p-red-h: #dc2626;
+      --s1p-green: #22c55e;
+      --s1p-success-bg: #d1fae5;
+      --s1p-success-text: #065f46;
+      --s1p-error-bg: #fee2e2;
 
-            /* -- 组件专属 -- */
-            --s1p-text-empty: #888;
-            --s1p-icon-color: #a1a1aa;
-            --s1p-icon-close: #9ca3af;
-            --s1p-icon-arrow: #6b7280;
-            --s1p-confirm-hover-bg: #27da80;
-            --s1p-cancel-hover-bg: #ff6464;
-            --s1p-secondary-bg: #e5e7eb;
-            --s1p-secondary-text: #374151;
-            --s1p-code-bg: #eee;
-            --s1p-readprogress-bg: #B8D56F;
+      /* -- 组件专属 -- */
+      --s1p-text-empty: #888;
+      --s1p-icon-color: #a1a1aa;
+      --s1p-icon-close: #9ca3af;
+      --s1p-icon-arrow: #6b7280;
+      --s1p-confirm-hover-bg: #27da80;
+      --s1p-cancel-hover-bg: #ff6464;
+      --s1p-secondary-bg: #e5e7eb;
+      --s1p-secondary-text: #374151;
+      --s1p-code-bg: #eee;
+      --s1p-readprogress-bg: #b8d56f;
 
-            /* -- 阅读进度 -- */
-            --s1p-progress-hot: rgb(192, 51, 34);
-            --s1p-progress-cold: rgb(107, 114, 128);
+      /* -- 阅读进度 -- */
+      --s1p-progress-hot: rgb(192, 51, 34);
+      --s1p-progress-cold: rgb(107, 114, 128);
 
-            /* -- [新增] 主题覆写颜色 -- */
-            --s1p-scrollbar-thumb: #C3D17F;
-            --s1p-sec-classic: #a4bf7bff;
-            --s1p-sub-h-classic: #b0d440;
-        }
+      /* -- [新增] 主题覆写颜色 -- */
+      --s1p-scrollbar-thumb: #c3d17f;
+      --s1p-sec-classic: #a4bf7bff;
+      --s1p-sub-h-classic: #b0d440;
+    }
 
-        @keyframes s1p-tab-fade-in {
-            from { opacity: 0; }
-            to   { opacity: 1; }
-        }
+    @keyframes s1p-tab-fade-in {
+      from {
+        opacity: 0;
+      }
+      to {
+        opacity: 1;
+      }
+    }
 
-        /* --- [FIX] 导航栏垂直居中对齐修正 --- */
-        #nv > ul {
-            display: flex !important;
-            align-items: center !important;
-        }
+    /* --- [FIX] 导航栏垂直居中对齐修正 --- */
+    #nv > ul {
+      display: flex !important;
+      align-items: center !important;
+    }
 
-        /* --- [MODIFIED] 手动同步导航按钮 (v5) --- */
-        #s1p-nav-sync-btn {
-            flex-shrink: 0;
-            margin-left: 8px;
-        }
+    /* --- [MODIFIED] 手动同步导航按钮 (v5) --- */
+    #s1p-nav-sync-btn {
+      flex-shrink: 0;
+      margin-left: 8px;
+    }
 
-        #s1p-nav-sync-btn a {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            height: 100%;
-            vertical-align: middle;
-            padding: 0 10px;
-            box-sizing: border-box;
-        }
-        #s1p-nav-sync-btn svg {
-            width: 16px;
-            height: 16px;
-            flex-shrink: 0;
-            color: var(--s1p-t);
-            transition: color 0.3s ease, transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-            position: relative;
-            top: 1.5px;
-        }
-        /* [新增] 通过为图标的路径同时应用填充和同色描边，来实现视觉上的“加粗”效果 */
-        #s1p-nav-sync-btn svg path {
-            stroke: currentColor; /* 描边颜色与填充色(currentColor)一致 */
-            stroke-width: 0.6px;  /* 描边宽度，可调整此值改变加粗程度 */
-            stroke-linejoin: round; /* 让描边的边角更平滑 */
-        }
-        #s1p-nav-sync-btn a:hover svg {
-            color: var(--s1p-t);
-            transform: scale(1.1);
-        }
+    #s1p-nav-sync-btn a {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      vertical-align: middle;
+      padding: 0 10px;
+      box-sizing: border-box;
+    }
+    #s1p-nav-sync-btn svg {
+      width: 16px;
+      height: 16px;
+      flex-shrink: 0;
+      color: var(--s1p-t);
+      transition: color 0.3s ease, transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      position: relative;
+      top: 1.5px;
+    }
+    /* [新增] 通过为图标的路径同时应用填充和同色描边，来实现视觉上的“加粗”效果 */
+    #s1p-nav-sync-btn svg path {
+      stroke: currentColor; /* 描边颜色与填充色(currentColor)一致 */
+      stroke-width: 0.6px; /* 描边宽度，可调整此值改变加粗程度 */
+      stroke-linejoin: round; /* 让描边的边角更平滑 */
+    }
+    #s1p-nav-sync-btn a:hover svg {
+      color: var(--s1p-t);
+      transform: scale(1.1);
+    }
 
-        /* --- [MODIFIED] 最终简化版同步动画 (只有旋转) --- */
-        @keyframes s1p-sync-simple-rotate {
-            from { transform: rotate(0deg); }
-            to   { transform: rotate(-360deg); }
-        }
+    /* --- [MODIFIED] 最终简化版同步动画 (只有旋转) --- */
+    @keyframes s1p-sync-simple-rotate {
+      from {
+        transform: rotate(0deg);
+      }
+      to {
+        transform: rotate(-360deg);
+      }
+    }
 
-        #s1p-nav-sync-btn svg.s1p-syncing {
-            animation: s1p-sync-simple-rotate 0.8s linear infinite;
-            pointer-events: none;
-        }
-        #s1p-nav-sync-btn svg.s1p-sync-success {
-            /* 移除了所有成功状态的视觉效果 */
-        }
-        #s1p-nav-sync-btn svg.s1p-sync-error {
-            /* 移除了所有失败状态的视觉效果 */
-        }
+    #s1p-nav-sync-btn svg.s1p-syncing {
+      animation: s1p-sync-simple-rotate 0.8s linear infinite;
+      pointer-events: none;
+    }
+    #s1p-nav-sync-btn svg.s1p-sync-success {
+      /* 移除了所有成功状态的视觉效果 */
+    }
+    #s1p-nav-sync-btn svg.s1p-sync-error {
+      /* 移除了所有失败状态的视觉效果 */
+    }
 
-        /* --- [NEW] Nav Sync Menu --- */
-        .s1p-nav-sync-menu {
-            position: absolute;
-            z-index: 10002;
-            background-color: var(--s1p-bg);
-            border-radius: 6px;
-            box-shadow: 0 2px 8px rgba(var(--s1p-black-rgb), 0.15);
-            border: 1px solid var(--s1p-pri);
-            padding: 4px;
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
-            min-width: max-content;
-            opacity: 0;
-            visibility: hidden;
-            transform: translateY(4px);
-            transition: opacity 0.15s ease-out, transform 0.15s ease-out, visibility 0.15s;
-            pointer-events: none;
-        }
-        .s1p-nav-sync-menu.visible {
-            opacity: 1;
-            visibility: visible;
-            transform: translateY(0);
-            pointer-events: auto;
-        }
-        .s1p-nav-sync-menu button {
-            background: none;
-            border: none;
-            padding: 6px 12px;
-            text-align: left;
-            cursor: pointer;
-            border-radius: 4px;
-            font-size: 14px;
-            color: var(--s1p-t);
-            white-space: nowrap;
-        }
-        .s1p-nav-sync-menu button:hover {
-            background-color: var(--s1p-sub-h);
-            color: var(--s1p-sub-h-t);
-        }
-        .s1p-nav-sync-menu button.s1p-cancel-btn:hover {
-            background-color: var(--s1p-secondary-bg);
-            color: var(--s1p-secondary-text);
-        }
+    /* --- [NEW] Nav Sync Menu --- */
+    .s1p-nav-sync-menu {
+      position: absolute;
+      z-index: 10002;
+      background-color: var(--s1p-bg);
+      border-radius: 6px;
+      box-shadow: 0 2px 8px rgba(var(--s1p-black-rgb), 0.15);
+      border: 1px solid var(--s1p-pri);
+      padding: 4px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: max-content;
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(4px);
+      transition: opacity 0.15s ease-out, transform 0.15s ease-out,
+        visibility 0.15s;
+      pointer-events: none;
+    }
+    .s1p-nav-sync-menu.visible {
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+    .s1p-nav-sync-menu button {
+      background: none;
+      border: none;
+      padding: 6px 12px;
+      text-align: left;
+      cursor: pointer;
+      border-radius: 4px;
+      font-size: 14px;
+      color: var(--s1p-t);
+      white-space: nowrap;
+    }
+    .s1p-nav-sync-menu button:hover {
+      background-color: var(--s1p-sub-h);
+      color: var(--s1p-sub-h-t);
+    }
+    .s1p-nav-sync-menu button.s1p-cancel-btn:hover {
+      background-color: var(--s1p-secondary-bg);
+      color: var(--s1p-secondary-text);
+    }
 
-        /* --- 手动同步弹窗样式 --- */
-        .s1p-sync-choice-info {
-            background-color: var(--s1p-sub);
-            border: 1px solid var(--s1p-pri);
-            border-radius: 6px;
-            padding: 12px;
-            margin-top: 12px;
-            font-size: 13px;
-            line-height: 1.7;
-        }
-        .s1p-sync-choice-info-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .s1p-sync-choice-info-label {
-            font-weight: 500;
-            color: var(--s1p-t);
-        }
-        .s1p-sync-choice-info-time {
-            font-family: monospace, sans-serif;
-        }
-        .s1p-sync-choice-newer {
-            color: var(--s1p-success-text);
-            font-weight: bold;
-        }
+    /* --- 手动同步弹窗样式 --- */
+    .s1p-sync-choice-info {
+      background-color: var(--s1p-sub);
+      border: 1px solid var(--s1p-pri);
+      border-radius: 6px;
+      padding: 12px;
+      margin-top: 12px;
+      font-size: 13px;
+      line-height: 1.7;
+    }
+    .s1p-sync-choice-info-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .s1p-sync-choice-info-label {
+      font-weight: 500;
+      color: var(--s1p-t);
+    }
+    .s1p-sync-choice-info-time {
+      font-family: monospace, sans-serif;
+    }
+    .s1p-sync-choice-newer {
+      color: var(--s1p-success-text);
+      font-weight: bold;
+    }
 
-        /* --- 提示框样式 --- */
-        .s1p-notice {
-            display: flex;
-            align-items: flex-start;
-            gap: 12px;
-            background-color: var(--s1p-sub);
-            border: 1px solid var(--s1p-pri);
-            border-radius: 6px;
-            padding: 12px;
-            margin-top: 12px;
-        }
-        .s1p-notice-icon {
-            flex-shrink: 0;
-            width: 20px;
-            height: 20px;
-            background-color: var(--s1p-t);
-            mask-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='currentColor'%3e%3cpath d='M12 22C6.47715 22 2 17.5228 2 12C2 6.47715 6.47715 2 12 2C17.5228 2 22 6.47715 22 12C22 17.5228 17.5228 22 12 22ZM12 20C16.4183 20 20 16.4183 20 12C20 7.58172 16.4183 4 12 4C7.58172 4 4 7.58172 4 12C4 16.4183 7.58172 20 12 20ZM11 7H13V9H11V7ZM11 11H13V17H11V11Z'%3e%3c/path%3e%3c/svg%3e");
-            mask-size: contain;
-            mask-position: center;
-            mask-repeat: no-repeat;
-            margin-top: 1px;
-        }
-        .s1p-notice-content {
-            font-size: 13px;
-            line-height: 1.6;
-            color: var(--s1p-desc-t);
-        }
-        .s1p-notice-content a {
-            color: var(--s1p-t);
-            font-weight: 500;
-            text-decoration: none;
-        }
-        .s1p-notice-content a:hover {
-            text-decoration: underline;
-        }
-        .s1p-notice-content p {
-            margin: 4px 0 0 0;
-            padding: 0;
-        }
+    /* --- 提示框样式 --- */
+    .s1p-notice {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      background-color: var(--s1p-sub);
+      border: 1px solid var(--s1p-pri);
+      border-radius: 6px;
+      padding: 12px;
+      margin-top: 12px;
+    }
+    .s1p-notice-icon {
+      flex-shrink: 0;
+      width: 20px;
+      height: 20px;
+      background-color: var(--s1p-t);
+      mask-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='currentColor'%3e%3cpath d='M12 22C6.47715 22 2 17.5228 2 12C2 6.47715 6.47715 2 12 2C17.5228 2 22 6.47715 22 12C22 17.5228 17.5228 22 12 22ZM12 20C16.4183 20 20 16.4183 20 12C20 7.58172 16.4183 4 12 4C7.58172 4 4 7.58172 4 12C4 16.4183 7.58172 20 12 20ZM11 7H13V9H11V7ZM11 11H13V17H11V11Z'%3e%3c/path%3e%3c/svg%3e");
+      mask-size: contain;
+      mask-position: center;
+      mask-repeat: no-repeat;
+      margin-top: 1px;
+    }
+    .s1p-notice-content {
+      font-size: 13px;
+      line-height: 1.6;
+      color: var(--s1p-desc-t);
+    }
+    .s1p-notice-content a {
+      color: var(--s1p-t);
+      font-weight: 500;
+      text-decoration: none;
+    }
+    .s1p-notice-content a:hover {
+      text-decoration: underline;
+    }
+    .s1p-notice-content p {
+      margin: 4px 0 0 0;
+      padding: 0;
+    }
 
-        /* --- 滑块式分段控件样式 --- */
-        .s1p-segmented-control {
-            position: relative;
-            display: inline-flex;
-            background-color: var(--s1p-sub);
-            border-radius: 6px;
-            padding: 2px;
-            user-select: none;
-        }
-        .s1p-segmented-control-slider {
-            position: absolute;
-            top: 2px;
-            left: 0;
-            height: calc(100% - 4px);
-            background-color: var(--s1p-sec);
-            border-radius: 5px;
-            box-shadow: 0 1px 3px rgba(var(--s1p-black-rgb), 0.1);
-            transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
-        }
-        .s1p-segmented-control:hover .s1p-segmented-control-slider {
-            box-shadow: 0 2px 6px rgba(var(--s1p-black-rgb), 0.15);
-        }
-        .s1p-segmented-control-option {
-            position: relative;
-            z-index: 1;
-            padding: 4px 12px;
-            color: var(--s1p-desc-t);
-            cursor: pointer;
-            transition: color 0.25s ease-in-out, background-color 0.2s ease-in-out;
-            font-size: 13px;
-            line-height: 1.5;
-            white-space: nowrap;
-            border-radius: 4px;
-        }
-        .s1p-segmented-control-option.active {
-            color: var(--s1p-white);
-            font-weight: 500;
-            cursor: default;
-        }
-        .s1p-segmented-control-option:not(.active):hover {
-            background-color: var(--s1p-pri);
-            color: var(--s1p-t);
-        }
+    /* --- 滑块式分段控件样式 --- */
+    .s1p-segmented-control {
+      position: relative;
+      display: inline-flex;
+      background-color: var(--s1p-sub);
+      border-radius: 6px;
+      padding: 2px;
+      user-select: none;
+    }
+    .s1p-segmented-control-slider {
+      position: absolute;
+      top: 2px;
+      left: 0;
+      height: calc(100% - 4px);
+      background-color: var(--s1p-sec);
+      border-radius: 5px;
+      box-shadow: 0 1px 3px rgba(var(--s1p-black-rgb), 0.1);
+      transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+        transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .s1p-segmented-control:hover .s1p-segmented-control-slider {
+      box-shadow: 0 2px 6px rgba(var(--s1p-black-rgb), 0.15);
+    }
+    .s1p-segmented-control-option {
+      position: relative;
+      z-index: 1;
+      padding: 4px 12px;
+      color: var(--s1p-desc-t);
+      cursor: pointer;
+      transition: color 0.25s ease-in-out, background-color 0.2s ease-in-out;
+      font-size: 13px;
+      line-height: 1.5;
+      white-space: nowrap;
+      border-radius: 4px;
+    }
+    .s1p-segmented-control-option.active {
+      color: var(--s1p-white);
+      font-weight: 500;
+      cursor: default;
+    }
+    .s1p-segmented-control-option:not(.active):hover {
+      background-color: var(--s1p-pri);
+      color: var(--s1p-t);
+    }
 
-        /* --- 核心修复与通用布局 --- */
-        #p_pop { display: none !important; }
-        #threadlisttableid td.icn {
-            padding-left: 2px !important;
-        }
+    /* --- 核心修复与通用布局 --- */
+    #p_pop {
+      display: none !important;
+    }
+    #threadlisttableid td.icn {
+      padding-left: 2px !important;
+    }
 
-        /* --- [FIX FINAL v3] 帖子列表对齐与分隔符修正 --- */
+    /* --- [FIX FINAL v3] 帖子列表对齐与分隔符修正 --- */
 
-        /* 1. [核心修正] 精确隐藏作为“空白分隔符”的 separatorline，
+    /* 1. [核心修正] 精确隐藏作为“空白分隔符”的 separatorline，
         通过 .emptb 类来识别，避免隐藏“版块主题”行。*/
-        #separatorline.emptb {
-            display: none !important;
-        }
+    #separatorline.emptb {
+      display: none !important;
+    }
 
-        /* 2. 为S1Plus注入的表头占位单元格设置宽度 */
-        #threadlisttableid .th .s1p-header-placeholder {
-            width: 14px;
-        }
+    /* 2. 为S1Plus注入的表头占位单元格设置宽度 */
+    #threadlisttableid .th .s1p-header-placeholder {
+      width: 14px;
+    }
 
-        /* 3. 统一所有列的对齐方式为左对齐，以匹配原始样式 */
-        #threadlisttableid td.by,
-        #threadlisttableid td.num,
-        #threadlisttableid .th .by,
-        #threadlisttableid .th .num {
-            text-align: left !important;
-        }
+    /* 3. 统一所有列的对齐方式为左对齐，以匹配原始样式 */
+    #threadlisttableid td.by,
+    #threadlisttableid td.num,
+    #threadlisttableid .th .by,
+    #threadlisttableid .th .num {
+      text-align: left !important;
+    }
 
-        /* --- 关键字屏蔽样式 --- */
-        .s1p-hidden-by-keyword, .s1p-hidden-by-quote { display: none !important; }
+    /* --- 关键字屏蔽样式 --- */
+    .s1p-hidden-by-keyword,
+    .s1p-hidden-by-quote {
+      display: none !important;
+    }
 
-        /* --- 按钮通用样式 --- */
-        .s1p-btn { display: inline-flex; align-items: center; justify-content: center; padding: 5px 10px 5px 12px; border-radius: 4px; background-color: var(--s1p-sub); color: var(--s1p-t); font-size: 14px; font-weight: bold; cursor: pointer; user-select: none; white-space: nowrap; border: 1px solid var(--s1p-pri); transition: all 0.2s ease-in-out;}
-        .s1p-btn:hover { background-color: var(--s1p-sub-h); color: var(--s1p-sub-h-t); border-color: var(--s1p-sub-h); }
-        .s1p-red-btn { background-color: var(--s1p-red); color: var(--s1p-white); border-color: var(--s1p-red); }
-        .s1p-red-btn:hover { background-color: var(--s1p-red-h); border-color: var(--s1p-red-h); }
-        .s1p-btn.s1p-danger:hover {
-            background-color: var(--s1p-red-h);
-            border-color: var(--s1p-red-h);
-            color: var(--s1p-white);
-        }
+    /* --- 按钮通用样式 --- */
+    .s1p-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 5px 10px 5px 12px;
+      border-radius: 4px;
+      background-color: var(--s1p-sub);
+      color: var(--s1p-t);
+      font-size: 14px;
+      font-weight: bold;
+      cursor: pointer;
+      user-select: none;
+      white-space: nowrap;
+      border: 1px solid var(--s1p-pri);
+      transition: all 0.2s ease-in-out;
+    }
+    .s1p-btn:hover {
+      background-color: var(--s1p-sub-h);
+      color: var(--s1p-sub-h-t);
+      border-color: var(--s1p-sub-h);
+    }
+    .s1p-red-btn {
+      background-color: var(--s1p-red);
+      color: var(--s1p-white);
+      border-color: var(--s1p-red);
+    }
+    .s1p-red-btn:hover {
+      background-color: var(--s1p-red-h);
+      border-color: var(--s1p-red-h);
+    }
+    .s1p-btn.s1p-danger:hover {
+      background-color: var(--s1p-red-h);
+      border-color: var(--s1p-red-h);
+      color: var(--s1p-white);
+    }
 
-        /* --- 帖子操作按钮 (三点图标) --- */
-        .s1p-options-cell {
-            position: relative;
-            width: 14px;
-            padding: 0 !important;
-            text-align: center;
-            vertical-align: middle;
-        }
-        .s1p-options-cell::after {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 100%;
-            width: 6px;
-            height: 100%;
-        }
-        .s1p-options-btn {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            width: 18px;
-            height: 24px;
-            border-radius: 4px;
-            cursor: pointer;
-            color: var(--s1p-icon-color);
-            opacity: 0.4;
-            transition: background-color 0.2s ease, color 0.2s ease, opacity 0.2s ease;
-        }
-        .s1p-options-cell:hover .s1p-options-btn {
-            background-color: var(--s1p-pri);
-            color: var(--s1p-t);
-            opacity: 1;
-        }
-        .s1p-options-menu {
-            position: absolute;
-            top: 50%;
-            left: 100%;
-            margin-left: 6px;
-            transform: translateY(-50%);
-            z-index: 10;
-            background-color: var(--s1p-bg);
-            border: 1px solid var(--s1p-pri);
-            border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(var(--s1p-black-rgb), 0.1);
-            padding: 5px;
-            min-width: 110px;
-            opacity: 0;
-            visibility: hidden;
-            pointer-events: none;
-            transition: opacity 0.15s ease-out, visibility 0.15s;
-        }
-        .s1p-options-cell:hover .s1p-options-menu {
-            opacity: 1;
-            visibility: visible;
-            pointer-events: auto;
-        }
+    /* --- 帖子操作按钮 (三点图标) --- */
+    .s1p-options-cell {
+      position: relative;
+      width: 14px;
+      padding: 0 !important;
+      text-align: center;
+      vertical-align: middle;
+    }
+    .s1p-options-cell::after {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 100%;
+      width: 6px;
+      height: 100%;
+    }
+    .s1p-options-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 18px;
+      height: 24px;
+      border-radius: 4px;
+      cursor: pointer;
+      color: var(--s1p-icon-color);
+      opacity: 0.4;
+      transition: background-color 0.2s ease, color 0.2s ease, opacity 0.2s ease;
+    }
+    .s1p-options-cell:hover .s1p-options-btn {
+      background-color: var(--s1p-pri);
+      color: var(--s1p-t);
+      opacity: 1;
+    }
+    .s1p-options-menu {
+      position: absolute;
+      top: 50%;
+      left: 100%;
+      margin-left: 6px;
+      transform: translateY(-50%);
+      z-index: 10;
+      background-color: var(--s1p-bg);
+      border: 1px solid var(--s1p-pri);
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(var(--s1p-black-rgb), 0.1);
+      padding: 5px;
+      min-width: 110px;
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transition: opacity 0.15s ease-out, visibility 0.15s;
+    }
+    .s1p-options-cell:hover .s1p-options-menu {
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+    }
 
-        /* --- 直接确认UI --- */
-        .s1p-direct-confirm {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 10px;
-            font-size: 14px;
-            color: var(--s1p-t);
-            padding: 2px 6px;
-            white-space: nowrap;
-        }
-        .s1p-confirm-separator {
-            border-left: 1px solid var(--s1p-pri);
-            height: 20px;
-            margin: 0 2px 0 8px;
-        }
-        .s1p-confirm-action-btn {
-            display: flex; align-items: center; justify-content: center;
-            width: 32px; height: 32px;
-            border: none; border-radius: 50%;
-            cursor: pointer;
-            transition: background-color 0.2s ease, transform 0.1s ease, background-image 0.2s ease;
-            background-repeat: no-repeat;
-            background-position: center;
-            background-size: 60%;
-            flex-shrink: 0;
-        }
-        .s1p-confirm-action-btn:active { transform: scale(0.95); }
-        .s1p-confirm-action-btn.s1p-confirm {
-            background-color: transparent;
-            background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='2.5' stroke='%2322c55e'%3e%3cpath stroke-linecap='round' stroke-linejoin='round' d='M4.5 12.75l6 6 9-13.5' /%3e%3c/svg%3e");
-        }
-        .s1p-confirm-action-btn.s1p-confirm:hover {
-            background-color: var(--s1p-confirm-hover-bg);
-            background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='2.5' stroke='%23ffffff'%3e%3cpath stroke-linecap='round' stroke-linejoin='round' d='M4.5 12.75l6 6 9-13.5' /%3e%3c/svg%3e");
-        }
-        .s1p-confirm-action-btn.s1p-cancel {
-            background-color: transparent;
-            background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='2.5' stroke='%23ef4444'%3e%3cpath stroke-linecap='round' stroke-linejoin='round' d='M6 18L18 6M6 6l12 12' /%3e%3c/svg%3e");
-        }
-        .s1p-confirm-action-btn.s1p-cancel:hover {
-            background-color: var(--s1p-cancel-hover-bg);
-            background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='2.5' stroke='%23ffffff'%3e%3cpath stroke-linecap='round' stroke-linejoin='round' d='M6 18L18 6M6 6l12 12' /%3e%3c/svg%3e");
-        }
+    /* --- 直接确认UI --- */
+    .s1p-direct-confirm {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 14px;
+      color: var(--s1p-t);
+      padding: 2px 6px;
+      white-space: nowrap;
+    }
+    .s1p-confirm-separator {
+      border-left: 1px solid var(--s1p-pri);
+      height: 20px;
+      margin: 0 2px 0 8px;
+    }
+    .s1p-confirm-action-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      border: none;
+      border-radius: 50%;
+      cursor: pointer;
+      transition: background-color 0.2s ease, transform 0.1s ease,
+        background-image 0.2s ease;
+      background-repeat: no-repeat;
+      background-position: center;
+      background-size: 60%;
+      flex-shrink: 0;
+    }
+    .s1p-confirm-action-btn:active {
+      transform: scale(0.95);
+    }
+    .s1p-confirm-action-btn.s1p-confirm {
+      background-color: transparent;
+      background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='2.5' stroke='%2322c55e'%3e%3cpath stroke-linecap='round' stroke-linejoin='round' d='M4.5 12.75l6 6 9-13.5' /%3e%3c/svg%3e");
+    }
+    .s1p-confirm-action-btn.s1p-confirm:hover {
+      background-color: var(--s1p-confirm-hover-bg);
+      background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='2.5' stroke='%23ffffff'%3e%3cpath stroke-linecap='round' stroke-linejoin='round' d='M4.5 12.75l6 6 9-13.5' /%3e%3c/svg%3e");
+    }
+    .s1p-confirm-action-btn.s1p-cancel {
+      background-color: transparent;
+      background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='2.5' stroke='%23ef4444'%3e%3cpath stroke-linecap='round' stroke-linejoin='round' d='M6 18L18 6M6 6l12 12' /%3e%3c/svg%3e");
+    }
+    .s1p-confirm-action-btn.s1p-cancel:hover {
+      background-color: var(--s1p-cancel-hover-bg);
+      background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='2.5' stroke='%23ffffff'%3e%3cpath stroke-linecap='round' stroke-linejoin='round' d='M6 18L18 6M6 6l12 12' /%3e%3c/svg%3e");
+    }
 
-        /* --- 行内确认菜单样式 (带动画) --- */
-        .s1p-inline-confirm-menu {
-            transform: translateY(0) !important;
-            margin-left: 0 !important;
-            z-index: 10004;
-            opacity: 0;
-            transform: translateX(-8px) scale(0.95) !important;
-            transition: opacity 0.15s ease-out, transform 0.15s ease-out;
-            pointer-events: none;
-            visibility: visible !important;
-        }
-        .s1p-inline-confirm-menu.visible {
-            opacity: 1;
-            transform: translateX(0) scale(1) !important;
-            pointer-events: auto;
-        }
+    /* --- 行内确认菜单样式 (带动画) --- */
+    .s1p-inline-confirm-menu {
+      transform: translateY(0) !important;
+      margin-left: 0 !important;
+      z-index: 10004;
+      opacity: 0;
+      transform: translateX(-8px) scale(0.95) !important;
+      transition: opacity 0.15s ease-out, transform 0.15s ease-out;
+      pointer-events: none;
+      visibility: visible !important;
+    }
+    .s1p-inline-confirm-menu.visible {
+      opacity: 1;
+      transform: translateX(0) scale(1) !important;
+      pointer-events: auto;
+    }
 
-        /* --- [NEW] Inline Action Menu --- */
-        .s1p-inline-action-menu {
-            position: absolute;
-            z-index: 10004;
-            display: flex;
-            align-items: center;
-            gap: 4px;
-            background-color: var(--s1p-bg);
-            border: 1px solid var(--s1p-pri);
-            border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(var(--s1p-black-rgb), 0.1);
-            padding: 5px;
-            opacity: 0;
-            visibility: hidden;
-            transform: translateY(5px) scale(0.95);
-            transition: opacity 0.15s ease-out, transform 0.15s ease-out, visibility 0.15s;
-            pointer-events: none;
-        }
-        .s1p-inline-action-menu.visible {
-            opacity: 1;
-            visibility: visible;
-            transform: translateY(0) scale(1);
-            pointer-events: auto;
-        }
-        .s1p-inline-action-menu .s1p-action-btn {
-            display: flex;
-            align-items: center;
-            gap: 5px;
-            padding: 5px 10px;
-            border-radius: 5px;
-            font-size: 14px;
-            font-weight: 500;
-            color: var(--s1p-t);
-            background-color: transparent;
-            border: none;
-            cursor: pointer;
-            transition: background-color 0.2s ease, color 0.2s ease;
-        }
-        .s1p-inline-action-menu .s1p-action-btn:hover {
-            background-color: var(--s1p-sub);
-        }
+    /* --- [NEW] Inline Action Menu --- */
+    .s1p-inline-action-menu {
+      position: absolute;
+      z-index: 10004;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      background-color: var(--s1p-bg);
+      border: 1px solid var(--s1p-pri);
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(var(--s1p-black-rgb), 0.1);
+      padding: 5px;
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(5px) scale(0.95);
+      transition: opacity 0.15s ease-out, transform 0.15s ease-out,
+        visibility 0.15s;
+      pointer-events: none;
+    }
+    .s1p-inline-action-menu.visible {
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(0) scale(1);
+      pointer-events: auto;
+    }
+    .s1p-inline-action-menu .s1p-action-btn {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 5px 10px;
+      border-radius: 5px;
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--s1p-t);
+      background-color: transparent;
+      border: none;
+      cursor: pointer;
+      transition: background-color 0.2s ease, color 0.2s ease;
+    }
+    .s1p-inline-action-menu .s1p-action-btn:hover {
+      background-color: var(--s1p-sub);
+    }
 
-        /* --- [MODIFIED] Icon Styling within Action Buttons --- */
-        .s1p-inline-action-menu .s1p-action-btn svg {
-            width: 20px;
-            height: 20px;
-            flex-shrink: 0; /* 防止图标被压缩 */
-        }
+    /* --- [MODIFIED] Icon Styling within Action Buttons --- */
+    .s1p-inline-action-menu .s1p-action-btn svg {
+      width: 20px;
+      height: 20px;
+      flex-shrink: 0; /* 防止图标被压缩 */
+    }
 
-        /* --- 阅读进度UI样式 --- */
-        .s1p-progress-container {
-            display: inline-flex;
-            align-items: center;
-            margin: 0 8px;
-            vertical-align: middle;
-            line-height: 1;
-        }
-        .s1p-progress-jump-btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 4px;
-            font-size: 12px;
-            font-weight: bold;
-            text-decoration: none;
-            border: 1px solid;
-            border-radius: 4px;
-            padding: 1px 6px 1px 4px;
-            transition: all 0.2s ease-in-out;
-            line-height: 1.4;
-        }
-        .s1p-progress-jump-btn::before {
-            content: '';
-            display: inline-block;
-            width: 1.1em;
-            height: 1.1em;
-            background-color: currentColor;
-            mask-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3e%3cpath d='M19 15l-6 6-1.42-1.42L15.17 16H4V4h2v10h9.17l-3.59-3.58L13 9l6 6z' fill='black'/%3e%3c/svg%3e");
-            mask-size: contain;
-            mask-repeat: no-repeat;
-            mask-position: center;
-        }
-        .s1p-new-replies-badge {
-            display: inline-block;
-            color: var(--s1p-white);
-            font-size: 12px;
-            font-weight: bold;
-            padding: 1px 5px;
-            border: 1px solid;
-            border-left: none;
-            border-radius: 0 4px 4px 0;
-            line-height: 1.4;
-            user-select: none;
-        }
+    /* --- 阅读进度UI样式 --- */
+    .s1p-progress-container {
+      display: inline-flex;
+      align-items: center;
+      margin: 0 8px;
+      vertical-align: middle;
+      line-height: 1;
+    }
+    .s1p-progress-jump-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 12px;
+      font-weight: bold;
+      text-decoration: none;
+      border: 1px solid;
+      border-radius: 4px;
+      padding: 1px 6px 1px 4px;
+      transition: all 0.2s ease-in-out;
+      line-height: 1.4;
+    }
+    .s1p-progress-jump-btn::before {
+      content: "";
+      display: inline-block;
+      width: 1.1em;
+      height: 1.1em;
+      background-color: currentColor;
+      mask-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3e%3cpath d='M19 15l-6 6-1.42-1.42L15.17 16H4V4h2v10h9.17l-3.59-3.58L13 9l6 6z' fill='black'/%3e%3c/svg%3e");
+      mask-size: contain;
+      mask-repeat: no-repeat;
+      mask-position: center;
+    }
+    .s1p-new-replies-badge {
+      display: inline-block;
+      color: var(--s1p-white);
+      font-size: 12px;
+      font-weight: bold;
+      padding: 1px 5px;
+      border: 1px solid;
+      border-left: none;
+      border-radius: 0 4px 4px 0;
+      line-height: 1.4;
+      user-select: none;
+    }
 
-        /* --- 通用输入框样式 --- */
-        .s1p-input {
-            width: 100%;
-            background: var(--s1p-bg);
-            border: 1px solid var(--s1p-pri);
-            border-radius: 6px;
-            padding: 8px 12px;
-            font-size: 14px;
-            box-sizing: border-box;
-            transition: border-color 0.2s ease-in-out, background-color 0.2s ease-in-out;
-            color: var(--s1p-t);
-        }
-        .s1p-input:focus {
-            outline: none;
-            border-color: var(--s1p-sec);
-            background-color: var(--s1p-white);
-        }
-        .s1p-textarea {
-            resize: vertical;
-            min-height: 80px;
-        }
+    /* --- 通用输入框样式 --- */
+    .s1p-input {
+      width: 100%;
+      background: var(--s1p-bg);
+      border: 1px solid var(--s1p-pri);
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-size: 14px;
+      box-sizing: border-box;
+      transition: border-color 0.2s ease-in-out,
+        background-color 0.2s ease-in-out;
+      color: var(--s1p-t);
+    }
+    .s1p-input:focus {
+      outline: none;
+      border-color: var(--s1p-sec);
+      background-color: var(--s1p-white);
+    }
+    .s1p-textarea {
+      resize: vertical;
+      min-height: 80px;
+    }
 
-        /* --- [新增] 优化 Windows 下密码输入框样式 --- */
-        #s1p-remote-pat-input {
-            /* 修正部分 Windows 系统下字体渲染问题 */
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            /* 增加字符间距，让星号 (*) 显示更清晰 */
-            letter-spacing: 1.5px;
-        }
-        #s1p-remote-pat-input::-ms-reveal {
-            /* 隐藏 Windows Edge/IE 浏览器自带的显示密码图标 */
-            display: none;
-        }
+    /* --- [新增] 优化 Windows 下密码输入框样式 --- */
+    #s1p-remote-pat-input {
+      /* 修正部分 Windows 系统下字体渲染问题 */
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+        "Helvetica Neue", Arial, sans-serif;
+      /* 增加字符间距，让星号 (*) 显示更清晰 */
+      letter-spacing: 1.5px;
+    }
+    #s1p-remote-pat-input::-ms-reveal {
+      /* 隐藏 Windows Edge/IE 浏览器自带的显示密码图标 */
+      display: none;
+    }
 
-        /* --- 用户标记悬浮窗 --- */
-        .s1p-tag-popover {
-            position: absolute;
-            z-index: 10001;
-            width: 300px;
-            background-color: var(--s1p-bg);
-            border-radius: 12px;
-            box-shadow: 0 4px 20px rgba(var(--s1p-black-rgb), 0.08);
-            border: 1px solid var(--s1p-pri);
-            opacity: 0;
-            visibility: hidden;
-            transform: translateY(5px) scale(0.98);
-            transition: opacity 0.2s ease-out, transform 0.2s ease-out, visibility 0.2s;
-            pointer-events: none;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-        }
-        .s1p-tag-popover.visible {
-            opacity: 1;
-            visibility: visible;
-            transform: translateY(0) scale(1);
-            pointer-events: auto;
-        }
-        .s1p-popover-content {
-            padding: 16px;
-        }
-        .s1p-popover-main-content {
-            font-size: 14px;
-            line-height: 1.6;
-            color: var(--s1p-t);
-            padding: 4px 4px 20px 4px;
-            min-height: 30px;
-            word-wrap: break-word;
-            white-space: pre-wrap;
-        }
-        .s1p-popover-main-content.s1p-empty {
-            text-align: center;
-            color: var(--s1p-text-empty);
-        }
-        .s1p-popover-hr {
-            border: none;
-            border-top: 1px solid var(--s1p-pri);
-            margin: 0;
-        }
-        .s1p-popover-footer {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 12px;
-            padding-top: 16px;
-        }
-        .s1p-popover-user-container {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            min-width: 0;
-        }
-        .s1p-popover-avatar {
-            width: 36px;
-            height: 36px;
-            border-radius: 50%;
-            object-fit: cover;
-            flex-shrink: 0;
-            background-color: var(--s1p-pri);
-        }
-        .s1p-popover-user-info {
-            flex-grow: 1;
-            min-width: 0;
-        }
-        .s1p-popover-username {
-            font-weight: 500;
-            font-size: 14px;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-        .s1p-popover-user-id {
-            font-size: 12px;
-            color: var(--s1p-desc-t);
-            white-space: nowrap;
-        }
-        .s1p-popover-actions {
-            display: flex;
-            gap: 8px;
-            flex-shrink: 0;
-        }
-        .s1p-edit-mode-header {
-            font-weight: 600;
-            font-size: 15px;
-            margin-bottom: 12px;
-        }
-        .s1p-edit-mode-textarea {
-            height: 90px;
-            margin-bottom: 12px;
-        }
-        .s1p-edit-mode-actions {
-            display: flex;
-            justify-content: flex-end;
-            gap: 8px;
-        }
+    /* --- 用户标记悬浮窗 --- */
+    .s1p-tag-popover {
+      position: absolute;
+      z-index: 10001;
+      width: 300px;
+      background-color: var(--s1p-bg);
+      border-radius: 12px;
+      box-shadow: 0 4px 20px rgba(var(--s1p-black-rgb), 0.08);
+      border: 1px solid var(--s1p-pri);
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(5px) scale(0.98);
+      transition: opacity 0.2s ease-out, transform 0.2s ease-out,
+        visibility 0.2s;
+      pointer-events: none;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+        "Helvetica Neue", Arial, sans-serif;
+    }
+    .s1p-tag-popover.visible {
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(0) scale(1);
+      pointer-events: auto;
+    }
+    .s1p-popover-content {
+      padding: 16px;
+    }
+    .s1p-popover-main-content {
+      font-size: 14px;
+      line-height: 1.6;
+      color: var(--s1p-t);
+      padding: 4px 4px 20px 4px;
+      min-height: 30px;
+      word-wrap: break-word;
+      white-space: pre-wrap;
+    }
+    .s1p-popover-main-content.s1p-empty {
+      text-align: center;
+      color: var(--s1p-text-empty);
+    }
+    .s1p-popover-hr {
+      border: none;
+      border-top: 1px solid var(--s1p-pri);
+      margin: 0;
+    }
+    .s1p-popover-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding-top: 16px;
+    }
+    .s1p-popover-user-container {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+    .s1p-popover-avatar {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      object-fit: cover;
+      flex-shrink: 0;
+      background-color: var(--s1p-pri);
+    }
+    .s1p-popover-user-info {
+      flex-grow: 1;
+      min-width: 0;
+    }
+    .s1p-popover-username {
+      font-weight: 500;
+      font-size: 14px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .s1p-popover-user-id {
+      font-size: 12px;
+      color: var(--s1p-desc-t);
+      white-space: nowrap;
+    }
+    .s1p-popover-actions {
+      display: flex;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    .s1p-edit-mode-header {
+      font-weight: 600;
+      font-size: 15px;
+      margin-bottom: 12px;
+    }
+    .s1p-edit-mode-textarea {
+      height: 90px;
+      margin-bottom: 12px;
+    }
+    .s1p-edit-mode-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
 
-        /* --- [NEW] 通用显示悬浮窗 --- */
-        .s1p-generic-display-popover {
-            position: absolute;
-            z-index: 10003;
-            max-width: 350px;
-            background-color: var(--s1p-bg);
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(var(--s1p-black-rgb), 0.12);
-            border: 1px solid var(--s1p-pri);
-            padding: 10px 14px;
-            font-size: 13px;
-            line-height: 1.6;
-            color: var(--s1p-t);
-            opacity: 0;
-            visibility: hidden;
-            transform: translateY(5px);
-            transition: opacity 0.15s ease-out, transform 0.15s ease-out;
-            pointer-events: none;
-            white-space: pre-wrap;
-            word-wrap: break-word;
-        }
-        .s1p-generic-display-popover.visible {
-            opacity: 1;
-            visibility: visible;
-            transform: translateY(0);
-        }
-        /* --- [ULTIMATE FIX V2.1] Flexbox Layout Fix (Ultimate Version) --- */
-        .pi {
-            display: flex !important;
-            align-items: center;
-            gap: 8px;
-            position: relative !important; /* <-- [新增] 为绝对定位的子元素提供定位上下文 */
-        }
-        .pi > .pti {
-            min-width: 0;
-            position: static !important;
-            z-index: auto !important;
-            order: 1;
-            overflow: hidden;
-        }
-        /* [新增] 布局伸缩器，永久固定右侧元素 */
-        .s1p-layout-spacer {
-            margin-left: auto;
-            order: 2;
-        }
-        .pi > strong {
-            flex-shrink: 0;
-            order: 4;
-        }
-        .pi > #fj {
-            margin-left: 0;
-            order: 5;
-            flex-shrink: 0;
-            position: static !important;
-            z-index: auto !important;
-        }
-        .authi {
-            display: flex !important;
-            align-items: center;
-            flex-wrap: nowrap;
-            overflow: hidden;
-            white-space: nowrap !important;
-        }
+    /* --- [NEW] 通用显示悬浮窗 --- */
+    .s1p-generic-display-popover {
+      position: absolute;
+      z-index: 10003;
+      max-width: 350px;
+      background-color: var(--s1p-bg);
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(var(--s1p-black-rgb), 0.12);
+      border: 1px solid var(--s1p-pri);
+      padding: 10px 14px;
+      font-size: 13px;
+      line-height: 1.6;
+      color: var(--s1p-t);
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(5px);
+      transition: opacity 0.15s ease-out, transform 0.15s ease-out;
+      pointer-events: none;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+    .s1p-generic-display-popover.visible {
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(0);
+    }
+    /* --- [ULTIMATE FIX V2.1] Flexbox Layout Fix (Ultimate Version) --- */
+    .pi {
+      display: flex !important;
+      align-items: center;
+      gap: 8px;
+      position: relative !important; /* <-- [新增] 为绝对定位的子元素提供定位上下文 */
+    }
+    .pi > .pti {
+      min-width: 0;
+      position: static !important;
+      z-index: auto !important;
+      order: 1;
+      overflow: hidden;
+    }
+    /* [新增] 布局伸缩器，永久固定右侧元素 */
+    .s1p-layout-spacer {
+      margin-left: auto;
+      order: 2;
+    }
+    .pi > strong {
+      flex-shrink: 0;
+      order: 4;
+    }
+    .pi > #fj {
+      margin-left: 0;
+      order: 5;
+      flex-shrink: 0;
+      position: static !important;
+      z-index: auto !important;
+    }
+    .authi {
+      display: flex !important;
+      align-items: center;
+      flex-wrap: nowrap;
+      overflow: hidden;
+      white-space: nowrap !important;
+    }
 
-        /* --- [FINAL FIX v2] Corrected CSS Selector Specificity --- */
+    /* --- [FINAL FIX v2] Corrected CSS Selector Specificity --- */
 
-        /* 1. 最外层容器: flex布局，这是基础 */
-        .s1p-authi-container {
-            display: flex;
-            align-items: center;
-            min-width: 0;
-        }
+    /* 1. 最外层容器: flex布局，这是基础 */
+    .s1p-authi-container {
+      display: flex;
+      align-items: center;
+      min-width: 0;
+    }
 
-        /* 2. 原生按钮容器: 绝对不允许被压缩 */
-        .s1p-authi-container > .authi {
-            flex-shrink: 0;
-            white-space: nowrap;
-        }
+    /* 2. 原生按钮容器: 绝对不允许被压缩 */
+    .s1p-authi-container > .authi {
+      flex-shrink: 0;
+      white-space: nowrap;
+    }
 
-        /* 3. 脚本按钮总容器: 作为被压缩的主要对象，内部强制不换行 */
-        .s1p-authi-container > .s1p-authi-actions-wrapper {
-            display: flex;
-            align-items: center;
-            flex-shrink: 1;
-            min-width: 0;
-            flex-wrap: nowrap;
-        }
+    /* 3. 脚本按钮总容器: 作为被压缩的主要对象，内部强制不换行 */
+    .s1p-authi-container > .s1p-authi-actions-wrapper {
+      display: flex;
+      align-items: center;
+      flex-shrink: 1;
+      min-width: 0;
+      flex-wrap: nowrap;
+    }
 
-        /* 4. [已修正冲突] 脚本容器 *内部* 元素的精确规则: */
+    /* 4. [已修正冲突] 脚本容器 *内部* 元素的精确规则: */
 
-        /* a) 用户标记容器(.s1p-user-tag-container): 这是唯一允许被压缩的元素 */
-        .s1p-authi-actions-wrapper > .s1p-user-tag-container {
-            flex-shrink: 1;
-            min-width: 30px;
-        }
+    /* a) 用户标记容器(.s1p-user-tag-container): 这是唯一允许被压缩的元素 */
+    .s1p-authi-actions-wrapper > .s1p-user-tag-container {
+      flex-shrink: 1;
+      min-width: 30px;
+    }
 
-        /* b) 其他所有按钮(<a>)和分隔符(<span>): 绝对不允许被压缩 */
-        .s1p-authi-actions-wrapper > a.s1p-authi-action,
-        .s1p-authi-actions-wrapper > span.pipe {
-            flex-shrink: 0;
-        }
+    /* b) 其他所有按钮(<a>)和分隔符(<span>): 绝对不允许被压缩 */
+    .s1p-authi-actions-wrapper > a.s1p-authi-action,
+    .s1p-authi-actions-wrapper > span.pipe {
+      flex-shrink: 0;
+    }
 
-        .s1p-authi-actions-wrapper {
-            display: inline-flex;
-            align-items: center;
-            min-width: 0;
-            vertical-align: middle;
-        }
-        .s1p-user-tag-container {
-            display: inline-flex;
-            align-items: center;
-            flex-shrink: 1;
-            min-width: 30px;
-            vertical-align: middle;
-            overflow: hidden;
-            border-radius: 6px;
-        }
-        .s1p-user-tag-display {
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            display: block;
-            background-color: var(--s1p-sub);
-            color: var(--s1p-t);
-            padding: 2px 8px;
-            font-size: 12px;
-            cursor: default;
-        }
-        .s1p-user-tag-options {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background-color: var(--s1p-sub);
-            color: var(--s1p-t);
-            padding: 0 8px;
-            flex-shrink: 0;
-            align-self: stretch;
-            cursor: pointer;
-            transition: background-color 0.2s ease-in-out;
-        }
-        .s1p-user-tag-options:hover {
-            background-color: var(--s1p-pri);
-        }
+    .s1p-authi-actions-wrapper {
+      display: inline-flex;
+      align-items: center;
+      min-width: 0;
+      vertical-align: middle;
+    }
+    .s1p-user-tag-container {
+      display: inline-flex;
+      align-items: center;
+      flex-shrink: 1;
+      min-width: 30px;
+      vertical-align: middle;
+      overflow: hidden;
+      border-radius: 6px;
+    }
+    .s1p-user-tag-display {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: block;
+      background-color: var(--s1p-sub);
+      color: var(--s1p-t);
+      padding: 2px 8px;
+      font-size: 12px;
+      cursor: default;
+    }
+    .s1p-user-tag-options {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background-color: var(--s1p-sub);
+      color: var(--s1p-t);
+      padding: 0 8px;
+      flex-shrink: 0;
+      align-self: stretch;
+      cursor: pointer;
+      transition: background-color 0.2s ease-in-out;
+    }
+    .s1p-user-tag-options:hover {
+      background-color: var(--s1p-pri);
+    }
 
-        /* --- Tag Options Menu --- */
-        .s1p-tag-options-menu {
-            position: absolute;
-            z-index: 10002;
-            background-color: var(--s1p-bg);
-            border-radius: 6px;
-            box-shadow: 0 2px 8px rgba(var(--s1p-black-rgb), 0.15);
-            border: 1px solid var(--s1p-pri);
-            padding: 4px;
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
-            min-width: max-content;
-        }
-        .s1p-tag-options-menu button {
-            background: none;
-            border: none;
-            padding: 6px 12px;
-            text-align: left;
-            cursor: pointer;
-            border-radius: 4px;
-            font-size: 14px;
-            color: var(--s1p-t);
-            white-space: nowrap;
-        }
-        .s1p-tag-options-menu button:hover {
-            background-color: var(--s1p-sub-h);
-            color: var(--s1p-sub-h-t);
-        }
-        .s1p-tag-options-menu button.s1p-delete:hover {
-            background-color: var(--s1p-red);
-            color: var(--s1p-white);
-        }
+    /* --- Tag Options Menu --- */
+    .s1p-tag-options-menu {
+      position: absolute;
+      z-index: 10002;
+      background-color: var(--s1p-bg);
+      border-radius: 6px;
+      box-shadow: 0 2px 8px rgba(var(--s1p-black-rgb), 0.15);
+      border: 1px solid var(--s1p-pri);
+      padding: 4px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: max-content;
+    }
+    .s1p-tag-options-menu button {
+      background: none;
+      border: none;
+      padding: 6px 12px;
+      text-align: left;
+      cursor: pointer;
+      border-radius: 4px;
+      font-size: 14px;
+      color: var(--s1p-t);
+      white-space: nowrap;
+    }
+    .s1p-tag-options-menu button:hover {
+      background-color: var(--s1p-sub-h);
+      color: var(--s1p-sub-h-t);
+    }
+    .s1p-tag-options-menu button.s1p-delete:hover {
+      background-color: var(--s1p-red);
+      color: var(--s1p-white);
+    }
 
-        /* --- 设置面板样式 --- */
-        .s1p-modal { display: flex; position: fixed; top: 0; left: 0; width: 100%; height: 100%;  background-color: rgba(var(--s1p-black-rgb), 0.5); justify-content: center; align-items: center; z-index: 9999; }
-        .s1p-modal-content { background-color: var(--s1p-bg); border-radius: 8px; box-shadow: 0 4px 6px rgba(var(--s1p-black-rgb), 0.1); width: 600px; max-width: 90%; max-height: 80vh; overflow: hidden; display: flex; flex-direction: column; position: relative; }
-        .s1p-modal-header { background: var(--s1p-pri) ;padding: 16px; border-bottom: 1px solid var(--s1p-pri); display: flex; justify-content: space-between; align-items: center; }
-        .s1p-modal-title { font-size: 18px; font-weight: bold; }
-        .s1p-modal-close {
-            width: 12px;
-            height: 12px;
-            cursor: pointer;
-            color: var(--s1p-icon-close);
-            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2 2L14 14M14 2L2 14' stroke='currentColor' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E");
-            background-repeat: no-repeat;
-            background-position: center;
-            background-size: contain;
-            transition: color 0.2s ease-in-out, transform 0.2s ease-in-out;
-            transform: rotate(0deg);
-        }
-        .s1p-modal-close:hover {
-            color: var(--s1p-red);
-            transform: rotate(90deg);
-        }
-        .s1p-modal-body { padding: 8px 16px 16px; overflow-y: auto; flex-grow: 1; }
-        .s1p-modal-footer { padding: 12px 16px; border-top: 1px solid var(--s1p-pri); text-align: right; font-size: 12px; }
+    /* --- 设置面板样式 --- */
+    .s1p-modal {
+      display: flex;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(var(--s1p-black-rgb), 0.5);
+      justify-content: center;
+      align-items: center;
+      z-index: 9999;
+    }
+    .s1p-modal-content {
+      background-color: var(--s1p-bg);
+      border-radius: 8px;
+      box-shadow: 0 4px 6px rgba(var(--s1p-black-rgb), 0.1);
+      width: 600px;
+      max-width: 90%;
+      max-height: 80vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+    .s1p-modal-header {
+      background: var(--s1p-pri);
+      padding: 16px;
+      border-bottom: 1px solid var(--s1p-pri);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .s1p-modal-title {
+      font-size: 18px;
+      font-weight: bold;
+    }
+    .s1p-modal-close {
+      width: 12px;
+      height: 12px;
+      cursor: pointer;
+      color: var(--s1p-icon-close);
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2 2L14 14M14 2L2 14' stroke='currentColor' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: center;
+      background-size: contain;
+      transition: color 0.2s ease-in-out, transform 0.2s ease-in-out;
+      transform: rotate(0deg);
+    }
+    .s1p-modal-close:hover {
+      color: var(--s1p-red);
+      transform: rotate(90deg);
+    }
+    .s1p-modal-body {
+      padding: 8px 16px 16px;
+      overflow-y: auto;
+      flex-grow: 1;
+    }
+    .s1p-modal-footer {
+      padding: 12px 16px;
+      border-top: 1px solid var(--s1p-pri);
+      text-align: right;
+      font-size: 12px;
+    }
 
-        /* --- [OPTIMIZED] 设置面板Tabs样式 (Pill / 滑块样式) --- */
-        .s1p-tabs {
-            position: relative;
-            display: inline-flex; /* 使容器宽度自适应内容 */
-            background-color: var(--s1p-sub);
-            border-radius: 6px;
-            padding: 4px;
-            margin-bottom: 16px;
-        }
-        .s1p-tab-slider {
-            position: absolute;
-            top: 4px;
-            left: 0;
-            height: calc(100% - 8px);
-            background-color: var(--s1p-white);
-            border-radius: 4px;
-            box-shadow: 0 1px 2px rgba(var(--s1p-black-rgb), 0.1);
-        }
-        .s1p-tab-content.active {
-          display: block;
-        }
-        .s1p-tab-btn {
-            position: relative;
-            z-index: 1;
-            padding: 6px 16px;
-            cursor: pointer;
-            border: none;
-            background-color: transparent;
-            font-size: 14px;
-            font-weight: 500;
-            color: var(--s1p-desc-t);
-            white-space: nowrap;
-            border-radius: 4px;
-            /* [修改] 增加 background-color 的过渡动画 */
-            transition: color 0.25s ease, background-color 0.2s ease;
-        }
-        .s1p-tab-btn:hover:not(.active) {
-            color: var(--s1p-t);
-            /* [新增] 添加背景色高亮效果 */
-            background-color: var(--s1p-pri);
-        }
-        .s1p-tab-btn.active {
-            color: var(--s1p-t);
-            cursor: default;
-        }
-        .s1p-tab-content {
-            display: none;
-            padding-top: 0;
-        }
-        
-        .s1p-tabs-wrapper {
-            display: flex;
-            justify-content: center;
-        }
-        .s1p-empty { text-align: center; padding: 24px; color: var(--s1p-desc-t); }
-        .s1p-list { display: flex; flex-direction: column; gap: 8px; }
-        .s1p-item { display: flex; justify-content: space-between; align-items: flex-start; padding: 12px; border-radius: 6px; background-color: var(--s1p-bg); border: 1px solid var(--s1p-pri); }
-        .s1p-item-info { flex-grow: 1; min-width: 0; }
-        .s1p-item-title { font-weight: 500; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .s1p-item-meta { font-size: 12px; color: var(--s1p-desc-t);}
-        .s1p-item-toggle { font-size: 12px; color: var(--s1p-desc-t); display: flex; align-items: center; gap: 8px; }
-        .s1p-item-toggle input { /* Handled by .s1p-switch */ }
-        .s1p-unblock-btn:hover { background-color: #07855b; border-color: #07855b; }
-        .s1p-sync-title { font-size: 14px; font-weight: 500; margin-bottom: 8px; }
-        .s1p-local-sync-desc { font-size: 14px; color: var(--s1p-desc-t); margin-bottom: 12px; line-height: 1.5; }
-        .s1p-local-sync-buttons { display: flex; gap: 8px; margin-bottom: 16px; }
-        .s1p-sync-textarea { width: 100%; min-height: 80px; margin-bottom: 20px;}
+    /* --- [OPTIMIZED] 设置面板Tabs样式 (Pill / 滑块样式) --- */
+    .s1p-tabs {
+      position: relative;
+      display: inline-flex; /* 使容器宽度自适应内容 */
+      background-color: var(--s1p-sub);
+      border-radius: 6px;
+      padding: 4px;
+      margin-bottom: 16px;
+    }
+    .s1p-tab-slider {
+      position: absolute;
+      top: 4px;
+      left: 0;
+      height: calc(100% - 8px);
+      background-color: var(--s1p-white);
+      border-radius: 4px;
+      box-shadow: 0 1px 2px rgba(var(--s1p-black-rgb), 0.1);
+    }
+    .s1p-tab-content.active {
+      display: block;
+    }
+    .s1p-tab-btn {
+      position: relative;
+      z-index: 1;
+      padding: 6px 16px;
+      cursor: pointer;
+      border: none;
+      background-color: transparent;
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--s1p-desc-t);
+      white-space: nowrap;
+      border-radius: 4px;
+      /* [修改] 增加 background-color 的过渡动画 */
+      transition: color 0.25s ease, background-color 0.2s ease;
+    }
+    .s1p-tab-btn:hover:not(.active) {
+      color: var(--s1p-t);
+      /* [新增] 添加背景色高亮效果 */
+      background-color: var(--s1p-pri);
+    }
+    .s1p-tab-btn.active {
+      color: var(--s1p-t);
+      cursor: default;
+    }
+    .s1p-tab-content {
+      display: none;
+      padding-top: 0;
+    }
 
-        /* --- [OPTIMIZED] Sync Settings Panel Disabled State --- */
-        #s1p-remote-sync-controls-wrapper {
-            transition: opacity 0.3s ease-out;
-        }
-        #s1p-remote-sync-controls-wrapper.is-disabled {
-            opacity: 0.5;
-            pointer-events: none;
-        }
+    .s1p-tabs-wrapper {
+      display: flex;
+      justify-content: center;
+    }
+    .s1p-empty {
+      text-align: center;
+      padding: 24px;
+      color: var(--s1p-desc-t);
+    }
+    .s1p-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .s1p-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      padding: 12px;
+      border-radius: 6px;
+      background-color: var(--s1p-bg);
+      border: 1px solid var(--s1p-pri);
+    }
+    .s1p-item-info {
+      flex-grow: 1;
+      min-width: 0;
+    }
+    .s1p-item-title {
+      font-weight: 500;
+      margin-bottom: 4px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .s1p-item-meta {
+      font-size: 12px;
+      color: var(--s1p-desc-t);
+    }
+    .s1p-item-toggle {
+      font-size: 12px;
+      color: var(--s1p-desc-t);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .s1p-item-toggle input {
+      /* Handled by .s1p-switch */
+    }
+    .s1p-unblock-btn:hover {
+      background-color: #07855b;
+      border-color: #07855b;
+    }
+    .s1p-sync-title {
+      font-size: 14px;
+      font-weight: 500;
+      margin-bottom: 8px;
+    }
+    .s1p-local-sync-desc {
+      font-size: 14px;
+      color: var(--s1p-desc-t);
+      margin-bottom: 12px;
+      line-height: 1.5;
+    }
+    .s1p-local-sync-buttons {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .s1p-sync-textarea {
+      width: 100%;
+      min-height: 80px;
+      margin-bottom: 20px;
+    }
 
-        /* --- 悬浮提示框 (Toast Notification) --- */
-        @keyframes s1p-toast-shake {
-            10%, 90% { transform: translate(-51%, 0); }
-            20%, 80% { transform: translate(-49%, 0); }
-            30%, 50%, 70% { transform: translate(-52%, 0); }
-            40%, 60% { transform: translate(-48%, 0); }
-        }
-        .s1p-toast-notification {
-            position: fixed;
-            left: 50%;
-            bottom: 20px;
-            transform: translate(-50%, 50px);
-            z-index: 10005;
-            padding: 10px 18px;
-            border-radius: 6px;
-            font-size: 14px;
-            font-weight: 500;
-            color: var(--s1p-t); /* <-- 修改了此行 */
-            background-color: var(--s1p-bg); /* <-- 修改了此行 */
-            box-shadow: 0 4px 12px rgba(var(--s1p-black-rgb), 0.15);
-            opacity: 0;
-            transition: opacity 0.3s ease-out, transform 0.3s ease-out;
-            pointer-events: none;
-            white-space: nowrap;
-            text-align: center;
-            /* [新增] 为浅色背景增加边框以提高辨识度 */
-            border: 1px solid var(--s1p-pri);
-        }
-        .s1p-modal-content .s1p-toast-notification {
-            position: absolute;
-            bottom: 15px;
-        }
-        .s1p-toast-notification.visible {
-            opacity: 1;
-            transform: translate(-50%, 0);
-        }
-        .s1p-toast-notification.success {
-            background-color: #27da80;
-            color: var(--s1p-white); /* 确保成功状态字体为白色 */
-            border-color: #27da80;   /* 覆盖边框颜色 */
-        }
-        .s1p-toast-notification.error {
-            background-color: var(--s1p-red);
-            color: var(--s1p-white); /* 确保失败状态字体为白色 */
-            border-color: var(--s1p-red);   /* 覆盖边框颜色 */
-        }
-        .s1p-toast-notification.error.visible {
-            animation: s1p-toast-shake 0.5s cubic-bezier(.36,.07,.19,.97) both;
-        }
+    /* --- [OPTIMIZED] Sync Settings Panel Disabled State --- */
+    #s1p-remote-sync-controls-wrapper {
+      transition: opacity 0.3s ease-out;
+    }
+    #s1p-remote-sync-controls-wrapper.is-disabled {
+      opacity: 0.5;
+      pointer-events: none;
+    }
 
-        /* --- 确认弹窗样式 --- */
-        @keyframes s1p-fade-in { from { opacity: 0; } to { opacity: 1; } } @keyframes s1p-scale-in { from { transform: scale(0.95); opacity: 0; } to { transform: scale(1); opacity: 1; } } @keyframes s1p-fade-out { from { opacity: 1; } to { opacity: 0; } } @keyframes s1p-scale-out { from { transform: scale(1); opacity: 1; } to { transform: scale(0.97); opacity: 0; } }
-        .s1p-confirm-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(var(--s1p-black-rgb), 0.65); display: flex; justify-content: center; align-items: center; z-index: 10000; animation: s1p-fade-in 0.2s ease-out; }
-        .s1p-confirm-content { background-color: var(--s1p-bg); border-radius: 12px; box-shadow: 0 10px 25px -5px rgba(var(--s1p-black-rgb), 0.1), 0 10px 10px -5px rgba(var(--s1p-black-rgb), 0.04); width: 480px; max-width: 90%; text-align: left; overflow: hidden; animation: s1p-scale-in 0.25s ease-out; }
-        .s1p-confirm-body { padding: 20px 24px; font-size: 16px; line-height: 1.6; }
-        .s1p-confirm-body .s1p-confirm-title { font-weight: 600; font-size: 18px; margin-bottom: 8px; }
-        .s1p-confirm-body .s1p-confirm-subtitle { font-size: 14px; color: var(--s1p-desc-t); }
-        .s1p-confirm-footer { padding: 12px 24px 20px; display: flex; justify-content: flex-end; gap: 12px; }
-        .s1p-confirm-footer.s1p-centered { justify-content: center; }
-        .s1p-confirm-btn { padding: 9px 14px; border-radius: 6px; font-size: 14px; font-weight: 500; cursor: pointer; border: 1px solid transparent; transition: all 0.15s ease-in-out; box-shadow: 0 1px 2px 0 rgba(var(--s1p-black-rgb), 0.05); white-space: nowrap; }
-        .s1p-confirm-btn:active { transform: translateY(1px); }
-        .s1p-confirm-btn.s1p-cancel { background-color: var(--s1p-sub); border-color: var(--s1p-pri); }
-        .s1p-confirm-btn.s1p-cancel:hover { border-color: var(--s1p-red); background-color: var(--s1p-error-bg); }
-        .s1p-confirm-btn.s1p-confirm { background-color: var(--s1p-red); color: var(--s1p-white); border-color: var(--s1p-red); }
-        .s1p-confirm-btn.s1p-confirm:hover { background-color: var(--s1p-red-h); border-color: var(--s1p-red-h); }
+    /* --- 悬浮提示框 (Toast Notification) --- */
+    @keyframes s1p-toast-shake {
+      10%,
+      90% {
+        transform: translate(-51%, 0);
+      }
+      20%,
+      80% {
+        transform: translate(-49%, 0);
+      }
+      30%,
+      50%,
+      70% {
+        transform: translate(-52%, 0);
+      }
+      40%,
+      60% {
+        transform: translate(-48%, 0);
+      }
+    }
+    .s1p-toast-notification {
+      position: fixed;
+      left: 50%;
+      bottom: 20px;
+      transform: translate(-50%, 50px);
+      z-index: 10005;
+      padding: 10px 18px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--s1p-t); /* <-- 修改了此行 */
+      background-color: var(--s1p-bg); /* <-- 修改了此行 */
+      box-shadow: 0 4px 12px rgba(var(--s1p-black-rgb), 0.15);
+      opacity: 0;
+      transition: opacity 0.3s ease-out, transform 0.3s ease-out;
+      pointer-events: none;
+      white-space: nowrap;
+      text-align: center;
+      /* [新增] 为浅色背景增加边框以提高辨识度 */
+      border: 1px solid var(--s1p-pri);
+    }
+    .s1p-modal-content .s1p-toast-notification {
+      position: absolute;
+      bottom: 15px;
+    }
+    .s1p-toast-notification.visible {
+      opacity: 1;
+      transform: translate(-50%, 0);
+    }
+    .s1p-toast-notification.success {
+      background-color: #27da80;
+      color: var(--s1p-white); /* 确保成功状态字体为白色 */
+      border-color: #27da80; /* 覆盖边框颜色 */
+    }
+    .s1p-toast-notification.error {
+      background-color: var(--s1p-red);
+      color: var(--s1p-white); /* 确保失败状态字体为白色 */
+      border-color: var(--s1p-red); /* 覆盖边框颜色 */
+    }
+    .s1p-toast-notification.error.visible {
+      animation: s1p-toast-shake 0.5s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+    }
 
-        /* --- [MODIFIED] Collapsible Section (V7 - Mask Image Fix) --- */
-        .s1p-collapsible-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            cursor: pointer;
-            user-select: none;
-        }
-        .s1p-settings-group-title.s1p-collapsible-header {
-            margin-bottom: 0;
-            transition: color 0.2s ease;
-        }
-        .s1p-settings-group-title.s1p-collapsible-header:hover {
-            color: var(--s1p-sec);
-        }
-        .s1p-expander-arrow {
-            display: inline-block;
-            width: 12px;
-            height: 12px;
-            /* [NEW METHOD] 使用 mask 定义图标形状 */
-            -webkit-mask-image: url("${SVG_ICON_ARROW_MASK}");
-            mask-image: url("${SVG_ICON_ARROW_MASK}");
-            -webkit-mask-size: contain;
-            mask-size: contain;
-            -webkit-mask-repeat: no-repeat;
-            mask-repeat: no-repeat;
-            -webkit-mask-position: center;
-            mask-position: center;
-            /* [NEW METHOD] 使用 background-color 来上色 */
-            background-color: var(--s1p-icon-arrow); /* 默认颜色 */
-            /* [NEW METHOD] 为 background-color 和 transform 添加过渡效果 */
-            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.2s ease;
-        }
-        .s1p-settings-group-title.s1p-collapsible-header:hover .s1p-expander-arrow {
-            background-color: var(--s1p-sec); /* 悬停颜色 */
-        }
-        .s1p-expander-arrow.expanded {
-            transform: rotate(90deg);
-        }
-        .s1p-collapsible-content {
-            display: grid;
-            grid-template-rows: 0fr;
-            padding-top: 0;
-            transition: grid-template-rows 0.4s cubic-bezier(0.4, 0, 0.2, 1), padding-top 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-        }
-        .s1p-collapsible-content > div {
-             overflow: hidden;
-        }
-        .s1p-collapsible-content.expanded {
-            grid-template-rows: 1fr;
-            padding-top: 12px;
-        }
+    /* --- 确认弹窗样式 --- */
+    @keyframes s1p-fade-in {
+      from {
+        opacity: 0;
+      }
+      to {
+        opacity: 1;
+      }
+    }
+    @keyframes s1p-scale-in {
+      from {
+        transform: scale(0.95);
+        opacity: 0;
+      }
+      to {
+        transform: scale(1);
+        opacity: 1;
+      }
+    }
+    @keyframes s1p-fade-out {
+      from {
+        opacity: 1;
+      }
+      to {
+        opacity: 0;
+      }
+    }
+    @keyframes s1p-scale-out {
+      from {
+        transform: scale(1);
+        opacity: 1;
+      }
+      to {
+        transform: scale(0.97);
+        opacity: 0;
+      }
+    }
+    .s1p-confirm-modal {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(var(--s1p-black-rgb), 0.65);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 10000;
+      animation: s1p-fade-in 0.2s ease-out;
+    }
+    .s1p-confirm-content {
+      background-color: var(--s1p-bg);
+      border-radius: 12px;
+      box-shadow: 0 10px 25px -5px rgba(var(--s1p-black-rgb), 0.1),
+        0 10px 10px -5px rgba(var(--s1p-black-rgb), 0.04);
+      width: 480px;
+      max-width: 90%;
+      text-align: left;
+      overflow: hidden;
+      animation: s1p-scale-in 0.25s ease-out;
+    }
+    .s1p-confirm-body {
+      padding: 20px 24px;
+      font-size: 16px;
+      line-height: 1.6;
+    }
+    .s1p-confirm-body .s1p-confirm-title {
+      font-weight: 600;
+      font-size: 18px;
+      margin-bottom: 8px;
+    }
+    .s1p-confirm-body .s1p-confirm-subtitle {
+      font-size: 14px;
+      color: var(--s1p-desc-t);
+    }
+    .s1p-confirm-footer {
+      padding: 12px 24px 20px;
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+    }
+    .s1p-confirm-footer.s1p-centered {
+      justify-content: center;
+    }
+    .s1p-confirm-btn {
+      padding: 9px 14px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: all 0.15s ease-in-out;
+      box-shadow: 0 1px 2px 0 rgba(var(--s1p-black-rgb), 0.05);
+      white-space: nowrap;
+    }
+    .s1p-confirm-btn:active {
+      transform: translateY(1px);
+    }
+    .s1p-confirm-btn.s1p-cancel {
+      background-color: var(--s1p-sub);
+      border-color: var(--s1p-pri);
+    }
+    .s1p-confirm-btn.s1p-cancel:hover {
+      border-color: var(--s1p-red);
+      background-color: var(--s1p-error-bg);
+    }
+    .s1p-confirm-btn.s1p-confirm {
+      background-color: var(--s1p-red);
+      color: var(--s1p-white);
+      border-color: var(--s1p-red);
+    }
+    .s1p-confirm-btn.s1p-confirm:hover {
+      background-color: var(--s1p-red-h);
+      border-color: var(--s1p-red-h);
+    }
 
-        /* --- Feature Content Animation --- */
-        .s1p-feature-content {
-            display: grid;
-            grid-template-rows: 0fr;
-            transition: grid-template-rows 0.6s ease-in-out, margin-top 0.6s ease-in-out;
-            margin-top: 0;
-        }
-        .s1p-feature-content.expanded {
-            grid-template-rows: 1fr;
-            margin-top: 16px;
-        }
-        .s1p-feature-content > div {
-            overflow: hidden;
-            transition: opacity 0.5s ease-in-out;
-        }
-        .s1p-feature-content:not(.expanded) > div {
-            opacity: 0;
-            transition-duration: 0.25s;
-        }
-        .s1p-feature-content.expanded > div {
-            opacity: 1;
-            transition-delay: 0.15s;
-        }
+    /* --- [MODIFIED] Collapsible Section (V7 - Mask Image Fix) --- */
+    .s1p-collapsible-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+      user-select: none;
+    }
+    .s1p-settings-group-title.s1p-collapsible-header {
+      margin-bottom: 0;
+      transition: color 0.2s ease;
+    }
+    .s1p-settings-group-title.s1p-collapsible-header:hover {
+      color: var(--s1p-sec);
+    }
+    .s1p-expander-arrow {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      /* [NEW METHOD] 使用 mask 定义图标形状 */
+      -webkit-mask-image: url("${SVG_ICON_ARROW_MASK}");
+      mask-image: url("${SVG_ICON_ARROW_MASK}");
+      -webkit-mask-size: contain;
+      mask-size: contain;
+      -webkit-mask-repeat: no-repeat;
+      mask-repeat: no-repeat;
+      -webkit-mask-position: center;
+      mask-position: center;
+      /* [NEW METHOD] 使用 background-color 来上色 */
+      background-color: var(--s1p-icon-arrow); /* 默认颜色 */
+      /* [NEW METHOD] 为 background-color 和 transform 添加过渡效果 */
+      transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+        background-color 0.2s ease;
+    }
+    .s1p-settings-group-title.s1p-collapsible-header:hover .s1p-expander-arrow {
+      background-color: var(--s1p-sec); /* 悬停颜色 */
+    }
+    .s1p-expander-arrow.expanded {
+      transform: rotate(90deg);
+    }
+    .s1p-collapsible-content {
+      display: grid;
+      grid-template-rows: 0fr;
+      padding-top: 0;
+      transition: grid-template-rows 0.4s cubic-bezier(0.4, 0, 0.2, 1),
+        padding-top 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .s1p-collapsible-content > div {
+      overflow: hidden;
+    }
+    .s1p-collapsible-content.expanded {
+      grid-template-rows: 1fr;
+      padding-top: 12px;
+    }
 
-        /* --- 界面定制设置样式 --- */
-        .s1p-settings-group { margin-bottom: 24px; }
-        .s1p-settings-group-title { font-size: 16px; font-weight: 500; border-bottom: 1px solid var(--s1p-pri); padding-bottom: 16px; margin-bottom: 12px; }
-        .s1p-settings-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; }
-        .s1p-settings-item .s1p-input { width: auto; min-width: 200px; }
-        .s1p-settings-label { font-size: 14px; }
-        .s1p-settings-checkbox { /* Handled by .s1p-switch */ }
-        .s1p-setting-desc { font-size: 12px; color: var(--s1p-desc-t); margin: -4px 0 8px 0; padding: 0; line-height: 1.5; }
-        .s1p-editor-item { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; padding: 6px; border-radius: 4px; background: var(--s1p-bg); }
-        .s1p-editor-item select { background: var(--s1p-bg);  width: 100%; border: 1px solid var(--s1p-pri); border-radius: 4px; padding: 6px 8px; font-size: 14px; box-sizing: border-box; }
-        .s1p-editor-item-controls { display: flex; align-items: center; gap: 4px; }
-        .s1p-editor-btn { padding: 4px; font-size: 18px; line-height: 1; cursor: pointer; border-radius: 4px; border:none; background: transparent; color: #9ca3af; }
-        /* --- [修正] 使用 :not() 伪类来排除删除按钮，防止其悬浮样式被覆盖 --- */
-        .s1p-editor-btn:not(.s1p-delete-button):hover { background: var(--s1p-secondary-bg); color: var(--s1p-secondary-text); }
-        /* --- [新增] 为删除按钮定义统一的尺寸和边距 (骨架) --- */
-        .s1p-editor-btn.s1p-delete-button {
-            width: 26px;
-            height: 26px;
-            padding: 4px;
-            box-sizing: border-box;
-            font-size: 0;
-        }
-        /* --- [联动修改] 仅在未启用NUX兼容模式时，应用S1 Plus的背景图标 (皮肤) --- */
-        body:not(.s1p-follow-nux-theme) .s1p-editor-btn.s1p-delete-button {
-            background-image: url("${SVG_ICON_DELETE_DEFAULT}");
-            background-repeat: no-repeat;
-            background-position: center;
-            background-size: 18px 18px;
-            transition: all 0.2s ease;
-        }
-        body:not(.s1p-follow-nux-theme) .s1p-editor-btn.s1p-delete-button:hover {
-            background-color: var(--s1p-red);
-            background-image: url("${SVG_ICON_DELETE_HOVER}");
-        }
-        .s1p-drag-handle { font-size: 18pt; cursor: grab; }
-        .s1p-editor-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; }
-        .s1p-settings-action-btn { display: inline-block; padding: 10px 20px; border-radius: 6px; font-size: 14px; font-weight: 500; cursor: pointer; transition: background-color 0.2s; border: none; }
-        .s1p-settings-action-btn.s1p-primary { background-color: var(--s1p-sec); color: var(--s1p-white); }
-        .s1p-settings-action-btn.s1p-primary:hover { background-color: var(--s1p-sec-h); }
-        .s1p-settings-action-btn.s1p-secondary { background-color: var(--s1p-secondary-bg); color: var(--s1p-secondary-text); }
-        .s1p-settings-action-btn.s1p-secondary:hover { background-color: var(--s1p-secondary-hover-bg); }
+    /* --- Feature Content Animation --- */
+    .s1p-feature-content {
+      display: grid;
+      grid-template-rows: 0fr;
+      transition: grid-template-rows 0.6s ease-in-out,
+        margin-top 0.6s ease-in-out;
+      margin-top: 0;
+    }
+    .s1p-feature-content.expanded {
+      grid-template-rows: 1fr;
+      margin-top: 16px;
+    }
+    .s1p-feature-content > div {
+      overflow: hidden;
+      transition: opacity 0.5s ease-in-out;
+    }
+    .s1p-feature-content:not(.expanded) > div {
+      opacity: 0;
+      transition-duration: 0.25s;
+    }
+    .s1p-feature-content.expanded > div {
+      opacity: 1;
+      transition-delay: 0.15s;
+    }
 
-        /* --- 带图标的搜索框 --- */
-        .s1p-search-input-wrapper {
-            position: relative;
-            display: flex;
-            align-items: center;
-            width: 100%;
-        }
-        .s1p-search-input-wrapper .s1p-input {
-            padding-left: 34px;
-            padding-right: 34px;
-        }
-        .s1p-search-input-wrapper svg.s1p-search-icon {
-            position: absolute;
-            left: 10px;
-            top: 50%;
-            transform: translateY(-50%);
-            width: 16px;
-            height: 16px;
-            color: var(--s1p-icon-color);
-            pointer-events: none;
-            transition: color 0.2s ease-in-out;
-        }
-        .s1p-search-input-wrapper .s1p-input:focus + svg.s1p-search-icon {
-            color: var(--s1p-sec);
-        }
+    /* --- 界面定制设置样式 --- */
+    .s1p-settings-group {
+      margin-bottom: 24px;
+    }
+    .s1p-settings-group-title {
+      font-size: 16px;
+      font-weight: 500;
+      border-bottom: 1px solid var(--s1p-pri);
+      padding-bottom: 16px;
+      margin-bottom: 12px;
+    }
+    .s1p-settings-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 0;
+    }
+    .s1p-settings-item .s1p-input {
+      width: auto;
+      min-width: 200px;
+    }
+    .s1p-settings-label {
+      font-size: 14px;
+    }
+    .s1p-settings-checkbox {
+      /* Handled by .s1p-switch */
+    }
+    .s1p-setting-desc {
+      font-size: 12px;
+      color: var(--s1p-desc-t);
+      margin: -4px 0 8px 0;
+      padding: 0;
+      line-height: 1.5;
+    }
+    .s1p-editor-item {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 8px;
+      align-items: center;
+      padding: 6px;
+      border-radius: 4px;
+      background: var(--s1p-bg);
+    }
+    .s1p-editor-item select {
+      background: var(--s1p-bg);
+      width: 100%;
+      border: 1px solid var(--s1p-pri);
+      border-radius: 4px;
+      padding: 6px 8px;
+      font-size: 14px;
+      box-sizing: border-box;
+    }
+    .s1p-editor-item-controls {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .s1p-editor-btn {
+      padding: 4px;
+      font-size: 18px;
+      line-height: 1;
+      cursor: pointer;
+      border-radius: 4px;
+      border: none;
+      background: transparent;
+      color: #9ca3af;
+    }
+    /* --- [修正] 使用 :not() 伪类来排除删除按钮，防止其悬浮样式被覆盖 --- */
+    .s1p-editor-btn:not(.s1p-delete-button):hover {
+      background: var(--s1p-secondary-bg);
+      color: var(--s1p-secondary-text);
+    }
+    /* --- [新增] 为删除按钮定义统一的尺寸和边距 (骨架) --- */
+    .s1p-editor-btn.s1p-delete-button {
+      width: 26px;
+      height: 26px;
+      padding: 4px;
+      box-sizing: border-box;
+      font-size: 0;
+    }
+    /* --- [联动修改] 仅在未启用NUX兼容模式时，应用S1 Plus的背景图标 (皮肤) --- */
+    body:not(.s1p-follow-nux-theme) .s1p-editor-btn.s1p-delete-button {
+      background-image: url("${SVG_ICON_DELETE_DEFAULT}");
+      background-repeat: no-repeat;
+      background-position: center;
+      background-size: 18px 18px;
+      transition: all 0.2s ease;
+    }
+    body:not(.s1p-follow-nux-theme) .s1p-editor-btn.s1p-delete-button:hover {
+      background-color: var(--s1p-red);
+      background-image: url("${SVG_ICON_DELETE_HOVER}");
+    }
+    .s1p-drag-handle {
+      font-size: 18pt;
+      cursor: grab;
+    }
+    .s1p-editor-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 12px;
+    }
+    .s1p-settings-action-btn {
+      display: inline-block;
+      padding: 10px 20px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background-color 0.2s;
+      border: none;
+    }
+    .s1p-settings-action-btn.s1p-primary {
+      background-color: var(--s1p-sec);
+      color: var(--s1p-white);
+    }
+    .s1p-settings-action-btn.s1p-primary:hover {
+      background-color: var(--s1p-sec-h);
+    }
+    .s1p-settings-action-btn.s1p-secondary {
+      background-color: var(--s1p-secondary-bg);
+      color: var(--s1p-secondary-text);
+    }
+    .s1p-settings-action-btn.s1p-secondary:hover {
+      background-color: var(--s1p-secondary-hover-bg);
+    }
 
-        /* --- 搜索框清空按钮 --- */
-        .s1p-search-clear-btn {
-            position: absolute;
-            right: 10px;
-            top: 50%;
-            transform: translateY(-50%);
-            width: 20px;
-            height: 20px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background-color: transparent;
-            border: none;
-            border-radius: 50%;
-            cursor: pointer;
-            opacity: 1;
-            transition: background-color 0.2s ease, opacity 0.2s ease, transform 0.2s ease;
-            padding: 0;
-        }
-        .s1p-search-clear-btn.hidden {
-            opacity: 0;
-            pointer-events: none;
-            transform: translateY(-50%) scale(0.8);
-        }
-        .s1p-search-clear-btn:hover {
-            background-color: var(--s1p-pri);
-        }
-        .s1p-search-clear-btn svg {
-            width: 12px;
-            height: 12px;
-            color: var(--s1p-icon-arrow);
-        }
+    /* --- 带图标的搜索框 --- */
+    .s1p-search-input-wrapper {
+      position: relative;
+      display: flex;
+      align-items: center;
+      width: 100%;
+    }
+    .s1p-search-input-wrapper .s1p-input {
+      padding-left: 34px;
+      padding-right: 34px;
+    }
+    .s1p-search-input-wrapper svg.s1p-search-icon {
+      position: absolute;
+      left: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 16px;
+      height: 16px;
+      color: var(--s1p-icon-color);
+      pointer-events: none;
+      transition: color 0.2s ease-in-out;
+    }
+    .s1p-search-input-wrapper .s1p-input:focus + svg.s1p-search-icon {
+      color: var(--s1p-sec);
+    }
 
-       /* --- 搜索关键词高亮 --- */
-        mark.s1p-highlight {
-            background-color: var(--s1p-pri);
-            color: var(--s1p-t);
-            font-weight: bold;
-            padding: 1px 3px;
-            border-radius: 3px;
-            text-decoration: none;
-        }
+    /* --- 搜索框清空按钮 --- */
+    .s1p-search-clear-btn {
+      position: absolute;
+      right: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 20px;
+      height: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background-color: transparent;
+      border: none;
+      border-radius: 50%;
+      cursor: pointer;
+      opacity: 1;
+      transition: background-color 0.2s ease, opacity 0.2s ease,
+        transform 0.2s ease;
+      padding: 0;
+    }
+    .s1p-search-clear-btn.hidden {
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(-50%) scale(0.8);
+    }
+    .s1p-search-clear-btn:hover {
+      background-color: var(--s1p-pri);
+    }
+    .s1p-search-clear-btn svg {
+      width: 12px;
+      height: 12px;
+      color: var(--s1p-icon-arrow);
+    }
 
-        /* --- Modern Toggle Switch --- */
-        .s1p-switch { position: relative; display: inline-block; width: 40px; height: 22px; vertical-align: middle; flex-shrink: 0; }
-        .s1p-switch input { opacity: 0; width: 0; height: 0; }
-        .s1p-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: var(--s1p-pri); transition: .3s; border-radius: 22px; }
-        .s1p-slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px; background-color: var(--s1p-white); transition: .3s; border-radius: 50%; box-shadow: 0 1px 3px rgba(var(--s1p-black-rgb), 0.1); }
-        input:checked + .s1p-slider { background-color: var(--s1p-sec); }
-        input:checked + .s1p-slider:before { transform: translateX(18px); }
+    /* --- 搜索关键词高亮 --- */
+    mark.s1p-highlight {
+      background-color: var(--s1p-pri);
+      color: var(--s1p-t);
+      font-weight: bold;
+      padding: 1px 3px;
+      border-radius: 3px;
+      text-decoration: none;
+    }
 
-        /* --- Nav Editor Dragging --- */
-        .s1p-editor-item.s1p-dragging { opacity: 0.5; }
+    /* --- Modern Toggle Switch --- */
+    .s1p-switch {
+      position: relative;
+      display: inline-block;
+      width: 40px;
+      height: 22px;
+      vertical-align: middle;
+      flex-shrink: 0;
+    }
+    .s1p-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    .s1p-slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: var(--s1p-pri);
+      transition: 0.3s;
+      border-radius: 22px;
+    }
+    .s1p-slider:before {
+      position: absolute;
+      content: "";
+      height: 16px;
+      width: 16px;
+      left: 3px;
+      bottom: 3px;
+      background-color: var(--s1p-white);
+      transition: 0.3s;
+      border-radius: 50%;
+      box-shadow: 0 1px 3px rgba(var(--s1p-black-rgb), 0.1);
+    }
+    input:checked + .s1p-slider {
+      background-color: var(--s1p-sec);
+    }
+    input:checked + .s1p-slider:before {
+      transform: translateX(18px);
+    }
 
-        /* --- 用户标记设置面板专属样式 --- */
-        .s1p-item-meta-id { font-family: monospace; background-color: var(--s1p-bg); padding: 1px 5px; border-radius: 4px; font-size: 11px; color: var(--s1p-t); }
-        .s1p-item-content {
-            margin-top: 10px; /* 增加上边距 */
-            padding-top: 10px; /* 增加上内边距，文字与分割线间的空间 */
-            border-top: 1px solid var(--s1p-pri); /* 添加分割线 */
-            color: var(--s1p-t); /* 使用更醒目的主文本颜色 */
-            font-size: 12px; /* 增大字体 */
-            font-weight: bold;
-            line-height: 1.6;
-            white-space: pre-wrap;
-            word-break: break-all;
-        }
-        #s1p-tab-bookmarks .s1p-item-content {
-            background-color: transparent;
-            border: none;
-            border-bottom: 1px solid var(--s1p-pri);
-            border-radius: 0;
-            padding: 0 0 10px 0;
-            margin-top: 0;
-            margin-bottom: 10px;
-        }
-        .s1p-item-editor textarea { width: 100%; min-height: 60px; margin-top: 8px; }
-        .s1p-item-actions { display: flex; align-self: flex-start; flex-shrink: 0; gap: 8px; margin-left: 16px; }
-        .s1p-item-actions .s1p-btn.s1p-primary { background-color: #3b82f6; color: var(--s1p-white); }
-        .s1p-item-actions .s1p-btn.s1p-primary:hover { background-color: #2563eb; }
-        .s1p-item-actions .s1p-btn.s1p-danger { background-color: var(--s1p-red); color: var(--s1p-white); }
-        .s1p-item-actions .s1p-btn.s1p-danger:hover { background-color: var(--s1p-red-h); border-color: var(--s1p-red-h);}
+    /* --- Nav Editor Dragging --- */
+    .s1p-editor-item.s1p-dragging {
+      opacity: 0.5;
+    }
 
-        /* --- 引用屏蔽占位符 --- */
-        .s1p-quote-placeholder {
-            background-color: var(--s1p-bg);
-            border: 1px solid var(--s1p-pri);
-            padding: 8px 12px;
-            border-radius: 6px;
-            margin: 10px 0;
-            font-size: 13px;
-            color: var(--s1p-desc-t);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        div.s1p-quote-placeholder span.s1p-quote-toggle {
-            color: var(--s1p-t);
-            font-weight: 500;
-            cursor: pointer;
-            padding: 4px 8px;
-            border-radius: 4px;
-            transition: background-color 0.2s ease, color 0.2s ease;
-        }
-        div.s1p-quote-placeholder span.s1p-quote-toggle:hover {
-            background-color: var(--s1p-sub);
-            color: var(--s1p-t);
-        }
-        .s1p-quote-wrapper {
-            overflow: hidden;
-            transition: max-height 0.35s ease-in-out;
-        }
+    /* --- 用户标记设置面板专属样式 --- */
+    .s1p-item-meta-id {
+      font-family: monospace;
+      background-color: var(--s1p-bg);
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-size: 11px;
+      color: var(--s1p-t);
+    }
+    .s1p-item-content {
+      margin-top: 10px; /* 增加上边距 */
+      padding-top: 10px; /* 增加上内边距，文字与分割线间的空间 */
+      border-top: 1px solid var(--s1p-pri); /* 添加分割线 */
+      color: var(--s1p-t); /* 使用更醒目的主文本颜色 */
+      font-size: 12px; /* 增大字体 */
+      font-weight: bold;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    #s1p-tab-bookmarks .s1p-item-content {
+      background-color: transparent;
+      border: none;
+      border-bottom: 1px solid var(--s1p-pri);
+      border-radius: 0;
+      padding: 0 0 10px 0;
+      margin-top: 0;
+      margin-bottom: 10px;
+    }
+    .s1p-item-editor textarea {
+      width: 100%;
+      min-height: 60px;
+      margin-top: 8px;
+    }
+    .s1p-item-actions {
+      display: flex;
+      align-self: flex-start;
+      flex-shrink: 0;
+      gap: 8px;
+      margin-left: 16px;
+    }
+    .s1p-item-actions .s1p-btn.s1p-primary {
+      background-color: #3b82f6;
+      color: var(--s1p-white);
+    }
+    .s1p-item-actions .s1p-btn.s1p-primary:hover {
+      background-color: #2563eb;
+    }
+    .s1p-item-actions .s1p-btn.s1p-danger {
+      background-color: var(--s1p-red);
+      color: var(--s1p-white);
+    }
+    .s1p-item-actions .s1p-btn.s1p-danger:hover {
+      background-color: var(--s1p-red-h);
+      border-color: var(--s1p-red-h);
+    }
 
-        /* --- Image Hiding --- */
-        .s1p-image-container {
-            display: flex;
-            flex-direction: column;
-            align-items: flex-start;
-            gap: 8px;
-            margin: 8px 0;
-        }
-        .s1p-image-placeholder {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 6px 12px;
-            border-radius: 6px;
-            background-color: var(--s1p-sub);
-            color: var(--s1p-t);
-            border: 1px solid var(--s1p-pri);
-            cursor: pointer;
-            font-size: 13px;
-            transition: all 0.2s ease;
-        }
-        .s1p-image-placeholder:hover {
-            background-color: var(--s1p-sub-h);
-            color: var(--s1p-sub-h-t);
-            border-color: var(--s1p-sub-h);
-        }
-        .s1p-image-container.hidden > .zoom {
-            display: none;
-        }
-        .s1p-image-toggle-all-container {
-            margin-bottom: 10px;
-        }
-        .s1p-image-toggle-all-btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 6px 12px;
-            border-radius: 6px;
-            background-color: var(--s1p-sub);
-            color: var(--s1p-t);
-            border: 1px solid var(--s1p-pri);
-            cursor: pointer;
-            font-size: 13px;
-            transition: all 0.2s ease;
-        }
-        .s1p-image-toggle-all-btn:hover {
-            background-color: var(--s1p-sub-h);
-            color: var(--s1p-sub-h-t);
-            border-color: var(--s1p-sub-h);
-        }
-        /* --- [新增 V9] 可禁用/启用的增强型悬浮控件 --- */
-        /* --- 模式 B: 增强控件关闭 (默认状态) --- */
-        /* 默认隐藏脚本创建的控件 */
-        #s1p-controls-wrapper {
-            display: none;
-        }
+    /* --- 引用屏蔽占位符 --- */
+    .s1p-quote-placeholder {
+      background-color: var(--s1p-bg);
+      border: 1px solid var(--s1p-pri);
+      padding: 8px 12px;
+      border-radius: 6px;
+      margin: 10px 0;
+      font-size: 13px;
+      color: var(--s1p-desc-t);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    div.s1p-quote-placeholder span.s1p-quote-toggle {
+      color: var(--s1p-t);
+      font-weight: 500;
+      cursor: pointer;
+      padding: 4px 8px;
+      border-radius: 4px;
+      transition: background-color 0.2s ease, color 0.2s ease;
+    }
+    div.s1p-quote-placeholder span.s1p-quote-toggle:hover {
+      background-color: var(--s1p-sub);
+      color: var(--s1p-t);
+    }
+    .s1p-quote-wrapper {
+      overflow: hidden;
+      transition: max-height 0.35s ease-in-out;
+    }
 
-        /* --- 模式 A: 增强控件开启 (当 body 有 s1p-enhanced-controls-active 时) --- */
-        /* 1. 让脚本控件显示出来 */
-        body.s1p-enhanced-controls-active #s1p-controls-wrapper {
-            display: block;
-        }
-        /* 2. 同时，彻底隐藏原生控件 */
-        body.s1p-enhanced-controls-active #scrolltop {
-            display: none !important;
-        }
+    /* --- Image Hiding --- */
+    .s1p-image-container {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 8px;
+      margin: 8px 0;
+    }
+    .s1p-image-placeholder {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 6px;
+      background-color: var(--s1p-sub);
+      color: var(--s1p-t);
+      border: 1px solid var(--s1p-pri);
+      cursor: pointer;
+      font-size: 13px;
+      transition: all 0.2s ease;
+    }
+    .s1p-image-placeholder:hover {
+      background-color: var(--s1p-sub-h);
+      color: var(--s1p-sub-h-t);
+      border-color: var(--s1p-sub-h);
+    }
+    .s1p-image-container.hidden > .zoom {
+      display: none;
+    }
+    .s1p-image-toggle-all-container {
+      margin-bottom: 10px;
+    }
+    .s1p-image-toggle-all-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 6px;
+      background-color: var(--s1p-sub);
+      color: var(--s1p-t);
+      border: 1px solid var(--s1p-pri);
+      cursor: pointer;
+      font-size: 13px;
+      transition: all 0.2s ease;
+    }
+    .s1p-image-toggle-all-btn:hover {
+      background-color: var(--s1p-sub-h);
+      color: var(--s1p-sub-h-t);
+      border-color: var(--s1p-sub-h);
+    }
+    /* --- [新增 V9] 可禁用/启用的增强型悬浮控件 --- */
+    /* --- 模式 B: 增强控件关闭 (默认状态) --- */
+    /* 默认隐藏脚本创建的控件 */
+    #s1p-controls-wrapper {
+      display: none;
+    }
 
-        /* 3. 以下是脚本控件自身的样式 (与之前版本类似，但选择器更严谨) */
-        #s1p-controls-wrapper {
-            position: fixed;
-            top: 50%;
-            right: 0;
-            transform: translateY(-50%);
-            z-index: 9998;
-        }
-        #s1p-controls-handle {
-            position: absolute;
-            top: 50%;
-            right: 0;
-            transform: translateY(-50%);
-            width: 20px;
-            /* [修改] 将高度从 60px 调整为 40px */
-            height: 40px;
-            background-color: var(--s1p-bg);
-            border: 1px solid var(--s1p-pri);
-            border-right: none;
-            border-radius: 10px 0 0 10px;
-            box-shadow: -2px 2px 8px rgba(var(--s1p-black-rgb), 0.1);
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: opacity 0.3s ease 0.1s;
-        }
-        #s1p-controls-handle::before {
-            content: '';
-            display: block;
-            width: 4px;
-            height: 16px;
-            background-color: var(--s1p-icon-color);
-            -webkit-mask-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 4 16' fill='currentColor'%3e%3ccircle cx='2' cy='2' r='1.5'/%3e%3ccircle cx='2' cy='8' r='1.5'/%3e%3ccircle cx='2' cy='14' r='1.5'/%3e%3c/svg%3e");
-            mask-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 4 16' fill='currentColor'%3e%3ccircle cx='2' cy='2' r='1.5'/%3e%3ccircle cx='2' cy='8' r='1.5'/%3e%3ccircle cx='2' cy='14' r='1.5'/%3e%3c/svg%3e");
-            -webkit-mask-size: contain;
-            mask-size: contain;
-            -webkit-mask-repeat: no-repeat;
-            mask-repeat: no-repeat;
-            -webkit-mask-position: center;
-            mask-position: center;
-        }
-        #s1p-floating-controls {
-            transform: translateX(100%);
-            opacity: 0;
-            visibility: hidden;
-            pointer-events: none;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            padding-left: 20px;
-            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease, visibility 0.3s;
-        }
-        #s1p-controls-wrapper:hover #s1p-controls-handle {
-            opacity: 0;
-            pointer-events: none;
-            transition: opacity 0.2s ease;
-        }
-        #s1p-controls-wrapper:hover #s1p-floating-controls {
-            transform: translateX(0);
-            opacity: 1;
-            visibility: visible;
-            pointer-events: auto;
-        }
-        #s1p-floating-controls a {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            width: 40px;
-            height: 40px;
-            border-radius: 50%;
-            background-color: var(--s1p-bg);
-            box-shadow: 0 2px 8px rgba(var(--s1p-black-rgb), 0.15);
-            border: 1px solid var(--s1p-pri);
-            transition: all 0.2s ease-in-out;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        #s1p-floating-controls a:hover {
-            background-color: var(--s1p-pri);
-            transform: scale(1.1);
-        }
-        #s1p-floating-controls a svg {
-            width: 24px;
-            height: 24px;
-            color: var(--s1p-t);
-        }
-        #s1p-floating-controls a.s1p-scroll-btn svg {
-            width: 28px;
-            height: 28px;
-        }
-        /* --- [更新] 回复收藏内容切换 V3 --- */
-        .s1p-bookmark-preview, .s1p-bookmark-full {
-            /* 保留换行和空格，确保纯文本格式正确显示 */
-            white-space: pre-wrap;
-            word-break: break-word;
-        }
-        .s1p-bookmark-full {
-            display: none;
-        }
-        .s1p-bookmark-toggle {
-            /* 保持为行内元素，自然跟在文字后方 */
-            display: inline;
-            margin-left: 4px; /* 与文字稍微隔开 */
-            font-weight: 500;
-            color: var(--s1p-t);
-            cursor: pointer;
-            text-decoration: none;
-            font-size: 13px;
-        }
-        .s1p-bookmark-toggle:hover {
-            color: var(--s1p-sec);
-            text-decoration: underline;
-        }
+    /* --- 模式 A: 增强控件开启 (当 body 有 s1p-enhanced-controls-active 时) --- */
+    /* 1. 让脚本控件显示出来 */
+    body.s1p-enhanced-controls-active #s1p-controls-wrapper {
+      display: block;
+    }
+    /* 2. 同时，彻底隐藏原生控件 */
+    body.s1p-enhanced-controls-active #scrolltop {
+      display: none !important;
+    }
 
-       /* --- [修改] 收藏夹内帖子跳转链接样式 --- */
-        .s1p-bookmark-meta-line {
-            display: flex;
-            align-items: center;
-            gap: 4px;
-            margin-top: 8px;
-        }
-        .s1p-bookmark-meta-line > span {
-            flex-shrink: 0;
-            white-space: nowrap;
-        }
-        .s1p-bookmark-thread-link {
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-            text-decoration: none;
-            font-weight: 500;
-            color: var(--s1p-desc-t);
-            transition: color 0.2s ease;
-            min-width: 0; /* 核心修复：允许此弹性项目收缩至小于其内容宽度 */
-        }
-        .s1p-bookmark-thread-link:hover {
-            color: var(--s1p-sec);
-            text-decoration: underline;
-        }
-        .s1p-bookmark-thread-link svg {
-            width: 14px;
-            height: 14px;
-            flex-shrink: 0; /* 防止图标被压缩 */
-        }
-        .s1p-bookmark-title-text {
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
+    /* 3. 以下是脚本控件自身的样式 (与之前版本类似，但选择器更严谨) */
+    #s1p-controls-wrapper {
+      position: fixed;
+      top: 50%;
+      right: 0;
+      transform: translateY(-50%);
+      z-index: 9998;
+    }
+    #s1p-controls-handle {
+      position: absolute;
+      top: 50%;
+      right: 0;
+      transform: translateY(-50%);
+      width: 20px;
+      /* [修改] 将高度从 60px 调整为 40px */
+      height: 40px;
+      background-color: var(--s1p-bg);
+      border: 1px solid var(--s1p-pri);
+      border-right: none;
+      border-radius: 10px 0 0 10px;
+      box-shadow: -2px 2px 8px rgba(var(--s1p-black-rgb), 0.1);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: opacity 0.3s ease 0.1s;
+    }
+    #s1p-controls-handle::before {
+      content: "";
+      display: block;
+      width: 4px;
+      height: 16px;
+      background-color: var(--s1p-icon-color);
+      -webkit-mask-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 4 16' fill='currentColor'%3e%3ccircle cx='2' cy='2' r='1.5'/%3e%3ccircle cx='2' cy='8' r='1.5'/%3e%3ccircle cx='2' cy='14' r='1.5'/%3e%3c/svg%3e");
+      mask-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 4 16' fill='currentColor'%3e%3ccircle cx='2' cy='2' r='1.5'/%3e%3ccircle cx='2' cy='8' r='1.5'/%3e%3ccircle cx='2' cy='14' r='1.5'/%3e%3c/svg%3e");
+      -webkit-mask-size: contain;
+      mask-size: contain;
+      -webkit-mask-repeat: no-repeat;
+      mask-repeat: no-repeat;
+      -webkit-mask-position: center;
+      mask-position: center;
+    }
+    #s1p-floating-controls {
+      transform: translateX(100%);
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding-left: 20px;
+      transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease,
+        visibility 0.3s;
+    }
+    #s1p-controls-wrapper:hover #s1p-controls-handle {
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease;
+    }
+    #s1p-controls-wrapper:hover #s1p-floating-controls {
+      transform: translateX(0);
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+    }
+    #s1p-floating-controls a {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background-color: var(--s1p-bg);
+      box-shadow: 0 2px 8px rgba(var(--s1p-black-rgb), 0.15);
+      border: 1px solid var(--s1p-pri);
+      transition: all 0.2s ease-in-out;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    #s1p-floating-controls a:hover {
+      background-color: var(--s1p-pri);
+      transform: scale(1.1);
+    }
+    #s1p-floating-controls a svg {
+      width: 24px;
+      height: 24px;
+      color: var(--s1p-t);
+    }
+    #s1p-floating-controls a.s1p-scroll-btn svg {
+      width: 28px;
+      height: 28px;
+    }
+    /* --- [更新] 回复收藏内容切换 V3 --- */
+    .s1p-bookmark-preview,
+    .s1p-bookmark-full {
+      /* 保留换行和空格，确保纯文本格式正确显示 */
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .s1p-bookmark-full {
+      display: none;
+    }
+    .s1p-bookmark-toggle {
+      /* 保持为行内元素，自然跟在文字后方 */
+      display: inline;
+      margin-left: 4px; /* 与文字稍微隔开 */
+      font-weight: 500;
+      color: var(--s1p-t);
+      cursor: pointer;
+      text-decoration: none;
+      font-size: 13px;
+    }
+    .s1p-bookmark-toggle:hover {
+      color: var(--s1p-sec);
+      text-decoration: underline;
+    }
 
-        @keyframes s1p-indicator-appear {
-            0% { opacity: 0; transform: translateY(-50%) scale(0.8) rotate(0deg); }
-            50% { opacity: 1; transform: translateY(-50%) scale(1.08) rotate(5deg); }
-            70% { transform: translateY(-50%) scale(0.98) rotate(-3deg); }
-            90% { transform: translateY(-50%) scale(1.02) rotate(1deg); }
-            100% { opacity: 1; transform: translateY(-50%) scale(1) rotate(0deg); }
-        }
-        @keyframes s1p-indicator-disappear {
-            from { opacity: 1; transform: translateY(-50%) scale(1); }
-            to { opacity: 0; transform: translateY(-50%) scale(0.8); }
-        }
-        .s1p-read-indicator {
-            position: absolute;
-            top: 50%;
-            transform: translateY(-50%);
-            display: inline-flex;
-            align-items: center;
-            gap: 4px;
-            background-color: var(--s1p-readprogress-bg);
-            color: var(--s1p-white);
-            padding: 3px 8px 4px; /* <-- [修改] 使用非对称内边距修正视觉重心 */
-            border-radius: 16px;
-            font-size: 11px;
-            font-weight: bold;
-            user-select: none;
-            white-space: nowrap;
-            box-shadow: 0 0 4px rgba(13, 13, 13, 0.1);
-            line-height: 1;
-        }
-        .s1p-read-indicator.s1p-anim-appear {
-            animation: s1p-indicator-appear 0.5s cubic-bezier(0.5, 0, 0.1, 1) forwards;
-        }
-        .s1p-read-indicator.s1p-anim-disappear {
-            animation: s1p-indicator-disappear 0.3s ease-out forwards;
-        }
-        .s1p-read-indicator-icon {
-            width: 14px; /* <-- [核心修改] 减小图标宽度 */
-            height: 14px; /* <-- [核心修改] 减小图标高度 */
-            background-color: currentColor;
-            mask-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='currentColor'%3e%3cpath d='M2 3.9934C2 3.44476 2.45531 3 2.9918 3H21.0082C21.556 3 22 3.44495 22 3.9934V20.0066C22 20.5552 21.5447 21 21.0082 21H2.9918C2.44405 21 2 20.5551 2 20.0066V3.9934ZM11 5H4V19H11V5ZM13 5V19H20V5H13ZM14 7H19V9H14V7ZM14 10H19V12H14V10Z'%3e%3c/path%3e%3c/svg%3e");
-            mask-size: contain;
-            mask-repeat: no-repeat;
-            mask-position: center;
-            /* -- [新增] 针对Windows平台的垂直对齐微调 -- */
-            position: relative;
-            top: 1px;
-        }
-    `);
+    /* --- [修改] 收藏夹内帖子跳转链接样式 --- */
+    .s1p-bookmark-meta-line {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      margin-top: 8px;
+    }
+    .s1p-bookmark-meta-line > span {
+      flex-shrink: 0;
+      white-space: nowrap;
+    }
+    .s1p-bookmark-thread-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      text-decoration: none;
+      font-weight: 500;
+      color: var(--s1p-desc-t);
+      transition: color 0.2s ease;
+      min-width: 0; /* 核心修复：允许此弹性项目收缩至小于其内容宽度 */
+    }
+    .s1p-bookmark-thread-link:hover {
+      color: var(--s1p-sec);
+      text-decoration: underline;
+    }
+    .s1p-bookmark-thread-link svg {
+      width: 14px;
+      height: 14px;
+      flex-shrink: 0; /* 防止图标被压缩 */
+    }
+    .s1p-bookmark-title-text {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    @keyframes s1p-indicator-appear {
+      0% {
+        opacity: 0;
+        transform: translateY(-50%) scale(0.8) rotate(0deg);
+      }
+      50% {
+        opacity: 1;
+        transform: translateY(-50%) scale(1.08) rotate(5deg);
+      }
+      70% {
+        transform: translateY(-50%) scale(0.98) rotate(-3deg);
+      }
+      90% {
+        transform: translateY(-50%) scale(1.02) rotate(1deg);
+      }
+      100% {
+        opacity: 1;
+        transform: translateY(-50%) scale(1) rotate(0deg);
+      }
+    }
+    @keyframes s1p-indicator-disappear {
+      from {
+        opacity: 1;
+        transform: translateY(-50%) scale(1);
+      }
+      to {
+        opacity: 0;
+        transform: translateY(-50%) scale(0.8);
+      }
+    }
+    .s1p-read-indicator {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background-color: var(--s1p-readprogress-bg);
+      color: var(--s1p-white);
+      padding: 3px 8px 4px; /* <-- [修改] 使用非对称内边距修正视觉重心 */
+      border-radius: 16px;
+      font-size: 11px;
+      font-weight: bold;
+      user-select: none;
+      white-space: nowrap;
+      box-shadow: 0 0 4px rgba(13, 13, 13, 0.1);
+      line-height: 1;
+    }
+    .s1p-read-indicator.s1p-anim-appear {
+      animation: s1p-indicator-appear 0.5s cubic-bezier(0.5, 0, 0.1, 1) forwards;
+    }
+    .s1p-read-indicator.s1p-anim-disappear {
+      animation: s1p-indicator-disappear 0.3s ease-out forwards;
+    }
+    .s1p-read-indicator-icon {
+      width: 14px; /* <-- [核心修改] 减小图标宽度 */
+      height: 14px; /* <-- [核心修改] 减小图标高度 */
+      background-color: currentColor;
+      mask-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='currentColor'%3e%3cpath d='M2 3.9934C2 3.44476 2.45531 3 2.9918 3H21.0082C21.556 3 22 3.44495 22 3.9934V20.0066C22 20.5552 21.5447 21 21.0082 21H2.9918C2.44405 21 2 20.5551 2 20.0066V3.9934ZM11 5H4V19H11V5ZM13 5V19H20V5H13ZM14 7H19V9H14V7ZM14 10H19V12H14V10Z'%3e%3c/path%3e%3c/svg%3e");
+      mask-size: contain;
+      mask-repeat: no-repeat;
+      mask-position: center;
+      /* -- [新增] 针对Windows平台的垂直对齐微调 -- */
+      position: relative;
+      top: 1px;
+    }
+  `);
 
   // --- S1 NUX 兼容性检测 ---
   let isS1NuxEnabled = false;
