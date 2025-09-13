@@ -128,10 +128,9 @@
             --s1p-sub-h-classic: #b0d440;
         }
 
-        /* --- [新增] Tab内容淡入动画 --- */
         @keyframes s1p-tab-fade-in {
-            from { opacity: 0; transform: translateY(5px); }
-            to   { opacity: 1; transform: translateY(0); }
+            from { opacity: 0; }
+            to   { opacity: 1; }
         }
 
         /* --- [FIX] 导航栏垂直居中对齐修正 --- */
@@ -178,7 +177,7 @@
         /* --- [MODIFIED] 最终简化版同步动画 (只有旋转) --- */
         @keyframes s1p-sync-simple-rotate {
             from { transform: rotate(0deg); }
-            to   { transform: rotate(360deg); }
+            to   { transform: rotate(-360deg); }
         }
 
         #s1p-nav-sync-btn svg.s1p-syncing {
@@ -955,11 +954,9 @@
             background-color: var(--s1p-white);
             border-radius: 4px;
             box-shadow: 0 1px 2px rgba(var(--s1p-black-rgb), 0.1);
-            transition: width 0.45s cubic-bezier(0.4, 0, 0.2, 1), transform 1s cubic-bezier(0.4, 0, 0.2, 1);
         }
-          .s1p-tab-content.active {
+        .s1p-tab-content.active {
           display: block;
-          animation: s1p-tab-fade-in 0.55s ease-out forwards;
         }
         .s1p-tab-btn {
             position: relative;
@@ -3497,16 +3494,35 @@
     if (!tabContainer) return;
     const slider = tabContainer.querySelector(".s1p-tab-slider");
     const activeTab = tabContainer.querySelector(".s1p-tab-btn.active");
+
     if (slider && activeTab) {
+      // --- [核心修正] 动画参数现在由JS直接控制 ---
+      // 您可以在这里轻松修改动画时长，单位是秒(s)
+      const animationDuration = "0.45s";
+      const animationEasing = "cubic-bezier(0.4, 0, 0.2, 1)";
+      // ---------------------------------------------
+
       const newWidth = activeTab.offsetWidth;
       const newLeft = activeTab.offsetLeft;
 
-      // 使用 requestAnimationFrame 来确保动画在下一帧渲染，从而稳定触发
+      // 1. 在下一帧，立即为滑块应用过渡动画效果
       requestAnimationFrame(() => {
+        slider.style.transition = `width ${animationDuration} ${animationEasing}, transform ${animationDuration} ${animationEasing}`;
+
+        // 2. 紧接着，设置滑块的目标宽度和位置，这将触发动画
         slider.style.width = `${newWidth}px`;
-        // [核心修改] 使用 transform 进行位移，而不是 left
         slider.style.transform = `translateX(${newLeft}px)`;
       });
+
+      // 3. [优化] 监听动画结束事件，结束后移除内联的 transition 样式
+      // 这样做的好处是，将控制权交还给CSS，避免潜在的样式冲突，是更规范的做法。
+      slider.addEventListener(
+        "transitionend",
+        () => {
+          slider.style.transition = "";
+        },
+        { once: true }
+      ); // { once: true } 确保事件只触发一次后自动移除
     }
   };
   const createManagementModal = () => {
@@ -4279,7 +4295,7 @@
         }
       });
     };
-    // [修改] 更新开关的文本描述，并简化事件逻辑
+
     const renderGeneralSettingsTab = () => {
       const settings = getSettings();
       tabs["general-settings"].innerHTML = `
@@ -4400,23 +4416,28 @@
                     </div>
                 </div>`;
 
-      // [核心修改] 将此函数内的 moveSlider 逻辑改为使用 transform
-      const moveSlider = (control, retries = 3) => {
-        if (!control || retries <= 0) return;
-        const slider = control.querySelector(".s1p-segmented-control-slider");
-        const activeOption = control.querySelector(
-          ".s1p-segmented-control-option.active"
-        );
+      // [核心修正] 使用 requestAnimationFrame 来确保滑块位置计算的准确性
+      const moveSlider = (control) => {
+        if (!control) return;
 
-        if (slider && activeOption) {
-          const width = activeOption.offsetWidth;
-          if (width === 0) {
-            setTimeout(() => moveSlider(control, retries - 1), 50);
-            return;
+        requestAnimationFrame(() => {
+          const slider = control.querySelector(".s1p-segmented-control-slider");
+          const activeOption = control.querySelector(
+            ".s1p-segmented-control-option.active"
+          );
+
+          // 在 rAF 回调中，offsetWidth 通常已经准备好，但作为双重保险，可以保留检查
+          if (slider && activeOption && activeOption.offsetWidth > 0) {
+            slider.style.width = `${activeOption.offsetWidth}px`;
+            slider.style.transform = `translateX(${activeOption.offsetLeft}px)`;
+          } else if (slider && activeOption) {
+            // 如果 rAF 后仍然为0（极端情况），可以再延迟一次
+            console.warn(
+              "S1 Plus: Segmented control layout calculation delayed. Retrying."
+            );
+            setTimeout(() => moveSlider(control), 50);
           }
-          slider.style.width = `${width}px`;
-          slider.style.transform = `translateX(${activeOption.offsetLeft}px)`;
-        }
+        });
       };
 
       const openInNewTabCheckbox = tabs["general-settings"].querySelector(
@@ -4443,7 +4464,8 @@
         "#s1p-readingProgressCleanupDays-control"
       );
       if (cleanupControl) {
-        setTimeout(() => moveSlider(cleanupControl), 0);
+        // [核心修正] 初始调用也使用 moveSlider
+        moveSlider(cleanupControl);
         cleanupControl.addEventListener("click", (e) => {
           const target = e.target.closest(".s1p-segmented-control-option");
           if (!target || target.classList.contains("active")) return;
