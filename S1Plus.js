@@ -2107,8 +2107,9 @@
         tagsImported = 0,
         bookmarksImported = 0;
 
-      const upgradeAndMerge = (type, importedData, getter, saver) => {
-        if (!importedData || typeof importedData !== "object") return 0;
+      // [修正] 此辅助函数仅用于升级数据结构，不再执行合并操作。
+      const upgradeDataStructure = (type, importedData) => {
+        if (!importedData || typeof importedData !== "object") return {};
         Object.keys(importedData).forEach((id) => {
           const item = importedData[id];
           if (type === "users" && typeof item.blockThreads === "undefined")
@@ -2116,9 +2117,7 @@
           if (type === "threads" && typeof item.reason === "undefined")
             item.reason = "manual";
         });
-        const merged = { ...getter(), ...importedData };
-        saver(merged);
-        return Object.keys(importedData).length;
+        return importedData;
       };
 
       if (dataToImport.settings) {
@@ -2126,29 +2125,24 @@
         const importedSettings = { ...dataToImport.settings };
         delete importedSettings.syncRemoteGistId;
         delete importedSettings.syncRemotePat;
+        // 设置是扁平对象，合并是安全的，予以保留
         saveSettings({ ...getSettings(), ...importedSettings });
         // ----------------------------------------------------------
       }
 
-      threadsImported = upgradeAndMerge(
-        "threads",
-        dataToImport.threads,
-        getBlockedThreads,
-        saveBlockedThreads
-      );
-      usersImported = upgradeAndMerge(
-        "users",
-        dataToImport.users,
-        getBlockedUsers,
-        saveBlockedUsers
-      );
+      // [修正] 关键修复：不再与本地数据合并，直接使用导入的数据进行覆盖
+      const threadsToSave = upgradeDataStructure("threads", dataToImport.threads || {});
+      saveBlockedThreads(threadsToSave);
+      threadsImported = Object.keys(threadsToSave).length;
 
-      if (
-        dataToImport.user_tags &&
-        typeof dataToImport.user_tags === "object"
-      ) {
-        const mergedTags = { ...getUserTags(), ...dataToImport.user_tags };
-        saveUserTags(mergedTags);
+      // [修正] 关键修复：不再与本地数据合并，直接使用导入的数据进行覆盖
+      const usersToSave = upgradeDataStructure("users", dataToImport.users || {});
+      saveBlockedUsers(usersToSave);
+      usersImported = Object.keys(usersToSave).length;
+
+      // [修正] 关键修复：不再与本地数据合并，直接使用导入的数据进行覆盖
+      if (dataToImport.user_tags && typeof dataToImport.user_tags === "object") {
+        saveUserTags(dataToImport.user_tags);
         tagsImported = Object.keys(dataToImport.user_tags).length;
       }
 
@@ -2156,6 +2150,7 @@
         dataToImport.title_filter_rules &&
         Array.isArray(dataToImport.title_filter_rules)
       ) {
+        // 数组直接替换，逻辑正确，无需修改
         saveTitleFilterRules(dataToImport.title_filter_rules);
         rulesImported = dataToImport.title_filter_rules.length;
       } else if (
@@ -2172,21 +2167,15 @@
         rulesImported = newRules.length;
       }
 
+      // [修正] 关键修复：不再与本地数据合并，直接使用导入的数据进行覆盖
       if (dataToImport.read_progress) {
-        const mergedProgress = {
-          ...getReadProgress(),
-          ...dataToImport.read_progress,
-        };
-        saveReadProgress(mergedProgress);
+        saveReadProgress(dataToImport.read_progress);
         progressImported = Object.keys(dataToImport.read_progress).length;
       }
 
+      // [修正] 关键修复：不再与本地数据合并，直接使用导入的数据进行覆盖
       if (dataToImport.bookmarked_replies) {
-        const mergedBookmarks = {
-          ...getBookmarkedReplies(),
-          ...dataToImport.bookmarked_replies,
-        };
-        saveBookmarkedReplies(mergedBookmarks);
+        saveBookmarkedReplies(dataToImport.bookmarked_replies);
         bookmarksImported = Object.keys(dataToImport.bookmarked_replies).length;
       }
 
@@ -2300,20 +2289,56 @@
       const settings = getSettings();
       if (
         !settings.syncRemoteEnabled ||
+        !settings.syncAutoEnabled || // [修正] 确保自动同步子开关也开启
         !settings.syncRemoteGistId ||
         !settings.syncRemotePat
       ) {
         return;
       }
-      console.log("S1 Plus: 检测到数据变更，触发远程同步推送...");
-      try {
-        const dataToPush = await exportLocalDataObject();
-        await pushRemoteData(dataToPush);
-        GM_setValue("s1p_last_sync_timestamp", Date.now());
-        updateLastSyncTimeDisplay();
-        console.log("S1 Plus: 数据已成功推送到远程。");
-      } catch (error) {
-        console.error("S1 Plus: 自动推送数据失败:", error);
+      
+      console.log("S1 Plus: 检测到数据变更，触发后台智能同步检查...");
+
+      // [核心修改] 不再是“盲目推送”，而是调用完整的智能同步引擎
+      const result = await performAutoSync();
+
+      // [新增] 根据智能同步的结果，决定是否需要用户交互
+      switch (result.status) {
+        case "conflict":
+          // 如果检测到冲突，则调用与启动时同步完全相同的弹窗，让用户解决
+          createAdvancedConfirmationModal(
+            "检测到后台同步冲突",
+            "<p>S1 Plus在后台自动同步时发现，您的本地数据和云端备份可能都已更改，为防止数据丢失，自动同步已暂停。</p><p>请手动选择要保留的版本来解决冲突。</p>",
+            [
+              {
+                text: "稍后处理",
+                className: "s1p-cancel",
+                action: () => {
+                  showMessage("同步已暂停，您可以在设置中手动同步。", null);
+                },
+              },
+              {
+                text: "立即解决",
+                className: "s1p-confirm",
+                action: () => {
+                  handleManualSync(); // 调用功能最完善的手动同步流程
+                },
+              },
+            ]
+          );
+          break;
+
+        case "failure":
+          // 如果同步失败，用一个无打扰的toast提示用户
+          showMessage(`后台同步失败: ${result.error}`, false);
+          break;
+        
+        case "success":
+          if (result.action === "pulled") {
+            // 如果后台自动拉取了数据，提示用户，因为页面内容可能已过期
+            showMessage("后台同步完成：云端有更新已被自动拉取。建议刷新页面。", true);
+          }
+          // 对于推送成功(pushed)或无需更改(no_change)的情况，控制台日志已足够，无需打扰用户
+          break;
       }
     })();
   };
