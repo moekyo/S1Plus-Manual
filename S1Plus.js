@@ -134,30 +134,35 @@
             align-items: center !important;
         }
         
-        /* --- [MODIFIED] 手动同步导航按钮 --- */
-        /* 1. 确保导航栏的 ul 容器使用 Flexbox 并垂直居中所有 li 元素 */
-        #nv > ul {
-            display: flex !important;
-            align-items: center !important;
+        /* --- [MODIFIED] 手动同步导航按钮 (v5) --- */
+        #s1p-nav-sync-btn {
+            flex-shrink: 0;
+            margin-left: 8px;
         }
 
-        /* 2. 针对包含SVG图标的 a 链接，让它也成为一个Flex容器 */
         #s1p-nav-sync-btn a {
-            display: flex;             /* 将 a 标签设置为 flex 容器 */
-            align-items: center;       /* 垂直居中内部的 SVG 图标 */
-            justify-content: center;   /* 水平居中内部的 SVG 图标 */
-            height: 100%;              /* 让 a 标签的高度撑满 li 元素 */
-            vertical-align: middle;    /* 尝试通过这个属性来改善对齐 */
-
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            vertical-align: middle;
+            padding: 0 10px;
+            box-sizing: border-box;
         }
         #s1p-nav-sync-btn svg {
-            width: 16px; /* <-- 已修改 */
-            height: 16px; /* <-- 已修改 */
+            width: 16px;
+            height: 16px;
+            flex-shrink: 0;
             color: var(--s1p-t);
             transition: color 0.3s ease, transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-            /* 在这个 svg 标签的样式里增加两行 */
             position: relative;
-             top: 1.5px; /* 将图标向下移动 1.5 个像素 */
+            top: 1.5px;
+        }
+        /* [新增] 通过为图标的路径同时应用填充和同色描边，来实现视觉上的“加粗”效果 */
+        #s1p-nav-sync-btn svg path {
+            stroke: currentColor; /* 描边颜色与填充色(currentColor)一致 */
+            stroke-width: 0.6px;  /* 描边宽度，可调整此值改变加粗程度 */
+            stroke-linejoin: round; /* 让描边的边角更平滑 */
         }
         #s1p-nav-sync-btn a:hover svg {
             color: var(--s1p-t);
@@ -2762,9 +2767,6 @@
     }
   };
 
-  /**
-   * [MODIFIED & OPTIMIZED] 添加或移除导航栏上的手动同步按钮，并增加状态反馈
-   */
   const updateNavbarSyncButton = () => {
     const settings = getSettings();
     const existingBtnLi = document.getElementById("s1p-nav-sync-btn");
@@ -2781,8 +2783,8 @@
     li.id = "s1p-nav-sync-btn";
     const a = document.createElement("a");
     a.href = "javascript:void(0);";
-    // --- [MODIFIED] 在 <path> 元素中添加了 stroke 和 stroke-width 属性来加粗图标 ---
-    a.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path stroke="currentColor" stroke-width="0.4" d="M12 4C9.25144 4 6.82508 5.38626 5.38443 7.5H8V9.5H2V3.5H4V5.99936C5.82381 3.57166 8.72764 2 12 2C17.5228 2 22 6.47715 22 12H20C20 7.58172 16.4183 4 12 4ZM4 12C4 16.4183 7.58172 20 12 20C14.7486 20 17.1749 18.6137 18.6156 16.5H16V14.5H22V20.5H20V18.0006C18.1762 20.4283 15.2724 22 12 22C6.47715 22 2 17.5228 2 12H4Z"></path></svg>`;
+    // --- [核心修正] 恢复为原始的、基于“填充(fill)”的实心图标定义 ---
+    a.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4C9.25144 4 6.82508 5.38626 5.38443 7.5H8V9.5H2V3.5H4V5.99936C5.82381 3.57166 8.72764 2 12 2C17.5228 2 22 6.47715 22 12H20C20 7.58172 16.4183 4 12 4ZM4 12C4 16.4183 7.58172 20 12 20C14.7486 20 17.1749 18.6137 18.6156 16.5H16V14.5H22V20.5H20V18.0006C18.1762 20.4283 15.2724 22 12 22C6.47715 22 2 17.5228 2 12H4Z"></path></svg>`;
     li.appendChild(a);
 
     if (settings.syncDirectChoiceMode) {
@@ -2802,7 +2804,6 @@
             li,
             [
               {
-                // [核心修正] 将图标和文字组合
                 label: `${pullIconSVG} <span>拉取</span>`,
                 action: "pull",
                 title:
@@ -2810,7 +2811,6 @@
                 callback: handleForcePull,
               },
               {
-                // [核心修正] 将图标和文字组合
                 label: `${pushIconSVG} <span>推送</span>`,
                 action: "push",
                 title: "将您当前的本地数据覆盖到云端备份，此操作不可逆。",
