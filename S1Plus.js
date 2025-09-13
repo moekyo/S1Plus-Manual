@@ -80,7 +80,6 @@
   const SVG_ICON_DELETE_HOVER = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='1.5' stroke='white'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0' /%3E%3C/svg%3E`;
   const SVG_ICON_ARROW_MASK = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 16'%3E%3Cpath d='M2 2L8 8L2 14' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E`;
 
-  
   GM_addStyle(`
         /* --- 通用颜色 --- */
         :root {
@@ -2131,17 +2130,26 @@
       }
 
       // [修正] 关键修复：不再与本地数据合并，直接使用导入的数据进行覆盖
-      const threadsToSave = upgradeDataStructure("threads", dataToImport.threads || {});
+      const threadsToSave = upgradeDataStructure(
+        "threads",
+        dataToImport.threads || {}
+      );
       saveBlockedThreads(threadsToSave);
       threadsImported = Object.keys(threadsToSave).length;
 
       // [修正] 关键修复：不再与本地数据合并，直接使用导入的数据进行覆盖
-      const usersToSave = upgradeDataStructure("users", dataToImport.users || {});
+      const usersToSave = upgradeDataStructure(
+        "users",
+        dataToImport.users || {}
+      );
       saveBlockedUsers(usersToSave);
       usersImported = Object.keys(usersToSave).length;
 
       // [修正] 关键修复：不再与本地数据合并，直接使用导入的数据进行覆盖
-      if (dataToImport.user_tags && typeof dataToImport.user_tags === "object") {
+      if (
+        dataToImport.user_tags &&
+        typeof dataToImport.user_tags === "object"
+      ) {
         saveUserTags(dataToImport.user_tags);
         tagsImported = Object.keys(dataToImport.user_tags).length;
       }
@@ -2295,7 +2303,7 @@
       ) {
         return;
       }
-      
+
       console.log("S1 Plus: 检测到数据变更，触发后台智能同步检查...");
 
       // [核心修改] 不再是“盲目推送”，而是调用完整的智能同步引擎
@@ -2331,11 +2339,14 @@
           // 如果同步失败，用一个无打扰的toast提示用户
           showMessage(`后台同步失败: ${result.error}`, false);
           break;
-        
+
         case "success":
           if (result.action === "pulled") {
             // 如果后台自动拉取了数据，提示用户，因为页面内容可能已过期
-            showMessage("后台同步完成：云端有更新已被自动拉取。建议刷新页面。", true);
+            showMessage(
+              "后台同步完成：云端有更新已被自动拉取。建议刷新页面。",
+              true
+            );
           }
           // 对于推送成功(pushed)或无需更改(no_change)的情况，控制台日志已足够，无需打扰用户
           break;
@@ -4653,13 +4664,17 @@
       }
 
       if (e.target.id === "s1p-remote-save-btn") {
+        const button = e.target;
+        button.disabled = true;
+        button.textContent = "正在保存并测试...";
+
         const currentSettings = getSettings();
         currentSettings.syncRemoteEnabled = modal.querySelector(
           "#s1p-remote-enabled-toggle"
         ).checked;
         currentSettings.syncDailyFirstLoad = modal.querySelector(
           "#s1p-daily-first-load-sync-enabled-toggle"
-        ).checked; // [整合] 保存新开关
+        ).checked;
         currentSettings.syncAutoEnabled = modal.querySelector(
           "#s1p-auto-sync-enabled-toggle"
         ).checked;
@@ -4670,9 +4685,32 @@
           .querySelector("#s1p-remote-pat-input")
           .value.trim();
 
+        // 1. 先保存设置，这样后续的 API 调用才能使用最新的凭据
         saveSettings(currentSettings);
-        updateNavbarSyncButton(); // 保存后更新导航栏按钮
-        showMessage("远程同步设置已保存。", true);
+        updateNavbarSyncButton();
+
+        try {
+          // 2. 只有在 Gist ID 和 PAT 都填写时才执行连通性测试
+          if (
+            currentSettings.syncRemoteGistId &&
+            currentSettings.syncRemotePat
+          ) {
+            showMessage("设置已保存，正在测试连接...", null);
+            await fetchRemoteData(); // 这个函数在失败时会 reject/throw error
+            showMessage("连接成功！", true);
+          } else {
+            // 如果字段不完整，只提示保存成功，不进行测试
+            showMessage("远程同步设置已保存。", true);
+          }
+        } catch (error) {
+          // 3. 捕获 fetchRemoteData 抛出的任何错误
+          showMessage("连接失败，请检查 Gist ID 和 PAT 是否正确。", false);
+          console.error("S1 Plus Sync Connection Test Failed:", error);
+        } finally {
+          // 4. 无论测试成功与否，最后都恢复按钮的状态
+          button.disabled = false;
+          button.textContent = "保存设置";
+        }
       }
 
       if (e.target.id === "s1p-remote-manual-sync-btn") {
