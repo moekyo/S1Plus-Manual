@@ -1331,6 +1331,107 @@
             color: var(--s1p-sub-h-t);
             border-color: var(--s1p-sub-h);
         }
+        /* --- [新增 V9] 可禁用/启用的增强型悬浮控件 --- */
+        /* --- 模式 B: 增强控件关闭 (默认状态) --- */
+        /* 默认隐藏脚本创建的控件 */
+        #s1p-controls-wrapper {
+            display: none;
+        }
+
+        /* --- 模式 A: 增强控件开启 (当 body 有 s1p-enhanced-controls-active 时) --- */
+        /* 1. 让脚本控件显示出来 */
+        body.s1p-enhanced-controls-active #s1p-controls-wrapper {
+            display: block;
+        }
+        /* 2. 同时，彻底隐藏原生控件 */
+        body.s1p-enhanced-controls-active #scrolltop {
+            display: none !important;
+        }
+        
+        /* 3. 以下是脚本控件自身的样式 (与之前版本类似，但选择器更严谨) */
+        #s1p-controls-wrapper {
+            position: fixed;
+            top: 50%;
+            right: 0;
+            transform: translateY(-50%);
+            z-index: 9998;
+        }
+        #s1p-controls-handle {
+            position: absolute;
+            top: 50%;
+            right: 0;
+            transform: translateY(-50%);
+            width: 20px;
+            height: 60px;
+            background-color: var(--s1p-bg);
+            border: 1px solid var(--s1p-pri);
+            border-right: none;
+            border-radius: 10px 0 0 10px;
+            box-shadow: -2px 2px 8px rgba(var(--s1p-black-rgb), 0.1);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: opacity 0.3s ease 0.1s;
+        }
+        #s1p-controls-handle::before {
+            content: '•••';
+            color: var(--s1p-icon-color);
+            font-size: 14px;
+            line-height: 1;
+            writing-mode: vertical-rl;
+            text-orientation: mixed;
+            letter-spacing: 2px;
+        }
+        #s1p-floating-controls {
+            transform: translateX(100%);
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            padding-left: 20px;
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease, visibility 0.3s;
+        }
+        #s1p-controls-wrapper:hover #s1p-controls-handle {
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s ease;
+        }
+        #s1p-controls-wrapper:hover #s1p-floating-controls {
+            transform: translateX(0);
+            opacity: 1;
+            visibility: visible;
+            pointer-events: auto;
+        }
+        #s1p-floating-controls a {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background-color: var(--s1p-bg);
+            box-shadow: 0 2px 8px rgba(var(--s1p-black-rgb), 0.15);
+            border: 1px solid var(--s1p-pri);
+            transition: all 0.2s ease-in-out;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        #s1p-floating-controls a:hover {
+            background-color: var(--s1p-pri);
+            transform: scale(1.1);
+        }
+        #s1p-floating-controls a svg {
+            width: 24px;
+            height: 24px;
+            color: var(--s1p-t);
+        }
+        #s1p-floating-controls a.s1p-scroll-btn svg {
+            width: 28px;
+            height: 28px;
+        }
         /* --- [更新] 回复收藏内容切换 V3 --- */
         .s1p-bookmark-preview, .s1p-bookmark-full {
             /* 保留换行和空格，确保纯文本格式正确显示 */
@@ -2499,6 +2600,7 @@
     showManuallyBlockedList: false,
     hideImagesByDefault: false,
     followS1NuxTheme: true, // <-- [新增]
+    enhanceFloatingControls: true,
     threadBlockHoverDelay: 1,
     customTitleSuffix: " - STAGE1ₛₜ",
     customNavLinks: [
@@ -4049,6 +4151,7 @@
         }
       });
     };
+    // [修改] 更新开关的文本描述，并简化事件逻辑
     const renderGeneralSettingsTab = () => {
       const settings = getSettings();
       tabs["general-settings"].innerHTML = `
@@ -4143,6 +4246,13 @@
                     </div>
                     <p class="s1p-setting-desc">UI 兼容模式：<b>开启</b>后，部分UI (如滚动条、删除按钮) 将适配 \`S1 NUX\` 风格；<b>关闭</b>则强制恢复 S1 Plus 的经典独立样式。</p>
                     <div class="s1p-settings-item">
+                        <label class="s1p-settings-label" for="s1p-enhanceFloatingControls">使用 S1 Plus 增强型悬浮控件</label>
+                        <label class="s1p-switch"><input type="checkbox" id="s1p-enhanceFloatingControls" class="s1p-settings-checkbox" data-setting="enhanceFloatingControls" ${
+                          settings.enhanceFloatingControls ? "checked" : ""
+                        }><span class="s1p-slider"></span></label>
+                    </div>
+                    <p class="s1p-setting-desc">开启后，将使用脚本提供的全新悬停展开式控件；关闭则恢复使用论坛原生的滚动控件。</p>
+                    <div class="s1p-settings-item">
                         <label class="s1p-settings-label" for="s1p-changeLogoLink">修改论坛Logo链接 (指向论坛首页)</label>
                         <label class="s1p-switch"><input type="checkbox" id="s1p-changeLogoLink" class="s1p-settings-checkbox" data-setting="changeLogoLink" ${
                           settings.changeLogoLink ? "checked" : ""
@@ -4235,6 +4345,11 @@
             settings[settingKey] = target.value;
           }
           saveSettings(settings);
+
+          if (settingKey === "enhanceFloatingControls") {
+            applyChanges();
+            return;
+          }
 
           if (settingKey === "followS1NuxTheme") {
             applyThemeOverrideStyle();
@@ -5944,6 +6059,121 @@
       },
     });
   }
+  // [修改] 将设置项重命名为 enhanceFloatingControls
+  const createCustomFloatingControls = () => {
+    // 1. 如果自定义控件已存在，则直接退出
+    if (document.getElementById("s1p-controls-wrapper")) {
+      return;
+    }
+
+    // 2. 从原生 #scrolltop 控件中搜集信息
+    const originalContainer = document.getElementById("scrolltop");
+    let replyAction = null;
+    let returnAction = null;
+    if (originalContainer) {
+      const replyLink = originalContainer.querySelector("a.replyfast");
+      if (replyLink) {
+        replyAction = {
+          href: replyLink.href,
+          onclick: replyLink.onclick,
+          title: replyLink.title,
+        };
+      }
+      const returnLink = originalContainer.querySelector(
+        "a.returnboard, a.returnlist"
+      );
+      if (returnLink) {
+        returnAction = { href: returnLink.href, title: returnLink.title };
+      }
+    }
+
+    // 3. 定义SVG图标
+    const svgs = {
+      scrollTop: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 13.9142L16.7929 18.7071L18.2071 17.2929L12 11.0858L5.79289 17.2929L7.20711 18.7071L12 13.9142ZM6 7L18 7V9L6 9L6 7Z"></path></svg>`,
+      scrollBottom: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 10.0858L7.20711 5.29291L5.79289 6.70712L12 12.9142L18.2071 6.70712L16.7929 5.29291L12 10.0858ZM18 17L6 17L6 15L18 15V17Z"></path></svg>`,
+      reply: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M14 22.5L11.2 19H6C5.44772 19 5 18.5523 5 18V7.10256C5 6.55028 5.44772 6.10256 6 6.10256H22C22.5523 6.10256 23 6.55028 23 7.10256V18C23 18.5523 22.5523 19 22 19H16.8L14 22.5ZM15.8387 17H21V8.10256H7V17H11.2H12.1613L14 19.2984L15.8387 17ZM2 2H19V4H3V15H1V3C1 2.44772 1.44772 2 2 2Z"></path></svg>`,
+      board: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M2 4C2 3.44772 2.44772 3 3 3H21C21.5523 3 22 3.44772 22 4V20C22 20.5523 21.5523 21 21 21H3C2.44772 21 2 20.5523 2 20V4ZM4 5V19H20V5H4ZM6 7H8V9H6V7ZM8 11H6V13H8V11ZM6 15H8V17H6V15ZM18 7H10V9H18V7ZM10 15H18V17H10V15ZM18 11H10V13H18V11Z"></path></svg>`,
+    };
+
+    // 4. 创建DOM结构
+    const wrapper = document.createElement("div");
+    wrapper.id = "s1p-controls-wrapper";
+    // [核心修改] 读取新命名的设置并添加对应的class
+    const settings = getSettings();
+    if (settings.enhanceFloatingControls) {
+      wrapper.classList.add("s1p-hover-interaction-enabled");
+    }
+
+    const handle = document.createElement("div");
+    handle.id = "s1p-controls-handle";
+
+    const panel = document.createElement("div");
+    panel.id = "s1p-floating-controls";
+
+    // 5. 创建按钮并添加到 panel 中
+    const createButton = (title, className, svg, href, onclick) => {
+      const link = document.createElement("a");
+      link.title = title;
+      link.className = className;
+      link.innerHTML = svg;
+      if (href) link.href = href;
+      if (onclick) link.onclick = onclick;
+      return link;
+    };
+
+    if (replyAction) {
+      panel.appendChild(
+        createButton(
+          replyAction.title,
+          "",
+          svgs.reply,
+          replyAction.href,
+          replyAction.onclick
+        )
+      );
+    }
+    const scrollTopBtn = createButton(
+      "返回顶部",
+      "s1p-scroll-btn",
+      svgs.scrollTop,
+      "javascript:void(0);",
+      (e) => {
+        e.preventDefault();
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+    );
+    const scrollBottomBtn = createButton(
+      "返回底部",
+      "s1p-scroll-btn",
+      svgs.scrollBottom,
+      "javascript:void(0);",
+      (e) => {
+        e.preventDefault();
+        window.scrollTo({
+          top: document.body.scrollHeight,
+          behavior: "smooth",
+        });
+      }
+    );
+    panel.appendChild(scrollTopBtn);
+    panel.appendChild(scrollBottomBtn);
+    if (returnAction) {
+      panel.appendChild(
+        createButton(
+          returnAction.title,
+          "",
+          svgs.board,
+          returnAction.href,
+          null
+        )
+      );
+    }
+
+    // 6. 组装并添加到页面
+    wrapper.appendChild(panel);
+    wrapper.appendChild(handle);
+    document.body.appendChild(wrapper);
+  };
 
   const cleanupOldReadProgress = () => {
     const settings = getSettings();
@@ -6139,9 +6369,29 @@
     const watchTarget = document.getElementById("wp") || document.body;
     observer.observe(watchTarget, { childList: true, subtree: true });
   }
+  // --- [新增] 悬浮控件管理器 ---
+  const manageFloatingControls = () => {
+    const settings = getSettings();
+    // 根据设置，切换body上的class，从而激活不同的CSS规则
+    document.body.classList.toggle(
+      "s1p-enhanced-controls-active",
+      settings.enhanceFloatingControls
+    );
 
+    if (settings.enhanceFloatingControls) {
+      // 如果设置为开启，则调用创建函数（它内部有防重复机制）
+      createCustomFloatingControls();
+    } else {
+      // 如果设置为关闭，则确保移除脚本创建的控件
+      document.getElementById("s1p-controls-wrapper")?.remove();
+    }
+  };
+  // [修改] 调用新的控件管理器，不再直接创建控件
   function applyChanges() {
     const settings = getSettings();
+
+    manageFloatingControls(); // <-- [核心修改]
+
     if (settings.enablePostBlocking) {
       hideBlockedThreads();
       hideThreadsByTitleKeyword();
