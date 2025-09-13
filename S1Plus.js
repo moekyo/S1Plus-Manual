@@ -3172,9 +3172,12 @@
     }
     return { ...defaultSettings, ...saved };
   };
-  const saveSettings = (settings) => {
+  // [MODIFIED] 增加 suppressSyncTrigger 参数以阻止在特定情况下触发自动同步
+  const saveSettings = (settings, suppressSyncTrigger = false) => {
     GM_setValue("s1p_settings", settings);
-    updateLastModifiedTimestamp();
+    if (!suppressSyncTrigger) {
+      updateLastModifiedTimestamp();
+    }
   };
 
   // --- [新增] 主题覆写样式管理 ---
@@ -3964,8 +3967,8 @@
       ); // { once: true } 确保事件只触发一次后自动移除
     }
   };
+  // [MODIFIED] 调整了“保存设置”按钮的逻辑，以防止首次设置时自动覆盖云端数据
   const createManagementModal = () => {
-    // ... (此处省略 calculateModalWidth 内部代码，与原文件一致) ...
     const calculateModalWidth = () => {
       const measureContainer = document.createElement("div");
       measureContainer.style.cssText =
@@ -5380,7 +5383,7 @@
       if (e.target.id === "s1p-remote-save-btn") {
         const button = e.target;
         button.disabled = true;
-        button.textContent = "正在保存并测试...";
+        button.textContent = "正在保存...";
 
         const currentSettings = getSettings();
         currentSettings.syncRemoteEnabled = modal.querySelector(
@@ -5399,32 +5402,20 @@
           .querySelector("#s1p-remote-pat-input")
           .value.trim();
 
-        // 1. 先保存设置，这样后续的 API 调用才能使用最新的凭据
-        saveSettings(currentSettings);
+        // [核心修改] 保存设置，但阻止自动同步触发
+        saveSettings(currentSettings, true);
         updateNavbarSyncButton();
 
-        try {
-          // 2. 只有在 Gist ID 和 PAT 都填写时才执行连通性测试
-          if (
-            currentSettings.syncRemoteGistId &&
-            currentSettings.syncRemotePat
-          ) {
-            showMessage("设置已保存，正在测试连接...", null);
-            await fetchRemoteData(); // 这个函数在失败时会 reject/throw error
-            showMessage("连接成功！", true);
-          } else {
-            // 如果字段不完整，只提示保存成功，不进行测试
-            showMessage("远程同步设置已保存。", true);
-          }
-        } catch (error) {
-          // 3. 捕获 fetchRemoteData 抛出的任何错误
-          showMessage("连接失败，请检查 Gist ID 和 PAT 是否正确。", false);
-          console.error("S1 Plus Sync Connection Test Failed:", error);
-        } finally {
-          // 4. 无论测试成功与否，最后都恢复按钮的状态
-          button.disabled = false;
-          button.textContent = "保存设置";
+        if (currentSettings.syncRemoteGistId && currentSettings.syncRemotePat) {
+          // [核心修改] 不再只是测试连接，而是直接调用完整的手动同步流程
+          showMessage("设置已保存，正在启动首次同步检查...", null);
+          await handleManualSync();
+        } else {
+          // 如果字段不完整，只提示保存成功
+          showMessage("远程同步设置已保存。", true);
         }
+        button.disabled = false;
+        button.textContent = "保存设置";
       }
 
       if (e.target.id === "s1p-remote-manual-sync-btn") {
