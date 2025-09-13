@@ -1522,6 +1522,43 @@
             color: var(--s1p-sec);
             text-decoration: underline;
         }
+
+       /* --- [修改] 收藏夹内帖子跳转链接样式 --- */
+        .s1p-bookmark-meta-line {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            margin-top: 8px;
+        }
+        .s1p-bookmark-meta-line > span {
+            flex-shrink: 0;
+            white-space: nowrap;
+        }
+        .s1p-bookmark-thread-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            text-decoration: none;
+            font-weight: 500;
+            color: var(--s1p-desc-t);
+            transition: color 0.2s ease;
+            min-width: 0; /* 核心修复：允许此弹性项目收缩至小于其内容宽度 */
+        }
+        .s1p-bookmark-thread-link:hover {
+            color: var(--s1p-sec);
+            text-decoration: underline;
+        }
+        .s1p-bookmark-thread-link svg {
+            width: 14px;
+            height: 14px;
+            flex-shrink: 0; /* 防止图标被压缩 */
+        }
+        .s1p-bookmark-title-text {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
         @keyframes s1p-indicator-appear {
             0% { opacity: 0; transform: translateY(-50%) scale(0.8) rotate(0deg); }
             50% { opacity: 1; transform: translateY(-50%) scale(1.08) rotate(5deg); }
@@ -3904,14 +3941,19 @@
                                     }</strong> · 收藏于: ${formatDate(
                               item.timestamp
                             )}
-                                    <br>
-                                    来自帖子: <a href="forum.php?mod=redirect&goto=findpost&ptid=${
-                                      item.threadId
-                                    }&pid=${
+                                    <div class="s1p-bookmark-meta-line">
+                                      <span>来自：</span>
+                                      <a class="s1p-bookmark-thread-link" href="forum.php?mod=redirect&goto=findpost&ptid=${
+                                        item.threadId
+                                      }&pid=${
                               item.postId
-                            }" target="_blank" style="font-weight: 500;">${
-                              item.threadTitle
-                            }</a>
+                            }" target="_blank" title="${item.threadTitle}">
+                                        <span class="s1p-bookmark-title-text">${
+                                          item.threadTitle
+                                        }</span>
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" /></svg>
+                                      </a>
+                                    </div>
                                 </div>
                             </div>
                         </div>`;
@@ -6004,7 +6046,7 @@
             const contentClone = contentEl.cloneNode(true);
             contentClone
               .querySelectorAll(
-                ".pstatus, .quote, .s1p-image-toggle-all-container"
+                ".pstatus, .quote, .s1p-image-toggle-all-container, .s1p-quote-placeholder"
               )
               .forEach((el) => el.remove());
             postContent = contentClone.innerText
