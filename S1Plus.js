@@ -127,12 +127,19 @@
             --s1p-sec-classic: #a4bf7bff;
             --s1p-sub-h-classic: #b0d440;
         }
+
+        /* --- [新增] Tab内容淡入动画 --- */
+        @keyframes s1p-tab-fade-in {
+            from { opacity: 0; transform: translateY(5px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+
         /* --- [FIX] 导航栏垂直居中对齐修正 --- */
         #nv > ul {
             display: flex !important;
             align-items: center !important;
         }
-        
+
         /* --- [MODIFIED] 手动同步导航按钮 (v5) --- */
         #s1p-nav-sync-btn {
             flex-shrink: 0;
@@ -309,11 +316,12 @@
         .s1p-segmented-control-slider {
             position: absolute;
             top: 2px;
+            left: 0;
             height: calc(100% - 4px);
             background-color: var(--s1p-sec);
             border-radius: 5px;
             box-shadow: 0 1px 3px rgba(var(--s1p-black-rgb), 0.1);
-            transition: all 0.25s ease-in-out;
+            transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
         }
         .s1p-segmented-control:hover .s1p-segmented-control-slider {
             box-shadow: 0 2px 6px rgba(var(--s1p-black-rgb), 0.15);
@@ -927,13 +935,65 @@
             color: var(--s1p-red);
             transform: rotate(90deg);
         }
-        .s1p-modal-body { padding: 0 16px 16px; overflow-y: auto; flex-grow: 1; }
+        .s1p-modal-body { padding: 8px 16px 16px; overflow-y: auto; flex-grow: 1; }
         .s1p-modal-footer { padding: 12px 16px; border-top: 1px solid var(--s1p-pri); text-align: right; font-size: 12px; }
-        .s1p-tabs { display: flex; border-bottom: 1px solid var(--s1p-pri); }
-        .s1p-tab-btn { padding: 12px 16px; cursor: pointer; border: none; background-color: transparent; font-size: 14px; border-bottom: 2px solid transparent; transition: all 0.2s; white-space: nowrap; }
-        .s1p-tab-btn.active { color: var(--s1p-sec); border-bottom-color: var(--s1p-sec); font-weight: 500; }
-        .s1p-tab-content { display: none; padding-top: 16px; }
-        .s1p-tab-content.active { display: block; }
+
+        /* --- [OPTIMIZED] 设置面板Tabs样式 (Pill / 滑块样式) --- */
+        .s1p-tabs {
+            position: relative;
+            display: inline-flex; /* 使容器宽度自适应内容 */
+            background-color: var(--s1p-sub);
+            border-radius: 6px;
+            padding: 4px;
+            margin-bottom: 16px;
+        }
+        .s1p-tab-slider {
+            position: absolute;
+            top: 4px;
+            left: 0;
+            height: calc(100% - 8px);
+            background-color: var(--s1p-white);
+            border-radius: 4px;
+            box-shadow: 0 1px 2px rgba(var(--s1p-black-rgb), 0.1);
+            transition: width 0.45s cubic-bezier(0.4, 0, 0.2, 1), transform 1s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+          .s1p-tab-content.active {
+          display: block;
+          animation: s1p-tab-fade-in 0.55s ease-out forwards;
+        }
+        .s1p-tab-btn {
+            position: relative;
+            z-index: 1;
+            padding: 6px 16px;
+            cursor: pointer;
+            border: none;
+            background-color: transparent;
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--s1p-desc-t);
+            white-space: nowrap;
+            border-radius: 4px;
+            /* [修改] 增加 background-color 的过渡动画 */
+            transition: color 0.25s ease, background-color 0.2s ease;
+        }
+        .s1p-tab-btn:hover:not(.active) {
+            color: var(--s1p-t);
+            /* [新增] 添加背景色高亮效果 */
+            background-color: var(--s1p-pri);
+        }
+        .s1p-tab-btn.active {
+            color: var(--s1p-t);
+            cursor: default;
+        }
+        .s1p-tab-content {
+            display: none;
+            padding-top: 0;
+        }
+        
+        .s1p-tabs-wrapper {
+            display: flex;
+            justify-content: center;
+        }
         .s1p-empty { text-align: center; padding: 24px; color: var(--s1p-desc-t); }
         .s1p-list { display: flex; flex-direction: column; gap: 8px; }
         .s1p-item { display: flex; justify-content: space-between; align-items: flex-start; padding: 12px; border-radius: 6px; background-color: var(--s1p-bg); border: 1px solid var(--s1p-pri); }
@@ -1347,7 +1407,7 @@
         body.s1p-enhanced-controls-active #scrolltop {
             display: none !important;
         }
-        
+
         /* 3. 以下是脚本控件自身的样式 (与之前版本类似，但选择器更严谨) */
         #s1p-controls-wrapper {
             position: fixed;
@@ -1362,7 +1422,8 @@
             right: 0;
             transform: translateY(-50%);
             width: 20px;
-            height: 60px;
+            /* [修改] 将高度从 60px 调整为 40px */
+            height: 40px;
             background-color: var(--s1p-bg);
             border: 1px solid var(--s1p-pri);
             border-right: none;
@@ -1375,13 +1436,19 @@
             transition: opacity 0.3s ease 0.1s;
         }
         #s1p-controls-handle::before {
-            content: '•••';
-            color: var(--s1p-icon-color);
-            font-size: 14px;
-            line-height: 1;
-            writing-mode: vertical-rl;
-            text-orientation: mixed;
-            letter-spacing: 2px;
+            content: '';
+            display: block;
+            width: 4px;
+            height: 16px;
+            background-color: var(--s1p-icon-color);
+            -webkit-mask-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 4 16' fill='currentColor'%3e%3ccircle cx='2' cy='2' r='1.5'/%3e%3ccircle cx='2' cy='8' r='1.5'/%3e%3ccircle cx='2' cy='14' r='1.5'/%3e%3c/svg%3e");
+            mask-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 4 16' fill='currentColor'%3e%3ccircle cx='2' cy='2' r='1.5'/%3e%3ccircle cx='2' cy='8' r='1.5'/%3e%3ccircle cx='2' cy='14' r='1.5'/%3e%3c/svg%3e");
+            -webkit-mask-size: contain;
+            mask-size: contain;
+            -webkit-mask-repeat: no-repeat;
+            mask-repeat: no-repeat;
+            -webkit-mask-position: center;
+            mask-position: center;
         }
         #s1p-floating-controls {
             transform: translateX(100%);
@@ -3388,7 +3455,23 @@
         }
       });
   };
+  // [最终版] 用于移动Tabs滑块的辅助函数
+  const moveTabSlider = (tabContainer) => {
+    if (!tabContainer) return;
+    const slider = tabContainer.querySelector(".s1p-tab-slider");
+    const activeTab = tabContainer.querySelector(".s1p-tab-btn.active");
+    if (slider && activeTab) {
+      const newWidth = activeTab.offsetWidth;
+      const newLeft = activeTab.offsetLeft;
 
+      // 使用 requestAnimationFrame 来确保动画在下一帧渲染，从而稳定触发
+      requestAnimationFrame(() => {
+        slider.style.width = `${newWidth}px`;
+        // [核心修改] 使用 transform 进行位移，而不是 left
+        slider.style.transform = `translateX(${newLeft}px)`;
+      });
+    }
+  };
   const createManagementModal = () => {
     // ... (此处省略 calculateModalWidth 内部代码，与原文件一致) ...
     const calculateModalWidth = () => {
@@ -3432,14 +3515,17 @@
     modal.innerHTML = `<div class="s1p-modal-content">
             <div class="s1p-modal-header"><div class="s1p-modal-title">S1 Plus 设置</div><div class="s1p-modal-close"></div></div>
             <div class="s1p-modal-body">
-                <div class="s1p-tabs">
-                    <button class="s1p-tab-btn active" data-tab="general-settings">通用设置</button>
-                    <button class="s1p-tab-btn" data-tab="threads">帖子屏蔽</button>
-                    <button class="s1p-tab-btn" data-tab="users">用户屏蔽</button>
-                    <button class="s1p-tab-btn" data-tab="tags">用户标记</button>
-                    <button class="s1p-tab-btn" data-tab="bookmarks">回复收藏</button>
-                    <button class="s1p-tab-btn" data-tab="nav-settings">导航栏定制</button>
-                    <button class="s1p-tab-btn" data-tab="sync">设置同步</button>
+                <div class="s1p-tabs-wrapper">
+                    <div class="s1p-tabs">
+                        <div class="s1p-tab-slider"></div>
+                        <button class="s1p-tab-btn active" data-tab="general-settings">通用设置</button>
+                        <button class="s1p-tab-btn" data-tab="threads">帖子屏蔽</button>
+                        <button class="s1p-tab-btn" data-tab="users">用户屏蔽</button>
+                        <button class="s1p-tab-btn" data-tab="tags">用户标记</button>
+                        <button class="s1p-tab-btn" data-tab="bookmarks">回复收藏</button>
+                        <button class="s1p-tab-btn" data-tab="nav-settings">导航栏定制</button>
+                        <button class="s1p-tab-btn" data-tab="sync">设置同步</button>
+                    </div>
                 </div>
                 <div id="s1p-tab-general-settings" class="s1p-tab-content active"></div>
                 <div id="s1p-tab-threads" class="s1p-tab-content"></div>
@@ -4271,6 +4357,8 @@
                         }" autocomplete="off">
                     </div>
                 </div>`;
+
+      // [核心修改] 将此函数内的 moveSlider 逻辑改为使用 transform
       const moveSlider = (control, retries = 3) => {
         if (!control || retries <= 0) return;
         const slider = control.querySelector(".s1p-segmented-control-slider");
@@ -4285,7 +4373,7 @@
             return;
           }
           slider.style.width = `${width}px`;
-          slider.style.left = `${activeOption.offsetLeft}px`;
+          slider.style.transform = `translateX(${activeOption.offsetLeft}px)`;
         }
       };
 
@@ -4512,6 +4600,11 @@
     renderTagsTab();
     renderBookmarksTab();
     renderNavSettingsTab();
+
+    // [新增] 初始化滑块位置
+    const tabContainer = modal.querySelector(".s1p-tabs");
+    setTimeout(() => moveTabSlider(tabContainer), 50);
+
     modal.style.transition = "opacity 0.2s ease-out";
     requestAnimationFrame(() => {
       modal.style.opacity = "1";
@@ -4614,12 +4707,15 @@
       const target = e.target;
       if (e.target.matches(".s1p-modal, .s1p-modal-close")) modal.remove();
       if (e.target.matches(".s1p-tab-btn")) {
+        const tabContainer = e.target.closest(".s1p-tabs");
         modal
           .querySelectorAll(".s1p-tab-btn, .s1p-tab-content")
           .forEach((el) => el.classList.remove("active"));
         e.target.classList.add("active");
         const activeTab = tabs[e.target.dataset.tab];
         if (activeTab) activeTab.classList.add("active");
+        // [新增] 调用函数移动滑块
+        moveTabSlider(tabContainer);
       }
 
       const unblockThreadId = e.target.dataset.unblockThreadId;
