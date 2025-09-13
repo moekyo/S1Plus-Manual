@@ -1,4 +1,7 @@
 ## [Unreleased]
+### 📦 重构 (Refactoring)
+- 对脚本内注入的所有 CSS 样式进行了统一的格式化，以提高代码的可读性和一致性。
+
 ### Changed
 - **[UI/UX]** 重构并优化了设置界面中标签页切换的滑块动画，改用 `transform` 和 JavaScript 控制过渡效果，使其更加流畅和稳定。
 - **[UI/UX]** 改进了分段控件（Segmented Control）的滑块动画逻辑，使用 `requestAnimationFrame` 确保位置计算的精确性，修复了潜在的显示问题。
