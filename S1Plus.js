@@ -513,7 +513,8 @@
       gap: 10px;
       font-size: 14px;
       color: var(--s1p-t);
-      padding: 2px 6px;
+      /* [修改] 将上下内边距从2px增加到6px，与选项按钮对齐 */
+      padding: 6px;
       white-space: nowrap;
     }
     .s1p-confirm-separator {
@@ -558,15 +559,17 @@
     }
 
     /* --- 行内确认菜单样式 (带动画) --- */
-    .s1p-inline-confirm-menu {
+    .s1p-options-menu.s1p-inline-confirm-menu {
       transform: translateY(0) !important;
-      margin-left: 0 !important;
+      margin-left: 2px !important;
       z-index: 10004;
       opacity: 0;
       transform: translateX(-8px) scale(0.95) !important;
       transition: opacity 0.15s ease-out, transform 0.15s ease-out;
       pointer-events: none;
       visibility: visible !important;
+      /* [修改] 强制设置padding为4px，与选项菜单容器完全一致 */
+      padding: 4px;
     }
     .s1p-inline-confirm-menu.visible {
       opacity: 1;
@@ -959,10 +962,10 @@
       border-radius: 6px;
       box-shadow: 0 2px 8px rgba(var(--s1p-black-rgb), 0.15);
       border: 1px solid var(--s1p-pri);
-      padding: 4px;
+      padding: 6px;
       display: flex;
       flex-direction: column;
-      gap: 2px;
+      gap: 4px;
       min-width: max-content;
     }
     .s1p-tag-options-menu button {
@@ -975,6 +978,8 @@
       font-size: 14px;
       color: var(--s1p-t);
       white-space: nowrap;
+      /* [修改] 根据精确的几何关系，设置行高为27px，确保布局完美对齐 */
+      line-height: 27px;
     }
     .s1p-tag-options-menu button:hover {
       background-color: var(--s1p-sub-h);
@@ -6393,8 +6398,125 @@
     addActionsToSinglePost(postTable);
   };
 
+  // --- [新增] 用户标记删除确认菜单 ---
+  /**
+   * 为用户标记的删除操作创建一个行内确认菜单。
+   * @param {HTMLElement} anchorElement - 定位的锚点元素，即“删除”按钮本身。
+   * @param {HTMLElement} tagOptionsAnchor - 原始的三点图标，用于获取用户信息。
+   */
+  const createTagDeleteConfirmMenu = (anchorElement, tagOptionsAnchor) => {
+    // 清理任何已存在的确认菜单
+    document
+      .querySelector(".s1p-inline-confirm-menu[data-s1p-confirm-for-tag]")
+      ?.remove();
+
+    const { userId, userName } = tagOptionsAnchor.dataset;
+
+    const menu = document.createElement("div");
+    menu.className = "s1p-options-menu s1p-inline-confirm-menu";
+    menu.dataset.s1pConfirmForTag = "true"; // 添加唯一标识
+    menu.style.width = "max-content";
+    menu.innerHTML = `
+        <div class="s1p-direct-confirm">
+            <span>确认删除？</span>
+            <span class="s1p-confirm-separator"></span>
+            <button class="s1p-confirm-action-btn s1p-cancel" title="取消"></button>
+            <button class="s1p-confirm-action-btn s1p-confirm" title="确认"></button>
+        </div>
+    `;
+    document.body.appendChild(menu);
+
+    // --- 智能定位 ---
+    const anchorRect = anchorElement.getBoundingClientRect();
+    const menuRect = menu.getBoundingClientRect();
+    const top =
+      anchorRect.top +
+      window.scrollY +
+      anchorRect.height / 2 -
+      menuRect.height / 2;
+    let left;
+    const spaceOnRight = window.innerWidth - anchorRect.right;
+    const requiredSpace = menuRect.width + 8;
+
+    if (spaceOnRight >= requiredSpace) {
+      left = anchorRect.right + window.scrollX + 8;
+    } else {
+      left = anchorRect.left + window.scrollX - menuRect.width - 8;
+    }
+    if (left < window.scrollX) {
+      left = window.scrollX + 8;
+    }
+
+    menu.style.top = `${top}px`;
+    menu.style.left = `${left}px`;
+
+    // --- 交互逻辑 ---
+    let isClosing = false;
+    const optionsMenu = anchorElement.closest(".s1p-tag-options-menu");
+
+    const closeAllMenus = () => {
+      if (isClosing) return;
+      isClosing = true;
+      document.removeEventListener("click", closeAllMenusOnClick);
+
+      menu.classList.remove("visible");
+      if (optionsMenu) optionsMenu.remove();
+      setTimeout(() => menu.remove(), 200);
+    };
+
+    const closeAllMenusOnClick = (e) => {
+      if (
+        !e.target.closest(
+          ".s1p-tag-options-menu, .s1p-inline-confirm-menu[data-s1p-confirm-for-tag]"
+        )
+      ) {
+        closeAllMenus();
+      }
+    };
+
+    menu.querySelector(".s1p-confirm").addEventListener("click", (e) => {
+      e.stopPropagation();
+      const tags = getUserTags();
+      delete tags[userId];
+      saveUserTags(tags);
+      refreshUserPostsOnPage(userId);
+      closeAllMenus();
+    });
+
+    menu.querySelector(".s1p-cancel").addEventListener("click", (e) => {
+      e.stopPropagation();
+      closeAllMenus();
+    });
+
+    // 让确认菜单也参与到主菜单的悬停逻辑中
+    if (optionsMenu && optionsMenu.s1p_api) {
+      menu.addEventListener("mouseenter", optionsMenu.s1p_api.cancelHideTimer);
+      menu.addEventListener("mouseleave", optionsMenu.s1p_api.startHideTimer);
+    }
+
+    // 添加全局点击监听器，用于在点击空白处时关闭所有菜单
+    setTimeout(
+      () => document.addEventListener("click", closeAllMenusOnClick),
+      0
+    );
+
+    // 动画入场
+    requestAnimationFrame(() => menu.classList.add("visible"));
+  };
+
   const createOptionsMenu = (anchorElement) => {
-    document.querySelector(".s1p-tag-options-menu")?.remove();
+    // 如果菜单已存在，则取消其隐藏计时器，防止因快速移入移出导致闪烁
+    const existingMenu = document.querySelector(".s1p-tag-options-menu");
+    if (existingMenu) {
+      if (existingMenu.s1p_api) existingMenu.s1p_api.cancelHideTimer();
+      return;
+    }
+
+    // 在创建新菜单前，清理所有可能残留的菜单
+    document
+      .querySelector(".s1p-inline-confirm-menu[data-s1p-confirm-for-tag]")
+      ?.remove();
+
     const { userId, userName } = anchorElement.dataset;
     const menu = document.createElement("div");
     menu.className = "s1p-tag-options-menu";
@@ -6404,35 +6526,68 @@
         `;
     document.body.appendChild(menu);
 
+    // --- 悬停与计时器逻辑 ---
+    let hideTimeout;
+    const closeAllMenus = () => {
+      menu.remove();
+      document
+        .querySelector(".s1p-inline-confirm-menu[data-s1p-confirm-for-tag]")
+        ?.remove();
+    };
+
+    const startHideTimer = () => {
+      clearTimeout(hideTimeout);
+      hideTimeout = setTimeout(() => {
+        const confirmMenu = document.querySelector(
+          ".s1p-inline-confirm-menu[data-s1p-confirm-for-tag]"
+        );
+        // 如果鼠标不在触发点、选项菜单或确认菜单上，则关闭所有
+        if (
+          !anchorElement.matches(":hover") &&
+          !menu.matches(":hover") &&
+          (!confirmMenu || !confirmMenu.matches(":hover"))
+        ) {
+          closeAllMenus();
+        }
+      }, 300);
+    };
+
+    const cancelHideTimer = () => clearTimeout(hideTimeout);
+
+    // 将API附加到菜单元素上，以便其他部分（如确认菜单）可以调用
+    menu.s1p_api = { startHideTimer, cancelHideTimer };
+
+    anchorElement.addEventListener("mouseleave", startHideTimer);
+    menu.addEventListener("mouseenter", cancelHideTimer);
+    menu.addEventListener("mouseleave", startHideTimer);
+
+    // --- 定位 ---
     const rect = anchorElement.getBoundingClientRect();
     menu.style.top = `${rect.bottom + window.scrollY + 2}px`;
     menu.style.left = `${rect.right + window.scrollX - menu.offsetWidth}px`;
-    const closeMenu = () => menu.remove();
 
+    // --- 按钮事件 ---
     menu.addEventListener("click", (e) => {
       e.stopPropagation();
-      const action = e.target.dataset.action;
+      const targetButton = e.target.closest("button");
+      if (!targetButton) return;
+      const action = targetButton.dataset.action;
 
       if (action === "edit") {
         const popover = document.getElementById("s1p-tag-popover-main");
         if (popover && popover.show) {
           popover.show(anchorElement, userId, userName);
         }
-        closeMenu();
+        closeAllMenus();
       } else if (action === "delete") {
-        createInlineConfirmMenu(anchorElement, "确认删除？", () => {
-          const tags = getUserTags();
-          delete tags[userId];
-          saveUserTags(tags);
-          refreshUserPostsOnPage(userId);
-        });
-        closeMenu();
+        // 点击删除时，取消隐藏计时器并弹出确认菜单
+        cancelHideTimer();
+        createTagDeleteConfirmMenu(targetButton, anchorElement);
       }
     });
 
-    setTimeout(() => {
-      document.addEventListener("click", closeMenu, { once: true });
-    }, 0);
+    // 初始调用，防止鼠标快速划过时意外触发关闭
+    cancelHideTimer();
   };
 
   /**
@@ -6590,7 +6745,7 @@
         optionsIcon.innerHTML = "&#8942;";
         optionsIcon.dataset.userId = userId;
         optionsIcon.dataset.userName = userName;
-        optionsIcon.addEventListener("click", (e) => {
+        optionsIcon.addEventListener("mouseenter", (e) => {
           e.preventDefault();
           e.stopPropagation();
           createOptionsMenu(e.currentTarget);
