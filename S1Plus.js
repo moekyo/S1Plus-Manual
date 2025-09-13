@@ -356,13 +356,44 @@
       background-color: var(--s1p-pri);
       color: var(--s1p-t);
     }
+        
+    /* --- [S1PLUS-MOD] 帖子列表最终布局修正 --- */
+
+    /* 1. 将原生图标列变为“隐形”，同时隐藏“新窗”和“隐藏置顶”按钮 */
+    #threadlisttableid .icn_new,
+    #threadlisttableid td.icn {
+        width: 0px !important;
+        padding-left: 0px !important;
+        padding-right: 0px !important;
+        overflow: hidden; /* 确保内容不会溢出 */
+    }
+    #threadlisttableid .icn_new > *,
+    #threadlisttableid td.icn > * {
+        display: none; /* 隐藏内部的图片等元素 */
+    }
+    #atarget,
+    a.closeprev.y[title="隐藏置顶帖"] {
+        display: none !important;
+    }
+
+    /* 2. 为脚本注入的“操作列”及“表头占位符”提供统一、明确的样式 */
+    #threadlisttableid .th .s1p-header-placeholder {
+        width: 32px !important;
+        padding: 0 8px !important;
+        box-sizing: border-box !important;
+    }
+    .s1p-options-cell {
+        position: relative;
+        text-align: center;
+        vertical-align: middle;
+        width: 20px !important;
+        padding: 0px !important;
+        box-sizing: border-box !important;
+    }
 
     /* --- 核心修复与通用布局 --- */
     #p_pop {
       display: none !important;
-    }
-    #threadlisttableid td.icn {
-      padding-left: 2px !important;
     }
 
     /* --- [FIX FINAL v3] 帖子列表对齐与分隔符修正 --- */
@@ -372,12 +403,7 @@
     #separatorline.emptb {
       display: none !important;
     }
-
-    /* 2. 为S1Plus注入的表头占位单元格设置宽度 */
-    #threadlisttableid .th .s1p-header-placeholder {
-      width: 14px;
-    }
-
+    
     /* 3. 统一所有列的对齐方式为左对齐，以匹配原始样式 */
     #threadlisttableid td.by,
     #threadlisttableid td.num,
@@ -430,13 +456,6 @@
     }
 
     /* --- 帖子操作按钮 (三点图标) --- */
-    .s1p-options-cell {
-      position: relative;
-      width: 14px;
-      padding: 0 !important;
-      text-align: center;
-      vertical-align: middle;
-    }
     .s1p-options-cell::after {
       content: "";
       position: absolute;
