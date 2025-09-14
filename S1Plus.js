@@ -356,39 +356,39 @@
       background-color: var(--s1p-pri);
       color: var(--s1p-t);
     }
-        
+
     /* --- [S1PLUS-MOD] 帖子列表最终布局修正 --- */
 
     /* 1. 将原生图标列变为“隐形”，同时隐藏“新窗”和“隐藏置顶”按钮 */
     #threadlisttableid .icn_new,
     #threadlisttableid td.icn {
-        width: 0px !important;
-        padding-left: 0px !important;
-        padding-right: 0px !important;
-        overflow: hidden; /* 确保内容不会溢出 */
+      width: 0px !important;
+      padding-left: 0px !important;
+      padding-right: 0px !important;
+      overflow: hidden; /* 确保内容不会溢出 */
     }
     #threadlisttableid .icn_new > *,
     #threadlisttableid td.icn > * {
-        display: none; /* 隐藏内部的图片等元素 */
+      display: none; /* 隐藏内部的图片等元素 */
     }
     #atarget,
     a.closeprev.y[title="隐藏置顶帖"] {
-        display: none !important;
+      display: none !important;
     }
 
     /* 2. 为脚本注入的“操作列”及“表头占位符”提供统一、明确的样式 */
     #threadlisttableid .th .s1p-header-placeholder {
-        width: 32px !important;
-        padding: 0 8px !important;
-        box-sizing: border-box !important;
+      width: 32px !important;
+      padding: 0 8px !important;
+      box-sizing: border-box !important;
     }
     .s1p-options-cell {
-        position: relative;
-        text-align: center;
-        vertical-align: middle;
-        width: 20px !important;
-        padding: 0px !important;
-        box-sizing: border-box !important;
+      position: relative;
+      text-align: center;
+      vertical-align: middle;
+      width: 20px !important;
+      padding: 0px !important;
+      box-sizing: border-box !important;
     }
 
     /* --- 核心修复与通用布局 --- */
@@ -403,7 +403,7 @@
     #separatorline.emptb {
       display: none !important;
     }
-    
+
     /* 3. 统一所有列的对齐方式为左对齐，以匹配原始样式 */
     #threadlisttableid td.by,
     #threadlisttableid td.num,
@@ -418,13 +418,14 @@
       display: none !important;
     }
 
-    /* --- 按钮通用样式 --- */
-    .s1p-btn {
+    /* --- 按钮通用样式 (V4 - 精致阴影与安全区适配) --- */
+    .s1p-btn,
+    .s1p-confirm-btn {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      padding: 5px 10px 5px 12px;
-      border-radius: 4px;
+      padding: 6px 14px;
+      border-radius: 6px;
       background-color: var(--s1p-sub);
       color: var(--s1p-t);
       font-size: 14px;
@@ -432,26 +433,36 @@
       cursor: pointer;
       user-select: none;
       white-space: nowrap;
-      border: 1px solid var(--s1p-pri);
-      transition: all 0.2s ease-in-out;
+      border: none;
+      /* [MODIFIED] 采用更收敛、精致的默认阴影，并微调Y轴位移 */
+      box-shadow: 0 1px 2px rgba(var(--s1p-black-rgb), 0.12);
+      transform: translateY(-1px);
+      /* [MODIFIED] 优化过渡动画曲线，使其更平滑 */
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     }
-    .s1p-btn:hover {
+
+    .s1p-btn:hover,
+    .s1p-confirm-btn:hover {
       background-color: var(--s1p-sub-h);
       color: var(--s1p-sub-h-t);
-      border-color: var(--s1p-sub-h);
+      /* [MODIFIED] 同样采用更收敛的悬停阴影，并微调Y轴位移 */
+      transform: translateY(-3px);
+      box-shadow: 0 3px 6px rgba(var(--s1p-black-rgb), 0.18);
     }
-    .s1p-red-btn {
-      background-color: var(--s1p-red);
-      color: var(--s1p-white);
-      border-color: var(--s1p-red);
-    }
-    .s1p-red-btn:hover {
-      background-color: var(--s1p-red-h);
-      border-color: var(--s1p-red-h);
-    }
-    .s1p-btn.s1p-danger:hover {
-      background-color: var(--s1p-red-h);
-      border-color: var(--s1p-red-h);
+
+    /* --- [MODIFIED] 危险/红色按钮样式 - 仅在高亮时变色 --- */
+
+    /* * 注意：原有的 .s1p-red-btn 默认红色样式已被移除。
+    * 现在，所有带 .s1p-red-btn 或 .s1p-danger 类的按钮，
+    * 在默认状态下都将显示上方 .s1p-btn 定义的通用灰色样式。
+    */
+
+    /* [MODIFIED] 将所有危险/红色按钮的变色逻辑统一到 hover 状态 */
+    .s1p-btn.s1p-red-btn:hover,
+    .s1p-btn.s1p-danger:hover ,
+    .s1p-confirm-btn.s1p-confirm:hover {
+      background-color: var(--s1p-red-h); /* 使用更深的红色作为悬停色 */
+      border-color: transparent; /* 确保没有边框颜色 */
       color: var(--s1p-white);
     }
 
@@ -1049,7 +1060,8 @@
       flex-grow: 1;
     }
     .s1p-modal-footer {
-      padding: 12px 16px;
+      /* [MODIFIED] 增加上下内边距，为按钮阴影提供空间 */
+      padding: 16px;
       border-top: 1px solid var(--s1p-pri);
       text-align: right;
       font-size: 12px;
@@ -1101,9 +1113,12 @@
       cursor: default;
     }
     .s1p-tab-content {
-      display: none;
-      padding-top: 0;
-    }
+  display: none;
+  padding-top: 0;
+  /* [NEW] 为所有标签页内容区统一添加 16px 的水平内边距，作为全局“安全区” */
+//  padding-left: 16px;
+  //padding-right: 16px;
+}
 
     .s1p-tabs-wrapper {
       display: flex;
@@ -1154,8 +1169,7 @@
       /* Handled by .s1p-switch */
     }
     .s1p-unblock-btn:hover {
-      background-color: #07855b;
-      border-color: #07855b;
+      background-color: var(--s1p-red-h);
     }
     .s1p-sync-title {
       font-size: 14px;
@@ -1171,7 +1185,7 @@
     .s1p-local-sync-buttons {
       display: flex;
       gap: 8px;
-      margin-bottom: 16px;
+      margin-bottom: 20px;
     }
     .s1p-sync-textarea {
       width: 100%;
@@ -1335,37 +1349,7 @@
     .s1p-confirm-footer.s1p-centered {
       justify-content: center;
     }
-    .s1p-confirm-btn {
-      padding: 9px 14px;
-      border-radius: 6px;
-      font-size: 14px;
-      font-weight: 500;
-      cursor: pointer;
-      border: 1px solid transparent;
-      transition: all 0.15s ease-in-out;
-      box-shadow: 0 1px 2px 0 rgba(var(--s1p-black-rgb), 0.05);
-      white-space: nowrap;
-    }
-    .s1p-confirm-btn:active {
-      transform: translateY(1px);
-    }
-    .s1p-confirm-btn.s1p-cancel {
-      background-color: var(--s1p-sub);
-      border-color: var(--s1p-pri);
-    }
-    .s1p-confirm-btn.s1p-cancel:hover {
-      border-color: var(--s1p-red);
-      background-color: var(--s1p-error-bg);
-    }
-    .s1p-confirm-btn.s1p-confirm {
-      background-color: var(--s1p-red);
-      color: var(--s1p-white);
-      border-color: var(--s1p-red);
-    }
-    .s1p-confirm-btn.s1p-confirm:hover {
-      background-color: var(--s1p-red-h);
-      border-color: var(--s1p-red-h);
-    }
+    
 
     /* --- [MODIFIED] Collapsible Section (V7 - Mask Image Fix) --- */
     .s1p-collapsible-header {
@@ -1432,7 +1416,7 @@
     }
     .s1p-feature-content.expanded {
       grid-template-rows: 1fr;
-      margin-top: 16px;
+      margin-top: 0px;
     }
     .s1p-feature-content > div {
       overflow: hidden;
@@ -1449,10 +1433,11 @@
 
     /* --- 界面定制设置样式 --- */
     .s1p-settings-group {
-      margin-bottom: 24px;
+      // margin-bottom: 0;
+      padding: 8px
     }
     .s1p-settings-group-title {
-      font-size: 16px;
+      font-size: 14px;
       font-weight: 500;
       border-bottom: 1px solid var(--s1p-pri);
       padding-bottom: 16px;
@@ -1470,6 +1455,10 @@
     }
     .s1p-settings-label {
       font-size: 14px;
+    }
+    .s1p-settings-section-title-label {
+      font-size: 16px;
+      font-weight: 600;
     }
     .s1p-settings-checkbox {
       /* Handled by .s1p-switch */
@@ -1548,30 +1537,6 @@
       justify-content: space-between;
       align-items: center;
       margin-top: 12px;
-    }
-    .s1p-settings-action-btn {
-      display: inline-block;
-      padding: 10px 20px;
-      border-radius: 6px;
-      font-size: 14px;
-      font-weight: 500;
-      cursor: pointer;
-      transition: background-color 0.2s;
-      border: none;
-    }
-    .s1p-settings-action-btn.s1p-primary {
-      background-color: var(--s1p-sec);
-      color: var(--s1p-white);
-    }
-    .s1p-settings-action-btn.s1p-primary:hover {
-      background-color: var(--s1p-sec-h);
-    }
-    .s1p-settings-action-btn.s1p-secondary {
-      background-color: var(--s1p-secondary-bg);
-      color: var(--s1p-secondary-text);
-    }
-    .s1p-settings-action-btn.s1p-secondary:hover {
-      background-color: var(--s1p-secondary-hover-bg);
     }
 
     /* --- 带图标的搜索框 --- */
@@ -1741,13 +1706,14 @@
     .s1p-item-actions .s1p-btn.s1p-primary:hover {
       background-color: #2563eb;
     }
-    .s1p-item-actions .s1p-btn.s1p-danger {
-      background-color: var(--s1p-red);
-      color: var(--s1p-white);
-    }
+
+    /* [MODIFIED] 移除了 .s1p-item-actions .s1p-btn.s1p-danger 的默认红色背景规则 */
+
+    /* [MODIFIED] 将危险按钮的红色样式只应用在 hover 状态 */
     .s1p-item-actions .s1p-btn.s1p-danger:hover {
       background-color: var(--s1p-red-h);
-      border-color: var(--s1p-red-h);
+      border-color: transparent; /* 再次确保边框透明 */
+      color: var(--s1p-white);
     }
 
     /* --- 引用屏蔽占位符 --- */
@@ -3146,6 +3112,7 @@
   // --- 设置管理 ---
   const defaultSettings = {
     enablePostBlocking: true,
+    enableGeneralSettings: true, // [NEW] 通用设置总开关
     enableUserBlocking: true,
     enableUserTagging: true,
     enableReadProgress: true,
@@ -4054,7 +4021,7 @@
                 <div id="s1p-tab-nav-settings" class="s1p-tab-content"></div>
                 <div id="s1p-tab-sync" class="s1p-tab-content">
                     <div class="s1p-settings-group">
-                        <div class="s1p-settings-group-title">本地备份与恢复</div>
+                        <div class="s1p-settings-group-title s1p-settings-section-title-label">本地备份与恢复</div>
                         <div class="s1p-local-sync-desc">通过手动复制/粘贴数据，在不同浏览器或设备间迁移或备份你的所有S1 Plus配置，包括屏蔽列表、导航栏、阅读进度和各项开关设置。</div>
                         <div class="s1p-local-sync-buttons">
                             <button id="s1p-local-export-btn" class="s1p-btn">导出数据</button>
@@ -4064,7 +4031,7 @@
                     </div>
 
                     <div class="s1p-settings-group">
-                        <div class="s1p-settings-group-title">远程同步 (通过GitHub Gist)</div>
+                        <div class="s1p-settings-group-title s1p-settings-section-title-label">远程同步 (通过GitHub Gist)</div>
                         <div id="s1p-last-sync-time-container" class="s1p-setting-desc" style="margin-top: -8px; margin-bottom: 16px;"></div>
                         <div class="s1p-settings-item">
                             <label class="s1p-settings-label" for="s1p-remote-enabled-toggle">启用远程同步 (总开关)</label>
@@ -4254,7 +4221,6 @@
     remoteToggle.addEventListener("change", updateRemoteSyncInputsState);
     updateRemoteSyncInputsState();
 
-    // ... (此处省略所有 render...Tab 函数的内部代码和事件绑定逻辑，与原文件一致) ...
     // [REFACTORED] 全新用户标记标签页渲染逻辑
     const renderTagsTab = (options = {}) => {
       const editingUserId = options.editingUserId;
@@ -4262,11 +4228,13 @@
       const isEnabled = settings.enableUserTagging;
 
       const toggleHTML = `
-                <div class="s1p-settings-item" style="padding: 0; padding-bottom: 16px; margin-bottom: 10px; border-bottom: 1px solid var(--s1p-pri);">
-                    <label class="s1p-settings-label" for="s1p-enableUserTagging">启用用户标记功能</label>
-                    <label class="s1p-switch"><input type="checkbox" id="s1p-enableUserTagging" data-feature="enableUserTagging" class="s1p-feature-toggle" ${
-                      isEnabled ? "checked" : ""
-                    }><span class="s1p-slider"></span></label>
+                <div class="s1p-settings-group">
+                    <div class="s1p-settings-item" style="padding: 0; padding-bottom: 16px; border-bottom: 1px solid var(--s1p-pri);">
+                        <label class="s1p-settings-label s1p-settings-section-title-label" for="s1p-enableUserTagging">启用用户标记功能</label>
+                        <label class="s1p-switch"><input type="checkbox" id="s1p-enableUserTagging" data-feature="enableUserTagging" class="s1p-feature-toggle" ${
+                          isEnabled ? "checked" : ""
+                        }><span class="s1p-slider"></span></label>
+                    </div>
                 </div>
             `;
       const userTags = getUserTags();
@@ -4364,11 +4332,13 @@
       const isEnabled = settings.enableBookmarkReplies;
 
       const toggleHTML = `
-                <div class="s1p-settings-item" style="padding: 0; padding-bottom: 16px; margin-bottom: 10px; border-bottom: 1px solid var(--s1p-pri);">
-                    <label class="s1p-settings-label" for="s1p-enableBookmarkReplies">启用回复收藏功能</label>
-                    <label class="s1p-switch"><input type="checkbox" id="s1p-enableBookmarkReplies" data-feature="enableBookmarkReplies" class="s1p-feature-toggle" ${
-                      isEnabled ? "checked" : ""
-                    }><span class="s1p-slider"></span></label>
+                <div class="s1p-settings-group">
+                    <div class="s1p-settings-item" style="padding: 0; padding-bottom: 16px; border-bottom: 1px solid var(--s1p-pri);">
+                        <label class="s1p-settings-label s1p-settings-section-title-label" for="s1p-enableBookmarkReplies">启用回复收藏功能</label>
+                        <label class="s1p-switch"><input type="checkbox" id="s1p-enableBookmarkReplies" data-feature="enableBookmarkReplies" class="s1p-feature-toggle" ${
+                          isEnabled ? "checked" : ""
+                        }><span class="s1p-slider"></span></label>
+                    </div>
                 </div>
             `;
       const bookmarkedReplies = getBookmarkedReplies();
@@ -4392,59 +4362,64 @@
                 </div>`
                     : ""
                 }
-                <div id="s1p-bookmarks-list-container">
-                    ${
-                      !hasBookmarks
-                        ? `<div id="s1p-bookmarks-empty-message" class="s1p-empty">暂无收藏的回复</div>`
-                        : `<div class="s1p-list" id="s1p-bookmarks-list">
-                        ${bookmarkItems
-                          .map((item) => {
-                            const fullText = item.postContent || "";
-                            const isLong = fullText.length > 150;
-                            let contentBlock;
-                            if (isLong) {
-                              const previewText = fullText.substring(0, 150);
-                              contentBlock = `<div class="s1p-bookmark-preview"><span>${previewText}... </span><a href="javascript:void(0);" class="s1p-bookmark-toggle" data-action="toggle-bookmark-content">查看完整回复</a></div><div class="s1p-bookmark-full" style="display: none;"><span>${fullText} </span><a href="javascript:void(0);" class="s1p-bookmark-toggle" data-action="toggle-bookmark-content">收起</a></div>`;
-                            } else {
-                              contentBlock = `<div class="s1p-bookmark-preview"><span>${fullText}</span></div>`;
-                            }
-                            return `
-                        <div class="s1p-item" data-post-id="${
-                          item.postId
-                        }" style="position: relative;">
-                            <button class="s1p-btn s1p-danger" data-action="remove-bookmark" data-post-id="${
+                <div class="s1p-settings-group">
+                    <div id="s1p-bookmarks-list-container">
+                        ${
+                          !hasBookmarks
+                            ? `<div id="s1p-bookmarks-empty-message" class="s1p-empty">暂无收藏的回复</div>`
+                            : `<div class="s1p-list" id="s1p-bookmarks-list">
+                            ${bookmarkItems
+                              .map((item) => {
+                                const fullText = item.postContent || "";
+                                const isLong = fullText.length > 150;
+                                let contentBlock;
+                                if (isLong) {
+                                  const previewText = fullText.substring(
+                                    0,
+                                    150
+                                  );
+                                  contentBlock = `<div class="s1p-bookmark-preview"><span>${previewText}... </span><a href="javascript:void(0);" class="s1p-bookmark-toggle" data-action="toggle-bookmark-content">查看完整回复</a></div><div class="s1p-bookmark-full" style="display: none;"><span>${fullText} </span><a href="javascript:void(0);" class="s1p-bookmark-toggle" data-action="toggle-bookmark-content">收起</a></div>`;
+                                } else {
+                                  contentBlock = `<div class="s1p-bookmark-preview"><span>${fullText}</span></div>`;
+                                }
+                                return `
+                            <div class="s1p-item" data-post-id="${
                               item.postId
-                            }" style="position: absolute; top: 12px; right: 12px; padding: 4px 8px; font-size: 12px;">取消收藏</button>
-                            <div class="s1p-item-info" style="width: 100%; padding-right: 100px;">
-                                <div class="s1p-item-content">${contentBlock}</div>
-                                <div class="s1p-item-meta" style="margin-top: 10px;">
-                                    <strong>${
-                                      item.authorName
-                                    }</strong> · 收藏于: ${formatDate(
-                              item.timestamp
-                            )}
-                                    <div class="s1p-bookmark-meta-line">
-                                      <span>来自：</span>
-                                      <a class="s1p-bookmark-thread-link" href="forum.php?mod=redirect&goto=findpost&ptid=${
-                                        item.threadId
-                                      }&pid=${
-                              item.postId
-                            }" target="_blank" title="${item.threadTitle}">
-                                        <span class="s1p-bookmark-title-text">${
-                                          item.threadTitle
-                                        }</span>
-                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" /></svg>
-                                      </a>
+                            }" style="position: relative;">
+                                <button class="s1p-btn s1p-danger" data-action="remove-bookmark" data-post-id="${
+                                  item.postId
+                                }" style="position: absolute; top: 12px; right: 12px; padding: 4px 8px;">取消收藏</button>
+                                <div class="s1p-item-info" style="width: 100%; padding-right: 100px;">
+                                    <div class="s1p-item-content">${contentBlock}</div>
+                                    <div class="s1p-item-meta" style="margin-top: 10px;">
+                                        <strong>${
+                                          item.authorName
+                                        }</strong> · 收藏于: ${formatDate(
+                                  item.timestamp
+                                )}
+                                        <div class="s1p-bookmark-meta-line">
+                                          <span>来自：</span>
+                                          <a class="s1p-bookmark-thread-link" href="forum.php?mod=redirect&goto=findpost&ptid=${
+                                            item.threadId
+                                          }&pid=${
+                                  item.postId
+                                }" target="_blank" title="${item.threadTitle}">
+                                            <span class="s1p-bookmark-title-text">${
+                                              item.threadTitle
+                                            }</span>
+                                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" /></svg>
+                                          </a>
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
-                        </div>`;
-                          })
-                          .join("")}
-                    </div>`
-                    }
+                            </div>`;
+                              })
+                              .join("")}
+                        </div>`
+                        }
+                    </div>
+                    <div id="s1p-bookmarks-no-results" class="s1p-empty" style="display: none;">没有找到匹配的收藏</div>
                 </div>
-                <div id="s1p-bookmarks-no-results" class="s1p-empty" style="display: none;">没有找到匹配的收藏</div>
             `;
       tabs["bookmarks"].innerHTML = `
                 ${toggleHTML}
@@ -4485,11 +4460,13 @@
       const isEnabled = settings.enableUserBlocking;
 
       const toggleHTML = `
-                <div class="s1p-settings-item" style="padding: 0; padding-bottom: 16px; margin-bottom: 10px; border-bottom: 1px solid var(--s1p-pri);">
-                    <label class="s1p-settings-label" for="s1p-enableUserBlocking">启用用户屏蔽功能</label>
-                    <label class="s1p-switch"><input type="checkbox" id="s1p-enableUserBlocking" data-feature="enableUserBlocking" class="s1p-feature-toggle" ${
-                      isEnabled ? "checked" : ""
-                    }><span class="s1p-slider"></span></label>
+                <div class="s1p-settings-group">
+                    <div class="s1p-settings-item" style="padding: 0; padding-bottom: 16px; border-bottom: 1px solid var(--s1p-pri);">
+                        <label class="s1p-settings-label s1p-settings-section-title-label" for="s1p-enableUserBlocking">启用用户屏蔽功能</label>
+                        <label class="s1p-switch"><input type="checkbox" id="s1p-enableUserBlocking" data-feature="enableUserBlocking" class="s1p-feature-toggle" ${
+                          isEnabled ? "checked" : ""
+                        }><span class="s1p-slider"></span></label>
+                    </div>
                 </div>
             `;
       const blockedUsers = getBlockedUsers();
@@ -4504,27 +4481,29 @@
                           settings.blockThreadsOnUserBlock ? "checked" : ""
                         }><span class="s1p-slider"></span></label>
                     </div>
+                    <p class="s1p-setting-desc" style="margin-top: 8px; margin-bottom: 16px;">
+                        <strong>提示</strong>：顶部总开关仅影响<strong>未来新屏蔽用户</strong>的默认设置。每个用户下方的独立开关，才是控制该用户主题帖的<strong>最终开关</strong>，拥有最高优先级。
+                    </p>
                 </div>
-                <p class="s1p-setting-desc" style="margin-top: -4px; margin-bottom: 16px;">
-                    <strong>提示</strong>：顶部总开关仅影响<strong>未来新屏蔽用户</strong>的默认设置。每个用户下方的独立开关，才是控制该用户主题帖的<strong>最终开关</strong>，拥有最高优先级。
-                </p>
-                <div id="s1p-blocked-user-list-container">
-                    ${
-                      userItemIds.length === 0
-                        ? `<div class="s1p-empty">暂无屏蔽的用户</div>`
-                        : `<div class="s1p-list">${userItemIds
-                            .map((id) => {
-                              const item = blockedUsers[id];
-                              return `<div class="s1p-item" data-user-id="${id}"><div class="s1p-item-info"><div class="s1p-item-title">${
-                                item.name || `用户 #${id}`
-                              }</div><div class="s1p-item-meta">屏蔽时间: ${formatDate(
-                                item.timestamp
-                              )}</div><div class="s1p-item-toggle"><label class="s1p-switch"><input type="checkbox" class="s1p-user-thread-block-toggle" data-user-id="${id}" ${
-                                item.blockThreads ? "checked" : ""
-                              }><span class="s1p-slider"></span></label><span>屏蔽该用户的主题帖</span></div></div><button class="s1p-unblock-btn s1p-btn" data-unblock-user-id="${id}">取消屏蔽</button></div>`;
-                            })
-                            .join("")}</div>`
-                    }
+                <div class="s1p-settings-group">
+                    <div id="s1p-blocked-user-list-container">
+                        ${
+                          userItemIds.length === 0
+                            ? `<div class="s1p-empty">暂无屏蔽的用户</div>`
+                            : `<div class="s1p-list">${userItemIds
+                                .map((id) => {
+                                  const item = blockedUsers[id];
+                                  return `<div class="s1p-item" data-user-id="${id}"><div class="s1p-item-info"><div class="s1p-item-title">${
+                                    item.name || `用户 #${id}`
+                                  }</div><div class="s1p-item-meta">屏蔽时间: ${formatDate(
+                                    item.timestamp
+                                  )}</div><div class="s1p-item-toggle"><label class="s1p-switch"><input type="checkbox" class="s1p-user-thread-block-toggle" data-user-id="${id}" ${
+                                    item.blockThreads ? "checked" : ""
+                                  }><span class="s1p-slider"></span></label><span>屏蔽该用户的主题帖</span></div></div><button class="s1p-unblock-btn s1p-btn" data-unblock-user-id="${id}">取消屏蔽</button></div>`;
+                                })
+                                .join("")}</div>`
+                        }
+                    </div>
                 </div>
             `;
       tabs["users"].innerHTML = `
@@ -4539,11 +4518,13 @@
       const isEnabled = settings.enablePostBlocking;
 
       const toggleHTML = `
-                <div class="s1p-settings-item" style="padding: 0; padding-bottom: 16px; margin-bottom: 10px; border-bottom: 1px solid var(--s1p-pri);">
-                    <label class="s1p-settings-label" for="s1p-enablePostBlocking">启用帖子屏蔽功能</label>
-                    <label class="s1p-switch"><input type="checkbox" id="s1p-enablePostBlocking" data-feature="enablePostBlocking" class="s1p-feature-toggle" ${
-                      isEnabled ? "checked" : ""
-                    }><span class="s1p-slider"></span></label>
+                <div class="s1p-settings-group">
+                    <div class="s1p-settings-item" style="padding: 0; padding-bottom: 16px; border-bottom: 1px solid var(--s1p-pri);">
+                        <label class="s1p-settings-label s1p-settings-section-title-label" for="s1p-enablePostBlocking">启用帖子屏蔽功能</label>
+                        <label class="s1p-switch"><input type="checkbox" id="s1p-enablePostBlocking" data-feature="enablePostBlocking" class="s1p-feature-toggle" ${
+                          isEnabled ? "checked" : ""
+                        }><span class="s1p-slider"></span></label>
+                    </div>
                 </div>
             `;
       const blockedThreads = getBlockedThreads();
@@ -4764,140 +4745,153 @@
 
     const renderGeneralSettingsTab = () => {
       const settings = getSettings();
+      // [REFACTORED] 完全重构，采用与其他标签页一致的“单一总开关 + 内容区块”结构
       tabs["general-settings"].innerHTML = `
-                <div class="s1p-settings-group">
-                    <div class="s1p-settings-group-title">阅读/浏览增强</div>
+            <div class="s1p-settings-group">
+                <div class="s1p-settings-item" style="padding: 0; padding-bottom: 16px; border-bottom: 1px solid var(--s1p-pri);">
+                    <label class="s1p-settings-label s1p-settings-section-title-label" for="s1p-enableGeneralSettings">启用通用设置</label>
+                    <label class="s1p-switch">
+                        <input type="checkbox" id="s1p-enableGeneralSettings" data-feature="enableGeneralSettings" class="s1p-feature-toggle" ${
+                          settings.enableGeneralSettings ? "checked" : ""
+                        }>
+                        <span class="s1p-slider"></span>
+                    </label>
+                </div>
+            </div>
 
-                    <div class="s1p-settings-item">
-                        <label class="s1p-settings-label" for="s1p-openThreadsInNewTab">在新窗口打开帖子</label>
-                        <label class="s1p-switch"><input type="checkbox" id="s1p-openThreadsInNewTab" class="s1p-settings-checkbox" data-setting="openThreadsInNewTab" ${
-                          settings.openThreadsInNewTab ? "checked" : ""
-                        }><span class="s1p-slider"></span></label>
-                    </div>
-                    <div class="s1p-settings-item" id="s1p-openThreadsInBackground-item" style="padding-left: 20px; ${
-                      !settings.openThreadsInNewTab ? "display: none;" : ""
-                    }">
-                        <label class="s1p-settings-label" for="s1p-openThreadsInBackground">后台打开 (不激活新标签页)</label>
-                        <label class="s1p-switch"><input type="checkbox" id="s1p-openThreadsInBackground" class="s1p-settings-checkbox" data-setting="openThreadsInBackground" ${
-                          settings.openThreadsInBackground ? "checked" : ""
-                        }><span class="s1p-slider"></span></label>
-                    </div>
+            <div class="s1p-feature-content ${
+              settings.enableGeneralSettings ? "expanded" : ""
+            }">
+                <div>
+                    <div class="s1p-settings-group">
+                        <div class="s1p-settings-group-title">阅读/浏览增强</div>
+                        <div class="s1p-settings-item">
+                            <label class="s1p-settings-label" for="s1p-openThreadsInNewTab">在新窗口打开帖子</label>
+                            <label class="s1p-switch"><input type="checkbox" id="s1p-openThreadsInNewTab" class="s1p-settings-checkbox" data-setting="openThreadsInNewTab" ${
+                              settings.openThreadsInNewTab ? "checked" : ""
+                            }><span class="s1p-slider"></span></label>
+                        </div>
+                        <div class="s1p-settings-item" id="s1p-openThreadsInBackground-item" style="padding-left: 20px; ${
+                          !settings.openThreadsInNewTab ? "display: none;" : ""
+                        }">
+                            <label class="s1p-settings-label" for="s1p-openThreadsInBackground">后台打开 (不激活新标签页)</label>
+                            <label class="s1p-switch"><input type="checkbox" id="s1p-openThreadsInBackground" class="s1p-settings-checkbox" data-setting="openThreadsInBackground" ${
+                              settings.openThreadsInBackground ? "checked" : ""
+                            }><span class="s1p-slider"></span></label>
+                        </div>
 
-                     <div class="s1p-settings-item">
-                        <label class="s1p-settings-label" for="s1p-enableReadProgress">启用阅读进度跟踪</label>
-                        <label class="s1p-switch"><input type="checkbox" id="s1p-enableReadProgress" data-feature="enableReadProgress" class="s1p-feature-toggle" ${
-                          settings.enableReadProgress ? "checked" : ""
-                        }><span class="s1p-slider"></span></label>
-                    </div>
-                    <div class="s1p-settings-item" id="s1p-showReadIndicator-container" style="padding-left: 20px; ${
-                      !settings.enableReadProgress ? "display: none;" : ""
-                    }">
-                        <label class="s1p-settings-label" for="s1p-showReadIndicator">显示“当前阅读位置”浮动标识</label>
-                        <label class="s1p-switch"><input type="checkbox" id="s1p-showReadIndicator" class="s1p-settings-checkbox" data-setting="showReadIndicator" ${
-                          settings.showReadIndicator ? "checked" : ""
-                        }><span class="s1p-slider"></span></label>
-                    </div>
-                    <div class="s1p-settings-item" id="s1p-readingProgressCleanupContainer" style="padding-left: 20px; ${
-                      !settings.enableReadProgress ? "display: none;" : ""
-                    }">
-                        <label class="s1p-settings-label">自动清理超过以下时间的阅读记录</label>
-                        <div id="s1p-readingProgressCleanupDays-control" class="s1p-segmented-control">
-                            <div class="s1p-segmented-control-slider"></div>
-                            <div class="s1p-segmented-control-option ${
-                              settings.readingProgressCleanupDays == 30
-                                ? "active"
-                                : ""
-                            }" data-value="30">1个月</div>
-                            <div class="s1p-segmented-control-option ${
-                              settings.readingProgressCleanupDays == 90
-                                ? "active"
-                                : ""
-                            }" data-value="90">3个月</div>
-                            <div class="s1p-segmented-control-option ${
-                              settings.readingProgressCleanupDays == 180
-                                ? "active"
-                                : ""
-                            }" data-value="180">6个月</div>
-                            <div class="s1p-segmented-control-option ${
-                              settings.readingProgressCleanupDays == 0
-                                ? "active"
-                                : ""
-                            }" data-value="0">永不</div>
+                         <div class="s1p-settings-item">
+                            <label class="s1p-settings-label" for="s1p-enableReadProgress">启用阅读进度跟踪</label>
+                            <label class="s1p-switch"><input type="checkbox" id="s1p-enableReadProgress" data-feature="enableReadProgress" class="s1p-feature-toggle" ${
+                              settings.enableReadProgress ? "checked" : ""
+                            }><span class="s1p-slider"></span></label>
+                        </div>
+                        <div class="s1p-settings-item" id="s1p-showReadIndicator-container" style="padding-left: 20px; ${
+                          !settings.enableReadProgress ? "display: none;" : ""
+                        }">
+                            <label class="s1p-settings-label" for="s1p-showReadIndicator">显示“当前阅读位置”浮动标识</label>
+                            <label class="s1p-switch"><input type="checkbox" id="s1p-showReadIndicator" class="s1p-settings-checkbox" data-setting="showReadIndicator" ${
+                              settings.showReadIndicator ? "checked" : ""
+                            }><span class="s1p-slider"></span></label>
+                        </div>
+                        <div class="s1p-settings-item" id="s1p-readingProgressCleanupContainer" style="padding-left: 20px; ${
+                          !settings.enableReadProgress ? "display: none;" : ""
+                        }">
+                            <label class="s1p-settings-label">自动清理超过以下时间的阅读记录</label>
+                            <div id="s1p-readingProgressCleanupDays-control" class="s1p-segmented-control">
+                                <div class="s1p-segmented-control-slider"></div>
+                                <div class="s1p-segmented-control-option ${
+                                  settings.readingProgressCleanupDays == 30
+                                    ? "active"
+                                    : ""
+                                }" data-value="30">1个月</div>
+                                <div class="s1p-segmented-control-option ${
+                                  settings.readingProgressCleanupDays == 90
+                                    ? "active"
+                                    : ""
+                                }" data-value="90">3个月</div>
+                                <div class="s1p-segmented-control-option ${
+                                  settings.readingProgressCleanupDays == 180
+                                    ? "active"
+                                    : ""
+                                }" data-value="180">6个月</div>
+                                <div class="s1p-segmented-control-option ${
+                                  settings.readingProgressCleanupDays == 0
+                                    ? "active"
+                                    : ""
+                                }" data-value="0">永不</div>
+                            </div>
+                        </div>
+                        <div class="s1p-settings-item">
+                            <label class="s1p-settings-label" for="s1p-openProgressInNewTab">在新窗口打开阅读进度</label>
+                            <label class="s1p-switch"><input type="checkbox" id="s1p-openProgressInNewTab" class="s1p-settings-checkbox" data-setting="openProgressInNewTab" ${
+                              settings.openProgressInNewTab ? "checked" : ""
+                            }><span class="s1p-slider"></span></label>
+                        </div>
+                        <div class="s1p-settings-item" id="s1p-openProgressInBackground-item" style="padding-left: 20px; ${
+                          !settings.openProgressInNewTab ? "display: none;" : ""
+                        }">
+                            <label class="s1p-settings-label" for="s1p-openProgressInBackground">后台打开 (不激活新标签页)</label>
+                            <label class="s1p-switch"><input type="checkbox" id="s1p-openProgressInBackground" class="s1p-settings-checkbox" data-setting="openProgressInBackground" ${
+                              settings.openProgressInBackground ? "checked" : ""
+                            }><span class="s1p-slider"></span></label>
+                        </div>
+                         <div class="s1p-settings-item">
+                            <label class="s1p-settings-label" for="s1p-hideImagesByDefault">默认隐藏帖子图片</label>
+                            <label class="s1p-switch"><input type="checkbox" id="s1p-hideImagesByDefault" class="s1p-settings-checkbox" data-setting="hideImagesByDefault" ${
+                              settings.hideImagesByDefault ? "checked" : ""
+                            }><span class="s1p-slider"></span></label>
                         </div>
                     </div>
-                    <div class="s1p-settings-item">
-                        <label class="s1p-settings-label" for="s1p-openProgressInNewTab">在新窗口打开阅读进度</label>
-                        <label class="s1p-switch"><input type="checkbox" id="s1p-openProgressInNewTab" class="s1p-settings-checkbox" data-setting="openProgressInNewTab" ${
-                          settings.openProgressInNewTab ? "checked" : ""
-                        }><span class="s1p-slider"></span></label>
-                    </div>
-                    <div class="s1p-settings-item" id="s1p-openProgressInBackground-item" style="padding-left: 20px; ${
-                      !settings.openProgressInNewTab ? "display: none;" : ""
-                    }">
-                        <label class="s1p-settings-label" for="s1p-openProgressInBackground">后台打开 (不激活新标签页)</label>
-                        <label class="s1p-switch"><input type="checkbox" id="s1p-openProgressInBackground" class="s1p-settings-checkbox" data-setting="openProgressInBackground" ${
-                          settings.openProgressInBackground ? "checked" : ""
-                        }><span class="s1p-slider"></span></label>
-                    </div>
-                     <div class="s1p-settings-item">
-                        <label class="s1p-settings-label" for="s1p-hideImagesByDefault">默认隐藏帖子图片</label>
-                        <label class="s1p-switch"><input type="checkbox" id="s1p-hideImagesByDefault" class="s1p-settings-checkbox" data-setting="hideImagesByDefault" ${
-                          settings.hideImagesByDefault ? "checked" : ""
-                        }><span class="s1p-slider"></span></label>
+                    <div class="s1p-settings-group">
+                        <div class="s1p-settings-group-title">界面与个性化</div>
+                        <div class="s1p-settings-item">
+                            <label class="s1p-settings-label" for="s1p-followS1NuxTheme">跟随 S1 NUX 视觉风格</label>
+                            <label class="s1p-switch"><input type="checkbox" id="s1p-followS1NuxTheme" class="s1p-settings-checkbox" data-setting="followS1NuxTheme" ${
+                              settings.followS1NuxTheme ? "checked" : ""
+                            }><span class="s1p-slider"></span></label>
+                        </div>
+                        <p class="s1p-setting-desc">UI 兼容模式：<b>开启</b>后，部分UI (如滚动条、删除按钮) 将适配 \`S1 NUX\` 风格；<b>关闭</b>则强制恢复 S1 Plus 的经典独立样式。</p>
+                        <div class="s1p-settings-item">
+                            <label class="s1p-settings-label" for="s1p-enhanceFloatingControls">使用 S1 Plus 增强型悬浮控件</label>
+                            <label class="s1p-switch"><input type="checkbox" id="s1p-enhanceFloatingControls" class="s1p-settings-checkbox" data-setting="enhanceFloatingControls" ${
+                              settings.enhanceFloatingControls ? "checked" : ""
+                            }><span class="s1p-slider"></span></label>
+                        </div>
+                        <p class="s1p-setting-desc">开启后，将使用脚本提供的全新悬停展开式控件；关闭则恢复使用论坛原生的滚动控件。</p>
+                        <div class="s1p-settings-item">
+                            <label class="s1p-settings-label" for="s1p-changeLogoLink">修改论坛Logo链接 (指向论坛首页)</label>
+                            <label class="s1p-switch"><input type="checkbox" id="s1p-changeLogoLink" class="s1p-settings-checkbox" data-setting="changeLogoLink" ${
+                              settings.changeLogoLink ? "checked" : ""
+                            }><span class="s1p-slider"></span></label>
+                        </div>
+                        <div class="s1p-settings-item">
+                            <label class="s1p-settings-label" for="s1p-hideBlacklistTip">隐藏已屏蔽用户发言的黄条提示</label>
+                            <label class="s1p-switch"><input type="checkbox" id="s1p-hideBlacklistTip" class="s1p-settings-checkbox" data-setting="hideBlacklistTip" ${
+                              settings.hideBlacklistTip ? "checked" : ""
+                            }><span class="s1p-slider"></span></label>
+                        </div>
+                        <div class="s1p-settings-item">
+                            <label class="s1p-settings-label" for="s1p-customTitleSuffix">自定义标题后缀</label>
+                            <input type="text" id="s1p-customTitleSuffix" class="s1p-input" data-setting="customTitleSuffix" value="${
+                              settings.customTitleSuffix || ""
+                            }" autocomplete="off">
+                        </div>
                     </div>
                 </div>
-                <div class="s1p-settings-group">
-                    <div class="s1p-settings-group-title">界面与个性化</div>
-                     <div class="s1p-settings-item">
-                        <label class="s1p-settings-label" for="s1p-followS1NuxTheme">跟随 S1 NUX 视觉风格</label>
-                        <label class="s1p-switch"><input type="checkbox" id="s1p-followS1NuxTheme" class="s1p-settings-checkbox" data-setting="followS1NuxTheme" ${
-                          settings.followS1NuxTheme ? "checked" : ""
-                        }><span class="s1p-slider"></span></label>
-                    </div>
-                    <p class="s1p-setting-desc">UI 兼容模式：<b>开启</b>后，部分UI (如滚动条、删除按钮) 将适配 \`S1 NUX\` 风格；<b>关闭</b>则强制恢复 S1 Plus 的经典独立样式。</p>
-                    <div class="s1p-settings-item">
-                        <label class="s1p-settings-label" for="s1p-enhanceFloatingControls">使用 S1 Plus 增强型悬浮控件</label>
-                        <label class="s1p-switch"><input type="checkbox" id="s1p-enhanceFloatingControls" class="s1p-settings-checkbox" data-setting="enhanceFloatingControls" ${
-                          settings.enhanceFloatingControls ? "checked" : ""
-                        }><span class="s1p-slider"></span></label>
-                    </div>
-                    <p class="s1p-setting-desc">开启后，将使用脚本提供的全新悬停展开式控件；关闭则恢复使用论坛原生的滚动控件。</p>
-                    <div class="s1p-settings-item">
-                        <label class="s1p-settings-label" for="s1p-changeLogoLink">修改论坛Logo链接 (指向论坛首页)</label>
-                        <label class="s1p-switch"><input type="checkbox" id="s1p-changeLogoLink" class="s1p-settings-checkbox" data-setting="changeLogoLink" ${
-                          settings.changeLogoLink ? "checked" : ""
-                        }><span class="s1p-slider"></span></label>
-                    </div>
-                    <div class="s1p-settings-item">
-                        <label class="s1p-settings-label" for="s1p-hideBlacklistTip">隐藏已屏蔽用户发言的黄条提示</label>
-                        <label class="s1p-switch"><input type="checkbox" id="s1p-hideBlacklistTip" class="s1p-settings-checkbox" data-setting="hideBlacklistTip" ${
-                          settings.hideBlacklistTip ? "checked" : ""
-                        }><span class="s1p-slider"></span></label>
-                    </div>
-                    <div class="s1p-settings-item">
-                        <label class="s1p-settings-label" for="s1p-customTitleSuffix">自定义标题后缀</label>
-                        <input type="text" id="s1p-customTitleSuffix" class="s1p-input" data-setting="customTitleSuffix" value="${
-                          settings.customTitleSuffix || ""
-                        }" autocomplete="off">
-                    </div>
-                </div>`;
+            </div>`;
 
-      // [核心修正] 使用 requestAnimationFrame 来确保滑块位置计算的准确性
       const moveSlider = (control) => {
         if (!control) return;
-
         requestAnimationFrame(() => {
           const slider = control.querySelector(".s1p-segmented-control-slider");
           const activeOption = control.querySelector(
             ".s1p-segmented-control-option.active"
           );
-
-          // 在 rAF 回调中，offsetWidth 通常已经准备好，但作为双重保险，可以保留检查
           if (slider && activeOption && activeOption.offsetWidth > 0) {
             slider.style.width = `${activeOption.offsetWidth}px`;
             slider.style.transform = `translateX(${activeOption.offsetLeft}px)`;
           } else if (slider && activeOption) {
-            // 如果 rAF 后仍然为0（极端情况），可以再延迟一次
             console.warn(
               "S1 Plus: Segmented control layout calculation delayed. Retrying."
             );
@@ -4930,18 +4924,14 @@
         "#s1p-readingProgressCleanupDays-control"
       );
       if (cleanupControl) {
-        // [核心修正] 初始调用也使用 moveSlider
         moveSlider(cleanupControl);
         cleanupControl.addEventListener("click", (e) => {
           const target = e.target.closest(".s1p-segmented-control-option");
           if (!target || target.classList.contains("active")) return;
-
           const newValue = parseInt(target.dataset.value, 10);
-
           const currentSettings = getSettings();
           currentSettings.readingProgressCleanupDays = newValue;
           saveSettings(currentSettings);
-
           cleanupControl
             .querySelectorAll(".s1p-segmented-control-option")
             .forEach((opt) => opt.classList.remove("active"));
@@ -4968,23 +4958,18 @@
             applyChanges();
             return;
           }
-
           if (settingKey === "followS1NuxTheme") {
             applyThemeOverrideStyle();
             applyDeleteButtonThemeStyle();
           }
-
           applyInterfaceCustomizations();
-
           if (settingKey === "showReadIndicator" && !target.checked) {
             updateReadIndicatorUI(null);
           }
-
           if (settingKey === "hideImagesByDefault") {
             applyImageHiding();
             manageImageToggleAllButtons();
           }
-
           if (
             settingKey === "openThreadsInNewTab" ||
             settingKey === "openThreadsInBackground"
@@ -4992,7 +4977,6 @@
             applyThreadLinkBehavior();
             applyPageLinkBehavior();
           }
-
           if (
             settingKey === "openProgressInNewTab" ||
             settingKey === "openProgressInBackground"
@@ -5006,22 +4990,33 @@
     const renderNavSettingsTab = () => {
       const settings = getSettings();
       tabs["nav-settings"].innerHTML = `
-                <div class="s1p-settings-group">
-                    <div class="s1p-settings-item" style="padding: 0;">
-                        <label class="s1p-settings-label" for="s1p-enableNavCustomization">启用自定义导航栏</label>
-                        <label class="s1p-switch"><input type="checkbox" id="s1p-enableNavCustomization" class="s1p-settings-checkbox" ${
+            <div class="s1p-settings-group">
+                <div class="s1p-settings-item" style="padding: 0; padding-bottom: 16px; border-bottom: 1px solid var(--s1p-pri);">
+                    <label class="s1p-settings-label s1p-settings-section-title-label" for="s1p-enableNavCustomization">启用自定义导航栏</label>
+                    <label class="s1p-switch">
+                        <input type="checkbox" id="s1p-enableNavCustomization" data-feature="enableNavCustomization" class="s1p-feature-toggle" ${
                           settings.enableNavCustomization ? "checked" : ""
-                        }><span class="s1p-slider"></span></label>
-                    </div>
-                    <div class="s1p-nav-editor-list" style="margin-top: 12px; display: flex; flex-direction: column; gap: 8px;"></div>
+                        }>
+                        <span class="s1p-slider"></span>
+                    </label>
                 </div>
-                <div class="s1p-editor-footer">
-                    <div style="display: flex; gap: 8px;">
-                        <button id="s1p-nav-add-btn" class="s1p-btn">添加新链接</button>
-                        <button id="s1p-settings-save-btn" class="s1p-btn">保存设置</button>
+            </div>
+
+            <div class="s1p-feature-content ${
+              settings.enableNavCustomization ? "expanded" : ""
+            }">
+                <div style="padding-top: 12px;">
+                    <div class="s1p-nav-editor-list" style="display: flex; flex-direction: column; gap: 8px;"></div>
+                    <div class="s1p-editor-footer">
+                        <div style="display: flex; gap: 8px;">
+                            <button id="s1p-nav-add-btn" class="s1p-btn">添加新链接</button>
+                            <button id="s1p-settings-save-btn" class="s1p-btn">保存设置</button>
+                        </div>
+                        <button id="s1p-nav-restore-btn" class="s1p-btn s1p-red-btn">恢复默认导航</button>
                     </div>
-                    <button id="s1p-nav-restore-btn" class="s1p-btn s1p-red-btn">恢复默认导航</button>
-                </div>`;
+                </div>
+            </div>`;
+
       const navListContainer = tabs["nav-settings"].querySelector(
         ".s1p-nav-editor-list"
       );
@@ -5029,16 +5024,16 @@
         navListContainer.innerHTML = (links || [])
           .map(
             (link, index) => `
-                    <div class="s1p-editor-item" draggable="true" data-index="${index}" style="grid-template-columns: auto 1fr 1fr auto; user-select: none;">
-                        <div class="s1p-drag-handle">::</div>
-                        <input type="text" class="s1p-input s1p-nav-name" placeholder="名称" value="${
-                          link.name || ""
-                        }" autocomplete="off">
-                        <input type="text" class="s1p-input s1p-nav-href" placeholder="链接" value="${
-                          link.href || ""
-                        }" autocomplete="off">
-                        <div class="s1p-editor-item-controls"><button class="s1p-editor-btn s1p-delete-button" data-action="delete" title="删除链接"></button></div>
-                    </div>`
+                <div class="s1p-editor-item" draggable="true" data-index="${index}" style="grid-template-columns: auto 1fr 1fr auto; user-select: none;">
+                    <div class="s1p-drag-handle">::</div>
+                    <input type="text" class="s1p-input s1p-nav-name" placeholder="名称" value="${
+                      link.name || ""
+                    }" autocomplete="off">
+                    <input type="text" class="s1p-input s1p-nav-href" placeholder="链接" value="${
+                      link.href || ""
+                    }" autocomplete="off">
+                    <div class="s1p-editor-item-controls"><button class="s1p-editor-btn s1p-delete-button" data-action="delete" title="删除链接"></button></div>
+                </div>`
           )
           .join("");
       };
@@ -5086,10 +5081,9 @@
           newItem.className = "s1p-editor-item";
           newItem.draggable = true;
           newItem.style.gridTemplateColumns = "auto 1fr 1fr auto";
-          // --- [联动修改] 同样重新添加 data-action="delete" ---
           newItem.innerHTML = `<div class="s1p-drag-handle">::</div><input type="text" class="s1p-input s1p-nav-name" placeholder="新链接" autocomplete="off"><input type="text" class="s1p-input s1p-nav-href" placeholder="forum.php" autocomplete="off"><div class="s1p-editor-item-controls"><button class="s1p-editor-btn s1p-delete-button" data-action="delete" title="删除链接"></button></div>`;
           navListContainer.appendChild(newItem);
-        } else if (target.classList.contains("s1p-delete-button")) {
+        } else if (target.closest(".s1p-delete-button")) {
           target.closest(".s1p-editor-item").remove();
         } else if (target.id === "s1p-nav-restore-btn") {
           const currentSettings = getSettings();
@@ -5098,7 +5092,6 @@
           currentSettings.customNavLinks = defaultSettings.customNavLinks;
           saveSettings(currentSettings);
           renderNavSettingsTab();
-          applyInterfaceCustomizations();
           initializeNavbar();
           showMessage("导航栏已恢复为默认设置！", true);
         } else if (target.id === "s1p-settings-save-btn") {
@@ -5117,11 +5110,31 @@
               .filter((l) => l.name && l.href),
           };
           saveSettings(newSettings);
-          applyInterfaceCustomizations();
           initializeNavbar();
           showMessage("设置已保存！", true);
         }
       });
+
+      const masterToggle = tabs["nav-settings"].querySelector(
+        "#s1p-enableNavCustomization"
+      );
+      if (masterToggle) {
+        masterToggle.addEventListener("change", (e) => {
+          const isChecked = e.target.checked;
+          const currentSettings = getSettings();
+          currentSettings.enableNavCustomization = isChecked;
+          saveSettings(currentSettings);
+
+          const contentWrapper = tabs["nav-settings"].querySelector(
+            ".s1p-feature-content"
+          );
+          if (contentWrapper) {
+            contentWrapper.classList.toggle("expanded", isChecked);
+          }
+
+          initializeNavbar();
+        });
+      }
     };
     // --- 初始化渲染和事件绑定 ---
     renderGeneralSettingsTab();
