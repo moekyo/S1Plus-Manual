@@ -3958,7 +3958,6 @@
       ); // { once: true } 确保事件只触发一次后自动移除
     }
   };
-  // [MODIFIED] 调整了“保存设置”按钮的逻辑，以防止首次设置时自动覆盖云端数据
   const createManagementModal = () => {
     const calculateModalWidth = () => {
       const measureContainer = document.createElement("div");
@@ -4727,14 +4726,28 @@
                     `;
           container.appendChild(newItem);
           newItem.querySelector('input[type="text"]').focus();
-        } else if (target.classList.contains("s1p-delete-button")) {
+        } else if (target.closest(".s1p-delete-button")) {
+          // [MODIFIED]
           const item = target.closest(".s1p-editor-item");
-          item.remove();
-          const container = tabs["threads"].querySelector(
-            "#s1p-keyword-rules-list"
-          );
-          if (container.children.length === 0) {
-            container.innerHTML = `<div class="s1p-empty" style="padding: 12px;">暂无规则</div>`;
+          if (item) {
+            const pattern =
+              item.querySelector(".s1p-keyword-rule-pattern").value.trim() ||
+              "空规则";
+            createConfirmationModal(
+              "确认删除该屏蔽规则吗？",
+              `规则内容: <code style="background-color: var(--s1p-secondary-bg); padding: 2px 4px; border-radius: 4px;">${pattern}</code><br>此操作仅在UI上移除，需要点击下方的“保存规则”按钮才会真正生效。`,
+              () => {
+                item.remove();
+                const container = tabs["threads"].querySelector(
+                  "#s1p-keyword-rules-list"
+                );
+                if (container.children.length === 0) {
+                  container.innerHTML = `<div class="s1p-empty" style="padding: 12px;">暂无规则</div>`;
+                }
+                showMessage("规则已从列表移除。", true);
+              },
+              "确认删除"
+            );
           }
         } else if (target.id === "s1p-keyword-rules-save-btn") {
           saveKeywordRules();
@@ -5084,16 +5097,38 @@
           newItem.innerHTML = `<div class="s1p-drag-handle">::</div><input type="text" class="s1p-input s1p-nav-name" placeholder="新链接" autocomplete="off"><input type="text" class="s1p-input s1p-nav-href" placeholder="forum.php" autocomplete="off"><div class="s1p-editor-item-controls"><button class="s1p-editor-btn s1p-delete-button" data-action="delete" title="删除链接"></button></div>`;
           navListContainer.appendChild(newItem);
         } else if (target.closest(".s1p-delete-button")) {
-          target.closest(".s1p-editor-item").remove();
+          // [MODIFIED]
+          const item = target.closest(".s1p-editor-item");
+          if (item) {
+            const name =
+              item.querySelector(".s1p-nav-name").value.trim() || "未命名链接";
+            createConfirmationModal(
+              "确认删除该导航链接吗？",
+              `链接名称: ${name}<br>此操作仅在UI上移除，需要点击下方的“保存设置”按钮才会真正生效。`,
+              () => {
+                item.remove();
+                showMessage("链接已从列表移除。", true);
+              },
+              "确认删除"
+            );
+          }
         } else if (target.id === "s1p-nav-restore-btn") {
-          const currentSettings = getSettings();
-          currentSettings.enableNavCustomization =
-            defaultSettings.enableNavCustomization;
-          currentSettings.customNavLinks = defaultSettings.customNavLinks;
-          saveSettings(currentSettings);
-          renderNavSettingsTab();
-          initializeNavbar();
-          showMessage("导航栏已恢复为默认设置！", true);
+          // [MODIFIED]
+          createConfirmationModal(
+            "确认要恢复默认导航栏吗？",
+            "您当前的自定义导航链接将被重置为脚本的默认设置。",
+            () => {
+              const currentSettings = getSettings();
+              currentSettings.enableNavCustomization =
+                defaultSettings.enableNavCustomization;
+              currentSettings.customNavLinks = defaultSettings.customNavLinks;
+              saveSettings(currentSettings);
+              renderNavSettingsTab();
+              initializeNavbar();
+              showMessage("导航栏已恢复为默认设置！", true);
+            },
+            "确认恢复"
+          );
         } else if (target.id === "s1p-settings-save-btn") {
           const newSettings = {
             ...getSettings(),
@@ -5263,65 +5298,102 @@
 
       const unblockThreadId = e.target.dataset.unblockThreadId;
       if (unblockThreadId) {
-        unblockThread(unblockThreadId);
-        removeListItem(
-          target,
-          '<div class="s1p-empty">暂无手动屏蔽的帖子</div>'
+        // [MODIFIED]
+        const item = target.closest(".s1p-item");
+        const title = item
+          ? item.querySelector(".s1p-item-title").textContent.trim()
+          : `帖子 #${unblockThreadId}`;
+        createConfirmationModal(
+          "确认取消屏蔽该帖子吗？",
+          `帖子标题: ${title}`,
+          () => {
+            unblockThread(unblockThreadId);
+            removeListItem(
+              target,
+              '<div class="s1p-empty">暂无手动屏蔽的帖子</div>'
+            );
+            showMessage("帖子已取消屏蔽。", true);
+          },
+          "确认取消"
         );
       }
 
       const unblockUserId = e.target.dataset.unblockUserId;
       if (unblockUserId) {
-        // [OPTIMIZED] 深度联动优化，避免重绘帖子列表
-        const allBlockedThreads = getBlockedThreads();
-        const threadsToUnblock = Object.keys(allBlockedThreads).filter(
-          (threadId) =>
-            allBlockedThreads[threadId].reason === `user_${unblockUserId}`
-        );
-
-        unblockUser(unblockUserId);
-
-        removeListItem(target, '<div class="s1p-empty">暂无屏蔽的用户</div>');
-
-        const threadList = document.querySelector(
-          "#s1p-manually-blocked-list-container .s1p-list"
-        );
-        if (threadList) {
-          threadsToUnblock.forEach((threadId) => {
-            const threadItemToRemove = threadList.querySelector(
-              `.s1p-item[data-thread-id="${threadId}"]`
+        // [MODIFIED]
+        const item = target.closest(".s1p-item");
+        const userName = item
+          ? item.querySelector(".s1p-item-title").textContent.trim()
+          : `用户 #${unblockUserId}`;
+        createConfirmationModal(
+          `确认取消屏蔽 “${userName}” 吗？`,
+          "该用户及其主题帖（如果已关联屏蔽）将被取消屏蔽。",
+          () => {
+            const allBlockedThreads = getBlockedThreads();
+            const threadsToUnblock = Object.keys(allBlockedThreads).filter(
+              (threadId) =>
+                allBlockedThreads[threadId].reason === `user_${unblockUserId}`
             );
-            threadItemToRemove?.remove();
-          });
-          if (threadList.children.length === 0) {
-            const container = threadList.closest(
-              "#s1p-manually-blocked-list-container"
+
+            unblockUser(unblockUserId);
+
+            removeListItem(
+              target,
+              '<div class="s1p-empty">暂无屏蔽的用户</div>'
             );
-            if (container) {
-              container.innerHTML =
-                '<div class="s1p-empty">暂无手动屏蔽的帖子</div>';
+
+            const threadList = document.querySelector(
+              "#s1p-manually-blocked-list-container .s1p-list"
+            );
+            if (threadList) {
+              threadsToUnblock.forEach((threadId) => {
+                const threadItemToRemove = threadList.querySelector(
+                  `.s1p-item[data-thread-id="${threadId}"]`
+                );
+                threadItemToRemove?.remove();
+              });
+              if (threadList.children.length === 0) {
+                const container = threadList.closest(
+                  "#s1p-manually-blocked-list-container"
+                );
+                if (container) {
+                  container.innerHTML =
+                    '<div class="s1p-empty">暂无手动屏蔽的帖子</div>';
+                }
+              }
             }
-          }
-        }
+            showMessage(`已取消对 ${userName} 的屏蔽。`, true);
+          },
+          "确认取消"
+        );
       }
 
       const removeBookmarkId = target.closest('[data-action="remove-bookmark"]')
         ?.dataset.postId;
       if (removeBookmarkId) {
-        const bookmarks = getBookmarkedReplies();
-        delete bookmarks[removeBookmarkId];
-        saveBookmarkedReplies(bookmarks);
-        refreshSinglePostActions(removeBookmarkId);
-        removeListItem(
-          target,
-          '<div class="s1p-empty">暂无收藏的回复</div>',
+        // [MODIFIED]
+        createConfirmationModal(
+          "确认取消收藏该回复吗？",
+          "此操作将从您的收藏列表中永久移除该条目。",
           () => {
-            // 列表清空后，移除搜索框
-            document
-              .querySelector("#s1p-bookmark-search-input")
-              ?.closest(".s1p-settings-group")
-              ?.remove();
-          }
+            const bookmarks = getBookmarkedReplies();
+            delete bookmarks[removeBookmarkId];
+            saveBookmarkedReplies(bookmarks);
+            refreshSinglePostActions(removeBookmarkId);
+            removeListItem(
+              target,
+              '<div class="s1p-empty">暂无收藏的回复</div>',
+              () => {
+                // 列表清空后，移除搜索框
+                document
+                  .querySelector("#s1p-bookmark-search-input")
+                  ?.closest(".s1p-settings-group")
+                  ?.remove();
+              }
+            );
+            showMessage("已取消收藏。", true);
+          },
+          "确认取消"
         );
       }
 
