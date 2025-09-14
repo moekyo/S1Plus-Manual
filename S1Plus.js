@@ -3118,7 +3118,6 @@
     }
   };
 
-  // --- 设置管理 ---
   const defaultSettings = {
     enablePostBlocking: true,
     enableGeneralSettings: true, // [NEW] 通用设置总开关
@@ -3141,6 +3140,7 @@
     hideImagesByDefault: false,
     followS1NuxTheme: true, // <-- [新增]
     enhanceFloatingControls: true,
+    recommendS1Nux: true, // [新增] S1 NUX 安装推荐开关
     threadBlockHoverDelay: 1,
     customTitleSuffix: " - STAGE1ₛₜ",
     customNavLinks: [
@@ -4874,6 +4874,14 @@
                             }><span class="s1p-slider"></span></label>
                         </div>
                         <p class="s1p-setting-desc">UI 兼容模式：<b>开启</b>后，部分UI (如滚动条、删除按钮) 将适配 \`S1 NUX\` 风格；<b>关闭</b>则强制恢复 S1 Plus 的经典独立样式。</p>
+                        
+                        <div class="s1p-settings-item">
+                            <label class="s1p-settings-label" for="s1p-recommendS1Nux">推荐 S1 NUX 安装</label>
+                            <label class="s1p-switch"><input type="checkbox" id="s1p-recommendS1Nux" class="s1p-settings-checkbox" data-setting="recommendS1Nux" ${
+                              settings.recommendS1Nux ? "checked" : ""
+                            }><span class="s1p-slider"></span></label>
+                        </div>
+                        <p class="s1p-setting-desc">S1 Plus 与 S1 NUX 论坛美化美化扩展搭配使用效果更佳。开启后，若检测到您未安装 S1 NUX，脚本会适时弹出对话框进行推荐。</p>
                         <div class="s1p-settings-item">
                             <label class="s1p-settings-label" for="s1p-enhanceFloatingControls">使用 S1 Plus 增强型悬浮控件</label>
                             <label class="s1p-switch"><input type="checkbox" id="s1p-enhanceFloatingControls" class="s1p-settings-checkbox" data-setting="enhanceFloatingControls" ${
@@ -6888,6 +6896,74 @@
       .forEach(addActionsToSinglePost);
   };
 
+  // [新增] S1 NUX 安装推荐函数
+  const handleNuxRecommendation = () => {
+    // 1. 如果已启用 NUX，则不执行任何操作
+    if (isS1NuxEnabled) return;
+
+    // 2. 检查用户是否在设置中关闭了推荐
+    const settings = getSettings();
+    if (!settings.recommendS1Nux) return;
+
+    // 3. 频率控制：每7天最多推荐一次
+    const LAST_REC_KEY = "s1p_last_nux_recommendation_timestamp";
+    const lastRecommendationTimestamp = GM_getValue(LAST_REC_KEY, 0);
+    const now = Date.now();
+    const threeDaysInMillis = 7 * 24 * 60 * 60 * 1000;
+
+    if (now - lastRecommendationTimestamp < threeDaysInMillis) {
+      console.log(
+        "S1 Plus: S1 NUX recommendation throttled (less than 3 days ago)."
+      );
+      return;
+    }
+
+    // 4. 创建并显示推荐弹窗
+    const bodyHtml = `
+        <p>检测到您尚未安装 <strong>S1 NUX</strong> 论坛美化扩展。</p>
+        <p>S1 Plus 与 S1 NUX 搭配使用可获得最佳论坛浏览体验，强烈推荐安装！</p>
+        <div class="s1p-notice" style="margin-top: 16px; gap: 8px;">
+             <div class="s1p-notice-icon"></div>
+             <div class="s1p-notice-content">
+                <a href="https://stage1st.com/2b/thread-1826103-1-2.html" target="_blank">点击此处，了解 S1 NUX 详情</a>
+                <p>一个由 S1 用户创作的、旨在优化论坛视觉和交互的 CSS 样式扩展。</p>
+             </div>
+        </div>
+    `;
+
+    const installButton = {
+      text: "前往安装",
+      className: "s1p-confirm",
+      action: () => {
+        GM_openInTab("https://userstyles.world/style/539", true);
+        const currentSettings = getSettings();
+        if (currentSettings.recommendS1Nux) {
+          currentSettings.recommendS1Nux = false;
+          saveSettings(currentSettings);
+        }
+      },
+    };
+
+    const disableButton = {
+      text: "不再提示",
+      className: "s1p-cancel",
+      action: () => {
+        const currentSettings = getSettings();
+        currentSettings.recommendS1Nux = false;
+        saveSettings(currentSettings);
+        showMessage("好的，将不再为您推荐 S1 NUX。", true);
+      },
+    };
+
+    createAdvancedConfirmationModal("S1 Plus 体验升级推荐", bodyHtml, [
+      disableButton,
+      installButton,
+    ]);
+
+    // 5. 更新推荐时间戳
+    GM_setValue(LAST_REC_KEY, now);
+  };
+
   function autoSign() {
     const checkinLink = document.querySelector(
       'a[href*="study_daily_attendance-daily_attendance.html"]'
@@ -7181,11 +7257,7 @@
     return false;
   };
 
-  // [S1 PLUS 整合版]
-  // --- 优点: 采纳了 kyo 方案的中断逻辑，当页面需要刷新时，停止后续无效操作，提升效率。
-  // --- [FIX] 增强了 MutationObserver，使其能够监测并修复因执行时机问题而被重置的导航栏，解决启动同步时的UI Bug。
-
-  // --- 主流程 ---
+  // [替换] 更新主流程函数
   async function main() {
     // [整合] 首先执行启动同步逻辑，并根据结果决定是否中断
     const isReloading = await handleStartupSync();
@@ -7196,6 +7268,7 @@
     cleanupOldReadProgress();
 
     detectS1Nux();
+    handleNuxRecommendation(); // [新增] 调用 NUX 推荐函数
     initializeNavbar();
     initializeGenericDisplayPopover();
     applyThemeOverrideStyle(); // <-- [新增] 启动时应用主题样式
