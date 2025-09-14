@@ -459,7 +459,7 @@
 
     /* [MODIFIED] 将所有危险/红色按钮的变色逻辑统一到 hover 状态 */
     .s1p-btn.s1p-red-btn:hover,
-    .s1p-btn.s1p-danger:hover ,
+    .s1p-btn.s1p-danger:hover,
     .s1p-confirm-btn.s1p-confirm:hover {
       background-color: var(--s1p-red-h); /* 使用更深的红色作为悬停色 */
       border-color: transparent; /* 确保没有边框颜色 */
@@ -572,7 +572,6 @@
     /* --- 行内确认菜单样式 (带动画) --- */
     .s1p-options-menu.s1p-inline-confirm-menu {
       transform: translateY(0) !important;
-      margin-left: 2px !important;
       z-index: 10004;
       opacity: 0;
       transform: translateX(-8px) scale(0.95) !important;
@@ -1113,12 +1112,12 @@
       cursor: default;
     }
     .s1p-tab-content {
-  display: none;
-  padding-top: 0;
-  /* [NEW] 为所有标签页内容区统一添加 16px 的水平内边距，作为全局“安全区” */
-//  padding-left: 16px;
-  //padding-right: 16px;
-}
+      display: none;
+      padding-top: 0;
+      /* [NEW] 为所有标签页内容区统一添加 16px 的水平内边距，作为全局“安全区” */
+      //  padding-left: 16px;
+      //padding-right: 16px;
+    }
 
     .s1p-tabs-wrapper {
       display: flex;
@@ -1349,7 +1348,6 @@
     .s1p-confirm-footer.s1p-centered {
       justify-content: center;
     }
-    
 
     /* --- [MODIFIED] Collapsible Section (V7 - Mask Image Fix) --- */
     .s1p-collapsible-header {
@@ -1434,7 +1432,7 @@
     /* --- 界面定制设置样式 --- */
     .s1p-settings-group {
       // margin-bottom: 0;
-      padding: 8px
+      padding: 8px;
     }
     .s1p-settings-group-title {
       font-size: 14px;
@@ -6521,13 +6519,18 @@
       menuRect.height / 2;
     let left;
     const spaceOnRight = window.innerWidth - anchorRect.right;
-    const requiredSpace = menuRect.width + 8;
+    const requiredSpace = menuRect.width + 10;
 
     if (spaceOnRight >= requiredSpace) {
-      left = anchorRect.right + window.scrollX + 8;
+      // 右侧定位: 在按钮右侧留出 10px 间距
+      left = anchorRect.right + window.scrollX + 10;
     } else {
-      left = anchorRect.left + window.scrollX - menuRect.width - 8;
+      // [最终修正 V2] 左侧定位:
+      // 在理论值 17px 的基础上，增加 7px 的安全边距，总偏移量为 24px。
+      // 这足以覆盖浏览器渲染时产生的未知布局偏差。
+      left = anchorRect.left + window.scrollX - menuRect.width - 30;
     }
+
     if (left < window.scrollX) {
       left = window.scrollX + 8;
     }
