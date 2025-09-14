@@ -177,6 +177,17 @@
       color: var(--s1p-t);
       transform: scale(1.1);
     }
+    
+    /* --- [核心修复] 针对 S1 NUX 窄屏模式的兼容性适配 --- */
+    @media (max-width: 909px) {
+      #nv ul #s1p-nav-sync-btn {
+        margin-left: 0 !important; /* 移除外边距，解决背景断裂问题 */
+      }
+      #nv ul #s1p-nav-sync-btn a {
+        /* [修改] 增加了左侧内边距，使其与左侧按钮的视觉间距更协调 */
+        padding: 0 4px 0 8px !important; 
+      }
+    }
 
     /* --- [MODIFIED] 最终简化版同步动画 (只有旋转) --- */
     @keyframes s1p-sync-simple-rotate {
