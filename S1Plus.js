@@ -878,6 +878,11 @@
     .pi > strong {
       flex-shrink: 0;
       order: 4;
+      visibility: hidden; /* <-- 核心修改：初始不可见 */
+      transition: visibility 0s; /* 确保状态改变是瞬时的 */
+    }
+    .pi > strong.s1p-layout-ready {
+      visibility: visible; /* <-- 脚本添加此类后立即显示 */
     }
     .pi > #fj {
       margin-left: 0;
@@ -893,8 +898,6 @@
       overflow: hidden;
       white-space: nowrap !important;
     }
-
-    /* --- [FINAL FIX v2] Corrected CSS Selector Specificity --- */
 
     /* 1. 最外层容器: flex布局，这是基础 */
     .s1p-authi-container {
@@ -6749,7 +6752,7 @@
   };
 
   /**
-   * [OPTIMIZED V2] Adds action buttons and layout spacer to a single post.
+   * [OPTIMIZED V3 - No Layout Shift] Adds action buttons and layout spacer to a single post.
    * @param {HTMLTableElement} postTable - The main table element for a single post.
    */
   const addActionsToSinglePost = (postTable) => {
@@ -6771,6 +6774,11 @@
     // --- [新增逻辑结束] ---
 
     if (authiDiv.parentElement.classList.contains("s1p-authi-container")) {
+      // --- [新增] 即使容器已存在，也要确保楼层号可见 ---
+      const floorNumberEl = piContainer.querySelector("strong");
+      if (floorNumberEl) {
+        floorNumberEl.classList.add("s1p-layout-ready");
+      }
       return;
     }
 
@@ -6931,6 +6939,12 @@
       authiDiv.parentElement.insertBefore(newContainer, authiDiv);
       newContainer.appendChild(authiDiv);
       newContainer.appendChild(scriptActionsWrapper);
+    }
+
+    // --- [核心新增] 修复加载闪烁：在所有布局操作完成后，立即显示楼层号 ---
+    const floorNumberEl = piContainer.querySelector("strong");
+    if (floorNumberEl) {
+      floorNumberEl.classList.add("s1p-layout-ready");
     }
   };
 
@@ -7202,160 +7216,159 @@
       saveReadProgress(cleanedProgress);
     }
   };
-
   /**
-   * [整合版] 脚本启动时的同步总控制器。
-   * [优化 v3] 优化了冲突处理方式，使用阻塞式对话框主动引导用户解决。
+   * [新增] 执行常规的启动时同步检查。
+   * 仅在“每日首次同步”未开启，且“自动后台同步”开启时由 main 函数调用。
    * @returns {Promise<boolean>} - 返回 true 表示页面即将刷新，主流程应中断。
    */
-  const handleStartupSync = async () => {
+  const handlePerLoadSyncCheck = async () => {
     const settings = getSettings();
-    if (!settings.syncRemoteEnabled) {
-      return false; // 总开关未开，直接跳过所有启动同步。
-    }
 
-    // --- 跨标签页同步锁 ---
-    const SYNC_LOCK_KEY = "s1p_sync_lock";
-    const SYNC_LOCK_TIMEOUT_MS = 60 * 1000; // 为锁设置1分钟的超时，防止因标签页崩溃导致死锁。
-
-    const today = new Date().toLocaleDateString("sv");
-    const lastSyncDate = GM_getValue("s1p_last_daily_sync_date", null);
-
-    if (settings.syncDailyFirstLoad && today !== lastSyncDate) {
-      const lockTimestamp = GM_getValue(SYNC_LOCK_KEY, 0);
-      if (Date.now() - lockTimestamp < SYNC_LOCK_TIMEOUT_MS) {
-        console.log(
-          "S1 Plus: 检测到另一个标签页可能正在同步，本次启动同步已跳过。"
-        );
-        return false;
-      }
-
-      GM_setValue(SYNC_LOCK_KEY, Date.now());
-
-      try {
-        const currentDateAfterLock = GM_getValue(
-          "s1p_last_daily_sync_date",
-          null
-        );
-        if (currentDateAfterLock === today) {
-          console.log("S1 Plus: 在锁定期间检测到同步已完成，已取消重复操作。");
-          return false;
-        }
-
-        console.log("S1 Plus: 正在执行每日首次加载同步...");
-        showMessage("S1 Plus: 正在执行每日首次自动同步...", null);
-        GM_setValue("s1p_last_daily_sync_date", today);
-
-        const result = await performAutoSync();
-
-        switch (result.status) {
-          case "success":
-            if (result.action === "pulled") {
-              showMessage("每日同步完成，正在刷新页面以应用最新数据...", true);
-              setTimeout(() => location.reload(), 1500);
-              return true;
-            } else {
-              showMessage("每日首次同步完成。", true);
-            }
-            break;
-          case "failure":
-            showMessage(`每日首次同步失败: ${result.error}`, false);
-            break;
-
-          // --- [修复] 冲突处理优化 ---
-          case "conflict":
-            // 使用已有的 createAdvancedConfirmationModal 函数来创建一个阻塞式对话框
-            createAdvancedConfirmationModal(
-              "检测到同步冲突",
-              "<p>S1 Plus在自动同步时发现，您的本地数据和云端备份可能都已更改。</p><p>为防止数据丢失，自动同步已暂停。请手动选择要保留的版本来解决冲突。</p>",
-              [
-                {
-                  text: "稍后处理",
-                  className: "s1p-cancel",
-                  action: () => {
-                    // 如果用户选择稍后处理，给一个标准的提示
-                    showMessage("同步已暂停，您可以在设置中手动同步。", null);
-                  },
-                },
-                {
-                  text: "立即解决",
-                  className: "s1p-confirm",
-                  action: () => {
-                    // 调用现有的手动同步函数，它已经内置了完整的冲突解决UI（推送/拉取选择）
-                    handleManualSync();
-                  },
-                },
-              ]
-            );
-            break;
-          // --- [修复结束] ---
-        }
-      } finally {
-        GM_deleteValue(SYNC_LOCK_KEY);
-        console.log("S1 Plus: 同步锁已释放。");
-      }
-      return false;
-    }
-
-    // --- 逻辑2: 如果不执行每日同步，则回退到原有的“自动后台同步”的启动检查 ---
-    if (settings.syncAutoEnabled) {
-      console.log("S1 Plus: 执行常规启动时同步检查...");
+    // 仅当“每日首次同步”关闭 且 “自动后台同步”开启时，才执行此检查
+    if (!settings.syncDailyFirstLoad && settings.syncAutoEnabled) {
+      console.log("S1 Plus: 执行常规启动时同步检查（因每日首次同步已关闭）...");
       const result = await performAutoSync();
       if (result.status === "success" && result.action === "pulled") {
         showMessage("检测到云端有更新，正在刷新页面...", true);
         setTimeout(() => location.reload(), 1500);
-        return true;
+        return true; // 指示主流程中断，因为页面即将刷新
       }
     }
+    return false; // 默认不中断
+  };
+  // [S1PLUS-MODIFIED] 请用此版本整体替换旧的 handleStartupSync 函数
+  /**
+   * [整合版] 脚本启动时的同步总控制器。
+   * [优化 v3] 优化了冲突处理方式，使用阻塞式对话框主动引导用户解决。
+   * [职责分离] 此函数现在只负责“每日首次加载时同步”的逻辑。
+   * @returns {Promise<boolean>} - 返回 true 表示页面即将刷新，主流程应中断。
+   */
+  const handleStartupSync = async () => {
+    const settings = getSettings();
+    // “每日同步”总开关未开，或远程同步总开关未开，则直接跳过
+    if (!settings.syncRemoteEnabled || !settings.syncDailyFirstLoad) {
+      return false;
+    }
 
-    return false;
+    const today = new Date().toLocaleDateString("sv");
+    const lastSyncDate = GM_getValue("s1p_last_daily_sync_date", null);
+
+    // 如果今天已经同步过，也直接跳过
+    if (today === lastSyncDate) {
+      return false;
+    }
+
+    // --- 执行每日首次同步的核心逻辑 ---
+    // --- 跨标签页同步锁 ---
+    const SYNC_LOCK_KEY = "s1p_sync_lock";
+    const SYNC_LOCK_TIMEOUT_MS = 60 * 1000; // 为锁设置1分钟的超时，防止因标签页崩溃导致死锁。
+
+    const lockTimestamp = GM_getValue(SYNC_LOCK_KEY, 0);
+    if (Date.now() - lockTimestamp < SYNC_LOCK_TIMEOUT_MS) {
+      console.log(
+        "S1 Plus: 检测到另一个标签页可能正在同步，本次启动同步已跳过。"
+      );
+      return false;
+    }
+
+    GM_setValue(SYNC_LOCK_KEY, Date.now());
+
+    try {
+      // 再次检查，防止在加锁过程中其他页面已完成同步
+      const currentDateAfterLock = GM_getValue(
+        "s1p_last_daily_sync_date",
+        null
+      );
+      if (currentDateAfterLock === today) {
+        console.log("S1 Plus: 在锁定期间检测到同步已完成，已取消重复操作。");
+        return false;
+      }
+
+      console.log("S1 Plus: 正在执行每日首次加载同步...");
+      showMessage("S1 Plus: 正在执行每日首次自动同步...", null);
+      GM_setValue("s1p_last_daily_sync_date", today);
+
+      const result = await performAutoSync();
+
+      switch (result.status) {
+        case "success":
+          if (result.action === "pulled") {
+            showMessage("每日同步完成，正在刷新页面以应用最新数据...", true);
+            setTimeout(() => location.reload(), 1500);
+            return true; // 需要刷新
+          } else {
+            showMessage("每日首次同步完成。", true);
+          }
+          break;
+        case "failure":
+          showMessage(`每日首次同步失败: ${result.error}`, false);
+          break;
+
+        case "conflict":
+          createAdvancedConfirmationModal(
+            "检测到同步冲突",
+            "<p>S1 Plus在自动同步时发现，您的本地数据和云端备份可能都已更改。</p><p>为防止数据丢失，自动同步已暂停。请手动选择要保留的版本来解决冲突。</p>",
+            [
+              {
+                text: "稍后处理",
+                className: "s1p-cancel",
+                action: () => {
+                  showMessage("同步已暂停，您可以在设置中手动同步。", null);
+                },
+              },
+              {
+                text: "立即解决",
+                className: "s1p-confirm",
+                action: () => {
+                  handleManualSync();
+                },
+              },
+            ]
+          );
+          break;
+      }
+    } finally {
+      GM_deleteValue(SYNC_LOCK_KEY);
+      console.log("S1 Plus: 同步锁已释放。");
+    }
+
+    return false; // 默认不刷新
   };
 
-  // [替换] 更新主流程函数
   async function main() {
-    // [整合] 首先执行启动同步逻辑，并根据结果决定是否中断
-    const isReloading = await handleStartupSync();
-    if (isReloading) {
+    // --- [核心修改] 按照您的建议，分离启动同步的调用 ---
+    // 步骤1: 尝试执行每日首次同步
+    const isReloadingAfterDailySync = await handleStartupSync();
+    if (isReloadingAfterDailySync) {
+      return; // 如果页面即将刷新，则中断后续所有脚本初始化操作
+    }
+    // 步骤2: 尝试执行常规的“每次加载”同步检查
+    const isReloadingAfterPerLoadSync = await handlePerLoadSyncCheck();
+    if (isReloadingAfterPerLoadSync) {
       return; // 如果页面即将刷新，则中断后续所有脚本初始化操作
     }
 
     cleanupOldReadProgress();
-
     detectS1Nux();
-    handleNuxRecommendation(); // [新增] 调用 NUX 推荐函数
+    handleNuxRecommendation();
     initializeNavbar();
     initializeGenericDisplayPopover();
-    applyThemeOverrideStyle(); // <-- [新增] 启动时应用主题样式
+    applyThemeOverrideStyle();
 
-    // --- [FIXED] 增强的 MutationObserver 逻辑 ---
     const observerCallback = (mutations, observer) => {
-      // 检查我们的自定义导航链接是否意外消失。
-      // 这是判断导航栏是否被（因任何原因）重置的最可靠方法。
       const navNeedsReinit = !document.getElementById("s1p-nav-link");
-
-      // 在我们修改 DOM 之前，先断开观察，防止无限循环。
       observer.disconnect();
-
-      // 如果导航栏需要重新初始化，则执行它，进行“自我修复”。
       if (navNeedsReinit) {
         console.log("S1 Plus: 检测到导航栏被重置，正在重新应用自定义设置。");
         initializeNavbar();
       }
-
-      // 运行常规的内容变化应用函数。
       applyChanges();
-
-      // 将观察器重新附加到更高层级的父元素上，以确保能监听到包括导航栏在内的所有变化。
       const watchTarget = document.getElementById("wp") || document.body;
       observer.observe(watchTarget, { childList: true, subtree: true });
     };
 
     const observer = new MutationObserver(observerCallback);
-
-    // 首次加载时，应用所有动态内容变更。
     applyChanges();
-
-    // 开始观察，目标是包含导航栏和内容区的父元素#wp。
     const watchTarget = document.getElementById("wp") || document.body;
     observer.observe(watchTarget, { childList: true, subtree: true });
   }
