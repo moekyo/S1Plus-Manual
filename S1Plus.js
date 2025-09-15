@@ -1807,13 +1807,13 @@
     /* --- [新增 V9] 可禁用/启用的增强型悬浮控件 --- */
     /* --- 模式 B: 增强控件关闭 (默认状态) --- */
     /* 默认隐藏脚本创建的控件 */
-    #s1p-controls-wrapper {
+    #s1p-floating-controls-wrapper {
       display: none;
     }
 
     /* --- 模式 A: 增强控件开启 (当 body 有 s1p-enhanced-controls-active 时) --- */
     /* 1. 让脚本控件显示出来 */
-    body.s1p-enhanced-controls-active #s1p-controls-wrapper {
+    body.s1p-enhanced-controls-active #s1p-floating-controls-wrapper {
       display: block;
     }
     /* 2. 同时，彻底隐藏原生控件 */
@@ -1822,20 +1822,19 @@
     }
 
     /* 3. 以下是脚本控件自身的样式 (与之前版本类似，但选择器更严谨) */
-    #s1p-controls-wrapper {
+    #s1p-floating-controls-wrapper {
       position: fixed;
       top: 50%;
-      right: 0;
+      right: 10px;
       transform: translateY(-50%);
       z-index: 9998;
     }
     #s1p-controls-handle {
       position: absolute;
       top: 50%;
-      right: 0;
+      right: -10px;
       transform: translateY(-50%);
       width: 20px;
-      /* [修改] 将高度从 60px 调整为 40px */
       height: 40px;
       background-color: var(--s1p-bg);
       border: 1px solid var(--s1p-pri);
@@ -1871,16 +1870,17 @@
       display: flex;
       flex-direction: column;
       gap: 8px;
-      padding-left: 30px;
+      /* [S1PLUS-MODIFIED] 将左侧内边距设为一个 >20px 的值，从而制造按钮和屏幕边缘的间距 */
+      padding-left: 35px;
       transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease,
         visibility 0.3s;
     }
-    #s1p-controls-wrapper:hover #s1p-controls-handle {
+    #s1p-floating-controls-wrapper:hover #s1p-controls-handle {
       opacity: 0;
       pointer-events: none;
       transition: opacity 0.2s ease;
     }
-    #s1p-controls-wrapper:hover #s1p-floating-controls {
+    #s1p-floating-controls-wrapper:hover #s1p-floating-controls {
       transform: translateX(0);
       opacity: 1;
       visibility: visible;
@@ -1895,7 +1895,6 @@
       border-radius: 50%;
       background-color: var(--s1p-bg);
       box-shadow: 0 2px 8px rgba(var(--s1p-black-rgb), 0.15);
-      border: 1px solid var(--s1p-pri);
       transition: all 0.2s ease-in-out;
       padding: 0;
       box-sizing: border-box;
@@ -1903,15 +1902,24 @@
     #s1p-floating-controls a:hover {
       background-color: var(--s1p-pri);
       transform: scale(1.1);
+      fill-opacity: 1;
     }
     #s1p-floating-controls a svg {
-      width: 24px;
-      height: 24px;
+      width: 18px;
+      height: 18px;
       color: var(--s1p-t);
+      fill-opacity: 0.5;
+    }
+    #s1p-floating-controls a svg:hover {
+      fill-opacity: 1;
     }
     #s1p-floating-controls a.s1p-scroll-btn svg {
-      width: 28px;
-      height: 28px;
+      width: 22px;
+      height: 22px;
+      fill-opacity: 0.5;
+    }
+      #s1p-floating-controls a.s1p-scroll-btn svg:hover {
+      fill-opacity: 1;
     }
     /* --- [更新] 回复收藏内容切换 V3 --- */
     .s1p-bookmark-preview,
@@ -7047,7 +7055,7 @@
   // [修改] 将设置项重命名为 enhanceFloatingControls
   const createCustomFloatingControls = () => {
     // 1. 如果自定义控件已存在，则直接退出
-    if (document.getElementById("s1p-controls-wrapper")) {
+    if (document.getElementById("s1p-floating-controls-wrapper")) {
       return;
     }
 
@@ -7082,7 +7090,7 @@
 
     // 4. 创建DOM结构
     const wrapper = document.createElement("div");
-    wrapper.id = "s1p-controls-wrapper";
+    wrapper.id = "s1p-floating-controls-wrapper";
     // [核心修改] 读取新命名的设置并添加对应的class
     const settings = getSettings();
     if (settings.enhanceFloatingControls) {
@@ -7365,7 +7373,7 @@
       createCustomFloatingControls();
     } else {
       // 如果设置为关闭，则确保移除脚本创建的控件
-      document.getElementById("s1p-controls-wrapper")?.remove();
+      document.getElementById("s1p-floating-controls-wrapper")?.remove();
     }
   };
   // [修改] 调用新的控件管理器，不再直接创建控件
