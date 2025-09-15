@@ -1871,7 +1871,7 @@
       display: flex;
       flex-direction: column;
       gap: 8px;
-      padding-left: 20px;
+      padding-left: 30px;
       transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease,
         visibility 0.3s;
     }
@@ -2927,11 +2927,19 @@
           if (response.status === 200) {
             resolve({ success: true, message: "数据已成功推送到Gist。" });
           } else {
-            reject(
-              new Error(
-                `Gist更新失败，状态码: ${response.status}, 响应: ${response.responseText}`
-              )
-            );
+            // [S1PLUS-MODIFIED] 优化 Gist API 错误信息处理
+            let errorMessage = `Gist 更新失败 (状态码: ${response.status})。`;
+            try {
+              const apiResponse = JSON.parse(response.responseText);
+              // 优先使用 API 返回的 message 字段
+              if (apiResponse && apiResponse.message) {
+                errorMessage += `原因: ${apiResponse.message}`;
+              }
+            } catch (e) {
+              // 如果响应不是有效的 JSON，则不附加额外信息
+              errorMessage += "请检查网络连接或 Gist 配置。";
+            }
+            reject(new Error(errorMessage));
           }
         },
         onerror: () => {
