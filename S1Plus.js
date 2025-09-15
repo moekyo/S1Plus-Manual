@@ -1070,6 +1070,10 @@
       padding: 8px 16px 16px;
       overflow-y: auto;
       flex-grow: 1;
+      /* --- [调试新增] --- */
+      transition: height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+      /* 暂时移除 flex-grow 以便手动控制高度 */
+      flex-grow: 0;
     }
     .s1p-modal-footer {
       /* [MODIFIED] 增加上下内边距，为按钮阴影提供空间 */
@@ -1421,8 +1425,8 @@
     .s1p-feature-content {
       display: grid;
       grid-template-rows: 0fr;
-      transition: grid-template-rows 0.6s ease-in-out,
-        margin-top 0.6s ease-in-out;
+      /* [调试] 暂时禁用这里的动画，以便测试我们自己的 height 动画 */
+      transition: none; 
       margin-top: 0;
     }
     .s1p-feature-content.expanded {
@@ -1431,15 +1435,16 @@
     }
     .s1p-feature-content > div {
       overflow: hidden;
-      transition: opacity 0.5s ease-in-out;
+      /* [调试] 暂时禁用这里的动画 */
+      transition: none;
     }
     .s1p-feature-content:not(.expanded) > div {
       opacity: 0;
-      transition-duration: 0.25s;
+      transition-duration: 0s;
     }
     .s1p-feature-content.expanded > div {
       opacity: 1;
-      transition-delay: 0.15s;
+      transition-delay: 0s;
     }
 
     /* --- 界面定制设置样式 --- */
@@ -4858,42 +4863,45 @@
                               settings.enableReadProgress ? "checked" : ""
                             }><span class="s1p-slider"></span></label>
                         </div>
-                        <div class="s1p-settings-item" id="s1p-showReadIndicator-container" style="padding-left: 20px; ${
-                          !settings.enableReadProgress ? "display: none;" : ""
+                        <div id="s1p-read-progress-sub-settings" class="s1p-feature-content ${
+                          settings.enableReadProgress ? "expanded" : ""
                         }">
-                            <label class="s1p-settings-label" for="s1p-showReadIndicator">显示“当前阅读位置”浮动标识</label>
-                            <label class="s1p-switch"><input type="checkbox" id="s1p-showReadIndicator" class="s1p-settings-checkbox" data-setting="showReadIndicator" ${
-                              settings.showReadIndicator ? "checked" : ""
-                            }><span class="s1p-slider"></span></label>
-                        </div>
-                        <div class="s1p-settings-item" id="s1p-readingProgressCleanupContainer" style="padding-left: 20px; ${
-                          !settings.enableReadProgress ? "display: none;" : ""
-                        }">
-                            <label class="s1p-settings-label">自动清理超过以下时间的阅读记录</label>
-                            <div id="s1p-readingProgressCleanupDays-control" class="s1p-segmented-control">
-                                <div class="s1p-segmented-control-slider"></div>
-                                <div class="s1p-segmented-control-option ${
-                                  settings.readingProgressCleanupDays == 30
-                                    ? "active"
-                                    : ""
-                                }" data-value="30">1个月</div>
-                                <div class="s1p-segmented-control-option ${
-                                  settings.readingProgressCleanupDays == 90
-                                    ? "active"
-                                    : ""
-                                }" data-value="90">3个月</div>
-                                <div class="s1p-segmented-control-option ${
-                                  settings.readingProgressCleanupDays == 180
-                                    ? "active"
-                                    : ""
-                                }" data-value="180">6个月</div>
-                                <div class="s1p-segmented-control-option ${
-                                  settings.readingProgressCleanupDays == 0
-                                    ? "active"
-                                    : ""
-                                }" data-value="0">永不</div>
+                          <div>
+                            <div class="s1p-settings-item" id="s1p-showReadIndicator-container" style="padding-left: 20px;">
+                                <label class="s1p-settings-label" for="s1p-showReadIndicator">显示“当前阅读位置”浮动标识</label>
+                                <label class="s1p-switch"><input type="checkbox" id="s1p-showReadIndicator" class="s1p-settings-checkbox" data-setting="showReadIndicator" ${
+                                  settings.showReadIndicator ? "checked" : ""
+                                }><span class="s1p-slider"></span></label>
                             </div>
+                            <div class="s1p-settings-item" id="s1p-readingProgressCleanupContainer" style="padding-left: 20px;">
+                                <label class="s1p-settings-label">自动清理超过以下时间的阅读记录</label>
+                                <div id="s1p-readingProgressCleanupDays-control" class="s1p-segmented-control">
+                                    <div class="s1p-segmented-control-slider"></div>
+                                    <div class="s1p-segmented-control-option ${
+                                      settings.readingProgressCleanupDays == 30
+                                        ? "active"
+                                        : ""
+                                    }" data-value="30">1个月</div>
+                                    <div class="s1p-segmented-control-option ${
+                                      settings.readingProgressCleanupDays == 90
+                                        ? "active"
+                                        : ""
+                                    }" data-value="90">3个月</div>
+                                    <div class="s1p-segmented-control-option ${
+                                      settings.readingProgressCleanupDays == 180
+                                        ? "active"
+                                        : ""
+                                    }" data-value="180">6个月</div>
+                                    <div class="s1p-segmented-control-option ${
+                                      settings.readingProgressCleanupDays == 0
+                                        ? "active"
+                                        : ""
+                                    }" data-value="0">永不</div>
+                                </div>
+                            </div>
+                          </div>
                         </div>
+
                         <div class="s1p-settings-item">
                             <label class="s1p-settings-label" for="s1p-openProgressInNewTab">在新窗口打开阅读进度</label>
                             <label class="s1p-switch"><input type="checkbox" id="s1p-openProgressInNewTab" class="s1p-settings-checkbox" data-setting="openProgressInNewTab" ${
@@ -4968,14 +4976,18 @@
           const activeOption = control.querySelector(
             ".s1p-segmented-control-option.active"
           );
-          if (slider && activeOption && activeOption.offsetWidth > 0) {
+          // [核心修正] 增加 offsetParent !== null 判断，确保元素可见
+          if (
+            slider &&
+            activeOption &&
+            activeOption.offsetWidth > 0 &&
+            activeOption.offsetParent !== null
+          ) {
             slider.style.width = `${activeOption.offsetWidth}px`;
             slider.style.transform = `translateX(${activeOption.offsetLeft}px)`;
           } else if (slider && activeOption) {
-            console.warn(
-              "S1 Plus: Segmented control layout calculation delayed. Retrying."
-            );
-            setTimeout(() => moveSlider(control), 50);
+            // 保留重试逻辑，以防万一，但现在它不应该无限循环了
+            setTimeout(() => moveSlider(control), 100);
           }
         });
       };
@@ -5004,7 +5016,7 @@
         "#s1p-readingProgressCleanupDays-control"
       );
       if (cleanupControl) {
-        moveSlider(cleanupControl);
+        moveSlider(cleanupControl); // 初始加载时调用
         cleanupControl.addEventListener("click", (e) => {
           const target = e.target.closest(".s1p-segmented-control-option");
           if (!target || target.classList.contains("active")) return;
@@ -5067,25 +5079,27 @@
         }
       });
     };
+    // [S1PLUS-MODIFIED] 请用此最终正确版本整体替换 renderNavSettingsTab 函数
     const renderNavSettingsTab = () => {
       const settings = getSettings();
       tabs["nav-settings"].innerHTML = `
-            <div class="s1p-settings-group">
-                <div class="s1p-settings-item" style="padding: 0; padding-bottom: 16px; border-bottom: 1px solid var(--s1p-pri);">
-                    <label class="s1p-settings-label s1p-settings-section-title-label" for="s1p-enableNavCustomization">启用自定义导航栏</label>
-                    <label class="s1p-switch">
-                        <input type="checkbox" id="s1p-enableNavCustomization" data-feature="enableNavCustomization" class="s1p-feature-toggle" ${
-                          settings.enableNavCustomization ? "checked" : ""
-                        }>
-                        <span class="s1p-slider"></span>
-                    </label>
-                </div>
+        <div class="s1p-settings-group">
+            <div class="s1p-settings-item" style="padding: 0; padding-bottom: 16px; border-bottom: 1px solid var(--s1p-pri);">
+                <label class="s1p-settings-label s1p-settings-section-title-label" for="s1p-enableNavCustomization">启用自定义导航栏</label>
+                <label class="s1p-switch">
+                    <input type="checkbox" id="s1p-enableNavCustomization" data-feature="enableNavCustomization" class="s1p-feature-toggle" ${
+                      settings.enableNavCustomization ? "checked" : ""
+                    }>
+                    <span class="s1p-slider"></span>
+                </label>
             </div>
+        </div>
 
-            <div class="s1p-feature-content ${
-              settings.enableNavCustomization ? "expanded" : ""
-            }">
-                <div style="padding-top: 12px;">
+        <div class="s1p-feature-content ${
+          settings.enableNavCustomization ? "expanded" : ""
+        }">
+            <div>
+                <div class="s1p-settings-group">
                     <div class="s1p-nav-editor-list" style="display: flex; flex-direction: column; gap: 8px;"></div>
                     <div class="s1p-editor-footer">
                         <div style="display: flex; gap: 8px;">
@@ -5095,7 +5109,8 @@
                         <button id="s1p-nav-restore-btn" class="s1p-btn s1p-red-btn">恢复默认导航</button>
                     </div>
                 </div>
-            </div>`;
+            </div>
+        </div>`;
 
       const navListContainer = tabs["nav-settings"].querySelector(
         ".s1p-nav-editor-list"
@@ -5104,16 +5119,16 @@
         navListContainer.innerHTML = (links || [])
           .map(
             (link, index) => `
-                <div class="s1p-editor-item" draggable="true" data-index="${index}" style="grid-template-columns: auto 1fr 1fr auto; user-select: none;">
-                    <div class="s1p-drag-handle">::</div>
-                    <input type="text" class="s1p-input s1p-nav-name" placeholder="名称" value="${
-                      link.name || ""
-                    }" autocomplete="off">
-                    <input type="text" class="s1p-input s1p-nav-href" placeholder="链接" value="${
-                      link.href || ""
-                    }" autocomplete="off">
-                    <div class="s1p-editor-item-controls"><button class="s1p-editor-btn s1p-delete-button" data-action="delete" title="删除链接"></button></div>
-                </div>`
+            <div class="s1p-editor-item" draggable="true" data-index="${index}" style="grid-template-columns: auto 1fr 1fr auto; user-select: none;">
+                <div class="s1p-drag-handle">::</div>
+                <input type="text" class="s1p-input s1p-nav-name" placeholder="名称" value="${
+                  link.name || ""
+                }" autocomplete="off">
+                <input type="text" class="s1p-input s1p-nav-href" placeholder="链接" value="${
+                  link.href || ""
+                }" autocomplete="off">
+                <div class="s1p-editor-item-controls"><button class="s1p-editor-btn s1p-delete-button" data-action="delete" title="删除链接"></button></div>
+            </div>`
           )
           .join("");
       };
@@ -5260,24 +5275,56 @@
       const featureKey = target.dataset.feature;
 
       if (featureKey && target.classList.contains("s1p-feature-toggle")) {
+        // [核心修正] 使用正确的 DOM 遍历方法
+        const contentWrapper = target.closest(
+          ".s1p-settings-group"
+        )?.nextElementSibling;
+        const modalBody = modal.querySelector(".s1p-modal-body");
+
+        // 如果结构不符或动画条件不足，则安全退出
+        if (
+          !modalBody ||
+          !contentWrapper ||
+          !contentWrapper.classList.contains("s1p-feature-content")
+        ) {
+          console.error(
+            "S1 Plus Debug: Animation structure not found. Aborting."
+          );
+          return;
+        }
+
         const isChecked = target.checked;
         settings[featureKey] = isChecked;
-
-        const contentWrapper =
-          target.closest(".s1p-settings-item")?.nextElementSibling;
-        if (
-          contentWrapper &&
-          contentWrapper.classList.contains("s1p-feature-content")
-        ) {
-          contentWrapper.classList.toggle("expanded", isChecked);
-        }
         saveSettings(settings);
 
+        const oldHeight = modalBody.offsetHeight;
+        modalBody.style.height = `${oldHeight}px`;
+
+        contentWrapper.classList.toggle("expanded", isChecked);
+
+        requestAnimationFrame(() => {
+          modalBody.style.height = "auto";
+          const newHeight = modalBody.offsetHeight;
+          modalBody.style.height = `${oldHeight}px`;
+
+          requestAnimationFrame(() => {
+            modalBody.style.height = `${newHeight}px`;
+          });
+        });
+
+        modalBody.addEventListener(
+          "transitionend",
+          function onEnd() {
+            modalBody.removeEventListener("transitionend", onEnd);
+            modalBody.style.height = "auto";
+          },
+          { once: true }
+        );
+
+        // 根据 featureKey 刷新对应UI
         switch (featureKey) {
           case "enableGeneralSettings":
-            // 重新渲染“通用设置”选项卡以正确显示/隐藏所有子选项
-            renderGeneralSettingsTab();
-            // 应用功能变更
+            // 注意：因为动画逻辑已在外部处理，这里只负责重新渲染内容，不再处理 classList.toggle
             applyInterfaceCustomizations();
             applyThreadLinkBehavior();
             applyPageLinkBehavior();
@@ -5289,12 +5336,14 @@
               removeProgressJumpButtons();
               updateReadIndicatorUI(null);
             }
+            // 重新渲染以更新内部状态，例如子开关
+            renderGeneralSettingsTab();
             break;
           case "enablePostBlocking":
             isChecked
               ? addBlockButtonsToThreads()
               : removeBlockButtonsFromThreads();
-            renderThreadTab(); // 重新渲染“帖子屏蔽”选项卡
+            renderThreadTab();
             break;
           case "enableUserBlocking":
             refreshAllAuthiActions();
@@ -5305,15 +5354,14 @@
             } else {
               Object.keys(getBlockedUsers()).forEach(showUserPosts);
             }
-            renderUserTab(); // 重新渲染“用户屏蔽”选项卡
+            renderUserTab();
             break;
           case "enableUserTagging":
             refreshAllAuthiActions();
-            renderTagsTab(); // 重新渲染“用户标记”选项卡
+            renderTagsTab();
             break;
           case "enableReadProgress":
-            // 此功能属于通用设置，因此直接重新渲染通用设置选项卡
-            renderGeneralSettingsTab();
+            renderGeneralSettingsTab(); // 重新渲染以更新子开关
             isChecked ? addProgressJumpButtons() : removeProgressJumpButtons();
             if (!isChecked) {
               updateReadIndicatorUI(null);
@@ -5321,7 +5369,7 @@
             break;
           case "enableBookmarkReplies":
             refreshAllAuthiActions();
-            renderBookmarksTab(); // 重新渲染“回复收藏”选项卡
+            renderBookmarksTab();
             break;
         }
         return;
