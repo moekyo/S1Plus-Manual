@@ -2041,6 +2041,17 @@
       position: relative;
       top: 1px;
     }
+    /* --- [新增] S1 NUX 推荐弹窗按钮专属样式 --- */
+    .s1p-nux-recommend-modal .s1p-confirm-btn.s1p-confirm:hover {
+      background-color: var(--s1p-sub-h); 
+      color: var(--s1p-white);
+      border-color: transparent;
+    }
+    .s1p-nux-recommend-modal .s1p-confirm-btn.s1p-cancel:hover {
+      background-color: var(--s1p-red-h); 
+      color: var(--s1p-white);
+      border-color: transparent;
+    }
   `);
 
   // --- S1 NUX 兼容性检测 ---
@@ -5848,10 +5859,21 @@
     });
   };
 
-  const createAdvancedConfirmationModal = (title, bodyHtml, buttons) => {
+  const createAdvancedConfirmationModal = (
+    title,
+    bodyHtml,
+    buttons,
+    options = {}
+  ) => {
+    // [修改] 增加 options 参数
     document.querySelector(".s1p-confirm-modal")?.remove();
     const modal = document.createElement("div");
     modal.className = "s1p-confirm-modal";
+
+    // [新增] 如果传入了自定义类名，则添加到 modal 元素上
+    if (options.modalClassName) {
+      modal.classList.add(options.modalClassName);
+    }
 
     const footerButtons = buttons
       .map(
@@ -6955,10 +6977,13 @@
       },
     };
 
-    createAdvancedConfirmationModal("S1 Plus 体验升级推荐", bodyHtml, [
-      disableButton,
-      installButton,
-    ]);
+    // [核心修改] 调用时传入 modalClassName
+    createAdvancedConfirmationModal(
+      "S1 Plus 体验升级推荐",
+      bodyHtml,
+      [disableButton, installButton],
+      { modalClassName: "s1p-nux-recommend-modal" }
+    );
 
     // 5. 更新推荐时间戳
     GM_setValue(LAST_REC_KEY, now);
