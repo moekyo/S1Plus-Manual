@@ -4234,7 +4234,6 @@
 
     const settings = getSettings();
     remoteToggle.checked = settings.syncRemoteEnabled;
-    // --- 在这里新增下面的代码块 ---
     const directChoiceModeToggle = modal.querySelector(
       "#s1p-direct-choice-mode-toggle"
     );
@@ -4244,11 +4243,9 @@
         const currentSettings = getSettings();
         currentSettings.syncDirectChoiceMode = e.target.checked;
         saveSettings(currentSettings);
-        // 立即刷新导航栏按钮以应用新模式
         initializeNavbar();
       });
     }
-    // --- 新增代码结束 ---
 
     modal.querySelector("#s1p-daily-first-load-sync-enabled-toggle").checked =
       settings.syncDailyFirstLoad;
@@ -4262,7 +4259,6 @@
     remoteToggle.addEventListener("change", updateRemoteSyncInputsState);
     updateRemoteSyncInputsState();
 
-    // [REFACTORED] 全新用户标记标签页渲染逻辑
     const renderTagsTab = (options = {}) => {
       const editingUserId = options.editingUserId;
       const settings = getSettings();
@@ -4304,7 +4300,6 @@
                             : `<div class="s1p-list">${tagItems
                                 .map(([id, data]) => {
                                   if (id === editingUserId) {
-                                    // --- 编辑模式 ---
                                     return `
                                 <div class="s1p-item" data-user-id="${id}">
                                     <div class="s1p-item-info">
@@ -4322,7 +4317,6 @@
                                     </div>
                                 </div>`;
                                   } else {
-                                    // --- 正常显示模式 ---
                                     return `
                                 <div class="s1p-item" data-user-id="${id}">
                                     <div class="s1p-item-info">
@@ -4769,8 +4763,6 @@
           container.appendChild(newItem);
           newItem.querySelector('input[type="text"]').focus();
         } else if (target.closest(".s1p-delete-button")) {
-          // --- [MODIFICATION START] ---
-          // 修改了删除规则的逻辑，使其立即生效
           const item = target.closest(".s1p-editor-item");
           if (item) {
             const pattern =
@@ -4781,8 +4773,6 @@
               `规则内容: <code style="background-color: var(--s1p-secondary-bg); padding: 2px 4px; border-radius: 4px;">${pattern}</code><br>此操作将立即生效并从存储中删除该规则。`,
               () => {
                 const ruleIdToDelete = item.dataset.ruleId;
-
-                // 如果是尚未保存的新规则，直接从界面移除即可
                 if (!ruleIdToDelete || ruleIdToDelete.startsWith("new_")) {
                   item.remove();
                   const container = tabs["threads"].querySelector(
@@ -4794,25 +4784,19 @@
                   showMessage("未保存的新规则已移除。", null);
                   return;
                 }
-
-                // 对于已保存的规则，从存储中删除
                 const currentRules = getTitleFilterRules();
                 const newRules = currentRules.filter(
                   (rule) => rule.id !== ruleIdToDelete
                 );
-                saveTitleFilterRules(newRules); // 保存新规则列表
-
-                // 立即应用变更并刷新UI
+                saveTitleFilterRules(newRules);
                 hideThreadsByTitleKeyword();
                 renderDynamicallyHiddenList();
-                renderRules(); // 重新渲染规则列表
-
+                renderRules();
                 showMessage("规则已成功删除。", true);
               },
               "确认删除"
             );
           }
-          // --- [MODIFICATION END] ---
         } else if (target.id === "s1p-keyword-rules-save-btn") {
           saveKeywordRules();
           showMessage("规则已保存！", true);
@@ -4822,7 +4806,6 @@
 
     const renderGeneralSettingsTab = () => {
       const settings = getSettings();
-      // [REFACTORED] 完全重构，采用与其他标签页一致的“单一总开关 + 内容区块”结构
       tabs["general-settings"].innerHTML = `
             <div class="s1p-settings-group">
                 <div class="s1p-settings-item" style="padding: 0; padding-bottom: 16px; border-bottom: 1px solid var(--s1p-pri);">
@@ -4976,7 +4959,6 @@
           const activeOption = control.querySelector(
             ".s1p-segmented-control-option.active"
           );
-          // [核心修正] 增加 offsetParent !== null 判断，确保元素可见
           if (
             slider &&
             activeOption &&
@@ -4986,7 +4968,6 @@
             slider.style.width = `${activeOption.offsetWidth}px`;
             slider.style.transform = `translateX(${activeOption.offsetLeft}px)`;
           } else if (slider && activeOption) {
-            // 保留重试逻辑，以防万一，但现在它不应该无限循环了
             setTimeout(() => moveSlider(control), 100);
           }
         });
@@ -5016,7 +4997,7 @@
         "#s1p-readingProgressCleanupDays-control"
       );
       if (cleanupControl) {
-        moveSlider(cleanupControl); // 初始加载时调用
+        moveSlider(cleanupControl);
         cleanupControl.addEventListener("click", (e) => {
           const target = e.target.closest(".s1p-segmented-control-option");
           if (!target || target.classList.contains("active")) return;
@@ -5079,7 +5060,6 @@
         }
       });
     };
-    // [S1PLUS-MODIFIED] 请用此最终正确版本整体替换 renderNavSettingsTab 函数
     const renderNavSettingsTab = () => {
       const settings = getSettings();
       tabs["nav-settings"].innerHTML = `
@@ -5100,7 +5080,8 @@
         }">
             <div>
                 <div class="s1p-settings-group">
-                    <div class="s1p-nav-editor-list" style="display: flex; flex-direction: column; gap: 8px;"></div>
+                    <div class="s1p-settings-group-title">导航链接编辑器</div>
+                    <div class="s1p-list s1p-nav-editor-list"></div>
                     <div class="s1p-editor-footer">
                         <div style="display: flex; gap: 8px;">
                             <button id="s1p-nav-add-btn" class="s1p-btn">添加新链接</button>
@@ -5179,7 +5160,6 @@
           newItem.innerHTML = `<div class="s1p-drag-handle">::</div><input type="text" class="s1p-input s1p-nav-name" placeholder="新链接" autocomplete="off"><input type="text" class="s1p-input s1p-nav-href" placeholder="forum.php" autocomplete="off"><div class="s1p-editor-item-controls"><button class="s1p-editor-btn s1p-delete-button" data-action="delete" title="删除链接"></button></div>`;
           navListContainer.appendChild(newItem);
         } else if (target.closest(".s1p-delete-button")) {
-          // [MODIFIED]
           const item = target.closest(".s1p-editor-item");
           if (item) {
             const name =
@@ -5195,7 +5175,6 @@
             );
           }
         } else if (target.id === "s1p-nav-restore-btn") {
-          // [MODIFIED]
           createConfirmationModal(
             "确认要恢复默认导航栏吗？",
             "您当前的自定义导航链接将被重置为脚本的默认设置。",
@@ -5231,29 +5210,8 @@
           showMessage("设置已保存！", true);
         }
       });
-
-      const masterToggle = tabs["nav-settings"].querySelector(
-        "#s1p-enableNavCustomization"
-      );
-      if (masterToggle) {
-        masterToggle.addEventListener("change", (e) => {
-          const isChecked = e.target.checked;
-          const currentSettings = getSettings();
-          currentSettings.enableNavCustomization = isChecked;
-          saveSettings(currentSettings);
-
-          const contentWrapper = tabs["nav-settings"].querySelector(
-            ".s1p-feature-content"
-          );
-          if (contentWrapper) {
-            contentWrapper.classList.toggle("expanded", isChecked);
-          }
-
-          initializeNavbar();
-        });
-      }
     };
-    // --- 初始化渲染和事件绑定 ---
+
     renderGeneralSettingsTab();
     renderThreadTab();
     renderUserTab();
@@ -5261,7 +5219,6 @@
     renderBookmarksTab();
     renderNavSettingsTab();
 
-    // [新增] 初始化滑块位置
     const tabContainer = modal.querySelector(".s1p-tabs");
     setTimeout(() => moveTabSlider(tabContainer), 50);
 
@@ -5275,13 +5232,11 @@
       const featureKey = target.dataset.feature;
 
       if (featureKey && target.classList.contains("s1p-feature-toggle")) {
-        // [核心修正] 使用正确的 DOM 遍历方法
         const contentWrapper = target.closest(
           ".s1p-settings-group"
         )?.nextElementSibling;
         const modalBody = modal.querySelector(".s1p-modal-body");
 
-        // 如果结构不符或动画条件不足，则安全退出
         if (
           !modalBody ||
           !contentWrapper ||
@@ -5321,10 +5276,9 @@
           { once: true }
         );
 
-        // 根据 featureKey 刷新对应UI
+        // [S1PLUS-MODIFIED] 新增了对 enableNavCustomization 的处理
         switch (featureKey) {
           case "enableGeneralSettings":
-            // 注意：因为动画逻辑已在外部处理，这里只负责重新渲染内容，不再处理 classList.toggle
             applyInterfaceCustomizations();
             applyThreadLinkBehavior();
             applyPageLinkBehavior();
@@ -5336,7 +5290,6 @@
               removeProgressJumpButtons();
               updateReadIndicatorUI(null);
             }
-            // 重新渲染以更新内部状态，例如子开关
             renderGeneralSettingsTab();
             break;
           case "enablePostBlocking":
@@ -5361,7 +5314,7 @@
             renderTagsTab();
             break;
           case "enableReadProgress":
-            renderGeneralSettingsTab(); // 重新渲染以更新子开关
+            renderGeneralSettingsTab();
             isChecked ? addProgressJumpButtons() : removeProgressJumpButtons();
             if (!isChecked) {
               updateReadIndicatorUI(null);
@@ -5370,6 +5323,9 @@
           case "enableBookmarkReplies":
             refreshAllAuthiActions();
             renderBookmarksTab();
+            break;
+          case "enableNavCustomization": // <-- 新增的 case
+            initializeNavbar();
             break;
         }
         return;
@@ -5390,12 +5346,7 @@
         saveSettings(currentSettings);
       }
     });
-    /**
-     * [OPTIMIZED] 从UI列表中移除一个项目，并在列表为空时显示提示信息。
-     * @param {HTMLElement} triggerElement - 触发删除操作的元素（如按钮）。
-     * @param {string} emptyHTML - 当列表为空时，要设置给容器的innerHTML。
-     * @param {function} [onEmptyCallback] - 列表变为空后执行的可选回调函数。
-     */
+
     function removeListItem(triggerElement, emptyHTML, onEmptyCallback) {
       const item = triggerElement.closest(".s1p-item");
       if (!item) return;
@@ -5425,13 +5376,11 @@
         e.target.classList.add("active");
         const activeTab = tabs[e.target.dataset.tab];
         if (activeTab) activeTab.classList.add("active");
-        // [新增] 调用函数移动滑块
         moveTabSlider(tabContainer);
       }
 
       const unblockThreadId = e.target.dataset.unblockThreadId;
       if (unblockThreadId) {
-        // [MODIFIED]
         const item = target.closest(".s1p-item");
         const title = item
           ? item.querySelector(".s1p-item-title").textContent.trim()
@@ -5453,7 +5402,6 @@
 
       const unblockUserId = e.target.dataset.unblockUserId;
       if (unblockUserId) {
-        // [MODIFIED]
         const item = target.closest(".s1p-item");
         const userName = item
           ? item.querySelector(".s1p-item-title").textContent.trim()
@@ -5504,7 +5452,6 @@
       const removeBookmarkId = target.closest('[data-action="remove-bookmark"]')
         ?.dataset.postId;
       if (removeBookmarkId) {
-        // [MODIFIED]
         createConfirmationModal(
           "确认取消收藏该回复吗？",
           "此操作将从您的收藏列表中永久移除该条目。",
@@ -5517,7 +5464,6 @@
               target,
               '<div class="s1p-empty">暂无收藏的回复</div>',
               () => {
-                // 列表清空后，移除搜索框
                 document
                   .querySelector("#s1p-bookmark-search-input")
                   ?.closest(".s1p-settings-group")
@@ -5530,7 +5476,6 @@
         );
       }
 
-      // --- 本地备份与恢复事件 (已优化) ---
       const syncTextarea = modal.querySelector("#s1p-local-sync-textarea");
       if (e.target.id === "s1p-local-export-btn") {
         const dataToExport = await exportLocalData();
@@ -5590,7 +5535,7 @@
               modal.querySelector("#s1p-remote-enabled-toggle").checked = false;
               modal.querySelector(
                 "#s1p-daily-first-load-sync-enabled-toggle"
-              ).checked = true; // [整合] 重置新开关
+              ).checked = true;
               modal.querySelector(
                 "#s1p-auto-sync-enabled-toggle"
               ).checked = true;
@@ -5599,7 +5544,6 @@
               updateRemoteSyncInputsState();
             }
 
-            // 全局刷新
             hideBlockedThreads();
             hideBlockedUsersPosts();
             applyUserThreadBlocklist();
@@ -5610,7 +5554,6 @@
               .querySelectorAll(".s1p-progress-container")
               .forEach((el) => el.remove());
 
-            // 重新渲染所有标签页
             renderThreadTab();
             renderUserTab();
             renderGeneralSettingsTab();
@@ -5644,16 +5587,13 @@
           .querySelector("#s1p-remote-pat-input")
           .value.trim();
 
-        // [核心修改] 保存设置，但阻止自动同步触发
         saveSettings(currentSettings, true);
         updateNavbarSyncButton();
 
         if (currentSettings.syncRemoteGistId && currentSettings.syncRemotePat) {
-          // [核心修改] 不再只是测试连接，而是直接调用完整的手动同步流程
           showMessage("设置已保存，正在启动首次同步检查...", null);
           await handleManualSync();
         } else {
-          // 如果字段不完整，只提示保存成功
           showMessage("远程同步设置已保存。", true);
         }
         button.disabled = false;
@@ -5675,7 +5615,6 @@
         }
       }
 
-      // --- 用户标记标签页专属事件 ---
       const targetTab = target.closest("#s1p-tab-tags");
       if (targetTab) {
         const action = target.dataset.action;
@@ -5719,7 +5658,7 @@
             };
             saveUserTags(tags);
             refreshUserPostsOnPage(userId);
-            renderTagsTab(); // 保存后需要重绘以退出编辑模式
+            renderTagsTab();
             showMessage(`已更新对 ${userName} 的标记。`, true);
           } else {
             createConfirmationModal(
@@ -5729,7 +5668,7 @@
                 delete tags[userId];
                 saveUserTags(tags);
                 refreshUserPostsOnPage(userId);
-                renderTagsTab(); // 删除后需要重绘
+                renderTagsTab();
                 showMessage(`已删除对 ${userName} 的标记。`, true);
               },
               "确认删除"
