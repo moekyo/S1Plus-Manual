@@ -5274,29 +5274,46 @@
         saveSettings(settings);
 
         switch (featureKey) {
+          case "enableGeneralSettings":
+            // 重新渲染“通用设置”选项卡以正确显示/隐藏所有子选项
+            renderGeneralSettingsTab();
+            // 应用功能变更
+            applyInterfaceCustomizations();
+            applyThreadLinkBehavior();
+            applyPageLinkBehavior();
+            applyImageHiding();
+            manageImageToggleAllButtons();
+            if (isChecked) {
+              addProgressJumpButtons();
+            } else {
+              removeProgressJumpButtons();
+              updateReadIndicatorUI(null);
+            }
+            break;
           case "enablePostBlocking":
             isChecked
               ? addBlockButtonsToThreads()
               : removeBlockButtonsFromThreads();
+            renderThreadTab(); // 重新渲染“帖子屏蔽”选项卡
             break;
           case "enableUserBlocking":
             refreshAllAuthiActions();
-            isChecked
-              ? hideBlockedUsersPosts()
-              : Object.keys(getBlockedUsers()).forEach(showUserPosts);
-            hideBlockedUserQuotes();
-            hideBlockedUserRatings();
+            if (isChecked) {
+              hideBlockedUsersPosts();
+              hideBlockedUserQuotes();
+              hideBlockedUserRatings();
+            } else {
+              Object.keys(getBlockedUsers()).forEach(showUserPosts);
+            }
+            renderUserTab(); // 重新渲染“用户屏蔽”选项卡
             break;
           case "enableUserTagging":
             refreshAllAuthiActions();
+            renderTagsTab(); // 重新渲染“用户标记”选项卡
             break;
           case "enableReadProgress":
-            document.getElementById(
-              "s1p-showReadIndicator-container"
-            ).style.display = isChecked ? "flex" : "none";
-            document.getElementById(
-              "s1p-readingProgressCleanupContainer"
-            ).style.display = isChecked ? "flex" : "none";
+            // 此功能属于通用设置，因此直接重新渲染通用设置选项卡
+            renderGeneralSettingsTab();
             isChecked ? addProgressJumpButtons() : removeProgressJumpButtons();
             if (!isChecked) {
               updateReadIndicatorUI(null);
@@ -5304,6 +5321,7 @@
             break;
           case "enableBookmarkReplies":
             refreshAllAuthiActions();
+            renderBookmarksTab(); // 重新渲染“回复收藏”选项卡
             break;
         }
         return;
@@ -6540,9 +6558,19 @@
   };
 
   const refreshAllAuthiActions = () => {
-    document
-      .querySelectorAll(".s1p-authi-actions-wrapper")
-      .forEach((el) => el.remove());
+    // 遍历每个由脚本创建的、用于包裹原生按钮和脚本按钮的总容器
+    document.querySelectorAll(".s1p-authi-container").forEach((container) => {
+      // 在容器中找到原生的 .authi 元素
+      const authiDiv = container.querySelector(".authi");
+      if (authiDiv) {
+        // 将原生 .authi 元素移回其原始位置（即总容器的前面）
+        container.parentElement.insertBefore(authiDiv, container);
+      }
+      // 彻底移除脚本创建的总容器，这样里面的脚本按钮（.s1p-authi-actions-wrapper）也会一并被移除
+      container.remove();
+    });
+
+    // 在完成彻底的清理后，重新调用主函数，根据当前最新的设置来添加按钮
     addActionsToPostFooter();
   };
 
