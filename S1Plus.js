@@ -527,29 +527,28 @@
       pointer-events: auto;
     }
 
-    /* --- 直接确认UI --- */
+    /* --- [MODIFIED] 直接确认UI (整体缩小) --- */
     .s1p-direct-confirm {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 10px;
-      font-size: 14px;
+      gap: 8px; /* 减小间距 */
+      font-size: 13px; /* 减小字体 */
       color: var(--s1p-t);
-      /* [修改] 将上下内边距从2px增加到6px，与选项按钮对齐 */
-      padding: 6px;
+      padding: 4px 6px; /* 减小内边距 */
       white-space: nowrap;
     }
     .s1p-confirm-separator {
       border-left: 1px solid var(--s1p-pri);
-      height: 20px;
-      margin: 0 2px 0 8px;
+      height: 16px; /* 减小高度 */
+      margin: 0 2px 0 6px;
     }
     .s1p-confirm-action-btn {
       display: flex;
       align-items: center;
       justify-content: center;
-      width: 32px;
-      height: 32px;
+      width: 28px; /* 减小尺寸 */
+      height: 28px; /* 减小尺寸 */
       border: none;
       border-radius: 50%;
       cursor: pointer;
@@ -557,7 +556,7 @@
         background-image 0.2s ease;
       background-repeat: no-repeat;
       background-position: center;
-      background-size: 60%;
+      background-size: 55%; /* 减小图标大小 */
       flex-shrink: 0;
     }
     .s1p-confirm-action-btn:active {
@@ -589,8 +588,8 @@
       transition: opacity 0.15s ease-out, transform 0.15s ease-out;
       pointer-events: none;
       visibility: visible !important;
-      /* [修改] 强制设置padding为4px，与选项菜单容器完全一致 */
-      padding: 4px;
+      /* [MODIFIED] 将 padding 从 4px 减为 2px */
+      padding: 2px;
     }
     .s1p-inline-confirm-menu.visible {
       opacity: 1;
@@ -975,7 +974,7 @@
       background-color: var(--s1p-pri);
     }
 
-    /* --- Tag Options Menu --- */
+    /* --- [MODIFIED] Tag Options Menu (高度比例调整) --- */
     .s1p-tag-options-menu {
       position: absolute;
       z-index: 10002;
@@ -983,24 +982,24 @@
       border-radius: 6px;
       box-shadow: 0 2px 8px rgba(var(--s1p-black-rgb), 0.15);
       border: 1px solid var(--s1p-pri);
-      padding: 6px;
+      padding: 4px; 
       display: flex;
       flex-direction: column;
-      gap: 4px;
+      gap: 2px; 
       min-width: max-content;
     }
     .s1p-tag-options-menu button {
       background: none;
       border: none;
-      padding: 6px 12px;
+      /* [MODIFIED] 增加垂直内边距，以达到目标高度 */
+      padding: 8px 10px; 
       text-align: left;
       cursor: pointer;
       border-radius: 4px;
-      font-size: 14px;
+      font-size: 13px; 
       color: var(--s1p-t);
       white-space: nowrap;
-      /* [修改] 根据精确的几何关系，设置行高为27px，确保布局完美对齐 */
-      line-height: 27px;
+      line-height: 1.5; 
     }
     .s1p-tag-options-menu button:hover {
       background-color: var(--s1p-sub-h);
@@ -6543,12 +6542,6 @@
     addActionsToSinglePost(postTable);
   };
 
-  // --- [新增] 用户标记删除确认菜单 ---
-  /**
-   * 为用户标记的删除操作创建一个行内确认菜单。
-   * @param {HTMLElement} anchorElement - 定位的锚点元素，即“删除”按钮本身。
-   * @param {HTMLElement} tagOptionsAnchor - 原始的三点图标，用于获取用户信息。
-   */
   const createTagDeleteConfirmMenu = (anchorElement, tagOptionsAnchor) => {
     // 清理任何已存在的确认菜单
     document
@@ -6571,26 +6564,25 @@
     `;
     document.body.appendChild(menu);
 
-    // --- 智能定位 ---
+    // --- [修正] 智能定位 (修正垂直对齐逻辑) ---
     const anchorRect = anchorElement.getBoundingClientRect();
     const menuRect = menu.getBoundingClientRect();
-    const top =
-      anchorRect.top +
-      window.scrollY +
-      anchorRect.height / 2 -
-      menuRect.height / 2;
+
+    // 直接将确认菜单的顶部与触发它的“删除标记”按钮的顶部对齐
+    const top = anchorRect.top + window.scrollY - 2;
+
     let left;
     const spaceOnRight = window.innerWidth - anchorRect.right;
     const requiredSpace = menuRect.width + 10;
 
     if (spaceOnRight >= requiredSpace) {
       // 右侧定位: 在按钮右侧留出 10px 间距
-      left = anchorRect.right + window.scrollX + 10;
+      left = anchorRect.right + window.scrollX + 8;
     } else {
       // [最终修正 V2] 左侧定位:
       // 在理论值 17px 的基础上，增加 7px 的安全边距，总偏移量为 24px。
       // 这足以覆盖浏览器渲染时产生的未知布局偏差。
-      left = anchorRect.left + window.scrollX - menuRect.width - 30;
+      left = anchorRect.left + window.scrollX - menuRect.width - 28;
     }
 
     if (left < window.scrollX) {
