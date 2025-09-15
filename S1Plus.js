@@ -4129,7 +4129,6 @@
             <div class="s1p-modal-footer">版本: ${SCRIPT_VERSION} (${SCRIPT_RELEASE_DATE})</div>
         </div>`;
 
-    // ... (此处省略 modal 宽度计算、tabs 定义、渲染逻辑等，与原文件一致) ...
     const modalContent = modal.querySelector(".s1p-modal-content");
     if (requiredWidth > 600) {
       modalContent.style.width = `${requiredWidth}px`;
@@ -4747,7 +4746,8 @@
           container.appendChild(newItem);
           newItem.querySelector('input[type="text"]').focus();
         } else if (target.closest(".s1p-delete-button")) {
-          // [MODIFIED]
+          // --- [MODIFICATION START] ---
+          // 修改了删除规则的逻辑，使其立即生效
           const item = target.closest(".s1p-editor-item");
           if (item) {
             const pattern =
@@ -4755,20 +4755,41 @@
               "空规则";
             createConfirmationModal(
               "确认删除该屏蔽规则吗？",
-              `规则内容: <code style="background-color: var(--s1p-secondary-bg); padding: 2px 4px; border-radius: 4px;">${pattern}</code><br>此操作仅在UI上移除，需要点击下方的“保存规则”按钮才会真正生效。`,
+              `规则内容: <code style="background-color: var(--s1p-secondary-bg); padding: 2px 4px; border-radius: 4px;">${pattern}</code><br>此操作将立即生效并从存储中删除该规则。`,
               () => {
-                item.remove();
-                const container = tabs["threads"].querySelector(
-                  "#s1p-keyword-rules-list"
-                );
-                if (container.children.length === 0) {
-                  container.innerHTML = `<div class="s1p-empty" style="padding: 12px;">暂无规则</div>`;
+                const ruleIdToDelete = item.dataset.ruleId;
+
+                // 如果是尚未保存的新规则，直接从界面移除即可
+                if (!ruleIdToDelete || ruleIdToDelete.startsWith("new_")) {
+                  item.remove();
+                  const container = tabs["threads"].querySelector(
+                    "#s1p-keyword-rules-list"
+                  );
+                  if (container.children.length === 0) {
+                    container.innerHTML = `<div class="s1p-empty" style="padding: 12px;">暂无规则</div>`;
+                  }
+                  showMessage("未保存的新规则已移除。", null);
+                  return;
                 }
-                showMessage("规则已从列表移除。", true);
+
+                // 对于已保存的规则，从存储中删除
+                const currentRules = getTitleFilterRules();
+                const newRules = currentRules.filter(
+                  (rule) => rule.id !== ruleIdToDelete
+                );
+                saveTitleFilterRules(newRules); // 保存新规则列表
+
+                // 立即应用变更并刷新UI
+                hideThreadsByTitleKeyword();
+                renderDynamicallyHiddenList();
+                renderRules(); // 重新渲染规则列表
+
+                showMessage("规则已成功删除。", true);
               },
               "确认删除"
             );
           }
+          // --- [MODIFICATION END] ---
         } else if (target.id === "s1p-keyword-rules-save-btn") {
           saveKeywordRules();
           showMessage("规则已保存！", true);
