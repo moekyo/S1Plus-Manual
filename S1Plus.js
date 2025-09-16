@@ -369,19 +369,10 @@
     }
 
     /* --- [S1PLUS-MOD] 帖子列表最终布局修正 --- */
-
-    /* 1. 将原生图标列变为“隐形”，同时隐藏“新窗”和“隐藏置顶”按钮 */
-    #threadlisttableid .icn_new,
-    #threadlisttableid td.icn {
-      width: 0px !important;
-      padding-left: 0px !important;
-      padding-right: 0px !important;
-      overflow: hidden; /* 确保内容不会溢出 */
+    .tl .icn {
+        padding-left: 0px !important;
     }
-    #threadlisttableid .icn_new > *,
-    #threadlisttableid td.icn > * {
-      display: none; /* 隐藏内部的图片等元素 */
-    }
+    /* [MODIFIED] 此处已移除隐藏 .icn 和 .icn_new 的样式规则 */
     #atarget,
     a.closeprev.y[title="隐藏置顶帖"] {
       display: none !important;
@@ -3930,7 +3921,6 @@
       ); // { once: true } 确保事件只触发一次后自动移除
     }
   };
-  // [整体替换] 请用这个最新版本的完整函数，替换脚本中旧的 createManagementModal 函数
   const createManagementModal = () => {
     const calculateModalWidth = () => {
       const measureContainer = document.createElement("div");
@@ -5155,7 +5145,6 @@
       const featureKey = target.dataset.feature;
 
       if (featureKey && target.classList.contains("s1p-feature-toggle")) {
-        // --- [Bug Fix Start] ---
         // 使用更可靠的方法来查找 contentWrapper
         // 优先查找作为 .s1p-settings-item 的直接兄弟元素
         let contentWrapper =
@@ -5169,7 +5158,6 @@
             ".s1p-settings-group"
           )?.nextElementSibling;
         }
-        // --- [Bug Fix End] ---
 
         const modalBody = modal.querySelector(".s1p-modal-body");
 
@@ -7207,7 +7195,6 @@
     }
     return false; // 默认不中断
   };
-  // [S1PLUS-MODIFIED] 请用此版本整体替换旧的 handleStartupSync 函数
   /**
    * [整合版] 脚本启动时的同步总控制器。
    * [优化 v3] 优化了冲突处理方式，使用阻塞式对话框主动引导用户解决。
