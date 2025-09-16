@@ -395,8 +395,6 @@
       display: none !important;
     }
 
-    /* --- [FIX FINAL v3] 帖子列表对齐与分隔符修正 --- */
-
     /* 1. [核心修正] 精确隐藏作为“空白分隔符”的 separatorline，
         通过 .emptb 类来识别，避免隐藏“版块主题”行。*/
     #separatorline.emptb {
@@ -2142,9 +2140,9 @@
     }, 5000);
   };
 
-  // [FIXED] 只有在数据实际变动时才更新时间戳并触发同步
+  // 只有在数据实际变动时才更新时间戳并触发同步
   const updateLastModifiedTimestamp = () => {
-    // [FIX] 如果初始同步正在进行，则阻止更新时间戳，以防因数据迁移导致错误的覆盖。
+    // 如果初始同步正在进行，则阻止更新时间戳，以防因数据迁移导致错误的覆盖。
     if (isInitialSyncInProgress) {
       console.log(
         "S1 Plus: 同步进行中，已阻止本次 last_modified 时间戳更新，以防数据覆盖。"
@@ -2168,8 +2166,6 @@
       container.textContent = "尚未进行过远程同步。";
     }
   };
-
-  // --- [新增] 与论坛原生黑名单同步的辅助函数 ---
 
   /**
    * 从当前页面获取 formhash，用于安全验证。
@@ -2203,7 +2199,6 @@
         method: "POST",
         url: url,
         headers: {
-          // [最终修正] 修正了 Content-Type 的拼写错误
           "Content-Type": "application/x-www-form-urlencoded",
           Referer: refererUrl,
         },
@@ -5498,7 +5493,6 @@
       if (unblockUserId) {
         const item = target.closest(".s1p-item");
 
-        // --- [FIX START] ---
         // 通过克隆、移除状态元素的方式，来安全地获取纯净的用户名。
         let userName;
         if (item) {
@@ -5518,7 +5512,6 @@
         } else {
           userName = `用户 #${unblockUserId}`;
         }
-        // --- [FIX END] ---
 
         createConfirmationModal(
           `确认取消屏蔽 “${userName}” 吗？`,
@@ -6100,7 +6093,6 @@
   };
 
   const addBlockButtonsToThreads = () => {
-    // --- [S1PLUS-FIX START] ---
     // 核心修复：注入一个空的表头单元格，以匹配内容行的列数。
     // S1Plus 原脚本会给每个内容行动态添加一个“操作列”单元格，但没有给表头行添加，导致列数不匹配。
     // 此代码通过给表头也添加一个对应的占位单元格，使得结构恢复一致，从而让浏览器能够正确对齐所有列。
@@ -6110,7 +6102,6 @@
       placeholderCell.className = "s1p-header-placeholder";
       headerTr.prepend(placeholderCell);
     }
-    // --- [S1PLUS-FIX END] ---
 
     document
       .querySelectorAll('tbody[id^="normalthread_"], tbody[id^="stickthread_"]')
@@ -7029,10 +7020,8 @@
           confirmText += " (将同步至论坛黑名单)";
         }
 
-        // --- [FIX START] 修正了这里的函数调用 ---
         // 将 e.currentTarget (即被点击的 a 标签)作为第一个参数传入
         createInlineConfirmMenu(e.currentTarget, confirmText, async () => {
-          // --- [FIX END] ---
           const success = await blockUser(userId, userName);
 
           const currentSettings = getSettings();
