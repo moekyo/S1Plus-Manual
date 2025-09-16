@@ -117,15 +117,12 @@
       --s1p-secondary-text: #374151;
       --s1p-code-bg: #eee;
       --s1p-readprogress-bg: #b8d56f;
+      
+      --s1p-list-item-status-bg: #dddddd
 
       /* -- 阅读进度 -- */
       --s1p-progress-hot: rgb(192, 51, 34);
       --s1p-progress-cold: rgb(107, 114, 128);
-
-      /* -- [新增] 主题覆写颜色 -- */
-      --s1p-scrollbar-thumb: #c3d17f;
-      --s1p-sec-classic: #a4bf7bff;
-      --s1p-sub-h-classic: #b0d440;
     }
 
     @keyframes s1p-tab-fade-in {
@@ -1155,6 +1152,7 @@
       min-width: 0;
     }
     .s1p-item-title {
+      font-size: 15px; 
       font-weight: 500;
       margin-bottom: 4px;
       white-space: nowrap;
@@ -1199,7 +1197,26 @@
       min-height: 80px;
       margin-bottom: 20px;
     }
-
+    /* --- [新增] 论坛黑名单同步状态提示 --- */
+    .s1p-native-sync-status {
+        /* [核心改造] 使用 inline-block 以应用内外边距和背景 */
+        display: inline-block;
+        /* [配色] 使用脚本内置的成功状态配色 */
+        background-color: var(--s1p-list-item-status-bg);
+        color: var(--s1p-t);
+        /* [形状] 增加内边距并设置大圆角，形成胶囊形状 */
+        padding: 2px 8px;
+        border-radius: 7px;
+        /* [字体] 移除斜体，适当加粗以提高可读性 */
+        font-style: normal;
+        font-weight: 500;
+        font-size: 11px;
+        /* [对齐] 调整垂直对齐，使其与用户名文本更协调 */
+        margin-left: 8px;
+        vertical-align: middle;
+        position: relative;
+        top: -1px;
+    }
     /* --- [OPTIMIZED] Sync Settings Panel Disabled State --- */
     #s1p-remote-sync-controls-wrapper {
       transition: opacity 0.3s ease-out;
@@ -1692,6 +1709,11 @@
       white-space: pre-wrap;
       word-break: break-all;
     }
+    /* --- [微调] 统一调整用户标记和回复收藏列表的内容区样式 --- */
+    #s1p-tags-list-container .s1p-item-content,
+    #s1p-bookmarks-list-container .s1p-item-content {
+        font-size: 14px;
+    }
     #s1p-tab-bookmarks .s1p-item-content {
       background-color: transparent;
       border: none;
@@ -2067,15 +2089,12 @@
       :root {
         /* 将阅读进度条背景改为更柔和的橄榄绿 */
         --s1p-readprogress-bg: #99a17a;
+        --s1p-list-item-status-bg: #3e3d3d
       }
 
       /* 删除按钮：默认状态下使用白色图标 */
       .s1p-editor-btn.s1p-delete-button {
         background-image: url("${SVG_ICON_DELETE_HOVER}") !important;
-      }
-      /* 删除按钮：鼠标悬停时移除图标，只留红色背景 */
-      .s1p-editor-btn.s1p-delete-button:hover {
-        background-image: none !important;
       }
     }
   `);
@@ -2148,6 +2167,108 @@
     } else {
       container.textContent = "尚未进行过远程同步。";
     }
+  };
+
+  // --- [新增] 与论坛原生黑名单同步的辅助函数 ---
+
+  /**
+   * 从当前页面获取 formhash，用于安全验证。
+   * @returns {string|null} 成功则返回 formhash 字符串，否则返回 null。
+   */
+  const getFormhash = () => {
+    const formhashInput = document.querySelector('input[name="formhash"]');
+    if (formhashInput && formhashInput.value) {
+      return formhashInput.value;
+    }
+    console.error("S1 Plus: 未能获取到 formhash，无法同步论坛黑名单。");
+    return null;
+  };
+
+  /**
+   * 异步将指定用户添加到论坛黑名单。
+   * @param {string} username - 要屏蔽的用户名。
+   * @param {string} formhash - 安全验证令牌。
+   * @returns {Promise<void>}
+   */
+  const addToNativeBlacklist = (username, formhash) => {
+    return new Promise((resolve, reject) => {
+      const url = "home.php?mod=spacecp&ac=friend&op=blacklist&start=";
+      const postData = `username=${encodeURIComponent(
+        username
+      )}&formhash=${formhash}&blacklistsubmit_btn=true&blacklistsubmit=true`;
+      const refererUrl =
+        "https://stage1st.com/2b/home.php?mod=spacecp&ac=friend&op=blacklist";
+
+      GM_xmlhttpRequest({
+        method: "POST",
+        url: url,
+        headers: {
+          // [最终修正] 修正了 Content-Type 的拼写错误
+          "Content-Type": "application/x-www-form-urlencoded",
+          Referer: refererUrl,
+        },
+        data: postData,
+        onload: (response) => {
+          if (
+            response.status === 200 &&
+            response.responseText.includes("操作成功")
+          ) {
+            console.log(`S1 Plus: 已成功将用户 ${username} 同步到论坛黑名单。`);
+            resolve();
+          } else {
+            console.error(`S1 Plus: 同步论坛黑名单失败 (添加)。`, response);
+            reject(
+              new Error(`HTTP status ${response.status} 或未找到成功标识`)
+            );
+          }
+        },
+        onerror: (error) => {
+          console.error("S1 Plus: 同步论坛黑名单网络请求失败 (添加)", error);
+          reject(error);
+        },
+      });
+    });
+  };
+
+  /**
+   * 异步将指定用户从论坛黑名单中移除。
+   * @param {string} uid - 要取消屏蔽的用户ID。
+   * @param {string} formhash - 安全验证令牌。
+   * @returns {Promise<void>}
+   */
+  const removeFromNativeBlacklist = (uid, formhash) => {
+    return new Promise((resolve, reject) => {
+      // 根据用户提供的网络日志，精确模拟请求
+      const url = `home.php?mod=spacecp&ac=friend&op=blacklist&subop=delete&uid=${uid}`;
+      const refererUrl = `https://stage1st.com/2b/home.php?mod=space&do=friend&view=blacklist`;
+
+      GM_xmlhttpRequest({
+        method: "GET",
+        url: url,
+        headers: {
+          Referer: refererUrl,
+        },
+        onload: (response) => {
+          // [最终修正] 采用用户发现的通用成功标识 "操作成功"
+          if (
+            response.status === 200 &&
+            response.responseText.includes("操作成功")
+          ) {
+            console.log(`S1 Plus: 已成功将 UID:${uid} 从论坛黑名单同步移除。`);
+            resolve();
+          } else {
+            console.error(`S1 Plus: 同步论坛黑名单失败 (移除)。`, response);
+            reject(
+              new Error(`HTTP status ${response.status} 或未找到成功标识`)
+            );
+          }
+        },
+        onerror: (error) => {
+          console.error("S1 Plus: 同步论坛黑名单网络请求失败 (移除)", error);
+          reject(error);
+        },
+      });
+    });
   };
 
   // --- 数据处理 & 核心功能 ---
@@ -2257,30 +2378,69 @@
   };
   const hideBlockedThreads = () =>
     Object.keys(getBlockedThreads()).forEach(hideThread);
-  const blockUser = (id, name) => {
+
+  const blockUser = async (id, name) => {
+    // [优化] 函数变为异步并返回布尔值
     const settings = getSettings();
     const b = getBlockedUsers();
     b[id] = {
       name,
       timestamp: Date.now(),
       blockThreads: settings.blockThreadsOnUserBlock,
+      // [新增] 根据设置决定是否添加同步标记
+      addedToNativeBlacklist: settings.syncWithNativeBlacklist,
     };
     saveBlockedUsers(b);
+
+    // [修改] 只有在开关开启时才执行同步操作
+    if (settings.syncWithNativeBlacklist) {
+      const formhash = getFormhash();
+      if (formhash) {
+        try {
+          await addToNativeBlacklist(name, formhash);
+        } catch (e) {
+          return false; // 同步失败
+        }
+      }
+    }
+
     hideUserPosts(id);
     hideBlockedUserQuotes();
     hideBlockedUserRatings();
     if (b[id].blockThreads) applyUserThreadBlocklist();
+    return true; // 全部成功
   };
 
-  // [MODIFIED] 增加调用评分刷新函数
-  const unblockUser = (id) => {
+  const unblockUser = async (id) => {
+    // [优化] 函数变为异步并返回布尔值
     const b = getBlockedUsers();
+    // [修改] 先获取要删除的用户数据
+    const userToUnblock = b[id];
+
+    // 如果用户不存在，直接返回成功
+    if (!userToUnblock) return true;
+
+    // 从脚本存储中删除用户
     delete b[id];
     saveBlockedUsers(b);
+
+    // [修改] 只有当用户有“已同步”标记时，才执行移除操作
+    if (userToUnblock.addedToNativeBlacklist === true) {
+      const formhash = getFormhash();
+      if (formhash) {
+        try {
+          await removeFromNativeBlacklist(id, formhash);
+        } catch (e) {
+          return false; // 同步失败
+        }
+      }
+    }
+
     showUserPosts(id);
     hideBlockedUserQuotes();
     hideBlockedUserRatings();
     unblockThreadsByUser(id);
+    return true; // 全部成功
   };
 
   // [FIX] 更精确地定位帖子作者，避免错误隐藏被评分的帖子
@@ -3180,6 +3340,7 @@
     changeLogoLink: true,
     hideBlacklistTip: true,
     blockThreadsOnUserBlock: true,
+    syncWithNativeBlacklist: true, // <--- [新增] 在这里添加这一行
     showBlockedByKeywordList: false,
     showManuallyBlockedList: false,
     hideImagesByDefault: false,
@@ -4249,7 +4410,7 @@
                                               data.timestamp
                                             )}
                                         </div>
-                                        <div class="s1p-item-content">${
+                                        <div class="s1p-item-content">用户标记：${
                                           data.tag
                                         }</div>
                                     </div>
@@ -4435,9 +4596,19 @@
                         <label class="s1p-switch"><input type="checkbox" id="s1p-blockThreadsOnUserBlock" class="s1p-settings-checkbox" ${
                           settings.blockThreadsOnUserBlock ? "checked" : ""
                         }><span class="s1p-slider"></span></label>
-                    </div>
+                    </div> 
                     <p class="s1p-setting-desc" style="margin-top: 8px; margin-bottom: 16px;">
                         <strong>提示</strong>：顶部总开关仅影响<strong>未来新屏蔽用户</strong>的默认设置。每个用户下方的独立开关，才是控制该用户主题帖的<strong>最终开关</strong>，拥有最高优先级。
+                    </p>                   
+                    <div class="s1p-settings-item" style="margin-top: 8px;">
+                        <label class="s1p-settings-label" for="s1p-syncWithNativeBlacklist">同步至论坛黑名单</label>
+                        <label class="s1p-switch"><input type="checkbox" id="s1p-syncWithNativeBlacklist" class="s1p-settings-checkbox" data-setting="syncWithNativeBlacklist" ${
+                          settings.syncWithNativeBlacklist ? "checked" : ""
+                        }><span class="s1p-slider"></span></label>
+                    </div>
+
+                    <p class="s1p-setting-desc" style="margin-top: 8px; margin-bottom: 16px;">
+                        <strong>提示</strong>：开启“同步至论坛黑名单”后，新屏蔽的用户会同时加入论坛黑名单。
                     </p>
                 </div>
                 <div class="s1p-settings-group">
@@ -4448,9 +4619,14 @@
                             : `<div class="s1p-list">${userItemIds
                                 .map((id) => {
                                   const item = blockedUsers[id];
+                                  // [新增] 根据标记生成状态提示
+                                  const syncStatusHtml =
+                                    item.addedToNativeBlacklist === true
+                                      ? '<span class="s1p-native-sync-status">已同步至论坛黑名单</span>'
+                                      : "";
                                   return `<div class="s1p-item" data-user-id="${id}"><div class="s1p-item-info"><div class="s1p-item-title">${
                                     item.name || `用户 #${id}`
-                                  }</div><div class="s1p-item-meta">屏蔽时间: ${formatDate(
+                                  }${syncStatusHtml}</div><div class="s1p-item-meta">屏蔽时间: ${formatDate(
                                     item.timestamp
                                   )}</div><div class="s1p-item-toggle"><label class="s1p-switch"><input type="checkbox" class="s1p-user-thread-block-toggle" data-user-id="${id}" ${
                                     item.blockThreads ? "checked" : ""
@@ -4928,50 +5104,6 @@
           moveSlider(cleanupControl);
         });
       }
-
-      tabs["general-settings"].addEventListener("change", (e) => {
-        const target = e.target;
-        const settingKey = target.dataset.setting;
-        if (settingKey) {
-          const settings = getSettings();
-          if (target.type === "checkbox") {
-            settings[settingKey] = target.checked;
-          } else if (target.type === "number" || target.tagName === "SELECT") {
-            settings[settingKey] = parseInt(target.value, 10);
-          } else {
-            settings[settingKey] = target.value;
-          }
-          saveSettings(settings);
-
-          if (settingKey === "enhanceFloatingControls") {
-            applyChanges();
-            return;
-          }
-
-          applyInterfaceCustomizations();
-          if (settingKey === "showReadIndicator" && !target.checked) {
-            updateReadIndicatorUI(null);
-          }
-          if (settingKey === "hideImagesByDefault") {
-            applyImageHiding();
-            manageImageToggleAllButtons();
-          }
-          if (
-            settingKey === "openThreadsInNewTab" ||
-            settingKey === "openThreadsInBackground"
-          ) {
-            applyThreadLinkBehavior();
-            applyPageLinkBehavior();
-          }
-          if (
-            settingKey === "openProgressInNewTab" ||
-            settingKey === "openProgressInBackground"
-          ) {
-            removeProgressJumpButtons();
-            addProgressJumpButtons();
-          }
-        }
-      });
     };
     const renderNavSettingsTab = () => {
       const settings = getSettings();
@@ -5144,12 +5276,51 @@
       const settings = getSettings();
       const featureKey = target.dataset.feature;
 
+      const settingKey = target.dataset.setting;
+
+      if (settingKey) {
+        const settings = getSettings();
+        if (target.type === "checkbox") {
+          settings[settingKey] = target.checked;
+        } else if (target.type === "number" || target.tagName === "SELECT") {
+          settings[settingKey] = parseInt(target.value, 10);
+        } else {
+          settings[settingKey] = target.value;
+        }
+        saveSettings(settings);
+
+        if (settingKey === "enhanceFloatingControls") {
+          applyChanges();
+          return;
+        }
+
+        applyInterfaceCustomizations();
+        if (settingKey === "showReadIndicator" && !target.checked) {
+          updateReadIndicatorUI(null);
+        }
+        if (settingKey === "hideImagesByDefault") {
+          applyImageHiding();
+          manageImageToggleAllButtons();
+        }
+        if (
+          settingKey === "openThreadsInNewTab" ||
+          settingKey === "openThreadsInBackground"
+        ) {
+          applyThreadLinkBehavior();
+          applyPageLinkBehavior();
+        }
+        if (
+          settingKey === "openProgressInNewTab" ||
+          settingKey === "openProgressInBackground"
+        ) {
+          removeProgressJumpButtons();
+          addProgressJumpButtons();
+        }
+      }
+
       if (featureKey && target.classList.contains("s1p-feature-toggle")) {
-        // 使用更可靠的方法来查找 contentWrapper
-        // 优先查找作为 .s1p-settings-item 的直接兄弟元素
         let contentWrapper =
           target.closest(".s1p-settings-item")?.nextElementSibling;
-        // 如果找不到，或者找到的不是 .s1p-feature-content (适用于顶层开关)，则回退到旧逻辑
         if (
           !contentWrapper ||
           !contentWrapper.classList.contains("s1p-feature-content")
@@ -5166,7 +5337,6 @@
           !contentWrapper ||
           !contentWrapper.classList.contains("s1p-feature-content")
         ) {
-          // [修正] 即使找不到动画容器，也应该继续执行保存逻辑
           console.warn(
             "S1 Plus Debug: Animation structure not found for this toggle, but will proceed with saving."
           );
@@ -5176,7 +5346,6 @@
         settings[featureKey] = isChecked;
         saveSettings(settings);
 
-        // 仅当 contentWrapper 有效时才执行动画逻辑
         if (
           contentWrapper &&
           contentWrapper.classList.contains("s1p-feature-content")
@@ -5202,7 +5371,6 @@
           );
         }
 
-        // [S1PLUS-MODIFIED] 新增了对 enableNavCustomization 的处理
         switch (featureKey) {
           case "enableGeneralSettings":
             applyInterfaceCustomizations();
@@ -5250,7 +5418,7 @@
             refreshAllAuthiActions();
             renderBookmarksTab();
             break;
-          case "enableNavCustomization": // <-- 新增的 case
+          case "enableNavCustomization":
             initializeNavbar();
             break;
         }
@@ -5329,47 +5497,82 @@
       const unblockUserId = e.target.dataset.unblockUserId;
       if (unblockUserId) {
         const item = target.closest(".s1p-item");
-        const userName = item
-          ? item.querySelector(".s1p-item-title").textContent.trim()
-          : `用户 #${unblockUserId}`;
+
+        // --- [FIX START] ---
+        // 通过克隆、移除状态元素的方式，来安全地获取纯净的用户名。
+        let userName;
+        if (item) {
+          const titleEl = item.querySelector(".s1p-item-title");
+          if (titleEl) {
+            const titleClone = titleEl.cloneNode(true);
+            const statusSpan = titleClone.querySelector(
+              ".s1p-native-sync-status"
+            );
+            if (statusSpan) {
+              statusSpan.remove();
+            }
+            userName = titleClone.textContent.trim();
+          } else {
+            userName = `用户 #${unblockUserId}`;
+          }
+        } else {
+          userName = `用户 #${unblockUserId}`;
+        }
+        // --- [FIX END] ---
+
         createConfirmationModal(
           `确认取消屏蔽 “${userName}” 吗？`,
           "该用户及其主题帖（如果已关联屏蔽）将被取消屏蔽。",
-          () => {
+          async () => {
             const allBlockedThreads = getBlockedThreads();
             const threadsToUnblock = Object.keys(allBlockedThreads).filter(
               (threadId) =>
                 allBlockedThreads[threadId].reason === `user_${unblockUserId}`
             );
 
-            unblockUser(unblockUserId);
+            const blockedUsers = getBlockedUsers();
+            const userToUnblockData = blockedUsers[unblockUserId];
+            const wasSynced =
+              userToUnblockData?.addedToNativeBlacklist === true;
 
-            removeListItem(
-              target,
-              '<div class="s1p-empty">暂无屏蔽的用户</div>'
-            );
+            const success = await unblockUser(unblockUserId);
 
-            const threadList = document.querySelector(
-              "#s1p-manually-blocked-list-container .s1p-list"
-            );
-            if (threadList) {
-              threadsToUnblock.forEach((threadId) => {
-                const threadItemToRemove = threadList.querySelector(
-                  `.s1p-item[data-thread-id="${threadId}"]`
-                );
-                threadItemToRemove?.remove();
-              });
-              if (threadList.children.length === 0) {
-                const container = threadList.closest(
-                  "#s1p-manually-blocked-list-container"
-                );
-                if (container) {
-                  container.innerHTML =
-                    '<div class="s1p-empty">暂无手动屏蔽的帖子</div>';
+            if (success) {
+              removeListItem(
+                target,
+                '<div class="s1p-empty">暂无屏蔽的用户</div>'
+              );
+
+              const threadList = document.querySelector(
+                "#s1p-manually-blocked-list-container .s1p-list"
+              );
+              if (threadList) {
+                threadsToUnblock.forEach((threadId) => {
+                  const threadItemToRemove = threadList.querySelector(
+                    `.s1p-item[data-thread-id="${threadId}"]`
+                  );
+                  threadItemToRemove?.remove();
+                });
+                if (threadList.children.length === 0) {
+                  const container = threadList.closest(
+                    "#s1p-manually-blocked-list-container"
+                  );
+                  if (container) {
+                    container.innerHTML =
+                      '<div class="s1p-empty">暂无手动屏蔽的帖子</div>';
+                  }
                 }
               }
+              const message = wasSynced
+                ? `已取消对 ${userName} 的屏蔽并从论坛同步移除。`
+                : `已取消对 ${userName} 的屏蔽。`;
+              showMessage(message, true);
+            } else {
+              showMessage(
+                `脚本内取消屏蔽成功，但同步移除论坛黑名单失败。`,
+                false
+              );
             }
-            showMessage(`已取消对 ${userName} 的屏蔽。`, true);
           },
           "确认取消"
         );
@@ -6692,10 +6895,6 @@
     cancelHideTimer();
   };
 
-  /**
-   * [OPTIMIZED V3 - No Layout Shift] Adds action buttons and layout spacer to a single post.
-   * @param {HTMLTableElement} postTable - The main table element for a single post.
-   */
   const addActionsToSinglePost = (postTable) => {
     const settings = getSettings();
     const authiDiv = postTable.querySelector(".plc .authi");
@@ -6821,12 +7020,31 @@
       blockLink.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        const confirmText = getSettings().blockThreadsOnUserBlock
+
+        const currentSettings = getSettings();
+        let confirmText = currentSettings.blockThreadsOnUserBlock
           ? `屏蔽用户并隐藏其主题帖？`
           : `确认屏蔽该用户？`;
-        createInlineConfirmMenu(e.currentTarget, confirmText, () =>
-          blockUser(userId, userName)
-        );
+        if (currentSettings.syncWithNativeBlacklist) {
+          confirmText += " (将同步至论坛黑名单)";
+        }
+
+        // --- [FIX START] 修正了这里的函数调用 ---
+        // 将 e.currentTarget (即被点击的 a 标签)作为第一个参数传入
+        createInlineConfirmMenu(e.currentTarget, confirmText, async () => {
+          // --- [FIX END] ---
+          const success = await blockUser(userId, userName);
+
+          const currentSettings = getSettings();
+          if (success) {
+            const message = currentSettings.syncWithNativeBlacklist
+              ? `已屏蔽用户 ${userName} 并同步至论坛黑名单。`
+              : `已屏蔽用户 ${userName}。`;
+            showMessage(message, true);
+          } else {
+            showMessage(`脚本内屏蔽成功，但同步论坛黑名单失败。`, false);
+          }
+        });
       });
       scriptActionsWrapper.appendChild(blockLink);
     }
@@ -6882,7 +7100,6 @@
       newContainer.appendChild(scriptActionsWrapper);
     }
 
-    // --- [核心新增] 修复加载闪烁：在所有布局操作完成后，立即显示楼层号 ---
     const floorNumberEl = piContainer.querySelector("strong");
     if (floorNumberEl) {
       floorNumberEl.classList.add("s1p-layout-ready");
