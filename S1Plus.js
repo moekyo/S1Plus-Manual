@@ -1532,17 +1532,24 @@
       box-sizing: border-box;
       font-size: 0;
     }
-    /* --- [联动修改] 仅在未启用NUX兼容模式时，应用S1 Plus的背景图标 (皮肤) --- */
-    body:not(.s1p-follow-nux-theme) .s1p-editor-btn.s1p-delete-button {
-      background-image: url("${SVG_ICON_DELETE_DEFAULT}");
-      background-repeat: no-repeat;
-      background-position: center;
-      background-size: 18px 18px;
-      transition: all 0.2s ease;
+   /* --- [修改] 固化S1 Plus经典删除按钮样式 --- */
+    .s1p-editor-btn.s1p-delete-button {
+        font-size: 0 !important;
+        width: 26px !important;
+        height: 26px !important;
+        padding: 4px !important;
+        box-sizing: border-box !important;
+        background-image: url("${SVG_ICON_DELETE_DEFAULT}") !important;
+        background-repeat: no-repeat !important;
+        background-position: center !important;
+        background-size: 18px 18px !important;
+        background-color: transparent !important;
+        mask: none !important;
+        transition: all 0.2s ease;
     }
-    body:not(.s1p-follow-nux-theme) .s1p-editor-btn.s1p-delete-button:hover {
-      background-color: var(--s1p-red);
-      background-image: url("${SVG_ICON_DELETE_HOVER}");
+    .s1p-editor-btn.s1p-delete-button:hover {
+        background-color: var(--s1p-red) !important;
+        background-image: url("${SVG_ICON_DELETE_HOVER}") !important;
     }
     .s1p-drag-handle {
       font-size: 18pt;
@@ -1990,36 +1997,38 @@
       text-overflow: ellipsis;
     }
 
-    @keyframes s1p-indicator-appear {
-      0% {
+    /* --- [修改] 阅读进度提示条 - 渐变动画 --- */
+    @keyframes s1p-indicator-fade-in {
+      from {
         opacity: 0;
-        transform: translateY(-50%) scale(0.8) rotate(0deg);
+        /* 保持垂直居中，并从一个轻微的放大状态恢复，使出现动画更柔和 */
+        transform: translateY(-50%) scale(1.05);
       }
-      50% {
+      to {
         opacity: 1;
-        transform: translateY(-50%) scale(1.08) rotate(5deg);
-      }
-      70% {
-        transform: translateY(-50%) scale(0.98) rotate(-3deg);
-      }
-      90% {
-        transform: translateY(-50%) scale(1.02) rotate(1deg);
-      }
-      100% {
-        opacity: 1;
-        transform: translateY(-50%) scale(1) rotate(0deg);
+        transform: translateY(-50%) scale(1);
       }
     }
-    @keyframes s1p-indicator-disappear {
+    @keyframes s1p-indicator-fade-out {
       from {
         opacity: 1;
         transform: translateY(-50%) scale(1);
       }
       to {
         opacity: 0;
-        transform: translateY(-50%) scale(0.8);
+        /* 消失时轻微缩小，使其更自然 */
+        transform: translateY(-50%) scale(0.95);
       }
     }
+    .s1p-read-indicator.s1p-anim-appear {
+      /* 使用新的 fade-in 动画，时长0.3秒 */
+      animation: s1p-indicator-fade-in 0.3s ease-out forwards;
+    }
+    .s1p-read-indicator.s1p-anim-disappear {
+      /* 使用新的 fade-out 动画，时长0.25秒 */
+      animation: s1p-indicator-fade-out 0.25s ease-in forwards;
+    }
+
     .s1p-read-indicator {
       position: absolute;
       top: 50%;
@@ -2037,12 +2046,6 @@
       white-space: nowrap;
       box-shadow: 0 0 4px rgba(13, 13, 13, 0.1);
       line-height: 1;
-    }
-    .s1p-read-indicator.s1p-anim-appear {
-      animation: s1p-indicator-appear 0.5s cubic-bezier(0.5, 0, 0.1, 1) forwards;
-    }
-    .s1p-read-indicator.s1p-anim-disappear {
-      animation: s1p-indicator-disappear 0.3s ease-out forwards;
     }
     .s1p-read-indicator-icon {
       width: 14px; /* <-- [核心修改] 减小图标宽度 */
@@ -2066,6 +2069,23 @@
       background-color: var(--s1p-red-h); 
       color: var(--s1p-white);
       border-color: transparent;
+    }
+
+    /* --- [新增] 深色模式样式覆写 --- */
+    @media (prefers-color-scheme: dark) {
+      :root {
+        /* 将阅读进度条背景改为更柔和的橄榄绿 */
+        --s1p-readprogress-bg: #99a17a;
+      }
+
+      /* 删除按钮：默认状态下使用白色图标 */
+      .s1p-editor-btn.s1p-delete-button {
+        background-image: url("${SVG_ICON_DELETE_HOVER}") !important;
+      }
+      /* 删除按钮：鼠标悬停时移除图标，只留红色背景 */
+      .s1p-editor-btn.s1p-delete-button:hover {
+        background-image: none !important;
+      }
     }
   `);
 
@@ -3172,7 +3192,6 @@
     showBlockedByKeywordList: false,
     showManuallyBlockedList: false,
     hideImagesByDefault: false,
-    followS1NuxTheme: true, // <-- [新增]
     enhanceFloatingControls: true,
     recommendS1Nux: true, // [新增] S1 NUX 安装推荐开关
     threadBlockHoverDelay: 1,
@@ -3211,96 +3230,6 @@
     GM_setValue("s1p_settings", settings);
     if (!suppressSyncTrigger) {
       updateLastModifiedTimestamp();
-    }
-  };
-
-  // --- [新增] 主题覆写样式管理 ---
-  let themeOverrideStyleElement = null;
-  let deleteButtonOverrideStyleElement = null;
-  const applyThemeOverrideStyle = () => {
-    const THEME_OVERRIDE_CSS = `
-            /* 适用于 Chrome, Edge 等 WebKit 内核浏览器 */
-            html::-webkit-scrollbar-thumb {
-                background-color: var(--s1p-scrollbar-thumb) !important;
-            }
-            html::-webkit-scrollbar-track {
-                background-color: var(--s1p-bg) !important;
-            }
-            /* 适用于 Firefox 浏览器 */
-            html {
-                scrollbar-color: var(--s1p-scrollbar-thumb) var(--s1p-bg) !important;
-            }
-            /* 强制恢复 S1 Plus 开关的原始高亮颜色 */
-            :root {
-                --s1p-sec: var(--s1p-sec-classic) !important;
-                --s1p-sub-h: var(--s1p-sub-h-classic) !important;
-            }
-        `;
-    const settings = getSettings();
-    // 当 "跟随S1Nux主题" 开启时，移除自定义样式
-    if (settings.followS1NuxTheme) {
-      if (
-        themeOverrideStyleElement &&
-        themeOverrideStyleElement.parentElement
-      ) {
-        themeOverrideStyleElement.remove();
-        themeOverrideStyleElement = null;
-      }
-    } else {
-      // 当 "跟随S1Nux主题" 关闭时，如果样式不存在则添加它
-      if (
-        !themeOverrideStyleElement ||
-        !themeOverrideStyleElement.parentElement
-      ) {
-        themeOverrideStyleElement = GM_addStyle(THEME_OVERRIDE_CSS);
-      }
-    }
-  };
-
-  const applyDeleteButtonThemeStyle = () => {
-    const OVERRIDE_CSS = `
-            .s1p-editor-btn.s1p-delete-button {
-                font-size: 0 !important;
-                width: 26px !important;
-                height: 26px !important;
-                padding: 4px !important;
-                box-sizing: border-box !important;
-                background-image: url("${SVG_ICON_DELETE_DEFAULT}") !important;
-                background-repeat: no-repeat !important;
-                background-position: center !important;
-                background-size: 18px 18px !important;
-                background-color: transparent !important;
-                mask: none !important;
-                transition: all 0.2s ease;
-            }
-            .s1p-editor-btn.s1p-delete-button:hover {
-                background-color: var(--s1p-red) !important;
-                background-image: url("${SVG_ICON_DELETE_HOVER}") !important;
-            }
-        `;
-    const settings = getSettings();
-
-    // --- [联动修改] 全新逻辑 ---
-    if (settings.followS1NuxTheme) {
-      // 模式：跟随 NUX
-      // 1. 给 body 添加标记类，让标准CSS失效
-      document.body.classList.add("s1p-follow-nux-theme");
-      // 2. 移除 !important 强制规则 (如果存在)，彻底让位给 S1 NUX
-      if (
-        deleteButtonOverrideStyleElement &&
-        deleteButtonOverrideStyleElement.parentElement
-      ) {
-        deleteButtonOverrideStyleElement.remove();
-        deleteButtonOverrideStyleElement = null;
-      }
-    } else {
-      // 模式：S1 Plus 经典
-      // 1. 从 body 移除标记类，让标准CSS可以先生效
-      document.body.classList.remove("s1p-follow-nux-theme");
-      // 2. 添加 !important 强制规则，确保能覆盖 S1 NUX
-      if (!deleteButtonOverrideStyleElement) {
-        deleteButtonOverrideStyleElement = GM_addStyle(OVERRIDE_CSS);
-      }
     }
   };
 
@@ -4001,6 +3930,7 @@
       ); // { once: true } 确保事件只触发一次后自动移除
     }
   };
+  // [整体替换] 请用这个最新版本的完整函数，替换脚本中旧的 createManagementModal 函数
   const createManagementModal = () => {
     const calculateModalWidth = () => {
       const measureContainer = document.createElement("div");
@@ -4882,23 +4812,27 @@
                                     }" data-value="0">永不</div>
                                 </div>
                             </div>
+                            <div class="s1p-settings-item" style="padding-left: 20px;">
+                                <label class="s1p-settings-label" for="s1p-openProgressInNewTab">在新窗口打开阅读进度</label>
+                                <label class="s1p-switch"><input type="checkbox" id="s1p-openProgressInNewTab" class="s1p-settings-checkbox" data-setting="openProgressInNewTab" ${
+                                  settings.openProgressInNewTab ? "checked" : ""
+                                }><span class="s1p-slider"></span></label>
+                            </div>
+                            <div class="s1p-settings-item" id="s1p-openProgressInBackground-item" style="padding-left: 40px; ${
+                              !settings.openProgressInNewTab
+                                ? "display: none;"
+                                : ""
+                            }">
+                                <label class="s1p-settings-label" for="s1p-openProgressInBackground">后台打开 (不激活新标签页)</label>
+                                <label class="s1p-switch"><input type="checkbox" id="s1p-openProgressInBackground" class="s1p-settings-checkbox" data-setting="openProgressInBackground" ${
+                                  settings.openProgressInBackground
+                                    ? "checked"
+                                    : ""
+                                }><span class="s1p-slider"></span></label>
+                            </div>
                           </div>
                         </div>
 
-                        <div class="s1p-settings-item">
-                            <label class="s1p-settings-label" for="s1p-openProgressInNewTab">在新窗口打开阅读进度</label>
-                            <label class="s1p-switch"><input type="checkbox" id="s1p-openProgressInNewTab" class="s1p-settings-checkbox" data-setting="openProgressInNewTab" ${
-                              settings.openProgressInNewTab ? "checked" : ""
-                            }><span class="s1p-slider"></span></label>
-                        </div>
-                        <div class="s1p-settings-item" id="s1p-openProgressInBackground-item" style="padding-left: 20px; ${
-                          !settings.openProgressInNewTab ? "display: none;" : ""
-                        }">
-                            <label class="s1p-settings-label" for="s1p-openProgressInBackground">后台打开 (不激活新标签页)</label>
-                            <label class="s1p-switch"><input type="checkbox" id="s1p-openProgressInBackground" class="s1p-settings-checkbox" data-setting="openProgressInBackground" ${
-                              settings.openProgressInBackground ? "checked" : ""
-                            }><span class="s1p-slider"></span></label>
-                        </div>
                          <div class="s1p-settings-item">
                             <label class="s1p-settings-label" for="s1p-hideImagesByDefault">默认隐藏帖子图片</label>
                             <label class="s1p-switch"><input type="checkbox" id="s1p-hideImagesByDefault" class="s1p-settings-checkbox" data-setting="hideImagesByDefault" ${
@@ -4908,14 +4842,6 @@
                     </div>
                     <div class="s1p-settings-group">
                         <div class="s1p-settings-group-title">界面与个性化</div>
-                        <div class="s1p-settings-item">
-                            <label class="s1p-settings-label" for="s1p-followS1NuxTheme">跟随 S1 NUX 视觉风格</label>
-                            <label class="s1p-switch"><input type="checkbox" id="s1p-followS1NuxTheme" class="s1p-settings-checkbox" data-setting="followS1NuxTheme" ${
-                              settings.followS1NuxTheme ? "checked" : ""
-                            }><span class="s1p-slider"></span></label>
-                        </div>
-                        <p class="s1p-setting-desc">UI 兼容模式：<b>开启</b>后，部分UI (如滚动条、删除按钮) 将适配 \`S1 NUX\` 风格；<b>关闭</b>则强制恢复 S1 Plus 的经典独立样式。</p>
-                        
                         <div class="s1p-settings-item">
                             <label class="s1p-settings-label" for="s1p-recommendS1Nux">推荐 S1 NUX 安装</label>
                             <label class="s1p-switch"><input type="checkbox" id="s1p-recommendS1Nux" class="s1p-settings-checkbox" data-setting="recommendS1Nux" ${
@@ -5031,10 +4957,7 @@
             applyChanges();
             return;
           }
-          if (settingKey === "followS1NuxTheme") {
-            applyThemeOverrideStyle();
-            applyDeleteButtonThemeStyle();
-          }
+
           applyInterfaceCustomizations();
           if (settingKey === "showReadIndicator" && !target.checked) {
             updateReadIndicatorUI(null);
@@ -5232,9 +5155,22 @@
       const featureKey = target.dataset.feature;
 
       if (featureKey && target.classList.contains("s1p-feature-toggle")) {
-        const contentWrapper = target.closest(
-          ".s1p-settings-group"
-        )?.nextElementSibling;
+        // --- [Bug Fix Start] ---
+        // 使用更可靠的方法来查找 contentWrapper
+        // 优先查找作为 .s1p-settings-item 的直接兄弟元素
+        let contentWrapper =
+          target.closest(".s1p-settings-item")?.nextElementSibling;
+        // 如果找不到，或者找到的不是 .s1p-feature-content (适用于顶层开关)，则回退到旧逻辑
+        if (
+          !contentWrapper ||
+          !contentWrapper.classList.contains("s1p-feature-content")
+        ) {
+          contentWrapper = target.closest(
+            ".s1p-settings-group"
+          )?.nextElementSibling;
+        }
+        // --- [Bug Fix End] ---
+
         const modalBody = modal.querySelector(".s1p-modal-body");
 
         if (
@@ -5242,39 +5178,41 @@
           !contentWrapper ||
           !contentWrapper.classList.contains("s1p-feature-content")
         ) {
-          console.error(
-            "S1 Plus Debug: Animation structure not found. Aborting."
+          // [修正] 即使找不到动画容器，也应该继续执行保存逻辑
+          console.warn(
+            "S1 Plus Debug: Animation structure not found for this toggle, but will proceed with saving."
           );
-          return;
         }
 
         const isChecked = target.checked;
         settings[featureKey] = isChecked;
         saveSettings(settings);
 
-        const oldHeight = modalBody.offsetHeight;
-        modalBody.style.height = `${oldHeight}px`;
-
-        contentWrapper.classList.toggle("expanded", isChecked);
-
-        requestAnimationFrame(() => {
-          modalBody.style.height = "auto";
-          const newHeight = modalBody.offsetHeight;
+        // 仅当 contentWrapper 有效时才执行动画逻辑
+        if (
+          contentWrapper &&
+          contentWrapper.classList.contains("s1p-feature-content")
+        ) {
+          const oldHeight = modalBody.offsetHeight;
           modalBody.style.height = `${oldHeight}px`;
-
+          contentWrapper.classList.toggle("expanded", isChecked);
           requestAnimationFrame(() => {
-            modalBody.style.height = `${newHeight}px`;
-          });
-        });
-
-        modalBody.addEventListener(
-          "transitionend",
-          function onEnd() {
-            modalBody.removeEventListener("transitionend", onEnd);
             modalBody.style.height = "auto";
-          },
-          { once: true }
-        );
+            const newHeight = modalBody.offsetHeight;
+            modalBody.style.height = `${oldHeight}px`;
+            requestAnimationFrame(() => {
+              modalBody.style.height = `${newHeight}px`;
+            });
+          });
+          modalBody.addEventListener(
+            "transitionend",
+            function onEnd() {
+              modalBody.removeEventListener("transitionend", onEnd);
+              modalBody.style.height = "auto";
+            },
+            { once: true }
+          );
+        }
 
         // [S1PLUS-MODIFIED] 新增了对 enableNavCustomization 的处理
         switch (featureKey) {
@@ -7197,6 +7135,24 @@
     document.body.appendChild(wrapper);
   };
 
+  // --- [新增] 悬浮控件管理器 ---
+  const manageFloatingControls = () => {
+    const settings = getSettings();
+    // 根据设置，切换body上的class，从而激活不同的CSS规则
+    document.body.classList.toggle(
+      "s1p-enhanced-controls-active",
+      settings.enhanceFloatingControls
+    );
+
+    if (settings.enhanceFloatingControls) {
+      // 如果设置为开启，则调用创建函数（它内部有防重复机制）
+      createCustomFloatingControls();
+    } else {
+      // 如果设置为关闭，则确保移除脚本创建的控件
+      document.getElementById("s1p-floating-controls-wrapper")?.remove();
+    }
+  };
+
   const cleanupOldReadProgress = () => {
     const settings = getSettings();
     if (
@@ -7368,7 +7324,6 @@
     handleNuxRecommendation();
     initializeNavbar();
     initializeGenericDisplayPopover();
-    applyThemeOverrideStyle();
 
     const observerCallback = (mutations, observer) => {
       const navNeedsReinit = !document.getElementById("s1p-nav-link");
@@ -7387,23 +7342,7 @@
     const watchTarget = document.getElementById("wp") || document.body;
     observer.observe(watchTarget, { childList: true, subtree: true });
   }
-  // --- [新增] 悬浮控件管理器 ---
-  const manageFloatingControls = () => {
-    const settings = getSettings();
-    // 根据设置，切换body上的class，从而激活不同的CSS规则
-    document.body.classList.toggle(
-      "s1p-enhanced-controls-active",
-      settings.enhanceFloatingControls
-    );
 
-    if (settings.enhanceFloatingControls) {
-      // 如果设置为开启，则调用创建函数（它内部有防重复机制）
-      createCustomFloatingControls();
-    } else {
-      // 如果设置为关闭，则确保移除脚本创建的控件
-      document.getElementById("s1p-floating-controls-wrapper")?.remove();
-    }
-  };
   // [修改] 调用新的控件管理器，不再直接创建控件
   function applyChanges() {
     const settings = getSettings();
@@ -7434,7 +7373,7 @@
     if (settings.enableReadProgress) {
       addProgressJumpButtons();
     }
-    applyDeleteButtonThemeStyle();
+
     applyInterfaceCustomizations();
     applyImageHiding();
     manageImageToggleAllButtons();
