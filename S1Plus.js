@@ -207,56 +207,9 @@
       /* 移除了所有失败状态的视觉效果 */
     }
 
-    /* --- [NEW] Nav Sync Menu --- */
-    .s1p-nav-sync-menu {
-      position: absolute;
-      z-index: 10002;
-      background-color: var(--s1p-bg);
-      border-radius: 6px;
-      box-shadow: 0 2px 8px rgba(var(--s1p-black-rgb), 0.15);
-      border: 1px solid var(--s1p-pri);
-      padding: 4px;
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-      min-width: max-content;
-      opacity: 0;
-      visibility: hidden;
-      transform: translateY(4px);
-      transition: opacity 0.15s ease-out, transform 0.15s ease-out,
-        visibility 0.15s;
-      pointer-events: none;
-    }
-    .s1p-nav-sync-menu.visible {
-      opacity: 1;
-      visibility: visible;
-      transform: translateY(0);
-      pointer-events: auto;
-    }
-    .s1p-nav-sync-menu button {
-      background: none;
-      border: none;
-      padding: 6px 12px;
-      text-align: left;
-      cursor: pointer;
-      border-radius: 4px;
-      font-size: 14px;
-      color: var(--s1p-t);
-      white-space: nowrap;
-    }
-    .s1p-nav-sync-menu button:hover {
-      background-color: var(--s1p-sub-h);
-      color: var(--s1p-sub-h-t);
-    }
-    .s1p-nav-sync-menu button.s1p-cancel-btn:hover {
-      background-color: var(--s1p-secondary-bg);
-      color: var(--s1p-secondary-text);
-    }
-
     /* --- 手动同步弹窗样式 --- */
     .s1p-sync-choice-info {
       background-color: var(--s1p-sub);
-      border: 1px solid var(--s1p-pri);
       border-radius: 6px;
       padding: 12px;
       margin-top: 12px;
@@ -497,7 +450,6 @@
       transform: translateY(-50%);
       z-index: 10;
       background-color: var(--s1p-bg);
-      border: 1px solid var(--s1p-pri);
       border-radius: 8px;
       box-shadow: 0 4px 12px rgba(var(--s1p-black-rgb), 0.1);
       padding: 5px;
@@ -591,7 +543,6 @@
       align-items: center;
       gap: 4px;
       background-color: var(--s1p-bg);
-      border: 1px solid var(--s1p-pri);
       border-radius: 8px;
       box-shadow: 0 4px 12px rgba(var(--s1p-black-rgb), 0.1);
       padding: 5px;
@@ -722,7 +673,6 @@
       background-color: var(--s1p-bg);
       border-radius: 12px;
       box-shadow: 0 4px 20px rgba(var(--s1p-black-rgb), 0.08);
-      border: 1px solid var(--s1p-pri);
       opacity: 0;
       visibility: hidden;
       transform: translateY(5px) scale(0.98);
@@ -824,7 +774,6 @@
       background-color: var(--s1p-bg);
       border-radius: 8px;
       box-shadow: 0 2px 10px rgba(var(--s1p-black-rgb), 0.12);
-      border: 1px solid var(--s1p-pri);
       padding: 10px 14px;
       font-size: 13px;
       line-height: 1.6;
@@ -970,7 +919,6 @@
       background-color: var(--s1p-bg);
       border-radius: 6px;
       box-shadow: 0 2px 8px rgba(var(--s1p-black-rgb), 0.15);
-      border: 1px solid var(--s1p-pri);
       padding: 4px; 
       display: flex;
       flex-direction: column;
@@ -1262,8 +1210,6 @@
       pointer-events: none;
       white-space: nowrap;
       text-align: center;
-      /* [新增] 为浅色背景增加边框以提高辨识度 */
-      border: 1px solid var(--s1p-pri);
     }
     .s1p-modal-content .s1p-toast-notification {
       position: absolute;
@@ -1791,20 +1737,25 @@
     .s1p-image-placeholder {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
-      padding: 6px 12px;
+      /* gap: 6px; */ /* [S1P-MOD] 移除gap，因为没有图标 */
+      padding: 6px 14px; /* [S1P-MOD] 匹配 s1p-btn 内边距 */
       border-radius: 6px;
-      background-color: var(--s1p-sub);
+      background-color: var(--s1p-pri);
       color: var(--s1p-t);
-      border: 1px solid var(--s1p-pri);
+      border: none; /* [S1P-MOD] 匹配 s1p-btn 边框 */
       cursor: pointer;
-      font-size: 13px;
+      font-size: 14px; /* [S1P-MOD] 匹配 s1p-btn 字体大小 */
+      font-weight: bold; /* [S1P-MOD] 匹配 s1p-btn 字体粗细 */
       transition: all 0.2s ease;
+      /* [S1P-MOD] 模拟 s1p-btn 的其他属性 */
+      justify-content: center;
+      user-select: none;
+      white-space: nowrap;
     }
     .s1p-image-placeholder:hover {
       background-color: var(--s1p-sub-h);
       color: var(--s1p-sub-h-t);
-      border-color: var(--s1p-sub-h);
+      /* [S1P-MOD] 移除 border-color，因为 border: none */
     }
     .s1p-image-container.hidden > .zoom {
       display: none;
@@ -1815,21 +1766,28 @@
     .s1p-image-toggle-all-btn {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
-      padding: 6px 12px;
+      /* gap: 6px; */ /* [S1P-MOD] 移除gap，因为没有图标 */
+      padding: 6px 14px; /* [S1P-MOD] 匹配 s1p-btn 内边距 */
       border-radius: 6px;
-      background-color: var(--s1p-sub);
+      background-color: var(--s1p-pri);
       color: var(--s1p-t);
-      border: 1px solid var(--s1p-pri);
+      border: none; /* [S1P-MOD] 匹配 s1p-btn 边框 */
       cursor: pointer;
-      font-size: 13px;
+      font-size: 14px; /* [S1P-MOD] 匹配 s1p-btn 字体大小 */
+      font-weight: bold; /* [S1P-MOD] 匹配 s1p-btn 字体粗细 */
       transition: all 0.2s ease;
+      /* [S1P-MOD] 模拟 s1p-btn 的其他属性 */
+      justify-content: center;
+      user-select: none;
+      white-space: nowrap;
     }
     .s1p-image-toggle-all-btn:hover {
       background-color: var(--s1p-sub-h);
       color: var(--s1p-sub-h-t);
-      border-color: var(--s1p-sub-h);
+      /* [S1P-MOD] 移除 border-color，因为 border: none */
     }
+
+
     /* --- [新增 V9] 可禁用/启用的增强型悬浮控件 --- */
     /* --- 模式 B: 增强控件关闭 (默认状态) --- */
     /* 默认隐藏脚本创建的控件 */
@@ -6550,6 +6508,36 @@
   let readIndicatorElement = null;
   let currentIndicatorParent = null;
   let pageObserver = null;
+  let currentLoggedInUid = null; // [新增] 缓存当前登录用户的UID
+  /**
+   * [新增 & 修正] 获取当前登录用户的UID
+   * (根据用户提供的HTML片段修正了选择器和正则表达式)
+   * @returns {string|null} 当前登录用户的UID，如果未找到则返回null
+   */
+  const getCurrentLoggedInUid = () => {
+    if (currentLoggedInUid) {
+      return currentLoggedInUid;
+    }
+
+    // 方案 1: 查找 #um strong.vwmy a (来自用户截图)
+    // <strong class="vwmy"><a href="space-uid-425635.html" ...>moekyo</a></strong>
+    let userSpaceLink = document.querySelector(
+      '#um strong.vwmy a[href*="space-uid-"]'
+    );
+    if (userSpaceLink) {
+      const match = userSpaceLink.href.match(/space-uid-(\d+)/);
+      if (match && match[1]) {
+        currentLoggedInUid = match[1];
+        // console.log("S1 Plus: 当前登录用户 UID (vwmy) ->", currentLoggedInUid);
+        return currentLoggedInUid;
+      }
+    }
+
+    console.warn(
+      "S1 Plus: 无法确定当前登录用户的 UID。屏蔽/标记按钮可能也会显示在自己的帖子上。"
+    );
+    return null;
+  };
 
   const trackReadProgressInThread = () => {
     const settings = getSettings();
@@ -6886,6 +6874,10 @@
     cancelHideTimer();
   };
 
+  /**
+   * [修改] 帖子楼层内操作按钮注入 (V2 - 增加当前用户判断)
+   * * @param {HTMLElement} postTable - 帖子的 <table> DOM 元素
+   */
   const addActionsToSinglePost = (postTable) => {
     const settings = getSettings();
     const authiDiv = postTable.querySelector(".plc .authi");
@@ -6918,8 +6910,13 @@
     const userProfileLink = plsCell.querySelector('a[href*="space-uid-"]');
     if (!userProfileLink) return;
     const uidMatch = userProfileLink.href.match(/space-uid-(\d+)\.html/);
-    const userId = uidMatch ? uidMatch[1] : null;
+    const userId = uidMatch ? uidMatch[1] : null; // 这是帖子作者的 UID
     if (!userId) return;
+
+    // --- [新增] 获取当前登录用户的UID，并进行比较 ---
+    const loggedInUid = getCurrentLoggedInUid();
+    const isCurrentUserPost = loggedInUid && loggedInUid === userId;
+    // ------------------------------------------
 
     const postId = postTable.id.replace("pid", "");
     const floorElement = postTable.querySelector(`#postnum${postId} em`);
@@ -6999,87 +6996,89 @@
       scriptActionsWrapper.appendChild(bookmarkLink);
     }
 
-    if (settings.enableUserBlocking) {
-      const pipe = document.createElement("span");
-      pipe.className = "pipe";
-      pipe.textContent = "|";
-      scriptActionsWrapper.appendChild(pipe);
-      const blockLink = document.createElement("a");
-      blockLink.href = "javascript:void(0);";
-      blockLink.textContent = "屏蔽该用户";
-      blockLink.className = "s1p-authi-action s1p-block-user-in-authi";
-      blockLink.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-
-        const currentSettings = getSettings();
-        let confirmText = currentSettings.blockThreadsOnUserBlock
-          ? `屏蔽用户并隐藏其主题帖？`
-          : `确认屏蔽该用户？`;
-        if (currentSettings.syncWithNativeBlacklist) {
-          confirmText += " (将同步至论坛黑名单)";
-        }
-
-        // 将 e.currentTarget (即被点击的 a 标签)作为第一个参数传入
-        createInlineConfirmMenu(e.currentTarget, confirmText, async () => {
-          const success = await blockUser(userId, userName);
-
-          const currentSettings = getSettings();
-          if (success) {
-            const message = currentSettings.syncWithNativeBlacklist
-              ? `已屏蔽用户 ${userName} 并同步至论坛黑名单。`
-              : `已屏蔽用户 ${userName}。`;
-            showMessage(message, true);
-          } else {
-            showMessage(`脚本内屏蔽成功，但同步论坛黑名单失败。`, false);
-          }
-        });
-      });
-      scriptActionsWrapper.appendChild(blockLink);
-    }
-
-    if (settings.enableUserTagging) {
-      const userTags = getUserTags();
-      const userTag = userTags[userId];
-      const pipe = document.createElement("span");
-      pipe.className = "pipe";
-      pipe.textContent = "|";
-      scriptActionsWrapper.appendChild(pipe);
-      if (userTag && userTag.tag) {
-        const tagContainer = document.createElement("span");
-        tagContainer.className = "s1p-authi-action s1p-user-tag-container";
-        const fullTagText = userTag.tag;
-        const tagDisplay = document.createElement("span");
-        tagDisplay.className = "s1p-user-tag-display";
-        tagDisplay.textContent = `用户标记：${fullTagText}`;
-        tagDisplay.dataset.fullTag = fullTagText;
-        tagDisplay.removeAttribute("title");
-        const optionsIcon = document.createElement("span");
-        optionsIcon.className = "s1p-user-tag-options";
-        optionsIcon.innerHTML = "&#8942;";
-        optionsIcon.dataset.userId = userId;
-        optionsIcon.dataset.userName = userName;
-        optionsIcon.addEventListener("mouseenter", (e) => {
+    if (!isCurrentUserPost) {
+      if (settings.enableUserBlocking) {
+        const pipe = document.createElement("span");
+        pipe.className = "pipe";
+        pipe.textContent = "|";
+        scriptActionsWrapper.appendChild(pipe);
+        const blockLink = document.createElement("a");
+        blockLink.href = "javascript:void(0);";
+        blockLink.textContent = "屏蔽该用户";
+        blockLink.className = "s1p-authi-action s1p-block-user-in-authi";
+        blockLink.addEventListener("click", (e) => {
           e.preventDefault();
           e.stopPropagation();
-          createOptionsMenu(e.currentTarget);
-        });
-        tagContainer.appendChild(tagDisplay);
-        tagContainer.appendChild(optionsIcon);
-        scriptActionsWrapper.appendChild(tagContainer);
-      } else {
-        const tagLink = document.createElement("a");
-        tagLink.href = "javascript:void(0);";
-        tagLink.textContent = "标记该用户";
-        tagLink.className = "s1p-authi-action s1p-tag-user-in-authi";
-        tagLink.addEventListener("click", (e) => {
-          e.preventDefault();
-          const popover = document.getElementById("s1p-tag-popover-main");
-          if (popover && popover.show) {
-            popover.show(e.currentTarget, userId, userName, userAvatar);
+
+          const currentSettings = getSettings();
+          let confirmText = currentSettings.blockThreadsOnUserBlock
+            ? `屏蔽用户并隐藏其主题帖？`
+            : `确认屏蔽该用户？`;
+          if (currentSettings.syncWithNativeBlacklist) {
+            confirmText += " (将同步至论坛黑名单)";
           }
+
+          // 将 e.currentTarget (即被点击的 a 标签)作为第一个参数传入
+          createInlineConfirmMenu(e.currentTarget, confirmText, async () => {
+            const success = await blockUser(userId, userName);
+
+            const currentSettings = getSettings();
+            if (success) {
+              const message = currentSettings.syncWithNativeBlacklist
+                ? `已屏蔽用户 ${userName} 并同步至论坛黑名单。`
+                : `已屏蔽用户 ${userName}。`;
+              showMessage(message, true);
+            } else {
+              showMessage(`脚本内屏蔽成功，但同步论坛黑名单失败。`, false);
+            }
+          });
         });
-        scriptActionsWrapper.appendChild(tagLink);
+        scriptActionsWrapper.appendChild(blockLink);
+      }
+
+      if (settings.enableUserTagging) {
+        const userTags = getUserTags();
+        const userTag = userTags[userId];
+        const pipe = document.createElement("span");
+        pipe.className = "pipe";
+        pipe.textContent = "|";
+        scriptActionsWrapper.appendChild(pipe);
+        if (userTag && userTag.tag) {
+          const tagContainer = document.createElement("span");
+          tagContainer.className = "s1p-authi-action s1p-user-tag-container";
+          const fullTagText = userTag.tag;
+          const tagDisplay = document.createElement("span");
+          tagDisplay.className = "s1p-user-tag-display";
+          tagDisplay.textContent = `用户标记：${fullTagText}`;
+          tagDisplay.dataset.fullTag = fullTagText;
+          tagDisplay.removeAttribute("title");
+          const optionsIcon = document.createElement("span");
+          optionsIcon.className = "s1p-user-tag-options";
+          optionsIcon.innerHTML = "&#8942;";
+          optionsIcon.dataset.userId = userId;
+          optionsIcon.dataset.userName = userName;
+          optionsIcon.addEventListener("mouseenter", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            createOptionsMenu(e.currentTarget);
+          });
+          tagContainer.appendChild(tagDisplay);
+          tagContainer.appendChild(optionsIcon);
+          scriptActionsWrapper.appendChild(tagContainer);
+        } else {
+          const tagLink = document.createElement("a");
+          tagLink.href = "javascript:void(0);";
+          tagLink.textContent = "标记该用户";
+          tagLink.className = "s1p-authi-action s1p-tag-user-in-authi";
+          tagLink.addEventListener("click", (e) => {
+            e.preventDefault();
+            const popover = document.getElementById("s1p-tag-popover-main");
+            if (popover && popover.show) {
+              popover.show(e.currentTarget, userId, userName, userAvatar);
+            }
+          });
+          scriptActionsWrapper.appendChild(tagLink);
+        }
       }
     }
 
@@ -7125,7 +7124,7 @@
 
     if (now - lastRecommendationTimestamp < threeDaysInMillis) {
       console.log(
-        "S1 Plus: S1 NUX recommendation throttled (less than 3 days ago)."
+        "S1 Plus: S1 NUX recommendation throttled (less than 7 days ago)."
       );
       return;
     }
@@ -7179,16 +7178,29 @@
     GM_setValue(LAST_REC_KEY, now);
   };
 
+  /**
+   * [修改] 自动签到 (V2 - 支持多账号)
+   * 修正了多账号切换时，签到记录互相干扰的问题。
+   */
   function autoSign() {
     const checkinLink = document.querySelector(
       'a[href*="study_daily_attendance-daily_attendance.html"]'
     );
     if (!checkinLink) return;
 
+    // --- [新增] 获取当前用户UID ---
+    const uid = getCurrentLoggedInUid();
+    if (!uid) {
+      // 如果没有UID（未登录），则不执行签到
+      return;
+    }
+    const signedDateKey = `signedDate_${uid}`; // <-- [修改] Key 变为 per-user
+    // ----------------------------
+
     var now = new Date();
     var date =
       now.getFullYear() + "-" + (now.getMonth() + 1) + "-" + now.getDate();
-    var signedDate = GM_getValue("signedDate");
+    var signedDate = GM_getValue(signedDateKey); // <-- [修改]
 
     if (signedDate == date) {
       checkinLink.style.display = "none";
@@ -7201,15 +7213,18 @@
       method: "GET",
       url: checkinLink.href,
       onload: function (response) {
-        GM_setValue("signedDate", date);
+        GM_setValue(signedDateKey, date); // <-- [修改]
         checkinLink.style.display = "none";
         console.log(
-          "S1 Plus: Auto check-in request sent. Status:",
+          `S1 Plus: Auto check-in for UID ${uid} sent. Status:`,
           response.status
         );
       },
       onerror: function (response) {
-        console.error("S1 Plus: Auto check-in request failed.", response);
+        console.error(
+          `S1 Plus: Auto check-in for UID ${uid} failed.`,
+          response
+        );
       },
     });
   }
