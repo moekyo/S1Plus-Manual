@@ -121,7 +121,7 @@
       --s1p-code-bg: #eee;
       --s1p-readprogress-bg: #b8d56f;
       
-      --s1p-list-item-status-bg: #dddddd
+      --s1p-list-item-status-bg: #dddddd;
 
       /* -- 阅读进度 -- */
       --s1p-progress-hot: rgb(192, 51, 34);
@@ -974,6 +974,11 @@
       display: flex;
       flex-direction: column;
       position: relative;
+      
+      /* [优化] 为设置面板设定统一的字体族和渲染方式 */
+      font-family: -apple-system, "BlinkMacSystemFont", "Segoe UI", "Roboto", "Helvetica Neue", "Arial", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
     }
     .s1p-modal-header {
       background: var(--s1p-pri);
@@ -984,8 +989,10 @@
       align-items: center;
     }
     .s1p-modal-title {
-      font-size: 18px;
-      font-weight: bold;
+      /* [优化 V2] 微调主标题尺寸 */
+      font-size: 20px;
+      font-weight: 600;
+      letter-spacing: -0.5px;
     }
     .s1p-modal-close {
       width: 12px;
@@ -1068,9 +1075,6 @@
     .s1p-tab-content {
       display: none;
       padding-top: 0;
-      /* [NEW] 为所有标签页内容区统一添加 16px 的水平内边距，作为全局“安全区” */
-      //  padding-left: 16px;
-      //padding-right: 16px;
     }
 
     .s1p-tabs-wrapper {
@@ -1101,6 +1105,7 @@
       min-width: 0;
     }
     .s1p-item-title {
+      /* [优化] 统一列表项标题样式 */
       font-size: 15px; 
       font-weight: 500;
       margin-bottom: 4px;
@@ -1109,6 +1114,7 @@
       text-overflow: ellipsis;
     }
     .s1p-item-meta {
+      /* [优化] 统一列表项元信息样式 */
       font-size: 12px;
       color: var(--s1p-desc-t);
     }
@@ -1126,15 +1132,17 @@
       background-color: var(--s1p-red-h);
     }
     .s1p-sync-title {
-      font-size: 14px;
-      font-weight: 500;
+      /* [优化] 调整同步标题的样式，与分组标题统一 */
+      font-size: 16px;
+      font-weight: 600;
       margin-bottom: 8px;
     }
     .s1p-local-sync-desc {
-      font-size: 14px;
+      /* [优化] 调整描述文字样式，提升可读性 */
+      font-size: 13px;
       color: var(--s1p-desc-t);
-      margin-bottom: 12px;
-      line-height: 1.5;
+      margin-bottom: 16px;
+      line-height: 1.7;
     }
     .s1p-local-sync-buttons {
       display: flex;
@@ -1148,19 +1156,14 @@
     }
     /* --- [新增] 论坛黑名单同步状态提示 --- */
     .s1p-native-sync-status {
-        /* [核心改造] 使用 inline-block 以应用内外边距和背景 */
         display: inline-block;
-        /* [配色] 使用脚本内置的成功状态配色 */
         background-color: var(--s1p-list-item-status-bg);
         color: var(--s1p-t);
-        /* [形状] 增加内边距并设置大圆角，形成胶囊形状 */
         padding: 2px 8px;
         border-radius: 7px;
-        /* [字体] 移除斜体，适当加粗以提高可读性 */
         font-style: normal;
         font-weight: 500;
         font-size: 11px;
-        /* [对齐] 调整垂直对齐，使其与用户名文本更协调 */
         margin-left: 8px;
         vertical-align: middle;
         position: relative;
@@ -1408,11 +1411,12 @@
       padding: 8px;
     }
     .s1p-settings-group-title {
-      font-size: 14px;
+      /* [优化 V2] 调整次级分组标题，拉开层级 */
+      font-size: 15px;
       font-weight: 500;
       border-bottom: 1px solid var(--s1p-pri);
-      padding-bottom: 16px;
-      margin-bottom: 12px;
+      padding-bottom: 12px;
+      margin-bottom: 16px;
     }
     .s1p-settings-item {
       display: flex;
@@ -1425,9 +1429,12 @@
       min-width: 200px;
     }
     .s1p-settings-label {
+      /* [优化] 设定设置项标签的基础样式 */
       font-size: 14px;
+      font-weight: 500;
     }
     .s1p-settings-section-title-label {
+      /* [优化 V2] 调整主要分组标题，响应用户反馈 */
       font-size: 16px;
       font-weight: 600;
     }
@@ -1435,11 +1442,12 @@
       /* Handled by .s1p-switch */
     }
     .s1p-setting-desc {
-      font-size: 12px;
+      /* [优化] 统一描述文字的样式，提升可读性 */
+      font-size: 13px;
       color: var(--s1p-desc-t);
-      margin: -4px 0 8px 0;
+      margin: -4px 0 12px 0;
       padding: 0;
-      line-height: 1.5;
+      line-height: 1.7;
     }
     .s1p-editor-item {
       display: grid;
@@ -1646,12 +1654,13 @@
       color: var(--s1p-t);
     }
     .s1p-item-content {
-      margin-top: 10px; /* 增加上边距 */
-      padding-top: 10px; /* 增加上内边距，文字与分割线间的空间 */
-      border-top: 1px solid var(--s1p-pri); /* 添加分割线 */
-      color: var(--s1p-t); /* 使用更醒目的主文本颜色 */
-      font-size: 12px; /* 增大字体 */
-      font-weight: bold;
+      /* [优化] 调整列表项正文内容的样式 */
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid var(--s1p-pri);
+      color: var(--s1p-t);
+      font-size: 14px;
+      font-weight: 400; /* 使用常规字重 */
       line-height: 1.6;
       white-space: pre-wrap;
       word-break: break-all;
