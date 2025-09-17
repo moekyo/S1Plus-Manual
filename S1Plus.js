@@ -90,6 +90,9 @@
       --s1p-white: #ffffff;
       --s1p-black-rgb: 0, 0, 0;
 
+      /* -- [新增] 阴影 -- */
+      --s1p-shadow-color-rgb: 0, 0, 0;
+
       /* -- 主题色 -- */
       --s1p-t: #022c80;
       --s1p-desc-t: #10388a;
@@ -289,12 +292,12 @@
       height: calc(100% - 4px);
       background-color: var(--s1p-sec);
       border-radius: 5px;
-      box-shadow: 0 1px 3px rgba(var(--s1p-black-rgb), 0.1);
+      box-shadow: 0 1px 3px rgba(var(--s1p-shadow-color-rgb), 0.1);
       transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1),
         transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
     }
     .s1p-segmented-control:hover .s1p-segmented-control-slider {
-      box-shadow: 0 2px 6px rgba(var(--s1p-black-rgb), 0.15);
+      box-shadow: 0 2px 6px rgba(var(--s1p-shadow-color-rgb), 0.15);
     }
     .s1p-segmented-control-option {
       position: relative;
@@ -385,7 +388,7 @@
       white-space: nowrap;
       border: none;
       /* [MODIFIED] 采用更收敛、精致的默认阴影，并微调Y轴位移 */
-      box-shadow: 0 1px 2px rgba(var(--s1p-black-rgb), 0.12);
+      box-shadow: 0 1px 2px rgba(var(--s1p-shadow-color-rgb), 0.12);
       transform: translateY(-1px);
       /* [MODIFIED] 优化过渡动画曲线，使其更平滑 */
       transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
@@ -397,7 +400,7 @@
       color: var(--s1p-sub-h-t);
       /* [MODIFIED] 同样采用更收敛的悬停阴影，并微调Y轴位移 */
       transform: translateY(-3px);
-      box-shadow: 0 3px 6px rgba(var(--s1p-black-rgb), 0.18);
+      box-shadow: 0 3px 6px rgba(var(--s1p-shadow-color-rgb), 0.18);
     }
 
     /* --- [MODIFIED] 危险/红色按钮样式 - 仅在高亮时变色 --- */
@@ -451,7 +454,7 @@
       z-index: 10;
       background-color: var(--s1p-bg);
       border-radius: 8px;
-      box-shadow: 0 4px 12px rgba(var(--s1p-black-rgb), 0.1);
+      box-shadow: 0 4px 12px rgba(var(--s1p-shadow-color-rgb), 0.1);
       padding: 5px;
       min-width: 110px;
       opacity: 0;
@@ -544,7 +547,7 @@
       gap: 4px;
       background-color: var(--s1p-bg);
       border-radius: 8px;
-      box-shadow: 0 4px 12px rgba(var(--s1p-black-rgb), 0.1);
+      box-shadow: 0 4px 12px rgba(var(--s1p-shadow-color-rgb), 0.1);
       padding: 5px;
       opacity: 0;
       visibility: hidden;
@@ -672,7 +675,7 @@
       width: 300px;
       background-color: var(--s1p-bg);
       border-radius: 12px;
-      box-shadow: 0 4px 20px rgba(var(--s1p-black-rgb), 0.08);
+      box-shadow: 0 4px 20px rgba(var(--s1p-shadow-color-rgb), 0.08);
       opacity: 0;
       visibility: hidden;
       transform: translateY(5px) scale(0.98);
@@ -773,7 +776,7 @@
       max-width: 350px;
       background-color: var(--s1p-bg);
       border-radius: 8px;
-      box-shadow: 0 2px 10px rgba(var(--s1p-black-rgb), 0.12);
+      box-shadow: 0 2px 10px rgba(var(--s1p-shadow-color-rgb), 0.12);
       padding: 10px 14px;
       font-size: 13px;
       line-height: 1.6;
@@ -918,7 +921,7 @@
       z-index: 10002;
       background-color: var(--s1p-bg);
       border-radius: 6px;
-      box-shadow: 0 2px 8px rgba(var(--s1p-black-rgb), 0.15);
+      box-shadow: 0 2px 8px rgba(var(--s1p-shadow-color-rgb), 0.15);
       padding: 4px; 
       display: flex;
       flex-direction: column;
@@ -963,7 +966,7 @@
     .s1p-modal-content {
       background-color: var(--s1p-bg);
       border-radius: 8px;
-      box-shadow: 0 4px 6px rgba(var(--s1p-black-rgb), 0.1);
+      box-shadow: 0 4px 6px rgba(var(--s1p-shadow-color-rgb), 0.1);
       width: 600px;
       max-width: 90%;
       max-height: 80vh;
@@ -1033,7 +1036,7 @@
       height: calc(100% - 8px);
       background-color: var(--s1p-white);
       border-radius: 4px;
-      box-shadow: 0 1px 2px rgba(var(--s1p-black-rgb), 0.1);
+      box-shadow: 0 1px 2px rgba(var(--s1p-shadow-color-rgb), 0.1);
     }
     .s1p-tab-content.active {
       display: block;
@@ -1204,7 +1207,7 @@
       font-weight: 500;
       color: var(--s1p-t); /* <-- 修改了此行 */
       background-color: var(--s1p-bg); /* <-- 修改了此行 */
-      box-shadow: 0 4px 12px rgba(var(--s1p-black-rgb), 0.15);
+      box-shadow: 0 4px 12px rgba(var(--s1p-shadow-color-rgb), 0.15);
       opacity: 0;
       transition: opacity 0.3s ease-out, transform 0.3s ease-out;
       pointer-events: none;
@@ -1286,8 +1289,8 @@
     .s1p-confirm-content {
       background-color: var(--s1p-bg);
       border-radius: 12px;
-      box-shadow: 0 10px 25px -5px rgba(var(--s1p-black-rgb), 0.1),
-        0 10px 10px -5px rgba(var(--s1p-black-rgb), 0.04);
+      box-shadow: 0 10px 25px -5px rgba(var(--s1p-shadow-color-rgb), 0.1),
+        0 10px 10px -5px rgba(var(--s1p-shadow-color-rgb), 0.04);
       width: 480px;
       max-width: 90%;
       text-align: left;
@@ -1619,7 +1622,7 @@
       background-color: var(--s1p-white);
       transition: 0.3s;
       border-radius: 50%;
-      box-shadow: 0 1px 3px rgba(var(--s1p-black-rgb), 0.1);
+      box-shadow: 0 1px 3px rgba(var(--s1p-shadow-color-rgb), 0.1);
     }
     input:checked + .s1p-slider {
       background-color: var(--s1p-sec);
@@ -1821,10 +1824,9 @@
       width: 20px;
       height: 40px;
       background-color: var(--s1p-bg);
-      border: 1px solid var(--s1p-pri);
       border-right: none;
       border-radius: 10px 0 0 10px;
-      box-shadow: -2px 2px 8px rgba(var(--s1p-black-rgb), 0.1);
+      box-shadow: -2px 2px 8px rgba(var(--s1p-shadow-color-rgb), 0.1);
       cursor: pointer;
       display: flex;
       align-items: center;
@@ -1878,7 +1880,7 @@
       height: 40px;
       border-radius: 50%;
       background-color: var(--s1p-bg);
-      box-shadow: 0 2px 8px rgba(var(--s1p-black-rgb), 0.15);
+      box-shadow: 0 2px 8px rgba(var(--s1p-shadow-color-rgb), 0.15);
       transition: all 0.2s ease-in-out;
       padding: 0;
       box-sizing: border-box;
@@ -2013,7 +2015,7 @@
       font-weight: bold;
       user-select: none;
       white-space: nowrap;
-      box-shadow: 0 0 4px rgba(13, 13, 13, 0.1);
+      box-shadow: 0 0 4px rgba(var(--s1p-shadow-color-rgb), 0.1);
       line-height: 1;
     }
     .s1p-read-indicator-icon {
@@ -2051,6 +2053,56 @@
       /* 删除按钮：默认状态下使用白色图标 */
       .s1p-editor-btn.s1p-delete-button {
         background-image: url("${SVG_ICON_DELETE_HOVER}") !important;
+      }
+
+      /* --- [新增] 深色模式阴影适配 --- */
+      .s1p-segmented-control-slider {
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+      }
+      .s1p-segmented-control:hover .s1p-segmented-control-slider {
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
+      }
+      .s1p-btn, .s1p-confirm-btn {
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      }
+      .s1p-btn:hover, .s1p-confirm-btn:hover {
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+      }
+      .s1p-options-menu, .s1p-inline-action-menu {
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+      }
+      .s1p-tag-popover {
+        box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+      }
+      .s1p-generic-display-popover {
+        box-shadow: 0 3px 12px rgba(0, 0, 0, 0.35);
+      }
+      .s1p-tag-options-menu {
+        box-shadow: 0 3px 10px rgba(0, 0, 0, 0.35);
+      }
+      .s1p-modal-content {
+        box-shadow: 0 5px 20px rgba(0, 0, 0, 0.3);
+      }
+      .s1p-tab-slider {
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+      }
+      .s1p-toast-notification {
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+      }
+      .s1p-confirm-content {
+        box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.3);
+      }
+      .s1p-slider:before {
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+      }
+      .s1p-read-indicator {
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+      }
+      #s1p-controls-handle {
+        box-shadow: -2px 2px 8px rgba(0, 0, 0, 0.25);
+      }
+      #s1p-floating-controls a {
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
       }
     }
   `);

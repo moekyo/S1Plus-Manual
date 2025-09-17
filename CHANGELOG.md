@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+### Style
+- **UI Refinement:** 引入了统一的阴影颜色变量，以增强主题一致性。
+- **Dark Mode:** 优化了深色模式下的阴影渲染，提升了视觉层次感。
+
 ### 🎨 UI/UX 优化 (UI/UX Improvements)
 
 - **界面风格统一**:
