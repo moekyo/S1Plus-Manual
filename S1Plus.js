@@ -1154,7 +1154,7 @@
     .s1p-sync-textarea {
       width: 100%;
       min-height: 80px;
-      margin-bottom: 20px;
+      margin-bottom: 8px;
     }
     /* --- [新增] 论坛黑名单同步状态提示 --- */
     .s1p-native-sync-status {
@@ -4389,7 +4389,6 @@
                 </div>
 
                 <div class="s1p-settings-group">
-                    <div class="s1p-settings-group-title">已标记用户列表</div>
                     <div id="s1p-tags-list-container">
                         ${
                           tagItems.length === 0
