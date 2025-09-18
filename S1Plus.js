@@ -2850,59 +2850,69 @@
   };
 
   /**
-   * 点击事件处理函数，用于在新标签页打开帖子。
+   * 全局点击事件处理函数，用于在新标签页打开符合条件的论坛内链接。
    * @param {MouseEvent} e - 点击事件对象。
    */
-  const threadLinkClickHandler = (e) => {
+  /**
+   * 全局点击事件处理函数，用于在新标签页打开符合条件的论坛内链接。
+   * @param {MouseEvent} e - 点击事件对象。
+   */
+  const globalLinkClickHandler = (e) => {
     const settings = getSettings();
-    // 再次检查设置，确保功能开启
-    if (settings.openThreadsInNewTab) {
+    if (!settings.openThreadsInNewTab) return; // 检查总开关是否开启
+
+    // 从事件目标开始向上查找最近的 <a> 标签
+    const anchor = e.target.closest("a[href]");
+    if (!anchor) return;
+
+    // --- 排除规则 ---
+    const href = anchor.getAttribute("href");
+
+    // 1. 排除 javascript: 伪协议链接
+    if (href.startsWith("javascript:")) {
+      return;
+    }
+
+    // [MODIFIED] 此处已移除对 anchor.target 的检查，以强制脚本接管所有内部链接
+    // 旧规则: if (anchor.target) { return; }
+
+    // 2. 排除登出链接
+    if (href.includes("mod=logging&action=logout")) {
+      return;
+    }
+
+    // 3. 排除脚本自身的UI交互链接 (如设置弹窗、确认框内)
+    if (
+      anchor.closest(
+        ".s1p-modal, .s1p-confirm-modal, .s1p-options-menu, .s1p-tag-popover"
+      )
+    ) {
+      return;
+    }
+
+    // 4. 核心判断：仅对指向当前站点的内部链接生效
+    if (anchor.hostname === window.location.hostname) {
       e.preventDefault();
-      GM_openInTab(e.currentTarget.href, {
+      e.stopPropagation();
+      GM_openInTab(anchor.href, {
+        // 使用 anchor.href 获取完整的绝对URL
         active: !settings.openThreadsInBackground,
       });
     }
   };
 
   /**
-   * 遍历帖子列表的所有标题链接，并根据用户设置应用或移除“新标签页打开”的行为。
+   * 根据用户设置，应用或移除全局链接处理行为。
    */
-  const applyThreadLinkBehavior = () => {
+  const applyGlobalLinkBehavior = () => {
+    // 先移除旧的监听器，防止重复绑定
+    document.body.removeEventListener("click", globalLinkClickHandler);
+
     const settings = getSettings();
-    document
-      .querySelectorAll(
-        'tbody[id^="normalthread_"] th a.s.xst, tbody[id^="stickthread_"] th a.s.xst'
-      )
-      .forEach((link) => {
-        // 先移除旧的监听器，以防重复添加或在禁用功能时清理
-        link.removeEventListener("click", threadLinkClickHandler);
-
-        // 如果功能启用，则添加新的监听器
-        if (settings.openThreadsInNewTab) {
-          link.addEventListener("click", threadLinkClickHandler);
-        }
-      });
-  };
-
-  /**
-   * 遍历帖子列表的所有页码链接，并根据用户设置应用或移除“新标签页打开”的行为。
-   */
-  const applyPageLinkBehavior = () => {
-    const settings = getSettings();
-    document
-      .querySelectorAll(
-        'tbody[id^="normalthread_"] span.tps a, tbody[id^="stickthread_"] span.tps a'
-      )
-      .forEach((link) => {
-        // 移除旧的监听器和 onclick 属性
-        link.removeEventListener("click", threadLinkClickHandler);
-        link.removeAttribute("onclick");
-
-        // 如果功能启用，则添加新的监听器
-        if (settings.openThreadsInNewTab) {
-          link.addEventListener("click", threadLinkClickHandler);
-        }
-      });
+    if (settings.openThreadsInNewTab) {
+      // 仅在功能开启时添加新的监听器
+      document.body.addEventListener("click", globalLinkClickHandler);
+    }
   };
 
   // [MODIFIED] 导出数据对象，采用新的嵌套结构并包含内容哈希
@@ -4915,149 +4925,147 @@
       });
     };
 
+    // [REPLACE ENTIRE FUNCTION]
     const renderGeneralSettingsTab = () => {
       const settings = getSettings();
       tabs["general-settings"].innerHTML = `
-            <div class="s1p-settings-group">
-                <div class="s1p-settings-item" style="padding: 0; padding-bottom: 16px; border-bottom: 1px solid var(--s1p-pri);">
-                    <label class="s1p-settings-label s1p-settings-section-title-label" for="s1p-enableGeneralSettings">启用通用设置</label>
-                    <label class="s1p-switch">
-                        <input type="checkbox" id="s1p-enableGeneralSettings" data-feature="enableGeneralSettings" class="s1p-feature-toggle" ${
-                          settings.enableGeneralSettings ? "checked" : ""
-                        }>
-                        <span class="s1p-slider"></span>
-                    </label>
+        <div class="s1p-settings-group">
+            <div class="s1p-settings-item" style="padding: 0; padding-bottom: 16px; border-bottom: 1px solid var(--s1p-pri);">
+                <label class="s1p-settings-label s1p-settings-section-title-label" for="s1p-enableGeneralSettings">启用通用设置</label>
+                <label class="s1p-switch">
+                    <input type="checkbox" id="s1p-enableGeneralSettings" data-feature="enableGeneralSettings" class="s1p-feature-toggle" ${
+                      settings.enableGeneralSettings ? "checked" : ""
+                    }>
+                    <span class="s1p-slider"></span>
+                </label>
+            </div>
+        </div>
+
+        <div class="s1p-feature-content ${
+          settings.enableGeneralSettings ? "expanded" : ""
+        }">
+            <div>
+                <div class="s1p-settings-group">
+                    <div class="s1p-settings-group-title">阅读/浏览增强</div>
+                    <div class="s1p-settings-item">
+                        <label class="s1p-settings-label" for="s1p-openThreadsInNewTab">在新标签页打开论坛内链接</label>
+                        <label class="s1p-switch"><input type="checkbox" id="s1p-openThreadsInNewTab" class="s1p-settings-checkbox" data-setting="openThreadsInNewTab" ${
+                          settings.openThreadsInNewTab ? "checked" : ""
+                        }><span class="s1p-slider"></span></label>
+                    </div>
+                    <p class="s1p-setting-desc" style="margin-top: -4px;">开启后，论坛内大部分页面链接（如帖子、版块、个人空间等）都将在新标签页打开。已排除登出、脚本功能等特殊链接。</p>
+                    <div class="s1p-settings-item" id="s1p-openThreadsInBackground-item" style="padding-left: 20px; ${
+                      !settings.openThreadsInNewTab ? "display: none;" : ""
+                    }">
+                        <label class="s1p-settings-label" for="s1p-openThreadsInBackground">后台打开 (不激活新标签页)</label>
+                        <label class="s1p-switch"><input type="checkbox" id="s1p-openThreadsInBackground" class="s1p-settings-checkbox" data-setting="openThreadsInBackground" ${
+                          settings.openThreadsInBackground ? "checked" : ""
+                        }><span class="s1p-slider"></span></label>
+                    </div>
+
+                     <div class="s1p-settings-item">
+                        <label class="s1p-settings-label" for="s1p-enableReadProgress">启用阅读进度跟踪</label>
+                        <label class="s1p-switch"><input type="checkbox" id="s1p-enableReadProgress" data-feature="enableReadProgress" class="s1p-feature-toggle" ${
+                          settings.enableReadProgress ? "checked" : ""
+                        }><span class="s1p-slider"></span></label>
+                    </div>
+                    <div id="s1p-read-progress-sub-settings" class="s1p-feature-content ${
+                      settings.enableReadProgress ? "expanded" : ""
+                    }">
+                      <div>
+                        <div class="s1p-settings-item" id="s1p-showReadIndicator-container" style="padding-left: 20px;">
+                            <label class="s1p-settings-label" for="s1p-showReadIndicator">显示“当前阅读位置”浮动标识</label>
+                            <label class="s1p-switch"><input type="checkbox" id="s1p-showReadIndicator" class="s1p-settings-checkbox" data-setting="showReadIndicator" ${
+                              settings.showReadIndicator ? "checked" : ""
+                            }><span class="s1p-slider"></span></label>
+                        </div>
+                        <div class="s1p-settings-item" id="s1p-readingProgressCleanupContainer" style="padding-left: 20px;">
+                            <label class="s1p-settings-label">自动清理超过以下时间的阅读记录</label>
+                            <div id="s1p-readingProgressCleanupDays-control" class="s1p-segmented-control">
+                                <div class="s1p-segmented-control-slider"></div>
+                                <div class="s1p-segmented-control-option ${
+                                  settings.readingProgressCleanupDays == 30
+                                    ? "active"
+                                    : ""
+                                }" data-value="30">1个月</div>
+                                <div class="s1p-segmented-control-option ${
+                                  settings.readingProgressCleanupDays == 90
+                                    ? "active"
+                                    : ""
+                                }" data-value="90">3个月</div>
+                                <div class="s1p-segmented-control-option ${
+                                  settings.readingProgressCleanupDays == 180
+                                    ? "active"
+                                    : ""
+                                }" data-value="180">6个月</div>
+                                <div class="s1p-segmented-control-option ${
+                                  settings.readingProgressCleanupDays == 0
+                                    ? "active"
+                                    : ""
+                                }" data-value="0">永不</div>
+                            </div>
+                        </div>
+                        <div class="s1p-settings-item" style="padding-left: 20px;">
+                            <label class="s1p-settings-label" for="s1p-openProgressInNewTab">在新标签页打开阅读进度</label>
+                            <label class="s1p-switch"><input type="checkbox" id="s1p-openProgressInNewTab" class="s1p-settings-checkbox" data-setting="openProgressInNewTab" ${
+                              settings.openProgressInNewTab ? "checked" : ""
+                            }><span class="s1p-slider"></span></label>
+                        </div>
+                        <div class="s1p-settings-item" id="s1p-openProgressInBackground-item" style="padding-left: 40px; ${
+                          !settings.openProgressInNewTab ? "display: none;" : ""
+                        }">
+                            <label class="s1p-settings-label" for="s1p-openProgressInBackground">后台打开 (不激活新标签页)</label>
+                            <label class="s1p-switch"><input type="checkbox" id="s1p-openProgressInBackground" class="s1p-settings-checkbox" data-setting="openProgressInBackground" ${
+                              settings.openProgressInBackground ? "checked" : ""
+                            }><span class="s1p-slider"></span></label>
+                        </div>
+                      </div>
+                    </div>
+
+                     <div class="s1p-settings-item">
+                        <label class="s1p-settings-label" for="s1p-hideImagesByDefault">默认隐藏帖子图片</label>
+                        <label class="s1p-switch"><input type="checkbox" id="s1p-hideImagesByDefault" class="s1p-settings-checkbox" data-setting="hideImagesByDefault" ${
+                          settings.hideImagesByDefault ? "checked" : ""
+                        }><span class="s1p-slider"></span></label>
+                    </div>
+                </div>
+                <div class="s1p-settings-group">
+                    <div class="s1p-settings-group-title">界面与个性化</div>
+                    <div class="s1p-settings-item">
+                        <label class="s1p-settings-label" for="s1p-recommendS1Nux">推荐 S1 NUX 安装</label>
+                        <label class="s1p-switch"><input type="checkbox" id="s1p-recommendS1Nux" class="s1p-settings-checkbox" data-setting="recommendS1Nux" ${
+                          settings.recommendS1Nux ? "checked" : ""
+                        }><span class="s1p-slider"></span></label>
+                    </div>
+                    <p class="s1p-setting-desc">S1 Plus 与 S1 NUX 论坛美化美化扩展搭配使用效果更佳。开启后，若检测到您未安装 S1 NUX，脚本会适时弹出对话框进行推荐。</p>
+                    <div class="s1p-settings-item">
+                        <label class="s1p-settings-label" for="s1p-enhanceFloatingControls">使用 S1 Plus 增强型悬浮控件</label>
+                        <label class="s1p-switch"><input type="checkbox" id="s1p-enhanceFloatingControls" class="s1p-settings-checkbox" data-setting="enhanceFloatingControls" ${
+                          settings.enhanceFloatingControls ? "checked" : ""
+                        }><span class="s1p-slider"></span></label>
+                    </div>
+                    <p class="s1p-setting-desc">开启后，将使用脚本提供的全新悬停展开式控件；关闭则恢复使用论坛原生的滚动控件。</p>
+                    <div class="s1p-settings-item">
+                        <label class="s1p-settings-label" for="s1p-changeLogoLink">修改论坛Logo链接 (指向论坛首页)</label>
+                        <label class="s1p-switch"><input type="checkbox" id="s1p-changeLogoLink" class="s1p-settings-checkbox" data-setting="changeLogoLink" ${
+                          settings.changeLogoLink ? "checked" : ""
+                        }><span class="s1p-slider"></span></label>
+                    </div>
+                    <div class="s1p-settings-item">
+                        <label class="s1p-settings-label" for="s1p-hideBlacklistTip">隐藏已屏蔽用户发言的黄条提示</label>
+                        <label class="s1p-switch"><input type="checkbox" id="s1p-hideBlacklistTip" class="s1p-settings-checkbox" data-setting="hideBlacklistTip" ${
+                          settings.hideBlacklistTip ? "checked" : ""
+                        }><span class="s1p-slider"></span></label>
+                    </div>
+                    <div class="s1p-settings-item">
+                        <label class="s1p-settings-label" for="s1p-customTitleSuffix">自定义标题后缀</label>
+                        <input type="text" id="s1p-customTitleSuffix" class="s1p-input" data-setting="customTitleSuffix" value="${
+                          settings.customTitleSuffix || ""
+                        }" autocomplete="off">
+                    </div>
                 </div>
             </div>
-
-            <div class="s1p-feature-content ${
-              settings.enableGeneralSettings ? "expanded" : ""
-            }">
-                <div>
-                    <div class="s1p-settings-group">
-                        <div class="s1p-settings-group-title">阅读/浏览增强</div>
-                        <div class="s1p-settings-item">
-                            <label class="s1p-settings-label" for="s1p-openThreadsInNewTab">在新窗口打开帖子</label>
-                            <label class="s1p-switch"><input type="checkbox" id="s1p-openThreadsInNewTab" class="s1p-settings-checkbox" data-setting="openThreadsInNewTab" ${
-                              settings.openThreadsInNewTab ? "checked" : ""
-                            }><span class="s1p-slider"></span></label>
-                        </div>
-                        <div class="s1p-settings-item" id="s1p-openThreadsInBackground-item" style="padding-left: 20px; ${
-                          !settings.openThreadsInNewTab ? "display: none;" : ""
-                        }">
-                            <label class="s1p-settings-label" for="s1p-openThreadsInBackground">后台打开 (不激活新标签页)</label>
-                            <label class="s1p-switch"><input type="checkbox" id="s1p-openThreadsInBackground" class="s1p-settings-checkbox" data-setting="openThreadsInBackground" ${
-                              settings.openThreadsInBackground ? "checked" : ""
-                            }><span class="s1p-slider"></span></label>
-                        </div>
-
-                         <div class="s1p-settings-item">
-                            <label class="s1p-settings-label" for="s1p-enableReadProgress">启用阅读进度跟踪</label>
-                            <label class="s1p-switch"><input type="checkbox" id="s1p-enableReadProgress" data-feature="enableReadProgress" class="s1p-feature-toggle" ${
-                              settings.enableReadProgress ? "checked" : ""
-                            }><span class="s1p-slider"></span></label>
-                        </div>
-                        <div id="s1p-read-progress-sub-settings" class="s1p-feature-content ${
-                          settings.enableReadProgress ? "expanded" : ""
-                        }">
-                          <div>
-                            <div class="s1p-settings-item" id="s1p-showReadIndicator-container" style="padding-left: 20px;">
-                                <label class="s1p-settings-label" for="s1p-showReadIndicator">显示“当前阅读位置”浮动标识</label>
-                                <label class="s1p-switch"><input type="checkbox" id="s1p-showReadIndicator" class="s1p-settings-checkbox" data-setting="showReadIndicator" ${
-                                  settings.showReadIndicator ? "checked" : ""
-                                }><span class="s1p-slider"></span></label>
-                            </div>
-                            <div class="s1p-settings-item" id="s1p-readingProgressCleanupContainer" style="padding-left: 20px;">
-                                <label class="s1p-settings-label">自动清理超过以下时间的阅读记录</label>
-                                <div id="s1p-readingProgressCleanupDays-control" class="s1p-segmented-control">
-                                    <div class="s1p-segmented-control-slider"></div>
-                                    <div class="s1p-segmented-control-option ${
-                                      settings.readingProgressCleanupDays == 30
-                                        ? "active"
-                                        : ""
-                                    }" data-value="30">1个月</div>
-                                    <div class="s1p-segmented-control-option ${
-                                      settings.readingProgressCleanupDays == 90
-                                        ? "active"
-                                        : ""
-                                    }" data-value="90">3个月</div>
-                                    <div class="s1p-segmented-control-option ${
-                                      settings.readingProgressCleanupDays == 180
-                                        ? "active"
-                                        : ""
-                                    }" data-value="180">6个月</div>
-                                    <div class="s1p-segmented-control-option ${
-                                      settings.readingProgressCleanupDays == 0
-                                        ? "active"
-                                        : ""
-                                    }" data-value="0">永不</div>
-                                </div>
-                            </div>
-                            <div class="s1p-settings-item" style="padding-left: 20px;">
-                                <label class="s1p-settings-label" for="s1p-openProgressInNewTab">在新窗口打开阅读进度</label>
-                                <label class="s1p-switch"><input type="checkbox" id="s1p-openProgressInNewTab" class="s1p-settings-checkbox" data-setting="openProgressInNewTab" ${
-                                  settings.openProgressInNewTab ? "checked" : ""
-                                }><span class="s1p-slider"></span></label>
-                            </div>
-                            <div class="s1p-settings-item" id="s1p-openProgressInBackground-item" style="padding-left: 40px; ${
-                              !settings.openProgressInNewTab
-                                ? "display: none;"
-                                : ""
-                            }">
-                                <label class="s1p-settings-label" for="s1p-openProgressInBackground">后台打开 (不激活新标签页)</label>
-                                <label class="s1p-switch"><input type="checkbox" id="s1p-openProgressInBackground" class="s1p-settings-checkbox" data-setting="openProgressInBackground" ${
-                                  settings.openProgressInBackground
-                                    ? "checked"
-                                    : ""
-                                }><span class="s1p-slider"></span></label>
-                            </div>
-                          </div>
-                        </div>
-
-                         <div class="s1p-settings-item">
-                            <label class="s1p-settings-label" for="s1p-hideImagesByDefault">默认隐藏帖子图片</label>
-                            <label class="s1p-switch"><input type="checkbox" id="s1p-hideImagesByDefault" class="s1p-settings-checkbox" data-setting="hideImagesByDefault" ${
-                              settings.hideImagesByDefault ? "checked" : ""
-                            }><span class="s1p-slider"></span></label>
-                        </div>
-                    </div>
-                    <div class="s1p-settings-group">
-                        <div class="s1p-settings-group-title">界面与个性化</div>
-                        <div class="s1p-settings-item">
-                            <label class="s1p-settings-label" for="s1p-recommendS1Nux">推荐 S1 NUX 安装</label>
-                            <label class="s1p-switch"><input type="checkbox" id="s1p-recommendS1Nux" class="s1p-settings-checkbox" data-setting="recommendS1Nux" ${
-                              settings.recommendS1Nux ? "checked" : ""
-                            }><span class="s1p-slider"></span></label>
-                        </div>
-                        <p class="s1p-setting-desc">S1 Plus 与 S1 NUX 论坛美化美化扩展搭配使用效果更佳。开启后，若检测到您未安装 S1 NUX，脚本会适时弹出对话框进行推荐。</p>
-                        <div class="s1p-settings-item">
-                            <label class="s1p-settings-label" for="s1p-enhanceFloatingControls">使用 S1 Plus 增强型悬浮控件</label>
-                            <label class="s1p-switch"><input type="checkbox" id="s1p-enhanceFloatingControls" class="s1p-settings-checkbox" data-setting="enhanceFloatingControls" ${
-                              settings.enhanceFloatingControls ? "checked" : ""
-                            }><span class="s1p-slider"></span></label>
-                        </div>
-                        <p class="s1p-setting-desc">开启后，将使用脚本提供的全新悬停展开式控件；关闭则恢复使用论坛原生的滚动控件。</p>
-                        <div class="s1p-settings-item">
-                            <label class="s1p-settings-label" for="s1p-changeLogoLink">修改论坛Logo链接 (指向论坛首页)</label>
-                            <label class="s1p-switch"><input type="checkbox" id="s1p-changeLogoLink" class="s1p-settings-checkbox" data-setting="changeLogoLink" ${
-                              settings.changeLogoLink ? "checked" : ""
-                            }><span class="s1p-slider"></span></label>
-                        </div>
-                        <div class="s1p-settings-item">
-                            <label class="s1p-settings-label" for="s1p-hideBlacklistTip">隐藏已屏蔽用户发言的黄条提示</label>
-                            <label class="s1p-switch"><input type="checkbox" id="s1p-hideBlacklistTip" class="s1p-settings-checkbox" data-setting="hideBlacklistTip" ${
-                              settings.hideBlacklistTip ? "checked" : ""
-                            }><span class="s1p-slider"></span></label>
-                        </div>
-                        <div class="s1p-settings-item">
-                            <label class="s1p-settings-label" for="s1p-customTitleSuffix">自定义标题后缀</label>
-                            <input type="text" id="s1p-customTitleSuffix" class="s1p-input" data-setting="customTitleSuffix" value="${
-                              settings.customTitleSuffix || ""
-                            }" autocomplete="off">
-                        </div>
-                    </div>
-                </div>
-            </div>`;
+        </div>`;
 
       const moveSlider = (control) => {
         if (!control) return;
@@ -5286,6 +5294,7 @@
     requestAnimationFrame(() => {
       modal.style.opacity = "1";
     });
+    // [REPLACE ENTIRE EVENT LISTENER BLOCK]
     modal.addEventListener("change", (e) => {
       const target = e.target;
       const settings = getSettings();
@@ -5321,8 +5330,7 @@
           settingKey === "openThreadsInNewTab" ||
           settingKey === "openThreadsInBackground"
         ) {
-          applyThreadLinkBehavior();
-          applyPageLinkBehavior();
+          applyGlobalLinkBehavior(); // <--- MODIFIED
         }
         if (
           settingKey === "openProgressInNewTab" ||
@@ -5389,8 +5397,7 @@
         switch (featureKey) {
           case "enableGeneralSettings":
             applyInterfaceCustomizations();
-            applyThreadLinkBehavior();
-            applyPageLinkBehavior();
+            applyGlobalLinkBehavior(); // <--- MODIFIED
             applyImageHiding();
             manageImageToggleAllButtons();
             if (isChecked) {
@@ -7613,7 +7620,6 @@
     observer.observe(watchTarget, { childList: true, subtree: true });
   }
 
-  // [修改] 调用新的控件管理器，不再直接创建控件
   function applyChanges() {
     const settings = getSettings();
 
@@ -7648,8 +7654,7 @@
     applyImageHiding();
     manageImageToggleAllButtons();
     renameAuthorLinks();
-    applyThreadLinkBehavior();
-    applyPageLinkBehavior();
+    applyGlobalLinkBehavior(); // <--- MODIFIED
     trackReadProgressInThread();
     try {
       autoSign();
