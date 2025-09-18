@@ -440,7 +440,7 @@
       opacity: 0.4;
       transition: background-color 0.2s ease, color 0.2s ease, opacity 0.2s ease;
     }
-    .s1p-options-cell:hover .s1p-options-btn {
+    .s1p-options-btn:hover {
       background-color: var(--s1p-pri);
       color: var(--s1p-t);
       opacity: 1;
@@ -462,7 +462,9 @@
       pointer-events: none;
       transition: opacity 0.15s ease-out, visibility 0.15s;
     }
-    .s1p-options-cell:hover .s1p-options-menu {
+    /* [修改] 将菜单的触发条件改为悬停图标按钮，并让菜单自身在悬停时保持显示 */
+    .s1p-options-btn:hover + .s1p-options-menu,
+    .s1p-options-menu:hover {
       opacity: 1;
       visibility: visible;
       pointer-events: auto;
