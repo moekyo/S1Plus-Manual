@@ -2892,6 +2892,15 @@
       return;
     }
 
+    // --- [新增] 排除多个UI区域的链接，使其保持原生跳转行为 ---
+    if (
+      anchor.closest(".pob") || // 楼内回复/编辑
+      anchor.closest("ul.tb") || // 用户空间子导航
+      anchor.closest("#pt") // 页面面包屑导航
+    ) {
+      return;
+    }
+
     // [MODIFIED] 增加了对 .pgbtn 的排除
     if (anchor.closest(".pgs") || anchor.closest(".pgbtn")) {
       return;
