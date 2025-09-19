@@ -105,6 +105,7 @@
       --s1p-red: #ef4444;
       --s1p-red-h: #dc2626;
       --s1p-green: #22c55e;
+      --s1p-green-h: #28b05aff;
       --s1p-success-bg: #d1fae5;
       --s1p-success-text: #065f46;
       --s1p-error-bg: #fee2e2;
@@ -2123,7 +2124,21 @@
       #s1p-floating-controls a {
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
       }
+
+      .s1p-toast-notification {
+        background-color: #303030;
+        // color: var(--s1p-bg);
+      }
+      .s1p-toast-notification.success {
+        /* 使用一个更柔和的绿色 */
+        background-color: var(--s1p-green-h);
+      }
+      .s1p-toast-notification.error {
+        /* 使用一个更深的红色 */
+        background-color: var(--s1p-red-h);
+      }
     }
+    
   `);
 
   // --- S1 NUX 兼容性检测 ---
