@@ -2876,91 +2876,113 @@
     const settings = getSettings();
     const openTabSettings = settings.openInNewTab;
 
-    if (!openTabSettings.threads) return;
+    if (!openTabSettings.master) return;
 
     const anchor = e.target.closest("a[href]");
     if (!anchor) return;
 
     const href = anchor.getAttribute("href");
-    if (href.startsWith("javascript:")) return;
-    if (href.includes("mod=logging&action=logout")) return;
     if (
+      href.startsWith("javascript:") ||
+      href.includes("mod=logging&action=logout") ||
       anchor.closest(
-        ".s1p-modal, .s1p-confirm-modal, .s1p-options-menu, .s1p-tag-popover"
+        ".s1p-modal, .s1p-confirm-modal, .s1p-options-menu, .s1p-tag-popover, .pob, .pgs, .pgbtn, #s1p-nav-link, #s1p-nav-sync-btn"
       )
     ) {
       return;
     }
 
-    // --- [新增] 排除多个UI区域的链接，使其保持原生跳转行为 ---
-    if (
-      anchor.closest(".pob") || // 楼内回复/编辑
-      anchor.closest("ul.tb") || // 用户空间子导航
-      anchor.closest("#pt") // 页面面包屑导航
-    ) {
-      return;
-    }
-
-    // [MODIFIED] 增加了对 .pgbtn 的排除
-    if (anchor.closest(".pgs") || anchor.closest(".pgbtn")) {
-      return;
-    }
-
-    if (anchor.hostname !== window.location.hostname) return;
-
-    // 1. 优先处理阅读进度跳转按钮
-    if (anchor.classList.contains("s1p-progress-jump-btn")) {
-      if (openTabSettings.progress) {
-        // 仅检查自己的开关，总开关已在函数顶部检查过
-        e.preventDefault();
-        e.stopPropagation();
-        GM_openInTab(anchor.href, {
-          active: !openTabSettings.progressInBackground,
-        });
+    // --- [核心重构 V2] 真正与执行顺序无关的精确识别 ---
+    const getLinkType = (targetAnchor) => {
+      // 步骤 1: 识别链接所具备的所有身份，不提前返回
+      const identities = [];
+      if (
+        targetAnchor.classList.contains("s1p-progress-jump-btn") &&
+        targetAnchor.closest("#threadlist")
+      ) {
+        identities.push("progress_jump");
       }
-      return; // 处理完后必须返回，避免被后续逻辑再次处理
-    }
-
-    // 2. 处理侧边栏菜单
-    if (anchor.closest(".appl")) {
-      if (openTabSettings.sidebar) {
-        e.preventDefault();
-        e.stopPropagation();
-        GM_openInTab(anchor.href, {
-          active: !openTabSettings.sidebarInBackground,
-        });
+      if (targetAnchor.closest("#threadlist")) {
+        identities.push("thread_list");
       }
-      return;
-    }
-
-    // 3. 处理导航栏和用户菜单
-    if (
-      (anchor.closest("#nv > ul") &&
-        !anchor.closest("#s1p-nav-link, #s1p-nav-sync-btn")) ||
-      anchor.closest("#um")
-    ) {
-      if (openTabSettings.nav) {
-        e.preventDefault();
-        e.stopPropagation();
-        GM_openInTab(anchor.href, {
-          active: !openTabSettings.navInBackground,
-        });
+      if (targetAnchor.closest(".xld.xlda")) {
+        identities.push("notification");
       }
-      return;
+      if (targetAnchor.closest(".wp")) {
+        identities.push("header");
+      }
+
+      // 如果没有任何身份，则为未处理
+      if (identities.length === 0) {
+        return "unhandled";
+      }
+
+      // 步骤 2: 定义身份的优先级顺序 (从最具体到最宽泛)
+      const priorityOrder = [
+        "progress_jump",
+        "thread_list",
+        "notification",
+        "header",
+      ];
+
+      // 步骤 3: 根据优先级列表，返回链接身份中优先级最高的一个
+      for (const priorityType of priorityOrder) {
+        if (identities.includes(priorityType)) {
+          return priorityType;
+        }
+      }
+
+      // 理论上不会执行到这里，作为安全保障
+      return "unhandled";
+    };
+
+    const linkType = getLinkType(anchor);
+
+    let open = false;
+    let background = false;
+    let settingApplied = false;
+
+    // --- 根据精确识别的类型，应用对应设置 (此部分逻辑不变) ---
+    switch (linkType) {
+      case "progress_jump":
+        if (openTabSettings.progress) {
+          open = true;
+          background = openTabSettings.progressInBackground;
+          settingApplied = true;
+        }
+        break;
+      case "thread_list":
+      case "notification":
+        if (openTabSettings.threadList) {
+          open = true;
+          background = openTabSettings.threadListInBackground;
+          settingApplied = true;
+        }
+        break;
+      case "header":
+        if (openTabSettings.nav) {
+          open = true;
+          background = openTabSettings.navInBackground;
+          settingApplied = true;
+        }
+        break;
+      case "unhandled":
+      default:
+        // 对于未处理的链接类型，直接返回，保持默认行为
+        return;
     }
 
-    // 4. 处理所有其他常规内部链接
-    e.preventDefault();
-    e.stopPropagation();
-    GM_openInTab(anchor.href, {
-      active: !openTabSettings.threadsInBackground,
-    });
+    if (open && settingApplied) {
+      e.preventDefault();
+      e.stopPropagation();
+      GM_openInTab(anchor.href, { active: !background });
+    }
   };
+
   const applyGlobalLinkBehavior = () => {
     document.body.removeEventListener("click", globalLinkClickHandler);
     const settings = getSettings();
-    // [MODIFIED] 现在只依赖总开关
-    if (settings.openInNewTab.threads) {
+    if (settings.openInNewTab.master) {
       document.body.addEventListener("click", globalLinkClickHandler);
     }
   };
@@ -3409,14 +3431,13 @@
     enableBookmarkReplies: true,
     readingProgressCleanupDays: 0,
     openInNewTab: {
-      threads: false,
-      threadsInBackground: false,
+      master: false,
+      threadList: true,
+      threadListInBackground: false,
       progress: true,
       progressInBackground: false,
-      nav: false,
+      nav: true,
       navInBackground: false,
-      sidebar: false, // <-- [NEW] 新增侧边栏设置
-      sidebarInBackground: false,
     },
     enableNavCustomization: true,
     changeLogoLink: true,
@@ -3451,29 +3472,46 @@
     const saved = GM_getValue("s1p_settings", {});
     const settings = { ...defaultSettings, ...saved };
 
-    // --- [NEW] 数据迁移逻辑 ---
-    // 检查是否存在旧的、独立的设置项，并且新的 openInNewTab 对象尚未创建
+    // --- [NEW V2] 数据迁移逻辑 ---
+    // 检查是否存在旧的、独立的设置项，或旧的 openInNewTab 结构
     if (
-      typeof saved.openThreadsInNewTab !== "undefined" &&
-      typeof saved.openInNewTab === "undefined"
+      typeof saved.openThreadsInNewTab !== "undefined" ||
+      (saved.openInNewTab && typeof saved.openInNewTab.threads !== "undefined")
     ) {
       console.log(
         "S1 Plus: 检测到旧版“在新标签页打开”设置，正在执行自动迁移..."
       );
-      settings.openInNewTab = {
-        threads: saved.openThreadsInNewTab || false,
-        threadsInBackground: saved.openThreadsInBackground || false,
-        progress: saved.openProgressInNewTab || true,
-        progressInBackground: saved.openProgressInBackground || false,
-        nav: false, // 旧版没有此设置，默认为 false
-        navInBackground: false,
+
+      const oldOpenTab = saved.openInNewTab || {};
+      const newOpenInNewTab = {
+        master: oldOpenTab.threads ?? saved.openThreadsInNewTab ?? false,
+        threadList: oldOpenTab.threads ?? saved.openThreadsInNewTab ?? true,
+        threadListInBackground:
+          oldOpenTab.threadsInBackground ??
+          saved.openThreadsInBackground ??
+          false,
+        progress: oldOpenTab.progress ?? saved.openProgressInNewTab ?? true,
+        progressInBackground:
+          oldOpenTab.progressInBackground ??
+          saved.openProgressInBackground ??
+          false,
+        nav: oldOpenTab.nav ?? true, // 旧版无此设置，迁移时默认为 true
+        navInBackground: oldOpenTab.navInBackground ?? false,
       };
+
+      settings.openInNewTab = newOpenInNewTab;
 
       // 从设置中删除已迁移的旧键
       delete settings.openThreadsInNewTab;
       delete settings.openThreadsInBackground;
       delete settings.openProgressInNewTab;
       delete settings.openProgressInBackground;
+      if (settings.openInNewTab) {
+        delete settings.openInNewTab.threads;
+        delete settings.openInNewTab.threadsInBackground;
+        delete settings.openInNewTab.sidebar;
+        delete settings.openInNewTab.sidebarInBackground;
+      }
 
       // 立即保存迁移后的新设置
       saveSettings(settings);
@@ -4292,7 +4330,7 @@
                         <div class="s1p-settings-group-title s1p-settings-section-title-label">远程同步 (通过GitHub Gist)</div>
                         <div id="s1p-last-sync-time-container" class="s1p-setting-desc" style="margin-top: -8px; margin-bottom: 16px;"></div>
                         <div class="s1p-settings-item">
-                            <label class="s1p-settings-label" for="s1p-remote-enabled-toggle">启用远程同步 (总开关)</label>
+                            <label class="s1p-settings-label" for="s1p-remote-enabled-toggle">启用远程同步</label>
                             <label class="s1p-switch">
                                 <input type="checkbox" id="s1p-remote-enabled-toggle" class="s1p-settings-checkbox">
                                 <span class="s1p-slider"></span>
@@ -5058,27 +5096,37 @@
                 <div class="s1p-settings-group">
                     <div class="s1p-settings-group-title">阅读/浏览增强</div>
                     <div class="s1p-settings-item">
-                        <label class="s1p-settings-label" for="s1p-openInNewTab-master">自定义链接打开行为 (总开关)</label>
-                        <label class="s1p-switch"><input type="checkbox" id="s1p-openInNewTab-master" class="s1p-settings-checkbox" data-setting="openInNewTab.threads" ${
-                          openTabSettings.threads ? "checked" : ""
+                        <label class="s1p-settings-label" for="s1p-openInNewTab-master">在新标签页打开帖子/版块等链接</label>
+                        <label class="s1p-switch"><input type="checkbox" id="s1p-openInNewTab-master" class="s1p-settings-checkbox" data-setting="openInNewTab.master" ${
+                          openTabSettings.master ? "checked" : ""
                         }><span class="s1p-slider"></span></label>
                     </div>
-                    <p class="s1p-setting-desc" style="margin-top: -4px;">开启后，下方选中的链接类型将在新标签页打开。关闭此项将禁用所有相关功能。</p>
+                    <p class="s1p-setting-desc" style="margin-top: -4px;">开启后，下方选中的链接类型将在新标签页打开。仅对顶部导航、帖子列表、消息提醒区域内的链接生效。</p>
                     
                     <div id="s1p-new-tab-sub-options" style="padding-left: 20px; margin-left: 8px; ${
-                      !openTabSettings.threads
+                      !openTabSettings.master
                         ? "opacity: 0.5; pointer-events: none;"
                         : ""
                     }">
-                        <div class="s1p-settings-item" id="s1p-openThreadsInBackground-item">
-                            <label class="s1p-settings-label">在后台打开帖子/版块等常规链接</label>
-                            <label class="s1p-switch"><input type="checkbox" id="s1p-openThreadsInBackground" class="s1p-settings-checkbox" data-setting="openInNewTab.threadsInBackground" ${
-                              openTabSettings.threadsInBackground
+
+                        <div class="s1p-settings-item">
+                            <label class="s1p-settings-label" for="s1p-openThreadListInNewTab">在新标签页打开帖子/消息链接</label>
+                            <label class="s1p-switch"><input type="checkbox" id="s1p-openThreadListInNewTab" class="s1p-settings-checkbox" data-setting="openInNewTab.threadList" ${
+                              openTabSettings.threadList ? "checked" : ""
+                            }><span class="s1p-slider"></span></label>
+                        </div>
+                         <p class="s1p-setting-desc" style="margin-top: -4px;">控制帖子列表和消息提醒区域内的常规链接。</p>
+                        <div class="s1p-settings-item" id="s1p-openThreadListInBackground-item" style="padding-left: 20px; ${
+                          !openTabSettings.threadList ? "display: none;" : ""
+                        }">
+                            <label class="s1p-settings-label">在后台打开</label>
+                            <label class="s1p-switch"><input type="checkbox" id="s1p-openThreadListInBackground" class="s1p-settings-checkbox" data-setting="openInNewTab.threadListInBackground" ${
+                              openTabSettings.threadListInBackground
                                 ? "checked"
                                 : ""
                             }><span class="s1p-slider"></span></label>
                         </div>
-                        
+
                         <div style="margin: 12px 0 8px 0; border-top: 1px solid var(--s1p-pri);"></div>
 
                         <div class="s1p-settings-item">
@@ -5098,8 +5146,10 @@
                             }><span class="s1p-slider"></span></label>
                         </div>
 
-                        <div class="s1p-settings-item" style="margin-top: 12px;">
-                            <label class="s1p-settings-label" for="s1p-openNavInNewTab">在新标签页打开导航栏链接</label> 
+                        <div style="margin: 12px 0 8px 0; border-top: 1px solid var(--s1p-pri);"></div>
+
+                        <div class="s1p-settings-item">
+                            <label class="s1p-settings-label" for="s1p-openNavInNewTab">在新标签页打开顶部导航/菜单链接</label> 
                             <label class="s1p-switch"><input type="checkbox" id="s1p-openNavInNewTab" class="s1p-settings-checkbox" data-setting="openInNewTab.nav" ${
                               openTabSettings.nav ? "checked" : ""
                             }><span class="s1p-slider"></span></label>
@@ -5112,24 +5162,6 @@
                               openTabSettings.navInBackground ? "checked" : ""
                             }><span class="s1p-slider"></span></label>
                         </div>
-
-                        <div class="s1p-settings-item" style="margin-top: 12px;">
-                            <label class="s1p-settings-label" for="s1p-openSidebarInNewTab">在新标签页打开设置/通知侧边栏链接</label>
-                            <label class="s1p-switch"><input type="checkbox" id="s1p-openSidebarInNewTab" class="s1p-settings-checkbox" data-setting="openInNewTab.sidebar" ${
-                              openTabSettings.sidebar ? "checked" : ""
-                            }><span class="s1p-slider"></span></label>
-                        </div>
-                        <div class="s1p-settings-item" id="s1p-openSidebarInBackground-item" style="padding-left: 20px; ${
-                          !openTabSettings.sidebar ? "display: none;" : ""
-                        }">
-                            <label class="s1p-settings-label" >在后台打开</label>
-                            <label class="s1p-switch"><input type="checkbox" id="s1p-openSidebarInBackground" class="s1p-settings-checkbox" data-setting="openInNewTab.sidebarInBackground" ${
-                              openTabSettings.sidebarInBackground
-                                ? "checked"
-                                : ""
-                            }><span class="s1p-slider"></span></label>
-                        </div>
-
                     </div>
 
                      <div class="s1p-settings-item" style="margin-top: 16px;">
@@ -5226,22 +5258,18 @@
       const subOptionsContainer = tabContent.querySelector(
         "#s1p-new-tab-sub-options"
       );
-      const progressSwitch = tabContent.querySelector(
-        "#s1p-openProgressInNewTab"
-      );
-      const progressBgItem = tabContent.querySelector(
-        "#s1p-openProgressInBackground-item"
-      );
-      const navSwitch = tabContent.querySelector("#s1p-openNavInNewTab");
-      const navBgItem = tabContent.querySelector(
-        "#s1p-openNavInBackground-item"
-      );
-      const sidebarSwitch = tabContent.querySelector(
-        "#s1p-openSidebarInNewTab"
-      ); // <-- 新增
-      const sidebarBgItem = tabContent.querySelector(
-        "#s1p-openSidebarInBackground-item"
-      ); // <-- 新增
+
+      const setupSubSwitch = (mainSwitchId, subItemContainerId) => {
+        const mainSwitch = tabContent.querySelector(`#${mainSwitchId}`);
+        const subItemContainer = tabContent.querySelector(
+          `#${subItemContainerId}`
+        );
+        if (mainSwitch && subItemContainer) {
+          mainSwitch.addEventListener("change", (e) => {
+            subItemContainer.style.display = e.target.checked ? "flex" : "none";
+          });
+        }
+      };
 
       masterSwitch.addEventListener("change", (e) => {
         if (e.target.checked) {
@@ -5252,16 +5280,16 @@
           subOptionsContainer.style.pointerEvents = "none";
         }
       });
-      progressSwitch.addEventListener("change", (e) => {
-        progressBgItem.style.display = e.target.checked ? "flex" : "none";
-      });
-      navSwitch.addEventListener("change", (e) => {
-        navBgItem.style.display = e.target.checked ? "flex" : "none";
-      });
-      sidebarSwitch.addEventListener("change", (e) => {
-        // <-- 新增
-        sidebarBgItem.style.display = e.target.checked ? "flex" : "none";
-      });
+
+      setupSubSwitch(
+        "s1p-openThreadListInNewTab",
+        "s1p-openThreadListInBackground-item"
+      );
+      setupSubSwitch(
+        "s1p-openProgressInNewTab",
+        "s1p-openProgressInBackground-item"
+      );
+      setupSubSwitch("s1p-openNavInNewTab", "s1p-openNavInBackground-item");
 
       const moveSlider = (control) => {
         if (!control) return;
