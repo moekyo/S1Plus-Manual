@@ -19,7 +19,7 @@ prompt = """
 
    1. 定位文件: 目标文件是 S1Plus.user.js。
    2. 更新元数据: 将文件头部的 // @version 从 [上一个版本号] 修改为 {{args}}。
-   3. 更新内部常量: 
+   3. 更新内部常量:
       * 将文件内的 const SCRIPT_VERSION 的值从 [上一个版本号] 修改为 {{args}}。
       * 将文件内的 SCRIPT_RELEASE_DATE 的值变为发布当天。
 
@@ -41,15 +41,22 @@ prompt = """
        * 确保 ## [Unreleased] 部分最终只剩下标题，其下方内容为空。
        * 确保新的版本日志与上一个版本日志之间有 --- 分割线。
 
-  步骤 3: 提交发布变更
+  步骤 3: 校准并刷新 README.md
 
-   1. 暂存文件: 使用 git add . 将所有修改过的文件（S1Plus.user.js 和 CHANGELOG.md）添加到暂存区。
+   1. 读取文件: 首先，同时读取 S1Plus.user.js 和 README.md 的内容。
+   2. 提取新元数据: 从 S1Plus.user.js 文件中，提取出更新后的完整元数据块。
+   4. 校准核心信息: 将 README.md 的主标题和项目简介，与新元数据中的 @name 和 @description 的内容进行校准。这里的目标是确保说明文字准确反映脚本的**完整功能**，而不是罗列本次更新的增量。
+   5. 覆盖文件: 修改后的新内容写回 README.md 文件。
+
+  步骤 4: 提交发布变更
+
+   1. 暂存文件: 使用 git add . 将所有修改过的文件（S1Plus.user.js、CHANGELOG.md 和 README.md）添加到暂存区。
    2. 检查历史: 使用 git log -n 3 查看最近的提交历史，以确认提交信息的风格。
    3. 提交变更: 使用 git commit 创建一个格式统一的发布提交。提交信息必须严格遵循以下格式：
    1     release: v{{args}}
       示例: git commit -m "release: v4.1.0"
 
-  步骤 4: 创建 Git 标签
+  步骤 5: 创建 Git 标签
 
    1. 打上标签: 为刚刚的发布提交创建一个新的 Git 标签。标签名必须严格遵循以下格式：
 
