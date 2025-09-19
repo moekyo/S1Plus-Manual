@@ -2878,7 +2878,20 @@
     }
     if (anchor.hostname !== window.location.hostname) return;
 
-    // [MODIFIED] 增加对侧边栏菜单的检查
+    // [NEW] 1. 优先处理阅读进度跳转按钮
+    if (anchor.classList.contains("s1p-progress-jump-btn")) {
+      if (openTabSettings.progress) {
+        // 仅检查自己的开关，总开关已在函数顶部检查过
+        e.preventDefault();
+        e.stopPropagation();
+        GM_openInTab(anchor.href, {
+          active: !openTabSettings.progressInBackground,
+        });
+      }
+      return; // 处理完后必须返回，避免被后续逻辑再次处理
+    }
+
+    // 2. 处理侧边栏菜单
     if (anchor.closest(".appl")) {
       if (openTabSettings.sidebar) {
         e.preventDefault();
@@ -2890,6 +2903,7 @@
       return;
     }
 
+    // 3. 处理导航栏和用户菜单
     if (
       (anchor.closest("#nv > ul") &&
         !anchor.closest("#s1p-nav-link, #s1p-nav-sync-btn")) ||
@@ -2905,13 +2919,13 @@
       return;
     }
 
+    // 4. 处理所有其他常规内部链接
     e.preventDefault();
     e.stopPropagation();
     GM_openInTab(anchor.href, {
       active: !openTabSettings.threadsInBackground,
     });
   };
-
   const applyGlobalLinkBehavior = () => {
     document.body.removeEventListener("click", globalLinkClickHandler);
     const settings = getSettings();
@@ -6584,18 +6598,8 @@
           jumpBtn.style.color = fcolor;
           jumpBtn.style.borderColor = fcolor;
 
-          jumpBtn.addEventListener("click", (e) => {
-            e.preventDefault();
-            const openTabSettings = settings.openInNewTab;
-            // [MODIFIED] 必须同时开启总开关和阅读进度子开关
-            if (openTabSettings.threads && openTabSettings.progress) {
-              GM_openInTab(jumpBtn.href, {
-                active: !openTabSettings.progressInBackground,
-              });
-            } else {
-              window.location.href = jumpBtn.href;
-            }
-          });
+          // [MODIFIED] 移除了此处的 click 事件监听器
+
           jumpBtn.addEventListener("mouseover", () => {
             jumpBtn.style.backgroundColor = fcolor;
             jumpBtn.style.color = "var(--s1p-white)";
