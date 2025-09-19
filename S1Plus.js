@@ -120,7 +120,7 @@
       --s1p-secondary-text: #374151;
       --s1p-code-bg: #eee;
       --s1p-readprogress-bg: #b8d56f;
-      
+
       --s1p-list-item-status-bg: #dddddd;
 
       /* -- 阅读进度 -- */
@@ -177,7 +177,7 @@
       color: var(--s1p-t);
       transform: scale(1.1);
     }
-    
+
     /* --- [核心修复] 针对 S1 NUX 窄屏模式的兼容性适配 --- */
     @media (max-width: 909px) {
       #nv ul #s1p-nav-sync-btn {
@@ -185,7 +185,7 @@
       }
       #nv ul #s1p-nav-sync-btn a {
         /* [修改] 增加了左侧内边距，使其与左侧按钮的视觉间距更协调 */
-        padding: 0 4px 0 8px !important; 
+        padding: 0 4px 0 8px !important;
       }
     }
 
@@ -323,7 +323,7 @@
 
     /* --- [S1PLUS-MOD] 帖子列表最终布局修正 --- */
     .tl .icn {
-        padding-left: 0px !important;
+      padding-left: 0px !important;
     }
     /* [MODIFIED] 此处已移除隐藏 .icn 和 .icn_new 的样式规则 */
     #atarget,
@@ -924,24 +924,24 @@
       background-color: var(--s1p-bg);
       border-radius: 6px;
       box-shadow: 0 2px 8px rgba(var(--s1p-shadow-color-rgb), 0.15);
-      padding: 4px; 
+      padding: 4px;
       display: flex;
       flex-direction: column;
-      gap: 2px; 
+      gap: 2px;
       min-width: max-content;
     }
     .s1p-tag-options-menu button {
       background: none;
       border: none;
       /* [MODIFIED] 增加垂直内边距，以达到目标高度 */
-      padding: 8px 10px; 
+      padding: 8px 10px;
       text-align: left;
       cursor: pointer;
       border-radius: 4px;
-      font-size: 13px; 
+      font-size: 13px;
       color: var(--s1p-t);
       white-space: nowrap;
-      line-height: 1.5; 
+      line-height: 1.5;
     }
     .s1p-tag-options-menu button:hover {
       background-color: var(--s1p-sub-h);
@@ -976,9 +976,11 @@
       display: flex;
       flex-direction: column;
       position: relative;
-      
+
       /* [优化] 为设置面板设定统一的字体族和渲染方式 */
-      font-family: -apple-system, "BlinkMacSystemFont", "Segoe UI", "Roboto", "Helvetica Neue", "Arial", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      font-family: -apple-system, "BlinkMacSystemFont", "Segoe UI", "Roboto",
+        "Helvetica Neue", "Arial", "PingFang SC", "Hiragino Sans GB",
+        "Microsoft YaHei", sans-serif;
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
     }
@@ -1108,7 +1110,7 @@
     }
     .s1p-item-title {
       /* [优化] 统一列表项标题样式 */
-      font-size: 15px; 
+      font-size: 15px;
       font-weight: 500;
       margin-bottom: 4px;
       white-space: nowrap;
@@ -1158,18 +1160,18 @@
     }
     /* --- [新增] 论坛黑名单同步状态提示 --- */
     .s1p-native-sync-status {
-        display: inline-block;
-        background-color: var(--s1p-list-item-status-bg);
-        color: var(--s1p-t);
-        padding: 2px 8px;
-        border-radius: 7px;
-        font-style: normal;
-        font-weight: 500;
-        font-size: 11px;
-        margin-left: 8px;
-        vertical-align: middle;
-        position: relative;
-        top: -1px;
+      display: inline-block;
+      background-color: var(--s1p-list-item-status-bg);
+      color: var(--s1p-t);
+      padding: 2px 8px;
+      border-radius: 7px;
+      font-style: normal;
+      font-weight: 500;
+      font-size: 11px;
+      margin-left: 8px;
+      vertical-align: middle;
+      position: relative;
+      top: -1px;
     }
     /* --- [OPTIMIZED] Sync Settings Panel Disabled State --- */
     #s1p-remote-sync-controls-wrapper {
@@ -1386,7 +1388,7 @@
       display: grid;
       grid-template-rows: 0fr;
       /* [调试] 暂时禁用这里的动画，以便测试我们自己的 height 动画 */
-      transition: none; 
+      transition: none;
       margin-top: 0;
     }
     .s1p-feature-content.expanded {
@@ -1497,24 +1499,24 @@
       box-sizing: border-box;
       font-size: 0;
     }
-   /* --- [修改] 固化S1 Plus经典删除按钮样式 --- */
+    /* --- [修改] 固化S1 Plus经典删除按钮样式 --- */
     .s1p-editor-btn.s1p-delete-button {
-        font-size: 0 !important;
-        width: 26px !important;
-        height: 26px !important;
-        padding: 4px !important;
-        box-sizing: border-box !important;
-        background-image: url("${SVG_ICON_DELETE_DEFAULT}") !important;
-        background-repeat: no-repeat !important;
-        background-position: center !important;
-        background-size: 18px 18px !important;
-        background-color: transparent !important;
-        mask: none !important;
-        transition: all 0.2s ease;
+      font-size: 0 !important;
+      width: 26px !important;
+      height: 26px !important;
+      padding: 4px !important;
+      box-sizing: border-box !important;
+      background-image: url("${SVG_ICON_DELETE_DEFAULT}") !important;
+      background-repeat: no-repeat !important;
+      background-position: center !important;
+      background-size: 18px 18px !important;
+      background-color: transparent !important;
+      mask: none !important;
+      transition: all 0.2s ease;
     }
     .s1p-editor-btn.s1p-delete-button:hover {
-        background-color: var(--s1p-red) !important;
-        background-image: url("${SVG_ICON_DELETE_HOVER}") !important;
+      background-color: var(--s1p-red) !important;
+      background-image: url("${SVG_ICON_DELETE_HOVER}") !important;
     }
     .s1p-drag-handle {
       font-size: 18pt;
@@ -1670,7 +1672,7 @@
     /* --- [微调] 统一调整用户标记和回复收藏列表的内容区样式 --- */
     #s1p-tags-list-container .s1p-item-content,
     #s1p-bookmarks-list-container .s1p-item-content {
-        font-size: 14px;
+      font-size: 14px;
     }
     #s1p-tab-bookmarks .s1p-item-content {
       background-color: transparent;
@@ -1801,7 +1803,6 @@
       /* [S1P-MOD] 移除 border-color，因为 border: none */
     }
 
-
     /* --- [新增 V9] 可禁用/启用的增强型悬浮控件 --- */
     /* --- 模式 B: 增强控件关闭 (默认状态) --- */
     /* 默认隐藏脚本创建的控件 */
@@ -1826,6 +1827,7 @@
       right: 10px;
       transform: translateY(-50%);
       z-index: 9998;
+      pointer-events: none; /* <--- 把这一行加在这里 */
     }
     #s1p-controls-handle {
       position: absolute;
@@ -1843,6 +1845,7 @@
       align-items: center;
       justify-content: center;
       transition: opacity 0.3s ease 0.1s;
+      pointer-events: auto; /* [新增] 唯独让手柄可以响应鼠标 */
     }
     #s1p-controls-handle::before {
       content: "";
@@ -1881,7 +1884,7 @@
       transform: translateX(0);
       opacity: 1;
       visibility: visible;
-      pointer-events: auto;
+      pointer-events: auto; /* [修改] 之前是auto，现在明确写出以确保逻辑完整 */
     }
     #s1p-floating-controls a {
       display: flex;
@@ -1915,7 +1918,7 @@
       height: 22px;
       fill-opacity: 0.5;
     }
-      #s1p-floating-controls a.s1p-scroll-btn svg:hover {
+    #s1p-floating-controls a.s1p-scroll-btn svg:hover {
       fill-opacity: 1;
     }
     /* --- [更新] 回复收藏内容切换 V3 --- */
@@ -2043,12 +2046,12 @@
     }
     /* --- [新增] S1 NUX 推荐弹窗按钮专属样式 --- */
     .s1p-nux-recommend-modal .s1p-confirm-btn.s1p-confirm:hover {
-      background-color: var(--s1p-sub-h); 
+      background-color: var(--s1p-sub-h);
       color: var(--s1p-white);
       border-color: transparent;
     }
     .s1p-nux-recommend-modal .s1p-confirm-btn.s1p-cancel:hover {
-      background-color: var(--s1p-red-h); 
+      background-color: var(--s1p-red-h);
       color: var(--s1p-white);
       border-color: transparent;
     }
@@ -2058,7 +2061,7 @@
       :root {
         /* 将阅读进度条背景改为更柔和的橄榄绿 */
         --s1p-readprogress-bg: #99a17a;
-        --s1p-list-item-status-bg: #3e3d3d
+        --s1p-list-item-status-bg: #3e3d3d;
       }
 
       /* 删除按钮：默认状态下使用白色图标 */
@@ -2073,13 +2076,18 @@
       .s1p-segmented-control:hover .s1p-segmented-control-slider {
         box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
       }
-      .s1p-btn, .s1p-confirm-btn {
-        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      .s1p-btn,
+      .s1p-confirm-btn {
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3),
+          inset 0 1px 0 rgba(255, 255, 255, 0.05);
       }
-      .s1p-btn:hover, .s1p-confirm-btn:hover {
-        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+      .s1p-btn:hover,
+      .s1p-confirm-btn:hover {
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.4),
+          inset 0 1px 0 rgba(255, 255, 255, 0.07);
       }
-      .s1p-options-menu, .s1p-inline-action-menu {
+      .s1p-options-menu,
+      .s1p-inline-action-menu {
         box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
       }
       .s1p-tag-popover {
