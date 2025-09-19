@@ -2876,9 +2876,15 @@
     ) {
       return;
     }
+
+    // [MODIFIED] 增加了对 .pgbtn 的排除
+    if (anchor.closest(".pgs") || anchor.closest(".pgbtn")) {
+      return;
+    }
+
     if (anchor.hostname !== window.location.hostname) return;
 
-    // [NEW] 1. 优先处理阅读进度跳转按钮
+    // 1. 优先处理阅读进度跳转按钮
     if (anchor.classList.contains("s1p-progress-jump-btn")) {
       if (openTabSettings.progress) {
         // 仅检查自己的开关，总开关已在函数顶部检查过
