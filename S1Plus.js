@@ -1743,6 +1743,37 @@
       transition: max-height 0.35s ease-in-out;
     }
 
+    /* --- [新增] 通知/提醒屏蔽样式 --- */
+    .s1p-notification-placeholder {
+      background-color: var(--s1p-bg);
+      border: 1px solid var(--s1p-pri);
+      padding: 8px 12px;
+      border-radius: 6px;
+      margin-top: 10px;
+      font-size: 13px;
+      color: var(--s1p-desc-t);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .s1p-notification-placeholder .s1p-notification-toggle {
+      color: var(--s1p-t);
+      font-weight: 500;
+      cursor: pointer;
+      padding: 4px 8px;
+      border-radius: 4px;
+      transition: background-color 0.2s ease, color 0.2s ease;
+    }
+    .s1p-notification-placeholder .s1p-notification-toggle:hover {
+      background-color: var(--s1p-sub);
+      color: var(--s1p-t);
+    }
+    .s1p-notification-wrapper {
+      overflow: hidden;
+      transition: max-height 0.35s ease-in-out;
+      margin-bottom: 10px;
+    }
+
     /* --- Image Hiding --- */
     .s1p-image-container {
       display: flex;
@@ -2587,6 +2618,96 @@
         }
       }
     });
+  };
+
+  // [修改 V2] 隐藏来自已屏蔽用户的消息提醒 (占位符替换模式)
+  const hideBlockedUserNotifications = () => {
+    const noticeContainer = document.querySelector(".xld.xlda");
+    if (!noticeContainer) return;
+
+    const settings = getSettings();
+    if (!settings.enableUserBlocking) return;
+
+    const blockedUserIds = Object.keys(getBlockedUsers());
+
+    // 遍历所有提醒元素或已存在的占位符的下一个元素
+    noticeContainer
+      .querySelectorAll(
+        "dl.cl, .s1p-notification-placeholder + .s1p-notification-wrapper"
+      )
+      .forEach((element) => {
+        let dlElement;
+        // 确定我们正在处理的是原始dl还是wrapper内的dl
+        if (element.classList.contains("s1p-notification-wrapper")) {
+          dlElement = element.querySelector("dl.cl");
+        } else {
+          dlElement = element;
+        }
+
+        if (!dlElement) return;
+
+        const userLink = dlElement.querySelector('a[href*="space-uid-"]');
+        if (!userLink) return;
+
+        const uidMatch = userLink.href.match(/space-uid-(\d+)/);
+        const authorId = uidMatch ? uidMatch[1] : null;
+        const isBlocked = authorId && blockedUserIds.includes(authorId);
+
+        const wrapper = dlElement.parentElement.classList.contains(
+          "s1p-notification-wrapper"
+        )
+          ? dlElement.parentElement
+          : null;
+
+        if (isBlocked) {
+          if (!wrapper) {
+            // 需要屏蔽，但尚未被包装 -> 执行包装和隐藏
+            const newWrapper = document.createElement("div");
+            newWrapper.className = "s1p-notification-wrapper";
+            dlElement.parentNode.insertBefore(newWrapper, dlElement);
+            newWrapper.appendChild(dlElement);
+
+            // 关键：先获取高度，再设置为0，以便动画生效
+            const initialHeight = dlElement.scrollHeight;
+            newWrapper.style.maxHeight = initialHeight + "px"; // 确保初始状态正确
+
+            requestAnimationFrame(() => {
+              newWrapper.style.maxHeight = "0px";
+            });
+
+            const placeholder = document.createElement("div");
+            placeholder.className = "s1p-notification-placeholder";
+            placeholder.innerHTML = `<span>一条来自已屏蔽用户的提醒已被隐藏。</span><span class="s1p-notification-toggle">点击展开</span>`;
+            newWrapper.parentNode.insertBefore(placeholder, newWrapper);
+
+            placeholder
+              .querySelector(".s1p-notification-toggle")
+              .addEventListener("click", function () {
+                const isCollapsed = newWrapper.style.maxHeight === "0px";
+                if (isCollapsed) {
+                  newWrapper.style.maxHeight = dlElement.scrollHeight + "px";
+                  this.textContent = "点击折叠";
+                } else {
+                  newWrapper.style.maxHeight = "0px";
+                  this.textContent = "点击展开";
+                }
+              });
+          }
+        } else {
+          if (wrapper) {
+            // 不需要屏蔽，但已被包装 -> 解除包装
+            const placeholder = wrapper.previousElementSibling;
+            if (
+              placeholder &&
+              placeholder.classList.contains("s1p-notification-placeholder")
+            ) {
+              placeholder.remove();
+            }
+            wrapper.parentNode.insertBefore(dlElement, wrapper);
+            wrapper.remove();
+          }
+        }
+      });
   };
 
   const hideThreadsByTitleKeyword = () => {
@@ -7829,6 +7950,7 @@
       hideBlockedUsersPosts();
       hideBlockedUserQuotes();
       hideBlockedUserRatings();
+      hideBlockedUserNotifications(); // [新增] 调用提醒屏蔽函数
     }
     if (
       settings.enableUserBlocking ||
