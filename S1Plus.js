@@ -2758,9 +2758,11 @@
   };
 
   const getReadProgress = () => GM_getValue("s1p_read_progress", {});
-  const saveReadProgress = (progress) => {
+  const saveReadProgress = (progress, suppressSyncTrigger = false) => {
     GM_setValue("s1p_read_progress", progress);
-    updateLastModifiedTimestamp();
+    if (!suppressSyncTrigger) {
+      updateLastModifiedTimestamp();
+    }
   };
   const updateThreadProgress = (threadId, postId, page, lastReadFloor) => {
     if (!postId || !page || !lastReadFloor) return;
@@ -3144,14 +3146,22 @@
   const exportLocalData = async () =>
     JSON.stringify(await exportLocalDataObject(), null, 2);
 
-  // [MODIFIED] 导入数据，兼容新旧两种数据结构
-  const importLocalData = (jsonStr) => {
+  // [MODIFIED] 导入数据，兼容新旧两种数据结构，并增加控制选项
+  const importLocalData = (jsonStr, options = {}) => {
+    const { suppressPostSync = false } = options;
     try {
+      // [S1P-FIX-A] 在导入任何数据之前，立刻断开当前页面的阅读进度观察器，修复潜在的竞态条件问题。
+      if (pageObserver) {
+        pageObserver.disconnect();
+        console.log(
+          "S1 Plus: 已在导入数据前断开阅读进度观察器，防止数据覆盖。"
+        );
+      }
+
       const imported = JSON.parse(jsonStr);
       if (typeof imported !== "object" || imported === null)
         throw new Error("无效数据格式");
 
-      // --- 兼容性处理：判断是新结构还是旧结构 ---
       const dataToImport =
         imported.data && imported.version >= 4.0 ? imported.data : imported;
 
@@ -3162,7 +3172,6 @@
         tagsImported = 0,
         bookmarksImported = 0;
 
-      // [修正] 此辅助函数仅用于升级数据结构，不再执行合并操作。
       const upgradeDataStructure = (type, importedData) => {
         if (!importedData || typeof importedData !== "object") return {};
         Object.keys(importedData).forEach((id) => {
@@ -3176,16 +3185,12 @@
       };
 
       if (dataToImport.settings) {
-        // --- [FIX] 导入设置时忽略 Gist ID 和 PAT，保留本地配置 ---
         const importedSettings = { ...dataToImport.settings };
         delete importedSettings.syncRemoteGistId;
         delete importedSettings.syncRemotePat;
-        // 设置是扁平对象，合并是安全的，予以保留
         saveSettings({ ...getSettings(), ...importedSettings });
-        // ----------------------------------------------------------
       }
 
-      // [修正] 关键修复：不再与本地数据合并，直接使用导入的数据进行覆盖
       const threadsToSave = upgradeDataStructure(
         "threads",
         dataToImport.threads || {}
@@ -3193,7 +3198,6 @@
       saveBlockedThreads(threadsToSave);
       threadsImported = Object.keys(threadsToSave).length;
 
-      // [修正] 关键修复：不再与本地数据合并，直接使用导入的数据进行覆盖
       const usersToSave = upgradeDataStructure(
         "users",
         dataToImport.users || {}
@@ -3201,7 +3205,6 @@
       saveBlockedUsers(usersToSave);
       usersImported = Object.keys(usersToSave).length;
 
-      // [修正] 关键修复：不再与本地数据合并，直接使用导入的数据进行覆盖
       if (
         dataToImport.user_tags &&
         typeof dataToImport.user_tags === "object"
@@ -3214,14 +3217,12 @@
         dataToImport.title_filter_rules &&
         Array.isArray(dataToImport.title_filter_rules)
       ) {
-        // 数组直接替换，逻辑正确，无需修改
         saveTitleFilterRules(dataToImport.title_filter_rules);
         rulesImported = dataToImport.title_filter_rules.length;
       } else if (
         dataToImport.title_keywords &&
         Array.isArray(dataToImport.title_keywords)
       ) {
-        // 向后兼容导入旧格式
         const newRules = dataToImport.title_keywords.map((k) => ({
           pattern: k,
           enabled: true,
@@ -3231,19 +3232,16 @@
         rulesImported = newRules.length;
       }
 
-      // [修正] 关键修复：不再与本地数据合并，直接使用导入的数据进行覆盖
       if (dataToImport.read_progress) {
         saveReadProgress(dataToImport.read_progress);
         progressImported = Object.keys(dataToImport.read_progress).length;
       }
 
-      // [修正] 关键修复：不再与本地数据合并，直接使用导入的数据进行覆盖
       if (dataToImport.bookmarked_replies) {
         saveBookmarkedReplies(dataToImport.bookmarked_replies);
         bookmarksImported = Object.keys(dataToImport.bookmarked_replies).length;
       }
 
-      // [FIXED] 导入成功后，将本地时间戳与导入的时间戳同步
       GM_setValue("s1p_last_modified", imported.lastUpdated || 0);
 
       hideBlockedThreads();
@@ -3252,8 +3250,11 @@
       hideThreadsByTitleKeyword();
       initializeNavbar();
       applyInterfaceCustomizations();
-      // 导入数据是一次大数据变更，直接触发一次推送
-      triggerRemoteSyncPush();
+
+      // [S1P-FIX-B] 只有在非抑制模式下（例如手动编辑文本框导入）才触发后续同步，修复强制拉取后的冗余操作问题。
+      if (!suppressPostSync) {
+        triggerRemoteSyncPush();
+      }
 
       return {
         success: true,
@@ -3825,9 +3826,6 @@
     }
   };
 
-  /**
-   * [NEW] 强制拉取处理器，用于手动将云端数据覆盖到本地。
-   */
   const handleForcePull = async () => {
     const icon = document.querySelector("#s1p-nav-sync-btn svg");
     if (icon) icon.classList.add("s1p-syncing");
@@ -3838,7 +3836,10 @@
         throw new Error("云端没有数据，无法拉取。");
       }
       const validatedRemote = await migrateAndValidateRemoteData(remoteData);
-      const result = importLocalData(JSON.stringify(validatedRemote.full));
+      // [S1P-FIX] 调用导入时，传入 suppressPostSync 选项来阻止不必要的二次同步
+      const result = importLocalData(JSON.stringify(validatedRemote.full), {
+        suppressPostSync: true,
+      });
       if (result.success) {
         GM_setValue("s1p_last_sync_timestamp", Date.now());
         updateLastSyncTimeDisplay();
@@ -6207,10 +6208,6 @@
     });
   };
 
-  /**
-   * [OPTIMIZED] 手动同步处理器，解耦UI逻辑并返回布尔值结果。
-   * @returns {Promise<boolean|null>} 返回 true 表示成功, false 表示失败, null 表示用户取消操作。
-   */
   const handleManualSync = () => {
     return new Promise(async (resolve) => {
       const settings = getSettings();
@@ -6292,7 +6289,10 @@
           text: "从云端拉取",
           className: "s1p-confirm",
           action: () => {
-            const result = importLocalData(JSON.stringify(remote.full));
+            // [S1P-FIX] 调用导入时，同样传入 suppressPostSync 选项
+            const result = importLocalData(JSON.stringify(remote.full), {
+              suppressPostSync: true,
+            });
             if (result.success) {
               GM_setValue("s1p_last_sync_timestamp", Date.now());
               updateLastSyncTimeDisplay();
@@ -7777,7 +7777,8 @@
       console.log(
         `S1 Plus: Cleaned up ${cleanedCount} old reading progress records (older than ${settings.readingProgressCleanupDays} days).`
       );
-      saveReadProgress(cleanedProgress);
+      // [S1P-FIX] 调用保存时，传入 true 来阻止更新 last_modified 时间戳
+      saveReadProgress(cleanedProgress, true);
     }
   };
   /**

@@ -1626,3 +1626,449 @@ CSS: .s1p-settings-group.is-disabled { opacity: 0.6; pointer-events: none; }
 点击“全部”后，布局恢复正常
 
 我上传了一些文件帮助分析，其中 S1Plus 为对应的脚本文件，no-issue 是选择“全部”时，正常显示帖子列表的完整 HTML 代码片段。with-layout-issue 是选择任意一个分类之后，帖子列表布局异常的完整 HTML 代码片段。根据以上信息分析一下原因，不需要马上给出解决方案，先帮我分析一下可能的原因，找到问题的根源之后再给出解决方案，先分析出来再说
+
+
+目前设置面板的高度发生变化时（切换各个 tab 的总开关状态。那些 tab 内部存在列表，针对其中元素进行操作，如取消屏蔽，取消收藏，添加屏蔽关键字，自定义导航栏之类的所导致的高度变化） 设置面板会有一个类似收起展开的动画效果，请帮我在代码找到对应的实现逻辑/原理。位于 
+.s1p-modal-body {
+padding: 8px 16px 16px;
+overflow-y: auto;
+flex-grow: 1;
+/* --- [调试新增] --- */
+transition: height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+/* 暂时移除 flex-grow 以便手动控制高度 */
+flex-grow: 0;
+} 
+中的 transition: height 0.35s cubic-bezier(0.4, 0, 0.2, 1);，
+我试过把时间改为 10 秒， 但是测试发现，在点击“启用通用设置”、“启用用户屏蔽”、“启用自定义导航栏”等功能开关后，设置面板的收起展开动画耗时并没有变长，还是和原来的时间和速度，所以我也不能确定动画是不是这个，还有会和这个 modal.addEventListener("change", (e) => {xxx} 中的 render...Tab() 方法有关吗，我想知道这个动画的实现原理，从而按照我需求调整这个动画
+
+
+
+用户屏蔽的屏蔽遗漏了以下 mn 区块，对应的是论坛消息提醒的部分，被屏蔽的用户的相关提醒也应该被屏蔽掉，但是由于在直接屏蔽会出现看到新提醒的显示，但是点进来却没看到任何新消息，会造成疑惑，所以在屏蔽的同时要加上相应的说明，再加一个显示/隐藏按钮
+
+<div class="mn">
+<div class="bm bw0">
+<h1 class="mt"><i class="fico-bell fic4 fc-p vm"></i>提醒</h1>
+
+<script type="text/javascript">
+
+function deleteQueryNotice(uid, type) {
+var dlObj = $(type + '_' + uid);
+if(dlObj != null) {
+var id = dlObj.getAttribute('notice');
+var x = new Ajax();
+x.get('home.php?mod=misc&ac=ajax&op=delnotice&inajax=1&id='+id, function(s){
+dlObj.parentNode.removeChild(dlObj);
+});
+}
+}
+
+function errorhandle_pokeignore(msg, values) {
+deleteQueryNotice(values['uid'], 'pokeQuery');
+}
+function succeedhandle_noticeignore(url,msg, values) {
+if(values['type'] == "poke") {
+deleteQueryNotice(values['uid'], 'pokeQuery');
+} else if(values['type'] == "friend" ) {
+deleteQueryNotice(values['uid'], 'pendingFriend');  
+} else {
+deleteQueryNotice(values['id'], 'notice');
+}
+}				
+</script>
+
+<div class="xld xlda">
+<div class="nts"><dl class="cl " notice="18317178" id="notice_18317178">
+<dd class="m avt mbn">
+<a href="space-uid-236890.html"><img src="https://avatar.stage1st.com/000/23/68/90_avatar_small.jpg"></a>
+</dd>
+<dt>
+<a class="d b" href="home.php?mod=spacecp&amp;ac=common&amp;op=ignore&amp;authorid=236890&amp;type=post&amp;handlekey=noticeignore" id="a_note_18317178" onclick="showWindow('noticeignore', this.href, 'get', 0);" title="屏蔽">屏蔽</a>
+<span class="xg1 xw0">2025-9-19 10:38</span>
+</dt>
+<dd class="ntc_body" style="">
+<a href="space-uid-236890.html">暗月杀人兔</a> 回复了您的帖子 <a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=2262366&amp;pid=68454774" target="_blank">人民空军最新宣传片</a> &nbsp; <a href="forum.php?mod=redirect&amp;goto=findpost&amp;pid=68454774&amp;ptid=2262366" target="_blank" class="lit">查看</a></dd>
+
+
+</dl>
+<dl class="cl " notice="18316906" id="notice_18316906">
+<dd class="m avt mbn">
+<a href="space-uid-194692.html"><img src="https://avatar.stage1st.com/000/19/46/92_avatar_small.jpg"></a>
+</dd>
+<dt>
+<a class="d b" href="home.php?mod=spacecp&amp;ac=common&amp;op=ignore&amp;authorid=194692&amp;type=post&amp;handlekey=noticeignore" id="a_note_18316906" onclick="showWindow('noticeignore', this.href, 'get', 0);" title="屏蔽">屏蔽</a>
+<span class="xg1 xw0">2025-9-19 08:33</span>
+</dt>
+<dd class="ntc_body" style="">
+<a href="space-uid-194692.html">mengsu</a> 回复了您的帖子 <a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=2262366&amp;pid=68454060" target="_blank">人民空军最新宣传片</a> &nbsp; <a href="forum.php?mod=redirect&amp;goto=findpost&amp;pid=68454060&amp;ptid=2262366" target="_blank" class="lit">查看</a></dd>
+
+
+</dl>
+<dl class="cl " notice="18316782" id="notice_18316782">
+<dd class="m avt mbn">
+<a href="space-uid-569233.html"><img src="https://avatar.stage1st.com/000/56/92/33_avatar_small.jpg"></a>
+</dd>
+<dt>
+<a class="d b" href="home.php?mod=spacecp&amp;ac=common&amp;op=ignore&amp;authorid=569233&amp;type=post&amp;handlekey=noticeignore" id="a_note_18316782" onclick="showWindow('noticeignore', this.href, 'get', 0);" title="屏蔽">屏蔽</a>
+<span class="xg1 xw0">2025-9-19 02:36</span>
+</dt>
+<dd class="ntc_body" style="">
+<a href="space-uid-569233.html">nekkihs2</a> 回复了您的帖子 <a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=2262366&amp;pid=68453719" target="_blank">人民空军最新宣传片</a> &nbsp; <a href="forum.php?mod=redirect&amp;goto=findpost&amp;pid=68453719&amp;ptid=2262366" target="_blank" class="lit">查看</a></dd>
+
+
+</dl>
+<dl class="cl " notice="18316376" id="notice_18316376">
+<dd class="m avt mbn">
+<a href="space-uid-29036.html"><img src="https://avatar.stage1st.com/000/02/90/36_avatar_small.jpg"></a>
+</dd>
+<dt>
+<a class="d b" href="home.php?mod=spacecp&amp;ac=common&amp;op=ignore&amp;authorid=29036&amp;type=post&amp;handlekey=noticeignore" id="a_note_18316376" onclick="showWindow('noticeignore', this.href, 'get', 0);" title="屏蔽">屏蔽</a>
+<span class="xg1 xw0">2025-9-18 20:07</span>
+</dt>
+<dd class="ntc_body" style="">
+<a href="space-uid-29036.html">装甲兔</a> 回复了您的帖子 <a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=2257906&amp;pid=68452488" target="_blank">731导演赵林山发明术语倒是一套一套的（更新：已过审）</a> &nbsp; <a href="forum.php?mod=redirect&amp;goto=findpost&amp;pid=68452488&amp;ptid=2257906" target="_blank" class="lit">查看</a></dd>
+
+
+</dl>
+<dl class="cl " notice="18315882" id="notice_18315882">
+<dd class="m avt mbn">
+<a href="space-uid-577272.html"><img src="https://avatar.stage1st.com/noavatar.svg"></a>
+</dd>
+<dt>
+<a class="d b" href="home.php?mod=spacecp&amp;ac=common&amp;op=ignore&amp;authorid=577272&amp;type=post&amp;handlekey=noticeignore" id="a_note_18315882" onclick="showWindow('noticeignore', this.href, 'get', 0);" title="屏蔽">屏蔽</a>
+<span class="xg1 xw0">2025-9-18 16:13</span>
+</dt>
+<dd class="ntc_body" style="">
+<a href="space-uid-577272.html">cmdycj0732</a> 回复了您的帖子 <a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=2262296&amp;pid=68451182" target="_blank">梁文峰通讯作者，deepseek登上nature封面</a> &nbsp; <a href="forum.php?mod=redirect&amp;goto=findpost&amp;pid=68451182&amp;ptid=2262296" target="_blank" class="lit">查看</a></dd>
+
+
+</dl>
+<dl class="cl " notice="18313990" id="notice_18313990">
+<dd class="m avt mbn">
+<a href="space-uid-553350.html"><img src="https://avatar.stage1st.com/000/55/33/50_avatar_small.jpg"></a>
+</dd>
+<dt>
+<a class="d b" href="home.php?mod=spacecp&amp;ac=common&amp;op=ignore&amp;authorid=553350&amp;type=post&amp;handlekey=noticeignore" id="a_note_18313990" onclick="showWindow('noticeignore', this.href, 'get', 0);" title="屏蔽">屏蔽</a>
+<span class="xg1 xw0">2025-9-18 13:44</span>
+</dt>
+<dd class="ntc_body" style="">
+<a href="space-uid-553350.html">灰流うらら</a> 回复了您的帖子 <a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=2262256&amp;pid=68450188" target="_blank">科技新闻两则：国产先进DUV光刻机开启测试，字节阿里等停购英伟达AI芯片。</a> &nbsp; <a href="forum.php?mod=redirect&amp;goto=findpost&amp;pid=68450188&amp;ptid=2262256" target="_blank" class="lit">查看</a></dd>
+
+
+</dl>
+<dl class="cl " notice="18314542" id="notice_18314542">
+<dd class="m avt mbn">
+<a href="space-uid-530952.html"><img src="https://avatar.stage1st.com/noavatar.svg"></a>
+</dd>
+<dt>
+<a class="d b" href="home.php?mod=spacecp&amp;ac=common&amp;op=ignore&amp;authorid=530952&amp;type=post&amp;handlekey=noticeignore" id="a_note_18314542" onclick="showWindow('noticeignore', this.href, 'get', 0);" title="屏蔽">屏蔽</a>
+<span class="xg1 xw0">2025-9-18 00:17</span>
+</dt>
+<dd class="ntc_body" style="">
+<a href="space-uid-530952.html">Lokad</a> 回复了您的帖子 <a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=2262256&amp;pid=68447466" target="_blank">科技新闻两则：国产先进DUV光刻机开启测试，字节阿里等停购英伟达AI芯片。</a> &nbsp; <a href="forum.php?mod=redirect&amp;goto=findpost&amp;pid=68447466&amp;ptid=2262256" target="_blank" class="lit">查看</a></dd>
+
+
+</dl>
+<dl class="cl " notice="18314515" id="notice_18314515">
+<dd class="m avt mbn">
+<a href="space-uid-530952.html"><img src="https://avatar.stage1st.com/noavatar.svg"></a>
+</dd>
+<dt>
+<a class="d b" href="home.php?mod=spacecp&amp;ac=common&amp;op=ignore&amp;authorid=530952&amp;type=post&amp;handlekey=noticeignore" id="a_note_18314515" onclick="showWindow('noticeignore', this.href, 'get', 0);" title="屏蔽">屏蔽</a>
+<span class="xg1 xw0">2025-9-17 23:59</span>
+</dt>
+<dd class="ntc_body" style="">
+<a href="space-uid-530952.html">Lokad</a> 回复了您的帖子 <a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=2262256&amp;pid=68447410" target="_blank">科技新闻两则：国产先进DUV光刻机开启测试，字节阿里等停购英伟达AI芯片。</a> &nbsp; <a href="forum.php?mod=redirect&amp;goto=findpost&amp;pid=68447410&amp;ptid=2262256" target="_blank" class="lit">查看</a></dd>
+
+
+</dl>
+<dl class="cl " notice="18314286" id="notice_18314286">
+<dd class="m avt mbn">
+<a href="space-uid-447042.html"><img src="https://avatar.stage1st.com/noavatar.svg"></a>
+</dd>
+<dt>
+<a class="d b" href="home.php?mod=spacecp&amp;ac=common&amp;op=ignore&amp;authorid=447042&amp;type=post&amp;handlekey=noticeignore" id="a_note_18314286" onclick="showWindow('noticeignore', this.href, 'get', 0);" title="屏蔽">屏蔽</a>
+<span class="xg1 xw0">2025-9-17 21:16</span>
+</dt>
+<dd class="ntc_body" style="">
+<a href="space-uid-447042.html">qratosones1337</a> 回复了您的帖子 <a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=2262256&amp;pid=68446697" target="_blank">科技新闻两则：国产先进DUV光刻机开启测试，字节阿里等停购英伟达AI芯片。</a> &nbsp; <a href="forum.php?mod=redirect&amp;goto=findpost&amp;pid=68446697&amp;ptid=2262256" target="_blank" class="lit">查看</a></dd>
+
+
+</dl>
+<dl class="cl " notice="18314090" id="notice_18314090">
+<dd class="m avt mbn">
+<a href="space-uid-45148.html"><img src="https://avatar.stage1st.com/000/04/51/48_avatar_small.jpg"></a>
+</dd>
+<dt>
+<a class="d b" href="home.php?mod=spacecp&amp;ac=common&amp;op=ignore&amp;authorid=45148&amp;type=post&amp;handlekey=noticeignore" id="a_note_18314090" onclick="showWindow('noticeignore', this.href, 'get', 0);" title="屏蔽">屏蔽</a>
+<span class="xg1 xw0">2025-9-17 19:36</span>
+</dt>
+<dd class="ntc_body" style="">
+<a href="space-uid-45148.html">佛剑分说</a> 回复了您的帖子 <a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=2260062&amp;pid=68446131" target="_blank">吉利银河M9，19.38万起</a> &nbsp; <a href="forum.php?mod=redirect&amp;goto=findpost&amp;pid=68446131&amp;ptid=2260062" target="_blank" class="lit">查看</a></dd>
+
+
+</dl>
+<dl class="cl " notice="18313998" id="notice_18313998">
+<dd class="m avt mbn">
+<a href="space-uid-573135.html"><img src="https://avatar.stage1st.com/000/57/31/35_avatar_small.jpg"></a>
+</dd>
+<dt>
+<a class="d b" href="home.php?mod=spacecp&amp;ac=common&amp;op=ignore&amp;authorid=573135&amp;type=post&amp;handlekey=noticeignore" id="a_note_18313998" onclick="showWindow('noticeignore', this.href, 'get', 0);" title="屏蔽">屏蔽</a>
+<span class="xg1 xw0">2025-9-17 18:45</span>
+</dt>
+<dd class="ntc_body" style="">
+<a href="space-uid-573135.html">是二大爷</a> 回复了您的帖子 <a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=2262256&amp;pid=68445902" target="_blank">科技新闻两则：国产先进DUV光刻机开启测试，字节阿里等停购英伟达AI芯片，</a> &nbsp; <a href="forum.php?mod=redirect&amp;goto=findpost&amp;pid=68445902&amp;ptid=2262256" target="_blank" class="lit">查看</a></dd>
+
+
+</dl>
+<dl class="cl " notice="18313157" id="notice_18313157">
+<dd class="m avt mbn">
+<a href="space-uid-424759.html"><img src="https://avatar.stage1st.com/noavatar.svg"></a>
+</dd>
+<dt>
+<a class="d b" href="home.php?mod=spacecp&amp;ac=common&amp;op=ignore&amp;authorid=424759&amp;type=post&amp;handlekey=noticeignore" id="a_note_18313157" onclick="showWindow('noticeignore', this.href, 'get', 0);" title="屏蔽">屏蔽</a>
+<span class="xg1 xw0">2025-9-17 12:15</span>
+</dt>
+<dd class="ntc_body" style="">
+<a href="space-uid-424759.html">畜男不是人</a> 回复了您的帖子 <a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=2262216&amp;pid=68443651" target="_blank">Tiktok最终方案敲定，美区特供tiktok+云上得州</a> &nbsp; <a href="forum.php?mod=redirect&amp;goto=findpost&amp;pid=68443651&amp;ptid=2262216" target="_blank" class="lit">查看</a></dd>
+
+
+</dl>
+<dl class="cl " notice="18205957" id="notice_18205957">
+<dd class="m avt mbn">
+<a href="space-uid-5384.html"><img src="https://avatar.stage1st.com/000/00/53/84_avatar_small.jpg"></a>
+</dd>
+<dt>
+<a class="d b" href="home.php?mod=spacecp&amp;ac=common&amp;op=ignore&amp;authorid=5384&amp;type=post&amp;handlekey=noticeignore" id="a_note_18205957" onclick="showWindow('noticeignore', this.href, 'get', 0);" title="屏蔽">屏蔽</a>
+<span class="xg1 xw0">2025-9-16 10:47</span>
+</dt>
+<dd class="ntc_body" style="">
+<a href="space-uid-5384.html">x3c</a> 回复了您的帖子 <a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=2257044&amp;pid=68437233" target="_blank">S1 Plus - Stage1st 体验增强套件｜9/14 更新</a> &nbsp; <a href="forum.php?mod=redirect&amp;goto=findpost&amp;pid=68437233&amp;ptid=2257044" target="_blank" class="lit">查看</a></dd>
+
+
+</dl>
+<dl class="cl " notice="18309208" id="notice_18309208">
+<dd class="m avt mbn">
+<a href="space-uid-379426.html"><img src="https://avatar.stage1st.com/000/37/94/26_avatar_small.jpg"></a>
+</dd>
+<dt>
+<a class="d b" href="home.php?mod=spacecp&amp;ac=common&amp;op=ignore&amp;authorid=379426&amp;type=post&amp;handlekey=noticeignore" id="a_note_18309208" onclick="showWindow('noticeignore', this.href, 'get', 0);" title="屏蔽">屏蔽</a>
+<span class="xg1 xw0">2025-9-15 15:44</span>
+</dt>
+<dd class="ntc_body" style="">
+<a href="space-uid-379426.html">就咋的</a> 回复了您的帖子 <a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=2261992&amp;pid=68432876" target="_blank">日本右翼不知道中日之间的巨大差距吗？为什么如此热衷于对华作战？</a> &nbsp; <a href="forum.php?mod=redirect&amp;goto=findpost&amp;pid=68432876&amp;ptid=2261992" target="_blank" class="lit">查看</a></dd>
+
+
+</dl>
+<dl class="cl " notice="18308587" id="notice_18308587">
+<dd class="m avt mbn">
+<a href="space-uid-152709.html"><img src="https://avatar.stage1st.com/000/15/27/09_avatar_small.jpg"></a>
+</dd>
+<dt>
+<a class="d b" href="home.php?mod=spacecp&amp;ac=common&amp;op=ignore&amp;authorid=152709&amp;type=post&amp;handlekey=noticeignore" id="a_note_18308587" onclick="showWindow('noticeignore', this.href, 'get', 0);" title="屏蔽">屏蔽</a>
+<span class="xg1 xw0">2025-9-15 11:16</span>
+</dt>
+<dd class="ntc_body" style="">
+<a href="space-uid-152709.html">pgain2004</a> 回复了您的帖子 <a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=2257044&amp;pid=68431113" target="_blank">S1 Plus - Stage1st 体验增强套件｜9/14 更新</a> &nbsp; <a href="forum.php?mod=redirect&amp;goto=findpost&amp;pid=68431113&amp;ptid=2257044" target="_blank" class="lit">查看</a></dd>
+
+
+</dl>
+<dl class="cl " notice="18298228" id="notice_18298228">
+<dd class="m avt mbn">
+<a href="space-uid-528538.html"><img src="https://avatar.stage1st.com/noavatar.svg"></a>
+</dd>
+<dt>
+<a class="d b" href="home.php?mod=spacecp&amp;ac=common&amp;op=ignore&amp;authorid=528538&amp;type=post&amp;handlekey=noticeignore" id="a_note_18298228" onclick="showWindow('noticeignore', this.href, 'get', 0);" title="屏蔽">屏蔽</a>
+<span class="xg1 xw0">2025-9-10 09:48</span>
+</dt>
+<dd class="ntc_body" style="">
+<a href="space-uid-528538.html">RookieTnT</a> 回复了您的帖子 <a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=2261565&amp;pid=68399445" target="_blank">iPhone 17 发布会</a> &nbsp; <a href="forum.php?mod=redirect&amp;goto=findpost&amp;pid=68399445&amp;ptid=2261565" target="_blank" class="lit">查看</a></dd>
+
+
+</dl>
+<dl class="cl " notice="18297676" id="notice_18297676">
+<dd class="m avt mbn">
+<a href="space-uid-152709.html"><img src="https://avatar.stage1st.com/000/15/27/09_avatar_small.jpg"></a>
+</dd>
+<dt>
+<a class="d b" href="home.php?mod=spacecp&amp;ac=common&amp;op=ignore&amp;authorid=152709&amp;type=post&amp;handlekey=noticeignore" id="a_note_18297676" onclick="showWindow('noticeignore', this.href, 'get', 0);" title="屏蔽">屏蔽</a>
+<span class="xg1 xw0">2025-9-9 22:56</span>
+</dt>
+<dd class="ntc_body" style="">
+<a href="space-uid-152709.html">pgain2004</a> 回复了您的帖子 <a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=1826103&amp;pid=68397802" target="_blank">【论坛美化】S1 NUX【25/6/20 修复匹配bug】</a> &nbsp; <a href="forum.php?mod=redirect&amp;goto=findpost&amp;pid=68397802&amp;ptid=1826103" target="_blank" class="lit">查看</a></dd>
+
+
+</dl>
+<dl class="cl " notice="18295761" id="notice_18295761">
+<dd class="m avt mbn">
+<a href="space-uid-152709.html"><img src="https://avatar.stage1st.com/000/15/27/09_avatar_small.jpg"></a>
+</dd>
+<dt>
+<a class="d b" href="home.php?mod=spacecp&amp;ac=common&amp;op=ignore&amp;authorid=152709&amp;type=post&amp;handlekey=noticeignore" id="a_note_18295761" onclick="showWindow('noticeignore', this.href, 'get', 0);" title="屏蔽">屏蔽</a>
+<span class="xg1 xw0">2025-9-9 06:08</span>
+</dt>
+<dd class="ntc_body" style="">
+<a href="space-uid-152709.html">pgain2004</a> 回复了您的帖子 <a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=1826103&amp;pid=68392798" target="_blank">【论坛美化】S1 NUX【25/6/20 修复匹配bug】</a> &nbsp; <a href="forum.php?mod=redirect&amp;goto=findpost&amp;pid=68392798&amp;ptid=1826103" target="_blank" class="lit">查看</a></dd>
+
+
+</dl>
+<dl class="cl " notice="18295602" id="notice_18295602">
+<dd class="m avt mbn">
+<a href="space-uid-152709.html"><img src="https://avatar.stage1st.com/000/15/27/09_avatar_small.jpg"></a>
+</dd>
+<dt>
+<a class="d b" href="home.php?mod=spacecp&amp;ac=common&amp;op=ignore&amp;authorid=152709&amp;type=post&amp;handlekey=noticeignore" id="a_note_18295602" onclick="showWindow('noticeignore', this.href, 'get', 0);" title="屏蔽">屏蔽</a>
+<span class="xg1 xw0">2025-9-8 23:16</span>
+</dt>
+<dd class="ntc_body" style="">
+<a href="space-uid-152709.html">pgain2004</a> 回复了您的帖子 <a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=1826103&amp;pid=68392172" target="_blank">【论坛美化】S1 NUX【25/6/20 修复匹配bug】</a> &nbsp; <a href="forum.php?mod=redirect&amp;goto=findpost&amp;pid=68392172&amp;ptid=1826103" target="_blank" class="lit">查看</a></dd>
+
+
+</dl>
+<dl class="cl " notice="18087086" id="notice_18087086">
+<dd class="m avt mbn">
+<a href="space-uid-220348.html"><img src="https://avatar.stage1st.com/000/22/03/48_avatar_small.jpg"></a>
+</dd>
+<dt>
+<a class="d b" href="home.php?mod=spacecp&amp;ac=common&amp;op=ignore&amp;authorid=220348&amp;type=post&amp;handlekey=noticeignore" id="a_note_18087086" onclick="showWindow('noticeignore', this.href, 'get', 0);" title="屏蔽">屏蔽</a>
+<span class="xg1 xw0">2025-9-8 20:46</span>
+</dt>
+<dd class="ntc_body" style="">
+<a href="space-uid-220348.html">奥柏伦亲王</a> 回复了您的帖子 <a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=2251687&amp;pid=68391583" target="_blank">已 G 勿念。白嫖 Gemini Advanced！！！暂时不需要教育验证（8 月前）</a> &nbsp; <a href="forum.php?mod=redirect&amp;goto=findpost&amp;pid=68391583&amp;ptid=2251687" target="_blank" class="lit">查看</a></dd>
+
+
+</dl>
+<dl class="cl " notice="18294338" id="notice_18294338">
+<dd class="m avt mbn">
+<a href="space-uid-577541.html"><img src="https://avatar.stage1st.com/noavatar.svg"></a>
+</dd>
+<dt>
+<a class="d b" href="home.php?mod=spacecp&amp;ac=common&amp;op=ignore&amp;authorid=577541&amp;type=post&amp;handlekey=noticeignore" id="a_note_18294338" onclick="showWindow('noticeignore', this.href, 'get', 0);" title="屏蔽">屏蔽</a>
+<span class="xg1 xw0">2025-9-8 13:30</span>
+</dt>
+<dd class="ntc_body" style="">
+<a href="space-uid-577541.html">Mojito</a> 回复了您的帖子 <a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=2261442&amp;pid=68389289" target="_blank">求 9.3 🥮 那个激光武器的萌化版本</a> &nbsp; <a href="forum.php?mod=redirect&amp;goto=findpost&amp;pid=68389289&amp;ptid=2261442" target="_blank" class="lit">查看</a></dd>
+
+
+</dl>
+<dl class="cl " notice="18293601" id="notice_18293601">
+<dd class="m avt mbn">
+<a href="space-uid-552961.html"><img src="https://avatar.stage1st.com/noavatar.svg"></a>
+</dd>
+<dt>
+<a class="d b" href="home.php?mod=spacecp&amp;ac=common&amp;op=ignore&amp;authorid=552961&amp;type=post&amp;handlekey=noticeignore" id="a_note_18293601" onclick="showWindow('noticeignore', this.href, 'get', 0);" title="屏蔽">屏蔽</a>
+<span class="xg1 xw0">2025-9-7 21:50</span>
+</dt>
+<dd class="ntc_body" style="">
+<a href="space-uid-552961.html">丸山之上缤纷彩</a> 回复了您的帖子 <a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=2261222&amp;pid=68386101" target="_blank">日网评论翻译：前日本首相鸠山由纪夫参加阅兵式，日本网民难以接受</a> &nbsp; <a href="forum.php?mod=redirect&amp;goto=findpost&amp;pid=68386101&amp;ptid=2261222" target="_blank" class="lit">查看</a></dd>
+
+
+</dl>
+<dl class="cl " notice="18290431" id="notice_18290431">
+<dd class="m avt mbn">
+<a href="space-uid-458738.html"><img src="https://avatar.stage1st.com/noavatar.svg"></a>
+</dd>
+<dt>
+<a class="d b" href="home.php?mod=spacecp&amp;ac=common&amp;op=ignore&amp;authorid=458738&amp;type=post&amp;handlekey=noticeignore" id="a_note_18290431" onclick="showWindow('noticeignore', this.href, 'get', 0);" title="屏蔽">屏蔽</a>
+<span class="xg1 xw0">2025-9-5 17:44</span>
+</dt>
+<dd class="ntc_body" style="">
+<a href="space-uid-458738.html">罗莉控</a> 回复了您的帖子 <a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=2261222&amp;pid=68376424" target="_blank">日网评论翻译：前日本首相鸠山由纪夫参加阅兵式，日本网民难以接受</a> &nbsp; <a href="forum.php?mod=redirect&amp;goto=findpost&amp;pid=68376424&amp;ptid=2261222" target="_blank" class="lit">查看</a></dd>
+
+
+</dl>
+<dl class="cl " notice="18290357" id="notice_18290357">
+<dd class="m avt mbn">
+<a href="space-uid-188627.html"><img src="https://avatar.stage1st.com/000/18/86/27_avatar_small.jpg"></a>
+</dd>
+<dt>
+<a class="d b" href="home.php?mod=spacecp&amp;ac=common&amp;op=ignore&amp;authorid=188627&amp;type=post&amp;handlekey=noticeignore" id="a_note_18290357" onclick="showWindow('noticeignore', this.href, 'get', 0);" title="屏蔽">屏蔽</a>
+<span class="xg1 xw0">2025-9-5 17:05</span>
+</dt>
+<dd class="ntc_body" style="">
+<a href="space-uid-188627.html">阿库鲁艾特</a> 回复了您的帖子 <a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=2261222&amp;pid=68376185" target="_blank">日网评论翻译：前日本首相鸠山由纪夫参加阅兵式，日本网民难以接受</a> &nbsp; <a href="forum.php?mod=redirect&amp;goto=findpost&amp;pid=68376185&amp;ptid=2261222" target="_blank" class="lit">查看</a></dd>
+
+
+</dl>
+<dl class="cl " notice="18290189" id="notice_18290189">
+<dd class="m avt mbn">
+<a href="space-uid-82836.html"><img src="https://avatar.stage1st.com/000/08/28/36_avatar_small.jpg"></a>
+</dd>
+<dt>
+<a class="d b" href="home.php?mod=spacecp&amp;ac=common&amp;op=ignore&amp;authorid=82836&amp;type=post&amp;handlekey=noticeignore" id="a_note_18290189" onclick="showWindow('noticeignore', this.href, 'get', 0);" title="屏蔽">屏蔽</a>
+<span class="xg1 xw0">2025-9-5 15:44</span>
+</dt>
+<dd class="ntc_body" style="">
+<a href="space-uid-82836.html">03e7</a> 回复了您的帖子 <a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=2261224&amp;pid=68375716" target="_blank">Claude母公司Anthropic全面禁止中国用户使用</a> &nbsp; <a href="forum.php?mod=redirect&amp;goto=findpost&amp;pid=68375716&amp;ptid=2261224" target="_blank" class="lit">查看</a></dd>
+
+
+</dl>
+<dl class="cl " notice="18289974" id="notice_18289974">
+<dd class="m avt mbn">
+<a href="space-uid-228808.html"><img src="https://avatar.stage1st.com/000/22/88/08_avatar_small.jpg"></a>
+</dd>
+<dt>
+<a class="d b" href="home.php?mod=spacecp&amp;ac=common&amp;op=ignore&amp;authorid=228808&amp;type=post&amp;handlekey=noticeignore" id="a_note_18289974" onclick="showWindow('noticeignore', this.href, 'get', 0);" title="屏蔽">屏蔽</a>
+<span class="xg1 xw0">2025-9-5 13:43</span>
+</dt>
+<dd class="ntc_body" style="">
+<a href="space-uid-228808.html">木水风铃</a> 回复了您的帖子 <a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=2261224&amp;pid=68375106" target="_blank">Claude母公司Anthropic全面禁止中国用户使用</a> &nbsp; <a href="forum.php?mod=redirect&amp;goto=findpost&amp;pid=68375106&amp;ptid=2261224" target="_blank" class="lit">查看</a></dd>
+
+
+</dl>
+<dl class="cl " notice="18286647" id="notice_18286647">
+<dd class="m avt mbn">
+<a href="space-uid-104858.html"><img src="https://avatar.stage1st.com/noavatar.svg"></a>
+</dd>
+<dt>
+<a class="d b" href="home.php?mod=spacecp&amp;ac=common&amp;op=ignore&amp;authorid=104858&amp;type=post&amp;handlekey=noticeignore" id="a_note_18286647" onclick="showWindow('noticeignore', this.href, 'get', 0);" title="屏蔽">屏蔽</a>
+<span class="xg1 xw0">2025-9-3 18:54</span>
+</dt>
+<dd class="ntc_body" style="">
+<a href="space-uid-104858.html">andychen</a> 回复了您的帖子 <a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=2260876&amp;pid=68365360" target="_blank">纪念抗战胜利80周年，9.3大阅兵直播讨论帖</a> &nbsp; <a href="forum.php?mod=redirect&amp;goto=findpost&amp;pid=68365360&amp;ptid=2260876" target="_blank" class="lit">查看</a></dd>
+
+
+</dl>
+<dl class="cl " notice="18286636" id="notice_18286636">
+<dd class="m avt mbn">
+<a href="space-uid-154573.html"><img src="https://avatar.stage1st.com/noavatar.svg"></a>
+</dd>
+<dt>
+<a class="d b" href="home.php?mod=spacecp&amp;ac=common&amp;op=ignore&amp;authorid=154573&amp;type=post&amp;handlekey=noticeignore" id="a_note_18286636" onclick="showWindow('noticeignore', this.href, 'get', 0);" title="屏蔽">屏蔽</a>
+<span class="xg1 xw0">2025-9-3 18:50</span>
+</dt>
+<dd class="ntc_body" style="">
+<a href="space-uid-154573.html">aeolus039</a> 回复了您的帖子 <a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=2260876&amp;pid=68365339" target="_blank">纪念抗战胜利80周年，9.3大阅兵直播讨论帖</a> &nbsp; <a href="forum.php?mod=redirect&amp;goto=findpost&amp;pid=68365339&amp;ptid=2260876" target="_blank" class="lit">查看</a></dd>
+
+
+</dl>
+<dl class="cl " notice="18286634" id="notice_18286634">
+<dd class="m avt mbn">
+<a href="space-uid-46046.html"><img src="https://avatar.stage1st.com/000/04/60/46_avatar_small.jpg"></a>
+</dd>
+<dt>
+<a class="d b" href="home.php?mod=spacecp&amp;ac=common&amp;op=ignore&amp;authorid=46046&amp;type=post&amp;handlekey=noticeignore" id="a_note_18286634" onclick="showWindow('noticeignore', this.href, 'get', 0);" title="屏蔽">屏蔽</a>
+<span class="xg1 xw0">2025-9-3 18:47</span>
+</dt>
+<dd class="ntc_body" style="">
+<a href="space-uid-46046.html">vorfeed</a> 回复了您的帖子 <a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=2260876&amp;pid=68365333" target="_blank">纪念抗战胜利80周年，9.3大阅兵直播讨论帖</a> &nbsp; <a href="forum.php?mod=redirect&amp;goto=findpost&amp;pid=68365333&amp;ptid=2260876" target="_blank" class="lit">查看</a></dd>
+
+
+</dl>
+<dl class="cl " notice="18286625" id="notice_18286625">
+<dd class="m avt mbn">
+<a href="space-uid-328756.html"><img src="https://avatar.stage1st.com/noavatar.svg"></a>
+</dd>
+<dt>
+<a class="d b" href="home.php?mod=spacecp&amp;ac=common&amp;op=ignore&amp;authorid=328756&amp;type=post&amp;handlekey=noticeignore" id="a_note_18286625" onclick="showWindow('noticeignore', this.href, 'get', 0);" title="屏蔽">屏蔽</a>
+<span class="xg1 xw0">2025-9-3 18:43</span>
+</dt>
+<dd class="ntc_body" style="">
+<a href="space-uid-328756.html">liwangli1983</a> 回复了您的帖子 <a href="forum.php?mod=redirect&amp;goto=findpost&amp;ptid=2260876&amp;pid=68365309" target="_blank">纪念抗战胜利80周年，9.3大阅兵直播讨论帖</a> &nbsp; <a href="forum.php?mod=redirect&amp;goto=findpost&amp;pid=68365309&amp;ptid=2260876" target="_blank" class="lit">查看</a></dd>
+
+
+</dl>
+</div>
+</div>
+
+<div class="pgs cl"><div class="pg"><strong>1</strong><a href="home.php?mod=space&amp;do=notice&amp;view=all&amp;type=&amp;isread=1&amp;page=2">2</a><a href="home.php?mod=space&amp;do=notice&amp;view=all&amp;type=&amp;isread=1&amp;page=3">3</a><a href="home.php?mod=space&amp;do=notice&amp;view=all&amp;type=&amp;isread=1&amp;page=4">4</a><a href="home.php?mod=space&amp;do=notice&amp;view=all&amp;type=&amp;isread=1&amp;page=5">5</a><a href="home.php?mod=space&amp;do=notice&amp;view=all&amp;type=&amp;isread=1&amp;page=6">6</a><a href="home.php?mod=space&amp;do=notice&amp;view=all&amp;type=&amp;isread=1&amp;page=7">7</a><a href="home.php?mod=space&amp;do=notice&amp;view=all&amp;type=&amp;isread=1&amp;page=8">8</a><a href="home.php?mod=space&amp;do=notice&amp;view=all&amp;type=&amp;isread=1&amp;page=9">9</a><a href="home.php?mod=space&amp;do=notice&amp;view=all&amp;type=&amp;isread=1&amp;page=10">10</a><a href="home.php?mod=space&amp;do=notice&amp;view=all&amp;type=&amp;isread=1&amp;page=187" class="last">... 187</a><label><input type="text" name="custompage" class="px" size="2" title="输入页码，按回车快速跳转" value="1" onkeydown="if(event.keyCode==13) {window.location='home.php?mod=space&amp;do=notice&amp;view=all&amp;type=&amp;isread=1&amp;page='+this.value;; doane(event);}"><span title="共 187 页"> / 187 页</span></label><a href="home.php?mod=space&amp;do=notice&amp;view=all&amp;type=&amp;isread=1&amp;page=2" class="nxt">下一页</a></div></div></div>
+</div>
