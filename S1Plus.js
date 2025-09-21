@@ -237,6 +237,92 @@
       font-weight: bold;
     }
 
+   /* --- [MODIFIED V3] 手动同步对比弹窗样式 (美化版) --- */
+.s1p-sync-last-action {
+  font-size: 13px;
+  color: var(--s1p-desc-t);
+  text-align: center;
+  margin: 12px 0 4px 0;
+  padding: 8px;
+  background-color: var(--s1p-sub);
+  border-radius: 6px;
+}
+.s1p-sync-comparison-table {
+  margin-top: 16px;
+  border: 1px solid var(--s1p-pri);
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 14px;
+}
+.s1p-sync-comparison-row {
+  display: grid;
+  grid-template-columns: auto 1fr 1fr; /* <-- [核心修改] 使用 auto 关键字 */
+  align-items: center;
+  border-bottom: 1px solid var(--s1p-pri);
+  transition: background-color 0.2s ease;
+}
+.s1p-sync-comparison-row:last-child {
+  border-bottom: none;
+}
+/* 斑马条纹效果 */
+.s1p-sync-comparison-row:nth-child(even) {
+  background-color: var(--s1p-sub);
+}
+.s1p-sync-comparison-row:hover {
+  background-color: var(--s1p-pri);
+}
+/* 表头样式 */
+.s1p-sync-comparison-header {
+  font-weight: 600;
+  background-color: var(--s1p-pri) !important;
+  color: var(--s1p-t);
+  border-bottom: 1px solid var(--s1p-pri);
+}
+.s1p-sync-comparison-header > div {
+  padding: 10px 14px;
+  text-align: center;
+}
+.s1p-sync-comparison-header > div:first-child {
+  text-align: left;
+}
+/* 单元格样式 */
+.s1p-sync-comparison-label,
+.s1p-sync-comparison-value {
+  padding: 10px 14px;
+}
+.s1p-sync-comparison-label {
+  font-weight: 500;
+  color: var(--s1p-t);
+  white-space: nowrap;
+}
+.s1p-sync-comparison-value {
+  text-align: center;
+  font-family: monospace, sans-serif;
+  font-size: 15px;
+}
+.s1p-newer-badge {
+  color: var(--s1p-success-text);
+  font-weight: bold;
+  font-size: 12px;
+  margin-left: 5px;
+  vertical-align: middle;
+}
+  /* --- [新增] 为手动同步弹窗设定更宽的尺寸 --- */
+.s1p-sync-modal .s1p-confirm-content {
+  width: 580px;
+}
+
+.s1p-progress-update-badge {
+  font-size: 11px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color: var(--s1p-sec);
+  font-weight: bold;
+  margin-left: 6px;
+  vertical-align: middle;
+  position: relative;
+  top: -1px;
+}
+
     /* --- 提示框样式 --- */
     .s1p-notice {
       display: flex;
@@ -3917,9 +4003,34 @@
     li.appendChild(a);
 
     if (settings.syncDirectChoiceMode) {
-      // --- 模式2: 高级模式 (调用新的内联动作菜单) ---
-      a.style.cursor = "default";
+      // --- [MODIFIED] 模式2: 高级模式 (点击->智能判断 | 悬停->直接选择) ---
       let activeMenu = null;
+
+      // [核心修改] 为高级模式下的按钮增加与默认模式完全相同的“点击”行为
+      a.addEventListener("click", async (e) => {
+        e.preventDefault();
+        const icon = a.querySelector("svg");
+        if (!icon || icon.classList.contains("s1p-syncing")) return;
+
+        icon.classList.remove("s1p-sync-success", "s1p-sync-error");
+        icon.classList.add("s1p-syncing");
+
+        try {
+          // 调用我们已优化的核心同步函数
+          await handleManualSync();
+          // 注意：由于handleManualSync现在自己处理所有反馈，这里不再需要处理其返回值来增删图标class
+          icon.classList.remove("s1p-syncing");
+        } catch (error) {
+          icon.classList.remove("s1p-syncing");
+          console.error("S1 Plus: Manual sync handler threw an error:", error);
+        } finally {
+          // 移除动画类，并重置可能存在的transform
+          setTimeout(() => {
+            icon.classList.remove("s1p-sync-success", "s1p-sync-error");
+            icon.style.transform = "";
+          }, 1200);
+        }
+      });
 
       const pullIconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M1 14.5C1 12.1716 2.22429 10.1291 4.06426 8.9812C4.56469 5.044 7.92686 2 12 2C16.0731 2 19.4353 5.044 19.9357 8.9812C21.7757 10.1291 23 12.1716 23 14.5C23 17.9216 20.3562 20.7257 17 20.9811L7 21C3.64378 20.7257 1 17.9216 1 14.5ZM16.8483 18.9868C19.1817 18.8093 21 16.8561 21 14.5C21 12.927 20.1884 11.4962 18.8771 10.6781L18.0714 10.1754L17.9517 9.23338C17.5735 6.25803 15.0288 4 12 4C8.97116 4 6.42647 6.25803 6.0483 9.23338L5.92856 10.1754L5.12288 10.6781C3.81156 11.4962 3 12.927 3 14.5C3 16.8561 4.81833 18.8093 7.1517 18.9868L7.325 19H16.675L16.8483 18.9868ZM13 12H16L12 17L8 12H11V8H13V12Z"></path></svg>`;
       const pushIconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M1 14.5C1 12.1716 2.22429 10.1291 4.06426 8.9812C4.56469 5.044 7.92686 2 12 2C16.0731 2 19.4353 5.044 19.9357 8.9812C21.7757 10.1291 23 12.1716 23 14.5C23 17.9216 20.3562 20.7257 17 20.9811L7 21C3.64378 20.7257 1 17.9216 1 14.5ZM16.8483 18.9868C19.1817 18.8093 21 16.8561 21 14.5C21 12.927 20.1884 11.4962 18.8771 10.6781L18.0714 10.1754L17.9517 9.23338C17.5735 6.25803 15.0288 4 12 4C8.97116 4 6.42647 6.25803 6.0483 9.23338L5.92856 10.1754L5.12288 10.6781C3.81156 11.4962 3 12.927 3 14.5C3 16.8561 4.81833 18.8093 7.1517 18.9868L7.325 19H16.675L16.8483 18.9868ZM13 13V17H11V13H8L12 8L16 13H13Z"></path></svg>`;
@@ -3962,13 +4073,10 @@
         icon.classList.remove("s1p-sync-success", "s1p-sync-error");
         icon.classList.add("s1p-syncing");
 
-        let success = false;
         try {
-          success = await handleManualSync();
+          // 调用我们已优化的核心同步函数
+          await handleManualSync();
           icon.classList.remove("s1p-syncing");
-          if (success !== null) {
-            icon.classList.add(success ? "s1p-sync-success" : "s1p-sync-error");
-          }
         } catch (error) {
           icon.classList.remove("s1p-syncing");
           console.error("S1 Plus: Manual sync handler threw an error:", error);
@@ -6287,7 +6395,153 @@
     });
   };
 
-  // [MODIFIED] 增加 suppressInitialMessage 参数以优化调用流程
+  /**
+   * [MODIFIED V4] 创建手动同步时的对比详情HTML (增加阅读进度智能更新提示)
+   * @param {object} localDataObj - 本地数据对象
+   * @param {object} remoteDataObj - 远程数据对象
+   * @param {boolean} isConflict - 是否为冲突状态
+   * @returns {string} - 用于弹窗的HTML字符串
+   */
+  const createSyncComparisonHtml = (
+    localDataObj,
+    remoteDataObj,
+    isConflict
+  ) => {
+    const lastSyncInfo = GM_getValue("s1p_last_manual_sync_info", null);
+    let lastActionHtml = "";
+    if (lastSyncInfo && lastSyncInfo.timestamp && lastSyncInfo.action) {
+      const actionText = lastSyncInfo.action === "push" ? "推送" : "拉取";
+      const formattedTime = new Date(lastSyncInfo.timestamp).toLocaleString(
+        "zh-CN",
+        { hour12: false }
+      );
+      lastActionHtml = `<div class="s1p-sync-last-action">这台电脑上次手动操作: 于 ${formattedTime} <strong>${actionText}</strong>了数据</div>`;
+    }
+
+    const localNewer = localDataObj.lastUpdated > remoteDataObj.lastUpdated;
+    let title = "";
+    if (isConflict) {
+      title = `<h2 style="color: var(--s1p-red);">检测到同步冲突！</h2><p>时间戳相同但内容不同，请仔细选择要保留的版本。</p>`;
+    } else if (localNewer) {
+      title = `<h2>本地数据较新</h2><p>建议选择“推送”以更新云端备份。</p>`;
+    } else {
+      title = `<h2>云端备份较新</h2><p>建议选择“拉取”以更新本地数据。</p>`;
+    }
+
+    const formatTime = (ts) =>
+      new Date(ts || 0).toLocaleString("zh-CN", { hour12: false });
+    const localTime = formatTime(localDataObj.lastUpdated);
+    const remoteTime = formatTime(remoteDataObj.lastUpdated);
+    const newerBadge = '<span class="s1p-newer-badge">(较新)</span>';
+
+    const categories = [
+      { label: "屏蔽用户", key: "users" },
+      { label: "屏蔽帖子", key: "threads" },
+      { label: "用户标记", key: "user_tags" },
+      { label: "回复收藏", key: "bookmarked_replies" },
+      { label: "标题规则", key: "title_filter_rules" },
+      { label: "阅读进度", key: "read_progress" },
+    ];
+
+    const sortAndStringify = (obj) => {
+      // 一个简化的确定性序列化，用于对比
+      if (!obj || typeof obj !== "object") return JSON.stringify(obj);
+      return JSON.stringify(
+        Object.keys(obj)
+          .sort()
+          .reduce((result, key) => {
+            result[key] = obj[key];
+            return result;
+          }, {})
+      );
+    };
+
+    const tableRows = categories
+      .map((cat) => {
+        const localData = localDataObj.data[cat.key] || {};
+        const remoteData = remoteDataObj.data[cat.key] || {};
+        const localCount = Object.keys(localData).length;
+        const remoteCount = Object.keys(remoteData).length;
+
+        let localBadge = "";
+        let remoteBadge = "";
+
+        // [核心升级] 仅对“阅读进度”进行智能更新检查
+        if (
+          cat.key === "read_progress" &&
+          localCount === remoteCount &&
+          localCount > 0
+        ) {
+          const localContentStr = sortAndStringify(localData);
+          const remoteContentStr = sortAndStringify(remoteData);
+
+          if (localContentStr !== remoteContentStr) {
+            // 内容不一致，根据整体时间戳判断哪边是更新的
+            const updateBadge =
+              '<span class="s1p-progress-update-badge">(内容更新)</span>';
+            if (localNewer) {
+              localBadge = updateBadge;
+            } else {
+              remoteBadge = updateBadge;
+            }
+          }
+        }
+
+        return `
+            <div class="s1p-sync-comparison-row">
+                <div class="s1p-sync-comparison-label">${cat.label}</div>
+                <div class="s1p-sync-comparison-value">${localCount} ${localBadge}</div>
+                <div class="s1p-sync-comparison-value">${remoteCount} ${remoteBadge}</div>
+            </div>
+        `;
+      })
+      .join("");
+
+    return `
+        ${title}
+        ${lastActionHtml}
+        <div class="s1p-sync-comparison-table">
+            <div class="s1p-sync-comparison-row s1p-sync-comparison-header">
+                <div>数据项</div>
+                <div>本地数量</div>
+                <div>云端数量</div>
+            </div>
+            ${tableRows}
+            <div class="s1p-sync-comparison-row">
+                <div class="s1p-sync-comparison-label">最后更新</div>
+                <div class="s1p-sync-comparison-value" style="font-size: 13px;">${localTime} ${
+      localNewer && !isConflict ? newerBadge : ""
+    }</div>
+                <div class="s1p-sync-comparison-value" style="font-size: 13px;">${remoteTime} ${
+      !localNewer && !isConflict ? newerBadge : ""
+    }</div>
+            </div>
+        </div>
+    `;
+  };
+
+  /**
+   * [NEW] 获取当前页面的帖子ID
+   * @returns {string|null} 帖子ID或null
+   */
+  const getCurrentThreadId = () => {
+    const threadIdMatch = window.location.href.match(/thread-(\d+)-/);
+    if (threadIdMatch && threadIdMatch[1]) {
+      return threadIdMatch[1];
+    }
+    const params = new URLSearchParams(window.location.search);
+    const tid = params.get("tid") || params.get("ptid");
+    if (tid) {
+      return tid;
+    }
+    const tidInput = document.querySelector('input[name="tid"]#tid');
+    if (tidInput && tidInput.value) {
+      return tidInput.value;
+    }
+    return null;
+  };
+
+  // [MODIFIED V5] 增加帖子详情页智能同步逻辑
   const handleManualSync = (suppressInitialMessage = false) => {
     return new Promise(async (resolve) => {
       const settings = getSettings();
@@ -6300,7 +6554,6 @@
         return resolve(false);
       }
 
-      // [S1P-UX-FIX] 只有在非静默模式下才显示初始提示
       if (!suppressInitialMessage) {
         showMessage("正在检查云端数据...", null);
       }
@@ -6318,6 +6571,10 @@
                 const localData = await exportLocalDataObject();
                 await pushRemoteData(localData);
                 GM_setValue("s1p_last_sync_timestamp", Date.now());
+                GM_setValue("s1p_last_manual_sync_info", {
+                  action: "push",
+                  timestamp: Date.now(),
+                });
                 updateLastSyncTimeDisplay();
                 showMessage("推送成功！已初始化云端备份。", true);
                 resolve(true);
@@ -6338,7 +6595,8 @@
           createAdvancedConfirmationModal(
             "初始化云端同步",
             "<p>检测到云端备份为空，是否将当前本地数据作为初始版本推送到云端？</p>",
-            [pushAction, cancelAction]
+            [pushAction, cancelAction],
+            { modalClassName: "s1p-sync-modal" }
           );
           return;
         }
@@ -6353,20 +6611,61 @@
           return resolve(true);
         }
 
-        const formatForDisplay = (ts) =>
-          new Date(ts || 0).toLocaleString("zh-CN", { hour12: false });
-        const localNewer = localDataObject.lastUpdated > remote.lastUpdated;
+        // [S1PLUS-SMART-SYNC] 帖子详情页智能同步逻辑
+        const currentThreadId = getCurrentThreadId();
+        if (currentThreadId && !isInitialSyncInProgress) {
+          // 1. 创建两份数据的“净化”版本，即移除当前帖子阅读进度
+          const sanitizedLocalData = JSON.parse(
+            JSON.stringify(localDataObject.data)
+          );
+          const sanitizedRemoteData = JSON.parse(JSON.stringify(remote.data));
+          const currentThreadLocalProgress = sanitizedLocalData.read_progress
+            ? sanitizedLocalData.read_progress[currentThreadId]
+            : undefined;
+
+          if (sanitizedLocalData.read_progress)
+            delete sanitizedLocalData.read_progress[currentThreadId];
+          if (sanitizedRemoteData.read_progress)
+            delete sanitizedRemoteData.read_progress[currentThreadId];
+
+          // 2. 对比“净化”后的版本是否一致
+          const sanitizedLocalHash = await calculateDataHash(
+            sanitizedLocalData
+          );
+          const sanitizedRemoteHash = await calculateDataHash(
+            sanitizedRemoteData
+          );
+
+          if (sanitizedLocalHash === sanitizedRemoteHash) {
+            // 3. 如果一致，说明唯一区别就是当前帖子的阅读进度，执行无感同步
+            showMessage("智能同步：正在合并云端数据与当前阅读进度...", null);
+
+            // 拉取云端数据
+            importLocalData(JSON.stringify(remote.full), {
+              suppressPostSync: true,
+            });
+
+            // 如果本地确实有当前帖子的进度，则把它合并回去
+            if (currentThreadLocalProgress) {
+              const progress = getReadProgress();
+              progress[currentThreadId] = currentThreadLocalProgress;
+              saveReadProgress(progress);
+            }
+
+            GM_setValue("s1p_last_sync_timestamp", Date.now());
+            updateLastSyncTimeDisplay();
+            showMessage("智能同步成功！已保留当前帖子的最新阅读进度。", true);
+            return resolve(true);
+          }
+        }
+
+        // [FALLBACK] 如果不满足智能同步条件，则执行原有的手动选择流程
         const isConflict = localDataObject.lastUpdated === remote.lastUpdated;
-        let bodyHtml = isConflict
-          ? `<p style="color: var(--s1p-red); font-weight: bold;">警告：检测到同步冲突！</p><p>两份数据的时间戳相同但内容不同。请仔细选择您希望保留的版本。</p>`
-          : `<p>检测到本地数据与云端备份不一致，请选择同步方式：</p>`;
-        bodyHtml += `<div class="s1p-sync-choice-info"><div class="s1p-sync-choice-info-row"><span class="s1p-sync-choice-info-label">本地数据:</span><span class="s1p-sync-choice-info-time ${
-          localNewer && !isConflict ? "s1p-sync-choice-newer" : ""
-        }">${formatForDisplay(
-          localDataObject.lastUpdated
-        )}</span></div><div class="s1p-sync-choice-info-row"><span class="s1p-sync-choice-info-label">云端备份:</span><span class="s1p-sync-choice-info-time ${
-          !localNewer && !isConflict ? "s1p-sync-choice-newer" : ""
-        }">${formatForDisplay(remote.lastUpdated)}</span></div></div>`;
+        const bodyHtml = createSyncComparisonHtml(
+          localDataObject,
+          remote,
+          isConflict
+        );
 
         const pullAction = {
           text: "从云端拉取",
@@ -6377,6 +6676,10 @@
             });
             if (result.success) {
               GM_setValue("s1p_last_sync_timestamp", Date.now());
+              GM_setValue("s1p_last_manual_sync_info", {
+                action: "pull",
+                timestamp: Date.now(),
+              });
               updateLastSyncTimeDisplay();
               showMessage(`拉取成功！页面即将刷新。`, true);
               setTimeout(() => location.reload(), 1200);
@@ -6394,6 +6697,10 @@
             try {
               await pushRemoteData(localDataObject);
               GM_setValue("s1p_last_sync_timestamp", Date.now());
+              GM_setValue("s1p_last_manual_sync_info", {
+                action: "push",
+                timestamp: Date.now(),
+              });
               updateLastSyncTimeDisplay();
               showMessage("推送成功！已更新云端备份。", true);
               resolve(true);
@@ -6411,11 +6718,12 @@
             resolve(null);
           },
         };
-        createAdvancedConfirmationModal("手动同步选择", bodyHtml, [
-          pullAction,
-          pushAction,
-          cancelAction,
-        ]);
+        createAdvancedConfirmationModal(
+          "手动同步选择",
+          bodyHtml,
+          [pullAction, pushAction, cancelAction],
+          { modalClassName: "s1p-sync-modal" }
+        );
       } catch (error) {
         const corruptionErrorMessage = "云端备份已损坏";
         if (error?.message.includes(corruptionErrorMessage)) {
@@ -6427,6 +6735,10 @@
                 const localDataObjectForPush = await exportLocalDataObject();
                 await pushRemoteData(localDataObjectForPush);
                 GM_setValue("s1p_last_sync_timestamp", Date.now());
+                GM_setValue("s1p_last_manual_sync_info", {
+                  action: "push",
+                  timestamp: Date.now(),
+                });
                 updateLastSyncTimeDisplay();
                 showMessage("推送成功！已使用本地数据修复云端备份。", true);
                 resolve(true);
@@ -6447,7 +6759,8 @@
           createAdvancedConfirmationModal(
             "检测到云端备份损坏",
             `<p style="color: var(--s1p-red);">云端备份文件校验失败，为保护数据已暂停同步。</p><p>是否用当前健康的本地数据强制覆盖云端损坏的备份？</p>`,
-            [forcePushAction, cancelAction]
+            [forcePushAction, cancelAction],
+            { modalClassName: "s1p-sync-modal" }
           );
         } else {
           showMessage(`操作失败: ${error.message}`, false);
