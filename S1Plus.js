@@ -3468,8 +3468,8 @@
     return { data, version, contentHash, lastUpdated, full: remoteGistObject };
   };
 
-  // 自动同步控制器，集成哈希校验逻辑并返回操作结果
-  const performAutoSync = async () => {
+  // [MODIFIED] 自动同步控制器 (逻辑优化版)
+  const performAutoSync = async (isStartupSync = false) => {
     const settings = getSettings();
     if (
       !settings.syncRemoteEnabled ||
@@ -3479,14 +3479,16 @@
       return { status: "skipped", reason: "disabled" };
     }
 
-    // [OPTIMIZATION] 开始同步前，设置标志位
     isInitialSyncInProgress = true;
-    console.log("S1 Plus (Sync): 启动同步检查...");
+    console.log(
+      `S1 Plus (Sync): 启动同步检查... (模式: ${
+        isStartupSync ? "Startup" : "Normal"
+      })`
+    );
 
     try {
       const rawRemoteData = await fetchRemoteData();
       if (Object.keys(rawRemoteData).length === 0) {
-        // Gist为空，首次同步
         console.log(`S1 Plus (Sync): 远程为空，推送本地数据...`);
         const localData = await exportLocalDataObject();
         await pushRemoteData(localData);
@@ -3494,50 +3496,72 @@
         return { status: "success", action: "pushed_initial" };
       }
 
-      // 1. 校验和迁移远程数据
       const remote = await migrateAndValidateRemoteData(rawRemoteData);
-      const remoteTimestamp = remote.lastUpdated;
-      const remoteHash = remote.contentHash;
-
-      // 2. 计算本地哈希和时间戳
       const localDataObject = await exportLocalDataObject();
-      const localTimestamp = localDataObject.lastUpdated;
-      const localHash = localDataObject.contentHash;
 
-      // 场景A: 完全一致
-      if (remoteHash === localHash) {
-        console.log(`S1 Plus (Sync): 本地与远程数据哈希一致，无需同步。`);
-        return { status: "success", action: "no_change" };
+      // --- 决策阶段 ---
+      let syncAction = null;
+      if (remote.contentHash === localDataObject.contentHash) {
+        syncAction = "no_change";
+      } else if (isStartupSync && settings.syncForcePullOnStartup) {
+        syncAction = "force_pull";
+      } else if (remote.lastUpdated > localDataObject.lastUpdated) {
+        syncAction = "pull";
+      } else if (localDataObject.lastUpdated > remote.lastUpdated) {
+        syncAction = isStartupSync ? "skip_push_on_startup" : "push";
+      } else {
+        syncAction = "conflict";
       }
 
-      // 哈希不一致，根据时间戳决策
-      // 场景B: 远程有更新
-      if (remoteTimestamp > localTimestamp) {
-        console.log(`S1 Plus (Sync): 远程数据比本地新，正在后台应用...`);
-        importLocalData(JSON.stringify(remote.full));
-        GM_setValue("s1p_last_sync_timestamp", Date.now());
-        return { status: "success", action: "pulled" };
-        // 场景C: 本地有更新
-      } else if (localTimestamp > remoteTimestamp) {
-        console.log(`S1 Plus (Sync): 本地数据比远程新，正在后台推送...`);
-        await pushRemoteData(localDataObject);
-        GM_setValue("s1p_last_sync_timestamp", Date.now());
-        return { status: "success", action: "pushed" };
-        // 场景D: 冲突 (时间戳相同但哈希不同)
-      } else {
-        console.warn(
-          `S1 Plus (Sync): 检测到同步冲突 (时间戳相同但内容不同)，自动同步已暂停。请手动同步以解决冲突。`
-        );
-        return {
-          status: "conflict",
-          reason: "timestamps match but hashes differ",
-        };
+      // --- 执行阶段 ---
+      switch (syncAction) {
+        case "no_change":
+          console.log(`S1 Plus (Sync): 本地与远程数据哈希一致，无需同步。`);
+          return { status: "success", action: "no_change" };
+
+        case "force_pull":
+          console.log(
+            `S1 Plus (Sync): 检测到启动时强制拉取已开启，将使用云端数据覆盖本地。`
+          );
+          importLocalData(JSON.stringify(remote.full), {
+            suppressPostSync: true,
+          });
+          GM_setValue("s1p_last_sync_timestamp", Date.now());
+          return { status: "success", action: "force_pulled" };
+
+        case "pull":
+          console.log(`S1 Plus (Sync): 远程数据比本地新，正在后台应用...`);
+          importLocalData(JSON.stringify(remote.full), {
+            suppressPostSync: true,
+          });
+          GM_setValue("s1p_last_sync_timestamp", Date.now());
+          return { status: "success", action: "pulled" };
+
+        case "skip_push_on_startup":
+          console.warn(
+            `S1 Plus (Sync): 启动同步检测到本地数据较新，已跳过自动推送以确保数据安全。如有需要，请手动同步。`
+          );
+          return { status: "success", action: "skipped_push_on_startup" };
+
+        case "push":
+          console.log(`S1 Plus (Sync): 本地数据比远程新，正在后台推送...`);
+          await pushRemoteData(localDataObject);
+          GM_setValue("s1p_last_sync_timestamp", Date.now());
+          return { status: "success", action: "pushed" };
+
+        case "conflict":
+          console.warn(
+            `S1 Plus (Sync): 检测到同步冲突 (时间戳相同但内容不同)，自动同步已暂停。请手动同步以解决冲突。`
+          );
+          return {
+            status: "conflict",
+            reason: "timestamps match but hashes differ",
+          };
       }
     } catch (error) {
       console.error("S1 Plus: 自动同步失败:", error);
       return { status: "failure", error: error.message };
     } finally {
-      // [OPTIMIZATION] 无论成功或失败，最后都清除标志位，以允许后续正常的防抖同步
       isInitialSyncInProgress = false;
       console.log("S1 Plus (Sync): 同步检查完成。");
     }
@@ -3585,6 +3609,7 @@
     syncRemoteEnabled: false,
     syncDailyFirstLoad: true,
     syncAutoEnabled: true,
+    syncForcePullOnStartup: false, // <-- [新增] 新增功能开关
     syncDirectChoiceMode: false,
     syncRemoteGistId: "",
     syncRemotePat: "",
@@ -4469,7 +4494,15 @@
                                 </label>
                             </div>
                             <p class="s1p-setting-desc">启用后，每天第一次打开论坛时会自动检查并同步数据。此功能独立于下方的“自动后台同步”。</p>
-
+                            
+                            <div class="s1p-settings-item">
+                                <label class="s1p-settings-label" for="s1p-force-pull-on-startup-toggle">启动时强制拉取云端数据 (需开启每日同步)</label>
+                                <label class="s1p-switch">
+                                    <input type="checkbox" id="s1p-force-pull-on-startup-toggle" class="s1p-settings-checkbox" data-setting="syncForcePullOnStartup" data-s1p-sync-control>
+                                    <span class="s1p-slider"></span>
+                                </label>
+                            </div>
+                            <p class="s1p-setting-desc" style="font-weight: bold; color: var(--s1p-red);">开启后，每日首次加载时若检测到云端与本地数据不一致，将总是使用云端数据覆盖本地，不再进行提示。请谨慎开启，这可能导致本地未同步的修改丢失。</p>
                             <div class="s1p-settings-item">
                                 <label class="s1p-settings-label" for="s1p-auto-sync-enabled-toggle">启用自动后台同步</label>
                                 <label class="s1p-switch">
@@ -4627,6 +4660,9 @@
       settings.syncDailyFirstLoad;
     modal.querySelector("#s1p-auto-sync-enabled-toggle").checked =
       settings.syncAutoEnabled;
+    // [修改] 设置新开关的初始状态
+    modal.querySelector("#s1p-force-pull-on-startup-toggle").checked =
+      settings.syncForcePullOnStartup;
     modal.querySelector("#s1p-remote-gist-id-input").value =
       settings.syncRemoteGistId || "";
     modal.querySelector("#s1p-remote-pat-input").value =
@@ -6208,7 +6244,8 @@
     });
   };
 
-  const handleManualSync = () => {
+  // [MODIFIED] 增加 suppressInitialMessage 参数以优化调用流程
+  const handleManualSync = (suppressInitialMessage = false) => {
     return new Promise(async (resolve) => {
       const settings = getSettings();
       if (
@@ -6220,7 +6257,10 @@
         return resolve(false);
       }
 
-      showMessage("正在检查云端数据...", null);
+      // [S1P-UX-FIX] 只有在非静默模式下才显示初始提示
+      if (!suppressInitialMessage) {
+        showMessage("正在检查云端数据...", null);
+      }
 
       try {
         const rawRemoteData = await fetchRemoteData();
@@ -6289,7 +6329,6 @@
           text: "从云端拉取",
           className: "s1p-confirm",
           action: () => {
-            // [S1P-FIX] 调用导入时，同样传入 suppressPostSync 选项
             const result = importLocalData(JSON.stringify(remote.full), {
               suppressPostSync: true,
             });
@@ -7781,35 +7820,23 @@
       saveReadProgress(cleanedProgress, true);
     }
   };
-  /**
-   * [新增] 执行常规的启动时同步检查。
-   * 仅在“每日首次同步”未开启，且“自动后台同步”开启时由 main 函数调用。
-   * @returns {Promise<boolean>} - 返回 true 表示页面即将刷新，主流程应中断。
-   */
   const handlePerLoadSyncCheck = async () => {
     const settings = getSettings();
 
-    // 仅当“每日首次同步”关闭 且 “自动后台同步”开启时，才执行此检查
     if (!settings.syncDailyFirstLoad && settings.syncAutoEnabled) {
       console.log("S1 Plus: 执行常规启动时同步检查（因每日首次同步已关闭）...");
-      const result = await performAutoSync();
+      // [S1P-FIX] 调用时传入 true，启用启动安全模式
+      const result = await performAutoSync(true);
       if (result.status === "success" && result.action === "pulled") {
         showMessage("检测到云端有更新，正在刷新页面...", true);
         setTimeout(() => location.reload(), 1500);
-        return true; // 指示主流程中断，因为页面即将刷新
+        return true;
       }
     }
-    return false; // 默认不中断
+    return false;
   };
-  /**
-   * [整合版] 脚本启动时的同步总控制器。
-   * [优化 v3] 优化了冲突处理方式，使用阻塞式对话框主动引导用户解决。
-   * [职责分离] 此函数现在只负责“每日首次加载时同步”的逻辑。
-   * @returns {Promise<boolean>} - 返回 true 表示页面即将刷新，主流程应中断。
-   */
   const handleStartupSync = async () => {
     const settings = getSettings();
-    // “每日同步”总开关未开，或远程同步总开关未开，则直接跳过
     if (!settings.syncRemoteEnabled || !settings.syncDailyFirstLoad) {
       return false;
     }
@@ -7817,15 +7844,12 @@
     const today = new Date().toLocaleDateString("sv");
     const lastSyncDate = GM_getValue("s1p_last_daily_sync_date", null);
 
-    // 如果今天已经同步过，也直接跳过
     if (today === lastSyncDate) {
       return false;
     }
 
-    // --- 执行每日首次同步的核心逻辑 ---
-    // --- 跨标签页同步锁 ---
     const SYNC_LOCK_KEY = "s1p_sync_lock";
-    const SYNC_LOCK_TIMEOUT_MS = 60 * 1000; // 为锁设置1分钟的超时，防止因标签页崩溃导致死锁。
+    const SYNC_LOCK_TIMEOUT_MS = 60 * 1000;
 
     const lockTimestamp = GM_getValue(SYNC_LOCK_KEY, 0);
     if (Date.now() - lockTimestamp < SYNC_LOCK_TIMEOUT_MS) {
@@ -7838,7 +7862,6 @@
     GM_setValue(SYNC_LOCK_KEY, Date.now());
 
     try {
-      // 再次检查，防止在加锁过程中其他页面已完成同步
       const currentDateAfterLock = GM_getValue(
         "s1p_last_daily_sync_date",
         null
@@ -7849,19 +7872,47 @@
       }
 
       console.log("S1 Plus: 正在执行每日首次加载同步...");
-      showMessage("S1 Plus: 正在执行每日首次自动同步...", null);
       GM_setValue("s1p_last_daily_sync_date", today);
 
-      const result = await performAutoSync();
+      const result = await performAutoSync(true);
 
       switch (result.status) {
         case "success":
-          if (result.action === "pulled") {
-            showMessage("每日同步完成，正在刷新页面以应用最新数据...", true);
+          // [修改] 增加对 "force_pulled" 状态的处理
+          if (result.action === "pulled" || result.action === "force_pulled") {
+            const message =
+              result.action === "force_pulled"
+                ? "启动时强制同步完成：已使用云端数据覆盖本地。正在刷新..."
+                : "每日同步完成：云端有更新已被自动拉取。正在刷新...";
+            showMessage(message, true);
             setTimeout(() => location.reload(), 1500);
-            return true; // 需要刷新
+            return true;
+          } else if (result.action === "skipped_push_on_startup") {
+            createAdvancedConfirmationModal(
+              "检测到本地有未同步的更改",
+              "<p>S1 Plus 在启动时发现，您的本地数据比云端备份要新。这可能意味着您在其他设备的工作未推送，或有离线修改未同步。</p><p>为防止数据丢失，自动同步已暂停。请选择如何处理：</p>",
+              [
+                {
+                  text: "稍后处理",
+                  className: "s1p-cancel",
+                  action: () => {
+                    showMessage("同步已暂停，您可稍后从导航栏手动同步。", null);
+                  },
+                },
+                {
+                  text: "立即解决",
+                  className: "s1p-confirm",
+                  action: () => {
+                    // [S1P-UX-FIX] 调用时传入 true，进入静默模式，避免弹出多余的提示
+                    handleManualSync(true);
+                  },
+                },
+              ]
+            );
           } else {
-            showMessage("每日首次同步完成。", true);
+            if (result.action !== "pushed_initial") {
+              showMessage("每日首次同步完成，数据已是最新。", true);
+            }
           }
           break;
         case "failure":
@@ -7884,7 +7935,8 @@
                 text: "立即解决",
                 className: "s1p-confirm",
                 action: () => {
-                  handleManualSync();
+                  // [S1P-UX-FIX] 此处也应进入静默模式
+                  handleManualSync(true);
                 },
               },
             ]
@@ -7896,7 +7948,7 @@
       console.log("S1 Plus: 同步锁已释放。");
     }
 
-    return false; // 默认不刷新
+    return false;
   };
 
   async function main() {
