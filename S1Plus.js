@@ -1458,6 +1458,11 @@
       padding: 0;
       line-height: 1.7;
     }
+    /* --- [新增] 警告文本样式 --- */
+    .s1p-warning-text {
+      font-weight: bold;
+      color: var(--s1p-red);
+    }
     .s1p-editor-item {
       display: grid;
       grid-template-columns: auto 1fr auto;
@@ -2171,6 +2176,11 @@
       .s1p-toast-notification.error {
         /* 使用一个更深的红色 */
         background-color: var(--s1p-red-h);
+      }
+
+      /* --- [新增] 深色模式下更柔和的警告文本颜色 --- */
+      .s1p-warning-text {
+        color: #f87171; /* A softer, less jarring red for dark backgrounds */
       }
     }
   `);
@@ -4506,7 +4516,7 @@
                                         <span class="s1p-slider"></span>
                                     </label>
                                 </div>
-                                <p class="s1p-setting-desc" style="font-weight: bold; color: var(--s1p-red);">开启后，每日首次加载时若检测到云端与本地数据不一致，将总是使用云端数据覆盖本地，不再进行提示。请谨慎开启，这可能导致本地未同步的修改丢失。</p>
+                                <p class="s1p-setting-desc s1p-warning-text">开启后，每日首次加载时若检测到云端与本地数据不一致，将总是使用云端数据覆盖本地，不再进行提示。请谨慎开启，这可能导致本地未同步的修改丢失。</p>
                             </div>
                             <div class="s1p-settings-item">
                                 <label class="s1p-settings-label" for="s1p-auto-sync-enabled-toggle">启用自动后台同步</label>
