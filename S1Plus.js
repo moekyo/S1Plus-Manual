@@ -421,14 +421,6 @@
     }
 
     /* --- 帖子操作按钮 (三点图标) --- */
-    .s1p-options-cell::after {
-      content: "";
-      position: absolute;
-      top: 0;
-      left: 100%;
-      width: 6px;
-      height: 100%;
-    }
     .s1p-options-btn {
       display: inline-flex;
       align-items: center;
@@ -450,13 +442,15 @@
       position: absolute;
       top: 50%;
       left: 100%;
-      margin-left: 6px;
+      /* [S1P-FIX] 移除 margin-left，将间距改为 padding-left，从而消除按钮和菜单间的交互断层 */
+      margin-left: 0;
       transform: translateY(-50%);
       z-index: 10;
       background-color: var(--s1p-bg);
       border-radius: 8px;
       box-shadow: 0 4px 12px rgba(var(--s1p-shadow-color-rgb), 0.1);
-      padding: 5px;
+      /* [S1P-FIX] 将左侧内边距扩大以在视觉上保持间距 (原 margin 6px + 原 padding 5px = 11px) */
+      padding: 5px 5px 5px 11px;
       min-width: 110px;
       opacity: 0;
       visibility: hidden;
@@ -2169,7 +2163,6 @@
         background-color: var(--s1p-red-h);
       }
     }
-    
   `);
 
   // --- S1 NUX 兼容性检测 ---
