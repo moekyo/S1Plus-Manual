@@ -1417,6 +1417,16 @@
       padding-bottom: 12px;
       margin-bottom: 16px;
     }
+
+    /* --- [修改] 统一的设置子选项分组缩进样式 --- */
+    .s1p-settings-sub-group {
+      padding-left: 20px;
+      border-left: none;  
+      margin-left: 8px;
+      margin-top: 8px;
+      transition: all 0.3s ease;
+    }
+
     .s1p-settings-item {
       display: flex;
       align-items: center;
@@ -4488,14 +4498,16 @@
                             </div>
                             <p class="s1p-setting-desc">启用后，每天第一次打开论坛时会自动检查并同步数据。此功能独立于下方的“自动后台同步”。</p>
                             
-                            <div class="s1p-settings-item">
-                                <label class="s1p-settings-label" for="s1p-force-pull-on-startup-toggle">启动时强制拉取云端数据 (需开启每日同步)</label>
-                                <label class="s1p-switch">
-                                    <input type="checkbox" id="s1p-force-pull-on-startup-toggle" class="s1p-settings-checkbox" data-setting="syncForcePullOnStartup" data-s1p-sync-control>
-                                    <span class="s1p-slider"></span>
-                                </label>
+                            <div class="s1p-settings-sub-group">
+                                <div class="s1p-settings-item">
+                                    <label class="s1p-settings-label" for="s1p-force-pull-on-startup-toggle">启动时强制拉取云端数据</label>
+                                    <label class="s1p-switch">
+                                        <input type="checkbox" id="s1p-force-pull-on-startup-toggle" class="s1p-settings-checkbox" data-setting="syncForcePullOnStartup" data-s1p-sync-control>
+                                        <span class="s1p-slider"></span>
+                                    </label>
+                                </div>
+                                <p class="s1p-setting-desc" style="font-weight: bold; color: var(--s1p-red);">开启后，每日首次加载时若检测到云端与本地数据不一致，将总是使用云端数据覆盖本地，不再进行提示。请谨慎开启，这可能导致本地未同步的修改丢失。</p>
                             </div>
-                            <p class="s1p-setting-desc" style="font-weight: bold; color: var(--s1p-red);">开启后，每日首次加载时若检测到云端与本地数据不一致，将总是使用云端数据覆盖本地，不再进行提示。请谨慎开启，这可能导致本地未同步的修改丢失。</p>
                             <div class="s1p-settings-item">
                                 <label class="s1p-settings-label" for="s1p-auto-sync-enabled-toggle">启用自动后台同步</label>
                                 <label class="s1p-switch">
@@ -4634,6 +4646,36 @@
         });
     };
 
+    // [MODIFIED] Start of changes
+    const dailySyncToggle = modal.querySelector(
+      "#s1p-daily-first-load-sync-enabled-toggle"
+    );
+    const forcePullWrapper = modal.querySelector(
+      "#s1p-tab-sync .s1p-settings-sub-group"
+    );
+    const forcePullToggle = modal.querySelector(
+      "#s1p-force-pull-on-startup-toggle"
+    );
+
+    const updateForcePullState = () => {
+      const isDailySyncEnabled = dailySyncToggle.checked;
+      if (isDailySyncEnabled) {
+        forcePullWrapper.style.opacity = "1";
+        forcePullWrapper.style.pointerEvents = "auto";
+        forcePullToggle.disabled = false;
+      } else {
+        forcePullWrapper.style.opacity = "0.5";
+        forcePullWrapper.style.pointerEvents = "none";
+        forcePullToggle.checked = false;
+        forcePullToggle.disabled = true;
+        // 触发一次change事件以确保设置能被保存
+        forcePullToggle.dispatchEvent(new Event("change"));
+      }
+    };
+
+    dailySyncToggle.addEventListener("change", updateForcePullState);
+    // End of changes
+
     const settings = getSettings();
     remoteToggle.checked = settings.syncRemoteEnabled;
     const directChoiceModeToggle = modal.querySelector(
@@ -4653,7 +4695,6 @@
       settings.syncDailyFirstLoad;
     modal.querySelector("#s1p-auto-sync-enabled-toggle").checked =
       settings.syncAutoEnabled;
-    // [修改] 设置新开关的初始状态
     modal.querySelector("#s1p-force-pull-on-startup-toggle").checked =
       settings.syncForcePullOnStartup;
     modal.querySelector("#s1p-remote-gist-id-input").value =
@@ -4663,6 +4704,7 @@
 
     remoteToggle.addEventListener("change", updateRemoteSyncInputsState);
     updateRemoteSyncInputsState();
+    updateForcePullState(); // [MODIFIED] 初始化子选项的状态
 
     const renderTagsTab = (options = {}) => {
       const editingUserId = options.editingUserId;
@@ -5222,7 +5264,6 @@
         }
       });
     };
-
     const renderGeneralSettingsTab = () => {
       const settings = getSettings();
       const openTabSettings = settings.openInNewTab;
@@ -5254,7 +5295,7 @@
                     </div>
                     <p class="s1p-setting-desc" style="margin-top: -4px;">开启后，下方选中的链接类型将在新标签页打开。仅对顶部导航、帖子列表、消息提醒区域内的链接生效。</p>
                     
-                    <div id="s1p-new-tab-sub-options" style="padding-left: 20px; margin-left: 8px; ${
+                    <div class="s1p-settings-sub-group" style="${
                       !openTabSettings.master
                         ? "opacity: 0.5; pointer-events: none;"
                         : ""
@@ -5321,17 +5362,17 @@
                           settings.enableReadProgress ? "checked" : ""
                         }><span class="s1p-slider"></span></label>
                     </div>
-                    <div id="s1p-read-progress-sub-settings" class="s1p-feature-content ${
+                    <div class="s1p-feature-content ${
                       settings.enableReadProgress ? "expanded" : ""
                     }">
-                      <div>
-                        <div class="s1p-settings-item" id="s1p-showReadIndicator-container" style="padding-left: 20px;">
+                      <div class="s1p-settings-sub-group">
+                        <div class="s1p-settings-item" id="s1p-showReadIndicator-container">
                             <label class="s1p-settings-label" for="s1p-showReadIndicator">显示“当前阅读位置”浮动标识</label>
                             <label class="s1p-switch"><input type="checkbox" id="s1p-showReadIndicator" class="s1p-settings-checkbox" data-setting="showReadIndicator" ${
                               settings.showReadIndicator ? "checked" : ""
                             }><span class="s1p-slider"></span></label>
                         </div>
-                        <div class="s1p-settings-item" id="s1p-readingProgressCleanupContainer" style="padding-left: 20px;">
+                        <div class="s1p-settings-item" id="s1p-readingProgressCleanupContainer">
                             <label class="s1p-settings-label">自动清理超过以下时间的阅读记录</label>
                             <div id="s1p-readingProgressCleanupDays-control" class="s1p-segmented-control">
                                 <div class="s1p-segmented-control-slider"></div>
@@ -5407,7 +5448,7 @@
       const tabContent = tabs["general-settings"];
       const masterSwitch = tabContent.querySelector("#s1p-openInNewTab-master");
       const subOptionsContainer = tabContent.querySelector(
-        "#s1p-new-tab-sub-options"
+        ".s1p-settings-sub-group"
       );
 
       const setupSubSwitch = (mainSwitchId, subItemContainerId) => {
@@ -5483,7 +5524,6 @@
         });
       }
     };
-
     const renderNavSettingsTab = () => {
       const settings = getSettings();
       tabs["nav-settings"].innerHTML = `
