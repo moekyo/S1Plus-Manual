@@ -6541,7 +6541,7 @@
     return null;
   };
 
-  // [MODIFIED V5] 增加帖子详情页智能同步逻辑
+  // [MODIFIED V6 FINAL] 修正帖子详情页智能同步逻辑，实现真正的双向判断
   const handleManualSync = (suppressInitialMessage = false) => {
     return new Promise(async (resolve) => {
       const settings = getSettings();
@@ -6611,10 +6611,9 @@
           return resolve(true);
         }
 
-        // [S1PLUS-SMART-SYNC] 帖子详情页智能同步逻辑
+        // [S1PLUS-SMART-SYNC V2 - LOGIC FIXED]
         const currentThreadId = getCurrentThreadId();
         if (currentThreadId && !isInitialSyncInProgress) {
-          // 1. 创建两份数据的“净化”版本，即移除当前帖子阅读进度
           const sanitizedLocalData = JSON.parse(
             JSON.stringify(localDataObject.data)
           );
@@ -6628,7 +6627,6 @@
           if (sanitizedRemoteData.read_progress)
             delete sanitizedRemoteData.read_progress[currentThreadId];
 
-          // 2. 对比“净化”后的版本是否一致
           const sanitizedLocalHash = await calculateDataHash(
             sanitizedLocalData
           );
@@ -6637,29 +6635,42 @@
           );
 
           if (sanitizedLocalHash === sanitizedRemoteHash) {
-            // 3. 如果一致，说明唯一区别就是当前帖子的阅读进度，执行无感同步
-            showMessage("智能同步：正在合并云端数据与当前阅读进度...", null);
-
-            // 拉取云端数据
-            importLocalData(JSON.stringify(remote.full), {
-              suppressPostSync: true,
-            });
-
-            // 如果本地确实有当前帖子的进度，则把它合并回去
-            if (currentThreadLocalProgress) {
-              const progress = getReadProgress();
-              progress[currentThreadId] = currentThreadLocalProgress;
-              saveReadProgress(progress);
+            // [逻辑修正] 在确认唯一区别是当前帖子进度后，必须再根据时间戳判断同步方向
+            if (localDataObject.lastUpdated > remote.lastUpdated) {
+              // 场景A: 本地较新 (用户主动阅读导致)，执行无感推送
+              showMessage(
+                "智能同步：本地进度已更新，正在自动推送到云端...",
+                null
+              );
+              try {
+                await pushRemoteData(localDataObject);
+                GM_setValue("s1p_last_sync_timestamp", Date.now());
+                updateLastSyncTimeDisplay();
+                showMessage("智能同步成功！已将本地最新进度推送到云端。", true);
+                return resolve(true);
+              } catch (e) {
+                showMessage(`智能推送失败: ${e.message}`, false);
+                return resolve(false);
+              }
+            } else {
+              // 场景B: 云端较新 (被动打开帖子)，执行无感拉取与合并
+              showMessage("智能同步：正在合并云端数据与当前阅读进度...", null);
+              importLocalData(JSON.stringify(remote.full), {
+                suppressPostSync: true,
+              });
+              if (currentThreadLocalProgress) {
+                const progress = getReadProgress();
+                progress[currentThreadId] = currentThreadLocalProgress;
+                saveReadProgress(progress);
+              }
+              GM_setValue("s1p_last_sync_timestamp", Date.now());
+              updateLastSyncTimeDisplay();
+              showMessage("智能同步成功！已保留当前帖子的最新阅读进度。", true);
+              return resolve(true);
             }
-
-            GM_setValue("s1p_last_sync_timestamp", Date.now());
-            updateLastSyncTimeDisplay();
-            showMessage("智能同步成功！已保留当前帖子的最新阅读进度。", true);
-            return resolve(true);
           }
         }
 
-        // [FALLBACK] 如果不满足智能同步条件，则执行原有的手动选择流程
         const isConflict = localDataObject.lastUpdated === remote.lastUpdated;
         const bodyHtml = createSyncComparisonHtml(
           localDataObject,
