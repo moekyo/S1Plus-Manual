@@ -237,100 +237,102 @@
       font-weight: bold;
     }
 
-   /* --- [MODIFIED V3] 手动同步对比弹窗样式 (美化版) --- */
-.s1p-sync-last-action {
-  font-size: 13px;
-  color: var(--s1p-desc-t);
-  text-align: center;
-  margin: 12px 0 4px 0;
-  padding: 8px;
-  background-color: var(--s1p-sub);
-  border-radius: 6px;
-}
-.s1p-sync-comparison-table {
-  margin-top: 16px;
-  border: 1px solid var(--s1p-pri);
-  border-radius: 8px;
-  overflow: hidden;
-  font-size: 14px;
-}
-.s1p-sync-comparison-row {
-  display: grid;
-  grid-template-columns: auto 1fr 1fr; /* <-- [核心修改] 使用 auto 关键字 */
-  align-items: center;
-  border-bottom: 1px solid var(--s1p-pri);
-  transition: background-color 0.2s ease;
-}
-.s1p-sync-comparison-row:last-child {
-  border-bottom: none;
-}
-/* 斑马条纹效果 */
-.s1p-sync-comparison-row:nth-child(even) {
-  background-color: var(--s1p-sub);
-}
-.s1p-sync-comparison-row:hover {
-  background-color: var(--s1p-pri);
-}
-/* 表头样式 */
-.s1p-sync-comparison-header {
-  font-weight: 600;
-  background-color: var(--s1p-pri) !important;
-  color: var(--s1p-t);
-  border-bottom: 1px solid var(--s1p-pri);
-}
-.s1p-sync-comparison-header > div {
-  padding: 10px 14px;
-  text-align: center;
-}
-.s1p-sync-comparison-header > div:first-child {
-  text-align: left;
-}
-/* 单元格样式 */
-.s1p-sync-comparison-label,
-.s1p-sync-comparison-value {
-  padding: 10px 14px;
-}
-.s1p-sync-comparison-label {
-  font-weight: 500;
-  color: var(--s1p-t);
-  white-space: nowrap;
-  font-size: 13px;
-}
-.s1p-sync-comparison-value {
-  /* [S1P-FIX] 使用 Flexbox 实现完美的垂直居中对齐 */
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px; /* 使用 gap 定义元素间距，比 margin 更现代 */
-  font-family: monospace, sans-serif;
-  font-size: 13px;
-}
-.s1p-newer-badge {
-  /* [S1P-FIX V4] 统一字体以解决跨平台对齐根源问题 */
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  color: var(--s1p-success-text);
-  font-weight: bold;
-  font-size: 12px;
-  position: relative;
-  /* [S1P-FIX V4] 统一为在 Windows 上视觉对齐的偏移值 */
-  top: -1px;
-}
-  /* --- [新增] 为手动同步弹窗设定更宽的尺寸 --- */
-.s1p-sync-modal .s1p-confirm-content {
-  width: 580px;
-}
+    /* --- [MODIFIED V3] 手动同步对比弹窗样式 (美化版) --- */
+    .s1p-sync-last-action {
+      font-size: 13px;
+      color: var(--s1p-desc-t);
+      text-align: center;
+      margin: 12px 0 4px 0;
+      padding: 8px;
+      background-color: var(--s1p-sub);
+      border-radius: 6px;
+    }
+    .s1p-sync-comparison-table {
+      margin-top: 16px;
+      border: 1px solid var(--s1p-pri);
+      border-radius: 8px;
+      overflow: hidden;
+      font-size: 14px;
+    }
+    .s1p-sync-comparison-row {
+      display: grid;
+      grid-template-columns: auto 1fr 1fr; /* <-- [核心修改] 使用 auto 关键字 */
+      align-items: center;
+      border-bottom: 1px solid var(--s1p-pri);
+      transition: background-color 0.2s ease;
+    }
+    .s1p-sync-comparison-row:last-child {
+      border-bottom: none;
+    }
+    /* 斑马条纹效果 */
+    .s1p-sync-comparison-row:nth-child(even) {
+      background-color: var(--s1p-sub);
+    }
+    .s1p-sync-comparison-row:hover {
+      background-color: var(--s1p-pri);
+    }
+    /* 表头样式 */
+    .s1p-sync-comparison-header {
+      font-weight: 600;
+      background-color: var(--s1p-pri) !important;
+      color: var(--s1p-t);
+      border-bottom: 1px solid var(--s1p-pri);
+    }
+    .s1p-sync-comparison-header > div {
+      padding: 10px 14px;
+      text-align: center;
+    }
+    .s1p-sync-comparison-header > div:first-child {
+      text-align: left;
+    }
+    /* 单元格样式 */
+    .s1p-sync-comparison-label,
+    .s1p-sync-comparison-value {
+      padding: 10px 14px;
+    }
+    .s1p-sync-comparison-label {
+      font-weight: 500;
+      color: var(--s1p-t);
+      white-space: nowrap;
+      font-size: 13px;
+    }
+    .s1p-sync-comparison-value {
+      /* [S1P-FIX] 使用 Flexbox 实现完美的垂直居中对齐 */
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px; /* 使用 gap 定义元素间距，比 margin 更现代 */
+      font-family: monospace, sans-serif;
+      font-size: 13px;
+    }
+    .s1p-newer-badge {
+      /* [S1P-FIX V4] 统一字体以解决跨平台对齐根源问题 */
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+        sans-serif;
+      color: var(--s1p-success-text);
+      font-weight: bold;
+      font-size: 12px;
+      position: relative;
+      /* [S1P-FIX V4] 统一为在 Windows 上视觉对齐的偏移值 */
+      top: -1px;
+    }
+    /* --- [新增] 为手动同步弹窗设定更宽的尺寸 --- */
+    .s1p-sync-modal .s1p-confirm-content {
+      width: 580px;
+    }
 
-.s1p-progress-update-badge {
-  font-size: 12px;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  color: var(--s1p-sec);
-  font-weight: bold;
-  /* [S1P-FIX V4] 统一为在 Windows 上视觉对齐的偏移值 */
-  position: relative;
-  top: -1px;
-  /* margin-left 已被父元素的 gap 替代 */
-  /* vertical-align 在 Flexbox 布局中无效 */
-}
+    .s1p-progress-update-badge {
+      font-size: 12px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+        sans-serif;
+      color: var(--s1p-sec);
+      font-weight: bold;
+      /* [S1P-FIX V4] 统一为在 Windows 上视觉对齐的偏移值 */
+      position: relative;
+      top: -1px;
+      /* margin-left 已被父元素的 gap 替代 */
+      /* vertical-align 在 Flexbox 布局中无效 */
+    }
 
     /* --- 提示框样式 --- */
     .s1p-notice {
@@ -1516,7 +1518,7 @@
     /* --- [修改] 统一的设置子选项分组缩进样式 --- */
     .s1p-settings-sub-group {
       padding-left: 20px;
-      border-left: none;  
+      border-left: none;
       margin-left: 8px;
       margin-top: 8px;
       transition: all 0.3s ease;
