@@ -8352,7 +8352,55 @@
     return false;
   };
 
+  /**
+   * [MODIFIED] 首次加载此版本时，显示更新亮点弹窗，并返回是否显示了弹窗。
+   * @returns {boolean} 如果显示了弹窗则返回 true，否则返回 false。
+   */
+  const showFirstTimeWelcomeIfNeeded = () => {
+    const WELCOME_FLAG_KEY = "s1p_v6_1_0_welcomed";
+    const hasSeenWelcome = GM_getValue(WELCOME_FLAG_KEY, false);
+
+    if (hasSeenWelcome) {
+      return false; // 已看过，不显示弹窗，返回 false
+    }
+
+    const bodyHtml = `
+    <p>感谢更新！本次更新重构了<strong>远程同步</strong>功能，为你带来更智能、更无感的体验：</p>
+    <ul style="margin: 12px 0 16px 20px; padding: 0; list-style-type: disc; line-height: 1.8;">
+        <li><strong>智能无感同步</strong>：在帖子页面，脚本会自动合并云端更新与你当前的阅读进度，无需手动操作。</li>
+        <li><strong>后台自动推送</strong>：本地数据变更后，脚本会在后台静默推送到云端，无需打扰。</li>
+        <li><strong>更清晰的冲突解决</strong>：当出现同步冲突时，提供更直观的数据对比界面，让你轻松决策。</li>
+        <li><strong>手动同步高级模式</strong>：可在设置中开启，之后悬停在导航栏的同步按钮上，即可直接选择“推送”或“拉取”。</li>
+    </ul>
+    <p>希望这些改进能为你带来更好的体验！</p>
+  `;
+
+    const buttons = [
+      {
+        text: "我明白了",
+        className: "s1p-confirm",
+        action: () => {
+          GM_setValue(WELCOME_FLAG_KEY, true);
+        },
+      },
+    ];
+
+    createAdvancedConfirmationModal(
+      "S1 Plus v6.1.0 更新亮点",
+      bodyHtml,
+      buttons,
+      {
+        modalClassName: "s1p-welcome-modal",
+      }
+    );
+
+    return true; // 确认显示了弹窗，返回 true
+  };
+
   async function main() {
+    // [修改] 调用欢迎弹窗并接收其状态
+    const welcomePopupWasShown = showFirstTimeWelcomeIfNeeded();
+
     // --- [核心修改] 按照您的建议，分离启动同步的调用 ---
     // 步骤1: 尝试执行每日首次同步
     const isReloadingAfterDailySync = await handleStartupSync();
@@ -8367,7 +8415,12 @@
 
     cleanupOldReadProgress();
     detectS1Nux();
-    handleNuxRecommendation();
+
+    // [核心修正] 只有在未显示欢迎弹窗时，才检查NUX推荐，避免冲突
+    if (!welcomePopupWasShown) {
+      handleNuxRecommendation();
+    }
+
     initializeNavbar();
     initializeGenericDisplayPopover();
 
