@@ -294,18 +294,26 @@
   font-weight: 500;
   color: var(--s1p-t);
   white-space: nowrap;
+  font-size: 13px;
 }
 .s1p-sync-comparison-value {
-  text-align: center;
+  /* [S1P-FIX] 使用 Flexbox 实现完美的垂直居中对齐 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px; /* 使用 gap 定义元素间距，比 margin 更现代 */
   font-family: monospace, sans-serif;
-  font-size: 15px;
+  font-size: 13px;
 }
 .s1p-newer-badge {
+  /* [S1P-FIX V4] 统一字体以解决跨平台对齐根源问题 */
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   color: var(--s1p-success-text);
   font-weight: bold;
   font-size: 12px;
-  margin-left: 5px;
-  vertical-align: middle;
+  position: relative;
+  /* [S1P-FIX V4] 统一为在 Windows 上视觉对齐的偏移值 */
+  top: -1px;
 }
   /* --- [新增] 为手动同步弹窗设定更宽的尺寸 --- */
 .s1p-sync-modal .s1p-confirm-content {
@@ -313,14 +321,15 @@
 }
 
 .s1p-progress-update-badge {
-  font-size: 11px;
+  font-size: 12px;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   color: var(--s1p-sec);
   font-weight: bold;
-  margin-left: 6px;
-  vertical-align: middle;
+  /* [S1P-FIX V4] 统一为在 Windows 上视觉对齐的偏移值 */
   position: relative;
   top: -1px;
+  /* margin-left 已被父元素的 gap 替代 */
+  /* vertical-align 在 Flexbox 布局中无效 */
 }
 
     /* --- 提示框样式 --- */
@@ -6945,17 +6954,27 @@
       document.body.appendChild(popover);
     }
 
-    let hideTimeout, showTimeout;
-    let isComposing = false;
+    // --- [S1P-FIX START] 优化交互逻辑为“点击外部关闭” ---
+    let currentAnchor = null; // 保存触发弹窗的锚点元素
 
-    const startHideTimer = () => {
-      if (isComposing) return;
-      clearTimeout(showTimeout);
-      clearTimeout(hideTimeout);
-      hideTimeout = setTimeout(() => popover.classList.remove("visible"), 300);
+    const closePopover = () => {
+      popover.classList.remove("visible");
+      // 移除全局点击监听器，避免内存泄漏
+      document.removeEventListener("click", handleOutsideClick);
+      currentAnchor = null;
     };
 
-    const cancelHideTimer = () => clearTimeout(hideTimeout);
+    const handleOutsideClick = (e) => {
+      // 如果点击事件发生在弹窗内部，或者发生在触发弹窗的原始锚点上，则不关闭
+      if (
+        popover.contains(e.target) ||
+        (currentAnchor && currentAnchor.contains(e.target))
+      ) {
+        return;
+      }
+      closePopover();
+    };
+    // --- [S1P-FIX END] ---
 
     const repositionPopover = (anchorElement) => {
       if (!anchorElement) return;
@@ -6992,19 +7011,31 @@
     };
 
     const show = (anchorElement, userId, userName) => {
-      cancelHideTimer();
-      clearTimeout(showTimeout);
+      // --- [S1P-FIX START] 更新显示逻辑 ---
+      // 如果弹窗已显示且由同一个锚点触发，则不执行任何操作（防止重复打开）
+      if (
+        popover.classList.contains("visible") &&
+        currentAnchor === anchorElement
+      ) {
+        return;
+      }
 
-      showTimeout = setTimeout(() => {
-        popover.dataset.userId = userId;
-        popover.dataset.userName = userName;
+      currentAnchor = anchorElement; // 保存当前触发的锚点
 
-        const userTags = getUserTags();
-        renderEditMode(userName, userId, userTags[userId]?.tag || "");
+      popover.dataset.userId = userId;
+      popover.dataset.userName = userName;
 
-        popover.classList.add("visible");
-        repositionPopover(anchorElement);
+      const userTags = getUserTags();
+      renderEditMode(userName, userId, userTags[userId]?.tag || "");
+
+      popover.classList.add("visible");
+      repositionPopover(anchorElement);
+
+      // 延迟添加全局监听器，以防止触发弹窗的同一次点击事件立即将其关闭
+      setTimeout(() => {
+        document.addEventListener("click", handleOutsideClick);
       }, 0);
+      // --- [S1P-FIX END] ---
     };
 
     popover.show = show;
@@ -7030,18 +7061,13 @@
           }
           saveUserTags(userTags);
           refreshUserPostsOnPage(userId);
-          popover.classList.remove("visible");
+          closePopover(); // [S1P-FIX] 改为调用新的关闭函数
           break;
         case "cancel-edit":
-          popover.classList.remove("visible");
+          closePopover(); // [S1P-FIX] 改为调用新的关闭函数
           break;
       }
     });
-
-    popover.addEventListener("mouseenter", cancelHideTimer);
-    popover.addEventListener("mouseleave", startHideTimer);
-    popover.addEventListener("compositionstart", () => (isComposing = true));
-    popover.addEventListener("compositionend", () => (isComposing = false));
   };
 
   const initializeGenericDisplayPopover = () => {
