@@ -420,9 +420,6 @@
     }
 
     /* --- [S1PLUS-MOD] 帖子列表最终布局修正 --- */
-    .tl .icn {
-      padding-left: 0px !important;
-    }
     /* [MODIFIED] 此处已移除隐藏 .icn 和 .icn_new 的样式规则 */
     #atarget,
     a.closeprev.y[title="隐藏置顶帖"] {
@@ -531,12 +528,13 @@
       opacity: 0.4;
       transition: background-color 0.2s ease, color 0.2s ease, opacity 0.2s ease;
     }
+    /* [S1PLUS-REPLACE-BLOCK] */
     /* [MODIFIED] 创建一个透明的“交互桥梁”，覆盖按钮和菜单之间的物理间隙 */
     .s1p-options-btn::after {
       content: '';
       position: absolute;
       top: 0;
-      left: 100%;
+      right: 100%; /* [S1P-MODIFIED] 从 left 改为 right，适配右侧按钮 */
       width: 2px; /* [核心修改] 大幅缩减桥梁宽度，防止其影响旁边的元素 */
       height: 100%;
     }
@@ -548,16 +546,16 @@
     .s1p-options-menu {
       position: absolute;
       top: 50%;
-      left: 100%;
-      /* [S1P-FIX] 移除 margin-left，将间距改为 padding-left，从而消除按钮和菜单间的交互断层 */
+      right: 100%; /* [S1P-MODIFIED] 从 left 改为 right，让菜单在按钮左侧弹出 */
+      /* [S1P-FIX] 移除 margin-left，将间距改为 padding-right，从而消除按钮和菜单间的交互断层 */
       margin-left: 0;
       transform: translateY(-50%);
       z-index: 10;
       background-color: var(--s1p-bg);
       border-radius: 8px;
       box-shadow: 0 4px 12px rgba(var(--s1p-shadow-color-rgb), 0.1);
-      /* [S1P-FIX] 将左侧内边距扩大以在视觉上保持间距 (原 margin 6px + 原 padding 5px = 11px) */
-      padding: 5px 5px 5px 11px;
+      /* [S1P-MODIFIED] 将内边距调整到右侧，以在视觉上保持间距 */
+      padding: 5px 11px 5px 5px;
       min-width: 110px;
       opacity: 0;
       visibility: hidden;
@@ -576,7 +574,6 @@
     .s1p-direct-confirm {
       display: flex;
       align-items: center;
-      justify-content: space-between;
       gap: 8px; /* 减小间距 */
       font-size: 13px; /* 减小字体 */
       color: var(--s1p-t);
@@ -6877,7 +6874,7 @@
     if (headerTr && !headerTr.querySelector(".s1p-header-placeholder")) {
       const placeholderCell = document.createElement("td");
       placeholderCell.className = "s1p-header-placeholder";
-      headerTr.prepend(placeholderCell);
+      headerTr.appendChild(placeholderCell);
     }
 
     document
@@ -6908,12 +6905,13 @@
 
         const optionsMenu = document.createElement("div");
         optionsMenu.className = "s1p-options-menu";
+        // [S1P-MODIFIED] 调整了确认框内部所有元素的顺序
         optionsMenu.innerHTML = `
                 <div class="s1p-direct-confirm">
-                    <span>屏蔽该帖子吗？</span>
-                    <span class="s1p-confirm-separator"></span>
-                    <button class="s1p-confirm-action-btn s1p-cancel" title="取消"></button>
                     <button class="s1p-confirm-action-btn s1p-confirm" title="确认屏蔽"></button>
+                    <button class="s1p-confirm-action-btn s1p-cancel" title="取消"></button>
+                    <span class="s1p-confirm-separator"></span>
+                    <span>屏蔽该帖子吗？</span>
                 </div>
             `;
 
@@ -6945,14 +6943,12 @@
 
         optionsCell.appendChild(optionsBtn);
         optionsCell.appendChild(optionsMenu);
-        tr.prepend(optionsCell);
-
-        // [S1PLUS-FIX]: 已移除原始的有问题的 colspan 逻辑，它已被上面的表头单元格注入方案彻底取代。
+        tr.appendChild(optionsCell);
 
         const separatorRow = document.querySelector("#separatorline > tr.ts");
         if (separatorRow && separatorRow.childElementCount < 6) {
           const emptyTd = document.createElement("td");
-          separatorRow.prepend(emptyTd);
+          separatorRow.appendChild(emptyTd);
         }
       });
   };
