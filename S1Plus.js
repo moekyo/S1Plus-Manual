@@ -519,6 +519,7 @@
 
     /* --- 帖子操作按钮 (三点图标) --- */
     .s1p-options-btn {
+      position: relative; /* 为 ::after 伪元素提供定位上下文 */
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -529,6 +530,15 @@
       color: var(--s1p-icon-color);
       opacity: 0.4;
       transition: background-color 0.2s ease, color 0.2s ease, opacity 0.2s ease;
+    }
+    /* [MODIFIED] 创建一个透明的“交互桥梁”，覆盖按钮和菜单之间的物理间隙 */
+    .s1p-options-btn::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 100%;
+      width: 2px; /* [核心修改] 大幅缩减桥梁宽度，防止其影响旁边的元素 */
+      height: 100%;
     }
     .s1p-options-btn:hover {
       background-color: var(--s1p-pri);
