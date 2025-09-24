@@ -3396,6 +3396,8 @@
         headers: {
           Authorization: `Bearer ${syncRemotePat}`,
           Accept: "application/vnd.github.v3+json",
+          // [新增] 增加此行以禁用API缓存，确保每次都获取最新数据
+          "Cache-Control": "no-cache",
         },
         onload: (response) => {
           if (response.status === 200) {
