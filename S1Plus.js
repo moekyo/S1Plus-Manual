@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      6.1.0
+// @version      6.2.0
 // @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪、回复收藏、远程同步等多种功能，全方位优化你的论坛体验。
 // @author       moekyo
 // @match        https://stage1st.com/2b/*
@@ -18,8 +18,8 @@
 (function () {
   "use strict";
 
-  const SCRIPT_VERSION = "6.1.0";
-  const SCRIPT_RELEASE_DATE = "2025-09-19";
+  const SCRIPT_VERSION = "6.2.0";
+  const SCRIPT_RELEASE_DATE = "2025-09-25";
 
   // --- [新增] SHA-256 哈希计算库 (基于 Web Crypto API) ---
   /**
