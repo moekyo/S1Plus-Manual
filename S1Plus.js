@@ -8359,22 +8359,22 @@
    * @returns {boolean} 如果显示了弹窗则返回 true，否则返回 false。
    */
   const showFirstTimeWelcomeIfNeeded = () => {
-    const WELCOME_FLAG_KEY = "s1p_v6_1_0_welcomed";
+    // [OPTIMIZED] 动态生成欢迎标记的键，确保每个版本只显示一次
+    const WELCOME_FLAG_KEY = `s1p_v${SCRIPT_VERSION.replace(
+      /\./g,
+      "_"
+    )}_welcomed`;
     const hasSeenWelcome = GM_getValue(WELCOME_FLAG_KEY, false);
 
     if (hasSeenWelcome) {
       return false; // 已看过，不显示弹窗，返回 false
     }
 
+    // [OPTIMIZED] 优化HTML结构以改善文本布局和换行
     const bodyHtml = `
-    <p>感谢更新！本次更新重构了<strong>远程同步</strong>功能，为你带来更智能、更无感的体验：</p>
-    <ul style="margin: 12px 0 16px 20px; padding: 0; list-style-type: disc; line-height: 1.8;">
-        <li><strong>智能无感同步</strong>：在帖子页面，脚本会自动合并云端更新与你当前的阅读进度，无需手动操作。</li>
-        <li><strong>后台自动推送</strong>：本地数据变更后，脚本会在后台静默推送到云端，无需打扰。</li>
-        <li><strong>更清晰的冲突解决</strong>：当出现同步冲突时，提供更直观的数据对比界面，让你轻松决策。</li>
-        <li><strong>手动同步高级模式</strong>：可在设置中开启，之后悬停在导航栏的同步按钮上，即可直接选择“推送”或“拉取”。</li>
-    </ul>
-    <p>希望这些改进能为你带来更好的体验！</p>
+    <p>已更新至 v${SCRIPT_VERSION}！本次更新包含一项重要的界面布局优化：</p>
+    <p style="margin-top: 8px;">我们将帖子列表的操作按钮（原悬停屏蔽按钮）从行首移动到了行末（右侧），以改善界面布局和操作流程。</p>
+    <p style="margin-top: 16px;">此外，此版本还包含了大量其他的功能优化与 Bug 修复。</p>
   `;
 
     const buttons = [
@@ -8387,8 +8387,9 @@
       },
     ];
 
+    // [OPTIMIZED] 动态获取版本号
     createAdvancedConfirmationModal(
-      "S1 Plus v6.1.0 更新亮点",
+      `S1 Plus v${SCRIPT_VERSION} 更新亮点`,
       bodyHtml,
       buttons,
       {
