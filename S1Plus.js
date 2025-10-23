@@ -3618,10 +3618,13 @@
       const remote = await migrateAndValidateRemoteData(rawRemoteData);
       const localDataObject = await exportLocalDataObject();
 
-      // --- 决策阶段 ---
+      // --- 决策阶段 (V2: 调整冲突检查的优先级) ---
       let syncAction = null;
       if (remote.contentHash === localDataObject.contentHash) {
         syncAction = "no_change";
+      } else if (localDataObject.lastUpdated === remote.lastUpdated) {
+        // [核心修改] 将冲突检查的优先级提到 force_pull 之前
+        syncAction = "conflict";
       } else if (isStartupSync && settings.syncForcePullOnStartup) {
         syncAction = "force_pull";
       } else if (remote.lastUpdated > localDataObject.lastUpdated) {
@@ -3629,6 +3632,7 @@
       } else if (localDataObject.lastUpdated > remote.lastUpdated) {
         syncAction = isStartupSync ? "skip_push_on_startup" : "push";
       } else {
+        // Fallback, should not be reached with the new logic, but kept for safety
         syncAction = "conflict";
       }
 
@@ -6420,12 +6424,14 @@
    * @param {object} localDataObj - 本地数据对象
    * @param {object} remoteDataObj - 远程数据对象
    * @param {boolean} isConflict - 是否为冲突状态
+   * @param {number} pendingCleanupCount - [S1PLUS-CLEANUP-FIX] 待处理计数
    * @returns {string} - 用于弹窗的HTML字符串
    */
   const createSyncComparisonHtml = (
     localDataObj,
     remoteDataObj,
-    isConflict
+    isConflict,
+    pendingCleanupCount = 0
   ) => {
     const lastSyncInfo = GM_getValue("s1p_last_manual_sync_info", null);
     let lastActionHtml = "";
@@ -6436,6 +6442,17 @@
         { hour12: false }
       );
       lastActionHtml = `<div class="s1p-sync-last-action">这台电脑上次手动操作: 于 ${formattedTime} <strong>${actionText}</strong>了数据</div>`;
+    }
+
+    // [融合版] 使用 Kyo 方案的解释性措辞，配合 Cosmo 方案的判断条件
+    let cleanupNoticeHtml = "";
+    if (isConflict && pendingCleanupCount > 0) {
+      cleanupNoticeHtml = `
+        <div class="s1p-notice" style="margin-top: 16px;">
+            <div class="s1p-notice-icon"></div>
+            <div class="s1p-notice-content">根据您的设置，S1 Plus 自动清理了 <strong>${pendingCleanupCount}</strong> 条陈旧的阅读记录，导致本地数据与云端不一致。</div>
+        </div>
+      `;
     }
 
     const localNewer = localDataObj.lastUpdated > remoteDataObj.lastUpdated;
@@ -6519,6 +6536,7 @@
 
     return `
         ${title}
+        ${cleanupNoticeHtml}
         ${lastActionHtml}
         <div class="s1p-sync-comparison-table">
             <div class="s1p-sync-comparison-row s1p-sync-comparison-header">
@@ -6561,7 +6579,6 @@
     return null;
   };
 
-  // [MODIFIED V6 FINAL] 修正帖子详情页智能同步逻辑，实现真正的双向判断
   const handleManualSync = (suppressInitialMessage = false) => {
     return new Promise(async (resolve) => {
       const settings = getSettings();
@@ -6692,12 +6709,14 @@
         }
 
         const isConflict = localDataObject.lastUpdated === remote.lastUpdated;
+        // [S1PLUS-CLEANUP-FIX] 检查是否有待处理的自动清理
+        const pendingCleanupCount = GM_getValue("s1p_pending_cleanup_info", 0);
         const bodyHtml = createSyncComparisonHtml(
           localDataObject,
           remote,
-          isConflict
+          isConflict,
+          pendingCleanupCount // [S1PLUS-CLEANUP-FIX] 传入待处理计数
         );
-
         const pullAction = {
           text: "从云端拉取",
           className: "s1p-confirm",
@@ -6706,6 +6725,7 @@
               suppressPostSync: true,
             });
             if (result.success) {
+              GM_deleteValue("s1p_pending_cleanup_info"); // <-- [S1PLUS-CLEANUP-FIX]
               GM_setValue("s1p_last_sync_timestamp", Date.now());
               GM_setValue("s1p_last_manual_sync_info", {
                 action: "pull",
@@ -6727,6 +6747,7 @@
           action: async () => {
             try {
               await pushRemoteData(localDataObject);
+              GM_deleteValue("s1p_pending_cleanup_info"); // <-- [S1PLUS-CLEANUP-FIX]
               GM_setValue("s1p_last_sync_timestamp", Date.now());
               GM_setValue("s1p_last_manual_sync_info", {
                 action: "push",
@@ -8219,7 +8240,9 @@
       console.log(
         `S1 Plus: Cleaned up ${cleanedCount} old reading progress records (older than ${settings.readingProgressCleanupDays} days).`
       );
-      // [S1P-FIX] 调用保存时，传入 true 来阻止更新 last_modified 时间戳
+      // [S1PLUS-CLEANUP-FIX] 标记已发生清理，等待用户同步确认
+      GM_setValue("s1p_pending_cleanup_info", cleanedCount);
+      // [核心] 必须保留 true，以防止干扰启动时同步检查
       saveReadProgress(cleanedProgress, true);
     }
   };
@@ -8372,9 +8395,13 @@
 
     // [OPTIMIZED] 优化HTML结构以改善文本布局和换行
     const bodyHtml = `
-    <p>已更新至 v${SCRIPT_VERSION}！本次更新包含一项重要的界面布局优化：</p>
-    <p style="margin-top: 8px;">我们将帖子列表的操作按钮（原悬停屏蔽按钮）从行首移动到了行末（右侧），以改善界面布局和操作流程。</p>
-    <p style="margin-top: 16px;">此外，此版本还包含了大量其他的功能优化与 Bug 修复。</p>
+    <p>已更新至 v${SCRIPT_VERSION}！本次更新包含一项同步逻辑修复：</p>
+    <p style="margin-top: 16px;">
+        修复了因“自动清理阅读记录”功能导致的同步冲突、循环弹窗、以及每日设置被重置等一系列问题。
+    </p>
+    <p style="margin-top: 8px;">
+        现在，脚本能够更智能地处理数据同步，确保您的设置和浏览进度在多设备间可靠同步。
+    </p>
   `;
 
     const buttons = [
