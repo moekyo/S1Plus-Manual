@@ -2286,6 +2286,13 @@
       .s1p-warning-text {
         color: #f87171; /* A softer, less jarring red for dark backgrounds */
       }
+      /* --- [新增] 深色模式下输入框聚焦样式 --- */
+      .s1p-input:focus {
+        background-color: #3e3d3d; /* 使用一个深灰色作为背景 */
+        border-color: var(
+          --s1p-sec-h
+        ); /* 沿用一个较亮的主题色作为边框，以示区分 */
+      }
     }
   `);
 
