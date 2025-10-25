@@ -3251,12 +3251,18 @@
 
     const contentHash = await calculateDataHash(data);
 
+    // [新增 V5 - 性能优化] 计算基础哈希 (不含阅读进度)
+    const dataForBaseHash = { ...data };
+    delete dataForBaseHash.read_progress;
+    const baseContentHash = await calculateDataHash(dataForBaseHash);
+
     return {
-      version: 4.0, // 版本号升级
+      version: 5.0, // 版本号升级
       lastUpdated,
       lastUpdatedFormatted,
-      contentHash, // 新增内容哈希字段
-      data, // 所有用户数据被封装在 data 对象中
+      contentHash,
+      baseContentHash, // 新增基础哈希
+      data,
     };
   };
 
@@ -3548,7 +3554,7 @@
       throw new Error("远程数据为空或格式无效");
     }
 
-    let data, version, contentHash, lastUpdated;
+    let data, version, contentHash, baseContentHash, lastUpdated;
 
     // 场景1: 新版数据结构 (v4.0+)
     if (remoteGistObject.data && remoteGistObject.version >= 4.0) {
@@ -3563,6 +3569,15 @@
         throw new Error(
           "云端备份已损坏 (哈希校验失败)，同步已暂停以保护您的本地数据。"
         );
+      }
+
+      // [新增 V5] 计算或获取 baseContentHash
+      if (remoteGistObject.version >= 5.0 && remoteGistObject.baseContentHash) {
+        baseContentHash = remoteGistObject.baseContentHash;
+      } else {
+        const dataForBaseHash = { ...data };
+        delete dataForBaseHash.read_progress;
+        baseContentHash = await calculateDataHash(dataForBaseHash);
       }
 
       // 场景2: 旧版扁平数据结构 (需要迁移)
@@ -3582,9 +3597,21 @@
       };
       // 旧版数据没有哈希，我们计算一个用于后续比较
       contentHash = await calculateDataHash(data);
+
+      // [新增 V5] 为旧数据也计算 baseContentHash
+      const dataForBaseHash = { ...data };
+      delete dataForBaseHash.read_progress;
+      baseContentHash = await calculateDataHash(dataForBaseHash);
     }
 
-    return { data, version, contentHash, lastUpdated, full: remoteGistObject };
+    return {
+      data,
+      version,
+      contentHash,
+      baseContentHash,
+      lastUpdated,
+      full: remoteGistObject,
+    };
   };
 
   // [MODIFIED] 自动同步控制器 (逻辑优化版)
@@ -6648,74 +6675,88 @@
           return resolve(true);
         }
 
-        // [S1PLUS-SMART-SYNC V2 - LOGIC FIXED]
-        const currentThreadId = getCurrentThreadId();
-        if (currentThreadId && !isInitialSyncInProgress) {
-          const sanitizedLocalData = JSON.parse(
-            JSON.stringify(localDataObject.data)
-          );
-          const sanitizedRemoteData = JSON.parse(JSON.stringify(remote.data));
-          const currentThreadLocalProgress = sanitizedLocalData.read_progress
-            ? sanitizedLocalData.read_progress[currentThreadId]
-            : undefined;
+        // [最终修正 V5 - 性能与逻辑完美版]
+        const localNewer = localDataObject.lastUpdated > remote.lastUpdated;
+        const pendingCleanupCount = GM_getValue("s1p_pending_cleanup_info", 0);
 
-          if (sanitizedLocalData.read_progress)
-            delete sanitizedLocalData.read_progress[currentThreadId];
-          if (sanitizedRemoteData.read_progress)
-            delete sanitizedRemoteData.read_progress[currentThreadId];
-
-          const sanitizedLocalHash = await calculateDataHash(
-            sanitizedLocalData
+        // 智能检查：当“清理”发生时，只在“基础数据”完全一致的情况下才自动推送
+        if (
+          localNewer &&
+          pendingCleanupCount > 0 &&
+          localDataObject.baseContentHash === remote.baseContentHash
+        ) {
+          console.log(
+            "S1 Plus (Sync): 确认基础数据一致，差异仅由阅读记录清理导致，执行自动推送。"
           );
-          const sanitizedRemoteHash = await calculateDataHash(
-            sanitizedRemoteData
-          );
-
-          if (sanitizedLocalHash === sanitizedRemoteHash) {
-            // [逻辑修正] 在确认唯一区别是当前帖子进度后，必须再根据时间戳判断同步方向
-            if (localDataObject.lastUpdated > remote.lastUpdated) {
-              // 场景A: 本地较新 (用户主动阅读导致)，执行无感推送
-              showMessage(
-                "智能同步：本地进度已更新，正在自动推送到云端...",
-                null
-              );
-              try {
-                await pushRemoteData(localDataObject);
-                GM_setValue("s1p_last_sync_timestamp", Date.now());
-                updateLastSyncTimeDisplay();
-                showMessage("智能同步成功！已将本地最新进度推送到云端。", true);
-                return resolve(true);
-              } catch (e) {
-                showMessage(`智能推送失败: ${e.message}`, false);
-                return resolve(false);
-              }
-            } else {
-              // 场景B: 云端较新 (被动打开帖子)，执行无感拉取与合并
-              showMessage("智能同步：正在合并云端数据与当前阅读进度...", null);
-              importLocalData(JSON.stringify(remote.full), {
-                suppressPostSync: true,
-              });
-              if (currentThreadLocalProgress) {
-                const progress = getReadProgress();
-                progress[currentThreadId] = currentThreadLocalProgress;
-                saveReadProgress(progress);
-              }
-              GM_setValue("s1p_last_sync_timestamp", Date.now());
-              updateLastSyncTimeDisplay();
-              showMessage("智能同步成功！已保留当前帖子的最新阅读进度。", true);
-              return resolve(true);
-            }
+          showMessage("阅读记录已自动清理，正在同步至云端...", null);
+          try {
+            await pushRemoteData(localDataObject);
+            GM_deleteValue("s1p_pending_cleanup_info");
+            GM_setValue("s1p_last_sync_timestamp", Date.now());
+            GM_setValue("s1p_last_manual_sync_info", {
+              action: "push",
+              timestamp: Date.now(),
+            });
+            updateLastSyncTimeDisplay();
+            showMessage("自动清理与同步成功！", true);
+            return resolve(true);
+          } catch (e) {
+            showMessage(`自动推送失败: ${e.message}`, false);
+            return resolve(false);
           }
         }
 
+        // 智能检查：当在帖子内，且只有当前帖子的阅读进度变化时，自动同步
+        const currentThreadId = getCurrentThreadId();
+        if (
+          currentThreadId &&
+          !isInitialSyncInProgress &&
+          localDataObject.baseContentHash === remote.baseContentHash
+        ) {
+          if (localNewer) {
+            showMessage(
+              "智能同步：本地进度已更新，正在自动推送到云端...",
+              null
+            );
+            try {
+              await pushRemoteData(localDataObject);
+              GM_setValue("s1p_last_sync_timestamp", Date.now());
+              updateLastSyncTimeDisplay();
+              showMessage("智能同步成功！已将本地最新进度推送到云端。", true);
+              return resolve(true);
+            } catch (e) {
+              showMessage(`智能推送失败: ${e.message}`, false);
+              return resolve(false);
+            }
+          } else {
+            const currentThreadLocalProgress = localDataObject.data
+              .read_progress
+              ? localDataObject.data.read_progress[currentThreadId]
+              : undefined;
+            showMessage("智能同步：正在合并云端数据与当前阅读进度...", null);
+            importLocalData(JSON.stringify(remote.full), {
+              suppressPostSync: true,
+            });
+            if (currentThreadLocalProgress) {
+              const progress = getReadProgress();
+              progress[currentThreadId] = currentThreadLocalProgress;
+              saveReadProgress(progress);
+            }
+            GM_setValue("s1p_last_sync_timestamp", Date.now());
+            updateLastSyncTimeDisplay();
+            showMessage("智能同步成功！已保留当前帖子的最新阅读进度。", true);
+            return resolve(true);
+          }
+        }
+        // --- 智能检查结束 ---
+
+        // 如果以上智能检查都未通过，则进入手动选择流程
         const isConflict = localDataObject.lastUpdated === remote.lastUpdated;
-        // [S1PLUS-CLEANUP-FIX] 检查是否有待处理的自动清理
-        const pendingCleanupCount = GM_getValue("s1p_pending_cleanup_info", 0);
         const bodyHtml = createSyncComparisonHtml(
           localDataObject,
           remote,
           isConflict,
-          pendingCleanupCount // [S1PLUS-CLEANUP-FIX] 传入待处理计数
+          pendingCleanupCount
         );
         const pullAction = {
           text: "从云端拉取",
@@ -6725,7 +6766,7 @@
               suppressPostSync: true,
             });
             if (result.success) {
-              GM_deleteValue("s1p_pending_cleanup_info"); // <-- [S1PLUS-CLEANUP-FIX]
+              GM_deleteValue("s1p_pending_cleanup_info");
               GM_setValue("s1p_last_sync_timestamp", Date.now());
               GM_setValue("s1p_last_manual_sync_info", {
                 action: "pull",
@@ -6747,7 +6788,7 @@
           action: async () => {
             try {
               await pushRemoteData(localDataObject);
-              GM_deleteValue("s1p_pending_cleanup_info"); // <-- [S1PLUS-CLEANUP-FIX]
+              GM_deleteValue("s1p_pending_cleanup_info");
               GM_setValue("s1p_last_sync_timestamp", Date.now());
               GM_setValue("s1p_last_manual_sync_info", {
                 action: "push",
@@ -8242,8 +8283,8 @@
       );
       // [S1PLUS-CLEANUP-FIX] 标记已发生清理，等待用户同步确认
       GM_setValue("s1p_pending_cleanup_info", cleanedCount);
-      // [核心] 必须保留 true，以防止干扰启动时同步检查
-      saveReadProgress(cleanedProgress, true);
+      // [核心修正] 将 suppressSyncTrigger 改为 false，以确保时间戳被更新
+      saveReadProgress(cleanedProgress, false);
     }
   };
   const handlePerLoadSyncCheck = async () => {
