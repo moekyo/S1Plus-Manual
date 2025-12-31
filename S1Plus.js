@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      6.2.1
-// @description  为Stage1st论坛提供帖子/用户屏蔽、导航栏自定义、自动签到、阅读进度跟踪、回复收藏、远程同步等多种功能，全方位优化你的论坛体验。
+// @version      6.3.0
+// @description  为Stage1st论坛提供帖子/用户/楼层屏蔽、导航栏自定义、自动签到、阅读进度跟踪、回复收藏、远程同步等多种功能，全方位优化你的论坛体验。
 // @author       moekyo
 // @match        https://stage1st.com/2b/*
 // @grant        GM_setValue
@@ -18,8 +18,8 @@
 (function () {
   "use strict";
 
-  const SCRIPT_VERSION = "6.2.1";
-  const SCRIPT_RELEASE_DATE = "2025-10-23";
+  const SCRIPT_VERSION = "6.3.0";
+  const SCRIPT_RELEASE_DATE = "2025-12-31";
 
   // --- [新增] SHA-256 哈希计算库 (基于 Web Crypto API) ---
   /**
@@ -1220,6 +1220,53 @@
       /* [优化] 统一列表项元信息样式 */
       font-size: 12px;
       color: var(--s1p-desc-t);
+    }
+    /* [NEW] 帖子分组样式 */
+    .s1p-thread-groups {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .s1p-thread-group {
+      border: 1px solid var(--s1p-pri);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+    .s1p-thread-header {
+      padding: 12px;
+      background-color: var(--s1p-bg);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      user-select: none;
+      transition: background-color 0.2s;
+    }
+    .s1p-thread-header:hover {
+      background-color: var(--s1p-hover);
+    }
+    .s1p-thread-title {
+      flex-grow: 1;
+      font-size: 14px;
+      font-weight: 500;
+    }
+    .s1p-thread-count {
+      font-size: 12px;
+      color: var(--s1p-desc-t);
+    }
+    .s1p-thread-posts {
+      padding: 12px;
+      background-color: var(--s1p-bg-alt);
+    }
+    .s1p-thread-posts.s1p-collapsible-content {
+      max-height: 0;
+      overflow: hidden;
+      padding: 0;
+      transition: max-height 0.3s ease-out, padding 0.3s ease-out;
+    }
+    .s1p-thread-posts.s1p-collapsible-content.expanded {
+      max-height: none;
+      padding: 12px;
     }
     .s1p-item-toggle {
       font-size: 12px;
@@ -2487,6 +2534,13 @@
     updateLastModifiedTimestamp();
   };
 
+  // [NEW] Blocked Posts data functions
+  const getBlockedPosts = () => GM_getValue("s1p_blocked_posts", {});
+  const saveBlockedPosts = (posts) => {
+    GM_setValue("s1p_blocked_posts", posts);
+    updateLastModifiedTimestamp();
+  };
+
   // [MODIFIED] 升级并获取用户标记，自动迁移旧数据
   const getUserTags = () => {
     const tags = GM_getValue("s1p_user_tags", {});
@@ -2635,6 +2689,53 @@
     hideBlockedUserRatings();
     unblockThreadsByUser(id);
     return true; // 全部成功
+  };
+
+  // [NEW] Block specific post/floor functions
+  const blockPost = (postId, threadId, threadTitle, floor, authorId, authorName, postContent) => {
+    const b = getBlockedPosts();
+    b[postId] = {
+      postId,
+      threadId,
+      threadTitle,
+      floor,
+      authorId,
+      authorName,
+      postContent,
+      timestamp: Date.now(),
+    };
+    saveBlockedPosts(b);
+    hidePost(postId);
+    return true;
+  };
+
+  const unblockPost = (postId) => {
+    const b = getBlockedPosts();
+    if (!b[postId]) return true;
+    delete b[postId];
+    saveBlockedPosts(b);
+    showPost(postId);
+    return true;
+  };
+
+  const hidePost = (postId) => {
+    const postTable = document.querySelector(`table#pid${postId}`);
+    if (postTable) {
+      postTable.setAttribute("style", "display: none !important");
+    }
+  };
+
+  const showPost = (postId) => {
+    const postTable = document.querySelector(`table#pid${postId}`);
+    if (postTable) {
+      postTable.removeAttribute("style");
+    }
+  };
+
+  const hideBlockedPosts = () => {
+    const settings = getSettings();
+    if (!settings.enablePostBlocking) return;
+    Object.keys(getBlockedPosts()).forEach(hidePost);
   };
 
   // [FIX] 更精确地定位帖子作者，避免错误隐藏被评分的帖子
@@ -3254,6 +3355,7 @@
       title_filter_rules: getTitleFilterRules(),
       read_progress: getReadProgress(),
       bookmarked_replies: getBookmarkedReplies(),
+      blocked_posts: getBlockedPosts(), // [NEW] 添加楼层屏蔽数据
     };
 
     const contentHash = await calculateDataHash(data);
@@ -3300,7 +3402,8 @@
         progressImported = 0,
         rulesImported = 0,
         tagsImported = 0,
-        bookmarksImported = 0;
+        bookmarksImported = 0,
+        postsImported = 0;
 
       const upgradeDataStructure = (type, importedData) => {
         if (!importedData || typeof importedData !== "object") return {};
@@ -3372,10 +3475,16 @@
         bookmarksImported = Object.keys(dataToImport.bookmarked_replies).length;
       }
 
+      if (dataToImport.blocked_posts) {
+        saveBlockedPosts(dataToImport.blocked_posts);
+        postsImported = Object.keys(dataToImport.blocked_posts).length;
+      }
+
       GM_setValue("s1p_last_modified", imported.lastUpdated || 0);
 
       hideBlockedThreads();
       hideBlockedUsersPosts();
+      hideBlockedPosts();
       applyUserThreadBlocklist();
       hideThreadsByTitleKeyword();
       initializeNavbar();
@@ -3388,7 +3497,7 @@
 
       return {
         success: true,
-        message: `成功导入 ${threadsImported} 条帖子、${usersImported} 条用户、${tagsImported} 条标记、${bookmarksImported} 条收藏、${rulesImported} 条标题规则、${progressImported} 条阅读进度及相关设置。`,
+        message: `成功导入 ${threadsImported} 条帖子、${usersImported} 条用户、${tagsImported} 条标记、${bookmarksImported} 条收藏、${postsImported} 条楼层屏蔽、${rulesImported} 条标题规则、${progressImported} 条阅读进度及相关设置。`,
       };
     } catch (e) {
       return { success: false, message: `导入失败: ${e.message}` };
@@ -5229,7 +5338,7 @@
                 </div>
 
                 <div class="s1p-settings-group">
-                     <div id="s1p-manually-blocked-header" class="s1p-settings-group-title s1p-collapsible-header">
+                    <div id="s1p-manually-blocked-header" class="s1p-settings-group-title s1p-collapsible-header">
                         <span>手动屏蔽的帖子列表</span>
                         <span class="s1p-expander-arrow ${
                           settings.showManuallyBlockedList ? "expanded" : ""
@@ -5260,6 +5369,68 @@
                             })
                             .join("")}</div>`
                     }
+                    </div>
+                    </div>
+                </div>
+
+                <div class="s1p-settings-group">
+                    <div class="s1p-settings-group-title">已屏蔽的楼层</div>
+                    <p class="s1p-setting-desc">手动屏蔽的特定楼层回复列表，按帖子分组显示。</p>
+                    <div id="s1p-blocked-posts-list-container">
+                    <div>
+                        ${
+                          (() => {
+                            const blockedPosts = getBlockedPosts();
+                            const blockedPostIds = Object.keys(blockedPosts).sort(
+                              (a, b) => blockedPosts[b].timestamp - blockedPosts[a].timestamp
+                            );
+
+                            if (blockedPostIds.length === 0) {
+                              return `<div class="s1p-empty">暂无屏蔽的楼层</div>`;
+                            }
+
+                            // 按threadId分组
+                            const postsByThread = {};
+                            blockedPostIds.forEach(postId => {
+                              const post = blockedPosts[postId];
+                              const threadId = post.threadId;
+                              if (!postsByThread[threadId]) {
+                                postsByThread[threadId] = {
+                                  threadId: post.threadId,
+                                  threadTitle: post.threadTitle,
+                                  posts: []
+                                };
+                              }
+                              postsByThread[threadId].posts.push(post);
+                            });
+
+                            // 获取折叠状态
+                            const collapsedThreads = GM_getValue("s1p_blocked_posts_collapsed_threads", {});
+
+                            return `<div class="s1p-thread-groups">${Object.values(postsByThread)
+                                  .map(thread => {
+                                    const isCollapsed = collapsedThreads[thread.threadId] || false;
+                                    return `
+                                    <div class="s1p-thread-group" data-thread-id="${thread.threadId}">
+                                        <div class="s1p-thread-header s1p-collapsible-header ${isCollapsed ? '' : 'expanded'}">
+                                            <span class="s1p-expander-arrow ${isCollapsed ? '' : 'expanded'}"></span>
+                                            <span class="s1p-thread-title">${thread.threadTitle || '未知帖子'}</span>
+                                            <span class="s1p-thread-count">(${thread.posts.length}个楼层)</span>
+                                        </div>
+                                        <div class="s1p-thread-posts s1p-collapsible-content ${isCollapsed ? '' : 'expanded'}">
+                                            <div class="s1p-list">${thread.posts
+                                              .map(post => {
+                                                return `<div class="s1p-item" data-post-id="${post.postId}"><div class="s1p-item-info"><div class="s1p-item-title">第${post.floor}楼</div><div class="s1p-item-meta">作者: ${
+                                                  post.authorName || `用户 #${post.authorId}`
+                                                } | 屏蔽时间: ${formatDate(post.timestamp)}</div></div><button class="s1p-unblock-post-btn s1p-btn" data-unblock-post-id="${post.postId}">取消屏蔽</button></div>`;
+                                              })
+                                              .join("")}</div>
+                                        </div>
+                                    </div>`;
+                                  })
+                                  .join("")}</div>`;
+                          })()
+                        }
                     </div>
                     </div>
                 </div>
@@ -5379,6 +5550,19 @@
             tabs["threads"]
               .querySelector("#s1p-manually-blocked-list-container")
               .classList.toggle("expanded", isNowExpanded);
+          } else if (header.classList.contains("s1p-thread-header")) {
+            // 处理帖子分组的折叠
+            const threadGroup = header.closest(".s1p-thread-group");
+            const threadId = threadGroup.dataset.threadId;
+            const collapsedThreads = GM_getValue("s1p_blocked_posts_collapsed_threads", {});
+            const isNowCollapsed = !collapsedThreads[threadId];
+
+            collapsedThreads[threadId] = isNowCollapsed;
+            GM_setValue("s1p_blocked_posts_collapsed_threads", collapsedThreads);
+
+            header.classList.toggle("expanded", !isNowCollapsed);
+            header.querySelector(".s1p-expander-arrow").classList.toggle("expanded", !isNowCollapsed);
+            threadGroup.querySelector(".s1p-thread-posts").classList.toggle("expanded", !isNowCollapsed);
           }
         } else if (target.id === "s1p-keyword-rule-add-btn") {
           const container = tabs["threads"].querySelector(
@@ -5993,6 +6177,15 @@
             }
             renderUserTab();
             break;
+          case "enablePostBlocking":
+            refreshAllAuthiActions();
+            if (isChecked) {
+              hideBlockedPosts();
+            } else {
+              Object.keys(getBlockedPosts()).forEach(showPost);
+            }
+            renderThreadTab();
+            break;
           case "enableUserTagging":
             refreshAllAuthiActions();
             renderTagsTab();
@@ -6167,6 +6360,54 @@
         );
       }
 
+      const unblockPostId = e.target.dataset.unblockPostId;
+      if (unblockPostId) {
+        const item = target.closest(".s1p-item");
+        const title = item
+          ? item.querySelector(".s1p-item-title").textContent.trim()
+          : `楼层 #${unblockPostId}`;
+        createConfirmationModal(
+          "确认取消屏蔽该楼层吗？",
+          `楼层信息: ${title}`,
+          () => {
+            unblockPost(unblockPostId);
+
+            // 对于分组列表，需要特殊处理
+            const threadGroup = item.closest(".s1p-thread-group");
+            if (threadGroup) {
+              // 移除当前楼层项
+              item.remove();
+
+              // 检查该帖子分组是否还有其他楼层
+              const remainingPosts = threadGroup.querySelector(".s1p-list");
+              if (remainingPosts && remainingPosts.children.length === 0) {
+                // 如果该帖子没有其他楼层了，移除整个帖子分组
+                threadGroup.remove();
+              }
+
+              // 检查是否还有任何帖子分组
+              const threadGroups = document.querySelector(".s1p-thread-groups");
+              if (threadGroups && threadGroups.children.length === 0) {
+                // 如果没有任何帖子分组了，显示空提示
+                const container = document.querySelector("#s1p-blocked-posts-list-container");
+                if (container) {
+                  container.innerHTML = '<div class="s1p-empty">暂无屏蔽的楼层</div>';
+                }
+              }
+            } else {
+              // 非分组列表的处理（向后兼容）
+              removeListItem(
+                target,
+                '<div class="s1p-empty">暂无屏蔽的楼层</div>'
+              );
+            }
+
+            showMessage("楼层已取消屏蔽。", true);
+          },
+          "确认取消"
+        );
+      }
+
       const removeBookmarkId = target.closest('[data-action="remove-bookmark"]')
         ?.dataset.postId;
       if (removeBookmarkId) {
@@ -6264,6 +6505,7 @@
 
             hideBlockedThreads();
             hideBlockedUsersPosts();
+            hideBlockedPosts();
             applyUserThreadBlocklist();
             hideThreadsByTitleKeyword();
             initializeNavbar();
@@ -7931,6 +8173,59 @@
         scriptActionsWrapper.appendChild(blockLink);
       }
 
+      // [NEW] Block specific post/floor
+      if (settings.enablePostBlocking) {
+        const blockedPosts = getBlockedPosts();
+        const isPostBlocked = !!blockedPosts[postId];
+
+        if (!isPostBlocked) {
+          const pipe = document.createElement("span");
+          pipe.className = "pipe";
+          pipe.textContent = "|";
+          scriptActionsWrapper.appendChild(pipe);
+          const blockPostLink = document.createElement("a");
+          blockPostLink.href = "javascript:void(0);";
+          blockPostLink.textContent = "屏蔽该楼层";
+          blockPostLink.className = "s1p-authi-action s1p-block-post-in-authi";
+          blockPostLink.addEventListener("click", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            // Get thread information
+            const threadTitleEl = document.querySelector("#thread_subject");
+            const threadTitle = threadTitleEl
+              ? threadTitleEl.textContent.trim()
+              : "未知标题";
+            const threadIdMatch = window.location.href.match(/thread-(\d+)-/);
+            const params = new URLSearchParams(window.location.search);
+            const threadId = threadIdMatch
+              ? threadIdMatch[1]
+              : params.get("tid") || params.get("ptid");
+
+            // Get post content
+            const contentEl = postTable.querySelector("td.t_f");
+            let postContent = "无法获取内容";
+            if (contentEl) {
+              const contentClone = contentEl.cloneNode(true);
+              contentClone
+                .querySelectorAll(
+                  ".pstatus, .quote, .s1p-image-toggle-all-container, .s1p-quote-placeholder"
+                )
+                .forEach((el) => el.remove());
+              postContent = contentClone.innerText
+                .trim()
+                .replace(/\n{3,}/g, "\n\n");
+            }
+
+            createInlineConfirmMenu(e.currentTarget, "确认屏蔽该楼层？", () => {
+              blockPost(postId, threadId, threadTitle, floor, userId, userName, postContent);
+              showMessage(`已屏蔽第 ${floor} 楼。`, true);
+            });
+          });
+          scriptActionsWrapper.appendChild(blockPostLink);
+        }
+      }
+
       if (settings.enableUserTagging) {
         const userTags = getUserTags();
         const userTag = userTags[userId];
@@ -8537,10 +8832,14 @@
       hideBlockedUserRatings();
       hideBlockedUserNotifications(); // [新增] 调用提醒屏蔽函数
     }
+    if (settings.enablePostBlocking) {
+      hideBlockedPosts(); // [新增] 调用楼层屏蔽函数
+    }
     if (
       settings.enableUserBlocking ||
       settings.enableUserTagging ||
-      settings.enableBookmarkReplies
+      settings.enableBookmarkReplies ||
+      settings.enablePostBlocking
     ) {
       addActionsToPostFooter();
     }
