@@ -1238,6 +1238,7 @@
       cursor: pointer;
       display: flex;
       align-items: center;
+      justify-content: space-between;
       gap: 8px;
       user-select: none;
       transition: background-color 0.2s;
@@ -5413,9 +5414,9 @@
                                     return `
                                     <div class="s1p-thread-group" data-thread-id="${thread.threadId}">
                                         <div class="s1p-thread-header s1p-collapsible-header ${isCollapsed ? '' : 'expanded'}">
-                                            <span class="s1p-expander-arrow ${isCollapsed ? '' : 'expanded'}"></span>
                                             <span class="s1p-thread-title">${thread.threadTitle || '未知帖子'}</span>
                                             <span class="s1p-thread-count">(${thread.posts.length}个楼层)</span>
+                                            <span class="s1p-expander-arrow ${isCollapsed ? '' : 'expanded'}"></span>
                                         </div>
                                         <div class="s1p-thread-posts s1p-collapsible-content ${isCollapsed ? '' : 'expanded'}">
                                             <div class="s1p-list">${thread.posts
