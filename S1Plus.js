@@ -123,6 +123,7 @@
       --s1p-readprogress-bg: #b8d56f;
 
       --s1p-list-item-status-bg: #dddddd;
+      --s1p-list-item-status-text: #022c80;
 
       /* -- 阅读进度 -- */
       --s1p-progress-hot: rgb(192, 51, 34);
@@ -1323,7 +1324,7 @@
     .s1p-native-sync-status {
       display: inline-block;
       background-color: var(--s1p-list-item-status-bg);
-      color: var(--s1p-t);
+      color: var(--s1p-list-item-status-text);
       padding: 2px 8px;
       border-radius: 7px;
       font-style: normal;
@@ -2268,13 +2269,10 @@
       :root {
         /* 将阅读进度条背景改为更柔和的橄榄绿 */
         --s1p-readprogress-bg: #99a17a;
-        --s1p-list-item-status-bg: #3e3d3d;
+        /* [移除] --s1p-list-item-status-bg 的覆写：该变量在系统深色模式但 NUX 禁用时会导致标识背景过深 */
       }
 
-      /* 删除按钮：默认状态下使用白色图标 */
-      .s1p-editor-btn.s1p-delete-button {
-        background-image: url("${SVG_ICON_DELETE_HOVER}") !important;
-      }
+      /* [移除] 删除按钮白色图标覆写：在系统深色模式但 NUX 禁用时会导致图标不可见 */
 
       /* --- [新增] 深色模式阴影适配 --- */
       .s1p-segmented-control-slider {
@@ -2348,13 +2346,7 @@
       .s1p-warning-text {
         color: #f87171; /* A softer, less jarring red for dark backgrounds */
       }
-      /* --- [新增] 深色模式下输入框聚焦样式 --- */
-      .s1p-input:focus {
-        background-color: #3e3d3d; /* 使用一个深灰色作为背景 */
-        border-color: var(
-          --s1p-sec-h
-        ); /* 沿用一个较亮的主题色作为边框，以示区分 */
-      }
+      /* [移除] 输入框深色聚焦背景覆写：在系统深色模式但 NUX 禁用时会导致输入框背景过深 */
     }
   `);
 
@@ -2367,6 +2359,26 @@
       if (style && style.content.includes("NUXISENABLED")) {
         console.log("S1 Plus: S1 NUX is enabled");
         isS1NuxEnabled = true;
+
+        // [新增] 仅当 NUX 启用时才注入深色模式专用样式，避免影响 NUX 禁用时的浅色模式
+        GM_addStyle(`
+          @media (prefers-color-scheme: dark) {
+            /* 输入框焦点：使用深灰色背景 */
+            .s1p-input:focus {
+              background-color: #3e3d3d;
+              border-color: var(--s1p-sec-h);
+            }
+            /* 删除按钮：使用白色图标 */
+            .s1p-editor-btn.s1p-delete-button {
+              background-image: url("${SVG_ICON_DELETE_HOVER}") !important;
+            }
+            /* 状态标识：使用深色背景和浅色文字 */
+            :root {
+              --s1p-list-item-status-bg: #3e3d3d;
+              --s1p-list-item-status-text: #d1d5db;
+            }
+          }
+        `);
       } else {
         console.log("S1 Plus: S1 NUX is not enabled");
       }
