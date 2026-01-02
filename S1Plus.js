@@ -1272,7 +1272,7 @@
       grid-template-rows: 0fr;
       padding: 0;
       transition: grid-template-rows 0.4s cubic-bezier(0.4, 0, 0.2, 1),
-        padding 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        padding 0.4s cubic-bezier(0.4, 0, 0.2, 1) !important;
     }
     .s1p-thread-posts.s1p-collapsible-content > div {
       overflow: hidden;
@@ -1535,7 +1535,7 @@
       grid-template-rows: 0fr;
       padding-top: 0;
       transition: grid-template-rows 0.4s cubic-bezier(0.4, 0, 0.2, 1),
-        padding-top 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        padding-top 0.4s cubic-bezier(0.4, 0, 0.2, 1) !important;
     }
     .s1p-collapsible-content > div {
       overflow: hidden;
