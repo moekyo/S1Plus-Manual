@@ -307,7 +307,7 @@
     }
     .s1p-newer-badge {
       /* [S1P-FIX V4] 统一字体以解决跨平台对齐根源问题 */
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+      font-family: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei",
         sans-serif;
       color: var(--s1p-success-text);
       font-weight: bold;
@@ -323,7 +323,7 @@
 
     .s1p-progress-update-badge {
       font-size: 12px;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+      font-family: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei",
         sans-serif;
       color: var(--s1p-sec);
       font-weight: bold;
@@ -756,11 +756,11 @@
       min-height: 80px;
     }
 
-    /* --- [新增] 优化 Windows 下密码输入框样式 --- */
+    /* --- [新增] 优化密码输入框样式 --- */
     #s1p-remote-pat-input {
-      /* 修正部分 Windows 系统下字体渲染问题 */
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-        "Helvetica Neue", Arial, sans-serif;
+      /* 统一字体栈，确保跨平台最佳渲染 */
+      font-family: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei",
+        sans-serif;
       /* 增加字符间距，让星号 (*) 显示更清晰 */
       letter-spacing: 1.5px;
     }
@@ -783,8 +783,8 @@
       transition: opacity 0.2s ease-out, transform 0.2s ease-out,
         visibility 0.2s;
       pointer-events: none;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-        "Helvetica Neue", Arial, sans-serif;
+      font-family: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei",
+        sans-serif;
     }
     .s1p-tag-popover.visible {
       opacity: 1;
@@ -1077,11 +1077,13 @@
       position: relative;
 
       /* [优化] 为设置面板设定统一的字体族和渲染方式 */
-      font-family: -apple-system, "BlinkMacSystemFont", "Segoe UI", "Roboto",
-        "Helvetica Neue", "Arial", "PingFang SC", "Hiragino Sans GB",
-        "Microsoft YaHei", sans-serif;
-      -webkit-font-smoothing: antialiased;
-      -moz-osx-font-smoothing: grayscale;
+      /* 使用 system-ui 让浏览器自动选择各平台最佳系统字体 */
+      /* Windows: Microsoft YaHei, macOS: PingFang SC, Linux: Noto Sans CJK */
+      font-family: system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB",
+        "Microsoft YaHei", "Segoe UI", Roboto, "Helvetica Neue", Arial,
+        sans-serif;
+      /* 移除 font-smoothing，让各平台使用默认的最优渲染方式 */
+      /* macOS 默认使用 antialiased，Windows 默认使用 ClearType 子像素抗锯齿 */
     }
     .s1p-modal-header {
       background: var(--s1p-pri);
@@ -1194,6 +1196,10 @@
       flex-direction: column;
       gap: 8px;
     }
+    /* 展开状态下的列表，移除顶部间距以更紧凑 */
+    .s1p-thread-posts.expanded .s1p-list {
+      margin-top: 0;
+    }
     .s1p-item {
       display: flex;
       justify-content: space-between;
@@ -1267,7 +1273,7 @@
     }
     .s1p-thread-posts.s1p-collapsible-content.expanded {
       max-height: none;
-      padding: 12px;
+      padding: 0 12px 12px 12px; /* 移除上边距，保持其他边距 */
     }
     .s1p-item-toggle {
       font-size: 12px;
