@@ -1282,6 +1282,9 @@
     .s1p-unblock-btn:hover {
       background-color: var(--s1p-red-h);
     }
+    .s1p-unblock-post-btn:hover {
+      background-color: var(--s1p-red-h);
+    }
     .s1p-sync-title {
       /* [优化] 调整同步标题的样式，与分组标题统一 */
       font-size: 16px;
