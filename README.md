@@ -67,7 +67,7 @@ S1 Plus 是一个为 Stage1st 论坛（S1）设计的用户脚本，旨在全方
     - Firefox: [Greasemonkey](https://addons.mozilla.org/en-US/firefox/addon/greasemonkey/) 或 [Tampermonkey](https://www.tampermonkey.net/)
     - Safari: [Tampermonkey](https://www.tampermonkey.net/)
 2.  然后，从以下任一地址安装 S1 Plus 脚本（推荐 GreasyFork）：
-    - **[GreasyFork](https://www.google.com/search?q=https://greasyfork.org/scripts/494988-s1-plus-stage1st-%25E4%25BD%2593%25E9%25AA%258C%25E5%25A2%259E%25E5%25BC%25BA%25E5%25A5%2597%25E4%25BB%25B6)** - 点击安装，自动更新。
+    - **[GreasyFork](https://greasyfork.org/en/scripts/543685-s1-plus-stage1st-%E4%BD%93%E9%AA%8C%E5%A2%9E%E5%BC%BA%E5%A5%97%E4%BB%B6)** - 点击安装，自动更新。
     - 或者，复制 `S1Plus.js` 文件的全部内容，在用户脚本管理器中“创建新脚本”，然后粘贴并保存。
 3.  **（可选）设置云同步**：请参考 [**设置教程**](https://silver-s1plus.netlify.app/) 来配置 GitHub Gist 云同步功能，实现跨设备无缝体验。
 
