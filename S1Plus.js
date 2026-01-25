@@ -139,6 +139,46 @@
       }
     }
 
+    @keyframes s1p-fade-in-down {
+      from {
+        opacity: 0;
+        transform: translateY(-10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @keyframes s1p-fade-out-up {
+      from {
+        opacity: 1;
+        transform: translateY(0);
+      }
+      to {
+        opacity: 0;
+        transform: translateY(-10px);
+      }
+    }
+
+    /* --- [新增] 用户备注样式 (适配自定义Popvoer) --- */
+    .s1p-user-remark-display {
+      font-size: 12px;
+      color: var(--s1p-desc-t);
+      /* max-width: 150px; 移除最大宽度限制 */
+      overflow: hidden; 
+      text-overflow: ellipsis; 
+      white-space: nowrap;
+      display: inline-block;
+      vertical-align: middle;
+      cursor: default;
+      /* 增加一点样式以示区别 */
+      background: rgba(0, 0, 0, 0.03);
+      padding: 0 4px;
+      border-radius: 4px;
+      max-width: 100%; /* 确保不超过容器宽度 */
+    }
+
     /* --- [FIX] 导航栏垂直居中对齐修正 --- */
     #nv > ul {
       display: flex !important;
@@ -2654,7 +2694,7 @@
   const hideBlockedThreads = () =>
     Object.keys(getBlockedThreads()).forEach(hideThread);
 
-  const blockUser = async (id, name) => {
+  const blockUser = async (id, name, remark = "") => {
     // [优化] 函数变为异步并返回布尔值
     const settings = getSettings();
     const b = getBlockedUsers();
@@ -2664,6 +2704,7 @@
       blockThreads: settings.blockThreadsOnUserBlock,
       // [新增] 根据设置决定是否添加同步标记
       addedToNativeBlacklist: settings.syncWithNativeBlacklist,
+      remark: remark, // [新增] 用户备注
     };
     saveBlockedUsers(b);
 
@@ -4584,21 +4625,103 @@
    * @param {string} confirmText - 确认提示文本
    * @param {Function} onConfirm - 点击确认后执行的回调函数
    */
-  const createInlineConfirmMenu = (anchorElement, confirmText, onConfirm) => {
+  /**
+   * [MODIFIED] 创建一个行内确认菜单 (V2: 带智能定位和动画)
+   * @param {HTMLElement} anchorElement - 菜单定位的锚点元素
+   * @param {string} confirmText - 确认提示文本
+   * @param {Function} onConfirm - 点击确认后执行的回调函数
+   * @param {object} options - 额外选项
+   * @param {string} [options.inputPlaceholder] - 输入框占位符（存在则显示输入框）
+   */
+  /**
+   * [MODIFIED] 创建一个行内确认菜单 (V2: 带智能定位和动画)
+   * @param {HTMLElement} anchorElement - 菜单定位的锚点元素
+   * @param {string} confirmText - 确认提示文本
+   * @param {Function} onConfirm - 点击确认后执行的回调函数
+   * @param {object} options - 额外选项
+   * @param {string} [options.inputPlaceholder] - 输入框占位符（存在则显示输入框）
+   */
+  const createInlineConfirmMenu = (
+    anchorElement,
+    confirmText,
+    onConfirm,
+    options = {}
+  ) => {
     document.querySelector(".s1p-inline-confirm-menu")?.remove();
 
     const menu = document.createElement("div");
     menu.className = "s1p-options-menu s1p-inline-confirm-menu";
+    // UI调整：移除默认padding，改为由内部容器控制
     menu.style.width = "max-content";
+    menu.style.padding = "0";
+    menu.style.background = "transparent";
+    menu.style.boxShadow = "none";
+    menu.style.border = "none";
+
+    // 箭头图标SVG
+    const arrowRightSvg = `<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>`;
+
+    // 生成唯一ID以便关联
+    const uniqueId = `s1p-confirm-${Date.now()}`;
 
     menu.innerHTML = `
-            <div class="s1p-direct-confirm">
-                <span>${confirmText}</span>
-                <span class="s1p-confirm-separator"></span>
+        <div class="s1p-confirm-main-bar" style="
+            background: var(--s1p-bg); 
+            border: 1px solid var(--s1p-border); 
+            border-radius: 6px; 
+            padding: 8px 12px; 
+            display: flex; 
+            align-items: center; 
+            gap: 8px; 
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            position: relative;
+            z-index: 2;
+        ">
+            ${options.inputPlaceholder ? `
+            <button class="s1p-confirm-expand-btn" style="
+                background: none; 
+                border: none; 
+                cursor: pointer; 
+                padding: 0; 
+                display: flex; 
+                align-items: center; 
+                color: var(--s1p-t); 
+                transition: transform 0.2s ease;
+            ">${arrowRightSvg}</button>
+            ` : ''}
+            
+            <span style="font-size: 13px; color: var(--s1p-t);">${confirmText}</span>
+            <span class="s1p-confirm-separator"></span>
+            <div style="display: flex; gap: 4px;"> 
                 <button class="s1p-confirm-action-btn s1p-cancel" title="取消"></button>
                 <button class="s1p-confirm-action-btn s1p-confirm" title="确认"></button>
             </div>
-        `;
+        </div>
+
+        ${options.inputPlaceholder ? `
+        <div class="s1p-confirm-remark-area" id="${uniqueId}-remark-area" style="
+            background: var(--s1p-bg); 
+            border: 1px solid var(--s1p-border); 
+            border-radius: 6px; 
+            padding: 12px; 
+            margin-top: 8px; 
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15); 
+            display: none; 
+            animation: s1p-fade-in-down 0.2s ease forwards;
+            position: relative;
+            z-index: 1;
+        ">
+            <div style="font-size: 13px; margin-bottom: 8px; color: var(--s1p-t);">备注：</div>
+            <textarea class="s1p-confirm-input s1p-input" placeholder="" style="
+                width: 100%; 
+                min-width: 300px;
+                min-height: 80px; 
+                resize: vertical;
+                font-family: inherit;
+            "></textarea>
+        </div>
+        ` : ''}
+    `;
 
     document.body.appendChild(menu);
     const anchorRect = anchorElement.getBoundingClientRect();
@@ -4608,15 +4731,18 @@
       anchorRect.top +
       window.scrollY +
       anchorRect.height / 2 -
-      menuRect.height / 2;
-    let left;
+      menuRect.height / 2; // 初步居中，后续可能需要微调
 
+    // 重新计算 left，确保包含展开后的潜在宽度（虽然初始是隐藏的，但尽量留足空间）
+    let left;
     const spaceOnRight = window.innerWidth - anchorRect.right;
-    const requiredSpace = menuRect.width + 16;
+    const requiredSpace = 320; // 预估展开后的宽度
 
     if (spaceOnRight >= requiredSpace) {
       left = anchorRect.right + window.scrollX + 8;
     } else {
+      // 作为一个简单的策略，如果右边放不下，就放左边
+      // 但实际上左边可能也放不下... 这里暂时维持原逻辑，优先保证主菜单可见
       left = anchorRect.left + window.scrollX - menuRect.width - 8;
     }
 
@@ -4627,11 +4753,52 @@
     menu.style.top = `${top}px`;
     menu.style.left = `${left}px`;
 
+    // Logic for Expand Button
+    if (options.inputPlaceholder) {
+      const expandBtn = menu.querySelector('.s1p-confirm-expand-btn');
+      const remarkArea = menu.querySelector('.s1p-confirm-remark-area');
+
+      if (expandBtn && remarkArea) {
+        expandBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          // Check if currently visible (and not currently closing)
+          const isExpanded = remarkArea.style.display !== 'none' && !remarkArea.classList.contains('closing');
+
+          if (isExpanded) {
+            // Start closing animation
+            remarkArea.classList.add('closing');
+            remarkArea.style.animation = 's1p-fade-out-up 0.2s ease forwards';
+            expandBtn.style.transform = 'rotate(0deg)';
+
+            const onAnimationEnd = () => {
+              remarkArea.style.display = 'none';
+              remarkArea.classList.remove('closing');
+              remarkArea.style.animation = ''; // Reset animation
+              remarkArea.removeEventListener('animationend', onAnimationEnd);
+            };
+            remarkArea.addEventListener('animationend', onAnimationEnd);
+          } else {
+            // Open
+            remarkArea.style.display = 'block';
+            remarkArea.style.animation = 's1p-fade-in-down 0.2s ease forwards';
+            expandBtn.style.transform = 'rotate(90deg)';
+            const textarea = remarkArea.querySelector('textarea');
+            requestAnimationFrame(() => textarea.focus());
+          }
+        });
+
+        // Prevent clicks inside remark area from closing the menu
+        remarkArea.addEventListener('click', (e) => {
+          e.stopPropagation();
+        });
+      }
+    }
+
     let isClosing = false;
     const closeMenu = () => {
       if (isClosing) return;
       isClosing = true;
-      document.removeEventListener("click", closeMenu);
+      document.removeEventListener("click", closeMenuOnClick);
       menu.classList.remove("visible");
 
       setTimeout(() => {
@@ -4641,9 +4808,21 @@
       }, 200);
     };
 
+    const closeMenuOnClick = (e) => {
+      if (!menu.contains(e.target)) {
+        closeMenu();
+      }
+    };
+
+    setTimeout(() => {
+      document.addEventListener("click", closeMenuOnClick);
+    }, 0);
+
     menu.querySelector(".s1p-confirm").addEventListener("click", (e) => {
       e.stopPropagation();
-      onConfirm();
+      const textarea = menu.querySelector("textarea");
+      const inputValue = textarea ? textarea.value.trim() : undefined;
+      onConfirm(inputValue);
       closeMenu();
     });
 
@@ -5282,11 +5461,17 @@
                 item.addedToNativeBlacklist === true
                   ? '<span class="s1p-native-sync-status">已同步至论坛黑名单</span>'
                   : "";
+
+              // [新增] 显示备注 (移动位置并使用自定义样式)
+              const remarkHtml = item.remark
+                ? `<div style="margin-top: 4px;"><span class="s1p-user-remark-display" data-full-tag="${item.remark.replace(/"/g, '&quot;')}">备注：${item.remark}</span></div>`
+                : "";
+
               return `<div class="s1p-item" data-user-id="${id}"><div class="s1p-item-info"><div class="s1p-item-title">${item.name || `用户 #${id}`
                 }${syncStatusHtml}</div><div class="s1p-item-meta">屏蔽时间: ${formatDate(
                   item.timestamp
                 )}</div><div class="s1p-item-toggle"><label class="s1p-switch"><input type="checkbox" class="s1p-user-thread-block-toggle" data-user-id="${id}" ${item.blockThreads ? "checked" : ""
-                }><span class="s1p-slider"></span></label><span>屏蔽该用户的主题帖</span></div></div><button class="s1p-unblock-btn s1p-btn" data-unblock-user-id="${id}">取消屏蔽</button></div>`;
+                }><span class="s1p-slider"></span></label><span>屏蔽该用户的主题帖</span></div>${remarkHtml}</div><button class="s1p-unblock-btn s1p-btn" data-unblock-user-id="${id}">取消屏蔽</button></div>`;
             })
             .join("")}</div>`
         }
@@ -7399,21 +7584,25 @@
       popover.s1p_api = { show, hide };
     }
 
-    // Keep existing listeners for user tags
+    // Keep existing listeners for user tags and add support for user remarks
     document.body.addEventListener("mouseover", (e) => {
-      const tagDisplay = e.target.closest(".s1p-user-tag-display");
+      const target = e.target.closest(
+        ".s1p-user-tag-display, .s1p-user-remark-display"
+      );
       if (
-        tagDisplay &&
-        tagDisplay.dataset.fullTag &&
-        tagDisplay.scrollWidth > tagDisplay.clientWidth
+        target &&
+        target.dataset.fullTag &&
+        target.scrollWidth > target.clientWidth
       ) {
-        show(tagDisplay, tagDisplay.dataset.fullTag);
+        show(target, target.dataset.fullTag);
       }
     });
 
     document.body.addEventListener("mouseout", (e) => {
-      const tagDisplay = e.target.closest(".s1p-user-tag-display");
-      if (tagDisplay) {
+      const target = e.target.closest(
+        ".s1p-user-tag-display, .s1p-user-remark-display"
+      );
+      if (target) {
         hide();
       }
     });
@@ -8116,19 +8305,24 @@
           }
 
           // 将 e.currentTarget (即被点击的 a 标签)作为第一个参数传入
-          createInlineConfirmMenu(e.currentTarget, confirmText, async () => {
-            const success = await blockUser(userId, userName);
+          createInlineConfirmMenu(
+            e.currentTarget,
+            confirmText,
+            async (remark) => {
+              const success = await blockUser(userId, userName, remark);
 
-            const currentSettings = getSettings();
-            if (success) {
-              const message = currentSettings.syncWithNativeBlacklist
-                ? `已屏蔽用户 ${userName} 并同步至论坛黑名单。`
-                : `已屏蔽用户 ${userName}。`;
-              showMessage(message, true);
-            } else {
-              showMessage(`脚本内屏蔽成功，但同步论坛黑名单失败。`, false);
-            }
-          });
+              const currentSettings = getSettings();
+              if (success) {
+                const message = currentSettings.syncWithNativeBlacklist
+                  ? `已屏蔽用户 ${userName} 并同步至论坛黑名单。`
+                  : `已屏蔽用户 ${userName}。`;
+                showMessage(message, true);
+              } else {
+                showMessage(`脚本内屏蔽成功，但同步论坛黑名单失败。`, false);
+              }
+            },
+            { inputPlaceholder: "添加备注 (可选)" }
+          );
         });
         scriptActionsWrapper.appendChild(blockLink);
       }
