@@ -128,7 +128,14 @@
       /* -- 阅读进度 -- */
       --s1p-progress-hot: rgb(192, 51, 34);
       --s1p-progress-cold: rgb(107, 114, 128);
+
     }
+
+    /* --- [新增的功能] 系统屏蔽楼层隐藏 --- */
+    html.s1p-hide-system-blocked-enabled table.plhin:has(.locked) {
+      display: none !important;
+    }
+
 
     @keyframes s1p-tab-fade-in {
       from {
@@ -2806,6 +2813,15 @@
     Object.keys(getBlockedPosts()).forEach(hidePost);
   };
 
+  const hideSystemBlockedPosts = () => {
+    const settings = getSettings();
+    if (settings.hideSystemBlockedPosts) {
+      document.documentElement.classList.add("s1p-hide-system-blocked-enabled");
+    } else {
+      document.documentElement.classList.remove("s1p-hide-system-blocked-enabled");
+    }
+  };
+
   // [FIX] 更精确地定位帖子作者，避免错误隐藏被评分的帖子
   const hideUserPosts = (id) => {
     document
@@ -3921,6 +3937,7 @@
     enableNavCustomization: true,
     changeLogoLink: true,
     hideBlacklistTip: true,
+    hideSystemBlockedPosts: false,
     blockThreadsOnUserBlock: true,
     syncWithNativeBlacklist: true,
     showBlockedByKeywordList: false,
@@ -5924,6 +5941,13 @@
                         <label class="s1p-switch"><input type="checkbox" id="s1p-hideImagesByDefault" class="s1p-settings-checkbox" data-setting="hideImagesByDefault" ${settings.hideImagesByDefault ? "checked" : ""
         }><span class="s1p-slider"></span></label>
                     </div>
+
+                    <div class="s1p-settings-item">
+                        <label class="s1p-settings-label" for="s1p-hideSystemBlockedPosts">默认隐藏被系统屏蔽的楼层</label>
+                        <label class="s1p-switch"><input type="checkbox" id="s1p-hideSystemBlockedPosts" class="s1p-settings-checkbox" data-setting="hideSystemBlockedPosts" ${settings.hideSystemBlockedPosts ? "checked" : ""
+        }><span class="s1p-slider"></span></label>
+                    </div>
+                    <p class="s1p-setting-desc">开启后，被屏蔽楼层将被自动隐藏。</p>
                 </div>
                 <div class="s1p-settings-group">
                     <div class="s1p-settings-group-title">界面与个性化</div>
@@ -5949,6 +5973,7 @@
                         <label class="s1p-switch"><input type="checkbox" id="s1p-hideBlacklistTip" class="s1p-settings-checkbox" data-setting="hideBlacklistTip" ${settings.hideBlacklistTip ? "checked" : ""
         }><span class="s1p-slider"></span></label>
                     </div>
+
                     <div class="s1p-settings-item">
                         <label class="s1p-settings-label" for="s1p-customTitleSuffix">自定义标题后缀</label>
                         <input type="text" id="s1p-customTitleSuffix" class="s1p-input" data-setting="customTitleSuffix" value="${settings.customTitleSuffix || ""
@@ -6239,6 +6264,9 @@
             removeProgressJumpButtons();
             addProgressJumpButtons();
           }
+        }
+        if (settingKey === "hideSystemBlockedPosts") {
+          hideSystemBlockedPosts();
         }
       }
 
@@ -8928,6 +8956,10 @@
   };
 
   async function main() {
+    // [即时生效] 立即应用楼层屏蔽CSS类，防止FOUC (Flash of Unstyled Content)
+    // 必须放在 await handleStartupSync 之前
+    hideSystemBlockedPosts();
+
     // [修改] 调用欢迎弹窗并接收其状态
     const welcomePopupWasShown = showFirstTimeWelcomeIfNeeded();
 
@@ -8991,6 +9023,9 @@
     }
     if (settings.enablePostBlocking) {
       hideBlockedPosts(); // [新增] 调用楼层屏蔽函数
+    }
+    if (settings.hideSystemBlockedPosts) {
+      hideSystemBlockedPosts();
     }
     if (
       settings.enableUserBlocking ||
