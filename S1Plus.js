@@ -1116,8 +1116,8 @@
       background-color: var(--s1p-bg);
       border-radius: 8px;
       box-shadow: 0 4px 6px rgba(var(--s1p-shadow-color-rgb), 0.1);
-      width: 600px;
-      max-width: 90%;
+      width: 750px;
+      max-width: 98%;
       max-height: 80vh;
       overflow: hidden;
       display: flex;
@@ -3925,6 +3925,8 @@
     showReadIndicator: true,
     enableBookmarkReplies: true,
     readingProgressCleanupDays: 0,
+    cleanupMode: 'auto',
+    manualCleanupDays: 30,
     openInNewTab: {
       master: false,
       threadList: true,
@@ -4943,7 +4945,7 @@
       });
       document.body.removeChild(measureContainer);
 
-      return totalTabsWidth + 32; // 32px for padding
+      return Math.max(totalTabsWidth + 32, 720); // 最小宽度 720px，确保内容完整显示
     };
     const requiredWidth = calculateModalWidth();
     document.querySelector(".s1p-modal")?.remove();
@@ -5912,27 +5914,35 @@
                             <label class="s1p-switch"><input type="checkbox" id="s1p-showReadIndicator" class="s1p-settings-checkbox" data-setting="showReadIndicator" ${settings.showReadIndicator ? "checked" : ""
         }><span class="s1p-slider"></span></label>
                         </div>
-                        <div class="s1p-settings-item" id="s1p-readingProgressCleanupContainer">
-                            <label class="s1p-settings-label">自动清理超过以下时间的阅读记录</label>
+                        <div class="s1p-settings-item" id="s1p-cleanupModeContainer">
+                            <label class="s1p-settings-label">阅读记录清理方式</label>
+                            <div id="s1p-cleanupMode-control" class="s1p-segmented-control">
+                                <div class="s1p-segmented-control-slider"></div>
+                                <div class="s1p-segmented-control-option ${settings.cleanupMode === 'auto' ? 'active' : ''}" data-value="auto">自动</div>
+                                <div class="s1p-segmented-control-option ${settings.cleanupMode === 'manual' ? 'active' : ''}" data-value="manual">手动</div>
+                            </div>
+                        </div>
+                        <div class="s1p-settings-item s1p-auto-cleanup-options" id="s1p-readingProgressCleanupContainer" style="${settings.cleanupMode === 'auto' ? '' : 'display: none;'} margin-top: -8px;">
+                            <label class="s1p-settings-label" style="padding-left: 16px;">自动清理超过以下时间的阅读记录</label>
                             <div id="s1p-readingProgressCleanupDays-control" class="s1p-segmented-control">
                                 <div class="s1p-segmented-control-slider"></div>
-                                <div class="s1p-segmented-control-option ${settings.readingProgressCleanupDays == 30
-          ? "active"
-          : ""
-        }" data-value="30">1个月</div>
-                                <div class="s1p-segmented-control-option ${settings.readingProgressCleanupDays == 90
-          ? "active"
-          : ""
-        }" data-value="90">3个月</div>
-                                <div class="s1p-segmented-control-option ${settings.readingProgressCleanupDays == 180
-          ? "active"
-          : ""
-        }" data-value="180">6个月</div>
-                                <div class="s1p-segmented-control-option ${settings.readingProgressCleanupDays == 0
-          ? "active"
-          : ""
-        }" data-value="0">永不</div>
+                                <div class="s1p-segmented-control-option ${settings.readingProgressCleanupDays == 30 ? 'active' : ''}" data-value="30">1个月</div>
+                                <div class="s1p-segmented-control-option ${settings.readingProgressCleanupDays == 90 ? 'active' : ''}" data-value="90">3个月</div>
+                                <div class="s1p-segmented-control-option ${settings.readingProgressCleanupDays == 180 ? 'active' : ''}" data-value="180">6个月</div>
+                                <div class="s1p-segmented-control-option ${settings.readingProgressCleanupDays == 0 ? 'active' : ''}" data-value="0">永不</div>
                             </div>
+                        </div>
+                        <div class="s1p-settings-item s1p-manual-cleanup-options" style="${settings.cleanupMode === 'manual' ? '' : 'display: none;'} margin-top: -8px; flex-wrap: nowrap; gap: 6px; align-items: center;">
+                            <label class="s1p-settings-label" style="margin-right: auto; white-space: nowrap; flex-shrink: 0; padding-left: 16px;">清理超过以下时间的阅读记录</label>
+                            <div id="s1p-manualCleanupDays-control" class="s1p-segmented-control" style="flex-shrink: 0;">
+                                <div class="s1p-segmented-control-slider"></div>
+                                <div class="s1p-segmented-control-option ${settings.manualCleanupDays == 30 ? 'active' : ''}" data-value="30">30天</div>
+                                <div class="s1p-segmented-control-option ${settings.manualCleanupDays == 180 ? 'active' : ''}" data-value="180">180天</div>
+                                <div class="s1p-segmented-control-option ${settings.manualCleanupDays == 365 ? 'active' : ''}" data-value="365">365天</div>
+                                <div class="s1p-segmented-control-option ${![30, 180, 365].includes(settings.manualCleanupDays) ? 'active' : ''}" data-value="custom">自定义</div>
+                            </div>
+                            <input type="number" id="s1p-manualCleanupCustomDays" class="s1p-input" placeholder="天数" value="${![30, 180, 365].includes(settings.manualCleanupDays) ? settings.manualCleanupDays : ''}" min="1" style="width: 60px !important; min-width: 60px !important; flex-shrink: 0; padding: 6px; ${![30, 180, 365].includes(settings.manualCleanupDays) ? '' : 'display: none;'}">
+                            <button id="s1p-manualCleanup-btn" class="s1p-btn s1p-red-btn" style="flex-shrink: 0; padding: 6px 12px;">立即清理</button>
                         </div>
                       </div>
                     </div>
@@ -6059,6 +6069,113 @@
             .forEach((opt) => opt.classList.remove("active"));
           target.classList.add("active");
           moveSlider(cleanupControl);
+        });
+      }
+
+      // 清理模式切换（自动/手动）
+      const cleanupModeControl = tabs["general-settings"].querySelector(
+        "#s1p-cleanupMode-control"
+      );
+      const autoCleanupOptions = tabs["general-settings"].querySelector(
+        "#s1p-readingProgressCleanupContainer"
+      );
+      const manualCleanupOptions = tabs["general-settings"].querySelector(
+        ".s1p-manual-cleanup-options"
+      );
+
+      if (cleanupModeControl) {
+        moveSlider(cleanupModeControl);
+        cleanupModeControl.addEventListener("click", (e) => {
+          const target = e.target.closest(".s1p-segmented-control-option");
+          if (!target || target.classList.contains("active")) return;
+          const newMode = target.dataset.value;
+          const currentSettings = getSettings();
+          currentSettings.cleanupMode = newMode;
+          saveSettings(currentSettings);
+          cleanupModeControl
+            .querySelectorAll(".s1p-segmented-control-option")
+            .forEach((opt) => opt.classList.remove("active"));
+          target.classList.add("active");
+          moveSlider(cleanupModeControl);
+
+          // 显示/隐藏对应的选项
+          if (newMode === "auto") {
+            autoCleanupOptions.style.display = "";
+            manualCleanupOptions.style.display = "none";
+          } else {
+            autoCleanupOptions.style.display = "none";
+            manualCleanupOptions.style.display = "";
+          }
+        });
+      }
+
+      // 手动清理天数选择
+      const manualCleanupDaysControl = tabs["general-settings"].querySelector(
+        "#s1p-manualCleanupDays-control"
+      );
+      const manualCleanupCustomInput = tabs["general-settings"].querySelector(
+        "#s1p-manualCleanupCustomDays"
+      );
+
+      if (manualCleanupDaysControl) {
+        moveSlider(manualCleanupDaysControl);
+        manualCleanupDaysControl.addEventListener("click", (e) => {
+          const target = e.target.closest(".s1p-segmented-control-option");
+          if (!target || target.classList.contains("active")) return;
+          const newValue = target.dataset.value;
+          const currentSettings = getSettings();
+
+          if (newValue === "custom") {
+            manualCleanupCustomInput.style.display = "";
+            // 切换到自定义时，清空设置，等待用户输入
+            currentSettings.manualCleanupDays = 0;
+            manualCleanupCustomInput.value = "";
+          } else {
+            manualCleanupCustomInput.style.display = "none";
+            currentSettings.manualCleanupDays = parseInt(newValue, 10);
+          }
+          saveSettings(currentSettings);
+
+          manualCleanupDaysControl
+            .querySelectorAll(".s1p-segmented-control-option")
+            .forEach((opt) => opt.classList.remove("active"));
+          target.classList.add("active");
+          moveSlider(manualCleanupDaysControl);
+        });
+      }
+
+      // 自定义天数输入
+      if (manualCleanupCustomInput) {
+        manualCleanupCustomInput.addEventListener("change", (e) => {
+          const value = parseInt(e.target.value, 10);
+          if (value && value > 0) {
+            const currentSettings = getSettings();
+            currentSettings.manualCleanupDays = value;
+            saveSettings(currentSettings);
+          }
+        });
+      }
+
+      // 手动清理按钮
+      const manualCleanupBtn = tabs["general-settings"].querySelector(
+        "#s1p-manualCleanup-btn"
+      );
+      if (manualCleanupBtn) {
+        manualCleanupBtn.addEventListener("click", () => {
+          const currentSettings = getSettings();
+          let days = currentSettings.manualCleanupDays;
+
+          // 如果是自定义模式，实时读取输入框的值
+          const customOption = manualCleanupDaysControl?.querySelector('.s1p-segmented-control-option[data-value="custom"]');
+          if (customOption?.classList.contains('active')) {
+            days = parseInt(manualCleanupCustomInput?.value, 10);
+          }
+
+          if (!days || days <= 0) {
+            showMessage("请先设置有效的天数", false);
+            return;
+          }
+          performManualCleanup(days);
         });
       }
     };
@@ -8771,6 +8888,46 @@
       saveReadProgress(cleanedProgress, false);
     }
   };
+
+  // 手动清理阅读记录
+  const performManualCleanup = (days) => {
+    const progress = getReadProgress();
+    const originalCount = Object.keys(progress).length;
+    if (originalCount === 0) {
+      showMessage("暂无阅读记录需要清理", true);
+      return;
+    }
+
+    const now = Date.now();
+    const maxAge = days * 24 * 60 * 60 * 1000;
+    const cleanedProgress = {};
+    let cleanedCount = 0;
+
+    for (const threadId in progress) {
+      if (Object.prototype.hasOwnProperty.call(progress, threadId)) {
+        const record = progress[threadId];
+        if (record.timestamp && now - record.timestamp < maxAge) {
+          cleanedProgress[threadId] = record;
+        } else {
+          cleanedCount++;
+        }
+      }
+    }
+
+    if (cleanedCount > 0) {
+      console.log(
+        `S1 Plus: Manually cleaned up ${cleanedCount} old reading progress records (older than ${days} days).`
+      );
+      // [S1PLUS-CLEANUP-FIX] 标记已发生清理，等待用户同步确认
+      GM_setValue("s1p_pending_cleanup_info", cleanedCount);
+      // [核心修正] 将 suppressSyncTrigger 改为 false，以确保时间戳被更新
+      saveReadProgress(cleanedProgress, false);
+      showMessage(`成功清理 ${cleanedCount} 条超过 ${days} 天的阅读记录`, true);
+    } else {
+      showMessage(`没有超过 ${days} 天的阅读记录需要清理`, true);
+    }
+  };
+
   const handlePerLoadSyncCheck = async () => {
     const settings = getSettings();
 
