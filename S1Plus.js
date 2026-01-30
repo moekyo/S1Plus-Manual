@@ -1116,8 +1116,8 @@
       background-color: var(--s1p-bg);
       border-radius: 8px;
       box-shadow: 0 4px 6px rgba(var(--s1p-shadow-color-rgb), 0.1);
-      width: 750px;
-      max-width: 98%;
+      width: 600px;
+      max-width: 90%;
       max-height: 80vh;
       overflow: hidden;
       display: flex;
@@ -1534,6 +1534,52 @@
       gap: 12px;
     }
     .s1p-confirm-footer.s1p-centered {
+      justify-content: center;
+    }
+
+    /* --- 阅读记录详情弹窗样式 --- */
+    .s1p-reading-progress-content {
+      max-width: 550px;
+      width: 100%;
+      position: relative;
+    }
+    .s1p-reading-progress-content .s1p-modal-close {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+    }
+    /* 表格改为真正的CSS Grid，确保列对齐 */
+    .s1p-reading-progress-modal .s1p-sync-comparison-table {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      pointer-events: auto;
+    }
+    .s1p-reading-progress-modal .s1p-sync-comparison-row {
+      display: contents;
+    }
+    .s1p-reading-progress-modal .s1p-sync-comparison-row > div {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--s1p-pri);
+    }
+    .s1p-reading-progress-modal .s1p-sync-comparison-header > div {
+      background-color: var(--s1p-pri);
+      font-weight: 600;
+    }
+    .s1p-reading-progress-modal .s1p-sync-comparison-row:last-child > div {
+      border-bottom: none;
+    }
+    /* 斑马条纹 - 每3个单元格为一行 */
+    .s1p-reading-progress-modal .s1p-sync-comparison-row:nth-child(even) > div {
+      background-color: var(--s1p-sub);
+    }
+    /* 列对齐 */
+    .s1p-reading-progress-modal .s1p-sync-comparison-label {
+      text-align: left;
+    }
+    .s1p-reading-progress-modal .s1p-sync-comparison-value {
+      text-align: center;
+      display: flex;
+      align-items: center;
       justify-content: center;
     }
 
@@ -3083,6 +3129,58 @@
       lastReadFloor: lastReadFloor,
     };
     saveReadProgress(progress);
+  };
+
+  /**
+   * 按时间区间分组阅读记录
+   * @param {Object} progress - 阅读进度数据对象
+   * @returns {Array} 分组后的数组，每个元素包含 label, count, ageRange, records
+   */
+  const groupReadProgressByTime = (progress) => {
+    const now = Date.now();
+    const DAY_MS = 24 * 60 * 60 * 1000;
+
+    // 定义时间区间（从新到旧）
+    const timeRanges = [
+      { label: "今天", minDays: 0, maxDays: 1 },
+      { label: "本周", minDays: 1, maxDays: 7 },
+      { label: "本月", minDays: 7, maxDays: 30 },
+      { label: "3个月内", minDays: 30, maxDays: 90 },
+      { label: "6个月内", minDays: 90, maxDays: 180 },
+      { label: "1年内", minDays: 180, maxDays: 365 },
+      { label: "1年以上", minDays: 365, maxDays: Infinity },
+    ];
+
+    // 初始化分组
+    const groups = timeRanges.map((range) => ({
+      label: range.label,
+      count: 0,
+      ageRange: [range.minDays * DAY_MS, range.maxDays * DAY_MS],
+      records: [],
+    }));
+
+    // 遍历阅读记录，分配到对应的时间组
+    for (const threadId in progress) {
+      if (Object.prototype.hasOwnProperty.call(progress, threadId)) {
+        const record = progress[threadId];
+        if (!record.timestamp) continue;
+
+        const age = now - record.timestamp;
+
+        // 找到对应的时间组
+        for (let i = 0; i < timeRanges.length; i++) {
+          const range = timeRanges[i];
+          if (age >= range.minDays * DAY_MS && age < range.maxDays * DAY_MS) {
+            groups[i].count++;
+            groups[i].records.push({ threadId, ...record });
+            break;
+          }
+        }
+      }
+    }
+
+    // 只返回有记录的分组
+    return groups.filter((group) => group.count > 0);
   };
 
   const applyUserThreadBlocklist = () => {
@@ -4945,7 +5043,7 @@
       });
       document.body.removeChild(measureContainer);
 
-      return Math.max(totalTabsWidth + 32, 720); // 最小宽度 720px，确保内容完整显示
+      return totalTabsWidth + 32;
     };
     const requiredWidth = calculateModalWidth();
     document.querySelector(".s1p-modal")?.remove();
@@ -5916,10 +6014,18 @@
                         </div>
                         <div class="s1p-settings-item" id="s1p-cleanupModeContainer">
                             <label class="s1p-settings-label">阅读记录清理方式</label>
-                            <div id="s1p-cleanupMode-control" class="s1p-segmented-control">
-                                <div class="s1p-segmented-control-slider"></div>
-                                <div class="s1p-segmented-control-option ${settings.cleanupMode === 'auto' ? 'active' : ''}" data-value="auto">自动</div>
-                                <div class="s1p-segmented-control-option ${settings.cleanupMode === 'manual' ? 'active' : ''}" data-value="manual">手动</div>
+                            <div style="display: flex; align-items: center; gap: 12px;">
+                                <div id="s1p-cleanupMode-control" class="s1p-segmented-control">
+                                    <div class="s1p-segmented-control-slider"></div>
+                                    <div class="s1p-segmented-control-option ${settings.cleanupMode === 'auto' ? 'active' : ''}" data-value="auto">自动</div>
+                                    <div class="s1p-segmented-control-option ${settings.cleanupMode === 'manual' ? 'active' : ''}" data-value="manual">手动</div>
+                                </div>
+                                <button id="s1p-open-progress-detail-btn" class="s1p-btn" style="${settings.cleanupMode === 'manual' ? '' : 'display: none;'} padding: 6px 12px; white-space: nowrap;">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="16" height="16" style="margin-right: 6px; vertical-align: middle;">
+                                        <path d="M3 3H21C21.5523 3 22 3.44772 22 4V20C22 20.5523 21.5523 21 21 21H3C2.44772 21 2 20.5523 2 20V4C2 3.44772 2.44772 3 3 3ZM4 5V19H20V5H4ZM7 7H11V11H7V7ZM7 13H11V17H7V13ZM13 7H17V11H13V7ZM13 13H17V17H13V13Z"></path>
+                                    </svg>
+                                    阅读记录详情
+                                </button>
                             </div>
                         </div>
                         <div class="s1p-settings-item s1p-auto-cleanup-options" id="s1p-readingProgressCleanupContainer" style="${settings.cleanupMode === 'auto' ? '' : 'display: none;'} margin-top: -8px;">
@@ -5931,18 +6037,6 @@
                                 <div class="s1p-segmented-control-option ${settings.readingProgressCleanupDays == 180 ? 'active' : ''}" data-value="180">6个月</div>
                                 <div class="s1p-segmented-control-option ${settings.readingProgressCleanupDays == 0 ? 'active' : ''}" data-value="0">永不</div>
                             </div>
-                        </div>
-                        <div class="s1p-settings-item s1p-manual-cleanup-options" style="${settings.cleanupMode === 'manual' ? '' : 'display: none;'} margin-top: -8px; flex-wrap: nowrap; gap: 6px; align-items: center;">
-                            <label class="s1p-settings-label" style="margin-right: auto; white-space: nowrap; flex-shrink: 0; padding-left: 16px;">清理超过以下时间的阅读记录</label>
-                            <div id="s1p-manualCleanupDays-control" class="s1p-segmented-control" style="flex-shrink: 0;">
-                                <div class="s1p-segmented-control-slider"></div>
-                                <div class="s1p-segmented-control-option ${settings.manualCleanupDays == 30 ? 'active' : ''}" data-value="30">30天</div>
-                                <div class="s1p-segmented-control-option ${settings.manualCleanupDays == 180 ? 'active' : ''}" data-value="180">180天</div>
-                                <div class="s1p-segmented-control-option ${settings.manualCleanupDays == 365 ? 'active' : ''}" data-value="365">365天</div>
-                                <div class="s1p-segmented-control-option ${![30, 180, 365].includes(settings.manualCleanupDays) ? 'active' : ''}" data-value="custom">自定义</div>
-                            </div>
-                            <input type="number" id="s1p-manualCleanupCustomDays" class="s1p-input" placeholder="天数" value="${![30, 180, 365].includes(settings.manualCleanupDays) ? settings.manualCleanupDays : ''}" min="1" style="width: 60px !important; min-width: 60px !important; flex-shrink: 0; padding: 6px; ${![30, 180, 365].includes(settings.manualCleanupDays) ? '' : 'display: none;'}">
-                            <button id="s1p-manualCleanup-btn" class="s1p-btn s1p-red-btn" style="flex-shrink: 0; padding: 6px 12px;">立即清理</button>
                         </div>
                       </div>
                     </div>
@@ -6079,8 +6173,8 @@
       const autoCleanupOptions = tabs["general-settings"].querySelector(
         "#s1p-readingProgressCleanupContainer"
       );
-      const manualCleanupOptions = tabs["general-settings"].querySelector(
-        ".s1p-manual-cleanup-options"
+      const progressDetailBtn = tabs["general-settings"].querySelector(
+        "#s1p-open-progress-detail-btn"
       );
 
       if (cleanupModeControl) {
@@ -6101,81 +6195,21 @@
           // 显示/隐藏对应的选项
           if (newMode === "auto") {
             autoCleanupOptions.style.display = "";
-            manualCleanupOptions.style.display = "none";
+            if (progressDetailBtn) progressDetailBtn.style.display = "none";
           } else {
             autoCleanupOptions.style.display = "none";
-            manualCleanupOptions.style.display = "";
+            if (progressDetailBtn) progressDetailBtn.style.display = "";
           }
         });
       }
 
-      // 手动清理天数选择
-      const manualCleanupDaysControl = tabs["general-settings"].querySelector(
-        "#s1p-manualCleanupDays-control"
+      // 打开阅读记录详情按钮
+      const openProgressDetailBtn = tabs["general-settings"].querySelector(
+        "#s1p-open-progress-detail-btn"
       );
-      const manualCleanupCustomInput = tabs["general-settings"].querySelector(
-        "#s1p-manualCleanupCustomDays"
-      );
-
-      if (manualCleanupDaysControl) {
-        moveSlider(manualCleanupDaysControl);
-        manualCleanupDaysControl.addEventListener("click", (e) => {
-          const target = e.target.closest(".s1p-segmented-control-option");
-          if (!target || target.classList.contains("active")) return;
-          const newValue = target.dataset.value;
-          const currentSettings = getSettings();
-
-          if (newValue === "custom") {
-            manualCleanupCustomInput.style.display = "";
-            // 切换到自定义时，清空设置，等待用户输入
-            currentSettings.manualCleanupDays = 0;
-            manualCleanupCustomInput.value = "";
-          } else {
-            manualCleanupCustomInput.style.display = "none";
-            currentSettings.manualCleanupDays = parseInt(newValue, 10);
-          }
-          saveSettings(currentSettings);
-
-          manualCleanupDaysControl
-            .querySelectorAll(".s1p-segmented-control-option")
-            .forEach((opt) => opt.classList.remove("active"));
-          target.classList.add("active");
-          moveSlider(manualCleanupDaysControl);
-        });
-      }
-
-      // 自定义天数输入
-      if (manualCleanupCustomInput) {
-        manualCleanupCustomInput.addEventListener("change", (e) => {
-          const value = parseInt(e.target.value, 10);
-          if (value && value > 0) {
-            const currentSettings = getSettings();
-            currentSettings.manualCleanupDays = value;
-            saveSettings(currentSettings);
-          }
-        });
-      }
-
-      // 手动清理按钮
-      const manualCleanupBtn = tabs["general-settings"].querySelector(
-        "#s1p-manualCleanup-btn"
-      );
-      if (manualCleanupBtn) {
-        manualCleanupBtn.addEventListener("click", () => {
-          const currentSettings = getSettings();
-          let days = currentSettings.manualCleanupDays;
-
-          // 如果是自定义模式，实时读取输入框的值
-          const customOption = manualCleanupDaysControl?.querySelector('.s1p-segmented-control-option[data-value="custom"]');
-          if (customOption?.classList.contains('active')) {
-            days = parseInt(manualCleanupCustomInput?.value, 10);
-          }
-
-          if (!days || days <= 0) {
-            showMessage("请先设置有效的天数", false);
-            return;
-          }
-          performManualCleanup(days);
+      if (openProgressDetailBtn) {
+        openProgressDetailBtn.addEventListener("click", () => {
+          createReadingProgressDetailModal();
         });
       }
     };
@@ -8853,6 +8887,8 @@
 
   const cleanupOldReadProgress = () => {
     const settings = getSettings();
+    // 只有在自动清理模式下才执行清理
+    if (settings.cleanupMode !== 'auto') return;
     if (
       !settings.readingProgressCleanupDays ||
       settings.readingProgressCleanupDays <= 0
@@ -8890,6 +8926,169 @@
   };
 
   // 手动清理阅读记录
+  /**
+   * 删除指定时间范围内的阅读记录
+   * @param {Array} ageRange - 时间范围 [minMs, maxMs]
+   * @param {string} groupLabel - 分组标签（用于提示信息）
+   */
+  const deleteProgressGroup = (ageRange, groupLabel) => {
+    const progress = getReadProgress();
+    const originalCount = Object.keys(progress).length;
+    if (originalCount === 0) {
+      showMessage("暂无阅读记录", true);
+      return;
+    }
+
+    const now = Date.now();
+    const [minAge, maxAge] = ageRange;
+    const cleanedProgress = {};
+    let deletedCount = 0;
+
+    for (const threadId in progress) {
+      if (Object.prototype.hasOwnProperty.call(progress, threadId)) {
+        const record = progress[threadId];
+        if (record.timestamp) {
+          const age = now - record.timestamp;
+          // 如果不在删除范围内，则保留
+          if (age < minAge || age >= maxAge) {
+            cleanedProgress[threadId] = record;
+          } else {
+            deletedCount++;
+          }
+        } else {
+          // 没有时间戳的记录保留
+          cleanedProgress[threadId] = record;
+        }
+      }
+    }
+
+    if (deletedCount > 0) {
+      saveReadProgress(cleanedProgress, false);
+      showMessage(`成功删除"${groupLabel}"分组的 ${deletedCount} 条阅读记录`, true);
+      // 刷新弹窗内容
+      const modal = document.querySelector(".s1p-reading-progress-modal");
+      if (modal) {
+        // 关闭当前弹窗并重新打开
+        modal.remove();
+        setTimeout(() => createReadingProgressDetailModal(), 100);
+      }
+    } else {
+      showMessage(`"${groupLabel}"分组没有记录需要删除`, true);
+    }
+  };
+
+  /**
+   * 创建阅读记录详情弹窗
+   */
+  const createReadingProgressDetailModal = () => {
+    // 移除已存在的弹窗
+    document.querySelector(".s1p-reading-progress-modal")?.remove();
+
+    const progress = getReadProgress();
+    const totalCount = Object.keys(progress).length;
+
+    if (totalCount === 0) {
+      showMessage("暂无阅读记录", true);
+      return;
+    }
+
+    // 按时间分组
+    const groups = groupReadProgressByTime(progress);
+
+    // 创建弹窗
+    const modal = document.createElement("div");
+    modal.className = "s1p-confirm-modal s1p-reading-progress-modal";
+
+    // 生成表格行
+    const tableRows = groups
+      .map(
+        (group) => `
+      <div class="s1p-sync-comparison-row">
+        <div class="s1p-sync-comparison-label">${group.label}</div>
+        <div class="s1p-sync-comparison-value">${group.count} 条</div>
+        <div class="s1p-sync-comparison-value">
+          <button class="s1p-btn s1p-red-btn s1p-progress-group-delete" data-age-range='${JSON.stringify(
+          group.ageRange
+        )}' data-label="${group.label}" style="padding: 4px 12px; font-size: 13px;">
+            删除
+          </button>
+        </div>
+      </div>
+    `
+      )
+      .join("");
+
+    modal.innerHTML = `
+      <div class="s1p-confirm-content s1p-reading-progress-content">
+        <div class="s1p-modal-close s1p-close-modal"></div>
+        <div class="s1p-confirm-body">
+          <h2 style="font-size: 18px; font-weight: 600; margin: 0 0 4px 0;">阅读记录详情</h2>
+          <p style="font-size: 13px; color: var(--s1p-desc-t); margin: 0 0 16px 0;">共 ${totalCount} 条阅读记录</p>
+          <div class="s1p-sync-comparison-table">
+            <div class="s1p-sync-comparison-row s1p-sync-comparison-header">
+              <div class="s1p-sync-comparison-label">时间范围</div>
+              <div class="s1p-sync-comparison-value">记录数</div>
+              <div class="s1p-sync-comparison-value">操作</div>
+            </div>
+            ${tableRows}
+          </div>
+        </div>
+      </div>
+    `;
+
+    // 关闭弹窗函数
+    const closeModal = () => {
+      modal.querySelector(".s1p-confirm-content").style.animation =
+        "s1p-scale-out 0.25s ease-out forwards";
+      modal.style.animation = "s1p-fade-out 0.25s ease-out forwards";
+      setTimeout(() => modal.remove(), 250);
+    };
+
+    // 点击遮罩层关闭
+    modal.addEventListener("click", (e) => {
+      if (e.target === modal) {
+        closeModal();
+      }
+    });
+
+    // 关闭按钮
+    const closeBtn = modal.querySelector(".s1p-close-modal");
+    if (closeBtn) {
+      closeBtn.addEventListener("click", closeModal);
+    }
+
+    // 删除按钮
+    modal.querySelectorAll(".s1p-progress-group-delete").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        const ageRange = JSON.parse(btn.dataset.ageRange);
+        const label = btn.dataset.label;
+
+        // 二次确认
+        createAdvancedConfirmationModal(
+          "确认删除",
+          `<p>确定要删除"${label}"分组的所有阅读记录吗？</p><p>此操作不可撤销。</p>`,
+          [
+            {
+              text: "取消",
+              className: "s1p-cancel",
+              action: () => { },
+            },
+            {
+              text: "确认删除",
+              className: "s1p-confirm",
+              action: () => {
+                deleteProgressGroup(ageRange, label);
+              },
+            },
+          ]
+        );
+      });
+    });
+
+    document.body.appendChild(modal);
+  };
+
   const performManualCleanup = (days) => {
     const progress = getReadProgress();
     const originalCount = Object.keys(progress).length;
