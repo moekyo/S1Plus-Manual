@@ -129,6 +129,14 @@
       --s1p-progress-hot: rgb(192, 51, 34);
       --s1p-progress-cold: rgb(107, 114, 128);
 
+      /* -- 用户标记颜色 -- */
+      --s1p-tag-red: #EF4444;
+      --s1p-tag-orange: #F97316;
+      --s1p-tag-yellow: #EAB308;
+      --s1p-tag-green: #22C55E;
+      --s1p-tag-blue: #3B82F6;
+      --s1p-tag-purple: #8B5CF6;
+
     }
 
     /* --- [新增的功能] 系统屏蔽楼层隐藏 --- */
@@ -1063,6 +1071,115 @@
     .s1p-user-tag-options:hover {
       background-color: var(--s1p-pri);
     }
+
+    /* --- 用户标记颜色样式 --- */
+    .s1p-user-tag-container.s1p-tag-color-red .s1p-user-tag-display,
+    .s1p-user-tag-container.s1p-tag-color-red .s1p-user-tag-options {
+      background-color: var(--s1p-tag-red);
+      color: var(--s1p-white);
+    }
+    .s1p-user-tag-container.s1p-tag-color-red .s1p-user-tag-options:hover {
+      filter: brightness(0.9);
+    }
+    .s1p-user-tag-container.s1p-tag-color-orange .s1p-user-tag-display,
+    .s1p-user-tag-container.s1p-tag-color-orange .s1p-user-tag-options {
+      background-color: var(--s1p-tag-orange);
+      color: var(--s1p-white);
+    }
+    .s1p-user-tag-container.s1p-tag-color-orange .s1p-user-tag-options:hover {
+      filter: brightness(0.9);
+    }
+    .s1p-user-tag-container.s1p-tag-color-yellow .s1p-user-tag-display,
+    .s1p-user-tag-container.s1p-tag-color-yellow .s1p-user-tag-options {
+      background-color: var(--s1p-tag-yellow);
+      color: #422006;
+    }
+    .s1p-user-tag-container.s1p-tag-color-yellow .s1p-user-tag-options:hover {
+      filter: brightness(0.9);
+    }
+    .s1p-user-tag-container.s1p-tag-color-green .s1p-user-tag-display,
+    .s1p-user-tag-container.s1p-tag-color-green .s1p-user-tag-options {
+      background-color: var(--s1p-tag-green);
+      color: var(--s1p-white);
+    }
+    .s1p-user-tag-container.s1p-tag-color-green .s1p-user-tag-options:hover {
+      filter: brightness(0.9);
+    }
+    .s1p-user-tag-container.s1p-tag-color-blue .s1p-user-tag-display,
+    .s1p-user-tag-container.s1p-tag-color-blue .s1p-user-tag-options {
+      background-color: var(--s1p-tag-blue);
+      color: var(--s1p-white);
+    }
+    .s1p-user-tag-container.s1p-tag-color-blue .s1p-user-tag-options:hover {
+      filter: brightness(0.9);
+    }
+    .s1p-user-tag-container.s1p-tag-color-purple .s1p-user-tag-display,
+    .s1p-user-tag-container.s1p-tag-color-purple .s1p-user-tag-options {
+      background-color: var(--s1p-tag-purple);
+      color: var(--s1p-white);
+    }
+    .s1p-user-tag-container.s1p-tag-color-purple .s1p-user-tag-options:hover {
+      filter: brightness(0.9);
+    }
+
+    /* --- 颜色选择器样式 --- */
+    .s1p-color-picker {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .s1p-color-picker-label {
+      font-size: 13px;
+      color: var(--s1p-desc-t);
+      flex-shrink: 0;
+    }
+    .s1p-color-options {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .s1p-color-option {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      border: 2px solid transparent;
+      cursor: pointer;
+      transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-sizing: border-box;
+    }
+    .s1p-color-option:hover {
+      transform: scale(1.1);
+    }
+    .s1p-color-option.selected {
+      border-color: var(--s1p-t);
+      box-shadow: 0 0 0 2px var(--s1p-bg);
+    }
+    .s1p-color-option svg {
+      width: 12px;
+      height: 12px;
+      opacity: 0;
+      transition: opacity 0.15s ease;
+    }
+    .s1p-color-option.selected svg {
+      opacity: 1;
+    }
+    .s1p-color-option[data-color=""] {
+      background-color: var(--s1p-sub);
+      border: 2px solid var(--s1p-pri);
+    }
+    .s1p-color-option[data-color=""].selected {
+      border-color: var(--s1p-t);
+    }
+    .s1p-color-option[data-color="red"] { background-color: var(--s1p-tag-red); }
+    .s1p-color-option[data-color="orange"] { background-color: var(--s1p-tag-orange); }
+    .s1p-color-option[data-color="yellow"] { background-color: var(--s1p-tag-yellow); }
+    .s1p-color-option[data-color="green"] { background-color: var(--s1p-tag-green); }
+    .s1p-color-option[data-color="blue"] { background-color: var(--s1p-tag-blue); }
+    .s1p-color-option[data-color="purple"] { background-color: var(--s1p-tag-purple); }
 
     /* --- [MODIFIED] Tag Options Menu (高度比例调整) --- */
     .s1p-tag-options-menu {
@@ -2363,6 +2480,14 @@
         /* 将阅读进度条背景改为更柔和的橄榄绿 */
         --s1p-readprogress-bg: #99a17a;
         /* [移除] --s1p-list-item-status-bg 的覆写：该变量在系统深色模式但 NUX 禁用时会导致标识背景过深 */
+
+        /* -- 用户标记颜色 (深色模式) -- */
+        --s1p-tag-red: #F87171;
+        --s1p-tag-orange: #FB923C;
+        --s1p-tag-yellow: #FACC15;
+        --s1p-tag-green: #4ADE80;
+        --s1p-tag-blue: #60A5FA;
+        --s1p-tag-purple: #A78BFA;
       }
 
       /* [移除] 删除按钮白色图标覆写：在系统深色模式但 NUX 禁用时会导致图标不可见 */
@@ -5351,8 +5476,13 @@
           : `<div class="s1p-list">${tagItems
             .map(([id, data]) => {
               if (id === editingUserId) {
+                const colors = ["", "red", "orange", "yellow", "green", "blue", "purple"];
+                const checkSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+                const colorOptionsHtml = colors.map(c =>
+                  `<span class="s1p-color-option ${c === (data.color || '') ? 'selected' : ''}" data-color="${c}">${checkSvg}</span>`
+                ).join("");
                 return `
-                                <div class="s1p-item" data-user-id="${id}">
+                                <div class="s1p-item" data-user-id="${id}" data-current-color="${data.color || ''}">
                                     <div class="s1p-item-info">
                                         <div class="s1p-item-title">${data.name}</div>
                                         <div class="s1p-item-meta">
@@ -5360,6 +5490,10 @@
                                         </div>
                                         <div class="s1p-item-editor">
                                             <textarea class="s1p-input s1p-textarea s1p-tag-edit-area" autocomplete="off">${data.tag}</textarea>
+                                            <div class="s1p-color-picker" style="margin-top:8px;">
+                                                <span class="s1p-color-picker-label">标记颜色：</span>
+                                                <div class="s1p-color-options">${colorOptionsHtml}</div>
+                                            </div>
                                         </div>
                                     </div>
                                     <div class="s1p-item-actions">
@@ -5368,19 +5502,17 @@
                                     </div>
                                 </div>`;
               } else {
+                const colorDot = data.color
+                  ? `<span class="s1p-color-option" data-color="${data.color}" style="width:14px;height:14px;display:inline-block;vertical-align:middle;margin-right:6px;pointer-events:none;"></span>`
+                  : '';
                 return `
                                 <div class="s1p-item" data-user-id="${id}">
                                     <div class="s1p-item-info">
-                                        <div class="s1p-item-title">${data.name
-                  }</div>
+                                        <div class="s1p-item-title">${data.name}</div>
                                         <div class="s1p-item-meta">
                                             ID: <span class="s1p-item-meta-id">${id}</span> &nbsp;
-                                            标记于: ${formatDate(
-                    data.timestamp
-                  )}
-                                        </div>
-                                        <div class="s1p-item-content">用户标记：${data.tag
-                  }</div>
+                                            标记于: ${formatDate(data.timestamp)}</div>
+                                        <div class="s1p-item-content">${colorDot}用户标记：${data.tag}</div>
                                     </div>
                                     <div class="s1p-item-actions">
                                         <button class="s1p-btn" data-action="edit-tag-item" data-user-id="${id}">编辑</button>
@@ -5408,6 +5540,13 @@
           textarea.selectionStart = textarea.selectionEnd =
             textarea.value.length;
         }
+        // 颜色选择器点击事件
+        tabs["tags"].querySelectorAll(".s1p-color-option").forEach(opt => {
+          opt.addEventListener("click", () => {
+            tabs["tags"].querySelectorAll(".s1p-color-option").forEach(o => o.classList.remove("selected"));
+            opt.classList.add("selected");
+          });
+        });
       }
     };
     const renderBookmarksTab = () => {
@@ -6931,16 +7070,16 @@
           );
         } else if (action === "save-tag-edit") {
           const userName = target.dataset.userName;
-          const newTag = targetTab
-            .querySelector(
-              `.s1p-item[data-user-id="${userId}"] .s1p-tag-edit-area`
-            )
-            .value.trim();
+          const itemEl = targetTab.querySelector(`.s1p-item[data-user-id="${userId}"]`);
+          const newTag = itemEl.querySelector(".s1p-tag-edit-area").value.trim();
+          const selectedColorOpt = itemEl.querySelector(".s1p-color-option.selected");
+          const newColor = selectedColorOpt ? selectedColorOpt.dataset.color : "";
           const tags = getUserTags();
           if (newTag) {
             tags[userId] = {
               ...tags[userId],
               tag: newTag,
+              color: newColor,
               timestamp: Date.now(),
               name: userName,
             };
@@ -7641,17 +7780,35 @@
       popover.style.left = `${left}px`;
     };
 
-    const renderEditMode = (userName, userId, currentTag = "") => {
+    const renderEditMode = (userName, userId, currentTag = "", currentColor = "") => {
+      const colors = ["", "red", "orange", "yellow", "green", "blue", "purple"];
+      const checkSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+      const colorOptionsHtml = colors.map(c =>
+        `<span class="s1p-color-option ${c === currentColor ? 'selected' : ''}" data-color="${c}">${checkSvg}</span>`
+      ).join("");
+
       popover.innerHTML = `
                  <div class="s1p-popover-content">
-                    <div class="s1p-edit-mode-header">为 ${userName} ${currentTag ? "编辑" : "添加"
-        }标记</div>
+                    <div class="s1p-edit-mode-header">为 ${userName} ${currentTag ? "编辑" : "添加"}标记</div>
                     <textarea class="s1p-input s1p-textarea s1p-edit-mode-textarea" placeholder="输入标记内容..." autocomplete="off">${currentTag}</textarea>
+                    <div class="s1p-color-picker">
+                        <span class="s1p-color-picker-label">标记颜色：</span>
+                        <div class="s1p-color-options">${colorOptionsHtml}</div>
+                    </div>
                     <div class="s1p-edit-mode-actions">
                         <button class="s1p-btn" data-action="cancel-edit">取消</button>
                         <button class="s1p-btn" data-action="save">保存</button>
                     </div>
                 </div>`;
+
+      // 颜色选择器点击事件
+      popover.querySelectorAll(".s1p-color-option").forEach(opt => {
+        opt.addEventListener("click", () => {
+          popover.querySelectorAll(".s1p-color-option").forEach(o => o.classList.remove("selected"));
+          opt.classList.add("selected");
+        });
+      });
+
       popover.querySelector("textarea").focus();
     };
 
@@ -7671,7 +7828,8 @@
       popover.dataset.userName = userName;
 
       const userTags = getUserTags();
-      renderEditMode(userName, userId, userTags[userId]?.tag || "");
+      const userTag = userTags[userId];
+      renderEditMode(userName, userId, userTag?.tag || "", userTag?.color || "");
 
       popover.classList.add("visible");
       repositionPopover(anchorElement);
@@ -7695,10 +7853,13 @@
       switch (target.dataset.action) {
         case "save":
           const newTag = popover.querySelector("textarea").value.trim();
+          const selectedColorOpt = popover.querySelector(".s1p-color-option.selected");
+          const newColor = selectedColorOpt ? selectedColorOpt.dataset.color : "";
           if (newTag) {
             userTags[userId] = {
               name: userName,
               tag: newTag,
+              color: newColor,
               timestamp: Date.now(),
             };
           } else {
@@ -8569,6 +8730,10 @@
         if (userTag && userTag.tag) {
           const tagContainer = document.createElement("span");
           tagContainer.className = "s1p-authi-action s1p-user-tag-container";
+          // 应用用户选择的颜色
+          if (userTag.color) {
+            tagContainer.classList.add(`s1p-tag-color-${userTag.color}`);
+          }
           const fullTagText = userTag.tag;
           const tagDisplay = document.createElement("span");
           tagDisplay.className = "s1p-user-tag-display";
