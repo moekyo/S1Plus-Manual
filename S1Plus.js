@@ -1058,8 +1058,8 @@
       height: 20px;
       padding: 2px;
       border-radius: 4px;
-      color: var(--s1p-t);
-      opacity: 0.65;
+      color: inherit;
+      opacity: 1;
       transition: opacity 0.15s ease, background-color 0.15s ease, color 0.15s ease;
     }
     .s1p-authi-actions-wrapper > a.s1p-toolbar-icon-btn:hover,
