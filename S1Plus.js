@@ -1192,6 +1192,7 @@
       flex-wrap: wrap;
     }
     .s1p-color-option {
+      color: white; /* 默认选中标识为白色 (适配彩色背景) */
       width: 22px;
       height: 22px;
       border-radius: 50%;
@@ -1220,6 +1221,7 @@
       opacity: 1;
     }
     .s1p-color-option[data-color=""] {
+      color: var(--s1p-t); /* 默认/透明背景选中标识为主题色 (适配浅色背景) */
       background-color: var(--s1p-sub);
       border: 2px solid var(--s1p-pri);
     }
@@ -5594,7 +5596,7 @@
             .map(([id, data]) => {
               if (id === editingUserId) {
                 const colors = ["", "red", "orange", "yellow", "green", "blue", "purple"];
-                const checkSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+                const checkSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
                 const colorOptionsHtml = colors.map(c =>
                   `<span class="s1p-color-option ${c === (data.color || '') ? 'selected' : ''}" data-color="${c}">${checkSvg}</span>`
                 ).join("");
@@ -7899,7 +7901,7 @@
 
     const renderEditMode = (userName, userId, currentTag = "", currentColor = "") => {
       const colors = ["", "red", "orange", "yellow", "green", "blue", "purple"];
-      const checkSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+      const checkSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
       const colorOptionsHtml = colors.map(c =>
         `<span class="s1p-color-option ${c === currentColor ? 'selected' : ''}" data-color="${c}">${checkSvg}</span>`
       ).join("");
