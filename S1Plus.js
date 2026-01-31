@@ -4532,6 +4532,8 @@
     try {
       const localData = await exportLocalDataObject();
       await pushRemoteData(localData);
+      // [FIX] 强制推送后清除残留的清理标记
+      GM_deleteValue("s1p_pending_cleanup_info");
       GM_setValue("s1p_last_sync_timestamp", Date.now());
       updateLastSyncTimeDisplay();
       showMessage("推送成功！已更新云端备份。", true);
@@ -4560,6 +4562,8 @@
         suppressPostSync: true,
       });
       if (result.success) {
+        // [FIX] 强制拉取成功后清除残留的清理标记
+        GM_deleteValue("s1p_pending_cleanup_info");
         GM_setValue("s1p_last_sync_timestamp", Date.now());
         updateLastSyncTimeDisplay();
         showMessage("拉取成功！页面即将刷新以应用新数据。", true);
@@ -6416,6 +6420,10 @@
           const currentSettings = getSettings();
           currentSettings.readingProgressCleanupDays = newValue;
           saveSettings(currentSettings);
+          // [FIX] 当设置为"永不"清理时，清除残留的清理标记
+          if (newValue === 0) {
+            GM_deleteValue("s1p_pending_cleanup_info");
+          }
           cleanupControl
             .querySelectorAll(".s1p-segmented-control-option")
             .forEach((opt) => opt.classList.remove("active"));
@@ -6457,6 +6465,8 @@
           } else {
             autoCleanupOptions.style.display = "none";
             if (progressDetailBtn) progressDetailBtn.style.display = "";
+            // [FIX] 切换到手动模式时，清除残留的自动清理标记，防止误触发自动推送逻辑
+            GM_deleteValue("s1p_pending_cleanup_info");
           }
         });
       }
@@ -9297,6 +9307,8 @@
     }
 
     if (deletedCount > 0) {
+      // [FIX] 设置清理标记，使同步逻辑能识别这是一次清理操作
+      GM_setValue("s1p_pending_cleanup_info", deletedCount);
       saveReadProgress(cleanedProgress, false);
       showMessage(`成功删除"${groupLabel}"分组的 ${deletedCount} 条阅读记录`, true);
       // 刷新弹窗内容
