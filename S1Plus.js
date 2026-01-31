@@ -80,6 +80,24 @@
   const SVG_ICON_DELETE_HOVER = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='1.5' stroke='white'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0' /%3E%3C/svg%3E`;
   const SVG_ICON_ARROW_MASK = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 16'%3E%3Cpath d='M2 2L8 8L2 14' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E`;
 
+  // --- 帖子楼层工具栏图标 ---
+  const TOOLBAR_ICONS = {
+    // 只看该用户 - 眼睛图标
+    viewAuthor: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3C17.3917 3 21.8778 6.87976 22.8194 12C21.8778 17.1202 17.3917 21 12 21C6.60828 21 2.12226 17.1202 1.18055 12C2.12226 6.87976 6.60828 3 12 3ZM12 19C16.2355 19 19.8602 16.0521 20.7773 12C19.8602 7.94792 16.2355 5 12 5C7.76454 5 4.13984 7.94792 3.22266 12C4.13984 16.0521 7.76454 19 12 19ZM12 16.5C9.51468 16.5 7.49997 14.4853 7.49997 12C7.49997 9.51472 9.51468 7.5 12 7.5C14.4852 7.5 16.5 9.51472 16.5 12C16.5 14.4853 14.4852 16.5 12 16.5ZM12 14.5C13.3807 14.5 14.5 13.3807 14.5 12C14.5 10.6193 13.3807 9.5 12 9.5C10.6193 9.5 9.49997 10.6193 9.49997 12C9.49997 13.3807 10.6193 14.5 12 14.5Z"></path></svg>`,
+    // 收藏回复 - 书签图标
+    bookmark: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M5 2H19C19.5523 2 20 2.44772 20 3V21.1433C20 21.4194 19.7761 21.6434 19.5 21.6434C19.4061 21.6434 19.314 21.6168 19.2344 21.5669L12 16.8968L4.76559 21.5669C4.53163 21.7136 4.22306 21.6429 4.07637 21.4089C4.02647 21.3293 4 21.2373 4 21.1433V3C4 2.44772 4.44772 2 5 2ZM18 4H6V18.4324L12 14.6577L18 18.4324V4Z"></path></svg>`,
+    // 收藏回复（已收藏）- 实心书签图标
+    bookmarked: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M5 2H19C19.5523 2 20 2.44772 20 3V21.1433C20 21.4194 19.7761 21.6434 19.5 21.6434C19.4061 21.6434 19.314 21.6168 19.2344 21.5669L12 16.8968L4.76559 21.5669C4.53163 21.7136 4.22306 21.6429 4.07637 21.4089C4.02647 21.3293 4 21.2373 4 21.1433V3C4 2.44772 4.44772 2 5 2Z"></path></svg>`,
+    // 屏蔽用户 - 用户禁止图标
+    blockUser: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M14 14.252V22H4C4 17.5817 7.58172 14 12 14C12.6906 14 13.3608 14.0875 14 14.252ZM12 13C8.685 13 6 10.315 6 7C6 3.685 8.685 1 12 1C15.315 1 18 3.685 18 7C18 10.315 15.315 13 12 13ZM19.4142 16.5858L21.182 14.818L22.5962 16.2322L20.8284 18L22.5962 19.7678L21.182 21.182L19.4142 19.4142L17.6464 21.182L16.2322 19.7678L18 18L16.2322 16.2322L17.6464 14.818L19.4142 16.5858Z"></path></svg>`,
+    // 屏蔽楼层 - 评论关闭图标
+    blockPost: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M2.80777 1.3934L21.1925 19.7781L19.7783 21.1923L16.5858 17.9999L6.45455 18L2 21.5V4C2 3.8307 2.03409 3.66895 2.09618 3.52106L1.39366 2.81854L2.80777 1.3934ZM4 6.41412V18.3853L5.76282 17H15.5858L4 5.41412V6.41412ZM21.0082 2C21.556 2 22 2.44495 22 2.9934V15.1789L20 13.1789V4H7.82099L5.82099 2H21.0082Z"></path></svg>`,
+    // 标记用户 - 标签图标
+    tagUser: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M10.9042 2.10025L20.8037 3.51446L22.2179 13.414L13.0255 22.6063C12.635 22.9969 12.0019 22.9969 11.6113 22.6063L1.71184 12.7069C1.32131 12.3163 1.32131 11.6832 1.71184 11.2926L10.9042 2.10025ZM11.6113 4.22157L3.83316 11.9997L12.3184 20.485L20.0966 12.7069L19.036 5.28223L11.6113 4.22157ZM13.7327 10.5855C12.9516 9.80448 12.9516 8.53815 13.7327 7.7571C14.5137 6.97606 15.78 6.97606 16.5611 7.7571C17.3421 8.53815 17.3421 9.80448 16.5611 10.5855C15.78 11.3666 14.5137 11.3666 13.7327 10.5855Z"></path></svg>`,
+    // 显示全部楼层 - 列表图标
+    showAll: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M8 4H21V6H8V4ZM3 3.5H6V6.5H3V3.5ZM3 10.5H6V13.5H3V10.5ZM3 17.5H6V20.5H3V17.5ZM8 11H21V13H8V11ZM8 18H21V20H8V18Z"></path></svg>`,
+  };
+
   GM_addStyle(`
     /* --- 通用颜色 --- */
     :root {
@@ -1028,6 +1046,40 @@
     .s1p-authi-actions-wrapper > a.s1p-authi-action,
     .s1p-authi-actions-wrapper > span.pipe {
       flex-shrink: 0;
+    }
+
+    /* --- 工具栏图标按钮样式 --- */
+    .s1p-authi-actions-wrapper > a.s1p-toolbar-icon-btn,
+    .authi a.s1p-toolbar-icon-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 20px;
+      height: 20px;
+      padding: 2px;
+      border-radius: 4px;
+      color: var(--s1p-t);
+      opacity: 0.65;
+      transition: opacity 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+    }
+    .s1p-authi-actions-wrapper > a.s1p-toolbar-icon-btn:hover,
+    .authi a.s1p-toolbar-icon-btn:hover {
+      opacity: 1;
+      background-color: var(--s1p-sub);
+    }
+    .s1p-authi-actions-wrapper > a.s1p-toolbar-icon-btn svg,
+    .authi a.s1p-toolbar-icon-btn svg {
+      width: 16px;
+      height: 16px;
+      flex-shrink: 0;
+    }
+    /* 已收藏状态 */
+    .s1p-authi-actions-wrapper > a.s1p-toolbar-icon-btn.s1p-bookmarked {
+      opacity: 1;
+      color: var(--s1p-pri);
+    }
+    .s1p-authi-actions-wrapper > a.s1p-toolbar-icon-btn.s1p-bookmarked:hover {
+      color: var(--s1p-t);
     }
 
     .s1p-authi-actions-wrapper {
@@ -3498,8 +3550,24 @@
     document
       .querySelectorAll('div.authi a[href*="authorid="]')
       .forEach((link) => {
-        if (link.textContent.trim() === "只看该作者") {
-          link.textContent = "只看该用户";
+        const linkText = link.textContent.trim();
+        if (linkText === "只看该作者" || linkText === "只看该用户") {
+          if (link.classList.contains("s1p-toolbar-icon-btn")) return; // 已处理过
+          link.classList.add("s1p-toolbar-icon-btn");
+          link.innerHTML = TOOLBAR_ICONS.viewAuthor;
+          link.title = "只看该用户";
+        }
+      });
+    // 处理"显示全部楼层"链接
+    document
+      .querySelectorAll('div.authi a')
+      .forEach((link) => {
+        const linkText = link.textContent.trim();
+        if (linkText === "显示全部楼层") {
+          if (link.classList.contains("s1p-toolbar-icon-btn")) return; // 已处理过
+          link.classList.add("s1p-toolbar-icon-btn");
+          link.innerHTML = TOOLBAR_ICONS.showAll;
+          link.title = "显示全部楼层";
         }
       });
   };
@@ -8652,8 +8720,12 @@
       scriptActionsWrapper.appendChild(pipe);
       const bookmarkLink = document.createElement("a");
       bookmarkLink.href = "javascript:void(0);";
-      bookmarkLink.className = "s1p-authi-action s1p-bookmark-reply";
-      bookmarkLink.textContent = isBookmarked ? "该回复已收藏" : "收藏该回复";
+      bookmarkLink.className = "s1p-authi-action s1p-toolbar-icon-btn s1p-bookmark-reply";
+      if (isBookmarked) {
+        bookmarkLink.classList.add("s1p-bookmarked");
+      }
+      bookmarkLink.innerHTML = isBookmarked ? TOOLBAR_ICONS.bookmarked : TOOLBAR_ICONS.bookmark;
+      bookmarkLink.title = isBookmarked ? "取消收藏" : "收藏该回复";
       bookmarkLink.addEventListener("click", (e) => {
         e.preventDefault();
         const currentBookmarks = getBookmarkedReplies();
@@ -8661,7 +8733,9 @@
         if (wasBookmarked) {
           delete currentBookmarks[postId];
           saveBookmarkedReplies(currentBookmarks);
-          bookmarkLink.textContent = "收藏该回复";
+          bookmarkLink.innerHTML = TOOLBAR_ICONS.bookmark;
+          bookmarkLink.title = "收藏该回复";
+          bookmarkLink.classList.remove("s1p-bookmarked");
           showMessage("已取消收藏该回复。", true);
         } else {
           const threadTitleEl = document.querySelector("#thread_subject");
@@ -8703,7 +8777,9 @@
             timestamp: Date.now(),
           };
           saveBookmarkedReplies(currentBookmarks);
-          bookmarkLink.textContent = "该回复已收藏";
+          bookmarkLink.innerHTML = TOOLBAR_ICONS.bookmarked;
+          bookmarkLink.title = "取消收藏";
+          bookmarkLink.classList.add("s1p-bookmarked");
           showMessage("已收藏该回复。", true);
         }
       });
@@ -8718,8 +8794,9 @@
         scriptActionsWrapper.appendChild(pipe);
         const blockLink = document.createElement("a");
         blockLink.href = "javascript:void(0);";
-        blockLink.textContent = "屏蔽该用户";
-        blockLink.className = "s1p-authi-action s1p-block-user-in-authi";
+        blockLink.className = "s1p-authi-action s1p-toolbar-icon-btn s1p-block-user-in-authi";
+        blockLink.innerHTML = TOOLBAR_ICONS.blockUser;
+        blockLink.title = "屏蔽该用户";
         blockLink.addEventListener("click", (e) => {
           e.preventDefault();
           e.stopPropagation();
@@ -8767,8 +8844,9 @@
           scriptActionsWrapper.appendChild(pipe);
           const blockPostLink = document.createElement("a");
           blockPostLink.href = "javascript:void(0);";
-          blockPostLink.textContent = "屏蔽该楼层";
-          blockPostLink.className = "s1p-authi-action s1p-block-post-in-authi";
+          blockPostLink.className = "s1p-authi-action s1p-toolbar-icon-btn s1p-block-post-in-authi";
+          blockPostLink.innerHTML = TOOLBAR_ICONS.blockPost;
+          blockPostLink.title = "屏蔽该楼层";
           blockPostLink.addEventListener("click", (e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -8844,8 +8922,9 @@
         } else {
           const tagLink = document.createElement("a");
           tagLink.href = "javascript:void(0);";
-          tagLink.textContent = "标记该用户";
-          tagLink.className = "s1p-authi-action s1p-tag-user-in-authi";
+          tagLink.className = "s1p-authi-action s1p-toolbar-icon-btn s1p-tag-user-in-authi";
+          tagLink.innerHTML = TOOLBAR_ICONS.tagUser;
+          tagLink.title = "标记该用户";
           tagLink.addEventListener("click", (e) => {
             e.preventDefault();
             const popover = document.getElementById("s1p-tag-popover-main");
@@ -9644,6 +9723,8 @@
     ) {
       addActionsToPostFooter();
     }
+    // 将工具栏文字链接转换为图标
+    renameAuthorLinks();
     if (settings.enableUserTagging) {
       initializeTaggingPopover();
     }
