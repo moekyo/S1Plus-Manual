@@ -1181,6 +1181,55 @@
     .s1p-color-option[data-color="blue"] { background-color: var(--s1p-tag-blue); }
     .s1p-color-option[data-color="purple"] { background-color: var(--s1p-tag-purple); }
 
+    /* --- 历史标记列表样式 --- */
+    .s1p-history-tags-container {
+      margin-top: 12px;
+      margin-bottom: 12px;
+    }
+    .s1p-history-tags-label {
+      font-size: 13px;
+      color: var(--s1p-desc-t);
+      margin-bottom: 6px;
+    }
+    .s1p-history-tags-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      max-height: 200px;
+      overflow-y: auto;
+      padding-right: 4px;
+    }
+    .s1p-history-tag-item {
+      max-width: 120px;
+      padding: 4px 10px;
+      font-size: 12px;
+      border-radius: 12px;
+      background-color: var(--s1p-sub);
+      color: var(--s1p-t);
+      cursor: pointer;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      transition: background-color 0.15s ease, transform 0.15s ease;
+    }
+    .s1p-history-tag-item:hover {
+      background-color: var(--s1p-pri);
+      transform: scale(1.02);
+    }
+    /* 历史标记颜色变体 */
+    .s1p-history-tag-item[data-color="red"] { background-color: var(--s1p-tag-red); color: #fff; }
+    .s1p-history-tag-item[data-color="orange"] { background-color: var(--s1p-tag-orange); color: #fff; }
+    .s1p-history-tag-item[data-color="yellow"] { background-color: var(--s1p-tag-yellow); color: #333; }
+    .s1p-history-tag-item[data-color="green"] { background-color: var(--s1p-tag-green); color: #fff; }
+    .s1p-history-tag-item[data-color="blue"] { background-color: var(--s1p-tag-blue); color: #fff; }
+    .s1p-history-tag-item[data-color="purple"] { background-color: var(--s1p-tag-purple); color: #fff; }
+    .s1p-history-tag-item[data-color="red"]:hover { filter: brightness(1.1); }
+    .s1p-history-tag-item[data-color="orange"]:hover { filter: brightness(1.1); }
+    .s1p-history-tag-item[data-color="yellow"]:hover { filter: brightness(1.05); }
+    .s1p-history-tag-item[data-color="green"]:hover { filter: brightness(1.1); }
+    .s1p-history-tag-item[data-color="blue"]:hover { filter: brightness(1.1); }
+    .s1p-history-tag-item[data-color="purple"]:hover { filter: brightness(1.1); }
+
     /* --- [MODIFIED] Tag Options Menu (高度比例调整) --- */
     .s1p-tag-options-menu {
       position: absolute;
@@ -2485,7 +2534,7 @@
         --s1p-tag-red: #F87171;
         --s1p-tag-orange: #FB923C;
         --s1p-tag-yellow: #FACC15;
-        --s1p-tag-green: #4ADE80;
+        --s1p-tag-green: #10B981;
         --s1p-tag-blue: #60A5FA;
         --s1p-tag-purple: #A78BFA;
       }
@@ -7787,6 +7836,28 @@
         `<span class="s1p-color-option ${c === currentColor ? 'selected' : ''}" data-color="${c}">${checkSvg}</span>`
       ).join("");
 
+      // 生成历史标记列表（显示所有不同用户的标记，不去重）
+      const allTags = getUserTags();
+      const historyTags = Object.entries(allTags)
+        .filter(([id]) => id !== userId) // 排除当前用户
+        .map(([, data]) => data)
+        .slice(0, 50); // 限制显示数量
+
+      const historyTagsHtml = historyTags.map(item => {
+        const escapedTag = item.tag.replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        return `<span class="s1p-history-tag-item" 
+              data-tag="${escapedTag}" 
+              data-color="${item.color || ''}"
+              data-full-tag="${escapedTag}">${item.tag}</span>`;
+      }).join('');
+
+      const historyTagsContainerHtml = historyTagsHtml ? `
+        <div class="s1p-history-tags-container">
+          <div class="s1p-history-tags-label">历史标记（${historyTags.length}）：</div>
+          <div class="s1p-history-tags-list">${historyTagsHtml}</div>
+        </div>
+      ` : '';
+
       popover.innerHTML = `
                  <div class="s1p-popover-content">
                     <div class="s1p-edit-mode-header">为 ${userName} ${currentTag ? "编辑" : "添加"}标记</div>
@@ -7795,6 +7866,7 @@
                         <span class="s1p-color-picker-label">标记颜色：</span>
                         <div class="s1p-color-options">${colorOptionsHtml}</div>
                     </div>
+                    ${historyTagsContainerHtml}
                     <div class="s1p-edit-mode-actions">
                         <button class="s1p-btn" data-action="cancel-edit">取消</button>
                         <button class="s1p-btn" data-action="save">保存</button>
@@ -7806,6 +7878,22 @@
         opt.addEventListener("click", () => {
           popover.querySelectorAll(".s1p-color-option").forEach(o => o.classList.remove("selected"));
           opt.classList.add("selected");
+        });
+      });
+
+      // 历史标记点击事件
+      popover.querySelectorAll(".s1p-history-tag-item").forEach(item => {
+        item.addEventListener("click", () => {
+          const textarea = popover.querySelector("textarea");
+          textarea.value = item.dataset.tag;
+
+          // 同时更新颜色选择
+          const color = item.dataset.color || '';
+          popover.querySelectorAll(".s1p-color-option").forEach(opt => {
+            opt.classList.toggle("selected", opt.dataset.color === color);
+          });
+
+          textarea.focus();
         });
       });
 
@@ -7924,10 +8012,10 @@
       popover.s1p_api = { show, hide };
     }
 
-    // Keep existing listeners for user tags and add support for user remarks
+    // Keep existing listeners for user tags and add support for user remarks and history tags
     document.body.addEventListener("mouseover", (e) => {
       const target = e.target.closest(
-        ".s1p-user-tag-display, .s1p-user-remark-display"
+        ".s1p-user-tag-display, .s1p-user-remark-display, .s1p-history-tag-item"
       );
       if (
         target &&
@@ -7940,7 +8028,7 @@
 
     document.body.addEventListener("mouseout", (e) => {
       const target = e.target.closest(
-        ".s1p-user-tag-display, .s1p-user-remark-display"
+        ".s1p-user-tag-display, .s1p-user-remark-display, .s1p-history-tag-item"
       );
       if (target) {
         hide();
