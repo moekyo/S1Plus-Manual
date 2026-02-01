@@ -1558,6 +1558,64 @@
     .s1p-item-toggle input {
       /* Handled by .s1p-switch */
     }
+    .s1p-blocked-user-item {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+    }
+    .s1p-blocked-user-top-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        width: 100%;
+    }
+    .s1p-item-row-controls {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 0;
+      width: 100%;
+    }
+    /* Fixed width for toggle container to prevent shrinking */
+    .s1p-item-row-controls .s1p-item-toggle {
+      flex-shrink: 0;
+      margin-top: 0; /* Reset margin from s1p-item-toggle if any */
+    }
+    .s1p-remark-container {
+      flex-grow: 1;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0; /* Crucial for text-overflow */
+      justify-content: flex-end; /* Align to the right */
+      margin-left: 4px;
+    }
+    .s1p-remark-text {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--s1p-desc-t);
+      font-size: 13px;
+      cursor: default;
+      max-width: 100%;
+      /* [Refactor] Add background styling */
+      /* [Refactor] Add background styling */
+      background-color: var(--s1p-sub);
+      border-radius: 8px;
+      padding: 2px 8px;
+      /* flex-grow: 1;  Removed to allow wrapping content only */
+      margin-right: 4px;
+      text-align: right;
+    }
+    .s1p-btn-xs {
+      padding: 2px 6px;
+      font-size: 12px;
+      height: auto;
+      line-height: 1.2;
+      min-width: auto;
+      flex-shrink: 0;
+    }
     .s1p-unblock-btn:hover {
       background-color: var(--s1p-red-h);
     }
@@ -4985,6 +5043,72 @@
   };
 
   /**
+   * [新增] 创建一个带输入的模态框
+   */
+  const createInputModal = (
+    title,
+    subtitle,
+    defaultValue,
+    onConfirm,
+    confirmText = "确定",
+    placeholder = ""
+  ) => {
+    document.querySelector(".s1p-confirm-modal")?.remove();
+    const modal = document.createElement("div");
+    modal.className = "s1p-confirm-modal";
+    // Reuse existing modal styles, add input field - NOW USING TEXTAREA
+    modal.innerHTML = `
+        <div class="s1p-confirm-content">
+            <div class="s1p-confirm-body">
+                <div class="s1p-confirm-title">${title}</div>
+                <div class="s1p-confirm-subtitle">${subtitle}</div>
+                <textarea class="s1p-input s1p-confirm-input-field" placeholder="${placeholder}" style="width: 100%; margin-top: 12px; min-height: 80px; resize: vertical; font-family: inherit;" autocomplete="off">${defaultValue.replace(/</g, "&lt;")}</textarea>
+            </div>
+            <div class="s1p-confirm-footer">
+                <button class="s1p-confirm-btn s1p-cancel">取消</button>
+                <button class="s1p-confirm-btn s1p-confirm">${confirmText}</button>
+            </div>
+        </div>`;
+
+    const closeModal = () => {
+      const content = modal.querySelector(".s1p-confirm-content");
+      if (content) content.style.animation = "s1p-scale-out 0.25s ease-out forwards";
+      modal.style.animation = "s1p-fade-out 0.25s ease-out forwards";
+      setTimeout(() => modal.remove(), 250);
+    };
+
+    const input = modal.querySelector(".s1p-confirm-input-field");
+
+    // Auto focus and select slightly delayed to ensure DOM is ready and transition doesn't interfere
+    setTimeout(() => {
+      if (input) {
+        input.focus();
+        input.select();
+      }
+    }, 50);
+
+    // Enter to confirm (Ctrl+Enter or Command+Enter), Escape to cancel
+    input.addEventListener("keydown", (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+        onConfirm(input.value);
+        closeModal();
+      } else if (e.key === "Escape") {
+        closeModal();
+      }
+    });
+
+    modal.querySelector(".s1p-confirm").addEventListener("click", () => {
+      onConfirm(input.value);
+      closeModal();
+    });
+    modal.querySelector(".s1p-cancel").addEventListener("click", closeModal);
+    modal.addEventListener("click", (e) => {
+      if (e.target === modal) closeModal();
+    });
+    document.body.appendChild(modal);
+  };
+
+  /**
    * [MODIFIED] 创建一个行内确认菜单 (V2: 带智能定位和动画)
    * @param {HTMLElement} anchorElement - 菜单定位的锚点元素
    * @param {string} confirmText - 确认提示文本
@@ -5841,16 +5965,38 @@
                   ? '<span class="s1p-native-sync-status">已同步至论坛黑名单</span>'
                   : "";
 
-              // [新增] 显示备注 (移动位置并使用自定义样式)
-              const remarkHtml = item.remark
-                ? `<div style="margin-top: 4px;"><span class="s1p-user-remark-display" data-full-tag="${item.remark.replace(/"/g, '&quot;')}">备注：${item.remark}</span></div>`
-                : "";
+              // [Modified] New Layout: Toggle and Remark in same row
+              const remark = item.remark || "";
+              const escapedRemark = remark.replace(/"/g, '&quot;');
 
-              return `<div class="s1p-item" data-user-id="${id}"><div class="s1p-item-info"><div class="s1p-item-title">${item.name || `用户 #${id}`
-                }${syncStatusHtml}</div><div class="s1p-item-meta">屏蔽时间: ${formatDate(
-                  item.timestamp
-                )}</div><div class="s1p-item-toggle"><label class="s1p-switch"><input type="checkbox" class="s1p-user-thread-block-toggle" data-user-id="${id}" ${item.blockThreads ? "checked" : ""
-                }><span class="s1p-slider"></span></label><span>屏蔽该用户的主题帖</span></div>${remarkHtml}</div><button class="s1p-unblock-btn s1p-btn" data-unblock-user-id="${id}">取消屏蔽</button></div>`;
+              const remarkControlsHtml = remark
+                ? `<span class="s1p-remark-text s1p-user-remark-display" data-full-tag="${escapedRemark}">备注：${remark}</span>
+                   <button class="s1p-btn s1p-btn-xs s1p-edit-remark-btn" data-user-id="${id}" data-current-remark="${escapedRemark}">编辑</button>`
+                : `<button class="s1p-btn s1p-btn-xs s1p-add-remark-btn" data-user-id="${id}">添加备注</button>`;
+
+              return `
+              <div class="s1p-item s1p-blocked-user-item" data-user-id="${id}">
+                <div class="s1p-blocked-user-top-row">
+                    <div class="s1p-item-info" style="margin-bottom: 0;">
+                        <div class="s1p-item-title">${item.name || `用户 #${id}`}${syncStatusHtml}</div>
+                        <div class="s1p-item-meta">屏蔽时间: ${formatDate(item.timestamp)}</div>
+                    </div>
+                    <button class="s1p-unblock-btn s1p-btn" data-unblock-user-id="${id}">取消屏蔽</button>
+                </div>
+                
+                <div class="s1p-item-row-controls">
+                    <div class="s1p-item-toggle">
+                        <label class="s1p-switch">
+                            <input type="checkbox" class="s1p-user-thread-block-toggle" data-user-id="${id}" ${item.blockThreads ? "checked" : ""}>
+                            <span class="s1p-slider"></span>
+                        </label>
+                        <span>屏蔽该用户的主题帖</span>
+                    </div>
+                    <div class="s1p-remark-container">
+                        ${remarkControlsHtml}
+                    </div>
+                </div>
+              </div>`;
             })
             .join("")}</div>`
         }
@@ -5863,6 +6009,38 @@
                     <div>${contentHTML}</div>
                 </div>
             `;
+
+      // [新增] 备注编辑事件监听
+      tabs["users"].addEventListener("click", (e) => {
+        const target = e.target;
+        if (target.classList.contains("s1p-add-remark-btn") || target.classList.contains("s1p-edit-remark-btn")) {
+          const userId = target.dataset.userId;
+          const currentRemark = target.dataset.currentRemark || "";
+
+          // Replaced prompt with custom input modal
+          const blockedUsers = getBlockedUsers(); // [Fix] Get users to display name
+          const userName = blockedUsers[userId]?.name || `用户 #${userId}`; // [Fix] Get user name
+
+          createInputModal(
+            "编辑备注",
+            `请为 <strong>${userName}</strong> 添加或修改备注（留空则删除备注）：`,
+            currentRemark,
+            (newRemark) => {
+              const blockedUsers = getBlockedUsers();
+              if (blockedUsers[userId]) {
+                if (newRemark === null || newRemark.trim() === "") {
+                  delete blockedUsers[userId].remark;
+                } else {
+                  blockedUsers[userId].remark = newRemark.trim();
+                }
+                GM_setValue("s1p_blocked_users", blockedUsers);
+                renderUserTab(); // Re-render to show changes
+              }
+            },
+            "保存"
+          );
+        }
+      });
     };
     const renderThreadTab = () => {
       const settings = getSettings();
