@@ -984,7 +984,103 @@
       visibility: visible;
       transform: translateY(0);
     }
-    /* --- [ULTIMATE FIX V2.1] Flexbox Layout Fix (Ultimate Version) --- */
+    /* --- [NEW] Date Picker Component --- */
+    .s1p-date-picker {
+      position: absolute;
+      /* top/left managed by JS */
+      width: 280px;
+      background-color: var(--s1p-bg);
+      border: 1px solid var(--s1p-border);
+      border-radius: 8px;
+      box-shadow: 0 10px 25px rgba(var(--s1p-shadow-color-rgb), 0.3);
+      z-index: 20005; /* Above modal */
+      padding: 16px;
+      display: none;
+      user-select: none;
+    }
+    .s1p-date-picker.visible {
+      display: block;
+      animation: s1p-fade-in 0.2s ease-out;
+    }
+    .s1p-dp-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+    .s1p-dp-title {
+      font-weight: bold;
+      color: var(--s1p-t);
+      font-size: 16px;
+      cursor: pointer;
+    }
+    .s1p-dp-nav-btn {
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--s1p-desc-t);
+      padding: 4px;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .s1p-dp-nav-btn:hover {
+      background-color: var(--s1p-sub-h);
+      color: var(--s1p-sub-h-t);
+    }
+    .s1p-dp-nav-btn svg {
+      width: 16px;
+      height: 16px;
+    }
+    .s1p-dp-weekdays {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      text-align: center;
+      font-size: 12px;
+      color: var(--s1p-desc-t);
+      margin-bottom: 8px;
+    }
+    .s1p-dp-days {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 4px;
+    }
+    .s1p-dp-day {
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      border-radius: 4px;
+      font-size: 14px;
+      color: var(--s1p-t);
+      transition: all 0.1s ease;
+    }
+    .s1p-dp-day:hover {
+      background-color: var(--s1p-sub-h);
+      color: var(--s1p-sub-h-t);
+    }
+    .s1p-dp-day.selected {
+      background-color: var(--s1p-pri);
+      color: var(--s1p-t);
+      font-weight: bold;
+      border: 1px solid var(--s1p-pri);
+    }
+    .s1p-dp-day.today {
+      border: 1px solid var(--s1p-sec);
+    }
+    .s1p-dp-day.today:hover {
+        background-color: var(--s1p-sec);
+        color: #fff;
+    }
+    .s1p-dp-day.empty {
+      pointer-events: none;
+      cursor: default;
+    }
+    .s1p-dp-day.other-month {
+      color: var(--s1p-text-empty);
+    }
     .pi {
       display: flex !important;
       align-items: center;
@@ -4384,6 +4480,8 @@
     syncDirectChoiceMode: false,
     syncRemoteGistId: "",
     syncRemotePat: "",
+    syncTokenExpiryEnabled: false, // [新增] Token 过期提醒
+    syncTokenExpiryDate: null,     // [新增] Token 过期时间戳
   };
 
   const getSettings = () => {
@@ -4471,6 +4569,7 @@
   // [MODIFIED] 增加 suppressSyncTrigger 参数以阻止在特定情况下触发自动同步
   const saveSettings = (settings, suppressSyncTrigger = false) => {
     GM_setValue("s1p_settings", settings);
+    console.log("S1 Plus: Settings saved.", settings); // [DEBUG]
     if (!suppressSyncTrigger) {
       updateLastModifiedTimestamp();
     }
@@ -5403,6 +5502,360 @@
       ); // { once: true } 确保事件只触发一次后自动移除
     }
   };
+
+  /**
+   * [新增] 自定义日期选择器逻辑 (Portal 模式，挂载到 body 以避免被截断)
+   * @param {HTMLElement} inputEl - 触发和显示日期的输入框
+   * @param {Date} initialDate - 初始日期
+   * @param {Function} onSelect - 选择回调
+   */
+  const createDatePicker = (inputEl, initialDate, onSelect) => {
+    let currentDate = new Date(initialDate); // 当前浏览的月份
+    let selectedDate = new Date(initialDate); // 当前选中的日期
+    let picker = null;
+
+    const render = () => {
+      // 懒加载：初次渲染时创建 DOM
+      if (!picker) {
+        picker = document.createElement("div");
+        picker.className = "s1p-date-picker";
+        document.body.appendChild(picker);
+
+        picker.addEventListener("click", (e) => e.stopPropagation());
+      }
+
+      const year = currentDate.getFullYear();
+      const month = currentDate.getMonth(); // 0-11
+
+      // 头部
+      const header = document.createElement("div");
+      header.className = "s1p-dp-header";
+      header.innerHTML = `
+        <button class="s1p-dp-nav-btn prev-year" title="上一年"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 19l-7-7 7-7" /></svg><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-left:-10px"><path d="M15 19l-7-7 7-7" /></svg></button>
+        <button class="s1p-dp-nav-btn prev-month" title="上个月"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 19l-7-7 7-7" /></svg></button>
+        <div class="s1p-dp-title">${year}年 ${month + 1}月</div>
+        <button class="s1p-dp-nav-btn next-month" title="下个月"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7" /></svg></button>
+        <button class="s1p-dp-nav-btn next-year" title="下一年"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-left:-10px"><path d="M9 5l7 7-7 7" /></svg><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7" /></svg></button>
+      `;
+
+      // 星期头
+      const weekdays = document.createElement("div");
+      weekdays.className = "s1p-dp-weekdays";
+      ["日", "一", "二", "三", "四", "五", "六"].forEach(d => {
+        const el = document.createElement("div");
+        el.className = "s1p-dp-weekday";
+        el.textContent = d;
+        weekdays.appendChild(el);
+      });
+
+      // 日期网格
+      const daysGrid = document.createElement("div");
+      daysGrid.className = "s1p-dp-days";
+
+      // 计算
+      const firstDay = new Date(year, month, 1).getDay(); // 当月第一天是星期几
+      const daysInMonth = new Date(year, month + 1, 0).getDate(); // 当月总天数
+      const daysInPrevMonth = new Date(year, month, 0).getDate(); // 上月总天数
+
+      // 填充上月
+      for (let i = 0; i < firstDay; i++) {
+        const d = daysInPrevMonth - firstDay + i + 1;
+        const el = document.createElement("div");
+        el.className = "s1p-dp-day other-month";
+        el.textContent = d;
+        el.addEventListener("click", () => {
+          currentDate.setMonth(month - 1);
+          currentDate.setDate(d);
+          render();
+          updatePosition(); // 重新渲染后保持位置
+        });
+        daysGrid.appendChild(el);
+      }
+
+      // 填充当月
+      const today = new Date();
+      for (let i = 1; i <= daysInMonth; i++) {
+        const el = document.createElement("div");
+        el.className = "s1p-dp-day";
+        el.textContent = i;
+
+        // 选中状态
+        if (selectedDate &&
+          selectedDate.getFullYear() === year &&
+          selectedDate.getMonth() === month &&
+          selectedDate.getDate() === i) {
+          el.classList.add("selected");
+        }
+
+        // 今天
+        if (today.getFullYear() === year && today.getMonth() === month && today.getDate() === i) {
+          el.classList.add("today");
+        }
+
+        el.addEventListener("click", (e) => {
+          e.stopPropagation();
+          // 更新选中日期
+          selectedDate = new Date(year, month, i);
+          if (onSelect) onSelect(selectedDate);
+          close();
+        });
+        daysGrid.appendChild(el);
+      }
+
+      // 填充下月 (补齐42格)
+      const totalCells = firstDay + daysInMonth;
+      const nextMonthDays = 42 - totalCells;
+      for (let i = 1; i <= nextMonthDays; i++) {
+        const el = document.createElement("div");
+        el.className = "s1p-dp-day other-month";
+        el.textContent = i;
+        el.addEventListener("click", () => {
+          currentDate.setMonth(month + 1);
+          render();
+          updatePosition();
+        });
+        daysGrid.appendChild(el);
+      }
+
+      picker.innerHTML = "";
+      picker.appendChild(header);
+      picker.appendChild(weekdays);
+      picker.appendChild(daysGrid);
+
+      // 绑定导航事件
+      picker.querySelector(".prev-month").addEventListener("click", (e) => { e.stopPropagation(); currentDate.setMonth(month - 1); render(); updatePosition(); });
+      picker.querySelector(".next-month").addEventListener("click", (e) => { e.stopPropagation(); currentDate.setMonth(month + 1); render(); updatePosition(); });
+      picker.querySelector(".prev-year").addEventListener("click", (e) => { e.stopPropagation(); currentDate.setFullYear(year - 1); render(); updatePosition(); });
+      picker.querySelector(".next-year").addEventListener("click", (e) => { e.stopPropagation(); currentDate.setFullYear(year + 1); render(); updatePosition(); });
+    };
+
+    const updatePosition = () => {
+      if (!picker) return;
+      const rect = inputEl.getBoundingClientRect();
+      const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+      const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft;
+
+      // 默认显示在下方
+      let top = rect.bottom + scrollTop + 8;
+      let left = rect.left + scrollLeft;
+
+      // 简单的边界检查 (如果下方空间不足，则显示在上方 - 可选优化)
+      // 暂且统一显示在下方，zIndex 足够高即可
+
+      picker.style.top = top + "px";
+      picker.style.left = left + "px";
+    };
+
+    const open = () => {
+      render(); // 确保 picker 存在
+      updatePosition();
+      picker.classList.add("visible");
+
+      // 使用 requestAnimationFrame 避免点击事件直接触发 document 的关闭监听
+      requestAnimationFrame(() => {
+        document.addEventListener("click", handleOutsideClick);
+        window.addEventListener("resize", updatePosition);
+        window.addEventListener("scroll", updatePosition, true); // 捕获滚动
+      });
+    };
+
+    const close = () => {
+      if (picker) {
+        picker.classList.remove("visible");
+        // 稍微延迟移除 DOM 以便动画播放，或者保留 DOM 仅隐藏？
+        // 这里选择保留 DOM 但隐藏
+      }
+      document.removeEventListener("click", handleOutsideClick);
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+
+    const handleOutsideClick = (e) => {
+      if (picker && !picker.contains(e.target) && e.target !== inputEl) {
+        close();
+      }
+    };
+
+    // 销毁方法 (例如模态框关闭时)
+    const destroy = () => {
+      close();
+      if (picker) {
+        picker.remove();
+        picker = null;
+      }
+    };
+
+    inputEl.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (picker && picker.classList.contains("visible")) {
+        close();
+      } else {
+        open();
+      }
+    });
+
+    // 不需要立即 render，点击时再 render 即可
+
+    return {
+      updateDate: (d) => {
+        selectedDate = new Date(d);
+        currentDate = new Date(d);
+        if (picker && picker.classList.contains("visible")) {
+          render();
+        }
+      },
+      destroy: destroy
+    };
+  };
+
+  /**
+   * [新增] 打开 Token 有效期配置模态框
+   * @param {Function} onSave - 保存后的回调，接收选定的时间戳
+   * @param {Function} onCancel - 取消后的回调
+   */
+  const openTokenExpiryConfigModal = (onSave, onCancel) => {
+    const currentSettings = getSettings();
+    // [FIX] 不移除现有的设置面板 (.s1p-modal)，而是叠加一个新的模态框
+    // document.querySelector(".s1p-modal")?.remove(); 
+
+    const modal = document.createElement("div");
+    modal.className = "s1p-token-config-modal"; // [FIX] 使用不同的类名以避免冲突 (CSS需适配或复用样式)
+
+    // 复用 s1p-modal 的核心样式，但手动应用以确保叠加效果
+    modal.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 20000;
+        opacity: 0;
+        transition: opacity 0.2s ease;
+    `;
+
+    // 默认过期日期：优先读取已保存的配置
+    let defaultDate;
+    if (currentSettings.syncTokenExpiryDate) {
+      defaultDate = new Date(currentSettings.syncTokenExpiryDate);
+    } else {
+      defaultDate = new Date();
+      defaultDate.setDate(defaultDate.getDate() + 30);
+    }
+    const formatDate = (d) => {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    };
+
+    modal.innerHTML = `
+        <div class="s1p-modal-content" style="width: 400px; max-width: 90%; background: var(--s1p-bg); border-radius: 12px; border: 1px solid var(--s1p-border); display: flex; flex-direction: column; box-shadow: 0 10px 25px rgba(0,0,0,0.3);">
+            <div class="s1p-modal-header" style="padding: 16px; border-bottom: 1px solid var(--s1p-border); display: flex; justify-content: space-between; align-items: center; background: var(--s1p-sub); border-top-left-radius: 12px; border-top-right-radius: 12px;">
+                <div class="s1p-modal-title" style="font-size: 16px; font-weight: bold; color: var(--s1p-t);">设置 Token 有效期</div>
+                <div class="s1p-modal-close"></div>
+            </div>
+            <div class="s1p-modal-body" style="padding: 20px; overflow-y: visible;">
+                <p class="s1p-setting-desc" style="margin-top: 0;">请设置您的 GitHub Personal Access Token 的过期时间，以便脚本在过期前提醒您。</p>
+                
+                <div class="s1p-settings-item" style="flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 16px;">
+                    <label class="s1p-settings-label">过期日期</label>
+                    <input type="text" id="s1p-token-expiry-date-input" class="s1p-input" value="${formatDate(defaultDate)}" readonly style="width: 100%; cursor: pointer; background: var(--s1p-bg);" placeholder="点击选择日期">
+                </div>
+
+                <div class="s1p-settings-group" style="margin-top: 16px; display: flex; gap: 8px; flex-wrap: wrap;">
+                    <button class="s1p-btn s1p-quick-date-btn" data-days="30">30天后</button>
+                    <button class="s1p-btn s1p-quick-date-btn" data-days="60">60天后</button>
+                    <button class="s1p-btn s1p-quick-date-btn" data-days="90">90天后</button>
+                     <button class="s1p-btn s1p-quick-date-btn" data-days="365">1年后</button>
+                </div>
+            </div>
+             <div class="s1p-modal-footer" style="padding: 16px; border-top: 1px solid var(--s1p-border); background: var(--s1p-sub); display: flex; justify-content: flex-end; gap: 8px; border-bottom-left-radius: 12px; border-bottom-right-radius: 12px;">
+                 <button class="s1p-btn s1p-cancel-btn">取消</button>
+                 <button class="s1p-btn s1p-confirm-btn s1p-primary">保存</button>
+            </div>
+        </div>`;
+
+    document.body.appendChild(modal);
+
+    // 动画显示
+    requestAnimationFrame(() => {
+      modal.style.opacity = "1";
+    });
+
+    const close = () => {
+      modal.style.opacity = "0";
+      setTimeout(() => modal.remove(), 200);
+      if (onCancel) onCancel();
+      // [FIX] 销毁日历实例
+      if (dp) dp.destroy();
+    };
+
+    // 成功保存时不调 onCancel
+    const closeOnSave = () => {
+      modal.style.opacity = "0";
+      setTimeout(() => modal.remove(), 200);
+      // [FIX] 销毁日历实例
+      if (dp) dp.destroy();
+    };
+
+    modal.querySelector(".s1p-modal-close").addEventListener("click", close);
+    modal.querySelector(".s1p-cancel-btn").addEventListener("click", close);
+
+    const dateInput = modal.querySelector("#s1p-token-expiry-date-input");
+
+    // [NEW] 初始化自定义日期选择器
+    let currentSelectedDate = defaultDate;
+    const dp = createDatePicker(dateInput, defaultDate, (date) => {
+      currentSelectedDate = date;
+      dateInput.value = formatDate(date);
+    });
+
+    // 快捷按钮逻辑
+    modal.querySelectorAll(".s1p-quick-date-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const days = parseInt(btn.dataset.days);
+        const date = new Date();
+        date.setDate(date.getDate() + days);
+
+        // 更新输入框和选择器状态
+        dateInput.value = formatDate(date);
+        currentSelectedDate = date;
+        dp.updateDate(date);
+      });
+    });
+
+    modal.querySelector(".s1p-confirm-btn").addEventListener("click", () => {
+      // 将日期转换为当天的结束时间 (23:59:59) 以避免时区造成的提前过期
+      const expiryDate = new Date(currentSelectedDate);
+      expiryDate.setHours(23, 59, 59, 999);
+      const timestamp = expiryDate.getTime();
+
+      if (timestamp < Date.now()) {
+        showMessage("过期日期不能早于当前时间", false);
+        return;
+      }
+
+      if (onSave) onSave(timestamp);
+
+      const mainSettingsModal = document.querySelector(".s1p-modal");
+      if (mainSettingsModal) {
+        const expiryToggle = mainSettingsModal.querySelector("#s1p-token-expiry-reminder-toggle");
+        if (expiryToggle) {
+          expiryToggle.checked = true;
+          // 触发 change 事件以防有其他监听器
+          expiryToggle.dispatchEvent(new Event("change"));
+        }
+      }
+
+      closeOnSave();
+    });
+  };
+
+
   const createManagementModal = () => {
     const calculateModalWidth = () => {
       const measureContainer = document.createElement("div");
@@ -5535,6 +5988,14 @@
                                     </button>
                                 </div>
                             </div>
+                            <div class="s1p-settings-item" style="margin-top: 12px;">
+                                <label class="s1p-settings-label" for="s1p-token-expiry-reminder-toggle">Sync Token 更新提醒</label>
+                                <label class="s1p-switch">
+                                    <input type="checkbox" id="s1p-token-expiry-reminder-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
+                                    <span class="s1p-slider"></span>
+                                </label>
+                            </div>
+                            <div id="s1p-token-expiry-info-container" class="s1p-setting-desc" style="margin-top: 4px; min-height: 20px;"></div>
                             <div class="s1p-notice">
                                 <div class="s1p-notice-icon"></div>
                                 <div class="s1p-notice-content">
@@ -5706,6 +6167,72 @@
       settings.syncRemotePat || "";
 
     remoteToggle.addEventListener("change", updateRemoteSyncInputsState);
+
+    // [新增] Token 过期提醒逻辑
+    const tokenExpiryToggle = modal.querySelector("#s1p-token-expiry-reminder-toggle");
+    const updateTokenExpiryInfo = () => {
+      const infoContainer = modal.querySelector("#s1p-token-expiry-info-container");
+      const expiryTimestamp = getSettings().syncTokenExpiryDate;
+
+      if (tokenExpiryToggle.checked && expiryTimestamp) {
+        const date = new Date(expiryTimestamp);
+        const dateStr = date.toLocaleDateString("zh-CN");
+        const daysLeft = Math.ceil((expiryTimestamp - Date.now()) / (1000 * 60 * 60 * 24));
+        const color = daysLeft <= 3 ? "var(--s1p-red)" : "var(--s1p-success-text)";
+
+        infoContainer.innerHTML = `过期时间：<span style="font-weight:bold; color: ${color}">${dateStr}</span> (剩余 ${daysLeft} 天) <button id="s1p-edit-token-expiry" class="s1p-btn" style="margin-left: 8px; padding: 2px 8px; font-size: 12px; height: auto;">修改</button>`;
+
+        modal.querySelector("#s1p-edit-token-expiry")?.addEventListener("click", () => {
+          openTokenExpiryConfigModal((ts) => {
+            const s = getSettings();
+            s.syncTokenExpiryDate = ts;
+            s.syncTokenExpiryEnabled = true; // [FIX] 确保状态为开启
+            saveSettings(s);
+            updateTokenExpiryInfo();
+            showMessage("Token 过期时间已更新", true);
+          });
+        });
+      } else {
+        infoContainer.innerHTML = "";
+      }
+    };
+
+    tokenExpiryToggle.checked = getSettings().syncTokenExpiryEnabled || false;
+    tokenExpiryToggle.addEventListener("change", (e) => {
+      const isChecked = e.target.checked;
+      const s = getSettings();
+
+      if (isChecked) {
+        if (!s.syncTokenExpiryDate) {
+          openTokenExpiryConfigModal((ts) => {
+            const current = getSettings();
+            current.syncTokenExpiryDate = ts;
+            current.syncTokenExpiryEnabled = true;
+            saveSettings(current);
+            // [FIX] Explicitly update UI state in closure
+            tokenExpiryToggle.checked = true;
+            updateTokenExpiryInfo();
+            showMessage("Token 过期时间已更新", true);
+          }, () => {
+            // On Cancel, revert toggle
+            e.target.checked = false;
+            updateTokenExpiryInfo();
+          });
+        } else {
+          // [FIX] Also auto-save when enabling if date exists
+          s.syncTokenExpiryEnabled = true;
+          saveSettings(s);
+          updateTokenExpiryInfo();
+        }
+      } else {
+        // [FIX] Auto-save when disabling
+        s.syncTokenExpiryEnabled = false;
+        saveSettings(s);
+        updateTokenExpiryInfo();
+      }
+    });
+    updateTokenExpiryInfo();
+
     updateRemoteSyncInputsState();
     updateForcePullState(); // [MODIFIED] 初始化子选项的状态
 
@@ -7368,6 +7895,9 @@
         currentSettings.syncRemotePat = modal
           .querySelector("#s1p-remote-pat-input")
           .value.trim();
+        currentSettings.syncTokenExpiryEnabled = modal.querySelector(
+          "#s1p-token-expiry-reminder-toggle"
+        ).checked;
 
         saveSettings(currentSettings, true);
         updateNavbarSyncButton();
@@ -9883,6 +10413,78 @@
     return true; // 确认显示了弹窗，返回 true
   };
 
+  /**
+   * [新增] 检查 Token 是否即将过期
+   * @returns {boolean} 是否显示了提醒弹窗
+   */
+  const checkTokenExpiry = () => {
+    const settings = getSettings();
+    if (!settings.syncRemoteEnabled || !settings.syncTokenExpiryEnabled) {
+      return false;
+    }
+
+    const expiryTimestamp = settings.syncTokenExpiryDate;
+    if (!expiryTimestamp) return false;
+
+    const today = new Date().toLocaleDateString("sv");
+    const lastCheckDate = GM_getValue("s1p_last_token_check_date", null);
+
+    if (today === lastCheckDate) return false;
+
+    const daysLeft = Math.ceil((expiryTimestamp - Date.now()) / (1000 * 60 * 60 * 24));
+
+    // Expired or within 3 days
+    if (daysLeft <= 3) {
+      GM_setValue("s1p_last_token_check_date", today); // Set checked today
+
+      let title = "Sync Token 即将过期";
+      let content = `<p>您的 GitHub Personal Access Token 将于 <strong>${daysLeft}</strong> 天后过期。</p><p>请及时更新 Token 以免影响同步功能。</p>`;
+
+      if (daysLeft < 0) {
+        title = "Sync Token 已过期";
+        content = `<p>您的 GitHub Personal Access Token 已过期 <strong>${Math.abs(daysLeft)}</strong> 天。</p><p>同步功能可能已无法使用，请立即更新。</p>`;
+      } else if (daysLeft === 0) {
+        title = "Sync Token 今天过期";
+        content = `<p>您的 GitHub Personal Access Token 将在今天过期。</p><p>请及时更新。</p>`;
+      }
+
+      createAdvancedConfirmationModal(
+        title,
+        content,
+        [
+          {
+            text: "知道了",
+            className: "s1p-btn", // Just a normal button
+            action: () => { } // Do nothing, date already updated
+          },
+          {
+            text: "前往生成",
+            className: "s1p-btn",
+            action: () => {
+              GM_openInTab("https://github.com/settings/tokens", true);
+            }
+          },
+          {
+            text: "已更新",
+            className: "s1p-confirm",
+            action: () => {
+              // Open config modal to update date
+              openTokenExpiryConfigModal((ts) => {
+                const s = getSettings();
+                s.syncTokenExpiryDate = ts;
+                saveSettings(s);
+                showMessage("Token 有效期已更新", true);
+              });
+            }
+          }
+        ],
+        { modalClassName: "s1p-token-expiry-modal" }
+      );
+      return true; // Shown
+    }
+    return false;
+  };
+
   async function main() {
     // [即时生效] 立即应用楼层屏蔽CSS类，防止FOUC (Flash of Unstyled Content)
     // 必须放在 await handleStartupSync 之前
@@ -9890,6 +10492,11 @@
 
     // [修改] 调用欢迎弹窗并接收其状态
     const welcomePopupWasShown = showFirstTimeWelcomeIfNeeded();
+
+    // [新增] 检查 Token 过期 (仅当没有显示欢迎弹窗时)
+    if (!welcomePopupWasShown) {
+      checkTokenExpiry();
+    }
 
     // --- [核心修改] 按照您的建议，分离启动同步的调用 ---
     // 步骤1: 尝试执行每日首次同步
