@@ -6589,7 +6589,7 @@
       );
       setupSubSwitch("s1p-openNavInNewTab", "s1p-openNavInBackground-item");
 
-      const moveSlider = (control) => {
+      const moveSlider = (control, skipAnimation = false) => {
         if (!control) return;
         requestAnimationFrame(() => {
           const slider = control.querySelector(".s1p-segmented-control-slider");
@@ -6602,10 +6602,22 @@
             activeOption.offsetWidth > 0 &&
             activeOption.offsetParent !== null
           ) {
+            if (skipAnimation) {
+              slider.style.transition = "none";
+            }
             slider.style.width = `${activeOption.offsetWidth}px`;
             slider.style.transform = `translateX(${activeOption.offsetLeft}px)`;
+
+            if (skipAnimation) {
+              // Force reflow
+              void slider.offsetWidth;
+              // Restore transition next frame to ensure it doesn't animate the initial state
+              requestAnimationFrame(() => {
+                slider.style.transition = "";
+              });
+            }
           } else if (slider && activeOption) {
-            setTimeout(() => moveSlider(control), 100);
+            setTimeout(() => moveSlider(control, skipAnimation), 100);
           }
         });
       };
@@ -6614,7 +6626,7 @@
         "#s1p-readingProgressCleanupDays-control"
       );
       if (cleanupControl) {
-        moveSlider(cleanupControl);
+        moveSlider(cleanupControl, true);
         cleanupControl.addEventListener("click", (e) => {
           const target = e.target.closest(".s1p-segmented-control-option");
           if (!target || target.classList.contains("active")) return;
@@ -6646,7 +6658,7 @@
       );
 
       if (cleanupModeControl) {
-        moveSlider(cleanupModeControl);
+        moveSlider(cleanupModeControl, true);
         cleanupModeControl.addEventListener("click", (e) => {
           const target = e.target.closest(".s1p-segmented-control-option");
           if (!target || target.classList.contains("active")) return;
