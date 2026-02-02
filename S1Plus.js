@@ -156,6 +156,10 @@
       --s1p-tag-green: #22C55E;
       --s1p-tag-blue: #3B82F6;
       --s1p-tag-purple: #8B5CF6;
+      
+      /* -- [新增] 用户名高亮 -- */
+      --s1p-username-bg: #bccda8; /* Sage Green */
+      --s1p-username-text: #0b2163; /* Dark Blue */
 
     }
 
@@ -935,6 +939,15 @@
       font-weight: 600;
       font-size: 15px;
       margin-bottom: 12px;
+      line-height: 1.6;
+    }
+    .s1p-username-highlight {
+      background-color: var(--s1p-username-bg);
+      color: var(--s1p-username-text);
+      padding: 2px 6px;
+      border-radius: 6px;
+      margin: 0 4px;
+      display: inline-block;
     }
     .s1p-edit-mode-textarea {
       height: 90px;
@@ -2651,6 +2664,10 @@
         --s1p-tag-green: #10B981;
         --s1p-tag-blue: #60A5FA;
         --s1p-tag-purple: #A78BFA;
+
+        /* -- 用户名高亮 (深色模式) -- */
+        --s1p-username-bg: #3F4F3A;
+        --s1p-username-text: #E5E7EB;
       }
 
       /* [移除] 删除按钮白色图标覆写：在系统深色模式但 NUX 禁用时会导致图标不可见 */
@@ -8137,7 +8154,7 @@
 
       popover.innerHTML = `
                  <div class="s1p-popover-content">
-                    <div class="s1p-edit-mode-header">为 ${userName} ${currentTag ? "编辑" : "添加"}标记</div>
+                    <div class="s1p-edit-mode-header">为 <span class="s1p-username-highlight">${userName}</span> ${currentTag ? "编辑" : "添加"}标记</div>
                     <textarea class="s1p-input s1p-textarea s1p-edit-mode-textarea" placeholder="输入标记内容..." autocomplete="off">${currentTag}</textarea>
                     <div class="s1p-color-picker">
                         <span class="s1p-color-picker-label">标记颜色：</span>
