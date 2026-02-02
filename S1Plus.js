@@ -1609,7 +1609,7 @@
       text-align: right;
     }
     .s1p-btn-xs {
-      padding: 2px 6px;
+      padding: 6px 8px;
       font-size: 12px;
       height: auto;
       line-height: 1.2;
