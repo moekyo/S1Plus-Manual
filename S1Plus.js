@@ -1608,7 +1608,7 @@
       margin-right: 4px;
       text-align: right;
     }
-    .s1p-btn-xs {
+    .s1p-btn-sm {
       padding: 6px 8px;
       font-size: 12px;
       height: auto;
@@ -5971,8 +5971,8 @@
 
               const remarkControlsHtml = remark
                 ? `<span class="s1p-remark-text s1p-user-remark-display" data-full-tag="${escapedRemark}">备注：${remark}</span>
-                   <button class="s1p-btn s1p-btn-xs s1p-edit-remark-btn" data-user-id="${id}" data-current-remark="${escapedRemark}">编辑</button>`
-                : `<button class="s1p-btn s1p-btn-xs s1p-add-remark-btn" data-user-id="${id}">添加备注</button>`;
+                   <button class="s1p-btn s1p-btn-sm s1p-edit-remark-btn" data-user-id="${id}" data-current-remark="${escapedRemark}">编辑</button>`
+                : `<button class="s1p-btn s1p-btn-sm s1p-add-remark-btn" data-user-id="${id}">添加备注</button>`;
 
               return `
               <div class="s1p-item s1p-blocked-user-item" data-user-id="${id}">
