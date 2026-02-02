@@ -5995,6 +5995,7 @@
                                     <span class="s1p-slider"></span>
                                 </label>
                             </div>
+                            <p class="s1p-setting-desc">开启后会在 token 到期前三天弹窗提醒</p>
                             <div id="s1p-token-expiry-info-container" class="s1p-setting-desc" style="margin-top: 4px; min-height: 20px;"></div>
                             <div class="s1p-notice">
                                 <div class="s1p-notice-icon"></div>
