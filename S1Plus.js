@@ -1180,8 +1180,8 @@
     }
     .s1p-authi-actions-wrapper > a.s1p-toolbar-icon-btn svg,
     .authi a.s1p-toolbar-icon-btn svg {
-      width: 14px;
-      height: 14px;
+      width: 12px;
+      height: 12px;
       flex-shrink: 0;
     }
     /* 已收藏状态 */
