@@ -5535,7 +5535,7 @@
         <button class="s1p-dp-nav-btn prev-month" title="上个月"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 19l-7-7 7-7" /></svg></button>
         <div class="s1p-dp-title">${year}年 ${month + 1}月</div>
         <button class="s1p-dp-nav-btn next-month" title="下个月"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7" /></svg></button>
-        <button class="s1p-dp-nav-btn next-year" title="下一年"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-left:-10px"><path d="M9 5l7 7-7 7" /></svg><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7" /></svg></button>
+        <button class="s1p-dp-nav-btn next-year" title="下一年"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7" /></svg><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-left:-10px"><path d="M9 5l7 7-7 7" /></svg></button>
       `;
 
       // 星期头
