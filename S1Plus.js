@@ -98,6 +98,10 @@
     tagUser: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="0.5"><path d="M10.9042 2.10025L20.8037 3.51446L22.2179 13.414L13.0255 22.6063C12.635 22.9969 12.0019 22.9969 11.6113 22.6063L1.71184 12.7069C1.32131 12.3163 1.32131 11.6832 1.71184 11.2926L10.9042 2.10025ZM11.6113 4.22157L3.83316 11.9997L12.3184 20.485L20.0966 12.7069L19.036 5.28223L11.6113 4.22157ZM13.7327 10.5855C12.9516 9.80448 12.9516 8.53815 13.7327 7.7571C14.5137 6.97606 15.78 6.97606 16.5611 7.7571C17.3421 8.53815 17.3421 9.80448 16.5611 10.5855C15.78 11.3666 14.5137 11.3666 13.7327 10.5855Z"></path></svg>`,
     // 显示全部楼层 - 列表图标 (Thickened 0.5)
     showAll: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="0.5"><path d="M8 4H21V6H8V4ZM3 3.5H6V6.5H3V3.5ZM3 10.5H6V13.5H3V10.5ZM3 17.5H6V20.5H3V17.5ZM8 11H21V13H8V11ZM8 18H21V20H8V18Z"></path></svg>`,
+    // 正序看帖 - 箭头向下 (Thickened 0.5)
+    sortAsc: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="0.5"><path d="M13 5V16.17L17.59 11.58L19 13L12 20L5 13L6.41 11.59L11 16.17V5H13Z"></path></svg>`,
+    // 倒序看帖 - 箭头向上 (Thickened 0.5)
+    sortDesc: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="0.5"><path d="M13 19V7.83L17.59 12.42L19 11L12 4L5 11L6.41 12.41L11 7.83V19H13Z"></path></svg>`,
   };
 
   GM_addStyle(`
@@ -109,6 +113,8 @@
       --s1p-sub: #e9ebe8;
       --s1p-white: #ffffff;
       --s1p-black-rgb: 0, 0, 0;
+      --s1p-border: #d1d5db;
+      --s1p-hover-overlay: rgba(0, 0, 0, 0.08);
 
       /* -- [新增] 阴影 -- */
       --s1p-shadow-color-rgb: 0, 0, 0;
@@ -1143,6 +1149,8 @@
       flex-shrink: 1;
       min-width: 0;
       flex-wrap: nowrap;
+      margin-left: 8px;
+      gap: 10px;
     }
 
     /* 4. [已修正冲突] 脚本容器 *内部* 元素的精确规则: */
@@ -1176,7 +1184,7 @@
     .s1p-authi-actions-wrapper > a.s1p-toolbar-icon-btn:hover,
     .authi a.s1p-toolbar-icon-btn:hover {
       opacity: 1;
-      background-color: var(--s1p-sub);
+      background-color: var(--s1p-hover-overlay);
     }
     .s1p-authi-actions-wrapper > a.s1p-toolbar-icon-btn svg,
     .authi a.s1p-toolbar-icon-btn svg {
@@ -2764,6 +2772,9 @@
         /* -- 用户名高亮 (深色模式) -- */
         --s1p-username-bg: #3F4F3A;
         --s1p-username-text: #E5E7EB;
+
+        --s1p-border: #4b5563;
+        --s1p-hover-overlay: rgba(255, 255, 255, 0.15);
       }
 
       /* [移除] 删除按钮白色图标覆写：在系统深色模式但 NUX 禁用时会导致图标不可见 */
@@ -2834,6 +2845,11 @@
       .s1p-toast-notification.error {
         /* 使用一个更深的红色 */
         background-color: var(--s1p-red-h);
+      }
+
+      .s1p-authi-actions-wrapper > a.s1p-toolbar-icon-btn:hover,
+      .authi a.s1p-toolbar-icon-btn:hover {
+        background-color: var(--s1p-hover-overlay);
       }
 
       /* --- [新增] 深色模式下更柔和的警告文本颜色 --- */
@@ -3723,26 +3739,40 @@
   // --- [新增] 修改“只看该作者”为“只看该用户”的函数 ---
   const renameAuthorLinks = () => {
     document
-      .querySelectorAll('div.authi a[href*="authorid="]')
+      .querySelectorAll('div.authi a[href*="authorid="], .s1p-authi-actions-wrapper a[href*="authorid="]')
       .forEach((link) => {
         const linkText = link.textContent.trim();
         if (linkText === "只看该作者" || linkText === "只看该用户") {
           if (link.classList.contains("s1p-toolbar-icon-btn")) return; // 已处理过
-          link.classList.add("s1p-toolbar-icon-btn");
+          link.classList.add("s1p-toolbar-icon-btn", "s1p-has-tooltip");
           link.innerHTML = TOOLBAR_ICONS.viewAuthor;
-          link.title = "只看该用户";
+          link.dataset.fullTag = "只看该用户";
+          link.removeAttribute("title");
         }
       });
     // 处理"显示全部楼层"链接
     document
-      .querySelectorAll('div.authi a')
+      .querySelectorAll('div.authi a, .s1p-authi-actions-wrapper a')
       .forEach((link) => {
         const linkText = link.textContent.trim();
         if (linkText === "显示全部楼层") {
           if (link.classList.contains("s1p-toolbar-icon-btn")) return; // 已处理过
-          link.classList.add("s1p-toolbar-icon-btn");
+          link.classList.add("s1p-toolbar-icon-btn", "s1p-has-tooltip");
           link.innerHTML = TOOLBAR_ICONS.showAll;
-          link.title = "显示全部楼层";
+          link.dataset.fullTag = "显示全部楼层";
+          link.removeAttribute("title");
+        } else if (linkText.includes("倒序")) {
+          if (link.classList.contains("s1p-toolbar-icon-btn")) return; // 已处理过
+          link.classList.add("s1p-toolbar-icon-btn", "s1p-has-tooltip");
+          link.innerHTML = TOOLBAR_ICONS.sortDesc;
+          link.dataset.fullTag = linkText;
+          link.removeAttribute("title");
+        } else if (linkText.includes("正序")) {
+          if (link.classList.contains("s1p-toolbar-icon-btn")) return; // 已处理过
+          link.classList.add("s1p-toolbar-icon-btn", "s1p-has-tooltip");
+          link.innerHTML = TOOLBAR_ICONS.sortAsc;
+          link.dataset.fullTag = linkText;
+          link.removeAttribute("title");
         }
       });
   };
@@ -8852,20 +8882,20 @@
     // Keep existing listeners for user tags and add support for user remarks and history tags
     document.body.addEventListener("mouseover", (e) => {
       const target = e.target.closest(
-        ".s1p-user-tag-display, .s1p-user-remark-display, .s1p-history-tag-item"
+        ".s1p-user-tag-display, .s1p-user-remark-display, .s1p-history-tag-item, .s1p-has-tooltip"
       );
-      if (
-        target &&
-        target.dataset.fullTag &&
-        target.scrollWidth > target.clientWidth
-      ) {
-        show(target, target.dataset.fullTag);
+      if (target && target.dataset.fullTag) {
+        // 如果是文本展示类，则需要检测是否溢出；如果是强制工具提示类，则直接显示
+        const isTooltip = target.classList.contains("s1p-has-tooltip");
+        if (isTooltip || target.scrollWidth > target.clientWidth) {
+          show(target, target.dataset.fullTag);
+        }
       }
     });
 
     document.body.addEventListener("mouseout", (e) => {
       const target = e.target.closest(
-        ".s1p-user-tag-display, .s1p-user-remark-display, .s1p-history-tag-item"
+        ".s1p-user-tag-display, .s1p-user-remark-display, .s1p-history-tag-item, .s1p-has-tooltip"
       );
       if (target) {
         hide();
@@ -9480,21 +9510,50 @@
     const scriptActionsWrapper = document.createElement("span");
     scriptActionsWrapper.className = "s1p-authi-actions-wrapper";
 
+    // --- [新增] 将原生的“只看该作者”、“显示全部楼层”和“倒序/正序浏览”按钮移动到脚本的操作栏中 ---
+    // 收集需要移动的按钮，以便我们可以控制它们的排列顺序
+    const nativeLinks = {
+      order: null,    // 倒序/正序浏览 (排第一)
+      author: null,   // 只看该作者 (排第二)
+      showAll: null   // 显示全部楼层 (排第三)
+    };
+
+    authiDiv.querySelectorAll('a').forEach(link => {
+      const linkText = link.textContent.trim();
+      const isAuthorLink = (link.href.includes('authorid=') && (linkText === "只看该作者" || linkText === "只看该用户" || link.title === "只看该用户" || link.querySelector('svg')));
+      const isShowAllLink = (linkText === "显示全部楼层" || link.title === "显示全部楼层");
+      const isOrderLink = (linkText.includes("倒序") || linkText.includes("正序"));
+
+      if (isAuthorLink) nativeLinks.author = link;
+      else if (isShowAllLink) nativeLinks.showAll = link;
+      else if (isOrderLink) nativeLinks.order = link;
+
+      if (isAuthorLink || isShowAllLink || isOrderLink) {
+        // 移除原 authiDiv 中紧跟在该链接之前的分隔符 (pipe)
+        const prev = link.previousElementSibling;
+        if (prev && (prev.classList.contains('pipe') || (prev.tagName === 'SPAN' && prev.textContent.trim() === '|'))) {
+          prev.remove();
+        }
+      }
+    });
+
+    // 按指定顺序添加到脚本操作栏
+    if (nativeLinks.order) scriptActionsWrapper.appendChild(nativeLinks.order);
+    if (nativeLinks.author) scriptActionsWrapper.appendChild(nativeLinks.author);
+    if (nativeLinks.showAll) scriptActionsWrapper.appendChild(nativeLinks.showAll);
+
     if (settings.enableBookmarkReplies) {
       const bookmarkedReplies = getBookmarkedReplies();
       const isBookmarked = !!bookmarkedReplies[postId];
-      const pipe = document.createElement("span");
-      pipe.className = "pipe";
-      pipe.textContent = "|";
-      scriptActionsWrapper.appendChild(pipe);
+
       const bookmarkLink = document.createElement("a");
       bookmarkLink.href = "javascript:void(0);";
-      bookmarkLink.className = "s1p-authi-action s1p-toolbar-icon-btn s1p-bookmark-reply";
+      bookmarkLink.className = "s1p-authi-action s1p-toolbar-icon-btn s1p-bookmark-reply s1p-has-tooltip";
       if (isBookmarked) {
         bookmarkLink.classList.add("s1p-bookmarked");
       }
       bookmarkLink.innerHTML = isBookmarked ? TOOLBAR_ICONS.bookmarked : TOOLBAR_ICONS.bookmark;
-      bookmarkLink.title = isBookmarked ? "取消收藏" : "收藏该回复";
+      bookmarkLink.dataset.fullTag = isBookmarked ? "取消收藏" : "收藏该回复";
       bookmarkLink.addEventListener("click", (e) => {
         e.preventDefault();
         const currentBookmarks = getBookmarkedReplies();
@@ -9503,7 +9562,7 @@
           delete currentBookmarks[postId];
           saveBookmarkedReplies(currentBookmarks);
           bookmarkLink.innerHTML = TOOLBAR_ICONS.bookmark;
-          bookmarkLink.title = "收藏该回复";
+          bookmarkLink.dataset.fullTag = "收藏该回复";
           bookmarkLink.classList.remove("s1p-bookmarked");
           showMessage("已取消收藏该回复。", true);
         } else {
@@ -9547,7 +9606,7 @@
           };
           saveBookmarkedReplies(currentBookmarks);
           bookmarkLink.innerHTML = TOOLBAR_ICONS.bookmarked;
-          bookmarkLink.title = "取消收藏";
+          bookmarkLink.dataset.fullTag = "取消收藏";
           bookmarkLink.classList.add("s1p-bookmarked");
           showMessage("已收藏该回复。", true);
         }
@@ -9557,15 +9616,12 @@
 
     if (!isCurrentUserPost) {
       if (settings.enableUserBlocking) {
-        const pipe = document.createElement("span");
-        pipe.className = "pipe";
-        pipe.textContent = "|";
-        scriptActionsWrapper.appendChild(pipe);
+
         const blockLink = document.createElement("a");
         blockLink.href = "javascript:void(0);";
-        blockLink.className = "s1p-authi-action s1p-toolbar-icon-btn s1p-block-user-in-authi";
+        blockLink.className = "s1p-authi-action s1p-toolbar-icon-btn s1p-block-user-in-authi s1p-has-tooltip";
         blockLink.innerHTML = TOOLBAR_ICONS.blockUser;
-        blockLink.title = "屏蔽该用户";
+        blockLink.dataset.fullTag = "屏蔽该用户";
         blockLink.addEventListener("click", (e) => {
           e.preventDefault();
           e.stopPropagation();
@@ -9607,15 +9663,12 @@
         const isPostBlocked = !!blockedPosts[postId];
 
         if (!isPostBlocked) {
-          const pipe = document.createElement("span");
-          pipe.className = "pipe";
-          pipe.textContent = "|";
-          scriptActionsWrapper.appendChild(pipe);
+
           const blockPostLink = document.createElement("a");
           blockPostLink.href = "javascript:void(0);";
-          blockPostLink.className = "s1p-authi-action s1p-toolbar-icon-btn s1p-block-post-in-authi";
+          blockPostLink.className = "s1p-authi-action s1p-toolbar-icon-btn s1p-block-post-in-authi s1p-has-tooltip";
           blockPostLink.innerHTML = TOOLBAR_ICONS.blockPost;
-          blockPostLink.title = "屏蔽该楼层";
+          blockPostLink.dataset.fullTag = "屏蔽该楼层";
           blockPostLink.addEventListener("click", (e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -9658,10 +9711,7 @@
       if (settings.enableUserTagging) {
         const userTags = getUserTags();
         const userTag = userTags[userId];
-        const pipe = document.createElement("span");
-        pipe.className = "pipe";
-        pipe.textContent = "|";
-        scriptActionsWrapper.appendChild(pipe);
+
         if (userTag && userTag.tag) {
           const tagContainer = document.createElement("span");
           tagContainer.className = "s1p-authi-action s1p-user-tag-container";
@@ -9691,9 +9741,9 @@
         } else {
           const tagLink = document.createElement("a");
           tagLink.href = "javascript:void(0);";
-          tagLink.className = "s1p-authi-action s1p-toolbar-icon-btn s1p-tag-user-in-authi";
+          tagLink.className = "s1p-authi-action s1p-toolbar-icon-btn s1p-tag-user-in-authi s1p-has-tooltip";
           tagLink.innerHTML = TOOLBAR_ICONS.tagUser;
-          tagLink.title = "标记该用户";
+          tagLink.dataset.fullTag = "标记该用户";
           tagLink.addEventListener("click", (e) => {
             e.preventDefault();
             const popover = document.getElementById("s1p-tag-popover-main");
@@ -9705,6 +9755,8 @@
         }
       }
     }
+
+
 
     if (scriptActionsWrapper.hasChildNodes()) {
       authiDiv.parentElement.insertBefore(newContainer, authiDiv);
