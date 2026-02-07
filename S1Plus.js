@@ -656,14 +656,14 @@
       pointer-events: auto;
     }
 
-    /* --- [MODIFIED] 直接确认UI (整体缩小) --- */
-    .s1p-direct-confirm {
+    /* --- [MODIFIED] 统一确认UI (去除边框，优化间距) --- */
+    .s1p-confirm-bar {
       display: flex;
       align-items: center;
-      gap: 8px; /* 减小间距 */
-      font-size: 13px; /* 减小字体 */
+      gap: 8px;
+      padding: 6px 6px;
+      font-size: 13px;
       color: var(--s1p-t);
-      padding: 4px 6px; /* 减小内边距 */
       white-space: nowrap;
     }
     .s1p-confirm-separator {
@@ -707,7 +707,15 @@
       background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='2.5' stroke='%23ffffff'%3e%3cpath stroke-linecap='round' stroke-linejoin='round' d='M6 18L18 6M6 6l12 12' /%3e%3c/svg%3e");
     }
 
-    /* --- 行内确认菜单样式 (带动画) --- */
+    /* --- [MODIFIED] 统一确认菜单容器 (去除间距以统一高度) --- */
+    .s1p-confirm-wrapper {
+      padding: 0 !important;
+      background-color: var(--s1p-bg);
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(var(--s1p-shadow-color-rgb), 0.15);
+      border: none !important;
+    }
+
     .s1p-options-menu.s1p-inline-confirm-menu {
       transform: translateY(0) !important;
       z-index: 10004;
@@ -716,9 +724,27 @@
       transition: opacity 0.15s ease-out, transform 0.15s ease-out;
       pointer-events: none;
       visibility: visible !important;
-      /* [MODIFIED] 将 padding 从 4px 减为 2px */
-      padding: 2px;
     }
+
+    .s1p-inline-confirm-menu.visible {
+      opacity: 1;
+      transform: translateX(0) scale(1) !important;
+      pointer-events: auto;
+    }
+
+    .s1p-confirm-remark-area {
+      padding: 12px;
+      border-top: 1px solid var(--s1p-pri);
+      display: none;
+      animation: s1p-fade-in-down 0.2s ease forwards;
+    }
+
+    .s1p-confirm-text {
+      font-size: 13px;
+      color: var(--s1p-t);
+      font-weight: normal;
+    }
+
     .s1p-inline-confirm-menu.visible {
       opacity: 1;
       transform: translateX(0) scale(1) !important;
@@ -5263,20 +5289,62 @@
    * @param {Function} onConfirm - 点击确认后执行的回调函数
    */
   /**
-   * [MODIFIED] 创建一个行内确认菜单 (V2: 带智能定位和动画)
-   * @param {HTMLElement} anchorElement - 菜单定位的锚点元素
+  /**
+   * [NEW] 创建一个通用的确认菜单内容结构
    * @param {string} confirmText - 确认提示文本
-   * @param {Function} onConfirm - 点击确认后执行的回调函数
    * @param {object} options - 额外选项
-   * @param {string} [options.inputPlaceholder] - 输入框占位符（存在则显示输入框）
+   * @returns {HTMLElement} 返回包含内容的 div
    */
+  const buildConfirmationMarkup = (confirmText, options = {}) => {
+    const container = document.createElement("div");
+    container.className = "s1p-confirm-container";
+
+    const uniqueId = `s1p-confirm-${Date.now()}`;
+    const arrowRightSvg = `<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>`;
+
+    container.innerHTML = `
+        <div class="s1p-confirm-bar">
+            <button class="s1p-confirm-action-btn s1p-confirm" title="确认"></button>
+            <button class="s1p-confirm-action-btn s1p-cancel" title="取消"></button>
+            <span class="s1p-confirm-separator"></span>
+            <span class="s1p-confirm-text">${confirmText}</span>
+            ${options.inputPlaceholder ? `
+            <button class="s1p-confirm-expand-btn" style="
+                background: none; 
+                border: none; 
+                cursor: pointer; 
+                padding: 0; 
+                margin-left: 4px;
+                display: flex; 
+                align-items: center; 
+                color: var(--s1p-t); 
+                transition: transform 0.2s ease;
+            ">${arrowRightSvg}</button>
+            ` : ''}
+        </div>
+        ${options.inputPlaceholder ? `
+        <div class="s1p-confirm-remark-area" id="${uniqueId}-remark-area">
+            <div style="font-size: 13px; margin-bottom: 8px; color: var(--s1p-t);">备注：</div>
+            <textarea class="s1p-confirm-input s1p-input" placeholder="${options.inputPlaceholder}" style="
+                width: 100%; 
+                min-width: 300px;
+                min-height: 80px; 
+                resize: vertical;
+                font-family: inherit;
+                box-sizing: border-box;
+            "></textarea>
+        </div>
+        ` : ''}
+    `;
+    return container;
+  };
+
   /**
    * [MODIFIED] 创建一个行内确认菜单 (V2: 带智能定位和动画)
-   * @param {HTMLElement} anchorElement - 菜单定位的锚点元素
+   * @param {HTMLElement} anchorElement - 锚点元素
    * @param {string} confirmText - 确认提示文本
    * @param {Function} onConfirm - 点击确认后执行的回调函数
    * @param {object} options - 额外选项
-   * @param {string} [options.inputPlaceholder] - 输入框占位符（存在则显示输入框）
    */
   const createInlineConfirmMenu = (
     anchorElement,
@@ -5287,78 +5355,14 @@
     document.querySelector(".s1p-inline-confirm-menu")?.remove();
 
     const menu = document.createElement("div");
-    menu.className = "s1p-options-menu s1p-inline-confirm-menu";
-    // UI调整：移除默认padding，改为由内部容器控制
+    menu.className = "s1p-options-menu s1p-inline-confirm-menu s1p-confirm-wrapper";
     menu.style.width = "max-content";
-    menu.style.padding = "0";
-    menu.style.background = "transparent";
-    menu.style.boxShadow = "none";
-    menu.style.border = "none";
 
-    // 箭头图标SVG
-    const arrowRightSvg = `<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>`;
+    const content = buildConfirmationMarkup(confirmText, options);
+    menu.appendChild(content);
 
-    // 生成唯一ID以便关联
-    const uniqueId = `s1p-confirm-${Date.now()}`;
-
-    menu.innerHTML = `
-        <div class="s1p-confirm-main-bar" style="
-            background: var(--s1p-bg); 
-            border: 1px solid var(--s1p-border); 
-            border-radius: 6px; 
-            padding: 8px 12px; 
-            display: flex; 
-            align-items: center; 
-            gap: 8px; 
-            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-            position: relative;
-            z-index: 2;
-        ">
-            ${options.inputPlaceholder ? `
-            <button class="s1p-confirm-expand-btn" style="
-                background: none; 
-                border: none; 
-                cursor: pointer; 
-                padding: 0; 
-                display: flex; 
-                align-items: center; 
-                color: var(--s1p-t); 
-                transition: transform 0.2s ease;
-            ">${arrowRightSvg}</button>
-            ` : ''}
-            
-            <span style="font-size: 13px; color: var(--s1p-t);">${confirmText}</span>
-            <span class="s1p-confirm-separator"></span>
-            <div style="display: flex; gap: 4px;"> 
-                <button class="s1p-confirm-action-btn s1p-cancel" title="取消"></button>
-                <button class="s1p-confirm-action-btn s1p-confirm" title="确认"></button>
-            </div>
-        </div>
-
-        ${options.inputPlaceholder ? `
-        <div class="s1p-confirm-remark-area" id="${uniqueId}-remark-area" style="
-            background: var(--s1p-bg); 
-            border: 1px solid var(--s1p-border); 
-            border-radius: 6px; 
-            padding: 12px; 
-            margin-top: 8px; 
-            box-shadow: 0 2px 8px rgba(0,0,0,0.15); 
-            display: none; 
-            animation: s1p-fade-in-down 0.2s ease forwards;
-            position: relative;
-            z-index: 1;
-        ">
-            <div style="font-size: 13px; margin-bottom: 8px; color: var(--s1p-t);">备注：</div>
-            <textarea class="s1p-confirm-input s1p-input" placeholder="" style="
-                width: 100%; 
-                min-width: 300px;
-                min-height: 80px; 
-                resize: vertical;
-                font-family: inherit;
-            "></textarea>
-        </div>
-        ` : ''}
-    `;
+    const cancelBtn = menu.querySelector(".s1p-cancel");
+    const confirmBtn = menu.querySelector(".s1p-confirm");
 
     document.body.appendChild(menu);
     const anchorRect = anchorElement.getBoundingClientRect();
@@ -8597,16 +8601,10 @@
         optionsBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>`;
 
         const optionsMenu = document.createElement("div");
-        optionsMenu.className = "s1p-options-menu";
-        // [S1P-MODIFIED] 调整了确认框内部所有元素的顺序
-        optionsMenu.innerHTML = `
-                <div class="s1p-direct-confirm">
-                    <button class="s1p-confirm-action-btn s1p-confirm" title="确认屏蔽"></button>
-                    <button class="s1p-confirm-action-btn s1p-cancel" title="取消"></button>
-                    <span class="s1p-confirm-separator"></span>
-                    <span>屏蔽该帖子吗？</span>
-                </div>
-            `;
+        optionsMenu.className = "s1p-options-menu s1p-confirm-wrapper";
+
+        const content = buildConfirmationMarkup("屏蔽该帖子吗？");
+        optionsMenu.appendChild(content);
 
         const cancelBtn = optionsMenu.querySelector(".s1p-cancel");
         const confirmBtn = optionsMenu.querySelector(".s1p-confirm");
@@ -9274,18 +9272,16 @@
     const { userId, userName } = tagOptionsAnchor.dataset;
 
     const menu = document.createElement("div");
-    menu.className = "s1p-options-menu s1p-inline-confirm-menu";
+    menu.className = "s1p-options-menu s1p-inline-confirm-menu s1p-confirm-wrapper";
     menu.dataset.s1pConfirmForTag = "true"; // 添加唯一标识
     menu.style.width = "max-content";
-    menu.innerHTML = `
-        <div class="s1p-direct-confirm">
-            <span>确认删除？</span>
-            <span class="s1p-confirm-separator"></span>
-            <button class="s1p-confirm-action-btn s1p-cancel" title="取消"></button>
-            <button class="s1p-confirm-action-btn s1p-confirm" title="确认"></button>
-        </div>
-    `;
+
+    const content = buildConfirmationMarkup("确认删除？");
+    menu.appendChild(content);
     document.body.appendChild(menu);
+
+    const cancelBtn = menu.querySelector(".s1p-cancel");
+    const confirmBtn = menu.querySelector(".s1p-confirm");
 
     // --- [修正] 智能定位 (修正垂直对齐逻辑) ---
     const anchorRect = anchorElement.getBoundingClientRect();
