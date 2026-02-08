@@ -8840,8 +8840,9 @@
 
     let showTimeout, hideTimeout;
 
-    const show = (anchor, text) => {
+    const show = (anchor, text, delay = 50) => {
       clearTimeout(hideTimeout);
+      clearTimeout(showTimeout); // [NEW] 额外清理 showTimeout 确保不会叠加
       showTimeout = setTimeout(() => {
         popover.textContent = text;
         const rect = anchor.getBoundingClientRect();
@@ -8862,14 +8863,13 @@
         popover.style.top = `${top}px`;
         popover.style.left = `${left}px`;
         popover.classList.add("visible");
-      }, 50);
+      }, delay);
     };
 
     const hide = () => {
       clearTimeout(showTimeout);
-      hideTimeout = setTimeout(() => {
-        popover.classList.remove("visible");
-      }, 100);
+      clearTimeout(hideTimeout);
+      popover.classList.remove("visible");
     };
 
     // [MODIFIED] Attach API to the element for external use
@@ -8886,7 +8886,9 @@
         // 如果是文本展示类，则需要检测是否溢出；如果是强制工具提示类，则直接显示
         const isTooltip = target.classList.contains("s1p-has-tooltip");
         if (isTooltip || target.scrollWidth > target.clientWidth) {
-          show(target, target.dataset.fullTag);
+          // [NEW] 如果是操作栏按钮，延迟 1 秒显示；否则保持 50ms 快速响应
+          const delay = isTooltip ? 1000 : 50;
+          show(target, target.dataset.fullTag, delay);
         }
       }
     });
