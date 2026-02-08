@@ -3157,6 +3157,29 @@
     }
     return [];
   };
+
+  /**
+   * [NEW] 检测本地“价值数据”是否为空 (屏蔽、标记、收藏等)
+   * 用于优化首次开启同步时的体验
+   * @returns {boolean}
+   */
+  const isLocalDataEmpty = () => {
+    const threadCount = Object.keys(getBlockedThreads()).length;
+    const userCount = Object.keys(getBlockedUsers()).length;
+    const tagCount = Object.keys(getUserTags()).length;
+    const bookmarkCount = Object.keys(getBookmarkedReplies()).length;
+    const postCount = Object.keys(getBlockedPosts()).length;
+    const ruleCount = getTitleFilterRules().length;
+
+    return (
+      threadCount === 0 &&
+      userCount === 0 &&
+      tagCount === 0 &&
+      bookmarkCount === 0 &&
+      postCount === 0 &&
+      ruleCount === 0
+    );
+  };
   const saveTitleFilterRules = (rules) => {
     GM_setValue("s1p_title_filter_rules", rules);
     updateLastModifiedTimestamp();
@@ -7939,7 +7962,7 @@
 
         if (currentSettings.syncRemoteGistId && currentSettings.syncRemotePat) {
           showMessage("设置已保存，正在启动首次同步检查...", null);
-          await handleManualSync();
+          await handleManualSync(false, true); // 标记为首次设置
         } else {
           showMessage("远程同步设置已保存。", true);
         }
@@ -8240,7 +8263,10 @@
     return null;
   };
 
-  const handleManualSync = (suppressInitialMessage = false) => {
+  const handleManualSync = (
+    suppressInitialMessage = false,
+    isInitialSetup = false
+  ) => {
     return new Promise(async (resolve) => {
       const settings = getSettings();
       if (
@@ -8259,7 +8285,48 @@
       try {
         const rawRemoteData = await fetchRemoteData();
 
-        if (Object.keys(rawRemoteData).length === 0) {
+        const remoteExists = Object.keys(rawRemoteData).length > 0;
+
+        // [优化] 如果是首次设置且本地为空环境，且云端有数据，则直接引导拉取
+        if (isInitialSetup && isLocalDataEmpty() && remoteExists) {
+          const remoteDataObj = await migrateAndValidateRemoteData(rawRemoteData);
+          const pullAction = {
+            text: "立即从云端恢复数据",
+            className: "s1p-confirm",
+            action: () => {
+              const result = importLocalData(JSON.stringify(remoteDataObj.full), {
+                suppressPostSync: true,
+              });
+              if (result.success) {
+                GM_setValue("s1p_last_sync_timestamp", Date.now());
+                updateLastSyncTimeDisplay();
+                showMessage("恢复成功！页面即将刷新。", true);
+                setTimeout(() => location.reload(), 1200);
+                resolve(true);
+              } else {
+                showMessage(`恢复失败: ${result.message}`, false);
+                resolve(false);
+              }
+            },
+          };
+          const cancelAction = {
+            text: "暂不恢复",
+            className: "s1p-cancel",
+            action: () => {
+              showMessage("已跳过数据恢复。", null);
+              resolve(null);
+            },
+          };
+          createAdvancedConfirmationModal(
+            "初始化 S1 Plus 同步",
+            "检测到这台电脑尚无本地数据，但云端已有备份，是否立即从云端恢复您的配置？",
+            [pullAction, cancelAction],
+            { modalClassName: "s1p-sync-modal" }
+          );
+          return;
+        }
+
+        if (!remoteExists) {
           const pushAction = {
             text: "推送本地数据到云端",
             className: "s1p-confirm",
