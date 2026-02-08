@@ -1210,7 +1210,8 @@
     .s1p-authi-actions-wrapper > a.s1p-toolbar-icon-btn:hover,
     .authi a.s1p-toolbar-icon-btn:hover {
       opacity: 1;
-      background-color: var(--s1p-hover-overlay);
+      background-color: var(--s1p-pri);
+      color: var(--s1p-t);
     }
     .s1p-authi-actions-wrapper > a.s1p-toolbar-icon-btn svg,
     .authi a.s1p-toolbar-icon-btn svg {
