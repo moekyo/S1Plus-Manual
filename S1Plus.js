@@ -99,9 +99,9 @@
     // 显示全部楼层 - 列表图标 (Thickened 0.5)
     showAll: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="0.5"><path d="M8 4H21V6H8V4ZM3 3.5H6V6.5H3V3.5ZM3 10.5H6V13.5H3V10.5ZM3 17.5H6V20.5H3V17.5ZM8 11H21V13H8V11ZM8 18H21V20H8V18Z"></path></svg>`,
     // 正序看帖 - 箭头向下 (Thickened 0.5)
-    sortAsc: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="0.5"><path d="M13 5V16.17L17.59 11.58L19 13L12 20L5 13L6.41 11.59L11 16.17V5H13Z"></path></svg>`,
+    sortAsc: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="2 2 20 20" fill="currentColor" stroke="currentColor" stroke-width="0.5"><path d="M13 5V16.17L17.59 11.58L19 13L12 20L5 13L6.41 11.59L11 16.17V5H13Z"></path></svg>`,
     // 倒序看帖 - 箭头向上 (Thickened 0.5)
-    sortDesc: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="0.5"><path d="M13 19V7.83L17.59 12.42L19 11L12 4L5 11L6.41 12.41L11 7.83V19H13Z"></path></svg>`,
+    sortDesc: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="2 2 20 20" fill="currentColor" stroke="currentColor" stroke-width="0.5"><path d="M13 19V7.83L17.59 12.42L19 11L12 4L5 11L6.41 12.41L11 7.83V19H13Z"></path></svg>`,
   };
 
   GM_addStyle(`
