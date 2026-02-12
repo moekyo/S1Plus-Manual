@@ -10437,6 +10437,7 @@
                 },
               ]
             );
+            return "popup_shown"; // [FIX] 标记已显示弹窗，阻止后续 Token 过期弹窗覆盖
           } else {
             if (result.action !== "pushed_initial") {
               showMessage("每日首次同步完成，数据已是最新。", true);
@@ -10469,7 +10470,7 @@
               },
             ]
           );
-          break;
+          return "popup_shown"; // [FIX] 标记已显示弹窗，阻止后续 Token 过期弹窗覆盖
       }
     } finally {
       GM_deleteValue(SYNC_LOCK_KEY);
@@ -10612,21 +10613,21 @@
     // [修改] 调用欢迎弹窗并接收其状态
     const welcomePopupWasShown = showFirstTimeWelcomeIfNeeded();
 
-    // [新增] 检查 Token 过期 (仅当没有显示欢迎弹窗时)
-    if (!welcomePopupWasShown) {
-      checkTokenExpiry();
-    }
-
     // --- [核心修改] 按照您的建议，分离启动同步的调用 ---
     // 步骤1: 尝试执行每日首次同步
-    const isReloadingAfterDailySync = await handleStartupSync();
-    if (isReloadingAfterDailySync) {
+    const startupSyncResult = await handleStartupSync();
+    if (startupSyncResult === true) {
       return; // 如果页面即将刷新，则中断后续所有脚本初始化操作
     }
     // 步骤2: 尝试执行常规的“每次加载”同步检查
     const isReloadingAfterPerLoadSync = await handlePerLoadSyncCheck();
     if (isReloadingAfterPerLoadSync) {
       return; // 如果页面即将刷新，则中断后续所有脚本初始化操作
+    }
+
+    // [FIX] 将 Token 过期检查移到同步流程之后，避免弹窗被同步弹窗覆盖
+    if (!welcomePopupWasShown && startupSyncResult !== "popup_shown") {
+      checkTokenExpiry();
     }
 
     cleanupOldReadProgress();
