@@ -61,6 +61,170 @@
     return newObj;
   };
 
+  /**
+   * HTML 文本节点转义，避免将用户数据直接作为 HTML 解析。
+   * @param {any} value
+   * @returns {string}
+   */
+  const escapeHTML = (value) =>
+    String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+
+  /**
+   * HTML 属性值转义（当前与文本转义策略一致，语义上便于区分用途）。
+   * @param {any} value
+   * @returns {string}
+   */
+  const escapeAttr = (value) => escapeHTML(value);
+
+  /**
+   * 对受限场景中的 HTML 片段进行白名单清洗。
+   * 仅保留允许标签与允许属性，剔除注释、事件处理器与 javascript: 链接。
+   * @param {any} html
+   * @param {string[]} allowedTags
+   * @param {Record<string, string[]>} allowedAttrsByTag
+   * @returns {string}
+   */
+  const sanitizeHtmlFragment = (html, allowedTags = [], allowedAttrsByTag = {}) => {
+    const template = document.createElement("template");
+    template.innerHTML = String(html ?? "");
+    const allowedTagSet = new Set(
+      allowedTags.map((tag) => String(tag).toUpperCase())
+    );
+    const normalizedAllowedAttrsByTag = {};
+    Object.keys(allowedAttrsByTag).forEach((tag) => {
+      normalizedAllowedAttrsByTag[String(tag).toUpperCase()] = new Set(
+        (allowedAttrsByTag[tag] || []).map((attr) => String(attr).toLowerCase())
+      );
+    });
+
+    const sanitizeNode = (root) => {
+      Array.from(root.childNodes).forEach((node) => {
+        if (node.nodeType === Node.ELEMENT_NODE) {
+          const tagName = node.tagName.toUpperCase();
+          if (!allowedTagSet.has(tagName)) {
+            node.replaceWith(document.createTextNode(node.textContent || ""));
+            return;
+          }
+
+          const allowedAttrs = normalizedAllowedAttrsByTag[tagName] || new Set();
+          Array.from(node.attributes).forEach((attr) => {
+            const attrName = attr.name.toLowerCase();
+            const attrValue = String(attr.value || "");
+
+            if (attrName.startsWith("on")) {
+              node.removeAttribute(attr.name);
+              return;
+            }
+
+            if (
+              (attrName === "href" || attrName === "xlink:href") &&
+              /^\s*javascript:/i.test(attrValue)
+            ) {
+              node.removeAttribute(attr.name);
+              return;
+            }
+
+            if (
+              attrName === "style" &&
+              /(expression\s*\(|javascript:|vbscript:|data\s*:\s*text\/html)/i.test(
+                attrValue
+              )
+            ) {
+              node.removeAttribute(attr.name);
+              return;
+            }
+
+            if (!allowedAttrs.has(attrName)) {
+              node.removeAttribute(attr.name);
+            }
+          });
+
+          sanitizeNode(node);
+          return;
+        }
+
+        if (node.nodeType === Node.COMMENT_NODE) {
+          node.remove();
+        }
+      });
+    };
+
+    sanitizeNode(template.content);
+    return template.innerHTML;
+  };
+
+  const sanitizeSubtitleHtml = (html) =>
+    sanitizeHtmlFragment(
+      html,
+      ["br", "strong", "b", "em", "i", "code", "p", "span"],
+      {}
+    );
+
+  const sanitizeInlineActionLabelHtml = (html) =>
+    sanitizeHtmlFragment(
+      html,
+      ["svg", "path", "span", "polyline"],
+      {
+        svg: [
+          "xmlns",
+          "viewbox",
+          "fill",
+          "width",
+          "height",
+          "style",
+          "stroke",
+          "stroke-width",
+          "stroke-linecap",
+          "stroke-linejoin",
+        ],
+        path: [
+          "d",
+          "fill",
+          "style",
+          "stroke",
+          "stroke-width",
+          "stroke-linecap",
+          "stroke-linejoin",
+        ],
+        span: ["class", "style"],
+        polyline: [
+          "points",
+          "fill",
+          "style",
+          "stroke",
+          "stroke-width",
+          "stroke-linecap",
+          "stroke-linejoin",
+        ],
+      }
+    );
+
+  const setSanitizedIconHtml = (element, html) => {
+    if (!element) return;
+    element.innerHTML = sanitizeInlineActionLabelHtml(html);
+  };
+
+  const sanitizeAdvancedModalHtml = (html) =>
+    sanitizeHtmlFragment(
+      html,
+      ["a", "br", "code", "div", "h2", "p", "span", "strong"],
+      {
+        a: ["class", "href", "rel", "target", "title"],
+        br: [],
+        code: ["class", "style"],
+        div: ["class", "style"],
+        h2: ["class", "style"],
+        p: ["class", "style"],
+        span: ["class", "style"],
+        strong: ["class", "style"],
+      }
+    );
+
   // --- [新增] 全局状态标志，用于防止启动时的同步竞态条件 ---
   let isInitialSyncInProgress = false;
   let syncDirtyDuringSync = false;
@@ -72,6 +236,8 @@
   let backgroundSyncRetryAttempts = 0;
   let backgroundSyncLockHeartbeatTimer = null;
   let manualSyncLockHeartbeatTimer = null;
+  let startupSyncLockHeartbeatTimer = null;
+  let isAutoSignInFlight = false;
 
   const BACKGROUND_SYNC_OWNER_ID = `tab_${Date.now()}_${Math.random()
     .toString(36)
@@ -85,6 +251,9 @@
   const MANUAL_SYNC_LOCK_KEY = "s1p_manual_sync_lock";
   const MANUAL_SYNC_LOCK_TTL_MS = 3 * 60 * 1000;
   const MANUAL_SYNC_LOCK_HEARTBEAT_MS = 10 * 1000;
+  const STARTUP_SYNC_LOCK_KEY = "s1p_startup_sync_lock";
+  const STARTUP_SYNC_LOCK_TTL_MS = 3 * 60 * 1000;
+  const STARTUP_SYNC_LOCK_HEARTBEAT_MS = 10 * 1000;
   const SYNC_LOCK_VERIFY_DELAY_MS = 50;
 
   const REMOTE_SYNC_REQUEST_TIMEOUT_MS = 12 * 1000;
@@ -100,6 +269,7 @@
   const AUTO_SYNC_CIRCUIT_OPEN_UNTIL_KEY = "s1p_auto_sync_circuit_open_until";
   const AUTO_SYNC_CIRCUIT_BREAKER_THRESHOLD = 3;
   const AUTO_SYNC_CIRCUIT_OPEN_DURATION_MS = 10 * 60 * 1000;
+  const DOM_OBSERVER_DEBOUNCE_MS = 120;
 
   let localDataHashCache = {
     cacheKey: null,
@@ -3296,12 +3466,23 @@
       ],
     ];
 
-    panel.innerHTML = rows
-      .map(
-        ([label, value]) =>
-          `<div class="s1p-diag-row"><span class="s1p-diag-label">${label}</span><span class="s1p-diag-value">${value}</span></div>`
-      )
-      .join("");
+    panel.textContent = "";
+    rows.forEach(([label, value]) => {
+      const row = document.createElement("div");
+      row.className = "s1p-diag-row";
+
+      const labelEl = document.createElement("span");
+      labelEl.className = "s1p-diag-label";
+      labelEl.textContent = String(label ?? "");
+
+      const valueEl = document.createElement("span");
+      valueEl.className = "s1p-diag-value";
+      valueEl.textContent = String(value ?? "");
+
+      row.appendChild(labelEl);
+      row.appendChild(valueEl);
+      panel.appendChild(row);
+    });
   };
 
   const updateLastSyncTimeDisplay = () => {
@@ -3753,12 +3934,16 @@
 
           const newPlaceholder = document.createElement("div");
           newPlaceholder.className = "s1p-quote-placeholder";
-          newPlaceholder.innerHTML = `<span>一条来自已屏蔽用户的引用已被隐藏。</span><span class="s1p-quote-toggle s1p-popover-btn">点击展开</span>`;
+          const quotePlaceholderText = document.createElement("span");
+          quotePlaceholderText.textContent = "一条来自已屏蔽用户的引用已被隐藏。";
+          const quoteToggle = document.createElement("span");
+          quoteToggle.className = "s1p-quote-toggle s1p-popover-btn";
+          quoteToggle.textContent = "点击展开";
+          newPlaceholder.appendChild(quotePlaceholderText);
+          newPlaceholder.appendChild(quoteToggle);
           newWrapper.parentNode.insertBefore(newPlaceholder, newWrapper);
 
-          newPlaceholder
-            .querySelector(".s1p-quote-toggle")
-            .addEventListener("click", function () {
+          quoteToggle.addEventListener("click", function () {
               const isCollapsed = newWrapper.style.maxHeight === "0px";
               if (isCollapsed) {
                 const style = window.getComputedStyle(quoteElement);
@@ -3863,12 +4048,17 @@
 
             const placeholder = document.createElement("div");
             placeholder.className = "s1p-notification-placeholder";
-            placeholder.innerHTML = `<span>一条来自已屏蔽用户的提醒已被隐藏。</span><span class="s1p-notification-toggle">点击展开</span>`;
+            const notificationPlaceholderText = document.createElement("span");
+            notificationPlaceholderText.textContent =
+              "一条来自已屏蔽用户的提醒已被隐藏。";
+            const notificationToggle = document.createElement("span");
+            notificationToggle.className = "s1p-notification-toggle";
+            notificationToggle.textContent = "点击展开";
+            placeholder.appendChild(notificationPlaceholderText);
+            placeholder.appendChild(notificationToggle);
             newWrapper.parentNode.insertBefore(placeholder, newWrapper);
 
-            placeholder
-              .querySelector(".s1p-notification-toggle")
-              .addEventListener("click", function () {
+            notificationToggle.addEventListener("click", function () {
                 const isCollapsed = newWrapper.style.maxHeight === "0px";
                 if (isCollapsed) {
                   newWrapper.style.maxHeight = dlElement.scrollHeight + "px";
@@ -4160,7 +4350,7 @@
         if (linkText === "只看该作者" || linkText === "只看该用户") {
           if (link.classList.contains("s1p-toolbar-icon-btn")) return; // 已处理过
           link.classList.add("s1p-toolbar-icon-btn", "s1p-has-tooltip");
-          link.innerHTML = TOOLBAR_ICONS.viewAuthor;
+          setSanitizedIconHtml(link, TOOLBAR_ICONS.viewAuthor);
           link.dataset.fullTag = "只看该用户";
           link.removeAttribute("title");
         }
@@ -4173,19 +4363,19 @@
         if (linkText === "显示全部楼层") {
           if (link.classList.contains("s1p-toolbar-icon-btn")) return; // 已处理过
           link.classList.add("s1p-toolbar-icon-btn", "s1p-has-tooltip");
-          link.innerHTML = TOOLBAR_ICONS.showAll;
+          setSanitizedIconHtml(link, TOOLBAR_ICONS.showAll);
           link.dataset.fullTag = "显示全部楼层";
           link.removeAttribute("title");
         } else if (linkText.includes("倒序")) {
           if (link.classList.contains("s1p-toolbar-icon-btn")) return; // 已处理过
           link.classList.add("s1p-toolbar-icon-btn", "s1p-has-tooltip");
-          link.innerHTML = TOOLBAR_ICONS.sortDesc;
+          setSanitizedIconHtml(link, TOOLBAR_ICONS.sortDesc);
           link.dataset.fullTag = linkText;
           link.removeAttribute("title");
         } else if (linkText.includes("正序")) {
           if (link.classList.contains("s1p-toolbar-icon-btn")) return; // 已处理过
           link.classList.add("s1p-toolbar-icon-btn", "s1p-has-tooltip");
-          link.innerHTML = TOOLBAR_ICONS.sortAsc;
+          setSanitizedIconHtml(link, TOOLBAR_ICONS.sortAsc);
           link.dataset.fullTag = linkText;
           link.removeAttribute("title");
         }
@@ -4778,6 +4968,72 @@
     }
   };
 
+  const getStartupSyncLockValue = () => {
+    const lock = GM_getValue(STARTUP_SYNC_LOCK_KEY, null);
+    if (
+      lock &&
+      typeof lock === "object" &&
+      lock.owner &&
+      typeof lock.timestamp === "number"
+    ) {
+      return lock;
+    }
+    return null;
+  };
+
+  const acquireStartupSyncLock = async () => {
+    const now = Date.now();
+    const currentLock = getStartupSyncLockValue();
+    const lockIsValid =
+      currentLock && now - currentLock.timestamp < STARTUP_SYNC_LOCK_TTL_MS;
+
+    if (lockIsValid && currentLock.owner !== BACKGROUND_SYNC_OWNER_ID) {
+      return false;
+    }
+
+    GM_setValue(STARTUP_SYNC_LOCK_KEY, {
+      owner: BACKGROUND_SYNC_OWNER_ID,
+      timestamp: now,
+    });
+
+    return await verifySyncLockOwnership(getStartupSyncLockValue);
+  };
+
+  const refreshStartupSyncLock = () => {
+    const currentLock = getStartupSyncLockValue();
+    if (!currentLock || currentLock.owner !== BACKGROUND_SYNC_OWNER_ID) {
+      return false;
+    }
+    GM_setValue(STARTUP_SYNC_LOCK_KEY, {
+      owner: BACKGROUND_SYNC_OWNER_ID,
+      timestamp: Date.now(),
+    });
+    return true;
+  };
+
+  const releaseStartupSyncLock = () => {
+    const currentLock = getStartupSyncLockValue();
+    if (currentLock && currentLock.owner === BACKGROUND_SYNC_OWNER_ID) {
+      GM_deleteValue(STARTUP_SYNC_LOCK_KEY);
+    }
+  };
+
+  const startStartupSyncLockHeartbeat = () => {
+    if (startupSyncLockHeartbeatTimer) {
+      clearInterval(startupSyncLockHeartbeatTimer);
+    }
+    startupSyncLockHeartbeatTimer = setInterval(() => {
+      refreshStartupSyncLock();
+    }, STARTUP_SYNC_LOCK_HEARTBEAT_MS);
+  };
+
+  const stopStartupSyncLockHeartbeat = () => {
+    if (startupSyncLockHeartbeatTimer) {
+      clearInterval(startupSyncLockHeartbeatTimer);
+      startupSyncLockHeartbeatTimer = null;
+    }
+  };
+
   const scheduleBackgroundSyncRetry = (
     delayMs = BACKGROUND_SYNC_LOCK_RETRY_DELAY_MS
   ) => {
@@ -4831,7 +5087,8 @@
                 handleManualSync();
               },
             },
-          ]
+          ],
+          { allowBodyHtml: true }
         );
         break;
 
@@ -5528,8 +5785,15 @@
       }
 
       button.dataset.action = btnConfig.action;
-      // [核心修正] 使用 innerHTML 替代 textContent 来渲染 SVG
-      button.innerHTML = btnConfig.label;
+      const buttonLabel =
+        btnConfig.label === undefined || btnConfig.label === null
+          ? ""
+          : String(btnConfig.label);
+      if (btnConfig.allowLabelHtml === true) {
+        button.innerHTML = sanitizeInlineActionLabelHtml(buttonLabel);
+      } else {
+        button.textContent = buttonLabel;
+      }
       menu.appendChild(button);
 
       button.addEventListener("click", (e) => {
@@ -5682,7 +5946,10 @@
     const a = document.createElement("a");
     a.href = "javascript:void(0);";
     // --- [核心修正] 恢复为原始的、基于“填充(fill)”的实心图标定义 ---
-    a.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4C14.7486 4 17.1749 5.38626 18.6156 7.5H16V9.5H22V3.5H20V5.99936C18.1762 3.57166 15.2724 2 12 2C6.47715 2 2 6.47715 2 12H4C4 7.58172 7.58172 4 12 4ZM20 12C20 16.4183 16.4183 20 12 20C9.25144 20 6.82508 18.6137 5.38443 16.5H8V14.5H2V20.5H4V18.0006C5.82381 20.4283 8.72764 22 12 22C17.5228 22 22 17.5228 22 12H20Z"></path></svg>`;
+    setSanitizedIconHtml(
+      a,
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4C14.7486 4 17.1749 5.38626 18.6156 7.5H16V9.5H22V3.5H20V5.99936C18.1762 3.57166 15.2724 2 12 2C6.47715 2 2 6.47715 2 12H4C4 7.58172 7.58172 4 12 4ZM20 12C20 16.4183 16.4183 20 12 20C9.25144 20 6.82508 18.6137 5.38443 16.5H8V14.5H2V20.5H4V18.0006C5.82381 20.4283 8.72764 22 12 22C17.5228 22 22 17.5228 22 12H20Z"></path></svg>`
+    );
     li.appendChild(a);
 
     if (settings.syncDirectChoiceMode) {
@@ -5728,6 +5995,7 @@
             [
               {
                 label: `${pullIconSVG} <span>拉取</span>`,
+                allowLabelHtml: true,
                 action: "pull",
                 title:
                   "用云端备份覆盖您当前的本地数据，本地未同步的修改将丢失！",
@@ -5735,6 +6003,7 @@
               },
               {
                 label: `${pushIconSVG} <span>推送</span>`,
+                allowLabelHtml: true,
                 action: "push",
                 title: "将您当前的本地数据覆盖到云端备份，此操作不可逆。",
                 callback: handleForcePush,
@@ -5808,7 +6077,7 @@
     document.getElementById("s1p-nav-sync-btn")?.remove();
 
     if (settings.enableNavCustomization) {
-      navUl.innerHTML = "";
+      navUl.textContent = "";
       (settings.customNavLinks || []).forEach((link) => {
         if (!link.name || !link.href) return;
         const li = document.createElement("li");
@@ -5902,18 +6171,17 @@
 
     if (!searchInput || !list || !clearButton || !noResultsMessage) return;
 
+    const restoreNodeChildren = (target, sourceSnapshot) => {
+      const clone = sourceSnapshot.cloneNode(true);
+      target.replaceChildren(...Array.from(clone.childNodes));
+    };
+
     const allItems = Array.from(list.querySelectorAll(".s1p-item"));
     const itemCache = allItems.map((item) => {
       const contentEl = item.querySelector(".s1p-item-content");
       const metaEl = item.querySelector(".s1p-item-meta");
-
-      // Store original HTML if not already stored
-      if (!contentEl.dataset.originalHtml) {
-        contentEl.dataset.originalHtml = contentEl.innerHTML;
-      }
-      if (!metaEl.dataset.originalHtml) {
-        metaEl.dataset.originalHtml = metaEl.innerHTML;
-      }
+      const contentSnapshot = contentEl.cloneNode(true);
+      const metaSnapshot = metaEl.cloneNode(true);
 
       return {
         element: item,
@@ -5924,6 +6192,8 @@
         ).toLowerCase(),
         contentEl: contentEl,
         metaEl: metaEl,
+        contentSnapshot: contentSnapshot,
+        metaSnapshot: metaSnapshot,
       };
     });
 
@@ -5944,9 +6214,9 @@
           keywords.length === 0 ||
           keywords.every((keyword) => item.searchableText.includes(keyword));
 
-        // Reset highlights first by restoring original HTML
-        item.contentEl.innerHTML = item.contentEl.dataset.originalHtml;
-        item.metaEl.innerHTML = item.metaEl.dataset.originalHtml;
+        // Reset highlights first by restoring original DOM snapshots
+        restoreNodeChildren(item.contentEl, item.contentSnapshot);
+        restoreNodeChildren(item.metaEl, item.metaSnapshot);
         item.element.style.display = isVisible ? "flex" : "none";
 
         if (isVisible) {
@@ -6045,23 +6315,65 @@
     title,
     subtitle,
     onConfirm,
-    confirmText = "确定"
+    confirmText = "确定",
+    options = {}
   ) => {
+    const { allowSubtitleHtml = false } = options;
+
     document.querySelector(".s1p-confirm-modal")?.remove();
     const modal = document.createElement("div");
     modal.className = "s1p-confirm-modal";
-    modal.innerHTML = `<div class="s1p-confirm-content"><div class="s1p-confirm-body"><div class="s1p-confirm-title">${title}</div><div class="s1p-confirm-subtitle">${subtitle}</div></div><div class="s1p-confirm-footer"><button class="s1p-confirm-btn s1p-cancel">取消</button><button class="s1p-confirm-btn s1p-confirm">${confirmText}</button></div></div>`;
+
+    const content = document.createElement("div");
+    content.className = "s1p-confirm-content";
+
+    const body = document.createElement("div");
+    body.className = "s1p-confirm-body";
+
+    const titleEl = document.createElement("div");
+    titleEl.className = "s1p-confirm-title";
+    titleEl.textContent = String(title ?? "");
+
+    const subtitleEl = document.createElement("div");
+    subtitleEl.className = "s1p-confirm-subtitle";
+    if (allowSubtitleHtml) {
+      subtitleEl.innerHTML = sanitizeSubtitleHtml(subtitle);
+    } else {
+      subtitleEl.textContent = String(subtitle ?? "");
+    }
+
+    body.appendChild(titleEl);
+    body.appendChild(subtitleEl);
+
+    const footer = document.createElement("div");
+    footer.className = "s1p-confirm-footer";
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.className = "s1p-confirm-btn s1p-cancel";
+    cancelBtn.textContent = "取消";
+
+    const confirmBtn = document.createElement("button");
+    confirmBtn.className = "s1p-confirm-btn s1p-confirm";
+    confirmBtn.textContent = String(confirmText ?? "");
+
+    footer.appendChild(cancelBtn);
+    footer.appendChild(confirmBtn);
+
+    content.appendChild(body);
+    content.appendChild(footer);
+    modal.appendChild(content);
+
     const closeModal = () => {
       modal.querySelector(".s1p-confirm-content").style.animation =
         "s1p-scale-out 0.25s ease-out forwards";
       modal.style.animation = "s1p-fade-out 0.25s ease-out forwards";
       setTimeout(() => modal.remove(), 250);
     };
-    modal.querySelector(".s1p-confirm").addEventListener("click", () => {
+    confirmBtn.addEventListener("click", () => {
       onConfirm();
       closeModal();
     });
-    modal.querySelector(".s1p-cancel").addEventListener("click", closeModal);
+    cancelBtn.addEventListener("click", closeModal);
     modal.addEventListener("click", (e) => {
       if (e.target === modal) closeModal();
     });
@@ -6077,24 +6389,65 @@
     defaultValue,
     onConfirm,
     confirmText = "确定",
-    placeholder = ""
+    placeholder = "",
+    options = {}
   ) => {
+    const { allowSubtitleHtml = false } = options;
+
     document.querySelector(".s1p-confirm-modal")?.remove();
     const modal = document.createElement("div");
     modal.className = "s1p-confirm-modal";
-    // Reuse existing modal styles, add input field - NOW USING TEXTAREA
-    modal.innerHTML = `
-        <div class="s1p-confirm-content">
-            <div class="s1p-confirm-body">
-                <div class="s1p-confirm-title">${title}</div>
-                <div class="s1p-confirm-subtitle">${subtitle}</div>
-                <textarea class="s1p-input s1p-confirm-input-field" placeholder="${placeholder}" style="width: 100%; margin-top: 12px; min-height: 80px; resize: vertical; font-family: inherit;" autocomplete="off">${defaultValue.replace(/</g, "&lt;")}</textarea>
-            </div>
-            <div class="s1p-confirm-footer">
-                <button class="s1p-confirm-btn s1p-cancel">取消</button>
-                <button class="s1p-confirm-btn s1p-confirm">${confirmText}</button>
-            </div>
-        </div>`;
+
+    const content = document.createElement("div");
+    content.className = "s1p-confirm-content";
+
+    const body = document.createElement("div");
+    body.className = "s1p-confirm-body";
+
+    const titleEl = document.createElement("div");
+    titleEl.className = "s1p-confirm-title";
+    titleEl.textContent = String(title ?? "");
+
+    const subtitleEl = document.createElement("div");
+    subtitleEl.className = "s1p-confirm-subtitle";
+    if (allowSubtitleHtml) {
+      subtitleEl.innerHTML = sanitizeSubtitleHtml(subtitle);
+    } else {
+      subtitleEl.textContent = String(subtitle ?? "");
+    }
+
+    const input = document.createElement("textarea");
+    input.className = "s1p-input s1p-confirm-input-field";
+    input.placeholder = String(placeholder ?? "");
+    input.style.width = "100%";
+    input.style.marginTop = "12px";
+    input.style.minHeight = "80px";
+    input.style.resize = "vertical";
+    input.style.fontFamily = "inherit";
+    input.autocomplete = "off";
+    input.value = String(defaultValue ?? "");
+
+    body.appendChild(titleEl);
+    body.appendChild(subtitleEl);
+    body.appendChild(input);
+
+    const footer = document.createElement("div");
+    footer.className = "s1p-confirm-footer";
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.className = "s1p-confirm-btn s1p-cancel";
+    cancelBtn.textContent = "取消";
+
+    const confirmBtn = document.createElement("button");
+    confirmBtn.className = "s1p-confirm-btn s1p-confirm";
+    confirmBtn.textContent = String(confirmText ?? "");
+
+    footer.appendChild(cancelBtn);
+    footer.appendChild(confirmBtn);
+
+    content.appendChild(body);
+    content.appendChild(footer);
+    modal.appendChild(content);
 
     const closeModal = () => {
       const content = modal.querySelector(".s1p-confirm-content");
@@ -6102,8 +6455,6 @@
       modal.style.animation = "s1p-fade-out 0.25s ease-out forwards";
       setTimeout(() => modal.remove(), 250);
     };
-
-    const input = modal.querySelector(".s1p-confirm-input-field");
 
     // Auto focus and select slightly delayed to ensure DOM is ready and transition doesn't interfere
     setTimeout(() => {
@@ -6123,11 +6474,11 @@
       }
     });
 
-    modal.querySelector(".s1p-confirm").addEventListener("click", () => {
+    confirmBtn.addEventListener("click", () => {
       onConfirm(input.value);
       closeModal();
     });
-    modal.querySelector(".s1p-cancel").addEventListener("click", closeModal);
+    cancelBtn.addEventListener("click", closeModal);
     modal.addEventListener("click", (e) => {
       if (e.target === modal) closeModal();
     });
@@ -6152,42 +6503,88 @@
     container.className = "s1p-confirm-container";
 
     const uniqueId = `s1p-confirm-${Date.now()}`;
-    const arrowRightSvg = `<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>`;
 
-    container.innerHTML = `
-        <div class="s1p-confirm-bar">
-            <button class="s1p-confirm-action-btn s1p-confirm" title="确认"></button>
-            <button class="s1p-confirm-action-btn s1p-cancel" title="取消"></button>
-            <span class="s1p-confirm-separator"></span>
-            <span class="s1p-confirm-text">${confirmText}</span>
-            ${options.inputPlaceholder ? `
-            <button class="s1p-confirm-expand-btn" style="
-                background: none; 
-                border: none; 
-                cursor: pointer; 
-                padding: 0; 
-                margin-left: 4px;
-                display: flex; 
-                align-items: center; 
-                color: var(--s1p-t); 
-                transition: transform 0.2s ease;
-            ">${arrowRightSvg}</button>
-            ` : ''}
-        </div>
-        ${options.inputPlaceholder ? `
-        <div class="s1p-confirm-remark-area" id="${uniqueId}-remark-area">
-            <div style="font-size: 13px; margin-bottom: 8px; color: var(--s1p-t);">备注：</div>
-            <textarea class="s1p-confirm-input s1p-input" placeholder="${options.inputPlaceholder}" style="
-                width: 100%; 
-                min-width: 300px;
-                min-height: 80px; 
-                resize: vertical;
-                font-family: inherit;
-                box-sizing: border-box;
-            "></textarea>
-        </div>
-        ` : ''}
-    `;
+    const bar = document.createElement("div");
+    bar.className = "s1p-confirm-bar";
+
+    const confirmBtn = document.createElement("button");
+    confirmBtn.className = "s1p-confirm-action-btn s1p-confirm";
+    confirmBtn.title = "确认";
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.className = "s1p-confirm-action-btn s1p-cancel";
+    cancelBtn.title = "取消";
+
+    const separator = document.createElement("span");
+    separator.className = "s1p-confirm-separator";
+
+    const text = document.createElement("span");
+    text.className = "s1p-confirm-text";
+    text.textContent = String(confirmText ?? "");
+
+    bar.appendChild(confirmBtn);
+    bar.appendChild(cancelBtn);
+    bar.appendChild(separator);
+    bar.appendChild(text);
+
+    if (options.inputPlaceholder) {
+      const expandBtn = document.createElement("button");
+      expandBtn.className = "s1p-confirm-expand-btn";
+      expandBtn.style.background = "none";
+      expandBtn.style.border = "none";
+      expandBtn.style.cursor = "pointer";
+      expandBtn.style.padding = "0";
+      expandBtn.style.marginLeft = "4px";
+      expandBtn.style.display = "flex";
+      expandBtn.style.alignItems = "center";
+      expandBtn.style.color = "var(--s1p-t)";
+      expandBtn.style.transition = "transform 0.2s ease";
+
+      const ns = "http://www.w3.org/2000/svg";
+      const icon = document.createElementNS(ns, "svg");
+      icon.setAttribute("viewBox", "0 0 24 24");
+      icon.setAttribute("width", "16");
+      icon.setAttribute("height", "16");
+      icon.setAttribute("stroke", "currentColor");
+      icon.setAttribute("stroke-width", "2");
+      icon.setAttribute("fill", "none");
+      icon.setAttribute("stroke-linecap", "round");
+      icon.setAttribute("stroke-linejoin", "round");
+      const polyline = document.createElementNS(ns, "polyline");
+      polyline.setAttribute("points", "9 18 15 12 9 6");
+      icon.appendChild(polyline);
+      expandBtn.appendChild(icon);
+      bar.appendChild(expandBtn);
+    }
+
+    container.appendChild(bar);
+
+    if (options.inputPlaceholder) {
+      const remarkArea = document.createElement("div");
+      remarkArea.className = "s1p-confirm-remark-area";
+      remarkArea.id = `${uniqueId}-remark-area`;
+
+      const label = document.createElement("div");
+      label.style.fontSize = "13px";
+      label.style.marginBottom = "8px";
+      label.style.color = "var(--s1p-t)";
+      label.textContent = "备注：";
+
+      const textarea = document.createElement("textarea");
+      textarea.className = "s1p-confirm-input s1p-input";
+      textarea.placeholder = String(options.inputPlaceholder);
+      textarea.style.width = "100%";
+      textarea.style.minWidth = "300px";
+      textarea.style.minHeight = "80px";
+      textarea.style.resize = "vertical";
+      textarea.style.fontFamily = "inherit";
+      textarea.style.boxSizing = "border-box";
+
+      remarkArea.appendChild(label);
+      remarkArea.appendChild(textarea);
+      container.appendChild(remarkArea);
+    }
+
     return container;
   };
 
@@ -6416,13 +6813,40 @@
       // 头部
       const header = document.createElement("div");
       header.className = "s1p-dp-header";
-      header.innerHTML = `
-        <button class="s1p-dp-nav-btn prev-year" title="上一年"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 19l-7-7 7-7" /></svg><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-left:-10px"><path d="M15 19l-7-7 7-7" /></svg></button>
-        <button class="s1p-dp-nav-btn prev-month" title="上个月"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 19l-7-7 7-7" /></svg></button>
-        <div class="s1p-dp-title">${year}年 ${month + 1}月</div>
-        <button class="s1p-dp-nav-btn next-month" title="下个月"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7" /></svg></button>
-        <button class="s1p-dp-nav-btn next-year" title="下一年"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7" /></svg><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-left:-10px"><path d="M9 5l7 7-7 7" /></svg></button>
-      `;
+      const createNavBtn = (cls, title, html) => {
+        const btn = document.createElement("button");
+        btn.className = `s1p-dp-nav-btn ${cls}`;
+        btn.title = title;
+        setSanitizedIconHtml(btn, html);
+        return btn;
+      };
+      const leftArrowSvg =
+        `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">` +
+        `<path d="M15 19l-7-7 7-7" /></svg>`;
+      const rightArrowSvg =
+        `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">` +
+        `<path d="M9 5l7 7-7 7" /></svg>`;
+      const prevYearHtml =
+        leftArrowSvg +
+        `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-left:-10px"><path d="M15 19l-7-7 7-7" /></svg>`;
+      const nextYearHtml =
+        rightArrowSvg +
+        `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-left:-10px"><path d="M9 5l7 7-7 7" /></svg>`;
+
+      const prevYearBtn = createNavBtn("prev-year", "上一年", prevYearHtml);
+      const prevMonthBtn = createNavBtn("prev-month", "上个月", leftArrowSvg);
+      const nextMonthBtn = createNavBtn("next-month", "下个月", rightArrowSvg);
+      const nextYearBtn = createNavBtn("next-year", "下一年", nextYearHtml);
+
+      const titleEl = document.createElement("div");
+      titleEl.className = "s1p-dp-title";
+      titleEl.textContent = `${year}年 ${month + 1}月`;
+
+      header.appendChild(prevYearBtn);
+      header.appendChild(prevMonthBtn);
+      header.appendChild(titleEl);
+      header.appendChild(nextMonthBtn);
+      header.appendChild(nextYearBtn);
 
       // 星期头
       const weekdays = document.createElement("div");
@@ -6503,7 +6927,7 @@
         daysGrid.appendChild(el);
       }
 
-      picker.innerHTML = "";
+      picker.textContent = "";
       picker.appendChild(header);
       picker.appendChild(weekdays);
       picker.appendChild(daysGrid);
@@ -6751,15 +7175,20 @@
       const tabsDiv = document.createElement("div");
       tabsDiv.className = "s1p-tabs";
       tabsDiv.style.display = "inline-flex";
-      tabsDiv.innerHTML = `
-                <button class="s1p-tab-btn">通用设置</button>
-                <button class="s1p-tab-btn">帖子屏蔽</button>
-                <button class="s1p-tab-btn">用户屏蔽</button>
-                <button class="s1p-tab-btn">用户标记</button>
-                <button class="s1p-tab-btn">回复收藏</button>
-                <button class="s1p-tab-btn">导航栏定制</button>
-                <button class="s1p-tab-btn">设置同步</button>
-            `;
+      [
+        "通用设置",
+        "帖子屏蔽",
+        "用户屏蔽",
+        "用户标记",
+        "回复收藏",
+        "导航栏定制",
+        "设置同步",
+      ].forEach((text) => {
+        const btn = document.createElement("button");
+        btn.className = "s1p-tab-btn";
+        btn.textContent = text;
+        tabsDiv.appendChild(btn);
+      });
       measureContainer.appendChild(tabsDiv);
       document.body.appendChild(measureContainer);
 
@@ -6978,19 +7407,35 @@
       "#s1p-clear-data-options"
     );
     if (clearDataOptionsContainer) {
-      clearDataOptionsContainer.innerHTML = Object.keys(dataClearanceConfig)
-        .map(
-          (key) => `
-                <div class="s1p-settings-item" style="padding: 8px 0;">
-                    <label class="s1p-settings-label" for="s1p-clear-chk-${key}">${dataClearanceConfig[key].label}</label>
-                    <label class="s1p-switch">
-                        <input type="checkbox" class="s1p-clear-data-checkbox" id="s1p-clear-chk-${key}" data-clear-key="${key}">
-                        <span class="s1p-slider"></span>
-                    </label>
-                </div>
-            `
-        )
-        .join("");
+      clearDataOptionsContainer.textContent = "";
+      Object.keys(dataClearanceConfig).forEach((key) => {
+        const item = document.createElement("div");
+        item.className = "s1p-settings-item";
+        item.style.padding = "8px 0";
+
+        const label = document.createElement("label");
+        label.className = "s1p-settings-label";
+        label.htmlFor = `s1p-clear-chk-${key}`;
+        label.textContent = String(dataClearanceConfig[key].label || "");
+
+        const switchLabel = document.createElement("label");
+        switchLabel.className = "s1p-switch";
+
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.className = "s1p-clear-data-checkbox";
+        checkbox.id = `s1p-clear-chk-${key}`;
+        checkbox.dataset.clearKey = key;
+
+        const slider = document.createElement("span");
+        slider.className = "s1p-slider";
+
+        switchLabel.appendChild(checkbox);
+        switchLabel.appendChild(slider);
+        item.appendChild(label);
+        item.appendChild(switchLabel);
+        clearDataOptionsContainer.appendChild(item);
+      });
     }
 
     const remoteToggle = modal.querySelector("#s1p-remote-enabled-toggle");
@@ -7113,15 +7558,34 @@
       const infoContainer = modal.querySelector("#s1p-token-expiry-info-container");
       const expiryTimestamp = getSettings().syncTokenExpiryDate;
 
+      infoContainer.textContent = "";
       if (tokenExpiryToggle.checked && expiryTimestamp) {
         const date = new Date(expiryTimestamp);
         const dateStr = date.toLocaleDateString("zh-CN");
         const daysLeft = Math.ceil((expiryTimestamp - Date.now()) / (1000 * 60 * 60 * 24));
         const color = daysLeft <= 3 ? "var(--s1p-red)" : "var(--s1p-success-text)";
 
-        infoContainer.innerHTML = `过期时间：<span style="font-weight:bold; color: ${color}">${dateStr}</span> (剩余 ${daysLeft} 天) <button id="s1p-edit-token-expiry" class="s1p-btn" style="margin-left: 8px; padding: 2px 8px; font-size: 12px; height: auto;">修改</button>`;
+        infoContainer.appendChild(document.createTextNode("过期时间："));
+        const dateEl = document.createElement("span");
+        dateEl.style.fontWeight = "bold";
+        dateEl.style.color = color;
+        dateEl.textContent = dateStr;
+        infoContainer.appendChild(dateEl);
+        infoContainer.appendChild(
+          document.createTextNode(` (剩余 ${daysLeft} 天) `)
+        );
 
-        modal.querySelector("#s1p-edit-token-expiry")?.addEventListener("click", () => {
+        const editBtn = document.createElement("button");
+        editBtn.id = "s1p-edit-token-expiry";
+        editBtn.className = "s1p-btn";
+        editBtn.style.marginLeft = "8px";
+        editBtn.style.padding = "2px 8px";
+        editBtn.style.fontSize = "12px";
+        editBtn.style.height = "auto";
+        editBtn.textContent = "修改";
+        infoContainer.appendChild(editBtn);
+
+        editBtn.addEventListener("click", () => {
           openTokenExpiryConfigModal((ts) => {
             const s = getSettings();
             s.syncTokenExpiryDate = ts;
@@ -7131,8 +7595,6 @@
             showMessage("Token 过期时间已更新", true);
           });
         });
-      } else {
-        infoContainer.innerHTML = "";
       }
     };
 
@@ -7193,83 +7655,172 @@
       const tagItems = Object.entries(userTags).sort(
         ([, a], [, b]) => (b.timestamp || 0) - (a.timestamp || 0)
       );
-      const contentHTML = `
-                <div class="s1p-settings-group">
-                    <div class="s1p-sync-title">用户标记管理</div>
-                    <p class="s1p-setting-desc" style="margin-top: 0; margin-bottom: 16px;">
-                        在此集中管理、编辑、导出或导入您为所有用户添加的标记。
-                    </p>
-                    <div class="s1p-local-sync-buttons">
-                        <button id="s1p-export-tags-btn" class="s1p-btn">导出全部标记</button>
-                        <button id="s1p-import-tags-btn" class="s1p-btn">导入标记</button>
-                    </div>
-                    <textarea id="s1p-tags-sync-textarea" class="s1p-input s1p-textarea s1p-sync-textarea" placeholder="在此粘贴导入数据或从此处复制导出数据..." autocomplete="off"></textarea>
-                </div>
-
-                <div class="s1p-settings-group">
-                    <div id="s1p-tags-list-container">
-                        ${tagItems.length === 0
-          ? `<div class="s1p-empty">暂无用户标记</div>`
-          : `<div class="s1p-list">${tagItems
-            .map(([id, data]) => {
-              if (id === editingUserId) {
-                const colors = ["", "red", "orange", "yellow", "green", "blue", "purple"];
-                const checkSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
-                const colorOptionsHtml = colors.map(c =>
-                  `<span class="s1p-color-option ${c === (data.color || '') ? 'selected' : ''}" data-color="${c}">${checkSvg}</span>`
-                ).join("");
-                return `
-                                <div class="s1p-item" data-user-id="${id}" data-current-color="${data.color || ''}">
-                                    <div class="s1p-item-info">
-                                        <div class="s1p-item-title">${data.name}</div>
-                                        <div class="s1p-item-meta">
-                                            ID: <span class="s1p-item-meta-id">${id}</span>
-                                        </div>
-                                        <div class="s1p-item-editor">
-                                            <textarea class="s1p-input s1p-textarea s1p-tag-edit-area" autocomplete="off">${data.tag}</textarea>
-                                            <div class="s1p-color-picker" style="margin-top:8px;">
-                                                <span class="s1p-color-picker-label">标记颜色：</span>
-                                                <div class="s1p-color-options">${colorOptionsHtml}</div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div class="s1p-item-actions">
-                                        <button class="s1p-btn s1p-primary" data-action="save-tag-edit" data-user-id="${id}" data-user-name="${data.name}">保存</button>
-                                        <button class="s1p-btn" data-action="cancel-tag-edit">取消</button>
-                                    </div>
-                                </div>`;
-              } else {
-                const colorDot = data.color
-                  ? `<span class="s1p-color-option" data-color="${data.color}" style="width:14px;height:14px;display:inline-block;vertical-align:middle;margin-right:6px;pointer-events:none;"></span>`
-                  : '';
-                return `
-                                <div class="s1p-item" data-user-id="${id}">
-                                    <div class="s1p-item-info">
-                                        <div class="s1p-item-title">${data.name}</div>
-                                        <div class="s1p-item-meta">
-                                            ID: <span class="s1p-item-meta-id">${id}</span> &nbsp;
-                                            标记于: ${formatDate(data.timestamp)}</div>
-                                        <div class="s1p-item-content">${colorDot}用户标记：${data.tag}</div>
-                                    </div>
-                                    <div class="s1p-item-actions">
-                                        <button class="s1p-btn" data-action="edit-tag-item" data-user-id="${id}">编辑</button>
-                                        <button class="s1p-btn s1p-danger" data-action="delete-tag-item" data-user-id="${id}" data-user-name="${data.name
-                  }">删除</button>
-                                    </div>
-                                </div>`;
-              }
-            })
-            .join("")}</div>`
-        }
-                    </div>
-                </div>
-            `;
       tabs["tags"].innerHTML = `
                 ${toggleHTML}
                 <div class="s1p-feature-content ${isEnabled ? "expanded" : ""}">
-                    <div>${contentHTML}</div>
+                    <div>
+                        <div class="s1p-settings-group">
+                            <div class="s1p-sync-title">用户标记管理</div>
+                            <p class="s1p-setting-desc" style="margin-top: 0; margin-bottom: 16px;">
+                                在此集中管理、编辑、导出或导入您为所有用户添加的标记。
+                            </p>
+                            <div class="s1p-local-sync-buttons">
+                                <button id="s1p-export-tags-btn" class="s1p-btn">导出全部标记</button>
+                                <button id="s1p-import-tags-btn" class="s1p-btn">导入标记</button>
+                            </div>
+                            <textarea id="s1p-tags-sync-textarea" class="s1p-input s1p-textarea s1p-sync-textarea" placeholder="在此粘贴导入数据或从此处复制导出数据..." autocomplete="off"></textarea>
+                        </div>
+
+                        <div class="s1p-settings-group">
+                            <div id="s1p-tags-list-container"></div>
+                        </div>
+                    </div>
                 </div>
             `;
+
+      const listContainer = tabs["tags"].querySelector("#s1p-tags-list-container");
+      if (listContainer) {
+        if (tagItems.length === 0) {
+          const emptyEl = document.createElement("div");
+          emptyEl.className = "s1p-empty";
+          emptyEl.textContent = "暂无用户标记";
+          listContainer.appendChild(emptyEl);
+        } else {
+          const listEl = document.createElement("div");
+          listEl.className = "s1p-list";
+          const colors = ["", "red", "orange", "yellow", "green", "blue", "purple"];
+          const checkSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+
+          tagItems.forEach(([id, data]) => {
+            const item = document.createElement("div");
+            item.className = "s1p-item";
+            item.dataset.userId = String(id ?? "");
+
+            const itemInfo = document.createElement("div");
+            itemInfo.className = "s1p-item-info";
+
+            const title = document.createElement("div");
+            title.className = "s1p-item-title";
+            const displayName = String(data?.name || `用户 #${id}`);
+            title.textContent = displayName;
+            itemInfo.appendChild(title);
+
+            const meta = document.createElement("div");
+            meta.className = "s1p-item-meta";
+            meta.appendChild(document.createTextNode("ID: "));
+
+            const idSpan = document.createElement("span");
+            idSpan.className = "s1p-item-meta-id";
+            idSpan.textContent = String(id ?? "");
+            meta.appendChild(idSpan);
+
+            if (id !== editingUserId) {
+              meta.appendChild(document.createTextNode(" \u00A0 标记于: "));
+              meta.appendChild(
+                document.createTextNode(formatDate(data?.timestamp || Date.now()))
+              );
+            }
+            itemInfo.appendChild(meta);
+
+            const actions = document.createElement("div");
+            actions.className = "s1p-item-actions";
+
+            if (id === editingUserId) {
+              item.dataset.currentColor = String(data?.color || "");
+
+              const editor = document.createElement("div");
+              editor.className = "s1p-item-editor";
+
+              const textarea = document.createElement("textarea");
+              textarea.className = "s1p-input s1p-textarea s1p-tag-edit-area";
+              textarea.autocomplete = "off";
+              textarea.value = String(data?.tag || "");
+              editor.appendChild(textarea);
+
+              const colorPicker = document.createElement("div");
+              colorPicker.className = "s1p-color-picker";
+              colorPicker.style.marginTop = "8px";
+
+              const colorLabel = document.createElement("span");
+              colorLabel.className = "s1p-color-picker-label";
+              colorLabel.textContent = "标记颜色：";
+              colorPicker.appendChild(colorLabel);
+
+              const colorOptions = document.createElement("div");
+              colorOptions.className = "s1p-color-options";
+              colors.forEach((color) => {
+                const option = document.createElement("span");
+                option.className = "s1p-color-option";
+                option.dataset.color = color;
+                if (color === (data?.color || "")) {
+                  option.classList.add("selected");
+                }
+                setSanitizedIconHtml(option, checkSvg);
+                colorOptions.appendChild(option);
+              });
+              colorPicker.appendChild(colorOptions);
+              editor.appendChild(colorPicker);
+              itemInfo.appendChild(editor);
+
+              const saveBtn = document.createElement("button");
+              saveBtn.className = "s1p-btn s1p-primary";
+              saveBtn.dataset.action = "save-tag-edit";
+              saveBtn.dataset.userId = String(id ?? "");
+              saveBtn.dataset.userName = displayName;
+              saveBtn.textContent = "保存";
+              actions.appendChild(saveBtn);
+
+              const cancelBtn = document.createElement("button");
+              cancelBtn.className = "s1p-btn";
+              cancelBtn.dataset.action = "cancel-tag-edit";
+              cancelBtn.textContent = "取消";
+              actions.appendChild(cancelBtn);
+            } else {
+              const content = document.createElement("div");
+              content.className = "s1p-item-content";
+
+              if (data?.color) {
+                const colorDot = document.createElement("span");
+                colorDot.className = "s1p-color-option";
+                colorDot.dataset.color = String(data.color);
+                colorDot.style.width = "14px";
+                colorDot.style.height = "14px";
+                colorDot.style.display = "inline-block";
+                colorDot.style.verticalAlign = "middle";
+                colorDot.style.marginRight = "6px";
+                colorDot.style.pointerEvents = "none";
+                content.appendChild(colorDot);
+              }
+              content.appendChild(
+                document.createTextNode(`用户标记：${String(data?.tag || "")}`)
+              );
+              itemInfo.appendChild(content);
+
+              const editBtn = document.createElement("button");
+              editBtn.className = "s1p-btn";
+              editBtn.dataset.action = "edit-tag-item";
+              editBtn.dataset.userId = String(id ?? "");
+              editBtn.textContent = "编辑";
+              actions.appendChild(editBtn);
+
+              const deleteBtn = document.createElement("button");
+              deleteBtn.className = "s1p-btn s1p-danger";
+              deleteBtn.dataset.action = "delete-tag-item";
+              deleteBtn.dataset.userId = String(id ?? "");
+              deleteBtn.dataset.userName = displayName;
+              deleteBtn.textContent = "删除";
+              actions.appendChild(deleteBtn);
+            }
+
+            item.appendChild(itemInfo);
+            item.appendChild(actions);
+            listEl.appendChild(item);
+          });
+
+          listContainer.appendChild(listEl);
+        }
+      }
+
       if (editingUserId) {
         const textarea = tabs["tags"].querySelector(".s1p-tag-edit-area");
         if (textarea) {
@@ -7305,102 +7856,191 @@
       );
 
       const hasBookmarks = bookmarkItems.length > 0;
-      const contentHTML = `
-                ${hasBookmarks
-          ? `
-                <div class="s1p-settings-group" style="margin-bottom: 16px;">
-                    <div class="s1p-search-input-wrapper">
-                        <input type="text" id="s1p-bookmark-search-input" class="s1p-input" placeholder="搜索内容、作者、标题..." autocomplete="off">
-                        <svg class="s1p-search-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" /></svg>
-                        <button id="s1p-bookmark-search-clear-btn" class="s1p-search-clear-btn hidden" title="清空搜索" aria-label="清空搜索">
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" /></svg>
-                        </button>
-                    </div>
-                </div>`
-          : ""
-        }
-                <div class="s1p-settings-group">
-                    <div id="s1p-bookmarks-list-container">
-                        ${!hasBookmarks
-          ? `<div id="s1p-bookmarks-empty-message" class="s1p-empty">暂无收藏的回复</div>`
-          : `<div class="s1p-list" id="s1p-bookmarks-list">
-                            ${bookmarkItems
-            .map((item) => {
-              const fullText = item.postContent || "";
-              const isLong = fullText.length > 150;
-              let contentBlock;
-              if (isLong) {
-                const previewText = fullText.substring(
-                  0,
-                  150
-                );
-                contentBlock = `<div class="s1p-bookmark-preview"><span>${previewText}... </span><a href="javascript:void(0);" class="s1p-bookmark-toggle" data-action="toggle-bookmark-content">查看完整回复</a></div><div class="s1p-bookmark-full" style="display: none;"><span>${fullText} </span><a href="javascript:void(0);" class="s1p-bookmark-toggle" data-action="toggle-bookmark-content">收起</a></div>`;
-              } else {
-                contentBlock = `<div class="s1p-bookmark-preview"><span>${fullText}</span></div>`;
-              }
-              return `
-                            <div class="s1p-item" data-post-id="${item.postId
-                }" style="position: relative;">
-                                <button class="s1p-btn s1p-danger" data-action="remove-bookmark" data-post-id="${item.postId
-                }" style="position: absolute; top: 12px; right: 12px; padding: 4px 8px;">取消收藏</button>
-                                <div class="s1p-item-info" style="width: 100%; padding-right: 100px;">
-                                    <div class="s1p-item-content">${contentBlock}</div>
-                                    <div class="s1p-item-meta" style="margin-top: 10px;">
-                                        <strong>${item.authorName
-                }</strong> · 收藏于: ${formatDate(
-                  item.timestamp
-                )}
-                                        <div class="s1p-bookmark-meta-line">
-                                          <span>来自：</span>
-                                          <a class="s1p-bookmark-thread-link" href="forum.php?mod=redirect&goto=findpost&ptid=${item.threadId
-                }&pid=${item.postId
-                }" target="_blank" title="${item.threadTitle}">
-                                            <span class="s1p-bookmark-title-text">${item.threadTitle
-                }</span>
-                                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" /></svg>
-                                          </a>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>`;
-            })
-            .join("")}
-                        </div>`
-        }
-                    </div>
-                    <div id="s1p-bookmarks-no-results" class="s1p-empty" style="display: none;">没有找到匹配的收藏</div>
-                </div>
-            `;
       tabs["bookmarks"].innerHTML = `
                 ${toggleHTML}
                 <div class="s1p-feature-content ${isEnabled ? "expanded" : ""}">
-                    <div>${contentHTML}</div>
+                    <div>
+                        ${hasBookmarks
+          ? `
+                        <div class="s1p-settings-group" style="margin-bottom: 16px;">
+                            <div class="s1p-search-input-wrapper">
+                                <input type="text" id="s1p-bookmark-search-input" class="s1p-input" placeholder="搜索内容、作者、标题..." autocomplete="off">
+                                <svg class="s1p-search-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" /></svg>
+                                <button id="s1p-bookmark-search-clear-btn" class="s1p-search-clear-btn hidden" title="清空搜索" aria-label="清空搜索">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" /></svg>
+                                </button>
+                            </div>
+                        </div>`
+          : ""
+        }
+                        <div class="s1p-settings-group">
+                            <div id="s1p-bookmarks-list-container"></div>
+                            <div id="s1p-bookmarks-no-results" class="s1p-empty" style="display: none;">没有找到匹配的收藏</div>
+                        </div>
+                    </div>
                 </div>
             `;
-      tabs["bookmarks"].addEventListener("click", (e) => {
-        const toggleLink = e.target.closest(
-          '[data-action="toggle-bookmark-content"]'
-        );
-        if (toggleLink) {
-          e.preventDefault();
-          e.stopPropagation();
-          const contentItem = toggleLink.closest(".s1p-item-content");
-          if (!contentItem) return;
-          const preview = contentItem.querySelector(".s1p-bookmark-preview");
-          const full = contentItem.querySelector(".s1p-bookmark-full");
-          if (!preview || !full) return;
 
-          const isCurrentlyCollapsed =
-            window.getComputedStyle(full).display === "none";
-          if (isCurrentlyCollapsed) {
-            full.style.display = "block";
-            preview.style.display = "none";
-          } else {
-            full.style.display = "none";
-            preview.style.display = "block";
-          }
+      const bookmarksContainer = tabs["bookmarks"].querySelector(
+        "#s1p-bookmarks-list-container"
+      );
+      if (bookmarksContainer) {
+        if (!hasBookmarks) {
+          const emptyEl = document.createElement("div");
+          emptyEl.id = "s1p-bookmarks-empty-message";
+          emptyEl.className = "s1p-empty";
+          emptyEl.textContent = "暂无收藏的回复";
+          bookmarksContainer.appendChild(emptyEl);
+        } else {
+          const listEl = document.createElement("div");
+          listEl.className = "s1p-list";
+          listEl.id = "s1p-bookmarks-list";
+
+          const externalLinkSvg = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" /></svg>`;
+
+          bookmarkItems.forEach((item) => {
+            const rawPostId = String(item?.postId ?? "");
+            const postIdForUrl = encodeURIComponent(rawPostId);
+            const threadIdForUrl = encodeURIComponent(String(item?.threadId ?? ""));
+            const authorName = String(item?.authorName || `用户 #${item?.authorId ?? "?"}`);
+            const threadTitle = String(item?.threadTitle || "");
+            const fullText = String(item?.postContent || "");
+            const isLong = fullText.length > 150;
+
+            const rowEl = document.createElement("div");
+            rowEl.className = "s1p-item";
+            rowEl.dataset.postId = rawPostId;
+            rowEl.style.position = "relative";
+
+            const removeBtn = document.createElement("button");
+            removeBtn.className = "s1p-btn s1p-danger";
+            removeBtn.dataset.action = "remove-bookmark";
+            removeBtn.dataset.postId = rawPostId;
+            removeBtn.style.position = "absolute";
+            removeBtn.style.top = "12px";
+            removeBtn.style.right = "12px";
+            removeBtn.style.padding = "4px 8px";
+            removeBtn.textContent = "取消收藏";
+            rowEl.appendChild(removeBtn);
+
+            const infoEl = document.createElement("div");
+            infoEl.className = "s1p-item-info";
+            infoEl.style.width = "100%";
+            infoEl.style.paddingRight = "100px";
+
+            const contentEl = document.createElement("div");
+            contentEl.className = "s1p-item-content";
+
+            const previewEl = document.createElement("div");
+            previewEl.className = "s1p-bookmark-preview";
+            const previewTextSpan = document.createElement("span");
+            previewTextSpan.textContent = isLong
+              ? `${fullText.substring(0, 150)}... `
+              : fullText;
+            previewEl.appendChild(previewTextSpan);
+
+            if (isLong) {
+              const showFullLink = document.createElement("a");
+              showFullLink.href = "javascript:void(0);";
+              showFullLink.className = "s1p-bookmark-toggle";
+              showFullLink.dataset.action = "toggle-bookmark-content";
+              showFullLink.textContent = "查看完整回复";
+              previewEl.appendChild(showFullLink);
+            }
+            contentEl.appendChild(previewEl);
+
+            if (isLong) {
+              const fullEl = document.createElement("div");
+              fullEl.className = "s1p-bookmark-full";
+              fullEl.style.display = "none";
+
+              const fullTextSpan = document.createElement("span");
+              fullTextSpan.textContent = `${fullText} `;
+              fullEl.appendChild(fullTextSpan);
+
+              const collapseLink = document.createElement("a");
+              collapseLink.href = "javascript:void(0);";
+              collapseLink.className = "s1p-bookmark-toggle";
+              collapseLink.dataset.action = "toggle-bookmark-content";
+              collapseLink.textContent = "收起";
+              fullEl.appendChild(collapseLink);
+              contentEl.appendChild(fullEl);
+            }
+
+            infoEl.appendChild(contentEl);
+
+            const metaEl = document.createElement("div");
+            metaEl.className = "s1p-item-meta";
+            metaEl.style.marginTop = "10px";
+
+            const authorEl = document.createElement("strong");
+            authorEl.textContent = authorName;
+            metaEl.appendChild(authorEl);
+            metaEl.appendChild(
+              document.createTextNode(` · 收藏于: ${formatDate(item?.timestamp)}`)
+            );
+
+            const metaLine = document.createElement("div");
+            metaLine.className = "s1p-bookmark-meta-line";
+
+            const fromLabel = document.createElement("span");
+            fromLabel.textContent = "来自：";
+            metaLine.appendChild(fromLabel);
+
+            const threadLink = document.createElement("a");
+            threadLink.className = "s1p-bookmark-thread-link";
+            threadLink.href = `forum.php?mod=redirect&goto=findpost&ptid=${threadIdForUrl}&pid=${postIdForUrl}`;
+            threadLink.target = "_blank";
+            threadLink.title = threadTitle;
+
+            const threadTitleEl = document.createElement("span");
+            threadTitleEl.className = "s1p-bookmark-title-text";
+            threadTitleEl.textContent = threadTitle;
+            threadLink.appendChild(threadTitleEl);
+
+            const linkIcon = document.createElement("span");
+            setSanitizedIconHtml(linkIcon, externalLinkSvg);
+            threadLink.appendChild(linkIcon.firstElementChild || linkIcon);
+
+            metaLine.appendChild(threadLink);
+            metaEl.appendChild(metaLine);
+            infoEl.appendChild(metaEl);
+
+            rowEl.appendChild(infoEl);
+            listEl.appendChild(rowEl);
+          });
+
+          bookmarksContainer.appendChild(listEl);
         }
-      });
+      }
+
+      if (!tabs["bookmarks"].dataset.s1pBookmarkToggleBound) {
+        tabs["bookmarks"].dataset.s1pBookmarkToggleBound = "true";
+        tabs["bookmarks"].addEventListener("click", (e) => {
+          const toggleLink = e.target.closest(
+            '[data-action="toggle-bookmark-content"]'
+          );
+          if (toggleLink) {
+            e.preventDefault();
+            e.stopPropagation();
+            const contentItem = toggleLink.closest(".s1p-item-content");
+            if (!contentItem) return;
+            const preview = contentItem.querySelector(".s1p-bookmark-preview");
+            const full = contentItem.querySelector(".s1p-bookmark-full");
+            if (!preview || !full) return;
+
+            const isCurrentlyCollapsed =
+              window.getComputedStyle(full).display === "none";
+            if (isCurrentlyCollapsed) {
+              full.style.display = "block";
+              preview.style.display = "none";
+            } else {
+              full.style.display = "none";
+              preview.style.display = "block";
+            }
+          }
+        });
+      }
       if (hasBookmarks) {
         setupBookmarkSearchComponent(tabs["bookmarks"]);
       }
@@ -7444,44 +8084,48 @@
                 </div>
                 <div class="s1p-settings-group">
                     <div id="s1p-blocked-user-list-container">
-                        ${userItemIds.length === 0
-          ? `<div class="s1p-empty">暂无屏蔽的用户</div>`
-          : `<div class="s1p-list">${userItemIds
-            .map((id) => {
-              const item = blockedUsers[id];
-              // [新增] 根据标记生成状态提示
-              const syncStatusHtml =
-                item.addedToNativeBlacklist === true
-                  ? '<span class="s1p-native-sync-status">已同步至论坛黑名单</span>'
-                  : "";
+	                        ${userItemIds.length === 0
+	          ? `<div class="s1p-empty">暂无屏蔽的用户</div>`
+	          : `<div class="s1p-list">${userItemIds
+	            .map((id) => {
+	              const item = blockedUsers[id];
+	              const safeIdAttr = escapeAttr(id);
+	              const displayName = item?.name || `用户 #${id}`;
+	              const safeDisplayName = escapeHTML(displayName);
+	              // [新增] 根据标记生成状态提示
+	              const syncStatusHtml =
+	                item.addedToNativeBlacklist === true
+	                  ? '<span class="s1p-native-sync-status">已同步至论坛黑名单</span>'
+	                  : "";
 
-              // [Modified] New Layout: Toggle and Remark in same row
-              const remark = item.remark || "";
-              const escapedRemark = remark.replace(/"/g, '&quot;');
+	              // [Modified] New Layout: Toggle and Remark in same row
+	              const remark = String(item.remark || "");
+	              const safeRemarkText = escapeHTML(remark);
+	              const safeRemarkAttr = escapeAttr(remark);
 
-              const remarkControlsHtml = remark
-                ? `<span class="s1p-remark-text s1p-user-remark-display" data-full-tag="${escapedRemark}">备注：${remark}</span>
-                   <button class="s1p-btn s1p-btn-sm s1p-edit-remark-btn" data-user-id="${id}" data-current-remark="${escapedRemark}">编辑</button>`
-                : `<button class="s1p-btn s1p-btn-sm s1p-add-remark-btn" data-user-id="${id}">添加备注</button>`;
+	              const remarkControlsHtml = remark
+	                ? `<span class="s1p-remark-text s1p-user-remark-display" data-full-tag="${safeRemarkAttr}">备注：${safeRemarkText}</span>
+	                   <button class="s1p-btn s1p-btn-sm s1p-edit-remark-btn" data-user-id="${safeIdAttr}" data-current-remark="${safeRemarkAttr}">编辑</button>`
+	                : `<button class="s1p-btn s1p-btn-sm s1p-add-remark-btn" data-user-id="${safeIdAttr}">添加备注</button>`;
 
-              return `
-              <div class="s1p-item s1p-blocked-user-item" data-user-id="${id}">
-                <div class="s1p-blocked-user-top-row">
-                    <div class="s1p-item-info" style="margin-bottom: 0;">
-                        <div class="s1p-item-title">${item.name || `用户 #${id}`}${syncStatusHtml}</div>
-                        <div class="s1p-item-meta">屏蔽时间: ${formatDate(item.timestamp)}</div>
-                    </div>
-                    <button class="s1p-unblock-btn s1p-btn" data-unblock-user-id="${id}">取消屏蔽</button>
-                </div>
-                
-                <div class="s1p-item-row-controls">
-                    <div class="s1p-item-toggle">
-                        <label class="s1p-switch">
-                            <input type="checkbox" class="s1p-user-thread-block-toggle" data-user-id="${id}" ${item.blockThreads ? "checked" : ""}>
-                            <span class="s1p-slider"></span>
-                        </label>
-                        <span>屏蔽该用户的主题帖</span>
-                    </div>
+	              return `
+	              <div class="s1p-item s1p-blocked-user-item" data-user-id="${safeIdAttr}">
+	                <div class="s1p-blocked-user-top-row">
+	                    <div class="s1p-item-info" style="margin-bottom: 0;">
+	                        <div class="s1p-item-title">${safeDisplayName}${syncStatusHtml}</div>
+	                        <div class="s1p-item-meta">屏蔽时间: ${formatDate(item.timestamp)}</div>
+	                    </div>
+	                    <button class="s1p-unblock-btn s1p-btn" data-unblock-user-id="${safeIdAttr}">取消屏蔽</button>
+	                </div>
+	                
+	                <div class="s1p-item-row-controls">
+	                    <div class="s1p-item-toggle">
+	                        <label class="s1p-switch">
+	                            <input type="checkbox" class="s1p-user-thread-block-toggle" data-user-id="${safeIdAttr}" ${item.blockThreads ? "checked" : ""}>
+	                            <span class="s1p-slider"></span>
+	                        </label>
+	                        <span>屏蔽该用户的主题帖</span>
+	                    </div>
                     <div class="s1p-remark-container">
                         ${remarkControlsHtml}
                     </div>
@@ -7501,36 +8145,42 @@
             `;
 
       // [新增] 备注编辑事件监听
-      tabs["users"].addEventListener("click", (e) => {
-        const target = e.target;
-        if (target.classList.contains("s1p-add-remark-btn") || target.classList.contains("s1p-edit-remark-btn")) {
-          const userId = target.dataset.userId;
-          const currentRemark = target.dataset.currentRemark || "";
+      if (!tabs["users"].dataset.s1pUserRemarkBound) {
+        tabs["users"].dataset.s1pUserRemarkBound = "true";
+        tabs["users"].addEventListener("click", (e) => {
+          const target = e.target;
+          if (target.classList.contains("s1p-add-remark-btn") || target.classList.contains("s1p-edit-remark-btn")) {
+            const userId = target.dataset.userId;
+            const currentRemark = target.dataset.currentRemark || "";
 
-          // Replaced prompt with custom input modal
-          const blockedUsers = getBlockedUsers(); // [Fix] Get users to display name
-          const userName = blockedUsers[userId]?.name || `用户 #${userId}`; // [Fix] Get user name
+            // Replaced prompt with custom input modal
+	            const blockedUsers = getBlockedUsers(); // [Fix] Get users to display name
+	            const userName = blockedUsers[userId]?.name || `用户 #${userId}`; // [Fix] Get user name
+	            const safeUserName = escapeHTML(userName);
 
-          createInputModal(
-            "编辑备注",
-            `请为 <strong>${userName}</strong> 添加或修改备注（留空则删除备注）：`,
-            currentRemark,
-            (newRemark) => {
-              const blockedUsers = getBlockedUsers();
-              if (blockedUsers[userId]) {
-                if (newRemark === null || newRemark.trim() === "") {
-                  delete blockedUsers[userId].remark;
-                } else {
-                  blockedUsers[userId].remark = newRemark.trim();
-                }
-                saveBlockedUsers(blockedUsers);
-                renderUserTab(); // Re-render to show changes
-              }
-            },
-            "保存"
-          );
-        }
-      });
+	            createInputModal(
+	              "编辑备注",
+	              `请为 <strong>${safeUserName}</strong> 添加或修改备注（留空则删除备注）：`,
+	              currentRemark,
+	              (newRemark) => {
+                const blockedUsers = getBlockedUsers();
+                if (blockedUsers[userId]) {
+                  if (newRemark === null || newRemark.trim() === "") {
+                    delete blockedUsers[userId].remark;
+                  } else {
+                    blockedUsers[userId].remark = newRemark.trim();
+                  }
+                  saveBlockedUsers(blockedUsers);
+                  renderUserTab(); // Re-render to show changes
+	                }
+	              },
+	              "保存",
+	              "",
+	              { allowSubtitleHtml: true }
+	            );
+	          }
+	        });
+	      }
     };
     const renderThreadTab = () => {
       const settings = getSettings();
@@ -7581,24 +8231,26 @@
                     <div id="s1p-manually-blocked-list-container" class="s1p-collapsible-content ${settings.showManuallyBlockedList ? "expanded" : ""
         }">
                     <div>
-                    ${manualItemIds.length === 0
-          ? `<div class="s1p-empty">暂无手动屏蔽的帖子</div>`
-          : `<div class="s1p-list">${manualItemIds
-            .map((id) => {
-              const item = blockedThreads[id];
-              return `<div class="s1p-item" data-thread-id="${id}"><div class="s1p-item-info"><div class="s1p-item-title">${item.title || `帖子 #${id}`
-                }</div><div class="s1p-item-meta">屏蔽时间: ${formatDate(
-                  item.timestamp
-                )} ${item.reason && item.reason !== "manual"
-                  ? `(因屏蔽用户${item.reason.replace(
-                    "user_",
-                    ""
-                  )})`
-                  : ""
-                }</div></div><button class="s1p-unblock-btn s1p-btn" data-unblock-thread-id="${id}">取消屏蔽</button></div>`;
-            })
-            .join("")}</div>`
-        }
+	                    ${manualItemIds.length === 0
+	          ? `<div class="s1p-empty">暂无手动屏蔽的帖子</div>`
+	          : `<div class="s1p-list">${manualItemIds
+	            .map((id) => {
+	              const item = blockedThreads[id];
+	              const safeThreadIdAttr = escapeAttr(id);
+	              const safeTitleText = escapeHTML(item.title || `帖子 #${id}`);
+	              const reasonText =
+	                item.reason && item.reason !== "manual"
+	                  ? `(因屏蔽用户${escapeHTML(
+	                    String(item.reason).replace("user_", "")
+	                  )})`
+	                  : "";
+	              return `<div class="s1p-item" data-thread-id="${safeThreadIdAttr}"><div class="s1p-item-info"><div class="s1p-item-title">${safeTitleText
+	                }</div><div class="s1p-item-meta">屏蔽时间: ${formatDate(
+	                  item.timestamp
+	                )} ${reasonText}</div></div><button class="s1p-unblock-btn s1p-btn" data-unblock-thread-id="${safeThreadIdAttr}">取消屏蔽</button></div>`;
+	            })
+	            .join("")}</div>`
+	        }
                     </div>
                     </div>
                 </div>
@@ -7636,25 +8288,33 @@
           // 获取折叠状态
           const collapsedThreads = GM_getValue("s1p_blocked_posts_collapsed_threads", {});
 
-          return `<div class="s1p-thread-groups">${Object.values(postsByThread)
-            .map(thread => {
-              const isCollapsed = collapsedThreads[thread.threadId] || false;
-              return `
-                                    <div class="s1p-thread-group" data-thread-id="${thread.threadId}">
-                                        <div class="s1p-thread-header s1p-collapsible-header ${isCollapsed ? '' : 'expanded'}">
-                                            <span class="s1p-thread-title">${thread.threadTitle || '未知帖子'}</span>
-                                            <span class="s1p-thread-count">(${thread.posts.length}个楼层)</span>
-                                            <span class="s1p-expander-arrow ${isCollapsed ? '' : 'expanded'}"></span>
-                                        </div>
-                                        <div class="s1p-thread-posts s1p-collapsible-content ${isCollapsed ? '' : 'expanded'}">
-                                            <div class="s1p-list">${thread.posts
-                  .map(post => {
-                    return `<div class="s1p-item" data-post-id="${post.postId}"><div class="s1p-item-info"><div class="s1p-item-title">第${post.floor}楼</div><div class="s1p-item-meta">作者: ${post.authorName || `用户 #${post.authorId}`
-                      } | 屏蔽时间: ${formatDate(post.timestamp)}</div></div><button class="s1p-unblock-post-btn s1p-btn" data-unblock-post-id="${post.postId}">取消屏蔽</button></div>`;
-                  })
-                  .join("")}</div>
-                                        </div>
-                                    </div>`;
+	          return `<div class="s1p-thread-groups">${Object.values(postsByThread)
+	            .map(thread => {
+	              const isCollapsed = collapsedThreads[thread.threadId] || false;
+	              const safeThreadIdAttr = escapeAttr(thread.threadId);
+	              const safeThreadTitleText = escapeHTML(
+	                thread.threadTitle || "未知帖子"
+	              );
+	              return `
+	                                    <div class="s1p-thread-group" data-thread-id="${safeThreadIdAttr}">
+	                                        <div class="s1p-thread-header s1p-collapsible-header ${isCollapsed ? '' : 'expanded'}">
+	                                            <span class="s1p-thread-title">${safeThreadTitleText}</span>
+	                                            <span class="s1p-thread-count">(${thread.posts.length}个楼层)</span>
+	                                            <span class="s1p-expander-arrow ${isCollapsed ? '' : 'expanded'}"></span>
+	                                        </div>
+	                                        <div class="s1p-thread-posts s1p-collapsible-content ${isCollapsed ? '' : 'expanded'}">
+	                                            <div class="s1p-list">${thread.posts
+	                  .map(post => {
+	                    const safePostIdAttr = escapeAttr(post.postId);
+	                    const safeFloorText = escapeHTML(post.floor);
+	                    const safeAuthorText = escapeHTML(
+	                      post.authorName || `用户 #${post.authorId}`
+	                    );
+	                    return `<div class="s1p-item" data-post-id="${safePostIdAttr}"><div class="s1p-item-info"><div class="s1p-item-title">第${safeFloorText}楼</div><div class="s1p-item-meta">作者: ${safeAuthorText} | 屏蔽时间: ${formatDate(post.timestamp)}</div></div><button class="s1p-unblock-post-btn s1p-btn" data-unblock-post-id="${safePostIdAttr}">取消屏蔽</button></div>`;
+	                  })
+	                  .join("")}</div>
+	                                        </div>
+	                                    </div>`;
             })
             .join("")}</div>`;
         })()
@@ -7671,26 +8331,108 @@
                 </div>
             `;
 
+      const createRuleEmptyMessage = () => {
+        const emptyEl = document.createElement("div");
+        emptyEl.className = "s1p-empty";
+        emptyEl.style.padding = "12px";
+        emptyEl.textContent = "暂无规则";
+        return emptyEl;
+      };
+
+      const createRuleEditorItem = ({
+        ruleId,
+        enabled = true,
+        pattern = "",
+      }) => {
+        const item = document.createElement("div");
+        item.className = "s1p-editor-item";
+        item.dataset.ruleId = String(ruleId ?? "");
+
+        const switchLabel = document.createElement("label");
+        switchLabel.className = "s1p-switch";
+
+        const toggle = document.createElement("input");
+        toggle.type = "checkbox";
+        toggle.className = "s1p-settings-checkbox s1p-keyword-rule-enable";
+        toggle.checked = !!enabled;
+
+        const slider = document.createElement("span");
+        slider.className = "s1p-slider";
+        switchLabel.appendChild(toggle);
+        switchLabel.appendChild(slider);
+
+        const patternInput = document.createElement("input");
+        patternInput.type = "text";
+        patternInput.className = "s1p-input s1p-keyword-rule-pattern";
+        patternInput.placeholder = "输入关键字或正则表达式";
+        patternInput.autocomplete = "off";
+        patternInput.value = String(pattern ?? "");
+
+        const controls = document.createElement("div");
+        controls.className = "s1p-editor-item-controls";
+
+        const deleteBtn = document.createElement("button");
+        deleteBtn.className = "s1p-editor-btn s1p-delete-button";
+        deleteBtn.dataset.action = "delete";
+        deleteBtn.title = "删除规则";
+        controls.appendChild(deleteBtn);
+
+        item.appendChild(switchLabel);
+        item.appendChild(patternInput);
+        item.appendChild(controls);
+        return item;
+      };
+
       const renderDynamicallyHiddenList = () => {
         const listContainer = tabs["threads"].querySelector(
           "#s1p-dynamically-hidden-list"
         );
+        if (!listContainer) return;
+
         const hiddenItems = Object.entries(dynamicallyHiddenThreads);
+        listContainer.textContent = "";
         if (hiddenItems.length === 0) {
-          listContainer.innerHTML = `<div class="s1p-empty" style="padding-top: 12px;">当前页面没有被关键字屏蔽的帖子</div>`;
+          const emptyEl = document.createElement("div");
+          emptyEl.className = "s1p-empty";
+          emptyEl.style.paddingTop = "12px";
+          emptyEl.textContent = "当前页面没有被关键字屏蔽的帖子";
+          listContainer.appendChild(emptyEl);
         } else {
-          listContainer.innerHTML = `<div class="s1p-list">${hiddenItems
-            .map(
-              ([id, item]) => `
-                        <div class="s1p-item" data-thread-id="${id}">
-                            <div class="s1p-item-info">
-                                <div class="s1p-item-title" title="${item.title}">${item.title}</div>
-                                <div class="s1p-item-meta">匹配规则: <code style="background: var(--s1p-code-bg); padding: 2px 4px; border-radius: 3px;">${item.pattern}</code></div>
-                            </div>
-                        </div>
-                    `
-            )
-            .join("")}</div>`;
+          const listEl = document.createElement("div");
+          listEl.className = "s1p-list";
+
+          hiddenItems.forEach(([id, item]) => {
+            const rowEl = document.createElement("div");
+            rowEl.className = "s1p-item";
+            rowEl.dataset.threadId = String(id ?? "");
+
+            const infoEl = document.createElement("div");
+            infoEl.className = "s1p-item-info";
+
+            const titleEl = document.createElement("div");
+            titleEl.className = "s1p-item-title";
+            const rawTitle = String(item?.title ?? "");
+            titleEl.title = rawTitle;
+            titleEl.textContent = rawTitle;
+
+            const metaEl = document.createElement("div");
+            metaEl.className = "s1p-item-meta";
+            metaEl.appendChild(document.createTextNode("匹配规则: "));
+
+            const codeEl = document.createElement("code");
+            codeEl.style.background = "var(--s1p-code-bg)";
+            codeEl.style.padding = "2px 4px";
+            codeEl.style.borderRadius = "3px";
+            codeEl.textContent = String(item?.pattern ?? "");
+            metaEl.appendChild(codeEl);
+
+            infoEl.appendChild(titleEl);
+            infoEl.appendChild(metaEl);
+            rowEl.appendChild(infoEl);
+            listEl.appendChild(rowEl);
+          });
+
+          listContainer.appendChild(listEl);
         }
       };
       const renderRules = () => {
@@ -7699,23 +8441,19 @@
           "#s1p-keyword-rules-list"
         );
         if (!container) return;
-        container.innerHTML = rules
-          .map(
-            (rule) => `
-                    <div class="s1p-editor-item" data-rule-id="${rule.id}">
-                        <label class="s1p-switch"><input type="checkbox" class="s1p-settings-checkbox s1p-keyword-rule-enable" ${rule.enabled ? "checked" : ""
-              }><span class="s1p-slider"></span></label>
-                        <input type="text" class="s1p-input s1p-keyword-rule-pattern" placeholder="输入关键字或正则表达式" value="${rule.pattern || ""
-              }" autocomplete="off">
-                        <div class="s1p-editor-item-controls">
-                            <button class="s1p-editor-btn s1p-delete-button" data-action="delete" title="删除规则"></button>
-                        </div>
-                    </div>
-                `
-          )
-          .join("");
+
+        container.textContent = "";
+        rules.forEach((rule) => {
+          container.appendChild(
+            createRuleEditorItem({
+              ruleId: rule.id,
+              enabled: rule.enabled,
+              pattern: rule.pattern || "",
+            })
+          );
+        });
         if (rules.length === 0) {
-          container.innerHTML = `<div class="s1p-empty" style="padding: 12px;">暂无规则</div>`;
+          container.appendChild(createRuleEmptyMessage());
         }
       };
 
@@ -7797,36 +8535,32 @@
           const emptyMsg = container.querySelector(".s1p-empty");
           if (emptyMsg) emptyMsg.remove();
 
-          const newItem = document.createElement("div");
-          newItem.className = "s1p-editor-item";
-          newItem.dataset.ruleId = `new_${Date.now()}`;
-          newItem.innerHTML = `
-                        <label class="s1p-switch"><input type="checkbox" class="s1p-settings-checkbox s1p-keyword-rule-enable" checked><span class="s1p-slider"></span></label>
-                        <input type="text" class="s1p-input s1p-keyword-rule-pattern" placeholder="输入关键字或正则表达式" value="" autocomplete="off">
-                        <div class="s1p-editor-item-controls">
-                            <button class="s1p-editor-btn s1p-delete-button" data-action="delete" title="删除规则"></button>
-                        </div>
-                    `;
+          const newItem = createRuleEditorItem({
+            ruleId: `new_${Date.now()}`,
+            enabled: true,
+            pattern: "",
+          });
           container.appendChild(newItem);
           newItem.querySelector('input[type="text"]').focus();
         } else if (target.closest(".s1p-delete-button")) {
           const item = target.closest(".s1p-editor-item");
-          if (item) {
-            const pattern =
-              item.querySelector(".s1p-keyword-rule-pattern").value.trim() ||
-              "空规则";
-            createConfirmationModal(
-              "确认删除该屏蔽规则吗？",
-              `规则内容: <code style="background-color: var(--s1p-secondary-bg); padding: 2px 4px; border-radius: 4px;">${pattern}</code><br>此操作将立即生效并从存储中删除该规则。`,
-              () => {
-                const ruleIdToDelete = item.dataset.ruleId;
-                if (!ruleIdToDelete || ruleIdToDelete.startsWith("new_")) {
+	          if (item) {
+	            const pattern =
+	              item.querySelector(".s1p-keyword-rule-pattern").value.trim() ||
+	              "空规则";
+	            const safePatternForHtml = escapeHTML(pattern);
+	            createConfirmationModal(
+	              "确认删除该屏蔽规则吗？",
+	              `规则内容: <code style="background-color: var(--s1p-secondary-bg); padding: 2px 4px; border-radius: 4px;">${safePatternForHtml}</code><br>此操作将立即生效并从存储中删除该规则。`,
+	              () => {
+	                const ruleIdToDelete = item.dataset.ruleId;
+	                if (!ruleIdToDelete || ruleIdToDelete.startsWith("new_")) {
                   item.remove();
                   const container = tabs["threads"].querySelector(
                     "#s1p-keyword-rules-list"
                   );
                   if (container.children.length === 0) {
-                    container.innerHTML = `<div class="s1p-empty" style="padding: 12px;">暂无规则</div>`;
+                    container.appendChild(createRuleEmptyMessage());
                   }
                   showMessage("未保存的新规则已移除。", null);
                   return;
@@ -7839,11 +8573,12 @@
                 hideThreadsByTitleKeyword();
                 renderDynamicallyHiddenList();
                 renderRules();
-                showMessage("规则已成功删除。", true);
-              },
-              "确认删除"
-            );
-          }
+	                showMessage("规则已成功删除。", true);
+	              },
+	              "确认删除",
+	              { allowSubtitleHtml: true }
+	            );
+	          }
         } else if (target.id === "s1p-keyword-rules-save-btn") {
           saveKeywordRules();
           showMessage("规则已保存！", true);
@@ -8008,12 +8743,12 @@
         }><span class="s1p-slider"></span></label>
                     </div>
 
-                    <div class="s1p-settings-item">
-                        <label class="s1p-settings-label" for="s1p-customTitleSuffix">自定义标题后缀</label>
-                        <input type="text" id="s1p-customTitleSuffix" class="s1p-input" data-setting="customTitleSuffix" value="${settings.customTitleSuffix || ""
-        }" autocomplete="off">
-                    </div>
-                </div>
+	                    <div class="s1p-settings-item">
+	                        <label class="s1p-settings-label" for="s1p-customTitleSuffix">自定义标题后缀</label>
+	                        <input type="text" id="s1p-customTitleSuffix" class="s1p-input" data-setting="customTitleSuffix" value="${escapeAttr(settings.customTitleSuffix || "")
+	        }" autocomplete="off">
+	                    </div>
+	                </div>
             </div>
         </div>`;
 
@@ -8195,20 +8930,55 @@
       const navListContainer = tabs["nav-settings"].querySelector(
         ".s1p-nav-editor-list"
       );
+      const createNavEditorItem = (index, name = "", href = "") => {
+        const item = document.createElement("div");
+        item.className = "s1p-editor-item";
+        item.draggable = true;
+        item.dataset.index = String(index ?? "");
+        item.style.gridTemplateColumns = "auto 1fr 1fr auto";
+        item.style.userSelect = "none";
+
+        const dragHandle = document.createElement("div");
+        dragHandle.className = "s1p-drag-handle";
+        dragHandle.textContent = "::";
+
+        const nameInput = document.createElement("input");
+        nameInput.type = "text";
+        nameInput.className = "s1p-input s1p-nav-name";
+        nameInput.placeholder = "名称";
+        nameInput.autocomplete = "off";
+        nameInput.value = String(name ?? "");
+
+        const hrefInput = document.createElement("input");
+        hrefInput.type = "text";
+        hrefInput.className = "s1p-input s1p-nav-href";
+        hrefInput.placeholder = "链接";
+        hrefInput.autocomplete = "off";
+        hrefInput.value = String(href ?? "");
+
+        const controls = document.createElement("div");
+        controls.className = "s1p-editor-item-controls";
+
+        const deleteBtn = document.createElement("button");
+        deleteBtn.className = "s1p-editor-btn s1p-delete-button";
+        deleteBtn.dataset.action = "delete";
+        deleteBtn.title = "删除链接";
+        controls.appendChild(deleteBtn);
+
+        item.appendChild(dragHandle);
+        item.appendChild(nameInput);
+        item.appendChild(hrefInput);
+        item.appendChild(controls);
+        return item;
+      };
+
       const renderNavList = (links) => {
-        navListContainer.innerHTML = (links || [])
-          .map(
-            (link, index) => `
-            <div class="s1p-editor-item" draggable="true" data-index="${index}" style="grid-template-columns: auto 1fr 1fr auto; user-select: none;">
-                <div class="s1p-drag-handle">::</div>
-                <input type="text" class="s1p-input s1p-nav-name" placeholder="名称" value="${link.name || ""
-              }" autocomplete="off">
-                <input type="text" class="s1p-input s1p-nav-href" placeholder="链接" value="${link.href || ""
-              }" autocomplete="off">
-                <div class="s1p-editor-item-controls"><button class="s1p-editor-btn s1p-delete-button" data-action="delete" title="删除链接"></button></div>
-            </div>`
-          )
-          .join("");
+        navListContainer.textContent = "";
+        (links || []).forEach((link, index) => {
+          navListContainer.appendChild(
+            createNavEditorItem(index, link.name || "", link.href || "")
+          );
+        });
       };
 
       renderNavList(settings.customNavLinks);
@@ -8250,27 +9020,27 @@
       tabs["nav-settings"].addEventListener("click", (e) => {
         const target = e.target;
         if (target.id === "s1p-nav-add-btn") {
-          const newItem = document.createElement("div");
-          newItem.className = "s1p-editor-item";
-          newItem.draggable = true;
-          newItem.style.gridTemplateColumns = "auto 1fr 1fr auto";
-          newItem.innerHTML = `<div class="s1p-drag-handle">::</div><input type="text" class="s1p-input s1p-nav-name" placeholder="新链接" autocomplete="off"><input type="text" class="s1p-input s1p-nav-href" placeholder="forum.php" autocomplete="off"><div class="s1p-editor-item-controls"><button class="s1p-editor-btn s1p-delete-button" data-action="delete" title="删除链接"></button></div>`;
+          const newItem = createNavEditorItem(`new_${Date.now()}`, "", "");
+          newItem.querySelector(".s1p-nav-name").placeholder = "新链接";
+          newItem.querySelector(".s1p-nav-href").placeholder = "forum.php";
           navListContainer.appendChild(newItem);
-        } else if (target.closest(".s1p-delete-button")) {
-          const item = target.closest(".s1p-editor-item");
-          if (item) {
-            const name =
-              item.querySelector(".s1p-nav-name").value.trim() || "未命名链接";
-            createConfirmationModal(
-              "确认删除该导航链接吗？",
-              `链接名称: ${name}<br>此操作仅在UI上移除，需要点击下方的“保存设置”按钮才会真正生效。`,
-              () => {
-                item.remove();
-                showMessage("链接已从列表移除。", true);
-              },
-              "确认删除"
-            );
-          }
+	        } else if (target.closest(".s1p-delete-button")) {
+	          const item = target.closest(".s1p-editor-item");
+	          if (item) {
+	            const name =
+	              item.querySelector(".s1p-nav-name").value.trim() || "未命名链接";
+	            const safeNameForHtml = escapeHTML(name);
+	            createConfirmationModal(
+	              "确认删除该导航链接吗？",
+	              `链接名称: ${safeNameForHtml}<br>此操作仅在UI上移除，需要点击下方的“保存设置”按钮才会真正生效。`,
+	              () => {
+	                item.remove();
+	                showMessage("链接已从列表移除。", true);
+	              },
+	              "确认删除",
+	              { allowSubtitleHtml: true }
+	            );
+	          }
         } else if (target.id === "s1p-nav-restore-btn") {
           createConfirmationModal(
             "确认要恢复默认导航栏吗？",
@@ -8440,6 +9210,12 @@
             isChecked
               ? addBlockButtonsToThreads()
               : removeBlockButtonsFromThreads();
+            refreshAllAuthiActions();
+            if (isChecked) {
+              hideBlockedPosts();
+            } else {
+              Object.keys(getBlockedPosts()).forEach(showPost);
+            }
             renderThreadTab();
             break;
           case "enableUserBlocking":
@@ -8452,15 +9228,6 @@
               Object.keys(getBlockedUsers()).forEach(showUserPosts);
             }
             renderUserTab();
-            break;
-          case "enablePostBlocking":
-            refreshAllAuthiActions();
-            if (isChecked) {
-              hideBlockedPosts();
-            } else {
-              Object.keys(getBlockedPosts()).forEach(showPost);
-            }
-            renderThreadTab();
             break;
           case "enableUserTagging":
             refreshAllAuthiActions();
@@ -8501,7 +9268,19 @@
       }
     });
 
-    function removeListItem(triggerElement, emptyHTML, onEmptyCallback) {
+    const renderEmptyState = (container, text, inlineStyle = "") => {
+      if (!container) return;
+      container.textContent = "";
+      const emptyEl = document.createElement("div");
+      emptyEl.className = "s1p-empty";
+      if (inlineStyle) {
+        emptyEl.style.cssText = inlineStyle;
+      }
+      emptyEl.textContent = text;
+      container.appendChild(emptyEl);
+    };
+
+    function removeListItem(triggerElement, emptyText, onEmptyCallback) {
       const item = triggerElement.closest(".s1p-item");
       if (!item) return;
 
@@ -8510,9 +9289,7 @@
 
       if (list && list.children.length === 0) {
         const container = list.parentElement;
-        if (container) {
-          container.innerHTML = emptyHTML;
-        }
+        renderEmptyState(container, emptyText);
         if (onEmptyCallback) {
           onEmptyCallback(container);
         }
@@ -8546,7 +9323,7 @@
             unblockThread(unblockThreadId);
             removeListItem(
               target,
-              '<div class="s1p-empty">暂无手动屏蔽的帖子</div>'
+              "暂无手动屏蔽的帖子"
             );
             showMessage("帖子已取消屏蔽。", true);
           },
@@ -8598,7 +9375,7 @@
             if (success) {
               removeListItem(
                 target,
-                '<div class="s1p-empty">暂无屏蔽的用户</div>'
+                "暂无屏蔽的用户"
               );
 
               const threadList = document.querySelector(
@@ -8616,8 +9393,7 @@
                     "#s1p-manually-blocked-list-container"
                   );
                   if (container) {
-                    container.innerHTML =
-                      '<div class="s1p-empty">暂无手动屏蔽的帖子</div>';
+                    renderEmptyState(container, "暂无手动屏蔽的帖子");
                   }
                 }
               }
@@ -8667,14 +9443,14 @@
                 // 如果没有任何帖子分组了，显示空提示
                 const container = document.querySelector("#s1p-blocked-posts-list-container");
                 if (container) {
-                  container.innerHTML = '<div class="s1p-empty">暂无屏蔽的楼层</div>';
+                  renderEmptyState(container, "暂无屏蔽的楼层");
                 }
               }
             } else {
               // 非分组列表的处理（向后兼容）
               removeListItem(
                 target,
-                '<div class="s1p-empty">暂无屏蔽的楼层</div>'
+                "暂无屏蔽的楼层"
               );
             }
 
@@ -8697,7 +9473,7 @@
             refreshSinglePostActions(removeBookmarkId);
             removeListItem(
               target,
-              '<div class="s1p-empty">暂无收藏的回复</div>',
+              "暂无收藏的回复",
               () => {
                 document
                   .querySelector("#s1p-bookmark-search-input")
@@ -8806,10 +9582,10 @@
         const btn = modal.querySelector("#s1p-toggle-pat-visibility");
         if (input.type === "password") {
           input.type = "text";
-          btn.innerHTML = SVG_ICON_EYE_SLASH;
+          setSanitizedIconHtml(btn, SVG_ICON_EYE_SLASH);
         } else {
           input.type = "password";
-          btn.innerHTML = SVG_ICON_EYE;
+          setSanitizedIconHtml(btn, SVG_ICON_EYE);
         }
       }
 
@@ -8968,7 +9744,7 @@
               refreshUserPostsOnPage(userId);
               removeListItem(
                 target,
-                `<div class="s1p-empty">暂无用户标记</div>`
+                "暂无用户标记"
               );
               showMessage(`已删除对 ${userName} 的标记。`, true);
             },
@@ -9369,7 +10145,7 @@
               "初始化云端同步",
               "<p>检测到云端备份为空，是否将当前本地数据作为初始版本推送到云端？</p>",
               [pushAction, cancelAction],
-              { modalClassName: "s1p-sync-modal" }
+              { modalClassName: "s1p-sync-modal", allowBodyHtml: true }
             );
             return;
           }
@@ -9562,7 +10338,7 @@
             "手动同步选择",
             bodyHtml,
             [pullAction, pushAction, cancelAction],
-            { modalClassName: "s1p-sync-modal" }
+            { modalClassName: "s1p-sync-modal", allowBodyHtml: true }
           );
         } catch (error) {
           const corruptionErrorMessage = "云端备份已损坏";
@@ -9612,7 +10388,7 @@
               "检测到云端备份损坏",
               `<p style="color: var(--s1p-red);">云端备份文件校验失败，为保护数据已暂停同步。</p><p>是否用当前健康的本地数据强制覆盖云端损坏的备份？</p>`,
               [forcePushAction, cancelAction],
-              { modalClassName: "s1p-sync-modal" }
+              { modalClassName: "s1p-sync-modal", allowBodyHtml: true }
             );
           } else {
             noteManualFailure(error.message);
@@ -9643,34 +10419,75 @@
     buttons,
     options = {}
   ) => {
+    const {
+      modalClassName,
+      allowTitleHtml = false,
+      allowBodyHtml = false,
+    } = options;
+    const renderedTitle = allowTitleHtml
+      ? sanitizeAdvancedModalHtml(title)
+      : String(title ?? "");
+    const renderedBody = allowBodyHtml
+      ? sanitizeAdvancedModalHtml(bodyHtml)
+      : String(bodyHtml ?? "");
+
     // [修改] 增加 options 参数
     document.querySelector(".s1p-confirm-modal")?.remove();
     const modal = document.createElement("div");
     modal.className = "s1p-confirm-modal";
 
     // [新增] 如果传入了自定义类名，则添加到 modal 元素上
-    if (options.modalClassName) {
-      modal.classList.add(options.modalClassName);
+    if (modalClassName) {
+      modal.classList.add(modalClassName);
     }
 
-    const footerButtons = buttons
-      .map(
-        (btn, index) =>
-          `<button class="s1p-confirm-btn ${btn.className || ""
-          }" data-btn-index="${index}">${btn.text}</button>`
-      )
-      .join("");
+    const content = document.createElement("div");
+    content.className = "s1p-confirm-content";
 
-    modal.innerHTML = `
-            <div class="s1p-confirm-content">
-                <div class="s1p-confirm-body">
-                    <div class="s1p-confirm-title">${title}</div>
-                    <div class="s1p-confirm-subtitle">${bodyHtml}</div>
-                </div>
-                <div class="s1p-confirm-footer s1p-centered">
-                    ${footerButtons}
-                </div>
-            </div>`;
+    const body = document.createElement("div");
+    body.className = "s1p-confirm-body";
+
+    const titleEl = document.createElement("div");
+    titleEl.className = "s1p-confirm-title";
+    if (allowTitleHtml) {
+      titleEl.innerHTML = renderedTitle;
+    } else {
+      titleEl.textContent = renderedTitle;
+    }
+
+    const subtitleEl = document.createElement("div");
+    subtitleEl.className = "s1p-confirm-subtitle";
+    if (allowBodyHtml) {
+      subtitleEl.innerHTML = renderedBody;
+    } else {
+      subtitleEl.textContent = renderedBody;
+    }
+
+    body.appendChild(titleEl);
+    body.appendChild(subtitleEl);
+
+    const footer = document.createElement("div");
+    footer.className = "s1p-confirm-footer s1p-centered";
+
+    const buttonEls = [];
+    buttons.forEach((btn) => {
+      const buttonEl = document.createElement("button");
+      buttonEl.className = "s1p-confirm-btn";
+      if (btn.className) {
+        buttonEl.classList.add(
+          ...String(btn.className)
+            .split(/\s+/)
+            .filter(Boolean)
+        );
+      }
+      buttonEl.textContent = String(btn.text || "");
+      footer.appendChild(buttonEl);
+      buttonEls.push(buttonEl);
+    });
+
+    content.appendChild(body);
+    content.appendChild(footer);
+    modal.appendChild(content);
 
     const closeModal = () => {
       modal.querySelector(".s1p-confirm-content").style.animation =
@@ -9691,13 +10508,12 @@
     });
 
     buttons.forEach((btn, index) => {
-      const buttonEl = modal.querySelector(`[data-btn-index="${index}"]`);
-      if (buttonEl) {
-        buttonEl.addEventListener("click", () => {
-          if (btn.action) btn.action();
-          closeModal();
-        });
-      }
+      const buttonEl = buttonEls[index];
+      if (!buttonEl) return;
+      buttonEl.addEventListener("click", () => {
+        if (btn.action) btn.action();
+        closeModal();
+      });
     });
 
     document.body.appendChild(modal);
@@ -9738,7 +10554,10 @@
         const optionsBtn = document.createElement("div");
         optionsBtn.className = "s1p-options-btn";
         optionsBtn.title = "屏蔽此贴";
-        optionsBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>`;
+        setSanitizedIconHtml(
+          optionsBtn,
+          `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>`
+        );
 
         const optionsMenu = document.createElement("div");
         optionsMenu.className = "s1p-options-menu s1p-confirm-wrapper";
@@ -9793,6 +10612,12 @@
       document.body.appendChild(popover);
     }
 
+    // 确保主点击监听只绑定一次，避免 applyChanges 反复调用导致监听器累积。
+    if (popover.dataset.s1pInitialized === "true") {
+      return;
+    }
+    popover.dataset.s1pInitialized = "true";
+
     // --- [S1P-FIX START] 优化交互逻辑为“点击外部关闭” ---
     let currentAnchor = null; // 保存触发弹窗的锚点元素
 
@@ -9837,9 +10662,6 @@
     const renderEditMode = (userName, userId, currentTag = "", currentColor = "") => {
       const colors = ["", "red", "orange", "yellow", "green", "blue", "purple"];
       const checkSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
-      const colorOptionsHtml = colors.map(c =>
-        `<span class="s1p-color-option ${c === currentColor ? 'selected' : ''}" data-color="${c}">${checkSvg}</span>`
-      ).join("");
 
       // 生成历史标记列表（显示所有不同用户的标记，不去重）
       const allTags = getUserTags();
@@ -9848,53 +10670,116 @@
         .map(([, data]) => data)
         .slice(0, 50); // 限制显示数量
 
-      const historyTagsHtml = historyTags.map(item => {
-        const escapedTag = item.tag.replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        return `<span class="s1p-history-tag-item" 
-              data-tag="${escapedTag}" 
-              data-color="${item.color || ''}"
-              data-full-tag="${escapedTag}">${item.tag}</span>`;
-      }).join('');
+      popover.textContent = "";
 
-      const historyTagsContainerHtml = historyTagsHtml ? `
-        <div class="s1p-history-tags-container">
-          <div class="s1p-history-tags-label">历史标记（${historyTags.length}）：</div>
-          <div class="s1p-history-tags-list">${historyTagsHtml}</div>
-        </div>
-      ` : '';
+      const content = document.createElement("div");
+      content.className = "s1p-popover-content";
 
-      popover.innerHTML = `
-                 <div class="s1p-popover-content">
-                    <div class="s1p-edit-mode-header">为 <span class="s1p-username-highlight">${userName}</span> ${currentTag ? "编辑" : "添加"}标记</div>
-                    <textarea class="s1p-input s1p-textarea s1p-edit-mode-textarea" placeholder="输入标记内容..." autocomplete="off">${currentTag}</textarea>
-                    <div class="s1p-color-picker">
-                        <span class="s1p-color-picker-label">标记颜色：</span>
-                        <div class="s1p-color-options">${colorOptionsHtml}</div>
-                    </div>
-                    ${historyTagsContainerHtml}
-                    <div class="s1p-edit-mode-actions">
-                        <button class="s1p-btn" data-action="cancel-edit">取消</button>
-                        <button class="s1p-btn" data-action="save">保存</button>
-                    </div>
-                </div>`;
+      const header = document.createElement("div");
+      header.className = "s1p-edit-mode-header";
+      header.appendChild(document.createTextNode("为 "));
+
+      const userNameHighlight = document.createElement("span");
+      userNameHighlight.className = "s1p-username-highlight";
+      userNameHighlight.textContent = String(userName ?? "");
+      header.appendChild(userNameHighlight);
+      header.appendChild(
+        document.createTextNode(currentTag ? " 编辑标记" : " 添加标记")
+      );
+      content.appendChild(header);
+
+      const textarea = document.createElement("textarea");
+      textarea.className = "s1p-input s1p-textarea s1p-edit-mode-textarea";
+      textarea.placeholder = "输入标记内容...";
+      textarea.autocomplete = "off";
+      textarea.value = String(currentTag ?? "");
+      content.appendChild(textarea);
+
+      const colorPicker = document.createElement("div");
+      colorPicker.className = "s1p-color-picker";
+
+      const colorPickerLabel = document.createElement("span");
+      colorPickerLabel.className = "s1p-color-picker-label";
+      colorPickerLabel.textContent = "标记颜色：";
+      colorPicker.appendChild(colorPickerLabel);
+
+      const colorOptions = document.createElement("div");
+      colorOptions.className = "s1p-color-options";
+      colors.forEach((color) => {
+        const option = document.createElement("span");
+        option.className = "s1p-color-option";
+        option.dataset.color = color;
+        if (color === currentColor) {
+          option.classList.add("selected");
+        }
+        setSanitizedIconHtml(option, checkSvg);
+        colorOptions.appendChild(option);
+      });
+      colorPicker.appendChild(colorOptions);
+      content.appendChild(colorPicker);
+
+      if (historyTags.length > 0) {
+        const historyContainer = document.createElement("div");
+        historyContainer.className = "s1p-history-tags-container";
+
+        const historyLabel = document.createElement("div");
+        historyLabel.className = "s1p-history-tags-label";
+        historyLabel.textContent = `历史标记（${historyTags.length}）：`;
+        historyContainer.appendChild(historyLabel);
+
+        const historyList = document.createElement("div");
+        historyList.className = "s1p-history-tags-list";
+        historyTags.forEach((item) => {
+          const tagValue = String(item?.tag ?? "");
+          const colorValue = String(item?.color ?? "");
+          const historyItem = document.createElement("span");
+          historyItem.className = "s1p-history-tag-item";
+          historyItem.dataset.tag = tagValue;
+          historyItem.dataset.color = colorValue;
+          historyItem.dataset.fullTag = tagValue;
+          historyItem.textContent = tagValue;
+          historyList.appendChild(historyItem);
+        });
+        historyContainer.appendChild(historyList);
+        content.appendChild(historyContainer);
+      }
+
+      const actions = document.createElement("div");
+      actions.className = "s1p-edit-mode-actions";
+
+      const cancelBtn = document.createElement("button");
+      cancelBtn.className = "s1p-btn";
+      cancelBtn.dataset.action = "cancel-edit";
+      cancelBtn.textContent = "取消";
+      actions.appendChild(cancelBtn);
+
+      const saveBtn = document.createElement("button");
+      saveBtn.className = "s1p-btn";
+      saveBtn.dataset.action = "save";
+      saveBtn.textContent = "保存";
+      actions.appendChild(saveBtn);
+
+      content.appendChild(actions);
+      popover.appendChild(content);
 
       // 颜色选择器点击事件
-      popover.querySelectorAll(".s1p-color-option").forEach(opt => {
+      popover.querySelectorAll(".s1p-color-option").forEach((opt) => {
         opt.addEventListener("click", () => {
-          popover.querySelectorAll(".s1p-color-option").forEach(o => o.classList.remove("selected"));
+          popover
+            .querySelectorAll(".s1p-color-option")
+            .forEach((o) => o.classList.remove("selected"));
           opt.classList.add("selected");
         });
       });
 
       // 历史标记点击事件
-      popover.querySelectorAll(".s1p-history-tag-item").forEach(item => {
+      popover.querySelectorAll(".s1p-history-tag-item").forEach((item) => {
         item.addEventListener("click", () => {
-          const textarea = popover.querySelector("textarea");
-          textarea.value = item.dataset.tag;
+          textarea.value = item.dataset.tag || "";
 
           // 同时更新颜色选择
-          const color = item.dataset.color || '';
-          popover.querySelectorAll(".s1p-color-option").forEach(opt => {
+          const color = item.dataset.color || "";
+          popover.querySelectorAll(".s1p-color-option").forEach((opt) => {
             opt.classList.toggle("selected", opt.dataset.color === color);
           });
 
@@ -9902,7 +10787,7 @@
         });
       });
 
-      popover.querySelector("textarea").focus();
+      textarea.focus();
     };
 
     const show = (anchorElement, userId, userName) => {
@@ -10153,10 +11038,12 @@
     if (!readIndicatorElement) {
       readIndicatorElement = document.createElement("div");
       readIndicatorElement.className = "s1p-read-indicator";
-      readIndicatorElement.innerHTML = `
-                <span class="s1p-read-indicator-icon"></span>
-                <span>当前阅读位置</span>
-            `;
+      const indicatorIcon = document.createElement("span");
+      indicatorIcon.className = "s1p-read-indicator-icon";
+      const indicatorText = document.createElement("span");
+      indicatorText.textContent = "当前阅读位置";
+      readIndicatorElement.appendChild(indicatorIcon);
+      readIndicatorElement.appendChild(indicatorText);
     }
     const indicator = readIndicatorElement;
     const currentPostId = currentIndicatorParent
@@ -10523,10 +11410,18 @@
     const { userId, userName } = anchorElement.dataset;
     const menu = document.createElement("div");
     menu.className = "s1p-tag-options-menu";
-    menu.innerHTML = `
-            <button data-action="edit">编辑标记</button>
-            <button data-action="delete" class="s1p-delete">删除标记</button>
-        `;
+
+    const editBtn = document.createElement("button");
+    editBtn.dataset.action = "edit";
+    editBtn.textContent = "编辑标记";
+    menu.appendChild(editBtn);
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.dataset.action = "delete";
+    deleteBtn.className = "s1p-delete";
+    deleteBtn.textContent = "删除标记";
+    menu.appendChild(deleteBtn);
+
     document.body.appendChild(menu);
 
     // --- 悬停与计时器逻辑 ---
@@ -10690,19 +11585,22 @@
       if (isBookmarked) {
         bookmarkLink.classList.add("s1p-bookmarked");
       }
-      bookmarkLink.innerHTML = isBookmarked ? TOOLBAR_ICONS.bookmarked : TOOLBAR_ICONS.bookmark;
+      setSanitizedIconHtml(
+        bookmarkLink,
+        isBookmarked ? TOOLBAR_ICONS.bookmarked : TOOLBAR_ICONS.bookmark
+      );
       bookmarkLink.dataset.fullTag = isBookmarked ? "取消收藏" : "收藏该回复";
       bookmarkLink.addEventListener("click", (e) => {
         e.preventDefault();
         const currentBookmarks = getBookmarkedReplies();
-        const wasBookmarked = !!currentBookmarks[postId];
-        if (wasBookmarked) {
-          delete currentBookmarks[postId];
-          saveBookmarkedReplies(currentBookmarks);
-          bookmarkLink.innerHTML = TOOLBAR_ICONS.bookmark;
-          bookmarkLink.dataset.fullTag = "收藏该回复";
-          bookmarkLink.classList.remove("s1p-bookmarked");
-          showMessage("已取消收藏该回复。", true);
+          const wasBookmarked = !!currentBookmarks[postId];
+          if (wasBookmarked) {
+            delete currentBookmarks[postId];
+            saveBookmarkedReplies(currentBookmarks);
+            setSanitizedIconHtml(bookmarkLink, TOOLBAR_ICONS.bookmark);
+            bookmarkLink.dataset.fullTag = "收藏该回复";
+            bookmarkLink.classList.remove("s1p-bookmarked");
+            showMessage("已取消收藏该回复。", true);
         } else {
           const threadTitleEl = document.querySelector("#thread_subject");
           const threadTitle = threadTitleEl
@@ -10743,7 +11641,7 @@
             timestamp: Date.now(),
           };
           saveBookmarkedReplies(currentBookmarks);
-          bookmarkLink.innerHTML = TOOLBAR_ICONS.bookmarked;
+          setSanitizedIconHtml(bookmarkLink, TOOLBAR_ICONS.bookmarked);
           bookmarkLink.dataset.fullTag = "取消收藏";
           bookmarkLink.classList.add("s1p-bookmarked");
           showMessage("已收藏该回复。", true);
@@ -10758,7 +11656,7 @@
         const blockLink = document.createElement("a");
         blockLink.href = "javascript:void(0);";
         blockLink.className = "s1p-authi-action s1p-toolbar-icon-btn s1p-block-user-in-authi s1p-has-tooltip";
-        blockLink.innerHTML = TOOLBAR_ICONS.blockUser;
+        setSanitizedIconHtml(blockLink, TOOLBAR_ICONS.blockUser);
         blockLink.dataset.fullTag = "屏蔽该用户";
         blockLink.addEventListener("click", (e) => {
           e.preventDefault();
@@ -10805,7 +11703,7 @@
           const blockPostLink = document.createElement("a");
           blockPostLink.href = "javascript:void(0);";
           blockPostLink.className = "s1p-authi-action s1p-toolbar-icon-btn s1p-block-post-in-authi s1p-has-tooltip";
-          blockPostLink.innerHTML = TOOLBAR_ICONS.blockPost;
+          setSanitizedIconHtml(blockPostLink, TOOLBAR_ICONS.blockPost);
           blockPostLink.dataset.fullTag = "屏蔽该楼层";
           blockPostLink.addEventListener("click", (e) => {
             e.preventDefault();
@@ -10865,7 +11763,7 @@
           tagDisplay.removeAttribute("title");
           const optionsIcon = document.createElement("span");
           optionsIcon.className = "s1p-user-tag-options";
-          optionsIcon.innerHTML = "&#8942;";
+          optionsIcon.textContent = "\u22EE";
           optionsIcon.dataset.userId = userId;
           optionsIcon.dataset.userName = userName;
           optionsIcon.addEventListener("mouseenter", (e) => {
@@ -10880,7 +11778,7 @@
           const tagLink = document.createElement("a");
           tagLink.href = "javascript:void(0);";
           tagLink.className = "s1p-authi-action s1p-toolbar-icon-btn s1p-tag-user-in-authi s1p-has-tooltip";
-          tagLink.innerHTML = TOOLBAR_ICONS.tagUser;
+          setSanitizedIconHtml(tagLink, TOOLBAR_ICONS.tagUser);
           tagLink.dataset.fullTag = "标记该用户";
           tagLink.addEventListener("click", (e) => {
             e.preventDefault();
@@ -10985,7 +11883,7 @@
       "S1 Plus 体验升级推荐",
       bodyHtml,
       [disableButton, installButton],
-      { modalClassName: "s1p-nux-recommend-modal" }
+      { modalClassName: "s1p-nux-recommend-modal", allowBodyHtml: true }
     );
 
     // 5. 更新推荐时间戳
@@ -10997,6 +11895,10 @@
    * 修正了多账号切换时，签到记录互相干扰的问题。
    */
   function autoSign() {
+    if (isAutoSignInFlight) {
+      return;
+    }
+
     const checkinLink = document.querySelector(
       'a[href*="study_daily_attendance-daily_attendance.html"]'
     );
@@ -11009,36 +11911,59 @@
       return;
     }
     const signedDateKey = `signedDate_${uid}`; // <-- [修改] Key 变为 per-user
+    const signAttemptDateKey = `signedAttemptDate_${uid}`;
     // ----------------------------
 
-    var now = new Date();
-    var date =
+    const now = new Date();
+    const date =
       now.getFullYear() + "-" + (now.getMonth() + 1) + "-" + now.getDate();
-    var signedDate = GM_getValue(signedDateKey); // <-- [修改]
+    const signedDate = GM_getValue(signedDateKey); // <-- [修改]
+    const attemptedDate = GM_getValue(signAttemptDateKey, null);
 
-    if (signedDate == date) {
+    if (signedDate === date) {
       checkinLink.style.display = "none";
+      return;
+    }
+
+    if (attemptedDate === date) {
       return;
     }
 
     if (now.getHours() < 6) return;
 
+    isAutoSignInFlight = true;
+    GM_setValue(signAttemptDateKey, date);
+
     GM_xmlhttpRequest({
       method: "GET",
       url: checkinLink.href,
+      timeout: REMOTE_SYNC_REQUEST_TIMEOUT_MS,
       onload: function (response) {
-        GM_setValue(signedDateKey, date); // <-- [修改]
-        checkinLink.style.display = "none";
-        console.log(
-          `S1 Plus: Auto check-in for UID ${uid} sent. Status:`,
+        isAutoSignInFlight = false;
+        if (response.status >= 200 && response.status < 300) {
+          GM_setValue(signedDateKey, date); // <-- [修改]
+          checkinLink.style.display = "none";
+          console.log(
+            `S1 Plus: Auto check-in for UID ${uid} sent. Status:`,
+            response.status
+          );
+          return;
+        }
+        console.warn(
+          `S1 Plus: Auto check-in for UID ${uid} returned non-2xx status:`,
           response.status
         );
       },
       onerror: function (response) {
+        isAutoSignInFlight = false;
         console.error(
           `S1 Plus: Auto check-in for UID ${uid} failed.`,
           response
         );
+      },
+      ontimeout: function () {
+        isAutoSignInFlight = false;
+        console.error(`S1 Plus: Auto check-in for UID ${uid} timed out.`);
       },
     });
   }
@@ -11098,7 +12023,7 @@
       const link = document.createElement("a");
       link.title = title;
       link.className = className;
-      link.innerHTML = svg;
+      setSanitizedIconHtml(link, svg);
       if (href) link.href = href;
       if (onclick) link.onclick = onclick;
       return link;
@@ -11292,47 +12217,107 @@
     const modal = document.createElement("div");
     modal.className = "s1p-confirm-modal s1p-reading-progress-modal";
 
-    // 生成表格行
-    const tableRows = groups
-      .map(
-        (group) => `
-      <div class="s1p-sync-comparison-row">
-        <div class="s1p-sync-comparison-label">${group.label}</div>
-        <div class="s1p-sync-comparison-value">${group.count} 条</div>
-        <div class="s1p-sync-comparison-value">
-          <button class="s1p-btn s1p-red-btn s1p-progress-group-delete" data-age-range='${JSON.stringify(
-          group.ageRange
-        )}' data-label="${group.label}" style="padding: 4px 12px; font-size: 13px;">
-            删除
-          </button>
-        </div>
-      </div>
-    `
-      )
-      .join("");
+    const content = document.createElement("div");
+    content.className = "s1p-confirm-content s1p-reading-progress-content";
 
-    modal.innerHTML = `
-      <div class="s1p-confirm-content s1p-reading-progress-content">
-        <div class="s1p-modal-close s1p-close-modal"></div>
-        <div class="s1p-confirm-body">
-          <h2 style="font-size: 18px; font-weight: 600; margin: 0 0 4px 0;">阅读记录详情</h2>
-          <p style="font-size: 13px; color: var(--s1p-desc-t); margin: 0 0 16px 0;">共 ${totalCount} 条阅读记录</p>
-          <div class="s1p-sync-comparison-table">
-            <div class="s1p-sync-comparison-row s1p-sync-comparison-header">
-              <div class="s1p-sync-comparison-label">时间范围</div>
-              <div class="s1p-sync-comparison-value">记录数</div>
-              <div class="s1p-sync-comparison-value">操作</div>
-            </div>
-            ${tableRows}
-          </div>
-        </div>
-      </div>
-    `;
+    const closeIcon = document.createElement("div");
+    closeIcon.className = "s1p-modal-close s1p-close-modal";
+    content.appendChild(closeIcon);
+
+    const body = document.createElement("div");
+    body.className = "s1p-confirm-body";
+
+    const title = document.createElement("h2");
+    title.style.fontSize = "18px";
+    title.style.fontWeight = "600";
+    title.style.margin = "0 0 4px 0";
+    title.textContent = "阅读记录详情";
+    body.appendChild(title);
+
+    const summary = document.createElement("p");
+    summary.style.fontSize = "13px";
+    summary.style.color = "var(--s1p-desc-t)";
+    summary.style.margin = "0 0 16px 0";
+    summary.textContent = `共 ${totalCount} 条阅读记录`;
+    body.appendChild(summary);
+
+    const table = document.createElement("div");
+    table.className = "s1p-sync-comparison-table";
+
+    const headerRow = document.createElement("div");
+    headerRow.className = "s1p-sync-comparison-row s1p-sync-comparison-header";
+    ["时间范围", "记录数", "操作"].forEach((text) => {
+      const headerCell = document.createElement("div");
+      headerCell.className = "s1p-sync-comparison-value";
+      if (text === "时间范围") {
+        headerCell.className = "s1p-sync-comparison-label";
+      }
+      headerCell.textContent = text;
+      headerRow.appendChild(headerCell);
+    });
+    table.appendChild(headerRow);
+
+    groups.forEach((group) => {
+      const row = document.createElement("div");
+      row.className = "s1p-sync-comparison-row";
+
+      const labelCell = document.createElement("div");
+      labelCell.className = "s1p-sync-comparison-label";
+      labelCell.textContent = String(group?.label ?? "");
+      row.appendChild(labelCell);
+
+      const countCell = document.createElement("div");
+      countCell.className = "s1p-sync-comparison-value";
+      countCell.textContent = `${group?.count || 0} 条`;
+      row.appendChild(countCell);
+
+      const actionCell = document.createElement("div");
+      actionCell.className = "s1p-sync-comparison-value";
+
+      const deleteBtn = document.createElement("button");
+      deleteBtn.className = "s1p-btn s1p-red-btn s1p-progress-group-delete";
+      deleteBtn.style.padding = "4px 12px";
+      deleteBtn.style.fontSize = "13px";
+      deleteBtn.textContent = "删除";
+      deleteBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        const ageRange = group?.ageRange;
+        const label = String(group?.label ?? "");
+
+        // 二次确认
+        createAdvancedConfirmationModal(
+          "确认删除",
+          `<p>确定要删除"${escapeHTML(label)}"分组的所有阅读记录吗？</p><p>此操作不可撤销。</p>`,
+          [
+            {
+              text: "取消",
+              className: "s1p-cancel",
+              action: () => { },
+            },
+            {
+              text: "确认删除",
+              className: "s1p-confirm",
+              action: () => {
+                deleteProgressGroup(ageRange, label);
+              },
+            },
+          ],
+          { allowBodyHtml: true }
+        );
+      });
+      actionCell.appendChild(deleteBtn);
+
+      row.appendChild(actionCell);
+      table.appendChild(row);
+    });
+
+    body.appendChild(table);
+    content.appendChild(body);
+    modal.appendChild(content);
 
     // 关闭弹窗函数
     const closeModal = () => {
-      modal.querySelector(".s1p-confirm-content").style.animation =
-        "s1p-scale-out 0.25s ease-out forwards";
+      content.style.animation = "s1p-scale-out 0.25s ease-out forwards";
       modal.style.animation = "s1p-fade-out 0.25s ease-out forwards";
       setTimeout(() => modal.remove(), 250);
     };
@@ -11349,35 +12334,6 @@
     if (closeBtn) {
       closeBtn.addEventListener("click", closeModal);
     }
-
-    // 删除按钮
-    modal.querySelectorAll(".s1p-progress-group-delete").forEach((btn) => {
-      btn.addEventListener("click", (e) => {
-        e.preventDefault();
-        const ageRange = JSON.parse(btn.dataset.ageRange);
-        const label = btn.dataset.label;
-
-        // 二次确认
-        createAdvancedConfirmationModal(
-          "确认删除",
-          `<p>确定要删除"${label}"分组的所有阅读记录吗？</p><p>此操作不可撤销。</p>`,
-          [
-            {
-              text: "取消",
-              className: "s1p-cancel",
-              action: () => { },
-            },
-            {
-              text: "确认删除",
-              className: "s1p-confirm",
-              action: () => {
-                deleteProgressGroup(ageRange, label);
-              },
-            },
-          ]
-        );
-      });
-    });
 
     document.body.appendChild(modal);
   };
@@ -11474,18 +12430,14 @@
       return false;
     }
 
-    const SYNC_LOCK_KEY = "s1p_sync_lock";
-    const SYNC_LOCK_TIMEOUT_MS = 60 * 1000;
-
-    const lockTimestamp = GM_getValue(SYNC_LOCK_KEY, 0);
-    if (Date.now() - lockTimestamp < SYNC_LOCK_TIMEOUT_MS) {
+    if (!(await acquireStartupSyncLock())) {
       console.log(
         "S1 Plus: 检测到另一个标签页可能正在同步，本次启动同步已跳过。"
       );
       return false;
     }
 
-    GM_setValue(SYNC_LOCK_KEY, Date.now());
+    startStartupSyncLockHeartbeat();
 
     try {
       const currentDateAfterLock = GM_getValue(
@@ -11545,7 +12497,8 @@
                     handleManualSync(true);
                   },
                 },
-              ]
+              ],
+              { allowBodyHtml: true }
             );
             return "popup_shown"; // [FIX] 标记已显示弹窗，阻止后续 Token 过期弹窗覆盖
           } else {
@@ -11585,7 +12538,8 @@
                   handleManualSync(true);
                 },
               },
-            ]
+            ],
+            { allowBodyHtml: true }
           );
           return "popup_shown"; // [FIX] 标记已显示弹窗，阻止后续 Token 过期弹窗覆盖
         case "skipped":
@@ -11596,11 +12550,12 @@
               ).toLocaleTimeString("zh-CN", { hour12: false })}。`,
               false
             );
-          }
-          break;
+        }
+        break;
       }
     } finally {
-      GM_deleteValue(SYNC_LOCK_KEY);
+      stopStartupSyncLockHeartbeat();
+      releaseStartupSyncLock();
       console.log("S1 Plus: 同步锁已释放。");
     }
 
@@ -11654,6 +12609,7 @@
       buttons,
       {
         modalClassName: "s1p-welcome-modal",
+        allowBodyHtml: true,
       }
     );
 
@@ -11725,7 +12681,7 @@
             }
           }
         ],
-        { modalClassName: "s1p-token-expiry-modal" }
+        { modalClassName: "s1p-token-expiry-modal", allowBodyHtml: true }
       );
       return true; // Shown
     }
@@ -11768,19 +12724,43 @@
     initializeNavbar();
     initializeGenericDisplayPopover();
 
-    const observerCallback = (mutations, observer) => {
-      const navNeedsReinit = !document.getElementById("s1p-nav-link");
-      observer.disconnect();
-      if (navNeedsReinit) {
-        console.log("S1 Plus: 检测到导航栏被重置，正在重新应用自定义设置。");
-        initializeNavbar();
+    let observer = null;
+    let observerApplyTimer = null;
+    let observerIsApplying = false;
+    let observerPendingNavReinit = false;
+
+    const observerCallback = () => {
+      if (observerIsApplying) {
+        return;
       }
-      applyChanges();
-      const watchTarget = document.getElementById("wp") || document.body;
-      observer.observe(watchTarget, { childList: true, subtree: true });
+
+      observerPendingNavReinit =
+        observerPendingNavReinit || !document.getElementById("s1p-nav-link");
+
+      if (observerApplyTimer) {
+        clearTimeout(observerApplyTimer);
+      }
+
+      observerApplyTimer = setTimeout(() => {
+        observerApplyTimer = null;
+        observerIsApplying = true;
+        observer.disconnect();
+        try {
+          if (observerPendingNavReinit) {
+            console.log("S1 Plus: 检测到导航栏被重置，正在重新应用自定义设置。");
+            initializeNavbar();
+          }
+          applyChanges();
+        } finally {
+          observerPendingNavReinit = false;
+          const watchTarget = document.getElementById("wp") || document.body;
+          observer.observe(watchTarget, { childList: true, subtree: true });
+          observerIsApplying = false;
+        }
+      }, DOM_OBSERVER_DEBOUNCE_MS);
     };
 
-    const observer = new MutationObserver(observerCallback);
+    observer = new MutationObserver(observerCallback);
     applyChanges();
     const watchTarget = document.getElementById("wp") || document.body;
     observer.observe(watchTarget, { childList: true, subtree: true });
@@ -11829,7 +12809,6 @@
     applyInterfaceCustomizations();
     applyImageHiding();
     manageImageToggleAllButtons();
-    renameAuthorLinks();
     applyGlobalLinkBehavior(); // <--- MODIFIED
     trackReadProgressInThread();
     try {

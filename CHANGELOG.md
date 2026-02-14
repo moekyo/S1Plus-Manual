@@ -1,5 +1,11 @@
 ## [Unreleased]
 
+### 🔐 安全与稳定性加固 (Security & Stability)
+
+- **DOM XSS 风险面收敛**: 对用户标记弹窗、阅读记录详情弹窗、用户标记列表和收藏列表等高频 UI，逐步移除直接拼接数据的 `innerHTML` 渲染路径，改为 `createElement` + `textContent` 的节点式渲染。
+- **高亮恢复机制重构**: 收藏搜索高亮恢复逻辑从 `innerHTML` 回填改为 DOM 快照还原，避免二次字符串注入路径并减少结构漂移风险。
+- **受控富文本入口统一清洗**: 继续沿用并收敛白名单清洗策略，仅在确有需要的受控场景（如图标、说明性富文本）保留经过 `sanitizeHtmlFragment` 的 `innerHTML` 写入。
+
 ### 🔧 远程同步健壮性加固 (Remote Sync Robustness)
 
 - **请求层重构**: 新增 `gmRequestWithTimeout` 和 `runRemoteRequestWithRetry`，为所有远程请求增加了 12 秒超时和最多 2 次指数退避重试，提升网络不稳定时的同步成功率。
