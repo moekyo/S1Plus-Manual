@@ -1,5 +1,26 @@
 ## [Unreleased]
 
+### 🔧 远程同步健壮性加固 (Remote Sync Robustness)
+
+- **请求层重构**: 新增 `gmRequestWithTimeout` 和 `runRemoteRequestWithRetry`，为所有远程请求增加了 12 秒超时和最多 2 次指数退避重试，提升网络不稳定时的同步成功率。
+- **跨标签页锁机制**: 新增后台同步锁和手动同步锁（基于 `GM_setValue`），防止多标签页同时执行同步操作。锁包含 TTL 过期、心跳续租和写后验证延迟（50ms），降低竞态条件风险。
+- **后台同步 single-flight + drain-loop**: 后台同步现在采用 single-flight 模式（防止重入），并在同步完成后检查是否有新的待同步数据，最多执行 3 轮 drain-loop，确保不遗漏同步期间的数据变更。
+- **乐观并发控制**: `pushRemoteData` 推送前会通过 `metadataOnly` 模式轻量级校验远端 `updated_at`，如果远端已被其他设备修改则中止推送并提示用户，有效防止多设备覆写。
+- **熔断器机制**: 后台自动同步连续失败 ≥3 次后自动暂停 10 分钟，避免无限重试。手动同步或强制推送成功后重置熔断器。启动时如熔断器生效会提示预计恢复时间。
+- **防抖分级优化**: 区分阅读进度变更（20s 防抖）和普通数据变更（5s 防抖），且低优先级的阅读进度防抖不会推迟已安排的普通数据同步。
+- **Gist 大文件支持**: 当 Gist 文件内容被截断（>1MB）时，自动通过 `raw_url` 二次拉取完整内容。新增 `@connect gist.githubusercontent.com` 域名白名单。
+- **同步诊断系统**: 新增同步诊断数据记录（最近尝试/成功/失败/冲突时间及失败原因），可通过设置面板三连击版本号激活隐藏诊断面板查看和复制诊断信息。
+- **冲突弹窗冷却**: 同类冲突弹窗 2 分钟内不重复弹出，避免频繁打扰用户。
+- **手动同步 single-flight**: 手动同步支持 promise 复用，同一标签页内不会重复发起；跨标签页通过锁阻止并发。
+- **`handleManualSync` 反模式修复**: 消除了 `new Promise(async ...)` 反模式，改为 IIFE + `.catch()` 兜底，确保未捕获异常不会被吞掉。
+- **`saveSettings` 参数优化**: 支持 options 对象调用方式（`{ suppressSyncTrigger, markDataChangedWhenSuppressed }`），兼容旧版布尔参数，提升调用可读性。
+- **`fetchRemoteData` 返回格式统一**: 始终返回 `{ data, meta }` 结构，删除 `includeMeta` 参数，所有调用点已同步更新。
+- **数据哈希缓存**: `exportLocalDataObject` 的 SHA-256 计算结果按 `lastModified` 时间戳缓存，避免短时间内重复计算。
+- **同步期间脏数据追踪**: 初始同步期间产生的本地数据变更不再丢弃，会记录 dirty 标记并在同步完成后自动补跑后台同步。
+- **后台同步重试上限**: `scheduleBackgroundSyncRetry` 新增最大重试次数限制（120 次），防止在异常情况下无限重试。
+- **启动同步结果增强处理**: 常规启动和每日首次同步均增加了对 `failure`、`conflict`、`skipped`（熔断器）、`force_pulled` 等状态的完整处理和用户提示。
+- **诊断面板样式提取**: 将诊断面板的内联样式提取为 `.s1p-diag-*` 系列 CSS 类，符合项目样式规范。
+
 ### 🎨 UI/UX 优化 (UI/UX Improvements)
 
 - **工具栏操作按钮高亮颜色优化**: 将 `s1p-authi-actions-wrapper` 中按钮在浅色模式下的悬停高亮颜色从通用的半透明黑改为设置面板的主题高亮色 (Sage Green)，并同步调整图标颜色为主题深蓝色，视觉效果与设置面板标签高度一致。
