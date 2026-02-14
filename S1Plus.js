@@ -267,6 +267,7 @@
   const SYNC_DIAGNOSTICS_KEY = "s1p_sync_diagnostics";
   const AUTO_SYNC_FAILURE_COUNT_KEY = "s1p_auto_sync_failure_count";
   const AUTO_SYNC_CIRCUIT_OPEN_UNTIL_KEY = "s1p_auto_sync_circuit_open_until";
+  const PENDING_AUTO_SYNC_KEY = "s1p_pending_auto_sync_request";
   const AUTO_SYNC_CIRCUIT_BREAKER_THRESHOLD = 3;
   const AUTO_SYNC_CIRCUIT_OPEN_DURATION_MS = 10 * 60 * 1000;
   const DOM_OBSERVER_DEBOUNCE_MS = 120;
@@ -3343,6 +3344,76 @@
     return { count: nextCount, opened: true, until };
   };
 
+  const markPendingAutoSyncRequest = (source = "general", lastModified = null) => {
+    GM_setValue(PENDING_AUTO_SYNC_KEY, {
+      source: String(source || "general"),
+      lastModified:
+        typeof lastModified === "number"
+          ? lastModified
+          : GM_getValue("s1p_last_modified", 0),
+      createdAt: Date.now(),
+    });
+  };
+
+  const clearPendingAutoSyncRequest = () => {
+    GM_deleteValue(PENDING_AUTO_SYNC_KEY);
+  };
+
+  const recoverPendingAutoSyncIfNeeded = () => {
+    const pending = GM_getValue(PENDING_AUTO_SYNC_KEY, null);
+    if (!pending || typeof pending !== "object") {
+      return;
+    }
+
+    const settings = getSettings();
+    if (
+      !settings.syncRemoteEnabled ||
+      !settings.syncAutoEnabled ||
+      !settings.syncRemoteGistId ||
+      !settings.syncRemotePat
+    ) {
+      return;
+    }
+
+    const pendingLastModified =
+      typeof pending.lastModified === "number" ? pending.lastModified : 0;
+    const currentLastModified = GM_getValue("s1p_last_modified", 0);
+    const effectiveLastModified = Math.max(pendingLastModified, currentLastModified);
+    const lastSyncTs = GM_getValue("s1p_last_sync_timestamp", 0);
+
+    if (effectiveLastModified <= lastSyncTs) {
+      clearPendingAutoSyncRequest();
+      return;
+    }
+
+    console.log(
+      "S1 Plus: 检测到跨页面遗留的待同步变更，正在补发后台同步任务。"
+    );
+    requestBackgroundSyncRun("pending_recovery", 600);
+  };
+
+  const bindPendingAutoSyncRecoveryHooks = () => {
+    if (window.__s1pPendingAutoSyncRecoveryBound) {
+      return;
+    }
+    window.__s1pPendingAutoSyncRecoveryBound = true;
+
+    // 处理浏览器后退缓存（bfcache）恢复场景：页面不会重新执行 main。
+    window.addEventListener("pageshow", (event) => {
+      if (event && event.persisted) {
+        console.log("S1 Plus: 检测到页面从 bfcache 恢复，检查待同步任务...");
+      }
+      recoverPendingAutoSyncIfNeeded();
+    });
+
+    // 处理标签页从后台恢复到前台的场景。
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") {
+        recoverPendingAutoSyncIfNeeded();
+      }
+    });
+  };
+
   const requestBackgroundSyncRun = (
     reason = "pending_update",
     delayMs = 0
@@ -3434,6 +3505,9 @@
       syncDirtyDuringSync = true;
       syncDirtyTimestamp = Math.max(syncDirtyTimestamp, nextLastModified);
       hasPendingBackgroundSync = true;
+      if (triggerSync) {
+        markPendingAutoSyncRequest(source, nextLastModified);
+      }
       console.log(
         "S1 Plus: 同步进行中检测到本地变更，已记录为待补同步任务。"
       );
@@ -3441,6 +3515,7 @@
     }
     GM_setValue("s1p_last_modified", nextLastModified);
     if (triggerSync) {
+      markPendingAutoSyncRequest(source, nextLastModified);
       debouncedTriggerRemoteSyncPush({ source });
     }
   };
@@ -5420,6 +5495,9 @@
 
     const syncMode = isStartupSync ? "startup" : "background";
     const asSuccessResult = (action) => {
+      if (action !== "skipped_push_on_startup") {
+        clearPendingAutoSyncRequest();
+      }
       resetAutoSyncFailureState();
       recordSyncSuccess(action, syncMode);
       updateLastSyncTimeDisplay();
@@ -5875,6 +5953,7 @@
       await pushRemoteData(localData);
       // [FIX] 强制推送后清除残留的清理标记
       GM_deleteValue("s1p_pending_cleanup_info");
+      clearPendingAutoSyncRequest();
       GM_setValue("s1p_last_sync_timestamp", Date.now());
       recordSyncSuccess("force_push", "manual");
       updateLastSyncTimeDisplay();
@@ -5909,6 +5988,7 @@
       if (result.success) {
         // [FIX] 强制拉取成功后清除残留的清理标记
         GM_deleteValue("s1p_pending_cleanup_info");
+        clearPendingAutoSyncRequest();
         GM_setValue("s1p_last_sync_timestamp", Date.now());
         recordSyncSuccess("force_pull", "manual");
         updateLastSyncTimeDisplay();
@@ -10034,6 +10114,7 @@
         let remoteMetaUpdatedAt;
         recordSyncAttempt("manual", "manual_sync");
         const noteManualSuccess = (action) => {
+          clearPendingAutoSyncRequest();
           resetAutoSyncFailureState();
           recordSyncSuccess(action, "manual");
           updateLastSyncTimeDisplay();
@@ -12722,6 +12803,8 @@
     }
 
     initializeNavbar();
+    bindPendingAutoSyncRecoveryHooks();
+    recoverPendingAutoSyncIfNeeded();
     initializeGenericDisplayPopover();
 
     let observer = null;
