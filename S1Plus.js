@@ -11,6 +11,7 @@
 // @grant        GM_deleteValue
 // @grant        GM_xmlhttpRequest
 // @grant        GM_openInTab
+// @grant        GM_addValueChangeListener
 // @connect      api.github.com
 // @connect      gist.githubusercontent.com
 // @license      MIT
@@ -271,6 +272,11 @@
   const AUTO_SYNC_CIRCUIT_BREAKER_THRESHOLD = 3;
   const AUTO_SYNC_CIRCUIT_OPEN_DURATION_MS = 10 * 60 * 1000;
   const DOM_OBSERVER_DEBOUNCE_MS = 120;
+  // 帖子列表页阅读进度刷新防抖，避免跨标签高频更新导致频繁重绘。
+  const READ_PROGRESS_LIST_REFRESH_DEBOUNCE_MS = 120;
+
+  let readProgressListRefreshTimer = null;
+  let pendingReadProgressDataForRefresh = null;
 
   let localDataHashCache = {
     cacheKey: null,
@@ -4209,6 +4215,47 @@
   };
 
   const getReadProgress = () => GM_getValue("s1p_read_progress", {});
+
+  const normalizeReadProgressData = (progress) => {
+    if (!progress || typeof progress !== "object" || Array.isArray(progress)) {
+      return { normalizedProgress: {}, hasLegacyType: Boolean(progress) };
+    }
+
+    const normalizedProgress = {};
+    let hasLegacyType = false;
+
+    Object.keys(progress).forEach((threadId) => {
+      const record = progress[threadId];
+      if (!record || typeof record !== "object" || Array.isArray(record)) {
+        hasLegacyType = true;
+        return;
+      }
+
+      const normalizedRecord = { ...record };
+      if (
+        Object.prototype.hasOwnProperty.call(normalizedRecord, "lastReadFloor") &&
+        normalizedRecord.lastReadFloor !== undefined &&
+        normalizedRecord.lastReadFloor !== null
+      ) {
+        const parsedFloor = parseInt(normalizedRecord.lastReadFloor, 10);
+        if (Number.isFinite(parsedFloor) && parsedFloor > 0) {
+          const normalizedFloor = String(parsedFloor);
+          if (normalizedRecord.lastReadFloor !== normalizedFloor) {
+            hasLegacyType = true;
+          }
+          normalizedRecord.lastReadFloor = normalizedFloor;
+        } else {
+          hasLegacyType = true;
+          delete normalizedRecord.lastReadFloor;
+        }
+      }
+
+      normalizedProgress[threadId] = normalizedRecord;
+    });
+
+    return { normalizedProgress, hasLegacyType };
+  };
+
   const saveReadProgress = (progress, suppressSyncTrigger = false) => {
     invalidateLocalDataHashCache();
     GM_setValue("s1p_read_progress", progress);
@@ -4216,14 +4263,67 @@
       updateLastModifiedTimestamp("read_progress");
     }
   };
+
+  const migrateLegacyReadProgressData = () => {
+    const progress = getReadProgress();
+    const { normalizedProgress, hasLegacyType } = normalizeReadProgressData(progress);
+    if (!hasLegacyType) {
+      return;
+    }
+
+    console.log("S1 Plus: 检测到旧版阅读进度类型，正在自动升级格式。");
+    saveReadProgress(normalizedProgress, true);
+  };
+
+  const shouldAdvanceThreadProgress = (
+    currentProgress,
+    nextPageNumber,
+    nextFloorNumber
+  ) => {
+    if (!currentProgress) {
+      return true;
+    }
+
+    const currentPage = parseInt(currentProgress.page, 10) || 0;
+    const currentFloor = parseInt(currentProgress.lastReadFloor, 10) || 0;
+
+    if (nextPageNumber > currentPage) {
+      return true;
+    }
+    if (nextPageNumber < currentPage) {
+      return false;
+    }
+
+    return nextFloorNumber > currentFloor;
+  };
+
   const updateThreadProgress = (threadId, postId, page, lastReadFloor) => {
     if (!postId || !page || !lastReadFloor) return;
+
+    const nextPageNumber = parseInt(page, 10);
+    const nextFloorNumber = parseInt(lastReadFloor, 10);
+    if (
+      !Number.isFinite(nextPageNumber) ||
+      nextPageNumber <= 0 ||
+      !Number.isFinite(nextFloorNumber) ||
+      nextFloorNumber <= 0
+    ) {
+      return;
+    }
+
     const progress = getReadProgress();
+    const currentProgress = progress[threadId];
+    if (
+      !shouldAdvanceThreadProgress(currentProgress, nextPageNumber, nextFloorNumber)
+    ) {
+      return;
+    }
+
     progress[threadId] = {
-      postId,
-      page,
+      postId: String(postId),
+      page: String(nextPageNumber),
       timestamp: Date.now(),
-      lastReadFloor: lastReadFloor,
+      lastReadFloor: String(nextFloorNumber),
     };
     saveReadProgress(progress);
   };
@@ -4799,8 +4899,11 @@
       }
 
       if (dataToImport.read_progress) {
-        saveReadProgress(dataToImport.read_progress, suppressSyncTrigger);
-        progressImported = Object.keys(dataToImport.read_progress).length;
+        const { normalizedProgress } = normalizeReadProgressData(
+          dataToImport.read_progress
+        );
+        saveReadProgress(normalizedProgress, suppressSyncTrigger);
+        progressImported = Object.keys(normalizedProgress).length;
       }
 
       if (dataToImport.bookmarked_replies) {
@@ -11022,90 +11125,186 @@
     return "var(--s1p-progress-cold)";
   };
 
-  const addProgressJumpButtons = () => {
-    const settings = getSettings();
-    const progressData = getReadProgress();
-    if (Object.keys(progressData).length === 0) return;
+  // 帖子列表行选择器：阅读进度按钮仅在列表场景下渲染/刷新。
+  const THREAD_LIST_ROW_SELECTOR =
+    'tbody[id^="normalthread_"], tbody[id^="stickthread_"]';
+  const isThreadListPage = () => Boolean(document.querySelector(THREAD_LIST_ROW_SELECTOR));
+
+  const normalizeReadProgressPayload = (payload) =>
+    payload && typeof payload === "object" && !Array.isArray(payload)
+      ? payload
+      : {};
+
+  const getThreadIdFromListRow = (row) => {
+    const threadIdMatch = row.id.match(/(?:normalthread_|stickthread_)(\d+)/);
+    return threadIdMatch ? threadIdMatch[1] : null;
+  };
+
+  const upsertProgressJumpButtonForRow = (row, progressData, now) => {
+    const container = row.querySelector("th");
+    if (!container) return;
+
+    const threadId = getThreadIdFromListRow(row);
+    if (!threadId) return;
+
+    const progress = progressData[threadId];
+    let progressContainer = container.querySelector(".s1p-progress-container");
+    if (!progress || !progress.page || !progress.postId) {
+      if (progressContainer) {
+        progressContainer.remove();
+      }
+      return;
+    }
+
+    const postId = String(progress.postId);
+    const page = String(progress.page);
+    const timestamp = Number(progress.timestamp) || 0;
+    const savedFloorText =
+      progress.lastReadFloor !== undefined &&
+      progress.lastReadFloor !== null &&
+      String(progress.lastReadFloor).trim() !== ""
+        ? String(progress.lastReadFloor)
+        : "";
+    const savedFloorNumber = parseInt(savedFloorText, 10);
+    const hasSavedFloor = Number.isFinite(savedFloorNumber) && savedFloorNumber > 0;
+    const hoursDiff = (now - timestamp) / 3600000;
+    const fcolor = getTimeBasedColor(hoursDiff);
+
+    const replyEl = row.querySelector("td.num a.xi2");
+    const currentReplies = replyEl
+      ? parseInt(replyEl.textContent.replace(/,/g, ""), 10) || 0
+      : 0;
+    const latestFloor = currentReplies + 1;
+    const newReplies =
+      hasSavedFloor && latestFloor > savedFloorNumber
+        ? latestFloor - savedFloorNumber
+        : 0;
+
+    const renderSignature = [
+      postId,
+      page,
+      savedFloorText,
+      newReplies,
+      fcolor,
+    ].join("|");
+
+    if (progressContainer && progressContainer.dataset.renderSignature === renderSignature) {
+      return;
+    }
+
+    if (!progressContainer) {
+      progressContainer = document.createElement("span");
+      progressContainer.className = "s1p-progress-container";
+      container.appendChild(progressContainer);
+    }
+    progressContainer.dataset.renderSignature = renderSignature;
+    progressContainer.replaceChildren();
+
+    const jumpBtn = document.createElement("a");
+    jumpBtn.className = "s1p-progress-jump-btn";
+    if (hasSavedFloor) {
+      jumpBtn.textContent = `P${page}-#${savedFloorText}`;
+      jumpBtn.title = `跳转至上次离开的第 ${page} 页，第 ${savedFloorText} 楼`;
+    } else {
+      jumpBtn.textContent = `P${page}`;
+      jumpBtn.title = `跳转至上次离开的第 ${page} 页`;
+    }
+
+    jumpBtn.href = `forum.php?mod=redirect&goto=findpost&ptid=${threadId}&pid=${postId}`;
+    jumpBtn.style.color = fcolor;
+    jumpBtn.style.borderColor = fcolor;
+
+    jumpBtn.addEventListener("mouseover", () => {
+      jumpBtn.style.backgroundColor = fcolor;
+      jumpBtn.style.color = "var(--s1p-white)";
+    });
+    jumpBtn.addEventListener("mouseout", () => {
+      jumpBtn.style.backgroundColor = "transparent";
+      jumpBtn.style.color = fcolor;
+    });
+
+    progressContainer.appendChild(jumpBtn);
+
+    if (newReplies > 0) {
+      const newRepliesBadge = document.createElement("span");
+      newRepliesBadge.className = "s1p-new-replies-badge";
+      newRepliesBadge.textContent = `+${newReplies}`;
+      newRepliesBadge.title = `有 ${newReplies} 条新回复`;
+      newRepliesBadge.style.backgroundColor = fcolor;
+      newRepliesBadge.style.borderColor = fcolor;
+      progressContainer.appendChild(newRepliesBadge);
+      jumpBtn.style.borderTopRightRadius = "0";
+      jumpBtn.style.borderBottomRightRadius = "0";
+    } else {
+      jumpBtn.style.borderTopRightRadius = "";
+      jumpBtn.style.borderBottomRightRadius = "";
+    }
+  };
+
+  const scheduleProgressJumpButtonsRefresh = (progressDataOverride = null) => {
+    if (
+      progressDataOverride &&
+      typeof progressDataOverride === "object" &&
+      !Array.isArray(progressDataOverride)
+    ) {
+      pendingReadProgressDataForRefresh = progressDataOverride;
+    }
+
+    if (readProgressListRefreshTimer) {
+      clearTimeout(readProgressListRefreshTimer);
+    }
+    readProgressListRefreshTimer = setTimeout(() => {
+      readProgressListRefreshTimer = null;
+      if (!getSettings().enableReadProgress) {
+        return;
+      }
+      if (!isThreadListPage()) {
+        return;
+      }
+
+      const progressDataToUse = pendingReadProgressDataForRefresh;
+      pendingReadProgressDataForRefresh = null;
+      addProgressJumpButtons(progressDataToUse);
+    }, READ_PROGRESS_LIST_REFRESH_DEBOUNCE_MS);
+  };
+
+  const initializeReadProgressCrossTabRefresh = () => {
+    if (window.__s1pReadProgressCrossTabRefreshBound) {
+      return;
+    }
+    window.__s1pReadProgressCrossTabRefreshBound = true;
+
+    if (typeof GM_addValueChangeListener === "function") {
+      GM_addValueChangeListener(
+        "s1p_read_progress",
+        (_key, _oldValue, newValue, isCrossContextChange) => {
+          if (!isCrossContextChange || !isThreadListPage()) {
+            return;
+          }
+          scheduleProgressJumpButtonsRefresh(newValue);
+        }
+      );
+    }
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible" && isThreadListPage()) {
+        scheduleProgressJumpButtonsRefresh();
+      }
+    });
+  };
+
+  const addProgressJumpButtons = (progressDataOverride = null) => {
+    const progressData =
+      progressDataOverride === null
+        ? getReadProgress()
+        : normalizeReadProgressPayload(progressDataOverride);
 
     const now = Date.now();
 
     document
-      .querySelectorAll('tbody[id^="normalthread_"], tbody[id^="stickthread_"]')
+      .querySelectorAll(THREAD_LIST_ROW_SELECTOR)
       .forEach((row) => {
-        const container = row.querySelector("th");
-        if (!container || container.querySelector(".s1p-progress-container"))
-          return;
-
-        const threadIdMatch = row.id.match(
-          /(?:normalthread_|stickthread_)(\d+)/
-        );
-        if (!threadIdMatch) return;
-        const threadId = threadIdMatch[1];
-
-        const progress = progressData[threadId];
-        if (progress && progress.page) {
-          const {
-            postId,
-            page,
-            timestamp,
-            lastReadFloor: savedFloor,
-          } = progress;
-          const hoursDiff = (now - (timestamp || 0)) / 3600000;
-          const fcolor = getTimeBasedColor(hoursDiff);
-
-          const replyEl = row.querySelector("td.num a.xi2");
-          const currentReplies = replyEl
-            ? parseInt(replyEl.textContent.replace(/,/g, "")) || 0
-            : 0;
-          const latestFloor = currentReplies + 1;
-          const newReplies =
-            savedFloor !== undefined && latestFloor > savedFloor
-              ? latestFloor - savedFloor
-              : 0;
-
-          const progressContainer = document.createElement("span");
-          progressContainer.className = "s1p-progress-container";
-
-          const jumpBtn = document.createElement("a");
-          jumpBtn.className = "s1p-progress-jump-btn";
-          if (savedFloor) {
-            jumpBtn.textContent = `P${page}-#${savedFloor}`;
-            jumpBtn.title = `跳转至上次离开的第 ${page} 页，第 ${savedFloor} 楼`;
-          } else {
-            jumpBtn.textContent = `P${page}`;
-            jumpBtn.title = `跳转至上次离开的第 ${page} 页`;
-          }
-
-          jumpBtn.href = `forum.php?mod=redirect&goto=findpost&ptid=${threadId}&pid=${postId}`;
-          jumpBtn.style.color = fcolor;
-          jumpBtn.style.borderColor = fcolor;
-
-          // [MODIFIED] 移除了此处的 click 事件监听器
-
-          jumpBtn.addEventListener("mouseover", () => {
-            jumpBtn.style.backgroundColor = fcolor;
-            jumpBtn.style.color = "var(--s1p-white)";
-          });
-          jumpBtn.addEventListener("mouseout", () => {
-            jumpBtn.style.backgroundColor = "transparent";
-            jumpBtn.style.color = fcolor;
-          });
-
-          progressContainer.appendChild(jumpBtn);
-          if (newReplies > 0) {
-            const newRepliesBadge = document.createElement("span");
-            newRepliesBadge.className = "s1p-new-replies-badge";
-            newRepliesBadge.textContent = `+${newReplies}`;
-            newRepliesBadge.title = `有 ${newReplies} 条新回复`;
-            newRepliesBadge.style.backgroundColor = fcolor;
-            newRepliesBadge.style.borderColor = fcolor;
-            progressContainer.appendChild(newRepliesBadge);
-            jumpBtn.style.borderTopRightRadius = "0";
-            jumpBtn.style.borderBottomRightRadius = "0";
-          }
-
-          container.appendChild(progressContainer);
-        }
+        upsertProgressJumpButtonForRow(row, progressData, now);
       });
   };
 
@@ -12794,6 +12993,7 @@
       checkTokenExpiry();
     }
 
+    migrateLegacyReadProgressData();
     cleanupOldReadProgress();
     detectS1Nux();
 
@@ -12806,6 +13006,7 @@
     bindPendingAutoSyncRecoveryHooks();
     recoverPendingAutoSyncIfNeeded();
     initializeGenericDisplayPopover();
+    initializeReadProgressCrossTabRefresh();
 
     let observer = null;
     let observerApplyTimer = null;
