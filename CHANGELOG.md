@@ -54,14 +54,16 @@
 - **修复 Token 过期弹窗与每日同步冲突**: 修复了当 Token 即将过期且触发每日首次同步时，两个弹窗可能互相覆盖的问题。现在同步弹窗优先显示，Token 过期提醒会在同步弹窗关闭后的下次加载中出现。
 - **修复关闭用户屏蔽时恢复不完整**: 修复了关闭用户屏蔽总开关时仅恢复帖子显示，而引用占位符、评分隐藏和提醒占位符可能残留的问题。现在无论开启还是关闭，引用、评分和提醒三类屏蔽效果都会统一刷新。
 - **修复导入旧格式数据时 `last_modified` 被写为 0**: 修复了导入缺少 `lastUpdated` 字段的旧格式数据时，时间戳被写入 `0` 导致远程同步误判为极旧版本的问题。现在会对导入的时间戳进行有效性校验，无效时回退为 `Date.now()`。
-- **标题屏蔽规则 ReDoS 防护**: 新增 `isRegexPatternHighRisk` 静态分析，检测嵌套量词、连续通配、超长正则和反向引用等高危模式，命中时自动降级为关键词匹配，避免页面卡顿。
+- **标题屏蔽规则 ReDoS 防护**: 新增 `getRegexPatternRiskReason` 逐字符状态机解析器，全面检测分组/管道/断言、通配符+量词、嵌套量词、`{n,m}` 范围上限、反向引用、超长正则等高危模式，命中时返回具体拒绝原因并自动降级为关键词匹配。正则编译启用 `u` (Unicode) flag，匹配输入截断至 160 字符。
+- **修复导航链接识别范围过宽**: 修复了 `getLinkType` 中 "header" 身份使用 `.closest(".wp")` 导致正文链接被误判为导航链接的问题。收窄为 `#nv, #mu, #um, #hd` 四个导航容器，消除误拦截。
+- **修复关闭阅读进度后观察器未停止**: 修复了在设置面板关闭阅读进度功能后，`IntersectionObserver`、事件监听器和保存定时器仍在后台运行的问题。关闭时显式调用 `resetReadProgressObserver`，`trackReadProgressInThread` 入口也增加了防御性清理。
 - **修复保存远程同步设置后触发条件偏宽**: 修复了仅填写 Gist ID 和 PAT（未开启远程同步总开关）就会触发首次同步的问题，现在需同时满足 `syncRemoteEnabled` 为开启状态。
 
 
 ### 🔧 技术改进与重构 (Refactoring & Tech Improvements)
 
 - **清理未使用配置项与死代码**: 移除了 `manualCleanupDays`、`threadBlockHoverDelay` 两个无引用的默认配置项，以及已无调用的 `performManualCleanup` 函数。
-- **MutationObserver 增量化**: 将全量 `applyChanges` 策略改为增量执行。新增 `classifyMutationBatch` 对 mutation 按线程区/帖子区/大节点三维分类，`applyIncrementalChanges` 仅执行变更区域对应的操作子集。`wp`/`ct` 级别变更或双区同时变更时安全回退到全量 `applyChanges`。无关 mutation 直接跳过，减少不必要的 DOM 操作。
+- **MutationObserver 增量化**: 将全量 `applyChanges` 策略改为增量执行。新增 `classifyMutationBatch` 对 mutation 按线程区/帖子区/大节点三维分类，`applyIncrementalChanges` 仅执行变更区域对应的操作子集。`wp`/`ct` 级别变更时安全回退到全量 `applyChanges`。`mutation.target` 仅做区域分类不触发全量回退，`applyGlobalLinkBehavior` 去重为单次调用。无关 mutation 直接跳过，减少不必要的 DOM 操作。
 - **高频集合匹配 `Array.includes` → `Set.has`**: 将 `hideBlockedUserQuotes`、`hideBlockedUserRatings`、`hideBlockedUserNotifications`、`applyUserThreadBlocklist` 中的数组查找改为 `Set.has`，在屏蔽用户较多时查找复杂度从 O(n) 降至 O(1)。
 - **标题规则正则编译缓存**: 将 `normalizePatternAsKeyword`、`isRegexPatternHighRisk` 提升为模块级函数，新增 `getCompiledTitleRuleMatchers` 基于签名缓存编译结果，规则未变时跳过重新编译。
 - **统一 Tab 事件绑定模式**: 引入 `rebindTabClickHandler` 工具函数，将 `bookmarks`、`users`、`threads`、`nav-settings` 四个 tab 原先不同的绑定方式（`dataset` 标记 / 手动 remove+add）统一为 `rebindTabClickHandler(tab, prev, handler)` 模式。

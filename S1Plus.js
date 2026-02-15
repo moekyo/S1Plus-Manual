@@ -4212,19 +4212,111 @@
       .replace(/\\(.)/g, "$1")
       .replace(/[.*+?^${}()|[\]\\]/g, "")
       .trim();
-  const isRegexPatternHighRisk = (pattern) => {
+  const TITLE_RULE_MAX_REGEX_LENGTH = 160;
+  const TITLE_RULE_MAX_QUANTIFIER_COUNT = 12;
+  const TITLE_RULE_MAX_REPEAT_UPPER_BOUND = 200;
+  const TITLE_RULE_MATCH_TITLE_MAX_LENGTH = 160;
+  const getRegexPatternRiskReason = (pattern) => {
     const raw = String(pattern || "");
-    if (raw.length > 180) return true;
+    if (!raw) return "空规则";
+    if (raw.length > TITLE_RULE_MAX_REGEX_LENGTH) {
+      return "规则长度过长";
+    }
+    if (/\\[1-9]/.test(raw)) {
+      return "包含反向引用";
+    }
+    if (/\(\?/.test(raw)) {
+      return "包含高级分组/断言";
+    }
 
-    const nestedQuantifierPattern =
-      /\((?:[^()\\]|\\.)*[+*](?:[^()\\]|\\.)*\)(?:[+*]|\{\d+,?\d*\})/;
-    if (nestedQuantifierPattern.test(raw)) return true;
+    let escaped = false;
+    let inCharClass = false;
+    let quantifierCount = 0;
+    let previousToken = "none";
 
-    if (/(?:\.\*){2,}|(?:\.\+){2,}/.test(raw)) return true;
+    for (let i = 0; i < raw.length; i++) {
+      const ch = raw[i];
+      if (escaped) {
+        escaped = false;
+        previousToken = "literal";
+        continue;
+      }
+      if (ch === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (inCharClass) {
+        if (ch === "]") {
+          inCharClass = false;
+          previousToken = "literal";
+        }
+        continue;
+      }
+      if (ch === "[") {
+        inCharClass = true;
+        previousToken = "literal";
+        continue;
+      }
+      if (ch === "(" || ch === ")" || ch === "|") {
+        return "包含分组或管道";
+      }
+      if (ch === ".") {
+        previousToken = "wildcard";
+        continue;
+      }
+      if (ch === "*" || ch === "+" || ch === "?") {
+        quantifierCount += 1;
+        if (previousToken === "wildcard") {
+          return "对通配符使用了贪婪量词";
+        }
+        previousToken = "quantifier";
+        continue;
+      }
+      if (ch === "{") {
+        const endIndex = raw.indexOf("}", i + 1);
+        if (endIndex === -1) {
+          return "量词语法不完整";
+        }
+        const body = raw.slice(i + 1, endIndex).trim();
+        if (!/^\d+(?:,\d*)?$/.test(body)) {
+          return "包含非标准量词";
+        }
+        const parts = body.split(",");
+        const min = parseInt(parts[0], 10);
+        const max =
+          parts.length > 1 && parts[1] !== ""
+            ? parseInt(parts[1], 10)
+            : null;
+        if (!Number.isFinite(min) || min > TITLE_RULE_MAX_REPEAT_UPPER_BOUND) {
+          return "量词上限过大";
+        }
+        if (
+          max !== null &&
+          (!Number.isFinite(max) ||
+            max > TITLE_RULE_MAX_REPEAT_UPPER_BOUND ||
+            max < min)
+        ) {
+          return "量词范围不安全";
+        }
+        quantifierCount += 1;
+        if (previousToken === "wildcard") {
+          return "对通配符使用了范围量词";
+        }
+        previousToken = "quantifier";
+        i = endIndex;
+        continue;
+      }
 
-    if (/\\[1-9]/.test(raw)) return true;
+      previousToken = "literal";
+    }
 
-    return false;
+    if (inCharClass || escaped) {
+      return "规则语法不完整";
+    }
+    if (quantifierCount > TITLE_RULE_MAX_QUANTIFIER_COUNT) {
+      return "量词数量过多";
+    }
+    return "";
   };
   let titleRuleMatcherCacheSignature = "";
   let titleRuleMatcherCache = [];
@@ -4241,16 +4333,17 @@
     const compiled = rules
       .map((r) => {
         const pattern = String(r.pattern || "");
-        if (isRegexPatternHighRisk(pattern)) {
+        const riskReason = getRegexPatternRiskReason(pattern);
+        if (riskReason) {
           const keyword = normalizePatternAsKeyword(pattern);
           if (!keyword) {
             console.warn(
-              `S1 Plus: 屏蔽规则 "${pattern}" 风险较高且无法安全降级为关键词，已忽略。`
+              `S1 Plus: 屏蔽规则 "${pattern}" 已拒绝（${riskReason}），且无法安全降级为关键词，已忽略。`
             );
             return null;
           }
           console.warn(
-            `S1 Plus: 屏蔽规则 "${pattern}" 风险较高，已降级为关键词匹配。`
+            `S1 Plus: 屏蔽规则 "${pattern}" 已拒绝（${riskReason}），已降级为关键词匹配。`
           );
           return {
             pattern,
@@ -4258,10 +4351,13 @@
           };
         }
         try {
-          const regex = new RegExp(pattern);
+          const regex = new RegExp(pattern, "u");
           return {
             pattern,
-            test: (title) => regex.test(title),
+            test: (title) =>
+              regex.test(
+                String(title || "").slice(0, TITLE_RULE_MATCH_TITLE_MAX_LENGTH)
+              ),
           };
         } catch (e) {
           console.error(
@@ -4749,6 +4845,7 @@
     }
 
     // --- [核心重构 V2] 真正与执行顺序无关的精确识别 ---
+    const navLinkScopeSelector = "#nv, #mu, #um, #hd";
     const getLinkType = (targetAnchor) => {
       // 步骤 1: 识别链接所具备的所有身份，不提前返回
       const identities = [];
@@ -4764,7 +4861,7 @@
       if (targetAnchor.closest(".xld.xlda")) {
         identities.push("notification");
       }
-      if (targetAnchor.closest(".wp")) {
+      if (targetAnchor.closest(navLinkScopeSelector)) {
         identities.push("header");
       }
 
@@ -9602,9 +9699,13 @@
             break;
           case "enableReadProgress":
             renderGeneralSettingsTab();
-            isChecked ? addProgressJumpButtons() : removeProgressJumpButtons();
-            if (!isChecked) {
+            if (isChecked) {
+              addProgressJumpButtons();
+              trackReadProgressInThread();
+            } else {
+              removeProgressJumpButtons();
               updateReadIndicatorUI(null);
+              resetReadProgressObserver({ clearObservedMarkers: true });
             }
             break;
           case "enableBookmarkReplies":
@@ -11717,8 +11818,13 @@
 
   const trackReadProgressInThread = () => {
     const settings = getSettings();
-    if (!settings.enableReadProgress || !document.getElementById("postlist"))
+    const postListElement = document.getElementById("postlist");
+    if (!settings.enableReadProgress || !postListElement) {
+      if (pageObserver || readProgressSaveTimeout || readProgressContext) {
+        resetReadProgressObserver({ clearObservedMarkers: true });
+      }
       return;
+    }
 
     let threadId = null;
     const threadIdMatch = window.location.href.match(/thread-(\d+)-/);
@@ -13280,7 +13386,18 @@
       };
 
       mutationList.forEach((mutation) => {
-        inspectNode(mutation.target);
+        if (
+          mutation.target instanceof Element &&
+          mutationTouchesSelector(mutation.target, threadMutationSelector)
+        ) {
+          touchesThreadArea = true;
+        }
+        if (
+          mutation.target instanceof Element &&
+          mutationTouchesSelector(mutation.target, postMutationSelector)
+        ) {
+          touchesPostArea = true;
+        }
         mutation.addedNodes.forEach(inspectNode);
         mutation.removedNodes.forEach(inspectNode);
       });
@@ -13289,6 +13406,7 @@
     };
     const applyIncrementalChanges = () => {
       const settings = getSettings();
+      let shouldRefreshGlobalLinkBehavior = false;
       if (observerPendingThreadRefresh) {
         if (settings.enablePostBlocking) {
           hideBlockedThreads();
@@ -13299,7 +13417,7 @@
         if (settings.enableReadProgress) {
           addProgressJumpButtons();
         }
-        applyGlobalLinkBehavior();
+        shouldRefreshGlobalLinkBehavior = true;
       }
       if (observerPendingPostRefresh) {
         if (settings.enableUserBlocking) {
@@ -13328,8 +13446,11 @@
         }
         applyImageHiding();
         manageImageToggleAllButtons();
-        applyGlobalLinkBehavior();
+        shouldRefreshGlobalLinkBehavior = true;
         trackReadProgressInThread();
+      }
+      if (shouldRefreshGlobalLinkBehavior) {
+        applyGlobalLinkBehavior();
       }
     };
 
@@ -13347,8 +13468,7 @@
         observerPendingPostRefresh || mutationFlags.touchesPostArea;
       observerRequireFullApply =
         observerRequireFullApply ||
-        mutationFlags.shouldForceFullApply ||
-        (mutationFlags.touchesThreadArea && mutationFlags.touchesPostArea);
+        mutationFlags.shouldForceFullApply;
       if (
         !observerPendingNavReinit &&
         !observerPendingThreadRefresh &&
