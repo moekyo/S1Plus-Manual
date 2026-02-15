@@ -6197,20 +6197,49 @@
    */
   const createInlineActionMenu = (anchorElement, buttons, onCloseCallback) => {
     // 确保同一时间只有一个菜单
-    document.querySelector(".s1p-inline-action-menu")?.remove();
+    const existingMenu = document.querySelector(".s1p-inline-action-menu");
+    if (existingMenu) {
+      if (
+        existingMenu.s1p_api &&
+        typeof existingMenu.s1p_api.destroy === "function"
+      ) {
+        existingMenu.s1p_api.destroy();
+      } else {
+        existingMenu.remove();
+      }
+    }
 
     const menu = document.createElement("div");
     menu.className = "s1p-inline-action-menu";
 
     let isClosing = false;
+    let hideTimeout = null;
+    const detachHoverListeners = () => {
+      anchorElement.removeEventListener("mouseleave", startHideTimer);
+      menu.removeEventListener("mouseenter", cancelHideTimer);
+      menu.removeEventListener("mouseleave", startHideTimer);
+    };
+    const notifyClose = () => {
+      if (onCloseCallback) onCloseCallback();
+    };
     const closeMenu = () => {
       if (isClosing) return;
       isClosing = true;
+      cancelHideTimer();
+      detachHoverListeners();
       menu.classList.remove("visible");
       setTimeout(() => {
         if (menu.parentNode) menu.remove();
-        if (onCloseCallback) onCloseCallback();
+        notifyClose();
       }, 200);
+    };
+    const destroyMenu = () => {
+      if (isClosing) return;
+      isClosing = true;
+      cancelHideTimer();
+      detachHoverListeners();
+      if (menu.parentNode) menu.remove();
+      notifyClose();
     };
 
     buttons.forEach((btnConfig) => {
@@ -6280,17 +6309,24 @@
     menu.style.left = `${left}px`;
 
     // --- 交互逻辑 ---
-    let hideTimeout;
     const startHideTimer = () => {
+      clearTimeout(hideTimeout);
       hideTimeout = setTimeout(closeMenu, 300);
     };
     const cancelHideTimer = () => {
       clearTimeout(hideTimeout);
+      hideTimeout = null;
     };
 
     anchorElement.addEventListener("mouseleave", startHideTimer);
     menu.addEventListener("mouseenter", cancelHideTimer);
     menu.addEventListener("mouseleave", startHideTimer);
+    menu.s1p_api = {
+      close: closeMenu,
+      destroy: destroyMenu,
+      startHideTimer,
+      cancelHideTimer,
+    };
 
     requestAnimationFrame(() => {
       menu.classList.add("visible");
@@ -12020,7 +12056,13 @@
       document.removeEventListener("click", closeAllMenusOnClick);
 
       menu.classList.remove("visible");
-      if (optionsMenu) optionsMenu.remove();
+      if (optionsMenu) {
+        if (optionsMenu.s1p_api && typeof optionsMenu.s1p_api.destroy === "function") {
+          optionsMenu.s1p_api.destroy();
+        } else {
+          optionsMenu.remove();
+        }
+      }
       setTimeout(() => menu.remove(), 200);
     };
 
@@ -12096,7 +12138,17 @@
 
     // --- 悬停与计时器逻辑 ---
     let hideTimeout;
+    let isMenuClosed = false;
+    const detachHoverListeners = () => {
+      anchorElement.removeEventListener("mouseleave", startHideTimer);
+      menu.removeEventListener("mouseenter", cancelHideTimer);
+      menu.removeEventListener("mouseleave", startHideTimer);
+    };
     const closeAllMenus = () => {
+      if (isMenuClosed) return;
+      isMenuClosed = true;
+      cancelHideTimer();
+      detachHoverListeners();
       menu.remove();
       document
         .querySelector(".s1p-inline-confirm-menu[data-s1p-confirm-for-tag]")
@@ -12123,7 +12175,7 @@
     const cancelHideTimer = () => clearTimeout(hideTimeout);
 
     // 将API附加到菜单元素上，以便其他部分（如确认菜单）可以调用
-    menu.s1p_api = { startHideTimer, cancelHideTimer };
+    menu.s1p_api = { startHideTimer, cancelHideTimer, destroy: closeAllMenus };
 
     anchorElement.addEventListener("mouseleave", startHideTimer);
     menu.addEventListener("mouseenter", cancelHideTimer);
