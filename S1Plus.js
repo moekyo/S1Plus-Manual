@@ -303,6 +303,8 @@
   const AUTO_SYNC_CIRCUIT_BREAKER_THRESHOLD = 3;
   const AUTO_SYNC_CIRCUIT_OPEN_DURATION_MS = 10 * 60 * 1000;
   const DOM_OBSERVER_DEBOUNCE_MS = 120;
+  const OBSERVER_INCREMENTAL_THREAD_ROW_LIMIT = 80;
+  const OBSERVER_INCREMENTAL_POST_TABLE_LIMIT = 80;
   // 帖子列表页阅读进度刷新防抖，避免跨标签高频更新导致频繁重绘。
   const READ_PROGRESS_LIST_REFRESH_DEBOUNCE_MS = 120;
   // 帖子页阅读进度持久化防抖：以内存批量累积为主，隐藏/卸载前强制落盘。
@@ -3894,8 +3896,40 @@
       document.getElementById(`stickthread_${id}`)
     )?.removeAttribute("style");
   };
-  const hideBlockedThreads = () =>
-    Object.keys(getBlockedThreads()).forEach(hideThread);
+  const THREAD_ROW_DOM_SELECTOR =
+    'tbody[id^="normalthread_"], tbody[id^="stickthread_"]';
+  const getThreadRowsFromScope = (rows = null) => {
+    if (Array.isArray(rows)) {
+      return rows.filter(
+        (row) =>
+          row instanceof Element &&
+          row.isConnected &&
+          row.matches(THREAD_ROW_DOM_SELECTOR)
+      );
+    }
+    if (rows instanceof Element) {
+      if (rows.matches(THREAD_ROW_DOM_SELECTOR)) {
+        return [rows];
+      }
+      return Array.from(rows.querySelectorAll(THREAD_ROW_DOM_SELECTOR));
+    }
+    return Array.from(document.querySelectorAll(THREAD_ROW_DOM_SELECTOR));
+  };
+  const applyBlockedThreadVisibilityForRows = (rows = null) => {
+    const blockedThreads = getBlockedThreads();
+    getThreadRowsFromScope(rows).forEach((row) => {
+      const threadId = row.id.replace(/^(normalthread_|stickthread_)/, "");
+      if (!threadId) return;
+      if (blockedThreads[threadId]) {
+        hideThread(threadId);
+      } else {
+        showThread(threadId);
+      }
+    });
+  };
+  const hideBlockedThreads = () => {
+    applyBlockedThreadVisibilityForRows();
+  };
 
   const blockUser = async (id, name, remark = "") => {
     // [优化] 函数变为异步并返回布尔值
@@ -4022,6 +4056,23 @@
     Object.keys(getBlockedPosts()).forEach(hidePost);
   };
 
+  const hideBlockedPostsInTables = (postTables = []) => {
+    const settings = getSettings();
+    if (!settings.enablePostBlocking || !Array.isArray(postTables)) return;
+
+    const blockedPostIdSet = new Set(Object.keys(getBlockedPosts()));
+    if (blockedPostIdSet.size === 0) return;
+
+    postTables.forEach((postTable) => {
+      if (!(postTable instanceof Element)) return;
+      const postIdMatch = postTable.id ? postTable.id.match(/^pid(\d+)$/) : null;
+      const postId = postIdMatch ? postIdMatch[1] : null;
+      if (postId && blockedPostIdSet.has(postId)) {
+        postTable.setAttribute("style", "display: none !important");
+      }
+    });
+  };
+
   const hideSystemBlockedPosts = () => {
     const settings = getSettings();
     if (settings.hideSystemBlockedPosts) {
@@ -4053,6 +4104,25 @@
 
     // 单次扫描帖子，避免“按用户多次全表查询”在大页上的额外开销。
     document.querySelectorAll("table.plhin").forEach((postTable) => {
+      const userLink = postTable.querySelector('.authi a[href*="space-uid-"]');
+      if (!userLink) return;
+
+      const uidMatch = userLink.href.match(/space-uid-(\d+)/);
+      if (uidMatch && uidMatch[1] && blockedUserIdSet.has(uidMatch[1])) {
+        postTable.setAttribute("style", "display: none !important");
+      }
+    });
+  };
+
+  const hideBlockedUsersPostsInTables = (postTables = []) => {
+    const settings = getSettings();
+    if (!settings.enableUserBlocking || !Array.isArray(postTables)) return;
+
+    const blockedUserIdSet = new Set(Object.keys(getBlockedUsers()));
+    if (blockedUserIdSet.size === 0) return;
+
+    postTables.forEach((postTable) => {
+      if (!(postTable instanceof Element)) return;
       const userLink = postTable.querySelector('.authi a[href*="space-uid-"]');
       if (!userLink) return;
 
@@ -4103,14 +4173,49 @@
     });
   };
 
-  const hideBlockedUserQuotes = () => {
+  const normalizeScopeRoots = (scopeRoots) => {
+    if (Array.isArray(scopeRoots)) {
+      return scopeRoots.filter((root) => root instanceof Element);
+    }
+    if (scopeRoots instanceof Element) {
+      return [scopeRoots];
+    }
+    return null;
+  };
+
+  const collectNodesByScope = (scopeRoots, selector) => {
+    const roots = normalizeScopeRoots(scopeRoots);
+    if (roots === null) {
+      return Array.from(document.querySelectorAll(selector));
+    }
+
+    const visited = new Set();
+    const nodes = [];
+    const addNode = (node) => {
+      if (!(node instanceof Element) || visited.has(node)) return;
+      visited.add(node);
+      nodes.push(node);
+    };
+
+    roots.forEach((root) => {
+      if (root.matches(selector)) {
+        addNode(root);
+      }
+      root.querySelectorAll(selector).forEach(addNode);
+    });
+
+    return nodes;
+  };
+
+  const hideBlockedUserQuotes = (scopeRoots = null) => {
     const settings = getSettings();
     const blockedUsers = getBlockedUsers();
     const blockedUserNameSet = new Set(
       Object.values(blockedUsers).map((u) => u.name)
     );
 
-    document.querySelectorAll("div.quote").forEach((quoteElement) => {
+    const targetQuotes = collectNodesByScope(scopeRoots, "div.quote");
+    targetQuotes.forEach((quoteElement) => {
       const quoteAuthorElement = quoteElement.querySelector(
         'blockquote font[color="#999999"]'
       );
@@ -4181,10 +4286,11 @@
   };
 
   // [MODIFIED] 函数现在可以同时处理隐藏和显示，是一个完整的“刷新”功能
-  const hideBlockedUserRatings = () => {
+  const hideBlockedUserRatings = (scopeRoots = null) => {
     const settings = getSettings();
     const blockedUserIdSet = new Set(Object.keys(getBlockedUsers()));
-    document.querySelectorAll("tbody.ratl_l tr").forEach((row) => {
+    const targetRows = collectNodesByScope(scopeRoots, "tbody.ratl_l tr");
+    targetRows.forEach((row) => {
       const userLink = row.querySelector('a[href*="space-uid-"]');
       if (userLink) {
         const uidMatch = userLink.href.match(/space-uid-(\d+)/);
@@ -4198,7 +4304,7 @@
   };
 
   // [修改 V2] 隐藏来自已屏蔽用户的消息提醒 (占位符替换模式)
-  const hideBlockedUserNotifications = () => {
+  const hideBlockedUserNotifications = (scopeRoots = null) => {
     const noticeContainer = document.querySelector(".xld.xlda");
     if (!noticeContainer) return;
 
@@ -4206,13 +4312,52 @@
     const isUserBlockingEnabled = settings.enableUserBlocking === true;
 
     const blockedUserIdSet = new Set(Object.keys(getBlockedUsers()));
+    const targetElements =
+      scopeRoots === null
+        ? Array.from(
+            noticeContainer.querySelectorAll(
+              "dl.cl, .s1p-notification-placeholder + .s1p-notification-wrapper"
+            )
+          )
+        : (() => {
+            const scopeNodes = collectNodesByScope(
+              scopeRoots,
+              [
+                "dl.cl",
+                ".s1p-notification-wrapper",
+                ".s1p-notification-placeholder",
+                ".xld.xlda",
+              ].join(", ")
+            );
+            const visited = new Set();
+            const nodes = [];
+            const addNode = (node) => {
+              if (!(node instanceof Element) || visited.has(node)) return;
+              if (!noticeContainer.contains(node)) return;
+              visited.add(node);
+              nodes.push(node);
+            };
+
+            scopeNodes.forEach((node) => {
+              if (node.matches("dl.cl, .s1p-notification-wrapper")) {
+                addNode(node);
+              }
+              if (node.matches(".s1p-notification-placeholder")) {
+                const next = node.nextElementSibling;
+                if (
+                  next &&
+                  next.classList.contains("s1p-notification-wrapper")
+                ) {
+                  addNode(next);
+                }
+              }
+            });
+
+            return nodes;
+          })();
 
     // 遍历所有提醒元素或已存在的占位符的下一个元素
-    noticeContainer
-      .querySelectorAll(
-        "dl.cl, .s1p-notification-placeholder + .s1p-notification-wrapper"
-      )
-      .forEach((element) => {
+    targetElements.forEach((element) => {
         let dlElement;
         // 确定我们正在处理的是原始dl还是wrapper内的dl
         if (element.classList.contains("s1p-notification-wrapper")) {
@@ -4459,38 +4604,48 @@
     return compiled;
   };
 
-  const hideThreadsByTitleKeyword = () => {
+  const applyKeywordThreadHidingForRows = (
+    rows = null,
+    { rebuildHiddenState = true } = {}
+  ) => {
     const rules = getTitleFilterRules().filter((r) => r.enabled && r.pattern);
-    const newHiddenThreads = {};
     const matchers = getCompiledTitleRuleMatchers(rules);
+    const targetRows = getThreadRowsFromScope(rows);
+    const nextHiddenThreads = rebuildHiddenState
+      ? {}
+      : { ...dynamicallyHiddenThreads };
 
-    document
-      .querySelectorAll('tbody[id^="normalthread_"], tbody[id^="stickthread_"]')
-      .forEach((row) => {
-        const titleElement = row.querySelector("th a.s.xst");
-        if (!titleElement) return;
+    targetRows.forEach((row) => {
+      const titleElement = row.querySelector("th a.s.xst");
+      if (!titleElement) return;
 
-        const title = titleElement.textContent.trim();
-        const threadId = row.id.replace(/^(normalthread_|stickthread_)/, "");
-        let isHidden = false;
+      const title = titleElement.textContent.trim();
+      const threadId = row.id.replace(/^(normalthread_|stickthread_)/, "");
+      if (!threadId) return;
+      let isHidden = false;
 
-        if (matchers.length > 0) {
-          const matchingRule = matchers.find((r) => r.test(title));
-          if (matchingRule) {
-            newHiddenThreads[threadId] = {
-              title,
-              pattern: matchingRule.pattern,
-            };
-            row.classList.add("s1p-hidden-by-keyword");
-            isHidden = true;
-          }
+      if (matchers.length > 0) {
+        const matchingRule = matchers.find((r) => r.test(title));
+        if (matchingRule) {
+          nextHiddenThreads[threadId] = {
+            title,
+            pattern: matchingRule.pattern,
+          };
+          row.classList.add("s1p-hidden-by-keyword");
+          isHidden = true;
         }
+      }
 
-        if (!isHidden) {
-          row.classList.remove("s1p-hidden-by-keyword");
-        }
-      });
-    dynamicallyHiddenThreads = newHiddenThreads;
+      if (!isHidden) {
+        row.classList.remove("s1p-hidden-by-keyword");
+        delete nextHiddenThreads[threadId];
+      }
+    });
+    dynamicallyHiddenThreads = nextHiddenThreads;
+  };
+
+  const hideThreadsByTitleKeyword = () => {
+    applyKeywordThreadHidingForRows(null, { rebuildHiddenState: true });
   };
 
   const getReadProgress = () => GM_getValue("s1p_read_progress", {});
@@ -4661,38 +4816,37 @@
     return groups.filter((group) => group.count > 0);
   };
 
-  const applyUserThreadBlocklist = () => {
+  const applyUserThreadBlocklistForRows = (rows = null) => {
     const blockedUsers = getBlockedUsers();
     const usersToBlockThreads = new Set(
       Object.keys(blockedUsers).filter((uid) => blockedUsers[uid].blockThreads)
     );
     if (usersToBlockThreads.size === 0) return;
 
-    document
-      .querySelectorAll('tbody[id^="normalthread_"], tbody[id^="stickthread_"]')
-      .forEach((row) => {
-        const authorLink = row.querySelector(
-          'td.by cite a[href*="space-uid-"]'
-        );
-        if (authorLink) {
-          const uidMatch = authorLink.href.match(/space-uid-(\d+)\.html/);
-          const authorId = uidMatch ? uidMatch[1] : null;
-          if (authorId && usersToBlockThreads.has(authorId)) {
-            const threadId = row.id.replace(
-              /^(normalthread_|stickthread_)/,
-              ""
+    getThreadRowsFromScope(rows).forEach((row) => {
+      const authorLink = row.querySelector(
+        'td.by cite a[href*="space-uid-"]'
+      );
+      if (authorLink) {
+        const uidMatch = authorLink.href.match(/space-uid-(\d+)\.html/);
+        const authorId = uidMatch ? uidMatch[1] : null;
+        if (authorId && usersToBlockThreads.has(authorId)) {
+          const threadId = row.id.replace(/^(normalthread_|stickthread_)/, "");
+          const titleElement = row.querySelector("th a.s.xst");
+          if (threadId && titleElement) {
+            blockThread(
+              threadId,
+              titleElement.textContent.trim(),
+              `user_${authorId}`
             );
-            const titleElement = row.querySelector("th a.s.xst");
-            if (threadId && titleElement) {
-              blockThread(
-                threadId,
-                titleElement.textContent.trim(),
-                `user_${authorId}`
-              );
-            }
           }
         }
-      });
+      }
+    });
+  };
+
+  const applyUserThreadBlocklist = () => {
+    applyUserThreadBlocklistForRows();
   };
 
   const unblockThreadsByUser = (userId) => {
@@ -4731,18 +4885,26 @@
     }
   };
 
-  const manageImageToggleAllButtons = () => {
+  const manageImageToggleAllButtons = (postTables = null) => {
     const settings = getSettings();
+    const targetPostTables = Array.isArray(postTables)
+      ? postTables.filter((table) => table instanceof Element)
+      : Array.from(document.querySelectorAll("table.plhin"));
 
     // 如果没有开启“默认隐藏图片”，则移除所有切换按钮并直接返回
     if (!settings.hideImagesByDefault) {
-      document
-        .querySelectorAll(".s1p-image-toggle-all-container")
-        .forEach((el) => el.remove());
+      const containers =
+        postTables === null
+          ? document.querySelectorAll(".s1p-image-toggle-all-container")
+          : targetPostTables.reduce((acc, table) => {
+            acc.push(...table.querySelectorAll(".s1p-image-toggle-all-container"));
+            return acc;
+          }, []);
+      containers.forEach((el) => el.remove());
       return;
     }
 
-    document.querySelectorAll("table.plhin").forEach((postContainer) => {
+    targetPostTables.forEach((postContainer) => {
       const imageContainers = postContainer.querySelectorAll(
         ".s1p-image-container"
       );
@@ -4798,10 +4960,34 @@
   };
 
   // --- [新增] 修改“只看该作者”为“只看该用户”的函数 ---
-  const renameAuthorLinks = () => {
-    document
-      .querySelectorAll('div.authi a[href*="authorid="], .s1p-authi-actions-wrapper a[href*="authorid="]')
-      .forEach((link) => {
+  const renameAuthorLinks = (scopeRoots = null) => {
+    const roots = Array.isArray(scopeRoots)
+      ? scopeRoots.filter((root) => root instanceof Element)
+      : scopeRoots instanceof Element
+        ? [scopeRoots]
+        : [];
+    const forEachScopedMatch = (selector, callback) => {
+      if (roots.length === 0) {
+        document.querySelectorAll(selector).forEach(callback);
+        return;
+      }
+      const visited = new Set();
+      roots.forEach((root) => {
+        if (root.matches(selector) && !visited.has(root)) {
+          visited.add(root);
+          callback(root);
+        }
+        root.querySelectorAll(selector).forEach((node) => {
+          if (visited.has(node)) return;
+          visited.add(node);
+          callback(node);
+        });
+      });
+    };
+
+    forEachScopedMatch(
+      'div.authi a[href*="authorid="], .s1p-authi-actions-wrapper a[href*="authorid="]',
+      (link) => {
         const linkText = link.textContent.trim();
         if (linkText === "只看该作者" || linkText === "只看该用户") {
           if (link.classList.contains("s1p-toolbar-icon-btn")) return; // 已处理过
@@ -4810,11 +4996,10 @@
           link.dataset.fullTag = "只看该用户";
           link.removeAttribute("title");
         }
-      });
+      }
+    );
     // 处理"显示全部楼层"链接
-    document
-      .querySelectorAll('div.authi a, .s1p-authi-actions-wrapper a')
-      .forEach((link) => {
+    forEachScopedMatch("div.authi a, .s1p-authi-actions-wrapper a", (link) => {
         const linkText = link.textContent.trim();
         if (linkText === "显示全部楼层") {
           if (link.classList.contains("s1p-toolbar-icon-btn")) return; // 已处理过
@@ -4835,16 +5020,33 @@
           link.dataset.fullTag = linkText;
           link.removeAttribute("title");
         }
-      });
+      }
+    );
   };
 
   // [MODIFIED] 图片隐藏功能的核心逻辑 (支持实时切换)
-  const applyImageHiding = () => {
+  const applyImageHiding = (postTables = null) => {
     const settings = getSettings();
+    const targetPostTables = Array.isArray(postTables)
+      ? postTables.filter((table) => table instanceof Element)
+      : null;
+    const collectBySelector = (selector) => {
+      if (!targetPostTables) {
+        return Array.from(document.querySelectorAll(selector));
+      }
+      const nodes = [];
+      targetPostTables.forEach((table) => {
+        if (table.matches(selector)) {
+          nodes.push(table);
+        }
+        nodes.push(...table.querySelectorAll(selector));
+      });
+      return nodes;
+    };
 
     // 如果功能未开启，则移除所有包装和占位符
     if (!settings.hideImagesByDefault) {
-      document.querySelectorAll(".s1p-image-container").forEach((container) => {
+      collectBySelector(".s1p-image-container").forEach((container) => {
         const originalElement =
           container.querySelector("img.zoom")?.closest("a") ||
           container.querySelector("img.zoom");
@@ -4857,7 +5059,7 @@
     }
 
     // 步骤 1: 遍历所有帖子图片，确保它们都被容器包裹并绑定切换事件
-    document.querySelectorAll("div.t_fsz img.zoom").forEach((img) => {
+    collectBySelector("div.t_fsz img.zoom").forEach((img) => {
       if (img.closest(".s1p-image-container")) return; // 如果已被包裹，则跳过
 
       const targetElement = img.closest("a") || img;
@@ -4893,7 +5095,7 @@
     });
 
     // 步骤 2: 根据当前设置和图片状态，同步所有容器的 class 和占位符文本
-    document.querySelectorAll(".s1p-image-container").forEach((container) => {
+    collectBySelector(".s1p-image-container").forEach((container) => {
       const placeholder = container.querySelector(".s1p-image-placeholder");
       if (!placeholder) return;
 
@@ -11195,7 +11397,9 @@
     document.body.appendChild(modal);
   };
 
-  const addBlockButtonsToThreads = () => {
+  const addBlockButtonsToThreadRows = (rows = []) => {
+    if (!Array.isArray(rows) || rows.length === 0) return;
+
     // 核心修复：注入一个空的表头单元格，以匹配内容行的列数。
     // S1Plus 原脚本会给每个内容行动态添加一个“操作列”单元格，但没有给表头行添加，导致列数不匹配。
     // 此代码通过给表头也添加一个对应的占位单元格，使得结构恢复一致，从而让浏览器能够正确对齐所有列。
@@ -11206,78 +11410,88 @@
       headerTr.appendChild(placeholderCell);
     }
 
-    document
-      .querySelectorAll('tbody[id^="normalthread_"], tbody[id^="stickthread_"]')
-      .forEach((row) => {
-        const tr = row.querySelector("tr");
-        if (
-          !tr ||
-          row.querySelector(".s1p-options-cell") ||
-          tr.classList.contains("ts") ||
-          tr.classList.contains("th")
-        )
-          return;
+    rows.forEach((row) => {
+      if (!(row instanceof Element) || !row.isConnected) return;
 
-        const titleElement = row.querySelector("th a.s.xst");
-        if (!titleElement) return;
+      const tr = row.querySelector("tr");
+      if (
+        !tr ||
+        row.querySelector(".s1p-options-cell") ||
+        tr.classList.contains("ts") ||
+        tr.classList.contains("th")
+      )
+        return;
 
-        const threadId = row.id.replace(/^(normalthread_|stickthread_)/, "");
-        const threadTitle = titleElement.textContent.trim();
+      const titleElement = row.querySelector("th a.s.xst");
+      if (!titleElement) return;
 
-        const optionsCell = document.createElement("td");
-        optionsCell.className = "s1p-options-cell";
+      const threadId = row.id.replace(/^(normalthread_|stickthread_)/, "");
+      const threadTitle = titleElement.textContent.trim();
 
-        const optionsBtn = document.createElement("div");
-        optionsBtn.className = "s1p-options-btn";
-        optionsBtn.title = "屏蔽此贴";
-        setSanitizedIconHtml(
-          optionsBtn,
-          `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>`
-        );
+      const optionsCell = document.createElement("td");
+      optionsCell.className = "s1p-options-cell";
 
-        const optionsMenu = document.createElement("div");
-        optionsMenu.className = "s1p-options-menu s1p-confirm-wrapper";
+      const optionsBtn = document.createElement("div");
+      optionsBtn.className = "s1p-options-btn";
+      optionsBtn.title = "屏蔽此贴";
+      setSanitizedIconHtml(
+        optionsBtn,
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>`
+      );
 
-        const content = buildConfirmationMarkup("屏蔽该帖子吗？");
-        optionsMenu.appendChild(content);
+      const optionsMenu = document.createElement("div");
+      optionsMenu.className = "s1p-options-menu s1p-confirm-wrapper";
 
-        const cancelBtn = optionsMenu.querySelector(".s1p-cancel");
-        const confirmBtn = optionsMenu.querySelector(".s1p-confirm");
+      const content = buildConfirmationMarkup("屏蔽该帖子吗？");
+      optionsMenu.appendChild(content);
 
-        cancelBtn.addEventListener("click", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
+      const cancelBtn = optionsMenu.querySelector(".s1p-cancel");
+      const confirmBtn = optionsMenu.querySelector(".s1p-confirm");
 
-          const parentCell = e.currentTarget.closest(".s1p-options-cell");
-          if (parentCell) {
-            optionsMenu.style.visibility = "hidden";
-            optionsMenu.style.opacity = "0";
-            parentCell.style.pointerEvents = "none";
-            setTimeout(() => {
-              optionsMenu.style.removeProperty("visibility");
-              optionsMenu.style.removeProperty("opacity");
-              parentCell.style.removeProperty("pointer-events");
-            }, 200);
-          }
-        });
+      cancelBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
 
-        confirmBtn.addEventListener("click", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          blockThread(threadId, threadTitle);
-        });
-
-        optionsCell.appendChild(optionsBtn);
-        optionsCell.appendChild(optionsMenu);
-        tr.appendChild(optionsCell);
-
-        const separatorRow = document.querySelector("#separatorline > tr.ts");
-        if (separatorRow && separatorRow.childElementCount < 6) {
-          const emptyTd = document.createElement("td");
-          emptyTd.className = "s1p-separator-placeholder";
-          separatorRow.appendChild(emptyTd);
+        const parentCell = e.currentTarget.closest(".s1p-options-cell");
+        if (parentCell) {
+          optionsMenu.style.visibility = "hidden";
+          optionsMenu.style.opacity = "0";
+          parentCell.style.pointerEvents = "none";
+          setTimeout(() => {
+            optionsMenu.style.removeProperty("visibility");
+            optionsMenu.style.removeProperty("opacity");
+            parentCell.style.removeProperty("pointer-events");
+          }, 200);
         }
       });
+
+      confirmBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        blockThread(threadId, threadTitle);
+      });
+
+      optionsCell.appendChild(optionsBtn);
+      optionsCell.appendChild(optionsMenu);
+      tr.appendChild(optionsCell);
+
+      const separatorRow = document.querySelector("#separatorline > tr.ts");
+      if (separatorRow && separatorRow.childElementCount < 6) {
+        const emptyTd = document.createElement("td");
+        emptyTd.className = "s1p-separator-placeholder";
+        separatorRow.appendChild(emptyTd);
+      }
+    });
+  };
+
+  const addBlockButtonsToThreads = () => {
+    addBlockButtonsToThreadRows(
+      Array.from(
+        document.querySelectorAll(
+          'tbody[id^="normalthread_"], tbody[id^="stickthread_"]'
+        )
+      )
+    );
   };
 
   const initializeTaggingPopover = () => {
@@ -11829,6 +12043,19 @@
       });
   };
 
+  const addProgressJumpButtonsForRows = (rows, progressDataOverride = null) => {
+    if (!Array.isArray(rows) || rows.length === 0) return;
+    const progressData =
+      progressDataOverride === null
+        ? getReadProgress()
+        : normalizeReadProgressPayload(progressDataOverride);
+    const now = Date.now();
+    rows.forEach((row) => {
+      if (!(row instanceof Element) || !row.isConnected) return;
+      upsertProgressJumpButtonForRow(row, progressData, now);
+    });
+  };
+
   const updateReadIndicatorUI = (targetPostId) => {
     // [核心修复] 在函数入口处直接检查设置状态
     // 如果开关关闭，则强制将目标ID设为null，这将触发后续的隐藏逻辑
@@ -12095,7 +12322,7 @@
     return null;
   };
 
-  const trackReadProgressInThread = () => {
+  const trackReadProgressInThread = (postTables = null) => {
     const settings = getSettings();
     const postListElement = document.getElementById("postlist");
     if (!settings.enableReadProgress || !postListElement) {
@@ -12196,8 +12423,14 @@
       window.addEventListener("pagehide", flushReadProgressSave);
     }
 
+    const scopedRoots = normalizeScopeRoots(postTables);
+    const targetPostTables =
+      scopedRoots === null
+        ? Array.from(document.querySelectorAll('table[id^="pid"]'))
+        : collectNodesByScope(scopedRoots, 'table[id^="pid"]');
+
     // [新增] 每次函数运行时（包括页面动态变化后），都检查并添加未被监控的帖子
-    document.querySelectorAll('table[id^="pid"]').forEach((el) => {
+    targetPostTables.forEach((el) => {
       // 使用一个自定义属性来避免重复添加监控
       if (!el.dataset.s1pObserved) {
         pageObserver.observe(el);
@@ -13661,10 +13894,32 @@
     let observerPendingThreadRefresh = false;
     let observerPendingPostRefresh = false;
     let observerRequireFullApply = false;
+    let observerPendingThreadRows = new Set();
+    let observerPendingPostTables = new Set();
+    let observerPendingThreadNeedsFullRefresh = false;
+    let observerPendingPostNeedsFullRefresh = false;
+    let observerPendingQuoteRefresh = false;
+    let observerPendingRatingsRefresh = false;
+    let observerPendingNotificationRefresh = false;
+    let observerPendingQuoteScopes = new Set();
+    let observerPendingRatingsScopes = new Set();
+    let observerPendingNotificationScopes = new Set();
     const threadMutationSelector =
       'tbody[id^="normalthread_"], tbody[id^="stickthread_"], #threadlist';
     const postMutationSelector =
       '#postlist, table[id^="pid"], .authi, .xld.xlda, tbody.ratl_l';
+    const threadRowSelector = 'tbody[id^="normalthread_"], tbody[id^="stickthread_"]';
+    const postTableSelector = 'table[id^="pid"]';
+    const quoteMutationSelector =
+      "div.quote, .s1p-quote-wrapper, .s1p-quote-placeholder";
+    const ratingsMutationSelector = "tbody.ratl_l";
+    const notificationMutationSelector =
+      ".xld.xlda, .s1p-notification-wrapper, .s1p-notification-placeholder";
+    const quoteScopeSelector =
+      "div.quote, .s1p-quote-wrapper, .s1p-quote-placeholder";
+    const ratingsScopeSelector = "tbody.ratl_l, tbody.ratl_l tr";
+    const notificationScopeSelector =
+      ".xld.xlda, dl.cl, .s1p-notification-wrapper, .s1p-notification-placeholder";
 
     const mutationTouchesSelector = (node, selector) => {
       if (!(node instanceof Element)) {
@@ -13672,11 +13927,28 @@
       }
       return node.matches(selector) || Boolean(node.querySelector(selector));
     };
+    const collectMatchesToSet = (node, selector, targetSet) => {
+      if (!(node instanceof Element)) return;
+      if (node.matches(selector)) {
+        targetSet.add(node);
+      }
+      node.querySelectorAll(selector).forEach((el) => targetSet.add(el));
+    };
     const classifyMutationBatch = (mutationList) => {
       let touchesThreadArea = false;
       let touchesPostArea = false;
       let shouldForceFullApply = false;
-      const inspectNode = (node) => {
+      let threadNeedsFullRefresh = false;
+      let postNeedsFullRefresh = false;
+      let touchesQuoteArea = false;
+      let touchesRatingsArea = false;
+      let touchesNotificationArea = false;
+      const addedThreadRows = new Set();
+      const addedPostTables = new Set();
+      const addedQuoteScopes = new Set();
+      const addedRatingsScopes = new Set();
+      const addedNotificationScopes = new Set();
+      const inspectNode = (node, { isRemoved = false } = {}) => {
         if (!(node instanceof Element)) {
           return;
         }
@@ -13686,9 +13958,35 @@
         }
         if (mutationTouchesSelector(node, threadMutationSelector)) {
           touchesThreadArea = true;
+          if (isRemoved) {
+            threadNeedsFullRefresh = true;
+          }
         }
         if (mutationTouchesSelector(node, postMutationSelector)) {
           touchesPostArea = true;
+          if (isRemoved) {
+            postNeedsFullRefresh = true;
+          }
+        }
+        if (mutationTouchesSelector(node, quoteMutationSelector)) {
+          touchesQuoteArea = true;
+        }
+        if (mutationTouchesSelector(node, ratingsMutationSelector)) {
+          touchesRatingsArea = true;
+        }
+        if (mutationTouchesSelector(node, notificationMutationSelector)) {
+          touchesNotificationArea = true;
+        }
+        if (!isRemoved) {
+          collectMatchesToSet(node, threadRowSelector, addedThreadRows);
+          collectMatchesToSet(node, postTableSelector, addedPostTables);
+          collectMatchesToSet(node, quoteScopeSelector, addedQuoteScopes);
+          collectMatchesToSet(node, ratingsScopeSelector, addedRatingsScopes);
+          collectMatchesToSet(
+            node,
+            notificationScopeSelector,
+            addedNotificationScopes
+          );
         }
       };
 
@@ -13698,43 +13996,163 @@
           mutationTouchesSelector(mutation.target, threadMutationSelector)
         ) {
           touchesThreadArea = true;
+          if (mutation.addedNodes.length === 0) {
+            threadNeedsFullRefresh = true;
+          }
         }
         if (
           mutation.target instanceof Element &&
           mutationTouchesSelector(mutation.target, postMutationSelector)
         ) {
           touchesPostArea = true;
+          if (mutation.addedNodes.length === 0) {
+            postNeedsFullRefresh = true;
+          }
         }
-        mutation.addedNodes.forEach(inspectNode);
-        mutation.removedNodes.forEach(inspectNode);
+        if (
+          mutation.target instanceof Element &&
+          mutation.target.matches(quoteMutationSelector)
+        ) {
+          touchesQuoteArea = true;
+          collectMatchesToSet(
+            mutation.target,
+            quoteScopeSelector,
+            addedQuoteScopes
+          );
+        }
+        if (
+          mutation.target instanceof Element &&
+          mutation.target.matches(ratingsMutationSelector)
+        ) {
+          touchesRatingsArea = true;
+          collectMatchesToSet(
+            mutation.target,
+            ratingsScopeSelector,
+            addedRatingsScopes
+          );
+        }
+        if (
+          mutation.target instanceof Element &&
+          mutation.target.matches(notificationMutationSelector)
+        ) {
+          touchesNotificationArea = true;
+          collectMatchesToSet(
+            mutation.target,
+            notificationScopeSelector,
+            addedNotificationScopes
+          );
+        }
+        mutation.addedNodes.forEach((node) => inspectNode(node, { isRemoved: false }));
+        mutation.removedNodes.forEach((node) => inspectNode(node, { isRemoved: true }));
       });
 
-      return { touchesThreadArea, touchesPostArea, shouldForceFullApply };
+      return {
+        touchesThreadArea,
+        touchesPostArea,
+        shouldForceFullApply,
+        threadNeedsFullRefresh,
+        postNeedsFullRefresh,
+        touchesQuoteArea,
+        touchesRatingsArea,
+        touchesNotificationArea,
+        addedThreadRows,
+        addedPostTables,
+        addedQuoteScopes,
+        addedRatingsScopes,
+        addedNotificationScopes,
+      };
     };
     const applyIncrementalChanges = () => {
       const settings = getSettings();
       let shouldRefreshGlobalLinkBehavior = false;
+      const pendingThreadRows = Array.from(observerPendingThreadRows).filter(
+        (row) => row instanceof Element && row.isConnected
+      );
+      const pendingPostTables = Array.from(observerPendingPostTables).filter(
+        (table) => table instanceof Element && table.isConnected
+      );
+      const pendingQuoteScopes = Array.from(observerPendingQuoteScopes).filter(
+        (node) => node instanceof Element && node.isConnected
+      );
+      const pendingRatingsScopes = Array.from(observerPendingRatingsScopes).filter(
+        (node) => node instanceof Element && node.isConnected
+      );
+      const pendingNotificationScopes = Array.from(
+        observerPendingNotificationScopes
+      ).filter((node) => node instanceof Element && node.isConnected);
+      const canUseScopedThreadRefresh =
+        pendingThreadRows.length > 0 &&
+        pendingThreadRows.length <= OBSERVER_INCREMENTAL_THREAD_ROW_LIMIT &&
+        !observerPendingThreadNeedsFullRefresh;
+      const canUseScopedPostRefresh =
+        pendingPostTables.length > 0 &&
+        pendingPostTables.length <= OBSERVER_INCREMENTAL_POST_TABLE_LIMIT &&
+        !observerPendingPostNeedsFullRefresh;
+
       if (observerPendingThreadRefresh) {
         if (settings.enablePostBlocking) {
-          hideBlockedThreads();
-          hideThreadsByTitleKeyword();
-          addBlockButtonsToThreads();
-          applyUserThreadBlocklist();
+          if (canUseScopedThreadRefresh) {
+            addBlockButtonsToThreadRows(pendingThreadRows);
+            applyBlockedThreadVisibilityForRows(pendingThreadRows);
+            applyKeywordThreadHidingForRows(pendingThreadRows, {
+              rebuildHiddenState: false,
+            });
+            applyUserThreadBlocklistForRows(pendingThreadRows);
+          } else {
+            hideBlockedThreads();
+            hideThreadsByTitleKeyword();
+            addBlockButtonsToThreads();
+            applyUserThreadBlocklist();
+          }
         }
         if (settings.enableReadProgress) {
-          addProgressJumpButtons();
+          if (canUseScopedThreadRefresh) {
+            addProgressJumpButtonsForRows(pendingThreadRows);
+          } else {
+            addProgressJumpButtons();
+          }
         }
         shouldRefreshGlobalLinkBehavior = true;
       }
       if (observerPendingPostRefresh) {
         if (settings.enableUserBlocking) {
-          hideBlockedUsersPosts();
-          hideBlockedUserQuotes();
-          hideBlockedUserRatings();
-          hideBlockedUserNotifications();
+          if (canUseScopedPostRefresh) {
+            hideBlockedUsersPostsInTables(pendingPostTables);
+          } else {
+            hideBlockedUsersPosts();
+          }
+          if (observerPendingQuoteRefresh) {
+            const quoteScopeRoots =
+              pendingQuoteScopes.length > 0
+                ? pendingQuoteScopes
+                : canUseScopedPostRefresh
+                  ? pendingPostTables
+                  : null;
+            hideBlockedUserQuotes(quoteScopeRoots);
+          }
+          if (observerPendingRatingsRefresh) {
+            const ratingsScopeRoots =
+              pendingRatingsScopes.length > 0
+                ? pendingRatingsScopes
+                : canUseScopedPostRefresh
+                  ? pendingPostTables
+                  : null;
+            hideBlockedUserRatings(ratingsScopeRoots);
+          }
+          if (observerPendingNotificationRefresh) {
+            const notificationScopeRoots =
+              pendingNotificationScopes.length > 0
+                ? pendingNotificationScopes
+                : null;
+            hideBlockedUserNotifications(notificationScopeRoots);
+          }
         }
         if (settings.enablePostBlocking) {
-          hideBlockedPosts();
+          if (canUseScopedPostRefresh) {
+            hideBlockedPostsInTables(pendingPostTables);
+          } else {
+            hideBlockedPosts();
+          }
         }
         if (settings.hideSystemBlockedPosts) {
           hideSystemBlockedPosts();
@@ -13745,16 +14163,27 @@
           settings.enableBookmarkReplies ||
           settings.enablePostBlocking
         ) {
-          addActionsToPostFooter();
+          if (canUseScopedPostRefresh) {
+            pendingPostTables.forEach(addActionsToSinglePost);
+          } else {
+            addActionsToPostFooter();
+          }
         }
-        renameAuthorLinks();
+        renameAuthorLinks(canUseScopedPostRefresh ? pendingPostTables : null);
         if (settings.enableUserTagging) {
           initializeTaggingPopover();
         }
-        applyImageHiding();
-        manageImageToggleAllButtons();
+        if (canUseScopedPostRefresh) {
+          applyImageHiding(pendingPostTables);
+          manageImageToggleAllButtons(pendingPostTables);
+        } else {
+          applyImageHiding();
+          manageImageToggleAllButtons();
+        }
         shouldRefreshGlobalLinkBehavior = true;
-        trackReadProgressInThread();
+        trackReadProgressInThread(
+          canUseScopedPostRefresh ? pendingPostTables : null
+        );
       }
       if (shouldRefreshGlobalLinkBehavior) {
         applyGlobalLinkBehavior();
@@ -13776,6 +14205,31 @@
       observerRequireFullApply =
         observerRequireFullApply ||
         mutationFlags.shouldForceFullApply;
+      observerPendingThreadNeedsFullRefresh =
+        observerPendingThreadNeedsFullRefresh ||
+        mutationFlags.threadNeedsFullRefresh;
+      observerPendingPostNeedsFullRefresh =
+        observerPendingPostNeedsFullRefresh ||
+        mutationFlags.postNeedsFullRefresh;
+      observerPendingQuoteRefresh =
+        observerPendingQuoteRefresh || mutationFlags.touchesQuoteArea;
+      observerPendingRatingsRefresh =
+        observerPendingRatingsRefresh || mutationFlags.touchesRatingsArea;
+      observerPendingNotificationRefresh =
+        observerPendingNotificationRefresh || mutationFlags.touchesNotificationArea;
+      mutationFlags.addedThreadRows.forEach((row) => observerPendingThreadRows.add(row));
+      mutationFlags.addedPostTables.forEach((table) =>
+        observerPendingPostTables.add(table)
+      );
+      mutationFlags.addedQuoteScopes.forEach((node) =>
+        observerPendingQuoteScopes.add(node)
+      );
+      mutationFlags.addedRatingsScopes.forEach((node) =>
+        observerPendingRatingsScopes.add(node)
+      );
+      mutationFlags.addedNotificationScopes.forEach((node) =>
+        observerPendingNotificationScopes.add(node)
+      );
       if (
         !observerPendingNavReinit &&
         !observerPendingThreadRefresh &&
@@ -13808,6 +14262,16 @@
           observerPendingThreadRefresh = false;
           observerPendingPostRefresh = false;
           observerRequireFullApply = false;
+          observerPendingThreadRows.clear();
+          observerPendingPostTables.clear();
+          observerPendingThreadNeedsFullRefresh = false;
+          observerPendingPostNeedsFullRefresh = false;
+          observerPendingQuoteRefresh = false;
+          observerPendingRatingsRefresh = false;
+          observerPendingNotificationRefresh = false;
+          observerPendingQuoteScopes.clear();
+          observerPendingRatingsScopes.clear();
+          observerPendingNotificationScopes.clear();
           const watchTarget = document.getElementById("wp") || document.body;
           observer.observe(watchTarget, { childList: true, subtree: true });
           observerIsApplying = false;

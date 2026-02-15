@@ -69,7 +69,7 @@
 
 - **清理未使用配置项与死代码**: 移除了 `manualCleanupDays`、`threadBlockHoverDelay` 两个无引用的默认配置项，以及已无调用的 `performManualCleanup` 函数。
 - **`getSettings()` 副作用写入抽离**: 将迁移逻辑从 getter 中剥离为纯函数 `buildNormalizedSettings`，`getSettings()` 不再触发 `saveSettings`。新增 `migrateLegacySettingsIfNeeded` 在启动阶段一次性执行迁移并落盘。导入路径也统一走 `buildNormalizedSettings` 归一化。
-- **MutationObserver 增量化**: 将全量 `applyChanges` 策略改为增量执行。新增 `classifyMutationBatch` 对 mutation 按线程区/帖子区/大节点三维分类，`applyIncrementalChanges` 仅执行变更区域对应的操作子集。`wp`/`ct` 级别变更时安全回退到全量 `applyChanges`。`mutation.target` 仅做区域分类不触发全量回退，`applyGlobalLinkBehavior` 去重为单次调用。无关 mutation 直接跳过，减少不必要的 DOM 操作。
+- **MutationObserver 节点级作用域增量化**: 将全量 `applyChanges` 策略改为节点级作用域增量执行。`classifyMutationBatch` 对 mutation 按线程行/帖子表/引用/评分/提醒五维分类并收集具体新增 DOM 节点引用。`applyIncrementalChanges` 在新增节点 ≤80 且无删除操作时走作用域路径，仅处理变更节点；超限或有删除时安全回退全量。核心屏蔽/关键词/用户线程屏蔽函数统一提取为 `*ForRows` 可复用变体，scope 和全量共享同一份逻辑。引用/评分/提醒/图片隐藏/进度跟踪等函数全部支持 `scopeRoots` 参数。新增 `restoreManagedVisibilityAfterDataImport` 用于导入后精确恢复可见性。
 - **高频集合匹配 `Array.includes` → `Set.has`**: 将 `hideBlockedUserQuotes`、`hideBlockedUserRatings`、`hideBlockedUserNotifications`、`applyUserThreadBlocklist` 中的数组查找改为 `Set.has`，在屏蔽用户较多时查找复杂度从 O(n) 降至 O(1)。
 - **`hideBlockedUsersPosts` 单次扫描优化**: 将"按用户多次全表查询"改为单次 `querySelectorAll("table.plhin")` 扫描 + `Set.has` 判定，复杂度从 O(N×M) 降至 O(M)。
 - **阅读进度写入批量落盘**: 引入 `pendingThreadProgressWrites` 内存缓冲层，滚动期间仅写入内存对象，5 秒防抖后批量 `GM_setValue`。`visibilitychange(hidden)`、`beforeunload`、`pagehide` 三重落盘保障不丢数据。`resetReadProgressObserver` 新增 `flushPendingProgress` 参数控制关闭/导入时的落盘策略。
