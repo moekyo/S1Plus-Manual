@@ -3868,24 +3868,36 @@
     // [优化] 函数变为异步并返回布尔值
     const settings = getSettings();
     const b = getBlockedUsers();
+    const shouldSyncToNativeBlacklist = settings.syncWithNativeBlacklist === true;
     b[id] = {
       name,
       timestamp: Date.now(),
       blockThreads: settings.blockThreadsOnUserBlock,
-      // [新增] 根据设置决定是否添加同步标记
-      addedToNativeBlacklist: settings.syncWithNativeBlacklist,
+      // [修复] 仅在论坛黑名单同步成功后再标记为 true。
+      addedToNativeBlacklist: false,
       remark: remark, // [新增] 用户备注
     };
     saveBlockedUsers(b);
 
-    // [修改] 只有在开关开启时才执行同步操作
-    if (settings.syncWithNativeBlacklist) {
+    let nativeSyncSucceeded = !shouldSyncToNativeBlacklist;
+    if (shouldSyncToNativeBlacklist) {
       const formhash = getFormhash();
-      if (formhash) {
+      if (!formhash) {
+        nativeSyncSucceeded = false;
+      } else {
         try {
           await addToNativeBlacklist(name, formhash);
+          nativeSyncSucceeded = true;
         } catch (e) {
-          return false; // 同步失败
+          nativeSyncSucceeded = false;
+        }
+      }
+
+      if (nativeSyncSucceeded) {
+        const latestBlockedUsers = getBlockedUsers();
+        if (latestBlockedUsers[id]) {
+          latestBlockedUsers[id].addedToNativeBlacklist = true;
+          saveBlockedUsers(latestBlockedUsers);
         }
       }
     }
@@ -3894,7 +3906,7 @@
     hideBlockedUserQuotes();
     hideBlockedUserRatings();
     if (b[id].blockThreads) applyUserThreadBlocklist();
-    return true; // 全部成功
+    return nativeSyncSucceeded;
   };
 
   const unblockUser = async (id) => {
@@ -3913,12 +3925,13 @@
     // [修改] 只有当用户有“已同步”标记时，才执行移除操作
     if (userToUnblock.addedToNativeBlacklist === true) {
       const formhash = getFormhash();
-      if (formhash) {
-        try {
-          await removeFromNativeBlacklist(id, formhash);
-        } catch (e) {
-          return false; // 同步失败
-        }
+      if (!formhash) {
+        return false;
+      }
+      try {
+        await removeFromNativeBlacklist(id, formhash);
+      } catch (e) {
+        return false; // 同步失败
       }
     }
 
@@ -12266,7 +12279,8 @@
     if (
       !settings.enableUserBlocking &&
       !settings.enableUserTagging &&
-      !settings.enableBookmarkReplies
+      !settings.enableBookmarkReplies &&
+      !settings.enablePostBlocking
     )
       return;
     document

@@ -46,6 +46,8 @@
 
 - **修复导入数据后阅读进度跟踪中断**: 修复了导入数据时 `pageObserver.disconnect()` 后未重建观察器、且已标记 `data-s1p-observed` 的元素不会被重新监控的问题。将阅读进度相关状态（观察器、定时器、可见帖子集合、上下文、事件监听器）提升为模块级命名变量，新增 `resetReadProgressObserver` 执行完整清理，并在 `importLocalData` 的 `finally` 块中调用 `trackReadProgressInThread` 确保观察器始终被重建。
 - **修复设置面板事件监听累积绑定**: 修复了 `renderThreadTab` / `renderNavSettingsTab` 每次重渲染都会重复 `addEventListener`、导致一次点击触发多次逻辑的问题。改为在闭包顶层持有命名处理函数引用，重渲染时先 `removeEventListener` 再 `addEventListener`，确保事件处理器始终唯一。
+- **修复仅开启楼层屏蔽时动作栏不注入**: 修复了 `addActionsToPostFooter` 的早退条件未包含 `enablePostBlocking`，导致仅开启楼层屏蔽功能时"屏蔽该楼层"按钮不会出现的问题。
+- **修复论坛黑名单同步状态与真实状态不一致**: 将 `blockUser` 中 `addedToNativeBlacklist` 的写入时机从"乐观写入"改为"请求成功后回写"，并在 `formhash` 缺失时正确标记为失败。`unblockUser` 中 `formhash` 缺失时也显式返回失败，避免用户误判同步结果。
 - **修复同帖多标签旧标签覆盖新进度**: 修复了同一帖子在多个标签页中打开时，后关闭的旧标签可能将阅读进度回写到更早楼层的问题。新增 `shouldAdvanceThreadProgress` 单向前进判断，仅允许页码或楼层号前进，更小的值将被丢弃。同时增加了输入参数校验，防止无效数据写入。
 - **列表页进度按钮跨标签实时刷新**: 帖子列表页的阅读进度跳转按钮现在可以跨标签实时更新。通过 `GM_addValueChangeListener` 监听其他标签对进度数据的修改，并在标签页重新变为可见时补充刷新。进度按钮重构为增量 upsert 模式（基于 `renderSignature` 跳过无变化行），避免全量重建导致的闪烁。
 - **统一 `lastReadFloor` 数据类型**: 将阅读进度中的 `lastReadFloor` 字段统一为 string 类型存储，新增 `normalizeReadProgressData` 迁移逻辑自动升级旧版 number 类型数据，导入入口也同步做格式校验。
