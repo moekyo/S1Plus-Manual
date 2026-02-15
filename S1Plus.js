@@ -346,6 +346,9 @@
   const CORE_DATA_CACHE_TTL_MS = 1000;
   const OBSERVER_INCREMENTAL_THREAD_ROW_LIMIT = 80;
   const OBSERVER_INCREMENTAL_POST_TABLE_LIMIT = 80;
+  const OBSERVER_INCREMENTAL_QUOTE_SCOPE_LIMIT = 80;
+  const OBSERVER_INCREMENTAL_RATINGS_SCOPE_LIMIT = 80;
+  const OBSERVER_INCREMENTAL_NOTIFICATION_SCOPE_LIMIT = 80;
   // 帖子列表页阅读进度刷新防抖，避免跨标签高频更新导致频繁重绘。
   const READ_PROGRESS_LIST_REFRESH_DEBOUNCE_MS = 120;
   // 帖子页阅读进度持久化防抖：以内存批量累积为主，隐藏/卸载前强制落盘。
@@ -14188,6 +14191,9 @@
     let observerPendingQuoteScopes = new Set();
     let observerPendingRatingsScopes = new Set();
     let observerPendingNotificationScopes = new Set();
+    let observerPendingQuoteScopesOverflow = false;
+    let observerPendingRatingsScopesOverflow = false;
+    let observerPendingNotificationScopesOverflow = false;
     const threadMutationSelector =
       'tbody[id^="normalthread_"], tbody[id^="stickthread_"], #threadlist';
     const postMutationSelector =
@@ -14211,12 +14217,25 @@
       }
       return node.matches(selector) || Boolean(node.querySelector(selector));
     };
-    const collectMatchesToSet = (node, selector, targetSet) => {
-      if (!(node instanceof Element)) return;
-      if (node.matches(selector)) {
-        targetSet.add(node);
+    const collectMatchesToSet = (
+      node,
+      selector,
+      targetSet,
+      maxSize = Number.POSITIVE_INFINITY
+    ) => {
+      if (!(node instanceof Element) || targetSet.size > maxSize) return;
+      const addNode = (targetNode) => {
+        targetSet.add(targetNode);
+        return targetSet.size <= maxSize;
+      };
+      if (node.matches(selector) && !addNode(node)) {
+        return;
       }
-      node.querySelectorAll(selector).forEach((el) => targetSet.add(el));
+      for (const matchedNode of node.querySelectorAll(selector)) {
+        if (!addNode(matchedNode)) {
+          break;
+        }
+      }
     };
     const classifyMutationBatch = (mutationList) => {
       let touchesThreadArea = false;
@@ -14264,12 +14283,23 @@
         if (!isRemoved) {
           collectMatchesToSet(node, threadRowSelector, addedThreadRows);
           collectMatchesToSet(node, postTableSelector, addedPostTables);
-          collectMatchesToSet(node, quoteScopeSelector, addedQuoteScopes);
-          collectMatchesToSet(node, ratingsScopeSelector, addedRatingsScopes);
+          collectMatchesToSet(
+            node,
+            quoteScopeSelector,
+            addedQuoteScopes,
+            OBSERVER_INCREMENTAL_QUOTE_SCOPE_LIMIT
+          );
+          collectMatchesToSet(
+            node,
+            ratingsScopeSelector,
+            addedRatingsScopes,
+            OBSERVER_INCREMENTAL_RATINGS_SCOPE_LIMIT
+          );
           collectMatchesToSet(
             node,
             notificationScopeSelector,
-            addedNotificationScopes
+            addedNotificationScopes,
+            OBSERVER_INCREMENTAL_NOTIFICATION_SCOPE_LIMIT
           );
         }
       };
@@ -14301,7 +14331,8 @@
           collectMatchesToSet(
             mutation.target,
             quoteScopeSelector,
-            addedQuoteScopes
+            addedQuoteScopes,
+            OBSERVER_INCREMENTAL_QUOTE_SCOPE_LIMIT
           );
         }
         if (
@@ -14312,7 +14343,8 @@
           collectMatchesToSet(
             mutation.target,
             ratingsScopeSelector,
-            addedRatingsScopes
+            addedRatingsScopes,
+            OBSERVER_INCREMENTAL_RATINGS_SCOPE_LIMIT
           );
         }
         if (
@@ -14323,12 +14355,21 @@
           collectMatchesToSet(
             mutation.target,
             notificationScopeSelector,
-            addedNotificationScopes
+            addedNotificationScopes,
+            OBSERVER_INCREMENTAL_NOTIFICATION_SCOPE_LIMIT
           );
         }
         mutation.addedNodes.forEach((node) => inspectNode(node, { isRemoved: false }));
         mutation.removedNodes.forEach((node) => inspectNode(node, { isRemoved: true }));
       });
+
+      const addedQuoteScopesOverflow =
+        addedQuoteScopes.size > OBSERVER_INCREMENTAL_QUOTE_SCOPE_LIMIT;
+      const addedRatingsScopesOverflow =
+        addedRatingsScopes.size > OBSERVER_INCREMENTAL_RATINGS_SCOPE_LIMIT;
+      const addedNotificationScopesOverflow =
+        addedNotificationScopes.size >
+        OBSERVER_INCREMENTAL_NOTIFICATION_SCOPE_LIMIT;
 
       return {
         touchesThreadArea,
@@ -14344,7 +14385,28 @@
         addedQuoteScopes,
         addedRatingsScopes,
         addedNotificationScopes,
+        addedQuoteScopesOverflow,
+        addedRatingsScopesOverflow,
+        addedNotificationScopesOverflow,
       };
+    };
+    const mergePendingScopedNodesWithLimit = (
+      pendingSet,
+      incomingSet,
+      limit,
+      hasOverflow
+    ) => {
+      if (hasOverflow) {
+        return true;
+      }
+      for (const node of incomingSet) {
+        pendingSet.add(node);
+        if (pendingSet.size > limit) {
+          pendingSet.clear();
+          return true;
+        }
+      }
+      return false;
     };
     const applyIncrementalChanges = () => {
       const settings = getSettings();
@@ -14372,6 +14434,19 @@
         pendingPostTables.length > 0 &&
         pendingPostTables.length <= OBSERVER_INCREMENTAL_POST_TABLE_LIMIT &&
         !observerPendingPostNeedsFullRefresh;
+      const canUseScopedQuoteRefresh =
+        !observerPendingQuoteScopesOverflow &&
+        pendingQuoteScopes.length > 0 &&
+        pendingQuoteScopes.length <= OBSERVER_INCREMENTAL_QUOTE_SCOPE_LIMIT;
+      const canUseScopedRatingsRefresh =
+        !observerPendingRatingsScopesOverflow &&
+        pendingRatingsScopes.length > 0 &&
+        pendingRatingsScopes.length <= OBSERVER_INCREMENTAL_RATINGS_SCOPE_LIMIT;
+      const canUseScopedNotificationRefresh =
+        !observerPendingNotificationScopesOverflow &&
+        pendingNotificationScopes.length > 0 &&
+        pendingNotificationScopes.length <=
+          OBSERVER_INCREMENTAL_NOTIFICATION_SCOPE_LIMIT;
 
       if (observerPendingThreadRefresh) {
         if (settings.enablePostBlocking) {
@@ -14407,7 +14482,7 @@
           }
           if (observerPendingQuoteRefresh) {
             const quoteScopeRoots =
-              pendingQuoteScopes.length > 0
+              canUseScopedQuoteRefresh
                 ? pendingQuoteScopes
                 : canUseScopedPostRefresh
                   ? pendingPostTables
@@ -14416,7 +14491,7 @@
           }
           if (observerPendingRatingsRefresh) {
             const ratingsScopeRoots =
-              pendingRatingsScopes.length > 0
+              canUseScopedRatingsRefresh
                 ? pendingRatingsScopes
                 : canUseScopedPostRefresh
                   ? pendingPostTables
@@ -14425,7 +14500,7 @@
           }
           if (observerPendingNotificationRefresh) {
             const notificationScopeRoots =
-              pendingNotificationScopes.length > 0
+              canUseScopedNotificationRefresh
                 ? pendingNotificationScopes
                 : null;
             hideBlockedUserNotifications(notificationScopeRoots);
@@ -14505,15 +14580,40 @@
       mutationFlags.addedPostTables.forEach((table) =>
         observerPendingPostTables.add(table)
       );
-      mutationFlags.addedQuoteScopes.forEach((node) =>
-        observerPendingQuoteScopes.add(node)
-      );
-      mutationFlags.addedRatingsScopes.forEach((node) =>
-        observerPendingRatingsScopes.add(node)
-      );
-      mutationFlags.addedNotificationScopes.forEach((node) =>
-        observerPendingNotificationScopes.add(node)
-      );
+      if (mutationFlags.addedQuoteScopesOverflow) {
+        observerPendingQuoteScopesOverflow = true;
+        observerPendingQuoteScopes.clear();
+      } else {
+        observerPendingQuoteScopesOverflow = mergePendingScopedNodesWithLimit(
+          observerPendingQuoteScopes,
+          mutationFlags.addedQuoteScopes,
+          OBSERVER_INCREMENTAL_QUOTE_SCOPE_LIMIT,
+          observerPendingQuoteScopesOverflow
+        );
+      }
+      if (mutationFlags.addedRatingsScopesOverflow) {
+        observerPendingRatingsScopesOverflow = true;
+        observerPendingRatingsScopes.clear();
+      } else {
+        observerPendingRatingsScopesOverflow = mergePendingScopedNodesWithLimit(
+          observerPendingRatingsScopes,
+          mutationFlags.addedRatingsScopes,
+          OBSERVER_INCREMENTAL_RATINGS_SCOPE_LIMIT,
+          observerPendingRatingsScopesOverflow
+        );
+      }
+      if (mutationFlags.addedNotificationScopesOverflow) {
+        observerPendingNotificationScopesOverflow = true;
+        observerPendingNotificationScopes.clear();
+      } else {
+        observerPendingNotificationScopesOverflow =
+          mergePendingScopedNodesWithLimit(
+            observerPendingNotificationScopes,
+            mutationFlags.addedNotificationScopes,
+            OBSERVER_INCREMENTAL_NOTIFICATION_SCOPE_LIMIT,
+            observerPendingNotificationScopesOverflow
+          );
+      }
       if (
         !observerPendingNavReinit &&
         !observerPendingThreadRefresh &&
@@ -14556,6 +14656,9 @@
           observerPendingQuoteScopes.clear();
           observerPendingRatingsScopes.clear();
           observerPendingNotificationScopes.clear();
+          observerPendingQuoteScopesOverflow = false;
+          observerPendingRatingsScopesOverflow = false;
+          observerPendingNotificationScopesOverflow = false;
           const watchTarget = document.getElementById("wp") || document.body;
           observer.observe(watchTarget, { childList: true, subtree: true });
           observerIsApplying = false;
