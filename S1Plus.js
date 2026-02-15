@@ -125,6 +125,33 @@
     }
   };
 
+  const isObjectRecord = (value) =>
+    Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+  const normalizeCustomNavLinks = (links = []) => {
+    if (!Array.isArray(links)) {
+      return [];
+    }
+
+    return links.reduce((acc, link) => {
+      if (!isObjectRecord(link)) {
+        return acc;
+      }
+
+      const name = String(link.name ?? "").trim();
+      const href = String(link.href ?? "").trim();
+      if (!name || !href) {
+        return acc;
+      }
+      if (!isSafeUrlAttributeValue(href)) {
+        return acc;
+      }
+
+      acc.push({ name, href });
+      return acc;
+    }, []);
+  };
+
   /**
    * 对受限场景中的 HTML 片段进行白名单清洗。
    * 仅保留允许标签与允许属性，剔除注释、事件处理器与 javascript: 链接。
@@ -3985,6 +4012,7 @@
     hideUserPosts(id);
     hideBlockedUserQuotes();
     hideBlockedUserRatings();
+    hideBlockedUserNotifications();
     if (b[id].blockThreads) applyUserThreadBlocklist();
     return nativeSyncSucceeded;
   };
@@ -4018,6 +4046,7 @@
     showUserPosts(id);
     hideBlockedUserQuotes();
     hideBlockedUserRatings();
+    hideBlockedUserNotifications();
     unblockThreadsByUser(id);
     return true; // 全部成功
   };
@@ -5134,10 +5163,15 @@
     const anchor = e.target.closest("a[href]");
     if (!anchor) return;
 
-    const href = anchor.getAttribute("href");
+    const href = String(anchor.getAttribute("href") || "");
+    const normalizedHref = href.trim().toLowerCase();
+    if (!href) return;
     if (
-      href.startsWith("javascript:") ||
-      href.includes("mod=logging&action=logout") ||
+      normalizedHref.startsWith("javascript:") ||
+      normalizedHref.startsWith("vbscript:") ||
+      normalizedHref.startsWith("data:text/html") ||
+      normalizedHref.includes("mod=logging&action=logout") ||
+      !isSafeUrlAttributeValue(href) ||
       anchor.closest(
         ".s1p-modal, .s1p-confirm-modal, .s1p-options-menu, .s1p-tag-popover, .pob, .pgs, .pgbtn, #s1p-nav-link, #s1p-nav-sync-btn"
       )
@@ -5411,27 +5445,39 @@
         hasSuppressedSyncedDataTransform = true;
       }
 
-      if (
-        dataToImport.user_tags &&
-        typeof dataToImport.user_tags === "object"
-      ) {
-        saveUserTags(dataToImport.user_tags, suppressSyncTrigger);
-        tagsImported = Object.keys(dataToImport.user_tags).length;
+      const hasUserTagsField = Object.prototype.hasOwnProperty.call(
+        dataToImport,
+        "user_tags"
+      );
+      const userTagsIsValidRecord =
+        hasUserTagsField && isObjectRecord(dataToImport.user_tags);
+      const userTagsToSave = userTagsIsValidRecord ? dataToImport.user_tags : {};
+      saveUserTags(userTagsToSave, suppressSyncTrigger);
+      tagsImported = Object.keys(userTagsToSave).length;
+      if (suppressSyncTrigger && !userTagsIsValidRecord) {
+        hasSuppressedSyncedDataTransform = true;
       }
 
-      if (
-        dataToImport.title_filter_rules &&
-        Array.isArray(dataToImport.title_filter_rules)
-      ) {
+      const hasTitleRulesField = Object.prototype.hasOwnProperty.call(
+        dataToImport,
+        "title_filter_rules"
+      );
+      const hasLegacyTitleKeywordsField = Object.prototype.hasOwnProperty.call(
+        dataToImport,
+        "title_keywords"
+      );
+      const hasTitleRulesArray = Array.isArray(dataToImport.title_filter_rules);
+      const hasLegacyTitleKeywordsArray = Array.isArray(
+        dataToImport.title_keywords
+      );
+
+      if (hasTitleRulesArray) {
         saveTitleFilterRules(
           dataToImport.title_filter_rules,
           suppressSyncTrigger
         );
         rulesImported = dataToImport.title_filter_rules.length;
-      } else if (
-        dataToImport.title_keywords &&
-        Array.isArray(dataToImport.title_keywords)
-      ) {
+      } else if (hasLegacyTitleKeywordsArray) {
         const newRules = dataToImport.title_keywords.map((k) => ({
           pattern: k,
           enabled: true,
@@ -5442,30 +5488,62 @@
         if (suppressSyncTrigger) {
           hasSuppressedSyncedDataTransform = true;
         }
-      }
-
-      if (dataToImport.read_progress) {
-        const { normalizedProgress, hasLegacyType } = normalizeReadProgressData(
-          dataToImport.read_progress
-        );
-        saveReadProgress(normalizedProgress, suppressSyncTrigger);
-        progressImported = Object.keys(normalizedProgress).length;
-        if (suppressSyncTrigger && hasLegacyType) {
+      } else {
+        saveTitleFilterRules([], suppressSyncTrigger);
+        rulesImported = 0;
+        if (
+          suppressSyncTrigger &&
+          (
+            !hasTitleRulesField ||
+            (hasTitleRulesField && !hasTitleRulesArray) ||
+            (hasLegacyTitleKeywordsField && !hasLegacyTitleKeywordsArray)
+          )
+        ) {
           hasSuppressedSyncedDataTransform = true;
         }
       }
 
-      if (dataToImport.bookmarked_replies) {
-        saveBookmarkedReplies(
-          dataToImport.bookmarked_replies,
-          suppressSyncTrigger
-        );
-        bookmarksImported = Object.keys(dataToImport.bookmarked_replies).length;
+      const hasReadProgressField = Object.prototype.hasOwnProperty.call(
+        dataToImport,
+        "read_progress"
+      );
+      const { normalizedProgress, hasLegacyType } = normalizeReadProgressData(
+        hasReadProgressField ? dataToImport.read_progress : {}
+      );
+      saveReadProgress(normalizedProgress, suppressSyncTrigger);
+      progressImported = Object.keys(normalizedProgress).length;
+      if (suppressSyncTrigger && (hasLegacyType || !hasReadProgressField)) {
+        hasSuppressedSyncedDataTransform = true;
       }
 
-      if (dataToImport.blocked_posts) {
-        saveBlockedPosts(dataToImport.blocked_posts, suppressSyncTrigger);
-        postsImported = Object.keys(dataToImport.blocked_posts).length;
+      const hasBookmarksField = Object.prototype.hasOwnProperty.call(
+        dataToImport,
+        "bookmarked_replies"
+      );
+      const bookmarksIsValidRecord =
+        hasBookmarksField && isObjectRecord(dataToImport.bookmarked_replies);
+      const bookmarksToSave = bookmarksIsValidRecord
+        ? dataToImport.bookmarked_replies
+        : {};
+      saveBookmarkedReplies(bookmarksToSave, suppressSyncTrigger);
+      bookmarksImported = Object.keys(bookmarksToSave).length;
+      if (suppressSyncTrigger && !bookmarksIsValidRecord) {
+        hasSuppressedSyncedDataTransform = true;
+      }
+
+      const hasBlockedPostsField = Object.prototype.hasOwnProperty.call(
+        dataToImport,
+        "blocked_posts"
+      );
+      const blockedPostsIsValidRecord =
+        hasBlockedPostsField && isObjectRecord(dataToImport.blocked_posts);
+      const blockedPostsToSave = blockedPostsIsValidRecord
+        ? dataToImport.blocked_posts
+        : {};
+      saveBlockedPosts(blockedPostsToSave, suppressSyncTrigger);
+      postsImported = Object.keys(blockedPostsToSave).length;
+      if (suppressSyncTrigger && !blockedPostsIsValidRecord) {
+        hasSuppressedSyncedDataTransform = true;
       }
 
       const importedLastUpdated = Number(imported.lastUpdated);
@@ -6442,7 +6520,7 @@
     }
 
     if (saved.customNavLinks && Array.isArray(saved.customNavLinks)) {
-      settings.customNavLinks = saved.customNavLinks;
+      settings.customNavLinks = normalizeCustomNavLinks(saved.customNavLinks);
     }
 
     return { settings, migrationApplied };
@@ -6973,12 +7051,14 @@
     if (settings.enableNavCustomization) {
       navUl.textContent = "";
       (settings.customNavLinks || []).forEach((link) => {
-        if (!link.name || !link.href) return;
+        const linkName = String(link?.name ?? "").trim();
+        const linkHref = String(link?.href ?? "").trim();
+        if (!linkName || !linkHref || !isSafeUrlAttributeValue(linkHref)) return;
         const li = document.createElement("li");
-        if (window.location.href.includes(link.href)) li.className = "a";
+        if (window.location.href.includes(linkHref)) li.className = "a";
         const a = document.createElement("a");
-        a.href = link.href;
-        a.textContent = link.name;
+        a.href = linkHref;
+        a.textContent = linkName;
         a.setAttribute("hidefocus", "true");
         li.appendChild(a);
         navUl.appendChild(li);
@@ -9988,22 +10068,29 @@
             "确认恢复"
           );
         } else if (target.id === "s1p-settings-save-btn") {
+          const rawCustomNavLinks = Array.from(
+            navListContainer.querySelectorAll(".s1p-editor-item")
+          )
+            .map((item) => ({
+              name: item.querySelector(".s1p-nav-name").value.trim(),
+              href: item.querySelector(".s1p-nav-href").value.trim(),
+            }))
+            .filter((l) => l.name && l.href);
+          const normalizedCustomNavLinks = normalizeCustomNavLinks(
+            rawCustomNavLinks
+          );
           const newSettings = {
             ...getSettings(),
             enableNavCustomization: tabs["nav-settings"].querySelector(
               "#s1p-enableNavCustomization"
             ).checked,
-            customNavLinks: Array.from(
-              navListContainer.querySelectorAll(".s1p-editor-item")
-            )
-              .map((item) => ({
-                name: item.querySelector(".s1p-nav-name").value.trim(),
-                href: item.querySelector(".s1p-nav-href").value.trim(),
-              }))
-              .filter((l) => l.name && l.href),
+            customNavLinks: normalizedCustomNavLinks,
           };
           saveSettings(newSettings);
           initializeNavbar();
+          if (normalizedCustomNavLinks.length < rawCustomNavLinks.length) {
+            showMessage("检测到不安全导航链接，已自动忽略。", false);
+          }
           showMessage("设置已保存！", true);
         }
       }
