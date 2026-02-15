@@ -62,6 +62,7 @@
 - **修复关闭帖子屏蔽时表头占位列残留**: `removeBlockButtonsFromThreads` 现在同步清除 `.s1p-header-placeholder` 和 `.s1p-separator-placeholder`，并对旧版无 class 的分隔行补位单元格做兜底收敛。新增补位单元格时加上 `s1p-separator-placeholder` class 标记。
 - **修复悬浮菜单监听器累积**: 为 `createInlineActionMenu` 和标记操作菜单新增 `detachHoverListeners` 显式解绑 `mouseleave`/`mouseenter`，所有关闭路径（用户离开、按钮点击、程序化替换）均会调用。新增 `destroy` 立即销毁方法和 `isClosing` 重入保护，`s1p_api` 挂载到 DOM 元素供外部调用。
 - **HTML 清洗器协议白名单化**: `href`/`xlink:href` 校验从黑名单（仅拦截 `javascript:`）改为白名单协议校验（`http`/`https`/`mailto`/`tel`/`ftp`），拦截 `data:`、`vbscript:`、协议相对 URL 等风险模式。
+- **修复导入数据后页面屏蔽状态不一致**: 新增 `restoreManagedVisibilityAfterDataImport` 在导入后精确恢复不再被屏蔽的线程和帖子。导入后刷新逻辑按开关状态决定应用范围，引用/评分/提醒统一刷新。旧版设置迁移时推进 `last_modified` 时间戳避免远程同步假冲突。
 
 
 ### 🔧 技术改进与重构 (Refactoring & Tech Improvements)

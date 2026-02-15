@@ -4063,6 +4063,46 @@
     });
   };
 
+  const restoreManagedVisibilityAfterDataImport = (settings = getSettings()) => {
+    const shouldApplyPostBlocking = settings.enablePostBlocking === true;
+    const shouldApplyUserBlocking = settings.enableUserBlocking === true;
+    const blockedThreadIdSet = shouldApplyPostBlocking
+      ? new Set(Object.keys(getBlockedThreads()))
+      : new Set();
+    const blockedPostIdSet = shouldApplyPostBlocking
+      ? new Set(Object.keys(getBlockedPosts()))
+      : new Set();
+    const blockedUserIdSet = shouldApplyUserBlocking
+      ? new Set(Object.keys(getBlockedUsers()))
+      : new Set();
+
+    document
+      .querySelectorAll('tbody[id^="normalthread_"], tbody[id^="stickthread_"]')
+      .forEach((row) => {
+        const threadId = row.id.replace(/^(normalthread_|stickthread_)/, "");
+        if (!threadId || !blockedThreadIdSet.has(threadId)) {
+          row.removeAttribute("style");
+        }
+      });
+
+    document.querySelectorAll("table.plhin").forEach((postTable) => {
+      const postIdMatch = postTable.id ? postTable.id.match(/^pid(\d+)$/) : null;
+      const postId = postIdMatch ? postIdMatch[1] : null;
+
+      const userLink = postTable.querySelector('.authi a[href*="space-uid-"]');
+      const uidMatch = userLink ? userLink.href.match(/space-uid-(\d+)/) : null;
+      const authorId = uidMatch && uidMatch[1] ? uidMatch[1] : null;
+
+      const shouldRemainHidden =
+        (postId && blockedPostIdSet.has(postId)) ||
+        (authorId && blockedUserIdSet.has(authorId));
+
+      if (!shouldRemainHidden) {
+        postTable.removeAttribute("style");
+      }
+    });
+  };
+
   const hideBlockedUserQuotes = () => {
     const settings = getSettings();
     const blockedUsers = getBlockedUsers();
@@ -5223,11 +5263,28 @@
         updateLastModifiedTimestamp("general", { triggerSync: false });
       }
 
-      hideBlockedThreads();
-      hideBlockedUsersPosts();
-      hideBlockedPosts();
-      applyUserThreadBlocklist();
-      hideThreadsByTitleKeyword();
+      const importedSettingsSnapshot = getSettings();
+      restoreManagedVisibilityAfterDataImport(importedSettingsSnapshot);
+
+      if (importedSettingsSnapshot.enablePostBlocking) {
+        hideBlockedThreads();
+        hideBlockedPosts();
+        applyUserThreadBlocklist();
+        hideThreadsByTitleKeyword();
+      } else {
+        document.querySelectorAll(".s1p-hidden-by-keyword").forEach((row) => {
+          row.classList.remove("s1p-hidden-by-keyword");
+        });
+        dynamicallyHiddenThreads = {};
+      }
+
+      if (importedSettingsSnapshot.enableUserBlocking) {
+        hideBlockedUsersPosts();
+      }
+      // 引用/提醒/评分函数本身会根据开关决定“隐藏或恢复”，导入后统一刷新可避免残留状态。
+      hideBlockedUserQuotes();
+      hideBlockedUserRatings();
+      hideBlockedUserNotifications();
       initializeNavbar();
       applyInterfaceCustomizations();
 
@@ -6254,7 +6311,11 @@
     }
 
     console.log("S1 Plus: 检测到旧版设置结构，正在执行一次性迁移...");
-    saveSettings(settings, { suppressSyncTrigger: true });
+    // 推进本地版本时间戳以避免“时间戳相同但内容不同”的假冲突，同时不触发自动推送。
+    saveSettings(settings, {
+      suppressSyncTrigger: true,
+      markDataChangedWhenSuppressed: true,
+    });
     console.log("S1 Plus: 设置迁移完成。");
     return true;
   };
