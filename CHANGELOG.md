@@ -75,6 +75,7 @@
 - **`getSettings()` 副作用写入抽离与缓存**: 将迁移逻辑从 getter 中剥离为纯函数 `buildNormalizedSettings`，`getSettings()` 不再触发 `saveSettings`。新增 `migrateLegacySettingsIfNeeded` 在启动阶段一次性执行迁移并落盘。导入路径也统一走 `buildNormalizedSettings` 归一化。新增 1 秒 TTL 缓存层消除增量路径中重复 `GM_getValue` + 反序列化开销，`saveSettings` 写入后立即刷新缓存，`GM_addValueChangeListener` 跨标签页同步。
 - **核心数据读取缓存**: 为 `getBlockedThreads`/`getBlockedUsers`/`getBlockedPosts`/`getReadProgress` 四个高频 getter 统一加入 1 秒 TTL 缓存，`save*` 写入后立即刷新，`initializeCoreDataCacheSync` 跨标签页同步。`save*` 函数增加 `isObjectRecord` 归一化防御。
 - **标记菜单生命周期管理**: 标记操作菜单和确认菜单统一走 `s1p_api.destroy` 销毁路径，确保监听器解绑。新增 `__s1pAnchorElement` 标记区分同锚点和不同锚点的菜单切换，`destroyConfirmMenu({ immediate })` 支持跳过动画直接移除。
+- **`applyGlobalLinkBehavior` 幂等化**: 引入 `isGlobalLinkBehaviorBound` 状态标记，开关未变化时跳过 `removeEventListener`/`addEventListener`，仅在状态切换时执行一次绑定/解绑。
 - **MutationObserver 节点级作用域增量化**: 将全量 `applyChanges` 策略改为节点级作用域增量执行。`classifyMutationBatch` 对 mutation 按线程行/帖子表/引用/评分/提醒五维分类并收集具体新增 DOM 节点引用。`applyIncrementalChanges` 在新增节点 ≤80 且无删除操作时走作用域路径，仅处理变更节点；超限或有删除时安全回退全量。核心屏蔽/关键词/用户线程屏蔽函数统一提取为 `*ForRows` 可复用变体，scope 和全量共享同一份逻辑。引用/评分/提醒/图片隐藏/进度跟踪等函数全部支持 `scopeRoots` 参数。新增 `restoreManagedVisibilityAfterDataImport` 用于导入后精确恢复可见性。
 - **高频集合匹配 `Array.includes` → `Set.has`**: 将 `hideBlockedUserQuotes`、`hideBlockedUserRatings`、`hideBlockedUserNotifications`、`applyUserThreadBlocklist` 中的数组查找改为 `Set.has`，在屏蔽用户较多时查找复杂度从 O(n) 降至 O(1)。
 - **`hideBlockedUsersPosts` 单次扫描优化**: 将"按用户多次全表查询"改为单次 `querySelectorAll("table.plhin")` 扫描 + `Set.has` 判定，复杂度从 O(N×M) 降至 O(M)。

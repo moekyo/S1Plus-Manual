@@ -5297,12 +5297,35 @@
     }
   };
 
+  let isGlobalLinkBehaviorBound = false;
+  let globalLinkBehaviorBoundTarget = null;
+
   const applyGlobalLinkBehavior = () => {
-    document.body.removeEventListener("click", globalLinkClickHandler);
     const settings = getSettings();
-    if (settings.openInNewTab.master) {
-      document.body.addEventListener("click", globalLinkClickHandler);
+    const shouldBind = settings.openInNewTab.master === true;
+    const target = document.body;
+
+    if (
+      isGlobalLinkBehaviorBound &&
+      (!shouldBind || globalLinkBehaviorBoundTarget !== target)
+    ) {
+      if (globalLinkBehaviorBoundTarget) {
+        globalLinkBehaviorBoundTarget.removeEventListener(
+          "click",
+          globalLinkClickHandler
+        );
+      }
+      isGlobalLinkBehaviorBound = false;
+      globalLinkBehaviorBoundTarget = null;
     }
+
+    if (!shouldBind || !target || isGlobalLinkBehaviorBound) {
+      return;
+    }
+
+    target.addEventListener("click", globalLinkClickHandler);
+    isGlobalLinkBehaviorBound = true;
+    globalLinkBehaviorBoundTarget = target;
   };
 
   const getSyncedSettings = (settings = null) => {
