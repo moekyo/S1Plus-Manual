@@ -4115,7 +4115,7 @@
     if (!noticeContainer) return;
 
     const settings = getSettings();
-    if (!settings.enableUserBlocking) return;
+    const isUserBlockingEnabled = settings.enableUserBlocking === true;
 
     const blockedUserIds = Object.keys(getBlockedUsers());
 
@@ -4140,7 +4140,8 @@
 
         const uidMatch = userLink.href.match(/space-uid-(\d+)/);
         const authorId = uidMatch ? uidMatch[1] : null;
-        const isBlocked = authorId && blockedUserIds.includes(authorId);
+        const isBlocked =
+          isUserBlockingEnabled && authorId && blockedUserIds.includes(authorId);
 
         const wrapper = dlElement.parentElement.classList.contains(
           "s1p-notification-wrapper"
@@ -4208,13 +4209,54 @@
     const rules = getTitleFilterRules().filter((r) => r.enabled && r.pattern);
     const newHiddenThreads = {};
 
-    const regexes = rules
+    const normalizePatternAsKeyword = (pattern) =>
+      String(pattern || "")
+        .replace(/\\(.)/g, "$1")
+        .replace(/[.*+?^${}()|[\]\\]/g, "")
+        .trim();
+    const isRegexPatternHighRisk = (pattern) => {
+      const raw = String(pattern || "");
+      if (raw.length > 180) return true;
+
+      const nestedQuantifierPattern =
+        /\((?:[^()\\]|\\.)*[+*](?:[^()\\]|\\.)*\)(?:[+*]|\{\d+,?\d*\})/;
+      if (nestedQuantifierPattern.test(raw)) return true;
+
+      if (/(?:\.\*){2,}|(?:\.\+){2,}/.test(raw)) return true;
+
+      if (/\\[1-9]/.test(raw)) return true;
+
+      return false;
+    };
+
+    const matchers = rules
       .map((r) => {
+        const pattern = String(r.pattern || "");
+        if (isRegexPatternHighRisk(pattern)) {
+          const keyword = normalizePatternAsKeyword(pattern);
+          if (!keyword) {
+            console.warn(
+              `S1 Plus: 屏蔽规则 "${pattern}" 风险较高且无法安全降级为关键词，已忽略。`
+            );
+            return null;
+          }
+          console.warn(
+            `S1 Plus: 屏蔽规则 "${pattern}" 风险较高，已降级为关键词匹配。`
+          );
+          return {
+            pattern,
+            test: (title) => title.includes(keyword),
+          };
+        }
         try {
-          return { regex: new RegExp(r.pattern), pattern: r.pattern };
+          const regex = new RegExp(pattern);
+          return {
+            pattern,
+            test: (title) => regex.test(title),
+          };
         } catch (e) {
           console.error(
-            `S1 Plus: 屏蔽规则 "${r.pattern}" 不是一个有效的正则表达式，将被忽略。`,
+            `S1 Plus: 屏蔽规则 "${pattern}" 不是一个有效的正则表达式，将被忽略。`,
             e
           );
           return null;
@@ -4232,8 +4274,8 @@
         const threadId = row.id.replace(/^(normalthread_|stickthread_)/, "");
         let isHidden = false;
 
-        if (regexes.length > 0) {
-          const matchingRule = regexes.find((r) => r.regex.test(title));
+        if (matchers.length > 0) {
+          const matchingRule = matchers.find((r) => r.test(title));
           if (matchingRule) {
             newHiddenThreads[threadId] = {
               title,
@@ -5004,7 +5046,12 @@
         postsImported = Object.keys(dataToImport.blocked_posts).length;
       }
 
-      GM_setValue("s1p_last_modified", imported.lastUpdated || 0);
+      const importedLastUpdated = Number(imported.lastUpdated);
+      const safeLastUpdated =
+        Number.isFinite(importedLastUpdated) && importedLastUpdated > 0
+          ? importedLastUpdated
+          : Date.now();
+      GM_setValue("s1p_last_modified", safeLastUpdated);
       if (suppressSyncTrigger && hasSuppressedSyncedDataTransform) {
         updateLastModifiedTimestamp("general", { triggerSync: false });
       }
@@ -9511,11 +9558,12 @@
             refreshAllAuthiActions();
             if (isChecked) {
               hideBlockedUsersPosts();
-              hideBlockedUserQuotes();
-              hideBlockedUserRatings();
             } else {
               Object.keys(getBlockedUsers()).forEach(showUserPosts);
             }
+            hideBlockedUserQuotes();
+            hideBlockedUserRatings();
+            hideBlockedUserNotifications();
             renderUserTab();
             break;
           case "enableUserTagging":
@@ -9919,7 +9967,11 @@
           });
           updateNavbarSyncButton();
 
-          if (currentSettings.syncRemoteGistId && currentSettings.syncRemotePat) {
+          if (
+            currentSettings.syncRemoteEnabled &&
+            currentSettings.syncRemoteGistId &&
+            currentSettings.syncRemotePat
+          ) {
             showMessage("设置已保存，正在启动首次同步检查...", null);
             await handleManualSync(false, true); // 标记为首次设置
           } else {
