@@ -274,6 +274,8 @@
   const DOM_OBSERVER_DEBOUNCE_MS = 120;
   // 帖子列表页阅读进度刷新防抖，避免跨标签高频更新导致频繁重绘。
   const READ_PROGRESS_LIST_REFRESH_DEBOUNCE_MS = 120;
+  // 帖子页阅读进度持久化防抖：以内存批量累积为主，隐藏/卸载前强制落盘。
+  const READ_PROGRESS_PERSIST_DEBOUNCE_MS = 5 * 1000;
 
   let readProgressListRefreshTimer = null;
   let pendingReadProgressDataForRefresh = null;
@@ -4014,8 +4016,21 @@
       .forEach((l) => l.closest("table.plhin")?.removeAttribute("style"));
   };
 
-  const hideBlockedUsersPosts = () =>
-    Object.keys(getBlockedUsers()).forEach(hideUserPosts);
+  const hideBlockedUsersPosts = () => {
+    const blockedUserIdSet = new Set(Object.keys(getBlockedUsers()));
+    if (blockedUserIdSet.size === 0) return;
+
+    // 单次扫描帖子，避免“按用户多次全表查询”在大页上的额外开销。
+    document.querySelectorAll("table.plhin").forEach((postTable) => {
+      const userLink = postTable.querySelector('.authi a[href*="space-uid-"]');
+      if (!userLink) return;
+
+      const uidMatch = userLink.href.match(/space-uid-(\d+)/);
+      if (uidMatch && uidMatch[1] && blockedUserIdSet.has(uidMatch[1])) {
+        postTable.setAttribute("style", "display: none !important");
+      }
+    });
+  };
 
   const hideBlockedUserQuotes = () => {
     const settings = getSettings();
@@ -4506,21 +4521,21 @@
       return;
     }
 
-    const progress = getReadProgress();
-    const currentProgress = progress[threadId];
+    const pendingProgress = pendingThreadProgressWrites[threadId] || null;
+    const currentProgress = pendingProgress || getReadProgress()[threadId];
     if (
       !shouldAdvanceThreadProgress(currentProgress, nextPageNumber, nextFloorNumber)
     ) {
       return;
     }
 
-    progress[threadId] = {
+    pendingThreadProgressWrites[threadId] = {
       postId: String(postId),
       page: String(nextPageNumber),
       timestamp: Date.now(),
       lastReadFloor: String(nextFloorNumber),
     };
-    saveReadProgress(progress);
+    schedulePendingThreadProgressPersist();
   };
 
   /**
@@ -9754,7 +9769,10 @@
             } else {
               removeProgressJumpButtons();
               updateReadIndicatorUI(null);
-              resetReadProgressObserver({ clearObservedMarkers: true });
+              resetReadProgressObserver({
+                clearObservedMarkers: true,
+                flushPendingProgress: true,
+              });
             }
             break;
           case "enableBookmarkReplies":
@@ -11765,7 +11783,68 @@
   let pageObserver = null;
   let readProgressVisiblePosts = new Map();
   let readProgressSaveTimeout = null;
+  let readProgressPersistTimeout = null;
+  let pendingThreadProgressWrites = {};
   let readProgressContext = null;
+  const flushPendingThreadProgressWrites = ({ suppressSyncTrigger = false } = {}) => {
+    if (readProgressPersistTimeout) {
+      clearTimeout(readProgressPersistTimeout);
+      readProgressPersistTimeout = null;
+    }
+
+    const pendingThreadIds = Object.keys(pendingThreadProgressWrites);
+    if (pendingThreadIds.length === 0) {
+      return false;
+    }
+
+    const progress = getReadProgress();
+    let hasChanges = false;
+
+    pendingThreadIds.forEach((threadId) => {
+      const pendingRecord = pendingThreadProgressWrites[threadId];
+      if (!pendingRecord) return;
+
+      const pendingPageNumber = parseInt(pendingRecord.page, 10);
+      const pendingFloorNumber = parseInt(pendingRecord.lastReadFloor, 10);
+      if (
+        !Number.isFinite(pendingPageNumber) ||
+        pendingPageNumber <= 0 ||
+        !Number.isFinite(pendingFloorNumber) ||
+        pendingFloorNumber <= 0
+      ) {
+        return;
+      }
+
+      const currentProgress = progress[threadId];
+      if (
+        !shouldAdvanceThreadProgress(
+          currentProgress,
+          pendingPageNumber,
+          pendingFloorNumber
+        )
+      ) {
+        return;
+      }
+
+      progress[threadId] = pendingRecord;
+      hasChanges = true;
+    });
+
+    pendingThreadProgressWrites = {};
+
+    if (hasChanges) {
+      saveReadProgress(progress, suppressSyncTrigger);
+      return true;
+    }
+    return false;
+  };
+  const schedulePendingThreadProgressPersist = () => {
+    if (readProgressPersistTimeout) return;
+    readProgressPersistTimeout = setTimeout(() => {
+      readProgressPersistTimeout = null;
+      flushPendingThreadProgressWrites();
+    }, READ_PROGRESS_PERSIST_DEBOUNCE_MS);
+  };
   const saveCurrentReadProgress = () => {
     if (!readProgressContext || readProgressVisiblePosts.size === 0) return;
 
@@ -11796,6 +11875,7 @@
       readProgressSaveTimeout = null;
     }
     saveCurrentReadProgress();
+    flushPendingThreadProgressWrites();
   };
   const scheduleReadProgressSave = () => {
     if (readProgressSaveTimeout) {
@@ -11811,7 +11891,19 @@
       flushReadProgressSave();
     }
   };
-  const resetReadProgressObserver = ({ clearObservedMarkers = false } = {}) => {
+  const resetReadProgressObserver = ({
+    clearObservedMarkers = false,
+    flushPendingProgress = false,
+  } = {}) => {
+    if (flushPendingProgress) {
+      flushPendingThreadProgressWrites();
+    } else {
+      if (readProgressPersistTimeout) {
+        clearTimeout(readProgressPersistTimeout);
+        readProgressPersistTimeout = null;
+      }
+      pendingThreadProgressWrites = {};
+    }
     if (pageObserver) {
       pageObserver.disconnect();
       pageObserver = null;
@@ -11827,6 +11919,7 @@
       handleReadProgressVisibilityChange
     );
     window.removeEventListener("beforeunload", flushReadProgressSave);
+    window.removeEventListener("pagehide", flushReadProgressSave);
     if (clearObservedMarkers) {
       document
         .querySelectorAll('table[id^="pid"][data-s1p-observed]')
@@ -11870,8 +11963,17 @@
     const settings = getSettings();
     const postListElement = document.getElementById("postlist");
     if (!settings.enableReadProgress || !postListElement) {
-      if (pageObserver || readProgressSaveTimeout || readProgressContext) {
-        resetReadProgressObserver({ clearObservedMarkers: true });
+      if (
+        pageObserver ||
+        readProgressSaveTimeout ||
+        readProgressPersistTimeout ||
+        readProgressContext ||
+        Object.keys(pendingThreadProgressWrites).length > 0
+      ) {
+        resetReadProgressObserver({
+          clearObservedMarkers: true,
+          flushPendingProgress: true,
+        });
       }
       return;
     }
@@ -11949,11 +12051,13 @@
         handleReadProgressVisibilityChange
       );
       window.removeEventListener("beforeunload", flushReadProgressSave);
+      window.removeEventListener("pagehide", flushReadProgressSave);
       document.addEventListener(
         "visibilitychange",
         handleReadProgressVisibilityChange
       );
       window.addEventListener("beforeunload", flushReadProgressSave);
+      window.addEventListener("pagehide", flushReadProgressSave);
     }
 
     // [新增] 每次函数运行时（包括页面动态变化后），都检查并添加未被监控的帖子

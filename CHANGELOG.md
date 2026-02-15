@@ -68,6 +68,8 @@
 - **清理未使用配置项与死代码**: 移除了 `manualCleanupDays`、`threadBlockHoverDelay` 两个无引用的默认配置项，以及已无调用的 `performManualCleanup` 函数。
 - **MutationObserver 增量化**: 将全量 `applyChanges` 策略改为增量执行。新增 `classifyMutationBatch` 对 mutation 按线程区/帖子区/大节点三维分类，`applyIncrementalChanges` 仅执行变更区域对应的操作子集。`wp`/`ct` 级别变更时安全回退到全量 `applyChanges`。`mutation.target` 仅做区域分类不触发全量回退，`applyGlobalLinkBehavior` 去重为单次调用。无关 mutation 直接跳过，减少不必要的 DOM 操作。
 - **高频集合匹配 `Array.includes` → `Set.has`**: 将 `hideBlockedUserQuotes`、`hideBlockedUserRatings`、`hideBlockedUserNotifications`、`applyUserThreadBlocklist` 中的数组查找改为 `Set.has`，在屏蔽用户较多时查找复杂度从 O(n) 降至 O(1)。
+- **`hideBlockedUsersPosts` 单次扫描优化**: 将"按用户多次全表查询"改为单次 `querySelectorAll("table.plhin")` 扫描 + `Set.has` 判定，复杂度从 O(N×M) 降至 O(M)。
+- **阅读进度写入批量落盘**: 引入 `pendingThreadProgressWrites` 内存缓冲层，滚动期间仅写入内存对象，5 秒防抖后批量 `GM_setValue`。`visibilitychange(hidden)`、`beforeunload`、`pagehide` 三重落盘保障不丢数据。`resetReadProgressObserver` 新增 `flushPendingProgress` 参数控制关闭/导入时的落盘策略。
 - **标题规则正则编译缓存**: 将 `normalizePatternAsKeyword`、`isRegexPatternHighRisk` 提升为模块级函数，新增 `getCompiledTitleRuleMatchers` 基于签名缓存编译结果，规则未变时跳过重新编译。
 - **统一 Tab 事件绑定模式**: 引入 `rebindTabClickHandler` 工具函数，将 `bookmarks`、`users`、`threads`、`nav-settings` 四个 tab 原先不同的绑定方式（`dataset` 标记 / 手动 remove+add）统一为 `rebindTabClickHandler(tab, prev, handler)` 模式。
 
