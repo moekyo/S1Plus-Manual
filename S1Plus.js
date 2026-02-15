@@ -4834,13 +4834,9 @@
     try {
       invalidateLocalDataHashCache();
 
-      // [S1P-FIX-A] 在导入任何数据之前，立刻断开当前页面的阅读进度观察器，修复潜在的竞态条件问题。
-      if (pageObserver) {
-        pageObserver.disconnect();
-        console.log(
-          "S1 Plus: 已在导入数据前断开阅读进度观察器，防止数据覆盖。"
-        );
-      }
+      // [S1P-FIX-A] 导入前重置观察器和绑定标记，避免导入后阅读进度跟踪中断。
+      resetReadProgressObserver({ clearObservedMarkers: true });
+      console.log("S1 Plus: 已在导入数据前重置阅读进度观察器。");
 
       const imported = JSON.parse(jsonStr);
       if (typeof imported !== "object" || imported === null)
@@ -5019,6 +5015,8 @@
       };
     } catch (e) {
       return { success: false, message: `导入失败: ${e.message}` };
+    } finally {
+      trackReadProgressInThread();
     }
   };
 
@@ -7641,6 +7639,8 @@
       "nav-settings": modal.querySelector("#s1p-tab-nav-settings"),
       sync: modal.querySelector("#s1p-tab-sync"),
     };
+    let threadTabClickHandler = null;
+    let navSettingsTabClickHandler = null;
     const dataClearanceConfig = {
       blockedThreads: {
         label: "手动屏蔽的帖子和用户主题帖",
@@ -8753,7 +8753,10 @@
         renderRules();
       };
 
-      tabs["threads"].addEventListener("click", (e) => {
+      if (threadTabClickHandler) {
+        tabs["threads"].removeEventListener("click", threadTabClickHandler);
+      }
+      threadTabClickHandler = (e) => {
         const target = e.target;
         const header = target.closest(".s1p-collapsible-header");
 
@@ -8851,7 +8854,8 @@
           saveKeywordRules();
           showMessage("规则已保存！", true);
         }
-      });
+      };
+      tabs["threads"].addEventListener("click", threadTabClickHandler);
     };
     const renderGeneralSettingsTab = () => {
       const settings = getSettings();
@@ -9285,7 +9289,10 @@
           container.appendChild(draggedItem);
         }
       });
-      tabs["nav-settings"].addEventListener("click", (e) => {
+      if (navSettingsTabClickHandler) {
+        tabs["nav-settings"].removeEventListener("click", navSettingsTabClickHandler);
+      }
+      navSettingsTabClickHandler = (e) => {
         const target = e.target;
         if (target.id === "s1p-nav-add-btn") {
           const newItem = createNavEditorItem(`new_${Date.now()}`, "", "");
@@ -9344,7 +9351,8 @@
           initializeNavbar();
           showMessage("设置已保存！", true);
         }
-      });
+      };
+      tabs["nav-settings"].addEventListener("click", navSettingsTabClickHandler);
     };
 
     renderGeneralSettingsTab();
@@ -11509,6 +11517,78 @@
   let readIndicatorElement = null;
   let currentIndicatorParent = null;
   let pageObserver = null;
+  let readProgressVisiblePosts = new Map();
+  let readProgressSaveTimeout = null;
+  let readProgressContext = null;
+  const saveCurrentReadProgress = () => {
+    if (!readProgressContext || readProgressVisiblePosts.size === 0) return;
+
+    let maxFloor = 0;
+    let finalPostId = null;
+    readProgressVisiblePosts.forEach((floor, postId) => {
+      if (floor > maxFloor) {
+        maxFloor = floor;
+        finalPostId = postId;
+      }
+    });
+
+    if (finalPostId && maxFloor > 0) {
+      if (getSettings().showReadIndicator) {
+        updateReadIndicatorUI(finalPostId);
+      }
+      updateThreadProgress(
+        readProgressContext.threadId,
+        finalPostId,
+        readProgressContext.currentPage,
+        maxFloor
+      );
+    }
+  };
+  const flushReadProgressSave = () => {
+    if (readProgressSaveTimeout) {
+      clearTimeout(readProgressSaveTimeout);
+      readProgressSaveTimeout = null;
+    }
+    saveCurrentReadProgress();
+  };
+  const scheduleReadProgressSave = () => {
+    if (readProgressSaveTimeout) {
+      clearTimeout(readProgressSaveTimeout);
+    }
+    readProgressSaveTimeout = setTimeout(() => {
+      readProgressSaveTimeout = null;
+      saveCurrentReadProgress();
+    }, 1500);
+  };
+  const handleReadProgressVisibilityChange = () => {
+    if (document.visibilityState === "hidden") {
+      flushReadProgressSave();
+    }
+  };
+  const resetReadProgressObserver = ({ clearObservedMarkers = false } = {}) => {
+    if (pageObserver) {
+      pageObserver.disconnect();
+      pageObserver = null;
+    }
+    if (readProgressSaveTimeout) {
+      clearTimeout(readProgressSaveTimeout);
+      readProgressSaveTimeout = null;
+    }
+    readProgressVisiblePosts.clear();
+    readProgressContext = null;
+    document.removeEventListener(
+      "visibilitychange",
+      handleReadProgressVisibilityChange
+    );
+    window.removeEventListener("beforeunload", flushReadProgressSave);
+    if (clearObservedMarkers) {
+      document
+        .querySelectorAll('table[id^="pid"][data-s1p-observed]')
+        .forEach((el) => {
+          el.removeAttribute("data-s1p-observed");
+        });
+    }
+  };
   let currentLoggedInUid = null; // [新增] 缓存当前登录用户的UID
   /**
    * [新增 & 修正] 获取当前登录用户的UID
@@ -11575,41 +11655,24 @@
       }
     }
 
+    const hasContextChanged =
+      !readProgressContext ||
+      readProgressContext.threadId !== threadId ||
+      readProgressContext.currentPage !== currentPage;
+    if (hasContextChanged) {
+      readProgressVisiblePosts.clear();
+      if (readProgressSaveTimeout) {
+        clearTimeout(readProgressSaveTimeout);
+        readProgressSaveTimeout = null;
+      }
+    }
+    readProgressContext = { threadId, currentPage };
+
     // --- [核心修改] 确保 pageObserver 只初始化一次，并能监控后续新增的元素 ---
-
-    // 仅当 pageObserver 未被创建时才创建，确保全局唯一
     if (!pageObserver) {
-      let visiblePosts = new Map();
-      let saveTimeout;
-
       const getFloorFromElement = (el) => {
         const floorElement = el.querySelector(".pi em");
         return floorElement ? parseInt(floorElement.textContent) || 0 : 0;
-      };
-
-      const saveCurrentProgress = () => {
-        if (visiblePosts.size === 0) return;
-        let maxFloor = 0;
-        let finalPostId = null;
-
-        visiblePosts.forEach((floor, postId) => {
-          if (floor > maxFloor) {
-            maxFloor = floor;
-            finalPostId = postId;
-          }
-        });
-
-        if (finalPostId && maxFloor > 0) {
-          if (getSettings().showReadIndicator) {
-            updateReadIndicatorUI(finalPostId);
-          }
-          updateThreadProgress(threadId, finalPostId, currentPage, maxFloor);
-        }
-      };
-
-      const debouncedSave = () => {
-        clearTimeout(saveTimeout);
-        saveTimeout = setTimeout(saveCurrentProgress, 1500);
       };
 
       pageObserver = new IntersectionObserver(
@@ -11619,28 +11682,27 @@
             if (entry.isIntersecting) {
               const floor = getFloorFromElement(entry.target);
               if (floor > 0) {
-                visiblePosts.set(postId, floor);
+                readProgressVisiblePosts.set(postId, floor);
               }
             } else {
-              visiblePosts.delete(postId);
+              readProgressVisiblePosts.delete(postId);
             }
           });
-          debouncedSave();
+          scheduleReadProgressSave();
         },
         { threshold: 0.3 }
       );
 
-      const finalSave = () => {
-        clearTimeout(saveTimeout);
-        saveCurrentProgress();
-      };
-
-      document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "hidden") {
-          finalSave();
-        }
-      });
-      window.addEventListener("beforeunload", finalSave);
+      document.removeEventListener(
+        "visibilitychange",
+        handleReadProgressVisibilityChange
+      );
+      window.removeEventListener("beforeunload", flushReadProgressSave);
+      document.addEventListener(
+        "visibilitychange",
+        handleReadProgressVisibilityChange
+      );
+      window.addEventListener("beforeunload", flushReadProgressSave);
     }
 
     // [新增] 每次函数运行时（包括页面动态变化后），都检查并添加未被监控的帖子
