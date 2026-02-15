@@ -58,6 +58,8 @@
 - **修复导航链接识别范围过宽**: 修复了 `getLinkType` 中 "header" 身份使用 `.closest(".wp")` 导致正文链接被误判为导航链接的问题。收窄为 `#nv, #mu, #um, #hd` 四个导航容器，消除误拦截。
 - **修复关闭阅读进度后观察器未停止**: 修复了在设置面板关闭阅读进度功能后，`IntersectionObserver`、事件监听器和保存定时器仍在后台运行的问题。关闭时显式调用 `resetReadProgressObserver`，`trackReadProgressInThread` 入口也增加了防御性清理。
 - **修复保存远程同步设置后触发条件偏宽**: 修复了仅填写 Gist ID 和 PAT（未开启远程同步总开关）就会触发首次同步的问题，现在需同时满足 `syncRemoteEnabled` 为开启状态。
+- **修复取消屏蔽用户本地/论坛状态分裂**: 将 `unblockUser` 中本地删除操作移至论坛端移除成功之后，失败时保留本地屏蔽状态。UI 提示也同步更新为与实际数据状态一致的文案。
+- **修复关闭帖子屏蔽时表头占位列残留**: `removeBlockButtonsFromThreads` 现在同步清除 `.s1p-header-placeholder` 和 `.s1p-separator-placeholder`，并对旧版无 class 的分隔行补位单元格做兜底收敛。新增补位单元格时加上 `s1p-separator-placeholder` class 标记。
 
 
 ### 🔧 技术改进与重构 (Refactoring & Tech Improvements)
