@@ -61,11 +61,13 @@
 - **修复取消屏蔽用户本地/论坛状态分裂**: 将 `unblockUser` 中本地删除操作移至论坛端移除成功之后，失败时保留本地屏蔽状态。UI 提示也同步更新为与实际数据状态一致的文案。
 - **修复关闭帖子屏蔽时表头占位列残留**: `removeBlockButtonsFromThreads` 现在同步清除 `.s1p-header-placeholder` 和 `.s1p-separator-placeholder`，并对旧版无 class 的分隔行补位单元格做兜底收敛。新增补位单元格时加上 `s1p-separator-placeholder` class 标记。
 - **修复悬浮菜单监听器累积**: 为 `createInlineActionMenu` 和标记操作菜单新增 `detachHoverListeners` 显式解绑 `mouseleave`/`mouseenter`，所有关闭路径（用户离开、按钮点击、程序化替换）均会调用。新增 `destroy` 立即销毁方法和 `isClosing` 重入保护，`s1p_api` 挂载到 DOM 元素供外部调用。
+- **HTML 清洗器协议白名单化**: `href`/`xlink:href` 校验从黑名单（仅拦截 `javascript:`）改为白名单协议校验（`http`/`https`/`mailto`/`tel`/`ftp`），拦截 `data:`、`vbscript:`、协议相对 URL 等风险模式。
 
 
 ### 🔧 技术改进与重构 (Refactoring & Tech Improvements)
 
 - **清理未使用配置项与死代码**: 移除了 `manualCleanupDays`、`threadBlockHoverDelay` 两个无引用的默认配置项，以及已无调用的 `performManualCleanup` 函数。
+- **`getSettings()` 副作用写入抽离**: 将迁移逻辑从 getter 中剥离为纯函数 `buildNormalizedSettings`，`getSettings()` 不再触发 `saveSettings`。新增 `migrateLegacySettingsIfNeeded` 在启动阶段一次性执行迁移并落盘。导入路径也统一走 `buildNormalizedSettings` 归一化。
 - **MutationObserver 增量化**: 将全量 `applyChanges` 策略改为增量执行。新增 `classifyMutationBatch` 对 mutation 按线程区/帖子区/大节点三维分类，`applyIncrementalChanges` 仅执行变更区域对应的操作子集。`wp`/`ct` 级别变更时安全回退到全量 `applyChanges`。`mutation.target` 仅做区域分类不触发全量回退，`applyGlobalLinkBehavior` 去重为单次调用。无关 mutation 直接跳过，减少不必要的 DOM 操作。
 - **高频集合匹配 `Array.includes` → `Set.has`**: 将 `hideBlockedUserQuotes`、`hideBlockedUserRatings`、`hideBlockedUserNotifications`、`applyUserThreadBlocklist` 中的数组查找改为 `Set.has`，在屏蔽用户较多时查找复杂度从 O(n) 降至 O(1)。
 - **`hideBlockedUsersPosts` 单次扫描优化**: 将"按用户多次全表查询"改为单次 `querySelectorAll("table.plhin")` 扫描 + `Set.has` 判定，复杂度从 O(N×M) 降至 O(M)。

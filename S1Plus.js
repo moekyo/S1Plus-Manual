@@ -82,6 +82,37 @@
    */
   const escapeAttr = (value) => escapeHTML(value);
 
+  const SAFE_URL_PROTOCOLS = new Set(["http:", "https:", "mailto:", "tel:", "ftp:"]);
+  const isSafeUrlAttributeValue = (value) => {
+    const rawValue = String(value ?? "");
+    const trimmedValue = rawValue.trim();
+    if (!trimmedValue) {
+      return true;
+    }
+
+    // 协议相对 URL 会继承当前协议，容易引入不受控跳转，按不安全处理。
+    if (/^\/\//.test(trimmedValue)) {
+      return false;
+    }
+
+    // 锚点与站内相对路径默认允许。
+    if (
+      /^#/.test(trimmedValue) ||
+      /^\//.test(trimmedValue) ||
+      /^\?/.test(trimmedValue) ||
+      /^\.\.?\//.test(trimmedValue)
+    ) {
+      return true;
+    }
+
+    try {
+      const parsedUrl = new URL(trimmedValue, window.location.origin);
+      return SAFE_URL_PROTOCOLS.has(parsedUrl.protocol);
+    } catch (e) {
+      return false;
+    }
+  };
+
   /**
    * 对受限场景中的 HTML 片段进行白名单清洗。
    * 仅保留允许标签与允许属性，剔除注释、事件处理器与 javascript: 链接。
@@ -124,7 +155,7 @@
 
             if (
               (attrName === "href" || attrName === "xlink:href") &&
-              /^\s*javascript:/i.test(attrValue)
+              !isSafeUrlAttributeValue(attrValue)
             ) {
               node.removeAttribute(attr.name);
               return;
@@ -5072,7 +5103,10 @@
         const importedSettings = { ...dataToImport.settings };
         delete importedSettings.syncRemoteGistId;
         delete importedSettings.syncRemotePat;
-        const mergedSettingsForImport = { ...getSettings(), ...importedSettings };
+        const {
+          settings: mergedSettingsForImport,
+          migrationApplied: settingsTransformedDuringImport,
+        } = buildNormalizedSettings({ ...getSettings(), ...importedSettings });
         if (suppressSyncTrigger) {
           const importedSyncedSettings = deterministicSort(
             getSyncedSettings(importedSettings)
@@ -5084,6 +5118,9 @@
             JSON.stringify(importedSyncedSettings) !==
             JSON.stringify(mergedSyncedSettings)
           ) {
+            hasSuppressedSyncedDataTransform = true;
+          }
+          if (settingsTransformedDuringImport) {
             hasSuppressedSyncedDataTransform = true;
           }
         }
@@ -6056,22 +6093,32 @@
     syncTokenExpiryDate: null,     // [新增] Token 过期时间戳
   };
 
-  const getSettings = () => {
-    const saved = GM_getValue("s1p_settings", {});
+  const buildNormalizedSettings = (rawSettings = {}) => {
+    const saved = rawSettings && typeof rawSettings === "object" ? rawSettings : {};
     const settings = { ...defaultSettings, ...saved };
+    let migrationApplied = false;
+    const savedOpenInNewTab =
+      saved.openInNewTab &&
+      typeof saved.openInNewTab === "object" &&
+      !Array.isArray(saved.openInNewTab)
+        ? saved.openInNewTab
+        : {};
 
-    // --- [NEW V2] 数据迁移逻辑 ---
-    // 检查是否存在旧的、独立的设置项，或旧的 openInNewTab 结构
-    if (
+    const hasLegacyOpenInNewTabRootKeys =
       typeof saved.openThreadsInNewTab !== "undefined" ||
-      (saved.openInNewTab && typeof saved.openInNewTab.threads !== "undefined")
-    ) {
-      console.log(
-        "S1 Plus: 检测到旧版“在新标签页打开”设置，正在执行自动迁移..."
-      );
+      typeof saved.openThreadsInBackground !== "undefined" ||
+      typeof saved.openProgressInNewTab !== "undefined" ||
+      typeof saved.openProgressInBackground !== "undefined";
+    const hasLegacyOpenInNewTabNestedKeys =
+      typeof savedOpenInNewTab.threads !== "undefined" ||
+      typeof savedOpenInNewTab.threadsInBackground !== "undefined" ||
+      typeof savedOpenInNewTab.sidebar !== "undefined" ||
+      typeof savedOpenInNewTab.sidebarInBackground !== "undefined";
 
-      const oldOpenTab = saved.openInNewTab || {};
-      const newOpenInNewTab = {
+    if (hasLegacyOpenInNewTabRootKeys || hasLegacyOpenInNewTabNestedKeys) {
+      const oldOpenTab = savedOpenInNewTab;
+      settings.openInNewTab = {
+        ...defaultSettings.openInNewTab,
         master: oldOpenTab.threads ?? saved.openThreadsInNewTab ?? false,
         threadList: oldOpenTab.threads ?? saved.openThreadsInNewTab ?? true,
         threadListInBackground:
@@ -6086,37 +6133,52 @@
         nav: oldOpenTab.nav ?? true, // 旧版无此设置，迁移时默认为 true
         navInBackground: oldOpenTab.navInBackground ?? false,
       };
-
-      settings.openInNewTab = newOpenInNewTab;
-
-      // 从设置中删除已迁移的旧键
-      delete settings.openThreadsInNewTab;
-      delete settings.openThreadsInBackground;
-      delete settings.openProgressInNewTab;
-      delete settings.openProgressInBackground;
-      if (settings.openInNewTab) {
-        delete settings.openInNewTab.threads;
-        delete settings.openInNewTab.threadsInBackground;
-        delete settings.openInNewTab.sidebar;
-        delete settings.openInNewTab.sidebarInBackground;
-      }
-
-      // 立即保存迁移后的新设置
-      saveSettings(settings);
-      console.log("S1 Plus: 设置迁移完成。");
+      migrationApplied = true;
     } else {
-      // 确保即使在迁移后，openInNewTab 对象也与默认值合并，以添加可能的新子属性
       settings.openInNewTab = {
         ...defaultSettings.openInNewTab,
-        ...(saved.openInNewTab || {}),
+        ...savedOpenInNewTab,
       };
+    }
+
+    const legacyRootKeys = [
+      "openThreadsInNewTab",
+      "openThreadsInBackground",
+      "openProgressInNewTab",
+      "openProgressInBackground",
+    ];
+    legacyRootKeys.forEach((key) => {
+      if (Object.prototype.hasOwnProperty.call(settings, key)) {
+        delete settings[key];
+        migrationApplied = true;
+      }
+    });
+
+    if (settings.openInNewTab && typeof settings.openInNewTab === "object") {
+      const legacyNestedKeys = [
+        "threads",
+        "threadsInBackground",
+        "sidebar",
+        "sidebarInBackground",
+      ];
+      legacyNestedKeys.forEach((key) => {
+        if (Object.prototype.hasOwnProperty.call(settings.openInNewTab, key)) {
+          delete settings.openInNewTab[key];
+          migrationApplied = true;
+        }
+      });
     }
 
     if (saved.customNavLinks && Array.isArray(saved.customNavLinks)) {
       settings.customNavLinks = saved.customNavLinks;
     }
 
-    return settings;
+    return { settings, migrationApplied };
+  };
+
+  const getSettings = () => {
+    const saved = GM_getValue("s1p_settings", {});
+    return buildNormalizedSettings(saved).settings;
   };
 
   // [S1PLUS-ADD-ABOVE: saveSettings]
@@ -6182,6 +6244,19 @@
     } else if (markDataChangedWhenSuppressed) {
       updateLastModifiedTimestamp("general", { triggerSync: false });
     }
+  };
+
+  const migrateLegacySettingsIfNeeded = () => {
+    const saved = GM_getValue("s1p_settings", {});
+    const { settings, migrationApplied } = buildNormalizedSettings(saved);
+    if (!migrationApplied) {
+      return false;
+    }
+
+    console.log("S1 Plus: 检测到旧版设置结构，正在执行一次性迁移...");
+    saveSettings(settings, { suppressSyncTrigger: true });
+    console.log("S1 Plus: 设置迁移完成。");
+    return true;
   };
 
   // --- 界面定制功能 ---
@@ -13481,6 +13556,7 @@
     // [即时生效] 立即应用楼层屏蔽CSS类，防止FOUC (Flash of Unstyled Content)
     // 必须放在 await handleStartupSync 之前
     hideSystemBlockedPosts();
+    migrateLegacySettingsIfNeeded();
 
     // [修改] 调用欢迎弹窗并接收其状态
     const welcomePopupWasShown = showFirstTimeWelcomeIfNeeded();
