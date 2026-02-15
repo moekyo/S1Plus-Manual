@@ -343,6 +343,7 @@
   const AUTO_SYNC_CIRCUIT_OPEN_DURATION_MS = 10 * 60 * 1000;
   const DOM_OBSERVER_DEBOUNCE_MS = 120;
   const SETTINGS_CACHE_TTL_MS = 1000;
+  const CORE_DATA_CACHE_TTL_MS = 1000;
   const OBSERVER_INCREMENTAL_THREAD_ROW_LIMIT = 80;
   const OBSERVER_INCREMENTAL_POST_TABLE_LIMIT = 80;
   // 帖子列表页阅读进度刷新防抖，避免跨标签高频更新导致频繁重绘。
@@ -3782,18 +3783,41 @@
   };
 
   // --- 数据处理 & 核心功能 ---
-  const getBlockedThreads = () => GM_getValue("s1p_blocked_threads", {});
+  const createCoreDataCacheState = () => ({ value: null, expiresAt: 0 });
+  const blockedThreadsCache = createCoreDataCacheState();
+  const blockedUsersCache = createCoreDataCacheState();
+  const blockedPostsCache = createCoreDataCacheState();
+  const readProgressCache = createCoreDataCacheState();
+  const setCoreDataCacheValue = (cacheState, value) => {
+    cacheState.value = isObjectRecord(value) ? value : {};
+    cacheState.expiresAt = Date.now() + CORE_DATA_CACHE_TTL_MS;
+  };
+  const getCoreDataFromCache = (cacheState, key) => {
+    if (cacheState.value && Date.now() < cacheState.expiresAt) {
+      return cacheState.value;
+    }
+    const latestValue = GM_getValue(key, {});
+    setCoreDataCacheValue(cacheState, latestValue);
+    return cacheState.value;
+  };
+  const getBlockedThreads = () =>
+    getCoreDataFromCache(blockedThreadsCache, "s1p_blocked_threads");
   const saveBlockedThreads = (threads, suppressSyncTrigger = false) => {
+    const normalizedThreads = isObjectRecord(threads) ? threads : {};
     invalidateLocalDataHashCache();
-    GM_setValue("s1p_blocked_threads", threads);
+    GM_setValue("s1p_blocked_threads", normalizedThreads);
+    setCoreDataCacheValue(blockedThreadsCache, normalizedThreads);
     if (!suppressSyncTrigger) {
       updateLastModifiedTimestamp();
     }
   };
-  const getBlockedUsers = () => GM_getValue("s1p_blocked_users", {});
+  const getBlockedUsers = () =>
+    getCoreDataFromCache(blockedUsersCache, "s1p_blocked_users");
   const saveBlockedUsers = (users, suppressSyncTrigger = false) => {
+    const normalizedUsers = isObjectRecord(users) ? users : {};
     invalidateLocalDataHashCache();
-    GM_setValue("s1p_blocked_users", users);
+    GM_setValue("s1p_blocked_users", normalizedUsers);
+    setCoreDataCacheValue(blockedUsersCache, normalizedUsers);
     if (!suppressSyncTrigger) {
       updateLastModifiedTimestamp();
     }
@@ -3816,10 +3840,13 @@
   };
 
   // [NEW] Blocked Posts data functions
-  const getBlockedPosts = () => GM_getValue("s1p_blocked_posts", {});
+  const getBlockedPosts = () =>
+    getCoreDataFromCache(blockedPostsCache, "s1p_blocked_posts");
   const saveBlockedPosts = (posts, suppressSyncTrigger = false) => {
+    const normalizedPosts = isObjectRecord(posts) ? posts : {};
     invalidateLocalDataHashCache();
-    GM_setValue("s1p_blocked_posts", posts);
+    GM_setValue("s1p_blocked_posts", normalizedPosts);
+    setCoreDataCacheValue(blockedPostsCache, normalizedPosts);
     if (!suppressSyncTrigger) {
       updateLastModifiedTimestamp();
     }
@@ -4690,7 +4717,8 @@
     applyKeywordThreadHidingForRows(null, { rebuildHiddenState: true });
   };
 
-  const getReadProgress = () => GM_getValue("s1p_read_progress", {});
+  const getReadProgress = () =>
+    getCoreDataFromCache(readProgressCache, "s1p_read_progress");
 
   const normalizeReadProgressData = (progress) => {
     if (!progress || typeof progress !== "object" || Array.isArray(progress)) {
@@ -4733,8 +4761,10 @@
   };
 
   const saveReadProgress = (progress, suppressSyncTrigger = false) => {
+    const normalizedProgress = isObjectRecord(progress) ? progress : {};
     invalidateLocalDataHashCache();
-    GM_setValue("s1p_read_progress", progress);
+    GM_setValue("s1p_read_progress", normalizedProgress);
+    setCoreDataCacheValue(readProgressCache, normalizedProgress);
     if (!suppressSyncTrigger) {
       updateLastModifiedTimestamp("read_progress");
     }
@@ -6567,6 +6597,33 @@
         }
       );
     }
+  };
+  const initializeCoreDataCacheSync = () => {
+    if (window.__s1pCoreDataCacheSyncBound) {
+      return;
+    }
+    window.__s1pCoreDataCacheSyncBound = true;
+
+    if (typeof GM_addValueChangeListener !== "function") {
+      return;
+    }
+
+    const bindCoreDataCacheSync = (key, cacheState) => {
+      GM_addValueChangeListener(
+        key,
+        (_changedKey, _oldValue, newValue, isCrossContextChange) => {
+          if (!isCrossContextChange) {
+            return;
+          }
+          setCoreDataCacheValue(cacheState, newValue);
+        }
+      );
+    };
+
+    bindCoreDataCacheSync("s1p_blocked_threads", blockedThreadsCache);
+    bindCoreDataCacheSync("s1p_blocked_users", blockedUsersCache);
+    bindCoreDataCacheSync("s1p_blocked_posts", blockedPostsCache);
+    bindCoreDataCacheSync("s1p_read_progress", readProgressCache);
   };
   const getSettings = () => {
     if (settingsCacheValue && Date.now() < settingsCacheExpiresAt) {
@@ -12626,9 +12683,19 @@
 
   const createTagDeleteConfirmMenu = (anchorElement, tagOptionsAnchor) => {
     // 清理任何已存在的确认菜单
-    document
-      .querySelector(".s1p-inline-confirm-menu[data-s1p-confirm-for-tag]")
-      ?.remove();
+    const existingConfirmMenu = document.querySelector(
+      ".s1p-inline-confirm-menu[data-s1p-confirm-for-tag]"
+    );
+    if (existingConfirmMenu) {
+      if (
+        existingConfirmMenu.s1p_api &&
+        typeof existingConfirmMenu.s1p_api.destroy === "function"
+      ) {
+        existingConfirmMenu.s1p_api.destroy({ immediate: true });
+      } else {
+        existingConfirmMenu.remove();
+      }
+    }
 
     const { userId, userName } = tagOptionsAnchor.dataset;
 
@@ -12675,13 +12742,20 @@
     // --- 交互逻辑 ---
     let isClosing = false;
     const optionsMenu = anchorElement.closest(".s1p-tag-options-menu");
-
-    const closeAllMenus = () => {
+    const destroyConfirmMenu = ({ immediate = false } = {}) => {
       if (isClosing) return;
       isClosing = true;
       document.removeEventListener("click", closeAllMenusOnClick);
-
+      if (immediate) {
+        menu.remove();
+        return;
+      }
       menu.classList.remove("visible");
+      setTimeout(() => menu.remove(), 200);
+    };
+
+    const closeAllMenus = () => {
+      destroyConfirmMenu();
       if (optionsMenu) {
         if (optionsMenu.s1p_api && typeof optionsMenu.s1p_api.destroy === "function") {
           optionsMenu.s1p_api.destroy();
@@ -12689,7 +12763,6 @@
           optionsMenu.remove();
         }
       }
-      setTimeout(() => menu.remove(), 200);
     };
 
     const closeAllMenusOnClick = (e) => {
@@ -12716,6 +12789,8 @@
       closeAllMenus();
     });
 
+    menu.s1p_api = { destroy: destroyConfirmMenu };
+
     // 让确认菜单也参与到主菜单的悬停逻辑中
     if (optionsMenu && optionsMenu.s1p_api) {
       menu.addEventListener("mouseenter", optionsMenu.s1p_api.cancelHideTimer);
@@ -12736,14 +12811,34 @@
     // 如果菜单已存在，则取消其隐藏计时器，防止因快速移入移出导致闪烁
     const existingMenu = document.querySelector(".s1p-tag-options-menu");
     if (existingMenu) {
-      if (existingMenu.s1p_api) existingMenu.s1p_api.cancelHideTimer();
-      return;
+      if (existingMenu.__s1pAnchorElement === anchorElement) {
+        if (existingMenu.s1p_api) existingMenu.s1p_api.cancelHideTimer();
+        return;
+      }
+      if (
+        existingMenu.s1p_api &&
+        typeof existingMenu.s1p_api.destroy === "function"
+      ) {
+        existingMenu.s1p_api.destroy();
+      } else {
+        existingMenu.remove();
+      }
     }
 
     // 在创建新菜单前，清理所有可能残留的菜单
-    document
-      .querySelector(".s1p-inline-confirm-menu[data-s1p-confirm-for-tag]")
-      ?.remove();
+    const existingConfirmMenu = document.querySelector(
+      ".s1p-inline-confirm-menu[data-s1p-confirm-for-tag]"
+    );
+    if (existingConfirmMenu) {
+      if (
+        existingConfirmMenu.s1p_api &&
+        typeof existingConfirmMenu.s1p_api.destroy === "function"
+      ) {
+        existingConfirmMenu.s1p_api.destroy({ immediate: true });
+      } else {
+        existingConfirmMenu.remove();
+      }
+    }
 
     const { userId, userName } = anchorElement.dataset;
     const menu = document.createElement("div");
@@ -12776,9 +12871,19 @@
       cancelHideTimer();
       detachHoverListeners();
       menu.remove();
-      document
-        .querySelector(".s1p-inline-confirm-menu[data-s1p-confirm-for-tag]")
-        ?.remove();
+      const confirmMenu = document.querySelector(
+        ".s1p-inline-confirm-menu[data-s1p-confirm-for-tag]"
+      );
+      if (confirmMenu) {
+        if (
+          confirmMenu.s1p_api &&
+          typeof confirmMenu.s1p_api.destroy === "function"
+        ) {
+          confirmMenu.s1p_api.destroy({ immediate: true });
+        } else {
+          confirmMenu.remove();
+        }
+      }
     };
 
     const startHideTimer = () => {
@@ -12801,6 +12906,7 @@
     const cancelHideTimer = () => clearTimeout(hideTimeout);
 
     // 将API附加到菜单元素上，以便其他部分（如确认菜单）可以调用
+    menu.__s1pAnchorElement = anchorElement;
     menu.s1p_api = { startHideTimer, cancelHideTimer, destroy: closeAllMenus };
 
     anchorElement.addEventListener("mouseleave", startHideTimer);
@@ -14039,6 +14145,7 @@
     recoverPendingAutoSyncIfNeeded();
     initializeGenericDisplayPopover();
     initializeSettingsCacheSync();
+    initializeCoreDataCacheSync();
     initializeReadProgressCrossTabRefresh();
 
     let observer = null;
