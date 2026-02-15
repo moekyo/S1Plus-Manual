@@ -60,6 +60,7 @@
 - **修复保存远程同步设置后触发条件偏宽**: 修复了仅填写 Gist ID 和 PAT（未开启远程同步总开关）就会触发首次同步的问题，现在需同时满足 `syncRemoteEnabled` 为开启状态。
 - **修复取消屏蔽用户本地/论坛状态分裂**: 将 `unblockUser` 中本地删除操作移至论坛端移除成功之后，失败时保留本地屏蔽状态。UI 提示也同步更新为与实际数据状态一致的文案。
 - **修复关闭帖子屏蔽时表头占位列残留**: `removeBlockButtonsFromThreads` 现在同步清除 `.s1p-header-placeholder` 和 `.s1p-separator-placeholder`，并对旧版无 class 的分隔行补位单元格做兜底收敛。新增补位单元格时加上 `s1p-separator-placeholder` class 标记。
+- **修复悬浮菜单监听器累积**: 为 `createInlineActionMenu` 和标记操作菜单新增 `detachHoverListeners` 显式解绑 `mouseleave`/`mouseenter`，所有关闭路径（用户离开、按钮点击、程序化替换）均会调用。新增 `destroy` 立即销毁方法和 `isClosing` 重入保护，`s1p_api` 挂载到 DOM 元素供外部调用。
 
 
 ### 🔧 技术改进与重构 (Refactoring & Tech Improvements)
