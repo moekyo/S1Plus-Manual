@@ -3918,11 +3918,7 @@
     // 如果用户不存在，直接返回成功
     if (!userToUnblock) return true;
 
-    // 从脚本存储中删除用户
-    delete b[id];
-    saveBlockedUsers(b);
-
-    // [修改] 只有当用户有“已同步”标记时，才执行移除操作
+    // 先执行论坛端移除，成功后再落地本地删除，避免本地/论坛状态分裂。
     if (userToUnblock.addedToNativeBlacklist === true) {
       const formhash = getFormhash();
       if (!formhash) {
@@ -3934,6 +3930,10 @@
         return false; // 同步失败
       }
     }
+
+    // 论坛端移除成功（或无需移除）后，再从脚本存储中删除用户
+    delete b[id];
+    saveBlockedUsers(b);
 
     showUserPosts(id);
     hideBlockedUserQuotes();
@@ -7173,8 +7173,21 @@
     document
       .querySelectorAll(".s1p-progress-container")
       .forEach((el) => el.remove());
-  const removeBlockButtonsFromThreads = () =>
-    document.querySelectorAll(".s1p-options-cell").forEach((el) => el.remove());
+  const removeBlockButtonsFromThreads = () => {
+    document
+      .querySelectorAll(
+        ".s1p-options-cell, .s1p-header-placeholder, .s1p-separator-placeholder"
+      )
+      .forEach((el) => el.remove());
+
+    // 兼容旧版本：历史上分隔行补位单元格未打 class，兜底收敛到原始列数(5)。
+    const separatorRow = document.querySelector("#separatorline > tr.ts");
+    if (separatorRow) {
+      while (separatorRow.childElementCount > 5) {
+        separatorRow.lastElementChild?.remove();
+      }
+    }
+  };
 
   const refreshUserPostsOnPage = (userId) => {
     if (!userId) return;
@@ -9870,10 +9883,10 @@
                 : `已取消对 ${userName} 的屏蔽。`;
               showMessage(message, true);
             } else {
-              showMessage(
-                `脚本内取消屏蔽成功，但同步移除论坛黑名单失败。`,
-                false
-              );
+              const failureMessage = wasSynced
+                ? `取消失败：无法从论坛黑名单移除，已保留本地屏蔽状态。`
+                : `取消失败：请稍后重试。`;
+              showMessage(failureMessage, false);
             }
           },
           "确认取消"
@@ -11071,6 +11084,7 @@
         const separatorRow = document.querySelector("#separatorline > tr.ts");
         if (separatorRow && separatorRow.childElementCount < 6) {
           const emptyTd = document.createElement("td");
+          emptyTd.className = "s1p-separator-placeholder";
           separatorRow.appendChild(emptyTd);
         }
       });
