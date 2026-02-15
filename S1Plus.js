@@ -4020,7 +4020,9 @@
   const hideBlockedUserQuotes = () => {
     const settings = getSettings();
     const blockedUsers = getBlockedUsers();
-    const blockedUserNames = Object.values(blockedUsers).map((u) => u.name);
+    const blockedUserNameSet = new Set(
+      Object.values(blockedUsers).map((u) => u.name)
+    );
 
     document.querySelectorAll("div.quote").forEach((quoteElement) => {
       const quoteAuthorElement = quoteElement.querySelector(
@@ -4034,7 +4036,7 @@
 
       const authorName = match[1];
       const isBlocked =
-        settings.enableUserBlocking && blockedUserNames.includes(authorName);
+        settings.enableUserBlocking && blockedUserNameSet.has(authorName);
 
       const wrapper = quoteElement.parentElement.classList.contains(
         "s1p-quote-wrapper"
@@ -4095,14 +4097,14 @@
   // [MODIFIED] 函数现在可以同时处理隐藏和显示，是一个完整的“刷新”功能
   const hideBlockedUserRatings = () => {
     const settings = getSettings();
-    const blockedUserIds = Object.keys(getBlockedUsers());
+    const blockedUserIdSet = new Set(Object.keys(getBlockedUsers()));
     document.querySelectorAll("tbody.ratl_l tr").forEach((row) => {
       const userLink = row.querySelector('a[href*="space-uid-"]');
       if (userLink) {
         const uidMatch = userLink.href.match(/space-uid-(\d+)/);
         if (uidMatch && uidMatch[1]) {
           const isBlocked =
-            settings.enableUserBlocking && blockedUserIds.includes(uidMatch[1]);
+            settings.enableUserBlocking && blockedUserIdSet.has(uidMatch[1]);
           row.style.display = isBlocked ? "none" : "";
         }
       }
@@ -4117,7 +4119,7 @@
     const settings = getSettings();
     const isUserBlockingEnabled = settings.enableUserBlocking === true;
 
-    const blockedUserIds = Object.keys(getBlockedUsers());
+    const blockedUserIdSet = new Set(Object.keys(getBlockedUsers()));
 
     // 遍历所有提醒元素或已存在的占位符的下一个元素
     noticeContainer
@@ -4141,7 +4143,7 @@
         const uidMatch = userLink.href.match(/space-uid-(\d+)/);
         const authorId = uidMatch ? uidMatch[1] : null;
         const isBlocked =
-          isUserBlockingEnabled && authorId && blockedUserIds.includes(authorId);
+          isUserBlockingEnabled && authorId && blockedUserIdSet.has(authorId);
 
         const wrapper = dlElement.parentElement.classList.contains(
           "s1p-notification-wrapper"
@@ -4205,31 +4207,38 @@
       });
   };
 
-  const hideThreadsByTitleKeyword = () => {
-    const rules = getTitleFilterRules().filter((r) => r.enabled && r.pattern);
-    const newHiddenThreads = {};
+  const normalizePatternAsKeyword = (pattern) =>
+    String(pattern || "")
+      .replace(/\\(.)/g, "$1")
+      .replace(/[.*+?^${}()|[\]\\]/g, "")
+      .trim();
+  const isRegexPatternHighRisk = (pattern) => {
+    const raw = String(pattern || "");
+    if (raw.length > 180) return true;
 
-    const normalizePatternAsKeyword = (pattern) =>
-      String(pattern || "")
-        .replace(/\\(.)/g, "$1")
-        .replace(/[.*+?^${}()|[\]\\]/g, "")
-        .trim();
-    const isRegexPatternHighRisk = (pattern) => {
-      const raw = String(pattern || "");
-      if (raw.length > 180) return true;
+    const nestedQuantifierPattern =
+      /\((?:[^()\\]|\\.)*[+*](?:[^()\\]|\\.)*\)(?:[+*]|\{\d+,?\d*\})/;
+    if (nestedQuantifierPattern.test(raw)) return true;
 
-      const nestedQuantifierPattern =
-        /\((?:[^()\\]|\\.)*[+*](?:[^()\\]|\\.)*\)(?:[+*]|\{\d+,?\d*\})/;
-      if (nestedQuantifierPattern.test(raw)) return true;
+    if (/(?:\.\*){2,}|(?:\.\+){2,}/.test(raw)) return true;
 
-      if (/(?:\.\*){2,}|(?:\.\+){2,}/.test(raw)) return true;
+    if (/\\[1-9]/.test(raw)) return true;
 
-      if (/\\[1-9]/.test(raw)) return true;
+    return false;
+  };
+  let titleRuleMatcherCacheSignature = "";
+  let titleRuleMatcherCache = [];
+  const buildTitleRuleMatcherCacheSignature = (rules) =>
+    rules
+      .map((r) => `${String(r.id || "")}\u0001${String(r.pattern || "")}`)
+      .join("\u0002");
+  const getCompiledTitleRuleMatchers = (rules) => {
+    const signature = buildTitleRuleMatcherCacheSignature(rules);
+    if (signature === titleRuleMatcherCacheSignature) {
+      return titleRuleMatcherCache;
+    }
 
-      return false;
-    };
-
-    const matchers = rules
+    const compiled = rules
       .map((r) => {
         const pattern = String(r.pattern || "");
         if (isRegexPatternHighRisk(pattern)) {
@@ -4263,6 +4272,15 @@
         }
       })
       .filter(Boolean);
+    titleRuleMatcherCacheSignature = signature;
+    titleRuleMatcherCache = compiled;
+    return compiled;
+  };
+
+  const hideThreadsByTitleKeyword = () => {
+    const rules = getTitleFilterRules().filter((r) => r.enabled && r.pattern);
+    const newHiddenThreads = {};
+    const matchers = getCompiledTitleRuleMatchers(rules);
 
     document
       .querySelectorAll('tbody[id^="normalthread_"], tbody[id^="stickthread_"]')
@@ -4463,10 +4481,10 @@
 
   const applyUserThreadBlocklist = () => {
     const blockedUsers = getBlockedUsers();
-    const usersToBlockThreads = Object.keys(blockedUsers).filter(
-      (uid) => blockedUsers[uid].blockThreads
+    const usersToBlockThreads = new Set(
+      Object.keys(blockedUsers).filter((uid) => blockedUsers[uid].blockThreads)
     );
-    if (usersToBlockThreads.length === 0) return;
+    if (usersToBlockThreads.size === 0) return;
 
     document
       .querySelectorAll('tbody[id^="normalthread_"], tbody[id^="stickthread_"]')
@@ -4477,7 +4495,7 @@
         if (authorLink) {
           const uidMatch = authorLink.href.match(/space-uid-(\d+)\.html/);
           const authorId = uidMatch ? uidMatch[1] : null;
-          if (authorId && usersToBlockThreads.includes(authorId)) {
+          if (authorId && usersToBlockThreads.has(authorId)) {
             const threadId = row.id.replace(
               /^(normalthread_|stickthread_)/,
               ""
@@ -5885,7 +5903,6 @@
     enableBookmarkReplies: true,
     readingProgressCleanupDays: 0,
     cleanupMode: 'auto',
-    manualCleanupDays: 30,
     openInNewTab: {
       master: false,
       threadList: true,
@@ -5906,7 +5923,6 @@
     hideImagesByDefault: false,
     enhanceFloatingControls: true,
     recommendS1Nux: true,
-    threadBlockHoverDelay: 1,
     customTitleSuffix: " - STAGE1ₛₜ",
     customNavLinks: [
       { name: "论坛", href: "forum.php" },
@@ -7699,8 +7715,17 @@
       "nav-settings": modal.querySelector("#s1p-tab-nav-settings"),
       sync: modal.querySelector("#s1p-tab-sync"),
     };
+    let bookmarkTabClickHandler = null;
+    let userTabClickHandler = null;
     let threadTabClickHandler = null;
     let navSettingsTabClickHandler = null;
+    const rebindTabClickHandler = (tabElement, previousHandler, nextHandler) => {
+      if (previousHandler) {
+        tabElement.removeEventListener("click", previousHandler);
+      }
+      tabElement.addEventListener("click", nextHandler);
+      return nextHandler;
+    };
     const dataClearanceConfig = {
       blockedThreads: {
         label: "手动屏蔽的帖子和用户主题帖",
@@ -8342,9 +8367,10 @@
         }
       }
 
-      if (!tabs["bookmarks"].dataset.s1pBookmarkToggleBound) {
-        tabs["bookmarks"].dataset.s1pBookmarkToggleBound = "true";
-        tabs["bookmarks"].addEventListener("click", (e) => {
+      bookmarkTabClickHandler = rebindTabClickHandler(
+        tabs["bookmarks"],
+        bookmarkTabClickHandler,
+        (e) => {
           const toggleLink = e.target.closest(
             '[data-action="toggle-bookmark-content"]'
           );
@@ -8367,8 +8393,8 @@
               preview.style.display = "block";
             }
           }
-        });
-      }
+        }
+      );
       if (hasBookmarks) {
         setupBookmarkSearchComponent(tabs["bookmarks"]);
       }
@@ -8473,11 +8499,15 @@
             `;
 
       // [新增] 备注编辑事件监听
-      if (!tabs["users"].dataset.s1pUserRemarkBound) {
-        tabs["users"].dataset.s1pUserRemarkBound = "true";
-        tabs["users"].addEventListener("click", (e) => {
+      userTabClickHandler = rebindTabClickHandler(
+        tabs["users"],
+        userTabClickHandler,
+        (e) => {
           const target = e.target;
-          if (target.classList.contains("s1p-add-remark-btn") || target.classList.contains("s1p-edit-remark-btn")) {
+          if (
+            target.classList.contains("s1p-add-remark-btn") ||
+            target.classList.contains("s1p-edit-remark-btn")
+          ) {
             const userId = target.dataset.userId;
             const currentRemark = target.dataset.currentRemark || "";
 
@@ -8507,8 +8537,8 @@
               { allowSubtitleHtml: true }
             );
           }
-        });
-      }
+        }
+      );
     };
     const renderThreadTab = () => {
       const settings = getSettings();
@@ -8813,10 +8843,10 @@
         renderRules();
       };
 
-      if (threadTabClickHandler) {
-        tabs["threads"].removeEventListener("click", threadTabClickHandler);
-      }
-      threadTabClickHandler = (e) => {
+      threadTabClickHandler = rebindTabClickHandler(
+        tabs["threads"],
+        threadTabClickHandler,
+        (e) => {
         const target = e.target;
         const header = target.closest(".s1p-collapsible-header");
 
@@ -8914,8 +8944,8 @@
           saveKeywordRules();
           showMessage("规则已保存！", true);
         }
-      };
-      tabs["threads"].addEventListener("click", threadTabClickHandler);
+      }
+      );
     };
     const renderGeneralSettingsTab = () => {
       const settings = getSettings();
@@ -9349,10 +9379,10 @@
           container.appendChild(draggedItem);
         }
       });
-      if (navSettingsTabClickHandler) {
-        tabs["nav-settings"].removeEventListener("click", navSettingsTabClickHandler);
-      }
-      navSettingsTabClickHandler = (e) => {
+      navSettingsTabClickHandler = rebindTabClickHandler(
+        tabs["nav-settings"],
+        navSettingsTabClickHandler,
+        (e) => {
         const target = e.target;
         if (target.id === "s1p-nav-add-btn") {
           const newItem = createNavEditorItem(`new_${Date.now()}`, "", "");
@@ -9411,8 +9441,8 @@
           initializeNavbar();
           showMessage("设置已保存！", true);
         }
-      };
-      tabs["nav-settings"].addEventListener("click", navSettingsTabClickHandler);
+      }
+      );
     };
 
     renderGeneralSettingsTab();
@@ -12859,44 +12889,6 @@
     document.body.appendChild(modal);
   };
 
-  const performManualCleanup = (days) => {
-    const progress = getReadProgress();
-    const originalCount = Object.keys(progress).length;
-    if (originalCount === 0) {
-      showMessage("暂无阅读记录需要清理", true);
-      return;
-    }
-
-    const now = Date.now();
-    const maxAge = days * 24 * 60 * 60 * 1000;
-    const cleanedProgress = {};
-    let cleanedCount = 0;
-
-    for (const threadId in progress) {
-      if (Object.prototype.hasOwnProperty.call(progress, threadId)) {
-        const record = progress[threadId];
-        if (record.timestamp && now - record.timestamp < maxAge) {
-          cleanedProgress[threadId] = record;
-        } else {
-          cleanedCount++;
-        }
-      }
-    }
-
-    if (cleanedCount > 0) {
-      console.log(
-        `S1 Plus: Manually cleaned up ${cleanedCount} old reading progress records (older than ${days} days).`
-      );
-      // [S1PLUS-CLEANUP-FIX] 标记已发生清理，等待用户同步确认
-      GM_setValue("s1p_pending_cleanup_info", cleanedCount);
-      // [核心修正] 将 suppressSyncTrigger 改为 false，以确保时间戳被更新
-      saveReadProgress(cleanedProgress, false);
-      showMessage(`成功清理 ${cleanedCount} 条超过 ${days} 天的阅读记录`, true);
-    } else {
-      showMessage(`没有超过 ${days} 天的阅读记录需要清理`, true);
-    }
-  };
-
   const handlePerLoadSyncCheck = async () => {
     const settings = getSettings();
 
@@ -13253,14 +13245,118 @@
     let observerApplyTimer = null;
     let observerIsApplying = false;
     let observerPendingNavReinit = false;
+    let observerPendingThreadRefresh = false;
+    let observerPendingPostRefresh = false;
+    let observerRequireFullApply = false;
+    const threadMutationSelector =
+      'tbody[id^="normalthread_"], tbody[id^="stickthread_"], #threadlist';
+    const postMutationSelector =
+      '#postlist, table[id^="pid"], .authi, .xld.xlda, tbody.ratl_l';
 
-    const observerCallback = () => {
+    const mutationTouchesSelector = (node, selector) => {
+      if (!(node instanceof Element)) {
+        return false;
+      }
+      return node.matches(selector) || Boolean(node.querySelector(selector));
+    };
+    const classifyMutationBatch = (mutationList) => {
+      let touchesThreadArea = false;
+      let touchesPostArea = false;
+      let shouldForceFullApply = false;
+      const inspectNode = (node) => {
+        if (!(node instanceof Element)) {
+          return;
+        }
+        if (node.id === "wp" || node.id === "ct") {
+          shouldForceFullApply = true;
+          return;
+        }
+        if (mutationTouchesSelector(node, threadMutationSelector)) {
+          touchesThreadArea = true;
+        }
+        if (mutationTouchesSelector(node, postMutationSelector)) {
+          touchesPostArea = true;
+        }
+      };
+
+      mutationList.forEach((mutation) => {
+        inspectNode(mutation.target);
+        mutation.addedNodes.forEach(inspectNode);
+        mutation.removedNodes.forEach(inspectNode);
+      });
+
+      return { touchesThreadArea, touchesPostArea, shouldForceFullApply };
+    };
+    const applyIncrementalChanges = () => {
+      const settings = getSettings();
+      if (observerPendingThreadRefresh) {
+        if (settings.enablePostBlocking) {
+          hideBlockedThreads();
+          hideThreadsByTitleKeyword();
+          addBlockButtonsToThreads();
+          applyUserThreadBlocklist();
+        }
+        if (settings.enableReadProgress) {
+          addProgressJumpButtons();
+        }
+        applyGlobalLinkBehavior();
+      }
+      if (observerPendingPostRefresh) {
+        if (settings.enableUserBlocking) {
+          hideBlockedUsersPosts();
+          hideBlockedUserQuotes();
+          hideBlockedUserRatings();
+          hideBlockedUserNotifications();
+        }
+        if (settings.enablePostBlocking) {
+          hideBlockedPosts();
+        }
+        if (settings.hideSystemBlockedPosts) {
+          hideSystemBlockedPosts();
+        }
+        if (
+          settings.enableUserBlocking ||
+          settings.enableUserTagging ||
+          settings.enableBookmarkReplies ||
+          settings.enablePostBlocking
+        ) {
+          addActionsToPostFooter();
+        }
+        renameAuthorLinks();
+        if (settings.enableUserTagging) {
+          initializeTaggingPopover();
+        }
+        applyImageHiding();
+        manageImageToggleAllButtons();
+        applyGlobalLinkBehavior();
+        trackReadProgressInThread();
+      }
+    };
+
+    const observerCallback = (mutationList = []) => {
       if (observerIsApplying) {
         return;
       }
 
       observerPendingNavReinit =
         observerPendingNavReinit || !document.getElementById("s1p-nav-link");
+      const mutationFlags = classifyMutationBatch(mutationList);
+      observerPendingThreadRefresh =
+        observerPendingThreadRefresh || mutationFlags.touchesThreadArea;
+      observerPendingPostRefresh =
+        observerPendingPostRefresh || mutationFlags.touchesPostArea;
+      observerRequireFullApply =
+        observerRequireFullApply ||
+        mutationFlags.shouldForceFullApply ||
+        (mutationFlags.touchesThreadArea && mutationFlags.touchesPostArea);
+      if (
+        !observerPendingNavReinit &&
+        !observerPendingThreadRefresh &&
+        !observerPendingPostRefresh &&
+        !observerRequireFullApply
+      ) {
+        return;
+      }
 
       if (observerApplyTimer) {
         clearTimeout(observerApplyTimer);
@@ -13275,9 +13371,16 @@
             console.log("S1 Plus: 检测到导航栏被重置，正在重新应用自定义设置。");
             initializeNavbar();
           }
-          applyChanges();
+          if (observerRequireFullApply) {
+            applyChanges();
+          } else {
+            applyIncrementalChanges();
+          }
         } finally {
           observerPendingNavReinit = false;
+          observerPendingThreadRefresh = false;
+          observerPendingPostRefresh = false;
+          observerRequireFullApply = false;
           const watchTarget = document.getElementById("wp") || document.body;
           observer.observe(watchTarget, { childList: true, subtree: true });
           observerIsApplying = false;
