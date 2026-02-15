@@ -61,14 +61,14 @@
 - **修复取消屏蔽用户本地/论坛状态分裂**: 将 `unblockUser` 中本地删除操作移至论坛端移除成功之后，失败时保留本地屏蔽状态。UI 提示也同步更新为与实际数据状态一致的文案。
 - **修复关闭帖子屏蔽时表头占位列残留**: `removeBlockButtonsFromThreads` 现在同步清除 `.s1p-header-placeholder` 和 `.s1p-separator-placeholder`，并对旧版无 class 的分隔行补位单元格做兜底收敛。新增补位单元格时加上 `s1p-separator-placeholder` class 标记。
 - **修复悬浮菜单监听器累积**: 为 `createInlineActionMenu` 和标记操作菜单新增 `detachHoverListeners` 显式解绑 `mouseleave`/`mouseenter`，所有关闭路径（用户离开、按钮点击、程序化替换）均会调用。新增 `destroy` 立即销毁方法和 `isClosing` 重入保护，`s1p_api` 挂载到 DOM 元素供外部调用。
-- **HTML 清洗器协议白名单化**: `href`/`xlink:href` 校验从黑名单（仅拦截 `javascript:`）改为白名单协议校验（`http`/`https`/`mailto`/`tel`/`ftp`），拦截 `data:`、`vbscript:`、协议相对 URL 等风险模式。
+- **HTML 清洗器协议白名单化**: `href`/`xlink:href` 校验从黑名单（仅拦截 `javascript:`）改为收紧版白名单——仅允许 `https` 及同源 `http`，拦截 `data:`、`vbscript:`、`mailto:`、`ftp:`、协议相对 URL 等风险模式。
 - **修复导入数据后页面屏蔽状态不一致**: 新增 `restoreManagedVisibilityAfterDataImport` 在导入后精确恢复不再被屏蔽的线程和帖子。导入后刷新逻辑按开关状态决定应用范围，引用/评分/提醒统一刷新。旧版设置迁移时推进 `last_modified` 时间戳避免远程同步假冲突。
 
 
 ### 🔧 技术改进与重构 (Refactoring & Tech Improvements)
 
 - **清理未使用配置项与死代码**: 移除了 `manualCleanupDays`、`threadBlockHoverDelay` 两个无引用的默认配置项，以及已无调用的 `performManualCleanup` 函数。
-- **`getSettings()` 副作用写入抽离**: 将迁移逻辑从 getter 中剥离为纯函数 `buildNormalizedSettings`，`getSettings()` 不再触发 `saveSettings`。新增 `migrateLegacySettingsIfNeeded` 在启动阶段一次性执行迁移并落盘。导入路径也统一走 `buildNormalizedSettings` 归一化。
+- **`getSettings()` 副作用写入抽离与缓存**: 将迁移逻辑从 getter 中剥离为纯函数 `buildNormalizedSettings`，`getSettings()` 不再触发 `saveSettings`。新增 `migrateLegacySettingsIfNeeded` 在启动阶段一次性执行迁移并落盘。导入路径也统一走 `buildNormalizedSettings` 归一化。新增 1 秒 TTL 缓存层消除增量路径中重复 `GM_getValue` + 反序列化开销，`saveSettings` 写入后立即刷新缓存，`GM_addValueChangeListener` 跨标签页同步。
 - **MutationObserver 节点级作用域增量化**: 将全量 `applyChanges` 策略改为节点级作用域增量执行。`classifyMutationBatch` 对 mutation 按线程行/帖子表/引用/评分/提醒五维分类并收集具体新增 DOM 节点引用。`applyIncrementalChanges` 在新增节点 ≤80 且无删除操作时走作用域路径，仅处理变更节点；超限或有删除时安全回退全量。核心屏蔽/关键词/用户线程屏蔽函数统一提取为 `*ForRows` 可复用变体，scope 和全量共享同一份逻辑。引用/评分/提醒/图片隐藏/进度跟踪等函数全部支持 `scopeRoots` 参数。新增 `restoreManagedVisibilityAfterDataImport` 用于导入后精确恢复可见性。
 - **高频集合匹配 `Array.includes` → `Set.has`**: 将 `hideBlockedUserQuotes`、`hideBlockedUserRatings`、`hideBlockedUserNotifications`、`applyUserThreadBlocklist` 中的数组查找改为 `Set.has`，在屏蔽用户较多时查找复杂度从 O(n) 降至 O(1)。
 - **`hideBlockedUsersPosts` 单次扫描优化**: 将"按用户多次全表查询"改为单次 `querySelectorAll("table.plhin")` 扫描 + `Set.has` 判定，复杂度从 O(N×M) 降至 O(M)。

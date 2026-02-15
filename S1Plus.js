@@ -82,7 +82,19 @@
    */
   const escapeAttr = (value) => escapeHTML(value);
 
-  const SAFE_URL_PROTOCOLS = new Set(["http:", "https:", "mailto:", "tel:", "ftp:"]);
+  // 绝对链接白名单策略（收紧版）：
+  // 1) 允许任意 https 链接；
+  // 2) 允许同源 http 链接（兼容极少数同源回退场景）；
+  // 3) 不允许 mailto/tel/ftp 等协议，降低钓鱼或非预期跳转面。
+  const isAllowedAbsoluteUrl = (parsedUrl) => {
+    if (parsedUrl.protocol === "https:") {
+      return true;
+    }
+    if (parsedUrl.protocol === "http:") {
+      return parsedUrl.origin === window.location.origin;
+    }
+    return false;
+  };
   const isSafeUrlAttributeValue = (value) => {
     const rawValue = String(value ?? "");
     const trimmedValue = rawValue.trim();
@@ -107,7 +119,7 @@
 
     try {
       const parsedUrl = new URL(trimmedValue, window.location.origin);
-      return SAFE_URL_PROTOCOLS.has(parsedUrl.protocol);
+      return isAllowedAbsoluteUrl(parsedUrl);
     } catch (e) {
       return false;
     }
@@ -303,6 +315,7 @@
   const AUTO_SYNC_CIRCUIT_BREAKER_THRESHOLD = 3;
   const AUTO_SYNC_CIRCUIT_OPEN_DURATION_MS = 10 * 60 * 1000;
   const DOM_OBSERVER_DEBOUNCE_MS = 120;
+  const SETTINGS_CACHE_TTL_MS = 1000;
   const OBSERVER_INCREMENTAL_THREAD_ROW_LIMIT = 80;
   const OBSERVER_INCREMENTAL_POST_TABLE_LIMIT = 80;
   // 帖子列表页阅读进度刷新防抖，避免跨标签高频更新导致频繁重绘。
@@ -6435,9 +6448,60 @@
     return { settings, migrationApplied };
   };
 
+  let settingsCacheValue = null;
+  let settingsCacheExpiresAt = 0;
+  const cloneSettingsObject = (settings) => {
+    if (!settings || typeof settings !== "object") {
+      return buildNormalizedSettings({}).settings;
+    }
+    if (typeof structuredClone === "function") {
+      return structuredClone(settings);
+    }
+    try {
+      return JSON.parse(JSON.stringify(settings));
+    } catch (error) {
+      return buildNormalizedSettings(settings).settings;
+    }
+  };
+  const setSettingsCache = (settings) => {
+    settingsCacheValue = cloneSettingsObject(settings);
+    settingsCacheExpiresAt = Date.now() + SETTINGS_CACHE_TTL_MS;
+  };
+  const invalidateSettingsCache = () => {
+    settingsCacheValue = null;
+    settingsCacheExpiresAt = 0;
+  };
+  const initializeSettingsCacheSync = () => {
+    if (window.__s1pSettingsCacheSyncBound) {
+      return;
+    }
+    window.__s1pSettingsCacheSyncBound = true;
+
+    if (typeof GM_addValueChangeListener === "function") {
+      GM_addValueChangeListener(
+        "s1p_settings",
+        (_key, _oldValue, newValue, isCrossContextChange) => {
+          if (!isCrossContextChange) {
+            return;
+          }
+          const { settings } = buildNormalizedSettings(newValue);
+          setSettingsCache(settings);
+        }
+      );
+    }
+  };
   const getSettings = () => {
+    if (settingsCacheValue && Date.now() < settingsCacheExpiresAt) {
+      return cloneSettingsObject(settingsCacheValue);
+    }
+
+    if (settingsCacheValue) {
+      invalidateSettingsCache();
+    }
     const saved = GM_getValue("s1p_settings", {});
-    return buildNormalizedSettings(saved).settings;
+    const { settings } = buildNormalizedSettings(saved);
+    setSettingsCache(settings);
+    return cloneSettingsObject(settingsCacheValue);
   };
 
   // [S1PLUS-ADD-ABOVE: saveSettings]
@@ -6495,8 +6559,10 @@
         suppressSyncTriggerOrOptions,
         legacyMarkDataChangedWhenSuppressed
       );
+    const normalizedSettings = buildNormalizedSettings(settings).settings;
     invalidateLocalDataHashCache();
-    GM_setValue("s1p_settings", settings);
+    GM_setValue("s1p_settings", normalizedSettings);
+    setSettingsCache(normalizedSettings);
     console.log("S1 Plus: Settings saved.");
     if (!suppressSyncTrigger) {
       updateLastModifiedTimestamp();
@@ -13885,6 +13951,7 @@
     bindPendingAutoSyncRecoveryHooks();
     recoverPendingAutoSyncIfNeeded();
     initializeGenericDisplayPopover();
+    initializeSettingsCacheSync();
     initializeReadProgressCrossTabRefresh();
 
     let observer = null;
