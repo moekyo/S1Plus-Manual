@@ -95,16 +95,18 @@
     }
     return false;
   };
-  const isSafeUrlAttributeValue = (value) => {
-    const rawValue = String(value ?? "");
-    const trimmedValue = rawValue.trim();
+  const getSafeUrlAttributeValue = (
+    value,
+    { allowEmpty = true } = {}
+  ) => {
+    const trimmedValue = String(value ?? "").trim();
     if (!trimmedValue) {
-      return true;
+      return allowEmpty ? "" : null;
     }
 
     // 协议相对 URL 会继承当前协议，容易引入不受控跳转，按不安全处理。
     if (/^\/\//.test(trimmedValue)) {
-      return false;
+      return null;
     }
 
     // 锚点与站内相对路径默认允许。
@@ -114,16 +116,18 @@
       /^\?/.test(trimmedValue) ||
       /^\.\.?\//.test(trimmedValue)
     ) {
-      return true;
+      return trimmedValue;
     }
 
     try {
       const parsedUrl = new URL(trimmedValue, window.location.origin);
-      return isAllowedAbsoluteUrl(parsedUrl);
+      return isAllowedAbsoluteUrl(parsedUrl) ? trimmedValue : null;
     } catch (e) {
-      return false;
+      return null;
     }
   };
+  const isSafeUrlAttributeValue = (value, options = undefined) =>
+    getSafeUrlAttributeValue(value, options) !== null;
 
   const isObjectRecord = (value) =>
     Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -139,11 +143,8 @@
       }
 
       const name = String(link.name ?? "").trim();
-      const href = String(link.href ?? "").trim();
+      const href = getSafeUrlAttributeValue(link.href, { allowEmpty: false });
       if (!name || !href) {
-        return acc;
-      }
-      if (!isSafeUrlAttributeValue(href)) {
         return acc;
       }
 
@@ -193,11 +194,18 @@
             }
 
             if (
-              (attrName === "href" || attrName === "xlink:href") &&
-              !isSafeUrlAttributeValue(attrValue)
+              attrName === "href" || attrName === "xlink:href"
             ) {
-              node.removeAttribute(attr.name);
-              return;
+              const safeUrlValue = getSafeUrlAttributeValue(attrValue, {
+                allowEmpty: true,
+              });
+              if (safeUrlValue === null) {
+                node.removeAttribute(attr.name);
+                return;
+              }
+              if (safeUrlValue !== attrValue) {
+                node.setAttribute(attr.name, safeUrlValue);
+              }
             }
 
             if (
@@ -7133,10 +7141,10 @@
 
     if (settings.enableNavCustomization) {
       navUl.textContent = "";
-      (settings.customNavLinks || []).forEach((link) => {
+      normalizeCustomNavLinks(settings.customNavLinks).forEach((link) => {
         const linkName = String(link?.name ?? "").trim();
-        const linkHref = String(link?.href ?? "").trim();
-        if (!linkName || !linkHref || !isSafeUrlAttributeValue(linkHref)) return;
+        const linkHref = getSafeUrlAttributeValue(link?.href, { allowEmpty: false });
+        if (!linkName || !linkHref) return;
         const li = document.createElement("li");
         if (window.location.href.includes(linkHref)) li.className = "a";
         const a = document.createElement("a");

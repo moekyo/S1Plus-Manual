@@ -61,10 +61,10 @@
 - **修复取消屏蔽用户本地/论坛状态分裂**: 将 `unblockUser` 中本地删除操作移至论坛端移除成功之后，失败时保留本地屏蔽状态。UI 提示也同步更新为与实际数据状态一致的文案。
 - **修复关闭帖子屏蔽时表头占位列残留**: `removeBlockButtonsFromThreads` 现在同步清除 `.s1p-header-placeholder` 和 `.s1p-separator-placeholder`，并对旧版无 class 的分隔行补位单元格做兜底收敛。新增补位单元格时加上 `s1p-separator-placeholder` class 标记。
 - **修复悬浮菜单监听器累积**: 为 `createInlineActionMenu` 和标记操作菜单新增 `detachHoverListeners` 显式解绑 `mouseleave`/`mouseenter`，所有关闭路径（用户离开、按钮点击、程序化替换）均会调用。新增 `destroy` 立即销毁方法和 `isClosing` 重入保护，`s1p_api` 挂载到 DOM 元素供外部调用。
-- **HTML 清洗器协议白名单化**: `href`/`xlink:href` 校验从黑名单（仅拦截 `javascript:`）改为收紧版白名单——仅允许 `https` 及同源 `http`，拦截 `data:`、`vbscript:`、`mailto:`、`ftp:`、协议相对 URL 等风险模式。
+- **HTML 清洗器协议白名单化**: `href`/`xlink:href` 校验从黑名单（仅拦截 `javascript:`）改为收紧版白名单——仅允许 `https` 及同源 `http`，拦截 `data:`、`vbscript:`、`mailto:`、`ftp:`、协议相对 URL 等风险模式。核心逻辑提取为 `getSafeUrlAttributeValue` 返回归一化后的安全值或 `null`，清洗器可自动修正脏值（如 trim 空格），`isSafeUrlAttributeValue` 变为布尔 wrapper。
 - **修复导入数据后页面屏蔽状态不一致**: 新增 `restoreManagedVisibilityAfterDataImport` 在导入后精确恢复不再被屏蔽的线程和帖子。导入后刷新逻辑按开关状态决定应用范围，引用/评分/提醒统一刷新。旧版设置迁移时推进 `last_modified` 时间戳避免远程同步假冲突。
 - **修复屏蔽/取消屏蔽用户后提醒区未刷新**: `blockUser` 和 `unblockUser` 补充调用 `hideBlockedUserNotifications`，确保提醒占位符即时生效和恢复。
-- **导航链接安全清洗**: 新增 `normalizeCustomNavLinks` 过滤非法或危险导航链接。存储层 (`buildNormalizedSettings`)、保存层（设置面板保存）、渲染层 (`initializeNavbar`) 三层防御。保存时检测到不安全链接会提示用户。
+- **导航链接安全清洗**: 新增 `normalizeCustomNavLinks` 过滤非法或危险导航链接，内部复用 `getSafeUrlAttributeValue`。存储层 (`buildNormalizedSettings`)、保存层（设置面板保存）、渲染层 (`initializeNavbar`) 三层防御。保存时检测到不安全链接会提示用户。
 - **全局链接行为安全加固**: `applyGlobalLinkBehavior` 中的 href 检查新增 `vbscript:`、`data:text/html` 检测并兜底 `isSafeUrlAttributeValue`，阻止不安全链接被 `window.open` 打开。
 - **数据导入全量同步化**: 导入时缺失或类型不正确的字段（`user_tags`、`title_filter_rules`、`read_progress`、`bookmarked_replies`、`blocked_posts`）统一写入空值而非跳过，确保远程"删除全部"操作能正确同步到本地。归一化修正均标记 `hasSuppressedSyncedDataTransform`。
 
