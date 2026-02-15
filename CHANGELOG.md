@@ -60,6 +60,12 @@
 
 ### 🔧 技术改进与重构 (Refactoring & Tech Improvements)
 
+- **清理未使用配置项与死代码**: 移除了 `manualCleanupDays`、`threadBlockHoverDelay` 两个无引用的默认配置项，以及已无调用的 `performManualCleanup` 函数。
+- **MutationObserver 增量化**: 将全量 `applyChanges` 策略改为增量执行。新增 `classifyMutationBatch` 对 mutation 按线程区/帖子区/大节点三维分类，`applyIncrementalChanges` 仅执行变更区域对应的操作子集。`wp`/`ct` 级别变更或双区同时变更时安全回退到全量 `applyChanges`。无关 mutation 直接跳过，减少不必要的 DOM 操作。
+- **高频集合匹配 `Array.includes` → `Set.has`**: 将 `hideBlockedUserQuotes`、`hideBlockedUserRatings`、`hideBlockedUserNotifications`、`applyUserThreadBlocklist` 中的数组查找改为 `Set.has`，在屏蔽用户较多时查找复杂度从 O(n) 降至 O(1)。
+- **标题规则正则编译缓存**: 将 `normalizePatternAsKeyword`、`isRegexPatternHighRisk` 提升为模块级函数，新增 `getCompiledTitleRuleMatchers` 基于签名缓存编译结果，规则未变时跳过重新编译。
+- **统一 Tab 事件绑定模式**: 引入 `rebindTabClickHandler` 工具函数，将 `bookmarks`、`users`、`threads`、`nav-settings` 四个 tab 原先不同的绑定方式（`dataset` 标记 / 手动 remove+add）统一为 `rebindTabClickHandler(tab, prev, handler)` 模式。
+
 - **二次确认弹窗逻辑大重构**: 
     - **逻辑整合**: 将帖子列表屏蔽、楼层/用户屏蔽、标记删除确认等所有分散的确认弹窗逻辑整合为一套统一的工具函数 `buildConfirmationMarkup`。
     - **高度视觉统一**: 彻底消除了不同场景下确认框的高度差（解决 10px 落差问题），通过统一的 `.s1p-confirm-wrapper` 手段确保所有弹窗在任何布局下都拥有像素级一致的外观。
