@@ -392,6 +392,7 @@
   const AUTO_SYNC_CIRCUIT_OPEN_UNTIL_KEY = "s1p_auto_sync_circuit_open_until";
   const AUTO_SYNC_CONFLICT_PAUSE_KEY = "s1p_auto_sync_conflict_pause";
   const PENDING_AUTO_SYNC_KEY = "s1p_pending_auto_sync_request";
+  const SETTINGS_CROSS_TAB_SIGNAL_KEY = "s1p_settings_refresh_signal";
   const SYNC_BASELINE_STATE_KEY = "s1p_sync_baseline_state";
   const SYNC_LOCK_LOST_CODE = "SYNC_LOCK_LOST";
   const SYNC_CONFLICT_MODAL_COOLDOWN_LOCK_KEY =
@@ -6172,6 +6173,7 @@
         bookmarksImported = 0,
         postsImported = 0;
       let hasSuppressedSyncedDataTransform = false;
+      let hasImportNormalizationAdjustments = false;
 
       const upgradeDataStructure = (type, importedData) => {
         const shouldNormalizeNumericId = type === "users" || type === "threads";
@@ -6299,6 +6301,9 @@
             hasSuppressedSyncedDataTransform = true;
           }
         }
+        if (settingsTransformedDuringImport || hadUnsafeImportedSettingsKeys) {
+          hasImportNormalizationAdjustments = true;
+        }
         saveSettings(
           mergedSettingsForImport,
           { suppressSyncTrigger }
@@ -6317,6 +6322,9 @@
       if (suppressSyncTrigger && threadsTransformedDuringImport) {
         hasSuppressedSyncedDataTransform = true;
       }
+      if (threadsTransformedDuringImport) {
+        hasImportNormalizationAdjustments = true;
+      }
 
       const {
         data: usersToSave,
@@ -6329,6 +6337,9 @@
       usersImported = Object.keys(usersToSave).length;
       if (suppressSyncTrigger && usersTransformedDuringImport) {
         hasSuppressedSyncedDataTransform = true;
+      }
+      if (usersTransformedDuringImport) {
+        hasImportNormalizationAdjustments = true;
       }
 
       const hasUserTagsField = Object.prototype.hasOwnProperty.call(
@@ -6350,6 +6361,9 @@
         )
       ) {
         hasSuppressedSyncedDataTransform = true;
+      }
+      if (!userTagsIsValidRecord || hasUnsafeRecordKeys(dataToImport.user_tags)) {
+        hasImportNormalizationAdjustments = true;
       }
 
       const hasTitleRulesField = Object.prototype.hasOwnProperty.call(
@@ -6382,6 +6396,7 @@
         if (suppressSyncTrigger) {
           hasSuppressedSyncedDataTransform = true;
         }
+        hasImportNormalizationAdjustments = true;
       } else {
         saveTitleFilterRules([], suppressSyncTrigger);
         rulesImported = 0;
@@ -6394,6 +6409,13 @@
           )
         ) {
           hasSuppressedSyncedDataTransform = true;
+        }
+        if (
+          !hasTitleRulesField ||
+          (hasTitleRulesField && !hasTitleRulesArray) ||
+          (hasLegacyTitleKeywordsField && !hasLegacyTitleKeywordsArray)
+        ) {
+          hasImportNormalizationAdjustments = true;
         }
       }
 
@@ -6408,6 +6430,9 @@
       progressImported = Object.keys(normalizedProgress).length;
       if (suppressSyncTrigger && (hasLegacyType || !hasReadProgressField)) {
         hasSuppressedSyncedDataTransform = true;
+      }
+      if (hasLegacyType || !hasReadProgressField) {
+        hasImportNormalizationAdjustments = true;
       }
 
       const hasBookmarksField = Object.prototype.hasOwnProperty.call(
@@ -6430,6 +6455,12 @@
       ) {
         hasSuppressedSyncedDataTransform = true;
       }
+      if (
+        !bookmarksIsValidRecord ||
+        hasUnsafeRecordKeys(dataToImport.bookmarked_replies)
+      ) {
+        hasImportNormalizationAdjustments = true;
+      }
 
       const hasBlockedPostsField = Object.prototype.hasOwnProperty.call(
         dataToImport,
@@ -6450,6 +6481,12 @@
         )
       ) {
         hasSuppressedSyncedDataTransform = true;
+      }
+      if (
+        !blockedPostsIsValidRecord ||
+        hasUnsafeRecordKeys(dataToImport.blocked_posts)
+      ) {
+        hasImportNormalizationAdjustments = true;
       }
 
       const importedLastUpdated = Number(imported.lastUpdated);
@@ -6499,9 +6536,15 @@
         triggerRemoteSyncPush();
       }
 
+      const normalizationNotice = hasImportNormalizationAdjustments
+        ? " 检测到导入内容包含无效 ID 或旧格式字段，已自动修正/忽略；若修正后与当前数据等价，后续手动同步可能提示“数据已最新”。"
+        : "";
+      const autoSyncNotice = !suppressPostSync
+        ? " 已按当前配置请求后台自动同步（若远程同步已开启）。"
+        : "";
       return {
         success: true,
-        message: `成功导入 ${threadsImported} 条帖子、${usersImported} 条用户、${tagsImported} 条标记、${bookmarksImported} 条收藏、${postsImported} 条楼层屏蔽、${rulesImported} 条标题规则、${progressImported} 条阅读进度及相关设置。`,
+        message: `成功导入 ${threadsImported} 条帖子、${usersImported} 条用户、${tagsImported} 条标记、${bookmarksImported} 条收藏、${postsImported} 条楼层屏蔽、${rulesImported} 条标题规则、${progressImported} 条阅读进度及相关设置。${normalizationNotice}${autoSyncNotice}`,
       };
     } catch (e) {
       return { success: false, message: `导入失败: ${e.message}` };
@@ -8176,6 +8219,7 @@
 
   let settingsCacheValue = null;
   let settingsCacheExpiresAt = 0;
+  let localSettingsWriteInFlightCount = 0;
   const cloneSettingsObject = (settings) => {
     if (!settings || typeof settings !== "object") {
       return buildNormalizedSettings({}).settings;
@@ -8235,6 +8279,7 @@
     "syncTokenExpiryEnabled",
     "syncTokenExpiryDate",
   ];
+  const SETTINGS_FALLBACK_SYNC_POLL_INTERVAL_MS = 1500;
   const isSettingPathMatched = (changedPath, targetPath) => {
     if (!changedPath || !targetPath) {
       return false;
@@ -8320,7 +8365,20 @@
       GM_addValueChangeListener(
         "s1p_settings",
         (_key, oldValue, newValue, isCrossContextChange) => {
-          if (!isCrossContextChange) {
+          const { settings: nextSettings } = buildNormalizedSettings(newValue);
+          const currentSettingsSnapshot = getSettings();
+          const differsFromCurrentCache = hasComparableValueChanged(
+            currentSettingsSnapshot,
+            nextSettings
+          );
+
+          // 某些油猴实现里 isCrossContextChange 在对象值上存在误报。
+          // 兜底策略：若新值与当前缓存确有差异，仍按跨标签更新处理；
+          // 但本标签页写入中的回调仍跳过，避免重复调度。
+          if (
+            !isCrossContextChange &&
+            (localSettingsWriteInFlightCount > 0 || !differsFromCurrentCache)
+          ) {
             return;
           }
           const { settings: previousSettings } = buildNormalizedSettings(
@@ -8330,16 +8388,85 @@
               ? oldValue
               : {}
           );
-          const { settings } = buildNormalizedSettings(newValue);
-          setSettingsCache(settings);
-          if (hasComparableValueChanged(previousSettings, settings)) {
+          setSettingsCache(nextSettings);
+          if (hasComparableValueChanged(previousSettings, nextSettings)) {
             scheduleSettingsCrossTabRefresh(
-              collectChangedSettingPaths(previousSettings, settings)
+              collectChangedSettingPaths(previousSettings, nextSettings)
             );
+          } else if (differsFromCurrentCache) {
+            // old/new 值无法可靠对比时，回退为全量刷新，保证关闭态也能收敛。
+            scheduleSettingsCrossTabRefresh();
           }
         }
       );
     }
+  };
+  const pullSettingsFromStorageSnapshot = () =>
+    buildNormalizedSettings(GM_getValue("s1p_settings", {})).settings;
+  const syncSettingsFromStorageSnapshotIfNeeded = ({
+    forceFullApply = false,
+    applyImmediately = false,
+  } = {}) => {
+    if (localSettingsWriteInFlightCount > 0) {
+      return false;
+    }
+    const cachedSettings = getSettings();
+    const storedSettings = pullSettingsFromStorageSnapshot();
+    if (!hasComparableValueChanged(cachedSettings, storedSettings)) {
+      return false;
+    }
+
+    const changedPaths = collectChangedSettingPaths(cachedSettings, storedSettings);
+    setSettingsCache(storedSettings);
+    if (applyImmediately) {
+      pendingSettingsCrossTabRefreshPaths.clear();
+      if (forceFullApply || changedPaths.length === 0) {
+        pendingSettingsCrossTabNeedsFullApply = true;
+      } else {
+        changedPaths.forEach((path) => {
+          if (typeof path === "string" && path.trim()) {
+            pendingSettingsCrossTabRefreshPaths.add(path.trim());
+          }
+        });
+      }
+      runSettingsCrossTabRefresh();
+      return true;
+    }
+    if (forceFullApply || changedPaths.length === 0) {
+      scheduleSettingsCrossTabRefresh();
+      return true;
+    }
+    scheduleSettingsCrossTabRefresh(changedPaths);
+    return true;
+  };
+  const initializeSettingsFallbackSync = () => {
+    if (window.__s1pSettingsFallbackSyncBound) {
+      return;
+    }
+    window.__s1pSettingsFallbackSyncBound = true;
+
+    const trySyncFromStorage = ({ forceFullApply = false } = {}) => {
+      if (document.visibilityState === "hidden") {
+        return;
+      }
+      syncSettingsFromStorageSnapshotIfNeeded({ forceFullApply });
+    };
+
+    setInterval(() => {
+      trySyncFromStorage();
+    }, SETTINGS_FALLBACK_SYNC_POLL_INTERVAL_MS);
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") {
+        trySyncFromStorage({ forceFullApply: true });
+      }
+    });
+    window.addEventListener("focus", () => {
+      trySyncFromStorage({ forceFullApply: true });
+    });
+    window.addEventListener("pageshow", () => {
+      trySyncFromStorage({ forceFullApply: true });
+    });
   };
   let coreDataCrossTabRefreshTimer = null;
   const pendingCoreDataCrossTabRefreshKeys = new Set();
@@ -8461,6 +8588,17 @@
     const keys = Array.from(pendingCoreDataCrossTabRefreshKeys);
     pendingCoreDataCrossTabRefreshKeys.clear();
     const changedKeys = new Set(keys);
+
+    if (changedKeys.has(SETTINGS_CROSS_TAB_SIGNAL_KEY)) {
+      changedKeys.delete(SETTINGS_CROSS_TAB_SIGNAL_KEY);
+      const didApplyFromSignal = syncSettingsFromStorageSnapshotIfNeeded({
+        forceFullApply: true,
+        applyImmediately: true,
+      });
+      if (didApplyFromSignal && changedKeys.size === 0) {
+        return;
+      }
+    }
 
     if (changedKeys.has("s1p_settings_refresh")) {
       const didRunFullSettingsApply = runSettingsCrossTabRefresh();
@@ -8599,6 +8737,7 @@
     bindCoreDataCacheSync("s1p_title_filter_rules", titleFilterRulesCache);
     bindCoreDataCacheSync("s1p_user_tags", userTagsCache);
     bindCoreDataCacheSync("s1p_bookmarked_replies", bookmarkedRepliesCache);
+    bindCoreDataCacheSync(SETTINGS_CROSS_TAB_SIGNAL_KEY);
     document.addEventListener("visibilitychange", () => {
       if (
         document.visibilityState === "visible" &&
@@ -8687,8 +8826,17 @@
       return;
     }
     invalidateLocalDataHashCache();
-    GM_setValue("s1p_settings", normalizedSettings);
-    setSettingsCache(normalizedSettings);
+    localSettingsWriteInFlightCount += 1;
+    try {
+      GM_setValue("s1p_settings", normalizedSettings);
+      GM_setValue(SETTINGS_CROSS_TAB_SIGNAL_KEY, Date.now() + Math.random());
+      setSettingsCache(normalizedSettings);
+    } finally {
+      localSettingsWriteInFlightCount = Math.max(
+        0,
+        localSettingsWriteInFlightCount - 1
+      );
+    }
     console.log("S1 Plus: Settings saved.");
     if (!suppressSyncTrigger) {
       updateLastModifiedTimestamp();
@@ -16654,6 +16802,7 @@
     recoverPendingAutoSyncIfNeeded();
     initializeGenericDisplayPopover();
     initializeSettingsCacheSync();
+    initializeSettingsFallbackSync();
     initializeCoreDataCacheSync();
     initializeReadProgressCrossTabRefresh();
 
