@@ -173,6 +173,19 @@
     }, []);
   };
 
+  const normalizeNumericId = (value) => {
+    const normalized = String(value ?? "").trim();
+    return /^\d+$/.test(normalized) ? normalized : "";
+  };
+  const extractUidFromProfileHref = (href) => {
+    const uidMatch = String(href || "").match(/space-uid-(\d+)/);
+    return uidMatch && uidMatch[1] ? uidMatch[1] : "";
+  };
+  const getPostTableById = (postId) => {
+    const normalizedPostId = normalizeNumericId(postId);
+    return normalizedPostId ? document.getElementById(`pid${normalizedPostId}`) : null;
+  };
+
   /**
    * 对受限场景中的 HTML 片段进行白名单清洗。
    * 仅保留允许标签与允许属性，剔除注释、事件处理器与 javascript: 链接。
@@ -372,6 +385,7 @@
     background_conflict: "sync_conflict",
     startup_conflict: "sync_conflict",
     auto_conflict_paused: "sync_conflict",
+    startup_local_newer: "sync_conflict",
   });
   const SYNC_DIAGNOSTICS_KEY = "s1p_sync_diagnostics";
   const AUTO_SYNC_FAILURE_COUNT_KEY = "s1p_auto_sync_failure_count";
@@ -401,6 +415,17 @@
   const READ_PROGRESS_PERSIST_DEBOUNCE_MS = 5 * 1000;
   // 收藏内容同步只保留短预览，避免整段文本参与哈希和上传。
   const BOOKMARK_SYNC_PREVIEW_MAX_LENGTH = 280;
+  const SUPPORTS_CSS_HAS_SELECTOR = (() => {
+    try {
+      return Boolean(
+        window.CSS &&
+        typeof window.CSS.supports === "function" &&
+        window.CSS.supports("selector(:has(*))")
+      );
+    } catch (error) {
+      return false;
+    }
+  })();
 
   let readProgressListRefreshTimer = null;
   let pendingReadProgressDataForRefresh = null;
@@ -519,6 +544,9 @@
 
     /* --- [新增的功能] 系统屏蔽楼层隐藏 --- */
     html.s1p-hide-system-blocked-enabled table.plhin:has(.locked) {
+      display: none !important;
+    }
+    .s1p-system-blocked-fallback-hidden {
       display: none !important;
     }
 
@@ -3339,37 +3367,69 @@
     };
   };
 
-  const getSyncDiagnostics = () => {
-    const defaultDiagnostics = {
-      lastAttemptTimestamp: 0,
-      lastSuccessTimestamp: 0,
-      lastFailureTimestamp: 0,
-      lastFailureReason: "",
-      consecutiveFailureCount: 0,
-      lastActionType: "",
-      lastConflictTimestamp: 0,
+  const SYNC_DIAGNOSTICS_DEFAULT = Object.freeze({
+    lastAttemptTimestamp: 0,
+    lastSuccessTimestamp: 0,
+    lastFailureTimestamp: 0,
+    lastFailureReason: "",
+    consecutiveFailureCount: 0,
+    lastActionType: "",
+    lastConflictTimestamp: 0,
+  });
+  const normalizeSyncDiagnostics = (value) => {
+    const source =
+      value && typeof value === "object" && !Array.isArray(value)
+        ? value
+        : {};
+    const normalizeTimestamp = (rawValue) => {
+      const parsed = Number(rawValue);
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
     };
-    const saved = GM_getValue(SYNC_DIAGNOSTICS_KEY, defaultDiagnostics);
-    if (!saved || typeof saved !== "object" || Array.isArray(saved)) {
-      return defaultDiagnostics;
-    }
-    return { ...defaultDiagnostics, ...saved };
+    const normalizeCount = (rawValue) => {
+      const parsed = Number(rawValue);
+      return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0;
+    };
+    const normalizeText = (rawValue, maxLength = 220) =>
+      String(rawValue || "")
+        .replace(/\s+/g, " ")
+        .replace(/[<>]/g, "")
+        .slice(0, maxLength);
+
+    return {
+      lastAttemptTimestamp: normalizeTimestamp(source.lastAttemptTimestamp),
+      lastSuccessTimestamp: normalizeTimestamp(source.lastSuccessTimestamp),
+      lastFailureTimestamp: normalizeTimestamp(source.lastFailureTimestamp),
+      lastFailureReason: normalizeText(source.lastFailureReason, 500),
+      consecutiveFailureCount: normalizeCount(source.consecutiveFailureCount),
+      lastActionType: normalizeText(source.lastActionType, 120),
+      lastConflictTimestamp: normalizeTimestamp(source.lastConflictTimestamp),
+    };
+  };
+  const getSyncDiagnostics = () => {
+    return normalizeSyncDiagnostics(
+      GM_getValue(SYNC_DIAGNOSTICS_KEY, SYNC_DIAGNOSTICS_DEFAULT)
+    );
   };
 
   const saveSyncDiagnostics = (nextDiagnostics) => {
-    GM_setValue(SYNC_DIAGNOSTICS_KEY, nextDiagnostics);
+    const normalizedDiagnostics = normalizeSyncDiagnostics(nextDiagnostics);
+    const currentDiagnostics = normalizeSyncDiagnostics(
+      GM_getValue(SYNC_DIAGNOSTICS_KEY, SYNC_DIAGNOSTICS_DEFAULT)
+    );
+    const currentSignature = JSON.stringify(
+      deterministicSort(currentDiagnostics)
+    );
+    const nextSignature = JSON.stringify(
+      deterministicSort(normalizedDiagnostics)
+    );
+    if (currentSignature === nextSignature) {
+      return;
+    }
+    GM_setValue(SYNC_DIAGNOSTICS_KEY, normalizedDiagnostics);
   };
 
   const resetSyncDiagnostics = () => {
-    GM_setValue(SYNC_DIAGNOSTICS_KEY, {
-      lastAttemptTimestamp: 0,
-      lastSuccessTimestamp: 0,
-      lastFailureTimestamp: 0,
-      lastFailureReason: "",
-      consecutiveFailureCount: 0,
-      lastActionType: "",
-      lastConflictTimestamp: 0,
-    });
+    GM_setValue(SYNC_DIAGNOSTICS_KEY, { ...SYNC_DIAGNOSTICS_DEFAULT });
   };
 
   const formatSyncTime = (timestamp) => {
@@ -3986,20 +4046,33 @@
   };
 
   // --- 数据处理 & 核心功能 ---
-  const createCoreDataCacheState = () => ({ value: null, expiresAt: 0 });
+  const createCoreDataCacheState = (normalize = sanitizeRecordObject) => ({
+    value: null,
+    expiresAt: 0,
+    normalize,
+  });
   const blockedThreadsCache = createCoreDataCacheState();
   const blockedUsersCache = createCoreDataCacheState();
   const blockedPostsCache = createCoreDataCacheState();
   const readProgressCache = createCoreDataCacheState();
+  const userTagsCache = createCoreDataCacheState();
+  const bookmarkedRepliesCache = createCoreDataCacheState();
+  const titleFilterRulesCache = createCoreDataCacheState((value) =>
+    Array.isArray(value) ? value : []
+  );
   const setCoreDataCacheValue = (cacheState, value) => {
-    cacheState.value = sanitizeRecordObject(value);
+    const normalize =
+      cacheState && typeof cacheState.normalize === "function"
+        ? cacheState.normalize
+        : sanitizeRecordObject;
+    cacheState.value = normalize(value);
     cacheState.expiresAt = Date.now() + CORE_DATA_CACHE_TTL_MS;
   };
-  const getCoreDataFromCache = (cacheState, key) => {
+  const getCoreDataFromCache = (cacheState, key, fallbackValue = {}) => {
     if (cacheState.value && Date.now() < cacheState.expiresAt) {
       return cacheState.value;
     }
-    const latestValue = GM_getValue(key, {});
+    const latestValue = GM_getValue(key, fallbackValue);
     setCoreDataCacheValue(cacheState, latestValue);
     return cacheState.value;
   };
@@ -4054,7 +4127,7 @@
       const lastType = length > 0 ? typeof value[length - 1] : "none";
       return `array:${length}:${firstType}:${lastType}`;
     }
-    const keys = Object.keys(value);
+    const keys = Object.keys(value).sort();
     let keyHash = 2166136261;
     for (const key of keys) {
       for (let i = 0; i < key.length; i++) {
@@ -4159,18 +4232,23 @@
     const normalizedTags = sanitizeRecordObject(tags);
     const currentStoredTags = getComparableStoredValue("s1p_user_tags", {});
     if (!hasComparableValueChanged(currentStoredTags, normalizedTags)) {
+      setCoreDataCacheValue(userTagsCache, normalizedTags);
       return;
     }
     invalidateLocalDataHashCache();
     GM_setValue("s1p_user_tags", normalizedTags);
     setComparableStoredValue("s1p_user_tags", normalizedTags);
+    setCoreDataCacheValue(userTagsCache, normalizedTags);
     if (!suppressSyncTrigger) {
       updateLastModifiedTimestamp();
     }
   };
   // [NEW] Bookmarked Replies data functions
   const getBookmarkedReplies = () =>
-    sanitizeRecordObject(GM_getValue("s1p_bookmarked_replies", {}));
+    getCoreDataFromCache(
+      bookmarkedRepliesCache,
+      "s1p_bookmarked_replies"
+    );
   const saveBookmarkedReplies = (replies, suppressSyncTrigger = false) => {
     const normalizedReplies = sanitizeRecordObject(replies);
     const currentStoredReplies = getComparableStoredValue(
@@ -4178,11 +4256,13 @@
       {}
     );
     if (!hasComparableValueChanged(currentStoredReplies, normalizedReplies)) {
+      setCoreDataCacheValue(bookmarkedRepliesCache, normalizedReplies);
       return;
     }
     invalidateLocalDataHashCache();
     GM_setValue("s1p_bookmarked_replies", normalizedReplies);
     setComparableStoredValue("s1p_bookmarked_replies", normalizedReplies);
+    setCoreDataCacheValue(bookmarkedRepliesCache, normalizedReplies);
     if (!suppressSyncTrigger) {
       updateLastModifiedTimestamp();
     }
@@ -4233,10 +4313,87 @@
   };
 
   // [NEW] Blocked Posts data functions
-  const getBlockedPosts = () =>
-    getCoreDataFromCache(blockedPostsCache, "s1p_blocked_posts");
+  const buildBlockedPostContentPreview = (text) =>
+    buildBookmarkContentPreview(text);
+  const normalizeBlockedPostsRecord = (postId, item) => {
+    if (!isObjectRecord(item)) {
+      return null;
+    }
+    const normalizedPostId = normalizeNumericId(item.postId || postId);
+    if (!normalizedPostId) {
+      return null;
+    }
+    const normalizedItem = sanitizeRecordObject(item);
+    normalizedItem.postId = normalizedPostId;
+    normalizedItem.threadId =
+      normalizeNumericId(normalizedItem.threadId) || "unknown_thread";
+    normalizedItem.threadTitle = String(normalizedItem.threadTitle || "");
+    normalizedItem.floor = String(normalizedItem.floor || "");
+    normalizedItem.authorId = normalizeNumericId(normalizedItem.authorId) || "";
+    normalizedItem.authorName = String(normalizedItem.authorName || "");
+    normalizedItem.timestamp =
+      Number.isFinite(Number(normalizedItem.timestamp)) &&
+      Number(normalizedItem.timestamp) > 0
+        ? Number(normalizedItem.timestamp)
+        : 0;
+    if (typeof normalizedItem.postContent !== "undefined") {
+      normalizedItem.postContent = String(normalizedItem.postContent || "");
+    }
+    const previewText = buildBlockedPostContentPreview(
+      normalizedItem.contentPreview || normalizedItem.postContent
+    );
+    if (previewText) {
+      normalizedItem.contentPreview = previewText;
+    } else {
+      delete normalizedItem.contentPreview;
+    }
+    return normalizedItem;
+  };
+  const normalizeBlockedPostsPayload = (posts) => {
+    const source = sanitizeRecordObject(posts);
+    const normalizedPosts = {};
+    Object.keys(source).forEach((postId) => {
+      const normalizedRecord = normalizeBlockedPostsRecord(postId, source[postId]);
+      if (!normalizedRecord) {
+        return;
+      }
+      normalizedPosts[normalizedRecord.postId] = normalizedRecord;
+    });
+    return normalizedPosts;
+  };
+  const getBlockedPostsForSync = () => {
+    const blockedPosts = getBlockedPosts();
+    const compactPosts = {};
+    Object.keys(blockedPosts).forEach((postId) => {
+      const item = blockedPosts[postId];
+      if (!isObjectRecord(item)) {
+        return;
+      }
+      const compactItem = sanitizeRecordObject(item);
+      const contentPreview = buildBlockedPostContentPreview(
+        compactItem.contentPreview || compactItem.postContent
+      );
+      delete compactItem.postContent;
+      if (contentPreview) {
+        compactItem.contentPreview = contentPreview;
+      } else {
+        delete compactItem.contentPreview;
+      }
+      compactPosts[postId] = compactItem;
+    });
+    return compactPosts;
+  };
+  const getBlockedPosts = () => {
+    const blockedPosts = getCoreDataFromCache(blockedPostsCache, "s1p_blocked_posts");
+    const normalizedPosts = normalizeBlockedPostsPayload(blockedPosts);
+    if (hasComparableValueChanged(blockedPosts, normalizedPosts)) {
+      setCoreDataCacheValue(blockedPostsCache, normalizedPosts);
+      setComparableStoredValue("s1p_blocked_posts", normalizedPosts);
+    }
+    return normalizedPosts;
+  };
   const saveBlockedPosts = (posts, suppressSyncTrigger = false) => {
-    const normalizedPosts = sanitizeRecordObject(posts);
+    const normalizedPosts = normalizeBlockedPostsPayload(posts);
     const currentStoredPosts = getComparableStoredValue("s1p_blocked_posts", {});
     if (!hasComparableValueChanged(currentStoredPosts, normalizedPosts)) {
       setCoreDataCacheValue(blockedPostsCache, normalizedPosts);
@@ -4253,28 +4410,57 @@
 
   // [MODIFIED] 升级并获取用户标记，自动迁移旧数据
   const getUserTags = () => {
-    const tags = sanitizeRecordObject(GM_getValue("s1p_user_tags", {}));
+    const tags = getCoreDataFromCache(userTagsCache, "s1p_user_tags");
     let needsMigration = false;
     const migratedTags = { ...tags };
 
     Object.keys(migratedTags).forEach((id) => {
-      if (typeof migratedTags[id] === "string" || !migratedTags[id].timestamp) {
+      const rawEntry = migratedTags[id];
+      const isLegacyString = typeof rawEntry === "string";
+      const isTagObject = isObjectRecord(rawEntry);
+
+      if (!isLegacyString && !isTagObject) {
         needsMigration = true;
-        const oldTag =
-          typeof migratedTags[id] === "string"
-            ? migratedTags[id]
-            : migratedTags[id].tag;
-        const oldName =
-          migratedTags[id] && migratedTags[id].name
-            ? migratedTags[id].name
-            : `用户 #${id}`;
-        migratedTags[id] = {
-          name: oldName,
-          tag: oldTag,
-          timestamp:
-            (migratedTags[id] && migratedTags[id].timestamp) || Date.now(),
-        };
+        delete migratedTags[id];
+        return;
       }
+
+      const normalizedTag = String(
+        isLegacyString ? rawEntry : rawEntry.tag || ""
+      ).trim();
+      if (!normalizedTag) {
+        needsMigration = true;
+        delete migratedTags[id];
+        return;
+      }
+
+      const normalizedName = String(
+        (isTagObject && rawEntry.name) || `用户 #${id}`
+      ).trim() || `用户 #${id}`;
+      const parsedTimestamp = Number(isTagObject ? rawEntry.timestamp : 0);
+      const normalizedTimestamp =
+        Number.isFinite(parsedTimestamp) && parsedTimestamp > 0
+          ? parsedTimestamp
+          : Date.now();
+      const normalizedColor =
+        isTagObject && typeof rawEntry.color === "string"
+          ? rawEntry.color.trim()
+          : "";
+
+      const normalizedEntry = {
+        name: normalizedName,
+        tag: normalizedTag,
+        timestamp: normalizedTimestamp,
+      };
+      if (normalizedColor) {
+        normalizedEntry.color = normalizedColor;
+      }
+
+      if (!isTagObject || hasComparableValueChanged(rawEntry, normalizedEntry)) {
+        needsMigration = true;
+      }
+
+      migratedTags[id] = normalizedEntry;
     });
 
     if (needsMigration) {
@@ -4288,8 +4474,18 @@
   };
 
   const getTitleFilterRules = () => {
+    if (
+      titleFilterRulesCache.value &&
+      Date.now() < titleFilterRulesCache.expiresAt
+    ) {
+      return titleFilterRulesCache.value;
+    }
+
     const rules = GM_getValue("s1p_title_filter_rules", null);
-    if (rules !== null) return rules;
+    if (rules !== null) {
+      setCoreDataCacheValue(titleFilterRulesCache, rules);
+      return titleFilterRulesCache.value;
+    }
 
     // --- 向下兼容：迁移旧的关键字数据 ---
     const oldKeywords = GM_getValue("s1p_title_keywords", null);
@@ -4304,7 +4500,8 @@
       updateLastModifiedTimestamp("general", { triggerSync: false });
       return newRules;
     }
-    return [];
+    setCoreDataCacheValue(titleFilterRulesCache, []);
+    return titleFilterRulesCache.value;
   };
 
   /**
@@ -4333,11 +4530,13 @@
     const normalizedRules = Array.isArray(rules) ? rules : [];
     const currentRules = getComparableStoredValue("s1p_title_filter_rules", []);
     if (!hasComparableValueChanged(currentRules, normalizedRules)) {
+      setCoreDataCacheValue(titleFilterRulesCache, normalizedRules);
       return;
     }
     invalidateLocalDataHashCache();
     GM_setValue("s1p_title_filter_rules", normalizedRules);
     setComparableStoredValue("s1p_title_filter_rules", normalizedRules);
+    setCoreDataCacheValue(titleFilterRulesCache, normalizedRules);
     if (!suppressSyncTrigger) {
       updateLastModifiedTimestamp();
     }
@@ -4485,40 +4684,46 @@
 
   // [NEW] Block specific post/floor functions
   const blockPost = (postId, threadId, threadTitle, floor, authorId, authorName, postContent) => {
+    const normalizedPostId = normalizeNumericId(postId);
+    if (!normalizedPostId) {
+      return false;
+    }
     const b = getBlockedPosts();
-    b[postId] = {
-      postId,
-      threadId,
-      threadTitle,
-      floor,
-      authorId,
-      authorName,
-      postContent,
+    b[normalizedPostId] = {
+      postId: normalizedPostId,
+      threadId: normalizeNumericId(threadId) || "unknown_thread",
+      threadTitle: String(threadTitle || ""),
+      floor: String(floor || ""),
+      authorId: normalizeNumericId(authorId) || "",
+      authorName: String(authorName || ""),
+      postContent: String(postContent || ""),
       timestamp: Date.now(),
     };
     saveBlockedPosts(b);
-    hidePost(postId);
+    hidePost(normalizedPostId);
     return true;
   };
 
   const unblockPost = (postId) => {
+    const normalizedPostId = normalizeNumericId(postId);
+    if (!normalizedPostId) return true;
     const b = getBlockedPosts();
-    if (!b[postId]) return true;
-    delete b[postId];
+    if (!b[normalizedPostId]) return true;
+    delete b[normalizedPostId];
     saveBlockedPosts(b);
-    showPost(postId);
+    showPost(normalizedPostId);
     return true;
   };
 
   const hidePost = (postId) => {
-    const postTable = document.querySelector(`table#pid${postId}`);
+    const postTable = getPostTableById(postId);
     if (postTable) {
       postTable.setAttribute("style", "display: none !important");
     }
   };
 
   const showPost = (postId) => {
-    const postTable = document.querySelector(`table#pid${postId}`);
+    const postTable = getPostTableById(postId);
     if (postTable) {
       postTable.removeAttribute("style");
     }
@@ -4549,27 +4754,61 @@
 
   const hideSystemBlockedPosts = () => {
     const settings = getSettings();
-    if (settings.hideSystemBlockedPosts) {
-      document.documentElement.classList.add("s1p-hide-system-blocked-enabled");
-    } else {
-      document.documentElement.classList.remove("s1p-hide-system-blocked-enabled");
+    const shouldHideSystemBlocked =
+      settings.enableGeneralSettings === true &&
+      settings.hideSystemBlockedPosts === true;
+    document.documentElement.classList.toggle(
+      "s1p-hide-system-blocked-enabled",
+      shouldHideSystemBlocked
+    );
+
+    // `:has` 在旧内核可能不支持，兜底为运行时 class 标记隐藏。
+    if (SUPPORTS_CSS_HAS_SELECTOR) {
+      if (!shouldHideSystemBlocked) {
+        document
+          .querySelectorAll("table.plhin.s1p-system-blocked-fallback-hidden")
+          .forEach((postTable) =>
+            postTable.classList.remove("s1p-system-blocked-fallback-hidden")
+          );
+      }
+      return;
     }
+
+    document.querySelectorAll("table.plhin").forEach((postTable) => {
+      const hasLockedPost = Boolean(postTable.querySelector(".locked"));
+      postTable.classList.toggle(
+        "s1p-system-blocked-fallback-hidden",
+        shouldHideSystemBlocked && hasLockedPost
+      );
+    });
   };
 
   // [FIX] 更精确地定位帖子作者，避免错误隐藏被评分的帖子
   const hideUserPosts = (id) => {
+    const normalizedUserId = normalizeNumericId(id);
+    if (!normalizedUserId) return;
     document
-      .querySelectorAll(`.authi a[href*="space-uid-${id}.html"]`)
-      .forEach((l) =>
-        l
+      .querySelectorAll('.authi a[href*="space-uid-"]')
+      .forEach((link) => {
+        if (extractUidFromProfileHref(link.href) !== normalizedUserId) {
+          return;
+        }
+        link
           .closest("table.plhin")
-          ?.setAttribute("style", "display: none !important")
-      );
+          ?.setAttribute("style", "display: none !important");
+      });
   };
   const showUserPosts = (id) => {
+    const normalizedUserId = normalizeNumericId(id);
+    if (!normalizedUserId) return;
     document
-      .querySelectorAll(`.authi a[href*="space-uid-${id}.html"]`)
-      .forEach((l) => l.closest("table.plhin")?.removeAttribute("style"));
+      .querySelectorAll('.authi a[href*="space-uid-"]')
+      .forEach((link) => {
+        if (extractUidFromProfileHref(link.href) !== normalizedUserId) {
+          return;
+        }
+        link.closest("table.plhin")?.removeAttribute("style");
+      });
   };
 
   const hideBlockedUsersPosts = () => {
@@ -5453,12 +5692,15 @@
 
   const manageImageToggleAllButtons = (postTables = null) => {
     const settings = getSettings();
+    const shouldHideImagesByDefault =
+      settings.enableGeneralSettings === true &&
+      settings.hideImagesByDefault === true;
     const targetPostTables = Array.isArray(postTables)
       ? postTables.filter((table) => table instanceof Element)
       : Array.from(document.querySelectorAll("table.plhin"));
 
     // 如果没有开启“默认隐藏图片”，则移除所有切换按钮并直接返回
-    if (!settings.hideImagesByDefault) {
+    if (!shouldHideImagesByDefault) {
       const containers =
         postTables === null
           ? document.querySelectorAll(".s1p-image-toggle-all-container")
@@ -5593,6 +5835,9 @@
   // [MODIFIED] 图片隐藏功能的核心逻辑 (支持实时切换)
   const applyImageHiding = (postTables = null) => {
     const settings = getSettings();
+    const shouldHideImagesByDefault =
+      settings.enableGeneralSettings === true &&
+      settings.hideImagesByDefault === true;
     const targetPostTables = Array.isArray(postTables)
       ? postTables.filter((table) => table instanceof Element)
       : null;
@@ -5611,7 +5856,7 @@
     };
 
     // 如果功能未开启，则移除所有包装和占位符
-    if (!settings.hideImagesByDefault) {
+    if (!shouldHideImagesByDefault) {
       collectBySelector(".s1p-image-container").forEach((container) => {
         const originalElement =
           container.querySelector("img.zoom")?.closest("a") ||
@@ -5666,7 +5911,7 @@
       if (!placeholder) return;
 
       const shouldBeHidden =
-        settings.hideImagesByDefault && container.dataset.manualShow !== "true";
+        shouldHideImagesByDefault && container.dataset.manualShow !== "true";
 
       container.classList.toggle("hidden", shouldBeHidden);
 
@@ -5682,7 +5927,7 @@
     const settings = getSettings();
     const openTabSettings = settings.openInNewTab;
 
-    if (!openTabSettings.master) return;
+    if (settings.enableGeneralSettings !== true || !openTabSettings.master) return;
 
     const anchor = e.target.closest("a[href]");
     if (!anchor) return;
@@ -5796,7 +6041,9 @@
 
   const applyGlobalLinkBehavior = () => {
     const settings = getSettings();
-    const shouldBind = settings.openInNewTab.master === true;
+    const shouldBind =
+      settings.enableGeneralSettings === true &&
+      settings.openInNewTab.master === true;
     const target = document.body;
 
     if (
@@ -5829,11 +6076,15 @@
   };
 
   const hasSyncedSettingsChanged = (previousSettings, nextSettings) =>
-    JSON.stringify(getSyncedSettings(previousSettings)) !==
-    JSON.stringify(getSyncedSettings(nextSettings));
+    hasComparableValueChanged(
+      getSyncedSettings(previousSettings),
+      getSyncedSettings(nextSettings)
+    );
 
   // [MODIFIED] 导出数据对象，采用新的嵌套结构并包含内容哈希
-  const exportLocalDataObject = async () => {
+  const exportLocalDataObject = async (
+    { compactBookmarksForSync = true, compactBlockedPostsForSync = true } = {}
+  ) => {
     const syncedSettings = getSyncedSettings(getSettings());
 
     const data = {
@@ -5843,8 +6094,12 @@
       user_tags: getUserTags(),
       title_filter_rules: getTitleFilterRules(),
       read_progress: getReadProgress(),
-      bookmarked_replies: getBookmarkedRepliesForSync(),
-      blocked_posts: getBlockedPosts(), // [NEW] 添加楼层屏蔽数据
+      bookmarked_replies: compactBookmarksForSync
+        ? getBookmarkedRepliesForSync()
+        : getBookmarkedReplies(),
+      blocked_posts: compactBlockedPostsForSync
+        ? getBlockedPostsForSync()
+        : getBlockedPosts(), // [NEW] 添加楼层屏蔽数据
     };
     const lastUpdated = GM_getValue("s1p_last_modified", 0);
     const lastUpdatedFormatted = new Date(lastUpdated).toLocaleString("zh-CN", {
@@ -5877,7 +6132,14 @@
   };
 
   const exportLocalData = async () =>
-    JSON.stringify(await exportLocalDataObject(), null, 2);
+    JSON.stringify(
+      await exportLocalDataObject({
+        compactBookmarksForSync: false,
+        compactBlockedPostsForSync: false,
+      }),
+      null,
+      2
+    );
 
   // [MODIFIED] 导入数据，兼容新旧两种数据结构，并增加控制选项
   const importLocalData = (jsonStr, options = {}) => {
@@ -5912,6 +6174,7 @@
       let hasSuppressedSyncedDataTransform = false;
 
       const upgradeDataStructure = (type, importedData) => {
+        const shouldNormalizeNumericId = type === "users" || type === "threads";
         if (!isObjectRecord(importedData)) {
           return { data: {}, changed: Boolean(importedData) };
         }
@@ -5923,25 +6186,83 @@
             changed = true;
             return;
           }
+          const normalizedId = shouldNormalizeNumericId
+            ? normalizeNumericId(id)
+            : id;
+          if (shouldNormalizeNumericId && !normalizedId) {
+            changed = true;
+            return;
+          }
+          const targetId = normalizedId || id;
+          if (targetId !== id) {
+            changed = true;
+          }
           const item = importedData[id];
-          if (!item || typeof item !== "object") {
-            upgradedData[id] = item;
+          let nextItem = null;
+
+          if (isObjectRecord(item)) {
+            nextItem = sanitizeRecordObject(item);
+            if (hasUnsafeRecordKeys(item)) {
+              changed = true;
+            }
+          } else if (typeof item === "string" && item.trim()) {
+            nextItem =
+              type === "users"
+                ? { name: item.trim() }
+                : type === "threads"
+                  ? { title: item.trim() }
+                  : null;
+            changed = true;
+          } else {
+            changed = true;
             return;
           }
 
-          const nextItem = sanitizeRecordObject(item);
-          if (hasUnsafeRecordKeys(item)) {
+          if (!nextItem || typeof nextItem !== "object") {
+            changed = true;
+            return;
+          }
+
+          const parsedTimestamp = Number(nextItem.timestamp);
+          if (!Number.isFinite(parsedTimestamp) || parsedTimestamp <= 0) {
+            nextItem.timestamp = Date.now();
             changed = true;
           }
-          if (type === "users" && typeof nextItem.blockThreads === "undefined") {
-            nextItem.blockThreads = false;
-            changed = true;
+
+          if (type === "users") {
+            if (typeof nextItem.blockThreads === "undefined") {
+              nextItem.blockThreads = false;
+              changed = true;
+            }
+            if (!nextItem.name) {
+              nextItem.name = `用户 #${targetId}`;
+              changed = true;
+            }
           }
-          if (type === "threads" && typeof nextItem.reason === "undefined") {
-            nextItem.reason = "manual";
-            changed = true;
+
+          if (type === "threads") {
+            if (typeof nextItem.reason === "undefined") {
+              nextItem.reason = "manual";
+              changed = true;
+            }
+            if (!nextItem.title) {
+              nextItem.title = `帖子 #${targetId}`;
+              changed = true;
+            }
           }
-          upgradedData[id] = nextItem;
+
+          const existingItem = upgradedData[targetId];
+          if (!existingItem) {
+            upgradedData[targetId] = nextItem;
+            return;
+          }
+          // 归一化后若发生 key 冲突，优先保留时间戳较新的记录。
+          const existingTimestamp = Number(existingItem.timestamp) || 0;
+          const nextTimestamp = Number(nextItem.timestamp) || 0;
+          if (nextTimestamp >= existingTimestamp) {
+            upgradedData[targetId] = nextItem;
+          }
+          changed = true;
         });
 
         return { data: upgradedData, changed };
@@ -6132,10 +6453,17 @@
       }
 
       const importedLastUpdated = Number(imported.lastUpdated);
-      const safeLastUpdated =
+      const currentLastModified = Number(GM_getValue("s1p_last_modified", 0)) || 0;
+      const maxAllowedImportedLastUpdated =
+        Date.now() + SYNC_TIMESTAMP_SKEW_TOLERANCE_MS;
+      const normalizedImportedLastUpdated =
         Number.isFinite(importedLastUpdated) && importedLastUpdated > 0
-          ? importedLastUpdated
+          ? Math.min(importedLastUpdated, maxAllowedImportedLastUpdated)
           : Date.now();
+      const safeLastUpdated = Math.max(
+        normalizedImportedLastUpdated,
+        currentLastModified + 1
+      );
       GM_setValue("s1p_last_modified", safeLastUpdated);
       if (suppressSyncTrigger && hasSuppressedSyncedDataTransform) {
         updateLastModifiedTimestamp("general", { triggerSync: false });
@@ -7734,6 +8062,9 @@
     const saved = sanitizeRecordObject(rawSettings);
     const settings = { ...defaultSettings, ...saved };
     let migrationApplied = false;
+    const normalizedDefaultCustomNavLinks = normalizeCustomNavLinks(
+      defaultSettings.customNavLinks
+    );
     const savedOpenInNewTab =
       saved.openInNewTab &&
         typeof saved.openInNewTab === "object" &&
@@ -7806,9 +8137,39 @@
       });
     }
 
-    if (saved.customNavLinks && Array.isArray(saved.customNavLinks)) {
-      settings.customNavLinks = normalizeCustomNavLinks(saved.customNavLinks);
+    const normalizedSavedCustomNavLinks = normalizeCustomNavLinks(
+      saved.customNavLinks
+    );
+    if (Array.isArray(saved.customNavLinks)) {
+      settings.customNavLinks = normalizedSavedCustomNavLinks;
+      if (
+        JSON.stringify(deterministicSort(saved.customNavLinks)) !==
+        JSON.stringify(deterministicSort(normalizedSavedCustomNavLinks))
+      ) {
+        migrationApplied = true;
+      }
+    } else {
+      settings.customNavLinks = normalizedDefaultCustomNavLinks;
+      if (typeof saved.customNavLinks !== "undefined") {
+        migrationApplied = true;
+      }
     }
+
+    const normalizedTokenExpiryEnabled = settings.syncTokenExpiryEnabled === true;
+    if (settings.syncTokenExpiryEnabled !== normalizedTokenExpiryEnabled) {
+      migrationApplied = true;
+    }
+    settings.syncTokenExpiryEnabled = normalizedTokenExpiryEnabled;
+
+    const parsedTokenExpiryDate = Number(settings.syncTokenExpiryDate);
+    const normalizedTokenExpiryDate =
+      Number.isFinite(parsedTokenExpiryDate) && parsedTokenExpiryDate > 0
+        ? parsedTokenExpiryDate
+        : null;
+    if (!Object.is(settings.syncTokenExpiryDate, normalizedTokenExpiryDate)) {
+      migrationApplied = true;
+    }
+    settings.syncTokenExpiryDate = normalizedTokenExpiryDate;
 
     return { settings, migrationApplied };
   };
@@ -7836,6 +8197,119 @@
     settingsCacheValue = null;
     settingsCacheExpiresAt = 0;
   };
+  const SETTINGS_CROSS_TAB_FULL_APPLY_PATHS = [
+    "enablePostBlocking",
+    "enableGeneralSettings",
+    "enableUserBlocking",
+    "enableUserTagging",
+    "enableReadProgress",
+    "enableBookmarkReplies",
+  ];
+  const SETTINGS_CROSS_TAB_LIGHTWEIGHT_PATHS = [
+    "openInNewTab",
+    "hideImagesByDefault",
+    "showReadIndicator",
+    "changeLogoLink",
+    "hideBlacklistTip",
+    "customTitleSuffix",
+    "enableNavCustomization",
+    "customNavLinks",
+    "hideSystemBlockedPosts",
+    "enhanceFloatingControls",
+    "syncRemoteEnabled",
+    "syncRemoteGistId",
+    "syncRemotePat",
+    "syncDirectChoiceMode",
+  ];
+  const SETTINGS_CROSS_TAB_PASSIVE_PATHS = [
+    "readingProgressCleanupDays",
+    "cleanupMode",
+    "blockThreadsOnUserBlock",
+    "syncWithNativeBlacklist",
+    "showBlockedByKeywordList",
+    "showManuallyBlockedList",
+    "recommendS1Nux",
+    "syncDailyFirstLoad",
+    "syncAutoEnabled",
+    "syncForcePullOnStartup",
+    "syncTokenExpiryEnabled",
+    "syncTokenExpiryDate",
+  ];
+  const isSettingPathMatched = (changedPath, targetPath) => {
+    if (!changedPath || !targetPath) {
+      return false;
+    }
+    return (
+      changedPath === targetPath ||
+      changedPath.startsWith(`${targetPath}.`) ||
+      targetPath.startsWith(`${changedPath}.`)
+    );
+  };
+  const hasSettingPathInChangedSet = (changedPathSet, targetPath) => {
+    for (const changedPath of changedPathSet) {
+      if (isSettingPathMatched(changedPath, targetPath)) {
+        return true;
+      }
+    }
+    return false;
+  };
+  const collectChangedSettingPaths = (
+    previousSettings,
+    nextSettings
+  ) => {
+    const changedPathSet = new Set();
+    const visitPath = (previousValue, nextValue, path) => {
+      if (!hasComparableValueChanged(previousValue, nextValue)) {
+        return;
+      }
+      const previousIsPlainObject =
+        previousValue &&
+        typeof previousValue === "object" &&
+        !Array.isArray(previousValue);
+      const nextIsPlainObject =
+        nextValue &&
+        typeof nextValue === "object" &&
+        !Array.isArray(nextValue);
+      if (!previousIsPlainObject || !nextIsPlainObject) {
+        if (path) {
+          changedPathSet.add(path);
+        }
+        return;
+      }
+      const keys = new Set([
+        ...Object.keys(previousValue),
+        ...Object.keys(nextValue),
+      ]);
+      if (keys.size === 0 && path) {
+        changedPathSet.add(path);
+        return;
+      }
+      keys.forEach((key) => {
+        const childPath = path ? `${path}.${key}` : key;
+        visitPath(previousValue[key], nextValue[key], childPath);
+      });
+    };
+    visitPath(previousSettings, nextSettings, "");
+    return Array.from(changedPathSet);
+  };
+  const pendingSettingsCrossTabRefreshPaths = new Set();
+  let pendingSettingsCrossTabNeedsFullApply = false;
+  const scheduleSettingsCrossTabRefresh = (changedPaths = []) => {
+    if (Array.isArray(changedPaths) && changedPaths.length > 0) {
+      changedPaths.forEach((path) => {
+        if (typeof path !== "string") {
+          return;
+        }
+        const normalizedPath = path.trim();
+        if (normalizedPath) {
+          pendingSettingsCrossTabRefreshPaths.add(normalizedPath);
+        }
+      });
+    } else {
+      pendingSettingsCrossTabNeedsFullApply = true;
+    }
+    scheduleCoreDataCrossTabRefresh("s1p_settings_refresh");
+  };
   const initializeSettingsCacheSync = () => {
     if (window.__s1pSettingsCacheSyncBound) {
       return;
@@ -7858,15 +8332,10 @@
           );
           const { settings } = buildNormalizedSettings(newValue);
           setSettingsCache(settings);
-
-          const authiActionSettingsChanged =
-            previousSettings.enableUserBlocking !== settings.enableUserBlocking ||
-            previousSettings.enableUserTagging !== settings.enableUserTagging ||
-            previousSettings.enableBookmarkReplies !==
-            settings.enableBookmarkReplies ||
-            previousSettings.enablePostBlocking !== settings.enablePostBlocking;
-          if (authiActionSettingsChanged) {
-            scheduleCoreDataCrossTabRefresh("s1p_settings_authi_actions");
+          if (hasComparableValueChanged(previousSettings, settings)) {
+            scheduleSettingsCrossTabRefresh(
+              collectChangedSettingPaths(previousSettings, settings)
+            );
           }
         }
       );
@@ -7874,6 +8343,115 @@
   };
   let coreDataCrossTabRefreshTimer = null;
   const pendingCoreDataCrossTabRefreshKeys = new Set();
+  const runSettingsCrossTabRefresh = () => {
+    const changedPathSet = new Set();
+    pendingSettingsCrossTabRefreshPaths.forEach((path) => {
+      if (typeof path === "string" && path.trim()) {
+        changedPathSet.add(path.trim());
+      }
+    });
+    pendingSettingsCrossTabRefreshPaths.clear();
+
+    const forceFullApply = pendingSettingsCrossTabNeedsFullApply;
+    pendingSettingsCrossTabNeedsFullApply = false;
+
+    if (forceFullApply || changedPathSet.size === 0) {
+      initializeNavbar();
+      applyChanges();
+      return true;
+    }
+
+    let requiresFullApply = false;
+    for (const changedPath of changedPathSet) {
+      if (
+        SETTINGS_CROSS_TAB_FULL_APPLY_PATHS.some((targetPath) =>
+          isSettingPathMatched(changedPath, targetPath)
+        )
+      ) {
+        requiresFullApply = true;
+        break;
+      }
+      const handledByLightweightPath =
+        SETTINGS_CROSS_TAB_LIGHTWEIGHT_PATHS.some((targetPath) =>
+          isSettingPathMatched(changedPath, targetPath)
+        );
+      if (handledByLightweightPath) {
+        continue;
+      }
+      const handledByPassivePath = SETTINGS_CROSS_TAB_PASSIVE_PATHS.some(
+        (targetPath) => isSettingPathMatched(changedPath, targetPath)
+      );
+      if (!handledByPassivePath) {
+        requiresFullApply = true;
+        break;
+      }
+    }
+
+    if (requiresFullApply) {
+      initializeNavbar();
+      applyChanges();
+      return true;
+    }
+
+    const settings = getSettings();
+    const shouldReinitializeNavbar =
+      hasSettingPathInChangedSet(changedPathSet, "enableNavCustomization") ||
+      hasSettingPathInChangedSet(changedPathSet, "customNavLinks") ||
+      hasSettingPathInChangedSet(changedPathSet, "syncRemoteEnabled") ||
+      hasSettingPathInChangedSet(changedPathSet, "syncDirectChoiceMode");
+    if (shouldReinitializeNavbar) {
+      initializeNavbar();
+    } else if (
+      hasSettingPathInChangedSet(changedPathSet, "syncRemoteGistId") ||
+      hasSettingPathInChangedSet(changedPathSet, "syncRemotePat")
+    ) {
+      updateNavbarSyncButton();
+    }
+    if (
+      hasSettingPathInChangedSet(changedPathSet, "changeLogoLink") ||
+      hasSettingPathInChangedSet(changedPathSet, "hideBlacklistTip") ||
+      hasSettingPathInChangedSet(changedPathSet, "customTitleSuffix")
+    ) {
+      applyInterfaceCustomizations();
+    }
+    if (hasSettingPathInChangedSet(changedPathSet, "enhanceFloatingControls")) {
+      manageFloatingControls();
+    }
+    if (hasSettingPathInChangedSet(changedPathSet, "hideImagesByDefault")) {
+      applyImageHiding();
+      manageImageToggleAllButtons();
+    }
+    if (hasSettingPathInChangedSet(changedPathSet, "openInNewTab")) {
+      applyGlobalLinkBehavior();
+    }
+    if (
+      (hasSettingPathInChangedSet(changedPathSet, "openInNewTab.progress") ||
+        hasSettingPathInChangedSet(
+          changedPathSet,
+          "openInNewTab.progressInBackground"
+        )) &&
+      settings.enableGeneralSettings === true &&
+      settings.enableReadProgress === true &&
+      isThreadListPage()
+    ) {
+      scheduleProgressJumpButtonsRefresh();
+    }
+    if (hasSettingPathInChangedSet(changedPathSet, "showReadIndicator")) {
+      if (!settings.showReadIndicator) {
+        updateReadIndicatorUI(null);
+      } else if (
+        settings.enableGeneralSettings === true &&
+        settings.enableReadProgress === true
+      ) {
+        trackReadProgressInThread();
+      }
+    }
+    if (hasSettingPathInChangedSet(changedPathSet, "hideSystemBlockedPosts")) {
+      hideSystemBlockedPosts();
+    }
+
+    return false;
+  };
   const runCoreDataCrossTabRefresh = () => {
     coreDataCrossTabRefreshTimer = null;
     if (pendingCoreDataCrossTabRefreshKeys.size === 0) {
@@ -7883,6 +8461,15 @@
     const keys = Array.from(pendingCoreDataCrossTabRefreshKeys);
     pendingCoreDataCrossTabRefreshKeys.clear();
     const changedKeys = new Set(keys);
+
+    if (changedKeys.has("s1p_settings_refresh")) {
+      const didRunFullSettingsApply = runSettingsCrossTabRefresh();
+      changedKeys.delete("s1p_settings_refresh");
+      if (didRunFullSettingsApply && changedKeys.size === 0) {
+        return;
+      }
+    }
+
     const settings = getSettings();
 
     if (changedKeys.has("s1p_blocked_threads")) {
@@ -7919,9 +8506,26 @@
       }
     }
 
-    if (changedKeys.has("s1p_read_progress") && settings.enableReadProgress) {
+    if (
+      changedKeys.has("s1p_read_progress") &&
+      settings.enableGeneralSettings === true &&
+      settings.enableReadProgress === true
+    ) {
       if (isThreadListPage()) {
         scheduleProgressJumpButtonsRefresh();
+      } else if (document.querySelector('table[id^="pid"]')) {
+        trackReadProgressInThread();
+        if (settings.showReadIndicator) {
+          const currentThreadId = getCurrentThreadId();
+          if (currentThreadId) {
+            const currentThreadProgress = getReadProgress()[currentThreadId];
+            updateReadIndicatorUI(
+              normalizeNumericId(currentThreadProgress?.postId) || null
+            );
+          } else {
+            updateReadIndicatorUI(null);
+          }
+        }
       }
     }
 
@@ -7948,12 +8552,6 @@
       refreshAllAuthiActions();
     }
 
-    if (
-      changedKeys.has("s1p_settings_authi_actions") &&
-      document.querySelector('table[id^="pid"]')
-    ) {
-      refreshAllAuthiActions();
-    }
   };
   const scheduleCoreDataCrossTabRefresh = (key) => {
     if (!key) {
@@ -7998,9 +8596,9 @@
     bindCoreDataCacheSync("s1p_blocked_users", blockedUsersCache);
     bindCoreDataCacheSync("s1p_blocked_posts", blockedPostsCache);
     bindCoreDataCacheSync("s1p_read_progress", readProgressCache);
-    bindCoreDataCacheSync("s1p_title_filter_rules");
-    bindCoreDataCacheSync("s1p_user_tags");
-    bindCoreDataCacheSync("s1p_bookmarked_replies");
+    bindCoreDataCacheSync("s1p_title_filter_rules", titleFilterRulesCache);
+    bindCoreDataCacheSync("s1p_user_tags", userTagsCache);
+    bindCoreDataCacheSync("s1p_bookmarked_replies", bookmarkedRepliesCache);
     document.addEventListener("visibilitychange", () => {
       if (
         document.visibilityState === "visible" &&
@@ -8083,6 +8681,11 @@
         legacyMarkDataChangedWhenSuppressed
       );
     const normalizedSettings = buildNormalizedSettings(settings).settings;
+    const currentSettings = getSettings();
+    if (!hasComparableValueChanged(currentSettings, normalizedSettings)) {
+      setSettingsCache(normalizedSettings);
+      return;
+    }
     invalidateLocalDataHashCache();
     GM_setValue("s1p_settings", normalizedSettings);
     setSettingsCache(normalizedSettings);
@@ -8111,24 +8714,72 @@
     return true;
   };
 
+  let interfaceTitleBaseCache = null;
+  let lastAppliedCustomTitleSuffix = "";
+  const TITLE_BASE_PATTERN =
+    /^(.+?)(?:论坛)?(?:\s*-\s*Stage1st)?\s*-\s*stage1\/s1\s+游戏动漫论坛$/;
+  const resolveInterfaceTitleBase = () => {
+    const currentTitle = String(document.title || "");
+    const matched = currentTitle.match(TITLE_BASE_PATTERN);
+    if (matched && matched[1]) {
+      interfaceTitleBaseCache = matched[1];
+      return interfaceTitleBaseCache;
+    }
+    if (
+      lastAppliedCustomTitleSuffix &&
+      currentTitle.endsWith(lastAppliedCustomTitleSuffix)
+    ) {
+      const strippedTitle = currentTitle.slice(
+        0,
+        -lastAppliedCustomTitleSuffix.length
+      );
+      if (strippedTitle) {
+        interfaceTitleBaseCache = strippedTitle;
+        return interfaceTitleBaseCache;
+      }
+    }
+    if (!interfaceTitleBaseCache) {
+      interfaceTitleBaseCache = currentTitle;
+    }
+    return interfaceTitleBaseCache;
+  };
+
   // --- 界面定制功能 ---
   const applyInterfaceCustomizations = () => {
     const settings = getSettings();
-    if (settings.changeLogoLink)
-      document.querySelector("#hd h2 a")?.setAttribute("href", "./forum.php");
-    if (settings.hideBlacklistTip)
-      document.getElementById("hiddenpoststip")?.remove();
+    const generalSettingsEnabled = settings.enableGeneralSettings === true;
 
-    // 添加标题后缀修改
-    if (settings.customTitleSuffix) {
-      const titlePattern =
-        /^(.+?)(?:论坛)?(?:\s*-\s*Stage1st)?\s*-\s*stage1\/s1\s+游戏动漫论坛$/;
-      if (titlePattern.test(document.title)) {
-        document.title =
-          document.title.replace(titlePattern, "$1") +
-          settings.customTitleSuffix;
+    const logoLink = document.querySelector("#hd h2 a");
+    if (logoLink) {
+      if (!logoLink.dataset.s1pOriginalHref) {
+        const originalHref = logoLink.getAttribute("href");
+        if (typeof originalHref === "string") {
+          logoLink.dataset.s1pOriginalHref = originalHref;
+        }
+      }
+      const originalHref = logoLink.dataset.s1pOriginalHref || "./";
+      if (generalSettingsEnabled && settings.changeLogoLink) {
+        logoLink.setAttribute("href", "./forum.php");
+      } else {
+        logoLink.setAttribute("href", originalHref);
       }
     }
+
+    const blacklistTip = document.getElementById("hiddenpoststip");
+    if (blacklistTip) {
+      if (generalSettingsEnabled && settings.hideBlacklistTip) {
+        blacklistTip.style.display = "none";
+      } else {
+        blacklistTip.style.removeProperty("display");
+      }
+    }
+
+    const titleBase = resolveInterfaceTitleBase();
+    const nextSuffix = generalSettingsEnabled
+      ? String(settings.customTitleSuffix || "")
+      : "";
+    document.title = nextSuffix ? `${titleBase}${nextSuffix}` : titleBase;
+    lastAppliedCustomTitleSuffix = nextSuffix;
   };
 
   /**
@@ -8730,6 +9381,23 @@
     }, 3000);
   };
 
+  const dismissExistingConfirmModal = (
+    { reason = "replaced", immediate = true } = {}
+  ) => {
+    const existingModal = document.querySelector(".s1p-confirm-modal");
+    if (!existingModal) {
+      return;
+    }
+    if (
+      existingModal.s1p_api &&
+      typeof existingModal.s1p_api.dismiss === "function"
+    ) {
+      existingModal.s1p_api.dismiss({ reason, immediate });
+    } else {
+      existingModal.remove();
+    }
+  };
+
   const createConfirmationModal = (
     title,
     subtitle,
@@ -8737,9 +9405,9 @@
     confirmText = "确定",
     options = {}
   ) => {
-    const { allowSubtitleHtml = false } = options;
+    const { allowSubtitleHtml = false, onDismiss = null } = options;
 
-    document.querySelector(".s1p-confirm-modal")?.remove();
+    dismissExistingConfirmModal({ reason: "replaced", immediate: true });
     const modal = document.createElement("div");
     modal.className = "s1p-confirm-modal";
 
@@ -8782,19 +9450,63 @@
     content.appendChild(footer);
     modal.appendChild(content);
 
-    const closeModal = () => {
-      modal.querySelector(".s1p-confirm-content").style.animation =
-        "s1p-scale-out 0.25s ease-out forwards";
+    let settled = false;
+    let closing = false;
+    const settleDismiss = (reason = "dismissed") => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (typeof onDismiss === "function") {
+        try {
+          onDismiss(reason);
+        } catch (error) {
+          console.error("S1 Plus: 弹窗 onDismiss 执行失败。", error);
+        }
+      }
+    };
+    const closeModal = ({
+      reason = "dismissed",
+      invokeDismiss = true,
+      immediate = false,
+    } = {}) => {
+      if (closing) {
+        return;
+      }
+      if (invokeDismiss) {
+        settleDismiss(reason);
+      }
+      closing = true;
+      if (immediate) {
+        modal.remove();
+        return;
+      }
+      const confirmContent = modal.querySelector(".s1p-confirm-content");
+      if (confirmContent) {
+        confirmContent.style.animation = "s1p-scale-out 0.25s ease-out forwards";
+      }
       modal.style.animation = "s1p-fade-out 0.25s ease-out forwards";
       setTimeout(() => modal.remove(), 250);
     };
+    modal.s1p_api = {
+      dismiss: ({ reason = "dismissed", immediate = false } = {}) =>
+        closeModal({ reason, immediate, invokeDismiss: true }),
+    };
     confirmBtn.addEventListener("click", () => {
-      onConfirm();
-      closeModal();
+      settled = true;
+      try {
+        onConfirm();
+      } catch (error) {
+        console.error("S1 Plus: 确认弹窗 onConfirm 执行失败。", error);
+      } finally {
+        closeModal({ invokeDismiss: false });
+      }
     });
-    cancelBtn.addEventListener("click", closeModal);
+    cancelBtn.addEventListener("click", () => closeModal({ reason: "cancel" }));
     modal.addEventListener("click", (e) => {
-      if (e.target === modal) closeModal();
+      if (e.target === modal) {
+        closeModal({ reason: "overlay_click" });
+      }
     });
     document.body.appendChild(modal);
   };
@@ -8811,9 +9523,9 @@
     placeholder = "",
     options = {}
   ) => {
-    const { allowSubtitleHtml = false } = options;
+    const { allowSubtitleHtml = false, onDismiss = null } = options;
 
-    document.querySelector(".s1p-confirm-modal")?.remove();
+    dismissExistingConfirmModal({ reason: "replaced", immediate: true });
     const modal = document.createElement("div");
     modal.className = "s1p-confirm-modal";
 
@@ -8868,11 +9580,47 @@
     content.appendChild(footer);
     modal.appendChild(content);
 
-    const closeModal = () => {
+    let settled = false;
+    let closing = false;
+    const settleDismiss = (reason = "dismissed") => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (typeof onDismiss === "function") {
+        try {
+          onDismiss(reason);
+        } catch (error) {
+          console.error("S1 Plus: 弹窗 onDismiss 执行失败。", error);
+        }
+      }
+    };
+    const closeModal = ({
+      reason = "dismissed",
+      invokeDismiss = true,
+      immediate = false,
+    } = {}) => {
+      if (closing) {
+        return;
+      }
+      if (invokeDismiss) {
+        settleDismiss(reason);
+      }
+      closing = true;
+      if (immediate) {
+        modal.remove();
+        return;
+      }
       const content = modal.querySelector(".s1p-confirm-content");
-      if (content) content.style.animation = "s1p-scale-out 0.25s ease-out forwards";
+      if (content) {
+        content.style.animation = "s1p-scale-out 0.25s ease-out forwards";
+      }
       modal.style.animation = "s1p-fade-out 0.25s ease-out forwards";
       setTimeout(() => modal.remove(), 250);
+    };
+    modal.s1p_api = {
+      dismiss: ({ reason = "dismissed", immediate = false } = {}) =>
+        closeModal({ reason, immediate, invokeDismiss: true }),
     };
 
     // Auto focus and select slightly delayed to ensure DOM is ready and transition doesn't interfere
@@ -8886,20 +9634,34 @@
     // Enter to confirm (Ctrl+Enter or Command+Enter), Escape to cancel
     input.addEventListener("keydown", (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-        onConfirm(input.value);
-        closeModal();
+        settled = true;
+        try {
+          onConfirm(input.value);
+        } catch (error) {
+          console.error("S1 Plus: 输入弹窗 onConfirm 执行失败。", error);
+        } finally {
+          closeModal({ invokeDismiss: false });
+        }
       } else if (e.key === "Escape") {
-        closeModal();
+        closeModal({ reason: "escape_key" });
       }
     });
 
     confirmBtn.addEventListener("click", () => {
-      onConfirm(input.value);
-      closeModal();
+      settled = true;
+      try {
+        onConfirm(input.value);
+      } catch (error) {
+        console.error("S1 Plus: 输入弹窗 onConfirm 执行失败。", error);
+      } finally {
+        closeModal({ invokeDismiss: false });
+      }
     });
-    cancelBtn.addEventListener("click", closeModal);
+    cancelBtn.addEventListener("click", () => closeModal({ reason: "cancel" }));
     modal.addEventListener("click", (e) => {
-      if (e.target === modal) closeModal();
+      if (e.target === modal) {
+        closeModal({ reason: "overlay_click" });
+      }
     });
     document.body.appendChild(modal);
   };
@@ -9020,7 +9782,19 @@
     onConfirm,
     options = {}
   ) => {
-    document.querySelector(".s1p-inline-confirm-menu")?.remove();
+    const existingInlineConfirmMenu = document.querySelector(
+      ".s1p-inline-confirm-menu"
+    );
+    if (existingInlineConfirmMenu) {
+      if (
+        existingInlineConfirmMenu.s1p_api &&
+        typeof existingInlineConfirmMenu.s1p_api.destroy === "function"
+      ) {
+        existingInlineConfirmMenu.s1p_api.destroy({ immediate: true });
+      } else {
+        existingInlineConfirmMenu.remove();
+      }
+    }
 
     const menu = document.createElement("div");
     menu.className = "s1p-options-menu s1p-inline-confirm-menu s1p-confirm-wrapper";
@@ -9104,10 +9878,22 @@
     }
 
     let isClosing = false;
-    const closeMenu = () => {
+    let closeMenuOnClick = null;
+    let bindDocumentClickTimer = null;
+    const closeMenu = ({ immediate = false } = {}) => {
       if (isClosing) return;
       isClosing = true;
+      if (bindDocumentClickTimer) {
+        clearTimeout(bindDocumentClickTimer);
+        bindDocumentClickTimer = null;
+      }
       document.removeEventListener("click", closeMenuOnClick);
+      if (immediate) {
+        if (menu.parentNode) {
+          menu.remove();
+        }
+        return;
+      }
       menu.classList.remove("visible");
 
       setTimeout(() => {
@@ -9117,22 +9903,34 @@
       }, 200);
     };
 
-    const closeMenuOnClick = (e) => {
+    closeMenuOnClick = (e) => {
       if (!menu.contains(e.target)) {
         closeMenu();
       }
     };
 
-    setTimeout(() => {
-      document.addEventListener("click", closeMenuOnClick);
+    menu.s1p_api = {
+      destroy: ({ immediate = true } = {}) => closeMenu({ immediate }),
+    };
+
+    bindDocumentClickTimer = setTimeout(() => {
+      bindDocumentClickTimer = null;
+      if (!isClosing) {
+        document.addEventListener("click", closeMenuOnClick);
+      }
     }, 0);
 
     menu.querySelector(".s1p-confirm").addEventListener("click", (e) => {
       e.stopPropagation();
       const textarea = menu.querySelector("textarea");
       const inputValue = textarea ? textarea.value.trim() : undefined;
-      onConfirm(inputValue);
-      closeMenu();
+      try {
+        onConfirm(inputValue);
+      } catch (error) {
+        console.error("S1 Plus: 行内确认菜单 onConfirm 执行失败。", error);
+      } finally {
+        closeMenu();
+      }
     });
 
     menu.querySelector(".s1p-cancel").addEventListener("click", (e) => {
@@ -9166,10 +9964,14 @@
   };
 
   const refreshUserPostsOnPage = (userId) => {
-    if (!userId) return;
+    const normalizedUserId = normalizeNumericId(userId);
+    if (!normalizedUserId) return;
     document
-      .querySelectorAll(`.authi a[href*="space-uid-${userId}"]`)
+      .querySelectorAll('.authi a[href*="space-uid-"]')
       .forEach((userLink) => {
+        if (extractUidFromProfileHref(userLink.href) !== normalizedUserId) {
+          return;
+        }
         const postTable = userLink.closest('table[id^="pid"]');
         if (postTable) {
           const postId = postTable.id.replace("pid", "");
@@ -9477,8 +10279,12 @@
 
     // 默认过期日期：优先读取已保存的配置
     let defaultDate;
-    if (currentSettings.syncTokenExpiryDate) {
-      defaultDate = new Date(currentSettings.syncTokenExpiryDate);
+    const savedExpiryTimestamp = Number(currentSettings.syncTokenExpiryDate);
+    if (
+      Number.isFinite(savedExpiryTimestamp) &&
+      savedExpiryTimestamp > 0
+    ) {
+      defaultDate = new Date(savedExpiryTimestamp);
     } else {
       defaultDate = new Date();
       defaultDate.setDate(defaultDate.getDate() + 30);
@@ -9995,10 +10801,14 @@
     const tokenExpiryToggle = modal.querySelector("#s1p-token-expiry-reminder-toggle");
     const updateTokenExpiryInfo = () => {
       const infoContainer = modal.querySelector("#s1p-token-expiry-info-container");
-      const expiryTimestamp = getSettings().syncTokenExpiryDate;
+      const expiryTimestamp = Number(getSettings().syncTokenExpiryDate);
 
       infoContainer.textContent = "";
-      if (tokenExpiryToggle.checked && expiryTimestamp) {
+      if (
+        tokenExpiryToggle.checked &&
+        Number.isFinite(expiryTimestamp) &&
+        expiryTimestamp > 0
+      ) {
         const date = new Date(expiryTimestamp);
         const dateStr = date.toLocaleDateString("zh-CN");
         const daysLeft = Math.ceil((expiryTimestamp - Date.now()) / (1000 * 60 * 60 * 24));
@@ -10043,7 +10853,8 @@
       const s = getSettingsForWrite();
 
       if (isChecked) {
-        if (!s.syncTokenExpiryDate) {
+        const savedTimestamp = Number(s.syncTokenExpiryDate);
+        if (!Number.isFinite(savedTimestamp) || savedTimestamp <= 0) {
           openTokenExpiryConfigModal((ts) => {
             const current = getSettingsForWrite();
             current.syncTokenExpiryDate = ts;
@@ -10713,36 +11524,38 @@
             (a, b) => blockedPosts[b].timestamp - blockedPosts[a].timestamp
           );
 
-          if (blockedPostIds.length === 0) {
-            return `<div class="s1p-empty">暂无屏蔽的楼层</div>`;
-          }
+	          if (blockedPostIds.length === 0) {
+	            return `<div class="s1p-empty">暂无屏蔽的楼层</div>`;
+	          }
 
-          // 按threadId分组
-          const postsByThread = {};
-          blockedPostIds.forEach(postId => {
-            const post = blockedPosts[postId];
-            const threadId = post.threadId;
-            if (!postsByThread[threadId]) {
-              postsByThread[threadId] = {
-                threadId: post.threadId,
-                threadTitle: post.threadTitle,
-                posts: []
-              };
-            }
-            postsByThread[threadId].posts.push(post);
-          });
+	          // 按threadId分组
+	          const postsByThread = new Map();
+	          blockedPostIds.forEach((postId) => {
+	            const post = blockedPosts[postId];
+	            const threadId = String(post?.threadId ?? "unknown_thread");
+	            if (!postsByThread.has(threadId)) {
+	              postsByThread.set(threadId, {
+	                threadId,
+	                threadTitle: post?.threadTitle,
+	                posts: [],
+	              });
+	            }
+	            postsByThread.get(threadId).posts.push(post);
+	          });
 
-          // 获取折叠状态
-          const collapsedThreads = GM_getValue("s1p_blocked_posts_collapsed_threads", {});
+	          // 获取折叠状态
+	          const collapsedThreads = sanitizeRecordObject(
+	            GM_getValue("s1p_blocked_posts_collapsed_threads", {})
+	          );
 
-          return `<div class="s1p-thread-groups">${Object.values(postsByThread)
-            .map(thread => {
-              const isCollapsed = collapsedThreads[thread.threadId] || false;
-              const safeThreadIdAttr = escapeAttr(thread.threadId);
-              const safeThreadTitleText = escapeHTML(
-                thread.threadTitle || "未知帖子"
-              );
-              return `
+	          return `<div class="s1p-thread-groups">${Array.from(postsByThread.values())
+	            .map((thread) => {
+	              const isCollapsed = collapsedThreads[thread.threadId] === true;
+	              const safeThreadIdAttr = escapeAttr(thread.threadId);
+	              const safeThreadTitleText = escapeHTML(
+	                thread.threadTitle || "未知帖子"
+	              );
+	              return `
 	                                    <div class="s1p-thread-group" data-thread-id="${safeThreadIdAttr}">
 	                                        <div class="s1p-thread-header s1p-collapsible-header ${isCollapsed ? '' : 'expanded'}">
 	                                            <span class="s1p-thread-title">${safeThreadTitleText}</span>
@@ -10751,12 +11564,12 @@
 	                                        </div>
 	                                        <div class="s1p-thread-posts s1p-collapsible-content ${isCollapsed ? '' : 'expanded'}">
 	                                            <div class="s1p-list">${thread.posts
-                  .map(post => {
-                    const safePostIdAttr = escapeAttr(post.postId);
-                    const safeFloorText = escapeHTML(post.floor);
-                    const safeAuthorText = escapeHTML(
-                      post.authorName || `用户 #${post.authorId}`
-                    );
+	                  .map((post) => {
+	                    const safePostIdAttr = escapeAttr(post.postId);
+	                    const safeFloorText = escapeHTML(post.floor);
+	                    const safeAuthorText = escapeHTML(
+	                      post.authorName || `用户 #${post.authorId}`
+	                    );
                     return `<div class="s1p-item" data-post-id="${safePostIdAttr}"><div class="s1p-item-info"><div class="s1p-item-title">第${safeFloorText}楼</div><div class="s1p-item-meta">作者: ${safeAuthorText} | 屏蔽时间: ${formatDate(post.timestamp)}</div></div><button class="s1p-unblock-post-btn s1p-btn" data-unblock-post-id="${safePostIdAttr}">取消屏蔽</button></div>`;
                   })
                   .join("")}</div>
@@ -10964,15 +11777,20 @@
               tabs["threads"]
                 .querySelector("#s1p-manually-blocked-list-container")
                 .classList.toggle("expanded", isNowExpanded);
-            } else if (header.classList.contains("s1p-thread-header")) {
-              // 处理帖子分组的折叠
-              const threadGroup = header.closest(".s1p-thread-group");
-              const threadId = threadGroup.dataset.threadId;
-              const collapsedThreads = GM_getValue("s1p_blocked_posts_collapsed_threads", {});
-              const isNowCollapsed = !collapsedThreads[threadId];
+	            } else if (header.classList.contains("s1p-thread-header")) {
+	              // 处理帖子分组的折叠
+	              const threadGroup = header.closest(".s1p-thread-group");
+	              const threadId = String(threadGroup?.dataset.threadId || "");
+	              if (!threadId) {
+	                return;
+	              }
+	              const collapsedThreads = sanitizeRecordObject(
+	                GM_getValue("s1p_blocked_posts_collapsed_threads", {})
+	              );
+	              const isNowCollapsed = collapsedThreads[threadId] !== true;
 
-              collapsedThreads[threadId] = isNowCollapsed;
-              GM_setValue("s1p_blocked_posts_collapsed_threads", collapsedThreads);
+	              collapsedThreads[threadId] = isNowCollapsed;
+	              GM_setValue("s1p_blocked_posts_collapsed_threads", collapsedThreads);
 
               header.classList.toggle("expanded", !isNowCollapsed);
               header.querySelector(".s1p-expander-arrow").classList.toggle("expanded", !isNowCollapsed);
@@ -12619,7 +13437,12 @@
               "初始化 S1 Plus 同步",
               "检测到这台电脑尚无本地数据，但云端已有备份，是否立即从云端恢复您的配置？",
               [pullAction, cancelAction],
-              { modalClassName: "s1p-sync-modal" }
+              {
+                modalClassName: "s1p-sync-modal",
+                onDismiss: () => {
+                  resolve(null);
+                },
+              }
             );
             return;
           }
@@ -12681,7 +13504,13 @@
               "初始化云端同步",
               "<p>检测到云端备份为空，是否将当前本地数据作为初始版本推送到云端？</p>",
               [pushAction, cancelAction],
-              { modalClassName: "s1p-sync-modal", allowBodyHtml: true }
+              {
+                modalClassName: "s1p-sync-modal",
+                allowBodyHtml: true,
+                onDismiss: () => {
+                  resolve(null);
+                },
+              }
             );
             return;
           }
@@ -12926,7 +13755,13 @@
             "手动同步选择",
             bodyHtml,
             [pullAction, pushAction, cancelAction],
-            { modalClassName: "s1p-sync-modal", allowBodyHtml: true }
+            {
+              modalClassName: "s1p-sync-modal",
+              allowBodyHtml: true,
+              onDismiss: () => {
+                resolve(null);
+              },
+            }
           );
         } catch (error) {
           if (error?.code === SYNC_LOCK_LOST_CODE) {
@@ -12991,7 +13826,13 @@
               "检测到云端备份损坏",
               `<p style="color: var(--s1p-red);">云端备份文件校验失败，为保护数据已暂停同步。</p><p>是否用当前健康的本地数据强制覆盖云端损坏的备份？</p>`,
               [forcePushAction, cancelAction],
-              { modalClassName: "s1p-sync-modal", allowBodyHtml: true }
+              {
+                modalClassName: "s1p-sync-modal",
+                allowBodyHtml: true,
+                onDismiss: () => {
+                  resolve(null);
+                },
+              }
             );
           } else {
             noteManualFailure(error.message);
@@ -13035,6 +13876,7 @@
       modalClassName,
       allowTitleHtml = false,
       allowBodyHtml = false,
+      onDismiss = null,
     } = options;
     const renderedTitle = allowTitleHtml
       ? sanitizeAdvancedModalHtml(title)
@@ -13043,8 +13885,8 @@
       ? sanitizeAdvancedModalHtml(bodyHtml)
       : String(bodyHtml ?? "");
 
-    // [修改] 增加 options 参数
-    document.querySelector(".s1p-confirm-modal")?.remove();
+    // [修改] 新弹窗创建前优雅关闭旧弹窗，避免覆盖导致的流程悬挂。
+    dismissExistingConfirmModal({ reason: "replaced", immediate: true });
     const modal = document.createElement("div");
     modal.className = "s1p-confirm-modal";
 
@@ -13101,11 +13943,49 @@
     content.appendChild(footer);
     modal.appendChild(content);
 
-    const closeModal = () => {
-      modal.querySelector(".s1p-confirm-content").style.animation =
-        "s1p-scale-out 0.25s ease-out forwards";
+    let settled = false;
+    let closing = false;
+    const settleDismiss = (reason = "dismissed") => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (typeof onDismiss === "function") {
+        try {
+          onDismiss(reason);
+        } catch (error) {
+          console.error("S1 Plus: 弹窗 onDismiss 执行失败。", error);
+        }
+      }
+    };
+
+    const closeModal = ({
+      reason = "dismissed",
+      invokeDismiss = true,
+      immediate = false,
+    } = {}) => {
+      if (closing) {
+        return;
+      }
+      if (invokeDismiss) {
+        settleDismiss(reason);
+      }
+      closing = true;
+      if (immediate) {
+        modal.remove();
+        return;
+      }
+      const confirmContent = modal.querySelector(".s1p-confirm-content");
+      if (confirmContent) {
+        confirmContent.style.animation = "s1p-scale-out 0.25s ease-out forwards";
+      }
       modal.style.animation = "s1p-fade-out 0.25s ease-out forwards";
       setTimeout(() => modal.remove(), 250);
+    };
+
+    modal.s1p_api = {
+      dismiss: ({ reason = "dismissed", immediate = false } = {}) =>
+        closeModal({ reason, immediate, invokeDismiss: true }),
     };
 
     modal.addEventListener("click", (e) => {
@@ -13114,7 +13994,7 @@
         if (cancelButton) {
           cancelButton.click();
         } else {
-          closeModal();
+          closeModal({ reason: "overlay_click" });
         }
       }
     });
@@ -13123,8 +14003,16 @@
       const buttonEl = buttonEls[index];
       if (!buttonEl) return;
       buttonEl.addEventListener("click", () => {
-        if (btn.action) btn.action();
-        closeModal();
+        settled = true;
+        try {
+          if (btn.action) {
+            btn.action();
+          }
+        } catch (error) {
+          console.error("S1 Plus: 弹窗按钮 action 执行失败。", error);
+        } finally {
+          closeModal({ invokeDismiss: false });
+        }
       });
     });
 
@@ -13724,7 +14612,11 @@
     }
     readProgressListRefreshTimer = setTimeout(() => {
       readProgressListRefreshTimer = null;
-      if (!getSettings().enableReadProgress) {
+      const settings = getSettings();
+      if (
+        settings.enableGeneralSettings !== true ||
+        settings.enableReadProgress !== true
+      ) {
         return;
       }
       if (!isThreadListPage()) {
@@ -13743,18 +14635,6 @@
     }
     window.__s1pReadProgressCrossTabRefreshBound = true;
 
-    if (typeof GM_addValueChangeListener === "function") {
-      GM_addValueChangeListener(
-        "s1p_read_progress",
-        (_key, _oldValue, newValue, isCrossContextChange) => {
-          if (!isCrossContextChange || !isThreadListPage()) {
-            return;
-          }
-          scheduleProgressJumpButtonsRefresh(newValue);
-        }
-      );
-    }
-
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible" && isThreadListPage()) {
         scheduleProgressJumpButtonsRefresh();
@@ -13763,6 +14643,13 @@
   };
 
   const addProgressJumpButtons = (progressDataOverride = null) => {
+    const settings = getSettings();
+    if (
+      settings.enableGeneralSettings !== true ||
+      settings.enableReadProgress !== true
+    ) {
+      return;
+    }
     const progressData =
       progressDataOverride === null
         ? getReadProgress()
@@ -13779,6 +14666,13 @@
 
   const addProgressJumpButtonsForRows = (rows, progressDataOverride = null) => {
     if (!Array.isArray(rows) || rows.length === 0) return;
+    const settings = getSettings();
+    if (
+      settings.enableGeneralSettings !== true ||
+      settings.enableReadProgress !== true
+    ) {
+      return;
+    }
     const progressData =
       progressDataOverride === null
         ? getReadProgress()
@@ -13793,7 +14687,11 @@
   const updateReadIndicatorUI = (targetPostId) => {
     // [核心修复] 在函数入口处直接检查设置状态
     // 如果开关关闭，则强制将目标ID设为null，这将触发后续的隐藏逻辑
-    if (!getSettings().showReadIndicator) {
+    const settings = getSettings();
+    if (
+      settings.enableGeneralSettings !== true ||
+      settings.showReadIndicator !== true
+    ) {
       targetPostId = null;
     }
 
@@ -14059,7 +14957,11 @@
   const trackReadProgressInThread = (postTables = null) => {
     const settings = getSettings();
     const postListElement = document.getElementById("postlist");
-    if (!settings.enableReadProgress || !postListElement) {
+    if (
+      settings.enableGeneralSettings !== true ||
+      settings.enableReadProgress !== true ||
+      !postListElement
+    ) {
       if (
         pageObserver ||
         readProgressSaveTimeout ||
@@ -14191,7 +15093,7 @@
   };
 
   const refreshSinglePostActions = (postId) => {
-    const postTable = document.querySelector(`table#pid${postId}`);
+    const postTable = getPostTableById(postId);
     if (!postTable) return;
 
     const container = postTable.querySelector(".s1p-authi-container");
@@ -14265,10 +15167,15 @@
 
     // --- 交互逻辑 ---
     let isClosing = false;
+    let bindDocumentClickTimer = null;
     const optionsMenu = anchorElement.closest(".s1p-tag-options-menu");
     const destroyConfirmMenu = ({ immediate = false } = {}) => {
       if (isClosing) return;
       isClosing = true;
+      if (bindDocumentClickTimer) {
+        clearTimeout(bindDocumentClickTimer);
+        bindDocumentClickTimer = null;
+      }
       document.removeEventListener("click", closeAllMenusOnClick);
       if (immediate) {
         menu.remove();
@@ -14322,10 +15229,12 @@
     }
 
     // 添加全局点击监听器，用于在点击空白处时关闭所有菜单
-    setTimeout(
-      () => document.addEventListener("click", closeAllMenusOnClick),
-      0
-    );
+    bindDocumentClickTimer = setTimeout(() => {
+      bindDocumentClickTimer = null;
+      if (!isClosing) {
+        document.addEventListener("click", closeAllMenusOnClick);
+      }
+    }, 0);
 
     // 动画入场
     requestAnimationFrame(() => menu.classList.add("visible"));
@@ -15039,7 +15948,10 @@
     wrapper.id = "s1p-floating-controls-wrapper";
     // [核心修改] 读取新命名的设置并添加对应的class
     const settings = getSettings();
-    if (settings.enhanceFloatingControls) {
+    if (
+      settings.enableGeneralSettings === true &&
+      settings.enhanceFloatingControls === true
+    ) {
       wrapper.classList.add("s1p-hover-interaction-enabled");
     }
 
@@ -15117,13 +16029,16 @@
   // --- [新增] 悬浮控件管理器 ---
   const manageFloatingControls = () => {
     const settings = getSettings();
+    const shouldEnableEnhancedControls =
+      settings.enableGeneralSettings === true &&
+      settings.enhanceFloatingControls === true;
     // 根据设置，切换body上的class，从而激活不同的CSS规则
     document.body.classList.toggle(
       "s1p-enhanced-controls-active",
-      settings.enhanceFloatingControls
+      shouldEnableEnhancedControls
     );
 
-    if (settings.enhanceFloatingControls) {
+    if (shouldEnableEnhancedControls) {
       // 如果设置为开启，则调用创建函数（它内部有防重复机制）
       createCustomFloatingControls();
     } else {
@@ -15635,8 +16550,10 @@
       return false;
     }
 
-    const expiryTimestamp = settings.syncTokenExpiryDate;
-    if (!expiryTimestamp) return false;
+    const expiryTimestamp = Number(settings.syncTokenExpiryDate);
+    if (!Number.isFinite(expiryTimestamp) || expiryTimestamp <= 0) {
+      return false;
+    }
 
     const today = new Date().toLocaleDateString("sv");
     const lastCheckDate = GM_getValue("s1p_last_token_check_date", null);
@@ -16025,6 +16942,9 @@
     };
     const applyIncrementalChanges = () => {
       const settings = getSettings();
+      const shouldEnableReadProgress =
+        settings.enableGeneralSettings === true &&
+        settings.enableReadProgress === true;
       let shouldRefreshGlobalLinkBehavior = false;
       const pendingThreadRows = Array.from(observerPendingThreadRows).filter(
         (row) => row instanceof Element && row.isConnected
@@ -16079,7 +16999,7 @@
             applyUserThreadBlocklist();
           }
         }
-        if (settings.enableReadProgress) {
+        if (shouldEnableReadProgress) {
           if (canUseScopedThreadRefresh) {
             addProgressJumpButtonsForRows(pendingThreadRows);
           } else {
@@ -16297,42 +17217,58 @@
 
   function applyChanges() {
     const settings = getSettings();
+    const shouldEnablePostBlocking = settings.enablePostBlocking === true;
+    const shouldEnableUserBlocking = settings.enableUserBlocking === true;
+    const shouldEnableReadProgress =
+      settings.enableGeneralSettings === true &&
+      settings.enableReadProgress === true;
+    let hasRestoredManagedVisibility = false;
+    const ensureManagedVisibilityRestored = () => {
+      if (hasRestoredManagedVisibility) {
+        return;
+      }
+      restoreManagedVisibilityAfterDataImport(settings);
+      hasRestoredManagedVisibility = true;
+    };
 
     manageFloatingControls(); // <-- [核心修改]
 
-    if (settings.enablePostBlocking) {
+    if (shouldEnablePostBlocking) {
       hideBlockedThreads();
       hideThreadsByTitleKeyword();
       addBlockButtonsToThreads();
       applyUserThreadBlocklist();
+      hideBlockedPosts();
+    } else {
+      ensureManagedVisibilityRestored();
+      removeBlockButtonsFromThreads();
+      document.querySelectorAll(".s1p-hidden-by-keyword").forEach((row) => {
+        row.classList.remove("s1p-hidden-by-keyword");
+      });
+      dynamicallyHiddenThreads = {};
     }
-    if (settings.enableUserBlocking) {
+
+    if (shouldEnableUserBlocking) {
       hideBlockedUsersPosts();
-      hideBlockedUserQuotes();
-      hideBlockedUserRatings();
-      hideBlockedUserNotifications(); // [新增] 调用提醒屏蔽函数
+    } else {
+      ensureManagedVisibilityRestored();
     }
-    if (settings.enablePostBlocking) {
-      hideBlockedPosts(); // [新增] 调用楼层屏蔽函数
-    }
-    if (settings.hideSystemBlockedPosts) {
-      hideSystemBlockedPosts();
-    }
-    if (
-      settings.enableUserBlocking ||
-      settings.enableUserTagging ||
-      settings.enableBookmarkReplies ||
-      settings.enablePostBlocking
-    ) {
-      addActionsToPostFooter();
-    }
+    hideBlockedUserQuotes();
+    hideBlockedUserRatings();
+    hideBlockedUserNotifications(); // [新增] 调用提醒屏蔽函数
+    hideSystemBlockedPosts();
+
+    refreshAllAuthiActions();
     // 将工具栏文字链接转换为图标
     renameAuthorLinks();
     if (settings.enableUserTagging) {
       initializeTaggingPopover();
     }
-    if (settings.enableReadProgress) {
+    if (shouldEnableReadProgress) {
       addProgressJumpButtons();
+    } else {
+      removeProgressJumpButtons();
+      updateReadIndicatorUI(null);
     }
 
     applyInterfaceCustomizations();

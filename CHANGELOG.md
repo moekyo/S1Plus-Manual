@@ -60,6 +60,12 @@
 
 ### 🐛 问题修复 (Bug Fixes)
 
+- **冻结清单收敛修复（同口径复审）**: `applyChanges` 补齐“开启/关闭双态收敛”路径，跨标签全量刷新不再只应用开启态；关闭相关功能后会同步清理线程/楼层隐藏态、关键字隐藏态、阅读进度按钮与操作栏残留。
+- **通用设置主开关语义补齐**: `enableGeneralSettings` 已接入运行时关键路径门控（全局新标签页拦截、图片默认隐藏、阅读进度按钮/指示器/观察器、界面定制），关闭主开关后行为与设置语义一致。
+- **界面定制可逆性修复**: `customTitleSuffix` 改为可逆写回模型；`changeLogoLink` 和 `hideBlacklistTip` 增加恢复路径，开关回退可在当前页即时生效。
+- **同步比较与兼容性修复**: `hasSyncedSettingsChanged` 改为可比较值深比较，消除键顺序噪音；`hideSystemBlockedPosts` 增加 `:has()` 能力检测与 fallback class 方案，兼容旧内核。
+- **导入 ID 归一化修复**: 导入 `threads/users` 时统一执行数字 ID 归一化，过滤无效 key，并在归一化冲突时按较新时间戳合并，避免“记录存在但行为不生效”的脏数据沉淀。
+
 - **修复导入数据后阅读进度跟踪中断**: 修复了导入数据时 `pageObserver.disconnect()` 后未重建观察器、且已标记 `data-s1p-observed` 的元素不会被重新监控的问题。将阅读进度相关状态（观察器、定时器、可见帖子集合、上下文、事件监听器）提升为模块级命名变量，新增 `resetReadProgressObserver` 执行完整清理，并在 `importLocalData` 的 `finally` 块中调用 `trackReadProgressInThread` 确保观察器始终被重建。
 - **修复设置面板事件监听累积绑定**: 修复了 `renderThreadTab` / `renderNavSettingsTab` 每次重渲染都会重复 `addEventListener`、导致一次点击触发多次逻辑的问题。改为在闭包顶层持有命名处理函数引用，重渲染时先 `removeEventListener` 再 `addEventListener`，确保事件处理器始终唯一。
 - **修复仅开启楼层屏蔽时动作栏不注入**: 修复了 `addActionsToPostFooter` 的早退条件未包含 `enablePostBlocking`，导致仅开启楼层屏蔽功能时"屏蔽该楼层"按钮不会出现的问题。
