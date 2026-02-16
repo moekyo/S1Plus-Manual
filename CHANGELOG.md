@@ -5,6 +5,7 @@
 - **DOM XSS 风险面收敛**: 对用户标记弹窗、阅读记录详情弹窗、用户标记列表和收藏列表等高频 UI，逐步移除直接拼接数据的 `innerHTML` 渲染路径，改为 `createElement` + `textContent` 的节点式渲染。
 - **高亮恢复机制重构**: 收藏搜索高亮恢复逻辑从 `innerHTML` 回填改为 DOM 快照还原，避免二次字符串注入路径并减少结构漂移风险。
 - **受控富文本入口统一清洗**: 继续沿用并收敛白名单清洗策略，仅在确有需要的受控场景（如图标、说明性富文本）保留经过 `sanitizeHtmlFragment` 的 `innerHTML` 写入。
+- **原型链污染防护**: 新增 `sanitizeRecordObject` 全面过滤 `__proto__` / `prototype` / `constructor` 等危险键，覆盖所有核心数据读写、导入和缓存路径。`deterministicSort` 使用 `Object.create(null)` 替代字面量对象，消除原型链隐患。
 
 ### 🔧 远程同步健壮性加固 (Remote Sync Robustness)
 
@@ -28,6 +29,12 @@
 - **后台同步重试上限**: `scheduleBackgroundSyncRetry` 新增最大重试次数限制（120 次），防止在异常情况下无限重试。
 - **启动同步结果增强处理**: 常规启动和每日首次同步均增加了对 `failure`、`conflict`、`skipped`（熔断器）、`force_pulled` 等状态的完整处理和用户提示。
 - **诊断面板样式提取**: 将诊断面板的内联样式提取为 `.s1p-diag-*` 系列 CSS 类，符合项目样式规范。
+- **同步冲突决策引擎重写**: 废弃简单的时间戳大小比较，引入 baseline 三方比对机制（`decideSyncActionByVersion`）。每次同步成功后保存 `contentHash + remoteUpdatedAt` 作为基准，下次同步时精确区分"仅本地改变"、"仅远端改变"和"双方都改变"。新增 12 小时时间戳偏差容忍（`SYNC_TIMESTAMP_SKEW_TOLERANCE_MS`），避免跨设备时钟偏差导致误判。
+- **阅读进度冲突自动合并**: 当同步冲突两端的非进度数据完全相同（通过 `baseContentHash` 或 `buildComparableDataWithoutReadProgress` 判定）时，自动按"取更深进度"策略合并阅读进度并回写云端，无需用户手动干预。
+- **冲突后自动同步暂停**: 冲突结束后清空补同步队列和 dirty 标记，阻止同一轮 drain-loop 中反复触发冲突。新增 `AUTO_SYNC_CONFLICT_PAUSE_KEY` 持久化暂停状态，手动同步或下次成功后自动恢复。
+- **收藏内容同步瘦身**: 同步路径中收藏内容仅上传截断后的 280 字符预览（`getBookmarkedRepliesForSync`），不再上传完整 `postContent`，大幅减少同步体积。本地保留完整内容不受影响。
+- **跨标签页核心数据即时刷新**: `GM_addValueChangeListener` 缓存更新后联动触发 UI 刷新（屏蔽列表、引用、评分、提醒、阅读进度按钮），标签页不可见时暂存变更键、切回可见时执行，120ms 防抖。
+- **跨页面待同步请求安全检查**: `tryResumePendingAutoSyncRequest` 增加对冲突时间戳和同步进行中状态的守卫，避免过期请求被重复补发或与进行中的同步任务冲突。
 
 ### 🎨 UI/UX 优化 (UI/UX Improvements)
 
@@ -82,6 +89,9 @@
 - **阅读进度写入批量落盘**: 引入 `pendingThreadProgressWrites` 内存缓冲层，滚动期间仅写入内存对象，5 秒防抖后批量 `GM_setValue`。`visibilitychange(hidden)`、`beforeunload`、`pagehide` 三重落盘保障不丢数据。`resetReadProgressObserver` 新增 `flushPendingProgress` 参数控制关闭/导入时的落盘策略。
 - **标题规则正则编译缓存**: 将 `normalizePatternAsKeyword`、`isRegexPatternHighRisk` 提升为模块级函数，新增 `getCompiledTitleRuleMatchers` 基于签名缓存编译结果，规则未变时跳过重新编译。
 - **统一 Tab 事件绑定模式**: 引入 `rebindTabClickHandler` 工具函数，将 `bookmarks`、`users`、`threads`、`nav-settings` 四个 tab 原先不同的绑定方式（`dataset` 标记 / 手动 remove+add）统一为 `rebindTabClickHandler(tab, prev, handler)` 模式。
+- **自动签到指数退避重试**: 签到失败后不再放弃当日重试，改为指数退避（基础 3 分钟，最大 1 小时）。签到尝试状态从简单日期字符串升级为 `{ date, failCount, nextRetryAt }` 结构，成功后清除尝试记录。兼容旧版字符串格式数据。
+- **Observer 性能精细化**: `mutationTouchesSelector` / `collectMatchesToSet` 增加 `!node.firstElementChild` 叶节点早返回，避免无意义的 `querySelector`。预组合 `observerRelevantMutationSelector` 做一次性筛查，不命中时跳过所有细分检查。各区域加 `!touchesXxxArea &&` 短路，已确认后不再重复检查。thread/post pending set 积累阶段也加入 maxSize 限流。`resolveObserverWatchTarget` 增加 `#ct` 作为更高优先级的监听目标。
+- **导入后 UI 刷新按功能开关守卫**: 数据导入成功后的屏蔽列表重建/阅读进度按钮刷新/提醒屏蔽等操作改为按 `enablePostBlocking` / `enableUserBlocking` / `enableReadProgress` 开关状态有条件执行，避免功能关闭时做无效 DOM 操作。
 
 - **二次确认弹窗逻辑大重构**: 
     - **逻辑整合**: 将帖子列表屏蔽、楼层/用户屏蔽、标记删除确认等所有分散的确认弹窗逻辑整合为一套统一的工具函数 `buildConfirmationMarkup`。

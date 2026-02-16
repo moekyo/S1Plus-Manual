@@ -55,7 +55,7 @@
       return obj.map(deterministicSort);
     }
     const sortedKeys = Object.keys(obj).sort();
-    const newObj = {};
+    const newObj = Object.create(null);
     for (const key of sortedKeys) {
       newObj[key] = deterministicSort(obj[key]);
     }
@@ -131,6 +131,26 @@
 
   const isObjectRecord = (value) =>
     Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+  // 避免通过导入数据中的特殊键污染对象原型链。
+  const UNSAFE_RECORD_KEYS = new Set(["__proto__", "prototype", "constructor"]);
+  const isUnsafeRecordKey = (key) => UNSAFE_RECORD_KEYS.has(String(key));
+  const hasUnsafeRecordKeys = (value) =>
+    isObjectRecord(value) &&
+    Object.keys(value).some((key) => isUnsafeRecordKey(key));
+  const sanitizeRecordObject = (value) => {
+    if (!isObjectRecord(value)) {
+      return {};
+    }
+    const sanitized = {};
+    Object.keys(value).forEach((key) => {
+      if (isUnsafeRecordKey(key)) {
+        return;
+      }
+      sanitized[key] = value[key];
+    });
+    return sanitized;
+  };
 
   const normalizeCustomNavLinks = (links = []) => {
     if (!Array.isArray(links)) {
@@ -346,9 +366,13 @@
   const SYNC_DIAGNOSTICS_KEY = "s1p_sync_diagnostics";
   const AUTO_SYNC_FAILURE_COUNT_KEY = "s1p_auto_sync_failure_count";
   const AUTO_SYNC_CIRCUIT_OPEN_UNTIL_KEY = "s1p_auto_sync_circuit_open_until";
+  const AUTO_SYNC_CONFLICT_PAUSE_KEY = "s1p_auto_sync_conflict_pause";
   const PENDING_AUTO_SYNC_KEY = "s1p_pending_auto_sync_request";
+  const SYNC_BASELINE_STATE_KEY = "s1p_sync_baseline_state";
   const AUTO_SYNC_CIRCUIT_BREAKER_THRESHOLD = 3;
   const AUTO_SYNC_CIRCUIT_OPEN_DURATION_MS = 10 * 60 * 1000;
+  // 当时间戳相差过大时，不再自动依据“谁大谁新”做决策，转为冲突保护。
+  const SYNC_TIMESTAMP_SKEW_TOLERANCE_MS = 12 * 60 * 60 * 1000;
   const DOM_OBSERVER_DEBOUNCE_MS = 120;
   const SETTINGS_CACHE_TTL_MS = 1000;
   const CORE_DATA_CACHE_TTL_MS = 1000;
@@ -361,6 +385,8 @@
   const READ_PROGRESS_LIST_REFRESH_DEBOUNCE_MS = 120;
   // 帖子页阅读进度持久化防抖：以内存批量累积为主，隐藏/卸载前强制落盘。
   const READ_PROGRESS_PERSIST_DEBOUNCE_MS = 5 * 1000;
+  // 收藏内容同步只保留短预览，避免整段文本参与哈希和上传。
+  const BOOKMARK_SYNC_PREVIEW_MAX_LENGTH = 280;
 
   let readProgressListRefreshTimer = null;
   let pendingReadProgressDataForRefresh = null;
@@ -3431,6 +3457,34 @@
     GM_deleteValue(AUTO_SYNC_CIRCUIT_OPEN_UNTIL_KEY);
   };
 
+  const getAutoSyncConflictPauseState = () => {
+    const saved = GM_getValue(AUTO_SYNC_CONFLICT_PAUSE_KEY, null);
+    if (
+      !saved ||
+      typeof saved !== "object" ||
+      saved.paused !== true
+    ) {
+      return { paused: false, reason: "", timestamp: 0 };
+    }
+    return {
+      paused: true,
+      reason: String(saved.reason || ""),
+      timestamp: Number(saved.timestamp) || 0,
+    };
+  };
+
+  const setAutoSyncConflictPause = (reason = "generic") => {
+    GM_setValue(AUTO_SYNC_CONFLICT_PAUSE_KEY, {
+      paused: true,
+      reason: String(reason || "generic"),
+      timestamp: Date.now(),
+    });
+  };
+
+  const clearAutoSyncConflictPause = () => {
+    GM_deleteValue(AUTO_SYNC_CONFLICT_PAUSE_KEY);
+  };
+
   const registerAutoSyncFailure = (mode = "background") => {
     if (mode !== "background" && mode !== "startup") {
       return { count: 0, opened: false };
@@ -3480,6 +3534,18 @@
       return;
     }
 
+    const diagnostics = getSyncDiagnostics();
+    const pendingCreatedAt =
+      typeof pending.createdAt === "number" ? pending.createdAt : 0;
+    if (
+      diagnostics.lastConflictTimestamp > 0 &&
+      pendingCreatedAt > 0 &&
+      pendingCreatedAt <= diagnostics.lastConflictTimestamp
+    ) {
+      clearPendingAutoSyncRequest();
+      return;
+    }
+
     const settings = getSettings();
     if (
       !settings.syncRemoteEnabled ||
@@ -3498,6 +3564,15 @@
 
     if (effectiveLastModified <= lastSyncTs) {
       clearPendingAutoSyncRequest();
+      return;
+    }
+
+    if (
+      isInitialSyncInProgress ||
+      isBackgroundAutoSyncInProgress ||
+      hasPendingBackgroundSync ||
+      backgroundSyncRetryTimeout
+    ) {
       return;
     }
 
@@ -3575,7 +3650,6 @@
     ) {
       return;
     }
-
     const debounceMs =
       source === "read_progress"
         ? READ_PROGRESS_SYNC_DEBOUNCE_MS
@@ -3800,7 +3874,7 @@
   const blockedPostsCache = createCoreDataCacheState();
   const readProgressCache = createCoreDataCacheState();
   const setCoreDataCacheValue = (cacheState, value) => {
-    cacheState.value = isObjectRecord(value) ? value : {};
+    cacheState.value = sanitizeRecordObject(value);
     cacheState.expiresAt = Date.now() + CORE_DATA_CACHE_TTL_MS;
   };
   const getCoreDataFromCache = (cacheState, key) => {
@@ -3814,7 +3888,7 @@
   const getBlockedThreads = () =>
     getCoreDataFromCache(blockedThreadsCache, "s1p_blocked_threads");
   const saveBlockedThreads = (threads, suppressSyncTrigger = false) => {
-    const normalizedThreads = isObjectRecord(threads) ? threads : {};
+    const normalizedThreads = sanitizeRecordObject(threads);
     invalidateLocalDataHashCache();
     GM_setValue("s1p_blocked_threads", normalizedThreads);
     setCoreDataCacheValue(blockedThreadsCache, normalizedThreads);
@@ -3825,7 +3899,7 @@
   const getBlockedUsers = () =>
     getCoreDataFromCache(blockedUsersCache, "s1p_blocked_users");
   const saveBlockedUsers = (users, suppressSyncTrigger = false) => {
-    const normalizedUsers = isObjectRecord(users) ? users : {};
+    const normalizedUsers = sanitizeRecordObject(users);
     invalidateLocalDataHashCache();
     GM_setValue("s1p_blocked_users", normalizedUsers);
     setCoreDataCacheValue(blockedUsersCache, normalizedUsers);
@@ -3834,27 +3908,74 @@
     }
   };
   const saveUserTags = (tags, suppressSyncTrigger = false) => {
+    const normalizedTags = sanitizeRecordObject(tags);
     invalidateLocalDataHashCache();
-    GM_setValue("s1p_user_tags", tags);
+    GM_setValue("s1p_user_tags", normalizedTags);
     if (!suppressSyncTrigger) {
       updateLastModifiedTimestamp();
     }
   };
   // [NEW] Bookmarked Replies data functions
-  const getBookmarkedReplies = () => GM_getValue("s1p_bookmarked_replies", {});
+  const getBookmarkedReplies = () =>
+    sanitizeRecordObject(GM_getValue("s1p_bookmarked_replies", {}));
   const saveBookmarkedReplies = (replies, suppressSyncTrigger = false) => {
+    const normalizedReplies = sanitizeRecordObject(replies);
     invalidateLocalDataHashCache();
-    GM_setValue("s1p_bookmarked_replies", replies);
+    GM_setValue("s1p_bookmarked_replies", normalizedReplies);
     if (!suppressSyncTrigger) {
       updateLastModifiedTimestamp();
     }
+  };
+  const normalizeBookmarkTextForPreview = (text) => {
+    const rawText = String(text ?? "");
+    if (!rawText) {
+      return "";
+    }
+    // 仅处理前部窗口，避免对超长正文在同步路径做全量扫描。
+    const windowedText =
+      rawText.length > BOOKMARK_SYNC_PREVIEW_MAX_LENGTH * 4
+        ? rawText.slice(0, BOOKMARK_SYNC_PREVIEW_MAX_LENGTH * 4)
+        : rawText;
+    return windowedText.trim().replace(/\n{3,}/g, "\n\n");
+  };
+  const buildBookmarkContentPreview = (text) => {
+    const normalized = normalizeBookmarkTextForPreview(text);
+    if (!normalized) {
+      return "";
+    }
+    if (normalized.length <= BOOKMARK_SYNC_PREVIEW_MAX_LENGTH) {
+      return normalized;
+    }
+    return `${normalized.slice(0, BOOKMARK_SYNC_PREVIEW_MAX_LENGTH)}...`;
+  };
+  const getBookmarkedRepliesForSync = () => {
+    const bookmarkedReplies = getBookmarkedReplies();
+    const compactReplies = {};
+    Object.keys(bookmarkedReplies).forEach((postId) => {
+      const item = bookmarkedReplies[postId];
+      if (!isObjectRecord(item)) {
+        return;
+      }
+      const compactItem = sanitizeRecordObject(item);
+      const contentPreview =
+        buildBookmarkContentPreview(compactItem.contentPreview) ||
+        buildBookmarkContentPreview(compactItem.postContent);
+      delete compactItem.postContent;
+      if (contentPreview) {
+        compactItem.contentPreview = contentPreview;
+      } else {
+        delete compactItem.contentPreview;
+      }
+      compactReplies[postId] = compactItem;
+    });
+    return compactReplies;
   };
 
   // [NEW] Blocked Posts data functions
   const getBlockedPosts = () =>
     getCoreDataFromCache(blockedPostsCache, "s1p_blocked_posts");
   const saveBlockedPosts = (posts, suppressSyncTrigger = false) => {
-    const normalizedPosts = isObjectRecord(posts) ? posts : {};
+    const normalizedPosts = sanitizeRecordObject(posts);
     invalidateLocalDataHashCache();
     GM_setValue("s1p_blocked_posts", normalizedPosts);
     setCoreDataCacheValue(blockedPostsCache, normalizedPosts);
@@ -3865,7 +3986,7 @@
 
   // [MODIFIED] 升级并获取用户标记，自动迁移旧数据
   const getUserTags = () => {
-    const tags = GM_getValue("s1p_user_tags", {});
+    const tags = sanitizeRecordObject(GM_getValue("s1p_user_tags", {}));
     let needsMigration = false;
     const migratedTags = { ...tags };
 
@@ -4395,127 +4516,127 @@
     const targetElements =
       scopeRoots === null
         ? Array.from(
-            noticeContainer.querySelectorAll(
-              "dl.cl, .s1p-notification-placeholder + .s1p-notification-wrapper"
-            )
+          noticeContainer.querySelectorAll(
+            "dl.cl, .s1p-notification-placeholder + .s1p-notification-wrapper"
           )
+        )
         : (() => {
-            const scopeNodes = collectNodesByScope(
-              scopeRoots,
-              [
-                "dl.cl",
-                ".s1p-notification-wrapper",
-                ".s1p-notification-placeholder",
-                ".xld.xlda",
-              ].join(", ")
-            );
-            const visited = new Set();
-            const nodes = [];
-            const addNode = (node) => {
-              if (!(node instanceof Element) || visited.has(node)) return;
-              if (!noticeContainer.contains(node)) return;
-              visited.add(node);
-              nodes.push(node);
-            };
+          const scopeNodes = collectNodesByScope(
+            scopeRoots,
+            [
+              "dl.cl",
+              ".s1p-notification-wrapper",
+              ".s1p-notification-placeholder",
+              ".xld.xlda",
+            ].join(", ")
+          );
+          const visited = new Set();
+          const nodes = [];
+          const addNode = (node) => {
+            if (!(node instanceof Element) || visited.has(node)) return;
+            if (!noticeContainer.contains(node)) return;
+            visited.add(node);
+            nodes.push(node);
+          };
 
-            scopeNodes.forEach((node) => {
-              if (node.matches("dl.cl, .s1p-notification-wrapper")) {
-                addNode(node);
+          scopeNodes.forEach((node) => {
+            if (node.matches("dl.cl, .s1p-notification-wrapper")) {
+              addNode(node);
+            }
+            if (node.matches(".s1p-notification-placeholder")) {
+              const next = node.nextElementSibling;
+              if (
+                next &&
+                next.classList.contains("s1p-notification-wrapper")
+              ) {
+                addNode(next);
               }
-              if (node.matches(".s1p-notification-placeholder")) {
-                const next = node.nextElementSibling;
-                if (
-                  next &&
-                  next.classList.contains("s1p-notification-wrapper")
-                ) {
-                  addNode(next);
-                }
-              }
-            });
+            }
+          });
 
-            return nodes;
-          })();
+          return nodes;
+        })();
 
     // 遍历所有提醒元素或已存在的占位符的下一个元素
     targetElements.forEach((element) => {
-        let dlElement;
-        // 确定我们正在处理的是原始dl还是wrapper内的dl
-        if (element.classList.contains("s1p-notification-wrapper")) {
-          dlElement = element.querySelector("dl.cl");
-        } else {
-          dlElement = element;
-        }
+      let dlElement;
+      // 确定我们正在处理的是原始dl还是wrapper内的dl
+      if (element.classList.contains("s1p-notification-wrapper")) {
+        dlElement = element.querySelector("dl.cl");
+      } else {
+        dlElement = element;
+      }
 
-        if (!dlElement) return;
+      if (!dlElement) return;
 
-        const userLink = dlElement.querySelector('a[href*="space-uid-"]');
-        if (!userLink) return;
+      const userLink = dlElement.querySelector('a[href*="space-uid-"]');
+      if (!userLink) return;
 
-        const uidMatch = userLink.href.match(/space-uid-(\d+)/);
-        const authorId = uidMatch ? uidMatch[1] : null;
-        const isBlocked =
-          isUserBlockingEnabled && authorId && blockedUserIdSet.has(authorId);
+      const uidMatch = userLink.href.match(/space-uid-(\d+)/);
+      const authorId = uidMatch ? uidMatch[1] : null;
+      const isBlocked =
+        isUserBlockingEnabled && authorId && blockedUserIdSet.has(authorId);
 
-        const wrapper = dlElement.parentElement.classList.contains(
-          "s1p-notification-wrapper"
-        )
-          ? dlElement.parentElement
-          : null;
+      const wrapper = dlElement.parentElement.classList.contains(
+        "s1p-notification-wrapper"
+      )
+        ? dlElement.parentElement
+        : null;
 
-        if (isBlocked) {
-          if (!wrapper) {
-            // 需要屏蔽，但尚未被包装 -> 执行包装和隐藏
-            const newWrapper = document.createElement("div");
-            newWrapper.className = "s1p-notification-wrapper";
-            dlElement.parentNode.insertBefore(newWrapper, dlElement);
-            newWrapper.appendChild(dlElement);
+      if (isBlocked) {
+        if (!wrapper) {
+          // 需要屏蔽，但尚未被包装 -> 执行包装和隐藏
+          const newWrapper = document.createElement("div");
+          newWrapper.className = "s1p-notification-wrapper";
+          dlElement.parentNode.insertBefore(newWrapper, dlElement);
+          newWrapper.appendChild(dlElement);
 
-            // 关键：先获取高度，再设置为0，以便动画生效
-            const initialHeight = dlElement.scrollHeight;
-            newWrapper.style.maxHeight = initialHeight + "px"; // 确保初始状态正确
+          // 关键：先获取高度，再设置为0，以便动画生效
+          const initialHeight = dlElement.scrollHeight;
+          newWrapper.style.maxHeight = initialHeight + "px"; // 确保初始状态正确
 
-            requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            newWrapper.style.maxHeight = "0px";
+          });
+
+          const placeholder = document.createElement("div");
+          placeholder.className = "s1p-notification-placeholder";
+          const notificationPlaceholderText = document.createElement("span");
+          notificationPlaceholderText.textContent =
+            "一条来自已屏蔽用户的提醒已被隐藏。";
+          const notificationToggle = document.createElement("span");
+          notificationToggle.className = "s1p-notification-toggle";
+          notificationToggle.textContent = "点击展开";
+          placeholder.appendChild(notificationPlaceholderText);
+          placeholder.appendChild(notificationToggle);
+          newWrapper.parentNode.insertBefore(placeholder, newWrapper);
+
+          notificationToggle.addEventListener("click", function () {
+            const isCollapsed = newWrapper.style.maxHeight === "0px";
+            if (isCollapsed) {
+              newWrapper.style.maxHeight = dlElement.scrollHeight + "px";
+              this.textContent = "点击折叠";
+            } else {
               newWrapper.style.maxHeight = "0px";
-            });
-
-            const placeholder = document.createElement("div");
-            placeholder.className = "s1p-notification-placeholder";
-            const notificationPlaceholderText = document.createElement("span");
-            notificationPlaceholderText.textContent =
-              "一条来自已屏蔽用户的提醒已被隐藏。";
-            const notificationToggle = document.createElement("span");
-            notificationToggle.className = "s1p-notification-toggle";
-            notificationToggle.textContent = "点击展开";
-            placeholder.appendChild(notificationPlaceholderText);
-            placeholder.appendChild(notificationToggle);
-            newWrapper.parentNode.insertBefore(placeholder, newWrapper);
-
-            notificationToggle.addEventListener("click", function () {
-              const isCollapsed = newWrapper.style.maxHeight === "0px";
-              if (isCollapsed) {
-                newWrapper.style.maxHeight = dlElement.scrollHeight + "px";
-                this.textContent = "点击折叠";
-              } else {
-                newWrapper.style.maxHeight = "0px";
-                this.textContent = "点击展开";
-              }
-            });
-          }
-        } else {
-          if (wrapper) {
-            // 不需要屏蔽，但已被包装 -> 解除包装
-            const placeholder = wrapper.previousElementSibling;
-            if (
-              placeholder &&
-              placeholder.classList.contains("s1p-notification-placeholder")
-            ) {
-              placeholder.remove();
+              this.textContent = "点击展开";
             }
-            wrapper.parentNode.insertBefore(dlElement, wrapper);
-            wrapper.remove();
-          }
+          });
         }
-      });
+      } else {
+        if (wrapper) {
+          // 不需要屏蔽，但已被包装 -> 解除包装
+          const placeholder = wrapper.previousElementSibling;
+          if (
+            placeholder &&
+            placeholder.classList.contains("s1p-notification-placeholder")
+          ) {
+            placeholder.remove();
+          }
+          wrapper.parentNode.insertBefore(dlElement, wrapper);
+          wrapper.remove();
+        }
+      }
+    });
   };
 
   const normalizePatternAsKeyword = (pattern) =>
@@ -4771,8 +4892,91 @@
     return { normalizedProgress, hasLegacyType };
   };
 
+  const parseReadProgressOrderNumber = (value) => {
+    const parsed = parseInt(value, 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+  };
+
+  const compareReadProgressRecords = (leftRecord, rightRecord) => {
+    const leftPage = parseReadProgressOrderNumber(leftRecord?.page);
+    const rightPage = parseReadProgressOrderNumber(rightRecord?.page);
+    if (leftPage !== rightPage) {
+      return leftPage - rightPage;
+    }
+
+    const leftFloor = parseReadProgressOrderNumber(leftRecord?.lastReadFloor);
+    const rightFloor = parseReadProgressOrderNumber(rightRecord?.lastReadFloor);
+    if (leftFloor !== rightFloor) {
+      return leftFloor - rightFloor;
+    }
+
+    const leftTs = Number(leftRecord?.timestamp) || 0;
+    const rightTs = Number(rightRecord?.timestamp) || 0;
+    return leftTs - rightTs;
+  };
+
+  const mergeReadProgressMaps = (localProgress, remoteProgress) => {
+    const { normalizedProgress: localNormalized } = normalizeReadProgressData(
+      localProgress || {}
+    );
+    const { normalizedProgress: remoteNormalized } = normalizeReadProgressData(
+      remoteProgress || {}
+    );
+    const merged = { ...remoteNormalized };
+
+    Object.keys(localNormalized).forEach((threadId) => {
+      const localRecord = localNormalized[threadId];
+      const remoteRecord = merged[threadId];
+      if (!remoteRecord) {
+        merged[threadId] = localRecord;
+        return;
+      }
+
+      if (compareReadProgressRecords(localRecord, remoteRecord) >= 0) {
+        merged[threadId] = localRecord;
+      }
+    });
+
+    return merged;
+  };
+  const buildComparableDataWithoutReadProgress = (dataObject) => {
+    const sourceData = isObjectRecord(dataObject) ? dataObject : {};
+    const comparableData = { ...sourceData };
+    delete comparableData.read_progress;
+
+    const rawBookmarks = sanitizeRecordObject(comparableData.bookmarked_replies);
+    const normalizedBookmarks = {};
+    Object.keys(rawBookmarks).forEach((postId) => {
+      const item = rawBookmarks[postId];
+      if (!isObjectRecord(item)) {
+        return;
+      }
+      const normalizedItem = sanitizeRecordObject(item);
+      const comparablePreview =
+        buildBookmarkContentPreview(normalizedItem.contentPreview) ||
+        buildBookmarkContentPreview(normalizedItem.postContent);
+      delete normalizedItem.postContent;
+      if (comparablePreview) {
+        normalizedItem.contentPreview = comparablePreview;
+      } else {
+        delete normalizedItem.contentPreview;
+      }
+      normalizedBookmarks[postId] = normalizedItem;
+    });
+    comparableData.bookmarked_replies = normalizedBookmarks;
+    return comparableData;
+  };
+  const calculateComparableBaseHashWithoutReadProgress = async (dataObject) =>
+    calculateDataHash(buildComparableDataWithoutReadProgress(dataObject));
+  const shortHashForLog = (hashValue) => {
+    if (typeof hashValue !== "string" || !hashValue) {
+      return "n/a";
+    }
+    return hashValue.slice(0, 10);
+  };
+
   const saveReadProgress = (progress, suppressSyncTrigger = false) => {
-    const normalizedProgress = isObjectRecord(progress) ? progress : {};
+    const normalizedProgress = sanitizeRecordObject(progress);
     invalidateLocalDataHashCache();
     GM_setValue("s1p_read_progress", normalizedProgress);
     setCoreDataCacheValue(readProgressCache, normalizedProgress);
@@ -5083,27 +5287,27 @@
     );
     // 处理"显示全部楼层"链接
     forEachScopedMatch("div.authi a, .s1p-authi-actions-wrapper a", (link) => {
-        const linkText = link.textContent.trim();
-        if (linkText === "显示全部楼层") {
-          if (link.classList.contains("s1p-toolbar-icon-btn")) return; // 已处理过
-          link.classList.add("s1p-toolbar-icon-btn", "s1p-has-tooltip");
-          setSanitizedIconHtml(link, TOOLBAR_ICONS.showAll);
-          link.dataset.fullTag = "显示全部楼层";
-          link.removeAttribute("title");
-        } else if (linkText.includes("倒序")) {
-          if (link.classList.contains("s1p-toolbar-icon-btn")) return; // 已处理过
-          link.classList.add("s1p-toolbar-icon-btn", "s1p-has-tooltip");
-          setSanitizedIconHtml(link, TOOLBAR_ICONS.sortDesc);
-          link.dataset.fullTag = linkText;
-          link.removeAttribute("title");
-        } else if (linkText.includes("正序")) {
-          if (link.classList.contains("s1p-toolbar-icon-btn")) return; // 已处理过
-          link.classList.add("s1p-toolbar-icon-btn", "s1p-has-tooltip");
-          setSanitizedIconHtml(link, TOOLBAR_ICONS.sortAsc);
-          link.dataset.fullTag = linkText;
-          link.removeAttribute("title");
-        }
+      const linkText = link.textContent.trim();
+      if (linkText === "显示全部楼层") {
+        if (link.classList.contains("s1p-toolbar-icon-btn")) return; // 已处理过
+        link.classList.add("s1p-toolbar-icon-btn", "s1p-has-tooltip");
+        setSanitizedIconHtml(link, TOOLBAR_ICONS.showAll);
+        link.dataset.fullTag = "显示全部楼层";
+        link.removeAttribute("title");
+      } else if (linkText.includes("倒序")) {
+        if (link.classList.contains("s1p-toolbar-icon-btn")) return; // 已处理过
+        link.classList.add("s1p-toolbar-icon-btn", "s1p-has-tooltip");
+        setSanitizedIconHtml(link, TOOLBAR_ICONS.sortDesc);
+        link.dataset.fullTag = linkText;
+        link.removeAttribute("title");
+      } else if (linkText.includes("正序")) {
+        if (link.classList.contains("s1p-toolbar-icon-btn")) return; // 已处理过
+        link.classList.add("s1p-toolbar-icon-btn", "s1p-has-tooltip");
+        setSanitizedIconHtml(link, TOOLBAR_ICONS.sortAsc);
+        link.dataset.fullTag = linkText;
+        link.removeAttribute("title");
       }
+    }
     );
   };
 
@@ -5360,7 +5564,7 @@
       user_tags: getUserTags(),
       title_filter_rules: getTitleFilterRules(),
       read_progress: getReadProgress(),
-      bookmarked_replies: getBookmarkedReplies(),
+      bookmarked_replies: getBookmarkedRepliesForSync(),
       blocked_posts: getBlockedPosts(), // [NEW] 添加楼层屏蔽数据
     };
     const lastUpdated = GM_getValue("s1p_last_modified", 0);
@@ -5408,11 +5612,16 @@
       console.log("S1 Plus: 已在导入数据前重置阅读进度观察器。");
 
       const imported = JSON.parse(jsonStr);
-      if (typeof imported !== "object" || imported === null)
+      if (!isObjectRecord(imported)) {
         throw new Error("无效数据格式");
+      }
 
-      const dataToImport =
+      const dataToImportSource =
         imported.data && imported.version >= 4.0 ? imported.data : imported;
+      if (!isObjectRecord(dataToImportSource)) {
+        throw new Error("无效数据格式");
+      }
+      const dataToImport = sanitizeRecordObject(dataToImportSource);
 
       let threadsImported = 0,
         usersImported = 0,
@@ -5424,20 +5633,27 @@
       let hasSuppressedSyncedDataTransform = false;
 
       const upgradeDataStructure = (type, importedData) => {
-        if (!importedData || typeof importedData !== "object") {
+        if (!isObjectRecord(importedData)) {
           return { data: {}, changed: Boolean(importedData) };
         }
 
         let changed = false;
         const upgradedData = {};
         Object.keys(importedData).forEach((id) => {
+          if (isUnsafeRecordKey(id)) {
+            changed = true;
+            return;
+          }
           const item = importedData[id];
           if (!item || typeof item !== "object") {
             upgradedData[id] = item;
             return;
           }
 
-          const nextItem = { ...item };
+          const nextItem = sanitizeRecordObject(item);
+          if (hasUnsafeRecordKeys(item)) {
+            changed = true;
+          }
           if (type === "users" && typeof nextItem.blockThreads === "undefined") {
             nextItem.blockThreads = false;
             changed = true;
@@ -5453,7 +5669,10 @@
       };
 
       if (dataToImport.settings) {
-        const importedSettings = { ...dataToImport.settings };
+        const importedSettings = sanitizeRecordObject(dataToImport.settings);
+        const hadUnsafeImportedSettingsKeys = hasUnsafeRecordKeys(
+          dataToImport.settings
+        );
         delete importedSettings.syncRemoteGistId;
         delete importedSettings.syncRemotePat;
         const {
@@ -5474,6 +5693,9 @@
             hasSuppressedSyncedDataTransform = true;
           }
           if (settingsTransformedDuringImport) {
+            hasSuppressedSyncedDataTransform = true;
+          }
+          if (hadUnsafeImportedSettingsKeys) {
             hasSuppressedSyncedDataTransform = true;
           }
         }
@@ -5515,10 +5737,18 @@
       );
       const userTagsIsValidRecord =
         hasUserTagsField && isObjectRecord(dataToImport.user_tags);
-      const userTagsToSave = userTagsIsValidRecord ? dataToImport.user_tags : {};
+      const userTagsToSave = userTagsIsValidRecord
+        ? sanitizeRecordObject(dataToImport.user_tags)
+        : {};
       saveUserTags(userTagsToSave, suppressSyncTrigger);
       tagsImported = Object.keys(userTagsToSave).length;
-      if (suppressSyncTrigger && !userTagsIsValidRecord) {
+      if (
+        suppressSyncTrigger &&
+        (
+          !userTagsIsValidRecord ||
+          hasUnsafeRecordKeys(dataToImport.user_tags)
+        )
+      ) {
         hasSuppressedSyncedDataTransform = true;
       }
 
@@ -5587,11 +5817,17 @@
       const bookmarksIsValidRecord =
         hasBookmarksField && isObjectRecord(dataToImport.bookmarked_replies);
       const bookmarksToSave = bookmarksIsValidRecord
-        ? dataToImport.bookmarked_replies
+        ? sanitizeRecordObject(dataToImport.bookmarked_replies)
         : {};
       saveBookmarkedReplies(bookmarksToSave, suppressSyncTrigger);
       bookmarksImported = Object.keys(bookmarksToSave).length;
-      if (suppressSyncTrigger && !bookmarksIsValidRecord) {
+      if (
+        suppressSyncTrigger &&
+        (
+          !bookmarksIsValidRecord ||
+          hasUnsafeRecordKeys(dataToImport.bookmarked_replies)
+        )
+      ) {
         hasSuppressedSyncedDataTransform = true;
       }
 
@@ -5602,11 +5838,17 @@
       const blockedPostsIsValidRecord =
         hasBlockedPostsField && isObjectRecord(dataToImport.blocked_posts);
       const blockedPostsToSave = blockedPostsIsValidRecord
-        ? dataToImport.blocked_posts
+        ? sanitizeRecordObject(dataToImport.blocked_posts)
         : {};
       saveBlockedPosts(blockedPostsToSave, suppressSyncTrigger);
       postsImported = Object.keys(blockedPostsToSave).length;
-      if (suppressSyncTrigger && !blockedPostsIsValidRecord) {
+      if (
+        suppressSyncTrigger &&
+        (
+          !blockedPostsIsValidRecord ||
+          hasUnsafeRecordKeys(dataToImport.blocked_posts)
+        )
+      ) {
         hasSuppressedSyncedDataTransform = true;
       }
 
@@ -5722,6 +5964,214 @@
         attempt += 1;
       }
     }
+  };
+
+  const getSyncBaselineState = () => {
+    const saved = GM_getValue(SYNC_BASELINE_STATE_KEY, null);
+    if (!saved || typeof saved !== "object") {
+      return null;
+    }
+    const contentHash =
+      typeof saved.contentHash === "string" && saved.contentHash
+        ? saved.contentHash
+        : null;
+    const remoteUpdatedAt =
+      typeof saved.remoteUpdatedAt === "string" && saved.remoteUpdatedAt
+        ? saved.remoteUpdatedAt
+        : null;
+    if (!contentHash) {
+      return null;
+    }
+    return { contentHash, remoteUpdatedAt };
+  };
+
+  const setSyncBaselineState = ({ contentHash = null, remoteUpdatedAt = null } = {}) => {
+    const nextContentHash =
+      typeof contentHash === "string" && contentHash ? contentHash : null;
+    const nextRemoteUpdatedAt =
+      typeof remoteUpdatedAt === "string" && remoteUpdatedAt
+        ? remoteUpdatedAt
+        : null;
+
+    GM_setValue(SYNC_BASELINE_STATE_KEY, {
+      contentHash: nextContentHash,
+      remoteUpdatedAt: nextRemoteUpdatedAt,
+      savedAt: Date.now(),
+    });
+  };
+
+  const decideSyncActionByVersion = ({
+    localDataObject,
+    remoteDataObject,
+    remoteUpdatedAt = undefined,
+    isStartupSync = false,
+    forcePullOnStartup = false,
+  }) => {
+    if (
+      !localDataObject ||
+      !remoteDataObject ||
+      remoteDataObject.contentHash === localDataObject.contentHash
+    ) {
+      return { action: "no_change", reason: "hash_equal", localNewer: false };
+    }
+
+    const baselineState = getSyncBaselineState();
+    if (baselineState) {
+      const localChanged = localDataObject.contentHash !== baselineState.contentHash;
+      const remoteChangedByHash =
+        typeof remoteDataObject.contentHash === "string" &&
+        remoteDataObject.contentHash
+          ? remoteDataObject.contentHash !== baselineState.contentHash
+          : null;
+      const hasComparableRemoteUpdatedAt =
+        typeof remoteUpdatedAt === "string" &&
+        remoteUpdatedAt &&
+        typeof baselineState.remoteUpdatedAt === "string" &&
+        baselineState.remoteUpdatedAt;
+      const remoteChangedByUpdatedAt = hasComparableRemoteUpdatedAt
+        ? remoteUpdatedAt !== baselineState.remoteUpdatedAt
+        : false;
+
+      if (remoteChangedByHash === true) {
+        if (localChanged) {
+          return {
+            action: "conflict",
+            reason: "both_changed_since_baseline",
+            localNewer: false,
+          };
+        }
+        if (isStartupSync && forcePullOnStartup) {
+          return {
+            action: "force_pull",
+            reason: "startup_force_pull_with_remote_change",
+            localNewer: false,
+          };
+        }
+        return {
+          action: "pull",
+          reason: "remote_changed_since_baseline",
+          localNewer: false,
+        };
+      }
+
+      if (remoteChangedByHash === false) {
+        if (localChanged) {
+          return {
+            action: isStartupSync ? "skip_push_on_startup" : "push",
+            reason: remoteChangedByUpdatedAt
+              ? "local_changed_with_remote_timestamp_drift"
+              : "local_changed_since_baseline",
+            localNewer: true,
+          };
+        }
+        return {
+          action: "no_change",
+          reason: remoteChangedByUpdatedAt
+            ? "hash_equal_with_remote_timestamp_drift"
+            : "hash_equal_since_baseline",
+          localNewer: false,
+        };
+      }
+
+      // 哈希不可用时回退到 updated_at 比较（兼容极端旧数据/异常数据）。
+      if (hasComparableRemoteUpdatedAt) {
+        if (localChanged && remoteChangedByUpdatedAt) {
+          return {
+            action: "conflict",
+            reason: "both_changed_since_baseline_by_updated_at",
+            localNewer: false,
+          };
+        }
+        if (!localChanged && remoteChangedByUpdatedAt) {
+          if (isStartupSync && forcePullOnStartup) {
+            return {
+              action: "force_pull",
+              reason: "startup_force_pull_with_remote_change",
+              localNewer: false,
+            };
+          }
+          return {
+            action: "pull",
+            reason: "remote_changed_since_baseline",
+            localNewer: false,
+          };
+        }
+        if (localChanged && !remoteChangedByUpdatedAt) {
+          return {
+            action: isStartupSync ? "skip_push_on_startup" : "push",
+            reason: "local_changed_since_baseline",
+            localNewer: true,
+          };
+        }
+      }
+
+      return {
+        action: "conflict",
+        reason: "baseline_indicates_no_change_but_hash_diff",
+        localNewer: false,
+      };
+    }
+
+    const localTs = Number(localDataObject.lastUpdated);
+    const remoteTs = Number(remoteDataObject.lastUpdated);
+    const hasComparableTimestamps =
+      Number.isFinite(localTs) &&
+      localTs > 0 &&
+      Number.isFinite(remoteTs) &&
+      remoteTs > 0;
+
+    if (!hasComparableTimestamps) {
+      if (isStartupSync && forcePullOnStartup) {
+        return {
+          action: "force_pull",
+          reason: "startup_force_pull_without_comparable_timestamps",
+          localNewer: false,
+        };
+      }
+      return {
+        action: "conflict",
+        reason: "insufficient_version_ordering",
+        localNewer: false,
+      };
+    }
+
+    if (localTs === remoteTs) {
+      return {
+        action: "conflict",
+        reason: "timestamps_match_hash_diff",
+        localNewer: false,
+      };
+    }
+
+    if (Math.abs(localTs - remoteTs) > SYNC_TIMESTAMP_SKEW_TOLERANCE_MS) {
+      return {
+        action: "conflict",
+        reason: "clock_skew_suspected",
+        localNewer: localTs > remoteTs,
+      };
+    }
+
+    if (isStartupSync && forcePullOnStartup) {
+      return {
+        action: "force_pull",
+        reason: "startup_force_pull",
+        localNewer: false,
+      };
+    }
+
+    if (remoteTs > localTs) {
+      return {
+        action: "pull",
+        reason: "timestamp_remote_newer",
+        localNewer: false,
+      };
+    }
+
+    return {
+      action: isStartupSync ? "skip_push_on_startup" : "push",
+      reason: "timestamp_local_newer",
+      localNewer: true,
+    };
   };
 
   const getManualSyncLockValue = () => {
@@ -6304,7 +6754,6 @@
     ) {
       return { status: "skipped", reason: "disabled" };
     }
-
     const circuitState = getAutoSyncCircuitState();
     if (circuitState.open) {
       return {
@@ -6315,9 +6764,15 @@
     }
 
     const syncMode = isStartupSync ? "startup" : "background";
-    const asSuccessResult = (action) => {
+    let syncOutcome = "unknown";
+    const asSuccessResult = (action, syncBaseline = null) => {
+      syncOutcome = "success";
       if (action !== "skipped_push_on_startup") {
         clearPendingAutoSyncRequest();
+      }
+      clearAutoSyncConflictPause();
+      if (syncBaseline) {
+        setSyncBaselineState(syncBaseline);
       }
       resetAutoSyncFailureState();
       recordSyncSuccess(action, syncMode);
@@ -6325,6 +6780,9 @@
       return { status: "success", action };
     };
     const asConflictResult = (reason) => {
+      syncOutcome = "conflict";
+      clearPendingAutoSyncRequest();
+      setAutoSyncConflictPause(reason);
       resetAutoSyncFailureState();
       recordSyncConflict(reason, syncMode);
       updateLastSyncTimeDisplay();
@@ -6351,39 +6809,36 @@
       if (Object.keys(rawRemoteData).length === 0) {
         console.log(`S1 Plus (Sync): 远程为空，推送本地数据...`);
         const localData = await exportLocalDataObject();
-        await pushRemoteData(localData, {
+        const pushResult = await pushRemoteData(localData, {
           expectedRemoteUpdatedAt: remoteMeta.updatedAt,
         });
         GM_setValue("s1p_last_sync_timestamp", Date.now());
-        return asSuccessResult("pushed_initial");
+        return asSuccessResult("pushed_initial", {
+          contentHash: localData.contentHash,
+          remoteUpdatedAt: pushResult?.updatedAt || null,
+        });
       }
 
       const remote = await migrateAndValidateRemoteData(rawRemoteData);
       const localDataObject = await exportLocalDataObject();
 
-      // --- 决策阶段 (V2: 调整冲突检查的优先级) ---
-      let syncAction = null;
-      if (remote.contentHash === localDataObject.contentHash) {
-        syncAction = "no_change";
-      } else if (localDataObject.lastUpdated === remote.lastUpdated) {
-        // [核心修改] 将冲突检查的优先级提到 force_pull 之前
-        syncAction = "conflict";
-      } else if (isStartupSync && settings.syncForcePullOnStartup) {
-        syncAction = "force_pull";
-      } else if (remote.lastUpdated > localDataObject.lastUpdated) {
-        syncAction = "pull";
-      } else if (localDataObject.lastUpdated > remote.lastUpdated) {
-        syncAction = isStartupSync ? "skip_push_on_startup" : "push";
-      } else {
-        // Fallback, should not be reached with the new logic, but kept for safety
-        syncAction = "conflict";
-      }
+      const versionDecision = decideSyncActionByVersion({
+        localDataObject,
+        remoteDataObject: remote,
+        remoteUpdatedAt: remoteMeta.updatedAt,
+        isStartupSync,
+        forcePullOnStartup: settings.syncForcePullOnStartup,
+      });
+      const syncAction = versionDecision.action;
 
       // --- 执行阶段 ---
       switch (syncAction) {
         case "no_change":
           console.log(`S1 Plus (Sync): 本地与远程数据哈希一致，无需同步。`);
-          return asSuccessResult("no_change");
+          return asSuccessResult("no_change", {
+            contentHash: localDataObject.contentHash,
+            remoteUpdatedAt: remoteMeta.updatedAt || null,
+          });
 
         case "force_pull":
           console.log(
@@ -6393,7 +6848,10 @@
             suppressPostSync: true,
           });
           GM_setValue("s1p_last_sync_timestamp", Date.now());
-          return asSuccessResult("force_pulled");
+          return asSuccessResult("force_pulled", {
+            contentHash: remote.contentHash,
+            remoteUpdatedAt: remoteMeta.updatedAt || null,
+          });
 
         case "pull":
           console.log(`S1 Plus (Sync): 远程数据比本地新，正在后台应用...`);
@@ -6401,7 +6859,10 @@
             suppressPostSync: true,
           });
           GM_setValue("s1p_last_sync_timestamp", Date.now());
-          return asSuccessResult("pulled");
+          return asSuccessResult("pulled", {
+            contentHash: remote.contentHash,
+            remoteUpdatedAt: remoteMeta.updatedAt || null,
+          });
 
         case "skip_push_on_startup":
           console.warn(
@@ -6411,23 +6872,111 @@
 
         case "push":
           console.log(`S1 Plus (Sync): 本地数据比远程新，正在后台推送...`);
-          await pushRemoteData(localDataObject, {
-            expectedRemoteUpdatedAt: remoteMeta.updatedAt,
-          });
-          GM_setValue("s1p_last_sync_timestamp", Date.now());
-          return asSuccessResult("pushed");
+          {
+            const pushResult = await pushRemoteData(localDataObject, {
+              expectedRemoteUpdatedAt: remoteMeta.updatedAt,
+            });
+            GM_setValue("s1p_last_sync_timestamp", Date.now());
+            return asSuccessResult("pushed", {
+              contentHash: localDataObject.contentHash,
+              remoteUpdatedAt: pushResult?.updatedAt || null,
+            });
+          }
 
         case "conflict":
-          console.warn(
-            `S1 Plus (Sync): 检测到同步冲突 (时间戳相同但内容不同)，自动同步已暂停。请手动同步以解决冲突。`
-          );
-          return asConflictResult("timestamps_match_hash_diff");
+          console.warn("S1 Plus (Sync): 冲突判定明细", {
+            reason: versionDecision.reason || "version_conflict",
+            localHash: shortHashForLog(localDataObject.contentHash),
+            remoteHash: shortHashForLog(remote.contentHash),
+            baselineHash: shortHashForLog(getSyncBaselineState()?.contentHash),
+            localBaseHash: shortHashForLog(localDataObject.baseContentHash),
+            remoteBaseHash: shortHashForLog(remote.baseContentHash),
+            remoteUpdatedAt: remoteMeta.updatedAt || "n/a",
+          });
+          {
+            const isBothChangedReason =
+              versionDecision.reason === "both_changed_since_baseline" ||
+              versionDecision.reason === "both_changed_since_baseline_by_updated_at";
+            let canAutoMergeReadProgress = false;
+            if (isBothChangedReason) {
+              const directBaseHashMatch =
+                localDataObject.baseContentHash &&
+                remote.baseContentHash &&
+                localDataObject.baseContentHash === remote.baseContentHash;
+              if (directBaseHashMatch) {
+                canAutoMergeReadProgress = true;
+              } else {
+                const localComparableHash =
+                  await calculateComparableBaseHashWithoutReadProgress(
+                    localDataObject.data
+                  );
+                const remoteComparableHash =
+                  await calculateComparableBaseHashWithoutReadProgress(remote.data);
+                canAutoMergeReadProgress =
+                  localComparableHash === remoteComparableHash;
+                console.warn("S1 Plus (Sync): 冲突可比哈希判定", {
+                  localComparableHash: shortHashForLog(localComparableHash),
+                  remoteComparableHash: shortHashForLog(remoteComparableHash),
+                  canAutoMergeReadProgress,
+                });
+              }
+            }
+
+            if (!canAutoMergeReadProgress) {
+              console.warn(
+                `S1 Plus (Sync): 检测到同步冲突 (${versionDecision.reason})，自动同步已暂停。请手动同步以解决冲突。`
+              );
+              return asConflictResult(versionDecision.reason || "version_conflict");
+            }
+
+            console.warn(
+              "S1 Plus (Sync): 检测到仅阅读进度分歧，正在执行自动合并并回写云端。"
+            );
+            const mergedReadProgress = mergeReadProgressMaps(
+              localDataObject.data?.read_progress,
+              remote.data?.read_progress
+            );
+            const mergedData = {
+              ...localDataObject.data,
+              read_progress: mergedReadProgress,
+            };
+            const mergedLastUpdated = Math.max(
+              Number(localDataObject.lastUpdated) || 0,
+              Number(remote.lastUpdated) || 0,
+              Date.now()
+            );
+            const mergedContentHash = await calculateDataHash(mergedData);
+            const mergedPayload = {
+              version: 5.0,
+              lastUpdated: mergedLastUpdated,
+              lastUpdatedFormatted: new Date(mergedLastUpdated).toLocaleString(
+                "zh-CN",
+                { hour12: false }
+              ),
+              data: mergedData,
+              contentHash: mergedContentHash,
+              baseContentHash: localDataObject.baseContentHash,
+            };
+
+            const pushResult = await pushRemoteData(mergedPayload, {
+              expectedRemoteUpdatedAt: remoteMeta.updatedAt,
+            });
+            importLocalData(JSON.stringify(mergedPayload), {
+              suppressPostSync: true,
+            });
+            GM_setValue("s1p_last_sync_timestamp", Date.now());
+            return asSuccessResult("merged_read_progress", {
+              contentHash: mergedContentHash,
+              remoteUpdatedAt: pushResult?.updatedAt || null,
+            });
+          }
       }
     } catch (error) {
       if (error?.code === REMOTE_VERSION_CONFLICT_CODE) {
         console.warn("S1 Plus (Sync): 推送前检测到远端版本变更，已转为冲突处理。");
         return asConflictResult("remote_changed_before_push");
       }
+      syncOutcome = "failure";
       console.error("S1 Plus: 自动同步失败:", error);
       recordSyncFailure(error.message, syncMode);
       const failureState = registerAutoSyncFailure(syncMode);
@@ -6435,7 +6984,16 @@
       return { status: "failure", error: error.message, failureState };
     } finally {
       isInitialSyncInProgress = false;
-      if (syncDirtyDuringSync) {
+      if (syncOutcome === "conflict") {
+        // 冲突时不应继续自动补同步，否则会在同一轮 drain 中反复触发冲突。
+        hasPendingBackgroundSync = false;
+        clearPendingAutoSyncRequest();
+        syncDirtyDuringSync = false;
+        syncDirtyTimestamp = 0;
+        console.log(
+          "S1 Plus (Sync): 冲突状态下已清空自动补同步队列，等待手动同步解决冲突。"
+        );
+      } else if (syncDirtyDuringSync) {
         const currentLastModified = GM_getValue("s1p_last_modified", 0);
         const nextDirtyLastModified = Math.max(
           syncDirtyTimestamp || Date.now(),
@@ -6508,14 +7066,14 @@
   };
 
   const buildNormalizedSettings = (rawSettings = {}) => {
-    const saved = rawSettings && typeof rawSettings === "object" ? rawSettings : {};
+    const saved = sanitizeRecordObject(rawSettings);
     const settings = { ...defaultSettings, ...saved };
     let migrationApplied = false;
     const savedOpenInNewTab =
       saved.openInNewTab &&
-      typeof saved.openInNewTab === "object" &&
-      !Array.isArray(saved.openInNewTab)
-        ? saved.openInNewTab
+        typeof saved.openInNewTab === "object" &&
+        !Array.isArray(saved.openInNewTab)
+        ? sanitizeRecordObject(saved.openInNewTab)
         : {};
 
     const hasLegacyOpenInNewTabRootKeys =
@@ -6632,6 +7190,72 @@
       );
     }
   };
+  let coreDataCrossTabRefreshTimer = null;
+  const pendingCoreDataCrossTabRefreshKeys = new Set();
+  const runCoreDataCrossTabRefresh = () => {
+    coreDataCrossTabRefreshTimer = null;
+    if (pendingCoreDataCrossTabRefreshKeys.size === 0) {
+      return;
+    }
+
+    const keys = Array.from(pendingCoreDataCrossTabRefreshKeys);
+    pendingCoreDataCrossTabRefreshKeys.clear();
+    const changedKeys = new Set(keys);
+    const settings = getSettings();
+
+    if (changedKeys.has("s1p_blocked_threads")) {
+      if (settings.enablePostBlocking) {
+        hideBlockedThreads();
+        applyUserThreadBlocklist();
+        hideThreadsByTitleKeyword();
+      } else {
+        restoreManagedVisibilityAfterDataImport(settings);
+        document.querySelectorAll(".s1p-hidden-by-keyword").forEach((row) => {
+          row.classList.remove("s1p-hidden-by-keyword");
+        });
+        dynamicallyHiddenThreads = {};
+      }
+    }
+
+    if (changedKeys.has("s1p_blocked_users")) {
+      restoreManagedVisibilityAfterDataImport(settings);
+      if (settings.enableUserBlocking) {
+        hideBlockedUsersPosts();
+      }
+      hideBlockedUserQuotes();
+      hideBlockedUserRatings();
+      hideBlockedUserNotifications();
+      if (settings.enablePostBlocking) {
+        applyUserThreadBlocklist();
+      }
+    }
+
+    if (changedKeys.has("s1p_blocked_posts")) {
+      restoreManagedVisibilityAfterDataImport(settings);
+      if (settings.enablePostBlocking) {
+        hideBlockedPosts();
+      }
+    }
+
+    if (changedKeys.has("s1p_read_progress") && settings.enableReadProgress) {
+      if (isThreadListPage()) {
+        scheduleProgressJumpButtonsRefresh();
+      }
+    }
+  };
+  const scheduleCoreDataCrossTabRefresh = (key) => {
+    if (!key) {
+      return;
+    }
+    pendingCoreDataCrossTabRefreshKeys.add(key);
+    if (document.visibilityState === "hidden") {
+      return;
+    }
+    if (coreDataCrossTabRefreshTimer) {
+      return;
+    }
+    coreDataCrossTabRefreshTimer = setTimeout(runCoreDataCrossTabRefresh, 120);
+  };
   const initializeCoreDataCacheSync = () => {
     if (window.__s1pCoreDataCacheSyncBound) {
       return;
@@ -6650,6 +7274,7 @@
             return;
           }
           setCoreDataCacheValue(cacheState, newValue);
+          scheduleCoreDataCrossTabRefresh(key);
         }
       );
     };
@@ -6658,6 +7283,15 @@
     bindCoreDataCacheSync("s1p_blocked_users", blockedUsersCache);
     bindCoreDataCacheSync("s1p_blocked_posts", blockedPostsCache);
     bindCoreDataCacheSync("s1p_read_progress", readProgressCache);
+    document.addEventListener("visibilitychange", () => {
+      if (
+        document.visibilityState === "visible" &&
+        pendingCoreDataCrossTabRefreshKeys.size > 0 &&
+        !coreDataCrossTabRefreshTimer
+      ) {
+        coreDataCrossTabRefreshTimer = setTimeout(runCoreDataCrossTabRefresh, 0);
+      }
+    });
   };
   const getSettings = () => {
     if (settingsCacheValue && Date.now() < settingsCacheExpiresAt) {
@@ -7789,10 +8423,6 @@
     requestAnimationFrame(() => {
       menu.classList.add("visible");
     });
-
-    setTimeout(() => {
-      document.addEventListener("click", closeMenu, { once: true });
-    }, 0);
   };
 
   const removeProgressJumpButtons = () =>
@@ -8993,8 +9623,11 @@
             const threadIdForUrl = encodeURIComponent(String(item?.threadId ?? ""));
             const authorName = String(item?.authorName || `用户 #${item?.authorId ?? "?"}`);
             const threadTitle = String(item?.threadTitle || "");
-            const fullText = String(item?.postContent || "");
-            const isLong = fullText.length > 150;
+            const localFullText = String(item?.postContent || "");
+            const previewText = String(item?.contentPreview || "");
+            const fullText = localFullText || previewText;
+            const displayText = fullText || "无法获取内容";
+            const canExpand = localFullText.length > 150;
 
             const rowEl = document.createElement("div");
             rowEl.className = "s1p-item";
@@ -9023,12 +9656,12 @@
             const previewEl = document.createElement("div");
             previewEl.className = "s1p-bookmark-preview";
             const previewTextSpan = document.createElement("span");
-            previewTextSpan.textContent = isLong
+            previewTextSpan.textContent = canExpand
               ? `${fullText.substring(0, 150)}... `
-              : fullText;
+              : displayText;
             previewEl.appendChild(previewTextSpan);
 
-            if (isLong) {
+            if (canExpand) {
               const showFullLink = document.createElement("a");
               showFullLink.href = "javascript:void(0);";
               showFullLink.className = "s1p-bookmark-toggle";
@@ -9038,7 +9671,7 @@
             }
             contentEl.appendChild(previewEl);
 
-            if (isLong) {
+            if (canExpand) {
               const fullEl = document.createElement("div");
               fullEl.className = "s1p-bookmark-full";
               fullEl.style.display = "none";
@@ -9583,104 +10216,104 @@
         tabs["threads"],
         threadTabClickHandler,
         (e) => {
-        const target = e.target;
-        const header = target.closest(".s1p-collapsible-header");
+          const target = e.target;
+          const header = target.closest(".s1p-collapsible-header");
 
-        if (header) {
-          if (header.id === "s1p-blocked-by-keyword-header") {
-            const currentSettings = getSettings();
-            const isNowExpanded = !currentSettings.showBlockedByKeywordList;
-            currentSettings.showBlockedByKeywordList = isNowExpanded;
-            saveSettings(currentSettings);
+          if (header) {
+            if (header.id === "s1p-blocked-by-keyword-header") {
+              const currentSettings = getSettings();
+              const isNowExpanded = !currentSettings.showBlockedByKeywordList;
+              currentSettings.showBlockedByKeywordList = isNowExpanded;
+              saveSettings(currentSettings);
 
-            header
-              .querySelector(".s1p-expander-arrow")
-              .classList.toggle("expanded", isNowExpanded);
-            tabs["threads"]
-              .querySelector("#s1p-dynamically-hidden-list-container")
-              .classList.toggle("expanded", isNowExpanded);
-          } else if (header.id === "s1p-manually-blocked-header") {
-            const currentSettings = getSettings();
-            const isNowExpanded = !currentSettings.showManuallyBlockedList;
-            currentSettings.showManuallyBlockedList = isNowExpanded;
-            saveSettings(currentSettings);
+              header
+                .querySelector(".s1p-expander-arrow")
+                .classList.toggle("expanded", isNowExpanded);
+              tabs["threads"]
+                .querySelector("#s1p-dynamically-hidden-list-container")
+                .classList.toggle("expanded", isNowExpanded);
+            } else if (header.id === "s1p-manually-blocked-header") {
+              const currentSettings = getSettings();
+              const isNowExpanded = !currentSettings.showManuallyBlockedList;
+              currentSettings.showManuallyBlockedList = isNowExpanded;
+              saveSettings(currentSettings);
 
-            header
-              .querySelector(".s1p-expander-arrow")
-              .classList.toggle("expanded", isNowExpanded);
-            tabs["threads"]
-              .querySelector("#s1p-manually-blocked-list-container")
-              .classList.toggle("expanded", isNowExpanded);
-          } else if (header.classList.contains("s1p-thread-header")) {
-            // 处理帖子分组的折叠
-            const threadGroup = header.closest(".s1p-thread-group");
-            const threadId = threadGroup.dataset.threadId;
-            const collapsedThreads = GM_getValue("s1p_blocked_posts_collapsed_threads", {});
-            const isNowCollapsed = !collapsedThreads[threadId];
+              header
+                .querySelector(".s1p-expander-arrow")
+                .classList.toggle("expanded", isNowExpanded);
+              tabs["threads"]
+                .querySelector("#s1p-manually-blocked-list-container")
+                .classList.toggle("expanded", isNowExpanded);
+            } else if (header.classList.contains("s1p-thread-header")) {
+              // 处理帖子分组的折叠
+              const threadGroup = header.closest(".s1p-thread-group");
+              const threadId = threadGroup.dataset.threadId;
+              const collapsedThreads = GM_getValue("s1p_blocked_posts_collapsed_threads", {});
+              const isNowCollapsed = !collapsedThreads[threadId];
 
-            collapsedThreads[threadId] = isNowCollapsed;
-            GM_setValue("s1p_blocked_posts_collapsed_threads", collapsedThreads);
+              collapsedThreads[threadId] = isNowCollapsed;
+              GM_setValue("s1p_blocked_posts_collapsed_threads", collapsedThreads);
 
-            header.classList.toggle("expanded", !isNowCollapsed);
-            header.querySelector(".s1p-expander-arrow").classList.toggle("expanded", !isNowCollapsed);
-            threadGroup.querySelector(".s1p-thread-posts").classList.toggle("expanded", !isNowCollapsed);
-          }
-        } else if (target.id === "s1p-keyword-rule-add-btn") {
-          const container = tabs["threads"].querySelector(
-            "#s1p-keyword-rules-list"
-          );
-          const emptyMsg = container.querySelector(".s1p-empty");
-          if (emptyMsg) emptyMsg.remove();
-
-          const newItem = createRuleEditorItem({
-            ruleId: `new_${Date.now()}`,
-            enabled: true,
-            pattern: "",
-          });
-          container.appendChild(newItem);
-          newItem.querySelector('input[type="text"]').focus();
-        } else if (target.closest(".s1p-delete-button")) {
-          const item = target.closest(".s1p-editor-item");
-          if (item) {
-            const pattern =
-              item.querySelector(".s1p-keyword-rule-pattern").value.trim() ||
-              "空规则";
-            const safePatternForHtml = escapeHTML(pattern);
-            createConfirmationModal(
-              "确认删除该屏蔽规则吗？",
-              `规则内容: <code style="background-color: var(--s1p-secondary-bg); padding: 2px 4px; border-radius: 4px;">${safePatternForHtml}</code><br>此操作将立即生效并从存储中删除该规则。`,
-              () => {
-                const ruleIdToDelete = item.dataset.ruleId;
-                if (!ruleIdToDelete || ruleIdToDelete.startsWith("new_")) {
-                  item.remove();
-                  const container = tabs["threads"].querySelector(
-                    "#s1p-keyword-rules-list"
-                  );
-                  if (container.children.length === 0) {
-                    container.appendChild(createRuleEmptyMessage());
-                  }
-                  showMessage("未保存的新规则已移除。", null);
-                  return;
-                }
-                const currentRules = getTitleFilterRules();
-                const newRules = currentRules.filter(
-                  (rule) => rule.id !== ruleIdToDelete
-                );
-                saveTitleFilterRules(newRules);
-                hideThreadsByTitleKeyword();
-                renderDynamicallyHiddenList();
-                renderRules();
-                showMessage("规则已成功删除。", true);
-              },
-              "确认删除",
-              { allowSubtitleHtml: true }
+              header.classList.toggle("expanded", !isNowCollapsed);
+              header.querySelector(".s1p-expander-arrow").classList.toggle("expanded", !isNowCollapsed);
+              threadGroup.querySelector(".s1p-thread-posts").classList.toggle("expanded", !isNowCollapsed);
+            }
+          } else if (target.id === "s1p-keyword-rule-add-btn") {
+            const container = tabs["threads"].querySelector(
+              "#s1p-keyword-rules-list"
             );
+            const emptyMsg = container.querySelector(".s1p-empty");
+            if (emptyMsg) emptyMsg.remove();
+
+            const newItem = createRuleEditorItem({
+              ruleId: `new_${Date.now()}`,
+              enabled: true,
+              pattern: "",
+            });
+            container.appendChild(newItem);
+            newItem.querySelector('input[type="text"]').focus();
+          } else if (target.closest(".s1p-delete-button")) {
+            const item = target.closest(".s1p-editor-item");
+            if (item) {
+              const pattern =
+                item.querySelector(".s1p-keyword-rule-pattern").value.trim() ||
+                "空规则";
+              const safePatternForHtml = escapeHTML(pattern);
+              createConfirmationModal(
+                "确认删除该屏蔽规则吗？",
+                `规则内容: <code style="background-color: var(--s1p-secondary-bg); padding: 2px 4px; border-radius: 4px;">${safePatternForHtml}</code><br>此操作将立即生效并从存储中删除该规则。`,
+                () => {
+                  const ruleIdToDelete = item.dataset.ruleId;
+                  if (!ruleIdToDelete || ruleIdToDelete.startsWith("new_")) {
+                    item.remove();
+                    const container = tabs["threads"].querySelector(
+                      "#s1p-keyword-rules-list"
+                    );
+                    if (container.children.length === 0) {
+                      container.appendChild(createRuleEmptyMessage());
+                    }
+                    showMessage("未保存的新规则已移除。", null);
+                    return;
+                  }
+                  const currentRules = getTitleFilterRules();
+                  const newRules = currentRules.filter(
+                    (rule) => rule.id !== ruleIdToDelete
+                  );
+                  saveTitleFilterRules(newRules);
+                  hideThreadsByTitleKeyword();
+                  renderDynamicallyHiddenList();
+                  renderRules();
+                  showMessage("规则已成功删除。", true);
+                },
+                "确认删除",
+                { allowSubtitleHtml: true }
+              );
+            }
+          } else if (target.id === "s1p-keyword-rules-save-btn") {
+            saveKeywordRules();
+            showMessage("规则已保存！", true);
           }
-        } else if (target.id === "s1p-keyword-rules-save-btn") {
-          saveKeywordRules();
-          showMessage("规则已保存！", true);
         }
-      }
       );
     };
     const renderGeneralSettingsTab = () => {
@@ -10119,72 +10752,72 @@
         tabs["nav-settings"],
         navSettingsTabClickHandler,
         (e) => {
-        const target = e.target;
-        if (target.id === "s1p-nav-add-btn") {
-          const newItem = createNavEditorItem(`new_${Date.now()}`, "", "");
-          newItem.querySelector(".s1p-nav-name").placeholder = "新链接";
-          newItem.querySelector(".s1p-nav-href").placeholder = "forum.php";
-          navListContainer.appendChild(newItem);
-        } else if (target.closest(".s1p-delete-button")) {
-          const item = target.closest(".s1p-editor-item");
-          if (item) {
-            const name =
-              item.querySelector(".s1p-nav-name").value.trim() || "未命名链接";
-            const safeNameForHtml = escapeHTML(name);
+          const target = e.target;
+          if (target.id === "s1p-nav-add-btn") {
+            const newItem = createNavEditorItem(`new_${Date.now()}`, "", "");
+            newItem.querySelector(".s1p-nav-name").placeholder = "新链接";
+            newItem.querySelector(".s1p-nav-href").placeholder = "forum.php";
+            navListContainer.appendChild(newItem);
+          } else if (target.closest(".s1p-delete-button")) {
+            const item = target.closest(".s1p-editor-item");
+            if (item) {
+              const name =
+                item.querySelector(".s1p-nav-name").value.trim() || "未命名链接";
+              const safeNameForHtml = escapeHTML(name);
+              createConfirmationModal(
+                "确认删除该导航链接吗？",
+                `链接名称: ${safeNameForHtml}<br>此操作仅在UI上移除，需要点击下方的“保存设置”按钮才会真正生效。`,
+                () => {
+                  item.remove();
+                  showMessage("链接已从列表移除。", true);
+                },
+                "确认删除",
+                { allowSubtitleHtml: true }
+              );
+            }
+          } else if (target.id === "s1p-nav-restore-btn") {
             createConfirmationModal(
-              "确认删除该导航链接吗？",
-              `链接名称: ${safeNameForHtml}<br>此操作仅在UI上移除，需要点击下方的“保存设置”按钮才会真正生效。`,
+              "确认要恢复默认导航栏吗？",
+              "您当前的自定义导航链接将被重置为脚本的默认设置。",
               () => {
-                item.remove();
-                showMessage("链接已从列表移除。", true);
+                const currentSettings = getSettings();
+                currentSettings.enableNavCustomization =
+                  defaultSettings.enableNavCustomization;
+                currentSettings.customNavLinks = defaultSettings.customNavLinks;
+                saveSettings(currentSettings);
+                renderNavSettingsTab();
+                initializeNavbar();
+                showMessage("导航栏已恢复为默认设置！", true);
               },
-              "确认删除",
-              { allowSubtitleHtml: true }
+              "确认恢复"
             );
+          } else if (target.id === "s1p-settings-save-btn") {
+            const rawCustomNavLinks = Array.from(
+              navListContainer.querySelectorAll(".s1p-editor-item")
+            )
+              .map((item) => ({
+                name: item.querySelector(".s1p-nav-name").value.trim(),
+                href: item.querySelector(".s1p-nav-href").value.trim(),
+              }))
+              .filter((l) => l.name && l.href);
+            const normalizedCustomNavLinks = normalizeCustomNavLinks(
+              rawCustomNavLinks
+            );
+            const newSettings = {
+              ...getSettings(),
+              enableNavCustomization: tabs["nav-settings"].querySelector(
+                "#s1p-enableNavCustomization"
+              ).checked,
+              customNavLinks: normalizedCustomNavLinks,
+            };
+            saveSettings(newSettings);
+            initializeNavbar();
+            if (normalizedCustomNavLinks.length < rawCustomNavLinks.length) {
+              showMessage("检测到不安全导航链接，已自动忽略。", false);
+            }
+            showMessage("设置已保存！", true);
           }
-        } else if (target.id === "s1p-nav-restore-btn") {
-          createConfirmationModal(
-            "确认要恢复默认导航栏吗？",
-            "您当前的自定义导航链接将被重置为脚本的默认设置。",
-            () => {
-              const currentSettings = getSettings();
-              currentSettings.enableNavCustomization =
-                defaultSettings.enableNavCustomization;
-              currentSettings.customNavLinks = defaultSettings.customNavLinks;
-              saveSettings(currentSettings);
-              renderNavSettingsTab();
-              initializeNavbar();
-              showMessage("导航栏已恢复为默认设置！", true);
-            },
-            "确认恢复"
-          );
-        } else if (target.id === "s1p-settings-save-btn") {
-          const rawCustomNavLinks = Array.from(
-            navListContainer.querySelectorAll(".s1p-editor-item")
-          )
-            .map((item) => ({
-              name: item.querySelector(".s1p-nav-name").value.trim(),
-              href: item.querySelector(".s1p-nav-href").value.trim(),
-            }))
-            .filter((l) => l.name && l.href);
-          const normalizedCustomNavLinks = normalizeCustomNavLinks(
-            rawCustomNavLinks
-          );
-          const newSettings = {
-            ...getSettings(),
-            enableNavCustomization: tabs["nav-settings"].querySelector(
-              "#s1p-enableNavCustomization"
-            ).checked,
-            customNavLinks: normalizedCustomNavLinks,
-          };
-          saveSettings(newSettings);
-          initializeNavbar();
-          if (normalizedCustomNavLinks.length < rawCustomNavLinks.length) {
-            showMessage("检测到不安全导航链接，已自动忽略。", false);
-          }
-          showMessage("设置已保存！", true);
         }
-      }
       );
     };
 
@@ -10672,16 +11305,34 @@
               updateRemoteSyncInputsState();
             }
 
-            hideBlockedThreads();
-            hideBlockedUsersPosts();
-            hideBlockedPosts();
-            applyUserThreadBlocklist();
-            hideThreadsByTitleKeyword();
+            const currentSettingsSnapshot = getSettings();
+            restoreManagedVisibilityAfterDataImport(currentSettingsSnapshot);
+
+            if (currentSettingsSnapshot.enablePostBlocking) {
+              hideBlockedThreads();
+              hideBlockedPosts();
+              applyUserThreadBlocklist();
+              hideThreadsByTitleKeyword();
+            } else {
+              document.querySelectorAll(".s1p-hidden-by-keyword").forEach((row) => {
+                row.classList.remove("s1p-hidden-by-keyword");
+              });
+              dynamicallyHiddenThreads = {};
+            }
+
+            if (currentSettingsSnapshot.enableUserBlocking) {
+              hideBlockedUsersPosts();
+            }
+            hideBlockedUserQuotes();
+            hideBlockedUserRatings();
+            hideBlockedUserNotifications();
             initializeNavbar();
             applyInterfaceCustomizations();
-            document
-              .querySelectorAll(".s1p-progress-container")
-              .forEach((el) => el.remove());
+            if (currentSettingsSnapshot.enableReadProgress) {
+              addProgressJumpButtons();
+            } else {
+              removeProgressJumpButtons();
+            }
 
             renderThreadTab();
             renderUserTab();
@@ -10924,14 +11575,11 @@
 
           try {
             const imported = JSON.parse(jsonStr);
-            if (
-              typeof imported !== "object" ||
-              imported === null ||
-              Array.isArray(imported)
-            )
+            if (!isObjectRecord(imported))
               throw new Error("无效数据格式，应为一个对象。");
-            for (const key in imported) {
-              const item = imported[key];
+            const sanitizedImported = sanitizeRecordObject(imported);
+            Object.keys(sanitizedImported).forEach((key) => {
+              const item = sanitizedImported[key];
               if (
                 typeof item !== "object" ||
                 item === null ||
@@ -10939,17 +11587,17 @@
                 typeof item.name === "undefined"
               )
                 throw new Error(`用户 #${key} 的数据格式不正确。`);
-            }
+            });
             createConfirmationModal(
               "确认导入用户标记吗？",
               "导入的数据将覆盖现有相同用户的标记。",
               () => {
                 const currentTags = getUserTags();
-                const mergedTags = { ...currentTags, ...imported };
+                const mergedTags = { ...currentTags, ...sanitizedImported };
                 saveUserTags(mergedTags);
                 renderTagsTab();
                 showMessage(
-                  `成功导入/更新 ${Object.keys(imported).length} 条用户标记。`,
+                  `成功导入/更新 ${Object.keys(sanitizedImported).length} 条用户标记。`,
                   true
                 );
                 textarea.value = "";
@@ -10977,7 +11625,8 @@
     localDataObj,
     remoteDataObj,
     isConflict,
-    pendingCleanupCount = 0
+    pendingCleanupCount = 0,
+    syncDecision = null
   ) => {
     const lastSyncInfo = GM_getValue("s1p_last_manual_sync_info", null);
     let lastActionHtml = "";
@@ -11001,10 +11650,13 @@
       `;
     }
 
-    const localNewer = localDataObj.lastUpdated > remoteDataObj.lastUpdated;
+    const localNewer =
+      syncDecision && typeof syncDecision === "object"
+        ? syncDecision.localNewer === true
+        : false;
     let title = "";
     if (isConflict) {
-      title = `<h2 style="color: var(--s1p-red);">检测到同步冲突！</h2><p>时间戳相同但内容不同，请仔细选择要保留的版本。</p>`;
+      title = `<h2 style="color: var(--s1p-red);">检测到同步冲突！</h2><p>无法安全自动判定新旧，请仔细选择要保留的版本。</p>`;
     } else if (localNewer) {
       title = `<h2>本地数据较新</h2><p>建议选择“推送”以更新云端备份。</p>`;
     } else {
@@ -11035,7 +11687,7 @@
           .reduce((result, key) => {
             result[key] = obj[key];
             return result;
-          }, {})
+          }, Object.create(null))
       );
     };
 
@@ -11154,8 +11806,12 @@
 
         let remoteMetaUpdatedAt;
         recordSyncAttempt("manual", "manual_sync");
-        const noteManualSuccess = (action) => {
+        const noteManualSuccess = (action, syncBaseline = null) => {
           clearPendingAutoSyncRequest();
+          clearAutoSyncConflictPause();
+          if (syncBaseline) {
+            setSyncBaselineState(syncBaseline);
+          }
           resetAutoSyncFailureState();
           recordSyncSuccess(action, "manual");
           updateLastSyncTimeDisplay();
@@ -11165,6 +11821,7 @@
           updateLastSyncTimeDisplay();
         };
         const noteManualConflict = (reason) => {
+          clearPendingAutoSyncRequest();
           recordSyncConflict(reason, "manual");
           updateLastSyncTimeDisplay();
         };
@@ -11192,7 +11849,10 @@
                 });
                 if (result.success) {
                   GM_setValue("s1p_last_sync_timestamp", Date.now());
-                  noteManualSuccess("initial_pull_recover");
+                  noteManualSuccess("initial_pull_recover", {
+                    contentHash: remoteDataObj.contentHash,
+                    remoteUpdatedAt: remoteMetaUpdatedAt || null,
+                  });
                   showMessage("恢复成功！页面即将刷新。", true);
                   setTimeout(() => location.reload(), 1200);
                   resolve(true);
@@ -11228,7 +11888,7 @@
                 showMessage("正在向云端推送数据...", null);
                 try {
                   const localData = await exportLocalDataObject();
-                  await pushRemoteData(localData, {
+                  const pushResult = await pushRemoteData(localData, {
                     expectedRemoteUpdatedAt: remoteMetaUpdatedAt,
                   });
                   GM_setValue("s1p_last_sync_timestamp", Date.now());
@@ -11236,7 +11896,10 @@
                     action: "push",
                     timestamp: Date.now(),
                   });
-                  noteManualSuccess("initial_push_seed");
+                  noteManualSuccess("initial_push_seed", {
+                    contentHash: localData.contentHash,
+                    remoteUpdatedAt: pushResult?.updatedAt || null,
+                  });
                   showMessage("推送成功！已初始化云端备份。", true);
                   resolve(true);
                 } catch (e) {
@@ -11274,21 +11937,29 @@
 
           const remote = await migrateAndValidateRemoteData(rawRemoteData);
           const localDataObject = await exportLocalDataObject();
+          const versionDecision = decideSyncActionByVersion({
+            localDataObject,
+            remoteDataObject: remote,
+            remoteUpdatedAt: remoteMetaUpdatedAt,
+          });
 
           if (remote.contentHash === localDataObject.contentHash) {
             showMessage("数据已是最新，无需同步。", true);
             GM_setValue("s1p_last_sync_timestamp", Date.now());
-            noteManualSuccess("no_change");
+            noteManualSuccess("no_change", {
+              contentHash: localDataObject.contentHash,
+              remoteUpdatedAt: remoteMetaUpdatedAt || null,
+            });
             return resolve(true);
           }
 
-          // [最终修正 V5 - 性能与逻辑完美版]
-          const localNewer = localDataObject.lastUpdated > remote.lastUpdated;
+          const localNewer = versionDecision.localNewer === true;
           const pendingCleanupCount = GM_getValue("s1p_pending_cleanup_info", 0);
 
           // 智能检查：当“清理”发生时，只在“基础数据”完全一致的情况下才自动推送
           if (
             localNewer &&
+            versionDecision.action === "push" &&
             pendingCleanupCount > 0 &&
             localDataObject.baseContentHash === remote.baseContentHash
           ) {
@@ -11297,7 +11968,7 @@
             );
             showMessage("阅读记录已自动清理，正在同步至云端...", null);
             try {
-              await pushRemoteData(localDataObject, {
+              const pushResult = await pushRemoteData(localDataObject, {
                 expectedRemoteUpdatedAt: remoteMetaUpdatedAt,
               });
               GM_deleteValue("s1p_pending_cleanup_info");
@@ -11306,7 +11977,10 @@
                 action: "push",
                 timestamp: Date.now(),
               });
-              noteManualSuccess("cleanup_auto_push");
+              noteManualSuccess("cleanup_auto_push", {
+                contentHash: localDataObject.contentHash,
+                remoteUpdatedAt: pushResult?.updatedAt || null,
+              });
               showMessage("自动清理与同步成功！", true);
               return resolve(true);
             } catch (e) {
@@ -11329,6 +12003,7 @@
           if (
             currentThreadId &&
             !isInitialSyncInProgress &&
+            (versionDecision.action === "push" || versionDecision.action === "pull") &&
             localDataObject.baseContentHash === remote.baseContentHash
           ) {
             if (localNewer) {
@@ -11337,11 +12012,14 @@
                 null
               );
               try {
-                await pushRemoteData(localDataObject, {
+                const pushResult = await pushRemoteData(localDataObject, {
                   expectedRemoteUpdatedAt: remoteMetaUpdatedAt,
                 });
                 GM_setValue("s1p_last_sync_timestamp", Date.now());
-                noteManualSuccess("smart_progress_push");
+                noteManualSuccess("smart_progress_push", {
+                  contentHash: localDataObject.contentHash,
+                  remoteUpdatedAt: pushResult?.updatedAt || null,
+                });
                 showMessage("智能同步成功！已将本地最新进度推送到云端。", true);
                 return resolve(true);
               } catch (e) {
@@ -11372,7 +12050,10 @@
                 saveReadProgress(progress);
               }
               GM_setValue("s1p_last_sync_timestamp", Date.now());
-              noteManualSuccess("smart_merge_pull");
+              noteManualSuccess("smart_merge_pull", {
+                contentHash: remote.contentHash,
+                remoteUpdatedAt: remoteMetaUpdatedAt || null,
+              });
               showMessage("智能同步成功！已保留当前帖子的最新阅读进度。", true);
               return resolve(true);
             }
@@ -11380,15 +12061,16 @@
           // --- 智能检查结束 ---
 
           // 如果以上智能检查都未通过，则进入手动选择流程
-          const isConflict = localDataObject.lastUpdated === remote.lastUpdated;
+          const isConflict = versionDecision.action === "conflict";
           if (isConflict) {
-            noteManualConflict("manual_decision_required");
+            noteManualConflict(versionDecision.reason || "manual_decision_required");
           }
           const bodyHtml = createSyncComparisonHtml(
             localDataObject,
             remote,
             isConflict,
-            pendingCleanupCount
+            pendingCleanupCount,
+            versionDecision
           );
           const pullAction = {
             text: "从云端拉取",
@@ -11404,7 +12086,10 @@
                   action: "pull",
                   timestamp: Date.now(),
                 });
-                noteManualSuccess("manual_pull");
+                noteManualSuccess("manual_pull", {
+                  contentHash: remote.contentHash,
+                  remoteUpdatedAt: remoteMetaUpdatedAt || null,
+                });
                 showMessage(`拉取成功！页面即将刷新。`, true);
                 setTimeout(() => location.reload(), 1200);
                 resolve(true);
@@ -11420,7 +12105,7 @@
             className: "s1p-confirm",
             action: async () => {
               try {
-                await pushRemoteData(localDataObject, {
+                const pushResult = await pushRemoteData(localDataObject, {
                   expectedRemoteUpdatedAt: remoteMetaUpdatedAt,
                 });
                 GM_deleteValue("s1p_pending_cleanup_info");
@@ -11429,7 +12114,10 @@
                   action: "push",
                   timestamp: Date.now(),
                 });
-                noteManualSuccess("manual_push");
+                noteManualSuccess("manual_push", {
+                  contentHash: localDataObject.contentHash,
+                  remoteUpdatedAt: pushResult?.updatedAt || null,
+                });
                 showMessage("推送成功！已更新云端备份。", true);
                 resolve(true);
               } catch (e) {
@@ -11471,7 +12159,7 @@
               action: async () => {
                 try {
                   const localDataObjectForPush = await exportLocalDataObject();
-                  await pushRemoteData(localDataObjectForPush, {
+                  const pushResult = await pushRemoteData(localDataObjectForPush, {
                     expectedRemoteUpdatedAt: remoteMetaUpdatedAt,
                   });
                   GM_setValue("s1p_last_sync_timestamp", Date.now());
@@ -11479,7 +12167,10 @@
                     action: "push",
                     timestamp: Date.now(),
                   });
-                  noteManualSuccess("manual_force_push_repair");
+                  noteManualSuccess("manual_force_push_repair", {
+                    contentHash: localDataObjectForPush.contentHash,
+                    remoteUpdatedAt: pushResult?.updatedAt || null,
+                  });
                   showMessage("推送成功！已使用本地数据修复云端备份。", true);
                   resolve(true);
                 } catch (e) {
@@ -13125,6 +13816,7 @@
             floor,
             authorId: userId,
             authorName: userName,
+            contentPreview: buildBookmarkContentPreview(postContent),
             postContent: postContent,
             timestamp: Date.now(),
           };
@@ -13404,24 +14096,71 @@
     // ----------------------------
 
     const now = new Date();
+    const nowTs = Date.now();
     const date =
       now.getFullYear() + "-" + (now.getMonth() + 1) + "-" + now.getDate();
     const signedDate = GM_getValue(signedDateKey); // <-- [修改]
-    const attemptedDate = GM_getValue(signAttemptDateKey, null);
+    const rawAttemptState = GM_getValue(signAttemptDateKey, null);
+    const attemptState =
+      rawAttemptState && typeof rawAttemptState === "object"
+        ? rawAttemptState
+        : typeof rawAttemptState === "string"
+          ? { date: rawAttemptState, nextRetryAt: 0, failCount: 1 }
+          : null;
 
     if (signedDate === date) {
       checkinLink.style.display = "none";
       return;
     }
 
-    if (attemptedDate === date) {
-      return;
+    if (attemptState && attemptState.date === date) {
+      const nextRetryAt = Number(attemptState.nextRetryAt) || 0;
+      if (nextRetryAt > nowTs) {
+        return;
+      }
     }
 
     if (now.getHours() < 6) return;
 
+    const setAttemptState = (failCount = 0, delayMs = 0) => {
+      const safeFailCount = Math.max(0, Number(failCount) || 0);
+      const nowForRetry = Date.now();
+      GM_setValue(signAttemptDateKey, {
+        date,
+        failCount: safeFailCount,
+        nextRetryAt: Math.max(0, nowForRetry + Math.max(0, delayMs)),
+      });
+    };
+    const scheduleRetryAfterFailure = () => {
+      const latestStateRaw = GM_getValue(signAttemptDateKey, null);
+      const latestState =
+        latestStateRaw && typeof latestStateRaw === "object"
+          ? latestStateRaw
+          : typeof latestStateRaw === "string"
+            ? { date: latestStateRaw, nextRetryAt: 0, failCount: 1 }
+            : null;
+      const previousFailCount =
+        latestState && latestState.date === date
+          ? Number(latestState.failCount) || 0
+          : 0;
+      const nextFailCount = previousFailCount + 1;
+      const baseDelay = 3 * 60 * 1000;
+      const cappedDelay = 60 * 60 * 1000;
+      const delayMs = Math.min(
+        cappedDelay,
+        baseDelay * Math.pow(2, Math.max(0, nextFailCount - 1))
+      );
+      setAttemptState(nextFailCount, delayMs);
+    };
+
     isAutoSignInFlight = true;
-    GM_setValue(signAttemptDateKey, date);
+    // 请求发出后先短暂锁定，避免页面内/多标签重复触发；失败后会改写为退避重试时间。
+    setAttemptState(
+      attemptState && attemptState.date === date
+        ? Number(attemptState.failCount) || 0
+        : 0,
+      2 * 60 * 1000
+    );
 
     GM_xmlhttpRequest({
       method: "GET",
@@ -13431,6 +14170,7 @@
         isAutoSignInFlight = false;
         if (response.status >= 200 && response.status < 300) {
           GM_setValue(signedDateKey, date); // <-- [修改]
+          GM_deleteValue(signAttemptDateKey);
           checkinLink.style.display = "none";
           console.log(
             `S1 Plus: Auto check-in for UID ${uid} sent. Status:`,
@@ -13442,6 +14182,7 @@
           `S1 Plus: Auto check-in for UID ${uid} returned non-2xx status:`,
           response.status
         );
+        scheduleRetryAfterFailure();
       },
       onerror: function (response) {
         isAutoSignInFlight = false;
@@ -13449,10 +14190,12 @@
           `S1 Plus: Auto check-in for UID ${uid} failed.`,
           response
         );
+        scheduleRetryAfterFailure();
       },
       ontimeout: function () {
         isAutoSignInFlight = false;
         console.error(`S1 Plus: Auto check-in for UID ${uid} timed out.`);
+        scheduleRetryAfterFailure();
       },
     });
   }
@@ -14218,12 +14961,37 @@
     const ratingsScopeSelector = "tbody.ratl_l, tbody.ratl_l tr";
     const notificationScopeSelector =
       ".xld.xlda, dl.cl, .s1p-notification-wrapper, .s1p-notification-placeholder";
+    const observerRelevantMutationSelector = [
+      threadMutationSelector,
+      postMutationSelector,
+      quoteMutationSelector,
+      ratingsMutationSelector,
+      notificationMutationSelector,
+    ].join(", ");
+    const observerThreadSetMaxSize = OBSERVER_INCREMENTAL_THREAD_ROW_LIMIT + 1;
+    const observerPostSetMaxSize = OBSERVER_INCREMENTAL_POST_TABLE_LIMIT + 1;
+    const observerQuoteScopeSetMaxSize =
+      OBSERVER_INCREMENTAL_QUOTE_SCOPE_LIMIT + 1;
+    const observerRatingsScopeSetMaxSize =
+      OBSERVER_INCREMENTAL_RATINGS_SCOPE_LIMIT + 1;
+    const observerNotificationScopeSetMaxSize =
+      OBSERVER_INCREMENTAL_NOTIFICATION_SCOPE_LIMIT + 1;
+    const resolveObserverWatchTarget = () =>
+      document.getElementById("ct") ||
+      document.getElementById("wp") ||
+      document.body;
 
     const mutationTouchesSelector = (node, selector) => {
       if (!(node instanceof Element)) {
         return false;
       }
-      return node.matches(selector) || Boolean(node.querySelector(selector));
+      if (node.matches(selector)) {
+        return true;
+      }
+      if (!node.firstElementChild) {
+        return false;
+      }
+      return Boolean(node.querySelector(selector));
     };
     const collectMatchesToSet = (
       node,
@@ -14237,6 +15005,9 @@
         return targetSet.size <= maxSize;
       };
       if (node.matches(selector) && !addNode(node)) {
+        return;
+      }
+      if (!node.firstElementChild) {
         return;
       }
       for (const matchedNode of node.querySelectorAll(selector)) {
@@ -14267,53 +15038,73 @@
           shouldForceFullApply = true;
           return;
         }
-        if (mutationTouchesSelector(node, threadMutationSelector)) {
+        if (!mutationTouchesSelector(node, observerRelevantMutationSelector)) {
+          return;
+        }
+        if (!touchesThreadArea && mutationTouchesSelector(node, threadMutationSelector)) {
           touchesThreadArea = true;
           if (isRemoved) {
             threadNeedsFullRefresh = true;
           }
         }
-        if (mutationTouchesSelector(node, postMutationSelector)) {
+        if (!touchesPostArea && mutationTouchesSelector(node, postMutationSelector)) {
           touchesPostArea = true;
           if (isRemoved) {
             postNeedsFullRefresh = true;
           }
         }
-        if (mutationTouchesSelector(node, quoteMutationSelector)) {
+        if (!touchesQuoteArea && mutationTouchesSelector(node, quoteMutationSelector)) {
           touchesQuoteArea = true;
         }
-        if (mutationTouchesSelector(node, ratingsMutationSelector)) {
+        if (
+          !touchesRatingsArea &&
+          mutationTouchesSelector(node, ratingsMutationSelector)
+        ) {
           touchesRatingsArea = true;
         }
-        if (mutationTouchesSelector(node, notificationMutationSelector)) {
+        if (
+          !touchesNotificationArea &&
+          mutationTouchesSelector(node, notificationMutationSelector)
+        ) {
           touchesNotificationArea = true;
         }
         if (!isRemoved) {
-          collectMatchesToSet(node, threadRowSelector, addedThreadRows);
-          collectMatchesToSet(node, postTableSelector, addedPostTables);
+          collectMatchesToSet(
+            node,
+            threadRowSelector,
+            addedThreadRows,
+            observerThreadSetMaxSize
+          );
+          collectMatchesToSet(
+            node,
+            postTableSelector,
+            addedPostTables,
+            observerPostSetMaxSize
+          );
           collectMatchesToSet(
             node,
             quoteScopeSelector,
             addedQuoteScopes,
-            OBSERVER_INCREMENTAL_QUOTE_SCOPE_LIMIT
+            observerQuoteScopeSetMaxSize
           );
           collectMatchesToSet(
             node,
             ratingsScopeSelector,
             addedRatingsScopes,
-            OBSERVER_INCREMENTAL_RATINGS_SCOPE_LIMIT
+            observerRatingsScopeSetMaxSize
           );
           collectMatchesToSet(
             node,
             notificationScopeSelector,
             addedNotificationScopes,
-            OBSERVER_INCREMENTAL_NOTIFICATION_SCOPE_LIMIT
+            observerNotificationScopeSetMaxSize
           );
         }
       };
 
       mutationList.forEach((mutation) => {
         if (
+          !touchesThreadArea &&
           mutation.target instanceof Element &&
           mutationTouchesSelector(mutation.target, threadMutationSelector)
         ) {
@@ -14323,6 +15114,7 @@
           }
         }
         if (
+          !touchesPostArea &&
           mutation.target instanceof Element &&
           mutationTouchesSelector(mutation.target, postMutationSelector)
         ) {
@@ -14340,7 +15132,7 @@
             mutation.target,
             quoteScopeSelector,
             addedQuoteScopes,
-            OBSERVER_INCREMENTAL_QUOTE_SCOPE_LIMIT
+            observerQuoteScopeSetMaxSize
           );
         }
         if (
@@ -14352,7 +15144,7 @@
             mutation.target,
             ratingsScopeSelector,
             addedRatingsScopes,
-            OBSERVER_INCREMENTAL_RATINGS_SCOPE_LIMIT
+            observerRatingsScopeSetMaxSize
           );
         }
         if (
@@ -14364,7 +15156,7 @@
             mutation.target,
             notificationScopeSelector,
             addedNotificationScopes,
-            OBSERVER_INCREMENTAL_NOTIFICATION_SCOPE_LIMIT
+            observerNotificationScopeSetMaxSize
           );
         }
         mutation.addedNodes.forEach((node) => inspectNode(node, { isRemoved: false }));
@@ -14454,7 +15246,7 @@
         !observerPendingNotificationScopesOverflow &&
         pendingNotificationScopes.length > 0 &&
         pendingNotificationScopes.length <=
-          OBSERVER_INCREMENTAL_NOTIFICATION_SCOPE_LIMIT;
+        OBSERVER_INCREMENTAL_NOTIFICATION_SCOPE_LIMIT;
 
       if (observerPendingThreadRefresh) {
         if (settings.enablePostBlocking) {
@@ -14584,10 +15376,18 @@
         observerPendingRatingsRefresh || mutationFlags.touchesRatingsArea;
       observerPendingNotificationRefresh =
         observerPendingNotificationRefresh || mutationFlags.touchesNotificationArea;
-      mutationFlags.addedThreadRows.forEach((row) => observerPendingThreadRows.add(row));
-      mutationFlags.addedPostTables.forEach((table) =>
-        observerPendingPostTables.add(table)
-      );
+      for (const row of mutationFlags.addedThreadRows) {
+        observerPendingThreadRows.add(row);
+        if (observerPendingThreadRows.size >= observerThreadSetMaxSize) {
+          break;
+        }
+      }
+      for (const table of mutationFlags.addedPostTables) {
+        observerPendingPostTables.add(table);
+        if (observerPendingPostTables.size >= observerPostSetMaxSize) {
+          break;
+        }
+      }
       if (mutationFlags.addedQuoteScopesOverflow) {
         observerPendingQuoteScopesOverflow = true;
         observerPendingQuoteScopes.clear();
@@ -14667,7 +15467,7 @@
           observerPendingQuoteScopesOverflow = false;
           observerPendingRatingsScopesOverflow = false;
           observerPendingNotificationScopesOverflow = false;
-          const watchTarget = document.getElementById("wp") || document.body;
+          const watchTarget = resolveObserverWatchTarget();
           observer.observe(watchTarget, { childList: true, subtree: true });
           observerIsApplying = false;
         }
@@ -14676,7 +15476,7 @@
 
     observer = new MutationObserver(observerCallback);
     applyChanges();
-    const watchTarget = document.getElementById("wp") || document.body;
+    const watchTarget = resolveObserverWatchTarget();
     observer.observe(watchTarget, { childList: true, subtree: true });
   }
 
