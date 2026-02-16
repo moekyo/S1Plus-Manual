@@ -37,6 +37,8 @@
 - **跨页面待同步请求安全检查**: `tryResumePendingAutoSyncRequest` 增加对冲突时间戳和同步进行中状态的守卫，避免过期请求被重复补发或与进行中的同步任务冲突。
 - **全局同步锁 (Global Sync Lock)**: 引入 `s1p_sync_global_lock` 全局互斥锁，统一协调后台自动同步、手动同步和启动同步。所有同步模式在获取自身锁前必须先通过全局锁检查，并引入 50ms 校验延迟（Double-Check）和回滚机制，彻底解决了多标签页并发下的锁覆盖和任务互撞问题（P2 并发控制）。
 - **冲突暂停门控 (Conflict Pause Gating)**: 冲突暂停状态从“名义暂停”升级为“强制门控”。现在 `requestBackgroundSyncRun`、`triggerRemoteSyncPush`、`performAutoSync` 等所有同步入口均会检查并遵循暂停状态，冲突未解决前严禁发起任何后台同步，有效防止了冲突后的无效重试和日志污染。
+- **冲突弹窗冷却统一 (Unified Conflict Cooldown)**: 引入 `SYNC_CONFLICT_MODAL_COOLDOWN_GROUP_MAP`，将后台同步冲突与启动同步冲突归入同一冷却组 (`sync_conflict`)。现在无论哪种触发方式检测到冲突，都会共享 2 分钟冷却计时，杜绝了不同来源的冲突弹窗交替轰炸用户的现象（P3 体验一致性）。
+- **同步脏标志优化**: 细化了同步过程中的脏数据状态管理，区分“仅时间戳修正”（如数据迁移/导入）与“实质性变更”。`triggerSync: false` 的操作不再误触发 `syncDirtyNeedsFollowUpSync`，有效消除了因非实质变更导致的补同步请求链（P2 误触发补同步）。
 
 
 ### 🎨 UI/UX 优化 (UI/UX Improvements)
