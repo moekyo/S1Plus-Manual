@@ -39,6 +39,10 @@
 - **冲突暂停门控 (Conflict Pause Gating)**: 冲突暂停状态从“名义暂停”升级为“强制门控”。现在 `requestBackgroundSyncRun`、`triggerRemoteSyncPush`、`performAutoSync` 等所有同步入口均会检查并遵循暂停状态，冲突未解决前严禁发起任何后台同步，有效防止了冲突后的无效重试和日志污染。
 - **冲突弹窗冷却统一 (Unified Conflict Cooldown)**: 引入 `SYNC_CONFLICT_MODAL_COOLDOWN_GROUP_MAP`，将后台同步冲突与启动同步冲突归入同一冷却组 (`sync_conflict`)。现在无论哪种触发方式检测到冲突，都会共享 2 分钟冷却计时，杜绝了不同来源的冲突弹窗交替轰炸用户的现象（P3 体验一致性）。
 - **同步脏标志优化**: 细化了同步过程中的脏数据状态管理，区分“仅时间戳修正”（如数据迁移/导入）与“实质性变更”。`triggerSync: false` 的操作不再误触发 `syncDirtyNeedsFollowUpSync`，有效消除了因非实质变更导致的补同步请求链（P2 误触发补同步）。
+- **并发一致性增强 (Concurrency Consistency)**: 心跳续租失败现在会被消费并触发中止路径；自动/手动同步都新增锁所有权断言 (`assertSyncLockOwned`)，避免“失锁继续跑”导致的脏写。
+- **冲突弹窗原子锁 (Atomic Conflict Modal Lock)**: 冲突弹窗冷却改写为“跨标签短锁 + 读写临界区”流程，引入 `s1p_conflict_modal_lock`，彻底避免了并发条件下双弹窗的可能性。
+- **存储性能优化 (Storage Performance)**: `saveSettings` 等所有核心保存函数新增“同值短路”逻辑，仅在数据实际变更时才落盘并更新时间戳，减少无效写入和不必要的同步触发。
+- **跨标签一致性补全 (Cross-Tab Consistency)**: 补全了 `user_tags` 和 `bookmarked_replies` 的跨标签监听，并在变更后自动触发相关 UI 刷新。
 
 
 ### 🎨 UI/UX 优化 (UI/UX Improvements)
