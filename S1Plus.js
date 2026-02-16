@@ -379,6 +379,10 @@
   const AUTO_SYNC_CONFLICT_PAUSE_KEY = "s1p_auto_sync_conflict_pause";
   const PENDING_AUTO_SYNC_KEY = "s1p_pending_auto_sync_request";
   const SYNC_BASELINE_STATE_KEY = "s1p_sync_baseline_state";
+  const SYNC_LOCK_LOST_CODE = "SYNC_LOCK_LOST";
+  const SYNC_CONFLICT_MODAL_COOLDOWN_LOCK_KEY =
+    "s1p_sync_conflict_modal_cooldown_lock";
+  const SYNC_CONFLICT_MODAL_COOLDOWN_LOCK_TTL_MS = 1500;
   const AUTO_SYNC_CIRCUIT_BREAKER_THRESHOLD = 3;
   const AUTO_SYNC_CIRCUIT_OPEN_DURATION_MS = 10 * 60 * 1000;
   // 当时间戳相差过大时，不再自动依据“谁大谁新”做决策，转为冲突保护。
@@ -3438,18 +3442,80 @@
     });
   };
 
-  const shouldShowConflictModal = (type = "generic") => {
-    const normalizedType = String(type || "generic");
-    const cooldownGroup =
-      SYNC_CONFLICT_MODAL_COOLDOWN_GROUP_MAP[normalizedType] || normalizedType;
-    const key = `s1p_last_conflict_modal_ts_${cooldownGroup}`;
+  const getConflictModalCooldownLock = () => {
+    const lock = GM_getValue(SYNC_CONFLICT_MODAL_COOLDOWN_LOCK_KEY, null);
+    if (
+      lock &&
+      typeof lock === "object" &&
+      lock.owner &&
+      typeof lock.timestamp === "number"
+    ) {
+      return lock;
+    }
+    return null;
+  };
+
+  const isConflictModalCooldownLockValid = (lock, now = Date.now()) =>
+    Boolean(
+      lock &&
+      typeof lock.timestamp === "number" &&
+      now - lock.timestamp < SYNC_CONFLICT_MODAL_COOLDOWN_LOCK_TTL_MS
+    );
+
+  const acquireConflictModalCooldownLock = async () => {
     const now = Date.now();
-    const lastShown = GM_getValue(key, 0);
-    if (now - lastShown < SYNC_CONFLICT_MODAL_COOLDOWN_MS) {
+    const currentLock = getConflictModalCooldownLock();
+    const currentLockIsValid = isConflictModalCooldownLockValid(currentLock, now);
+
+    if (
+      currentLockIsValid &&
+      currentLock.owner !== BACKGROUND_SYNC_OWNER_ID
+    ) {
       return false;
     }
-    GM_setValue(key, now);
-    return true;
+
+    GM_setValue(SYNC_CONFLICT_MODAL_COOLDOWN_LOCK_KEY, {
+      owner: BACKGROUND_SYNC_OWNER_ID,
+      timestamp: now,
+    });
+
+    return verifySyncLockOwnership(() => {
+      const verifiedLock = getConflictModalCooldownLock();
+      return Boolean(
+        verifiedLock &&
+        verifiedLock.owner === BACKGROUND_SYNC_OWNER_ID &&
+        isConflictModalCooldownLockValid(verifiedLock)
+      );
+    });
+  };
+
+  const releaseConflictModalCooldownLock = () => {
+    const currentLock = getConflictModalCooldownLock();
+    if (currentLock && currentLock.owner === BACKGROUND_SYNC_OWNER_ID) {
+      GM_deleteValue(SYNC_CONFLICT_MODAL_COOLDOWN_LOCK_KEY);
+    }
+  };
+
+  const shouldShowConflictModal = async (type = "generic") => {
+    if (!(await acquireConflictModalCooldownLock())) {
+      return false;
+    }
+
+    try {
+      const normalizedType = String(type || "generic");
+      const cooldownGroup =
+        SYNC_CONFLICT_MODAL_COOLDOWN_GROUP_MAP[normalizedType] || normalizedType;
+      const key = `s1p_last_conflict_modal_ts_${cooldownGroup}`;
+      const now = Date.now();
+      const lastShown = GM_getValue(key, 0);
+      if (now - lastShown < SYNC_CONFLICT_MODAL_COOLDOWN_MS) {
+        return false;
+      }
+      GM_setValue(key, now);
+      return true;
+    } finally {
+      releaseConflictModalCooldownLock();
+    }
   };
 
   const getAutoSyncCircuitState = () => {
@@ -3937,12 +4003,136 @@
     setCoreDataCacheValue(cacheState, latestValue);
     return cacheState.value;
   };
+  const COMPARABLE_RECORD_STORAGE_KEYS = new Set([
+    "s1p_blocked_threads",
+    "s1p_blocked_users",
+    "s1p_user_tags",
+    "s1p_bookmarked_replies",
+    "s1p_blocked_posts",
+    "s1p_read_progress",
+  ]);
+  const comparableStoredValueCache = new Map();
+  const normalizeComparableStoredValueByKey = (key, value) => {
+    if (COMPARABLE_RECORD_STORAGE_KEYS.has(key)) {
+      return sanitizeRecordObject(value);
+    }
+    if (key === "s1p_title_filter_rules") {
+      return Array.isArray(value) ? value : [];
+    }
+    return value;
+  };
+  const getComparableStoredValue = (key, fallbackValue = {}) => {
+    if (comparableStoredValueCache.has(key)) {
+      return comparableStoredValueCache.get(key);
+    }
+    const normalizedValue = normalizeComparableStoredValueByKey(
+      key,
+      GM_getValue(key, fallbackValue)
+    );
+    comparableStoredValueCache.set(key, normalizedValue);
+    return normalizedValue;
+  };
+  const setComparableStoredValue = (key, value) => {
+    comparableStoredValueCache.set(
+      key,
+      normalizeComparableStoredValueByKey(key, value)
+    );
+  };
+  const isComparableObjectValue = (value) =>
+    value !== null && typeof value === "object";
+  const computeComparableValueShapeSignature = (value) => {
+    if (value === null) {
+      return "null";
+    }
+    const valueType = typeof value;
+    if (valueType !== "object") {
+      return `${valueType}:${String(value)}`;
+    }
+    if (Array.isArray(value)) {
+      const length = value.length;
+      const firstType = length > 0 ? typeof value[0] : "none";
+      const lastType = length > 0 ? typeof value[length - 1] : "none";
+      return `array:${length}:${firstType}:${lastType}`;
+    }
+    const keys = Object.keys(value);
+    let keyHash = 2166136261;
+    for (const key of keys) {
+      for (let i = 0; i < key.length; i++) {
+        keyHash ^= key.charCodeAt(i);
+        keyHash = Math.imul(keyHash, 16777619);
+      }
+      keyHash = Math.imul(keyHash ^ key.length, 16777619);
+    }
+    return `object:${keys.length}:${keyHash >>> 0}`;
+  };
+  const areComparableValuesEqual = (leftValue, rightValue) => {
+    if (Object.is(leftValue, rightValue)) {
+      return true;
+    }
+    if (typeof leftValue !== typeof rightValue) {
+      return false;
+    }
+    if (
+      !isComparableObjectValue(leftValue) ||
+      !isComparableObjectValue(rightValue)
+    ) {
+      return false;
+    }
+
+    const leftIsArray = Array.isArray(leftValue);
+    if (leftIsArray !== Array.isArray(rightValue)) {
+      return false;
+    }
+    if (leftIsArray) {
+      if (leftValue.length !== rightValue.length) {
+        return false;
+      }
+      for (let i = 0; i < leftValue.length; i++) {
+        if (!areComparableValuesEqual(leftValue[i], rightValue[i])) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    const leftKeys = Object.keys(leftValue);
+    const rightKeys = Object.keys(rightValue);
+    if (leftKeys.length !== rightKeys.length) {
+      return false;
+    }
+    for (const key of leftKeys) {
+      if (!Object.prototype.hasOwnProperty.call(rightValue, key)) {
+        return false;
+      }
+      if (!areComparableValuesEqual(leftValue[key], rightValue[key])) {
+        return false;
+      }
+    }
+    return true;
+  };
+  const hasComparableValueChanged = (currentValue, nextValue) => {
+    const currentSignature = computeComparableValueShapeSignature(currentValue);
+    const nextSignature = computeComparableValueShapeSignature(nextValue);
+    if (currentSignature !== nextSignature) {
+      return true;
+    }
+    return !areComparableValuesEqual(currentValue, nextValue);
+  };
   const getBlockedThreads = () =>
     getCoreDataFromCache(blockedThreadsCache, "s1p_blocked_threads");
   const saveBlockedThreads = (threads, suppressSyncTrigger = false) => {
     const normalizedThreads = sanitizeRecordObject(threads);
+    const currentStoredThreads = getComparableStoredValue(
+      "s1p_blocked_threads",
+      {}
+    );
+    if (!hasComparableValueChanged(currentStoredThreads, normalizedThreads)) {
+      setCoreDataCacheValue(blockedThreadsCache, normalizedThreads);
+      return;
+    }
     invalidateLocalDataHashCache();
     GM_setValue("s1p_blocked_threads", normalizedThreads);
+    setComparableStoredValue("s1p_blocked_threads", normalizedThreads);
     setCoreDataCacheValue(blockedThreadsCache, normalizedThreads);
     if (!suppressSyncTrigger) {
       updateLastModifiedTimestamp();
@@ -3952,8 +4142,14 @@
     getCoreDataFromCache(blockedUsersCache, "s1p_blocked_users");
   const saveBlockedUsers = (users, suppressSyncTrigger = false) => {
     const normalizedUsers = sanitizeRecordObject(users);
+    const currentStoredUsers = getComparableStoredValue("s1p_blocked_users", {});
+    if (!hasComparableValueChanged(currentStoredUsers, normalizedUsers)) {
+      setCoreDataCacheValue(blockedUsersCache, normalizedUsers);
+      return;
+    }
     invalidateLocalDataHashCache();
     GM_setValue("s1p_blocked_users", normalizedUsers);
+    setComparableStoredValue("s1p_blocked_users", normalizedUsers);
     setCoreDataCacheValue(blockedUsersCache, normalizedUsers);
     if (!suppressSyncTrigger) {
       updateLastModifiedTimestamp();
@@ -3961,8 +4157,13 @@
   };
   const saveUserTags = (tags, suppressSyncTrigger = false) => {
     const normalizedTags = sanitizeRecordObject(tags);
+    const currentStoredTags = getComparableStoredValue("s1p_user_tags", {});
+    if (!hasComparableValueChanged(currentStoredTags, normalizedTags)) {
+      return;
+    }
     invalidateLocalDataHashCache();
     GM_setValue("s1p_user_tags", normalizedTags);
+    setComparableStoredValue("s1p_user_tags", normalizedTags);
     if (!suppressSyncTrigger) {
       updateLastModifiedTimestamp();
     }
@@ -3972,8 +4173,16 @@
     sanitizeRecordObject(GM_getValue("s1p_bookmarked_replies", {}));
   const saveBookmarkedReplies = (replies, suppressSyncTrigger = false) => {
     const normalizedReplies = sanitizeRecordObject(replies);
+    const currentStoredReplies = getComparableStoredValue(
+      "s1p_bookmarked_replies",
+      {}
+    );
+    if (!hasComparableValueChanged(currentStoredReplies, normalizedReplies)) {
+      return;
+    }
     invalidateLocalDataHashCache();
     GM_setValue("s1p_bookmarked_replies", normalizedReplies);
+    setComparableStoredValue("s1p_bookmarked_replies", normalizedReplies);
     if (!suppressSyncTrigger) {
       updateLastModifiedTimestamp();
     }
@@ -4028,8 +4237,14 @@
     getCoreDataFromCache(blockedPostsCache, "s1p_blocked_posts");
   const saveBlockedPosts = (posts, suppressSyncTrigger = false) => {
     const normalizedPosts = sanitizeRecordObject(posts);
+    const currentStoredPosts = getComparableStoredValue("s1p_blocked_posts", {});
+    if (!hasComparableValueChanged(currentStoredPosts, normalizedPosts)) {
+      setCoreDataCacheValue(blockedPostsCache, normalizedPosts);
+      return;
+    }
     invalidateLocalDataHashCache();
     GM_setValue("s1p_blocked_posts", normalizedPosts);
+    setComparableStoredValue("s1p_blocked_posts", normalizedPosts);
     setCoreDataCacheValue(blockedPostsCache, normalizedPosts);
     if (!suppressSyncTrigger) {
       updateLastModifiedTimestamp();
@@ -4115,8 +4330,14 @@
     );
   };
   const saveTitleFilterRules = (rules, suppressSyncTrigger = false) => {
+    const normalizedRules = Array.isArray(rules) ? rules : [];
+    const currentRules = getComparableStoredValue("s1p_title_filter_rules", []);
+    if (!hasComparableValueChanged(currentRules, normalizedRules)) {
+      return;
+    }
     invalidateLocalDataHashCache();
-    GM_setValue("s1p_title_filter_rules", rules);
+    GM_setValue("s1p_title_filter_rules", normalizedRules);
+    setComparableStoredValue("s1p_title_filter_rules", normalizedRules);
     if (!suppressSyncTrigger) {
       updateLastModifiedTimestamp();
     }
@@ -5029,8 +5250,14 @@
 
   const saveReadProgress = (progress, suppressSyncTrigger = false) => {
     const normalizedProgress = sanitizeRecordObject(progress);
+    const currentStoredProgress = getComparableStoredValue("s1p_read_progress", {});
+    if (!hasComparableValueChanged(currentStoredProgress, normalizedProgress)) {
+      setCoreDataCacheValue(readProgressCache, normalizedProgress);
+      return;
+    }
     invalidateLocalDataHashCache();
     GM_setValue("s1p_read_progress", normalizedProgress);
+    setComparableStoredValue("s1p_read_progress", normalizedProgress);
     setCoreDataCacheValue(readProgressCache, normalizedProgress);
     if (!suppressSyncTrigger) {
       updateLastModifiedTimestamp("read_progress");
@@ -6072,7 +6299,7 @@
       const localChanged = localDataObject.contentHash !== baselineState.contentHash;
       const remoteChangedByHash =
         typeof remoteDataObject.contentHash === "string" &&
-        remoteDataObject.contentHash
+          remoteDataObject.contentHash
           ? remoteDataObject.contentHash !== baselineState.contentHash
           : null;
       const hasComparableRemoteUpdatedAt =
@@ -6330,6 +6557,84 @@
     return Boolean(typeof verifyFn === "function" && verifyFn());
   };
 
+  const getSyncLockStateByMode = (mode) => {
+    switch (mode) {
+      case SYNC_LOCK_MODE_MANUAL:
+        return {
+          getModeLock: getManualSyncLockValue,
+          ttlMs: MANUAL_SYNC_LOCK_TTL_MS,
+        };
+      case SYNC_LOCK_MODE_BACKGROUND:
+        return {
+          getModeLock: getBackgroundSyncLockValue,
+          ttlMs: BACKGROUND_SYNC_LOCK_TTL_MS,
+        };
+      case SYNC_LOCK_MODE_STARTUP:
+        return {
+          getModeLock: getStartupSyncLockValue,
+          ttlMs: STARTUP_SYNC_LOCK_TTL_MS,
+        };
+      default:
+        return null;
+    }
+  };
+
+  const isSyncLockOwned = (mode, now = Date.now()) => {
+    const state = getSyncLockStateByMode(mode);
+    if (!state) {
+      return false;
+    }
+
+    const modeLock = state.getModeLock();
+    if (
+      !modeLock ||
+      modeLock.owner !== BACKGROUND_SYNC_OWNER_ID ||
+      !isModeSyncLockValid(modeLock, state.ttlMs, now)
+    ) {
+      return false;
+    }
+
+    const globalLock = getGlobalSyncLockValue();
+    return Boolean(
+      globalLock &&
+      globalLock.owner === BACKGROUND_SYNC_OWNER_ID &&
+      globalLock.mode === mode &&
+      isGlobalSyncLockValid(globalLock, now)
+    );
+  };
+
+  const getSyncLockModeDisplayName = (mode) => {
+    switch (mode) {
+      case SYNC_LOCK_MODE_MANUAL:
+        return "手动同步";
+      case SYNC_LOCK_MODE_BACKGROUND:
+        return "后台同步";
+      case SYNC_LOCK_MODE_STARTUP:
+        return "启动同步";
+      default:
+        return "同步";
+    }
+  };
+
+  const createSyncLockLostError = (mode, stage = "unknown") => {
+    const error = new Error(
+      `${getSyncLockModeDisplayName(mode)}锁已失效，任务已中止（阶段: ${stage}）。`
+    );
+    error.code = SYNC_LOCK_LOST_CODE;
+    error.syncLockMode = mode;
+    error.syncLockStage = stage;
+    return error;
+  };
+
+  const assertSyncLockOwned = (mode, stage = "unknown") => {
+    if (!mode) {
+      return;
+    }
+    if (!isSyncLockOwned(mode)) {
+      throw createSyncLockLostError(mode, stage);
+    }
+  };
+
   const acquireManualSyncLock = async () => {
     const now = Date.now();
     const currentLock = getManualSyncLockValue();
@@ -6403,7 +6708,10 @@
       clearInterval(manualSyncLockHeartbeatTimer);
     }
     manualSyncLockHeartbeatTimer = setInterval(() => {
-      refreshManualSyncLock();
+      if (!refreshManualSyncLock()) {
+        stopManualSyncLockHeartbeat();
+        console.warn("S1 Plus: 手动同步锁续租失败，当前任务将中止。");
+      }
     }, MANUAL_SYNC_LOCK_HEARTBEAT_MS);
   };
 
@@ -6509,7 +6817,10 @@
       clearInterval(backgroundSyncLockHeartbeatTimer);
     }
     backgroundSyncLockHeartbeatTimer = setInterval(() => {
-      refreshBackgroundSyncLock();
+      if (!refreshBackgroundSyncLock()) {
+        stopBackgroundSyncLockHeartbeat();
+        console.warn("S1 Plus: 后台同步锁续租失败，当前任务将中止。");
+      }
     }, BACKGROUND_SYNC_LOCK_HEARTBEAT_MS);
   };
 
@@ -6606,7 +6917,10 @@
       clearInterval(startupSyncLockHeartbeatTimer);
     }
     startupSyncLockHeartbeatTimer = setInterval(() => {
-      refreshStartupSyncLock();
+      if (!refreshStartupSyncLock()) {
+        stopStartupSyncLockHeartbeat();
+        console.warn("S1 Plus: 启动同步锁续租失败，当前任务将中止。");
+      }
     }, STARTUP_SYNC_LOCK_HEARTBEAT_MS);
   };
 
@@ -6647,10 +6961,10 @@
     }, Math.max(0, delayMs));
   };
 
-  const handleBackgroundAutoSyncResult = (result) => {
+  const handleBackgroundAutoSyncResult = async (result) => {
     switch (result.status) {
       case "conflict":
-        if (!shouldShowConflictModal("background_conflict")) {
+        if (!(await shouldShowConflictModal("background_conflict"))) {
           showMessage(
             "再次检测到后台同步冲突，已进入提示冷却。请稍后手动同步处理。",
             false
@@ -6696,6 +7010,9 @@
       case "skipped":
         if (result.reason === "conflict_paused") {
           console.log("S1 Plus: 后台自动同步因冲突暂停状态被门控。");
+        } else if (result.reason === "lock_lost") {
+          console.warn("S1 Plus: 后台自动同步因锁失效中止，稍后将自动重试。");
+          scheduleBackgroundSyncRetry(1200);
         }
         break;
     }
@@ -6907,8 +7224,11 @@
           startBackgroundSyncLockHeartbeat();
           try {
             console.log("S1 Plus: 检测到数据变更，触发后台智能同步检查...");
-            const result = await performAutoSync();
-            handleBackgroundAutoSyncResult(result);
+            const result = await performAutoSync(
+              false,
+              SYNC_LOCK_MODE_BACKGROUND
+            );
+            await handleBackgroundAutoSyncResult(result);
           } finally {
             stopBackgroundSyncLockHeartbeat();
             releaseBackgroundSyncLock();
@@ -7005,7 +7325,7 @@
   };
 
   // [MODIFIED] 自动同步控制器 (逻辑优化版)
-  const performAutoSync = async (isStartupSync = false) => {
+  const performAutoSync = async (isStartupSync = false, syncLockMode = null) => {
     const settings = getSettings();
     if (
       !settings.syncRemoteEnabled ||
@@ -7033,6 +7353,18 @@
     }
 
     const syncMode = isStartupSync ? "startup" : "background";
+    const assertAutoSyncLockOwned = (stage) => {
+      if (!syncLockMode) {
+        return;
+      }
+      assertSyncLockOwned(syncLockMode, `auto_sync:${stage}`);
+    };
+    const runWithAutoSyncLockGuard = async (stage, callback) => {
+      assertAutoSyncLockOwned(`${stage}:before`);
+      const result = await callback();
+      assertAutoSyncLockOwned(`${stage}:after`);
+      return result;
+    };
     let syncOutcome = "unknown";
     const asSuccessResult = (action, syncBaseline = null) => {
       syncOutcome = "success";
@@ -7076,13 +7408,23 @@
     );
 
     try {
-      const { data: rawRemoteData, meta: remoteMeta } = await fetchRemoteData();
+      const { data: rawRemoteData, meta: remoteMeta } =
+        await runWithAutoSyncLockGuard("fetch_remote_data", () =>
+          fetchRemoteData()
+        );
       if (Object.keys(rawRemoteData).length === 0) {
         console.log(`S1 Plus (Sync): 远程为空，推送本地数据...`);
-        const localData = await exportLocalDataObject();
-        const pushResult = await pushRemoteData(localData, {
-          expectedRemoteUpdatedAt: remoteMeta.updatedAt,
-        });
+        const localData = await runWithAutoSyncLockGuard(
+          "export_local_data_initial_push",
+          () => exportLocalDataObject()
+        );
+        const pushResult = await runWithAutoSyncLockGuard(
+          "push_initial_data",
+          () =>
+            pushRemoteData(localData, {
+              expectedRemoteUpdatedAt: remoteMeta.updatedAt,
+            })
+        );
         GM_setValue("s1p_last_sync_timestamp", Date.now());
         return asSuccessResult("pushed_initial", {
           contentHash: localData.contentHash,
@@ -7090,8 +7432,14 @@
         });
       }
 
-      const remote = await migrateAndValidateRemoteData(rawRemoteData);
-      const localDataObject = await exportLocalDataObject();
+      const remote = await runWithAutoSyncLockGuard(
+        "validate_remote_data",
+        () => migrateAndValidateRemoteData(rawRemoteData)
+      );
+      const localDataObject = await runWithAutoSyncLockGuard(
+        "export_local_data",
+        () => exportLocalDataObject()
+      );
 
       const versionDecision = decideSyncActionByVersion({
         localDataObject,
@@ -7106,6 +7454,7 @@
       switch (syncAction) {
         case "no_change":
           console.log(`S1 Plus (Sync): 本地与远程数据哈希一致，无需同步。`);
+          assertAutoSyncLockOwned("return_no_change");
           return asSuccessResult("no_change", {
             contentHash: localDataObject.contentHash,
             remoteUpdatedAt: remoteMeta.updatedAt || null,
@@ -7115,6 +7464,7 @@
           console.log(
             `S1 Plus (Sync): 检测到启动时强制拉取已开启，将使用云端数据覆盖本地。`
           );
+          assertAutoSyncLockOwned("apply_force_pull_remote_data");
           importLocalData(JSON.stringify(remote.full), {
             suppressPostSync: true,
           });
@@ -7126,6 +7476,7 @@
 
         case "pull":
           console.log(`S1 Plus (Sync): 远程数据比本地新，正在后台应用...`);
+          assertAutoSyncLockOwned("apply_pull_remote_data");
           importLocalData(JSON.stringify(remote.full), {
             suppressPostSync: true,
           });
@@ -7139,14 +7490,19 @@
           console.warn(
             `S1 Plus (Sync): 启动同步检测到本地数据较新，已跳过自动推送以确保数据安全。如有需要，请手动同步。`
           );
+          assertAutoSyncLockOwned("return_skip_push_on_startup");
           return asSuccessResult("skipped_push_on_startup");
 
         case "push":
           console.log(`S1 Plus (Sync): 本地数据比远程新，正在后台推送...`);
           {
-            const pushResult = await pushRemoteData(localDataObject, {
-              expectedRemoteUpdatedAt: remoteMeta.updatedAt,
-            });
+            const pushResult = await runWithAutoSyncLockGuard(
+              "push_latest_local_data",
+              () =>
+                pushRemoteData(localDataObject, {
+                  expectedRemoteUpdatedAt: remoteMeta.updatedAt,
+                })
+            );
             GM_setValue("s1p_last_sync_timestamp", Date.now());
             return asSuccessResult("pushed", {
               contentHash: localDataObject.contentHash,
@@ -7177,12 +7533,18 @@
               if (directBaseHashMatch) {
                 canAutoMergeReadProgress = true;
               } else {
-                const localComparableHash =
-                  await calculateComparableBaseHashWithoutReadProgress(
-                    localDataObject.data
-                  );
-                const remoteComparableHash =
-                  await calculateComparableBaseHashWithoutReadProgress(remote.data);
+                const localComparableHash = await runWithAutoSyncLockGuard(
+                  "calc_local_comparable_hash",
+                  () =>
+                    calculateComparableBaseHashWithoutReadProgress(
+                      localDataObject.data
+                    )
+                );
+                const remoteComparableHash = await runWithAutoSyncLockGuard(
+                  "calc_remote_comparable_hash",
+                  () =>
+                    calculateComparableBaseHashWithoutReadProgress(remote.data)
+                );
                 canAutoMergeReadProgress =
                   localComparableHash === remoteComparableHash;
                 console.warn("S1 Plus (Sync): 冲突可比哈希判定", {
@@ -7197,6 +7559,7 @@
               console.warn(
                 `S1 Plus (Sync): 检测到同步冲突 (${versionDecision.reason})，自动同步已暂停。请手动同步以解决冲突。`
               );
+              assertAutoSyncLockOwned("return_conflict");
               return asConflictResult(versionDecision.reason || "version_conflict");
             }
 
@@ -7216,7 +7579,10 @@
               Number(remote.lastUpdated) || 0,
               Date.now()
             );
-            const mergedContentHash = await calculateDataHash(mergedData);
+            const mergedContentHash = await runWithAutoSyncLockGuard(
+              "calc_merged_content_hash",
+              () => calculateDataHash(mergedData)
+            );
             const mergedPayload = {
               version: 5.0,
               lastUpdated: mergedLastUpdated,
@@ -7229,9 +7595,14 @@
               baseContentHash: localDataObject.baseContentHash,
             };
 
-            const pushResult = await pushRemoteData(mergedPayload, {
-              expectedRemoteUpdatedAt: remoteMeta.updatedAt,
-            });
+            const pushResult = await runWithAutoSyncLockGuard(
+              "push_merged_read_progress",
+              () =>
+                pushRemoteData(mergedPayload, {
+                  expectedRemoteUpdatedAt: remoteMeta.updatedAt,
+                })
+            );
+            assertAutoSyncLockOwned("apply_merged_payload");
             importLocalData(JSON.stringify(mergedPayload), {
               suppressPostSync: true,
             });
@@ -7246,6 +7617,19 @@
       if (error?.code === REMOTE_VERSION_CONFLICT_CODE) {
         console.warn("S1 Plus (Sync): 推送前检测到远端版本变更，已转为冲突处理。");
         return asConflictResult("remote_changed_before_push");
+      }
+      if (error?.code === SYNC_LOCK_LOST_CODE) {
+        syncOutcome = "lock_lost";
+        console.warn("S1 Plus (Sync): 同步锁失效，当前任务已中止。", {
+          mode: error?.syncLockMode || syncLockMode || syncMode,
+          stage: error?.syncLockStage || "unknown",
+        });
+        return {
+          status: "skipped",
+          reason: "lock_lost",
+          mode: error?.syncLockMode || syncLockMode || syncMode,
+          stage: error?.syncLockStage || "unknown",
+        };
       }
       syncOutcome = "failure";
       console.error("S1 Plus: 自动同步失败:", error);
@@ -7265,6 +7649,8 @@
         console.log(
           "S1 Plus (Sync): 冲突状态下已清空自动补同步队列，等待手动同步解决冲突。"
         );
+      } else if (syncOutcome === "lock_lost") {
+        console.warn("S1 Plus (Sync): 由于锁失效，当前自动同步已提前终止。");
       } else if (syncDirtyDuringSync) {
         const currentLastModified = GM_getValue("s1p_last_modified", 0);
         const nextDirtyLastModified = Math.max(
@@ -7459,12 +7845,29 @@
     if (typeof GM_addValueChangeListener === "function") {
       GM_addValueChangeListener(
         "s1p_settings",
-        (_key, _oldValue, newValue, isCrossContextChange) => {
+        (_key, oldValue, newValue, isCrossContextChange) => {
           if (!isCrossContextChange) {
             return;
           }
+          const { settings: previousSettings } = buildNormalizedSettings(
+            oldValue &&
+              typeof oldValue === "object" &&
+              !Array.isArray(oldValue)
+              ? oldValue
+              : {}
+          );
           const { settings } = buildNormalizedSettings(newValue);
           setSettingsCache(settings);
+
+          const authiActionSettingsChanged =
+            previousSettings.enableUserBlocking !== settings.enableUserBlocking ||
+            previousSettings.enableUserTagging !== settings.enableUserTagging ||
+            previousSettings.enableBookmarkReplies !==
+            settings.enableBookmarkReplies ||
+            previousSettings.enablePostBlocking !== settings.enablePostBlocking;
+          if (authiActionSettingsChanged) {
+            scheduleCoreDataCrossTabRefresh("s1p_settings_authi_actions");
+          }
         }
       );
     }
@@ -7521,6 +7924,36 @@
         scheduleProgressJumpButtonsRefresh();
       }
     }
+
+    if (changedKeys.has("s1p_title_filter_rules")) {
+      if (settings.enablePostBlocking) {
+        hideThreadsByTitleKeyword();
+      } else {
+        document.querySelectorAll(".s1p-hidden-by-keyword").forEach((row) => {
+          row.classList.remove("s1p-hidden-by-keyword");
+        });
+        dynamicallyHiddenThreads = {};
+      }
+    }
+
+    if (
+      (changedKeys.has("s1p_user_tags") ||
+        changedKeys.has("s1p_bookmarked_replies") ||
+        changedKeys.has("s1p_blocked_posts")) &&
+      (settings.enableUserTagging ||
+        settings.enableBookmarkReplies ||
+        settings.enablePostBlocking) &&
+      document.querySelector('table[id^="pid"]')
+    ) {
+      refreshAllAuthiActions();
+    }
+
+    if (
+      changedKeys.has("s1p_settings_authi_actions") &&
+      document.querySelector('table[id^="pid"]')
+    ) {
+      refreshAllAuthiActions();
+    }
   };
   const scheduleCoreDataCrossTabRefresh = (key) => {
     if (!key) {
@@ -7545,14 +7978,17 @@
       return;
     }
 
-    const bindCoreDataCacheSync = (key, cacheState) => {
+    const bindCoreDataCacheSync = (key, cacheState = null) => {
       GM_addValueChangeListener(
         key,
         (_changedKey, _oldValue, newValue, isCrossContextChange) => {
           if (!isCrossContextChange) {
             return;
           }
-          setCoreDataCacheValue(cacheState, newValue);
+          setComparableStoredValue(key, newValue);
+          if (cacheState) {
+            setCoreDataCacheValue(cacheState, newValue);
+          }
           scheduleCoreDataCrossTabRefresh(key);
         }
       );
@@ -7562,6 +7998,9 @@
     bindCoreDataCacheSync("s1p_blocked_users", blockedUsersCache);
     bindCoreDataCacheSync("s1p_blocked_posts", blockedPostsCache);
     bindCoreDataCacheSync("s1p_read_progress", readProgressCache);
+    bindCoreDataCacheSync("s1p_title_filter_rules");
+    bindCoreDataCacheSync("s1p_user_tags");
+    bindCoreDataCacheSync("s1p_bookmarked_replies");
     document.addEventListener("visibilitychange", () => {
       if (
         document.visibilityState === "visible" &&
@@ -7574,7 +8013,7 @@
   };
   const getSettings = () => {
     if (settingsCacheValue && Date.now() < settingsCacheExpiresAt) {
-      return cloneSettingsObject(settingsCacheValue);
+      return settingsCacheValue;
     }
 
     if (settingsCacheValue) {
@@ -7583,8 +8022,10 @@
     const saved = GM_getValue("s1p_settings", {});
     const { settings } = buildNormalizedSettings(saved);
     setSettingsCache(settings);
-    return cloneSettingsObject(settingsCacheValue);
+    return settingsCacheValue;
   };
+  // 写操作请使用此函数，避免直接修改缓存对象。
+  const getSettingsForWrite = () => cloneSettingsObject(getSettings());
 
   // [S1PLUS-ADD-ABOVE: saveSettings]
   /**
@@ -9530,7 +9971,7 @@
     if (directChoiceModeToggle) {
       directChoiceModeToggle.checked = settings.syncDirectChoiceMode;
       directChoiceModeToggle.addEventListener("change", (e) => {
-        const currentSettings = getSettings();
+        const currentSettings = getSettingsForWrite();
         currentSettings.syncDirectChoiceMode = e.target.checked;
         saveSettings(currentSettings);
         initializeNavbar();
@@ -9585,7 +10026,7 @@
 
         editBtn.addEventListener("click", () => {
           openTokenExpiryConfigModal((ts) => {
-            const s = getSettings();
+            const s = getSettingsForWrite();
             s.syncTokenExpiryDate = ts;
             s.syncTokenExpiryEnabled = true; // [FIX] 确保状态为开启
             saveSettings(s);
@@ -9599,12 +10040,12 @@
     tokenExpiryToggle.checked = getSettings().syncTokenExpiryEnabled || false;
     tokenExpiryToggle.addEventListener("change", (e) => {
       const isChecked = e.target.checked;
-      const s = getSettings();
+      const s = getSettingsForWrite();
 
       if (isChecked) {
         if (!s.syncTokenExpiryDate) {
           openTokenExpiryConfigModal((ts) => {
-            const current = getSettings();
+            const current = getSettingsForWrite();
             current.syncTokenExpiryDate = ts;
             current.syncTokenExpiryEnabled = true;
             saveSettings(current);
@@ -10500,7 +10941,7 @@
 
           if (header) {
             if (header.id === "s1p-blocked-by-keyword-header") {
-              const currentSettings = getSettings();
+              const currentSettings = getSettingsForWrite();
               const isNowExpanded = !currentSettings.showBlockedByKeywordList;
               currentSettings.showBlockedByKeywordList = isNowExpanded;
               saveSettings(currentSettings);
@@ -10512,7 +10953,7 @@
                 .querySelector("#s1p-dynamically-hidden-list-container")
                 .classList.toggle("expanded", isNowExpanded);
             } else if (header.id === "s1p-manually-blocked-header") {
-              const currentSettings = getSettings();
+              const currentSettings = getSettingsForWrite();
               const isNowExpanded = !currentSettings.showManuallyBlockedList;
               currentSettings.showManuallyBlockedList = isNowExpanded;
               saveSettings(currentSettings);
@@ -10842,7 +11283,7 @@
           const target = e.target.closest(".s1p-segmented-control-option");
           if (!target || target.classList.contains("active")) return;
           const newValue = parseInt(target.dataset.value, 10);
-          const currentSettings = getSettings();
+          const currentSettings = getSettingsForWrite();
           currentSettings.readingProgressCleanupDays = newValue;
           saveSettings(currentSettings);
           // [FIX] 当设置为"永不"清理时，清除残留的清理标记
@@ -10874,7 +11315,7 @@
           const target = e.target.closest(".s1p-segmented-control-option");
           if (!target || target.classList.contains("active")) return;
           const newMode = target.dataset.value;
-          const currentSettings = getSettings();
+          const currentSettings = getSettingsForWrite();
           currentSettings.cleanupMode = newMode;
           saveSettings(currentSettings);
           cleanupModeControl
@@ -11059,7 +11500,7 @@
               "确认要恢复默认导航栏吗？",
               "您当前的自定义导航链接将被重置为脚本的默认设置。",
               () => {
-                const currentSettings = getSettings();
+                const currentSettings = getSettingsForWrite();
                 currentSettings.enableNavCustomization =
                   defaultSettings.enableNavCustomization;
                 currentSettings.customNavLinks = defaultSettings.customNavLinks;
@@ -11117,7 +11558,7 @@
     // [REPLACE ENTIRE EVENT LISTENER BLOCK]
     modal.addEventListener("change", (e) => {
       const target = e.target;
-      const settings = getSettings();
+      const settings = getSettingsForWrite();
       const featureKey = target.dataset.feature;
       const settingKey = target.dataset.setting;
 
@@ -11291,7 +11732,7 @@
           renderThreadTab();
         }
       } else if (target.matches("#s1p-blockThreadsOnUserBlock")) {
-        const currentSettings = getSettings();
+        const currentSettings = getSettingsForWrite();
         currentSettings.blockThreadsOnUserBlock = target.checked;
         saveSettings(currentSettings);
       }
@@ -12071,6 +12512,16 @@
     }
     startManualSyncLockHeartbeat();
 
+    const assertManualSyncLockOwned = (stage) => {
+      assertSyncLockOwned(SYNC_LOCK_MODE_MANUAL, `manual_sync:${stage}`);
+    };
+    const runWithManualSyncLockGuard = async (stage, callback) => {
+      assertManualSyncLockOwned(`${stage}:before`);
+      const result = await callback();
+      assertManualSyncLockOwned(`${stage}:after`);
+      return result;
+    };
+
     manualSyncInFlightPromise = new Promise((resolve) => {
       (async () => {
         const settings = getSettings();
@@ -12110,7 +12561,10 @@
         }
 
         try {
-          const { data: rawRemoteData, meta } = await fetchRemoteData();
+          const { data: rawRemoteData, meta } = await runWithManualSyncLockGuard(
+            "fetch_remote_data",
+            () => fetchRemoteData()
+          );
           remoteMetaUpdatedAt =
             typeof meta?.updatedAt === "string" ? meta.updatedAt : undefined;
 
@@ -12118,11 +12572,22 @@
 
           // [优化] 如果是首次设置且本地为空环境，且云端有数据，则直接引导拉取
           if (isInitialSetup && isLocalDataEmpty() && remoteExists) {
-            const remoteDataObj = await migrateAndValidateRemoteData(rawRemoteData);
+            const remoteDataObj = await runWithManualSyncLockGuard(
+              "validate_remote_data_for_initial_pull",
+              () => migrateAndValidateRemoteData(rawRemoteData)
+            );
             const pullAction = {
               text: "立即从云端恢复数据",
               className: "s1p-confirm",
               action: () => {
+                if (!isSyncLockOwned(SYNC_LOCK_MODE_MANUAL)) {
+                  showMessage(
+                    "手动同步锁已失效，本次操作已中止，请重新发起同步。",
+                    false
+                  );
+                  resolve(false);
+                  return;
+                }
                 const result = importLocalData(JSON.stringify(remoteDataObj.full), {
                   suppressPostSync: true,
                 });
@@ -12166,10 +12631,17 @@
               action: async () => {
                 showMessage("正在向云端推送数据...", null);
                 try {
-                  const localData = await exportLocalDataObject();
-                  const pushResult = await pushRemoteData(localData, {
-                    expectedRemoteUpdatedAt: remoteMetaUpdatedAt,
-                  });
+                  const localData = await runWithManualSyncLockGuard(
+                    "export_local_data_initial_push",
+                    () => exportLocalDataObject()
+                  );
+                  const pushResult = await runWithManualSyncLockGuard(
+                    "push_initial_local_data",
+                    () =>
+                      pushRemoteData(localData, {
+                        expectedRemoteUpdatedAt: remoteMetaUpdatedAt,
+                      })
+                  );
                   GM_setValue("s1p_last_sync_timestamp", Date.now());
                   GM_setValue("s1p_last_manual_sync_info", {
                     action: "push",
@@ -12214,8 +12686,14 @@
             return;
           }
 
-          const remote = await migrateAndValidateRemoteData(rawRemoteData);
-          const localDataObject = await exportLocalDataObject();
+          const remote = await runWithManualSyncLockGuard(
+            "validate_remote_data",
+            () => migrateAndValidateRemoteData(rawRemoteData)
+          );
+          const localDataObject = await runWithManualSyncLockGuard(
+            "export_local_data",
+            () => exportLocalDataObject()
+          );
           const versionDecision = decideSyncActionByVersion({
             localDataObject,
             remoteDataObject: remote,
@@ -12247,9 +12725,13 @@
             );
             showMessage("阅读记录已自动清理，正在同步至云端...", null);
             try {
-              const pushResult = await pushRemoteData(localDataObject, {
-                expectedRemoteUpdatedAt: remoteMetaUpdatedAt,
-              });
+              const pushResult = await runWithManualSyncLockGuard(
+                "push_cleanup_auto_sync",
+                () =>
+                  pushRemoteData(localDataObject, {
+                    expectedRemoteUpdatedAt: remoteMetaUpdatedAt,
+                  })
+              );
               GM_deleteValue("s1p_pending_cleanup_info");
               GM_setValue("s1p_last_sync_timestamp", Date.now());
               GM_setValue("s1p_last_manual_sync_info", {
@@ -12291,9 +12773,13 @@
                 null
               );
               try {
-                const pushResult = await pushRemoteData(localDataObject, {
-                  expectedRemoteUpdatedAt: remoteMetaUpdatedAt,
-                });
+                const pushResult = await runWithManualSyncLockGuard(
+                  "push_smart_progress",
+                  () =>
+                    pushRemoteData(localDataObject, {
+                      expectedRemoteUpdatedAt: remoteMetaUpdatedAt,
+                    })
+                );
                 GM_setValue("s1p_last_sync_timestamp", Date.now());
                 noteManualSuccess("smart_progress_push", {
                   contentHash: localDataObject.contentHash,
@@ -12320,6 +12806,7 @@
                 ? localDataObject.data.read_progress[currentThreadId]
                 : undefined;
               showMessage("智能同步：正在合并云端数据与当前阅读进度...", null);
+              assertManualSyncLockOwned("smart_merge_pull_import");
               importLocalData(JSON.stringify(remote.full), {
                 suppressPostSync: true,
               });
@@ -12355,6 +12842,14 @@
             text: "从云端拉取",
             className: "s1p-confirm",
             action: () => {
+              if (!isSyncLockOwned(SYNC_LOCK_MODE_MANUAL)) {
+                showMessage(
+                  "手动同步锁已失效，本次操作已中止，请重新发起同步。",
+                  false
+                );
+                resolve(false);
+                return;
+              }
               const result = importLocalData(JSON.stringify(remote.full), {
                 suppressPostSync: true,
               });
@@ -12384,9 +12879,13 @@
             className: "s1p-confirm",
             action: async () => {
               try {
-                const pushResult = await pushRemoteData(localDataObject, {
-                  expectedRemoteUpdatedAt: remoteMetaUpdatedAt,
-                });
+                const pushResult = await runWithManualSyncLockGuard(
+                  "push_manual_choice",
+                  () =>
+                    pushRemoteData(localDataObject, {
+                      expectedRemoteUpdatedAt: remoteMetaUpdatedAt,
+                    })
+                );
                 GM_deleteValue("s1p_pending_cleanup_info");
                 GM_setValue("s1p_last_sync_timestamp", Date.now());
                 GM_setValue("s1p_last_manual_sync_info", {
@@ -12430,6 +12929,11 @@
             { modalClassName: "s1p-sync-modal", allowBodyHtml: true }
           );
         } catch (error) {
+          if (error?.code === SYNC_LOCK_LOST_CODE) {
+            showMessage("手动同步锁已失效，本次任务已中止，请重新发起同步。", false);
+            resolve(false);
+            return;
+          }
           const corruptionErrorMessage = "云端备份已损坏";
           if (error?.message.includes(corruptionErrorMessage)) {
             const forcePushAction = {
@@ -12437,10 +12941,17 @@
               className: "s1p-confirm",
               action: async () => {
                 try {
-                  const localDataObjectForPush = await exportLocalDataObject();
-                  const pushResult = await pushRemoteData(localDataObjectForPush, {
-                    expectedRemoteUpdatedAt: remoteMetaUpdatedAt,
-                  });
+                  const localDataObjectForPush = await runWithManualSyncLockGuard(
+                    "export_local_data_force_repair",
+                    () => exportLocalDataObject()
+                  );
+                  const pushResult = await runWithManualSyncLockGuard(
+                    "push_force_repair",
+                    () =>
+                      pushRemoteData(localDataObjectForPush, {
+                        expectedRemoteUpdatedAt: remoteMetaUpdatedAt,
+                      })
+                  );
                   GM_setValue("s1p_last_sync_timestamp", Date.now());
                   GM_setValue("s1p_last_manual_sync_info", {
                     action: "push",
@@ -12489,6 +13000,15 @@
           }
         }
       })().catch((error) => {
+        if (error?.code === SYNC_LOCK_LOST_CODE) {
+          console.warn("S1 Plus: 手动同步因锁失效被中止。", {
+            mode: error?.syncLockMode || SYNC_LOCK_MODE_MANUAL,
+            stage: error?.syncLockStage || "unknown",
+          });
+          showMessage("手动同步锁已失效，本次任务已中止，请重新发起同步。", false);
+          resolve(false);
+          return;
+        }
         const fallbackMessage = error?.message || "未知错误";
         console.error("S1 Plus: 手动同步发生未捕获异常:", error);
         recordSyncFailure(fallbackMessage, "manual");
@@ -14319,7 +14839,7 @@
       className: "s1p-confirm",
       action: () => {
         GM_openInTab("https://userstyles.world/style/539", true);
-        const currentSettings = getSettings();
+        const currentSettings = getSettingsForWrite();
         if (currentSettings.recommendS1Nux) {
           currentSettings.recommendS1Nux = false;
           saveSettings(currentSettings);
@@ -14331,7 +14851,7 @@
       text: "不再提示",
       className: "s1p-cancel",
       action: () => {
-        const currentSettings = getSettings();
+        const currentSettings = getSettingsForWrite();
         currentSettings.recommendS1Nux = false;
         saveSettings(currentSettings);
         showMessage("好的，将不再为您推荐 S1 NUX。", true);
@@ -14849,8 +15369,8 @@
     document.body.appendChild(modal);
   };
 
-  const notifyAutoSyncConflictPausedIfNeeded = () => {
-    if (!shouldShowConflictModal("auto_conflict_paused")) {
+  const notifyAutoSyncConflictPausedIfNeeded = async () => {
+    if (!(await shouldShowConflictModal("auto_conflict_paused"))) {
       return;
     }
     showMessage(
@@ -14895,7 +15415,7 @@
               false
             );
           } else if (result.reason === "conflict_paused") {
-            notifyAutoSyncConflictPausedIfNeeded();
+            await notifyAutoSyncConflictPausedIfNeeded();
           }
           break;
       }
@@ -14936,7 +15456,7 @@
 
       console.log("S1 Plus: 正在执行每日首次加载同步...");
 
-      const result = await performAutoSync(true);
+      const result = await performAutoSync(true, SYNC_LOCK_MODE_STARTUP);
       if (
         result.status === "success" &&
         result.action !== "skipped_push_on_startup"
@@ -14956,7 +15476,7 @@
             setTimeout(() => location.reload(), 1500);
             return true;
           } else if (result.action === "skipped_push_on_startup") {
-            if (!shouldShowConflictModal("startup_local_newer")) {
+            if (!(await shouldShowConflictModal("startup_local_newer"))) {
               showMessage(
                 "检测到本地数据较新，已进入提示冷却。请稍后在导航栏手动同步。",
                 false
@@ -14997,7 +15517,7 @@
           break;
 
         case "conflict":
-          if (!shouldShowConflictModal("startup_conflict")) {
+          if (!(await shouldShowConflictModal("startup_conflict"))) {
             showMessage(
               "再次检测到启动同步冲突，已进入提示冷却。请稍后手动同步处理。",
               false
@@ -15036,7 +15556,9 @@
               false
             );
           } else if (result.reason === "conflict_paused") {
-            notifyAutoSyncConflictPausedIfNeeded();
+            await notifyAutoSyncConflictPausedIfNeeded();
+          } else if (result.reason === "lock_lost") {
+            showMessage("启动同步因锁失效已中止，本次将跳过。", false);
           }
           break;
       }
@@ -15160,7 +15682,7 @@
             action: () => {
               // Open config modal to update date
               openTokenExpiryConfigModal((ts) => {
-                const s = getSettings();
+                const s = getSettingsForWrite();
                 s.syncTokenExpiryDate = ts;
                 saveSettings(s);
                 showMessage("Token 有效期已更新", true);
