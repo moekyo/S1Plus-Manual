@@ -347,6 +347,10 @@
   const BACKGROUND_SYNC_LOCK_RETRY_DELAY_MS = 8 * 1000;
   const BACKGROUND_SYNC_MAX_RETRY_ATTEMPTS = 120;
   const BACKGROUND_SYNC_MAX_DRAIN_LOOPS = 3;
+  const GLOBAL_SYNC_LOCK_KEY = "s1p_sync_global_lock";
+  const SYNC_LOCK_MODE_MANUAL = "manual";
+  const SYNC_LOCK_MODE_BACKGROUND = "background";
+  const SYNC_LOCK_MODE_STARTUP = "startup";
   const MANUAL_SYNC_LOCK_KEY = "s1p_manual_sync_lock";
   const MANUAL_SYNC_LOCK_TTL_MS = 3 * 60 * 1000;
   const MANUAL_SYNC_LOCK_HEARTBEAT_MS = 10 * 1000;
@@ -3485,6 +3489,11 @@
     GM_deleteValue(AUTO_SYNC_CONFLICT_PAUSE_KEY);
   };
 
+  const getActiveAutoSyncConflictPause = () => {
+    const pauseState = getAutoSyncConflictPauseState();
+    return pauseState.paused ? pauseState : null;
+  };
+
   const registerAutoSyncFailure = (mode = "background") => {
     if (mode !== "background" && mode !== "startup") {
       return { count: 0, opened: false };
@@ -3556,6 +3565,10 @@
       return;
     }
 
+    if (getActiveAutoSyncConflictPause()) {
+      return;
+    }
+
     const pendingLastModified =
       typeof pending.lastModified === "number" ? pending.lastModified : 0;
     const currentLastModified = GM_getValue("s1p_last_modified", 0);
@@ -3608,6 +3621,11 @@
     reason = "pending_update",
     delayMs = 0
   ) => {
+    if (getActiveAutoSyncConflictPause()) {
+      clearAutoSyncRuntimeQueue();
+      return;
+    }
+
     hasPendingBackgroundSync = true;
 
     if (isInitialSyncInProgress || isBackgroundAutoSyncInProgress) {
@@ -3627,6 +3645,22 @@
   let remotePushTimeout;
   let remotePushDueTimestamp = 0;
   let remotePushScheduledReason = "debounced_local_change";
+  const clearRemotePushDebounceTimer = () => {
+    if (remotePushTimeout) {
+      clearTimeout(remotePushTimeout);
+      remotePushTimeout = null;
+    }
+    remotePushDueTimestamp = 0;
+    remotePushScheduledReason = "debounced_local_change";
+  };
+  const clearAutoSyncRuntimeQueue = () => {
+    hasPendingBackgroundSync = false;
+    if (backgroundSyncRetryTimeout) {
+      clearTimeout(backgroundSyncRetryTimeout);
+      backgroundSyncRetryTimeout = null;
+    }
+    clearRemotePushDebounceTimer();
+  };
   const armRemotePushTimer = (dueTimestamp, reason) => {
     remotePushDueTimestamp = dueTimestamp;
     remotePushScheduledReason = reason;
@@ -3648,6 +3682,10 @@
       !settings.syncRemoteGistId ||
       !settings.syncRemotePat
     ) {
+      return;
+    }
+    if (getActiveAutoSyncConflictPause()) {
+      clearRemotePushDebounceTimer();
       return;
     }
     const debounceMs =
@@ -6187,12 +6225,95 @@
     return null;
   };
 
-  const verifySyncLockOwnership = async (getLockValueFn) => {
-    await sleep(SYNC_LOCK_VERIFY_DELAY_MS);
-    const verifiedLock = getLockValueFn();
-    return Boolean(
-      verifiedLock && verifiedLock.owner === BACKGROUND_SYNC_OWNER_ID
+  const getGlobalSyncLockValue = () => {
+    const lock = GM_getValue(GLOBAL_SYNC_LOCK_KEY, null);
+    const ttlMs = Number(lock?.ttlMs);
+    if (
+      lock &&
+      typeof lock === "object" &&
+      lock.owner &&
+      typeof lock.timestamp === "number" &&
+      typeof lock.mode === "string" &&
+      Number.isFinite(ttlMs) &&
+      ttlMs > 0
+    ) {
+      return {
+        owner: lock.owner,
+        timestamp: lock.timestamp,
+        mode: lock.mode,
+        ttlMs,
+      };
+    }
+    return null;
+  };
+
+  const isModeSyncLockValid = (lock, ttlMs, now = Date.now()) =>
+    Boolean(lock && now - lock.timestamp < ttlMs);
+
+  const isGlobalSyncLockValid = (lock, now = Date.now()) =>
+    Boolean(lock && now - lock.timestamp < lock.ttlMs);
+
+  const hasActiveOtherModeSyncLock = (currentMode, now = Date.now()) => {
+    const lockStates = [
+      {
+        mode: SYNC_LOCK_MODE_MANUAL,
+        lock: getManualSyncLockValue(),
+        ttlMs: MANUAL_SYNC_LOCK_TTL_MS,
+      },
+      {
+        mode: SYNC_LOCK_MODE_BACKGROUND,
+        lock: getBackgroundSyncLockValue(),
+        ttlMs: BACKGROUND_SYNC_LOCK_TTL_MS,
+      },
+      {
+        mode: SYNC_LOCK_MODE_STARTUP,
+        lock: getStartupSyncLockValue(),
+        ttlMs: STARTUP_SYNC_LOCK_TTL_MS,
+      },
+    ];
+
+    return lockStates.some(
+      ({ mode, lock, ttlMs }) =>
+        mode !== currentMode && isModeSyncLockValid(lock, ttlMs, now)
     );
+  };
+
+  const setGlobalSyncLock = (mode, timestamp, ttlMs) => {
+    GM_setValue(GLOBAL_SYNC_LOCK_KEY, {
+      owner: BACKGROUND_SYNC_OWNER_ID,
+      mode,
+      timestamp,
+      ttlMs,
+    });
+  };
+
+  const refreshGlobalSyncLock = (mode, ttlMs) => {
+    const currentLock = getGlobalSyncLockValue();
+    if (
+      !currentLock ||
+      currentLock.owner !== BACKGROUND_SYNC_OWNER_ID ||
+      currentLock.mode !== mode
+    ) {
+      return false;
+    }
+    setGlobalSyncLock(mode, Date.now(), ttlMs);
+    return true;
+  };
+
+  const releaseGlobalSyncLock = (mode) => {
+    const currentLock = getGlobalSyncLockValue();
+    if (
+      currentLock &&
+      currentLock.owner === BACKGROUND_SYNC_OWNER_ID &&
+      currentLock.mode === mode
+    ) {
+      GM_deleteValue(GLOBAL_SYNC_LOCK_KEY);
+    }
+  };
+
+  const verifySyncLockOwnership = async (verifyFn) => {
+    await sleep(SYNC_LOCK_VERIFY_DELAY_MS);
+    return Boolean(typeof verifyFn === "function" && verifyFn());
   };
 
   const acquireManualSyncLock = async () => {
@@ -6200,8 +6321,20 @@
     const currentLock = getManualSyncLockValue();
     const lockIsValid =
       currentLock && now - currentLock.timestamp < MANUAL_SYNC_LOCK_TTL_MS;
+    const globalLock = getGlobalSyncLockValue();
+    const globalLockIsValid = isGlobalSyncLockValid(globalLock, now);
 
     if (lockIsValid && currentLock.owner !== BACKGROUND_SYNC_OWNER_ID) {
+      return false;
+    }
+    if (hasActiveOtherModeSyncLock(SYNC_LOCK_MODE_MANUAL, now)) {
+      return false;
+    }
+    if (
+      globalLockIsValid &&
+      (globalLock.owner !== BACKGROUND_SYNC_OWNER_ID ||
+        globalLock.mode !== SYNC_LOCK_MODE_MANUAL)
+    ) {
       return false;
     }
 
@@ -6209,13 +6342,31 @@
       owner: BACKGROUND_SYNC_OWNER_ID,
       timestamp: now,
     });
+    setGlobalSyncLock(SYNC_LOCK_MODE_MANUAL, now, MANUAL_SYNC_LOCK_TTL_MS);
 
-    return await verifySyncLockOwnership(getManualSyncLockValue);
+    const acquired = await verifySyncLockOwnership(() => {
+      const verifiedModeLock = getManualSyncLockValue();
+      const verifiedGlobalLock = getGlobalSyncLockValue();
+      return (
+        verifiedModeLock &&
+        verifiedModeLock.owner === BACKGROUND_SYNC_OWNER_ID &&
+        verifiedGlobalLock &&
+        verifiedGlobalLock.owner === BACKGROUND_SYNC_OWNER_ID &&
+        verifiedGlobalLock.mode === SYNC_LOCK_MODE_MANUAL
+      );
+    });
+    if (!acquired) {
+      releaseManualSyncLock();
+    }
+    return acquired;
   };
 
   const refreshManualSyncLock = () => {
     const currentLock = getManualSyncLockValue();
     if (!currentLock || currentLock.owner !== BACKGROUND_SYNC_OWNER_ID) {
+      return false;
+    }
+    if (!refreshGlobalSyncLock(SYNC_LOCK_MODE_MANUAL, MANUAL_SYNC_LOCK_TTL_MS)) {
       return false;
     }
     GM_setValue(MANUAL_SYNC_LOCK_KEY, {
@@ -6230,6 +6381,7 @@
     if (currentLock && currentLock.owner === BACKGROUND_SYNC_OWNER_ID) {
       GM_deleteValue(MANUAL_SYNC_LOCK_KEY);
     }
+    releaseGlobalSyncLock(SYNC_LOCK_MODE_MANUAL);
   };
 
   const startManualSyncLockHeartbeat = () => {
@@ -6266,8 +6418,20 @@
     const currentLock = getBackgroundSyncLockValue();
     const lockIsValid =
       currentLock && now - currentLock.timestamp < BACKGROUND_SYNC_LOCK_TTL_MS;
+    const globalLock = getGlobalSyncLockValue();
+    const globalLockIsValid = isGlobalSyncLockValid(globalLock, now);
 
     if (lockIsValid && currentLock.owner !== BACKGROUND_SYNC_OWNER_ID) {
+      return false;
+    }
+    if (hasActiveOtherModeSyncLock(SYNC_LOCK_MODE_BACKGROUND, now)) {
+      return false;
+    }
+    if (
+      globalLockIsValid &&
+      (globalLock.owner !== BACKGROUND_SYNC_OWNER_ID ||
+        globalLock.mode !== SYNC_LOCK_MODE_BACKGROUND)
+    ) {
       return false;
     }
 
@@ -6275,13 +6439,40 @@
       owner: BACKGROUND_SYNC_OWNER_ID,
       timestamp: now,
     });
+    setGlobalSyncLock(
+      SYNC_LOCK_MODE_BACKGROUND,
+      now,
+      BACKGROUND_SYNC_LOCK_TTL_MS
+    );
 
-    return await verifySyncLockOwnership(getBackgroundSyncLockValue);
+    const acquired = await verifySyncLockOwnership(() => {
+      const verifiedModeLock = getBackgroundSyncLockValue();
+      const verifiedGlobalLock = getGlobalSyncLockValue();
+      return (
+        verifiedModeLock &&
+        verifiedModeLock.owner === BACKGROUND_SYNC_OWNER_ID &&
+        verifiedGlobalLock &&
+        verifiedGlobalLock.owner === BACKGROUND_SYNC_OWNER_ID &&
+        verifiedGlobalLock.mode === SYNC_LOCK_MODE_BACKGROUND
+      );
+    });
+    if (!acquired) {
+      releaseBackgroundSyncLock();
+    }
+    return acquired;
   };
 
   const refreshBackgroundSyncLock = () => {
     const currentLock = getBackgroundSyncLockValue();
     if (!currentLock || currentLock.owner !== BACKGROUND_SYNC_OWNER_ID) {
+      return false;
+    }
+    if (
+      !refreshGlobalSyncLock(
+        SYNC_LOCK_MODE_BACKGROUND,
+        BACKGROUND_SYNC_LOCK_TTL_MS
+      )
+    ) {
       return false;
     }
     GM_setValue(BACKGROUND_SYNC_LOCK_KEY, {
@@ -6296,6 +6487,7 @@
     if (currentLock && currentLock.owner === BACKGROUND_SYNC_OWNER_ID) {
       GM_deleteValue(BACKGROUND_SYNC_LOCK_KEY);
     }
+    releaseGlobalSyncLock(SYNC_LOCK_MODE_BACKGROUND);
   };
 
   const startBackgroundSyncLockHeartbeat = () => {
@@ -6332,8 +6524,20 @@
     const currentLock = getStartupSyncLockValue();
     const lockIsValid =
       currentLock && now - currentLock.timestamp < STARTUP_SYNC_LOCK_TTL_MS;
+    const globalLock = getGlobalSyncLockValue();
+    const globalLockIsValid = isGlobalSyncLockValid(globalLock, now);
 
     if (lockIsValid && currentLock.owner !== BACKGROUND_SYNC_OWNER_ID) {
+      return false;
+    }
+    if (hasActiveOtherModeSyncLock(SYNC_LOCK_MODE_STARTUP, now)) {
+      return false;
+    }
+    if (
+      globalLockIsValid &&
+      (globalLock.owner !== BACKGROUND_SYNC_OWNER_ID ||
+        globalLock.mode !== SYNC_LOCK_MODE_STARTUP)
+    ) {
       return false;
     }
 
@@ -6341,13 +6545,31 @@
       owner: BACKGROUND_SYNC_OWNER_ID,
       timestamp: now,
     });
+    setGlobalSyncLock(SYNC_LOCK_MODE_STARTUP, now, STARTUP_SYNC_LOCK_TTL_MS);
 
-    return await verifySyncLockOwnership(getStartupSyncLockValue);
+    const acquired = await verifySyncLockOwnership(() => {
+      const verifiedModeLock = getStartupSyncLockValue();
+      const verifiedGlobalLock = getGlobalSyncLockValue();
+      return (
+        verifiedModeLock &&
+        verifiedModeLock.owner === BACKGROUND_SYNC_OWNER_ID &&
+        verifiedGlobalLock &&
+        verifiedGlobalLock.owner === BACKGROUND_SYNC_OWNER_ID &&
+        verifiedGlobalLock.mode === SYNC_LOCK_MODE_STARTUP
+      );
+    });
+    if (!acquired) {
+      releaseStartupSyncLock();
+    }
+    return acquired;
   };
 
   const refreshStartupSyncLock = () => {
     const currentLock = getStartupSyncLockValue();
     if (!currentLock || currentLock.owner !== BACKGROUND_SYNC_OWNER_ID) {
+      return false;
+    }
+    if (!refreshGlobalSyncLock(SYNC_LOCK_MODE_STARTUP, STARTUP_SYNC_LOCK_TTL_MS)) {
       return false;
     }
     GM_setValue(STARTUP_SYNC_LOCK_KEY, {
@@ -6362,6 +6584,7 @@
     if (currentLock && currentLock.owner === BACKGROUND_SYNC_OWNER_ID) {
       GM_deleteValue(STARTUP_SYNC_LOCK_KEY);
     }
+    releaseGlobalSyncLock(SYNC_LOCK_MODE_STARTUP);
   };
 
   const startStartupSyncLockHeartbeat = () => {
@@ -6383,6 +6606,11 @@
   const scheduleBackgroundSyncRetry = (
     delayMs = BACKGROUND_SYNC_LOCK_RETRY_DELAY_MS
   ) => {
+    if (getActiveAutoSyncConflictPause()) {
+      clearAutoSyncRuntimeQueue();
+      return;
+    }
+
     hasPendingBackgroundSync = true;
     if (backgroundSyncRetryTimeout) {
       clearTimeout(backgroundSyncRetryTimeout);
@@ -6448,6 +6676,12 @@
             "后台同步完成：云端有更新已被自动拉取。建议刷新页面。",
             true
           );
+        }
+        break;
+
+      case "skipped":
+        if (result.reason === "conflict_paused") {
+          console.log("S1 Plus: 后台自动同步因冲突暂停状态被门控。");
         }
         break;
     }
@@ -6607,6 +6841,18 @@
     ) {
       return;
     }
+    const conflictPauseState = getActiveAutoSyncConflictPause();
+    if (conflictPauseState) {
+      clearAutoSyncRuntimeQueue();
+      console.log(
+        `S1 Plus: 自动同步冲突暂停生效，已跳过后台同步触发(${reason})。`,
+        {
+          reason: conflictPauseState.reason || "generic",
+          pausedAt: conflictPauseState.timestamp || 0,
+        }
+      );
+      return;
+    }
 
     if (!isInitialSyncInProgress && !isBackgroundAutoSyncInProgress) {
       backgroundSyncRetryAttempts = 0;
@@ -6638,7 +6884,7 @@
           if (!(await acquireBackgroundSyncLock())) {
             hasPendingBackgroundSync = true;
             console.log(
-              "S1 Plus: 检测到其他标签页正在后台同步，稍后将重试。"
+              "S1 Plus: 检测到其他同步任务正在执行，稍后将重试。"
             );
             scheduleBackgroundSyncRetry();
             break;
@@ -6754,6 +7000,15 @@
     ) {
       return { status: "skipped", reason: "disabled" };
     }
+    const conflictPauseState = getActiveAutoSyncConflictPause();
+    if (conflictPauseState) {
+      return {
+        status: "skipped",
+        reason: "conflict_paused",
+        conflictReason: conflictPauseState.reason || "generic",
+        pausedAt: conflictPauseState.timestamp || 0,
+      };
+    }
     const circuitState = getAutoSyncCircuitState();
     if (circuitState.open) {
       return {
@@ -6783,6 +7038,7 @@
       syncOutcome = "conflict";
       clearPendingAutoSyncRequest();
       setAutoSyncConflictPause(reason);
+      clearAutoSyncRuntimeQueue();
       resetAutoSyncFailureState();
       recordSyncConflict(reason, syncMode);
       updateLastSyncTimeDisplay();
@@ -11787,7 +12043,7 @@
     }
 
     if (!(await acquireManualSyncLock())) {
-      showMessage("另一标签页正在执行手动同步，请稍后再试。", false);
+      showMessage("当前有其他同步任务正在执行，请稍后再试。", false);
       return false;
     }
     startManualSyncLockHeartbeat();
@@ -14570,6 +14826,16 @@
     document.body.appendChild(modal);
   };
 
+  const notifyAutoSyncConflictPausedIfNeeded = () => {
+    if (!shouldShowConflictModal("auto_conflict_paused")) {
+      return;
+    }
+    showMessage(
+      "自动同步因上次冲突仍处于暂停状态，请先在导航栏执行手动同步。",
+      false
+    );
+  };
+
   const handlePerLoadSyncCheck = async () => {
     const settings = getSettings();
 
@@ -14605,6 +14871,8 @@
               ).toLocaleTimeString("zh-CN", { hour12: false })}。`,
               false
             );
+          } else if (result.reason === "conflict_paused") {
+            notifyAutoSyncConflictPausedIfNeeded();
           }
           break;
       }
@@ -14626,7 +14894,7 @@
 
     if (!(await acquireStartupSyncLock())) {
       console.log(
-        "S1 Plus: 检测到另一个标签页可能正在同步，本次启动同步已跳过。"
+        "S1 Plus: 检测到其他同步任务正在执行，本次启动同步已跳过。"
       );
       return false;
     }
@@ -14744,6 +15012,8 @@
               ).toLocaleTimeString("zh-CN", { hour12: false })}。`,
               false
             );
+          } else if (result.reason === "conflict_paused") {
+            notifyAutoSyncConflictPausedIfNeeded();
           }
           break;
       }
