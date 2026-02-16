@@ -35,6 +35,9 @@
 - **收藏内容同步瘦身**: 同步路径中收藏内容仅上传截断后的 280 字符预览（`getBookmarkedRepliesForSync`），不再上传完整 `postContent`，大幅减少同步体积。本地保留完整内容不受影响。
 - **跨标签页核心数据即时刷新**: `GM_addValueChangeListener` 缓存更新后联动触发 UI 刷新（屏蔽列表、引用、评分、提醒、阅读进度按钮），标签页不可见时暂存变更键、切回可见时执行，120ms 防抖。
 - **跨页面待同步请求安全检查**: `tryResumePendingAutoSyncRequest` 增加对冲突时间戳和同步进行中状态的守卫，避免过期请求被重复补发或与进行中的同步任务冲突。
+- **全局同步锁 (Global Sync Lock)**: 引入 `s1p_sync_global_lock` 全局互斥锁，统一协调后台自动同步、手动同步和启动同步。所有同步模式在获取自身锁前必须先通过全局锁检查，并引入 50ms 校验延迟（Double-Check）和回滚机制，彻底解决了多标签页并发下的锁覆盖和任务互撞问题（P2 并发控制）。
+- **冲突暂停门控 (Conflict Pause Gating)**: 冲突暂停状态从“名义暂停”升级为“强制门控”。现在 `requestBackgroundSyncRun`、`triggerRemoteSyncPush`、`performAutoSync` 等所有同步入口均会检查并遵循暂停状态，冲突未解决前严禁发起任何后台同步，有效防止了冲突后的无效重试和日志污染。
+
 
 ### 🎨 UI/UX 优化 (UI/UX Improvements)
 
