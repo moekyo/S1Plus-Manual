@@ -327,6 +327,7 @@
   // --- [新增] 全局状态标志，用于防止启动时的同步竞态条件 ---
   let isInitialSyncInProgress = false;
   let syncDirtyDuringSync = false;
+  let syncDirtyNeedsFollowUpSync = false;
   let syncDirtyTimestamp = 0;
   let isBackgroundAutoSyncInProgress = false;
   let manualSyncInFlightPromise = null;
@@ -367,6 +368,11 @@
   const READ_PROGRESS_SYNC_DEBOUNCE_MS = 20 * 1000;
   const DEFAULT_SYNC_DEBOUNCE_MS = 5 * 1000;
   const SYNC_CONFLICT_MODAL_COOLDOWN_MS = 2 * 60 * 1000;
+  const SYNC_CONFLICT_MODAL_COOLDOWN_GROUP_MAP = Object.freeze({
+    background_conflict: "sync_conflict",
+    startup_conflict: "sync_conflict",
+    auto_conflict_paused: "sync_conflict",
+  });
   const SYNC_DIAGNOSTICS_KEY = "s1p_sync_diagnostics";
   const AUTO_SYNC_FAILURE_COUNT_KEY = "s1p_auto_sync_failure_count";
   const AUTO_SYNC_CIRCUIT_OPEN_UNTIL_KEY = "s1p_auto_sync_circuit_open_until";
@@ -3433,7 +3439,10 @@
   };
 
   const shouldShowConflictModal = (type = "generic") => {
-    const key = `s1p_last_conflict_modal_ts_${type}`;
+    const normalizedType = String(type || "generic");
+    const cooldownGroup =
+      SYNC_CONFLICT_MODAL_COOLDOWN_GROUP_MAP[normalizedType] || normalizedType;
+    const key = `s1p_last_conflict_modal_ts_${cooldownGroup}`;
     const now = Date.now();
     const lastShown = GM_getValue(key, 0);
     if (now - lastShown < SYNC_CONFLICT_MODAL_COOLDOWN_MS) {
@@ -3731,13 +3740,18 @@
     if (isInitialSyncInProgress) {
       syncDirtyDuringSync = true;
       syncDirtyTimestamp = Math.max(syncDirtyTimestamp, nextLastModified);
-      hasPendingBackgroundSync = true;
       if (triggerSync) {
+        syncDirtyNeedsFollowUpSync = true;
+        hasPendingBackgroundSync = true;
         markPendingAutoSyncRequest(source, nextLastModified);
+        console.log(
+          "S1 Plus: 同步进行中检测到本地变更，已记录为待补同步任务。"
+        );
+      } else {
+        console.log(
+          "S1 Plus: 同步进行中检测到仅本地时间戳修正，已记录但不会触发补同步。"
+        );
       }
-      console.log(
-        "S1 Plus: 同步进行中检测到本地变更，已记录为待补同步任务。"
-      );
       return;
     }
     GM_setValue("s1p_last_modified", nextLastModified);
@@ -7052,6 +7066,7 @@
     migrateLegacyReadProgressData();
 
     syncDirtyDuringSync = false;
+    syncDirtyNeedsFollowUpSync = false;
     syncDirtyTimestamp = 0;
     isInitialSyncInProgress = true;
     recordSyncAttempt(syncMode, "auto");
@@ -7245,6 +7260,7 @@
         hasPendingBackgroundSync = false;
         clearPendingAutoSyncRequest();
         syncDirtyDuringSync = false;
+        syncDirtyNeedsFollowUpSync = false;
         syncDirtyTimestamp = 0;
         console.log(
           "S1 Plus (Sync): 冲突状态下已清空自动补同步队列，等待手动同步解决冲突。"
@@ -7259,12 +7275,19 @@
           "s1p_last_modified",
           nextDirtyLastModified
         );
-        requestBackgroundSyncRun("dirty_during_sync", 300);
-        console.log(
-          "S1 Plus (Sync): 检测到同步期间的本地变更，已自动加入补同步队列。"
-        );
+        if (syncDirtyNeedsFollowUpSync) {
+          requestBackgroundSyncRun("dirty_during_sync", 300);
+          console.log(
+            "S1 Plus (Sync): 检测到同步期间的本地变更，已自动加入补同步队列。"
+          );
+        } else {
+          console.log(
+            "S1 Plus (Sync): 检测到同步期间仅时间戳修正，本轮不触发补同步。"
+          );
+        }
       }
       syncDirtyDuringSync = false;
+      syncDirtyNeedsFollowUpSync = false;
       syncDirtyTimestamp = 0;
       console.log("S1 Plus (Sync): 同步检查完成。");
     }
