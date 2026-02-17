@@ -393,6 +393,9 @@
   const AUTO_SYNC_CONFLICT_PAUSE_KEY = "s1p_auto_sync_conflict_pause";
   const PENDING_AUTO_SYNC_KEY = "s1p_pending_auto_sync_request";
   const SETTINGS_CROSS_TAB_SIGNAL_KEY = "s1p_settings_refresh_signal";
+  const SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID = `s1p_tab_${Date.now()}_${Math.random()
+    .toString(36)
+    .slice(2)}`;
   const SYNC_BASELINE_STATE_KEY = "s1p_sync_baseline_state";
   const SYNC_LOCK_LOST_CODE = "SYNC_LOCK_LOST";
   const SYNC_CONFLICT_MODAL_COOLDOWN_LOCK_KEY =
@@ -8279,7 +8282,10 @@
     "syncTokenExpiryEnabled",
     "syncTokenExpiryDate",
   ];
-  const SETTINGS_FALLBACK_SYNC_POLL_INTERVAL_MS = 1500;
+  const SETTINGS_FALLBACK_SYNC_POLL_MIN_INTERVAL_MS = 1500;
+  const SETTINGS_FALLBACK_SYNC_POLL_MAX_INTERVAL_MS = 20 * 1000;
+  const SETTINGS_FALLBACK_SYNC_POLL_BACKOFF_STEP_MS = 2500;
+  const SETTINGS_FALLBACK_SYNC_SIGNAL_HEALTH_WINDOW_MS = 60 * 1000;
   const isSettingPathMatched = (changedPath, targetPath) => {
     if (!changedPath || !targetPath) {
       return false;
@@ -8339,21 +8345,136 @@
   };
   const pendingSettingsCrossTabRefreshPaths = new Set();
   let pendingSettingsCrossTabNeedsFullApply = false;
+  let settingsModalCrossTabSyncController = null;
+  let lastSettingsCrossTabSignalReceivedAt = 0;
+  let hasObservedSettingsCrossTabSignal = false;
+  let settingsRuntimeAppliedSnapshot = null;
+  const markSettingsRuntimeAppliedSnapshot = (settings) => {
+    settingsRuntimeAppliedSnapshot = cloneSettingsObject(
+      buildNormalizedSettings(settings).settings
+    );
+  };
+  const hasSettingsRuntimeAppliedDrift = (nextSettings) => {
+    if (!settingsRuntimeAppliedSnapshot) {
+      return true;
+    }
+    return hasComparableValueChanged(settingsRuntimeAppliedSnapshot, nextSettings);
+  };
+  const parseSettingsCrossTabSignalPayload = (rawValue) => {
+    if (
+      rawValue &&
+      typeof rawValue === "object" &&
+      !Array.isArray(rawValue)
+    ) {
+      return {
+        sender:
+          typeof rawValue.sender === "string" ? rawValue.sender : "",
+        ts: Number(rawValue.ts) || 0,
+      };
+    }
+    return {
+      sender: "",
+      ts: Number(rawValue) || 0,
+    };
+  };
+  const shouldHandleCoreDataCrossTabChange = (
+    key,
+    newValue,
+    isCrossContextChange
+  ) => {
+    if (key !== SETTINGS_CROSS_TAB_SIGNAL_KEY) {
+      return Boolean(isCrossContextChange);
+    }
+    const signalPayload = parseSettingsCrossTabSignalPayload(newValue);
+    if (
+      signalPayload.sender &&
+      signalPayload.sender === SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID
+    ) {
+      return false;
+    }
+    return Boolean(isCrossContextChange || signalPayload.sender);
+  };
+  const normalizeSettingChangedPath = (path) =>
+    typeof path === "string" ? path.trim() : "";
+  const appendSettingChangedPathsToSet = (targetSet, changedPaths = []) => {
+    if (!(targetSet instanceof Set) || !Array.isArray(changedPaths)) {
+      return;
+    }
+    changedPaths.forEach((path) => {
+      const normalizedPath = normalizeSettingChangedPath(path);
+      if (normalizedPath) {
+        targetSet.add(normalizedPath);
+      }
+    });
+  };
+  const syncOpenSettingsModalFromCrossTab = ({
+    changedPathSet = new Set(),
+    forceFullApply = false,
+  } = {}) => {
+    if (!settingsModalCrossTabSyncController) {
+      return;
+    }
+    if (
+      typeof settingsModalCrossTabSyncController.sync !== "function" ||
+      typeof settingsModalCrossTabSyncController.isAlive !== "function" ||
+      !settingsModalCrossTabSyncController.isAlive()
+    ) {
+      settingsModalCrossTabSyncController = null;
+      return;
+    }
+    try {
+      settingsModalCrossTabSyncController.sync({ changedPathSet, forceFullApply });
+    } catch (error) {
+      console.warn(
+        "S1 Plus: 跨标签设置面板同步失败，将在下次事件中重试。",
+        error
+      );
+    }
+  };
   const scheduleSettingsCrossTabRefresh = (changedPaths = []) => {
     if (Array.isArray(changedPaths) && changedPaths.length > 0) {
-      changedPaths.forEach((path) => {
-        if (typeof path !== "string") {
-          return;
-        }
-        const normalizedPath = path.trim();
-        if (normalizedPath) {
-          pendingSettingsCrossTabRefreshPaths.add(normalizedPath);
-        }
-      });
+      appendSettingChangedPathsToSet(
+        pendingSettingsCrossTabRefreshPaths,
+        changedPaths
+      );
     } else {
       pendingSettingsCrossTabNeedsFullApply = true;
     }
     scheduleCoreDataCrossTabRefresh("s1p_settings_refresh");
+  };
+  const stageSettingsCrossTabRefreshForImmediateRun = ({
+    changedPaths = null,
+    forceFullApply = false,
+  } = {}) => {
+    pendingSettingsCrossTabRefreshPaths.clear();
+    pendingSettingsCrossTabNeedsFullApply = Boolean(forceFullApply);
+    if (pendingSettingsCrossTabNeedsFullApply) {
+      return;
+    }
+    if (!Array.isArray(changedPaths) || changedPaths.length === 0) {
+      pendingSettingsCrossTabNeedsFullApply = true;
+      return;
+    }
+    appendSettingChangedPathsToSet(pendingSettingsCrossTabRefreshPaths, changedPaths);
+  };
+  const queueSettingsCrossTabRefresh = ({
+    changedPaths = null,
+    forceFullApply = false,
+    applyImmediately = false,
+  } = {}) => {
+    if (applyImmediately) {
+      stageSettingsCrossTabRefreshForImmediateRun({
+        changedPaths,
+        forceFullApply,
+      });
+      runSettingsCrossTabRefresh();
+      return;
+    }
+    if (forceFullApply || !Array.isArray(changedPaths) || changedPaths.length === 0) {
+      scheduleSettingsCrossTabRefresh();
+      return;
+    }
+    scheduleSettingsCrossTabRefresh(changedPaths);
   };
   const initializeSettingsCacheSync = () => {
     if (window.__s1pSettingsCacheSyncBound) {
@@ -8406,6 +8527,7 @@
   const syncSettingsFromStorageSnapshotIfNeeded = ({
     forceFullApply = false,
     applyImmediately = false,
+    forceApplyWhenUnchanged = false,
   } = {}) => {
     if (localSettingsWriteInFlightCount > 0) {
       return false;
@@ -8413,30 +8535,25 @@
     const cachedSettings = getSettings();
     const storedSettings = pullSettingsFromStorageSnapshot();
     if (!hasComparableValueChanged(cachedSettings, storedSettings)) {
-      return false;
+      if (!forceApplyWhenUnchanged) {
+        if (!(forceFullApply && hasSettingsRuntimeAppliedDrift(storedSettings))) {
+          return false;
+        }
+      }
+      queueSettingsCrossTabRefresh({
+        forceFullApply: true,
+        applyImmediately,
+      });
+      return true;
     }
 
     const changedPaths = collectChangedSettingPaths(cachedSettings, storedSettings);
     setSettingsCache(storedSettings);
-    if (applyImmediately) {
-      pendingSettingsCrossTabRefreshPaths.clear();
-      if (forceFullApply || changedPaths.length === 0) {
-        pendingSettingsCrossTabNeedsFullApply = true;
-      } else {
-        changedPaths.forEach((path) => {
-          if (typeof path === "string" && path.trim()) {
-            pendingSettingsCrossTabRefreshPaths.add(path.trim());
-          }
-        });
-      }
-      runSettingsCrossTabRefresh();
-      return true;
-    }
-    if (forceFullApply || changedPaths.length === 0) {
-      scheduleSettingsCrossTabRefresh();
-      return true;
-    }
-    scheduleSettingsCrossTabRefresh(changedPaths);
+    queueSettingsCrossTabRefresh({
+      changedPaths,
+      forceFullApply,
+      applyImmediately,
+    });
     return true;
   };
   const initializeSettingsFallbackSync = () => {
@@ -8444,48 +8561,107 @@
       return;
     }
     window.__s1pSettingsFallbackSyncBound = true;
+    let fallbackPollTimer = null;
+    let fallbackPollIntervalMs = SETTINGS_FALLBACK_SYNC_POLL_MIN_INTERVAL_MS;
+    const stopFallbackPoll = () => {
+      if (fallbackPollTimer) {
+        clearTimeout(fallbackPollTimer);
+        fallbackPollTimer = null;
+      }
+    };
+    const hasHealthyCrossTabSettingsSignalChannel = () => {
+      if (!hasObservedSettingsCrossTabSignal) {
+        return false;
+      }
+      return (
+        Date.now() - lastSettingsCrossTabSignalReceivedAt <=
+        SETTINGS_FALLBACK_SYNC_SIGNAL_HEALTH_WINDOW_MS
+      );
+    };
 
     const trySyncFromStorage = ({ forceFullApply = false } = {}) => {
       if (document.visibilityState === "hidden") {
-        return;
+        return false;
       }
-      syncSettingsFromStorageSnapshotIfNeeded({ forceFullApply });
+      return syncSettingsFromStorageSnapshotIfNeeded({ forceFullApply });
     };
 
-    setInterval(() => {
-      trySyncFromStorage();
-    }, SETTINGS_FALLBACK_SYNC_POLL_INTERVAL_MS);
+    const adjustFallbackPollInterval = ({ didSync = false } = {}) => {
+      if (didSync || !hasHealthyCrossTabSettingsSignalChannel()) {
+        fallbackPollIntervalMs = SETTINGS_FALLBACK_SYNC_POLL_MIN_INTERVAL_MS;
+        return;
+      }
+      fallbackPollIntervalMs = Math.min(
+        SETTINGS_FALLBACK_SYNC_POLL_MAX_INTERVAL_MS,
+        fallbackPollIntervalMs + SETTINGS_FALLBACK_SYNC_POLL_BACKOFF_STEP_MS
+      );
+    };
+    const scheduleNextFallbackPoll = () => {
+      if (document.visibilityState !== "visible") {
+        stopFallbackPoll();
+        return;
+      }
+      stopFallbackPoll();
+      fallbackPollTimer = setTimeout(() => {
+        fallbackPollTimer = null;
+        if (document.visibilityState !== "visible") {
+          return;
+        }
+        const shouldForceFullApplyInPoll =
+          !hasHealthyCrossTabSettingsSignalChannel();
+        const didSync = trySyncFromStorage({
+          forceFullApply: shouldForceFullApplyInPoll,
+        });
+        adjustFallbackPollInterval({ didSync });
+        scheduleNextFallbackPoll();
+      }, fallbackPollIntervalMs);
+    };
+    const resyncSettingsOnForeground = () => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+      trySyncFromStorage({ forceFullApply: true });
+      adjustFallbackPollInterval({ didSync: false });
+      scheduleNextFallbackPoll();
+    };
+
+    scheduleNextFallbackPoll();
 
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") {
-        trySyncFromStorage({ forceFullApply: true });
+        resyncSettingsOnForeground();
+        return;
       }
+      stopFallbackPoll();
     });
-    window.addEventListener("focus", () => {
-      trySyncFromStorage({ forceFullApply: true });
-    });
-    window.addEventListener("pageshow", () => {
-      trySyncFromStorage({ forceFullApply: true });
-    });
+    window.addEventListener("focus", resyncSettingsOnForeground);
+    window.addEventListener("pageshow", resyncSettingsOnForeground);
   };
   let coreDataCrossTabRefreshTimer = null;
   const pendingCoreDataCrossTabRefreshKeys = new Set();
+  const runFullSettingsCrossTabRefresh = (changedPathSet) => {
+    initializeNavbar();
+    applyChanges();
+    markSettingsRuntimeAppliedSnapshot(getSettings());
+    syncOpenSettingsModalFromCrossTab({
+      changedPathSet,
+      forceFullApply: true,
+    });
+    return true;
+  };
   const runSettingsCrossTabRefresh = () => {
     const changedPathSet = new Set();
-    pendingSettingsCrossTabRefreshPaths.forEach((path) => {
-      if (typeof path === "string" && path.trim()) {
-        changedPathSet.add(path.trim());
-      }
-    });
+    appendSettingChangedPathsToSet(
+      changedPathSet,
+      Array.from(pendingSettingsCrossTabRefreshPaths)
+    );
     pendingSettingsCrossTabRefreshPaths.clear();
 
     const forceFullApply = pendingSettingsCrossTabNeedsFullApply;
     pendingSettingsCrossTabNeedsFullApply = false;
 
     if (forceFullApply || changedPathSet.size === 0) {
-      initializeNavbar();
-      applyChanges();
-      return true;
+      return runFullSettingsCrossTabRefresh(changedPathSet);
     }
 
     let requiresFullApply = false;
@@ -8515,9 +8691,7 @@
     }
 
     if (requiresFullApply) {
-      initializeNavbar();
-      applyChanges();
-      return true;
+      return runFullSettingsCrossTabRefresh(changedPathSet);
     }
 
     const settings = getSettings();
@@ -8577,6 +8751,8 @@
       hideSystemBlockedPosts();
     }
 
+    markSettingsRuntimeAppliedSnapshot(settings);
+    syncOpenSettingsModalFromCrossTab({ changedPathSet });
     return false;
   };
   const runCoreDataCrossTabRefresh = () => {
@@ -8591,12 +8767,20 @@
 
     if (changedKeys.has(SETTINGS_CROSS_TAB_SIGNAL_KEY)) {
       changedKeys.delete(SETTINGS_CROSS_TAB_SIGNAL_KEY);
+      lastSettingsCrossTabSignalReceivedAt = Date.now();
+      hasObservedSettingsCrossTabSignal = true;
       const didApplyFromSignal = syncSettingsFromStorageSnapshotIfNeeded({
         forceFullApply: true,
         applyImmediately: true,
+        forceApplyWhenUnchanged: true,
       });
-      if (didApplyFromSignal && changedKeys.size === 0) {
-        return;
+      if (didApplyFromSignal) {
+        pendingSettingsCrossTabRefreshPaths.clear();
+        pendingSettingsCrossTabNeedsFullApply = false;
+        changedKeys.delete("s1p_settings_refresh");
+        if (changedKeys.size === 0) {
+          return;
+        }
       }
     }
 
@@ -8691,18 +8875,21 @@
     }
 
   };
-  const scheduleCoreDataCrossTabRefresh = (key) => {
-    if (!key) {
-      return;
-    }
-    pendingCoreDataCrossTabRefreshKeys.add(key);
+  const ensureCoreDataCrossTabRefreshScheduled = (delayMs = 120) => {
     if (document.visibilityState === "hidden") {
       return;
     }
     if (coreDataCrossTabRefreshTimer) {
       return;
     }
-    coreDataCrossTabRefreshTimer = setTimeout(runCoreDataCrossTabRefresh, 120);
+    coreDataCrossTabRefreshTimer = setTimeout(runCoreDataCrossTabRefresh, delayMs);
+  };
+  const scheduleCoreDataCrossTabRefresh = (key) => {
+    if (!key) {
+      return;
+    }
+    pendingCoreDataCrossTabRefreshKeys.add(key);
+    ensureCoreDataCrossTabRefreshScheduled();
   };
   const initializeCoreDataCacheSync = () => {
     if (window.__s1pCoreDataCacheSyncBound) {
@@ -8718,7 +8905,13 @@
       GM_addValueChangeListener(
         key,
         (_changedKey, _oldValue, newValue, isCrossContextChange) => {
-          if (!isCrossContextChange) {
+          if (
+            !shouldHandleCoreDataCrossTabChange(
+              key,
+              newValue,
+              isCrossContextChange
+            )
+          ) {
             return;
           }
           setComparableStoredValue(key, newValue);
@@ -8744,7 +8937,7 @@
         pendingCoreDataCrossTabRefreshKeys.size > 0 &&
         !coreDataCrossTabRefreshTimer
       ) {
-        coreDataCrossTabRefreshTimer = setTimeout(runCoreDataCrossTabRefresh, 0);
+        ensureCoreDataCrossTabRefreshScheduled(0);
       }
     });
   };
@@ -8829,7 +9022,11 @@
     localSettingsWriteInFlightCount += 1;
     try {
       GM_setValue("s1p_settings", normalizedSettings);
-      GM_setValue(SETTINGS_CROSS_TAB_SIGNAL_KEY, Date.now() + Math.random());
+      GM_setValue(SETTINGS_CROSS_TAB_SIGNAL_KEY, {
+        ts: Date.now(),
+        sender: SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID,
+        nonce: Math.random(),
+      });
       setSettingsCache(normalizedSettings);
     } finally {
       localSettingsWriteInFlightCount = Math.max(
@@ -10587,6 +10784,7 @@
       return totalTabsWidth + 32;
     };
     const requiredWidth = calculateModalWidth();
+    settingsModalCrossTabSyncController = null;
     document.querySelector(".s1p-modal")?.remove();
 
     const modal = document.createElement("div");
@@ -10766,6 +10964,53 @@
       tabElement.addEventListener("click", nextHandler);
       return nextHandler;
     };
+    const SETTINGS_MODAL_DIRTY_TAB = Object.freeze({
+      THREAD_RULES: "thread_rules",
+      NAV_SETTINGS: "nav_settings",
+      SYNC_SETTINGS: "sync_settings",
+    });
+    const settingsModalDirtyState = {
+      [SETTINGS_MODAL_DIRTY_TAB.THREAD_RULES]: false,
+      [SETTINGS_MODAL_DIRTY_TAB.NAV_SETTINGS]: false,
+      [SETTINGS_MODAL_DIRTY_TAB.SYNC_SETTINGS]: false,
+    };
+    let lastSettingsModalDirtyNoticeAt = 0;
+    const SETTINGS_MODAL_DIRTY_NOTICE_COOLDOWN_MS = 5000;
+    const setSettingsModalDirtyState = (tabKey, isDirty = true) => {
+      if (!tabKey) {
+        return;
+      }
+      settingsModalDirtyState[tabKey] = isDirty === true;
+    };
+    const isSettingsModalDirty = (tabKey) =>
+      tabKey ? settingsModalDirtyState[tabKey] === true : false;
+    const notifySettingsModalDirtyTabDeferredRefresh = (tabLabels = []) => {
+      if (!Array.isArray(tabLabels) || tabLabels.length === 0) {
+        return;
+      }
+      const now = Date.now();
+      if (
+        now - lastSettingsModalDirtyNoticeAt <
+        SETTINGS_MODAL_DIRTY_NOTICE_COOLDOWN_MS
+      ) {
+        return;
+      }
+      lastSettingsModalDirtyNoticeAt = now;
+      const uniqueLabels = Array.from(
+        new Set(
+          tabLabels
+            .map((label) => String(label || "").trim())
+            .filter((label) => label)
+        )
+      );
+      if (uniqueLabels.length === 0) {
+        return;
+      }
+      showMessage(
+        `检测到其他标签页设置变更，已保留当前未保存编辑（${uniqueLabels.join("、")}）。请先保存后再查看最新状态。`,
+        null
+      );
+    };
     const dataClearanceConfig = {
       blockedThreads: {
         label: "手动屏蔽的帖子和用户主题帖",
@@ -10849,6 +11094,9 @@
     const dailySyncToggle = modal.querySelector(
       "#s1p-daily-first-load-sync-enabled-toggle"
     );
+    const autoSyncToggle = modal.querySelector("#s1p-auto-sync-enabled-toggle");
+    const remoteGistIdInput = modal.querySelector("#s1p-remote-gist-id-input");
+    const remotePatInput = modal.querySelector("#s1p-remote-pat-input");
     const forcePullWrapper = modal.querySelector(
       "#s1p-tab-sync .s1p-settings-sub-group"
     );
@@ -10856,7 +11104,7 @@
       "#s1p-force-pull-on-startup-toggle"
     );
 
-    const updateForcePullState = () => {
+    const updateForcePullState = ({ persistWhenDisabled = true } = {}) => {
       const isDailySyncEnabled = dailySyncToggle.checked;
       if (isDailySyncEnabled) {
         forcePullWrapper.style.opacity = "1";
@@ -10867,12 +11115,16 @@
         forcePullWrapper.style.pointerEvents = "none";
         forcePullToggle.checked = false;
         forcePullToggle.disabled = true;
-        // 触发一次change事件以确保设置能被保存
-        forcePullToggle.dispatchEvent(new Event("change"));
+        if (persistWhenDisabled) {
+          // 触发一次change事件以确保设置能被保存
+          forcePullToggle.dispatchEvent(new Event("change"));
+        }
       }
     };
 
-    dailySyncToggle.addEventListener("change", updateForcePullState);
+    dailySyncToggle.addEventListener("change", () =>
+      updateForcePullState({ persistWhenDisabled: true })
+    );
     // End of changes
 
     const settings = getSettings();
@@ -10934,16 +11186,28 @@
 
     modal.querySelector("#s1p-daily-first-load-sync-enabled-toggle").checked =
       settings.syncDailyFirstLoad;
-    modal.querySelector("#s1p-auto-sync-enabled-toggle").checked =
-      settings.syncAutoEnabled;
+    modal.querySelector("#s1p-auto-sync-enabled-toggle").checked = settings.syncAutoEnabled;
     modal.querySelector("#s1p-force-pull-on-startup-toggle").checked =
       settings.syncForcePullOnStartup;
-    modal.querySelector("#s1p-remote-gist-id-input").value =
-      settings.syncRemoteGistId || "";
-    modal.querySelector("#s1p-remote-pat-input").value =
-      settings.syncRemotePat || "";
+    modal.querySelector("#s1p-remote-gist-id-input").value = settings.syncRemoteGistId || "";
+    modal.querySelector("#s1p-remote-pat-input").value = settings.syncRemotePat || "";
 
     remoteToggle.addEventListener("change", updateRemoteSyncInputsState);
+    const markSyncSettingsDirty = () =>
+      setSettingsModalDirtyState(SETTINGS_MODAL_DIRTY_TAB.SYNC_SETTINGS, true);
+    remoteToggle.addEventListener("change", markSyncSettingsDirty);
+    dailySyncToggle.addEventListener("change", markSyncSettingsDirty);
+    if (autoSyncToggle) {
+      autoSyncToggle.addEventListener("change", markSyncSettingsDirty);
+    }
+    if (remoteGistIdInput) {
+      remoteGistIdInput.addEventListener("input", markSyncSettingsDirty);
+      remoteGistIdInput.addEventListener("change", markSyncSettingsDirty);
+    }
+    if (remotePatInput) {
+      remotePatInput.addEventListener("input", markSyncSettingsDirty);
+      remotePatInput.addEventListener("change", markSyncSettingsDirty);
+    }
 
     // [新增] Token 过期提醒逻辑
     const tokenExpiryToggle = modal.querySelector("#s1p-token-expiry-reminder-toggle");
@@ -11031,6 +11295,63 @@
       }
     });
     updateTokenExpiryInfo();
+
+    const setModalCheckedControl = (selector, checked) => {
+      const control = modal.querySelector(selector);
+      if (!control) {
+        return;
+      }
+      const nextChecked = checked === true;
+      if (control.checked !== nextChecked) {
+        control.checked = nextChecked;
+      }
+    };
+    const setModalInputValue = (selector, value) => {
+      const control = modal.querySelector(selector);
+      if (!control) {
+        return;
+      }
+      const nextValue = String(value ?? "");
+      if (control.value !== nextValue) {
+        control.value = nextValue;
+      }
+    };
+    const refreshSyncTabControlsFromSettings = ({
+      suppressForcePullPersist = true,
+    } = {}) => {
+      const latestSettings = getSettings();
+      setModalCheckedControl(
+        "#s1p-remote-enabled-toggle",
+        latestSettings.syncRemoteEnabled
+      );
+      setModalCheckedControl(
+        "#s1p-daily-first-load-sync-enabled-toggle",
+        latestSettings.syncDailyFirstLoad
+      );
+      setModalCheckedControl(
+        "#s1p-auto-sync-enabled-toggle",
+        latestSettings.syncAutoEnabled
+      );
+      setModalCheckedControl(
+        "#s1p-force-pull-on-startup-toggle",
+        latestSettings.syncForcePullOnStartup
+      );
+      setModalCheckedControl(
+        "#s1p-token-expiry-reminder-toggle",
+        latestSettings.syncTokenExpiryEnabled
+      );
+      setModalCheckedControl(
+        "#s1p-direct-choice-mode-toggle",
+        latestSettings.syncDirectChoiceMode
+      );
+      setModalInputValue("#s1p-remote-gist-id-input", latestSettings.syncRemoteGistId);
+      setModalInputValue("#s1p-remote-pat-input", latestSettings.syncRemotePat);
+      updateRemoteSyncInputsState();
+      updateForcePullState({
+        persistWhenDisabled: !suppressForcePullPersist,
+      });
+      updateTokenExpiryInfo();
+    };
 
     updateRemoteSyncInputsState();
     updateForcePullState(); // [MODIFIED] 初始化子选项的状态
@@ -11589,6 +11910,7 @@
       );
     };
     const renderThreadTab = () => {
+      setSettingsModalDirtyState(SETTINGS_MODAL_DIRTY_TAB.THREAD_RULES, false);
       const settings = getSettings();
       const isEnabled = settings.enablePostBlocking;
 
@@ -11867,6 +12189,21 @@
 
       renderRules();
       renderDynamicallyHiddenList();
+      const rulesContainer = tabs["threads"].querySelector("#s1p-keyword-rules-list");
+      if (rulesContainer) {
+        rulesContainer.addEventListener("input", (event) => {
+          const target = event.target;
+          if (target && target.matches(".s1p-keyword-rule-pattern")) {
+            setSettingsModalDirtyState(SETTINGS_MODAL_DIRTY_TAB.THREAD_RULES, true);
+          }
+        });
+        rulesContainer.addEventListener("change", (event) => {
+          const target = event.target;
+          if (target && target.matches(".s1p-keyword-rule-enable")) {
+            setSettingsModalDirtyState(SETTINGS_MODAL_DIRTY_TAB.THREAD_RULES, true);
+          }
+        });
+      }
       const saveKeywordRules = () => {
         const newRules = [];
         tabs["threads"]
@@ -11891,6 +12228,7 @@
         hideThreadsByTitleKeyword();
         renderDynamicallyHiddenList();
         renderRules();
+        setSettingsModalDirtyState(SETTINGS_MODAL_DIRTY_TAB.THREAD_RULES, false);
       };
 
       threadTabClickHandler = rebindTabClickHandler(
@@ -11958,6 +12296,7 @@
             });
             container.appendChild(newItem);
             newItem.querySelector('input[type="text"]').focus();
+            setSettingsModalDirtyState(SETTINGS_MODAL_DIRTY_TAB.THREAD_RULES, true);
           } else if (target.closest(".s1p-delete-button")) {
             const item = target.closest(".s1p-editor-item");
             if (item) {
@@ -11978,6 +12317,10 @@
                     if (container.children.length === 0) {
                       container.appendChild(createRuleEmptyMessage());
                     }
+                    setSettingsModalDirtyState(
+                      SETTINGS_MODAL_DIRTY_TAB.THREAD_RULES,
+                      true
+                    );
                     showMessage("未保存的新规则已移除。", null);
                     return;
                   }
@@ -11989,6 +12332,10 @@
                   hideThreadsByTitleKeyword();
                   renderDynamicallyHiddenList();
                   renderRules();
+                  setSettingsModalDirtyState(
+                    SETTINGS_MODAL_DIRTY_TAB.THREAD_RULES,
+                    false
+                  );
                   showMessage("规则已成功删除。", true);
                 },
                 "确认删除",
@@ -12314,6 +12661,7 @@
       }
     };
     const renderNavSettingsTab = () => {
+      setSettingsModalDirtyState(SETTINGS_MODAL_DIRTY_TAB.NAV_SETTINGS, false);
       const settings = getSettings();
       tabs["nav-settings"].innerHTML = `
         <div class="s1p-settings-group">
@@ -12399,6 +12747,16 @@
       };
 
       renderNavList(settings.customNavLinks);
+      navListContainer.addEventListener("input", (e) => {
+        const target = e.target;
+        if (
+          target &&
+          (target.classList.contains("s1p-nav-name") ||
+            target.classList.contains("s1p-nav-href"))
+        ) {
+          setSettingsModalDirtyState(SETTINGS_MODAL_DIRTY_TAB.NAV_SETTINGS, true);
+        }
+      });
 
       let draggedItem = null;
       navListContainer.addEventListener("dragstart", (e) => {
@@ -12413,6 +12771,7 @@
         if (draggedItem) {
           draggedItem.classList.remove("s1p-dragging");
           draggedItem = null;
+          setSettingsModalDirtyState(SETTINGS_MODAL_DIRTY_TAB.NAV_SETTINGS, true);
         }
       });
       navListContainer.addEventListener("dragover", (e) => {
@@ -12444,6 +12803,7 @@
             newItem.querySelector(".s1p-nav-name").placeholder = "新链接";
             newItem.querySelector(".s1p-nav-href").placeholder = "forum.php";
             navListContainer.appendChild(newItem);
+            setSettingsModalDirtyState(SETTINGS_MODAL_DIRTY_TAB.NAV_SETTINGS, true);
           } else if (target.closest(".s1p-delete-button")) {
             const item = target.closest(".s1p-editor-item");
             if (item) {
@@ -12455,6 +12815,10 @@
                 `链接名称: ${safeNameForHtml}<br>此操作仅在UI上移除，需要点击下方的“保存设置”按钮才会真正生效。`,
                 () => {
                   item.remove();
+                  setSettingsModalDirtyState(
+                    SETTINGS_MODAL_DIRTY_TAB.NAV_SETTINGS,
+                    true
+                  );
                   showMessage("链接已从列表移除。", true);
                 },
                 "确认删除",
@@ -12471,6 +12835,10 @@
                   defaultSettings.enableNavCustomization;
                 currentSettings.customNavLinks = defaultSettings.customNavLinks;
                 saveSettings(currentSettings);
+                setSettingsModalDirtyState(
+                  SETTINGS_MODAL_DIRTY_TAB.NAV_SETTINGS,
+                  false
+                );
                 renderNavSettingsTab();
                 initializeNavbar();
                 showMessage("导航栏已恢复为默认设置！", true);
@@ -12497,6 +12865,7 @@
               customNavLinks: normalizedCustomNavLinks,
             };
             saveSettings(newSettings);
+            setSettingsModalDirtyState(SETTINGS_MODAL_DIRTY_TAB.NAV_SETTINGS, false);
             initializeNavbar();
             if (normalizedCustomNavLinks.length < rawCustomNavLinks.length) {
               showMessage("检测到不安全导航链接，已自动忽略。", false);
@@ -12513,6 +12882,134 @@
     renderTagsTab();
     renderBookmarksTab();
     renderNavSettingsTab();
+
+    const closeManagementModal = () => {
+      if (
+        settingsModalCrossTabSyncController &&
+        settingsModalCrossTabSyncController.modalElement === modal
+      ) {
+        settingsModalCrossTabSyncController = null;
+      }
+      modal.remove();
+    };
+    const shouldRefreshModalTabByPaths = (changedPathSet, watchedPaths) => {
+      if (!(changedPathSet instanceof Set) || changedPathSet.size === 0) {
+        return true;
+      }
+      return watchedPaths.some((path) =>
+        hasSettingPathInChangedSet(changedPathSet, path)
+      );
+    };
+    const refreshOpenSettingsModalByChangedPaths = ({
+      changedPathSet = new Set(),
+      forceFullApply = false,
+    } = {}) => {
+      if (!modal.isConnected) {
+        return;
+      }
+      const shouldRefreshGeneralTab =
+        forceFullApply ||
+        shouldRefreshModalTabByPaths(changedPathSet, [
+          "enableGeneralSettings",
+          "enableReadProgress",
+          "readingProgressCleanupDays",
+          "cleanupMode",
+          "openInNewTab",
+          "showReadIndicator",
+          "hideImagesByDefault",
+          "hideSystemBlockedPosts",
+          "recommendS1Nux",
+          "enhanceFloatingControls",
+          "changeLogoLink",
+          "hideBlacklistTip",
+          "customTitleSuffix",
+        ]);
+      const shouldRefreshThreadTab =
+        forceFullApply ||
+        shouldRefreshModalTabByPaths(changedPathSet, [
+          "enablePostBlocking",
+          "blockThreadsOnUserBlock",
+          "syncWithNativeBlacklist",
+          "showBlockedByKeywordList",
+          "showManuallyBlockedList",
+        ]);
+      const shouldRefreshUserTab =
+        forceFullApply ||
+        shouldRefreshModalTabByPaths(changedPathSet, [
+          "enableUserBlocking",
+          "syncWithNativeBlacklist",
+        ]);
+      const shouldRefreshTagsTab =
+        forceFullApply ||
+        shouldRefreshModalTabByPaths(changedPathSet, ["enableUserTagging"]);
+      const shouldRefreshBookmarksTab =
+        forceFullApply ||
+        shouldRefreshModalTabByPaths(changedPathSet, ["enableBookmarkReplies"]);
+      const shouldRefreshNavTab =
+        forceFullApply ||
+        shouldRefreshModalTabByPaths(changedPathSet, [
+          "enableNavCustomization",
+          "customNavLinks",
+        ]);
+      const shouldRefreshSyncTab =
+        forceFullApply ||
+        shouldRefreshModalTabByPaths(changedPathSet, [
+          "syncRemoteEnabled",
+          "syncDailyFirstLoad",
+          "syncAutoEnabled",
+          "syncForcePullOnStartup",
+          "syncDirectChoiceMode",
+          "syncRemoteGistId",
+          "syncRemotePat",
+          "syncTokenExpiryEnabled",
+          "syncTokenExpiryDate",
+        ]);
+      const deferredDirtyTabLabels = [];
+
+      if (shouldRefreshGeneralTab) {
+        renderGeneralSettingsTab();
+      }
+      if (shouldRefreshThreadTab) {
+        if (isSettingsModalDirty(SETTINGS_MODAL_DIRTY_TAB.THREAD_RULES)) {
+          deferredDirtyTabLabels.push("帖子屏蔽");
+        } else {
+          renderThreadTab();
+        }
+      }
+      if (shouldRefreshUserTab) {
+        renderUserTab();
+      }
+      if (shouldRefreshTagsTab) {
+        renderTagsTab();
+      }
+      if (shouldRefreshBookmarksTab) {
+        renderBookmarksTab();
+      }
+      if (shouldRefreshNavTab) {
+        if (isSettingsModalDirty(SETTINGS_MODAL_DIRTY_TAB.NAV_SETTINGS)) {
+          deferredDirtyTabLabels.push("导航栏定制");
+        } else {
+          renderNavSettingsTab();
+        }
+      }
+      if (shouldRefreshSyncTab) {
+        if (isSettingsModalDirty(SETTINGS_MODAL_DIRTY_TAB.SYNC_SETTINGS)) {
+          deferredDirtyTabLabels.push("设置同步");
+        } else {
+          refreshSyncTabControlsFromSettings({ suppressForcePullPersist: true });
+        }
+      }
+      if (deferredDirtyTabLabels.length > 0) {
+        notifySettingsModalDirtyTabDeferredRefresh(deferredDirtyTabLabels);
+      }
+    };
+    settingsModalCrossTabSyncController = {
+      modalElement: modal,
+      isAlive: () => modal.isConnected,
+      sync: ({ changedPathSet = new Set(), forceFullApply = false } = {}) => {
+        refreshOpenSettingsModalByChangedPaths({ changedPathSet, forceFullApply });
+      },
+    };
 
     const tabContainer = modal.querySelector(".s1p-tabs");
     setTimeout(() => moveTabSlider(tabContainer), 50);
@@ -12734,7 +13231,7 @@
 
     modal.addEventListener("click", async (e) => {
       const target = e.target;
-      if (e.target.matches(".s1p-modal, .s1p-modal-close")) modal.remove();
+      if (e.target.matches(".s1p-modal, .s1p-modal-close")) closeManagementModal();
       if (e.target.matches(".s1p-tab-btn")) {
         const tabContainer = e.target.closest(".s1p-tabs");
         modal
@@ -12979,6 +13476,18 @@
             });
 
             if (selectedKeys.includes("settings")) {
+              setSettingsModalDirtyState(
+                SETTINGS_MODAL_DIRTY_TAB.SYNC_SETTINGS,
+                false
+              );
+              setSettingsModalDirtyState(
+                SETTINGS_MODAL_DIRTY_TAB.NAV_SETTINGS,
+                false
+              );
+              setSettingsModalDirtyState(
+                SETTINGS_MODAL_DIRTY_TAB.THREAD_RULES,
+                false
+              );
               modal.querySelector("#s1p-remote-enabled-toggle").checked = false;
               modal.querySelector(
                 "#s1p-daily-first-load-sync-enabled-toggle"
@@ -13082,6 +13591,7 @@
             suppressSyncTrigger: true,
             markDataChangedWhenSuppressed: shouldMarkSyncedDataChange,
           });
+          setSettingsModalDirtyState(SETTINGS_MODAL_DIRTY_TAB.SYNC_SETTINGS, false);
           updateNavbarSyncButton();
 
           if (
@@ -17425,6 +17935,7 @@
     manageImageToggleAllButtons();
     applyGlobalLinkBehavior(); // <--- MODIFIED
     trackReadProgressInThread();
+    markSettingsRuntimeAppliedSnapshot(settings);
     try {
       autoSign();
     } catch (e) {

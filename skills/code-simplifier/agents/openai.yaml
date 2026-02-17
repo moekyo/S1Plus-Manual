@@ -1,0 +1,7 @@
+interface:
+  display_name: "Code Simplifier"
+  short_description: "Safe refactors for clearer, simpler code"
+  default_prompt: "Use $code-simplifier to simplify my recent code changes without changing behavior."
+
+policy:
+  allow_implicit_invocation: true
