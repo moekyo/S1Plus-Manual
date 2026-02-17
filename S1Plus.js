@@ -6139,9 +6139,14 @@
 
   // [MODIFIED] 导出数据对象，采用新的嵌套结构并包含内容哈希
   const exportLocalDataObject = async (
-    { compactBookmarksForSync = true, compactBlockedPostsForSync = true } = {}
+    { compactBookmarksForSync = null, compactBlockedPostsForSync = true } = {}
   ) => {
-    const syncedSettings = getSyncedSettings(getSettings());
+    const currentSettings = getSettings();
+    const syncedSettings = getSyncedSettings(currentSettings);
+    const shouldCompactBookmarksForSync =
+      typeof compactBookmarksForSync === "boolean"
+        ? compactBookmarksForSync
+        : currentSettings.syncBookmarkFullContent !== true;
 
     const data = {
       settings: syncedSettings, // 使用过滤后的设置对象
@@ -6150,7 +6155,7 @@
       user_tags: getUserTags(),
       title_filter_rules: getTitleFilterRules(),
       read_progress: getReadProgress(),
-      bookmarked_replies: compactBookmarksForSync
+      bookmarked_replies: shouldCompactBookmarksForSync
         ? getBookmarkedRepliesForSync()
         : getBookmarkedReplies(),
       blocked_posts: compactBlockedPostsForSync
@@ -8150,6 +8155,7 @@
     syncAutoEnabled: true,
     syncForcePullOnStartup: false, // <-- [新增] 新增功能开关
     syncDirectChoiceMode: false,
+    syncBookmarkFullContent: false,
     syncRemoteGistId: "",
     syncRemotePat: "",
     syncTokenExpiryEnabled: false, // [新增] Token 过期提醒
@@ -8269,6 +8275,15 @@
     }
     settings.syncTokenExpiryDate = normalizedTokenExpiryDate;
 
+    const normalizedSyncBookmarkFullContent =
+      settings.syncBookmarkFullContent === true;
+    if (
+      settings.syncBookmarkFullContent !== normalizedSyncBookmarkFullContent
+    ) {
+      migrationApplied = true;
+    }
+    settings.syncBookmarkFullContent = normalizedSyncBookmarkFullContent;
+
     return { settings, migrationApplied };
   };
 
@@ -8331,6 +8346,7 @@
     "syncDailyFirstLoad",
     "syncAutoEnabled",
     "syncForcePullOnStartup",
+    "syncBookmarkFullContent",
     "syncTokenExpiryEnabled",
     "syncTokenExpiryDate",
   ];
@@ -10974,6 +10990,14 @@
                                 </label>
                             </div>
                             <p class="s1p-setting-desc">关闭时，点击同步按钮将智能判断；开启时，悬停同步按钮可直接选择推送或拉取。</p>
+                            <div class="s1p-settings-item">
+                                <label class="s1p-settings-label" for="s1p-sync-bookmark-full-content-toggle">收藏回复同步完整正文</label>
+                                <label class="s1p-switch">
+                                    <input type="checkbox" id="s1p-sync-bookmark-full-content-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
+                                    <span class="s1p-slider"></span>
+                                </label>
+                            </div>
+                            <p class="s1p-setting-desc">关闭时仅同步 280 字预览（更快更省流量）；开启后会同步完整收藏内容（跨设备可查看全文，但体积更大）。</p>
                             <div class="s1p-settings-item" style="flex-direction: column; align-items: flex-start; gap: 4px;">
                                 <label class="s1p-settings-label" for="s1p-remote-gist-id-input">Gist ID</label>
                                 <input type="text" id="s1p-remote-gist-id-input" class="s1p-input" placeholder="从 Gist 网址中复制的那一长串 ID" style="width: 100%;" autocomplete="off" data-s1p-sync-control>
@@ -11189,6 +11213,9 @@
       "#s1p-daily-first-load-sync-enabled-toggle"
     );
     const autoSyncToggle = modal.querySelector("#s1p-auto-sync-enabled-toggle");
+    const bookmarkFullContentToggle = modal.querySelector(
+      "#s1p-sync-bookmark-full-content-toggle"
+    );
     const remoteGistIdInput = modal.querySelector("#s1p-remote-gist-id-input");
     const remotePatInput = modal.querySelector("#s1p-remote-pat-input");
     const forcePullWrapper = modal.querySelector(
@@ -11278,30 +11305,30 @@
       });
     }
 
-    modal.querySelector("#s1p-daily-first-load-sync-enabled-toggle").checked =
-      settings.syncDailyFirstLoad;
-    modal.querySelector("#s1p-auto-sync-enabled-toggle").checked = settings.syncAutoEnabled;
-    modal.querySelector("#s1p-force-pull-on-startup-toggle").checked =
-      settings.syncForcePullOnStartup;
-    modal.querySelector("#s1p-remote-gist-id-input").value = settings.syncRemoteGistId || "";
-    modal.querySelector("#s1p-remote-pat-input").value = settings.syncRemotePat || "";
+    dailySyncToggle.checked = settings.syncDailyFirstLoad;
+    autoSyncToggle.checked = settings.syncAutoEnabled;
+    bookmarkFullContentToggle.checked = settings.syncBookmarkFullContent;
+    forcePullToggle.checked = settings.syncForcePullOnStartup;
+    remoteGistIdInput.value = settings.syncRemoteGistId || "";
+    remotePatInput.value = settings.syncRemotePat || "";
 
     remoteToggle.addEventListener("change", updateRemoteSyncInputsState);
     const markSyncSettingsDirty = () =>
       setSettingsModalDirtyState(SETTINGS_MODAL_DIRTY_TAB.SYNC_SETTINGS, true);
-    remoteToggle.addEventListener("change", markSyncSettingsDirty);
-    dailySyncToggle.addEventListener("change", markSyncSettingsDirty);
-    if (autoSyncToggle) {
-      autoSyncToggle.addEventListener("change", markSyncSettingsDirty);
-    }
-    if (remoteGistIdInput) {
-      remoteGistIdInput.addEventListener("input", markSyncSettingsDirty);
-      remoteGistIdInput.addEventListener("change", markSyncSettingsDirty);
-    }
-    if (remotePatInput) {
-      remotePatInput.addEventListener("input", markSyncSettingsDirty);
-      remotePatInput.addEventListener("change", markSyncSettingsDirty);
-    }
+    const bindDirtyListenerForTextInput = (inputControl) => {
+      inputControl.addEventListener("input", markSyncSettingsDirty);
+      inputControl.addEventListener("change", markSyncSettingsDirty);
+    };
+    [
+      remoteToggle,
+      dailySyncToggle,
+      autoSyncToggle,
+      bookmarkFullContentToggle,
+    ].forEach((toggleControl) =>
+      toggleControl.addEventListener("change", markSyncSettingsDirty)
+    );
+    bindDirtyListenerForTextInput(remoteGistIdInput);
+    bindDirtyListenerForTextInput(remotePatInput);
 
     // [新增] Token 过期提醒逻辑
     const tokenExpiryToggle = modal.querySelector("#s1p-token-expiry-reminder-toggle");
@@ -11425,6 +11452,10 @@
       setModalCheckedControl(
         "#s1p-auto-sync-enabled-toggle",
         latestSettings.syncAutoEnabled
+      );
+      setModalCheckedControl(
+        "#s1p-sync-bookmark-full-content-toggle",
+        latestSettings.syncBookmarkFullContent
       );
       setModalCheckedControl(
         "#s1p-force-pull-on-startup-toggle",
@@ -13053,6 +13084,7 @@
           "syncAutoEnabled",
           "syncForcePullOnStartup",
           "syncDirectChoiceMode",
+          "syncBookmarkFullContent",
           "syncRemoteGistId",
           "syncRemotePat",
           "syncTokenExpiryEnabled",
@@ -13582,15 +13614,12 @@
                 SETTINGS_MODAL_DIRTY_TAB.THREAD_RULES,
                 false
               );
-              modal.querySelector("#s1p-remote-enabled-toggle").checked = false;
-              modal.querySelector(
-                "#s1p-daily-first-load-sync-enabled-toggle"
-              ).checked = true;
-              modal.querySelector(
-                "#s1p-auto-sync-enabled-toggle"
-              ).checked = true;
-              modal.querySelector("#s1p-remote-gist-id-input").value = "";
-              modal.querySelector("#s1p-remote-pat-input").value = "";
+              remoteToggle.checked = false;
+              dailySyncToggle.checked = true;
+              autoSyncToggle.checked = true;
+              bookmarkFullContentToggle.checked = false;
+              remoteGistIdInput.value = "";
+              remotePatInput.value = "";
               updateRemoteSyncInputsState();
             }
 
@@ -13658,21 +13687,13 @@
         try {
           const previousSettings = getSettings();
           const currentSettings = { ...previousSettings };
-          currentSettings.syncRemoteEnabled = modal.querySelector(
-            "#s1p-remote-enabled-toggle"
-          ).checked;
-          currentSettings.syncDailyFirstLoad = modal.querySelector(
-            "#s1p-daily-first-load-sync-enabled-toggle"
-          ).checked;
-          currentSettings.syncAutoEnabled = modal.querySelector(
-            "#s1p-auto-sync-enabled-toggle"
-          ).checked;
-          currentSettings.syncRemoteGistId = modal
-            .querySelector("#s1p-remote-gist-id-input")
-            .value.trim();
-          currentSettings.syncRemotePat = modal
-            .querySelector("#s1p-remote-pat-input")
-            .value.trim();
+          currentSettings.syncRemoteEnabled = remoteToggle.checked;
+          currentSettings.syncDailyFirstLoad = dailySyncToggle.checked;
+          currentSettings.syncAutoEnabled = autoSyncToggle.checked;
+          currentSettings.syncBookmarkFullContent =
+            bookmarkFullContentToggle.checked;
+          currentSettings.syncRemoteGistId = remoteGistIdInput.value.trim();
+          currentSettings.syncRemotePat = remotePatInput.value.trim();
           currentSettings.syncTokenExpiryEnabled = modal.querySelector(
             "#s1p-token-expiry-reminder-toggle"
           ).checked;
