@@ -7799,10 +7799,14 @@
     let syncOutcome = "unknown";
     const asSuccessResult = (action, syncBaseline = null) => {
       syncOutcome = "success";
-      if (action !== "skipped_push_on_startup") {
+      if (action === "skipped_push_on_startup") {
+        // 启动安全模式命中“本地较新”时，冻结后续自动同步，等待手动同步决策。
+        setAutoSyncConflictPause("startup_local_newer");
+        clearAutoSyncRuntimeQueue();
+      } else {
         clearPendingAutoSyncRequest();
+        clearAutoSyncConflictPause();
       }
-      clearAutoSyncConflictPause();
       if (syncBaseline) {
         setSyncBaselineState(syncBaseline);
       }
