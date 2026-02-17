@@ -1046,6 +1046,13 @@
       color: var(--s1p-t);
       white-space: nowrap;
     }
+    .s1p-confirm-bar.s1p-confirm-bar-text-first {
+      padding-left: 12px;
+    }
+    .s1p-confirm-bar.s1p-has-expander .s1p-confirm-text {
+      flex: 1;
+      min-width: 0;
+    }
     .s1p-confirm-separator {
       border-left: 1px solid var(--s1p-pri);
       height: 16px; /* 减小高度 */
@@ -1095,6 +1102,52 @@
       box-shadow: 0 4px 12px rgba(var(--s1p-shadow-color-rgb), 0.15);
       border: none !important;
     }
+    .s1p-confirm-container {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .s1p-confirm-card {
+      background-color: var(--s1p-bg);
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(var(--s1p-shadow-color-rgb), 0.15);
+      border: none;
+      overflow: hidden;
+    }
+    .s1p-inline-confirm-menu.s1p-has-remark-input {
+      background: transparent !important;
+      box-shadow: none !important;
+      border: none !important;
+    }
+    .s1p-inline-confirm-menu.s1p-has-remark-input .s1p-confirm-container {
+      gap: 12px;
+    }
+    .s1p-confirm-expand-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      border: none;
+      border-radius: 50%;
+      background: transparent;
+      color: var(--s1p-t);
+      cursor: pointer;
+      padding: 0;
+      margin-right: 2px;
+      flex-shrink: 0;
+      transition: transform 0.2s ease, background-color 0.2s ease;
+    }
+    .s1p-confirm-expand-btn:hover {
+      background-color: var(--s1p-hover-bg);
+    }
+    .s1p-confirm-expand-btn.expanded {
+      transform: rotate(90deg);
+    }
+    .s1p-confirm-expand-btn svg {
+      width: 16px;
+      height: 16px;
+    }
 
     .s1p-options-menu.s1p-inline-confirm-menu {
       transform: translateY(0) !important;
@@ -1114,7 +1167,6 @@
 
     .s1p-confirm-remark-area {
       padding: 12px;
-      border-top: 1px solid var(--s1p-pri);
       display: none;
       animation: s1p-fade-in-down 0.2s ease forwards;
     }
@@ -10012,13 +10064,6 @@
   };
 
   /**
-   * [MODIFIED] 创建一个行内确认菜单 (V2: 带智能定位和动画)
-   * @param {HTMLElement} anchorElement - 菜单定位的锚点元素
-   * @param {string} confirmText - 确认提示文本
-   * @param {Function} onConfirm - 点击确认后执行的回调函数
-   */
-  /**
-  /**
    * [NEW] 创建一个通用的确认菜单内容结构
    * @param {string} confirmText - 确认提示文本
    * @param {object} options - 额外选项
@@ -10027,8 +10072,9 @@
   const buildConfirmationMarkup = (confirmText, options = {}) => {
     const container = document.createElement("div");
     container.className = "s1p-confirm-container";
-
-    const uniqueId = `s1p-confirm-${Date.now()}`;
+    const hasRemarkInput = Boolean(options.inputPlaceholder);
+    const useTextFirstLayout =
+      hasRemarkInput || options.actionLayout === "text-first";
 
     const bar = document.createElement("div");
     bar.className = "s1p-confirm-bar";
@@ -10048,23 +10094,11 @@
     text.className = "s1p-confirm-text";
     text.textContent = String(confirmText ?? "");
 
-    bar.appendChild(confirmBtn);
-    bar.appendChild(cancelBtn);
-    bar.appendChild(separator);
-    bar.appendChild(text);
-
-    if (options.inputPlaceholder) {
+    if (hasRemarkInput) {
+      bar.classList.add("s1p-has-expander");
       const expandBtn = document.createElement("button");
+      expandBtn.type = "button";
       expandBtn.className = "s1p-confirm-expand-btn";
-      expandBtn.style.background = "none";
-      expandBtn.style.border = "none";
-      expandBtn.style.cursor = "pointer";
-      expandBtn.style.padding = "0";
-      expandBtn.style.marginLeft = "4px";
-      expandBtn.style.display = "flex";
-      expandBtn.style.alignItems = "center";
-      expandBtn.style.color = "var(--s1p-t)";
-      expandBtn.style.transition = "transform 0.2s ease";
 
       const ns = "http://www.w3.org/2000/svg";
       const icon = document.createElementNS(ns, "svg");
@@ -10081,13 +10115,35 @@
       icon.appendChild(polyline);
       expandBtn.appendChild(icon);
       bar.appendChild(expandBtn);
+    } else if (useTextFirstLayout) {
+      bar.classList.add("s1p-confirm-bar-text-first");
     }
 
-    container.appendChild(bar);
+    if (useTextFirstLayout) {
+      bar.appendChild(text);
+      bar.appendChild(separator);
+      bar.appendChild(cancelBtn);
+      bar.appendChild(confirmBtn);
+    } else {
+      bar.appendChild(confirmBtn);
+      bar.appendChild(cancelBtn);
+      bar.appendChild(separator);
+      bar.appendChild(text);
+    }
 
-    if (options.inputPlaceholder) {
+    if (hasRemarkInput) {
+      const barCard = document.createElement("div");
+      barCard.className = "s1p-confirm-card s1p-confirm-bar-card";
+      barCard.appendChild(bar);
+      container.appendChild(barCard);
+    } else {
+      container.appendChild(bar);
+    }
+
+    if (hasRemarkInput) {
+      const uniqueId = `s1p-confirm-${Date.now()}`;
       const remarkArea = document.createElement("div");
-      remarkArea.className = "s1p-confirm-remark-area";
+      remarkArea.className = "s1p-confirm-card s1p-confirm-remark-area";
       remarkArea.id = `${uniqueId}-remark-area`;
 
       const label = document.createElement("div");
@@ -10143,9 +10199,20 @@
 
     const menu = document.createElement("div");
     menu.className = "s1p-options-menu s1p-inline-confirm-menu s1p-confirm-wrapper";
+    const resolvedOptions = { ...options };
+    const isAnchorInAuthiActions = Boolean(
+      anchorElement?.closest?.(".s1p-authi-actions-wrapper")
+    );
+    if (!resolvedOptions.actionLayout && isAnchorInAuthiActions) {
+      resolvedOptions.actionLayout = "text-first";
+    }
+    const hasRemarkInput = Boolean(resolvedOptions.inputPlaceholder);
+    if (hasRemarkInput) {
+      menu.classList.add("s1p-has-remark-input");
+    }
     menu.style.width = "max-content";
 
-    const content = buildConfirmationMarkup(confirmText, options);
+    const content = buildConfirmationMarkup(confirmText, resolvedOptions);
     menu.appendChild(content);
 
     const cancelBtn = menu.querySelector(".s1p-cancel");
@@ -10182,41 +10249,68 @@
     menu.style.left = `${left}px`;
 
     // Logic for Expand Button
-    if (options.inputPlaceholder) {
-      const expandBtn = menu.querySelector('.s1p-confirm-expand-btn');
-      const remarkArea = menu.querySelector('.s1p-confirm-remark-area');
+    if (hasRemarkInput) {
+      const expandBtn = menu.querySelector(".s1p-confirm-expand-btn");
+      const remarkArea = menu.querySelector(".s1p-confirm-remark-area");
 
       if (expandBtn && remarkArea) {
-        expandBtn.addEventListener('click', (e) => {
+        let closeAnimationEndHandler = null;
+        const clearCloseAnimationEndHandler = () => {
+          if (closeAnimationEndHandler) {
+            remarkArea.removeEventListener("animationend", closeAnimationEndHandler);
+            closeAnimationEndHandler = null;
+          }
+        };
+        const setRemarkExpandedState = (expanded) => {
+          expandBtn.classList.toggle("expanded", expanded);
+          expandBtn.setAttribute("aria-expanded", expanded ? "true" : "false");
+          remarkArea.dataset.expanded = expanded ? "true" : "false";
+        };
+        const collapseRemarkArea = () => {
+          clearCloseAnimationEndHandler();
+          setRemarkExpandedState(false);
+          remarkArea.classList.add("closing");
+          remarkArea.style.animation = "s1p-fade-out-up 0.2s ease forwards";
+          closeAnimationEndHandler = () => {
+            remarkArea.style.display = "none";
+            remarkArea.classList.remove("closing");
+            remarkArea.style.animation = "";
+            clearCloseAnimationEndHandler();
+          };
+          remarkArea.addEventListener("animationend", closeAnimationEndHandler, {
+            once: true,
+          });
+        };
+        const expandRemarkArea = () => {
+          clearCloseAnimationEndHandler();
+          remarkArea.classList.remove("closing");
+          remarkArea.style.display = "block";
+          remarkArea.style.animation = "s1p-fade-in-down 0.2s ease forwards";
+          setRemarkExpandedState(true);
+          const textarea = remarkArea.querySelector("textarea");
+          if (textarea) {
+            requestAnimationFrame(() => textarea.focus());
+          }
+        };
+        remarkArea.style.display = "none";
+        setRemarkExpandedState(false);
+
+        expandBtn.addEventListener("click", (e) => {
+          e.preventDefault();
           e.stopPropagation();
-          // Check if currently visible (and not currently closing)
-          const isExpanded = remarkArea.style.display !== 'none' && !remarkArea.classList.contains('closing');
+          const isExpanded =
+            remarkArea.dataset.expanded === "true" &&
+            !remarkArea.classList.contains("closing");
 
           if (isExpanded) {
-            // Start closing animation
-            remarkArea.classList.add('closing');
-            remarkArea.style.animation = 's1p-fade-out-up 0.2s ease forwards';
-            expandBtn.style.transform = 'rotate(0deg)';
-
-            const onAnimationEnd = () => {
-              remarkArea.style.display = 'none';
-              remarkArea.classList.remove('closing');
-              remarkArea.style.animation = ''; // Reset animation
-              remarkArea.removeEventListener('animationend', onAnimationEnd);
-            };
-            remarkArea.addEventListener('animationend', onAnimationEnd);
+            collapseRemarkArea();
           } else {
-            // Open
-            remarkArea.style.display = 'block';
-            remarkArea.style.animation = 's1p-fade-in-down 0.2s ease forwards';
-            expandBtn.style.transform = 'rotate(90deg)';
-            const textarea = remarkArea.querySelector('textarea');
-            requestAnimationFrame(() => textarea.focus());
+            expandRemarkArea();
           }
         });
 
         // Prevent clicks inside remark area from closing the menu
-        remarkArea.addEventListener('click', (e) => {
+        remarkArea.addEventListener("click", (e) => {
           e.stopPropagation();
         });
       }
@@ -15788,7 +15882,9 @@
     menu.dataset.s1pConfirmForTag = "true"; // 添加唯一标识
     menu.style.width = "max-content";
 
-    const content = buildConfirmationMarkup("确认删除？");
+    const content = buildConfirmationMarkup("确认删除？", {
+      actionLayout: "text-first",
+    });
     menu.appendChild(content);
     document.body.appendChild(menu);
 
