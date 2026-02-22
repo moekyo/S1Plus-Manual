@@ -61,6 +61,7 @@
 ### 🐛 问题修复 (Bug Fixes)
 
 - **设置跨标签刷新链路增强（Tampermonkey 兼容）**: 针对部分环境下 `s1p_settings` 变更监听不稳定的问题，新增独立信号键 `s1p_settings_refresh_signal`。信号 payload 增加 `sender`（标签页来源标识），跨标签监听优先按 `sender` 判定来源，不再强依赖 `isCrossContextChange` 的准确性，保证功能开关在其他标签页稳定收敛。
+- **修复云端备份“哈希校验失败”误判**: 修复了同步导出对象在哈希计算后可能被后续本地写入（尤其是阅读进度）就地修改，导致上传 `data` 与 `contentHash` 非同一快照的问题。现在导出路径使用不可变快照参与哈希与上传，并将阅读进度关键写入改为 copy-on-write，避免竞态下误报“云端备份已损坏”。
 - **设置跨标签兜底同步**: 新增可见页轻量对齐机制（`visibilitychange`/`focus`/`pageshow` + 周期轮询），在监听异常时可回退到存储快照对齐，避免 A 页变更后 B 页长期残留旧状态。
 - **设置信号强制收敛修复**: `s1p_settings_refresh_signal` 触发时新增 `forceApplyWhenUnchanged` 路径；即使缓存已被动更新、`cached === stored`，也会执行一次强制应用，修复“值已变但运行态未收敛”的静默失效场景（如阅读进度按钮/帖子屏蔽开关跨标签残留）。
 - **设置面板打开态实时回写**: 新增 `settingsModalCrossTabSyncController`，跨标签设置变更会按路径刷新已打开设置面板中的对应 tab（通用/帖子/用户/标记/收藏/导航/同步），不再需要关闭重开面板才能看到最新开关状态。
