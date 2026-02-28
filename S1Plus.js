@@ -415,6 +415,8 @@
   const OBSERVER_INCREMENTAL_NOTIFICATION_SCOPE_LIMIT = 80;
   // 帖子列表页阅读进度刷新防抖，避免跨标签高频更新导致频繁重绘。
   const READ_PROGRESS_LIST_REFRESH_DEBOUNCE_MS = 120;
+  // 列表页阅读按钮悬停超过该时长后显示删除入口。
+  const READ_PROGRESS_DELETE_REVEAL_DELAY_MS = 2 * 1000;
   // 帖子页阅读进度持久化防抖：以内存批量累积为主，隐藏/卸载前强制落盘。
   const READ_PROGRESS_PERSIST_DEBOUNCE_MS = 5 * 1000;
   // 收藏内容同步只保留短预览，避免整段文本参与哈希和上传。
@@ -546,6 +548,9 @@
       /* -- 阅读进度 -- */
       --s1p-progress-hot: rgb(192, 51, 34);
       --s1p-progress-cold: rgb(107, 114, 128);
+      --s1p-progress-delete-bg: #d95a4d;
+      --s1p-progress-delete-hover-bg: #be463a;
+      --s1p-progress-delete-text: #ffffff;
 
       /* -- 用户标记颜色 -- */
       --s1p-tag-red: #EF4444;
@@ -1279,6 +1284,39 @@
       mask-size: contain;
       mask-repeat: no-repeat;
       mask-position: center;
+    }
+    .s1p-progress-delete-btn {
+      width: 0;
+      box-sizing: border-box;
+      margin-left: 0;
+      padding: 1px 0;
+      border: 0 solid var(--s1p-progress-delete-bg);
+      border-radius: 4px;
+      background: var(--s1p-progress-delete-bg);
+      color: var(--s1p-progress-delete-text);
+      font-size: 12px;
+      font-weight: bold;
+      line-height: 1.4;
+      white-space: nowrap;
+      overflow: hidden;
+      opacity: 0;
+      pointer-events: none;
+      cursor: pointer;
+      transition: width 0.2s ease, opacity 0.2s ease, margin-left 0.2s ease,
+        border-width 0.2s ease, padding 0.2s ease;
+    }
+    .s1p-progress-container.s1p-show-delete-btn .s1p-progress-delete-btn {
+      width: 44px;
+      margin-left: 4px;
+      padding: 1px 6px;
+      border-width: 1px;
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .s1p-progress-delete-btn:hover {
+      background-color: var(--s1p-progress-delete-hover-bg);
+      border-color: var(--s1p-progress-delete-hover-bg);
+      color: var(--s1p-progress-delete-text);
     }
     .s1p-new-replies-badge {
       display: inline-block;
@@ -3308,6 +3346,9 @@
 
         --s1p-border: #4b5563;
         --s1p-hover-overlay: rgba(255, 255, 255, 0.15);
+        --s1p-progress-delete-bg: #e26557;
+        --s1p-progress-delete-hover-bg: #c34a3e;
+        --s1p-progress-delete-text: #ffffff;
       }
 
       /* [移除] 删除按钮白色图标覆写：在系统深色模式但 NUX 禁用时会导致图标不可见 */
@@ -5638,6 +5679,37 @@
       lastReadFloor: String(nextFloorNumber),
     };
     schedulePendingThreadProgressPersist();
+  };
+
+  // 删除单个帖子阅读记录（用于列表页悬停删除入口）
+  const deleteThreadReadProgress = (threadId) => {
+    const normalizedThreadId = String(threadId || "").trim();
+    if (!normalizedThreadId) return false;
+
+    if (Object.prototype.hasOwnProperty.call(pendingThreadProgressWrites, normalizedThreadId)) {
+      delete pendingThreadProgressWrites[normalizedThreadId];
+    }
+
+    const progress = getReadProgress();
+    if (!Object.prototype.hasOwnProperty.call(progress, normalizedThreadId)) {
+      return false;
+    }
+
+    const nextProgress = { ...progress };
+    delete nextProgress[normalizedThreadId];
+
+    // 与已有手动清理逻辑保持一致，便于同步层识别本地清理行为。
+    const pendingCleanupCount = parseInt(
+      String(GM_getValue("s1p_pending_cleanup_info", 0)),
+      10
+    );
+    GM_setValue(
+      "s1p_pending_cleanup_info",
+      (Number.isFinite(pendingCleanupCount) ? pendingCleanupCount : 0) + 1
+    );
+    saveReadProgress(nextProgress, false);
+    scheduleProgressJumpButtonsRefresh(nextProgress);
+    return true;
   };
 
   /**
@@ -15273,6 +15345,10 @@
     let progressContainer = container.querySelector(".s1p-progress-container");
     if (!progress || !progress.page || !progress.postId) {
       if (progressContainer) {
+        if (progressContainer.__s1pDeleteRevealTimer) {
+          clearTimeout(progressContainer.__s1pDeleteRevealTimer);
+          progressContainer.__s1pDeleteRevealTimer = null;
+        }
         progressContainer.remove();
       }
       return;
@@ -15321,8 +15397,20 @@
     if (!progressContainer) {
       progressContainer = document.createElement("span");
       progressContainer.className = "s1p-progress-container";
+      progressContainer.addEventListener("mouseleave", () => {
+        if (progressContainer.__s1pDeleteRevealTimer) {
+          clearTimeout(progressContainer.__s1pDeleteRevealTimer);
+          progressContainer.__s1pDeleteRevealTimer = null;
+        }
+        progressContainer.classList.remove("s1p-show-delete-btn");
+      });
       container.appendChild(progressContainer);
     }
+    if (progressContainer.__s1pDeleteRevealTimer) {
+      clearTimeout(progressContainer.__s1pDeleteRevealTimer);
+      progressContainer.__s1pDeleteRevealTimer = null;
+    }
+    progressContainer.classList.remove("s1p-show-delete-btn");
     progressContainer.dataset.renderSignature = renderSignature;
     progressContainer.dataset.dataSignature = dataSignature;
     progressContainer.replaceChildren();
@@ -15349,6 +15437,21 @@
       jumpBtn.style.backgroundColor = "transparent";
       jumpBtn.style.color = fcolor;
     });
+    jumpBtn.addEventListener("mouseenter", () => {
+      if (progressContainer.__s1pDeleteRevealTimer) {
+        clearTimeout(progressContainer.__s1pDeleteRevealTimer);
+      }
+      progressContainer.__s1pDeleteRevealTimer = setTimeout(() => {
+        progressContainer.classList.add("s1p-show-delete-btn");
+        progressContainer.__s1pDeleteRevealTimer = null;
+      }, READ_PROGRESS_DELETE_REVEAL_DELAY_MS);
+    });
+    jumpBtn.addEventListener("mouseleave", () => {
+      if (progressContainer.__s1pDeleteRevealTimer) {
+        clearTimeout(progressContainer.__s1pDeleteRevealTimer);
+        progressContainer.__s1pDeleteRevealTimer = null;
+      }
+    });
 
     progressContainer.appendChild(jumpBtn);
 
@@ -15366,6 +15469,22 @@
       jumpBtn.style.borderTopRightRadius = "";
       jumpBtn.style.borderBottomRightRadius = "";
     }
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "s1p-progress-delete-btn";
+    deleteBtn.textContent = "删除";
+    deleteBtn.title = "删除该帖阅读记录";
+    deleteBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (deleteThreadReadProgress(threadId)) {
+        showMessage("已删除该帖阅读记录", true);
+      } else {
+        showMessage("该帖暂无可删除的阅读记录", true);
+      }
+    });
+    progressContainer.appendChild(deleteBtn);
 
     if (previousDataSignature && previousDataSignature !== dataSignature) {
       progressContainer.classList.remove("s1p-progress-refresh-flash");
