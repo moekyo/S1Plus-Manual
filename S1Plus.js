@@ -1196,6 +1196,28 @@
       color: var(--s1p-t);
       font-weight: normal;
     }
+    .s1p-confirm-action-btn.s1p-thread-block-author-btn {
+      background-color: transparent;
+      color: var(--s1p-icon-color);
+    }
+    .s1p-confirm-action-btn.s1p-thread-block-author-btn svg {
+      width: 16px;
+      height: 16px;
+      display: block;
+      pointer-events: none;
+    }
+    .s1p-confirm-action-btn.s1p-thread-block-author-btn:hover {
+      background-color: var(--s1p-pri);
+      color: var(--s1p-red);
+    }
+    .s1p-confirm-action-btn.s1p-thread-block-author-btn.s1p-selected {
+      background-color: transparent;
+      color: var(--s1p-red);
+    }
+    .s1p-confirm-action-btn.s1p-thread-block-author-btn.s1p-selected:hover {
+      background-color: var(--s1p-pri);
+      color: var(--s1p-red-h);
+    }
 
     .s1p-inline-confirm-menu.visible {
       opacity: 1;
@@ -14885,6 +14907,58 @@
   };
 
   const addBlockButtonsToThreadRows = (rows = []) => {
+    const THREAD_BLOCK_AUTHOR_TOOLTIP_TEXT = {
+      disabled: "开启后，确认时会同时屏蔽发帖人",
+      enabled: "已启用：确认时会同时屏蔽发帖人",
+    };
+    const setThreadBlockAuthorButtonSelectedState = (button, isSelected) => {
+      button.classList.toggle("s1p-selected", isSelected);
+      button.setAttribute("aria-pressed", isSelected ? "true" : "false");
+      button.dataset.fullTag = isSelected
+        ? THREAD_BLOCK_AUTHOR_TOOLTIP_TEXT.enabled
+        : THREAD_BLOCK_AUTHOR_TOOLTIP_TEXT.disabled;
+    };
+    const createThreadBlockAuthorButton = () => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className =
+        "s1p-confirm-action-btn s1p-thread-block-author-btn s1p-has-tooltip";
+      button.dataset.s1pTooltipDelay = "2000";
+      setThreadBlockAuthorButtonSelectedState(button, false);
+      setSanitizedIconHtml(button, TOOLBAR_ICONS.blockUser);
+      return button;
+    };
+    const blockThreadAuthor = async (authorId, authorName) => {
+      const currentSettings = getSettings();
+      if (currentSettings.enableUserBlocking !== true) {
+        showMessage("帖子已屏蔽。自动拉黑未执行：请先开启“用户屏蔽功能”。", false);
+        return;
+      }
+      if (!authorId || !authorName) {
+        showMessage("帖子已屏蔽。自动拉黑未执行：未能识别发帖人。", false);
+        return;
+      }
+
+      const blockedUsers = getBlockedUsers();
+      if (blockedUsers[authorId]) {
+        return;
+      }
+
+      const nativeSyncSucceeded = await blockUser(authorId, authorName);
+      const latestSettings = getSettings();
+      if (nativeSyncSucceeded) {
+        const message = latestSettings.syncWithNativeBlacklist
+          ? `已屏蔽帖子并拉黑作者 ${authorName}（已同步至论坛黑名单）。`
+          : `已屏蔽帖子并拉黑作者 ${authorName}。`;
+        showMessage(message, true);
+        return;
+      }
+      showMessage(
+        `已屏蔽帖子并拉黑作者 ${authorName}，但同步论坛黑名单失败。`,
+        false
+      );
+    };
+
     if (!Array.isArray(rows) || rows.length === 0) return;
 
     // 核心修复：注入一个空的表头单元格，以匹配内容行的列数。
@@ -14914,6 +14988,11 @@
 
       const threadId = row.id.replace(/^(normalthread_|stickthread_)/, "");
       const threadTitle = titleElement.textContent.trim();
+      const authorLink = row.querySelector('td.by cite a[href*="space-uid-"]');
+      const authorId = authorLink
+        ? extractUidFromProfileHref(authorLink.href)
+        : "";
+      const authorName = authorLink ? authorLink.textContent.trim() : "";
 
       const optionsCell = document.createElement("td");
       optionsCell.className = "s1p-options-cell";
@@ -14930,10 +15009,22 @@
       optionsMenu.className = "s1p-options-menu s1p-confirm-wrapper";
 
       const content = buildConfirmationMarkup("屏蔽该帖子吗？");
+      const confirmBar = content.querySelector(".s1p-confirm-bar");
+      const confirmSeparator = content.querySelector(".s1p-confirm-separator");
+      const blockAuthorBtn = createThreadBlockAuthorButton();
+      if (confirmBar && confirmSeparator) {
+        confirmBar.insertBefore(blockAuthorBtn, confirmSeparator);
+      }
       optionsMenu.appendChild(content);
 
       const cancelBtn = optionsMenu.querySelector(".s1p-cancel");
       const confirmBtn = optionsMenu.querySelector(".s1p-confirm");
+      blockAuthorBtn.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const nextSelected = !blockAuthorBtn.classList.contains("s1p-selected");
+        setThreadBlockAuthorButtonSelectedState(blockAuthorBtn, nextSelected);
+      });
 
       cancelBtn.addEventListener("click", (e) => {
         e.preventDefault();
@@ -14952,10 +15043,16 @@
         }
       });
 
-      confirmBtn.addEventListener("click", (e) => {
+      confirmBtn.addEventListener("click", async (e) => {
         e.preventDefault();
         e.stopPropagation();
         blockThread(threadId, threadTitle);
+
+        const shouldBlockAuthor = blockAuthorBtn.classList.contains("s1p-selected");
+        if (!shouldBlockAuthor) {
+          return;
+        }
+        await blockThreadAuthor(authorId, authorName);
       });
 
       optionsCell.appendChild(optionsBtn);
@@ -15279,6 +15376,19 @@
     if (!popover.s1p_api) {
       popover.s1p_api = { show, hide };
     }
+    const resolveTooltipDelay = (target, isTooltip) => {
+      if (!isTooltip) {
+        return 50;
+      }
+      const configuredTooltipDelay = parseInt(
+        String(target?.dataset?.s1pTooltipDelay || ""),
+        10
+      );
+      if (!Number.isFinite(configuredTooltipDelay)) {
+        return 1000;
+      }
+      return Math.max(0, configuredTooltipDelay);
+    };
 
     // Keep existing listeners for user tags and add support for user remarks and history tags
     document.body.addEventListener("mouseover", (e) => {
@@ -15289,8 +15399,7 @@
         // 如果是文本展示类，则需要检测是否溢出；如果是强制工具提示类，则直接显示
         const isTooltip = target.classList.contains("s1p-has-tooltip");
         if (isTooltip || target.scrollWidth > target.clientWidth) {
-          // [NEW] 如果是操作栏按钮，延迟 1 秒显示；否则保持 50ms 快速响应
-          const delay = isTooltip ? 1000 : 50;
+          const delay = resolveTooltipDelay(target, isTooltip);
           show(target, target.dataset.fullTag, delay);
         }
       }
