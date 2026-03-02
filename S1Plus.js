@@ -4117,9 +4117,10 @@
         },
         data: postData,
         onload: (response) => {
+          const responseText = String(response.responseText || "");
           if (
             response.status === 200 &&
-            response.responseText.includes("操作成功")
+            responseText.includes("操作成功")
           ) {
             console.log(`S1 Plus: 已成功将用户 ${username} 同步到论坛黑名单。`);
             resolve();
@@ -4157,10 +4158,11 @@
           Referer: refererUrl,
         },
         onload: (response) => {
+          const responseText = String(response.responseText || "");
           // [最终修正] 采用用户发现的通用成功标识 "操作成功"
           if (
             response.status === 200 &&
-            response.responseText.includes("操作成功")
+            responseText.includes("操作成功")
           ) {
             console.log(`S1 Plus: 已成功将 UID:${uid} 从论坛黑名单同步移除。`);
             resolve();
@@ -4236,13 +4238,20 @@
       key,
       GM_getValue(key, fallbackValue)
     );
-    comparableStoredValueCache.set(key, normalizedValue);
-    return normalizedValue;
+    const cachedValue = isComparableObjectValue(normalizedValue)
+      ? deepCloneSyncValue(normalizedValue)
+      : normalizedValue;
+    comparableStoredValueCache.set(key, cachedValue);
+    return cachedValue;
   };
   const setComparableStoredValue = (key, value) => {
+    const normalizedValue = normalizeComparableStoredValueByKey(key, value);
+    const cachedValue = isComparableObjectValue(normalizedValue)
+      ? deepCloneSyncValue(normalizedValue)
+      : normalizedValue;
     comparableStoredValueCache.set(
       key,
-      normalizeComparableStoredValueByKey(key, value)
+      cachedValue
     );
   };
   const isComparableObjectValue = (value) =>
@@ -4767,9 +4776,17 @@
 
       if (nativeSyncSucceeded) {
         const latestBlockedUsers = getBlockedUsers();
-        if (latestBlockedUsers[id]) {
-          latestBlockedUsers[id].addedToNativeBlacklist = true;
-          saveBlockedUsers(latestBlockedUsers);
+        const latestUser = latestBlockedUsers[id];
+        if (latestUser) {
+          // 避免直接修改缓存对象，防止“同值短路”误判导致状态未落盘。
+          const nextBlockedUsers = {
+            ...latestBlockedUsers,
+            [id]: {
+              ...latestUser,
+              addedToNativeBlacklist: true,
+            },
+          };
+          saveBlockedUsers(nextBlockedUsers);
         }
       }
     }
@@ -12130,13 +12147,19 @@
               currentRemark,
               (newRemark) => {
                 const blockedUsers = getBlockedUsers();
-                if (blockedUsers[userId]) {
+                const currentUser = blockedUsers[userId];
+                if (currentUser) {
+                  const nextUser = { ...currentUser };
                   if (newRemark === null || newRemark.trim() === "") {
-                    delete blockedUsers[userId].remark;
+                    delete nextUser.remark;
                   } else {
-                    blockedUsers[userId].remark = newRemark.trim();
+                    nextUser.remark = newRemark.trim();
                   }
-                  saveBlockedUsers(blockedUsers);
+                  const nextBlockedUsers = {
+                    ...blockedUsers,
+                    [userId]: nextUser,
+                  };
+                  saveBlockedUsers(nextBlockedUsers);
                   renderUserTab(); // Re-render to show changes
                 }
               },
@@ -13427,9 +13450,16 @@
         const userId = target.dataset.userId;
         const blockThreads = target.checked;
         const users = getBlockedUsers();
-        if (users[userId]) {
-          users[userId].blockThreads = blockThreads;
-          saveBlockedUsers(users);
+        const userEntry = users[userId];
+        if (userEntry) {
+          const nextUsers = {
+            ...users,
+            [userId]: {
+              ...userEntry,
+              blockThreads: blockThreads,
+            },
+          };
+          saveBlockedUsers(nextUsers);
           if (blockThreads) applyUserThreadBlocklist();
           else unblockThreadsByUser(userId);
           renderThreadTab();
