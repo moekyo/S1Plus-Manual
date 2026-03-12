@@ -21,7 +21,7 @@
   "use strict";
 
   const SCRIPT_VERSION = "6.3.0";
-  const SCRIPT_RELEASE_DATE = "2025-12-31";
+  const SCRIPT_RELEASE_DATE = "2026-03-12";
 
   // --- [新增] SHA-256 哈希计算库 (基于 Web Crypto API) ---
   /**
@@ -4476,7 +4476,7 @@
     normalizedItem.authorName = String(normalizedItem.authorName || "");
     normalizedItem.timestamp =
       Number.isFinite(Number(normalizedItem.timestamp)) &&
-      Number(normalizedItem.timestamp) > 0
+        Number(normalizedItem.timestamp) > 0
         ? Number(normalizedItem.timestamp)
         : 0;
     if (typeof normalizedItem.postContent !== "undefined") {
@@ -12256,38 +12256,38 @@
             (a, b) => blockedPosts[b].timestamp - blockedPosts[a].timestamp
           );
 
-	          if (blockedPostIds.length === 0) {
-	            return `<div class="s1p-empty">暂无屏蔽的楼层</div>`;
-	          }
+          if (blockedPostIds.length === 0) {
+            return `<div class="s1p-empty">暂无屏蔽的楼层</div>`;
+          }
 
-	          // 按threadId分组
-	          const postsByThread = new Map();
-	          blockedPostIds.forEach((postId) => {
-	            const post = blockedPosts[postId];
-	            const threadId = String(post?.threadId ?? "unknown_thread");
-	            if (!postsByThread.has(threadId)) {
-	              postsByThread.set(threadId, {
-	                threadId,
-	                threadTitle: post?.threadTitle,
-	                posts: [],
-	              });
-	            }
-	            postsByThread.get(threadId).posts.push(post);
-	          });
+          // 按threadId分组
+          const postsByThread = new Map();
+          blockedPostIds.forEach((postId) => {
+            const post = blockedPosts[postId];
+            const threadId = String(post?.threadId ?? "unknown_thread");
+            if (!postsByThread.has(threadId)) {
+              postsByThread.set(threadId, {
+                threadId,
+                threadTitle: post?.threadTitle,
+                posts: [],
+              });
+            }
+            postsByThread.get(threadId).posts.push(post);
+          });
 
-	          // 获取折叠状态
-	          const collapsedThreads = sanitizeRecordObject(
-	            GM_getValue("s1p_blocked_posts_collapsed_threads", {})
-	          );
+          // 获取折叠状态
+          const collapsedThreads = sanitizeRecordObject(
+            GM_getValue("s1p_blocked_posts_collapsed_threads", {})
+          );
 
-	          return `<div class="s1p-thread-groups">${Array.from(postsByThread.values())
-	            .map((thread) => {
-	              const isCollapsed = collapsedThreads[thread.threadId] === true;
-	              const safeThreadIdAttr = escapeAttr(thread.threadId);
-	              const safeThreadTitleText = escapeHTML(
-	                thread.threadTitle || "未知帖子"
-	              );
-	              return `
+          return `<div class="s1p-thread-groups">${Array.from(postsByThread.values())
+            .map((thread) => {
+              const isCollapsed = collapsedThreads[thread.threadId] === true;
+              const safeThreadIdAttr = escapeAttr(thread.threadId);
+              const safeThreadTitleText = escapeHTML(
+                thread.threadTitle || "未知帖子"
+              );
+              return `
 	                                    <div class="s1p-thread-group" data-thread-id="${safeThreadIdAttr}">
 	                                        <div class="s1p-thread-header s1p-collapsible-header ${isCollapsed ? '' : 'expanded'}">
 	                                            <span class="s1p-thread-title">${safeThreadTitleText}</span>
@@ -12296,12 +12296,12 @@
 	                                        </div>
 	                                        <div class="s1p-thread-posts s1p-collapsible-content ${isCollapsed ? '' : 'expanded'}">
 	                                            <div class="s1p-list">${thread.posts
-	                  .map((post) => {
-	                    const safePostIdAttr = escapeAttr(post.postId);
-	                    const safeFloorText = escapeHTML(post.floor);
-	                    const safeAuthorText = escapeHTML(
-	                      post.authorName || `用户 #${post.authorId}`
-	                    );
+                  .map((post) => {
+                    const safePostIdAttr = escapeAttr(post.postId);
+                    const safeFloorText = escapeHTML(post.floor);
+                    const safeAuthorText = escapeHTML(
+                      post.authorName || `用户 #${post.authorId}`
+                    );
                     return `<div class="s1p-item" data-post-id="${safePostIdAttr}"><div class="s1p-item-info"><div class="s1p-item-title">第${safeFloorText}楼</div><div class="s1p-item-meta">作者: ${safeAuthorText} | 屏蔽时间: ${formatDate(post.timestamp)}</div></div><button class="s1p-unblock-post-btn s1p-btn" data-unblock-post-id="${safePostIdAttr}">取消屏蔽</button></div>`;
                   })
                   .join("")}</div>
@@ -12525,20 +12525,20 @@
               tabs["threads"]
                 .querySelector("#s1p-manually-blocked-list-container")
                 .classList.toggle("expanded", isNowExpanded);
-	            } else if (header.classList.contains("s1p-thread-header")) {
-	              // 处理帖子分组的折叠
-	              const threadGroup = header.closest(".s1p-thread-group");
-	              const threadId = String(threadGroup?.dataset.threadId || "");
-	              if (!threadId) {
-	                return;
-	              }
-	              const collapsedThreads = sanitizeRecordObject(
-	                GM_getValue("s1p_blocked_posts_collapsed_threads", {})
-	              );
-	              const isNowCollapsed = collapsedThreads[threadId] !== true;
+            } else if (header.classList.contains("s1p-thread-header")) {
+              // 处理帖子分组的折叠
+              const threadGroup = header.closest(".s1p-thread-group");
+              const threadId = String(threadGroup?.dataset.threadId || "");
+              if (!threadId) {
+                return;
+              }
+              const collapsedThreads = sanitizeRecordObject(
+                GM_getValue("s1p_blocked_posts_collapsed_threads", {})
+              );
+              const isNowCollapsed = collapsedThreads[threadId] !== true;
 
-	              collapsedThreads[threadId] = isNowCollapsed;
-	              GM_setValue("s1p_blocked_posts_collapsed_threads", collapsedThreads);
+              collapsedThreads[threadId] = isNowCollapsed;
+              GM_setValue("s1p_blocked_posts_collapsed_threads", collapsedThreads);
 
               header.classList.toggle("expanded", !isNowCollapsed);
               header.querySelector(".s1p-expander-arrow").classList.toggle("expanded", !isNowCollapsed);
@@ -17557,15 +17557,18 @@
 
     // [OPTIMIZED] 优化HTML结构以改善文本布局和换行
     const bodyHtml = `
-    <p>已更新至 v${SCRIPT_VERSION}！本次更新包含多项重要改进：</p>
+    <p>已更新至 v${SCRIPT_VERSION}！本次更新聚焦在安全性、同步稳定性与使用体验：</p>
     <p style="margin-top: 16px;">
-        <strong>✨ 楼层屏蔽功能</strong>：新增针对单个楼层的屏蔽功能，现在可以屏蔽特定楼层回复而不需要屏蔽整个用户。屏蔽楼层列表支持折叠功能，并可在设置面板的"帖子屏蔽"标签页中管理。
+        <strong>🔒 安全加固</strong>：收敛了高风险 HTML 渲染路径，补强原型链污染与高风险正则防护，整体更安全可靠。
     </p>
     <p style="margin-top: 8px;">
-        <strong>🎨 UI/UX 全面优化</strong>：优化 Window 平台下字体渲染，统一设置面板动画效果和箭头位置。
+        <strong>☁️ 同步升级</strong>：远程请求加入超时重试、跨标签页锁与冲突处理优化，并支持大文件 Gist 拉取和阅读进度冲突自动合并。
     </p>
     <p style="margin-top: 8px;">
-        <strong>🐛 问题修复</strong>：修复了禁用 NUX 主题时，设置面板在深色系统模式下的多个样式异常问题；同时修复了某些场景下可能出现的远程同步异常问题。
+        <strong>🩺 同步诊断</strong>：设置面板中三连击版本号即可打开诊断信息面板，快速定位同步异常。
+    </p>
+    <p style="margin-top: 8px;">
+        <strong>✨ 功能与交互优化</strong>：新增 Token 过期提醒、Token 显示/隐藏、用户标记颜色与历史快捷选择；同时统一工具栏图标与提示交互，界面更清爽。
     </p>
   `;
 
