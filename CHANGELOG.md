@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [v6.3.0] - 2026-03-12
+
 ### 🔐 安全与稳定性加固 (Security & Stability)
 
 - **DOM XSS 风险面收敛**: 对用户标记弹窗、阅读记录详情弹窗、用户标记列表和收藏列表等高频 UI，逐步移除直接拼接数据的 `innerHTML` 渲染路径，改为 `createElement` + `textContent` 的节点式渲染。
