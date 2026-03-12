@@ -1,10 +1,10 @@
 # S1Filter-Manual 项目说明
 
-本项目 `S1Filter-Manual` 包含一个用户脚本（`S1Plus.user.js`）和一个用户样式（`S1 NUX.css`），旨在全方位增强 Stage1st 论坛（saraba1st.com / stage1st.com）的浏览体验。
+本项目 `S1Filter-Manual` 包含一个用户脚本（`S1Plus.js`）和一个用户样式（`S1 NUX.css`），旨在全方位增强 Stage1st 论坛（saraba1st.com / stage1st.com）的浏览体验。
 
 ## 核心组件
 
-### `S1Plus.user.js` (用户脚本)
+### `S1Plus.js` (用户脚本)
 
 此脚本是功能的核心，通过 Tampermonkey 或 Greasemonkey 等浏览器扩展运行，为论坛添加了大量实用功能。
 
@@ -55,10 +55,10 @@
 
 ## 安装与使用
 
-### `S1Plus.user.js` (用户脚本)
+### `S1Plus.js` (用户脚本)
 
 1.  在浏览器中安装一个用户脚本管理器（如 [Tampermonkey](https://www.tampermonkey.net/) 或 [Greasemonkey](https://addons.mozilla.org/en-US/firefox/addon/greasemonkey/)）。
-2.  打开 `S1Plus.user.js` 文件，或将其拖拽到浏览器中，脚本管理器会自动弹出安装提示。
+2.  打开 `S1Plus.js` 文件，或将其拖拽到浏览器中，脚本管理器会自动弹出安装提示。
 3.  确认安装。
 
 

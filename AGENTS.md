@@ -10,7 +10,7 @@ S1 Plus is a Tampermonkey/Greasemonkey userscript that enhances the Stage1st for
 
 This project has no traditional build system. Development workflow:
 
-- **Direct editing**: Edit `S1Plus.user.js` directly
+- **Direct editing**: Edit `S1Plus.js` directly
 - **Testing**: Install the script in Tampermonkey/Greasemonkey and test in browser
 - **Version updates**: Manually update version in script metadata (lines 4, 20)
 - **Distribution**: Upload to GreasyFork for auto-updates
@@ -18,7 +18,7 @@ This project has no traditional build system. Development workflow:
 ## Architecture & Key Patterns
 
 ### Single-File Architecture
-All functionality is contained in `S1Plus.user.js`. The script follows these patterns:
+All functionality is contained in `S1Plus.js`. The script follows these patterns:
 
 - **Data Storage**: Uses Greasemonkey API (`GM_setValue`, `GM_getValue`) for persistence
 - **UI Creation**: Dynamic HTML generation with CSS injection via `GM_addStyle`
