@@ -17,7 +17,7 @@ prompt = """
 
   步骤 1: 更新版本号
 
-   1. 定位文件: 目标文件是 S1Plus.user.js。
+   1. 定位文件: 目标文件是 S1Plus.js。
    2. 更新元数据: 将文件头部的 // @version 从 [上一个版本号] 修改为 {{args}}。
    3. 更新内部常量:
       * 将文件内的 const SCRIPT_VERSION 的值从 [上一个版本号] 修改为 {{args}}。
@@ -43,14 +43,14 @@ prompt = """
 
   步骤 3: 校准并刷新 README.md
 
-   1. 读取文件: 首先，同时读取 S1Plus.user.js 和 README.md 的内容。
-   2. 提取新元数据: 从 S1Plus.user.js 文件中，提取出更新后的完整元数据块。
+   1. 读取文件: 首先，同时读取 S1Plus.js 和 README.md 的内容。
+   2. 提取新元数据: 从 S1Plus.js 文件中，提取出更新后的完整元数据块。
    3. 更新 readme：根据目前代码所有的实现，更新 readme，确保说明各项说明能准确反映脚本的**完整功能**，而不是罗列本次更新的增量。
    
 
   步骤 4: 提交发布变更
 
-   1. 暂存文件: 使用 git add . 将所有修改过的文件（S1Plus.user.js、CHANGELOG.md 和 README.md）添加到暂存区。
+   1. 暂存文件: 使用 git add . 将所有修改过的文件（S1Plus.js、CHANGELOG.md 和 README.md）添加到暂存区。
    2. 检查历史: 使用 git log -n 3 查看最近的提交历史，以确认提交信息的风格。
    3. 提交变更: 使用 git commit 创建一个格式统一的发布提交。提交信息必须严格遵循以下格式：
    1     release: v{{args}}

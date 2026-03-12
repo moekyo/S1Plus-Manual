@@ -1078,7 +1078,7 @@ if (!isS1NuxEnabled) {
 
 从这个 diff 文件中整理对应的 changelog 和 commit 信息
 
-git diff v4.4.3..feature/cloud-sync -- S1Plus.user.js > s1plus_diff
+git diff v4.4.3..feature/cloud-sync -- S1Plus.js > s1plus_diff
 
 你把原来的 json 结构改了，这样会导致不兼容旧有格式，怎么办
 {
@@ -1308,7 +1308,7 @@ S1 Plus: 数据已成功推送到远程。
 
 ### **最终版综合提示词 (Final & Comprehensive Prompt):**
 
-请为 `S1Plus.user.js` 脚本实现一个功能完善、层级清晰的远程同步模块。具体需求整合如下：
+请为 `S1Plus.js` 脚本实现一个功能完善、层级清晰的远程同步模块。具体需求整合如下：
 
 **第一部分：实现分层级的同步开关逻辑**
 
@@ -1345,7 +1345,7 @@ S1 Plus: 数据已成功推送到远程。
 
 以上两个 diff 文件分别是针对下面的需求所做的修改，分析它们各自的实现方式和优化点，找出可以进一步改进的地方。
 需求：
-请为 `S1Plus.user.js` 脚本实现一个功能完善、层级清晰的远程同步模块。具体需求整合如下：
+请为 `S1Plus.js` 脚本实现一个功能完善、层级清晰的远程同步模块。具体需求整合如下：
 
 **第一部分：实现分层级的同步开关逻辑**
 
