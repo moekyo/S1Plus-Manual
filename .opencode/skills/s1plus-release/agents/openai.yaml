@@ -1,0 +1,7 @@
+interface:
+  display_name: "S1Plus Release"
+  short_description: "Standard release flow for S1Plus"
+  default_prompt: "Use $s1plus-release to publish S1Plus as version 6.4.0."
+
+policy:
+  allow_implicit_invocation: true
