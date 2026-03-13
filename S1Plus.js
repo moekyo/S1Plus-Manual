@@ -415,6 +415,8 @@
   const OBSERVER_INCREMENTAL_NOTIFICATION_SCOPE_LIMIT = 80;
   // 帖子列表页阅读进度刷新防抖，避免跨标签高频更新导致频繁重绘。
   const READ_PROGRESS_LIST_REFRESH_DEBOUNCE_MS = 120;
+  // 帖内工具栏图标默认悬浮提示延迟，避免扫过时频繁闪现。
+  const DEFAULT_TOOLBAR_TOOLTIP_DELAY_MS = 500;
   // 列表页阅读按钮悬停超过该时长后显示删除入口。
   const READ_PROGRESS_DELETE_REVEAL_DELAY_MS = 2 * 1000;
   // 帖子页阅读进度持久化防抖：以内存批量累积为主，隐藏/卸载前强制落盘。
@@ -15415,7 +15417,7 @@
         10
       );
       if (!Number.isFinite(configuredTooltipDelay)) {
-        return 1000;
+        return DEFAULT_TOOLBAR_TOOLTIP_DELAY_MS;
       }
       return Math.max(0, configuredTooltipDelay);
     };
