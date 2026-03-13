@@ -1050,6 +1050,16 @@
       pointer-events: none;
       transition: opacity 0.15s ease-out, visibility 0.15s;
     }
+    /* 当左侧空间不足时，让帖子列表确认菜单改为向右弹出 */
+    .s1p-options-cell.s1p-open-right > .s1p-options-btn::after {
+      left: 100%;
+      right: auto;
+    }
+    .s1p-options-cell.s1p-open-right > .s1p-options-menu {
+      left: 100%;
+      right: auto;
+      padding: 5px 5px 5px 11px;
+    }
     /* [修改] 将菜单的触发条件改为悬停图标按钮，并让菜单自身在悬停时保持显示 */
     .s1p-options-btn:hover + .s1p-options-menu,
     .s1p-options-menu:hover {
@@ -1219,12 +1229,6 @@
     .s1p-confirm-action-btn.s1p-thread-block-author-btn.s1p-selected:hover {
       background-color: var(--s1p-pri);
       color: var(--s1p-red-h);
-    }
-
-    .s1p-inline-confirm-menu.visible {
-      opacity: 1;
-      transform: translateX(0) scale(1) !important;
-      pointer-events: auto;
     }
 
     /* --- [NEW] Inline Action Menu --- */
@@ -1644,13 +1648,14 @@
     .s1p-dp-day.other-month {
       color: var(--s1p-text-empty);
     }
-    .pi {
+    /* 仅作用于脚本接管的帖子头部布局，避免影响 NUX 窄屏的其他 .pi/.authi 区块 */
+    #postlist .plc .pi.s1p-authi-layout {
       display: flex !important;
       align-items: center;
       gap: 8px;
       position: relative !important; /* <-- [新增] 为绝对定位的子元素提供定位上下文 */
     }
-    .pi > .pti {
+    #postlist .plc .pi.s1p-authi-layout > .pti {
       min-width: 0;
       position: static !important;
       z-index: auto !important;
@@ -1662,23 +1667,23 @@
       margin-left: auto;
       order: 2;
     }
-    .pi > strong {
+    #postlist .plc .pi.s1p-authi-layout > strong {
       flex-shrink: 0;
       order: 4;
       visibility: hidden; /* <-- 核心修改：初始不可见 */
       transition: visibility 0s; /* 确保状态改变是瞬时的 */
     }
-    .pi > strong.s1p-layout-ready {
+    #postlist .plc .pi.s1p-authi-layout > strong.s1p-layout-ready {
       visibility: visible; /* <-- 脚本添加此类后立即显示 */
     }
-    .pi > #fj {
+    #postlist .plc .pi.s1p-authi-layout > #fj {
       margin-left: 0;
       order: 5;
       flex-shrink: 0;
       position: static !important;
       z-index: auto !important;
     }
-    .authi {
+    #postlist .plc .authi.s1p-authi-layout {
       display: flex !important;
       align-items: center;
       flex-wrap: nowrap;
@@ -15087,6 +15092,23 @@
         await blockThreadAuthor(authorId, authorName);
       });
 
+      const updateOptionsMenuDirection = () => {
+        // 根据当前可视空间动态决定左右方向，避免窄屏时菜单超出视口
+        const rect = optionsCell.getBoundingClientRect();
+        const menuWidth = optionsMenu.offsetWidth || 120;
+        const viewportPadding = 8;
+        const spaceOnLeft = rect.left;
+        const spaceOnRight = window.innerWidth - rect.right;
+        const shouldOpenRight =
+          spaceOnLeft < menuWidth + viewportPadding && spaceOnRight > spaceOnLeft;
+
+        optionsCell.classList.toggle("s1p-open-right", shouldOpenRight);
+      };
+
+      optionsBtn.addEventListener("mouseenter", updateOptionsMenuDirection);
+      optionsMenu.addEventListener("mouseenter", updateOptionsMenuDirection);
+      updateOptionsMenuDirection();
+
       optionsCell.appendChild(optionsBtn);
       optionsCell.appendChild(optionsMenu);
       tr.appendChild(optionsCell);
@@ -16128,18 +16150,44 @@
     });
   };
 
+  const resetAuthiLayoutState = (authiDiv) => {
+    if (!authiDiv) return;
+
+    authiDiv.classList.remove("s1p-authi-layout");
+
+    const piContainer = authiDiv.closest(".pi");
+    if (!piContainer) return;
+
+    piContainer.classList.remove("s1p-authi-layout");
+
+    const spacer = piContainer.querySelector(".s1p-layout-spacer");
+    if (spacer) {
+      spacer.remove();
+    }
+
+    const floorNumberEl = piContainer.querySelector("strong.s1p-layout-ready");
+    if (floorNumberEl) {
+      floorNumberEl.classList.remove("s1p-layout-ready");
+    }
+  };
+
+  const detachAuthiContainer = (container) => {
+    if (!container) return;
+
+    const parent = container.parentElement;
+    const authiDiv = container.querySelector(".authi");
+    if (authiDiv && parent) {
+      // 将原生 .authi 元素移回其原始位置（即总容器的前面）
+      parent.insertBefore(authiDiv, container);
+      resetAuthiLayoutState(authiDiv);
+    }
+    // 彻底移除脚本创建的总容器，这样里面的脚本按钮（.s1p-authi-actions-wrapper）也会一并被移除
+    container.remove();
+  };
+
   const refreshAllAuthiActions = () => {
     // 遍历每个由脚本创建的、用于包裹原生按钮和脚本按钮的总容器
-    document.querySelectorAll(".s1p-authi-container").forEach((container) => {
-      // 在容器中找到原生的 .authi 元素
-      const authiDiv = container.querySelector(".authi");
-      if (authiDiv) {
-        // 将原生 .authi 元素移回其原始位置（即总容器的前面）
-        container.parentElement.insertBefore(authiDiv, container);
-      }
-      // 彻底移除脚本创建的总容器，这样里面的脚本按钮（.s1p-authi-actions-wrapper）也会一并被移除
-      container.remove();
-    });
+    document.querySelectorAll(".s1p-authi-container").forEach(detachAuthiContainer);
 
     // 在完成彻底的清理后，重新调用主函数，根据当前最新的设置来添加按钮
     addActionsToPostFooter();
@@ -16150,13 +16198,7 @@
     if (!postTable) return;
 
     const container = postTable.querySelector(".s1p-authi-container");
-    if (container) {
-      const authiDiv = container.querySelector(".authi");
-      if (authiDiv) {
-        container.parentElement.insertBefore(authiDiv, container);
-      }
-      container.remove();
-    }
+    detachAuthiContainer(container);
     addActionsToSinglePost(postTable);
   };
 
@@ -16442,6 +16484,10 @@
     // --- [核心修改] 将 pi 容器作为操作目标 ---
     const piContainer = authiDiv.closest(".pi");
     if (!piContainer) return;
+
+    // 标记为脚本接管布局，避免样式影响到其他 .pi/.authi 区块
+    piContainer.classList.add("s1p-authi-layout");
+    authiDiv.classList.add("s1p-authi-layout");
 
     // --- [这里是新增的“伸缩器”逻辑] ---
     // 检查并添加永久的布局伸缩器，确保布局稳定
