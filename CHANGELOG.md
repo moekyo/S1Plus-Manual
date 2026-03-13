@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [v6.3.1] - 2026-03-13
+
 ### 🐛 问题修复 (Bug Fixes)
 
 - **修复 NUX 窄屏下帖子头部错位**: 将 `.pi/.authi` 的布局样式从全局作用域收敛到脚本接管的帖子头部（`s1p-authi-layout`），避免误伤 NUX 窄屏适配布局。
@@ -10,6 +12,8 @@
 
 - **确认菜单样式去重**: 删除重复的 `.s1p-inline-confirm-menu.visible` 样式块，降低维护成本。
 - **Authi 容器拆解逻辑提炼**: 新增 `detachAuthiContainer` 统一容器还原与清理路径，减少 `refreshAllAuthiActions` / `refreshSinglePostActions` 重复代码。
+
+---
 
 ## [v6.3.0] - 2026-03-12
 

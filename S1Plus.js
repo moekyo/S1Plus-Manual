@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      6.3.0
+// @version      6.3.1
 // @description  为Stage1st论坛提供帖子/用户/楼层屏蔽、导航栏自定义、自动签到、阅读进度跟踪、回复收藏、远程同步等多种功能，全方位优化你的论坛体验。
 // @author       moekyo
 // @match        https://stage1st.com/2b/*
@@ -20,8 +20,8 @@
 (function () {
   "use strict";
 
-  const SCRIPT_VERSION = "6.3.0";
-  const SCRIPT_RELEASE_DATE = "2026-03-12";
+  const SCRIPT_VERSION = "6.3.1";
+  const SCRIPT_RELEASE_DATE = "2026-03-13";
 
   // --- [新增] SHA-256 哈希计算库 (基于 Web Crypto API) ---
   /**
@@ -17626,18 +17626,18 @@
 
     // [OPTIMIZED] 优化HTML结构以改善文本布局和换行
     const bodyHtml = `
-    <p>已更新至 v${SCRIPT_VERSION}！本次更新聚焦在安全性、同步稳定性与使用体验：</p>
+    <p>已更新至 v${SCRIPT_VERSION}！本次更新主要修复了窄屏场景下的显示与交互问题。</p>
     <p style="margin-top: 16px;">
-        <strong>🔒 安全加固</strong>：收敛了高风险 HTML 渲染路径，补强原型链污染与高风险正则防护，整体更安全可靠。
+        <strong>📱 窄屏布局修复</strong>：修复 NUX 窄屏下帖子头部错位问题，楼层操作区与页面布局对齐更稳定。
     </p>
     <p style="margin-top: 8px;">
-        <strong>☁️ 同步升级</strong>：远程请求加入超时重试、跨标签页锁与冲突处理优化，并支持大文件 Gist 拉取和阅读进度冲突自动合并。
+        <strong>🧭 菜单可见性优化</strong>：列表页“屏蔽该帖子”确认菜单会根据空间自动调整弹出方向，避免被裁切看不全。
     </p>
     <p style="margin-top: 8px;">
-        <strong>🩺 同步诊断</strong>：设置面板中三连击版本号即可打开诊断信息面板，快速定位同步异常。
+        <strong>📍 阅读位置体验优化</strong>：窄屏下“当前阅读位置”改为更紧凑样式，并优化与楼层号间距，减少遮挡与贴边感。
     </p>
     <p style="margin-top: 8px;">
-        <strong>✨ 功能与交互优化</strong>：新增 Token 过期提醒、Token 显示/隐藏、用户标记颜色与历史快捷选择；同时统一工具栏图标与提示交互，界面更清爽。
+        <strong>🛠️ 稳定性小幅提升</strong>：同步清理重复样式与部分重复逻辑，后续维护与行为一致性更好。
     </p>
   `;
 
