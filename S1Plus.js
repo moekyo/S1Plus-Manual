@@ -416,11 +416,16 @@
   // 帖子列表页阅读进度刷新防抖，避免跨标签高频更新导致频繁重绘。
   const READ_PROGRESS_LIST_REFRESH_DEBOUNCE_MS = 120;
   // 帖内工具栏图标默认悬浮提示延迟，避免扫过时频繁闪现。
-  const DEFAULT_TOOLBAR_TOOLTIP_DELAY_MS = 500;
+  const DEFAULT_TOOLBAR_TOOLTIP_DELAY_MS = 350;
+  // 与 NUX 窄屏规则保持一致的断点。
+  const NARROW_SCREEN_MAX_WIDTH_PX = 909;
   // 列表页阅读按钮悬停超过该时长后显示删除入口。
   const READ_PROGRESS_DELETE_REVEAL_DELAY_MS = 2 * 1000;
   // 帖子页阅读进度持久化防抖：以内存批量累积为主，隐藏/卸载前强制落盘。
   const READ_PROGRESS_PERSIST_DEBOUNCE_MS = 5 * 1000;
+  // 阅读位置标识的正文留白与右侧安全间距。
+  const READ_INDICATOR_CONTENT_GAP_PX = 8;
+  const READ_INDICATOR_RIGHT_SAFE_GAP_PX = 14;
   // 收藏内容同步只保留短预览，避免整段文本参与哈希和上传。
   const BOOKMARK_SYNC_PREVIEW_MAX_LENGTH = 280;
   const SUPPORTS_CSS_HAS_SELECTOR = (() => {
@@ -668,7 +673,7 @@
     }
 
     /* --- [核心修复] 针对 S1 NUX 窄屏模式的兼容性适配 --- */
-    @media (max-width: 909px) {
+    @media (max-width: ${NARROW_SCREEN_MAX_WIDTH_PX}px) {
       #nv ul #s1p-nav-sync-btn {
         margin-left: 0 !important; /* 移除外边距，解决背景断裂问题 */
       }
@@ -3341,6 +3346,22 @@
       /* -- [新增] 针对Windows平台的垂直对齐微调 -- */
       position: relative;
       top: 1px;
+    }
+    @media (max-width: ${NARROW_SCREEN_MAX_WIDTH_PX}px) {
+      /* 窄屏时将“当前阅读位置”压缩为小图标，避免遮挡工具栏按钮 */
+      .s1p-read-indicator {
+        gap: 0;
+        padding: 4px;
+        border-radius: 999px;
+      }
+      .s1p-read-indicator > span:not(.s1p-read-indicator-icon) {
+        display: none;
+      }
+      .s1p-read-indicator-icon {
+        width: 12px;
+        height: 12px;
+        top: 0;
+      }
     }
     /* --- [新增] S1 NUX 推荐弹窗按钮专属样式 --- */
     .s1p-nux-recommend-modal .s1p-confirm-btn.s1p-confirm:hover {
@@ -15821,9 +15842,9 @@
               indicatorWidth = indicator.offsetWidth;
             }
             const newPti = newParentPi.querySelector(".pti");
-            const gap = 8;
             if (newPti && indicatorWidth > 0) {
-              newPti.style.paddingRight = `${indicatorWidth + gap}px`;
+              newPti.style.paddingRight =
+                `${indicatorWidth + READ_INDICATOR_CONTENT_GAP_PX}px`;
             }
             if (!indicator.parentElement) {
               newParentPi.appendChild(indicator);
@@ -15833,7 +15854,7 @@
             const rightOffset =
               (floorEl ? floorEl.offsetWidth : 0) +
               (actionsEl ? actionsEl.offsetWidth : 0) +
-              gap;
+              READ_INDICATOR_RIGHT_SAFE_GAP_PX;
             indicator.style.right = `${rightOffset}px`;
             currentIndicatorParent = newParentPi;
 
