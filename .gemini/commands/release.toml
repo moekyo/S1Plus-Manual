@@ -41,14 +41,24 @@ prompt = """
        * 确保 ## [Unreleased] 部分最终只剩下标题，其下方内容为空。
        * 确保新的版本日志与上一个版本日志之间有 --- 分割线。
 
-  步骤 3: 校准并刷新 README.md
+  步骤 3: 更新首次升级欢迎弹窗文案（showFirstTimeWelcomeIfNeeded）
+
+   1. 定位函数: 在 S1Plus.js 中找到 showFirstTimeWelcomeIfNeeded 函数。
+   2. 更新文案: 重写该函数中的 bodyHtml 更新亮点内容。
+   3. 文案要求:
+      * 必须基于本次刚生成的 ## [v{{args}}] 版本 Changelog 内容进行提炼。
+      * 必须面向一般用户，强调“变化结果/用户收益”，避免底层实现细节堆砌。
+      * 控制为 3-5 条精简亮点，按主题归纳（如安全、同步、体验）。
+      * 保持标题格式不变（S1 Plus v${SCRIPT_VERSION} 更新亮点）。
+
+  步骤 4: 校准并刷新 README.md
 
    1. 读取文件: 首先，同时读取 S1Plus.js 和 README.md 的内容。
    2. 提取新元数据: 从 S1Plus.js 文件中，提取出更新后的完整元数据块。
    3. 更新 readme：根据目前代码所有的实现，更新 readme，确保说明各项说明能准确反映脚本的**完整功能**，而不是罗列本次更新的增量。
    
 
-  步骤 4: 提交发布变更
+  步骤 5: 提交发布变更
 
    1. 暂存文件: 使用 git add . 将所有修改过的文件（S1Plus.js、CHANGELOG.md 和 README.md）添加到暂存区。
    2. 检查历史: 使用 git log -n 3 查看最近的提交历史，以确认提交信息的风格。
@@ -56,7 +66,7 @@ prompt = """
    1     release: v{{args}}
       示例: git commit -m "release: v4.1.0"
 
-  步骤 5: 创建 Git 标签
+  步骤 6: 创建 Git 标签
 
    1. 打上标签: 为刚刚的发布提交创建一个新的 Git 标签。标签名必须严格遵循以下格式：
 
@@ -71,6 +81,7 @@ prompt = """
    * 文件内容校验: 至关重要！在任何时候，当你需要修改一个文件时（尤其是 CHANGELOG.md），都必须先用
      read_file 读取其最新内容，然后再使用 write_file 或 replace
      进行修改。这可以防止因内容不同步而导致的操作失败。
+   * 文案一致性校验: 发布前必须确认 showFirstTimeWelcomeIfNeeded 的 bodyHtml 与本次 v{{args}} Changelog 对齐，且表达为“面向普通用户”的精简说明。
    * 遵循约定: 严格遵守项目中既定的版本号格式、Changelog 格式、提交信息格式和标签格式。
    * 最终确认: 完成所有步骤后，向用户报告发布成功，并询问是否需要将提交和标签推送到远程仓库 (git push
       && git push --tags)。
