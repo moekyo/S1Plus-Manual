@@ -420,7 +420,7 @@
   // 与 NUX 窄屏规则保持一致的断点。
   const NARROW_SCREEN_MAX_WIDTH_PX = 909;
   // 列表页阅读按钮悬停超过该时长后显示删除入口。
-  const READ_PROGRESS_DELETE_REVEAL_DELAY_MS = 2 * 1000;
+  const READ_PROGRESS_DELETE_REVEAL_DELAY_MS = 1 * 1000;
   // 帖子页阅读进度持久化防抖：以内存批量累积为主，隐藏/卸载前强制落盘。
   const READ_PROGRESS_PERSIST_DEBOUNCE_MS = 5 * 1000;
   // 阅读位置标识的正文留白与右侧安全间距。
@@ -555,8 +555,8 @@
       /* -- 阅读进度 -- */
       --s1p-progress-hot: rgb(192, 51, 34);
       --s1p-progress-cold: rgb(107, 114, 128);
-      --s1p-progress-delete-bg: #d95a4d;
-      --s1p-progress-delete-hover-bg: #be463a;
+      --s1p-progress-delete-bg: var(--s1p-progress-hot);
+      --s1p-progress-delete-hover-bg: rgb(154, 41, 28);
       --s1p-progress-delete-text: #ffffff;
 
       /* -- 用户标记颜色 -- */
@@ -3396,8 +3396,8 @@
 
         --s1p-border: #4b5563;
         --s1p-hover-overlay: rgba(255, 255, 255, 0.15);
-        --s1p-progress-delete-bg: #e26557;
-        --s1p-progress-delete-hover-bg: #c34a3e;
+        --s1p-progress-delete-bg: var(--s1p-progress-hot);
+        --s1p-progress-delete-hover-bg: rgb(154, 41, 28);
         --s1p-progress-delete-text: #ffffff;
       }
 
