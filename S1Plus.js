@@ -1056,11 +1056,11 @@
       transition: opacity 0.15s ease-out, visibility 0.15s;
     }
     /* 当左侧空间不足时，让帖子列表确认菜单改为向右弹出 */
-    .s1p-options-cell.s1p-open-right > .s1p-options-btn::after {
+    .s1p-options-cell.s1p-open-right:hover > .s1p-options-btn::after {
       left: 100%;
       right: auto;
     }
-    .s1p-options-cell.s1p-open-right > .s1p-options-menu {
+    .s1p-options-cell.s1p-open-right:hover > .s1p-options-menu {
       left: 100%;
       right: auto;
       padding: 5px 5px 5px 11px;
@@ -15128,6 +15128,9 @@
 
       optionsBtn.addEventListener("mouseenter", updateOptionsMenuDirection);
       optionsMenu.addEventListener("mouseenter", updateOptionsMenuDirection);
+      optionsCell.addEventListener("mouseleave", () =>
+        optionsCell.classList.remove("s1p-open-right")
+      );
       updateOptionsMenuDirection();
 
       optionsCell.appendChild(optionsBtn);
