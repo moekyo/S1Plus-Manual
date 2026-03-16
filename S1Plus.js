@@ -439,6 +439,70 @@
       return false;
     }
   })();
+  const IMAGE_PREVIEW_LIMIT_MIN = 100;
+  const IMAGE_PREVIEW_LIMIT_MAX = 5000;
+  const IMAGE_PREVIEW_DEFAULT_WIDTH = 800;
+  const IMAGE_PREVIEW_DEFAULT_HEIGHT = 1200;
+  const IMAGE_PREVIEW_LIMIT_ROOT_CLASS = "s1p-limit-images-by-size-enabled";
+  const IMAGE_PREVIEW_LIMIT_IMAGE_CLASS = "s1p-size-limited-image";
+  const IMAGE_PREVIEW_TITLE_DATA_KEY = "s1pOriginalTitle";
+  const IMAGE_PREVIEW_TITLE_HINT = "\u70b9\u51fb\u67e5\u770b\u539f\u56fe";
+  const normalizeImagePreviewLimitValue = (value, fallback) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) {
+      return fallback;
+    }
+    const rounded = Math.round(parsed);
+    return Math.min(
+      IMAGE_PREVIEW_LIMIT_MAX,
+      Math.max(IMAGE_PREVIEW_LIMIT_MIN, rounded)
+    );
+  };
+  const normalizeBooleanWithDefault = (value, defaultValue = true) =>
+    typeof value === "boolean" ? value : defaultValue;
+  const resolveImagePreviewLimitState = (rawSettings = {}) => {
+    const source = sanitizeRecordObject(rawSettings);
+    return {
+      enableGeneralSettings: normalizeBooleanWithDefault(
+        source.enableGeneralSettings,
+        true
+      ),
+      limitImagesBySize: normalizeBooleanWithDefault(
+        source.limitImagesBySize,
+        true
+      ),
+      imagePreviewMaxWidth: normalizeImagePreviewLimitValue(
+        source.imagePreviewMaxWidth,
+        IMAGE_PREVIEW_DEFAULT_WIDTH
+      ),
+      imagePreviewMaxHeight: normalizeImagePreviewLimitValue(
+        source.imagePreviewMaxHeight,
+        IMAGE_PREVIEW_DEFAULT_HEIGHT
+      ),
+    };
+  };
+  const applyImagePreviewLimitRootState = (state = {}) => {
+    const rootElement = document.documentElement;
+    if (!rootElement) return;
+    rootElement.style.setProperty(
+      "--s1p-image-preview-max-width",
+      `${state.imagePreviewMaxWidth}px`
+    );
+    rootElement.style.setProperty(
+      "--s1p-image-preview-max-height",
+      `${state.imagePreviewMaxHeight}px`
+    );
+    rootElement.classList.toggle(
+      IMAGE_PREVIEW_LIMIT_ROOT_CLASS,
+      state.enableGeneralSettings === true && state.limitImagesBySize === true
+    );
+  };
+  const applyEarlyImagePreviewLimitRootState = () => {
+    const rawSettings = GM_getValue("s1p_settings", {});
+    const normalizedState = resolveImagePreviewLimitState(rawSettings);
+    applyImagePreviewLimitRootState(normalizedState);
+  };
+  applyEarlyImagePreviewLimitRootState();
 
   let readProgressListRefreshTimer = null;
   let pendingReadProgressDataForRefresh = null;
@@ -570,6 +634,8 @@
       /* -- [新增] 用户名高亮 -- */
       --s1p-username-bg: #bccda8; /* Sage Green */
       --s1p-username-text: #0b2163; /* Dark Blue */
+      --s1p-image-preview-max-width: 800px;
+      --s1p-image-preview-max-height: 1200px;
 
     }
 
@@ -2662,6 +2728,77 @@
       width: auto;
       min-width: 200px;
     }
+    .s1p-image-size-limit-panel {
+      display: grid;
+      gap: 6px;
+    }
+    .s1p-image-size-limit-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .s1p-image-size-limit-header .s1p-setting-desc {
+      margin: 0;
+      flex: 1 1 auto;
+    }
+    .s1p-image-size-limit-header .s1p-btn {
+      flex-shrink: 0;
+      white-space: nowrap;
+    }
+    .s1p-image-size-limit-panel:not(.is-enabled) {
+      opacity: 0.5;
+      pointer-events: none;
+    }
+    .s1p-image-size-limit-controls {
+      display: grid;
+      gap: 6px;
+    }
+    .s1p-image-size-limit-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 6px;
+    }
+    .s1p-image-size-limit-field {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .s1p-image-size-limit-input-wrap {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .s1p-image-size-limit-input.s1p-input {
+      min-width: 74px;
+      width: 74px;
+      text-align: right;
+      padding: 6px 8px;
+      appearance: textfield;
+      -moz-appearance: textfield;
+    }
+    .s1p-image-size-limit-input.s1p-input::-webkit-outer-spin-button,
+    .s1p-image-size-limit-input.s1p-input::-webkit-inner-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+    .s1p-image-size-limit-unit {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--s1p-t);
+      min-width: 18px;
+      line-height: 1;
+    }
+    @media (max-width: 640px) {
+      .s1p-image-size-limit-header {
+        flex-wrap: wrap;
+      }
+      .s1p-image-size-limit-input.s1p-input {
+        width: 100px;
+        min-width: 100px;
+      }
+    }
     .s1p-settings-label {
       /* [优化] 设定设置项标签的基础样式 */
       font-size: 14px;
@@ -3052,6 +3189,14 @@
       align-items: flex-start;
       gap: 8px;
       margin: 8px 0;
+    }
+    html.s1p-limit-images-by-size-enabled div.t_fsz img.zoom,
+    html.s1p-limit-images-by-size-enabled div.t_fsz img[id^="aimg_"],
+    html.s1p-limit-images-by-size-enabled .s1p-size-limited-image {
+      max-width: var(--s1p-image-preview-max-width) !important;
+      max-height: var(--s1p-image-preview-max-height) !important;
+      width: auto !important;
+      height: auto !important;
     }
     .s1p-image-placeholder {
       display: inline-flex;
@@ -5977,6 +6122,100 @@
     });
   };
 
+  const restoreImagePreviewTitle = (img) => {
+    if (!(img instanceof HTMLImageElement)) {
+      return;
+    }
+    if (!Object.prototype.hasOwnProperty.call(img.dataset, IMAGE_PREVIEW_TITLE_DATA_KEY)) {
+      return;
+    }
+    const originalTitle = String(img.dataset[IMAGE_PREVIEW_TITLE_DATA_KEY] || "");
+    if (originalTitle) {
+      img.setAttribute("title", originalTitle);
+    } else {
+      img.removeAttribute("title");
+    }
+    delete img.dataset[IMAGE_PREVIEW_TITLE_DATA_KEY];
+  };
+  const buildImagePreviewTitleWithHint = (originalTitle) => {
+    if (!originalTitle) {
+      return IMAGE_PREVIEW_TITLE_HINT;
+    }
+    if (originalTitle.includes(IMAGE_PREVIEW_TITLE_HINT)) {
+      return originalTitle;
+    }
+    return `${originalTitle} | ${IMAGE_PREVIEW_TITLE_HINT}`;
+  };
+  const applyImageSizeLimits = (postTables = null) => {
+    const settings = getSettings();
+    const normalizedState = resolveImagePreviewLimitState(settings);
+    applyImagePreviewLimitRootState(normalizedState);
+
+    const targetPostTables = Array.isArray(postTables)
+      ? postTables.filter((table) => table instanceof Element)
+      : null;
+    const collectBySelector = (selector) => {
+      if (!targetPostTables) {
+        return Array.from(document.querySelectorAll(selector));
+      }
+      const collected = [];
+      const seen = new Set();
+      targetPostTables.forEach((table) => {
+        if (!(table instanceof Element)) return;
+        if (table.matches(selector) && !seen.has(table)) {
+          seen.add(table);
+          collected.push(table);
+        }
+        table.querySelectorAll(selector).forEach((node) => {
+          if (seen.has(node)) return;
+          seen.add(node);
+          collected.push(node);
+        });
+      });
+      return collected;
+    };
+    const targetImages = collectBySelector(
+      "div.t_fsz img.zoom, div.t_fsz img[id^='aimg_']"
+    );
+
+    if (!targetPostTables) {
+      const targetImageSet = new Set(targetImages);
+      document
+        .querySelectorAll(`img.${IMAGE_PREVIEW_LIMIT_IMAGE_CLASS}`)
+        .forEach((img) => {
+          if (!(img instanceof HTMLImageElement) || targetImageSet.has(img)) {
+            return;
+          }
+          img.classList.remove(IMAGE_PREVIEW_LIMIT_IMAGE_CLASS);
+          restoreImagePreviewTitle(img);
+        });
+    }
+
+    const shouldLimitImages =
+      normalizedState.enableGeneralSettings === true &&
+      normalizedState.limitImagesBySize === true;
+
+    targetImages.forEach((img) => {
+      if (!(img instanceof HTMLImageElement)) {
+        return;
+      }
+
+      if (!shouldLimitImages) {
+        img.classList.remove(IMAGE_PREVIEW_LIMIT_IMAGE_CLASS);
+        restoreImagePreviewTitle(img);
+        return;
+      }
+
+      if (!Object.prototype.hasOwnProperty.call(img.dataset, IMAGE_PREVIEW_TITLE_DATA_KEY)) {
+        img.dataset[IMAGE_PREVIEW_TITLE_DATA_KEY] = img.getAttribute("title") || "";
+      }
+      const originalTitle = String(img.dataset[IMAGE_PREVIEW_TITLE_DATA_KEY] || "");
+      const nextTitle = buildImagePreviewTitleWithHint(originalTitle);
+      img.classList.add(IMAGE_PREVIEW_LIMIT_IMAGE_CLASS);
+      img.setAttribute("title", nextTitle);
+    });
+  };
+
   // --- [新增] 修改“只看该作者”为“只看该用户”的函数 ---
   const renameAuthorLinks = (scopeRoots = null) => {
     const roots = Array.isArray(scopeRoots)
@@ -8297,6 +8536,9 @@
     showBlockedByKeywordList: false,
     showManuallyBlockedList: false,
     hideImagesByDefault: false,
+    limitImagesBySize: true,
+    imagePreviewMaxWidth: IMAGE_PREVIEW_DEFAULT_WIDTH,
+    imagePreviewMaxHeight: IMAGE_PREVIEW_DEFAULT_HEIGHT,
     enhanceFloatingControls: true,
     recommendS1Nux: true,
     customTitleSuffix: " - STAGE1ₛₜ",
@@ -8443,6 +8685,35 @@
     }
     settings.syncBookmarkFullContent = normalizedSyncBookmarkFullContent;
 
+    const normalizedLimitImagesBySize = normalizeBooleanWithDefault(
+      settings.limitImagesBySize,
+      true
+    );
+    if (settings.limitImagesBySize !== normalizedLimitImagesBySize) {
+      migrationApplied = true;
+    }
+    settings.limitImagesBySize = normalizedLimitImagesBySize;
+
+    const normalizedImagePreviewMaxWidth = normalizeImagePreviewLimitValue(
+      settings.imagePreviewMaxWidth,
+      IMAGE_PREVIEW_DEFAULT_WIDTH
+    );
+    if (!Object.is(settings.imagePreviewMaxWidth, normalizedImagePreviewMaxWidth)) {
+      migrationApplied = true;
+    }
+    settings.imagePreviewMaxWidth = normalizedImagePreviewMaxWidth;
+
+    const normalizedImagePreviewMaxHeight = normalizeImagePreviewLimitValue(
+      settings.imagePreviewMaxHeight,
+      IMAGE_PREVIEW_DEFAULT_HEIGHT
+    );
+    if (
+      !Object.is(settings.imagePreviewMaxHeight, normalizedImagePreviewMaxHeight)
+    ) {
+      migrationApplied = true;
+    }
+    settings.imagePreviewMaxHeight = normalizedImagePreviewMaxHeight;
+
     return { settings, migrationApplied };
   };
 
@@ -8481,6 +8752,9 @@
   const SETTINGS_CROSS_TAB_LIGHTWEIGHT_PATHS = [
     "openInNewTab",
     "hideImagesByDefault",
+    "limitImagesBySize",
+    "imagePreviewMaxWidth",
+    "imagePreviewMaxHeight",
     "showReadIndicator",
     "changeLogoLink",
     "hideBlacklistTip",
@@ -8948,6 +9222,13 @@
     if (hasSettingPathInChangedSet(changedPathSet, "hideImagesByDefault")) {
       applyImageHiding();
       manageImageToggleAllButtons();
+    }
+    if (
+      hasSettingPathInChangedSet(changedPathSet, "limitImagesBySize") ||
+      hasSettingPathInChangedSet(changedPathSet, "imagePreviewMaxWidth") ||
+      hasSettingPathInChangedSet(changedPathSet, "imagePreviewMaxHeight")
+    ) {
+      applyImageSizeLimits();
     }
     if (hasSettingPathInChangedSet(changedPathSet, "openInNewTab")) {
       applyGlobalLinkBehavior();
@@ -12764,7 +13045,35 @@
                         <label class="s1p-switch"><input type="checkbox" id="s1p-hideImagesByDefault" class="s1p-settings-checkbox" data-setting="hideImagesByDefault" ${settings.hideImagesByDefault ? "checked" : ""
         }><span class="s1p-slider"></span></label>
                     </div>
-
+                    <div class="s1p-settings-item">
+                        <label class="s1p-settings-label" for="s1p-limitImagesBySize">\u9650\u5236\u8d85\u5927\u56fe\u7247\u5c3a\u5bf8\uff08\u70b9\u51fb\u67e5\u770b\u539f\u56fe\uff09</label>
+                        <label class="s1p-switch"><input type="checkbox" id="s1p-limitImagesBySize" class="s1p-settings-checkbox" data-setting="limitImagesBySize" ${settings.limitImagesBySize ? "checked" : ""
+        }><span class="s1p-slider"></span></label>
+                    </div>
+                    <div id="s1p-image-size-limit-panel" class="s1p-image-size-limit-panel ${settings.limitImagesBySize ? "is-enabled" : ""}">
+                        <div class="s1p-image-size-limit-header">
+                            <p class="s1p-setting-desc">\u8d85\u8fc7\u9608\u503c\u7684\u56fe\u7247\u4f1a\u6309\u6bd4\u4f8b\u7f29\u653e\uff0c\u70b9\u51fb\u4ecd\u4f7f\u7528\u8bba\u575b\u539f\u751f\u67e5\u770b\u539f\u56fe\u3002</p>
+                            <button id="s1p-image-size-reset-btn" type="button" class="s1p-btn">\u6062\u590d\u9ed8\u8ba4</button>
+                        </div>
+                        <div class="s1p-settings-sub-group s1p-image-size-limit-controls">
+                            <div class="s1p-image-size-limit-grid">
+                                <div class="s1p-image-size-limit-field">
+                                    <label class="s1p-settings-label" for="s1p-imagePreviewMaxWidth">\u6700\u5927\u5bbd\u5ea6</label>
+                                    <div class="s1p-image-size-limit-input-wrap">
+                                        <input type="number" id="s1p-imagePreviewMaxWidth" class="s1p-input s1p-image-size-limit-input" data-setting="imagePreviewMaxWidth" min="${IMAGE_PREVIEW_LIMIT_MIN}" max="${IMAGE_PREVIEW_LIMIT_MAX}" step="1" value="${settings.imagePreviewMaxWidth}">
+                                        <span class="s1p-image-size-limit-unit">px</span>
+                                    </div>
+                                </div>
+                                <div class="s1p-image-size-limit-field">
+                                    <label class="s1p-settings-label" for="s1p-imagePreviewMaxHeight">\u6700\u5927\u9ad8\u5ea6</label>
+                                    <div class="s1p-image-size-limit-input-wrap">
+                                        <input type="number" id="s1p-imagePreviewMaxHeight" class="s1p-input s1p-image-size-limit-input" data-setting="imagePreviewMaxHeight" min="${IMAGE_PREVIEW_LIMIT_MIN}" max="${IMAGE_PREVIEW_LIMIT_MAX}" step="1" value="${settings.imagePreviewMaxHeight}">
+                                        <span class="s1p-image-size-limit-unit">px</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                     <div class="s1p-settings-item">
                         <label class="s1p-settings-label" for="s1p-hideSystemBlockedPosts">默认隐藏被系统屏蔽的楼层</label>
                         <label class="s1p-switch"><input type="checkbox" id="s1p-hideSystemBlockedPosts" class="s1p-settings-checkbox" data-setting="hideSystemBlockedPosts" ${settings.hideSystemBlockedPosts ? "checked" : ""
@@ -12947,6 +13256,50 @@
       if (openProgressDetailBtn) {
         openProgressDetailBtn.addEventListener("click", () => {
           createReadingProgressDetailModal();
+        });
+      }
+      const imageSizeLimitPanel = tabs["general-settings"].querySelector(
+        "#s1p-image-size-limit-panel"
+      );
+      const imageSizeLimitToggle = tabs["general-settings"].querySelector(
+        "#s1p-limitImagesBySize"
+      );
+      if (imageSizeLimitToggle && imageSizeLimitPanel) {
+        imageSizeLimitToggle.addEventListener("change", (event) => {
+          imageSizeLimitPanel.classList.toggle(
+            "is-enabled",
+            event.target.checked === true
+          );
+        });
+      }
+      const imageSizeResetButton = tabs["general-settings"].querySelector(
+        "#s1p-image-size-reset-btn"
+      );
+      if (imageSizeResetButton) {
+        imageSizeResetButton.addEventListener("click", (event) => {
+          event.preventDefault();
+          const currentSettings = getSettingsForWrite();
+          currentSettings.imagePreviewMaxWidth = IMAGE_PREVIEW_DEFAULT_WIDTH;
+          currentSettings.imagePreviewMaxHeight = IMAGE_PREVIEW_DEFAULT_HEIGHT;
+          saveSettings(currentSettings);
+          const latestSettings = getSettings();
+          const widthInput = tabs["general-settings"].querySelector(
+            "#s1p-imagePreviewMaxWidth"
+          );
+          const heightInput = tabs["general-settings"].querySelector(
+            "#s1p-imagePreviewMaxHeight"
+          );
+          if (widthInput) {
+            widthInput.value = String(latestSettings.imagePreviewMaxWidth);
+          }
+          if (heightInput) {
+            heightInput.value = String(latestSettings.imagePreviewMaxHeight);
+          }
+          applyImageSizeLimits();
+          showMessage(
+            "\u5df2\u6062\u590d\u9ed8\u8ba4\u5927\u56fe\u9650\u5236\uff1a800 / 1200 px\u3002",
+            true
+          );
         });
       }
     };
@@ -13207,6 +13560,9 @@
           "openInNewTab",
           "showReadIndicator",
           "hideImagesByDefault",
+          "limitImagesBySize",
+          "imagePreviewMaxWidth",
+          "imagePreviewMaxHeight",
           "hideSystemBlockedPosts",
           "recommendS1Nux",
           "enhanceFloatingControls",
@@ -13341,6 +13697,27 @@
           applyImageHiding();
           manageImageToggleAllButtons();
         }
+        if (
+          settingKey === "limitImagesBySize" ||
+          settingKey === "imagePreviewMaxWidth" ||
+          settingKey === "imagePreviewMaxHeight"
+        ) {
+          const latestSettings = getSettings();
+          if (
+            settingKey === "imagePreviewMaxWidth" ||
+            settingKey === "imagePreviewMaxHeight"
+          ) {
+            target.value = String(latestSettings[settingKey]);
+          }
+          const imageLimitPanel = modal.querySelector("#s1p-image-size-limit-panel");
+          if (imageLimitPanel) {
+            imageLimitPanel.classList.toggle(
+              "is-enabled",
+              latestSettings.limitImagesBySize === true
+            );
+          }
+          applyImageSizeLimits();
+        }
         // [MODIFIED] 当任何一个新标签页设置改变时，都重新应用全局行为
         if (settingKey.startsWith("openInNewTab.")) {
           applyGlobalLinkBehavior();
@@ -13414,6 +13791,7 @@
             applyGlobalLinkBehavior();
             applyImageHiding();
             manageImageToggleAllButtons();
+            applyImageSizeLimits();
             if (isChecked) {
               addProgressJumpButtons();
             } else {
@@ -18199,9 +18577,11 @@
         if (canUseScopedPostRefresh) {
           applyImageHiding(pendingPostTables);
           manageImageToggleAllButtons(pendingPostTables);
+          applyImageSizeLimits(pendingPostTables);
         } else {
           applyImageHiding();
           manageImageToggleAllButtons();
+          applyImageSizeLimits();
         }
         shouldRefreshGlobalLinkBehavior = true;
         trackReadProgressInThread(
@@ -18403,6 +18783,7 @@
     applyInterfaceCustomizations();
     applyImageHiding();
     manageImageToggleAllButtons();
+    applyImageSizeLimits();
     applyGlobalLinkBehavior(); // <--- MODIFIED
     trackReadProgressInThread();
     markSettingsRuntimeAppliedSnapshot(settings);
