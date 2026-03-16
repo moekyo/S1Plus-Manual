@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      6.3.1
+// @version      6.4.0
 // @description  为Stage1st论坛提供帖子/用户/楼层屏蔽、导航栏自定义、自动签到、阅读进度跟踪、回复收藏、远程同步等多种功能，全方位优化你的论坛体验。
 // @author       moekyo
 // @match        https://stage1st.com/2b/*
@@ -20,8 +20,8 @@
 (function () {
   "use strict";
 
-  const SCRIPT_VERSION = "6.3.1";
-  const SCRIPT_RELEASE_DATE = "2026-03-13";
+  const SCRIPT_VERSION = "6.4.0";
+  const SCRIPT_RELEASE_DATE = "2026-03-16";
 
   // --- [新增] SHA-256 哈希计算库 (基于 Web Crypto API) ---
   /**
@@ -18007,18 +18007,18 @@
 
     // [OPTIMIZED] 优化HTML结构以改善文本布局和换行
     const bodyHtml = `
-    <p>已更新至 v${SCRIPT_VERSION}！本次更新主要修复了窄屏场景下的显示与交互问题。</p>
+    <p>已更新至 v${SCRIPT_VERSION}！本次更新聚焦图片浏览体验与设置易用性，并修复了列表页的一个布局问题。</p>
     <p style="margin-top: 16px;">
-        <strong>📱 窄屏布局修复</strong>：修复 NUX 窄屏下帖子头部错位问题，楼层操作区与页面布局对齐更稳定。
+        <strong>🖼️ 超大图片显示更稳</strong>：新增“限制超大图片尺寸”开关，默认按 800x1200 等比缩放，超大图不再撑爆楼层布局；点击图片仍使用论坛原生查看原图。
     </p>
     <p style="margin-top: 8px;">
-        <strong>🧭 菜单可见性优化</strong>：列表页“屏蔽该帖子”确认菜单会根据空间自动调整弹出方向，避免被裁切看不全。
+        <strong>⚙️ 图片阈值可直接调</strong>：最大宽度/高度支持自定义，并提供“恢复默认”一键回退，刷新后仍会保留你的设置。
     </p>
     <p style="margin-top: 8px;">
-        <strong>📍 阅读位置体验优化</strong>：窄屏下“当前阅读位置”改为更紧凑样式，并优化与楼层号间距，减少遮挡与贴边感。
+        <strong>🎛️ 设置区更紧凑统一</strong>：图片限制面板重排为更清晰的紧凑布局，输入框与现有控件风格统一，调节更直观。
     </p>
     <p style="margin-top: 8px;">
-        <strong>🛠️ 稳定性小幅提升</strong>：同步清理重复样式与部分重复逻辑，后续维护与行为一致性更好。
+        <strong>🧭 列表页布局稳定性提升</strong>：修复偶发底部横向滚动条与右侧空白区问题，浏览体验更干净。
     </p>
   `;
 
