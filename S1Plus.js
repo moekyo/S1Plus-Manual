@@ -423,6 +423,8 @@
   const READ_PROGRESS_DELETE_REVEAL_DELAY_MS = 1 * 1000;
   // 帖子页阅读进度持久化防抖：以内存批量累积为主，隐藏/卸载前强制落盘。
   const READ_PROGRESS_PERSIST_DEBOUNCE_MS = 5 * 1000;
+  const NATIVE_BLACKLIST_VIEW_URL =
+    "https://stage1st.com/2b/home.php?mod=space&do=friend&view=blacklist";
   // 阅读位置标识的正文留白与右侧安全间距。
   const READ_INDICATOR_CONTENT_GAP_PX = 8;
   const READ_INDICATOR_RIGHT_SAFE_GAP_PX = 14;
@@ -546,6 +548,7 @@
   const SVG_ICON_ARROW_MASK = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 16'%3E%3Cpath d='M2 2L8 8L2 14' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E`;
   const SVG_ICON_EYE = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 16px; height: 16px;"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>`;
   const SVG_ICON_EYE_SLASH = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 16px; height: 16px;"><path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>`;
+  const SVG_ICON_EXTERNAL_LINK = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" /></svg>`;
 
   // --- 帖子楼层工具栏图标 ---
   const TOOLBAR_ICONS = {
@@ -4694,7 +4697,7 @@
     return new Promise((resolve, reject) => {
       // 根据用户提供的网络日志，精确模拟请求
       const url = `home.php?mod=spacecp&ac=friend&op=blacklist&subop=delete&uid=${uid}`;
-      const refererUrl = `https://stage1st.com/2b/home.php?mod=space&do=friend&view=blacklist`;
+      const refererUrl = NATIVE_BLACKLIST_VIEW_URL;
 
       GM_xmlhttpRequest({
         method: "GET",
@@ -12589,8 +12592,6 @@
           listEl.className = "s1p-list";
           listEl.id = "s1p-bookmarks-list";
 
-          const externalLinkSvg = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" /></svg>`;
-
           bookmarkItems.forEach((item) => {
             const rawPostId = String(item?.postId ?? "");
             const postIdForUrl = encodeURIComponent(rawPostId);
@@ -12695,7 +12696,7 @@
             threadLink.appendChild(threadTitleEl);
 
             const linkIcon = document.createElement("span");
-            setSanitizedIconHtml(linkIcon, externalLinkSvg);
+            setSanitizedIconHtml(linkIcon, SVG_ICON_EXTERNAL_LINK);
             threadLink.appendChild(linkIcon.firstElementChild || linkIcon);
 
             metaLine.appendChild(threadLink);
@@ -12957,6 +12958,7 @@
       const userItemIds = Object.keys(blockedUsers).sort(
         (a, b) => blockedUsers[b].timestamp - blockedUsers[a].timestamp
       );
+      const nativeBlacklistLinkHtml = `<a class="s1p-bookmark-thread-link" href="${NATIVE_BLACKLIST_VIEW_URL}" target="_blank" rel="noopener noreferrer" title="论坛黑名单"><span class="s1p-bookmark-title-text">论坛黑名单</span>${SVG_ICON_EXTERNAL_LINK}</a>`;
       const contentHTML = `
                 <div class="s1p-settings-group" style="margin-bottom: 16px; padding-bottom: 0;">
                     <div class="s1p-settings-item">
@@ -12974,7 +12976,8 @@
                     </div>
 
                     <p class="s1p-setting-desc" style="margin-top: 8px; margin-bottom: 16px;">
-                        <strong>提示</strong>：开启“同步至论坛黑名单”后，新屏蔽的用户会同时加入论坛黑名单。
+                        <strong>提示</strong>：开启“同步至论坛黑名单”后，新屏蔽的用户会同时加入
+                        ${nativeBlacklistLinkHtml}。
                     </p>
                 </div>
                 <div class="s1p-settings-group" style="margin-bottom: 16px; padding-bottom: 0;">
