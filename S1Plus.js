@@ -646,6 +646,9 @@
     .s1p-system-blocked-fallback-hidden {
       display: none !important;
     }
+    .s1p-hidden-blocked-rating-block {
+      display: none !important;
+    }
 
 
     @keyframes s1p-tab-fade-in {
@@ -695,6 +698,16 @@
       padding: 0 4px;
       border-radius: 4px;
       max-width: 100%; /* 确保不超过容器宽度 */
+    }
+    .s1p-profile-block-user-wrap {
+      margin-top: 8px;
+    }
+    .s1p-profile-block-user-wrap .s1p-profile-block-user-btn {
+      font-weight: 600;
+      padding: 4px 12px;
+    }
+    .s1p-profile-block-user-btn.is-blocked {
+      cursor: pointer;
     }
 
     /* --- [FIX] 导航栏垂直居中对齐修正 --- */
@@ -2533,6 +2546,10 @@
       z-index: 10000;
       animation: s1p-fade-in 0.2s ease-out;
     }
+    /* 已有蒙版（设置面板）时，confirm modal 不重复显示蒙版背景 */
+    .s1p-modal ~ .s1p-confirm-modal {
+      background-color: transparent;
+    }
     .s1p-confirm-content {
       background-color: var(--s1p-bg);
       border-radius: 12px;
@@ -2566,6 +2583,27 @@
     }
     .s1p-confirm-footer.s1p-centered {
       justify-content: center;
+    }
+    .s1p-manual-block-form {
+      margin-top: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .s1p-manual-block-field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .s1p-manual-block-field-label {
+      font-size: 14px;
+      color: var(--s1p-t);
+      font-weight: 600;
+    }
+    .s1p-manual-block-remark-input {
+      min-height: 88px;
+      resize: vertical;
+      font-family: inherit;
     }
 
     /* --- 阅读记录详情弹窗样式 --- */
@@ -4266,6 +4304,230 @@
     return null;
   };
 
+  const normalizeUsernameInput = (value) => {
+    const firstLine = String(value ?? "").split(/\r?\n/)[0] || "";
+    return firstLine.trim().replace(/^@+/, "");
+  };
+
+  const extractUidFromSpaceUrl = (url) => {
+    const rawUrl = String(url || "");
+    if (!rawUrl) {
+      return "";
+    }
+
+    const uidFromProfileHref = extractUidFromProfileHref(rawUrl);
+    if (uidFromProfileHref) {
+      return uidFromProfileHref;
+    }
+
+    const uidFromQueryMatch = rawUrl.match(/[?&]uid=(\d+)/);
+    if (uidFromQueryMatch && uidFromQueryMatch[1]) {
+      return uidFromQueryMatch[1];
+    }
+
+    try {
+      const parsedUrl = new URL(rawUrl, window.location.origin);
+      return normalizeNumericId(parsedUrl.searchParams.get("uid"));
+    } catch (error) {
+      return "";
+    }
+  };
+
+  const findUidByUsernameFromLinks = (links, username) => {
+    const normalizedUsername = normalizeUsernameInput(username);
+    if (!normalizedUsername || !links) {
+      return "";
+    }
+
+    for (const link of Array.from(links)) {
+      if (!(link instanceof Element)) {
+        continue;
+      }
+      const linkName = normalizeUsernameInput(link.textContent);
+      if (linkName !== normalizedUsername) {
+        continue;
+      }
+      const uid = extractUidFromSpaceUrl(
+        link.getAttribute("href") || link.href || ""
+      );
+      if (uid) {
+        return uid;
+      }
+    }
+    return "";
+  };
+
+  const findUidByUsernameInHtml = (htmlText, username) => {
+    const sourceHtml = String(htmlText || "");
+    if (!sourceHtml) {
+      return "";
+    }
+    try {
+      const parser = new DOMParser();
+      const htmlDoc = parser.parseFromString(sourceHtml, "text/html");
+
+      const matchedUid = findUidByUsernameFromLinks(
+        htmlDoc.querySelectorAll('a[href*="space-uid-"], a[href*="uid="]'),
+        username
+      );
+      if (matchedUid) {
+        return matchedUid;
+      }
+
+      const canonicalHref =
+        htmlDoc.querySelector('link[rel="canonical"]')?.getAttribute("href") ||
+        "";
+      const canonicalUid = extractUidFromSpaceUrl(canonicalHref);
+      if (canonicalUid) {
+        return canonicalUid;
+      }
+
+      // 当页面内仅存在一个 UID 候选时，可安全地作为兜底。
+      const uidCandidates = new Set();
+      htmlDoc
+        .querySelectorAll('a[href*="space-uid-"], a[href*="uid="]')
+        .forEach((link) => {
+          const uid = extractUidFromSpaceUrl(
+            link.getAttribute("href") || link.href || ""
+          );
+          if (uid) {
+            uidCandidates.add(uid);
+          }
+        });
+      if (uidCandidates.size === 1) {
+        return Array.from(uidCandidates)[0];
+      }
+    } catch (error) {
+      console.warn("S1 Plus: 解析用户名查询结果失败。", error);
+    }
+    return "";
+  };
+
+  const requestUserProfileLookupPage = (url) =>
+    new Promise((resolve, reject) => {
+      GM_xmlhttpRequest({
+        method: "GET",
+        url,
+        timeout: 10000,
+        onload: (response) => {
+          if (response.status >= 200 && response.status < 400) {
+            resolve(response);
+            return;
+          }
+          reject(new Error(`HTTP status ${response.status}`));
+        },
+        onerror: (error) => reject(error),
+        ontimeout: () => reject(new Error("请求超时")),
+      });
+    });
+
+  const createUserLookupError = (code, message) => {
+    const error = new Error(message);
+    error.code = code;
+    return error;
+  };
+
+  const resolveUidByUsername = async (username) => {
+    const normalizedUsername = normalizeUsernameInput(username);
+    if (!normalizedUsername) {
+      throw createUserLookupError("EMPTY_USERNAME", "用户名不能为空。");
+    }
+
+    const uidOnCurrentPage = findUidByUsernameFromLinks(
+      document.querySelectorAll('a[href*="space-uid-"], a[href*="uid="]'),
+      normalizedUsername
+    );
+    if (uidOnCurrentPage) {
+      return uidOnCurrentPage;
+    }
+
+    const lookupUrls = [
+      `home.php?mod=space&username=${encodeURIComponent(normalizedUsername)}`,
+      `home.php?mod=space&uid=0&do=profile&username=${encodeURIComponent(
+        normalizedUsername
+      )}`,
+      `space-username-${encodeURIComponent(normalizedUsername)}.html`,
+    ];
+    let hasSuccessfulResponse = false;
+    let lastRequestError = null;
+
+    for (const lookupUrl of lookupUrls) {
+      try {
+        const response = await requestUserProfileLookupPage(lookupUrl);
+        hasSuccessfulResponse = true;
+
+        const finalUrl = String(response.finalUrl || response.responseURL || "");
+        const uidFromFinalUrl = extractUidFromSpaceUrl(finalUrl);
+        if (uidFromFinalUrl) {
+          return uidFromFinalUrl;
+        }
+
+        const redirectLocationMatch = String(response.responseHeaders || "").match(
+          /^\s*location:\s*(.+)$/im
+        );
+        if (redirectLocationMatch && redirectLocationMatch[1]) {
+          const uidFromLocation = extractUidFromSpaceUrl(
+            redirectLocationMatch[1].trim()
+          );
+          if (uidFromLocation) {
+            return uidFromLocation;
+          }
+        }
+
+        const uidFromHtml = findUidByUsernameInHtml(
+          response.responseText,
+          normalizedUsername
+        );
+        if (uidFromHtml) {
+          return uidFromHtml;
+        }
+      } catch (error) {
+        lastRequestError = error;
+      }
+    }
+
+    if (hasSuccessfulResponse) {
+      throw createUserLookupError(
+        "UID_NOT_FOUND",
+        `未找到用户名为 ${normalizedUsername} 的用户。`
+      );
+    }
+    const requestError = createUserLookupError(
+      "LOOKUP_REQUEST_FAILED",
+      "用户名查询请求失败。"
+    );
+    requestError.cause = lastRequestError;
+    throw requestError;
+  };
+
+  const buildUserBlockConfirmText = (settings = getSettings()) => {
+    const baseText =
+      settings.blockThreadsOnUserBlock === true
+        ? "屏蔽用户并隐藏其主题帖？"
+        : "确认屏蔽该用户？";
+    return settings.syncWithNativeBlacklist === true
+      ? `${baseText} (将同步至论坛黑名单)`
+      : baseText;
+  };
+
+  const showUserBlockResultMessage = (
+    userName,
+    nativeSyncSucceeded,
+    settings = getSettings()
+  ) => {
+    const displayName = String(userName || "该用户");
+    if (nativeSyncSucceeded) {
+      showMessage(
+        settings.syncWithNativeBlacklist === true
+          ? `已屏蔽用户 ${displayName} 并同步至论坛黑名单。`
+          : `已屏蔽用户 ${displayName}。`,
+        true
+      );
+      return;
+    }
+    showMessage(`已屏蔽用户 ${displayName}，但同步论坛黑名单失败。`, false);
+  };
+
   /**
    * 异步将指定用户添加到论坛黑名单。
    * @param {string} username - 要屏蔽的用户名。
@@ -5325,18 +5587,52 @@
   // [MODIFIED] 函数现在可以同时处理隐藏和显示，是一个完整的“刷新”功能
   const hideBlockedUserRatings = (scopeRoots = null) => {
     const settings = getSettings();
+    const isUserBlockingEnabled = settings.enableUserBlocking === true;
     const blockedUserIdSet = new Set(Object.keys(getBlockedUsers()));
+    const getRatingAuthorId = (row) => {
+      if (!(row instanceof Element)) {
+        return "";
+      }
+      const userLink = row.querySelector('a[href*="space-uid-"], a[href*="uid="]');
+      if (!userLink) {
+        return "";
+      }
+      return extractUidFromSpaceUrl(
+        userLink.getAttribute("href") || userLink.href || ""
+      );
+    };
     const targetRows = collectNodesByScope(scopeRoots, "tbody.ratl_l tr");
     targetRows.forEach((row) => {
-      const userLink = row.querySelector('a[href*="space-uid-"]');
-      if (userLink) {
-        const uidMatch = userLink.href.match(/space-uid-(\d+)/);
-        if (uidMatch && uidMatch[1]) {
-          const isBlocked =
-            settings.enableUserBlocking && blockedUserIdSet.has(uidMatch[1]);
-          row.style.display = isBlocked ? "none" : "";
-        }
+      const authorId = getRatingAuthorId(row);
+      if (!authorId) return;
+
+      const isBlocked = isUserBlockingEnabled && blockedUserIdSet.has(authorId);
+      row.style.display = isBlocked ? "none" : "";
+    });
+
+    const targetRateBlocks =
+      scopeRoots === null
+        ? Array.from(document.querySelectorAll("dl.rate"))
+        : collectNodesByScope(scopeRoots, "dl.rate");
+    targetRateBlocks.forEach((rateBlock) => {
+      const ratingRows = Array.from(rateBlock.querySelectorAll("tbody.ratl_l tr"));
+      if (ratingRows.length === 0) {
+        rateBlock.classList.remove("s1p-hidden-blocked-rating-block");
+        return;
       }
+
+      const hasAnyUnblockedRating = ratingRows.some((row) => {
+        const authorId = getRatingAuthorId(row);
+        if (!authorId) {
+          return true;
+        }
+        return !blockedUserIdSet.has(authorId);
+      });
+
+      rateBlock.classList.toggle(
+        "s1p-hidden-blocked-rating-block",
+        isUserBlockingEnabled && !hasAnyUnblockedRating
+      );
     });
   };
 
@@ -10617,6 +10913,7 @@
       textarea.style.resize = "vertical";
       textarea.style.fontFamily = "inherit";
       textarea.style.boxSizing = "border-box";
+      textarea.value = String(options.inputDefaultValue ?? "");
 
       remarkArea.appendChild(label);
       remarkArea.appendChild(textarea);
@@ -10817,8 +11114,8 @@
 
     menu.querySelector(".s1p-confirm").addEventListener("click", (e) => {
       e.stopPropagation();
-      const textarea = menu.querySelector("textarea");
-      const inputValue = textarea ? textarea.value.trim() : undefined;
+      const remarkTextarea = menu.querySelector(".s1p-confirm-remark-area textarea");
+      const inputValue = remarkTextarea ? remarkTextarea.value.trim() : undefined;
       try {
         onConfirm(inputValue);
       } catch (error) {
@@ -12333,6 +12630,204 @@
         setupBookmarkSearchComponent(tabs["bookmarks"]);
       }
     };
+    const openManualUserBlockModal = (
+      defaultUsername = "",
+      defaultRemark = ""
+    ) => {
+      dismissExistingConfirmModal({ reason: "replaced", immediate: true });
+
+      const modal = document.createElement("div");
+      modal.className = "s1p-confirm-modal";
+
+      const content = document.createElement("div");
+      content.className = "s1p-confirm-content";
+
+      const body = document.createElement("div");
+      body.className = "s1p-confirm-body";
+
+      const titleEl = document.createElement("div");
+      titleEl.className = "s1p-confirm-title";
+      titleEl.textContent = "手动屏蔽用户";
+
+      const subtitleEl = document.createElement("div");
+      subtitleEl.className = "s1p-confirm-subtitle";
+      subtitleEl.textContent = "输入用户名后，脚本会自动识别 UID，并支持备注。";
+
+      const form = document.createElement("div");
+      form.className = "s1p-manual-block-form";
+
+      const usernameField = document.createElement("div");
+      usernameField.className = "s1p-manual-block-field";
+      const usernameLabel = document.createElement("div");
+      usernameLabel.className = "s1p-manual-block-field-label";
+      usernameLabel.textContent = "用户名：";
+      const usernameInput = document.createElement("input");
+      usernameInput.type = "text";
+      usernameInput.className = "s1p-input";
+      usernameInput.placeholder = "输入用户名（支持 @用户名）";
+      usernameInput.autocomplete = "off";
+      usernameInput.value = String(defaultUsername || "");
+      usernameField.appendChild(usernameLabel);
+      usernameField.appendChild(usernameInput);
+
+      const remarkField = document.createElement("div");
+      remarkField.className = "s1p-manual-block-field";
+      const remarkLabel = document.createElement("div");
+      remarkLabel.className = "s1p-manual-block-field-label";
+      remarkLabel.textContent = "备注：";
+      const remarkInput = document.createElement("textarea");
+      remarkInput.className = "s1p-input s1p-manual-block-remark-input";
+      remarkInput.placeholder = "添加备注（可选）";
+      remarkInput.value = String(defaultRemark || "");
+      remarkField.appendChild(remarkLabel);
+      remarkField.appendChild(remarkInput);
+
+      form.appendChild(usernameField);
+      form.appendChild(remarkField);
+
+      body.appendChild(titleEl);
+      body.appendChild(subtitleEl);
+      body.appendChild(form);
+
+      const footer = document.createElement("div");
+      footer.className = "s1p-confirm-footer";
+
+      const cancelBtn = document.createElement("button");
+      cancelBtn.className = "s1p-confirm-btn s1p-cancel";
+      cancelBtn.textContent = "取消";
+
+      const confirmBtn = document.createElement("button");
+      confirmBtn.className = "s1p-confirm-btn s1p-confirm";
+      confirmBtn.textContent = "确认屏蔽";
+
+      footer.appendChild(cancelBtn);
+      footer.appendChild(confirmBtn);
+
+      content.appendChild(body);
+      content.appendChild(footer);
+      modal.appendChild(content);
+
+      let isClosing = false;
+      let isSubmitting = false;
+      const closeModal = ({ immediate = false } = {}) => {
+        if (isClosing) return;
+        isClosing = true;
+        if (immediate) {
+          modal.remove();
+          return;
+        }
+        content.style.animation = "s1p-scale-out 0.25s ease-out forwards";
+        modal.style.animation = "s1p-fade-out 0.25s ease-out forwards";
+        setTimeout(() => modal.remove(), 250);
+      };
+
+      const setSubmittingState = (submitting) => {
+        isSubmitting = submitting;
+        confirmBtn.disabled = submitting;
+        cancelBtn.disabled = submitting;
+      };
+
+      const handleSubmit = async () => {
+        if (isSubmitting) return;
+        const rawUsernameInput = String(usernameInput.value || "");
+        const rawRemarkInput = String(remarkInput.value || "");
+        const userName = normalizeUsernameInput(rawUsernameInput);
+
+        if (!userName) {
+          showMessage("请输入用户名。", false);
+          usernameInput.focus();
+          return;
+        }
+
+        const blockedUsers = getBlockedUsers();
+        const duplicatedByName = Object.values(blockedUsers).some(
+          (entry) => normalizeUsernameInput(entry?.name) === userName
+        );
+        if (duplicatedByName) {
+          showMessage(`用户 ${userName} 已在屏蔽列表中。`, false);
+          return;
+        }
+
+        setSubmittingState(true);
+        showMessage(`正在查找用户 ${userName}...`, null);
+        try {
+          const userId = await resolveUidByUsername(userName);
+          const latestBlockedUsers = getBlockedUsers();
+          if (latestBlockedUsers[userId]) {
+            const existingName = latestBlockedUsers[userId]?.name || userName;
+            showMessage(`用户 ${existingName} 已在屏蔽列表中。`, false);
+            setSubmittingState(false);
+            return;
+          }
+
+          const remark = rawRemarkInput.trim();
+          const nativeSyncSucceeded = await blockUser(userId, userName, remark);
+
+          renderUserTab();
+          renderThreadTab();
+          closeModal();
+
+          showUserBlockResultMessage(
+            userName,
+            nativeSyncSucceeded,
+            getSettings()
+          );
+        } catch (error) {
+          if (error?.code === "UID_NOT_FOUND") {
+            showMessage("未找到该用户名，请检查后重试。", false);
+            usernameInput.focus();
+            usernameInput.select();
+          } else if (error?.code === "LOOKUP_REQUEST_FAILED") {
+            showMessage("查询用户失败，请稍后重试。", false);
+          } else {
+            showMessage("手动屏蔽失败，请稍后重试。", false);
+          }
+          setSubmittingState(false);
+        }
+      };
+
+      cancelBtn.addEventListener("click", () => {
+        if (!isSubmitting) {
+          closeModal();
+        }
+      });
+      confirmBtn.addEventListener("click", handleSubmit);
+
+      usernameInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.isComposing) {
+          e.preventDefault();
+          handleSubmit();
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          if (!isSubmitting) {
+            closeModal();
+          }
+        }
+      });
+      remarkInput.addEventListener("keydown", (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+          e.preventDefault();
+          handleSubmit();
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          if (!isSubmitting) {
+            closeModal();
+          }
+        }
+      });
+
+      modal.addEventListener("click", (e) => {
+        if (e.target === modal && !isSubmitting) {
+          closeModal();
+        }
+      });
+
+      document.body.appendChild(modal);
+      setTimeout(() => {
+        usernameInput.focus();
+        usernameInput.select();
+      }, 50);
+    };
     const renderUserTab = () => {
       const settings = getSettings();
       const isEnabled = settings.enableUserBlocking;
@@ -12368,6 +12863,15 @@
 
                     <p class="s1p-setting-desc" style="margin-top: 8px; margin-bottom: 16px;">
                         <strong>提示</strong>：开启“同步至论坛黑名单”后，新屏蔽的用户会同时加入论坛黑名单。
+                    </p>
+                </div>
+                <div class="s1p-settings-group" style="margin-bottom: 16px; padding-bottom: 0;">
+                    <div class="s1p-settings-item">
+                        <label class="s1p-settings-label" for="s1p-manual-block-user-btn">手动输入用户名屏蔽</label>
+                        <button id="s1p-manual-block-user-btn" class="s1p-btn" type="button">添加屏蔽用户</button>
+                    </div>
+                    <p class="s1p-setting-desc" style="margin-top: 8px; margin-bottom: 0;">
+                        输入用户名后，脚本会自动识别 UID，并支持填写备注后加入屏蔽列表。
                     </p>
                 </div>
                 <div class="s1p-settings-group">
@@ -13917,6 +14421,11 @@
         const activeTab = tabs[e.target.dataset.tab];
         if (activeTab) activeTab.classList.add("active");
         moveTabSlider(tabContainer);
+      }
+
+      if (target.id === "s1p-manual-block-user-btn") {
+        openManualUserBlockModal();
+        return;
       }
 
       const unblockThreadId = e.target.dataset.unblockThreadId;
@@ -17053,30 +17562,17 @@
           e.preventDefault();
           e.stopPropagation();
 
-          const currentSettings = getSettings();
-          let confirmText = currentSettings.blockThreadsOnUserBlock
-            ? `屏蔽用户并隐藏其主题帖？`
-            : `确认屏蔽该用户？`;
-          if (currentSettings.syncWithNativeBlacklist) {
-            confirmText += " (将同步至论坛黑名单)";
-          }
-
           // 将 e.currentTarget (即被点击的 a 标签)作为第一个参数传入
           createInlineConfirmMenu(
             e.currentTarget,
-            confirmText,
+            buildUserBlockConfirmText(getSettings()),
             async (remark) => {
-              const success = await blockUser(userId, userName, remark);
-
-              const currentSettings = getSettings();
-              if (success) {
-                const message = currentSettings.syncWithNativeBlacklist
-                  ? `已屏蔽用户 ${userName} 并同步至论坛黑名单。`
-                  : `已屏蔽用户 ${userName}。`;
-                showMessage(message, true);
-              } else {
-                showMessage(`脚本内屏蔽成功，但同步论坛黑名单失败。`, false);
-              }
+              const nativeSyncSucceeded = await blockUser(userId, userName, remark);
+              showUserBlockResultMessage(
+                userName,
+                nativeSyncSucceeded,
+                getSettings()
+              );
             },
             { inputPlaceholder: "添加备注 (可选)" }
           );
@@ -17209,6 +17705,157 @@
     document
       .querySelectorAll('table[id^="pid"]')
       .forEach(addActionsToSinglePost);
+  };
+
+  const PROFILE_HEADER_SELECTOR = "#uhd .h.cl";
+  const PROFILE_HEADER_FALLBACK_SELECTOR = ".h.cl";
+  const PROFILE_HEADER_USER_LINK_SELECTOR =
+    '.icn.avt a[href*="space-uid-"], .icn.avt a[href*="uid="]';
+
+  const findProfileHeader = () =>
+    document.querySelector(PROFILE_HEADER_SELECTOR) ||
+    Array.from(document.querySelectorAll(PROFILE_HEADER_FALLBACK_SELECTOR)).find(
+      (header) =>
+        header.querySelector(".icn.avt") &&
+        header.querySelector("h2.mt") &&
+        header.querySelector(PROFILE_HEADER_USER_LINK_SELECTOR)
+    );
+
+  const resolveProfileHeaderIdentity = (profileHeader) => {
+    if (!(profileHeader instanceof Element)) {
+      return { userId: "", userName: "" };
+    }
+
+    const searchParams = new URLSearchParams(window.location.search);
+    const profileLink = profileHeader.querySelector(
+      PROFILE_HEADER_USER_LINK_SELECTOR
+    );
+    const shortUidMatch = window.location.search.match(/^\?(\d+)$/);
+    const uidFromSummaryTextMatch =
+      profileHeader.textContent.match(/\(UID[:：]\s*(\d+)\)/i) ||
+      document.body.textContent.match(/\(UID[:：]\s*(\d+)\)/i);
+
+    const userId =
+      extractUidFromSpaceUrl(profileLink?.href || "") ||
+      normalizeNumericId(searchParams.get("uid")) ||
+      normalizeNumericId(shortUidMatch && shortUidMatch[1]) ||
+      extractUidFromSpaceUrl(window.location.href) ||
+      normalizeNumericId(uidFromSummaryTextMatch && uidFromSummaryTextMatch[1]);
+    const userName = normalizeUsernameInput(
+      profileHeader.querySelector("h2.mt")?.textContent?.trim() || ""
+    );
+    return { userId, userName };
+  };
+
+  let profileHeaderBlockButtonRetryTimer = null;
+  const scheduleProfileHeaderBlockButtonRefresh = (delayMs = 700) => {
+    if (profileHeaderBlockButtonRetryTimer) {
+      clearTimeout(profileHeaderBlockButtonRetryTimer);
+    }
+    profileHeaderBlockButtonRetryTimer = setTimeout(() => {
+      profileHeaderBlockButtonRetryTimer = null;
+      addBlockButtonToUserProfileHeader();
+    }, Math.max(0, Number(delayMs) || 0));
+  };
+
+  const addBlockButtonToUserProfileHeader = () => {
+    const profileHeader = findProfileHeader();
+    if (!profileHeader) {
+      return false;
+    }
+    profileHeader
+      .querySelectorAll(".s1p-profile-block-user-wrap")
+      .forEach((node) => node.remove());
+
+    const settings = getSettings();
+    if (!settings.enableUserBlocking) {
+      return true;
+    }
+
+    const { userId, userName } = resolveProfileHeaderIdentity(profileHeader);
+    if (!userId || !userName) {
+      return false;
+    }
+
+    const loggedInUid = getCurrentLoggedInUid();
+    if (loggedInUid && loggedInUid === userId) {
+      return true;
+    }
+
+    const actionWrap = document.createElement("span");
+    actionWrap.className = "s1p-profile-block-user-wrap";
+    actionWrap.style.cssText = "display:inline-block; vertical-align:middle; margin-left:10px;";
+
+    const titleEl = profileHeader.querySelector("h2.mt");
+    if (titleEl) {
+      titleEl.style.display = "inline-block";
+      titleEl.style.verticalAlign = "middle";
+    }
+
+    const blockBtn = document.createElement("button");
+    blockBtn.type = "button";
+    blockBtn.className = "s1p-btn s1p-profile-block-user-btn";
+
+    const blockedUsers = getBlockedUsers();
+    const alreadyBlocked = Boolean(blockedUsers[userId]);
+    blockBtn.textContent = alreadyBlocked ? "已屏蔽该用户" : "屏蔽该用户";
+    if (alreadyBlocked) {
+      blockBtn.classList.add("is-blocked");
+    }
+
+    actionWrap.appendChild(blockBtn);
+    if (titleEl) {
+      titleEl.insertAdjacentElement("afterend", actionWrap);
+    } else {
+      profileHeader.appendChild(actionWrap);
+    }
+
+    blockBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const isCurrentlyBlocked = blockBtn.classList.contains("is-blocked");
+
+      if (isCurrentlyBlocked) {
+        createInlineConfirmMenu(
+          blockBtn,
+          `确认解除对 ${userName} 的屏蔽？`,
+          async () => {
+            const blockedUsers = getBlockedUsers();
+            const wasSynced =
+              blockedUsers[userId]?.addedToNativeBlacklist === true;
+            const success = await unblockUser(userId);
+            if (success) {
+              addBlockButtonToUserProfileHeader();
+              showMessage(`已解除对 ${userName} 的屏蔽。`, true);
+            } else {
+              showMessage(
+                wasSynced
+                  ? "取消失败：无法从论坛黑名单移除，已保留本地屏蔽状态。"
+                  : "取消失败：请稍后重试。",
+                false
+              );
+            }
+          }
+        );
+      } else {
+        createInlineConfirmMenu(
+          blockBtn,
+          buildUserBlockConfirmText(getSettings()),
+          async (remark) => {
+            const nativeSyncSucceeded = await blockUser(userId, userName, remark);
+            addBlockButtonToUserProfileHeader();
+            showUserBlockResultMessage(
+              userName,
+              nativeSyncSucceeded,
+              getSettings()
+            );
+          },
+          { inputPlaceholder: "添加备注 (可选)" }
+        );
+      }
+    });
+    return true;
   };
 
   // [新增] S1 NUX 安装推荐函数
@@ -18187,7 +18834,7 @@
     const threadMutationSelector =
       'tbody[id^="normalthread_"], tbody[id^="stickthread_"], #threadlist';
     const postMutationSelector =
-      '#postlist, table[id^="pid"], .authi, .xld.xlda, tbody.ratl_l';
+      '#postlist, table[id^="pid"], .authi, .xld.xlda, tbody.ratl_l, #uhd';
     const threadRowSelector = 'tbody[id^="normalthread_"], tbody[id^="stickthread_"]';
     const postTableSelector = 'table[id^="pid"]';
     const quoteMutationSelector =
@@ -18570,6 +19217,7 @@
             addActionsToPostFooter();
           }
         }
+        addBlockButtonToUserProfileHeader();
         renameAuthorLinks(canUseScopedPostRefresh ? pendingPostTables : null);
         if (settings.enableUserTagging) {
           initializeTaggingPopover();
@@ -18768,6 +19416,10 @@
     hideSystemBlockedPosts();
 
     refreshAllAuthiActions();
+    const profileHeaderBlockButtonApplied = addBlockButtonToUserProfileHeader();
+    if (!profileHeaderBlockButtonApplied) {
+      scheduleProfileHeaderBlockButtonRefresh(900);
+    }
     // 将工具栏文字链接转换为图标
     renameAuthorLinks();
     if (settings.enableUserTagging) {
