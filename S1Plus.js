@@ -710,10 +710,14 @@
       cursor: pointer;
     }
 
-    /* --- [FIX] 导航栏垂直居中对齐修正 --- */
-    #nv > ul {
-      display: flex !important;
-      align-items: center !important;
+    /* --- [FIX] 导航栏垂直居中对齐修正 ---
+    * 仅在宽屏启用，避免干扰 S1 NUX 窄屏下的悬浮导航交互逻辑。
+    */
+    @media (min-width: ${NARROW_SCREEN_MAX_WIDTH_PX + 1}px) {
+      #nv > ul {
+        display: flex !important;
+        align-items: center !important;
+      }
     }
 
     /* --- [MODIFIED] 手动同步导航按钮 (v5) --- */
@@ -3088,6 +3092,112 @@
     }
     input:checked + .s1p-slider:before {
       transform: translateX(18px);
+    }
+
+    /* --- [NEW] 设置面板窄屏适配 --- */
+    @media (max-width: ${NARROW_SCREEN_MAX_WIDTH_PX}px) {
+      .s1p-modal {
+        align-items: stretch;
+        padding: 8px;
+        box-sizing: border-box;
+      }
+      .s1p-modal-content {
+        width: 100% !important;
+        max-width: 100%;
+        max-height: calc(100vh - 16px);
+      }
+      .s1p-modal-header {
+        padding: 12px;
+      }
+      .s1p-modal-title {
+        font-size: 16px;
+      }
+      .s1p-modal-body {
+        padding: 8px 12px 12px;
+        overflow-x: hidden;
+      }
+      .s1p-modal-footer {
+        padding: 10px 12px;
+      }
+
+      .s1p-tabs-wrapper {
+        justify-content: flex-start;
+        overflow-x: auto;
+        overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
+        padding-bottom: 2px;
+      }
+      .s1p-tabs {
+        min-width: max-content;
+        flex-shrink: 0;
+        margin-bottom: 12px;
+      }
+      .s1p-tab-btn {
+        padding: 6px 12px;
+        font-size: 13px;
+      }
+
+      .s1p-settings-sub-group {
+        padding-left: 12px;
+        margin-left: 0;
+      }
+      .s1p-settings-item {
+        flex-wrap: wrap;
+        align-items: flex-start;
+        gap: 10px;
+      }
+      .s1p-settings-label {
+        flex: 1 1 auto;
+        min-width: 0;
+        line-height: 1.5;
+        word-break: break-word;
+      }
+      .s1p-settings-item > .s1p-switch {
+        margin-left: auto;
+      }
+      .s1p-settings-item .s1p-input {
+        min-width: 0;
+      }
+      .s1p-settings-item > .s1p-input {
+        width: 100%;
+        flex: 1 1 100%;
+      }
+
+      :is(#s1p-cleanupModeContainer, #s1p-readingProgressCleanupContainer) {
+        flex-wrap: wrap;
+      }
+      :is(#s1p-cleanupModeContainer, #s1p-readingProgressCleanupContainer)
+        > .s1p-settings-label {
+        flex: 1 1 100%;
+        padding-left: 0 !important;
+      }
+      #s1p-cleanupModeContainer > div {
+        width: 100%;
+        display: flex !important;
+        flex-wrap: wrap;
+        gap: 8px !important;
+        align-items: center !important;
+      }
+      :is(#s1p-cleanupMode-control, #s1p-readingProgressCleanupDays-control) {
+        max-width: 100%;
+        overflow-x: auto;
+        overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
+      }
+      #s1p-readingProgressCleanupDays-control {
+        width: 100%;
+      }
+      #s1p-readingProgressCleanupDays-control .s1p-segmented-control-option {
+        text-align: center;
+      }
+      #s1p-open-progress-detail-btn {
+        max-width: 100%;
+        padding: 6px 10px !important;
+      }
+
+      :is(.s1p-local-sync-buttons, .s1p-diag-actions) {
+        flex-wrap: wrap;
+      }
     }
 
     /* --- Nav Editor Dragging --- */
@@ -11630,7 +11740,9 @@
 
       return totalTabsWidth + 32;
     };
-    const requiredWidth = calculateModalWidth();
+    const shouldAutoFitModalWidth =
+      window.innerWidth > NARROW_SCREEN_MAX_WIDTH_PX;
+    const requiredWidth = shouldAutoFitModalWidth ? calculateModalWidth() : 0;
     settingsModalCrossTabSyncController = null;
     document.querySelector(".s1p-modal")?.remove();
 
@@ -11792,7 +11904,7 @@
         </div>`;
 
     const modalContent = modal.querySelector(".s1p-modal-content");
-    if (requiredWidth > 600) {
+    if (shouldAutoFitModalWidth && requiredWidth > 600) {
       modalContent.style.width = `${requiredWidth}px`;
     }
 
