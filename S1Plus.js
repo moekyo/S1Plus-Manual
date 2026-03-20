@@ -647,7 +647,6 @@
       --s1p-username-text: #0b2163; /* Dark Blue */
       --s1p-image-preview-max-width: 800px;
       --s1p-image-preview-max-height: 1200px;
-      --s1p-image-viewer-overlay-bg: rgba(183, 193, 173, 0.72);
       --s1p-image-viewer-viewport-bg: #d4ddce;
 
     }
@@ -3422,7 +3421,7 @@
       display: none;
       align-items: center;
       justify-content: center;
-      background: var(--s1p-image-viewer-overlay-bg);
+      background: rgba(var(--s1p-black-rgb), 0.7);
       backdrop-filter: blur(2px);
     }
     .s1p-image-viewer.is-open {
@@ -4004,7 +4003,6 @@
         --s1p-progress-delete-bg: var(--s1p-progress-hot);
         --s1p-progress-delete-hover-bg: rgb(154, 41, 28);
         --s1p-progress-delete-text: #ffffff;
-        --s1p-image-viewer-overlay-bg: rgba(var(--s1p-black-rgb), 0.7);
         --s1p-image-viewer-viewport-bg: rgba(var(--s1p-black-rgb), 0.78);
       }
 
