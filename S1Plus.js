@@ -647,6 +647,8 @@
       --s1p-username-text: #0b2163; /* Dark Blue */
       --s1p-image-preview-max-width: 800px;
       --s1p-image-preview-max-height: 1200px;
+      --s1p-image-viewer-overlay-bg: rgba(183, 193, 173, 0.72);
+      --s1p-image-viewer-viewport-bg: #d4ddce;
 
     }
 
@@ -3420,7 +3422,7 @@
       display: none;
       align-items: center;
       justify-content: center;
-      background: rgba(var(--s1p-black-rgb), 0.7);
+      background: var(--s1p-image-viewer-overlay-bg);
       backdrop-filter: blur(2px);
     }
     .s1p-image-viewer.is-open {
@@ -3505,7 +3507,7 @@
       position: relative;
       flex: 1;
       overflow: hidden;
-      background: rgba(var(--s1p-black-rgb), 0.78);
+      background: var(--s1p-image-viewer-viewport-bg);
       cursor: grab;
       user-select: none;
     }
@@ -4002,6 +4004,8 @@
         --s1p-progress-delete-bg: var(--s1p-progress-hot);
         --s1p-progress-delete-hover-bg: rgb(154, 41, 28);
         --s1p-progress-delete-text: #ffffff;
+        --s1p-image-viewer-overlay-bg: rgba(var(--s1p-black-rgb), 0.7);
+        --s1p-image-viewer-viewport-bg: rgba(var(--s1p-black-rgb), 0.78);
       }
 
       /* [移除] 删除按钮白色图标覆写：在系统深色模式但 NUX 禁用时会导致图标不可见 */
@@ -7376,7 +7380,11 @@
     const fittedHeight = height * targetScale;
     state.scale = targetScale;
     state.translateX = (viewportWidth - fittedWidth) / 2;
-    state.translateY = contain ? (viewportHeight - fittedHeight) / 2 : 0;
+    state.translateY = contain
+      ? (viewportHeight - fittedHeight) / 2
+      : fittedHeight > viewportHeight
+      ? 0
+      : (viewportHeight - fittedHeight) / 2;
     applyS1pImageViewerTransform();
     return true;
   };
