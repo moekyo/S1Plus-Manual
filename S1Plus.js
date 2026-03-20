@@ -1,4 +1,4 @@
-// ==UserScript==
+﻿// ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
 // @version      6.4.0
@@ -447,8 +447,16 @@
   const IMAGE_PREVIEW_DEFAULT_HEIGHT = 1200;
   const IMAGE_PREVIEW_LIMIT_ROOT_CLASS = "s1p-limit-images-by-size-enabled";
   const IMAGE_PREVIEW_LIMIT_IMAGE_CLASS = "s1p-size-limited-image";
+  const S1P_IMAGE_VIEWER_IMAGE_SELECTOR = "img.zoom, img[id^='aimg_']";
   const IMAGE_PREVIEW_TITLE_DATA_KEY = "s1pOriginalTitle";
   const IMAGE_PREVIEW_TITLE_HINT = "\u70b9\u51fb\u67e5\u770b\u539f\u56fe";
+  const S1P_IMAGE_VIEWER_MIN_SCALE = 0.08;
+  const S1P_IMAGE_VIEWER_MAX_SCALE = 8;
+  const S1P_IMAGE_VIEWER_ZOOM_STEP = 0.16;
+  const S1P_IMAGE_VIEWER_SWITCH_ANIMATION_MS = 220;
+  const S1P_IMAGE_VIEWER_NAV_AUTO_HIDE_MS = 1400;
+  const S1P_IMAGE_VIEWER_NAV_LEAVE_HIDE_MS = 220;
+  const S1P_IMAGE_VIEWER_NAV_MOVE_THROTTLE_MS = 120;
   const normalizeImagePreviewLimitValue = (value, fallback) => {
     const parsed = Number(value);
     if (!Number.isFinite(parsed)) {
@@ -3405,6 +3413,305 @@
     /* --- [新增 V9] 可禁用/启用的增强型悬浮控件 --- */
     /* --- 模式 B: 增强控件关闭 (默认状态) --- */
     /* 默认隐藏脚本创建的控件 */
+    .s1p-image-viewer {
+      position: fixed;
+      inset: 0;
+      z-index: 100000;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(var(--s1p-black-rgb), 0.7);
+      backdrop-filter: blur(2px);
+    }
+    .s1p-image-viewer.is-open {
+      display: flex;
+    }
+    .s1p-image-viewer.is-dragging .s1p-image-viewer__viewport {
+      cursor: grabbing;
+    }
+    .s1p-image-viewer__panel {
+      width: min(96vw, 1600px);
+      height: min(94vh, 1200px);
+      border-radius: 12px;
+      border: 1px solid var(--s1p-pri);
+      background: var(--s1p-bg);
+      box-shadow: 0 12px 40px rgba(var(--s1p-shadow-color-rgb), 0.35);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .s1p-image-viewer__toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--s1p-pri);
+      background: var(--s1p-sub);
+      flex-wrap: wrap;
+    }
+    .s1p-image-viewer__title {
+      font-weight: 600;
+      color: var(--s1p-t);
+      margin-right: auto;
+      font-size: 13px;
+    }
+    .s1p-image-viewer__zoom {
+      font-size: 12px;
+      color: var(--s1p-desc-t);
+      background: var(--s1p-bg);
+      border: 1px solid var(--s1p-pri);
+      border-radius: 999px;
+      padding: 4px 8px;
+      min-width: 64px;
+      text-align: center;
+      white-space: nowrap;
+    }
+    .s1p-image-viewer__index {
+      font-size: 12px;
+      color: var(--s1p-desc-t);
+      background: var(--s1p-bg);
+      border: 1px solid var(--s1p-pri);
+      border-radius: 999px;
+      padding: 4px 8px;
+      min-width: 56px;
+      text-align: center;
+      white-space: nowrap;
+    }
+    .s1p-image-viewer__toolbar .s1p-btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+    .s1p-image-viewer__toolbar .s1p-image-viewer__close-btn {
+      width: 34px;
+      height: 34px;
+      min-width: 34px;
+      padding: 0;
+      flex: 0 0 34px;
+      font-size: 0;
+      line-height: 0;
+    }
+    .s1p-image-viewer__close-icon {
+      display: block;
+      width: 14px;
+      height: 14px;
+      stroke: currentColor;
+      stroke-width: 2.2;
+      fill: none;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      pointer-events: none;
+    }
+    .s1p-image-viewer__viewport {
+      position: relative;
+      flex: 1;
+      overflow: hidden;
+      background: rgba(var(--s1p-black-rgb), 0.78);
+      cursor: grab;
+      user-select: none;
+    }
+    .s1p-image-viewer__nav-btn {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      z-index: 3;
+      width: 38px;
+      height: 38px;
+      border-radius: 999px;
+      border: none;
+      background: var(--s1p-sub);
+      color: var(--s1p-t);
+      font-size: 0;
+      line-height: 0;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 1px 2px rgba(var(--s1p-shadow-color-rgb), 0.12);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.18s ease,
+        background-color 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+        color 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+        box-shadow 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+        transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      user-select: none;
+    }
+    .s1p-image-viewer__nav-icon {
+      display: block;
+      width: 16px;
+      height: 16px;
+      margin: 0 auto;
+      stroke: currentColor;
+      stroke-width: 2.2;
+      fill: none;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      pointer-events: none;
+    }
+    .s1p-image-viewer__nav-btn[data-action="prev"] {
+      left: 14px;
+    }
+    .s1p-image-viewer__nav-btn[data-action="next"] {
+      right: 14px;
+    }
+    .s1p-image-viewer.has-gallery.is-nav-visible .s1p-image-viewer__nav-btn {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .s1p-image-viewer:not(.has-gallery) .s1p-image-viewer__nav-btn {
+      display: none;
+    }
+    .s1p-image-viewer__nav-btn:hover:not(:disabled) {
+      transform: translateY(calc(-50% - 2px));
+      background: var(--s1p-sub-h);
+      color: var(--s1p-sub-h-t);
+      box-shadow: 0 3px 6px rgba(var(--s1p-shadow-color-rgb), 0.18);
+    }
+    .s1p-image-viewer__nav-btn:active:not(:disabled) {
+      transform: translateY(calc(-50% - 1px));
+    }
+    .s1p-image-viewer__nav-btn:disabled {
+      opacity: 0.45 !important;
+      cursor: not-allowed;
+      color: var(--s1p-desc-t);
+      box-shadow: 0 1px 2px rgba(var(--s1p-shadow-color-rgb), 0.1);
+    }
+    .s1p-image-viewer__image-stage {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      pointer-events: none;
+      transform: translate3d(0, 0, 0);
+      transform-origin: 0 0;
+      will-change: transform;
+      opacity: 1;
+    }
+    .s1p-image-viewer__image-stage--ghost {
+      z-index: 1;
+      opacity: 0;
+    }
+    .s1p-image-viewer.has-switch-ghost .s1p-image-viewer__image-stage--ghost {
+      opacity: 1;
+    }
+    .s1p-image-viewer__image-stage--main {
+      z-index: 2;
+    }
+    .s1p-image-viewer__image {
+      position: absolute;
+      top: 0;
+      left: 0;
+      max-width: none;
+      max-height: none;
+      transform-origin: 0 0 !important;
+      will-change: transform;
+      pointer-events: none;
+      user-select: none;
+      -webkit-user-drag: none;
+      opacity: 1;
+      transition: none !important;
+      animation: none !important;
+    }
+    .s1p-image-viewer.is-preparing-switch
+      .s1p-image-viewer__image-stage--main
+      .s1p-image-viewer__image {
+      opacity: 0;
+    }
+    .s1p-image-viewer.is-switching-next .s1p-image-viewer__image-stage--main {
+      animation: s1p-image-viewer-slide-in-next ${S1P_IMAGE_VIEWER_SWITCH_ANIMATION_MS}ms
+        cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .s1p-image-viewer.is-switching-prev .s1p-image-viewer__image-stage--main {
+      animation: s1p-image-viewer-slide-in-prev ${S1P_IMAGE_VIEWER_SWITCH_ANIMATION_MS}ms
+        cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .s1p-image-viewer.has-switch-ghost.is-switching-next
+      .s1p-image-viewer__image-stage--ghost {
+      animation: s1p-image-viewer-slide-out-next ${S1P_IMAGE_VIEWER_SWITCH_ANIMATION_MS}ms
+        cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .s1p-image-viewer.has-switch-ghost.is-switching-prev
+      .s1p-image-viewer__image-stage--ghost {
+      animation: s1p-image-viewer-slide-out-prev ${S1P_IMAGE_VIEWER_SWITCH_ANIMATION_MS}ms
+        cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    @keyframes s1p-image-viewer-slide-in-next {
+      from {
+        transform: translate3d(56px, 0, 0);
+      }
+      to {
+        transform: translate3d(0, 0, 0);
+      }
+    }
+    @keyframes s1p-image-viewer-slide-in-prev {
+      from {
+        transform: translate3d(-56px, 0, 0);
+      }
+      to {
+        transform: translate3d(0, 0, 0);
+      }
+    }
+    @keyframes s1p-image-viewer-slide-out-next {
+      from {
+        transform: translate3d(0, 0, 0);
+        opacity: 1;
+      }
+      to {
+        transform: translate3d(-56px, 0, 0);
+        opacity: 0;
+      }
+    }
+    @keyframes s1p-image-viewer-slide-out-prev {
+      from {
+        transform: translate3d(0, 0, 0);
+        opacity: 1;
+      }
+      to {
+        transform: translate3d(56px, 0, 0);
+        opacity: 0;
+      }
+    }
+    @media (max-width: ${NARROW_SCREEN_MAX_WIDTH_PX}px) {
+      .s1p-image-viewer__panel {
+        width: 100vw;
+        height: 100vh;
+        border-radius: 0;
+        border: none;
+      }
+      .s1p-image-viewer__toolbar {
+        gap: 6px;
+        padding: 8px;
+      }
+      .s1p-image-viewer__title {
+        width: 100%;
+        margin-right: 0;
+      }
+      .s1p-image-viewer__toolbar .s1p-btn {
+        flex: 1;
+        min-width: 0;
+      }
+      .s1p-image-viewer__toolbar .s1p-image-viewer__close-btn {
+        width: 32px;
+        height: 32px;
+        min-width: 32px;
+        flex: 0 0 32px;
+      }
+      .s1p-image-viewer__close-icon {
+        width: 13px;
+        height: 13px;
+      }
+      .s1p-image-viewer__nav-btn {
+        width: 34px;
+        height: 34px;
+      }
+      .s1p-image-viewer__nav-icon {
+        width: 14px;
+        height: 14px;
+      }
+      .s1p-image-viewer.has-gallery .s1p-image-viewer__nav-btn {
+        opacity: 1;
+        pointer-events: auto;
+      }
+    }
     #s1p-floating-controls-wrapper {
       display: none;
     }
@@ -6626,6 +6933,941 @@
   };
 
   // --- [新增] 修改“只看该作者”为“只看该用户”的函数 ---
+  const clampS1pImageViewerScale = (value) =>
+    Math.min(
+      S1P_IMAGE_VIEWER_MAX_SCALE,
+      Math.max(S1P_IMAGE_VIEWER_MIN_SCALE, Number(value) || 1)
+    );
+  const normalizeS1pImageViewerSourceUrl = (rawUrl) => {
+    const candidate = String(rawUrl || "").trim();
+    if (!candidate || !isSafeUrlAttributeValue(candidate, { allowEmpty: false })) {
+      return "";
+    }
+    try {
+      return new URL(candidate, window.location.href).href;
+    } catch (error) {
+      return "";
+    }
+  };
+  const resolveS1pImageViewerSourceUrl = (img) => {
+    if (!(img instanceof HTMLImageElement)) {
+      return "";
+    }
+    const anchor = img.closest("a[href]");
+    const candidates = [
+      img.getAttribute("file"),
+      img.getAttribute("zoomfile"),
+      anchor ? anchor.getAttribute("href") : "",
+      anchor ? anchor.href : "",
+      img.currentSrc,
+      img.getAttribute("src"),
+      img.src,
+    ];
+    for (const candidate of candidates) {
+      const normalized = normalizeS1pImageViewerSourceUrl(candidate);
+      if (normalized) {
+        return normalized;
+      }
+    }
+    return "";
+  };
+  const s1pImageViewerState = {
+    overlay: null,
+    viewport: null,
+    image: null,
+    ghostImage: null,
+    zoomLabel: null,
+    indexLabel: null,
+    fitBtn: null,
+    prevBtn: null,
+    nextBtn: null,
+    sourceUrl: "",
+    galleryItems: [],
+    currentIndex: -1,
+    pendingSwitchDirection: 0,
+    hasPreparedSwitchTransform: false,
+    switchRequestId: 0,
+    switchAnimationTimer: 0,
+    navHideTimer: 0,
+    lastNavMoveAt: 0,
+    scale: 1,
+    translateX: 0,
+    translateY: 0,
+    isOpen: false,
+    isDragging: false,
+    dragStartX: 0,
+    dragStartY: 0,
+    dragOriginX: 0,
+    dragOriginY: 0,
+    bodyOverflowBeforeOpen: "",
+  };
+  const clearS1pImageViewerNavHideTimer = () => {
+    const state = s1pImageViewerState;
+    if (state.navHideTimer) {
+      window.clearTimeout(state.navHideTimer);
+      state.navHideTimer = 0;
+    }
+  };
+  const clearS1pImageViewerSwitchGhost = () => {
+    const state = s1pImageViewerState;
+    if (!state.overlay) {
+      return;
+    }
+    state.overlay.classList.remove("has-switch-ghost");
+    if (state.ghostImage instanceof HTMLImageElement) {
+      state.ghostImage.removeAttribute("src");
+      state.ghostImage.style.transform = "";
+    }
+  };
+  const resolveS1pImageViewerSwitchDirection = (previousIndex, nextIndex) => {
+    if (previousIndex < 0 || nextIndex === previousIndex) {
+      return 0;
+    }
+    return nextIndex > previousIndex ? 1 : -1;
+  };
+  const clearS1pImageViewerSwitchAnimation = ({ keepGhost = false } = {}) => {
+    const state = s1pImageViewerState;
+    if (!state.overlay) {
+      return;
+    }
+    if (state.switchAnimationTimer) {
+      window.clearTimeout(state.switchAnimationTimer);
+      state.switchAnimationTimer = 0;
+    }
+    state.overlay.classList.remove(
+      "is-switching",
+      "is-switching-prev",
+      "is-switching-next",
+      "is-preparing-switch"
+    );
+    if (!keepGhost) {
+      clearS1pImageViewerSwitchGhost();
+    }
+  };
+  const prepareS1pImageViewerSwitchGhost = () => {
+    const state = s1pImageViewerState;
+    if (
+      !state.overlay ||
+      !(state.image instanceof HTMLImageElement) ||
+      !(state.ghostImage instanceof HTMLImageElement)
+    ) {
+      return false;
+    }
+    const currentSourceUrl = normalizeS1pImageViewerSourceUrl(
+      state.image.currentSrc || state.image.src
+    );
+    if (!currentSourceUrl) {
+      clearS1pImageViewerSwitchGhost();
+      return false;
+    }
+    state.ghostImage.src = currentSourceUrl;
+    state.ghostImage.style.transform =
+      state.image.style.transform ||
+      `translate3d(${state.translateX}px, ${state.translateY}px, 0) scale(${state.scale})`;
+    state.overlay.classList.add("has-switch-ghost");
+    return true;
+  };
+  const playS1pImageViewerSwitchAnimation = (direction) => {
+    const state = s1pImageViewerState;
+    if (!state.overlay || !state.isOpen) {
+      return;
+    }
+    const normalizedDirection = Number(direction);
+    if (!Number.isFinite(normalizedDirection) || normalizedDirection === 0) {
+      clearS1pImageViewerSwitchAnimation();
+      return;
+    }
+    clearS1pImageViewerSwitchAnimation({ keepGhost: true });
+    void state.overlay.offsetWidth;
+    const directionClass =
+      normalizedDirection > 0 ? "is-switching-next" : "is-switching-prev";
+    state.overlay.classList.add("is-switching", directionClass);
+    state.switchAnimationTimer = window.setTimeout(() => {
+      const latestState = s1pImageViewerState;
+      latestState.switchAnimationTimer = 0;
+      if (!latestState.overlay) {
+        return;
+      }
+      clearS1pImageViewerSwitchAnimation();
+    }, S1P_IMAGE_VIEWER_SWITCH_ANIMATION_MS + 40);
+  };
+  const showS1pImageViewerNavTemporarily = (
+    durationMs = S1P_IMAGE_VIEWER_NAV_AUTO_HIDE_MS
+  ) => {
+    const state = s1pImageViewerState;
+    if (!state.overlay || !state.isOpen || state.galleryItems.length <= 1) {
+      return;
+    }
+    state.overlay.classList.add("is-nav-visible");
+    clearS1pImageViewerNavHideTimer();
+    const safeDuration = Math.max(
+      120,
+      Number(durationMs) || S1P_IMAGE_VIEWER_NAV_AUTO_HIDE_MS
+    );
+    state.navHideTimer = window.setTimeout(() => {
+      const latestState = s1pImageViewerState;
+      latestState.navHideTimer = 0;
+      if (!latestState.overlay || !latestState.isOpen || latestState.isDragging) {
+        return;
+      }
+      latestState.overlay.classList.remove("is-nav-visible");
+    }, safeDuration);
+  };
+  const hideS1pImageViewerNavSoon = (
+    durationMs = S1P_IMAGE_VIEWER_NAV_LEAVE_HIDE_MS
+  ) => {
+    const state = s1pImageViewerState;
+    if (!state.overlay || !state.isOpen || state.galleryItems.length <= 1) {
+      return;
+    }
+    clearS1pImageViewerNavHideTimer();
+    state.navHideTimer = window.setTimeout(() => {
+      const latestState = s1pImageViewerState;
+      latestState.navHideTimer = 0;
+      if (!latestState.overlay || !latestState.isOpen || latestState.isDragging) {
+        return;
+      }
+      latestState.overlay.classList.remove("is-nav-visible");
+    }, Math.max(80, Number(durationMs) || S1P_IMAGE_VIEWER_NAV_LEAVE_HIDE_MS));
+  };
+  const handleS1pImageViewerViewportMouseMove = () => {
+    const state = s1pImageViewerState;
+    if (!state.isOpen) {
+      return;
+    }
+    const now = Date.now();
+    if (now - state.lastNavMoveAt < S1P_IMAGE_VIEWER_NAV_MOVE_THROTTLE_MS) {
+      return;
+    }
+    state.lastNavMoveAt = now;
+    showS1pImageViewerNavTemporarily();
+  };
+  const handleS1pImageViewerViewportMouseLeave = () => {
+    hideS1pImageViewerNavSoon();
+  };
+  const collectS1pImageViewerGalleryFromTarget = (targetImage) => {
+    if (!(targetImage instanceof HTMLImageElement)) {
+      return { items: [], initialIndex: 0 };
+    }
+    const root =
+      targetImage.closest("td.t_f") ||
+      targetImage.closest("div.t_fsz") ||
+      targetImage.closest("table.plhin") ||
+      document;
+    const galleryItems = [];
+    const indexByUrl = new Map();
+    let initialIndex = -1;
+    Array.from(root.querySelectorAll(S1P_IMAGE_VIEWER_IMAGE_SELECTOR)).forEach((img) => {
+      const sourceUrl = resolveS1pImageViewerSourceUrl(img);
+      if (!sourceUrl) {
+        return;
+      }
+      if (!indexByUrl.has(sourceUrl)) {
+        indexByUrl.set(sourceUrl, galleryItems.length);
+        galleryItems.push(sourceUrl);
+      }
+      if (img === targetImage) {
+        initialIndex = indexByUrl.get(sourceUrl);
+      }
+    });
+    const targetSourceUrl = resolveS1pImageViewerSourceUrl(targetImage);
+    if (targetSourceUrl && !indexByUrl.has(targetSourceUrl)) {
+      indexByUrl.set(targetSourceUrl, galleryItems.length);
+      galleryItems.push(targetSourceUrl);
+    }
+    if (initialIndex < 0 && targetSourceUrl && indexByUrl.has(targetSourceUrl)) {
+      initialIndex = indexByUrl.get(targetSourceUrl);
+    }
+    if (initialIndex < 0 || initialIndex >= galleryItems.length) {
+      initialIndex = 0;
+    }
+    return { items: galleryItems, initialIndex };
+  };
+  const syncS1pImageViewerNavigationState = () => {
+    const state = s1pImageViewerState;
+    const count = state.galleryItems.length;
+    const hasGallery = count > 1;
+    if (state.overlay) {
+      state.overlay.classList.toggle("has-gallery", hasGallery);
+      if (!hasGallery) {
+        state.overlay.classList.remove("is-nav-visible");
+      }
+    }
+    if (!hasGallery) {
+      clearS1pImageViewerNavHideTimer();
+    }
+    const safeCount = Math.max(1, count);
+    let safeIndex = 0;
+    if (count > 0) {
+      safeIndex = Math.min(count - 1, Math.max(0, Number(state.currentIndex) || 0));
+    }
+    if (state.indexLabel) {
+      state.indexLabel.textContent = `${safeIndex + 1}/${safeCount}`;
+    }
+    const disablePrev = count <= 1 || safeIndex <= 0;
+    const disableNext = count <= 1 || safeIndex >= count - 1;
+    if (state.prevBtn) {
+      state.prevBtn.disabled = disablePrev;
+    }
+    if (state.nextBtn) {
+      state.nextBtn.disabled = disableNext;
+    }
+  };
+  const requestS1pImageViewerSourceSwitch = (sourceUrl, requestId) => {
+    const normalizedSourceUrl = normalizeS1pImageViewerSourceUrl(sourceUrl);
+    if (!normalizedSourceUrl) {
+      return;
+    }
+    const preloadImage = new Image();
+    let isHandled = false;
+    const finalizeSwitch = (naturalWidth, naturalHeight, usePreparedTransform) => {
+      if (isHandled) {
+        return;
+      }
+      isHandled = true;
+      const state = s1pImageViewerState;
+      if (
+        !state.isOpen ||
+        !state.image ||
+        state.switchRequestId !== requestId ||
+        state.sourceUrl !== normalizedSourceUrl
+      ) {
+        return;
+      }
+      if (state.overlay) {
+        const hasGhost = state.overlay.classList.contains("has-switch-ghost");
+        state.overlay.classList.toggle("is-preparing-switch", hasGhost);
+      }
+      state.hasPreparedSwitchTransform =
+        usePreparedTransform &&
+        applyS1pImageViewerFitBySize(naturalWidth, naturalHeight, {
+          contain: false,
+          allowUpscale: true,
+        });
+      state.image.src = normalizedSourceUrl;
+    };
+    preloadImage.addEventListener("load", () => {
+      finalizeSwitch(
+        Number(preloadImage.naturalWidth || 0),
+        Number(preloadImage.naturalHeight || 0),
+        true
+      );
+    });
+    preloadImage.addEventListener("error", () => {
+      finalizeSwitch(0, 0, false);
+    });
+    preloadImage.decoding = "async";
+    preloadImage.src = normalizedSourceUrl;
+    if (preloadImage.complete && Number(preloadImage.naturalWidth || 0) > 0) {
+      finalizeSwitch(
+        Number(preloadImage.naturalWidth || 0),
+        Number(preloadImage.naturalHeight || 0),
+        true
+      );
+    }
+  };
+  const setS1pImageViewerActiveIndex = (
+    nextIndex,
+    { allowSameIndexReset = false } = {}
+  ) => {
+    const state = s1pImageViewerState;
+    const count = state.galleryItems.length;
+    if (count <= 0) {
+      state.currentIndex = -1;
+      state.sourceUrl = "";
+      syncS1pImageViewerNavigationState();
+      return false;
+    }
+    const parsedIndex = Number.parseInt(String(nextIndex), 10);
+    const normalizedIndex = Number.isFinite(parsedIndex)
+      ? Math.min(count - 1, Math.max(0, parsedIndex))
+      : 0;
+    const nextSourceUrl = state.galleryItems[normalizedIndex];
+    const previousIndex = state.currentIndex;
+    const isSameTarget =
+      state.currentIndex === normalizedIndex && state.sourceUrl === nextSourceUrl;
+    state.currentIndex = normalizedIndex;
+    state.sourceUrl = nextSourceUrl;
+    syncS1pImageViewerNavigationState();
+    if (!state.image) {
+      return false;
+    }
+    if (!allowSameIndexReset && isSameTarget) {
+      return false;
+    }
+    stopS1pImageViewerDragging();
+    if (state.image.src !== nextSourceUrl) {
+      state.pendingSwitchDirection = resolveS1pImageViewerSwitchDirection(
+        previousIndex,
+        normalizedIndex
+      );
+      clearS1pImageViewerSwitchAnimation();
+      state.switchRequestId += 1;
+      const switchRequestId = state.switchRequestId;
+      if (previousIndex < 0) {
+        state.hasPreparedSwitchTransform = false;
+        state.image.src = nextSourceUrl;
+      } else {
+        prepareS1pImageViewerSwitchGhost();
+        requestS1pImageViewerSourceSwitch(nextSourceUrl, switchRequestId);
+      }
+      return true;
+    }
+    state.switchRequestId += 1;
+    state.pendingSwitchDirection = 0;
+    state.hasPreparedSwitchTransform = false;
+    clearS1pImageViewerSwitchAnimation();
+    if (state.image.complete && Number(state.image.naturalWidth || 0) > 0) {
+      resetS1pImageViewerTransform();
+    } else {
+      state.scale = 1;
+      state.translateX = 0;
+      state.translateY = 0;
+      applyS1pImageViewerTransform();
+    }
+    return true;
+  };
+  const stepS1pImageViewerActiveIndex = (delta) => {
+    const state = s1pImageViewerState;
+    if (state.galleryItems.length <= 1) {
+      return false;
+    }
+    showS1pImageViewerNavTemporarily();
+    return setS1pImageViewerActiveIndex(state.currentIndex + delta);
+  };
+  const applyS1pImageViewerTransform = () => {
+    const state = s1pImageViewerState;
+    if (!state.image) {
+      return;
+    }
+    state.image.style.transform = `translate3d(${state.translateX}px, ${state.translateY}px, 0) scale(${state.scale})`;
+    if (state.zoomLabel) {
+      state.zoomLabel.textContent = `${Math.round(state.scale * 100)}%`;
+    }
+  };
+  const applyS1pImageViewerFitBySize = (
+    naturalWidth,
+    naturalHeight,
+    { contain = false, allowUpscale = false } = {}
+  ) => {
+    const state = s1pImageViewerState;
+    if (!state.viewport) {
+      return false;
+    }
+    const width = Number(naturalWidth || 0);
+    const height = Number(naturalHeight || 0);
+    if (width <= 0 || height <= 0) {
+      return false;
+    }
+    const viewportRect = state.viewport.getBoundingClientRect();
+    const viewportWidth = Math.max(1, Number(viewportRect.width || 0));
+    const viewportHeight = Math.max(1, Number(viewportRect.height || 0));
+    const widthScale = viewportWidth / width;
+    const containScale = Math.min(viewportWidth / width, viewportHeight / height);
+    let baseScale = widthScale;
+    if (contain) {
+      baseScale = containScale;
+    }
+    if (!allowUpscale) {
+      baseScale = Math.min(1, baseScale);
+    }
+    const targetScale = clampS1pImageViewerScale(baseScale);
+    const fittedWidth = width * targetScale;
+    const fittedHeight = height * targetScale;
+    state.scale = targetScale;
+    state.translateX = (viewportWidth - fittedWidth) / 2;
+    state.translateY = contain ? (viewportHeight - fittedHeight) / 2 : 0;
+    applyS1pImageViewerTransform();
+    return true;
+  };
+  const fitS1pImageViewerToViewport = () => {
+    const state = s1pImageViewerState;
+    if (!state.image || !state.viewport) {
+      return false;
+    }
+    const naturalWidth = Number(state.image.naturalWidth || 0);
+    const naturalHeight = Number(state.image.naturalHeight || 0);
+    return applyS1pImageViewerFitBySize(naturalWidth, naturalHeight, {
+      contain: false,
+      allowUpscale: true,
+    });
+  };
+  const fitS1pImageViewerContainToViewport = () => {
+    const state = s1pImageViewerState;
+    if (!state.image || !state.viewport) {
+      return false;
+    }
+    const naturalWidth = Number(state.image.naturalWidth || 0);
+    const naturalHeight = Number(state.image.naturalHeight || 0);
+    return applyS1pImageViewerFitBySize(naturalWidth, naturalHeight, {
+      contain: true,
+      allowUpscale: false,
+    });
+  };
+  const resetS1pImageViewerTransform = () => {
+    if (fitS1pImageViewerToViewport()) {
+      return;
+    }
+    const state = s1pImageViewerState;
+    state.scale = 1;
+    state.translateX = 0;
+    state.translateY = 0;
+    applyS1pImageViewerTransform();
+  };
+  const handleS1pImageViewerMouseMove = (event) => {
+    const state = s1pImageViewerState;
+    if (!state.isDragging) {
+      return;
+    }
+    if ((event.buttons & 1) !== 1) {
+      stopS1pImageViewerDragging();
+      return;
+    }
+    state.translateX = state.dragOriginX + (event.clientX - state.dragStartX);
+    state.translateY = state.dragOriginY + (event.clientY - state.dragStartY);
+    applyS1pImageViewerTransform();
+  };
+  const stopS1pImageViewerDragging = () => {
+    const state = s1pImageViewerState;
+    if (!state.isDragging) {
+      return;
+    }
+    state.isDragging = false;
+    if (state.overlay) {
+      state.overlay.classList.remove("is-dragging");
+    }
+    window.removeEventListener("mousemove", handleS1pImageViewerMouseMove, true);
+    window.removeEventListener("mouseup", stopS1pImageViewerDragging, true);
+    window.removeEventListener("blur", stopS1pImageViewerDragging, true);
+  };
+  const handleS1pImageViewerKeydown = (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeS1pImageViewer();
+      return;
+    }
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      stepS1pImageViewerActiveIndex(-1);
+      return;
+    }
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      stepS1pImageViewerActiveIndex(1);
+    }
+  };
+  const closeS1pImageViewer = () => {
+    const state = s1pImageViewerState;
+    stopS1pImageViewerDragging();
+    if (!state.overlay || !state.isOpen) {
+      return;
+    }
+    state.overlay.classList.remove("is-open");
+    clearS1pImageViewerSwitchAnimation();
+    state.overlay.classList.remove("is-nav-visible");
+    state.overlay.classList.remove("has-gallery");
+    state.overlay.setAttribute("aria-hidden", "true");
+    document.removeEventListener("keydown", handleS1pImageViewerKeydown, true);
+    if (document.body) {
+      document.body.style.overflow = state.bodyOverflowBeforeOpen || "";
+    }
+    state.isOpen = false;
+    state.sourceUrl = "";
+    state.galleryItems = [];
+    state.currentIndex = -1;
+    state.pendingSwitchDirection = 0;
+    state.hasPreparedSwitchTransform = false;
+    state.switchRequestId += 1;
+    state.lastNavMoveAt = 0;
+    clearS1pImageViewerNavHideTimer();
+    syncS1pImageViewerNavigationState();
+  };
+  const openS1pImageInNewTab = () => {
+    const sourceUrl = String(s1pImageViewerState.sourceUrl || "");
+    if (!sourceUrl) {
+      return;
+    }
+    try {
+      GM_openInTab(sourceUrl, { active: true });
+    } catch (error) {
+      window.open(sourceUrl, "_blank", "noopener,noreferrer");
+    }
+  };
+  const handleS1pImageViewerMouseDown = (event) => {
+    const state = s1pImageViewerState;
+    if (!state.isOpen || event.button !== 0) {
+      return;
+    }
+    if (
+      event.target instanceof Element &&
+      event.target.closest(".s1p-image-viewer__nav-btn")
+    ) {
+      return;
+    }
+    showS1pImageViewerNavTemporarily();
+    event.preventDefault();
+    state.isDragging = true;
+    state.dragStartX = event.clientX;
+    state.dragStartY = event.clientY;
+    state.dragOriginX = state.translateX;
+    state.dragOriginY = state.translateY;
+    if (state.overlay) {
+      state.overlay.classList.add("is-dragging");
+    }
+    window.addEventListener("mousemove", handleS1pImageViewerMouseMove, true);
+    window.addEventListener("mouseup", stopS1pImageViewerDragging, true);
+    window.addEventListener("blur", stopS1pImageViewerDragging, true);
+  };
+  const handleS1pImageViewerWheel = (event) => {
+    const state = s1pImageViewerState;
+    if (!state.isOpen || !state.viewport) {
+      return;
+    }
+    showS1pImageViewerNavTemporarily();
+    if (state.isDragging) {
+      stopS1pImageViewerDragging();
+    }
+    event.preventDefault();
+    const previousScale = state.scale;
+    if (!Number.isFinite(previousScale) || previousScale <= 0) {
+      return;
+    }
+    const zoomFactor =
+      event.deltaY < 0
+        ? 1 + S1P_IMAGE_VIEWER_ZOOM_STEP
+        : 1 / (1 + S1P_IMAGE_VIEWER_ZOOM_STEP);
+    const nextScale = clampS1pImageViewerScale(previousScale * zoomFactor);
+    if (Math.abs(nextScale - previousScale) < 0.0001) {
+      return;
+    }
+    const viewportRect = state.viewport.getBoundingClientRect();
+    const centerX = Number(viewportRect.width || 0) / 2;
+    const centerY = Number(viewportRect.height || 0) / 2;
+    const imageX = (centerX - state.translateX) / previousScale;
+    const imageY = (centerY - state.translateY) / previousScale;
+    state.translateX = centerX - imageX * nextScale;
+    state.translateY = centerY - imageY * nextScale;
+    state.scale = nextScale;
+    applyS1pImageViewerTransform();
+  };
+  const ensureS1pImageViewer = () => {
+    const state = s1pImageViewerState;
+    if (state.overlay && state.overlay.isConnected) {
+      return;
+    }
+    const overlay = document.createElement("div");
+    overlay.className = "s1p-image-viewer";
+    overlay.setAttribute("aria-hidden", "true");
+    overlay.innerHTML = `
+      <div class="s1p-image-viewer__panel" role="dialog" aria-modal="true" aria-label="S1 Plus \u56fe\u7247\u67e5\u770b\u5668">
+        <div class="s1p-image-viewer__toolbar">
+          <span class="s1p-image-viewer__title">S1 Plus \u56fe\u7247\u67e5\u770b\u5668</span>
+          <span class="s1p-image-viewer__index">1/1</span>
+          <span class="s1p-image-viewer__zoom">100%</span>
+          <button type="button" class="s1p-btn" data-action="fit">\u5b8c\u6574\u663e\u793a</button>
+          <button type="button" class="s1p-btn" data-action="reset">\u91cd\u7f6e\u89c6\u56fe</button>
+          <button type="button" class="s1p-btn" data-action="open">\u65b0\u6807\u7b7e\u6253\u5f00\u539f\u56fe</button>
+          <button
+            type="button"
+            class="s1p-btn s1p-image-viewer__close-btn"
+            data-action="close"
+            aria-label="\u5173\u95ed (Esc)"
+            title="\u5173\u95ed (Esc)"
+          >
+            <svg class="s1p-image-viewer__close-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+              <path d="M5 5L15 15"></path>
+              <path d="M15 5L5 15"></path>
+            </svg>
+          </button>
+        </div>
+        <div class="s1p-image-viewer__viewport">
+          <button type="button" class="s1p-image-viewer__nav-btn" data-action="prev" aria-label="\u4e0a\u4e00\u5f20">
+            <svg class="s1p-image-viewer__nav-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+              <path d="M12.5 4.5L7 10l5.5 5.5"></path>
+            </svg>
+          </button>
+          <div class="s1p-image-viewer__image-stage s1p-image-viewer__image-stage--ghost">
+            <img class="s1p-image-viewer__image s1p-image-viewer__image-ghost" alt="" />
+          </div>
+          <div class="s1p-image-viewer__image-stage s1p-image-viewer__image-stage--main">
+            <img class="s1p-image-viewer__image s1p-image-viewer__image-main" alt="S1 Plus \u56fe\u7247\u67e5\u770b\u5668" />
+          </div>
+          <button type="button" class="s1p-image-viewer__nav-btn" data-action="next" aria-label="\u4e0b\u4e00\u5f20">
+            <svg class="s1p-image-viewer__nav-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+              <path d="M7.5 4.5L13 10l-5.5 5.5"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const panel = overlay.querySelector(".s1p-image-viewer__panel");
+    const viewport = overlay.querySelector(".s1p-image-viewer__viewport");
+    const imageStage = overlay.querySelector(".s1p-image-viewer__image-stage--main");
+    const ghostImage = overlay.querySelector(".s1p-image-viewer__image-ghost");
+    const image = overlay.querySelector(".s1p-image-viewer__image-main");
+    const indexLabel = overlay.querySelector(".s1p-image-viewer__index");
+    const zoomLabel = overlay.querySelector(".s1p-image-viewer__zoom");
+    const fitBtn = overlay.querySelector('button[data-action="fit"]');
+    const prevBtn = overlay.querySelector('button[data-action="prev"]');
+    const nextBtn = overlay.querySelector('button[data-action="next"]');
+    const resetBtn = overlay.querySelector('button[data-action="reset"]');
+    const openBtn = overlay.querySelector('button[data-action="open"]');
+    const closeBtn = overlay.querySelector('button[data-action="close"]');
+
+    if (
+      !(panel instanceof HTMLElement) ||
+      !(viewport instanceof HTMLElement) ||
+      !(imageStage instanceof HTMLElement) ||
+      !(ghostImage instanceof HTMLImageElement) ||
+      !(image instanceof HTMLImageElement) ||
+      !(indexLabel instanceof HTMLElement) ||
+      !(zoomLabel instanceof HTMLElement) ||
+      !(fitBtn instanceof HTMLButtonElement) ||
+      !(prevBtn instanceof HTMLButtonElement) ||
+      !(nextBtn instanceof HTMLButtonElement) ||
+      !(resetBtn instanceof HTMLButtonElement) ||
+      !(openBtn instanceof HTMLButtonElement) ||
+      !(closeBtn instanceof HTMLButtonElement)
+    ) {
+      overlay.remove();
+      return;
+    }
+
+    image.style.transition = "none";
+    image.style.transformOrigin = "0 0";
+    ghostImage.style.transition = "none";
+    ghostImage.style.transformOrigin = "0 0";
+
+    image.addEventListener("dragstart", (event) => {
+      event.preventDefault();
+    });
+    image.addEventListener("load", () => {
+      const latestState = s1pImageViewerState;
+      if (!latestState.isOpen || !latestState.image) {
+        return;
+      }
+      const hasPreparedTransform = latestState.hasPreparedSwitchTransform === true;
+      latestState.hasPreparedSwitchTransform = false;
+      if (!hasPreparedTransform) {
+        resetS1pImageViewerTransform();
+      }
+      if (latestState.overlay) {
+        latestState.overlay.classList.remove("is-preparing-switch");
+      }
+      requestAnimationFrame(() => {
+        const syncedState = s1pImageViewerState;
+        if (!syncedState.isOpen || !syncedState.image) {
+          return;
+        }
+        const direction = Number(syncedState.pendingSwitchDirection) || 0;
+        syncedState.pendingSwitchDirection = 0;
+        playS1pImageViewerSwitchAnimation(direction);
+      });
+    });
+    image.addEventListener("error", () => {
+      const latestState = s1pImageViewerState;
+      latestState.hasPreparedSwitchTransform = false;
+      latestState.pendingSwitchDirection = 0;
+      if (latestState.overlay) {
+        latestState.overlay.classList.remove("is-preparing-switch");
+      }
+      clearS1pImageViewerSwitchAnimation();
+    });
+    viewport.addEventListener("mouseenter", showS1pImageViewerNavTemporarily);
+    viewport.addEventListener("mousemove", handleS1pImageViewerViewportMouseMove);
+    viewport.addEventListener("mouseleave", handleS1pImageViewerViewportMouseLeave);
+    viewport.addEventListener("mousedown", handleS1pImageViewerMouseDown);
+    viewport.addEventListener("wheel", handleS1pImageViewerWheel, {
+      passive: false,
+    });
+    fitBtn.addEventListener("click", () => {
+      fitS1pImageViewerContainToViewport();
+    });
+    prevBtn.addEventListener("click", () => {
+      stepS1pImageViewerActiveIndex(-1);
+    });
+    nextBtn.addEventListener("click", () => {
+      stepS1pImageViewerActiveIndex(1);
+    });
+    resetBtn.addEventListener("click", () => {
+      resetS1pImageViewerTransform();
+    });
+    openBtn.addEventListener("click", () => {
+      openS1pImageInNewTab();
+    });
+    closeBtn.addEventListener("click", () => {
+      closeS1pImageViewer();
+    });
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) {
+        closeS1pImageViewer();
+      }
+    });
+
+    state.overlay = overlay;
+    state.viewport = viewport;
+    state.image = image;
+    state.ghostImage = ghostImage;
+    state.indexLabel = indexLabel;
+    state.zoomLabel = zoomLabel;
+    state.fitBtn = fitBtn;
+    state.prevBtn = prevBtn;
+    state.nextBtn = nextBtn;
+    syncS1pImageViewerNavigationState();
+  };
+  const openS1pImageViewer = (sourceUrl, options = {}) => {
+    const normalizedSourceUrl = normalizeS1pImageViewerSourceUrl(sourceUrl);
+    if (!normalizedSourceUrl) {
+      return false;
+    }
+    ensureS1pImageViewer();
+    const state = s1pImageViewerState;
+    if (!state.overlay || !state.image) {
+      return false;
+    }
+    if (!state.isOpen) {
+      state.bodyOverflowBeforeOpen = document.body ? document.body.style.overflow : "";
+    }
+    if (document.body) {
+      document.body.style.overflow = "hidden";
+    }
+    const rawGalleryItems = Array.isArray(options.galleryItems)
+      ? options.galleryItems
+      : [normalizedSourceUrl];
+    const galleryItems = Array.from(
+      new Set(
+        rawGalleryItems
+          .map((url) => normalizeS1pImageViewerSourceUrl(url))
+          .filter(Boolean)
+      )
+    );
+    if (!galleryItems.includes(normalizedSourceUrl)) {
+      galleryItems.push(normalizedSourceUrl);
+    }
+    const requestedInitialIndex = Number.parseInt(String(options.initialIndex), 10);
+    const initialIndex = Number.isFinite(requestedInitialIndex)
+      ? Math.min(galleryItems.length - 1, Math.max(0, requestedInitialIndex))
+      : Math.max(0, galleryItems.indexOf(normalizedSourceUrl));
+    state.galleryItems = galleryItems;
+    state.currentIndex = -1;
+    state.pendingSwitchDirection = 0;
+    state.hasPreparedSwitchTransform = false;
+    state.switchRequestId += 1;
+    state.lastNavMoveAt = 0;
+    syncS1pImageViewerNavigationState();
+    state.overlay.classList.add("is-open");
+    state.overlay.setAttribute("aria-hidden", "false");
+    state.isOpen = true;
+    document.removeEventListener("keydown", handleS1pImageViewerKeydown, true);
+    document.addEventListener("keydown", handleS1pImageViewerKeydown, true);
+    setS1pImageViewerActiveIndex(initialIndex, { allowSameIndexReset: true });
+    requestAnimationFrame(() => {
+      if (!state.isOpen) {
+        return;
+      }
+      if (state.image.complete && Number(state.image.naturalWidth || 0) > 0) {
+        resetS1pImageViewerTransform();
+        clearS1pImageViewerSwitchAnimation();
+      } else {
+        state.scale = 1;
+        state.translateX = 0;
+        state.translateY = 0;
+        applyS1pImageViewerTransform();
+      }
+      showS1pImageViewerNavTemporarily();
+    });
+    return true;
+  };
+  const getS1pImageViewerTargetImage = (eventTarget) => {
+    if (!(eventTarget instanceof Element)) {
+      return null;
+    }
+    const directMatch = eventTarget.closest(S1P_IMAGE_VIEWER_IMAGE_SELECTOR);
+    if (directMatch && directMatch.closest("div.t_fsz")) {
+      return directMatch;
+    }
+    const anchor = eventTarget.closest("a[href]");
+    if (!anchor || !anchor.closest("div.t_fsz")) {
+      return null;
+    }
+    return anchor.querySelector(S1P_IMAGE_VIEWER_IMAGE_SELECTOR);
+  };
+  const s1pImageViewerClickHandler = (event) => {
+    if (
+      event.defaultPrevented ||
+      event.button !== 0 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.altKey ||
+      event.shiftKey
+    ) {
+      return;
+    }
+    const settings = getSettings();
+    const shouldUseS1pImageViewer =
+      settings.enableGeneralSettings === true &&
+      settings.useS1PlusImageViewer === true;
+    if (!shouldUseS1pImageViewer) {
+      return;
+    }
+    const targetImage = getS1pImageViewerTargetImage(event.target);
+    if (!(targetImage instanceof HTMLImageElement)) {
+      return;
+    }
+    const sourceUrl = resolveS1pImageViewerSourceUrl(targetImage);
+    if (!sourceUrl) {
+      return;
+    }
+    const galleryContext = collectS1pImageViewerGalleryFromTarget(targetImage);
+    event.preventDefault();
+    event.stopPropagation();
+    if (typeof event.stopImmediatePropagation === "function") {
+      event.stopImmediatePropagation();
+    }
+    openS1pImageViewer(sourceUrl, {
+      galleryItems: galleryContext.items,
+      initialIndex: galleryContext.initialIndex,
+    });
+  };
+  let isS1pImageViewerBehaviorBound = false;
+  let s1pImageViewerBehaviorBoundTarget = null;
+  const applyS1pImageViewerBehavior = (_scopeRoots = null) => {
+    const settings = getSettings();
+    const shouldEnableS1pImageViewer =
+      settings.enableGeneralSettings === true &&
+      settings.useS1PlusImageViewer === true;
+    const target = document;
+
+    if (
+      isS1pImageViewerBehaviorBound &&
+      (!shouldEnableS1pImageViewer || s1pImageViewerBehaviorBoundTarget !== target)
+    ) {
+      if (s1pImageViewerBehaviorBoundTarget) {
+        s1pImageViewerBehaviorBoundTarget.removeEventListener(
+          "click",
+          s1pImageViewerClickHandler,
+          true
+        );
+      }
+      isS1pImageViewerBehaviorBound = false;
+      s1pImageViewerBehaviorBoundTarget = null;
+      closeS1pImageViewer();
+    }
+
+    if (!shouldEnableS1pImageViewer) {
+      return;
+    }
+
+    if (isS1pImageViewerBehaviorBound) {
+      return;
+    }
+    target.addEventListener("click", s1pImageViewerClickHandler, true);
+    isS1pImageViewerBehaviorBound = true;
+    s1pImageViewerBehaviorBoundTarget = target;
+  };
+
   const renameAuthorLinks = (scopeRoots = null) => {
     const roots = Array.isArray(scopeRoots)
       ? scopeRoots.filter((root) => root instanceof Element)
@@ -8946,6 +10188,7 @@
     showManuallyBlockedList: false,
     hideImagesByDefault: false,
     limitImagesBySize: true,
+    useS1PlusImageViewer: true,
     imagePreviewMaxWidth: IMAGE_PREVIEW_DEFAULT_WIDTH,
     imagePreviewMaxHeight: IMAGE_PREVIEW_DEFAULT_HEIGHT,
     enhanceFloatingControls: true,
@@ -9103,6 +10346,17 @@
     }
     settings.limitImagesBySize = normalizedLimitImagesBySize;
 
+    const normalizedUseS1PlusImageViewer = normalizeBooleanWithDefault(
+      settings.useS1PlusImageViewer,
+      true
+    );
+    if (
+      settings.useS1PlusImageViewer !== normalizedUseS1PlusImageViewer
+    ) {
+      migrationApplied = true;
+    }
+    settings.useS1PlusImageViewer = normalizedUseS1PlusImageViewer;
+
     const normalizedImagePreviewMaxWidth = normalizeImagePreviewLimitValue(
       settings.imagePreviewMaxWidth,
       IMAGE_PREVIEW_DEFAULT_WIDTH
@@ -9162,6 +10416,7 @@
     "openInNewTab",
     "hideImagesByDefault",
     "limitImagesBySize",
+    "useS1PlusImageViewer",
     "imagePreviewMaxWidth",
     "imagePreviewMaxHeight",
     "showReadIndicator",
@@ -9631,6 +10886,7 @@
     if (hasSettingPathInChangedSet(changedPathSet, "hideImagesByDefault")) {
       applyImageHiding();
       manageImageToggleAllButtons();
+      applyS1pImageViewerBehavior();
     }
     if (
       hasSettingPathInChangedSet(changedPathSet, "limitImagesBySize") ||
@@ -9638,6 +10894,12 @@
       hasSettingPathInChangedSet(changedPathSet, "imagePreviewMaxHeight")
     ) {
       applyImageSizeLimits();
+      applyS1pImageViewerBehavior();
+    }
+    if (
+      hasSettingPathInChangedSet(changedPathSet, "useS1PlusImageViewer")
+    ) {
+      applyS1pImageViewerBehavior();
     }
     if (hasSettingPathInChangedSet(changedPathSet, "openInNewTab")) {
       applyGlobalLinkBehavior();
@@ -13665,13 +14927,18 @@
         }><span class="s1p-slider"></span></label>
                     </div>
                     <div class="s1p-settings-item">
+                        <label class="s1p-settings-label" for="s1p-useS1PlusImageViewer">所有帖子图片使用 S1 Plus 查看器（替代论坛原生查看器）</label>
+                        <label class="s1p-switch"><input type="checkbox" id="s1p-useS1PlusImageViewer" class="s1p-settings-checkbox" data-setting="useS1PlusImageViewer" ${settings.useS1PlusImageViewer ? "checked" : ""
+        }><span class="s1p-slider"></span></label>
+                    </div>
+                    <div class="s1p-settings-item">
                         <label class="s1p-settings-label" for="s1p-limitImagesBySize">\u9650\u5236\u8d85\u5927\u56fe\u7247\u5c3a\u5bf8\uff08\u70b9\u51fb\u67e5\u770b\u539f\u56fe\uff09</label>
                         <label class="s1p-switch"><input type="checkbox" id="s1p-limitImagesBySize" class="s1p-settings-checkbox" data-setting="limitImagesBySize" ${settings.limitImagesBySize ? "checked" : ""
         }><span class="s1p-slider"></span></label>
                     </div>
                     <div id="s1p-image-size-limit-panel" class="s1p-image-size-limit-panel ${settings.limitImagesBySize ? "is-enabled" : ""}">
                         <div class="s1p-image-size-limit-header">
-                            <p class="s1p-setting-desc">\u8d85\u8fc7\u9608\u503c\u7684\u56fe\u7247\u4f1a\u6309\u6bd4\u4f8b\u7f29\u653e\uff0c\u70b9\u51fb\u4ecd\u4f7f\u7528\u8bba\u575b\u539f\u751f\u67e5\u770b\u539f\u56fe\u3002</p>
+                            <p class="s1p-setting-desc">超过阈值的图片会按比例缩放，点击可查看原图（由上方查看器开关决定使用 S1 Plus 或论坛原生）。</p>
                             <button id="s1p-image-size-reset-btn" type="button" class="s1p-btn">\u6062\u590d\u9ed8\u8ba4</button>
                         </div>
                         <div class="s1p-settings-sub-group s1p-image-size-limit-controls">
@@ -14180,6 +15447,7 @@
           "showReadIndicator",
           "hideImagesByDefault",
           "limitImagesBySize",
+          "useS1PlusImageViewer",
           "imagePreviewMaxWidth",
           "imagePreviewMaxHeight",
           "hideSystemBlockedPosts",
@@ -14315,6 +15583,7 @@
         if (settingKey === "hideImagesByDefault") {
           applyImageHiding();
           manageImageToggleAllButtons();
+          applyS1pImageViewerBehavior();
         }
         if (
           settingKey === "limitImagesBySize" ||
@@ -14336,8 +15605,12 @@
             );
           }
           applyImageSizeLimits();
+          applyS1pImageViewerBehavior();
         }
         // [MODIFIED] 当任何一个新标签页设置改变时，都重新应用全局行为
+        if (settingKey === "useS1PlusImageViewer") {
+          applyS1pImageViewerBehavior();
+        }
         if (settingKey.startsWith("openInNewTab.")) {
           applyGlobalLinkBehavior();
           // 如果是阅读进度相关的设置改变了，则刷新按钮
@@ -14411,6 +15684,7 @@
             applyImageHiding();
             manageImageToggleAllButtons();
             applyImageSizeLimits();
+            applyS1pImageViewerBehavior();
             if (isChecked) {
               addProgressJumpButtons();
             } else {
@@ -19341,10 +20615,12 @@
           applyImageHiding(pendingPostTables);
           manageImageToggleAllButtons(pendingPostTables);
           applyImageSizeLimits(pendingPostTables);
+          applyS1pImageViewerBehavior(pendingPostTables);
         } else {
           applyImageHiding();
           manageImageToggleAllButtons();
           applyImageSizeLimits();
+          applyS1pImageViewerBehavior();
         }
         shouldRefreshGlobalLinkBehavior = true;
         trackReadProgressInThread(
@@ -19551,6 +20827,7 @@
     applyImageHiding();
     manageImageToggleAllButtons();
     applyImageSizeLimits();
+    applyS1pImageViewerBehavior();
     applyGlobalLinkBehavior(); // <--- MODIFIED
     trackReadProgressInThread();
     markSettingsRuntimeAppliedSnapshot(settings);
@@ -19563,3 +20840,4 @@
 
   main();
 })();
+
