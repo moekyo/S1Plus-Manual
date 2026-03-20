@@ -4087,10 +4087,271 @@
       }
       /* [移除] 输入框深色聚焦背景覆写：在系统深色模式但 NUX 禁用时会导致输入框背景过深 */
     }
+
+    /* --- [新增] NUX 深色主题下的帖子黑字可读性修复 --- */
+    .s1p-nux-dark-text-fixed {
+      color: var(--t, #d1d5db) !important;
+      -webkit-text-fill-color: var(--t, #d1d5db) !important;
+    }
   `);
 
   // --- S1 NUX 兼容性检测 ---
   let isS1NuxEnabled = false;
+  const NUX_DARK_TEXT_MIN_CONTRAST_RATIO = 2.8;
+  const NUX_DARK_TEXT_FIX_CLASS = "s1p-nux-dark-text-fixed";
+  const NUX_DARK_TEXT_CANDIDATE_SELECTOR =
+    [
+      "td.t_f [style*='color:']",
+      "td.t_f [style*='-webkit-text-fill-color']",
+      "td.t_f font[color]",
+      "td.t_f span[color]",
+      "td.t_f a[color]",
+      "td.t_f p[color]",
+      "td.t_f div[color]",
+      "td.t_f em[color]",
+      "td.t_f strong[color]",
+      "td.t_f b[color]",
+      "td.t_f i[color]",
+      "td.t_f u[color]",
+      "td.t_f li[color]",
+      "td.t_f blockquote[color]",
+    ].join(", ");
+  const NUX_DARK_TEXT_IGNORED_TAGS = new Set([
+    "IMG",
+    "VIDEO",
+    "SVG",
+    "PATH",
+    "CODE",
+    "PRE",
+    "SCRIPT",
+    "STYLE",
+    "IFRAME",
+    "INPUT",
+    "TEXTAREA",
+    "BUTTON",
+  ]);
+  let isNuxDarkModeChangeListenerBound = false;
+
+  const parseRgbaColor = (colorText) => {
+    const match = String(colorText || "")
+      .trim()
+      .match(
+        /^rgba?\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)(?:\s*,\s*(\d*\.?\d+))?\s*\)$/i
+      );
+    if (!match) {
+      return null;
+    }
+    const toChannel = (raw) =>
+      Math.max(0, Math.min(255, Math.round(Number.parseFloat(raw))));
+    const alphaRaw = Number.parseFloat(match[4]);
+    return {
+      r: toChannel(match[1]),
+      g: toChannel(match[2]),
+      b: toChannel(match[3]),
+      a: Number.isFinite(alphaRaw) ? Math.max(0, Math.min(1, alphaRaw)) : 1,
+    };
+  };
+
+  const toLinearSrgb = (channel) => {
+    const normalized = Math.max(0, Math.min(255, channel)) / 255;
+    return normalized <= 0.04045
+      ? normalized / 12.92
+      : ((normalized + 0.055) / 1.055) ** 2.4;
+  };
+
+  const getRelativeLuminance = (color) =>
+    0.2126 * toLinearSrgb(color.r) +
+    0.7152 * toLinearSrgb(color.g) +
+    0.0722 * toLinearSrgb(color.b);
+
+  const getContrastRatio = (colorA, colorB) => {
+    const luminanceA = getRelativeLuminance(colorA);
+    const luminanceB = getRelativeLuminance(colorB);
+    const lighter = Math.max(luminanceA, luminanceB);
+    const darker = Math.min(luminanceA, luminanceB);
+    return (lighter + 0.05) / (darker + 0.05);
+  };
+
+  const blendRgbaOver = (foreground, background) => {
+    const fgAlpha = Math.max(0, Math.min(1, Number(foreground.a) || 0));
+    const bgAlpha = Math.max(0, Math.min(1, Number(background.a) || 1));
+    const outAlpha = fgAlpha + bgAlpha * (1 - fgAlpha);
+    if (outAlpha <= 0) {
+      return { r: 0, g: 0, b: 0, a: 0 };
+    }
+    return {
+      r: Math.round(
+        (foreground.r * fgAlpha + background.r * bgAlpha * (1 - fgAlpha)) /
+        outAlpha
+      ),
+      g: Math.round(
+        (foreground.g * fgAlpha + background.g * bgAlpha * (1 - fgAlpha)) /
+        outAlpha
+      ),
+      b: Math.round(
+        (foreground.b * fgAlpha + background.b * bgAlpha * (1 - fgAlpha)) /
+        outAlpha
+      ),
+      a: outAlpha,
+    };
+  };
+
+  const isNuxDarkThemeActive = () => {
+    if (!isS1NuxEnabled) {
+      return false;
+    }
+    const rootStyle = window.getComputedStyle(document.documentElement);
+    const darkThemeRaw = rootStyle.getPropertyValue("--darktheme").trim();
+    const darkThemeFlag = Number.parseInt(darkThemeRaw, 10);
+    if (Number.isFinite(darkThemeFlag)) {
+      return darkThemeFlag === 1;
+    }
+    return window.matchMedia("(prefers-color-scheme: dark)").matches;
+  };
+
+  const resolveFallbackBackgroundColor = () => {
+    const bodyColor = parseRgbaColor(
+      window.getComputedStyle(document.body || document.documentElement).backgroundColor
+    );
+    const rootColor = parseRgbaColor(
+      window.getComputedStyle(document.documentElement).backgroundColor
+    );
+    const fallback =
+      (bodyColor && bodyColor.a > 0.02 && bodyColor) ||
+      (rootColor && rootColor.a > 0.02 && rootColor) ||
+      { r: 22, g: 22, b: 22, a: 1 };
+    return { r: fallback.r, g: fallback.g, b: fallback.b, a: 1 };
+  };
+
+  const resolveEffectiveBackgroundColor = (element, stopNode = null) => {
+    const fallback = resolveFallbackBackgroundColor();
+    let current = element;
+    while (current instanceof Element) {
+      const bgColor = parseRgbaColor(window.getComputedStyle(current).backgroundColor);
+      if (bgColor && bgColor.a > 0.02) {
+        if (bgColor.a >= 0.995) {
+          return { r: bgColor.r, g: bgColor.g, b: bgColor.b, a: 1 };
+        }
+        return blendRgbaOver(bgColor, fallback);
+      }
+      if (current === stopNode) {
+        break;
+      }
+      current = current.parentElement;
+    }
+    return fallback;
+  };
+
+  const shouldApplyNuxDarkTextFix = (node) => {
+    if (!(node instanceof HTMLElement)) {
+      return false;
+    }
+    if (NUX_DARK_TEXT_IGNORED_TAGS.has(node.tagName)) {
+      return false;
+    }
+    if (!/\S/.test(node.textContent || "")) {
+      return false;
+    }
+
+    const inlineColorText = String(node.style.color || "").trim();
+    const inlineTextFillColorText = String(node.style.webkitTextFillColor || "").trim();
+    const hasInlineColor = inlineColorText.length > 0 || inlineTextFillColorText.length > 0;
+    const hasLegacyColorAttr = node.hasAttribute("color");
+    if (!hasInlineColor && !hasLegacyColorAttr) {
+      return false;
+    }
+
+    const textColor = parseRgbaColor(window.getComputedStyle(node).color);
+    if (!textColor || textColor.a <= 0.08) {
+      return false;
+    }
+
+    const postContent = node.closest("td.t_f");
+    const backgroundColor = resolveEffectiveBackgroundColor(node, postContent);
+    const contrastRatio = getContrastRatio(textColor, backgroundColor);
+    if (contrastRatio >= NUX_DARK_TEXT_MIN_CONTRAST_RATIO) {
+      return false;
+    }
+
+    const textLuminance = getRelativeLuminance(textColor);
+    const backgroundLuminance = getRelativeLuminance(backgroundColor);
+    if (textLuminance > backgroundLuminance || backgroundLuminance > 0.55) {
+      return false;
+    }
+
+    return true;
+  };
+
+  const applyNuxDarkTextContrastFix = (postTables = null) => {
+    const targetPostTables = Array.isArray(postTables)
+      ? postTables.filter((table) => table instanceof Element)
+      : null;
+    const collectBySelector = (selector) => {
+      if (!targetPostTables) {
+        return Array.from(document.querySelectorAll(selector));
+      }
+      const nodes = [];
+      const seen = new Set();
+      targetPostTables.forEach((table) => {
+        if (!(table instanceof Element)) return;
+        if (table.matches(selector) && !seen.has(table)) {
+          seen.add(table);
+          nodes.push(table);
+        }
+        table.querySelectorAll(selector).forEach((node) => {
+          if (seen.has(node)) return;
+          seen.add(node);
+          nodes.push(node);
+        });
+      });
+      return nodes;
+    };
+
+    if (!isNuxDarkThemeActive()) {
+      collectBySelector(`.${NUX_DARK_TEXT_FIX_CLASS}`).forEach((node) => {
+        node.classList.remove(NUX_DARK_TEXT_FIX_CLASS);
+      });
+      return;
+    }
+
+    collectBySelector(`.${NUX_DARK_TEXT_FIX_CLASS}`).forEach((node) => {
+      if (!(node instanceof HTMLElement)) {
+        return;
+      }
+      if (!node.matches(NUX_DARK_TEXT_CANDIDATE_SELECTOR)) {
+        node.classList.remove(NUX_DARK_TEXT_FIX_CLASS);
+      }
+    });
+
+    collectBySelector(NUX_DARK_TEXT_CANDIDATE_SELECTOR).forEach((node) => {
+      if (!(node instanceof HTMLElement)) {
+        return;
+      }
+      node.classList.toggle(NUX_DARK_TEXT_FIX_CLASS, shouldApplyNuxDarkTextFix(node));
+    });
+  };
+
+  const bindNuxDarkModeChangeListener = () => {
+    if (isNuxDarkModeChangeListenerBound || typeof window.matchMedia !== "function") {
+      return;
+    }
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const handleNuxDarkModeChange = () => {
+      if (!isS1NuxEnabled) {
+        return;
+      }
+      applyNuxDarkTextContrastFix();
+    };
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", handleNuxDarkModeChange);
+    } else if (typeof mediaQuery.addListener === "function") {
+      mediaQuery.addListener(handleNuxDarkModeChange);
+    } else {
+      return;
+    }
+    isNuxDarkModeChangeListenerBound = true;
+  };
+
   const detectS1Nux = () => {
     const archiverLink = document.querySelector('a[href*="archiver"]');
     if (archiverLink) {
@@ -4118,6 +4379,7 @@
             }
           }
         `);
+        bindNuxDarkModeChangeListener();
       } else {
         console.log("S1 Plus: S1 NUX is not enabled");
       }
@@ -20622,11 +20884,13 @@
           manageImageToggleAllButtons(pendingPostTables);
           applyImageSizeLimits(pendingPostTables);
           applyS1pImageViewerBehavior(pendingPostTables);
+          applyNuxDarkTextContrastFix(pendingPostTables);
         } else {
           applyImageHiding();
           manageImageToggleAllButtons();
           applyImageSizeLimits();
           applyS1pImageViewerBehavior();
+          applyNuxDarkTextContrastFix();
         }
         shouldRefreshGlobalLinkBehavior = true;
         trackReadProgressInThread(
@@ -20834,6 +21098,7 @@
     manageImageToggleAllButtons();
     applyImageSizeLimits();
     applyS1pImageViewerBehavior();
+    applyNuxDarkTextContrastFix();
     applyGlobalLinkBehavior(); // <--- MODIFIED
     trackReadProgressInThread();
     markSettingsRuntimeAppliedSnapshot(settings);
@@ -20846,4 +21111,3 @@
 
   main();
 })();
-
