@@ -1,7 +1,7 @@
-﻿// ==UserScript==
+// ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      6.4.0
+// @version      6.5.0
 // @description  为Stage1st论坛提供帖子/用户/楼层屏蔽、导航栏自定义、自动签到、阅读进度跟踪、回复收藏、远程同步等多种功能，全方位优化你的论坛体验。
 // @author       moekyo
 // @match        https://stage1st.com/2b/*
@@ -20,8 +20,8 @@
 (function () {
   "use strict";
 
-  const SCRIPT_VERSION = "6.4.0";
-  const SCRIPT_RELEASE_DATE = "2026-03-16";
+  const SCRIPT_VERSION = "6.5.0";
+  const SCRIPT_RELEASE_DATE = "2026-03-20";
 
   // --- [新增] SHA-256 哈希计算库 (基于 Web Crypto API) ---
   /**
@@ -20311,18 +20311,18 @@
 
     // [OPTIMIZED] 优化HTML结构以改善文本布局和换行
     const bodyHtml = `
-    <p>已更新至 v${SCRIPT_VERSION}！本次更新聚焦图片浏览体验与设置易用性，并修复了列表页的一个布局问题。</p>
+    <p>已更新至 v${SCRIPT_VERSION}！本次更新聚焦看图体验、NUX 兼容和设置界面细节优化。</p>
     <p style="margin-top: 16px;">
-        <strong>🖼️ 超大图片显示更稳</strong>：新增“限制超大图片尺寸”开关，默认按 800x1200 等比缩放，超大图不再撑爆楼层布局；点击图片仍使用论坛原生查看原图。
+        <strong>🖼️ 图片查看体验升级</strong>：帖子图片统一由 S1 Plus 查看器接管，支持滚轮缩放、拖拽平移、完整显示与同楼层多图切换；查看长图更顺手。
     </p>
     <p style="margin-top: 8px;">
-        <strong>⚙️ 图片阈值可直接调</strong>：最大宽度/高度支持自定义，并提供“恢复默认”一键回退，刷新后仍会保留你的设置。
+        <strong>🌙 NUX 深色模式可读性增强</strong>：针对少量“黑字叠黑底”的异常帖子新增可读性修复；同时修复 NUX 窄屏导航失焦与设置面板窄屏挤压问题。
     </p>
     <p style="margin-top: 8px;">
-        <strong>🎛️ 设置区更紧凑统一</strong>：图片限制面板重排为更清晰的紧凑布局，输入框与现有控件风格统一，调节更直观。
+        <strong>🧩 交互与入口更统一</strong>：用户屏蔽提示内新增可点击“论坛黑名单”入口，跳转更直接，界面占位更紧凑。
     </p>
     <p style="margin-top: 8px;">
-        <strong>🧭 列表页布局稳定性提升</strong>：修复偶发底部横向滚动条与右侧空白区问题，浏览体验更干净。
+        <strong>🔧 底层实现更轻量</strong>：窄屏样式和弹窗测量逻辑进一步精简，减少重复代码与不必要的布局计算，页面响应更稳定。
     </p>
   `;
 
