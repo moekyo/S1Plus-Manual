@@ -7337,6 +7337,36 @@
     dragOriginX: 0,
     dragOriginY: 0,
     bodyOverflowBeforeOpen: "",
+    previouslyFocusedElement: null,
+  };
+  const restoreFocusAfterS1pImageViewerClose = () => {
+    const state = s1pImageViewerState;
+    const overlay = state.overlay;
+    const activeElement = document.activeElement;
+    const restoreTarget = state.previouslyFocusedElement;
+    state.previouslyFocusedElement = null;
+    if (
+      !(overlay instanceof HTMLElement) ||
+      !(activeElement instanceof HTMLElement) ||
+      !overlay.contains(activeElement)
+    ) {
+      return;
+    }
+    if (
+      restoreTarget instanceof HTMLElement &&
+      restoreTarget.isConnected &&
+      !overlay.contains(restoreTarget)
+    ) {
+      try {
+        restoreTarget.focus({ preventScroll: true });
+      } catch (error) {
+        restoreTarget.focus();
+      }
+    }
+    const focusedElement = document.activeElement;
+    if (focusedElement instanceof HTMLElement && overlay.contains(focusedElement)) {
+      focusedElement.blur();
+    }
   };
   const clearS1pImageViewerNavHideTimer = () => {
     const state = s1pImageViewerState;
@@ -7888,6 +7918,7 @@
     clearS1pImageViewerSwitchAnimation();
     state.overlay.classList.remove("is-nav-visible");
     state.overlay.classList.remove("has-gallery");
+    restoreFocusAfterS1pImageViewerClose();
     state.overlay.setAttribute("aria-hidden", "true");
     document.removeEventListener("keydown", handleS1pImageViewerKeydown, true);
     if (document.body) {
@@ -8345,6 +8376,9 @@
       return false;
     }
     if (!state.isOpen) {
+      const activeElement = document.activeElement;
+      state.previouslyFocusedElement =
+        activeElement instanceof HTMLElement ? activeElement : null;
       state.bodyOverflowBeforeOpen = document.body ? document.body.style.overflow : "";
     }
     if (document.body) {
