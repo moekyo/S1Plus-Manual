@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      6.5.0
+// @version      6.6.0
 // @description  为Stage1st论坛提供帖子/用户/楼层屏蔽、导航栏自定义、自动签到、阅读进度跟踪、回复收藏、远程同步等多种功能，全方位优化你的论坛体验。
 // @author       moekyo
 // @match        https://stage1st.com/2b/*
@@ -20,8 +20,8 @@
 (function () {
   "use strict";
 
-  const SCRIPT_VERSION = "6.5.0";
-  const SCRIPT_RELEASE_DATE = "2026-03-20";
+  const SCRIPT_VERSION = "6.6.0";
+  const SCRIPT_RELEASE_DATE = "2026-03-21";
 
   // --- [新增] SHA-256 哈希计算库 (基于 Web Crypto API) ---
   /**
@@ -20975,18 +20975,18 @@
 
     // [OPTIMIZED] 优化HTML结构以改善文本布局和换行
     const bodyHtml = `
-    <p>已更新至 v${SCRIPT_VERSION}！本次更新聚焦看图体验、NUX 兼容和设置界面细节优化。</p>
+    <p>已更新至 v${SCRIPT_VERSION}！本次更新聚焦浏览效率、看图操作和界面细节体验。</p>
     <p style="margin-top: 16px;">
-        <strong>🖼️ 图片查看体验升级</strong>：帖子图片统一由 S1 Plus 查看器接管，支持滚轮缩放、拖拽平移、完整显示与同楼层多图切换；查看长图更顺手。
+        <strong>🔗 纯文本链接更好用</strong>：可将正文中的 http://、https://、www. 文本自动转为可点击链接，并可单独设置是否新标签/后台打开。
     </p>
     <p style="margin-top: 8px;">
-        <strong>🌙 NUX 深色模式可读性增强</strong>：针对少量“黑字叠黑底”的异常帖子新增可读性修复；同时修复 NUX 窄屏导航失焦与设置面板窄屏挤压问题。
+        <strong>🖼️ 图片查看器操作补全</strong>：工具条新增放大、缩小、向上滚动、向下滚动按钮，并修复按钮动画硬切问题；连续操作更顺滑。
     </p>
     <p style="margin-top: 8px;">
-        <strong>🧩 交互与入口更统一</strong>：用户屏蔽提示内新增可点击“论坛黑名单”入口，跳转更直接，界面占位更紧凑。
+        <strong>🧭 顶栏入口更顺手</strong>：NUX 顶栏头像展开区补充“帖子”快捷入口，可一键进入“我的帖子”；并优化了按钮间距一致性。
     </p>
     <p style="margin-top: 8px;">
-        <strong>🔧 底层实现更轻量</strong>：窄屏样式和弹窗测量逻辑进一步精简，减少重复代码与不必要的布局计算，页面响应更稳定。
+        <strong>🔧 底层实现更精简</strong>：链接处理和图片查看器动画逻辑进一步收敛，减少重复路径，交互稳定性更好。
     </p>
   `;
 
