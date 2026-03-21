@@ -185,6 +185,31 @@
     const normalizedPostId = normalizeNumericId(postId);
     return normalizedPostId ? document.getElementById(`pid${normalizedPostId}`) : null;
   };
+  const PLAIN_URL_REGEX = /\b(?:https?:\/\/|www\.)[^\s<>"']*/gi;
+  const URL_DETECTOR_REGEX = /(?:https?:\/\/|www\.)/i;
+  const PLAIN_URL_TRAILING_PUNCTUATION_REGEX = /[.,!?;:，。！？；：、]/u;
+  const PLAIN_URL_AUTOLINK_CLASS_NAME = "s1p-autolink-url";
+  const PLAIN_URL_AUTOLINK_DATA_VALUE = "url";
+  const PLAIN_URL_AUTOLINK_FALLBACK_ROOT_IDS = ["postlist", "ct"];
+  const PLAIN_URL_AUTOLINK_SKIP_SELECTOR = [
+    "a",
+    "script",
+    "style",
+    "textarea",
+    "input",
+    "button",
+    "select",
+    "option",
+    "code",
+    "pre",
+    ".s1p-modal",
+    ".s1p-confirm-modal",
+    "[contenteditable='true']",
+    ".tedt",
+    ".edt",
+  ].join(", ");
+  const AUTO_LINKED_URL_ANCHOR_SELECTOR =
+    'a.s1p-autolink-url[data-s1p-autolink="url"], a.s1p-autolink-bilibili[data-s1p-autolink="bilibili"]';
 
   /**
    * 对受限场景中的 HTML 片段进行白名单清洗。
@@ -797,6 +822,17 @@
     }
     #s1p-nav-sync-btn svg.s1p-sync-error {
       /* 移除了所有失败状态的视觉效果 */
+    }
+    /* 顶栏“帖子”快捷入口：与 NUX 顶栏悬停展开交互保持一致 */
+    #um #s1p-my-threads-link {
+      order: -1;
+      margin: 0;
+      font-size: 0;
+      white-space: nowrap;
+    }
+    #um:hover #s1p-my-threads-link {
+      margin-right: 8px;
+      font-size: 13px;
     }
 
     /* --- 手动同步弹窗样式 --- */
@@ -8291,6 +8327,201 @@
     });
   };
 
+  const trimTrailingPunctuationFromPlainUrl = (rawUrlText) => {
+    let urlText = String(rawUrlText || "");
+    let trailingText = "";
+    while (urlText && PLAIN_URL_TRAILING_PUNCTUATION_REGEX.test(urlText.slice(-1))) {
+      trailingText = urlText.slice(-1) + trailingText;
+      urlText = urlText.slice(0, -1);
+    }
+    return { urlText, trailingText };
+  };
+
+  const normalizePlainUrlAutolinkHref = (urlText) => {
+    const normalizedInput = String(urlText || "").trim();
+    if (!normalizedInput) {
+      return null;
+    }
+    const hrefCandidate = /^www\./i.test(normalizedInput)
+      ? `https://${normalizedInput}`
+      : normalizedInput;
+    try {
+      const parsedUrl = new URL(hrefCandidate, window.location.origin);
+      if (parsedUrl.protocol === "http:" || parsedUrl.protocol === "https:") {
+        return parsedUrl.href;
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
+  };
+
+  const resolvePlainUrlAutolinkRoots = (scopeRoots = null) => {
+    const normalizedRoots = Array.isArray(scopeRoots)
+      ? scopeRoots.filter((root) => root instanceof Element && root.isConnected)
+      : [];
+    if (normalizedRoots.length > 0) {
+      return normalizedRoots;
+    }
+
+    const fallbackRoots = [];
+    PLAIN_URL_AUTOLINK_FALLBACK_ROOT_IDS.forEach((rootId) => {
+      const root = document.getElementById(rootId);
+      if (!(root instanceof Element) || !root.isConnected) {
+        return;
+      }
+      if (!fallbackRoots.includes(root)) {
+        fallbackRoots.push(root);
+      }
+    });
+    if (fallbackRoots.length === 0 && document.body instanceof Element) {
+      fallbackRoots.push(document.body);
+    }
+    return fallbackRoots;
+  };
+
+  const isPlainUrlAutolinkCandidateTextNode = (node) => {
+    if (!(node instanceof Text)) {
+      return false;
+    }
+    const textContent = String(node.textContent || "");
+    if (!textContent || !URL_DETECTOR_REGEX.test(textContent)) {
+      return false;
+    }
+    const parentElement = node.parentElement;
+    if (!parentElement) {
+      return false;
+    }
+    return !parentElement.closest(PLAIN_URL_AUTOLINK_SKIP_SELECTOR);
+  };
+
+  const collectPlainUrlAutolinkCandidateTextNodes = (root) => {
+    if (!(root instanceof Element)) {
+      return [];
+    }
+    const textWalker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        return isPlainUrlAutolinkCandidateTextNode(node)
+          ? NodeFilter.FILTER_ACCEPT
+          : NodeFilter.FILTER_REJECT;
+      },
+    });
+    const candidateTextNodes = [];
+    while (textWalker.nextNode()) {
+      candidateTextNodes.push(textWalker.currentNode);
+    }
+    return candidateTextNodes;
+  };
+
+  const buildPlainUrlAutolinkFragment = (textContent) => {
+    if (!URL_DETECTOR_REGEX.test(textContent)) {
+      return null;
+    }
+
+    PLAIN_URL_REGEX.lastIndex = 0;
+    let hasValidMatch = false;
+    let previousIndex = 0;
+    const fragment = document.createDocumentFragment();
+    let match = PLAIN_URL_REGEX.exec(textContent);
+
+    while (match) {
+      const rawMatchedText = String(match[0] || "");
+      const matchIndex = Number(match.index) || 0;
+
+      if (matchIndex > previousIndex) {
+        fragment.appendChild(
+          document.createTextNode(textContent.slice(previousIndex, matchIndex))
+        );
+      }
+
+      const { urlText, trailingText } =
+        trimTrailingPunctuationFromPlainUrl(rawMatchedText);
+      const safeHref = normalizePlainUrlAutolinkHref(urlText);
+      if (urlText && safeHref) {
+        const anchor = document.createElement("a");
+        anchor.href = safeHref;
+        anchor.textContent = urlText;
+        anchor.className = PLAIN_URL_AUTOLINK_CLASS_NAME;
+        anchor.dataset.s1pAutolink = PLAIN_URL_AUTOLINK_DATA_VALUE;
+        fragment.appendChild(anchor);
+        if (trailingText) {
+          fragment.appendChild(document.createTextNode(trailingText));
+        }
+        hasValidMatch = true;
+      } else {
+        fragment.appendChild(document.createTextNode(rawMatchedText));
+      }
+
+      previousIndex = matchIndex + rawMatchedText.length;
+      match = PLAIN_URL_REGEX.exec(textContent);
+    }
+
+    if (!hasValidMatch) {
+      return null;
+    }
+
+    if (previousIndex < textContent.length) {
+      fragment.appendChild(
+        document.createTextNode(textContent.slice(previousIndex))
+      );
+    }
+    return fragment;
+  };
+
+  const restorePlainTextUrlAutolinks = (scopeRoots = null) => {
+    const rootsToScan = resolvePlainUrlAutolinkRoots(scopeRoots);
+    if (rootsToScan.length === 0) {
+      return;
+    }
+
+    rootsToScan.forEach((root) => {
+      if (!(root instanceof Element)) {
+        return;
+      }
+      root.querySelectorAll(AUTO_LINKED_URL_ANCHOR_SELECTOR).forEach((anchor) => {
+        if (!(anchor instanceof HTMLAnchorElement)) {
+          return;
+        }
+        anchor.replaceWith(document.createTextNode(anchor.textContent || ""));
+      });
+    });
+  };
+
+  const applyPlainTextUrlAutolinks = (scopeRoots = null) => {
+    const settings = getSettings();
+    if (
+      settings.enableGeneralSettings !== true ||
+      settings.autoLinkPlainTextUrls !== true
+    ) {
+      restorePlainTextUrlAutolinks(scopeRoots);
+      return;
+    }
+
+    const rootsToScan = resolvePlainUrlAutolinkRoots(scopeRoots);
+
+    if (rootsToScan.length === 0) {
+      return;
+    }
+
+    rootsToScan.forEach((root) => {
+      const candidateTextNodes = collectPlainUrlAutolinkCandidateTextNodes(root);
+
+      candidateTextNodes.forEach((textNode) => {
+        if (!(textNode instanceof Text) || !textNode.isConnected) {
+          return;
+        }
+        const textContent = String(textNode.textContent || "");
+        if (!textContent) {
+          return;
+        }
+        const linkifiedFragment = buildPlainUrlAutolinkFragment(textContent);
+        if (linkifiedFragment) {
+          textNode.replaceWith(linkifiedFragment);
+        }
+      });
+    });
+  };
+
   const globalLinkClickHandler = (e) => {
     const settings = getSettings();
     const openTabSettings = settings.openInNewTab;
@@ -8302,13 +8533,19 @@
 
     const href = String(anchor.getAttribute("href") || "");
     const normalizedHref = href.trim().toLowerCase();
+    const isPlainTextAutoLinkedAnchor = anchor.matches(
+      AUTO_LINKED_URL_ANCHOR_SELECTOR
+    );
+    const isSafeForManagedOpen =
+      isSafeUrlAttributeValue(href) ||
+      (isPlainTextAutoLinkedAnchor && /^https?:\/\//i.test(normalizedHref));
     if (!href) return;
     if (
       normalizedHref.startsWith("javascript:") ||
       normalizedHref.startsWith("vbscript:") ||
       normalizedHref.startsWith("data:text/html") ||
       normalizedHref.includes("mod=logging&action=logout") ||
-      !isSafeUrlAttributeValue(href) ||
+      !isSafeForManagedOpen ||
       anchor.closest(
         ".s1p-modal, .s1p-confirm-modal, .s1p-options-menu, .s1p-tag-popover, .pob, .pgs, .pgbtn, #s1p-nav-link, #s1p-nav-sync-btn"
       )
@@ -8321,6 +8558,9 @@
     const getLinkType = (targetAnchor) => {
       // 步骤 1: 识别链接所具备的所有身份，不提前返回
       const identities = [];
+      if (targetAnchor.matches(AUTO_LINKED_URL_ANCHOR_SELECTOR)) {
+        identities.push("plain_text_autolink");
+      }
       if (
         targetAnchor.classList.contains("s1p-progress-jump-btn") &&
         targetAnchor.closest("#threadlist")
@@ -8344,6 +8584,7 @@
 
       // 步骤 2: 定义身份的优先级顺序 (从最具体到最宽泛)
       const priorityOrder = [
+        "plain_text_autolink",
         "progress_jump",
         "thread_list",
         "notification",
@@ -8369,6 +8610,13 @@
 
     // --- 根据精确识别的类型，应用对应设置 (此部分逻辑不变) ---
     switch (linkType) {
+      case "plain_text_autolink":
+        if (openTabSettings.plainTextUrls) {
+          open = true;
+          background = openTabSettings.plainTextUrlsInBackground;
+          settingApplied = true;
+        }
+        break;
       case "progress_jump":
         if (openTabSettings.progress) {
           open = true;
@@ -10445,7 +10693,10 @@
       progressInBackground: false,
       nav: true,
       navInBackground: false,
+      plainTextUrls: false,
+      plainTextUrlsInBackground: false,
     },
+    autoLinkPlainTextUrls: false,
     enableNavCustomization: true,
     changeLogoLink: true,
     hideBlacklistTip: true,
@@ -10525,6 +10776,9 @@
           false,
         nav: oldOpenTab.nav ?? true, // 旧版无此设置，迁移时默认为 true
         navInBackground: oldOpenTab.navInBackground ?? false,
+        plainTextUrls: oldOpenTab.plainTextUrls ?? false,
+        plainTextUrlsInBackground:
+          oldOpenTab.plainTextUrlsInBackground ?? false,
       };
       migrationApplied = true;
     } else {
@@ -10645,6 +10899,26 @@
     }
     settings.imagePreviewMaxHeight = normalizedImagePreviewMaxHeight;
 
+    const autoLinkPlainTextUrlsSourceValue =
+      typeof saved.autoLinkPlainTextUrls !== "undefined"
+        ? settings.autoLinkPlainTextUrls
+        : settings.autoLinkBilibiliPlainText;
+    const normalizedAutoLinkPlainTextUrls = normalizeBooleanWithDefault(
+      autoLinkPlainTextUrlsSourceValue,
+      false
+    );
+    if (
+      settings.autoLinkPlainTextUrls !==
+      normalizedAutoLinkPlainTextUrls
+    ) {
+      migrationApplied = true;
+    }
+    settings.autoLinkPlainTextUrls = normalizedAutoLinkPlainTextUrls;
+    if (Object.prototype.hasOwnProperty.call(settings, "autoLinkBilibiliPlainText")) {
+      delete settings.autoLinkBilibiliPlainText;
+      migrationApplied = true;
+    }
+
     return { settings, migrationApplied };
   };
 
@@ -10688,6 +10962,7 @@
     "imagePreviewMaxWidth",
     "imagePreviewMaxHeight",
     "showReadIndicator",
+    "autoLinkPlainTextUrls",
     "changeLogoLink",
     "hideBlacklistTip",
     "customTitleSuffix",
@@ -11171,6 +11446,9 @@
     }
     if (hasSettingPathInChangedSet(changedPathSet, "openInNewTab")) {
       applyGlobalLinkBehavior();
+    }
+    if (hasSettingPathInChangedSet(changedPathSet, "autoLinkPlainTextUrls")) {
+      applyPlainTextUrlAutolinks();
     }
     if (
       (hasSettingPathInChangedSet(changedPathSet, "openInNewTab.progress") ||
@@ -11915,6 +12193,48 @@
     }
 
     managerLink.insertAdjacentElement("afterend", li);
+  };
+
+  const ensureMyThreadsQuickLink = () => {
+    const userMenuRoot = document.querySelector("#um");
+    if (!userMenuRoot) {
+      return;
+    }
+
+    const isLoggedIn = Boolean(
+      userMenuRoot.querySelector('a[href^="member.php?mod=logging&action=logout"]') ||
+      userMenuRoot.querySelector("strong.vwmy a")
+    );
+    if (!isLoggedIn) {
+      userMenuRoot.querySelector("#s1p-my-threads-link")?.remove();
+      return;
+    }
+
+    const threadListUrl = "https://stage1st.com/2b/home.php?mod=space&do=thread&view=me";
+    const baseContainer = userMenuRoot.querySelector("p") || userMenuRoot;
+    const existingLink = userMenuRoot.querySelector("#s1p-my-threads-link");
+
+    const threadLink = existingLink || document.createElement("a");
+    if (!existingLink) {
+      threadLink.id = "s1p-my-threads-link";
+      threadLink.textContent = "帖子";
+      threadLink.title = "查看我的帖子";
+      threadLink.setAttribute("hidefocus", "true");
+    }
+    if (threadLink.getAttribute("href") !== threadListUrl) {
+      threadLink.setAttribute("href", threadListUrl);
+    }
+
+    const preferredAnchor = baseContainer.querySelector(
+      'a[href="home.php?mod=spacecp"], #loginstatus, #myprompt, #pm_ntc'
+    );
+    if (preferredAnchor && preferredAnchor !== threadLink) {
+      baseContainer.insertBefore(threadLink, preferredAnchor);
+      return;
+    }
+    if (threadLink.parentElement !== baseContainer) {
+      baseContainer.appendChild(threadLink);
+    }
   };
 
   const initializeNavbar = () => {
@@ -15095,7 +15415,7 @@
                         <label class="s1p-switch"><input type="checkbox" id="s1p-openInNewTab-master" class="s1p-settings-checkbox" data-setting="openInNewTab.master" ${openTabSettings.master ? "checked" : ""
         }><span class="s1p-slider"></span></label>
                     </div>
-                    <p class="s1p-setting-desc" style="margin-top: -4px;">开启后，下方选中的链接类型将在新标签页打开。仅对顶部导航、帖子列表、消息提醒区域内的链接生效。</p>
+                    <p class="s1p-setting-desc" style="margin-top: -4px;">开启后，下方选中的链接类型将在新标签页打开。支持顶部导航、帖子列表、消息提醒，以及脚本识别出的纯文本链接。</p>
                     
                     <div class="s1p-settings-sub-group" style="${!openTabSettings.master
           ? "opacity: 0.5; pointer-events: none;"
@@ -15146,6 +15466,25 @@
                             <label class="s1p-switch"><input type="checkbox" id="s1p-openNavInBackground" class="s1p-settings-checkbox" data-setting="openInNewTab.navInBackground" ${openTabSettings.navInBackground ? "checked" : ""
         }><span class="s1p-slider"></span></label>
                         </div>
+
+                    </div>
+
+                    <div class="s1p-settings-item" style="margin-top: 16px;">
+                        <label class="s1p-settings-label" for="s1p-autoLinkPlainTextUrls">将纯文本链接自动转为可点击超链接</label>
+                        <label class="s1p-switch"><input type="checkbox" id="s1p-autoLinkPlainTextUrls" class="s1p-settings-checkbox" data-setting="autoLinkPlainTextUrls" ${settings.autoLinkPlainTextUrls ? "checked" : ""
+        }><span class="s1p-slider"></span></label>
+                    </div>
+                    <p class="s1p-setting-desc" style="margin-top: -4px;">处理常见 http://、https://、www. 开头的纯文本链接；原本已可点击的链接会自动跳过。</p>
+                    <div class="s1p-settings-item" id="s1p-openPlainTextUrlInNewTab-item" style="margin-top: 8px; padding-left: 20px; ${!settings.autoLinkPlainTextUrls ? "display: none;" : ""}">
+                        <label class="s1p-settings-label" for="s1p-openPlainTextUrlInNewTab">在新标签页打开“纯文本自动链接”</label>
+                        <label class="s1p-switch"><input type="checkbox" id="s1p-openPlainTextUrlInNewTab" class="s1p-settings-checkbox" data-setting="openInNewTab.plainTextUrls" ${openTabSettings.plainTextUrls ? "checked" : ""
+        }><span class="s1p-slider"></span></label>
+                    </div>
+                    <div class="s1p-settings-item" id="s1p-openPlainTextUrlInBackground-item" style="padding-left: 40px; ${!openTabSettings.plainTextUrls ? "display: none;" : ""
+        }">
+                        <label class="s1p-settings-label">在后台打开</label>
+                        <label class="s1p-switch"><input type="checkbox" id="s1p-openPlainTextUrlInBackground" class="s1p-settings-checkbox" data-setting="openInNewTab.plainTextUrlsInBackground" ${openTabSettings.plainTextUrlsInBackground ? "checked" : ""
+        }><span class="s1p-slider"></span></label>
                     </div>
 
                      <div class="s1p-settings-item" style="margin-top: 16px;">
@@ -15306,6 +15645,14 @@
         "s1p-openProgressInBackground-item"
       );
       setupSubSwitch("s1p-openNavInNewTab", "s1p-openNavInBackground-item");
+      setupSubSwitch(
+        "s1p-autoLinkPlainTextUrls",
+        "s1p-openPlainTextUrlInNewTab-item"
+      );
+      setupSubSwitch(
+        "s1p-openPlainTextUrlInNewTab",
+        "s1p-openPlainTextUrlInBackground-item"
+      );
 
       const moveSlider = (control, skipAnimation = false) => {
         if (!control) return;
@@ -15713,6 +16060,7 @@
           "cleanupMode",
           "openInNewTab",
           "showReadIndicator",
+          "autoLinkPlainTextUrls",
           "hideImagesByDefault",
           "limitImagesBySize",
           "useS1PlusImageViewer",
@@ -15878,6 +16226,9 @@
         // [MODIFIED] 当任何一个新标签页设置改变时，都重新应用全局行为
         if (settingKey === "useS1PlusImageViewer") {
           applyS1pImageViewerBehavior();
+        }
+        if (settingKey === "autoLinkPlainTextUrls") {
+          applyPlainTextUrlAutolinks();
         }
         if (settingKey.startsWith("openInNewTab.")) {
           applyGlobalLinkBehavior();
@@ -20885,12 +21236,14 @@
           applyImageSizeLimits(pendingPostTables);
           applyS1pImageViewerBehavior(pendingPostTables);
           applyNuxDarkTextContrastFix(pendingPostTables);
+          applyPlainTextUrlAutolinks(pendingPostTables);
         } else {
           applyImageHiding();
           manageImageToggleAllButtons();
           applyImageSizeLimits();
           applyS1pImageViewerBehavior();
           applyNuxDarkTextContrastFix();
+          applyPlainTextUrlAutolinks();
         }
         shouldRefreshGlobalLinkBehavior = true;
         trackReadProgressInThread(
@@ -20900,6 +21253,7 @@
       if (shouldRefreshGlobalLinkBehavior) {
         applyGlobalLinkBehavior();
       }
+      ensureMyThreadsQuickLink();
     };
 
     const observerCallback = (mutationList = []) => {
@@ -21099,7 +21453,9 @@
     applyImageSizeLimits();
     applyS1pImageViewerBehavior();
     applyNuxDarkTextContrastFix();
+    applyPlainTextUrlAutolinks();
     applyGlobalLinkBehavior(); // <--- MODIFIED
+    ensureMyThreadsQuickLink();
     trackReadProgressInThread();
     markSettingsRuntimeAppliedSnapshot(settings);
     try {
