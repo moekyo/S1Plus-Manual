@@ -478,6 +478,11 @@
   const S1P_IMAGE_VIEWER_MIN_SCALE = 0.08;
   const S1P_IMAGE_VIEWER_MAX_SCALE = 8;
   const S1P_IMAGE_VIEWER_ZOOM_STEP = 0.16;
+  const S1P_IMAGE_VIEWER_SCROLL_STEP_RATIO = 0.24;
+  const S1P_IMAGE_VIEWER_SCROLL_STEP_MIN_PX = 56;
+  const S1P_IMAGE_VIEWER_SCROLL_STEP_MAX_PX = 360;
+  const S1P_IMAGE_VIEWER_BUTTON_ZOOM_ANIMATION_MS = 160;
+  const S1P_IMAGE_VIEWER_BUTTON_SCROLL_ANIMATION_MS = 220;
   const S1P_IMAGE_VIEWER_SWITCH_ANIMATION_MS = 220;
   const S1P_IMAGE_VIEWER_NAV_AUTO_HIDE_MS = 1400;
   const S1P_IMAGE_VIEWER_NAV_LEAVE_HIDE_MS = 220;
@@ -3518,6 +3523,22 @@
       opacity: 0.45;
       cursor: not-allowed;
     }
+    .s1p-image-viewer__toolbar .s1p-image-viewer__icon-btn {
+      width: 34px;
+      height: 34px;
+      min-width: 34px;
+      padding: 0;
+      flex: 0 0 34px;
+      font-size: 0;
+      line-height: 0;
+    }
+    .s1p-image-viewer__zoom-icon {
+      display: block;
+      width: 16px;
+      height: 16px;
+      fill: currentColor;
+      pointer-events: none;
+    }
     .s1p-image-viewer__toolbar .s1p-image-viewer__close-btn {
       width: 34px;
       height: 34px;
@@ -3725,6 +3746,17 @@
       .s1p-image-viewer__toolbar .s1p-btn {
         flex: 1;
         min-width: 0;
+      }
+      .s1p-image-viewer__toolbar .s1p-image-viewer__icon-btn {
+        width: 32px;
+        height: 32px;
+        min-width: 32px;
+        flex: 0 0 32px;
+        padding: 0;
+      }
+      .s1p-image-viewer__zoom-icon {
+        width: 15px;
+        height: 15px;
       }
       .s1p-image-viewer__toolbar .s1p-image-viewer__close-btn {
         width: 32px;
@@ -7278,6 +7310,10 @@
     ghostImage: null,
     zoomLabel: null,
     indexLabel: null,
+    zoomOutBtn: null,
+    zoomInBtn: null,
+    scrollUpBtn: null,
+    scrollDownBtn: null,
     fitBtn: null,
     prevBtn: null,
     nextBtn: null,
@@ -7288,6 +7324,7 @@
     hasPreparedSwitchTransform: false,
     switchRequestId: 0,
     switchAnimationTimer: 0,
+    transformAnimationTimer: 0,
     navHideTimer: 0,
     lastNavMoveAt: 0,
     scale: 1,
@@ -7324,6 +7361,84 @@
       return 0;
     }
     return nextIndex > previousIndex ? 1 : -1;
+  };
+  const setS1pImageViewerImageTransition = (durationMs = 0) => {
+    const state = s1pImageViewerState;
+    if (!(state.image instanceof HTMLImageElement)) {
+      return;
+    }
+    if (Number(durationMs) <= 0) {
+      state.image.style.setProperty("transition", "none", "important");
+      return;
+    }
+    const safeDuration = Math.max(60, Number(durationMs) || 0);
+    state.image.style.setProperty(
+      "transition",
+      `transform ${safeDuration}ms cubic-bezier(0.22, 1, 0.36, 1)`,
+      "important"
+    );
+  };
+  const clearS1pImageViewerTransformButtonAnimation = () => {
+    const state = s1pImageViewerState;
+    if (state.transformAnimationTimer) {
+      window.clearTimeout(state.transformAnimationTimer);
+      state.transformAnimationTimer = 0;
+    }
+    setS1pImageViewerImageTransition(0);
+  };
+  const syncS1pImageViewerTransformStateFromRendered = () => {
+    const state = s1pImageViewerState;
+    if (!(state.image instanceof HTMLImageElement)) {
+      return false;
+    }
+    let transformValue = "";
+    try {
+      transformValue = String(window.getComputedStyle(state.image).transform || "");
+    } catch (error) {
+      return false;
+    }
+    if (!transformValue || transformValue === "none") {
+      return false;
+    }
+    const MatrixCtor =
+      typeof DOMMatrixReadOnly === "function"
+        ? DOMMatrixReadOnly
+        : typeof DOMMatrix === "function"
+        ? DOMMatrix
+        : null;
+    if (!MatrixCtor) {
+      return false;
+    }
+    try {
+      const matrix = new MatrixCtor(transformValue);
+      const scaleX = Number(matrix.m11);
+      const scaleY = Number(matrix.m22);
+      const translateX = Number(matrix.m41);
+      const translateY = Number(matrix.m42);
+      const resolvedScale = Number.isFinite(scaleX) && Number.isFinite(scaleY)
+        ? (Math.abs(scaleX) + Math.abs(scaleY)) / 2
+        : Number.isFinite(scaleX)
+        ? Math.abs(scaleX)
+        : Number.isFinite(scaleY)
+        ? Math.abs(scaleY)
+        : NaN;
+      let hasSynced = false;
+      if (Number.isFinite(resolvedScale) && resolvedScale > 0) {
+        state.scale = clampS1pImageViewerScale(resolvedScale);
+        hasSynced = true;
+      }
+      if (Number.isFinite(translateX)) {
+        state.translateX = translateX;
+        hasSynced = true;
+      }
+      if (Number.isFinite(translateY)) {
+        state.translateY = translateY;
+        hasSynced = true;
+      }
+      return hasSynced;
+    } catch (error) {
+      return false;
+    }
   };
   const clearS1pImageViewerSwitchAnimation = ({ keepGhost = false } = {}) => {
     const state = s1pImageViewerState;
@@ -7596,6 +7711,7 @@
       return false;
     }
     stopS1pImageViewerDragging();
+    clearS1pImageViewerTransformButtonAnimation();
     if (state.image.src !== nextSourceUrl) {
       state.pendingSwitchDirection = resolveS1pImageViewerSwitchDirection(
         previousIndex,
@@ -7654,6 +7770,7 @@
     if (!state.viewport) {
       return false;
     }
+    clearS1pImageViewerTransformButtonAnimation();
     const width = Number(naturalWidth || 0);
     const height = Number(naturalHeight || 0);
     if (width <= 0 || height <= 0) {
@@ -7763,6 +7880,7 @@
   const closeS1pImageViewer = () => {
     const state = s1pImageViewerState;
     stopS1pImageViewerDragging();
+    clearS1pImageViewerTransformButtonAnimation();
     if (!state.overlay || !state.isOpen) {
       return;
     }
@@ -7809,6 +7927,7 @@
       return;
     }
     showS1pImageViewerNavTemporarily();
+    clearS1pImageViewerTransformButtonAnimation();
     event.preventDefault();
     state.isDragging = true;
     state.dragStartX = event.clientX;
@@ -7831,18 +7950,26 @@
     if (state.isDragging) {
       stopS1pImageViewerDragging();
     }
+    clearS1pImageViewerTransformButtonAnimation();
     event.preventDefault();
+    zoomS1pImageViewerByStep(event.deltaY < 0 ? 1 : -1);
+  };
+  const zoomS1pImageViewerByStep = (direction) => {
+    const state = s1pImageViewerState;
+    if (!state.isOpen || !state.viewport) {
+      return false;
+    }
     const previousScale = state.scale;
     if (!Number.isFinite(previousScale) || previousScale <= 0) {
-      return;
+      return false;
     }
     const zoomFactor =
-      event.deltaY < 0
+      Number(direction) >= 0
         ? 1 + S1P_IMAGE_VIEWER_ZOOM_STEP
         : 1 / (1 + S1P_IMAGE_VIEWER_ZOOM_STEP);
     const nextScale = clampS1pImageViewerScale(previousScale * zoomFactor);
     if (Math.abs(nextScale - previousScale) < 0.0001) {
-      return;
+      return false;
     }
     const viewportRect = state.viewport.getBoundingClientRect();
     const centerX = Number(viewportRect.width || 0) / 2;
@@ -7853,6 +7980,88 @@
     state.translateY = centerY - imageY * nextScale;
     state.scale = nextScale;
     applyS1pImageViewerTransform();
+    return true;
+  };
+  const scrollS1pImageViewerByStep = (direction) => {
+    const state = s1pImageViewerState;
+    if (!state.isOpen || !state.viewport) {
+      return false;
+    }
+    const viewportRect = state.viewport.getBoundingClientRect();
+    const viewportHeight = Number(viewportRect.height || 0);
+    const scrollStepPx = Math.min(
+      S1P_IMAGE_VIEWER_SCROLL_STEP_MAX_PX,
+      Math.max(
+        S1P_IMAGE_VIEWER_SCROLL_STEP_MIN_PX,
+        viewportHeight * S1P_IMAGE_VIEWER_SCROLL_STEP_RATIO
+      )
+    );
+    if (!Number.isFinite(scrollStepPx) || scrollStepPx <= 0) {
+      return false;
+    }
+    const normalizedDirection = Number(direction);
+    const deltaY = normalizedDirection >= 0 ? -scrollStepPx : scrollStepPx;
+    state.translateY += deltaY;
+    applyS1pImageViewerTransform();
+    return true;
+  };
+  const animateS1pImageViewerTransformAction = (
+    applyTransformChange,
+    { syncFromRendered = false, durationMs = S1P_IMAGE_VIEWER_BUTTON_ZOOM_ANIMATION_MS } = {}
+  ) => {
+    const state = s1pImageViewerState;
+    if (
+      !state.isOpen ||
+      !(state.image instanceof HTMLImageElement) ||
+      typeof applyTransformChange !== "function"
+    ) {
+      return false;
+    }
+    if (syncFromRendered) {
+      syncS1pImageViewerTransformStateFromRendered();
+    }
+    if (state.transformAnimationTimer) {
+      window.clearTimeout(state.transformAnimationTimer);
+      state.transformAnimationTimer = 0;
+    }
+    const safeDuration = Math.max(60, Number(durationMs) || 0);
+    setS1pImageViewerImageTransition(safeDuration);
+    const didApplyChange = applyTransformChange();
+    if (!didApplyChange) {
+      clearS1pImageViewerTransformButtonAnimation();
+      return false;
+    }
+    state.transformAnimationTimer = window.setTimeout(() => {
+      const latestState = s1pImageViewerState;
+      latestState.transformAnimationTimer = 0;
+      setS1pImageViewerImageTransition(0);
+    }, safeDuration + 24);
+    return true;
+  };
+  const runS1pImageViewerToolbarTransformAction = (action) => {
+    showS1pImageViewerNavTemporarily();
+    if (s1pImageViewerState.isDragging) {
+      stopS1pImageViewerDragging();
+    }
+    return action();
+  };
+  const animateS1pImageViewerZoomStep = (direction) => {
+    return animateS1pImageViewerTransformAction(() =>
+      zoomS1pImageViewerByStep(direction),
+      {
+        syncFromRendered: true,
+        durationMs: S1P_IMAGE_VIEWER_BUTTON_ZOOM_ANIMATION_MS,
+      }
+    );
+  };
+  const animateS1pImageViewerScrollStep = (direction) => {
+    return animateS1pImageViewerTransformAction(() =>
+      scrollS1pImageViewerByStep(direction),
+      {
+        syncFromRendered: false,
+        durationMs: S1P_IMAGE_VIEWER_BUTTON_SCROLL_ANIMATION_MS,
+      }
+    );
   };
   const ensureS1pImageViewer = () => {
     const state = s1pImageViewerState;
@@ -7868,6 +8077,78 @@
           <span class="s1p-image-viewer__title">S1 Plus \u56fe\u7247\u67e5\u770b\u5668</span>
           <span class="s1p-image-viewer__index">1/1</span>
           <span class="s1p-image-viewer__zoom">100%</span>
+          <button
+            type="button"
+            class="s1p-btn s1p-image-viewer__icon-btn"
+            data-action="zoom-out"
+            aria-label="\u7f29\u5c0f"
+            title="\u7f29\u5c0f"
+          >
+            <svg
+              class="s1p-image-viewer__zoom-icon"
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+              aria-hidden="true"
+              focusable="false"
+            >
+              <path d="M18.031 16.6168L22.3137 20.8995L20.8995 22.3137L16.6168 18.031C15.0769 19.263 13.124 20 11 20C6.032 20 2 15.968 2 11C2 6.032 6.032 2 11 2C15.968 2 20 6.032 20 11C20 13.124 19.263 15.0769 18.031 16.6168ZM16.0247 15.8748C17.2475 14.6146 18 12.8956 18 11C18 7.1325 14.8675 4 11 4C7.1325 4 4 7.1325 4 11C4 14.8675 7.1325 18 11 18C12.8956 18 14.6146 17.2475 15.8748 16.0247L16.0247 15.8748ZM7 10H15V12H7V10Z"></path>
+            </svg>
+          </button>
+          <button
+            type="button"
+            class="s1p-btn s1p-image-viewer__icon-btn"
+            data-action="zoom-in"
+            aria-label="\u653e\u5927"
+            title="\u653e\u5927"
+          >
+            <svg
+              class="s1p-image-viewer__zoom-icon"
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+              aria-hidden="true"
+              focusable="false"
+            >
+              <path d="M18.031 16.6168L22.3137 20.8995L20.8995 22.3137L16.6168 18.031C15.0769 19.263 13.124 20 11 20C6.032 20 2 15.968 2 11C2 6.032 6.032 2 11 2C15.968 2 20 6.032 20 11C20 13.124 19.263 15.0769 18.031 16.6168ZM16.0247 15.8748C17.2475 14.6146 18 12.8956 18 11C18 7.1325 14.8675 4 11 4C7.1325 4 4 7.1325 4 11C4 14.8675 7.1325 18 11 18C12.8956 18 14.6146 17.2475 15.8748 16.0247L16.0247 15.8748ZM10 10V7H12V10H15V12H12V15H10V12H7V10H10Z"></path>
+            </svg>
+          </button>
+          <button
+            type="button"
+            class="s1p-btn s1p-image-viewer__icon-btn"
+            data-action="scroll-up"
+            aria-label="\u5411\u4e0a\u6eda\u52a8"
+            title="\u5411\u4e0a\u6eda\u52a8"
+          >
+            <svg
+              class="s1p-image-viewer__zoom-icon"
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+              aria-hidden="true"
+              focusable="false"
+            >
+              <path d="M7.41 14.59 12 10l4.59 4.59L18 13.17l-6-6-6 6z"></path>
+            </svg>
+          </button>
+          <button
+            type="button"
+            class="s1p-btn s1p-image-viewer__icon-btn"
+            data-action="scroll-down"
+            aria-label="\u5411\u4e0b\u6eda\u52a8"
+            title="\u5411\u4e0b\u6eda\u52a8"
+          >
+            <svg
+              class="s1p-image-viewer__zoom-icon"
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+              aria-hidden="true"
+              focusable="false"
+            >
+              <path d="m7.41 8.59 4.59 4.58 4.59-4.58L18 10l-6 6-6-6z"></path>
+            </svg>
+          </button>
           <button type="button" class="s1p-btn" data-action="fit">\u5b8c\u6574\u663e\u793a</button>
           <button type="button" class="s1p-btn" data-action="reset">\u91cd\u7f6e\u89c6\u56fe</button>
           <button type="button" class="s1p-btn" data-action="open">\u65b0\u6807\u7b7e\u6253\u5f00\u539f\u56fe</button>
@@ -7913,6 +8194,10 @@
     const image = overlay.querySelector(".s1p-image-viewer__image-main");
     const indexLabel = overlay.querySelector(".s1p-image-viewer__index");
     const zoomLabel = overlay.querySelector(".s1p-image-viewer__zoom");
+    const zoomOutBtn = overlay.querySelector('button[data-action="zoom-out"]');
+    const zoomInBtn = overlay.querySelector('button[data-action="zoom-in"]');
+    const scrollUpBtn = overlay.querySelector('button[data-action="scroll-up"]');
+    const scrollDownBtn = overlay.querySelector('button[data-action="scroll-down"]');
     const fitBtn = overlay.querySelector('button[data-action="fit"]');
     const prevBtn = overlay.querySelector('button[data-action="prev"]');
     const nextBtn = overlay.querySelector('button[data-action="next"]');
@@ -7928,6 +8213,10 @@
       !(image instanceof HTMLImageElement) ||
       !(indexLabel instanceof HTMLElement) ||
       !(zoomLabel instanceof HTMLElement) ||
+      !(zoomOutBtn instanceof HTMLButtonElement) ||
+      !(zoomInBtn instanceof HTMLButtonElement) ||
+      !(scrollUpBtn instanceof HTMLButtonElement) ||
+      !(scrollDownBtn instanceof HTMLButtonElement) ||
       !(fitBtn instanceof HTMLButtonElement) ||
       !(prevBtn instanceof HTMLButtonElement) ||
       !(nextBtn instanceof HTMLButtonElement) ||
@@ -7939,9 +8228,9 @@
       return;
     }
 
-    image.style.transition = "none";
+    image.style.setProperty("transition", "none", "important");
     image.style.transformOrigin = "0 0";
-    ghostImage.style.transition = "none";
+    ghostImage.style.setProperty("transition", "none", "important");
     ghostImage.style.transformOrigin = "0 0";
 
     image.addEventListener("dragstart", (event) => {
@@ -7986,6 +8275,26 @@
     viewport.addEventListener("wheel", handleS1pImageViewerWheel, {
       passive: false,
     });
+    zoomOutBtn.addEventListener("click", () => {
+      runS1pImageViewerToolbarTransformAction(() =>
+        animateS1pImageViewerZoomStep(-1)
+      );
+    });
+    zoomInBtn.addEventListener("click", () => {
+      runS1pImageViewerToolbarTransformAction(() =>
+        animateS1pImageViewerZoomStep(1)
+      );
+    });
+    scrollUpBtn.addEventListener("click", () => {
+      runS1pImageViewerToolbarTransformAction(() =>
+        animateS1pImageViewerScrollStep(-1)
+      );
+    });
+    scrollDownBtn.addEventListener("click", () => {
+      runS1pImageViewerToolbarTransformAction(() =>
+        animateS1pImageViewerScrollStep(1)
+      );
+    });
     fitBtn.addEventListener("click", () => {
       fitS1pImageViewerContainToViewport();
     });
@@ -8016,6 +8325,10 @@
     state.ghostImage = ghostImage;
     state.indexLabel = indexLabel;
     state.zoomLabel = zoomLabel;
+    state.zoomOutBtn = zoomOutBtn;
+    state.zoomInBtn = zoomInBtn;
+    state.scrollUpBtn = scrollUpBtn;
+    state.scrollDownBtn = scrollDownBtn;
     state.fitBtn = fitBtn;
     state.prevBtn = prevBtn;
     state.nextBtn = nextBtn;
