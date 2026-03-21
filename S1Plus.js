@@ -305,7 +305,7 @@
   const sanitizeInlineActionLabelHtml = (html) =>
     sanitizeHtmlFragment(
       html,
-      ["svg", "path", "span", "polyline"],
+      ["svg", "path", "span", "polyline", "circle"],
       {
         svg: [
           "xmlns",
@@ -331,6 +331,18 @@
         span: ["class", "style"],
         polyline: [
           "points",
+          "fill",
+          "style",
+          "stroke",
+          "stroke-width",
+          "stroke-linecap",
+          "stroke-linejoin",
+        ],
+        circle: [
+          "class",
+          "cx",
+          "cy",
+          "r",
           "fill",
           "style",
           "stroke",
@@ -417,6 +429,18 @@
   const AUTO_SYNC_CIRCUIT_OPEN_UNTIL_KEY = "s1p_auto_sync_circuit_open_until";
   const AUTO_SYNC_CONFLICT_PAUSE_KEY = "s1p_auto_sync_conflict_pause";
   const PENDING_AUTO_SYNC_KEY = "s1p_pending_auto_sync_request";
+  const AUTO_SYNC_INDICATOR_STATE_KEY = "s1p_auto_sync_indicator_state";
+  const AUTO_SYNC_INDICATOR_PHASE_IDLE = "idle";
+  const AUTO_SYNC_INDICATOR_PHASE_PENDING = "pending";
+  const AUTO_SYNC_INDICATOR_PHASE_RUNNING = "running";
+  const AUTO_SYNC_INDICATOR_PHASE_SUCCESS = "success";
+  const AUTO_SYNC_INDICATOR_PHASE_FAILURE = "failure";
+  const AUTO_SYNC_INDICATOR_PHASE_CONFLICT = "conflict";
+  const AUTO_SYNC_INDICATOR_PENDING_STALE_MS = 90 * 1000;
+  const AUTO_SYNC_INDICATOR_RUNNING_STALE_MS = 3 * 60 * 1000;
+  const AUTO_SYNC_INDICATOR_SUCCESS_TTL_MS = 2 * 60 * 1000;
+  const AUTO_SYNC_INDICATOR_FAILURE_TTL_MS = 5 * 60 * 1000;
+  const AUTO_SYNC_INDICATOR_CONFLICT_TTL_MS = 10 * 60 * 1000;
   const SETTINGS_CROSS_TAB_SIGNAL_KEY = "s1p_settings_refresh_signal";
   const SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID = `s1p_tab_${Date.now()}_${Math.random()
     .toString(36)
@@ -806,6 +830,12 @@
         /* [修改] 增加了左侧内边距，使其与左侧按钮的视觉间距更协调 */
         padding: 0 4px 0 8px !important;
       }
+      #nv ul #s1p-nav-auto-sync-indicator {
+        margin-left: 0 !important;
+      }
+      #nv ul #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-wrap {
+        padding: 0 4px 0 6px !important;
+      }
     }
 
     /* --- [MODIFIED] 最终简化版同步动画 (只有旋转) --- */
@@ -828,6 +858,84 @@
     #s1p-nav-sync-btn svg.s1p-sync-error {
       /* 移除了所有失败状态的视觉效果 */
     }
+
+    #s1p-nav-auto-sync-indicator {
+      flex-shrink: 0;
+      margin-left: 0;
+      opacity: 1;
+    }
+    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-wrap {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      padding: 0 3px;
+      box-sizing: border-box;
+      cursor: default;
+    }
+    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 16px;
+      height: 16px;
+    }
+    #s1p-nav-auto-sync-indicator svg {
+      width: 16px;
+      height: 16px;
+      color: var(--t, var(--s1p-t));
+      transition: opacity 0.25s ease;
+      position: relative;
+      top: 1.5px;
+      vector-effect: non-scaling-stroke;
+      shape-rendering: geometricPrecision;
+    }
+    #s1p-nav-auto-sync-indicator svg path {
+      stroke: currentColor;
+      stroke-width: 0.6px;
+      stroke-linejoin: round;
+    }
+    #s1p-nav-auto-sync-indicator[data-sync-state="idle"] svg {
+      opacity: 1;
+    }
+    #s1p-nav-auto-sync-indicator[data-sync-state="pending"] svg {
+      opacity: 1;
+    }
+    #s1p-nav-auto-sync-indicator[data-sync-state="running"] svg {
+      opacity: 1;
+    }
+    #s1p-nav-auto-sync-indicator[data-sync-state="success"] svg {
+      opacity: 1;
+    }
+    #s1p-nav-auto-sync-indicator[data-sync-state="failure"] svg,
+    #s1p-nav-auto-sync-indicator[data-sync-state="conflict"] svg {
+      opacity: 1;
+    }
+
+    @keyframes s1p-auto-sync-dot-bounce {
+      0%, 80%, 100% {
+        transform: translateY(0);
+        opacity: 0.4;
+      }
+      40% {
+        transform: translateY(-1.8px);
+        opacity: 1;
+      }
+    }
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-running .s1p-dot {
+      animation: s1p-auto-sync-dot-bounce 1s ease-in-out infinite;
+      transform-origin: center;
+    }
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-running .s1p-dot:nth-child(1) {
+      animation-delay: 0s;
+    }
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-running .s1p-dot:nth-child(2) {
+      animation-delay: 0.16s;
+    }
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-running .s1p-dot:nth-child(3) {
+      animation-delay: 0.32s;
+    }
+
     /* 顶栏“帖子”快捷入口：与 NUX 顶栏悬停展开交互保持一致 */
     #um #s1p-my-threads-link {
       order: -1;
@@ -2488,6 +2596,9 @@
       transition: opacity 0.3s ease-out;
     }
     #s1p-remote-sync-controls-wrapper.is-disabled {
+      opacity: 0.5;
+    }
+    #s1p-auto-sync-indicator-subgroup.is-disabled {
       opacity: 0.5;
       pointer-events: none;
     }
@@ -4693,6 +4804,346 @@
     GM_deleteValue(AUTO_SYNC_CIRCUIT_OPEN_UNTIL_KEY);
   };
 
+  const normalizeAutoSyncIndicatorPhase = (
+    phase,
+    { allowRunning = true, allowPending = true } = {}
+  ) => {
+    switch (String(phase || "").trim()) {
+      case AUTO_SYNC_INDICATOR_PHASE_IDLE:
+        return AUTO_SYNC_INDICATOR_PHASE_IDLE;
+      case AUTO_SYNC_INDICATOR_PHASE_PENDING:
+        return allowPending ? AUTO_SYNC_INDICATOR_PHASE_PENDING : "";
+      case AUTO_SYNC_INDICATOR_PHASE_RUNNING:
+        return allowRunning ? AUTO_SYNC_INDICATOR_PHASE_RUNNING : "";
+      case AUTO_SYNC_INDICATOR_PHASE_SUCCESS:
+        return AUTO_SYNC_INDICATOR_PHASE_SUCCESS;
+      case AUTO_SYNC_INDICATOR_PHASE_FAILURE:
+        return AUTO_SYNC_INDICATOR_PHASE_FAILURE;
+      case AUTO_SYNC_INDICATOR_PHASE_CONFLICT:
+        return AUTO_SYNC_INDICATOR_PHASE_CONFLICT;
+      default:
+        return "";
+    }
+  };
+
+  const normalizeAutoSyncIndicatorState = (rawValue = null) => {
+    const raw =
+      rawValue && typeof rawValue === "object" && !Array.isArray(rawValue)
+        ? rawValue
+        : {};
+    const phase =
+      normalizeAutoSyncIndicatorPhase(raw.phase, { allowRunning: true }) ||
+      AUTO_SYNC_INDICATOR_PHASE_IDLE;
+    const timestamp = Number(raw.timestamp) || 0;
+    const token = typeof raw.token === "string" ? raw.token : "";
+
+    const fallbackResolvedPhase =
+      phase === AUTO_SYNC_INDICATOR_PHASE_RUNNING ||
+        phase === AUTO_SYNC_INDICATOR_PHASE_PENDING
+        ? AUTO_SYNC_INDICATOR_PHASE_IDLE
+        : normalizeAutoSyncIndicatorPhase(phase, {
+          allowRunning: false,
+          allowPending: false,
+        }) ||
+        AUTO_SYNC_INDICATOR_PHASE_IDLE;
+
+    const lastResolvedPhase =
+      normalizeAutoSyncIndicatorPhase(raw.lastResolvedPhase, {
+        allowRunning: false,
+        allowPending: false,
+      }) || fallbackResolvedPhase;
+    const lastResolvedTimestamp =
+      Number(raw.lastResolvedTimestamp) ||
+      (phase === AUTO_SYNC_INDICATOR_PHASE_RUNNING ||
+        phase === AUTO_SYNC_INDICATOR_PHASE_PENDING
+        ? 0
+        : timestamp);
+
+    return {
+      phase,
+      timestamp,
+      token,
+      lastResolvedPhase,
+      lastResolvedTimestamp,
+    };
+  };
+
+  const getAutoSyncIndicatorState = () =>
+    normalizeAutoSyncIndicatorState(
+      GM_getValue(AUTO_SYNC_INDICATOR_STATE_KEY, null)
+    );
+
+  const hasActiveBackgroundSyncLock = (now = Date.now()) => {
+    const backgroundLock = getBackgroundSyncLockValue();
+    const globalLock = getGlobalSyncLockValue();
+    return (
+      isModeSyncLockValid(backgroundLock, BACKGROUND_SYNC_LOCK_TTL_MS, now) ||
+      Boolean(
+        globalLock &&
+        globalLock.mode === SYNC_LOCK_MODE_BACKGROUND &&
+        isGlobalSyncLockValid(globalLock, now)
+      )
+    );
+  };
+
+  const hasActivePendingAutoSyncRequest = () => {
+    const pending = GM_getValue(PENDING_AUTO_SYNC_KEY, null);
+    return Boolean(pending && typeof pending === "object");
+  };
+
+  const getAutoSyncIndicatorResolvedTtlMs = (phase) => {
+    switch (phase) {
+      case AUTO_SYNC_INDICATOR_PHASE_SUCCESS:
+        return AUTO_SYNC_INDICATOR_SUCCESS_TTL_MS;
+      case AUTO_SYNC_INDICATOR_PHASE_FAILURE:
+        return AUTO_SYNC_INDICATOR_FAILURE_TTL_MS;
+      case AUTO_SYNC_INDICATOR_PHASE_CONFLICT:
+        return AUTO_SYNC_INDICATOR_CONFLICT_TTL_MS;
+      default:
+        return 0;
+    }
+  };
+
+  let autoSyncIndicatorWriteInFlightCount = 0;
+
+  const persistAutoSyncIndicatorState = (nextState) => {
+    const normalized = normalizeAutoSyncIndicatorState(nextState);
+    autoSyncIndicatorWriteInFlightCount += 1;
+    try {
+      GM_setValue(AUTO_SYNC_INDICATOR_STATE_KEY, normalized);
+    } finally {
+      autoSyncIndicatorWriteInFlightCount = Math.max(
+        0,
+        autoSyncIndicatorWriteInFlightCount - 1
+      );
+    }
+    renderNavbarAutoSyncIndicator(normalized);
+    return normalized;
+  };
+
+  const resolveAutoSyncIndicatorDisplayPhase = (stateInput = null) => {
+    const state = stateInput
+      ? normalizeAutoSyncIndicatorState(stateInput)
+      : getAutoSyncIndicatorState();
+    const now = Date.now();
+    const hasActiveBackgroundLock = hasActiveBackgroundSyncLock(now);
+    const hasPendingRequest = hasActivePendingAutoSyncRequest();
+    const hasConflictPause = Boolean(getActiveAutoSyncConflictPause());
+    const hasOpenCircuit = getAutoSyncCircuitState().open;
+    const canShowPending = hasPendingRequest && !hasConflictPause && !hasOpenCircuit;
+
+    if (hasActiveBackgroundLock) {
+      return { ...state, displayPhase: AUTO_SYNC_INDICATOR_PHASE_RUNNING };
+    }
+
+    const resolveWithTtl = (phase, timestamp) => {
+      const normalizedPhase = normalizeAutoSyncIndicatorPhase(phase, {
+        allowRunning: false,
+        allowPending: false,
+      });
+      if (!normalizedPhase || normalizedPhase === AUTO_SYNC_INDICATOR_PHASE_IDLE) {
+        return AUTO_SYNC_INDICATOR_PHASE_IDLE;
+      }
+      if (
+        normalizedPhase === AUTO_SYNC_INDICATOR_PHASE_CONFLICT &&
+        getActiveAutoSyncConflictPause()
+      ) {
+        return AUTO_SYNC_INDICATOR_PHASE_CONFLICT;
+      }
+      const ttlMs = getAutoSyncIndicatorResolvedTtlMs(normalizedPhase);
+      if (ttlMs <= 0) {
+        return normalizedPhase;
+      }
+      return now - (Number(timestamp) || 0) <= ttlMs
+        ? normalizedPhase
+        : AUTO_SYNC_INDICATOR_PHASE_IDLE;
+    };
+
+    if (state.phase === AUTO_SYNC_INDICATOR_PHASE_RUNNING) {
+      if (now - state.timestamp <= AUTO_SYNC_INDICATOR_RUNNING_STALE_MS) {
+        return { ...state, displayPhase: AUTO_SYNC_INDICATOR_PHASE_RUNNING };
+      }
+      const fallbackPhase = resolveWithTtl(
+        state.lastResolvedPhase,
+        state.lastResolvedTimestamp
+      );
+      return {
+        ...state,
+        displayPhase:
+          fallbackPhase === AUTO_SYNC_INDICATOR_PHASE_IDLE && canShowPending
+            ? AUTO_SYNC_INDICATOR_PHASE_PENDING
+            : fallbackPhase,
+      };
+    }
+
+    if (state.phase === AUTO_SYNC_INDICATOR_PHASE_PENDING) {
+      const shouldKeepPending =
+        canShowPending || now - state.timestamp <= AUTO_SYNC_INDICATOR_PENDING_STALE_MS;
+      if (shouldKeepPending) {
+        return { ...state, displayPhase: AUTO_SYNC_INDICATOR_PHASE_PENDING };
+      }
+      const fallbackPhase = resolveWithTtl(
+        state.lastResolvedPhase,
+        state.lastResolvedTimestamp
+      );
+      return { ...state, displayPhase: fallbackPhase };
+    }
+
+    const resolvedPhase = resolveWithTtl(state.phase, state.timestamp);
+    return {
+      ...state,
+      displayPhase:
+        resolvedPhase === AUTO_SYNC_INDICATOR_PHASE_IDLE && canShowPending
+          ? AUTO_SYNC_INDICATOR_PHASE_PENDING
+          : resolvedPhase,
+    };
+  };
+
+  const setAutoSyncIndicatorPendingPhase = (source = "background_queue") => {
+    const current = getAutoSyncIndicatorState();
+    if (current.phase === AUTO_SYNC_INDICATOR_PHASE_RUNNING) {
+      return false;
+    }
+
+    const now = Date.now();
+    persistAutoSyncIndicatorState({
+      phase: AUTO_SYNC_INDICATOR_PHASE_PENDING,
+      timestamp: now,
+      token: current.token || "",
+      source: String(source || "background_queue"),
+      lastResolvedPhase:
+        current.lastResolvedPhase || AUTO_SYNC_INDICATOR_PHASE_IDLE,
+      lastResolvedTimestamp:
+        Number(current.lastResolvedTimestamp) ||
+        Number(current.timestamp) ||
+        0,
+    });
+    return true;
+  };
+
+  const startBackgroundAutoSyncIndicatorCycle = (
+    source = "background_local_change"
+  ) => {
+    const current = getAutoSyncIndicatorState();
+    const lastResolvedPhase =
+      current.phase === AUTO_SYNC_INDICATOR_PHASE_RUNNING
+        ? current.lastResolvedPhase || AUTO_SYNC_INDICATOR_PHASE_IDLE
+        : normalizeAutoSyncIndicatorPhase(current.phase, {
+          allowRunning: false,
+          allowPending: false,
+        }) ||
+        AUTO_SYNC_INDICATOR_PHASE_IDLE;
+    const lastResolvedTimestamp =
+      current.phase === AUTO_SYNC_INDICATOR_PHASE_RUNNING
+        ? current.lastResolvedTimestamp || current.timestamp || 0
+        : current.timestamp || current.lastResolvedTimestamp || 0;
+
+    const token = `${BACKGROUND_SYNC_OWNER_ID}_${Date.now()}_${Math.random()
+      .toString(36)
+      .slice(2, 7)}`;
+    persistAutoSyncIndicatorState({
+      phase: AUTO_SYNC_INDICATOR_PHASE_RUNNING,
+      timestamp: Date.now(),
+      token,
+      source: String(source || "background_local_change"),
+      lastResolvedPhase,
+      lastResolvedTimestamp,
+    });
+    return token;
+  };
+
+  const finishBackgroundAutoSyncIndicatorCycle = (token, phase) => {
+    if (!token) {
+      return false;
+    }
+    const current = getAutoSyncIndicatorState();
+    if (current.token !== token) {
+      if (
+        current.phase === AUTO_SYNC_INDICATOR_PHASE_RUNNING &&
+        !hasActiveBackgroundSyncLock()
+      ) {
+        const resolvedPhase =
+          normalizeAutoSyncIndicatorPhase(phase, {
+            allowRunning: false,
+            allowPending: false,
+          }) ||
+          current.lastResolvedPhase ||
+          AUTO_SYNC_INDICATOR_PHASE_IDLE;
+        const now = Date.now();
+        persistAutoSyncIndicatorState({
+          phase: resolvedPhase,
+          timestamp: now,
+          token: current.token || token,
+          lastResolvedPhase: resolvedPhase,
+          lastResolvedTimestamp: now,
+        });
+        return true;
+      }
+      return false;
+    }
+
+    const resolvedPhase =
+      normalizeAutoSyncIndicatorPhase(phase, {
+        allowRunning: false,
+        allowPending: false,
+      }) ||
+      current.lastResolvedPhase ||
+      AUTO_SYNC_INDICATOR_PHASE_IDLE;
+    const now = Date.now();
+    persistAutoSyncIndicatorState({
+      phase: resolvedPhase,
+      timestamp: now,
+      token,
+      lastResolvedPhase: resolvedPhase,
+      lastResolvedTimestamp: now,
+    });
+    return true;
+  };
+
+  const setAutoSyncIndicatorResolvedPhase = (phase) => {
+    const resolvedPhase = normalizeAutoSyncIndicatorPhase(phase, {
+      allowRunning: false,
+      allowPending: false,
+    });
+    if (!resolvedPhase) {
+      return false;
+    }
+    const current = getAutoSyncIndicatorState();
+    const now = Date.now();
+    persistAutoSyncIndicatorState({
+      phase: resolvedPhase,
+      timestamp: now,
+      token: current.token || "",
+      lastResolvedPhase: resolvedPhase,
+      lastResolvedTimestamp: now,
+    });
+    return true;
+  };
+
+  const getAutoSyncIndicatorPhaseFromResult = (result = null) => {
+    if (!result || typeof result !== "object") {
+      return "";
+    }
+    switch (result.status) {
+      case "success":
+        return AUTO_SYNC_INDICATOR_PHASE_SUCCESS;
+      case "failure":
+        return AUTO_SYNC_INDICATOR_PHASE_FAILURE;
+      case "conflict":
+        return AUTO_SYNC_INDICATOR_PHASE_CONFLICT;
+      case "skipped":
+        if (result.reason === "conflict_paused") {
+          return AUTO_SYNC_INDICATOR_PHASE_CONFLICT;
+        }
+        if (result.reason === "circuit_open") {
+          return AUTO_SYNC_INDICATOR_PHASE_FAILURE;
+        }
+        return "";
+      default:
+        return "";
+    }
+  };
+
   const getAutoSyncConflictPauseState = () => {
     const saved = GM_getValue(AUTO_SYNC_CONFLICT_PAUSE_KEY, null);
     if (
@@ -4859,6 +5310,7 @@
     }
 
     hasPendingBackgroundSync = true;
+    setAutoSyncIndicatorPendingPhase(reason);
 
     if (isInitialSyncInProgress || isBackgroundAutoSyncInProgress) {
       return;
@@ -4920,6 +5372,11 @@
       clearRemotePushDebounceTimer();
       return;
     }
+    setAutoSyncIndicatorPendingPhase(
+      source === "read_progress"
+        ? "debounced_read_progress"
+        : "debounced_local_change"
+    );
     const debounceMs =
       source === "read_progress"
         ? READ_PROGRESS_SYNC_DEBOUNCE_MS
@@ -4967,6 +5424,7 @@
         syncDirtyNeedsFollowUpSync = true;
         hasPendingBackgroundSync = true;
         markPendingAutoSyncRequest(source, nextLastModified);
+        setAutoSyncIndicatorPendingPhase(`${source}_dirty_during_sync`);
         console.log(
           "S1 Plus: 同步进行中检测到本地变更，已记录为待补同步任务。"
         );
@@ -7434,8 +7892,8 @@
       typeof DOMMatrixReadOnly === "function"
         ? DOMMatrixReadOnly
         : typeof DOMMatrix === "function"
-        ? DOMMatrix
-        : null;
+          ? DOMMatrix
+          : null;
     if (!MatrixCtor) {
       return false;
     }
@@ -7448,10 +7906,10 @@
       const resolvedScale = Number.isFinite(scaleX) && Number.isFinite(scaleY)
         ? (Math.abs(scaleX) + Math.abs(scaleY)) / 2
         : Number.isFinite(scaleX)
-        ? Math.abs(scaleX)
-        : Number.isFinite(scaleY)
-        ? Math.abs(scaleY)
-        : NaN;
+          ? Math.abs(scaleX)
+          : Number.isFinite(scaleY)
+            ? Math.abs(scaleY)
+            : NaN;
       let hasSynced = false;
       if (Number.isFinite(resolvedScale) && resolvedScale > 0) {
         state.scale = clampS1pImageViewerScale(resolvedScale);
@@ -7826,8 +8284,8 @@
     state.translateY = contain
       ? (viewportHeight - fittedHeight) / 2
       : fittedHeight > viewportHeight
-      ? 0
-      : (viewportHeight - fittedHeight) / 2;
+        ? 0
+        : (viewportHeight - fittedHeight) / 2;
     applyS1pImageViewerTransform();
     return true;
   };
@@ -10275,10 +10733,12 @@
   ) => {
     if (getActiveAutoSyncConflictPause()) {
       clearAutoSyncRuntimeQueue();
+      setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_CONFLICT);
       return;
     }
 
     hasPendingBackgroundSync = true;
+    setAutoSyncIndicatorPendingPhase("background_retry");
     if (backgroundSyncRetryTimeout) {
       clearTimeout(backgroundSyncRetryTimeout);
     }
@@ -10514,6 +10974,7 @@
     const conflictPauseState = getActiveAutoSyncConflictPause();
     if (conflictPauseState) {
       clearAutoSyncRuntimeQueue();
+      setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_CONFLICT);
       console.log(
         `S1 Plus: 自动同步冲突暂停生效，已跳过后台同步触发(${reason})。`,
         {
@@ -10528,6 +10989,7 @@
       backgroundSyncRetryAttempts = 0;
     }
     hasPendingBackgroundSync = true;
+    setAutoSyncIndicatorPendingPhase(reason);
     if (isInitialSyncInProgress || isBackgroundAutoSyncInProgress) {
       console.log(
         `S1 Plus: 后台同步请求(${reason})已加入队列，等待当前同步完成。`
@@ -10540,6 +11002,8 @@
         return;
       }
 
+      let indicatorCycleToken = "";
+      let indicatorFinalPhase = "";
       isBackgroundAutoSyncInProgress = true;
       let drainCount = 0;
 
@@ -10559,6 +11023,9 @@
             scheduleBackgroundSyncRetry();
             break;
           }
+          if (!indicatorCycleToken) {
+            indicatorCycleToken = startBackgroundAutoSyncIndicatorCycle(reason);
+          }
 
           startBackgroundSyncLockHeartbeat();
           try {
@@ -10567,6 +11034,10 @@
               false,
               SYNC_LOCK_MODE_BACKGROUND
             );
+            const phaseFromResult = getAutoSyncIndicatorPhaseFromResult(result);
+            if (phaseFromResult) {
+              indicatorFinalPhase = phaseFromResult;
+            }
             await handleBackgroundAutoSyncResult(result);
           } finally {
             stopBackgroundSyncLockHeartbeat();
@@ -10588,6 +11059,24 @@
           !backgroundSyncRetryTimeout
         ) {
           scheduleBackgroundSyncRetry(300);
+        }
+
+        const shouldStayQueued =
+          hasPendingBackgroundSync ||
+          Boolean(backgroundSyncRetryTimeout) ||
+          isInitialSyncInProgress;
+        if (shouldStayQueued) {
+          setAutoSyncIndicatorPendingPhase("background_queue");
+        } else if (indicatorCycleToken) {
+          const currentIndicatorState = getAutoSyncIndicatorState();
+          finishBackgroundAutoSyncIndicatorCycle(
+            indicatorCycleToken,
+            indicatorFinalPhase ||
+            currentIndicatorState.lastResolvedPhase ||
+            AUTO_SYNC_INDICATOR_PHASE_IDLE
+          );
+        } else if (indicatorFinalPhase) {
+          setAutoSyncIndicatorResolvedPhase(indicatorFinalPhase);
         }
       }
     })();
@@ -11072,6 +11561,7 @@
     syncRemoteEnabled: false,
     syncDailyFirstLoad: true,
     syncAutoEnabled: true,
+    syncShowAutoSyncIndicator: true,
     syncForcePullOnStartup: false, // <-- [新增] 新增功能开关
     syncDirectChoiceMode: false,
     syncBookmarkFullContent: false,
@@ -11332,6 +11822,7 @@
     "recommendS1Nux",
     "syncDailyFirstLoad",
     "syncAutoEnabled",
+    "syncShowAutoSyncIndicator",
     "syncForcePullOnStartup",
     "syncBookmarkFullContent",
     "syncTokenExpiryEnabled",
@@ -11754,6 +12245,8 @@
       hasSettingPathInChangedSet(changedPathSet, "enableNavCustomization") ||
       hasSettingPathInChangedSet(changedPathSet, "customNavLinks") ||
       hasSettingPathInChangedSet(changedPathSet, "syncRemoteEnabled") ||
+      hasSettingPathInChangedSet(changedPathSet, "syncAutoEnabled") ||
+      hasSettingPathInChangedSet(changedPathSet, "syncShowAutoSyncIndicator") ||
       hasSettingPathInChangedSet(changedPathSet, "syncDirectChoiceMode");
     if (shouldReinitializeNavbar) {
       initializeNavbar();
@@ -12414,6 +12907,154 @@
     }
   };
 
+  const getAutoSyncIndicatorTitleByPhase = (phase) => {
+    switch (phase) {
+      case AUTO_SYNC_INDICATOR_PHASE_PENDING:
+        return "后台自动同步：待同步";
+      case AUTO_SYNC_INDICATOR_PHASE_RUNNING:
+        return "后台自动同步：进行中";
+      case AUTO_SYNC_INDICATOR_PHASE_SUCCESS:
+        return "后台自动同步：已完成";
+      case AUTO_SYNC_INDICATOR_PHASE_FAILURE:
+        return "后台自动同步：失败（待下次同步）";
+      case AUTO_SYNC_INDICATOR_PHASE_CONFLICT:
+        return "后台自动同步：冲突（请手动同步）";
+      case AUTO_SYNC_INDICATOR_PHASE_IDLE:
+      default:
+        return "后台自动同步：待命";
+    }
+  };
+
+  const getAutoSyncIndicatorIconHtmlByPhase = (phase) => {
+    switch (phase) {
+      case AUTO_SYNC_INDICATOR_PHASE_PENDING:
+        return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 16" fill="currentColor"><circle cx="4" cy="8" r="1.75"></circle><circle cx="10" cy="8" r="1.75"></circle><circle cx="16" cy="8" r="1.75"></circle></svg>`;
+      case AUTO_SYNC_INDICATOR_PHASE_RUNNING:
+        return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 16" fill="currentColor"><circle class="s1p-dot" cx="4" cy="8" r="1.75"></circle><circle class="s1p-dot" cx="10" cy="8" r="1.75"></circle><circle class="s1p-dot" cx="16" cy="8" r="1.75"></circle></svg>`;
+      case AUTO_SYNC_INDICATOR_PHASE_SUCCESS:
+        return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="1 1 22 22" fill="currentColor"><path d="M4 12C4 7.58172 7.58172 4 12 4C16.4183 4 20 7.58172 20 12C20 16.4183 16.4183 20 12 20C7.58172 20 4 16.4183 4 12ZM12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2ZM17.4571 9.45711L16.0429 8.04289L11 13.0858L8.20711 10.2929L6.79289 11.7071L11 15.9142L17.4571 9.45711Z"></path></svg>`;
+      case AUTO_SYNC_INDICATOR_PHASE_FAILURE:
+      case AUTO_SYNC_INDICATOR_PHASE_CONFLICT:
+        return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="1 1 22 22" fill="currentColor"><path d="M12 22C6.47715 22 2 17.5228 2 12C2 6.47715 6.47715 2 12 2C17.5228 2 22 6.47715 22 12C22 17.5228 17.5228 22 12 22ZM12 20C16.4183 20 20 16.4183 20 12C20 7.58172 16.4183 4 12 4C7.58172 4 4 7.58172 4 12C4 16.4183 7.58172 20 12 20ZM7 11H17V13H7V11Z"></path></svg>`;
+      case AUTO_SYNC_INDICATOR_PHASE_IDLE:
+      default:
+        return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="8" r="2.25"></circle></svg>`;
+    }
+  };
+
+  const ensureNavbarAutoSyncIndicatorElement = () => {
+    const settings = getSettings();
+    const existingIndicator = document.getElementById("s1p-nav-auto-sync-indicator");
+    const managerLink = document.getElementById("s1p-nav-link");
+    if (
+      !settings.syncRemoteEnabled ||
+      !settings.syncAutoEnabled ||
+      settings.syncShowAutoSyncIndicator !== true ||
+      !managerLink
+    ) {
+      if (existingIndicator) {
+        existingIndicator.remove();
+      }
+      return null;
+    }
+
+    if (existingIndicator) {
+      return existingIndicator;
+    }
+
+    const li = document.createElement("li");
+    li.id = "s1p-nav-auto-sync-indicator";
+    li.setAttribute("aria-hidden", "true");
+    const wrap = document.createElement("span");
+    wrap.className = "s1p-nav-auto-sync-indicator-wrap";
+    const icon = document.createElement("span");
+    icon.className = "s1p-nav-auto-sync-indicator-icon";
+    wrap.appendChild(icon);
+    li.appendChild(wrap);
+
+    const syncButton = document.getElementById("s1p-nav-sync-btn");
+    if (syncButton) {
+      syncButton.insertAdjacentElement("afterend", li);
+    } else {
+      managerLink.insertAdjacentElement("afterend", li);
+    }
+
+    return li;
+  };
+
+  const renderNavbarAutoSyncIndicator = (stateInput = null) => {
+    const indicatorLi = ensureNavbarAutoSyncIndicatorElement();
+    if (!indicatorLi) {
+      return;
+    }
+
+    const iconHost = indicatorLi.querySelector(".s1p-nav-auto-sync-indicator-icon");
+    if (!iconHost) {
+      return;
+    }
+
+    const resolvedState = resolveAutoSyncIndicatorDisplayPhase(stateInput);
+    const displayPhase =
+      normalizeAutoSyncIndicatorPhase(resolvedState.displayPhase, {
+        allowRunning: true,
+      }) || AUTO_SYNC_INDICATOR_PHASE_IDLE;
+
+    setSanitizedIconHtml(
+      iconHost,
+      getAutoSyncIndicatorIconHtmlByPhase(displayPhase)
+    );
+    const svg = iconHost.querySelector("svg");
+    if (svg) {
+      svg.classList.add(`s1p-auto-sync-${displayPhase}`);
+    }
+
+    indicatorLi.dataset.syncState = displayPhase;
+    indicatorLi.title = getAutoSyncIndicatorTitleByPhase(displayPhase);
+  };
+
+  const initializeAutoSyncIndicatorCrossTabSync = () => {
+    if (window.__s1pAutoSyncIndicatorCrossTabSyncBound) {
+      return;
+    }
+    window.__s1pAutoSyncIndicatorCrossTabSyncBound = true;
+
+    if (typeof GM_addValueChangeListener === "function") {
+      GM_addValueChangeListener(
+        AUTO_SYNC_INDICATOR_STATE_KEY,
+        (_key, _oldValue, newValue, isCrossContextChange) => {
+          const nextState = normalizeAutoSyncIndicatorState(newValue);
+          const currentStateSnapshot = getAutoSyncIndicatorState();
+          const differsFromCurrentCache = hasComparableValueChanged(
+            currentStateSnapshot,
+            nextState
+          );
+          if (
+            !isCrossContextChange &&
+            (autoSyncIndicatorWriteInFlightCount > 0 || !differsFromCurrentCache)
+          ) {
+            return;
+          }
+          renderNavbarAutoSyncIndicator(nextState);
+        }
+      );
+    }
+
+    const refreshIndicator = () => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+      renderNavbarAutoSyncIndicator();
+    };
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") {
+        refreshIndicator();
+      }
+    });
+    window.addEventListener("focus", refreshIndicator);
+    window.addEventListener("pageshow", refreshIndicator);
+  };
+
   const updateNavbarSyncButton = () => {
     const settings = getSettings();
     const existingBtnLi = document.getElementById("s1p-nav-sync-btn");
@@ -12421,10 +13062,14 @@
 
     if (!settings.syncRemoteEnabled) {
       if (existingBtnLi) existingBtnLi.remove();
+      document.getElementById("s1p-nav-auto-sync-indicator")?.remove();
       return;
     }
 
-    if (existingBtnLi || !managerLink) return;
+    if (existingBtnLi || !managerLink) {
+      renderNavbarAutoSyncIndicator();
+      return;
+    }
 
     const li = document.createElement("li");
     li.id = "s1p-nav-sync-btn";
@@ -12540,6 +13185,7 @@
     }
 
     managerLink.insertAdjacentElement("afterend", li);
+    renderNavbarAutoSyncIndicator();
   };
 
   const ensureMyThreadsQuickLink = () => {
@@ -12602,6 +13248,7 @@
 
     document.getElementById("s1p-nav-link")?.remove();
     document.getElementById("s1p-nav-sync-btn")?.remove();
+    document.getElementById("s1p-nav-auto-sync-indicator")?.remove();
 
     if (settings.enableNavCustomization) {
       navUl.textContent = "";
@@ -13887,16 +14534,6 @@
 
       if (onSave) onSave(timestamp);
 
-      const mainSettingsModal = document.querySelector(".s1p-modal");
-      if (mainSettingsModal) {
-        const expiryToggle = mainSettingsModal.querySelector("#s1p-token-expiry-reminder-toggle");
-        if (expiryToggle) {
-          expiryToggle.checked = true;
-          // 触发 change 事件以防有其他监听器
-          expiryToggle.dispatchEvent(new Event("change"));
-        }
-      }
-
       closeOnSave();
     });
   };
@@ -14013,11 +14650,11 @@
                             </div>
                             <p class="s1p-setting-desc">启用后，每天第一次打开论坛时会自动检查并同步数据。此功能独立于下方的“自动后台同步”。</p>
                             
-                            <div class="s1p-settings-sub-group">
+                            <div id="s1p-force-pull-subgroup" class="s1p-settings-sub-group">
                                 <div class="s1p-settings-item">
                                     <label class="s1p-settings-label" for="s1p-force-pull-on-startup-toggle">启动时强制拉取云端数据</label>
                                     <label class="s1p-switch">
-                                        <input type="checkbox" id="s1p-force-pull-on-startup-toggle" class="s1p-settings-checkbox" data-setting="syncForcePullOnStartup" data-s1p-sync-control>
+                                        <input type="checkbox" id="s1p-force-pull-on-startup-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
                                         <span class="s1p-slider"></span>
                                     </label>
                                 </div>
@@ -14031,10 +14668,20 @@
                                 </label>
                             </div>
                             <p class="s1p-setting-desc">启用后，数据将在停止操作5秒后自动同步。关闭后将切换为纯手动同步模式。</p>
+                            <div id="s1p-auto-sync-indicator-subgroup" class="s1p-settings-sub-group">
+                                <div class="s1p-settings-item">
+                                    <label class="s1p-settings-label" for="s1p-show-auto-sync-indicator-toggle">显示后台同步状态指示器</label>
+                                    <label class="s1p-switch">
+                                        <input type="checkbox" id="s1p-show-auto-sync-indicator-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
+                                        <span class="s1p-slider"></span>
+                                    </label>
+                                </div>
+                                <p class="s1p-setting-desc">开启后，将在导航栏显示后台自动同步状态（待命/同步中/完成/异常）。</p>
+                            </div>
                             <div class="s1p-settings-item">
                                 <label class="s1p-settings-label" for="s1p-direct-choice-mode-toggle">启用手动同步高级模式 (悬停选择)</label>
                                 <label class="s1p-switch">
-                                    <input type="checkbox" id="s1p-direct-choice-mode-toggle" class="s1p-settings-checkbox" data-setting="syncDirectChoiceMode">
+                                    <input type="checkbox" id="s1p-direct-choice-mode-toggle" class="s1p-settings-checkbox">
                                     <span class="s1p-slider"></span>
                                 </label>
                             </div>
@@ -14076,6 +14723,7 @@
                                     <p>Token只会保存在你的浏览器本地，不会上传到任何地方。</p>
                                 </div>
                             </div>
+                            <p class="s1p-setting-desc" style="margin-top: 10px; margin-bottom: 8px;">以上同步配置修改后，需点击“保存设置”才会生效。</p>
                             <div class="s1p-editor-footer" style="margin-top: 16px; justify-content: flex-end; gap: 8px;">
                                  <button id="s1p-remote-save-btn" class="s1p-btn" data-s1p-sync-control>保存设置</button>
                                  <button id="s1p-remote-manual-sync-btn" class="s1p-btn" data-s1p-sync-control>手动同步</button>
@@ -14253,7 +14901,8 @@
       controlsWrapper
         .querySelectorAll("[data-s1p-sync-control]")
         .forEach((el) => {
-          el.disabled = !isMasterEnabled;
+          const shouldKeepEnabled = el.id === "s1p-remote-save-btn";
+          el.disabled = shouldKeepEnabled ? false : !isMasterEnabled;
         });
     };
 
@@ -14262,19 +14911,25 @@
       "#s1p-daily-first-load-sync-enabled-toggle"
     );
     const autoSyncToggle = modal.querySelector("#s1p-auto-sync-enabled-toggle");
+    const autoSyncIndicatorToggle = modal.querySelector(
+      "#s1p-show-auto-sync-indicator-toggle"
+    );
+    const autoSyncIndicatorSubGroup = modal.querySelector(
+      "#s1p-auto-sync-indicator-subgroup"
+    );
     const bookmarkFullContentToggle = modal.querySelector(
       "#s1p-sync-bookmark-full-content-toggle"
     );
     const remoteGistIdInput = modal.querySelector("#s1p-remote-gist-id-input");
     const remotePatInput = modal.querySelector("#s1p-remote-pat-input");
-    const forcePullWrapper = modal.querySelector(
-      "#s1p-tab-sync .s1p-settings-sub-group"
-    );
+    const forcePullWrapper = modal.querySelector("#s1p-force-pull-subgroup");
     const forcePullToggle = modal.querySelector(
       "#s1p-force-pull-on-startup-toggle"
     );
+    const markSyncSettingsDirty = () =>
+      setSettingsModalDirtyState(SETTINGS_MODAL_DIRTY_TAB.SYNC_SETTINGS, true);
 
-    const updateForcePullState = ({ persistWhenDisabled = true } = {}) => {
+    const updateForcePullState = () => {
       const isDailySyncEnabled = dailySyncToggle.checked;
       if (isDailySyncEnabled) {
         forcePullWrapper.style.opacity = "1";
@@ -14283,18 +14938,21 @@
       } else {
         forcePullWrapper.style.opacity = "0.5";
         forcePullWrapper.style.pointerEvents = "none";
-        forcePullToggle.checked = false;
         forcePullToggle.disabled = true;
-        if (persistWhenDisabled) {
-          // 触发一次change事件以确保设置能被保存
-          forcePullToggle.dispatchEvent(new Event("change"));
-        }
       }
     };
 
-    dailySyncToggle.addEventListener("change", () =>
-      updateForcePullState({ persistWhenDisabled: true })
-    );
+    const updateAutoSyncIndicatorToggleState = () => {
+      const isEnabled =
+        remoteToggle.checked === true && autoSyncToggle.checked === true;
+      if (autoSyncIndicatorSubGroup) {
+        autoSyncIndicatorSubGroup.classList.toggle("is-disabled", !isEnabled);
+      }
+      autoSyncIndicatorToggle.disabled = !isEnabled;
+    };
+
+    dailySyncToggle.addEventListener("change", updateForcePullState);
+    autoSyncToggle.addEventListener("change", updateAutoSyncIndicatorToggleState);
     // End of changes
 
     const settings = getSettings();
@@ -14346,24 +15004,20 @@
     );
     if (directChoiceModeToggle) {
       directChoiceModeToggle.checked = settings.syncDirectChoiceMode;
-      directChoiceModeToggle.addEventListener("change", (e) => {
-        const currentSettings = getSettingsForWrite();
-        currentSettings.syncDirectChoiceMode = e.target.checked;
-        saveSettings(currentSettings);
-        initializeNavbar();
-      });
     }
 
     dailySyncToggle.checked = settings.syncDailyFirstLoad;
     autoSyncToggle.checked = settings.syncAutoEnabled;
+    autoSyncIndicatorToggle.checked = settings.syncShowAutoSyncIndicator !== false;
     bookmarkFullContentToggle.checked = settings.syncBookmarkFullContent;
     forcePullToggle.checked = settings.syncForcePullOnStartup;
     remoteGistIdInput.value = settings.syncRemoteGistId || "";
     remotePatInput.value = settings.syncRemotePat || "";
 
-    remoteToggle.addEventListener("change", updateRemoteSyncInputsState);
-    const markSyncSettingsDirty = () =>
-      setSettingsModalDirtyState(SETTINGS_MODAL_DIRTY_TAB.SYNC_SETTINGS, true);
+    remoteToggle.addEventListener("change", () => {
+      updateRemoteSyncInputsState();
+      updateAutoSyncIndicatorToggleState();
+    });
     const bindDirtyListenerForTextInput = (inputControl) => {
       inputControl.addEventListener("input", markSyncSettingsDirty);
       inputControl.addEventListener("change", markSyncSettingsDirty);
@@ -14372,18 +15026,45 @@
       remoteToggle,
       dailySyncToggle,
       autoSyncToggle,
+      autoSyncIndicatorToggle,
+      forcePullToggle,
+      directChoiceModeToggle,
       bookmarkFullContentToggle,
     ].forEach((toggleControl) =>
-      toggleControl.addEventListener("change", markSyncSettingsDirty)
+      toggleControl?.addEventListener("change", markSyncSettingsDirty)
     );
     bindDirtyListenerForTextInput(remoteGistIdInput);
     bindDirtyListenerForTextInput(remotePatInput);
 
     // [新增] Token 过期提醒逻辑
     const tokenExpiryToggle = modal.querySelector("#s1p-token-expiry-reminder-toggle");
+    const normalizeTokenExpiryDateValue = (value) => {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+    };
+    let pendingTokenExpiryDate = normalizeTokenExpiryDateValue(
+      settings.syncTokenExpiryDate
+    );
+    const applyPendingTokenExpiryDate = (value, { markDirty = true } = {}) => {
+      const normalizedTimestamp = normalizeTokenExpiryDateValue(value);
+      if (normalizedTimestamp === null) {
+        return false;
+      }
+      if (!Object.is(pendingTokenExpiryDate, normalizedTimestamp)) {
+        pendingTokenExpiryDate = normalizedTimestamp;
+        if (markDirty) {
+          markSyncSettingsDirty();
+        }
+      }
+      return true;
+    };
+    const markSyncSettingsDirtyAndRefreshTokenExpiryInfo = () => {
+      markSyncSettingsDirty();
+      updateTokenExpiryInfo();
+    };
     const updateTokenExpiryInfo = () => {
       const infoContainer = modal.querySelector("#s1p-token-expiry-info-container");
-      const expiryTimestamp = Number(getSettings().syncTokenExpiryDate);
+      const expiryTimestamp = pendingTokenExpiryDate;
 
       infoContainer.textContent = "";
       if (
@@ -14418,50 +15099,39 @@
 
         editBtn.addEventListener("click", () => {
           openTokenExpiryConfigModal((ts) => {
-            const s = getSettingsForWrite();
-            s.syncTokenExpiryDate = ts;
-            s.syncTokenExpiryEnabled = true; // [FIX] 确保状态为开启
-            saveSettings(s);
+            if (!applyPendingTokenExpiryDate(ts)) {
+              return;
+            }
+            tokenExpiryToggle.checked = true;
             updateTokenExpiryInfo();
-            showMessage("Token 过期时间已更新", true);
           });
         });
       }
     };
 
-    tokenExpiryToggle.checked = getSettings().syncTokenExpiryEnabled || false;
+    tokenExpiryToggle.checked = settings.syncTokenExpiryEnabled || false;
     tokenExpiryToggle.addEventListener("change", (e) => {
-      const isChecked = e.target.checked;
-      const s = getSettingsForWrite();
+      const isChecked = e.target.checked === true;
 
       if (isChecked) {
-        const savedTimestamp = Number(s.syncTokenExpiryDate);
-        if (!Number.isFinite(savedTimestamp) || savedTimestamp <= 0) {
+        if (!pendingTokenExpiryDate) {
           openTokenExpiryConfigModal((ts) => {
-            const current = getSettingsForWrite();
-            current.syncTokenExpiryDate = ts;
-            current.syncTokenExpiryEnabled = true;
-            saveSettings(current);
-            // [FIX] Explicitly update UI state in closure
-            tokenExpiryToggle.checked = true;
+            if (!applyPendingTokenExpiryDate(ts)) {
+              e.target.checked = false;
+              updateTokenExpiryInfo();
+              return;
+            }
+            e.target.checked = true;
             updateTokenExpiryInfo();
-            showMessage("Token 过期时间已更新", true);
           }, () => {
-            // On Cancel, revert toggle
             e.target.checked = false;
             updateTokenExpiryInfo();
           });
         } else {
-          // [FIX] Also auto-save when enabling if date exists
-          s.syncTokenExpiryEnabled = true;
-          saveSettings(s);
-          updateTokenExpiryInfo();
+          markSyncSettingsDirtyAndRefreshTokenExpiryInfo();
         }
       } else {
-        // [FIX] Auto-save when disabling
-        s.syncTokenExpiryEnabled = false;
-        saveSettings(s);
-        updateTokenExpiryInfo();
+        markSyncSettingsDirtyAndRefreshTokenExpiryInfo();
       }
     });
     updateTokenExpiryInfo();
@@ -14486,9 +15156,7 @@
         control.value = nextValue;
       }
     };
-    const refreshSyncTabControlsFromSettings = ({
-      suppressForcePullPersist = true,
-    } = {}) => {
+    const refreshSyncTabControlsFromSettings = () => {
       const latestSettings = getSettings();
       setModalCheckedControl(
         "#s1p-remote-enabled-toggle",
@@ -14503,6 +15171,10 @@
         latestSettings.syncAutoEnabled
       );
       setModalCheckedControl(
+        "#s1p-show-auto-sync-indicator-toggle",
+        latestSettings.syncShowAutoSyncIndicator !== false
+      );
+      setModalCheckedControl(
         "#s1p-sync-bookmark-full-content-toggle",
         latestSettings.syncBookmarkFullContent
       );
@@ -14514,6 +15186,9 @@
         "#s1p-token-expiry-reminder-toggle",
         latestSettings.syncTokenExpiryEnabled
       );
+      applyPendingTokenExpiryDate(latestSettings.syncTokenExpiryDate, {
+        markDirty: false,
+      });
       setModalCheckedControl(
         "#s1p-direct-choice-mode-toggle",
         latestSettings.syncDirectChoiceMode
@@ -14521,14 +15196,14 @@
       setModalInputValue("#s1p-remote-gist-id-input", latestSettings.syncRemoteGistId);
       setModalInputValue("#s1p-remote-pat-input", latestSettings.syncRemotePat);
       updateRemoteSyncInputsState();
-      updateForcePullState({
-        persistWhenDisabled: !suppressForcePullPersist,
-      });
+      updateForcePullState();
+      updateAutoSyncIndicatorToggleState();
       updateTokenExpiryInfo();
     };
 
     updateRemoteSyncInputsState();
     updateForcePullState(); // [MODIFIED] 初始化子选项的状态
+    updateAutoSyncIndicatorToggleState();
 
     const renderTagsTab = (options = {}) => {
       const editingUserId = options.editingUserId;
@@ -16453,6 +17128,7 @@
           "syncRemoteEnabled",
           "syncDailyFirstLoad",
           "syncAutoEnabled",
+          "syncShowAutoSyncIndicator",
           "syncForcePullOnStartup",
           "syncDirectChoiceMode",
           "syncBookmarkFullContent",
@@ -16493,7 +17169,7 @@
         if (isSettingsModalDirty(SETTINGS_MODAL_DIRTY_TAB.SYNC_SETTINGS)) {
           deferredDirtyTabLabels.push("设置同步");
         } else {
-          refreshSyncTabControlsFromSettings({ suppressForcePullPersist: true });
+          refreshSyncTabControlsFromSettings();
         }
       }
       if (deferredDirtyTabLabels.length > 0) {
@@ -17104,6 +17780,12 @@
           currentSettings.syncRemoteEnabled = remoteToggle.checked;
           currentSettings.syncDailyFirstLoad = dailySyncToggle.checked;
           currentSettings.syncAutoEnabled = autoSyncToggle.checked;
+          currentSettings.syncShowAutoSyncIndicator =
+            autoSyncIndicatorToggle.checked;
+          currentSettings.syncForcePullOnStartup =
+            dailySyncToggle.checked && forcePullToggle.checked;
+          currentSettings.syncDirectChoiceMode =
+            directChoiceModeToggle?.checked === true;
           currentSettings.syncBookmarkFullContent =
             bookmarkFullContentToggle.checked;
           currentSettings.syncRemoteGistId = remoteGistIdInput.value.trim();
@@ -17111,6 +17793,7 @@
           currentSettings.syncTokenExpiryEnabled = modal.querySelector(
             "#s1p-token-expiry-reminder-toggle"
           ).checked;
+          currentSettings.syncTokenExpiryDate = pendingTokenExpiryDate;
 
           const shouldMarkSyncedDataChange = hasSyncedSettingsChanged(
             previousSettings,
@@ -21105,13 +21788,31 @@
             text: "已更新",
             className: "s1p-confirm",
             action: () => {
-              // Open config modal to update date
-              openTokenExpiryConfigModal((ts) => {
-                const s = getSettingsForWrite();
-                s.syncTokenExpiryDate = ts;
-                saveSettings(s);
-                showMessage("Token 有效期已更新", true);
-              });
+              const existingSettingsModal = document.querySelector(".s1p-modal");
+              if (!existingSettingsModal) {
+                createManagementModal();
+              }
+              const focusSyncSettings = () => {
+                const settingsModal = document.querySelector(".s1p-modal");
+                if (!settingsModal) {
+                  return;
+                }
+                settingsModal
+                  .querySelector('.s1p-tab-btn[data-tab="sync"]')
+                  ?.click();
+                settingsModal
+                  .querySelector("#s1p-token-expiry-info-container")
+                  ?.scrollIntoView({ block: "center", behavior: "smooth" });
+                showMessage(
+                  "请在“设置同步”中更新 Token 有效期，并点击“保存设置”后生效。",
+                  true
+                );
+              };
+              if (existingSettingsModal) {
+                focusSyncSettings();
+              } else {
+                setTimeout(focusSyncSettings, 80);
+              }
             }
           }
         ],
@@ -21158,6 +21859,7 @@
     }
 
     initializeNavbar();
+    initializeAutoSyncIndicatorCrossTabSync();
     bindPendingAutoSyncRecoveryHooks();
     recoverPendingAutoSyncIfNeeded();
     initializeGenericDisplayPopover();
