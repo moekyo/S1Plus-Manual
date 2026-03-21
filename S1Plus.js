@@ -11043,7 +11043,7 @@
       plainTextUrls: false,
       plainTextUrlsInBackground: false,
     },
-    autoLinkPlainTextUrls: false,
+    autoLinkPlainTextUrls: true,
     enableNavCustomization: true,
     changeLogoLink: true,
     hideBlacklistTip: true,
@@ -11252,7 +11252,7 @@
         : settings.autoLinkBilibiliPlainText;
     const normalizedAutoLinkPlainTextUrls = normalizeBooleanWithDefault(
       autoLinkPlainTextUrlsSourceValue,
-      false
+      defaultSettings.autoLinkPlainTextUrls
     );
     if (
       settings.autoLinkPlainTextUrls !==
