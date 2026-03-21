@@ -702,6 +702,8 @@
       --s1p-image-preview-max-width: 800px;
       --s1p-image-preview-max-height: 1200px;
       --s1p-image-viewer-viewport-bg: #d4ddce;
+      /* 帖子工具栏二级菜单层级：保持低于 Discuz 原生回复弹窗 #fwin_reply (z-index: 201) */
+      --s1p-post-toolbar-layer-z: 180;
 
     }
 
@@ -1439,6 +1441,9 @@
       pointer-events: none;
       visibility: visible !important;
     }
+    .s1p-options-menu.s1p-inline-confirm-menu[data-s1p-scope="post-toolbar"] {
+      z-index: var(--s1p-post-toolbar-layer-z);
+    }
 
     .s1p-inline-confirm-menu.visible {
       opacity: 1;
@@ -1497,6 +1502,9 @@
       transition: opacity 0.15s ease-out, transform 0.15s ease-out,
         visibility 0.15s;
       pointer-events: none;
+    }
+    .s1p-inline-action-menu[data-s1p-scope="post-toolbar"] {
+      z-index: var(--s1p-post-toolbar-layer-z);
     }
     .s1p-inline-action-menu.visible {
       opacity: 1;
@@ -1688,6 +1696,9 @@
       transform: translateY(0) scale(1);
       pointer-events: auto;
     }
+    .s1p-tag-popover[data-s1p-scope="post-toolbar"] {
+      z-index: var(--s1p-post-toolbar-layer-z);
+    }
     .s1p-popover-content {
       padding: 16px;
     }
@@ -1799,6 +1810,9 @@
       opacity: 1;
       visibility: visible;
       transform: translateY(0);
+    }
+    .s1p-generic-display-popover[data-s1p-scope="post-toolbar"] {
+      z-index: var(--s1p-post-toolbar-layer-z);
     }
     /* --- [NEW] Date Picker Component --- */
     .s1p-date-picker {
@@ -2227,6 +2241,9 @@
       flex-direction: column;
       gap: 2px;
       min-width: max-content;
+    }
+    .s1p-tag-options-menu[data-s1p-scope="post-toolbar"] {
+      z-index: var(--s1p-post-toolbar-layer-z);
     }
     .s1p-tag-options-menu button {
       background: none;
@@ -12714,6 +12731,12 @@
 
     const menu = document.createElement("div");
     menu.className = "s1p-inline-action-menu";
+    const isAnchorInAuthiActions = Boolean(
+      anchorElement?.closest?.(".s1p-authi-actions-wrapper")
+    );
+    if (isAnchorInAuthiActions) {
+      menu.dataset.s1pScope = POPUP_SCOPE_POST_TOOLBAR;
+    }
 
     let isClosing = false;
     let hideTimeout = null;
@@ -13880,6 +13903,66 @@
     return container;
   };
 
+  const POPUP_SCOPE_POST_TOOLBAR = "post-toolbar";
+  const POST_TOOLBAR_ACTIONS_SELECTOR = ".s1p-authi-actions-wrapper";
+  const POST_TOOLBAR_POPUP_SELECTOR = [
+    `.s1p-inline-confirm-menu[data-s1p-scope="${POPUP_SCOPE_POST_TOOLBAR}"]`,
+    `.s1p-inline-action-menu[data-s1p-scope="${POPUP_SCOPE_POST_TOOLBAR}"]`,
+    `.s1p-tag-options-menu[data-s1p-scope="${POPUP_SCOPE_POST_TOOLBAR}"]`,
+  ].join(", ");
+
+  const isPostToolbarAnchor = (anchorElement) =>
+    Boolean(anchorElement?.closest?.(POST_TOOLBAR_ACTIONS_SELECTOR));
+  const applyPostToolbarPopupScope = (popupElement, anchorElement) => {
+    if (!(popupElement instanceof Element)) {
+      return false;
+    }
+    const shouldUsePostToolbarScope = isPostToolbarAnchor(anchorElement);
+    if (shouldUsePostToolbarScope) {
+      popupElement.dataset.s1pScope = POPUP_SCOPE_POST_TOOLBAR;
+      return true;
+    }
+    delete popupElement.dataset.s1pScope;
+    return false;
+  };
+  const markAsPostToolbarPopup = (popupElement) => {
+    if (popupElement instanceof Element) {
+      popupElement.dataset.s1pScope = POPUP_SCOPE_POST_TOOLBAR;
+    }
+  };
+
+  const destroyPopupMenuImmediately = (menu) => {
+    if (!(menu instanceof Element)) return;
+    if (menu.s1p_api && typeof menu.s1p_api.destroy === "function") {
+      try {
+        menu.s1p_api.destroy({ immediate: true });
+        return;
+      } catch (error) {
+        console.warn("S1 Plus: 二级菜单 destroy 失败，回退为直接移除。", error);
+      }
+    }
+    menu.remove();
+  };
+
+  // 清理帖子工具栏相关二级弹窗，确保按钮切换时不会叠窗。
+  const dismissToolbarSecondaryPopups = () => {
+    document
+      .querySelectorAll(POST_TOOLBAR_POPUP_SELECTOR)
+      .forEach((menu) => destroyPopupMenuImmediately(menu));
+
+    const tagPopover = document.getElementById("s1p-tag-popover-main");
+    if (
+      tagPopover &&
+      tagPopover.dataset.s1pScope === POPUP_SCOPE_POST_TOOLBAR
+    ) {
+      if (tagPopover.s1p_api && typeof tagPopover.s1p_api.hide === "function") {
+        tagPopover.s1p_api.hide();
+      } else {
+        tagPopover.classList.remove("visible");
+      }
+    }
+  };
+
   /**
    * [MODIFIED] 创建一个行内确认菜单 (V2: 带智能定位和动画)
    * @param {HTMLElement} anchorElement - 锚点元素
@@ -13910,8 +13993,9 @@
     const menu = document.createElement("div");
     menu.className = "s1p-options-menu s1p-inline-confirm-menu s1p-confirm-wrapper";
     const resolvedOptions = { ...options };
-    const isAnchorInAuthiActions = Boolean(
-      anchorElement?.closest?.(".s1p-authi-actions-wrapper")
+    const isAnchorInAuthiActions = applyPostToolbarPopupScope(
+      menu,
+      anchorElement
     );
     if (!resolvedOptions.actionLayout && isAnchorInAuthiActions) {
       resolvedOptions.actionLayout = "text-first";
@@ -19089,6 +19173,7 @@
       popover.className = "s1p-tag-popover";
       document.body.appendChild(popover);
     }
+    markAsPostToolbarPopup(popover);
 
     // 确保主点击监听只绑定一次，避免 applyChanges 反复调用导致监听器累积。
     if (popover.dataset.s1pInitialized === "true") {
@@ -19298,6 +19383,8 @@
     };
 
     popover.show = show;
+    popover.hide = closePopover;
+    popover.s1p_api = { show, hide: closePopover };
 
     popover.addEventListener("click", (e) => {
       const target = e.target.closest("button[data-action]");
@@ -19347,6 +19434,8 @@
       clearTimeout(hideTimeout);
       clearTimeout(showTimeout); // [NEW] 额外清理 showTimeout 确保不会叠加
       showTimeout = setTimeout(() => {
+        applyPostToolbarPopupScope(popover, anchor);
+
         popover.textContent = text;
         const rect = anchor.getBoundingClientRect();
 
@@ -20172,6 +20261,7 @@
     const menu = document.createElement("div");
     menu.className = "s1p-options-menu s1p-inline-confirm-menu s1p-confirm-wrapper";
     menu.dataset.s1pConfirmForTag = "true"; // 添加唯一标识
+    markAsPostToolbarPopup(menu);
     menu.style.width = "max-content";
 
     const content = buildConfirmationMarkup("确认删除？", {
@@ -20304,6 +20394,9 @@
       }
     }
 
+    // 打开用户标记二级菜单前，先清空其他类型的二级弹窗，避免叠窗。
+    dismissToolbarSecondaryPopups();
+
     // 在创建新菜单前，清理所有可能残留的菜单
     const existingConfirmMenu = document.querySelector(
       ".s1p-inline-confirm-menu[data-s1p-confirm-for-tag]"
@@ -20322,6 +20415,7 @@
     const { userId, userName } = anchorElement.dataset;
     const menu = document.createElement("div");
     menu.className = "s1p-tag-options-menu";
+    markAsPostToolbarPopup(menu);
 
     const editBtn = document.createElement("button");
     editBtn.dataset.action = "edit";
@@ -20479,6 +20573,17 @@
     newContainer.className = "s1p-authi-container";
     const scriptActionsWrapper = document.createElement("span");
     scriptActionsWrapper.className = "s1p-authi-actions-wrapper";
+    scriptActionsWrapper.addEventListener(
+      "click",
+      (event) => {
+        const clickTarget = event.target instanceof Element ? event.target : null;
+        if (!clickTarget || !clickTarget.closest("a, .s1p-user-tag-options")) {
+          return;
+        }
+        dismissToolbarSecondaryPopups();
+      },
+      true
+    );
 
     // --- [新增] 将原生的“只看该作者”、“显示全部楼层”和“倒序/正序浏览”按钮移动到脚本的操作栏中 ---
     // 收集需要移动的按钮，以便我们可以控制它们的排列顺序
