@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-S1 Plus is a Tampermonkey/Greasemonkey userscript that enhances the Stage1st forum experience. It's a single-file JavaScript application (~4,500 lines) providing advanced forum management features including post/user blocking, user tagging, reply bookmarking, reading progress tracking, and cloud synchronization.
+S1 Plus is a Tampermonkey/Greasemonkey userscript that enhances the Stage1st forum experience. It's a single-file JavaScript application (~23,200 lines) providing advanced forum management features including post/user blocking, user tagging, reply bookmarking, reading progress tracking, and cloud synchronization.
 
 ## Development Commands
 
@@ -36,12 +36,15 @@ All functionality is contained in `S1Plus.js`. The script follows these patterns
 ### Data Structures
 
 Key data objects stored via GM API:
+- `s1p_settings`: Core configuration and feature toggles
 - `s1p_blockedThreads`: Blocked post IDs
 - `s1p_blockedUsers`: Blocked user data with linked blocking options
 - `s1p_userTags`: User tagging system
 - `s1p_bookmarkedReplies`: Bookmarked replies (v5.0+)
 - `s1p_readingProgress`: Reading position tracking
 - `s1p_syncData`: Cloud sync configuration and timestamps
+- `s1p_title_filter_rules` / `s1p_title_keywords`: Title filtering rules
+- `s1p_blocked_posts_collapsed_threads`: Collapsed thread state for blocked posts
 
 ### Security Considerations
 
