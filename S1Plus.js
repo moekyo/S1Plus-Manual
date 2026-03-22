@@ -507,6 +507,16 @@
   const S1P_IMAGE_VIEWER_SCROLL_STEP_MAX_PX = 360;
   const S1P_IMAGE_VIEWER_BUTTON_ZOOM_ANIMATION_MS = 160;
   const S1P_IMAGE_VIEWER_BUTTON_SCROLL_ANIMATION_MS = 220;
+  const S1P_IMAGE_VIEWER_BUTTON_HOLD_DELAY_MS = 260;
+  const S1P_IMAGE_VIEWER_BUTTON_ZOOM_REPEAT_INTERVAL_MS =
+    S1P_IMAGE_VIEWER_BUTTON_ZOOM_ANIMATION_MS;
+  const S1P_IMAGE_VIEWER_BUTTON_SCROLL_REPEAT_INTERVAL_MS =
+    S1P_IMAGE_VIEWER_BUTTON_SCROLL_ANIMATION_MS;
+  const S1P_IMAGE_VIEWER_OPEN_CLOSE_ANIMATION_MS = 180;
+  const S1P_IMAGE_VIEWER_OPEN_PANEL_DELAY_MS =
+    S1P_IMAGE_VIEWER_OPEN_CLOSE_ANIMATION_MS;
+  const S1P_IMAGE_VIEWER_CLOSE_OVERLAY_DELAY_MS =
+    S1P_IMAGE_VIEWER_OPEN_CLOSE_ANIMATION_MS;
   const S1P_IMAGE_VIEWER_SWITCH_ANIMATION_MS = 220;
   const S1P_IMAGE_VIEWER_NAV_AUTO_HIDE_MS = 1400;
   const S1P_IMAGE_VIEWER_NAV_LEAVE_HIDE_MS = 220;
@@ -1813,6 +1823,9 @@
     }
     .s1p-generic-display-popover[data-s1p-scope="post-toolbar"] {
       z-index: var(--s1p-post-toolbar-layer-z);
+    }
+    .s1p-generic-display-popover[data-s1p-scope="image-viewer"] {
+      z-index: 100010;
     }
     /* --- [NEW] Date Picker Component --- */
     .s1p-date-picker {
@@ -3587,14 +3600,23 @@
       position: fixed;
       inset: 0;
       z-index: 100000;
-      display: none;
+      display: flex;
       align-items: center;
       justify-content: center;
       background: rgba(var(--s1p-black-rgb), 0.7);
       backdrop-filter: blur(2px);
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transition: opacity ${S1P_IMAGE_VIEWER_OPEN_CLOSE_ANIMATION_MS}ms
+        cubic-bezier(0.22, 1, 0.36, 1);
     }
-    .s1p-image-viewer.is-open {
-      display: flex;
+    .s1p-image-viewer.is-visible {
+      visibility: visible;
+    }
+    .s1p-image-viewer.is-overlay-open {
+      opacity: 1;
+      pointer-events: auto;
     }
     .s1p-image-viewer.is-dragging .s1p-image-viewer__viewport {
       cursor: grabbing;
@@ -3609,6 +3631,26 @@
       overflow: hidden;
       display: flex;
       flex-direction: column;
+      opacity: 0;
+      transform: translate3d(0, 12px, 0);
+      transition:
+        transform ${S1P_IMAGE_VIEWER_OPEN_CLOSE_ANIMATION_MS}ms cubic-bezier(0.22, 1, 0.36, 1),
+        opacity ${S1P_IMAGE_VIEWER_OPEN_CLOSE_ANIMATION_MS}ms cubic-bezier(0.22, 1, 0.36, 1);
+      will-change: transform, opacity;
+    }
+    .s1p-image-viewer.is-panel-open .s1p-image-viewer__panel {
+      opacity: 1;
+      transform: translate3d(0, 0, 0);
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .s1p-image-viewer,
+      .s1p-image-viewer__panel,
+      .s1p-image-viewer__image-stage--main,
+      .s1p-image-viewer__image-stage--ghost,
+      .s1p-image-viewer__image {
+        transition: none !important;
+        animation: none !important;
+      }
     }
     .s1p-image-viewer__toolbar {
       display: flex;
@@ -7792,6 +7834,8 @@
     fitBtn: null,
     prevBtn: null,
     nextBtn: null,
+    toolbarContinuousActionStops: [],
+    toolbarContinuousActionDisposers: [],
     sourceUrl: "",
     galleryItems: [],
     currentIndex: -1,
@@ -7800,12 +7844,19 @@
     switchRequestId: 0,
     switchAnimationTimer: 0,
     transformAnimationTimer: 0,
+    closeOverlayTimer: 0,
+    closeAnimationTimer: 0,
+    closeTransitionTarget: null,
+    closeTransitionEndHandler: null,
+    openPanelTimer: 0,
+    openAnimationFrameId: 0,
     navHideTimer: 0,
     lastNavMoveAt: 0,
     scale: 1,
     translateX: 0,
     translateY: 0,
     isOpen: false,
+    isClosing: false,
     isDragging: false,
     dragStartX: 0,
     dragStartY: 0,
@@ -7813,6 +7864,98 @@
     dragOriginY: 0,
     bodyOverflowBeforeOpen: "",
     previouslyFocusedElement: null,
+    lastZoomPercent: null,
+  };
+  const isS1pReducedMotionPreferred = () => {
+    if (typeof window.matchMedia !== "function") {
+      return false;
+    }
+    try {
+      return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    } catch (error) {
+      return false;
+    }
+  };
+  const resolveS1pImageViewerAnimationDuration = (durationMs) => {
+    if (isS1pReducedMotionPreferred()) {
+      return 0;
+    }
+    return Math.max(0, Number(durationMs) || 0);
+  };
+  const hideS1pGenericDisplayPopoverImmediately = () => {
+    const popover = document.getElementById("s1p-generic-display-popover");
+    if (popover && popover.s1p_api && typeof popover.s1p_api.hide === "function") {
+      popover.s1p_api.hide();
+    }
+  };
+  const clearS1pImageViewerOpenTransitionState = () => {
+    const state = s1pImageViewerState;
+    if (state.openAnimationFrameId) {
+      window.cancelAnimationFrame(state.openAnimationFrameId);
+      state.openAnimationFrameId = 0;
+    }
+    if (state.openPanelTimer) {
+      window.clearTimeout(state.openPanelTimer);
+      state.openPanelTimer = 0;
+    }
+  };
+  const detachS1pImageViewerCloseTransitionListener = () => {
+    const state = s1pImageViewerState;
+    if (
+      state.closeTransitionTarget instanceof Element &&
+      typeof state.closeTransitionEndHandler === "function"
+    ) {
+      state.closeTransitionTarget.removeEventListener(
+        "transitionend",
+        state.closeTransitionEndHandler
+      );
+    }
+    state.closeTransitionTarget = null;
+    state.closeTransitionEndHandler = null;
+  };
+  const clearS1pImageViewerCloseTransitionState = () => {
+    const state = s1pImageViewerState;
+    if (state.closeOverlayTimer) {
+      window.clearTimeout(state.closeOverlayTimer);
+      state.closeOverlayTimer = 0;
+    }
+    if (state.closeAnimationTimer) {
+      window.clearTimeout(state.closeAnimationTimer);
+      state.closeAnimationTimer = 0;
+    }
+    detachS1pImageViewerCloseTransitionListener();
+  };
+  const resetS1pImageViewerOverlayVisibilityClasses = () => {
+    const state = s1pImageViewerState;
+    if (!state.overlay) {
+      return;
+    }
+    state.overlay.classList.remove("is-visible");
+    state.overlay.classList.remove("is-panel-open");
+    state.overlay.classList.remove("is-overlay-open");
+    state.overlay.classList.remove("is-nav-visible");
+    state.overlay.classList.remove("has-gallery");
+  };
+  const canContinueS1pImageViewerClosing = () => {
+    const state = s1pImageViewerState;
+    return Boolean(!state.isOpen && state.isClosing && state.overlay);
+  };
+  const finalizeS1pImageViewerCloseState = () => {
+    const state = s1pImageViewerState;
+    if (state.isOpen) {
+      return false;
+    }
+    clearS1pImageViewerCloseTransitionState();
+    state.isClosing = false;
+    resetS1pImageViewerOverlayVisibilityClasses();
+    if (document.body) {
+      document.body.style.overflow = state.bodyOverflowBeforeOpen || "";
+    }
+    state.sourceUrl = "";
+    state.galleryItems = [];
+    state.currentIndex = -1;
+    syncS1pImageViewerNavigationState();
+    return true;
   };
   const restoreFocusAfterS1pImageViewerClose = () => {
     const state = s1pImageViewerState;
@@ -7872,11 +8015,12 @@
     if (!(state.image instanceof HTMLImageElement)) {
       return;
     }
-    if (Number(durationMs) <= 0) {
+    const resolvedDuration = resolveS1pImageViewerAnimationDuration(durationMs);
+    if (resolvedDuration <= 0) {
       state.image.style.setProperty("transition", "none", "important");
       return;
     }
-    const safeDuration = Math.max(60, Number(durationMs) || 0);
+    const safeDuration = Math.max(60, resolvedDuration);
     state.image.style.setProperty(
       "transition",
       `transform ${safeDuration}ms cubic-bezier(0.22, 1, 0.36, 1)`,
@@ -7997,6 +8141,13 @@
       clearS1pImageViewerSwitchAnimation();
       return;
     }
+    const switchAnimationDurationMs = resolveS1pImageViewerAnimationDuration(
+      S1P_IMAGE_VIEWER_SWITCH_ANIMATION_MS
+    );
+    if (switchAnimationDurationMs <= 0) {
+      clearS1pImageViewerSwitchAnimation();
+      return;
+    }
     clearS1pImageViewerSwitchAnimation({ keepGhost: true });
     void state.overlay.offsetWidth;
     const directionClass =
@@ -8009,7 +8160,7 @@
         return;
       }
       clearS1pImageViewerSwitchAnimation();
-    }, S1P_IMAGE_VIEWER_SWITCH_ANIMATION_MS + 40);
+    }, switchAnimationDurationMs + 40);
   };
   const showS1pImageViewerNavTemporarily = (
     durationMs = S1P_IMAGE_VIEWER_NAV_AUTO_HIDE_MS
@@ -8102,6 +8253,22 @@
       initialIndex = 0;
     }
     return { items: galleryItems, initialIndex };
+  };
+  const getS1pImageViewerViewportSize = () => {
+    const state = s1pImageViewerState;
+    if (!(state.viewport instanceof HTMLElement)) {
+      return { width: 0, height: 0 };
+    }
+    const width = Number(state.viewport.clientWidth || 0);
+    const height = Number(state.viewport.clientHeight || 0);
+    if (width > 0 && height > 0) {
+      return { width, height };
+    }
+    const viewportRect = state.viewport.getBoundingClientRect();
+    return {
+      width: Number(viewportRect.width || 0),
+      height: Number(viewportRect.height || 0),
+    };
   };
   const syncS1pImageViewerNavigationState = () => {
     const state = s1pImageViewerState;
@@ -8263,7 +8430,11 @@
     }
     state.image.style.transform = `translate3d(${state.translateX}px, ${state.translateY}px, 0) scale(${state.scale})`;
     if (state.zoomLabel) {
-      state.zoomLabel.textContent = `${Math.round(state.scale * 100)}%`;
+      const zoomPercent = Math.round(state.scale * 100);
+      if (zoomPercent !== state.lastZoomPercent) {
+        state.lastZoomPercent = zoomPercent;
+        state.zoomLabel.textContent = `${zoomPercent}%`;
+      }
     }
   };
   const applyS1pImageViewerFitBySize = (
@@ -8281,9 +8452,9 @@
     if (width <= 0 || height <= 0) {
       return false;
     }
-    const viewportRect = state.viewport.getBoundingClientRect();
-    const viewportWidth = Math.max(1, Number(viewportRect.width || 0));
-    const viewportHeight = Math.max(1, Number(viewportRect.height || 0));
+    const viewportSize = getS1pImageViewerViewportSize();
+    const viewportWidth = Math.max(1, Number(viewportSize.width || 0));
+    const viewportHeight = Math.max(1, Number(viewportSize.height || 0));
     const widthScale = viewportWidth / width;
     const containScale = Math.min(viewportWidth / width, viewportHeight / height);
     let baseScale = widthScale;
@@ -8386,29 +8557,64 @@
     const state = s1pImageViewerState;
     stopS1pImageViewerDragging();
     clearS1pImageViewerTransformButtonAnimation();
+    stopS1pImageViewerToolbarContinuousActions();
+    hideS1pGenericDisplayPopoverImmediately();
     if (!state.overlay || !state.isOpen) {
       return;
     }
-    state.overlay.classList.remove("is-open");
+    clearS1pImageViewerOpenTransitionState();
+    clearS1pImageViewerCloseTransitionState();
+    const closeOverlayDelayMs = resolveS1pImageViewerAnimationDuration(
+      S1P_IMAGE_VIEWER_CLOSE_OVERLAY_DELAY_MS
+    );
+    const closeAnimationDurationMs = resolveS1pImageViewerAnimationDuration(
+      S1P_IMAGE_VIEWER_OPEN_CLOSE_ANIMATION_MS
+    );
+    state.overlay.classList.remove("is-panel-open");
     clearS1pImageViewerSwitchAnimation();
-    state.overlay.classList.remove("is-nav-visible");
-    state.overlay.classList.remove("has-gallery");
     restoreFocusAfterS1pImageViewerClose();
     state.overlay.setAttribute("aria-hidden", "true");
     document.removeEventListener("keydown", handleS1pImageViewerKeydown, true);
-    if (document.body) {
-      document.body.style.overflow = state.bodyOverflowBeforeOpen || "";
-    }
     state.isOpen = false;
-    state.sourceUrl = "";
-    state.galleryItems = [];
-    state.currentIndex = -1;
+    state.isClosing = true;
     state.pendingSwitchDirection = 0;
     state.hasPreparedSwitchTransform = false;
     state.switchRequestId += 1;
     state.lastNavMoveAt = 0;
     clearS1pImageViewerNavHideTimer();
-    syncS1pImageViewerNavigationState();
+    const handleCloseTransitionEnd = (event) => {
+      const latestState = s1pImageViewerState;
+      if (
+        !canContinueS1pImageViewerClosing() ||
+        event.target !== latestState.overlay ||
+        event.propertyName !== "opacity"
+      ) {
+        return;
+      }
+      finalizeS1pImageViewerCloseState();
+    };
+    state.closeTransitionTarget = state.overlay;
+    state.closeTransitionEndHandler = handleCloseTransitionEnd;
+    state.overlay.addEventListener("transitionend", handleCloseTransitionEnd);
+    state.closeOverlayTimer = window.setTimeout(() => {
+      const latestState = s1pImageViewerState;
+      latestState.closeOverlayTimer = 0;
+      if (!canContinueS1pImageViewerClosing()) {
+        return;
+      }
+      latestState.overlay.classList.remove("is-overlay-open");
+      if (closeAnimationDurationMs <= 0) {
+        finalizeS1pImageViewerCloseState();
+      }
+    }, closeOverlayDelayMs);
+    state.closeAnimationTimer = window.setTimeout(() => {
+      const latestState = s1pImageViewerState;
+      latestState.closeAnimationTimer = 0;
+      if (!canContinueS1pImageViewerClosing()) {
+        return;
+      }
+      finalizeS1pImageViewerCloseState();
+    }, closeOverlayDelayMs + Math.max(80, closeAnimationDurationMs) + 120);
   };
   const openS1pImageInNewTab = () => {
     const sourceUrl = String(s1pImageViewerState.sourceUrl || "");
@@ -8461,25 +8667,35 @@
     zoomS1pImageViewerByStep(event.deltaY < 0 ? 1 : -1);
   };
   const zoomS1pImageViewerByStep = (direction) => {
+    const zoomFactor =
+      Number(direction) >= 0
+        ? 1 + S1P_IMAGE_VIEWER_ZOOM_STEP
+        : 1 / (1 + S1P_IMAGE_VIEWER_ZOOM_STEP);
+    return applyS1pImageViewerZoomFactor(zoomFactor);
+  };
+  const applyS1pImageViewerZoomFactor = (zoomFactor) => {
     const state = s1pImageViewerState;
     if (!state.isOpen || !state.viewport) {
+      return false;
+    }
+    const safeZoomFactor =
+      Number.isFinite(Number(zoomFactor)) && Number(zoomFactor) > 0
+        ? Number(zoomFactor)
+        : NaN;
+    if (!Number.isFinite(safeZoomFactor) || safeZoomFactor <= 0) {
       return false;
     }
     const previousScale = state.scale;
     if (!Number.isFinite(previousScale) || previousScale <= 0) {
       return false;
     }
-    const zoomFactor =
-      Number(direction) >= 0
-        ? 1 + S1P_IMAGE_VIEWER_ZOOM_STEP
-        : 1 / (1 + S1P_IMAGE_VIEWER_ZOOM_STEP);
-    const nextScale = clampS1pImageViewerScale(previousScale * zoomFactor);
+    const nextScale = clampS1pImageViewerScale(previousScale * safeZoomFactor);
     if (Math.abs(nextScale - previousScale) < 0.0001) {
       return false;
     }
-    const viewportRect = state.viewport.getBoundingClientRect();
-    const centerX = Number(viewportRect.width || 0) / 2;
-    const centerY = Number(viewportRect.height || 0) / 2;
+    const viewportSize = getS1pImageViewerViewportSize();
+    const centerX = Number(viewportSize.width || 0) / 2;
+    const centerY = Number(viewportSize.height || 0) / 2;
     const imageX = (centerX - state.translateX) / previousScale;
     const imageY = (centerY - state.translateY) / previousScale;
     state.translateX = centerX - imageX * nextScale;
@@ -8488,13 +8704,27 @@
     applyS1pImageViewerTransform();
     return true;
   };
-  const scrollS1pImageViewerByStep = (direction) => {
+  const zoomS1pImageViewerByContinuousDelta = (direction, deltaMs) => {
+    const normalizedDirection = Number(direction);
+    const safeDirection = normalizedDirection >= 0 ? 1 : -1;
+    const safeDeltaMs = Math.max(1, Math.min(48, Number(deltaMs) || 0));
+    const baselineDurationSec =
+      Math.max(60, S1P_IMAGE_VIEWER_BUTTON_ZOOM_ANIMATION_MS) / 1000;
+    const stepScalePerBaseline =
+      safeDirection > 0
+        ? 1 + S1P_IMAGE_VIEWER_ZOOM_STEP
+        : 1 / (1 + S1P_IMAGE_VIEWER_ZOOM_STEP);
+    const normalizedProgress = safeDeltaMs / (baselineDurationSec * 1000);
+    const zoomFactor = Math.pow(stepScalePerBaseline, normalizedProgress);
+    return applyS1pImageViewerZoomFactor(zoomFactor);
+  };
+  const resolveS1pImageViewerScrollStepPx = () => {
     const state = s1pImageViewerState;
     if (!state.isOpen || !state.viewport) {
-      return false;
+      return 0;
     }
-    const viewportRect = state.viewport.getBoundingClientRect();
-    const viewportHeight = Number(viewportRect.height || 0);
+    const viewportSize = getS1pImageViewerViewportSize();
+    const viewportHeight = Number(viewportSize.height || 0);
     const scrollStepPx = Math.min(
       S1P_IMAGE_VIEWER_SCROLL_STEP_MAX_PX,
       Math.max(
@@ -8503,10 +8733,43 @@
       )
     );
     if (!Number.isFinite(scrollStepPx) || scrollStepPx <= 0) {
+      return 0;
+    }
+    return scrollStepPx;
+  };
+  const scrollS1pImageViewerByStep = (direction) => {
+    const state = s1pImageViewerState;
+    if (!state.isOpen || !state.viewport) {
+      return false;
+    }
+    const scrollStepPx = resolveS1pImageViewerScrollStepPx();
+    if (scrollStepPx <= 0) {
       return false;
     }
     const normalizedDirection = Number(direction);
     const deltaY = normalizedDirection >= 0 ? -scrollStepPx : scrollStepPx;
+    state.translateY += deltaY;
+    applyS1pImageViewerTransform();
+    return true;
+  };
+  const scrollS1pImageViewerByContinuousDelta = (direction, deltaMs) => {
+    const state = s1pImageViewerState;
+    if (!state.isOpen || !state.viewport) {
+      return false;
+    }
+    const baseStepPx = resolveS1pImageViewerScrollStepPx();
+    if (baseStepPx <= 0) {
+      return false;
+    }
+    const safeDeltaMs = Math.max(1, Math.min(48, Number(deltaMs) || 0));
+    const baselineDurationSec =
+      Math.max(80, S1P_IMAGE_VIEWER_BUTTON_SCROLL_ANIMATION_MS) / 1000;
+    const distance = (baseStepPx * safeDeltaMs) / (baselineDurationSec * 1000);
+    if (!Number.isFinite(distance) || distance <= 0) {
+      return false;
+    }
+    const normalizedDirection = Number(direction);
+    const deltaY = normalizedDirection >= 0 ? -distance : distance;
     state.translateY += deltaY;
     applyS1pImageViewerTransform();
     return true;
@@ -8530,12 +8793,17 @@
       window.clearTimeout(state.transformAnimationTimer);
       state.transformAnimationTimer = 0;
     }
-    const safeDuration = Math.max(60, Number(durationMs) || 0);
+    const safeDuration = resolveS1pImageViewerAnimationDuration(
+      Math.max(60, Number(durationMs) || 0)
+    );
     setS1pImageViewerImageTransition(safeDuration);
     const didApplyChange = applyTransformChange();
     if (!didApplyChange) {
       clearS1pImageViewerTransformButtonAnimation();
       return false;
+    }
+    if (safeDuration <= 0) {
+      return true;
     }
     state.transformAnimationTimer = window.setTimeout(() => {
       const latestState = s1pImageViewerState;
@@ -8569,11 +8837,304 @@
       }
     );
   };
+  const stopS1pImageViewerToolbarContinuousActions = () => {
+    const state = s1pImageViewerState;
+    const stopHandlers = Array.isArray(state.toolbarContinuousActionStops)
+      ? state.toolbarContinuousActionStops
+      : [];
+    stopHandlers.forEach((stop) => {
+      if (typeof stop === "function") {
+        stop();
+      }
+    });
+  };
+  const disposeS1pImageViewerToolbarContinuousActions = () => {
+    const state = s1pImageViewerState;
+    const disposeHandlers = Array.isArray(state.toolbarContinuousActionDisposers)
+      ? state.toolbarContinuousActionDisposers
+      : [];
+    disposeHandlers.forEach((dispose) => {
+      if (typeof dispose === "function") {
+        dispose();
+      }
+    });
+    state.toolbarContinuousActionStops = [];
+    state.toolbarContinuousActionDisposers = [];
+  };
+  const bindS1pImageViewerToolbarContinuousAction = (
+    button,
+    action,
+    {
+      holdDelayMs = S1P_IMAGE_VIEWER_BUTTON_HOLD_DELAY_MS,
+      repeatIntervalMs = S1P_IMAGE_VIEWER_BUTTON_ZOOM_REPEAT_INTERVAL_MS,
+      continuousAction = null,
+    } = {}
+  ) => {
+    if (!(button instanceof HTMLButtonElement) || typeof action !== "function") {
+      return { stop: () => {}, dispose: () => {} };
+    }
+
+    const safeHoldDelay = Math.max(
+      120,
+      Number(holdDelayMs) || S1P_IMAGE_VIEWER_BUTTON_HOLD_DELAY_MS
+    );
+    const safeRepeatInterval = Math.max(
+      48,
+      Number(repeatIntervalMs) || S1P_IMAGE_VIEWER_BUTTON_ZOOM_REPEAT_INTERVAL_MS
+    );
+    let holdDelayTimer = 0;
+    let repeatTimer = 0;
+    let repeatRafId = 0;
+    let repeatRafLastTime = 0;
+    let activePointerId = null;
+    let isPressing = false;
+    let hasTriggeredContinuousAction = false;
+    let suppressNextClick = false;
+    let ignoreSyntheticMouseUntil = 0;
+    const removeListeners = [];
+
+    const clearTimers = () => {
+      if (holdDelayTimer) {
+        window.clearTimeout(holdDelayTimer);
+        holdDelayTimer = 0;
+      }
+      if (repeatTimer) {
+        window.clearInterval(repeatTimer);
+        repeatTimer = 0;
+      }
+      if (repeatRafId) {
+        window.cancelAnimationFrame(repeatRafId);
+        repeatRafId = 0;
+      }
+      repeatRafLastTime = 0;
+    };
+    const stopPress = ({ resetClickSuppression = false } = {}) => {
+      clearTimers();
+      isPressing = false;
+      if (
+        activePointerId !== null &&
+        typeof button.hasPointerCapture === "function" &&
+        button.hasPointerCapture(activePointerId)
+      ) {
+        try {
+          button.releasePointerCapture(activePointerId);
+        } catch (error) {
+          // Ignore browser-level pointer capture release failures.
+        }
+      }
+      activePointerId = null;
+      if (resetClickSuppression) {
+        hasTriggeredContinuousAction = false;
+        suppressNextClick = false;
+      }
+    };
+    const addManagedListener = (target, type, listener, options) => {
+      if (
+        !target ||
+        typeof target.addEventListener !== "function" ||
+        typeof target.removeEventListener !== "function"
+      ) {
+        return;
+      }
+      target.addEventListener(type, listener, options);
+      const capture =
+        typeof options === "boolean"
+          ? options
+          : Boolean(options && typeof options === "object" && options.capture);
+      removeListeners.push(() => {
+        target.removeEventListener(type, listener, capture);
+      });
+    };
+    const runContinuousActionStep = () => {
+      if (!isPressing) {
+        return;
+      }
+      if (button.disabled) {
+        clearTimers();
+        return;
+      }
+      const didApply = runS1pImageViewerToolbarTransformAction(action);
+      if (didApply === false) {
+        clearTimers();
+      }
+    };
+    const runContinuousActionFrame = (now) => {
+      if (!isPressing) {
+        repeatRafId = 0;
+        repeatRafLastTime = 0;
+        return;
+      }
+      if (button.disabled) {
+        clearTimers();
+        return;
+      }
+      const safeNow = Number(now) || 0;
+      const safeDeltaMs = Math.max(
+        1,
+        Math.min(
+          48,
+          repeatRafLastTime > 0 ? safeNow - repeatRafLastTime : 16
+        )
+      );
+      repeatRafLastTime = safeNow;
+      const didApply =
+        typeof continuousAction === "function"
+          ? continuousAction(safeDeltaMs)
+          : false;
+      if (didApply === false) {
+        clearTimers();
+        return;
+      }
+      repeatRafId = window.requestAnimationFrame(runContinuousActionFrame);
+    };
+    const beginPress = () => {
+      if (button.disabled) {
+        return false;
+      }
+      stopPress({ resetClickSuppression: true });
+      isPressing = true;
+      activePointerId = null;
+      hasTriggeredContinuousAction = false;
+      suppressNextClick = false;
+      holdDelayTimer = window.setTimeout(() => {
+        holdDelayTimer = 0;
+        if (!isPressing || button.disabled) {
+          return;
+        }
+        hasTriggeredContinuousAction = true;
+        if (typeof continuousAction === "function") {
+          showS1pImageViewerNavTemporarily();
+          if (s1pImageViewerState.isDragging) {
+            stopS1pImageViewerDragging();
+          }
+          clearS1pImageViewerTransformButtonAnimation();
+          syncS1pImageViewerTransformStateFromRendered();
+          repeatRafLastTime = 0;
+          repeatRafId = window.requestAnimationFrame(runContinuousActionFrame);
+          return;
+        }
+        runContinuousActionStep();
+        repeatTimer = window.setInterval(runContinuousActionStep, safeRepeatInterval);
+      }, safeHoldDelay);
+      return true;
+    };
+    const handlePressStart = (event) => {
+      if (!(event instanceof PointerEvent)) {
+        return;
+      }
+      if (event.pointerType === "mouse" && event.button !== 0) {
+        return;
+      }
+      if (!beginPress()) {
+        return;
+      }
+      activePointerId = event.pointerId;
+      if (typeof button.setPointerCapture === "function") {
+        try {
+          button.setPointerCapture(event.pointerId);
+        } catch (error) {
+          // Ignore browser-level pointer capture failures.
+        }
+      }
+    };
+    const isPointerIdMatched = (event) => {
+      if (
+        event instanceof PointerEvent &&
+        activePointerId !== null &&
+        event.pointerId !== activePointerId
+      ) {
+        return false;
+      }
+      return true;
+    };
+    const handlePressEnd = (event) => {
+      if (!isPointerIdMatched(event)) {
+        return;
+      }
+      const shouldSuppressClick = hasTriggeredContinuousAction;
+      stopPress();
+      hasTriggeredContinuousAction = false;
+      suppressNextClick = shouldSuppressClick;
+    };
+    const handlePressCancel = (event) => {
+      if (!isPointerIdMatched(event) || !isPressing) {
+        return;
+      }
+      stopPress({ resetClickSuppression: true });
+    };
+    const handleMouseDown = (event) => {
+      if (!(event instanceof MouseEvent) || event.button !== 0) {
+        return;
+      }
+      if (Date.now() < ignoreSyntheticMouseUntil) {
+        return;
+      }
+      beginPress();
+    };
+    const handleMouseUp = () => {
+      handlePressEnd();
+    };
+    const handleTouchStart = (event) => {
+      if (!(event instanceof TouchEvent) || event.touches.length > 1) {
+        return;
+      }
+      ignoreSyntheticMouseUntil = Date.now() + 800;
+      beginPress();
+    };
+    const handleTouchEnd = () => {
+      handlePressEnd();
+    };
+    const handleSuppressedClick = (event) => {
+      if (!suppressNextClick) {
+        return;
+      }
+      suppressNextClick = false;
+      event.preventDefault();
+      event.stopPropagation();
+      if (typeof event.stopImmediatePropagation === "function") {
+        event.stopImmediatePropagation();
+      }
+    };
+    const handleWindowBlur = () => {
+      if (!isPressing) {
+        return;
+      }
+      stopPress({ resetClickSuppression: true });
+    };
+
+    if (typeof window.PointerEvent === "function") {
+      addManagedListener(button, "pointerdown", handlePressStart);
+      addManagedListener(button, "pointerup", handlePressEnd);
+      addManagedListener(button, "pointercancel", handlePressCancel);
+      addManagedListener(button, "lostpointercapture", handlePressCancel);
+    } else {
+      addManagedListener(button, "mousedown", handleMouseDown);
+      addManagedListener(window, "mouseup", handleMouseUp, true);
+      addManagedListener(button, "touchstart", handleTouchStart, { passive: true });
+      addManagedListener(button, "touchend", handleTouchEnd);
+      addManagedListener(button, "touchcancel", handlePressCancel);
+    }
+    addManagedListener(button, "click", handleSuppressedClick, { capture: true });
+    addManagedListener(window, "blur", handleWindowBlur);
+
+    const stop = () => {
+      stopPress({ resetClickSuppression: true });
+    };
+    const dispose = () => {
+      stop();
+      removeListeners.forEach((remove) => {
+        remove();
+      });
+      removeListeners.length = 0;
+    };
+    return { stop, dispose };
+  };
   const ensureS1pImageViewer = () => {
     const state = s1pImageViewerState;
     if (state.overlay && state.overlay.isConnected) {
       return;
     }
+    disposeS1pImageViewerToolbarContinuousActions();
     const overlay = document.createElement("div");
     overlay.className = "s1p-image-viewer";
     overlay.setAttribute("aria-hidden", "true");
@@ -8585,10 +9146,10 @@
           <span class="s1p-image-viewer__zoom">100%</span>
           <button
             type="button"
-            class="s1p-btn s1p-image-viewer__icon-btn"
+            class="s1p-btn s1p-image-viewer__icon-btn s1p-has-tooltip"
             data-action="zoom-out"
-            aria-label="\u7f29\u5c0f"
-            title="\u7f29\u5c0f"
+            data-full-tag="\u7f29\u5c0f\uff08\u957f\u6309\u53ef\u8fde\u7eed\u7f29\u653e\uff09"
+            aria-label="\u7f29\u5c0f\uff08\u957f\u6309\u53ef\u8fde\u7eed\u7f29\u653e\uff09"
           >
             <svg
               class="s1p-image-viewer__zoom-icon"
@@ -8603,10 +9164,10 @@
           </button>
           <button
             type="button"
-            class="s1p-btn s1p-image-viewer__icon-btn"
+            class="s1p-btn s1p-image-viewer__icon-btn s1p-has-tooltip"
             data-action="zoom-in"
-            aria-label="\u653e\u5927"
-            title="\u653e\u5927"
+            data-full-tag="\u653e\u5927\uff08\u957f\u6309\u53ef\u8fde\u7eed\u7f29\u653e\uff09"
+            aria-label="\u653e\u5927\uff08\u957f\u6309\u53ef\u8fde\u7eed\u7f29\u653e\uff09"
           >
             <svg
               class="s1p-image-viewer__zoom-icon"
@@ -8621,10 +9182,10 @@
           </button>
           <button
             type="button"
-            class="s1p-btn s1p-image-viewer__icon-btn"
+            class="s1p-btn s1p-image-viewer__icon-btn s1p-has-tooltip"
             data-action="scroll-up"
-            aria-label="\u5411\u4e0a\u6eda\u52a8"
-            title="\u5411\u4e0a\u6eda\u52a8"
+            data-full-tag="\u5411\u4e0a\u6eda\u52a8\uff08\u957f\u6309\u53ef\u8fde\u7eed\u6eda\u52a8\uff09"
+            aria-label="\u5411\u4e0a\u6eda\u52a8\uff08\u957f\u6309\u53ef\u8fde\u7eed\u6eda\u52a8\uff09"
           >
             <svg
               class="s1p-image-viewer__zoom-icon"
@@ -8639,10 +9200,10 @@
           </button>
           <button
             type="button"
-            class="s1p-btn s1p-image-viewer__icon-btn"
+            class="s1p-btn s1p-image-viewer__icon-btn s1p-has-tooltip"
             data-action="scroll-down"
-            aria-label="\u5411\u4e0b\u6eda\u52a8"
-            title="\u5411\u4e0b\u6eda\u52a8"
+            data-full-tag="\u5411\u4e0b\u6eda\u52a8\uff08\u957f\u6309\u53ef\u8fde\u7eed\u6eda\u52a8\uff09"
+            aria-label="\u5411\u4e0b\u6eda\u52a8\uff08\u957f\u6309\u53ef\u8fde\u7eed\u6eda\u52a8\uff09"
           >
             <svg
               class="s1p-image-viewer__zoom-icon"
@@ -8781,25 +9342,55 @@
     viewport.addEventListener("wheel", handleS1pImageViewerWheel, {
       passive: false,
     });
-    zoomOutBtn.addEventListener("click", () => {
-      runS1pImageViewerToolbarTransformAction(() =>
-        animateS1pImageViewerZoomStep(-1)
+    const toolbarTransformControls = [
+      {
+        button: zoomOutBtn,
+        action: () => animateS1pImageViewerZoomStep(-1),
+        continuousAction: (deltaMs) =>
+          zoomS1pImageViewerByContinuousDelta(-1, deltaMs),
+        repeatIntervalMs: S1P_IMAGE_VIEWER_BUTTON_ZOOM_REPEAT_INTERVAL_MS,
+      },
+      {
+        button: zoomInBtn,
+        action: () => animateS1pImageViewerZoomStep(1),
+        continuousAction: (deltaMs) =>
+          zoomS1pImageViewerByContinuousDelta(1, deltaMs),
+        repeatIntervalMs: S1P_IMAGE_VIEWER_BUTTON_ZOOM_REPEAT_INTERVAL_MS,
+      },
+      {
+        button: scrollUpBtn,
+        action: () => animateS1pImageViewerScrollStep(-1),
+        continuousAction: (deltaMs) =>
+          scrollS1pImageViewerByContinuousDelta(-1, deltaMs),
+        repeatIntervalMs: S1P_IMAGE_VIEWER_BUTTON_SCROLL_REPEAT_INTERVAL_MS,
+      },
+      {
+        button: scrollDownBtn,
+        action: () => animateS1pImageViewerScrollStep(1),
+        continuousAction: (deltaMs) =>
+          scrollS1pImageViewerByContinuousDelta(1, deltaMs),
+        repeatIntervalMs: S1P_IMAGE_VIEWER_BUTTON_SCROLL_REPEAT_INTERVAL_MS,
+      },
+    ];
+    const toolbarContinuousActionStops = [];
+    const toolbarContinuousActionDisposers = [];
+    toolbarTransformControls.forEach((control) => {
+      const runAction = () => runS1pImageViewerToolbarTransformAction(control.action);
+      control.button.addEventListener("click", runAction);
+      const binding = bindS1pImageViewerToolbarContinuousAction(
+        control.button,
+        control.action,
+        {
+          repeatIntervalMs: control.repeatIntervalMs,
+          continuousAction: control.continuousAction,
+        }
       );
-    });
-    zoomInBtn.addEventListener("click", () => {
-      runS1pImageViewerToolbarTransformAction(() =>
-        animateS1pImageViewerZoomStep(1)
-      );
-    });
-    scrollUpBtn.addEventListener("click", () => {
-      runS1pImageViewerToolbarTransformAction(() =>
-        animateS1pImageViewerScrollStep(-1)
-      );
-    });
-    scrollDownBtn.addEventListener("click", () => {
-      runS1pImageViewerToolbarTransformAction(() =>
-        animateS1pImageViewerScrollStep(1)
-      );
+      if (binding && typeof binding.stop === "function") {
+        toolbarContinuousActionStops.push(binding.stop);
+      }
+      if (binding && typeof binding.dispose === "function") {
+        toolbarContinuousActionDisposers.push(binding.dispose);
+      }
     });
     fitBtn.addEventListener("click", () => {
       fitS1pImageViewerContainToViewport();
@@ -8838,6 +9429,8 @@
     state.fitBtn = fitBtn;
     state.prevBtn = prevBtn;
     state.nextBtn = nextBtn;
+    state.toolbarContinuousActionStops = toolbarContinuousActionStops;
+    state.toolbarContinuousActionDisposers = toolbarContinuousActionDisposers;
     syncS1pImageViewerNavigationState();
   };
   const openS1pImageViewer = (sourceUrl, options = {}) => {
@@ -8850,7 +9443,11 @@
     if (!state.overlay || !state.image) {
       return false;
     }
-    if (!state.isOpen) {
+    const wasClosing = state.isClosing === true;
+    clearS1pImageViewerCloseTransitionState();
+    state.isClosing = false;
+    clearS1pImageViewerOpenTransitionState();
+    if (!state.isOpen && !wasClosing) {
       const activeElement = document.activeElement;
       state.previouslyFocusedElement =
         activeElement instanceof HTMLElement ? activeElement : null;
@@ -8882,10 +9479,37 @@
     state.hasPreparedSwitchTransform = false;
     state.switchRequestId += 1;
     state.lastNavMoveAt = 0;
+    state.lastZoomPercent = null;
     syncS1pImageViewerNavigationState();
-    state.overlay.classList.add("is-open");
+    const openPanelDelayMs = resolveS1pImageViewerAnimationDuration(
+      S1P_IMAGE_VIEWER_OPEN_PANEL_DELAY_MS
+    );
+    state.overlay.classList.add("is-visible");
+    state.overlay.classList.remove("is-overlay-open");
+    state.overlay.classList.remove("is-panel-open");
     state.overlay.setAttribute("aria-hidden", "false");
     state.isOpen = true;
+    void state.overlay.offsetWidth;
+    state.openAnimationFrameId = window.requestAnimationFrame(() => {
+      const latestState = s1pImageViewerState;
+      latestState.openAnimationFrameId = 0;
+      if (!latestState.isOpen || !latestState.overlay) {
+        return;
+      }
+      latestState.overlay.classList.add("is-overlay-open");
+      if (openPanelDelayMs <= 0) {
+        latestState.overlay.classList.add("is-panel-open");
+        return;
+      }
+      latestState.openPanelTimer = window.setTimeout(() => {
+        const delayedState = s1pImageViewerState;
+        delayedState.openPanelTimer = 0;
+        if (!delayedState.isOpen || !delayedState.overlay) {
+          return;
+        }
+        delayedState.overlay.classList.add("is-panel-open");
+      }, openPanelDelayMs);
+    });
     document.removeEventListener("keydown", handleS1pImageViewerKeydown, true);
     document.addEventListener("keydown", handleS1pImageViewerKeydown, true);
     setS1pImageViewerActiveIndex(initialIndex, { allowSameIndexReset: true });
@@ -13904,7 +14528,9 @@
   };
 
   const POPUP_SCOPE_POST_TOOLBAR = "post-toolbar";
+  const POPUP_SCOPE_IMAGE_VIEWER = "image-viewer";
   const POST_TOOLBAR_ACTIONS_SELECTOR = ".s1p-authi-actions-wrapper";
+  const IMAGE_VIEWER_ROOT_SELECTOR = ".s1p-image-viewer";
   const POST_TOOLBAR_POPUP_SELECTOR = [
     `.s1p-inline-confirm-menu[data-s1p-scope="${POPUP_SCOPE_POST_TOOLBAR}"]`,
     `.s1p-inline-action-menu[data-s1p-scope="${POPUP_SCOPE_POST_TOOLBAR}"]`,
@@ -13913,6 +14539,8 @@
 
   const isPostToolbarAnchor = (anchorElement) =>
     Boolean(anchorElement?.closest?.(POST_TOOLBAR_ACTIONS_SELECTOR));
+  const isImageViewerAnchor = (anchorElement) =>
+    Boolean(anchorElement?.closest?.(IMAGE_VIEWER_ROOT_SELECTOR));
   const applyPostToolbarPopupScope = (popupElement, anchorElement) => {
     if (!(popupElement instanceof Element)) {
       return false;
@@ -13921,6 +14549,10 @@
     if (shouldUsePostToolbarScope) {
       popupElement.dataset.s1pScope = POPUP_SCOPE_POST_TOOLBAR;
       return true;
+    }
+    if (isImageViewerAnchor(anchorElement)) {
+      popupElement.dataset.s1pScope = POPUP_SCOPE_IMAGE_VIEWER;
+      return false;
     }
     delete popupElement.dataset.s1pScope;
     return false;
