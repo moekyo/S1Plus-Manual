@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      6.6.0
+// @version      6.7.0
 // @description  为Stage1st论坛提供帖子/用户/楼层屏蔽、导航栏自定义、自动签到、阅读进度跟踪、回复收藏、远程同步等多种功能，全方位优化你的论坛体验。
 // @author       moekyo
 // @match        https://stage1st.com/2b/*
@@ -20,8 +20,8 @@
 (function () {
   "use strict";
 
-  const SCRIPT_VERSION = "6.6.0";
-  const SCRIPT_RELEASE_DATE = "2026-03-21";
+  const SCRIPT_VERSION = "6.7.0";
+  const SCRIPT_RELEASE_DATE = "2026-03-22";
 
   // --- [新增] SHA-256 哈希计算库 (基于 Web Crypto API) ---
   /**
@@ -22428,18 +22428,18 @@
 
     // [OPTIMIZED] 优化HTML结构以改善文本布局和换行
     const bodyHtml = `
-    <p>已更新至 v${SCRIPT_VERSION}！本次更新聚焦浏览效率、看图操作和界面细节体验。</p>
+    <p>已更新至 v${SCRIPT_VERSION}！本次更新聚焦图片查看器体验、提示一致性和同步设置稳定性。</p>
     <p style="margin-top: 16px;">
-        <strong>🔗 纯文本链接更好用</strong>：可将正文中的 http://、https://、www. 文本自动转为可点击链接，并可单独设置是否新标签/后台打开。
+        <strong>🖼️ 图片查看器更连贯</strong>：工具条支持长按连续缩放/连续滚动，操作更顺滑；打开与关闭动画改为分段时序，过渡更自然。
     </p>
     <p style="margin-top: 8px;">
-        <strong>🖼️ 图片查看器操作补全</strong>：工具条新增放大、缩小、向上滚动、向下滚动按钮，并修复按钮动画硬切问题；连续操作更顺滑。
+        <strong>📐 显示与提示更稳定</strong>：修复图片查看器后续打开偶发右侧留白问题，宽度占用更准确；图标按钮统一脚本悬浮提示并补充“长按可连续操作”说明，层级不再被蒙版遮挡。
     </p>
     <p style="margin-top: 8px;">
-        <strong>🧭 顶栏入口更顺手</strong>：NUX 顶栏头像展开区补充“帖子”快捷入口，可一键进入“我的帖子”；并优化了按钮间距一致性。
+        <strong>🧹 交互细节更一致</strong>：屏蔽帖子确认条中的“顺便拉黑发帖人”提示出现时机已与其他同类提示统一，减少等待感。
     </p>
     <p style="margin-top: 8px;">
-        <strong>🔧 底层实现更精简</strong>：链接处理和图片查看器动画逻辑进一步收敛，减少重复路径，交互稳定性更好。
+        <strong>☁️ 同步设置更可靠</strong>：修复关闭远程同步后保存按钮不可用问题；同步页统一为手动保存逻辑，设置行为更可预期。
     </p>
   `;
 
