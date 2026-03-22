@@ -19622,7 +19622,6 @@
       button.type = "button";
       button.className =
         "s1p-confirm-action-btn s1p-thread-block-author-btn s1p-has-tooltip";
-      button.dataset.s1pTooltipDelay = "2000";
       setThreadBlockAuthorButtonSelectedState(button, false);
       setSanitizedIconHtml(button, TOOLBAR_ICONS.blockUser);
       return button;
