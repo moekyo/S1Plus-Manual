@@ -13339,7 +13339,12 @@
    * @param {Array<Object>} buttons - 按钮配置数组，例如 [{ label, title, action, className, callback }]
    * @param {Function} [onCloseCallback] - 菜单关闭时执行的回调函数
    */
-  const createInlineActionMenu = (anchorElement, buttons, onCloseCallback) => {
+  const createInlineActionMenu = (
+    anchorElement,
+    buttons,
+    onCloseCallback,
+    options = {}
+  ) => {
     // 确保同一时间只有一个菜单
     const existingMenu = document.querySelector(".s1p-inline-action-menu");
     if (existingMenu) {
@@ -13432,7 +13437,15 @@
     document.body.appendChild(menu);
 
     // --- 定位与显示 ---
-    const anchorRect = anchorElement.getBoundingClientRect();
+    const positionAnchorElement =
+      options.positionAnchorElement instanceof Element
+        ? options.positionAnchorElement
+        : anchorElement;
+    const rawAnchorGapPx = Number(options.anchorGapPx);
+    const anchorGapPx = Number.isFinite(rawAnchorGapPx)
+      ? Math.max(0, rawAnchorGapPx)
+      : 4;
+    const anchorRect = positionAnchorElement.getBoundingClientRect();
     const menuRect = menu.getBoundingClientRect();
 
     const top =
@@ -13446,9 +13459,9 @@
     const requiredSpace = menuRect.width + 16;
 
     if (spaceOnRight >= requiredSpace) {
-      left = anchorRect.right + window.scrollX + 8;
+      left = anchorRect.right + window.scrollX + anchorGapPx;
     } else {
-      left = anchorRect.left + window.scrollX - menuRect.width - 8;
+      left = anchorRect.left + window.scrollX - menuRect.width - anchorGapPx;
     }
 
     if (left < window.scrollX) {
@@ -13788,6 +13801,10 @@
             ],
             () => {
               activeMenu = null;
+            },
+            {
+              positionAnchorElement: a.querySelector("svg"),
+              anchorGapPx: 8,
             }
           );
         }
