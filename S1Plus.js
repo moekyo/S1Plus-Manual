@@ -381,6 +381,7 @@
   let syncDirtyTimestamp = 0;
   let isBackgroundAutoSyncInProgress = false;
   let manualSyncInFlightPromise = null;
+  let forceSyncInFlight = false;
   let hasPendingBackgroundSync = false;
   let backgroundSyncRetryTimeout = null;
   let backgroundSyncRetryAttempts = 0;
@@ -5065,6 +5066,13 @@
     }
 
     const now = Date.now();
+    // 对高频 pending 触发做短时去重，避免跨标签 GM 写入风暴。
+    if (
+      current.phase === AUTO_SYNC_INDICATOR_PHASE_PENDING &&
+      now - (Number(current.timestamp) || 0) < 1000
+    ) {
+      return false;
+    }
     persistAutoSyncIndicatorState({
       phase: AUTO_SYNC_INDICATOR_PHASE_PENDING,
       timestamp: now,
@@ -5087,15 +5095,16 @@
     const lastResolvedPhase =
       current.phase === AUTO_SYNC_INDICATOR_PHASE_RUNNING
         ? current.lastResolvedPhase || AUTO_SYNC_INDICATOR_PHASE_IDLE
-        : normalizeAutoSyncIndicatorPhase(current.phase, {
-          allowRunning: false,
-          allowPending: false,
-        }) ||
+        : current.lastResolvedPhase ||
+        normalizeAutoSyncIndicatorPhase(current.phase, {
+            allowRunning: false,
+            allowPending: false,
+          }) ||
         AUTO_SYNC_INDICATOR_PHASE_IDLE;
     const lastResolvedTimestamp =
       current.phase === AUTO_SYNC_INDICATOR_PHASE_RUNNING
         ? current.lastResolvedTimestamp || current.timestamp || 0
-        : current.timestamp || current.lastResolvedTimestamp || 0;
+        : current.lastResolvedTimestamp || current.timestamp || 0;
 
     const token = `${BACKGROUND_SYNC_OWNER_ID}_${Date.now()}_${Math.random()
       .toString(36)
@@ -10663,7 +10672,15 @@
         const httpError = new Error(`HTTP ${response.status}`);
         httpError.status = response.status;
         httpError.response = response;
-        httpError.retryable = REMOTE_SYNC_RETRYABLE_STATUS.has(response.status);
+        const responseTextLower = String(response.responseText || "").toLowerCase();
+        const isRetryableGitHubRateLimit403 =
+          response.status === 403 &&
+          (responseTextLower.includes("secondary rate limit") ||
+            responseTextLower.includes("api rate limit exceeded") ||
+            responseTextLower.includes("retry after"));
+        httpError.retryable =
+          REMOTE_SYNC_RETRYABLE_STATUS.has(response.status) ||
+          isRetryableGitHubRateLimit403;
         throw httpError;
       } catch (error) {
         const canRetry =
@@ -13504,23 +13521,57 @@
   const handleForcePush = async () => {
     const icon = document.querySelector("#s1p-nav-sync-btn svg");
     if (icon) icon.classList.add("s1p-syncing");
+    if (manualSyncInFlightPromise || forceSyncInFlight) {
+      showMessage("手动同步正在进行，请稍候...", null);
+      if (icon) {
+        icon.classList.remove("s1p-syncing");
+      }
+      return;
+    }
+    forceSyncInFlight = true;
+    if (!(await acquireManualSyncLock())) {
+      showMessage("当前有其他同步任务正在执行，请稍后再试。", false);
+      forceSyncInFlight = false;
+      if (icon) {
+        icon.classList.remove("s1p-syncing");
+      }
+      return;
+    }
+    startManualSyncLockHeartbeat();
+    const assertManualSyncLockOwned = (stage) => {
+      assertSyncLockOwned(SYNC_LOCK_MODE_MANUAL, `force_push:${stage}`);
+    };
     recordSyncAttempt("manual", "force_push");
     showMessage("正在向云端推送数据...", null);
     try {
+      assertManualSyncLockOwned("before_export_local_data");
       const localData = await exportLocalDataObject();
+      assertManualSyncLockOwned("before_push_remote_data");
       await pushRemoteData(localData);
+      assertManualSyncLockOwned("after_push_remote_data");
       // [FIX] 强制推送后清除残留的清理标记
       GM_deleteValue("s1p_pending_cleanup_info");
       clearPendingAutoSyncRequest();
+      clearAutoSyncConflictPause();
       GM_setValue("s1p_last_sync_timestamp", Date.now());
+      setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_SUCCESS);
+      resetAutoSyncFailureState();
       recordSyncSuccess("force_push", "manual");
       updateLastSyncTimeDisplay();
       showMessage("推送成功！已更新云端备份。", true);
     } catch (e) {
+      if (e?.code === SYNC_LOCK_LOST_CODE) {
+        showMessage("手动同步锁已失效，本次任务已中止，请重新发起同步。", false);
+        return;
+      }
+      setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_FAILURE);
       recordSyncFailure(e.message, "manual");
       updateLastSyncTimeDisplay();
       showMessage(`推送失败: ${e.message}`, false);
     } finally {
+      forceSyncInFlight = false;
+      stopManualSyncLockHeartbeat();
+      releaseManualSyncLock();
       if (icon) {
         icon.classList.remove("s1p-syncing");
         setTimeout(() => (icon.style.transform = ""), 1200); // 重置 transform
@@ -13531,23 +13582,50 @@
   const handleForcePull = async () => {
     const icon = document.querySelector("#s1p-nav-sync-btn svg");
     if (icon) icon.classList.add("s1p-syncing");
+    if (manualSyncInFlightPromise || forceSyncInFlight) {
+      showMessage("手动同步正在进行，请稍候...", null);
+      if (icon) {
+        icon.classList.remove("s1p-syncing");
+      }
+      return;
+    }
+    forceSyncInFlight = true;
+    if (!(await acquireManualSyncLock())) {
+      showMessage("当前有其他同步任务正在执行，请稍后再试。", false);
+      forceSyncInFlight = false;
+      if (icon) {
+        icon.classList.remove("s1p-syncing");
+      }
+      return;
+    }
+    startManualSyncLockHeartbeat();
+    const assertManualSyncLockOwned = (stage) => {
+      assertSyncLockOwned(SYNC_LOCK_MODE_MANUAL, `force_pull:${stage}`);
+    };
     recordSyncAttempt("manual", "force_pull");
     showMessage("正在从云端拉取数据...", null);
     try {
+      assertManualSyncLockOwned("before_fetch_remote_data");
       const { data: remoteData } = await fetchRemoteData();
+      assertManualSyncLockOwned("after_fetch_remote_data");
       if (Object.keys(remoteData).length === 0) {
         throw new Error("云端没有数据，无法拉取。");
       }
       const validatedRemote = await migrateAndValidateRemoteData(remoteData);
+      assertManualSyncLockOwned("before_import_local_data");
       // [S1P-FIX] 调用导入时，传入 suppressPostSync 选项来阻止不必要的二次同步
       const result = importLocalData(JSON.stringify(validatedRemote.full), {
         suppressPostSync: true,
       });
+      assertManualSyncLockOwned("after_import_local_data");
       if (result.success) {
         // [FIX] 强制拉取成功后清除残留的清理标记
         GM_deleteValue("s1p_pending_cleanup_info");
         clearPendingAutoSyncRequest();
+        clearAutoSyncConflictPause();
         GM_setValue("s1p_last_sync_timestamp", Date.now());
+        setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_SUCCESS);
+        resetAutoSyncFailureState();
         recordSyncSuccess("force_pull", "manual");
         updateLastSyncTimeDisplay();
         showMessage("拉取成功！页面即将刷新以应用新数据。", true);
@@ -13556,10 +13634,18 @@
         throw new Error(result.message);
       }
     } catch (e) {
+      if (e?.code === SYNC_LOCK_LOST_CODE) {
+        showMessage("手动同步锁已失效，本次任务已中止，请重新发起同步。", false);
+        return;
+      }
+      setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_FAILURE);
       recordSyncFailure(e.message, "manual");
       updateLastSyncTimeDisplay();
       showMessage(`拉取失败: ${e.message}`, false);
     } finally {
+      forceSyncInFlight = false;
+      stopManualSyncLockHeartbeat();
+      releaseManualSyncLock();
       if (icon) {
         icon.classList.remove("s1p-syncing");
         setTimeout(() => (icon.style.transform = ""), 1200); // 重置 transform
@@ -18527,6 +18613,15 @@
             "#s1p-token-expiry-reminder-toggle"
           ).checked;
           currentSettings.syncTokenExpiryDate = pendingTokenExpiryDate;
+          const didRemoteTargetChange =
+            String(previousSettings.syncRemoteGistId || "").trim() !==
+            currentSettings.syncRemoteGistId;
+          const didDisableRemoteSync =
+            previousSettings.syncRemoteEnabled === true &&
+            currentSettings.syncRemoteEnabled !== true;
+          const didPatChange =
+            String(previousSettings.syncRemotePat || "").trim() !==
+            currentSettings.syncRemotePat;
 
           const shouldMarkSyncedDataChange = hasSyncedSettingsChanged(
             previousSettings,
@@ -18536,6 +18631,15 @@
             suppressSyncTrigger: true,
             markDataChangedWhenSuppressed: shouldMarkSyncedDataChange,
           });
+          if (didRemoteTargetChange || didDisableRemoteSync) {
+            // 远端目标切换/关闭远程同步后，清理旧会话残留状态，避免新目标沿用旧基线造成误判。
+            GM_deleteValue(SYNC_BASELINE_STATE_KEY);
+            clearPendingAutoSyncRequest();
+            clearAutoSyncConflictPause();
+            clearAutoSyncRuntimeQueue();
+            resetAutoSyncFailureState();
+            setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_IDLE);
+          }
           setSettingsModalDirtyState(SETTINGS_MODAL_DIRTY_TAB.SYNC_SETTINGS, false);
           updateNavbarSyncButton();
 
@@ -18544,6 +18648,37 @@
             currentSettings.syncRemoteGistId &&
             currentSettings.syncRemotePat
           ) {
+            if (didPatChange) {
+              showMessage("设置已保存，正在验证新的 Token 凭据...", null);
+              try {
+                await fetchRemoteData({ metadataOnly: true });
+                // PAT 验证成功后，仅重置失败熔断状态，不影响 baseline。
+                resetAutoSyncFailureState();
+                if (!getActiveAutoSyncConflictPause()) {
+                  setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_IDLE);
+                }
+              } catch (probeError) {
+                const probeErrorMessage = String(probeError?.message || "");
+                const isAuthRejected =
+                  /(?:状态码|HTTP)\s*[: ]?\s*(401|403)\b/i.test(
+                    probeErrorMessage
+                  ) || /bad credentials|requires authentication/i.test(
+                    probeErrorMessage
+                  );
+                if (isAuthRejected) {
+                  showMessage(
+                    "新 Token 验证失败：认证被拒绝（401/403）。请检查 Token 权限、有效期和 Gist 访问范围。",
+                    false
+                  );
+                  return;
+                }
+                showMessage(
+                  `Token 验证未完成（${probeErrorMessage || "网络异常"
+                  }），将继续尝试首次同步检查...`,
+                  false
+                );
+              }
+            }
             showMessage("设置已保存，正在启动首次同步检查...", null);
             await handleManualSync(false, true); // 标记为首次设置
           } else {
@@ -18920,18 +19055,30 @@
     suppressInitialMessage = false,
     isInitialSetup = false
   ) => {
+    const MANUAL_SYNC_LOCK_BUSY_MESSAGE =
+      "当前有其他同步任务正在执行，本次手动同步已跳过，请稍后再试。";
+    const MANUAL_SYNC_LOCK_LOST_MESSAGE =
+      "手动同步锁已失效，本次任务已中止，请重新发起同步。";
+
     if (manualSyncInFlightPromise) {
       if (!suppressInitialMessage) {
         showMessage("手动同步正在进行，请稍候...", null);
       }
       return manualSyncInFlightPromise;
     }
+    if (forceSyncInFlight) {
+      if (!suppressInitialMessage) {
+        showMessage("手动同步正在进行，请稍候...", null);
+      }
+      return false;
+    }
 
     if (!(await acquireManualSyncLock())) {
-      showMessage("当前有其他同步任务正在执行，请稍后再试。", false);
+      showMessage(MANUAL_SYNC_LOCK_BUSY_MESSAGE, false);
       return false;
     }
     startManualSyncLockHeartbeat();
+    let manualSyncLockHeldByThisRun = true;
 
     const assertManualSyncLockOwned = (stage) => {
       assertSyncLockOwned(SYNC_LOCK_MODE_MANUAL, `manual_sync:${stage}`);
@@ -18941,6 +19088,32 @@
       const result = await callback();
       assertManualSyncLockOwned(`${stage}:after`);
       return result;
+    };
+    const releaseManualSyncLockForDecision = () => {
+      if (!manualSyncLockHeldByThisRun) {
+        return;
+      }
+      stopManualSyncLockHeartbeat();
+      releaseManualSyncLock();
+      manualSyncLockHeldByThisRun = false;
+    };
+    const ensureManualSyncLockForDecisionAction = async (stage) => {
+      if (manualSyncLockHeldByThisRun && isSyncLockOwned(SYNC_LOCK_MODE_MANUAL)) {
+        return true;
+      }
+      if (manualSyncLockHeldByThisRun) {
+        stopManualSyncLockHeartbeat();
+        releaseManualSyncLock();
+        manualSyncLockHeldByThisRun = false;
+      }
+      if (!(await acquireManualSyncLock())) {
+        showMessage(MANUAL_SYNC_LOCK_BUSY_MESSAGE, false);
+        return false;
+      }
+      startManualSyncLockHeartbeat();
+      manualSyncLockHeldByThisRun = true;
+      assertManualSyncLockOwned(`${stage}:lock_ready`);
+      return true;
     };
 
     manualSyncInFlightPromise = new Promise((resolve) => {
@@ -18960,6 +19133,8 @@
         const noteManualSuccess = (action, syncBaseline = null) => {
           clearPendingAutoSyncRequest();
           clearAutoSyncConflictPause();
+          // 手动同步成功后，立即覆盖后台指示器的旧失败/冲突态，避免残留样式持续到 TTL 结束。
+          setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_SUCCESS);
           if (syncBaseline) {
             setSyncBaselineState(syncBaseline);
           }
@@ -18968,13 +19143,57 @@
           updateLastSyncTimeDisplay();
         };
         const noteManualFailure = (message) => {
+          setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_FAILURE);
           recordSyncFailure(message, "manual");
           updateLastSyncTimeDisplay();
         };
         const noteManualConflict = (reason) => {
           clearPendingAutoSyncRequest();
+          setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_CONFLICT);
           recordSyncConflict(reason, "manual");
           updateLastSyncTimeDisplay();
+        };
+        const tryReacquireDecisionLock = async (stage) => {
+          if (await ensureManualSyncLockForDecisionAction(stage)) {
+            return true;
+          }
+          resolve(false);
+          return false;
+        };
+        const resolveWithLockLostNotice = () => {
+          showMessage(MANUAL_SYNC_LOCK_LOST_MESSAGE, false);
+          resolve(false);
+        };
+        const handleManualLockLostError = (error) => {
+          if (error?.code !== SYNC_LOCK_LOST_CODE) {
+            return false;
+          }
+          resolveWithLockLostNotice();
+          return true;
+        };
+        const fetchLatestValidatedRemoteForDecision = async (
+          stageSuffix,
+          emptyDataErrorMessage
+        ) => {
+          const { data: latestRawRemoteData, meta: latestMeta } =
+            await runWithManualSyncLockGuard(
+              `fetch_remote_data_${stageSuffix}`,
+              () => fetchRemoteData()
+            );
+          if (Object.keys(latestRawRemoteData).length === 0) {
+            throw new Error(emptyDataErrorMessage);
+          }
+          const latestRemoteDataObject = await runWithManualSyncLockGuard(
+            `validate_remote_data_${stageSuffix}`,
+            () => migrateAndValidateRemoteData(latestRawRemoteData)
+          );
+          return {
+            remoteDataObject: latestRemoteDataObject,
+            remoteUpdatedAt:
+              typeof latestMeta?.updatedAt === "string"
+                ? latestMeta.updatedAt
+                : null,
+          };
         };
 
         if (!suppressInitialMessage) {
@@ -18993,37 +19212,52 @@
 
           // [优化] 如果是首次设置且本地为空环境，且云端有数据，则直接引导拉取
           if (isInitialSetup && isLocalDataEmpty() && remoteExists) {
-            const remoteDataObj = await runWithManualSyncLockGuard(
+            await runWithManualSyncLockGuard(
               "validate_remote_data_for_initial_pull",
               () => migrateAndValidateRemoteData(rawRemoteData)
             );
             const pullAction = {
               text: "立即从云端恢复数据",
               className: "s1p-confirm",
-              action: () => {
-                if (!isSyncLockOwned(SYNC_LOCK_MODE_MANUAL)) {
-                  showMessage(
-                    "手动同步锁已失效，本次操作已中止，请重新发起同步。",
-                    false
-                  );
-                  resolve(false);
+              action: async () => {
+                if (!(await tryReacquireDecisionLock("initial_pull_recover"))) {
                   return;
                 }
-                const result = importLocalData(JSON.stringify(remoteDataObj.full), {
-                  suppressPostSync: true,
-                });
-                if (result.success) {
-                  GM_setValue("s1p_last_sync_timestamp", Date.now());
-                  noteManualSuccess("initial_pull_recover", {
-                    contentHash: remoteDataObj.contentHash,
-                    remoteUpdatedAt: remoteMetaUpdatedAt || null,
-                  });
-                  showMessage("恢复成功！页面即将刷新。", true);
-                  setTimeout(() => location.reload(), 1200);
-                  resolve(true);
-                } else {
-                  noteManualFailure(result.message);
-                  showMessage(`恢复失败: ${result.message}`, false);
+                try {
+                  const {
+                    remoteDataObject: latestRemoteDataObj,
+                    remoteUpdatedAt: latestRemoteUpdatedAt,
+                  } = await fetchLatestValidatedRemoteForDecision(
+                    "initial_pull_confirm",
+                    "云端没有数据，无法恢复。"
+                  );
+
+                  const result = importLocalData(
+                    JSON.stringify(latestRemoteDataObj.full),
+                    {
+                      suppressPostSync: true,
+                    }
+                  );
+                  if (result.success) {
+                    GM_setValue("s1p_last_sync_timestamp", Date.now());
+                    noteManualSuccess("initial_pull_recover", {
+                      contentHash: latestRemoteDataObj.contentHash,
+                      remoteUpdatedAt: latestRemoteUpdatedAt,
+                    });
+                    showMessage("恢复成功！页面即将刷新。", true);
+                    setTimeout(() => location.reload(), 1200);
+                    resolve(true);
+                  } else {
+                    noteManualFailure(result.message);
+                    showMessage(`恢复失败: ${result.message}`, false);
+                    resolve(false);
+                  }
+                } catch (error) {
+                  if (handleManualLockLostError(error)) {
+                    return;
+                  }
+                  noteManualFailure(error?.message || "恢复失败");
+                  showMessage(`恢复失败: ${error?.message || "未知错误"}`, false);
                   resolve(false);
                 }
               },
@@ -19036,6 +19270,7 @@
                 resolve(null);
               },
             };
+            releaseManualSyncLockForDecision();
             createAdvancedConfirmationModal(
               "初始化 S1 Plus 同步",
               "检测到这台电脑尚无本地数据，但云端已有备份，是否立即从云端恢复您的配置？",
@@ -19055,6 +19290,9 @@
               text: "推送本地数据到云端",
               className: "s1p-confirm",
               action: async () => {
+                if (!(await tryReacquireDecisionLock("initial_push_seed"))) {
+                  return;
+                }
                 showMessage("正在向云端推送数据...", null);
                 try {
                   const localData = await runWithManualSyncLockGuard(
@@ -19103,6 +19341,7 @@
                 resolve(null);
               },
             };
+            releaseManualSyncLockForDecision();
             createAdvancedConfirmationModal(
               "初始化云端同步",
               "<p>检测到云端备份为空，是否将当前本地数据作为初始版本推送到云端？</p>",
@@ -19273,35 +19512,46 @@
           const pullAction = {
             text: "从云端拉取",
             className: "s1p-confirm",
-            action: () => {
-              if (!isSyncLockOwned(SYNC_LOCK_MODE_MANUAL)) {
-                showMessage(
-                  "手动同步锁已失效，本次操作已中止，请重新发起同步。",
-                  false
-                );
-                resolve(false);
+            action: async () => {
+              if (!(await tryReacquireDecisionLock("manual_pull_choice"))) {
                 return;
               }
-              const result = importLocalData(JSON.stringify(remote.full), {
-                suppressPostSync: true,
-              });
-              if (result.success) {
-                GM_deleteValue("s1p_pending_cleanup_info");
-                GM_setValue("s1p_last_sync_timestamp", Date.now());
-                GM_setValue("s1p_last_manual_sync_info", {
-                  action: "pull",
-                  timestamp: Date.now(),
+              try {
+                const {
+                  remoteDataObject: latestRemote,
+                  remoteUpdatedAt: latestRemoteUpdatedAt,
+                } = await fetchLatestValidatedRemoteForDecision(
+                  "manual_pull_confirm",
+                  "云端没有数据，无法拉取。"
+                );
+                const result = importLocalData(JSON.stringify(latestRemote.full), {
+                  suppressPostSync: true,
                 });
-                noteManualSuccess("manual_pull", {
-                  contentHash: remote.contentHash,
-                  remoteUpdatedAt: remoteMetaUpdatedAt || null,
-                });
-                showMessage(`拉取成功！页面即将刷新。`, true);
-                setTimeout(() => location.reload(), 1200);
-                resolve(true);
-              } else {
-                noteManualFailure(result.message);
-                showMessage(`导入失败: ${result.message}`, false);
+                if (result.success) {
+                  GM_deleteValue("s1p_pending_cleanup_info");
+                  GM_setValue("s1p_last_sync_timestamp", Date.now());
+                  GM_setValue("s1p_last_manual_sync_info", {
+                    action: "pull",
+                    timestamp: Date.now(),
+                  });
+                  noteManualSuccess("manual_pull", {
+                    contentHash: latestRemote.contentHash,
+                    remoteUpdatedAt: latestRemoteUpdatedAt,
+                  });
+                  showMessage(`拉取成功！页面即将刷新。`, true);
+                  setTimeout(() => location.reload(), 1200);
+                  resolve(true);
+                } else {
+                  noteManualFailure(result.message);
+                  showMessage(`导入失败: ${result.message}`, false);
+                  resolve(false);
+                }
+              } catch (error) {
+                if (handleManualLockLostError(error)) {
+                  return;
+                }
+                noteManualFailure(error?.message || "导入失败");
+                showMessage(`导入失败: ${error?.message || "未知错误"}`, false);
                 resolve(false);
               }
             },
@@ -19310,6 +19560,9 @@
             text: "向云端推送",
             className: "s1p-confirm",
             action: async () => {
+              if (!(await tryReacquireDecisionLock("manual_push_choice"))) {
+                return;
+              }
               try {
                 const pushResult = await runWithManualSyncLockGuard(
                   "push_manual_choice",
@@ -19354,6 +19607,7 @@
               resolve(null);
             },
           };
+          releaseManualSyncLockForDecision();
           createAdvancedConfirmationModal(
             "手动同步选择",
             bodyHtml,
@@ -19367,9 +19621,7 @@
             }
           );
         } catch (error) {
-          if (error?.code === SYNC_LOCK_LOST_CODE) {
-            showMessage("手动同步锁已失效，本次任务已中止，请重新发起同步。", false);
-            resolve(false);
+          if (handleManualLockLostError(error)) {
             return;
           }
           const corruptionErrorMessage = "云端备份已损坏";
@@ -19378,6 +19630,11 @@
               text: "强制推送，覆盖云端",
               className: "s1p-confirm",
               action: async () => {
+                if (
+                  !(await tryReacquireDecisionLock("manual_force_push_repair"))
+                ) {
+                  return;
+                }
                 try {
                   const localDataObjectForPush = await runWithManualSyncLockGuard(
                     "export_local_data_force_repair",
@@ -19425,6 +19682,7 @@
                 resolve(null);
               },
             };
+            releaseManualSyncLockForDecision();
             createAdvancedConfirmationModal(
               "检测到云端备份损坏",
               `<p style="color: var(--s1p-red);">云端备份文件校验失败，为保护数据已暂停同步。</p><p>是否用当前健康的本地数据强制覆盖云端损坏的备份？</p>`,
@@ -19449,7 +19707,7 @@
             mode: error?.syncLockMode || SYNC_LOCK_MODE_MANUAL,
             stage: error?.syncLockStage || "unknown",
           });
-          showMessage("手动同步锁已失效，本次任务已中止，请重新发起同步。", false);
+          showMessage(MANUAL_SYNC_LOCK_LOST_MESSAGE, false);
           resolve(false);
           return;
         }
@@ -19465,6 +19723,7 @@
     return manualSyncInFlightPromise.finally(() => {
       stopManualSyncLockHeartbeat();
       releaseManualSyncLock();
+      manualSyncLockHeldByThisRun = false;
       manualSyncInFlightPromise = null;
     });
   };
@@ -22238,42 +22497,63 @@
   const handlePerLoadSyncCheck = async () => {
     const settings = getSettings();
 
-    if (!settings.syncDailyFirstLoad && settings.syncAutoEnabled) {
+    if (
+      !settings.syncDailyFirstLoad &&
+      settings.syncAutoEnabled &&
+      settings.syncRemoteEnabled &&
+      settings.syncRemoteGistId &&
+      settings.syncRemotePat
+    ) {
+      if (!(await acquireStartupSyncLock())) {
+        console.log(
+          "S1 Plus: 检测到其他同步任务正在执行，本次常规启动同步检查已跳过。"
+        );
+        return false;
+      }
+      startStartupSyncLockHeartbeat();
+
       console.log("S1 Plus: 执行常规启动时同步检查（因每日首次同步已关闭）...");
-      // [S1P-FIX] 调用时传入 true，启用启动安全模式
-      const result = await performAutoSync(true);
-      switch (result.status) {
-        case "success":
-          if (result.action === "pulled" || result.action === "force_pulled") {
-            showMessage("检测到云端有更新，正在刷新页面...", true);
-            setTimeout(() => location.reload(), 1500);
-            return true;
-          }
-          if (result.action === "skipped_push_on_startup") {
-            showMessage(
-              "检测到本地数据较新，已跳过本次启动自动推送。请稍后在导航栏手动同步。",
-              false
-            );
-          }
-          break;
-        case "failure":
-          showMessage(`启动同步检查失败: ${result.error}`, false);
-          break;
-        case "conflict":
-          showMessage("启动同步检查检测到冲突，请在导航栏执行手动同步。", false);
-          break;
-        case "skipped":
-          if (result.reason === "circuit_open") {
-            showMessage(
-              `自动同步因连续失败已暂停，预计恢复时间：${new Date(
-                result.until
-              ).toLocaleTimeString("zh-CN", { hour12: false })}。`,
-              false
-            );
-          } else if (result.reason === "conflict_paused") {
-            await notifyAutoSyncConflictPausedIfNeeded();
-          }
-          break;
+      try {
+        // [S1P-FIX] 调用时传入 true，启用启动安全模式，并绑定启动锁上下文。
+        const result = await performAutoSync(true, SYNC_LOCK_MODE_STARTUP);
+        switch (result.status) {
+          case "success":
+            if (result.action === "pulled" || result.action === "force_pulled") {
+              showMessage("检测到云端有更新，正在刷新页面...", true);
+              setTimeout(() => location.reload(), 1500);
+              return true;
+            }
+            if (result.action === "skipped_push_on_startup") {
+              showMessage(
+                "检测到本地数据较新，已跳过本次启动自动推送。请稍后在导航栏手动同步。",
+                false
+              );
+            }
+            break;
+          case "failure":
+            showMessage(`启动同步检查失败: ${result.error}`, false);
+            break;
+          case "conflict":
+            showMessage("启动同步检查检测到冲突，请在导航栏执行手动同步。", false);
+            break;
+          case "skipped":
+            if (result.reason === "circuit_open") {
+              showMessage(
+                `自动同步因连续失败已暂停，预计恢复时间：${new Date(
+                  result.until
+                ).toLocaleTimeString("zh-CN", { hour12: false })}。`,
+                false
+              );
+            } else if (result.reason === "conflict_paused") {
+              await notifyAutoSyncConflictPausedIfNeeded();
+            } else if (result.reason === "lock_lost") {
+              showMessage("常规启动同步检查因锁失效已中止，本次将跳过。", false);
+            }
+            break;
+        }
+      } finally {
+        stopStartupSyncLockHeartbeat();
+        releaseStartupSyncLock();
       }
     }
     return false;
