@@ -1973,6 +1973,10 @@
       display: flex;
       align-items: center;
       min-width: 0;
+      /* 与右侧工具图标使用同一水平节奏。 */
+      --s1p-authi-action-inline-gap: 10px;
+      /* 视觉补偿：首个图标有内边距，外侧额外补 5px 使观感更接近图标间距。 */
+      --s1p-authi-leading-gap-optical-fix: 5px;
     }
 
     /* 2. 原生按钮容器: 绝对不允许被压缩 */
@@ -1988,8 +1992,10 @@
       flex-shrink: 1;
       min-width: 0;
       flex-wrap: nowrap;
-      margin-left: 8px;
-      gap: 10px;
+      margin-left: calc(
+        var(--s1p-authi-action-inline-gap) + var(--s1p-authi-leading-gap-optical-fix)
+      );
+      gap: var(--s1p-authi-action-inline-gap);
     }
 
     /* 4. [已修正冲突] 脚本容器 *内部* 元素的精确规则: */
