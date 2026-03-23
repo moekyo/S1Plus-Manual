@@ -187,6 +187,86 @@
 - `s1p_pending_auto_sync_request` 用于跨页面补发
 - `pageshow`（含 bfcache）/`visibilitychange` 自动恢复补同步
 
+### 6.5 自动后台同步指示器流转 (Auto Sync Indicator)
+
+指示器主要用于在导航栏反馈同步队列和网络状态，具备跨标签页同步动画的能力。
+
+#### 简易流转全览
+完全的极简状态单线变迁路径如下：
+> `Idle` ➞ *(本地更改)* ➞ `Pending` ➞ *(防抖结束)* ➞ `Running` ➞ *(网络返回)* ➞ `Success / Failure / Conflict` ➞ *(TTL时间结束)* ➞ `Idle`
+
+#### 详细节点与时序图
+1. **触发 (Pending)**
+   - 本地数据变更时，调用 `setAutoSyncIndicatorPendingPhase(reason)` 进入防抖队列。
+   - 显示静止的三个点图标，不会打断正在执行的其他同步任务。
+2. **执行 (Running)**
+   - 防抖结束，调用 `startBackgroundAutoSyncIndicatorCycle(reason)` 生成加锁 `token`。
+   - 图标触发 `.s1p-auto-sync-running` 类，内部三个小点（`.s1p-dot`）执行 `s1p-auto-sync-dot-bounce` 波浪形依次跳动动画。
+3. **结算 (Success / Failure / Conflict)**
+   - 网络合并完成后，调用 `finishBackgroundAutoSyncIndicatorCycle(token, phase)`。
+   - **Success (成功)**：图标变为打勾（静止，无动画）。
+   - **Failure / Conflict (失败或冲突)**：图标变为减号（静止，无动画）。
+4. **冷却与复位 (Cooldown & Revert)**
+   - 根据结算类型进行自动倒计时冷却：Success (2分钟) / Failure (5分钟) / Conflict (10分钟)。
+   - TTL 到期后，随页面可见（visibilitychange）或聚焦重新触发 UI 渲染，自动复位回空闲时极简的单点 `idle` 状态。
+
+```mermaid
+%%{init: {
+  "theme": "base",
+  "themeVariables": {
+    "primaryColor": "#f8fbff",
+    "primaryTextColor": "#1f2a44",
+    "primaryBorderColor": "#9db4d6",
+    "lineColor": "#5f7da8",
+    "actorBkg": "#eef4ff",
+    "actorBorder": "#8ea9cf",
+    "actorTextColor": "#1f2a44",
+    "noteBkgColor": "#f6f9ff",
+    "noteBorderColor": "#b6c7e3",
+    "noteTextColor": "#2d4265"
+  },
+  "sequence": {
+    "diagramMarginX": 24,
+    "actorMargin": 36,
+    "messageMargin": 16
+  }
+}}%%
+sequenceDiagram
+    autonumber
+    participant U as 用户操作
+    participant I as 导航栏指示器
+    participant D as 防抖队列
+    participant S as 同步引擎
+    participant G as GitHub Gist API
+
+    Note over I: Idle（单点）
+    U->>D: 本地数据变更
+    D->>I: Pending（三点静止）
+    D->>S: 防抖结束，提交同步任务
+    S->>I: Running（三点跳动）
+    S->>G: 拉取/合并/按需推送
+
+    alt 同步成功
+        G-->>S: 200 OK
+        S->>I: Success（打勾）
+    else 请求失败
+        G-->>S: 4xx/5xx 或超时
+        S->>I: Failure（减号）
+    else 检测到冲突
+        G-->>S: 需人工决策
+        S->>I: Conflict（减号）
+    end
+
+    Note over I: TTL 冷却（Success 2m / Failure 5m / Conflict 10m）
+    opt 冷却期出现新变更
+        U->>D: 触发新变更
+        D->>I: 立即切回 Pending
+    end
+
+    I->>I: TTL 到期 + visibility/focus 重绘
+    Note over I: 回到 Idle
+```
+
 ## 7. 改动约定（避免回归）
 
 ### 7.1 设置写入
