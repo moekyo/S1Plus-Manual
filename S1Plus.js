@@ -11,7 +11,10 @@
 // @grant        GM_deleteValue
 // @grant        GM_xmlhttpRequest
 // @grant        GM_openInTab
+// @grant        GM_download
 // @grant        GM_addValueChangeListener
+// @connect      stage1st.com
+// @connect      img.stage1st.com
 // @connect      api.github.com
 // @connect      gist.githubusercontent.com
 // @license      MIT
@@ -2676,7 +2679,7 @@
       left: 50%;
       bottom: 20px;
       transform: translate(-50%, 50px);
-      z-index: 10005;
+      z-index: 100120;
       padding: 10px 18px;
       border-radius: 6px;
       font-size: 14px;
@@ -8247,6 +8250,8 @@
     scrollUpBtn: null,
     scrollDownBtn: null,
     fitBtn: null,
+    saveBtn: null,
+    saveAllBtn: null,
     prevBtn: null,
     nextBtn: null,
     toolbarContinuousActionStops: [],
@@ -8280,6 +8285,8 @@
     bodyOverflowBeforeOpen: "",
     previouslyFocusedElement: null,
     lastZoomPercent: null,
+    isSingleSaving: false,
+    isBatchSaving: false,
   };
   const isS1pReducedMotionPreferred = () => {
     if (typeof window.matchMedia !== "function") {
@@ -8714,6 +8721,7 @@
     if (state.nextBtn) {
       state.nextBtn.disabled = disableNext;
     }
+    syncS1pImageViewerDownloadButtonState();
   };
   const requestS1pImageViewerSourceSwitch = (sourceUrl, requestId) => {
     const normalizedSourceUrl = normalizeS1pImageViewerSourceUrl(sourceUrl);
@@ -9041,6 +9049,468 @@
     } catch (error) {
       window.open(sourceUrl, "_blank", "noopener,noreferrer");
     }
+  };
+  const triggerS1pImageViewerBlobDownload = (blob, fileName) => {
+    if (!(blob instanceof Blob) || blob.size <= 0) {
+      return false;
+    }
+    const objectUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = fileName;
+    anchor.style.display = "none";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => {
+      URL.revokeObjectURL(objectUrl);
+    }, 3000);
+    return true;
+  };
+  const sanitizeS1pImageViewerDownloadFileName = (fileName) => {
+    const safeName = String(fileName || "")
+      .replace(/[\u0000-\u001f\u007f]/g, "")
+      .replace(/[\\/:*?"<>|]+/g, "_")
+      .replace(/\s+/g, " ")
+      .trim()
+      .replace(/[. ]+$/g, "");
+    return safeName;
+  };
+  const resolveS1pImageViewerDownloadFileName = (sourceUrl) => {
+    const fallbackName = `s1plus-image-${new Date()
+      .toISOString()
+      .replace(/[^0-9]/g, "")
+      .slice(0, 14)}.jpg`;
+    const normalizedSourceUrl = normalizeS1pImageViewerSourceUrl(sourceUrl);
+    if (!normalizedSourceUrl) {
+      return fallbackName;
+    }
+    try {
+      const parsedUrl = new URL(normalizedSourceUrl, window.location.href);
+      const queryFilenameKeys = ["filename", "file", "name", "attname"];
+      for (const key of queryFilenameKeys) {
+        const queryFileName = sanitizeS1pImageViewerDownloadFileName(
+          parsedUrl.searchParams.get(key)
+        );
+        if (queryFileName) {
+          return queryFileName;
+        }
+      }
+      const rawFileName = parsedUrl.pathname.split("/").pop() || "";
+      let decodedFileName = rawFileName;
+      try {
+        decodedFileName = decodeURIComponent(rawFileName);
+      } catch (error) {
+        decodedFileName = rawFileName;
+      }
+      const safeFileName = sanitizeS1pImageViewerDownloadFileName(decodedFileName);
+      if (safeFileName) {
+        return safeFileName;
+      }
+    } catch (error) {
+      return fallbackName;
+    }
+    return fallbackName;
+  };
+  const resolveS1pHostConnectPermission = (host) => {
+    const normalizedHost = String(host || "")
+      .trim()
+      .toLowerCase();
+    if (!normalizedHost) {
+      return { known: false, allowed: false };
+    }
+    const hasScriptConnects =
+      typeof GM_info !== "undefined" &&
+      GM_info &&
+      GM_info.script &&
+      Array.isArray(GM_info.script.connects);
+    if (!hasScriptConnects) {
+      return { known: false, allowed: false };
+    }
+    const connects = GM_info.script.connects;
+    if (connects.length === 0) {
+      return { known: false, allowed: false };
+    }
+    const allowed = connects.some((rule) => {
+      const normalizedRule = String(rule || "")
+        .trim()
+        .toLowerCase();
+      if (!normalizedRule) {
+        return false;
+      }
+      if (normalizedRule === "*" || normalizedRule === "<all_urls>") {
+        return true;
+      }
+      if (normalizedRule === normalizedHost) {
+        return true;
+      }
+      if (normalizedRule.startsWith("*.")) {
+        const suffix = normalizedRule.slice(2);
+        return normalizedHost === suffix || normalizedHost.endsWith(`.${suffix}`);
+      }
+      return false;
+    });
+    return { known: true, allowed };
+  };
+  const buildS1pImageDownloadRequestHeaders = () => {
+    const headers = {};
+    const referrer = String(window.location.href || "").trim();
+    const origin = String(window.location.origin || "").trim();
+    if (referrer) {
+      headers.Referer = referrer;
+    }
+    if (origin) {
+      headers.Origin = origin;
+    }
+    return headers;
+  };
+  const resolveS1pDownloadErrorMessage = (errorLike, fallbackMessage = "下载失败") => {
+    if (!errorLike) {
+      return fallbackMessage;
+    }
+    if (errorLike instanceof Error) {
+      return String(errorLike.message || fallbackMessage);
+    }
+    if (typeof errorLike === "string") {
+      return errorLike;
+    }
+    if (typeof errorLike === "object") {
+      const code = String(errorLike.error || errorLike.code || "").trim();
+      const details = String(errorLike.details || errorLike.message || "").trim();
+      if (code && details && details !== code) {
+        return `${code}: ${details}`;
+      }
+      if (code) {
+        return code;
+      }
+      if (details) {
+        return details;
+      }
+    }
+    return fallbackMessage;
+  };
+  const createS1pImageDownloadResult = (success, errorMessage = "") => {
+    return {
+      success: success === true,
+      errorMessage: String(errorMessage || ""),
+    };
+  };
+  const downloadS1pImageByUrl = async (
+    sourceUrl,
+    { fileName = "", timeoutMs = 20000 } = {}
+  ) => {
+    const normalizedSourceUrl = normalizeS1pImageViewerSourceUrl(sourceUrl);
+    if (!normalizedSourceUrl) {
+      return createS1pImageDownloadResult(false, "图片地址无效");
+    }
+    const resolvedFileName =
+      sanitizeS1pImageViewerDownloadFileName(fileName) ||
+      resolveS1pImageViewerDownloadFileName(normalizedSourceUrl);
+    const targetHost = (() => {
+      try {
+        return new URL(normalizedSourceUrl, window.location.href).hostname || "";
+      } catch (error) {
+        return "";
+      }
+    })();
+    const requestHeaders = buildS1pImageDownloadRequestHeaders();
+    let gmDownloadErrorMessage = "";
+
+    const hasLegacyGMDownload = typeof GM_download === "function";
+    const hasPromiseGMDownload =
+      typeof GM === "object" && GM && typeof GM.download === "function";
+    const connectPermission = resolveS1pHostConnectPermission(targetHost);
+
+    if (connectPermission.known && !connectPermission.allowed) {
+      const permissionErrorMessage = `Tampermonkey 未授权连接 ${targetHost || "目标域名"}（@connect）`;
+      console.warn(
+        "S1 Plus: 图片保存被 @connect 策略拦截。",
+        normalizedSourceUrl,
+        permissionErrorMessage
+      );
+      return createS1pImageDownloadResult(
+        false,
+        `${permissionErrorMessage}。请更新本地加载器并重新授予权限`
+      );
+    }
+
+    if (hasLegacyGMDownload || hasPromiseGMDownload) {
+      try {
+        const downloadOptions = {
+          url: normalizedSourceUrl,
+          name: resolvedFileName,
+          saveAs: false,
+          headers: requestHeaders,
+        };
+        if (hasLegacyGMDownload) {
+          await new Promise((resolve, reject) => {
+            let settled = false;
+            const resolveOnce = () => {
+              if (settled) {
+                return;
+              }
+              settled = true;
+              resolve(true);
+            };
+            const rejectOnce = (error) => {
+              if (settled) {
+                return;
+              }
+              settled = true;
+              reject(
+                error instanceof Error
+                  ? error
+                  : new Error(resolveS1pDownloadErrorMessage(error))
+              );
+            };
+            try {
+              GM_download({
+                ...downloadOptions,
+                onload: resolveOnce,
+                ontimeout: () => rejectOnce(new Error("下载超时")),
+                onerror: (error) => rejectOnce(error),
+              });
+            } catch (error) {
+              rejectOnce(error);
+            }
+          });
+        } else {
+          await GM.download(downloadOptions);
+        }
+        return createS1pImageDownloadResult(true);
+      } catch (downloadError) {
+        gmDownloadErrorMessage = resolveS1pDownloadErrorMessage(downloadError);
+        console.warn(
+          "S1 Plus: GM_download 失败，尝试回退方案。",
+          normalizedSourceUrl,
+          gmDownloadErrorMessage,
+          downloadError
+        );
+      }
+    }
+
+    try {
+      const response = await new Promise((resolve, reject) => {
+        const requestOptions = {
+          method: "GET",
+          url: normalizedSourceUrl,
+          responseType: "blob",
+          timeout: Math.max(2000, Number(timeoutMs) || 20000),
+          headers: requestHeaders,
+          anonymous: false,
+          onload: (rawResponse) => resolve(rawResponse),
+          ontimeout: () => reject(new Error("请求超时")),
+          onerror: (errorDetails) =>
+            reject(
+              new Error(
+                `网络请求失败（${resolveS1pDownloadErrorMessage(errorDetails, "未知错误")}）`
+              )
+            ),
+        };
+        const cookieText = String(document.cookie || "").trim();
+        if (cookieText) {
+          requestOptions.cookie = cookieText;
+        }
+        GM_xmlhttpRequest({
+          ...requestOptions,
+        });
+      });
+      const statusCode = Number(response.status || 0);
+      const responsePayload = response.response;
+      if (statusCode !== 0 && (statusCode < 200 || statusCode >= 300)) {
+        throw new Error(`HTTP ${statusCode}`);
+      }
+      let imageBlob = null;
+      if (responsePayload instanceof Blob) {
+        imageBlob = responsePayload;
+      } else if (responsePayload instanceof ArrayBuffer) {
+        imageBlob = new Blob([responsePayload]);
+      } else if (ArrayBuffer.isView(responsePayload)) {
+        imageBlob = new Blob([
+          new Uint8Array(
+            responsePayload.buffer,
+            responsePayload.byteOffset,
+            responsePayload.byteLength
+          ),
+        ]);
+      }
+      if (!(imageBlob instanceof Blob) || imageBlob.size <= 0) {
+        throw new Error("图片响应格式不受支持");
+      }
+      if (triggerS1pImageViewerBlobDownload(imageBlob, resolvedFileName)) {
+        return createS1pImageDownloadResult(true);
+      }
+      return createS1pImageDownloadResult(false, "浏览器触发下载失败");
+    } catch (gmRequestError) {
+      try {
+        const fetchResponse = await fetch(normalizedSourceUrl, {
+          method: "GET",
+          credentials: "include",
+          mode: "cors",
+        });
+        if (!fetchResponse.ok) {
+          throw new Error(`HTTP ${fetchResponse.status}`);
+        }
+        const imageBlob = await fetchResponse.blob();
+        if (triggerS1pImageViewerBlobDownload(imageBlob, resolvedFileName)) {
+          return createS1pImageDownloadResult(true);
+        }
+        return createS1pImageDownloadResult(false, "浏览器触发下载失败");
+      } catch (fetchError) {
+        const gmRequestErrorMessage = resolveS1pDownloadErrorMessage(gmRequestError);
+        const fetchErrorMessage = resolveS1pDownloadErrorMessage(fetchError);
+        const errorFragments = [
+          gmDownloadErrorMessage,
+          gmRequestErrorMessage,
+          fetchErrorMessage,
+        ].filter(Boolean);
+        const combinedErrorMessage = errorFragments.join("；");
+        console.warn(
+          "S1 Plus: 图片保存失败。",
+          normalizedSourceUrl,
+          combinedErrorMessage,
+          gmRequestError,
+          fetchError
+        );
+        return createS1pImageDownloadResult(
+          false,
+          combinedErrorMessage || "网络请求失败"
+        );
+      }
+    }
+  };
+  const buildS1pImageViewerBatchDownloadFileName = (sourceUrl, index, totalCount) => {
+    const baseFileName = resolveS1pImageViewerDownloadFileName(sourceUrl);
+    const safeIndex = Math.max(1, Number(index) || 1);
+    const safeTotalCount = Math.max(1, Number(totalCount) || 1);
+    const padLength = Math.max(2, String(safeTotalCount).length);
+    const indexPrefix = String(safeIndex).padStart(padLength, "0");
+    return `${indexPrefix}-${baseFileName}`;
+  };
+  const syncS1pImageViewerDownloadButtonState = () => {
+    const state = s1pImageViewerState;
+    const hasSourceUrl = Boolean(String(state.sourceUrl || "").trim());
+    if (state.saveBtn) {
+      state.saveBtn.disabled = !hasSourceUrl || state.isBatchSaving || state.isSingleSaving;
+      state.saveBtn.textContent = state.isSingleSaving ? "正在保存..." : "保存图片";
+    }
+    if (state.saveAllBtn) {
+      const shouldShowSaveAllBtn = state.galleryItems.length > 1;
+      state.saveAllBtn.style.display = shouldShowSaveAllBtn ? "" : "none";
+      state.saveAllBtn.disabled =
+        !shouldShowSaveAllBtn || state.isBatchSaving || state.isSingleSaving;
+      state.saveAllBtn.textContent = state.isBatchSaving
+        ? "正在保存..."
+        : "保存全部图片";
+    }
+  };
+  const saveS1pImageToLocal = async () => {
+    const state = s1pImageViewerState;
+    if (state.isSingleSaving || state.isBatchSaving) {
+      showMessage("正在保存图片，请稍候...", null);
+      return false;
+    }
+    const sourceUrl = String(state.sourceUrl || "");
+    if (!sourceUrl) {
+      showMessage("当前没有可保存的图片。", false);
+      return false;
+    }
+    state.isSingleSaving = true;
+    syncS1pImageViewerDownloadButtonState();
+    showMessage("正在保存图片...", null);
+    let result = null;
+    try {
+      result = await downloadS1pImageByUrl(sourceUrl);
+    } finally {
+      state.isSingleSaving = false;
+      syncS1pImageViewerDownloadButtonState();
+    }
+    if (!result.success) {
+      console.warn("S1 Plus: 单图保存失败。", {
+        sourceUrl,
+        error: String(result.errorMessage || ""),
+      });
+      showMessage("保存失败。", false);
+      return false;
+    }
+    showMessage("图片已开始保存。", true);
+    return true;
+  };
+  const saveAllS1pImagesToLocal = async () => {
+    const state = s1pImageViewerState;
+    if (state.isBatchSaving || state.isSingleSaving) {
+      showMessage("正在保存图片，请稍候...", null);
+      return false;
+    }
+    const imageUrls = Array.isArray(state.galleryItems)
+      ? state.galleryItems.filter((url) => normalizeS1pImageViewerSourceUrl(url))
+      : [];
+    if (imageUrls.length <= 1) {
+      showMessage("当前没有多图可批量保存。", false);
+      return false;
+    }
+
+    state.isBatchSaving = true;
+    syncS1pImageViewerDownloadButtonState();
+    const total = imageUrls.length;
+    let successCount = 0;
+    let firstFailureMessage = "";
+    showMessage(`开始保存，共 ${total} 张图片。`, null);
+    try {
+      for (let index = 0; index < total; index += 1) {
+        if (!state.isOpen) {
+          break;
+        }
+        const imageUrl = imageUrls[index];
+        const fileName = buildS1pImageViewerBatchDownloadFileName(
+          imageUrl,
+          index + 1,
+          total
+        );
+        // 逐张下载，减少浏览器对并发下载的拦截概率。
+        const result = await downloadS1pImageByUrl(imageUrl, { fileName });
+        if (result.success) {
+          successCount += 1;
+        } else if (!firstFailureMessage) {
+          firstFailureMessage = String(result.errorMessage || "");
+        }
+        if (!result.success) {
+          console.warn("S1 Plus: 批量保存失败项。", {
+            imageUrl,
+            error: String(result.errorMessage || ""),
+          });
+        }
+        await sleep(180);
+      }
+    } finally {
+      state.isBatchSaving = false;
+      syncS1pImageViewerDownloadButtonState();
+    }
+
+    if (successCount === total) {
+      showMessage(`已开始保存 ${successCount} 张图片。`, true);
+      return true;
+    }
+    if (successCount > 0) {
+      if (firstFailureMessage) {
+        console.warn("S1 Plus: 批量保存部分失败。", {
+          successCount,
+          total,
+          firstError: firstFailureMessage,
+        });
+      }
+      showMessage(
+        `部分成功：已开始保存 ${successCount}/${total} 张图片。`,
+        false
+      );
+      return true;
+    }
+    console.warn("S1 Plus: 批量保存全部失败。", {
+      total,
+      firstError: firstFailureMessage,
+    });
+    showMessage("保存失败。", false);
+    return false;
   };
   const handleS1pImageViewerMouseDown = (event) => {
     const state = s1pImageViewerState;
@@ -9633,6 +10103,8 @@
           </button>
           <button type="button" class="s1p-btn" data-action="fit">\u5b8c\u6574\u663e\u793a</button>
           <button type="button" class="s1p-btn" data-action="reset">\u91cd\u7f6e\u89c6\u56fe</button>
+          <button type="button" class="s1p-btn" data-action="save">\u4fdd\u5b58\u56fe\u7247</button>
+          <button type="button" class="s1p-btn" data-action="save-all">\u4fdd\u5b58\u5168\u90e8\u56fe\u7247</button>
           <button type="button" class="s1p-btn" data-action="open">\u65b0\u6807\u7b7e\u6253\u5f00\u539f\u56fe</button>
           <button
             type="button"
@@ -9684,6 +10156,8 @@
     const prevBtn = overlay.querySelector('button[data-action="prev"]');
     const nextBtn = overlay.querySelector('button[data-action="next"]');
     const resetBtn = overlay.querySelector('button[data-action="reset"]');
+    const saveBtn = overlay.querySelector('button[data-action="save"]');
+    const saveAllBtn = overlay.querySelector('button[data-action="save-all"]');
     const openBtn = overlay.querySelector('button[data-action="open"]');
     const closeBtn = overlay.querySelector('button[data-action="close"]');
 
@@ -9703,6 +10177,8 @@
       !(prevBtn instanceof HTMLButtonElement) ||
       !(nextBtn instanceof HTMLButtonElement) ||
       !(resetBtn instanceof HTMLButtonElement) ||
+      !(saveBtn instanceof HTMLButtonElement) ||
+      !(saveAllBtn instanceof HTMLButtonElement) ||
       !(openBtn instanceof HTMLButtonElement) ||
       !(closeBtn instanceof HTMLButtonElement)
     ) {
@@ -9819,6 +10295,12 @@
     resetBtn.addEventListener("click", () => {
       resetS1pImageViewerTransform();
     });
+    saveBtn.addEventListener("click", () => {
+      void saveS1pImageToLocal();
+    });
+    saveAllBtn.addEventListener("click", () => {
+      void saveAllS1pImagesToLocal();
+    });
     openBtn.addEventListener("click", () => {
       openS1pImageInNewTab();
     });
@@ -9842,6 +10324,8 @@
     state.scrollUpBtn = scrollUpBtn;
     state.scrollDownBtn = scrollDownBtn;
     state.fitBtn = fitBtn;
+    state.saveBtn = saveBtn;
+    state.saveAllBtn = saveAllBtn;
     state.prevBtn = prevBtn;
     state.nextBtn = nextBtn;
     state.toolbarContinuousActionStops = toolbarContinuousActionStops;

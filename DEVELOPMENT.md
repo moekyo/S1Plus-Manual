@@ -38,7 +38,10 @@
 // @grant        GM_deleteValue
 // @grant        GM_xmlhttpRequest
 // @grant        GM_openInTab
+// @grant        GM_download
 // @grant        GM_addValueChangeListener
+// @connect      stage1st.com
+// @connect      img.stage1st.com
 // @connect      api.github.com
 // @connect      gist.githubusercontent.com
 // ==/UserScript==
@@ -54,6 +57,7 @@
 - 关闭线上正式脚本，避免双实例冲突
 - `@require` 必须是绝对路径
 - Windows 路径示例：`file:///C:/Users/Name/S1Plus-Manual/S1Plus.js`
+- 本地 Loader 的 `@grant` / `@connect` 需要与主脚本保持一致；若缺少 `img.stage1st.com`，图片保存会被 Tampermonkey 拦截
 
 ## 3. 多机协作流程（Git）
 
