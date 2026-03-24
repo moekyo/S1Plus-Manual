@@ -475,6 +475,11 @@
   const READ_PROGRESS_PERSIST_DEBOUNCE_MS = 5 * 1000;
   const NATIVE_BLACKLIST_VIEW_URL =
     "https://stage1st.com/2b/home.php?mod=space&do=friend&view=blacklist";
+  const NATIVE_BLACKLIST_IMPORT_BUTTON_ID = "s1p-native-blacklist-import-btn";
+  const NATIVE_BLACKLIST_IMPORT_HINT_ID = "s1p-native-blacklist-import-hint";
+  const NATIVE_BLACKLIST_IMPORTED_BADGE_CLASS = "s1p-native-imported-badge";
+  const NATIVE_BLACKLIST_IMPORTED_BADGE_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M5 2H19C19.5523 2 20 2.44772 20 3V22.1433C20 22.4194 19.7761 22.6434 19.5 22.6434C19.4061 22.6434 19.314 22.6168 19.2344 22.5669L12 18.0313L4.76559 22.5669C4.53163 22.7136 4.22306 22.6429 4.07637 22.4089C4.02647 22.3293 4 22.2373 4 22.1433V3C4 2.44772 4.44772 2 5 2ZM18 4H6V19.4324L12 15.6707L18 19.4324V4Z"></path></svg>`;
+  const NATIVE_BLACKLIST_IMPORTED_BADGE_TITLE = "已在 S1 Plus 屏蔽列表";
   // 阅读位置标识的正文留白与右侧安全间距。
   const READ_INDICATOR_CONTENT_GAP_PX = 8;
   const READ_INDICATOR_RIGHT_SAFE_GAP_PX = 14;
@@ -2432,6 +2437,12 @@
       flex-direction: column;
       gap: 8px;
     }
+    .s1p-list-summary {
+      margin: -4px 0 10px;
+      color: var(--s1p-desc-t);
+      font-size: 12px;
+      line-height: 1.5;
+    }
     /* 展开状态下的列表，移除顶部间距以更紧凑 */
     .s1p-thread-posts.expanded .s1p-list {
       margin-top: 0;
@@ -2809,6 +2820,32 @@
       min-height: 88px;
       resize: vertical;
       font-family: inherit;
+    }
+    .s1p-native-blacklist-import-btn {
+      margin-left: 8px;
+    }
+    .s1p-native-blacklist-import-hint {
+      margin-left: 8px;
+      color: var(--s1p-desc-t);
+      font-size: 12px;
+    }
+    .s1p-native-imported-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      float: right;
+      width: 16px;
+      height: 16px;
+      margin-left: 8px;
+      color: var(--s1p-list-item-status-text);
+      line-height: 0;
+      pointer-events: auto;
+      cursor: help;
+    }
+    .s1p-native-imported-badge > svg {
+      width: 16px;
+      height: 16px;
+      display: block;
     }
 
     /* --- 阅读记录详情弹窗样式 --- */
@@ -5810,6 +5847,369 @@
       return;
     }
     showMessage(`已屏蔽用户 ${displayName}，但同步论坛黑名单失败。`, false);
+  };
+
+  const isNativeBlacklistPage = () => {
+    if (!/\/home\.php$/i.test(String(window.location.pathname || ""))) {
+      return false;
+    }
+    const searchParams = new URLSearchParams(window.location.search);
+    return (
+      searchParams.get("mod") === "space" &&
+      searchParams.get("do") === "friend" &&
+      searchParams.get("view") === "blacklist"
+    );
+  };
+
+  const getNativeBlacklistPaginationInfo = (root = document) => {
+    const searchParams = new URLSearchParams(window.location.search);
+    let currentPage = Number.parseInt(searchParams.get("page") || "1", 10);
+    if (!Number.isFinite(currentPage) || currentPage <= 0) {
+      currentPage = 1;
+    }
+
+    const currentPageFromPager = Number.parseInt(
+      String(root.querySelector(".pg strong")?.textContent || ""),
+      10
+    );
+    if (Number.isFinite(currentPageFromPager) && currentPageFromPager > 0) {
+      currentPage = currentPageFromPager;
+    }
+
+    let totalPages = currentPage;
+    const totalPageText = String(
+      root.querySelector(".pg label span[title*='页']")?.getAttribute("title") ||
+      root.querySelector(".pg label span")?.textContent ||
+      ""
+    );
+    const totalPageMatch = totalPageText.match(/(\d+)\s*页/);
+    if (totalPageMatch && totalPageMatch[1]) {
+      const parsedTotalPage = Number.parseInt(totalPageMatch[1], 10);
+      if (Number.isFinite(parsedTotalPage) && parsedTotalPage > 0) {
+        totalPages = parsedTotalPage;
+      }
+    }
+    return { currentPage, totalPages };
+  };
+
+  const buildNativeBlacklistImportHintText = (root = document) => {
+    const paginationInfo = getNativeBlacklistPaginationInfo(root);
+    return paginationInfo.totalPages > 1
+      ? `当前第 ${paginationInfo.currentPage}/${paginationInfo.totalPages} 页，可逐页导入。`
+      : "将当前页系统黑名单导入脚本。";
+  };
+
+  const getNativeBlacklistCardUserMeta = (listItem) => {
+    if (!(listItem instanceof Element)) {
+      return {
+        userId: "",
+        userName: "",
+      };
+    }
+
+    // 黑名单卡片结构里，用户名链接是 h4 的直接子节点；
+    // “黑名单除名”在 h4 > span.y 里，不能拿它当用户名。
+    const headingProfileLink = listItem.querySelector("h4 > a");
+    const uidFallbackLink = listItem.querySelector(
+      '.avt a[href*="space-uid-"], .avt a[href*="mod=space&uid="], .avt a[href*="uid="]'
+    );
+    const uidReferenceLink = headingProfileLink || uidFallbackLink;
+    const fallbackUidMatch = String(listItem.id || "").match(/^friend_(\d+)_li$/);
+
+    const userId = normalizeNumericId(
+      extractUidFromSpaceUrl(
+        uidReferenceLink?.getAttribute("href") || uidReferenceLink?.href || ""
+      ) || (fallbackUidMatch && fallbackUidMatch[1])
+    );
+    const userName = normalizeUsernameInput(headingProfileLink?.textContent || "");
+
+    return {
+      userId,
+      userName,
+    };
+  };
+
+  const resolveNativeBlacklistCardActionBar = (listItem) => {
+    if (!(listItem instanceof Element)) {
+      return null;
+    }
+    // 黑名单卡片里第一个 `.xg1` 是底部操作行；
+    // 互动弹层是额外节点，不作为标识挂载点。
+    for (const child of Array.from(listItem.children)) {
+      if (
+        child instanceof Element &&
+        child.tagName === "DIV" &&
+        child.classList.contains("xg1")
+      ) {
+        return child;
+      }
+    }
+    return null;
+  };
+
+  const collectNativeBlacklistUsersFromPage = (root = document) => {
+    const userMap = new Map();
+    root.querySelectorAll('#friend_ul li[id^="friend_"]').forEach((listItem) => {
+      const { userId, userName } = getNativeBlacklistCardUserMeta(listItem);
+      if (!userId || !userName) {
+        return;
+      }
+      if (!userMap.has(userId)) {
+        userMap.set(userId, userName);
+      }
+    });
+
+    return Array.from(userMap.entries()).map(([id, name]) => ({ id, name }));
+  };
+
+  const updateNativeBlacklistImportedBadges = (root = document) => {
+    if (!isNativeBlacklistPage()) {
+      return 0;
+    }
+
+    const blockedUsers = getBlockedUsers();
+    const blockedUserIdSet = new Set(
+      Object.keys(blockedUsers)
+        .map((id) => normalizeNumericId(id))
+        .filter(Boolean)
+    );
+    const blockedUserNameSet = new Set();
+    Object.values(blockedUsers).forEach((entry) => {
+      const normalizedName = normalizeUsernameInput(entry?.name);
+      if (normalizedName) {
+        blockedUserNameSet.add(normalizedName);
+      }
+    });
+
+    let markedCount = 0;
+    root.querySelectorAll('#friend_ul li[id^="friend_"]').forEach((listItem) => {
+      if (!(listItem instanceof Element)) {
+        return;
+      }
+      const { userId, userName } = getNativeBlacklistCardUserMeta(listItem);
+      const shouldMarkAsImported = Boolean(
+        (userId && blockedUserIdSet.has(userId)) ||
+          (userName && blockedUserNameSet.has(userName))
+      );
+
+      const existingBadges = Array.from(
+        listItem.querySelectorAll(`.${NATIVE_BLACKLIST_IMPORTED_BADGE_CLASS}`)
+      );
+
+      if (shouldMarkAsImported) {
+        let badge = existingBadges[0];
+        if (!(badge instanceof Element)) {
+          badge = document.createElement("span");
+          badge.className = NATIVE_BLACKLIST_IMPORTED_BADGE_CLASS;
+        }
+        const actionBar = resolveNativeBlacklistCardActionBar(listItem);
+        if (actionBar) {
+          actionBar.appendChild(badge);
+        } else {
+          listItem.appendChild(badge);
+        }
+        setSanitizedIconHtml(badge, NATIVE_BLACKLIST_IMPORTED_BADGE_ICON);
+        badge.classList.add("s1p-has-tooltip");
+        badge.dataset.fullTag = NATIVE_BLACKLIST_IMPORTED_BADGE_TITLE;
+        badge.dataset.s1pTooltipDelay = "120";
+        badge.removeAttribute("title");
+        existingBadges.slice(1).forEach((node) => node.remove());
+        markedCount += 1;
+      } else {
+        existingBadges.forEach((node) => node.remove());
+      }
+    });
+
+    return markedCount;
+  };
+
+  const importNativeBlacklistUsersFromCurrentPage = () => {
+    const usersToImport = collectNativeBlacklistUsersFromPage(document);
+    if (usersToImport.length === 0) {
+      return {
+        hasEntries: false,
+        hasChanges: false,
+        addedCount: 0,
+        updatedCount: 0,
+        duplicatedByIdCount: 0,
+        duplicatedByNameCount: 0,
+      };
+    }
+
+    const settings = getSettings();
+    const blockedUsers = getBlockedUsers();
+    const nextBlockedUsers = { ...blockedUsers };
+    const blockedNameSet = new Set();
+    Object.values(nextBlockedUsers).forEach((entry) => {
+      const normalizedName = normalizeUsernameInput(entry?.name);
+      if (normalizedName) {
+        blockedNameSet.add(normalizedName);
+      }
+    });
+
+    let addedCount = 0;
+    let updatedCount = 0;
+    let duplicatedByIdCount = 0;
+    let duplicatedByNameCount = 0;
+    const importTimestamp = Date.now();
+
+    usersToImport.forEach((item, index) => {
+      const userId = normalizeNumericId(item.id);
+      const userName = normalizeUsernameInput(item.name);
+      if (!userId || !userName) {
+        return;
+      }
+
+      const existingItem = nextBlockedUsers[userId];
+      if (existingItem) {
+        let shouldUpdateExistingItem = false;
+        let nextExistingItem = existingItem;
+
+        const existingName = String(existingItem?.name || "");
+        const shouldRefreshName =
+          !normalizeUsernameInput(existingName) ||
+          /^用户\s*#\d+$/.test(existingName);
+        if (shouldRefreshName && existingName !== userName) {
+          nextExistingItem = { ...nextExistingItem, name: userName };
+          shouldUpdateExistingItem = true;
+        }
+        if (existingItem.addedToNativeBlacklist !== true) {
+          nextExistingItem = {
+            ...nextExistingItem,
+            addedToNativeBlacklist: true,
+          };
+          shouldUpdateExistingItem = true;
+        }
+
+        if (shouldUpdateExistingItem) {
+          nextBlockedUsers[userId] = nextExistingItem;
+          blockedNameSet.add(userName);
+          updatedCount += 1;
+        } else {
+          duplicatedByIdCount += 1;
+        }
+        return;
+      }
+
+      if (blockedNameSet.has(userName)) {
+        duplicatedByNameCount += 1;
+        return;
+      }
+
+      nextBlockedUsers[userId] = {
+        name: userName,
+        timestamp: importTimestamp + index,
+        blockThreads: settings.blockThreadsOnUserBlock === true,
+        addedToNativeBlacklist: true,
+      };
+      blockedNameSet.add(userName);
+      addedCount += 1;
+    });
+
+    const hasChanges = addedCount > 0 || updatedCount > 0;
+    if (hasChanges) {
+      saveBlockedUsers(nextBlockedUsers);
+      hideBlockedUsersPosts();
+      hideBlockedUserQuotes();
+      hideBlockedUserRatings();
+      hideBlockedUserNotifications();
+      if (settings.enablePostBlocking) {
+        applyUserThreadBlocklist();
+      }
+    }
+    updateNativeBlacklistImportedBadges(document);
+
+    return {
+      hasEntries: true,
+      hasChanges,
+      addedCount,
+      updatedCount,
+      duplicatedByIdCount,
+      duplicatedByNameCount,
+    };
+  };
+
+  const ensureNativeBlacklistImportButton = () => {
+    if (!isNativeBlacklistPage()) {
+      return false;
+    }
+
+    const blacklistForm = document.querySelector('form[name="blackform"]');
+    const addButton = blacklistForm?.querySelector(
+      'button[name="blacklistsubmit_btn"]'
+    );
+    if (!(addButton instanceof Element)) {
+      updateNativeBlacklistImportedBadges(document);
+      return false;
+    }
+    const actionCell = addButton.parentElement;
+    if (!(actionCell instanceof Element)) {
+      updateNativeBlacklistImportedBadges(document);
+      return false;
+    }
+
+    let importBtn = actionCell.querySelector(`#${NATIVE_BLACKLIST_IMPORT_BUTTON_ID}`);
+    if (!(importBtn instanceof Element)) {
+      importBtn = document.createElement("button");
+      importBtn.type = "button";
+      importBtn.id = NATIVE_BLACKLIST_IMPORT_BUTTON_ID;
+      importBtn.className = "pn vm s1p-native-blacklist-import-btn";
+      importBtn.innerHTML = "<em>导入本页到 S1 Plus</em>";
+
+      importBtn.addEventListener("click", () => {
+        if (importBtn.disabled) {
+          return;
+        }
+
+        importBtn.disabled = true;
+        showMessage("正在导入当前页论坛黑名单...", null);
+        try {
+          const result = importNativeBlacklistUsersFromCurrentPage();
+          if (!result.hasEntries) {
+            showMessage("当前页面未检测到可导入的黑名单用户。", false);
+            return;
+          }
+
+          const latestPaginationInfo = getNativeBlacklistPaginationInfo(document);
+          const pageSuffix =
+            latestPaginationInfo.totalPages > 1
+              ? `第 ${latestPaginationInfo.currentPage}/${latestPaginationInfo.totalPages} 页`
+              : "当前页";
+          const continueHint =
+            latestPaginationInfo.totalPages > 1 &&
+            latestPaginationInfo.currentPage < latestPaginationInfo.totalPages
+              ? " 请继续翻页后重复导入。"
+              : "";
+
+          if (!result.hasChanges) {
+            showMessage(`${pageSuffix}导入完成：无新增，均已存在。${continueHint}`, true);
+            return;
+          }
+
+          showMessage(
+            `${pageSuffix}导入完成：新增 ${result.addedCount}，更新 ${result.updatedCount}，重复UID ${result.duplicatedByIdCount}，重名跳过 ${result.duplicatedByNameCount}。${continueHint}`,
+            true
+          );
+        } catch (error) {
+          console.error("S1 Plus: 导入论坛黑名单失败。", error);
+          showMessage("导入失败，请稍后重试。", false);
+        } finally {
+          importBtn.disabled = false;
+        }
+      });
+      addButton.insertAdjacentElement("afterend", importBtn);
+    }
+
+    let importHint = actionCell.querySelector(`#${NATIVE_BLACKLIST_IMPORT_HINT_ID}`);
+    if (!(importHint instanceof Element)) {
+      importHint = document.createElement("span");
+      importHint.id = NATIVE_BLACKLIST_IMPORT_HINT_ID;
+      importHint.className = "s1p-native-blacklist-import-hint";
+      importBtn.insertAdjacentElement("afterend", importHint);
+    }
+    importHint.textContent = buildNativeBlacklistImportHintText(document);
+    updateNativeBlacklistImportedBadges(document);
+    return true;
   };
 
   /**
@@ -15597,6 +15997,29 @@
     let userTabClickHandler = null;
     let threadTabClickHandler = null;
     let navSettingsTabClickHandler = null;
+    const formatListSummaryText = (count, itemLabel = "条记录") => {
+      const safeCount = Math.max(0, Number(count) || 0);
+      return `当前共 ${safeCount} ${itemLabel}`;
+    };
+    const buildListSummaryHtml = (summaryId, count, itemLabel) => {
+      const safeCount = Math.max(0, Number(count) || 0);
+      const hiddenStyle = safeCount > 0 ? "" : ' style="display: none;"';
+      return `<div id="${summaryId}" class="s1p-list-summary"${hiddenStyle}>${formatListSummaryText(
+        safeCount,
+        itemLabel
+      )}</div>`;
+    };
+    const setListSummaryText = (summaryId, count, itemLabel) => {
+      const summaryEl = modal.querySelector(`#${summaryId}`);
+      if (!summaryEl) {
+        return;
+      }
+      const safeCount = Math.max(0, Number(count) || 0);
+      summaryEl.style.display = safeCount > 0 ? "" : "none";
+      if (safeCount > 0) {
+        summaryEl.textContent = formatListSummaryText(safeCount, itemLabel);
+      }
+    };
     const rebindTabClickHandler = (tabElement, previousHandler, nextHandler) => {
       if (previousHandler) {
         tabElement.removeEventListener("click", previousHandler);
@@ -16064,12 +16487,17 @@
                             <textarea id="s1p-tags-sync-textarea" class="s1p-input s1p-textarea s1p-sync-textarea" placeholder="在此粘贴导入数据或从此处复制导出数据..." autocomplete="off"></textarea>
                         </div>
 
-                        <div class="s1p-settings-group">
-                            <div id="s1p-tags-list-container"></div>
-                        </div>
-                    </div>
-                </div>
-            `;
+	                        <div class="s1p-settings-group">
+	                            ${buildListSummaryHtml(
+                                "s1p-tags-list-summary",
+                                tagItems.length,
+                                "条用户标记"
+                              )}
+	                            <div id="s1p-tags-list-container"></div>
+	                        </div>
+	                    </div>
+	                </div>
+	            `;
 
       const listContainer = tabs["tags"].querySelector("#s1p-tags-list-container");
       if (listContainer) {
@@ -16266,12 +16694,17 @@
                         </div>`
           : ""
         }
-                        <div class="s1p-settings-group">
-                            <div id="s1p-bookmarks-list-container"></div>
-                            <div id="s1p-bookmarks-no-results" class="s1p-empty" style="display: none;">没有找到匹配的收藏</div>
-                        </div>
-                    </div>
-                </div>
+	                        <div class="s1p-settings-group">
+	                            ${buildListSummaryHtml(
+                                "s1p-bookmarks-list-summary",
+                                bookmarkItems.length,
+                                "条收藏回复"
+                              )}
+	                            <div id="s1p-bookmarks-list-container"></div>
+	                            <div id="s1p-bookmarks-no-results" class="s1p-empty" style="display: none;">没有找到匹配的收藏</div>
+	                        </div>
+	                    </div>
+	                </div>
             `;
 
       const bookmarksContainer = tabs["bookmarks"].querySelector(
@@ -16672,24 +17105,36 @@
         }><span class="s1p-slider"></span></label>
                     </div>
 
-                    <p class="s1p-setting-desc" style="margin-top: 8px; margin-bottom: 16px;">
-                        <strong>提示</strong>：开启“同步至论坛黑名单”后，新屏蔽的用户会同时加入
-                        ${nativeBlacklistLinkHtml}。
-                    </p>
-                </div>
-                <div class="s1p-settings-group" style="margin-bottom: 16px; padding-bottom: 0;">
-                    <div class="s1p-settings-item">
-                        <label class="s1p-settings-label" for="s1p-manual-block-user-btn">手动输入用户名屏蔽</label>
-                        <button id="s1p-manual-block-user-btn" class="s1p-btn" type="button">添加屏蔽用户</button>
+	                    <p class="s1p-setting-desc" style="margin-top: 8px; margin-bottom: 16px;">
+	                        <strong>提示</strong>：开启“同步至论坛黑名单”后，新屏蔽的用户会同时加入
+	                        ${nativeBlacklistLinkHtml}。
+	                    </p>
+	                    <div class="s1p-settings-item" style="margin-top: 8px;">
+	                        <label class="s1p-settings-label" for="s1p-open-native-blacklist-import-btn">导入论坛黑名单到脚本</label>
+	                        <button id="s1p-open-native-blacklist-import-btn" class="s1p-btn" type="button">前往黑名单页面导入</button>
+	                    </div>
+	                    <p class="s1p-setting-desc" style="margin-top: 8px; margin-bottom: 0;">
+	                        跳转后可在论坛黑名单页点击“导入本页到 S1 Plus”，支持逐页导入并自动去重。
+	                    </p>
+	                </div>
+	                <div class="s1p-settings-group" style="margin-bottom: 16px; padding-bottom: 0;">
+	                    <div class="s1p-settings-item">
+	                        <label class="s1p-settings-label" for="s1p-manual-block-user-btn">手动输入用户名屏蔽</label>
+	                        <button id="s1p-manual-block-user-btn" class="s1p-btn" type="button">添加屏蔽用户</button>
                     </div>
                     <p class="s1p-setting-desc" style="margin-top: 8px; margin-bottom: 0;">
                         输入用户名后，脚本会自动识别 UID，并支持填写备注后加入屏蔽列表。
                     </p>
-                </div>
-                <div class="s1p-settings-group">
-                    <div id="s1p-blocked-user-list-container">
-	                        ${userItemIds.length === 0
-          ? `<div class="s1p-empty">暂无屏蔽的用户</div>`
+	                </div>
+	                <div class="s1p-settings-group">
+	                    ${buildListSummaryHtml(
+                        "s1p-blocked-user-list-summary",
+                        userItemIds.length,
+                        "位屏蔽用户"
+                      )}
+	                    <div id="s1p-blocked-user-list-container">
+		                        ${userItemIds.length === 0
+	          ? `<div class="s1p-empty">暂无屏蔽的用户</div>`
           : `<div class="s1p-list">${userItemIds
             .map((id) => {
               const item = blockedUsers[id];
@@ -16814,10 +17259,22 @@
       const manualItemIds = Object.keys(blockedThreads).sort(
         (a, b) => blockedThreads[b].timestamp - blockedThreads[a].timestamp
       );
+      const blockedPosts = getBlockedPosts();
+      const blockedPostIds = Object.keys(blockedPosts).sort(
+        (a, b) => blockedPosts[b].timestamp - blockedPosts[a].timestamp
+      );
+      const initialTitleFilterRules = getTitleFilterRules();
+      const keywordRuleCount = initialTitleFilterRules.length;
+      const dynamicallyHiddenCount = Object.keys(dynamicallyHiddenThreads).length;
       const contentHTML = `
                 <div class="s1p-settings-group">
                     <div class="s1p-settings-group-title">标题关键字屏蔽规则</div>
                     <p class="s1p-setting-desc">将自动屏蔽标题匹配已启用规则的帖子，支持正则表达式。修改后请点击“保存规则”以生效。</p>
+                    ${buildListSummaryHtml(
+                      "s1p-keyword-rules-summary",
+                      keywordRuleCount,
+                      "条标题规则"
+                    )}
                     <div id="s1p-keyword-rules-list" style="display: flex; flex-direction: column; gap: 8px;"></div>
                     <div class="s1p-editor-footer" style="justify-content: flex-start; gap: 8px;">
                          <button id="s1p-keyword-rule-add-btn" class="s1p-btn">添加新规则</button>
@@ -16833,7 +17290,14 @@
                     </div>
                     <div id="s1p-dynamically-hidden-list-container" class="s1p-collapsible-content ${settings.showBlockedByKeywordList ? "expanded" : ""
         }">
-                        <div id="s1p-dynamically-hidden-list"></div>
+                        <div>
+                            ${buildListSummaryHtml(
+                              "s1p-dynamically-hidden-summary",
+                              dynamicallyHiddenCount,
+                              "条当前页面命中帖子"
+                            )}
+                            <div id="s1p-dynamically-hidden-list"></div>
+                        </div>
                     </div>
                 </div>
 
@@ -16846,7 +17310,12 @@
                     <div id="s1p-manually-blocked-list-container" class="s1p-collapsible-content ${settings.showManuallyBlockedList ? "expanded" : ""
         }">
                     <div>
-	                    ${manualItemIds.length === 0
+		                    ${buildListSummaryHtml(
+                            "s1p-manually-blocked-summary",
+                            manualItemIds.length,
+                            "条手动屏蔽帖子"
+                          )}
+		                    ${manualItemIds.length === 0
           ? `<div class="s1p-empty">暂无手动屏蔽的帖子</div>`
           : `<div class="s1p-list">${manualItemIds
             .map((id) => {
@@ -16875,12 +17344,12 @@
                     <p class="s1p-setting-desc">手动屏蔽的特定楼层回复列表，按帖子分组显示。</p>
                     <div id="s1p-blocked-posts-list-container">
                     <div>
+                        ${buildListSummaryHtml(
+                          "s1p-blocked-posts-summary",
+                          blockedPostIds.length,
+                          "条屏蔽楼层"
+                        )}
                         ${(() => {
-          const blockedPosts = getBlockedPosts();
-          const blockedPostIds = Object.keys(blockedPosts).sort(
-            (a, b) => blockedPosts[b].timestamp - blockedPosts[a].timestamp
-          );
-
           if (blockedPostIds.length === 0) {
             return `<div class="s1p-empty">暂无屏蔽的楼层</div>`;
           }
@@ -17007,6 +17476,11 @@
         if (!listContainer) return;
 
         const hiddenItems = Object.entries(dynamicallyHiddenThreads);
+        setListSummaryText(
+          "s1p-dynamically-hidden-summary",
+          hiddenItems.length,
+          "条当前页面命中帖子"
+        );
         listContainer.textContent = "";
         if (hiddenItems.length === 0) {
           const emptyEl = document.createElement("div");
@@ -17052,12 +17526,15 @@
           listContainer.appendChild(listEl);
         }
       };
-      const renderRules = () => {
-        const rules = getTitleFilterRules();
+      const renderRules = (rulesOverride = null) => {
+        const rules = Array.isArray(rulesOverride)
+          ? rulesOverride
+          : getTitleFilterRules();
         const container = tabs["threads"].querySelector(
           "#s1p-keyword-rules-list"
         );
         if (!container) return;
+        setListSummaryText("s1p-keyword-rules-summary", rules.length, "条标题规则");
 
         container.textContent = "";
         rules.forEach((rule) => {
@@ -17074,7 +17551,7 @@
         }
       };
 
-      renderRules();
+      renderRules(initialTitleFilterRules);
       renderDynamicallyHiddenList();
       const rulesContainer = tabs["threads"].querySelector("#s1p-keyword-rules-list");
       if (rulesContainer) {
@@ -17114,7 +17591,7 @@
         saveTitleFilterRules(newRules);
         hideThreadsByTitleKeyword();
         renderDynamicallyHiddenList();
-        renderRules();
+        renderRules(newRules);
         setSettingsModalDirtyState(SETTINGS_MODAL_DIRTY_TAB.THREAD_RULES, false);
       };
 
@@ -17218,7 +17695,7 @@
                   saveTitleFilterRules(newRules);
                   hideThreadsByTitleKeyword();
                   renderDynamicallyHiddenList();
-                  renderRules();
+                  renderRules(newRules);
                   setSettingsModalDirtyState(
                     SETTINGS_MODAL_DIRTY_TAB.THREAD_RULES,
                     false
@@ -17671,6 +18148,13 @@
             <div>
                 <div class="s1p-settings-group">
                     <div class="s1p-settings-group-title">导航链接编辑器</div>
+                    ${buildListSummaryHtml(
+                      "s1p-nav-link-summary",
+                      Array.isArray(settings.customNavLinks)
+                        ? settings.customNavLinks.length
+                        : 0,
+                      "个导航链接"
+                    )}
                     <div class="s1p-list s1p-nav-editor-list"></div>
                     <div class="s1p-editor-footer">
                         <div style="display: flex; gap: 8px;">
@@ -17730,11 +18214,13 @@
 
       const renderNavList = (links) => {
         navListContainer.textContent = "";
-        (links || []).forEach((link, index) => {
+        const safeLinks = Array.isArray(links) ? links : [];
+        safeLinks.forEach((link, index) => {
           navListContainer.appendChild(
             createNavEditorItem(index, link.name || "", link.href || "")
           );
         });
+        setListSummaryText("s1p-nav-link-summary", safeLinks.length, "个导航链接");
       };
 
       renderNavList(settings.customNavLinks);
@@ -17794,6 +18280,11 @@
             newItem.querySelector(".s1p-nav-name").placeholder = "新链接";
             newItem.querySelector(".s1p-nav-href").placeholder = "forum.php";
             navListContainer.appendChild(newItem);
+            setListSummaryText(
+              "s1p-nav-link-summary",
+              navListContainer.querySelectorAll(".s1p-editor-item").length,
+              "个导航链接"
+            );
             setSettingsModalDirtyState(SETTINGS_MODAL_DIRTY_TAB.NAV_SETTINGS, true);
           } else if (target.closest(".s1p-delete-button")) {
             const item = target.closest(".s1p-editor-item");
@@ -17806,6 +18297,11 @@
                 `链接名称: ${safeNameForHtml}<br>此操作仅在UI上移除，需要点击下方的“保存设置”按钮才会真正生效。`,
                 () => {
                   item.remove();
+                  setListSummaryText(
+                    "s1p-nav-link-summary",
+                    navListContainer.querySelectorAll(".s1p-editor-item").length,
+                    "个导航链接"
+                  );
                   setSettingsModalDirtyState(
                     SETTINGS_MODAL_DIRTY_TAB.NAV_SETTINGS,
                     true
@@ -18239,14 +18735,21 @@
 
     const renderEmptyState = (container, text, inlineStyle = "") => {
       if (!container) return;
-      container.textContent = "";
+      const summaryEl = container.querySelector(".s1p-list-summary");
+      container
+        .querySelectorAll(".s1p-list, .s1p-thread-groups, .s1p-empty")
+        .forEach((node) => node.remove());
+      const targetContainer =
+        summaryEl instanceof Element && summaryEl.parentElement
+          ? summaryEl.parentElement
+          : container;
       const emptyEl = document.createElement("div");
       emptyEl.className = "s1p-empty";
       if (inlineStyle) {
         emptyEl.style.cssText = inlineStyle;
       }
       emptyEl.textContent = text;
-      container.appendChild(emptyEl);
+      targetContainer.appendChild(emptyEl);
     };
 
     function removeListItem(triggerElement, emptyText, onEmptyCallback) {
@@ -18283,6 +18786,23 @@
         openManualUserBlockModal();
         return;
       }
+      if (target.id === "s1p-open-native-blacklist-import-btn") {
+        try {
+          if (typeof GM_openInTab === "function") {
+            GM_openInTab(NATIVE_BLACKLIST_VIEW_URL, {
+              active: true,
+              insert: true,
+              setParent: true,
+            });
+          } else {
+            window.open(NATIVE_BLACKLIST_VIEW_URL, "_blank", "noopener");
+          }
+        } catch (error) {
+          console.error("S1 Plus: 打开论坛黑名单页面失败。", error);
+          window.open(NATIVE_BLACKLIST_VIEW_URL, "_blank", "noopener");
+        }
+        return;
+      }
 
       const unblockThreadId = e.target.dataset.unblockThreadId;
       if (unblockThreadId) {
@@ -18293,16 +18813,21 @@
         createConfirmationModal(
           "确认取消屏蔽该帖子吗？",
           `帖子标题: ${title}`,
-          () => {
-            unblockThread(unblockThreadId);
-            removeListItem(
-              target,
-              "暂无手动屏蔽的帖子"
+              () => {
+                unblockThread(unblockThreadId);
+                removeListItem(
+                  target,
+                  "暂无手动屏蔽的帖子"
+                );
+                setListSummaryText(
+                  "s1p-manually-blocked-summary",
+                  Object.keys(getBlockedThreads()).length,
+                  "条手动屏蔽帖子"
+                );
+                showMessage("帖子已取消屏蔽。", true);
+              },
+              "确认取消"
             );
-            showMessage("帖子已取消屏蔽。", true);
-          },
-          "确认取消"
-        );
       }
 
       const unblockUserId = e.target.dataset.unblockUserId;
@@ -18351,6 +18876,11 @@
                 target,
                 "暂无屏蔽的用户"
               );
+              setListSummaryText(
+                "s1p-blocked-user-list-summary",
+                Object.keys(getBlockedUsers()).length,
+                "位屏蔽用户"
+              );
 
               const threadList = document.querySelector(
                 "#s1p-manually-blocked-list-container .s1p-list"
@@ -18371,6 +18901,11 @@
                   }
                 }
               }
+              setListSummaryText(
+                "s1p-manually-blocked-summary",
+                Object.keys(getBlockedThreads()).length,
+                "条手动屏蔽帖子"
+              );
               const message = wasSynced
                 ? `已取消对 ${userName} 的屏蔽并从论坛同步移除。`
                 : `已取消对 ${userName} 的屏蔽。`;
@@ -18420,17 +18955,22 @@
                   renderEmptyState(container, "暂无屏蔽的楼层");
                 }
               }
-            } else {
-              // 非分组列表的处理（向后兼容）
-              removeListItem(
-                target,
-                "暂无屏蔽的楼层"
+              } else {
+                // 非分组列表的处理（向后兼容）
+                removeListItem(
+                  target,
+                  "暂无屏蔽的楼层"
+                );
+              }
+              setListSummaryText(
+                "s1p-blocked-posts-summary",
+                Object.keys(getBlockedPosts()).length,
+                "条屏蔽楼层"
               );
-            }
 
-            showMessage("楼层已取消屏蔽。", true);
-          },
-          "确认取消"
+              showMessage("楼层已取消屏蔽。", true);
+            },
+            "确认取消"
         );
       }
 
@@ -18454,6 +18994,11 @@
                   ?.closest(".s1p-settings-group")
                   ?.remove();
               }
+            );
+            setListSummaryText(
+              "s1p-bookmarks-list-summary",
+              Object.keys(getBookmarkedReplies()).length,
+              "条收藏回复"
             );
             showMessage("已取消收藏。", true);
           },
@@ -23543,6 +24088,10 @@
     applyNuxDarkTextContrastFix();
     applyPlainTextUrlAutolinks();
     applyGlobalLinkBehavior(); // <--- MODIFIED
+    const nativeBlacklistImportButtonApplied = ensureNativeBlacklistImportButton();
+    if (!nativeBlacklistImportButtonApplied && isNativeBlacklistPage()) {
+      setTimeout(() => ensureNativeBlacklistImportButton(), 700);
+    }
     ensureMyThreadsQuickLink();
     trackReadProgressInThread();
     markSettingsRuntimeAppliedSnapshot(settings);
