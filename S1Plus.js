@@ -645,6 +645,8 @@
     blockPost: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="0.5"><path d="M2.80777 1.3934L22.6068 21.1924L21.1925 22.6066L17.5846 18.9994L6.45516 19L2.00016 22.5V4C2.00016 3.8307 2.04223 3.67123 2.11649 3.53146L1.39355 2.80762L2.80777 1.3934ZM3.99955 5.4134L4.00016 18.3853L5.76349 17L15.5846 16.9994L3.99955 5.4134ZM21.0002 3C21.5524 3 22.0002 3.44772 22.0002 4V17.785L20.0002 15.785V5L9.21316 4.999L7.21416 3H21.0002Z"></path></svg>`,
     // 标记用户 - 标签图标 (Thickened 0.5)
     tagUser: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="0.5"><path d="M10.9042 2.10025L20.8037 3.51446L22.2179 13.414L13.0255 22.6063C12.635 22.9969 12.0019 22.9969 11.6113 22.6063L1.71184 12.7069C1.32131 12.3163 1.32131 11.6832 1.71184 11.2926L10.9042 2.10025ZM11.6113 4.22157L3.83316 11.9997L12.3184 20.485L20.0966 12.7069L19.036 5.28223L11.6113 4.22157ZM13.7327 10.5855C12.9516 9.80448 12.9516 8.53815 13.7327 7.7571C14.5137 6.97606 15.78 6.97606 16.5611 7.7571C17.3421 8.53815 17.3421 9.80448 16.5611 10.5855C15.78 11.3666 14.5137 11.3666 13.7327 10.5855Z"></path></svg>`,
+    // 编辑回复 - 铅笔图标 (Thickened 0.5)
+    editPost: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="0.5"><path d="M16.7574 2.99678L14.7574 4.99678H5V18.9968H19V9.23943L21 7.23943V19.9968C21 20.5491 20.5523 20.9968 20 20.9968H4C3.44772 20.9968 3 20.5491 3 19.9968V3.99678C3 3.4445 3.44772 2.99678 4 2.99678H16.7574ZM20.4853 2.09729L21.8995 3.5115L12.7071 12.7039L11.2954 12.7064L11.2929 11.2897L20.4853 2.09729Z"></path></svg>`,
     // 显示全部楼层 - 列表图标 (Thickened 0.5)
     showAll: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="0.5"><path d="M8 4H21V6H8V4ZM3 3.5H6V6.5H3V3.5ZM3 10.5H6V13.5H3V10.5ZM3 17.5H6V20.5H3V17.5ZM8 11H21V13H8V11ZM8 18H21V20H8V18Z"></path></svg>`,
     // 正序看帖 - 箭头向下 (Thickened 0.5)
@@ -22318,6 +22320,24 @@
     requestAnimationFrame(() => menu.classList.add("visible"));
   };
 
+  const NATIVE_POST_EDIT_LINK_SELECTOR =
+    'a.editp, .pob a[href*="action=edit"], .po.hin a[href*="action=edit"], a[onclick*="showWindow"][onclick*="edit"]';
+
+  const createPostEditToolbarLink = (postTable) => {
+    const nativeEditLink = postTable.querySelector(NATIVE_POST_EDIT_LINK_SELECTOR);
+    if (!nativeEditLink) {
+      return null;
+    }
+    const editLink = nativeEditLink.cloneNode(true);
+    editLink.className =
+      "s1p-authi-action s1p-toolbar-icon-btn s1p-edit-post-in-authi s1p-has-tooltip";
+    setSanitizedIconHtml(editLink, TOOLBAR_ICONS.editPost);
+    editLink.dataset.fullTag = "编辑当前回复";
+    editLink.removeAttribute("id");
+    editLink.removeAttribute("title");
+    return editLink;
+  };
+
   const createOptionsMenu = (anchorElement) => {
     // 如果菜单已存在，则取消其隐藏计时器，防止因快速移入移出导致闪烁
     const existingMenu = document.querySelector(".s1p-tag-options-menu");
@@ -22559,6 +22579,11 @@
     if (nativeLinks.author) scriptActionsWrapper.appendChild(nativeLinks.author);
     if (nativeLinks.showAll) scriptActionsWrapper.appendChild(nativeLinks.showAll);
 
+    // 仅在“当前楼层属于本人”时尝试创建编辑按钮；若论坛未提供原生编辑入口则返回 null
+    const pendingEditLink = isCurrentUserPost
+      ? createPostEditToolbarLink(postTable)
+      : null;
+
     if (settings.enableBookmarkReplies) {
       const bookmarkedReplies = getBookmarkedReplies();
       const isBookmarked = !!bookmarkedReplies[postId];
@@ -22762,6 +22787,11 @@
           scriptActionsWrapper.appendChild(tagLink);
         }
       }
+    }
+
+    // 按需求固定放在工具栏最后
+    if (pendingEditLink) {
+      scriptActionsWrapper.appendChild(pendingEditLink);
     }
 
 
