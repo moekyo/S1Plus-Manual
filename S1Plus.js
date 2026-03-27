@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      6.7.0
+// @version      6.8.0
 // @description  为Stage1st论坛提供帖子/用户/楼层屏蔽、导航栏自定义、自动签到、阅读进度跟踪、回复收藏、远程同步等多种功能，全方位优化你的论坛体验。
 // @author       moekyo
 // @match        https://stage1st.com/2b/*
@@ -23,8 +23,8 @@
 (function () {
   "use strict";
 
-  const SCRIPT_VERSION = "6.7.0";
-  const SCRIPT_RELEASE_DATE = "2026-03-22";
+  const SCRIPT_VERSION = "6.8.0";
+  const SCRIPT_RELEASE_DATE = "2026-03-27";
 
   // --- [新增] SHA-256 哈希计算库 (基于 Web Crypto API) ---
   /**
@@ -23760,18 +23760,18 @@
 
     // [OPTIMIZED] 优化HTML结构以改善文本布局和换行
     const bodyHtml = `
-    <p>已更新至 v${SCRIPT_VERSION}！本次更新聚焦图片查看器体验、提示一致性和同步设置稳定性。</p>
+    <p>已更新至 v${SCRIPT_VERSION}！本次更新重点覆盖黑名单迁移、图片保存能力与同步稳定性。</p>
     <p style="margin-top: 16px;">
-        <strong>🖼️ 图片查看器更连贯</strong>：工具条支持长按连续缩放/连续滚动，操作更顺滑；打开与关闭动画改为分段时序，过渡更自然。
+        <strong>🚚 黑名单迁移更高效</strong>：论坛黑名单页新增“一键导入到 S1 Plus”，支持按页渐进导入与 UID/用户名去重；导入结果会明确展示新增、更新与重复统计，批量整理历史黑名单更省心。
     </p>
     <p style="margin-top: 8px;">
-        <strong>📐 显示与提示更稳定</strong>：修复图片查看器后续打开偶发右侧留白问题，宽度占用更准确；图标按钮统一脚本悬浮提示并补充“长按可连续操作”说明，层级不再被蒙版遮挡。
+        <strong>🧭 管理面板信息更清晰</strong>：用户屏蔽、帖子屏蔽、规则列表等区域统一补充“当前共 N 条”汇总；用户屏蔽页新增前往论坛黑名单导入入口，并改为新标签打开，避免未保存设置被覆盖。
     </p>
     <p style="margin-top: 8px;">
-        <strong>🧹 交互细节更一致</strong>：屏蔽帖子确认条中的“顺便拉黑发帖人”提示出现时机已与其他同类提示统一，减少等待感。
+        <strong>🖼️ 图片查看器新增保存能力</strong>：工具栏新增“保存图片 / 保存全部图片”，支持单图下载与同贴多图顺序批量保存；单图场景会自动隐藏“保存全部图片”，并补齐权限拦截与失败提示，保存反馈更明确。
     </p>
     <p style="margin-top: 8px;">
-        <strong>☁️ 同步设置更可靠</strong>：修复关闭远程同步后保存按钮不可用问题；同步页统一为手动保存逻辑，设置行为更可预期。
+        <strong>☁️ 同步与交互稳定性增强</strong>：优化多标签启动并发、手动同步决策阶段锁占用与指示器状态残留问题；同时补强 PAT 可用性校验和 GitHub 403 限流重试，日常同步更稳。
     </p>
   `;
 
