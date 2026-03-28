@@ -2605,11 +2605,6 @@
     .s1p-tabs-wrapper {
       display: flex;
       justify-content: center;
-      position: -webkit-sticky;
-      position: sticky;
-      top: 0;
-      z-index: 3;
-      background-color: var(--s1p-bg);
     }
     .s1p-empty {
       text-align: center;
