@@ -14,7 +14,7 @@
         "openInNewTab.threadListInBackground": true,
         "openInNewTab.progress": false,
         "openInNewTab.progressInBackground": true,
-        "openInNewTab.nav": true,
+        "openInNewTab.nav": false,
         "openInNewTab.navInBackground": false
       },
       "reasonsInclude": [
@@ -40,7 +40,7 @@
       "settings": {
         "openInNewTab.threadList": true,
         "openInNewTab.threadListInBackground": true,
-        "openInNewTab.nav": true,
+        "openInNewTab.nav": false,
         "openInNewTab.navInBackground": false,
         "openInNewTab.postContentLinks": true,
         "openInNewTab.postContentLinksInBackground": true
