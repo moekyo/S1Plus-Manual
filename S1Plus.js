@@ -3918,17 +3918,27 @@
       justify-content: space-between;
       align-items: center;
     }
-    div.s1p-quote-placeholder span.s1p-quote-toggle {
-      color: var(--s1p-t);
-      font-weight: 500;
-      cursor: pointer;
-      padding: 4px 8px;
-      border-radius: 4px;
-      transition: background-color 0.2s ease, color 0.2s ease;
-    }
-    div.s1p-quote-placeholder span.s1p-quote-toggle:hover {
+    .s1p-inline-toggle-btn {
+      appearance: none;
+      border: none;
       background-color: var(--s1p-sub);
       color: var(--s1p-t);
+      font-size: 12px;
+      font-weight: 600;
+      line-height: 1;
+      border-radius: 6px;
+      padding: 6px 12px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background-color 0.2s ease, color 0.2s ease;
+    }
+    .s1p-inline-toggle-btn:hover {
+      background-color: var(--s1p-sub-h);
+      color: var(--s1p-sub-h-t);
+    }
+    .s1p-inline-toggle-btn:focus-visible {
+      outline: 2px solid var(--s1p-sub-h);
+      outline-offset: 1px;
     }
     .s1p-quote-wrapper {
       overflow: hidden;
@@ -3947,18 +3957,6 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
-    }
-    .s1p-notification-placeholder .s1p-notification-toggle {
-      color: var(--s1p-t);
-      font-weight: 500;
-      cursor: pointer;
-      padding: 4px 8px;
-      border-radius: 4px;
-      transition: background-color 0.2s ease, color 0.2s ease;
-    }
-    .s1p-notification-placeholder .s1p-notification-toggle:hover {
-      background-color: var(--s1p-sub);
-      color: var(--s1p-t);
     }
     .s1p-notification-wrapper {
       overflow: hidden;
@@ -7628,8 +7626,9 @@
           newPlaceholder.className = "s1p-quote-placeholder";
           const quotePlaceholderText = document.createElement("span");
           quotePlaceholderText.textContent = "一条来自已屏蔽用户的引用已被隐藏。";
-          const quoteToggle = document.createElement("span");
-          quoteToggle.className = "s1p-quote-toggle s1p-popover-btn";
+          const quoteToggle = document.createElement("button");
+          quoteToggle.type = "button";
+          quoteToggle.className = "s1p-quote-toggle s1p-inline-toggle-btn";
           quoteToggle.textContent = "点击展开";
           newPlaceholder.appendChild(quotePlaceholderText);
           newPlaceholder.appendChild(quoteToggle);
@@ -7818,8 +7817,10 @@
           const notificationPlaceholderText = document.createElement("span");
           notificationPlaceholderText.textContent =
             "一条来自已屏蔽用户的提醒已被隐藏。";
-          const notificationToggle = document.createElement("span");
-          notificationToggle.className = "s1p-notification-toggle";
+          const notificationToggle = document.createElement("button");
+          notificationToggle.type = "button";
+          notificationToggle.className =
+            "s1p-notification-toggle s1p-inline-toggle-btn";
           notificationToggle.textContent = "点击展开";
           placeholder.appendChild(notificationPlaceholderText);
           placeholder.appendChild(notificationToggle);
