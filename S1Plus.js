@@ -22,6 +22,8 @@
 
 (function () {
   "use strict";
+  const IS_S1P_TEST_MODE =
+    typeof globalThis !== "undefined" && globalThis.__S1P_TEST_MODE__ === true;
 
   const SCRIPT_VERSION = "6.9.0";
   const SCRIPT_RELEASE_DATE = "2026-03-27";
@@ -213,6 +215,59 @@
   ].join(", ");
   const AUTO_LINKED_URL_ANCHOR_SELECTOR =
     'a.s1p-autolink-url[data-s1p-autolink="url"], a.s1p-autolink-bilibili[data-s1p-autolink="bilibili"]';
+  const OPEN_IN_NEW_TAB_THREAD_LIST_SCOPE_SELECTOR = "#threadlist";
+  const OPEN_IN_NEW_TAB_NOTIFICATION_SCOPE_SELECTOR = ".xld.xlda";
+  const OPEN_IN_NEW_TAB_NAV_SCOPE_SELECTOR = "#nv, #mu, #um, #hd";
+  const OPEN_IN_NEW_TAB_PRIMARY_KEYS = [
+    "threadList",
+    "progress",
+    "nav",
+    "postContentLinks",
+  ];
+  const OPEN_IN_NEW_TAB_EXCLUDED_SCOPE_SELECTOR =
+    ".s1p-modal, .s1p-confirm-modal, .s1p-options-menu, .s1p-tag-popover, .pob, .pgs, .pgbtn, #s1p-nav-link, #s1p-nav-sync-btn";
+  const isLikelyDownloadLink = (anchorElement, hrefValue) => {
+    if (!(anchorElement instanceof HTMLAnchorElement)) {
+      return false;
+    }
+    if (anchorElement.hasAttribute("download")) {
+      return true;
+    }
+    const normalizedHref = String(hrefValue || "").trim().toLowerCase();
+    if (!normalizedHref) {
+      return false;
+    }
+    if (
+      /(?:^|[?&])mod=attachment(?:&|$)/.test(normalizedHref) ||
+      /(?:^|[?&])(?:action|op|do)=download(?:&|$)/.test(normalizedHref) ||
+      /(?:^|\/)attachment\.php(?:[?#]|$)/.test(normalizedHref)
+    ) {
+      return true;
+    }
+    try {
+      const parsedUrl = new URL(anchorElement.href || hrefValue, window.location.origin);
+      const pathname = String(parsedUrl.pathname || "").toLowerCase();
+      if (pathname.endsWith("/attachment.php") || pathname === "/attachment.php") {
+        return true;
+      }
+      const mod = String(parsedUrl.searchParams.get("mod") || "").toLowerCase();
+      if (mod === "attachment") {
+        return true;
+      }
+      const action = String(parsedUrl.searchParams.get("action") || "").toLowerCase();
+      if (action === "download") {
+        return true;
+      }
+      const op = String(parsedUrl.searchParams.get("op") || "").toLowerCase();
+      if (op === "download") {
+        return true;
+      }
+      const doParam = String(parsedUrl.searchParams.get("do") || "").toLowerCase();
+      return doParam === "download";
+    } catch (e) {
+      return false;
+    }
+  };
 
   /**
    * 对受限场景中的 HTML 片段进行白名单清洗。
@@ -585,7 +640,9 @@
     const normalizedState = resolveImagePreviewLimitState(rawSettings);
     applyImagePreviewLimitRootState(normalizedState);
   };
-  applyEarlyImagePreviewLimitRootState();
+  if (!IS_S1P_TEST_MODE) {
+    applyEarlyImagePreviewLimitRootState();
+  }
 
   let readProgressListRefreshTimer = null;
   let pendingReadProgressDataForRefresh = null;
@@ -627,8 +684,8 @@
   const SVG_ICON_DELETE_DEFAULT = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='1.5' stroke='%23374151'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0' /%3E%3C/svg%3E`;
   const SVG_ICON_DELETE_HOVER = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='1.5' stroke='white'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0' /%3E%3C/svg%3E`;
   const SVG_ICON_ARROW_MASK = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 16'%3E%3Cpath d='M2 2L8 8L2 14' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E`;
-  const SVG_ICON_EYE = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 16px; height: 16px;"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>`;
-  const SVG_ICON_EYE_SLASH = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 16px; height: 16px;"><path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>`;
+  const SVG_ICON_EYE = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>`;
+  const SVG_ICON_EYE_SLASH = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>`;
   const SVG_ICON_EXTERNAL_LINK = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" /></svg>`;
 
   // --- 帖子楼层工具栏图标 ---
@@ -1093,6 +1150,12 @@
       /* margin-left 已被父元素的 gap 替代 */
       /* vertical-align 在 Flexbox 布局中无效 */
     }
+    .s1p-sync-conflict-title {
+      color: var(--s1p-red);
+    }
+    .s1p-sync-danger-text {
+      color: var(--s1p-red);
+    }
 
     /* --- 提示框样式 --- */
     .s1p-notice {
@@ -1104,6 +1167,12 @@
       border-radius: 6px;
       padding: 12px;
       margin-top: 12px;
+    }
+    .s1p-notice-top16 {
+      margin-top: 16px;
+    }
+    .s1p-notice-gap8 {
+      gap: 8px;
     }
     .s1p-notice-icon {
       flex-shrink: 0;
@@ -1887,6 +1956,10 @@
       width: 16px;
       height: 16px;
     }
+    .s1p-dp-year-arrow-offset {
+      display: inline-flex;
+      margin-left: -10px;
+    }
     .s1p-dp-weekdays {
       display: grid;
       grid-template-columns: repeat(7, 1fr);
@@ -2377,6 +2450,70 @@
       text-align: right;
       font-size: 12px;
     }
+    .s1p-token-config-modal {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(var(--s1p-black-rgb), 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 20000;
+      opacity: 0;
+      transition: opacity 0.2s ease;
+    }
+    .s1p-token-config-content {
+      width: 400px;
+      max-width: 90%;
+      border-radius: 12px;
+      border: 1px solid var(--s1p-border);
+      box-shadow: 0 10px 25px rgba(var(--s1p-shadow-color-rgb), 0.3);
+    }
+    .s1p-token-config-header {
+      background: var(--s1p-sub);
+      border-bottom-color: var(--s1p-border);
+      border-top-left-radius: 12px;
+      border-top-right-radius: 12px;
+    }
+    .s1p-token-config-title {
+      font-size: 16px;
+      color: var(--s1p-t);
+    }
+    .s1p-token-config-body {
+      padding: 20px;
+      overflow-y: visible;
+    }
+    .s1p-token-config-desc {
+      margin-top: 0;
+    }
+    .s1p-token-config-date-item {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 8px;
+      margin-top: 16px;
+    }
+    .s1p-token-config-date-input {
+      width: 100%;
+      cursor: pointer;
+      background: var(--s1p-bg);
+    }
+    .s1p-token-config-quick-buttons {
+      margin-top: 16px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .s1p-token-config-footer {
+      border-top-color: var(--s1p-border);
+      background: var(--s1p-sub);
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      border-bottom-left-radius: 12px;
+      border-bottom-right-radius: 12px;
+    }
 
     /* --- [OPTIMIZED] 设置面板Tabs样式 (Pill / 滑块样式) --- */
     .s1p-tabs {
@@ -2605,12 +2742,6 @@
     }
     .s1p-unblock-post-btn:hover {
       background-color: var(--s1p-red-h);
-    }
-    .s1p-sync-title {
-      /* [优化] 调整同步标题的样式，与分组标题统一 */
-      font-size: 16px;
-      font-weight: 600;
-      margin-bottom: 8px;
     }
     .s1p-local-sync-desc {
       /* [优化] 调整描述文字样式，提升可读性 */
@@ -2982,8 +3113,12 @@
 
     /* --- 界面定制设置样式 --- */
     .s1p-settings-group {
-      // margin-bottom: 0;
+      /* margin-bottom: 0; */
       padding: 8px;
+    }
+    .s1p-settings-group-compact {
+      margin-bottom: 16px;
+      padding-bottom: 0;
     }
     .s1p-settings-group-title {
       /* [优化 V2] 调整次级分组标题，拉开层级 */
@@ -3009,9 +3144,202 @@
       justify-content: space-between;
       padding: 8px 0;
     }
+    .s1p-settings-item-top8 {
+      margin-top: 8px;
+    }
+    .s1p-settings-item-top12 {
+      margin-top: 12px;
+    }
+    .s1p-settings-item-column {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 4px;
+    }
+    .s1p-feature-toggle-item {
+      padding: 0;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--s1p-pri);
+    }
     .s1p-settings-item .s1p-input {
       width: auto;
       min-width: 200px;
+    }
+    .s1p-settings-group-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .s1p-settings-group-head .s1p-settings-group-title {
+      margin-bottom: 0;
+      border-bottom: none;
+      padding-bottom: 0;
+    }
+    .s1p-settings-group-head .s1p-btn {
+      padding: 4px 10px;
+    }
+    .s1p-link-open-mode-section {
+      margin-top: 16px;
+      padding-top: 12px;
+    }
+    .s1p-setting-desc-top8 {
+      margin-top: 8px;
+      margin-bottom: 16px;
+    }
+    .s1p-setting-desc-top8-no-bottom {
+      margin-top: 8px;
+      margin-bottom: 0;
+    }
+    .s1p-setting-desc-save-hint {
+      margin-top: 10px;
+      margin-bottom: 8px;
+    }
+    .s1p-sync-last-sync-time {
+      margin-top: -8px;
+      margin-bottom: 16px;
+    }
+    .s1p-sync-token-expiry-info {
+      margin-top: 4px;
+      min-height: 20px;
+    }
+    .s1p-sync-footer-actions {
+      margin-top: 16px;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+    .s1p-clear-data-options {
+      margin-top: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      background-color: var(--s1p-bg);
+      border: 1px solid var(--s1p-pri);
+      border-radius: 6px;
+      padding: 12px;
+    }
+    .s1p-clear-data-footer {
+      margin-top: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .s1p-clear-data-select-all {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .s1p-hidden {
+      display: none;
+    }
+    .s1p-input-full {
+      width: 100%;
+    }
+    .s1p-relative-full {
+      position: relative;
+      width: 100%;
+    }
+    .s1p-input-with-right-icon {
+      width: 100%;
+      padding-right: 32px;
+    }
+    .s1p-icon-btn-overlay {
+      position: absolute;
+      right: 4px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--s1p-desc-t);
+      padding: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0.7;
+      transition: opacity 0.2s;
+    }
+    .s1p-setting-desc-top0-bottom16 {
+      margin-top: 0;
+      margin-bottom: 16px;
+    }
+    .s1p-settings-group-margin-bottom16 {
+      margin-bottom: 16px;
+    }
+    .s1p-item-info-no-margin {
+      margin-bottom: 0;
+    }
+    .s1p-keyword-rules-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .s1p-editor-footer-start {
+      justify-content: flex-start;
+      gap: 8px;
+    }
+    .s1p-settings-item-top16 {
+      margin-top: 16px;
+    }
+    .s1p-setting-desc-top-negative4 {
+      margin-top: -4px;
+    }
+    .s1p-flex-row-center-gap12 {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .s1p-progress-detail-btn {
+      padding: 6px 12px;
+      white-space: nowrap;
+    }
+    .s1p-progress-detail-btn-icon {
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+    .s1p-settings-item-auto-cleanup {
+      margin-top: -8px;
+    }
+    .s1p-settings-label-indent16 {
+      padding-left: 16px;
+    }
+    .s1p-setting-desc-progress-hint {
+      margin-top: -2px;
+      padding-left: 2px;
+    }
+    .s1p-nav-editor-actions {
+      display: flex;
+      gap: 8px;
+    }
+    .s1p-inline-code-badge {
+      background-color: var(--s1p-secondary-bg);
+      padding: 2px 4px;
+      border-radius: 4px;
+    }
+    .s1p-welcome-highlight-paragraph {
+      margin-top: 16px;
+    }
+    .s1p-link-open-mode-group {
+      display: grid;
+      gap: 8px;
+    }
+    .s1p-link-open-mode-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 6px 0;
+    }
+    .s1p-link-open-mode-item .s1p-settings-label {
+      flex: 1 1 auto;
+    }
+    .s1p-link-open-mode-control {
+      flex-shrink: 0;
+    }
+    .s1p-link-open-mode-item.is-disabled {
+      opacity: 0.52;
+    }
+    .s1p-link-open-mode-item.is-disabled .s1p-link-open-mode-control {
+      pointer-events: none;
     }
     .s1p-image-size-limit-panel {
       display: grid;
@@ -3422,6 +3750,12 @@
         align-items: center !important;
       }
       :is(#s1p-cleanupMode-control, #s1p-readingProgressCleanupDays-control) {
+        max-width: 100%;
+        overflow-x: auto;
+        overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
+      }
+      .s1p-link-open-mode-control {
         max-width: 100%;
         overflow-x: auto;
         overflow-y: hidden;
@@ -4352,7 +4686,7 @@
 
       .s1p-toast-notification {
         background-color: #303030;
-        // color: var(--s1p-bg);
+        /* color: var(--s1p-bg); */
       }
       .s1p-toast-notification.success {
         /* 使用一个更柔和的绿色 */
@@ -10445,15 +10779,17 @@
     }
     return anchor.querySelector(S1P_IMAGE_VIEWER_IMAGE_SELECTOR);
   };
+  const isPrimaryUnmodifiedClick = (event) => {
+    if (!event || event.defaultPrevented) {
+      return false;
+    }
+    if (event.button !== 0) {
+      return false;
+    }
+    return !(event.metaKey || event.ctrlKey || event.altKey || event.shiftKey);
+  };
   const s1pImageViewerClickHandler = (event) => {
-    if (
-      event.defaultPrevented ||
-      event.button !== 0 ||
-      event.metaKey ||
-      event.ctrlKey ||
-      event.altKey ||
-      event.shiftKey
-    ) {
+    if (!isPrimaryUnmodifiedClick(event)) {
       return;
     }
     const settings = getSettings();
@@ -10870,68 +11206,67 @@
   };
 
   const globalLinkClickHandler = (e) => {
+    if (!isPrimaryUnmodifiedClick(e)) return;
+
     const settings = getSettings();
     const openTabSettings = settings.openInNewTab;
 
-    if (settings.enableGeneralSettings !== true || !openTabSettings.master) return;
+    if (settings.enableGeneralSettings !== true) return;
+    if (!isObjectRecord(openTabSettings)) return;
 
-    const anchor = e.target.closest("a[href]");
+    const eventTarget = e.target;
+    if (!(eventTarget instanceof Element)) return;
+    const anchor = eventTarget.closest("a[href]");
     if (!anchor) return;
 
     const href = String(anchor.getAttribute("href") || "");
     const normalizedHref = href.trim().toLowerCase();
+    if (!href || normalizedHref.startsWith("#")) return;
+    if (isLikelyDownloadLink(anchor, href)) return;
     const isPlainTextAutoLinkedAnchor = anchor.matches(
       AUTO_LINKED_URL_ANCHOR_SELECTOR
     );
     const isSafeForManagedOpen =
       isSafeUrlAttributeValue(href) ||
       (isPlainTextAutoLinkedAnchor && /^https?:\/\//i.test(normalizedHref));
-    if (!href) return;
     if (
       normalizedHref.startsWith("javascript:") ||
       normalizedHref.startsWith("vbscript:") ||
       normalizedHref.startsWith("data:text/html") ||
       normalizedHref.includes("mod=logging&action=logout") ||
       !isSafeForManagedOpen ||
-      anchor.closest(
-        ".s1p-modal, .s1p-confirm-modal, .s1p-options-menu, .s1p-tag-popover, .pob, .pgs, .pgbtn, #s1p-nav-link, #s1p-nav-sync-btn"
-      )
+      anchor.closest(OPEN_IN_NEW_TAB_EXCLUDED_SCOPE_SELECTOR)
     ) {
       return;
     }
 
     // --- [核心重构 V2] 真正与执行顺序无关的精确识别 ---
-    const navLinkScopeSelector = "#nv, #mu, #um, #hd";
     const getLinkType = (targetAnchor) => {
       // 步骤 1: 识别链接所具备的所有身份，不提前返回
       const identities = [];
-      if (targetAnchor.matches(AUTO_LINKED_URL_ANCHOR_SELECTOR)) {
-        identities.push("plain_text_autolink");
-      }
       if (
         targetAnchor.classList.contains("s1p-progress-jump-btn") &&
-        targetAnchor.closest("#threadlist")
+        targetAnchor.closest(OPEN_IN_NEW_TAB_THREAD_LIST_SCOPE_SELECTOR)
       ) {
         identities.push("progress_jump");
       }
-      if (targetAnchor.closest("#threadlist")) {
+      if (targetAnchor.closest(OPEN_IN_NEW_TAB_THREAD_LIST_SCOPE_SELECTOR)) {
         identities.push("thread_list");
       }
-      if (targetAnchor.closest(".xld.xlda")) {
+      if (targetAnchor.closest(OPEN_IN_NEW_TAB_NOTIFICATION_SCOPE_SELECTOR)) {
         identities.push("notification");
       }
-      if (targetAnchor.closest(navLinkScopeSelector)) {
+      if (targetAnchor.closest(OPEN_IN_NEW_TAB_NAV_SCOPE_SELECTOR)) {
         identities.push("header");
       }
 
-      // 如果没有任何身份，则为未处理
+      // 若未命中上方专属范围，则归类为全站通用链接（兜底分类）。
       if (identities.length === 0) {
-        return "unhandled";
+        return "sitewide_link";
       }
 
       // 步骤 2: 定义身份的优先级顺序 (从最具体到最宽泛)
       const priorityOrder = [
-        "plain_text_autolink",
         "progress_jump",
         "thread_list",
         "notification",
@@ -10946,50 +11281,45 @@
       }
 
       // 理论上不会执行到这里，作为安全保障
-      return "unhandled";
+      return "sitewide_link";
     };
 
     const linkType = getLinkType(anchor);
+    const openRuleByLinkType = {
+      sitewide_link: {
+        openKey: "postContentLinks",
+        backgroundKey: "postContentLinksInBackground",
+      },
+      progress_jump: {
+        openKey: "progress",
+        backgroundKey: "progressInBackground",
+      },
+      thread_list: {
+        openKey: "threadList",
+        backgroundKey: "threadListInBackground",
+      },
+      notification: {
+        openKey: "threadList",
+        backgroundKey: "threadListInBackground",
+      },
+      header: {
+        openKey: "nav",
+        backgroundKey: "navInBackground",
+      },
+    };
+    const openRule = openRuleByLinkType[linkType];
+    if (!openRule) {
+      return;
+    }
 
     let open = false;
     let background = false;
     let settingApplied = false;
 
-    // --- 根据精确识别的类型，应用对应设置 (此部分逻辑不变) ---
-    switch (linkType) {
-      case "plain_text_autolink":
-        if (openTabSettings.plainTextUrls) {
-          open = true;
-          background = openTabSettings.plainTextUrlsInBackground;
-          settingApplied = true;
-        }
-        break;
-      case "progress_jump":
-        if (openTabSettings.progress) {
-          open = true;
-          background = openTabSettings.progressInBackground;
-          settingApplied = true;
-        }
-        break;
-      case "thread_list":
-      case "notification":
-        if (openTabSettings.threadList) {
-          open = true;
-          background = openTabSettings.threadListInBackground;
-          settingApplied = true;
-        }
-        break;
-      case "header":
-        if (openTabSettings.nav) {
-          open = true;
-          background = openTabSettings.navInBackground;
-          settingApplied = true;
-        }
-        break;
-      case "unhandled":
-      default:
-        // 对于未处理的链接类型，直接返回，保持默认行为
-        return;
+    if (openTabSettings[openRule.openKey] === true) {
+      open = true;
+      background = openTabSettings[openRule.backgroundKey] === true;
+      settingApplied = true;
     }
 
     if (open && settingApplied) {
@@ -11001,12 +11331,20 @@
 
   let isGlobalLinkBehaviorBound = false;
   let globalLinkBehaviorBoundTarget = null;
+  const hasAnyOpenInNewTabRuleEnabled = (openInNewTabSettings) => {
+    if (!openInNewTabSettings || typeof openInNewTabSettings !== "object") {
+      return false;
+    }
+    return OPEN_IN_NEW_TAB_PRIMARY_KEYS.some(
+      (key) => openInNewTabSettings[key] === true
+    );
+  };
 
   const applyGlobalLinkBehavior = () => {
     const settings = getSettings();
     const shouldBind =
       settings.enableGeneralSettings === true &&
-      settings.openInNewTab.master === true;
+      hasAnyOpenInNewTabRuleEnabled(settings.openInNewTab);
     const target = document.body;
 
     if (
@@ -13072,15 +13410,14 @@
     readingProgressCleanupDays: 0,
     cleanupMode: 'auto',
     openInNewTab: {
-      master: false,
-      threadList: true,
+      threadList: false,
       threadListInBackground: false,
-      progress: true,
+      progress: false,
       progressInBackground: false,
-      nav: true,
+      nav: false,
       navInBackground: false,
-      plainTextUrls: false,
-      plainTextUrlsInBackground: false,
+      postContentLinks: false,
+      postContentLinksInBackground: false,
     },
     autoLinkPlainTextUrls: true,
     enableNavCustomization: true,
@@ -13125,6 +13462,16 @@
     const saved = sanitizeRecordObject(rawSettings);
     const settings = { ...defaultSettings, ...saved };
     let migrationApplied = false;
+    const migrationReasons = [];
+    const markMigration = (reason) => {
+      migrationApplied = true;
+      if (
+        reason &&
+        !migrationReasons.includes(reason)
+      ) {
+        migrationReasons.push(reason);
+      }
+    };
     const normalizedDefaultCustomNavLinks = normalizeCustomNavLinks(
       defaultSettings.customNavLinks
     );
@@ -13145,14 +13492,30 @@
       typeof savedOpenInNewTab.threadsInBackground !== "undefined" ||
       typeof savedOpenInNewTab.sidebar !== "undefined" ||
       typeof savedOpenInNewTab.sidebarInBackground !== "undefined";
+    const hasLegacyOpenInNewTabPlainTextKeys =
+      typeof savedOpenInNewTab.plainTextUrls !== "undefined" ||
+      typeof savedOpenInNewTab.plainTextUrlsInBackground !== "undefined";
+    const hasCurrentOpenInNewTabPostContentKeys =
+      typeof savedOpenInNewTab.postContentLinks !== "undefined" ||
+      typeof savedOpenInNewTab.postContentLinksInBackground !== "undefined";
+    const hasLegacyOpenInNewTabMaster =
+      typeof savedOpenInNewTab.master !== "undefined";
+    let normalizedOpenInNewTab = {
+      ...defaultSettings.openInNewTab,
+      ...savedOpenInNewTab,
+    };
 
     if (hasLegacyOpenInNewTabRootKeys || hasLegacyOpenInNewTabNestedKeys) {
       const oldOpenTab = savedOpenInNewTab;
-      settings.openInNewTab = {
+      normalizedOpenInNewTab = {
         ...defaultSettings.openInNewTab,
-        master: oldOpenTab.threads ?? saved.openThreadsInNewTab ?? false,
-        threadList: oldOpenTab.threads ?? saved.openThreadsInNewTab ?? true,
+        threadList:
+          oldOpenTab.threadList ??
+          oldOpenTab.threads ??
+          saved.openThreadsInNewTab ??
+          true,
         threadListInBackground:
+          oldOpenTab.threadListInBackground ??
           oldOpenTab.threadsInBackground ??
           saved.openThreadsInBackground ??
           false,
@@ -13163,17 +13526,55 @@
           false,
         nav: oldOpenTab.nav ?? true, // 旧版无此设置，迁移时默认为 true
         navInBackground: oldOpenTab.navInBackground ?? false,
-        plainTextUrls: oldOpenTab.plainTextUrls ?? false,
-        plainTextUrlsInBackground:
-          oldOpenTab.plainTextUrlsInBackground ?? false,
+        postContentLinks:
+          oldOpenTab.postContentLinks ?? oldOpenTab.plainTextUrls ?? false,
+        postContentLinksInBackground:
+          oldOpenTab.postContentLinksInBackground ??
+          oldOpenTab.plainTextUrlsInBackground ??
+          false,
       };
-      migrationApplied = true;
-    } else {
-      settings.openInNewTab = {
-        ...defaultSettings.openInNewTab,
-        ...savedOpenInNewTab,
-      };
+      markMigration("open_in_new_tab_legacy_root_or_nested_keys");
     }
+    if (
+      !hasCurrentOpenInNewTabPostContentKeys &&
+      hasLegacyOpenInNewTabPlainTextKeys
+    ) {
+      normalizedOpenInNewTab = {
+        ...normalizedOpenInNewTab,
+        postContentLinks:
+          savedOpenInNewTab.plainTextUrls ??
+          defaultSettings.openInNewTab.postContentLinks,
+        postContentLinksInBackground:
+          savedOpenInNewTab.plainTextUrlsInBackground ??
+          defaultSettings.openInNewTab.postContentLinksInBackground,
+      };
+      markMigration("open_in_new_tab_legacy_plain_text_keys");
+    }
+    if (hasLegacyOpenInNewTabMaster) {
+      // 旧版由 master 总开关门控，迁移后需固化为各子开关，避免升级后行为突变。
+      const legacyMasterEnabled = savedOpenInNewTab.master === true;
+      normalizedOpenInNewTab = {
+        ...normalizedOpenInNewTab,
+        threadList:
+          legacyMasterEnabled && normalizedOpenInNewTab.threadList === true,
+        progress: legacyMasterEnabled && normalizedOpenInNewTab.progress === true,
+        nav: legacyMasterEnabled && normalizedOpenInNewTab.nav === true,
+        postContentLinks:
+          legacyMasterEnabled && normalizedOpenInNewTab.postContentLinks === true,
+      };
+      markMigration("open_in_new_tab_legacy_master");
+    }
+    Object.keys(defaultSettings.openInNewTab).forEach((key) => {
+      const normalizedValue = normalizeBooleanWithDefault(
+        normalizedOpenInNewTab[key],
+        defaultSettings.openInNewTab[key]
+      );
+      if (normalizedOpenInNewTab[key] !== normalizedValue) {
+        markMigration(`open_in_new_tab_normalized_bool:${key}`);
+      }
+      normalizedOpenInNewTab[key] = normalizedValue;
+    });
+    settings.openInNewTab = normalizedOpenInNewTab;
 
     const legacyRootKeys = [
       "openThreadsInNewTab",
@@ -13184,21 +13585,24 @@
     legacyRootKeys.forEach((key) => {
       if (Object.prototype.hasOwnProperty.call(settings, key)) {
         delete settings[key];
-        migrationApplied = true;
+        markMigration(`open_in_new_tab_legacy_root_key_removed:${key}`);
       }
     });
 
     if (settings.openInNewTab && typeof settings.openInNewTab === "object") {
       const legacyNestedKeys = [
+        "master",
         "threads",
         "threadsInBackground",
         "sidebar",
         "sidebarInBackground",
+        "plainTextUrls",
+        "plainTextUrlsInBackground",
       ];
       legacyNestedKeys.forEach((key) => {
         if (Object.prototype.hasOwnProperty.call(settings.openInNewTab, key)) {
           delete settings.openInNewTab[key];
-          migrationApplied = true;
+          markMigration(`open_in_new_tab_legacy_nested_key_removed:${key}`);
         }
       });
     }
@@ -13212,18 +13616,18 @@
         JSON.stringify(deterministicSort(saved.customNavLinks)) !==
         JSON.stringify(deterministicSort(normalizedSavedCustomNavLinks))
       ) {
-        migrationApplied = true;
+        markMigration("custom_nav_links_normalized");
       }
     } else {
       settings.customNavLinks = normalizedDefaultCustomNavLinks;
       if (typeof saved.customNavLinks !== "undefined") {
-        migrationApplied = true;
+        markMigration("custom_nav_links_reset_to_default");
       }
     }
 
     const normalizedTokenExpiryEnabled = settings.syncTokenExpiryEnabled === true;
     if (settings.syncTokenExpiryEnabled !== normalizedTokenExpiryEnabled) {
-      migrationApplied = true;
+      markMigration("sync_token_expiry_enabled_normalized");
     }
     settings.syncTokenExpiryEnabled = normalizedTokenExpiryEnabled;
 
@@ -13233,7 +13637,7 @@
         ? parsedTokenExpiryDate
         : null;
     if (!Object.is(settings.syncTokenExpiryDate, normalizedTokenExpiryDate)) {
-      migrationApplied = true;
+      markMigration("sync_token_expiry_date_normalized");
     }
     settings.syncTokenExpiryDate = normalizedTokenExpiryDate;
 
@@ -13242,7 +13646,7 @@
     if (
       settings.syncBookmarkFullContent !== normalizedSyncBookmarkFullContent
     ) {
-      migrationApplied = true;
+      markMigration("sync_bookmark_full_content_normalized");
     }
     settings.syncBookmarkFullContent = normalizedSyncBookmarkFullContent;
 
@@ -13251,7 +13655,7 @@
       true
     );
     if (settings.limitImagesBySize !== normalizedLimitImagesBySize) {
-      migrationApplied = true;
+      markMigration("limit_images_by_size_normalized");
     }
     settings.limitImagesBySize = normalizedLimitImagesBySize;
 
@@ -13262,7 +13666,7 @@
     if (
       settings.useS1PlusImageViewer !== normalizedUseS1PlusImageViewer
     ) {
-      migrationApplied = true;
+      markMigration("use_s1plus_image_viewer_normalized");
     }
     settings.useS1PlusImageViewer = normalizedUseS1PlusImageViewer;
 
@@ -13271,7 +13675,7 @@
       IMAGE_PREVIEW_DEFAULT_WIDTH
     );
     if (!Object.is(settings.imagePreviewMaxWidth, normalizedImagePreviewMaxWidth)) {
-      migrationApplied = true;
+      markMigration("image_preview_max_width_normalized");
     }
     settings.imagePreviewMaxWidth = normalizedImagePreviewMaxWidth;
 
@@ -13282,7 +13686,7 @@
     if (
       !Object.is(settings.imagePreviewMaxHeight, normalizedImagePreviewMaxHeight)
     ) {
-      migrationApplied = true;
+      markMigration("image_preview_max_height_normalized");
     }
     settings.imagePreviewMaxHeight = normalizedImagePreviewMaxHeight;
 
@@ -13298,16 +13702,25 @@
       settings.autoLinkPlainTextUrls !==
       normalizedAutoLinkPlainTextUrls
     ) {
-      migrationApplied = true;
+      markMigration("auto_link_plain_text_urls_normalized");
     }
     settings.autoLinkPlainTextUrls = normalizedAutoLinkPlainTextUrls;
     if (Object.prototype.hasOwnProperty.call(settings, "autoLinkBilibiliPlainText")) {
       delete settings.autoLinkBilibiliPlainText;
-      migrationApplied = true;
+      markMigration("auto_link_bilibili_plain_text_removed");
     }
 
-    return { settings, migrationApplied };
+    return { settings, migrationApplied, migrationReasons };
   };
+
+  if (IS_S1P_TEST_MODE) {
+    const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
+    testHookHost.__S1P_TEST_HOOKS__ = {
+      ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
+      buildNormalizedSettings,
+      defaultSettings,
+    };
+  }
 
   let settingsCacheValue = null;
   let settingsCacheExpiresAt = 0;
@@ -14076,7 +14489,7 @@
   /**
    * [NEW] 设置一个嵌套对象的值。
    * @param {object} obj - 要修改的对象。
-   * @param {string} path - 属性路径，用点号分隔，例如 'openInNewTab.threads'。
+   * @param {string} path - 属性路径，用点号分隔，例如 'openInNewTab.threadList'。
    * @param {any} value - 要设置的值。
    */
   const setNestedValue = (obj, path, value) => {
@@ -14159,12 +14572,16 @@
 
   const migrateLegacySettingsIfNeeded = () => {
     const saved = GM_getValue("s1p_settings", {});
-    const { settings, migrationApplied } = buildNormalizedSettings(saved);
+    const { settings, migrationApplied, migrationReasons = [] } =
+      buildNormalizedSettings(saved);
     if (!migrationApplied) {
       return false;
     }
 
     console.log("S1 Plus: 检测到旧版设置结构，正在执行一次性迁移...");
+    if (migrationReasons.length > 0) {
+      console.log("S1 Plus: 设置迁移原因:", migrationReasons.join(", "));
+    }
     // 推进本地版本时间戳以避免“时间戳相同但内容不同”的假冲突，同时不触发自动推送。
     saveSettings(settings, {
       suppressSyncTrigger: true,
@@ -15918,10 +16335,10 @@
         `<path d="M9 5l7 7-7 7" /></svg>`;
       const prevYearHtml =
         leftArrowSvg +
-        `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-left:-10px"><path d="M15 19l-7-7 7-7" /></svg>`;
+        `<span class="s1p-dp-year-arrow-offset"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 19l-7-7 7-7" /></svg></span>`;
       const nextYearHtml =
         rightArrowSvg +
-        `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-left:-10px"><path d="M9 5l7 7-7 7" /></svg>`;
+        `<span class="s1p-dp-year-arrow-offset"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7" /></svg></span>`;
 
       const prevYearBtn = createNavBtn("prev-year", "上一年", prevYearHtml);
       const prevMonthBtn = createNavBtn("prev-month", "上个月", leftArrowSvg);
@@ -16121,22 +16538,6 @@
     const modal = document.createElement("div");
     modal.className = "s1p-token-config-modal"; // [FIX] 使用不同的类名以避免冲突 (CSS需适配或复用样式)
 
-    // 复用 s1p-modal 的核心样式，但手动应用以确保叠加效果
-    modal.style.cssText = `
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background-color: rgba(0, 0, 0, 0.5);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        z-index: 20000;
-        opacity: 0;
-        transition: opacity 0.2s ease;
-    `;
-
     // 默认过期日期：优先读取已保存的配置
     let defaultDate;
     const savedExpiryTimestamp = Number(currentSettings.syncTokenExpiryDate);
@@ -16157,27 +16558,27 @@
     };
 
     modal.innerHTML = `
-        <div class="s1p-modal-content" style="width: 400px; max-width: 90%; background: var(--s1p-bg); border-radius: 12px; border: 1px solid var(--s1p-border); display: flex; flex-direction: column; box-shadow: 0 10px 25px rgba(0,0,0,0.3);">
-            <div class="s1p-modal-header" style="padding: 16px; border-bottom: 1px solid var(--s1p-border); display: flex; justify-content: space-between; align-items: center; background: var(--s1p-sub); border-top-left-radius: 12px; border-top-right-radius: 12px;">
-                <div class="s1p-modal-title" style="font-size: 16px; font-weight: bold; color: var(--s1p-t);">设置 Token 有效期</div>
+        <div class="s1p-modal-content s1p-token-config-content">
+            <div class="s1p-modal-header s1p-token-config-header">
+                <div class="s1p-modal-title s1p-token-config-title">设置 Token 有效期</div>
                 <div class="s1p-modal-close"></div>
             </div>
-            <div class="s1p-modal-body" style="padding: 20px; overflow-y: visible;">
-                <p class="s1p-setting-desc" style="margin-top: 0;">请设置您的 GitHub Personal Access Token 的过期时间，以便脚本在过期前提醒您。</p>
+            <div class="s1p-modal-body s1p-token-config-body">
+                <p class="s1p-setting-desc s1p-token-config-desc">请设置您的 GitHub Personal Access Token 的过期时间，以便脚本在过期前提醒您。</p>
                 
-                <div class="s1p-settings-item" style="flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 16px;">
+                <div class="s1p-settings-item s1p-token-config-date-item">
                     <label class="s1p-settings-label">过期日期</label>
-                    <input type="text" id="s1p-token-expiry-date-input" class="s1p-input" value="${formatDate(defaultDate)}" readonly style="width: 100%; cursor: pointer; background: var(--s1p-bg);" placeholder="点击选择日期">
+                    <input type="text" id="s1p-token-expiry-date-input" class="s1p-input s1p-token-config-date-input" value="${formatDate(defaultDate)}" readonly placeholder="点击选择日期">
                 </div>
 
-                <div class="s1p-settings-group" style="margin-top: 16px; display: flex; gap: 8px; flex-wrap: wrap;">
+                <div class="s1p-settings-group s1p-token-config-quick-buttons">
                     <button class="s1p-btn s1p-quick-date-btn" data-days="30">30天后</button>
                     <button class="s1p-btn s1p-quick-date-btn" data-days="60">60天后</button>
                     <button class="s1p-btn s1p-quick-date-btn" data-days="90">90天后</button>
                      <button class="s1p-btn s1p-quick-date-btn" data-days="365">1年后</button>
                 </div>
             </div>
-             <div class="s1p-modal-footer" style="padding: 16px; border-top: 1px solid var(--s1p-border); background: var(--s1p-sub); display: flex; justify-content: flex-end; gap: 8px; border-bottom-left-radius: 12px; border-bottom-right-radius: 12px;">
+             <div class="s1p-modal-footer s1p-token-config-footer">
                  <button class="s1p-btn s1p-cancel-btn">取消</button>
                  <button class="s1p-btn s1p-confirm-btn s1p-primary">保存</button>
             </div>
@@ -16293,6 +16694,147 @@
     const requiredWidth = shouldAutoFitModalWidth ? calculateModalWidth() : 0;
     settingsModalCrossTabSyncController = null;
     document.querySelector(".s1p-modal")?.remove();
+    const buildSyncSettingsTabHtml = () => `
+      <div class="s1p-settings-group">
+        <div class="s1p-settings-group-title s1p-settings-section-title-label">本地备份与恢复</div>
+        <div class="s1p-local-sync-desc">通过手动复制/粘贴数据，在不同浏览器或设备间迁移或备份你的所有S1 Plus配置，包括屏蔽列表、导航栏、阅读进度和各项开关设置。</div>
+        <div class="s1p-local-sync-buttons">
+          <button id="s1p-local-export-btn" class="s1p-btn">导出数据</button>
+          <button id="s1p-local-import-btn" class="s1p-btn">导入数据</button>
+        </div>
+        <textarea id="s1p-local-sync-textarea" class="s1p-input s1p-textarea s1p-sync-textarea" placeholder="在此粘贴导入数据或从此处复制导出数据" autocomplete="off"></textarea>
+      </div>
+
+      <div class="s1p-settings-group">
+        <div class="s1p-settings-group-title s1p-settings-section-title-label">远程同步 (通过GitHub Gist)</div>
+        <div id="s1p-last-sync-time-container" class="s1p-setting-desc s1p-sync-last-sync-time"></div>
+        <div id="s1p-sync-diagnostics-wrapper" class="s1p-settings-sub-group s1p-diag-wrapper s1p-hidden">
+          <div class="s1p-settings-item s1p-diag-header">
+            <label class="s1p-settings-label">同步诊断信息</label>
+            <div class="s1p-diag-actions">
+              <button id="s1p-sync-diagnostics-copy-btn" class="s1p-btn s1p-diag-btn" type="button">复制诊断</button>
+              <button id="s1p-sync-diagnostics-reset-btn" class="s1p-btn s1p-diag-btn" type="button">重置诊断</button>
+            </div>
+          </div>
+          <div id="s1p-sync-diagnostics-panel" class="s1p-diag-panel"></div>
+        </div>
+        <div class="s1p-settings-item">
+          <label class="s1p-settings-label" for="s1p-remote-enabled-toggle">启用远程同步</label>
+          <label class="s1p-switch">
+            <input type="checkbox" id="s1p-remote-enabled-toggle" class="s1p-settings-checkbox">
+            <span class="s1p-slider"></span>
+          </label>
+        </div>
+        <p class="s1p-setting-desc">启用后，你可以在导航栏手动同步，或开启下面的自动同步。</p>
+
+        <div id="s1p-remote-sync-controls-wrapper">
+          <div class="s1p-settings-item">
+            <label class="s1p-settings-label" for="s1p-daily-first-load-sync-enabled-toggle">启用每日首次加载时同步</label>
+            <label class="s1p-switch">
+              <input type="checkbox" id="s1p-daily-first-load-sync-enabled-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
+              <span class="s1p-slider"></span>
+            </label>
+          </div>
+          <p class="s1p-setting-desc">启用后，每天第一次打开论坛时会自动检查并同步数据。此功能独立于下方的“自动后台同步”。</p>
+
+          <div id="s1p-force-pull-subgroup" class="s1p-settings-sub-group">
+            <div class="s1p-settings-item">
+              <label class="s1p-settings-label" for="s1p-force-pull-on-startup-toggle">启动时强制拉取云端数据</label>
+              <label class="s1p-switch">
+                <input type="checkbox" id="s1p-force-pull-on-startup-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
+                <span class="s1p-slider"></span>
+              </label>
+            </div>
+            <p class="s1p-setting-desc s1p-warning-text">开启后，每日首次加载时若检测到云端与本地数据不一致，将总是使用云端数据覆盖本地，不再进行提示。请谨慎开启，这可能导致本地未同步的修改丢失。</p>
+          </div>
+          <div class="s1p-settings-item">
+            <label class="s1p-settings-label" for="s1p-auto-sync-enabled-toggle">启用自动后台同步</label>
+            <label class="s1p-switch">
+              <input type="checkbox" id="s1p-auto-sync-enabled-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
+              <span class="s1p-slider"></span>
+            </label>
+          </div>
+          <p class="s1p-setting-desc">启用后，数据将在停止操作5秒后自动同步。关闭后将切换为纯手动同步模式。</p>
+          <div id="s1p-auto-sync-indicator-subgroup" class="s1p-settings-sub-group">
+            <div class="s1p-settings-item">
+              <label class="s1p-settings-label" for="s1p-show-auto-sync-indicator-toggle">显示后台同步状态指示器</label>
+              <label class="s1p-switch">
+                <input type="checkbox" id="s1p-show-auto-sync-indicator-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
+                <span class="s1p-slider"></span>
+              </label>
+            </div>
+            <p class="s1p-setting-desc">开启后，将在导航栏显示后台自动同步状态（待命/同步中/完成/异常）。</p>
+          </div>
+          <div class="s1p-settings-item">
+            <label class="s1p-settings-label" for="s1p-direct-choice-mode-toggle">启用手动同步高级模式 (悬停选择)</label>
+            <label class="s1p-switch">
+              <input type="checkbox" id="s1p-direct-choice-mode-toggle" class="s1p-settings-checkbox">
+              <span class="s1p-slider"></span>
+            </label>
+          </div>
+          <p class="s1p-setting-desc">关闭时，点击同步按钮将智能判断；开启时，悬停同步按钮可直接选择推送或拉取。</p>
+          <div class="s1p-settings-item">
+            <label class="s1p-settings-label" for="s1p-sync-bookmark-full-content-toggle">收藏回复同步完整正文</label>
+            <label class="s1p-switch">
+              <input type="checkbox" id="s1p-sync-bookmark-full-content-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
+              <span class="s1p-slider"></span>
+            </label>
+          </div>
+          <p class="s1p-setting-desc">关闭时仅同步 280 字预览（更快更省流量）；开启后会同步完整收藏内容（跨设备可查看全文，但体积更大）。</p>
+          <div class="s1p-settings-item s1p-settings-item-column">
+            <label class="s1p-settings-label" for="s1p-remote-gist-id-input">Gist ID</label>
+            <input type="text" id="s1p-remote-gist-id-input" class="s1p-input s1p-input-full" placeholder="从 Gist 网址中复制的那一长串 ID" autocomplete="off" data-s1p-sync-control>
+          </div>
+          <div class="s1p-settings-item s1p-settings-item-column s1p-settings-item-top12">
+            <label class="s1p-settings-label" for="s1p-remote-pat-input">GitHub Personal Access Token (PAT)</label>
+            <div class="s1p-relative-full">
+              <input type="password" id="s1p-remote-pat-input" class="s1p-input s1p-input-with-right-icon" placeholder="ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" autocomplete="new-password" data-s1p-sync-control>
+              <button id="s1p-toggle-pat-visibility" type="button" class="s1p-icon-btn-overlay">
+                ${SVG_ICON_EYE}
+              </button>
+            </div>
+          </div>
+          <div class="s1p-settings-item s1p-settings-item-top12">
+            <label class="s1p-settings-label" for="s1p-token-expiry-reminder-toggle">Sync Token 更新提醒</label>
+            <label class="s1p-switch">
+              <input type="checkbox" id="s1p-token-expiry-reminder-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
+              <span class="s1p-slider"></span>
+            </label>
+          </div>
+          <p class="s1p-setting-desc">开启后会在 Token 到期前三天弹窗提醒</p>
+          <div id="s1p-token-expiry-info-container" class="s1p-setting-desc s1p-sync-token-expiry-info"></div>
+          <div class="s1p-notice">
+            <div class="s1p-notice-icon"></div>
+            <div class="s1p-notice-content">
+              <a href="https://silver-s1plus.netlify.app/" target="_blank" rel="noopener noreferrer">点击此处查看设置教程</a>
+              <p>Token只会保存在你的浏览器本地，不会上传到任何地方。</p>
+            </div>
+          </div>
+          <p class="s1p-setting-desc s1p-setting-desc-save-hint">以上同步配置修改后，需点击“保存设置”才会生效。</p>
+          <div class="s1p-editor-footer s1p-sync-footer-actions">
+            <button id="s1p-remote-save-btn" class="s1p-btn" data-s1p-sync-control>保存设置</button>
+            <button id="s1p-remote-manual-sync-btn" class="s1p-btn" data-s1p-sync-control>手动同步</button>
+            <button id="s1p-open-gist-page-btn" class="s1p-btn" data-s1p-sync-control>打开 Gist 页面</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="s1p-settings-group">
+        <div class="s1p-settings-group-title s1p-settings-section-title-label">危险操作</div>
+        <div class="s1p-local-sync-desc">以下操作会立即清空脚本在<b>当前浏览器</b>中的所选数据，且无法撤销。请在操作前务必通过“导出数据”功能进行备份。</div>
+        <div id="s1p-clear-data-options" class="s1p-clear-data-options"></div>
+        <div class="s1p-clear-data-footer">
+          <div class="s1p-clear-data-select-all">
+            <label class="s1p-settings-label" for="s1p-clear-select-all">全选</label>
+            <label class="s1p-switch">
+              <input type="checkbox" id="s1p-clear-select-all">
+              <span class="s1p-slider"></span>
+            </label>
+          </div>
+          <button id="s1p-clear-selected-btn" class="s1p-btn s1p-red-btn">清除选中数据</button>
+        </div>
+      </div>
+    `;
 
     const modal = document.createElement("div");
     modal.className = "s1p-modal";
@@ -16318,146 +16860,7 @@
                 <div id="s1p-tab-tags" class="s1p-tab-content"></div>
                 <div id="s1p-tab-bookmarks" class="s1p-tab-content"></div>
                 <div id="s1p-tab-nav-settings" class="s1p-tab-content"></div>
-                <div id="s1p-tab-sync" class="s1p-tab-content">
-                    <div class="s1p-settings-group">
-                        <div class="s1p-settings-group-title s1p-settings-section-title-label">本地备份与恢复</div>
-                        <div class="s1p-local-sync-desc">通过手动复制/粘贴数据，在不同浏览器或设备间迁移或备份你的所有S1 Plus配置，包括屏蔽列表、导航栏、阅读进度和各项开关设置。</div>
-                        <div class="s1p-local-sync-buttons">
-                            <button id="s1p-local-export-btn" class="s1p-btn">导出数据</button>
-                            <button id="s1p-local-import-btn" class="s1p-btn">导入数据</button>
-                        </div>
-                        <textarea id="s1p-local-sync-textarea" class="s1p-input s1p-textarea s1p-sync-textarea" placeholder="在此粘贴导入数据或从此处复制导出数据" autocomplete="off"></textarea>
-                    </div>
-
-                    <div class="s1p-settings-group">
-                        <div class="s1p-settings-group-title s1p-settings-section-title-label">远程同步 (通过GitHub Gist)</div>
-                        <div id="s1p-last-sync-time-container" class="s1p-setting-desc" style="margin-top: -8px; margin-bottom: 16px;"></div>
-                        <div id="s1p-sync-diagnostics-wrapper" class="s1p-settings-sub-group s1p-diag-wrapper" style="display: none;">
-                            <div class="s1p-settings-item s1p-diag-header">
-                                <label class="s1p-settings-label">同步诊断信息</label>
-                                <div class="s1p-diag-actions">
-                                    <button id="s1p-sync-diagnostics-copy-btn" class="s1p-btn s1p-diag-btn" type="button">复制诊断</button>
-                                    <button id="s1p-sync-diagnostics-reset-btn" class="s1p-btn s1p-diag-btn" type="button">重置诊断</button>
-                                </div>
-                            </div>
-                            <div id="s1p-sync-diagnostics-panel" class="s1p-diag-panel"></div>
-                        </div>
-                        <div class="s1p-settings-item">
-                            <label class="s1p-settings-label" for="s1p-remote-enabled-toggle">启用远程同步</label>
-                            <label class="s1p-switch">
-                                <input type="checkbox" id="s1p-remote-enabled-toggle" class="s1p-settings-checkbox">
-                                <span class="s1p-slider"></span>
-                            </label>
-                        </div>
-                         <p class="s1p-setting-desc">启用后，你可以在导航栏手动同步，或开启下面的自动同步。</p>
-
-                        <div id="s1p-remote-sync-controls-wrapper">
-                            <div class="s1p-settings-item">
-                                <label class="s1p-settings-label" for="s1p-daily-first-load-sync-enabled-toggle">启用每日首次加载时同步</label>
-                                <label class="s1p-switch">
-                                    <input type="checkbox" id="s1p-daily-first-load-sync-enabled-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
-                                    <span class="s1p-slider"></span>
-                                </label>
-                            </div>
-                            <p class="s1p-setting-desc">启用后，每天第一次打开论坛时会自动检查并同步数据。此功能独立于下方的“自动后台同步”。</p>
-                            
-                            <div id="s1p-force-pull-subgroup" class="s1p-settings-sub-group">
-                                <div class="s1p-settings-item">
-                                    <label class="s1p-settings-label" for="s1p-force-pull-on-startup-toggle">启动时强制拉取云端数据</label>
-                                    <label class="s1p-switch">
-                                        <input type="checkbox" id="s1p-force-pull-on-startup-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
-                                        <span class="s1p-slider"></span>
-                                    </label>
-                                </div>
-                                <p class="s1p-setting-desc s1p-warning-text">开启后，每日首次加载时若检测到云端与本地数据不一致，将总是使用云端数据覆盖本地，不再进行提示。请谨慎开启，这可能导致本地未同步的修改丢失。</p>
-                            </div>
-                            <div class="s1p-settings-item">
-                                <label class="s1p-settings-label" for="s1p-auto-sync-enabled-toggle">启用自动后台同步</label>
-                                <label class="s1p-switch">
-                                    <input type="checkbox" id="s1p-auto-sync-enabled-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
-                                    <span class="s1p-slider"></span>
-                                </label>
-                            </div>
-                            <p class="s1p-setting-desc">启用后，数据将在停止操作5秒后自动同步。关闭后将切换为纯手动同步模式。</p>
-                            <div id="s1p-auto-sync-indicator-subgroup" class="s1p-settings-sub-group">
-                                <div class="s1p-settings-item">
-                                    <label class="s1p-settings-label" for="s1p-show-auto-sync-indicator-toggle">显示后台同步状态指示器</label>
-                                    <label class="s1p-switch">
-                                        <input type="checkbox" id="s1p-show-auto-sync-indicator-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
-                                        <span class="s1p-slider"></span>
-                                    </label>
-                                </div>
-                                <p class="s1p-setting-desc">开启后，将在导航栏显示后台自动同步状态（待命/同步中/完成/异常）。</p>
-                            </div>
-                            <div class="s1p-settings-item">
-                                <label class="s1p-settings-label" for="s1p-direct-choice-mode-toggle">启用手动同步高级模式 (悬停选择)</label>
-                                <label class="s1p-switch">
-                                    <input type="checkbox" id="s1p-direct-choice-mode-toggle" class="s1p-settings-checkbox">
-                                    <span class="s1p-slider"></span>
-                                </label>
-                            </div>
-                            <p class="s1p-setting-desc">关闭时，点击同步按钮将智能判断；开启时，悬停同步按钮可直接选择推送或拉取。</p>
-                            <div class="s1p-settings-item">
-                                <label class="s1p-settings-label" for="s1p-sync-bookmark-full-content-toggle">收藏回复同步完整正文</label>
-                                <label class="s1p-switch">
-                                    <input type="checkbox" id="s1p-sync-bookmark-full-content-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
-                                    <span class="s1p-slider"></span>
-                                </label>
-                            </div>
-                            <p class="s1p-setting-desc">关闭时仅同步 280 字预览（更快更省流量）；开启后会同步完整收藏内容（跨设备可查看全文，但体积更大）。</p>
-                            <div class="s1p-settings-item" style="flex-direction: column; align-items: flex-start; gap: 4px;">
-                                <label class="s1p-settings-label" for="s1p-remote-gist-id-input">Gist ID</label>
-                                <input type="text" id="s1p-remote-gist-id-input" class="s1p-input" placeholder="从 Gist 网址中复制的那一长串 ID" style="width: 100%;" autocomplete="off" data-s1p-sync-control>
-                            </div>
-                            <div class="s1p-settings-item" style="flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 12px;">
-                                <label class="s1p-settings-label" for="s1p-remote-pat-input">GitHub Personal Access Token (PAT)</label>
-                                <div style="position: relative; width: 100%;">
-                                    <input type="password" id="s1p-remote-pat-input" class="s1p-input" placeholder="ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" style="width: 100%; padding-right: 32px;" autocomplete="new-password" data-s1p-sync-control>
-                                    <button id="s1p-toggle-pat-visibility" type="button" style="position: absolute; right: 4px; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; color: var(--s1p-desc-t); padding: 4px; display: flex; align-items: center; justify-content: center; opacity: 0.7; transition: opacity 0.2s;">
-                                        ${SVG_ICON_EYE}
-                                    </button>
-                                </div>
-                            </div>
-                            <div class="s1p-settings-item" style="margin-top: 12px;">
-                                <label class="s1p-settings-label" for="s1p-token-expiry-reminder-toggle">Sync Token 更新提醒</label>
-                                <label class="s1p-switch">
-                                    <input type="checkbox" id="s1p-token-expiry-reminder-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
-                                    <span class="s1p-slider"></span>
-                                </label>
-                            </div>
-                            <p class="s1p-setting-desc">开启后会在 Token 到期前三天弹窗提醒</p>
-                            <div id="s1p-token-expiry-info-container" class="s1p-setting-desc" style="margin-top: 4px; min-height: 20px;"></div>
-                            <div class="s1p-notice">
-                                <div class="s1p-notice-icon"></div>
-                                <div class="s1p-notice-content">
-                                    <a href="https://silver-s1plus.netlify.app/" target="_blank">点击此处查看设置教程</a>
-                                    <p>Token只会保存在你的浏览器本地，不会上传到任何地方。</p>
-                                </div>
-                            </div>
-                            <p class="s1p-setting-desc" style="margin-top: 10px; margin-bottom: 8px;">以上同步配置修改后，需点击“保存设置”才会生效。</p>
-                            <div class="s1p-editor-footer" style="margin-top: 16px; justify-content: flex-end; gap: 8px;">
-                                 <button id="s1p-remote-save-btn" class="s1p-btn" data-s1p-sync-control>保存设置</button>
-                                 <button id="s1p-remote-manual-sync-btn" class="s1p-btn" data-s1p-sync-control>手动同步</button>
-                                 <button id="s1p-open-gist-page-btn" class="s1p-btn" data-s1p-sync-control>打开 Gist 页面</button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="s1p-sync-title">危险操作</div>
-                    <div class="s1p-local-sync-desc">以下操作会立即清空脚本在<b>当前浏览器</b>中的所选数据，且无法撤销。请在操作前务必通过“导出数据”功能进行备份。</div>
-                    <div id="s1p-clear-data-options" style="margin-top: 12px; display: flex; flex-direction: column; gap: 8px; background-color: var(--s1p-bg); border: 1px solid var(--s1p-pri); border-radius: 6px; padding: 12px;">
-                        </div>
-                    <div style="margin-top: 12px; display: flex; justify-content: space-between; align-items: center;">
-                        <div style="display: flex; align-items: center; gap: 12px;">
-                            <label class="s1p-settings-label" for="s1p-clear-select-all">全选</label>
-                            <label class="s1p-switch">
-                                <input type="checkbox" id="s1p-clear-select-all">
-                                <span class="s1p-slider"></span>
-                            </label>
-                        </div>
-                        <button id="s1p-clear-selected-btn" class="s1p-btn s1p-red-btn">清除选中数据</button>
-                    </div>
-                </div>
+                <div id="s1p-tab-sync" class="s1p-tab-content"></div>
             </div>
             <div class="s1p-modal-footer">版本: ${SCRIPT_VERSION} (${SCRIPT_RELEASE_DATE})</div>
         </div>`;
@@ -16468,7 +16871,6 @@
     }
 
     document.body.appendChild(modal);
-    updateLastSyncTimeDisplay();
 
     const tabs = {
       "general-settings": modal.querySelector("#s1p-tab-general-settings"),
@@ -16489,8 +16891,8 @@
     };
     const buildListSummaryHtml = (summaryId, count, itemLabel) => {
       const safeCount = Math.max(0, Number(count) || 0);
-      const hiddenStyle = safeCount > 0 ? "" : ' style="display: none;"';
-      return `<div id="${summaryId}" class="s1p-list-summary"${hiddenStyle}>${formatListSummaryText(
+      const hiddenClass = safeCount > 0 ? "" : " s1p-hidden";
+      return `<div id="${summaryId}" class="s1p-list-summary${hiddenClass}">${formatListSummaryText(
         safeCount,
         itemLabel
       )}</div>`;
@@ -16501,7 +16903,7 @@
         return;
       }
       const safeCount = Math.max(0, Number(count) || 0);
-      summaryEl.style.display = safeCount > 0 ? "" : "none";
+      summaryEl.classList.toggle("s1p-hidden", safeCount <= 0);
       if (safeCount > 0) {
         summaryEl.textContent = formatListSummaryText(safeCount, itemLabel);
       }
@@ -16513,6 +16915,28 @@
       tabElement.addEventListener("click", nextHandler);
       return nextHandler;
     };
+    const buildPrimaryFeatureToggleHtml = ({
+      id,
+      featureKey,
+      label,
+      checked = false,
+    }) => `
+      <div class="s1p-settings-group">
+        <div class="s1p-settings-item s1p-feature-toggle-item">
+          <label class="s1p-settings-label s1p-settings-section-title-label" for="${id}">${label}</label>
+          <label class="s1p-switch">
+            <input type="checkbox" id="${id}" data-feature="${featureKey}" class="s1p-feature-toggle" ${checked ? "checked" : ""
+      }>
+            <span class="s1p-slider"></span>
+          </label>
+        </div>
+      </div>
+    `;
+    const renderSyncTab = () => {
+      tabs["sync"].innerHTML = buildSyncSettingsTabHtml();
+    };
+    renderSyncTab();
+    updateLastSyncTimeDisplay();
     const SETTINGS_MODAL_DIRTY_TAB = Object.freeze({
       THREAD_RULES: "thread_rules",
       NAV_SETTINGS: "nav_settings",
@@ -16698,7 +17122,7 @@
     const setSyncDiagnosticsVisible = (visible) => {
       if (!syncDiagnosticsWrapper) return;
       isSyncDiagnosticsVisible = visible;
-      syncDiagnosticsWrapper.style.display = visible ? "" : "none";
+      syncDiagnosticsWrapper.classList.toggle("s1p-hidden", !visible);
       if (visible) {
         updateSyncDiagnosticsPanel();
       }
@@ -16944,15 +17368,12 @@
       const settings = getSettings();
       const isEnabled = settings.enableUserTagging;
 
-      const toggleHTML = `
-                <div class="s1p-settings-group">
-                    <div class="s1p-settings-item" style="padding: 0; padding-bottom: 16px; border-bottom: 1px solid var(--s1p-pri);">
-                        <label class="s1p-settings-label s1p-settings-section-title-label" for="s1p-enableUserTagging">启用用户标记功能</label>
-                        <label class="s1p-switch"><input type="checkbox" id="s1p-enableUserTagging" data-feature="enableUserTagging" class="s1p-feature-toggle" ${isEnabled ? "checked" : ""
-        }><span class="s1p-slider"></span></label>
-                    </div>
-                </div>
-            `;
+      const toggleHTML = buildPrimaryFeatureToggleHtml({
+        id: "s1p-enableUserTagging",
+        featureKey: "enableUserTagging",
+        label: "启用用户标记功能",
+        checked: isEnabled,
+      });
       const userTags = getUserTags();
       const tagItems = Object.entries(userTags).sort(
         ([, a], [, b]) => (b.timestamp || 0) - (a.timestamp || 0)
@@ -16961,9 +17382,9 @@
                 ${toggleHTML}
                 <div class="s1p-feature-content ${isEnabled ? "expanded" : ""}">
                     <div>
-                        <div class="s1p-settings-group">
-                            <div class="s1p-sync-title">用户标记管理</div>
-                            <p class="s1p-setting-desc" style="margin-top: 0; margin-bottom: 16px;">
+	                        <div class="s1p-settings-group">
+	                            <div class="s1p-settings-group-title">用户标记管理</div>
+                            <p class="s1p-setting-desc s1p-setting-desc-top0-bottom16">
                                 在此集中管理、编辑、导出或导入您为所有用户添加的标记。
                             </p>
                             <div class="s1p-local-sync-buttons">
@@ -17148,15 +17569,12 @@
       const settings = getSettings();
       const isEnabled = settings.enableBookmarkReplies;
 
-      const toggleHTML = `
-                <div class="s1p-settings-group">
-                    <div class="s1p-settings-item" style="padding: 0; padding-bottom: 16px; border-bottom: 1px solid var(--s1p-pri);">
-                        <label class="s1p-settings-label s1p-settings-section-title-label" for="s1p-enableBookmarkReplies">启用回复收藏功能</label>
-                        <label class="s1p-switch"><input type="checkbox" id="s1p-enableBookmarkReplies" data-feature="enableBookmarkReplies" class="s1p-feature-toggle" ${isEnabled ? "checked" : ""
-        }><span class="s1p-slider"></span></label>
-                    </div>
-                </div>
-            `;
+      const toggleHTML = buildPrimaryFeatureToggleHtml({
+        id: "s1p-enableBookmarkReplies",
+        featureKey: "enableBookmarkReplies",
+        label: "启用回复收藏功能",
+        checked: isEnabled,
+      });
       const bookmarkedReplies = getBookmarkedReplies();
       const bookmarkItems = Object.values(bookmarkedReplies).sort(
         (a, b) => b.timestamp - a.timestamp
@@ -17167,12 +17585,12 @@
                 ${toggleHTML}
                 <div class="s1p-feature-content ${isEnabled ? "expanded" : ""}">
                     <div>
-                        ${hasBookmarks
-          ? `
-                        <div class="s1p-settings-group" style="margin-bottom: 16px;">
-                            <div class="s1p-search-input-wrapper">
-                                <input type="text" id="s1p-bookmark-search-input" class="s1p-input" placeholder="搜索内容、作者、标题..." autocomplete="off">
-                                <svg class="s1p-search-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" /></svg>
+	                        ${hasBookmarks
+	          ? `
+	                        <div class="s1p-settings-group s1p-settings-group-margin-bottom16">
+	                            <div class="s1p-search-input-wrapper">
+	                                <input type="text" id="s1p-bookmark-search-input" class="s1p-input" placeholder="搜索内容、作者、标题..." autocomplete="off">
+	                                <svg class="s1p-search-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" /></svg>
                                 <button id="s1p-bookmark-search-clear-btn" class="s1p-search-clear-btn hidden" title="清空搜索" aria-label="清空搜索">
                                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" /></svg>
                                 </button>
@@ -17181,16 +17599,16 @@
           : ""
         }
 	                        <div class="s1p-settings-group">
-	                            ${buildListSummaryHtml(
-                                "s1p-bookmarks-list-summary",
-                                bookmarkItems.length,
-                                "条收藏回复"
-                              )}
-	                            <div id="s1p-bookmarks-list-container"></div>
-	                            <div id="s1p-bookmarks-no-results" class="s1p-empty" style="display: none;">没有找到匹配的收藏</div>
-	                        </div>
-	                    </div>
-	                </div>
+		                            ${buildListSummaryHtml(
+	                                "s1p-bookmarks-list-summary",
+	                                bookmarkItems.length,
+	                                "条收藏回复"
+	                              )}
+		                            <div id="s1p-bookmarks-list-container"></div>
+		                            <div id="s1p-bookmarks-no-results" class="s1p-empty s1p-hidden">没有找到匹配的收藏</div>
+		                        </div>
+		                    </div>
+		                </div>
             `;
 
       const bookmarksContainer = tabs["bookmarks"].querySelector(
@@ -17561,57 +17979,54 @@
       const settings = getSettings();
       const isEnabled = settings.enableUserBlocking;
 
-      const toggleHTML = `
-                <div class="s1p-settings-group">
-                    <div class="s1p-settings-item" style="padding: 0; padding-bottom: 16px; border-bottom: 1px solid var(--s1p-pri);">
-                        <label class="s1p-settings-label s1p-settings-section-title-label" for="s1p-enableUserBlocking">启用用户屏蔽功能</label>
-                        <label class="s1p-switch"><input type="checkbox" id="s1p-enableUserBlocking" data-feature="enableUserBlocking" class="s1p-feature-toggle" ${isEnabled ? "checked" : ""
-        }><span class="s1p-slider"></span></label>
-                    </div>
-                </div>
-            `;
+      const toggleHTML = buildPrimaryFeatureToggleHtml({
+        id: "s1p-enableUserBlocking",
+        featureKey: "enableUserBlocking",
+        label: "启用用户屏蔽功能",
+        checked: isEnabled,
+      });
       const blockedUsers = getBlockedUsers();
       const userItemIds = Object.keys(blockedUsers).sort(
         (a, b) => blockedUsers[b].timestamp - blockedUsers[a].timestamp
       );
       const nativeBlacklistLinkHtml = `<a class="s1p-bookmark-thread-link" href="${NATIVE_BLACKLIST_VIEW_URL}" target="_blank" rel="noopener noreferrer" title="论坛黑名单"><span class="s1p-bookmark-title-text">论坛黑名单</span>${SVG_ICON_EXTERNAL_LINK}</a>`;
       const contentHTML = `
-                <div class="s1p-settings-group" style="margin-bottom: 16px; padding-bottom: 0;">
+                <div class="s1p-settings-group s1p-settings-group-compact">
                     <div class="s1p-settings-item">
                         <label class="s1p-settings-label" for="s1p-blockThreadsOnUserBlock">屏蔽用户时，默认屏蔽其所有主题帖</label>
                         <label class="s1p-switch"><input type="checkbox" id="s1p-blockThreadsOnUserBlock" class="s1p-settings-checkbox" ${settings.blockThreadsOnUserBlock ? "checked" : ""
         }><span class="s1p-slider"></span></label>
                     </div> 
-                    <p class="s1p-setting-desc" style="margin-top: 8px; margin-bottom: 16px;">
+                    <p class="s1p-setting-desc s1p-setting-desc-top8">
                         <strong>提示</strong>：顶部总开关仅影响<strong>未来新屏蔽用户</strong>的默认设置。每个用户下方的独立开关，才是控制该用户主题帖的<strong>最终开关</strong>，拥有最高优先级。
                     </p>                   
-                    <div class="s1p-settings-item" style="margin-top: 8px;">
+                    <div class="s1p-settings-item s1p-settings-item-top8">
                         <label class="s1p-settings-label" for="s1p-syncWithNativeBlacklist">同步至论坛黑名单</label>
                         <label class="s1p-switch"><input type="checkbox" id="s1p-syncWithNativeBlacklist" class="s1p-settings-checkbox" data-setting="syncWithNativeBlacklist" ${settings.syncWithNativeBlacklist ? "checked" : ""
         }><span class="s1p-slider"></span></label>
                     </div>
 
-	                    <p class="s1p-setting-desc" style="margin-top: 8px; margin-bottom: 16px;">
-	                        <strong>提示</strong>：开启“同步至论坛黑名单”后，新屏蔽的用户会同时加入
-	                        ${nativeBlacklistLinkHtml}。
-	                    </p>
-	                    <div class="s1p-settings-item" style="margin-top: 8px;">
-	                        <label class="s1p-settings-label" for="s1p-open-native-blacklist-import-btn">导入论坛黑名单到脚本</label>
-	                        <button id="s1p-open-native-blacklist-import-btn" class="s1p-btn" type="button">前往黑名单页面导入</button>
+		                    <p class="s1p-setting-desc s1p-setting-desc-top8">
+		                        <strong>提示</strong>：开启“同步至论坛黑名单”后，新屏蔽的用户会同时加入
+		                        ${nativeBlacklistLinkHtml}。
+		                    </p>
+		                    <div class="s1p-settings-item s1p-settings-item-top8">
+		                        <label class="s1p-settings-label" for="s1p-open-native-blacklist-import-btn">导入论坛黑名单到脚本</label>
+		                        <button id="s1p-open-native-blacklist-import-btn" class="s1p-btn" type="button">前往黑名单页面导入</button>
+		                    </div>
+		                    <p class="s1p-setting-desc s1p-setting-desc-top8-no-bottom">
+		                        跳转后可在论坛黑名单页点击“导入本页到 S1 Plus”，支持逐页导入并自动去重。
+		                    </p>
+		                </div>
+		                <div class="s1p-settings-group s1p-settings-group-compact">
+		                    <div class="s1p-settings-item">
+		                        <label class="s1p-settings-label" for="s1p-manual-block-user-btn">手动输入用户名屏蔽</label>
+		                        <button id="s1p-manual-block-user-btn" class="s1p-btn" type="button">添加屏蔽用户</button>
 	                    </div>
-	                    <p class="s1p-setting-desc" style="margin-top: 8px; margin-bottom: 0;">
-	                        跳转后可在论坛黑名单页点击“导入本页到 S1 Plus”，支持逐页导入并自动去重。
+	                    <p class="s1p-setting-desc s1p-setting-desc-top8-no-bottom">
+	                        输入用户名后，脚本会自动识别 UID，并支持填写备注后加入屏蔽列表。
 	                    </p>
-	                </div>
-	                <div class="s1p-settings-group" style="margin-bottom: 16px; padding-bottom: 0;">
-	                    <div class="s1p-settings-item">
-	                        <label class="s1p-settings-label" for="s1p-manual-block-user-btn">手动输入用户名屏蔽</label>
-	                        <button id="s1p-manual-block-user-btn" class="s1p-btn" type="button">添加屏蔽用户</button>
-                    </div>
-                    <p class="s1p-setting-desc" style="margin-top: 8px; margin-bottom: 0;">
-                        输入用户名后，脚本会自动识别 UID，并支持填写备注后加入屏蔽列表。
-                    </p>
-	                </div>
+		                </div>
 	                <div class="s1p-settings-group">
 	                    ${buildListSummaryHtml(
                         "s1p-blocked-user-list-summary",
@@ -17644,12 +18059,12 @@
                 : `<button class="s1p-btn s1p-btn-sm s1p-add-remark-btn" data-user-id="${safeIdAttr}">添加备注</button>`;
 
               return `
-	              <div class="s1p-item s1p-blocked-user-item" data-user-id="${safeIdAttr}">
-	                <div class="s1p-blocked-user-top-row">
-	                    <div class="s1p-item-info" style="margin-bottom: 0;">
-	                        <div class="s1p-item-title">${safeDisplayName}${syncStatusHtml}</div>
-	                        <div class="s1p-item-meta">屏蔽时间: ${formatDate(item.timestamp)}</div>
-	                    </div>
+		              <div class="s1p-item s1p-blocked-user-item" data-user-id="${safeIdAttr}">
+		                <div class="s1p-blocked-user-top-row">
+		                    <div class="s1p-item-info s1p-item-info-no-margin">
+		                        <div class="s1p-item-title">${safeDisplayName}${syncStatusHtml}</div>
+		                        <div class="s1p-item-meta">屏蔽时间: ${formatDate(item.timestamp)}</div>
+		                    </div>
 	                    <button class="s1p-unblock-btn s1p-btn" data-unblock-user-id="${safeIdAttr}">取消屏蔽</button>
 	                </div>
 	                
@@ -17732,15 +18147,12 @@
       const settings = getSettings();
       const isEnabled = settings.enablePostBlocking;
 
-      const toggleHTML = `
-                <div class="s1p-settings-group">
-                    <div class="s1p-settings-item" style="padding: 0; padding-bottom: 16px; border-bottom: 1px solid var(--s1p-pri);">
-                        <label class="s1p-settings-label s1p-settings-section-title-label" for="s1p-enablePostBlocking">启用帖子屏蔽功能</label>
-                        <label class="s1p-switch"><input type="checkbox" id="s1p-enablePostBlocking" data-feature="enablePostBlocking" class="s1p-feature-toggle" ${isEnabled ? "checked" : ""
-        }><span class="s1p-slider"></span></label>
-                    </div>
-                </div>
-            `;
+      const toggleHTML = buildPrimaryFeatureToggleHtml({
+        id: "s1p-enablePostBlocking",
+        featureKey: "enablePostBlocking",
+        label: "启用帖子屏蔽功能",
+        checked: isEnabled,
+      });
       const blockedThreads = getBlockedThreads();
       const manualItemIds = Object.keys(blockedThreads).sort(
         (a, b) => blockedThreads[b].timestamp - blockedThreads[a].timestamp
@@ -17761,8 +18173,8 @@
                       keywordRuleCount,
                       "条标题规则"
                     )}
-                    <div id="s1p-keyword-rules-list" style="display: flex; flex-direction: column; gap: 8px;"></div>
-                    <div class="s1p-editor-footer" style="justify-content: flex-start; gap: 8px;">
+                    <div id="s1p-keyword-rules-list" class="s1p-keyword-rules-list"></div>
+                    <div class="s1p-editor-footer s1p-editor-footer-start">
                          <button id="s1p-keyword-rule-add-btn" class="s1p-btn">添加新规则</button>
                          <button id="s1p-keyword-rules-save-btn" class="s1p-btn">保存规则</button>
                     </div>
@@ -18156,7 +18568,7 @@
               const safePatternForHtml = escapeHTML(pattern);
               createConfirmationModal(
                 "确认删除该屏蔽规则吗？",
-                `规则内容: <code style="background-color: var(--s1p-secondary-bg); padding: 2px 4px; border-radius: 4px;">${safePatternForHtml}</code><br>此操作将立即生效并从存储中删除该规则。`,
+                `规则内容: <code class="s1p-inline-code-badge">${safePatternForHtml}</code><br>此操作将立即生效并从存储中删除该规则。`,
                 () => {
                   const ruleIdToDelete = item.dataset.ruleId;
                   if (!ruleIdToDelete || ruleIdToDelete.startsWith("new_")) {
@@ -18202,102 +18614,50 @@
     const renderGeneralSettingsTab = () => {
       const settings = getSettings();
       const openTabSettings = settings.openInNewTab;
+      const isReadProgressEnabled = settings.enableReadProgress === true;
+      const resolveOpenModeValue = (isEnabled, isBackground) => {
+        if (!isEnabled) return "off";
+        return isBackground ? "background" : "foreground";
+      };
+      const openModeValues = {
+        threadList: resolveOpenModeValue(
+          openTabSettings.threadList,
+          openTabSettings.threadListInBackground
+        ),
+        progress: resolveOpenModeValue(
+          openTabSettings.progress,
+          openTabSettings.progressInBackground
+        ),
+        nav: resolveOpenModeValue(
+          openTabSettings.nav,
+          openTabSettings.navInBackground
+        ),
+        postContentLinks: resolveOpenModeValue(
+          openTabSettings.postContentLinks,
+          openTabSettings.postContentLinksInBackground
+        ),
+      };
 
       tabs["general-settings"].innerHTML = `
-        <div class="s1p-settings-group">
-            <div class="s1p-settings-item" style="padding: 0; padding-bottom: 16px; border-bottom: 1px solid var(--s1p-pri);">
-                <label class="s1p-settings-label s1p-settings-section-title-label" for="s1p-enableGeneralSettings">启用通用设置</label>
-                <label class="s1p-switch">
-                    <input type="checkbox" id="s1p-enableGeneralSettings" data-feature="enableGeneralSettings" class="s1p-feature-toggle" ${settings.enableGeneralSettings ? "checked" : ""
-        }>
-                    <span class="s1p-slider"></span>
-                </label>
-            </div>
-        </div>
-
+        ${buildPrimaryFeatureToggleHtml({
+          id: "s1p-enableGeneralSettings",
+          featureKey: "enableGeneralSettings",
+          label: "启用通用设置",
+          checked: settings.enableGeneralSettings,
+        })}
         <div class="s1p-feature-content ${settings.enableGeneralSettings ? "expanded" : ""
         }">
             <div>
                 <div class="s1p-settings-group">
                     <div class="s1p-settings-group-title">阅读/浏览增强</div>
-                    <div class="s1p-settings-item">
-                        <label class="s1p-settings-label" for="s1p-openInNewTab-master">在新标签页打开帖子/版块等链接</label>
-                        <label class="s1p-switch"><input type="checkbox" id="s1p-openInNewTab-master" class="s1p-settings-checkbox" data-setting="openInNewTab.master" ${openTabSettings.master ? "checked" : ""
-        }><span class="s1p-slider"></span></label>
-                    </div>
-                    <p class="s1p-setting-desc" style="margin-top: -4px;">开启后，下方选中的链接类型将在新标签页打开。支持顶部导航、帖子列表、消息提醒，以及脚本识别出的纯文本链接。</p>
-                    
-                    <div class="s1p-settings-sub-group" style="${!openTabSettings.master
-          ? "opacity: 0.5; pointer-events: none;"
-          : ""
-        }">
-
-                        <div class="s1p-settings-item">
-                            <label class="s1p-settings-label" for="s1p-openThreadListInNewTab">在新标签页打开帖子/消息链接</label>
-                            <label class="s1p-switch"><input type="checkbox" id="s1p-openThreadListInNewTab" class="s1p-settings-checkbox" data-setting="openInNewTab.threadList" ${openTabSettings.threadList ? "checked" : ""
-        }><span class="s1p-slider"></span></label>
-                        </div>
-                         <p class="s1p-setting-desc" style="margin-top: -4px;">控制帖子列表和消息提醒区域内的常规链接。</p>
-                        <div class="s1p-settings-item" id="s1p-openThreadListInBackground-item" style="padding-left: 20px; ${!openTabSettings.threadList ? "display: none;" : ""
-        }">
-                            <label class="s1p-settings-label">在后台打开</label>
-                            <label class="s1p-switch"><input type="checkbox" id="s1p-openThreadListInBackground" class="s1p-settings-checkbox" data-setting="openInNewTab.threadListInBackground" ${openTabSettings.threadListInBackground
-          ? "checked"
-          : ""
-        }><span class="s1p-slider"></span></label>
-                        </div>
-
-                        <div style="margin: 12px 0 8px 0; border-top: 1px solid var(--s1p-pri);"></div>
-
-                        <div class="s1p-settings-item">
-                            <label class="s1p-settings-label" for="s1p-openProgressInNewTab">在新标签页打开阅读进度跳转</label>
-                            <label class="s1p-switch"><input type="checkbox" id="s1p-openProgressInNewTab" class="s1p-settings-checkbox" data-setting="openInNewTab.progress" ${openTabSettings.progress ? "checked" : ""
-        }><span class="s1p-slider"></span></label>
-                        </div>
-                        <div class="s1p-settings-item" id="s1p-openProgressInBackground-item" style="padding-left: 20px; ${!openTabSettings.progress ? "display: none;" : ""
-        }">
-                            <label class="s1p-settings-label">在后台打开</label>
-                            <label class="s1p-switch"><input type="checkbox" id="s1p-openProgressInBackground" class="s1p-settings-checkbox" data-setting="openInNewTab.progressInBackground" ${openTabSettings.progressInBackground
-          ? "checked"
-          : ""
-        }><span class="s1p-slider"></span></label>
-                        </div>
-
-                        <div style="margin: 12px 0 8px 0; border-top: 1px solid var(--s1p-pri);"></div>
-
-                        <div class="s1p-settings-item">
-                            <label class="s1p-settings-label" for="s1p-openNavInNewTab">在新标签页打开顶部导航/菜单链接</label> 
-                            <label class="s1p-switch"><input type="checkbox" id="s1p-openNavInNewTab" class="s1p-settings-checkbox" data-setting="openInNewTab.nav" ${openTabSettings.nav ? "checked" : ""
-        }><span class="s1p-slider"></span></label>
-                        </div>
-                        <div class="s1p-settings-item" id="s1p-openNavInBackground-item" style="padding-left: 20px; ${!openTabSettings.nav ? "display: none;" : ""
-        }">
-                            <label class="s1p-settings-label" >在后台打开</label>
-                            <label class="s1p-switch"><input type="checkbox" id="s1p-openNavInBackground" class="s1p-settings-checkbox" data-setting="openInNewTab.navInBackground" ${openTabSettings.navInBackground ? "checked" : ""
-        }><span class="s1p-slider"></span></label>
-                        </div>
-
-                    </div>
-
-                    <div class="s1p-settings-item" style="margin-top: 16px;">
+                    <div class="s1p-settings-item s1p-settings-item-top16">
                         <label class="s1p-settings-label" for="s1p-autoLinkPlainTextUrls">将纯文本链接自动转为可点击超链接</label>
                         <label class="s1p-switch"><input type="checkbox" id="s1p-autoLinkPlainTextUrls" class="s1p-settings-checkbox" data-setting="autoLinkPlainTextUrls" ${settings.autoLinkPlainTextUrls ? "checked" : ""
         }><span class="s1p-slider"></span></label>
                     </div>
-                    <p class="s1p-setting-desc" style="margin-top: -4px;">处理常见 http://、https://、www. 开头的纯文本链接；原本已可点击的链接会自动跳过。</p>
-                    <div class="s1p-settings-item" id="s1p-openPlainTextUrlInNewTab-item" style="margin-top: 8px; padding-left: 20px; ${!settings.autoLinkPlainTextUrls ? "display: none;" : ""}">
-                        <label class="s1p-settings-label" for="s1p-openPlainTextUrlInNewTab">在新标签页打开“纯文本自动链接”</label>
-                        <label class="s1p-switch"><input type="checkbox" id="s1p-openPlainTextUrlInNewTab" class="s1p-settings-checkbox" data-setting="openInNewTab.plainTextUrls" ${openTabSettings.plainTextUrls ? "checked" : ""
-        }><span class="s1p-slider"></span></label>
-                    </div>
-                    <div class="s1p-settings-item" id="s1p-openPlainTextUrlInBackground-item" style="padding-left: 40px; ${!openTabSettings.plainTextUrls ? "display: none;" : ""
-        }">
-                        <label class="s1p-settings-label">在后台打开</label>
-                        <label class="s1p-switch"><input type="checkbox" id="s1p-openPlainTextUrlInBackground" class="s1p-settings-checkbox" data-setting="openInNewTab.plainTextUrlsInBackground" ${openTabSettings.plainTextUrlsInBackground ? "checked" : ""
-        }><span class="s1p-slider"></span></label>
-                    </div>
+                    <p class="s1p-setting-desc s1p-setting-desc-top-negative4">处理常见 http://、https://、www. 开头的纯文本链接；原本已可点击的链接会自动跳过。</p>
 
-                     <div class="s1p-settings-item" style="margin-top: 16px;">
+                     <div class="s1p-settings-item s1p-settings-item-top16">
                         <label class="s1p-settings-label" for="s1p-enableReadProgress">启用阅读进度跟踪</label>
                         <label class="s1p-switch"><input type="checkbox" id="s1p-enableReadProgress" data-feature="enableReadProgress" class="s1p-feature-toggle" ${settings.enableReadProgress ? "checked" : ""
         }><span class="s1p-slider"></span></label>
@@ -18312,22 +18672,22 @@
                         </div>
                         <div class="s1p-settings-item" id="s1p-cleanupModeContainer">
                             <label class="s1p-settings-label">阅读记录清理方式</label>
-                            <div style="display: flex; align-items: center; gap: 12px;">
+                            <div class="s1p-flex-row-center-gap12">
                                 <div id="s1p-cleanupMode-control" class="s1p-segmented-control">
                                     <div class="s1p-segmented-control-slider"></div>
                                     <div class="s1p-segmented-control-option ${settings.cleanupMode === 'auto' ? 'active' : ''}" data-value="auto">自动</div>
                                     <div class="s1p-segmented-control-option ${settings.cleanupMode === 'manual' ? 'active' : ''}" data-value="manual">手动</div>
                                 </div>
-                                <button id="s1p-open-progress-detail-btn" class="s1p-btn" style="${settings.cleanupMode === 'manual' ? '' : 'display: none;'} padding: 6px 12px; white-space: nowrap;">
-                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="16" height="16" style="margin-right: 6px; vertical-align: middle;">
+                                <button id="s1p-open-progress-detail-btn" class="s1p-btn s1p-progress-detail-btn ${settings.cleanupMode === 'manual' ? '' : 's1p-hidden'}">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="16" height="16" class="s1p-progress-detail-btn-icon">
                                         <path d="M3 3H21C21.5523 3 22 3.44772 22 4V20C22 20.5523 21.5523 21 21 21H3C2.44772 21 2 20.5523 2 20V4C2 3.44772 2.44772 3 3 3ZM4 5V19H20V5H4ZM7 7H11V11H7V7ZM7 13H11V17H7V13ZM13 7H17V11H13V7ZM13 13H17V17H13V13Z"></path>
                                     </svg>
                                     阅读记录详情
                                 </button>
                             </div>
                         </div>
-                        <div class="s1p-settings-item s1p-auto-cleanup-options" id="s1p-readingProgressCleanupContainer" style="${settings.cleanupMode === 'auto' ? '' : 'display: none;'} margin-top: -8px;">
-                            <label class="s1p-settings-label" style="padding-left: 16px;">自动清理超过以下时间的阅读记录</label>
+                        <div class="s1p-settings-item s1p-auto-cleanup-options s1p-settings-item-auto-cleanup ${settings.cleanupMode === 'auto' ? '' : 's1p-hidden'}" id="s1p-readingProgressCleanupContainer">
+                            <label class="s1p-settings-label s1p-settings-label-indent16">自动清理超过以下时间的阅读记录</label>
                             <div id="s1p-readingProgressCleanupDays-control" class="s1p-segmented-control">
                                 <div class="s1p-segmented-control-slider"></div>
                                 <div class="s1p-segmented-control-option ${settings.readingProgressCleanupDays == 30 ? 'active' : ''}" data-value="30">1个月</div>
@@ -18384,6 +18744,54 @@
                     </div>
                     <p class="s1p-setting-desc">开启后，被屏蔽楼层将被自动隐藏。</p>
                 </div>
+                <div class="s1p-settings-group s1p-link-open-mode-section">
+                        <div class="s1p-settings-group-head">
+                            <div class="s1p-settings-group-title">链接打开方式（新标签页）</div>
+                            <button id="s1p-reset-open-in-new-tab-settings-btn" type="button" class="s1p-btn">恢复默认</button>
+                        </div>
+                        <p class="s1p-setting-desc s1p-setting-desc-top8-no-bottom">按来源单独控制打开行为：关闭 / 自动切换到新标签页 / 后台打开不切换。最后一项仅作用于除“帖子/消息链接”“阅读进度跳转”“顶部导航/菜单链接”之外的其他论坛链接。</p>
+                        <div class="s1p-link-open-mode-group">
+                            <div class="s1p-link-open-mode-item">
+                                <label class="s1p-settings-label" for="s1p-openMode-threadList-control">帖子/消息链接</label>
+                                <div id="s1p-openMode-threadList-control" class="s1p-segmented-control s1p-link-open-mode-control">
+                                    <div class="s1p-segmented-control-slider"></div>
+                                    <div class="s1p-segmented-control-option ${openModeValues.threadList === "off" ? "active" : ""}" data-value="off">关闭</div>
+                                    <div class="s1p-segmented-control-option ${openModeValues.threadList === "foreground" ? "active" : ""}" data-value="foreground">自动切换</div>
+                                    <div class="s1p-segmented-control-option ${openModeValues.threadList === "background" ? "active" : ""}" data-value="background">后台打开</div>
+                                </div>
+                            </div>
+                            <div class="s1p-link-open-mode-item ${isReadProgressEnabled ? "" : "is-disabled"}">
+                                <label class="s1p-settings-label" for="s1p-openMode-progress-control">阅读进度跳转</label>
+                                <div id="s1p-openMode-progress-control" class="s1p-segmented-control s1p-link-open-mode-control">
+                                    <div class="s1p-segmented-control-slider"></div>
+                                    <div class="s1p-segmented-control-option ${openModeValues.progress === "off" ? "active" : ""}" data-value="off">关闭</div>
+                                    <div class="s1p-segmented-control-option ${openModeValues.progress === "foreground" ? "active" : ""}" data-value="foreground">自动切换</div>
+                                    <div class="s1p-segmented-control-option ${openModeValues.progress === "background" ? "active" : ""}" data-value="background">后台打开</div>
+                                </div>
+                            </div>
+                            ${isReadProgressEnabled
+          ? ""
+          : '<p class="s1p-setting-desc s1p-setting-desc-progress-hint">需先开启“阅读进度跟踪”。</p>'}
+                            <div class="s1p-link-open-mode-item">
+                                <label class="s1p-settings-label" for="s1p-openMode-nav-control">顶部导航/菜单链接</label>
+                                <div id="s1p-openMode-nav-control" class="s1p-segmented-control s1p-link-open-mode-control">
+                                    <div class="s1p-segmented-control-slider"></div>
+                                    <div class="s1p-segmented-control-option ${openModeValues.nav === "off" ? "active" : ""}" data-value="off">关闭</div>
+                                    <div class="s1p-segmented-control-option ${openModeValues.nav === "foreground" ? "active" : ""}" data-value="foreground">自动切换</div>
+                                    <div class="s1p-segmented-control-option ${openModeValues.nav === "background" ? "active" : ""}" data-value="background">后台打开</div>
+                                </div>
+                            </div>
+                            <div class="s1p-link-open-mode-item">
+                                <label class="s1p-settings-label" for="s1p-openMode-postContentLinks-control">其他论坛链接（含自动补链）</label>
+                                <div id="s1p-openMode-postContentLinks-control" class="s1p-segmented-control s1p-link-open-mode-control">
+                                    <div class="s1p-segmented-control-slider"></div>
+                                    <div class="s1p-segmented-control-option ${openModeValues.postContentLinks === "off" ? "active" : ""}" data-value="off">关闭</div>
+                                    <div class="s1p-segmented-control-option ${openModeValues.postContentLinks === "foreground" ? "active" : ""}" data-value="foreground">自动切换</div>
+                                    <div class="s1p-segmented-control-option ${openModeValues.postContentLinks === "background" ? "active" : ""}" data-value="background">后台打开</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 <div class="s1p-settings-group">
                     <div class="s1p-settings-group-title">界面与个性化</div>
                     <div class="s1p-settings-item">
@@ -18419,50 +18827,39 @@
         </div>`;
 
       const tabContent = tabs["general-settings"];
-      const masterSwitch = tabContent.querySelector("#s1p-openInNewTab-master");
-      const subOptionsContainer = tabContent.querySelector(
-        ".s1p-settings-sub-group"
+      const resetOpenInNewTabSettingsBtn = tabContent.querySelector(
+        "#s1p-reset-open-in-new-tab-settings-btn"
       );
-
-      const setupSubSwitch = (mainSwitchId, subItemContainerId) => {
-        const mainSwitch = tabContent.querySelector(`#${mainSwitchId}`);
-        const subItemContainer = tabContent.querySelector(
-          `#${subItemContainerId}`
-        );
-        if (mainSwitch && subItemContainer) {
-          mainSwitch.addEventListener("change", (e) => {
-            subItemContainer.style.display = e.target.checked ? "flex" : "none";
-          });
-        }
-      };
-
-      masterSwitch.addEventListener("change", (e) => {
-        if (e.target.checked) {
-          subOptionsContainer.style.opacity = "1";
-          subOptionsContainer.style.pointerEvents = "auto";
-        } else {
-          subOptionsContainer.style.opacity = "0.5";
-          subOptionsContainer.style.pointerEvents = "none";
-        }
-      });
-
-      setupSubSwitch(
-        "s1p-openThreadListInNewTab",
-        "s1p-openThreadListInBackground-item"
-      );
-      setupSubSwitch(
-        "s1p-openProgressInNewTab",
-        "s1p-openProgressInBackground-item"
-      );
-      setupSubSwitch("s1p-openNavInNewTab", "s1p-openNavInBackground-item");
-      setupSubSwitch(
-        "s1p-autoLinkPlainTextUrls",
-        "s1p-openPlainTextUrlInNewTab-item"
-      );
-      setupSubSwitch(
-        "s1p-openPlainTextUrlInNewTab",
-        "s1p-openPlainTextUrlInBackground-item"
-      );
+      if (resetOpenInNewTabSettingsBtn) {
+        resetOpenInNewTabSettingsBtn.addEventListener("click", (event) => {
+          event.preventDefault();
+          const currentSettings = getSettingsForWrite();
+          currentSettings.openInNewTab = {
+            ...currentSettings.openInNewTab,
+            threadList: defaultSettings.openInNewTab.threadList,
+            threadListInBackground:
+              defaultSettings.openInNewTab.threadListInBackground,
+            progress: defaultSettings.openInNewTab.progress,
+            progressInBackground: defaultSettings.openInNewTab.progressInBackground,
+            nav: defaultSettings.openInNewTab.nav,
+            navInBackground: defaultSettings.openInNewTab.navInBackground,
+            postContentLinks: defaultSettings.openInNewTab.postContentLinks,
+            postContentLinksInBackground:
+              defaultSettings.openInNewTab.postContentLinksInBackground,
+          };
+          saveSettings(currentSettings);
+          applyGlobalLinkBehavior();
+          removeProgressJumpButtons();
+          if (
+            currentSettings.enableGeneralSettings === true &&
+            currentSettings.enableReadProgress === true
+          ) {
+            addProgressJumpButtons();
+          }
+          renderGeneralSettingsTab();
+          showMessage("“链接打开方式（新标签页）”已恢复默认。", true);
+        });
+      }
 
       const moveSlider = (control, skipAnimation = false) => {
         if (!control) return;
@@ -18496,6 +18893,92 @@
           }
         });
       };
+      const setOpenModeOption = (control, modeValue) => {
+        if (!control) return;
+        control
+          .querySelectorAll(".s1p-segmented-control-option")
+          .forEach((opt) => opt.classList.remove("active"));
+        const targetOption = control.querySelector(
+          `.s1p-segmented-control-option[data-value="${modeValue}"]`
+        );
+        if (targetOption) {
+          targetOption.classList.add("active");
+        }
+        moveSlider(control);
+      };
+      const applyOpenModeToSettings = (settingsForWrite, openKey, backgroundKey, mode) => {
+        if (
+          !settingsForWrite.openInNewTab ||
+          typeof settingsForWrite.openInNewTab !== "object"
+        ) {
+          settingsForWrite.openInNewTab = { ...defaultSettings.openInNewTab };
+        }
+        if (mode === "background") {
+          settingsForWrite.openInNewTab[openKey] = true;
+          settingsForWrite.openInNewTab[backgroundKey] = true;
+          return;
+        }
+        if (mode === "foreground") {
+          settingsForWrite.openInNewTab[openKey] = true;
+          settingsForWrite.openInNewTab[backgroundKey] = false;
+          return;
+        }
+        settingsForWrite.openInNewTab[openKey] = false;
+        settingsForWrite.openInNewTab[backgroundKey] = false;
+      };
+      const bindOpenModeControl = (
+        controlId,
+        openKey,
+        backgroundKey,
+        { disabled = false } = {}
+      ) => {
+        const control = tabContent.querySelector(`#${controlId}`);
+        if (!control) {
+          return;
+        }
+        moveSlider(control, true);
+        if (disabled) {
+          return;
+        }
+        control.addEventListener("click", (event) => {
+          const option = event.target.closest(".s1p-segmented-control-option");
+          if (!option || option.classList.contains("active")) {
+            return;
+          }
+          const mode = option.dataset.value;
+          const nextSettings = getSettingsForWrite();
+          applyOpenModeToSettings(nextSettings, openKey, backgroundKey, mode);
+          saveSettings(nextSettings);
+          setOpenModeOption(control, mode);
+          applyGlobalLinkBehavior();
+          if (openKey === "progress") {
+            removeProgressJumpButtons();
+            if (
+              nextSettings.enableGeneralSettings === true &&
+              nextSettings.enableReadProgress === true
+            ) {
+              addProgressJumpButtons();
+            }
+          }
+        });
+      };
+      bindOpenModeControl(
+        "s1p-openMode-threadList-control",
+        "threadList",
+        "threadListInBackground"
+      );
+      bindOpenModeControl(
+        "s1p-openMode-progress-control",
+        "progress",
+        "progressInBackground",
+        { disabled: !isReadProgressEnabled }
+      );
+      bindOpenModeControl("s1p-openMode-nav-control", "nav", "navInBackground");
+      bindOpenModeControl(
+        "s1p-openMode-postContentLinks-control",
+        "postContentLinks",
+        "postContentLinksInBackground"
+      );
 
       const cleanupControl = tabs["general-settings"].querySelector(
         "#s1p-readingProgressCleanupDays-control"
@@ -18549,11 +19032,11 @@
 
           // 显示/隐藏对应的选项
           if (newMode === "auto") {
-            autoCleanupOptions.style.display = "";
-            if (progressDetailBtn) progressDetailBtn.style.display = "none";
+            autoCleanupOptions?.classList.remove("s1p-hidden");
+            progressDetailBtn?.classList.add("s1p-hidden");
           } else {
-            autoCleanupOptions.style.display = "none";
-            if (progressDetailBtn) progressDetailBtn.style.display = "";
+            autoCleanupOptions?.classList.add("s1p-hidden");
+            progressDetailBtn?.classList.remove("s1p-hidden");
             // [FIX] 切换到手动模式时，清除残留的自动清理标记，防止误触发自动推送逻辑
             GM_deleteValue("s1p_pending_cleanup_info");
           }
@@ -18618,17 +19101,12 @@
       setSettingsModalDirtyState(SETTINGS_MODAL_DIRTY_TAB.NAV_SETTINGS, false);
       const settings = getSettings();
       tabs["nav-settings"].innerHTML = `
-        <div class="s1p-settings-group">
-            <div class="s1p-settings-item" style="padding: 0; padding-bottom: 16px; border-bottom: 1px solid var(--s1p-pri);">
-                <label class="s1p-settings-label s1p-settings-section-title-label" for="s1p-enableNavCustomization">启用自定义导航栏</label>
-                <label class="s1p-switch">
-                    <input type="checkbox" id="s1p-enableNavCustomization" data-feature="enableNavCustomization" class="s1p-feature-toggle" ${settings.enableNavCustomization ? "checked" : ""
-        }>
-                    <span class="s1p-slider"></span>
-                </label>
-            </div>
-        </div>
-
+        ${buildPrimaryFeatureToggleHtml({
+          id: "s1p-enableNavCustomization",
+          featureKey: "enableNavCustomization",
+          label: "启用自定义导航栏",
+          checked: settings.enableNavCustomization,
+        })}
         <div class="s1p-feature-content ${settings.enableNavCustomization ? "expanded" : ""
         }">
             <div>
@@ -18640,13 +19118,13 @@
                         ? settings.customNavLinks.length
                         : 0,
                       "个导航链接"
-                    )}
-                    <div class="s1p-list s1p-nav-editor-list"></div>
-                    <div class="s1p-editor-footer">
-                        <div style="display: flex; gap: 8px;">
-                            <button id="s1p-nav-add-btn" class="s1p-btn">添加新链接</button>
-                            <button id="s1p-settings-save-btn" class="s1p-btn">保存设置</button>
-                        </div>
+	                    )}
+	                    <div class="s1p-list s1p-nav-editor-list"></div>
+	                    <div class="s1p-editor-footer">
+	                        <div class="s1p-nav-editor-actions">
+	                            <button id="s1p-nav-add-btn" class="s1p-btn">添加新链接</button>
+	                            <button id="s1p-settings-save-btn" class="s1p-btn">保存设置</button>
+	                        </div>
                         <button id="s1p-nav-restore-btn" class="s1p-btn s1p-red-btn">恢复默认导航</button>
                     </div>
                 </div>
@@ -19956,7 +20434,7 @@
     let cleanupNoticeHtml = "";
     if (isConflict && pendingCleanupCount > 0) {
       cleanupNoticeHtml = `
-        <div class="s1p-notice" style="margin-top: 16px;">
+        <div class="s1p-notice s1p-notice-top16">
             <div class="s1p-notice-icon"></div>
             <div class="s1p-notice-content">根据您的设置，S1 Plus 自动清理了 <strong>${pendingCleanupCount}</strong> 条陈旧的阅读记录，导致本地数据与云端不一致。</div>
         </div>
@@ -19969,7 +20447,7 @@
         : false;
     let title = "";
     if (isConflict) {
-      title = `<h2 style="color: var(--s1p-red);">检测到同步冲突！</h2><p>无法安全自动判定新旧，请仔细选择要保留的版本。</p>`;
+      title = `<h2 class="s1p-sync-conflict-title">检测到同步冲突！</h2><p>无法安全自动判定新旧，请仔细选择要保留的版本。</p>`;
     } else if (localNewer) {
       title = `<h2>本地数据较新</h2><p>建议选择“推送”以更新云端备份。</p>`;
     } else {
@@ -20058,9 +20536,9 @@
             ${tableRows}
             <div class="s1p-sync-comparison-row">
                 <div class="s1p-sync-comparison-label">最后更新</div>
-                <div class="s1p-sync-comparison-value" style="font-size: 13px;">${localTime} ${localNewer && !isConflict ? newerBadge : ""
+                <div class="s1p-sync-comparison-value">${localTime} ${localNewer && !isConflict ? newerBadge : ""
       }</div>
-                <div class="s1p-sync-comparison-value" style="font-size: 13px;">${remoteTime} ${!localNewer && !isConflict ? newerBadge : ""
+                <div class="s1p-sync-comparison-value">${remoteTime} ${!localNewer && !isConflict ? newerBadge : ""
       }</div>
             </div>
         </div>
@@ -20722,7 +21200,7 @@
             releaseManualSyncLockForDecision();
             createAdvancedConfirmationModal(
               "检测到云端备份损坏",
-              `<p style="color: var(--s1p-red);">云端备份文件校验失败，为保护数据已暂停同步。</p><p>是否用当前健康的本地数据强制覆盖云端损坏的备份？</p>`,
+              `<p class="s1p-sync-danger-text">云端备份文件校验失败，为保护数据已暂停同步。</p><p>是否用当前健康的本地数据强制覆盖云端损坏的备份？</p>`,
               [forcePushAction, cancelAction],
               {
                 modalClassName: "s1p-sync-modal",
@@ -22999,10 +23477,10 @@
     const bodyHtml = `
         <p>检测到您尚未安装 <strong>S1 NUX</strong> 论坛美化扩展。</p>
         <p>S1 Plus 与 S1 NUX 搭配使用可获得最佳论坛浏览体验，强烈推荐安装！</p>
-        <div class="s1p-notice" style="margin-top: 16px; gap: 8px;">
+        <div class="s1p-notice s1p-notice-top16 s1p-notice-gap8">
              <div class="s1p-notice-icon"></div>
              <div class="s1p-notice-content">
-                <a href="https://stage1st.com/2b/thread-1826103-1-2.html" target="_blank">点击此处，了解 S1 NUX 详情</a>
+                <a href="https://stage1st.com/2b/thread-1826103-1-2.html" target="_blank" rel="noopener noreferrer">点击此处，了解 S1 NUX 详情</a>
                 <p>一个由 S1 用户创作的、旨在优化论坛视觉和交互的 CSS 样式扩展。</p>
              </div>
         </div>
@@ -23791,7 +24269,7 @@
     // [OPTIMIZED] 优化HTML结构以改善文本布局和换行
     const bodyHtml = `
     <p>已更新至 v${SCRIPT_VERSION}！这次更新主要优化了帖子楼层工具栏的编辑体验。</p>
-    <p style="margin-top: 16px;">
+    <p class="s1p-welcome-highlight-paragraph">
         <strong>✏️ 新增编辑按钮</strong>：在帖子楼层工具栏加入“编辑当前回复”快捷入口，进入编辑更直接。
     </p>
   `;
@@ -24607,5 +25085,7 @@
     }
   }
 
-  main();
+  if (!IS_S1P_TEST_MODE) {
+    main();
+  }
 })();

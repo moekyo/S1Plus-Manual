@@ -59,6 +59,17 @@
 - Windows 路径示例：`file:///C:/Users/Name/S1Plus-Manual/S1Plus.js`
 - 本地 Loader 的 `@grant` / `@connect` 需要与主脚本保持一致；若缺少 `img.stage1st.com`，图片保存会被 Tampermonkey 拦截
 
+### 2.3 迁移回归校验（建议每次改设置迁移后执行）
+
+```bash
+node scripts/test-settings-migration.js
+```
+
+说明：
+
+- 用例夹具：`tests/settings-migration/fixtures.json`
+- 覆盖重点：旧版 `openInNewTab` 结构迁移、布尔归一化、自动补链旧键迁移、Token 到期字段归一化等
+
 ## 3. 多机协作流程（Git）
 
 ### 3.1 首次在新设备
@@ -81,6 +92,7 @@
 
 - `sanitizeHtmlFragment`：受控 HTML 白名单清洗
 - `getSafeUrlAttributeValue`：URL 安全校验
+- `isPrimaryUnmodifiedClick`：统一判定“普通左键点击”（排除 Ctrl/Cmd/Shift/Alt 与已拦截事件）
 - `sanitizeRecordObject`：对象键净化（防原型链污染）
 - `deterministicSort` / `sha256`：稳定序列化与哈希
 
@@ -177,6 +189,10 @@
 2. 必要时回退时间戳判定（带 12h 偏差保护）
 3. 双端都变更 -> 冲突
 4. 仅阅读进度分歧且基础数据一致 -> 自动合并
+
+补充：
+
+- 设置迁移归一化函数 `buildNormalizedSettings()` 现会返回 `migrationReasons`，用于定位本次迁移是由哪些旧字段/脏值触发。
 
 ### 6.3 并发与保护
 
