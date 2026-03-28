@@ -1332,7 +1332,8 @@
 
     /* --- 按钮通用样式 (V4 - 精致阴影与安全区适配) --- */
     .s1p-btn,
-    .s1p-confirm-btn {
+    .s1p-confirm-btn,
+    .s1p-inline-toggle-btn {
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -1354,7 +1355,8 @@
     }
 
     .s1p-btn:hover,
-    .s1p-confirm-btn:hover {
+    .s1p-confirm-btn:hover,
+    .s1p-inline-toggle-btn:hover {
       background-color: var(--s1p-sub-h);
       color: var(--s1p-sub-h-t);
       /* [MODIFIED] 同样采用更收敛的悬停阴影，并微调Y轴位移 */
@@ -2603,6 +2605,11 @@
     .s1p-tabs-wrapper {
       display: flex;
       justify-content: center;
+      position: -webkit-sticky;
+      position: sticky;
+      top: 0;
+      z-index: 3;
+      background-color: var(--s1p-bg);
     }
     .s1p-empty {
       text-align: center;
@@ -3751,7 +3758,7 @@
       }
 
       .s1p-tabs-wrapper {
-        justify-content: flex-start;
+        justify-content: center;
         overflow-x: auto;
         overflow-y: hidden;
         -webkit-overflow-scrolling: touch;
@@ -3906,35 +3913,29 @@
     }
 
     /* --- 引用屏蔽占位符 --- */
-    .s1p-quote-placeholder {
+    .s1p-quote-placeholder,
+    .s1p-notification-placeholder {
       background-color: var(--s1p-bg);
       border: 1px solid var(--s1p-pri);
       padding: 8px 12px;
       border-radius: 6px;
-      margin: 10px 0;
+      margin: 14px 0 10px;
       font-size: 13px;
       color: var(--s1p-desc-t);
       display: flex;
       justify-content: space-between;
       align-items: center;
     }
-    .s1p-inline-toggle-btn {
-      appearance: none;
-      border: none;
-      background-color: var(--s1p-sub);
-      color: var(--s1p-t);
-      font-size: 12px;
-      font-weight: 600;
-      line-height: 1;
-      border-radius: 6px;
-      padding: 6px 12px;
-      cursor: pointer;
-      white-space: nowrap;
-      transition: background-color 0.2s ease, color 0.2s ease;
+    td.t_f > .pstatus {
+      display: block;
+      margin: 0 0 18px !important;
     }
-    .s1p-inline-toggle-btn:hover {
-      background-color: var(--s1p-sub-h);
-      color: var(--s1p-sub-h-t);
+    td.t_f > .pstatus + br {
+      display: none;
+    }
+    td.t_f > .pstatus + .s1p-quote-placeholder,
+    td.t_f > .pstatus + .s1p-notification-placeholder {
+      margin-top: 0 !important;
     }
     .s1p-inline-toggle-btn:focus-visible {
       outline: 2px solid var(--s1p-sub-h);
@@ -3946,18 +3947,6 @@
     }
 
     /* --- [新增] 通知/提醒屏蔽样式 --- */
-    .s1p-notification-placeholder {
-      background-color: var(--s1p-bg);
-      border: 1px solid var(--s1p-pri);
-      padding: 8px 12px;
-      border-radius: 6px;
-      margin-top: 10px;
-      font-size: 13px;
-      color: var(--s1p-desc-t);
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
     .s1p-notification-wrapper {
       overflow: hidden;
       transition: max-height 0.35s ease-in-out;
@@ -4694,12 +4683,14 @@
         box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
       }
       .s1p-btn,
-      .s1p-confirm-btn {
+      .s1p-confirm-btn,
+      .s1p-inline-toggle-btn {
         box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3),
           inset 0 1px 0 rgba(255, 255, 255, 0.05);
       }
       .s1p-btn:hover,
-      .s1p-confirm-btn:hover {
+      .s1p-confirm-btn:hover,
+      .s1p-inline-toggle-btn:hover {
         box-shadow: 0 2px 5px rgba(0, 0, 0, 0.4),
           inset 0 1px 0 rgba(255, 255, 255, 0.07);
       }
@@ -4720,7 +4711,11 @@
         box-shadow: 0 5px 20px rgba(0, 0, 0, 0.3);
       }
       .s1p-tab-slider {
+        background-color: #2f3a46;
         box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+      }
+      .s1p-tab-btn.active {
+        color: #e5edf6;
       }
       .s1p-toast-notification {
         box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
@@ -7585,6 +7580,14 @@
 
     return nodes;
   };
+  const setInlineToggleExpandedState = (toggleElement, isExpanded) => {
+    if (!(toggleElement instanceof HTMLButtonElement)) {
+      return;
+    }
+    toggleElement.textContent = isExpanded ? "点击折叠" : "点击展开";
+    toggleElement.classList.toggle("is-expanded", isExpanded);
+    toggleElement.setAttribute("aria-expanded", String(isExpanded));
+  };
 
   const hideBlockedUserQuotes = (scopeRoots = null) => {
     const settings = getSettings();
@@ -7629,7 +7632,7 @@
           const quoteToggle = document.createElement("button");
           quoteToggle.type = "button";
           quoteToggle.className = "s1p-quote-toggle s1p-inline-toggle-btn";
-          quoteToggle.textContent = "点击展开";
+          setInlineToggleExpandedState(quoteToggle, false);
           newPlaceholder.appendChild(quotePlaceholderText);
           newPlaceholder.appendChild(quoteToggle);
           newWrapper.parentNode.insertBefore(newPlaceholder, newWrapper);
@@ -7642,11 +7645,10 @@
               const marginBottom = parseFloat(style.marginBottom);
               newWrapper.style.maxHeight =
                 quoteElement.offsetHeight + marginTop + marginBottom + "px";
-              this.textContent = "点击折叠";
             } else {
               newWrapper.style.maxHeight = "0px";
-              this.textContent = "点击展开";
             }
+            setInlineToggleExpandedState(this, isCollapsed);
           });
         }
       } else {
@@ -7821,7 +7823,7 @@
           notificationToggle.type = "button";
           notificationToggle.className =
             "s1p-notification-toggle s1p-inline-toggle-btn";
-          notificationToggle.textContent = "点击展开";
+          setInlineToggleExpandedState(notificationToggle, false);
           placeholder.appendChild(notificationPlaceholderText);
           placeholder.appendChild(notificationToggle);
           newWrapper.parentNode.insertBefore(placeholder, newWrapper);
@@ -7830,11 +7832,10 @@
             const isCollapsed = newWrapper.style.maxHeight === "0px";
             if (isCollapsed) {
               newWrapper.style.maxHeight = dlElement.scrollHeight + "px";
-              this.textContent = "点击折叠";
             } else {
               newWrapper.style.maxHeight = "0px";
-              this.textContent = "点击展开";
             }
+            setInlineToggleExpandedState(this, isCollapsed);
           });
         }
       } else {
@@ -16331,27 +16332,39 @@
       const animationEasing = "cubic-bezier(0.4, 0, 0.2, 1)";
       // ---------------------------------------------
 
-      const newWidth = activeTab.offsetWidth;
-      const newLeft = activeTab.offsetLeft;
+      const tabContainerRect = tabContainer.getBoundingClientRect();
+      const activeTabRect = activeTab.getBoundingClientRect();
+      const newWidth = activeTabRect.width;
+      const newLeft = activeTabRect.left - tabContainerRect.left;
 
       // 1. 在下一帧，立即为滑块应用过渡动画效果
       requestAnimationFrame(() => {
         slider.style.transition = `width ${animationDuration} ${animationEasing}, transform ${animationDuration} ${animationEasing}`;
 
         // 2. 紧接着，设置滑块的目标宽度和位置，这将触发动画
-        slider.style.width = `${newWidth}px`;
-        slider.style.transform = `translateX(${newLeft}px)`;
+        slider.style.width = `${newWidth.toFixed(3)}px`;
+        slider.style.transform = `translateX(${newLeft.toFixed(3)}px)`;
       });
 
-      // 3. [优化] 监听动画结束事件，结束后移除内联的 transition 样式
-      // 这样做的好处是，将控制权交还给CSS，避免潜在的样式冲突，是更规范的做法。
-      slider.addEventListener(
-        "transitionend",
-        () => {
-          slider.style.transition = "";
-        },
-        { once: true }
-      ); // { once: true } 确保事件只触发一次后自动移除
+      // 保持 transition 内联样式，避免频繁重算时堆积 transitionend 监听器。
+    }
+  };
+  const scheduleTabSliderSync = (tabContainer) => {
+    if (!tabContainer) return;
+    const syncSliderPosition = () => {
+      if (tabContainer.isConnected) {
+        moveTabSlider(tabContainer);
+      }
+    };
+
+    // 首次渲染时布局可能还在收敛，连续校准几次可避免“刚打开/截图时”尺寸偏差。
+    syncSliderPosition();
+    requestAnimationFrame(syncSliderPosition);
+    setTimeout(syncSliderPosition, 120);
+
+    const fontsReady = document.fonts && document.fonts.ready;
+    if (fontsReady && typeof fontsReady.then === "function") {
+      fontsReady.then(syncSliderPosition).catch(() => {});
     }
   };
 
@@ -19396,12 +19409,20 @@
     renderBookmarksTab();
     renderNavSettingsTab();
 
+    let handleTabSliderLayoutChange = null;
+    let tabSliderResizeObserver = null;
     const closeManagementModal = () => {
       if (
         settingsModalCrossTabSyncController &&
         settingsModalCrossTabSyncController.modalElement === modal
       ) {
         settingsModalCrossTabSyncController = null;
+      }
+      if (handleTabSliderLayoutChange) {
+        window.removeEventListener("resize", handleTabSliderLayoutChange);
+      }
+      if (tabSliderResizeObserver) {
+        tabSliderResizeObserver.disconnect();
       }
       modal.remove();
     };
@@ -19532,7 +19553,16 @@
     };
 
     const tabContainer = modal.querySelector(".s1p-tabs");
-    setTimeout(() => moveTabSlider(tabContainer), 50);
+    const syncTabSliderLayout = () => moveTabSlider(tabContainer);
+    scheduleTabSliderSync(tabContainer);
+    handleTabSliderLayoutChange = syncTabSliderLayout;
+    window.addEventListener("resize", handleTabSliderLayoutChange, {
+      passive: true,
+    });
+    if (typeof ResizeObserver === "function") {
+      tabSliderResizeObserver = new ResizeObserver(syncTabSliderLayout);
+      tabSliderResizeObserver.observe(tabContainer);
+    }
 
     modal.style.transition = "opacity 0.2s ease-out";
     requestAnimationFrame(() => {
