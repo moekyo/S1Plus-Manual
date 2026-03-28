@@ -1,0 +1,220 @@
+[
+  {
+    "name": "legacy_root_keys_migration",
+    "input": {
+      "openThreadsInNewTab": true,
+      "openThreadsInBackground": true,
+      "openProgressInNewTab": false,
+      "openProgressInBackground": true
+    },
+    "expected": {
+      "migrationApplied": true,
+      "settings": {
+        "openInNewTab.threadList": true,
+        "openInNewTab.threadListInBackground": true,
+        "openInNewTab.progress": false,
+        "openInNewTab.progressInBackground": true,
+        "openInNewTab.nav": true,
+        "openInNewTab.navInBackground": false
+      },
+      "reasonsInclude": [
+        "open_in_new_tab_legacy_root_or_nested_keys",
+        "open_in_new_tab_legacy_root_key_removed:openThreadsInNewTab"
+      ]
+    }
+  },
+  {
+    "name": "legacy_nested_and_plain_text_keys_migration",
+    "input": {
+      "openInNewTab": {
+        "threads": true,
+        "threadsInBackground": true,
+        "sidebar": false,
+        "sidebarInBackground": true,
+        "plainTextUrls": true,
+        "plainTextUrlsInBackground": true
+      }
+    },
+    "expected": {
+      "migrationApplied": true,
+      "settings": {
+        "openInNewTab.threadList": true,
+        "openInNewTab.threadListInBackground": true,
+        "openInNewTab.nav": true,
+        "openInNewTab.navInBackground": false,
+        "openInNewTab.postContentLinks": true,
+        "openInNewTab.postContentLinksInBackground": true
+      },
+      "absentPaths": [
+        "openInNewTab.threads",
+        "openInNewTab.threadsInBackground",
+        "openInNewTab.sidebar",
+        "openInNewTab.sidebarInBackground",
+        "openInNewTab.plainTextUrls",
+        "openInNewTab.plainTextUrlsInBackground"
+      ],
+      "reasonsInclude": [
+        "open_in_new_tab_legacy_root_or_nested_keys"
+      ]
+    }
+  },
+  {
+    "name": "legacy_master_gate_off",
+    "input": {
+      "openInNewTab": {
+        "master": false,
+        "threads": true,
+        "sidebar": true,
+        "plainTextUrls": true
+      }
+    },
+    "expected": {
+      "migrationApplied": true,
+      "settings": {
+        "openInNewTab.threadList": false,
+        "openInNewTab.progress": false,
+        "openInNewTab.nav": false,
+        "openInNewTab.postContentLinks": false
+      },
+      "reasonsInclude": [
+        "open_in_new_tab_legacy_master"
+      ]
+    }
+  },
+  {
+    "name": "open_in_new_tab_dirty_boolean_values",
+    "input": {
+      "openInNewTab": {
+        "threadList": "true",
+        "threadListInBackground": "false",
+        "progress": true,
+        "progressInBackground": 1,
+        "nav": false,
+        "navInBackground": null,
+        "postContentLinks": "false",
+        "postContentLinksInBackground": "true"
+      }
+    },
+    "expected": {
+      "migrationApplied": true,
+      "settings": {
+        "openInNewTab.threadList": false,
+        "openInNewTab.threadListInBackground": false,
+        "openInNewTab.progress": true,
+        "openInNewTab.progressInBackground": false,
+        "openInNewTab.nav": false,
+        "openInNewTab.navInBackground": false,
+        "openInNewTab.postContentLinks": false,
+        "openInNewTab.postContentLinksInBackground": false
+      },
+      "reasonsInclude": [
+        "open_in_new_tab_normalized_bool:threadList",
+        "open_in_new_tab_normalized_bool:postContentLinksInBackground"
+      ]
+    }
+  },
+  {
+    "name": "auto_link_plain_text_legacy_fallback",
+    "input": {
+      "autoLinkBilibiliPlainText": false
+    },
+    "expected": {
+      "migrationApplied": true,
+      "settings": {
+        "autoLinkPlainTextUrls": false
+      },
+      "absentPaths": [
+        "autoLinkBilibiliPlainText"
+      ],
+      "reasonsInclude": [
+        "auto_link_plain_text_urls_normalized",
+        "auto_link_bilibili_plain_text_removed"
+      ]
+    }
+  },
+  {
+    "name": "token_expiry_normalization",
+    "input": {
+      "syncTokenExpiryEnabled": "yes",
+      "syncTokenExpiryDate": "abc"
+    },
+    "expected": {
+      "migrationApplied": true,
+      "settings": {
+        "syncTokenExpiryEnabled": false,
+        "syncTokenExpiryDate": null
+      },
+      "reasonsInclude": [
+        "sync_token_expiry_enabled_normalized",
+        "sync_token_expiry_date_normalized"
+      ]
+    }
+  },
+  {
+    "name": "image_preview_bounds_clamped",
+    "input": {
+      "imagePreviewMaxWidth": 99999,
+      "imagePreviewMaxHeight": 50
+    },
+    "expected": {
+      "migrationApplied": true,
+      "settings": {
+        "imagePreviewMaxWidth": 5000,
+        "imagePreviewMaxHeight": 100
+      },
+      "reasonsInclude": [
+        "image_preview_max_width_normalized",
+        "image_preview_max_height_normalized"
+      ]
+    }
+  },
+  {
+    "name": "clean_current_structure_no_migration",
+    "input": {
+      "openInNewTab": {
+        "threadList": true,
+        "threadListInBackground": false,
+        "progress": false,
+        "progressInBackground": false,
+        "nav": true,
+        "navInBackground": false,
+        "postContentLinks": true,
+        "postContentLinksInBackground": false
+      },
+      "autoLinkPlainTextUrls": true,
+      "syncTokenExpiryEnabled": false,
+      "syncTokenExpiryDate": null
+    },
+    "expected": {
+      "migrationApplied": false,
+      "settings": {
+        "openInNewTab.threadList": true,
+        "openInNewTab.nav": true,
+        "openInNewTab.postContentLinks": true,
+        "autoLinkPlainTextUrls": true
+      },
+      "reasonsInclude": []
+    }
+  },
+  {
+    "name": "custom_nav_links_normalization",
+    "input": {
+      "customNavLinks": [
+        { "name": "", "href": "forum.php" },
+        { "name": "危险链接", "href": "javascript:alert(1)" },
+        { "name": "归墟", "href": "forum-157-1.html" }
+      ]
+    },
+    "expected": {
+      "migrationApplied": true,
+      "settings": {
+        "customNavLinks.length": 1,
+        "customNavLinks.0.name": "归墟",
+        "customNavLinks.0.href": "forum-157-1.html"
+      },
+      "reasonsInclude": [
+        "custom_nav_links_normalized"
+      ]
+    }
+  }
+]
