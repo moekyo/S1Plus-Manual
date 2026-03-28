@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      6.9.0
+// @version      6.10.0
 // @description  为Stage1st论坛提供帖子/用户/楼层屏蔽、导航栏自定义、自动签到、阅读进度跟踪、回复收藏、远程同步等多种功能，全方位优化你的论坛体验。
 // @author       moekyo
 // @match        https://stage1st.com/2b/*
@@ -25,8 +25,8 @@
   const IS_S1P_TEST_MODE =
     typeof globalThis !== "undefined" && globalThis.__S1P_TEST_MODE__ === true;
 
-  const SCRIPT_VERSION = "6.9.0";
-  const SCRIPT_RELEASE_DATE = "2026-03-27";
+  const SCRIPT_VERSION = "6.10.0";
+  const SCRIPT_RELEASE_DATE = "2026-03-28";
 
   // --- [新增] SHA-256 哈希计算库 (基于 Web Crypto API) ---
   /**
@@ -264,6 +264,41 @@
       }
       const doParam = String(parsedUrl.searchParams.get("do") || "").toLowerCase();
       return doParam === "download";
+    } catch (e) {
+      return false;
+    }
+  };
+  const isLikelyLogoutLink = (anchorElement, hrefValue) => {
+    if (!(anchorElement instanceof HTMLAnchorElement)) {
+      return false;
+    }
+    const normalizedHref = String(hrefValue || "").trim().toLowerCase();
+    if (!normalizedHref) {
+      return false;
+    }
+    if (
+      /(?:^|[?&])mod=logging(?:&|$)/.test(normalizedHref) &&
+      /(?:^|[?&])action=logout(?:&|$)/.test(normalizedHref)
+    ) {
+      return true;
+    }
+    try {
+      const parsedUrl = new URL(anchorElement.href || hrefValue, window.location.origin);
+      if (parsedUrl.origin !== window.location.origin) {
+        return false;
+      }
+      const pathname = String(parsedUrl.pathname || "").toLowerCase();
+      const mod = String(parsedUrl.searchParams.get("mod") || "").toLowerCase();
+      const action = String(parsedUrl.searchParams.get("action") || "").toLowerCase();
+      const op = String(parsedUrl.searchParams.get("op") || "").toLowerCase();
+      const doParam = String(parsedUrl.searchParams.get("do") || "").toLowerCase();
+      if (mod === "logging" && action === "logout") {
+        return true;
+      }
+      if (pathname.endsWith("/member.php") || pathname === "/member.php") {
+        return action === "logout" || op === "logout" || doParam === "logout";
+      }
+      return false;
     } catch (e) {
       return false;
     }
@@ -3164,11 +3199,21 @@
       width: auto;
       min-width: 200px;
     }
+    .s1p-settings-item-column > .s1p-input,
+    .s1p-settings-item-column > .s1p-relative-full {
+      width: 100%;
+      align-self: stretch;
+    }
+    .s1p-settings-item-column .s1p-input {
+      width: 100%;
+      min-width: 0;
+    }
     .s1p-settings-group-head {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 12px;
+      margin-bottom: 8px;
     }
     .s1p-settings-group-head .s1p-settings-group-title {
       margin-bottom: 0;
@@ -3177,10 +3222,11 @@
     }
     .s1p-settings-group-head .s1p-btn {
       padding: 4px 10px;
+      font-size: 13px;
     }
     .s1p-link-open-mode-section {
-      margin-top: 16px;
-      padding-top: 12px;
+      margin-top: 8px;
+      padding-top: 0;
     }
     .s1p-setting-desc-top8 {
       margin-top: 8px;
@@ -3191,7 +3237,7 @@
       margin-bottom: 0;
     }
     .s1p-setting-desc-save-hint {
-      margin-top: 10px;
+      margin-top: 14px;
       margin-bottom: 8px;
     }
     .s1p-sync-last-sync-time {
@@ -3206,6 +3252,13 @@
       margin-top: 16px;
       justify-content: flex-end;
       gap: 8px;
+    }
+    .s1p-editor-footer.s1p-sync-footer-actions {
+      justify-content: flex-end;
+      gap: 8px;
+    }
+    .s1p-notice + .s1p-setting-desc-save-hint {
+      margin-top: 14px;
     }
     .s1p-clear-data-options {
       margin-top: 12px;
@@ -3329,6 +3382,10 @@
       gap: 12px;
       padding: 6px 0;
     }
+    .s1p-link-open-mode-desc {
+      margin-top: 0;
+      margin-bottom: 12px;
+    }
     .s1p-link-open-mode-item .s1p-settings-label {
       flex: 1 1 auto;
     }
@@ -3358,6 +3415,8 @@
     .s1p-image-size-limit-header .s1p-btn {
       flex-shrink: 0;
       white-space: nowrap;
+      padding: 4px 10px;
+      font-size: 13px;
     }
     .s1p-image-size-limit-panel:not(.is-enabled) {
       opacity: 0.5;
@@ -11233,7 +11292,7 @@
       normalizedHref.startsWith("javascript:") ||
       normalizedHref.startsWith("vbscript:") ||
       normalizedHref.startsWith("data:text/html") ||
-      normalizedHref.includes("mod=logging&action=logout") ||
+      isLikelyLogoutLink(anchor, href) ||
       !isSafeForManagedOpen ||
       anchor.closest(OPEN_IN_NEW_TAB_EXCLUDED_SCOPE_SELECTOR)
     ) {
@@ -11324,7 +11383,6 @@
 
     if (open && settingApplied) {
       e.preventDefault();
-      e.stopPropagation();
       GM_openInTab(anchor.href, { active: !background });
     }
   };
@@ -13513,18 +13571,21 @@
           oldOpenTab.threadList ??
           oldOpenTab.threads ??
           saved.openThreadsInNewTab ??
-          true,
+          defaultSettings.openInNewTab.threadList,
         threadListInBackground:
           oldOpenTab.threadListInBackground ??
           oldOpenTab.threadsInBackground ??
           saved.openThreadsInBackground ??
           false,
-        progress: oldOpenTab.progress ?? saved.openProgressInNewTab ?? true,
+        progress:
+          oldOpenTab.progress ??
+          saved.openProgressInNewTab ??
+          defaultSettings.openInNewTab.progress,
         progressInBackground:
           oldOpenTab.progressInBackground ??
           saved.openProgressInBackground ??
           false,
-        nav: oldOpenTab.nav ?? true, // 旧版无此设置，迁移时默认为 true
+        nav: oldOpenTab.nav ?? defaultSettings.openInNewTab.nav,
         navInBackground: oldOpenTab.navInBackground ?? false,
         postContentLinks:
           oldOpenTab.postContentLinks ?? oldOpenTab.plainTextUrls ?? false,
@@ -18749,7 +18810,7 @@
                             <div class="s1p-settings-group-title">链接打开方式（新标签页）</div>
                             <button id="s1p-reset-open-in-new-tab-settings-btn" type="button" class="s1p-btn">恢复默认</button>
                         </div>
-                        <p class="s1p-setting-desc s1p-setting-desc-top8-no-bottom">按来源单独控制打开行为：关闭 / 自动切换到新标签页 / 后台打开不切换。最后一项仅作用于除“帖子/消息链接”“阅读进度跳转”“顶部导航/菜单链接”之外的其他论坛链接。</p>
+                        <p class="s1p-setting-desc s1p-link-open-mode-desc">按来源单独控制打开行为：关闭 / 自动切换到新标签页 / 后台打开不切换。最后一项仅作用于除“帖子/消息链接”“阅读进度跳转”“顶部导航/菜单链接”之外的其他论坛链接。</p>
                         <div class="s1p-link-open-mode-group">
                             <div class="s1p-link-open-mode-item">
                                 <label class="s1p-settings-label" for="s1p-openMode-threadList-control">帖子/消息链接</label>
@@ -24268,10 +24329,9 @@
 
     // [OPTIMIZED] 优化HTML结构以改善文本布局和换行
     const bodyHtml = `
-    <p>已更新至 v${SCRIPT_VERSION}！这次更新主要优化了帖子楼层工具栏的编辑体验。</p>
-    <p class="s1p-welcome-highlight-paragraph">
-        <strong>✏️ 新增编辑按钮</strong>：在帖子楼层工具栏加入“编辑当前回复”快捷入口，进入编辑更直接。
-    </p>
+    <p>已更新至 v${SCRIPT_VERSION}！这次更新主要是把链接打开体验做得更顺手。</p>
+    <p>链接跳转更稳定了，误跳转和打断阅读的情况更少。</p>
+    <p>旧设置升级也更平滑，开关状态会更容易保持一致。</p>
   `;
 
     const buttons = [
