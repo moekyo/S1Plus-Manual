@@ -2493,6 +2493,19 @@
       color: var(--s1p-red);
       transform: rotate(90deg);
     }
+    .s1p-btn.s1p-settings-close-btn {
+      width: 34px;
+      height: 34px;
+      min-width: 34px;
+      flex: 0 0 34px;
+      padding: 0;
+      border-radius: 6px;
+      background-image: none;
+      font-size: 0;
+      line-height: 0;
+      appearance: none;
+      -webkit-appearance: none;
+    }
     .s1p-modal-body {
       padding: 8px 16px 16px;
       overflow-y: auto;
@@ -17021,7 +17034,7 @@
     modal.className = "s1p-modal";
     modal.style.opacity = "0";
     modal.innerHTML = `<div class="s1p-modal-content">
-            <div class="s1p-modal-header"><div class="s1p-modal-title">S1 Plus 设置</div><div class="s1p-modal-close"></div></div>
+            <div class="s1p-modal-header"><div class="s1p-modal-title">S1 Plus 设置</div><button type="button" class="s1p-btn s1p-settings-close-btn" aria-label="关闭设置面板" title="关闭设置面板"><svg class="s1p-image-viewer__close-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M5 5L15 15"></path><path d="M15 5L5 15"></path></svg></button></div>
             <div class="s1p-modal-body">
                 <div class="s1p-tabs-wrapper">
                     <div class="s1p-tabs">
@@ -19945,7 +19958,12 @@
 
     modal.addEventListener("click", async (e) => {
       const target = e.target;
-      if (e.target.matches(".s1p-modal, .s1p-modal-close")) closeManagementModal();
+      if (
+        target.matches(".s1p-modal") ||
+        target.closest(".s1p-settings-close-btn")
+      ) {
+        closeManagementModal();
+      }
       if (e.target.matches(".s1p-tab-btn")) {
         const tabContainer = e.target.closest(".s1p-tabs");
         modal
