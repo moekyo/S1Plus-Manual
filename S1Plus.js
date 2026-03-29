@@ -3423,6 +3423,18 @@
       margin-top: 0;
       margin-bottom: 12px;
     }
+    .s1p-image-viewer-default-mode-group {
+      margin-top: 2px;
+      margin-bottom: 10px;
+    }
+    .s1p-image-viewer-default-mode-group > .s1p-settings-item {
+      padding-top: 4px;
+      padding-bottom: 6px;
+    }
+    .s1p-setting-desc.s1p-image-viewer-default-mode-desc {
+      margin-top: 6px;
+      margin-bottom: 16px;
+    }
     .s1p-link-open-mode-item .s1p-settings-label {
       flex: 1 1 auto;
     }
@@ -9266,10 +9278,7 @@
       }
       state.hasPreparedSwitchTransform =
         usePreparedTransform &&
-        applyS1pImageViewerFitBySize(naturalWidth, naturalHeight, {
-          contain: false,
-          allowUpscale: true,
-        });
+        applyS1pImageViewerDefaultFitBySize(naturalWidth, naturalHeight);
       state.image.src = normalizedSourceUrl;
     };
     preloadImage.addEventListener("load", () => {
@@ -9345,7 +9354,7 @@
     state.hasPreparedSwitchTransform = false;
     clearS1pImageViewerSwitchAnimation();
     if (state.image.complete && Number(state.image.naturalWidth || 0) > 0) {
-      resetS1pImageViewerTransform();
+      applyS1pImageViewerDefaultTransform();
     } else {
       state.scale = 1;
       state.translateX = 0;
@@ -9415,6 +9424,29 @@
         : (viewportHeight - fittedHeight) / 2;
     applyS1pImageViewerTransform();
     return true;
+  };
+  const applyS1pImageViewerDefaultFitBySize = (naturalWidth, naturalHeight) => {
+    const settings = getSettings();
+    const shouldContain = settings.imageViewerDefaultFullDisplay === true;
+    return applyS1pImageViewerFitBySize(naturalWidth, naturalHeight, {
+      contain: shouldContain,
+      allowUpscale: !shouldContain,
+    });
+  };
+  const applyS1pImageViewerDefaultTransform = () => {
+    const state = s1pImageViewerState;
+    if (!state.image || !state.viewport) {
+      return;
+    }
+    const naturalWidth = Number(state.image.naturalWidth || 0);
+    const naturalHeight = Number(state.image.naturalHeight || 0);
+    if (applyS1pImageViewerDefaultFitBySize(naturalWidth, naturalHeight)) {
+      return;
+    }
+    state.scale = 1;
+    state.translateX = 0;
+    state.translateY = 0;
+    applyS1pImageViewerTransform();
   };
   const fitS1pImageViewerToViewport = () => {
     const state = s1pImageViewerState;
@@ -10718,7 +10750,7 @@
       const hasPreparedTransform = latestState.hasPreparedSwitchTransform === true;
       latestState.hasPreparedSwitchTransform = false;
       if (!hasPreparedTransform) {
-        resetS1pImageViewerTransform();
+        applyS1pImageViewerDefaultTransform();
       }
       if (latestState.overlay) {
         latestState.overlay.classList.remove("is-preparing-switch");
@@ -10933,7 +10965,7 @@
         return;
       }
       if (state.image.complete && Number(state.image.naturalWidth || 0) > 0) {
-        resetS1pImageViewerTransform();
+        applyS1pImageViewerDefaultTransform();
         clearS1pImageViewerSwitchAnimation();
       } else {
         state.scale = 1;
@@ -13610,6 +13642,7 @@
     hideImagesByDefault: false,
     limitImagesBySize: true,
     useS1PlusImageViewer: true,
+    imageViewerDefaultFullDisplay: false,
     imagePreviewMaxWidth: IMAGE_PREVIEW_DEFAULT_WIDTH,
     imagePreviewMaxHeight: IMAGE_PREVIEW_DEFAULT_HEIGHT,
     enhanceFloatingControls: true,
@@ -13852,6 +13885,19 @@
     }
     settings.useS1PlusImageViewer = normalizedUseS1PlusImageViewer;
 
+    const normalizedImageViewerDefaultFullDisplay = normalizeBooleanWithDefault(
+      settings.imageViewerDefaultFullDisplay,
+      defaultSettings.imageViewerDefaultFullDisplay
+    );
+    if (
+      settings.imageViewerDefaultFullDisplay !==
+      normalizedImageViewerDefaultFullDisplay
+    ) {
+      markMigration("image_viewer_default_full_display_normalized");
+    }
+    settings.imageViewerDefaultFullDisplay =
+      normalizedImageViewerDefaultFullDisplay;
+
     const normalizedImagePreviewMaxWidth = normalizeImagePreviewLimitValue(
       settings.imagePreviewMaxWidth,
       IMAGE_PREVIEW_DEFAULT_WIDTH
@@ -13941,6 +13987,7 @@
     "hideImagesByDefault",
     "limitImagesBySize",
     "useS1PlusImageViewer",
+    "imageViewerDefaultFullDisplay",
     "imagePreviewMaxWidth",
     "imagePreviewMaxHeight",
     "showReadIndicator",
@@ -14428,6 +14475,15 @@
       hasSettingPathInChangedSet(changedPathSet, "useS1PlusImageViewer")
     ) {
       applyS1pImageViewerBehavior();
+    }
+    if (
+      hasSettingPathInChangedSet(
+        changedPathSet,
+        "imageViewerDefaultFullDisplay"
+      ) &&
+      s1pImageViewerState.isOpen
+    ) {
+      applyS1pImageViewerDefaultTransform();
     }
     if (hasSettingPathInChangedSet(changedPathSet, "openInNewTab")) {
       applyGlobalLinkBehavior();
@@ -18840,6 +18896,9 @@
           openTabSettings.postContentLinksInBackground
         ),
       };
+      const imageViewerDefaultMode = settings.imageViewerDefaultFullDisplay
+        ? "full"
+        : "max-width";
 
       tabs["general-settings"].innerHTML = `
         ${buildPrimaryFeatureToggleHtml({
@@ -18910,6 +18969,17 @@
                         <label class="s1p-settings-label" for="s1p-useS1PlusImageViewer">所有帖子图片使用 S1 Plus 查看器（替代论坛原生查看器）</label>
                         <label class="s1p-switch"><input type="checkbox" id="s1p-useS1PlusImageViewer" class="s1p-settings-checkbox" data-setting="useS1PlusImageViewer" ${settings.useS1PlusImageViewer ? "checked" : ""
         }><span class="s1p-slider"></span></label>
+                    </div>
+                    <div class="s1p-settings-sub-group s1p-image-viewer-default-mode-group">
+                        <div class="s1p-settings-item">
+                            <label class="s1p-settings-label" for="s1p-imageViewerDefaultMode-control">S1 Plus 查看器打开图片默认模式</label>
+                            <div id="s1p-imageViewerDefaultMode-control" class="s1p-segmented-control">
+                                <div class="s1p-segmented-control-slider"></div>
+                                <div class="s1p-segmented-control-option ${imageViewerDefaultMode === "full" ? "active" : ""}" data-value="full">完整显示</div>
+                                <div class="s1p-segmented-control-option ${imageViewerDefaultMode === "max-width" ? "active" : ""}" data-value="max-width">放大显示</div>
+                            </div>
+                        </div>
+                        <p class="s1p-setting-desc s1p-image-viewer-default-mode-desc"><strong>完整显示</strong>会完整适配可视区域；<strong>放大显示</strong>会优先铺满宽度（竖图可能需要滚动）。</p>
                     </div>
                     <div class="s1p-settings-item">
                         <label class="s1p-settings-label" for="s1p-limitImagesBySize">\u9650\u5236\u8d85\u5927\u56fe\u7247\u5c3a\u5bf8\uff08\u70b9\u51fb\u67e5\u770b\u539f\u56fe\uff09</label>
@@ -19182,6 +19252,30 @@
         "postContentLinks",
         "postContentLinksInBackground"
       );
+      const imageViewerDefaultModeControl = tabContent.querySelector(
+        "#s1p-imageViewerDefaultMode-control"
+      );
+      if (imageViewerDefaultModeControl) {
+        moveSlider(imageViewerDefaultModeControl, true);
+        imageViewerDefaultModeControl.addEventListener("click", (event) => {
+          const option = event.target.closest(".s1p-segmented-control-option");
+          if (!option || option.classList.contains("active")) {
+            return;
+          }
+          const modeValue = String(option.dataset.value || "");
+          const currentSettings = getSettingsForWrite();
+          currentSettings.imageViewerDefaultFullDisplay = modeValue === "full";
+          saveSettings(currentSettings);
+          imageViewerDefaultModeControl
+            .querySelectorAll(".s1p-segmented-control-option")
+            .forEach((opt) => opt.classList.remove("active"));
+          option.classList.add("active");
+          moveSlider(imageViewerDefaultModeControl);
+          if (s1pImageViewerState.isOpen) {
+            applyS1pImageViewerDefaultTransform();
+          }
+        });
+      }
 
       const cleanupControl = tabs["general-settings"].querySelector(
         "#s1p-readingProgressCleanupDays-control"
@@ -19586,6 +19680,7 @@
           "hideImagesByDefault",
           "limitImagesBySize",
           "useS1PlusImageViewer",
+          "imageViewerDefaultFullDisplay",
           "imagePreviewMaxWidth",
           "imagePreviewMaxHeight",
           "hideSystemBlockedPosts",
