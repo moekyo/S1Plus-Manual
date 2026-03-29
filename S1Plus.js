@@ -1282,6 +1282,28 @@
       background-color: var(--s1p-pri);
       color: var(--s1p-t);
     }
+    /* S1 NUX 部分深色主题下，分段控件激活项改用深色文字以提升对比度 */
+    .s1p-modal.s1p-nux-segmented-contrast-fix .s1p-segmented-control-option.active {
+      color: var(--s1p-segmented-active-contrast-text, var(--icl, #111827));
+      text-shadow: none;
+    }
+    /* S1 NUX 酒红主题下，强化标签页激活态与非激活态对比 */
+    .s1p-modal.s1p-nux-vine-tab-tone .s1p-tabs {
+      background-color: var(--pri, #953a55);
+    }
+    .s1p-modal.s1p-nux-vine-tab-tone .s1p-tab-btn {
+      color: var(--tg, #a6949d);
+    }
+    .s1p-modal.s1p-nux-vine-tab-tone .s1p-tab-btn:hover:not(.active) {
+      color: var(--tl, #ece0e5);
+      background-color: rgba(0, 0, 0, 0.12);
+    }
+    .s1p-modal.s1p-nux-vine-tab-tone .s1p-tab-slider {
+      background-color: #7c3046;
+    }
+    .s1p-modal.s1p-nux-vine-tab-tone .s1p-tab-btn.active {
+      color: #fff6fb;
+    }
 
     /* --- [S1PLUS-MOD] 帖子列表最终布局修正 --- */
     /* [MODIFIED] 此处已移除隐藏 .icn 和 .icn_new 的样式规则 */
@@ -4798,24 +4820,55 @@
     "TEXTAREA",
     "BUTTON",
   ]);
+  const NUX_SEGMENTED_CONTRAST_FIX_CLASS = "s1p-nux-segmented-contrast-fix";
+  const NUX_VINE_TAB_TONE_CLASS = "s1p-nux-vine-tab-tone";
+  const NUX_SEGMENTED_ACTIVE_TEXT_COLOR_VAR =
+    "--s1p-segmented-active-contrast-text";
+  const NUX_SEGMENTED_LOW_CONTRAST_SEC_SIGNATURES = [
+    { r: 255, g: 182, b: 8 },   // blueprint
+    { r: 54, g: 255, b: 114 },  // vine
+    { r: 199, g: 232, b: 11 },  // jungle
+  ];
+  const NUX_VINE_SEC_SIGNATURE = { r: 54, g: 255, b: 114 };
+  const NUX_THEME_SEC_SIGNATURE_TOLERANCE = 3;
   let isNuxDarkModeChangeListenerBound = false;
 
   const parseRgbaColor = (colorText) => {
-    const match = String(colorText || "")
-      .trim()
-      .match(
-        /^rgba?\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)(?:\s*,\s*(\d*\.?\d+))?\s*\)$/i
-      );
-    if (!match) {
+    const colorTextSafe = String(colorText || "").trim();
+    const hexMatch = colorTextSafe.match(/^#([0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i);
+    if (hexMatch) {
+      const hex = hexMatch[1];
+      const expandHex = (input) =>
+        input.length <= 4
+          ? input
+            .split("")
+            .map((char) => `${char}${char}`)
+            .join("")
+          : input;
+      const normalizedHex = expandHex(hex);
+      const hasAlpha = normalizedHex.length === 8;
+      const alphaHex = hasAlpha ? normalizedHex.slice(6, 8) : "ff";
+      return {
+        r: Number.parseInt(normalizedHex.slice(0, 2), 16),
+        g: Number.parseInt(normalizedHex.slice(2, 4), 16),
+        b: Number.parseInt(normalizedHex.slice(4, 6), 16),
+        a: Number.parseInt(alphaHex, 16) / 255,
+      };
+    }
+    const rgbMatch = colorTextSafe.match(
+      /^rgba?\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)(?:\s*,\s*(\d*\.?\d+))?\s*\)$/i
+    );
+    if (!rgbMatch) {
       return null;
     }
+
     const toChannel = (raw) =>
       Math.max(0, Math.min(255, Math.round(Number.parseFloat(raw))));
-    const alphaRaw = Number.parseFloat(match[4]);
+    const alphaRaw = Number.parseFloat(rgbMatch[4]);
     return {
-      r: toChannel(match[1]),
-      g: toChannel(match[2]),
-      b: toChannel(match[3]),
+      r: toChannel(rgbMatch[1]),
+      g: toChannel(rgbMatch[2]),
+      b: toChannel(rgbMatch[3]),
       a: Number.isFinite(alphaRaw) ? Math.max(0, Math.min(1, alphaRaw)) : 1,
     };
   };
@@ -4875,6 +4928,62 @@
       return darkThemeFlag === 1;
     }
     return window.matchMedia("(prefers-color-scheme: dark)").matches;
+  };
+
+  const isColorClose = (colorA, colorB, tolerance = 0) =>
+    Math.abs(colorA.r - colorB.r) <= tolerance &&
+    Math.abs(colorA.g - colorB.g) <= tolerance &&
+    Math.abs(colorA.b - colorB.b) <= tolerance;
+
+  const resolveNuxSecColor = () => {
+    const rootStyle = window.getComputedStyle(document.documentElement);
+    return parseRgbaColor(rootStyle.getPropertyValue("--sec"));
+  };
+
+  const shouldApplyNuxSegmentedContrastFix = () => {
+    if (!isNuxDarkThemeActive()) {
+      return false;
+    }
+    const secColor = resolveNuxSecColor();
+    if (!secColor || secColor.a <= 0.08) {
+      return false;
+    }
+    return NUX_SEGMENTED_LOW_CONTRAST_SEC_SIGNATURES.some((signature) =>
+      isColorClose(secColor, signature, NUX_THEME_SEC_SIGNATURE_TOLERANCE)
+    );
+  };
+
+  const applyNuxSegmentedContrastFix = (settingsModal = null) => {
+    const targetModal = settingsModal || document.querySelector(".s1p-modal");
+    if (!(targetModal instanceof HTMLElement)) {
+      return;
+    }
+    const shouldApply = shouldApplyNuxSegmentedContrastFix();
+    targetModal.classList.toggle(NUX_SEGMENTED_CONTRAST_FIX_CLASS, shouldApply);
+    if (shouldApply) {
+      const rootStyle = window.getComputedStyle(document.documentElement);
+      const textColor = rootStyle.getPropertyValue("--icl").trim() || "#111827";
+      targetModal.style.setProperty(NUX_SEGMENTED_ACTIVE_TEXT_COLOR_VAR, textColor);
+    } else {
+      targetModal.style.removeProperty(NUX_SEGMENTED_ACTIVE_TEXT_COLOR_VAR);
+    }
+  };
+
+  const applyNuxVineTabToneFix = (settingsModal = null) => {
+    const targetModal = settingsModal || document.querySelector(".s1p-modal");
+    if (!(targetModal instanceof HTMLElement)) {
+      return;
+    }
+    const secColor = resolveNuxSecColor();
+    const isVineBySecColor =
+      !!secColor &&
+      secColor.a > 0.08 &&
+      isColorClose(
+        secColor,
+        NUX_VINE_SEC_SIGNATURE,
+        NUX_THEME_SEC_SIGNATURE_TOLERANCE
+      );
+    targetModal.classList.toggle(NUX_VINE_TAB_TONE_CLASS, isVineBySecColor);
   };
 
   const resolveFallbackBackgroundColor = () => {
@@ -5009,6 +5118,8 @@
         return;
       }
       applyNuxDarkTextContrastFix();
+      applyNuxSegmentedContrastFix();
+      applyNuxVineTabToneFix();
     };
     if (typeof mediaQuery.addEventListener === "function") {
       mediaQuery.addEventListener("change", handleNuxDarkModeChange);
@@ -16941,6 +17052,15 @@
     }
 
     document.body.appendChild(modal);
+    const syncNuxThemeModalStyles = () => {
+      if (!modal.isConnected) {
+        return;
+      }
+      applyNuxSegmentedContrastFix(modal);
+      applyNuxVineTabToneFix(modal);
+    };
+    syncNuxThemeModalStyles();
+    let modalThemeSyncTimer = window.setInterval(syncNuxThemeModalStyles, 350);
 
     const tabs = {
       "general-settings": modal.querySelector("#s1p-tab-general-settings"),
@@ -19418,6 +19538,10 @@
       }
       if (tabSliderResizeObserver) {
         tabSliderResizeObserver.disconnect();
+      }
+      if (modalThemeSyncTimer) {
+        window.clearInterval(modalThemeSyncTimer);
+        modalThemeSyncTimer = 0;
       }
       modal.remove();
     };
