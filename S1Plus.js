@@ -178,6 +178,75 @@
     }, []);
   };
 
+  const normalizeNavHrefMatchKey = (hrefValue) => {
+    const safeHref = getSafeUrlAttributeValue(hrefValue, { allowEmpty: false });
+    if (!safeHref) {
+      return "";
+    }
+
+    try {
+      const parsedUrl = new URL(safeHref, window.location.origin);
+      const normalizedPathname = String(parsedUrl.pathname || "").replace(/^\/+/, "");
+      const pathWithQuery = `${normalizedPathname}${parsedUrl.search}`;
+      return pathWithQuery || parsedUrl.href;
+    } catch (error) {
+      return safeHref;
+    }
+  };
+
+  let nativeNavLiTemplateMap = null;
+  const captureNativeNavLiTemplates = (navUl) => {
+    if (!(navUl instanceof HTMLUListElement)) {
+      return;
+    }
+    if (
+      nativeNavLiTemplateMap instanceof Map &&
+      nativeNavLiTemplateMap.size > 0
+    ) {
+      return;
+    }
+
+    const templateMap = new Map();
+    navUl.querySelectorAll(":scope > li").forEach((li) => {
+      if (!(li instanceof HTMLLIElement)) {
+        return;
+      }
+      if (
+        li.id === "s1p-nav-link" ||
+        li.id === "s1p-nav-sync-btn" ||
+        li.id === "s1p-nav-auto-sync-indicator"
+      ) {
+        return;
+      }
+
+      const anchor = li.querySelector(":scope > a[href]");
+      if (!(anchor instanceof HTMLAnchorElement)) {
+        return;
+      }
+
+      [anchor.getAttribute("href"), anchor.href].forEach((hrefCandidate) => {
+        const key = normalizeNavHrefMatchKey(hrefCandidate);
+        if (key && !templateMap.has(key)) {
+          templateMap.set(key, li.cloneNode(true));
+        }
+      });
+    });
+
+    nativeNavLiTemplateMap = templateMap;
+  };
+
+  const resolveNativeNavLiTemplateByHref = (hrefValue) => {
+    if (
+      !(nativeNavLiTemplateMap instanceof Map) ||
+      nativeNavLiTemplateMap.size === 0
+    ) {
+      return null;
+    }
+
+    const key = normalizeNavHrefMatchKey(hrefValue);
+    return key ? nativeNavLiTemplateMap.get(key) || null : null;
+  };
+
   const normalizeNumericId = (value) => {
     const normalized = String(value ?? "").trim();
     return /^\d+$/.test(normalized) ? normalized : "";
@@ -15591,6 +15660,7 @@
     const settings = getSettings();
     const navUl = document.querySelector("#nv > ul");
     if (!navUl) return;
+    captureNativeNavLiTemplates(navUl);
 
     const createManagerLink = () => {
       const li = document.createElement("li");
@@ -15609,17 +15679,41 @@
 
     if (settings.enableNavCustomization) {
       navUl.textContent = "";
+      const usedTemplateIds = new Set();
       normalizeCustomNavLinks(settings.customNavLinks).forEach((link) => {
         const linkName = String(link?.name ?? "").trim();
         const linkHref = getSafeUrlAttributeValue(link?.href, { allowEmpty: false });
         if (!linkName || !linkHref) return;
-        const li = document.createElement("li");
-        if (window.location.href.includes(linkHref)) li.className = "a";
-        const a = document.createElement("a");
+
+        const nativeTemplate = resolveNativeNavLiTemplateByHref(linkHref);
+        let li = null;
+        if (nativeTemplate instanceof HTMLLIElement) {
+          li = nativeTemplate.cloneNode(true);
+          const templateId = String(li.id || "").trim();
+          if (templateId) {
+            if (usedTemplateIds.has(templateId)) {
+              li.removeAttribute("id");
+            } else {
+              usedTemplateIds.add(templateId);
+            }
+          }
+        }
+
+        if (!(li instanceof HTMLLIElement)) {
+          li = document.createElement("li");
+        }
+
+        let a = li.querySelector(":scope > a");
+        if (!(a instanceof HTMLAnchorElement)) {
+          li.textContent = "";
+          a = document.createElement("a");
+          li.appendChild(a);
+        }
+
         a.href = linkHref;
         a.textContent = linkName;
         a.setAttribute("hidefocus", "true");
-        li.appendChild(a);
+        li.classList.toggle("a", window.location.href.includes(linkHref));
         navUl.appendChild(li);
       });
     }
