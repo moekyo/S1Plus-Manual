@@ -3096,12 +3096,21 @@
     /* 列对齐 */
     .s1p-reading-progress-modal .s1p-sync-comparison-label {
       text-align: left;
+      white-space: normal;
+      line-height: 1.4;
     }
     .s1p-reading-progress-modal .s1p-sync-comparison-value {
       text-align: center;
       display: flex;
       align-items: center;
       justify-content: center;
+    }
+    .s1p-reading-progress-modal .s1p-progress-group-period {
+      display: block;
+      margin-top: 2px;
+      color: var(--s1p-desc-t);
+      font-size: 12px;
+      font-weight: 400;
     }
 
     /* --- [MODIFIED] Collapsible Section (V7 - Mask Image Fix) --- */
@@ -8487,6 +8496,55 @@
 
     // 只返回有记录的分组
     return groups.filter((group) => group.count > 0);
+  };
+
+  const formatReadProgressPeriodDate = (timestamp, withDay = false) => {
+    const date = timestamp instanceof Date ? timestamp : new Date(timestamp);
+    const yearMonthText = `${date.getFullYear()}年${date.getMonth() + 1}月`;
+    return withDay ? `${yearMonthText}${date.getDate()}日` : yearMonthText;
+  };
+
+  const formatReadProgressPeriodRange = (
+    startTimestamp,
+    endTimestamp,
+    withDay = false
+  ) => {
+    const startText = formatReadProgressPeriodDate(startTimestamp, withDay);
+    const endText = formatReadProgressPeriodDate(endTimestamp, withDay);
+    return startText === endText ? startText : `${startText} - ${endText}`;
+  };
+
+  const getReadProgressGroupPeriodText = (
+    groupLabel,
+    ageRange,
+    now = Date.now()
+  ) => {
+    if (!Array.isArray(ageRange) || ageRange.length < 2) return "";
+
+    const [minAge, maxAge] = ageRange;
+    const latestTimestamp = now - minAge;
+    const hasUpperBound = Number.isFinite(maxAge);
+    const earliestTimestamp = hasUpperBound ? now - maxAge + 1 : Number.NaN;
+
+    // 更细粒度展示短周期分组
+    if (groupLabel === "今天") {
+      return formatReadProgressPeriodDate(latestTimestamp, true);
+    }
+    if (groupLabel === "本周" && hasUpperBound) {
+      return formatReadProgressPeriodRange(
+        earliestTimestamp,
+        latestTimestamp,
+        true
+      );
+    }
+
+    const latestText = formatReadProgressPeriodDate(latestTimestamp);
+
+    if (!hasUpperBound) {
+      return `早于 ${latestText}`;
+    }
+
+    return formatReadProgressPeriodRange(earliestTimestamp, latestTimestamp);
   };
 
   const applyUserThreadBlocklistForRows = (rows = null) => {
@@ -24427,10 +24485,24 @@
     groups.forEach((group) => {
       const row = document.createElement("div");
       row.className = "s1p-sync-comparison-row";
+      const groupLabel = String(group?.label ?? "");
 
       const labelCell = document.createElement("div");
       labelCell.className = "s1p-sync-comparison-label";
-      labelCell.textContent = String(group?.label ?? "");
+      const labelMain = document.createElement("span");
+      labelMain.textContent = groupLabel;
+      labelCell.appendChild(labelMain);
+
+      const periodText = getReadProgressGroupPeriodText(
+        groupLabel,
+        group?.ageRange
+      );
+      if (periodText) {
+        const periodEl = document.createElement("span");
+        periodEl.className = "s1p-progress-group-period";
+        periodEl.textContent = periodText;
+        labelCell.appendChild(periodEl);
+      }
       row.appendChild(labelCell);
 
       const countCell = document.createElement("div");
