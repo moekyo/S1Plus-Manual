@@ -566,6 +566,8 @@
   const READ_PROGRESS_DELETE_REVEAL_DELAY_MS = 1 * 1000;
   // 帖子页阅读进度持久化防抖：以内存批量累积为主，隐藏/卸载前强制落盘。
   const READ_PROGRESS_PERSIST_DEBOUNCE_MS = 5 * 1000;
+  // 调试开关：开启后输出阅读进度楼层解析与兜底链路日志。
+  const READ_PROGRESS_PARSE_DEBUG = false;
   const NATIVE_BLACKLIST_VIEW_URL =
     "https://stage1st.com/2b/home.php?mod=space&do=friend&view=blacklist";
   const NATIVE_BLACKLIST_IMPORT_BUTTON_ID = "s1p-native-blacklist-import-btn";
@@ -22633,10 +22635,154 @@
   let currentIndicatorParent = null;
   let pageObserver = null;
   let readProgressVisiblePosts = new Map();
+  let readProgressLastVisibleRecord = null;
+  let readProgressFirstPostId = null;
   let readProgressSaveTimeout = null;
   let readProgressPersistTimeout = null;
   let pendingThreadProgressWrites = {};
   let readProgressContext = null;
+  const logReadProgressParseDebug = (message, details = null) => {
+    if (!READ_PROGRESS_PARSE_DEBUG) return;
+    if (details) {
+      console.debug(`S1 Plus (ReadProgress): ${message}`, details);
+      return;
+    }
+    console.debug(`S1 Plus (ReadProgress): ${message}`);
+  };
+  const getPostIdFromPostTable = (postTable) => {
+    if (!(postTable instanceof Element) || !postTable.id) {
+      return null;
+    }
+    const postIdMatch = postTable.id.match(/^pid(\d+)$/);
+    return postIdMatch && postIdMatch[1] ? postIdMatch[1] : null;
+  };
+  const refreshReadProgressFirstPostId = () => {
+    const firstPostTable = document.querySelector('#postlist table[id^="pid"]');
+    readProgressFirstPostId = getPostIdFromPostTable(firstPostTable);
+    return readProgressFirstPostId;
+  };
+  const parsePostFloorFromTable = (
+    postTable,
+    { fallbackToFirstPostFloor = false, firstPostIdHint = null } = {}
+  ) => {
+    if (!(postTable instanceof Element)) {
+      return 0;
+    }
+
+    const postId = getPostIdFromPostTable(postTable);
+    const floorElement = postId
+      ? postTable.querySelector(`#postnum${postId} em`)
+      : postTable.querySelector(".pi em");
+    const floorText = floorElement ? String(floorElement.textContent || "").trim() : "";
+    const parsedFloor = parseInt(floorText, 10);
+    if (Number.isFinite(parsedFloor) && parsedFloor > 0) {
+      return parsedFloor;
+    }
+
+    const matchedFloorNumber = floorText.match(/(\d+)/);
+    if (matchedFloorNumber && matchedFloorNumber[1]) {
+      const normalizedFloor = parseInt(matchedFloorNumber[1], 10);
+      if (Number.isFinite(normalizedFloor) && normalizedFloor > 0) {
+        return normalizedFloor;
+      }
+    }
+
+    if (!fallbackToFirstPostFloor) {
+      logReadProgressParseDebug("楼层解析失败，未启用主楼兜底。", {
+        postId,
+        floorText,
+      });
+      return 0;
+    }
+
+    const fallbackFirstPostId =
+      String(firstPostIdHint || "").trim() || refreshReadProgressFirstPostId();
+    if (fallbackFirstPostId && postId && fallbackFirstPostId === postId) {
+      logReadProgressParseDebug("主楼楼层解析失败，已兜底为 1 楼。", {
+        postId,
+        floorText,
+      });
+      return 1;
+    }
+
+    logReadProgressParseDebug("楼层解析失败，且未命中主楼兜底。", {
+      postId,
+      floorText,
+      firstPostId: fallbackFirstPostId || null,
+    });
+    return 0;
+  };
+  const getReadProgressRecordFromPostTable = (
+    postTable,
+    { fallbackToFirstPostFloor = false, firstPostIdHint = null } = {}
+  ) => {
+    const postId = getPostIdFromPostTable(postTable);
+    if (!postId) {
+      return null;
+    }
+    const floor = parsePostFloorFromTable(postTable, {
+      fallbackToFirstPostFloor,
+      firstPostIdHint,
+    });
+    if (!Number.isFinite(floor) || floor <= 0) {
+      return null;
+    }
+    return { postId, floor };
+  };
+  const getReadProgressFallbackFromFirstPost = ({ firstPostIdHint = null } = {}) => {
+    const resolvedFirstPostId =
+      String(firstPostIdHint || "").trim() || refreshReadProgressFirstPostId();
+    const firstPostTable =
+      (resolvedFirstPostId ? getPostTableById(resolvedFirstPostId) : null) ||
+      document.querySelector('#postlist table[id^="pid"]');
+    if (!firstPostTable) {
+      return null;
+    }
+    const effectiveFirstPostId = getPostIdFromPostTable(firstPostTable) || resolvedFirstPostId;
+    if (effectiveFirstPostId) {
+      readProgressFirstPostId = effectiveFirstPostId;
+    }
+    return getReadProgressRecordFromPostTable(firstPostTable, {
+      fallbackToFirstPostFloor: true,
+      firstPostIdHint: effectiveFirstPostId || null,
+    });
+  };
+  const isValidReadProgressRecord = (record) =>
+    Boolean(
+      record &&
+        record.postId &&
+        Number.isFinite(record.floor) &&
+        record.floor > 0
+    );
+  const resolveReadProgressCandidateRecord = ({ firstPostIdHint = null } = {}) => {
+    let maxFloor = 0;
+    let finalPostId = null;
+    readProgressVisiblePosts.forEach((floor, postId) => {
+      if (floor > maxFloor) {
+        maxFloor = floor;
+        finalPostId = postId;
+      }
+    });
+
+    if (finalPostId && maxFloor > 0) {
+      return { postId: finalPostId, floor: maxFloor };
+    }
+
+    if (isValidReadProgressRecord(readProgressLastVisibleRecord)) {
+      return {
+        postId: readProgressLastVisibleRecord.postId,
+        floor: readProgressLastVisibleRecord.floor,
+      };
+    }
+
+    const fallbackRecord = getReadProgressFallbackFromFirstPost({
+      firstPostIdHint,
+    });
+    if (isValidReadProgressRecord(fallbackRecord)) {
+      return { ...fallbackRecord };
+    }
+    return null;
+  };
   const flushPendingThreadProgressWrites = ({ suppressSyncTrigger = false } = {}) => {
     if (readProgressPersistTimeout) {
       clearTimeout(readProgressPersistTimeout);
@@ -22697,28 +22843,25 @@
     }, READ_PROGRESS_PERSIST_DEBOUNCE_MS);
   };
   const saveCurrentReadProgress = () => {
-    if (!readProgressContext || readProgressVisiblePosts.size === 0) return;
+    if (!readProgressContext) return;
 
-    let maxFloor = 0;
-    let finalPostId = null;
-    readProgressVisiblePosts.forEach((floor, postId) => {
-      if (floor > maxFloor) {
-        maxFloor = floor;
-        finalPostId = postId;
-      }
+    const candidateRecord = resolveReadProgressCandidateRecord({
+      firstPostIdHint: readProgressFirstPostId,
     });
+    if (!candidateRecord) return;
 
-    if (finalPostId && maxFloor > 0) {
-      if (getSettings().showReadIndicator) {
-        updateReadIndicatorUI(finalPostId);
-      }
-      updateThreadProgress(
-        readProgressContext.threadId,
-        finalPostId,
-        readProgressContext.currentPage,
-        maxFloor
-      );
+    const { postId: finalPostId, floor: maxFloor } = candidateRecord;
+    readProgressLastVisibleRecord = { postId: finalPostId, floor: maxFloor };
+
+    if (getSettings().showReadIndicator) {
+      updateReadIndicatorUI(finalPostId);
     }
+    updateThreadProgress(
+      readProgressContext.threadId,
+      finalPostId,
+      readProgressContext.currentPage,
+      maxFloor
+    );
   };
   const flushReadProgressSave = () => {
     if (readProgressSaveTimeout) {
@@ -22764,6 +22907,8 @@
       readProgressSaveTimeout = null;
     }
     readProgressVisiblePosts.clear();
+    readProgressLastVisibleRecord = null;
+    readProgressFirstPostId = null;
     readProgressContext = null;
     document.removeEventListener(
       "visibilitychange",
@@ -22869,28 +23014,39 @@
       readProgressContext.currentPage !== currentPage;
     if (hasContextChanged) {
       readProgressVisiblePosts.clear();
+      readProgressLastVisibleRecord = null;
+      readProgressFirstPostId = null;
       if (readProgressSaveTimeout) {
         clearTimeout(readProgressSaveTimeout);
         readProgressSaveTimeout = null;
       }
     }
     readProgressContext = { threadId, currentPage };
+    refreshReadProgressFirstPostId();
 
     // --- [核心修改] 确保 pageObserver 只初始化一次，并能监控后续新增的元素 ---
     if (!pageObserver) {
-      const getFloorFromElement = (el) => {
-        const floorElement = el.querySelector(".pi em");
-        return floorElement ? parseInt(floorElement.textContent) || 0 : 0;
-      };
-
       pageObserver = new IntersectionObserver(
         (entries) => {
           entries.forEach((entry) => {
-            const postId = entry.target.id.replace("pid", "");
+            const record = getReadProgressRecordFromPostTable(entry.target, {
+              fallbackToFirstPostFloor: true,
+              firstPostIdHint: readProgressFirstPostId,
+            });
+            const postId = record?.postId || getPostIdFromPostTable(entry.target);
+            if (!postId) {
+              return;
+            }
             if (entry.isIntersecting) {
-              const floor = getFloorFromElement(entry.target);
-              if (floor > 0) {
-                readProgressVisiblePosts.set(postId, floor);
+              if (record && record.floor > 0) {
+                readProgressVisiblePosts.set(postId, record.floor);
+                // 记录最近一次进入可见范围的楼层，用于可见集合暂时为空时的兜底。
+                readProgressLastVisibleRecord = {
+                  postId: record.postId,
+                  floor: record.floor,
+                };
+              } else {
+                readProgressVisiblePosts.delete(postId);
               }
             } else {
               readProgressVisiblePosts.delete(postId);
@@ -23325,8 +23481,9 @@
     // ------------------------------------------
 
     const postId = postTable.id.replace("pid", "");
-    const floorElement = postTable.querySelector(`#postnum${postId} em`);
-    const floor = floorElement ? parseInt(floorElement.textContent, 10) : 0;
+    const floor = parsePostFloorFromTable(postTable, {
+      fallbackToFirstPostFloor: true,
+    });
     const userName = userProfileLink.textContent.trim();
     const userAvatar = plsCell.querySelector(".avatar img")?.src;
 
