@@ -9356,10 +9356,7 @@
     if (state.image.complete && Number(state.image.naturalWidth || 0) > 0) {
       applyS1pImageViewerDefaultTransform();
     } else {
-      state.scale = 1;
-      state.translateX = 0;
-      state.translateY = 0;
-      applyS1pImageViewerTransform();
+      applyS1pImageViewerIdentityTransform();
     }
     return true;
   };
@@ -9384,6 +9381,13 @@
         state.zoomLabel.textContent = `${zoomPercent}%`;
       }
     }
+  };
+  const applyS1pImageViewerIdentityTransform = () => {
+    const state = s1pImageViewerState;
+    state.scale = 1;
+    state.translateX = 0;
+    state.translateY = 0;
+    applyS1pImageViewerTransform();
   };
   const applyS1pImageViewerFitBySize = (
     naturalWidth,
@@ -9443,10 +9447,7 @@
     if (applyS1pImageViewerDefaultFitBySize(naturalWidth, naturalHeight)) {
       return;
     }
-    state.scale = 1;
-    state.translateX = 0;
-    state.translateY = 0;
-    applyS1pImageViewerTransform();
+    applyS1pImageViewerIdentityTransform();
   };
   const fitS1pImageViewerToViewport = () => {
     const state = s1pImageViewerState;
@@ -9472,15 +9473,11 @@
       allowUpscale: false,
     });
   };
-  const resetS1pImageViewerTransform = () => {
+  const applyS1pImageViewerZoomDisplayTransform = () => {
     if (fitS1pImageViewerToViewport()) {
       return;
     }
-    const state = s1pImageViewerState;
-    state.scale = 1;
-    state.translateX = 0;
-    state.translateY = 0;
-    applyS1pImageViewerTransform();
+    applyS1pImageViewerIdentityTransform();
   };
   const handleS1pImageViewerMouseMove = (event) => {
     const state = s1pImageViewerState;
@@ -10650,7 +10647,7 @@
             </svg>
           </button>
           <button type="button" class="s1p-btn" data-action="fit">\u5b8c\u6574\u663e\u793a</button>
-          <button type="button" class="s1p-btn" data-action="reset">\u91cd\u7f6e\u89c6\u56fe</button>
+          <button type="button" class="s1p-btn" data-action="reset">\u653e\u5927\u663e\u793a</button>
           <button type="button" class="s1p-btn" data-action="save">\u4fdd\u5b58\u56fe\u7247</button>
           <button type="button" class="s1p-btn" data-action="save-all">\u4fdd\u5b58\u5168\u90e8\u56fe\u7247</button>
           <button type="button" class="s1p-btn" data-action="open">\u65b0\u6807\u7b7e\u6253\u5f00\u539f\u56fe</button>
@@ -10841,7 +10838,7 @@
       stepS1pImageViewerActiveIndex(1);
     });
     resetBtn.addEventListener("click", () => {
-      resetS1pImageViewerTransform();
+      applyS1pImageViewerZoomDisplayTransform();
     });
     saveBtn.addEventListener("click", () => {
       void saveS1pImageToLocal();
