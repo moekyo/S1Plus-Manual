@@ -3462,6 +3462,9 @@
       display: grid;
       gap: 6px;
     }
+    .s1p-hide-system-blocked-posts-item {
+      margin-top: 8px;
+    }
     .s1p-image-size-limit-header {
       display: flex;
       align-items: center;
@@ -19067,7 +19070,7 @@
                             </div>
                         </div>
                     </div>
-                    <div class="s1p-settings-item">
+                    <div class="s1p-settings-item s1p-hide-system-blocked-posts-item">
                         <label class="s1p-settings-label" for="s1p-hideSystemBlockedPosts">默认隐藏被系统屏蔽的楼层</label>
                         <label class="s1p-switch"><input type="checkbox" id="s1p-hideSystemBlockedPosts" class="s1p-settings-checkbox" data-setting="hideSystemBlockedPosts" ${settings.hideSystemBlockedPosts ? "checked" : ""
         }><span class="s1p-slider"></span></label>
