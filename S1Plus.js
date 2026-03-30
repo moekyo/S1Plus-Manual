@@ -552,12 +552,63 @@
   let startupSyncLockHeartbeatTimer = null;
   let isAutoSignInFlight = false;
   let readingProgressModalEscHandler = null;
-  const clearReadingProgressModalEscHandler = () => {
-    if (!readingProgressModalEscHandler) {
-      return;
+  let settingsModalEscKeydownHandler = null;
+  const blurCurrentFocusSoon = (delayMs = 0) => {
+    const safeDelayMs = Math.max(0, Number(delayMs) || 0);
+    window.setTimeout(() => {
+      window.requestAnimationFrame(() => {
+        const activeElement = document.activeElement;
+        if (activeElement instanceof HTMLElement) {
+          activeElement.blur();
+        }
+      });
+    }, safeDelayMs);
+  };
+  const blurFocusAfterEscClose = (settleDelayMs = 0) => {
+    blurCurrentFocusSoon(0);
+    const safeSettleDelayMs = Math.max(0, Number(settleDelayMs) || 0);
+    if (safeSettleDelayMs > 0) {
+      blurCurrentFocusSoon(safeSettleDelayMs + 24);
     }
-    document.removeEventListener("keydown", readingProgressModalEscHandler);
-    readingProgressModalEscHandler = null;
+  };
+  const bindEscCloseForStyledModal = ({
+    onClose,
+    shouldHandle = null,
+    blurAfterCloseMs = 0,
+  } = {}) => {
+    if (typeof onClose !== "function") {
+      return null;
+    }
+    const handler = (event) => {
+      if (event.key !== "Escape") {
+        return;
+      }
+      if (typeof shouldHandle === "function" && shouldHandle(event) !== true) {
+        return;
+      }
+      event.preventDefault();
+      onClose();
+      blurFocusAfterEscClose(blurAfterCloseMs);
+    };
+    document.addEventListener("keydown", handler);
+    return handler;
+  };
+  const unbindEscCloseForStyledModal = (handler) => {
+    if (typeof handler !== "function") {
+      return null;
+    }
+    document.removeEventListener("keydown", handler);
+    return null;
+  };
+  const clearSettingsModalEscKeydownHandler = () => {
+    settingsModalEscKeydownHandler = unbindEscCloseForStyledModal(
+      settingsModalEscKeydownHandler
+    );
+  };
+  const clearReadingProgressModalEscHandler = () => {
+    readingProgressModalEscHandler = unbindEscCloseForStyledModal(
+      readingProgressModalEscHandler
+    );
   };
 
   const BACKGROUND_SYNC_OWNER_ID = `tab_${Date.now()}_${Math.random()
@@ -9685,6 +9736,7 @@
     if (event.key === "Escape") {
       event.preventDefault();
       closeS1pImageViewer();
+      blurFocusAfterEscClose(S1P_IMAGE_VIEWER_CLOSE_OVERLAY_DELAY_MS);
       return;
     }
     if (event.key === "ArrowLeft") {
@@ -17040,15 +17092,10 @@
 
     let isClosed = false;
     let dp = null;
-    const onEscape = (event) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        closeTokenAsCancel();
-      }
+    let escapeHandler = null;
+    const removeEscapeListener = () => {
+      escapeHandler = unbindEscCloseForStyledModal(escapeHandler);
     };
-    document.addEventListener("keydown", onEscape);
-    const removeEscapeListener = () =>
-      document.removeEventListener("keydown", onEscape);
     const closeTokenConfigModal = ({ triggerCancel = true } = {}) => {
       if (isClosed) {
         return;
@@ -17067,6 +17114,11 @@
     };
     const closeTokenAsCancel = () =>
       closeTokenConfigModal({ triggerCancel: true });
+    escapeHandler = bindEscCloseForStyledModal({
+      onClose: closeTokenAsCancel,
+      shouldHandle: () => modal.isConnected,
+      blurAfterCloseMs: 200,
+    });
 
     modal
       .querySelector(".s1p-token-config-close-btn")
@@ -17163,6 +17215,7 @@
       window.innerWidth > NARROW_SCREEN_MAX_WIDTH_PX;
     const requiredWidth = shouldAutoFitModalWidth ? calculateModalWidth() : 0;
     settingsModalCrossTabSyncController = null;
+    clearSettingsModalEscKeydownHandler();
     document.querySelector(".s1p-modal")?.remove();
     const buildSyncSettingsTabHtml = () => `
       <div class="s1p-settings-group">
@@ -19863,6 +19916,7 @@
       ) {
         settingsModalCrossTabSyncController = null;
       }
+      clearSettingsModalEscKeydownHandler();
       if (handleTabSliderLayoutChange) {
         window.removeEventListener("resize", handleTabSliderLayoutChange);
       }
@@ -19875,6 +19929,22 @@
       }
       modal.remove();
     };
+    settingsModalEscKeydownHandler = bindEscCloseForStyledModal({
+      onClose: closeManagementModal,
+      shouldHandle: () => {
+        if (!modal.isConnected) {
+          return false;
+        }
+        if (document.querySelector(".s1p-token-config-modal")) {
+          return false;
+        }
+        if (document.querySelector(".s1p-confirm-modal")) {
+          return false;
+        }
+        return true;
+      },
+      blurAfterCloseMs: 0,
+    });
     const shouldRefreshModalTabByPaths = (changedPathSet, watchedPaths) => {
       if (!(changedPathSet instanceof Set) || changedPathSet.size === 0) {
         return true;
@@ -24752,13 +24822,11 @@
       modal.style.animation = "s1p-fade-out 0.25s ease-out forwards";
       setTimeout(() => modal.remove(), 250);
     };
-    readingProgressModalEscHandler = (event) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        closeModal();
-      }
-    };
-    document.addEventListener("keydown", readingProgressModalEscHandler);
+    readingProgressModalEscHandler = bindEscCloseForStyledModal({
+      onClose: closeModal,
+      shouldHandle: () => modal.isConnected,
+      blurAfterCloseMs: 250,
+    });
 
     // 点击遮罩层关闭
     modal.addEventListener("click", (e) => {
