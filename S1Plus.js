@@ -629,6 +629,9 @@
   const READ_PROGRESS_LIST_REFRESH_DEBOUNCE_MS = 120;
   // 帖内工具栏图标默认悬浮提示延迟，避免扫过时频繁闪现。
   const DEFAULT_TOOLBAR_TOOLTIP_DELAY_MS = 350;
+  const GENERIC_TOOLTIP_TARGET_SELECTOR =
+    ".s1p-user-tag-display, .s1p-user-remark-display, .s1p-history-tag-item, .s1p-has-tooltip";
+  const GENERIC_TOOLTIP_VIEWPORT_PADDING_PX = 10;
   // 与 NUX 窄屏规则保持一致的断点。
   const NARROW_SCREEN_MAX_WIDTH_PX = 909;
   // 列表页阅读按钮悬停超过该时长后显示删除入口。
@@ -637,6 +640,33 @@
   const READ_PROGRESS_PERSIST_DEBOUNCE_MS = 5 * 1000;
   // 调试开关：开启后输出阅读进度楼层解析与兜底链路日志。
   const READ_PROGRESS_PARSE_DEBUG = false;
+  const setCustomTooltip = (element, text) => {
+    if (!(element instanceof Element)) {
+      return;
+    }
+    const normalizedText = String(text ?? "");
+    if (normalizedText) {
+      element.classList.add("s1p-has-tooltip");
+      element.dataset.fullTag = normalizedText;
+    } else {
+      element.classList.remove("s1p-has-tooltip");
+      delete element.dataset.fullTag;
+    }
+    element.removeAttribute("title");
+  };
+  const clearCustomTooltip = (element, restoreTitle = "") => {
+    if (!(element instanceof Element)) {
+      return;
+    }
+    element.classList.remove("s1p-has-tooltip");
+    delete element.dataset.fullTag;
+    const normalizedTitle = String(restoreTitle ?? "");
+    if (normalizedTitle) {
+      element.setAttribute("title", normalizedTitle);
+    } else {
+      element.removeAttribute("title");
+    }
+  };
   const NATIVE_BLACKLIST_VIEW_URL =
     "https://stage1st.com/2b/home.php?mod=space&do=friend&view=blacklist";
   const NATIVE_BLACKLIST_IMPORT_BUTTON_ID = "s1p-native-blacklist-import-btn";
@@ -2010,7 +2040,8 @@
     .s1p-generic-display-popover {
       position: absolute;
       z-index: 10003;
-      max-width: 350px;
+      max-width: min(350px, calc(100vw - 20px));
+      width: max-content;
       background-color: var(--s1p-bg);
       border-radius: 8px;
       box-shadow: 0 2px 10px rgba(var(--s1p-shadow-color-rgb), 0.12);
@@ -2018,6 +2049,7 @@
       font-size: 13px;
       line-height: 1.6;
       color: var(--s1p-t);
+      writing-mode: horizontal-tb;
       opacity: 0;
       visibility: hidden;
       transform: translateY(5px);
@@ -8773,11 +8805,7 @@
       return;
     }
     const originalTitle = String(img.dataset[IMAGE_PREVIEW_TITLE_DATA_KEY] || "");
-    if (originalTitle) {
-      img.setAttribute("title", originalTitle);
-    } else {
-      img.removeAttribute("title");
-    }
+    clearCustomTooltip(img, originalTitle);
     delete img.dataset[IMAGE_PREVIEW_TITLE_DATA_KEY];
   };
   const buildImagePreviewTitleWithHint = (originalTitle) => {
@@ -8855,7 +8883,7 @@
       const originalTitle = String(img.dataset[IMAGE_PREVIEW_TITLE_DATA_KEY] || "");
       const nextTitle = buildImagePreviewTitleWithHint(originalTitle);
       img.classList.add(IMAGE_PREVIEW_LIMIT_IMAGE_CLASS);
-      img.setAttribute("title", nextTitle);
+      setCustomTooltip(img, nextTitle);
     });
   };
 
@@ -10785,10 +10813,10 @@
           <button type="button" class="s1p-btn" data-action="open">\u65b0\u6807\u7b7e\u6253\u5f00\u539f\u56fe</button>
           <button
             type="button"
-            class="s1p-btn s1p-image-viewer__close-btn"
+            class="s1p-btn s1p-image-viewer__close-btn s1p-has-tooltip"
             data-action="close"
             aria-label="\u5173\u95ed (Esc)"
-            title="\u5173\u95ed (Esc)"
+            data-full-tag="\u5173\u95ed (Esc)"
           >
             <svg class="s1p-image-viewer__close-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
               <path d="M5 5L15 15"></path>
@@ -15387,6 +15415,7 @@
     const li = document.createElement("li");
     li.id = "s1p-nav-auto-sync-indicator";
     li.setAttribute("aria-hidden", "true");
+    li.classList.add("s1p-has-tooltip");
     const wrap = document.createElement("span");
     wrap.className = "s1p-nav-auto-sync-indicator-wrap";
     const icon = document.createElement("span");
@@ -15431,7 +15460,7 @@
     }
 
     indicatorLi.dataset.syncState = displayPhase;
-    indicatorLi.title = getAutoSyncIndicatorTitleByPhase(displayPhase);
+    setCustomTooltip(indicatorLi, getAutoSyncIndicatorTitleByPhase(displayPhase));
   };
 
   const initializeAutoSyncIndicatorCrossTabSync = () => {
@@ -15637,9 +15666,9 @@
     if (!existingLink) {
       threadLink.id = "s1p-my-threads-link";
       threadLink.textContent = "帖子";
-      threadLink.title = "查看我的帖子";
       threadLink.setAttribute("hidefocus", "true");
     }
+    setCustomTooltip(threadLink, "查看我的帖子");
     if (threadLink.getAttribute("href") !== threadListUrl) {
       threadLink.setAttribute("href", threadListUrl);
     }
@@ -16241,11 +16270,11 @@
 
     const confirmBtn = document.createElement("button");
     confirmBtn.className = "s1p-confirm-action-btn s1p-confirm";
-    confirmBtn.title = "确认";
+    setCustomTooltip(confirmBtn, "确认");
 
     const cancelBtn = document.createElement("button");
     cancelBtn.className = "s1p-confirm-action-btn s1p-cancel";
-    cancelBtn.title = "取消";
+    setCustomTooltip(cancelBtn, "取消");
 
     const separator = document.createElement("span");
     separator.className = "s1p-confirm-separator";
@@ -16727,7 +16756,7 @@
       const createNavBtn = (cls, title, html) => {
         const btn = document.createElement("button");
         btn.className = `s1p-dp-nav-btn ${cls}`;
-        btn.title = title;
+        setCustomTooltip(btn, title);
         setSanitizedIconHtml(btn, html);
         return btn;
       };
@@ -17244,7 +17273,7 @@
     modal.className = "s1p-modal";
     modal.style.opacity = "0";
     modal.innerHTML = `<div class="s1p-modal-content">
-            <div class="s1p-modal-header"><div class="s1p-modal-title">S1 Plus 设置</div><button type="button" class="s1p-btn s1p-settings-close-btn" aria-label="关闭设置面板" title="关闭设置面板"><svg class="s1p-image-viewer__close-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M5 5L15 15"></path><path d="M15 5L5 15"></path></svg></button></div>
+            <div class="s1p-modal-header"><div class="s1p-modal-title">S1 Plus 设置</div><button type="button" class="s1p-btn s1p-settings-close-btn s1p-has-tooltip" aria-label="关闭设置面板" data-full-tag="关闭设置面板"><svg class="s1p-image-viewer__close-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M5 5L15 15"></path><path d="M15 5L5 15"></path></svg></button></div>
             <div class="s1p-modal-body">
                 <div class="s1p-tabs-wrapper">
                     <div class="s1p-tabs">
@@ -18004,7 +18033,7 @@
 	                            <div class="s1p-search-input-wrapper">
 	                                <input type="text" id="s1p-bookmark-search-input" class="s1p-input" placeholder="搜索内容、作者、标题..." autocomplete="off">
 	                                <svg class="s1p-search-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" /></svg>
-                                <button id="s1p-bookmark-search-clear-btn" class="s1p-search-clear-btn hidden" title="清空搜索" aria-label="清空搜索">
+                                <button id="s1p-bookmark-search-clear-btn" class="s1p-search-clear-btn s1p-has-tooltip hidden" data-full-tag="清空搜索" aria-label="清空搜索">
                                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" /></svg>
                                 </button>
                             </div>
@@ -18135,7 +18164,7 @@
             threadLink.className = "s1p-bookmark-thread-link";
             threadLink.href = `forum.php?mod=redirect&goto=findpost&ptid=${threadIdForUrl}&pid=${postIdForUrl}`;
             threadLink.target = "_blank";
-            threadLink.title = threadTitle;
+            setCustomTooltip(threadLink, threadTitle);
 
             const threadTitleEl = document.createElement("span");
             threadTitleEl.className = "s1p-bookmark-title-text";
@@ -18402,7 +18431,7 @@
       const userItemIds = Object.keys(blockedUsers).sort(
         (a, b) => blockedUsers[b].timestamp - blockedUsers[a].timestamp
       );
-      const nativeBlacklistLinkHtml = `<a class="s1p-bookmark-thread-link" href="${NATIVE_BLACKLIST_VIEW_URL}" target="_blank" rel="noopener noreferrer" title="论坛黑名单"><span class="s1p-bookmark-title-text">论坛黑名单</span>${SVG_ICON_EXTERNAL_LINK}</a>`;
+      const nativeBlacklistLinkHtml = `<a class="s1p-bookmark-thread-link s1p-has-tooltip" href="${NATIVE_BLACKLIST_VIEW_URL}" target="_blank" rel="noopener noreferrer" data-full-tag="论坛黑名单"><span class="s1p-bookmark-title-text">论坛黑名单</span>${SVG_ICON_EXTERNAL_LINK}</a>`;
       const contentHTML = `
                 <div class="s1p-settings-group s1p-settings-group-compact">
                     <div class="s1p-settings-item">
@@ -18771,7 +18800,7 @@
         const deleteBtn = document.createElement("button");
         deleteBtn.className = "s1p-editor-btn s1p-delete-button";
         deleteBtn.dataset.action = "delete";
-        deleteBtn.title = "删除规则";
+        setCustomTooltip(deleteBtn, "删除规则");
         controls.appendChild(deleteBtn);
 
         item.appendChild(switchLabel);
@@ -18814,7 +18843,7 @@
             const titleEl = document.createElement("div");
             titleEl.className = "s1p-item-title";
             const rawTitle = String(item?.title ?? "");
-            titleEl.title = rawTitle;
+            setCustomTooltip(titleEl, rawTitle);
             titleEl.textContent = rawTitle;
 
             const metaEl = document.createElement("div");
@@ -19617,7 +19646,7 @@
         const deleteBtn = document.createElement("button");
         deleteBtn.className = "s1p-editor-btn s1p-delete-button";
         deleteBtn.dataset.action = "delete";
-        deleteBtn.title = "删除链接";
+        setCustomTooltip(deleteBtn, "删除链接");
         controls.appendChild(deleteBtn);
 
         item.appendChild(dragHandle);
@@ -21966,7 +21995,7 @@
 
       const optionsBtn = document.createElement("div");
       optionsBtn.className = "s1p-options-btn";
-      optionsBtn.title = "屏蔽此贴";
+      setCustomTooltip(optionsBtn, "屏蔽此贴");
       setSanitizedIconHtml(
         optionsBtn,
         `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>`
@@ -22328,10 +22357,11 @@
       document.body.appendChild(popover);
     }
 
-    let showTimeout, hideTimeout;
+    let showTimeout;
+    const resolveTooltipTarget = (node) =>
+      node instanceof Element ? node.closest(GENERIC_TOOLTIP_TARGET_SELECTOR) : null;
 
     const show = (anchor, text, delay = 50) => {
-      clearTimeout(hideTimeout);
       clearTimeout(showTimeout); // [NEW] 额外清理 showTimeout 确保不会叠加
       showTimeout = setTimeout(() => {
         applyPostToolbarPopupScope(popover, anchor);
@@ -22340,17 +22370,22 @@
         const rect = anchor.getBoundingClientRect();
 
         popover.style.display = "block";
+        // 先重置到稳定测量坐标，避免复用时受上一次 left 影响导致宽度被压缩成“竖排”。
+        popover.style.left = "0px";
+        popover.style.top = "0px";
         let top = rect.top + window.scrollY - popover.offsetHeight - 6;
         let left =
           rect.left + window.scrollX + rect.width / 2 - popover.offsetWidth / 2;
-        if (top < window.scrollY) {
+        const viewportPadding = GENERIC_TOOLTIP_VIEWPORT_PADDING_PX;
+        const viewportLeft = window.scrollX;
+        const viewportRight = window.scrollX + window.innerWidth;
+        const minLeft = viewportLeft + viewportPadding;
+        const maxLeft = viewportRight - popover.offsetWidth - viewportPadding;
+        if (top < window.scrollY + 6) {
           top = rect.bottom + window.scrollY + 6;
         }
 
-        if (left < 10) left = 10;
-        if (left + popover.offsetWidth > window.innerWidth) {
-          left = window.innerWidth - popover.offsetWidth - 10;
-        }
+        left = Math.min(Math.max(left, minLeft), Math.max(minLeft, maxLeft));
 
         popover.style.top = `${top}px`;
         popover.style.left = `${left}px`;
@@ -22360,7 +22395,6 @@
 
     const hide = () => {
       clearTimeout(showTimeout);
-      clearTimeout(hideTimeout);
       popover.classList.remove("visible");
     };
 
@@ -22384,26 +22418,36 @@
 
     // Keep existing listeners for user tags and add support for user remarks and history tags
     document.body.addEventListener("mouseover", (e) => {
-      const target = e.target.closest(
-        ".s1p-user-tag-display, .s1p-user-remark-display, .s1p-history-tag-item, .s1p-has-tooltip"
-      );
-      if (target && target.dataset.fullTag) {
-        // 如果是文本展示类，则需要检测是否溢出；如果是强制工具提示类，则直接显示
-        const isTooltip = target.classList.contains("s1p-has-tooltip");
-        if (isTooltip || target.scrollWidth > target.clientWidth) {
-          const delay = resolveTooltipDelay(target, isTooltip);
-          show(target, target.dataset.fullTag, delay);
-        }
+      const target = resolveTooltipTarget(e.target);
+      const tooltipText = target?.dataset?.fullTag;
+      if (!target || !tooltipText) {
+        return;
+      }
+      // 如果是文本展示类，则需要检测是否溢出；如果是强制工具提示类，则直接显示
+      const isTooltip = target.classList.contains("s1p-has-tooltip");
+      if (isTooltip || target.scrollWidth > target.clientWidth) {
+        const delay = resolveTooltipDelay(target, isTooltip);
+        show(target, tooltipText, delay);
       }
     });
 
     document.body.addEventListener("mouseout", (e) => {
-      const target = e.target.closest(
-        ".s1p-user-tag-display, .s1p-user-remark-display, .s1p-history-tag-item, .s1p-has-tooltip"
-      );
-      if (target) {
-        hide();
+      const target = resolveTooltipTarget(e.target);
+      if (!target) {
+        return;
       }
+      const relatedTarget = e.relatedTarget;
+      if (
+        relatedTarget instanceof Element &&
+        (target === relatedTarget || target.contains(relatedTarget))
+      ) {
+        return;
+      }
+      const nextHoverTarget = resolveTooltipTarget(relatedTarget);
+      if (nextHoverTarget === target) {
+        return;
+      }
+      hide();
     });
   };
 
@@ -22520,10 +22564,10 @@
     jumpBtn.className = "s1p-progress-jump-btn";
     if (hasSavedFloor) {
       jumpBtn.textContent = `P${page}-#${savedFloorText}`;
-      jumpBtn.title = `跳转至上次离开的第 ${page} 页，第 ${savedFloorText} 楼`;
+      setCustomTooltip(jumpBtn, `跳转至上次离开的第 ${page} 页，第 ${savedFloorText} 楼`);
     } else {
       jumpBtn.textContent = `P${page}`;
-      jumpBtn.title = `跳转至上次离开的第 ${page} 页`;
+      setCustomTooltip(jumpBtn, `跳转至上次离开的第 ${page} 页`);
     }
 
     jumpBtn.href = `forum.php?mod=redirect&goto=findpost&ptid=${threadId}&pid=${postId}`;
@@ -22560,7 +22604,7 @@
       const newRepliesBadge = document.createElement("span");
       newRepliesBadge.className = "s1p-new-replies-badge";
       newRepliesBadge.textContent = `+${newReplies}`;
-      newRepliesBadge.title = `有 ${newReplies} 条新回复`;
+      setCustomTooltip(newRepliesBadge, `有 ${newReplies} 条新回复`);
       newRepliesBadge.style.backgroundColor = fcolor;
       newRepliesBadge.style.borderColor = fcolor;
       progressContainer.appendChild(newRepliesBadge);
@@ -22575,7 +22619,7 @@
     deleteBtn.type = "button";
     deleteBtn.className = "s1p-progress-delete-btn";
     deleteBtn.textContent = "删除";
-    deleteBtn.title = "删除该帖阅读记录";
+    setCustomTooltip(deleteBtn, "删除该帖阅读记录");
     deleteBtn.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -24340,8 +24384,8 @@
     // 5. 创建按钮并添加到 panel 中
     const createButton = (title, className, svg, href, onclick) => {
       const link = document.createElement("a");
-      link.title = title;
       link.className = className;
+      setCustomTooltip(link, title);
       setSanitizedIconHtml(link, svg);
       if (href) link.href = href;
       if (onclick) link.onclick = onclick;
