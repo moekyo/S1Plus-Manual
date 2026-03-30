@@ -13,10 +13,7 @@
 // @grant        GM_openInTab
 // @grant        GM_download
 // @grant        GM_addValueChangeListener
-// @connect      stage1st.com
-// @connect      img.stage1st.com
-// @connect      api.github.com
-// @connect      gist.githubusercontent.com
+// @connect      *
 // @license      MIT
 // ==/UserScript==
 
@@ -802,6 +799,15 @@
   const S1P_IMAGE_VIEWER_CLOSE_OVERLAY_DELAY_MS =
     S1P_IMAGE_VIEWER_OPEN_CLOSE_ANIMATION_MS;
   const S1P_IMAGE_VIEWER_SWITCH_ANIMATION_MS = 220;
+  const S1P_IMAGE_VIEWER_SWITCH_OFFSET_PX = 36;
+  const S1P_IMAGE_VIEWER_SWITCH_LOAD_TIMEOUT_MS = 6500;
+  const S1P_IMAGE_VIEWER_SWITCH_LOAD_TIMEOUT_MIN_MS = 2200;
+  const S1P_IMAGE_VIEWER_SWITCH_LOAD_TIMEOUT_MAX_MS = 15000;
+  const S1P_IMAGE_VIEWER_SWITCH_LOAD_TIMEOUT_EWMA_FACTOR = 3.4;
+  const S1P_IMAGE_VIEWER_SWITCH_RETRY_MAX = 2;
+  const S1P_IMAGE_VIEWER_SWITCH_RETRY_BASE_DELAY_MS = 260;
+  const S1P_IMAGE_DOWNLOAD_RETRY_MAX = 2;
+  const S1P_IMAGE_DOWNLOAD_RETRY_BASE_DELAY_MS = 360;
   const S1P_IMAGE_VIEWER_NAV_AUTO_HIDE_MS = 1400;
   const S1P_IMAGE_VIEWER_NAV_LEAVE_HIDE_MS = 220;
   const S1P_IMAGE_VIEWER_NAV_MOVE_THROTTLE_MS = 120;
@@ -4363,7 +4369,8 @@
       .s1p-image-viewer__panel,
       .s1p-image-viewer__image-stage--main,
       .s1p-image-viewer__image-stage--ghost,
-      .s1p-image-viewer__image {
+      .s1p-image-viewer__image,
+      .s1p-image-viewer__switch-loading-spinner {
         transition: none !important;
         animation: none !important;
       }
@@ -4376,6 +4383,39 @@
       border-bottom: 1px solid var(--s1p-pri);
       background: var(--s1p-sub);
       flex-wrap: wrap;
+    }
+    .s1p-image-viewer__save-status-overlay {
+      display: none;
+      align-items: center;
+      gap: 8px;
+      flex: 0 0 auto;
+      max-width: min(42vw, 420px);
+      min-width: 0;
+      margin-left: 4px;
+    }
+    .s1p-image-viewer__save-status-overlay.is-visible {
+      display: inline-flex;
+    }
+    .s1p-image-viewer__save-status {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--s1p-desc-t);
+      line-height: 1.5;
+      flex: 0 1 auto;
+      min-width: 0;
+      max-width: min(30vw, 320px);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .s1p-image-viewer__save-cancel-btn {
+      display: none;
+      flex: 0 0 auto;
+    }
+    .s1p-image-viewer__save-cancel-btn.is-visible {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
     }
     .s1p-image-viewer__title {
       font-weight: 600;
@@ -4453,6 +4493,60 @@
       cursor: grab;
       user-select: none;
     }
+    .s1p-image-viewer__switch-loading {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 4;
+      display: none;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 12px;
+      border-radius: 12px;
+      border: 1px solid #c9d2bf;
+      background: #edf1e6;
+      color: var(--s1p-t, #022c80);
+      box-shadow: 0 10px 24px rgba(var(--s1p-shadow-color-rgb), 0.2);
+      font-size: 12px;
+      font-weight: 600;
+      line-height: 1;
+      pointer-events: auto;
+      user-select: none;
+      white-space: nowrap;
+    }
+    .s1p-image-viewer.is-switch-loading .s1p-image-viewer__switch-loading {
+      display: inline-flex;
+    }
+    .s1p-image-viewer__switch-loading-spinner {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      border: 2px solid rgba(2, 44, 128, 0.22);
+      border-top-color: #022c80;
+      animation: s1p-image-viewer-switch-loading-spin 0.82s linear infinite;
+      flex: 0 0 auto;
+    }
+    .s1p-image-viewer__switch-loading-text {
+      pointer-events: none;
+    }
+    .s1p-image-viewer__switch-cancel-btn {
+      margin-left: 2px;
+      padding: 2px 8px;
+      min-height: 24px;
+      font-size: 12px;
+      font-weight: 600;
+      line-height: 1;
+      white-space: nowrap;
+    }
+    @keyframes s1p-image-viewer-switch-loading-spin {
+      from {
+        transform: rotate(0deg);
+      }
+      to {
+        transform: rotate(360deg);
+      }
+    }
     .s1p-image-viewer__nav-btn {
       position: absolute;
       top: 50%;
@@ -4528,6 +4622,9 @@
       transform: translate3d(0, 0, 0);
       transform-origin: 0 0;
       will-change: transform;
+      backface-visibility: hidden;
+      -webkit-backface-visibility: hidden;
+      contain: paint;
       opacity: 1;
     }
     .s1p-image-viewer__image-stage--ghost {
@@ -4548,6 +4645,8 @@
       max-height: none;
       transform-origin: 0 0 !important;
       will-change: transform;
+      backface-visibility: hidden;
+      -webkit-backface-visibility: hidden;
       pointer-events: none;
       user-select: none;
       -webkit-user-drag: none;
@@ -4558,7 +4657,7 @@
     .s1p-image-viewer.is-preparing-switch
       .s1p-image-viewer__image-stage--main
       .s1p-image-viewer__image {
-      opacity: 0;
+      opacity: 1;
     }
     .s1p-image-viewer.is-switching-next .s1p-image-viewer__image-stage--main {
       animation: s1p-image-viewer-slide-in-next ${S1P_IMAGE_VIEWER_SWITCH_ANIMATION_MS}ms
@@ -4580,7 +4679,7 @@
     }
     @keyframes s1p-image-viewer-slide-in-next {
       from {
-        transform: translate3d(56px, 0, 0);
+        transform: translate3d(${S1P_IMAGE_VIEWER_SWITCH_OFFSET_PX}px, 0, 0);
       }
       to {
         transform: translate3d(0, 0, 0);
@@ -4588,7 +4687,7 @@
     }
     @keyframes s1p-image-viewer-slide-in-prev {
       from {
-        transform: translate3d(-56px, 0, 0);
+        transform: translate3d(calc(${S1P_IMAGE_VIEWER_SWITCH_OFFSET_PX}px * -1), 0, 0);
       }
       to {
         transform: translate3d(0, 0, 0);
@@ -4600,7 +4699,7 @@
         opacity: 1;
       }
       to {
-        transform: translate3d(-56px, 0, 0);
+        transform: translate3d(calc(${S1P_IMAGE_VIEWER_SWITCH_OFFSET_PX}px * -1), 0, 0);
         opacity: 0;
       }
     }
@@ -4610,7 +4709,7 @@
         opacity: 1;
       }
       to {
-        transform: translate3d(56px, 0, 0);
+        transform: translate3d(${S1P_IMAGE_VIEWER_SWITCH_OFFSET_PX}px, 0, 0);
         opacity: 0;
       }
     }
@@ -4620,6 +4719,31 @@
         height: 100vh;
         border-radius: 0;
         border: none;
+      }
+      .s1p-image-viewer__save-status-overlay {
+        position: static;
+        width: 100%;
+        order: 9;
+        justify-content: flex-start;
+        margin-top: 2px;
+        margin-left: 0;
+      }
+      .s1p-image-viewer__save-status {
+        font-size: 14px;
+        flex: 1 1 auto;
+        max-width: none;
+      }
+      .s1p-image-viewer__save-cancel-btn.is-visible {
+        order: 10;
+      }
+      .s1p-image-viewer__switch-loading {
+        font-size: 11px;
+        gap: 6px;
+        padding: 6px 10px;
+      }
+      .s1p-image-viewer__switch-cancel-btn {
+        min-height: 22px;
+        font-size: 11px;
       }
       .s1p-image-viewer__toolbar {
         gap: 6px;
@@ -4705,7 +4829,7 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: opacity 0.3s ease 0.1s;
+      transition: opacity 0.18s ease;
       pointer-events: auto; /* [新增] 唯独让手柄可以响应鼠标 */
     }
     #s1p-controls-handle::before {
@@ -4733,14 +4857,16 @@
       gap: 8px;
       /* [S1PLUS-MODIFIED] 将左侧内边距设为一个 >20px 的值，从而制造按钮和屏幕边缘的间距 */
       padding-left: 35px;
-      transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease,
-        visibility 0.3s;
+      transition: transform 0.24s cubic-bezier(0.22, 1, 0.36, 1),
+        opacity 0.2s ease, visibility 0.2s;
     }
+    #s1p-floating-controls-wrapper.s1p-floating-controls-open #s1p-controls-handle,
     #s1p-floating-controls-wrapper:hover #s1p-controls-handle {
       opacity: 0;
-      pointer-events: none;
       transition: opacity 0.2s ease;
+      pointer-events: none;
     }
+    #s1p-floating-controls-wrapper.s1p-floating-controls-open #s1p-floating-controls,
     #s1p-floating-controls-wrapper:hover #s1p-floating-controls {
       transform: translateX(0);
       opacity: 1;
@@ -4773,6 +4899,16 @@
     }
     #s1p-floating-controls a svg:hover {
       fill-opacity: 1;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      #s1p-controls-handle,
+      #s1p-floating-controls,
+      #s1p-floating-controls a {
+        transition: none !important;
+      }
+      #s1p-floating-controls a:hover {
+        transform: none;
+      }
     }
     #s1p-floating-controls a.s1p-scroll-btn svg {
       width: 22px;
@@ -9036,6 +9172,39 @@
       return "";
     }
   };
+  const normalizeS1pImageViewerComparableSourceUrl = (rawUrl) => {
+    const normalizedSourceUrl = normalizeS1pImageViewerSourceUrl(rawUrl);
+    if (!normalizedSourceUrl) {
+      return "";
+    }
+    try {
+      const parsedUrl = new URL(normalizedSourceUrl, window.location.href);
+      parsedUrl.searchParams.delete("s1p_retry");
+      parsedUrl.searchParams.delete("s1p_retry_ts");
+      return parsedUrl.href;
+    } catch (error) {
+      return normalizedSourceUrl;
+    }
+  };
+  const buildS1pImageViewerRetryRequestUrl = (sourceUrl, retryCount = 0) => {
+    const normalizedSourceUrl = normalizeS1pImageViewerSourceUrl(sourceUrl);
+    if (!normalizedSourceUrl) {
+      return "";
+    }
+    const safeRetryCount = Math.max(0, Number.parseInt(String(retryCount), 10) || 0);
+    if (safeRetryCount <= 0) {
+      return normalizedSourceUrl;
+    }
+    try {
+      const parsedUrl = new URL(normalizedSourceUrl, window.location.href);
+      parsedUrl.searchParams.set("s1p_retry", String(safeRetryCount));
+      parsedUrl.searchParams.set("s1p_retry_ts", String(Date.now()));
+      return parsedUrl.href;
+    } catch (error) {
+      const separator = normalizedSourceUrl.includes("?") ? "&" : "?";
+      return `${normalizedSourceUrl}${separator}s1p_retry=${safeRetryCount}&s1p_retry_ts=${Date.now()}`;
+    }
+  };
   const resolveS1pImageViewerSourceUrl = (img) => {
     if (!(img instanceof HTMLImageElement)) {
       return "";
@@ -9072,6 +9241,12 @@
     fitBtn: null,
     saveBtn: null,
     saveAllBtn: null,
+    openBtn: null,
+    switchCancelBtn: null,
+    switchLoadingText: null,
+    saveStatusOverlay: null,
+    saveStatusText: null,
+    saveCancelBtn: null,
     prevBtn: null,
     nextBtn: null,
     toolbarContinuousActionStops: [],
@@ -9079,10 +9254,20 @@
     sourceUrl: "",
     galleryItems: [],
     currentIndex: -1,
+    pendingIndex: -1,
+    pendingSourceUrl: "",
+    pendingRequestStartedAt: 0,
     pendingSwitchDirection: 0,
+    pendingRawFallbackAttempt: false,
+    pendingRawFallbackTried: false,
     hasPreparedSwitchTransform: false,
     switchRequestId: 0,
+    switchLoadDurationEwmaMs: 0,
+    switchAnimationFrameId: 0,
     switchAnimationTimer: 0,
+    switchLoadTimeoutTimer: 0,
+    switchRetryTimer: 0,
+    pendingRetryCount: 0,
     transformAnimationTimer: 0,
     closeOverlayTimer: 0,
     closeAnimationTimer: 0,
@@ -9107,6 +9292,13 @@
     lastZoomPercent: null,
     isSingleSaving: false,
     isBatchSaving: false,
+    saveAbortRequested: false,
+    activeSaveAbortController: null,
+    prefetchedSources: new Set(),
+    prefetchingSources: new Set(),
+    prefetchImagePool: [],
+    prefetchInFlightImages: new Map(),
+    prefetchSessionId: 0,
   };
   const isS1pReducedMotionPreferred = () => {
     if (typeof window.matchMedia !== "function") {
@@ -9167,6 +9359,114 @@
     }
     detachS1pImageViewerCloseTransitionListener();
   };
+  const clearS1pImageViewerSwitchLoadTimeout = () => {
+    const state = s1pImageViewerState;
+    if (state.switchLoadTimeoutTimer) {
+      window.clearTimeout(state.switchLoadTimeoutTimer);
+      state.switchLoadTimeoutTimer = 0;
+    }
+  };
+  const clearS1pImageViewerSwitchRetryTimer = () => {
+    const state = s1pImageViewerState;
+    if (state.switchRetryTimer) {
+      window.clearTimeout(state.switchRetryTimer);
+      state.switchRetryTimer = 0;
+    }
+  };
+  const clearS1pImageViewerSwitchTimers = () => {
+    clearS1pImageViewerSwitchRetryTimer();
+    clearS1pImageViewerSwitchLoadTimeout();
+  };
+  const resetS1pImageViewerPendingSwitchState = (
+    state = s1pImageViewerState,
+    { resetDirection = true } = {}
+  ) => {
+    state.pendingIndex = -1;
+    state.pendingSourceUrl = "";
+    state.pendingRequestStartedAt = 0;
+    state.pendingRetryCount = 0;
+    state.pendingRawFallbackAttempt = false;
+    state.pendingRawFallbackTried = false;
+    if (resetDirection) {
+      state.pendingSwitchDirection = 0;
+    }
+    state.hasPreparedSwitchTransform = false;
+  };
+  const cancelS1pImageViewerPrefetchRequests = () => {
+    const state = s1pImageViewerState;
+    state.prefetchSessionId += 1;
+    if (state.prefetchInFlightImages instanceof Map) {
+      state.prefetchInFlightImages.forEach((preloadImage) => {
+        if (preloadImage instanceof HTMLImageElement) {
+          try {
+            preloadImage.removeAttribute("src");
+          } catch (error) {
+            // ignore
+          }
+        }
+      });
+      state.prefetchInFlightImages.clear();
+    }
+    state.prefetchingSources.clear();
+  };
+  const isS1pImageViewerSwitchPending = () => {
+    const state = s1pImageViewerState;
+    const normalizedPendingSource = normalizeS1pImageViewerSourceUrl(
+      state.pendingSourceUrl
+    );
+    return state.pendingIndex >= 0 && Boolean(normalizedPendingSource);
+  };
+  const resolveS1pImageViewerSwitchBaseIndex = () => {
+    const state = s1pImageViewerState;
+    if (isS1pImageViewerSwitchPending()) {
+      return Math.max(0, Number(state.pendingIndex) || 0);
+    }
+    if (state.currentIndex >= 0) {
+      return state.currentIndex;
+    }
+    return -1;
+  };
+  const cancelS1pImageViewerPendingSwitch = ({
+    notify = false,
+    reason = "",
+  } = {}) => {
+    const state = s1pImageViewerState;
+    if (!state.isOpen || !isS1pImageViewerSwitchPending()) {
+      return false;
+    }
+    clearS1pImageViewerSwitchTimers();
+    state.switchRequestId += 1;
+    const fallbackSourceUrl = normalizeS1pImageViewerSourceUrl(state.sourceUrl);
+    resetS1pImageViewerPendingSwitchState(state);
+    if (state.overlay) {
+      state.overlay.classList.remove("is-preparing-switch");
+    }
+    clearS1pImageViewerSwitchAnimation();
+    if (fallbackSourceUrl) {
+      if (state.image instanceof HTMLImageElement && state.image.src !== fallbackSourceUrl) {
+        state.image.src = fallbackSourceUrl;
+      }
+    } else {
+      state.currentIndex = -1;
+      state.sourceUrl = "";
+      if (state.image instanceof HTMLImageElement) {
+        state.image.removeAttribute("src");
+      }
+      applyS1pImageViewerIdentityTransform();
+    }
+    syncS1pImageViewerNavigationState();
+    syncS1pImageViewerDownloadButtonState();
+    if (notify) {
+      const message =
+        reason === "timeout"
+          ? "图片加载超时，请重试。"
+          : reason === "error"
+            ? "图片加载失败，请重试。"
+            : "已取消图片切换。";
+      showMessage(message, false);
+    }
+    return true;
+  };
   const resetS1pImageViewerOverlayVisibilityClasses = () => {
     const state = s1pImageViewerState;
     if (!state.overlay) {
@@ -9177,6 +9477,12 @@
     state.overlay.classList.remove("is-overlay-open");
     state.overlay.classList.remove("is-nav-visible");
     state.overlay.classList.remove("has-gallery");
+    state.overlay.classList.remove("is-switch-loading");
+    state.overlay.classList.remove("is-preparing-switch");
+    state.overlay.classList.remove("is-switching");
+    state.overlay.classList.remove("is-switching-prev");
+    state.overlay.classList.remove("is-switching-next");
+    state.overlay.classList.remove("has-switch-ghost");
   };
   const canContinueS1pImageViewerClosing = () => {
     const state = s1pImageViewerState;
@@ -9188,6 +9494,7 @@
       return false;
     }
     clearS1pImageViewerCloseTransitionState();
+    clearS1pImageViewerSwitchTimers();
     state.isClosing = false;
     resetS1pImageViewerOverlayVisibilityClasses();
     if (document.body) {
@@ -9196,6 +9503,22 @@
     state.sourceUrl = "";
     state.galleryItems = [];
     state.currentIndex = -1;
+    resetS1pImageViewerPendingSwitchState(state);
+    state.lastZoomPercent = null;
+    if (state.image instanceof HTMLImageElement) {
+      state.image.removeAttribute("src");
+      state.image.style.transform = "";
+    }
+    if (state.ghostImage instanceof HTMLImageElement) {
+      state.ghostImage.removeAttribute("src");
+      state.ghostImage.style.transform = "";
+    }
+    state.saveAbortRequested = false;
+    state.activeSaveAbortController = null;
+    state.prefetchedSources.clear();
+    cancelS1pImageViewerPrefetchRequests();
+    state.prefetchImagePool = [];
+    syncS1pImageViewerBatchSaveStatusBar({ visible: false });
     syncS1pImageViewerNavigationState();
     return true;
   };
@@ -9336,6 +9659,10 @@
     if (!state.overlay) {
       return;
     }
+    if (state.switchAnimationFrameId) {
+      window.cancelAnimationFrame(state.switchAnimationFrameId);
+      state.switchAnimationFrameId = 0;
+    }
     if (state.switchAnimationTimer) {
       window.clearTimeout(state.switchAnimationTimer);
       state.switchAnimationTimer = 0;
@@ -9360,7 +9687,7 @@
       return false;
     }
     const currentSourceUrl = normalizeS1pImageViewerSourceUrl(
-      state.image.currentSrc || state.image.src
+      state.sourceUrl || state.image.currentSrc || state.image.src
     );
     if (!currentSourceUrl) {
       clearS1pImageViewerSwitchGhost();
@@ -9391,18 +9718,279 @@
       return;
     }
     clearS1pImageViewerSwitchAnimation({ keepGhost: true });
-    void state.overlay.offsetWidth;
     const directionClass =
       normalizedDirection > 0 ? "is-switching-next" : "is-switching-prev";
-    state.overlay.classList.add("is-switching", directionClass);
-    state.switchAnimationTimer = window.setTimeout(() => {
+    state.switchAnimationFrameId = window.requestAnimationFrame(() => {
       const latestState = s1pImageViewerState;
-      latestState.switchAnimationTimer = 0;
-      if (!latestState.overlay) {
+      latestState.switchAnimationFrameId = 0;
+      if (!latestState.overlay || !latestState.isOpen) {
         return;
       }
-      clearS1pImageViewerSwitchAnimation();
-    }, switchAnimationDurationMs + 40);
+      latestState.overlay.classList.add("is-switching", directionClass);
+      latestState.switchAnimationTimer = window.setTimeout(() => {
+        const syncedState = s1pImageViewerState;
+        syncedState.switchAnimationTimer = 0;
+        if (!syncedState.overlay) {
+          return;
+        }
+        clearS1pImageViewerSwitchAnimation();
+      }, switchAnimationDurationMs + 40);
+    });
+  };
+  const rememberS1pImageViewerPrefetchedSource = (sourceUrl) => {
+    const normalizedSourceUrl = normalizeS1pImageViewerSourceUrl(sourceUrl);
+    if (!normalizedSourceUrl) {
+      return;
+    }
+    const state = s1pImageViewerState;
+    if (state.prefetchedSources.has(normalizedSourceUrl)) {
+      return;
+    }
+    state.prefetchedSources.add(normalizedSourceUrl);
+    state.prefetchImagePool.push(normalizedSourceUrl);
+    while (state.prefetchImagePool.length > 120) {
+      const expiredSource = state.prefetchImagePool.shift();
+      if (expiredSource) {
+        state.prefetchedSources.delete(expiredSource);
+      }
+    }
+  };
+  const prefetchS1pImageViewerSource = (sourceUrl) => {
+    const normalizedSourceUrl = normalizeS1pImageViewerSourceUrl(sourceUrl);
+    if (!normalizedSourceUrl) {
+      return;
+    }
+    const state = s1pImageViewerState;
+    if (
+      state.prefetchedSources.has(normalizedSourceUrl) ||
+      state.prefetchingSources.has(normalizedSourceUrl)
+    ) {
+      return;
+    }
+    state.prefetchingSources.add(normalizedSourceUrl);
+    const prefetchSessionId = state.prefetchSessionId;
+    const preloadImage = new Image();
+    if (state.prefetchInFlightImages instanceof Map) {
+      state.prefetchInFlightImages.set(normalizedSourceUrl, preloadImage);
+    }
+    const finish = (shouldRemember) => {
+      const latestState = s1pImageViewerState;
+      if (latestState.prefetchSessionId !== prefetchSessionId) {
+        return;
+      }
+      latestState.prefetchingSources.delete(normalizedSourceUrl);
+      if (latestState.prefetchInFlightImages instanceof Map) {
+        latestState.prefetchInFlightImages.delete(normalizedSourceUrl);
+      }
+      if (shouldRemember && latestState.isOpen) {
+        rememberS1pImageViewerPrefetchedSource(normalizedSourceUrl);
+      }
+    };
+    preloadImage.addEventListener("load", () => {
+      finish(true);
+    });
+    preloadImage.addEventListener("error", () => {
+      finish(false);
+    });
+    preloadImage.decoding = "async";
+    preloadImage.src = normalizedSourceUrl;
+  };
+  const prefetchS1pImageViewerNeighborSources = (centerIndex) => {
+    const state = s1pImageViewerState;
+    if (!state.isOpen || state.galleryItems.length <= 1) {
+      return;
+    }
+    const parsedCenterIndex = Number.parseInt(String(centerIndex), 10);
+    const normalizedCenterIndex = Number.isFinite(parsedCenterIndex)
+      ? Math.min(state.galleryItems.length - 1, Math.max(0, parsedCenterIndex))
+      : 0;
+    [1, -1, 2, -2].forEach((offset) => {
+      const nextIndex = normalizedCenterIndex + offset;
+      if (nextIndex < 0 || nextIndex >= state.galleryItems.length) {
+        return;
+      }
+      const sourceUrl = state.galleryItems[nextIndex];
+      prefetchS1pImageViewerSource(sourceUrl);
+    });
+  };
+  const isS1pImageViewerViewportHovered = () => {
+    const state = s1pImageViewerState;
+    if (!(state.viewport instanceof HTMLElement)) {
+      return false;
+    }
+    try {
+      return state.viewport.matches(":hover");
+    } catch (error) {
+      return false;
+    }
+  };
+  const syncS1pImageViewerSwitchLoadingState = () => {
+    const state = s1pImageViewerState;
+    if (!state.overlay) {
+      return;
+    }
+    const isSwitchLoading = isS1pImageViewerSwitchPending();
+    state.overlay.classList.toggle("is-switch-loading", isSwitchLoading);
+    if (state.switchLoadingText instanceof HTMLElement) {
+      let loadingText = "加载中...";
+      if (isSwitchLoading) {
+        const totalCount = Math.max(1, state.galleryItems.length);
+        const pendingIndex = Number.parseInt(String(state.pendingIndex), 10);
+        const pendingRetryCount = Math.max(0, Number(state.pendingRetryCount) || 0);
+        const isRawFallbackAttempt = state.pendingRawFallbackAttempt === true;
+        if (
+          totalCount > 1 &&
+          Number.isFinite(pendingIndex) &&
+          pendingIndex >= 0 &&
+          pendingIndex < totalCount
+        ) {
+          loadingText =
+            isRawFallbackAttempt
+              ? `回退 ${pendingIndex + 1}/${totalCount}...`
+              : pendingRetryCount > 0
+              ? `重试${pendingRetryCount} ${pendingIndex + 1}/${totalCount}...`
+              : `加载 ${pendingIndex + 1}/${totalCount}...`;
+        }
+      }
+      state.switchLoadingText.textContent = loadingText;
+    }
+    if (state.switchCancelBtn instanceof HTMLButtonElement) {
+      state.switchCancelBtn.disabled = !isSwitchLoading;
+    }
+  };
+  const retryS1pImageViewerPendingSwitch = (reason = "error") => {
+    const state = s1pImageViewerState;
+    if (!state.isOpen || !(state.image instanceof HTMLImageElement)) {
+      return false;
+    }
+    if (!isS1pImageViewerSwitchPending()) {
+      return false;
+    }
+    const currentRetryCount = Math.max(0, Number(state.pendingRetryCount) || 0);
+    const hasRemainingRetry = currentRetryCount < S1P_IMAGE_VIEWER_SWITCH_RETRY_MAX;
+    const shouldUseRawFallbackAttempt =
+      !hasRemainingRetry && state.pendingRawFallbackTried !== true;
+    if (!hasRemainingRetry && !shouldUseRawFallbackAttempt) {
+      return false;
+    }
+    const pendingSourceUrl = normalizeS1pImageViewerSourceUrl(state.pendingSourceUrl);
+    if (!pendingSourceUrl) {
+      return false;
+    }
+    const nextRetryCount = hasRemainingRetry ? currentRetryCount + 1 : currentRetryCount;
+    state.pendingRetryCount = nextRetryCount;
+    state.pendingRawFallbackAttempt = shouldUseRawFallbackAttempt;
+    if (shouldUseRawFallbackAttempt) {
+      state.pendingRawFallbackTried = true;
+    }
+    state.hasPreparedSwitchTransform = false;
+    state.pendingRequestStartedAt = Date.now();
+    state.switchRequestId += 1;
+    const retryRequestId = state.switchRequestId;
+    clearS1pImageViewerSwitchRetryTimer();
+    if (state.overlay) {
+      state.overlay.classList.remove("is-preparing-switch");
+    }
+    const retryOrdinal = shouldUseRawFallbackAttempt ? currentRetryCount + 1 : nextRetryCount;
+    const retryDelayMs = Math.min(
+      1400,
+      Math.max(
+        100,
+        Number(S1P_IMAGE_VIEWER_SWITCH_RETRY_BASE_DELAY_MS) *
+          2 ** Math.max(0, retryOrdinal - 1)
+      )
+    );
+    scheduleS1pImageViewerSwitchLoadTimeout(retryRequestId, pendingSourceUrl);
+    state.switchRetryTimer = window.setTimeout(() => {
+      const latestState = s1pImageViewerState;
+      latestState.switchRetryTimer = 0;
+      if (
+        !latestState.isOpen ||
+        !(latestState.image instanceof HTMLImageElement) ||
+        !isS1pImageViewerSwitchPending() ||
+        latestState.switchRequestId !== retryRequestId ||
+        normalizeS1pImageViewerSourceUrl(latestState.pendingSourceUrl) !== pendingSourceUrl
+      ) {
+        return;
+      }
+      requestS1pImageViewerSourceSwitch(pendingSourceUrl, retryRequestId, {
+        retryCount: shouldUseRawFallbackAttempt ? 0 : nextRetryCount,
+      });
+    }, retryDelayMs);
+    console.warn("S1 Plus: 图片加载失败，自动重试。", {
+      reason,
+      retry: retryOrdinal,
+      maxRetry: S1P_IMAGE_VIEWER_SWITCH_RETRY_MAX,
+      fallbackToRawUrl: shouldUseRawFallbackAttempt,
+      source: pendingSourceUrl,
+    });
+    return true;
+  };
+  const resolveS1pImageViewerSwitchLoadTimeoutMs = (sourceUrl) => {
+    const state = s1pImageViewerState;
+    const normalizedSourceUrl = normalizeS1pImageViewerSourceUrl(sourceUrl);
+    let timeoutMs = Number(S1P_IMAGE_VIEWER_SWITCH_LOAD_TIMEOUT_MS) || 0;
+    if (timeoutMs <= 0) {
+      timeoutMs = 6500;
+    }
+    const ewmaDuration = Number(state.switchLoadDurationEwmaMs || 0);
+    if (ewmaDuration > 0) {
+      const adaptiveTimeout = Math.round(
+        ewmaDuration * S1P_IMAGE_VIEWER_SWITCH_LOAD_TIMEOUT_EWMA_FACTOR + 900
+      );
+      timeoutMs = Math.max(timeoutMs, adaptiveTimeout);
+    }
+    if (normalizedSourceUrl) {
+      if (
+        state.prefetchedSources.has(normalizedSourceUrl) ||
+        state.prefetchingSources.has(normalizedSourceUrl)
+      ) {
+        timeoutMs = Math.round(timeoutMs * 0.86);
+      }
+      try {
+        const targetUrl = new URL(normalizedSourceUrl, window.location.href);
+        if (targetUrl.origin !== window.location.origin) {
+          timeoutMs = Math.round(timeoutMs * 1.2);
+        }
+      } catch (error) {
+        // ignore
+      }
+    }
+    return Math.min(
+      S1P_IMAGE_VIEWER_SWITCH_LOAD_TIMEOUT_MAX_MS,
+      Math.max(S1P_IMAGE_VIEWER_SWITCH_LOAD_TIMEOUT_MIN_MS, timeoutMs)
+    );
+  };
+  const scheduleS1pImageViewerSwitchLoadTimeout = (requestId, sourceUrl) => {
+    clearS1pImageViewerSwitchLoadTimeout();
+    const safeRequestId = Number(requestId) || 0;
+    if (safeRequestId <= 0) {
+      return;
+    }
+    const normalizedExpectedSourceUrl = normalizeS1pImageViewerSourceUrl(sourceUrl);
+    const timeoutMs = resolveS1pImageViewerSwitchLoadTimeoutMs(normalizedExpectedSourceUrl);
+    s1pImageViewerState.switchLoadTimeoutTimer = window.setTimeout(() => {
+      const state = s1pImageViewerState;
+      state.switchLoadTimeoutTimer = 0;
+      if (
+        !state.isOpen ||
+        !isS1pImageViewerSwitchPending() ||
+        state.switchRequestId !== safeRequestId
+      ) {
+        return;
+      }
+      if (
+        normalizedExpectedSourceUrl &&
+        normalizeS1pImageViewerSourceUrl(state.pendingSourceUrl) !==
+          normalizedExpectedSourceUrl
+      ) {
+        return;
+      }
+      if (retryS1pImageViewerPendingSwitch("timeout")) {
+        return;
+      }
+      cancelS1pImageViewerPendingSwitch({ notify: true, reason: "timeout" });
+    }, timeoutMs);
   };
   const showS1pImageViewerNavTemporarily = (
     durationMs = S1P_IMAGE_VIEWER_NAV_AUTO_HIDE_MS
@@ -9423,6 +10011,10 @@
       if (!latestState.overlay || !latestState.isOpen || latestState.isDragging) {
         return;
       }
+      if (isS1pImageViewerViewportHovered()) {
+        latestState.overlay.classList.add("is-nav-visible");
+        return;
+      }
       latestState.overlay.classList.remove("is-nav-visible");
     }, safeDuration);
   };
@@ -9438,6 +10030,10 @@
       const latestState = s1pImageViewerState;
       latestState.navHideTimer = 0;
       if (!latestState.overlay || !latestState.isOpen || latestState.isDragging) {
+        return;
+      }
+      if (isS1pImageViewerViewportHovered()) {
+        latestState.overlay.classList.add("is-nav-visible");
         return;
       }
       latestState.overlay.classList.remove("is-nav-visible");
@@ -9468,28 +10064,21 @@
       targetImage.closest("table.plhin") ||
       document;
     const galleryItems = [];
-    const indexByUrl = new Map();
     let initialIndex = -1;
     Array.from(root.querySelectorAll(S1P_IMAGE_VIEWER_IMAGE_SELECTOR)).forEach((img) => {
       const sourceUrl = resolveS1pImageViewerSourceUrl(img);
       if (!sourceUrl) {
         return;
       }
-      if (!indexByUrl.has(sourceUrl)) {
-        indexByUrl.set(sourceUrl, galleryItems.length);
-        galleryItems.push(sourceUrl);
-      }
+      galleryItems.push(sourceUrl);
       if (img === targetImage) {
-        initialIndex = indexByUrl.get(sourceUrl);
+        initialIndex = galleryItems.length - 1;
       }
     });
     const targetSourceUrl = resolveS1pImageViewerSourceUrl(targetImage);
-    if (targetSourceUrl && !indexByUrl.has(targetSourceUrl)) {
-      indexByUrl.set(targetSourceUrl, galleryItems.length);
+    if (targetSourceUrl && initialIndex < 0) {
       galleryItems.push(targetSourceUrl);
-    }
-    if (initialIndex < 0 && targetSourceUrl && indexByUrl.has(targetSourceUrl)) {
-      initialIndex = indexByUrl.get(targetSourceUrl);
+      initialIndex = galleryItems.length - 1;
     }
     if (initialIndex < 0 || initialIndex >= galleryItems.length) {
       initialIndex = 0;
@@ -9516,12 +10105,15 @@
     const state = s1pImageViewerState;
     const count = state.galleryItems.length;
     const hasGallery = count > 1;
+    const isSwitchLoading = isS1pImageViewerSwitchPending();
+    const normalizedCurrentSourceUrl = normalizeS1pImageViewerSourceUrl(state.sourceUrl);
     if (state.overlay) {
       state.overlay.classList.toggle("has-gallery", hasGallery);
       if (!hasGallery) {
         state.overlay.classList.remove("is-nav-visible");
       }
     }
+    syncS1pImageViewerSwitchLoadingState();
     if (!hasGallery) {
       clearS1pImageViewerNavHideTimer();
     }
@@ -9530,11 +10122,25 @@
     if (count > 0) {
       safeIndex = Math.min(count - 1, Math.max(0, Number(state.currentIndex) || 0));
     }
-    if (state.indexLabel) {
-      state.indexLabel.textContent = `${safeIndex + 1}/${safeCount}`;
+    let displayIndex = safeIndex;
+    const pendingIndex = Number.parseInt(String(state.pendingIndex), 10);
+    if (
+      isSwitchLoading &&
+      Number.isFinite(pendingIndex) &&
+      pendingIndex >= 0 &&
+      pendingIndex < count
+    ) {
+      displayIndex = pendingIndex;
     }
-    const disablePrev = count <= 1 || safeIndex <= 0;
-    const disableNext = count <= 1 || safeIndex >= count - 1;
+    if (state.indexLabel) {
+      if (!isSwitchLoading && count > 0 && !normalizedCurrentSourceUrl && state.currentIndex < 0) {
+        state.indexLabel.textContent = `-/${safeCount}`;
+      } else {
+        state.indexLabel.textContent = `${displayIndex + 1}/${safeCount}`;
+      }
+    }
+    const disablePrev = isSwitchLoading || count <= 1 || safeIndex <= 0;
+    const disableNext = isSwitchLoading || count <= 1 || safeIndex >= count - 1;
     if (state.prevBtn) {
       state.prevBtn.disabled = disablePrev;
     }
@@ -9543,54 +10149,34 @@
     }
     syncS1pImageViewerDownloadButtonState();
   };
-  const requestS1pImageViewerSourceSwitch = (sourceUrl, requestId) => {
+  const requestS1pImageViewerSourceSwitch = (
+    sourceUrl,
+    requestId,
+    { retryCount = 0 } = {}
+  ) => {
     const normalizedSourceUrl = normalizeS1pImageViewerSourceUrl(sourceUrl);
     if (!normalizedSourceUrl) {
       return;
     }
-    const preloadImage = new Image();
-    let isHandled = false;
-    const finalizeSwitch = (naturalWidth, naturalHeight, usePreparedTransform) => {
-      if (isHandled) {
-        return;
-      }
-      isHandled = true;
-      const state = s1pImageViewerState;
-      if (
-        !state.isOpen ||
-        !state.image ||
-        state.switchRequestId !== requestId ||
-        state.sourceUrl !== normalizedSourceUrl
-      ) {
-        return;
-      }
-      if (state.overlay) {
-        const hasGhost = state.overlay.classList.contains("has-switch-ghost");
-        state.overlay.classList.toggle("is-preparing-switch", hasGhost);
-      }
-      state.hasPreparedSwitchTransform =
-        usePreparedTransform &&
-        applyS1pImageViewerDefaultFitBySize(naturalWidth, naturalHeight);
-      state.image.src = normalizedSourceUrl;
-    };
-    preloadImage.addEventListener("load", () => {
-      finalizeSwitch(
-        Number(preloadImage.naturalWidth || 0),
-        Number(preloadImage.naturalHeight || 0),
-        true
-      );
-    });
-    preloadImage.addEventListener("error", () => {
-      finalizeSwitch(0, 0, false);
-    });
-    preloadImage.decoding = "async";
-    preloadImage.src = normalizedSourceUrl;
-    if (preloadImage.complete && Number(preloadImage.naturalWidth || 0) > 0) {
-      finalizeSwitch(
-        Number(preloadImage.naturalWidth || 0),
-        Number(preloadImage.naturalHeight || 0),
-        true
-      );
+    const state = s1pImageViewerState;
+    if (
+      !state.isOpen ||
+      !state.image ||
+      state.switchRequestId !== requestId ||
+      normalizeS1pImageViewerSourceUrl(state.pendingSourceUrl) !== normalizedSourceUrl
+    ) {
+      return;
+    }
+    if (state.overlay) {
+      state.overlay.classList.remove("is-preparing-switch");
+    }
+    state.hasPreparedSwitchTransform = false;
+    const requestSourceUrl = buildS1pImageViewerRetryRequestUrl(
+      normalizedSourceUrl,
+      retryCount
+    );
+    if (requestSourceUrl && state.image.src !== requestSourceUrl) {
+      state.image.src = requestSourceUrl;
     }
   };
   const setS1pImageViewerActiveIndex = (
@@ -9602,54 +10188,109 @@
     if (count <= 0) {
       state.currentIndex = -1;
       state.sourceUrl = "";
+      clearS1pImageViewerSwitchTimers();
+      resetS1pImageViewerPendingSwitchState(state);
       syncS1pImageViewerNavigationState();
+      syncS1pImageViewerDownloadButtonState();
       return false;
     }
     const parsedIndex = Number.parseInt(String(nextIndex), 10);
     const normalizedIndex = Number.isFinite(parsedIndex)
       ? Math.min(count - 1, Math.max(0, parsedIndex))
       : 0;
-    const nextSourceUrl = state.galleryItems[normalizedIndex];
-    const previousIndex = state.currentIndex;
-    const isSameTarget =
-      state.currentIndex === normalizedIndex && state.sourceUrl === nextSourceUrl;
-    state.currentIndex = normalizedIndex;
-    state.sourceUrl = nextSourceUrl;
-    syncS1pImageViewerNavigationState();
+    const nextSourceUrl = normalizeS1pImageViewerSourceUrl(
+      state.galleryItems[normalizedIndex]
+    );
+    if (!nextSourceUrl) {
+      return false;
+    }
     if (!state.image) {
       return false;
     }
-    if (!allowSameIndexReset && isSameTarget) {
+    const normalizedCurrentSourceUrl = normalizeS1pImageViewerSourceUrl(state.sourceUrl);
+    const comparableRenderedSourceUrl = normalizeS1pImageViewerComparableSourceUrl(
+      state.image.currentSrc || state.image.src
+    );
+    const comparableNextSourceUrl = normalizeS1pImageViewerComparableSourceUrl(
+      nextSourceUrl
+    );
+    const hasRenderedImage =
+      state.image.complete === true && Number(state.image.naturalWidth || 0) > 0;
+    const hasPendingSwitch = isS1pImageViewerSwitchPending();
+    const normalizedPendingSourceUrl = normalizeS1pImageViewerSourceUrl(
+      state.pendingSourceUrl
+    );
+    const isSameAsPending =
+      hasPendingSwitch &&
+      state.pendingIndex === normalizedIndex &&
+      normalizedPendingSourceUrl === nextSourceUrl;
+    const isSameAsCurrent =
+      state.currentIndex === normalizedIndex &&
+      normalizedCurrentSourceUrl === nextSourceUrl;
+    if (!allowSameIndexReset && (isSameAsPending || isSameAsCurrent)) {
       return false;
+    }
+    if (hasPendingSwitch && isSameAsCurrent) {
+      clearS1pImageViewerSwitchTimers();
+      resetS1pImageViewerPendingSwitchState(state);
+      state.switchRequestId += 1;
+      if (state.overlay) {
+        state.overlay.classList.remove("is-preparing-switch");
+      }
+      clearS1pImageViewerSwitchAnimation();
+      if (
+        normalizedCurrentSourceUrl &&
+        state.image.src !== normalizedCurrentSourceUrl
+      ) {
+        state.image.src = normalizedCurrentSourceUrl;
+      }
+      syncS1pImageViewerNavigationState();
+      syncS1pImageViewerDownloadButtonState();
+      return true;
+    }
+    const canReuseRenderedSourceDirectly =
+      hasRenderedImage &&
+      Boolean(comparableRenderedSourceUrl) &&
+      comparableRenderedSourceUrl === comparableNextSourceUrl &&
+      state.currentIndex !== normalizedIndex;
+    if (canReuseRenderedSourceDirectly) {
+      clearS1pImageViewerSwitchTimers();
+      state.currentIndex = normalizedIndex;
+      state.sourceUrl = nextSourceUrl;
+      resetS1pImageViewerPendingSwitchState(state);
+      state.switchRequestId += 1;
+      if (state.overlay) {
+        state.overlay.classList.remove("is-preparing-switch");
+      }
+      clearS1pImageViewerSwitchAnimation();
+      syncS1pImageViewerNavigationState();
+      syncS1pImageViewerDownloadButtonState();
+      prefetchS1pImageViewerNeighborSources(normalizedIndex);
+      return true;
     }
     stopS1pImageViewerDragging();
     clearS1pImageViewerTransformButtonAnimation();
-    if (state.image.src !== nextSourceUrl) {
-      state.pendingSwitchDirection = resolveS1pImageViewerSwitchDirection(
-        previousIndex,
-        normalizedIndex
-      );
-      clearS1pImageViewerSwitchAnimation();
-      state.switchRequestId += 1;
-      const switchRequestId = state.switchRequestId;
-      if (previousIndex < 0) {
-        state.hasPreparedSwitchTransform = false;
-        state.image.src = nextSourceUrl;
-      } else {
-        prepareS1pImageViewerSwitchGhost();
-        requestS1pImageViewerSourceSwitch(nextSourceUrl, switchRequestId);
-      }
-      return true;
-    }
-    state.switchRequestId += 1;
-    state.pendingSwitchDirection = 0;
+    clearS1pImageViewerSwitchRetryTimer();
+    const previousSwitchBaseIndex = resolveS1pImageViewerSwitchBaseIndex();
+    resetS1pImageViewerPendingSwitchState(state, { resetDirection: false });
+    state.pendingIndex = normalizedIndex;
+    state.pendingSourceUrl = nextSourceUrl;
+    state.pendingRequestStartedAt = Date.now();
+    state.pendingSwitchDirection = resolveS1pImageViewerSwitchDirection(
+      previousSwitchBaseIndex,
+      normalizedIndex
+    );
     state.hasPreparedSwitchTransform = false;
     clearS1pImageViewerSwitchAnimation();
-    if (state.image.complete && Number(state.image.naturalWidth || 0) > 0) {
-      applyS1pImageViewerDefaultTransform();
-    } else {
-      applyS1pImageViewerIdentityTransform();
-    }
+    state.switchRequestId += 1;
+    const switchRequestId = state.switchRequestId;
+    // 切换请求阶段不再挂旧图 ghost 层，避免不同尺寸图片叠影/残影。
+    clearS1pImageViewerSwitchGhost();
+    syncS1pImageViewerNavigationState();
+    syncS1pImageViewerDownloadButtonState();
+    prefetchS1pImageViewerNeighborSources(normalizedIndex);
+    scheduleS1pImageViewerSwitchLoadTimeout(switchRequestId, nextSourceUrl);
+    requestS1pImageViewerSourceSwitch(nextSourceUrl, switchRequestId);
     return true;
   };
   const stepS1pImageViewerActiveIndex = (delta) => {
@@ -9658,7 +10299,8 @@
       return false;
     }
     showS1pImageViewerNavTemporarily();
-    return setS1pImageViewerActiveIndex(state.currentIndex + delta);
+    const baseIndex = Math.max(0, resolveS1pImageViewerSwitchBaseIndex());
+    return setS1pImageViewerActiveIndex(baseIndex + delta);
   };
   const applyS1pImageViewerTransform = () => {
     const state = s1pImageViewerState;
@@ -9805,11 +10447,19 @@
       return;
     }
     if (event.key === "ArrowLeft") {
+      if (isS1pImageViewerSwitchPending()) {
+        event.preventDefault();
+        return;
+      }
       event.preventDefault();
       stepS1pImageViewerActiveIndex(-1);
       return;
     }
     if (event.key === "ArrowRight") {
+      if (isS1pImageViewerSwitchPending()) {
+        event.preventDefault();
+        return;
+      }
       event.preventDefault();
       stepS1pImageViewerActiveIndex(1);
     }
@@ -9820,11 +10470,14 @@
     clearS1pImageViewerTransformButtonAnimation();
     stopS1pImageViewerToolbarContinuousActions();
     hideS1pGenericDisplayPopoverImmediately();
+    requestS1pImageViewerSaveAbort();
+    cancelS1pImageViewerPrefetchRequests();
     if (!state.overlay || !state.isOpen) {
       return;
     }
     clearS1pImageViewerOpenTransitionState();
     clearS1pImageViewerCloseTransitionState();
+    clearS1pImageViewerSwitchRetryTimer();
     const closeOverlayDelayMs = resolveS1pImageViewerAnimationDuration(
       S1P_IMAGE_VIEWER_CLOSE_OVERLAY_DELAY_MS
     );
@@ -9832,14 +10485,14 @@
       S1P_IMAGE_VIEWER_OPEN_CLOSE_ANIMATION_MS
     );
     state.overlay.classList.remove("is-panel-open");
+    clearS1pImageViewerSwitchTimers();
     clearS1pImageViewerSwitchAnimation();
     restoreFocusAfterS1pImageViewerClose();
     state.overlay.setAttribute("aria-hidden", "true");
     document.removeEventListener("keydown", handleS1pImageViewerKeydown, true);
     state.isOpen = false;
     state.isClosing = true;
-    state.pendingSwitchDirection = 0;
-    state.hasPreparedSwitchTransform = false;
+    resetS1pImageViewerPendingSwitchState(state);
     state.switchRequestId += 1;
     state.lastNavMoveAt = 0;
     clearS1pImageViewerNavHideTimer();
@@ -10033,10 +10686,123 @@
       errorMessage: String(errorMessage || ""),
     };
   };
+  const isRetryableS1pImageDownloadErrorMessage = (errorMessage) => {
+    const normalizedMessage = String(errorMessage || "").trim().toLowerCase();
+    if (!normalizedMessage) {
+      return false;
+    }
+    if (normalizedMessage === "已取消" || /abort|aborted|已取消/.test(normalizedMessage)) {
+      return false;
+    }
+    return (
+      /err_http2_protocol_error/.test(normalizedMessage) ||
+      /err_connection_closed|err_network_changed|err_internet_disconnected/.test(
+        normalizedMessage
+      ) ||
+      /failed to fetch|network request failed|网络请求失败/.test(normalizedMessage) ||
+      /timeout|timed out|请求超时|下载超时/.test(normalizedMessage) ||
+      /http\s*(5\d{2}|429)\b/.test(normalizedMessage)
+    );
+  };
+  const downloadS1pImageByUrlWithRetry = async (
+    sourceUrl,
+    {
+      fileName = "",
+      timeoutMs = 20000,
+      abortSignal = null,
+      maxRetries = S1P_IMAGE_DOWNLOAD_RETRY_MAX,
+      retryBaseDelayMs = S1P_IMAGE_DOWNLOAD_RETRY_BASE_DELAY_MS,
+      onRetryAttempt = null,
+    } = {}
+  ) => {
+    const safeMaxRetries = Math.max(0, Number.parseInt(String(maxRetries), 10) || 0);
+    const maxAttempts = safeMaxRetries + 1;
+    let lastResult = createS1pImageDownloadResult(false, "下载失败");
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      if (abortSignal && abortSignal.aborted) {
+        return createS1pImageDownloadResult(false, "已取消");
+      }
+      lastResult = await downloadS1pImageByUrl(sourceUrl, {
+        fileName,
+        timeoutMs,
+        abortSignal,
+      });
+      if (lastResult.success) {
+        return lastResult;
+      }
+      const errorMessage = String(lastResult.errorMessage || "");
+      if (errorMessage.trim() === "已取消") {
+        return lastResult;
+      }
+      const hasNextAttempt = attempt < maxAttempts;
+      if (!hasNextAttempt || !isRetryableS1pImageDownloadErrorMessage(errorMessage)) {
+        return lastResult;
+      }
+      const nextAttempt = attempt + 1;
+      if (typeof onRetryAttempt === "function") {
+        try {
+          onRetryAttempt({
+            nextAttempt,
+            maxAttempts,
+            lastErrorMessage: errorMessage,
+          });
+        } catch (error) {
+          // ignore
+        }
+      }
+      const retryDelayMs = Math.min(
+        2000,
+        Math.max(
+          120,
+          Number(retryBaseDelayMs || S1P_IMAGE_DOWNLOAD_RETRY_BASE_DELAY_MS) *
+            2 ** Math.max(0, attempt - 1)
+        )
+      );
+      await sleep(retryDelayMs);
+    }
+    return lastResult;
+  };
   const downloadS1pImageByUrl = async (
     sourceUrl,
-    { fileName = "", timeoutMs = 20000 } = {}
+    { fileName = "", timeoutMs = 20000, abortSignal = null } = {}
   ) => {
+    const createAbortError = () => {
+      const abortError = new Error("已取消");
+      abortError.name = "AbortError";
+      return abortError;
+    };
+    const isAbortError = (errorLike) => {
+      if (!errorLike) {
+        return false;
+      }
+      const errorName = String(errorLike.name || "").trim();
+      const errorMessage = resolveS1pDownloadErrorMessage(errorLike, "").trim();
+      return (
+        errorName === "AbortError" ||
+        errorMessage === "已取消" ||
+        /abort|aborted|已取消/i.test(errorMessage)
+      );
+    };
+    const bindAbortSignal = (onAbort) => {
+      if (
+        !abortSignal ||
+        typeof abortSignal.addEventListener !== "function" ||
+        typeof onAbort !== "function"
+      ) {
+        return () => {};
+      }
+      abortSignal.addEventListener("abort", onAbort, { once: true });
+      return () => {
+        try {
+          abortSignal.removeEventListener("abort", onAbort);
+        } catch (error) {
+          // ignore
+        }
+      };
+    };
+    if (abortSignal && abortSignal.aborted) {
+      return createS1pImageDownloadResult(false, "已取消");
+    }
     const normalizedSourceUrl = normalizeS1pImageViewerSourceUrl(sourceUrl);
     if (!normalizedSourceUrl) {
       return createS1pImageDownloadResult(false, "图片地址无效");
@@ -10058,17 +10824,15 @@
     const hasPromiseGMDownload =
       typeof GM === "object" && GM && typeof GM.download === "function";
     const connectPermission = resolveS1pHostConnectPermission(targetHost);
+    let preflightPermissionErrorMessage = "";
 
     if (connectPermission.known && !connectPermission.allowed) {
-      const permissionErrorMessage = `Tampermonkey 未授权连接 ${targetHost || "目标域名"}（@connect）`;
+      preflightPermissionErrorMessage = `Tampermonkey 未授权连接 ${targetHost || "目标域名"}（@connect）`;
       console.warn(
         "S1 Plus: 图片保存被 @connect 策略拦截。",
         normalizedSourceUrl,
-        permissionErrorMessage
-      );
-      return createS1pImageDownloadResult(
-        false,
-        `${permissionErrorMessage}。请更新本地加载器并重新授予权限`
+        preflightPermissionErrorMessage,
+        "继续尝试运行时下载与回退方案。"
       );
     }
 
@@ -10083,11 +10847,14 @@
         if (hasLegacyGMDownload) {
           await new Promise((resolve, reject) => {
             let settled = false;
+            let downloadRequest = null;
+            let unbindAbortSignal = () => {};
             const resolveOnce = () => {
               if (settled) {
                 return;
               }
               settled = true;
+              unbindAbortSignal();
               resolve(true);
             };
             const rejectOnce = (error) => {
@@ -10095,14 +10862,30 @@
                 return;
               }
               settled = true;
+              unbindAbortSignal();
               reject(
                 error instanceof Error
                   ? error
                   : new Error(resolveS1pDownloadErrorMessage(error))
               );
             };
+            const handleAbort = () => {
+              if (downloadRequest && typeof downloadRequest.abort === "function") {
+                try {
+                  downloadRequest.abort();
+                } catch (error) {
+                  // ignore
+                }
+              }
+              rejectOnce(createAbortError());
+            };
+            if (abortSignal && abortSignal.aborted) {
+              rejectOnce(createAbortError());
+              return;
+            }
+            unbindAbortSignal = bindAbortSignal(handleAbort);
             try {
-              GM_download({
+              downloadRequest = GM_download({
                 ...downloadOptions,
                 onload: resolveOnce,
                 ontimeout: () => rejectOnce(new Error("下载超时")),
@@ -10115,8 +10898,14 @@
         } else {
           await GM.download(downloadOptions);
         }
+        if (abortSignal && abortSignal.aborted) {
+          return createS1pImageDownloadResult(false, "已取消");
+        }
         return createS1pImageDownloadResult(true);
       } catch (downloadError) {
+        if (isAbortError(downloadError) || (abortSignal && abortSignal.aborted)) {
+          return createS1pImageDownloadResult(false, "已取消");
+        }
         gmDownloadErrorMessage = resolveS1pDownloadErrorMessage(downloadError);
         console.warn(
           "S1 Plus: GM_download 失败，尝试回退方案。",
@@ -10126,9 +10915,46 @@
         );
       }
     }
+    if (abortSignal && abortSignal.aborted) {
+      return createS1pImageDownloadResult(false, "已取消");
+    }
 
     try {
       const response = await new Promise((resolve, reject) => {
+        let settled = false;
+        let requestHandle = null;
+        let unbindAbortSignal = () => {};
+        const resolveOnce = (value) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          unbindAbortSignal();
+          resolve(value);
+        };
+        const rejectOnce = (error) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          unbindAbortSignal();
+          reject(error);
+        };
+        const handleAbort = () => {
+          if (requestHandle && typeof requestHandle.abort === "function") {
+            try {
+              requestHandle.abort();
+            } catch (error) {
+              // ignore
+            }
+          }
+          rejectOnce(createAbortError());
+        };
+        if (abortSignal && abortSignal.aborted) {
+          rejectOnce(createAbortError());
+          return;
+        }
+        unbindAbortSignal = bindAbortSignal(handleAbort);
         const requestOptions = {
           method: "GET",
           url: normalizedSourceUrl,
@@ -10136,10 +10962,10 @@
           timeout: Math.max(2000, Number(timeoutMs) || 20000),
           headers: requestHeaders,
           anonymous: false,
-          onload: (rawResponse) => resolve(rawResponse),
-          ontimeout: () => reject(new Error("请求超时")),
+          onload: (rawResponse) => resolveOnce(rawResponse),
+          ontimeout: () => rejectOnce(new Error("请求超时")),
           onerror: (errorDetails) =>
-            reject(
+            rejectOnce(
               new Error(
                 `网络请求失败（${resolveS1pDownloadErrorMessage(errorDetails, "未知错误")}）`
               )
@@ -10149,7 +10975,7 @@
         if (cookieText) {
           requestOptions.cookie = cookieText;
         }
-        GM_xmlhttpRequest({
+        requestHandle = GM_xmlhttpRequest({
           ...requestOptions,
         });
       });
@@ -10180,12 +11006,28 @@
       }
       return createS1pImageDownloadResult(false, "浏览器触发下载失败");
     } catch (gmRequestError) {
+      if (isAbortError(gmRequestError) || (abortSignal && abortSignal.aborted)) {
+        return createS1pImageDownloadResult(false, "已取消");
+      }
       try {
-        const fetchResponse = await fetch(normalizedSourceUrl, {
-          method: "GET",
-          credentials: "include",
-          mode: "cors",
+        const fetchAbortController =
+          typeof AbortController === "function" ? new AbortController() : null;
+        const unbindFetchAbortSignal = bindAbortSignal(() => {
+          if (fetchAbortController) {
+            fetchAbortController.abort();
+          }
         });
+        let fetchResponse = null;
+        try {
+          fetchResponse = await fetch(normalizedSourceUrl, {
+            method: "GET",
+            credentials: "include",
+            mode: "cors",
+            signal: fetchAbortController ? fetchAbortController.signal : undefined,
+          });
+        } finally {
+          unbindFetchAbortSignal();
+        }
         if (!fetchResponse.ok) {
           throw new Error(`HTTP ${fetchResponse.status}`);
         }
@@ -10195,9 +11037,15 @@
         }
         return createS1pImageDownloadResult(false, "浏览器触发下载失败");
       } catch (fetchError) {
+        if (isAbortError(fetchError) || (abortSignal && abortSignal.aborted)) {
+          return createS1pImageDownloadResult(false, "已取消");
+        }
         const gmRequestErrorMessage = resolveS1pDownloadErrorMessage(gmRequestError);
         const fetchErrorMessage = resolveS1pDownloadErrorMessage(fetchError);
         const errorFragments = [
+          preflightPermissionErrorMessage
+            ? `${preflightPermissionErrorMessage}（请更新本地加载器并重新授予权限）`
+            : "",
           gmDownloadErrorMessage,
           gmRequestErrorMessage,
           fetchErrorMessage,
@@ -10225,21 +11073,86 @@
     const indexPrefix = String(safeIndex).padStart(padLength, "0");
     return `${indexPrefix}-${baseFileName}`;
   };
+  const syncS1pImageViewerBatchSaveStatusBar = ({
+    visible = false,
+    message = "",
+    showCancel = false,
+  } = {}) => {
+    const state = s1pImageViewerState;
+    if (
+      !(state.saveStatusOverlay instanceof HTMLElement) ||
+      !(state.saveStatusText instanceof HTMLElement) ||
+      !(state.saveCancelBtn instanceof HTMLButtonElement)
+    ) {
+      return;
+    }
+    if (!visible) {
+      state.saveStatusOverlay.classList.remove("is-visible");
+      state.saveStatusText.textContent = "";
+      state.saveCancelBtn.classList.remove("is-visible");
+      state.saveCancelBtn.disabled = false;
+      return;
+    }
+    state.saveStatusOverlay.classList.add("is-visible");
+    state.saveStatusText.textContent = String(message || "");
+    state.saveCancelBtn.classList.toggle("is-visible", showCancel);
+    state.saveCancelBtn.disabled = !showCancel;
+  };
+  const isS1pImageViewerSaveTaskRunning = () => {
+    const state = s1pImageViewerState;
+    return state.isSingleSaving === true || state.isBatchSaving === true;
+  };
+  const requestS1pImageViewerSaveAbort = () => {
+    const state = s1pImageViewerState;
+    if (!isS1pImageViewerSaveTaskRunning() || state.saveAbortRequested) {
+      return false;
+    }
+    state.saveAbortRequested = true;
+    syncS1pImageViewerBatchSaveStatusBar({
+      visible: true,
+      message: "正在取消保存...",
+      showCancel: false,
+    });
+    const abortController = state.activeSaveAbortController;
+    if (
+      abortController &&
+      typeof abortController === "object" &&
+      typeof abortController.abort === "function"
+    ) {
+      try {
+        abortController.abort();
+      } catch (error) {
+        // ignore
+      }
+    }
+    return true;
+  };
   const syncS1pImageViewerDownloadButtonState = () => {
     const state = s1pImageViewerState;
     const hasSourceUrl = Boolean(String(state.sourceUrl || "").trim());
+    const isSwitchLoading = isS1pImageViewerSwitchPending();
     if (state.saveBtn) {
-      state.saveBtn.disabled = !hasSourceUrl || state.isBatchSaving || state.isSingleSaving;
+      state.saveBtn.disabled =
+        !hasSourceUrl || state.isBatchSaving || state.isSingleSaving || isSwitchLoading;
       state.saveBtn.textContent = state.isSingleSaving ? "正在保存..." : "保存图片";
     }
     if (state.saveAllBtn) {
       const shouldShowSaveAllBtn = state.galleryItems.length > 1;
       state.saveAllBtn.style.display = shouldShowSaveAllBtn ? "" : "none";
       state.saveAllBtn.disabled =
-        !shouldShowSaveAllBtn || state.isBatchSaving || state.isSingleSaving;
+        !shouldShowSaveAllBtn ||
+        state.isBatchSaving ||
+        state.isSingleSaving ||
+        isSwitchLoading;
       state.saveAllBtn.textContent = state.isBatchSaving
         ? "正在保存..."
         : "保存全部图片";
+    }
+    if (state.openBtn) {
+      state.openBtn.disabled = !hasSourceUrl || isSwitchLoading;
+    }
+    if (!isS1pImageViewerSaveTaskRunning()) {
+      syncS1pImageViewerBatchSaveStatusBar({ visible: false });
     }
   };
   const saveS1pImageToLocal = async () => {
@@ -10254,14 +11167,46 @@
       return false;
     }
     state.isSingleSaving = true;
+    state.saveAbortRequested = false;
+    const taskAbortController =
+      typeof AbortController === "function" ? new AbortController() : null;
+    state.activeSaveAbortController = taskAbortController;
     syncS1pImageViewerDownloadButtonState();
-    showMessage("正在保存图片...", null);
+    syncS1pImageViewerBatchSaveStatusBar({
+      visible: true,
+      message: "正在保存图片...",
+      showCancel: true,
+    });
     let result = null;
+    let wasAbortRequested = false;
     try {
-      result = await downloadS1pImageByUrl(sourceUrl);
+      result = await downloadS1pImageByUrlWithRetry(sourceUrl, {
+        abortSignal: taskAbortController ? taskAbortController.signal : null,
+        onRetryAttempt: ({ nextAttempt, maxAttempts }) => {
+          syncS1pImageViewerBatchSaveStatusBar({
+            visible: true,
+            message: `网络不稳，重试 ${nextAttempt}/${maxAttempts}...`,
+            showCancel: true,
+          });
+        },
+      });
     } finally {
+      wasAbortRequested =
+        state.saveAbortRequested === true ||
+        Boolean(taskAbortController && taskAbortController.signal.aborted);
       state.isSingleSaving = false;
+      state.saveAbortRequested = false;
+      state.activeSaveAbortController = null;
+      syncS1pImageViewerBatchSaveStatusBar({ visible: false });
       syncS1pImageViewerDownloadButtonState();
+    }
+    if (wasAbortRequested) {
+      if (result && result.success) {
+        showMessage("已取消：当前图片可能已提交保存。", null);
+        return true;
+      }
+      showMessage("已取消保存。", null);
+      return false;
     }
     if (!result.success) {
       console.warn("S1 Plus: 单图保存失败。", {
@@ -10289,16 +11234,30 @@
     }
 
     state.isBatchSaving = true;
+    state.saveAbortRequested = false;
+    const taskAbortController =
+      typeof AbortController === "function" ? new AbortController() : null;
+    state.activeSaveAbortController = taskAbortController;
     syncS1pImageViewerDownloadButtonState();
     const total = imageUrls.length;
     let successCount = 0;
     let firstFailureMessage = "";
-    showMessage(`开始保存，共 ${total} 张图片。`, null);
+    let stopReason = "";
     try {
       for (let index = 0; index < total; index += 1) {
         if (!state.isOpen) {
+          stopReason = "viewer_closed";
           break;
         }
+        if (state.saveAbortRequested) {
+          stopReason = "user_cancel";
+          break;
+        }
+        syncS1pImageViewerBatchSaveStatusBar({
+          visible: true,
+          message: `正在保存第 ${index + 1}/${total} 张图片...`,
+          showCancel: true,
+        });
         const imageUrl = imageUrls[index];
         const fileName = buildS1pImageViewerBatchDownloadFileName(
           imageUrl,
@@ -10306,10 +11265,27 @@
           total
         );
         // 逐张下载，减少浏览器对并发下载的拦截概率。
-        const result = await downloadS1pImageByUrl(imageUrl, { fileName });
+        const result = await downloadS1pImageByUrlWithRetry(imageUrl, {
+          fileName,
+          abortSignal: taskAbortController ? taskAbortController.signal : null,
+          onRetryAttempt: ({ nextAttempt, maxAttempts }) => {
+            syncS1pImageViewerBatchSaveStatusBar({
+              visible: true,
+              message: `第 ${index + 1}/${total} 张重试 ${nextAttempt}/${maxAttempts}...`,
+              showCancel: true,
+            });
+          },
+        });
+        const wasCanceledDuringCurrentItem =
+          String(result.errorMessage || "").trim() === "已取消";
         if (result.success) {
           successCount += 1;
-        } else if (!firstFailureMessage) {
+        }
+        if (state.saveAbortRequested || wasCanceledDuringCurrentItem) {
+          stopReason = "user_cancel";
+          break;
+        }
+        if (!result.success && !firstFailureMessage) {
           firstFailureMessage = String(result.errorMessage || "");
         }
         if (!result.success) {
@@ -10322,11 +11298,33 @@
       }
     } finally {
       state.isBatchSaving = false;
+      state.saveAbortRequested = false;
+      state.activeSaveAbortController = null;
+      syncS1pImageViewerBatchSaveStatusBar({ visible: false });
       syncS1pImageViewerDownloadButtonState();
     }
 
+    if (stopReason === "user_cancel") {
+      if (successCount > 0) {
+        showMessage(`已取消：${successCount}/${total} 张图片已提交保存。`, false);
+        return true;
+      }
+      showMessage("已取消批量保存。", null);
+      return false;
+    }
+    if (stopReason === "viewer_closed") {
+      if (successCount > 0) {
+        showMessage(`已停止：查看器关闭前已提交 ${successCount}/${total} 张图片。`, null);
+        return true;
+      }
+      showMessage("图片查看器已关闭，批量保存已停止。", null);
+      return false;
+    }
     if (successCount === total) {
-      showMessage(`已开始保存 ${successCount} 张图片。`, true);
+      showMessage(
+        `批量保存已提交：${successCount} 张图片（请在浏览器下载列表查看进度）。`,
+        true
+      );
       return true;
     }
     if (successCount > 0) {
@@ -10338,7 +11336,7 @@
         });
       }
       showMessage(
-        `部分成功：已开始保存 ${successCount}/${total} 张图片。`,
+        `批量保存部分成功：${successCount}/${total} 张图片已提交，其余失败。`,
         false
       );
       return true;
@@ -10357,7 +11355,9 @@
     }
     if (
       event.target instanceof Element &&
-      event.target.closest(".s1p-image-viewer__nav-btn")
+      event.target.closest(
+        ".s1p-image-viewer__nav-btn, .s1p-image-viewer__switch-loading"
+      )
     ) {
       return;
     }
@@ -10865,6 +11865,10 @@
       <div class="s1p-image-viewer__panel" role="dialog" aria-modal="true" aria-label="S1 Plus \u56fe\u7247\u67e5\u770b\u5668">
         <div class="s1p-image-viewer__toolbar">
           <span class="s1p-image-viewer__title">S1 Plus \u56fe\u7247\u67e5\u770b\u5668</span>
+          <div class="s1p-image-viewer__save-status-overlay" aria-live="polite">
+            <span class="s1p-image-viewer__save-status"></span>
+            <button type="button" class="s1p-btn s1p-image-viewer__save-cancel-btn">取消</button>
+          </div>
           <span class="s1p-image-viewer__index">1/1</span>
           <span class="s1p-image-viewer__zoom">100%</span>
           <button
@@ -10963,6 +11967,11 @@
           <div class="s1p-image-viewer__image-stage s1p-image-viewer__image-stage--main">
             <img class="s1p-image-viewer__image s1p-image-viewer__image-main" alt="S1 Plus \u56fe\u7247\u67e5\u770b\u5668" />
           </div>
+          <div class="s1p-image-viewer__switch-loading" aria-live="polite" aria-atomic="true">
+            <span class="s1p-image-viewer__switch-loading-spinner" aria-hidden="true"></span>
+            <span class="s1p-image-viewer__switch-loading-text">\u56fe\u7247\u52a0\u8f7d\u4e2d...</span>
+            <button type="button" class="s1p-btn s1p-image-viewer__switch-cancel-btn" data-action="cancel-switch">\u53d6\u6d88</button>
+          </div>
           <button type="button" class="s1p-image-viewer__nav-btn" data-action="next" aria-label="\u4e0b\u4e00\u5f20">
             <svg class="s1p-image-viewer__nav-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
               <path d="M7.5 4.5L13 10l-5.5 5.5"></path>
@@ -10976,8 +11985,18 @@
     const panel = overlay.querySelector(".s1p-image-viewer__panel");
     const viewport = overlay.querySelector(".s1p-image-viewer__viewport");
     const imageStage = overlay.querySelector(".s1p-image-viewer__image-stage--main");
+    const switchLoading = overlay.querySelector(".s1p-image-viewer__switch-loading");
+    const switchLoadingText = overlay.querySelector(".s1p-image-viewer__switch-loading-text");
+    const switchCancelBtn = overlay.querySelector(
+      '.s1p-image-viewer__switch-cancel-btn[data-action="cancel-switch"]'
+    );
     const ghostImage = overlay.querySelector(".s1p-image-viewer__image-ghost");
     const image = overlay.querySelector(".s1p-image-viewer__image-main");
+    const saveStatusOverlay = overlay.querySelector(
+      ".s1p-image-viewer__save-status-overlay"
+    );
+    const saveStatusText = overlay.querySelector(".s1p-image-viewer__save-status");
+    const saveCancelBtn = overlay.querySelector(".s1p-image-viewer__save-cancel-btn");
     const indexLabel = overlay.querySelector(".s1p-image-viewer__index");
     const zoomLabel = overlay.querySelector(".s1p-image-viewer__zoom");
     const zoomOutBtn = overlay.querySelector('button[data-action="zoom-out"]');
@@ -10997,8 +12016,14 @@
       !(panel instanceof HTMLElement) ||
       !(viewport instanceof HTMLElement) ||
       !(imageStage instanceof HTMLElement) ||
+      !(switchLoading instanceof HTMLElement) ||
+      !(switchLoadingText instanceof HTMLElement) ||
+      !(switchCancelBtn instanceof HTMLButtonElement) ||
       !(ghostImage instanceof HTMLImageElement) ||
       !(image instanceof HTMLImageElement) ||
+      !(saveStatusOverlay instanceof HTMLElement) ||
+      !(saveStatusText instanceof HTMLElement) ||
+      !(saveCancelBtn instanceof HTMLButtonElement) ||
       !(indexLabel instanceof HTMLElement) ||
       !(zoomLabel instanceof HTMLElement) ||
       !(zoomOutBtn instanceof HTMLButtonElement) ||
@@ -11031,6 +12056,49 @@
       if (!latestState.isOpen || !latestState.image) {
         return;
       }
+      const expectedSourceUrl = normalizeS1pImageViewerSourceUrl(
+        latestState.pendingSourceUrl
+      );
+      const expectedComparableSourceUrl = normalizeS1pImageViewerComparableSourceUrl(
+        expectedSourceUrl
+      );
+      const renderedComparableSourceUrl = normalizeS1pImageViewerComparableSourceUrl(
+        latestState.image.currentSrc || latestState.image.src
+      );
+      if (
+        !expectedComparableSourceUrl ||
+        renderedComparableSourceUrl !== expectedComparableSourceUrl
+      ) {
+        return;
+      }
+      clearS1pImageViewerSwitchTimers();
+      const pendingRequestStartedAt = Number(latestState.pendingRequestStartedAt || 0);
+      if (pendingRequestStartedAt > 0) {
+        const elapsedMs = Math.max(0, Date.now() - pendingRequestStartedAt);
+        if (elapsedMs > 0) {
+          const previousEwma = Number(latestState.switchLoadDurationEwmaMs || 0);
+          latestState.switchLoadDurationEwmaMs =
+            previousEwma > 0
+              ? Math.round(previousEwma * 0.72 + elapsedMs * 0.28)
+              : elapsedMs;
+        }
+      }
+      if (
+        latestState.pendingIndex >= 0 &&
+        latestState.pendingIndex < latestState.galleryItems.length
+      ) {
+        latestState.currentIndex = latestState.pendingIndex;
+      } else {
+        latestState.currentIndex = Math.max(
+          0,
+          latestState.galleryItems.indexOf(expectedSourceUrl)
+        );
+      }
+      latestState.sourceUrl = expectedSourceUrl;
+      resetS1pImageViewerPendingSwitchState(latestState, {
+        resetDirection: false,
+      });
+      rememberS1pImageViewerPrefetchedSource(expectedSourceUrl);
       const hasPreparedTransform = latestState.hasPreparedSwitchTransform === true;
       latestState.hasPreparedSwitchTransform = false;
       if (!hasPreparedTransform) {
@@ -11039,6 +12107,8 @@
       if (latestState.overlay) {
         latestState.overlay.classList.remove("is-preparing-switch");
       }
+      syncS1pImageViewerNavigationState();
+      syncS1pImageViewerDownloadButtonState();
       requestAnimationFrame(() => {
         const syncedState = s1pImageViewerState;
         if (!syncedState.isOpen || !syncedState.image) {
@@ -11047,16 +12117,32 @@
         const direction = Number(syncedState.pendingSwitchDirection) || 0;
         syncedState.pendingSwitchDirection = 0;
         playS1pImageViewerSwitchAnimation(direction);
+        prefetchS1pImageViewerNeighborSources(syncedState.currentIndex);
       });
     });
     image.addEventListener("error", () => {
       const latestState = s1pImageViewerState;
-      latestState.hasPreparedSwitchTransform = false;
-      latestState.pendingSwitchDirection = 0;
-      if (latestState.overlay) {
-        latestState.overlay.classList.remove("is-preparing-switch");
+      const expectedSourceUrl = normalizeS1pImageViewerSourceUrl(
+        latestState.pendingSourceUrl
+      );
+      const expectedComparableSourceUrl = normalizeS1pImageViewerComparableSourceUrl(
+        expectedSourceUrl
+      );
+      const renderedComparableSourceUrl = normalizeS1pImageViewerComparableSourceUrl(
+        latestState.image
+          ? latestState.image.currentSrc || latestState.image.src
+          : ""
+      );
+      if (
+        !expectedComparableSourceUrl ||
+        renderedComparableSourceUrl !== expectedComparableSourceUrl
+      ) {
+        return;
       }
-      clearS1pImageViewerSwitchAnimation();
+      if (retryS1pImageViewerPendingSwitch("error")) {
+        return;
+      }
+      cancelS1pImageViewerPendingSwitch({ notify: true, reason: "error" });
     });
     viewport.addEventListener("mouseenter", showS1pImageViewerNavTemporarily);
     viewport.addEventListener("mousemove", handleS1pImageViewerViewportMouseMove);
@@ -11133,6 +12219,12 @@
     saveAllBtn.addEventListener("click", () => {
       void saveAllS1pImagesToLocal();
     });
+    saveCancelBtn.addEventListener("click", () => {
+      requestS1pImageViewerSaveAbort();
+    });
+    switchCancelBtn.addEventListener("click", () => {
+      cancelS1pImageViewerPendingSwitch({ notify: true });
+    });
     openBtn.addEventListener("click", () => {
       openS1pImageInNewTab();
     });
@@ -11149,6 +12241,9 @@
     state.viewport = viewport;
     state.image = image;
     state.ghostImage = ghostImage;
+    state.saveStatusOverlay = saveStatusOverlay;
+    state.saveStatusText = saveStatusText;
+    state.saveCancelBtn = saveCancelBtn;
     state.indexLabel = indexLabel;
     state.zoomLabel = zoomLabel;
     state.zoomOutBtn = zoomOutBtn;
@@ -11158,10 +12253,14 @@
     state.fitBtn = fitBtn;
     state.saveBtn = saveBtn;
     state.saveAllBtn = saveAllBtn;
+    state.openBtn = openBtn;
+    state.switchCancelBtn = switchCancelBtn;
+    state.switchLoadingText = switchLoadingText;
     state.prevBtn = prevBtn;
     state.nextBtn = nextBtn;
     state.toolbarContinuousActionStops = toolbarContinuousActionStops;
     state.toolbarContinuousActionDisposers = toolbarContinuousActionDisposers;
+    syncS1pImageViewerBatchSaveStatusBar({ visible: false });
     syncS1pImageViewerNavigationState();
   };
   const openS1pImageViewer = (sourceUrl, options = {}) => {
@@ -11184,19 +12283,26 @@
         activeElement instanceof HTMLElement ? activeElement : null;
       state.bodyOverflowBeforeOpen = document.body ? document.body.style.overflow : "";
     }
+    if ((!state.isOpen || wasClosing) && state.image instanceof HTMLImageElement) {
+      state.image.removeAttribute("src");
+      state.image.style.transform = "";
+    }
+    if ((!state.isOpen || wasClosing) && state.ghostImage instanceof HTMLImageElement) {
+      state.ghostImage.removeAttribute("src");
+      state.ghostImage.style.transform = "";
+    }
     if (document.body) {
       document.body.style.overflow = "hidden";
     }
     const rawGalleryItems = Array.isArray(options.galleryItems)
       ? options.galleryItems
       : [normalizedSourceUrl];
-    const galleryItems = Array.from(
-      new Set(
-        rawGalleryItems
-          .map((url) => normalizeS1pImageViewerSourceUrl(url))
-          .filter(Boolean)
-      )
-    );
+    const galleryItems = rawGalleryItems
+      .map((url) => normalizeS1pImageViewerSourceUrl(url))
+      .filter(Boolean);
+    if (galleryItems.length === 0) {
+      galleryItems.push(normalizedSourceUrl);
+    }
     if (!galleryItems.includes(normalizedSourceUrl)) {
       galleryItems.push(normalizedSourceUrl);
     }
@@ -11205,13 +12311,16 @@
       ? Math.min(galleryItems.length - 1, Math.max(0, requestedInitialIndex))
       : Math.max(0, galleryItems.indexOf(normalizedSourceUrl));
     state.galleryItems = galleryItems;
+    state.sourceUrl = "";
     state.currentIndex = -1;
-    state.pendingSwitchDirection = 0;
-    state.hasPreparedSwitchTransform = false;
+    clearS1pImageViewerSwitchTimers();
+    resetS1pImageViewerPendingSwitchState(state);
     state.switchRequestId += 1;
     state.lastNavMoveAt = 0;
     state.lastZoomPercent = null;
     syncS1pImageViewerNavigationState();
+    state.isOpen = true;
+    setS1pImageViewerActiveIndex(initialIndex, { allowSameIndexReset: true });
     const openPanelDelayMs = resolveS1pImageViewerAnimationDuration(
       S1P_IMAGE_VIEWER_OPEN_PANEL_DELAY_MS
     );
@@ -11219,8 +12328,6 @@
     state.overlay.classList.remove("is-overlay-open");
     state.overlay.classList.remove("is-panel-open");
     state.overlay.setAttribute("aria-hidden", "false");
-    state.isOpen = true;
-    void state.overlay.offsetWidth;
     state.openAnimationFrameId = window.requestAnimationFrame(() => {
       const latestState = s1pImageViewerState;
       latestState.openAnimationFrameId = 0;
@@ -11243,7 +12350,6 @@
     });
     document.removeEventListener("keydown", handleS1pImageViewerKeydown, true);
     document.addEventListener("keydown", handleS1pImageViewerKeydown, true);
-    setS1pImageViewerActiveIndex(initialIndex, { allowSameIndexReset: true });
     requestAnimationFrame(() => {
       if (!state.isOpen) {
         return;
@@ -11293,6 +12399,10 @@
       settings.enableGeneralSettings === true &&
       settings.useS1PlusImageViewer === true;
     if (!shouldUseS1pImageViewer) {
+      return;
+    }
+    const viewerState = s1pImageViewerState;
+    if (viewerState.isOpen || viewerState.isClosing) {
       return;
     }
     const targetImage = getS1pImageViewerTargetImage(event.target);
@@ -20229,6 +21339,9 @@
       SETTINGS_MODAL_OPEN_ANIMATION_MS + SETTINGS_MODAL_ANIMATION_FALLBACK_GAP_MS
     );
     requestAnimationFrame(() => {
+      if (!modal.isConnected || isClosingManagementModal) {
+        return;
+      }
       modal.style.opacity = "1";
     });
     // [REPLACE ENTIRE EVENT LISTENER BLOCK]
@@ -24581,6 +25694,177 @@
     });
   }
   // [修改] 将设置项重命名为 enhanceFloatingControls
+  const FLOATING_CONTROLS_OPEN_CLASS = "s1p-floating-controls-open";
+  const floatingControlsInteractionCleanupMap = new WeakMap();
+  const FLOATING_CONTROLS_OPEN_DELAY_MS = 0;
+  const FLOATING_CONTROLS_CLOSE_DELAY_MS = 180;
+  const bindFloatingControlsHoverInteraction = (wrapper, handle, panel) => {
+    if (
+      !(wrapper instanceof HTMLElement) ||
+      !(handle instanceof HTMLElement) ||
+      !(panel instanceof HTMLElement)
+    ) {
+      return;
+    }
+    const previousCleanup = floatingControlsInteractionCleanupMap.get(wrapper);
+    if (typeof previousCleanup === "function") {
+      previousCleanup();
+    }
+    let openTimer = 0;
+    let closeTimer = 0;
+    let isPinnedOpen = false;
+    const disposers = [];
+    const addListener = (target, type, listener, options) => {
+      target.addEventListener(type, listener, options);
+      disposers.push(() => target.removeEventListener(type, listener, options));
+    };
+    const clearOpenTimer = () => {
+      if (!openTimer) {
+        return;
+      }
+      window.clearTimeout(openTimer);
+      openTimer = 0;
+    };
+    const clearCloseTimer = () => {
+      if (!closeTimer) {
+        return;
+      }
+      window.clearTimeout(closeTimer);
+      closeTimer = 0;
+    };
+    const setOpenState = (isOpen) => {
+      wrapper.classList.toggle(FLOATING_CONTROLS_OPEN_CLASS, isOpen);
+    };
+    const scheduleOpen = () => {
+      clearCloseTimer();
+      if (wrapper.classList.contains(FLOATING_CONTROLS_OPEN_CLASS)) {
+        return;
+      }
+      if (FLOATING_CONTROLS_OPEN_DELAY_MS <= 0) {
+        setOpenState(true);
+        return;
+      }
+      if (openTimer) {
+        return;
+      }
+      openTimer = window.setTimeout(() => {
+        openTimer = 0;
+        if (!wrapper.isConnected) {
+          return;
+        }
+        setOpenState(true);
+      }, FLOATING_CONTROLS_OPEN_DELAY_MS);
+    };
+    const closeImmediately = () => {
+      clearOpenTimer();
+      clearCloseTimer();
+      setOpenState(false);
+    };
+    const scheduleClose = ({ immediate = false } = {}) => {
+      if (isPinnedOpen) {
+        return;
+      }
+      clearOpenTimer();
+      if (!wrapper.classList.contains(FLOATING_CONTROLS_OPEN_CLASS)) {
+        return;
+      }
+      if (immediate) {
+        closeImmediately();
+        return;
+      }
+      if (closeTimer) {
+        return;
+      }
+      closeTimer = window.setTimeout(() => {
+        closeTimer = 0;
+        if (!wrapper.isConnected) {
+          return;
+        }
+        if (isPinnedOpen) {
+          return;
+        }
+        setOpenState(false);
+      }, FLOATING_CONTROLS_CLOSE_DELAY_MS);
+    };
+    const handlePointerLeave = (event) => {
+      const nextTarget = event.relatedTarget;
+      if (nextTarget instanceof Node && wrapper.contains(nextTarget)) {
+        return;
+      }
+      scheduleClose();
+    };
+    const supportsPointerEvents =
+      typeof window !== "undefined" && typeof window.PointerEvent === "function";
+    const openEventName = supportsPointerEvents ? "pointerenter" : "mouseenter";
+    const leaveEventName = supportsPointerEvents ? "pointerleave" : "mouseleave";
+    addListener(wrapper, openEventName, scheduleOpen);
+    addListener(wrapper, leaveEventName, handlePointerLeave);
+    addListener(wrapper, "focusin", scheduleOpen);
+    addListener(wrapper, "focusout", (event) => {
+      const nextTarget = event.relatedTarget;
+      if (nextTarget instanceof Node && wrapper.contains(nextTarget)) {
+        return;
+      }
+      scheduleClose();
+    });
+    const togglePinnedOpen = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (wrapper.classList.contains(FLOATING_CONTROLS_OPEN_CLASS) && isPinnedOpen) {
+        isPinnedOpen = false;
+        scheduleClose({ immediate: true });
+        return;
+      }
+      isPinnedOpen = true;
+      clearCloseTimer();
+      scheduleOpen();
+    };
+    addListener(handle, "click", togglePinnedOpen);
+    addListener(handle, "keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " " && event.key !== "Spacebar") {
+        return;
+      }
+      togglePinnedOpen(event);
+    });
+    const closePinnedOpenOnOuterPointer = (event) => {
+      if (!isPinnedOpen) {
+        return;
+      }
+      const eventTarget = event.target;
+      if (eventTarget instanceof Node && wrapper.contains(eventTarget)) {
+        return;
+      }
+      isPinnedOpen = false;
+      scheduleClose({ immediate: true });
+    };
+    if (supportsPointerEvents) {
+      addListener(document, "pointerdown", closePinnedOpenOnOuterPointer, {
+        passive: true,
+      });
+    } else {
+      addListener(document, "mousedown", closePinnedOpenOnOuterPointer, {
+        passive: true,
+      });
+      addListener(document, "touchstart", closePinnedOpenOnOuterPointer, {
+        passive: true,
+      });
+    }
+    addListener(panel, "click", () => {
+      if (!isPinnedOpen) {
+        return;
+      }
+      isPinnedOpen = false;
+      scheduleClose({ immediate: true });
+    });
+    const cleanup = () => {
+      clearOpenTimer();
+      clearCloseTimer();
+      disposers.forEach((dispose) => dispose());
+      floatingControlsInteractionCleanupMap.delete(wrapper);
+    };
+    floatingControlsInteractionCleanupMap.set(wrapper, cleanup);
+    return cleanup;
+  };
   const createCustomFloatingControls = () => {
     // 1. 如果自定义控件已存在，则直接退出
     if (document.getElementById("s1p-floating-controls-wrapper")) {
@@ -24630,6 +25914,9 @@
 
     const handle = document.createElement("div");
     handle.id = "s1p-controls-handle";
+    handle.tabIndex = 0;
+    handle.setAttribute("role", "button");
+    handle.setAttribute("aria-label", "展开或收起悬浮控件");
 
     const panel = document.createElement("div");
     panel.id = "s1p-floating-controls";
@@ -24663,7 +25950,10 @@
       "javascript:void(0);",
       (e) => {
         e.preventDefault();
-        window.scrollTo({ top: 0, behavior: "smooth" });
+        window.scrollTo({
+          top: 0,
+          behavior: isS1pReducedMotionPreferred() ? "auto" : "smooth",
+        });
       }
     );
     const scrollBottomBtn = createButton(
@@ -24675,7 +25965,7 @@
         e.preventDefault();
         window.scrollTo({
           top: document.body.scrollHeight,
-          behavior: "smooth",
+          behavior: isS1pReducedMotionPreferred() ? "auto" : "smooth",
         });
       }
     );
@@ -24697,6 +25987,7 @@
     wrapper.appendChild(panel);
     wrapper.appendChild(handle);
     document.body.appendChild(wrapper);
+    bindFloatingControlsHoverInteraction(wrapper, handle, panel);
   };
 
   // --- [新增] 悬浮控件管理器 ---
@@ -24716,7 +26007,15 @@
       createCustomFloatingControls();
     } else {
       // 如果设置为关闭，则确保移除脚本创建的控件
-      document.getElementById("s1p-floating-controls-wrapper")?.remove();
+      const existingWrapper = document.getElementById("s1p-floating-controls-wrapper");
+      if (existingWrapper instanceof HTMLElement) {
+        const cleanupInteraction =
+          floatingControlsInteractionCleanupMap.get(existingWrapper);
+        if (typeof cleanupInteraction === "function") {
+          cleanupInteraction();
+        }
+        existingWrapper.remove();
+      }
     }
   };
 
