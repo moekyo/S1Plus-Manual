@@ -4,8 +4,7 @@
 // @version      99.9.10
 // @description  本地开发版，直接加载磁盘文件
 // @author       Antigravity
-// @match        *://*.saraba1st.com/*
-// @match        *://*.stage1st.com/*
+// @match        https://stage1st.com/2b/*
 // @require      file:///Users/rexxin/Development/S1Plus-Manual/S1Plus.js
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -15,10 +14,7 @@
 // @grant        GM_openInTab
 // @grant        GM_download
 // @grant        GM_addValueChangeListener
-// @connect      stage1st.com
-// @connect      img.stage1st.com
-// @connect      api.github.com
-// @connect      gist.githubusercontent.com
+// @connect      *
 // ==/UserScript==
 
 (function () {
