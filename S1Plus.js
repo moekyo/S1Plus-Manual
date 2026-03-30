@@ -551,6 +551,14 @@
   let manualSyncLockHeartbeatTimer = null;
   let startupSyncLockHeartbeatTimer = null;
   let isAutoSignInFlight = false;
+  let readingProgressModalEscHandler = null;
+  const clearReadingProgressModalEscHandler = () => {
+    if (!readingProgressModalEscHandler) {
+      return;
+    }
+    document.removeEventListener("keydown", readingProgressModalEscHandler);
+    readingProgressModalEscHandler = null;
+  };
 
   const BACKGROUND_SYNC_OWNER_ID = `tab_${Date.now()}_${Math.random()
     .toString(36)
@@ -667,6 +675,31 @@
       element.removeAttribute("title");
     }
   };
+  const MODAL_CLOSE_BUTTON_BASE_CLASS =
+    "s1p-btn s1p-settings-close-btn s1p-has-tooltip";
+  const MODAL_CLOSE_BUTTON_ICON_SVG =
+    `<svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 5L15 15"></path><path d="M15 5L5 15"></path></svg>`;
+  const createModalCloseButton = ({
+    ariaLabel = "关闭窗口",
+    tooltipText = ariaLabel,
+    extraClassName = "",
+    dataAction = "",
+  } = {}) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = [MODAL_CLOSE_BUTTON_BASE_CLASS, extraClassName]
+      .filter(Boolean)
+      .join(" ");
+    button.setAttribute("aria-label", String(ariaLabel));
+    setCustomTooltip(button, tooltipText);
+    if (dataAction) {
+      button.dataset.action = dataAction;
+    }
+    setSanitizedIconHtml(button, MODAL_CLOSE_BUTTON_ICON_SVG);
+    return button;
+  };
+  const buildModalCloseButtonHtml = (options = {}) =>
+    createModalCloseButton(options).outerHTML;
   const NATIVE_BLACKLIST_VIEW_URL =
     "https://stage1st.com/2b/home.php?mod=space&do=friend&view=blacklist";
   const NATIVE_BLACKLIST_IMPORT_BUTTON_ID = "s1p-native-blacklist-import-btn";
@@ -2075,7 +2108,6 @@
       /* top/left managed by JS */
       width: 280px;
       background-color: var(--s1p-bg);
-      border: 1px solid var(--s1p-border);
       border-radius: 8px;
       box-shadow: 0 10px 25px rgba(var(--s1p-shadow-color-rgb), 0.3);
       z-index: 20005; /* Above modal */
@@ -2580,22 +2612,6 @@
       font-weight: 600;
       letter-spacing: -0.5px;
     }
-    .s1p-modal-close {
-      width: 12px;
-      height: 12px;
-      cursor: pointer;
-      color: var(--s1p-icon-close);
-      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2 2L14 14M14 2L2 14' stroke='currentColor' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E");
-      background-repeat: no-repeat;
-      background-position: center;
-      background-size: contain;
-      transition: color 0.2s ease-in-out, transform 0.2s ease-in-out;
-      transform: rotate(0deg);
-    }
-    .s1p-modal-close:hover {
-      color: var(--s1p-red);
-      transform: rotate(90deg);
-    }
     .s1p-btn.s1p-settings-close-btn {
       width: 34px;
       height: 34px;
@@ -2631,7 +2647,7 @@
       left: 0;
       width: 100%;
       height: 100%;
-      background-color: rgba(var(--s1p-black-rgb), 0.5);
+      background-color: transparent;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -2643,8 +2659,8 @@
       width: 400px;
       max-width: 90%;
       border-radius: 12px;
-      border: 1px solid var(--s1p-border);
-      box-shadow: 0 10px 25px rgba(var(--s1p-shadow-color-rgb), 0.3);
+      box-shadow: 0 10px 25px -5px rgba(var(--s1p-shadow-color-rgb), 0.1),
+        0 10px 10px -5px rgba(var(--s1p-shadow-color-rgb), 0.04);
     }
     .s1p-token-config-header {
       background: var(--s1p-sub);
@@ -3165,7 +3181,7 @@
       width: 100%;
       position: relative;
     }
-    .s1p-reading-progress-content .s1p-modal-close {
+    .s1p-reading-progress-content .s1p-close-modal {
       position: absolute;
       top: 20px;
       right: 20px;
@@ -4211,7 +4227,6 @@
       width: min(96vw, 1600px);
       height: min(94vh, 1200px);
       border-radius: 12px;
-      border: 1px solid var(--s1p-pri);
       background: var(--s1p-bg);
       box-shadow: 0 12px 40px rgba(var(--s1p-shadow-color-rgb), 0.35);
       overflow: hidden;
@@ -4877,7 +4892,8 @@
       .s1p-toast-notification {
         box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
       }
-      .s1p-confirm-content {
+      .s1p-confirm-content,
+      .s1p-token-config-content {
         box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.3);
       }
       .s1p-slider:before {
@@ -10811,18 +10827,12 @@
           <button type="button" class="s1p-btn" data-action="save">\u4fdd\u5b58\u56fe\u7247</button>
           <button type="button" class="s1p-btn" data-action="save-all">\u4fdd\u5b58\u5168\u90e8\u56fe\u7247</button>
           <button type="button" class="s1p-btn" data-action="open">\u65b0\u6807\u7b7e\u6253\u5f00\u539f\u56fe</button>
-          <button
-            type="button"
-            class="s1p-btn s1p-image-viewer__close-btn s1p-has-tooltip"
-            data-action="close"
-            aria-label="\u5173\u95ed (Esc)"
-            data-full-tag="\u5173\u95ed (Esc)"
-          >
-            <svg class="s1p-image-viewer__close-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
-              <path d="M5 5L15 15"></path>
-              <path d="M15 5L5 15"></path>
-            </svg>
-          </button>
+          ${buildModalCloseButtonHtml({
+            ariaLabel: "\u5173\u95ed (Esc)",
+            tooltipText: "\u5173\u95ed (Esc)",
+            extraClassName: "s1p-image-viewer__close-btn",
+            dataAction: "close",
+          })}
         </div>
         <div class="s1p-image-viewer__viewport">
           <button type="button" class="s1p-image-viewer__nav-btn" data-action="prev" aria-label="\u4e0a\u4e00\u5f20">
@@ -16994,7 +17004,11 @@
         <div class="s1p-modal-content s1p-token-config-content">
             <div class="s1p-modal-header s1p-token-config-header">
                 <div class="s1p-modal-title s1p-token-config-title">设置 Token 有效期</div>
-                <div class="s1p-modal-close"></div>
+                ${buildModalCloseButtonHtml({
+      ariaLabel: "关闭窗口",
+      tooltipText: "关闭窗口",
+      extraClassName: "s1p-token-config-close-btn",
+    })}
             </div>
             <div class="s1p-modal-body s1p-token-config-body">
                 <p class="s1p-setting-desc s1p-token-config-desc">请设置您的 GitHub Personal Access Token 的过期时间，以便脚本在过期前提醒您。</p>
@@ -17024,30 +17038,53 @@
       modal.style.opacity = "1";
     });
 
-    const close = () => {
+    let isClosed = false;
+    let dp = null;
+    const onEscape = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeTokenAsCancel();
+      }
+    };
+    document.addEventListener("keydown", onEscape);
+    const removeEscapeListener = () =>
+      document.removeEventListener("keydown", onEscape);
+    const closeTokenConfigModal = ({ triggerCancel = true } = {}) => {
+      if (isClosed) {
+        return;
+      }
+      isClosed = true;
+      removeEscapeListener();
       modal.style.opacity = "0";
       setTimeout(() => modal.remove(), 200);
-      if (onCancel) onCancel();
-      // [FIX] 销毁日历实例
-      if (dp) dp.destroy();
+      if (dp) {
+        dp.destroy();
+        dp = null;
+      }
+      if (triggerCancel && onCancel) {
+        onCancel();
+      }
     };
+    const closeTokenAsCancel = () =>
+      closeTokenConfigModal({ triggerCancel: true });
 
-    // 成功保存时不调 onCancel
-    const closeOnSave = () => {
-      modal.style.opacity = "0";
-      setTimeout(() => modal.remove(), 200);
-      // [FIX] 销毁日历实例
-      if (dp) dp.destroy();
-    };
-
-    modal.querySelector(".s1p-modal-close").addEventListener("click", close);
-    modal.querySelector(".s1p-cancel-btn").addEventListener("click", close);
+    modal
+      .querySelector(".s1p-token-config-close-btn")
+      .addEventListener("click", closeTokenAsCancel);
+    modal
+      .querySelector(".s1p-cancel-btn")
+      .addEventListener("click", closeTokenAsCancel);
+    modal.addEventListener("click", (e) => {
+      if (e.target === modal) {
+        closeTokenAsCancel();
+      }
+    });
 
     const dateInput = modal.querySelector("#s1p-token-expiry-date-input");
 
     // [NEW] 初始化自定义日期选择器
     let currentSelectedDate = defaultDate;
-    const dp = createDatePicker(dateInput, defaultDate, (date) => {
+    dp = createDatePicker(dateInput, defaultDate, (date) => {
       currentSelectedDate = date;
       dateInput.value = formatDate(date);
     });
@@ -17079,7 +17116,7 @@
 
       if (onSave) onSave(timestamp);
 
-      closeOnSave();
+      closeTokenConfigModal({ triggerCancel: false });
     });
   };
 
@@ -17273,7 +17310,10 @@
     modal.className = "s1p-modal";
     modal.style.opacity = "0";
     modal.innerHTML = `<div class="s1p-modal-content">
-            <div class="s1p-modal-header"><div class="s1p-modal-title">S1 Plus 设置</div><button type="button" class="s1p-btn s1p-settings-close-btn s1p-has-tooltip" aria-label="关闭设置面板" data-full-tag="关闭设置面板"><svg class="s1p-image-viewer__close-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M5 5L15 15"></path><path d="M15 5L5 15"></path></svg></button></div>
+            <div class="s1p-modal-header"><div class="s1p-modal-title">S1 Plus 设置</div>${buildModalCloseButtonHtml({
+      ariaLabel: "关闭设置面板",
+      tooltipText: "关闭设置面板",
+    })}</div>
             <div class="s1p-modal-body">
                 <div class="s1p-tabs-wrapper">
                     <div class="s1p-tabs">
@@ -24552,6 +24592,7 @@
       // 刷新弹窗内容
       const modal = document.querySelector(".s1p-reading-progress-modal");
       if (modal) {
+        clearReadingProgressModalEscHandler();
         // 关闭当前弹窗并重新打开
         modal.remove();
         setTimeout(() => createReadingProgressDetailModal(), 100);
@@ -24565,6 +24606,7 @@
    * 创建阅读记录详情弹窗
    */
   const createReadingProgressDetailModal = () => {
+    clearReadingProgressModalEscHandler();
     // 移除已存在的弹窗
     document.querySelector(".s1p-reading-progress-modal")?.remove();
 
@@ -24586,8 +24628,11 @@
     const content = document.createElement("div");
     content.className = "s1p-confirm-content s1p-reading-progress-content";
 
-    const closeIcon = document.createElement("div");
-    closeIcon.className = "s1p-modal-close s1p-close-modal";
+    const closeIcon = createModalCloseButton({
+      ariaLabel: "关闭窗口",
+      tooltipText: "关闭窗口",
+      extraClassName: "s1p-close-modal",
+    });
     content.appendChild(closeIcon);
 
     const body = document.createElement("div");
@@ -24696,11 +24741,24 @@
     modal.appendChild(content);
 
     // 关闭弹窗函数
+    let isClosing = false;
     const closeModal = () => {
+      if (isClosing) {
+        return;
+      }
+      isClosing = true;
+      clearReadingProgressModalEscHandler();
       content.style.animation = "s1p-scale-out 0.25s ease-out forwards";
       modal.style.animation = "s1p-fade-out 0.25s ease-out forwards";
       setTimeout(() => modal.remove(), 250);
     };
+    readingProgressModalEscHandler = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeModal();
+      }
+    };
+    document.addEventListener("keydown", readingProgressModalEscHandler);
 
     // 点击遮罩层关闭
     modal.addEventListener("click", (e) => {
