@@ -127,6 +127,19 @@ node scripts/test-settings-migration.js
 - `applyChanges`：全量应用
 - `MutationObserver` 增量分发：列表/帖子/引用/评分/提醒五路处理
 
+### 4.6 增强悬浮控件（Floating Controls）
+
+- `manageFloatingControls`：根据设置开关统一创建/销毁增强悬浮控件
+- `createCustomFloatingControls`：构建手柄 + 动作面板 + 按钮（语义化 `a/button`）
+- `bindFloatingControlsHoverInteraction`：控件交互状态机（悬停开合、固定展开、外部点击关闭）
+
+实现约束（维护时请保持）：
+
+- 使用单一开合状态源：仅通过 `s1p-floating-controls-open` class 控制显隐，避免 CSS `:hover` 与 JS 定时器竞态。
+- 悬停判定基于“交互区域来源集合”（handle/panel），不要回退为依赖 wrapper 自身 hover。
+- 关闭路径分为两类：延迟收起（hover 离开）与立即收起（取消固定/外部点击），两者清理逻辑需统一。
+- 手柄需同步 `aria-expanded`，动作型入口优先使用 `button`，仅导航型入口使用 `a`。
+
 ## 5. 存储键说明（GM Key）
 
 ### 5.1 业务数据

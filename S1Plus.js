@@ -4504,7 +4504,7 @@
       gap: 8px;
       padding: 7px 12px;
       border-radius: 12px;
-      border: 1px solid #c9d2bf;
+      border: none;
       background: #edf1e6;
       color: var(--s1p-t, #022c80);
       box-shadow: 0 10px 24px rgba(var(--s1p-shadow-color-rgb), 0.2);
@@ -4812,7 +4812,7 @@
       right: 10px;
       transform: translateY(-50%);
       z-index: 9998;
-      pointer-events: none; /* <--- 把这一行加在这里 */
+      pointer-events: none;
     }
     #s1p-controls-handle {
       position: absolute;
@@ -4830,7 +4830,7 @@
       align-items: center;
       justify-content: center;
       transition: opacity 0.18s ease;
-      pointer-events: auto; /* [新增] 唯独让手柄可以响应鼠标 */
+      pointer-events: auto;
     }
     #s1p-controls-handle::before {
       content: "";
@@ -4860,20 +4860,18 @@
       transition: transform 0.24s cubic-bezier(0.22, 1, 0.36, 1),
         opacity 0.2s ease, visibility 0.2s;
     }
-    #s1p-floating-controls-wrapper.s1p-floating-controls-open #s1p-controls-handle,
-    #s1p-floating-controls-wrapper:hover #s1p-controls-handle {
-      opacity: 0;
+    #s1p-floating-controls-wrapper.s1p-floating-controls-open #s1p-controls-handle {
+      opacity: 0.08;
       transition: opacity 0.2s ease;
-      pointer-events: none;
     }
-    #s1p-floating-controls-wrapper.s1p-floating-controls-open #s1p-floating-controls,
-    #s1p-floating-controls-wrapper:hover #s1p-floating-controls {
+    #s1p-floating-controls-wrapper.s1p-floating-controls-open #s1p-floating-controls {
       transform: translateX(0);
       opacity: 1;
       visibility: visible;
-      pointer-events: auto; /* [修改] 之前是auto，现在明确写出以确保逻辑完整 */
+      pointer-events: auto;
     }
-    #s1p-floating-controls a {
+    #s1p-floating-controls a,
+    #s1p-floating-controls button {
       display: flex;
       justify-content: center;
       align-items: center;
@@ -4885,37 +4883,46 @@
       transition: all 0.2s ease-in-out;
       padding: 0;
       box-sizing: border-box;
+      border: none;
+      cursor: pointer;
     }
-    #s1p-floating-controls a:hover {
+    #s1p-floating-controls a:hover,
+    #s1p-floating-controls button:hover {
       background-color: var(--s1p-pri);
       transform: scale(1.1);
       fill-opacity: 1;
     }
-    #s1p-floating-controls a svg {
+    #s1p-floating-controls a svg,
+    #s1p-floating-controls button svg {
       width: 18px;
       height: 18px;
       color: var(--s1p-t);
       fill-opacity: 0.5;
     }
-    #s1p-floating-controls a svg:hover {
+    #s1p-floating-controls a svg:hover,
+    #s1p-floating-controls button svg:hover {
       fill-opacity: 1;
     }
     @media (prefers-reduced-motion: reduce) {
       #s1p-controls-handle,
       #s1p-floating-controls,
-      #s1p-floating-controls a {
+      #s1p-floating-controls a,
+      #s1p-floating-controls button {
         transition: none !important;
       }
-      #s1p-floating-controls a:hover {
+      #s1p-floating-controls a:hover,
+      #s1p-floating-controls button:hover {
         transform: none;
       }
     }
-    #s1p-floating-controls a.s1p-scroll-btn svg {
+    #s1p-floating-controls a.s1p-scroll-btn svg,
+    #s1p-floating-controls button.s1p-scroll-btn svg {
       width: 22px;
       height: 22px;
       fill-opacity: 0.5;
     }
-    #s1p-floating-controls a.s1p-scroll-btn svg:hover {
+    #s1p-floating-controls a.s1p-scroll-btn svg:hover,
+    #s1p-floating-controls button.s1p-scroll-btn svg:hover {
       fill-opacity: 1;
     }
     /* --- [更新] 回复收藏内容切换 V3 --- */
@@ -5157,7 +5164,8 @@
       #s1p-controls-handle {
         box-shadow: -2px 2px 8px rgba(0, 0, 0, 0.25);
       }
-      #s1p-floating-controls a {
+      #s1p-floating-controls a,
+      #s1p-floating-controls button {
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
       }
 
@@ -25696,7 +25704,6 @@
   // [修改] 将设置项重命名为 enhanceFloatingControls
   const FLOATING_CONTROLS_OPEN_CLASS = "s1p-floating-controls-open";
   const floatingControlsInteractionCleanupMap = new WeakMap();
-  const FLOATING_CONTROLS_OPEN_DELAY_MS = 0;
   const FLOATING_CONTROLS_CLOSE_DELAY_MS = 180;
   const bindFloatingControlsHoverInteraction = (wrapper, handle, panel) => {
     if (
@@ -25710,21 +25717,18 @@
     if (typeof previousCleanup === "function") {
       previousCleanup();
     }
-    let openTimer = 0;
     let closeTimer = 0;
     let isPinnedOpen = false;
+    const pointerInsideSources = new Set();
     const disposers = [];
     const addListener = (target, type, listener, options) => {
       target.addEventListener(type, listener, options);
       disposers.push(() => target.removeEventListener(type, listener, options));
     };
-    const clearOpenTimer = () => {
-      if (!openTimer) {
-        return;
-      }
-      window.clearTimeout(openTimer);
-      openTimer = 0;
-    };
+    const isNodeInsideFloatingControls = (node) =>
+      node instanceof Node && wrapper.contains(node);
+    const isPointerInsideFloatingControls = () =>
+      pointerInsideSources.size > 0;
     const clearCloseTimer = () => {
       if (!closeTimer) {
         return;
@@ -25734,37 +25738,23 @@
     };
     const setOpenState = (isOpen) => {
       wrapper.classList.toggle(FLOATING_CONTROLS_OPEN_CLASS, isOpen);
+      handle.setAttribute("aria-expanded", isOpen ? "true" : "false");
     };
     const scheduleOpen = () => {
       clearCloseTimer();
       if (wrapper.classList.contains(FLOATING_CONTROLS_OPEN_CLASS)) {
         return;
       }
-      if (FLOATING_CONTROLS_OPEN_DELAY_MS <= 0) {
-        setOpenState(true);
-        return;
-      }
-      if (openTimer) {
-        return;
-      }
-      openTimer = window.setTimeout(() => {
-        openTimer = 0;
-        if (!wrapper.isConnected) {
-          return;
-        }
-        setOpenState(true);
-      }, FLOATING_CONTROLS_OPEN_DELAY_MS);
+      setOpenState(true);
     };
     const closeImmediately = () => {
-      clearOpenTimer();
       clearCloseTimer();
       setOpenState(false);
     };
     const scheduleClose = ({ immediate = false } = {}) => {
-      if (isPinnedOpen) {
+      if (isPinnedOpen || isPointerInsideFloatingControls()) {
         return;
       }
-      clearOpenTimer();
       if (!wrapper.classList.contains(FLOATING_CONTROLS_OPEN_CLASS)) {
         return;
       }
@@ -25783,12 +25773,20 @@
         if (isPinnedOpen) {
           return;
         }
+        if (isPointerInsideFloatingControls()) {
+          return;
+        }
         setOpenState(false);
       }, FLOATING_CONTROLS_CLOSE_DELAY_MS);
     };
-    const handlePointerLeave = (event) => {
+    const markPointerEnter = (source) => {
+      pointerInsideSources.add(source);
+      scheduleOpen();
+    };
+    const markPointerLeave = (source, event) => {
+      pointerInsideSources.delete(source);
       const nextTarget = event.relatedTarget;
-      if (nextTarget instanceof Node && wrapper.contains(nextTarget)) {
+      if (isNodeInsideFloatingControls(nextTarget)) {
         return;
       }
       scheduleClose();
@@ -25797,12 +25795,18 @@
       typeof window !== "undefined" && typeof window.PointerEvent === "function";
     const openEventName = supportsPointerEvents ? "pointerenter" : "mouseenter";
     const leaveEventName = supportsPointerEvents ? "pointerleave" : "mouseleave";
-    addListener(wrapper, openEventName, scheduleOpen);
-    addListener(wrapper, leaveEventName, handlePointerLeave);
+    addListener(handle, openEventName, () => markPointerEnter("handle"));
+    addListener(handle, leaveEventName, (event) =>
+      markPointerLeave("handle", event)
+    );
+    addListener(panel, openEventName, () => markPointerEnter("panel"));
+    addListener(panel, leaveEventName, (event) =>
+      markPointerLeave("panel", event)
+    );
     addListener(wrapper, "focusin", scheduleOpen);
     addListener(wrapper, "focusout", (event) => {
       const nextTarget = event.relatedTarget;
-      if (nextTarget instanceof Node && wrapper.contains(nextTarget)) {
+      if (isNodeInsideFloatingControls(nextTarget)) {
         return;
       }
       scheduleClose();
@@ -25812,7 +25816,7 @@
       event.stopPropagation();
       if (wrapper.classList.contains(FLOATING_CONTROLS_OPEN_CLASS) && isPinnedOpen) {
         isPinnedOpen = false;
-        scheduleClose({ immediate: true });
+        closeImmediately();
         return;
       }
       isPinnedOpen = true;
@@ -25831,7 +25835,7 @@
         return;
       }
       const eventTarget = event.target;
-      if (eventTarget instanceof Node && wrapper.contains(eventTarget)) {
+      if (isNodeInsideFloatingControls(eventTarget)) {
         return;
       }
       isPinnedOpen = false;
@@ -25854,11 +25858,11 @@
         return;
       }
       isPinnedOpen = false;
-      scheduleClose({ immediate: true });
+      closeImmediately();
     });
     const cleanup = () => {
-      clearOpenTimer();
       clearCloseTimer();
+      pointerInsideSources.clear();
       disposers.forEach((dispose) => dispose());
       floatingControlsInteractionCleanupMap.delete(wrapper);
     };
@@ -25903,83 +25907,84 @@
     // 4. 创建DOM结构
     const wrapper = document.createElement("div");
     wrapper.id = "s1p-floating-controls-wrapper";
-    // [核心修改] 读取新命名的设置并添加对应的class
-    const settings = getSettings();
-    if (
-      settings.enableGeneralSettings === true &&
-      settings.enhanceFloatingControls === true
-    ) {
-      wrapper.classList.add("s1p-hover-interaction-enabled");
-    }
 
     const handle = document.createElement("div");
     handle.id = "s1p-controls-handle";
     handle.tabIndex = 0;
     handle.setAttribute("role", "button");
     handle.setAttribute("aria-label", "展开或收起悬浮控件");
+    handle.setAttribute("aria-expanded", "false");
 
     const panel = document.createElement("div");
     panel.id = "s1p-floating-controls";
 
     // 5. 创建按钮并添加到 panel 中
-    const createButton = (title, className, svg, href, onclick) => {
-      const link = document.createElement("a");
-      link.className = className;
-      setCustomTooltip(link, title);
-      setSanitizedIconHtml(link, svg);
-      if (href) link.href = href;
-      if (onclick) link.onclick = onclick;
-      return link;
+    const createButton = ({
+      title,
+      className = "",
+      svg,
+      href = null,
+      onclick = null,
+      useButton = false,
+    }) => {
+      const element = document.createElement(useButton ? "button" : "a");
+      element.className = className;
+      if (useButton) {
+        element.type = "button";
+      } else if (href) {
+        element.href = href;
+      }
+      setCustomTooltip(element, title);
+      setSanitizedIconHtml(element, svg);
+      if (onclick) element.onclick = onclick;
+      return element;
     };
 
     if (replyAction) {
       panel.appendChild(
-        createButton(
-          replyAction.title,
-          "",
-          svgs.reply,
-          replyAction.href,
-          replyAction.onclick
-        )
+        createButton({
+          title: replyAction.title,
+          svg: svgs.reply,
+          href: replyAction.href,
+          onclick: replyAction.onclick,
+        })
       );
     }
-    const scrollTopBtn = createButton(
-      "返回顶部",
-      "s1p-scroll-btn",
-      svgs.scrollTop,
-      "javascript:void(0);",
-      (e) => {
+    const scrollTopBtn = createButton({
+      title: "返回顶部",
+      className: "s1p-scroll-btn",
+      svg: svgs.scrollTop,
+      onclick: (e) => {
         e.preventDefault();
         window.scrollTo({
           top: 0,
           behavior: isS1pReducedMotionPreferred() ? "auto" : "smooth",
         });
-      }
-    );
-    const scrollBottomBtn = createButton(
-      "返回底部",
-      "s1p-scroll-btn",
-      svgs.scrollBottom,
-      "javascript:void(0);",
-      (e) => {
+      },
+      useButton: true,
+    });
+    const scrollBottomBtn = createButton({
+      title: "返回底部",
+      className: "s1p-scroll-btn",
+      svg: svgs.scrollBottom,
+      onclick: (e) => {
         e.preventDefault();
         window.scrollTo({
           top: document.body.scrollHeight,
           behavior: isS1pReducedMotionPreferred() ? "auto" : "smooth",
         });
-      }
-    );
+      },
+      useButton: true,
+    });
     panel.appendChild(scrollTopBtn);
     panel.appendChild(scrollBottomBtn);
     if (returnAction) {
       panel.appendChild(
-        createButton(
-          returnAction.title,
-          "",
-          svgs.board,
-          returnAction.href,
-          null
-        )
+        createButton({
+          title: returnAction.title,
+          svg: svgs.board,
+          href: returnAction.href,
+        })
       );
     }
 
