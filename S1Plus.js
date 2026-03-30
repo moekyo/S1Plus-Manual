@@ -954,6 +954,7 @@
       --s1p-sec-h: #306bebff;
       --s1p-sub-h: #2563eb;
       --s1p-sub-h-t: var(--s1p-white);
+      --s1p-focus-ring: rgba(59, 130, 246, 0.48);
 
       /* -- 状态色 -- */
       --s1p-red: #ef4444;
@@ -1559,6 +1560,17 @@
       transform: translateY(-1px);
       /* [MODIFIED] 优化过渡动画曲线，使其更平滑 */
       transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .s1p-btn:focus,
+    .s1p-confirm-btn:focus,
+    .s1p-inline-toggle-btn:focus {
+      outline: none;
+    }
+    .s1p-btn:focus-visible,
+    .s1p-confirm-btn:focus-visible,
+    .s1p-inline-toggle-btn:focus-visible {
+      outline: 2px solid var(--s1p-focus-ring);
+      outline-offset: 2px;
     }
 
     .s1p-btn:hover,
@@ -2627,6 +2639,17 @@
       justify-content: center;
       align-items: center;
       z-index: 9999;
+      transition: opacity 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .s1p-modal.s1p-modal-opening .s1p-modal-content {
+      animation: s1p-settings-modal-scale-in 0.28s cubic-bezier(0.22, 1, 0.36, 1)
+        both;
+      will-change: transform, opacity;
+    }
+    .s1p-modal.s1p-modal-closing .s1p-modal-content {
+      animation: s1p-settings-modal-scale-out 0.25s cubic-bezier(0.22, 1, 0.36, 1)
+        forwards;
+      will-change: transform, opacity;
     }
     .s1p-modal-content {
       background-color: var(--s1p-bg);
@@ -2639,6 +2662,9 @@
       display: flex;
       flex-direction: column;
       position: relative;
+      transition: none;
+      backface-visibility: hidden;
+      transform-origin: center;
 
       /* [优化] 为设置面板设定统一的字体族和渲染方式 */
       /* 使用 system-ui 让浏览器自动选择各平台最佳系统字体 */
@@ -2675,6 +2701,17 @@
       line-height: 0;
       appearance: none;
       -webkit-appearance: none;
+      background-color: var(--s1p-sub);
+      color: var(--s1p-t);
+      -webkit-mask: none;
+      mask: none;
+      text-shadow: none;
+    }
+    .s1p-btn.s1p-settings-close-btn > svg {
+      display: block;
+      width: 14px;
+      height: 14px;
+      pointer-events: none;
     }
     .s1p-modal-body {
       padding: 8px 16px 16px;
@@ -2712,6 +2749,9 @@
       border-radius: 12px;
       box-shadow: 0 10px 25px -5px rgba(var(--s1p-shadow-color-rgb), 0.1),
         0 10px 10px -5px rgba(var(--s1p-shadow-color-rgb), 0.04);
+      transition: none;
+      backface-visibility: hidden;
+      transform-origin: center;
     }
     .s1p-token-config-header {
       background: var(--s1p-sub);
@@ -3127,6 +3167,26 @@
         opacity: 0;
       }
     }
+    @keyframes s1p-settings-modal-scale-out {
+      from {
+        transform: translate3d(0, 0, 0) scale(1);
+        opacity: 1;
+      }
+      to {
+        transform: translate3d(0, 10px, 0) scale(0.985);
+        opacity: 0;
+      }
+    }
+    @keyframes s1p-settings-modal-scale-in {
+      from {
+        transform: translate3d(0, 10px, 0) scale(0.985);
+        opacity: 0;
+      }
+      to {
+        transform: translate3d(0, 0, 0) scale(1);
+        opacity: 1;
+      }
+    }
     .s1p-confirm-modal {
       position: fixed;
       top: 0;
@@ -3139,6 +3199,7 @@
       align-items: center;
       z-index: 10000;
       animation: s1p-fade-in 0.2s ease-out;
+      transition: none;
     }
     /* 已有蒙版（设置面板）时，confirm modal 不重复显示蒙版背景 */
     .s1p-modal ~ .s1p-confirm-modal {
@@ -3154,6 +3215,9 @@
       text-align: left;
       overflow: hidden;
       animation: s1p-scale-in 0.25s ease-out;
+      transition: none;
+      backface-visibility: hidden;
+      transform-origin: center;
     }
     .s1p-confirm-body {
       padding: 20px 24px;
@@ -4162,7 +4226,7 @@
       margin-top: 0 !important;
     }
     .s1p-inline-toggle-btn:focus-visible {
-      outline: 2px solid var(--s1p-sub-h);
+      outline: 2px solid var(--s1p-focus-ring);
       outline-offset: 1px;
     }
     .s1p-quote-wrapper {
@@ -4894,6 +4958,7 @@
         --s1p-progress-delete-hover-bg: rgb(154, 41, 28);
         --s1p-progress-delete-text: #ffffff;
         --s1p-image-viewer-viewport-bg: rgba(var(--s1p-black-rgb), 0.78);
+        --s1p-focus-ring: rgba(96, 165, 250, 0.56);
       }
 
       /* [移除] 删除按钮白色图标覆写：在系统深色模式但 NUX 禁用时会导致图标不可见 */
@@ -19909,7 +19974,19 @@
 
     let handleTabSliderLayoutChange = null;
     let tabSliderResizeObserver = null;
+    let settingsModalOpenAnimationTimer = 0;
+    let settingsModalCloseAnimationTimer = 0;
+    const SETTINGS_MODAL_OPEN_ANIMATION_MS = 280;
+    const SETTINGS_MODAL_ANIMATION_FALLBACK_GAP_MS = 80;
+    const SETTINGS_MODAL_OPEN_ANIMATION_NAME = "s1p-settings-modal-scale-in";
+    const SETTINGS_MODAL_CLOSE_ANIMATION_NAME = "s1p-settings-modal-scale-out";
+    let isClosingManagementModal = false;
+    const SETTINGS_MODAL_CLOSE_ANIMATION_MS = 250;
     const closeManagementModal = () => {
+      if (isClosingManagementModal) {
+        return;
+      }
+      isClosingManagementModal = true;
       if (
         settingsModalCrossTabSyncController &&
         settingsModalCrossTabSyncController.modalElement === modal
@@ -19927,7 +20004,47 @@
         window.clearInterval(modalThemeSyncTimer);
         modalThemeSyncTimer = 0;
       }
-      modal.remove();
+      if (settingsModalOpenAnimationTimer) {
+        window.clearTimeout(settingsModalOpenAnimationTimer);
+        settingsModalOpenAnimationTimer = 0;
+      }
+      if (settingsModalCloseAnimationTimer) {
+        window.clearTimeout(settingsModalCloseAnimationTimer);
+        settingsModalCloseAnimationTimer = 0;
+      }
+      modal.classList.remove("s1p-modal-opening");
+      modal.style.pointerEvents = "none";
+      modal.style.opacity = "0";
+      modal.classList.add("s1p-modal-closing");
+      const finalizeClose = () => {
+        if (settingsModalCloseAnimationTimer) {
+          window.clearTimeout(settingsModalCloseAnimationTimer);
+          settingsModalCloseAnimationTimer = 0;
+        }
+        if (modal.isConnected) {
+          modal.remove();
+        }
+      };
+      modalContent.addEventListener(
+        "animationend",
+        (event) => {
+          if (event.target !== modalContent) {
+            return;
+          }
+          if (
+            event.animationName &&
+            event.animationName !== SETTINGS_MODAL_CLOSE_ANIMATION_NAME
+          ) {
+            return;
+          }
+          finalizeClose();
+        },
+        { once: true }
+      );
+      settingsModalCloseAnimationTimer = window.setTimeout(
+        finalizeClose,
+        SETTINGS_MODAL_CLOSE_ANIMATION_MS + SETTINGS_MODAL_ANIMATION_FALLBACK_GAP_MS
+      );
     };
     settingsModalEscKeydownHandler = bindEscCloseForStyledModal({
       onClose: closeManagementModal,
@@ -20084,7 +20201,33 @@
       tabSliderResizeObserver.observe(tabContainer);
     }
 
-    modal.style.transition = "opacity 0.2s ease-out";
+    modal.classList.add("s1p-modal-opening");
+    modalContent.addEventListener(
+      "animationend",
+      (event) => {
+        if (event.target !== modalContent) {
+          return;
+        }
+        if (
+          event.animationName &&
+          event.animationName !== SETTINGS_MODAL_OPEN_ANIMATION_NAME
+        ) {
+          return;
+        }
+        modal.classList.remove("s1p-modal-opening");
+      },
+      { once: true }
+    );
+    settingsModalOpenAnimationTimer = window.setTimeout(
+      () => {
+        settingsModalOpenAnimationTimer = 0;
+        if (!modal.isConnected) {
+          return;
+        }
+        modal.classList.remove("s1p-modal-opening");
+      },
+      SETTINGS_MODAL_OPEN_ANIMATION_MS + SETTINGS_MODAL_ANIMATION_FALLBACK_GAP_MS
+    );
     requestAnimationFrame(() => {
       modal.style.opacity = "1";
     });
