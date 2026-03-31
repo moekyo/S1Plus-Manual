@@ -211,7 +211,8 @@
       if (
         li.id === "s1p-nav-link" ||
         li.id === "s1p-nav-sync-btn" ||
-        li.id === "s1p-nav-auto-sync-indicator"
+        li.id === "s1p-nav-auto-sync-indicator" ||
+        li.id === "s1p-nav-sync-sticky-alert"
       ) {
         return;
       }
@@ -541,6 +542,7 @@
   let isBackgroundAutoSyncInProgress = false;
   let manualSyncInFlightPromise = null;
   let forceSyncInFlight = false;
+  let navbarPersistentSyncAlertDismissedSignature = null;
   let hasPendingBackgroundSync = false;
   let backgroundSyncRetryTimeout = null;
   let backgroundSyncRetryAttempts = 0;
@@ -642,6 +644,7 @@
     startup_conflict: "sync_conflict",
     auto_conflict_paused: "sync_conflict",
     startup_local_newer: "sync_conflict",
+    local_changed_during_sync: "sync_conflict",
   });
   const SYNC_DIAGNOSTICS_KEY = "s1p_sync_diagnostics";
   const AUTO_SYNC_FAILURE_COUNT_KEY = "s1p_auto_sync_failure_count";
@@ -660,6 +663,8 @@
   const AUTO_SYNC_INDICATOR_SUCCESS_TTL_MS = 2 * 60 * 1000;
   const AUTO_SYNC_INDICATOR_FAILURE_TTL_MS = 5 * 60 * 1000;
   const AUTO_SYNC_INDICATOR_CONFLICT_TTL_MS = 10 * 60 * 1000;
+  const NAVBAR_SYNC_ALERT_SESSION_DISMISS_KEY =
+    "s1p_nav_sync_alert_session_dismissed_signature";
   const SETTINGS_CROSS_TAB_SIGNAL_KEY = "s1p_settings_refresh_signal";
   const SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID = `s1p_tab_${Date.now()}_${Math.random()
     .toString(36)
@@ -673,6 +678,9 @@
   const AUTO_SYNC_CIRCUIT_OPEN_DURATION_MS = 10 * 60 * 1000;
   // 当时间戳相差过大时，不再自动依据“谁大谁新”做决策，转为冲突保护。
   const SYNC_TIMESTAMP_SKEW_TOLERANCE_MS = 12 * 60 * 60 * 1000;
+  // 启动同步调度到空闲时段，减少“每日首次加载卡住”的体感。
+  const STARTUP_SYNC_IDLE_TIMEOUT_MS = 1200;
+  const STARTUP_SYNC_IDLE_FALLBACK_DELAY_MS = 180;
   const DOM_OBSERVER_DEBOUNCE_MS = 120;
   const SETTINGS_CACHE_TTL_MS = 1000;
   const CORE_DATA_CACHE_TTL_MS = 1000;
@@ -970,6 +978,27 @@
       --s1p-success-bg: #d1fae5;
       --s1p-success-text: #065f46;
       --s1p-error-bg: #fee2e2;
+      --s1p-sync-alert-local-change-bg: rgba(210, 42, 58, 0.16);
+      --s1p-sync-alert-local-change-text: #8f1625;
+      --s1p-sync-alert-local-change-dot: #d71f35;
+      --s1p-sync-alert-local-change-action-bg: rgba(213, 39, 60, 0.28);
+      --s1p-sync-alert-local-change-action-text: #7c1220;
+      --s1p-sync-alert-local-change-action-hover-bg: rgba(213, 39, 60, 0.38);
+      --s1p-sync-alert-local-change-dismiss-text: rgba(133, 28, 43, 0.9);
+      --s1p-sync-alert-local-newer-bg: rgba(12, 145, 132, 0.16);
+      --s1p-sync-alert-local-newer-text: #0f635b;
+      --s1p-sync-alert-local-newer-dot: #0ea79c;
+      --s1p-sync-alert-local-newer-action-bg: rgba(14, 167, 156, 0.28);
+      --s1p-sync-alert-local-newer-action-text: #0d5f58;
+      --s1p-sync-alert-local-newer-action-hover-bg: rgba(14, 167, 156, 0.4);
+      --s1p-sync-alert-local-newer-dismiss-text: rgba(13, 98, 91, 0.9);
+      --s1p-sync-alert-circuit-bg: rgba(232, 138, 18, 0.16);
+      --s1p-sync-alert-circuit-text: #8a4f03;
+      --s1p-sync-alert-circuit-dot: #d57b00;
+      --s1p-sync-alert-circuit-action-bg: rgba(225, 130, 14, 0.3);
+      --s1p-sync-alert-circuit-action-text: #6f3f00;
+      --s1p-sync-alert-circuit-action-hover-bg: rgba(225, 130, 14, 0.42);
+      --s1p-sync-alert-circuit-dismiss-text: rgba(116, 67, 6, 0.9);
 
       /* -- 组件专属 -- */
       --s1p-text-empty: #888;
@@ -1143,6 +1172,22 @@
       #nv ul #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-wrap {
         padding: 0 4px 0 6px !important;
       }
+      #nv ul #s1p-nav-sync-sticky-alert {
+        margin-left: 0 !important;
+      }
+      #nv ul #s1p-nav-sync-sticky-alert .s1p-nav-sync-sticky-alert-wrap {
+        padding: 0 5px !important;
+        gap: 4px !important;
+      }
+      #nv ul #s1p-nav-sync-sticky-alert .s1p-nav-sync-sticky-alert-text {
+        display: none;
+      }
+      #nv ul #s1p-nav-sync-sticky-alert .s1p-nav-sync-sticky-alert-dismiss {
+        display: none;
+      }
+      #nv ul #s1p-nav-sync-sticky-alert .s1p-nav-sync-sticky-alert-action {
+        padding: 2px 6px !important;
+      }
     }
 
     /* --- [MODIFIED] 最终简化版同步动画 (只有旋转) --- */
@@ -1216,6 +1261,149 @@
     }
     #s1p-nav-auto-sync-indicator[data-sync-state="failure"] svg,
     #s1p-nav-auto-sync-indicator[data-sync-state="conflict"] svg {
+      opacity: 1;
+    }
+
+    #nv ul #s1p-nav-sync-sticky-alert::before {
+      display: none !important;
+    }
+    #s1p-nav-sync-sticky-alert {
+      display: flex;
+      align-items: center;
+      flex-shrink: 0;
+      height: 100%;
+      line-height: 1;
+      padding: 0 !important;
+      margin-left: 6px;
+      margin-top: 0 !important;
+      margin-bottom: 0 !important;
+      opacity: 1;
+      --s1p-sync-alert-current-bg: var(--s1p-sync-alert-local-change-bg);
+      --s1p-sync-alert-current-text: var(--s1p-sync-alert-local-change-text);
+      --s1p-sync-alert-current-dot: var(--s1p-sync-alert-local-change-dot);
+      --s1p-sync-alert-current-action-bg: var(
+        --s1p-sync-alert-local-change-action-bg
+      );
+      --s1p-sync-alert-current-action-text: var(
+        --s1p-sync-alert-local-change-action-text
+      );
+      --s1p-sync-alert-current-action-hover-bg: var(
+        --s1p-sync-alert-local-change-action-hover-bg
+      );
+      --s1p-sync-alert-current-dismiss-text: var(
+        --s1p-sync-alert-local-change-dismiss-text
+      );
+    }
+    #s1p-nav-sync-sticky-alert[data-alert-type="startup_local_newer"] {
+      --s1p-sync-alert-current-bg: var(--s1p-sync-alert-local-newer-bg);
+      --s1p-sync-alert-current-text: var(--s1p-sync-alert-local-newer-text);
+      --s1p-sync-alert-current-dot: var(--s1p-sync-alert-local-newer-dot);
+      --s1p-sync-alert-current-action-bg: var(
+        --s1p-sync-alert-local-newer-action-bg
+      );
+      --s1p-sync-alert-current-action-text: var(
+        --s1p-sync-alert-local-newer-action-text
+      );
+      --s1p-sync-alert-current-action-hover-bg: var(
+        --s1p-sync-alert-local-newer-action-hover-bg
+      );
+      --s1p-sync-alert-current-dismiss-text: var(
+        --s1p-sync-alert-local-newer-dismiss-text
+      );
+    }
+    #s1p-nav-sync-sticky-alert[data-alert-type="circuit_open"] {
+      --s1p-sync-alert-current-bg: var(--s1p-sync-alert-circuit-bg);
+      --s1p-sync-alert-current-text: var(--s1p-sync-alert-circuit-text);
+      --s1p-sync-alert-current-dot: var(--s1p-sync-alert-circuit-dot);
+      --s1p-sync-alert-current-action-bg: var(--s1p-sync-alert-circuit-action-bg);
+      --s1p-sync-alert-current-action-text: var(
+        --s1p-sync-alert-circuit-action-text
+      );
+      --s1p-sync-alert-current-action-hover-bg: var(
+        --s1p-sync-alert-circuit-action-hover-bg
+      );
+      --s1p-sync-alert-current-dismiss-text: var(
+        --s1p-sync-alert-circuit-dismiss-text
+      );
+    }
+    #s1p-nav-sync-sticky-alert .s1p-nav-sync-sticky-alert-wrap {
+      display: inline-flex;
+      align-items: center;
+      align-self: center;
+      gap: 7px;
+      min-height: 24px;
+      padding: 0 10px 0 8px;
+      box-sizing: border-box;
+      border: 0;
+      border-radius: 999px;
+      background: var(--s1p-sync-alert-current-bg);
+      color: var(--s1p-sync-alert-current-text);
+      backdrop-filter: saturate(115%);
+    }
+    #s1p-nav-sync-sticky-alert .s1p-nav-sync-sticky-alert-text {
+      display: inline-flex;
+      align-items: center;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      line-height: 1;
+      white-space: nowrap;
+    }
+    #s1p-nav-sync-sticky-alert .s1p-nav-sync-sticky-alert-text::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      flex: 0 0 auto;
+      border-radius: 999px;
+      margin-right: 6px;
+      background: var(--s1p-sync-alert-current-dot);
+      box-shadow: 0 0 0 2px rgba(var(--s1p-black-rgb), 0.06);
+    }
+    #s1p-nav-sync-sticky-alert .s1p-nav-sync-sticky-alert-action {
+      border: 0;
+      border-radius: 999px;
+      background: var(--s1p-sync-alert-current-action-bg);
+      color: var(--s1p-sync-alert-current-action-text);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+      text-decoration: none;
+      cursor: pointer;
+      padding: 3px 7px;
+      line-height: 1;
+      white-space: nowrap;
+      transition: background-color 0.18s ease, transform 0.12s ease;
+    }
+    #s1p-nav-sync-sticky-alert .s1p-nav-sync-sticky-alert-action:hover {
+      background: var(--s1p-sync-alert-current-action-hover-bg);
+    }
+    #s1p-nav-sync-sticky-alert .s1p-nav-sync-sticky-alert-action:active {
+      transform: translateY(0.5px);
+    }
+    #s1p-nav-sync-sticky-alert .s1p-nav-sync-sticky-alert-action:disabled {
+      opacity: 0.5;
+      cursor: default;
+      transform: none;
+    }
+    #s1p-nav-sync-sticky-alert .s1p-nav-sync-sticky-alert-action:disabled:hover {
+      background: var(--s1p-sync-alert-current-action-bg);
+    }
+    #s1p-nav-sync-sticky-alert .s1p-nav-sync-sticky-alert-dismiss {
+      border: 0;
+      background: transparent;
+      color: var(--s1p-sync-alert-current-dismiss-text);
+      font-size: 11px;
+      font-weight: 600;
+      text-decoration: none;
+      cursor: pointer;
+      padding: 0 1px;
+      line-height: 1;
+      white-space: nowrap;
+      transition: color 0.18s ease, opacity 0.18s ease;
+      opacity: 0.92;
+    }
+    #s1p-nav-sync-sticky-alert .s1p-nav-sync-sticky-alert-dismiss:hover {
+      color: inherit;
       opacity: 1;
     }
 
@@ -5102,6 +5290,27 @@
         --s1p-progress-delete-text: #ffffff;
         --s1p-image-viewer-viewport-bg: rgba(var(--s1p-black-rgb), 0.78);
         --s1p-focus-ring: rgba(96, 165, 250, 0.56);
+        --s1p-sync-alert-local-change-bg: rgba(239, 68, 68, 0.24);
+        --s1p-sync-alert-local-change-text: #fecaca;
+        --s1p-sync-alert-local-change-dot: #fb7185;
+        --s1p-sync-alert-local-change-action-bg: rgba(248, 113, 113, 0.34);
+        --s1p-sync-alert-local-change-action-text: #fff1f2;
+        --s1p-sync-alert-local-change-action-hover-bg: rgba(248, 113, 113, 0.46);
+        --s1p-sync-alert-local-change-dismiss-text: rgba(254, 202, 202, 0.9);
+        --s1p-sync-alert-local-newer-bg: rgba(20, 184, 166, 0.26);
+        --s1p-sync-alert-local-newer-text: #ccfbf1;
+        --s1p-sync-alert-local-newer-dot: #2dd4bf;
+        --s1p-sync-alert-local-newer-action-bg: rgba(45, 212, 191, 0.36);
+        --s1p-sync-alert-local-newer-action-text: #ecfeff;
+        --s1p-sync-alert-local-newer-action-hover-bg: rgba(45, 212, 191, 0.5);
+        --s1p-sync-alert-local-newer-dismiss-text: rgba(153, 246, 228, 0.9);
+        --s1p-sync-alert-circuit-bg: rgba(245, 158, 11, 0.26);
+        --s1p-sync-alert-circuit-text: #fcd34d;
+        --s1p-sync-alert-circuit-dot: #f59e0b;
+        --s1p-sync-alert-circuit-action-bg: rgba(251, 191, 36, 0.34);
+        --s1p-sync-alert-circuit-action-text: #fff4bf;
+        --s1p-sync-alert-circuit-action-hover-bg: rgba(251, 191, 36, 0.46);
+        --s1p-sync-alert-circuit-dismiss-text: rgba(253, 230, 138, 0.9);
       }
 
       /* [移除] 删除按钮白色图标覆写：在系统深色模式但 NUX 禁用时会导致图标不可见 */
@@ -5818,6 +6027,7 @@
   const resetAutoSyncFailureState = () => {
     GM_setValue(AUTO_SYNC_FAILURE_COUNT_KEY, 0);
     GM_deleteValue(AUTO_SYNC_CIRCUIT_OPEN_UNTIL_KEY);
+    renderNavbarPersistentSyncAlert();
   };
 
   const normalizeAutoSyncIndicatorPhase = (
@@ -6184,16 +6394,60 @@
     };
   };
 
+  const getNavbarPersistentSyncAlertDismissedSignature = () => {
+    if (typeof navbarPersistentSyncAlertDismissedSignature === "string") {
+      return navbarPersistentSyncAlertDismissedSignature;
+    }
+    let storedSignature = "";
+    try {
+      if (window.sessionStorage) {
+        storedSignature = String(
+          window.sessionStorage.getItem(NAVBAR_SYNC_ALERT_SESSION_DISMISS_KEY) || ""
+        );
+      }
+    } catch (_) {
+      storedSignature = "";
+    }
+    navbarPersistentSyncAlertDismissedSignature = storedSignature;
+    return storedSignature;
+  };
+
+  const setNavbarPersistentSyncAlertDismissedSignature = (signature = "") => {
+    const normalizedSignature = String(signature || "");
+    navbarPersistentSyncAlertDismissedSignature = normalizedSignature;
+    try {
+      if (!window.sessionStorage) {
+        return;
+      }
+      if (normalizedSignature) {
+        window.sessionStorage.setItem(
+          NAVBAR_SYNC_ALERT_SESSION_DISMISS_KEY,
+          normalizedSignature
+        );
+      } else {
+        window.sessionStorage.removeItem(NAVBAR_SYNC_ALERT_SESSION_DISMISS_KEY);
+      }
+    } catch (_) {
+      // 忽略会话存储异常，降级为当前运行时内存态。
+    }
+  };
+
+  const clearNavbarPersistentSyncAlertDismissedSignature = () => {
+    setNavbarPersistentSyncAlertDismissedSignature("");
+  };
+
   const setAutoSyncConflictPause = (reason = "generic") => {
     GM_setValue(AUTO_SYNC_CONFLICT_PAUSE_KEY, {
       paused: true,
       reason: String(reason || "generic"),
       timestamp: Date.now(),
     });
+    renderNavbarPersistentSyncAlert();
   };
 
   const clearAutoSyncConflictPause = () => {
     GM_deleteValue(AUTO_SYNC_CONFLICT_PAUSE_KEY);
+    renderNavbarPersistentSyncAlert();
   };
 
   const getActiveAutoSyncConflictPause = () => {
@@ -6226,6 +6480,7 @@
       )} 分钟。请先手动同步排查问题。`,
       false
     );
+    renderNavbarPersistentSyncAlert();
     return { count: nextCount, opened: true, until };
   };
 
@@ -14264,6 +14519,13 @@
   const handleBackgroundAutoSyncResult = async (result) => {
     switch (result.status) {
       case "conflict":
+        if (result.reason === "local_changed_during_sync") {
+          showMessage(
+            "检测到您在后台自动同步期间有本地操作，已暂停自动拉取以保护更改。请稍后手动同步。",
+            false
+          );
+          break;
+        }
         if (!(await shouldShowConflictModal("background_conflict"))) {
           showMessage(
             "再次检测到后台同步冲突，已进入提示冷却。请稍后手动同步处理。",
@@ -14695,11 +14957,17 @@
       return result;
     };
     let syncOutcome = "unknown";
-    const asSuccessResult = (action, syncBaseline = null) => {
+    const asSuccessResult = (action, syncBaseline = null, extraResult = null) => {
       syncOutcome = "success";
       if (action === "skipped_push_on_startup") {
         // 启动安全模式命中“本地较新”时，冻结后续自动同步，等待手动同步决策。
-        setAutoSyncConflictPause("startup_local_newer");
+        const pauseReason =
+          extraResult &&
+          typeof extraResult === "object" &&
+          extraResult.reason === "local_changed_during_sync"
+            ? "local_changed_during_sync"
+            : "startup_local_newer";
+        setAutoSyncConflictPause(pauseReason);
         clearAutoSyncRuntimeQueue();
       } else {
         clearPendingAutoSyncRequest();
@@ -14711,7 +14979,15 @@
       resetAutoSyncFailureState();
       recordSyncSuccess(action, syncMode);
       updateLastSyncTimeDisplay();
-      return { status: "success", action };
+      const baseResult = { status: "success", action };
+      if (
+        extraResult &&
+        typeof extraResult === "object" &&
+        !Array.isArray(extraResult)
+      ) {
+        return { ...baseResult, ...extraResult };
+      }
+      return baseResult;
     };
     const asConflictResult = (reason) => {
       syncOutcome = "conflict";
@@ -14782,6 +15058,25 @@
         forcePullOnStartup: settings.syncForcePullOnStartup,
       });
       const syncAction = versionDecision.action;
+      const guardAgainstDirtyPullOverwrite = (stage) => {
+        if (!syncDirtyNeedsFollowUpSync) {
+          return null;
+        }
+        console.warn(
+          "S1 Plus (Sync): 同步期间检测到本地改动，已取消自动拉取以避免覆盖本地更改。",
+          {
+            stage,
+            mode: syncMode,
+          }
+        );
+        assertAutoSyncLockOwned(`return_${stage}_dirty_guard`);
+        if (isStartupSync) {
+          return asSuccessResult("skipped_push_on_startup", null, {
+            reason: "local_changed_during_sync",
+          });
+        }
+        return asConflictResult("local_changed_during_sync");
+      };
 
       // --- 执行阶段 ---
       switch (syncAction) {
@@ -14797,6 +15092,12 @@
           console.log(
             `S1 Plus (Sync): 检测到启动时强制拉取已开启，将使用云端数据覆盖本地。`
           );
+          {
+            const dirtyGuardResult = guardAgainstDirtyPullOverwrite("force_pull");
+            if (dirtyGuardResult) {
+              return dirtyGuardResult;
+            }
+          }
           assertAutoSyncLockOwned("apply_force_pull_remote_data");
           importLocalData(JSON.stringify(remote.full), {
             suppressPostSync: true,
@@ -14809,6 +15110,12 @@
 
         case "pull":
           console.log(`S1 Plus (Sync): 远程数据比本地新，正在后台应用...`);
+          {
+            const dirtyGuardResult = guardAgainstDirtyPullOverwrite("pull");
+            if (dirtyGuardResult) {
+              return dirtyGuardResult;
+            }
+          }
           assertAutoSyncLockOwned("apply_pull_remote_data");
           importLocalData(JSON.stringify(remote.full), {
             suppressPostSync: true,
@@ -15095,17 +15402,30 @@
         !Array.isArray(saved.openInNewTab)
         ? sanitizeRecordObject(saved.openInNewTab)
         : {};
+    const legacyOpenInNewTabRootKeys = [
+      "openThreadsInNewTab",
+      "openThreadsInBackground",
+      "openProgressInNewTab",
+      "openProgressInBackground",
+    ];
+    const legacyOpenInNewTabNestedKeys = [
+      "master",
+      "threads",
+      "threadsInBackground",
+      "sidebar",
+      "sidebarInBackground",
+      "plainTextUrls",
+      "plainTextUrlsInBackground",
+    ];
+    const legacyOpenInNewTabRootKeySet = new Set(legacyOpenInNewTabRootKeys);
+    const legacyOpenInNewTabNestedKeySet = new Set(legacyOpenInNewTabNestedKeys);
 
-    const hasLegacyOpenInNewTabRootKeys =
-      typeof saved.openThreadsInNewTab !== "undefined" ||
-      typeof saved.openThreadsInBackground !== "undefined" ||
-      typeof saved.openProgressInNewTab !== "undefined" ||
-      typeof saved.openProgressInBackground !== "undefined";
-    const hasLegacyOpenInNewTabNestedKeys =
-      typeof savedOpenInNewTab.threads !== "undefined" ||
-      typeof savedOpenInNewTab.threadsInBackground !== "undefined" ||
-      typeof savedOpenInNewTab.sidebar !== "undefined" ||
-      typeof savedOpenInNewTab.sidebarInBackground !== "undefined";
+    const hasLegacyOpenInNewTabRootKeys = legacyOpenInNewTabRootKeys.some(
+      (key) => typeof saved[key] !== "undefined"
+    );
+    const hasLegacyOpenInNewTabNestedKeys = legacyOpenInNewTabNestedKeys.some(
+      (key) => typeof savedOpenInNewTab[key] !== "undefined"
+    );
     const hasLegacyOpenInNewTabPlainTextKeys =
       typeof savedOpenInNewTab.plainTextUrls !== "undefined" ||
       typeof savedOpenInNewTab.plainTextUrlsInBackground !== "undefined";
@@ -15192,37 +15512,6 @@
       normalizedOpenInNewTab[key] = normalizedValue;
     });
     settings.openInNewTab = normalizedOpenInNewTab;
-
-    const legacyRootKeys = [
-      "openThreadsInNewTab",
-      "openThreadsInBackground",
-      "openProgressInNewTab",
-      "openProgressInBackground",
-    ];
-    legacyRootKeys.forEach((key) => {
-      if (Object.prototype.hasOwnProperty.call(settings, key)) {
-        delete settings[key];
-        markMigration(`open_in_new_tab_legacy_root_key_removed:${key}`);
-      }
-    });
-
-    if (settings.openInNewTab && typeof settings.openInNewTab === "object") {
-      const legacyNestedKeys = [
-        "master",
-        "threads",
-        "threadsInBackground",
-        "sidebar",
-        "sidebarInBackground",
-        "plainTextUrls",
-        "plainTextUrlsInBackground",
-      ];
-      legacyNestedKeys.forEach((key) => {
-        if (Object.prototype.hasOwnProperty.call(settings.openInNewTab, key)) {
-          delete settings.openInNewTab[key];
-          markMigration(`open_in_new_tab_legacy_nested_key_removed:${key}`);
-        }
-      });
-    }
 
     const normalizedSavedCustomNavLinks = normalizeCustomNavLinks(
       saved.customNavLinks
@@ -15338,6 +15627,59 @@
     if (Object.prototype.hasOwnProperty.call(settings, "autoLinkBilibiliPlainText")) {
       delete settings.autoLinkBilibiliPlainText;
       markMigration("auto_link_bilibili_plain_text_removed");
+    }
+
+    const legacyReadingProgressCleanupMode =
+      typeof saved.readingProgressCleanupMode === "string"
+        ? saved.readingProgressCleanupMode
+        : "";
+    const cleanupModeSource =
+      typeof saved.cleanupMode === "string"
+        ? saved.cleanupMode
+        : legacyReadingProgressCleanupMode || settings.cleanupMode;
+    const normalizedCleanupMode =
+      String(cleanupModeSource).trim() === "manual" ? "manual" : "auto";
+    if (settings.cleanupMode !== normalizedCleanupMode) {
+      markMigration("cleanup_mode_normalized");
+    }
+    settings.cleanupMode = normalizedCleanupMode;
+    if (
+      Object.prototype.hasOwnProperty.call(settings, "readingProgressCleanupMode")
+    ) {
+      delete settings.readingProgressCleanupMode;
+      markMigration("reading_progress_cleanup_mode_legacy_key_removed");
+    }
+
+    // 清理 settings 中已废弃/未知字段，仅保留当前版本支持的键。
+    const allowedSettingKeys = new Set(Object.keys(defaultSettings));
+    Object.keys(settings).forEach((key) => {
+      if (!allowedSettingKeys.has(key)) {
+        delete settings[key];
+        if (legacyOpenInNewTabRootKeySet.has(key)) {
+          markMigration(`open_in_new_tab_legacy_root_key_removed:${key}`);
+        } else {
+          markMigration(`legacy_setting_key_removed:${key}`);
+        }
+      }
+    });
+    if (
+      settings.openInNewTab &&
+      typeof settings.openInNewTab === "object" &&
+      !Array.isArray(settings.openInNewTab)
+    ) {
+      const allowedOpenInNewTabKeys = new Set(
+        Object.keys(defaultSettings.openInNewTab)
+      );
+      Object.keys(settings.openInNewTab).forEach((key) => {
+        if (!allowedOpenInNewTabKeys.has(key)) {
+          delete settings.openInNewTab[key];
+          if (legacyOpenInNewTabNestedKeySet.has(key)) {
+            markMigration(`open_in_new_tab_legacy_nested_key_removed:${key}`);
+          } else {
+            markMigration(`open_in_new_tab_unknown_nested_key_removed:${key}`);
+          }
+        }
+      });
     }
 
     return { settings, migrationApplied, migrationReasons };
@@ -16637,6 +16979,189 @@
     }
   };
 
+  const getNavbarPersistentSyncAlertDescriptor = () => {
+    const conflictPauseState = getActiveAutoSyncConflictPause();
+    if (conflictPauseState) {
+      const pauseReason = String(conflictPauseState.reason || "");
+      const pauseTimestamp = Number(conflictPauseState.timestamp) || 0;
+      if (pauseReason === "local_changed_during_sync") {
+        return {
+          type: "local_changed_during_sync",
+          signature: `pause:${pauseReason}:${pauseTimestamp}`,
+          text: "同步暂停：本地改动待处理",
+          title:
+            "检测到您在自动同步期间有本地操作，已暂停自动拉取。点击“处理”执行手动同步。",
+          actionLabel: "处理",
+          dismissLabel: "忽略本次",
+        };
+      }
+      if (pauseReason === "startup_local_newer") {
+        return {
+          type: "startup_local_newer",
+          signature: `pause:${pauseReason}:${pauseTimestamp}`,
+          text: "同步暂停：本地数据较新",
+          title:
+            "启动时检测到本地数据比云端更新，已暂停自动推送。点击“处理”执行手动同步。",
+          actionLabel: "处理",
+          dismissLabel: "忽略本次",
+        };
+      }
+      return {
+        type: "conflict_paused",
+        signature: `pause:${pauseReason || "generic"}:${pauseTimestamp}`,
+        text: "同步暂停：冲突待处理",
+        title: "自动同步因冲突已暂停。点击“处理”执行手动同步。",
+        actionLabel: "处理",
+        dismissLabel: "忽略本次",
+      };
+    }
+
+    const circuitState = getAutoSyncCircuitState();
+    if (circuitState.open) {
+      const resumeTime = new Date(circuitState.until).toLocaleTimeString("zh-CN", {
+        hour12: false,
+      });
+      return {
+        type: "circuit_open",
+        signature: `circuit_open:${Number(circuitState.until) || 0}`,
+        text: "同步暂停：连续失败",
+        title: `自动同步连续失败，预计 ${resumeTime} 后自动恢复。点击“处理”可立即手动同步。`,
+        actionLabel: "处理",
+        dismissLabel: "忽略本次",
+      };
+    }
+
+    return null;
+  };
+
+  const ensureNavbarPersistentSyncAlertElement = () => {
+    const settings = getSettings();
+    const existingAlert = document.getElementById("s1p-nav-sync-sticky-alert");
+    const managerLink = document.getElementById("s1p-nav-link");
+    if (!settings.syncRemoteEnabled || !managerLink) {
+      if (existingAlert) {
+        existingAlert.remove();
+      }
+      return null;
+    }
+
+    if (existingAlert) {
+      return existingAlert;
+    }
+
+    const li = document.createElement("li");
+    li.id = "s1p-nav-sync-sticky-alert";
+    li.classList.add("s1p-has-tooltip");
+    li.setAttribute("aria-live", "polite");
+
+    const wrap = document.createElement("span");
+    wrap.className = "s1p-nav-sync-sticky-alert-wrap";
+
+    const text = document.createElement("span");
+    text.className = "s1p-nav-sync-sticky-alert-text";
+
+    const actionButton = document.createElement("button");
+    actionButton.type = "button";
+    actionButton.className = "s1p-nav-sync-sticky-alert-action";
+
+    const dismissButton = document.createElement("button");
+    dismissButton.type = "button";
+    dismissButton.className = "s1p-nav-sync-sticky-alert-dismiss";
+
+    wrap.appendChild(text);
+    wrap.appendChild(actionButton);
+    wrap.appendChild(dismissButton);
+    li.appendChild(wrap);
+
+    const indicator = document.getElementById("s1p-nav-auto-sync-indicator");
+    const syncButton = document.getElementById("s1p-nav-sync-btn");
+    if (indicator) {
+      indicator.insertAdjacentElement("afterend", li);
+    } else if (syncButton) {
+      syncButton.insertAdjacentElement("afterend", li);
+    } else {
+      managerLink.insertAdjacentElement("afterend", li);
+    }
+
+    return li;
+  };
+
+  const renderNavbarPersistentSyncAlert = () => {
+    const descriptor = getNavbarPersistentSyncAlertDescriptor();
+    if (!descriptor) {
+      clearNavbarPersistentSyncAlertDismissedSignature();
+      document.getElementById("s1p-nav-sync-sticky-alert")?.remove();
+      return;
+    }
+    const descriptorSignature = String(descriptor.signature || "");
+    const dismissedSignature = getNavbarPersistentSyncAlertDismissedSignature();
+    if (
+      dismissedSignature &&
+      descriptorSignature &&
+      dismissedSignature !== descriptorSignature
+    ) {
+      clearNavbarPersistentSyncAlertDismissedSignature();
+    } else if (
+      dismissedSignature &&
+      descriptorSignature &&
+      dismissedSignature === descriptorSignature
+    ) {
+      document.getElementById("s1p-nav-sync-sticky-alert")?.remove();
+      return;
+    }
+
+    const alertLi = ensureNavbarPersistentSyncAlertElement();
+    if (!alertLi) {
+      return;
+    }
+
+    const textEl = alertLi.querySelector(".s1p-nav-sync-sticky-alert-text");
+    const actionBtn = alertLi.querySelector(".s1p-nav-sync-sticky-alert-action");
+    const dismissBtn = alertLi.querySelector(".s1p-nav-sync-sticky-alert-dismiss");
+    if (
+      !(textEl instanceof HTMLElement) ||
+      !(actionBtn instanceof HTMLButtonElement) ||
+      !(dismissBtn instanceof HTMLButtonElement)
+    ) {
+      return;
+    }
+
+    alertLi.dataset.alertType = descriptor.type;
+    alertLi.dataset.alertSignature = descriptorSignature;
+    textEl.textContent = descriptor.text;
+    actionBtn.textContent = descriptor.actionLabel || "处理";
+    dismissBtn.textContent = descriptor.dismissLabel || "忽略本次";
+    actionBtn.disabled = Boolean(manualSyncInFlightPromise || forceSyncInFlight);
+    actionBtn.onclick = async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (manualSyncInFlightPromise || forceSyncInFlight) {
+        return;
+      }
+      actionBtn.disabled = true;
+      try {
+        clearNavbarPersistentSyncAlertDismissedSignature();
+        await handleManualSync();
+      } catch (error) {
+        console.error("S1 Plus: 常驻同步提示触发手动同步失败:", error);
+      } finally {
+        renderNavbarPersistentSyncAlert();
+      }
+    };
+    dismissBtn.disabled = false;
+    dismissBtn.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!descriptorSignature) {
+        return;
+      }
+      setNavbarPersistentSyncAlertDismissedSignature(descriptorSignature);
+      document.getElementById("s1p-nav-sync-sticky-alert")?.remove();
+    };
+
+    setCustomTooltip(alertLi, descriptor.title || descriptor.text);
+  };
+
   const ensureNavbarAutoSyncIndicatorElement = () => {
     const settings = getSettings();
     const existingIndicator = document.getElementById("s1p-nav-auto-sync-indicator");
@@ -16706,6 +17231,7 @@
 
     indicatorLi.dataset.syncState = displayPhase;
     setCustomTooltip(indicatorLi, getAutoSyncIndicatorTitleByPhase(displayPhase));
+    renderNavbarPersistentSyncAlert();
   };
 
   const initializeAutoSyncIndicatorCrossTabSync = () => {
@@ -16733,6 +17259,12 @@
           renderNavbarAutoSyncIndicator(nextState);
         }
       );
+      GM_addValueChangeListener(AUTO_SYNC_CONFLICT_PAUSE_KEY, () => {
+        renderNavbarPersistentSyncAlert();
+      });
+      GM_addValueChangeListener(AUTO_SYNC_CIRCUIT_OPEN_UNTIL_KEY, () => {
+        renderNavbarPersistentSyncAlert();
+      });
     }
 
     const refreshIndicator = () => {
@@ -16740,6 +17272,7 @@
         return;
       }
       renderNavbarAutoSyncIndicator();
+      renderNavbarPersistentSyncAlert();
     };
 
     document.addEventListener("visibilitychange", () => {
@@ -16755,15 +17288,16 @@
     const settings = getSettings();
     const existingBtnLi = document.getElementById("s1p-nav-sync-btn");
     const managerLink = document.getElementById("s1p-nav-link");
-
     if (!settings.syncRemoteEnabled) {
       if (existingBtnLi) existingBtnLi.remove();
       document.getElementById("s1p-nav-auto-sync-indicator")?.remove();
+      document.getElementById("s1p-nav-sync-sticky-alert")?.remove();
       return;
     }
 
     if (existingBtnLi || !managerLink) {
       renderNavbarAutoSyncIndicator();
+      renderNavbarPersistentSyncAlert();
       return;
     }
 
@@ -16886,6 +17420,7 @@
 
     managerLink.insertAdjacentElement("afterend", li);
     renderNavbarAutoSyncIndicator();
+    renderNavbarPersistentSyncAlert();
   };
 
   const ensureMyThreadsQuickLink = () => {
@@ -16950,6 +17485,7 @@
     document.getElementById("s1p-nav-link")?.remove();
     document.getElementById("s1p-nav-sync-btn")?.remove();
     document.getElementById("s1p-nav-auto-sync-indicator")?.remove();
+    document.getElementById("s1p-nav-sync-sticky-alert")?.remove();
 
     if (settings.enableNavCustomization) {
       navUl.textContent = "";
@@ -25505,11 +26041,11 @@
   // [新增] S1 NUX 安装推荐函数
   const handleNuxRecommendation = () => {
     // 1. 如果已启用 NUX，则不执行任何操作
-    if (isS1NuxEnabled) return;
+    if (isS1NuxEnabled) return false;
 
     // 2. 检查用户是否在设置中关闭了推荐
     const settings = getSettings();
-    if (!settings.recommendS1Nux) return;
+    if (!settings.recommendS1Nux) return false;
 
     // 3. 频率控制：每7天最多推荐一次
     const LAST_REC_KEY = "s1p_last_nux_recommendation_timestamp";
@@ -25521,7 +26057,7 @@
       console.log(
         "S1 Plus: S1 NUX recommendation throttled (less than 7 days ago)."
       );
-      return;
+      return false;
     }
 
     // 4. 创建并显示推荐弹窗
@@ -25571,6 +26107,7 @@
 
     // 5. 更新推荐时间戳
     GM_setValue(LAST_REC_KEY, now);
+    return true;
   };
 
   /**
@@ -26331,8 +26868,12 @@
               return true;
             }
             if (result.action === "skipped_push_on_startup") {
+              const skippedByLocalChangeDuringSync =
+                result.reason === "local_changed_during_sync";
               showMessage(
-                "检测到本地数据较新，已跳过本次启动自动推送。请稍后在导航栏手动同步。",
+                skippedByLocalChangeDuringSync
+                  ? "检测到您在自动同步期间有本地操作，已暂停自动拉取以保护更改。请稍后在导航栏手动同步。"
+                  : "检测到本地数据较新，已跳过本次启动自动推送。请稍后在导航栏手动同步。",
                 false
               );
             }
@@ -26419,16 +26960,25 @@
             setTimeout(() => location.reload(), 1500);
             return true;
           } else if (result.action === "skipped_push_on_startup") {
-            if (!(await shouldShowConflictModal("startup_local_newer"))) {
+            const skippedByLocalChangeDuringSync =
+              result.reason === "local_changed_during_sync";
+            const conflictModalType = skippedByLocalChangeDuringSync
+              ? "local_changed_during_sync"
+              : "startup_local_newer";
+            if (!(await shouldShowConflictModal(conflictModalType))) {
               showMessage(
-                "检测到本地数据较新，已进入提示冷却。请稍后在导航栏手动同步。",
+                skippedByLocalChangeDuringSync
+                  ? "检测到您在自动同步期间有本地操作，已暂停自动拉取以保护更改。请稍后在导航栏手动同步。"
+                  : "检测到本地数据较新，已进入提示冷却。请稍后在导航栏手动同步。",
                 false
               );
               return false;
             }
             createAdvancedConfirmationModal(
               "检测到本地有未同步的更改",
-              "<p>S1 Plus 在启动时发现，您的本地数据比云端备份要新。这可能意味着您在其他设备的工作未推送，或有离线修改未同步。</p><p>为防止数据丢失，自动同步已暂停。请选择如何处理：</p>",
+              skippedByLocalChangeDuringSync
+                ? "<p>S1 Plus 检测到您在自动同步过程中进行了本地操作。为避免云端拉取覆盖您的新更改，本轮自动拉取已暂停。</p><p>请手动同步并选择要保留的版本，以完成一次安全同步。</p>"
+                : "<p>S1 Plus 在启动时发现，您的本地数据比云端备份要新。这可能意味着您在其他设备的工作未推送，或有离线修改未同步。</p><p>为防止数据丢失，自动同步已暂停。请选择如何处理：</p>",
               [
                 {
                   text: "稍后处理",
@@ -26512,6 +27062,56 @@
     }
 
     return false;
+  };
+
+  const runStartupSyncFlowDeferred = ({
+    welcomePopupWasShown = false,
+    shouldTryNuxRecommendation = false,
+  } = {}) => {
+    const runFlow = async () => {
+      try {
+        const startupSyncResult = await handleStartupSync();
+        if (startupSyncResult === true) {
+          return;
+        }
+
+        const isReloadingAfterPerLoadSync = await handlePerLoadSyncCheck();
+        if (isReloadingAfterPerLoadSync) {
+          return;
+        }
+
+        let tokenPopupWasShown = false;
+        // 保持原有顺序：同步流程结束后再做 Token 过期提醒，避免弹窗互相覆盖。
+        if (!welcomePopupWasShown && startupSyncResult !== "popup_shown") {
+          tokenPopupWasShown = checkTokenExpiry() === true;
+        }
+
+        if (
+          shouldTryNuxRecommendation &&
+          !welcomePopupWasShown &&
+          startupSyncResult !== "popup_shown" &&
+          !tokenPopupWasShown
+        ) {
+          handleNuxRecommendation();
+        }
+      } catch (error) {
+        console.error("S1 Plus: 延迟执行启动同步流程失败:", error);
+      }
+    };
+
+    if (typeof window.requestIdleCallback === "function") {
+      window.requestIdleCallback(
+        () => {
+          runFlow();
+        },
+        { timeout: STARTUP_SYNC_IDLE_TIMEOUT_MS }
+      );
+      return;
+    }
+
+    window.setTimeout(() => {
+      runFlow();
+    }, STARTUP_SYNC_IDLE_FALLBACK_DELAY_MS);
   };
 
   /**
@@ -26655,38 +27255,17 @@
 
   async function main() {
     // [即时生效] 立即应用楼层屏蔽CSS类，防止FOUC (Flash of Unstyled Content)
-    // 必须放在 await handleStartupSync 之前
+    // 必须在页面初始化早期执行
     hideSystemBlockedPosts();
     migrateLegacySettingsIfNeeded();
 
     // [修改] 调用欢迎弹窗并接收其状态
     const welcomePopupWasShown = showFirstTimeWelcomeIfNeeded();
 
-    // --- [核心修改] 按照您的建议，分离启动同步的调用 ---
-    // 步骤1: 尝试执行每日首次同步
-    const startupSyncResult = await handleStartupSync();
-    if (startupSyncResult === true) {
-      return; // 如果页面即将刷新，则中断后续所有脚本初始化操作
-    }
-    // 步骤2: 尝试执行常规的“每次加载”同步检查
-    const isReloadingAfterPerLoadSync = await handlePerLoadSyncCheck();
-    if (isReloadingAfterPerLoadSync) {
-      return; // 如果页面即将刷新，则中断后续所有脚本初始化操作
-    }
-
-    // [FIX] 将 Token 过期检查移到同步流程之后，避免弹窗被同步弹窗覆盖
-    if (!welcomePopupWasShown && startupSyncResult !== "popup_shown") {
-      checkTokenExpiry();
-    }
-
     migrateLegacyReadProgressData();
     cleanupOldReadProgress();
     detectS1Nux();
-
-    // [核心修正] 只有在未显示欢迎弹窗时，才检查NUX推荐，避免冲突
-    if (!welcomePopupWasShown) {
-      handleNuxRecommendation();
-    }
+    const shouldTryNuxRecommendation = !welcomePopupWasShown;
 
     initializeNavbar();
     initializeAutoSyncIndicatorCrossTabSync();
@@ -27264,6 +27843,12 @@
     applyChanges();
     const watchTarget = resolveObserverWatchTarget();
     observer.observe(watchTarget, { childList: true, subtree: true });
+
+    // 初始化完成后再调度启动同步，避免每日首次加载时主流程阻塞。
+    runStartupSyncFlowDeferred({
+      welcomePopupWasShown,
+      shouldTryNuxRecommendation,
+    });
   }
 
   function applyChanges() {
