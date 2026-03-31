@@ -2911,10 +2911,23 @@
       padding: 8px 16px 16px;
       overflow-y: auto;
       flex-grow: 1;
-      /* --- [调试新增] --- */
-      transition: height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
       /* 暂时移除 flex-grow 以便手动控制高度 */
       flex-grow: 0;
+    }
+    .s1p-modal > .s1p-modal-content > .s1p-modal-body {
+      scrollbar-gutter: stable both-edges;
+      transition: height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    @supports not (scrollbar-gutter: stable) {
+      .s1p-modal > .s1p-modal-content > .s1p-modal-body {
+        /* 兼容不支持 scrollbar-gutter 的浏览器：固定显示滚动条以避免宽度跳变。 */
+        overflow-y: scroll;
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .s1p-modal > .s1p-modal-content > .s1p-modal-body {
+        transition: none !important;
+      }
     }
     .s1p-modal-footer {
       /* [MODIFIED] 增加上下内边距，为按钮阴影提供空间 */
@@ -18467,7 +18480,7 @@
     if (slider && activeTab) {
       // --- [核心修正] 动画参数现在由JS直接控制 ---
       // 您可以在这里轻松修改动画时长，单位是秒(s)
-      const animationDuration = "0.45s";
+      const animationDuration = isS1pReducedMotionPreferred() ? "0s" : "0.35s";
       const animationEasing = "cubic-bezier(0.4, 0, 0.2, 1)";
       // ---------------------------------------------
 
@@ -21628,14 +21641,188 @@
 
     let handleTabSliderLayoutChange = null;
     let tabSliderResizeObserver = null;
+    let modalBodyContentResizeObserver = null;
+    let observedModalBodyTabContent = null;
+    let modalBodyObserverIgnoreCallbacks = 0;
     let settingsModalOpenAnimationTimer = 0;
     let settingsModalCloseAnimationTimer = 0;
+    let modalBodyHeightAnimationTimer = 0;
+    let modalBodyHeightReconcileRaf = 0;
+    let modalBodyHeightPendingReconcile = false;
+    let modalBodyHeightOriginalOverflowY = null;
+    let modalBodyHeightTransitionHandler = null;
     const SETTINGS_MODAL_OPEN_ANIMATION_MS = 280;
     const SETTINGS_MODAL_ANIMATION_FALLBACK_GAP_MS = 80;
+    const SETTINGS_MODAL_BODY_HEIGHT_ANIMATION_MS = 350;
     const SETTINGS_MODAL_OPEN_ANIMATION_NAME = "s1p-settings-modal-scale-in";
     const SETTINGS_MODAL_CLOSE_ANIMATION_NAME = "s1p-settings-modal-scale-out";
     let isClosingManagementModal = false;
     const SETTINGS_MODAL_CLOSE_ANIMATION_MS = 250;
+    const restoreModalBodyHeightVisualState = (modalBody) => {
+      if (!modalBody) {
+        return;
+      }
+      if (modalBodyHeightOriginalOverflowY !== null) {
+        modalBody.style.overflowY = modalBodyHeightOriginalOverflowY;
+        modalBodyHeightOriginalOverflowY = null;
+      }
+      modalBody.style.willChange = "";
+    };
+    const stopModalBodyHeightAnimation = (
+      modalBody,
+      { resetToAuto = false, keepVisualLock = false } = {}
+    ) => {
+      if (!modalBody) {
+        return;
+      }
+      if (modalBodyHeightTransitionHandler) {
+        modalBody.removeEventListener(
+          "transitionend",
+          modalBodyHeightTransitionHandler
+        );
+        modalBodyHeightTransitionHandler = null;
+      }
+      if (modalBodyHeightAnimationTimer) {
+        window.clearTimeout(modalBodyHeightAnimationTimer);
+        modalBodyHeightAnimationTimer = 0;
+      }
+      if (modalBodyHeightReconcileRaf) {
+        window.cancelAnimationFrame(modalBodyHeightReconcileRaf);
+        modalBodyHeightReconcileRaf = 0;
+      }
+      if (resetToAuto) {
+        modalBodyHeightPendingReconcile = false;
+        restoreModalBodyHeightVisualState(modalBody);
+        modalBody.style.height = "auto";
+      }
+      if (!keepVisualLock && !resetToAuto) {
+        restoreModalBodyHeightVisualState(modalBody);
+      }
+    };
+    const finalizeModalBodyHeightAnimation = (modalBody, targetHeight) => {
+      modalBody.style.height = targetHeight;
+      stopModalBodyHeightAnimation(modalBody, {
+        resetToAuto: false,
+        keepVisualLock: false,
+      });
+      if (modalBodyHeightPendingReconcile) {
+        scheduleModalBodyHeightReconcile();
+      }
+    };
+    const animateSettingsModalBodyHeight = (modalBody, applyLayoutChange) => {
+      if (typeof applyLayoutChange !== "function") {
+        return;
+      }
+      if (!modalBody || !modalBody.isConnected) {
+        applyLayoutChange();
+        return;
+      }
+      const prefersReducedMotion = isS1pReducedMotionPreferred();
+      stopModalBodyHeightAnimation(modalBody, { resetToAuto: false });
+      if (prefersReducedMotion) {
+        applyLayoutChange();
+        modalBody.style.height = "auto";
+        return;
+      }
+
+      modalBodyHeightOriginalOverflowY = modalBody.style.overflowY || "";
+      modalBody.style.overflowY = "hidden";
+      modalBody.style.willChange = "height";
+      const oldHeight = modalBody.getBoundingClientRect().height;
+      modalBody.style.height = `${oldHeight.toFixed(3)}px`;
+      applyLayoutChange();
+
+      requestAnimationFrame(() => {
+        if (!modalBody.isConnected) {
+          return;
+        }
+        // 目标高度按“最终滚动状态”测量，避免 hidden/auto 切换导致尾段跳变。
+        modalBody.style.overflowY = modalBodyHeightOriginalOverflowY || "";
+        modalBody.style.height = "auto";
+        const newHeight = modalBody.getBoundingClientRect().height;
+        modalBody.style.overflowY = "hidden";
+        modalBody.style.height = `${oldHeight.toFixed(3)}px`;
+        requestAnimationFrame(() => {
+          if (!modalBody.isConnected) {
+            return;
+          }
+          const targetHeight = `${newHeight.toFixed(3)}px`;
+          if (Math.abs(newHeight - oldHeight) < 1) {
+            finalizeModalBodyHeightAnimation(modalBody, targetHeight);
+            return;
+          }
+          const finalizeHeightAnimation = () => {
+            finalizeModalBodyHeightAnimation(modalBody, targetHeight);
+          };
+          modalBodyHeightTransitionHandler = (event) => {
+            if (event.target !== modalBody) {
+              return;
+            }
+            if (event.propertyName && event.propertyName !== "height") {
+              return;
+            }
+            finalizeHeightAnimation();
+          };
+          modalBody.addEventListener(
+            "transitionend",
+            modalBodyHeightTransitionHandler
+          );
+          modalBodyHeightAnimationTimer = window.setTimeout(
+            finalizeHeightAnimation,
+            SETTINGS_MODAL_BODY_HEIGHT_ANIMATION_MS +
+            SETTINGS_MODAL_ANIMATION_FALLBACK_GAP_MS
+          );
+          modalBody.style.height = targetHeight;
+        });
+      });
+    };
+    const updateObservedModalBodyTabContent = () => {
+      if (!modalBodyContentResizeObserver) {
+        return;
+      }
+      const activeTab = modal.querySelector(".s1p-tab-content.active");
+      const nextObserved = activeTab instanceof Element ? activeTab : null;
+      if (observedModalBodyTabContent === nextObserved) {
+        return;
+      }
+      if (observedModalBodyTabContent instanceof Element) {
+        try {
+          modalBodyContentResizeObserver.unobserve(observedModalBodyTabContent);
+        } catch (_) {}
+      }
+      observedModalBodyTabContent = nextObserved;
+      if (observedModalBodyTabContent instanceof Element) {
+        // 切换观察目标后，忽略首轮/次轮回调，避免“初始上报”触发额外高度补动画。
+        modalBodyObserverIgnoreCallbacks = 2;
+        modalBodyContentResizeObserver.observe(observedModalBodyTabContent);
+      }
+    };
+    const scheduleModalBodyHeightReconcile = () => {
+      modalBodyHeightPendingReconcile = true;
+      if (modalBodyHeightReconcileRaf) {
+        return;
+      }
+      modalBodyHeightReconcileRaf = window.requestAnimationFrame(() => {
+        modalBodyHeightReconcileRaf = 0;
+        if (!modal.isConnected || isClosingManagementModal) {
+          modalBodyHeightPendingReconcile = false;
+          return;
+        }
+        if (!modalBodyHeightPendingReconcile) {
+          return;
+        }
+        const modalBody = modal.querySelector(".s1p-modal-body");
+        if (!modalBody || !modalBody.isConnected) {
+          modalBodyHeightPendingReconcile = false;
+          return;
+        }
+        if (modalBodyHeightTransitionHandler || modalBodyHeightAnimationTimer) {
+          return;
+        }
+        modalBodyHeightPendingReconcile = false;
+        animateSettingsModalBodyHeight(modalBody, () => {});
+      });
+    };
     const closeManagementModal = () => {
       if (isClosingManagementModal) {
         return;
@@ -21654,6 +21841,10 @@
       if (tabSliderResizeObserver) {
         tabSliderResizeObserver.disconnect();
       }
+      if (modalBodyContentResizeObserver) {
+        modalBodyContentResizeObserver.disconnect();
+        observedModalBodyTabContent = null;
+      }
       if (modalThemeSyncTimer) {
         window.clearInterval(modalThemeSyncTimer);
         modalThemeSyncTimer = 0;
@@ -21666,6 +21857,9 @@
         window.clearTimeout(settingsModalCloseAnimationTimer);
         settingsModalCloseAnimationTimer = 0;
       }
+      stopModalBodyHeightAnimation(modal.querySelector(".s1p-modal-body"), {
+        resetToAuto: true,
+      });
       modal.classList.remove("s1p-modal-opening");
       modal.style.pointerEvents = "none";
       modal.style.opacity = "0";
@@ -21853,6 +22047,20 @@
     if (typeof ResizeObserver === "function") {
       tabSliderResizeObserver = new ResizeObserver(syncTabSliderLayout);
       tabSliderResizeObserver.observe(tabContainer);
+      const handleModalBodyContentResize = () => {
+        if (!modal.isConnected || isClosingManagementModal) {
+          return;
+        }
+        if (modalBodyObserverIgnoreCallbacks > 0) {
+          modalBodyObserverIgnoreCallbacks -= 1;
+          return;
+        }
+        scheduleModalBodyHeightReconcile();
+      };
+      modalBodyContentResizeObserver = new ResizeObserver(
+        handleModalBodyContentResize
+      );
+      updateObservedModalBodyTabContent();
     }
 
     modal.classList.add("s1p-modal-opening");
@@ -21995,25 +22203,9 @@
           contentWrapper &&
           contentWrapper.classList.contains("s1p-feature-content")
         ) {
-          const oldHeight = modalBody.offsetHeight;
-          modalBody.style.height = `${oldHeight}px`;
-          contentWrapper.classList.toggle("expanded", isChecked);
-          requestAnimationFrame(() => {
-            modalBody.style.height = "auto";
-            const newHeight = modalBody.offsetHeight;
-            modalBody.style.height = `${oldHeight}px`;
-            requestAnimationFrame(() => {
-              modalBody.style.height = `${newHeight}px`;
-            });
+          animateSettingsModalBodyHeight(modalBody, () => {
+            contentWrapper.classList.toggle("expanded", isChecked);
           });
-          modalBody.addEventListener(
-            "transitionend",
-            function onEnd() {
-              modalBody.removeEventListener("transitionend", onEnd);
-              modalBody.style.height = "auto";
-            },
-            { once: true }
-          );
         }
 
         switch (featureKey) {
@@ -22152,15 +22344,27 @@
       ) {
         closeManagementModal();
       }
-      if (e.target.matches(".s1p-tab-btn")) {
-        const tabContainer = e.target.closest(".s1p-tabs");
-        modal
-          .querySelectorAll(".s1p-tab-btn, .s1p-tab-content")
-          .forEach((el) => el.classList.remove("active"));
-        e.target.classList.add("active");
-        const activeTab = tabs[e.target.dataset.tab];
-        if (activeTab) activeTab.classList.add("active");
-        moveTabSlider(tabContainer);
+      const tabButton = target.closest(".s1p-tab-btn");
+      if (tabButton) {
+        const tabContainer = tabButton.closest(".s1p-tabs");
+        const nextTab = tabs[tabButton.dataset.tab];
+        const shouldSwitchTab =
+          !!tabContainer &&
+          !!nextTab &&
+          !tabButton.classList.contains("active");
+        if (shouldSwitchTab) {
+          modalBodyHeightPendingReconcile = false;
+          const modalBody = modal.querySelector(".s1p-modal-body");
+          animateSettingsModalBodyHeight(modalBody, () => {
+            modal
+              .querySelectorAll(".s1p-tab-btn, .s1p-tab-content")
+              .forEach((el) => el.classList.remove("active"));
+            tabButton.classList.add("active");
+            nextTab.classList.add("active");
+            updateObservedModalBodyTabContent();
+          });
+          moveTabSlider(tabContainer);
+        }
       }
 
       if (target.id === "s1p-manual-block-user-btn") {
