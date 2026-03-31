@@ -379,8 +379,9 @@ sequenceDiagram
 
 | 场景 | 关键实现 | 默认时长 | 是否动画 |
 |---|---|---|---|
-| Tab 内容切换 | `.s1p-tab-content` 使用 `display: none/block` | N/A | ❌（内容本体） |
-| Tab 滑块 | `.s1p-tab-slider` 的 `width/transform` 过渡（JS 驱动） | `0.35s` | ✅ |
+| Tab 内容切换（内容本体） | `.s1p-tab-content` 使用 `display: none/block` | N/A | ❌ |
+| Tab 切换高度过渡 | `tab click` 中对 `.s1p-modal > .s1p-modal-content > .s1p-modal-body` 做 JS 高度过渡（持续像素锁 + 自动对齐） | `0.35s` | ✅ |
+| Tab 滑块 | `.s1p-tab-slider` 的 `width/transform` 过渡（JS 驱动） | `0.35s`（`reduced-motion` 下 `0s`） | ✅ |
 | 通用折叠区 | `.s1p-collapsible-content` `grid-template-rows: 0fr ↔ 1fr` + `padding-top` | `0.4s` | ✅ |
 | 已屏蔽楼层分组 | `.s1p-thread-posts.s1p-collapsible-content` 同样走 `grid-template-rows` | `0.4s` | ✅ |
 | 功能总开关展开 | `modal change` 事件中对 `.s1p-modal-body` 做 JS 高度过渡（FLIP 变体） | `0.35s` | ✅ |
@@ -392,25 +393,23 @@ sequenceDiagram
 1. Tab 的“内容区”不做过渡动画  
 当前是 `display` 切换，浏览器无法对 `display` 过渡。
 
-2. 总开关展开/收起动画由 JS 控制父容器高度  
-代码路径在设置面板 `modal.addEventListener("change", ...)` 中：
+2. 总开关展开/收起与 Tab 切换共用同一套高度动画  
+代码路径通过 `animateSettingsModalBodyHeight(...)` 统一触发（`change` 与 `tab click`）：
 
 ```javascript
-const oldHeight = modalBody.offsetHeight;
-modalBody.style.height = `${oldHeight}px`;
-contentWrapper.classList.toggle("expanded", isChecked);
-requestAnimationFrame(() => {
-  modalBody.style.height = "auto";
-  const newHeight = modalBody.offsetHeight;
-  modalBody.style.height = `${oldHeight}px`;
-  requestAnimationFrame(() => {
-    modalBody.style.height = `${newHeight}px`;
-  });
+animateSettingsModalBodyHeight(modalBody, () => {
+  contentWrapper.classList.toggle("expanded", isChecked);
 });
 ```
 
-3. `.s1p-feature-content` 自身动画目前被禁用  
+3. 高度动画采用“持续像素锁 + 自动对齐”  
+动画收尾不立即切回 `height:auto`，以避免尾段抖动；当激活 tab 内容真实变化时，由 `ResizeObserver` 触发一次补偿对齐动画。为避免切换 tab 时“初始回调”引发二次弹动，会忽略首轮/次轮观察回调。
+
+4. `.s1p-feature-content` 自身动画目前被禁用  
 这是当前代码中的显式状态（`transition: none`），用于避免与父容器高度动画叠加导致节奏混乱。
+
+5. Tab 切换复用同一套父容器高度过渡  
+Tab 内容本体仍为 `display` 切换；视觉过渡来自 `.s1p-modal-body` 的高度动画，能根据不同 tab 内容高度平滑收敛。
 
 ### 11.3 与 S1 NUX 的动画冲突
 
