@@ -1684,6 +1684,21 @@
     .s1p-modal.s1p-nux-vine-tab-tone .s1p-tab-btn.active {
       color: #fff6fb;
     }
+    /* S1 NUX 可能覆盖全局 transition-duration，隔离设置弹窗核心动画节奏 */
+    .s1p-modal.s1p-nux-transition-isolation > .s1p-modal-content > .s1p-modal-body {
+      transition-property: height !important;
+      transition-duration: 0.35s !important;
+      transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1) !important;
+    }
+    .s1p-modal.s1p-nux-transition-isolation .s1p-tab-slider {
+      transition-duration: 0.35s !important;
+      transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1) !important;
+    }
+    .s1p-modal.s1p-nux-transition-isolation .s1p-tab-content,
+    .s1p-modal.s1p-nux-transition-isolation .s1p-collapsible-content,
+    .s1p-modal.s1p-nux-transition-isolation .s1p-thread-posts.s1p-collapsible-content {
+      transition-duration: 0s !important;
+    }
 
     /* --- [S1PLUS-MOD] 帖子列表最终布局修正 --- */
     /* [MODIFIED] 此处已移除隐藏 .icn 和 .icn_new 的样式规则 */
@@ -2928,6 +2943,10 @@
       .s1p-modal > .s1p-modal-content > .s1p-modal-body {
         transition: none !important;
       }
+      .s1p-collapsible-content > div,
+      .s1p-thread-posts.s1p-collapsible-content > div {
+        transition: none !important;
+      }
     }
     .s1p-modal-footer {
       /* [MODIFIED] 增加上下内边距，为按钮阴影提供空间 */
@@ -3022,9 +3041,6 @@
       border-radius: 4px;
       box-shadow: 0 1px 2px rgba(var(--s1p-shadow-color-rgb), 0.1);
     }
-    .s1p-tab-content.active {
-      display: block;
-    }
     .s1p-tab-btn {
       position: relative;
       z-index: 1;
@@ -3049,9 +3065,44 @@
       color: var(--s1p-t);
       cursor: default;
     }
-    .s1p-tab-content {
-      display: none;
+    .s1p-tab-panels {
+      position: relative;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      align-items: start;
+    }
+    .s1p-modal > .s1p-modal-content .s1p-tab-content {
+      grid-column: 1;
+      grid-row: 1;
+      width: 100%;
+      min-width: 0;
+      min-height: 0;
+      height: 0;
+      overflow: hidden;
+      visibility: hidden;
+      pointer-events: none;
+      opacity: 0;
+      z-index: 0;
       padding-top: 0;
+      content-visibility: hidden;
+      contain-intrinsic-size: 1px 480px;
+      transition: none !important;
+    }
+    .s1p-modal > .s1p-modal-content .s1p-tab-content.active {
+      height: auto;
+      overflow: visible;
+      visibility: visible;
+      pointer-events: auto;
+      opacity: 1;
+      z-index: 1;
+      content-visibility: visible;
+      contain-intrinsic-size: auto;
+    }
+    .s1p-modal > .s1p-modal-content .s1p-tab-content.s1p-tab-content-cold {
+      content-visibility: hidden;
+    }
+    .s1p-modal > .s1p-modal-content .s1p-tab-content.s1p-tab-content-prewarm {
+      contain-intrinsic-size: 1px 420px;
     }
 
     .s1p-tabs-wrapper {
@@ -3073,6 +3124,25 @@
       color: var(--s1p-desc-t);
       font-size: 12px;
       line-height: 1.5;
+    }
+    .s1p-list-pagination {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 10px;
+      flex-wrap: wrap;
+    }
+    .s1p-list-pagination-info {
+      font-size: 12px;
+      color: var(--s1p-desc-t);
+      line-height: 1.4;
+    }
+    .s1p-list-pagination .s1p-list-pagination-btn {
+      padding: 4px 10px;
+      min-height: 28px;
+      font-size: 12px;
+      line-height: 1.2;
     }
     /* 展开状态下的列表，移除顶部间距以更紧凑 */
     .s1p-thread-posts.expanded .s1p-list {
@@ -3148,15 +3218,20 @@
       display: grid;
       grid-template-rows: 0fr;
       padding: 0;
-      transition: grid-template-rows 0.4s cubic-bezier(0.4, 0, 0.2, 1),
-        padding 0.4s cubic-bezier(0.4, 0, 0.2, 1) !important;
+      /* 设置面板主高度由 modal-body 统一动画，内部列表避免再叠加二次过渡。 */
+      transition: none !important;
     }
     .s1p-thread-posts.s1p-collapsible-content > div {
       overflow: hidden;
+      opacity: 0;
+      transition: opacity 0.22s ease;
     }
     .s1p-thread-posts.s1p-collapsible-content.expanded {
       grid-template-rows: 1fr;
       padding: 0 12px 12px 12px; /* 移除上边距，保持其他边距 */
+    }
+    .s1p-thread-posts.s1p-collapsible-content.expanded > div {
+      opacity: 1;
     }
     .s1p-item-toggle {
       font-size: 12px;
@@ -3596,15 +3671,20 @@
       display: grid;
       grid-template-rows: 0fr;
       padding-top: 0;
-      transition: grid-template-rows 0.4s cubic-bezier(0.4, 0, 0.2, 1),
-        padding-top 0.4s cubic-bezier(0.4, 0, 0.2, 1) !important;
+      /* 设置面板主高度由 modal-body 统一动画，内部列表避免再叠加二次过渡。 */
+      transition: none !important;
     }
     .s1p-collapsible-content > div {
       overflow: hidden;
+      opacity: 0;
+      transition: opacity 0.22s ease;
     }
     .s1p-collapsible-content.expanded {
       grid-template-rows: 1fr;
       padding-top: 12px;
+    }
+    .s1p-collapsible-content.expanded > div {
+      opacity: 1;
     }
 
     /* --- Feature Content Animation --- */
@@ -5460,6 +5540,7 @@
   ]);
   const NUX_SEGMENTED_CONTRAST_FIX_CLASS = "s1p-nux-segmented-contrast-fix";
   const NUX_VINE_TAB_TONE_CLASS = "s1p-nux-vine-tab-tone";
+  const NUX_TRANSITION_ISOLATION_CLASS = "s1p-nux-transition-isolation";
   const NUX_SEGMENTED_ACTIVE_TEXT_COLOR_VAR =
     "--s1p-segmented-active-contrast-text";
   const NUX_SEGMENTED_LOW_CONTRAST_SEC_SIGNATURES = [
@@ -5623,6 +5704,13 @@
       );
     targetModal.classList.toggle(NUX_VINE_TAB_TONE_CLASS, isVineBySecColor);
   };
+  const applyNuxTransitionIsolationFix = (settingsModal = null) => {
+    const targetModal = settingsModal || document.querySelector(".s1p-modal");
+    if (!(targetModal instanceof HTMLElement)) {
+      return;
+    }
+    targetModal.classList.toggle(NUX_TRANSITION_ISOLATION_CLASS, isS1NuxEnabled);
+  };
 
   const resolveFallbackBackgroundColor = () => {
     const bodyColor = parseRgbaColor(
@@ -5756,6 +5844,7 @@
         return;
       }
       applyNuxDarkTextContrastFix();
+      applyNuxTransitionIsolationFix();
       applyNuxSegmentedContrastFix();
       applyNuxVineTabToneFix();
     };
@@ -17599,106 +17688,6 @@
     }
   }
 
-  // [REPLACED] Bookmark search component with safe highlighting
-  /**
-   * Sets up the interactive search functionality for the bookmarks tab.
-   * @param {HTMLElement} bookmarksTabElement The container element for the bookmarks tab.
-   */
-  function setupBookmarkSearchComponent(bookmarksTabElement) {
-    const searchInput = bookmarksTabElement.querySelector(
-      "#s1p-bookmark-search-input"
-    );
-    const clearButton = bookmarksTabElement.querySelector(
-      "#s1p-bookmark-search-clear-btn"
-    );
-    const list = bookmarksTabElement.querySelector("#s1p-bookmarks-list");
-    const noResultsMessage = bookmarksTabElement.querySelector(
-      "#s1p-bookmarks-no-results"
-    );
-    const emptyMessage = bookmarksTabElement.querySelector(
-      "#s1p-bookmarks-empty-message"
-    );
-
-    if (!searchInput || !list || !clearButton || !noResultsMessage) return;
-
-    const restoreNodeChildren = (target, sourceSnapshot) => {
-      const clone = sourceSnapshot.cloneNode(true);
-      target.replaceChildren(...Array.from(clone.childNodes));
-    };
-
-    const allItems = Array.from(list.querySelectorAll(".s1p-item"));
-    const itemCache = allItems.map((item) => {
-      const contentEl = item.querySelector(".s1p-item-content");
-      const metaEl = item.querySelector(".s1p-item-meta");
-      const contentSnapshot = contentEl.cloneNode(true);
-      const metaSnapshot = metaEl.cloneNode(true);
-
-      return {
-        element: item,
-        searchableText: (
-          contentEl.textContent +
-          " " +
-          metaEl.textContent
-        ).toLowerCase(),
-        contentEl: contentEl,
-        metaEl: metaEl,
-        contentSnapshot: contentSnapshot,
-        metaSnapshot: metaSnapshot,
-      };
-    });
-
-    const performSearch = () => {
-      const query = searchInput.value.toLowerCase().trim();
-      clearButton.classList.toggle("hidden", query.length === 0);
-
-      const keywords = query.split(/\s+/).filter((k) => k);
-      let visibleCount = 0;
-
-      const highlightRegex =
-        keywords.length > 0
-          ? new RegExp(keywords.map(escapeRegExp).join("|"), "gi")
-          : null;
-
-      for (const item of itemCache) {
-        const isVisible =
-          keywords.length === 0 ||
-          keywords.every((keyword) => item.searchableText.includes(keyword));
-
-        // Reset highlights first by restoring original DOM snapshots
-        restoreNodeChildren(item.contentEl, item.contentSnapshot);
-        restoreNodeChildren(item.metaEl, item.metaSnapshot);
-        item.element.style.display = isVisible ? "flex" : "none";
-
-        if (isVisible) {
-          visibleCount++;
-          if (highlightRegex) {
-            // Apply new, safe highlighting that only targets text nodes
-            highlightTextInNode(item.contentEl, highlightRegex);
-            highlightTextInNode(item.metaEl, highlightRegex);
-          }
-        }
-      }
-
-      const hasAnyItems = allItems.length > 0;
-      list.style.display = hasAnyItems ? "flex" : "none";
-      emptyMessage.style.display = !hasAnyItems ? "block" : "none";
-      noResultsMessage.style.display =
-        hasAnyItems && visibleCount === 0 && query.length > 0
-          ? "block"
-          : "none";
-    };
-
-    searchInput.addEventListener("input", performSearch);
-
-    clearButton.addEventListener("click", () => {
-      searchInput.value = "";
-      performSearch();
-      searchInput.focus();
-    });
-
-    clearButton.classList.toggle("hidden", searchInput.value.length === 0);
-  }
-
   // --- UI 创建 ---
   const formatDate = (timestamp) => new Date(timestamp).toLocaleString("zh-CN");
 
@@ -18906,6 +18895,17 @@
 
 
   const createManagementModal = () => {
+    const settingsModalTabDefinitions = [
+      { key: "general-settings", label: "通用设置" },
+      { key: "threads", label: "帖子屏蔽" },
+      { key: "users", label: "用户屏蔽" },
+      { key: "tags", label: "用户标记" },
+      { key: "bookmarks", label: "回复收藏" },
+      { key: "nav-settings", label: "导航栏定制" },
+      { key: "sync", label: "设置同步" },
+    ];
+    const getSettingsModalTabButtonId = (tabKey) => `s1p-tab-btn-${tabKey}`;
+    const getSettingsModalTabPanelId = (tabKey) => `s1p-tab-${tabKey}`;
     const calculateModalWidth = () => {
       const measureContainer = document.createElement("div");
       measureContainer.style.cssText =
@@ -18914,18 +18914,10 @@
       const tabsDiv = document.createElement("div");
       tabsDiv.className = "s1p-tabs";
       tabsDiv.style.display = "inline-flex";
-      [
-        "通用设置",
-        "帖子屏蔽",
-        "用户屏蔽",
-        "用户标记",
-        "回复收藏",
-        "导航栏定制",
-        "设置同步",
-      ].forEach((text) => {
+      settingsModalTabDefinitions.forEach(({ label }) => {
         const btn = document.createElement("button");
         btn.className = "s1p-tab-btn";
-        btn.textContent = text;
+        btn.textContent = label;
         tabsDiv.appendChild(btn);
       });
       measureContainer.appendChild(tabsDiv);
@@ -19090,6 +19082,37 @@
         </div>
       </div>
     `;
+    const buildSettingsModalTabsHtml = () => {
+      const tabButtonsHtml = settingsModalTabDefinitions
+        .map(({ key, label }, index) => {
+          const isActive = index === 0;
+          return `<button
+              id="${getSettingsModalTabButtonId(key)}"
+              class="s1p-tab-btn${isActive ? " active" : ""}"
+              data-tab="${key}"
+              type="button"
+            >${label}</button>`;
+        })
+        .join("");
+      const tabPanelsHtml = settingsModalTabDefinitions
+        .map(({ key }, index) => {
+          const isActive = index === 0;
+          return `<div
+              id="${getSettingsModalTabPanelId(key)}"
+              class="s1p-tab-content${isActive ? " active" : ""}"
+            ></div>`;
+        })
+        .join("");
+      return `
+        <div class="s1p-tabs-wrapper">
+          <div class="s1p-tabs">
+            <div class="s1p-tab-slider"></div>
+            ${tabButtonsHtml}
+          </div>
+        </div>
+        <div class="s1p-tab-panels">${tabPanelsHtml}</div>
+      `;
+    };
 
     const modal = document.createElement("div");
     modal.className = "s1p-modal";
@@ -19100,25 +19123,7 @@
       tooltipText: "关闭设置面板",
     })}</div>
             <div class="s1p-modal-body">
-                <div class="s1p-tabs-wrapper">
-                    <div class="s1p-tabs">
-                        <div class="s1p-tab-slider"></div>
-                        <button class="s1p-tab-btn active" data-tab="general-settings">通用设置</button>
-                        <button class="s1p-tab-btn" data-tab="threads">帖子屏蔽</button>
-                        <button class="s1p-tab-btn" data-tab="users">用户屏蔽</button>
-                        <button class="s1p-tab-btn" data-tab="tags">用户标记</button>
-                        <button class="s1p-tab-btn" data-tab="bookmarks">回复收藏</button>
-                        <button class="s1p-tab-btn" data-tab="nav-settings">导航栏定制</button>
-                        <button class="s1p-tab-btn" data-tab="sync">设置同步</button>
-                    </div>
-                </div>
-                <div id="s1p-tab-general-settings" class="s1p-tab-content active"></div>
-                <div id="s1p-tab-threads" class="s1p-tab-content"></div>
-                <div id="s1p-tab-users" class="s1p-tab-content"></div>
-                <div id="s1p-tab-tags" class="s1p-tab-content"></div>
-                <div id="s1p-tab-bookmarks" class="s1p-tab-content"></div>
-                <div id="s1p-tab-nav-settings" class="s1p-tab-content"></div>
-                <div id="s1p-tab-sync" class="s1p-tab-content"></div>
+                ${buildSettingsModalTabsHtml()}
             </div>
             <div class="s1p-modal-footer">版本: ${SCRIPT_VERSION} (${SCRIPT_RELEASE_DATE})</div>
         </div>`;
@@ -19133,25 +19138,209 @@
       if (!modal.isConnected) {
         return;
       }
+      applyNuxTransitionIsolationFix(modal);
       applyNuxSegmentedContrastFix(modal);
       applyNuxVineTabToneFix(modal);
     };
     syncNuxThemeModalStyles();
     let modalThemeSyncTimer = window.setInterval(syncNuxThemeModalStyles, 350);
 
-    const tabs = {
-      "general-settings": modal.querySelector("#s1p-tab-general-settings"),
-      threads: modal.querySelector("#s1p-tab-threads"),
-      users: modal.querySelector("#s1p-tab-users"),
-      tags: modal.querySelector("#s1p-tab-tags"),
-      bookmarks: modal.querySelector("#s1p-tab-bookmarks"),
-      "nav-settings": modal.querySelector("#s1p-tab-nav-settings"),
-      sync: modal.querySelector("#s1p-tab-sync"),
+    const tabs = settingsModalTabDefinitions.reduce((acc, { key }) => {
+      acc[key] = modal.querySelector(`#${getSettingsModalTabPanelId(key)}`);
+      return acc;
+    }, {});
+    const settingsTabContainer = modal.querySelector(".s1p-tabs");
+    const tabButtons = settingsModalTabDefinitions.reduce((acc, { key }) => {
+      acc[key] = settingsTabContainer?.querySelector(
+        `.s1p-tab-btn[data-tab="${key}"]`
+      );
+      return acc;
+    }, {});
+    let activeSettingsTabKey = settingsModalTabDefinitions[0]?.key || "";
+    const setSingleSettingsTabActiveState = (tabKey, isActive) => {
+      const tabButton = tabButtons[tabKey];
+      if (tabButton) {
+        tabButton.classList.toggle("active", isActive);
+      }
+      const tabPanel = tabs[tabKey];
+      if (tabPanel) {
+        tabPanel.classList.toggle("active", isActive);
+      }
     };
-    let bookmarkTabClickHandler = null;
-    let userTabClickHandler = null;
-    let threadTabClickHandler = null;
-    let navSettingsTabClickHandler = null;
+    const setActiveSettingsTab = (nextTabKey, { focus = false } = {}) => {
+      const normalizedTabKey = String(nextTabKey || "");
+      if (!tabs[normalizedTabKey] || !tabButtons[normalizedTabKey]) {
+        return false;
+      }
+      const previousTabKey = activeSettingsTabKey;
+      if (previousTabKey === normalizedTabKey) {
+        if (focus) {
+          tabButtons[normalizedTabKey]?.focus();
+        }
+        return false;
+      }
+      if (previousTabKey && previousTabKey !== normalizedTabKey) {
+        setSingleSettingsTabActiveState(previousTabKey, false);
+      }
+      setSingleSettingsTabActiveState(normalizedTabKey, true);
+      activeSettingsTabKey = normalizedTabKey;
+      if (focus) {
+        tabButtons[normalizedTabKey]?.focus();
+      }
+      return true;
+    };
+    setActiveSettingsTab(activeSettingsTabKey);
+    let handleBookmarksPanelClick = null;
+    let handleUsersPanelClick = null;
+    let handleThreadsPanelClick = null;
+    let handleNavSettingsPanelClick = null;
+    const settingsModalRenderedTabKeys = new Set();
+    const settingsModalStaleTabKeys = new Set();
+    let settingsModalNeighborPrewarmTimer = 0;
+    let settingsModalNeighborPrewarmIdleHandle = 0;
+    const SETTINGS_MODAL_PREWARM_DELAY_MS = 120;
+    const SETTINGS_MODAL_PREWARM_IDLE_TIMEOUT_MS = 320;
+    const markSettingsTabRendered = (tabKey) => {
+      const normalizedTabKey = String(tabKey || "");
+      if (!normalizedTabKey) {
+        return;
+      }
+      settingsModalRenderedTabKeys.add(normalizedTabKey);
+      settingsModalStaleTabKeys.delete(normalizedTabKey);
+    };
+    const SETTINGS_MODAL_LIST_PAGE_SIZE = 80;
+    const SETTINGS_MODAL_BLOCKED_POST_GROUP_PAGE_SIZE = 24;
+    const SETTINGS_MODAL_LIST_KEY = Object.freeze({
+      TAGS: "tags",
+      BLOCKED_USERS: "blocked-users",
+      MANUAL_THREADS: "manual-threads",
+      BLOCKED_POST_THREAD_GROUPS: "blocked-post-thread-groups",
+      BOOKMARKS: "bookmarks",
+    });
+    const settingsModalListPageState = new Map();
+    let settingsModalBookmarkSearchQuery = "";
+    let settingsModalBookmarkSearchTimer = 0;
+    let settingsModalBookmarkSearchComposing = false;
+    const SETTINGS_MODAL_BOOKMARK_SEARCH_DEBOUNCE_MS = 90;
+    const clearSettingsModalBookmarkSearchTimer = () => {
+      if (!settingsModalBookmarkSearchTimer) {
+        return;
+      }
+      window.clearTimeout(settingsModalBookmarkSearchTimer);
+      settingsModalBookmarkSearchTimer = 0;
+    };
+    const getSettingsModalBookmarkSearchKeywords = (rawQuery) =>
+      String(rawQuery || "")
+        .toLowerCase()
+        .trim()
+        .split(/\s+/)
+        .filter((keyword) => keyword.length > 0);
+    const buildSettingsModalBookmarkSearchText = (bookmarkItem) => {
+      const rawPostId = String(bookmarkItem?.postId ?? "");
+      const authorName = String(
+        bookmarkItem?.authorName || `用户 #${bookmarkItem?.authorId ?? "?"}`
+      );
+      const threadTitle = String(bookmarkItem?.threadTitle || "");
+      const localFullText = String(bookmarkItem?.postContent || "");
+      const previewText = String(bookmarkItem?.contentPreview || "");
+      return [rawPostId, authorName, threadTitle, localFullText || previewText]
+        .join(" ")
+        .toLowerCase();
+    };
+    const filterSettingsModalBookmarkItemsByKeywords = (bookmarkItems, keywords) => {
+      if (!Array.isArray(bookmarkItems) || bookmarkItems.length === 0) {
+        return [];
+      }
+      if (!Array.isArray(keywords) || keywords.length === 0) {
+        return bookmarkItems;
+      }
+      return bookmarkItems.filter((bookmarkItem) => {
+        const searchText = buildSettingsModalBookmarkSearchText(bookmarkItem);
+        return keywords.every((keyword) => searchText.includes(keyword));
+      });
+    };
+    const resolveInputCursorPosition = (inputElement, fallbackValue = "") => {
+      const fallbackLength = String(fallbackValue || "").length;
+      return Number.isFinite(inputElement?.selectionStart)
+        ? inputElement.selectionStart
+        : fallbackLength;
+    };
+    const normalizeSettingsModalListPage = (rawPage, totalPages) => {
+      const numericPage = Number(rawPage);
+      const safeTotalPages = Math.max(1, Number(totalPages) || 1);
+      if (!Number.isFinite(numericPage)) {
+        return 1;
+      }
+      return Math.min(safeTotalPages, Math.max(1, Math.floor(numericPage)));
+    };
+    const getSettingsModalListPageMeta = (
+      listKey,
+      totalItems,
+      pageSize = SETTINGS_MODAL_LIST_PAGE_SIZE
+    ) => {
+      const safeTotalItems = Math.max(0, Number(totalItems) || 0);
+      const safePageSize = Math.max(1, Number(pageSize) || SETTINGS_MODAL_LIST_PAGE_SIZE);
+      const totalPages = Math.max(1, Math.ceil(safeTotalItems / safePageSize));
+      const currentPage = normalizeSettingsModalListPage(
+        settingsModalListPageState.get(String(listKey || "")),
+        totalPages
+      );
+      settingsModalListPageState.set(String(listKey || ""), currentPage);
+      return {
+        currentPage,
+        totalPages,
+        totalItems: safeTotalItems,
+        pageSize: safePageSize,
+      };
+    };
+    const paginateSettingsModalList = (
+      sourceItems,
+      listKey,
+      pageSize = SETTINGS_MODAL_LIST_PAGE_SIZE
+    ) => {
+      const safeItems = Array.isArray(sourceItems) ? sourceItems : [];
+      const meta = getSettingsModalListPageMeta(listKey, safeItems.length, pageSize);
+      const startIndex = (meta.currentPage - 1) * meta.pageSize;
+      const endIndex = Math.min(startIndex + meta.pageSize, safeItems.length);
+      return {
+        ...meta,
+        startIndex,
+        endIndex,
+        visibleItems: safeItems.slice(startIndex, endIndex),
+      };
+    };
+    const buildSettingsModalListPaginationHtml = (
+      listKey,
+      pagination,
+      itemLabel = "条记录"
+    ) => {
+      if (!pagination || pagination.totalPages <= 1) {
+        return "";
+      }
+      const safeListKey = escapeAttr(String(listKey || ""));
+      const pageInfoText = `${pagination.startIndex + 1}-${pagination.endIndex} / ${pagination.totalItems} ${itemLabel}`;
+      return `
+        <div class="s1p-list-pagination">
+          <button
+            type="button"
+            class="s1p-btn s1p-list-pagination-btn"
+            data-action="settings-list-page"
+            data-list-key="${safeListKey}"
+            data-page="${pagination.currentPage - 1}"
+            ${pagination.currentPage <= 1 ? "disabled" : ""}
+          >上一页</button>
+          <span class="s1p-list-pagination-info">第 ${pagination.currentPage} / ${pagination.totalPages} 页 · ${pageInfoText}</span>
+          <button
+            type="button"
+            class="s1p-btn s1p-list-pagination-btn"
+            data-action="settings-list-page"
+            data-list-key="${safeListKey}"
+            data-page="${pagination.currentPage + 1}"
+            ${pagination.currentPage >= pagination.totalPages ? "disabled" : ""}
+          >下一页</button>
+        </div>
+      `;
+    };
     const formatListSummaryText = (count, itemLabel = "条记录") => {
       const safeCount = Math.max(0, Number(count) || 0);
       return `当前共 ${safeCount} ${itemLabel}`;
@@ -19175,12 +19364,11 @@
         summaryEl.textContent = formatListSummaryText(safeCount, itemLabel);
       }
     };
-    const rebindTabClickHandler = (tabElement, previousHandler, nextHandler) => {
-      if (previousHandler) {
-        tabElement.removeEventListener("click", previousHandler);
+    const runSettingsPanelClickDelegate = (delegate, event) => {
+      if (typeof delegate !== "function") {
+        return false;
       }
-      tabElement.addEventListener("click", nextHandler);
-      return nextHandler;
+      return delegate(event) === true;
     };
     const buildPrimaryFeatureToggleHtml = ({
       id,
@@ -19201,6 +19389,7 @@
     `;
     const renderSyncTab = () => {
       tabs["sync"].innerHTML = buildSyncSettingsTabHtml();
+      markSettingsTabRendered("sync");
     };
     renderSyncTab();
     updateLastSyncTimeDisplay();
@@ -19631,6 +19820,7 @@
     updateAutoSyncIndicatorToggleState();
 
     const renderTagsTab = (options = {}) => {
+      markSettingsTabRendered("tags");
       const editingUserId = options.editingUserId;
       const settings = getSettings();
       const isEnabled = settings.enableUserTagging;
@@ -19645,6 +19835,26 @@
       const tagItems = Object.entries(userTags).sort(
         ([, a], [, b]) => (b.timestamp || 0) - (a.timestamp || 0)
       );
+      const normalizedEditingUserId =
+        editingUserId === undefined || editingUserId === null
+          ? ""
+          : String(editingUserId);
+      if (normalizedEditingUserId) {
+        const editingIndex = tagItems.findIndex(
+          ([id]) => String(id) === normalizedEditingUserId
+        );
+        if (editingIndex >= 0) {
+          settingsModalListPageState.set(
+            SETTINGS_MODAL_LIST_KEY.TAGS,
+            Math.floor(editingIndex / SETTINGS_MODAL_LIST_PAGE_SIZE) + 1
+          );
+        }
+      }
+      const tagsPagination = paginateSettingsModalList(
+        tagItems,
+        SETTINGS_MODAL_LIST_KEY.TAGS
+      );
+      const visibleTagItems = tagsPagination.visibleItems;
       tabs["tags"].innerHTML = `
                 ${toggleHTML}
                 <div class="s1p-feature-content ${isEnabled ? "expanded" : ""}">
@@ -19661,17 +19871,22 @@
                             <textarea id="s1p-tags-sync-textarea" class="s1p-input s1p-textarea s1p-sync-textarea" placeholder="在此粘贴导入数据或从此处复制导出数据..." autocomplete="off"></textarea>
                         </div>
 
-	                        <div class="s1p-settings-group">
-	                            ${buildListSummaryHtml(
+		                        <div class="s1p-settings-group">
+		                            ${buildListSummaryHtml(
                                 "s1p-tags-list-summary",
                                 tagItems.length,
                                 "条用户标记"
                               )}
-	                            <div id="s1p-tags-list-container"></div>
-	                        </div>
-	                    </div>
-	                </div>
-	            `;
+		                            <div id="s1p-tags-list-container"></div>
+                                ${buildSettingsModalListPaginationHtml(
+                                  SETTINGS_MODAL_LIST_KEY.TAGS,
+                                  tagsPagination,
+                                  "条用户标记"
+                                )}
+		                        </div>
+		                    </div>
+		                </div>
+		            `;
 
       const listContainer = tabs["tags"].querySelector("#s1p-tags-list-container");
       if (listContainer) {
@@ -19686,7 +19901,7 @@
           const colors = ["", "red", "orange", "yellow", "green", "blue", "purple"];
           const checkSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
 
-          tagItems.forEach(([id, data]) => {
+          visibleTagItems.forEach(([id, data]) => {
             const item = document.createElement("div");
             item.className = "s1p-item";
             item.dataset.userId = String(id ?? "");
@@ -19709,7 +19924,7 @@
             idSpan.textContent = String(id ?? "");
             meta.appendChild(idSpan);
 
-            if (id !== editingUserId) {
+            if (String(id) !== normalizedEditingUserId) {
               meta.appendChild(document.createTextNode(" \u00A0 标记于: "));
               meta.appendChild(
                 document.createTextNode(formatDate(data?.timestamp || Date.now()))
@@ -19720,7 +19935,7 @@
             const actions = document.createElement("div");
             actions.className = "s1p-item-actions";
 
-            if (id === editingUserId) {
+            if (String(id) === normalizedEditingUserId) {
               item.dataset.currentColor = String(data?.color || "");
 
               const editor = document.createElement("div");
@@ -19816,23 +20031,18 @@
         }
       }
 
-      if (editingUserId) {
+      if (normalizedEditingUserId) {
         const textarea = tabs["tags"].querySelector(".s1p-tag-edit-area");
         if (textarea) {
           textarea.focus();
           textarea.selectionStart = textarea.selectionEnd =
             textarea.value.length;
         }
-        // 颜色选择器点击事件
-        tabs["tags"].querySelectorAll(".s1p-color-option").forEach(opt => {
-          opt.addEventListener("click", () => {
-            tabs["tags"].querySelectorAll(".s1p-color-option").forEach(o => o.classList.remove("selected"));
-            opt.classList.add("selected");
-          });
-        });
       }
     };
     const renderBookmarksTab = () => {
+      markSettingsTabRendered("bookmarks");
+      clearSettingsModalBookmarkSearchTimer();
       const settings = getSettings();
       const isEnabled = settings.enableBookmarkReplies;
 
@@ -19846,36 +20056,71 @@
       const bookmarkItems = Object.values(bookmarkedReplies).sort(
         (a, b) => b.timestamp - a.timestamp
       );
-
+      if (bookmarkItems.length === 0) {
+        settingsModalBookmarkSearchQuery = "";
+        settingsModalBookmarkSearchComposing = false;
+      }
+      const normalizedSearchQuery = String(settingsModalBookmarkSearchQuery || "");
+      const bookmarkSearchKeywords = getSettingsModalBookmarkSearchKeywords(
+        normalizedSearchQuery
+      );
+      const hasSearchQuery = bookmarkSearchKeywords.length > 0;
+      const filteredBookmarkItems = filterSettingsModalBookmarkItemsByKeywords(
+        bookmarkItems,
+        bookmarkSearchKeywords
+      );
+      const bookmarksPagination = paginateSettingsModalList(
+        filteredBookmarkItems,
+        SETTINGS_MODAL_LIST_KEY.BOOKMARKS
+      );
+      const visibleBookmarkItems = bookmarksPagination.visibleItems;
       const hasBookmarks = bookmarkItems.length > 0;
+      const hasFilteredResults = filteredBookmarkItems.length > 0;
+      const bookmarkSummaryCount = hasSearchQuery
+        ? filteredBookmarkItems.length
+        : bookmarkItems.length;
+      const bookmarkSummaryLabel = hasSearchQuery
+        ? "条匹配收藏"
+        : "条收藏回复";
+      const bookmarkHighlightRegex = hasSearchQuery
+        ? new RegExp(
+          bookmarkSearchKeywords.map(escapeRegExp).join("|"),
+          "gi"
+        )
+        : null;
       tabs["bookmarks"].innerHTML = `
                 ${toggleHTML}
                 <div class="s1p-feature-content ${isEnabled ? "expanded" : ""}">
                     <div>
-	                        ${hasBookmarks
+		                        ${hasBookmarks
 	          ? `
 	                        <div class="s1p-settings-group s1p-settings-group-margin-bottom16">
 	                            <div class="s1p-search-input-wrapper">
-	                                <input type="text" id="s1p-bookmark-search-input" class="s1p-input" placeholder="搜索内容、作者、标题..." autocomplete="off">
+	                                <input type="text" id="s1p-bookmark-search-input" class="s1p-input" placeholder="搜索内容、作者、标题..." autocomplete="off" value="${escapeAttr(normalizedSearchQuery)}">
 	                                <svg class="s1p-search-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" /></svg>
-                                <button id="s1p-bookmark-search-clear-btn" class="s1p-search-clear-btn s1p-has-tooltip hidden" data-full-tag="清空搜索" aria-label="清空搜索">
-                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" /></svg>
-                                </button>
-                            </div>
-                        </div>`
+	                                <button id="s1p-bookmark-search-clear-btn" class="s1p-search-clear-btn s1p-has-tooltip${normalizedSearchQuery ? "" : " hidden"}" data-full-tag="清空搜索" aria-label="清空搜索">
+	                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" /></svg>
+	                                </button>
+	                            </div>
+	                        </div>`
           : ""
         }
 	                        <div class="s1p-settings-group">
-		                            ${buildListSummaryHtml(
-	                                "s1p-bookmarks-list-summary",
-	                                bookmarkItems.length,
-	                                "条收藏回复"
-	                              )}
-		                            <div id="s1p-bookmarks-list-container"></div>
-		                            <div id="s1p-bookmarks-no-results" class="s1p-empty s1p-hidden">没有找到匹配的收藏</div>
-		                        </div>
-		                    </div>
-		                </div>
+			                            ${buildListSummaryHtml(
+		                                "s1p-bookmarks-list-summary",
+		                                bookmarkSummaryCount,
+		                                bookmarkSummaryLabel
+		                              )}
+			                            <div id="s1p-bookmarks-list-container"></div>
+			                            <div id="s1p-bookmarks-no-results" class="s1p-empty${hasSearchQuery && hasBookmarks && !hasFilteredResults ? "" : " s1p-hidden"}">没有找到匹配的收藏</div>
+                                  ${buildSettingsModalListPaginationHtml(
+                                    SETTINGS_MODAL_LIST_KEY.BOOKMARKS,
+                                    bookmarksPagination,
+                                    bookmarkSummaryLabel
+                                  )}
+			                        </div>
+			                    </div>
+			                </div>
             `;
 
       const bookmarksContainer = tabs["bookmarks"].querySelector(
@@ -19888,12 +20133,12 @@
           emptyEl.className = "s1p-empty";
           emptyEl.textContent = "暂无收藏的回复";
           bookmarksContainer.appendChild(emptyEl);
-        } else {
+        } else if (hasFilteredResults) {
           const listEl = document.createElement("div");
           listEl.className = "s1p-list";
           listEl.id = "s1p-bookmarks-list";
 
-          bookmarkItems.forEach((item) => {
+          visibleBookmarkItems.forEach((item) => {
             const rawPostId = String(item?.postId ?? "");
             const postIdForUrl = encodeURIComponent(rawPostId);
             const threadIdForUrl = encodeURIComponent(String(item?.threadId ?? ""));
@@ -20003,6 +20248,10 @@
             metaLine.appendChild(threadLink);
             metaEl.appendChild(metaLine);
             infoEl.appendChild(metaEl);
+            if (bookmarkHighlightRegex) {
+              highlightTextInNode(contentEl, bookmarkHighlightRegex);
+              highlightTextInNode(metaEl, bookmarkHighlightRegex);
+            }
 
             rowEl.appendChild(infoEl);
             listEl.appendChild(rowEl);
@@ -20011,38 +20260,103 @@
           bookmarksContainer.appendChild(listEl);
         }
       }
-
-      bookmarkTabClickHandler = rebindTabClickHandler(
-        tabs["bookmarks"],
-        bookmarkTabClickHandler,
-        (e) => {
-          const toggleLink = e.target.closest(
-            '[data-action="toggle-bookmark-content"]'
+      const searchInput = tabs["bookmarks"].querySelector("#s1p-bookmark-search-input");
+      const clearSearchButton = tabs["bookmarks"].querySelector(
+        "#s1p-bookmark-search-clear-btn"
+      );
+      const rerenderBookmarksWithSearch = (
+        nextQuery,
+        { preserveFocus = false, cursorPos = 0 } = {}
+      ) => {
+        settingsModalBookmarkSearchQuery = String(nextQuery || "");
+        settingsModalListPageState.set(SETTINGS_MODAL_LIST_KEY.BOOKMARKS, 1);
+        renderBookmarksTab();
+        if (preserveFocus && activeSettingsTabKey === "bookmarks") {
+          const nextInput = tabs["bookmarks"].querySelector(
+            "#s1p-bookmark-search-input"
           );
-          if (toggleLink) {
-            e.preventDefault();
-            e.stopPropagation();
-            const contentItem = toggleLink.closest(".s1p-item-content");
-            if (!contentItem) return;
-            const preview = contentItem.querySelector(".s1p-bookmark-preview");
-            const full = contentItem.querySelector(".s1p-bookmark-full");
-            if (!preview || !full) return;
-
-            const isCurrentlyCollapsed =
-              window.getComputedStyle(full).display === "none";
-            if (isCurrentlyCollapsed) {
-              full.style.display = "block";
-              preview.style.display = "none";
-            } else {
-              full.style.display = "none";
-              preview.style.display = "block";
-            }
+          if (nextInput) {
+            nextInput.focus();
+            const safeCursorPos = Math.max(
+              0,
+              Math.min(Number(cursorPos) || 0, nextInput.value.length)
+            );
+            nextInput.setSelectionRange(safeCursorPos, safeCursorPos);
           }
         }
-      );
-      if (hasBookmarks) {
-        setupBookmarkSearchComponent(tabs["bookmarks"]);
+      };
+      if (searchInput) {
+        const scheduleBookmarksSearchRerender = (nextValue, cursorPos) => {
+          clearSettingsModalBookmarkSearchTimer();
+          settingsModalBookmarkSearchTimer = window.setTimeout(() => {
+            settingsModalBookmarkSearchTimer = 0;
+            rerenderBookmarksWithSearch(nextValue, {
+              preserveFocus: true,
+              cursorPos,
+            });
+          }, SETTINGS_MODAL_BOOKMARK_SEARCH_DEBOUNCE_MS);
+        };
+        searchInput.addEventListener("compositionstart", () => {
+          settingsModalBookmarkSearchComposing = true;
+          clearSettingsModalBookmarkSearchTimer();
+        });
+        searchInput.addEventListener("compositionend", (event) => {
+          settingsModalBookmarkSearchComposing = false;
+          const nextValue = String(event.target?.value || "");
+          const cursorPos = resolveInputCursorPosition(event.target, nextValue);
+          scheduleBookmarksSearchRerender(nextValue, cursorPos);
+        });
+        searchInput.addEventListener("input", (event) => {
+          if (event.isComposing || settingsModalBookmarkSearchComposing) {
+            return;
+          }
+          const nextValue = String(event.target?.value || "");
+          const cursorPos = resolveInputCursorPosition(event.target, nextValue);
+          scheduleBookmarksSearchRerender(nextValue, cursorPos);
+        });
       }
+      if (clearSearchButton) {
+        clearSearchButton.addEventListener("click", () => {
+          settingsModalBookmarkSearchComposing = false;
+          clearSettingsModalBookmarkSearchTimer();
+          rerenderBookmarksWithSearch("", {
+            preserveFocus: true,
+            cursorPos: 0,
+          });
+        });
+      }
+
+      handleBookmarksPanelClick = (e) => {
+        const panel = tabs["bookmarks"];
+        const target = e.target;
+        if (!(panel instanceof Element) || !panel.contains(target)) {
+          return false;
+        }
+        const toggleLink = target.closest('[data-action="toggle-bookmark-content"]');
+        if (!toggleLink) {
+          return false;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        const contentItem = toggleLink.closest(".s1p-item-content");
+        if (!contentItem) {
+          return true;
+        }
+        const preview = contentItem.querySelector(".s1p-bookmark-preview");
+        const full = contentItem.querySelector(".s1p-bookmark-full");
+        if (!preview || !full) {
+          return true;
+        }
+        const isCurrentlyCollapsed = window.getComputedStyle(full).display === "none";
+        if (isCurrentlyCollapsed) {
+          full.style.display = "block";
+          preview.style.display = "none";
+        } else {
+          full.style.display = "none";
+          preview.style.display = "block";
+        }
+        return true;
+      };
     };
     const openManualUserBlockModal = (
       defaultUsername = "",
@@ -20177,8 +20491,16 @@
           const remark = rawRemarkInput.trim();
           const nativeSyncSucceeded = await blockUser(userId, userName, remark);
 
-          renderUserTab();
-          renderThreadTab();
+          if (activeSettingsTabKey === "users") {
+            const modalBody = modal.querySelector(".s1p-modal-body");
+            animateSettingsModalBodyHeight(modalBody, () => {
+              renderUserTab();
+              updateObservedModalBodyTabContent();
+            });
+          } else {
+            refreshSettingsTabWithLazyPolicy("users", renderUserTab);
+          }
+          refreshSettingsTabWithLazyPolicy("threads", renderThreadTab);
           closeModal();
 
           showUserBlockResultMessage(
@@ -20243,6 +20565,7 @@
       }, 50);
     };
     const renderUserTab = () => {
+      markSettingsTabRendered("users");
       const settings = getSettings();
       const isEnabled = settings.enableUserBlocking;
 
@@ -20256,6 +20579,11 @@
       const userItemIds = Object.keys(blockedUsers).sort(
         (a, b) => blockedUsers[b].timestamp - blockedUsers[a].timestamp
       );
+      const blockedUsersPagination = paginateSettingsModalList(
+        userItemIds,
+        SETTINGS_MODAL_LIST_KEY.BLOCKED_USERS
+      );
+      const visibleUserItemIds = blockedUsersPagination.visibleItems;
       const nativeBlacklistLinkHtml = `<a class="s1p-bookmark-thread-link s1p-has-tooltip" href="${NATIVE_BLACKLIST_VIEW_URL}" target="_blank" rel="noopener noreferrer" data-full-tag="论坛黑名单"><span class="s1p-bookmark-title-text">论坛黑名单</span>${SVG_ICON_EXTERNAL_LINK}</a>`;
       const contentHTML = `
                 <div class="s1p-settings-group s1p-settings-group-compact">
@@ -20301,12 +20629,12 @@
                         "位屏蔽用户"
                       )}
 	                    <div id="s1p-blocked-user-list-container">
-		                        ${userItemIds.length === 0
-	          ? `<div class="s1p-empty">暂无屏蔽的用户</div>`
-          : `<div class="s1p-list">${userItemIds
-            .map((id) => {
-              const item = blockedUsers[id];
-              const safeIdAttr = escapeAttr(id);
+			                        ${userItemIds.length === 0
+		          ? `<div class="s1p-empty">暂无屏蔽的用户</div>`
+	          : `<div class="s1p-list">${visibleUserItemIds
+	            .map((id) => {
+	              const item = blockedUsers[id];
+	              const safeIdAttr = escapeAttr(id);
               const displayName = item?.name || `用户 #${id}`;
               const safeDisplayName = escapeHTML(displayName);
               // [新增] 根据标记生成状态提示
@@ -20349,11 +20677,16 @@
                 </div>
               </div>`;
             })
-            .join("")}</div>`
-        }
-                    </div>
-                </div>
-            `;
+	            .join("")}</div>`
+	        }
+	                    </div>
+                        ${buildSettingsModalListPaginationHtml(
+                          SETTINGS_MODAL_LIST_KEY.BLOCKED_USERS,
+                          blockedUsersPagination,
+                          "位屏蔽用户"
+                        )}
+	                </div>
+	            `;
       tabs["users"].innerHTML = `
                 ${toggleHTML}
                 <div class="s1p-feature-content ${isEnabled ? "expanded" : ""}">
@@ -20361,55 +20694,55 @@
                 </div>
             `;
 
-      // [新增] 备注编辑事件监听
-      userTabClickHandler = rebindTabClickHandler(
-        tabs["users"],
-        userTabClickHandler,
-        (e) => {
-          const target = e.target;
-          if (
-            target.classList.contains("s1p-add-remark-btn") ||
-            target.classList.contains("s1p-edit-remark-btn")
-          ) {
-            const userId = target.dataset.userId;
-            const currentRemark = target.dataset.currentRemark || "";
-
-            // Replaced prompt with custom input modal
-            const blockedUsers = getBlockedUsers(); // [Fix] Get users to display name
-            const userName = blockedUsers[userId]?.name || `用户 #${userId}`; // [Fix] Get user name
-            const safeUserName = escapeHTML(userName);
-
-            createInputModal(
-              "编辑备注",
-              `请为 <strong>${safeUserName}</strong> 添加或修改备注（留空则删除备注）：`,
-              currentRemark,
-              (newRemark) => {
-                const blockedUsers = getBlockedUsers();
-                const currentUser = blockedUsers[userId];
-                if (currentUser) {
-                  const nextUser = { ...currentUser };
-                  if (newRemark === null || newRemark.trim() === "") {
-                    delete nextUser.remark;
-                  } else {
-                    nextUser.remark = newRemark.trim();
-                  }
-                  const nextBlockedUsers = {
-                    ...blockedUsers,
-                    [userId]: nextUser,
-                  };
-                  saveBlockedUsers(nextBlockedUsers);
-                  renderUserTab(); // Re-render to show changes
-                }
-              },
-              "保存",
-              "",
-              { allowSubtitleHtml: true }
-            );
-          }
+      // [新增] 备注编辑事件监听（由 modal 级事件委托触发）
+      handleUsersPanelClick = (e) => {
+        const panel = tabs["users"];
+        const target = e.target;
+        if (!(panel instanceof Element) || !panel.contains(target)) {
+          return false;
         }
-      );
+        if (
+          !target.classList.contains("s1p-add-remark-btn") &&
+          !target.classList.contains("s1p-edit-remark-btn")
+        ) {
+          return false;
+        }
+        const userId = target.dataset.userId;
+        const currentRemark = target.dataset.currentRemark || "";
+        const blockedUsers = getBlockedUsers();
+        const userName = blockedUsers[userId]?.name || `用户 #${userId}`;
+        const safeUserName = escapeHTML(userName);
+        createInputModal(
+          "编辑备注",
+          `请为 <strong>${safeUserName}</strong> 添加或修改备注（留空则删除备注）：`,
+          currentRemark,
+          (newRemark) => {
+            const latestBlockedUsers = getBlockedUsers();
+            const currentUser = latestBlockedUsers[userId];
+            if (currentUser) {
+              const nextUser = { ...currentUser };
+              if (newRemark === null || newRemark.trim() === "") {
+                delete nextUser.remark;
+              } else {
+                nextUser.remark = newRemark.trim();
+              }
+              const nextBlockedUsers = {
+                ...latestBlockedUsers,
+                [userId]: nextUser,
+              };
+              saveBlockedUsers(nextBlockedUsers);
+              renderUserTab();
+            }
+          },
+          "保存",
+          "",
+          { allowSubtitleHtml: true }
+        );
+        return true;
+      };
     };
     const renderThreadTab = () => {
+      markSettingsTabRendered("threads");
       setSettingsModalDirtyState(SETTINGS_MODAL_DIRTY_TAB.THREAD_RULES, false);
       const settings = getSettings();
       const isEnabled = settings.enablePostBlocking;
@@ -20424,9 +20757,43 @@
       const manualItemIds = Object.keys(blockedThreads).sort(
         (a, b) => blockedThreads[b].timestamp - blockedThreads[a].timestamp
       );
+      const manualThreadsPagination = paginateSettingsModalList(
+        manualItemIds,
+        SETTINGS_MODAL_LIST_KEY.MANUAL_THREADS
+      );
+      const visibleManualItemIds = manualThreadsPagination.visibleItems;
       const blockedPosts = getBlockedPosts();
       const blockedPostIds = Object.keys(blockedPosts).sort(
         (a, b) => blockedPosts[b].timestamp - blockedPosts[a].timestamp
+      );
+      const blockedPostThreadGroups = (() => {
+        if (blockedPostIds.length === 0) {
+          return [];
+        }
+        const postsByThread = new Map();
+        blockedPostIds.forEach((postId) => {
+          const post = blockedPosts[postId];
+          const threadId = String(post?.threadId ?? "unknown_thread");
+          if (!postsByThread.has(threadId)) {
+            postsByThread.set(threadId, {
+              threadId,
+              threadTitle: post?.threadTitle,
+              posts: [],
+            });
+          }
+          postsByThread.get(threadId).posts.push(post);
+        });
+        return Array.from(postsByThread.values());
+      })();
+      const blockedPostThreadGroupsPagination = paginateSettingsModalList(
+        blockedPostThreadGroups,
+        SETTINGS_MODAL_LIST_KEY.BLOCKED_POST_THREAD_GROUPS,
+        SETTINGS_MODAL_BLOCKED_POST_GROUP_PAGE_SIZE
+      );
+      const visibleBlockedPostThreadGroups =
+        blockedPostThreadGroupsPagination.visibleItems;
+      const blockedPostCollapsedThreads = sanitizeRecordObject(
+        GM_getValue("s1p_blocked_posts_collapsed_threads", {})
       );
       const initialTitleFilterRules = getTitleFilterRules();
       const keywordRuleCount = initialTitleFilterRules.length;
@@ -20480,12 +20847,12 @@
                             manualItemIds.length,
                             "条手动屏蔽帖子"
                           )}
-		                    ${manualItemIds.length === 0
-          ? `<div class="s1p-empty">暂无手动屏蔽的帖子</div>`
-          : `<div class="s1p-list">${manualItemIds
-            .map((id) => {
-              const item = blockedThreads[id];
-              const safeThreadIdAttr = escapeAttr(id);
+			                    ${manualItemIds.length === 0
+	          ? `<div class="s1p-empty">暂无手动屏蔽的帖子</div>`
+	          : `<div class="s1p-list">${visibleManualItemIds
+	            .map((id) => {
+	              const item = blockedThreads[id];
+	              const safeThreadIdAttr = escapeAttr(id);
               const safeTitleText = escapeHTML(item.title || `帖子 #${id}`);
               const reasonText =
                 item.reason && item.reason !== "manual"
@@ -20498,10 +20865,15 @@
                   item.timestamp
                 )} ${reasonText}</div></div><button class="s1p-unblock-btn s1p-btn" data-unblock-thread-id="${safeThreadIdAttr}">取消屏蔽</button></div>`;
             })
-            .join("")}</div>`
-        }
-                    </div>
-                    </div>
+	            .join("")}</div>`
+	        }
+	                    </div>
+                        ${buildSettingsModalListPaginationHtml(
+                          SETTINGS_MODAL_LIST_KEY.MANUAL_THREADS,
+                          manualThreadsPagination,
+                          "条手动屏蔽帖子"
+                        )}
+	                </div>
                 </div>
 
                 <div class="s1p-settings-group">
@@ -20518,30 +20890,9 @@
           if (blockedPostIds.length === 0) {
             return `<div class="s1p-empty">暂无屏蔽的楼层</div>`;
           }
-
-          // 按threadId分组
-          const postsByThread = new Map();
-          blockedPostIds.forEach((postId) => {
-            const post = blockedPosts[postId];
-            const threadId = String(post?.threadId ?? "unknown_thread");
-            if (!postsByThread.has(threadId)) {
-              postsByThread.set(threadId, {
-                threadId,
-                threadTitle: post?.threadTitle,
-                posts: [],
-              });
-            }
-            postsByThread.get(threadId).posts.push(post);
-          });
-
-          // 获取折叠状态
-          const collapsedThreads = sanitizeRecordObject(
-            GM_getValue("s1p_blocked_posts_collapsed_threads", {})
-          );
-
-          return `<div class="s1p-thread-groups">${Array.from(postsByThread.values())
+          return `<div class="s1p-thread-groups">${visibleBlockedPostThreadGroups
             .map((thread) => {
-              const isCollapsed = collapsedThreads[thread.threadId] === true;
+              const isCollapsed = blockedPostCollapsedThreads[thread.threadId] === true;
               const safeThreadIdAttr = escapeAttr(thread.threadId);
               const safeThreadTitleText = escapeHTML(
                 thread.threadTitle || "未知帖子"
@@ -20570,6 +20921,11 @@
             .join("")}</div>`;
         })()
         }
+                        ${buildSettingsModalListPaginationHtml(
+                          SETTINGS_MODAL_LIST_KEY.BLOCKED_POST_THREAD_GROUPS,
+                          blockedPostThreadGroupsPagination,
+                          "个帖子分组"
+                        )}
                     </div>
                     </div>
                 </div>
@@ -20760,125 +21116,148 @@
         setSettingsModalDirtyState(SETTINGS_MODAL_DIRTY_TAB.THREAD_RULES, false);
       };
 
-      threadTabClickHandler = rebindTabClickHandler(
-        tabs["threads"],
-        threadTabClickHandler,
-        (e) => {
-          const target = e.target;
-          const header = target.closest(".s1p-collapsible-header");
-
-          if (header) {
-            if (header.id === "s1p-blocked-by-keyword-header") {
-              const currentSettings = getSettingsForWrite();
-              const isNowExpanded = !currentSettings.showBlockedByKeywordList;
-              currentSettings.showBlockedByKeywordList = isNowExpanded;
-              saveSettings(currentSettings);
-
+      handleThreadsPanelClick = (e) => {
+        const panel = tabs["threads"];
+        const target = e.target;
+        if (!(panel instanceof Element) || !panel.contains(target)) {
+          return false;
+        }
+        const animateThreadsSubListToggle = (applyLayoutChange) => {
+          const modalBody = modal.querySelector(".s1p-modal-body");
+          // 显式高度动画时，短暂忽略 RO 的初始回调，避免尾段二次补动画。
+          modalBodyObserverIgnoreCallbacks = Math.max(
+            modalBodyObserverIgnoreCallbacks,
+            2
+          );
+          animateSettingsModalBodyHeight(modalBody, applyLayoutChange);
+        };
+        const header = target.closest(".s1p-collapsible-header");
+        if (header) {
+          if (header.id === "s1p-blocked-by-keyword-header") {
+            const currentSettings = getSettingsForWrite();
+            const isNowExpanded = !currentSettings.showBlockedByKeywordList;
+            currentSettings.showBlockedByKeywordList = isNowExpanded;
+            saveSettings(currentSettings);
+            animateThreadsSubListToggle(() => {
               header
                 .querySelector(".s1p-expander-arrow")
                 .classList.toggle("expanded", isNowExpanded);
-              tabs["threads"]
+              panel
                 .querySelector("#s1p-dynamically-hidden-list-container")
                 .classList.toggle("expanded", isNowExpanded);
-            } else if (header.id === "s1p-manually-blocked-header") {
-              const currentSettings = getSettingsForWrite();
-              const isNowExpanded = !currentSettings.showManuallyBlockedList;
-              currentSettings.showManuallyBlockedList = isNowExpanded;
-              saveSettings(currentSettings);
-
+            });
+            return true;
+          }
+          if (header.id === "s1p-manually-blocked-header") {
+            const currentSettings = getSettingsForWrite();
+            const isNowExpanded = !currentSettings.showManuallyBlockedList;
+            currentSettings.showManuallyBlockedList = isNowExpanded;
+            saveSettings(currentSettings);
+            animateThreadsSubListToggle(() => {
               header
                 .querySelector(".s1p-expander-arrow")
                 .classList.toggle("expanded", isNowExpanded);
-              tabs["threads"]
+              panel
                 .querySelector("#s1p-manually-blocked-list-container")
                 .classList.toggle("expanded", isNowExpanded);
-            } else if (header.classList.contains("s1p-thread-header")) {
-              // 处理帖子分组的折叠
-              const threadGroup = header.closest(".s1p-thread-group");
-              const threadId = String(threadGroup?.dataset.threadId || "");
-              if (!threadId) {
-                return;
-              }
-              const collapsedThreads = sanitizeRecordObject(
-                GM_getValue("s1p_blocked_posts_collapsed_threads", {})
-              );
-              const isNowCollapsed = collapsedThreads[threadId] !== true;
-
-              collapsedThreads[threadId] = isNowCollapsed;
-              GM_setValue("s1p_blocked_posts_collapsed_threads", collapsedThreads);
-
-              header.classList.toggle("expanded", !isNowCollapsed);
-              header.querySelector(".s1p-expander-arrow").classList.toggle("expanded", !isNowCollapsed);
-              threadGroup.querySelector(".s1p-thread-posts").classList.toggle("expanded", !isNowCollapsed);
-            }
-          } else if (target.id === "s1p-keyword-rule-add-btn") {
-            const container = tabs["threads"].querySelector(
-              "#s1p-keyword-rules-list"
-            );
-            const emptyMsg = container.querySelector(".s1p-empty");
-            if (emptyMsg) emptyMsg.remove();
-
-            const newItem = createRuleEditorItem({
-              ruleId: `new_${Date.now()}`,
-              enabled: true,
-              pattern: "",
             });
-            container.appendChild(newItem);
-            newItem.querySelector('input[type="text"]').focus();
-            setSettingsModalDirtyState(SETTINGS_MODAL_DIRTY_TAB.THREAD_RULES, true);
-          } else if (target.closest(".s1p-delete-button")) {
-            const item = target.closest(".s1p-editor-item");
-            if (item) {
-              const pattern =
-                item.querySelector(".s1p-keyword-rule-pattern").value.trim() ||
-                "空规则";
-              const safePatternForHtml = escapeHTML(pattern);
-              createConfirmationModal(
-                "确认删除该屏蔽规则吗？",
-                `规则内容: <code class="s1p-inline-code-badge">${safePatternForHtml}</code><br>此操作将立即生效并从存储中删除该规则。`,
-                () => {
-                  const ruleIdToDelete = item.dataset.ruleId;
-                  if (!ruleIdToDelete || ruleIdToDelete.startsWith("new_")) {
-                    item.remove();
-                    const container = tabs["threads"].querySelector(
-                      "#s1p-keyword-rules-list"
-                    );
-                    if (container.children.length === 0) {
-                      container.appendChild(createRuleEmptyMessage());
-                    }
-                    setSettingsModalDirtyState(
-                      SETTINGS_MODAL_DIRTY_TAB.THREAD_RULES,
-                      true
-                    );
-                    showMessage("未保存的新规则已移除。", null);
-                    return;
-                  }
-                  const currentRules = getTitleFilterRules();
-                  const newRules = currentRules.filter(
-                    (rule) => rule.id !== ruleIdToDelete
-                  );
-                  saveTitleFilterRules(newRules);
-                  hideThreadsByTitleKeyword();
-                  renderDynamicallyHiddenList();
-                  renderRules(newRules);
-                  setSettingsModalDirtyState(
-                    SETTINGS_MODAL_DIRTY_TAB.THREAD_RULES,
-                    false
-                  );
-                  showMessage("规则已成功删除。", true);
-                },
-                "确认删除",
-                { allowSubtitleHtml: true }
-              );
+            return true;
+          }
+          if (header.classList.contains("s1p-thread-header")) {
+            const threadGroup = header.closest(".s1p-thread-group");
+            const threadId = String(threadGroup?.dataset.threadId || "");
+            if (!threadId) {
+              return true;
             }
-          } else if (target.id === "s1p-keyword-rules-save-btn") {
-            saveKeywordRules();
-            showMessage("规则已保存！", true);
+            const collapsedThreads = sanitizeRecordObject(
+              GM_getValue("s1p_blocked_posts_collapsed_threads", {})
+            );
+            const isNowCollapsed = collapsedThreads[threadId] !== true;
+            collapsedThreads[threadId] = isNowCollapsed;
+            GM_setValue("s1p_blocked_posts_collapsed_threads", collapsedThreads);
+            animateThreadsSubListToggle(() => {
+              header.classList.toggle("expanded", !isNowCollapsed);
+              header
+                .querySelector(".s1p-expander-arrow")
+                .classList.toggle("expanded", !isNowCollapsed);
+              threadGroup
+                .querySelector(".s1p-thread-posts")
+                .classList.toggle("expanded", !isNowCollapsed);
+            });
+            return true;
           }
         }
-      );
+        if (target.id === "s1p-keyword-rule-add-btn") {
+          const container = panel.querySelector("#s1p-keyword-rules-list");
+          const emptyMsg = container?.querySelector(".s1p-empty");
+          if (emptyMsg) {
+            emptyMsg.remove();
+          }
+          const newItem = createRuleEditorItem({
+            ruleId: `new_${Date.now()}`,
+            enabled: true,
+            pattern: "",
+          });
+          container?.appendChild(newItem);
+          newItem.querySelector('input[type="text"]')?.focus();
+          setSettingsModalDirtyState(SETTINGS_MODAL_DIRTY_TAB.THREAD_RULES, true);
+          return true;
+        }
+        if (target.closest(".s1p-delete-button")) {
+          const item = target.closest(".s1p-editor-item");
+          if (!item) {
+            return true;
+          }
+          const pattern =
+            item.querySelector(".s1p-keyword-rule-pattern").value.trim() || "空规则";
+          const safePatternForHtml = escapeHTML(pattern);
+          createConfirmationModal(
+            "确认删除该屏蔽规则吗？",
+            `规则内容: <code class="s1p-inline-code-badge">${safePatternForHtml}</code><br>此操作将立即生效并从存储中删除该规则。`,
+            () => {
+              const ruleIdToDelete = item.dataset.ruleId;
+              if (!ruleIdToDelete || ruleIdToDelete.startsWith("new_")) {
+                item.remove();
+                const container = panel.querySelector("#s1p-keyword-rules-list");
+                if (container && container.children.length === 0) {
+                  container.appendChild(createRuleEmptyMessage());
+                }
+                setSettingsModalDirtyState(
+                  SETTINGS_MODAL_DIRTY_TAB.THREAD_RULES,
+                  true
+                );
+                showMessage("未保存的新规则已移除。", null);
+                return;
+              }
+              const currentRules = getTitleFilterRules();
+              const newRules = currentRules.filter(
+                (rule) => rule.id !== ruleIdToDelete
+              );
+              saveTitleFilterRules(newRules);
+              hideThreadsByTitleKeyword();
+              renderDynamicallyHiddenList();
+              renderRules(newRules);
+              setSettingsModalDirtyState(
+                SETTINGS_MODAL_DIRTY_TAB.THREAD_RULES,
+                false
+              );
+              showMessage("规则已成功删除。", true);
+            },
+            "确认删除",
+            { allowSubtitleHtml: true }
+          );
+          return true;
+        }
+        if (target.id === "s1p-keyword-rules-save-btn") {
+          saveKeywordRules();
+          showMessage("规则已保存！", true);
+          return true;
+        }
+        return false;
+      };
     };
     const renderGeneralSettingsTab = () => {
+      markSettingsTabRendered("general-settings");
       const settings = getSettings();
       const openTabSettings = settings.openInNewTab;
       const isReadProgressEnabled = settings.enableReadProgress === true;
@@ -21403,6 +21782,7 @@
       }
     };
     const renderNavSettingsTab = () => {
+      markSettingsTabRendered("nav-settings");
       setSettingsModalDirtyState(SETTINGS_MODAL_DIRTY_TAB.NAV_SETTINGS, false);
       const settings = getSettings();
       tabs["nav-settings"].innerHTML = `
@@ -21539,105 +21919,106 @@
           container.appendChild(draggedItem);
         }
       });
-      navSettingsTabClickHandler = rebindTabClickHandler(
-        tabs["nav-settings"],
-        navSettingsTabClickHandler,
-        (e) => {
-          const target = e.target;
-          if (target.id === "s1p-nav-add-btn") {
-            const newItem = createNavEditorItem(`new_${Date.now()}`, "", "");
-            newItem.querySelector(".s1p-nav-name").placeholder = "新链接";
-            newItem.querySelector(".s1p-nav-href").placeholder = "forum.php";
-            navListContainer.appendChild(newItem);
-            setListSummaryText(
-              "s1p-nav-link-summary",
-              navListContainer.querySelectorAll(".s1p-editor-item").length,
-              "个导航链接"
-            );
-            setSettingsModalDirtyState(SETTINGS_MODAL_DIRTY_TAB.NAV_SETTINGS, true);
-          } else if (target.closest(".s1p-delete-button")) {
-            const item = target.closest(".s1p-editor-item");
-            if (item) {
-              const name =
-                item.querySelector(".s1p-nav-name").value.trim() || "未命名链接";
-              const safeNameForHtml = escapeHTML(name);
-              createConfirmationModal(
-                "确认删除该导航链接吗？",
-                `链接名称: ${safeNameForHtml}<br>此操作仅在UI上移除，需要点击下方的“保存设置”按钮才会真正生效。`,
-                () => {
-                  item.remove();
-                  setListSummaryText(
-                    "s1p-nav-link-summary",
-                    navListContainer.querySelectorAll(".s1p-editor-item").length,
-                    "个导航链接"
-                  );
-                  setSettingsModalDirtyState(
-                    SETTINGS_MODAL_DIRTY_TAB.NAV_SETTINGS,
-                    true
-                  );
-                  showMessage("链接已从列表移除。", true);
-                },
-                "确认删除",
-                { allowSubtitleHtml: true }
-              );
-            }
-          } else if (target.id === "s1p-nav-restore-btn") {
-            createConfirmationModal(
-              "确认要恢复默认导航栏吗？",
-              "您当前的自定义导航链接将被重置为脚本的默认设置。",
-              () => {
-                const currentSettings = getSettingsForWrite();
-                currentSettings.enableNavCustomization =
-                  defaultSettings.enableNavCustomization;
-                currentSettings.customNavLinks = defaultSettings.customNavLinks;
-                saveSettings(currentSettings);
-                setSettingsModalDirtyState(
-                  SETTINGS_MODAL_DIRTY_TAB.NAV_SETTINGS,
-                  false
-                );
-                renderNavSettingsTab();
-                initializeNavbar();
-                showMessage("导航栏已恢复为默认设置！", true);
-              },
-              "确认恢复"
-            );
-          } else if (target.id === "s1p-settings-save-btn") {
-            const rawCustomNavLinks = Array.from(
-              navListContainer.querySelectorAll(".s1p-editor-item")
-            )
-              .map((item) => ({
-                name: item.querySelector(".s1p-nav-name").value.trim(),
-                href: item.querySelector(".s1p-nav-href").value.trim(),
-              }))
-              .filter((l) => l.name && l.href);
-            const normalizedCustomNavLinks = normalizeCustomNavLinks(
-              rawCustomNavLinks
-            );
-            const newSettings = {
-              ...getSettings(),
-              enableNavCustomization: tabs["nav-settings"].querySelector(
-                "#s1p-enableNavCustomization"
-              ).checked,
-              customNavLinks: normalizedCustomNavLinks,
-            };
-            saveSettings(newSettings);
-            setSettingsModalDirtyState(SETTINGS_MODAL_DIRTY_TAB.NAV_SETTINGS, false);
-            initializeNavbar();
-            if (normalizedCustomNavLinks.length < rawCustomNavLinks.length) {
-              showMessage("检测到不安全导航链接，已自动忽略。", false);
-            }
-            showMessage("设置已保存！", true);
-          }
+      handleNavSettingsPanelClick = (e) => {
+        const panel = tabs["nav-settings"];
+        const target = e.target;
+        if (!(panel instanceof Element) || !panel.contains(target)) {
+          return false;
         }
-      );
+        if (target.id === "s1p-nav-add-btn") {
+          const newItem = createNavEditorItem(`new_${Date.now()}`, "", "");
+          newItem.querySelector(".s1p-nav-name").placeholder = "新链接";
+          newItem.querySelector(".s1p-nav-href").placeholder = "forum.php";
+          navListContainer.appendChild(newItem);
+          setListSummaryText(
+            "s1p-nav-link-summary",
+            navListContainer.querySelectorAll(".s1p-editor-item").length,
+            "个导航链接"
+          );
+          setSettingsModalDirtyState(SETTINGS_MODAL_DIRTY_TAB.NAV_SETTINGS, true);
+          return true;
+        }
+        if (target.closest(".s1p-delete-button")) {
+          const item = target.closest(".s1p-editor-item");
+          if (!item) {
+            return true;
+          }
+          const name =
+            item.querySelector(".s1p-nav-name").value.trim() || "未命名链接";
+          const safeNameForHtml = escapeHTML(name);
+          createConfirmationModal(
+            "确认删除该导航链接吗？",
+            `链接名称: ${safeNameForHtml}<br>此操作仅在UI上移除，需要点击下方的“保存设置”按钮才会真正生效。`,
+            () => {
+              item.remove();
+              setListSummaryText(
+                "s1p-nav-link-summary",
+                navListContainer.querySelectorAll(".s1p-editor-item").length,
+                "个导航链接"
+              );
+              setSettingsModalDirtyState(
+                SETTINGS_MODAL_DIRTY_TAB.NAV_SETTINGS,
+                true
+              );
+              showMessage("链接已从列表移除。", true);
+            },
+            "确认删除",
+            { allowSubtitleHtml: true }
+          );
+          return true;
+        }
+        if (target.id === "s1p-nav-restore-btn") {
+          createConfirmationModal(
+            "确认要恢复默认导航栏吗？",
+            "您当前的自定义导航链接将被重置为脚本的默认设置。",
+            () => {
+              const currentSettings = getSettingsForWrite();
+              currentSettings.enableNavCustomization =
+                defaultSettings.enableNavCustomization;
+              currentSettings.customNavLinks = defaultSettings.customNavLinks;
+              saveSettings(currentSettings);
+              setSettingsModalDirtyState(
+                SETTINGS_MODAL_DIRTY_TAB.NAV_SETTINGS,
+                false
+              );
+              renderNavSettingsTab();
+              initializeNavbar();
+              showMessage("导航栏已恢复为默认设置！", true);
+            },
+            "确认恢复"
+          );
+          return true;
+        }
+        if (target.id === "s1p-settings-save-btn") {
+          const rawCustomNavLinks = Array.from(
+            navListContainer.querySelectorAll(".s1p-editor-item")
+          )
+            .map((item) => ({
+              name: item.querySelector(".s1p-nav-name").value.trim(),
+              href: item.querySelector(".s1p-nav-href").value.trim(),
+            }))
+            .filter((l) => l.name && l.href);
+          const normalizedCustomNavLinks = normalizeCustomNavLinks(
+            rawCustomNavLinks
+          );
+          const newSettings = {
+            ...getSettings(),
+            enableNavCustomization: panel.querySelector("#s1p-enableNavCustomization")
+              .checked,
+            customNavLinks: normalizedCustomNavLinks,
+          };
+          saveSettings(newSettings);
+          setSettingsModalDirtyState(SETTINGS_MODAL_DIRTY_TAB.NAV_SETTINGS, false);
+          initializeNavbar();
+          if (normalizedCustomNavLinks.length < rawCustomNavLinks.length) {
+            showMessage("检测到不安全导航链接，已自动忽略。", false);
+          }
+          showMessage("设置已保存！", true);
+          return true;
+        }
+        return false;
+      };
     };
-
-    renderGeneralSettingsTab();
-    renderThreadTab();
-    renderUserTab();
-    renderTagsTab();
-    renderBookmarksTab();
-    renderNavSettingsTab();
 
     let handleTabSliderLayoutChange = null;
     let tabSliderResizeObserver = null;
@@ -21649,15 +22030,209 @@
     let modalBodyHeightAnimationTimer = 0;
     let modalBodyHeightReconcileRaf = 0;
     let modalBodyHeightPendingReconcile = false;
+    let modalBodyHeightReconcileCooldownUntil = 0;
     let modalBodyHeightOriginalOverflowY = null;
     let modalBodyHeightTransitionHandler = null;
     const SETTINGS_MODAL_OPEN_ANIMATION_MS = 280;
     const SETTINGS_MODAL_ANIMATION_FALLBACK_GAP_MS = 80;
     const SETTINGS_MODAL_BODY_HEIGHT_ANIMATION_MS = 350;
+    const SETTINGS_MODAL_BODY_HEIGHT_EPSILON_PX = 1;
+    const SETTINGS_MODAL_BODY_HEIGHT_RECONCILE_COOLDOWN_MS = 100;
     const SETTINGS_MODAL_OPEN_ANIMATION_NAME = "s1p-settings-modal-scale-in";
     const SETTINGS_MODAL_CLOSE_ANIMATION_NAME = "s1p-settings-modal-scale-out";
     let isClosingManagementModal = false;
     const SETTINGS_MODAL_CLOSE_ANIMATION_MS = 250;
+    const getSettingsModalTabIndex = (tabKey) =>
+      settingsModalTabDefinitions.findIndex(
+        ({ key }) => key === String(tabKey || "")
+      );
+    const getNeighborSettingsModalTabKeys = (tabKey) => {
+      const targetIndex = getSettingsModalTabIndex(tabKey);
+      if (targetIndex < 0) {
+        return [];
+      }
+      const neighbors = [];
+      if (targetIndex > 0) {
+        neighbors.push(settingsModalTabDefinitions[targetIndex - 1]?.key);
+      }
+      if (targetIndex < settingsModalTabDefinitions.length - 1) {
+        neighbors.push(settingsModalTabDefinitions[targetIndex + 1]?.key);
+      }
+      return neighbors.filter((key) => !!key);
+    };
+    const isSettingsModalTabNeighbor = (tabKey, centerTabKey = activeSettingsTabKey) =>
+      getNeighborSettingsModalTabKeys(centerTabKey).includes(String(tabKey || ""));
+    const renderSettingsModalTabByKey = (tabKey, { force = false } = {}) => {
+      const normalizedTabKey = String(tabKey || "");
+      if (!normalizedTabKey || normalizedTabKey === "sync") {
+        return false;
+      }
+      const shouldRender =
+        force ||
+        !settingsModalRenderedTabKeys.has(normalizedTabKey) ||
+        settingsModalStaleTabKeys.has(normalizedTabKey);
+      if (!shouldRender) {
+        return false;
+      }
+      switch (normalizedTabKey) {
+        case "general-settings":
+          renderGeneralSettingsTab();
+          break;
+        case "threads":
+          renderThreadTab();
+          break;
+        case "users":
+          renderUserTab();
+          break;
+        case "tags":
+          renderTagsTab();
+          break;
+        case "bookmarks":
+          renderBookmarksTab();
+          break;
+        case "nav-settings":
+          renderNavSettingsTab();
+          break;
+        default:
+          return false;
+      }
+      return true;
+    };
+    const rerenderSettingsModalPaginatedList = (listKey) => {
+      switch (String(listKey || "")) {
+        case SETTINGS_MODAL_LIST_KEY.TAGS:
+          renderTagsTab();
+          return true;
+        case SETTINGS_MODAL_LIST_KEY.BLOCKED_USERS:
+          renderUserTab();
+          return true;
+        case SETTINGS_MODAL_LIST_KEY.MANUAL_THREADS:
+          renderThreadTab();
+          return true;
+        case SETTINGS_MODAL_LIST_KEY.BLOCKED_POST_THREAD_GROUPS:
+          renderThreadTab();
+          return true;
+        case SETTINGS_MODAL_LIST_KEY.BOOKMARKS:
+          renderBookmarksTab();
+          return true;
+        default:
+          return false;
+      }
+    };
+    const isSettingsModalPaginatedListKey = (listKey) =>
+      Object.values(SETTINGS_MODAL_LIST_KEY).includes(String(listKey || ""));
+    const updateSettingsModalTabPerformanceHints = (
+      centerTabKey = activeSettingsTabKey
+    ) => {
+      const normalizedCenterKey = String(centerTabKey || activeSettingsTabKey || "");
+      const keepAliveTabKeys = new Set([
+        "sync",
+        normalizedCenterKey,
+        ...getNeighborSettingsModalTabKeys(normalizedCenterKey),
+      ]);
+      settingsModalTabDefinitions.forEach(({ key }) => {
+        const tabPanel = tabs[key];
+        if (!(tabPanel instanceof Element)) {
+          return;
+        }
+        const isActive = key === normalizedCenterKey;
+        const shouldKeepAlive = keepAliveTabKeys.has(key);
+        tabPanel.classList.toggle("s1p-tab-content-cold", !shouldKeepAlive);
+        tabPanel.classList.toggle(
+          "s1p-tab-content-prewarm",
+          !isActive && shouldKeepAlive
+        );
+      });
+    };
+    const cancelSettingsModalNeighborPrewarm = () => {
+      if (settingsModalNeighborPrewarmTimer) {
+        window.clearTimeout(settingsModalNeighborPrewarmTimer);
+        settingsModalNeighborPrewarmTimer = 0;
+      }
+      if (
+        settingsModalNeighborPrewarmIdleHandle &&
+        typeof window.cancelIdleCallback === "function"
+      ) {
+        window.cancelIdleCallback(settingsModalNeighborPrewarmIdleHandle);
+        settingsModalNeighborPrewarmIdleHandle = 0;
+      }
+    };
+    const runSettingsModalNeighborPrewarm = (
+      centerTabKey = activeSettingsTabKey
+    ) => {
+      const normalizedCenterKey = String(centerTabKey || activeSettingsTabKey || "");
+      if (!normalizedCenterKey || !modal.isConnected || isClosingManagementModal) {
+        return;
+      }
+      getNeighborSettingsModalTabKeys(normalizedCenterKey).forEach((neighborKey) => {
+        renderSettingsModalTabByKey(neighborKey, { force: false });
+      });
+      updateSettingsModalTabPerformanceHints(normalizedCenterKey);
+    };
+    const scheduleSettingsModalNeighborPrewarm = (
+      centerTabKey = activeSettingsTabKey
+    ) => {
+      const normalizedCenterKey = String(centerTabKey || activeSettingsTabKey || "");
+      if (!normalizedCenterKey) {
+        return;
+      }
+      cancelSettingsModalNeighborPrewarm();
+      const run = () => {
+        settingsModalNeighborPrewarmTimer = 0;
+        settingsModalNeighborPrewarmIdleHandle = 0;
+        // 高度动画进行时延后预热，避免预热渲染抢占尾段帧预算。
+        if (isModalBodyHeightAnimationActive()) {
+          settingsModalNeighborPrewarmTimer = window.setTimeout(
+            run,
+            SETTINGS_MODAL_PREWARM_DELAY_MS
+          );
+          return;
+        }
+        runSettingsModalNeighborPrewarm(normalizedCenterKey);
+      };
+      if (typeof window.requestIdleCallback === "function") {
+        settingsModalNeighborPrewarmIdleHandle = window.requestIdleCallback(run, {
+          timeout: SETTINGS_MODAL_PREWARM_IDLE_TIMEOUT_MS,
+        });
+      } else {
+        settingsModalNeighborPrewarmTimer = window.setTimeout(
+          run,
+          SETTINGS_MODAL_PREWARM_DELAY_MS
+        );
+      }
+    };
+    const shouldRenderSettingsTabImmediately = (tabKey) => {
+      const normalizedTabKey = String(tabKey || "");
+      if (!normalizedTabKey || normalizedTabKey === "sync") {
+        return false;
+      }
+      return (
+        normalizedTabKey === activeSettingsTabKey ||
+        isSettingsModalTabNeighbor(normalizedTabKey) ||
+        settingsModalRenderedTabKeys.has(normalizedTabKey)
+      );
+    };
+    renderSettingsModalTabByKey(activeSettingsTabKey, { force: true });
+    updateSettingsModalTabPerformanceHints(activeSettingsTabKey);
+    scheduleSettingsModalNeighborPrewarm(activeSettingsTabKey);
+    const isModalBodyHeightAnimationActive = () =>
+      !!(modalBodyHeightTransitionHandler || modalBodyHeightAnimationTimer);
+    const measureModalBodyAutoHeight = (modalBody, overflowYValue = "") => {
+      if (!modalBody || !modalBody.isConnected) {
+        return 0;
+      }
+      const previousInlineHeight = modalBody.style.height;
+      const previousInlineOverflowY = modalBody.style.overflowY;
+      const previousInlineTransition = modalBody.style.transition;
+      modalBody.style.transition = "none";
+      modalBody.style.overflowY = overflowYValue;
+      modalBody.style.height = "auto";
+      const nextHeight = modalBody.getBoundingClientRect().height;
+      modalBody.style.height = previousInlineHeight;
+      modalBody.style.overflowY = previousInlineOverflowY;
+      modalBody.style.transition = previousInlineTransition;
+      return nextHeight;
+    };
     const restoreModalBodyHeightVisualState = (modalBody) => {
       if (!modalBody) {
         return;
@@ -21705,6 +22280,8 @@
         resetToAuto: false,
         keepVisualLock: false,
       });
+      modalBodyHeightReconcileCooldownUntil =
+        Date.now() + SETTINGS_MODAL_BODY_HEIGHT_RECONCILE_COOLDOWN_MS;
       if (modalBodyHeightPendingReconcile) {
         scheduleModalBodyHeightReconcile();
       }
@@ -21731,57 +22308,44 @@
       const oldHeight = modalBody.getBoundingClientRect().height;
       modalBody.style.height = `${oldHeight.toFixed(3)}px`;
       applyLayoutChange();
-
+      const measuredOverflowY = modalBodyHeightOriginalOverflowY || "";
+      const newHeight = measureModalBodyAutoHeight(modalBody, measuredOverflowY);
+      const targetHeight = `${newHeight.toFixed(3)}px`;
+      if (Math.abs(newHeight - oldHeight) < SETTINGS_MODAL_BODY_HEIGHT_EPSILON_PX) {
+        finalizeModalBodyHeightAnimation(modalBody, targetHeight);
+        return;
+      }
+      const finalizeHeightAnimation = () => {
+        finalizeModalBodyHeightAnimation(modalBody, targetHeight);
+      };
+      modalBodyHeightTransitionHandler = (event) => {
+        if (event.target !== modalBody) {
+          return;
+        }
+        if (event.propertyName && event.propertyName !== "height") {
+          return;
+        }
+        finalizeHeightAnimation();
+      };
+      modalBody.addEventListener("transitionend", modalBodyHeightTransitionHandler);
+      modalBodyHeightAnimationTimer = window.setTimeout(
+        finalizeHeightAnimation,
+        SETTINGS_MODAL_BODY_HEIGHT_ANIMATION_MS +
+        SETTINGS_MODAL_ANIMATION_FALLBACK_GAP_MS
+      );
       requestAnimationFrame(() => {
         if (!modalBody.isConnected) {
           return;
         }
-        // 目标高度按“最终滚动状态”测量，避免 hidden/auto 切换导致尾段跳变。
-        modalBody.style.overflowY = modalBodyHeightOriginalOverflowY || "";
-        modalBody.style.height = "auto";
-        const newHeight = modalBody.getBoundingClientRect().height;
-        modalBody.style.overflowY = "hidden";
-        modalBody.style.height = `${oldHeight.toFixed(3)}px`;
-        requestAnimationFrame(() => {
-          if (!modalBody.isConnected) {
-            return;
-          }
-          const targetHeight = `${newHeight.toFixed(3)}px`;
-          if (Math.abs(newHeight - oldHeight) < 1) {
-            finalizeModalBodyHeightAnimation(modalBody, targetHeight);
-            return;
-          }
-          const finalizeHeightAnimation = () => {
-            finalizeModalBodyHeightAnimation(modalBody, targetHeight);
-          };
-          modalBodyHeightTransitionHandler = (event) => {
-            if (event.target !== modalBody) {
-              return;
-            }
-            if (event.propertyName && event.propertyName !== "height") {
-              return;
-            }
-            finalizeHeightAnimation();
-          };
-          modalBody.addEventListener(
-            "transitionend",
-            modalBodyHeightTransitionHandler
-          );
-          modalBodyHeightAnimationTimer = window.setTimeout(
-            finalizeHeightAnimation,
-            SETTINGS_MODAL_BODY_HEIGHT_ANIMATION_MS +
-            SETTINGS_MODAL_ANIMATION_FALLBACK_GAP_MS
-          );
-          modalBody.style.height = targetHeight;
-        });
+        modalBody.style.height = targetHeight;
       });
     };
     const updateObservedModalBodyTabContent = () => {
       if (!modalBodyContentResizeObserver) {
         return;
       }
-      const activeTab = modal.querySelector(".s1p-tab-content.active");
-      const nextObserved = activeTab instanceof Element ? activeTab : null;
+      const activeTabPanel = tabs[activeSettingsTabKey];
+      const nextObserved = activeTabPanel instanceof Element ? activeTabPanel : null;
       if (observedModalBodyTabContent === nextObserved) {
         return;
       }
@@ -21792,10 +22356,36 @@
       }
       observedModalBodyTabContent = nextObserved;
       if (observedModalBodyTabContent instanceof Element) {
-        // 切换观察目标后，忽略首轮/次轮回调，避免“初始上报”触发额外高度补动画。
+        // 切换观察目标后，忽略首轮/次轮回调，避免“初始上报”触发额外补动画。
         modalBodyObserverIgnoreCallbacks = 2;
         modalBodyContentResizeObserver.observe(observedModalBodyTabContent);
       }
+    };
+    const switchSettingsTab = (nextTabKey, { focusButton = false } = {}) => {
+      const normalizedTabKey = String(nextTabKey || "");
+      if (!normalizedTabKey || !tabs[normalizedTabKey] || !tabButtons[normalizedTabKey]) {
+        return false;
+      }
+      if (normalizedTabKey === activeSettingsTabKey) {
+        if (focusButton) {
+          tabButtons[normalizedTabKey]?.focus();
+        }
+        return false;
+      }
+      modalBodyHeightPendingReconcile = false;
+      const modalBody = modal.querySelector(".s1p-modal-body");
+      animateSettingsModalBodyHeight(modalBody, () => {
+        renderSettingsModalTabByKey(normalizedTabKey, { force: false });
+        setActiveSettingsTab(normalizedTabKey);
+        updateSettingsModalTabPerformanceHints(normalizedTabKey);
+        updateObservedModalBodyTabContent();
+      });
+      moveTabSlider(settingsTabContainer);
+      scheduleSettingsModalNeighborPrewarm(normalizedTabKey);
+      if (focusButton) {
+        tabButtons[normalizedTabKey]?.focus();
+      }
+      return true;
     };
     const scheduleModalBodyHeightReconcile = () => {
       modalBodyHeightPendingReconcile = true;
@@ -21816,7 +22406,7 @@
           modalBodyHeightPendingReconcile = false;
           return;
         }
-        if (modalBodyHeightTransitionHandler || modalBodyHeightAnimationTimer) {
+        if (isModalBodyHeightAnimationActive()) {
           return;
         }
         modalBodyHeightPendingReconcile = false;
@@ -21849,6 +22439,9 @@
         window.clearInterval(modalThemeSyncTimer);
         modalThemeSyncTimer = 0;
       }
+      cancelSettingsModalNeighborPrewarm();
+      clearSettingsModalBookmarkSearchTimer();
+      settingsModalBookmarkSearchComposing = false;
       if (settingsModalOpenAnimationTimer) {
         window.clearTimeout(settingsModalOpenAnimationTimer);
         settingsModalOpenAnimationTimer = 0;
@@ -21917,6 +22510,23 @@
       return watchedPaths.some((path) =>
         hasSettingPathInChangedSet(changedPathSet, path)
       );
+    };
+    const refreshSettingsTabWithLazyPolicy = (tabKey, renderFn) => {
+      if (typeof renderFn !== "function") {
+        return false;
+      }
+      const normalizedTabKey = String(tabKey || "");
+      if (!normalizedTabKey || normalizedTabKey === "sync") {
+        renderFn();
+        return true;
+      }
+      if (shouldRenderSettingsTabImmediately(normalizedTabKey)) {
+        renderFn();
+        markSettingsTabRendered(normalizedTabKey);
+        return true;
+      }
+      settingsModalStaleTabKeys.add(normalizedTabKey);
+      return false;
     };
     const refreshOpenSettingsModalByChangedPaths = ({
       changedPathSet = new Set(),
@@ -21993,29 +22603,32 @@
       const deferredDirtyTabLabels = [];
 
       if (shouldRefreshGeneralTab) {
-        renderGeneralSettingsTab();
+        refreshSettingsTabWithLazyPolicy(
+          "general-settings",
+          renderGeneralSettingsTab
+        );
       }
       if (shouldRefreshThreadTab) {
         if (isSettingsModalDirty(SETTINGS_MODAL_DIRTY_TAB.THREAD_RULES)) {
           deferredDirtyTabLabels.push("帖子屏蔽");
         } else {
-          renderThreadTab();
+          refreshSettingsTabWithLazyPolicy("threads", renderThreadTab);
         }
       }
       if (shouldRefreshUserTab) {
-        renderUserTab();
+        refreshSettingsTabWithLazyPolicy("users", renderUserTab);
       }
       if (shouldRefreshTagsTab) {
-        renderTagsTab();
+        refreshSettingsTabWithLazyPolicy("tags", renderTagsTab);
       }
       if (shouldRefreshBookmarksTab) {
-        renderBookmarksTab();
+        refreshSettingsTabWithLazyPolicy("bookmarks", renderBookmarksTab);
       }
       if (shouldRefreshNavTab) {
         if (isSettingsModalDirty(SETTINGS_MODAL_DIRTY_TAB.NAV_SETTINGS)) {
           deferredDirtyTabLabels.push("导航栏定制");
         } else {
-          renderNavSettingsTab();
+          refreshSettingsTabWithLazyPolicy("nav-settings", renderNavSettingsTab);
         }
       }
       if (shouldRefreshSyncTab) {
@@ -22037,18 +22650,26 @@
       },
     };
 
-    const tabContainer = modal.querySelector(".s1p-tabs");
-    const syncTabSliderLayout = () => moveTabSlider(tabContainer);
-    scheduleTabSliderSync(tabContainer);
+    const syncTabSliderLayout = () => moveTabSlider(settingsTabContainer);
+    scheduleTabSliderSync(settingsTabContainer);
     handleTabSliderLayoutChange = syncTabSliderLayout;
     window.addEventListener("resize", handleTabSliderLayoutChange, {
       passive: true,
     });
     if (typeof ResizeObserver === "function") {
       tabSliderResizeObserver = new ResizeObserver(syncTabSliderLayout);
-      tabSliderResizeObserver.observe(tabContainer);
+      if (settingsTabContainer) {
+        tabSliderResizeObserver.observe(settingsTabContainer);
+      }
       const handleModalBodyContentResize = () => {
         if (!modal.isConnected || isClosingManagementModal) {
+          return;
+        }
+        // 容器高度动画进行中时，不再追加新的 reconcile，避免尾段“弹一下”。
+        if (isModalBodyHeightAnimationActive()) {
+          return;
+        }
+        if (Date.now() < modalBodyHeightReconcileCooldownUntil) {
           return;
         }
         if (modalBodyObserverIgnoreCallbacks > 0) {
@@ -22292,7 +22913,7 @@
           saveBlockedUsers(nextUsers);
           if (blockThreads) applyUserThreadBlocklist();
           else unblockThreadsByUser(userId);
-          renderThreadTab();
+          refreshSettingsTabWithLazyPolicy("threads", renderThreadTab);
         }
       } else if (target.matches("#s1p-blockThreadsOnUserBlock")) {
         const currentSettings = getSettingsForWrite();
@@ -22343,28 +22964,41 @@
         target.closest(".s1p-settings-close-btn")
       ) {
         closeManagementModal();
+        return;
       }
       const tabButton = target.closest(".s1p-tab-btn");
       if (tabButton) {
-        const tabContainer = tabButton.closest(".s1p-tabs");
-        const nextTab = tabs[tabButton.dataset.tab];
-        const shouldSwitchTab =
-          !!tabContainer &&
-          !!nextTab &&
-          !tabButton.classList.contains("active");
-        if (shouldSwitchTab) {
-          modalBodyHeightPendingReconcile = false;
-          const modalBody = modal.querySelector(".s1p-modal-body");
-          animateSettingsModalBodyHeight(modalBody, () => {
-            modal
-              .querySelectorAll(".s1p-tab-btn, .s1p-tab-content")
-              .forEach((el) => el.classList.remove("active"));
-            tabButton.classList.add("active");
-            nextTab.classList.add("active");
-            updateObservedModalBodyTabContent();
-          });
-          moveTabSlider(tabContainer);
+        switchSettingsTab(tabButton.dataset.tab, { focusButton: false });
+        return;
+      }
+      const paginationButton = target.closest(
+        '.s1p-list-pagination-btn[data-action="settings-list-page"]'
+      );
+      if (paginationButton) {
+        const listKey = String(paginationButton.dataset.listKey || "");
+        const nextPage = Number.parseInt(paginationButton.dataset.page, 10);
+        if (
+          !listKey ||
+          !Number.isFinite(nextPage) ||
+          !isSettingsModalPaginatedListKey(listKey)
+        ) {
+          return;
         }
+        settingsModalListPageState.set(listKey, Math.max(1, nextPage));
+        const modalBody = modal.querySelector(".s1p-modal-body");
+        animateSettingsModalBodyHeight(modalBody, () => {
+          rerenderSettingsModalPaginatedList(listKey);
+          updateObservedModalBodyTabContent();
+        });
+        return;
+      }
+      if (
+        runSettingsPanelClickDelegate(handleBookmarksPanelClick, e) ||
+        runSettingsPanelClickDelegate(handleUsersPanelClick, e) ||
+        runSettingsPanelClickDelegate(handleThreadsPanelClick, e) ||
+        runSettingsPanelClickDelegate(handleNavSettingsPanelClick, e)
+      ) {
+        return;
       }
 
       if (target.id === "s1p-manual-block-user-btn") {
@@ -22400,15 +23034,11 @@
           `帖子标题: ${title}`,
               () => {
                 unblockThread(unblockThreadId);
-                removeListItem(
-                  target,
-                  "暂无手动屏蔽的帖子"
-                );
-                setListSummaryText(
-                  "s1p-manually-blocked-summary",
-                  Object.keys(getBlockedThreads()).length,
-                  "条手动屏蔽帖子"
-                );
+                const modalBody = modal.querySelector(".s1p-modal-body");
+                animateSettingsModalBodyHeight(modalBody, () => {
+                  renderThreadTab();
+                  updateObservedModalBodyTabContent();
+                });
                 showMessage("帖子已取消屏蔽。", true);
               },
               "确认取消"
@@ -22443,12 +23073,6 @@
           `确认取消屏蔽 “${userName}” 吗？`,
           "该用户及其主题帖（如果已关联屏蔽）将被取消屏蔽。",
           async () => {
-            const allBlockedThreads = getBlockedThreads();
-            const threadsToUnblock = Object.keys(allBlockedThreads).filter(
-              (threadId) =>
-                allBlockedThreads[threadId].reason === `user_${unblockUserId}`
-            );
-
             const blockedUsers = getBlockedUsers();
             const userToUnblockData = blockedUsers[unblockUserId];
             const wasSynced =
@@ -22457,40 +23081,16 @@
             const success = await unblockUser(unblockUserId);
 
             if (success) {
-              removeListItem(
-                target,
-                "暂无屏蔽的用户"
-              );
-              setListSummaryText(
-                "s1p-blocked-user-list-summary",
-                Object.keys(getBlockedUsers()).length,
-                "位屏蔽用户"
-              );
-
-              const threadList = document.querySelector(
-                "#s1p-manually-blocked-list-container .s1p-list"
-              );
-              if (threadList) {
-                threadsToUnblock.forEach((threadId) => {
-                  const threadItemToRemove = threadList.querySelector(
-                    `.s1p-item[data-thread-id="${threadId}"]`
-                  );
-                  threadItemToRemove?.remove();
+              const modalBody = modal.querySelector(".s1p-modal-body");
+              if (activeSettingsTabKey === "users") {
+                animateSettingsModalBodyHeight(modalBody, () => {
+                  renderUserTab();
+                  updateObservedModalBodyTabContent();
                 });
-                if (threadList.children.length === 0) {
-                  const container = threadList.closest(
-                    "#s1p-manually-blocked-list-container"
-                  );
-                  if (container) {
-                    renderEmptyState(container, "暂无手动屏蔽的帖子");
-                  }
-                }
+              } else {
+                refreshSettingsTabWithLazyPolicy("users", renderUserTab);
               }
-              setListSummaryText(
-                "s1p-manually-blocked-summary",
-                Object.keys(getBlockedThreads()).length,
-                "条手动屏蔽帖子"
-              );
+              refreshSettingsTabWithLazyPolicy("threads", renderThreadTab);
               const message = wasSynced
                 ? `已取消对 ${userName} 的屏蔽并从论坛同步移除。`
                 : `已取消对 ${userName} 的屏蔽。`;
@@ -22517,45 +23117,14 @@
           `楼层信息: ${title}`,
           () => {
             unblockPost(unblockPostId);
-
-            // 对于分组列表，需要特殊处理
-            const threadGroup = item.closest(".s1p-thread-group");
-            if (threadGroup) {
-              // 移除当前楼层项
-              item.remove();
-
-              // 检查该帖子分组是否还有其他楼层
-              const remainingPosts = threadGroup.querySelector(".s1p-list");
-              if (remainingPosts && remainingPosts.children.length === 0) {
-                // 如果该帖子没有其他楼层了，移除整个帖子分组
-                threadGroup.remove();
-              }
-
-              // 检查是否还有任何帖子分组
-              const threadGroups = document.querySelector(".s1p-thread-groups");
-              if (threadGroups && threadGroups.children.length === 0) {
-                // 如果没有任何帖子分组了，显示空提示
-                const container = document.querySelector("#s1p-blocked-posts-list-container");
-                if (container) {
-                  renderEmptyState(container, "暂无屏蔽的楼层");
-                }
-              }
-              } else {
-                // 非分组列表的处理（向后兼容）
-                removeListItem(
-                  target,
-                  "暂无屏蔽的楼层"
-                );
-              }
-              setListSummaryText(
-                "s1p-blocked-posts-summary",
-                Object.keys(getBlockedPosts()).length,
-                "条屏蔽楼层"
-              );
-
-              showMessage("楼层已取消屏蔽。", true);
-            },
-            "确认取消"
+            const modalBody = modal.querySelector(".s1p-modal-body");
+            animateSettingsModalBodyHeight(modalBody, () => {
+              renderThreadTab();
+              updateObservedModalBodyTabContent();
+            });
+            showMessage("楼层已取消屏蔽。", true);
+          },
+          "确认取消"
         );
       }
 
@@ -22570,21 +23139,11 @@
             delete bookmarks[removeBookmarkId];
             saveBookmarkedReplies(bookmarks);
             refreshSinglePostActions(removeBookmarkId);
-            removeListItem(
-              target,
-              "暂无收藏的回复",
-              () => {
-                document
-                  .querySelector("#s1p-bookmark-search-input")
-                  ?.closest(".s1p-settings-group")
-                  ?.remove();
-              }
-            );
-            setListSummaryText(
-              "s1p-bookmarks-list-summary",
-              Object.keys(getBookmarkedReplies()).length,
-              "条收藏回复"
-            );
+            const modalBody = modal.querySelector(".s1p-modal-body");
+            animateSettingsModalBodyHeight(modalBody, () => {
+              renderBookmarksTab();
+              updateObservedModalBodyTabContent();
+            });
             showMessage("已取消收藏。", true);
           },
           "确认取消"
@@ -22611,11 +23170,14 @@
         const result = importLocalData(jsonStr);
         showMessage(result.message, result.success);
         if (result.success) {
-          renderThreadTab();
-          renderUserTab();
-          renderGeneralSettingsTab();
-          renderTagsTab();
-          renderBookmarksTab();
+          refreshSettingsTabWithLazyPolicy("threads", renderThreadTab);
+          refreshSettingsTabWithLazyPolicy("users", renderUserTab);
+          refreshSettingsTabWithLazyPolicy(
+            "general-settings",
+            renderGeneralSettingsTab
+          );
+          refreshSettingsTabWithLazyPolicy("tags", renderTagsTab);
+          refreshSettingsTabWithLazyPolicy("bookmarks", renderBookmarksTab);
         }
       }
       if (e.target.id === "s1p-clear-select-all") {
@@ -22697,11 +23259,14 @@
               removeProgressJumpButtons();
             }
 
-            renderThreadTab();
-            renderUserTab();
-            renderGeneralSettingsTab();
-            renderTagsTab();
-            renderBookmarksTab();
+            refreshSettingsTabWithLazyPolicy("threads", renderThreadTab);
+            refreshSettingsTabWithLazyPolicy("users", renderUserTab);
+            refreshSettingsTabWithLazyPolicy(
+              "general-settings",
+              renderGeneralSettingsTab
+            );
+            refreshSettingsTabWithLazyPolicy("tags", renderTagsTab);
+            refreshSettingsTabWithLazyPolicy("bookmarks", renderBookmarksTab);
             showMessage("选中的本地数据已成功清除。", true);
           },
           "确认清除"
@@ -22910,6 +23475,14 @@
 
       const targetTab = target.closest("#s1p-tab-tags");
       if (targetTab) {
+        const colorOption = target.closest(".s1p-color-option");
+        if (colorOption && colorOption.closest(".s1p-color-options")) {
+          targetTab
+            .querySelectorAll(".s1p-color-options .s1p-color-option")
+            .forEach((option) => option.classList.remove("selected"));
+          colorOption.classList.add("selected");
+          return;
+        }
         const action = target.dataset.action;
         const userId = target.dataset.userId;
 
@@ -22926,10 +23499,11 @@
               delete tags[userId];
               saveUserTags(tags);
               refreshUserPostsOnPage(userId);
-              removeListItem(
-                target,
-                "暂无用户标记"
-              );
+              const modalBody = modal.querySelector(".s1p-modal-body");
+              animateSettingsModalBodyHeight(modalBody, () => {
+                renderTagsTab();
+                updateObservedModalBodyTabContent();
+              });
               showMessage(`已删除对 ${userName} 的标记。`, true);
             },
             "确认删除"
