@@ -766,8 +766,9 @@
   // 阅读位置标识的正文留白与右侧安全间距。
   const READ_INDICATOR_CONTENT_GAP_PX = 8;
   const READ_INDICATOR_RIGHT_SAFE_GAP_PX = 14;
-  // 收藏内容同步只保留短预览，避免整段文本参与哈希和上传。
+  // 收藏内容在“压缩同步”模式下会截断为短预览（完整同步模式不受此限制）。
   const BOOKMARK_SYNC_PREVIEW_MAX_LENGTH = 280;
+  const BOOKMARK_PANEL_PREVIEW_MAX_LENGTH = 150;
   const SUPPORTS_CSS_HAS_SELECTOR = (() => {
     try {
       return Boolean(
@@ -5217,18 +5218,48 @@
       display: none;
     }
     .s1p-bookmark-toggle {
-      /* 保持为行内元素，自然跟在文字后方 */
-      display: inline;
-      margin-left: 4px; /* 与文字稍微隔开 */
-      font-weight: 500;
-      color: var(--s1p-t);
+      /* 将“查看完整回复/收起”做成弱按钮，避免和正文混淆 */
+      display: inline-flex;
+      align-items: center;
+      margin-left: 6px;
+      padding: 1px 10px;
+      border-radius: 999px;
+      background-color: var(--s1p-sub);
+      color: var(--s1p-sec);
       cursor: pointer;
       text-decoration: none;
-      font-size: 13px;
+      font-size: 12px;
+      font-weight: 600;
+      line-height: 1.5;
+      white-space: nowrap;
+      vertical-align: middle;
+      box-shadow: 0 1px 2px rgba(var(--s1p-shadow-color-rgb), 0.08);
+      transition: background-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
     }
     .s1p-bookmark-toggle:hover {
-      color: var(--s1p-sec);
-      text-decoration: underline;
+      background-color: var(--s1p-sec);
+      color: var(--s1p-white);
+      text-decoration: none;
+      box-shadow: 0 2px 4px rgba(var(--s1p-shadow-color-rgb), 0.12);
+    }
+    .s1p-bookmark-toggle:focus {
+      outline: none;
+    }
+    .s1p-bookmark-toggle:focus-visible {
+      outline: 2px solid var(--s1p-focus-ring);
+      outline-offset: 2px;
+    }
+    .s1p-bookmark-toggle:active {
+      background-color: var(--s1p-sec-h);
+      color: var(--s1p-white);
+    }
+    .s1p-bookmark-preview-only-hint {
+      display: block;
+      margin-top: 6px;
+      font-size: 12px;
+      line-height: 1.5;
+      color: var(--s1p-desc-t);
+      opacity: 0.88;
     }
 
     /* --- [修改] 收藏夹内帖子跳转链接样式 --- */
@@ -7821,6 +7852,23 @@
     }
     return `${normalized.slice(0, BOOKMARK_SYNC_PREVIEW_MAX_LENGTH)}...`;
   };
+  const resolveBookmarkContentFields = (bookmarkItem) => {
+    const postContent = String(bookmarkItem?.postContent || "");
+    const contentPreview = String(bookmarkItem?.contentPreview || "");
+    return {
+      postContent,
+      contentPreview,
+      displayContent: postContent || contentPreview,
+      hasPostContent: postContent.length > 0,
+    };
+  };
+  const buildBookmarkPreviewFromItem = (bookmarkItem) => {
+    const { postContent, contentPreview } = resolveBookmarkContentFields(bookmarkItem);
+    return (
+      buildBookmarkContentPreview(postContent) ||
+      buildBookmarkContentPreview(contentPreview)
+    );
+  };
   const getBookmarkedRepliesForSync = () => {
     const bookmarkedReplies = getBookmarkedReplies();
     const compactReplies = {};
@@ -7830,9 +7878,7 @@
         return;
       }
       const compactItem = sanitizeRecordObject(item);
-      const contentPreview =
-        buildBookmarkContentPreview(compactItem.contentPreview) ||
-        buildBookmarkContentPreview(compactItem.postContent);
+      const contentPreview = buildBookmarkPreviewFromItem(compactItem);
       delete compactItem.postContent;
       if (contentPreview) {
         compactItem.contentPreview = contentPreview;
@@ -9047,9 +9093,7 @@
         return;
       }
       const normalizedItem = sanitizeRecordObject(item);
-      const comparablePreview =
-        buildBookmarkContentPreview(normalizedItem.contentPreview) ||
-        buildBookmarkContentPreview(normalizedItem.postContent);
+      const comparablePreview = buildBookmarkPreviewFromItem(normalizedItem);
       delete normalizedItem.postContent;
       if (comparablePreview) {
         normalizedItem.contentPreview = comparablePreview;
@@ -20144,11 +20188,11 @@
             const threadIdForUrl = encodeURIComponent(String(item?.threadId ?? ""));
             const authorName = String(item?.authorName || `用户 #${item?.authorId ?? "?"}`);
             const threadTitle = String(item?.threadTitle || "");
-            const localFullText = String(item?.postContent || "");
-            const previewText = String(item?.contentPreview || "");
-            const fullText = localFullText || previewText;
+            const bookmarkContent = resolveBookmarkContentFields(item);
+            const hasLocalFullText = bookmarkContent.hasPostContent;
+            const fullText = bookmarkContent.displayContent;
             const displayText = fullText || "无法获取内容";
-            const canExpand = localFullText.length > 150;
+            const canExpand = fullText.length > BOOKMARK_PANEL_PREVIEW_MAX_LENGTH;
 
             const rowEl = document.createElement("div");
             rowEl.className = "s1p-item";
@@ -20178,7 +20222,7 @@
             previewEl.className = "s1p-bookmark-preview";
             const previewTextSpan = document.createElement("span");
             previewTextSpan.textContent = canExpand
-              ? `${fullText.substring(0, 150)}... `
+              ? `${fullText.substring(0, BOOKMARK_PANEL_PREVIEW_MAX_LENGTH)}... `
               : displayText;
             previewEl.appendChild(previewTextSpan);
 
@@ -20187,7 +20231,7 @@
               showFullLink.href = "javascript:void(0);";
               showFullLink.className = "s1p-bookmark-toggle";
               showFullLink.dataset.action = "toggle-bookmark-content";
-              showFullLink.textContent = "查看完整回复";
+              showFullLink.textContent = hasLocalFullText ? "查看完整回复" : "展开查看更多";
               previewEl.appendChild(showFullLink);
             }
             contentEl.appendChild(previewEl);
@@ -20200,6 +20244,12 @@
               const fullTextSpan = document.createElement("span");
               fullTextSpan.textContent = `${fullText} `;
               fullEl.appendChild(fullTextSpan);
+              if (!hasLocalFullText) {
+                const previewOnlyHint = document.createElement("div");
+                previewOnlyHint.className = "s1p-bookmark-preview-only-hint";
+                previewOnlyHint.textContent = "该收藏仅保存了预览内容，完整正文可能已在早期同步中丢失。";
+                fullEl.appendChild(previewOnlyHint);
+              }
 
               const collapseLink = document.createElement("a");
               collapseLink.href = "javascript:void(0);";
