@@ -22972,41 +22972,6 @@
       }
     });
 
-    const renderEmptyState = (container, text, inlineStyle = "") => {
-      if (!container) return;
-      const summaryEl = container.querySelector(".s1p-list-summary");
-      container
-        .querySelectorAll(".s1p-list, .s1p-thread-groups, .s1p-empty")
-        .forEach((node) => node.remove());
-      const targetContainer =
-        summaryEl instanceof Element && summaryEl.parentElement
-          ? summaryEl.parentElement
-          : container;
-      const emptyEl = document.createElement("div");
-      emptyEl.className = "s1p-empty";
-      if (inlineStyle) {
-        emptyEl.style.cssText = inlineStyle;
-      }
-      emptyEl.textContent = text;
-      targetContainer.appendChild(emptyEl);
-    };
-
-    function removeListItem(triggerElement, emptyText, onEmptyCallback) {
-      const item = triggerElement.closest(".s1p-item");
-      if (!item) return;
-
-      const list = item.parentElement;
-      item.remove();
-
-      if (list && list.children.length === 0) {
-        const container = list.parentElement;
-        renderEmptyState(container, emptyText);
-        if (onEmptyCallback) {
-          onEmptyCallback(container);
-        }
-      }
-    }
-
     modal.addEventListener("click", async (e) => {
       const target = e.target;
       if (
