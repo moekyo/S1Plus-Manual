@@ -5416,7 +5416,7 @@
         --s1p-progress-delete-bg: var(--s1p-progress-hot);
         --s1p-progress-delete-hover-bg: rgb(154, 41, 28);
         --s1p-progress-delete-text: #ffffff;
-        --s1p-image-viewer-viewport-bg: rgba(var(--s1p-black-rgb), 0.78);
+        --s1p-image-viewer-viewport-bg: #222a32;
         --s1p-focus-ring: rgba(96, 165, 250, 0.56);
         --s1p-sync-alert-local-change-bg: rgba(239, 68, 68, 0.24);
         --s1p-sync-alert-local-change-text: #fecaca;
