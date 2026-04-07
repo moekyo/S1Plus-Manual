@@ -3005,13 +3005,20 @@
       margin-top: 0;
     }
     .s1p-token-config-date-item {
-      flex-direction: column;
-      align-items: flex-start;
-      gap: 8px;
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      gap: 12px;
       margin-top: 16px;
     }
+    .s1p-token-config-date-item .s1p-settings-label {
+      flex: 0 0 auto;
+      min-width: 72px;
+      margin-bottom: 0;
+    }
     .s1p-token-config-date-input {
-      width: 100%;
+      flex: 1 1 auto;
+      width: auto;
       cursor: pointer;
       background: var(--s1p-bg);
     }
