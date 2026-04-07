@@ -958,6 +958,9 @@
       --s1p-black-rgb: 0, 0, 0;
       --s1p-border: #d1d5db;
       --s1p-hover-overlay: rgba(0, 0, 0, 0.08);
+      /* 全屏蒙版统一走轻磨砂玻璃参数，方便设置面板/确认框/图片查看器一起调节。 */
+      --s1p-overlay-backdrop: rgba(var(--s1p-black-rgb), 0.28);
+      --s1p-overlay-blur: 2px;
 
       /* -- [新增] 阴影 -- */
       --s1p-shadow-color-rgb: 0, 0, 0;
@@ -2838,14 +2841,27 @@
     }
 
     /* --- 设置面板样式 --- */
-    .s1p-modal {
-      display: flex;
+    .s1p-modal,
+    .s1p-confirm-modal,
+    .s1p-token-config-modal,
+    .s1p-image-viewer {
+      background-color: var(--s1p-overlay-backdrop);
+      -webkit-backdrop-filter: blur(var(--s1p-overlay-blur));
+      backdrop-filter: blur(var(--s1p-overlay-blur));
+    }
+    .s1p-modal,
+    .s1p-confirm-modal,
+    .s1p-token-config-modal {
       position: fixed;
       top: 0;
       left: 0;
       width: 100%;
       height: 100%;
-      background-color: rgba(var(--s1p-black-rgb), 0.5);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+    .s1p-modal {
       justify-content: center;
       align-items: center;
       z-index: 9999;
@@ -2957,15 +2973,6 @@
       font-size: 12px;
     }
     .s1p-token-config-modal {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background-color: transparent;
-      display: flex;
-      align-items: center;
-      justify-content: center;
       z-index: 20000;
       opacity: 0;
       transition: opacity 0.2s ease;
@@ -3471,22 +3478,19 @@
       }
     }
     .s1p-confirm-modal {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background-color: rgba(var(--s1p-black-rgb), 0.65);
-      display: flex;
-      justify-content: center;
-      align-items: center;
       z-index: 10000;
       animation: s1p-fade-in 0.2s ease-out;
       transition: none;
     }
-    /* 已有蒙版（设置面板）时，confirm modal 不重复显示蒙版背景 */
-    .s1p-modal ~ .s1p-confirm-modal {
-      background-color: transparent;
+    /* 嵌套在已打开的全屏弹层上时，次级弹窗不再叠加第二层蒙版。 */
+    .s1p-modal ~ .s1p-confirm-modal,
+    .s1p-modal ~ .s1p-token-config-modal,
+    .s1p-image-viewer ~ .s1p-confirm-modal,
+    .s1p-image-viewer ~ .s1p-token-config-modal {
+      background: transparent;
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+      box-shadow: none;
     }
     .s1p-confirm-content {
       background-color: var(--s1p-bg);
@@ -4608,8 +4612,6 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      background: rgba(var(--s1p-black-rgb), 0.7);
-      backdrop-filter: blur(2px);
       opacity: 0;
       visibility: hidden;
       pointer-events: none;
@@ -5409,6 +5411,8 @@
 
         --s1p-border: #4b5563;
         --s1p-hover-overlay: rgba(255, 255, 255, 0.15);
+        --s1p-overlay-backdrop: rgba(var(--s1p-black-rgb), 0.34);
+        --s1p-overlay-blur: 3px;
         --s1p-progress-delete-bg: var(--s1p-progress-hot);
         --s1p-progress-delete-hover-bg: rgb(154, 41, 28);
         --s1p-progress-delete-text: #ffffff;
