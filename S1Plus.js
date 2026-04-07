@@ -959,8 +959,8 @@
       --s1p-border: #d1d5db;
       --s1p-hover-overlay: rgba(0, 0, 0, 0.08);
       /* 全屏蒙版统一走轻磨砂玻璃参数，方便设置面板/确认框/图片查看器一起调节。 */
-      --s1p-overlay-backdrop: rgba(var(--s1p-black-rgb), 0.28);
-      --s1p-overlay-blur: 2px;
+      --s1p-overlay-backdrop: rgba(var(--s1p-black-rgb), 0.22);
+      --s1p-overlay-blur: 1.6px;
 
       /* -- [新增] 阴影 -- */
       --s1p-shadow-color-rgb: 0, 0, 0;
@@ -5413,8 +5413,8 @@
 
         --s1p-border: #4b5563;
         --s1p-hover-overlay: rgba(255, 255, 255, 0.15);
-        --s1p-overlay-backdrop: rgba(var(--s1p-black-rgb), 0.34);
-        --s1p-overlay-blur: 3px;
+        --s1p-overlay-backdrop: rgba(var(--s1p-black-rgb), 0.24);
+        --s1p-overlay-blur: 1.8px;
         --s1p-progress-delete-bg: var(--s1p-progress-hot);
         --s1p-progress-delete-hover-bg: rgb(154, 41, 28);
         --s1p-progress-delete-text: #ffffff;
