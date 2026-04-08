@@ -291,8 +291,21 @@
     "nav",
     "postContentLinks",
   ];
+  const OPEN_IN_NEW_TAB_POST_TOOLBAR_SCOPE_SELECTOR =
+    ".s1p-authi-actions-wrapper";
   const OPEN_IN_NEW_TAB_EXCLUDED_SCOPE_SELECTOR =
-    ".s1p-modal, .s1p-confirm-modal, .s1p-options-menu, .s1p-tag-popover, .pob, .pgs, .pgbtn, #s1p-nav-link, #s1p-nav-sync-btn";
+    [
+      ".s1p-modal",
+      ".s1p-confirm-modal",
+      ".s1p-options-menu",
+      ".s1p-tag-popover",
+      OPEN_IN_NEW_TAB_POST_TOOLBAR_SCOPE_SELECTOR,
+      ".pob",
+      ".pgs",
+      ".pgbtn",
+      "#s1p-nav-link",
+      "#s1p-nav-sync-btn",
+    ].join(", ");
   const isLikelyDownloadLink = (anchorElement, hrefValue) => {
     if (!(anchorElement instanceof HTMLAnchorElement)) {
       return false;
