@@ -285,11 +285,65 @@
   const OPEN_IN_NEW_TAB_THREAD_LIST_SCOPE_SELECTOR = "#threadlist";
   const OPEN_IN_NEW_TAB_NOTIFICATION_SCOPE_SELECTOR = ".xld.xlda";
   const OPEN_IN_NEW_TAB_NAV_SCOPE_SELECTOR = "#nv, #mu, #um, #hd";
+  const OPEN_IN_NEW_TAB_THREAD_DETAIL_SCOPE_SELECTOR =
+    '#postlist table[id^="pid"]';
+  const OPEN_IN_NEW_TAB_CONTROL_CONFIGS = [
+    {
+      key: "threadList",
+      backgroundKey: "threadListInBackground",
+      label: "帖子/消息链接",
+    },
+    {
+      key: "progress",
+      backgroundKey: "progressInBackground",
+      label: "阅读进度跳转",
+    },
+    {
+      key: "nav",
+      backgroundKey: "navInBackground",
+      label: "顶部导航/菜单链接",
+    },
+    {
+      key: "threadDetail",
+      backgroundKey: "threadDetailInBackground",
+      label: "帖子详情页链接（含自动补链）",
+    },
+    {
+      key: "postContentLinks",
+      backgroundKey: "postContentLinksInBackground",
+      label: "其他论坛链接",
+    },
+  ];
   const OPEN_IN_NEW_TAB_PRIMARY_KEYS = [
-    "threadList",
-    "progress",
-    "nav",
-    "postContentLinks",
+    ...OPEN_IN_NEW_TAB_CONTROL_CONFIGS.map((config) => config.key),
+  ];
+  const OPEN_IN_NEW_TAB_LINK_TYPE_PRIORITY = [
+    {
+      type: "progress_jump",
+      matches: (anchor) =>
+        anchor.classList.contains("s1p-progress-jump-btn") &&
+        Boolean(anchor.closest(OPEN_IN_NEW_TAB_THREAD_LIST_SCOPE_SELECTOR)),
+    },
+    {
+      type: "thread_list",
+      matches: (anchor) =>
+        Boolean(anchor.closest(OPEN_IN_NEW_TAB_THREAD_LIST_SCOPE_SELECTOR)),
+    },
+    {
+      type: "notification",
+      matches: (anchor) =>
+        Boolean(anchor.closest(OPEN_IN_NEW_TAB_NOTIFICATION_SCOPE_SELECTOR)),
+    },
+    {
+      type: "header",
+      matches: (anchor) =>
+        Boolean(anchor.closest(OPEN_IN_NEW_TAB_NAV_SCOPE_SELECTOR)),
+    },
+    {
+      type: "thread_detail",
+      matches: (anchor) =>
+        Boolean(anchor.closest(OPEN_IN_NEW_TAB_THREAD_DETAIL_SCOPE_SELECTOR)),
+    },
   ];
   const OPEN_IN_NEW_TAB_POST_TOOLBAR_SCOPE_SELECTOR =
     ".s1p-authi-actions-wrapper";
@@ -717,6 +771,83 @@
   const READ_PROGRESS_PERSIST_DEBOUNCE_MS = 5 * 1000;
   // 调试开关：开启后输出阅读进度楼层解析与兜底链路日志。
   const READ_PROGRESS_PARSE_DEBUG = false;
+  const LINK_OPEN_MODE_TOOLTIP_TEMPLATE_ID = "link-open-mode-help";
+  const OPEN_IN_NEW_TAB_RULE_BY_LINK_TYPE = {
+    sitewide_link: {
+      openKey: "postContentLinks",
+      backgroundKey: "postContentLinksInBackground",
+    },
+    progress_jump: {
+      openKey: "progress",
+      backgroundKey: "progressInBackground",
+    },
+    thread_list: {
+      openKey: "threadList",
+      backgroundKey: "threadListInBackground",
+    },
+    notification: {
+      openKey: "threadList",
+      backgroundKey: "threadListInBackground",
+    },
+    header: {
+      openKey: "nav",
+      backgroundKey: "navInBackground",
+    },
+    thread_detail: {
+      openKey: "threadDetail",
+      backgroundKey: "threadDetailInBackground",
+    },
+  };
+  const LINK_OPEN_MODE_TOOLTIP_TEMPLATE = [
+    {
+      title: "打开行为",
+      items: [
+        {
+          label: "关闭",
+          body: "当前页打开。",
+        },
+        {
+          label: "自动切换",
+          body: "新标签页打开并立即切换。",
+        },
+        {
+          label: "后台打开",
+          body: "新标签页打开但不切换。",
+        },
+      ],
+    },
+    {
+      title: "分类范围",
+      items: [
+        {
+          index: "1.",
+          label: "帖子/消息链接",
+          body: "帖子列表、消息提醒区域。",
+        },
+        {
+          index: "2.",
+          label: "阅读进度跳转",
+          body: "帖子列表里的阅读进度按钮。",
+        },
+        {
+          index: "3.",
+          label: "顶部导航/菜单链接",
+          body: "顶部导航、下拉菜单、用户栏。",
+        },
+        {
+          index: "4.",
+          label: "帖子详情页链接（含自动补链）",
+          body: "详情页楼层列表中的作者信息、正文、引用、自动补链等常规链接。",
+        },
+        {
+          index: "5.",
+          label: "其他论坛链接",
+          body: "其余未命中前述分类的论坛链接，如设置页侧栏。",
+        },
+      ],
+    },
+  ];
+  const LINK_OPEN_MODE_HELP_TOOLTIP_TEXT = "查看各分类的适用范围";
   const setCustomTooltip = (element, text) => {
     if (!(element instanceof Element)) {
       return;
@@ -2391,6 +2522,58 @@
     .s1p-generic-display-popover[data-s1p-scope="image-viewer"] {
       z-index: 100010;
     }
+    .s1p-generic-display-popover.s1p-generic-display-popover-doc {
+      padding: 16px 18px;
+      line-height: 1.65;
+    }
+    .s1p-tooltip-doc {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .s1p-tooltip-doc-section {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .s1p-tooltip-doc-title {
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+    }
+    .s1p-tooltip-doc-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .s1p-tooltip-doc-item {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .s1p-tooltip-doc-item-head {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1.5;
+    }
+    .s1p-tooltip-doc-item-index {
+      flex-shrink: 0;
+      min-width: 20px;
+      color: var(--s1p-desc-t);
+      font-weight: 700;
+    }
+    .s1p-tooltip-doc-item-label {
+      color: var(--s1p-t);
+    }
+    .s1p-tooltip-doc-item-body {
+      padding-left: 28px;
+      font-size: 12px;
+      line-height: 1.65;
+      color: var(--s1p-desc-t);
+    }
     /* --- [NEW] Date Picker Component --- */
     .s1p-date-picker {
       position: absolute;
@@ -3812,6 +3995,11 @@
       border-bottom: none;
       padding-bottom: 0;
     }
+    .s1p-settings-group-title-with-help {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
     .s1p-settings-group-head .s1p-btn {
       padding: 4px 10px;
       font-size: 13px;
@@ -4001,6 +4189,32 @@
     }
     .s1p-link-open-mode-item.is-disabled .s1p-link-open-mode-control {
       pointer-events: none;
+    }
+    .s1p-help-icon-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 18px;
+      height: 18px;
+      padding: 0;
+      border: 1px solid var(--s1p-pri);
+      border-radius: 999px;
+      background: var(--s1p-sub);
+      color: var(--s1p-desc-t);
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1;
+      cursor: help;
+      transition: background-color 0.2s ease, color 0.2s ease,
+        border-color 0.2s ease, transform 0.2s ease;
+    }
+    .s1p-help-icon-btn:hover,
+    .s1p-help-icon-btn:focus-visible {
+      background: var(--s1p-pri);
+      border-color: var(--s1p-pri);
+      color: var(--s1p-btn-text);
+      transform: translateY(-1px);
+      outline: none;
     }
     .s1p-image-size-limit-panel {
       display: grid;
@@ -13281,74 +13495,12 @@
       return;
     }
 
-    // --- [核心重构 V2] 真正与执行顺序无关的精确识别 ---
-    const getLinkType = (targetAnchor) => {
-      // 步骤 1: 识别链接所具备的所有身份，不提前返回
-      const identities = [];
-      if (
-        targetAnchor.classList.contains("s1p-progress-jump-btn") &&
-        targetAnchor.closest(OPEN_IN_NEW_TAB_THREAD_LIST_SCOPE_SELECTOR)
-      ) {
-        identities.push("progress_jump");
-      }
-      if (targetAnchor.closest(OPEN_IN_NEW_TAB_THREAD_LIST_SCOPE_SELECTOR)) {
-        identities.push("thread_list");
-      }
-      if (targetAnchor.closest(OPEN_IN_NEW_TAB_NOTIFICATION_SCOPE_SELECTOR)) {
-        identities.push("notification");
-      }
-      if (targetAnchor.closest(OPEN_IN_NEW_TAB_NAV_SCOPE_SELECTOR)) {
-        identities.push("header");
-      }
-
-      // 若未命中上方专属范围，则归类为全站通用链接（兜底分类）。
-      if (identities.length === 0) {
-        return "sitewide_link";
-      }
-
-      // 步骤 2: 定义身份的优先级顺序 (从最具体到最宽泛)
-      const priorityOrder = [
-        "progress_jump",
-        "thread_list",
-        "notification",
-        "header",
-      ];
-
-      // 步骤 3: 根据优先级列表，返回链接身份中优先级最高的一个
-      for (const priorityType of priorityOrder) {
-        if (identities.includes(priorityType)) {
-          return priorityType;
-        }
-      }
-
-      // 理论上不会执行到这里，作为安全保障
-      return "sitewide_link";
-    };
+    const getLinkType = (targetAnchor) =>
+      OPEN_IN_NEW_TAB_LINK_TYPE_PRIORITY.find(({ matches }) => matches(targetAnchor))
+        ?.type || "sitewide_link";
 
     const linkType = getLinkType(anchor);
-    const openRuleByLinkType = {
-      sitewide_link: {
-        openKey: "postContentLinks",
-        backgroundKey: "postContentLinksInBackground",
-      },
-      progress_jump: {
-        openKey: "progress",
-        backgroundKey: "progressInBackground",
-      },
-      thread_list: {
-        openKey: "threadList",
-        backgroundKey: "threadListInBackground",
-      },
-      notification: {
-        openKey: "threadList",
-        backgroundKey: "threadListInBackground",
-      },
-      header: {
-        openKey: "nav",
-        backgroundKey: "navInBackground",
-      },
-    };
-    const openRule = openRuleByLinkType[linkType];
+    const openRule = OPEN_IN_NEW_TAB_RULE_BY_LINK_TYPE[linkType];
     if (!openRule) {
       return;
     }
@@ -15508,6 +15660,8 @@
       progressInBackground: false,
       nav: false,
       navInBackground: false,
+      threadDetail: false,
+      threadDetailInBackground: false,
       postContentLinks: false,
       postContentLinksInBackground: false,
     },
@@ -15556,6 +15710,14 @@
     const settings = { ...defaultSettings, ...saved };
     let migrationApplied = false;
     const migrationReasons = [];
+    const getFirstDefinedValue = (...values) =>
+      values.find((value) => typeof value !== "undefined");
+    const resolveOpenInNewTabSetting = (fallbackValue, ...values) => {
+      const resolvedValue = getFirstDefinedValue(...values);
+      return typeof resolvedValue === "undefined"
+        ? fallbackValue
+        : resolvedValue;
+    };
     const markMigration = (reason) => {
       migrationApplied = true;
       if (
@@ -15601,6 +15763,9 @@
     const hasLegacyOpenInNewTabPlainTextKeys =
       typeof savedOpenInNewTab.plainTextUrls !== "undefined" ||
       typeof savedOpenInNewTab.plainTextUrlsInBackground !== "undefined";
+    const hasCurrentOpenInNewTabThreadDetailKeys =
+      typeof savedOpenInNewTab.threadDetail !== "undefined" ||
+      typeof savedOpenInNewTab.threadDetailInBackground !== "undefined";
     const hasCurrentOpenInNewTabPostContentKeys =
       typeof savedOpenInNewTab.postContentLinks !== "undefined" ||
       typeof savedOpenInNewTab.postContentLinksInBackground !== "undefined";
@@ -15615,32 +15780,58 @@
       const oldOpenTab = savedOpenInNewTab;
       normalizedOpenInNewTab = {
         ...defaultSettings.openInNewTab,
-        threadList:
-          oldOpenTab.threadList ??
-          oldOpenTab.threads ??
-          saved.openThreadsInNewTab ??
+        threadList: resolveOpenInNewTabSetting(
           defaultSettings.openInNewTab.threadList,
-        threadListInBackground:
-          oldOpenTab.threadListInBackground ??
-          oldOpenTab.threadsInBackground ??
-          saved.openThreadsInBackground ??
-          false,
-        progress:
-          oldOpenTab.progress ??
-          saved.openProgressInNewTab ??
+          oldOpenTab.threadList,
+          oldOpenTab.threads,
+          saved.openThreadsInNewTab
+        ),
+        threadListInBackground: resolveOpenInNewTabSetting(
+          defaultSettings.openInNewTab.threadListInBackground,
+          oldOpenTab.threadListInBackground,
+          oldOpenTab.threadsInBackground,
+          saved.openThreadsInBackground
+        ),
+        progress: resolveOpenInNewTabSetting(
           defaultSettings.openInNewTab.progress,
-        progressInBackground:
-          oldOpenTab.progressInBackground ??
-          saved.openProgressInBackground ??
-          false,
-        nav: oldOpenTab.nav ?? defaultSettings.openInNewTab.nav,
-        navInBackground: oldOpenTab.navInBackground ?? false,
-        postContentLinks:
-          oldOpenTab.postContentLinks ?? oldOpenTab.plainTextUrls ?? false,
-        postContentLinksInBackground:
-          oldOpenTab.postContentLinksInBackground ??
-          oldOpenTab.plainTextUrlsInBackground ??
-          false,
+          oldOpenTab.progress,
+          saved.openProgressInNewTab
+        ),
+        progressInBackground: resolveOpenInNewTabSetting(
+          defaultSettings.openInNewTab.progressInBackground,
+          oldOpenTab.progressInBackground,
+          saved.openProgressInBackground
+        ),
+        nav: resolveOpenInNewTabSetting(
+          defaultSettings.openInNewTab.nav,
+          oldOpenTab.nav
+        ),
+        navInBackground: resolveOpenInNewTabSetting(
+          defaultSettings.openInNewTab.navInBackground,
+          oldOpenTab.navInBackground
+        ),
+        threadDetail: resolveOpenInNewTabSetting(
+          defaultSettings.openInNewTab.threadDetail,
+          oldOpenTab.threadDetail,
+          oldOpenTab.postContentLinks,
+          oldOpenTab.plainTextUrls
+        ),
+        threadDetailInBackground: resolveOpenInNewTabSetting(
+          defaultSettings.openInNewTab.threadDetailInBackground,
+          oldOpenTab.threadDetailInBackground,
+          oldOpenTab.postContentLinksInBackground,
+          oldOpenTab.plainTextUrlsInBackground
+        ),
+        postContentLinks: resolveOpenInNewTabSetting(
+          defaultSettings.openInNewTab.postContentLinks,
+          oldOpenTab.postContentLinks,
+          oldOpenTab.plainTextUrls
+        ),
+        postContentLinksInBackground: resolveOpenInNewTabSetting(
+          defaultSettings.openInNewTab.postContentLinksInBackground,
+          oldOpenTab.postContentLinksInBackground,
+          oldOpenTab.plainTextUrlsInBackground
+        ),
       };
       markMigration("open_in_new_tab_legacy_root_or_nested_keys");
     }
@@ -15650,14 +15841,38 @@
     ) {
       normalizedOpenInNewTab = {
         ...normalizedOpenInNewTab,
-        postContentLinks:
-          savedOpenInNewTab.plainTextUrls ??
+        postContentLinks: resolveOpenInNewTabSetting(
           defaultSettings.openInNewTab.postContentLinks,
-        postContentLinksInBackground:
-          savedOpenInNewTab.plainTextUrlsInBackground ??
+          savedOpenInNewTab.plainTextUrls
+        ),
+        postContentLinksInBackground: resolveOpenInNewTabSetting(
           defaultSettings.openInNewTab.postContentLinksInBackground,
+          savedOpenInNewTab.plainTextUrlsInBackground
+        ),
       };
       markMigration("open_in_new_tab_legacy_plain_text_keys");
+    }
+    if (
+      !hasCurrentOpenInNewTabThreadDetailKeys &&
+      (hasCurrentOpenInNewTabPostContentKeys || hasLegacyOpenInNewTabPlainTextKeys)
+    ) {
+      normalizedOpenInNewTab = {
+        ...normalizedOpenInNewTab,
+        threadDetail: resolveOpenInNewTabSetting(
+          defaultSettings.openInNewTab.threadDetail,
+          normalizedOpenInNewTab.postContentLinks
+        ),
+        threadDetailInBackground: resolveOpenInNewTabSetting(
+          defaultSettings.openInNewTab.threadDetailInBackground,
+          normalizedOpenInNewTab.postContentLinksInBackground
+        ),
+        // 旧版“其他论坛链接（含自动补链）”在拆分后优先迁移到帖子详情页链接，
+        // 兜底的其他论坛链接回到默认值，避免升级后两项长期保持相同设置。
+        postContentLinks: defaultSettings.openInNewTab.postContentLinks,
+        postContentLinksInBackground:
+          defaultSettings.openInNewTab.postContentLinksInBackground,
+      };
+      markMigration("open_in_new_tab_thread_detail_split");
     }
     if (hasLegacyOpenInNewTabMaster) {
       // 旧版由 master 总开关门控，迁移后需固化为各子开关，避免升级后行为突变。
@@ -15668,6 +15883,8 @@
           legacyMasterEnabled && normalizedOpenInNewTab.threadList === true,
         progress: legacyMasterEnabled && normalizedOpenInNewTab.progress === true,
         nav: legacyMasterEnabled && normalizedOpenInNewTab.nav === true,
+        threadDetail:
+          legacyMasterEnabled && normalizedOpenInNewTab.threadDetail === true,
         postContentLinks:
           legacyMasterEnabled && normalizedOpenInNewTab.postContentLinks === true,
       };
@@ -21341,27 +21558,47 @@
         if (!isEnabled) return "off";
         return isBackground ? "background" : "foreground";
       };
-      const openModeValues = {
-        threadList: resolveOpenModeValue(
-          openTabSettings.threadList,
-          openTabSettings.threadListInBackground
-        ),
-        progress: resolveOpenModeValue(
-          openTabSettings.progress,
-          openTabSettings.progressInBackground
-        ),
-        nav: resolveOpenModeValue(
-          openTabSettings.nav,
-          openTabSettings.navInBackground
-        ),
-        postContentLinks: resolveOpenModeValue(
-          openTabSettings.postContentLinks,
-          openTabSettings.postContentLinksInBackground
-        ),
-      };
+      const openModeValues = OPEN_IN_NEW_TAB_CONTROL_CONFIGS.reduce(
+        (result, config) => {
+          result[config.key] = resolveOpenModeValue(
+            openTabSettings[config.key],
+            openTabSettings[config.backgroundKey]
+          );
+          return result;
+        },
+        {}
+      );
       const imageViewerDefaultMode = settings.imageViewerDefaultFullDisplay
         ? "full"
         : "max-width";
+      const renderLinkOpenModeControlHtml = ({
+        key,
+        label,
+        disabled = false,
+      }) => {
+        const disabledClass = disabled ? " is-disabled" : "";
+        return `
+                            <div class="s1p-link-open-mode-item${disabledClass}">
+                                <label class="s1p-settings-label" for="s1p-openMode-${key}-control">${label}</label>
+                                <div id="s1p-openMode-${key}-control" class="s1p-segmented-control s1p-link-open-mode-control">
+                                    <div class="s1p-segmented-control-slider"></div>
+                                    <div class="s1p-segmented-control-option ${openModeValues[key] === "off" ? "active" : ""}" data-value="off">关闭</div>
+                                    <div class="s1p-segmented-control-option ${openModeValues[key] === "foreground" ? "active" : ""}" data-value="foreground">自动切换</div>
+                                    <div class="s1p-segmented-control-option ${openModeValues[key] === "background" ? "active" : ""}" data-value="background">后台打开</div>
+                                </div>
+                            </div>`;
+      };
+      const openModeControlsHtml = OPEN_IN_NEW_TAB_CONTROL_CONFIGS.map((config) => {
+        const controlHtml = renderLinkOpenModeControlHtml({
+          ...config,
+          disabled: config.key === "progress" && !isReadProgressEnabled,
+        });
+        if (config.key !== "progress" || isReadProgressEnabled) {
+          return controlHtml;
+        }
+        return `${controlHtml}
+                            <p class="s1p-setting-desc s1p-setting-desc-progress-hint">需先开启“阅读进度跟踪”。</p>`;
+      }).join("");
 
       tabs["general-settings"].innerHTML = `
         ${buildPrimaryFeatureToggleHtml({
@@ -21482,50 +21719,14 @@
                 </div>
                 <div class="s1p-settings-group s1p-link-open-mode-section">
                         <div class="s1p-settings-group-head">
-                            <div class="s1p-settings-group-title">链接打开方式（新标签页）</div>
+                            <div class="s1p-settings-group-title s1p-settings-group-title-with-help">
+                                <span>链接打开方式（新标签页）</span>
+                                <button id="s1p-link-open-mode-help-btn" type="button" class="s1p-help-icon-btn" aria-label="查看链接打开方式说明">?</button>
+                            </div>
                             <button id="s1p-reset-open-in-new-tab-settings-btn" type="button" class="s1p-btn">恢复默认</button>
                         </div>
-                        <p class="s1p-setting-desc s1p-link-open-mode-desc">按来源单独控制打开行为：关闭 / 自动切换到新标签页 / 后台打开不切换。最后一项仅作用于除“帖子/消息链接”“阅读进度跳转”“顶部导航/菜单链接”之外的其他论坛链接。</p>
                         <div class="s1p-link-open-mode-group">
-                            <div class="s1p-link-open-mode-item">
-                                <label class="s1p-settings-label" for="s1p-openMode-threadList-control">帖子/消息链接</label>
-                                <div id="s1p-openMode-threadList-control" class="s1p-segmented-control s1p-link-open-mode-control">
-                                    <div class="s1p-segmented-control-slider"></div>
-                                    <div class="s1p-segmented-control-option ${openModeValues.threadList === "off" ? "active" : ""}" data-value="off">关闭</div>
-                                    <div class="s1p-segmented-control-option ${openModeValues.threadList === "foreground" ? "active" : ""}" data-value="foreground">自动切换</div>
-                                    <div class="s1p-segmented-control-option ${openModeValues.threadList === "background" ? "active" : ""}" data-value="background">后台打开</div>
-                                </div>
-                            </div>
-                            <div class="s1p-link-open-mode-item ${isReadProgressEnabled ? "" : "is-disabled"}">
-                                <label class="s1p-settings-label" for="s1p-openMode-progress-control">阅读进度跳转</label>
-                                <div id="s1p-openMode-progress-control" class="s1p-segmented-control s1p-link-open-mode-control">
-                                    <div class="s1p-segmented-control-slider"></div>
-                                    <div class="s1p-segmented-control-option ${openModeValues.progress === "off" ? "active" : ""}" data-value="off">关闭</div>
-                                    <div class="s1p-segmented-control-option ${openModeValues.progress === "foreground" ? "active" : ""}" data-value="foreground">自动切换</div>
-                                    <div class="s1p-segmented-control-option ${openModeValues.progress === "background" ? "active" : ""}" data-value="background">后台打开</div>
-                                </div>
-                            </div>
-                            ${isReadProgressEnabled
-          ? ""
-          : '<p class="s1p-setting-desc s1p-setting-desc-progress-hint">需先开启“阅读进度跟踪”。</p>'}
-                            <div class="s1p-link-open-mode-item">
-                                <label class="s1p-settings-label" for="s1p-openMode-nav-control">顶部导航/菜单链接</label>
-                                <div id="s1p-openMode-nav-control" class="s1p-segmented-control s1p-link-open-mode-control">
-                                    <div class="s1p-segmented-control-slider"></div>
-                                    <div class="s1p-segmented-control-option ${openModeValues.nav === "off" ? "active" : ""}" data-value="off">关闭</div>
-                                    <div class="s1p-segmented-control-option ${openModeValues.nav === "foreground" ? "active" : ""}" data-value="foreground">自动切换</div>
-                                    <div class="s1p-segmented-control-option ${openModeValues.nav === "background" ? "active" : ""}" data-value="background">后台打开</div>
-                                </div>
-                            </div>
-                            <div class="s1p-link-open-mode-item">
-                                <label class="s1p-settings-label" for="s1p-openMode-postContentLinks-control">其他论坛链接（含自动补链）</label>
-                                <div id="s1p-openMode-postContentLinks-control" class="s1p-segmented-control s1p-link-open-mode-control">
-                                    <div class="s1p-segmented-control-slider"></div>
-                                    <div class="s1p-segmented-control-option ${openModeValues.postContentLinks === "off" ? "active" : ""}" data-value="off">关闭</div>
-                                    <div class="s1p-segmented-control-option ${openModeValues.postContentLinks === "foreground" ? "active" : ""}" data-value="foreground">自动切换</div>
-                                    <div class="s1p-segmented-control-option ${openModeValues.postContentLinks === "background" ? "active" : ""}" data-value="background">后台打开</div>
-                                </div>
-                            </div>
+                            ${openModeControlsHtml}
                         </div>
                     </div>
                 <div class="s1p-settings-group">
@@ -21566,22 +21767,24 @@
       const resetOpenInNewTabSettingsBtn = tabContent.querySelector(
         "#s1p-reset-open-in-new-tab-settings-btn"
       );
+      const linkOpenModeHelpBtn = tabContent.querySelector(
+        "#s1p-link-open-mode-help-btn"
+      );
+      if (linkOpenModeHelpBtn) {
+        setCustomTooltip(linkOpenModeHelpBtn, LINK_OPEN_MODE_HELP_TOOLTIP_TEXT);
+        linkOpenModeHelpBtn.dataset.s1pTooltipDelay = "120";
+        linkOpenModeHelpBtn.dataset.s1pTooltipMaxWidth =
+          "min(560px, calc(100vw - 20px))";
+        linkOpenModeHelpBtn.dataset.s1pTooltipTemplate =
+          LINK_OPEN_MODE_TOOLTIP_TEMPLATE_ID;
+      }
       if (resetOpenInNewTabSettingsBtn) {
         resetOpenInNewTabSettingsBtn.addEventListener("click", (event) => {
           event.preventDefault();
           const currentSettings = getSettingsForWrite();
           currentSettings.openInNewTab = {
             ...currentSettings.openInNewTab,
-            threadList: defaultSettings.openInNewTab.threadList,
-            threadListInBackground:
-              defaultSettings.openInNewTab.threadListInBackground,
-            progress: defaultSettings.openInNewTab.progress,
-            progressInBackground: defaultSettings.openInNewTab.progressInBackground,
-            nav: defaultSettings.openInNewTab.nav,
-            navInBackground: defaultSettings.openInNewTab.navInBackground,
-            postContentLinks: defaultSettings.openInNewTab.postContentLinks,
-            postContentLinksInBackground:
-              defaultSettings.openInNewTab.postContentLinksInBackground,
+            ...defaultSettings.openInNewTab,
           };
           saveSettings(currentSettings);
           applyGlobalLinkBehavior();
@@ -21698,23 +21901,16 @@
           }
         });
       };
-      bindOpenModeControl(
-        "s1p-openMode-threadList-control",
-        "threadList",
-        "threadListInBackground"
-      );
-      bindOpenModeControl(
-        "s1p-openMode-progress-control",
-        "progress",
-        "progressInBackground",
-        { disabled: !isReadProgressEnabled }
-      );
-      bindOpenModeControl("s1p-openMode-nav-control", "nav", "navInBackground");
-      bindOpenModeControl(
-        "s1p-openMode-postContentLinks-control",
-        "postContentLinks",
-        "postContentLinksInBackground"
-      );
+      OPEN_IN_NEW_TAB_CONTROL_CONFIGS.forEach((config) => {
+        bindOpenModeControl(
+          `s1p-openMode-${config.key}-control`,
+          config.key,
+          config.backgroundKey,
+          {
+            disabled: config.key === "progress" && !isReadProgressEnabled,
+          }
+        );
+      });
       const imageViewerDefaultModeControl = tabContent.querySelector(
         "#s1p-imageViewerDefaultMode-control"
       );
@@ -25087,44 +25283,190 @@
     }
 
     let showTimeout;
+    let pendingShowToken = 0;
+    let cachedLinkOpenModeTooltipDoc = null;
+    const templateMeasuredWidthCache = new Map();
+    const getLinkOpenModeTooltipDoc = () => {
+      if (!cachedLinkOpenModeTooltipDoc) {
+        const doc = document.createElement("div");
+        doc.className = "s1p-tooltip-doc";
+
+        LINK_OPEN_MODE_TOOLTIP_TEMPLATE.forEach((sectionDescriptor) => {
+          const section = document.createElement("section");
+          section.className = "s1p-tooltip-doc-section";
+
+          const title = document.createElement("div");
+          title.className = "s1p-tooltip-doc-title";
+          title.textContent = sectionDescriptor.title;
+          section.appendChild(title);
+
+          const list = document.createElement("div");
+          list.className = "s1p-tooltip-doc-list";
+
+          sectionDescriptor.items.forEach((itemDescriptor) => {
+            const item = document.createElement("div");
+            item.className = "s1p-tooltip-doc-item";
+
+            const head = document.createElement("div");
+            head.className = "s1p-tooltip-doc-item-head";
+
+            if (itemDescriptor.index) {
+              const index = document.createElement("span");
+              index.className = "s1p-tooltip-doc-item-index";
+              index.textContent = itemDescriptor.index;
+              head.appendChild(index);
+            }
+
+            const label = document.createElement("span");
+            label.className = "s1p-tooltip-doc-item-label";
+            label.textContent = itemDescriptor.label;
+            head.appendChild(label);
+            item.appendChild(head);
+
+            if (itemDescriptor.body) {
+              const body = document.createElement("div");
+              body.className = "s1p-tooltip-doc-item-body";
+              body.textContent = itemDescriptor.body;
+              item.appendChild(body);
+            }
+
+            list.appendChild(item);
+          });
+
+          section.appendChild(list);
+          doc.appendChild(section);
+        });
+
+        cachedLinkOpenModeTooltipDoc = doc;
+      }
+      return cachedLinkOpenModeTooltipDoc;
+    };
+    const resetTooltipPopoverPresentation = () => {
+      popover.classList.remove("visible", "s1p-generic-display-popover-doc");
+      popover.style.display = "";
+      popover.style.width = "";
+      popover.style.maxWidth = "";
+      popover.replaceChildren();
+    };
+    const renderTooltipContent = (templateId, text) => {
+      const isLinkOpenModeHelp = templateId === LINK_OPEN_MODE_TOOLTIP_TEMPLATE_ID;
+      popover.classList.toggle(
+        "s1p-generic-display-popover-doc",
+        isLinkOpenModeHelp
+      );
+      if (isLinkOpenModeHelp) {
+        popover.replaceChildren(getLinkOpenModeTooltipDoc().cloneNode(true));
+        return true;
+      }
+
+      popover.textContent = text;
+      return false;
+    };
+    const resolveTooltipWidthCacheKey = (templateId, tooltipMaxWidth, isTemplate) => {
+      if (!isTemplate || !templateId) {
+        return "";
+      }
+      return `${templateId}::${tooltipMaxWidth}::${window.innerWidth}`;
+    };
+    const applyTooltipMeasuredWidth = (widthCacheKey) => {
+      const cachedWidth = widthCacheKey
+        ? templateMeasuredWidthCache.get(widthCacheKey)
+        : 0;
+      if (cachedWidth) {
+        popover.style.width = `${cachedWidth}px`;
+        return;
+      }
+
+      popover.style.width = "max-content";
+      const measuredWidth = Math.ceil(popover.getBoundingClientRect().width);
+      if (measuredWidth > 0) {
+        popover.style.width = `${measuredWidth}px`;
+        if (widthCacheKey) {
+          templateMeasuredWidthCache.set(widthCacheKey, measuredWidth);
+        }
+      }
+    };
+    const positionTooltipPopover = (anchor) => {
+      const rect = anchor.getBoundingClientRect();
+      const tooltipWidth = popover.offsetWidth;
+      let top = rect.top + window.scrollY - popover.offsetHeight - 6;
+      let left = rect.left + window.scrollX + rect.width / 2 - tooltipWidth / 2;
+      const viewportPadding = GENERIC_TOOLTIP_VIEWPORT_PADDING_PX;
+      const viewportLeft = window.scrollX;
+      const viewportRight = window.scrollX + window.innerWidth;
+      const minLeft = viewportLeft + viewportPadding;
+      const maxLeft = viewportRight - tooltipWidth - viewportPadding;
+
+      if (top < window.scrollY + 6) {
+        top = rect.bottom + window.scrollY + 6;
+      }
+
+      left = Math.min(Math.max(left, minLeft), Math.max(minLeft, maxLeft));
+      popover.style.top = `${top}px`;
+      popover.style.left = `${left}px`;
+    };
+    const showTooltipPopover = (anchor, text, showToken) => {
+      if (showToken !== pendingShowToken) {
+        return;
+      }
+
+      applyPostToolbarPopupScope(popover, anchor);
+      const templateId = String(anchor?.dataset?.s1pTooltipTemplate || "").trim();
+      const isTemplateTooltip = renderTooltipContent(templateId, text);
+      const tooltipMaxWidth = String(
+        anchor?.dataset?.s1pTooltipMaxWidth || ""
+      ).trim();
+      const widthCacheKey = resolveTooltipWidthCacheKey(
+        templateId,
+        tooltipMaxWidth,
+        isTemplateTooltip
+      );
+
+      popover.classList.remove("visible");
+      popover.style.maxWidth = tooltipMaxWidth;
+      popover.style.display = "block";
+      popover.style.left = "0px";
+      popover.style.top = "0px";
+      applyTooltipMeasuredWidth(widthCacheKey);
+      positionTooltipPopover(anchor);
+
+      requestAnimationFrame(() => {
+        if (showToken !== pendingShowToken) {
+          return;
+        }
+        popover.classList.add("visible");
+      });
+    };
+    const maybeWaitForTooltipFonts = (anchor, callback) => {
+      const templateId = String(anchor?.dataset?.s1pTooltipTemplate || "").trim();
+      const shouldWaitForFonts =
+        templateId === LINK_OPEN_MODE_TOOLTIP_TEMPLATE_ID &&
+        document.fonts &&
+        typeof document.fonts.ready?.then === "function" &&
+        document.fonts.status !== "loaded";
+      if (shouldWaitForFonts) {
+        document.fonts.ready.then(callback, callback);
+        return;
+      }
+      callback();
+    };
     const resolveTooltipTarget = (node) =>
       node instanceof Element ? node.closest(GENERIC_TOOLTIP_TARGET_SELECTOR) : null;
 
     const show = (anchor, text, delay = 50) => {
-      clearTimeout(showTimeout); // [NEW] 额外清理 showTimeout 确保不会叠加
+      clearTimeout(showTimeout);
+      const showToken = ++pendingShowToken;
       showTimeout = setTimeout(() => {
-        applyPostToolbarPopupScope(popover, anchor);
-
-        popover.textContent = text;
-        const rect = anchor.getBoundingClientRect();
-
-        popover.style.display = "block";
-        // 先重置到稳定测量坐标，避免复用时受上一次 left 影响导致宽度被压缩成“竖排”。
-        popover.style.left = "0px";
-        popover.style.top = "0px";
-        let top = rect.top + window.scrollY - popover.offsetHeight - 6;
-        let left =
-          rect.left + window.scrollX + rect.width / 2 - popover.offsetWidth / 2;
-        const viewportPadding = GENERIC_TOOLTIP_VIEWPORT_PADDING_PX;
-        const viewportLeft = window.scrollX;
-        const viewportRight = window.scrollX + window.innerWidth;
-        const minLeft = viewportLeft + viewportPadding;
-        const maxLeft = viewportRight - popover.offsetWidth - viewportPadding;
-        if (top < window.scrollY + 6) {
-          top = rect.bottom + window.scrollY + 6;
-        }
-
-        left = Math.min(Math.max(left, minLeft), Math.max(minLeft, maxLeft));
-
-        popover.style.top = `${top}px`;
-        popover.style.left = `${left}px`;
-        popover.classList.add("visible");
+        maybeWaitForTooltipFonts(anchor, () => {
+          showTooltipPopover(anchor, text, showToken);
+        });
       }, delay);
     };
 
     const hide = () => {
+      pendingShowToken += 1;
       clearTimeout(showTimeout);
-      popover.classList.remove("visible");
+      resetTooltipPopoverPresentation();
     };
 
     // [MODIFIED] Attach API to the element for external use
