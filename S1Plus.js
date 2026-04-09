@@ -766,6 +766,7 @@
   const GENERIC_TOOLTIP_TARGET_SELECTOR =
     ".s1p-user-tag-display, .s1p-user-remark-display, .s1p-history-tag-item, .s1p-has-tooltip";
   const GENERIC_TOOLTIP_VIEWPORT_PADDING_PX = 10;
+  const GENERIC_TOOLTIP_GAP_PX = 8;
   // 与 NUX 窄屏规则保持一致的断点。
   const NARROW_SCREEN_MAX_WIDTH_PX = 909;
   // 列表页阅读按钮悬停超过该时长后显示删除入口。
@@ -2528,6 +2529,14 @@
     .s1p-generic-display-popover.s1p-generic-display-popover-doc {
       padding: 16px 18px;
       line-height: 1.65;
+      max-height: calc(100vh - 20px);
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-gutter: stable;
+      scrollbar-width: thin;
+      pointer-events: auto;
+      transform: none;
+      transition: opacity 0.15s ease-out;
     }
     .s1p-tooltip-doc {
       display: flex;
@@ -25295,11 +25304,39 @@
       popover.className = "s1p-generic-display-popover";
       document.body.appendChild(popover);
     }
+    if (popover.dataset.s1pInitialized === "true") {
+      return;
+    }
+    popover.dataset.s1pInitialized = "true";
 
     let showTimeout;
     let pendingShowToken = 0;
+    let activeTooltipAnchor = null;
+    let activeTooltipTemplateId = "";
+    let repositionRafId = 0;
     let cachedLinkOpenModeTooltipDoc = null;
     const templateMeasuredWidthCache = new Map();
+    const getTooltipTemplateId = (anchor) =>
+      String(anchor?.dataset?.s1pTooltipTemplate || "").trim();
+    const getTooltipMaxWidth = (anchor) =>
+      String(anchor?.dataset?.s1pTooltipMaxWidth || "").trim();
+    const isLinkOpenModeHelpTemplate = (templateId) =>
+      templateId === LINK_OPEN_MODE_TOOLTIP_TEMPLATE_ID;
+    const clearActiveTooltipContext = () => {
+      activeTooltipAnchor = null;
+      activeTooltipTemplateId = "";
+    };
+    const setActiveTooltipContext = (anchor, templateId) => {
+      activeTooltipAnchor = anchor instanceof Element ? anchor : null;
+      activeTooltipTemplateId = templateId;
+    };
+    const cancelTooltipReposition = () => {
+      if (!repositionRafId) {
+        return;
+      }
+      cancelAnimationFrame(repositionRafId);
+      repositionRafId = 0;
+    };
     const getLinkOpenModeTooltipDoc = () => {
       if (!cachedLinkOpenModeTooltipDoc) {
         const doc = document.createElement("div");
@@ -25360,10 +25397,13 @@
       popover.style.display = "";
       popover.style.width = "";
       popover.style.maxWidth = "";
+      popover.style.maxHeight = "";
+      popover.scrollTop = 0;
+      clearActiveTooltipContext();
       popover.replaceChildren();
     };
     const renderTooltipContent = (templateId, text) => {
-      const isLinkOpenModeHelp = templateId === LINK_OPEN_MODE_TOOLTIP_TEMPLATE_ID;
+      const isLinkOpenModeHelp = isLinkOpenModeHelpTemplate(templateId);
       popover.classList.toggle(
         "s1p-generic-display-popover-doc",
         isLinkOpenModeHelp
@@ -25400,24 +25440,60 @@
         }
       }
     };
-    const positionTooltipPopover = (anchor) => {
+    const applyTooltipHeightConstraint = (templateId = "") => {
+      if (isLinkOpenModeHelpTemplate(templateId)) {
+        popover.style.maxHeight = `${Math.max(
+          120,
+          window.innerHeight - GENERIC_TOOLTIP_VIEWPORT_PADDING_PX * 2
+        )}px`;
+        return;
+      }
+      popover.style.maxHeight = "";
+    };
+    const positionTooltipPopover = (anchor, templateId = "") => {
       const rect = anchor.getBoundingClientRect();
       const tooltipWidth = popover.offsetWidth;
-      let top = rect.top + window.scrollY - popover.offsetHeight - 6;
-      let left = rect.left + window.scrollX + rect.width / 2 - tooltipWidth / 2;
+      const tooltipHeight = popover.offsetHeight;
       const viewportPadding = GENERIC_TOOLTIP_VIEWPORT_PADDING_PX;
+      const tooltipGap = GENERIC_TOOLTIP_GAP_PX;
+      const isLinkOpenModeHelp = isLinkOpenModeHelpTemplate(templateId);
+      let top;
+      let left;
+
+      if (isLinkOpenModeHelp) {
+        top =
+          rect.top + window.scrollY + rect.height / 2 - tooltipHeight / 2;
+        left = rect.right + window.scrollX + tooltipGap;
+
+        if (left + tooltipWidth > window.scrollX + window.innerWidth - viewportPadding) {
+          left = rect.left + window.scrollX - tooltipWidth - tooltipGap;
+        }
+      } else {
+        top = rect.top + window.scrollY - tooltipHeight - 6;
+        left = rect.left + window.scrollX + rect.width / 2 - tooltipWidth / 2;
+
+        if (top < window.scrollY + 6) {
+          top = rect.bottom + window.scrollY + 6;
+        }
+      }
+
+      const viewportTop = window.scrollY;
       const viewportLeft = window.scrollX;
       const viewportRight = window.scrollX + window.innerWidth;
+      const viewportBottom = window.scrollY + window.innerHeight;
+      const minTop = viewportTop + viewportPadding;
+      const maxTop = viewportBottom - tooltipHeight - viewportPadding;
       const minLeft = viewportLeft + viewportPadding;
       const maxLeft = viewportRight - tooltipWidth - viewportPadding;
 
-      if (top < window.scrollY + 6) {
-        top = rect.bottom + window.scrollY + 6;
-      }
-
+      top = Math.min(Math.max(top, minTop), Math.max(minTop, maxTop));
       left = Math.min(Math.max(left, minLeft), Math.max(minLeft, maxLeft));
       popover.style.top = `${top}px`;
       popover.style.left = `${left}px`;
+    };
+    const repositionTooltip = (anchor, templateId = "") => {
+      applyTooltipHeightConstraint(templateId);
+      positionTooltipPopover(anchor, templateId);
     };
     const showTooltipPopover = (anchor, text, showToken) => {
       if (showToken !== pendingShowToken) {
@@ -25425,11 +25501,9 @@
       }
 
       applyPostToolbarPopupScope(popover, anchor);
-      const templateId = String(anchor?.dataset?.s1pTooltipTemplate || "").trim();
+      const templateId = getTooltipTemplateId(anchor);
       const isTemplateTooltip = renderTooltipContent(templateId, text);
-      const tooltipMaxWidth = String(
-        anchor?.dataset?.s1pTooltipMaxWidth || ""
-      ).trim();
+      const tooltipMaxWidth = getTooltipMaxWidth(anchor);
       const widthCacheKey = resolveTooltipWidthCacheKey(
         templateId,
         tooltipMaxWidth,
@@ -25441,8 +25515,10 @@
       popover.style.display = "block";
       popover.style.left = "0px";
       popover.style.top = "0px";
+      popover.scrollTop = 0;
+      setActiveTooltipContext(anchor, templateId);
       applyTooltipMeasuredWidth(widthCacheKey);
-      positionTooltipPopover(anchor);
+      repositionTooltip(anchor, templateId);
 
       requestAnimationFrame(() => {
         if (showToken !== pendingShowToken) {
@@ -25452,9 +25528,9 @@
       });
     };
     const maybeWaitForTooltipFonts = (anchor, callback) => {
-      const templateId = String(anchor?.dataset?.s1pTooltipTemplate || "").trim();
+      const templateId = getTooltipTemplateId(anchor);
       const shouldWaitForFonts =
-        templateId === LINK_OPEN_MODE_TOOLTIP_TEMPLATE_ID &&
+        isLinkOpenModeHelpTemplate(templateId) &&
         document.fonts &&
         typeof document.fonts.ready?.then === "function" &&
         document.fonts.status !== "loaded";
@@ -25466,6 +25542,20 @@
     };
     const resolveTooltipTarget = (node) =>
       node instanceof Element ? node.closest(GENERIC_TOOLTIP_TARGET_SELECTOR) : null;
+    const repositionActiveTooltip = () => {
+      cancelTooltipReposition();
+      repositionRafId = requestAnimationFrame(() => {
+        repositionRafId = 0;
+        if (!popover.classList.contains("visible")) {
+          return;
+        }
+        if (!(activeTooltipAnchor instanceof Element) || !activeTooltipAnchor.isConnected) {
+          hide();
+          return;
+        }
+        repositionTooltip(activeTooltipAnchor, activeTooltipTemplateId);
+      });
+    };
 
     const show = (anchor, text, delay = 50) => {
       clearTimeout(showTimeout);
@@ -25480,6 +25570,7 @@
     const hide = () => {
       pendingShowToken += 1;
       clearTimeout(showTimeout);
+      cancelTooltipReposition();
       resetTooltipPopoverPresentation();
     };
 
@@ -25487,6 +25578,8 @@
     if (!popover.s1p_api) {
       popover.s1p_api = { show, hide };
     }
+    window.addEventListener("resize", repositionActiveTooltip);
+    document.addEventListener("scroll", repositionActiveTooltip, true);
     const resolveTooltipDelay = (target, isTooltip) => {
       if (!isTooltip) {
         return 50;
@@ -25522,6 +25615,14 @@
         return;
       }
       const relatedTarget = e.relatedTarget;
+      const templateId = getTooltipTemplateId(target);
+      if (
+        isLinkOpenModeHelpTemplate(templateId) &&
+        relatedTarget instanceof Element &&
+        (relatedTarget === popover || popover.contains(relatedTarget))
+      ) {
+        return;
+      }
       if (
         relatedTarget instanceof Element &&
         (target === relatedTarget || target.contains(relatedTarget))
@@ -25530,6 +25631,21 @@
       }
       const nextHoverTarget = resolveTooltipTarget(relatedTarget);
       if (nextHoverTarget === target) {
+        return;
+      }
+      hide();
+    });
+    popover.addEventListener("mouseleave", (e) => {
+      if (!isLinkOpenModeHelpTemplate(activeTooltipTemplateId)) {
+        return;
+      }
+      const relatedTarget = e.relatedTarget;
+      if (
+        relatedTarget instanceof Element &&
+        activeTooltipAnchor &&
+        (relatedTarget === activeTooltipAnchor ||
+          activeTooltipAnchor.contains(relatedTarget))
+      ) {
         return;
       }
       hide();
