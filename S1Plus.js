@@ -612,6 +612,9 @@
   let navbarPersistentSyncAlertDismissedSignature = null;
   let hasPendingBackgroundSync = false;
   let backgroundSyncRetryTimeout = null;
+
+  const isManualSyncActionBusy = () =>
+    Boolean(manualSyncInFlightPromise || forceSyncInFlight);
   let backgroundSyncRetryAttempts = 0;
   let backgroundSyncLockHeartbeatTimer = null;
   let manualSyncLockHeartbeatTimer = null;
@@ -1526,16 +1529,15 @@
     #s1p-nav-sync-sticky-alert .s1p-nav-sync-sticky-alert-action:hover {
       background: var(--s1p-sync-alert-current-action-hover-bg);
     }
+    #s1p-nav-sync-sticky-alert .s1p-nav-sync-sticky-alert-action[data-busy="true"] {
+      opacity: 0.72;
+    }
+    #s1p-nav-sync-sticky-alert
+      .s1p-nav-sync-sticky-alert-action[data-busy="true"]:hover {
+      background: var(--s1p-sync-alert-current-action-bg);
+    }
     #s1p-nav-sync-sticky-alert .s1p-nav-sync-sticky-alert-action:active {
       transform: translateY(0.5px);
-    }
-    #s1p-nav-sync-sticky-alert .s1p-nav-sync-sticky-alert-action:disabled {
-      opacity: 0.5;
-      cursor: default;
-      transform: none;
-    }
-    #s1p-nav-sync-sticky-alert .s1p-nav-sync-sticky-alert-action:disabled:hover {
-      background: var(--s1p-sync-alert-current-action-bg);
     }
     #s1p-nav-sync-sticky-alert .s1p-nav-sync-sticky-alert-dismiss {
       border: 0;
@@ -17522,16 +17524,24 @@
     alertLi.dataset.alertType = descriptor.type;
     alertLi.dataset.alertSignature = descriptorSignature;
     textEl.textContent = descriptor.text;
-    actionBtn.textContent = descriptor.actionLabel || "处理";
     dismissBtn.textContent = descriptor.dismissLabel || "忽略本次";
-    actionBtn.disabled = Boolean(manualSyncInFlightPromise || forceSyncInFlight);
+    const applyActionButtonState = ({ busy }) => {
+      const isBusy = Boolean(busy);
+      actionBtn.textContent = isBusy
+        ? "同步中..."
+        : descriptor.actionLabel || "处理";
+      actionBtn.dataset.busy = isBusy ? "true" : "false";
+      actionBtn.setAttribute("aria-busy", isBusy ? "true" : "false");
+    };
+    applyActionButtonState({ busy: isManualSyncActionBusy() });
     actionBtn.onclick = async (event) => {
       event.preventDefault();
       event.stopPropagation();
-      if (manualSyncInFlightPromise || forceSyncInFlight) {
+      if (isManualSyncActionBusy()) {
+        showMessage("手动同步正在进行，请稍候...", null);
         return;
       }
-      actionBtn.disabled = true;
+      applyActionButtonState({ busy: true });
       try {
         clearNavbarPersistentSyncAlertDismissedSignature();
         await handleManualSync();
