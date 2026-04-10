@@ -42,8 +42,10 @@
         "openInNewTab.threadListInBackground": true,
         "openInNewTab.nav": false,
         "openInNewTab.navInBackground": false,
-        "openInNewTab.postContentLinks": true,
-        "openInNewTab.postContentLinksInBackground": true
+        "openInNewTab.threadDetail": true,
+        "openInNewTab.threadDetailInBackground": true,
+        "openInNewTab.postContentLinks": false,
+        "openInNewTab.postContentLinksInBackground": false
       },
       "absentPaths": [
         "openInNewTab.threads",
@@ -54,7 +56,9 @@
         "openInNewTab.plainTextUrlsInBackground"
       ],
       "reasonsInclude": [
-        "open_in_new_tab_legacy_root_or_nested_keys"
+        "open_in_new_tab_legacy_root_or_nested_keys",
+        "open_in_new_tab_legacy_plain_text_keys",
+        "open_in_new_tab_thread_detail_split"
       ]
     }
   },
@@ -104,12 +108,15 @@
         "openInNewTab.progressInBackground": false,
         "openInNewTab.nav": false,
         "openInNewTab.navInBackground": false,
+        "openInNewTab.threadDetail": false,
+        "openInNewTab.threadDetailInBackground": false,
         "openInNewTab.postContentLinks": false,
         "openInNewTab.postContentLinksInBackground": false
       },
       "reasonsInclude": [
         "open_in_new_tab_normalized_bool:threadList",
-        "open_in_new_tab_normalized_bool:postContentLinksInBackground"
+        "open_in_new_tab_thread_detail_split",
+        "open_in_new_tab_normalized_bool:threadDetail"
       ]
     }
   },
@@ -178,7 +185,9 @@
         "progressInBackground": false,
         "nav": true,
         "navInBackground": false,
-        "postContentLinks": true,
+        "threadDetail": true,
+        "threadDetailInBackground": false,
+        "postContentLinks": false,
         "postContentLinksInBackground": false
       },
       "autoLinkPlainTextUrls": true,
@@ -190,7 +199,8 @@
       "settings": {
         "openInNewTab.threadList": true,
         "openInNewTab.nav": true,
-        "openInNewTab.postContentLinks": true,
+        "openInNewTab.threadDetail": true,
+        "openInNewTab.postContentLinks": false,
         "autoLinkPlainTextUrls": true
       },
       "reasonsInclude": []
