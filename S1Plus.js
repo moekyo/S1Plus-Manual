@@ -781,6 +781,7 @@
   const GENERIC_TOOLTIP_POSITION_FLOATING = "floating";
   const GENERIC_TOOLTIP_POSITION_SIDE = "side";
   const GENERIC_TOOLTIP_TEMPLATE_WIDTH_CACHE_LIMIT = 24;
+  const GENERIC_TOOLTIP_ANCHOR_HEALTHCHECK_MS = 160;
   const GENERIC_TOOLTIP_DATASET_CONFIG_KEYS = {
     delay: "s1pTooltipDelay",
     maxWidth: "s1pTooltipMaxWidth",
@@ -792,6 +793,7 @@
     preserveOnPopoverHover: false,
     constrainHeight: false,
     measureWidth: false,
+    hideOnPointerEventsNone: false,
   });
   const LINK_OPEN_MODE_TOOLTIP_TEMPLATE_ID = "link-open-mode-help";
   const LINK_OPEN_MODE_HELP_TOOLTIP_CONFIG = Object.freeze({
@@ -25373,6 +25375,8 @@
     let activeTooltipAnchor = null;
     let activeTooltipBehavior = null;
     let repositionRafId = 0;
+    let anchorHealthCheckTimer = 0;
+    let anchorMutationObserver = null;
     let cachedLinkOpenModeTooltipDoc = null;
     const templateMeasuredWidthCache = new Map();
     const pruneTemplateMeasuredWidthCache = () => {
@@ -25410,12 +25414,96 @@
       activeTooltipAnchor = anchor instanceof Element ? anchor : null;
       activeTooltipBehavior = behavior || null;
     };
+    const isTooltipPopoverVisible = () => popover.classList.contains("visible");
+    const getActiveTooltipBehavior = () =>
+      activeTooltipBehavior || resolveTooltipBehavior(activeTooltipAnchor);
     const cancelTooltipReposition = () => {
       if (!repositionRafId) {
         return;
       }
       cancelAnimationFrame(repositionRafId);
       repositionRafId = 0;
+    };
+    const stopTooltipAnchorMonitor = () => {
+      if (anchorHealthCheckTimer) {
+        clearTimeout(anchorHealthCheckTimer);
+        anchorHealthCheckTimer = 0;
+      }
+      if (anchorMutationObserver) {
+        anchorMutationObserver.disconnect();
+        anchorMutationObserver = null;
+      }
+    };
+    const isTooltipAnchorAvailable = (
+      anchor,
+      behavior = activeTooltipBehavior
+    ) => {
+      if (!(anchor instanceof Element) || !anchor.isConnected) {
+        return false;
+      }
+      const computedStyle = window.getComputedStyle(anchor);
+      if (
+        computedStyle.display === "none" ||
+        computedStyle.visibility === "hidden"
+      ) {
+        return false;
+      }
+      if (
+        behavior?.hideOnPointerEventsNone &&
+        computedStyle.pointerEvents === "none"
+      ) {
+        return false;
+      }
+      return anchor.getClientRects().length > 0;
+    };
+    const runTooltipAnchorHealthCheck = () => {
+      if (!isTooltipPopoverVisible()) {
+        return;
+      }
+      const behavior = getActiveTooltipBehavior();
+      if (!isTooltipAnchorAvailable(activeTooltipAnchor, behavior)) {
+        hide();
+        return;
+      }
+      repositionActiveTooltip();
+    };
+    const scheduleTooltipAnchorHealthCheck = ({
+      repeat = false,
+      delayMs = GENERIC_TOOLTIP_ANCHOR_HEALTHCHECK_MS,
+    } = {}) => {
+      const normalizedDelayMs = Math.max(0, Number(delayMs) || 0);
+      if (anchorHealthCheckTimer) {
+        if (normalizedDelayMs > 0) {
+          return;
+        }
+        clearTimeout(anchorHealthCheckTimer);
+        anchorHealthCheckTimer = 0;
+      }
+      if (!isTooltipPopoverVisible() && normalizedDelayMs > 0) {
+        return;
+      }
+      anchorHealthCheckTimer = setTimeout(() => {
+        anchorHealthCheckTimer = 0;
+        runTooltipAnchorHealthCheck();
+        if (repeat && isTooltipPopoverVisible()) {
+          scheduleTooltipAnchorHealthCheck({ repeat: true });
+        }
+      }, normalizedDelayMs);
+    };
+    const startTooltipAnchorMonitor = () => {
+      stopTooltipAnchorMonitor();
+      if (typeof MutationObserver === "function" && document.body) {
+        anchorMutationObserver = new MutationObserver(() => {
+          scheduleTooltipAnchorHealthCheck({ delayMs: 0 });
+        });
+        anchorMutationObserver.observe(document.body, {
+          childList: true,
+          subtree: true,
+          attributes: true,
+          attributeFilter: ["class", "style", "hidden", "aria-hidden"],
+        });
+      }
+      scheduleTooltipAnchorHealthCheck({ repeat: true });
     };
     const getLinkOpenModeTooltipDoc = () => {
       if (!cachedLinkOpenModeTooltipDoc) {
@@ -25510,6 +25598,7 @@
       }
     };
     const resetTooltipPopoverPresentation = () => {
+      stopTooltipAnchorMonitor();
       popover.classList.remove("visible");
       Object.values(tooltipVariantClassByKind).forEach((className) =>
         popover.classList.remove(className)
@@ -25632,7 +25721,10 @@
       positionTooltipPopover(anchor, behavior);
     };
     const showTooltipPopover = (anchor, text, showToken, behavior) => {
-      if (showToken !== pendingShowToken) {
+      if (
+        showToken !== pendingShowToken ||
+        !isTooltipAnchorAvailable(anchor, behavior)
+      ) {
         return;
       }
 
@@ -25653,6 +25745,7 @@
           return;
         }
         popover.classList.add("visible");
+        startTooltipAnchorMonitor();
       });
     };
     const maybeWaitForTooltipFonts = (behavior, callback) => {
@@ -25673,14 +25766,14 @@
       cancelTooltipReposition();
       repositionRafId = requestAnimationFrame(() => {
         repositionRafId = 0;
-        if (!popover.classList.contains("visible")) {
+        if (!isTooltipPopoverVisible()) {
           return;
         }
-        if (!(activeTooltipAnchor instanceof Element) || !activeTooltipAnchor.isConnected) {
+        const behavior = getActiveTooltipBehavior();
+        if (!isTooltipAnchorAvailable(activeTooltipAnchor, behavior)) {
           hide();
           return;
         }
-        const behavior = resolveTooltipBehavior(activeTooltipAnchor);
         setActiveTooltipContext(activeTooltipAnchor, behavior);
         applyTooltipLayout(activeTooltipAnchor, behavior, { forceRemeasure });
       });
@@ -25691,6 +25784,9 @@
       const showToken = ++pendingShowToken;
       const behavior = resolveTooltipBehavior(anchor);
       showTimeout = setTimeout(() => {
+        if (!isTooltipAnchorAvailable(anchor, behavior)) {
+          return;
+        }
         maybeWaitForTooltipFonts(behavior, () => {
           showTooltipPopover(anchor, text, showToken, behavior);
         });
