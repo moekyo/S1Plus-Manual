@@ -219,3 +219,43 @@
 - Phase 3 does not yet bind the new runner to `pageshow` / `visibilitychange`.
 - Phase 3 does not yet add visible-page polling, user-activity backoff, diagnostics surface, or page-type-aware refresh behavior.
 - Because trigger wiring is still pending, the new runner currently exists as infrastructure plus verified behavior, not as user-visible automatic foreground probing yet.
+
+## Phase 4 Implementation Notes
+
+### Trigger integration scope chosen for this phase
+- Added a small trigger-layer bridge instead of mixing new probe logic directly into the existing listeners:
+  - `triggerForegroundRemoteFreshnessProbe(...)`
+  - `handlePendingAutoSyncRecoveryVisibilityChange(...)`
+  - `handlePendingAutoSyncRecoveryPageShow(...)`
+- This keeps Phase 4 focused on event wiring and preserves Phase 3 as the single place where probe guard conditions and follow-up sync reuse are decided.
+
+### Listener behavior after Phase 4
+- `visibilitychange` now does two things when the page becomes visible:
+  - first runs the original `recoverPendingAutoSyncIfNeeded()`
+  - then triggers the guarded metadata-only foreground probe
+- `pageshow` now keeps the original recovery behavior for every restore/load path, but only bfcache restores (`event.persisted === true`) trigger the extra foreground probe.
+- Non-persisted `pageshow` intentionally stays recovery-only:
+  - startup sync and per-load sync already cover normal fresh page loads
+  - probing there would add redundant remote metadata checks on top of existing load-time sync paths
+
+### Safety and noise-control choices preserved
+- The Phase 4 bridge does not bypass any of the Phase 3 protections:
+  - same-tab cooldown
+  - shared cross-tab cooldown
+  - lightweight probe lock
+  - active sync lock checks
+  - conflict pause / circuit breaker guards
+- The trigger bridge wraps probe execution with local error handling so listener callbacks do not surface unhandled promise rejections if a metadata probe throws unexpectedly.
+- Because `pageshow` and `visibilitychange` may both occur during a foreground restore, Phase 4 still relies on the existing cooldown/lock model to suppress duplicate network work rather than inventing a second event-level dedupe path.
+
+### Validation added in Phase 4
+- Added `scripts/test-foreground-trigger-integration.js` to verify:
+  - listener wiring uses the dedicated Phase 4 handlers
+  - visible `visibilitychange` runs recovery before the guarded probe
+  - hidden `visibilitychange` exits without recovery or probe work
+  - persisted `pageshow` runs recovery plus probe
+  - non-persisted `pageshow` remains recovery-only
+
+### Remaining limitations after Phase 4
+- Always-visible tabs still do not notice remote changes without a foreground-style trigger; that gap is intentionally left for Phase 5 visible-page polling.
+- Phase 4 does not yet change post-sync refresh policy, diagnostics output, or user-facing status copy.

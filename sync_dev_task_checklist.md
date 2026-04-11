@@ -4,15 +4,16 @@
 Turn the cross-device auto-pull design into an implementation-ready checklist with clear module boundaries, dependencies, and acceptance criteria.
 
 ## Execution Status
-- Current status: Phase 3 completed on 2026-04-11.
-- Overall progress: 3 of 9 phases completed.
+- Current status: Phase 4 completed on 2026-04-12.
+- Overall progress: 4 of 9 phases completed.
 - Validation completed:
   - `node --check S1Plus.js`
   - `node scripts/test-settings-migration.js`
   - `node scripts/test-remote-probe-state.js`
   - `node scripts/test-sync-settings-ui.js`
   - `node scripts/test-foreground-remote-probe.js`
-- Next step: Phase 4, integrate the new guarded probe runner into `pageshow` / `visibilitychange` without disturbing pending local auto-sync recovery.
+  - `node scripts/test-foreground-trigger-integration.js`
+- Next step: Phase 5, add visible-page polling so always-visible tabs can also notice newer remote data.
 
 ## Phase 1: State and Settings [Completed]
 
@@ -84,16 +85,16 @@ Acceptance:
 - [x] Changed remote triggers safe follow-up sync path
 - [x] Conflict pause / circuit breaker / active lock conditions skip correctly
 
-## Phase 4: Trigger Integration
+## Phase 4: Trigger Integration [Completed]
 
-### Task 6. Integrate `pageshow` and `visibilitychange`
+### Task 6. Integrate `pageshow` and `visibilitychange` [Completed]
 - Extend existing hooks
 - Avoid interfering with current pending local auto-sync recovery
 
 Acceptance:
-- Returning to a hidden tab can trigger guarded remote freshness check
-- bfcache restore can trigger guarded remote freshness check
-- No request storm under rapid repeated visibility transitions
+- [x] Returning to a hidden tab can trigger guarded remote freshness check
+- [x] bfcache restore can trigger guarded remote freshness check
+- [x] No request storm under rapid repeated visibility transitions
 
 ## Phase 5: Visible-Page Polling
 

@@ -7239,6 +7239,68 @@
     requestBackgroundSyncRun("pending_recovery", 600);
   };
 
+  const triggerForegroundRemoteFreshnessProbe = (
+    reason = "visibilitychange",
+    overrides = {}
+  ) => {
+    if (document.visibilityState !== "visible") {
+      return Promise.resolve(createForegroundTriggerSkippedResult("document_hidden"));
+    }
+
+    const checkRemoteFreshnessOnForegroundFn =
+      overrides.checkRemoteFreshnessOnForeground || checkRemoteFreshnessOnForeground;
+
+    return Promise.resolve(
+      checkRemoteFreshnessOnForegroundFn(reason)
+    ).catch((error) => {
+      const errorMessage = error?.message || String(error);
+      console.error(
+        `S1 Plus: 前台远端更新探测触发失败(${reason}):`,
+        error
+      );
+      return {
+        status: "failure",
+        reason: "probe_trigger_error",
+        error: errorMessage,
+      };
+    });
+  };
+
+  const createForegroundTriggerSkippedResult = (reason) => ({
+    status: "skipped",
+    reason,
+  });
+
+  const getPendingAutoSyncRecoveryFn = (overrides = {}) =>
+    overrides.recoverPendingAutoSyncIfNeeded || recoverPendingAutoSyncIfNeeded;
+
+  const handlePendingAutoSyncRecoveryPageShow = (
+    event,
+    overrides = {}
+  ) => {
+    if (event && event.persisted) {
+      console.log("S1 Plus: 检测到页面从 bfcache 恢复，检查待同步任务...");
+    }
+    getPendingAutoSyncRecoveryFn(overrides)();
+
+    if (!(event && event.persisted)) {
+      return Promise.resolve(
+        createForegroundTriggerSkippedResult("pageshow_not_persisted")
+      );
+    }
+
+    return triggerForegroundRemoteFreshnessProbe("pageshow", overrides);
+  };
+
+  const handlePendingAutoSyncRecoveryVisibilityChange = (overrides = {}) => {
+    if (document.visibilityState !== "visible") {
+      return Promise.resolve(createForegroundTriggerSkippedResult("document_hidden"));
+    }
+
+    getPendingAutoSyncRecoveryFn(overrides)();
+    return triggerForegroundRemoteFreshnessProbe("visibilitychange", overrides);
+  };
+
   const bindPendingAutoSyncRecoveryHooks = () => {
     if (window.__s1pPendingAutoSyncRecoveryBound) {
       return;
@@ -7247,17 +7309,12 @@
 
     // 处理浏览器后退缓存（bfcache）恢复场景：页面不会重新执行 main。
     window.addEventListener("pageshow", (event) => {
-      if (event && event.persisted) {
-        console.log("S1 Plus: 检测到页面从 bfcache 恢复，检查待同步任务...");
-      }
-      recoverPendingAutoSyncIfNeeded();
+      void handlePendingAutoSyncRecoveryPageShow(event);
     });
 
     // 处理标签页从后台恢复到前台的场景。
     document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible") {
-        recoverPendingAutoSyncIfNeeded();
-      }
+      void handlePendingAutoSyncRecoveryVisibilityChange();
     });
   };
 
@@ -16258,6 +16315,9 @@
       hasAnyActiveSyncLock,
       requestForegroundRemoteSyncCheck,
       checkRemoteFreshnessOnForeground,
+      triggerForegroundRemoteFreshnessProbe,
+      handlePendingAutoSyncRecoveryPageShow,
+      handlePendingAutoSyncRecoveryVisibilityChange,
     };
   }
 
