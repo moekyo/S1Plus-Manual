@@ -218,6 +218,7 @@ node scripts/test-settings-migration.js
 补充：
 
 - 设置迁移归一化函数 `buildNormalizedSettings()` 现会返回 `migrationReasons`，用于定位本次迁移是由哪些旧字段/脏值触发。
+- 同步检查模式已拆分为两个独立设置：`syncDailyFirstLoad` 仅控制“每日首次加载时同步”，`syncPerLoadCheckEnabled` 仅控制“每次页面加载时检查同步”；不要再依赖“关闭前者等于开启后者”的旧隐式语义。
 
 ### 6.3 并发与保护
 
@@ -231,6 +232,7 @@ node scripts/test-settings-migration.js
 
 - `s1p_pending_auto_sync_request` 用于跨页面补发
 - `pageshow`（含 bfcache）/`visibilitychange` 自动恢复补同步
+- “每次页面加载时检查同步”会复用启动同步锁链路，避免多标签页同时发起远端检查。
 
 ### 6.5 自动后台同步指示器流转 (Auto Sync Indicator)
 
