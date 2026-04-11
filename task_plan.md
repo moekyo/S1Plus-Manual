@@ -4,8 +4,8 @@
 Execute the implementation from `sync_implementation_plan.md` in the order defined by `sync_dev_task_checklist.md`, so device B can detect and safely apply newer remote sync data in more real-world return/resume scenarios without weakening the existing conflict protections.
 
 ## Status
-- Current status: Phase 2 completed, Phase 3 next.
-- Overall progress: 2 of 9 implementation phases completed.
+- Current status: Phase 3 completed, Phase 4 next.
+- Overall progress: 3 of 9 implementation phases completed.
 - Completed in this session:
   - Added the new foreground-check setting default and migration behavior.
   - Added persisted remote probe info, shared cooldown state, and lightweight probe lock helpers.
@@ -13,16 +13,20 @@ Execute the implementation from `sync_implementation_plan.md` in the order defin
   - Added the Phase 2 sync-tab control for `syncCheckOnReturnToForeground`.
   - Wired the new toggle into sync-tab hydrate/save/reset/cross-tab refresh flows.
   - Added a Phase 2 wiring verification script for the sync settings UI.
+  - Added Phase 3 shared cooldown / per-tab cooldown helpers and a verified probe-lock acquisition path for metadata-only freshness checks.
+  - Added `checkRemoteFreshnessOnForeground(...)` and `requestForegroundRemoteSyncCheck(...)`, so a positive probe can reuse the existing startup sync safety path without creating a second sync decision engine.
+  - Added `scripts/test-foreground-remote-probe.js` to cover unchanged remote, changed remote, shared cooldown, probe lock contention, and early-skip guard conditions.
 - Validation:
   - `node --check S1Plus.js`
   - `node scripts/test-settings-migration.js`
   - `node scripts/test-remote-probe-state.js`
   - `node scripts/test-sync-settings-ui.js`
+  - `node scripts/test-foreground-remote-probe.js`
 
 ## Phases
 - [x] Phase 1: State and settings
 - [x] Phase 2: Settings UI
-- [ ] Phase 3: Probe infrastructure
+- [x] Phase 3: Probe infrastructure
 - [ ] Phase 4: Trigger integration
 - [ ] Phase 5: Visible-page polling
 - [ ] Phase 6: Safe sync execution
@@ -73,5 +77,25 @@ Execute the implementation from `sync_implementation_plan.md` in the order defin
 - Next:
   - Implement Phase 3 remote probe helpers and shared throttling/lock behavior.
 
+## Phase 3 Update
+- Status: Completed
+- Completed:
+  - Added explicit remote-probe cooldown helpers for cross-tab shared throttling and same-tab foreground flap suppression.
+  - Added `acquireRemoteProbeLock(...)`, so rapid multi-tab foreground changes now have a verified single-owner metadata probe path instead of raw last-write-wins state only.
+  - Added `checkRemoteFreshnessOnForeground(reason)` to run a metadata-only probe, persist the observed remote timestamp, and exit quietly when the remote timestamp already matches the last synced baseline.
+  - Added `requestForegroundRemoteSyncCheck(reason)` to reuse `performAutoSync(true, SYNC_LOCK_MODE_STARTUP)` under the existing startup lock/heartbeat path whenever the probe sees a newer remote snapshot.
+  - Exposed focused Phase 3 test hooks and added `scripts/test-foreground-remote-probe.js` for behavioral regression coverage.
+- Validation:
+  - `node --check S1Plus.js`
+  - `node scripts/test-settings-migration.js`
+  - `node scripts/test-remote-probe-state.js`
+  - `node scripts/test-sync-settings-ui.js`
+  - `node scripts/test-foreground-remote-probe.js`
+- Remaining:
+  - `pageshow` / `visibilitychange` still use only pending local auto-sync recovery; the new foreground probe runner is not wired into those triggers yet.
+  - Visible-page polling, activity-aware backoff, diagnostics expansion, and refresh policy changes remain for later phases.
+- Next:
+  - Implement Phase 4 trigger integration so `pageshow` and `visibilitychange` can invoke the guarded foreground probe without regressing existing pending local auto-sync recovery behavior.
+
 ## Errors Encountered
-- None during Phase 1-2 implementation or validation.
+- A first pass of the new Phase 3 regression script used a synthetic timestamp for the circuit-breaker test while the production helper checked the real `Date.now()`. The test was corrected to use a real future `until` timestamp before final validation.

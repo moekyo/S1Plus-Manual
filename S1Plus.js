@@ -612,6 +612,9 @@
   let navbarPersistentSyncAlertDismissedSignature = null;
   let hasPendingBackgroundSync = false;
   let backgroundSyncRetryTimeout = null;
+  let lastForegroundProbeAt = 0;
+  let foregroundProbeInFlightPromise = null;
+  let foregroundRemoteSyncCheckInFlightPromise = null;
 
   const isManualSyncActionBusy = () =>
     Boolean(manualSyncInFlightPromise || forceSyncInFlight);
@@ -743,6 +746,8 @@
   const REMOTE_PROBE_INFO_KEY = "s1p_last_remote_probe_info";
   const REMOTE_PROBE_SHARED_COOLDOWN_KEY = "s1p_remote_probe_shared_cooldown";
   const REMOTE_PROBE_LOCK_KEY = "s1p_remote_probe_lock";
+  const REMOTE_PROBE_SHARED_COOLDOWN_MS = 45 * 1000;
+  const REMOTE_PROBE_LOCAL_COOLDOWN_MS = 12 * 1000;
   const REMOTE_PROBE_LOCK_TTL_MS = 8 * 1000;
   const SYNC_LOCK_LOST_CODE = "SYNC_LOCK_LOST";
   const SYNC_CONFLICT_MODAL_COOLDOWN_LOCK_KEY =
@@ -6426,6 +6431,64 @@
       getCurrentState: getRemoteProbeSharedCooldownState,
       normalizeState: normalizeRemoteProbeSharedCooldownState,
     });
+
+  const getRemoteProbeSharedCooldownRemainingMs = (now = Date.now()) => {
+    const lastObservedAt = getRemoteProbeSharedCooldownState().lastObservedAt;
+    if (!lastObservedAt) {
+      return 0;
+    }
+    return Math.max(
+      0,
+      REMOTE_PROBE_SHARED_COOLDOWN_MS - (now - lastObservedAt)
+    );
+  };
+
+  const isRemoteProbeSharedCooldownActive = (now = Date.now()) =>
+    getRemoteProbeSharedCooldownRemainingMs(now) > 0;
+
+  const getForegroundProbeLocalCooldownRemainingMs = (now = Date.now()) => {
+    if (!lastForegroundProbeAt) {
+      return 0;
+    }
+    return Math.max(0, REMOTE_PROBE_LOCAL_COOLDOWN_MS - (now - lastForegroundProbeAt));
+  };
+
+  const isForegroundProbeLocalCooldownActive = (now = Date.now()) =>
+    getForegroundProbeLocalCooldownRemainingMs(now) > 0;
+
+  const markForegroundProbeLocalAttempt = (timestamp = Date.now()) => {
+    const normalizedTimestamp = normalizeRemoteProbeTimestamp(timestamp) || Date.now();
+    lastForegroundProbeAt = normalizedTimestamp;
+    return normalizedTimestamp;
+  };
+
+  const recordRemoteProbeObservation = ({
+    remoteUpdatedAt = null,
+    observedAt = Date.now(),
+    checkedBy = BACKGROUND_SYNC_OWNER_ID,
+  } = {}) => {
+    const normalizedObservedAt =
+      normalizeRemoteProbeTimestamp(observedAt) || Date.now();
+    const normalizedRemoteUpdatedAt =
+      normalizeRemoteProbeUpdatedAt(remoteUpdatedAt);
+    const normalizedCheckedBy =
+      normalizeRemoteProbeText(checkedBy, 120) || BACKGROUND_SYNC_OWNER_ID;
+
+    const nextProbeInfo = setLastRemoteProbeInfo({
+      lastObservedRemoteUpdatedAt: normalizedRemoteUpdatedAt,
+      lastObservedAt: normalizedObservedAt,
+    });
+    const nextSharedCooldown = setRemoteProbeSharedCooldownState({
+      lastObservedRemoteUpdatedAt: normalizedRemoteUpdatedAt,
+      lastObservedAt: normalizedObservedAt,
+      checkedBy: normalizedCheckedBy,
+    });
+
+    return {
+      probeInfo: nextProbeInfo,
+      sharedCooldown: nextSharedCooldown,
+    };
+  };
 
   const normalizeRemoteProbeLockValue = (value) => {
     const source = sanitizeRecordObject(value);
@@ -14647,6 +14710,13 @@
     );
   };
 
+  const hasAnyActiveSyncLock = (now = Date.now()) => {
+    if (hasActiveOtherModeSyncLock("", now)) {
+      return true;
+    }
+    return isGlobalSyncLockValid(getGlobalSyncLockValue(), now);
+  };
+
   const setGlobalSyncLock = (mode, timestamp, ttlMs) => {
     GM_setValue(GLOBAL_SYNC_LOCK_KEY, {
       owner: BACKGROUND_SYNC_OWNER_ID,
@@ -14683,6 +14753,39 @@
   const verifySyncLockOwnership = async (verifyFn) => {
     await sleep(SYNC_LOCK_VERIFY_DELAY_MS);
     return Boolean(typeof verifyFn === "function" && verifyFn());
+  };
+
+  const acquireRemoteProbeLock = async ({
+    owner = BACKGROUND_SYNC_OWNER_ID,
+    reason = "",
+  } = {}) => {
+    const now = Date.now();
+    const currentLock = getRemoteProbeLockValue();
+    if (isRemoteProbeLockValid(currentLock, now) && currentLock.owner !== owner) {
+      return false;
+    }
+
+    const nextLock = setRemoteProbeLockValue({
+      owner,
+      timestamp: now,
+      reason,
+    });
+    if (!nextLock) {
+      return false;
+    }
+
+    const acquired = await verifySyncLockOwnership(() => {
+      const verifiedLock = getRemoteProbeLockValue();
+      return (
+        verifiedLock &&
+        verifiedLock.owner === nextLock.owner &&
+        verifiedLock.timestamp === nextLock.timestamp
+      );
+    });
+    if (!acquired) {
+      releaseRemoteProbeLockValue(owner);
+    }
+    return acquired;
   };
 
   const getSyncLockStateByMode = (mode) => {
@@ -15893,6 +15996,270 @@
       console.log("S1 Plus (Sync): 同步检查完成。");
     }
   };
+
+  const requestForegroundRemoteSyncCheck = async (
+    reason = "remote_probe_changed",
+    overrides = {}
+  ) => {
+    const settingsSnapshot = overrides.settingsSnapshot || getSettings();
+    if (
+      !settingsSnapshot.syncRemoteEnabled ||
+      !settingsSnapshot.syncRemoteGistId ||
+      !settingsSnapshot.syncRemotePat
+    ) {
+      return { status: "skipped", reason: "disabled" };
+    }
+
+    const conflictPauseState = getActiveAutoSyncConflictPause();
+    if (conflictPauseState) {
+      return {
+        status: "skipped",
+        reason: "conflict_paused",
+        conflictReason: conflictPauseState.reason || "generic",
+        pausedAt: conflictPauseState.timestamp || 0,
+      };
+    }
+
+    const circuitState = getAutoSyncCircuitState();
+    if (circuitState.open) {
+      return {
+        status: "skipped",
+        reason: "circuit_open",
+        until: circuitState.until,
+      };
+    }
+
+    if (foregroundRemoteSyncCheckInFlightPromise) {
+      return {
+        status: "skipped",
+        reason: "foreground_sync_in_flight",
+      };
+    }
+
+    const acquireStartupSyncLockFn =
+      overrides.acquireStartupSyncLock || acquireStartupSyncLock;
+    const startStartupSyncLockHeartbeatFn =
+      overrides.startStartupSyncLockHeartbeat || startStartupSyncLockHeartbeat;
+    const stopStartupSyncLockHeartbeatFn =
+      overrides.stopStartupSyncLockHeartbeat || stopStartupSyncLockHeartbeat;
+    const releaseStartupSyncLockFn =
+      overrides.releaseStartupSyncLock || releaseStartupSyncLock;
+    const performAutoSyncFn = overrides.performAutoSync || performAutoSync;
+    const normalizedReason =
+      normalizeRemoteProbeText(reason, 120) || "remote_probe_changed";
+
+    const runPromise = (async () => {
+      if (!(await acquireStartupSyncLockFn())) {
+        console.log(
+          `S1 Plus: 前台远端检查(${normalizedReason})发现已有同步任务在执行，已跳过本轮 follow-up sync。`
+        );
+        return {
+          status: "skipped",
+          reason: "startup_lock_unavailable",
+        };
+      }
+
+      startStartupSyncLockHeartbeatFn();
+      try {
+        console.log(
+          `S1 Plus: 远端探测命中更新，正在复用启动同步路径执行安全检查(${normalizedReason})...`
+        );
+        return await performAutoSyncFn(true, SYNC_LOCK_MODE_STARTUP);
+      } finally {
+        stopStartupSyncLockHeartbeatFn();
+        releaseStartupSyncLockFn();
+      }
+    })();
+
+    foregroundRemoteSyncCheckInFlightPromise = runPromise;
+    try {
+      return await runPromise;
+    } finally {
+      if (foregroundRemoteSyncCheckInFlightPromise === runPromise) {
+        foregroundRemoteSyncCheckInFlightPromise = null;
+      }
+    }
+  };
+
+  const checkRemoteFreshnessOnForeground = async (
+    reason = "visibility",
+    overrides = {}
+  ) => {
+    const settingsSnapshot = overrides.settingsSnapshot || getSettings();
+    if (
+      !settingsSnapshot.syncRemoteEnabled ||
+      !settingsSnapshot.syncRemoteGistId ||
+      !settingsSnapshot.syncRemotePat
+    ) {
+      return { status: "skipped", reason: "disabled" };
+    }
+    if (settingsSnapshot.syncCheckOnReturnToForeground !== true) {
+      return { status: "skipped", reason: "foreground_check_disabled" };
+    }
+
+    const conflictPauseState = getActiveAutoSyncConflictPause();
+    if (conflictPauseState) {
+      return {
+        status: "skipped",
+        reason: "conflict_paused",
+        conflictReason: conflictPauseState.reason || "generic",
+        pausedAt: conflictPauseState.timestamp || 0,
+      };
+    }
+
+    const circuitState = getAutoSyncCircuitState();
+    if (circuitState.open) {
+      return {
+        status: "skipped",
+        reason: "circuit_open",
+        until: circuitState.until,
+      };
+    }
+
+    if (foregroundProbeInFlightPromise) {
+      return { status: "skipped", reason: "probe_in_flight" };
+    }
+    if (foregroundRemoteSyncCheckInFlightPromise) {
+      return { status: "skipped", reason: "foreground_sync_in_flight" };
+    }
+
+    const now =
+      Number.isFinite(overrides.now) && overrides.now > 0
+        ? Math.floor(overrides.now)
+        : Date.now();
+    if (hasAnyActiveSyncLock(now)) {
+      return { status: "skipped", reason: "sync_lock_active" };
+    }
+    if (isForegroundProbeLocalCooldownActive(now)) {
+      return {
+        status: "skipped",
+        reason: "local_cooldown",
+        retryAfterMs: getForegroundProbeLocalCooldownRemainingMs(now),
+      };
+    }
+
+    const sharedCooldownState = getRemoteProbeSharedCooldownState();
+    if (isRemoteProbeSharedCooldownActive(now)) {
+      return {
+        status: "skipped",
+        reason: "shared_cooldown",
+        retryAfterMs: getRemoteProbeSharedCooldownRemainingMs(now),
+        checkedBy: sharedCooldownState.checkedBy || "",
+        lastObservedRemoteUpdatedAt:
+          sharedCooldownState.lastObservedRemoteUpdatedAt || null,
+      };
+    }
+
+    const acquireRemoteProbeLockFn =
+      overrides.acquireRemoteProbeLock || acquireRemoteProbeLock;
+    const releaseRemoteProbeLockValueFn =
+      overrides.releaseRemoteProbeLockValue || releaseRemoteProbeLockValue;
+    const fetchRemoteDataFn = overrides.fetchRemoteData || fetchRemoteData;
+    const requestForegroundRemoteSyncCheckFn =
+      overrides.requestForegroundRemoteSyncCheck || requestForegroundRemoteSyncCheck;
+    const normalizedReason =
+      normalizeRemoteProbeText(reason, 120) || "visibility";
+
+    markForegroundProbeLocalAttempt(now);
+
+    const runPromise = (async () => {
+      const probeInfoBefore = getLastRemoteProbeInfo();
+      const baselineState = getSyncBaselineState();
+      const lastSyncedRemoteUpdatedAt =
+        probeInfoBefore.lastSyncedRemoteUpdatedAt ||
+        baselineState?.remoteUpdatedAt ||
+        null;
+      const lastObservedRemoteUpdatedAt =
+        probeInfoBefore.lastObservedRemoteUpdatedAt || null;
+
+      if (
+        !(await acquireRemoteProbeLockFn({
+          owner: BACKGROUND_SYNC_OWNER_ID,
+          reason: normalizedReason,
+        }))
+      ) {
+        return { status: "skipped", reason: "probe_lock_unavailable" };
+      }
+
+      let remoteMeta = null;
+      try {
+        const probeResult = await fetchRemoteDataFn({ metadataOnly: true });
+        remoteMeta =
+          probeResult && typeof probeResult === "object" ? probeResult.meta : null;
+      } finally {
+        releaseRemoteProbeLockValueFn(BACKGROUND_SYNC_OWNER_ID);
+      }
+
+      const remoteUpdatedAt = normalizeRemoteProbeUpdatedAt(
+        remoteMeta?.updatedAt
+      );
+      recordRemoteProbeObservation({
+        remoteUpdatedAt,
+        observedAt: now,
+      });
+
+      if (!remoteUpdatedAt) {
+        return {
+          status: "skipped",
+          reason: "remote_updated_at_missing",
+          lastSyncedRemoteUpdatedAt,
+          lastObservedRemoteUpdatedAt,
+        };
+      }
+
+      if (
+        lastSyncedRemoteUpdatedAt &&
+        remoteUpdatedAt === lastSyncedRemoteUpdatedAt
+      ) {
+        return {
+          status: "unchanged",
+          reason: "remote_already_synced",
+          remoteUpdatedAt,
+          lastSyncedRemoteUpdatedAt,
+          lastObservedRemoteUpdatedAt,
+        };
+      }
+
+      const syncRequestResult = await requestForegroundRemoteSyncCheckFn(
+        `remote_probe_changed:${normalizedReason}`,
+        overrides.requestForegroundRemoteSyncCheckOverrides || {}
+      );
+
+      return {
+        status: "changed",
+        reason: "remote_changed",
+        remoteUpdatedAt,
+        lastSyncedRemoteUpdatedAt,
+        lastObservedRemoteUpdatedAt,
+        syncRequestResult,
+      };
+    })();
+
+    foregroundProbeInFlightPromise = runPromise;
+    try {
+      return await runPromise;
+    } finally {
+      if (foregroundProbeInFlightPromise === runPromise) {
+        foregroundProbeInFlightPromise = null;
+      }
+    }
+  };
+
+  if (IS_S1P_TEST_MODE) {
+    const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
+    testHookHost.__S1P_TEST_HOOKS__ = {
+      ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
+      getRemoteProbeSharedCooldownRemainingMs,
+      isRemoteProbeSharedCooldownActive,
+      getForegroundProbeLocalCooldownRemainingMs,
+      isForegroundProbeLocalCooldownActive,
+      recordRemoteProbeObservation,
+      acquireRemoteProbeLock,
+      hasAnyActiveSyncLock,
+      requestForegroundRemoteSyncCheck,
+      checkRemoteFreshnessOnForeground,
+    };
+  }
 
   const defaultSettings = {
     enablePostBlocking: true,

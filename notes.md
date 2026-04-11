@@ -159,3 +159,63 @@
   - save path persists the value
   - reset path restores the default
   - cross-tab refresh rehydrates the control
+
+## Phase 3 Implementation Notes
+
+### Probe throttling model implemented in this phase
+- Added a shared cross-tab probe cooldown helper around `s1p_remote_probe_shared_cooldown`:
+  - current window is `45s`
+  - any successful metadata probe updates `lastObservedAt`, `lastObservedRemoteUpdatedAt`, and `checkedBy`
+- Added a same-tab in-memory cooldown for foreground probes:
+  - current window is `12s`
+  - this smooths repeated `visibilitychange` flaps before persisted shared state is re-read
+- Added `recordRemoteProbeObservation(...)` so the persisted “what remote snapshot was just seen” write stays consistent between the probe info key and the shared cooldown key.
+
+### Probe lock behavior chosen for Phase 3
+- The Phase 1 raw lock storage helpers were extended with `acquireRemoteProbeLock(...)`.
+- Acquisition now uses the same short verification pattern as the existing sync locks:
+  - write candidate owner/timestamp
+  - wait the standard verification delay
+  - re-read storage and confirm this tab still owns the latest lock value
+- This keeps probe locking lightweight, but materially improves rapid tab-switch correctness over a plain last-write-wins write.
+
+### Foreground probe execution path implemented
+- Added `checkRemoteFreshnessOnForeground(reason)` with these guard layers:
+  - remote sync enabled and credentials complete
+  - `syncCheckOnReturnToForeground === true`
+  - no active conflict pause
+  - no open circuit breaker
+  - no active sync lock
+  - no in-flight foreground probe or foreground follow-up sync
+  - same-tab cooldown elapsed
+  - shared cross-tab cooldown elapsed
+  - probe lock acquired
+- The probe itself only calls `fetchRemoteData({ metadataOnly: true })`.
+- After a successful metadata fetch:
+  - the newly observed remote `updatedAt` is persisted
+  - if it matches the last synced remote timestamp, the runner exits as `unchanged`
+  - otherwise it calls `requestForegroundRemoteSyncCheck(...)`
+
+### Follow-up sync reuse choice
+- Added `requestForegroundRemoteSyncCheck(reason)` instead of introducing new sync resolution logic.
+- The helper acquires the existing startup sync lock, starts the normal startup lock heartbeat, and delegates the real decision to:
+  - `performAutoSync(true, SYNC_LOCK_MODE_STARTUP)`
+- This means Phase 3 already reuses current protections for:
+  - local-newer startup protection
+  - conflict pause handling
+  - circuit breaker behavior
+  - read-progress-only auto-merge
+- What remains for later phases is trigger wiring and UX policy, not sync correctness logic.
+
+### Validation added in Phase 3
+- Added `scripts/test-foreground-remote-probe.js` to verify:
+  - unchanged remote metadata exits without follow-up sync
+  - changed remote metadata triggers the safe follow-up sync path
+  - shared cooldown suppresses repeated probes
+  - probe lock rejects a second owner while active
+  - conflict pause / circuit breaker / active sync lock guard conditions all skip before network work
+
+### Limitations intentionally left for later phases
+- Phase 3 does not yet bind the new runner to `pageshow` / `visibilitychange`.
+- Phase 3 does not yet add visible-page polling, user-activity backoff, diagnostics surface, or page-type-aware refresh behavior.
+- Because trigger wiring is still pending, the new runner currently exists as infrastructure plus verified behavior, not as user-visible automatic foreground probing yet.
