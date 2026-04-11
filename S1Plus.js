@@ -15771,6 +15771,7 @@
     ],
     syncRemoteEnabled: false,
     syncDailyFirstLoad: true,
+    syncPerLoadCheckEnabled: false,
     syncAutoEnabled: true,
     syncShowAutoSyncIndicator: true,
     syncForcePullOnStartup: false, // <-- [新增] 新增功能开关
@@ -15803,6 +15804,13 @@
       ) {
         migrationReasons.push(reason);
       }
+    };
+    const applyNormalizedBooleanSetting = (key, normalizedValue, migrationReason) => {
+      if (settings[key] !== normalizedValue) {
+        markMigration(migrationReason);
+      }
+      settings[key] = normalizedValue;
+      return normalizedValue;
     };
     const normalizedDefaultCustomNavLinks = normalizeCustomNavLinks(
       defaultSettings.customNavLinks
@@ -15996,6 +16004,52 @@
         markMigration("custom_nav_links_reset_to_default");
       }
     }
+
+    const hasLegacyImplicitPerLoadCheckEnabled =
+      typeof saved.syncPerLoadCheckEnabled === "undefined" &&
+      saved.syncDailyFirstLoad === false &&
+      saved.syncAutoEnabled !== false;
+    applyNormalizedBooleanSetting(
+      "syncDailyFirstLoad",
+      settings.syncDailyFirstLoad === true,
+      "sync_daily_first_load_normalized"
+    );
+
+    const normalizedSyncPerLoadCheckEnabled = normalizeBooleanWithDefault(
+      hasLegacyImplicitPerLoadCheckEnabled
+        ? true
+        : settings.syncPerLoadCheckEnabled,
+      defaultSettings.syncPerLoadCheckEnabled
+    );
+    applyNormalizedBooleanSetting(
+      "syncPerLoadCheckEnabled",
+      normalizedSyncPerLoadCheckEnabled,
+      "sync_per_load_check_enabled_normalized"
+    );
+    if (hasLegacyImplicitPerLoadCheckEnabled) {
+      markMigration("sync_per_load_check_enabled_migrated_from_daily_toggle");
+    }
+    applyNormalizedBooleanSetting(
+      "syncAutoEnabled",
+      settings.syncAutoEnabled === true,
+      "sync_auto_enabled_normalized"
+    );
+    applyNormalizedBooleanSetting(
+      "syncShowAutoSyncIndicator",
+      settings.syncShowAutoSyncIndicator !== false,
+      "sync_show_auto_sync_indicator_normalized"
+    );
+    applyNormalizedBooleanSetting(
+      "syncForcePullOnStartup",
+      settings.syncDailyFirstLoad === true &&
+        settings.syncForcePullOnStartup === true,
+      "sync_force_pull_on_startup_normalized"
+    );
+    applyNormalizedBooleanSetting(
+      "syncDirectChoiceMode",
+      settings.syncDirectChoiceMode === true,
+      "sync_direct_choice_mode_normalized"
+    );
 
     const normalizedTokenExpiryEnabled = settings.syncTokenExpiryEnabled === true;
     if (settings.syncTokenExpiryEnabled !== normalizedTokenExpiryEnabled) {
@@ -16223,6 +16277,7 @@
     "showManuallyBlockedList",
     "recommendS1Nux",
     "syncDailyFirstLoad",
+    "syncPerLoadCheckEnabled",
     "syncAutoEnabled",
     "syncShowAutoSyncIndicator",
     "syncForcePullOnStartup",
@@ -19354,7 +19409,16 @@
               <span class="s1p-slider"></span>
             </label>
           </div>
-          <p class="s1p-setting-desc">启用后，每天第一次打开论坛时会自动检查并同步数据。此功能独立于下方的“自动后台同步”。</p>
+          <p class="s1p-setting-desc">启用后，每天第一次打开论坛时会自动检查并同步数据。关闭它后，不会再隐式切换成“每次页面加载时检查”。此功能独立于下方的“自动后台同步”。</p>
+
+          <div class="s1p-settings-item">
+            <label class="s1p-settings-label" for="s1p-per-load-sync-enabled-toggle">启用每次页面加载时检查同步</label>
+            <label class="s1p-switch">
+              <input type="checkbox" id="s1p-per-load-sync-enabled-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
+              <span class="s1p-slider"></span>
+            </label>
+          </div>
+          <p class="s1p-setting-desc">启用后，每次打开论坛页面时都会执行一次安全同步检查；如遇冲突，仍会暂停自动处理并提示你手动决定。此功能同样独立于“自动后台同步”。</p>
 
           <div id="s1p-force-pull-subgroup" class="s1p-settings-sub-group">
             <div class="s1p-settings-item">
@@ -19896,6 +19960,9 @@
     const dailySyncToggle = modal.querySelector(
       "#s1p-daily-first-load-sync-enabled-toggle"
     );
+    const perLoadSyncToggle = modal.querySelector(
+      "#s1p-per-load-sync-enabled-toggle"
+    );
     const autoSyncToggle = modal.querySelector("#s1p-auto-sync-enabled-toggle");
     const autoSyncIndicatorToggle = modal.querySelector(
       "#s1p-show-auto-sync-indicator-toggle"
@@ -19993,6 +20060,7 @@
     }
 
     dailySyncToggle.checked = settings.syncDailyFirstLoad;
+    perLoadSyncToggle.checked = settings.syncPerLoadCheckEnabled;
     autoSyncToggle.checked = settings.syncAutoEnabled;
     autoSyncIndicatorToggle.checked = settings.syncShowAutoSyncIndicator !== false;
     bookmarkFullContentToggle.checked = settings.syncBookmarkFullContent;
@@ -20011,6 +20079,7 @@
     [
       remoteToggle,
       dailySyncToggle,
+      perLoadSyncToggle,
       autoSyncToggle,
       autoSyncIndicatorToggle,
       forcePullToggle,
@@ -20151,6 +20220,10 @@
       setModalCheckedControl(
         "#s1p-daily-first-load-sync-enabled-toggle",
         latestSettings.syncDailyFirstLoad
+      );
+      setModalCheckedControl(
+        "#s1p-per-load-sync-enabled-toggle",
+        latestSettings.syncPerLoadCheckEnabled
       );
       setModalCheckedControl(
         "#s1p-auto-sync-enabled-toggle",
@@ -22946,6 +23019,7 @@
         shouldRefreshModalTabByPaths(changedPathSet, [
           "syncRemoteEnabled",
           "syncDailyFirstLoad",
+          "syncPerLoadCheckEnabled",
           "syncAutoEnabled",
           "syncShowAutoSyncIndicator",
           "syncForcePullOnStartup",
@@ -23544,6 +23618,7 @@
               );
               remoteToggle.checked = false;
               dailySyncToggle.checked = true;
+              perLoadSyncToggle.checked = false;
               autoSyncToggle.checked = true;
               bookmarkFullContentToggle.checked = false;
               remoteGistIdInput.value = "";
@@ -23620,6 +23695,7 @@
           const currentSettings = { ...previousSettings };
           currentSettings.syncRemoteEnabled = remoteToggle.checked;
           currentSettings.syncDailyFirstLoad = dailySyncToggle.checked;
+          currentSettings.syncPerLoadCheckEnabled = perLoadSyncToggle.checked;
           currentSettings.syncAutoEnabled = autoSyncToggle.checked;
           currentSettings.syncShowAutoSyncIndicator =
             autoSyncIndicatorToggle.checked;
@@ -28361,8 +28437,7 @@
     const settings = getSettings();
 
     if (
-      !settings.syncDailyFirstLoad &&
-      settings.syncAutoEnabled &&
+      settings.syncPerLoadCheckEnabled &&
       settings.syncRemoteEnabled &&
       settings.syncRemoteGistId &&
       settings.syncRemotePat
@@ -28375,7 +28450,7 @@
       }
       startStartupSyncLockHeartbeat();
 
-      console.log("S1 Plus: 执行常规启动时同步检查（因每日首次同步已关闭）...");
+      console.log("S1 Plus: 正在执行每次页面加载同步检查...");
       try {
         // [S1P-FIX] 调用时传入 true，启用启动安全模式，并绑定启动锁上下文。
         const result = await performAutoSync(true, SYNC_LOCK_MODE_STARTUP);
