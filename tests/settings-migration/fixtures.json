@@ -158,6 +158,50 @@
     }
   },
   {
+    "name": "foreground_probe_setting_defaults_for_new_install",
+    "input": {},
+    "expected": {
+      "migrationApplied": false,
+      "settings": {
+        "syncCheckOnReturnToForeground": true
+      },
+      "reasonsInclude": []
+    }
+  },
+  {
+    "name": "foreground_probe_setting_migrates_for_existing_auto_sync_users",
+    "input": {
+      "syncRemoteEnabled": true,
+      "syncAutoEnabled": true
+    },
+    "expected": {
+      "migrationApplied": true,
+      "settings": {
+        "syncCheckOnReturnToForeground": true
+      },
+      "reasonsInclude": [
+        "sync_check_on_return_to_foreground_migrated_from_sync_state"
+      ]
+    }
+  },
+  {
+    "name": "foreground_probe_setting_stays_off_when_remote_sync_disabled",
+    "input": {
+      "syncRemoteEnabled": false,
+      "syncAutoEnabled": true
+    },
+    "expected": {
+      "migrationApplied": true,
+      "settings": {
+        "syncCheckOnReturnToForeground": false
+      },
+      "reasonsInclude": [
+        "sync_check_on_return_to_foreground_normalized",
+        "sync_check_on_return_to_foreground_migrated_from_sync_state"
+      ]
+    }
+  },
+  {
     "name": "image_preview_bounds_clamped",
     "input": {
       "imagePreviewMaxWidth": 99999,
@@ -191,6 +235,7 @@
         "postContentLinksInBackground": false
       },
       "autoLinkPlainTextUrls": true,
+      "syncCheckOnReturnToForeground": true,
       "syncTokenExpiryEnabled": false,
       "syncTokenExpiryDate": null
     },

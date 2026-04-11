@@ -3,33 +3,49 @@
 ## Goal
 Turn the cross-device auto-pull design into an implementation-ready checklist with clear module boundaries, dependencies, and acceptance criteria.
 
-## Phase 1: State and Settings
+## Execution Status
+- Current status: Phase 2 completed on 2026-04-11.
+- Overall progress: 2 of 9 phases completed.
+- Validation completed:
+  - `node --check S1Plus.js`
+  - `node scripts/test-settings-migration.js`
+  - `node scripts/test-remote-probe-state.js`
+  - `node scripts/test-sync-settings-ui.js`
+- Next step: Phase 3, implement remote probe helpers and shared throttling/lock infrastructure.
 
-### Task 1. Add new settings
-- Add `syncCheckOnReturnToForeground`
-- Add optional advanced setting if needed later:
+## Phase 1: State and Settings [Completed]
+
+### Task 1. Add new settings [Completed]
+- Added `syncCheckOnReturnToForeground`
+- Deferred optional advanced setting until visible-page polling is implemented:
   - `syncVisiblePagePollingEnabled`
+- Implemented migration behavior:
+  - new installs default to `true`
+  - existing saved settings without this key migrate to `true` only when remote sync is enabled and auto sync is not disabled
+  - other migrated installs persist `false`
 
 Acceptance:
-- Settings normalize correctly in `buildNormalizedSettings()`
-- New installs get the intended default
-- Existing installs migrate safely
+- [x] Settings normalize correctly in `buildNormalizedSettings()`
+- [x] New installs get the intended default
+- [x] Existing installs migrate safely
 
-### Task 2. Add probe state storage
-- Add persisted probe info state:
+### Task 2. Add probe state storage [Completed]
+- Added persisted probe info state:
   - `lastObservedRemoteUpdatedAt`
   - `lastObservedAt`
   - `lastSyncedRemoteUpdatedAt`
-- Add shared cooldown data
-- Add optional lightweight probe lock key
+- Added shared cooldown data
+- Added lightweight probe lock key and state clear helper
+- Wired `lastSyncedRemoteUpdatedAt` to `setSyncBaselineState(...)`
+- Clear probe state when remote target changes or remote sync is disabled
 
 Acceptance:
-- Probe state can be read/written safely
-- “Observed” and “synced” remote states are clearly separated
+- [x] Probe state can be read/written safely
+- [x] “Observed” and “synced” remote states are clearly separated
 
-## Phase 2: Settings UI
+## Phase 2: Settings UI [Completed]
 
-### Task 3. Add sync settings controls
+### Task 3. Add sync settings controls [Completed]
 - Add `启用回到前台时检查云端更新`
 - If exposing polling separately, add advanced sub-setting for visible-page polling
 - Update descriptions to explain:
@@ -38,9 +54,9 @@ Acceptance:
   - relation to existing startup checks
 
 Acceptance:
-- Setting appears in sync tab
-- Save/load/reset all work
-- Cross-tab settings refresh updates the new controls
+- [x] Setting appears in sync tab
+- [x] Save/load/reset all work
+- [x] Cross-tab settings refresh updates the new controls
 
 ## Phase 3: Probe Infrastructure
 
