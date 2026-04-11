@@ -4,14 +4,15 @@
 Turn the cross-device auto-pull design into an implementation-ready checklist with clear module boundaries, dependencies, and acceptance criteria.
 
 ## Execution Status
-- Current status: Phase 2 completed on 2026-04-11.
-- Overall progress: 2 of 9 phases completed.
+- Current status: Phase 3 completed on 2026-04-11.
+- Overall progress: 3 of 9 phases completed.
 - Validation completed:
   - `node --check S1Plus.js`
   - `node scripts/test-settings-migration.js`
   - `node scripts/test-remote-probe-state.js`
   - `node scripts/test-sync-settings-ui.js`
-- Next step: Phase 3, implement remote probe helpers and shared throttling/lock infrastructure.
+  - `node scripts/test-foreground-remote-probe.js`
+- Next step: Phase 4, integrate the new guarded probe runner into `pageshow` / `visibilitychange` without disturbing pending local auto-sync recovery.
 
 ## Phase 1: State and Settings [Completed]
 
@@ -58,19 +59,19 @@ Acceptance:
 - [x] Save/load/reset all work
 - [x] Cross-tab settings refresh updates the new controls
 
-## Phase 3: Probe Infrastructure
+## Phase 3: Probe Infrastructure [Completed]
 
-### Task 4. Implement remote probe helpers
+### Task 4. Implement remote probe helpers [Completed]
 - `getLastRemoteProbeInfo()`
 - `setLastRemoteProbeInfo()`
 - shared cooldown helpers
 - probe lock helpers
 
 Acceptance:
-- Shared cooldown suppresses repeated probes across tabs
-- Probe lock prevents simultaneous metadata requests during rapid tab switching
+- [x] Shared cooldown suppresses repeated probes across tabs
+- [x] Probe lock prevents simultaneous metadata requests during rapid tab switching
 
-### Task 5. Implement foreground probe runner
+### Task 5. Implement foreground probe runner [Completed]
 - `checkRemoteFreshnessOnForeground(reason)`
 - Use `fetchRemoteData({ metadataOnly: true })`
 - Compare against:
@@ -79,9 +80,9 @@ Acceptance:
 - On change, schedule safe full sync check
 
 Acceptance:
-- Unchanged remote exits quietly
-- Changed remote triggers safe follow-up sync path
-- Conflict pause / circuit breaker / active lock conditions skip correctly
+- [x] Unchanged remote exits quietly
+- [x] Changed remote triggers safe follow-up sync path
+- [x] Conflict pause / circuit breaker / active lock conditions skip correctly
 
 ## Phase 4: Trigger Integration
 
