@@ -740,6 +740,10 @@
     .toString(36)
     .slice(2)}`;
   const SYNC_BASELINE_STATE_KEY = "s1p_sync_baseline_state";
+  const REMOTE_PROBE_INFO_KEY = "s1p_last_remote_probe_info";
+  const REMOTE_PROBE_SHARED_COOLDOWN_KEY = "s1p_remote_probe_shared_cooldown";
+  const REMOTE_PROBE_LOCK_KEY = "s1p_remote_probe_lock";
+  const REMOTE_PROBE_LOCK_TTL_MS = 8 * 1000;
   const SYNC_LOCK_LOST_CODE = "SYNC_LOCK_LOST";
   const SYNC_CONFLICT_MODAL_COOLDOWN_LOCK_KEY =
     "s1p_sync_conflict_modal_cooldown_lock";
@@ -6313,6 +6317,171 @@
 
   const resetSyncDiagnostics = () => {
     GM_setValue(SYNC_DIAGNOSTICS_KEY, { ...SYNC_DIAGNOSTICS_DEFAULT });
+  };
+
+  const REMOTE_PROBE_INFO_DEFAULT = Object.freeze({
+    lastObservedRemoteUpdatedAt: null,
+    lastObservedAt: 0,
+    lastSyncedRemoteUpdatedAt: null,
+  });
+  const REMOTE_PROBE_SHARED_COOLDOWN_DEFAULT = Object.freeze({
+    lastObservedRemoteUpdatedAt: null,
+    lastObservedAt: 0,
+    checkedBy: "",
+  });
+
+  const normalizeRemoteProbeUpdatedAt = (rawValue) => {
+    const normalized = String(rawValue || "").trim();
+    return normalized || null;
+  };
+  const normalizeRemoteProbeTimestamp = (rawValue) => {
+    const parsed = Number(rawValue);
+    return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0;
+  };
+  const normalizeRemoteProbeText = (rawValue, maxLength = 120) =>
+    String(rawValue || "")
+      .replace(/\s+/g, " ")
+      .replace(/[<>]/g, "")
+      .trim()
+      .slice(0, maxLength);
+  const getNormalizedRemoteProbeState = (key, fallbackValue, normalizeState) =>
+    normalizeState(GM_getValue(key, fallbackValue));
+  const getRemoteProbeStateSignature = (value) =>
+    JSON.stringify(deterministicSort(value));
+  const setNormalizedRemoteProbeState = ({
+    key,
+    nextValue,
+    merge = true,
+    getCurrentState,
+    normalizeState,
+  }) => {
+    const currentState = getCurrentState();
+    const source = sanitizeRecordObject(nextValue);
+    const normalized = normalizeState(
+      merge ? { ...currentState, ...source } : source
+    );
+    if (
+      getRemoteProbeStateSignature(currentState) !==
+      getRemoteProbeStateSignature(normalized)
+    ) {
+      GM_setValue(key, normalized);
+    }
+    return normalized;
+  };
+
+  const normalizeRemoteProbeInfo = (value) => {
+    const source = sanitizeRecordObject(value);
+    return {
+      lastObservedRemoteUpdatedAt: normalizeRemoteProbeUpdatedAt(
+        source.lastObservedRemoteUpdatedAt
+      ),
+      lastObservedAt: normalizeRemoteProbeTimestamp(source.lastObservedAt),
+      lastSyncedRemoteUpdatedAt: normalizeRemoteProbeUpdatedAt(
+        source.lastSyncedRemoteUpdatedAt
+      ),
+    };
+  };
+  const getLastRemoteProbeInfo = () =>
+    getNormalizedRemoteProbeState(
+      REMOTE_PROBE_INFO_KEY,
+      REMOTE_PROBE_INFO_DEFAULT,
+      normalizeRemoteProbeInfo
+    );
+
+  const setLastRemoteProbeInfo = (nextValue, { merge = true } = {}) => {
+    return setNormalizedRemoteProbeState({
+      key: REMOTE_PROBE_INFO_KEY,
+      nextValue,
+      merge,
+      getCurrentState: getLastRemoteProbeInfo,
+      normalizeState: normalizeRemoteProbeInfo,
+    });
+  };
+
+  const normalizeRemoteProbeSharedCooldownState = (value) => {
+    const source = sanitizeRecordObject(value);
+    return {
+      lastObservedRemoteUpdatedAt: normalizeRemoteProbeUpdatedAt(
+        source.lastObservedRemoteUpdatedAt
+      ),
+      lastObservedAt: normalizeRemoteProbeTimestamp(source.lastObservedAt),
+      checkedBy: normalizeRemoteProbeText(source.checkedBy, 120),
+    };
+  };
+  const getRemoteProbeSharedCooldownState = () =>
+    getNormalizedRemoteProbeState(
+      REMOTE_PROBE_SHARED_COOLDOWN_KEY,
+      REMOTE_PROBE_SHARED_COOLDOWN_DEFAULT,
+      normalizeRemoteProbeSharedCooldownState
+    );
+
+  const setRemoteProbeSharedCooldownState = (
+    nextValue,
+    { merge = true } = {}
+  ) =>
+    setNormalizedRemoteProbeState({
+      key: REMOTE_PROBE_SHARED_COOLDOWN_KEY,
+      nextValue,
+      merge,
+      getCurrentState: getRemoteProbeSharedCooldownState,
+      normalizeState: normalizeRemoteProbeSharedCooldownState,
+    });
+
+  const normalizeRemoteProbeLockValue = (value) => {
+    const source = sanitizeRecordObject(value);
+    const owner = normalizeRemoteProbeText(source.owner, 120);
+    const timestamp = normalizeRemoteProbeTimestamp(source.timestamp);
+    const reason = normalizeRemoteProbeText(source.reason, 160);
+    if (!owner || !timestamp) {
+      return null;
+    }
+    return { owner, timestamp, reason };
+  };
+  const getRemoteProbeLockValue = () =>
+    normalizeRemoteProbeLockValue(GM_getValue(REMOTE_PROBE_LOCK_KEY, null));
+
+  const isRemoteProbeLockValid = (lock, now = Date.now()) =>
+    Boolean(
+      lock &&
+      typeof lock.timestamp === "number" &&
+      now - lock.timestamp < REMOTE_PROBE_LOCK_TTL_MS
+    );
+
+  const setRemoteProbeLockValue = ({
+    owner = BACKGROUND_SYNC_OWNER_ID,
+    timestamp = Date.now(),
+    reason = "",
+  } = {}) => {
+    const normalized = normalizeRemoteProbeLockValue({
+      owner,
+      timestamp,
+      reason,
+    });
+    if (!normalized) {
+      return null;
+    }
+    GM_setValue(REMOTE_PROBE_LOCK_KEY, normalized);
+    return normalized;
+  };
+
+  const releaseRemoteProbeLockValue = (owner = BACKGROUND_SYNC_OWNER_ID) => {
+    const currentLock = getRemoteProbeLockValue();
+    if (!currentLock) {
+      return false;
+    }
+    if (owner && currentLock.owner !== owner) {
+      return false;
+    }
+    GM_deleteValue(REMOTE_PROBE_LOCK_KEY);
+    return true;
+  };
+
+  const clearRemoteProbeState = () => {
+    [
+      REMOTE_PROBE_INFO_KEY,
+      REMOTE_PROBE_SHARED_COOLDOWN_KEY,
+      REMOTE_PROBE_LOCK_KEY,
+    ].forEach((key) => GM_deleteValue(key));
   };
 
   const formatSyncTime = (timestamp) => {
@@ -14231,6 +14400,11 @@
       remoteUpdatedAt: nextRemoteUpdatedAt,
       savedAt: Date.now(),
     });
+    if (nextRemoteUpdatedAt) {
+      setLastRemoteProbeInfo({
+        lastSyncedRemoteUpdatedAt: nextRemoteUpdatedAt,
+      });
+    }
   };
 
   const decideSyncActionByVersion = ({
@@ -15773,6 +15947,7 @@
     syncDailyFirstLoad: true,
     syncPerLoadCheckEnabled: false,
     syncAutoEnabled: true,
+    syncCheckOnReturnToForeground: true,
     syncShowAutoSyncIndicator: true,
     syncForcePullOnStartup: false, // <-- [新增] 新增功能开关
     syncDirectChoiceMode: false,
@@ -16009,6 +16184,12 @@
       typeof saved.syncPerLoadCheckEnabled === "undefined" &&
       saved.syncDailyFirstLoad === false &&
       saved.syncAutoEnabled !== false;
+    const hasExistingSavedSettings = Object.keys(saved).length > 0;
+    const shouldMigrateForegroundProbeSetting =
+      typeof saved.syncCheckOnReturnToForeground === "undefined" &&
+      hasExistingSavedSettings;
+    const migratedForegroundProbeSettingEnabled =
+      saved.syncRemoteEnabled === true && saved.syncAutoEnabled !== false;
     applyNormalizedBooleanSetting(
       "syncDailyFirstLoad",
       settings.syncDailyFirstLoad === true,
@@ -16034,6 +16215,20 @@
       settings.syncAutoEnabled === true,
       "sync_auto_enabled_normalized"
     );
+    const normalizedSyncCheckOnReturnToForeground = normalizeBooleanWithDefault(
+      shouldMigrateForegroundProbeSetting
+        ? migratedForegroundProbeSettingEnabled
+        : settings.syncCheckOnReturnToForeground,
+      defaultSettings.syncCheckOnReturnToForeground
+    );
+    applyNormalizedBooleanSetting(
+      "syncCheckOnReturnToForeground",
+      normalizedSyncCheckOnReturnToForeground,
+      "sync_check_on_return_to_foreground_normalized"
+    );
+    if (shouldMigrateForegroundProbeSetting) {
+      markMigration("sync_check_on_return_to_foreground_migrated_from_sync_state");
+    }
     applyNormalizedBooleanSetting(
       "syncShowAutoSyncIndicator",
       settings.syncShowAutoSyncIndicator !== false,
@@ -16211,6 +16406,16 @@
       ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
       buildNormalizedSettings,
       defaultSettings,
+      getLastRemoteProbeInfo,
+      setLastRemoteProbeInfo,
+      getRemoteProbeSharedCooldownState,
+      setRemoteProbeSharedCooldownState,
+      getRemoteProbeLockValue,
+      isRemoteProbeLockValid,
+      setRemoteProbeLockValue,
+      releaseRemoteProbeLockValue,
+      clearRemoteProbeState,
+      setSyncBaselineState,
     };
   }
 
@@ -16279,6 +16484,7 @@
     "syncDailyFirstLoad",
     "syncPerLoadCheckEnabled",
     "syncAutoEnabled",
+    "syncCheckOnReturnToForeground",
     "syncShowAutoSyncIndicator",
     "syncForcePullOnStartup",
     "syncBookmarkFullContent",
@@ -19420,6 +19626,15 @@
           </div>
           <p class="s1p-setting-desc">启用后，每次打开论坛页面时都会执行一次安全同步检查；如遇冲突，仍会暂停自动处理并提示你手动决定。此功能同样独立于“自动后台同步”。</p>
 
+          <div class="s1p-settings-item">
+            <label class="s1p-settings-label" for="s1p-check-on-return-to-foreground-toggle">启用回到前台时检查云端更新</label>
+            <label class="s1p-switch">
+              <input type="checkbox" id="s1p-check-on-return-to-foreground-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
+              <span class="s1p-slider"></span>
+            </label>
+          </div>
+          <p class="s1p-setting-desc">启用后，标签页从后台恢复、后退缓存恢复或重新变为可见时，会先进行一次轻量远端探测；若发现云端已更新，将自动执行一次安全同步检查。此功能用于补足上方的启动类检查，不会直接导入云端数据。</p>
+
           <div id="s1p-force-pull-subgroup" class="s1p-settings-sub-group">
             <div class="s1p-settings-item">
               <label class="s1p-settings-label" for="s1p-force-pull-on-startup-toggle">启动时强制拉取云端数据</label>
@@ -19941,10 +20156,56 @@
       });
     }
 
-    const remoteToggle = modal.querySelector("#s1p-remote-enabled-toggle");
-    const controlsWrapper = modal.querySelector(
-      "#s1p-remote-sync-controls-wrapper"
-    );
+    const syncSettingsControls = {
+      remoteToggle: modal.querySelector("#s1p-remote-enabled-toggle"),
+      controlsWrapper: modal.querySelector("#s1p-remote-sync-controls-wrapper"),
+      dailySyncToggle: modal.querySelector(
+        "#s1p-daily-first-load-sync-enabled-toggle"
+      ),
+      perLoadSyncToggle: modal.querySelector(
+        "#s1p-per-load-sync-enabled-toggle"
+      ),
+      foregroundSyncCheckToggle: modal.querySelector(
+        "#s1p-check-on-return-to-foreground-toggle"
+      ),
+      autoSyncToggle: modal.querySelector("#s1p-auto-sync-enabled-toggle"),
+      autoSyncIndicatorToggle: modal.querySelector(
+        "#s1p-show-auto-sync-indicator-toggle"
+      ),
+      autoSyncIndicatorSubGroup: modal.querySelector(
+        "#s1p-auto-sync-indicator-subgroup"
+      ),
+      bookmarkFullContentToggle: modal.querySelector(
+        "#s1p-sync-bookmark-full-content-toggle"
+      ),
+      remoteGistIdInput: modal.querySelector("#s1p-remote-gist-id-input"),
+      remotePatInput: modal.querySelector("#s1p-remote-pat-input"),
+      forcePullWrapper: modal.querySelector("#s1p-force-pull-subgroup"),
+      forcePullToggle: modal.querySelector("#s1p-force-pull-on-startup-toggle"),
+      directChoiceModeToggle: modal.querySelector(
+        "#s1p-direct-choice-mode-toggle"
+      ),
+      tokenExpiryToggle: modal.querySelector(
+        "#s1p-token-expiry-reminder-toggle"
+      ),
+    };
+    const {
+      remoteToggle,
+      controlsWrapper,
+      dailySyncToggle,
+      perLoadSyncToggle,
+      foregroundSyncCheckToggle,
+      autoSyncToggle,
+      autoSyncIndicatorToggle,
+      autoSyncIndicatorSubGroup,
+      bookmarkFullContentToggle,
+      remoteGistIdInput,
+      remotePatInput,
+      forcePullWrapper,
+      forcePullToggle,
+      directChoiceModeToggle,
+      tokenExpiryToggle,
+    } = syncSettingsControls;
     const updateRemoteSyncInputsState = () => {
       const isMasterEnabled = remoteToggle.checked;
       controlsWrapper.classList.toggle("is-disabled", !isMasterEnabled);
@@ -19956,29 +20217,6 @@
         });
     };
 
-    // [MODIFIED] Start of changes
-    const dailySyncToggle = modal.querySelector(
-      "#s1p-daily-first-load-sync-enabled-toggle"
-    );
-    const perLoadSyncToggle = modal.querySelector(
-      "#s1p-per-load-sync-enabled-toggle"
-    );
-    const autoSyncToggle = modal.querySelector("#s1p-auto-sync-enabled-toggle");
-    const autoSyncIndicatorToggle = modal.querySelector(
-      "#s1p-show-auto-sync-indicator-toggle"
-    );
-    const autoSyncIndicatorSubGroup = modal.querySelector(
-      "#s1p-auto-sync-indicator-subgroup"
-    );
-    const bookmarkFullContentToggle = modal.querySelector(
-      "#s1p-sync-bookmark-full-content-toggle"
-    );
-    const remoteGistIdInput = modal.querySelector("#s1p-remote-gist-id-input");
-    const remotePatInput = modal.querySelector("#s1p-remote-pat-input");
-    const forcePullWrapper = modal.querySelector("#s1p-force-pull-subgroup");
-    const forcePullToggle = modal.querySelector(
-      "#s1p-force-pull-on-startup-toggle"
-    );
     const markSyncSettingsDirty = () =>
       setSettingsModalDirtyState(SETTINGS_MODAL_DIRTY_TAB.SYNC_SETTINGS, true);
 
@@ -20006,10 +20244,8 @@
 
     dailySyncToggle.addEventListener("change", updateForcePullState);
     autoSyncToggle.addEventListener("change", updateAutoSyncIndicatorToggleState);
-    // End of changes
 
     const settings = getSettings();
-    remoteToggle.checked = settings.syncRemoteEnabled;
     const syncDiagnosticsWrapper = modal.querySelector(
       "#s1p-sync-diagnostics-wrapper"
     );
@@ -20052,22 +20288,6 @@
       });
     }
 
-    const directChoiceModeToggle = modal.querySelector(
-      "#s1p-direct-choice-mode-toggle"
-    );
-    if (directChoiceModeToggle) {
-      directChoiceModeToggle.checked = settings.syncDirectChoiceMode;
-    }
-
-    dailySyncToggle.checked = settings.syncDailyFirstLoad;
-    perLoadSyncToggle.checked = settings.syncPerLoadCheckEnabled;
-    autoSyncToggle.checked = settings.syncAutoEnabled;
-    autoSyncIndicatorToggle.checked = settings.syncShowAutoSyncIndicator !== false;
-    bookmarkFullContentToggle.checked = settings.syncBookmarkFullContent;
-    forcePullToggle.checked = settings.syncForcePullOnStartup;
-    remoteGistIdInput.value = settings.syncRemoteGistId || "";
-    remotePatInput.value = settings.syncRemotePat || "";
-
     remoteToggle.addEventListener("change", () => {
       updateRemoteSyncInputsState();
       updateAutoSyncIndicatorToggleState();
@@ -20080,6 +20300,7 @@
       remoteToggle,
       dailySyncToggle,
       perLoadSyncToggle,
+      foregroundSyncCheckToggle,
       autoSyncToggle,
       autoSyncIndicatorToggle,
       forcePullToggle,
@@ -20092,7 +20313,6 @@
     bindDirtyListenerForTextInput(remotePatInput);
 
     // [新增] Token 过期提醒逻辑
-    const tokenExpiryToggle = modal.querySelector("#s1p-token-expiry-reminder-toggle");
     const normalizeTokenExpiryDateValue = (value) => {
       const parsed = Number(value);
       return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
@@ -20164,7 +20384,50 @@
       }
     };
 
-    tokenExpiryToggle.checked = settings.syncTokenExpiryEnabled || false;
+    const applySyncSettingsToModal = (settingsSnapshot) => {
+      remoteToggle.checked = settingsSnapshot.syncRemoteEnabled === true;
+      dailySyncToggle.checked = settingsSnapshot.syncDailyFirstLoad === true;
+      perLoadSyncToggle.checked =
+        settingsSnapshot.syncPerLoadCheckEnabled === true;
+      foregroundSyncCheckToggle.checked =
+        settingsSnapshot.syncCheckOnReturnToForeground === true;
+      autoSyncToggle.checked = settingsSnapshot.syncAutoEnabled === true;
+      autoSyncIndicatorToggle.checked =
+        settingsSnapshot.syncShowAutoSyncIndicator !== false;
+      bookmarkFullContentToggle.checked =
+        settingsSnapshot.syncBookmarkFullContent === true;
+      forcePullToggle.checked = settingsSnapshot.syncForcePullOnStartup === true;
+      directChoiceModeToggle.checked =
+        settingsSnapshot.syncDirectChoiceMode === true;
+      tokenExpiryToggle.checked = settingsSnapshot.syncTokenExpiryEnabled === true;
+      pendingTokenExpiryDate = normalizeTokenExpiryDateValue(
+        settingsSnapshot.syncTokenExpiryDate
+      );
+      remoteGistIdInput.value = settingsSnapshot.syncRemoteGistId || "";
+      remotePatInput.value = settingsSnapshot.syncRemotePat || "";
+
+      updateRemoteSyncInputsState();
+      updateForcePullState();
+      updateAutoSyncIndicatorToggleState();
+      updateTokenExpiryInfo();
+    };
+    const buildSyncSettingsFromModal = () => ({
+      syncRemoteEnabled: remoteToggle.checked,
+      syncDailyFirstLoad: dailySyncToggle.checked,
+      syncPerLoadCheckEnabled: perLoadSyncToggle.checked,
+      syncCheckOnReturnToForeground: foregroundSyncCheckToggle.checked,
+      syncAutoEnabled: autoSyncToggle.checked,
+      syncShowAutoSyncIndicator: autoSyncIndicatorToggle.checked,
+      syncForcePullOnStartup: dailySyncToggle.checked && forcePullToggle.checked,
+      syncDirectChoiceMode: directChoiceModeToggle.checked === true,
+      syncBookmarkFullContent: bookmarkFullContentToggle.checked,
+      syncRemoteGistId: remoteGistIdInput.value.trim(),
+      syncRemotePat: remotePatInput.value.trim(),
+      syncTokenExpiryEnabled: tokenExpiryToggle.checked,
+      syncTokenExpiryDate: pendingTokenExpiryDate,
+    });
+
+    applySyncSettingsToModal(settings);
     tokenExpiryToggle.addEventListener("change", (e) => {
       const isChecked = e.target.checked === true;
 
@@ -20189,80 +20452,9 @@
         markSyncSettingsDirtyAndRefreshTokenExpiryInfo();
       }
     });
-    updateTokenExpiryInfo();
-
-    const setModalCheckedControl = (selector, checked) => {
-      const control = modal.querySelector(selector);
-      if (!control) {
-        return;
-      }
-      const nextChecked = checked === true;
-      if (control.checked !== nextChecked) {
-        control.checked = nextChecked;
-      }
-    };
-    const setModalInputValue = (selector, value) => {
-      const control = modal.querySelector(selector);
-      if (!control) {
-        return;
-      }
-      const nextValue = String(value ?? "");
-      if (control.value !== nextValue) {
-        control.value = nextValue;
-      }
-    };
     const refreshSyncTabControlsFromSettings = () => {
-      const latestSettings = getSettings();
-      setModalCheckedControl(
-        "#s1p-remote-enabled-toggle",
-        latestSettings.syncRemoteEnabled
-      );
-      setModalCheckedControl(
-        "#s1p-daily-first-load-sync-enabled-toggle",
-        latestSettings.syncDailyFirstLoad
-      );
-      setModalCheckedControl(
-        "#s1p-per-load-sync-enabled-toggle",
-        latestSettings.syncPerLoadCheckEnabled
-      );
-      setModalCheckedControl(
-        "#s1p-auto-sync-enabled-toggle",
-        latestSettings.syncAutoEnabled
-      );
-      setModalCheckedControl(
-        "#s1p-show-auto-sync-indicator-toggle",
-        latestSettings.syncShowAutoSyncIndicator !== false
-      );
-      setModalCheckedControl(
-        "#s1p-sync-bookmark-full-content-toggle",
-        latestSettings.syncBookmarkFullContent
-      );
-      setModalCheckedControl(
-        "#s1p-force-pull-on-startup-toggle",
-        latestSettings.syncForcePullOnStartup
-      );
-      setModalCheckedControl(
-        "#s1p-token-expiry-reminder-toggle",
-        latestSettings.syncTokenExpiryEnabled
-      );
-      applyPendingTokenExpiryDate(latestSettings.syncTokenExpiryDate, {
-        markDirty: false,
-      });
-      setModalCheckedControl(
-        "#s1p-direct-choice-mode-toggle",
-        latestSettings.syncDirectChoiceMode
-      );
-      setModalInputValue("#s1p-remote-gist-id-input", latestSettings.syncRemoteGistId);
-      setModalInputValue("#s1p-remote-pat-input", latestSettings.syncRemotePat);
-      updateRemoteSyncInputsState();
-      updateForcePullState();
-      updateAutoSyncIndicatorToggleState();
-      updateTokenExpiryInfo();
+      applySyncSettingsToModal(getSettings());
     };
-
-    updateRemoteSyncInputsState();
-    updateForcePullState(); // [MODIFIED] 初始化子选项的状态
-    updateAutoSyncIndicatorToggleState();
 
     const renderTagsTab = (options = {}) => {
       markSettingsTabRendered("tags");
@@ -23021,6 +23213,7 @@
           "syncDailyFirstLoad",
           "syncPerLoadCheckEnabled",
           "syncAutoEnabled",
+          "syncCheckOnReturnToForeground",
           "syncShowAutoSyncIndicator",
           "syncForcePullOnStartup",
           "syncDirectChoiceMode",
@@ -23616,14 +23809,7 @@
                 SETTINGS_MODAL_DIRTY_TAB.THREAD_RULES,
                 false
               );
-              remoteToggle.checked = false;
-              dailySyncToggle.checked = true;
-              perLoadSyncToggle.checked = false;
-              autoSyncToggle.checked = true;
-              bookmarkFullContentToggle.checked = false;
-              remoteGistIdInput.value = "";
-              remotePatInput.value = "";
-              updateRemoteSyncInputsState();
+              applySyncSettingsToModal(defaultSettings);
             }
 
             const currentSettingsSnapshot = getSettings();
@@ -23692,25 +23878,10 @@
 
         try {
           const previousSettings = getSettings();
-          const currentSettings = { ...previousSettings };
-          currentSettings.syncRemoteEnabled = remoteToggle.checked;
-          currentSettings.syncDailyFirstLoad = dailySyncToggle.checked;
-          currentSettings.syncPerLoadCheckEnabled = perLoadSyncToggle.checked;
-          currentSettings.syncAutoEnabled = autoSyncToggle.checked;
-          currentSettings.syncShowAutoSyncIndicator =
-            autoSyncIndicatorToggle.checked;
-          currentSettings.syncForcePullOnStartup =
-            dailySyncToggle.checked && forcePullToggle.checked;
-          currentSettings.syncDirectChoiceMode =
-            directChoiceModeToggle?.checked === true;
-          currentSettings.syncBookmarkFullContent =
-            bookmarkFullContentToggle.checked;
-          currentSettings.syncRemoteGistId = remoteGistIdInput.value.trim();
-          currentSettings.syncRemotePat = remotePatInput.value.trim();
-          currentSettings.syncTokenExpiryEnabled = modal.querySelector(
-            "#s1p-token-expiry-reminder-toggle"
-          ).checked;
-          currentSettings.syncTokenExpiryDate = pendingTokenExpiryDate;
+          const currentSettings = {
+            ...previousSettings,
+            ...buildSyncSettingsFromModal(),
+          };
           const didRemoteTargetChange =
             String(previousSettings.syncRemoteGistId || "").trim() !==
             currentSettings.syncRemoteGistId;
@@ -23732,6 +23903,7 @@
           if (didRemoteTargetChange || didDisableRemoteSync) {
             // 远端目标切换/关闭远程同步后，清理旧会话残留状态，避免新目标沿用旧基线造成误判。
             GM_deleteValue(SYNC_BASELINE_STATE_KEY);
+            clearRemoteProbeState();
             clearPendingAutoSyncRequest();
             clearAutoSyncConflictPause();
             clearAutoSyncRuntimeQueue();
