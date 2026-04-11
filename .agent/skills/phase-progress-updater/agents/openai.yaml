@@ -1,0 +1,4 @@
+interface:
+  display_name: "Phase Progress Updater"
+  short_description: "Update phase docs with detailed progress reporting"
+  default_prompt: "Use $phase-progress-updater to update phase-tracking documents with a precise completion and progress report."
