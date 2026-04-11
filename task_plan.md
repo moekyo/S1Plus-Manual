@@ -4,8 +4,8 @@
 Execute the implementation from `sync_implementation_plan.md` in the order defined by `sync_dev_task_checklist.md`, so device B can detect and safely apply newer remote sync data in more real-world return/resume scenarios without weakening the existing conflict protections.
 
 ## Status
-- Current status: Phase 4 completed, Phase 5 next.
-- Overall progress: 4 of 9 implementation phases completed.
+- Current status: Phase 5 completed, Phase 6 next.
+- Overall progress: 5 of 9 implementation phases completed.
 - Completed in this session:
   - Added the new foreground-check setting default and migration behavior.
   - Added persisted remote probe info, shared cooldown state, and lightweight probe lock helpers.
@@ -19,6 +19,11 @@ Execute the implementation from `sync_implementation_plan.md` in the order defin
   - Added a dedicated Phase 4 trigger bridge so `visibilitychange` and bfcache `pageshow` can reuse the guarded foreground probe runner without replacing the existing pending local auto-sync recovery path.
   - Kept non-bfcache `pageshow` on recovery-only behavior to avoid duplicating startup/per-load sync checks on normal page load.
   - Added `scripts/test-foreground-trigger-integration.js` to verify trigger wiring, recovery ordering, persisted-`pageshow` probe behavior, and hidden-page early exits.
+  - Added Phase 5 visible-page polling runtime state, including user-activity timestamps, active/idle polling intervals, and a timer-based scheduler for always-visible pages.
+  - Wired visible-page polling into the existing foreground recovery hooks so visible pages start polling, hidden pages stop polling, and bfcache/foreground returns re-arm the timer without bypassing the metadata-only probe path.
+  - Added pointer, keyboard, and scroll activity tracking so long-idle visible pages back off to a lower polling frequency and new user interaction restores the normal cadence.
+  - Synced the polling scheduler with settings save and cross-tab settings refresh so enabling/disabling the feature converges without requiring a page reload.
+  - Added `scripts/test-visible-remote-polling.js` to verify scheduler wiring, hidden-page stop behavior, polling execution, inactivity backoff, and post-idle recovery.
 - Validation:
   - `node --check S1Plus.js`
   - `node scripts/test-settings-migration.js`
@@ -26,13 +31,14 @@ Execute the implementation from `sync_implementation_plan.md` in the order defin
   - `node scripts/test-sync-settings-ui.js`
   - `node scripts/test-foreground-remote-probe.js`
   - `node scripts/test-foreground-trigger-integration.js`
+  - `node scripts/test-visible-remote-polling.js`
 
 ## Phases
 - [x] Phase 1: State and settings
 - [x] Phase 2: Settings UI
 - [x] Phase 3: Probe infrastructure
 - [x] Phase 4: Trigger integration
-- [ ] Phase 5: Visible-page polling
+- [x] Phase 5: Visible-page polling
 - [ ] Phase 6: Safe sync execution
 - [ ] Phase 7: Refresh policy
 - [ ] Phase 8: Diagnostics and UI feedback
@@ -49,6 +55,11 @@ Execute the implementation from `sync_implementation_plan.md` in the order defin
   - `s1p_remote_probe_lock`
 - `lastSyncedRemoteUpdatedAt` is updated from existing `setSyncBaselineState(...)` writes so later probe logic can distinguish “observed remote changed” from “remote already reconciled”.
 - Probe state is cleared together with sync baseline / pending auto-sync runtime state when the remote target changes or remote sync is turned off.
+- Phase 5 keeps visible-page polling behind the existing `syncCheckOnReturnToForeground` switch instead of adding a second user-facing toggle before the polling behavior is mature enough to justify a more granular setting.
+- The first polling rollout uses:
+  - `240s` active visible-page probe interval
+  - `720s` degraded interval after `15m` without pointer/keyboard/scroll activity
+  - the same metadata-only `checkRemoteFreshnessOnForeground(...)` path already validated in Phases 3-4
 
 ## Phase 1 Update
 - Status: Completed
@@ -120,6 +131,28 @@ Execute the implementation from `sync_implementation_plan.md` in the order defin
   - Activity-aware backoff, diagnostics extension, and post-sync refresh policy remain for later phases.
 - Next:
   - Implement Phase 5 visible-page polling so long-lived always-visible tabs can periodically run the same guarded metadata-only freshness probe.
+
+## Phase 5 Update
+- Status: Completed
+- Completed:
+  - Added visible-page polling runtime state via `lastUserInteractionAt`, `visibleRemoteProbeTimer`, and `currentVisibleProbeIntervalMs`.
+  - Added `scheduleVisibleRemoteFreshnessPolling(...)`, `stopVisibleRemoteFreshnessPolling(...)`, and `syncVisibleRemoteFreshnessPollingForCurrentState(...)` so visible tabs now keep a low-frequency metadata-only remote freshness check alive even without a foreground transition.
+  - Reused `checkRemoteFreshnessOnForeground(...)` for polling execution, so Phase 5 does not introduce a second remote-fetch or sync-decision path.
+  - Added pointer, keyboard, and scroll activity listeners plus `handleVisibleRemoteFreshnessUserActivity(...)`, so long-idle visible tabs back off from `240s` polling to `720s`, and fresh interaction restores the normal interval.
+  - Wired polling state reconciliation into `bindPendingAutoSyncRecoveryHooks()`, `saveSettings(...)`, `runFullSettingsCrossTabRefresh(...)`, and `runSettingsCrossTabRefresh(...)` so runtime behavior matches current visibility and settings state.
+- Validation:
+  - `node --check S1Plus.js`
+  - `node scripts/test-settings-migration.js`
+  - `node scripts/test-remote-probe-state.js`
+  - `node scripts/test-sync-settings-ui.js`
+  - `node scripts/test-foreground-remote-probe.js`
+  - `node scripts/test-foreground-trigger-integration.js`
+  - `node scripts/test-visible-remote-polling.js`
+- Remaining:
+  - Phase 5 only adds the missing trigger/scheduler layer; post-probe sync execution still relies on the already existing follow-up path and Phase 6 remains the place to formalize that reuse boundary in the implementation checklist.
+  - Diagnostics expansion, user-facing messaging, and page-type-aware refresh behavior are still pending in later phases.
+- Next:
+  - Implement Phase 6 safe sync execution as an explicit checklist milestone, keeping the existing startup lock reuse path as the only full-sync decision engine.
 
 ## Errors Encountered
 - A first pass of the new Phase 3 regression script used a synthetic timestamp for the circuit-breaker test while the production helper checked the real `Date.now()`. The test was corrected to use a real future `until` timestamp before final validation.

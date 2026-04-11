@@ -615,6 +615,9 @@
   let lastForegroundProbeAt = 0;
   let foregroundProbeInFlightPromise = null;
   let foregroundRemoteSyncCheckInFlightPromise = null;
+  let lastUserInteractionAt = 0;
+  let visibleRemoteProbeTimer = null;
+  let currentVisibleProbeIntervalMs = 0;
 
   const isManualSyncActionBusy = () =>
     Boolean(manualSyncInFlightPromise || forceSyncInFlight);
@@ -749,6 +752,9 @@
   const REMOTE_PROBE_SHARED_COOLDOWN_MS = 45 * 1000;
   const REMOTE_PROBE_LOCAL_COOLDOWN_MS = 12 * 1000;
   const REMOTE_PROBE_LOCK_TTL_MS = 8 * 1000;
+  const REMOTE_PROBE_VISIBLE_POLL_ACTIVE_INTERVAL_MS = 4 * 60 * 1000;
+  const REMOTE_PROBE_VISIBLE_POLL_IDLE_INTERVAL_MS = 12 * 60 * 1000;
+  const REMOTE_PROBE_VISIBLE_POLL_IDLE_AFTER_MS = 15 * 60 * 1000;
   const SYNC_LOCK_LOST_CODE = "SYNC_LOCK_LOST";
   const SYNC_CONFLICT_MODAL_COOLDOWN_LOCK_KEY =
     "s1p_sync_conflict_modal_cooldown_lock";
@@ -7271,6 +7277,195 @@
     reason,
   });
 
+  const normalizeVisibleRemoteFreshnessTimestamp = (timestamp = Date.now()) =>
+    normalizeRemoteProbeTimestamp(timestamp) || Date.now();
+
+  const isVisibleRemoteFreshnessPollingEnabled = (settingsSnapshot) =>
+    Boolean(
+      settingsSnapshot.syncRemoteEnabled &&
+      settingsSnapshot.syncRemoteGistId &&
+      settingsSnapshot.syncRemotePat &&
+      settingsSnapshot.syncCheckOnReturnToForeground === true
+    );
+
+  const getVisibleRemoteFreshnessPollingMode = (intervalMs) => {
+    if (intervalMs >= REMOTE_PROBE_VISIBLE_POLL_IDLE_INTERVAL_MS) {
+      return "idle";
+    }
+    return "active";
+  };
+
+  const getVisibleRemoteFreshnessPollingReason = (intervalMs) => {
+    if (getVisibleRemoteFreshnessPollingMode(intervalMs) === "idle") {
+      return "visible_poll_idle";
+    }
+    return "visible_poll_active";
+  };
+
+  const createVisibleRemoteFreshnessActivityResult = (
+    activityTimestamp,
+    intervalMs
+  ) => ({
+    status: "recorded",
+    lastUserInteractionAt: activityTimestamp,
+    intervalMs: intervalMs || 0,
+  });
+
+  const stopVisibleRemoteFreshnessPollingWithReason = (reason) => {
+    stopVisibleRemoteFreshnessPolling();
+    return createForegroundTriggerSkippedResult(reason);
+  };
+
+  const markVisibleRemoteFreshnessUserActivity = (timestamp = Date.now()) => {
+    const normalizedTimestamp =
+      normalizeVisibleRemoteFreshnessTimestamp(timestamp);
+    lastUserInteractionAt = normalizedTimestamp;
+    return normalizedTimestamp;
+  };
+
+  const getVisibleRemoteFreshnessPollingIntervalMs = (now = Date.now()) => {
+    const normalizedNow = normalizeVisibleRemoteFreshnessTimestamp(now);
+    const inactivityMs = lastUserInteractionAt
+      ? Math.max(0, normalizedNow - lastUserInteractionAt)
+      : 0;
+    if (inactivityMs >= REMOTE_PROBE_VISIBLE_POLL_IDLE_AFTER_MS) {
+      return REMOTE_PROBE_VISIBLE_POLL_IDLE_INTERVAL_MS;
+    }
+    return REMOTE_PROBE_VISIBLE_POLL_ACTIVE_INTERVAL_MS;
+  };
+
+  const stopVisibleRemoteFreshnessPolling = () => {
+    if (visibleRemoteProbeTimer) {
+      clearTimeout(visibleRemoteProbeTimer);
+      visibleRemoteProbeTimer = null;
+    }
+    currentVisibleProbeIntervalMs = 0;
+    return { status: "stopped" };
+  };
+
+  const scheduleVisibleRemoteFreshnessPolling = (options = {}) => {
+    const settingsSnapshot = options.settingsSnapshot || getSettings();
+    const now = normalizeVisibleRemoteFreshnessTimestamp(options.now);
+    if (options.resetActivity === true || !lastUserInteractionAt) {
+      markVisibleRemoteFreshnessUserActivity(now);
+    }
+
+    if (document.visibilityState !== "visible") {
+      return stopVisibleRemoteFreshnessPollingWithReason("document_hidden");
+    }
+
+    if (!isVisibleRemoteFreshnessPollingEnabled(settingsSnapshot)) {
+      const reason =
+        settingsSnapshot.syncCheckOnReturnToForeground === true
+          ? "disabled"
+          : "foreground_check_disabled";
+      return stopVisibleRemoteFreshnessPollingWithReason(reason);
+    }
+
+    const intervalMs = getVisibleRemoteFreshnessPollingIntervalMs(now);
+    const pollingMode = getVisibleRemoteFreshnessPollingMode(intervalMs);
+    const pollReason = getVisibleRemoteFreshnessPollingReason(intervalMs);
+    const checkRemoteFreshnessOnForegroundFn =
+      options.checkRemoteFreshnessOnForeground || checkRemoteFreshnessOnForeground;
+    const checkRemoteFreshnessOverrides =
+      options.checkRemoteFreshnessOnForegroundOverrides || {};
+
+    stopVisibleRemoteFreshnessPolling();
+    currentVisibleProbeIntervalMs = intervalMs;
+    visibleRemoteProbeTimer = setTimeout(async () => {
+      visibleRemoteProbeTimer = null;
+      currentVisibleProbeIntervalMs = 0;
+
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+
+      try {
+        await checkRemoteFreshnessOnForegroundFn(
+          pollReason,
+          checkRemoteFreshnessOverrides
+        );
+      } catch (error) {
+        console.error(
+          `S1 Plus: 可见页面远端更新轮询失败(${pollReason}):`,
+          error
+        );
+      } finally {
+        scheduleVisibleRemoteFreshnessPolling();
+      }
+    }, intervalMs);
+
+    return {
+      status: "scheduled",
+      intervalMs,
+      mode: pollingMode,
+      lastUserInteractionAt,
+    };
+  };
+
+  const syncVisibleRemoteFreshnessPollingForCurrentState = (options = {}) => {
+    if (document.visibilityState !== "visible") {
+      return stopVisibleRemoteFreshnessPolling();
+    }
+    return scheduleVisibleRemoteFreshnessPolling(options);
+  };
+
+  const handleVisibleRemoteFreshnessUserActivity = (options = {}) => {
+    const now = normalizeVisibleRemoteFreshnessTimestamp(options.now);
+    const previousIntervalMs = currentVisibleProbeIntervalMs;
+    const activityTimestamp = markVisibleRemoteFreshnessUserActivity(now);
+
+    if (document.visibilityState !== "visible" || !visibleRemoteProbeTimer) {
+      return createVisibleRemoteFreshnessActivityResult(
+        activityTimestamp,
+        previousIntervalMs
+      );
+    }
+
+    const nextIntervalMs = getVisibleRemoteFreshnessPollingIntervalMs(now);
+    if (
+      previousIntervalMs >= REMOTE_PROBE_VISIBLE_POLL_IDLE_INTERVAL_MS &&
+      nextIntervalMs < previousIntervalMs
+    ) {
+      return scheduleVisibleRemoteFreshnessPolling({
+        ...options,
+        now,
+      });
+    }
+
+    return createVisibleRemoteFreshnessActivityResult(
+      activityTimestamp,
+      previousIntervalMs
+    );
+  };
+
+  const bindVisibleRemoteFreshnessPollingActivityHooks = () => {
+    if (window.__s1pVisibleRemoteFreshnessPollingActivityBound) {
+      return;
+    }
+    window.__s1pVisibleRemoteFreshnessPollingActivityBound = true;
+
+    const handleUserActivity = () => {
+      handleVisibleRemoteFreshnessUserActivity();
+    };
+
+    window.addEventListener("pointerdown", handleUserActivity, {
+      capture: true,
+      passive: true,
+    });
+    document.addEventListener("keydown", handleUserActivity, true);
+    window.addEventListener("scroll", handleUserActivity, {
+      capture: true,
+      passive: true,
+    });
+  };
+
+  const getVisibleRemoteFreshnessPollingRuntimeState = () => ({
+    lastUserInteractionAt,
+    currentVisibleProbeIntervalMs,
+    hasTimer: Boolean(visibleRemoteProbeTimer),
+  });
+
   const getPendingAutoSyncRecoveryFn = (overrides = {}) =>
     overrides.recoverPendingAutoSyncIfNeeded || recoverPendingAutoSyncIfNeeded;
 
@@ -7306,15 +7501,29 @@
       return;
     }
     window.__s1pPendingAutoSyncRecoveryBound = true;
+    bindVisibleRemoteFreshnessPollingActivityHooks();
+    syncVisibleRemoteFreshnessPollingForCurrentState({
+      resetActivity: true,
+    });
 
     // 处理浏览器后退缓存（bfcache）恢复场景：页面不会重新执行 main。
     window.addEventListener("pageshow", (event) => {
       void handlePendingAutoSyncRecoveryPageShow(event);
+      syncVisibleRemoteFreshnessPollingForCurrentState({
+        resetActivity: Boolean(event && event.persisted),
+      });
     });
 
     // 处理标签页从后台恢复到前台的场景。
     document.addEventListener("visibilitychange", () => {
       void handlePendingAutoSyncRecoveryVisibilityChange();
+      if (document.visibilityState === "visible") {
+        syncVisibleRemoteFreshnessPollingForCurrentState({
+          resetActivity: true,
+        });
+        return;
+      }
+      stopVisibleRemoteFreshnessPolling();
     });
   };
 
@@ -16313,6 +16522,13 @@
       recordRemoteProbeObservation,
       acquireRemoteProbeLock,
       hasAnyActiveSyncLock,
+      markVisibleRemoteFreshnessUserActivity,
+      getVisibleRemoteFreshnessPollingIntervalMs,
+      stopVisibleRemoteFreshnessPolling,
+      scheduleVisibleRemoteFreshnessPolling,
+      syncVisibleRemoteFreshnessPollingForCurrentState,
+      handleVisibleRemoteFreshnessUserActivity,
+      getVisibleRemoteFreshnessPollingRuntimeState,
       requestForegroundRemoteSyncCheck,
       checkRemoteFreshnessOnForeground,
       triggerForegroundRemoteFreshnessProbe,
@@ -17278,6 +17494,7 @@
   const runFullSettingsCrossTabRefresh = (changedPathSet) => {
     initializeNavbar();
     applyChanges();
+    syncVisibleRemoteFreshnessPollingForCurrentState();
     markSettingsRuntimeAppliedSnapshot(getSettings());
     syncOpenSettingsModalFromCrossTab({
       changedPathSet,
@@ -17416,6 +17633,7 @@
     }
 
     markSettingsRuntimeAppliedSnapshot(settings);
+    syncVisibleRemoteFreshnessPollingForCurrentState();
     syncOpenSettingsModalFromCrossTab({ changedPathSet });
     return false;
   };
@@ -17699,6 +17917,7 @@
       );
     }
     console.log("S1 Plus: Settings saved.");
+    syncVisibleRemoteFreshnessPollingForCurrentState();
     if (!suppressSyncTrigger) {
       updateLastModifiedTimestamp();
     } else if (markDataChangedWhenSuppressed) {

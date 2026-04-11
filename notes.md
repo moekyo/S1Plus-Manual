@@ -258,4 +258,67 @@
 
 ### Remaining limitations after Phase 4
 - Always-visible tabs still do not notice remote changes without a foreground-style trigger; that gap is intentionally left for Phase 5 visible-page polling.
+
+## Phase 5 Implementation Notes
+
+### Visible-page polling model implemented
+- Added dedicated runtime state for polling orchestration:
+  - `lastUserInteractionAt`
+  - `visibleRemoteProbeTimer`
+  - `currentVisibleProbeIntervalMs`
+- Added these Phase 5 helpers:
+  - `scheduleVisibleRemoteFreshnessPolling(...)`
+  - `stopVisibleRemoteFreshnessPolling(...)`
+  - `syncVisibleRemoteFreshnessPollingForCurrentState(...)`
+  - `getVisibleRemoteFreshnessPollingIntervalMs(...)`
+- Polling remains metadata-only:
+  - each timer run still delegates to `checkRemoteFreshnessOnForeground(...)`
+  - no new full-fetch path or alternate sync decision engine was introduced in Phase 5
+
+### Polling cadence and backoff choices
+- Active visible-page polling interval is currently `240s`.
+- After `15m` without user activity, the polling interval degrades to `720s`.
+- This keeps the Phase 5 implementation within the design target:
+  - active mode still falls inside the recommended `180-300s` range
+  - idle mode still falls inside the recommended `600-900s` range
+- Phase 5 intentionally degrades instead of fully pausing after long inactivity:
+  - it closes the always-visible stale-data gap now
+  - it leaves room for a stricter pause heuristic later if GitHub API cost needs further tuning
+
+### User-activity tracking behavior
+- Added activity listeners for:
+  - `pointerdown`
+  - `keydown`
+  - `scroll`
+- New activity updates `lastUserInteractionAt`.
+- If the page is currently on the degraded polling interval, new activity immediately re-arms polling back to the active interval instead of waiting for the old idle timer to expire.
+- Scroll tracking was kept lightweight:
+  - repeated activity during an already-active interval only refreshes the timestamp
+  - the timer is only rescheduled when the page needs to leave idle mode
+
+### Integration choices made in Phase 5
+- `bindPendingAutoSyncRecoveryHooks()` now:
+  - binds the Phase 5 activity listeners once
+  - starts polling on visible pages
+  - stops polling as soon as the page becomes hidden
+  - re-arms polling on `pageshow` / `visibilitychange` returns
+- Settings convergence was tightened so polling state follows current config without a reload:
+  - `saveSettings(...)` now re-evaluates polling state after a local settings write
+  - `runFullSettingsCrossTabRefresh(...)` and `runSettingsCrossTabRefresh(...)` now do the same for cross-tab updates
+- Phase 5 continues to reuse the existing `syncCheckOnReturnToForeground` switch:
+  - no separate visible-polling setting was added yet
+  - this avoids prematurely committing to a second UX toggle before later phases settle the full behavior
+
+### Validation added in Phase 5
+- Added `scripts/test-visible-remote-polling.js` to verify:
+  - Phase 5 listener wiring exists
+  - visible pages schedule the active polling interval
+  - hidden pages stop polling
+  - a polling tick runs the metadata-only probe path and schedules the next tick
+  - long inactivity degrades the interval
+  - fresh user interaction restores the active interval
+
+### Remaining limitations after Phase 5
+- Polling-triggered full sync still flows through the previously added follow-up path; later checklist phases still need to document the safe-sync reuse boundary and UX outcomes more explicitly.
+- Diagnostics, copy, and refresh policy have not changed yet.
 - Phase 4 does not yet change post-sync refresh policy, diagnostics output, or user-facing status copy.
