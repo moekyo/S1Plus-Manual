@@ -4,8 +4,8 @@
 Execute the implementation from `sync_implementation_plan.md` in the order defined by `sync_dev_task_checklist.md`, so device B can detect and safely apply newer remote sync data in more real-world return/resume scenarios without weakening the existing conflict protections.
 
 ## Status
-- Current status: Phase 3 completed, Phase 4 next.
-- Overall progress: 3 of 9 implementation phases completed.
+- Current status: Phase 4 completed, Phase 5 next.
+- Overall progress: 4 of 9 implementation phases completed.
 - Completed in this session:
   - Added the new foreground-check setting default and migration behavior.
   - Added persisted remote probe info, shared cooldown state, and lightweight probe lock helpers.
@@ -16,18 +16,22 @@ Execute the implementation from `sync_implementation_plan.md` in the order defin
   - Added Phase 3 shared cooldown / per-tab cooldown helpers and a verified probe-lock acquisition path for metadata-only freshness checks.
   - Added `checkRemoteFreshnessOnForeground(...)` and `requestForegroundRemoteSyncCheck(...)`, so a positive probe can reuse the existing startup sync safety path without creating a second sync decision engine.
   - Added `scripts/test-foreground-remote-probe.js` to cover unchanged remote, changed remote, shared cooldown, probe lock contention, and early-skip guard conditions.
+  - Added a dedicated Phase 4 trigger bridge so `visibilitychange` and bfcache `pageshow` can reuse the guarded foreground probe runner without replacing the existing pending local auto-sync recovery path.
+  - Kept non-bfcache `pageshow` on recovery-only behavior to avoid duplicating startup/per-load sync checks on normal page load.
+  - Added `scripts/test-foreground-trigger-integration.js` to verify trigger wiring, recovery ordering, persisted-`pageshow` probe behavior, and hidden-page early exits.
 - Validation:
   - `node --check S1Plus.js`
   - `node scripts/test-settings-migration.js`
   - `node scripts/test-remote-probe-state.js`
   - `node scripts/test-sync-settings-ui.js`
   - `node scripts/test-foreground-remote-probe.js`
+  - `node scripts/test-foreground-trigger-integration.js`
 
 ## Phases
 - [x] Phase 1: State and settings
 - [x] Phase 2: Settings UI
 - [x] Phase 3: Probe infrastructure
-- [ ] Phase 4: Trigger integration
+- [x] Phase 4: Trigger integration
 - [ ] Phase 5: Visible-page polling
 - [ ] Phase 6: Safe sync execution
 - [ ] Phase 7: Refresh policy
@@ -96,6 +100,26 @@ Execute the implementation from `sync_implementation_plan.md` in the order defin
   - Visible-page polling, activity-aware backoff, diagnostics expansion, and refresh policy changes remain for later phases.
 - Next:
   - Implement Phase 4 trigger integration so `pageshow` and `visibilitychange` can invoke the guarded foreground probe without regressing existing pending local auto-sync recovery behavior.
+
+## Phase 4 Update
+- Status: Completed
+- Completed:
+  - Added `triggerForegroundRemoteFreshnessProbe(...)` as the shared trigger bridge for foreground-return probe execution and error isolation.
+  - Added `handlePendingAutoSyncRecoveryVisibilityChange(...)`, so visible-tab recovery now performs the original pending local auto-sync recovery first and then invokes the guarded metadata-only remote freshness probe.
+  - Added `handlePendingAutoSyncRecoveryPageShow(...)`, so bfcache restores reuse the same recovery-first flow while normal non-persisted `pageshow` remains recovery-only.
+  - Rewired `bindPendingAutoSyncRecoveryHooks()` to call the new Phase 4 handlers instead of directly embedding recovery logic.
+- Validation:
+  - `node --check S1Plus.js`
+  - `node scripts/test-settings-migration.js`
+  - `node scripts/test-remote-probe-state.js`
+  - `node scripts/test-sync-settings-ui.js`
+  - `node scripts/test-foreground-remote-probe.js`
+  - `node scripts/test-foreground-trigger-integration.js`
+- Remaining:
+  - Visible-page polling is still not implemented, so always-visible tabs still rely on a later phase to notice remote changes without a foreground transition.
+  - Activity-aware backoff, diagnostics extension, and post-sync refresh policy remain for later phases.
+- Next:
+  - Implement Phase 5 visible-page polling so long-lived always-visible tabs can periodically run the same guarded metadata-only freshness probe.
 
 ## Errors Encountered
 - A first pass of the new Phase 3 regression script used a synthetic timestamp for the circuit-breaker test while the production helper checked the real `Date.now()`. The test was corrected to use a real future `until` timestamp before final validation.
