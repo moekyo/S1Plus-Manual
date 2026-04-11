@@ -4,8 +4,8 @@
 Turn the cross-device auto-pull design into an implementation-ready checklist with clear module boundaries, dependencies, and acceptance criteria.
 
 ## Execution Status
-- Current status: Phase 4 completed on 2026-04-12.
-- Overall progress: 4 of 9 phases completed.
+- Current status: Phase 5 completed on 2026-04-12.
+- Overall progress: 5 of 9 phases completed.
 - Validation completed:
   - `node --check S1Plus.js`
   - `node scripts/test-settings-migration.js`
@@ -13,7 +13,8 @@ Turn the cross-device auto-pull design into an implementation-ready checklist wi
   - `node scripts/test-sync-settings-ui.js`
   - `node scripts/test-foreground-remote-probe.js`
   - `node scripts/test-foreground-trigger-integration.js`
-- Next step: Phase 5, add visible-page polling so always-visible tabs can also notice newer remote data.
+  - `node scripts/test-visible-remote-polling.js`
+- Next step: Phase 6, formalize safe sync execution reuse as the next explicit milestone.
 
 ## Phase 1: State and Settings [Completed]
 
@@ -96,29 +97,43 @@ Acceptance:
 - [x] bfcache restore can trigger guarded remote freshness check
 - [x] No request storm under rapid repeated visibility transitions
 
-## Phase 5: Visible-Page Polling
+## Phase 5: Visible-Page Polling [Completed]
 
-### Task 7. Add visible-page polling scheduler
+### Task 7. Add visible-page polling scheduler [Completed]
 - Start when page becomes visible
 - Stop when page becomes hidden
 - Probe every 180-300 seconds while active
 - Reuse same metadata-only probe path
+- Implemented with:
+  - `scheduleVisibleRemoteFreshnessPolling(...)`
+  - `stopVisibleRemoteFreshnessPolling(...)`
+  - `syncVisibleRemoteFreshnessPollingForCurrentState(...)`
+- Current active polling interval:
+  - `240s`
 
 Acceptance:
-- Always-visible pages can eventually notice remote changes
-- Polling never performs full remote fetch directly
+- [x] Always-visible pages can eventually notice remote changes
+- [x] Polling never performs full remote fetch directly
 
-### Task 8. Add activity-aware polling backoff
+### Task 8. Add activity-aware polling backoff [Completed]
 - Track recent user activity:
   - pointer
   - keyboard
   - scroll
 - Degrade polling interval after long inactivity
 - Optionally pause after very long inactivity
+- Implemented with:
+  - `lastUserInteractionAt`
+  - `handleVisibleRemoteFreshnessUserActivity(...)`
+  - `pointerdown` / `keydown` / `scroll` listeners
+- Current backoff policy:
+  - degrade from `240s` to `720s`
+  - trigger degradation after `15m` without activity
+  - new interaction immediately restores the active interval
 
 Acceptance:
-- Visible but unattended pages reduce request frequency
-- New interaction restores normal polling interval
+- [x] Visible but unattended pages reduce request frequency
+- [x] New interaction restores normal polling interval
 
 ## Phase 6: Safe Sync Execution
 
