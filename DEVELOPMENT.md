@@ -21,15 +21,20 @@
 
 ### 2.2 推荐 Loader（本地文件热加载）
 
-在 Tampermonkey 新建脚本 `S1 Plus (Local)`：
+仓库里已经提供了两份可直接使用的本地加载器：
+
+- `S1Plus-Local-Mac.user.js`
+- `S1Plus-Local-Windows.user.js`
+
+如果要手动新建，也可以参考下面这个模板：
 
 ```javascript
 // ==UserScript==
 // @name         S1 Plus (Local)
 // @namespace    http://tampermonkey.net/
-// @version      99.9.9
+// @version      99.9.10
 // @description  本地开发加载器
-// @author       moekyo
+// @author       Antigravity
 // @match        https://stage1st.com/2b/*
 // @require      file:///[YOUR_LOCAL_PATH]/S1Plus.js
 // @grant        GM_setValue
@@ -40,10 +45,7 @@
 // @grant        GM_openInTab
 // @grant        GM_download
 // @grant        GM_addValueChangeListener
-// @connect      stage1st.com
-// @connect      img.stage1st.com
-// @connect      api.github.com
-// @connect      gist.githubusercontent.com
+// @connect      *
 // ==/UserScript==
 
 (function () {
@@ -57,7 +59,7 @@
 - 关闭线上正式脚本，避免双实例冲突
 - `@require` 必须是绝对路径
 - Windows 路径示例：`file:///C:/Users/Name/S1Plus-Manual/S1Plus.js`
-- 本地 Loader 的 `@grant` / `@connect` 需要与主脚本保持一致；若缺少 `img.stage1st.com`，图片保存会被 Tampermonkey 拦截
+- 本地 Loader 的 `@grant` / `@connect` 需要与主脚本保持一致；当前主脚本使用 `@connect *`
 
 ### 2.3 迁移回归校验（建议每次改设置迁移后执行）
 
