@@ -740,6 +740,11 @@
   const AUTO_SYNC_INDICATOR_PHASE_SUCCESS = "success";
   const AUTO_SYNC_INDICATOR_PHASE_FAILURE = "failure";
   const AUTO_SYNC_INDICATOR_PHASE_CONFLICT = "conflict";
+  const AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND = "background";
+  const AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP = "daily_startup";
+  const AUTO_SYNC_INDICATOR_SOURCE_PER_LOAD = "per_load";
+  const AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_FOLLOWUP =
+    "foreground_followup";
   const AUTO_SYNC_INDICATOR_PENDING_STALE_MS = 90 * 1000;
   const AUTO_SYNC_INDICATOR_RUNNING_STALE_MS = 3 * 60 * 1000;
   const AUTO_SYNC_INDICATOR_SUCCESS_TTL_MS = 2 * 60 * 1000;
@@ -912,7 +917,7 @@
       items: [
         {
           label: "关闭",
-          body: "完全关闭自动检查；不会在页面加载、切回前台，或页面持续可见时主动检查云端更新。",
+          body: "完全关闭自动检查；不会在页面首次可见、页面加载、切回前台，或页面持续可见时主动检查云端更新。",
         },
         {
           label: "每次加载检查",
@@ -920,7 +925,7 @@
         },
         {
           label: "回到前台检查",
-          body: "标签页回到前台、从后退缓存恢复，或页面持续可见时，会先做轻量远端探测；只有确认云端有更新后才继续执行安全同步检查。",
+          body: "论坛页面首次可见、标签页回到前台、从后退缓存恢复，或页面持续可见时，会先做轻量远端探测；只有确认云端有更新后才继续执行安全同步检查。",
         },
       ],
     },
@@ -933,7 +938,7 @@
         },
         {
           label: "回到前台检查",
-          body: "更偏向跨设备切换或长时间常驻页面场景；会在回到前台时立即探测，并在页面持续可见时低频复查。",
+          body: "更偏向跨设备切换或长时间常驻页面场景；会在新开页面首次可见或回到前台时立即探测，并在页面持续可见时低频复查。",
         },
       ],
     },
@@ -3734,12 +3739,16 @@
       opacity: 0;
       transition: opacity 0.3s ease-out, transform 0.3s ease-out;
       pointer-events: none;
-      white-space: nowrap;
+      max-width: min(80vw, 560px);
+      white-space: normal;
+      word-break: break-word;
+      line-height: 1.5;
       text-align: center;
     }
     .s1p-modal-content .s1p-toast-notification {
       position: absolute;
       bottom: 15px;
+      max-width: calc(100% - 32px);
     }
     .s1p-toast-notification.visible {
       opacity: 1;
@@ -4082,6 +4091,11 @@
       margin-left: 8px;
       margin-top: 8px;
       transition: all 0.3s ease;
+    }
+    .s1p-settings-sub-group-flat {
+      padding-left: 0;
+      margin-left: 0;
+      margin-top: 0;
     }
 
     .s1p-settings-item {
@@ -4753,6 +4767,9 @@
       .s1p-settings-sub-group {
         padding-left: 12px;
         margin-left: 0;
+      }
+      .s1p-settings-sub-group-flat {
+        padding-left: 0;
       }
       .s1p-settings-item {
         flex-wrap: wrap;
@@ -6967,6 +6984,30 @@
     }
   };
 
+  const isAutoSyncIndicatorActivePhase = (phase) =>
+    phase === AUTO_SYNC_INDICATOR_PHASE_RUNNING ||
+    phase === AUTO_SYNC_INDICATOR_PHASE_PENDING;
+
+  const normalizeAutoSyncIndicatorSource = (source) => {
+    switch (String(source || "").trim()) {
+      case AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND:
+        return AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND;
+      case AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP:
+        return AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP;
+      case AUTO_SYNC_INDICATOR_SOURCE_PER_LOAD:
+        return AUTO_SYNC_INDICATOR_SOURCE_PER_LOAD;
+      case AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_FOLLOWUP:
+        return AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_FOLLOWUP;
+      default:
+        return "";
+    }
+  };
+
+  const normalizeAutoSyncIndicatorReason = (reason) => {
+    const normalized = String(reason || "").trim();
+    return normalized ? normalized.slice(0, 160) : "";
+  };
+
   const normalizeAutoSyncIndicatorState = (rawValue = null) => {
     const raw =
       rawValue && typeof rawValue === "object" && !Array.isArray(rawValue)
@@ -6977,16 +7018,17 @@
       AUTO_SYNC_INDICATOR_PHASE_IDLE;
     const timestamp = Number(raw.timestamp) || 0;
     const token = typeof raw.token === "string" ? raw.token : "";
+    const source = normalizeAutoSyncIndicatorSource(raw.source);
+    const reason = normalizeAutoSyncIndicatorReason(raw.reason);
+    const isActivePhase = isAutoSyncIndicatorActivePhase(phase);
 
     const fallbackResolvedPhase =
-      phase === AUTO_SYNC_INDICATOR_PHASE_RUNNING ||
-        phase === AUTO_SYNC_INDICATOR_PHASE_PENDING
+      isActivePhase
         ? AUTO_SYNC_INDICATOR_PHASE_IDLE
         : normalizeAutoSyncIndicatorPhase(phase, {
-          allowRunning: false,
-          allowPending: false,
-        }) ||
-        AUTO_SYNC_INDICATOR_PHASE_IDLE;
+            allowRunning: false,
+            allowPending: false,
+          }) || AUTO_SYNC_INDICATOR_PHASE_IDLE;
 
     const lastResolvedPhase =
       normalizeAutoSyncIndicatorPhase(raw.lastResolvedPhase, {
@@ -6994,24 +7036,40 @@
         allowPending: false,
       }) || fallbackResolvedPhase;
     const lastResolvedTimestamp =
-      Number(raw.lastResolvedTimestamp) ||
-      (phase === AUTO_SYNC_INDICATOR_PHASE_RUNNING ||
-        phase === AUTO_SYNC_INDICATOR_PHASE_PENDING
-        ? 0
-        : timestamp);
+      Number(raw.lastResolvedTimestamp) || (isActivePhase ? 0 : timestamp);
+    const lastResolvedSource =
+      normalizeAutoSyncIndicatorSource(raw.lastResolvedSource) ||
+      (isActivePhase ? "" : source);
+    const lastResolvedReason =
+      normalizeAutoSyncIndicatorReason(raw.lastResolvedReason) ||
+      (isActivePhase ? "" : reason);
 
     return {
       phase,
       timestamp,
       token,
+      source,
+      reason,
       lastResolvedPhase,
       lastResolvedTimestamp,
+      lastResolvedSource,
+      lastResolvedReason,
     };
   };
 
   const getAutoSyncIndicatorState = () =>
     normalizeAutoSyncIndicatorState(
       GM_getValue(AUTO_SYNC_INDICATOR_STATE_KEY, null)
+    );
+
+  const hasEnabledAutoSyncIndicatorPath = (settingsSnapshot = {}) =>
+    Boolean(
+      settingsSnapshot.syncRemoteEnabled === true &&
+      settingsSnapshot.syncShowAutoSyncIndicator !== false &&
+      (settingsSnapshot.syncDailyFirstLoad === true ||
+        settingsSnapshot.syncPerLoadCheckEnabled === true ||
+        settingsSnapshot.syncCheckOnReturnToForeground === true ||
+        settingsSnapshot.syncAutoEnabled === true)
     );
 
   const hasActiveBackgroundSyncLock = (now = Date.now()) => {
@@ -7062,6 +7120,34 @@
     return normalized;
   };
 
+  const buildAutoSyncIndicatorLastResolvedSnapshot = (stateInput = null) => {
+    const current = stateInput
+      ? normalizeAutoSyncIndicatorState(stateInput)
+      : getAutoSyncIndicatorState();
+    const currentResolvedPhase = normalizeAutoSyncIndicatorPhase(current.phase, {
+      allowRunning: false,
+      allowPending: false,
+    });
+    const isActivePhase = isAutoSyncIndicatorActivePhase(current.phase);
+
+    return {
+      lastResolvedPhase: isActivePhase
+        ? current.lastResolvedPhase || AUTO_SYNC_INDICATOR_PHASE_IDLE
+        : current.lastResolvedPhase ||
+          currentResolvedPhase ||
+          AUTO_SYNC_INDICATOR_PHASE_IDLE,
+      lastResolvedTimestamp: isActivePhase
+        ? current.lastResolvedTimestamp || current.timestamp || 0
+        : current.lastResolvedTimestamp || current.timestamp || 0,
+      lastResolvedSource: isActivePhase
+        ? current.lastResolvedSource || ""
+        : current.lastResolvedSource || current.source || "",
+      lastResolvedReason: isActivePhase
+        ? current.lastResolvedReason || ""
+        : current.lastResolvedReason || current.reason || "",
+    };
+  };
+
   const resolveAutoSyncIndicatorDisplayPhase = (stateInput = null) => {
     const state = stateInput
       ? normalizeAutoSyncIndicatorState(stateInput)
@@ -7072,75 +7158,183 @@
     const hasConflictPause = Boolean(getActiveAutoSyncConflictPause());
     const hasOpenCircuit = getAutoSyncCircuitState().open;
     const canShowPending = hasPendingRequest && !hasConflictPause && !hasOpenCircuit;
+    const buildDisplayState = (displayPhase, displaySource = "", displayReason = "") => ({
+      ...state,
+      displayPhase,
+      displaySource: normalizeAutoSyncIndicatorSource(displaySource),
+      displayReason: normalizeAutoSyncIndicatorReason(displayReason),
+    });
 
     if (hasActiveBackgroundLock) {
-      return { ...state, displayPhase: AUTO_SYNC_INDICATOR_PHASE_RUNNING };
+      return buildDisplayState(
+        AUTO_SYNC_INDICATOR_PHASE_RUNNING,
+        AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+        state.reason
+      );
     }
 
-    const resolveWithTtl = (phase, timestamp) => {
+    const resolveWithTtl = (phase, timestamp, source, reason) => {
       const normalizedPhase = normalizeAutoSyncIndicatorPhase(phase, {
         allowRunning: false,
         allowPending: false,
       });
       if (!normalizedPhase || normalizedPhase === AUTO_SYNC_INDICATOR_PHASE_IDLE) {
-        return AUTO_SYNC_INDICATOR_PHASE_IDLE;
+        return {
+          phase: AUTO_SYNC_INDICATOR_PHASE_IDLE,
+          source: "",
+          reason: "",
+        };
       }
       if (
         normalizedPhase === AUTO_SYNC_INDICATOR_PHASE_CONFLICT &&
         getActiveAutoSyncConflictPause()
       ) {
-        return AUTO_SYNC_INDICATOR_PHASE_CONFLICT;
+        return {
+          phase: AUTO_SYNC_INDICATOR_PHASE_CONFLICT,
+          source: normalizeAutoSyncIndicatorSource(source),
+          reason: normalizeAutoSyncIndicatorReason(reason),
+        };
       }
       const ttlMs = getAutoSyncIndicatorResolvedTtlMs(normalizedPhase);
       if (ttlMs <= 0) {
-        return normalizedPhase;
+        return {
+          phase: normalizedPhase,
+          source: normalizeAutoSyncIndicatorSource(source),
+          reason: normalizeAutoSyncIndicatorReason(reason),
+        };
       }
-      return now - (Number(timestamp) || 0) <= ttlMs
-        ? normalizedPhase
-        : AUTO_SYNC_INDICATOR_PHASE_IDLE;
+      if (now - (Number(timestamp) || 0) <= ttlMs) {
+        return {
+          phase: normalizedPhase,
+          source: normalizeAutoSyncIndicatorSource(source),
+          reason: normalizeAutoSyncIndicatorReason(reason),
+        };
+      }
+      return {
+        phase: AUTO_SYNC_INDICATOR_PHASE_IDLE,
+        source: "",
+        reason: "",
+      };
     };
 
     if (state.phase === AUTO_SYNC_INDICATOR_PHASE_RUNNING) {
       if (now - state.timestamp <= AUTO_SYNC_INDICATOR_RUNNING_STALE_MS) {
-        return { ...state, displayPhase: AUTO_SYNC_INDICATOR_PHASE_RUNNING };
+        return buildDisplayState(
+          AUTO_SYNC_INDICATOR_PHASE_RUNNING,
+          state.source,
+          state.reason
+        );
       }
-      const fallbackPhase = resolveWithTtl(
+      const fallbackState = resolveWithTtl(
         state.lastResolvedPhase,
-        state.lastResolvedTimestamp
+        state.lastResolvedTimestamp,
+        state.lastResolvedSource,
+        state.lastResolvedReason
       );
-      return {
-        ...state,
-        displayPhase:
-          fallbackPhase === AUTO_SYNC_INDICATOR_PHASE_IDLE && canShowPending
-            ? AUTO_SYNC_INDICATOR_PHASE_PENDING
-            : fallbackPhase,
-      };
+      if (fallbackState.phase === AUTO_SYNC_INDICATOR_PHASE_IDLE && canShowPending) {
+        return buildDisplayState(
+          AUTO_SYNC_INDICATOR_PHASE_PENDING,
+          AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+          state.reason
+        );
+      }
+      return buildDisplayState(
+        fallbackState.phase,
+        fallbackState.source,
+        fallbackState.reason
+      );
     }
 
     if (state.phase === AUTO_SYNC_INDICATOR_PHASE_PENDING) {
       const shouldKeepPending =
         canShowPending || now - state.timestamp <= AUTO_SYNC_INDICATOR_PENDING_STALE_MS;
       if (shouldKeepPending) {
-        return { ...state, displayPhase: AUTO_SYNC_INDICATOR_PHASE_PENDING };
+        return buildDisplayState(
+          AUTO_SYNC_INDICATOR_PHASE_PENDING,
+          state.source || AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+          state.reason
+        );
       }
-      const fallbackPhase = resolveWithTtl(
+      const fallbackState = resolveWithTtl(
         state.lastResolvedPhase,
-        state.lastResolvedTimestamp
+        state.lastResolvedTimestamp,
+        state.lastResolvedSource,
+        state.lastResolvedReason
       );
-      return { ...state, displayPhase: fallbackPhase };
+      return buildDisplayState(
+        fallbackState.phase,
+        fallbackState.source,
+        fallbackState.reason
+      );
     }
 
-    const resolvedPhase = resolveWithTtl(state.phase, state.timestamp);
+    const resolvedState = resolveWithTtl(
+      state.phase,
+      state.timestamp,
+      state.source,
+      state.reason
+    );
+    if (resolvedState.phase === AUTO_SYNC_INDICATOR_PHASE_IDLE && canShowPending) {
+      return buildDisplayState(
+        AUTO_SYNC_INDICATOR_PHASE_PENDING,
+        AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+        state.reason
+      );
+    }
+      return buildDisplayState(
+        resolvedState.phase,
+        resolvedState.source,
+        resolvedState.reason
+      );
+  };
+
+  const buildAutoSyncIndicatorResolvedState = ({
+    current,
+    requestedPhase = "",
+    source = "",
+    reason = "",
+    token = "",
+  }) => {
+    const resolvedPhase =
+      requestedPhase ||
+      current.lastResolvedPhase ||
+      AUTO_SYNC_INDICATOR_PHASE_IDLE;
+    let resolvedSource = "";
+    let resolvedReason = "";
+
+    if (resolvedPhase !== AUTO_SYNC_INDICATOR_PHASE_IDLE) {
+      if (requestedPhase) {
+        resolvedSource =
+          normalizeAutoSyncIndicatorSource(source) ||
+          current.source ||
+          current.lastResolvedSource ||
+          "";
+        resolvedReason =
+          normalizeAutoSyncIndicatorReason(reason) ||
+          current.reason ||
+          current.lastResolvedReason ||
+          "";
+      } else {
+        resolvedSource = current.lastResolvedSource || "";
+        resolvedReason = current.lastResolvedReason || "";
+      }
+    }
+
+    const now = Date.now();
     return {
-      ...state,
-      displayPhase:
-        resolvedPhase === AUTO_SYNC_INDICATOR_PHASE_IDLE && canShowPending
-          ? AUTO_SYNC_INDICATOR_PHASE_PENDING
-          : resolvedPhase,
+      phase: resolvedPhase,
+      timestamp: now,
+      token: token || current.token || "",
+      source: resolvedSource,
+      reason: resolvedReason,
+      lastResolvedPhase: resolvedPhase,
+      lastResolvedTimestamp: now,
+      lastResolvedSource: resolvedSource,
+      lastResolvedReason: resolvedReason,
     };
   };
 
-  const setAutoSyncIndicatorPendingPhase = (source = "background_queue") => {
+  const setAutoSyncIndicatorPendingPhase = (reason = "background_queue") => {
     const current = getAutoSyncIndicatorState();
     if (current.phase === AUTO_SYNC_INDICATOR_PHASE_RUNNING) {
       return false;
@@ -7154,39 +7348,24 @@
     ) {
       return false;
     }
+    const lastResolvedSnapshot = buildAutoSyncIndicatorLastResolvedSnapshot(current);
     persistAutoSyncIndicatorState({
       phase: AUTO_SYNC_INDICATOR_PHASE_PENDING,
       timestamp: now,
       token: current.token || "",
-      source: String(source || "background_queue"),
-      lastResolvedPhase:
-        current.lastResolvedPhase || AUTO_SYNC_INDICATOR_PHASE_IDLE,
-      lastResolvedTimestamp:
-        Number(current.lastResolvedTimestamp) ||
-        Number(current.timestamp) ||
-        0,
+      source: AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+      reason: normalizeAutoSyncIndicatorReason(reason),
+      ...lastResolvedSnapshot,
     });
     return true;
   };
 
-  const startBackgroundAutoSyncIndicatorCycle = (
-    source = "background_local_change"
-  ) => {
+  const startAutoSyncIndicatorCycle = (source = "", options = {}) => {
     const current = getAutoSyncIndicatorState();
-    const lastResolvedPhase =
-      current.phase === AUTO_SYNC_INDICATOR_PHASE_RUNNING
-        ? current.lastResolvedPhase || AUTO_SYNC_INDICATOR_PHASE_IDLE
-        : current.lastResolvedPhase ||
-        normalizeAutoSyncIndicatorPhase(current.phase, {
-            allowRunning: false,
-            allowPending: false,
-          }) ||
-        AUTO_SYNC_INDICATOR_PHASE_IDLE;
-    const lastResolvedTimestamp =
-      current.phase === AUTO_SYNC_INDICATOR_PHASE_RUNNING
-        ? current.lastResolvedTimestamp || current.timestamp || 0
-        : current.lastResolvedTimestamp || current.timestamp || 0;
-
+    const resolvedSource =
+      normalizeAutoSyncIndicatorSource(source) ||
+      AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND;
+    const lastResolvedSnapshot = buildAutoSyncIndicatorLastResolvedSnapshot(current);
     const token = `${BACKGROUND_SYNC_OWNER_ID}_${Date.now()}_${Math.random()
       .toString(36)
       .slice(2, 7)}`;
@@ -7194,62 +7373,49 @@
       phase: AUTO_SYNC_INDICATOR_PHASE_RUNNING,
       timestamp: Date.now(),
       token,
-      source: String(source || "background_local_change"),
-      lastResolvedPhase,
-      lastResolvedTimestamp,
+      source: resolvedSource,
+      reason: normalizeAutoSyncIndicatorReason(options.reason),
+      ...lastResolvedSnapshot,
     });
     return token;
   };
 
-  const finishBackgroundAutoSyncIndicatorCycle = (token, phase) => {
+  const finishAutoSyncIndicatorCycle = (token, phase, options = {}) => {
     if (!token) {
       return false;
     }
     const current = getAutoSyncIndicatorState();
+    const requestedPhase = normalizeAutoSyncIndicatorPhase(phase, {
+      allowRunning: false,
+      allowPending: false,
+    });
+    const persistResolvedState = (persistToken) => {
+      persistAutoSyncIndicatorState(
+        buildAutoSyncIndicatorResolvedState({
+          current,
+          requestedPhase,
+          source: options.source,
+          reason: options.reason,
+          token: persistToken || token,
+        })
+      );
+      return true;
+    };
+
     if (current.token !== token) {
       if (
         current.phase === AUTO_SYNC_INDICATOR_PHASE_RUNNING &&
-        !hasActiveBackgroundSyncLock()
+        !hasAnyActiveSyncLock()
       ) {
-        const resolvedPhase =
-          normalizeAutoSyncIndicatorPhase(phase, {
-            allowRunning: false,
-            allowPending: false,
-          }) ||
-          current.lastResolvedPhase ||
-          AUTO_SYNC_INDICATOR_PHASE_IDLE;
-        const now = Date.now();
-        persistAutoSyncIndicatorState({
-          phase: resolvedPhase,
-          timestamp: now,
-          token: current.token || token,
-          lastResolvedPhase: resolvedPhase,
-          lastResolvedTimestamp: now,
-        });
-        return true;
+        return persistResolvedState(current.token || token);
       }
       return false;
     }
 
-    const resolvedPhase =
-      normalizeAutoSyncIndicatorPhase(phase, {
-        allowRunning: false,
-        allowPending: false,
-      }) ||
-      current.lastResolvedPhase ||
-      AUTO_SYNC_INDICATOR_PHASE_IDLE;
-    const now = Date.now();
-    persistAutoSyncIndicatorState({
-      phase: resolvedPhase,
-      timestamp: now,
-      token,
-      lastResolvedPhase: resolvedPhase,
-      lastResolvedTimestamp: now,
-    });
-    return true;
+    return persistResolvedState(token);
   };
 
-  const setAutoSyncIndicatorResolvedPhase = (phase) => {
+  const setAutoSyncIndicatorResolvedPhase = (phase, options = {}) => {
     const resolvedPhase = normalizeAutoSyncIndicatorPhase(phase, {
       allowRunning: false,
       allowPending: false,
@@ -7258,14 +7424,14 @@
       return false;
     }
     const current = getAutoSyncIndicatorState();
-    const now = Date.now();
-    persistAutoSyncIndicatorState({
-      phase: resolvedPhase,
-      timestamp: now,
-      token: current.token || "",
-      lastResolvedPhase: resolvedPhase,
-      lastResolvedTimestamp: now,
-    });
+    persistAutoSyncIndicatorState(
+      buildAutoSyncIndicatorResolvedState({
+        current,
+        requestedPhase: resolvedPhase,
+        source: options.source,
+        reason: options.reason,
+      })
+    );
     return true;
   };
 
@@ -7275,6 +7441,9 @@
     }
     switch (result.status) {
       case "success":
+        if (result.action === "skipped_push_on_startup") {
+          return AUTO_SYNC_INDICATOR_PHASE_CONFLICT;
+        }
         return AUTO_SYNC_INDICATOR_PHASE_SUCCESS;
       case "failure":
         return AUTO_SYNC_INDICATOR_PHASE_FAILURE;
@@ -7291,6 +7460,18 @@
       default:
         return "";
     }
+  };
+
+  const getAutoSyncIndicatorReasonFromResult = (result = null) => {
+    if (!result || typeof result !== "object") {
+      return "";
+    }
+    if (result.status === "success" && result.action === "skipped_push_on_startup") {
+      return result.reason === "local_changed_during_sync"
+        ? "local_changed_during_sync"
+        : "startup_local_newer";
+    }
+    return normalizeAutoSyncIndicatorReason(result.reason);
   };
 
   const getAutoSyncConflictPauseState = () => {
@@ -7526,13 +7707,16 @@
   const normalizeVisibleRemoteFreshnessTimestamp = (timestamp = Date.now()) =>
     normalizeRemoteProbeTimestamp(timestamp) || Date.now();
 
-  const isVisibleRemoteFreshnessPollingEnabled = (settingsSnapshot) =>
+  const isForegroundRemoteFreshnessCheckEnabled = (settingsSnapshot) =>
     Boolean(
       settingsSnapshot.syncRemoteEnabled &&
       settingsSnapshot.syncRemoteGistId &&
       settingsSnapshot.syncRemotePat &&
       settingsSnapshot.syncCheckOnReturnToForeground === true
     );
+
+  const isVisibleRemoteFreshnessPollingEnabled = (settingsSnapshot) =>
+    isForegroundRemoteFreshnessCheckEnabled(settingsSnapshot);
 
   const getVisibleRemoteFreshnessPollingMode = (intervalMs) => {
     if (intervalMs >= REMOTE_PROBE_VISIBLE_POLL_IDLE_INTERVAL_MS) {
@@ -7807,8 +7991,8 @@
     successLeadSentence
   ) => ({
     reloadMessage,
-    threadPageMessage: `${successLeadSentence}当前在帖子页，暂不自动刷新以免打断阅读；请在方便时手动刷新查看最新内容。`,
-    dirtySettingsMessage: `${successLeadSentence}当前设置面板有未保存编辑，已暂停自动刷新；请先保存或取消编辑后再手动刷新页面。`,
+    threadPageMessage: `${successLeadSentence}当前在帖子页，暂不自动刷新。`,
+    dirtySettingsMessage: `${successLeadSentence}当前有未保存的设置编辑，暂不自动刷新。`,
   });
 
   const getDefaultAutoPullRefreshMessages = (action = "pulled") => {
@@ -7945,7 +8129,7 @@
     const showMessageFn = options.showMessage || showMessage;
     const plan = getAutoPullRefreshPlan(options);
     if (!plan.shouldReload) {
-      showMessageFn(getAutoPullRefreshDisplayMessage(plan, messages), true);
+      showMessageFn(getAutoPullRefreshDisplayMessage(plan, messages), null);
       return {
         ...plan,
         reloadSchedule: {
@@ -7968,6 +8152,32 @@
       ...plan,
       reloadSchedule,
     };
+  };
+
+  const hasScheduledAutoPullReload = (refreshPlan) => {
+    const reloadStatus = String(refreshPlan?.reloadSchedule?.status || "");
+    return reloadStatus === "scheduled" || reloadStatus === "already_scheduled";
+  };
+
+  const handleInitialForegroundRemoteFreshnessCheck = async (overrides = {}) => {
+    const settings = overrides.settingsSnapshot || getSettings();
+    if (!isForegroundRemoteFreshnessCheckEnabled(settings)) {
+      return false;
+    }
+    if (document.visibilityState !== "visible") {
+      return false;
+    }
+    const triggerForegroundRemoteFreshnessProbeFn =
+      overrides.triggerForegroundRemoteFreshnessProbe ||
+      triggerForegroundRemoteFreshnessProbe;
+
+    // 新开页面不会触发“回到前台”事件；这里补一次首次可见探测，
+    // 同时继续复用共享冷却和跨标签锁，避免多标签重复请求云端。
+    const probeResult = await triggerForegroundRemoteFreshnessProbeFn(
+      "page_load_visible",
+      overrides.triggerForegroundRemoteFreshnessProbeOverrides || {}
+    );
+    return hasScheduledAutoPullReload(probeResult?.refreshPlan);
   };
 
   const isVisibleRemoteFreshnessPollingReason = (reason = "") => {
@@ -8004,42 +8214,7 @@
     }
 
     if (result.status === "skipped") {
-      switch (result.reason) {
-        case "local_cooldown":
-        case "shared_cooldown":
-        case "probe_lock_unavailable":
-          return {
-            key: "foreground_probe_throttled",
-            message: "前台检查刚刚执行过，已跳过本轮重复探测。",
-            isSuccess: null,
-            allowDuringPolling: false,
-          };
-        case "sync_lock_active":
-        case "probe_in_flight":
-        case "foreground_sync_in_flight":
-          return {
-            key: "foreground_probe_active_sync",
-            message: "前台检查已跳过：当前已有同步任务在执行。",
-            isSuccess: null,
-            allowDuringPolling: false,
-          };
-        case "conflict_paused":
-          return {
-            key: "foreground_probe_conflict_paused",
-            message: "前台检查已跳过：自动同步仍处于冲突暂停状态，请手动同步。",
-            isSuccess: null,
-            allowDuringPolling: false,
-          };
-        case "circuit_open":
-          return {
-            key: "foreground_probe_circuit_open",
-            message: "前台检查已跳过：自动同步因连续失败暂时暂停，稍后会自动恢复。",
-            isSuccess: null,
-            allowDuringPolling: false,
-          };
-        default:
-          return null;
-      }
+      return null;
     }
 
     if (result.status !== "changed") {
@@ -8074,36 +8249,7 @@
     }
 
     if (syncResult.status === "skipped") {
-      switch (syncResult.reason) {
-        case "conflict_paused":
-          return {
-            key: "foreground_probe_remote_changed_conflict_paused",
-            message:
-              "检测到云端有更新，但自动同步仍处于冲突暂停状态；请手动同步处理。",
-            isSuccess: false,
-            allowDuringPolling: true,
-          };
-        case "circuit_open":
-          return {
-            key: "foreground_probe_remote_changed_circuit_open",
-            message:
-              "检测到云端有更新，但自动同步因连续失败暂时暂停；请稍后重试或手动同步。",
-            isSuccess: false,
-            allowDuringPolling: true,
-          };
-        case "startup_lock_unavailable":
-        case "foreground_sync_in_flight":
-        case "lock_lost":
-          return {
-            key: "foreground_probe_remote_changed_active_sync",
-            message:
-              "检测到云端有更新，但当前已有同步任务在执行；已跳过本轮重复检查。",
-            isSuccess: null,
-            allowDuringPolling: false,
-          };
-        default:
-          return null;
-      }
+      return null;
     }
 
     return null;
@@ -16167,7 +16313,10 @@
   ) => {
     if (getActiveAutoSyncConflictPause()) {
       clearAutoSyncRuntimeQueue();
-      setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_CONFLICT);
+      setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_CONFLICT, {
+        source: AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+        reason: "conflict_paused",
+      });
       return;
     }
 
@@ -16419,7 +16568,10 @@
     const conflictPauseState = getActiveAutoSyncConflictPause();
     if (conflictPauseState) {
       clearAutoSyncRuntimeQueue();
-      setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_CONFLICT);
+      setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_CONFLICT, {
+        source: AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+        reason: "conflict_paused",
+      });
       console.log(
         `S1 Plus: 自动同步冲突暂停生效，已跳过后台同步触发(${reason})。`,
         {
@@ -16449,6 +16601,7 @@
 
       let indicatorCycleToken = "";
       let indicatorFinalPhase = "";
+      let indicatorFinalReason = "";
       isBackgroundAutoSyncInProgress = true;
       let drainCount = 0;
 
@@ -16469,7 +16622,10 @@
             break;
           }
           if (!indicatorCycleToken) {
-            indicatorCycleToken = startBackgroundAutoSyncIndicatorCycle(reason);
+            indicatorCycleToken = startAutoSyncIndicatorCycle(
+              AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+              { reason }
+            );
           }
 
           startBackgroundSyncLockHeartbeat();
@@ -16482,6 +16638,8 @@
             const phaseFromResult = getAutoSyncIndicatorPhaseFromResult(result);
             if (phaseFromResult) {
               indicatorFinalPhase = phaseFromResult;
+              indicatorFinalReason =
+                getAutoSyncIndicatorReasonFromResult(result) || indicatorFinalReason;
             }
             await handleBackgroundAutoSyncResult(result);
           } finally {
@@ -16514,14 +16672,21 @@
           setAutoSyncIndicatorPendingPhase("background_queue");
         } else if (indicatorCycleToken) {
           const currentIndicatorState = getAutoSyncIndicatorState();
-          finishBackgroundAutoSyncIndicatorCycle(
+          finishAutoSyncIndicatorCycle(
             indicatorCycleToken,
             indicatorFinalPhase ||
             currentIndicatorState.lastResolvedPhase ||
-            AUTO_SYNC_INDICATOR_PHASE_IDLE
+            AUTO_SYNC_INDICATOR_PHASE_IDLE,
+            {
+              source: AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+              reason: indicatorFinalReason || reason,
+            }
           );
         } else if (indicatorFinalPhase) {
-          setAutoSyncIndicatorResolvedPhase(indicatorFinalPhase);
+          setAutoSyncIndicatorResolvedPhase(indicatorFinalPhase, {
+            source: AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+            reason: indicatorFinalReason || reason,
+          });
         }
       }
     })();
@@ -17064,6 +17229,63 @@
     }
   };
 
+  const runStartupModeAutoSyncCheckWithIndicator = async ({
+    source = AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+    reason = "",
+    onIndicatorStart,
+    startupOptions = {},
+  } = {}) => {
+    const resolvedSource =
+      normalizeAutoSyncIndicatorSource(source) ||
+      AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND;
+    const normalizedReason = normalizeAutoSyncIndicatorReason(reason);
+    const startupOnBeforePerform = startupOptions.onBeforePerform;
+    let indicatorCycleToken = "";
+    let result = null;
+
+    try {
+      result = await runStartupModeAutoSyncCheck({
+        ...startupOptions,
+        onBeforePerform: async () => {
+          indicatorCycleToken = startAutoSyncIndicatorCycle(resolvedSource, {
+            reason: normalizedReason,
+          });
+          if (typeof onIndicatorStart === "function") {
+            await onIndicatorStart();
+          }
+          if (typeof startupOnBeforePerform === "function") {
+            await startupOnBeforePerform();
+          }
+        },
+      });
+    } catch (error) {
+      if (indicatorCycleToken) {
+        finishAutoSyncIndicatorCycle(
+          indicatorCycleToken,
+          AUTO_SYNC_INDICATOR_PHASE_FAILURE,
+          {
+            source: resolvedSource,
+            reason: normalizedReason,
+          }
+        );
+      }
+      throw error;
+    }
+
+    if (indicatorCycleToken) {
+      finishAutoSyncIndicatorCycle(
+        indicatorCycleToken,
+        getAutoSyncIndicatorPhaseFromResult(result),
+        {
+          source: resolvedSource,
+          reason: getAutoSyncIndicatorReasonFromResult(result) || normalizedReason,
+        }
+      );
+    }
+
+    return result;
+  };
+
   const requestForegroundRemoteSyncCheck = async (
     reason = "remote_probe_changed",
     overrides = {}
@@ -17083,22 +17305,25 @@
 
     const normalizedReason =
       normalizeRemoteProbeText(reason, 120) || "remote_probe_changed";
-
-    const runPromise = runStartupModeAutoSyncCheck({
-      acquireStartupSyncLock: overrides.acquireStartupSyncLock,
-      startStartupSyncLockHeartbeat: overrides.startStartupSyncLockHeartbeat,
-      stopStartupSyncLockHeartbeat: overrides.stopStartupSyncLockHeartbeat,
-      releaseStartupSyncLock: overrides.releaseStartupSyncLock,
-      performAutoSync: overrides.performAutoSync,
-      onLockUnavailable: () => {
-        console.log(
-          `S1 Plus: 前台远端检查(${normalizedReason})发现已有同步任务在执行，已跳过本轮 follow-up sync。`
-        );
-      },
-      onBeforePerform: () => {
+    const runPromise = runStartupModeAutoSyncCheckWithIndicator({
+      source: AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_FOLLOWUP,
+      reason: normalizedReason,
+      onIndicatorStart: () => {
         console.log(
           `S1 Plus: 远端探测命中更新，正在复用启动同步路径执行安全检查(${normalizedReason})...`
         );
+      },
+      startupOptions: {
+        acquireStartupSyncLock: overrides.acquireStartupSyncLock,
+        startStartupSyncLockHeartbeat: overrides.startStartupSyncLockHeartbeat,
+        stopStartupSyncLockHeartbeat: overrides.stopStartupSyncLockHeartbeat,
+        releaseStartupSyncLock: overrides.releaseStartupSyncLock,
+        performAutoSync: overrides.performAutoSync,
+        onLockUnavailable: () => {
+          console.log(
+            `S1 Plus: 前台远端检查(${normalizedReason})发现已有同步任务在执行，已跳过本轮 follow-up sync。`
+          );
+        },
       },
     });
 
@@ -17348,7 +17573,16 @@
       runStartupModeAutoSyncCheck,
       requestForegroundRemoteSyncCheck,
       checkRemoteFreshnessOnForeground,
+      hasEnabledAutoSyncIndicatorPath,
+      getAutoSyncIndicatorState,
+      setAutoSyncIndicatorResolvedPhase,
+      startAutoSyncIndicatorCycle,
+      finishAutoSyncIndicatorCycle,
+      getAutoSyncIndicatorPhaseFromResult,
+      getAutoSyncIndicatorReasonFromResult,
+      getAutoSyncIndicatorTitle: (...args) => getAutoSyncIndicatorTitle(...args),
       triggerForegroundRemoteFreshnessProbe,
+      handleInitialForegroundRemoteFreshnessCheck,
       handlePendingAutoSyncRecoveryPageShow,
       handlePendingAutoSyncRecoveryVisibilityChange,
     };
@@ -18381,7 +18615,13 @@
       hasSettingPathInChangedSet(changedPathSet, "enableNavCustomization") ||
       hasSettingPathInChangedSet(changedPathSet, "customNavLinks") ||
       hasSettingPathInChangedSet(changedPathSet, "syncRemoteEnabled") ||
+      hasSettingPathInChangedSet(changedPathSet, "syncDailyFirstLoad") ||
+      hasSettingPathInChangedSet(changedPathSet, "syncPerLoadCheckEnabled") ||
       hasSettingPathInChangedSet(changedPathSet, "syncAutoEnabled") ||
+      hasSettingPathInChangedSet(
+        changedPathSet,
+        "syncCheckOnReturnToForeground"
+      ) ||
       hasSettingPathInChangedSet(changedPathSet, "syncShowAutoSyncIndicator") ||
       hasSettingPathInChangedSet(changedPathSet, "syncDirectChoiceMode");
     if (shouldReinitializeNavbar) {
@@ -19146,21 +19386,66 @@
     }
   };
 
-  const getAutoSyncIndicatorTitleByPhase = (phase) => {
+  const getAutoSyncIndicatorSourceLabel = (source) => {
+    switch (normalizeAutoSyncIndicatorSource(source)) {
+      case AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND:
+        return "后台同步";
+      case AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP:
+        return "每日首次同步";
+      case AUTO_SYNC_INDICATOR_SOURCE_PER_LOAD:
+        return "每次加载检查";
+      case AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_FOLLOWUP:
+        return "前台检查同步";
+      default:
+        return "自动同步";
+    }
+  };
+
+  const getAutoSyncIndicatorTitle = (stateInput = null) => {
+    const resolvedState =
+      stateInput && typeof stateInput === "object" && "displayPhase" in stateInput
+        ? stateInput
+        : resolveAutoSyncIndicatorDisplayPhase(stateInput);
+    const phase =
+      normalizeAutoSyncIndicatorPhase(resolvedState.displayPhase, {
+        allowRunning: true,
+      }) || AUTO_SYNC_INDICATOR_PHASE_IDLE;
+    const source = normalizeAutoSyncIndicatorSource(
+      resolvedState.displaySource || resolvedState.source
+    );
+    const reason = normalizeAutoSyncIndicatorReason(
+      resolvedState.displayReason || resolvedState.reason
+    );
+    const sourceLabel = getAutoSyncIndicatorSourceLabel(source);
+
     switch (phase) {
       case AUTO_SYNC_INDICATOR_PHASE_PENDING:
-        return "后台自动同步：待同步";
+        return "自动同步：后台同步待处理";
       case AUTO_SYNC_INDICATOR_PHASE_RUNNING:
-        return "后台自动同步：进行中";
+        if (source === AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_FOLLOWUP) {
+          return "自动同步：前台发现更新，正在同步";
+        }
+        return sourceLabel === "自动同步"
+          ? "自动同步：同步中"
+          : `自动同步：${sourceLabel}中`;
       case AUTO_SYNC_INDICATOR_PHASE_SUCCESS:
-        return "后台自动同步：已完成";
+        return sourceLabel === "自动同步"
+          ? "自动同步：自动同步已完成"
+          : `自动同步：${sourceLabel}已完成`;
       case AUTO_SYNC_INDICATOR_PHASE_FAILURE:
-        return "后台自动同步：失败（待下次同步）";
+        if (reason === "circuit_open") {
+          return "自动同步：连续失败，已暂时暂停";
+        }
+        return sourceLabel === "自动同步"
+          ? "自动同步：自动同步失败（待下次同步）"
+          : `自动同步：${sourceLabel}失败（待下次同步）`;
       case AUTO_SYNC_INDICATOR_PHASE_CONFLICT:
-        return "后台自动同步：冲突（请手动同步）";
+        return sourceLabel === "自动同步"
+          ? "自动同步：发现冲突，请手动同步"
+          : `自动同步：${sourceLabel}发现冲突，请手动同步`;
       case AUTO_SYNC_INDICATOR_PHASE_IDLE:
       default:
-        return "后台自动同步：待命";
+        return "自动同步：待命";
     }
   };
 
@@ -19377,9 +19662,7 @@
     const existingIndicator = document.getElementById("s1p-nav-auto-sync-indicator");
     const managerLink = document.getElementById("s1p-nav-link");
     if (
-      !settings.syncRemoteEnabled ||
-      !settings.syncAutoEnabled ||
-      settings.syncShowAutoSyncIndicator !== true ||
+      !hasEnabledAutoSyncIndicatorPath(settings) ||
       !managerLink
     ) {
       if (existingIndicator) {
@@ -19440,7 +19723,9 @@
     }
 
     indicatorLi.dataset.syncState = displayPhase;
-    setCustomTooltip(indicatorLi, getAutoSyncIndicatorTitleByPhase(displayPhase));
+    indicatorLi.dataset.syncSource =
+      normalizeAutoSyncIndicatorSource(resolvedState.displaySource) || "";
+    setCustomTooltip(indicatorLi, getAutoSyncIndicatorTitle(resolvedState));
     renderNavbarPersistentSyncAlert();
   };
 
@@ -21115,6 +21400,16 @@
               <div class="s1p-segmented-control-option" data-value="foreground">回到前台</div>
             </div>
           </div>
+          <div id="s1p-auto-sync-indicator-subgroup" class="s1p-settings-sub-group s1p-settings-sub-group-flat">
+            <div class="s1p-settings-item">
+              <label class="s1p-settings-label" for="s1p-show-auto-sync-indicator-toggle">显示自动同步状态指示器</label>
+              <label class="s1p-switch">
+                <input type="checkbox" id="s1p-show-auto-sync-indicator-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
+                <span class="s1p-slider"></span>
+              </label>
+            </div>
+            <p class="s1p-setting-desc">开启后，会在导航栏显示自动同步状态摘要，包括每日首次、每次加载、页面首次可见/回到前台检查后的自动同步，以及后台自动同步。</p>
+          </div>
           <div class="s1p-settings-item">
             <label class="s1p-settings-label" for="s1p-auto-sync-enabled-toggle">启用自动后台同步</label>
             <label class="s1p-switch">
@@ -21123,16 +21418,6 @@
             </label>
           </div>
           <p class="s1p-setting-desc">启用后，数据将在停止操作5秒后自动同步。关闭后将切换为纯手动同步模式。</p>
-          <div id="s1p-auto-sync-indicator-subgroup" class="s1p-settings-sub-group">
-            <div class="s1p-settings-item">
-              <label class="s1p-settings-label" for="s1p-show-auto-sync-indicator-toggle">显示后台同步状态指示器</label>
-              <label class="s1p-switch">
-                <input type="checkbox" id="s1p-show-auto-sync-indicator-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
-                <span class="s1p-slider"></span>
-              </label>
-            </div>
-            <p class="s1p-setting-desc">开启后，将在导航栏显示后台自动同步状态（待命/同步中/完成/异常）。</p>
-          </div>
           <div class="s1p-settings-item">
             <label class="s1p-settings-label" for="s1p-direct-choice-mode-toggle">启用手动同步高级模式 (悬停选择)</label>
             <label class="s1p-switch">
@@ -21818,8 +22103,7 @@
     };
 
     const updateAutoSyncIndicatorToggleState = () => {
-      const isEnabled =
-        remoteToggle.checked === true && autoSyncToggle.checked === true;
+      const isEnabled = remoteToggle.checked === true;
       if (autoSyncIndicatorSubGroup) {
         autoSyncIndicatorSubGroup.classList.toggle("is-disabled", !isEnabled);
       }
@@ -21827,6 +22111,7 @@
     };
 
     dailySyncToggle.addEventListener("change", updateForcePullState);
+    remoteToggle.addEventListener("change", updateAutoSyncIndicatorToggleState);
     autoSyncToggle.addEventListener("change", updateAutoSyncIndicatorToggleState);
     if (syncAutoCheckModeHelpBtn) {
       setTemplateTooltip(
@@ -30238,14 +30523,17 @@
       return false;
     }
 
-    const result = await runStartupModeAutoSyncCheck({
-      onLockUnavailable: () => {
-        console.log(
-          "S1 Plus: 检测到其他同步任务正在执行，本次常规启动同步检查已跳过。"
-        );
-      },
-      onBeforePerform: () => {
+    const result = await runStartupModeAutoSyncCheckWithIndicator({
+      source: AUTO_SYNC_INDICATOR_SOURCE_PER_LOAD,
+      onIndicatorStart: () => {
         console.log("S1 Plus: 正在执行每次页面加载同步检查...");
+      },
+      startupOptions: {
+        onLockUnavailable: () => {
+          console.log(
+            "S1 Plus: 检测到其他同步任务正在执行，本次常规启动同步检查已跳过。"
+          );
+        },
       },
     });
 
@@ -30257,36 +30545,6 @@
             reason: "per_load_auto_pull",
           });
           return true;
-        }
-        if (result.action === "skipped_push_on_startup") {
-          const skippedByLocalChangeDuringSync =
-            result.reason === "local_changed_during_sync";
-          showMessage(
-            skippedByLocalChangeDuringSync
-              ? "检测到您在自动同步期间有本地操作，已暂停自动拉取以保护更改。请稍后在导航栏手动同步。"
-              : "检测到本地数据较新，已跳过本次启动自动推送。请稍后在导航栏手动同步。",
-            false
-          );
-        }
-        break;
-      case "failure":
-        showMessage(`启动同步检查失败: ${result.error}`, false);
-        break;
-      case "conflict":
-        showMessage("启动同步检查检测到冲突，请在导航栏执行手动同步。", false);
-        break;
-      case "skipped":
-        if (result.reason === "circuit_open") {
-          showMessage(
-            `自动同步因连续失败已暂停，预计恢复时间：${new Date(
-              result.until
-            ).toLocaleTimeString("zh-CN", { hour12: false })}。`,
-            false
-          );
-        } else if (result.reason === "conflict_paused") {
-          await notifyAutoSyncConflictPausedIfNeeded();
-        } else if (result.reason === "lock_lost") {
-          showMessage("常规启动同步检查因锁失效已中止，本次将跳过。", false);
         }
         break;
     }
@@ -30305,31 +30563,34 @@
       return false;
     }
 
-    const result = await runStartupModeAutoSyncCheck({
-      onLockUnavailable: () => {
-        console.log(
-          "S1 Plus: 检测到其他同步任务正在执行，本次启动同步已跳过。"
-        );
-      },
-      beforePerform: () => {
-        const currentDateAfterLock = GM_getValue(
-          "s1p_last_daily_sync_date",
-          null
-        );
-        if (currentDateAfterLock === today) {
-          console.log("S1 Plus: 在锁定期间检测到同步已完成，已取消重复操作。");
-          return {
-            skip: true,
-            result: { status: "skipped", reason: "daily_sync_already_completed" },
-          };
-        }
-        return null;
-      },
-      onBeforePerform: () => {
+    const result = await runStartupModeAutoSyncCheckWithIndicator({
+      source: AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP,
+      onIndicatorStart: () => {
         console.log("S1 Plus: 正在执行每日首次加载同步...");
       },
-      onAfterRelease: () => {
-        console.log("S1 Plus: 同步锁已释放。");
+      startupOptions: {
+        onLockUnavailable: () => {
+          console.log(
+            "S1 Plus: 检测到其他同步任务正在执行，本次启动同步已跳过。"
+          );
+        },
+        beforePerform: () => {
+          const currentDateAfterLock = GM_getValue(
+            "s1p_last_daily_sync_date",
+            null
+          );
+          if (currentDateAfterLock === today) {
+            console.log("S1 Plus: 在锁定期间检测到同步已完成，已取消重复操作。");
+            return {
+              skip: true,
+              result: { status: "skipped", reason: "daily_sync_already_completed" },
+            };
+          }
+          return null;
+        },
+        onAfterRelease: () => {
+          console.log("S1 Plus: 同步锁已释放。");
+        },
       },
     });
     if (
@@ -30467,6 +30728,12 @@
 
         const isReloadingAfterPerLoadSync = await handlePerLoadSyncCheck();
         if (isReloadingAfterPerLoadSync) {
+          return;
+        }
+
+        const isReloadingAfterInitialForegroundProbe =
+          await handleInitialForegroundRemoteFreshnessCheck();
+        if (isReloadingAfterInitialForegroundProbe) {
           return;
         }
 
