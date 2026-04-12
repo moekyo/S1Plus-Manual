@@ -349,12 +349,35 @@ const testActiveSyncSkipShowsLowNoiseFeedback = async () => {
   assert.match(diagnosticsText, /探测是否触发安全同步: 否/);
 };
 
+const testProbeExecutionFailureStillRecordsDiagnostics = async () => {
+  const { hooks } = createHarness();
+  const now = 1760000400000;
+
+  const result = await hooks.checkRemoteFreshnessOnForeground("visibilitychange", {
+    now,
+    settingsSnapshot: enabledSettings,
+    fetchRemoteData: async () => {
+      throw new Error("metadata fetch exploded");
+    },
+  });
+
+  assert.equal(result.status, "failure");
+  assert.equal(result.reason, "probe_execution_error");
+
+  const diagnostics = toPlainObject(hooks.getSyncDiagnostics());
+  assert.equal(diagnostics.lastProbeTimestamp, now);
+  assert.equal(diagnostics.lastProbeResult, "failure_probe_execution_error");
+  assert.equal(diagnostics.lastProbeTriggeredSync, false);
+  assert.equal(diagnostics.lastProbeTriggeredSyncResult, "");
+};
+
 (async () => {
   testStaticWiring();
   await testUnchangedProbeUpdatesDiagnosticsQuietly();
   await testChangedRemoteBlockedByLocalChangesShowsFeedback();
   await testSharedCooldownRecordsDiagnosticsAndStaysQuietDuringPolling();
   await testActiveSyncSkipShowsLowNoiseFeedback();
+  await testProbeExecutionFailureStillRecordsDiagnostics();
 
   console.log("[foreground-probe-diagnostics-feedback] Phase 8 diagnostics and feedback verified.");
 })().catch((error) => {

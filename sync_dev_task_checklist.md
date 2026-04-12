@@ -52,8 +52,9 @@ Acceptance:
 ## Phase 2: Settings UI [Completed]
 
 ### Task 3. Add sync settings controls [Completed]
-- Add `启用回到前台时检查云端更新`
-- If exposing polling separately, add advanced sub-setting for visible-page polling
+- Add a single mutually exclusive control:
+  - `自动检查云端更新`
+  - options: `关闭` / `每次加载` / `回到前台`
 - Update descriptions to explain:
   - foreground check
   - visible-page polling

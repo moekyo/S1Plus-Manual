@@ -912,7 +912,7 @@
       items: [
         {
           label: "关闭",
-          body: "关闭这组额外自动检查，不再在页面加载或切回前台时主动检查云端更新。",
+          body: "完全关闭自动检查；不会在页面加载、切回前台，或页面持续可见时主动检查云端更新。",
         },
         {
           label: "每次加载检查",
@@ -920,7 +920,7 @@
         },
         {
           label: "回到前台检查",
-          body: "标签页重新可见时先做一次轻量探测，只有确认云端有更新后才继续执行安全同步检查。",
+          body: "标签页回到前台、从后退缓存恢复，或页面持续可见时，会先做轻量远端探测；只有确认云端有更新后才继续执行安全同步检查。",
         },
       ],
     },
@@ -933,7 +933,7 @@
         },
         {
           label: "回到前台检查",
-          body: "更偏向跨设备切换场景，能减少无意义的完整同步检查。",
+          body: "更偏向跨设备切换或长时间常驻页面场景；会在回到前台时立即探测，并在页面持续可见时低频复查。",
         },
       ],
     },
@@ -6594,6 +6594,11 @@
     if (normalizedStatus === "unchanged" || normalizedStatus === "changed") {
       return normalizedStatus;
     }
+    if (normalizedStatus === "failure") {
+      const normalizedReason =
+        normalizeRemoteProbeText(result?.reason, 80) || "";
+      return normalizedReason ? `failure_${normalizedReason}` : "failure";
+    }
     if (normalizedStatus !== "skipped") {
       return normalizedStatus;
     }
@@ -7477,20 +7482,39 @@
 
     const checkRemoteFreshnessOnForegroundFn =
       overrides.checkRemoteFreshnessOnForeground || checkRemoteFreshnessOnForeground;
+    const checkRemoteFreshnessOnForegroundOverrides =
+      overrides.checkRemoteFreshnessOnForegroundOverrides || {};
+    const probeTimestamp =
+      Number.isFinite(checkRemoteFreshnessOnForegroundOverrides.now) &&
+      checkRemoteFreshnessOnForegroundOverrides.now > 0
+        ? Math.floor(checkRemoteFreshnessOnForegroundOverrides.now)
+        : Date.now();
 
     return Promise.resolve(
-      checkRemoteFreshnessOnForegroundFn(reason)
+      checkRemoteFreshnessOnForegroundFn(
+        reason,
+        checkRemoteFreshnessOnForegroundOverrides
+      )
     ).catch((error) => {
       const errorMessage = error?.message || String(error);
       console.error(
         `S1 Plus: 前台远端更新探测触发失败(${reason}):`,
         error
       );
-      return {
-        status: "failure",
-        reason: "probe_trigger_error",
-        error: errorMessage,
-      };
+      return finalizeForegroundProbeResult(
+        {
+          status: "failure",
+          reason: "probe_trigger_error",
+          error: errorMessage,
+        },
+        {
+          timestamp: probeTimestamp,
+          triggerReason: reason,
+          showMessage:
+            checkRemoteFreshnessOnForegroundOverrides.showMessage ||
+            overrides.showMessage,
+        }
+      );
     });
   };
 
@@ -17276,6 +17300,17 @@
     foregroundProbeInFlightPromise = runPromise;
     try {
       return await runPromise;
+    } catch (error) {
+      const errorMessage = error?.message || String(error);
+      console.error(
+        `S1 Plus: 前台远端更新探测执行失败(${normalizedReason}):`,
+        error
+      );
+      return finalizeResult({
+        status: "failure",
+        reason: "probe_execution_error",
+        error: errorMessage,
+      });
     } finally {
       if (foregroundProbeInFlightPromise === runPromise) {
         foregroundProbeInFlightPromise = null;
@@ -17628,14 +17663,6 @@
       defaultSettings.syncPerLoadCheckEnabled
     );
     applyNormalizedBooleanSetting(
-      "syncPerLoadCheckEnabled",
-      normalizedSyncPerLoadCheckEnabled,
-      "sync_per_load_check_enabled_normalized"
-    );
-    if (hasLegacyImplicitPerLoadCheckEnabled) {
-      markMigration("sync_per_load_check_enabled_migrated_from_daily_toggle");
-    }
-    applyNormalizedBooleanSetting(
       "syncAutoEnabled",
       settings.syncAutoEnabled === true,
       "sync_auto_enabled_normalized"
@@ -17646,13 +17673,33 @@
         : settings.syncCheckOnReturnToForeground,
       defaultSettings.syncCheckOnReturnToForeground
     );
+    const resolvedSyncAutoCheckMode =
+      normalizedSyncPerLoadCheckEnabled === true
+        ? "per_load"
+        : normalizedSyncCheckOnReturnToForeground === true
+          ? "foreground"
+          : "off";
+    applyNormalizedBooleanSetting(
+      "syncPerLoadCheckEnabled",
+      resolvedSyncAutoCheckMode === "per_load",
+      "sync_per_load_check_enabled_normalized"
+    );
+    if (hasLegacyImplicitPerLoadCheckEnabled) {
+      markMigration("sync_per_load_check_enabled_migrated_from_daily_toggle");
+    }
     applyNormalizedBooleanSetting(
       "syncCheckOnReturnToForeground",
-      normalizedSyncCheckOnReturnToForeground,
+      resolvedSyncAutoCheckMode === "foreground",
       "sync_check_on_return_to_foreground_normalized"
     );
     if (shouldMigrateForegroundProbeSetting) {
       markMigration("sync_check_on_return_to_foreground_migrated_from_sync_state");
+    }
+    if (
+      normalizedSyncPerLoadCheckEnabled === true &&
+      normalizedSyncCheckOnReturnToForeground === true
+    ) {
+      markMigration("sync_auto_check_mode_collapsed_to_per_load");
     }
     applyNormalizedBooleanSetting(
       "syncShowAutoSyncIndicator",
