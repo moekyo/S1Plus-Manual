@@ -220,6 +220,26 @@
     }
   },
   {
+    "name": "sync_auto_check_mode_dual_flags_collapse_to_per_load",
+    "input": {
+      "syncRemoteEnabled": true,
+      "syncAutoEnabled": true,
+      "syncPerLoadCheckEnabled": true,
+      "syncCheckOnReturnToForeground": true
+    },
+    "expected": {
+      "migrationApplied": true,
+      "settings": {
+        "syncPerLoadCheckEnabled": true,
+        "syncCheckOnReturnToForeground": false
+      },
+      "reasonsInclude": [
+        "sync_check_on_return_to_foreground_normalized",
+        "sync_auto_check_mode_collapsed_to_per_load"
+      ]
+    }
+  },
+  {
     "name": "clean_current_structure_no_migration",
     "input": {
       "openInNewTab": {

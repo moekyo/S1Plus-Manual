@@ -90,17 +90,29 @@ Reason:
 
 ## 5. Settings Design
 
-Add a dedicated sync option:
+Expose one mutually exclusive automatic-check control in the sync settings UI:
 
-- `syncCheckOnReturnToForeground`
+- `自动检查云端更新`
+- options:
+  - `关闭`
+  - `每次加载`
+  - `回到前台`
 
-Recommended label:
+Internal mapping:
 
-- `启用回到前台时检查云端更新`
+- `关闭`
+  - `syncPerLoadCheckEnabled = false`
+  - `syncCheckOnReturnToForeground = false`
+- `每次加载`
+  - `syncPerLoadCheckEnabled = true`
+  - `syncCheckOnReturnToForeground = false`
+- `回到前台`
+  - `syncPerLoadCheckEnabled = false`
+  - `syncCheckOnReturnToForeground = true`
 
-Recommended description:
+Recommended explanation:
 
-- `启用后，标签页从后台恢复、后退缓存恢复或重新变为可见时，会先进行一次轻量远端探测；若发现云端已更新，将自动执行一次安全同步检查。`
+- `回到前台` mode covers both return-to-foreground / bfcache checks and the later low-frequency visible-page polling path.
 
 Why a separate setting:
 - This is neither “daily first load” nor “per page load”.

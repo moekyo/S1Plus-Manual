@@ -10,8 +10,8 @@ Execute the implementation from `sync_implementation_plan.md` in the order defin
   - Added the new foreground-check setting default and migration behavior.
   - Added persisted remote probe info, shared cooldown state, and lightweight probe lock helpers.
   - Hooked `lastSyncedRemoteUpdatedAt` into baseline writes and cleared probe state when the remote target changes or remote sync is disabled.
-  - Added the Phase 2 sync-tab control for `syncCheckOnReturnToForeground`.
-  - Wired the new toggle into sync-tab hydrate/save/reset/cross-tab refresh flows.
+  - Added the Phase 2 sync-tab control for `自动检查云端更新`, with mutually exclusive `关闭` / `每次加载` / `回到前台` modes backed by the existing per-load + foreground flags.
+  - Wired the control into sync-tab hydrate/save/reset/cross-tab refresh flows and normalized legacy dual-enabled state down to one effective mode.
   - Added a Phase 2 wiring verification script for the sync settings UI.
   - Added Phase 3 shared cooldown / per-tab cooldown helpers and a verified probe-lock acquisition path for metadata-only freshness checks.
   - Added `checkRemoteFreshnessOnForeground(...)` and `requestForegroundRemoteSyncCheck(...)`, so a positive probe can reuse the existing startup sync safety path without creating a second sync decision engine.
@@ -108,9 +108,10 @@ Execute the implementation from `sync_implementation_plan.md` in the order defin
 ## Phase 2 Update
 - Status: Completed
 - Completed:
-  - Added the `启用回到前台时检查云端更新` toggle to the sync settings tab.
-  - Added user-facing copy explaining that the toggle supplements startup-style checks with a lightweight remote freshness probe before any safe sync decision.
-  - Wired the toggle into sync-tab initial render, dirty-state tracking, save persistence, settings reset, and cross-tab control refresh.
+  - Added the `自动检查云端更新` mutually exclusive control to the sync settings tab, with `关闭` / `每次加载` / `回到前台` three-way selection.
+  - Kept the stored behavior mapped onto the existing `syncPerLoadCheckEnabled` and `syncCheckOnReturnToForeground` flags, while normalizing legacy dual-enabled state down to a single effective mode.
+  - Updated user-facing copy so the `回到前台` mode explicitly covers both return-to-foreground checks and the later visible-page low-frequency polling path before any safe sync decision.
+  - Wired the control into sync-tab initial render, dirty-state tracking, save persistence, settings reset, and cross-tab control refresh.
   - Added `scripts/test-sync-settings-ui.js` to guard the Phase 2 wiring points against future regressions.
 - Validation:
   - `node --check S1Plus.js`

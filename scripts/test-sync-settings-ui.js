@@ -30,6 +30,10 @@ expectMatch(
   "自动检查模式说明未使用独立的 tooltip 配置。"
 );
 expectMatch(
+  /页面持续可见时[\s\S]*低频复查/,
+  "自动检查模式说明未覆盖可见页低频轮询的实际行为。"
+);
+expectMatch(
   /const resolveSyncAutoCheckModeValue = \(settingsSnapshot = \{\}\) => \{[\s\S]*syncPerLoadCheckEnabled[\s\S]*syncCheckOnReturnToForeground/,
   "同步设置页缺少自动检查模式的回填映射 helper。"
 );

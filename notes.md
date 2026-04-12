@@ -124,11 +124,14 @@
 ## Phase 2 Implementation Notes
 
 ### Sync settings UI scope chosen for this phase
-- Added only the primary foreground freshness toggle:
+- The first shipped UI only introduced the primary foreground freshness toggle:
   - `syncCheckOnReturnToForeground`
-- Kept the optional visible-page polling sub-setting deferred:
-  - the polling behavior does not exist yet
-  - exposing it now would create a UI contract ahead of the actual runtime implementation
+- After the later polling/refresh phases landed, the settings UI was consolidated into one mutually exclusive control:
+  - `自动检查云端更新`
+  - `关闭`: disable per-load checks plus foreground/visible-page checks
+  - `每次加载`: map to `syncPerLoadCheckEnabled`
+  - `回到前台`: map to `syncCheckOnReturnToForeground`, including visible-page low-frequency polling
+- Legacy saved data that had both booleans enabled is now normalized down to a single effective mode (`每次加载`) so the stored state matches the new UI contract.
 
 ### Sync tab wiring completed
 - Added the new control to the sync tab alongside the existing startup-style sync toggles.
@@ -136,7 +139,7 @@
   - a lightweight remote freshness probe on foreground return / bfcache restore / visible recovery
   - a supplement to daily-first-load and per-page-load checks
   - not a direct remote import path
-- The new toggle is now wired into:
+- The shipped control is now wired into:
   - modal initial hydration from `getSettings()`
   - dirty-state tracking before save
   - save persistence through the sync settings save button
