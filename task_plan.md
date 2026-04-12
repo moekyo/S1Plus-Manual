@@ -4,8 +4,8 @@
 Execute the implementation from `sync_implementation_plan.md` in the order defined by `sync_dev_task_checklist.md`, so device B can detect and safely apply newer remote sync data in more real-world return/resume scenarios without weakening the existing conflict protections.
 
 ## Status
-- Current status: Phase 5 completed, Phase 6 next.
-- Overall progress: 5 of 9 implementation phases completed.
+- Current status: Phase 6 completed, Phase 7 next.
+- Overall progress: 6 of 9 implementation phases completed.
 - Completed in this session:
   - Added the new foreground-check setting default and migration behavior.
   - Added persisted remote probe info, shared cooldown state, and lightweight probe lock helpers.
@@ -24,6 +24,10 @@ Execute the implementation from `sync_implementation_plan.md` in the order defin
   - Added pointer, keyboard, and scroll activity tracking so long-idle visible pages back off to a lower polling frequency and new user interaction restores the normal cadence.
   - Synced the polling scheduler with settings save and cross-tab settings refresh so enabling/disabling the feature converges without requiring a page reload.
   - Added `scripts/test-visible-remote-polling.js` to verify scheduler wiring, hidden-page stop behavior, polling execution, inactivity backoff, and post-idle recovery.
+  - Added `runStartupModeAutoSyncCheck(...)` as the shared startup-lock orchestration helper for safe auto-sync execution.
+  - Rewired `requestForegroundRemoteSyncCheck(...)`, `handlePerLoadSyncCheck()`, and `handleStartupSync()` to reuse the same startup-path helper instead of open-coding independent lock + heartbeat + `performAutoSync(...)` sequences.
+  - Kept the real sync decision inside `performAutoSync(true, SYNC_LOCK_MODE_STARTUP)`, so foreground probe follow-up, daily first-load sync, and per-load sync all converge on the same safety behavior.
+  - Added `scripts/test-safe-sync-execution.js` to verify the shared startup execution helper, early short-circuit behavior, lock-unavailable handling, and Phase 6 call-site reuse.
 - Validation:
   - `node --check S1Plus.js`
   - `node scripts/test-settings-migration.js`
@@ -32,6 +36,7 @@ Execute the implementation from `sync_implementation_plan.md` in the order defin
   - `node scripts/test-foreground-remote-probe.js`
   - `node scripts/test-foreground-trigger-integration.js`
   - `node scripts/test-visible-remote-polling.js`
+  - `node scripts/test-safe-sync-execution.js`
 
 ## Phases
 - [x] Phase 1: State and settings
@@ -39,7 +44,7 @@ Execute the implementation from `sync_implementation_plan.md` in the order defin
 - [x] Phase 3: Probe infrastructure
 - [x] Phase 4: Trigger integration
 - [x] Phase 5: Visible-page polling
-- [ ] Phase 6: Safe sync execution
+- [x] Phase 6: Safe sync execution
 - [ ] Phase 7: Refresh policy
 - [ ] Phase 8: Diagnostics and UI feedback
 - [ ] Phase 9: Testing and regression verification
@@ -60,6 +65,7 @@ Execute the implementation from `sync_implementation_plan.md` in the order defin
   - `240s` active visible-page probe interval
   - `720s` degraded interval after `15m` without pointer/keyboard/scroll activity
   - the same metadata-only `checkRemoteFreshnessOnForeground(...)` path already validated in Phases 3-4
+- Phase 6 formalizes startup-path reuse with `runStartupModeAutoSyncCheck(...)`, so the only full auto-sync decision engine remains `performAutoSync(true, SYNC_LOCK_MODE_STARTUP)` regardless of whether execution was triggered by startup, per-load checks, or a positive remote freshness probe.
 
 ## Phase 1 Update
 - Status: Completed
@@ -153,6 +159,30 @@ Execute the implementation from `sync_implementation_plan.md` in the order defin
   - Diagnostics expansion, user-facing messaging, and page-type-aware refresh behavior are still pending in later phases.
 - Next:
   - Implement Phase 6 safe sync execution as an explicit checklist milestone, keeping the existing startup lock reuse path as the only full-sync decision engine.
+
+## Phase 6 Update
+- Status: Completed
+- Completed:
+  - Added `runStartupModeAutoSyncCheck(...)` to centralize startup-lock acquisition, heartbeat management, guarded pre-checks, `performAutoSync(true, SYNC_LOCK_MODE_STARTUP)` execution, and guaranteed lock release.
+  - Rewired `requestForegroundRemoteSyncCheck(...)` to reuse the shared helper, so probe follow-up execution no longer carries its own separate startup-lock orchestration.
+  - Rewired `handlePerLoadSyncCheck()` and `handleStartupSync()` to call the same helper, preserving their existing UX/message handling while removing duplicated startup execution plumbing.
+  - Added a `beforePerform` short-circuit path so the daily-first-load flow can still re-check `s1p_last_daily_sync_date` after lock acquisition without reintroducing a second execution skeleton.
+  - Added `scripts/test-safe-sync-execution.js` to verify helper ordering, early short-circuit behavior, lock-unavailable handling, and the three Phase 6 call sites staying on the shared path.
+- Validation:
+  - `node --check S1Plus.js`
+  - `node scripts/test-settings-migration.js`
+  - `node scripts/test-remote-probe-state.js`
+  - `node scripts/test-sync-settings-ui.js`
+  - `node scripts/test-foreground-remote-probe.js`
+  - `node scripts/test-foreground-trigger-integration.js`
+  - `node scripts/test-visible-remote-polling.js`
+  - `node scripts/test-safe-sync-execution.js`
+- Remaining:
+  - Post-sync refresh behavior is still coarse and not yet page-type-aware.
+  - Automatic reload protection for dirty settings-modal edits remains for Phase 7.
+  - Probe / sync diagnostics and user-facing probe-result messaging are still pending for Phase 8.
+- Next:
+  - Implement Phase 7 refresh policy so auto-pull on list pages can remain lightweight while thread pages and dirty settings sessions avoid disruptive reload behavior.
 
 ## Errors Encountered
 - A first pass of the new Phase 3 regression script used a synthetic timestamp for the circuit-breaker test while the production helper checked the real `Date.now()`. The test was corrected to use a real future `until` timestamp before final validation.
