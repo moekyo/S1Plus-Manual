@@ -618,6 +618,8 @@
   let lastUserInteractionAt = 0;
   let visibleRemoteProbeTimer = null;
   let currentVisibleProbeIntervalMs = 0;
+  let pendingAutoPullReloadTimer = null;
+  let pendingAutoPullReloadReason = "";
 
   const isManualSyncActionBusy = () =>
     Boolean(manualSyncInFlightPromise || forceSyncInFlight);
@@ -755,6 +757,7 @@
   const REMOTE_PROBE_VISIBLE_POLL_ACTIVE_INTERVAL_MS = 4 * 60 * 1000;
   const REMOTE_PROBE_VISIBLE_POLL_IDLE_INTERVAL_MS = 12 * 60 * 1000;
   const REMOTE_PROBE_VISIBLE_POLL_IDLE_AFTER_MS = 15 * 60 * 1000;
+  const AUTO_PULL_RELOAD_DELAY_MS = 1500;
   const SYNC_LOCK_LOST_CODE = "SYNC_LOCK_LOST";
   const SYNC_CONFLICT_MODAL_COOLDOWN_LOCK_KEY =
     "s1p_sync_conflict_modal_cooldown_lock";
@@ -7465,6 +7468,264 @@
     currentVisibleProbeIntervalMs,
     hasTimer: Boolean(visibleRemoteProbeTimer),
   });
+
+  const clearPendingAutoPullReloadTimer = () => {
+    if (pendingAutoPullReloadTimer) {
+      clearTimeout(pendingAutoPullReloadTimer);
+      pendingAutoPullReloadTimer = null;
+    }
+    pendingAutoPullReloadReason = "";
+  };
+
+  const getAutoPullRefreshContext = (options = {}) => {
+    const doc = options.document || document;
+    const href =
+      typeof options.href === "string"
+        ? options.href
+        : String(window.location?.href || "");
+    const search =
+      typeof options.search === "string"
+        ? options.search
+        : String(window.location?.search || "");
+    return {
+      doc,
+      href,
+      search,
+      searchParams: new URLSearchParams(search),
+    };
+  };
+
+  const hasQueryableDocument = (doc) =>
+    Boolean(doc && typeof doc.querySelector === "function");
+
+  const hasDirtySettingsModalEdits = (options = {}) => {
+    const { doc } = getAutoPullRefreshContext(options);
+    if (!hasQueryableDocument(doc)) {
+      return false;
+    }
+    return Boolean(
+      doc.querySelector(".s1p-modal[data-s1p-settings-has-dirty-edits='true']")
+    );
+  };
+
+  const isAutoPullRefreshAction = (action) =>
+    action === "pulled" || action === "force_pulled";
+
+  const shouldApplyAutoPullRefreshForSyncResult = (syncResult) =>
+    Boolean(
+      syncResult &&
+      syncResult.status === "success" &&
+      isAutoPullRefreshAction(syncResult.action)
+    );
+
+  const isThreadDetailPageForAutoPullRefresh = (options = {}) => {
+    const { doc, href, searchParams } = getAutoPullRefreshContext(options);
+    if (
+      hasQueryableDocument(doc) &&
+      doc.querySelector("#postlist, #postlist table[id^='pid']")
+    ) {
+      return true;
+    }
+    if (/thread-\d+-/i.test(href)) {
+      return true;
+    }
+    return (
+      searchParams.get("mod") === "viewthread" ||
+      Boolean(searchParams.get("tid") || searchParams.get("ptid"))
+    );
+  };
+
+  const isLightweightListPageForAutoPullRefresh = (options = {}) => {
+    const { doc, href, searchParams } = getAutoPullRefreshContext(options);
+    if (
+      hasQueryableDocument(doc) &&
+      doc.querySelector(
+        "#threadlist, #threadlisttableid, tbody[id^='normalthread_'], tbody[id^='stickthread_']"
+      )
+    ) {
+      return true;
+    }
+    if (/forum-\d+-\d+\.html/i.test(href)) {
+      return true;
+    }
+    return (
+      searchParams.get("mod") === "forumdisplay" ||
+      searchParams.get("mod") === "guide" ||
+      (searchParams.get("mod") === "space" &&
+        searchParams.get("do") === "thread")
+    );
+  };
+
+  const getNormalizedAutoPullReloadDelayMs = (reloadDelayMs) =>
+    Math.max(0, Number(reloadDelayMs) || AUTO_PULL_RELOAD_DELAY_MS);
+
+  const createAutoPullRefreshMessages = (
+    reloadMessage,
+    successLeadSentence
+  ) => ({
+    reloadMessage,
+    threadPageMessage: `${successLeadSentence}当前在帖子页，暂不自动刷新以免打断阅读；请在方便时手动刷新查看最新内容。`,
+    dirtySettingsMessage: `${successLeadSentence}当前设置面板有未保存编辑，已暂停自动刷新；请先保存或取消编辑后再手动刷新页面。`,
+  });
+
+  const getDefaultAutoPullRefreshMessages = (action = "pulled") => {
+    if (action === "force_pulled") {
+      return createAutoPullRefreshMessages(
+        "启动时强制同步完成：已使用云端数据覆盖本地。正在刷新...",
+        "启动时强制同步已使用云端数据覆盖本地。"
+      );
+    }
+    return createAutoPullRefreshMessages(
+      "检测到云端有更新，正在刷新页面...",
+      "检测到云端有更新，已自动拉取到本地。"
+    );
+  };
+
+  const getAutoPullRefreshMessagesForSource = (
+    source = "generic",
+    action = "pulled"
+  ) => {
+    switch (source) {
+      case "background":
+        return createAutoPullRefreshMessages(
+          "后台同步完成：云端有更新已被自动拉取。正在刷新页面...",
+          "后台同步完成：云端有更新已被自动拉取。"
+        );
+      case "daily":
+        if (action === "force_pulled") {
+          return getDefaultAutoPullRefreshMessages(action);
+        }
+        return createAutoPullRefreshMessages(
+          "每日同步完成：云端有更新已被自动拉取。正在刷新...",
+          "每日同步完成：云端有更新已被自动拉取。"
+        );
+      default:
+        return getDefaultAutoPullRefreshMessages(action);
+    }
+  };
+
+  const getAutoPullRefreshPlan = (options = {}) => {
+    const reloadDelayMs = getNormalizedAutoPullReloadDelayMs(
+      options.reloadDelayMs
+    );
+    if (hasDirtySettingsModalEdits(options)) {
+      return {
+        policy: "settings_dirty",
+        pageType: "settings_modal",
+        shouldReload: false,
+        reloadDelayMs,
+      };
+    }
+    if (isThreadDetailPageForAutoPullRefresh(options)) {
+      return {
+        policy: "thread_soft_prompt",
+        pageType: "thread_detail",
+        shouldReload: false,
+        reloadDelayMs,
+      };
+    }
+    if (isLightweightListPageForAutoPullRefresh(options)) {
+      return {
+        policy: "reload_now",
+        pageType: "lightweight_list",
+        shouldReload: true,
+        reloadDelayMs,
+      };
+    }
+    return {
+      policy: "reload_now",
+      pageType: "generic",
+      shouldReload: true,
+      reloadDelayMs,
+    };
+  };
+
+  const getAutoPullRefreshDisplayMessage = (plan, messages) => {
+    if (plan.policy === "settings_dirty") {
+      return messages.dirtySettingsMessage;
+    }
+    return messages.threadPageMessage;
+  };
+
+  const getAutoPullRefreshReason = (options = {}, action = "pulled") =>
+    options.reason || `auto_pull:${action}`;
+
+  const getAutoPullRefreshMessages = (options = {}, action = "pulled") => {
+    const defaultMessages = getDefaultAutoPullRefreshMessages(action);
+    if (!options.messages || typeof options.messages !== "object") {
+      return defaultMessages;
+    }
+    return {
+      ...defaultMessages,
+      ...options.messages,
+    };
+  };
+
+  const scheduleAutoPullReload = (options = {}) => {
+    const locationObject = options.locationObject || window.location;
+    const setTimeoutFn = options.setTimeoutFn || setTimeout;
+    const reloadDelayMs = getNormalizedAutoPullReloadDelayMs(
+      options.reloadDelayMs
+    );
+    const normalizedReason =
+      normalizeRemoteProbeText(options.reason, 120) || "auto_pull";
+    if (pendingAutoPullReloadTimer) {
+      return {
+        status: "already_scheduled",
+        reloadDelayMs,
+        reason: pendingAutoPullReloadReason || normalizedReason,
+      };
+    }
+
+    pendingAutoPullReloadReason = normalizedReason;
+    pendingAutoPullReloadTimer = setTimeoutFn(() => {
+      pendingAutoPullReloadTimer = null;
+      pendingAutoPullReloadReason = "";
+      if (locationObject && typeof locationObject.reload === "function") {
+        locationObject.reload();
+      }
+    }, reloadDelayMs);
+
+    return {
+      status: "scheduled",
+      reloadDelayMs,
+      reason: normalizedReason,
+    };
+  };
+
+  const applyAutoPullRefreshPolicy = (options = {}) => {
+    let action = "pulled";
+    if (options.action === "force_pulled") {
+      action = "force_pulled";
+    }
+    const messages = getAutoPullRefreshMessages(options, action);
+    const showMessageFn = options.showMessage || showMessage;
+    const plan = getAutoPullRefreshPlan(options);
+    if (!plan.shouldReload) {
+      showMessageFn(getAutoPullRefreshDisplayMessage(plan, messages), true);
+      return {
+        ...plan,
+        reloadSchedule: {
+          status: "suppressed",
+          reason: plan.policy,
+        },
+      };
+    }
+
+    const reloadSchedule = scheduleAutoPullReload({
+      reason: getAutoPullRefreshReason(options, action),
+      reloadDelayMs: plan.reloadDelayMs,
+      locationObject: options.locationObject,
+      setTimeoutFn: options.setTimeoutFn,
+    });
+    if (reloadSchedule.status !== "already_scheduled") {
+      showMessageFn(messages.reloadMessage, true);
+    }
+    return {
+      ...plan,
+      reloadSchedule,
+    };
+  };
 
   const getPendingAutoSyncRecoveryFn = (overrides = {}) =>
     overrides.recoverPendingAutoSyncIfNeeded || recoverPendingAutoSyncIfNeeded;
@@ -15505,11 +15766,15 @@
         break;
 
       case "success":
-        if (result.action === "pulled" || result.action === "force_pulled") {
-          showMessage(
-            "后台同步完成：云端有更新已被自动拉取。建议刷新页面。",
-            true
-          );
+        if (isAutoPullRefreshAction(result.action)) {
+          applyAutoPullRefreshPolicy({
+            action: result.action,
+            reason: "background_auto_pull",
+            messages: getAutoPullRefreshMessagesForSource(
+              "background",
+              result.action
+            ),
+          });
         }
         break;
 
@@ -16495,6 +16760,16 @@
         `remote_probe_changed:${normalizedReason}`,
         overrides.requestForegroundRemoteSyncCheckOverrides || {}
       );
+      let refreshPlan = null;
+      if (shouldApplyAutoPullRefreshForSyncResult(syncRequestResult)) {
+        refreshPlan = applyAutoPullRefreshPolicy({
+          action: syncRequestResult.action,
+          reason: `foreground_probe:${normalizedReason}`,
+          showMessage: overrides.showMessage,
+          locationObject: overrides.locationObject,
+          setTimeoutFn: overrides.setTimeoutFn,
+        });
+      }
 
       return {
         status: "changed",
@@ -16503,6 +16778,7 @@
         lastSyncedRemoteUpdatedAt,
         lastObservedRemoteUpdatedAt,
         syncRequestResult,
+        refreshPlan,
       };
     })();
 
@@ -16534,6 +16810,12 @@
       syncVisibleRemoteFreshnessPollingForCurrentState,
       handleVisibleRemoteFreshnessUserActivity,
       getVisibleRemoteFreshnessPollingRuntimeState,
+      hasDirtySettingsModalEdits,
+      isThreadDetailPageForAutoPullRefresh,
+      isLightweightListPageForAutoPullRefresh,
+      getAutoPullRefreshPlan,
+      applyAutoPullRefreshPolicy,
+      clearPendingAutoPullReloadTimer,
       runStartupModeAutoSyncCheck,
       requestForegroundRemoteSyncCheck,
       checkRemoteFreshnessOnForeground,
@@ -20708,14 +20990,28 @@
     };
     let lastSettingsModalDirtyNoticeAt = 0;
     const SETTINGS_MODAL_DIRTY_NOTICE_COOLDOWN_MS = 5000;
+    const syncSettingsModalDirtyDataset = () => {
+      const dirtyTabKeys = Object.entries(settingsModalDirtyState)
+        .filter(([, isDirty]) => isDirty === true)
+        .map(([tabKey]) => tabKey);
+      if (dirtyTabKeys.length > 0) {
+        modal.dataset.s1pSettingsHasDirtyEdits = "true";
+        modal.dataset.s1pSettingsDirtyTabs = dirtyTabKeys.join(",");
+        return;
+      }
+      delete modal.dataset.s1pSettingsHasDirtyEdits;
+      delete modal.dataset.s1pSettingsDirtyTabs;
+    };
     const setSettingsModalDirtyState = (tabKey, isDirty = true) => {
       if (!tabKey) {
         return;
       }
       settingsModalDirtyState[tabKey] = isDirty === true;
+      syncSettingsModalDirtyDataset();
     };
     const isSettingsModalDirty = (tabKey) =>
       tabKey ? settingsModalDirtyState[tabKey] === true : false;
+    syncSettingsModalDirtyDataset();
     const notifySettingsModalDirtyTabDeferredRefresh = (tabLabels = []) => {
       if (!Array.isArray(tabLabels) || tabLabels.length === 0) {
         return;
@@ -29281,9 +29577,11 @@
 
     switch (result.status) {
       case "success":
-        if (result.action === "pulled" || result.action === "force_pulled") {
-          showMessage("检测到云端有更新，正在刷新页面...", true);
-          setTimeout(() => location.reload(), 1500);
+        if (isAutoPullRefreshAction(result.action)) {
+          applyAutoPullRefreshPolicy({
+            action: result.action,
+            reason: "per_load_auto_pull",
+          });
           return true;
         }
         if (result.action === "skipped_push_on_startup") {
@@ -29369,14 +29667,18 @@
 
     switch (result.status) {
       case "success":
-        // [修改] 增加对 "force_pulled" 状态的处理
-        if (result.action === "pulled" || result.action === "force_pulled") {
-          const message =
-            result.action === "force_pulled"
-              ? "启动时强制同步完成：已使用云端数据覆盖本地。正在刷新..."
-              : "每日同步完成：云端有更新已被自动拉取。正在刷新...";
-          showMessage(message, true);
-          setTimeout(() => location.reload(), 1500);
+        if (isAutoPullRefreshAction(result.action)) {
+          applyAutoPullRefreshPolicy({
+            action: result.action,
+            reason:
+              result.action === "force_pulled"
+                ? "daily_startup_force_pull"
+                : "daily_startup_pull",
+            messages: getAutoPullRefreshMessagesForSource(
+              "daily",
+              result.action
+            ),
+          });
           return true;
         } else if (result.action === "skipped_push_on_startup") {
           const skippedByLocalChangeDuringSync =

@@ -4,8 +4,8 @@
 Turn the cross-device auto-pull design into an implementation-ready checklist with clear module boundaries, dependencies, and acceptance criteria.
 
 ## Execution Status
-- Current status: Phase 6 completed on 2026-04-12.
-- Overall progress: 6 of 9 phases completed.
+- Current status: Phase 7 completed on 2026-04-12.
+- Overall progress: 7 of 9 phases completed.
 - Validation completed:
   - `node --check S1Plus.js`
   - `node scripts/test-settings-migration.js`
@@ -15,7 +15,8 @@ Turn the cross-device auto-pull design into an implementation-ready checklist wi
   - `node scripts/test-foreground-trigger-integration.js`
   - `node scripts/test-visible-remote-polling.js`
   - `node scripts/test-safe-sync-execution.js`
-- Next step: Phase 7, add page-type-aware refresh policy without disrupting active reading or dirty settings edits.
+  - `node scripts/test-post-sync-refresh-policy.js`
+- Next step: Phase 8, extend diagnostics and low-noise user-facing probe/sync feedback.
 
 ## Phase 1: State and Settings [Completed]
 
@@ -155,19 +156,28 @@ Acceptance:
   - conflict pause
   - read-progress merge
 
-## Phase 7: Refresh Policy
+## Phase 7: Refresh Policy [Completed]
 
-### Task 10. Add page-type-aware post-sync behavior
+### Task 10. Add page-type-aware post-sync behavior [Completed]
 - Lightweight list pages:
   - allow direct reload
 - Thread pages:
   - prefer delayed/idle reload or soft prompt
 - Settings modal with dirty edits:
   - never auto-reload
+- Implemented with:
+  - `getAutoPullRefreshPlan(...)`
+  - `applyAutoPullRefreshPolicy(...)`
+  - modal dirty-state DOM dataset exposure via `data-s1p-settings-has-dirty-edits`
+  - follow-up wiring in:
+    - `handleStartupSync()`
+    - `handlePerLoadSyncCheck()`
+    - `handleBackgroundAutoSyncResult(...)`
+    - `checkRemoteFreshnessOnForeground(...)`
 
 Acceptance:
-- Auto-pull no longer feels unnecessarily disruptive on thread pages
-- Unsaved settings edits are never blown away by auto-refresh
+- [x] Auto-pull no longer feels unnecessarily disruptive on thread pages
+- [x] Unsaved settings edits are never blown away by auto-refresh
 
 ## Phase 8: Diagnostics and UI Feedback
 

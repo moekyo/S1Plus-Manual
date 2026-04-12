@@ -4,8 +4,8 @@
 Execute the implementation from `sync_implementation_plan.md` in the order defined by `sync_dev_task_checklist.md`, so device B can detect and safely apply newer remote sync data in more real-world return/resume scenarios without weakening the existing conflict protections.
 
 ## Status
-- Current status: Phase 6 completed, Phase 7 next.
-- Overall progress: 6 of 9 implementation phases completed.
+- Current status: Phase 7 completed, Phase 8 next.
+- Overall progress: 7 of 9 implementation phases completed.
 - Completed in this session:
   - Added the new foreground-check setting default and migration behavior.
   - Added persisted remote probe info, shared cooldown state, and lightweight probe lock helpers.
@@ -28,6 +28,14 @@ Execute the implementation from `sync_implementation_plan.md` in the order defin
   - Rewired `requestForegroundRemoteSyncCheck(...)`, `handlePerLoadSyncCheck()`, and `handleStartupSync()` to reuse the same startup-path helper instead of open-coding independent lock + heartbeat + `performAutoSync(...)` sequences.
   - Kept the real sync decision inside `performAutoSync(true, SYNC_LOCK_MODE_STARTUP)`, so foreground probe follow-up, daily first-load sync, and per-load sync all converge on the same safety behavior.
   - Added `scripts/test-safe-sync-execution.js` to verify the shared startup execution helper, early short-circuit behavior, lock-unavailable handling, and Phase 6 call-site reuse.
+  - Added a unified Phase 7 post-sync refresh policy via `getAutoPullRefreshPlan(...)` and `applyAutoPullRefreshPolicy(...)`.
+  - Classified auto-pull success handling by current page context:
+    - lightweight list pages still allow direct reload
+    - thread pages now fall back to a soft prompt instead of auto-refresh
+    - settings modal sessions with dirty edits now suppress auto-refresh entirely
+  - Exposed settings-modal dirty state as DOM dataset markers so sync flows outside the modal can reliably detect unsaved edits before deciding whether to reload.
+  - Rewired post-sync refresh handling in `handleStartupSync()`, `handlePerLoadSyncCheck()`, `handleBackgroundAutoSyncResult(...)`, and `checkRemoteFreshnessOnForeground(...)` so all auto-pull paths converge on the same Phase 7 policy.
+  - Added `scripts/test-post-sync-refresh-policy.js` to verify policy selection, dirty-settings protection, thread-page soft prompting, and list-page reload scheduling.
 - Validation:
   - `node --check S1Plus.js`
   - `node scripts/test-settings-migration.js`
@@ -37,6 +45,7 @@ Execute the implementation from `sync_implementation_plan.md` in the order defin
   - `node scripts/test-foreground-trigger-integration.js`
   - `node scripts/test-visible-remote-polling.js`
   - `node scripts/test-safe-sync-execution.js`
+  - `node scripts/test-post-sync-refresh-policy.js`
 
 ## Phases
 - [x] Phase 1: State and settings
@@ -45,7 +54,7 @@ Execute the implementation from `sync_implementation_plan.md` in the order defin
 - [x] Phase 4: Trigger integration
 - [x] Phase 5: Visible-page polling
 - [x] Phase 6: Safe sync execution
-- [ ] Phase 7: Refresh policy
+- [x] Phase 7: Refresh policy
 - [ ] Phase 8: Diagnostics and UI feedback
 - [ ] Phase 9: Testing and regression verification
 
@@ -66,6 +75,11 @@ Execute the implementation from `sync_implementation_plan.md` in the order defin
   - `720s` degraded interval after `15m` without pointer/keyboard/scroll activity
   - the same metadata-only `checkRemoteFreshnessOnForeground(...)` path already validated in Phases 3-4
 - Phase 6 formalizes startup-path reuse with `runStartupModeAutoSyncCheck(...)`, so the only full auto-sync decision engine remains `performAutoSync(true, SYNC_LOCK_MODE_STARTUP)` regardless of whether execution was triggered by startup, per-load checks, or a positive remote freshness probe.
+- Phase 7 centralizes auto-pull refresh handling in `applyAutoPullRefreshPolicy(...)` instead of letting each caller open-code `location.reload()` decisions.
+- The first refresh-policy rollout keeps behavior intentionally conservative:
+  - list-like pages continue to auto-reload
+  - thread pages only show a soft prompt
+  - any open settings modal with dirty edits suppresses auto-reload
 
 ## Phase 1 Update
 - Status: Completed
@@ -183,6 +197,27 @@ Execute the implementation from `sync_implementation_plan.md` in the order defin
   - Probe / sync diagnostics and user-facing probe-result messaging are still pending for Phase 8.
 - Next:
   - Implement Phase 7 refresh policy so auto-pull on list pages can remain lightweight while thread pages and dirty settings sessions avoid disruptive reload behavior.
+
+## Phase 7 Update
+- Status: Completed
+- Completed:
+  - Added `hasDirtySettingsModalEdits(...)`, `isThreadDetailPageForAutoPullRefresh(...)`, `isLightweightListPageForAutoPullRefresh(...)`, `getAutoPullRefreshPlan(...)`, and `applyAutoPullRefreshPolicy(...)` to centralize auto-pull refresh decisions.
+  - Added de-duplicated reload scheduling so list-like pages still refresh automatically without each auto-sync caller hand-writing a new `location.reload()` timer.
+  - Marked settings-modal dirty state onto the modal DOM node, allowing sync flows outside `createManagementModal()` to reliably suppress auto-refresh when the user has unsaved edits.
+  - Rewired `handleStartupSync()`, `handlePerLoadSyncCheck()`, `handleBackgroundAutoSyncResult(...)`, and foreground-probe follow-up success handling to reuse the same page-aware refresh policy.
+  - Added `scripts/test-post-sync-refresh-policy.js` to cover list-page reload behavior, thread-page soft prompting, dirty-settings suppression, and key wiring expectations.
+- Validation:
+  - `node --check S1Plus.js`
+  - `node scripts/test-post-sync-refresh-policy.js`
+  - `node scripts/test-safe-sync-execution.js`
+  - `node scripts/test-foreground-remote-probe.js`
+  - `node scripts/test-foreground-trigger-integration.js`
+  - `node scripts/test-visible-remote-polling.js`
+- Remaining:
+  - Phase 7 changes refresh behavior only; it does not yet add dedicated diagnostics fields or richer probe-result message taxonomy.
+  - Thread pages currently use the conservative “soft prompt, no auto-reload” path rather than an idle-reload heuristic.
+- Next:
+  - Implement Phase 8 diagnostics and UI feedback so probe-layer decisions and refresh outcomes become easier to inspect and understand.
 
 ## Errors Encountered
 - A first pass of the new Phase 3 regression script used a synthetic timestamp for the circuit-breaker test while the production helper checked the real `Date.now()`. The test was corrected to use a real future `until` timestamp before final validation.
