@@ -1,162 +1,20 @@
 #!/usr/bin/env node
 "use strict";
 
-const fs = require("fs");
-const path = require("path");
-const vm = require("vm");
 const assert = require("assert/strict");
-const { webcrypto } = require("crypto");
-
-const repoRoot = path.resolve(__dirname, "..");
-const sourcePath = path.join(repoRoot, "S1Plus.js");
-const sourceCode = fs.readFileSync(sourcePath, "utf8");
+const {
+  createHarness: createBaseHarness,
+  sourceCode,
+} = require("./s1plus-test-helpers");
 
 const noop = () => {};
-const createClassListStub = () => ({
-  add: noop,
-  remove: noop,
-  toggle: noop,
-  contains: () => false,
-});
-const createElementStub = () => ({
-  style: {},
-  classList: createClassListStub(),
-  appendChild: noop,
-  removeChild: noop,
-  remove: noop,
-  setAttribute: noop,
-  getAttribute: () => "",
-  addEventListener: noop,
-  removeEventListener: noop,
-  querySelector: () => null,
-  querySelectorAll: () => [],
-  closest: () => null,
-  innerHTML: "",
-  textContent: "",
-  value: "",
-});
-
-const createSandbox = () => {
-  const store = new Map();
-  const documentElement = {
-    style: {
-      setProperty: noop,
-      removeProperty: noop,
-    },
-    classList: createClassListStub(),
-  };
-  const bodyElement = createElementStub();
-
-  const sandbox = {
-    __S1P_TEST_MODE__: true,
-    __S1P_TEST_STORE__: store,
-    console,
-    URL,
-    URLSearchParams,
-    TextEncoder,
-    TextDecoder,
-    crypto: webcrypto,
-    setTimeout,
-    clearTimeout,
-    setInterval,
-    clearInterval,
-    requestAnimationFrame: (callback) =>
-      setTimeout(() => callback(Date.now()), 0),
-    cancelAnimationFrame: (id) => clearTimeout(id),
-    performance: { now: () => Date.now() },
-    navigator: { userAgent: "node" },
-    location: {
-      href: "https://stage1st.com/2b/forum-1-1.html",
-      search: "",
-      origin: "https://stage1st.com",
-      reload: noop,
-    },
-    window: {
-      location: {
-        href: "https://stage1st.com/2b/forum-1-1.html",
-        search: "",
-        origin: "https://stage1st.com",
-        reload: noop,
-      },
-      CSS: { supports: () => false },
-      addEventListener: noop,
-      removeEventListener: noop,
-      pageXOffset: 0,
-      pageYOffset: 0,
-      innerWidth: 1920,
-      innerHeight: 1080,
-    },
-    document: {
-      body: bodyElement,
-      documentElement,
-      title: "",
-      visibilityState: "visible",
-      addEventListener: noop,
-      removeEventListener: noop,
-      querySelector: () => null,
-      querySelectorAll: () => [],
-      getElementById: () => null,
-      createElement: createElementStub,
-    },
-    Node: {
-      ELEMENT_NODE: 1,
-      COMMENT_NODE: 8,
-    },
-    Element: function Element() {},
-    HTMLAnchorElement: function HTMLAnchorElement() {},
-    HTMLImageElement: function HTMLImageElement() {},
-    MutationObserver: class MutationObserver {
-      observe() {}
-      disconnect() {}
-      takeRecords() {
-        return [];
-      }
-    },
-    GM_getValue: (key, defaultValue) =>
-      store.has(key) ? store.get(key) : defaultValue,
-    GM_setValue: (key, value) => {
-      store.set(key, value);
-    },
-    GM_addStyle: noop,
-    GM_deleteValue: (key) => {
-      store.delete(key);
-    },
-    GM_xmlhttpRequest: noop,
-    GM_openInTab: noop,
-    GM_download: noop,
-    GM_addValueChangeListener: noop,
-  };
-
-  sandbox.window.document = sandbox.document;
-  sandbox.window.navigator = sandbox.navigator;
-  sandbox.window.setTimeout = sandbox.setTimeout;
-  sandbox.window.clearTimeout = sandbox.clearTimeout;
-  sandbox.window.requestAnimationFrame = sandbox.requestAnimationFrame;
-  sandbox.window.cancelAnimationFrame = sandbox.cancelAnimationFrame;
-  sandbox.window.performance = sandbox.performance;
-
-  sandbox.globalThis = sandbox;
-  sandbox.self = sandbox.window;
-  sandbox.global = sandbox;
-  sandbox.unsafeWindow = sandbox.window;
-
-  return { sandbox };
-};
 
 const createHarness = () => {
-  const { sandbox } = createSandbox();
-  vm.createContext(sandbox);
-  vm.runInContext(sourceCode, sandbox, {
-    filename: "S1Plus.js",
-    timeout: 20000,
+  return createBaseHarness({
+    href: "https://stage1st.com/2b/forum-1-1.html",
+    search: "",
+    hookErrorMessage: "未能从 S1Plus.js 暴露 Phase 7 测试钩子。",
   });
-
-  const hooks = sandbox.__S1P_TEST_HOOKS__;
-  if (!hooks) {
-    throw new Error("未能从 S1Plus.js 暴露 Phase 7 测试钩子。");
-  }
-
-  return { sandbox, hooks };
 };
 
 const createQueryDocument = ({
@@ -312,7 +170,7 @@ const testThreadPageShowsSoftPromptOnly = () => {
   assert.equal(timerScheduled, false);
   assert.equal(messages.length, 1);
   assert.match(messages[0].message, /当前在帖子页，暂不自动刷新/);
-  assert.equal(messages[0].isSuccess, true);
+  assert.equal(messages[0].isSuccess, null);
 };
 
 const testDirtySettingsSuppressesReload = () => {
@@ -345,8 +203,8 @@ const testDirtySettingsSuppressesReload = () => {
   assert.equal(result.reloadSchedule.status, "suppressed");
   assert.equal(timerScheduled, false);
   assert.equal(messages.length, 1);
-  assert.match(messages[0].message, /设置面板有未保存编辑/);
-  assert.equal(messages[0].isSuccess, true);
+  assert.match(messages[0].message, /未保存的设置编辑/);
+  assert.equal(messages[0].isSuccess, null);
 };
 
 const main = async () => {

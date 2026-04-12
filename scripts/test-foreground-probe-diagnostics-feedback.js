@@ -1,165 +1,20 @@
 #!/usr/bin/env node
 "use strict";
 
-const fs = require("fs");
-const path = require("path");
-const vm = require("vm");
 const assert = require("assert/strict");
-const { webcrypto } = require("crypto");
-
-const repoRoot = path.resolve(__dirname, "..");
-const sourcePath = path.join(repoRoot, "S1Plus.js");
-const sourceCode = fs.readFileSync(sourcePath, "utf8");
-
-const noop = () => {};
-const createClassListStub = () => ({
-  add: noop,
-  remove: noop,
-  toggle: noop,
-  contains: () => false,
-});
-const createElementStub = () => ({
-  style: {},
-  classList: createClassListStub(),
-  appendChild: noop,
-  removeChild: noop,
-  remove: noop,
-  setAttribute: noop,
-  getAttribute: () => "",
-  addEventListener: noop,
-  removeEventListener: noop,
-  querySelector: () => null,
-  querySelectorAll: () => [],
-  closest: () => null,
-  innerHTML: "",
-  textContent: "",
-  value: "",
-});
-
-const createSandbox = () => {
-  const store = new Map();
-  const documentElement = {
-    style: {
-      setProperty: noop,
-      removeProperty: noop,
-    },
-    classList: createClassListStub(),
-  };
-  const bodyElement = createElementStub();
-
-  const sandbox = {
-    __S1P_TEST_MODE__: true,
-    __S1P_TEST_STORE__: store,
-    console,
-    URL,
-    URLSearchParams,
-    TextEncoder,
-    TextDecoder,
-    crypto: webcrypto,
-    setTimeout,
-    clearTimeout,
-    setInterval,
-    clearInterval,
-    requestAnimationFrame: (callback) =>
-      setTimeout(() => callback(Date.now()), 0),
-    cancelAnimationFrame: (id) => clearTimeout(id),
-    performance: { now: () => Date.now() },
-    navigator: { userAgent: "node" },
-    location: {
-      href: "https://stage1st.com/2b/forum-1-1.html",
-      search: "",
-      origin: "https://stage1st.com",
-      reload: noop,
-    },
-    window: {
-      location: {
-        href: "https://stage1st.com/2b/forum-1-1.html",
-        search: "",
-        origin: "https://stage1st.com",
-        reload: noop,
-      },
-      CSS: { supports: () => false },
-      addEventListener: noop,
-      removeEventListener: noop,
-      pageXOffset: 0,
-      pageYOffset: 0,
-      innerWidth: 1920,
-      innerHeight: 1080,
-    },
-    document: {
-      body: bodyElement,
-      documentElement,
-      title: "",
-      visibilityState: "visible",
-      addEventListener: noop,
-      removeEventListener: noop,
-      querySelector: () => null,
-      querySelectorAll: () => [],
-      getElementById: () => null,
-      createElement: createElementStub,
-    },
-    Node: {
-      ELEMENT_NODE: 1,
-      COMMENT_NODE: 8,
-    },
-    Element: function Element() {},
-    HTMLAnchorElement: function HTMLAnchorElement() {},
-    HTMLImageElement: function HTMLImageElement() {},
-    MutationObserver: class MutationObserver {
-      observe() {}
-      disconnect() {}
-      takeRecords() {
-        return [];
-      }
-    },
-    GM_getValue: (key, defaultValue) =>
-      store.has(key) ? store.get(key) : defaultValue,
-    GM_setValue: (key, value) => {
-      store.set(key, value);
-    },
-    GM_addStyle: noop,
-    GM_deleteValue: (key) => {
-      store.delete(key);
-    },
-    GM_xmlhttpRequest: noop,
-    GM_openInTab: noop,
-    GM_download: noop,
-    GM_addValueChangeListener: noop,
-  };
-
-  sandbox.window.document = sandbox.document;
-  sandbox.window.navigator = sandbox.navigator;
-  sandbox.window.setTimeout = sandbox.setTimeout;
-  sandbox.window.clearTimeout = sandbox.clearTimeout;
-  sandbox.window.requestAnimationFrame = sandbox.requestAnimationFrame;
-  sandbox.window.cancelAnimationFrame = sandbox.cancelAnimationFrame;
-  sandbox.window.performance = sandbox.performance;
-
-  sandbox.globalThis = sandbox;
-  sandbox.self = sandbox.window;
-  sandbox.global = sandbox;
-  sandbox.unsafeWindow = sandbox.window;
-
-  return { sandbox, store };
-};
+const {
+  createHarness: createBaseHarness,
+  sourceCode,
+  toPlainObject,
+} = require("./s1plus-test-helpers");
 
 const createHarness = () => {
-  const { sandbox, store } = createSandbox();
-  vm.createContext(sandbox);
-  vm.runInContext(sourceCode, sandbox, {
-    filename: "S1Plus.js",
-    timeout: 20000,
+  return createBaseHarness({
+    href: "https://stage1st.com/2b/forum-1-1.html",
+    search: "",
+    hookErrorMessage: "未能从 S1Plus.js 暴露 Phase 8 测试钩子。",
   });
-
-  const hooks = sandbox.__S1P_TEST_HOOKS__;
-  if (!hooks) {
-    throw new Error("未能从 S1Plus.js 暴露 Phase 8 测试钩子。");
-  }
-
-  return { sandbox, store, hooks };
 };
-
-const toPlainObject = (value) => JSON.parse(JSON.stringify(value));
 
 const enabledSettings = {
   syncRemoteEnabled: true,
@@ -188,10 +43,6 @@ const testStaticWiring = () => {
   expectMatch(
     /检测到云端有更新，但本地也有未处理改动。为保护数据，已暂停自动拉取，请手动同步。/m,
     "Phase 8 未新增“本地改动阻止自动拉取”的低打扰提示语。"
-  );
-  expectMatch(
-    /前台检查刚刚执行过，已跳过本轮重复探测。/m,
-    "Phase 8 未新增 cooldown 命中时的低打扰提示语。"
   );
 };
 
@@ -317,7 +168,7 @@ const testSharedCooldownRecordsDiagnosticsAndStaysQuietDuringPolling = async () 
   assert.equal(diagnostics.lastProbeTriggeredSync, false);
 };
 
-const testActiveSyncSkipShowsLowNoiseFeedback = async () => {
+const testActiveSyncSkipStaysQuiet = async () => {
   const { hooks, store } = createHarness();
   store.set("s1p_sync_global_lock", {
     owner: "other-tab",
@@ -340,9 +191,7 @@ const testActiveSyncSkipShowsLowNoiseFeedback = async () => {
 
   assert.equal(result.status, "skipped");
   assert.equal(result.reason, "sync_lock_active");
-  assert.equal(messages.length, 1, "已有同步任务时应给出低打扰提示。");
-  assert.match(messages[0].message, /已有同步任务在执行/);
-  assert.equal(messages[0].isSuccess, null);
+  assert.equal(messages.length, 0, "已有同步任务时自动检查应保持静默。");
 
   const diagnosticsText = hooks.buildSyncDiagnosticsSummary();
   assert.match(diagnosticsText, /最近探测结果: skipped_active_sync/);
@@ -376,7 +225,7 @@ const testProbeExecutionFailureStillRecordsDiagnostics = async () => {
   await testUnchangedProbeUpdatesDiagnosticsQuietly();
   await testChangedRemoteBlockedByLocalChangesShowsFeedback();
   await testSharedCooldownRecordsDiagnosticsAndStaysQuietDuringPolling();
-  await testActiveSyncSkipShowsLowNoiseFeedback();
+  await testActiveSyncSkipStaysQuiet();
   await testProbeExecutionFailureStillRecordsDiagnostics();
 
   console.log("[foreground-probe-diagnostics-feedback] Phase 8 diagnostics and feedback verified.");
