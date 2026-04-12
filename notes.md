@@ -261,6 +261,85 @@
 
 ## Phase 5 Implementation Notes
 
+### Visible-page polling runtime added
+- Added runtime state for visible-page probing:
+  - `lastUserInteractionAt`
+  - `visibleRemoteProbeTimer`
+  - `currentVisibleProbeIntervalMs`
+- Added scheduler helpers:
+  - `scheduleVisibleRemoteFreshnessPolling(...)`
+  - `stopVisibleRemoteFreshnessPolling(...)`
+  - `syncVisibleRemoteFreshnessPollingForCurrentState(...)`
+- The polling path reuses `checkRemoteFreshnessOnForeground(...)`:
+  - still metadata-only at the probe layer
+  - still hands off any positive hit to the same safe follow-up sync path
+
+### Activity-aware backoff choices implemented
+- Added `handleVisibleRemoteFreshnessUserActivity(...)` plus pointer, keyboard, and scroll listeners.
+- Current rollout policy:
+  - active visible-page polling every `240s`
+  - degrade to `720s` after `15m` of no interaction
+  - new interaction restores the active interval immediately
+- This closes the “always-visible device B” gap without keeping unattended tabs on an unnecessarily aggressive metadata cadence.
+
+### Runtime reconciliation completed
+- Visible-page polling now re-syncs with current settings and visibility when:
+  - foreground recovery hooks fire
+  - sync settings are saved
+  - cross-tab settings refresh updates local controls
+- Hidden pages stop polling immediately instead of relying on timer callbacks to discover visibility changes later.
+
+### Validation added in Phase 5
+- Added `scripts/test-visible-remote-polling.js` to verify:
+  - scheduler start/stop behavior
+  - polling execution through the existing foreground probe path
+  - hidden-page stop behavior
+  - inactivity backoff and post-idle recovery
+
+## Phase 6 Implementation Notes
+
+### Startup-path execution reuse is now explicit
+- Added `runStartupModeAutoSyncCheck(...)` as the shared execution helper for any safe sync check that must run under the startup sync lock.
+- The helper now owns:
+  - startup lock acquisition
+  - startup lock heartbeat lifecycle
+  - optional pre-execution short-circuit checks
+  - the final call to `performAutoSync(true, SYNC_LOCK_MODE_STARTUP)`
+  - guaranteed lock release and optional post-release hooks
+
+### What changed in call-site structure
+- `requestForegroundRemoteSyncCheck(...)` now reuses `runStartupModeAutoSyncCheck(...)` instead of open-coding its own startup-lock / heartbeat / `performAutoSync(...)` sequence.
+- `handlePerLoadSyncCheck()` now uses the same helper, so page-load sync checks and positive probe follow-up sync checks share the same execution skeleton.
+- `handleStartupSync()` now also uses the shared helper, with a `beforePerform` hook that re-checks `s1p_last_daily_sync_date` after lock acquisition and can safely short-circuit if another tab already completed the daily sync.
+
+### Why this matters for correctness
+- Phase 3 already ensured the foreground probe handed off the full sync decision to `performAutoSync(...)`.
+- Phase 6 makes that reuse structural rather than just behavioral:
+  - there is no longer a separate handwritten startup-lock execution path for probe follow-up work
+  - startup sync, per-load sync, and probe-triggered sync now converge on the same startup-mode execution helper
+- This reduces drift risk in future changes to:
+  - lock lifecycle behavior
+  - heartbeat handling
+  - startup-mode `performAutoSync(...)` invocation semantics
+
+### Validation added in Phase 6
+- Added `scripts/test-safe-sync-execution.js` to verify:
+  - helper ordering for lock acquire / heartbeat / perform / release
+  - `beforePerform` short-circuit behavior
+  - lock-unavailable handling without accidental `performAutoSync(...)`
+  - static call-site reuse for:
+    - `requestForegroundRemoteSyncCheck(...)`
+    - `handlePerLoadSyncCheck()`
+    - `handleStartupSync()`
+
+### Remaining gaps after Phase 6
+- Refresh behavior is still not page-type-aware:
+  - thread pages can still be more disruptive than ideal after auto-pull
+  - dirty settings-modal edits still need explicit reload protection
+- Diagnostics and user-facing probe-result messaging remain for later phases.
+
+## Phase 5 Implementation Notes
+
 ### Visible-page polling model implemented
 - Added dedicated runtime state for polling orchestration:
   - `lastUserInteractionAt`

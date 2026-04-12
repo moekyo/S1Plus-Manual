@@ -4,8 +4,8 @@
 Turn the cross-device auto-pull design into an implementation-ready checklist with clear module boundaries, dependencies, and acceptance criteria.
 
 ## Execution Status
-- Current status: Phase 5 completed on 2026-04-12.
-- Overall progress: 5 of 9 phases completed.
+- Current status: Phase 6 completed on 2026-04-12.
+- Overall progress: 6 of 9 phases completed.
 - Validation completed:
   - `node --check S1Plus.js`
   - `node scripts/test-settings-migration.js`
@@ -14,7 +14,8 @@ Turn the cross-device auto-pull design into an implementation-ready checklist wi
   - `node scripts/test-foreground-remote-probe.js`
   - `node scripts/test-foreground-trigger-integration.js`
   - `node scripts/test-visible-remote-polling.js`
-- Next step: Phase 6, formalize safe sync execution reuse as the next explicit milestone.
+  - `node scripts/test-safe-sync-execution.js`
+- Next step: Phase 7, add page-type-aware refresh policy without disrupting active reading or dirty settings edits.
 
 ## Phase 1: State and Settings [Completed]
 
@@ -135,17 +136,21 @@ Acceptance:
 - [x] Visible but unattended pages reduce request frequency
 - [x] New interaction restores normal polling interval
 
-## Phase 6: Safe Sync Execution
+## Phase 6: Safe Sync Execution [Completed]
 
-### Task 9. Reuse existing sync engine for follow-up execution
+### Task 9. Reuse existing sync engine for follow-up execution [Completed]
 - Add orchestration function such as:
   - `requestForegroundRemoteSyncCheck(reason)`
 - Reuse startup lock path
 - Continue to delegate final decision to `performAutoSync(true, SYNC_LOCK_MODE_STARTUP)`
+- Implemented with:
+  - `runStartupModeAutoSyncCheck(...)`
+  - `requestForegroundRemoteSyncCheck(...)` now reusing the shared startup-path execution helper
+  - `handleStartupSync()` and `handlePerLoadSyncCheck()` now reusing the same helper instead of open-coding their own startup-lock execution sequence
 
 Acceptance:
-- No second sync decision engine is introduced
-- Existing safety behavior remains intact:
+- [x] No second sync decision engine is introduced
+- [x] Existing safety behavior remains intact:
   - local-newer protection
   - conflict pause
   - read-progress merge

@@ -15859,16 +15859,15 @@
     };
   };
 
-  // [MODIFIED] 自动同步控制器 (逻辑优化版)
-  const performAutoSync = async (isStartupSync = false, syncLockMode = null) => {
-    const settings = getSettings();
+  const getRemoteSyncExecutionSkipResult = (settingsSnapshot) => {
     if (
-      !settings.syncRemoteEnabled ||
-      !settings.syncRemoteGistId ||
-      !settings.syncRemotePat
+      !settingsSnapshot.syncRemoteEnabled ||
+      !settingsSnapshot.syncRemoteGistId ||
+      !settingsSnapshot.syncRemotePat
     ) {
       return { status: "skipped", reason: "disabled" };
     }
+
     const conflictPauseState = getActiveAutoSyncConflictPause();
     if (conflictPauseState) {
       return {
@@ -15878,6 +15877,7 @@
         pausedAt: conflictPauseState.timestamp || 0,
       };
     }
+
     const circuitState = getAutoSyncCircuitState();
     if (circuitState.open) {
       return {
@@ -15885,6 +15885,17 @@
         reason: "circuit_open",
         until: circuitState.until,
       };
+    }
+
+    return null;
+  };
+
+  // [MODIFIED] 自动同步控制器 (逻辑优化版)
+  const performAutoSync = async (isStartupSync = false, syncLockMode = null) => {
+    const settings = getSettings();
+    const skipResult = getRemoteSyncExecutionSkipResult(settings);
+    if (skipResult) {
+      return skipResult;
     }
 
     const syncMode = isStartupSync ? "startup" : "background";
@@ -16263,36 +16274,66 @@
     }
   };
 
+  const runStartupModeAutoSyncCheck = async (options = {}) => {
+    const {
+      acquireStartupSyncLock: acquireStartupSyncLockFn = acquireStartupSyncLock,
+      startStartupSyncLockHeartbeat:
+        startStartupSyncLockHeartbeatFn = startStartupSyncLockHeartbeat,
+      stopStartupSyncLockHeartbeat:
+        stopStartupSyncLockHeartbeatFn = stopStartupSyncLockHeartbeat,
+      releaseStartupSyncLock: releaseStartupSyncLockFn = releaseStartupSyncLock,
+      performAutoSync: performAutoSyncFn = performAutoSync,
+      lockUnavailableResult = {
+        status: "skipped",
+        reason: "startup_lock_unavailable",
+      },
+      onLockUnavailable,
+      beforePerform,
+      onBeforePerform,
+      onAfterRelease,
+    } = options;
+
+    if (!(await acquireStartupSyncLockFn())) {
+      if (typeof onLockUnavailable === "function") {
+        await onLockUnavailable();
+      }
+      return lockUnavailableResult;
+    }
+
+    startStartupSyncLockHeartbeatFn();
+    try {
+      if (typeof beforePerform === "function") {
+        const beforePerformResult = await beforePerform();
+        if (
+          beforePerformResult &&
+          typeof beforePerformResult === "object" &&
+          beforePerformResult.skip === true
+        ) {
+          return beforePerformResult.result;
+        }
+      }
+
+      if (typeof onBeforePerform === "function") {
+        await onBeforePerform();
+      }
+      return await performAutoSyncFn(true, SYNC_LOCK_MODE_STARTUP);
+    } finally {
+      stopStartupSyncLockHeartbeatFn();
+      releaseStartupSyncLockFn();
+      if (typeof onAfterRelease === "function") {
+        await onAfterRelease();
+      }
+    }
+  };
+
   const requestForegroundRemoteSyncCheck = async (
     reason = "remote_probe_changed",
     overrides = {}
   ) => {
     const settingsSnapshot = overrides.settingsSnapshot || getSettings();
-    if (
-      !settingsSnapshot.syncRemoteEnabled ||
-      !settingsSnapshot.syncRemoteGistId ||
-      !settingsSnapshot.syncRemotePat
-    ) {
-      return { status: "skipped", reason: "disabled" };
-    }
-
-    const conflictPauseState = getActiveAutoSyncConflictPause();
-    if (conflictPauseState) {
-      return {
-        status: "skipped",
-        reason: "conflict_paused",
-        conflictReason: conflictPauseState.reason || "generic",
-        pausedAt: conflictPauseState.timestamp || 0,
-      };
-    }
-
-    const circuitState = getAutoSyncCircuitState();
-    if (circuitState.open) {
-      return {
-        status: "skipped",
-        reason: "circuit_open",
-        until: circuitState.until,
-      };
+    const skipResult = getRemoteSyncExecutionSkipResult(settingsSnapshot);
+    if (skipResult) {
+      return skipResult;
     }
 
     if (foregroundRemoteSyncCheckInFlightPromise) {
@@ -16302,40 +16343,26 @@
       };
     }
 
-    const acquireStartupSyncLockFn =
-      overrides.acquireStartupSyncLock || acquireStartupSyncLock;
-    const startStartupSyncLockHeartbeatFn =
-      overrides.startStartupSyncLockHeartbeat || startStartupSyncLockHeartbeat;
-    const stopStartupSyncLockHeartbeatFn =
-      overrides.stopStartupSyncLockHeartbeat || stopStartupSyncLockHeartbeat;
-    const releaseStartupSyncLockFn =
-      overrides.releaseStartupSyncLock || releaseStartupSyncLock;
-    const performAutoSyncFn = overrides.performAutoSync || performAutoSync;
     const normalizedReason =
       normalizeRemoteProbeText(reason, 120) || "remote_probe_changed";
 
-    const runPromise = (async () => {
-      if (!(await acquireStartupSyncLockFn())) {
+    const runPromise = runStartupModeAutoSyncCheck({
+      acquireStartupSyncLock: overrides.acquireStartupSyncLock,
+      startStartupSyncLockHeartbeat: overrides.startStartupSyncLockHeartbeat,
+      stopStartupSyncLockHeartbeat: overrides.stopStartupSyncLockHeartbeat,
+      releaseStartupSyncLock: overrides.releaseStartupSyncLock,
+      performAutoSync: overrides.performAutoSync,
+      onLockUnavailable: () => {
         console.log(
           `S1 Plus: 前台远端检查(${normalizedReason})发现已有同步任务在执行，已跳过本轮 follow-up sync。`
         );
-        return {
-          status: "skipped",
-          reason: "startup_lock_unavailable",
-        };
-      }
-
-      startStartupSyncLockHeartbeatFn();
-      try {
+      },
+      onBeforePerform: () => {
         console.log(
           `S1 Plus: 远端探测命中更新，正在复用启动同步路径执行安全检查(${normalizedReason})...`
         );
-        return await performAutoSyncFn(true, SYNC_LOCK_MODE_STARTUP);
-      } finally {
-        stopStartupSyncLockHeartbeatFn();
-        releaseStartupSyncLockFn();
-      }
-    })();
+      },
+    });
 
     foregroundRemoteSyncCheckInFlightPromise = runPromise;
     try {
@@ -16352,34 +16379,12 @@
     overrides = {}
   ) => {
     const settingsSnapshot = overrides.settingsSnapshot || getSettings();
-    if (
-      !settingsSnapshot.syncRemoteEnabled ||
-      !settingsSnapshot.syncRemoteGistId ||
-      !settingsSnapshot.syncRemotePat
-    ) {
-      return { status: "skipped", reason: "disabled" };
+    const skipResult = getRemoteSyncExecutionSkipResult(settingsSnapshot);
+    if (skipResult) {
+      return skipResult;
     }
     if (settingsSnapshot.syncCheckOnReturnToForeground !== true) {
       return { status: "skipped", reason: "foreground_check_disabled" };
-    }
-
-    const conflictPauseState = getActiveAutoSyncConflictPause();
-    if (conflictPauseState) {
-      return {
-        status: "skipped",
-        reason: "conflict_paused",
-        conflictReason: conflictPauseState.reason || "generic",
-        pausedAt: conflictPauseState.timestamp || 0,
-      };
-    }
-
-    const circuitState = getAutoSyncCircuitState();
-    if (circuitState.open) {
-      return {
-        status: "skipped",
-        reason: "circuit_open",
-        until: circuitState.until,
-      };
     }
 
     if (foregroundProbeInFlightPromise) {
@@ -16529,6 +16534,7 @@
       syncVisibleRemoteFreshnessPollingForCurrentState,
       handleVisibleRemoteFreshnessUserActivity,
       getVisibleRemoteFreshnessPollingRuntimeState,
+      runStartupModeAutoSyncCheck,
       requestForegroundRemoteSyncCheck,
       checkRemoteFreshnessOnForeground,
       triggerForegroundRemoteFreshnessProbe,
@@ -29253,68 +29259,64 @@
 
   const handlePerLoadSyncCheck = async () => {
     const settings = getSettings();
-
     if (
-      settings.syncPerLoadCheckEnabled &&
-      settings.syncRemoteEnabled &&
-      settings.syncRemoteGistId &&
-      settings.syncRemotePat
+      !settings.syncPerLoadCheckEnabled ||
+      !settings.syncRemoteEnabled ||
+      !settings.syncRemoteGistId ||
+      !settings.syncRemotePat
     ) {
-      if (!(await acquireStartupSyncLock())) {
+      return false;
+    }
+
+    const result = await runStartupModeAutoSyncCheck({
+      onLockUnavailable: () => {
         console.log(
           "S1 Plus: 检测到其他同步任务正在执行，本次常规启动同步检查已跳过。"
         );
-        return false;
-      }
-      startStartupSyncLockHeartbeat();
+      },
+      onBeforePerform: () => {
+        console.log("S1 Plus: 正在执行每次页面加载同步检查...");
+      },
+    });
 
-      console.log("S1 Plus: 正在执行每次页面加载同步检查...");
-      try {
-        // [S1P-FIX] 调用时传入 true，启用启动安全模式，并绑定启动锁上下文。
-        const result = await performAutoSync(true, SYNC_LOCK_MODE_STARTUP);
-        switch (result.status) {
-          case "success":
-            if (result.action === "pulled" || result.action === "force_pulled") {
-              showMessage("检测到云端有更新，正在刷新页面...", true);
-              setTimeout(() => location.reload(), 1500);
-              return true;
-            }
-            if (result.action === "skipped_push_on_startup") {
-              const skippedByLocalChangeDuringSync =
-                result.reason === "local_changed_during_sync";
-              showMessage(
-                skippedByLocalChangeDuringSync
-                  ? "检测到您在自动同步期间有本地操作，已暂停自动拉取以保护更改。请稍后在导航栏手动同步。"
-                  : "检测到本地数据较新，已跳过本次启动自动推送。请稍后在导航栏手动同步。",
-                false
-              );
-            }
-            break;
-          case "failure":
-            showMessage(`启动同步检查失败: ${result.error}`, false);
-            break;
-          case "conflict":
-            showMessage("启动同步检查检测到冲突，请在导航栏执行手动同步。", false);
-            break;
-          case "skipped":
-            if (result.reason === "circuit_open") {
-              showMessage(
-                `自动同步因连续失败已暂停，预计恢复时间：${new Date(
-                  result.until
-                ).toLocaleTimeString("zh-CN", { hour12: false })}。`,
-                false
-              );
-            } else if (result.reason === "conflict_paused") {
-              await notifyAutoSyncConflictPausedIfNeeded();
-            } else if (result.reason === "lock_lost") {
-              showMessage("常规启动同步检查因锁失效已中止，本次将跳过。", false);
-            }
-            break;
+    switch (result.status) {
+      case "success":
+        if (result.action === "pulled" || result.action === "force_pulled") {
+          showMessage("检测到云端有更新，正在刷新页面...", true);
+          setTimeout(() => location.reload(), 1500);
+          return true;
         }
-      } finally {
-        stopStartupSyncLockHeartbeat();
-        releaseStartupSyncLock();
-      }
+        if (result.action === "skipped_push_on_startup") {
+          const skippedByLocalChangeDuringSync =
+            result.reason === "local_changed_during_sync";
+          showMessage(
+            skippedByLocalChangeDuringSync
+              ? "检测到您在自动同步期间有本地操作，已暂停自动拉取以保护更改。请稍后在导航栏手动同步。"
+              : "检测到本地数据较新，已跳过本次启动自动推送。请稍后在导航栏手动同步。",
+            false
+          );
+        }
+        break;
+      case "failure":
+        showMessage(`启动同步检查失败: ${result.error}`, false);
+        break;
+      case "conflict":
+        showMessage("启动同步检查检测到冲突，请在导航栏执行手动同步。", false);
+        break;
+      case "skipped":
+        if (result.reason === "circuit_open") {
+          showMessage(
+            `自动同步因连续失败已暂停，预计恢复时间：${new Date(
+              result.until
+            ).toLocaleTimeString("zh-CN", { hour12: false })}。`,
+            false
+          );
+        } else if (result.reason === "conflict_paused") {
+          await notifyAutoSyncConflictPausedIfNeeded();
+        } else if (result.reason === "lock_lost") {
+          showMessage("常规启动同步检查因锁失效已中止，本次将跳过。", false);
+        }
+        break;
     }
     return false;
   };
@@ -29331,120 +29333,84 @@
       return false;
     }
 
-    if (!(await acquireStartupSyncLock())) {
-      console.log(
-        "S1 Plus: 检测到其他同步任务正在执行，本次启动同步已跳过。"
-      );
-      return false;
+    const result = await runStartupModeAutoSyncCheck({
+      onLockUnavailable: () => {
+        console.log(
+          "S1 Plus: 检测到其他同步任务正在执行，本次启动同步已跳过。"
+        );
+      },
+      beforePerform: () => {
+        const currentDateAfterLock = GM_getValue(
+          "s1p_last_daily_sync_date",
+          null
+        );
+        if (currentDateAfterLock === today) {
+          console.log("S1 Plus: 在锁定期间检测到同步已完成，已取消重复操作。");
+          return {
+            skip: true,
+            result: { status: "skipped", reason: "daily_sync_already_completed" },
+          };
+        }
+        return null;
+      },
+      onBeforePerform: () => {
+        console.log("S1 Plus: 正在执行每日首次加载同步...");
+      },
+      onAfterRelease: () => {
+        console.log("S1 Plus: 同步锁已释放。");
+      },
+    });
+    if (
+      result.status === "success" &&
+      result.action !== "skipped_push_on_startup"
+    ) {
+      GM_setValue("s1p_last_daily_sync_date", today);
     }
 
-    startStartupSyncLockHeartbeat();
-
-    try {
-      const currentDateAfterLock = GM_getValue(
-        "s1p_last_daily_sync_date",
-        null
-      );
-      if (currentDateAfterLock === today) {
-        console.log("S1 Plus: 在锁定期间检测到同步已完成，已取消重复操作。");
-        return false;
-      }
-
-      console.log("S1 Plus: 正在执行每日首次加载同步...");
-
-      const result = await performAutoSync(true, SYNC_LOCK_MODE_STARTUP);
-      if (
-        result.status === "success" &&
-        result.action !== "skipped_push_on_startup"
-      ) {
-        GM_setValue("s1p_last_daily_sync_date", today);
-      }
-
-      switch (result.status) {
-        case "success":
-          // [修改] 增加对 "force_pulled" 状态的处理
-          if (result.action === "pulled" || result.action === "force_pulled") {
-            const message =
-              result.action === "force_pulled"
-                ? "启动时强制同步完成：已使用云端数据覆盖本地。正在刷新..."
-                : "每日同步完成：云端有更新已被自动拉取。正在刷新...";
-            showMessage(message, true);
-            setTimeout(() => location.reload(), 1500);
-            return true;
-          } else if (result.action === "skipped_push_on_startup") {
-            const skippedByLocalChangeDuringSync =
-              result.reason === "local_changed_during_sync";
-            const conflictModalType = skippedByLocalChangeDuringSync
-              ? "local_changed_during_sync"
-              : "startup_local_newer";
-            if (!(await shouldShowConflictModal(conflictModalType))) {
-              showMessage(
-                skippedByLocalChangeDuringSync
-                  ? "检测到您在自动同步期间有本地操作，已暂停自动拉取以保护更改。请稍后在导航栏手动同步。"
-                  : "检测到本地数据较新，已进入提示冷却。请稍后在导航栏手动同步。",
-                false
-              );
-              return false;
-            }
-            createAdvancedConfirmationModal(
-              "检测到本地有未同步的更改",
-              skippedByLocalChangeDuringSync
-                ? "<p>S1 Plus 检测到您在自动同步过程中进行了本地操作。为避免云端拉取覆盖您的新更改，本轮自动拉取已暂停。</p><p>请手动同步并选择要保留的版本，以完成一次安全同步。</p>"
-                : "<p>S1 Plus 在启动时发现，您的本地数据比云端备份要新。这可能意味着您在其他设备的工作未推送，或有离线修改未同步。</p><p>为防止数据丢失，自动同步已暂停。请选择如何处理：</p>",
-              [
-                {
-                  text: "稍后处理",
-                  className: "s1p-cancel",
-                  action: () => {
-                    showMessage("同步已暂停，您可稍后从导航栏手动同步。", null);
-                  },
-                },
-                {
-                  text: "立即解决",
-                  className: "s1p-confirm",
-                  action: () => {
-                    // [S1P-UX-FIX] 调用时传入 true，进入静默模式，避免弹出多余的提示
-                    handleManualSync(true);
-                  },
-                },
-              ],
-              { allowBodyHtml: true }
-            );
-            return "popup_shown"; // [FIX] 标记已显示弹窗，阻止后续 Token 过期弹窗覆盖
-          } else {
-            if (result.action !== "pushed_initial") {
-              showMessage("每日首次同步完成，数据已是最新。", true);
-            }
-          }
-          break;
-        case "failure":
-          showMessage(`每日首次同步失败: ${result.error}`, false);
-          break;
-
-        case "conflict":
-          if (!(await shouldShowConflictModal("startup_conflict"))) {
+    switch (result.status) {
+      case "success":
+        // [修改] 增加对 "force_pulled" 状态的处理
+        if (result.action === "pulled" || result.action === "force_pulled") {
+          const message =
+            result.action === "force_pulled"
+              ? "启动时强制同步完成：已使用云端数据覆盖本地。正在刷新..."
+              : "每日同步完成：云端有更新已被自动拉取。正在刷新...";
+          showMessage(message, true);
+          setTimeout(() => location.reload(), 1500);
+          return true;
+        } else if (result.action === "skipped_push_on_startup") {
+          const skippedByLocalChangeDuringSync =
+            result.reason === "local_changed_during_sync";
+          const conflictModalType = skippedByLocalChangeDuringSync
+            ? "local_changed_during_sync"
+            : "startup_local_newer";
+          if (!(await shouldShowConflictModal(conflictModalType))) {
             showMessage(
-              "再次检测到启动同步冲突，已进入提示冷却。请稍后手动同步处理。",
+              skippedByLocalChangeDuringSync
+                ? "检测到您在自动同步期间有本地操作，已暂停自动拉取以保护更改。请稍后在导航栏手动同步。"
+                : "检测到本地数据较新，已进入提示冷却。请稍后在导航栏手动同步。",
               false
             );
             return false;
           }
           createAdvancedConfirmationModal(
-            "检测到同步冲突",
-            "<p>S1 Plus在自动同步时发现，您的本地数据和云端备份可能都已更改。</p><p>为防止数据丢失，自动同步已暂停。请手动选择要保留的版本来解决冲突。</p>",
+            "检测到本地有未同步的更改",
+            skippedByLocalChangeDuringSync
+              ? "<p>S1 Plus 检测到您在自动同步过程中进行了本地操作。为避免云端拉取覆盖您的新更改，本轮自动拉取已暂停。</p><p>请手动同步并选择要保留的版本，以完成一次安全同步。</p>"
+              : "<p>S1 Plus 在启动时发现，您的本地数据比云端备份要新。这可能意味着您在其他设备的工作未推送，或有离线修改未同步。</p><p>为防止数据丢失，自动同步已暂停。请选择如何处理：</p>",
             [
               {
                 text: "稍后处理",
                 className: "s1p-cancel",
                 action: () => {
-                  showMessage("同步已暂停，您可以在设置中手动同步。", null);
+                  showMessage("同步已暂停，您可稍后从导航栏手动同步。", null);
                 },
               },
               {
                 text: "立即解决",
                 className: "s1p-confirm",
                 action: () => {
-                  // [S1P-UX-FIX] 此处也应进入静默模式
+                  // [S1P-UX-FIX] 调用时传入 true，进入静默模式，避免弹出多余的提示
                   handleManualSync(true);
                 },
               },
@@ -29452,25 +29418,61 @@
             { allowBodyHtml: true }
           );
           return "popup_shown"; // [FIX] 标记已显示弹窗，阻止后续 Token 过期弹窗覆盖
-        case "skipped":
-          if (result.reason === "circuit_open") {
-            showMessage(
-              `自动同步因连续失败已暂停，预计恢复时间：${new Date(
-                result.until
-              ).toLocaleTimeString("zh-CN", { hour12: false })}。`,
-              false
-            );
-          } else if (result.reason === "conflict_paused") {
-            await notifyAutoSyncConflictPausedIfNeeded();
-          } else if (result.reason === "lock_lost") {
-            showMessage("启动同步因锁失效已中止，本次将跳过。", false);
+        } else {
+          if (result.action !== "pushed_initial") {
+            showMessage("每日首次同步完成，数据已是最新。", true);
           }
-          break;
-      }
-    } finally {
-      stopStartupSyncLockHeartbeat();
-      releaseStartupSyncLock();
-      console.log("S1 Plus: 同步锁已释放。");
+        }
+        break;
+      case "failure":
+        showMessage(`每日首次同步失败: ${result.error}`, false);
+        break;
+
+      case "conflict":
+        if (!(await shouldShowConflictModal("startup_conflict"))) {
+          showMessage(
+            "再次检测到启动同步冲突，已进入提示冷却。请稍后手动同步处理。",
+            false
+          );
+          return false;
+        }
+        createAdvancedConfirmationModal(
+          "检测到同步冲突",
+          "<p>S1 Plus在自动同步时发现，您的本地数据和云端备份可能都已更改。</p><p>为防止数据丢失，自动同步已暂停。请手动选择要保留的版本来解决冲突。</p>",
+          [
+            {
+              text: "稍后处理",
+              className: "s1p-cancel",
+              action: () => {
+                showMessage("同步已暂停，您可以在设置中手动同步。", null);
+              },
+            },
+            {
+              text: "立即解决",
+              className: "s1p-confirm",
+              action: () => {
+                // [S1P-UX-FIX] 此处也应进入静默模式
+                handleManualSync(true);
+              },
+            },
+          ],
+          { allowBodyHtml: true }
+        );
+        return "popup_shown"; // [FIX] 标记已显示弹窗，阻止后续 Token 过期弹窗覆盖
+      case "skipped":
+        if (result.reason === "circuit_open") {
+          showMessage(
+            `自动同步因连续失败已暂停，预计恢复时间：${new Date(
+              result.until
+            ).toLocaleTimeString("zh-CN", { hour12: false })}。`,
+            false
+          );
+        } else if (result.reason === "conflict_paused") {
+          await notifyAutoSyncConflictPausedIfNeeded();
+        } else if (result.reason === "lock_lost") {
+          showMessage("启动同步因锁失效已中止，本次将跳过。", false);
+        }
+        break;
     }
 
     return false;
