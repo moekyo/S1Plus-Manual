@@ -338,6 +338,67 @@
   - dirty settings-modal edits still need explicit reload protection
 - Diagnostics and user-facing probe-result messaging remain for later phases.
 
+## Phase 7 Implementation Notes
+
+### Refresh-policy model implemented
+- Added a dedicated post-sync refresh-policy layer instead of leaving each sync caller to decide its own `location.reload()` behavior.
+- The Phase 7 policy now distinguishes three situations:
+  - lightweight list pages: allow automatic reload
+  - thread detail pages: suppress automatic reload and show a soft prompt instead
+  - settings modal with dirty edits: suppress automatic reload entirely
+- This keeps auto-pull effective on low-risk pages while avoiding the most disruptive reading/editing interruptions.
+
+### Dirty settings protection choice
+- The existing settings modal already tracked dirty state for:
+  - thread rules
+  - nav settings
+  - sync settings
+- Phase 7 now mirrors that state onto the modal element through DOM dataset markers:
+  - `data-s1p-settings-has-dirty-edits`
+  - `data-s1p-settings-dirty-tabs`
+- This avoids leaking modal-local state into more global sync code through ad-hoc globals while still letting startup/background/foreground sync flows detect unsaved edits safely.
+
+### Page-type detection scope chosen for this phase
+- Thread detail detection currently keys off:
+  - `#postlist`
+  - thread-style URLs
+  - `mod=viewthread` / `tid` / `ptid`
+- Lightweight list detection currently keys off:
+  - `#threadlist`
+  - `#threadlisttableid`
+  - thread-row containers
+  - forum/list-style URLs such as `forum-<id>-<page>.html`
+- Pages outside those buckets currently stay on the existing conservative “reload is allowed” behavior.
+
+### Integration choices made in Phase 7
+- Added `getAutoPullRefreshPlan(...)` for pure policy selection and `applyAutoPullRefreshPolicy(...)` for side effects.
+- Added de-duplicated reload scheduling so multiple success paths do not keep stacking independent reload timers.
+- Rewired all successful auto-pull entry points that matter for the cross-device flow:
+  - `handleStartupSync()`
+  - `handlePerLoadSyncCheck()`
+  - `handleBackgroundAutoSyncResult(...)`
+  - `checkRemoteFreshnessOnForeground(...)` when the follow-up sync actually pulls newer remote data
+- Manual force-pull / manual decision flows were intentionally left unchanged in Phase 7:
+  - they are explicit user actions
+  - the checklist goal here was auto-pull refresh behavior
+
+### Validation added in Phase 7
+- Added `scripts/test-post-sync-refresh-policy.js` to verify:
+  - static wiring of the new refresh-policy helper and call sites
+  - list-page auto-reload scheduling
+  - thread-page soft-prompt suppression
+  - dirty-settings suppression
+- Re-ran adjacent sync regressions to ensure the new policy layer did not disturb earlier phases:
+  - `scripts/test-safe-sync-execution.js`
+  - `scripts/test-foreground-remote-probe.js`
+  - `scripts/test-foreground-trigger-integration.js`
+  - `scripts/test-visible-remote-polling.js`
+
+### Remaining limitations after Phase 7
+- Thread pages currently prefer the “soft prompt only” branch rather than a more ambitious idle-reload heuristic.
+- Phase 7 does not yet record refresh-policy outcomes into diagnostics state.
+- Probe-result copy is still relatively coarse and will need Phase 8 follow-up work.
+
 ## Phase 5 Implementation Notes
 
 ### Visible-page polling model implemented
