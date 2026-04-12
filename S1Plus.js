@@ -620,6 +620,10 @@
   let currentVisibleProbeIntervalMs = 0;
   let pendingAutoPullReloadTimer = null;
   let pendingAutoPullReloadReason = "";
+  let lastForegroundProbeFeedbackState = {
+    key: "",
+    timestamp: 0,
+  };
 
   const isManualSyncActionBusy = () =>
     Boolean(manualSyncInFlightPromise || forceSyncInFlight);
@@ -764,6 +768,7 @@
   const SYNC_CONFLICT_MODAL_COOLDOWN_LOCK_TTL_MS = 1500;
   const AUTO_SYNC_CIRCUIT_BREAKER_THRESHOLD = 3;
   const AUTO_SYNC_CIRCUIT_OPEN_DURATION_MS = 10 * 60 * 1000;
+  const FOREGROUND_PROBE_FEEDBACK_COOLDOWN_MS = 15 * 1000;
   // 当时间戳相差过大时，不再自动依据“谁大谁新”做决策，转为冲突保护。
   const SYNC_TIMESTAMP_SKEW_TOLERANCE_MS = 12 * 60 * 60 * 1000;
   // 启动同步调度到空闲时段，减少“每日首次加载卡住”的体感。
@@ -818,6 +823,12 @@
     delay: "120",
     maxWidth: "min(560px, calc(100vw - 20px))",
     templateId: LINK_OPEN_MODE_TOOLTIP_TEMPLATE_ID,
+  });
+  const SYNC_AUTO_CHECK_MODE_TOOLTIP_TEMPLATE_ID = "sync-auto-check-mode-help";
+  const SYNC_AUTO_CHECK_MODE_HELP_TOOLTIP_CONFIG = Object.freeze({
+    delay: "120",
+    maxWidth: "min(560px, calc(100vw - 20px))",
+    templateId: SYNC_AUTO_CHECK_MODE_TOOLTIP_TEMPLATE_ID,
   });
   const OPEN_IN_NEW_TAB_RULE_BY_LINK_TYPE = {
     sitewide_link: {
@@ -895,6 +906,39 @@
     },
   ];
   const LINK_OPEN_MODE_HELP_TOOLTIP_TEXT = "查看各分类的适用范围";
+  const SYNC_AUTO_CHECK_MODE_TOOLTIP_TEMPLATE = [
+    {
+      title: "检查时机",
+      items: [
+        {
+          label: "关闭",
+          body: "关闭这组额外自动检查，不再在页面加载或切回前台时主动检查云端更新。",
+        },
+        {
+          label: "每次加载检查",
+          body: "每次打开论坛页面时直接执行一次安全同步检查，响应最快，但检查频率也最高。",
+        },
+        {
+          label: "回到前台检查",
+          body: "标签页重新可见时先做一次轻量探测，只有确认云端有更新后才继续执行安全同步检查。",
+        },
+      ],
+    },
+    {
+      title: "区别说明",
+      items: [
+        {
+          label: "每次加载检查",
+          body: "适合希望打开页面就立刻校验云端状态的场景。",
+        },
+        {
+          label: "回到前台检查",
+          body: "更偏向跨设备切换场景，能减少无意义的完整同步检查。",
+        },
+      ],
+    },
+  ];
+  const SYNC_AUTO_CHECK_MODE_HELP_TOOLTIP_TEXT = "查看自动检查方式说明";
   const applyTooltipDatasetConfig = (element, config = {}) => {
     if (!(element instanceof Element)) {
       return;
@@ -4282,6 +4326,29 @@
     .s1p-link-open-mode-item.is-disabled .s1p-link-open-mode-control {
       pointer-events: none;
     }
+    .s1p-settings-label-with-help {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      min-width: 0;
+    }
+    .s1p-settings-label-with-help .s1p-settings-label {
+      margin: 0;
+    }
+    .s1p-sync-auto-check-item {
+      gap: 12px;
+      padding: 8px 0 4px;
+    }
+    .s1p-sync-auto-check-item .s1p-settings-label {
+      flex: 1 1 auto;
+    }
+    .s1p-sync-auto-check-control {
+      flex-shrink: 0;
+    }
+    .s1p-sync-auto-check-control.is-disabled {
+      opacity: 0.52;
+      pointer-events: none;
+    }
     .s1p-help-icon-btn {
       display: inline-flex;
       align-items: center;
@@ -6276,6 +6343,12 @@
     consecutiveFailureCount: 0,
     lastActionType: "",
     lastConflictTimestamp: 0,
+    lastProbeTimestamp: 0,
+    lastProbeRemoteUpdatedAt: "",
+    lastSyncedRemoteUpdatedAt: "",
+    lastProbeResult: "",
+    lastProbeTriggeredSync: false,
+    lastProbeTriggeredSyncResult: "",
   });
   const normalizeSyncDiagnostics = (value) => {
     const source =
@@ -6290,6 +6363,7 @@
       const parsed = Number(rawValue);
       return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0;
     };
+    const normalizeFlag = (rawValue) => rawValue === true;
     const normalizeText = (rawValue, maxLength = 220) =>
       String(rawValue || "")
         .replace(/\s+/g, " ")
@@ -6304,6 +6378,21 @@
       consecutiveFailureCount: normalizeCount(source.consecutiveFailureCount),
       lastActionType: normalizeText(source.lastActionType, 120),
       lastConflictTimestamp: normalizeTimestamp(source.lastConflictTimestamp),
+      lastProbeTimestamp: normalizeTimestamp(source.lastProbeTimestamp),
+      lastProbeRemoteUpdatedAt: normalizeText(
+        source.lastProbeRemoteUpdatedAt,
+        160
+      ),
+      lastSyncedRemoteUpdatedAt: normalizeText(
+        source.lastSyncedRemoteUpdatedAt,
+        160
+      ),
+      lastProbeResult: normalizeText(source.lastProbeResult, 120),
+      lastProbeTriggeredSync: normalizeFlag(source.lastProbeTriggeredSync),
+      lastProbeTriggeredSyncResult: normalizeText(
+        source.lastProbeTriggeredSyncResult,
+        220
+      ),
     };
   };
   const getSyncDiagnostics = () => {
@@ -6499,6 +6588,105 @@
     };
   };
 
+  const getForegroundProbeDiagnosticResult = (result) => {
+    const normalizedStatus =
+      normalizeRemoteProbeText(result?.status, 80) || "unknown";
+    if (normalizedStatus === "unchanged" || normalizedStatus === "changed") {
+      return normalizedStatus;
+    }
+    if (normalizedStatus !== "skipped") {
+      return normalizedStatus;
+    }
+
+    switch (result?.reason) {
+      case "local_cooldown":
+        return "throttled_local_cooldown";
+      case "shared_cooldown":
+        return "throttled_shared_cooldown";
+      case "disabled":
+      case "foreground_check_disabled":
+        return "skipped_disabled";
+      case "conflict_paused":
+        return "skipped_conflict_pause";
+      case "circuit_open":
+        return "skipped_circuit_open";
+      case "sync_lock_active":
+      case "foreground_sync_in_flight":
+        return "skipped_active_sync";
+      case "probe_in_flight":
+        return "skipped_probe_in_flight";
+      case "probe_lock_unavailable":
+        return "skipped_probe_lock_unavailable";
+      case "remote_updated_at_missing":
+        return "skipped_remote_metadata_missing";
+      default: {
+        const normalizedReason =
+          normalizeRemoteProbeText(result?.reason, 80) || "unknown";
+        return `skipped_${normalizedReason}`;
+      }
+    }
+  };
+
+  const formatForegroundProbeSyncResultForDiagnostics = (syncResult) => {
+    if (!syncResult || typeof syncResult !== "object") {
+      return "";
+    }
+
+    const normalizedStatus =
+      normalizeRemoteProbeText(syncResult.status, 40) || "unknown";
+    if (normalizedStatus === "success") {
+      const normalizedAction =
+        normalizeRemoteProbeText(syncResult.action, 60) || "unknown";
+      const normalizedReason = normalizeRemoteProbeText(syncResult.reason, 80);
+      return normalizedReason
+        ? `success:${normalizedAction}:${normalizedReason}`
+        : `success:${normalizedAction}`;
+    }
+    if (normalizedStatus === "failure") {
+      const errorText = sanitizeDiagnosticText(syncResult.error || "unknown", 140);
+      return `failure:${errorText || "unknown"}`;
+    }
+    const normalizedReason =
+      normalizeRemoteProbeText(syncResult.reason, 120) || "generic";
+    return `${normalizedStatus}:${normalizedReason}`;
+  };
+
+  const recordForegroundProbeDiagnostics = ({
+    timestamp = Date.now(),
+    remoteUpdatedAt = null,
+    result = "unknown",
+    triggeredSync = false,
+    triggeredSyncResult = "",
+    lastSyncedRemoteUpdatedAt = null,
+  } = {}) => {
+    const current = getSyncDiagnostics();
+    const latestProbeInfo = getLastRemoteProbeInfo();
+    const normalizedTimestamp =
+      normalizeRemoteProbeTimestamp(timestamp) || Date.now();
+    const normalizedRemoteUpdatedAt = normalizeRemoteProbeUpdatedAt(
+      remoteUpdatedAt
+    );
+    const normalizedLastSyncedRemoteUpdatedAt =
+      normalizeRemoteProbeUpdatedAt(lastSyncedRemoteUpdatedAt) ||
+      latestProbeInfo.lastSyncedRemoteUpdatedAt ||
+      current.lastSyncedRemoteUpdatedAt ||
+      "";
+
+    saveSyncDiagnostics({
+      ...current,
+      lastProbeTimestamp: normalizedTimestamp,
+      lastProbeRemoteUpdatedAt:
+        normalizedRemoteUpdatedAt || current.lastProbeRemoteUpdatedAt || "",
+      lastSyncedRemoteUpdatedAt: normalizedLastSyncedRemoteUpdatedAt,
+      lastProbeResult: normalizeRemoteProbeText(result, 120),
+      lastProbeTriggeredSync: triggeredSync === true,
+      lastProbeTriggeredSyncResult: sanitizeDiagnosticText(
+        triggeredSyncResult,
+        220
+      ),
+    });
+  };
+
   const normalizeRemoteProbeLockValue = (value) => {
     const source = sanitizeRecordObject(value);
     const owner = normalizeRemoteProbeText(source.owner, 120);
@@ -6561,6 +6749,25 @@
     return new Date(timestamp).toLocaleString("zh-CN", { hour12: false });
   };
 
+  const formatRemoteProbeUpdatedAtForDisplay = (value) => {
+    const normalized = String(value || "").trim();
+    if (!normalized) {
+      return "—";
+    }
+    const parsed = Date.parse(normalized);
+    if (!Number.isFinite(parsed)) {
+      return normalized;
+    }
+    return new Date(parsed).toLocaleString("zh-CN", { hour12: false });
+  };
+
+  const formatProbeTriggeredSyncForDisplay = (diagnostics) => {
+    if (!diagnostics.lastProbeTimestamp) {
+      return "—";
+    }
+    return diagnostics.lastProbeTriggeredSync ? "是" : "否";
+  };
+
   const sanitizeDiagnosticText = (text, maxLength = 220) =>
     String(text || "")
       .replace(/\s+/g, " ")
@@ -6578,6 +6785,18 @@
       `最近冲突: ${formatSyncTime(diagnostics.lastConflictTimestamp)}`,
       `最近失败: ${formatSyncTime(diagnostics.lastFailureTimestamp)}`,
       `连续失败: ${diagnostics.consecutiveFailureCount || 0}`,
+      `最近探测: ${formatSyncTime(diagnostics.lastProbeTimestamp)}`,
+      `最近探测远端版本: ${formatRemoteProbeUpdatedAtForDisplay(
+        diagnostics.lastProbeRemoteUpdatedAt
+      )}`,
+      `最近已同步远端版本: ${formatRemoteProbeUpdatedAtForDisplay(
+        diagnostics.lastSyncedRemoteUpdatedAt
+      )}`,
+      `最近探测结果: ${diagnostics.lastProbeResult || "—"}`,
+      `探测是否触发安全同步: ${formatProbeTriggeredSyncForDisplay(
+        diagnostics
+      )}`,
+      `最近探测后同步结果: ${diagnostics.lastProbeTriggeredSyncResult || "—"}`,
       `失败原因: ${diagnostics.lastFailureReason
         ? sanitizeDiagnosticText(diagnostics.lastFailureReason, 500)
         : "—"
@@ -7727,6 +7946,210 @@
     };
   };
 
+  const isVisibleRemoteFreshnessPollingReason = (reason = "") => {
+    const normalizedReason = normalizeRemoteProbeText(reason, 120);
+    return (
+      normalizedReason === "visible_poll_active" ||
+      normalizedReason === "visible_poll_idle"
+    );
+  };
+
+  const shouldEmitForegroundProbeFeedback = (feedbackKey, now = Date.now()) => {
+    const normalizedKey = normalizeRemoteProbeText(feedbackKey, 160);
+    const normalizedNow = normalizeRemoteProbeTimestamp(now) || Date.now();
+    if (!normalizedKey) {
+      return false;
+    }
+    if (
+      lastForegroundProbeFeedbackState.key === normalizedKey &&
+      normalizedNow - lastForegroundProbeFeedbackState.timestamp <
+      FOREGROUND_PROBE_FEEDBACK_COOLDOWN_MS
+    ) {
+      return false;
+    }
+    lastForegroundProbeFeedbackState = {
+      key: normalizedKey,
+      timestamp: normalizedNow,
+    };
+    return true;
+  };
+
+  const getForegroundProbeFeedbackDescriptor = (result) => {
+    if (!result || typeof result !== "object") {
+      return null;
+    }
+
+    if (result.status === "skipped") {
+      switch (result.reason) {
+        case "local_cooldown":
+        case "shared_cooldown":
+        case "probe_lock_unavailable":
+          return {
+            key: "foreground_probe_throttled",
+            message: "前台检查刚刚执行过，已跳过本轮重复探测。",
+            isSuccess: null,
+            allowDuringPolling: false,
+          };
+        case "sync_lock_active":
+        case "probe_in_flight":
+        case "foreground_sync_in_flight":
+          return {
+            key: "foreground_probe_active_sync",
+            message: "前台检查已跳过：当前已有同步任务在执行。",
+            isSuccess: null,
+            allowDuringPolling: false,
+          };
+        case "conflict_paused":
+          return {
+            key: "foreground_probe_conflict_paused",
+            message: "前台检查已跳过：自动同步仍处于冲突暂停状态，请手动同步。",
+            isSuccess: null,
+            allowDuringPolling: false,
+          };
+        case "circuit_open":
+          return {
+            key: "foreground_probe_circuit_open",
+            message: "前台检查已跳过：自动同步因连续失败暂时暂停，稍后会自动恢复。",
+            isSuccess: null,
+            allowDuringPolling: false,
+          };
+        default:
+          return null;
+      }
+    }
+
+    if (result.status !== "changed") {
+      return null;
+    }
+
+    const syncResult = result.syncRequestResult;
+    if (!syncResult || typeof syncResult !== "object") {
+      return null;
+    }
+
+    if (
+      syncResult.status === "success" &&
+      syncResult.action === "skipped_push_on_startup"
+    ) {
+      return {
+        key: "foreground_probe_local_changes_block_pull",
+        message:
+          "检测到云端有更新，但本地也有未处理改动。为保护数据，已暂停自动拉取，请手动同步。",
+        isSuccess: false,
+        allowDuringPolling: true,
+      };
+    }
+
+    if (syncResult.status === "conflict") {
+      return {
+        key: "foreground_probe_conflict_detected",
+        message: "检测到云端与本地可能同时有变更，已暂停自动处理，请手动同步。",
+        isSuccess: false,
+        allowDuringPolling: true,
+      };
+    }
+
+    if (syncResult.status === "skipped") {
+      switch (syncResult.reason) {
+        case "conflict_paused":
+          return {
+            key: "foreground_probe_remote_changed_conflict_paused",
+            message:
+              "检测到云端有更新，但自动同步仍处于冲突暂停状态；请手动同步处理。",
+            isSuccess: false,
+            allowDuringPolling: true,
+          };
+        case "circuit_open":
+          return {
+            key: "foreground_probe_remote_changed_circuit_open",
+            message:
+              "检测到云端有更新，但自动同步因连续失败暂时暂停；请稍后重试或手动同步。",
+            isSuccess: false,
+            allowDuringPolling: true,
+          };
+        case "startup_lock_unavailable":
+        case "foreground_sync_in_flight":
+        case "lock_lost":
+          return {
+            key: "foreground_probe_remote_changed_active_sync",
+            message:
+              "检测到云端有更新，但当前已有同步任务在执行；已跳过本轮重复检查。",
+            isSuccess: null,
+            allowDuringPolling: false,
+          };
+        default:
+          return null;
+      }
+    }
+
+    return null;
+  };
+
+  const maybeShowForegroundProbeFeedback = (result, options = {}) => {
+    const descriptor = getForegroundProbeFeedbackDescriptor(result);
+    if (!descriptor) {
+      return false;
+    }
+
+    const normalizedTriggerReason =
+      normalizeRemoteProbeText(options.triggerReason, 120) || "";
+    if (
+      isVisibleRemoteFreshnessPollingReason(normalizedTriggerReason) &&
+      descriptor.allowDuringPolling !== true
+    ) {
+      return false;
+    }
+
+    const now =
+      normalizeRemoteProbeTimestamp(options.now) || Date.now();
+    if (!shouldEmitForegroundProbeFeedback(descriptor.key, now)) {
+      return false;
+    }
+
+    const showMessageFn = options.showMessage || showMessage;
+    showMessageFn(descriptor.message, descriptor.isSuccess);
+    return true;
+  };
+
+  const finalizeForegroundProbeResult = (result, options = {}) => {
+    const normalizedTimestamp =
+      normalizeRemoteProbeTimestamp(options.timestamp) || Date.now();
+    const triggeredSyncResult =
+      typeof options.triggeredSyncResult === "string"
+        ? options.triggeredSyncResult
+        : formatForegroundProbeSyncResultForDiagnostics(result?.syncRequestResult);
+    const remoteUpdatedAt = Object.prototype.hasOwnProperty.call(
+      options,
+      "remoteUpdatedAt"
+    )
+      ? options.remoteUpdatedAt
+      : result?.remoteUpdatedAt ?? result?.lastObservedRemoteUpdatedAt ?? null;
+    const lastSyncedRemoteUpdatedAt = Object.prototype.hasOwnProperty.call(
+      options,
+      "lastSyncedRemoteUpdatedAt"
+    )
+      ? options.lastSyncedRemoteUpdatedAt
+      : result?.lastSyncedRemoteUpdatedAt ?? null;
+
+    recordForegroundProbeDiagnostics({
+      timestamp: normalizedTimestamp,
+      remoteUpdatedAt,
+      result: getForegroundProbeDiagnosticResult(result),
+      triggeredSync:
+        typeof options.triggeredSync === "boolean"
+          ? options.triggeredSync
+          : Boolean(result?.syncRequestResult),
+      triggeredSyncResult,
+      lastSyncedRemoteUpdatedAt,
+    });
+    maybeShowForegroundProbeFeedback(result, {
+      triggerReason: options.triggerReason,
+      showMessage: options.showMessage,
+      now: normalizedTimestamp,
+    });
+    return result;
+  };
+
   const getPendingAutoSyncRecoveryFn = (overrides = {}) =>
     overrides.recoverPendingAutoSyncIfNeeded || recoverPendingAutoSyncIfNeeded;
 
@@ -7943,6 +8366,28 @@
       ["最近冲突", formatSyncTime(diagnostics.lastConflictTimestamp)],
       ["最近失败", formatSyncTime(diagnostics.lastFailureTimestamp)],
       ["连续失败", String(diagnostics.consecutiveFailureCount || 0)],
+      ["最近探测", formatSyncTime(diagnostics.lastProbeTimestamp)],
+      [
+        "最近探测远端版本",
+        formatRemoteProbeUpdatedAtForDisplay(
+          diagnostics.lastProbeRemoteUpdatedAt
+        ),
+      ],
+      [
+        "最近已同步远端版本",
+        formatRemoteProbeUpdatedAtForDisplay(
+          diagnostics.lastSyncedRemoteUpdatedAt
+        ),
+      ],
+      ["最近探测结果", diagnostics.lastProbeResult || "—"],
+      [
+        "探测是否触发安全同步",
+        formatProbeTriggeredSyncForDisplay(diagnostics),
+      ],
+      [
+        "最近探测后同步结果",
+        diagnostics.lastProbeTriggeredSyncResult || "—",
+      ],
       [
         "失败原因",
         diagnostics.lastFailureReason
@@ -14994,6 +15439,10 @@
       setLastRemoteProbeInfo({
         lastSyncedRemoteUpdatedAt: nextRemoteUpdatedAt,
       });
+      saveSyncDiagnostics({
+        ...getSyncDiagnostics(),
+        lastSyncedRemoteUpdatedAt: nextRemoteUpdatedAt,
+      });
     }
   };
 
@@ -16643,47 +17092,64 @@
     reason = "visibility",
     overrides = {}
   ) => {
-    const settingsSnapshot = overrides.settingsSnapshot || getSettings();
-    const skipResult = getRemoteSyncExecutionSkipResult(settingsSnapshot);
-    if (skipResult) {
-      return skipResult;
-    }
-    if (settingsSnapshot.syncCheckOnReturnToForeground !== true) {
-      return { status: "skipped", reason: "foreground_check_disabled" };
-    }
-
-    if (foregroundProbeInFlightPromise) {
-      return { status: "skipped", reason: "probe_in_flight" };
-    }
-    if (foregroundRemoteSyncCheckInFlightPromise) {
-      return { status: "skipped", reason: "foreground_sync_in_flight" };
-    }
-
     const now =
       Number.isFinite(overrides.now) && overrides.now > 0
         ? Math.floor(overrides.now)
         : Date.now();
+    const finalizeResult = (result, extraOptions = {}) =>
+      finalizeForegroundProbeResult(result, {
+        timestamp: now,
+        triggerReason: reason,
+        showMessage: overrides.showMessage,
+        ...extraOptions,
+      });
+    const settingsSnapshot = overrides.settingsSnapshot || getSettings();
+    const skipResult = getRemoteSyncExecutionSkipResult(settingsSnapshot);
+    if (skipResult) {
+      return finalizeResult(skipResult);
+    }
+    if (settingsSnapshot.syncCheckOnReturnToForeground !== true) {
+      return finalizeResult({
+        status: "skipped",
+        reason: "foreground_check_disabled",
+      });
+    }
+
+    if (foregroundProbeInFlightPromise) {
+      return finalizeResult({ status: "skipped", reason: "probe_in_flight" });
+    }
+    if (foregroundRemoteSyncCheckInFlightPromise) {
+      return finalizeResult({
+        status: "skipped",
+        reason: "foreground_sync_in_flight",
+      });
+    }
     if (hasAnyActiveSyncLock(now)) {
-      return { status: "skipped", reason: "sync_lock_active" };
+      return finalizeResult({ status: "skipped", reason: "sync_lock_active" });
     }
     if (isForegroundProbeLocalCooldownActive(now)) {
-      return {
+      return finalizeResult({
         status: "skipped",
         reason: "local_cooldown",
         retryAfterMs: getForegroundProbeLocalCooldownRemainingMs(now),
-      };
+      });
     }
 
     const sharedCooldownState = getRemoteProbeSharedCooldownState();
     if (isRemoteProbeSharedCooldownActive(now)) {
-      return {
-        status: "skipped",
-        reason: "shared_cooldown",
-        retryAfterMs: getRemoteProbeSharedCooldownRemainingMs(now),
-        checkedBy: sharedCooldownState.checkedBy || "",
-        lastObservedRemoteUpdatedAt:
-          sharedCooldownState.lastObservedRemoteUpdatedAt || null,
-      };
+      return finalizeResult(
+        {
+          status: "skipped",
+          reason: "shared_cooldown",
+          retryAfterMs: getRemoteProbeSharedCooldownRemainingMs(now),
+          checkedBy: sharedCooldownState.checkedBy || "",
+          lastObservedRemoteUpdatedAt:
+            sharedCooldownState.lastObservedRemoteUpdatedAt || null,
+        },
+        {
+          remoteUpdatedAt: sharedCooldownState.lastObservedRemoteUpdatedAt || null,
+        }
+      );
     }
 
     const acquireRemoteProbeLockFn =
@@ -16714,7 +17180,10 @@
           reason: normalizedReason,
         }))
       ) {
-        return { status: "skipped", reason: "probe_lock_unavailable" };
+        return finalizeResult({
+          status: "skipped",
+          reason: "probe_lock_unavailable",
+        });
       }
 
       let remoteMeta = null;
@@ -16735,25 +17204,37 @@
       });
 
       if (!remoteUpdatedAt) {
-        return {
-          status: "skipped",
-          reason: "remote_updated_at_missing",
-          lastSyncedRemoteUpdatedAt,
-          lastObservedRemoteUpdatedAt,
-        };
+        return finalizeResult(
+          {
+            status: "skipped",
+            reason: "remote_updated_at_missing",
+            lastSyncedRemoteUpdatedAt,
+            lastObservedRemoteUpdatedAt,
+          },
+          {
+            remoteUpdatedAt: null,
+            lastSyncedRemoteUpdatedAt,
+          }
+        );
       }
 
       if (
         lastSyncedRemoteUpdatedAt &&
         remoteUpdatedAt === lastSyncedRemoteUpdatedAt
       ) {
-        return {
-          status: "unchanged",
-          reason: "remote_already_synced",
-          remoteUpdatedAt,
-          lastSyncedRemoteUpdatedAt,
-          lastObservedRemoteUpdatedAt,
-        };
+        return finalizeResult(
+          {
+            status: "unchanged",
+            reason: "remote_already_synced",
+            remoteUpdatedAt,
+            lastSyncedRemoteUpdatedAt,
+            lastObservedRemoteUpdatedAt,
+          },
+          {
+            remoteUpdatedAt,
+            lastSyncedRemoteUpdatedAt,
+          }
+        );
       }
 
       const syncRequestResult = await requestForegroundRemoteSyncCheckFn(
@@ -16771,15 +17252,25 @@
         });
       }
 
-      return {
-        status: "changed",
-        reason: "remote_changed",
-        remoteUpdatedAt,
-        lastSyncedRemoteUpdatedAt,
-        lastObservedRemoteUpdatedAt,
-        syncRequestResult,
-        refreshPlan,
-      };
+      return finalizeResult(
+        {
+          status: "changed",
+          reason: "remote_changed",
+          remoteUpdatedAt,
+          lastSyncedRemoteUpdatedAt,
+          lastObservedRemoteUpdatedAt,
+          syncRequestResult,
+          refreshPlan,
+        },
+        {
+          remoteUpdatedAt,
+          triggeredSync: true,
+          triggeredSyncResult:
+            formatForegroundProbeSyncResultForDiagnostics(syncRequestResult),
+          lastSyncedRemoteUpdatedAt: getLastRemoteProbeInfo()
+            .lastSyncedRemoteUpdatedAt || lastSyncedRemoteUpdatedAt,
+        }
+      );
     })();
 
     foregroundProbeInFlightPromise = runPromise;
@@ -16801,6 +17292,9 @@
       getForegroundProbeLocalCooldownRemainingMs,
       isForegroundProbeLocalCooldownActive,
       recordRemoteProbeObservation,
+      getSyncDiagnostics,
+      resetSyncDiagnostics,
+      buildSyncDiagnosticsSummary,
       acquireRemoteProbeLock,
       hasAnyActiveSyncLock,
       markVisibleRemoteFreshnessUserActivity,
@@ -20551,24 +21045,6 @@
           </div>
           <p class="s1p-setting-desc">启用后，每天第一次打开论坛时会自动检查并同步数据。关闭它后，不会再隐式切换成“每次页面加载时检查”。此功能独立于下方的“自动后台同步”。</p>
 
-          <div class="s1p-settings-item">
-            <label class="s1p-settings-label" for="s1p-per-load-sync-enabled-toggle">启用每次页面加载时检查同步</label>
-            <label class="s1p-switch">
-              <input type="checkbox" id="s1p-per-load-sync-enabled-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
-              <span class="s1p-slider"></span>
-            </label>
-          </div>
-          <p class="s1p-setting-desc">启用后，每次打开论坛页面时都会执行一次安全同步检查；如遇冲突，仍会暂停自动处理并提示你手动决定。此功能同样独立于“自动后台同步”。</p>
-
-          <div class="s1p-settings-item">
-            <label class="s1p-settings-label" for="s1p-check-on-return-to-foreground-toggle">启用回到前台时检查云端更新</label>
-            <label class="s1p-switch">
-              <input type="checkbox" id="s1p-check-on-return-to-foreground-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
-              <span class="s1p-slider"></span>
-            </label>
-          </div>
-          <p class="s1p-setting-desc">启用后，标签页从后台恢复、后退缓存恢复或重新变为可见时，会先进行一次轻量远端探测；若发现云端已更新，将自动执行一次安全同步检查。此功能用于补足上方的启动类检查，不会直接导入云端数据。</p>
-
           <div id="s1p-force-pull-subgroup" class="s1p-settings-sub-group">
             <div class="s1p-settings-item">
               <label class="s1p-settings-label" for="s1p-force-pull-on-startup-toggle">启动时强制拉取云端数据</label>
@@ -20578,6 +21054,19 @@
               </label>
             </div>
             <p class="s1p-setting-desc s1p-warning-text">开启后，每日首次加载时若检测到云端与本地数据不一致，将总是使用云端数据覆盖本地，不再进行提示。请谨慎开启，这可能导致本地未同步的修改丢失。</p>
+          </div>
+
+          <div class="s1p-settings-item s1p-sync-auto-check-item">
+            <div class="s1p-settings-label-with-help">
+              <label class="s1p-settings-label" for="s1p-sync-auto-check-mode-control">自动检查云端更新</label>
+              <button id="s1p-sync-auto-check-mode-help-btn" type="button" class="s1p-help-icon-btn" aria-label="查看自动检查方式说明">${SVG_ICON_HELP_CIRCLE}</button>
+            </div>
+            <div id="s1p-sync-auto-check-mode-control" class="s1p-segmented-control s1p-sync-auto-check-control" data-s1p-sync-control>
+              <div class="s1p-segmented-control-slider"></div>
+              <div class="s1p-segmented-control-option active" data-value="off">关闭</div>
+              <div class="s1p-segmented-control-option" data-value="per_load">每次加载</div>
+              <div class="s1p-segmented-control-option" data-value="foreground">回到前台</div>
+            </div>
           </div>
           <div class="s1p-settings-item">
             <label class="s1p-settings-label" for="s1p-auto-sync-enabled-toggle">启用自动后台同步</label>
@@ -21110,11 +21599,11 @@
       dailySyncToggle: modal.querySelector(
         "#s1p-daily-first-load-sync-enabled-toggle"
       ),
-      perLoadSyncToggle: modal.querySelector(
-        "#s1p-per-load-sync-enabled-toggle"
+      syncAutoCheckModeControl: modal.querySelector(
+        "#s1p-sync-auto-check-mode-control"
       ),
-      foregroundSyncCheckToggle: modal.querySelector(
-        "#s1p-check-on-return-to-foreground-toggle"
+      syncAutoCheckModeHelpBtn: modal.querySelector(
+        "#s1p-sync-auto-check-mode-help-btn"
       ),
       autoSyncToggle: modal.querySelector("#s1p-auto-sync-enabled-toggle"),
       autoSyncIndicatorToggle: modal.querySelector(
@@ -21141,8 +21630,8 @@
       remoteToggle,
       controlsWrapper,
       dailySyncToggle,
-      perLoadSyncToggle,
-      foregroundSyncCheckToggle,
+      syncAutoCheckModeControl,
+      syncAutoCheckModeHelpBtn,
       autoSyncToggle,
       autoSyncIndicatorToggle,
       autoSyncIndicatorSubGroup,
@@ -21154,6 +21643,98 @@
       directChoiceModeToggle,
       tokenExpiryToggle,
     } = syncSettingsControls;
+    const moveSegmentedControlSlider = (control, skipAnimation = false) => {
+      if (!control) {
+        return;
+      }
+      requestAnimationFrame(() => {
+        const slider = control.querySelector(".s1p-segmented-control-slider");
+        const activeOption = control.querySelector(
+          ".s1p-segmented-control-option.active"
+        );
+        if (
+          slider &&
+          activeOption &&
+          activeOption.offsetWidth > 0 &&
+          activeOption.offsetParent !== null
+        ) {
+          if (skipAnimation) {
+            slider.style.transition = "none";
+          }
+          slider.style.width = `${activeOption.offsetWidth}px`;
+          slider.style.transform = `translateX(${activeOption.offsetLeft}px)`;
+          if (skipAnimation) {
+            void slider.offsetWidth;
+            requestAnimationFrame(() => {
+              slider.style.transition = "";
+            });
+          }
+        } else if (slider && activeOption) {
+          setTimeout(() => moveSegmentedControlSlider(control, skipAnimation), 100);
+        }
+      });
+    };
+    const setSegmentedControlValue = (
+      control,
+      modeValue,
+      { fallbackValue = "off", skipAnimation = false } = {}
+    ) => {
+      if (!control) {
+        return;
+      }
+      const normalizedMode = String(modeValue || "").trim() || fallbackValue;
+      control
+        .querySelectorAll(".s1p-segmented-control-option")
+        .forEach((option) => {
+          option.classList.toggle(
+            "active",
+            option.dataset.value === normalizedMode
+          );
+        });
+      moveSegmentedControlSlider(control, skipAnimation);
+    };
+    const getSegmentedControlValue = (control, fallbackValue = "off") => {
+      if (!control) {
+        return fallbackValue;
+      }
+      const activeOption = control.querySelector(
+        ".s1p-segmented-control-option.active"
+      );
+      return String(activeOption?.dataset?.value || fallbackValue);
+    };
+    const setSegmentedControlDisabledState = (control, disabled) => {
+      if (!control?.classList?.contains("s1p-segmented-control")) {
+        return false;
+      }
+      control.classList.toggle("is-disabled", disabled);
+      return true;
+    };
+    const resolveSyncAutoCheckModeValue = (settingsSnapshot = {}) => {
+      if (settingsSnapshot.syncPerLoadCheckEnabled === true) {
+        return "per_load";
+      }
+      if (settingsSnapshot.syncCheckOnReturnToForeground === true) {
+        return "foreground";
+      }
+      return "off";
+    };
+    const applySyncAutoCheckModeToSettings = (settingsForWrite, modeValue) => {
+      const normalizedMode = String(modeValue || "").trim();
+      settingsForWrite.syncPerLoadCheckEnabled =
+        normalizedMode === "per_load";
+      settingsForWrite.syncCheckOnReturnToForeground =
+        normalizedMode === "foreground";
+    };
+    const setSyncAutoCheckModeControlValue = (
+      modeValue,
+      { skipAnimation = false } = {}
+    ) =>
+      setSegmentedControlValue(syncAutoCheckModeControl, modeValue, {
+        fallbackValue: "off",
+        skipAnimation,
+      });
+    const getSyncAutoCheckModeControlValue = () =>
+      getSegmentedControlValue(syncAutoCheckModeControl, "off");
     const updateRemoteSyncInputsState = () => {
       const isMasterEnabled = remoteToggle.checked;
       controlsWrapper.classList.toggle("is-disabled", !isMasterEnabled);
@@ -21161,6 +21742,14 @@
         .querySelectorAll("[data-s1p-sync-control]")
         .forEach((el) => {
           const shouldKeepEnabled = el.id === "s1p-remote-save-btn";
+          if (
+            setSegmentedControlDisabledState(
+              el,
+              shouldKeepEnabled ? false : !isMasterEnabled
+            )
+          ) {
+            return;
+          }
           el.disabled = shouldKeepEnabled ? false : !isMasterEnabled;
         });
     };
@@ -21192,6 +21781,27 @@
 
     dailySyncToggle.addEventListener("change", updateForcePullState);
     autoSyncToggle.addEventListener("change", updateAutoSyncIndicatorToggleState);
+    if (syncAutoCheckModeHelpBtn) {
+      setTemplateTooltip(
+        syncAutoCheckModeHelpBtn,
+        SYNC_AUTO_CHECK_MODE_HELP_TOOLTIP_TEXT,
+        SYNC_AUTO_CHECK_MODE_HELP_TOOLTIP_CONFIG
+      );
+    }
+    if (syncAutoCheckModeControl) {
+      moveSegmentedControlSlider(syncAutoCheckModeControl, true);
+      syncAutoCheckModeControl.addEventListener("click", (event) => {
+        if (syncAutoCheckModeControl.classList.contains("is-disabled")) {
+          return;
+        }
+        const option = event.target.closest(".s1p-segmented-control-option");
+        if (!option || option.classList.contains("active")) {
+          return;
+        }
+        setSyncAutoCheckModeControlValue(option.dataset.value);
+        markSyncSettingsDirty();
+      });
+    }
 
     const settings = getSettings();
     const syncDiagnosticsWrapper = modal.querySelector(
@@ -21247,8 +21857,6 @@
     [
       remoteToggle,
       dailySyncToggle,
-      perLoadSyncToggle,
-      foregroundSyncCheckToggle,
       autoSyncToggle,
       autoSyncIndicatorToggle,
       forcePullToggle,
@@ -21335,10 +21943,10 @@
     const applySyncSettingsToModal = (settingsSnapshot) => {
       remoteToggle.checked = settingsSnapshot.syncRemoteEnabled === true;
       dailySyncToggle.checked = settingsSnapshot.syncDailyFirstLoad === true;
-      perLoadSyncToggle.checked =
-        settingsSnapshot.syncPerLoadCheckEnabled === true;
-      foregroundSyncCheckToggle.checked =
-        settingsSnapshot.syncCheckOnReturnToForeground === true;
+      setSyncAutoCheckModeControlValue(
+        resolveSyncAutoCheckModeValue(settingsSnapshot),
+        { skipAnimation: true }
+      );
       autoSyncToggle.checked = settingsSnapshot.syncAutoEnabled === true;
       autoSyncIndicatorToggle.checked =
         settingsSnapshot.syncShowAutoSyncIndicator !== false;
@@ -21359,21 +21967,26 @@
       updateAutoSyncIndicatorToggleState();
       updateTokenExpiryInfo();
     };
-    const buildSyncSettingsFromModal = () => ({
-      syncRemoteEnabled: remoteToggle.checked,
-      syncDailyFirstLoad: dailySyncToggle.checked,
-      syncPerLoadCheckEnabled: perLoadSyncToggle.checked,
-      syncCheckOnReturnToForeground: foregroundSyncCheckToggle.checked,
-      syncAutoEnabled: autoSyncToggle.checked,
-      syncShowAutoSyncIndicator: autoSyncIndicatorToggle.checked,
-      syncForcePullOnStartup: dailySyncToggle.checked && forcePullToggle.checked,
-      syncDirectChoiceMode: directChoiceModeToggle.checked === true,
-      syncBookmarkFullContent: bookmarkFullContentToggle.checked,
-      syncRemoteGistId: remoteGistIdInput.value.trim(),
-      syncRemotePat: remotePatInput.value.trim(),
-      syncTokenExpiryEnabled: tokenExpiryToggle.checked,
-      syncTokenExpiryDate: pendingTokenExpiryDate,
-    });
+    const buildSyncSettingsFromModal = () => {
+      const syncAutoCheckMode = getSyncAutoCheckModeControlValue();
+      const nextSettings = {
+        syncRemoteEnabled: remoteToggle.checked,
+        syncDailyFirstLoad: dailySyncToggle.checked,
+        syncPerLoadCheckEnabled: false,
+        syncCheckOnReturnToForeground: false,
+        syncAutoEnabled: autoSyncToggle.checked,
+        syncShowAutoSyncIndicator: autoSyncIndicatorToggle.checked,
+        syncForcePullOnStartup: dailySyncToggle.checked && forcePullToggle.checked,
+        syncDirectChoiceMode: directChoiceModeToggle.checked === true,
+        syncBookmarkFullContent: bookmarkFullContentToggle.checked,
+        syncRemoteGistId: remoteGistIdInput.value.trim(),
+        syncRemotePat: remotePatInput.value.trim(),
+        syncTokenExpiryEnabled: tokenExpiryToggle.checked,
+        syncTokenExpiryDate: pendingTokenExpiryDate,
+      };
+      applySyncAutoCheckModeToSettings(nextSettings, syncAutoCheckMode);
+      return nextSettings;
+    };
 
     applySyncSettingsToModal(settings);
     tokenExpiryToggle.addEventListener("change", (e) => {
@@ -26573,7 +27186,7 @@
     let repositionRafId = 0;
     let anchorHealthCheckTimer = 0;
     let anchorMutationObserver = null;
-    let cachedLinkOpenModeTooltipDoc = null;
+    const tooltipTemplateDocCache = new Map();
     const templateMeasuredWidthCache = new Map();
     const pruneTemplateMeasuredWidthCache = () => {
       while (
@@ -26701,71 +27314,85 @@
       }
       scheduleTooltipAnchorHealthCheck({ repeat: true });
     };
-    const getLinkOpenModeTooltipDoc = () => {
-      if (!cachedLinkOpenModeTooltipDoc) {
-        const doc = document.createElement("div");
-        doc.className = "s1p-tooltip-doc";
+    const buildTooltipDocFromTemplate = (templateSections = []) => {
+      const doc = document.createElement("div");
+      doc.className = "s1p-tooltip-doc";
 
-        LINK_OPEN_MODE_TOOLTIP_TEMPLATE.forEach((sectionDescriptor) => {
-          const section = document.createElement("section");
-          section.className = "s1p-tooltip-doc-section";
+      templateSections.forEach((sectionDescriptor) => {
+        const section = document.createElement("section");
+        section.className = "s1p-tooltip-doc-section";
 
-          const title = document.createElement("div");
-          title.className = "s1p-tooltip-doc-title";
-          title.textContent = sectionDescriptor.title;
-          section.appendChild(title);
+        const title = document.createElement("div");
+        title.className = "s1p-tooltip-doc-title";
+        title.textContent = sectionDescriptor.title;
+        section.appendChild(title);
 
-          const list = document.createElement("div");
-          list.className = "s1p-tooltip-doc-list";
+        const list = document.createElement("div");
+        list.className = "s1p-tooltip-doc-list";
 
-          sectionDescriptor.items.forEach((itemDescriptor) => {
-            const item = document.createElement("div");
-            item.className = "s1p-tooltip-doc-item";
+        sectionDescriptor.items.forEach((itemDescriptor) => {
+          const item = document.createElement("div");
+          item.className = "s1p-tooltip-doc-item";
 
-            const head = document.createElement("div");
-            head.className = "s1p-tooltip-doc-item-head";
+          const head = document.createElement("div");
+          head.className = "s1p-tooltip-doc-item-head";
 
-            if (itemDescriptor.index) {
-              const index = document.createElement("span");
-              index.className = "s1p-tooltip-doc-item-index";
-              index.textContent = itemDescriptor.index;
-              head.appendChild(index);
-            }
+          if (itemDescriptor.index) {
+            const index = document.createElement("span");
+            index.className = "s1p-tooltip-doc-item-index";
+            index.textContent = itemDescriptor.index;
+            head.appendChild(index);
+          }
 
-            const label = document.createElement("span");
-            label.className = "s1p-tooltip-doc-item-label";
-            label.textContent = itemDescriptor.label;
-            head.appendChild(label);
-            item.appendChild(head);
+          const label = document.createElement("span");
+          label.className = "s1p-tooltip-doc-item-label";
+          label.textContent = itemDescriptor.label;
+          head.appendChild(label);
+          item.appendChild(head);
 
-            if (itemDescriptor.body) {
-              const body = document.createElement("div");
-              body.className = "s1p-tooltip-doc-item-body";
-              body.textContent = itemDescriptor.body;
-              item.appendChild(body);
-            }
+          if (itemDescriptor.body) {
+            const body = document.createElement("div");
+            body.className = "s1p-tooltip-doc-item-body";
+            body.textContent = itemDescriptor.body;
+            item.appendChild(body);
+          }
 
-            list.appendChild(item);
-          });
-
-          section.appendChild(list);
-          doc.appendChild(section);
+          list.appendChild(item);
         });
 
-        cachedLinkOpenModeTooltipDoc = doc;
-      }
-      return cachedLinkOpenModeTooltipDoc;
+        section.appendChild(list);
+        doc.appendChild(section);
+      });
+      return doc;
     };
+    const getTooltipDocFromTemplate = (templateId, templateSections = []) => {
+      if (!tooltipTemplateDocCache.has(templateId)) {
+        tooltipTemplateDocCache.set(
+          templateId,
+          buildTooltipDocFromTemplate(templateSections)
+        );
+      }
+      return tooltipTemplateDocCache.get(templateId);
+    };
+    const buildDocTooltipTemplateConfig = (templateId, templateSections) => ({
+      kind: GENERIC_TOOLTIP_KIND_DOC,
+      position: GENERIC_TOOLTIP_POSITION_SIDE,
+      waitForFonts: true,
+      preserveOnPopoverHover: true,
+      constrainHeight: true,
+      measureWidth: true,
+      renderContent: () =>
+        getTooltipDocFromTemplate(templateId, templateSections).cloneNode(true),
+    });
     const tooltipTemplateConfigs = {
-      [LINK_OPEN_MODE_TOOLTIP_TEMPLATE_ID]: {
-        kind: GENERIC_TOOLTIP_KIND_DOC,
-        position: GENERIC_TOOLTIP_POSITION_SIDE,
-        waitForFonts: true,
-        preserveOnPopoverHover: true,
-        constrainHeight: true,
-        measureWidth: true,
-        renderContent: () => getLinkOpenModeTooltipDoc().cloneNode(true),
-      },
+      [LINK_OPEN_MODE_TOOLTIP_TEMPLATE_ID]: buildDocTooltipTemplateConfig(
+        LINK_OPEN_MODE_TOOLTIP_TEMPLATE_ID,
+        LINK_OPEN_MODE_TOOLTIP_TEMPLATE
+      ),
+      [SYNC_AUTO_CHECK_MODE_TOOLTIP_TEMPLATE_ID]: buildDocTooltipTemplateConfig(
+        SYNC_AUTO_CHECK_MODE_TOOLTIP_TEMPLATE_ID,
+        SYNC_AUTO_CHECK_MODE_TOOLTIP_TEMPLATE
+      ),
     };
     const resolveTooltipBehavior = (anchor) => {
       const templateId = getTooltipTemplateId(anchor);

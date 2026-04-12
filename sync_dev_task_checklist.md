@@ -4,8 +4,8 @@
 Turn the cross-device auto-pull design into an implementation-ready checklist with clear module boundaries, dependencies, and acceptance criteria.
 
 ## Execution Status
-- Current status: Phase 7 completed on 2026-04-12.
-- Overall progress: 7 of 9 phases completed.
+- Current status: Phase 8 completed on 2026-04-12.
+- Overall progress: 8 of 9 phases completed.
 - Validation completed:
   - `node --check S1Plus.js`
   - `node scripts/test-settings-migration.js`
@@ -16,7 +16,8 @@ Turn the cross-device auto-pull design into an implementation-ready checklist wi
   - `node scripts/test-visible-remote-polling.js`
   - `node scripts/test-safe-sync-execution.js`
   - `node scripts/test-post-sync-refresh-policy.js`
-- Next step: Phase 8, extend diagnostics and low-noise user-facing probe/sync feedback.
+  - `node scripts/test-foreground-probe-diagnostics-feedback.js`
+- Next step: Phase 9, run functional and regression verification for the full cross-device auto-pull flow.
 
 ## Phase 1: State and Settings [Completed]
 
@@ -179,29 +180,39 @@ Acceptance:
 - [x] Auto-pull no longer feels unnecessarily disruptive on thread pages
 - [x] Unsaved settings edits are never blown away by auto-refresh
 
-## Phase 8: Diagnostics and UI Feedback
+## Phase 8: Diagnostics and UI Feedback [Completed]
 
-### Task 11. Extend diagnostics
-- Add:
+### Task 11. Extend diagnostics [Completed]
+- Added sync diagnostics fields:
   - `lastProbeTimestamp`
   - `lastProbeRemoteUpdatedAt`
   - `lastSyncedRemoteUpdatedAt`
   - `lastProbeResult`
   - `lastProbeTriggeredSync`
   - `lastProbeTriggeredSyncResult`
+- Wired the new fields into:
+  - `buildSyncDiagnosticsSummary()`
+  - `updateSyncDiagnosticsPanel()`
+  - `setSyncBaselineState(...)` for synced-remote timestamp carry-forward
+  - a dedicated foreground-probe finalization path so every probe outcome updates diagnostics consistently
 
 Acceptance:
-- Probe layer and execution layer can be debugged independently
+- [x] Probe layer and execution layer can be debugged independently
 
-### Task 12. Update user-facing messages
-- Add low-noise copy for:
-  - remote changed and auto-pull succeeded
+### Task 12. Update user-facing messages [Completed]
+- Added low-noise foreground-probe copy for:
   - remote changed but local edits block pull
   - conflict detected
   - skipped due to pause / cooldown / active sync
+- Kept existing Phase 7 auto-pull success refresh copy as the success path for:
+  - remote changed and auto-pull succeeded
+- Added feedback gating so:
+  - visible-page polling stays quiet for low-priority skip reasons
+  - duplicate foreground skip toasts are suppressed within a short cooldown
+  - actionable “remote changed but not applied” states still surface to the user
 
 Acceptance:
-- Messages clearly explain why data did or did not update
+- [x] Messages clearly explain why data did or did not update
 
 ## Phase 9: Testing
 
