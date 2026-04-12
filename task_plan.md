@@ -4,8 +4,8 @@
 Execute the implementation from `sync_implementation_plan.md` in the order defined by `sync_dev_task_checklist.md`, so device B can detect and safely apply newer remote sync data in more real-world return/resume scenarios without weakening the existing conflict protections.
 
 ## Status
-- Current status: Phase 7 completed, Phase 8 next.
-- Overall progress: 7 of 9 implementation phases completed.
+- Current status: Phase 8 completed, Phase 9 next.
+- Overall progress: 8 of 9 implementation phases completed.
 - Completed in this session:
   - Added the new foreground-check setting default and migration behavior.
   - Added persisted remote probe info, shared cooldown state, and lightweight probe lock helpers.
@@ -36,6 +36,12 @@ Execute the implementation from `sync_implementation_plan.md` in the order defin
   - Exposed settings-modal dirty state as DOM dataset markers so sync flows outside the modal can reliably detect unsaved edits before deciding whether to reload.
   - Rewired post-sync refresh handling in `handleStartupSync()`, `handlePerLoadSyncCheck()`, `handleBackgroundAutoSyncResult(...)`, and `checkRemoteFreshnessOnForeground(...)` so all auto-pull paths converge on the same Phase 7 policy.
   - Added `scripts/test-post-sync-refresh-policy.js` to verify policy selection, dirty-settings protection, thread-page soft prompting, and list-page reload scheduling.
+  - Extended `s1p_sync_diagnostics` with probe-layer fields for the latest probe time, observed remote version, last synced remote version, probe result, follow-up sync trigger flag, and follow-up sync result.
+  - Wired the new probe diagnostics into `buildSyncDiagnosticsSummary()`, `updateSyncDiagnosticsPanel()`, and `setSyncBaselineState(...)`, so synced-remote timestamps stay visible even when the full sync is triggered outside the foreground probe path.
+  - Added `getForegroundProbeDiagnosticResult(...)`, `recordForegroundProbeDiagnostics(...)`, and `finalizeForegroundProbeResult(...)` so every foreground-probe outcome now lands in diagnostics through one shared write path.
+  - Added low-noise foreground-probe feedback for “local edits blocked pull”, “conflict detected”, and “pause / cooldown / active sync” skip cases, while intentionally keeping low-priority polling skips silent.
+  - Added short duplicate-toast suppression for foreground-probe skip feedback so `visibilitychange` + `pageshow` bursts do not spam the user with repeated notices.
+  - Added `scripts/test-foreground-probe-diagnostics-feedback.js` to verify the new diagnostics fields, summary output, low-noise feedback copy, and polling-time feedback suppression.
 - Validation:
   - `node --check S1Plus.js`
   - `node scripts/test-settings-migration.js`
@@ -46,6 +52,7 @@ Execute the implementation from `sync_implementation_plan.md` in the order defin
   - `node scripts/test-visible-remote-polling.js`
   - `node scripts/test-safe-sync-execution.js`
   - `node scripts/test-post-sync-refresh-policy.js`
+  - `node scripts/test-foreground-probe-diagnostics-feedback.js`
 
 ## Phases
 - [x] Phase 1: State and settings
@@ -55,7 +62,7 @@ Execute the implementation from `sync_implementation_plan.md` in the order defin
 - [x] Phase 5: Visible-page polling
 - [x] Phase 6: Safe sync execution
 - [x] Phase 7: Refresh policy
-- [ ] Phase 8: Diagnostics and UI feedback
+- [x] Phase 8: Diagnostics and UI feedback
 - [ ] Phase 9: Testing and regression verification
 
 ## Decisions Made
@@ -80,6 +87,10 @@ Execute the implementation from `sync_implementation_plan.md` in the order defin
   - list-like pages continue to auto-reload
   - thread pages only show a soft prompt
   - any open settings modal with dirty edits suppresses auto-reload
+- Phase 8 keeps the probe diagnostics inside the existing `s1p_sync_diagnostics` record instead of creating a second debug store, so copy/export/reset all remain on one surface.
+- Low-noise foreground-probe feedback follows two rules:
+  - actionable “remote changed but not applied” outcomes may still toast during visible-page polling
+  - low-priority skip reasons such as cooldown or an already-running sync stay silent during polling and are de-duplicated on foreground-return bursts
 
 ## Phase 1 Update
 - Status: Completed
@@ -218,6 +229,36 @@ Execute the implementation from `sync_implementation_plan.md` in the order defin
   - Thread pages currently use the conservative “soft prompt, no auto-reload” path rather than an idle-reload heuristic.
 - Next:
   - Implement Phase 8 diagnostics and UI feedback so probe-layer decisions and refresh outcomes become easier to inspect and understand.
+
+## Phase 8 Update
+- Status: Completed
+- Completed:
+  - Extended `SYNC_DIAGNOSTICS_DEFAULT` / `normalizeSyncDiagnostics(...)` with:
+    - `lastProbeTimestamp`
+    - `lastProbeRemoteUpdatedAt`
+    - `lastSyncedRemoteUpdatedAt`
+    - `lastProbeResult`
+    - `lastProbeTriggeredSync`
+    - `lastProbeTriggeredSyncResult`
+  - Added a shared foreground-probe finalization path, so early skips, unchanged probes, and positive remote-change follow-up checks all update diagnostics consistently instead of relying on scattered inline writes.
+  - Updated sync diagnostics copy/export surfaces so the settings-panel diagnostics and clipboard summary now expose both the probe layer and the follow-up sync layer.
+  - Added low-noise foreground-probe copy for:
+    - remote changed but local edits blocked pull
+    - conflict detected after the metadata probe
+    - pause / cooldown / active-sync skip cases
+  - Kept low-priority polling skips intentionally quiet and added short duplicate-feedback suppression to avoid repeated toasts during `pageshow` + `visibilitychange` bursts.
+  - Added `scripts/test-foreground-probe-diagnostics-feedback.js` to verify diagnostics writes, summary output, actionable feedback copy, and polling-time quiet behavior.
+- Validation:
+  - `node --check S1Plus.js`
+  - `node scripts/test-foreground-probe-diagnostics-feedback.js`
+  - `node scripts/test-foreground-remote-probe.js`
+  - `node scripts/test-post-sync-refresh-policy.js`
+  - `node scripts/test-safe-sync-execution.js`
+- Remaining:
+  - Phase 8 improves probe diagnostics and user explanation, but it does not yet complete the end-to-end multi-device functional matrix or full regression sweep defined for Phase 9.
+  - Thread pages still use the existing conservative soft-prompt refresh policy from Phase 7.
+- Next:
+  - Implement Phase 9 testing and regression verification across return-to-foreground, always-visible polling, multi-tab contention, local-unsynced-edit protection, and manual-sync regression cases.
 
 ## Errors Encountered
 - A first pass of the new Phase 3 regression script used a synthetic timestamp for the circuit-breaker test while the production helper checked the real `Date.now()`. The test was corrected to use a real future `until` timestamp before final validation.

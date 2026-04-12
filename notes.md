@@ -462,3 +462,74 @@
 - Polling-triggered full sync still flows through the previously added follow-up path; later checklist phases still need to document the safe-sync reuse boundary and UX outcomes more explicitly.
 - Diagnostics, copy, and refresh policy have not changed yet.
 - Phase 4 does not yet change post-sync refresh policy, diagnostics output, or user-facing status copy.
+
+## Phase 8 Implementation Notes
+
+### Diagnostics surface expanded in this phase
+- Extended `s1p_sync_diagnostics` with probe-layer state so copy/reset/panel rendering stay on one existing diagnostics surface instead of introducing a second store.
+- Added these fields:
+  - `lastProbeTimestamp`
+  - `lastProbeRemoteUpdatedAt`
+  - `lastSyncedRemoteUpdatedAt`
+  - `lastProbeResult`
+  - `lastProbeTriggeredSync`
+  - `lastProbeTriggeredSyncResult`
+- The diagnostics panel and clipboard summary now expose both layers:
+  - probe layer: when the most recent foreground/visible probe ran and what it saw
+  - execution layer: whether that probe triggered a safe sync and how that follow-up finished
+
+### Probe diagnostics write model chosen for Phase 8
+- Added `getForegroundProbeDiagnosticResult(...)` to normalize raw probe outcomes into a compact taxonomy such as:
+  - `unchanged`
+  - `changed`
+  - `throttled_shared_cooldown`
+  - `skipped_active_sync`
+  - `skipped_conflict_pause`
+- Added `formatForegroundProbeSyncResultForDiagnostics(...)` so follow-up sync results are recorded separately from the probe result itself, for example:
+  - `success:pulled`
+  - `success:skipped_push_on_startup:local_changed_during_sync`
+  - `conflict:both_changed_since_baseline`
+  - `skipped:startup_lock_unavailable`
+- Added `finalizeForegroundProbeResult(...)` so all foreground-probe exits now go through one place that:
+  - writes diagnostics
+  - optionally shows low-noise feedback
+  - preserves a consistent timestamp for that probe attempt
+
+### Synced-remote timestamp handling refined
+- `setSyncBaselineState(...)` now also mirrors the latest synced remote timestamp into diagnostics.
+- This keeps `lastSyncedRemoteUpdatedAt` current even when the latest successful sync came from:
+  - startup sync
+  - per-load sync
+  - background sync
+  - or a foreground probe follow-up sync
+- Without this extra write, the new Phase 8 diagnostics could lag behind the real baseline state whenever the last successful sync did not originate from the probe helper itself.
+
+### Low-noise feedback policy implemented
+- Kept the existing Phase 7 refresh copy as the success path when a foreground probe ultimately auto-pulls and refresh behavior is applied.
+- Added new foreground-probe feedback for actionable non-success outcomes:
+  - remote changed but local edits blocked pull
+  - conflict detected after the metadata probe
+  - follow-up sync skipped because conflict pause / circuit breaker is still active
+- Added low-priority skip feedback for:
+  - cooldown already active
+  - another sync task already running
+- To keep this low-noise:
+  - visible-page polling stays silent for low-priority skip reasons
+  - duplicate skip toasts are suppressed inside a short per-tab cooldown window
+  - actionable “remote changed but not applied” states can still surface during polling because they require user awareness
+
+### Validation added in Phase 8
+- Added `scripts/test-foreground-probe-diagnostics-feedback.js` to verify:
+  - new diagnostics defaults and panel/summary wiring
+  - unchanged-probe diagnostics writes
+  - “remote changed but local edits blocked pull” feedback copy
+  - polling-time suppression for low-priority cooldown feedback
+  - active-sync skip feedback and diagnostics summary output
+- Re-ran nearby regressions to ensure the new finalization path did not break prior phases:
+  - `scripts/test-foreground-remote-probe.js`
+  - `scripts/test-post-sync-refresh-policy.js`
+  - `scripts/test-safe-sync-execution.js`
+
+### Remaining limitations after Phase 8
+- Phase 8 improves observability and user explanation, but it does not yet complete the end-to-end multi-device verification matrix from Phase 9.
+- Low-noise feedback is currently toast-based; it does not yet extend the navbar sync indicator with dedicated foreground-probe reasons.
