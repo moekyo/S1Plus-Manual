@@ -620,6 +620,9 @@
   let currentVisibleProbeIntervalMs = 0;
   let pendingAutoPullReloadTimer = null;
   let pendingAutoPullReloadReason = "";
+  let foregroundRemoteSyncRetryTimer = null;
+  let foregroundRemoteSyncRetryAttempts = 0;
+  let foregroundRemoteSyncRetryReason = "";
   let lastForegroundProbeFeedbackState = {
     key: "",
     timestamp: 0,
@@ -746,7 +749,6 @@
   const AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_FOLLOWUP =
     "foreground_followup";
   const AUTO_SYNC_INDICATOR_PENDING_STALE_MS = 90 * 1000;
-  const AUTO_SYNC_INDICATOR_RUNNING_STALE_MS = 3 * 60 * 1000;
   const AUTO_SYNC_INDICATOR_SUCCESS_TTL_MS = 2 * 60 * 1000;
   const AUTO_SYNC_INDICATOR_FAILURE_TTL_MS = 5 * 60 * 1000;
   const AUTO_SYNC_INDICATOR_CONFLICT_TTL_MS = 10 * 60 * 1000;
@@ -774,6 +776,9 @@
   const AUTO_SYNC_CIRCUIT_BREAKER_THRESHOLD = 3;
   const AUTO_SYNC_CIRCUIT_OPEN_DURATION_MS = 10 * 60 * 1000;
   const FOREGROUND_PROBE_FEEDBACK_COOLDOWN_MS = 15 * 1000;
+  const FOREGROUND_REMOTE_SYNC_RETRY_BASE_DELAY_MS = 1200;
+  const FOREGROUND_REMOTE_SYNC_RETRY_MAX_DELAY_MS = 10 * 1000;
+  const FOREGROUND_REMOTE_SYNC_RETRY_MAX_ATTEMPTS = 6;
   // 当时间戳相差过大时，不再自动依据“谁大谁新”做决策，转为冲突保护。
   const SYNC_TIMESTAMP_SKEW_TOLERANCE_MS = 12 * 60 * 60 * 1000;
   // 启动同步调度到空闲时段，减少“每日首次加载卡住”的体感。
@@ -7154,6 +7159,7 @@
       : getAutoSyncIndicatorState();
     const now = Date.now();
     const hasActiveBackgroundLock = hasActiveBackgroundSyncLock(now);
+    const hasActiveSyncLock = hasAnyActiveSyncLock(now);
     const hasPendingRequest = hasActivePendingAutoSyncRequest();
     const hasConflictPause = Boolean(getActiveAutoSyncConflictPause());
     const hasOpenCircuit = getAutoSyncCircuitState().open;
@@ -7218,7 +7224,7 @@
     };
 
     if (state.phase === AUTO_SYNC_INDICATOR_PHASE_RUNNING) {
-      if (now - state.timestamp <= AUTO_SYNC_INDICATOR_RUNNING_STALE_MS) {
+      if (hasActiveSyncLock || autoSyncIndicatorWriteInFlightCount > 0) {
         return buildDisplayState(
           AUTO_SYNC_INDICATOR_PHASE_RUNNING,
           state.source,
@@ -7533,6 +7539,7 @@
   };
 
   const setAutoSyncConflictPause = (reason = "generic") => {
+    clearForegroundRemoteSyncRetry();
     GM_setValue(AUTO_SYNC_CONFLICT_PAUSE_KEY, {
       paused: true,
       reason: String(reason || "generic"),
@@ -7936,7 +7943,9 @@
   };
 
   const isAutoPullRefreshAction = (action) =>
-    action === "pulled" || action === "force_pulled";
+    action === "pulled" ||
+    action === "force_pulled" ||
+    action === "merged_read_progress";
 
   const shouldApplyAutoPullRefreshForSyncResult = (syncResult) =>
     Boolean(
@@ -8002,6 +8011,12 @@
         "启动时强制同步已使用云端数据覆盖本地。"
       );
     }
+    if (action === "merged_read_progress") {
+      return createAutoPullRefreshMessages(
+        "检测到云端与本地的阅读进度已自动合并。正在刷新页面...",
+        "检测到云端与本地的阅读进度已自动合并。"
+      );
+    }
     return createAutoPullRefreshMessages(
       "检测到云端有更新，正在刷新页面...",
       "检测到云端有更新，已自动拉取到本地。"
@@ -8014,11 +8029,23 @@
   ) => {
     switch (source) {
       case "background":
+        if (action === "merged_read_progress") {
+          return createAutoPullRefreshMessages(
+            "后台同步完成：阅读进度已自动合并。正在刷新页面...",
+            "后台同步完成：阅读进度已自动合并。"
+          );
+        }
         return createAutoPullRefreshMessages(
           "后台同步完成：云端有更新已被自动拉取。正在刷新页面...",
           "后台同步完成：云端有更新已被自动拉取。"
         );
       case "daily":
+        if (action === "merged_read_progress") {
+          return createAutoPullRefreshMessages(
+            "每日同步完成：阅读进度已自动合并。正在刷新...",
+            "每日同步完成：阅读进度已自动合并。"
+          );
+        }
         if (action === "force_pulled") {
           return getDefaultAutoPullRefreshMessages(action);
         }
@@ -8044,6 +8071,14 @@
       };
     }
     if (isThreadDetailPageForAutoPullRefresh(options)) {
+      if (options.allowThreadSoftPrompt === false) {
+        return {
+          policy: "reload_now",
+          pageType: "thread_detail",
+          shouldReload: true,
+          reloadDelayMs,
+        };
+      }
       return {
         policy: "thread_soft_prompt",
         pageType: "thread_detail",
@@ -8121,10 +8156,11 @@
   };
 
   const applyAutoPullRefreshPolicy = (options = {}) => {
-    let action = "pulled";
-    if (options.action === "force_pulled") {
-      action = "force_pulled";
-    }
+    const action =
+      options.action === "force_pulled" ||
+      options.action === "merged_read_progress"
+        ? options.action
+        : "pulled";
     const messages = getAutoPullRefreshMessages(options, action);
     const showMessageFn = options.showMessage || showMessage;
     const plan = getAutoPullRefreshPlan(options);
@@ -8152,6 +8188,20 @@
       ...plan,
       reloadSchedule,
     };
+  };
+
+  const applyRefreshPolicyForSyncResult = (syncResult, options = {}) => {
+    if (!shouldApplyAutoPullRefreshForSyncResult(syncResult)) {
+      return null;
+    }
+
+    const action = syncResult.action || "pulled";
+    const allowThreadSoftPrompt = action === "merged_read_progress";
+    return applyAutoPullRefreshPolicy({
+      ...options,
+      action,
+      allowThreadSoftPrompt,
+    });
   };
 
   const hasScheduledAutoPullReload = (refreshPlan) => {
@@ -10770,6 +10820,41 @@
     });
 
     return merged;
+  };
+  const buildMergedReadProgressPayload = async (
+    localDataObject,
+    remoteDataObject
+  ) => {
+    const mergedReadProgress = mergeReadProgressMaps(
+      localDataObject?.data?.read_progress,
+      remoteDataObject?.data?.read_progress
+    );
+    const mergedData = {
+      ...(isObjectRecord(localDataObject?.data)
+        ? localDataObject.data
+        : sanitizeRecordObject(remoteDataObject?.data)),
+      read_progress: mergedReadProgress,
+    };
+    const mergedLastUpdated = Math.max(
+      Number(localDataObject?.lastUpdated) || 0,
+      Number(remoteDataObject?.lastUpdated) || 0,
+      Date.now()
+    );
+    const mergedContentHash = await calculateDataHash(mergedData);
+    return {
+      payload: {
+        version: 5.0,
+        lastUpdated: mergedLastUpdated,
+        lastUpdatedFormatted: new Date(mergedLastUpdated).toLocaleString(
+          "zh-CN",
+          { hour12: false }
+        ),
+        data: mergedData,
+        contentHash: mergedContentHash,
+        baseContentHash: localDataObject?.baseContentHash || null,
+      },
+      contentHash: mergedContentHash,
+    };
   };
   const buildComparableDataWithoutReadProgress = (dataObject) => {
     const sourceData = isObjectRecord(dataObject) ? dataObject : {};
@@ -16388,10 +16473,12 @@
         break;
 
       case "success":
-        if (isAutoPullRefreshAction(result.action)) {
-          applyAutoPullRefreshPolicy({
-            action: result.action,
-            reason: "background_auto_pull",
+        if (shouldApplyAutoPullRefreshForSyncResult(result)) {
+          applyRefreshPolicyForSyncResult(result, {
+            reason:
+              result.action === "merged_read_progress"
+                ? "background_merge_refresh"
+                : "background_auto_pull",
             messages: getAutoPullRefreshMessagesForSource(
               "background",
               result.action
@@ -17064,34 +17151,11 @@
             console.warn(
               "S1 Plus (Sync): 检测到仅阅读进度分歧，正在执行自动合并并回写云端。"
             );
-            const mergedReadProgress = mergeReadProgressMaps(
-              localDataObject.data?.read_progress,
-              remote.data?.read_progress
-            );
-            const mergedData = {
-              ...localDataObject.data,
-              read_progress: mergedReadProgress,
-            };
-            const mergedLastUpdated = Math.max(
-              Number(localDataObject.lastUpdated) || 0,
-              Number(remote.lastUpdated) || 0,
-              Date.now()
-            );
-            const mergedContentHash = await runWithAutoSyncLockGuard(
-              "calc_merged_content_hash",
-              () => calculateDataHash(mergedData)
-            );
-            const mergedPayload = {
-              version: 5.0,
-              lastUpdated: mergedLastUpdated,
-              lastUpdatedFormatted: new Date(mergedLastUpdated).toLocaleString(
-                "zh-CN",
-                { hour12: false }
-              ),
-              data: mergedData,
-              contentHash: mergedContentHash,
-              baseContentHash: localDataObject.baseContentHash,
-            };
+            const { payload: mergedPayload, contentHash: mergedContentHash } =
+              await runWithAutoSyncLockGuard(
+                "build_merged_read_progress_payload",
+                () => buildMergedReadProgressPayload(localDataObject, remote)
+              );
 
             const pushResult = await runWithAutoSyncLockGuard(
               "push_merged_read_progress",
@@ -17337,6 +17401,110 @@
     }
   };
 
+  const clearForegroundRemoteSyncRetry = () => {
+    if (foregroundRemoteSyncRetryTimer) {
+      clearTimeout(foregroundRemoteSyncRetryTimer);
+      foregroundRemoteSyncRetryTimer = null;
+    }
+    foregroundRemoteSyncRetryAttempts = 0;
+    foregroundRemoteSyncRetryReason = "";
+  };
+
+  const isForegroundRemoteSyncRetryableSkipResult = (syncResult) =>
+    Boolean(
+      syncResult &&
+      typeof syncResult === "object" &&
+      syncResult.status === "skipped" &&
+      (
+        syncResult.reason === "startup_lock_unavailable" ||
+        syncResult.reason === "foreground_sync_in_flight" ||
+        syncResult.reason === "lock_lost"
+      )
+    );
+
+  const scheduleForegroundRemoteSyncRetry = (reason = "remote_probe_retry") => {
+    if (document.visibilityState !== "visible") {
+      clearForegroundRemoteSyncRetry();
+      return { status: "suppressed", reason: "document_hidden" };
+    }
+    const normalizedReason =
+      normalizeRemoteProbeText(reason, 120) || "remote_probe_retry";
+    if (
+      foregroundRemoteSyncRetryTimer &&
+      foregroundRemoteSyncRetryReason === normalizedReason
+    ) {
+      return {
+        status: "already_scheduled",
+        attempt: foregroundRemoteSyncRetryAttempts,
+        reason: normalizedReason,
+      };
+    }
+    if (getActiveAutoSyncConflictPause()) {
+      clearForegroundRemoteSyncRetry();
+      return { status: "suppressed", reason: "conflict_paused" };
+    }
+    if (foregroundRemoteSyncRetryAttempts >= FOREGROUND_REMOTE_SYNC_RETRY_MAX_ATTEMPTS) {
+      console.warn(
+        "S1 Plus: 前台远端检查补偿重试达到上限，将等待下一次前台探测触发。"
+      );
+      clearForegroundRemoteSyncRetry();
+      return { status: "dropped", reason: "retry_limit_reached" };
+    }
+    const retryDelayMs = Math.min(
+      FOREGROUND_REMOTE_SYNC_RETRY_MAX_DELAY_MS,
+      FOREGROUND_REMOTE_SYNC_RETRY_BASE_DELAY_MS *
+        2 ** foregroundRemoteSyncRetryAttempts
+    );
+    foregroundRemoteSyncRetryAttempts += 1;
+    foregroundRemoteSyncRetryReason = normalizedReason;
+    setAutoSyncIndicatorPendingPhase("foreground_followup_retry");
+
+    if (foregroundRemoteSyncRetryTimer) {
+      clearTimeout(foregroundRemoteSyncRetryTimer);
+    }
+    foregroundRemoteSyncRetryTimer = setTimeout(async () => {
+      foregroundRemoteSyncRetryTimer = null;
+      if (document.visibilityState !== "visible") {
+        clearForegroundRemoteSyncRetry();
+        return;
+      }
+
+      try {
+        const syncResult = await requestForegroundRemoteSyncCheck(
+          normalizedReason
+        );
+        if (isForegroundRemoteSyncRetryableSkipResult(syncResult)) {
+          scheduleForegroundRemoteSyncRetry(normalizedReason);
+          return;
+        }
+
+        clearForegroundRemoteSyncRetry();
+        applyRefreshPolicyForSyncResult(syncResult, {
+          reason: `foreground_retry:${normalizedReason}`,
+        });
+        maybeShowForegroundProbeFeedback(
+          { status: "changed", syncRequestResult: syncResult },
+          {
+            triggerReason: normalizedReason,
+          }
+        );
+      } catch (error) {
+        console.error(
+          `S1 Plus: 前台远端检查补偿重试失败(${normalizedReason}):`,
+          error
+        );
+        clearForegroundRemoteSyncRetry();
+      }
+    }, retryDelayMs);
+
+    return {
+      status: "scheduled",
+      retryAfterMs: retryDelayMs,
+      attempt: foregroundRemoteSyncRetryAttempts,
+      reason: normalizedReason,
+    };
+  };
+
   const checkRemoteFreshnessOnForeground = async (
     reason = "visibility",
     overrides = {}
@@ -17490,10 +17658,16 @@
         `remote_probe_changed:${normalizedReason}`,
         overrides.requestForegroundRemoteSyncCheckOverrides || {}
       );
+      if (isForegroundRemoteSyncRetryableSkipResult(syncRequestResult)) {
+        scheduleForegroundRemoteSyncRetry(
+          `remote_probe_changed:${normalizedReason}`
+        );
+      } else {
+        clearForegroundRemoteSyncRetry();
+      }
       let refreshPlan = null;
       if (shouldApplyAutoPullRefreshForSyncResult(syncRequestResult)) {
-        refreshPlan = applyAutoPullRefreshPolicy({
-          action: syncRequestResult.action,
+        refreshPlan = applyRefreshPolicyForSyncResult(syncRequestResult, {
           reason: `foreground_probe:${normalizedReason}`,
           showMessage: overrides.showMessage,
           locationObject: overrides.locationObject,
@@ -26644,26 +26818,36 @@
                 return resolve(false);
               }
             } else {
-              const currentThreadLocalProgress = localDataObject.data
-                .read_progress
-                ? localDataObject.data.read_progress[currentThreadId]
-                : undefined;
               showMessage("智能同步：正在合并云端数据与当前阅读进度...", null);
+              const { payload: mergedPayload, contentHash: mergedContentHash } =
+                await runWithManualSyncLockGuard(
+                  "build_smart_merge_pull_payload",
+                  () => buildMergedReadProgressPayload(localDataObject, remote)
+                );
+              const pushResult = await runWithManualSyncLockGuard(
+                "push_smart_merge_pull_payload",
+                () =>
+                  pushRemoteData(mergedPayload, {
+                    expectedRemoteUpdatedAt: remoteMetaUpdatedAt,
+                  })
+              );
               assertManualSyncLockOwned("smart_merge_pull_import");
-              importLocalData(JSON.stringify(remote.full), {
+              importLocalData(JSON.stringify(mergedPayload), {
                 suppressPostSync: true,
               });
-              if (currentThreadLocalProgress) {
-                const progress = { ...getReadProgress() };
-                progress[currentThreadId] = { ...currentThreadLocalProgress };
-                saveReadProgress(progress);
-              }
               GM_setValue("s1p_last_sync_timestamp", Date.now());
               noteManualSuccess("smart_merge_pull", {
-                contentHash: remote.contentHash,
-                remoteUpdatedAt: remoteMetaUpdatedAt || null,
+                contentHash: mergedContentHash,
+                remoteUpdatedAt: pushResult?.updatedAt || null,
               });
-              showMessage("智能同步成功！已保留当前帖子的最新阅读进度。", true);
+              applyAutoPullRefreshPolicy({
+                action: "merged_read_progress",
+                reason: "manual_smart_merge_pull",
+                messages: createAutoPullRefreshMessages(
+                  "智能同步成功！已保留并合并最新阅读进度。正在刷新页面...",
+                  "智能同步成功！已保留并合并最新阅读进度。"
+                ),
+              });
               return resolve(true);
             }
           }
@@ -30539,9 +30723,8 @@
 
     switch (result.status) {
       case "success":
-        if (isAutoPullRefreshAction(result.action)) {
-          applyAutoPullRefreshPolicy({
-            action: result.action,
+        if (shouldApplyAutoPullRefreshForSyncResult(result)) {
+          applyRefreshPolicyForSyncResult(result, {
             reason: "per_load_auto_pull",
           });
           return true;
@@ -30602,13 +30785,14 @@
 
     switch (result.status) {
       case "success":
-        if (isAutoPullRefreshAction(result.action)) {
-          applyAutoPullRefreshPolicy({
-            action: result.action,
+        if (shouldApplyAutoPullRefreshForSyncResult(result)) {
+          applyRefreshPolicyForSyncResult(result, {
             reason:
               result.action === "force_pulled"
                 ? "daily_startup_force_pull"
-                : "daily_startup_pull",
+                : result.action === "merged_read_progress"
+                  ? "daily_startup_merged_read_progress"
+                  : "daily_startup_pull",
             messages: getAutoPullRefreshMessagesForSource(
               "daily",
               result.action
