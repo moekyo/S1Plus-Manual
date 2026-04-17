@@ -76,7 +76,7 @@ const testSourceAwareTitlesAndMappings = () => {
       displayPhase: "pending",
       displaySource: "background",
     }),
-    "自动同步：后台同步待处理"
+    "自动同步：后台自动同步待处理"
   );
   assert.strictEqual(
     hooks.getAutoSyncIndicatorTitle({
@@ -90,7 +90,7 @@ const testSourceAwareTitlesAndMappings = () => {
       displayPhase: "running",
       displaySource: "foreground_followup",
     }),
-    "自动同步：前台发现更新，正在同步"
+    "自动同步：回到前台检查命中更新，正在同步"
   );
   assert.strictEqual(
     hooks.getAutoSyncIndicatorPhaseFromResult({
@@ -153,8 +153,8 @@ const testAutoSyncEntryPointsBindIndicatorSources = () => {
     "每次页面加载同步检查未绑定 per_load 指示器来源。"
   );
   expectMatch(
-    /const requestForegroundRemoteSyncCheck = async[\s\S]*?runStartupModeAutoSyncCheckWithIndicator\(\{\s*source:\s*AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_FOLLOWUP/m,
-    "前台 follow-up sync 未绑定 foreground_followup 指示器来源。"
+    /const requestForegroundRemoteSyncCheck = async[\s\S]*?runForegroundFollowUpAutoSyncCheckWithIndicator\(\{\s*source:\s*resolvedSource/m,
+    "前台 follow-up sync 未绑定专用 foreground_followup 指示器 helper。"
   );
 };
 

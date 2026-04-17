@@ -10,7 +10,7 @@ const {
 
 const createHarness = () => {
   return createBaseHarness({
-    hookErrorMessage: "未能从 S1Plus.js 暴露 Phase 6 测试钩子。",
+    hookErrorMessage: "未能从 S1Plus.js 暴露 Phase 3 测试钩子。",
   });
 };
 
@@ -65,6 +65,63 @@ const testRuntimeReusesStartupExecutionPath = async () => {
   assert.deepStrictEqual(toPlainObject(result), {
     status: "success",
     action: "pulled",
+  });
+};
+
+const testForegroundFollowUpUsesDedicatedExecutionMode = async () => {
+  const { hooks } = createHarness();
+  const calls = [];
+
+  const result = await hooks.runForegroundFollowUpAutoSyncCheck({
+    acquireStartupSyncLock: async () => {
+      calls.push("acquire");
+      return true;
+    },
+    startStartupSyncLockHeartbeat: () => {
+      calls.push("heartbeat:start");
+    },
+    stopStartupSyncLockHeartbeat: () => {
+      calls.push("heartbeat:stop");
+    },
+    releaseStartupSyncLock: () => {
+      calls.push("release");
+    },
+    beforePerform: async () => {
+      calls.push("beforePerform");
+      return null;
+    },
+    onBeforePerform: async () => {
+      calls.push("onBeforePerform");
+    },
+    onAfterRelease: async () => {
+      calls.push("afterRelease");
+    },
+    performAutoSync: async (options) => {
+      calls.push(
+        `perform:${options.mode}:${options.syncLockMode}:${options.triggerSource}`
+      );
+      return {
+        status: "blocked",
+        blockLevel: "soft",
+        reason: "local_changed_during_sync",
+      };
+    },
+  });
+
+  assert.deepStrictEqual(calls, [
+    "acquire",
+    "heartbeat:start",
+    "beforePerform",
+    "onBeforePerform",
+    "perform:foreground_followup:startup:foreground_resume",
+    "heartbeat:stop",
+    "release",
+    "afterRelease",
+  ]);
+  assert.deepStrictEqual(toPlainObject(result), {
+    status: "blocked",
+    blockLevel: "soft",
+    reason: "local_changed_during_sync",
   });
 };
 
@@ -140,10 +197,53 @@ const testLockUnavailableSkipsWithoutHeartbeat = async () => {
   });
 };
 
-const testPhase6CallSitesUseSharedHelper = () => {
+const testDecisionSplitsStartupBackgroundAndForegroundFollowUp = () => {
+  const { hooks } = createHarness();
+  hooks.setSyncBaselineState({
+    contentHash: "baseline",
+    remoteUpdatedAt: "2026-04-11T12:30:00Z",
+  });
+
+  const localDataObject = {
+    contentHash: "local-newer",
+    lastUpdated: 200,
+  };
+  const remoteDataObject = {
+    contentHash: "baseline",
+    lastUpdated: 100,
+  };
+
+  const startupDecision = hooks.decideSyncActionByVersion({
+    localDataObject,
+    remoteDataObject,
+    remoteUpdatedAt: "2026-04-11T12:30:00Z",
+    syncMode: "startup",
+  });
+  const backgroundDecision = hooks.decideSyncActionByVersion({
+    localDataObject,
+    remoteDataObject,
+    remoteUpdatedAt: "2026-04-11T12:30:00Z",
+    syncMode: "background",
+  });
+  const foregroundDecision = hooks.decideSyncActionByVersion({
+    localDataObject,
+    remoteDataObject,
+    remoteUpdatedAt: "2026-04-11T12:30:00Z",
+    syncMode: "foreground_followup",
+  });
+
+  assert.equal(startupDecision.action, "skip_push_on_startup");
+  assert.equal(backgroundDecision.action, "push");
+  assert.equal(
+    foregroundDecision.action,
+    "skip_push_on_foreground_followup"
+  );
+};
+
+const testPhase3CallSitesUseDedicatedHelpers = () => {
   expectMatch(
-    /const requestForegroundRemoteSyncCheck = async[\s\S]*?runStartupModeAutoSyncCheckWithIndicator\(\{/m,
-    "前台 follow-up sync 入口未复用统一的启动安全同步 helper。"
+    /const requestForegroundRemoteSyncCheck = async[\s\S]*?runForegroundFollowUpAutoSyncCheckWithIndicator\(\{/m,
+    "前台 follow-up sync 入口未切到专用 foreground_followup helper。"
   );
   expectMatch(
     /const handlePerLoadSyncCheck = async[\s\S]*?runStartupModeAutoSyncCheckWithIndicator\(\{/m,
@@ -157,11 +257,13 @@ const testPhase6CallSitesUseSharedHelper = () => {
 
 (async () => {
   await testRuntimeReusesStartupExecutionPath();
+  await testForegroundFollowUpUsesDedicatedExecutionMode();
   await testBeforePerformCanShortCircuitSafely();
   await testLockUnavailableSkipsWithoutHeartbeat();
-  testPhase6CallSitesUseSharedHelper();
+  testDecisionSplitsStartupBackgroundAndForegroundFollowUp();
+  testPhase3CallSitesUseDedicatedHelpers();
 
-  console.log("[safe-sync-execution] Phase 6 startup-path reuse verified.");
+  console.log("[safe-sync-execution] Phase 3 sync execution layering verified.");
 })().catch((error) => {
   console.error(error);
   process.exitCode = 1;

@@ -12,7 +12,7 @@ const createHarness = () => {
   return createBaseHarness({
     href: "https://stage1st.com/2b/forum-1-1.html",
     search: "",
-    hookErrorMessage: "未能从 S1Plus.js 暴露 Phase 8 测试钩子。",
+    hookErrorMessage: "未能从 S1Plus.js 暴露前台探测测试钩子。",
   });
 };
 
@@ -30,19 +30,27 @@ const expectMatch = (pattern, message) => {
 const testStaticWiring = () => {
   expectMatch(
     /lastProbeTimestamp:\s*0,/m,
-    "Phase 8 未扩展同步诊断默认字段中的 lastProbeTimestamp。"
+    "Phase 7 未扩展同步诊断默认字段中的 lastProbeTimestamp。"
   );
   expectMatch(
     /lastProbeTriggeredSyncResult:\s*""/m,
-    "Phase 8 未扩展同步诊断默认字段中的 lastProbeTriggeredSyncResult。"
+    "Phase 7 未扩展同步诊断默认字段中的 lastProbeTriggeredSyncResult。"
   );
   expectMatch(
     /"最近探测远端版本"/m,
-    "Phase 8 未将探测诊断字段接入同步诊断面板。"
+    "Phase 7 未将探测诊断字段接入同步诊断面板。"
   );
   expectMatch(
-    /检测到云端有更新，但本地也有未处理改动。为保护数据，已暂停自动拉取，请手动同步。/m,
-    "Phase 8 未新增“本地改动阻止自动拉取”的低打扰提示语。"
+    /lastSyncResultCode:\s*""/m,
+    "Phase 7 未扩展同步诊断默认字段中的 lastSyncResultCode。"
+  );
+  expectMatch(
+    /"最近结果码"/m,
+    "Phase 7 未将结果码接入同步诊断面板。"
+  );
+  expectMatch(
+    /const getForegroundFollowUpSoftBlockState = \(\) =>/m,
+    "Phase 3 未暴露前台 follow-up soft block 状态辅助函数。"
   );
 };
 
@@ -73,24 +81,31 @@ const testUnchangedProbeUpdatesDiagnosticsQuietly = async () => {
 
   assert.equal(result.status, "unchanged");
   assert.equal(messages.length, 0, "未变化场景应保持静默。");
-  assert.deepStrictEqual(toPlainObject(hooks.getSyncDiagnostics()), {
-    lastAttemptTimestamp: 0,
-    lastSuccessTimestamp: 0,
-    lastFailureTimestamp: 0,
-    lastFailureReason: "",
-    consecutiveFailureCount: 0,
-    lastActionType: "",
-    lastConflictTimestamp: 0,
-    lastProbeTimestamp: now,
-    lastProbeRemoteUpdatedAt: "2026-04-11T12:30:00Z",
-    lastSyncedRemoteUpdatedAt: "2026-04-11T12:30:00Z",
-    lastProbeResult: "unchanged",
-    lastProbeTriggeredSync: false,
-    lastProbeTriggeredSyncResult: "",
-  });
+  const diagnostics = toPlainObject(hooks.getSyncDiagnostics());
+  assert.equal(diagnostics.lastAttemptTimestamp, 0);
+  assert.equal(diagnostics.lastSuccessTimestamp, 0);
+  assert.equal(diagnostics.lastFailureTimestamp, 0);
+  assert.equal(diagnostics.lastConflictTimestamp, 0);
+  assert.equal(diagnostics.lastProbeTimestamp, now);
+  assert.equal(diagnostics.lastProbeRemoteUpdatedAt, "2026-04-11T12:30:00Z");
+  assert.equal(diagnostics.lastSyncedRemoteUpdatedAt, "2026-04-11T12:30:00Z");
+  assert.equal(diagnostics.lastProbeResult, "unchanged");
+  assert.equal(diagnostics.lastProbeTriggeredSync, false);
+  assert.equal(diagnostics.lastProbeTriggeredSyncResult, "");
+  assert.equal(diagnostics.lastTriggerSource, "foreground_resume");
+  assert.equal(diagnostics.lastPageVisibility, "visible");
+  assert.match(diagnostics.lastTabId, /^s1p_tab_/);
+  assert.equal(diagnostics.lastBaselineHash, "baseline-hash");
+  assert.equal(diagnostics.lastSyncResultKind, "probe");
+  assert.equal(diagnostics.lastSyncResultCode, "unchanged");
+  assert.equal(diagnostics.lastSyncBlockKind, "");
+  assert.equal(diagnostics.lastSyncBlockReason, "");
+  assert.equal(diagnostics.lastCleanupSource, "");
+  assert.equal(diagnostics.lastPendingCleanupCount, 0);
+  assert.equal(diagnostics.lastHadConfirmedVisiblePost, false);
 };
 
-const testChangedRemoteBlockedByLocalChangesShowsFeedback = async () => {
+const testChangedRemoteBlockedByLocalChangesStaysQuietAndRecordsSoftBlock = async () => {
   const { hooks } = createHarness();
   hooks.setSyncBaselineState({
     contentHash: "baseline-hash",
@@ -111,16 +126,18 @@ const testChangedRemoteBlockedByLocalChangesShowsFeedback = async () => {
       },
     }),
     requestForegroundRemoteSyncCheck: async () => ({
-      status: "success",
-      action: "skipped_push_on_startup",
+      status: "blocked",
+      blockLevel: "soft",
       reason: "local_changed_during_sync",
     }),
   });
 
   assert.equal(result.status, "changed");
-  assert.equal(messages.length, 1, "本地改动阻止自动拉取时应提示用户。");
-  assert.match(messages[0].message, /本地也有未处理改动/);
-  assert.equal(messages[0].isSuccess, false);
+  assert.equal(
+    messages.length,
+    0,
+    "Phase 3 的 soft block 不应再把前台局部脏状态升级成高打扰提示。"
+  );
 
   const diagnostics = toPlainObject(hooks.getSyncDiagnostics());
   assert.equal(diagnostics.lastProbeTimestamp, now);
@@ -130,8 +147,13 @@ const testChangedRemoteBlockedByLocalChangesShowsFeedback = async () => {
   assert.equal(diagnostics.lastProbeTriggeredSync, true);
   assert.equal(
     diagnostics.lastProbeTriggeredSyncResult,
-    "success:skipped_push_on_startup:local_changed_during_sync"
+    "blocked:soft:local_changed_during_sync"
   );
+  assert.equal(diagnostics.lastTriggerSource, "foreground_resume");
+  assert.equal(diagnostics.lastSyncResultKind, "blocked");
+  assert.equal(diagnostics.lastSyncResultCode, "local_changed_during_sync");
+  assert.equal(diagnostics.lastSyncBlockKind, "soft");
+  assert.equal(diagnostics.lastSyncBlockReason, "local_changed_during_sync");
 };
 
 const testSharedCooldownRecordsDiagnosticsAndStaysQuietDuringPolling = async () => {
@@ -166,6 +188,9 @@ const testSharedCooldownRecordsDiagnosticsAndStaysQuietDuringPolling = async () 
   assert.equal(diagnostics.lastProbeResult, "throttled_shared_cooldown");
   assert.equal(diagnostics.lastProbeRemoteUpdatedAt, "2026-04-11T12:45:00Z");
   assert.equal(diagnostics.lastProbeTriggeredSync, false);
+  assert.equal(diagnostics.lastTriggerSource, "visible_poll");
+  assert.equal(diagnostics.lastSyncResultKind, "probe");
+  assert.equal(diagnostics.lastSyncResultCode, "throttled_shared_cooldown");
 };
 
 const testActiveSyncSkipStaysQuiet = async () => {
@@ -194,6 +219,7 @@ const testActiveSyncSkipStaysQuiet = async () => {
   assert.equal(messages.length, 0, "已有同步任务时自动检查应保持静默。");
 
   const diagnosticsText = hooks.buildSyncDiagnosticsSummary();
+  assert.match(diagnosticsText, /最近结果码: skipped_active_sync/);
   assert.match(diagnosticsText, /最近探测结果: skipped_active_sync/);
   assert.match(diagnosticsText, /探测是否触发安全同步: 否/);
 };
@@ -218,17 +244,19 @@ const testProbeExecutionFailureStillRecordsDiagnostics = async () => {
   assert.equal(diagnostics.lastProbeResult, "failure_probe_execution_error");
   assert.equal(diagnostics.lastProbeTriggeredSync, false);
   assert.equal(diagnostics.lastProbeTriggeredSyncResult, "");
+  assert.equal(diagnostics.lastSyncResultKind, "probe");
+  assert.equal(diagnostics.lastSyncResultCode, "failure_probe_execution_error");
 };
 
 (async () => {
   testStaticWiring();
   await testUnchangedProbeUpdatesDiagnosticsQuietly();
-  await testChangedRemoteBlockedByLocalChangesShowsFeedback();
+  await testChangedRemoteBlockedByLocalChangesStaysQuietAndRecordsSoftBlock();
   await testSharedCooldownRecordsDiagnosticsAndStaysQuietDuringPolling();
   await testActiveSyncSkipStaysQuiet();
   await testProbeExecutionFailureStillRecordsDiagnostics();
 
-  console.log("[foreground-probe-diagnostics-feedback] Phase 8 diagnostics and feedback verified.");
+  console.log("[foreground-probe-diagnostics-feedback] Phase 7 diagnostics and feedback verified.");
 })().catch((error) => {
   console.error(error);
   process.exitCode = 1;

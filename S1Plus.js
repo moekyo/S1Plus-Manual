@@ -621,8 +621,10 @@
   let pendingAutoPullReloadTimer = null;
   let pendingAutoPullReloadReason = "";
   let foregroundRemoteSyncRetryTimer = null;
+  let foregroundRemoteSyncRetryDueAt = 0;
   let foregroundRemoteSyncRetryAttempts = 0;
   let foregroundRemoteSyncRetryReason = "";
+  let foregroundFollowUpSoftBlockState = null;
   let lastForegroundProbeFeedbackState = {
     key: "",
     timestamp: 0,
@@ -735,8 +737,24 @@
   const AUTO_SYNC_FAILURE_COUNT_KEY = "s1p_auto_sync_failure_count";
   const AUTO_SYNC_CIRCUIT_OPEN_UNTIL_KEY = "s1p_auto_sync_circuit_open_until";
   const AUTO_SYNC_CONFLICT_PAUSE_KEY = "s1p_auto_sync_conflict_pause";
+  const PENDING_CLEANUP_INFO_KEY = "s1p_pending_cleanup_info";
   const PENDING_AUTO_SYNC_KEY = "s1p_pending_auto_sync_request";
   const DEFERRED_STARTUP_SYNC_KEY = "s1p_deferred_startup_sync";
+  const SYNC_TRIGGER_SOURCE_DAILY_STARTUP = "daily_startup";
+  const SYNC_TRIGGER_SOURCE_PER_LOAD = "per_load";
+  const SYNC_TRIGGER_SOURCE_PAGE_LOAD_VISIBLE = "page_load_visible";
+  const SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME = "foreground_resume";
+  const SYNC_TRIGGER_SOURCE_VISIBLE_POLL = "visible_poll";
+  const SYNC_TRIGGER_SOURCE_BACKGROUND_PUSH = "background_push";
+  const SYNC_TRIGGER_SOURCE_MANUAL_SYNC = "manual_sync";
+  const AUTO_SYNC_MODE_BACKGROUND = "background";
+  const AUTO_SYNC_MODE_STARTUP = "startup";
+  const AUTO_SYNC_MODE_FOREGROUND_FOLLOWUP = "foreground_followup";
+  const FOREGROUND_FOLLOWUP_SOFT_BLOCK_SCOPE_TAB = "tab";
+  const FOREGROUND_FOLLOWUP_SOFT_BLOCK_SCOPE_THREAD = "thread";
+  const LEGACY_AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND = "background";
+  const LEGACY_AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_FOLLOWUP =
+    "foreground_followup";
   const AUTO_SYNC_INDICATOR_STATE_KEY = "s1p_auto_sync_indicator_state";
   const AUTO_SYNC_INDICATOR_PHASE_IDLE = "idle";
   const AUTO_SYNC_INDICATOR_PHASE_PENDING = "pending";
@@ -744,11 +762,19 @@
   const AUTO_SYNC_INDICATOR_PHASE_SUCCESS = "success";
   const AUTO_SYNC_INDICATOR_PHASE_FAILURE = "failure";
   const AUTO_SYNC_INDICATOR_PHASE_CONFLICT = "conflict";
-  const AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND = "background";
-  const AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP = "daily_startup";
-  const AUTO_SYNC_INDICATOR_SOURCE_PER_LOAD = "per_load";
-  const AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_FOLLOWUP =
-    "foreground_followup";
+  const AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND =
+    SYNC_TRIGGER_SOURCE_BACKGROUND_PUSH;
+  const AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP =
+    SYNC_TRIGGER_SOURCE_DAILY_STARTUP;
+  const AUTO_SYNC_INDICATOR_SOURCE_PER_LOAD = SYNC_TRIGGER_SOURCE_PER_LOAD;
+  const AUTO_SYNC_INDICATOR_SOURCE_PAGE_LOAD_VISIBLE =
+    SYNC_TRIGGER_SOURCE_PAGE_LOAD_VISIBLE;
+  const AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME =
+    SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME;
+  const AUTO_SYNC_INDICATOR_SOURCE_VISIBLE_POLL =
+    SYNC_TRIGGER_SOURCE_VISIBLE_POLL;
+  const AUTO_SYNC_INDICATOR_SOURCE_MANUAL_SYNC =
+    SYNC_TRIGGER_SOURCE_MANUAL_SYNC;
   const AUTO_SYNC_INDICATOR_PENDING_STALE_MS = 90 * 1000;
   const AUTO_SYNC_INDICATOR_SUCCESS_TTL_MS = 2 * 60 * 1000;
   const AUTO_SYNC_INDICATOR_FAILURE_TTL_MS = 5 * 60 * 1000;
@@ -778,8 +804,26 @@
   const AUTO_SYNC_CIRCUIT_OPEN_DURATION_MS = 10 * 60 * 1000;
   const FOREGROUND_PROBE_FEEDBACK_COOLDOWN_MS = 15 * 1000;
   const FOREGROUND_REMOTE_SYNC_RETRY_BASE_DELAY_MS = 1200;
-  const FOREGROUND_REMOTE_SYNC_RETRY_MAX_DELAY_MS = 10 * 1000;
+  const FOREGROUND_REMOTE_SYNC_RETRY_MAX_DELAY_MS = 30 * 1000;
   const FOREGROUND_REMOTE_SYNC_RETRY_MAX_ATTEMPTS = 6;
+  const FOREGROUND_REMOTE_SYNC_RETRY_SETTLE_BUFFER_MS = 300;
+  const FOREGROUND_PROBE_INITIALIZATION_NOISE_GRACE_MS = 8 * 1000;
+  const FOREGROUND_PROBE_SOFT_BLOCK_REASON_PENDING_WRITE =
+    "read_progress_pending_write";
+  const FOREGROUND_PROBE_SOFT_BLOCK_REASON_SYNC_DEBOUNCE =
+    "read_progress_sync_debounce";
+  const FOREGROUND_PROBE_SOFT_BLOCK_REASON_INITIALIZATION_NOISE =
+    "read_progress_initialization_noise";
+  const CLEANUP_PROVENANCE_SOURCE_AUTO_EXPIRE = "auto_expire_cleanup";
+  const CLEANUP_PROVENANCE_SOURCE_MANUAL_SINGLE = "manual_single_delete";
+  const CLEANUP_PROVENANCE_SOURCE_MANUAL_GROUP = "manual_group_delete";
+  const CLEANUP_PROVENANCE_SOURCE_LEGACY_COUNT = "legacy_count_only";
+  const CLEANUP_SHORTCUT_ALLOWED_SOURCES = new Set([
+    CLEANUP_PROVENANCE_SOURCE_AUTO_EXPIRE,
+    CLEANUP_PROVENANCE_SOURCE_MANUAL_SINGLE,
+    CLEANUP_PROVENANCE_SOURCE_MANUAL_GROUP,
+  ]);
+  const CLEANUP_PROVENANCE_TTL_MS = 2 * 60 * 60 * 1000;
   // 当时间戳相差过大时，不再自动依据“谁大谁新”做决策，转为冲突保护。
   const SYNC_TIMESTAMP_SKEW_TOLERANCE_MS = 12 * 60 * 60 * 1000;
   // 启动同步仅做一个很短的延时，让页面先完成首轮初始化，
@@ -806,10 +850,22 @@
   const NARROW_SCREEN_MAX_WIDTH_PX = 909;
   // 列表页阅读按钮悬停超过该时长后显示删除入口。
   const READ_PROGRESS_DELETE_REVEAL_DELAY_MS = 1 * 1000;
-  // 帖子页阅读进度持久化防抖：以内存批量累积为主，隐藏/卸载前强制落盘。
+  // 线程页至少稳定停留这么久，才把当前可见楼层视作真实阅读。
+  const READ_PROGRESS_CONFIRM_VISIBLE_MS = 1500;
+  // 帖子页阅读进度持久化防抖：以内存批量累积为主，隐藏/卸载前仅提交已确认阅读会话的待写入。
   const READ_PROGRESS_PERSIST_DEBOUNCE_MS = 5 * 1000;
   // 调试开关：开启后输出阅读进度楼层解析与兜底链路日志。
   const READ_PROGRESS_PARSE_DEBUG = false;
+  const READ_PROGRESS_INTERACTION_CONFIRM_KEYS = new Set([
+    "ArrowDown",
+    "ArrowUp",
+    "PageDown",
+    "PageUp",
+    "Home",
+    "End",
+    " ",
+    "Spacebar",
+  ]);
   const GENERIC_TOOLTIP_KIND_COMPACT = "compact";
   const GENERIC_TOOLTIP_KIND_OVERFLOW = "overflow";
   const GENERIC_TOOLTIP_KIND_DOC = "doc";
@@ -6373,6 +6429,20 @@
     lastProbeResult: "",
     lastProbeTriggeredSync: false,
     lastProbeTriggeredSyncResult: "",
+    lastTriggerSource: "",
+    lastPageVisibility: "",
+    lastTabId: "",
+    lastThreadId: "",
+    lastLocalHash: "",
+    lastRemoteHash: "",
+    lastBaselineHash: "",
+    lastCleanupSource: "",
+    lastPendingCleanupCount: 0,
+    lastSyncResultKind: "",
+    lastSyncResultCode: "",
+    lastSyncBlockKind: "",
+    lastSyncBlockReason: "",
+    lastHadConfirmedVisiblePost: false,
   });
   const normalizeSyncDiagnostics = (value) => {
     const source =
@@ -6417,6 +6487,22 @@
         source.lastProbeTriggeredSyncResult,
         220
       ),
+      lastTriggerSource: normalizeText(source.lastTriggerSource, 80),
+      lastPageVisibility: normalizeText(source.lastPageVisibility, 32),
+      lastTabId: normalizeText(source.lastTabId, 80),
+      lastThreadId: normalizeText(source.lastThreadId, 40),
+      lastLocalHash: normalizeText(source.lastLocalHash, 20),
+      lastRemoteHash: normalizeText(source.lastRemoteHash, 20),
+      lastBaselineHash: normalizeText(source.lastBaselineHash, 20),
+      lastCleanupSource: normalizeText(source.lastCleanupSource, 80),
+      lastPendingCleanupCount: normalizeCount(source.lastPendingCleanupCount),
+      lastSyncResultKind: normalizeText(source.lastSyncResultKind, 60),
+      lastSyncResultCode: normalizeText(source.lastSyncResultCode, 160),
+      lastSyncBlockKind: normalizeText(source.lastSyncBlockKind, 60),
+      lastSyncBlockReason: normalizeText(source.lastSyncBlockReason, 160),
+      lastHadConfirmedVisiblePost: normalizeFlag(
+        source.lastHadConfirmedVisiblePost
+      ),
     };
   };
   const getSyncDiagnostics = () => {
@@ -6444,6 +6530,169 @@
 
   const resetSyncDiagnostics = () => {
     GM_setValue(SYNC_DIAGNOSTICS_KEY, { ...SYNC_DIAGNOSTICS_DEFAULT });
+  };
+
+  const normalizeSyncDiagnosticText = (value, maxLength = 120) =>
+    String(value || "")
+      .replace(/\s+/g, " ")
+      .replace(/[<>]/g, "")
+      .slice(0, maxLength);
+
+  const normalizeSyncDiagnosticHash = (value) => {
+    const normalized = String(value || "").trim();
+    return normalized ? normalized.slice(0, 20) : "";
+  };
+
+  const normalizeSyncDiagnosticVisibility = (value) => {
+    const normalized = String(value || "").trim();
+    if (
+      normalized === "visible" ||
+      normalized === "hidden" ||
+      normalized === "prerender"
+    ) {
+      return normalized;
+    }
+    return "";
+  };
+
+  const resolveSyncDiagnosticsThreadId = (threadId = "") => {
+    const explicitThreadId = normalizeNumericId(threadId);
+    if (explicitThreadId) {
+      return explicitThreadId;
+    }
+    const currentThreadId =
+      typeof getCurrentThreadId === "function" ? getCurrentThreadId() : "";
+    return (
+      normalizeNumericId(currentThreadId) ||
+      normalizeNumericId(readProgressContext?.threadId) ||
+      ""
+    );
+  };
+
+  const getSyncDiagnosticsReadProgressGuardState = () =>
+    typeof getReadProgressProbeGuardState === "function"
+      ? getReadProgressProbeGuardState()
+      : null;
+
+  const mergeSyncDiagnosticsContext = (current, options = {}) => {
+    const cleanupInfo = Object.prototype.hasOwnProperty.call(
+      options,
+      "cleanupInfo"
+    )
+      ? normalizePendingCleanupInfo(options.cleanupInfo)
+      : getPendingCleanupInfo();
+    const readProgressGuard = Object.prototype.hasOwnProperty.call(
+      options,
+      "readProgressGuardState"
+    )
+      ? cloneForegroundFollowUpReadProgressGuardState(
+          options.readProgressGuardState
+        )
+      : getSyncDiagnosticsReadProgressGuardState();
+    const baselineState = getSyncBaselineState();
+    const resolvedTriggerSource =
+      normalizeSyncTriggerSource(options.triggerSource, {
+        reason: options.triggerReason,
+      }) ||
+      resolveSyncTriggerSourceFromReasonText(options.triggerReason) ||
+      "";
+
+    return {
+      ...current,
+      lastTriggerSource: Object.prototype.hasOwnProperty.call(
+        options,
+        "triggerSource"
+      ) || Object.prototype.hasOwnProperty.call(options, "triggerReason")
+        ? resolvedTriggerSource
+        : current.lastTriggerSource || "",
+      lastPageVisibility: Object.prototype.hasOwnProperty.call(
+        options,
+        "pageVisibility"
+      )
+        ? normalizeSyncDiagnosticVisibility(options.pageVisibility)
+        : normalizeSyncDiagnosticVisibility(document.visibilityState) ||
+          current.lastPageVisibility ||
+          "",
+      lastTabId: Object.prototype.hasOwnProperty.call(options, "tabId")
+        ? normalizeSyncDiagnosticText(options.tabId, 80)
+        : normalizeSyncDiagnosticText(SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID, 80),
+      lastThreadId: resolveSyncDiagnosticsThreadId(options.threadId),
+      lastLocalHash: Object.prototype.hasOwnProperty.call(options, "localHash")
+        ? normalizeSyncDiagnosticHash(options.localHash)
+        : current.lastLocalHash || "",
+      lastRemoteHash: Object.prototype.hasOwnProperty.call(options, "remoteHash")
+        ? normalizeSyncDiagnosticHash(options.remoteHash)
+        : current.lastRemoteHash || "",
+      lastBaselineHash: Object.prototype.hasOwnProperty.call(
+        options,
+        "baselineHash"
+      )
+        ? normalizeSyncDiagnosticHash(options.baselineHash)
+        : normalizeSyncDiagnosticHash(baselineState?.contentHash) ||
+          current.lastBaselineHash ||
+          "",
+      lastCleanupSource: normalizeCleanupProvenanceSource(options.cleanupSource) ||
+        cleanupInfo?.source ||
+        "",
+      lastPendingCleanupCount: Math.max(
+        0,
+        Math.floor(
+          Number(
+            Object.prototype.hasOwnProperty.call(options, "pendingCleanupCount")
+              ? options.pendingCleanupCount
+              : cleanupInfo?.deletedCount
+          ) || 0
+        )
+      ),
+      lastSyncResultKind: Object.prototype.hasOwnProperty.call(
+        options,
+        "syncResultKind"
+      )
+        ? normalizeSyncDiagnosticText(options.syncResultKind, 60)
+        : current.lastSyncResultKind || "",
+      lastSyncResultCode: Object.prototype.hasOwnProperty.call(
+        options,
+        "syncResultCode"
+      )
+        ? normalizeSyncDiagnosticText(options.syncResultCode, 160)
+        : current.lastSyncResultCode || "",
+      lastSyncBlockKind: Object.prototype.hasOwnProperty.call(
+        options,
+        "syncBlockKind"
+      )
+        ? normalizeSyncDiagnosticText(options.syncBlockKind, 60)
+        : current.lastSyncBlockKind || "",
+      lastSyncBlockReason: Object.prototype.hasOwnProperty.call(
+        options,
+        "syncBlockReason"
+      )
+        ? normalizeSyncDiagnosticText(options.syncBlockReason, 160)
+        : current.lastSyncBlockReason || "",
+      lastHadConfirmedVisiblePost: Object.prototype.hasOwnProperty.call(
+        options,
+        "hadConfirmedVisiblePost"
+      )
+        ? options.hadConfirmedVisiblePost === true
+        : readProgressGuard?.hasConfirmedVisiblePost === true,
+    };
+  };
+
+  const getStableSyncResultCode = ({
+    action = "",
+    reason = "",
+    fallback = "",
+  } = {}) => {
+    const normalizedAction = normalizeRemoteProbeText(action, 120) || "";
+    const normalizedReason = normalizeRemoteProbeText(reason, 160) || "";
+    if (normalizedAction === "skipped_push_on_startup") {
+      return normalizedReason === "local_changed_during_sync"
+        ? "local_changed_during_sync"
+        : "startup_local_newer";
+    }
+    if (normalizedAction === "cleanup_shortcut_push") {
+      return "cleanup_shortcut_applied";
+    }
+    return normalizedAction || normalizedReason || fallback;
   };
 
   const REMOTE_PROBE_INFO_DEFAULT = Object.freeze({
@@ -6646,6 +6895,8 @@
         return "skipped_probe_in_flight";
       case "probe_lock_unavailable":
         return "skipped_probe_lock_unavailable";
+      case "followup_retry_pending":
+        return "skipped_followup_retry_pending";
       case "remote_updated_at_missing":
         return "skipped_remote_metadata_missing";
       default: {
@@ -6671,6 +6922,13 @@
         ? `success:${normalizedAction}:${normalizedReason}`
         : `success:${normalizedAction}`;
     }
+    if (normalizedStatus === "blocked") {
+      const blockLevel =
+        normalizeRemoteProbeText(syncResult.blockLevel, 40) || "soft";
+      const normalizedReason =
+        normalizeRemoteProbeText(syncResult.reason, 120) || "generic";
+      return `blocked:${blockLevel}:${normalizedReason}`;
+    }
     if (normalizedStatus === "failure") {
       const errorText = sanitizeDiagnosticText(syncResult.error || "unknown", 140);
       return `failure:${errorText || "unknown"}`;
@@ -6684,9 +6942,13 @@
     timestamp = Date.now(),
     remoteUpdatedAt = null,
     result = "unknown",
+    probeResult = null,
+    syncRequestResult = null,
     triggeredSync = false,
     triggeredSyncResult = "",
     lastSyncedRemoteUpdatedAt = null,
+    triggerSource = "",
+    triggerReason = "",
   } = {}) => {
     const current = getSyncDiagnostics();
     const latestProbeInfo = getLastRemoteProbeInfo();
@@ -6700,9 +6962,69 @@
       latestProbeInfo.lastSyncedRemoteUpdatedAt ||
       current.lastSyncedRemoteUpdatedAt ||
       "";
+    let nextDiagnostics = mergeSyncDiagnosticsContext(current, {
+      triggerSource,
+      triggerReason,
+      localHash: current.lastLocalHash,
+      remoteHash: current.lastRemoteHash,
+      baselineHash: current.lastBaselineHash,
+    });
+    const normalizedSyncStatus =
+      normalizeRemoteProbeText(syncRequestResult?.status, 40) || "";
+    if (normalizedSyncStatus === "success") {
+      nextDiagnostics = mergeSyncDiagnosticsContext(nextDiagnostics, {
+        syncResultKind: "success",
+        syncResultCode: getStableSyncResultCode({
+          action: syncRequestResult?.action,
+          reason: syncRequestResult?.reason,
+          fallback: "foreground_probe_sync_success",
+        }),
+        syncBlockKind: "",
+        syncBlockReason: "",
+      });
+    } else if (normalizedSyncStatus === "blocked") {
+      const normalizedBlockReason =
+        normalizeRemoteProbeText(syncRequestResult?.reason, 160) ||
+        "foreground_probe_blocked";
+      nextDiagnostics = mergeSyncDiagnosticsContext(nextDiagnostics, {
+        syncResultKind: "blocked",
+        syncResultCode: normalizedBlockReason,
+        syncBlockKind:
+          normalizeRemoteProbeText(syncRequestResult?.blockLevel, 60) || "soft",
+        syncBlockReason: normalizedBlockReason,
+      });
+    } else if (normalizedSyncStatus === "conflict") {
+      const normalizedConflictReason =
+        normalizeRemoteProbeText(syncRequestResult?.reason, 160) ||
+        "foreground_probe_conflict";
+      nextDiagnostics = mergeSyncDiagnosticsContext(nextDiagnostics, {
+        syncResultKind: "conflict",
+        syncResultCode: normalizedConflictReason,
+        syncBlockKind: "hard",
+        syncBlockReason: normalizedConflictReason,
+      });
+    } else if (normalizedSyncStatus === "failure") {
+      nextDiagnostics = mergeSyncDiagnosticsContext(nextDiagnostics, {
+        syncResultKind: "failure",
+        syncResultCode:
+          sanitizeDiagnosticText(syncRequestResult?.error || "unknown", 160) ||
+          "foreground_probe_failure",
+        syncBlockKind: "",
+        syncBlockReason: "",
+      });
+    } else {
+      nextDiagnostics = mergeSyncDiagnosticsContext(nextDiagnostics, {
+        syncResultKind: "probe",
+        syncResultCode:
+          normalizeRemoteProbeText(result, 160) ||
+          getForegroundProbeDiagnosticResult(probeResult),
+        syncBlockKind: "",
+        syncBlockReason: "",
+      });
+    }
 
     saveSyncDiagnostics({
-      ...current,
+      ...nextDiagnostics,
       lastProbeTimestamp: normalizedTimestamp,
       lastProbeRemoteUpdatedAt:
         normalizedRemoteUpdatedAt || current.lastProbeRemoteUpdatedAt || "",
@@ -6797,39 +7119,94 @@
     return diagnostics.lastProbeTriggeredSync ? "是" : "否";
   };
 
+  const formatSyncDiagnosticYesNo = (value) => (value === true ? "是" : "否");
+
+  const formatSyncDiagnosticHashForDisplay = (value) => {
+    const normalized = String(value || "").trim();
+    return normalized || "—";
+  };
+
+  const formatSyncDiagnosticTriggerSource = (source) => {
+    const normalizedSource = normalizeSyncTriggerSource(source);
+    if (!normalizedSource) {
+      return "—";
+    }
+    const sourceLabel = getAutoSyncIndicatorSourceLabel(normalizedSource);
+    if (!sourceLabel || sourceLabel === "自动同步") {
+      return normalizedSource;
+    }
+    return `${sourceLabel} (${normalizedSource})`;
+  };
+
   const sanitizeDiagnosticText = (text, maxLength = 220) =>
     String(text || "")
       .replace(/\s+/g, " ")
       .replace(/[<>]/g, "")
       .slice(0, maxLength);
 
+  const buildSyncDiagnosticsRows = (diagnostics) => [
+    ["最近动作", diagnostics.lastActionType || "—"],
+    ["最近尝试", formatSyncTime(diagnostics.lastAttemptTimestamp)],
+    ["最近成功", formatSyncTime(diagnostics.lastSuccessTimestamp)],
+    ["最近冲突", formatSyncTime(diagnostics.lastConflictTimestamp)],
+    ["最近失败", formatSyncTime(diagnostics.lastFailureTimestamp)],
+    ["连续失败", String(diagnostics.consecutiveFailureCount || 0)],
+    ["最近触发源", formatSyncDiagnosticTriggerSource(diagnostics.lastTriggerSource)],
+    ["页面可见性", diagnostics.lastPageVisibility || "—"],
+    ["标签页 ID", diagnostics.lastTabId || "—"],
+    ["帖子 ID", diagnostics.lastThreadId || "—"],
+    ["最近结果类型", diagnostics.lastSyncResultKind || "—"],
+    ["最近结果码", diagnostics.lastSyncResultCode || "—"],
+    ["最近阻断级别", diagnostics.lastSyncBlockKind || "—"],
+    ["最近阻断原因", diagnostics.lastSyncBlockReason || "—"],
+    ["待处理 cleanup 来源", diagnostics.lastCleanupSource || "—"],
+    ["待处理 cleanup 数量", String(diagnostics.lastPendingCleanupCount || 0)],
+    ["本地哈希", formatSyncDiagnosticHashForDisplay(diagnostics.lastLocalHash)],
+    ["远端哈希", formatSyncDiagnosticHashForDisplay(diagnostics.lastRemoteHash)],
+    [
+      "基线哈希",
+      formatSyncDiagnosticHashForDisplay(diagnostics.lastBaselineHash),
+    ],
+    [
+      "已确认可见楼层",
+      formatSyncDiagnosticYesNo(diagnostics.lastHadConfirmedVisiblePost),
+    ],
+    ["最近探测", formatSyncTime(diagnostics.lastProbeTimestamp)],
+    [
+      "最近探测远端版本",
+      formatRemoteProbeUpdatedAtForDisplay(diagnostics.lastProbeRemoteUpdatedAt),
+    ],
+    [
+      "最近已同步远端版本",
+      formatRemoteProbeUpdatedAtForDisplay(
+        diagnostics.lastSyncedRemoteUpdatedAt
+      ),
+    ],
+    ["最近探测结果", diagnostics.lastProbeResult || "—"],
+    [
+      "探测是否触发安全同步",
+      formatProbeTriggeredSyncForDisplay(diagnostics),
+    ],
+    [
+      "最近探测后同步结果",
+      diagnostics.lastProbeTriggeredSyncResult || "—",
+    ],
+    [
+      "失败原因",
+      diagnostics.lastFailureReason
+        ? sanitizeDiagnosticText(diagnostics.lastFailureReason, 500)
+        : "—",
+    ],
+  ];
+
   const buildSyncDiagnosticsSummary = () => {
     const diagnostics = getSyncDiagnostics();
     const lines = [
       `S1 Plus 同步诊断快照`,
       `版本: ${SCRIPT_VERSION} (${SCRIPT_RELEASE_DATE})`,
-      `最近动作: ${diagnostics.lastActionType || "—"}`,
-      `最近尝试: ${formatSyncTime(diagnostics.lastAttemptTimestamp)}`,
-      `最近成功: ${formatSyncTime(diagnostics.lastSuccessTimestamp)}`,
-      `最近冲突: ${formatSyncTime(diagnostics.lastConflictTimestamp)}`,
-      `最近失败: ${formatSyncTime(diagnostics.lastFailureTimestamp)}`,
-      `连续失败: ${diagnostics.consecutiveFailureCount || 0}`,
-      `最近探测: ${formatSyncTime(diagnostics.lastProbeTimestamp)}`,
-      `最近探测远端版本: ${formatRemoteProbeUpdatedAtForDisplay(
-        diagnostics.lastProbeRemoteUpdatedAt
-      )}`,
-      `最近已同步远端版本: ${formatRemoteProbeUpdatedAtForDisplay(
-        diagnostics.lastSyncedRemoteUpdatedAt
-      )}`,
-      `最近探测结果: ${diagnostics.lastProbeResult || "—"}`,
-      `探测是否触发安全同步: ${formatProbeTriggeredSyncForDisplay(
-        diagnostics
-      )}`,
-      `最近探测后同步结果: ${diagnostics.lastProbeTriggeredSyncResult || "—"}`,
-      `失败原因: ${diagnostics.lastFailureReason
-        ? sanitizeDiagnosticText(diagnostics.lastFailureReason, 500)
-        : "—"
-      }`,
+      ...buildSyncDiagnosticsRows(diagnostics).map(
+        ([label, value]) => `${label}: ${value}`
+      ),
     ];
     return lines.join("\n");
   };
@@ -6837,16 +7214,32 @@
   const recordSyncAttempt = (mode = "background", trigger = "auto") => {
     const current = getSyncDiagnostics();
     saveSyncDiagnostics({
-      ...current,
+      ...mergeSyncDiagnosticsContext(current, {
+        triggerSource: trigger,
+        syncResultKind: "attempt",
+        syncResultCode: normalizeRemoteProbeText(trigger, 160) || "attempt",
+        syncBlockKind: "",
+        syncBlockReason: "",
+      }),
       lastAttemptTimestamp: Date.now(),
       lastActionType: `${mode}:${trigger}:attempt`,
     });
   };
 
-  const recordSyncSuccess = (action, mode = "background") => {
+  const recordSyncSuccess = (action, mode = "background", options = {}) => {
     const current = getSyncDiagnostics();
     saveSyncDiagnostics({
-      ...current,
+      ...mergeSyncDiagnosticsContext(current, {
+        ...options,
+        syncResultKind: "success",
+        syncResultCode: getStableSyncResultCode({
+          action,
+          reason: options.reason,
+          fallback: "success",
+        }),
+        syncBlockKind: "",
+        syncBlockReason: "",
+      }),
       lastSuccessTimestamp: Date.now(),
       consecutiveFailureCount: 0,
       lastFailureReason: "",
@@ -6854,10 +7247,16 @@
     });
   };
 
-  const recordSyncFailure = (reason, mode = "background") => {
+  const recordSyncFailure = (reason, mode = "background", options = {}) => {
     const current = getSyncDiagnostics();
     saveSyncDiagnostics({
-      ...current,
+      ...mergeSyncDiagnosticsContext(current, {
+        ...options,
+        syncResultKind: "failure",
+        syncResultCode: sanitizeDiagnosticText(reason || "未知错误", 160),
+        syncBlockKind: "",
+        syncBlockReason: "",
+      }),
       lastFailureTimestamp: Date.now(),
       lastFailureReason: sanitizeDiagnosticText(reason || "未知错误", 500),
       consecutiveFailureCount: (current.consecutiveFailureCount || 0) + 1,
@@ -6865,10 +7264,35 @@
     });
   };
 
-  const recordSyncConflict = (reason, mode = "background") => {
+  const recordSyncBlocked = (
+    reason,
+    mode = "background",
+    level = "soft",
+    options = {}
+  ) => {
     const current = getSyncDiagnostics();
     saveSyncDiagnostics({
-      ...current,
+      ...mergeSyncDiagnosticsContext(current, {
+        ...options,
+        syncResultKind: "blocked",
+        syncResultCode: normalizeRemoteProbeText(reason, 160) || "blocked",
+        syncBlockKind: normalizeRemoteProbeText(level, 60) || "soft",
+        syncBlockReason: normalizeRemoteProbeText(reason, 160) || "generic",
+      }),
+      lastActionType: `${mode}:blocked:${level || "soft"}:${reason || "generic"}`,
+    });
+  };
+
+  const recordSyncConflict = (reason, mode = "background", options = {}) => {
+    const current = getSyncDiagnostics();
+    saveSyncDiagnostics({
+      ...mergeSyncDiagnosticsContext(current, {
+        ...options,
+        syncResultKind: "conflict",
+        syncResultCode: normalizeRemoteProbeText(reason, 160) || "conflict",
+        syncBlockKind: "hard",
+        syncBlockReason: normalizeRemoteProbeText(reason, 160) || "conflict",
+      }),
       lastConflictTimestamp: Date.now(),
       lastActionType: `${mode}:conflict:${reason || "generic"}`,
     });
@@ -6995,19 +7419,152 @@
     phase === AUTO_SYNC_INDICATOR_PHASE_RUNNING ||
     phase === AUTO_SYNC_INDICATOR_PHASE_PENDING;
 
+  const resolveSyncTriggerSourceFromReasonText = (reason = "") => {
+    const normalizedReason = String(reason || "").trim();
+    if (!normalizedReason) {
+      return "";
+    }
+
+    if (
+      normalizedReason === SYNC_TRIGGER_SOURCE_PAGE_LOAD_VISIBLE ||
+      normalizedReason.endsWith(`:${SYNC_TRIGGER_SOURCE_PAGE_LOAD_VISIBLE}`)
+    ) {
+      return SYNC_TRIGGER_SOURCE_PAGE_LOAD_VISIBLE;
+    }
+
+    if (
+      normalizedReason === SYNC_TRIGGER_SOURCE_VISIBLE_POLL ||
+      normalizedReason === "visible_poll_active" ||
+      normalizedReason === "visible_poll_idle" ||
+      normalizedReason.endsWith(":visible_poll_active") ||
+      normalizedReason.endsWith(":visible_poll_idle") ||
+      normalizedReason.endsWith(`:${SYNC_TRIGGER_SOURCE_VISIBLE_POLL}`)
+    ) {
+      return SYNC_TRIGGER_SOURCE_VISIBLE_POLL;
+    }
+
+    if (
+      normalizedReason === SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME ||
+      normalizedReason === "visibilitychange" ||
+      normalizedReason === "pageshow" ||
+      normalizedReason.endsWith(`:${SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME}`) ||
+      normalizedReason.endsWith(":visibilitychange") ||
+      normalizedReason.endsWith(":pageshow")
+    ) {
+      return SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME;
+    }
+
+    if (
+      normalizedReason === SYNC_TRIGGER_SOURCE_PER_LOAD ||
+      normalizedReason.endsWith(`:${SYNC_TRIGGER_SOURCE_PER_LOAD}`)
+    ) {
+      return SYNC_TRIGGER_SOURCE_PER_LOAD;
+    }
+
+    if (
+      normalizedReason === SYNC_TRIGGER_SOURCE_DAILY_STARTUP ||
+      normalizedReason.endsWith(`:${SYNC_TRIGGER_SOURCE_DAILY_STARTUP}`)
+    ) {
+      return SYNC_TRIGGER_SOURCE_DAILY_STARTUP;
+    }
+
+    if (
+      normalizedReason === SYNC_TRIGGER_SOURCE_BACKGROUND_PUSH ||
+      normalizedReason.endsWith(`:${SYNC_TRIGGER_SOURCE_BACKGROUND_PUSH}`)
+    ) {
+      return SYNC_TRIGGER_SOURCE_BACKGROUND_PUSH;
+    }
+
+    if (
+      normalizedReason === SYNC_TRIGGER_SOURCE_MANUAL_SYNC ||
+      normalizedReason.endsWith(`:${SYNC_TRIGGER_SOURCE_MANUAL_SYNC}`)
+    ) {
+      return SYNC_TRIGGER_SOURCE_MANUAL_SYNC;
+    }
+
+    return "";
+  };
+
+  const normalizeSyncTriggerSource = (source, options = {}) => {
+    const normalizedSource = String(source || "").trim();
+    if (!normalizedSource) {
+      return resolveSyncTriggerSourceFromReasonText(options.reason);
+    }
+
+    switch (normalizedSource) {
+      case SYNC_TRIGGER_SOURCE_DAILY_STARTUP:
+      case SYNC_TRIGGER_SOURCE_PER_LOAD:
+      case SYNC_TRIGGER_SOURCE_PAGE_LOAD_VISIBLE:
+      case SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME:
+      case SYNC_TRIGGER_SOURCE_VISIBLE_POLL:
+      case SYNC_TRIGGER_SOURCE_BACKGROUND_PUSH:
+      case SYNC_TRIGGER_SOURCE_MANUAL_SYNC:
+        return normalizedSource;
+      case LEGACY_AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND:
+        return SYNC_TRIGGER_SOURCE_BACKGROUND_PUSH;
+      case LEGACY_AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_FOLLOWUP:
+        return (
+          resolveSyncTriggerSourceFromReasonText(options.reason) ||
+          SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME
+        );
+      default:
+        return (
+          resolveSyncTriggerSourceFromReasonText(normalizedSource) ||
+          resolveSyncTriggerSourceFromReasonText(options.reason)
+        );
+    }
+  };
+
   const normalizeAutoSyncIndicatorSource = (source) => {
-    switch (String(source || "").trim()) {
-      case AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND:
-        return AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND;
-      case AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP:
-        return AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP;
-      case AUTO_SYNC_INDICATOR_SOURCE_PER_LOAD:
-        return AUTO_SYNC_INDICATOR_SOURCE_PER_LOAD;
-      case AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_FOLLOWUP:
-        return AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_FOLLOWUP;
+    return normalizeSyncTriggerSource(source);
+  };
+
+  const normalizeAutoSyncExecutionMode = (mode) => {
+    switch (String(mode || "").trim()) {
+      case AUTO_SYNC_MODE_STARTUP:
+      case AUTO_SYNC_MODE_BACKGROUND:
+      case AUTO_SYNC_MODE_FOREGROUND_FOLLOWUP:
+        return String(mode || "").trim();
       default:
         return "";
     }
+  };
+
+  const resolveAutoSyncExecutionOptions = (
+    modeOrIsStartupSync = false,
+    syncLockMode = null,
+    triggerSource = ""
+  ) => {
+    if (typeof modeOrIsStartupSync === "string") {
+      return {
+        syncMode:
+          normalizeAutoSyncExecutionMode(modeOrIsStartupSync) ||
+          AUTO_SYNC_MODE_BACKGROUND,
+        syncLockMode,
+        triggerSource,
+      };
+    }
+
+    if (isObjectRecord(modeOrIsStartupSync)) {
+      return {
+        syncMode:
+          normalizeAutoSyncExecutionMode(modeOrIsStartupSync.mode) ||
+          (modeOrIsStartupSync.isStartupSync === true
+            ? AUTO_SYNC_MODE_STARTUP
+            : AUTO_SYNC_MODE_BACKGROUND),
+        syncLockMode: modeOrIsStartupSync.syncLockMode || null,
+        triggerSource: String(modeOrIsStartupSync.triggerSource || ""),
+      };
+    }
+
+    return {
+      syncMode:
+        modeOrIsStartupSync === true
+          ? AUTO_SYNC_MODE_STARTUP
+          : AUTO_SYNC_MODE_BACKGROUND,
+      syncLockMode,
+      triggerSource,
+    };
   };
 
   const normalizeAutoSyncIndicatorReason = (reason) => {
@@ -7469,6 +8026,8 @@
         return AUTO_SYNC_INDICATOR_PHASE_FAILURE;
       case "conflict":
         return AUTO_SYNC_INDICATOR_PHASE_CONFLICT;
+      case "blocked":
+        return "";
       case "skipped":
         if (result.reason === "conflict_paused") {
           return AUTO_SYNC_INDICATOR_PHASE_CONFLICT;
@@ -7491,7 +8050,262 @@
         ? "local_changed_during_sync"
         : "startup_local_newer";
     }
+    if (result.status === "blocked") {
+      return normalizeAutoSyncIndicatorReason(result.reason);
+    }
     return normalizeAutoSyncIndicatorReason(result.reason);
+  };
+
+  const cloneForegroundFollowUpReadProgressGuardState = (state = null) => {
+    if (!state || typeof state !== "object") {
+      return null;
+    }
+    return {
+      ...state,
+      lastPersistedProvenance: isObjectRecord(state.lastPersistedProvenance)
+        ? { ...state.lastPersistedProvenance }
+        : null,
+    };
+  };
+
+  const getCurrentForegroundFollowUpThreadContext = () => {
+    const currentThreadId =
+      normalizeNumericId(
+        readProgressContext?.threadId ||
+          (typeof getCurrentThreadId === "function" ? getCurrentThreadId() : "")
+      ) || "";
+    let currentPage = "";
+    if (readProgressContext && readProgressContext.threadId === currentThreadId) {
+      currentPage = String(readProgressContext.currentPage || "").trim();
+    }
+    if (!currentPage) {
+      const currentHref = String(window.location?.href || "");
+      const threadPageMatch = currentHref.match(/thread-\d+-(\d+)-/);
+      if (threadPageMatch && threadPageMatch[1]) {
+        currentPage = threadPageMatch[1];
+      } else {
+        const params = new URLSearchParams(String(window.location?.search || ""));
+        currentPage = String(params.get("page") || "").trim();
+      }
+    }
+    return {
+      threadId: currentThreadId,
+      page: currentPage || "",
+    };
+  };
+
+  const getForegroundFollowUpSoftBlockBoundary = () => {
+    const threadContext = getCurrentForegroundFollowUpThreadContext();
+    const readProgressGuard =
+      typeof getReadProgressProbeGuardState === "function"
+        ? getReadProgressProbeGuardState()
+        : null;
+    const lastPersistedThreadId =
+      normalizeNumericId(readProgressGuard?.lastPersistedProvenance?.threadId) || "";
+    const shouldUseThreadScope = Boolean(
+      threadContext.threadId &&
+        (
+          readProgressGuard?.hasPendingWrite ||
+          readProgressGuard?.isInSyncDebounceWindow ||
+          readProgressGuard?.hasConfirmedVisiblePost ||
+          readProgressGuard?.hasConfirmedReading ||
+          lastPersistedThreadId === threadContext.threadId
+        )
+    );
+    return {
+      scope: shouldUseThreadScope
+        ? FOREGROUND_FOLLOWUP_SOFT_BLOCK_SCOPE_THREAD
+        : FOREGROUND_FOLLOWUP_SOFT_BLOCK_SCOPE_TAB,
+      threadId: shouldUseThreadScope ? threadContext.threadId : "",
+      page: shouldUseThreadScope ? threadContext.page : "",
+      readProgressGuard: cloneForegroundFollowUpReadProgressGuardState(
+        readProgressGuard
+      ),
+    };
+  };
+
+  const cloneForegroundFollowUpSoftBlockState = (state = null) => {
+    if (!state || typeof state !== "object") {
+      return null;
+    }
+    return {
+      ...state,
+      readProgressGuard: cloneForegroundFollowUpReadProgressGuardState(
+        state.readProgressGuard
+      ),
+    };
+  };
+
+  // Phase 3: baseline / remote probe / hard pause 仍是全局共享状态；
+  // foreground follow-up 的 soft block 只保留在当前标签页运行时，并在帖子页补充 thread/page 上下文。
+  const getForegroundFollowUpSoftBlockState = () =>
+    cloneForegroundFollowUpSoftBlockState(foregroundFollowUpSoftBlockState);
+
+  const clearForegroundFollowUpSoftBlock = () => {
+    foregroundFollowUpSoftBlockState = null;
+    return null;
+  };
+
+  const setForegroundFollowUpSoftBlock = ({
+    reason = "local_changed_during_sync",
+    triggerSource = SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME,
+    triggerReason = "",
+    syncAction = "",
+  } = {}) => {
+    const boundary = getForegroundFollowUpSoftBlockBoundary();
+    foregroundFollowUpSoftBlockState = {
+      level: "soft",
+      scope: boundary.scope,
+      reason:
+        normalizeRemoteProbeText(reason, 120) ||
+        "foreground_followup_soft_block",
+      triggerSource:
+        normalizeSyncTriggerSource(triggerSource, { reason: triggerReason }) ||
+        SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME,
+      triggerReason: normalizeRemoteProbeText(triggerReason, 160) || "",
+      syncAction: normalizeRemoteProbeText(syncAction, 80) || "",
+      sourceTabId: SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID,
+      threadId: boundary.threadId,
+      page: boundary.page,
+      documentVisibilityState: document.visibilityState,
+      createdAt: Date.now(),
+      readProgressGuard: boundary.readProgressGuard,
+    };
+    return getForegroundFollowUpSoftBlockState();
+  };
+
+  const isForegroundProbeRetryableSoftBlockReason = (reason = "") => {
+    const normalizedReason = normalizeRemoteProbeText(reason, 120);
+    return (
+      normalizedReason === FOREGROUND_PROBE_SOFT_BLOCK_REASON_PENDING_WRITE ||
+      normalizedReason === FOREGROUND_PROBE_SOFT_BLOCK_REASON_SYNC_DEBOUNCE ||
+      normalizedReason === FOREGROUND_PROBE_SOFT_BLOCK_REASON_INITIALIZATION_NOISE
+    );
+  };
+
+  const getForegroundProbeRetryWaitUntil = (
+    readProgressGuard,
+    now = Date.now()
+  ) => {
+    if (!readProgressGuard || typeof readProgressGuard !== "object") {
+      return 0;
+    }
+
+    const candidateTimestamps = [];
+    const normalizedNow = normalizeRemoteProbeTimestamp(now) || Date.now();
+    const pendingSaveDueAt = Number(readProgressGuard.pendingSaveDueAt) || 0;
+    const pendingPersistDueAt = Number(readProgressGuard.pendingPersistDueAt) || 0;
+    const syncDebounceDueAt = Number(readProgressGuard.syncDebounceDueAt) || 0;
+    const lastPersistedAt = Number(readProgressGuard.lastPersistedAt) || 0;
+    const initializationNoiseUntil =
+      readProgressGuard.lastPersistWasInitializationNoise === true &&
+      lastPersistedAt > 0
+        ? lastPersistedAt + FOREGROUND_PROBE_INITIALIZATION_NOISE_GRACE_MS
+        : 0;
+
+    if (pendingSaveDueAt > normalizedNow) {
+      candidateTimestamps.push(pendingSaveDueAt);
+    }
+    if (pendingPersistDueAt > normalizedNow) {
+      candidateTimestamps.push(pendingPersistDueAt);
+    }
+    if (syncDebounceDueAt > normalizedNow) {
+      candidateTimestamps.push(syncDebounceDueAt);
+    }
+    if (initializationNoiseUntil > normalizedNow) {
+      candidateTimestamps.push(initializationNoiseUntil);
+    }
+
+    return candidateTimestamps.length > 0 ? Math.max(...candidateTimestamps) : 0;
+  };
+
+  const resolveForegroundProbeRetryDelayMs = (
+    attempt = 0,
+    preferredDelayMs = 0
+  ) => {
+    const exponentialDelayMs = Math.min(
+      FOREGROUND_REMOTE_SYNC_RETRY_MAX_DELAY_MS,
+      FOREGROUND_REMOTE_SYNC_RETRY_BASE_DELAY_MS * 2 ** Math.max(0, attempt)
+    );
+    const normalizedPreferredDelayMs = Math.max(
+      0,
+      Math.floor(Number(preferredDelayMs) || 0)
+    );
+    if (!normalizedPreferredDelayMs) {
+      return exponentialDelayMs;
+    }
+    return Math.max(
+      exponentialDelayMs,
+      Math.min(
+        FOREGROUND_REMOTE_SYNC_RETRY_MAX_DELAY_MS,
+        normalizedPreferredDelayMs
+      )
+    );
+  };
+
+  const getForegroundProbeGateBlockResult = ({
+    triggerSource = SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME,
+    triggerReason = "",
+    now = Date.now(),
+    readProgressGuardState = null,
+  } = {}) => {
+    const normalizedNow = normalizeRemoteProbeTimestamp(now) || Date.now();
+    const readProgressGuard = cloneForegroundFollowUpReadProgressGuardState(
+      readProgressGuardState && typeof readProgressGuardState === "object"
+        ? readProgressGuardState
+        : typeof getReadProgressProbeGuardState === "function"
+          ? getReadProgressProbeGuardState()
+          : null
+    );
+    if (!readProgressGuard) {
+      return null;
+    }
+
+    const retryWaitUntil = getForegroundProbeRetryWaitUntil(
+      readProgressGuard,
+      normalizedNow
+    );
+    let blockReason = "";
+    if (readProgressGuard.hasPendingWrite) {
+      blockReason = FOREGROUND_PROBE_SOFT_BLOCK_REASON_PENDING_WRITE;
+    } else if (readProgressGuard.isInSyncDebounceWindow) {
+      blockReason = FOREGROUND_PROBE_SOFT_BLOCK_REASON_SYNC_DEBOUNCE;
+    } else if (
+      readProgressGuard.lastPersistWasInitializationNoise === true &&
+      retryWaitUntil > normalizedNow
+    ) {
+      blockReason = FOREGROUND_PROBE_SOFT_BLOCK_REASON_INITIALIZATION_NOISE;
+    }
+
+    if (!blockReason) {
+      return null;
+    }
+
+    const retryAfterMs = resolveForegroundProbeRetryDelayMs(
+      foregroundRemoteSyncRetryAttempts,
+      retryWaitUntil > normalizedNow
+        ? retryWaitUntil - normalizedNow + FOREGROUND_REMOTE_SYNC_RETRY_SETTLE_BUFFER_MS
+        : FOREGROUND_REMOTE_SYNC_RETRY_BASE_DELAY_MS
+    );
+    const softBlockState = setForegroundFollowUpSoftBlock({
+      reason: blockReason,
+      triggerSource,
+      triggerReason,
+      syncAction: "probe_gate_blocked",
+    });
+
+    return {
+      status: "blocked",
+      blockLevel: "soft",
+      blockScope:
+        softBlockState?.scope || FOREGROUND_FOLLOWUP_SOFT_BLOCK_SCOPE_TAB,
+      reason: blockReason,
+      action: "probe_gate_blocked",
+      retryAfterMs,
+      retryWaitUntil,
+      readProgressGuard,
+      softBlockState,
+    };
   };
 
   const getAutoSyncConflictPauseState = () => {
@@ -7554,6 +8368,7 @@
 
   const setAutoSyncConflictPause = (reason = "generic") => {
     clearForegroundRemoteSyncRetry();
+    clearForegroundFollowUpSoftBlock();
     GM_setValue(AUTO_SYNC_CONFLICT_PAUSE_KEY, {
       paused: true,
       reason: String(reason || "generic"),
@@ -7563,6 +8378,7 @@
   };
 
   const clearAutoSyncConflictPause = () => {
+    clearForegroundFollowUpSoftBlock();
     GM_deleteValue(AUTO_SYNC_CONFLICT_PAUSE_KEY);
     renderNavbarPersistentSyncAlert();
   };
@@ -7628,6 +8444,9 @@
       date,
       createdAt: Number(source.createdAt) || 0,
       reason: normalizeRemoteProbeText(source.reason, 120) || "",
+      scheduledBy:
+        normalizeSyncTriggerSource(source.scheduledBy) ||
+        SYNC_TRIGGER_SOURCE_DAILY_STARTUP,
     };
   };
 
@@ -7649,7 +8468,8 @@
 
   const markDeferredStartupSyncRequest = (
     reason = "startup_flow_delayed",
-    today = getCurrentDailySyncDateKey()
+    today = getCurrentDailySyncDateKey(),
+    scheduledBy = SYNC_TRIGGER_SOURCE_DAILY_STARTUP
   ) => {
     const normalizedReason =
       normalizeRemoteProbeText(reason, 120) || "startup_flow_delayed";
@@ -7657,6 +8477,9 @@
       date: today,
       createdAt: Date.now(),
       reason: normalizedReason,
+      scheduledBy:
+        normalizeSyncTriggerSource(scheduledBy) ||
+        SYNC_TRIGGER_SOURCE_DAILY_STARTUP,
     };
     GM_setValue(DEFERRED_STARTUP_SYNC_KEY, nextValue);
     return nextValue;
@@ -7688,12 +8511,52 @@
   const getStartupSyncFreshnessState = (scheduledAt = Date.now()) => {
     const elapsedMs = Date.now() - scheduledAt;
     const today = getCurrentDailySyncDateKey();
+    const deferredStartupSyncRequest = getDeferredStartupSyncRequest(today);
     return {
       elapsedMs,
       today,
       lastSyncDate: GM_getValue("s1p_last_daily_sync_date", null),
-      hasDeferredStartupSync: Boolean(getDeferredStartupSyncRequest(today)),
+      deferredStartupSyncRequest,
+      hasDeferredStartupSync: Boolean(deferredStartupSyncRequest),
       isStaleStartupFlow: elapsedMs > STARTUP_SYNC_MAX_DELAY_MS,
+    };
+  };
+
+  const getStartupSyncOrchestratorDecision = (
+    scheduledAt = Date.now(),
+    settingsSnapshot = getSettings()
+  ) => {
+    const freshnessState = getStartupSyncFreshnessState(scheduledAt);
+    if (!freshnessState.isStaleStartupFlow) {
+      return {
+        action: "run_fresh_startup_flow",
+        freshnessState,
+      };
+    }
+
+    if (freshnessState.hasDeferredStartupSync) {
+      return {
+        action: "resume_deferred_daily_startup",
+        freshnessState,
+      };
+    }
+
+    if (
+      shouldDeferDailyStartupSyncForToday(
+        settingsSnapshot,
+        freshnessState.today,
+        freshnessState.lastSyncDate
+      )
+    ) {
+      return {
+        action: "defer_daily_startup",
+        freshnessState,
+      };
+    }
+
+    return {
+      action: "skip_stale_startup_only_checks",
+      freshnessState,
     };
   };
 
@@ -8102,19 +8965,19 @@
   const getDefaultAutoPullRefreshMessages = (action = "pulled") => {
     if (action === "force_pulled") {
       return createAutoPullRefreshMessages(
-        "启动时强制同步完成：已使用云端数据覆盖本地。正在刷新...",
-        "启动时强制同步已使用云端数据覆盖本地。"
+        "启动同步已按强制策略使用云端备份覆盖本地。正在刷新页面...",
+        "启动同步已按强制策略使用云端备份覆盖本地。"
       );
     }
     if (action === "merged_read_progress") {
       return createAutoPullRefreshMessages(
-        "检测到云端与本地的阅读进度已自动合并。正在刷新页面...",
-        "检测到云端与本地的阅读进度已自动合并。"
+        "检测到云端有变化，已保留本地阅读进度并完成自动合并。正在刷新页面...",
+        "检测到云端有变化，已保留本地阅读进度并完成自动合并。"
       );
     }
     return createAutoPullRefreshMessages(
-      "检测到云端有更新，正在刷新页面...",
-      "检测到云端有更新，已自动拉取到本地。"
+      "检测到云端备份比当前页面更新，已自动拉取到本地。正在刷新页面...",
+      "检测到云端备份比当前页面更新，已自动拉取到本地。"
     );
   };
 
@@ -8126,27 +8989,27 @@
       case "background":
         if (action === "merged_read_progress") {
           return createAutoPullRefreshMessages(
-            "后台同步完成：阅读进度已自动合并。正在刷新页面...",
-            "后台同步完成：阅读进度已自动合并。"
+            "后台自动同步检测到云端变化，已保留本地阅读进度并完成自动合并。正在刷新页面...",
+            "后台自动同步检测到云端变化，已保留本地阅读进度并完成自动合并。"
           );
         }
         return createAutoPullRefreshMessages(
-          "后台同步完成：云端有更新已被自动拉取。正在刷新页面...",
-          "后台同步完成：云端有更新已被自动拉取。"
+          "后台自动同步发现云端备份较新，已自动拉取到本地。正在刷新页面...",
+          "后台自动同步发现云端备份较新，已自动拉取到本地。"
         );
       case "daily":
         if (action === "merged_read_progress") {
           return createAutoPullRefreshMessages(
-            "每日同步完成：阅读进度已自动合并。正在刷新...",
-            "每日同步完成：阅读进度已自动合并。"
+            "每日首次同步检测到云端变化，已保留本地阅读进度并完成自动合并。正在刷新页面...",
+            "每日首次同步检测到云端变化，已保留本地阅读进度并完成自动合并。"
           );
         }
         if (action === "force_pulled") {
           return getDefaultAutoPullRefreshMessages(action);
         }
         return createAutoPullRefreshMessages(
-          "每日同步完成：云端有更新已被自动拉取。正在刷新...",
-          "每日同步完成：云端有更新已被自动拉取。"
+          "每日首次同步发现云端备份较新，已自动拉取到本地。正在刷新页面...",
+          "每日首次同步发现云端备份较新，已自动拉取到本地。"
         );
       default:
         return getDefaultAutoPullRefreshMessages(action);
@@ -8327,7 +9190,7 @@
     // 新开页面不会触发“回到前台”事件；这里补一次首次可见探测，
     // 同时继续复用共享冷却和跨标签锁，避免多标签重复请求云端。
     const probeResult = await triggerForegroundRemoteFreshnessProbeFn(
-      "page_load_visible",
+      SYNC_TRIGGER_SOURCE_PAGE_LOAD_VISIBLE,
       overrides.triggerForegroundRemoteFreshnessProbeOverrides || {}
     );
     return hasScheduledAutoPullReload(probeResult?.refreshPlan);
@@ -8336,6 +9199,7 @@
   const isVisibleRemoteFreshnessPollingReason = (reason = "") => {
     const normalizedReason = normalizeRemoteProbeText(reason, 120);
     return (
+      normalizedReason === SYNC_TRIGGER_SOURCE_VISIBLE_POLL ||
       normalizedReason === "visible_poll_active" ||
       normalizedReason === "visible_poll_idle"
     );
@@ -8379,6 +9243,10 @@
       return null;
     }
 
+    if (syncResult.status === "blocked") {
+      return null;
+    }
+
     if (
       syncResult.status === "success" &&
       syncResult.action === "skipped_push_on_startup"
@@ -8386,7 +9254,7 @@
       return {
         key: "foreground_probe_local_changes_block_pull",
         message:
-          "检测到云端有更新，但本地也有未处理改动。为保护数据，已暂停自动拉取，请手动同步。",
+          "检测到云端有变化，但当前标签页还有未稳定的本地状态。已先暂停这次自动拉取；如需立即处理，请发起一次全局手动同步。",
         isSuccess: false,
         allowDuringPolling: true,
       };
@@ -8395,7 +9263,8 @@
     if (syncResult.status === "conflict") {
       return {
         key: "foreground_probe_conflict_detected",
-        message: "检测到云端与本地可能同时有变更，已暂停自动处理，请手动同步。",
+        message:
+          "检测到云端与本地都可能已有变化，已暂停自动处理。请发起一次全局手动同步决定保留哪一侧。",
         isSuccess: false,
         allowDuringPolling: true,
       };
@@ -8458,12 +9327,16 @@
       timestamp: normalizedTimestamp,
       remoteUpdatedAt,
       result: getForegroundProbeDiagnosticResult(result),
+      probeResult: result,
+      syncRequestResult: result?.syncRequestResult,
       triggeredSync:
         typeof options.triggeredSync === "boolean"
           ? options.triggeredSync
           : Boolean(result?.syncRequestResult),
       triggeredSyncResult,
       lastSyncedRemoteUpdatedAt,
+      triggerSource: options.triggerReason,
+      triggerReason: options.triggerReason,
     });
     maybeShowForegroundProbeFeedback(result, {
       triggerReason: options.triggerReason,
@@ -8491,7 +9364,10 @@
       );
     }
 
-    return triggerForegroundRemoteFreshnessProbe("pageshow", overrides);
+    return triggerForegroundRemoteFreshnessProbe(
+      SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME,
+      overrides
+    );
   };
 
   const handlePendingAutoSyncRecoveryVisibilityChange = (overrides = {}) => {
@@ -8500,7 +9376,10 @@
     }
 
     getPendingAutoSyncRecoveryFn(overrides)();
-    return triggerForegroundRemoteFreshnessProbe("visibilitychange", overrides);
+    return triggerForegroundRemoteFreshnessProbe(
+      SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME,
+      overrides
+    );
   };
 
   const bindPendingAutoSyncRecoveryHooks = () => {
@@ -8563,6 +9442,16 @@
   let remotePushTimeout;
   let remotePushDueTimestamp = 0;
   let remotePushScheduledReason = "debounced_local_change";
+  let readProgressSyncDebounceDueAt = 0;
+  let readProgressSyncDebounceReason = "";
+  const clearReadProgressSyncDebounceState = () => {
+    readProgressSyncDebounceDueAt = 0;
+    readProgressSyncDebounceReason = "";
+  };
+  const setReadProgressSyncDebounceState = (dueAt, reason) => {
+    readProgressSyncDebounceDueAt = Math.max(0, Number(dueAt) || 0);
+    readProgressSyncDebounceReason = String(reason || "").trim();
+  };
   const clearRemotePushDebounceTimer = () => {
     if (remotePushTimeout) {
       clearTimeout(remotePushTimeout);
@@ -8570,6 +9459,7 @@
     }
     remotePushDueTimestamp = 0;
     remotePushScheduledReason = "debounced_local_change";
+    clearReadProgressSyncDebounceState();
   };
   const clearAutoSyncRuntimeQueue = () => {
     hasPendingBackgroundSync = false;
@@ -8582,11 +9472,17 @@
   const armRemotePushTimer = (dueTimestamp, reason) => {
     remotePushDueTimestamp = dueTimestamp;
     remotePushScheduledReason = reason;
+    if (reason === "debounced_read_progress") {
+      setReadProgressSyncDebounceState(dueTimestamp, reason);
+    } else {
+      clearReadProgressSyncDebounceState();
+    }
     remotePushTimeout = setTimeout(() => {
       remotePushTimeout = null;
       remotePushDueTimestamp = 0;
       const triggerReason = remotePushScheduledReason;
       remotePushScheduledReason = "debounced_local_change";
+      clearReadProgressSyncDebounceState();
       triggerRemoteSyncPush(triggerReason);
     }, Math.max(0, dueTimestamp - Date.now()));
   };
@@ -8682,42 +9578,7 @@
     if (!panel) return;
 
     const diagnostics = getSyncDiagnostics();
-    const rows = [
-      ["最近动作", diagnostics.lastActionType || "—"],
-      ["最近尝试", formatSyncTime(diagnostics.lastAttemptTimestamp)],
-      ["最近成功", formatSyncTime(diagnostics.lastSuccessTimestamp)],
-      ["最近冲突", formatSyncTime(diagnostics.lastConflictTimestamp)],
-      ["最近失败", formatSyncTime(diagnostics.lastFailureTimestamp)],
-      ["连续失败", String(diagnostics.consecutiveFailureCount || 0)],
-      ["最近探测", formatSyncTime(diagnostics.lastProbeTimestamp)],
-      [
-        "最近探测远端版本",
-        formatRemoteProbeUpdatedAtForDisplay(
-          diagnostics.lastProbeRemoteUpdatedAt
-        ),
-      ],
-      [
-        "最近已同步远端版本",
-        formatRemoteProbeUpdatedAtForDisplay(
-          diagnostics.lastSyncedRemoteUpdatedAt
-        ),
-      ],
-      ["最近探测结果", diagnostics.lastProbeResult || "—"],
-      [
-        "探测是否触发安全同步",
-        formatProbeTriggeredSyncForDisplay(diagnostics),
-      ],
-      [
-        "最近探测后同步结果",
-        diagnostics.lastProbeTriggeredSyncResult || "—",
-      ],
-      [
-        "失败原因",
-        diagnostics.lastFailureReason
-          ? sanitizeDiagnosticText(diagnostics.lastFailureReason)
-          : "—",
-      ],
-    ];
+    const rows = buildSyncDiagnosticsRows(diagnostics);
 
     panel.textContent = "";
     rows.forEach(([label, value]) => {
@@ -10837,6 +11698,88 @@
   const getReadProgress = () =>
     getCoreDataFromCache(readProgressCache, "s1p_read_progress");
 
+  const normalizeReadProgressSaveReason = (reason) => {
+    const normalizedReason = String(reason || "").trim();
+    return normalizedReason ? normalizedReason.slice(0, 80) : "";
+  };
+
+  const normalizeReadProgressProvenance = (
+    provenance,
+    fallbackContext = {},
+    { allowCreate = false } = {}
+  ) => {
+    if (!isObjectRecord(provenance)) {
+      if (!allowCreate) {
+        return null;
+      }
+      if (!isObjectRecord(fallbackContext)) {
+        return null;
+      }
+    }
+    if (!isObjectRecord(provenance) && !isObjectRecord(fallbackContext)) {
+      return null;
+    }
+
+    const normalizedSource = sanitizeRecordObject(provenance);
+    const normalizedFallback = isObjectRecord(fallbackContext)
+      ? sanitizeRecordObject(fallbackContext)
+      : {};
+    const pickString = (...values) => {
+      for (const value of values) {
+        const normalizedValue = String(value || "").trim();
+        if (normalizedValue) {
+          return normalizedValue;
+        }
+      }
+      return "";
+    };
+    const pickTimestamp = (...values) => {
+      for (const value of values) {
+        const normalizedValue = Number(value);
+        if (Number.isFinite(normalizedValue) && normalizedValue > 0) {
+          return normalizedValue;
+        }
+      }
+      return 0;
+    };
+
+    const sourceTabId = pickString(
+      normalizedSource.sourceTabId,
+      normalizedFallback.sourceTabId
+    );
+    const threadId = pickString(
+      normalizedSource.threadId,
+      normalizedFallback.threadId
+    );
+    const page = pickString(normalizedSource.page, normalizedFallback.page);
+    const saveReason = normalizeReadProgressSaveReason(
+      pickString(normalizedSource.saveReason, normalizedFallback.saveReason)
+    );
+    const documentVisibilityState = pickString(
+      normalizedSource.documentVisibilityState,
+      normalizedFallback.documentVisibilityState
+    );
+    const createdAt =
+      pickTimestamp(normalizedSource.createdAt, normalizedFallback.createdAt) ||
+      Date.now();
+
+    return {
+      sourceTabId: sourceTabId || SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID,
+      threadId,
+      page,
+      saveReason: saveReason || "read_progress_update",
+      documentVisibilityState: documentVisibilityState || document.visibilityState,
+      hadConfirmedVisiblePost:
+        normalizedSource.hadConfirmedVisiblePost === true ||
+        normalizedFallback.hadConfirmedVisiblePost === true,
+      createdAt,
+      initiatedWhileHidden:
+        normalizedSource.initiatedWhileHidden === true ||
+        normalizedFallback.initiatedWhileHidden === true,
+      saveKind: "real_reading",
+    };
+  };
+
   const normalizeReadProgressData = (progress) => {
     if (!progress || typeof progress !== "object" || Array.isArray(progress)) {
       return { normalizedProgress: {}, hasLegacyType: Boolean(progress) };
@@ -10869,6 +11812,27 @@
           hasLegacyType = true;
           delete normalizedRecord.lastReadFloor;
         }
+      }
+
+      const normalizedProvenance = normalizeReadProgressProvenance(
+        normalizedRecord.provenance,
+        {
+          threadId,
+          page: normalizedRecord.page,
+        }
+      );
+      if (normalizedProvenance) {
+        const rawProvenance = isObjectRecord(record.provenance)
+          ? JSON.stringify(record.provenance)
+          : "";
+        const nextProvenance = JSON.stringify(normalizedProvenance);
+        if (rawProvenance !== nextProvenance) {
+          hasLegacyType = true;
+        }
+        normalizedRecord.provenance = normalizedProvenance;
+      } else if (Object.prototype.hasOwnProperty.call(normalizedRecord, "provenance")) {
+        hasLegacyType = true;
+        delete normalizedRecord.provenance;
       }
 
       normalizedProgress[threadId] = normalizedRecord;
@@ -10994,7 +11958,7 @@
   };
 
   const saveReadProgress = (progress, suppressSyncTrigger = false) => {
-    const normalizedProgress = sanitizeRecordObject(progress);
+    const { normalizedProgress } = normalizeReadProgressData(progress);
     const currentStoredProgress = getComparableStoredValue("s1p_read_progress", {});
     if (!hasComparableValueChanged(currentStoredProgress, normalizedProgress)) {
       setCoreDataCacheValue(readProgressCache, normalizedProgress);
@@ -11044,7 +12008,549 @@
     return nextFloorNumber > currentFloor;
   };
 
-  const updateThreadProgress = (threadId, postId, page, lastReadFloor) => {
+  const buildReadProgressProvenance = (
+    threadId,
+    page,
+    {
+      saveReason = "",
+      documentVisibilityState = document.visibilityState,
+      hadConfirmedVisiblePost = false,
+      initiatedWhileHidden = false,
+      createdAt = Date.now(),
+    } = {}
+  ) =>
+    normalizeReadProgressProvenance(
+      {
+        sourceTabId: SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID,
+        threadId,
+        page,
+        saveReason,
+        documentVisibilityState,
+        hadConfirmedVisiblePost,
+        createdAt,
+        initiatedWhileHidden,
+      },
+      {
+        threadId,
+        page,
+      },
+      { allowCreate: true }
+    );
+
+  const normalizeCleanupProvenanceSource = (value) => {
+    const normalized = String(value || "").trim();
+    switch (normalized) {
+      case CLEANUP_PROVENANCE_SOURCE_AUTO_EXPIRE:
+      case CLEANUP_PROVENANCE_SOURCE_MANUAL_SINGLE:
+      case CLEANUP_PROVENANCE_SOURCE_MANUAL_GROUP:
+      case CLEANUP_PROVENANCE_SOURCE_LEGACY_COUNT:
+        return normalized;
+      default:
+        return "";
+    }
+  };
+
+  const normalizeCleanupModeAtCreation = (value) => {
+    const normalized = String(value || "").trim();
+    return normalized === "auto" || normalized === "manual" ? normalized : "";
+  };
+
+  const normalizeCleanupThreadIds = (value) => {
+    const rawIds = Array.isArray(value)
+      ? value
+      : typeof value === "string" && value
+        ? [value]
+        : [];
+    return Array.from(
+      new Set(rawIds.map((item) => normalizeNumericId(item)).filter(Boolean))
+    ).sort((left, right) => Number(left) - Number(right));
+  };
+
+  const normalizePendingCleanupInfo = (rawValue) => {
+    const legacyCount = Math.max(0, Math.floor(Number(rawValue) || 0));
+    if (legacyCount > 0 && !isObjectRecord(rawValue)) {
+      return {
+        source: CLEANUP_PROVENANCE_SOURCE_LEGACY_COUNT,
+        cleanupModeAtCreation: "",
+        createdAt: 0,
+        deletedCount: legacyCount,
+        threadIds: [],
+        initiatedFromThreadId: "",
+        basisHashBefore: "",
+        basisHashAfter: "",
+      };
+    }
+
+    const sourceValue = sanitizeRecordObject(rawValue);
+    const source = normalizeCleanupProvenanceSource(sourceValue.source);
+    const deletedCount = Math.max(
+      0,
+      Math.floor(Number(sourceValue.deletedCount) || 0)
+    );
+    if (deletedCount <= 0) {
+      return null;
+    }
+
+    return {
+      source: source || CLEANUP_PROVENANCE_SOURCE_LEGACY_COUNT,
+      cleanupModeAtCreation: normalizeCleanupModeAtCreation(
+        sourceValue.cleanupModeAtCreation
+      ),
+      createdAt: Math.max(0, Math.floor(Number(sourceValue.createdAt) || 0)),
+      deletedCount,
+      threadIds: normalizeCleanupThreadIds(sourceValue.threadIds),
+      initiatedFromThreadId: normalizeNumericId(sourceValue.initiatedFromThreadId),
+      basisHashBefore:
+        typeof sourceValue.basisHashBefore === "string"
+          ? sourceValue.basisHashBefore
+          : "",
+      basisHashAfter:
+        typeof sourceValue.basisHashAfter === "string"
+          ? sourceValue.basisHashAfter
+          : "",
+    };
+  };
+
+  const getPendingCleanupInfo = () =>
+    normalizePendingCleanupInfo(GM_getValue(PENDING_CLEANUP_INFO_KEY, null));
+
+  const clearPendingCleanupInfo = () => {
+    GM_deleteValue(PENDING_CLEANUP_INFO_KEY);
+  };
+
+  const setPendingCleanupInfo = (value) => {
+    const normalized = normalizePendingCleanupInfo(value);
+    if (!normalized) {
+      clearPendingCleanupInfo();
+      return null;
+    }
+    GM_setValue(PENDING_CLEANUP_INFO_KEY, normalized);
+    return normalized;
+  };
+
+  const calculateReadProgressDataHash = async (progress) => {
+    const { normalizedProgress } = normalizeReadProgressData(progress || {});
+    return calculateDataHash(normalizedProgress);
+  };
+
+  const buildPendingCleanupInfo = async ({
+    source = "",
+    cleanupModeAtCreation = "",
+    deletedCount = 0,
+    threadIds = [],
+    initiatedFromThreadId = "",
+    beforeProgress = {},
+    afterProgress = {},
+    createdAt = Date.now(),
+  } = {}) => {
+    const normalizedSource = normalizeCleanupProvenanceSource(source);
+    const normalizedDeletedCount = Math.max(
+      0,
+      Math.floor(Number(deletedCount) || 0)
+    );
+    if (!normalizedSource || normalizedDeletedCount <= 0) {
+      return null;
+    }
+
+    const [basisHashBefore, basisHashAfter] = await Promise.all([
+      calculateReadProgressDataHash(beforeProgress),
+      calculateReadProgressDataHash(afterProgress),
+    ]);
+
+    return normalizePendingCleanupInfo({
+      source: normalizedSource,
+      cleanupModeAtCreation,
+      createdAt,
+      deletedCount: normalizedDeletedCount,
+      threadIds,
+      initiatedFromThreadId,
+      basisHashBefore,
+      basisHashAfter,
+    });
+  };
+
+  const recordPendingCleanupInfo = async ({
+    source = "",
+    cleanupModeAtCreation = "",
+    deletedCount = 0,
+    threadIds = [],
+    initiatedFromThreadId = "",
+    beforeProgress = {},
+    afterProgress = {},
+    createdAt = Date.now(),
+  } = {}) => {
+    try {
+      const nextValue = await buildPendingCleanupInfo({
+        source,
+        cleanupModeAtCreation,
+        deletedCount,
+        threadIds,
+        initiatedFromThreadId,
+        beforeProgress,
+        afterProgress,
+        createdAt,
+      });
+      return setPendingCleanupInfo(nextValue);
+    } catch (error) {
+      console.warn("S1 Plus: cleanup provenance 构建失败，回退到兼容模式。", error);
+      return setPendingCleanupInfo({
+        source: CLEANUP_PROVENANCE_SOURCE_LEGACY_COUNT,
+        cleanupModeAtCreation,
+        createdAt,
+        deletedCount,
+        threadIds,
+        initiatedFromThreadId,
+      });
+    }
+  };
+
+  const isPendingCleanupInfoExpired = (cleanupInfo, now = Date.now()) => {
+    const createdAt = Math.max(0, Math.floor(Number(cleanupInfo?.createdAt) || 0));
+    if (createdAt <= 0) {
+      return false;
+    }
+    return now - createdAt > CLEANUP_PROVENANCE_TTL_MS;
+  };
+
+  const isPendingCleanupRelevantToThread = (cleanupInfo, currentThreadId = "") => {
+    const normalizedCurrentThreadId = normalizeNumericId(currentThreadId);
+    if (!normalizedCurrentThreadId) {
+      return true;
+    }
+    const normalizedCleanupInfo = normalizePendingCleanupInfo(cleanupInfo);
+    if (!normalizedCleanupInfo) {
+      return false;
+    }
+    if (normalizedCleanupInfo.initiatedFromThreadId === normalizedCurrentThreadId) {
+      return true;
+    }
+    return normalizedCleanupInfo.threadIds.includes(normalizedCurrentThreadId);
+  };
+
+  const getCleanupSyncMessageBundle = (cleanupInfo = null) => {
+    const normalizedCleanupInfo = normalizePendingCleanupInfo(cleanupInfo);
+    const deletedCount = Math.max(
+      0,
+      Math.floor(Number(normalizedCleanupInfo?.deletedCount) || 0)
+    );
+    switch (normalizedCleanupInfo?.source) {
+      case CLEANUP_PROVENANCE_SOURCE_AUTO_EXPIRE:
+        return {
+          syncingMessage: "已自动清理过期阅读记录，正在同步至云端...",
+          successMessage: "过期阅读记录已同步到云端。",
+          noticeText: `检测到最近自动清理了 <strong>${deletedCount}</strong> 条过期阅读记录。`,
+        };
+      case CLEANUP_PROVENANCE_SOURCE_MANUAL_SINGLE:
+      case CLEANUP_PROVENANCE_SOURCE_MANUAL_GROUP:
+        return {
+          syncingMessage: "已删除的阅读记录正在同步至云端...",
+          successMessage: "已删除的阅读记录已同步到云端。",
+          noticeText: `检测到最近手动删除了 <strong>${deletedCount}</strong> 条阅读记录。`,
+        };
+      default:
+        return {
+          syncingMessage: "检测到阅读记录变更，正在同步至云端...",
+          successMessage: "阅读记录变更已同步到云端。",
+          noticeText:
+            deletedCount > 0
+              ? `检测到最近有 <strong>${deletedCount}</strong> 条阅读记录被删除。`
+              : "",
+        };
+    }
+  };
+
+  const buildSyncNoticeHtml = (
+    descriptor = null,
+    { extraClassName = "s1p-notice-top16" } = {}
+  ) => {
+    if (!descriptor || typeof descriptor !== "object") {
+      return "";
+    }
+    const titleHtml = String(descriptor.titleHtml || "").trim();
+    const bodyHtml = String(descriptor.bodyHtml || "").trim();
+    const detailHtml = String(descriptor.detailHtml || "").trim();
+    if (!titleHtml && !bodyHtml && !detailHtml) {
+      return "";
+    }
+    const noticeClassName = ["s1p-notice"];
+    if (extraClassName) {
+      noticeClassName.push(
+        ...String(extraClassName)
+          .split(/\s+/)
+          .filter(Boolean)
+      );
+    }
+    const contentParts = [];
+    if (titleHtml) {
+      contentParts.push(`<strong>${titleHtml}</strong>`);
+    }
+    if (bodyHtml) {
+      contentParts.push(`<p>${bodyHtml}</p>`);
+    }
+    if (detailHtml) {
+      contentParts.push(`<p>${detailHtml}</p>`);
+    }
+    return `
+      <div class="${noticeClassName.join(" ")}">
+        <div class="s1p-notice-icon"></div>
+        <div class="s1p-notice-content">${contentParts.join("")}</div>
+      </div>
+    `;
+  };
+
+  const getCleanupNoticeDescriptor = (
+    cleanupInfo = null,
+    { currentThreadId = "" } = {}
+  ) => {
+    const normalizedCleanupInfo = normalizePendingCleanupInfo(cleanupInfo);
+    if (!normalizedCleanupInfo) {
+      return null;
+    }
+
+    const deletedCount = Math.max(
+      0,
+      Math.floor(Number(normalizedCleanupInfo.deletedCount) || 0)
+    );
+    const deletedCountHtml = `<strong>${deletedCount}</strong>`;
+    const normalizedCurrentThreadId = normalizeNumericId(currentThreadId);
+    const isRelevantToCurrentThread = isPendingCleanupRelevantToThread(
+      normalizedCleanupInfo,
+      normalizedCurrentThreadId
+    );
+    let bodyHtml = "";
+    let detailHtml = "";
+    let preflightHtml = "";
+
+    switch (normalizedCleanupInfo.source) {
+      case CLEANUP_PROVENANCE_SOURCE_AUTO_EXPIRE:
+        bodyHtml = `最近自动清理了 ${deletedCountHtml} 条过期阅读记录。`;
+        if (normalizedCurrentThreadId && !isRelevantToCurrentThread) {
+          detailHtml =
+            "这条 cleanup provenance 来自当前帖子之外的阅读记录变更，只会作为本次全局手动同步的附带信息，不代表当前帖子被自动清理。";
+          preflightHtml =
+            "检测到一条来自当前帖子之外的自动 cleanup 记录，会一并比较，但不会当成当前帖子的异常。";
+        } else {
+          detailHtml =
+            "这是一条阅读进度 cleanup provenance，会与原始触发原因并列展示，不会改写当前同步提示的来由。";
+          preflightHtml =
+            "检测到最近一次自动 cleanup provenance，会和其他同步原因一起比较，不会单独覆盖当前提示。";
+        }
+        break;
+      case CLEANUP_PROVENANCE_SOURCE_MANUAL_SINGLE:
+      case CLEANUP_PROVENANCE_SOURCE_MANUAL_GROUP:
+        bodyHtml = `最近手动删除了 ${deletedCountHtml} 条阅读记录。`;
+        if (normalizedCurrentThreadId && !isRelevantToCurrentThread) {
+          detailHtml =
+            "这条删除记录来自当前帖子之外的阅读进度变更，只会作为本次全局手动同步的附带信息，不代表当前帖子发生了自动清理。";
+          preflightHtml =
+            "检测到最近一次手动删除来自当前帖子之外，会一并比较，但不会把它解释成当前帖子的 cleanup 问题。";
+        } else {
+          detailHtml =
+            "这是最近一次阅读记录删除来源，会与原始触发原因并列展示，不会把当前同步问题改写成“自动清理”。";
+          preflightHtml =
+            "检测到最近一次阅读记录删除来源，会与云端变化和其他差异一起进入全局手动同步判断。";
+        }
+        break;
+      default:
+        bodyHtml =
+          deletedCount > 0
+            ? `最近有 ${deletedCountHtml} 条阅读记录被删除。`
+            : "最近检测到阅读记录删除来源。";
+        detailHtml =
+          "这条 cleanup 记录会作为本次全局手动同步的附带信息，不会覆盖原始触发原因。";
+        preflightHtml =
+          "检测到最近存在阅读记录删除来源，会和其他同步差异一起比较。";
+        break;
+    }
+
+    return {
+      titleHtml: "另有 cleanup 记录",
+      bodyHtml,
+      detailHtml,
+      preflightHtml,
+      isRelevantToCurrentThread,
+    };
+  };
+
+  const getManualSyncRootCauseDescriptor = ({
+    syncDecision = null,
+    conflictPauseState = null,
+  } = {}) => {
+    const pauseReason = String(conflictPauseState?.reason || "").trim();
+    if (pauseReason === "local_changed_during_sync") {
+      return {
+        titleHtml: "原始触发原因",
+        bodyHtml:
+          "自动同步期间检测到本地改动，为避免覆盖较新的本地数据，已暂停自动处理。",
+        detailHtml:
+          "接下来发起的是一次全局手动同步，会比较整套 S1 Plus 数据，而不是只处理当前帖子。",
+      };
+    }
+    if (pauseReason === "startup_local_newer") {
+      return {
+        titleHtml: "原始触发原因",
+        bodyHtml:
+          "启动时发现本地数据比云端更新，自动推送已暂停，等待您进行一次全局手动判断。",
+        detailHtml:
+          "这次会比较整套 S1 Plus 数据的去向，而不是只处理当前帖子里的单个异常。",
+      };
+    }
+    if (pauseReason) {
+      return {
+        titleHtml: "原始触发原因",
+        bodyHtml:
+          "自动同步检测到本地与云端可能同时发生了变化，已暂停自动处理以等待人工决定。",
+        detailHtml:
+          "这次需要决定的是整套 S1 Plus 数据的保留方向，不是只处理当前帖子。",
+      };
+    }
+
+    if (syncDecision && String(syncDecision.action || "") === "conflict") {
+      return {
+        titleHtml: "当前需要您决定的全局同步原因",
+        bodyHtml:
+          "本地与云端都可能已有更新，自动同步无法安全判定新旧，所以需要您手动决定保留哪一侧。",
+        detailHtml:
+          "这里比较的是整套 S1 Plus 数据，而不是只处理当前帖子或当前页上的一个局部问题。",
+      };
+    }
+
+    if (syncDecision && syncDecision.localNewer === true) {
+      return {
+        titleHtml: "本次同步作用域",
+        bodyHtml:
+          "当前对比结果偏向本地侧较新，但这仍是一轮全局手动同步判断。",
+        detailHtml:
+          "会综合比较阅读进度、cleanup 删除来源和其他 S1 Plus 数据，不只处理当前帖子。",
+      };
+    }
+
+    if (syncDecision && typeof syncDecision === "object") {
+      return {
+        titleHtml: "本次同步作用域",
+        bodyHtml:
+          "当前对比结果偏向云端侧较新，但这次操作仍是一次全局手动同步。",
+        detailHtml:
+          "会综合比较阅读进度、cleanup 删除来源和其他 S1 Plus 数据，而不是只处理当前帖子。",
+      };
+    }
+
+    return {
+      titleHtml: "本次同步作用域",
+      bodyHtml:
+        "这会发起一次全局手动同步，统一比较本地与云端的整套 S1 Plus 数据。",
+      detailHtml: "即使您是从当前帖子页进入，也不是只处理这个帖子。",
+    };
+  };
+
+  const createManualSyncPreflightHtml = ({
+    currentThreadId = "",
+    pendingCleanupInfo = null,
+    triggerDescriptor = null,
+  } = {}) => {
+    const cleanupDescriptor = getCleanupNoticeDescriptor(pendingCleanupInfo, {
+      currentThreadId,
+    });
+    const triggerLeadHtml = String(triggerDescriptor?.preflightLeadHtml || "").trim();
+    const cleanupLeadHtml = cleanupDescriptor?.preflightHtml
+      ? cleanupDescriptor.preflightHtml
+      : "当前没有待处理的 cleanup 删除来源，但这次仍会比较全部阅读进度差异。";
+
+    return `
+      <p><strong>这不是只处理当前帖子。</strong> 将发起一次全局手动同步，统一比较本地与云端的整套 S1 Plus 数据。</p>
+      <p><strong>当前原因：</strong>${triggerLeadHtml || "会先检查云端最新版本，再决定是拉取、推送还是提示冲突。"}</p>
+      <p><strong>会一起检查：</strong>云端变化、阅读进度，以及最近的 cleanup 删除来源。</p>
+      <p><strong>cleanup 删除：</strong>${cleanupLeadHtml}</p>
+    `;
+  };
+
+  const evaluateCleanupSyncShortcut = async ({
+    pendingCleanupInfo = undefined,
+    localDataObject = null,
+    remoteDataObject = null,
+    versionDecision = null,
+    currentThreadId = "",
+    activeConflictPause = undefined,
+    now = Date.now(),
+  } = {}) => {
+    const cleanupInfo =
+      pendingCleanupInfo === undefined
+        ? getPendingCleanupInfo()
+        : normalizePendingCleanupInfo(pendingCleanupInfo);
+    const resolvedConflictPause =
+      activeConflictPause === undefined
+        ? typeof getActiveAutoSyncConflictPause === "function"
+          ? getActiveAutoSyncConflictPause()
+          : null
+        : activeConflictPause;
+
+    const blocked = (reason, extra = {}) => ({
+      allowed: false,
+      reason,
+      cleanupInfo,
+      ...extra,
+    });
+
+    if (!cleanupInfo) {
+      return blocked("no_pending_cleanup");
+    }
+    if (!CLEANUP_SHORTCUT_ALLOWED_SOURCES.has(cleanupInfo.source)) {
+      return blocked("cleanup_source_not_allowed");
+    }
+    if (isPendingCleanupInfoExpired(cleanupInfo, now)) {
+      return blocked("cleanup_info_expired");
+    }
+    if (resolvedConflictPause) {
+      return blocked("active_conflict_pause");
+    }
+    if (!localDataObject || !remoteDataObject) {
+      return blocked("missing_sync_payload");
+    }
+    if (!(versionDecision && versionDecision.localNewer === true)) {
+      return blocked("cleanup_not_local_newer");
+    }
+    if (String(versionDecision.action || "") !== "push") {
+      return blocked("cleanup_not_push_action");
+    }
+    if (
+      !localDataObject.baseContentHash ||
+      !remoteDataObject.baseContentHash ||
+      localDataObject.baseContentHash !== remoteDataObject.baseContentHash
+    ) {
+      return blocked("cleanup_base_hash_mismatch");
+    }
+    if (!isPendingCleanupRelevantToThread(cleanupInfo, currentThreadId)) {
+      return blocked("cleanup_unrelated_to_current_thread");
+    }
+
+    const [localReadProgressHash, remoteReadProgressHash] = await Promise.all([
+      calculateReadProgressDataHash(localDataObject?.data?.read_progress || {}),
+      calculateReadProgressDataHash(remoteDataObject?.data?.read_progress || {}),
+    ]);
+
+    if (cleanupInfo.basisHashAfter !== localReadProgressHash) {
+      return blocked("cleanup_local_basis_mismatch", { localReadProgressHash });
+    }
+    if (cleanupInfo.basisHashBefore !== remoteReadProgressHash) {
+      return blocked("cleanup_remote_basis_mismatch", { remoteReadProgressHash });
+    }
+
+    return {
+      allowed: true,
+      reason: "cleanup_shortcut_allowed",
+      cleanupInfo,
+      localReadProgressHash,
+      remoteReadProgressHash,
+    };
+  };
+
+  const updateThreadProgress = (
+    threadId,
+    postId,
+    page,
+    lastReadFloor,
+    provenanceOptions = {}
+  ) => {
     if (!postId || !page || !lastReadFloor) return;
 
     const nextPageNumber = parseInt(page, 10);
@@ -11066,18 +12572,23 @@
       return;
     }
 
+    const createdAt = Date.now();
     pendingThreadProgressWrites[threadId] = {
       postId: String(postId),
       page: String(nextPageNumber),
-      timestamp: Date.now(),
+      timestamp: createdAt,
       lastReadFloor: String(nextFloorNumber),
+      provenance: buildReadProgressProvenance(String(threadId), String(nextPageNumber), {
+        ...provenanceOptions,
+        createdAt,
+      }),
     };
     schedulePendingThreadProgressPersist();
   };
 
   // 删除单个帖子阅读记录（用于列表页悬停删除入口）
-  const deleteThreadReadProgress = (threadId) => {
-    const normalizedThreadId = String(threadId || "").trim();
+  const deleteThreadReadProgress = async (threadId) => {
+    const normalizedThreadId = normalizeNumericId(threadId);
     if (!normalizedThreadId) return false;
 
     if (Object.prototype.hasOwnProperty.call(pendingThreadProgressWrites, normalizedThreadId)) {
@@ -11092,15 +12603,18 @@
     const nextProgress = { ...progress };
     delete nextProgress[normalizedThreadId];
 
-    // 与已有手动清理逻辑保持一致，便于同步层识别本地清理行为。
-    const pendingCleanupCount = parseInt(
-      String(GM_getValue("s1p_pending_cleanup_info", 0)),
-      10
-    );
-    GM_setValue(
-      "s1p_pending_cleanup_info",
-      (Number.isFinite(pendingCleanupCount) ? pendingCleanupCount : 0) + 1
-    );
+    const createdAt = Date.now();
+    await recordPendingCleanupInfo({
+      source: CLEANUP_PROVENANCE_SOURCE_MANUAL_SINGLE,
+      cleanupModeAtCreation: getSettings().cleanupMode,
+      createdAt,
+      deletedCount: 1,
+      threadIds: [normalizedThreadId],
+      initiatedFromThreadId:
+        typeof getCurrentThreadId === "function" ? getCurrentThreadId() : "",
+      beforeProgress: progress,
+      afterProgress: nextProgress,
+    });
     saveReadProgress(nextProgress, false);
     scheduleProgressJumpButtonsRefresh(nextProgress);
     return true;
@@ -15798,7 +17312,9 @@
         lastSyncedRemoteUpdatedAt: nextRemoteUpdatedAt,
       });
       saveSyncDiagnostics({
-        ...getSyncDiagnostics(),
+        ...mergeSyncDiagnosticsContext(getSyncDiagnostics(), {
+          baselineHash: shortHashForLog(nextContentHash),
+        }),
         lastSyncedRemoteUpdatedAt: nextRemoteUpdatedAt,
       });
     }
@@ -15808,9 +17324,18 @@
     localDataObject,
     remoteDataObject,
     remoteUpdatedAt = undefined,
-    isStartupSync = false,
+    syncMode = AUTO_SYNC_MODE_BACKGROUND,
     forcePullOnStartup = false,
   }) => {
+    const resolvedSyncMode =
+      normalizeAutoSyncExecutionMode(syncMode) || AUTO_SYNC_MODE_BACKGROUND;
+    const isStartupSync = resolvedSyncMode === AUTO_SYNC_MODE_STARTUP;
+    const localNewerAction =
+      resolvedSyncMode === AUTO_SYNC_MODE_FOREGROUND_FOLLOWUP
+        ? "skip_push_on_foreground_followup"
+        : isStartupSync
+          ? "skip_push_on_startup"
+          : "push";
     if (
       !localDataObject ||
       !remoteDataObject ||
@@ -15861,7 +17386,7 @@
       if (remoteChangedByHash === false) {
         if (localChanged) {
           return {
-            action: isStartupSync ? "skip_push_on_startup" : "push",
+            action: localNewerAction,
             reason: remoteChangedByUpdatedAt
               ? "local_changed_with_remote_timestamp_drift"
               : "local_changed_since_baseline",
@@ -15902,7 +17427,7 @@
         }
         if (localChanged && !remoteChangedByUpdatedAt) {
           return {
-            action: isStartupSync ? "skip_push_on_startup" : "push",
+            action: localNewerAction,
             reason: "local_changed_since_baseline",
             localNewer: true,
           };
@@ -15972,7 +17497,7 @@
     }
 
     return {
-      action: isStartupSync ? "skip_push_on_startup" : "push",
+      action: localNewerAction,
       reason: "timestamp_local_newer",
       localNewer: true,
     };
@@ -16536,31 +18061,31 @@
       case "conflict":
         if (result.reason === "local_changed_during_sync") {
           showMessage(
-            "检测到您在后台自动同步期间有本地操作，已暂停自动拉取以保护更改。请稍后手动同步。",
+            "检测到您在后台自动同步期间有本地操作，已暂停自动拉取以保护更改。请稍后发起全局手动同步。",
             false
           );
           break;
         }
         if (!(await shouldShowConflictModal("background_conflict"))) {
           showMessage(
-            "再次检测到后台同步冲突，已进入提示冷却。请稍后手动同步处理。",
+            "再次检测到后台同步冲突，已进入提示冷却。请稍后发起全局手动同步。",
             false
           );
           break;
         }
         createAdvancedConfirmationModal(
           "检测到后台同步冲突",
-          "<p>S1 Plus在后台自动同步时发现，您的本地数据和云端备份可能都已更改，为防止数据丢失，自动同步已暂停。</p><p>请手动选择要保留的版本来解决冲突。</p>",
+          "<p>S1 Plus 在后台自动同步时发现，本地与云端备份可能都已更改。为防止数据丢失，自动同步已暂停。</p><p>接下来如果继续，将发起一次全局手动同步来决定保留哪一侧，而不是只处理当前帖子。</p>",
           [
             {
               text: "稍后处理",
               className: "s1p-cancel",
               action: () => {
-                showMessage("同步已暂停，您可以在设置中手动同步。", null);
+                showMessage("同步已暂停，您可以稍后在导航栏发起全局手动同步。", null);
               },
             },
             {
-              text: "立即解决",
+              text: "发起全局同步",
               className: "s1p-confirm",
               action: () => {
                 handleManualSync();
@@ -16823,7 +18348,8 @@
             console.log("S1 Plus: 检测到数据变更，触发后台智能同步检查...");
             const result = await performAutoSync(
               false,
-              SYNC_LOCK_MODE_BACKGROUND
+              SYNC_LOCK_MODE_BACKGROUND,
+              SYNC_TRIGGER_SOURCE_BACKGROUND_PUSH
             );
             const phaseFromResult = getAutoSyncIndicatorPhaseFromResult(result);
             if (phaseFromResult) {
@@ -16984,19 +18510,48 @@
   };
 
   // [MODIFIED] 自动同步控制器 (逻辑优化版)
-  const performAutoSync = async (isStartupSync = false, syncLockMode = null) => {
+  const performAutoSync = async (
+    modeOrIsStartupSync = false,
+    syncLockMode = null,
+    triggerSource = ""
+  ) => {
+    const executionOptions = resolveAutoSyncExecutionOptions(
+      modeOrIsStartupSync,
+      syncLockMode,
+      triggerSource
+    );
+    const syncMode = executionOptions.syncMode;
+    const isStartupSync = syncMode === AUTO_SYNC_MODE_STARTUP;
     const settings = getSettings();
     const skipResult = getRemoteSyncExecutionSkipResult(settings);
     if (skipResult) {
       return skipResult;
     }
 
-    const syncMode = isStartupSync ? "startup" : "background";
+    const resolvedTriggerSource =
+      normalizeSyncTriggerSource(executionOptions.triggerSource) ||
+      (syncMode === AUTO_SYNC_MODE_STARTUP
+        ? SYNC_TRIGGER_SOURCE_DAILY_STARTUP
+        : syncMode === AUTO_SYNC_MODE_FOREGROUND_FOLLOWUP
+          ? SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME
+          : SYNC_TRIGGER_SOURCE_BACKGROUND_PUSH);
+    let syncDiagnosticsContext = {
+      triggerSource: resolvedTriggerSource,
+    };
+    const updateSyncDiagnosticsContext = (partial = {}) => {
+      syncDiagnosticsContext = {
+        ...syncDiagnosticsContext,
+        ...partial,
+      };
+    };
     const assertAutoSyncLockOwned = (stage) => {
-      if (!syncLockMode) {
+      if (!executionOptions.syncLockMode) {
         return;
       }
-      assertSyncLockOwned(syncLockMode, `auto_sync:${stage}`);
+      assertSyncLockOwned(
+        executionOptions.syncLockMode,
+        `auto_sync:${syncMode}:${stage}`
+      );
     };
     const runWithAutoSyncLockGuard = async (stage, callback) => {
       assertAutoSyncLockOwned(`${stage}:before`);
@@ -17005,6 +18560,35 @@
       return result;
     };
     let syncOutcome = "unknown";
+    const asSoftBlockedResult = (reason, extraResult = null) => {
+      syncOutcome = "soft_blocked";
+      const softBlockState = setForegroundFollowUpSoftBlock({
+        reason,
+        triggerSource: resolvedTriggerSource,
+        triggerReason:
+          extraResult && typeof extraResult === "object" ? extraResult.reason : "",
+        syncAction:
+          extraResult && typeof extraResult === "object"
+            ? extraResult.action || ""
+            : "",
+      });
+      recordSyncBlocked(reason, syncMode, "soft", syncDiagnosticsContext);
+      const baseResult = {
+        status: "blocked",
+        blockLevel: "soft",
+        blockScope: softBlockState?.scope || FOREGROUND_FOLLOWUP_SOFT_BLOCK_SCOPE_TAB,
+        reason,
+        softBlockState,
+      };
+      if (
+        extraResult &&
+        typeof extraResult === "object" &&
+        !Array.isArray(extraResult)
+      ) {
+        return { ...baseResult, ...extraResult };
+      }
+      return baseResult;
+    };
     const asSuccessResult = (action, syncBaseline = null, extraResult = null) => {
       syncOutcome = "success";
       if (action === "skipped_push_on_startup") {
@@ -17025,7 +18609,11 @@
         setSyncBaselineState(syncBaseline);
       }
       resetAutoSyncFailureState();
-      recordSyncSuccess(action, syncMode);
+      recordSyncSuccess(action, syncMode, {
+        ...syncDiagnosticsContext,
+        reason:
+          extraResult && typeof extraResult === "object" ? extraResult.reason : "",
+      });
       updateLastSyncTimeDisplay();
       const baseResult = { status: "success", action };
       if (
@@ -17043,7 +18631,7 @@
       setAutoSyncConflictPause(reason);
       clearAutoSyncRuntimeQueue();
       resetAutoSyncFailureState();
-      recordSyncConflict(reason, syncMode);
+      recordSyncConflict(reason, syncMode, syncDiagnosticsContext);
       updateLastSyncTimeDisplay();
       return { status: "conflict", reason };
     };
@@ -17058,11 +18646,8 @@
     syncDirtyNeedsFollowUpSync = false;
     syncDirtyTimestamp = 0;
     isInitialSyncInProgress = true;
-    recordSyncAttempt(syncMode, "auto");
-    console.log(
-      `S1 Plus (Sync): 启动同步检查... (模式: ${isStartupSync ? "Startup" : "Normal"
-      })`
-    );
+    recordSyncAttempt(syncMode, resolvedTriggerSource);
+    console.log(`S1 Plus (Sync): 启动同步检查... (模式: ${syncMode})`);
 
     try {
       const { data: rawRemoteData, meta: remoteMeta } =
@@ -17075,6 +18660,10 @@
           "export_local_data_initial_push",
           () => exportLocalDataObject()
         );
+        updateSyncDiagnosticsContext({
+          localHash: shortHashForLog(localData.contentHash),
+          baselineHash: shortHashForLog(getSyncBaselineState()?.contentHash),
+        });
         const pushResult = await runWithAutoSyncLockGuard(
           "push_initial_data",
           () =>
@@ -17097,12 +18686,19 @@
         "export_local_data",
         () => exportLocalDataObject()
       );
+      updateSyncDiagnosticsContext({
+        localHash: shortHashForLog(localDataObject.contentHash),
+        remoteHash: shortHashForLog(remote.contentHash),
+        baselineHash: shortHashForLog(getSyncBaselineState()?.contentHash),
+        cleanupInfo: getPendingCleanupInfo(),
+        threadId: getCurrentThreadId() || "",
+      });
 
       const versionDecision = decideSyncActionByVersion({
         localDataObject,
         remoteDataObject: remote,
         remoteUpdatedAt: remoteMeta.updatedAt,
-        isStartupSync,
+        syncMode,
         forcePullOnStartup: settings.syncForcePullOnStartup,
       });
       const syncAction = versionDecision.action;
@@ -17121,6 +18717,12 @@
         if (isStartupSync) {
           return asSuccessResult("skipped_push_on_startup", null, {
             reason: "local_changed_during_sync",
+          });
+        }
+        if (syncMode === AUTO_SYNC_MODE_FOREGROUND_FOLLOWUP) {
+          return asSoftBlockedResult("local_changed_during_sync", {
+            reason: "local_changed_during_sync",
+            action: "foreground_followup_dirty_guard",
           });
         }
         return asConflictResult("local_changed_during_sync");
@@ -17180,6 +18782,22 @@
           );
           assertAutoSyncLockOwned("return_skip_push_on_startup");
           return asSuccessResult("skipped_push_on_startup");
+
+        case "skip_push_on_foreground_followup":
+          console.warn(
+            "S1 Plus (Sync): 前台 follow-up 命中本地较新，已记录为当前标签页 soft block，不升级为全局暂停。",
+            {
+              reason: versionDecision.reason || "local_changed_since_baseline",
+              triggerSource: resolvedTriggerSource,
+            }
+          );
+          assertAutoSyncLockOwned("return_skip_push_on_foreground_followup");
+          return asSoftBlockedResult(
+            versionDecision.reason || "local_changed_since_baseline",
+            {
+              action: "skip_push_on_foreground_followup",
+            }
+          );
 
         case "push":
           console.log(`S1 Plus (Sync): 本地数据比远程新，正在后台推送...`);
@@ -17298,7 +18916,7 @@
       }
       syncOutcome = "failure";
       console.error("S1 Plus: 自动同步失败:", error);
-      recordSyncFailure(error.message, syncMode);
+      recordSyncFailure(error.message, syncMode, syncDiagnosticsContext);
       const failureState = registerAutoSyncFailure(syncMode);
       updateLastSyncTimeDisplay();
       return { status: "failure", error: error.message, failureState };
@@ -17357,6 +18975,7 @@
         status: "skipped",
         reason: "startup_lock_unavailable",
       },
+      triggerSource = "",
       onLockUnavailable,
       beforePerform,
       onBeforePerform,
@@ -17386,7 +19005,12 @@
       if (typeof onBeforePerform === "function") {
         await onBeforePerform();
       }
-      return await performAutoSyncFn(true, SYNC_LOCK_MODE_STARTUP);
+      return await performAutoSyncFn(
+        true,
+        SYNC_LOCK_MODE_STARTUP,
+        normalizeSyncTriggerSource(triggerSource) ||
+          SYNC_TRIGGER_SOURCE_DAILY_STARTUP
+      );
     } finally {
       stopStartupSyncLockHeartbeatFn();
       releaseStartupSyncLockFn();
@@ -17413,6 +19037,7 @@
     try {
       result = await runStartupModeAutoSyncCheck({
         ...startupOptions,
+        triggerSource: resolvedSource,
         onBeforePerform: async () => {
           indicatorCycleToken = startAutoSyncIndicatorCycle(resolvedSource, {
             reason: normalizedReason,
@@ -17422,6 +19047,124 @@
           }
           if (typeof startupOnBeforePerform === "function") {
             await startupOnBeforePerform();
+          }
+        },
+      });
+    } catch (error) {
+      if (indicatorCycleToken) {
+        finishAutoSyncIndicatorCycle(
+          indicatorCycleToken,
+          AUTO_SYNC_INDICATOR_PHASE_FAILURE,
+          {
+            source: resolvedSource,
+            reason: normalizedReason,
+          }
+        );
+      }
+      throw error;
+    }
+
+    if (indicatorCycleToken) {
+      finishAutoSyncIndicatorCycle(
+        indicatorCycleToken,
+        getAutoSyncIndicatorPhaseFromResult(result),
+        {
+          source: resolvedSource,
+          reason: getAutoSyncIndicatorReasonFromResult(result) || normalizedReason,
+        }
+      );
+    }
+
+    return result;
+  };
+
+  const runForegroundFollowUpAutoSyncCheck = async (options = {}) => {
+    const {
+      acquireStartupSyncLock: acquireStartupSyncLockFn = acquireStartupSyncLock,
+      startStartupSyncLockHeartbeat:
+        startStartupSyncLockHeartbeatFn = startStartupSyncLockHeartbeat,
+      stopStartupSyncLockHeartbeat:
+        stopStartupSyncLockHeartbeatFn = stopStartupSyncLockHeartbeat,
+      releaseStartupSyncLock: releaseStartupSyncLockFn = releaseStartupSyncLock,
+      performAutoSync: performAutoSyncFn = performAutoSync,
+      lockUnavailableResult = {
+        status: "skipped",
+        reason: "foreground_followup_lock_unavailable",
+      },
+      triggerSource = "",
+      onLockUnavailable,
+      beforePerform,
+      onBeforePerform,
+      onAfterRelease,
+    } = options;
+
+    if (!(await acquireStartupSyncLockFn())) {
+      if (typeof onLockUnavailable === "function") {
+        await onLockUnavailable();
+      }
+      return lockUnavailableResult;
+    }
+
+    startStartupSyncLockHeartbeatFn();
+    try {
+      if (typeof beforePerform === "function") {
+        const beforePerformResult = await beforePerform();
+        if (
+          beforePerformResult &&
+          typeof beforePerformResult === "object" &&
+          beforePerformResult.skip === true
+        ) {
+          return beforePerformResult.result;
+        }
+      }
+
+      clearForegroundFollowUpSoftBlock();
+      if (typeof onBeforePerform === "function") {
+        await onBeforePerform();
+      }
+      return await performAutoSyncFn({
+        mode: AUTO_SYNC_MODE_FOREGROUND_FOLLOWUP,
+        syncLockMode: SYNC_LOCK_MODE_STARTUP,
+        triggerSource:
+          normalizeSyncTriggerSource(triggerSource) ||
+          SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME,
+      });
+    } finally {
+      stopStartupSyncLockHeartbeatFn();
+      releaseStartupSyncLockFn();
+      if (typeof onAfterRelease === "function") {
+        await onAfterRelease();
+      }
+    }
+  };
+
+  const runForegroundFollowUpAutoSyncCheckWithIndicator = async ({
+    source = AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME,
+    reason = "",
+    onIndicatorStart,
+    followUpOptions = {},
+  } = {}) => {
+    const resolvedSource =
+      normalizeAutoSyncIndicatorSource(source) ||
+      AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME;
+    const normalizedReason = normalizeAutoSyncIndicatorReason(reason);
+    const followUpOnBeforePerform = followUpOptions.onBeforePerform;
+    let indicatorCycleToken = "";
+    let result = null;
+
+    try {
+      result = await runForegroundFollowUpAutoSyncCheck({
+        ...followUpOptions,
+        triggerSource: resolvedSource,
+        onBeforePerform: async () => {
+          indicatorCycleToken = startAutoSyncIndicatorCycle(resolvedSource, {
+            reason: normalizedReason,
+          });
+          if (typeof onIndicatorStart === "function") {
+            await onIndicatorStart();
+          }
+          if (typeof followUpOnBeforePerform === "function") {
+            await followUpOnBeforePerform();
           }
         },
       });
@@ -17472,15 +19215,18 @@
 
     const normalizedReason =
       normalizeRemoteProbeText(reason, 120) || "remote_probe_changed";
-    const runPromise = runStartupModeAutoSyncCheckWithIndicator({
-      source: AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_FOLLOWUP,
+    const resolvedSource =
+      normalizeSyncTriggerSource(normalizedReason) ||
+      AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME;
+    const runPromise = runForegroundFollowUpAutoSyncCheckWithIndicator({
+      source: resolvedSource,
       reason: normalizedReason,
       onIndicatorStart: () => {
         console.log(
-          `S1 Plus: 远端探测命中更新，正在复用启动同步路径执行安全检查(${normalizedReason})...`
+          `S1 Plus: 远端探测命中更新，正在执行前台 follow-up 同步检查(${normalizedReason})...`
         );
       },
-      startupOptions: {
+      followUpOptions: {
         acquireStartupSyncLock: overrides.acquireStartupSyncLock,
         startStartupSyncLockHeartbeat: overrides.startStartupSyncLockHeartbeat,
         stopStartupSyncLockHeartbeat: overrides.stopStartupSyncLockHeartbeat,
@@ -17509,8 +19255,17 @@
       clearTimeout(foregroundRemoteSyncRetryTimer);
       foregroundRemoteSyncRetryTimer = null;
     }
+    foregroundRemoteSyncRetryDueAt = 0;
     foregroundRemoteSyncRetryAttempts = 0;
     foregroundRemoteSyncRetryReason = "";
+  };
+
+  const getForegroundRemoteSyncRetryRemainingMs = (now = Date.now()) => {
+    const normalizedNow = normalizeRemoteProbeTimestamp(now) || Date.now();
+    if (!foregroundRemoteSyncRetryDueAt) {
+      return 0;
+    }
+    return Math.max(0, foregroundRemoteSyncRetryDueAt - normalizedNow);
   };
 
   const isForegroundRemoteSyncRetryableSkipResult = (syncResult) =>
@@ -17519,19 +19274,39 @@
       typeof syncResult === "object" &&
       syncResult.status === "skipped" &&
       (
-        syncResult.reason === "startup_lock_unavailable" ||
+        syncResult.reason === "foreground_followup_lock_unavailable" ||
         syncResult.reason === "foreground_sync_in_flight" ||
         syncResult.reason === "lock_lost"
       )
     );
 
-  const scheduleForegroundRemoteSyncRetry = (reason = "remote_probe_retry") => {
+  const isForegroundRemoteSyncRetryableResult = (syncResult) =>
+    isForegroundRemoteSyncRetryableSkipResult(syncResult) ||
+    Boolean(
+      syncResult &&
+      typeof syncResult === "object" &&
+      syncResult.status === "blocked" &&
+      syncResult.blockLevel === "soft" &&
+      isForegroundProbeRetryableSoftBlockReason(syncResult.reason)
+    );
+
+  const scheduleForegroundRemoteSyncRetry = (
+    reason = "remote_probe_retry",
+    options = {}
+  ) => {
     if (document.visibilityState !== "visible") {
       clearForegroundRemoteSyncRetry();
       return { status: "suppressed", reason: "document_hidden" };
     }
     const normalizedReason =
       normalizeRemoteProbeText(reason, 120) || "remote_probe_retry";
+    const resolvedSource =
+      normalizeSyncTriggerSource(normalizedReason) ||
+      AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME;
+    const preferredDelayMs = Math.max(
+      0,
+      Math.floor(Number(options.preferredDelayMs) || 0)
+    );
     if (
       foregroundRemoteSyncRetryTimer &&
       foregroundRemoteSyncRetryReason === normalizedReason
@@ -17539,6 +19314,7 @@
       return {
         status: "already_scheduled",
         attempt: foregroundRemoteSyncRetryAttempts,
+        retryAfterMs: getForegroundRemoteSyncRetryRemainingMs(),
         reason: normalizedReason,
       };
     }
@@ -17553,39 +19329,73 @@
       clearForegroundRemoteSyncRetry();
       return { status: "dropped", reason: "retry_limit_reached" };
     }
-    const retryDelayMs = Math.min(
-      FOREGROUND_REMOTE_SYNC_RETRY_MAX_DELAY_MS,
-      FOREGROUND_REMOTE_SYNC_RETRY_BASE_DELAY_MS *
-        2 ** foregroundRemoteSyncRetryAttempts
+    const retryDelayMs = resolveForegroundProbeRetryDelayMs(
+      foregroundRemoteSyncRetryAttempts,
+      preferredDelayMs
     );
     foregroundRemoteSyncRetryAttempts += 1;
     foregroundRemoteSyncRetryReason = normalizedReason;
-    setAutoSyncIndicatorPendingPhase("foreground_followup_retry");
+    foregroundRemoteSyncRetryDueAt = Date.now() + retryDelayMs;
+    setAutoSyncIndicatorPendingState(
+      resolvedSource,
+      "foreground_followup_retry"
+    );
 
     if (foregroundRemoteSyncRetryTimer) {
       clearTimeout(foregroundRemoteSyncRetryTimer);
     }
     foregroundRemoteSyncRetryTimer = setTimeout(async () => {
       foregroundRemoteSyncRetryTimer = null;
+      foregroundRemoteSyncRetryDueAt = 0;
       if (document.visibilityState !== "visible") {
         clearForegroundRemoteSyncRetry();
         return;
       }
 
       try {
-        const syncResult = await requestForegroundRemoteSyncCheck(
-          normalizedReason
+        const gateBlockResult = (
+          options.getForegroundProbeGateBlockResult ||
+          getForegroundProbeGateBlockResult
+        )({
+          triggerSource: resolvedSource,
+          triggerReason: normalizedReason,
+          now: Date.now(),
+        });
+        if (gateBlockResult) {
+          scheduleForegroundRemoteSyncRetry(normalizedReason, {
+            ...options,
+            preferredDelayMs: gateBlockResult.retryAfterMs,
+          });
+          return;
+        }
+
+        const syncResult = await (
+          options.requestForegroundRemoteSyncCheck ||
+          requestForegroundRemoteSyncCheck
+        )(
+          normalizedReason,
+          options.requestForegroundRemoteSyncCheckOverrides || {}
         );
-        if (isForegroundRemoteSyncRetryableSkipResult(syncResult)) {
-          scheduleForegroundRemoteSyncRetry(normalizedReason);
+        if (isForegroundRemoteSyncRetryableResult(syncResult)) {
+          scheduleForegroundRemoteSyncRetry(normalizedReason, {
+            ...options,
+            preferredDelayMs:
+              Number(syncResult?.retryAfterMs) || preferredDelayMs,
+          });
           return;
         }
 
         clearForegroundRemoteSyncRetry();
-        applyRefreshPolicyForSyncResult(syncResult, {
+        (
+          options.applyRefreshPolicyForSyncResult ||
+          applyRefreshPolicyForSyncResult
+        )(syncResult, {
           reason: `foreground_retry:${normalizedReason}`,
         });
-        maybeShowForegroundProbeFeedback(
+        (
+          options.maybeShowForegroundProbeFeedback ||
+          maybeShowForegroundProbeFeedback
+        )(
           { status: "changed", syncRequestResult: syncResult },
           {
             triggerReason: normalizedReason,
@@ -17644,6 +19454,15 @@
         reason: "foreground_sync_in_flight",
       });
     }
+    const foregroundRetryRemainingMs =
+      getForegroundRemoteSyncRetryRemainingMs(now);
+    if (foregroundRetryRemainingMs > 0) {
+      return finalizeResult({
+        status: "skipped",
+        reason: "followup_retry_pending",
+        retryAfterMs: foregroundRetryRemainingMs,
+      });
+    }
     if (hasAnyActiveSyncLock(now)) {
       return finalizeResult({ status: "skipped", reason: "sync_lock_active" });
     }
@@ -17679,8 +19498,26 @@
     const fetchRemoteDataFn = overrides.fetchRemoteData || fetchRemoteData;
     const requestForegroundRemoteSyncCheckFn =
       overrides.requestForegroundRemoteSyncCheck || requestForegroundRemoteSyncCheck;
+    const getForegroundProbeGateBlockResultFn =
+      overrides.getForegroundProbeGateBlockResult ||
+      getForegroundProbeGateBlockResult;
     const normalizedReason =
       normalizeRemoteProbeText(reason, 120) || "visibility";
+    const retryOptions = {
+      ...(overrides.foregroundRemoteSyncRetryOptions || {}),
+    };
+    if (!retryOptions.getForegroundProbeGateBlockResult) {
+      retryOptions.getForegroundProbeGateBlockResult =
+        getForegroundProbeGateBlockResultFn;
+    }
+    if (!retryOptions.requestForegroundRemoteSyncCheck) {
+      retryOptions.requestForegroundRemoteSyncCheck =
+        requestForegroundRemoteSyncCheckFn;
+    }
+    if (!retryOptions.requestForegroundRemoteSyncCheckOverrides) {
+      retryOptions.requestForegroundRemoteSyncCheckOverrides =
+        overrides.requestForegroundRemoteSyncCheckOverrides || {};
+    }
 
     markForegroundProbeLocalAttempt(now);
 
@@ -17757,14 +19594,49 @@
         );
       }
 
+      const gateBlockResult = getForegroundProbeGateBlockResultFn({
+        triggerSource: normalizeSyncTriggerSource(normalizedReason) ||
+          SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME,
+        triggerReason: normalizedReason,
+        now,
+      });
+      if (gateBlockResult) {
+        const retryPlan = scheduleForegroundRemoteSyncRetry(
+          `remote_probe_changed:${normalizedReason}`,
+          {
+            ...retryOptions,
+            preferredDelayMs: gateBlockResult.retryAfterMs,
+          }
+        );
+        return finalizeResult(
+          {
+            status: "changed",
+            reason: "remote_changed",
+            remoteUpdatedAt,
+            lastSyncedRemoteUpdatedAt,
+            lastObservedRemoteUpdatedAt,
+            syncRequestResult: gateBlockResult,
+            retryPlan,
+          },
+          {
+            remoteUpdatedAt,
+            triggeredSync: false,
+            triggeredSyncResult:
+              formatForegroundProbeSyncResultForDiagnostics(gateBlockResult),
+            lastSyncedRemoteUpdatedAt,
+          }
+        );
+      }
+
       const syncRequestResult = await requestForegroundRemoteSyncCheckFn(
         `remote_probe_changed:${normalizedReason}`,
         overrides.requestForegroundRemoteSyncCheckOverrides || {}
       );
-      if (isForegroundRemoteSyncRetryableSkipResult(syncRequestResult)) {
-        scheduleForegroundRemoteSyncRetry(
-          `remote_probe_changed:${normalizedReason}`
-        );
+      if (isForegroundRemoteSyncRetryableResult(syncRequestResult)) {
+        scheduleForegroundRemoteSyncRetry(`remote_probe_changed:${normalizedReason}`, {
+          ...retryOptions,
+          preferredDelayMs: Number(syncRequestResult?.retryAfterMs) || 0,
+        });
       } else {
         clearForegroundRemoteSyncRetry();
       }
@@ -17849,7 +19721,10 @@
       clearPendingAutoPullReloadTimer,
       runStartupModeAutoSyncCheck,
       requestForegroundRemoteSyncCheck,
+      scheduleForegroundRemoteSyncRetry,
+      getForegroundRemoteSyncRetryRemainingMs,
       checkRemoteFreshnessOnForeground,
+      getForegroundProbeGateBlockResult,
       hasEnabledAutoSyncIndicatorPath,
       getAutoSyncIndicatorState,
       setAutoSyncIndicatorResolvedPhase,
@@ -17858,10 +19733,29 @@
       getAutoSyncIndicatorPhaseFromResult,
       getAutoSyncIndicatorReasonFromResult,
       getAutoSyncIndicatorTitle: (...args) => getAutoSyncIndicatorTitle(...args),
+      decideSyncActionByVersion,
+      performAutoSync,
+      runForegroundFollowUpAutoSyncCheck,
       triggerForegroundRemoteFreshnessProbe,
       handleInitialForegroundRemoteFreshnessCheck,
       handlePendingAutoSyncRecoveryPageShow,
       handlePendingAutoSyncRecoveryVisibilityChange,
+      getForegroundFollowUpSoftBlockState,
+      clearForegroundFollowUpSoftBlock,
+      setForegroundFollowUpSoftBlock,
+      getPendingCleanupInfo,
+      setPendingCleanupInfo,
+      clearPendingCleanupInfo,
+      buildPendingCleanupInfo,
+      evaluateCleanupSyncShortcut,
+      calculateReadProgressDataHash,
+      getCleanupSyncMessageBundle,
+      getCleanupNoticeDescriptor,
+      getManualSyncRootCauseDescriptor,
+      createManualSyncPreflightHtml,
+      getAutoPullRefreshMessagesForSource,
+      getNavbarPersistentSyncAlertDescriptor: (...args) =>
+        getNavbarPersistentSyncAlertDescriptor(...args),
     };
   }
 
@@ -19560,13 +21454,17 @@
       await pushRemoteData(localData);
       assertManualSyncLockOwned("after_push_remote_data");
       // [FIX] 强制推送后清除残留的清理标记
-      GM_deleteValue("s1p_pending_cleanup_info");
+      clearPendingCleanupInfo();
       clearPendingAutoSyncRequest();
       clearAutoSyncConflictPause();
       GM_setValue("s1p_last_sync_timestamp", Date.now());
       setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_SUCCESS);
       resetAutoSyncFailureState();
-      recordSyncSuccess("force_push", "manual");
+      recordSyncSuccess("force_push", "manual", {
+        triggerSource: SYNC_TRIGGER_SOURCE_MANUAL_SYNC,
+        localHash: shortHashForLog(localData.contentHash),
+        baselineHash: shortHashForLog(getSyncBaselineState()?.contentHash),
+      });
       updateLastSyncTimeDisplay();
       showMessage("推送成功！已更新云端备份。", true);
     } catch (e) {
@@ -19575,7 +21473,9 @@
         return;
       }
       setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_FAILURE);
-      recordSyncFailure(e.message, "manual");
+      recordSyncFailure(e.message, "manual", {
+        triggerSource: SYNC_TRIGGER_SOURCE_MANUAL_SYNC,
+      });
       updateLastSyncTimeDisplay();
       showMessage(`推送失败: ${e.message}`, false);
     } finally {
@@ -19630,13 +21530,17 @@
       assertManualSyncLockOwned("after_import_local_data");
       if (result.success) {
         // [FIX] 强制拉取成功后清除残留的清理标记
-        GM_deleteValue("s1p_pending_cleanup_info");
+        clearPendingCleanupInfo();
         clearPendingAutoSyncRequest();
         clearAutoSyncConflictPause();
         GM_setValue("s1p_last_sync_timestamp", Date.now());
         setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_SUCCESS);
         resetAutoSyncFailureState();
-        recordSyncSuccess("force_pull", "manual");
+        recordSyncSuccess("force_pull", "manual", {
+          triggerSource: SYNC_TRIGGER_SOURCE_MANUAL_SYNC,
+          remoteHash: shortHashForLog(validatedRemote.contentHash),
+          baselineHash: shortHashForLog(getSyncBaselineState()?.contentHash),
+        });
         updateLastSyncTimeDisplay();
         showMessage("拉取成功！页面即将刷新以应用新数据。", true);
         setTimeout(() => location.reload(), 1500);
@@ -19649,7 +21553,9 @@
         return;
       }
       setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_FAILURE);
-      recordSyncFailure(e.message, "manual");
+      recordSyncFailure(e.message, "manual", {
+        triggerSource: SYNC_TRIGGER_SOURCE_MANUAL_SYNC,
+      });
       updateLastSyncTimeDisplay();
       showMessage(`拉取失败: ${e.message}`, false);
     } finally {
@@ -19666,13 +21572,19 @@
   const getAutoSyncIndicatorSourceLabel = (source) => {
     switch (normalizeAutoSyncIndicatorSource(source)) {
       case AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND:
-        return "后台同步";
+        return "后台自动同步";
       case AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP:
         return "每日首次同步";
       case AUTO_SYNC_INDICATOR_SOURCE_PER_LOAD:
         return "每次加载检查";
-      case AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_FOLLOWUP:
-        return "前台检查同步";
+      case AUTO_SYNC_INDICATOR_SOURCE_PAGE_LOAD_VISIBLE:
+        return "首次可见检查";
+      case AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME:
+        return "回到前台检查";
+      case AUTO_SYNC_INDICATOR_SOURCE_VISIBLE_POLL:
+        return "可见页轮询检查";
+      case AUTO_SYNC_INDICATOR_SOURCE_MANUAL_SYNC:
+        return "手动同步";
       default:
         return "自动同步";
     }
@@ -19701,8 +21613,12 @@
           ? "自动同步：待处理"
           : `自动同步：${sourceLabel}待处理`;
       case AUTO_SYNC_INDICATOR_PHASE_RUNNING:
-        if (source === AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_FOLLOWUP) {
-          return "自动同步：前台发现更新，正在同步";
+        if (
+          source === AUTO_SYNC_INDICATOR_SOURCE_PAGE_LOAD_VISIBLE ||
+          source === AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME ||
+          source === AUTO_SYNC_INDICATOR_SOURCE_VISIBLE_POLL
+        ) {
+          return `自动同步：${sourceLabel}命中更新，正在同步`;
         }
         return sourceLabel === "自动同步"
           ? "自动同步：同步中"
@@ -19720,8 +21636,8 @@
           : `自动同步：${sourceLabel}失败（待下次同步）`;
       case AUTO_SYNC_INDICATOR_PHASE_CONFLICT:
         return sourceLabel === "自动同步"
-          ? "自动同步：发现冲突，请手动同步"
-          : `自动同步：${sourceLabel}发现冲突，请手动同步`;
+          ? "自动同步：发现冲突，需全局手动同步"
+          : `自动同步：${sourceLabel}发现冲突，需全局手动同步`;
       case AUTO_SYNC_INDICATOR_PHASE_IDLE:
       default:
         return "自动同步：待命";
@@ -19754,10 +21670,14 @@
         return {
           type: "local_changed_during_sync",
           signature: `pause:${pauseReason}:${pauseTimestamp}`,
-          text: "同步暂停：本地改动待处理",
+          text: "全局同步暂停：本地改动待确认",
           title:
-            "检测到您在自动同步期间有本地操作，已暂停自动拉取。点击“处理”执行手动同步。",
-          actionLabel: "处理",
+            "自动同步期间检测到本地改动，已暂停全局自动处理。点击“全局同步”会比较整套 S1 Plus 数据，而不是只处理当前帖子。",
+          preflightLeadHtml:
+            "自动同步期间检测到本地改动，已暂停自动拉取，等待一次全局手动同步来决定整套数据的去向。",
+          actionLabel: "全局同步",
+          busyLabel: "全局同步中...",
+          preflightConfirmLabel: "开始全局同步",
           dismissLabel: "忽略本次",
         };
       }
@@ -19765,19 +21685,28 @@
         return {
           type: "startup_local_newer",
           signature: `pause:${pauseReason}:${pauseTimestamp}`,
-          text: "同步暂停：本地数据较新",
+          text: "全局同步暂停：本地数据较新",
           title:
-            "启动时检测到本地数据比云端更新，已暂停自动推送。点击“处理”执行手动同步。",
-          actionLabel: "处理",
+            "启动时发现本地数据比云端更新，已暂停自动推送。点击“全局同步”会比较整套 S1 Plus 数据，而不是只处理当前帖子。",
+          preflightLeadHtml:
+            "启动时发现本地数据比云端更新，自动推送已暂停，需要一次全局手动同步来决定保留本地还是云端。",
+          actionLabel: "全局同步",
+          busyLabel: "全局同步中...",
+          preflightConfirmLabel: "开始全局同步",
           dismissLabel: "忽略本次",
         };
       }
       return {
         type: "conflict_paused",
         signature: `pause:${pauseReason || "generic"}:${pauseTimestamp}`,
-        text: "同步暂停：冲突待处理",
-        title: "自动同步因冲突已暂停。点击“处理”执行手动同步。",
-        actionLabel: "处理",
+        text: "全局同步暂停：冲突待决定",
+        title:
+          "自动同步检测到全局冲突，已暂停自动处理。点击“全局同步”会比较整套 S1 Plus 数据，而不是只处理当前帖子。",
+        preflightLeadHtml:
+          "自动同步检测到本地与云端可能同时有变化，需要一次全局手动同步来决定保留哪一侧。",
+        actionLabel: "全局同步",
+        busyLabel: "全局同步中...",
+        preflightConfirmLabel: "开始全局同步",
         dismissLabel: "忽略本次",
       };
     }
@@ -19790,9 +21719,13 @@
       return {
         type: "circuit_open",
         signature: `circuit_open:${Number(circuitState.until) || 0}`,
-        text: "同步暂停：连续失败",
-        title: `自动同步连续失败，预计 ${resumeTime} 后自动恢复。点击“处理”可立即手动同步。`,
-        actionLabel: "处理",
+        text: "全局同步暂停：连续失败",
+        title: `自动同步连续失败，预计 ${resumeTime} 后自动恢复。点击“全局同步”可立即改为一次手动比较。`,
+        preflightLeadHtml:
+          "自动同步已因连续失败进入暂停状态，这次会改为一次全局手动同步，重新检查云端与本地的整套差异。",
+        actionLabel: "全局同步",
+        busyLabel: "全局同步中...",
+        preflightConfirmLabel: "开始全局同步",
         dismissLabel: "忽略本次",
       };
     }
@@ -19899,8 +21832,8 @@
     const applyActionButtonState = ({ busy }) => {
       const isBusy = Boolean(busy);
       actionBtn.textContent = isBusy
-        ? "同步中..."
-        : descriptor.actionLabel || "处理";
+        ? descriptor.busyLabel || "同步中..."
+        : descriptor.actionLabel || "全局同步";
       actionBtn.dataset.busy = isBusy ? "true" : "false";
       actionBtn.setAttribute("aria-busy", isBusy ? "true" : "false");
     };
@@ -19912,15 +21845,44 @@
         showMessage("手动同步正在进行，请稍候...", null);
         return;
       }
-      applyActionButtonState({ busy: true });
-      try {
-        clearNavbarPersistentSyncAlertDismissedSignature();
-        await handleManualSync();
-      } catch (error) {
-        console.error("S1 Plus: 常驻同步提示触发手动同步失败:", error);
-      } finally {
-        renderNavbarPersistentSyncAlert();
-      }
+      createAdvancedConfirmationModal(
+        "发起全局手动同步",
+        createManualSyncPreflightHtml({
+          currentThreadId: getCurrentThreadId() || "",
+          pendingCleanupInfo: getPendingCleanupInfo(),
+          triggerDescriptor: descriptor,
+        }),
+        [
+          {
+            text: "取消",
+            className: "s1p-cancel",
+            action: () => {},
+          },
+          {
+            text: descriptor.preflightConfirmLabel || "开始全局同步",
+            className: "s1p-confirm",
+            action: async () => {
+              if (isManualSyncActionBusy()) {
+                showMessage("手动同步正在进行，请稍候...", null);
+                return;
+              }
+              applyActionButtonState({ busy: true });
+              try {
+                clearNavbarPersistentSyncAlertDismissedSignature();
+                await handleManualSync();
+              } catch (error) {
+                console.error("S1 Plus: 常驻同步提示触发手动同步失败:", error);
+              } finally {
+                renderNavbarPersistentSyncAlert();
+              }
+            },
+          },
+        ],
+        {
+          modalClassName: "s1p-sync-modal",
+          allowBodyHtml: true,
+        }
+      );
     };
     dismissBtn.disabled = false;
     dismissBtn.onclick = (event) => {
@@ -20181,7 +22143,10 @@
       a.addEventListener("mouseover", (e) => {
         const popover = document.getElementById("s1p-generic-display-popover");
         if (popover && popover.s1p_api) {
-          popover.s1p_api.show(e.currentTarget, "手动同步数据 (智能判断)");
+          popover.s1p_api.show(
+            e.currentTarget,
+            "发起全局手动同步（智能判断，会综合比较云端变化、阅读进度与 cleanup 记录）"
+          );
         }
       });
       a.addEventListener("mouseout", () => {
@@ -20190,6 +22155,13 @@
           popover.s1p_api.hide();
         }
       });
+    }
+
+    if (settings.syncDirectChoiceMode) {
+      setCustomTooltip(
+        a,
+        "点击发起全局手动同步；悬停可直接选择全局拉取或全局推送。"
+      );
     }
 
     managerLink.insertAdjacentElement("afterend", li);
@@ -21644,7 +23616,7 @@
             <span class="s1p-slider"></span>
           </label>
         </div>
-        <p class="s1p-setting-desc">启用后，你可以在导航栏手动同步，或开启下面的自动同步。</p>
+        <p class="s1p-setting-desc">启用后，你可以在导航栏发起全局手动同步，或开启下面的自动同步。</p>
 
         <div id="s1p-remote-sync-controls-wrapper">
           <div class="s1p-settings-item">
@@ -24471,7 +26443,7 @@
           saveSettings(currentSettings);
           // [FIX] 当设置为"永不"清理时，清除残留的清理标记
           if (newValue === 0) {
-            GM_deleteValue("s1p_pending_cleanup_info");
+            clearPendingCleanupInfo();
           }
           cleanupControl
             .querySelectorAll(".s1p-segmented-control-option")
@@ -24515,7 +26487,7 @@
             autoCleanupOptions?.classList.add("s1p-hidden");
             progressDetailBtn?.classList.remove("s1p-hidden");
             // [FIX] 切换到手动模式时，清除残留的自动清理标记，防止误触发自动推送逻辑
-            GM_deleteValue("s1p_pending_cleanup_info");
+            clearPendingCleanupInfo();
           }
         });
       }
@@ -26345,15 +28317,16 @@
    * @param {object} localDataObj - 本地数据对象
    * @param {object} remoteDataObj - 远程数据对象
    * @param {boolean} isConflict - 是否为冲突状态
-   * @param {number} pendingCleanupCount - [S1PLUS-CLEANUP-FIX] 待处理计数
+   * @param {object|null} pendingCleanupInfo - cleanup provenance 信息
    * @returns {string} - 用于弹窗的HTML字符串
    */
   const createSyncComparisonHtml = (
     localDataObj,
     remoteDataObj,
     isConflict,
-    pendingCleanupCount = 0,
-    syncDecision = null
+    pendingCleanupInfo = null,
+    syncDecision = null,
+    displayContext = {}
   ) => {
     const lastSyncInfo = GM_getValue("s1p_last_manual_sync_info", null);
     let lastActionHtml = "";
@@ -26366,16 +28339,25 @@
       lastActionHtml = `<div class="s1p-sync-last-action">这台电脑上次手动操作: 于 ${formattedTime} <strong>${actionText}</strong>了数据</div>`;
     }
 
-    // [融合版] 使用 Kyo 方案的解释性措辞，配合 Cosmo 方案的判断条件
-    let cleanupNoticeHtml = "";
-    if (isConflict && pendingCleanupCount > 0) {
-      cleanupNoticeHtml = `
-        <div class="s1p-notice s1p-notice-top16">
-            <div class="s1p-notice-icon"></div>
-            <div class="s1p-notice-content">根据您的设置，S1 Plus 自动清理了 <strong>${pendingCleanupCount}</strong> 条陈旧的阅读记录，导致本地数据与云端不一致。</div>
-        </div>
-      `;
-    }
+    const conflictPauseState =
+      displayContext && typeof displayContext === "object"
+        ? displayContext.conflictPauseState || null
+        : null;
+    const currentThreadId =
+      displayContext && typeof displayContext === "object"
+        ? displayContext.currentThreadId || ""
+        : "";
+    const rootCauseNoticeHtml = buildSyncNoticeHtml(
+      getManualSyncRootCauseDescriptor({
+        syncDecision,
+        conflictPauseState,
+      })
+    );
+    const cleanupNoticeHtml = buildSyncNoticeHtml(
+      getCleanupNoticeDescriptor(pendingCleanupInfo, {
+        currentThreadId,
+      })
+    );
 
     const localNewer =
       syncDecision && typeof syncDecision === "object"
@@ -26461,6 +28443,7 @@
 
     return `
         ${title}
+        ${rootCauseNoticeHtml}
         ${cleanupNoticeHtml}
         ${lastActionHtml}
         <div class="s1p-sync-comparison-table">
@@ -26480,6 +28463,14 @@
         </div>
     `;
   };
+
+  if (IS_S1P_TEST_MODE) {
+    const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
+    testHookHost.__S1P_TEST_HOOKS__ = {
+      ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
+      createSyncComparisonHtml,
+    };
+  }
 
   /**
    * [NEW] 获取当前页面的帖子ID
@@ -26581,7 +28572,15 @@
 
         let remoteMetaUpdatedAt;
         recordSyncAttempt("manual", "manual_sync");
-        const noteManualSuccess = (action, syncBaseline = null) => {
+        const buildManualSyncDiagnosticsContext = (overrides = {}) => ({
+          triggerSource: SYNC_TRIGGER_SOURCE_MANUAL_SYNC,
+          ...overrides,
+        });
+        const noteManualSuccess = (
+          action,
+          syncBaseline = null,
+          diagnosticContext = {}
+        ) => {
           clearPendingAutoSyncRequest();
           clearAutoSyncConflictPause();
           // 手动同步成功后，立即覆盖后台指示器的旧失败/冲突态，避免残留样式持续到 TTL 结束。
@@ -26590,18 +28589,31 @@
             setSyncBaselineState(syncBaseline);
           }
           resetAutoSyncFailureState();
-          recordSyncSuccess(action, "manual");
+          recordSyncSuccess(
+            action,
+            "manual",
+            buildManualSyncDiagnosticsContext(diagnosticContext)
+          );
           updateLastSyncTimeDisplay();
         };
-        const noteManualFailure = (message) => {
+        const noteManualFailure = (message, diagnosticContext = {}) => {
           setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_FAILURE);
-          recordSyncFailure(message, "manual");
+          recordSyncFailure(
+            message,
+            "manual",
+            buildManualSyncDiagnosticsContext(diagnosticContext)
+          );
           updateLastSyncTimeDisplay();
         };
-        const noteManualConflict = (reason) => {
+        const noteManualConflict = (reason, diagnosticContext = {}) => {
           clearPendingAutoSyncRequest();
+          clearForegroundFollowUpSoftBlock();
           setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_CONFLICT);
-          recordSyncConflict(reason, "manual");
+          recordSyncConflict(
+            reason,
+            "manual",
+            buildManualSyncDiagnosticsContext(diagnosticContext)
+          );
           updateLastSyncTimeDisplay();
         };
         const tryReacquireDecisionLock = async (stage) => {
@@ -26770,13 +28782,13 @@
                   resolve(true);
                 } catch (e) {
                   if (e?.code === REMOTE_VERSION_CONFLICT_CODE) {
-                    noteManualConflict("remote_changed_before_initial_push");
-                    showMessage(
-                      "推送失败：云端数据已变化，请重新执行手动同步。",
-                      false
-                    );
-                    resolve(false);
-                    return;
+                  noteManualConflict("remote_changed_before_initial_push");
+                  showMessage(
+                    "推送失败：云端数据已变化，请重新发起全局手动同步。",
+                    false
+                  );
+                  resolve(false);
+                  return;
                   }
                   noteManualFailure(e.message);
                   showMessage(`推送失败: ${e.message}`, false);
@@ -26823,29 +28835,71 @@
           });
 
           if (remote.contentHash === localDataObject.contentHash) {
+            clearPendingCleanupInfo();
             showMessage("数据已是最新，无需同步。", true);
             GM_setValue("s1p_last_sync_timestamp", Date.now());
-            noteManualSuccess("no_change", {
-              contentHash: localDataObject.contentHash,
-              remoteUpdatedAt: remoteMetaUpdatedAt || null,
-            });
+            noteManualSuccess(
+              "no_change",
+              {
+                contentHash: localDataObject.contentHash,
+                remoteUpdatedAt: remoteMetaUpdatedAt || null,
+              },
+              decisionDiagnostics
+            );
             return resolve(true);
           }
 
           const localNewer = versionDecision.localNewer === true;
-          const pendingCleanupCount = GM_getValue("s1p_pending_cleanup_info", 0);
+          const currentThreadId = getCurrentThreadId();
+          const pendingCleanupInfo = getPendingCleanupInfo();
+          const decisionDiagnostics = {
+            localHash: shortHashForLog(localDataObject.contentHash),
+            remoteHash: shortHashForLog(remote.contentHash),
+            baselineHash: shortHashForLog(getSyncBaselineState()?.contentHash),
+            cleanupInfo: pendingCleanupInfo,
+            threadId: currentThreadId || "",
+          };
+          const activeConflictPause = getActiveAutoSyncConflictPause();
+          const cleanupShortcutDecision = await evaluateCleanupSyncShortcut({
+            pendingCleanupInfo,
+            localDataObject,
+            remoteDataObject: remote,
+            versionDecision,
+            currentThreadId,
+            activeConflictPause,
+          });
 
-          // 智能检查：当“清理”发生时，只在“基础数据”完全一致的情况下才自动推送
-          if (
-            localNewer &&
-            versionDecision.action === "push" &&
-            pendingCleanupCount > 0 &&
-            localDataObject.baseContentHash === remote.baseContentHash
-          ) {
-            console.log(
-              "S1 Plus (Sync): 确认基础数据一致，差异仅由阅读记录清理导致，执行自动推送。"
+          if (pendingCleanupInfo && !cleanupShortcutDecision.allowed) {
+            console.log("S1 Plus (Sync): cleanup shortcut guard blocked.", {
+              reason: cleanupShortcutDecision.reason,
+              source: pendingCleanupInfo.source,
+              currentThreadId: currentThreadId || "",
+              deletedCount: pendingCleanupInfo.deletedCount,
+            });
+            saveSyncDiagnostics(
+              mergeSyncDiagnosticsContext(getSyncDiagnostics(), {
+                ...buildManualSyncDiagnosticsContext(decisionDiagnostics),
+                syncResultKind: "blocked",
+                syncResultCode: "cleanup_shortcut_rejected",
+                syncBlockKind: "cleanup_guard",
+                syncBlockReason: cleanupShortcutDecision.reason,
+              })
             );
-            showMessage("阅读记录已自动清理，正在同步至云端...", null);
+          }
+
+          if (cleanupShortcutDecision.allowed) {
+            const cleanupMessages = getCleanupSyncMessageBundle(
+              cleanupShortcutDecision.cleanupInfo
+            );
+            console.log(
+              "S1 Plus (Sync): cleanup provenance guard passed, executing cleanup shortcut push.",
+              {
+                source: cleanupShortcutDecision.cleanupInfo?.source || "",
+                currentThreadId: currentThreadId || "",
+                deletedCount: cleanupShortcutDecision.cleanupInfo?.deletedCount || 0,
+              }
+            );
+            showMessage(cleanupMessages.syncingMessage, null);
             try {
               const pushResult = await runWithManualSyncLockGuard(
                 "push_cleanup_auto_sync",
@@ -26854,35 +28908,41 @@
                     expectedRemoteUpdatedAt: remoteMetaUpdatedAt,
                   })
               );
-              GM_deleteValue("s1p_pending_cleanup_info");
+              clearPendingCleanupInfo();
               GM_setValue("s1p_last_sync_timestamp", Date.now());
               GM_setValue("s1p_last_manual_sync_info", {
                 action: "push",
                 timestamp: Date.now(),
               });
-              noteManualSuccess("cleanup_auto_push", {
-                contentHash: localDataObject.contentHash,
-                remoteUpdatedAt: pushResult?.updatedAt || null,
-              });
-              showMessage("自动清理与同步成功！", true);
+              noteManualSuccess(
+                "cleanup_shortcut_push",
+                {
+                  contentHash: localDataObject.contentHash,
+                  remoteUpdatedAt: pushResult?.updatedAt || null,
+                },
+                decisionDiagnostics
+              );
+              showMessage(cleanupMessages.successMessage, true);
               return resolve(true);
             } catch (e) {
               if (e?.code === REMOTE_VERSION_CONFLICT_CODE) {
-                noteManualConflict("remote_changed_before_cleanup_push");
+                noteManualConflict(
+                  "remote_changed_before_cleanup_push",
+                  decisionDiagnostics
+                );
                 showMessage(
-                  "自动推送失败：云端数据已变化，请重新执行手动同步。",
+                  "自动推送失败：云端数据已变化，请重新发起全局手动同步。",
                   false
                 );
                 return resolve(false);
               }
-              noteManualFailure(e.message);
+              noteManualFailure(e.message, decisionDiagnostics);
               showMessage(`自动推送失败: ${e.message}`, false);
               return resolve(false);
             }
           }
 
           // 智能检查：当在帖子内，且只有当前帖子的阅读进度变化时，自动同步
-          const currentThreadId = getCurrentThreadId();
           if (
             currentThreadId &&
             !isInitialSyncInProgress &&
@@ -26903,22 +28963,29 @@
                     })
                 );
                 GM_setValue("s1p_last_sync_timestamp", Date.now());
-                noteManualSuccess("smart_progress_push", {
-                  contentHash: localDataObject.contentHash,
-                  remoteUpdatedAt: pushResult?.updatedAt || null,
-                });
+                noteManualSuccess(
+                  "smart_progress_push",
+                  {
+                    contentHash: localDataObject.contentHash,
+                    remoteUpdatedAt: pushResult?.updatedAt || null,
+                  },
+                  decisionDiagnostics
+                );
                 showMessage("智能同步成功！已将本地最新进度推送到云端。", true);
                 return resolve(true);
               } catch (e) {
                 if (e?.code === REMOTE_VERSION_CONFLICT_CODE) {
-                  noteManualConflict("remote_changed_before_smart_push");
+                  noteManualConflict(
+                    "remote_changed_before_smart_push",
+                    decisionDiagnostics
+                  );
                   showMessage(
-                    "智能推送失败：云端数据已变化，请重新执行手动同步。",
+                    "智能推送失败：云端数据已变化，请重新发起全局手动同步。",
                     false
                   );
                   return resolve(false);
                 }
-                noteManualFailure(e.message);
+                noteManualFailure(e.message, decisionDiagnostics);
                 showMessage(`智能推送失败: ${e.message}`, false);
                 return resolve(false);
               }
@@ -26941,10 +29008,14 @@
                 suppressPostSync: true,
               });
               GM_setValue("s1p_last_sync_timestamp", Date.now());
-              noteManualSuccess("smart_merge_pull", {
-                contentHash: mergedContentHash,
-                remoteUpdatedAt: pushResult?.updatedAt || null,
-              });
+              noteManualSuccess(
+                "smart_merge_pull",
+                {
+                  contentHash: mergedContentHash,
+                  remoteUpdatedAt: pushResult?.updatedAt || null,
+                },
+                decisionDiagnostics
+              );
               applyAutoPullRefreshPolicy({
                 action: "merged_read_progress",
                 reason: "manual_smart_merge_pull",
@@ -26961,14 +29032,21 @@
           // 如果以上智能检查都未通过，则进入手动选择流程
           const isConflict = versionDecision.action === "conflict";
           if (isConflict) {
-            noteManualConflict(versionDecision.reason || "manual_decision_required");
+            noteManualConflict(
+              versionDecision.reason || "manual_decision_required",
+              decisionDiagnostics
+            );
           }
           const bodyHtml = createSyncComparisonHtml(
             localDataObject,
             remote,
             isConflict,
-            pendingCleanupCount,
-            versionDecision
+            pendingCleanupInfo,
+            versionDecision,
+            {
+              currentThreadId,
+              conflictPauseState: activeConflictPause,
+            }
           );
           const pullAction = {
             text: "从云端拉取",
@@ -26989,21 +29067,28 @@
                   suppressPostSync: true,
                 });
                 if (result.success) {
-                  GM_deleteValue("s1p_pending_cleanup_info");
+                  clearPendingCleanupInfo();
                   GM_setValue("s1p_last_sync_timestamp", Date.now());
                   GM_setValue("s1p_last_manual_sync_info", {
                     action: "pull",
                     timestamp: Date.now(),
                   });
-                  noteManualSuccess("manual_pull", {
-                    contentHash: latestRemote.contentHash,
-                    remoteUpdatedAt: latestRemoteUpdatedAt,
-                  });
+                  noteManualSuccess(
+                    "manual_pull",
+                    {
+                      contentHash: latestRemote.contentHash,
+                      remoteUpdatedAt: latestRemoteUpdatedAt,
+                    },
+                    {
+                      ...decisionDiagnostics,
+                      remoteHash: shortHashForLog(latestRemote.contentHash),
+                    }
+                  );
                   showMessage(`拉取成功！页面即将刷新。`, true);
                   setTimeout(() => location.reload(), 1200);
                   resolve(true);
                 } else {
-                  noteManualFailure(result.message);
+                  noteManualFailure(result.message, decisionDiagnostics);
                   showMessage(`导入失败: ${result.message}`, false);
                   resolve(false);
                 }
@@ -27011,7 +29096,10 @@
                 if (handleManualLockLostError(error)) {
                   return;
                 }
-                noteManualFailure(error?.message || "导入失败");
+                noteManualFailure(
+                  error?.message || "导入失败",
+                  decisionDiagnostics
+                );
                 showMessage(`导入失败: ${error?.message || "未知错误"}`, false);
                 resolve(false);
               }
@@ -27032,29 +29120,36 @@
                       expectedRemoteUpdatedAt: remoteMetaUpdatedAt,
                     })
                 );
-                GM_deleteValue("s1p_pending_cleanup_info");
+                clearPendingCleanupInfo();
                 GM_setValue("s1p_last_sync_timestamp", Date.now());
                 GM_setValue("s1p_last_manual_sync_info", {
                   action: "push",
                   timestamp: Date.now(),
                 });
-                noteManualSuccess("manual_push", {
-                  contentHash: localDataObject.contentHash,
-                  remoteUpdatedAt: pushResult?.updatedAt || null,
-                });
+                noteManualSuccess(
+                  "manual_push",
+                  {
+                    contentHash: localDataObject.contentHash,
+                    remoteUpdatedAt: pushResult?.updatedAt || null,
+                  },
+                  decisionDiagnostics
+                );
                 showMessage("推送成功！已更新云端备份。", true);
                 resolve(true);
               } catch (e) {
                 if (e?.code === REMOTE_VERSION_CONFLICT_CODE) {
-                  noteManualConflict("remote_changed_before_manual_push");
+                  noteManualConflict(
+                    "remote_changed_before_manual_push",
+                    decisionDiagnostics
+                  );
                   showMessage(
-                    "推送失败：云端数据已变化，请重新执行手动同步。",
+                    "推送失败：云端数据已变化，请重新发起全局手动同步。",
                     false
                   );
                   resolve(false);
                   return;
                 }
-                noteManualFailure(e.message);
+                noteManualFailure(e.message, decisionDiagnostics);
                 showMessage(`推送失败: ${e.message}`, false);
                 resolve(false);
               }
@@ -27123,7 +29218,7 @@
                   if (e?.code === REMOTE_VERSION_CONFLICT_CODE) {
                     noteManualConflict("remote_changed_before_repair_push");
                     showMessage(
-                      "强制推送失败：云端数据已变化，请重新执行手动同步。",
+                      "强制推送失败：云端数据已变化，请重新发起全局手动同步。",
                       false
                     );
                     resolve(false);
@@ -28493,10 +30588,10 @@
     deleteBtn.className = "s1p-progress-delete-btn";
     deleteBtn.textContent = "删除";
     setCustomTooltip(deleteBtn, "删除该帖阅读记录");
-    deleteBtn.addEventListener("click", (event) => {
+    deleteBtn.addEventListener("click", async (event) => {
       event.preventDefault();
       event.stopPropagation();
-      if (deleteThreadReadProgress(threadId)) {
+      if (await deleteThreadReadProgress(threadId)) {
         showMessage("已删除该帖阅读记录", true);
       } else {
         showMessage("该帖暂无可删除的阅读记录", true);
@@ -28713,6 +30808,99 @@
   let readProgressPersistTimeout = null;
   let pendingThreadProgressWrites = {};
   let readProgressContext = null;
+  let readProgressSaveDueAt = 0;
+  const READ_PROGRESS_STAGE_OBSERVER_READY = "observer_initialized";
+  const READ_PROGRESS_STAGE_CANDIDATE_PENDING = "candidate_pending";
+  const READ_PROGRESS_STAGE_READING_CONFIRMED = "reading_confirmed";
+  const READ_PROGRESS_SAVE_REASON_VISIBLE_STABLE = "visible_stable";
+  const READ_PROGRESS_SAVE_REASON_USER_INTERACTION = "user_interaction";
+  const READ_PROGRESS_SAVE_REASON_VISIBILITY_HIDDEN_FLUSH =
+    "visibility_hidden_flush";
+  const READ_PROGRESS_SAVE_REASON_PAGEHIDE_FLUSH = "pagehide_flush";
+  const READ_PROGRESS_SAVE_REASON_BEFOREUNLOAD_FLUSH =
+    "beforeunload_flush";
+  const createReadProgressTrackingState = () => {
+    const now = Date.now();
+    return {
+      stage: READ_PROGRESS_STAGE_OBSERVER_READY,
+      startedAt: now,
+      visibleSince: document.visibilityState === "visible" ? now : 0,
+      initiatedWhileHidden: document.visibilityState !== "visible",
+      firstCandidateAt: 0,
+      hasConfirmedVisiblePost: false,
+      hasConfirmedReading: false,
+      confirmationReason: "",
+      confirmedAt: 0,
+      lastInteractionAt: 0,
+      lastInteractionType: "",
+      pendingSaveReason: "",
+      pendingSaveScheduledAt: 0,
+      pendingPersistDueAt: 0,
+      lastPersistedAt: 0,
+      lastPersistedProvenance: null,
+      lastPersistedWasInitializationNoise: false,
+    };
+  };
+  let readProgressTrackingState = createReadProgressTrackingState();
+  const resetReadProgressTrackingState = () => {
+    readProgressTrackingState = createReadProgressTrackingState();
+    readProgressSaveDueAt = 0;
+  };
+  const clearReadProgressSaveTimer = () => {
+    if (readProgressSaveTimeout) {
+      clearTimeout(readProgressSaveTimeout);
+      readProgressSaveTimeout = null;
+    }
+    readProgressSaveDueAt = 0;
+    if (readProgressTrackingState) {
+      readProgressTrackingState.pendingSaveReason = "";
+      readProgressTrackingState.pendingSaveScheduledAt = 0;
+    }
+  };
+  const clearReadProgressPersistTimer = () => {
+    if (readProgressPersistTimeout) {
+      clearTimeout(readProgressPersistTimeout);
+      readProgressPersistTimeout = null;
+    }
+    if (readProgressTrackingState) {
+      readProgressTrackingState.pendingPersistDueAt = 0;
+    }
+  };
+  const getReadProgressProbeGuardState = () => {
+    const now = Date.now();
+    const pendingWriteCount = Object.keys(pendingThreadProgressWrites).length;
+    return {
+      stage:
+        readProgressTrackingState?.stage || READ_PROGRESS_STAGE_OBSERVER_READY,
+      hasPendingWrite: Boolean(
+        readProgressSaveTimeout ||
+          readProgressPersistTimeout ||
+          pendingWriteCount > 0
+      ),
+      hasPendingSaveTimer: Boolean(readProgressSaveTimeout),
+      pendingSaveDueAt: readProgressSaveDueAt,
+      pendingSaveReason: readProgressTrackingState?.pendingSaveReason || "",
+      pendingSaveScheduledAt:
+        Number(readProgressTrackingState?.pendingSaveScheduledAt) || 0,
+      hasPendingPersist: Boolean(readProgressPersistTimeout || pendingWriteCount > 0),
+      pendingPersistDueAt: Number(readProgressTrackingState?.pendingPersistDueAt) || 0,
+      isInSyncDebounceWindow: readProgressSyncDebounceDueAt > now,
+      syncDebounceDueAt: readProgressSyncDebounceDueAt,
+      syncDebounceReason: readProgressSyncDebounceReason || "",
+      hasConfirmedVisiblePost:
+        readProgressTrackingState?.hasConfirmedVisiblePost === true,
+      hasConfirmedReading: readProgressTrackingState?.hasConfirmedReading === true,
+      initiatedWhileHidden: readProgressTrackingState?.initiatedWhileHidden === true,
+      lastPersistedAt: Number(readProgressTrackingState?.lastPersistedAt) || 0,
+      lastPersistWasInitializationNoise:
+        readProgressTrackingState?.lastPersistedWasInitializationNoise === true,
+      lastPersistedProvenance: isObjectRecord(
+        readProgressTrackingState?.lastPersistedProvenance
+      )
+        ? { ...readProgressTrackingState.lastPersistedProvenance }
+        : null,
+    };
+  };
   const logReadProgressParseDebug = (message, details = null) => {
     if (!READ_PROGRESS_PARSE_DEBUG) return;
     if (details) {
@@ -28801,24 +30989,6 @@
     }
     return { postId, floor };
   };
-  const getReadProgressFallbackFromFirstPost = ({ firstPostIdHint = null } = {}) => {
-    const resolvedFirstPostId =
-      String(firstPostIdHint || "").trim() || refreshReadProgressFirstPostId();
-    const firstPostTable =
-      (resolvedFirstPostId ? getPostTableById(resolvedFirstPostId) : null) ||
-      document.querySelector('#postlist table[id^="pid"]');
-    if (!firstPostTable) {
-      return null;
-    }
-    const effectiveFirstPostId = getPostIdFromPostTable(firstPostTable) || resolvedFirstPostId;
-    if (effectiveFirstPostId) {
-      readProgressFirstPostId = effectiveFirstPostId;
-    }
-    return getReadProgressRecordFromPostTable(firstPostTable, {
-      fallbackToFirstPostFloor: true,
-      firstPostIdHint: effectiveFirstPostId || null,
-    });
-  };
   const isValidReadProgressRecord = (record) =>
     Boolean(
       record &&
@@ -28826,7 +30996,19 @@
         Number.isFinite(record.floor) &&
         record.floor > 0
     );
-  const resolveReadProgressCandidateRecord = ({ firstPostIdHint = null } = {}) => {
+  const markReadProgressVisibleRecord = (record) => {
+    if (!isValidReadProgressRecord(record)) {
+      return;
+    }
+    if (!readProgressTrackingState.firstCandidateAt) {
+      readProgressTrackingState.firstCandidateAt = Date.now();
+    }
+    readProgressTrackingState.hasConfirmedVisiblePost = true;
+    if (!readProgressTrackingState.hasConfirmedReading) {
+      readProgressTrackingState.stage = READ_PROGRESS_STAGE_CANDIDATE_PENDING;
+    }
+  };
+  const resolveReadProgressCandidateRecord = () => {
     let maxFloor = 0;
     let finalPostId = null;
     readProgressVisiblePosts.forEach((floor, postId) => {
@@ -28846,20 +31028,10 @@
         floor: readProgressLastVisibleRecord.floor,
       };
     }
-
-    const fallbackRecord = getReadProgressFallbackFromFirstPost({
-      firstPostIdHint,
-    });
-    if (isValidReadProgressRecord(fallbackRecord)) {
-      return { ...fallbackRecord };
-    }
     return null;
   };
   const flushPendingThreadProgressWrites = ({ suppressSyncTrigger = false } = {}) => {
-    if (readProgressPersistTimeout) {
-      clearTimeout(readProgressPersistTimeout);
-      readProgressPersistTimeout = null;
-    }
+    clearReadProgressPersistTimer();
 
     const pendingThreadIds = Object.keys(pendingThreadProgressWrites);
     if (pendingThreadIds.length === 0) {
@@ -28868,6 +31040,7 @@
 
     const progress = { ...getReadProgress() };
     let hasChanges = false;
+    let lastPersistedProvenance = null;
 
     pendingThreadIds.forEach((threadId) => {
       const pendingRecord = pendingThreadProgressWrites[threadId];
@@ -28897,97 +31070,272 @@
 
       progress[threadId] = pendingRecord;
       hasChanges = true;
+      lastPersistedProvenance = isObjectRecord(pendingRecord.provenance)
+        ? { ...pendingRecord.provenance }
+        : null;
     });
 
     pendingThreadProgressWrites = {};
 
     if (hasChanges) {
       saveReadProgress(progress, suppressSyncTrigger);
+      if (readProgressTrackingState) {
+        readProgressTrackingState.lastPersistedAt = Date.now();
+        readProgressTrackingState.lastPersistedProvenance = lastPersistedProvenance;
+        readProgressTrackingState.lastPersistedWasInitializationNoise =
+          lastPersistedProvenance?.saveKind === "initialization_noise";
+      }
       return true;
     }
     return false;
   };
   const schedulePendingThreadProgressPersist = () => {
     if (readProgressPersistTimeout) return;
+    if (readProgressTrackingState) {
+      readProgressTrackingState.pendingPersistDueAt =
+        Date.now() + READ_PROGRESS_PERSIST_DEBOUNCE_MS;
+    }
     readProgressPersistTimeout = setTimeout(() => {
       readProgressPersistTimeout = null;
+      if (readProgressTrackingState) {
+        readProgressTrackingState.pendingPersistDueAt = 0;
+      }
       flushPendingThreadProgressWrites();
     }, READ_PROGRESS_PERSIST_DEBOUNCE_MS);
   };
-  const saveCurrentReadProgress = () => {
+  const isReadProgressInteractionTarget = (target) =>
+    target instanceof Element &&
+    Boolean(
+      target.closest(
+        "input, textarea, select, [contenteditable=''], [contenteditable='true']"
+      )
+    );
+  const markReadProgressReadingConfirmed = (reason) => {
+    if (!readProgressTrackingState) {
+      resetReadProgressTrackingState();
+    }
+    if (!readProgressTrackingState.hasConfirmedReading) {
+      readProgressTrackingState.hasConfirmedReading = true;
+      readProgressTrackingState.confirmedAt = Date.now();
+    }
+    readProgressTrackingState.confirmationReason =
+      normalizeReadProgressSaveReason(reason) ||
+      READ_PROGRESS_SAVE_REASON_VISIBLE_STABLE;
+    readProgressTrackingState.stage = READ_PROGRESS_STAGE_READING_CONFIRMED;
+  };
+  const resolveReadProgressConfirmationReason = (preferredReason = "") => {
+    if (!readProgressTrackingState?.hasConfirmedVisiblePost) {
+      return "";
+    }
+    const normalizedPreferredReason =
+      normalizeReadProgressSaveReason(preferredReason);
+    if (
+      normalizedPreferredReason === READ_PROGRESS_SAVE_REASON_USER_INTERACTION &&
+      readProgressTrackingState.lastInteractionAt > 0
+    ) {
+      return normalizedPreferredReason;
+    }
+    if (readProgressTrackingState.lastInteractionAt > 0) {
+      return READ_PROGRESS_SAVE_REASON_USER_INTERACTION;
+    }
+    if (document.visibilityState !== "visible") {
+      return "";
+    }
+    const visibleSince = Number(readProgressTrackingState.visibleSince) || 0;
+    if (
+      visibleSince > 0 &&
+      Date.now() - visibleSince >= READ_PROGRESS_CONFIRM_VISIBLE_MS
+    ) {
+      return READ_PROGRESS_SAVE_REASON_VISIBLE_STABLE;
+    }
+    return "";
+  };
+  const saveCurrentReadProgress = ({ reason = "" } = {}) => {
     if (!readProgressContext) return;
 
-    const candidateRecord = resolveReadProgressCandidateRecord({
-      firstPostIdHint: readProgressFirstPostId,
-    });
+    const candidateRecord = resolveReadProgressCandidateRecord();
     if (!candidateRecord) return;
 
     const { postId: finalPostId, floor: maxFloor } = candidateRecord;
     readProgressLastVisibleRecord = { postId: finalPostId, floor: maxFloor };
 
-    if (getSettings().showReadIndicator) {
+    const normalizedReason = normalizeReadProgressSaveReason(reason);
+    const isFlushReason = normalizedReason.endsWith("_flush");
+    if (!readProgressTrackingState?.hasConfirmedReading) {
+      const confirmationReason =
+        resolveReadProgressConfirmationReason(normalizedReason);
+      if (!confirmationReason) {
+        return;
+      }
+      markReadProgressReadingConfirmed(confirmationReason);
+    } else if (
+      document.visibilityState !== "visible" &&
+      !isFlushReason
+    ) {
+      return;
+    }
+
+    const effectiveSaveReason = isFlushReason
+      ? normalizedReason
+      : readProgressTrackingState.confirmationReason ||
+        READ_PROGRESS_SAVE_REASON_VISIBLE_STABLE;
+
+    if (
+      document.visibilityState === "visible" &&
+      getSettings().showReadIndicator
+    ) {
       updateReadIndicatorUI(finalPostId);
     }
     updateThreadProgress(
       readProgressContext.threadId,
       finalPostId,
       readProgressContext.currentPage,
-      maxFloor
+      maxFloor,
+      {
+        saveReason: effectiveSaveReason,
+        documentVisibilityState: document.visibilityState,
+        hadConfirmedVisiblePost:
+          readProgressTrackingState.hasConfirmedVisiblePost === true,
+        initiatedWhileHidden:
+          readProgressTrackingState.initiatedWhileHidden === true,
+      }
     );
   };
-  const flushReadProgressSave = () => {
-    if (readProgressSaveTimeout) {
-      clearTimeout(readProgressSaveTimeout);
-      readProgressSaveTimeout = null;
+  const flushReadProgressSave = ({
+    reason = READ_PROGRESS_SAVE_REASON_VISIBILITY_HIDDEN_FLUSH,
+    allowSessionFinalize = false,
+  } = {}) => {
+    clearReadProgressSaveTimer();
+    if (allowSessionFinalize) {
+      saveCurrentReadProgress({ reason });
     }
-    saveCurrentReadProgress();
     flushPendingThreadProgressWrites();
   };
-  const scheduleReadProgressSave = () => {
-    if (readProgressSaveTimeout) {
-      clearTimeout(readProgressSaveTimeout);
+  const scheduleReadProgressSave = (reason = READ_PROGRESS_SAVE_REASON_VISIBLE_STABLE) => {
+    if (!readProgressContext || document.visibilityState !== "visible") {
+      return;
+    }
+    const candidateRecord = resolveReadProgressCandidateRecord();
+    if (!candidateRecord) {
+      return;
+    }
+    clearReadProgressSaveTimer();
+    const normalizedReason =
+      normalizeReadProgressSaveReason(reason) ||
+      READ_PROGRESS_SAVE_REASON_VISIBLE_STABLE;
+    const dueAt = Date.now() + READ_PROGRESS_CONFIRM_VISIBLE_MS;
+    readProgressSaveDueAt = dueAt;
+    if (readProgressTrackingState) {
+      readProgressTrackingState.pendingSaveReason = normalizedReason;
+      readProgressTrackingState.pendingSaveScheduledAt = Date.now();
     }
     readProgressSaveTimeout = setTimeout(() => {
       readProgressSaveTimeout = null;
-      saveCurrentReadProgress();
-    }, 1500);
+      readProgressSaveDueAt = 0;
+      if (readProgressTrackingState) {
+        readProgressTrackingState.pendingSaveScheduledAt = 0;
+      }
+      saveCurrentReadProgress({ reason: normalizedReason });
+    }, READ_PROGRESS_CONFIRM_VISIBLE_MS);
+  };
+  const handleReadProgressUserInteraction = (interactionType) => {
+    if (!readProgressContext || document.visibilityState !== "visible") {
+      return;
+    }
+    if (!readProgressTrackingState) {
+      resetReadProgressTrackingState();
+    }
+    readProgressTrackingState.lastInteractionAt = Date.now();
+    readProgressTrackingState.lastInteractionType = String(interactionType || "").trim();
+    if (resolveReadProgressCandidateRecord()) {
+      scheduleReadProgressSave(READ_PROGRESS_SAVE_REASON_USER_INTERACTION);
+    }
+  };
+  const handleReadProgressWheel = () => {
+    handleReadProgressUserInteraction("wheel");
+  };
+  const handleReadProgressTouchStart = () => {
+    handleReadProgressUserInteraction("touchstart");
+  };
+  const handleReadProgressKeydown = (event) => {
+    if (
+      !event ||
+      event.defaultPrevented ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.altKey ||
+      isReadProgressInteractionTarget(event.target) ||
+      !READ_PROGRESS_INTERACTION_CONFIRM_KEYS.has(event.key)
+    ) {
+      return;
+    }
+    handleReadProgressUserInteraction("keydown");
   };
   const handleReadProgressVisibilityChange = () => {
     if (document.visibilityState === "hidden") {
-      flushReadProgressSave();
+      if (readProgressTrackingState) {
+        readProgressTrackingState.visibleSince = 0;
+      }
+      flushReadProgressSave({
+        reason: READ_PROGRESS_SAVE_REASON_VISIBILITY_HIDDEN_FLUSH,
+        allowSessionFinalize: true,
+      });
+      return;
     }
+    if (!readProgressTrackingState) {
+      resetReadProgressTrackingState();
+    }
+    readProgressTrackingState.visibleSince = Date.now();
+    const candidateRecord = resolveReadProgressCandidateRecord();
+    if (candidateRecord) {
+      markReadProgressVisibleRecord(candidateRecord);
+      scheduleReadProgressSave(READ_PROGRESS_SAVE_REASON_VISIBLE_STABLE);
+    }
+  };
+  const handleReadProgressBeforeUnload = () => {
+    flushReadProgressSave({
+      reason: READ_PROGRESS_SAVE_REASON_BEFOREUNLOAD_FLUSH,
+      allowSessionFinalize: true,
+    });
+  };
+  const handleReadProgressPageHide = () => {
+    flushReadProgressSave({
+      reason: READ_PROGRESS_SAVE_REASON_PAGEHIDE_FLUSH,
+      allowSessionFinalize: true,
+    });
   };
   const resetReadProgressObserver = ({
     clearObservedMarkers = false,
     flushPendingProgress = false,
   } = {}) => {
     if (flushPendingProgress) {
-      flushPendingThreadProgressWrites();
+      flushReadProgressSave({
+        reason: READ_PROGRESS_SAVE_REASON_PAGEHIDE_FLUSH,
+        allowSessionFinalize: true,
+      });
     } else {
-      if (readProgressPersistTimeout) {
-        clearTimeout(readProgressPersistTimeout);
-        readProgressPersistTimeout = null;
-      }
+      clearReadProgressSaveTimer();
+      clearReadProgressPersistTimer();
       pendingThreadProgressWrites = {};
     }
     if (pageObserver) {
       pageObserver.disconnect();
       pageObserver = null;
     }
-    if (readProgressSaveTimeout) {
-      clearTimeout(readProgressSaveTimeout);
-      readProgressSaveTimeout = null;
-    }
     readProgressVisiblePosts.clear();
     readProgressLastVisibleRecord = null;
     readProgressFirstPostId = null;
     readProgressContext = null;
+    resetReadProgressTrackingState();
     document.removeEventListener(
       "visibilitychange",
       handleReadProgressVisibilityChange
     );
-    window.removeEventListener("beforeunload", flushReadProgressSave);
-    window.removeEventListener("pagehide", flushReadProgressSave);
+    window.removeEventListener("beforeunload", handleReadProgressBeforeUnload);
+    window.removeEventListener("pagehide", handleReadProgressPageHide);
+    document.removeEventListener("wheel", handleReadProgressWheel);
+    document.removeEventListener("touchstart", handleReadProgressTouchStart);
+    document.removeEventListener("keydown", handleReadProgressKeydown);
     if (clearObservedMarkers) {
       document
         .querySelectorAll('table[id^="pid"][data-s1p-observed]')
@@ -29088,10 +31436,8 @@
       readProgressVisiblePosts.clear();
       readProgressLastVisibleRecord = null;
       readProgressFirstPostId = null;
-      if (readProgressSaveTimeout) {
-        clearTimeout(readProgressSaveTimeout);
-        readProgressSaveTimeout = null;
-      }
+      clearReadProgressSaveTimer();
+      resetReadProgressTrackingState();
     }
     readProgressContext = { threadId, currentPage };
     refreshReadProgressFirstPostId();
@@ -29117,6 +31463,9 @@
                   postId: record.postId,
                   floor: record.floor,
                 };
+                if (document.visibilityState === "visible") {
+                  markReadProgressVisibleRecord(record);
+                }
               } else {
                 readProgressVisiblePosts.delete(postId);
               }
@@ -29124,7 +31473,7 @@
               readProgressVisiblePosts.delete(postId);
             }
           });
-          scheduleReadProgressSave();
+          scheduleReadProgressSave(READ_PROGRESS_SAVE_REASON_VISIBLE_STABLE);
         },
         { threshold: 0.3 }
       );
@@ -29133,14 +31482,22 @@
         "visibilitychange",
         handleReadProgressVisibilityChange
       );
-      window.removeEventListener("beforeunload", flushReadProgressSave);
-      window.removeEventListener("pagehide", flushReadProgressSave);
+      window.removeEventListener("beforeunload", handleReadProgressBeforeUnload);
+      window.removeEventListener("pagehide", handleReadProgressPageHide);
+      document.removeEventListener("wheel", handleReadProgressWheel);
+      document.removeEventListener("touchstart", handleReadProgressTouchStart);
+      document.removeEventListener("keydown", handleReadProgressKeydown);
       document.addEventListener(
         "visibilitychange",
         handleReadProgressVisibilityChange
       );
-      window.addEventListener("beforeunload", flushReadProgressSave);
-      window.addEventListener("pagehide", flushReadProgressSave);
+      window.addEventListener("beforeunload", handleReadProgressBeforeUnload);
+      window.addEventListener("pagehide", handleReadProgressPageHide);
+      document.addEventListener("wheel", handleReadProgressWheel, { passive: true });
+      document.addEventListener("touchstart", handleReadProgressTouchStart, {
+        passive: true,
+      });
+      document.addEventListener("keydown", handleReadProgressKeydown);
     }
 
     const scopedRoots = normalizeScopeRoots(postTables);
@@ -30524,10 +32881,10 @@
     }
   };
 
-  const cleanupOldReadProgress = () => {
+  const cleanupOldReadProgress = async () => {
     const settings = getSettings();
     // 只有在自动清理模式下才执行清理
-    if (settings.cleanupMode !== 'auto') return;
+    if (settings.cleanupMode !== "auto") return;
     if (
       !settings.readingProgressCleanupDays ||
       settings.readingProgressCleanupDays <= 0
@@ -30557,8 +32914,19 @@
       console.log(
         `S1 Plus: Cleaned up ${cleanedCount} old reading progress records (older than ${settings.readingProgressCleanupDays} days).`
       );
-      // [S1PLUS-CLEANUP-FIX] 标记已发生清理，等待用户同步确认
-      GM_setValue("s1p_pending_cleanup_info", cleanedCount);
+      const removedThreadIds = Object.keys(progress).filter(
+        (threadId) => !Object.prototype.hasOwnProperty.call(cleanedProgress, threadId)
+      );
+      await recordPendingCleanupInfo({
+        source: CLEANUP_PROVENANCE_SOURCE_AUTO_EXPIRE,
+        cleanupModeAtCreation: settings.cleanupMode,
+        createdAt: now,
+        deletedCount: cleanedCount,
+        threadIds: removedThreadIds,
+        initiatedFromThreadId: getCurrentThreadId(),
+        beforeProgress: progress,
+        afterProgress: cleanedProgress,
+      });
       // [核心修正] 将 suppressSyncTrigger 改为 false，以确保时间戳被更新
       saveReadProgress(cleanedProgress, false);
     }
@@ -30570,7 +32938,7 @@
    * @param {Array} ageRange - 时间范围 [minMs, maxMs]
    * @param {string} groupLabel - 分组标签（用于提示信息）
    */
-  const deleteProgressGroup = (ageRange, groupLabel) => {
+  const deleteProgressGroup = async (ageRange, groupLabel) => {
     const progress = getReadProgress();
     const originalCount = Object.keys(progress).length;
     if (originalCount === 0) {
@@ -30581,6 +32949,7 @@
     const now = Date.now();
     const [minAge, maxAge] = ageRange;
     const cleanedProgress = {};
+    const removedThreadIds = [];
     let deletedCount = 0;
 
     for (const threadId in progress) {
@@ -30593,6 +32962,7 @@
             cleanedProgress[threadId] = record;
           } else {
             deletedCount++;
+            removedThreadIds.push(threadId);
           }
         } else {
           // 没有时间戳的记录保留
@@ -30602,8 +32972,16 @@
     }
 
     if (deletedCount > 0) {
-      // [FIX] 设置清理标记，使同步逻辑能识别这是一次清理操作
-      GM_setValue("s1p_pending_cleanup_info", deletedCount);
+      await recordPendingCleanupInfo({
+        source: CLEANUP_PROVENANCE_SOURCE_MANUAL_GROUP,
+        cleanupModeAtCreation: getSettings().cleanupMode,
+        createdAt: now,
+        deletedCount,
+        threadIds: removedThreadIds,
+        initiatedFromThreadId: getCurrentThreadId(),
+        beforeProgress: progress,
+        afterProgress: cleanedProgress,
+      });
       saveReadProgress(cleanedProgress, false);
       showMessage(`成功删除"${groupLabel}"分组的 ${deletedCount} 条阅读记录`, true);
       // 刷新弹窗内容
@@ -30739,8 +33117,8 @@
             {
               text: "确认删除",
               className: "s1p-confirm",
-              action: () => {
-                deleteProgressGroup(ageRange, label);
+              action: async () => {
+                await deleteProgressGroup(ageRange, label);
               },
             },
           ],
@@ -30796,7 +33174,7 @@
       return;
     }
     showMessage(
-      "自动同步因上次冲突仍处于暂停状态，请先在导航栏执行手动同步。",
+      "自动同步因上次冲突仍处于暂停状态，请先在导航栏发起全局手动同步。",
       false
     );
   };
@@ -30931,8 +33309,8 @@
           if (!(await shouldShowConflictModal(conflictModalType))) {
             showMessage(
               skippedByLocalChangeDuringSync
-                ? "检测到您在自动同步期间有本地操作，已暂停自动拉取以保护更改。请稍后在导航栏手动同步。"
-                : "检测到本地数据较新，已进入提示冷却。请稍后在导航栏手动同步。",
+                ? "检测到您在自动同步期间有本地操作，已暂停自动拉取以保护更改。请稍后在导航栏发起全局手动同步。"
+                : "检测到本地数据较新，已进入提示冷却。请稍后在导航栏发起全局手动同步。",
               false
             );
             return false;
@@ -30940,18 +33318,18 @@
           createAdvancedConfirmationModal(
             "检测到本地有未同步的更改",
             skippedByLocalChangeDuringSync
-              ? "<p>S1 Plus 检测到您在自动同步过程中进行了本地操作。为避免云端拉取覆盖您的新更改，本轮自动拉取已暂停。</p><p>请手动同步并选择要保留的版本，以完成一次安全同步。</p>"
-              : "<p>S1 Plus 在启动时发现，您的本地数据比云端备份要新。这可能意味着您在其他设备的工作未推送，或有离线修改未同步。</p><p>为防止数据丢失，自动同步已暂停。请选择如何处理：</p>",
+              ? "<p>S1 Plus 检测到您在自动同步过程中进行了本地操作。为避免云端拉取覆盖您的新更改，本轮自动拉取已暂停。</p><p>如果继续，将发起一次全局手动同步来决定整套数据的去向，而不是只处理当前帖子。</p>"
+              : "<p>S1 Plus 在启动时发现，您的本地数据比云端备份要新。这可能意味着您在其他设备的工作未推送，或有离线修改未同步。</p><p>为防止数据丢失，自动同步已暂停。接下来如继续，将进入一次全局手动同步判断。</p>",
             [
               {
                 text: "稍后处理",
                 className: "s1p-cancel",
                 action: () => {
-                  showMessage("同步已暂停，您可稍后从导航栏手动同步。", null);
+                  showMessage("同步已暂停，您可稍后从导航栏发起全局手动同步。", null);
                 },
               },
               {
-                text: "立即解决",
+                text: "发起全局同步",
                 className: "s1p-confirm",
                 action: () => {
                   // [S1P-UX-FIX] 调用时传入 true，进入静默模式，避免弹出多余的提示
@@ -30975,24 +33353,24 @@
       case "conflict":
         if (!(await shouldShowConflictModal("startup_conflict"))) {
           showMessage(
-            "再次检测到启动同步冲突，已进入提示冷却。请稍后手动同步处理。",
+            "再次检测到启动同步冲突，已进入提示冷却。请稍后发起全局手动同步。",
             false
           );
           return false;
         }
         createAdvancedConfirmationModal(
           "检测到同步冲突",
-          "<p>S1 Plus在自动同步时发现，您的本地数据和云端备份可能都已更改。</p><p>为防止数据丢失，自动同步已暂停。请手动选择要保留的版本来解决冲突。</p>",
+          "<p>S1 Plus 在自动同步时发现，本地数据和云端备份可能都已更改。</p><p>为防止数据丢失，自动同步已暂停。接下来如继续，将发起一次全局手动同步来决定保留哪一侧。</p>",
           [
             {
               text: "稍后处理",
               className: "s1p-cancel",
               action: () => {
-                showMessage("同步已暂停，您可以在设置中手动同步。", null);
+                showMessage("同步已暂停，您可以稍后在导航栏发起全局手动同步。", null);
               },
             },
             {
-              text: "立即解决",
+              text: "发起全局同步",
               className: "s1p-confirm",
               action: () => {
                 // [S1P-UX-FIX] 此处也应进入静默模式
@@ -31027,7 +33405,7 @@
     shouldTryNuxRecommendation = false,
   } = {}) => {
     const scheduledAt = Date.now();
-    const runFlow = async ({
+    const runStartupOrchestratorFlow = async ({
       skipDailyStartupSync = false,
       suppressStartupOnlyChecks = false,
     } = {}) => {
@@ -31074,46 +33452,63 @@
         console.error("S1 Plus: 延迟执行启动同步流程失败:", error);
       }
     };
-    const runStaleStartupFlow = ({
-      elapsedMs,
-      today,
-      lastSyncDate,
-      hasDeferredStartupSync,
-    }) => {
-      if (hasDeferredStartupSync) {
-        console.log(
-          `S1 Plus: 启动同步流程触发过晚（${elapsedMs}ms），将仅补执行已顺延的每日首次同步。`
-        );
-        runFlow({ suppressStartupOnlyChecks: true });
-        return;
-      }
+    const runStartupOrchestratorDecision = (decision) => {
+      const freshnessState =
+        decision && typeof decision === "object" ? decision.freshnessState || {} : {};
+      const elapsedMs = Number(freshnessState.elapsedMs) || 0;
 
-      let staleFlowMessage =
-        `S1 Plus: 启动同步流程触发过晚（${elapsedMs}ms），已跳过本页启动期专属同步检查。`;
-      const settings = getSettings();
-      if (shouldDeferDailyStartupSyncForToday(settings, today, lastSyncDate)) {
-        markDeferredStartupSyncRequest("startup_flow_delayed", today);
-        setAutoSyncIndicatorPendingState(
-          AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP,
-          "daily_startup_deferred"
-        );
-        staleFlowMessage =
-          `S1 Plus: 启动同步流程触发过晚（${elapsedMs}ms），每日首次同步已顺延到下一个新页面执行。`;
+      switch (decision?.action) {
+        case "run_fresh_startup_flow":
+          runStartupOrchestratorFlow();
+          return;
+        case "resume_deferred_daily_startup":
+          {
+            const deferredRequest = freshnessState.deferredStartupSyncRequest;
+            const scheduledBy =
+              normalizeSyncTriggerSource(deferredRequest?.scheduledBy) ||
+              SYNC_TRIGGER_SOURCE_DAILY_STARTUP;
+            console.log(
+              `S1 Plus: 启动同步流程触发过晚（${elapsedMs}ms），当前页面将优先补执行已顺延的每日首次同步（scheduledBy: ${scheduledBy}）。`
+            );
+          }
+          runStartupOrchestratorFlow({
+            suppressStartupOnlyChecks: true,
+          });
+          return;
+        case "defer_daily_startup":
+          markDeferredStartupSyncRequest(
+            "startup_flow_delayed",
+            freshnessState.today,
+            SYNC_TRIGGER_SOURCE_DAILY_STARTUP
+          );
+          setAutoSyncIndicatorPendingState(
+            AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP,
+            "daily_startup_deferred"
+          );
+          console.log(
+            `S1 Plus: 启动同步流程触发过晚（${elapsedMs}ms），每日首次同步已顺延到下一个新页面执行。`
+          );
+          runStartupOrchestratorFlow({
+            skipDailyStartupSync: true,
+            suppressStartupOnlyChecks: true,
+          });
+          return;
+        case "skip_stale_startup_only_checks":
+        default:
+          console.log(
+            `S1 Plus: 启动同步流程触发过晚（${elapsedMs}ms），已跳过本页启动期专属同步检查。`
+          );
+          runStartupOrchestratorFlow({
+            skipDailyStartupSync: true,
+            suppressStartupOnlyChecks: true,
+          });
       }
-
-      console.log(staleFlowMessage);
-      runFlow({
-        skipDailyStartupSync: true,
-        suppressStartupOnlyChecks: true,
-      });
     };
     const runFlowIfFresh = () => {
-      const freshnessState = getStartupSyncFreshnessState(scheduledAt);
-      if (!freshnessState.isStaleStartupFlow) {
-        runFlow();
-        return;
-      }
-      runStaleStartupFlow(freshnessState);
+      const startupOrchestratorDecision = getStartupSyncOrchestratorDecision(
+        scheduledAt
+      );
+      runStartupOrchestratorDecision(startupOrchestratorDecision);
     };
 
     window.setTimeout(runFlowIfFresh, STARTUP_SYNC_DEFER_DELAY_MS);
@@ -31268,7 +33663,7 @@
     const welcomePopupWasShown = showFirstTimeWelcomeIfNeeded();
 
     migrateLegacyReadProgressData();
-    cleanupOldReadProgress();
+    await cleanupOldReadProgress();
     detectS1Nux();
     const shouldTryNuxRecommendation = !welcomePopupWasShown;
 
