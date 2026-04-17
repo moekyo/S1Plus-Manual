@@ -736,6 +736,7 @@
   const AUTO_SYNC_CIRCUIT_OPEN_UNTIL_KEY = "s1p_auto_sync_circuit_open_until";
   const AUTO_SYNC_CONFLICT_PAUSE_KEY = "s1p_auto_sync_conflict_pause";
   const PENDING_AUTO_SYNC_KEY = "s1p_pending_auto_sync_request";
+  const DEFERRED_STARTUP_SYNC_KEY = "s1p_deferred_startup_sync";
   const AUTO_SYNC_INDICATOR_STATE_KEY = "s1p_auto_sync_indicator_state";
   const AUTO_SYNC_INDICATOR_PHASE_IDLE = "idle";
   const AUTO_SYNC_INDICATOR_PHASE_PENDING = "pending";
@@ -781,9 +782,10 @@
   const FOREGROUND_REMOTE_SYNC_RETRY_MAX_ATTEMPTS = 6;
   // 当时间戳相差过大时，不再自动依据“谁大谁新”做决策，转为冲突保护。
   const SYNC_TIMESTAMP_SKEW_TOLERANCE_MS = 12 * 60 * 60 * 1000;
-  // 启动同步调度到空闲时段，减少“每日首次加载卡住”的体感。
-  const STARTUP_SYNC_IDLE_TIMEOUT_MS = 1200;
-  const STARTUP_SYNC_IDLE_FALLBACK_DELAY_MS = 180;
+  // 启动同步仅做一个很短的延时，让页面先完成首轮初始化，
+  // 同时限制必须在页面打开后的短窗口内执行，避免浏览数分钟后才突然补触发并刷新。
+  const STARTUP_SYNC_DEFER_DELAY_MS = 80;
+  const STARTUP_SYNC_MAX_DELAY_MS = 4000;
   const DOM_OBSERVER_DEBOUNCE_MS = 120;
   const SETTINGS_CACHE_TTL_MS = 1000;
   const CORE_DATA_CACHE_TTL_MS = 1000;
@@ -7340,7 +7342,10 @@
     };
   };
 
-  const setAutoSyncIndicatorPendingPhase = (reason = "background_queue") => {
+  const setAutoSyncIndicatorPendingState = (
+    source = AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+    reason = "background_queue"
+  ) => {
     const current = getAutoSyncIndicatorState();
     if (current.phase === AUTO_SYNC_INDICATOR_PHASE_RUNNING) {
       return false;
@@ -7355,16 +7360,25 @@
       return false;
     }
     const lastResolvedSnapshot = buildAutoSyncIndicatorLastResolvedSnapshot(current);
+    const resolvedSource =
+      normalizeAutoSyncIndicatorSource(source) ||
+      AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND;
     persistAutoSyncIndicatorState({
       phase: AUTO_SYNC_INDICATOR_PHASE_PENDING,
       timestamp: now,
       token: current.token || "",
-      source: AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+      source: resolvedSource,
       reason: normalizeAutoSyncIndicatorReason(reason),
       ...lastResolvedSnapshot,
     });
     return true;
   };
+
+  const setAutoSyncIndicatorPendingPhase = (reason = "background_queue") =>
+    setAutoSyncIndicatorPendingState(
+      AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+      reason
+    );
 
   const startAutoSyncIndicatorCycle = (source = "", options = {}) => {
     const current = getAutoSyncIndicatorState();
@@ -7600,6 +7614,63 @@
 
   const clearPendingAutoSyncRequest = () => {
     GM_deleteValue(PENDING_AUTO_SYNC_KEY);
+  };
+
+  const getCurrentDailySyncDateKey = () => new Date().toLocaleDateString("sv");
+
+  const normalizeDeferredStartupSyncRequest = (value) => {
+    const source = sanitizeRecordObject(value);
+    const date = typeof source.date === "string" ? source.date.trim() : "";
+    if (!date) {
+      return null;
+    }
+    return {
+      date,
+      createdAt: Number(source.createdAt) || 0,
+      reason: normalizeRemoteProbeText(source.reason, 120) || "",
+    };
+  };
+
+  const getDeferredStartupSyncRequest = (
+    today = getCurrentDailySyncDateKey()
+  ) => {
+    const normalized = normalizeDeferredStartupSyncRequest(
+      GM_getValue(DEFERRED_STARTUP_SYNC_KEY, null)
+    );
+    if (!normalized) {
+      return null;
+    }
+    if (normalized.date !== today) {
+      GM_deleteValue(DEFERRED_STARTUP_SYNC_KEY);
+      return null;
+    }
+    return normalized;
+  };
+
+  const markDeferredStartupSyncRequest = (
+    reason = "startup_flow_delayed",
+    today = getCurrentDailySyncDateKey()
+  ) => {
+    const normalizedReason =
+      normalizeRemoteProbeText(reason, 120) || "startup_flow_delayed";
+    const nextValue = {
+      date: today,
+      createdAt: Date.now(),
+      reason: normalizedReason,
+    };
+    GM_setValue(DEFERRED_STARTUP_SYNC_KEY, nextValue);
+    return nextValue;
+  };
+
+  const clearDeferredStartupSyncRequest = () => {
+    GM_deleteValue(DEFERRED_STARTUP_SYNC_KEY);
+  };
+
+  const markDailyStartupSyncCompletedForToday = (
+    today = getCurrentDailySyncDateKey()
+  ) => {
+    GM_setValue("s1p_last_daily_sync_date", today);
+    clearDeferredStartupSyncRequest();
   };
 
   const recoverPendingAutoSyncIfNeeded = () => {
@@ -19594,7 +19665,9 @@
 
     switch (phase) {
       case AUTO_SYNC_INDICATOR_PHASE_PENDING:
-        return "自动同步：后台同步待处理";
+        return sourceLabel === "自动同步"
+          ? "自动同步：待处理"
+          : `自动同步：${sourceLabel}待处理`;
       case AUTO_SYNC_INDICATOR_PHASE_RUNNING:
         if (source === AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_FOLLOWUP) {
           return "自动同步：前台发现更新，正在同步";
@@ -30736,14 +30809,23 @@
   const handleStartupSync = async () => {
     const settings = getSettings();
     if (!settings.syncRemoteEnabled || !settings.syncDailyFirstLoad) {
+      clearDeferredStartupSyncRequest();
       return false;
     }
 
-    const today = new Date().toLocaleDateString("sv");
+    const today = getCurrentDailySyncDateKey();
     const lastSyncDate = GM_getValue("s1p_last_daily_sync_date", null);
+    const deferredStartupSync = getDeferredStartupSyncRequest(today);
+    const shouldResumeDeferredStartupSync = Boolean(deferredStartupSync);
 
-    if (today === lastSyncDate) {
+    if (today === lastSyncDate && !shouldResumeDeferredStartupSync) {
       return false;
+    }
+
+    if (shouldResumeDeferredStartupSync) {
+      console.log(
+        "S1 Plus: 检测到已顺延的每日首次同步，正在当前新页面补执行..."
+      );
     }
 
     const result = await runStartupModeAutoSyncCheckWithIndicator({
@@ -30780,7 +30862,16 @@
       result.status === "success" &&
       result.action !== "skipped_push_on_startup"
     ) {
-      GM_setValue("s1p_last_daily_sync_date", today);
+      markDailyStartupSyncCompletedForToday(today);
+    } else if (
+      shouldResumeDeferredStartupSync &&
+      (
+        result.status === "conflict" ||
+        result.status === "success" ||
+        (result.status === "skipped" && result.reason === "conflict_paused")
+      )
+    ) {
+      clearDeferredStartupSyncRequest();
     }
 
     switch (result.status) {
@@ -30903,9 +30994,12 @@
     welcomePopupWasShown = false,
     shouldTryNuxRecommendation = false,
   } = {}) => {
-    const runFlow = async () => {
+    const scheduledAt = Date.now();
+    const runFlow = async ({ skipDailyStartupSync = false } = {}) => {
       try {
-        const startupSyncResult = await handleStartupSync();
+        const startupSyncResult = skipDailyStartupSync
+          ? false
+          : await handleStartupSync();
         if (startupSyncResult === true) {
           return;
         }
@@ -30939,20 +31033,36 @@
         console.error("S1 Plus: 延迟执行启动同步流程失败:", error);
       }
     };
-
-    if (typeof window.requestIdleCallback === "function") {
-      window.requestIdleCallback(
-        () => {
-          runFlow();
-        },
-        { timeout: STARTUP_SYNC_IDLE_TIMEOUT_MS }
+    const runFlowIfFresh = () => {
+      const elapsedMs = Date.now() - scheduledAt;
+      const today = getCurrentDailySyncDateKey();
+      const settings = getSettings();
+      const lastSyncDate = GM_getValue("s1p_last_daily_sync_date", null);
+      const hasDeferredStartupSync = Boolean(
+        getDeferredStartupSyncRequest(today)
       );
-      return;
-    }
-
-    window.setTimeout(() => {
+      if (elapsedMs > STARTUP_SYNC_MAX_DELAY_MS && !hasDeferredStartupSync) {
+        const shouldDeferDailyStartupSync =
+          settings.syncRemoteEnabled === true &&
+          settings.syncDailyFirstLoad === true &&
+          today !== lastSyncDate;
+        if (shouldDeferDailyStartupSync) {
+          markDeferredStartupSyncRequest("startup_flow_delayed", today);
+          setAutoSyncIndicatorPendingState(
+            AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP,
+            "daily_startup_deferred"
+          );
+        }
+        console.log(
+          `S1 Plus: 启动同步流程触发过晚（${elapsedMs}ms），每日首次同步已顺延到下一个新页面执行。`
+        );
+        runFlow({ skipDailyStartupSync: true });
+        return;
+      }
       runFlow();
-    }, STARTUP_SYNC_IDLE_FALLBACK_DELAY_MS);
+    };
+
+    window.setTimeout(runFlowIfFresh, STARTUP_SYNC_DEFER_DELAY_MS);
   };
 
   /**
