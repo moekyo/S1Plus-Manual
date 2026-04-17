@@ -7673,6 +7673,30 @@
     clearDeferredStartupSyncRequest();
   };
 
+  const shouldDeferDailyStartupSyncForToday = (
+    settingsSnapshot,
+    today = getCurrentDailySyncDateKey(),
+    lastSyncDate = GM_getValue("s1p_last_daily_sync_date", null)
+  ) =>
+    Boolean(
+      settingsSnapshot &&
+        settingsSnapshot.syncRemoteEnabled === true &&
+        settingsSnapshot.syncDailyFirstLoad === true &&
+        today !== lastSyncDate
+    );
+
+  const getStartupSyncFreshnessState = (scheduledAt = Date.now()) => {
+    const elapsedMs = Date.now() - scheduledAt;
+    const today = getCurrentDailySyncDateKey();
+    return {
+      elapsedMs,
+      today,
+      lastSyncDate: GM_getValue("s1p_last_daily_sync_date", null),
+      hasDeferredStartupSync: Boolean(getDeferredStartupSyncRequest(today)),
+      isStaleStartupFlow: elapsedMs > STARTUP_SYNC_MAX_DELAY_MS,
+    };
+  };
+
   const recoverPendingAutoSyncIfNeeded = () => {
     const pending = GM_getValue(PENDING_AUTO_SYNC_KEY, null);
     if (!pending || typeof pending !== "object") {
@@ -8235,6 +8259,14 @@
     const messages = getAutoPullRefreshMessages(options, action);
     const showMessageFn = options.showMessage || showMessage;
     const plan = getAutoPullRefreshPlan(options);
+    const refreshReason = getAutoPullRefreshReason(options, action);
+    console.log("S1 Plus: 自动拉取刷新策略判定", {
+      action,
+      reason: refreshReason,
+      policy: plan.policy,
+      pageType: plan.pageType,
+      shouldReload: plan.shouldReload,
+    });
     if (!plan.shouldReload) {
       showMessageFn(getAutoPullRefreshDisplayMessage(plan, messages), null);
       return {
@@ -8247,7 +8279,7 @@
     }
 
     const reloadSchedule = scheduleAutoPullReload({
-      reason: getAutoPullRefreshReason(options, action),
+      reason: refreshReason,
       reloadDelayMs: plan.reloadDelayMs,
       locationObject: options.locationObject,
       setTimeoutFn: options.setTimeoutFn,
@@ -30995,7 +31027,10 @@
     shouldTryNuxRecommendation = false,
   } = {}) => {
     const scheduledAt = Date.now();
-    const runFlow = async ({ skipDailyStartupSync = false } = {}) => {
+    const runFlow = async ({
+      skipDailyStartupSync = false,
+      suppressStartupOnlyChecks = false,
+    } = {}) => {
       try {
         const startupSyncResult = skipDailyStartupSync
           ? false
@@ -31004,15 +31039,21 @@
           return;
         }
 
-        const isReloadingAfterPerLoadSync = await handlePerLoadSyncCheck();
-        if (isReloadingAfterPerLoadSync) {
-          return;
-        }
+        if (!suppressStartupOnlyChecks) {
+          const isReloadingAfterPerLoadSync = await handlePerLoadSyncCheck();
+          if (isReloadingAfterPerLoadSync) {
+            return;
+          }
 
-        const isReloadingAfterInitialForegroundProbe =
-          await handleInitialForegroundRemoteFreshnessCheck();
-        if (isReloadingAfterInitialForegroundProbe) {
-          return;
+          const isReloadingAfterInitialForegroundProbe =
+            await handleInitialForegroundRemoteFreshnessCheck();
+          if (isReloadingAfterInitialForegroundProbe) {
+            return;
+          }
+        } else {
+          console.log(
+            "S1 Plus: 启动流程已过新鲜窗口，已跳过每次加载同步检查与首次可见前台探测。"
+          );
         }
 
         let tokenPopupWasShown = false;
@@ -31033,33 +31074,46 @@
         console.error("S1 Plus: 延迟执行启动同步流程失败:", error);
       }
     };
-    const runFlowIfFresh = () => {
-      const elapsedMs = Date.now() - scheduledAt;
-      const today = getCurrentDailySyncDateKey();
-      const settings = getSettings();
-      const lastSyncDate = GM_getValue("s1p_last_daily_sync_date", null);
-      const hasDeferredStartupSync = Boolean(
-        getDeferredStartupSyncRequest(today)
-      );
-      if (elapsedMs > STARTUP_SYNC_MAX_DELAY_MS && !hasDeferredStartupSync) {
-        const shouldDeferDailyStartupSync =
-          settings.syncRemoteEnabled === true &&
-          settings.syncDailyFirstLoad === true &&
-          today !== lastSyncDate;
-        if (shouldDeferDailyStartupSync) {
-          markDeferredStartupSyncRequest("startup_flow_delayed", today);
-          setAutoSyncIndicatorPendingState(
-            AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP,
-            "daily_startup_deferred"
-          );
-        }
+    const runStaleStartupFlow = ({
+      elapsedMs,
+      today,
+      lastSyncDate,
+      hasDeferredStartupSync,
+    }) => {
+      if (hasDeferredStartupSync) {
         console.log(
-          `S1 Plus: 启动同步流程触发过晚（${elapsedMs}ms），每日首次同步已顺延到下一个新页面执行。`
+          `S1 Plus: 启动同步流程触发过晚（${elapsedMs}ms），将仅补执行已顺延的每日首次同步。`
         );
-        runFlow({ skipDailyStartupSync: true });
+        runFlow({ suppressStartupOnlyChecks: true });
         return;
       }
-      runFlow();
+
+      let staleFlowMessage =
+        `S1 Plus: 启动同步流程触发过晚（${elapsedMs}ms），已跳过本页启动期专属同步检查。`;
+      const settings = getSettings();
+      if (shouldDeferDailyStartupSyncForToday(settings, today, lastSyncDate)) {
+        markDeferredStartupSyncRequest("startup_flow_delayed", today);
+        setAutoSyncIndicatorPendingState(
+          AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP,
+          "daily_startup_deferred"
+        );
+        staleFlowMessage =
+          `S1 Plus: 启动同步流程触发过晚（${elapsedMs}ms），每日首次同步已顺延到下一个新页面执行。`;
+      }
+
+      console.log(staleFlowMessage);
+      runFlow({
+        skipDailyStartupSync: true,
+        suppressStartupOnlyChecks: true,
+      });
+    };
+    const runFlowIfFresh = () => {
+      const freshnessState = getStartupSyncFreshnessState(scheduledAt);
+      if (!freshnessState.isStaleStartupFlow) {
+        runFlow();
+        return;
+      }
+      runStaleStartupFlow(freshnessState);
     };
 
     window.setTimeout(runFlowIfFresh, STARTUP_SYNC_DEFER_DELAY_MS);
