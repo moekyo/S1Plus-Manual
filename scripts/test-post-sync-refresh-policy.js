@@ -55,15 +55,15 @@ const testStaticWiring = () => {
     "Phase 7 未将设置弹窗脏状态暴露为可被同步逻辑检测的 DOM 标记。"
   );
   expectMatch(
-    /applyAutoPullRefreshPolicy\(\{\s*action:\s*result\.action,\s*reason:\s*"per_load_auto_pull"/m,
+    /const handlePerLoadSyncCheck = async[\s\S]*?applyRefreshPolicyForSyncResult\(result,\s*\{\s*reason:\s*"per_load_auto_pull"/m,
     "Phase 7 未将每次加载同步成功接入刷新策略。"
   );
   expectMatch(
-    /applyAutoPullRefreshPolicy\(\{\s*action:\s*result\.action,\s*reason:\s*"background_auto_pull"/m,
+    /const handleBackgroundAutoSyncResult = async[\s\S]*?applyRefreshPolicyForSyncResult\(result,\s*\{[\s\S]*?reason:\s*result\.action === "merged_read_progress"[\s\S]*?"background_auto_pull"/m,
     "Phase 7 未将后台自动同步成功接入刷新策略。"
   );
   expectMatch(
-    /refreshPlan = applyAutoPullRefreshPolicy\(\{\s*action:\s*syncRequestResult\.action,/m,
+    /refreshPlan = applyRefreshPolicyForSyncResult\(syncRequestResult,\s*\{[\s\S]*?reason:\s*`foreground_probe:\$\{normalizedReason\}`/m,
     "Phase 7 未将前台远端探测命中的 follow-up sync 接入刷新策略。"
   );
 };
@@ -132,7 +132,10 @@ const testListPageSchedulesReload = () => {
   assert.equal(result.reloadSchedule.status, "scheduled");
   assert.equal(result.reloadSchedule.reloadDelayMs, 1500);
   assert.equal(messages.length, 1);
-  assert.equal(messages[0].message, "检测到云端有更新，正在刷新页面...");
+  assert.equal(
+    messages[0].message,
+    "检测到云端备份比当前页面更新，已自动拉取到本地。正在刷新页面..."
+  );
   assert.equal(messages[0].isSuccess, true);
   assert.ok(scheduledTimer, "列表页应当调度自动刷新。");
   assert.equal(scheduledTimer.delay, 1500);

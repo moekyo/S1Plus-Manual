@@ -50,7 +50,7 @@ const testVisibilityChangeTriggersRecoveryAndProbe = async () => {
     },
   });
 
-  assert.deepStrictEqual(calls, ["recover", "probe:visibilitychange"]);
+  assert.deepStrictEqual(calls, ["recover", "probe:foreground_resume"]);
   assert.strictEqual(result.status, "unchanged");
 };
 
@@ -94,7 +94,7 @@ const testPersistedPageShowTriggersRecoveryAndProbe = async () => {
     }
   );
 
-  assert.deepStrictEqual(calls, ["recover", "probe:pageshow"]);
+  assert.deepStrictEqual(calls, ["recover", "probe:foreground_resume"]);
   assert.strictEqual(result.status, "changed");
 };
 
