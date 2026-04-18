@@ -41,8 +41,13 @@ const testVisibilityChangeTriggersRecoveryAndProbe = async () => {
   const calls = [];
 
   const result = await hooks.handlePendingAutoSyncRecoveryVisibilityChange({
+    syncCoreDataFromStorageSnapshotIfNeeded: () => {
+      calls.push("resync");
+      return { didSync: true, changedKeys: ["s1p_read_progress"] };
+    },
     recoverPendingAutoSyncIfNeeded: () => {
       calls.push("recover");
+      return { status: "skipped", reason: "no_pending_auto_sync" };
     },
     checkRemoteFreshnessOnForeground: async (reason) => {
       calls.push(`probe:${reason}`);
@@ -50,7 +55,7 @@ const testVisibilityChangeTriggersRecoveryAndProbe = async () => {
     },
   });
 
-  assert.deepStrictEqual(calls, ["recover", "probe:foreground_resume"]);
+  assert.deepStrictEqual(calls, ["resync", "recover", "probe:foreground_resume"]);
   assert.strictEqual(result.status, "unchanged");
 };
 
@@ -84,8 +89,13 @@ const testPersistedPageShowTriggersRecoveryAndProbe = async () => {
   const result = await hooks.handlePendingAutoSyncRecoveryPageShow(
     { persisted: true },
     {
+      syncCoreDataFromStorageSnapshotIfNeeded: () => {
+        calls.push("resync");
+        return { didSync: true, changedKeys: ["s1p_read_progress"] };
+      },
       recoverPendingAutoSyncIfNeeded: () => {
         calls.push("recover");
+        return { status: "skipped", reason: "no_pending_auto_sync" };
       },
       checkRemoteFreshnessOnForeground: async (reason) => {
         calls.push(`probe:${reason}`);
@@ -94,7 +104,7 @@ const testPersistedPageShowTriggersRecoveryAndProbe = async () => {
     }
   );
 
-  assert.deepStrictEqual(calls, ["recover", "probe:foreground_resume"]);
+  assert.deepStrictEqual(calls, ["resync", "recover", "probe:foreground_resume"]);
   assert.strictEqual(result.status, "changed");
 };
 
@@ -121,6 +131,31 @@ const testNonPersistedPageShowKeepsRecoveryOnly = async () => {
   assert.strictEqual(probeCount, 0);
   assert.strictEqual(result.status, "skipped");
   assert.strictEqual(result.reason, "pageshow_not_persisted");
+};
+
+const testVisibilityChangeWaitsForPendingRecovery = async () => {
+  const { sandbox, hooks } = createHarness();
+  sandbox.document.visibilityState = "visible";
+  const calls = [];
+
+  const result = await hooks.handlePendingAutoSyncRecoveryVisibilityChange({
+    syncCoreDataFromStorageSnapshotIfNeeded: () => {
+      calls.push("resync");
+      return { didSync: true, changedKeys: ["s1p_read_progress"] };
+    },
+    recoverPendingAutoSyncIfNeeded: () => {
+      calls.push("recover");
+      return { status: "scheduled", reason: "pending_recovery", delayMs: 600 };
+    },
+    checkRemoteFreshnessOnForeground: async () => {
+      calls.push("probe");
+      return { status: "unchanged" };
+    },
+  });
+
+  assert.deepStrictEqual(calls, ["resync", "recover"]);
+  assert.strictEqual(result.status, "skipped");
+  assert.strictEqual(result.reason, "pending_recovery_settle");
 };
 
 const testInitialVisibleProbeTriggersForegroundCheck = async () => {
@@ -175,6 +210,7 @@ const main = async () => {
   await testHiddenVisibilityChangeDoesNothing();
   await testPersistedPageShowTriggersRecoveryAndProbe();
   await testNonPersistedPageShowKeepsRecoveryOnly();
+  await testVisibilityChangeWaitsForPendingRecovery();
   await testInitialVisibleProbeTriggersForegroundCheck();
   await testHiddenInitialVisibleProbeStaysIdle();
   console.log("[foreground-trigger-integration] Phase 4 trigger integration verified.");

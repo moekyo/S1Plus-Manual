@@ -785,8 +785,12 @@
   const SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID = `s1p_tab_${Date.now()}_${Math.random()
     .toString(36)
     .slice(2)}`;
+  const BACKGROUND_OPEN_THREAD_HINTS_KEY = "s1p_background_open_thread_hints";
+  const BACKGROUND_OPEN_THREAD_HINT_TTL_MS = 5 * 60 * 1000;
   const SYNC_BASELINE_STATE_KEY = "s1p_sync_baseline_state";
   const REMOTE_PROBE_INFO_KEY = "s1p_last_remote_probe_info";
+  const LAST_LOCAL_SESSION_REMOTE_WRITE_KEY =
+    "s1p_last_local_session_remote_write";
   const REMOTE_PROBE_SHARED_COOLDOWN_KEY = "s1p_remote_probe_shared_cooldown";
   const REMOTE_PROBE_LOCK_KEY = "s1p_remote_probe_lock";
   const REMOTE_PROBE_SHARED_COOLDOWN_MS = 45 * 1000;
@@ -808,12 +812,15 @@
   const FOREGROUND_REMOTE_SYNC_RETRY_MAX_ATTEMPTS = 6;
   const FOREGROUND_REMOTE_SYNC_RETRY_SETTLE_BUFFER_MS = 300;
   const FOREGROUND_PROBE_INITIALIZATION_NOISE_GRACE_MS = 8 * 1000;
+  const LOCAL_SESSION_REMOTE_WRITE_TTL_MS = 5 * 60 * 1000;
   const FOREGROUND_PROBE_SOFT_BLOCK_REASON_PENDING_WRITE =
     "read_progress_pending_write";
   const FOREGROUND_PROBE_SOFT_BLOCK_REASON_SYNC_DEBOUNCE =
     "read_progress_sync_debounce";
   const FOREGROUND_PROBE_SOFT_BLOCK_REASON_INITIALIZATION_NOISE =
     "read_progress_initialization_noise";
+  const FOREGROUND_PROBE_SKIP_REASON_PENDING_RECOVERY_SETTLE =
+    "pending_recovery_settle";
   const CLEANUP_PROVENANCE_SOURCE_AUTO_EXPIRE = "auto_expire_cleanup";
   const CLEANUP_PROVENANCE_SOURCE_MANUAL_SINGLE = "manual_single_delete";
   const CLEANUP_PROVENANCE_SOURCE_MANUAL_GROUP = "manual_group_delete";
@@ -833,6 +840,7 @@
   const DOM_OBSERVER_DEBOUNCE_MS = 120;
   const SETTINGS_CACHE_TTL_MS = 1000;
   const CORE_DATA_CACHE_TTL_MS = 1000;
+  const COMPARABLE_STORED_VALUE_CACHE_TTL_MS = 1000;
   const OBSERVER_INCREMENTAL_THREAD_ROW_LIMIT = 80;
   const OBSERVER_INCREMENTAL_POST_TABLE_LIMIT = 80;
   const OBSERVER_INCREMENTAL_QUOTE_SCOPE_LIMIT = 80;
@@ -6432,6 +6440,7 @@
     lastProbeResult: "",
     lastProbeTriggeredSync: false,
     lastProbeTriggeredSyncResult: "",
+    lastProbeSameSessionRemoteWrite: false,
     lastTriggerSource: "",
     lastPageVisibility: "",
     lastTabId: "",
@@ -6449,6 +6458,8 @@
     lastReadProgressStartupSnapshot: "",
     lastReadProgressConfirmationReason: "",
     lastReadProgressConfirmationTimestamp: 0,
+    lastCoreDataSnapshotResyncTimestamp: 0,
+    lastCoreDataSnapshotResyncKeys: Object.freeze([]),
     readProgressStartupSummaries: Object.freeze([]),
     readProgressDebugEvents: Object.freeze([]),
   });
@@ -6502,6 +6513,7 @@
         ),
         initialFocus: normalizeOptionalFlag(source.initialFocus),
         initiatedWhileHidden: normalizeFlag(source.initiatedWhileHidden),
+        passiveBackgroundOpened: normalizeFlag(source.passiveBackgroundOpened),
         firstVisibleCandidate: normalizeText(source.firstVisibleCandidate, 80),
         firstVisibleCandidateAt: normalizeTimestamp(
           source.firstVisibleCandidateAt
@@ -6564,6 +6576,9 @@
         source.lastProbeTriggeredSyncResult,
         220
       ),
+      lastProbeSameSessionRemoteWrite: normalizeFlag(
+        source.lastProbeSameSessionRemoteWrite
+      ),
       lastTriggerSource: normalizeText(source.lastTriggerSource, 80),
       lastPageVisibility: normalizeText(source.lastPageVisibility, 32),
       lastTabId: normalizeText(source.lastTabId, 80),
@@ -6590,6 +6605,14 @@
       ),
       lastReadProgressConfirmationTimestamp: normalizeTimestamp(
         source.lastReadProgressConfirmationTimestamp
+      ),
+      lastCoreDataSnapshotResyncTimestamp: normalizeTimestamp(
+        source.lastCoreDataSnapshotResyncTimestamp
+      ),
+      lastCoreDataSnapshotResyncKeys: normalizeTextList(
+        source.lastCoreDataSnapshotResyncKeys,
+        120,
+        12
       ),
       readProgressStartupSummaries: normalizeReadProgressStartupSummaryList(
         source.readProgressStartupSummaries,
@@ -6692,6 +6715,8 @@
     const initialFocus = formatReadProgressStartupSummaryFocus(
       summary.initialFocus
     );
+    const passiveBackground =
+      summary.passiveBackgroundOpened === true ? "yes" : "no";
     const candidate = summary.firstVisibleCandidate
       ? `${summary.firstVisibleCandidate}@${formatReadProgressDebugCompactTime(
           summary.firstVisibleCandidateAt
@@ -6727,6 +6752,7 @@
       `tid=${threadId}`,
       `page=${page}`,
       `init=${initialVisibility}/${initialFocus}`,
+      `passive=${passiveBackground}`,
       `candidate=${candidate}`,
       `vischg=${firstVisibilityChange}`,
       `pageshow=${firstPageshow}`,
@@ -6795,6 +6821,9 @@
       initialFocus: chooseFlag(current.initialFocus, source.initialFocus),
       initiatedWhileHidden:
         current.initiatedWhileHidden === true || source.initiatedWhileHidden === true,
+      passiveBackgroundOpened:
+        current.passiveBackgroundOpened === true ||
+        source.passiveBackgroundOpened === true,
       firstVisibleCandidate: chooseFirstTruthy(
         current.firstVisibleCandidate,
         normalizeSyncDiagnosticText(source.firstVisibleCandidate, 80)
@@ -7121,6 +7150,14 @@
     lastObservedAt: 0,
     lastSyncedRemoteUpdatedAt: null,
   });
+  const LOCAL_SESSION_REMOTE_WRITE_DEFAULT = Object.freeze({
+    sourceTabId: "",
+    threadId: "",
+    action: "",
+    remoteUpdatedAt: null,
+    syncMode: "",
+    createdAt: 0,
+  });
   const REMOTE_PROBE_SHARED_COOLDOWN_DEFAULT = Object.freeze({
     lastObservedRemoteUpdatedAt: null,
     lastObservedAt: 0,
@@ -7193,6 +7230,123 @@
       getCurrentState: getLastRemoteProbeInfo,
       normalizeState: normalizeRemoteProbeInfo,
     });
+  };
+
+  const normalizeLocalSessionRemoteWrite = (value, now = Date.now()) => {
+    const source = sanitizeRecordObject(value);
+    const createdAt = normalizeRemoteProbeTimestamp(source.createdAt);
+    if (
+      !createdAt ||
+      now - createdAt > LOCAL_SESSION_REMOTE_WRITE_TTL_MS
+    ) {
+      return { ...LOCAL_SESSION_REMOTE_WRITE_DEFAULT };
+    }
+    return {
+      sourceTabId:
+        normalizeSyncDiagnosticText(source.sourceTabId, 80) ||
+        SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID,
+      threadId: normalizeNumericId(source.threadId) || "",
+      action: normalizeRemoteProbeText(source.action, 80),
+      remoteUpdatedAt: normalizeRemoteProbeUpdatedAt(source.remoteUpdatedAt),
+      syncMode: normalizeRemoteProbeText(source.syncMode, 60),
+      createdAt,
+    };
+  };
+
+  const getLastLocalSessionRemoteWrite = () =>
+    normalizeLocalSessionRemoteWrite(
+      GM_getValue(
+        LAST_LOCAL_SESSION_REMOTE_WRITE_KEY,
+        LOCAL_SESSION_REMOTE_WRITE_DEFAULT
+      )
+    );
+
+  const setLastLocalSessionRemoteWrite = (nextValue = {}) => {
+    const normalized = normalizeLocalSessionRemoteWrite(nextValue);
+    const hasMeaningfulWrite =
+      Boolean(normalized.remoteUpdatedAt) && normalized.createdAt > 0;
+    if (!hasMeaningfulWrite) {
+      GM_deleteValue(LAST_LOCAL_SESSION_REMOTE_WRITE_KEY);
+      return { ...LOCAL_SESSION_REMOTE_WRITE_DEFAULT };
+    }
+    GM_setValue(LAST_LOCAL_SESSION_REMOTE_WRITE_KEY, normalized);
+    return normalized;
+  };
+
+  const isPushLikeSyncAction = (action = "") => {
+    switch (normalizeRemoteProbeText(action, 80)) {
+      case "pushed_initial":
+      case "pushed":
+      case "merged_read_progress":
+      case "cleanup_shortcut_push":
+      case "initial_push_seed":
+      case "smart_progress_push":
+      case "smart_merge_pull":
+      case "manual_push":
+      case "manual_force_push_repair":
+        return true;
+      default:
+        return false;
+    }
+  };
+
+  const recordLocalSessionRemoteWrite = ({
+    action = "",
+    remoteUpdatedAt = null,
+    threadId = "",
+    syncMode = "",
+    sourceTabId = SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID,
+    createdAt = Date.now(),
+  } = {}) => {
+    if (!isPushLikeSyncAction(action)) {
+      return { ...LOCAL_SESSION_REMOTE_WRITE_DEFAULT };
+    }
+    return setLastLocalSessionRemoteWrite({
+      sourceTabId,
+      threadId,
+      action,
+      remoteUpdatedAt,
+      syncMode,
+      createdAt,
+    });
+  };
+
+  const recordSuccessfulRemoteWriteIfNeeded = ({
+    action = "",
+    remoteUpdatedAt = null,
+    threadId = "",
+    syncMode = "",
+  } = {}) => {
+    const normalizedRemoteUpdatedAt =
+      normalizeRemoteProbeUpdatedAt(remoteUpdatedAt);
+    if (!normalizedRemoteUpdatedAt) {
+      return { ...LOCAL_SESSION_REMOTE_WRITE_DEFAULT };
+    }
+    return recordLocalSessionRemoteWrite({
+      action,
+      remoteUpdatedAt: normalizedRemoteUpdatedAt,
+      threadId,
+      syncMode,
+    });
+  };
+
+  const getMatchingLocalSessionRemoteWrite = ({
+    remoteUpdatedAt = null,
+    now = Date.now(),
+  } = {}) => {
+    const normalizedRemoteUpdatedAt = normalizeRemoteProbeUpdatedAt(remoteUpdatedAt);
+    if (!normalizedRemoteUpdatedAt) {
+      return null;
+    }
+    const recentWrite = getLastLocalSessionRemoteWrite();
+    if (
+      recentWrite.remoteUpdatedAt &&
+      now - recentWrite.createdAt <= LOCAL_SESSION_REMOTE_WRITE_TTL_MS &&
+      recentWrite.remoteUpdatedAt === normalizedRemoteUpdatedAt
+    ) {
+      return recentWrite;
+    }
+    return null;
   };
 
   const normalizeRemoteProbeSharedCooldownState = (value) => {
@@ -7368,6 +7522,7 @@
     triggeredSync = false,
     triggeredSyncResult = "",
     lastSyncedRemoteUpdatedAt = null,
+    sameSessionRemoteWrite = false,
     triggerSource = "",
     triggerReason = "",
   } = {}) => {
@@ -7456,6 +7611,7 @@
         triggeredSyncResult,
         220
       ),
+      lastProbeSameSessionRemoteWrite: sameSessionRemoteWrite === true,
     });
   };
 
@@ -7605,6 +7761,18 @@
             )} | ${diagnostics.lastReadProgressConfirmationReason}`
           : "—",
       ],
+      [
+        "最近核心数据收敛",
+        diagnostics.lastCoreDataSnapshotResyncTimestamp
+          ? `${formatSyncTime(
+              diagnostics.lastCoreDataSnapshotResyncTimestamp
+            )} | ${
+              diagnostics.lastCoreDataSnapshotResyncKeys.length > 0
+                ? diagnostics.lastCoreDataSnapshotResyncKeys.join(", ")
+                : "—"
+            }`
+          : "—",
+      ],
       ["最近探测", formatSyncTime(diagnostics.lastProbeTimestamp)],
       [
         "最近探测远端版本",
@@ -7617,6 +7785,10 @@
         ),
       ],
       ["最近探测结果", diagnostics.lastProbeResult || "—"],
+      [
+        "最近探测是否同机会话写入",
+        formatSyncDiagnosticYesNo(diagnostics.lastProbeSameSessionRemoteWrite),
+      ],
       [
         "探测是否触发安全同步",
         formatProbeTriggeredSyncForDisplay(diagnostics),
@@ -7755,6 +7927,26 @@
       lastConflictTimestamp: Date.now(),
       lastActionType: `${mode}:conflict:${reason || "generic"}`,
     });
+  };
+
+  const recordCoreDataSnapshotResync = (
+    keys = [],
+    timestamp = Date.now()
+  ) => {
+    const normalizedKeys = (Array.isArray(keys) ? keys : [])
+      .map((key) => normalizeSyncDiagnosticText(key, 80))
+      .filter(Boolean)
+      .slice(0, 12);
+    if (normalizedKeys.length === 0) {
+      return false;
+    }
+    const current = getSyncDiagnostics();
+    saveSyncDiagnostics({
+      ...current,
+      lastCoreDataSnapshotResyncTimestamp: timestamp,
+      lastCoreDataSnapshotResyncKeys: normalizedKeys,
+    });
+    return true;
   };
 
   const getConflictModalCooldownLock = () => {
@@ -8001,6 +8193,7 @@
           AUTO_SYNC_MODE_BACKGROUND,
         syncLockMode,
         triggerSource,
+        useFreshLocalSnapshot: false,
       };
     }
 
@@ -8013,6 +8206,7 @@
             : AUTO_SYNC_MODE_BACKGROUND),
         syncLockMode: modeOrIsStartupSync.syncLockMode || null,
         triggerSource: String(modeOrIsStartupSync.triggerSource || ""),
+        useFreshLocalSnapshot: modeOrIsStartupSync.useFreshLocalSnapshot === true,
       };
     }
 
@@ -8023,6 +8217,7 @@
           : AUTO_SYNC_MODE_BACKGROUND,
       syncLockMode,
       triggerSource,
+      useFreshLocalSnapshot: false,
     };
   };
 
@@ -9022,7 +9217,7 @@
   const recoverPendingAutoSyncIfNeeded = () => {
     const pending = GM_getValue(PENDING_AUTO_SYNC_KEY, null);
     if (!pending || typeof pending !== "object") {
-      return;
+      return { status: "skipped", reason: "no_pending_auto_sync" };
     }
 
     const diagnostics = getSyncDiagnostics();
@@ -9034,7 +9229,7 @@
       pendingCreatedAt <= diagnostics.lastConflictTimestamp
     ) {
       clearPendingAutoSyncRequest();
-      return;
+      return { status: "cleared", reason: "conflict_newer_than_pending" };
     }
 
     const settings = getSettings();
@@ -9044,11 +9239,11 @@
       !settings.syncRemoteGistId ||
       !settings.syncRemotePat
     ) {
-      return;
+      return { status: "skipped", reason: "sync_not_ready" };
     }
 
     if (getActiveAutoSyncConflictPause()) {
-      return;
+      return { status: "skipped", reason: "conflict_paused" };
     }
 
     const pendingLastModified =
@@ -9059,7 +9254,7 @@
 
     if (effectiveLastModified <= lastSyncTs) {
       clearPendingAutoSyncRequest();
-      return;
+      return { status: "cleared", reason: "already_synced" };
     }
 
     if (
@@ -9068,13 +9263,18 @@
       hasPendingBackgroundSync ||
       backgroundSyncRetryTimeout
     ) {
-      return;
+      return { status: "skipped", reason: "background_sync_busy" };
     }
 
     console.log(
       "S1 Plus: 检测到跨页面遗留的待同步变更，正在补发后台同步任务。"
     );
     requestBackgroundSyncRun("pending_recovery", 600);
+    return {
+      status: "scheduled",
+      reason: "pending_recovery",
+      delayMs: 600,
+    };
   };
 
   const triggerForegroundRemoteFreshnessProbe = (
@@ -9409,6 +9609,147 @@
     );
   };
 
+  const normalizeBackgroundOpenThreadPage = (value) => {
+    const parsed = parseInt(String(value || "").trim(), 10);
+    return Number.isFinite(parsed) && parsed > 0 ? String(parsed) : "1";
+  };
+
+  const parseThreadPageSignatureFromLocation = ({ href = "", search = "" } = {}) => {
+    const normalizedHref = String(href || "").trim();
+    const normalizedSearch = String(
+      search || (normalizedHref.includes("?") ? normalizedHref.slice(normalizedHref.indexOf("?")) : "")
+    ).trim();
+    const threadMatch = normalizedHref.match(/thread-(\d+)-(\d+)-/i);
+    if (threadMatch && threadMatch[1]) {
+      return {
+        threadId: threadMatch[1],
+        page: normalizeBackgroundOpenThreadPage(threadMatch[2]),
+      };
+    }
+
+    const searchParams = new URLSearchParams(
+      normalizedSearch.startsWith("?")
+        ? normalizedSearch.slice(1)
+        : normalizedSearch
+    );
+    const threadId = String(
+      searchParams.get("tid") || searchParams.get("ptid") || ""
+    ).trim();
+    if (!/^\d+$/.test(threadId)) {
+      return {
+        threadId: "",
+        page: "1",
+      };
+    }
+    return {
+      threadId,
+      page: normalizeBackgroundOpenThreadPage(searchParams.get("page")),
+    };
+  };
+
+  const normalizeBackgroundOpenThreadHint = (value, now = Date.now()) => {
+    const source = sanitizeRecordObject(value);
+    const threadId = String(source.threadId || "").trim();
+    if (!/^\d+$/.test(threadId)) {
+      return null;
+    }
+    const createdAt = Number(source.createdAt) || 0;
+    if (!createdAt || now - createdAt > BACKGROUND_OPEN_THREAD_HINT_TTL_MS) {
+      return null;
+    }
+    const sessionId =
+      normalizeSyncDiagnosticText(source.sessionId, 120) ||
+      normalizeSyncDiagnosticText(
+        `${SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID}_${threadId}_${createdAt}`,
+        120
+      );
+    return {
+      sessionId,
+      openerTabId:
+        normalizeSyncDiagnosticText(source.openerTabId, 80) ||
+        SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID,
+      threadId,
+      page: normalizeBackgroundOpenThreadPage(source.page),
+      href: normalizeSyncDiagnosticText(source.href, 260),
+      createdAt,
+    };
+  };
+
+  const getBackgroundOpenThreadHints = (now = Date.now()) => {
+    const storedHints = GM_getValue(BACKGROUND_OPEN_THREAD_HINTS_KEY, []);
+    return (Array.isArray(storedHints) ? storedHints : [])
+      .map((item) => normalizeBackgroundOpenThreadHint(item, now))
+      .filter(Boolean);
+  };
+
+  const saveBackgroundOpenThreadHints = (hints = []) => {
+    const normalizedHints = (Array.isArray(hints) ? hints : [])
+      .map((item) => normalizeBackgroundOpenThreadHint(item))
+      .filter(Boolean);
+    GM_setValue(BACKGROUND_OPEN_THREAD_HINTS_KEY, normalizedHints);
+    return normalizedHints;
+  };
+
+  const registerBackgroundOpenThreadHintForUrl = (href) => {
+    const hrefText = String(href || "").trim();
+    if (
+      !hrefText ||
+      !isThreadDetailPageForAutoPullRefresh({
+        document: null,
+        href: hrefText,
+        search: hrefText.includes("?") ? hrefText.slice(hrefText.indexOf("?")) : "",
+      })
+    ) {
+      return null;
+    }
+    const signature = parseThreadPageSignatureFromLocation({ href: hrefText });
+    if (!signature.threadId) {
+      return null;
+    }
+    const createdAt = Date.now();
+    const nextHint = normalizeBackgroundOpenThreadHint({
+      sessionId: `${SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID}_${signature.threadId}_${signature.page}_${createdAt}`,
+      openerTabId: SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID,
+      threadId: signature.threadId,
+      page: signature.page,
+      href: hrefText,
+      createdAt,
+    });
+    if (!nextHint) {
+      return null;
+    }
+    const nextHints = getBackgroundOpenThreadHints(createdAt);
+    nextHints.push(nextHint);
+    saveBackgroundOpenThreadHints(nextHints);
+    return nextHint;
+  };
+
+  const consumeBackgroundOpenThreadHint = ({
+    threadId = "",
+    page = "1",
+  } = {}) => {
+    const normalizedThreadId = String(threadId || "").trim();
+    if (!/^\d+$/.test(normalizedThreadId)) {
+      return null;
+    }
+    const normalizedPage = normalizeBackgroundOpenThreadPage(page);
+    const now = Date.now();
+    const hints = getBackgroundOpenThreadHints(now);
+    const matchedIndex = hints.findIndex(
+      (item) =>
+        item.threadId === normalizedThreadId && item.page === normalizedPage
+    );
+    if (matchedIndex < 0) {
+      if (hints.length > 0) {
+        saveBackgroundOpenThreadHints(hints);
+      }
+      return null;
+    }
+    const [matchedHint] = hints.splice(matchedIndex, 1);
+    saveBackgroundOpenThreadHints(hints);
+    return matchedHint || null;
+  };
+
   const getNormalizedAutoPullReloadDelayMs = (reloadDelayMs) =>
     Math.max(0, Number(reloadDelayMs) || AUTO_PULL_RELOAD_DELAY_MS);
 
@@ -9580,6 +9921,7 @@
         : "pulled";
     const messages = getAutoPullRefreshMessages(options, action);
     const showMessageFn = options.showMessage || showMessage;
+    const shouldShowMessage = options.suppressMessage !== true;
     const plan = getAutoPullRefreshPlan(options);
     const refreshReason = getAutoPullRefreshReason(options, action);
     console.log("S1 Plus: 自动拉取刷新策略判定", {
@@ -9588,9 +9930,12 @@
       policy: plan.policy,
       pageType: plan.pageType,
       shouldReload: plan.shouldReload,
+      suppressMessage: shouldShowMessage ? "no" : "yes",
     });
     if (!plan.shouldReload) {
-      showMessageFn(getAutoPullRefreshDisplayMessage(plan, messages), null);
+      if (shouldShowMessage) {
+        showMessageFn(getAutoPullRefreshDisplayMessage(plan, messages), null);
+      }
       return {
         ...plan,
         reloadSchedule: {
@@ -9606,7 +9951,7 @@
       locationObject: options.locationObject,
       setTimeoutFn: options.setTimeoutFn,
     });
-    if (reloadSchedule.status !== "already_scheduled") {
+    if (reloadSchedule.status !== "already_scheduled" && shouldShowMessage) {
       showMessageFn(messages.reloadMessage, true);
     }
     return {
@@ -9794,6 +10139,9 @@
           : Boolean(result?.syncRequestResult),
       triggeredSyncResult,
       lastSyncedRemoteUpdatedAt,
+      sameSessionRemoteWrite:
+        options.sameSessionRemoteWrite === true ||
+        result?.sameSessionRemoteWrite === true,
       triggerSource: options.triggerReason,
       triggerReason: options.triggerReason,
     });
@@ -9808,19 +10156,56 @@
   const getPendingAutoSyncRecoveryFn = (overrides = {}) =>
     overrides.recoverPendingAutoSyncIfNeeded || recoverPendingAutoSyncIfNeeded;
 
+  const resyncForegroundStateFromStorageSnapshot = (
+    overrides = {},
+    { includeSettings = false } = {}
+  ) => {
+    const syncCoreDataFromStorageSnapshotIfNeededFn =
+      overrides.syncCoreDataFromStorageSnapshotIfNeeded ||
+      syncCoreDataFromStorageSnapshotIfNeeded;
+    const coreDataSnapshotResyncResult = syncCoreDataFromStorageSnapshotIfNeededFn({
+      applyImmediately: true,
+    });
+
+    let settingsSnapshotResynced = false;
+    if (includeSettings) {
+      const syncSettingsFromStorageSnapshotIfNeededFn =
+        overrides.syncSettingsFromStorageSnapshotIfNeeded ||
+        syncSettingsFromStorageSnapshotIfNeeded;
+      settingsSnapshotResynced = syncSettingsFromStorageSnapshotIfNeededFn({
+        forceFullApply: true,
+        applyImmediately: true,
+        forceApplyWhenUnchanged: true,
+      });
+    }
+
+    return {
+      coreDataSnapshotResyncResult,
+      settingsSnapshotResynced,
+    };
+  };
+
   const handlePendingAutoSyncRecoveryPageShow = (
     event,
     overrides = {}
   ) => {
     if (event && event.persisted) {
       console.log("S1 Plus: 检测到页面从 bfcache 恢复，检查待同步任务...");
+      resyncForegroundStateFromStorageSnapshot(overrides);
     }
-    getPendingAutoSyncRecoveryFn(overrides)();
+    const recoveryResult = getPendingAutoSyncRecoveryFn(overrides)();
 
     if (!(event && event.persisted)) {
       return Promise.resolve(
         createForegroundTriggerSkippedResult("pageshow_not_persisted")
       );
+    }
+    if (recoveryResult?.status === "scheduled") {
+      return Promise.resolve({
+        status: "skipped",
+        reason: FOREGROUND_PROBE_SKIP_REASON_PENDING_RECOVERY_SETTLE,
+        recoveryResult,
+      });
     }
 
     return triggerForegroundRemoteFreshnessProbe(
@@ -9834,7 +10219,17 @@
       return Promise.resolve(createForegroundTriggerSkippedResult("document_hidden"));
     }
 
-    getPendingAutoSyncRecoveryFn(overrides)();
+    const { coreDataSnapshotResyncResult } =
+      resyncForegroundStateFromStorageSnapshot(overrides);
+    const recoveryResult = getPendingAutoSyncRecoveryFn(overrides)();
+    if (recoveryResult?.status === "scheduled") {
+      return Promise.resolve({
+        status: "skipped",
+        reason: FOREGROUND_PROBE_SKIP_REASON_PENDING_RECOVERY_SETTLE,
+        recoveryResult,
+        coreDataSnapshotResyncResult,
+      });
+    }
     return triggerForegroundRemoteFreshnessProbe(
       SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME,
       overrides
@@ -10837,28 +11232,35 @@
     }
     return value;
   };
+  const buildComparableStoredValueCacheEntry = (key, value) => {
+    const normalizedValue = normalizeComparableStoredValueByKey(key, value);
+    return {
+      value: isComparableObjectValue(normalizedValue)
+        ? deepCloneSyncValue(normalizedValue)
+        : normalizedValue,
+      expiresAt: Date.now() + COMPARABLE_STORED_VALUE_CACHE_TTL_MS,
+    };
+  };
   const getComparableStoredValue = (key, fallbackValue = {}) => {
-    if (comparableStoredValueCache.has(key)) {
-      return comparableStoredValueCache.get(key);
+    const cachedEntry = comparableStoredValueCache.get(key);
+    if (
+      cachedEntry &&
+      typeof cachedEntry === "object" &&
+      Date.now() < (Number(cachedEntry.expiresAt) || 0)
+    ) {
+      return cachedEntry.value;
     }
-    const normalizedValue = normalizeComparableStoredValueByKey(
+    const nextEntry = buildComparableStoredValueCacheEntry(
       key,
       GM_getValue(key, fallbackValue)
     );
-    const cachedValue = isComparableObjectValue(normalizedValue)
-      ? deepCloneSyncValue(normalizedValue)
-      : normalizedValue;
-    comparableStoredValueCache.set(key, cachedValue);
-    return cachedValue;
+    comparableStoredValueCache.set(key, nextEntry);
+    return nextEntry.value;
   };
   const setComparableStoredValue = (key, value) => {
-    const normalizedValue = normalizeComparableStoredValueByKey(key, value);
-    const cachedValue = isComparableObjectValue(normalizedValue)
-      ? deepCloneSyncValue(normalizedValue)
-      : normalizedValue;
     comparableStoredValueCache.set(
       key,
-      cachedValue
+      buildComparableStoredValueCacheEntry(key, value)
     );
   };
   const isComparableObjectValue = (value) =>
@@ -11056,8 +11458,7 @@
       buildBookmarkContentPreview(contentPreview)
     );
   };
-  const getBookmarkedRepliesForSync = () => {
-    const bookmarkedReplies = getBookmarkedReplies();
+  const buildBookmarkedRepliesForSyncFromSource = (bookmarkedReplies = {}) => {
     const compactReplies = {};
     Object.keys(bookmarkedReplies).forEach((postId) => {
       const item = bookmarkedReplies[postId];
@@ -11076,6 +11477,8 @@
     });
     return compactReplies;
   };
+  const getBookmarkedRepliesForSync = () =>
+    buildBookmarkedRepliesForSyncFromSource(getBookmarkedReplies());
 
   // [NEW] Blocked Posts data functions
   const buildBlockedPostContentPreview = (text) =>
@@ -11126,8 +11529,7 @@
     });
     return normalizedPosts;
   };
-  const getBlockedPostsForSync = () => {
-    const blockedPosts = getBlockedPosts();
+  const buildBlockedPostsForSyncFromSource = (blockedPosts = {}) => {
     const compactPosts = {};
     Object.keys(blockedPosts).forEach((postId) => {
       const item = blockedPosts[postId];
@@ -11148,6 +11550,8 @@
     });
     return compactPosts;
   };
+  const getBlockedPostsForSync = () =>
+    buildBlockedPostsForSyncFromSource(getBlockedPosts());
   const getBlockedPosts = () => {
     const blockedPosts = getCoreDataFromCache(blockedPostsCache, "s1p_blocked_posts");
     const normalizedPosts = normalizeBlockedPostsPayload(blockedPosts);
@@ -17166,6 +17570,9 @@
 
     if (open && settingApplied) {
       e.preventDefault();
+      if (background) {
+        registerBackgroundOpenThreadHintForUrl(anchor.href);
+      }
       GM_openInTab(anchor.href, { active: !background });
     }
   };
@@ -17223,37 +17630,102 @@
       getSyncedSettings(nextSettings)
     );
 
-  // [MODIFIED] 导出数据对象，采用新的嵌套结构并包含内容哈希
-  const exportLocalDataObject = async (
-    { compactBookmarksForSync = null, compactBlockedPostsForSync = true } = {}
-  ) => {
-    const currentSettings = getSettings();
+  const getCoreDataSnapshotValueForExport = (key, { useFreshSnapshot = false } = {}) => {
+    if (!useFreshSnapshot) {
+      switch (key) {
+        case "s1p_blocked_threads":
+          return getBlockedThreads();
+        case "s1p_blocked_users":
+          return getBlockedUsers();
+        case "s1p_user_tags":
+          return getUserTags();
+        case "s1p_title_filter_rules":
+          return getTitleFilterRules();
+        case "s1p_read_progress":
+          return getReadProgress();
+        case "s1p_bookmarked_replies":
+          return getBookmarkedReplies();
+        case "s1p_blocked_posts":
+          return getBlockedPosts();
+        default:
+          return {};
+      }
+    }
+
+    const descriptor = getCoreDataStorageSnapshotDescriptors([key])[0];
+    if (!descriptor) {
+      return {};
+    }
+    return pullNormalizedCoreDataStorageSnapshotValue(descriptor);
+  };
+
+  const buildExportLocalDataSnapshot = ({
+    useFreshSnapshot = false,
+    compactBookmarksForSync = null,
+    compactBlockedPostsForSync = true,
+  } = {}) => {
+    const currentSettings = useFreshSnapshot
+      ? pullSettingsFromStorageSnapshot()
+      : getSettings();
     const syncedSettings = getSyncedSettings(currentSettings);
     const shouldCompactBookmarksForSync =
       typeof compactBookmarksForSync === "boolean"
         ? compactBookmarksForSync
         : currentSettings.syncBookmarkFullContent !== true;
+    const bookmarkedReplies = getCoreDataSnapshotValueForExport(
+      "s1p_bookmarked_replies",
+      { useFreshSnapshot }
+    );
+    const blockedPosts = getCoreDataSnapshotValueForExport("s1p_blocked_posts", {
+      useFreshSnapshot,
+    });
 
-    const data = {
-      settings: syncedSettings, // 使用过滤后的设置对象
-      threads: getBlockedThreads(),
-      users: getBlockedUsers(),
-      user_tags: getUserTags(),
-      title_filter_rules: getTitleFilterRules(),
-      read_progress: getReadProgress(),
+    return {
+      settings: syncedSettings,
+      threads: getCoreDataSnapshotValueForExport("s1p_blocked_threads", {
+        useFreshSnapshot,
+      }),
+      users: getCoreDataSnapshotValueForExport("s1p_blocked_users", {
+        useFreshSnapshot,
+      }),
+      user_tags: getCoreDataSnapshotValueForExport("s1p_user_tags", {
+        useFreshSnapshot,
+      }),
+      title_filter_rules: getCoreDataSnapshotValueForExport(
+        "s1p_title_filter_rules",
+        { useFreshSnapshot }
+      ),
+      read_progress: getCoreDataSnapshotValueForExport("s1p_read_progress", {
+        useFreshSnapshot,
+      }),
       bookmarked_replies: shouldCompactBookmarksForSync
-        ? getBookmarkedRepliesForSync()
-        : getBookmarkedReplies(),
+        ? buildBookmarkedRepliesForSyncFromSource(bookmarkedReplies)
+        : bookmarkedReplies,
       blocked_posts: compactBlockedPostsForSync
-        ? getBlockedPostsForSync()
-        : getBlockedPosts(), // [NEW] 添加楼层屏蔽数据
+        ? buildBlockedPostsForSyncFromSource(blockedPosts)
+        : blockedPosts,
     };
+  };
+
+  // [MODIFIED] 导出数据对象，采用新的嵌套结构并包含内容哈希
+  const exportLocalDataObject = async (
+    {
+      compactBookmarksForSync = null,
+      compactBlockedPostsForSync = true,
+      useFreshSnapshot = false,
+    } = {}
+  ) => {
+    const data = buildExportLocalDataSnapshot({
+      useFreshSnapshot,
+      compactBookmarksForSync,
+      compactBlockedPostsForSync,
+    });
     const dataSnapshot = deepCloneSyncValue(data);
     const lastUpdated = GM_getValue("s1p_last_modified", 0);
     const lastUpdatedFormatted = new Date(lastUpdated).toLocaleString("zh-CN", {
       hour12: false,
     });
-    const cacheKey = String(lastUpdated);
+    const cacheKey = useFreshSnapshot ? `${lastUpdated}:fresh` : String(lastUpdated);
     let contentHash = localDataHashCache.contentHash;
     let baseContentHash = localDataHashCache.baseContentHash;
 
@@ -19031,6 +19503,9 @@
         : syncMode === AUTO_SYNC_MODE_FOREGROUND_FOLLOWUP
           ? SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME
           : SYNC_TRIGGER_SOURCE_BACKGROUND_PUSH);
+    const exportLocalDataOptions = executionOptions.useFreshLocalSnapshot
+      ? { useFreshSnapshot: true }
+      : {};
     let syncDiagnosticsContext = {
       triggerSource: resolvedTriggerSource,
     };
@@ -19104,6 +19579,16 @@
       if (syncBaseline) {
         setSyncBaselineState(syncBaseline);
       }
+      recordSuccessfulRemoteWriteIfNeeded({
+        action,
+        remoteUpdatedAt:
+          extraResult?.remoteUpdatedAt ?? syncBaseline?.remoteUpdatedAt ?? null,
+        threadId:
+          normalizeNumericId(syncDiagnosticsContext.threadId) ||
+          getCurrentThreadId() ||
+          "",
+        syncMode,
+      });
       resetAutoSyncFailureState();
       recordSyncSuccess(action, syncMode, {
         ...syncDiagnosticsContext,
@@ -19154,7 +19639,7 @@
         console.log(`S1 Plus (Sync): 远程为空，推送本地数据...`);
         const localData = await runWithAutoSyncLockGuard(
           "export_local_data_initial_push",
-          () => exportLocalDataObject()
+          () => exportLocalDataObject(exportLocalDataOptions)
         );
         updateSyncDiagnosticsContext({
           localHash: shortHashForLog(localData.contentHash),
@@ -19180,7 +19665,7 @@
       );
       const localDataObject = await runWithAutoSyncLockGuard(
         "export_local_data",
-        () => exportLocalDataObject()
+        () => exportLocalDataObject(exportLocalDataOptions)
       );
       updateSyncDiagnosticsContext({
         localHash: shortHashForLog(localDataObject.contentHash),
@@ -19621,6 +20106,7 @@
       return await performAutoSyncFn({
         mode: AUTO_SYNC_MODE_FOREGROUND_FOLLOWUP,
         syncLockMode: SYNC_LOCK_MODE_STARTUP,
+        useFreshLocalSnapshot: true,
         triggerSource:
           normalizeSyncTriggerSource(triggerSource) ||
           SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME,
@@ -20090,6 +20576,21 @@
         );
       }
 
+      const sameSessionRemoteWrite = getMatchingLocalSessionRemoteWrite({
+        remoteUpdatedAt,
+        now,
+      });
+      let snapshotResyncResult = null;
+      let settingsSnapshotResynced = false;
+      if (sameSessionRemoteWrite) {
+        const snapshotSyncResult = resyncForegroundStateFromStorageSnapshot(
+          overrides,
+          { includeSettings: true }
+        );
+        snapshotResyncResult = snapshotSyncResult.coreDataSnapshotResyncResult;
+        settingsSnapshotResynced = snapshotSyncResult.settingsSnapshotResynced;
+      }
+
       const gateBlockResult = getForegroundProbeGateBlockResultFn({
         triggerSource: normalizeSyncTriggerSource(normalizedReason) ||
           SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME,
@@ -20113,6 +20614,9 @@
             lastObservedRemoteUpdatedAt,
             syncRequestResult: gateBlockResult,
             retryPlan,
+            sameSessionRemoteWrite: Boolean(sameSessionRemoteWrite),
+            snapshotResyncResult,
+            settingsSnapshotResynced,
           },
           {
             remoteUpdatedAt,
@@ -20120,6 +20624,7 @@
             triggeredSyncResult:
               formatForegroundProbeSyncResultForDiagnostics(gateBlockResult),
             lastSyncedRemoteUpdatedAt,
+            sameSessionRemoteWrite: Boolean(sameSessionRemoteWrite),
           }
         );
       }
@@ -20141,6 +20646,7 @@
         refreshPlan = applyRefreshPolicyForSyncResult(syncRequestResult, {
           reason: `foreground_probe:${normalizedReason}`,
           showMessage: overrides.showMessage,
+          suppressMessage: Boolean(sameSessionRemoteWrite),
           locationObject: overrides.locationObject,
           setTimeoutFn: overrides.setTimeoutFn,
         });
@@ -20155,6 +20661,9 @@
           lastObservedRemoteUpdatedAt,
           syncRequestResult,
           refreshPlan,
+          sameSessionRemoteWrite: Boolean(sameSessionRemoteWrite),
+          snapshotResyncResult,
+          settingsSnapshotResynced,
         },
         {
           remoteUpdatedAt,
@@ -20163,6 +20672,7 @@
             formatForegroundProbeSyncResultForDiagnostics(syncRequestResult),
           lastSyncedRemoteUpdatedAt: getLastRemoteProbeInfo()
             .lastSyncedRemoteUpdatedAt || lastSyncedRemoteUpdatedAt,
+          sameSessionRemoteWrite: Boolean(sameSessionRemoteWrite),
         }
       );
     })();
@@ -20197,6 +20707,10 @@
       getForegroundProbeLocalCooldownRemainingMs,
       isForegroundProbeLocalCooldownActive,
       recordRemoteProbeObservation,
+      getLastLocalSessionRemoteWrite,
+      setLastLocalSessionRemoteWrite,
+      recordLocalSessionRemoteWrite,
+      getMatchingLocalSessionRemoteWrite,
       getSyncDiagnostics,
       resetSyncDiagnostics,
       buildSyncDiagnosticsSummary,
@@ -20212,6 +20726,10 @@
       hasDirtySettingsModalEdits,
       isThreadDetailPageForAutoPullRefresh,
       isLightweightListPageForAutoPullRefresh,
+      parseThreadPageSignatureFromLocation,
+      getBackgroundOpenThreadHints,
+      registerBackgroundOpenThreadHintForUrl,
+      consumeBackgroundOpenThreadHint,
       getAutoPullRefreshPlan,
       applyAutoPullRefreshPolicy,
       clearPendingAutoPullReloadTimer,
@@ -20789,6 +21307,7 @@
       releaseRemoteProbeLockValue,
       clearRemoteProbeState,
       setSyncBaselineState,
+      exportLocalDataObject,
     };
   }
 
@@ -21509,6 +22028,121 @@
     pendingCoreDataCrossTabRefreshKeys.add(key);
     ensureCoreDataCrossTabRefreshScheduled();
   };
+  const getCoreDataStorageSnapshotDescriptors = (keys = null) => {
+    const requestedKeys = Array.isArray(keys)
+      ? new Set(
+          keys
+            .map((key) => normalizeSyncDiagnosticText(key, 80))
+            .filter(Boolean)
+        )
+      : null;
+    const descriptors = [
+      {
+        key: "s1p_blocked_threads",
+        cacheState: blockedThreadsCache,
+        fallbackValue: {},
+      },
+      {
+        key: "s1p_blocked_users",
+        cacheState: blockedUsersCache,
+        fallbackValue: {},
+      },
+      {
+        key: "s1p_blocked_posts",
+        cacheState: blockedPostsCache,
+        fallbackValue: {},
+      },
+      {
+        key: "s1p_read_progress",
+        cacheState: readProgressCache,
+        fallbackValue: {},
+      },
+      {
+        key: "s1p_title_filter_rules",
+        cacheState: titleFilterRulesCache,
+        fallbackValue: [],
+      },
+      {
+        key: "s1p_user_tags",
+        cacheState: userTagsCache,
+        fallbackValue: {},
+      },
+      {
+        key: "s1p_bookmarked_replies",
+        cacheState: bookmarkedRepliesCache,
+        fallbackValue: {},
+      },
+    ];
+    return requestedKeys
+      ? descriptors.filter((descriptor) => requestedKeys.has(descriptor.key))
+      : descriptors;
+  };
+  const pullNormalizedCoreDataStorageSnapshotValue = ({
+    key,
+    cacheState,
+    fallbackValue,
+  }) => {
+    const normalize =
+      cacheState && typeof cacheState.normalize === "function"
+        ? cacheState.normalize
+        : sanitizeRecordObject;
+    return normalize(GM_getValue(key, fallbackValue));
+  };
+  const syncCoreDataFromStorageSnapshotIfNeeded = ({
+    keys = null,
+    applyImmediately = false,
+    recordDiagnostics = true,
+  } = {}) => {
+    const descriptors = getCoreDataStorageSnapshotDescriptors(keys);
+    if (descriptors.length === 0) {
+      return {
+        didSync: false,
+        changedKeys: [],
+      };
+    }
+
+    const changedKeys = [];
+    descriptors.forEach((descriptor) => {
+      const storedValue = pullNormalizedCoreDataStorageSnapshotValue(descriptor);
+      const currentValue = getComparableStoredValue(
+        descriptor.key,
+        descriptor.fallbackValue
+      );
+      if (hasComparableValueChanged(currentValue, storedValue)) {
+        changedKeys.push(descriptor.key);
+      }
+      setComparableStoredValue(descriptor.key, storedValue);
+      if (descriptor.cacheState) {
+        setCoreDataCacheValue(descriptor.cacheState, storedValue);
+      }
+    });
+
+    if (changedKeys.length > 0) {
+      if (applyImmediately) {
+        changedKeys.forEach((key) => {
+          pendingCoreDataCrossTabRefreshKeys.add(key);
+        });
+        if (coreDataCrossTabRefreshTimer) {
+          clearTimeout(coreDataCrossTabRefreshTimer);
+          coreDataCrossTabRefreshTimer = null;
+        }
+        runCoreDataCrossTabRefresh();
+      } else {
+        changedKeys.forEach((key) => {
+          scheduleCoreDataCrossTabRefresh(key);
+        });
+      }
+      if (recordDiagnostics) {
+        recordCoreDataSnapshotResync(changedKeys);
+      }
+    }
+
+    return {
+      didSync: changedKeys.length > 0,
+      changedKeys,
+      applyMode: applyImmediately ? "immediate" : "scheduled",
+    };
+  };
   const initializeCoreDataCacheSync = () => {
     if (window.__s1pCoreDataCacheSyncBound) {
       return;
@@ -21559,6 +22193,13 @@
       }
     });
   };
+  if (IS_S1P_TEST_MODE) {
+    const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
+    testHookHost.__S1P_TEST_HOOKS__ = {
+      ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
+      syncCoreDataFromStorageSnapshotIfNeeded,
+    };
+  }
   const getSettings = () => {
     if (settingsCacheValue && Date.now() < settingsCacheExpiresAt) {
       return settingsCacheValue;
@@ -29084,6 +29725,15 @@
           if (syncBaseline) {
             setSyncBaselineState(syncBaseline);
           }
+          recordSuccessfulRemoteWriteIfNeeded({
+            action,
+            remoteUpdatedAt: syncBaseline?.remoteUpdatedAt || null,
+            threadId:
+              normalizeNumericId(diagnosticContext.threadId) ||
+              getCurrentThreadId() ||
+              "",
+            syncMode: "manual",
+          });
           resetAutoSyncFailureState();
           recordSyncSuccess(
             action,
@@ -31323,6 +31973,8 @@
       startupSummarySessionKey: "",
       visibleSince: document.visibilityState === "visible" ? now : 0,
       initiatedWhileHidden: document.visibilityState !== "visible",
+      passiveBackgroundOpened: false,
+      backgroundOpenSessionId: "",
       firstCandidateAt: 0,
       hasConfirmedVisiblePost: false,
       hasConfirmedReading: false,
@@ -31388,6 +32040,8 @@
         readProgressTrackingState?.hasConfirmedVisiblePost === true,
       hasConfirmedReading: readProgressTrackingState?.hasConfirmedReading === true,
       initiatedWhileHidden: readProgressTrackingState?.initiatedWhileHidden === true,
+      passiveBackgroundOpened:
+        readProgressTrackingState?.passiveBackgroundOpened === true,
       lastPersistedAt: Number(readProgressTrackingState?.lastPersistedAt) || 0,
       lastPersistWasInitializationNoise:
         readProgressTrackingState?.lastPersistedWasInitializationNoise === true,
@@ -31477,6 +32131,9 @@
       initiatedWhileHidden:
         source.initiatedWhileHidden === true ||
         readProgressTrackingState?.initiatedWhileHidden === true,
+      passiveBackgroundOpened:
+        source.passiveBackgroundOpened === true ||
+        readProgressTrackingState?.passiveBackgroundOpened === true,
       lastEventType:
         normalizeSyncDiagnosticText(source.lastEventType, 80) ||
         normalizeSyncDiagnosticText(eventType, 80),
@@ -31491,10 +32148,13 @@
     const initHidden = readProgressTrackingState?.initiatedWhileHidden === true
       ? "yes"
       : "no";
+    const passiveBackground =
+      readProgressTrackingState?.passiveBackgroundOpened === true ? "yes" : "no";
     const normalizedDetail = String(detail || "").trim();
     const detailParts = normalizedDetail ? [normalizedDetail] : [];
     detailParts.push(`stage=${stage}`);
     detailParts.push(`initHidden=${initHidden}`);
+    detailParts.push(`passiveBg=${passiveBackground}`);
     const startupSummaryPatch = Object.prototype.hasOwnProperty.call(
       options,
       "startupSummaryPatch"
@@ -31767,12 +32427,33 @@
       }
     );
   };
+  const requiresExplicitInteractionForReadProgressConfirmation = () =>
+    Boolean(
+      readProgressTrackingState?.initiatedWhileHidden === true ||
+        readProgressTrackingState?.passiveBackgroundOpened === true
+    );
   const resolveReadProgressConfirmationReason = (preferredReason = "") => {
     if (!readProgressTrackingState?.hasConfirmedVisiblePost) {
       return "";
     }
     const normalizedPreferredReason =
       normalizeReadProgressSaveReason(preferredReason);
+    const requiresExplicitInteraction =
+      requiresExplicitInteractionForReadProgressConfirmation();
+    const visibleSince = Number(readProgressTrackingState.visibleSince) || 0;
+    const hasStableVisibleWindow =
+      document.visibilityState === "visible" &&
+      visibleSince > 0 &&
+      Date.now() - visibleSince >= READ_PROGRESS_CONFIRM_VISIBLE_MS;
+    if (requiresExplicitInteraction) {
+      if (
+        readProgressTrackingState.lastInteractionAt > 0 &&
+        hasStableVisibleWindow
+      ) {
+        return READ_PROGRESS_SAVE_REASON_USER_INTERACTION;
+      }
+      return "";
+    }
     if (
       normalizedPreferredReason === READ_PROGRESS_SAVE_REASON_USER_INTERACTION &&
       readProgressTrackingState.lastInteractionAt > 0
@@ -31782,14 +32463,7 @@
     if (readProgressTrackingState.lastInteractionAt > 0) {
       return READ_PROGRESS_SAVE_REASON_USER_INTERACTION;
     }
-    if (document.visibilityState !== "visible") {
-      return "";
-    }
-    const visibleSince = Number(readProgressTrackingState.visibleSince) || 0;
-    if (
-      visibleSince > 0 &&
-      Date.now() - visibleSince >= READ_PROGRESS_CONFIRM_VISIBLE_MS
-    ) {
+    if (hasStableVisibleWindow) {
       return READ_PROGRESS_SAVE_REASON_VISIBLE_STABLE;
     }
     return "";
@@ -31814,7 +32488,7 @@
           visibleSince > 0 ? Math.max(0, Date.now() - visibleSince) : 0;
         recordReadProgressTrackingDebugEvent(
           "rp_save_blocked",
-          `requested=${normalizedReason || "none"}, candidate=${formatReadProgressDebugCandidateRecord(candidateRecord)}, visibleFor=${visibleForMs}ms, lastInteraction=${readProgressTrackingState?.lastInteractionType || "none"}`
+          `requested=${normalizedReason || "none"}, candidate=${formatReadProgressDebugCandidateRecord(candidateRecord)}, visibleFor=${visibleForMs}ms, lastInteraction=${readProgressTrackingState?.lastInteractionType || "none"}, requiresInteraction=${requiresExplicitInteractionForReadProgressConfirmation() ? "yes" : "no"}`
         );
         return;
       }
@@ -32051,6 +32725,31 @@
         });
     }
   };
+  if (IS_S1P_TEST_MODE) {
+    const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
+    testHookHost.__S1P_TEST_HOOKS__ = {
+      ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
+      resetReadProgressTrackingState,
+      getReadProgress,
+      getReadProgressTrackingState: () =>
+        sanitizeRecordObject(readProgressTrackingState),
+      setReadProgressTrackingStateForTest: (patch = {}, { replace = false } = {}) => {
+        const nextState = replace
+          ? {
+              ...createReadProgressTrackingState(),
+              ...sanitizeRecordObject(patch),
+            }
+          : {
+              ...sanitizeRecordObject(readProgressTrackingState),
+              ...sanitizeRecordObject(patch),
+            };
+        readProgressTrackingState = nextState;
+        return sanitizeRecordObject(readProgressTrackingState);
+      },
+      resolveReadProgressConfirmationReason,
+      requiresExplicitInteractionForReadProgressConfirmation,
+    };
+  }
   let currentLoggedInUid = null; // [新增] 缓存当前登录用户的UID
   /**
    * [新增 & 修正] 获取当前登录用户的UID
@@ -32154,6 +32853,18 @@
           page: currentPage,
         });
     }
+    let backgroundOpenHint = null;
+    if (hasContextChanged) {
+      backgroundOpenHint = consumeBackgroundOpenThreadHint({
+        threadId,
+        page: currentPage,
+      });
+      if (backgroundOpenHint && readProgressTrackingState) {
+        readProgressTrackingState.passiveBackgroundOpened = true;
+        readProgressTrackingState.backgroundOpenSessionId =
+          backgroundOpenHint.sessionId || "";
+      }
+    }
     refreshReadProgressFirstPostId();
     const initialVisibility = document.visibilityState;
     const initialHasFocus =
@@ -32166,6 +32877,8 @@
             initialFocus: initialHasFocus,
             page: currentPage,
             startedAt: Number(readProgressTrackingState?.startedAt) || Date.now(),
+            passiveBackgroundOpened:
+              readProgressTrackingState?.passiveBackgroundOpened === true,
           },
         }
       : {};

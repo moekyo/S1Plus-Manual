@@ -62,6 +62,8 @@
   - 常见现象该去读哪些 phase
 - [background-open-unexpected-remote-update-investigation.md](./background-open-unexpected-remote-update-investigation.md)
   - 当前“后台开帖后误报云端更新”这条低频问题的专题调查记录、已排除项、诊断字段解释和下次复现场景的取证步骤
+- [same-device-unexpected-remote-update-findings-and-fix-plan.md](./same-device-unexpected-remote-update-findings-and-fix-plan.md)
+  - 本轮关于“同机远端更新提示”的完整收口文档，汇总根因分层、修复优先级与后续验收计划
 
 ### 3.2 分阶段文档
 
@@ -197,6 +199,9 @@
 - 后台打开的新帖子页默认保持被动：
   - 隐藏页不再安排阅读进度保存
   - 回到前台后才重新进入确认窗口
+- 列表页后台开帖现在会写入短寿命 opener hint：
+  - 线程页若消费到匹配 hint，会把本次阅读会话标记为 `passiveBackgroundOpened`
+  - 命中该标记的会话，不再允许单靠 `visible_stable` 完成首次阅读确认
 - 阅读进度候选记录不再在“没有真实可见楼层”时回退成主楼 synthetic progress。
 - 新写入的阅读进度记录现在带有 provenance：
   - `sourceTabId`
@@ -217,6 +222,7 @@
 - `Phase 2` 代码实现已完成，并已通过语法校验。
 - 当前环境仍无法直接完成 Tampermonkey 浏览器内多标签手测，需在真实论坛页面补跑：
   - 后台打开多个帖子页不应平白产生 `read_progress`
+  - 后台打开后长时间挂起、首次真正激活时仍不应仅靠 `visible_stable` 提前确认阅读
   - 前台稳定阅读后应能正常保存进度
   - 切后台或关闭页面时，仅应提交已确认阅读会话中的待写入记录
 
@@ -259,6 +265,16 @@
 - 当前标签页一旦已有前台 retry 在等待，新的 `visibilitychange/pageshow` probe 会先返回 `followup_retry_pending`：
   - 不再重复请求远端 metadata
   - 不再把同一份旧状态连续放大
+- `foreground_resume` / `pageshow(persisted)` 现在会先做核心数据 storage snapshot 收敛：
+  - 先把同机会话里可能漏掉的核心数据变更直接从 GM 存储拉回当前页 cache
+  - 再决定是否继续执行远端 freshness probe
+- 如果前台恢复阶段已经挂起了 `pending_recovery` 后台补同步：
+  - 当前轮次会先返回 `pending_recovery_settle`
+  - 不再立即 probe 远端并把同机自写远端误看成“远端更新”
+- 当前浏览器会话若刚刚完成本地 push / merged push：
+  - 前台 probe 现在会识别 `same-session remote write`
+  - 会先做 storage snapshot 收敛，再用 fresh snapshot 执行 foreground follow-up
+  - 若仍需自动拉取，会改成静默处理，不再弹“远端更新”类提示
 - 新增 `scripts/test-foreground-probe-gate-retry.js`，把以下行为固化成脚本回归：
   - 远端已变但本地未稳定时先 quiet soft block
   - retry pending 期间抑制重复前台探测
@@ -271,6 +287,8 @@
   - `foreground_resume / visible_poll` 已显式感知阅读进度 pending / debounce
   - visible poll 低严重度场景会优先进入 soft block + retry
   - 前台 retry pending 时，不会再重复放大同一份旧状态
+  - 前台恢复会先做核心数据 snapshot 收敛，并在 `pending_recovery` 已挂起时暂停即时 probe
+  - same-session remote write 已能被识别并静默处理，foreground follow-up 也已改用 fresh snapshot 规避旧 cache 干扰
 
 ### 8.9 Phase 5 本轮落地内容
 
