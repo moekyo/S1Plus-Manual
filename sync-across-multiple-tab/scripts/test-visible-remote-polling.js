@@ -7,7 +7,7 @@ const vm = require("vm");
 const assert = require("assert/strict");
 const { webcrypto } = require("crypto");
 
-const repoRoot = path.resolve(__dirname, "..");
+const repoRoot = path.resolve(__dirname, "..", "..");
 const sourcePath = path.join(repoRoot, "S1Plus.js");
 const sourceCode = fs.readFileSync(sourcePath, "utf8");
 const toPlainObject = (value) => JSON.parse(JSON.stringify(value));

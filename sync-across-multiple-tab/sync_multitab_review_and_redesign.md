@@ -60,6 +60,8 @@
 - [coverage_matrix.md](./sync_multitab_redesign/coverage_matrix.md)
   - 问题 ID 和阶段的对应关系
   - 常见现象该去读哪些 phase
+- [background-open-unexpected-remote-update-investigation.md](./background-open-unexpected-remote-update-investigation.md)
+  - 当前“后台开帖后误报云端更新”这条低频问题的专题调查记录、已排除项、诊断字段解释和下次复现场景的取证步骤
 
 ### 3.2 分阶段文档
 
@@ -358,6 +360,20 @@
   - `cleanup_shortcut_applied`
   - `cleanup_shortcut_rejected`
 - 同步诊断面板与“复制诊断”摘要已扩展到可直接查看最近触发源、阻断级别、cleanup 上下文和 hash 摘要，不再只能看时间戳。
+- 又为阅读进度补了一层面向多标签排查的生命周期调试轨迹：
+  - 最近几次 `pageshow / visibilitychange / focus / blur`
+  - 首个可见楼层候选何时出现
+  - 阅读是被 `visible_stable` 还是 `user_interaction` 确认
+  - 实际何时入队写入、何时 flush、何时触发 `read_progress` 时间戳更新
+  - 这样再次出现“后台开帖但从未激活，几分钟后却提示云端有更新”时，可以直接从诊断里看出到底是哪一个标签页先走到了写入链路
+- 另外补了两个更直接的快速判断字段：
+  - `阅读启动快照`
+  - `最近阅读确认`
+  便于先单独验证“后台新开页是否在启动时就拿到了异常的 `visible` 初始值”以及“是否曾经仅靠 `visible_stable` 就通过确认”
+- 现在又把“后台新开页启动摘要”从事件流水里单独拆成了摘要列表：
+  - 每个帖子页按 `tabId + threadId + page + startedAt` 单独保留一张摘要卡
+  - 记录初始 `visibility / focus`、首次 `visibilitychange / pageshow / focus`、首个可见楼层候选、首次确认、首次入队写入、首次 `read_progress` 时间戳更新
+  - 即使当前活跃页后续产生大量滚轮事件，也不会再把后台页启动时的证据刷掉
 - 自动拉取后的刷新策略继续收口到统一 helper，并补齐了对应回归，确保：
   - 列表页自动刷新
   - 帖子页 soft prompt
@@ -379,8 +395,12 @@
 - 当前环境仍无法直接完成 Tampermonkey 真实论坛页面上的多标签手测，但本阶段的结构性目标已经到位：
   - 复杂同步决策已有统一诊断字段和稳定结果码
   - cleanup shortcut 的 apply / reject 已能直接从诊断里识别
+  - 后台开帖页的生命周期与阅读进度确认链路现在也能直接落进诊断，不再只能靠推测
   - 多标签相关的 probe / retry / refresh / cleanup / 文案链路已形成固定脚本基线
 
 ### 8.15 下一步
 
-- 在真实论坛页面补跑多标签手测 checklist，并把这套脚本回归作为后续同步改动的默认基线。
+- 先按“列表页后台打开多个帖子、只阅读其中一个”的路径复现一次，并复制新的阅读进度调试轨迹。
+- 复现时优先看新的“启动摘要”列表，再用 `阅读调试 1..N` 补细节。
+- 再根据轨迹判断是继续收紧 Phase 2 的真实阅读确认条件，还是去修后台开帖页启动期的可见性判定。
+- 继续把这套脚本回归作为后续同步改动的默认基线。

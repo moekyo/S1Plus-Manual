@@ -106,6 +106,19 @@
   - 把最近一次同步 / 探测决策的上下文字段接入 `s1p_sync_diagnostics`，包括触发源、页面可见性、标签页 ID、帖子 ID、hash 摘要、cleanup 来源与数量、结果类型 / 结果码、阻断级别 / 原因、`hadConfirmedVisiblePost`
   - 让前台探测、自动同步、手动同步和 cleanup shortcut 共用同一套稳定结果码，至少可直接区分 `local_changed_during_sync`、`startup_local_newer`、`cleanup_shortcut_applied`、`cleanup_shortcut_rejected`
   - 扩展同步诊断面板和“复制诊断”摘要，直接展示最近一次决策的根因，而不再只停留在时间戳层面
+  - 为帖子页阅读进度新增一组面向多标签排查的调试轨迹，持久记录最近几次 `pageshow / visibilitychange / focus / blur`、首个可见楼层候选、阅读确认原因、实际入队写入与 `read_progress` 时间戳触发，便于验证“后台打开但从未激活的标签页”是否真的拿到了前台信号
+  - 在诊断面板里额外补了两个快速判断字段：
+    - `阅读启动快照`
+    - `最近阅读确认`
+    这样可以先单独验证“后台新开页初始可见性是否异常”与“是否曾经仅靠 visible stable 通过确认”，不必等到再次出现云端更新提示
+  - 进一步把“后台新开页启动摘要”从事件流水里拆成独立列表，按 `tabId + threadId + page + startedAt` 为每个帖子页单独保留首个生命周期信号：
+    - 初始 `visibility / focus`
+    - 首次 `visibilitychange / pageshow / focus`
+    - 首个可见楼层候选
+    - 首次阅读确认
+    - 首次入队写入
+    - 首次 `read_progress` 时间戳更新
+    这样即使当前活跃页后续产生大量 `wheel` 调试事件，也不会把后台页的启动证据冲掉
   - 把自动拉取后的刷新策略验证、cleanup shortcut 诊断结果码验证、foreground probe 诊断验证收口进固定脚本回归基线
 - 涉及文件：
   - `S1Plus.js`
@@ -125,15 +138,23 @@
   - `node scripts/test-phase6-interaction-copy.js`
   - `node scripts/test-post-sync-refresh-policy.js`
   - `node scripts/test-visible-remote-polling.js`
+  - 针对本轮阅读进度调试增强，已额外重跑：
+    - `node sync-across-multiple-tab/scripts/test-safe-sync-execution.js`
+    - `node sync-across-multiple-tab/scripts/test-foreground-trigger-integration.js`
+    - `node sync-across-multiple-tab/scripts/test-foreground-probe-gate-retry.js`
+    - `node sync-across-multiple-tab/scripts/test-foreground-probe-diagnostics-feedback.js`
+    - `node sync-across-multiple-tab/scripts/test-visible-remote-polling.js`
   - 当前环境无法直接完成真实 Stage1st 页面上的 Tampermonkey 多标签手测，已在下方 checklist 保留为后续必跑项
 - 剩余工作：
+  - 在真实论坛页面按“列表页后台打开多个帖子、只阅读其中一个”的路径复现一次，并对照新的“启动摘要”确认后台页到底拿到了哪类生命周期信号
   - 在真实论坛页面补跑多标签页手测
   - 后续如再改同步链路，继续把新增场景补进脚本基线
 - 风险 / 限制：
   - Node harness 能覆盖状态机、结果码和诊断字段，但不能完整模拟真实浏览器里的长时驻留、GM API、bfcache 恢复细节和多标签页交互节奏
+  - 这次新增的阅读进度调试轨迹能把“后台页是否拿到前台信号”记下来，但是否出现异常初始 `visibilityState` 仍然要靠真实浏览器复现场景确认
   - 真实论坛 DOM 结构或浏览器节流策略变化，仍可能影响最终体感
 - 下一步：
-  - 按下面的固定 checklist 在真实论坛页面补跑多标签页验证，并将其作为后续同步改动的默认 release gate
+  - 先用新的“启动摘要 + 调试轨迹”复现并确认后台开帖页的真实生命周期，再决定是继续收紧 Phase 2 的“真实阅读成立”条件，还是去修 `GM_openInTab` 背景打开链路上的启动期判断
 
 ## 10. 固定回归 Checklist
 
