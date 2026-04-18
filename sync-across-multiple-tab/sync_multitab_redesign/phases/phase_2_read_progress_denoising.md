@@ -125,7 +125,9 @@
   - 删除“没有真实可见楼层时回退主楼生成 synthetic progress”的候选解析路径
   - 对 `initiatedWhileHidden === true` 或命中 `passiveBackgroundOpened` 的线程页，首次确认现在必须同时满足：
     - 页面已经稳定回到前台一小段时间
-    - 且至少出现一次明确用户交互
+    - 且至少满足以下其一：
+      - 出现一次明确用户交互
+      - 当前页已经真正拿到焦点
     - 单靠 `visible_stable` 不再允许完成首次确认
   - 为新写入的阅读进度记录补入 provenance：
     - `sourceTabId`
@@ -148,6 +150,7 @@
 - 验证：
   - 已通过 `node --check S1Plus.js`
   - 已通过 `node sync-across-multiple-tab/scripts/test-background-open-passive-session.js`
+    - 覆盖后台打开会话与隐藏启动会话的“无交互阻断 / 真正拿到焦点放行 / 明确交互放行”
   - 已人工回读阅读进度候选解析、隐藏页切换、落盘与 provenance 生成链路
   - 当前环境无法直接完成 Tampermonkey / 浏览器内多标签手测，已记录为后续补充验证项
 - 剩余工作：
@@ -156,6 +159,6 @@
 - 风险 / 限制：
   - 当前仍保留“主楼本身可见但楼层 DOM 缺失时，将其楼层视为 1 楼”的局部解析兜底；它不再用于“没有真实可见楼层”的 synthetic fallback
   - `passiveBackgroundOpened` 目前依赖 opener hint 与线程号 / 页码匹配；真实论坛中仍需继续观察极端浏览器时序和重复后台开同页的行为
-  - `getReadProgressProbeGuardState()` 已可被 probe gate 消费，但同机会话级的 quiet handling 仍有后续优化空间
+  - `getReadProgressProbeGuardState()` 已被后续 `Phase 4` probe gate 消费，但真实论坛中的多标签 / bfcache / 长时间挂起手测仍需继续补跑
 - 下一步：
   - 进入 `Phase 3` 处理同步状态分层；并在可用浏览器环境补跑 Phase 2 的多标签回归手测

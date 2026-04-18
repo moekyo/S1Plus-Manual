@@ -602,7 +602,9 @@ Phase 7 真正完成的是：
 
 1. 对 `initiatedWhileHidden === true` 的线程页，首次确认必须同时要求：
    - 真正进入前台后稳定可见
-   - 且至少一次明确用户交互
+   - 且至少满足以下其一：
+     - 至少一次明确用户交互
+     - 当前页已经真正拿到焦点
 2. 单靠 `visible_stable`，不足以让“隐藏启动页”进入 `reading_confirmed`
 3. 对正常前台打开的线程页，继续保留 `visible_stable` 路径，避免回归体验
 
@@ -683,7 +685,7 @@ Phase 7 真正完成的是：
    - `visibilitychange -> visible` 与 `pageshow(persisted)` 现在会先做核心数据收敛，再处理 `pending_recovery`
    - 若确实已挂起 `pending_recovery`，当前轮次会先返回 `pending_recovery_settle`
 4. 方案 4：收紧隐藏启动页首次确认
-   - 对 `initiatedWhileHidden === true` 或命中 `passiveBackgroundOpened` 的线程页，首次确认必须满足“稳定前台 + 明确交互”
+   - 对 `initiatedWhileHidden === true` 或命中 `passiveBackgroundOpened` 的线程页，首次确认必须满足“稳定前台 + 明确交互 / 当前页真正拿到焦点”
    - 单靠 `visible_stable` 已不能完成首次确认
 5. 方案 5：same-session remote write 降噪
    - 当前浏览器会话成功 push / merged push 后，会记录最近一次本地远端写入
@@ -712,27 +714,27 @@ Phase 7 真正完成的是：
 
 ## 9. 测试与验收
 
-### 9.1 脚本测试新增 / 扩展
+### 9.1 当前脚本测试覆盖
 
-建议新增：
+当前已覆盖：
 
 - `scripts/test-background-open-passive-session.js`
   - 验证后台打开页在未获前台 + 无交互前不会进入 `reading_confirmed`
+  - 验证 `passiveBackgroundOpened` 与 `initiatedWhileHidden` 会话在“稳定前台 + 真正拿到焦点”后可记录短帖 / 无滚动阅读进度
 - `scripts/test-core-data-snapshot-resync.js`
   - 验证核心数据监听缺失时，foreground resync 仍能收敛
-- `scripts/test-foreground-recovery-serialization.js`
-  - 验证 `pending_recovery` 与 foreground probe 不再并发抢跑
-
-建议扩展：
-
+  - 验证 foreground follow-up 的 `fresh snapshot` 导出可绕过旧 cache
 - `scripts/test-foreground-trigger-integration.js`
-  - 覆盖“同机会话刚 push，另一页回前台”的 quiet handling
+  - 覆盖 `visibilitychange / pageshow(persisted)` 下的 snapshot resync、`pending_recovery_settle` 和 probe 串行化
+- `scripts/test-foreground-same-session-remote-write.js`
+  - 覆盖“同机会话刚 push，另一页回前台”的 quiet handling、诊断标记与必要刷新保留
 - `scripts/test-post-sync-refresh-policy.js`
-  - 验证 `merged_read_progress / pulled` 在新 quiet handling 下的文案与刷新策略
+  - 验证 `pulled / merged_read_progress` 在列表页、帖子页、设置脏态页上的刷新策略
+  - 验证 quiet handling 的 `suppressMessage` 分支会静默保留刷新，而不会再弹“远端更新”类提示
 
 ### 9.2 浏览器手测场景
 
-建议把以下场景固定写进多标签回归 checklist：
+以下场景仍需在真实浏览器 + Tampermonkey 环境补跑，目前仓库内脚本测试尚未替代这些时序验证：
 
 1. 列表页后台打开多个帖子，只真正阅读其中一个
 2. 后台打开后从未激活的帖子页保持挂起 2 到 3 分钟

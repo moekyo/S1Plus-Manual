@@ -32432,6 +32432,8 @@
       readProgressTrackingState?.initiatedWhileHidden === true ||
         readProgressTrackingState?.passiveBackgroundOpened === true
     );
+  const hasFocusedReadProgressSession = () =>
+    typeof document.hasFocus === "function" ? document.hasFocus() === true : false;
   const resolveReadProgressConfirmationReason = (preferredReason = "") => {
     if (!readProgressTrackingState?.hasConfirmedVisiblePost) {
       return "";
@@ -32447,10 +32449,15 @@
       Date.now() - visibleSince >= READ_PROGRESS_CONFIRM_VISIBLE_MS;
     if (requiresExplicitInteraction) {
       if (
-        readProgressTrackingState.lastInteractionAt > 0 &&
+        (
+          readProgressTrackingState.lastInteractionAt > 0 ||
+          hasFocusedReadProgressSession()
+        ) &&
         hasStableVisibleWindow
       ) {
-        return READ_PROGRESS_SAVE_REASON_USER_INTERACTION;
+        return readProgressTrackingState.lastInteractionAt > 0
+          ? READ_PROGRESS_SAVE_REASON_USER_INTERACTION
+          : READ_PROGRESS_SAVE_REASON_VISIBLE_STABLE;
       }
       return "";
     }
