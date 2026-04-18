@@ -854,6 +854,9 @@
   const READ_PROGRESS_CONFIRM_VISIBLE_MS = 1500;
   // 帖子页阅读进度持久化防抖：以内存批量累积为主，隐藏/卸载前仅提交已确认阅读会话的待写入。
   const READ_PROGRESS_PERSIST_DEBOUNCE_MS = 5 * 1000;
+  const READ_PROGRESS_STARTUP_SUMMARY_LIMIT = 8;
+  // 同步诊断里保留最近几条阅读进度调试事件，便于复盘后台开帖页的生命周期。
+  const READ_PROGRESS_DEBUG_EVENT_LIMIT = 12;
   // 调试开关：开启后输出阅读进度楼层解析与兜底链路日志。
   const READ_PROGRESS_PARSE_DEBUG = false;
   const READ_PROGRESS_INTERACTION_CONFIRM_KEYS = new Set([
@@ -6443,6 +6446,11 @@
     lastSyncBlockKind: "",
     lastSyncBlockReason: "",
     lastHadConfirmedVisiblePost: false,
+    lastReadProgressStartupSnapshot: "",
+    lastReadProgressConfirmationReason: "",
+    lastReadProgressConfirmationTimestamp: 0,
+    readProgressStartupSummaries: Object.freeze([]),
+    readProgressDebugEvents: Object.freeze([]),
   });
   const normalizeSyncDiagnostics = (value) => {
     const source =
@@ -6463,6 +6471,75 @@
         .replace(/\s+/g, " ")
         .replace(/[<>]/g, "")
         .slice(0, maxLength);
+    const normalizeTextList = (
+      rawValue,
+      maxLength = 360,
+      maxItems = READ_PROGRESS_DEBUG_EVENT_LIMIT
+    ) =>
+      (Array.isArray(rawValue) ? rawValue : [])
+        .map((item) => normalizeText(item, maxLength))
+        .filter(Boolean)
+        .slice(-maxItems);
+    const normalizePageshowKind = (rawValue) => {
+      const normalized = String(rawValue || "").trim();
+      return normalized === "persisted" || normalized === "normal"
+        ? normalized
+        : "";
+    };
+    const normalizeReadProgressStartupSummary = (rawValue) => {
+      const source = sanitizeRecordObject(rawValue);
+      const normalizeOptionalFlag = (flagValue) =>
+        flagValue === true ? true : flagValue === false ? false : null;
+      return {
+        sessionKey: normalizeText(source.sessionKey, 180),
+        tabId: normalizeText(source.tabId, 80),
+        threadId: normalizeNumericId(source.threadId),
+        page: normalizeText(source.page, 24),
+        startedAt: normalizeTimestamp(source.startedAt),
+        updatedAt: normalizeTimestamp(source.updatedAt),
+        initialVisibility: normalizeSyncDiagnosticVisibility(
+          source.initialVisibility
+        ),
+        initialFocus: normalizeOptionalFlag(source.initialFocus),
+        initiatedWhileHidden: normalizeFlag(source.initiatedWhileHidden),
+        firstVisibleCandidate: normalizeText(source.firstVisibleCandidate, 80),
+        firstVisibleCandidateAt: normalizeTimestamp(
+          source.firstVisibleCandidateAt
+        ),
+        firstVisibilityChange: normalizeSyncDiagnosticVisibility(
+          source.firstVisibilityChange
+        ),
+        firstVisibilityChangeAt: normalizeTimestamp(
+          source.firstVisibilityChangeAt
+        ),
+        firstPageshowKind: normalizePageshowKind(source.firstPageshowKind),
+        firstPageshowAt: normalizeTimestamp(source.firstPageshowAt),
+        firstFocusAt: normalizeTimestamp(source.firstFocusAt),
+        firstConfirmationReason: normalizeText(
+          source.firstConfirmationReason,
+          80
+        ),
+        firstConfirmationAt: normalizeTimestamp(source.firstConfirmationAt),
+        queuedWrite: normalizeFlag(source.queuedWrite),
+        queuedWriteAt: normalizeTimestamp(source.queuedWriteAt),
+        lastModifiedTriggered: normalizeFlag(source.lastModifiedTriggered),
+        lastModifiedAt: normalizeTimestamp(source.lastModifiedAt),
+        lastEventType: normalizeText(source.lastEventType, 80),
+      };
+    };
+    const normalizeReadProgressStartupSummaryList = (
+      rawValue,
+      maxItems = READ_PROGRESS_STARTUP_SUMMARY_LIMIT
+    ) =>
+      (Array.isArray(rawValue) ? rawValue : [])
+        .map((item) => normalizeReadProgressStartupSummary(item))
+        .filter((item) => item.sessionKey)
+        .sort(
+          (left, right) =>
+            (left.updatedAt || left.startedAt || 0) -
+            (right.updatedAt || right.startedAt || 0)
+        )
+        .slice(-maxItems);
 
     return {
       lastAttemptTimestamp: normalizeTimestamp(source.lastAttemptTimestamp),
@@ -6502,6 +6579,26 @@
       lastSyncBlockReason: normalizeText(source.lastSyncBlockReason, 160),
       lastHadConfirmedVisiblePost: normalizeFlag(
         source.lastHadConfirmedVisiblePost
+      ),
+      lastReadProgressStartupSnapshot: normalizeText(
+        source.lastReadProgressStartupSnapshot,
+        220
+      ),
+      lastReadProgressConfirmationReason: normalizeText(
+        source.lastReadProgressConfirmationReason,
+        80
+      ),
+      lastReadProgressConfirmationTimestamp: normalizeTimestamp(
+        source.lastReadProgressConfirmationTimestamp
+      ),
+      readProgressStartupSummaries: normalizeReadProgressStartupSummaryList(
+        source.readProgressStartupSummaries,
+        READ_PROGRESS_STARTUP_SUMMARY_LIMIT
+      ),
+      readProgressDebugEvents: normalizeTextList(
+        source.readProgressDebugEvents,
+        360,
+        READ_PROGRESS_DEBUG_EVENT_LIMIT
       ),
     };
   };
@@ -6553,6 +6650,330 @@
       return normalized;
     }
     return "";
+  };
+  const formatReadProgressDebugTimestamp = (timestamp) => {
+    const normalizedTimestamp = Number(timestamp);
+    if (!Number.isFinite(normalizedTimestamp) || normalizedTimestamp <= 0) {
+      return "—";
+    }
+    return new Date(normalizedTimestamp).toLocaleString("zh-CN", {
+      hour12: false,
+    });
+  };
+  const formatReadProgressDebugCompactTime = (timestamp) => {
+    const normalizedTimestamp = Number(timestamp);
+    if (!Number.isFinite(normalizedTimestamp) || normalizedTimestamp <= 0) {
+      return "none";
+    }
+    return new Date(normalizedTimestamp).toLocaleTimeString("zh-CN", {
+      hour12: false,
+    });
+  };
+  const formatReadProgressStartupSummaryFocus = (value) => {
+    if (value === true) {
+      return "yes";
+    }
+    if (value === false) {
+      return "no";
+    }
+    return "unknown";
+  };
+  const buildReadProgressStartupSummaryDisplay = (summary) => {
+    if (!summary || typeof summary !== "object") {
+      return "—";
+    }
+    const startedAt =
+      formatReadProgressDebugTimestamp(summary.startedAt) || "—";
+    const tabId =
+      normalizeSyncDiagnosticText(summary.tabId, 80) || "unknown";
+    const threadId = normalizeNumericId(summary.threadId) || "—";
+    const page = normalizeSyncDiagnosticText(summary.page, 24) || "—";
+    const initialVisibility = summary.initialVisibility || "unknown";
+    const initialFocus = formatReadProgressStartupSummaryFocus(
+      summary.initialFocus
+    );
+    const candidate = summary.firstVisibleCandidate
+      ? `${summary.firstVisibleCandidate}@${formatReadProgressDebugCompactTime(
+          summary.firstVisibleCandidateAt
+        )}`
+      : "none";
+    const firstVisibilityChange = summary.firstVisibilityChange
+      ? `${summary.firstVisibilityChange}@${formatReadProgressDebugCompactTime(
+          summary.firstVisibilityChangeAt
+        )}`
+      : "none";
+    const firstPageshow = summary.firstPageshowAt
+      ? `${summary.firstPageshowKind || "normal"}@${formatReadProgressDebugCompactTime(
+          summary.firstPageshowAt
+        )}`
+      : "none";
+    const firstFocus = summary.firstFocusAt
+      ? formatReadProgressDebugCompactTime(summary.firstFocusAt)
+      : "none";
+    const confirmation = summary.firstConfirmationReason
+      ? `${summary.firstConfirmationReason}@${formatReadProgressDebugCompactTime(
+          summary.firstConfirmationAt
+        )}`
+      : "none";
+    const queuedWrite = summary.queuedWrite
+      ? `yes@${formatReadProgressDebugCompactTime(summary.queuedWriteAt)}`
+      : "no";
+    const lastModified = summary.lastModifiedTriggered
+      ? `yes@${formatReadProgressDebugCompactTime(summary.lastModifiedAt)}`
+      : "no";
+    return [
+      startedAt,
+      `tab=${tabId}`,
+      `tid=${threadId}`,
+      `page=${page}`,
+      `init=${initialVisibility}/${initialFocus}`,
+      `candidate=${candidate}`,
+      `vischg=${firstVisibilityChange}`,
+      `pageshow=${firstPageshow}`,
+      `focus=${firstFocus}`,
+      `confirm=${confirmation}`,
+      `queued=${queuedWrite}`,
+      `modified=${lastModified}`,
+    ].join(" | ");
+  };
+  const mergeReadProgressStartupSummary = (
+    currentSummary = null,
+    patch = {}
+  ) => {
+    const current =
+      currentSummary && typeof currentSummary === "object" ? currentSummary : {};
+    const source = sanitizeRecordObject(patch);
+    const chooseFirstTruthy = (...values) => {
+      for (const value of values) {
+        if (value) {
+          return value;
+        }
+      }
+      return "";
+    };
+    const chooseFirstTimestamp = (...values) => {
+      for (const value of values) {
+        const normalizedValue = Number(value);
+        if (Number.isFinite(normalizedValue) && normalizedValue > 0) {
+          return Math.floor(normalizedValue);
+        }
+      }
+      return 0;
+    };
+    const chooseFlag = (...values) => {
+      for (const value of values) {
+        if (value === true || value === false) {
+          return value;
+        }
+      }
+      return null;
+    };
+    const updatedAt = Math.max(
+      chooseFirstTimestamp(source.updatedAt),
+      chooseFirstTimestamp(source.startedAt),
+      chooseFirstTimestamp(current.updatedAt),
+      chooseFirstTimestamp(current.startedAt),
+      Date.now()
+    );
+    return {
+      sessionKey: chooseFirstTruthy(source.sessionKey, current.sessionKey),
+      tabId: chooseFirstTruthy(source.tabId, current.tabId),
+      threadId: chooseFirstTruthy(
+        normalizeNumericId(source.threadId),
+        current.threadId
+      ),
+      page: chooseFirstTruthy(
+        normalizeSyncDiagnosticText(source.page, 24),
+        current.page
+      ),
+      startedAt: chooseFirstTimestamp(current.startedAt, source.startedAt),
+      updatedAt,
+      initialVisibility: chooseFirstTruthy(
+        normalizeSyncDiagnosticVisibility(source.initialVisibility),
+        current.initialVisibility
+      ),
+      initialFocus: chooseFlag(current.initialFocus, source.initialFocus),
+      initiatedWhileHidden:
+        current.initiatedWhileHidden === true || source.initiatedWhileHidden === true,
+      firstVisibleCandidate: chooseFirstTruthy(
+        current.firstVisibleCandidate,
+        normalizeSyncDiagnosticText(source.firstVisibleCandidate, 80)
+      ),
+      firstVisibleCandidateAt: chooseFirstTimestamp(
+        current.firstVisibleCandidateAt,
+        source.firstVisibleCandidateAt
+      ),
+      firstVisibilityChange: chooseFirstTruthy(
+        current.firstVisibilityChange,
+        normalizeSyncDiagnosticVisibility(source.firstVisibilityChange)
+      ),
+      firstVisibilityChangeAt: chooseFirstTimestamp(
+        current.firstVisibilityChangeAt,
+        source.firstVisibilityChangeAt
+      ),
+      firstPageshowKind: chooseFirstTruthy(
+        current.firstPageshowKind,
+        source.firstPageshowKind
+      ),
+      firstPageshowAt: chooseFirstTimestamp(
+        current.firstPageshowAt,
+        source.firstPageshowAt
+      ),
+      firstFocusAt: chooseFirstTimestamp(
+        current.firstFocusAt,
+        source.firstFocusAt
+      ),
+      firstConfirmationReason: chooseFirstTruthy(
+        current.firstConfirmationReason,
+        normalizeSyncDiagnosticText(source.firstConfirmationReason, 80)
+      ),
+      firstConfirmationAt: chooseFirstTimestamp(
+        current.firstConfirmationAt,
+        source.firstConfirmationAt
+      ),
+      queuedWrite: current.queuedWrite === true || source.queuedWrite === true,
+      queuedWriteAt: chooseFirstTimestamp(
+        current.queuedWriteAt,
+        source.queuedWriteAt
+      ),
+      lastModifiedTriggered:
+        current.lastModifiedTriggered === true ||
+        source.lastModifiedTriggered === true,
+      lastModifiedAt: chooseFirstTimestamp(
+        current.lastModifiedAt,
+        source.lastModifiedAt
+      ),
+      lastEventType: chooseFirstTruthy(
+        normalizeSyncDiagnosticText(source.lastEventType, 80),
+        current.lastEventType
+      ),
+    };
+  };
+  const updateReadProgressStartupSummaries = (currentSummaries, patch) => {
+    const source = sanitizeRecordObject(patch);
+    const sessionKey = normalizeSyncDiagnosticText(source.sessionKey, 180);
+    if (!sessionKey) {
+      return Array.isArray(currentSummaries) ? currentSummaries : [];
+    }
+    const nextSummaries = Array.isArray(currentSummaries)
+      ? currentSummaries.slice()
+      : [];
+    const existingIndex = nextSummaries.findIndex(
+      (item) => item && item.sessionKey === sessionKey
+    );
+    const mergedSummary = mergeReadProgressStartupSummary(
+      existingIndex >= 0 ? nextSummaries[existingIndex] : null,
+      source
+    );
+    if (existingIndex >= 0) {
+      nextSummaries[existingIndex] = mergedSummary;
+    } else {
+      nextSummaries.push(mergedSummary);
+    }
+    return nextSummaries;
+  };
+  const buildReadProgressDebugEventSummary = ({
+    eventType = "",
+    detail = "",
+    timestamp = Date.now(),
+    pageVisibility = document.visibilityState,
+    hasFocus = typeof document.hasFocus === "function" ? document.hasFocus() : null,
+    tabId = SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID,
+    threadId = "",
+  } = {}) => {
+    const normalizedEventType =
+      normalizeSyncDiagnosticText(eventType, 80) || "read_progress_event";
+    const normalizedDetail = normalizeSyncDiagnosticText(detail, 200);
+    const normalizedVisibility =
+      normalizeSyncDiagnosticVisibility(pageVisibility) ||
+      normalizeSyncDiagnosticVisibility(document.visibilityState) ||
+      "unknown";
+    const normalizedHasFocus =
+      hasFocus === true ? "yes" : hasFocus === false ? "no" : "unknown";
+    const normalizedTabId =
+      normalizeSyncDiagnosticText(tabId, 80) ||
+      normalizeSyncDiagnosticText(SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID, 80) ||
+      "unknown";
+    const normalizedThreadId = resolveSyncDiagnosticsThreadId(threadId);
+    const parts = [
+      formatReadProgressDebugTimestamp(timestamp),
+      `tab=${normalizedTabId}`,
+      `vis=${normalizedVisibility}`,
+      `focus=${normalizedHasFocus}`,
+    ];
+    if (normalizedThreadId) {
+      parts.push(`tid=${normalizedThreadId}`);
+    }
+    parts.push(normalizedEventType);
+    if (normalizedDetail) {
+      parts.push(normalizedDetail);
+    }
+    return parts.join(" | ");
+  };
+  const recordReadProgressDebugEvent = (eventType = "", options = {}) => {
+    const {
+      detail = "",
+      timestamp = Date.now(),
+      pageVisibility = document.visibilityState,
+      hasFocus = typeof document.hasFocus === "function" ? document.hasFocus() : null,
+      threadId = "",
+      hadConfirmedVisiblePost = undefined,
+      tabId = SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID,
+      startupSnapshot = "",
+      confirmationReason = "",
+      confirmationTimestamp = 0,
+      startupSummaryPatch = null,
+      consoleDetails = null,
+    } = options;
+    const eventSummary = buildReadProgressDebugEventSummary({
+      eventType,
+      detail,
+      timestamp,
+      pageVisibility,
+      hasFocus,
+      tabId,
+      threadId,
+    });
+    const current = getSyncDiagnostics();
+    const nextDiagnostics = mergeSyncDiagnosticsContext(current, {
+      pageVisibility,
+      threadId,
+      tabId,
+      hadConfirmedVisiblePost,
+    });
+    if (Object.prototype.hasOwnProperty.call(options, "startupSnapshot")) {
+      nextDiagnostics.lastReadProgressStartupSnapshot = normalizeSyncDiagnosticText(
+        startupSnapshot,
+        220
+      );
+    }
+    if (Object.prototype.hasOwnProperty.call(options, "confirmationReason")) {
+      nextDiagnostics.lastReadProgressConfirmationReason =
+        normalizeSyncDiagnosticText(confirmationReason, 80);
+      nextDiagnostics.lastReadProgressConfirmationTimestamp = Math.max(
+        0,
+        Math.floor(Number(confirmationTimestamp) || 0)
+      );
+    }
+    if (startupSummaryPatch && typeof startupSummaryPatch === "object") {
+      nextDiagnostics.readProgressStartupSummaries =
+        updateReadProgressStartupSummaries(
+          current.readProgressStartupSummaries,
+          startupSummaryPatch
+        );
+    }
+    nextDiagnostics.readProgressDebugEvents = [
+      ...current.readProgressDebugEvents,
+      eventSummary,
+    ].slice(-READ_PROGRESS_DEBUG_EVENT_LIMIT);
+    saveSyncDiagnostics(nextDiagnostics);
+    if (READ_PROGRESS_PARSE_DEBUG) {
+      if (consoleDetails) {
+        console.debug("S1 Plus (ReadProgressDebug):", eventSummary, consoleDetails);
+      } else {
+        console.debug("S1 Plus (ReadProgressDebug):", eventSummary);
+      }
+    }
   };
 
   const resolveSyncDiagnosticsThreadId = (threadId = "") => {
@@ -7144,60 +7565,98 @@
       .replace(/[<>]/g, "")
       .slice(0, maxLength);
 
-  const buildSyncDiagnosticsRows = (diagnostics) => [
-    ["最近动作", diagnostics.lastActionType || "—"],
-    ["最近尝试", formatSyncTime(diagnostics.lastAttemptTimestamp)],
-    ["最近成功", formatSyncTime(diagnostics.lastSuccessTimestamp)],
-    ["最近冲突", formatSyncTime(diagnostics.lastConflictTimestamp)],
-    ["最近失败", formatSyncTime(diagnostics.lastFailureTimestamp)],
-    ["连续失败", String(diagnostics.consecutiveFailureCount || 0)],
-    ["最近触发源", formatSyncDiagnosticTriggerSource(diagnostics.lastTriggerSource)],
-    ["页面可见性", diagnostics.lastPageVisibility || "—"],
-    ["标签页 ID", diagnostics.lastTabId || "—"],
-    ["帖子 ID", diagnostics.lastThreadId || "—"],
-    ["最近结果类型", diagnostics.lastSyncResultKind || "—"],
-    ["最近结果码", diagnostics.lastSyncResultCode || "—"],
-    ["最近阻断级别", diagnostics.lastSyncBlockKind || "—"],
-    ["最近阻断原因", diagnostics.lastSyncBlockReason || "—"],
-    ["待处理 cleanup 来源", diagnostics.lastCleanupSource || "—"],
-    ["待处理 cleanup 数量", String(diagnostics.lastPendingCleanupCount || 0)],
-    ["本地哈希", formatSyncDiagnosticHashForDisplay(diagnostics.lastLocalHash)],
-    ["远端哈希", formatSyncDiagnosticHashForDisplay(diagnostics.lastRemoteHash)],
-    [
-      "基线哈希",
-      formatSyncDiagnosticHashForDisplay(diagnostics.lastBaselineHash),
-    ],
-    [
-      "已确认可见楼层",
-      formatSyncDiagnosticYesNo(diagnostics.lastHadConfirmedVisiblePost),
-    ],
-    ["最近探测", formatSyncTime(diagnostics.lastProbeTimestamp)],
-    [
-      "最近探测远端版本",
-      formatRemoteProbeUpdatedAtForDisplay(diagnostics.lastProbeRemoteUpdatedAt),
-    ],
-    [
-      "最近已同步远端版本",
-      formatRemoteProbeUpdatedAtForDisplay(
-        diagnostics.lastSyncedRemoteUpdatedAt
-      ),
-    ],
-    ["最近探测结果", diagnostics.lastProbeResult || "—"],
-    [
-      "探测是否触发安全同步",
-      formatProbeTriggeredSyncForDisplay(diagnostics),
-    ],
-    [
-      "最近探测后同步结果",
-      diagnostics.lastProbeTriggeredSyncResult || "—",
-    ],
-    [
-      "失败原因",
-      diagnostics.lastFailureReason
-        ? sanitizeDiagnosticText(diagnostics.lastFailureReason, 500)
-        : "—",
-    ],
-  ];
+  const buildSyncDiagnosticsRows = (diagnostics) => {
+    const rows = [
+      ["最近动作", diagnostics.lastActionType || "—"],
+      ["最近尝试", formatSyncTime(diagnostics.lastAttemptTimestamp)],
+      ["最近成功", formatSyncTime(diagnostics.lastSuccessTimestamp)],
+      ["最近冲突", formatSyncTime(diagnostics.lastConflictTimestamp)],
+      ["最近失败", formatSyncTime(diagnostics.lastFailureTimestamp)],
+      ["连续失败", String(diagnostics.consecutiveFailureCount || 0)],
+      [
+        "最近触发源",
+        formatSyncDiagnosticTriggerSource(diagnostics.lastTriggerSource),
+      ],
+      ["页面可见性", diagnostics.lastPageVisibility || "—"],
+      ["标签页 ID", diagnostics.lastTabId || "—"],
+      ["帖子 ID", diagnostics.lastThreadId || "—"],
+      ["最近结果类型", diagnostics.lastSyncResultKind || "—"],
+      ["最近结果码", diagnostics.lastSyncResultCode || "—"],
+      ["最近阻断级别", diagnostics.lastSyncBlockKind || "—"],
+      ["最近阻断原因", diagnostics.lastSyncBlockReason || "—"],
+      ["待处理 cleanup 来源", diagnostics.lastCleanupSource || "—"],
+      ["待处理 cleanup 数量", String(diagnostics.lastPendingCleanupCount || 0)],
+      ["本地哈希", formatSyncDiagnosticHashForDisplay(diagnostics.lastLocalHash)],
+      ["远端哈希", formatSyncDiagnosticHashForDisplay(diagnostics.lastRemoteHash)],
+      [
+        "基线哈希",
+        formatSyncDiagnosticHashForDisplay(diagnostics.lastBaselineHash),
+      ],
+      [
+        "已确认可见楼层",
+        formatSyncDiagnosticYesNo(diagnostics.lastHadConfirmedVisiblePost),
+      ],
+      ["阅读启动快照", diagnostics.lastReadProgressStartupSnapshot || "—"],
+      [
+        "最近阅读确认",
+        diagnostics.lastReadProgressConfirmationReason
+          ? `${formatSyncTime(
+              diagnostics.lastReadProgressConfirmationTimestamp
+            )} | ${diagnostics.lastReadProgressConfirmationReason}`
+          : "—",
+      ],
+      ["最近探测", formatSyncTime(diagnostics.lastProbeTimestamp)],
+      [
+        "最近探测远端版本",
+        formatRemoteProbeUpdatedAtForDisplay(diagnostics.lastProbeRemoteUpdatedAt),
+      ],
+      [
+        "最近已同步远端版本",
+        formatRemoteProbeUpdatedAtForDisplay(
+          diagnostics.lastSyncedRemoteUpdatedAt
+        ),
+      ],
+      ["最近探测结果", diagnostics.lastProbeResult || "—"],
+      [
+        "探测是否触发安全同步",
+        formatProbeTriggeredSyncForDisplay(diagnostics),
+      ],
+      [
+        "最近探测后同步结果",
+        diagnostics.lastProbeTriggeredSyncResult || "—",
+      ],
+      [
+        "失败原因",
+        diagnostics.lastFailureReason
+          ? sanitizeDiagnosticText(diagnostics.lastFailureReason, 500)
+          : "—",
+      ],
+    ];
+    const startupSummaries = Array.isArray(diagnostics.readProgressStartupSummaries)
+      ? diagnostics.readProgressStartupSummaries.slice().reverse()
+      : [];
+    if (startupSummaries.length === 0) {
+      rows.push(["启动摘要", "—"]);
+    } else {
+      startupSummaries.forEach((summary, index) => {
+        rows.push([
+          `启动摘要 ${index + 1}`,
+          buildReadProgressStartupSummaryDisplay(summary),
+        ]);
+      });
+    }
+    const debugEvents = Array.isArray(diagnostics.readProgressDebugEvents)
+      ? diagnostics.readProgressDebugEvents.slice().reverse()
+      : [];
+    if (debugEvents.length === 0) {
+      rows.push(["阅读调试", "—"]);
+      return rows;
+    }
+    debugEvents.forEach((eventSummary, index) => {
+      rows.push([`阅读调试 ${index + 1}`, eventSummary]);
+    });
+    return rows;
+  };
 
   const buildSyncDiagnosticsSummary = () => {
     const diagnostics = getSyncDiagnostics();
@@ -9546,8 +10005,30 @@
   ) => {
     const currentLastModified = GM_getValue("s1p_last_modified", 0);
     const nextLastModified = Math.max(Date.now(), currentLastModified + 1);
+    const recordReadProgressLastModifiedDebug = (phase) => {
+      if (source !== "read_progress") {
+        return;
+      }
+      const eventTimestamp = Date.now();
+      recordReadProgressDebugEvent("rp_last_modified", {
+        detail: `phase=${phase}, triggerSync=${triggerSync ? "yes" : "no"}, pendingReason=${triggerSync ? "read_progress" : "timestamp_only"}`,
+        timestamp: eventTimestamp,
+        threadId: readProgressContext?.threadId || "",
+        hadConfirmedVisiblePost:
+          readProgressTrackingState?.hasConfirmedVisiblePost === true,
+        startupSummaryPatch: buildReadProgressStartupSummaryPatch(
+          {
+            lastModifiedTriggered: true,
+            lastModifiedAt: eventTimestamp,
+            updatedAt: eventTimestamp,
+          },
+          { eventType: "rp_last_modified" }
+        ),
+      });
+    };
     // 如果初始同步正在进行，不直接丢弃信号，改为记录 dirty 标记并在同步后补跑。
     if (isInitialSyncInProgress) {
+      recordReadProgressLastModifiedDebug("initial_sync_in_progress");
       syncDirtyDuringSync = true;
       syncDirtyTimestamp = Math.max(syncDirtyTimestamp, nextLastModified);
       if (triggerSync) {
@@ -9566,6 +10047,7 @@
       return;
     }
     GM_setValue("s1p_last_modified", nextLastModified);
+    recordReadProgressLastModifiedDebug("written");
     if (triggerSync) {
       markPendingAutoSyncRequest(source, nextLastModified);
       debouncedTriggerRemoteSyncPush({ source });
@@ -12569,6 +13051,10 @@
     if (
       !shouldAdvanceThreadProgress(currentProgress, nextPageNumber, nextFloorNumber)
     ) {
+      recordReadProgressTrackingDebugEvent(
+        "rp_queue_skipped_not_newer",
+        `page=${nextPageNumber}, floor=${nextFloorNumber}`
+      );
       return;
     }
 
@@ -12583,6 +13069,16 @@
         createdAt,
       }),
     };
+    recordReadProgressTrackingDebugEvent(
+      "rp_queue_write",
+      `page=${nextPageNumber}, floor=${nextFloorNumber}, reason=${pendingThreadProgressWrites[threadId].provenance?.saveReason || "unknown"}`,
+      {
+        startupSummaryPatch: {
+          queuedWrite: true,
+          queuedWriteAt: createdAt,
+        },
+      }
+    );
     schedulePendingThreadProgressPersist();
   };
 
@@ -30824,6 +31320,7 @@
     return {
       stage: READ_PROGRESS_STAGE_OBSERVER_READY,
       startedAt: now,
+      startupSummarySessionKey: "",
       visibleSince: document.visibilityState === "visible" ? now : 0,
       initiatedWhileHidden: document.visibilityState !== "visible",
       firstCandidateAt: 0,
@@ -30908,6 +31405,117 @@
       return;
     }
     console.debug(`S1 Plus (ReadProgress): ${message}`);
+  };
+  const formatReadProgressDebugCandidateRecord = (record) =>
+    isValidReadProgressRecord(record)
+      ? `${record.postId}@${record.floor}`
+      : "none";
+  const buildReadProgressStartupSummarySessionKey = ({
+    threadId = "",
+    page = "",
+  } = {}) => {
+    const normalizedTabId =
+      normalizeSyncDiagnosticText(SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID, 80) ||
+      "tab";
+    const normalizedThreadId =
+      normalizeNumericId(threadId || readProgressContext?.threadId) || "no_thread";
+    const normalizedPage =
+      normalizeSyncDiagnosticText(page || readProgressContext?.currentPage, 24) ||
+      "no_page";
+    const startedAt = Math.max(
+      0,
+      Math.floor(Number(readProgressTrackingState?.startedAt) || 0)
+    );
+    return startedAt
+      ? `${normalizedTabId}:${normalizedThreadId}:${normalizedPage}:${startedAt}`
+      : "";
+  };
+  const buildReadProgressStartupSummaryPatch = (
+    patch = {},
+    { eventType = "" } = {}
+  ) => {
+    const source = sanitizeRecordObject(patch);
+    const sessionKey =
+      normalizeSyncDiagnosticText(source.sessionKey, 180) ||
+      normalizeSyncDiagnosticText(
+        readProgressTrackingState?.startupSummarySessionKey,
+        180
+      ) ||
+      buildReadProgressStartupSummarySessionKey({
+        threadId: source.threadId,
+        page: source.page,
+      });
+    if (!sessionKey) {
+      return null;
+    }
+    return {
+      ...source,
+      sessionKey,
+      tabId:
+        normalizeSyncDiagnosticText(source.tabId, 80) ||
+        normalizeSyncDiagnosticText(SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID, 80),
+      threadId:
+        normalizeNumericId(source.threadId) ||
+        normalizeNumericId(readProgressContext?.threadId) ||
+        "",
+      page:
+        normalizeSyncDiagnosticText(source.page, 24) ||
+        normalizeSyncDiagnosticText(readProgressContext?.currentPage, 24) ||
+        "",
+      startedAt: Math.max(
+        0,
+        Math.floor(
+          Number(source.startedAt) ||
+            Number(readProgressTrackingState?.startedAt) ||
+            0
+        )
+      ),
+      updatedAt: Math.max(
+        0,
+        Math.floor(Number(source.updatedAt) || Date.now())
+      ),
+      initiatedWhileHidden:
+        source.initiatedWhileHidden === true ||
+        readProgressTrackingState?.initiatedWhileHidden === true,
+      lastEventType:
+        normalizeSyncDiagnosticText(source.lastEventType, 80) ||
+        normalizeSyncDiagnosticText(eventType, 80),
+    };
+  };
+  const recordReadProgressTrackingDebugEvent = (
+    eventType,
+    detail = "",
+    options = {}
+  ) => {
+    const stage = readProgressTrackingState?.stage || READ_PROGRESS_STAGE_OBSERVER_READY;
+    const initHidden = readProgressTrackingState?.initiatedWhileHidden === true
+      ? "yes"
+      : "no";
+    const normalizedDetail = String(detail || "").trim();
+    const detailParts = normalizedDetail ? [normalizedDetail] : [];
+    detailParts.push(`stage=${stage}`);
+    detailParts.push(`initHidden=${initHidden}`);
+    const startupSummaryPatch = Object.prototype.hasOwnProperty.call(
+      options,
+      "startupSummaryPatch"
+    )
+      ? buildReadProgressStartupSummaryPatch(options.startupSummaryPatch, {
+          eventType,
+        })
+      : null;
+    recordReadProgressDebugEvent(eventType, {
+      ...options,
+      threadId: options.threadId || readProgressContext?.threadId || "",
+      startupSummaryPatch,
+      hadConfirmedVisiblePost:
+        Object.prototype.hasOwnProperty.call(
+          options,
+          "hadConfirmedVisiblePost"
+        )
+          ? options.hadConfirmedVisiblePost
+          : readProgressTrackingState?.hasConfirmedVisiblePost === true,
+      detail: detailParts.join(", "),
+    });
   };
   const getPostIdFromPostTable = (postTable) => {
     if (!(postTable instanceof Element) || !postTable.id) {
@@ -31000,12 +31608,26 @@
     if (!isValidReadProgressRecord(record)) {
       return;
     }
-    if (!readProgressTrackingState.firstCandidateAt) {
+    const isFirstCandidate = !readProgressTrackingState.firstCandidateAt;
+    if (isFirstCandidate) {
       readProgressTrackingState.firstCandidateAt = Date.now();
     }
     readProgressTrackingState.hasConfirmedVisiblePost = true;
     if (!readProgressTrackingState.hasConfirmedReading) {
       readProgressTrackingState.stage = READ_PROGRESS_STAGE_CANDIDATE_PENDING;
+    }
+    if (isFirstCandidate) {
+      recordReadProgressTrackingDebugEvent(
+        "rp_candidate_visible",
+        `candidate=${formatReadProgressDebugCandidateRecord(record)}`,
+        {
+          startupSummaryPatch: {
+            firstVisibleCandidate: formatReadProgressDebugCandidateRecord(record),
+            firstVisibleCandidateAt:
+              Number(readProgressTrackingState.firstCandidateAt) || Date.now(),
+          },
+        }
+      );
     }
   };
   const resolveReadProgressCandidateRecord = () => {
@@ -31040,6 +31662,7 @@
 
     const progress = { ...getReadProgress() };
     let hasChanges = false;
+    let appliedWriteCount = 0;
     let lastPersistedProvenance = null;
 
     pendingThreadIds.forEach((threadId) => {
@@ -31070,6 +31693,7 @@
 
       progress[threadId] = pendingRecord;
       hasChanges = true;
+      appliedWriteCount += 1;
       lastPersistedProvenance = isObjectRecord(pendingRecord.provenance)
         ? { ...pendingRecord.provenance }
         : null;
@@ -31078,6 +31702,10 @@
     pendingThreadProgressWrites = {};
 
     if (hasChanges) {
+      recordReadProgressTrackingDebugEvent(
+        "rp_persist_flush",
+        `writes=${appliedWriteCount}, suppressSync=${suppressSyncTrigger ? "yes" : "no"}, provenance=${lastPersistedProvenance?.saveReason || "unknown"}`
+      );
       saveReadProgress(progress, suppressSyncTrigger);
       if (readProgressTrackingState) {
         readProgressTrackingState.lastPersistedAt = Date.now();
@@ -31095,6 +31723,10 @@
       readProgressTrackingState.pendingPersistDueAt =
         Date.now() + READ_PROGRESS_PERSIST_DEBOUNCE_MS;
     }
+    recordReadProgressTrackingDebugEvent(
+      "rp_persist_scheduled",
+      `dueIn=${READ_PROGRESS_PERSIST_DEBOUNCE_MS}ms`
+    );
     readProgressPersistTimeout = setTimeout(() => {
       readProgressPersistTimeout = null;
       if (readProgressTrackingState) {
@@ -31122,6 +31754,18 @@
       normalizeReadProgressSaveReason(reason) ||
       READ_PROGRESS_SAVE_REASON_VISIBLE_STABLE;
     readProgressTrackingState.stage = READ_PROGRESS_STAGE_READING_CONFIRMED;
+    recordReadProgressTrackingDebugEvent(
+      "rp_reading_confirmed",
+      `reason=${readProgressTrackingState.confirmationReason}`,
+      {
+        confirmationReason: readProgressTrackingState.confirmationReason,
+        confirmationTimestamp: readProgressTrackingState.confirmedAt,
+        startupSummaryPatch: {
+          firstConfirmationReason: readProgressTrackingState.confirmationReason,
+          firstConfirmationAt: readProgressTrackingState.confirmedAt,
+        },
+      }
+    );
   };
   const resolveReadProgressConfirmationReason = (preferredReason = "") => {
     if (!readProgressTrackingState?.hasConfirmedVisiblePost) {
@@ -31165,6 +31809,13 @@
       const confirmationReason =
         resolveReadProgressConfirmationReason(normalizedReason);
       if (!confirmationReason) {
+        const visibleSince = Number(readProgressTrackingState?.visibleSince) || 0;
+        const visibleForMs =
+          visibleSince > 0 ? Math.max(0, Date.now() - visibleSince) : 0;
+        recordReadProgressTrackingDebugEvent(
+          "rp_save_blocked",
+          `requested=${normalizedReason || "none"}, candidate=${formatReadProgressDebugCandidateRecord(candidateRecord)}, visibleFor=${visibleForMs}ms, lastInteraction=${readProgressTrackingState?.lastInteractionType || "none"}`
+        );
         return;
       }
       markReadProgressReadingConfirmed(confirmationReason);
@@ -31172,6 +31823,10 @@
       document.visibilityState !== "visible" &&
       !isFlushReason
     ) {
+      recordReadProgressTrackingDebugEvent(
+        "rp_save_blocked_hidden",
+        `requested=${normalizedReason || "none"}, candidate=${formatReadProgressDebugCandidateRecord(candidateRecord)}`
+      );
       return;
     }
 
@@ -31212,10 +31867,19 @@
     flushPendingThreadProgressWrites();
   };
   const scheduleReadProgressSave = (reason = READ_PROGRESS_SAVE_REASON_VISIBLE_STABLE) => {
-    if (!readProgressContext || document.visibilityState !== "visible") {
+    if (!readProgressContext) {
       return;
     }
     const candidateRecord = resolveReadProgressCandidateRecord();
+    if (document.visibilityState !== "visible") {
+      if (candidateRecord) {
+        recordReadProgressTrackingDebugEvent(
+          "rp_save_schedule_skipped_hidden",
+          `requested=${normalizeReadProgressSaveReason(reason) || READ_PROGRESS_SAVE_REASON_VISIBLE_STABLE}, candidate=${formatReadProgressDebugCandidateRecord(candidateRecord)}`
+        );
+      }
+      return;
+    }
     if (!candidateRecord) {
       return;
     }
@@ -31229,6 +31893,10 @@
       readProgressTrackingState.pendingSaveReason = normalizedReason;
       readProgressTrackingState.pendingSaveScheduledAt = Date.now();
     }
+    recordReadProgressTrackingDebugEvent(
+      "rp_save_scheduled",
+      `reason=${normalizedReason}, candidate=${formatReadProgressDebugCandidateRecord(candidateRecord)}, dueIn=${READ_PROGRESS_CONFIRM_VISIBLE_MS}ms`
+    );
     readProgressSaveTimeout = setTimeout(() => {
       readProgressSaveTimeout = null;
       readProgressSaveDueAt = 0;
@@ -31247,6 +31915,10 @@
     }
     readProgressTrackingState.lastInteractionAt = Date.now();
     readProgressTrackingState.lastInteractionType = String(interactionType || "").trim();
+    recordReadProgressTrackingDebugEvent(
+      "rp_interaction",
+      `type=${readProgressTrackingState.lastInteractionType || "unknown"}`
+    );
     if (resolveReadProgressCandidateRecord()) {
       scheduleReadProgressSave(READ_PROGRESS_SAVE_REASON_USER_INTERACTION);
     }
@@ -31272,6 +31944,16 @@
     handleReadProgressUserInteraction("keydown");
   };
   const handleReadProgressVisibilityChange = () => {
+    recordReadProgressTrackingDebugEvent(
+      "rp_visibilitychange",
+      `next=${document.visibilityState}`,
+      {
+        startupSummaryPatch: {
+          firstVisibilityChange: document.visibilityState,
+          firstVisibilityChangeAt: Date.now(),
+        },
+      }
+    );
     if (document.visibilityState === "hidden") {
       if (readProgressTrackingState) {
         readProgressTrackingState.visibleSince = 0;
@@ -31291,6 +31973,28 @@
       markReadProgressVisibleRecord(candidateRecord);
       scheduleReadProgressSave(READ_PROGRESS_SAVE_REASON_VISIBLE_STABLE);
     }
+  };
+  const handleReadProgressPageShowForDebug = (event) => {
+    recordReadProgressTrackingDebugEvent(
+      "rp_pageshow",
+      `persisted=${event?.persisted === true ? "yes" : "no"}`,
+      {
+        startupSummaryPatch: {
+          firstPageshowKind: event?.persisted === true ? "persisted" : "normal",
+          firstPageshowAt: Date.now(),
+        },
+      }
+    );
+  };
+  const handleReadProgressWindowFocus = () => {
+    recordReadProgressTrackingDebugEvent("rp_focus", "", {
+      startupSummaryPatch: {
+        firstFocusAt: Date.now(),
+      },
+    });
+  };
+  const handleReadProgressWindowBlur = () => {
+    recordReadProgressTrackingDebugEvent("rp_blur");
   };
   const handleReadProgressBeforeUnload = () => {
     flushReadProgressSave({
@@ -31333,6 +32037,9 @@
     );
     window.removeEventListener("beforeunload", handleReadProgressBeforeUnload);
     window.removeEventListener("pagehide", handleReadProgressPageHide);
+    window.removeEventListener("pageshow", handleReadProgressPageShowForDebug);
+    window.removeEventListener("focus", handleReadProgressWindowFocus);
+    window.removeEventListener("blur", handleReadProgressWindowBlur);
     document.removeEventListener("wheel", handleReadProgressWheel);
     document.removeEventListener("touchstart", handleReadProgressTouchStart);
     document.removeEventListener("keydown", handleReadProgressKeydown);
@@ -31440,10 +32147,37 @@
       resetReadProgressTrackingState();
     }
     readProgressContext = { threadId, currentPage };
+    if (readProgressTrackingState) {
+      readProgressTrackingState.startupSummarySessionKey =
+        buildReadProgressStartupSummarySessionKey({
+          threadId,
+          page: currentPage,
+        });
+    }
     refreshReadProgressFirstPostId();
+    const initialVisibility = document.visibilityState;
+    const initialHasFocus =
+      typeof document.hasFocus === "function" ? document.hasFocus() : null;
+    const readProgressContextDebugOptions = hasContextChanged
+      ? {
+          startupSnapshot: `page=${currentPage}, vis=${initialVisibility}, focus=${initialHasFocus === true ? "yes" : initialHasFocus === false ? "no" : "unknown"}`,
+          startupSummaryPatch: {
+            initialVisibility,
+            initialFocus: initialHasFocus,
+            page: currentPage,
+            startedAt: Number(readProgressTrackingState?.startedAt) || Date.now(),
+          },
+        }
+      : {};
+    recordReadProgressTrackingDebugEvent(
+      hasContextChanged ? "rp_context_init" : "rp_context_refresh",
+      `page=${currentPage}, initVisibility=${initialVisibility}, hasFocus=${initialHasFocus === true ? "yes" : initialHasFocus === false ? "no" : "unknown"}`,
+      readProgressContextDebugOptions
+    );
 
     // --- [核心修改] 确保 pageObserver 只初始化一次，并能监控后续新增的元素 ---
     if (!pageObserver) {
+      recordReadProgressTrackingDebugEvent("rp_observer_bound");
       pageObserver = new IntersectionObserver(
         (entries) => {
           entries.forEach((entry) => {
@@ -31484,6 +32218,9 @@
       );
       window.removeEventListener("beforeunload", handleReadProgressBeforeUnload);
       window.removeEventListener("pagehide", handleReadProgressPageHide);
+      window.removeEventListener("pageshow", handleReadProgressPageShowForDebug);
+      window.removeEventListener("focus", handleReadProgressWindowFocus);
+      window.removeEventListener("blur", handleReadProgressWindowBlur);
       document.removeEventListener("wheel", handleReadProgressWheel);
       document.removeEventListener("touchstart", handleReadProgressTouchStart);
       document.removeEventListener("keydown", handleReadProgressKeydown);
@@ -31493,6 +32230,9 @@
       );
       window.addEventListener("beforeunload", handleReadProgressBeforeUnload);
       window.addEventListener("pagehide", handleReadProgressPageHide);
+      window.addEventListener("pageshow", handleReadProgressPageShowForDebug);
+      window.addEventListener("focus", handleReadProgressWindowFocus);
+      window.addEventListener("blur", handleReadProgressWindowBlur);
       document.addEventListener("wheel", handleReadProgressWheel, { passive: true });
       document.addEventListener("touchstart", handleReadProgressTouchStart, {
         passive: true,
