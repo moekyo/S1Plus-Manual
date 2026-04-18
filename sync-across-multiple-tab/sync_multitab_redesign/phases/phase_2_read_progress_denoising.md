@@ -119,7 +119,14 @@
     - 或发生滚轮 / 触摸 / 键盘翻页类交互
     - 且已经拿到真实可见楼层记录
   - 后台打开的新帖子页默认保持被动，不再在隐藏状态下安排阅读进度保存
+  - 为后台打开的新帖子页补入显式 opener hint：
+    - 列表页后台开帖时会写入短寿命线程提示
+    - 线程页启动时若消费到匹配提示，会把当前会话标记为 `passiveBackgroundOpened`
   - 删除“没有真实可见楼层时回退主楼生成 synthetic progress”的候选解析路径
+  - 对 `initiatedWhileHidden === true` 或命中 `passiveBackgroundOpened` 的线程页，首次确认现在必须同时满足：
+    - 页面已经稳定回到前台一小段时间
+    - 且至少出现一次明确用户交互
+    - 单靠 `visible_stable` 不再允许完成首次确认
   - 为新写入的阅读进度记录补入 provenance：
     - `sourceTabId`
     - `threadId`
@@ -140,13 +147,15 @@
   - `sync_multitab_redesign/problem_catalog.md`
 - 验证：
   - 已通过 `node --check S1Plus.js`
+  - 已通过 `node sync-across-multiple-tab/scripts/test-background-open-passive-session.js`
   - 已人工回读阅读进度候选解析、隐藏页切换、落盘与 provenance 生成链路
   - 当前环境无法直接完成 Tampermonkey / 浏览器内多标签手测，已记录为后续补充验证项
 - 剩余工作：
-  - 在真实论坛页面补跑后台开帖、多标签切换、关闭标签页的手测
+  - 在真实论坛页面补跑后台开帖、多标签切换、关闭标签页和“后台页长时间挂起后首次激活”的手测
   - 将本阶段暴露的 pending / debounce 信号接入 `foreground_resume` 与 `visible_poll` 的 gate 逻辑
 - 风险 / 限制：
   - 当前仍保留“主楼本身可见但楼层 DOM 缺失时，将其楼层视为 1 楼”的局部解析兜底；它不再用于“没有真实可见楼层”的 synthetic fallback
-  - `getReadProgressProbeGuardState()` 目前只提供运行时信号，真正的 probe gate 消费逻辑留在 `Phase 4`
+  - `passiveBackgroundOpened` 目前依赖 opener hint 与线程号 / 页码匹配；真实论坛中仍需继续观察极端浏览器时序和重复后台开同页的行为
+  - `getReadProgressProbeGuardState()` 已可被 probe gate 消费，但同机会话级的 quiet handling 仍有后续优化空间
 - 下一步：
   - 进入 `Phase 3` 处理同步状态分层；并在可用浏览器环境补跑 Phase 2 的多标签回归手测

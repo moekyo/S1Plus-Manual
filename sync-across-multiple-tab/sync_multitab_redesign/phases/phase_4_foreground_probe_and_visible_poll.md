@@ -103,9 +103,24 @@
   - 前台补偿重试现在会记录剩余等待时间，并在真正执行 follow-up sync 之前再次检查 probe gate，等待本地状态稳定后再继续。
   - 当前标签页已有前台 retry pending 时，新的前台 probe 会直接返回 `followup_retry_pending`，避免 `visibilitychange/pageshow` 与 visible poll 重复拉起同一份旧状态。
   - 保持 visible poll 低打扰：probe gate 命中时不再升级成高严重度提示，仍只在真正冲突场景上浮。
+  - `foreground_resume` / `pageshow(persisted)` 现在会先做核心数据 storage snapshot 收敛，再决定是否继续执行远端 freshness probe。
+  - 核心数据 snapshot 收敛会同时刷新：
+    - core data cache
+    - `comparableStoredValueCache`
+    - 当前页待处理的跨标签刷新键
+  - 若前台恢复阶段检测到 `pending_recovery` 已成功挂起后台补同步，本轮会先返回 `pending_recovery_settle`，不再立即 probe 远端。
+  - 当前浏览器会话若刚刚成功执行过本地 push / merged push，前台 probe 现在会识别 `same-session remote write`：
+    - 先做 storage snapshot 收敛
+    - 前台 follow-up 会改用 fresh snapshot 导出本地数据，避免“旧 cache + 新 baseline”组合
+    - 若最终仍需自动拉取，改为静默处理，不再弹“远端更新”类提示
+  - 同步诊断新增核心数据收敛观测字段，可直接看到最近一次 snapshot resync 的时间与 key 集。
+  - 同步诊断新增 same-session probe 标记，便于区分“外部远端变化”与“同机会话刚写入云端”。
 - 涉及文件：
   - `S1Plus.js`
   - `scripts/test-foreground-probe-gate-retry.js`
+  - `sync-across-multiple-tab/scripts/test-core-data-snapshot-resync.js`
+  - `sync-across-multiple-tab/scripts/test-foreground-trigger-integration.js`
+  - `sync-across-multiple-tab/scripts/test-foreground-same-session-remote-write.js`
 - 验证：
   - `node --check S1Plus.js`
   - `node scripts/test-safe-sync-execution.js`
@@ -114,12 +129,17 @@
   - `node scripts/test-visible-remote-polling.js`
   - `node scripts/test-auto-sync-indicator-linkage.js`
   - `node scripts/test-foreground-probe-gate-retry.js`
+  - `node sync-across-multiple-tab/scripts/test-core-data-snapshot-resync.js`
+  - `node sync-across-multiple-tab/scripts/test-foreground-trigger-integration.js`
+  - `node sync-across-multiple-tab/scripts/test-foreground-same-session-remote-write.js`
   - 说明：当前环境仍无法直接完成 Tampermonkey 浏览器内多标签手测，以上验证以脚本/语法检查为主。
 - 剩余工作：
   - 在真实论坛页面补跑多标签手测，确认长时间阅读、后台开帖、bfcache 恢复和 visible poll 的实际体验。
+  - 继续观察 same-session quiet handling 在真实论坛中对列表页自动刷新体感是否仍需进一步收紧。
   - 进入 `Phase 5`，处理 cleanup provenance、手动删除来源和当前页处理链路隔离。
 - 风险 / 限制：
   - 当前 probe gate 主要面向阅读进度相关的短时本地未稳定状态，cleanup provenance 仍未结构化。
   - `soft block` 与 retry 仍是当前标签页运行时状态，不会跨刷新持久化。
+  - 核心数据 snapshot resync 与 comparable cache TTL 已覆盖当前高价值 key，但更激进的全量 fresh snapshot 策略仍属于后续稳定性增强。
 - 下一步：
   - 开始 `Phase 5`，把 cleanup 分支改成有来源、有线程边界、能校验前后关系的结构化状态。
