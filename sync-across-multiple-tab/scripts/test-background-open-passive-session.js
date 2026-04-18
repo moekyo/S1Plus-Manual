@@ -33,7 +33,7 @@ const testBackgroundOpenHintLifecycle = () => {
 };
 
 const testPassiveBackgroundOpenRequiresInteraction = () => {
-  const { hooks } = createHarness();
+  const { hooks, sandbox } = createHarness();
   hooks.setReadProgressTrackingStateForTest(
     {
       hasConfirmedVisiblePost: true,
@@ -56,6 +56,14 @@ const testPassiveBackgroundOpenRequiresInteraction = () => {
     "后台打开页在没有真实交互前，不应仅靠 visible_stable 完成首次确认。"
   );
 
+  sandbox.document.hasFocus = () => true;
+  assert.equal(
+    hooks.resolveReadProgressConfirmationReason("visible_stable"),
+    "visible_stable",
+    "后台打开页在真正切到前台且稳定可见后，即使没有滚动，也应允许记录阅读进度。"
+  );
+
+  sandbox.document.hasFocus = () => false;
   hooks.setReadProgressTrackingStateForTest({
     lastInteractionAt: Date.now() - 120,
     lastInteractionType: "wheel",
@@ -66,8 +74,8 @@ const testPassiveBackgroundOpenRequiresInteraction = () => {
   );
 };
 
-const testHiddenStartRequiresInteraction = () => {
-  const { hooks } = createHarness();
+const testHiddenStartRequiresForegroundConfirmation = () => {
+  const { hooks, sandbox } = createHarness();
   hooks.setReadProgressTrackingStateForTest(
     {
       hasConfirmedVisiblePost: true,
@@ -86,6 +94,14 @@ const testHiddenStartRequiresInteraction = () => {
     "隐藏启动页在没有交互前，不应仅靠 visible_stable 完成首次确认。"
   );
 
+  sandbox.document.hasFocus = () => true;
+  assert.equal(
+    hooks.resolveReadProgressConfirmationReason("visible_stable"),
+    "visible_stable",
+    "隐藏启动页在真正回到前台且稳定可见后，即使没有滚动，也应允许记录阅读进度。"
+  );
+
+  sandbox.document.hasFocus = () => false;
   hooks.setReadProgressTrackingStateForTest({
     lastInteractionAt: Date.now() - 120,
     lastInteractionType: "keydown",
@@ -99,7 +115,7 @@ const testHiddenStartRequiresInteraction = () => {
 const main = async () => {
   testBackgroundOpenHintLifecycle();
   testPassiveBackgroundOpenRequiresInteraction();
-  testHiddenStartRequiresInteraction();
+  testHiddenStartRequiresForegroundConfirmation();
   console.log("[background-open-passive-session] checks passed.");
 };
 

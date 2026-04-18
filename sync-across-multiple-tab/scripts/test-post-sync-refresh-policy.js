@@ -176,6 +176,70 @@ const testThreadPageShowsSoftPromptOnly = () => {
   assert.equal(messages[0].isSuccess, null);
 };
 
+const testMergedReadProgressThreadUsesMergeCopy = () => {
+  const { hooks } = createHarness();
+  hooks.clearPendingAutoPullReloadTimer();
+
+  const messages = [];
+  let timerScheduled = false;
+  const result = hooks.applyAutoPullRefreshPolicy({
+    document: createQueryDocument({ hasPostList: true }),
+    href: "https://stage1st.com/2b/thread-123456-1-1.html",
+    search: "",
+    action: "merged_read_progress",
+    showMessage: (message, isSuccess) => {
+      messages.push({ message, isSuccess });
+    },
+    setTimeoutFn: () => {
+      timerScheduled = true;
+      return 1;
+    },
+    locationObject: {
+      reload: noop,
+    },
+  });
+
+  assert.equal(result.policy, "thread_soft_prompt");
+  assert.equal(result.reloadSchedule.status, "suppressed");
+  assert.equal(timerScheduled, false);
+  assert.equal(messages.length, 1);
+  assert.match(messages[0].message, /已保留本地阅读进度并完成自动合并/);
+  assert.match(messages[0].message, /当前在帖子页，暂不自动刷新/);
+  assert.equal(messages[0].isSuccess, null);
+};
+
+const testSuppressMessageKeepsReloadQuiet = () => {
+  const { hooks } = createHarness();
+  hooks.clearPendingAutoPullReloadTimer();
+
+  const messages = [];
+  let scheduledTimer = null;
+  const result = hooks.applyAutoPullRefreshPolicy({
+    document: createQueryDocument({ hasThreadList: true }),
+    href: "https://stage1st.com/2b/forum-1-1.html",
+    search: "",
+    action: "merged_read_progress",
+    suppressMessage: true,
+    showMessage: (message, isSuccess) => {
+      messages.push({ message, isSuccess });
+    },
+    setTimeoutFn: (callback, delay) => {
+      scheduledTimer = { callback, delay };
+      return 1;
+    },
+    locationObject: {
+      reload: noop,
+    },
+  });
+
+  assert.equal(result.policy, "reload_now");
+  assert.equal(result.reloadSchedule.status, "scheduled");
+  assert.equal(result.reloadSchedule.reloadDelayMs, 1500);
+  assert.deepStrictEqual(messages, []);
+  assert.ok(scheduledTimer, "静默处理仍应保留必要的自动刷新。");
+  hooks.clearPendingAutoPullReloadTimer();
+};
+
 const testDirtySettingsSuppressesReload = () => {
   const { hooks } = createHarness();
   hooks.clearPendingAutoPullReloadTimer();
@@ -215,6 +279,8 @@ const main = async () => {
   testRefreshPlanDetection();
   testListPageSchedulesReload();
   testThreadPageShowsSoftPromptOnly();
+  testMergedReadProgressThreadUsesMergeCopy();
+  testSuppressMessageKeepsReloadQuiet();
   testDirtySettingsSuppressesReload();
   console.log("Phase 7 post-sync refresh policy checks passed.");
 };
