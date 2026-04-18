@@ -19,6 +19,10 @@
 
 单独保存下来，方便后续在别的设备或新的会话里继续排查。
 
+如果需要查看基于这份调查进一步整理出的完整结论、根因分层和修复方案，可继续阅读：
+
+- [same-device-unexpected-remote-update-findings-and-fix-plan.md](./same-device-unexpected-remote-update-findings-and-fix-plan.md)
+
 ## 2. 现象描述
 
 用户当前使用场景：
