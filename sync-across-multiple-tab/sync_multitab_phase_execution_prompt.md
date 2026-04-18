@@ -42,12 +42,12 @@
 
 阅读约束：
 1. 必读：
-   - `/Users/rexxin/Development/S1Plus-Manual/sync_multitab_review_and_redesign.md`
+   - `/Users/rexxin/Development/S1Plus-Manual/sync-across-multiple-tab/sync_multitab_review_and_redesign.md`
    - 当前 phase 文档
 2. 只有在确实需要时才补读：
-   - `/Users/rexxin/Development/S1Plus-Manual/sync_multitab_redesign/coverage_matrix.md`
-   - `/Users/rexxin/Development/S1Plus-Manual/sync_multitab_redesign/problem_catalog.md`
-   - `/Users/rexxin/Development/S1Plus-Manual/sync_multitab_redesign/architecture_principles.md`
+   - `/Users/rexxin/Development/S1Plus-Manual/sync-across-multiple-tab/sync_multitab_redesign/coverage_matrix.md`
+   - `/Users/rexxin/Development/S1Plus-Manual/sync-across-multiple-tab/sync_multitab_redesign/problem_catalog.md`
+   - `/Users/rexxin/Development/S1Plus-Manual/sync-across-multiple-tab/sync_multitab_redesign/architecture_principles.md`
 3. 默认不要把 `/Users/rexxin/Development/S1Plus-Manual/discussion.md` 放进实现阶段上下文，除非你明确需要追溯原始讨论措辞。
 
 执行要求：
@@ -67,7 +67,7 @@
 
 文档更新要求：
 
-A. 更新根文档 `/Users/rexxin/Development/S1Plus-Manual/sync_multitab_review_and_redesign.md`
+A. 更新根文档 `/Users/rexxin/Development/S1Plus-Manual/sync-across-multiple-tab/sync_multitab_review_and_redesign.md`
 - 如果还没有总进度区块，则新增一个简洁的“当前实施进度”区块
 - 至少记录：
   - 当前阶段
@@ -95,11 +95,11 @@ B. 更新当前 phase 文档
 - 只有在当前阶段的 intended output 已存在，且关键验证已完成或明确写明为何未执行时，才能标记为 `Completed`
 
 C. 仅在必要时更新参考文档
-- `/Users/rexxin/Development/S1Plus-Manual/sync_multitab_redesign/problem_catalog.md`
+- `/Users/rexxin/Development/S1Plus-Manual/sync-across-multiple-tab/sync_multitab_redesign/problem_catalog.md`
   - 仅在你发现了新的问题、现象、风险、或已做局部修复需要登记时更新
-- `/Users/rexxin/Development/S1Plus-Manual/sync_multitab_redesign/architecture_principles.md`
+- `/Users/rexxin/Development/S1Plus-Manual/sync-across-multiple-tab/sync_multitab_redesign/architecture_principles.md`
   - 仅在通用设计原则真的发生变化时更新
-- `/Users/rexxin/Development/S1Plus-Manual/sync_multitab_redesign/coverage_matrix.md`
+- `/Users/rexxin/Development/S1Plus-Manual/sync-across-multiple-tab/sync_multitab_redesign/coverage_matrix.md`
   - 仅在问题与阶段映射、默认选读路径、或阶段边界发生变化时更新
 
 文档更新原则：
@@ -144,7 +144,7 @@ C. 仅在必要时更新参考文档
 
 ```text
 - Phase 1：启动期与触发源语义收口
-- 当前 phase 文档：`/Users/rexxin/Development/S1Plus-Manual/sync_multitab_redesign/phases/phase_1_startup_and_trigger_model.md`
+- 当前 phase 文档：`/Users/rexxin/Development/S1Plus-Manual/sync-across-multiple-tab/sync_multitab_redesign/phases/phase_1_startup_and_trigger_model.md`
 - 本轮只处理：
   - 启动期 freshness window 与 startup orchestrator 的正式收口
   - `daily_startup` / `per_load` / `page_load_visible` / `foreground_resume` / `visible_poll` / `background_push` / `manual_sync` 的触发源语义边界
@@ -157,7 +157,7 @@ C. 仅在必要时更新参考文档
 
 ```text
 - Phase 2：阅读进度写入链路去噪
-- 当前 phase 文档：`/Users/rexxin/Development/S1Plus-Manual/sync_multitab_redesign/phases/phase_2_read_progress_denoising.md`
+- 当前 phase 文档：`/Users/rexxin/Development/S1Plus-Manual/sync-across-multiple-tab/sync_multitab_redesign/phases/phase_2_read_progress_denoising.md`
 - 本轮只处理：
   - 阅读进度跟踪从“初始化即可能落盘”改成“真实阅读成立后才落盘”
   - 后台打开标签页默认被动，不应制造可同步本地改动
@@ -170,7 +170,7 @@ C. 仅在必要时更新参考文档
 
 ```text
 - Phase 3：同步状态模型分层
-- 当前 phase 文档：`/Users/rexxin/Development/S1Plus-Manual/sync_multitab_redesign/phases/phase_3_sync_state_layering.md`
+- 当前 phase 文档：`/Users/rexxin/Development/S1Plus-Manual/sync-across-multiple-tab/sync_multitab_redesign/phases/phase_3_sync_state_layering.md`
 - 本轮只处理：
   - `foreground_followup` 不再复用 startup 模式
   - 引入 `soft block / hard pause` 双层阻塞模型
@@ -183,7 +183,7 @@ C. 仅在必要时更新参考文档
 
 ```text
 - Phase 4：前台探测与可见页轮询重构
-- 当前 phase 文档：`/Users/rexxin/Development/S1Plus-Manual/sync_multitab_redesign/phases/phase_4_foreground_probe_and_visible_poll.md`
+- 当前 phase 文档：`/Users/rexxin/Development/S1Plus-Manual/sync-across-multiple-tab/sync_multitab_redesign/phases/phase_4_foreground_probe_and_visible_poll.md`
 - 本轮只处理：
   - `foreground_resume` / `visible_poll` 的 probe gate
   - 显式检查 pendingThreadProgressWrites / 阅读进度 debounce / 初始化噪声 provenance
@@ -196,7 +196,7 @@ C. 仅在必要时更新参考文档
 
 ```text
 - Phase 5：cleanup provenance 与手动同步分支重构
-- 当前 phase 文档：`/Users/rexxin/Development/S1Plus-Manual/sync_multitab_redesign/phases/phase_5_cleanup_provenance_and_manual_sync.md`
+- 当前 phase 文档：`/Users/rexxin/Development/S1Plus-Manual/sync-across-multiple-tab/sync_multitab_redesign/phases/phase_5_cleanup_provenance_and_manual_sync.md`
 - 本轮只处理：
   - 用结构化 provenance 替换 `s1p_pending_cleanup_info`
   - 区分自动清理、手动单条删除、手动分组删除
@@ -209,7 +209,7 @@ C. 仅在必要时更新参考文档
 
 ```text
 - Phase 6：用户交互与提示语义重构
-- 当前 phase 文档：`/Users/rexxin/Development/S1Plus-Manual/sync_multitab_redesign/phases/phase_6_interaction_and_copy.md`
+- 当前 phase 文档：`/Users/rexxin/Development/S1Plus-Manual/sync-across-multiple-tab/sync_multitab_redesign/phases/phase_6_interaction_and_copy.md`
 - 本轮只处理：
   - 自动刷新 / 自动拉取文案的原因细分
   - 常驻提示区分当前页问题与全局同步问题
@@ -222,7 +222,7 @@ C. 仅在必要时更新参考文档
 
 ```text
 - Phase 7：诊断、观测与多标签回归体系
-- 当前 phase 文档：`/Users/rexxin/Development/S1Plus-Manual/sync_multitab_redesign/phases/phase_7_diagnostics_and_regression.md`
+- 当前 phase 文档：`/Users/rexxin/Development/S1Plus-Manual/sync-across-multiple-tab/sync_multitab_redesign/phases/phase_7_diagnostics_and_regression.md`
 - 本轮只处理：
   - 扩展诊断字段与结果码
   - 让日志 / 诊断能明确看出触发源、未自动拉取原因、cleanup / conflict 的真实来源
@@ -248,7 +248,7 @@ C. 仅在必要时更新参考文档
 ```text
 当前阶段：
 - Phase 4：前台探测与可见页轮询重构
-- 当前 phase 文档：`/Users/rexxin/Development/S1Plus-Manual/sync_multitab_redesign/phases/phase_4_foreground_probe_and_visible_poll.md`
+- 当前 phase 文档：`/Users/rexxin/Development/S1Plus-Manual/sync-across-multiple-tab/sync_multitab_redesign/phases/phase_4_foreground_probe_and_visible_poll.md`
 - 本轮只处理：
   - `foreground_resume` / `visible_poll` 的 probe gate
   - 显式检查 pendingThreadProgressWrites / 阅读进度 debounce / 初始化噪声 provenance
