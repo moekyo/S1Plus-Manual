@@ -1,4 +1,4 @@
-# S1 Plus 开发手册（当前代码基线：v6.7.0）
+# S1 Plus 开发手册（当前代码基线：v6.10.0 + 当前分支未发布同步重构）
 
 > 本文档基于当前 `S1Plus.js` 实现整理，用于指导后续开发、调试、测试与发布。
 
@@ -64,13 +64,32 @@
 ### 2.3 迁移回归校验（建议每次改设置迁移后执行）
 
 ```bash
-node scripts/test-settings-migration.js
+node sync-across-multiple-tab/scripts/test-settings-migration.js
 ```
 
 说明：
 
 - 用例夹具：`tests/settings-migration/fixtures.json`
 - 覆盖重点：旧版 `openInNewTab` 结构迁移、布尔归一化、自动补链旧键迁移、Token 到期字段归一化等
+
+### 2.4 同步回归脚本（本轮多标签页重构）
+
+当前仓库把同步专项测试脚本收敛在 `sync-across-multiple-tab/scripts/`，常见入口包括：
+
+- `test-foreground-remote-probe.js`
+- `test-foreground-trigger-integration.js`
+- `test-visible-remote-polling.js`
+- `test-post-sync-refresh-policy.js`
+- `test-safe-sync-execution.js`
+- `test-cleanup-provenance-guard.js`
+- `test-background-open-passive-session.js`
+
+建议在改动以下能力后优先回归对应脚本：
+
+- 前台探测 / 可见页轮询
+- 自动拉取后的刷新策略
+- cleanup provenance 与手动同步分支
+- 设置迁移与同步设置 UI
 
 ## 3. 多机协作流程（Git）
 
@@ -219,8 +238,17 @@ node scripts/test-settings-migration.js
 
 补充：
 
+- 启动期现在通过 startup orchestrator 决定执行路径：`fresh` 页面运行完整启动链路，`stale` 页面只顺延每日首次同步或直接跳过启动专属检查。
 - 设置迁移归一化函数 `buildNormalizedSettings()` 现会返回 `migrationReasons`，用于定位本次迁移是由哪些旧字段/脏值触发。
 - 同步检查模式已拆分为两个独立设置：`syncDailyFirstLoad` 仅控制“每日首次加载时同步”，`syncPerLoadCheckEnabled` 仅控制“每次页面加载时检查同步”；不要再依赖“关闭前者等于开启后者”的旧隐式语义。
+- 当前触发源命名已显式收口为：
+  - `daily_startup`
+  - `per_load`
+  - `page_load_visible`
+  - `foreground_resume`
+  - `visible_poll`
+  - `background_push`
+  - `manual_sync`
 
 ### 6.3 并发与保护
 
@@ -229,16 +257,20 @@ node scripts/test-settings-migration.js
 - 锁心跳续租，失锁即中止
 - 自动同步熔断（连续失败 3 次暂停 10 分钟）
 - 冲突暂停门控，防止冲突态继续自动推送
+- 前台探测使用独立的 probe 锁、共享冷却和本地冷却，避免多个标签页同时做 metadata-only probe
+- 前台 follow-up sync 的局部脏状态优先落为 soft block；只有真正的全局冲突或明确需要人工处理时才升级为 hard pause
 
 ### 6.4 跨页面补偿
 
 - `s1p_pending_auto_sync_request` 用于跨页面补发
 - `pageshow`（含 bfcache）/`visibilitychange` 自动恢复补同步
 - “每次页面加载时检查同步”会复用启动同步锁链路，避免多标签页同时发起远端检查。
+- 前台 probe 命中远端变化但 follow-up sync 因锁占用等原因未能执行时，会登记补偿重试而不是直接丢弃本轮自动拉取机会。
+- 后台打开帖子页会写入短寿命 opener hint；线程页会据此把会话标记为 `passiveBackgroundOpened`，降低后台开帖造成的假阅读进度。
 
-### 6.5 自动后台同步指示器流转 (Auto Sync Indicator)
+### 6.5 统一自动同步指示器流转 (Auto Sync Indicator)
 
-指示器主要用于在导航栏反馈同步队列和网络状态，具备跨标签页同步动画的能力。
+指示器现在用于反馈“自动同步体系”的摘要状态，而不再只是后台自动同步子模块的状态灯。
 
 #### 简易流转全览
 完全的极简状态单线变迁路径如下：
@@ -249,7 +281,7 @@ node scripts/test-settings-migration.js
    - 本地数据变更时，调用 `setAutoSyncIndicatorPendingPhase(reason)` 进入防抖队列。
    - 显示静止的三个点图标，不会打断正在执行的其他同步任务。
 2. **执行 (Running)**
-   - 防抖结束，调用 `startBackgroundAutoSyncIndicatorCycle(reason)` 生成加锁 `token`。
+   - 防抖结束，或某条自动同步路径真正进入执行阶段后，调用对应的 indicator cycle 入口生成加锁 `token`。
    - 图标触发 `.s1p-auto-sync-running` 类，内部三个小点（`.s1p-dot`）执行 `s1p-auto-sync-dot-bounce` 波浪形依次跳动动画。
 3. **结算 (Success / Failure / Conflict)**
    - 网络合并完成后，调用 `finishBackgroundAutoSyncIndicatorCycle(token, phase)`。
@@ -258,6 +290,12 @@ node scripts/test-settings-migration.js
 4. **冷却与复位 (Cooldown & Revert)**
    - 根据结算类型进行自动倒计时冷却：Success (2分钟) / Failure (5分钟) / Conflict (10分钟)。
    - TTL 到期后，随页面可见（visibilitychange）或聚焦重新触发 UI 渲染，自动复位回空闲时极简的单点 `idle` 状态。
+
+实现注意：
+
+- metadata-only probe 的 `unchanged` / `cooldown` / `skipped` 不应点亮 indicator。
+- 只有真正进入 follow-up safe sync 或后台自动同步执行时，才切换到 `running`。
+- 当前实现已经为不同来源保留 `source` 字段，后续扩展时优先沿用现有来源枚举，而不是新增自由文本。
 
 ```mermaid
 %%{init: {
@@ -389,7 +427,7 @@ sequenceDiagram
 
 ## 11. 设置面板动画机制（整合调试报告）
 
-本节整合了原 `设置面板动画调试报告.md`，并按当前 `v6.7.0` 代码口径更新。
+本节整合了原 `设置面板动画调试报告.md`，并按当前 `v6.10.0 + 当前分支未发布改动` 的代码口径更新。
 
 ### 11.1 动画通道总览
 
