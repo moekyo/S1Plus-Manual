@@ -775,6 +775,8 @@
     SYNC_TRIGGER_SOURCE_VISIBLE_POLL;
   const AUTO_SYNC_INDICATOR_SOURCE_MANUAL_SYNC =
     SYNC_TRIGGER_SOURCE_MANUAL_SYNC;
+  const AUTO_SYNC_INDICATOR_ENTER_DURATION_MS = 180;
+  const AUTO_SYNC_INDICATOR_EXIT_DURATION_MS = 140;
   const AUTO_SYNC_INDICATOR_PENDING_STALE_MS = 90 * 1000;
   const AUTO_SYNC_INDICATOR_SUCCESS_TTL_MS = 2 * 60 * 1000;
   const AUTO_SYNC_INDICATOR_FAILURE_TTL_MS = 5 * 60 * 1000;
@@ -1576,17 +1578,43 @@
       cursor: default;
     }
     #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-icon {
+      position: relative;
       display: inline-flex;
       align-items: center;
       justify-content: center;
       width: 16px;
       height: 16px;
+      overflow: visible;
+    }
+    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer {
+      position: absolute;
+      inset: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      transform: scale(0.88);
+      transition:
+        opacity ${AUTO_SYNC_INDICATOR_ENTER_DURATION_MS}ms cubic-bezier(0.22, 1, 0.36, 1),
+        transform ${AUTO_SYNC_INDICATOR_ENTER_DURATION_MS}ms cubic-bezier(0.22, 1, 0.36, 1);
+      will-change: opacity, transform;
+      pointer-events: none;
+    }
+    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-active,
+    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-entering-active,
+    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-entered {
+      opacity: 1;
+      transform: scale(1);
+    }
+    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-exiting {
+      opacity: 0;
+      transform: scale(0.88);
+      transition-duration: ${AUTO_SYNC_INDICATOR_EXIT_DURATION_MS}ms;
     }
     #s1p-nav-auto-sync-indicator svg {
       width: 16px;
       height: 16px;
       color: var(--t, var(--s1p-t));
-      transition: opacity 0.25s ease;
       position: relative;
       top: 1.5px;
       vector-effect: non-scaling-stroke;
@@ -1612,6 +1640,11 @@
     #s1p-nav-auto-sync-indicator[data-sync-state="failure"] svg,
     #s1p-nav-auto-sync-indicator[data-sync-state="conflict"] svg {
       opacity: 1;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer {
+        transition: none !important;
+      }
     }
 
     #nv ul #s1p-nav-sync-sticky-alert::before {
@@ -22798,6 +22831,46 @@
     }
   };
 
+  const createNavbarAutoSyncIndicatorLayer = (phase) => {
+    const layer = document.createElement("span");
+    layer.className = "s1p-nav-auto-sync-indicator-layer";
+    layer.dataset.phase = phase;
+    setSanitizedIconHtml(layer, getAutoSyncIndicatorIconHtmlByPhase(phase));
+    const svg = layer.querySelector("svg");
+    if (svg) {
+      svg.classList.add(`s1p-auto-sync-${phase}`);
+    }
+    return layer;
+  };
+
+  const stabilizeNavbarAutoSyncIndicatorLayers = (iconHost) => {
+    if (!iconHost) {
+      return null;
+    }
+    if (iconHost.__s1pAutoSyncIndicatorCleanupTimer) {
+      clearTimeout(iconHost.__s1pAutoSyncIndicatorCleanupTimer);
+      iconHost.__s1pAutoSyncIndicatorCleanupTimer = null;
+    }
+    const layers = Array.from(
+      iconHost.querySelectorAll(".s1p-nav-auto-sync-indicator-layer")
+    );
+    if (layers.length === 0) {
+      delete iconHost.dataset.renderedPhase;
+      return null;
+    }
+    const activeLayer = layers[layers.length - 1];
+    layers.slice(0, -1).forEach((layer) => layer.remove());
+    activeLayer.classList.remove(
+      "is-entering",
+      "is-entering-active",
+      "is-entered",
+      "is-exiting"
+    );
+    activeLayer.classList.add("is-active");
+    iconHost.dataset.renderedPhase = activeLayer.dataset.phase || "";
+    return activeLayer;
+  };
+
   const getNavbarPersistentSyncAlertDescriptor = () => {
     const conflictPauseState = getActiveAutoSyncConflictPause();
     if (conflictPauseState) {
@@ -23090,14 +23163,35 @@
       normalizeAutoSyncIndicatorPhase(resolvedState.displayPhase, {
         allowRunning: true,
       }) || AUTO_SYNC_INDICATOR_PHASE_IDLE;
+    const reducedMotion = isS1pReducedMotionPreferred();
+    const currentLayer = stabilizeNavbarAutoSyncIndicatorLayers(iconHost);
+    const currentPhase = currentLayer?.dataset.phase || "";
 
-    setSanitizedIconHtml(
-      iconHost,
-      getAutoSyncIndicatorIconHtmlByPhase(displayPhase)
-    );
-    const svg = iconHost.querySelector("svg");
-    if (svg) {
-      svg.classList.add(`s1p-auto-sync-${displayPhase}`);
+    if (currentPhase !== displayPhase) {
+      const nextLayer = createNavbarAutoSyncIndicatorLayer(displayPhase);
+      if (!currentLayer || reducedMotion) {
+        nextLayer.classList.add("is-active");
+        iconHost.replaceChildren(nextLayer);
+      } else {
+        currentLayer.classList.remove("is-active");
+        currentLayer.classList.add("is-exiting");
+        nextLayer.classList.add("is-entering");
+        iconHost.appendChild(nextLayer);
+        // 强制一次样式刷新，确保浏览器先提交初始态，再启动切换过渡。
+        void nextLayer.getBoundingClientRect();
+        nextLayer.classList.add("is-entering-active");
+        iconHost.__s1pAutoSyncIndicatorCleanupTimer = setTimeout(() => {
+          if (!nextLayer.isConnected) {
+            return;
+          }
+          iconHost.replaceChildren(nextLayer);
+          nextLayer.classList.remove("is-entering", "is-entering-active");
+          nextLayer.classList.add("is-entered");
+          nextLayer.classList.add("is-active");
+          iconHost.__s1pAutoSyncIndicatorCleanupTimer = null;
+        }, AUTO_SYNC_INDICATOR_ENTER_DURATION_MS);
+      }
+      iconHost.dataset.renderedPhase = displayPhase;
     }
 
     indicatorLi.dataset.syncState = displayPhase;
