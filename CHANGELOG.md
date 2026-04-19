@@ -25,6 +25,7 @@
 - **同步状态模型分层**: 新增 tab-local / thread-local 的前台 follow-up soft block，与全局 hard pause 分离，避免一个标签页的局部脏状态冻结所有标签页。
 - **阅读进度与自动合并链路收敛**: 阅读进度候选、确认、持久化、自动合并 payload 构建和同步后刷新入口统一复用辅助函数，减少重复分支。
 - **同步诊断显著增强**: 诊断信息新增 probe 时间、触发源、页面可见性、local/remote/baseline 哈希摘要、cleanup 来源、阅读进度启动摘要与调试事件，方便定位同机多标签页异常。
+- **保留可复用调试面板框架**: 新增一套默认隐藏的浮动调试面板基础设施，当前接入了导航栏自动同步指示器的手动预览入口；需要时可通过 `window.__s1pAutoSyncIndicatorDebug.showPanel()` 按需启用。
 - **回归脚本覆盖补齐**: 新增前台探测、可见页轮询、same-session remote write、refresh policy、cleanup provenance、safe sync execution、settings migration 等多组测试脚本。
 - **多标签页同步专题文档补齐**: 新增问题总表、覆盖矩阵、阶段文档、执行提示和调查记录，方便继续沿阶段推进或回溯具体现象。
 - **本地开发 Loader 调整**: 仓库新增 `S1Plus-Local-Mac.user.js` 和 `S1Plus-Local-Windows.user.js`，并同步校准开发文档中的本地加载说明。

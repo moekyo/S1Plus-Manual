@@ -91,6 +91,23 @@ node sync-across-multiple-tab/scripts/test-settings-migration.js
 - cleanup provenance 与手动同步分支
 - 设置迁移与同步设置 UI
 
+### 2.5 导航栏同步指示器调试面板
+
+仓库里保留了一套可复用的浮动调试面板框架，当前已有一个“自动同步指示器调试”实例，但默认不自动显示。
+
+需要手动观察导航栏自动同步指示器的状态切换或动画时，可在浏览器控制台执行：
+
+- `window.__s1pAutoSyncIndicatorDebug.showPanel()`
+- `window.__s1pAutoSyncIndicatorDebug.hidePanel()`
+- `window.__s1pAutoSyncIndicatorDebug.clear()`
+
+使用约束：
+
+- 调试面板只覆盖导航栏指示器的预览显示，不会改写真实同步状态
+- 面板中的“实际 phase/source”仍然读取真实状态，可用于对照预览覆盖
+- `running` 等状态的调试预览会跳过真实同步锁门控，仅用于人工观察 UI，不代表同步任务真的在执行
+- 这套面板框架应优先作为通用调试容器复用，而不是为每个功能再单独写一套浮动面板
+
 ## 3. 多机协作流程（Git）
 
 ### 3.1 首次在新设备
