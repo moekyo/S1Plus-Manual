@@ -775,8 +775,126 @@
     SYNC_TRIGGER_SOURCE_VISIBLE_POLL;
   const AUTO_SYNC_INDICATOR_SOURCE_MANUAL_SYNC =
     SYNC_TRIGGER_SOURCE_MANUAL_SYNC;
-  const AUTO_SYNC_INDICATOR_ENTER_DURATION_MS = 180;
-  const AUTO_SYNC_INDICATOR_EXIT_DURATION_MS = 140;
+  const AUTO_SYNC_INDICATOR_ENTER_DURATION_MS = 220;
+  const AUTO_SYNC_INDICATOR_EXIT_DURATION_MS = 170;
+  const AUTO_SYNC_INDICATOR_DEBUG_PANEL_ID = "s1p-auto-sync-debug-panel";
+  const AUTO_SYNC_INDICATOR_DEBUG_PHASE_OPTIONS = Object.freeze({
+    allowRunning: true,
+    allowPending: true,
+  });
+  const AUTO_SYNC_INDICATOR_DEBUG_DEFAULT_SEQUENCE_PHASES = Object.freeze([
+    AUTO_SYNC_INDICATOR_PHASE_IDLE,
+    AUTO_SYNC_INDICATOR_PHASE_PENDING,
+    AUTO_SYNC_INDICATOR_PHASE_RUNNING,
+    AUTO_SYNC_INDICATOR_PHASE_SUCCESS,
+  ]);
+  const AUTO_SYNC_INDICATOR_DEBUG_PHASE_BUTTONS = Object.freeze([
+    {
+      label: "待机",
+      action: "idle",
+      phase: AUTO_SYNC_INDICATOR_PHASE_IDLE,
+      reason: "debug_idle",
+    },
+    {
+      label: "Pending",
+      action: "pending",
+      phase: AUTO_SYNC_INDICATOR_PHASE_PENDING,
+      reason: "debug_pending",
+    },
+    {
+      label: "Running",
+      action: "running",
+      phase: AUTO_SYNC_INDICATOR_PHASE_RUNNING,
+      reason: "debug_running",
+    },
+    {
+      label: "Success",
+      action: "success",
+      phase: AUTO_SYNC_INDICATOR_PHASE_SUCCESS,
+      reason: "debug_success",
+    },
+    {
+      label: "Failure",
+      action: "failure",
+      phase: AUTO_SYNC_INDICATOR_PHASE_FAILURE,
+      reason: "debug_failure",
+    },
+    {
+      label: "Conflict",
+      action: "conflict",
+      phase: AUTO_SYNC_INDICATOR_PHASE_CONFLICT,
+      reason: "debug_conflict",
+    },
+  ]);
+  const AUTO_SYNC_INDICATOR_DEBUG_SEQUENCE_BUTTONS = Object.freeze([
+    {
+      label: "待机 → Pending",
+      action: "idleToPending",
+      kind: "transition",
+      phases: Object.freeze([
+        AUTO_SYNC_INDICATOR_PHASE_IDLE,
+        AUTO_SYNC_INDICATOR_PHASE_PENDING,
+      ]),
+      reason: "debug_idle_to_pending",
+    },
+    {
+      label: "Pending → Running",
+      action: "pendingToRunning",
+      kind: "transition",
+      phases: Object.freeze([
+        AUTO_SYNC_INDICATOR_PHASE_PENDING,
+        AUTO_SYNC_INDICATOR_PHASE_RUNNING,
+      ]),
+      reason: "debug_pending_to_running",
+    },
+    {
+      label: "Running → Success",
+      action: "runningToSuccess",
+      kind: "transition",
+      phases: Object.freeze([
+        AUTO_SYNC_INDICATOR_PHASE_RUNNING,
+        AUTO_SYNC_INDICATOR_PHASE_SUCCESS,
+      ]),
+      reason: "debug_running_to_success",
+    },
+    {
+      label: "整套 Demo",
+      action: "demo",
+      kind: "transition",
+      phases: AUTO_SYNC_INDICATOR_DEBUG_DEFAULT_SEQUENCE_PHASES,
+      reason: "debug_sequence",
+    },
+  ]);
+  const AUTO_SYNC_INDICATOR_DEBUG_PANEL_GROUPS = Object.freeze([
+    {
+      label: "单状态",
+      layoutClassName: "s1p-debug-panel-grid",
+      buttons: AUTO_SYNC_INDICATOR_DEBUG_PHASE_BUTTONS.map(
+        ({ label, action, kind = "" }) => ({
+          label,
+          action,
+          kind,
+        })
+      ),
+    },
+    {
+      label: "常看转场",
+      buttons: AUTO_SYNC_INDICATOR_DEBUG_SEQUENCE_BUTTONS.map(
+        ({ label, action, kind = "" }) => ({
+          label,
+          action,
+          kind,
+        })
+      ),
+    },
+    {
+      label: "控制",
+      buttons: [
+        { label: "停止循环", action: "stop", kind: "utility" },
+        { label: "恢复真实状态", action: "clear", kind: "utility" },
+      ],
+    },
+  ]);
   const AUTO_SYNC_INDICATOR_PENDING_STALE_MS = 90 * 1000;
   const AUTO_SYNC_INDICATOR_SUCCESS_TTL_MS = 2 * 60 * 1000;
   const AUTO_SYNC_INDICATOR_FAILURE_TTL_MS = 5 * 60 * 1000;
@@ -1593,23 +1711,107 @@
       align-items: center;
       justify-content: center;
       opacity: 0;
-      transform: scale(0.88);
-      transition:
-        opacity ${AUTO_SYNC_INDICATOR_ENTER_DURATION_MS}ms cubic-bezier(0.22, 1, 0.36, 1),
-        transform ${AUTO_SYNC_INDICATOR_ENTER_DURATION_MS}ms cubic-bezier(0.22, 1, 0.36, 1);
+      transform: translateY(-2px) scale(0.74) rotate(-9deg);
       will-change: opacity, transform;
       pointer-events: none;
     }
-    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-active,
-    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-entering-active,
-    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-entered {
+    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-active {
       opacity: 1;
-      transform: scale(1);
+      transform: translateY(0) scale(1) rotate(0deg);
+    }
+    @keyframes s1p-auto-sync-indicator-enter {
+      0% {
+        opacity: 0;
+        transform: translateY(-2px) scale(0.74) rotate(-9deg);
+      }
+      62% {
+        opacity: 1;
+        transform: translateY(0) scale(1.08) rotate(2deg);
+      }
+      100% {
+        opacity: 1;
+        transform: translateY(0) scale(1) rotate(0deg);
+      }
+    }
+    @keyframes s1p-auto-sync-indicator-exit {
+      0% {
+        opacity: 1;
+        transform: translateY(0) scale(1) rotate(0deg);
+      }
+      100% {
+        opacity: 0;
+        transform: translateY(2px) scale(0.78) rotate(8deg);
+      }
+    }
+    @keyframes s1p-auto-sync-indicator-idle-to-pending-enter {
+      0% {
+        opacity: 0.42;
+        transform: translateY(0) scaleX(0.18) scaleY(0.92);
+      }
+      58% {
+        opacity: 1;
+        transform: translateY(0) scaleX(1.16) scaleY(1.04);
+      }
+      100% {
+        opacity: 1;
+        transform: translateY(0) scaleX(1) scaleY(1);
+      }
+    }
+    @keyframes s1p-auto-sync-indicator-idle-to-pending-exit {
+      0% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+      100% {
+        opacity: 0;
+        transform: translateY(0) scale(0.56);
+      }
+    }
+    @keyframes s1p-auto-sync-indicator-pending-dot-enter {
+      0% {
+        opacity: 0;
+        transform: translateX(var(--s1p-pending-dot-offset-x, 0)) scale(0.2);
+      }
+      72% {
+        opacity: 1;
+        transform: translateX(0) scale(1.12);
+      }
+      100% {
+        opacity: 1;
+        transform: translateX(0) scale(1);
+      }
+    }
+    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-entering {
+      animation: s1p-auto-sync-indicator-enter ${AUTO_SYNC_INDICATOR_ENTER_DURATION_MS}ms cubic-bezier(0.22, 1, 0.36, 1) both;
     }
     #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-exiting {
+      animation: s1p-auto-sync-indicator-exit ${AUTO_SYNC_INDICATOR_EXIT_DURATION_MS}ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    }
+    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-entering.s1p-auto-sync-transition-idle-to-pending {
+      animation: none;
+      opacity: 1;
+      transform: translateY(0) scale(1) rotate(0deg);
+    }
+    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-exiting.s1p-auto-sync-transition-idle-to-pending-origin {
+      animation: s1p-auto-sync-indicator-idle-to-pending-exit ${AUTO_SYNC_INDICATOR_EXIT_DURATION_MS}ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    }
+    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-entering.s1p-auto-sync-transition-idle-to-pending .s1p-pending-dot {
       opacity: 0;
-      transform: scale(0.88);
-      transition-duration: ${AUTO_SYNC_INDICATOR_EXIT_DURATION_MS}ms;
+      transform-box: fill-box;
+      transform-origin: center;
+      animation: s1p-auto-sync-indicator-pending-dot-enter 200ms cubic-bezier(0.25, 1, 0.5, 1) both;
+    }
+    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-entering.s1p-auto-sync-transition-idle-to-pending .s1p-pending-dot:nth-child(1) {
+      --s1p-pending-dot-offset-x: 6px;
+      animation-delay: 0ms;
+    }
+    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-entering.s1p-auto-sync-transition-idle-to-pending .s1p-pending-dot:nth-child(2) {
+      --s1p-pending-dot-offset-x: 0px;
+      animation-delay: 42ms;
+    }
+    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-entering.s1p-auto-sync-transition-idle-to-pending .s1p-pending-dot:nth-child(3) {
+      --s1p-pending-dot-offset-x: -6px;
+      animation-delay: 84ms;
     }
     #s1p-nav-auto-sync-indicator svg {
       width: 16px;
@@ -1641,9 +1843,113 @@
     #s1p-nav-auto-sync-indicator[data-sync-state="conflict"] svg {
       opacity: 1;
     }
+    #s1p-debug-panel-host {
+      position: fixed;
+      right: 16px;
+      bottom: 18px;
+      z-index: 2147483642;
+      width: min(320px, calc(100vw - 24px));
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 10px;
+      pointer-events: none;
+    }
+    .s1p-debug-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 12px;
+      border-radius: 12px;
+      background: color-mix(in srgb, var(--s1p-bg-alt) 88%, black 12%);
+      border: 1px solid color-mix(in srgb, var(--s1p-pri) 70%, transparent);
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
+      color: var(--s1p-t);
+      backdrop-filter: blur(8px);
+      pointer-events: auto;
+    }
+    .s1p-debug-panel.s1p-hidden {
+      display: none !important;
+    }
+    .s1p-debug-panel .s1p-debug-panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .s1p-debug-panel .s1p-debug-panel-title {
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+    .s1p-debug-panel .s1p-debug-panel-note {
+      font-size: 11px;
+      line-height: 1.45;
+      color: var(--s1p-desc-t);
+    }
+    .s1p-debug-panel .s1p-debug-panel-status {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 4px 8px;
+      font-size: 11px;
+      line-height: 1.45;
+      color: var(--s1p-desc-t);
+    }
+    .s1p-debug-panel .s1p-debug-panel-status strong {
+      color: var(--s1p-t);
+      font-weight: 600;
+    }
+    .s1p-debug-panel .s1p-debug-panel-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .s1p-debug-panel .s1p-debug-panel-group-label {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--s1p-desc-t);
+      letter-spacing: 0.02em;
+    }
+    .s1p-debug-panel .s1p-debug-panel-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 6px;
+    }
+    .s1p-debug-panel .s1p-debug-panel-actions {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px;
+    }
+    .s1p-debug-panel .s1p-debug-btn {
+      min-height: 30px;
+      padding: 6px 8px;
+      font-size: 12px;
+      line-height: 1.2;
+      white-space: nowrap;
+    }
+    .s1p-debug-panel .s1p-debug-btn[data-kind="transition"] {
+      font-size: 11px;
+    }
+    .s1p-debug-panel .s1p-debug-btn[data-kind="utility"] {
+      font-size: 11px;
+    }
+    @media (max-width: 640px) {
+      #s1p-debug-panel-host {
+        right: 8px;
+        bottom: 8px;
+        width: min(320px, calc(100vw - 16px));
+      }
+      .s1p-debug-panel {
+        padding: 10px;
+      }
+    }
     @media (prefers-reduced-motion: reduce) {
       #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer {
+        animation: none !important;
         transition: none !important;
+      }
+      #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer .s1p-pending-dot {
+        animation: none !important;
       }
     }
 
@@ -22817,7 +23123,7 @@
   const getAutoSyncIndicatorIconHtmlByPhase = (phase) => {
     switch (phase) {
       case AUTO_SYNC_INDICATOR_PHASE_PENDING:
-        return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 16" fill="currentColor"><circle cx="4" cy="8" r="1.75"></circle><circle cx="10" cy="8" r="1.75"></circle><circle cx="16" cy="8" r="1.75"></circle></svg>`;
+        return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 16" fill="currentColor"><circle class="s1p-pending-dot" cx="4" cy="8" r="1.75"></circle><circle class="s1p-pending-dot" cx="10" cy="8" r="1.75"></circle><circle class="s1p-pending-dot" cx="16" cy="8" r="1.75"></circle></svg>`;
       case AUTO_SYNC_INDICATOR_PHASE_RUNNING:
         return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 16" fill="currentColor"><circle class="s1p-dot" cx="4" cy="8" r="1.75"></circle><circle class="s1p-dot" cx="10" cy="8" r="1.75"></circle><circle class="s1p-dot" cx="16" cy="8" r="1.75"></circle></svg>`;
       case AUTO_SYNC_INDICATOR_PHASE_SUCCESS:
@@ -22843,6 +23149,359 @@
     return layer;
   };
 
+  let autoSyncIndicatorDebugOverrideState = null;
+  let autoSyncIndicatorDebugSequenceTimer = null;
+
+  const normalizeAutoSyncIndicatorDebugPhase = (phase, fallback = "") =>
+    normalizeAutoSyncIndicatorPhase(
+      phase,
+      AUTO_SYNC_INDICATOR_DEBUG_PHASE_OPTIONS
+    ) || fallback;
+
+  const buildAutoSyncIndicatorDebugState = (
+    phase,
+    source = AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+    reason = ""
+  ) => {
+    const normalizedPhase = normalizeAutoSyncIndicatorDebugPhase(
+      phase,
+      AUTO_SYNC_INDICATOR_PHASE_IDLE
+    );
+    const normalizedSource = normalizeAutoSyncIndicatorSource(source) || "";
+    const normalizedReason = normalizeAutoSyncIndicatorReason(reason) || "";
+    const now = Date.now();
+    const isIdlePhase = normalizedPhase === AUTO_SYNC_INDICATOR_PHASE_IDLE;
+    const isPendingPhase = normalizedPhase === AUTO_SYNC_INDICATOR_PHASE_PENDING;
+    if (isIdlePhase) {
+      return {
+        phase: AUTO_SYNC_INDICATOR_PHASE_IDLE,
+        timestamp: now,
+        token: "",
+        source: "",
+        reason: "",
+        lastResolvedPhase: AUTO_SYNC_INDICATOR_PHASE_IDLE,
+        lastResolvedTimestamp: now,
+        lastResolvedSource: "",
+        lastResolvedReason: "",
+      };
+    }
+    return {
+      phase: normalizedPhase,
+      timestamp: now,
+      token: `debug_${normalizedPhase}_${now}`,
+      source: normalizedSource,
+      reason: normalizedReason,
+      lastResolvedPhase:
+        isPendingPhase ? AUTO_SYNC_INDICATOR_PHASE_IDLE : normalizedPhase,
+      lastResolvedTimestamp: now,
+      lastResolvedSource: isPendingPhase ? "" : normalizedSource,
+      lastResolvedReason: isPendingPhase ? "" : normalizedReason,
+    };
+  };
+
+  const stopAutoSyncIndicatorDebugSequence = () => {
+    if (autoSyncIndicatorDebugSequenceTimer) {
+      clearTimeout(autoSyncIndicatorDebugSequenceTimer);
+      autoSyncIndicatorDebugSequenceTimer = null;
+    }
+  };
+
+  const setAutoSyncIndicatorDebugOverride = (state) => {
+    stopAutoSyncIndicatorDebugSequence();
+    autoSyncIndicatorDebugOverrideState = state;
+    renderNavbarAutoSyncIndicator(state);
+  };
+
+  const clearAutoSyncIndicatorDebugOverride = () => {
+    stopAutoSyncIndicatorDebugSequence();
+    autoSyncIndicatorDebugOverrideState = null;
+    renderNavbarAutoSyncIndicator();
+  };
+
+  const runAutoSyncIndicatorDebugSequence = (
+    phases = AUTO_SYNC_INDICATOR_DEBUG_DEFAULT_SEQUENCE_PHASES,
+    {
+      source = AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+      reason = "debug_sequence",
+      stepDelayMs = 700,
+      loop = false,
+    } = {}
+  ) => {
+    stopAutoSyncIndicatorDebugSequence();
+    const normalizedPhases = phases
+      .map((phase) => normalizeAutoSyncIndicatorDebugPhase(phase))
+      .filter(Boolean);
+    if (normalizedPhases.length === 0) {
+      clearAutoSyncIndicatorDebugOverride();
+      return;
+    }
+    let index = 0;
+    const renderNext = () => {
+      const nextPhase = normalizedPhases[index];
+      autoSyncIndicatorDebugOverrideState = buildAutoSyncIndicatorDebugState(
+        nextPhase,
+        source,
+        `${reason}:${nextPhase}`
+      );
+      renderNavbarAutoSyncIndicator(autoSyncIndicatorDebugOverrideState);
+      index += 1;
+      if (index >= normalizedPhases.length) {
+        if (!loop) {
+          autoSyncIndicatorDebugSequenceTimer = null;
+          return;
+        }
+        index = 0;
+      }
+      autoSyncIndicatorDebugSequenceTimer = setTimeout(
+        renderNext,
+        Math.max(0, Number(stepDelayMs) || 0)
+      );
+    };
+    renderNext();
+  };
+
+  const buildAutoSyncIndicatorDebugDisplayState = (stateInput) => {
+    const previewState = normalizeAutoSyncIndicatorState(stateInput);
+    return {
+      ...previewState,
+      displayPhase: normalizeAutoSyncIndicatorDebugPhase(
+        previewState.phase,
+        AUTO_SYNC_INDICATOR_PHASE_IDLE
+      ),
+      displaySource: normalizeAutoSyncIndicatorSource(previewState.source) || "",
+      displayReason: normalizeAutoSyncIndicatorReason(previewState.reason) || "",
+    };
+  };
+
+  const updateAutoSyncIndicatorDebugPanelState = () => {
+    const panel = document.getElementById(AUTO_SYNC_INDICATOR_DEBUG_PANEL_ID);
+    if (!panel) {
+      return;
+    }
+    const actualState = getAutoSyncIndicatorState();
+    const previewState = autoSyncIndicatorDebugOverrideState;
+    [
+      ["actual-phase", actualState.phase || AUTO_SYNC_INDICATOR_PHASE_IDLE],
+      ["actual-source", actualState.source || "—"],
+      ["preview-phase", previewState?.phase || "无"],
+      ["preview-source", previewState?.source || "—"],
+    ].forEach(([statusKey, text]) => {
+      const statusEl = panel.querySelector(
+        `[data-s1p-auto-sync-debug-status='${statusKey}']`
+      );
+      if (statusEl) {
+        statusEl.textContent = text;
+      }
+    });
+  };
+
+  const ensureS1pDebugPanelHost = () => {
+    let host = document.getElementById("s1p-debug-panel-host");
+    if (host) {
+      return host;
+    }
+    host = document.createElement("div");
+    host.id = "s1p-debug-panel-host";
+    document.body.appendChild(host);
+    return host;
+  };
+
+  const createS1pDebugButton = ({
+    label = "",
+    action = "",
+    kind = "",
+    sizeClassName = "",
+  } = {}) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `s1p-btn ${sizeClassName || ""} s1p-debug-btn`.trim();
+    button.textContent = label;
+    if (action) {
+      button.dataset.s1pDebugAction = action;
+    }
+    if (kind) {
+      button.dataset.kind = kind;
+    }
+    return button;
+  };
+
+  const createS1pDebugPanelGroup = ({
+    label = "",
+    layoutClassName = "s1p-debug-panel-actions",
+    buttons = [],
+  } = {}) => {
+    const group = document.createElement("div");
+    group.className = "s1p-debug-panel-group";
+
+    if (label) {
+      const labelEl = document.createElement("div");
+      labelEl.className = "s1p-debug-panel-group-label";
+      labelEl.textContent = label;
+      group.appendChild(labelEl);
+    }
+
+    const actions = document.createElement("div");
+    actions.className = layoutClassName;
+    buttons.forEach((buttonConfig) => {
+      actions.appendChild(createS1pDebugButton(buttonConfig));
+    });
+    group.appendChild(actions);
+    return group;
+  };
+
+  const createS1pDebugPanelShell = ({
+    id,
+    title = "",
+    note = "",
+    statusMarkup = "",
+    hideAction = "hide",
+    hideLabel = "隐藏",
+    onAction = null,
+  }) => {
+    const panel = document.createElement("div");
+    panel.id = id;
+    panel.className = "s1p-debug-panel";
+
+    const head = document.createElement("div");
+    head.className = "s1p-debug-panel-head";
+
+    const titleEl = document.createElement("div");
+    titleEl.className = "s1p-debug-panel-title";
+    titleEl.textContent = title;
+    head.appendChild(titleEl);
+    head.appendChild(
+      createS1pDebugButton({
+        label: hideLabel,
+        action: hideAction,
+        kind: "utility",
+        sizeClassName: "s1p-btn-sm",
+      })
+    );
+    panel.appendChild(head);
+
+    if (note) {
+      const noteEl = document.createElement("div");
+      noteEl.className = "s1p-debug-panel-note";
+      noteEl.textContent = note;
+      panel.appendChild(noteEl);
+    }
+
+    if (statusMarkup) {
+      const statusWrapper = document.createElement("div");
+      statusWrapper.className = "s1p-debug-panel-status";
+      statusWrapper.innerHTML = statusMarkup;
+      panel.appendChild(statusWrapper);
+    }
+
+    panel.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-s1p-debug-action]");
+      if (!(button instanceof HTMLButtonElement)) {
+        return;
+      }
+      const action = String(button.dataset.s1pDebugAction || "");
+      if (!action) {
+        return;
+      }
+      if (action === hideAction) {
+        panel.classList.add("s1p-hidden");
+        return;
+      }
+      if (typeof onAction === "function") {
+        onAction(action, button);
+      }
+    });
+
+    return panel;
+  };
+
+  const hideS1pDebugPanel = (panelId) => {
+    document.getElementById(panelId)?.classList.add("s1p-hidden");
+  };
+
+  const triggerAutoSyncIndicatorDebugAction = (action) => {
+    const api = globalThis.__s1pAutoSyncIndicatorDebug;
+    if (!api) {
+      return;
+    }
+    if (
+      AUTO_SYNC_INDICATOR_DEBUG_PHASE_BUTTONS.some(
+        (buttonConfig) => buttonConfig.action === action
+      )
+    ) {
+      api[action]?.();
+      return;
+    }
+    if (
+      AUTO_SYNC_INDICATOR_DEBUG_SEQUENCE_BUTTONS.some(
+        (buttonConfig) => buttonConfig.action === action
+      )
+    ) {
+      api[action]?.(900, false);
+      return;
+    }
+    if (action === "stop" || action === "clear") {
+      api[action]?.();
+    }
+  };
+
+  const initializeAutoSyncIndicatorDebugPanel = () => {
+    const existingPanel = document.getElementById(AUTO_SYNC_INDICATOR_DEBUG_PANEL_ID);
+    if (existingPanel) {
+      existingPanel.classList.remove("s1p-hidden");
+      updateAutoSyncIndicatorDebugPanelState();
+      return existingPanel;
+    }
+    const panel = createS1pDebugPanelShell({
+      id: AUTO_SYNC_INDICATOR_DEBUG_PANEL_ID,
+      title: "同步指示器调试",
+      note: "只覆盖导航指示器显示，不修改真实同步状态。",
+      statusMarkup: `
+        <span>实际 phase</span><strong data-s1p-auto-sync-debug-status="actual-phase">—</strong>
+        <span>实际 source</span><strong data-s1p-auto-sync-debug-status="actual-source">—</strong>
+        <span>预览 phase</span><strong data-s1p-auto-sync-debug-status="preview-phase">无</strong>
+        <span>预览 source</span><strong data-s1p-auto-sync-debug-status="preview-source">—</strong>
+      `,
+      onAction: (action) => {
+        triggerAutoSyncIndicatorDebugAction(action);
+        updateAutoSyncIndicatorDebugPanelState();
+      },
+    });
+    AUTO_SYNC_INDICATOR_DEBUG_PANEL_GROUPS.forEach((groupConfig) => {
+      panel.appendChild(createS1pDebugPanelGroup(groupConfig));
+    });
+    const host = ensureS1pDebugPanelHost();
+    host.appendChild(panel);
+    updateAutoSyncIndicatorDebugPanelState();
+    return panel;
+  };
+
+  const getNavbarAutoSyncIndicatorTransitionClassNames = (
+    fromPhase = "",
+    toPhase = ""
+  ) => {
+    const normalizedFrom =
+      normalizeAutoSyncIndicatorPhase(fromPhase, {
+        allowRunning: true,
+      }) || "";
+    const normalizedTo =
+      normalizeAutoSyncIndicatorPhase(toPhase, {
+        allowRunning: true,
+      }) || "";
+    if (
+      normalizedFrom === AUTO_SYNC_INDICATOR_PHASE_IDLE &&
+      normalizedTo === AUTO_SYNC_INDICATOR_PHASE_PENDING
+    ) {
+      return {
+        entering: "s1p-auto-sync-transition-idle-to-pending",
+        exiting: "s1p-auto-sync-transition-idle-to-pending-origin",
+      };
+    }
+    return {
+      entering: "",
+      exiting: "",
+    };
+  };
+
   const stabilizeNavbarAutoSyncIndicatorLayers = (iconHost) => {
     if (!iconHost) {
       return null;
@@ -22862,8 +23521,6 @@
     layers.slice(0, -1).forEach((layer) => layer.remove());
     activeLayer.classList.remove(
       "is-entering",
-      "is-entering-active",
-      "is-entered",
       "is-exiting"
     );
     activeLayer.classList.add("is-active");
@@ -23158,7 +23815,15 @@
       return;
     }
 
-    const resolvedState = resolveAutoSyncIndicatorDisplayPhase(stateInput);
+    const isDebugPreviewActive =
+      autoSyncIndicatorDebugOverrideState &&
+      typeof autoSyncIndicatorDebugOverrideState === "object";
+    const effectiveStateInput = isDebugPreviewActive
+      ? autoSyncIndicatorDebugOverrideState
+      : stateInput;
+    const resolvedState = isDebugPreviewActive
+      ? buildAutoSyncIndicatorDebugDisplayState(effectiveStateInput)
+      : resolveAutoSyncIndicatorDisplayPhase(effectiveStateInput);
     const displayPhase =
       normalizeAutoSyncIndicatorPhase(resolvedState.displayPhase, {
         allowRunning: true,
@@ -23169,24 +23834,30 @@
 
     if (currentPhase !== displayPhase) {
       const nextLayer = createNavbarAutoSyncIndicatorLayer(displayPhase);
+      const transitionClassNames = getNavbarAutoSyncIndicatorTransitionClassNames(
+        currentPhase,
+        displayPhase
+      );
       if (!currentLayer || reducedMotion) {
         nextLayer.classList.add("is-active");
         iconHost.replaceChildren(nextLayer);
       } else {
         currentLayer.classList.remove("is-active");
         currentLayer.classList.add("is-exiting");
+        if (transitionClassNames.exiting) {
+          currentLayer.classList.add(transitionClassNames.exiting);
+        }
         nextLayer.classList.add("is-entering");
+        if (transitionClassNames.entering) {
+          nextLayer.classList.add(transitionClassNames.entering);
+        }
         iconHost.appendChild(nextLayer);
-        // 强制一次样式刷新，确保浏览器先提交初始态，再启动切换过渡。
-        void nextLayer.getBoundingClientRect();
-        nextLayer.classList.add("is-entering-active");
         iconHost.__s1pAutoSyncIndicatorCleanupTimer = setTimeout(() => {
           if (!nextLayer.isConnected) {
             return;
           }
           iconHost.replaceChildren(nextLayer);
-          nextLayer.classList.remove("is-entering", "is-entering-active");
-          nextLayer.classList.add("is-entered");
+          nextLayer.classList.remove("is-entering");
           nextLayer.classList.add("is-active");
           iconHost.__s1pAutoSyncIndicatorCleanupTimer = null;
         }, AUTO_SYNC_INDICATOR_ENTER_DURATION_MS);
@@ -23199,6 +23870,58 @@
       normalizeAutoSyncIndicatorSource(resolvedState.displaySource) || "";
     setCustomTooltip(indicatorLi, getAutoSyncIndicatorTitle(resolvedState));
     renderNavbarPersistentSyncAlert();
+    updateAutoSyncIndicatorDebugPanelState();
+  };
+
+  const registerAutoSyncIndicatorDebugApi = () => {
+    const host = typeof globalThis !== "undefined" ? globalThis : window;
+    if (!host) {
+      return;
+    }
+    const debugApi = {
+      getActualState: () => getAutoSyncIndicatorState(),
+      getPreviewState: () => autoSyncIndicatorDebugOverrideState,
+      showPanel: () => initializeAutoSyncIndicatorDebugPanel(),
+      hidePanel: () => hideS1pDebugPanel(AUTO_SYNC_INDICATOR_DEBUG_PANEL_ID),
+      clear: () => clearAutoSyncIndicatorDebugOverride(),
+      stop: () => stopAutoSyncIndicatorDebugSequence(),
+      show: (
+        phase,
+        {
+          source = AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+          reason = "debug_manual",
+        } = {}
+      ) =>
+        setAutoSyncIndicatorDebugOverride(
+          buildAutoSyncIndicatorDebugState(phase, source, reason)
+        ),
+      demo: (stepDelayMs = 700) =>
+        runAutoSyncIndicatorDebugSequence(undefined, {
+          stepDelayMs,
+        }),
+    };
+    AUTO_SYNC_INDICATOR_DEBUG_PHASE_BUTTONS.forEach(
+      ({ action, phase, reason }) => {
+        debugApi[action] = (source = AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND) =>
+          setAutoSyncIndicatorDebugOverride(
+            buildAutoSyncIndicatorDebugState(phase, source, reason)
+          );
+      }
+    );
+    AUTO_SYNC_INDICATOR_DEBUG_SEQUENCE_BUTTONS.forEach(
+      ({ action, phases, reason }) => {
+        if (action === "demo") {
+          return;
+        }
+        debugApi[action] = (stepDelayMs = 800, loop = false) =>
+          runAutoSyncIndicatorDebugSequence(phases, {
+            stepDelayMs,
+            loop,
+            reason,
+          });
+      }
+    );
+    host.__s1pAutoSyncIndicatorDebug = debugApi;
   };
 
   const initializeAutoSyncIndicatorCrossTabSync = () => {
@@ -35222,6 +35945,7 @@
     const shouldTryNuxRecommendation = !welcomePopupWasShown;
 
     initializeNavbar();
+    registerAutoSyncIndicatorDebugApi();
     initializeAutoSyncIndicatorCrossTabSync();
     bindPendingAutoSyncRecoveryHooks();
     recoverPendingAutoSyncIfNeeded();

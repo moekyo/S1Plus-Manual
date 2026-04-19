@@ -212,7 +212,11 @@ S1 Plus 是一个面向 Stage1st（S1）的用户脚本，目标是让论坛浏�
 - 常驻提示的“处理”会触发手动同步；“忽略本次”为会话级生效（刷新后恢复）
 - 前台探测命中远端更新后，如果 follow-up sync 因锁占用等原因被跳过，会自动安排补偿重试
 - 自动拉取、强制拉取和阅读进度自动合并后的导入统一走同一套刷新策略，减少“实际已同步但页面看起来没变化”的情况
-- 临时同步 UI 预览面板已移除，正式版仅展示真实同步状态
+- 自动同步指示器调试面板默认不显示，但调试框架已保留；需要时可在控制台手动启用：
+  - `window.__s1pAutoSyncIndicatorDebug.showPanel()`
+  - `window.__s1pAutoSyncIndicatorDebug.hidePanel()`
+  - `window.__s1pAutoSyncIndicatorDebug.clear()`
+- 调试面板只覆盖导航指示器预览，不会改写真实同步状态；面板内显示的“实际 phase/source”仍来自当前真实同步状态
 - 脚本会在设置归一化阶段自动迁移并清理历史遗留配置键，仅保留当前版本支持的配置项
 - 更换 PAT 后会先做一次轻量凭据校验，若认证被拒绝（401/403）会先提示并中止本次首次同步检查
 
@@ -233,6 +237,8 @@ S1 Plus 是一个面向 Stage1st（S1）的用户脚本，目标是让论坛浏�
 ### 同步异常怎么排查？
 
 - 检查 Token/Gist/网络
+- 需要观察导航栏自动同步指示器动画或状态切换时，可先执行 `window.__s1pAutoSyncIndicatorDebug.showPanel()` 打开隐藏的调试面板
+- 调试结束后可执行 `window.__s1pAutoSyncIndicatorDebug.hidePanel()` 隐藏面板，或执行 `window.__s1pAutoSyncIndicatorDebug.clear()` 恢复真实指示器显示
 - 打开同步诊断（设置页底部版本号三连击）查看失败原因
 
 ## 相关文档
