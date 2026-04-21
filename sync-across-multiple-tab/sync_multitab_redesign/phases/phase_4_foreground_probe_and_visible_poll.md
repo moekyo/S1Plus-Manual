@@ -136,10 +136,30 @@
 - 剩余工作：
   - 在真实论坛页面补跑多标签手测，确认长时间阅读、后台开帖、bfcache 恢复和 visible poll 的实际体验。
   - 继续观察 same-session quiet handling 在真实论坛中对列表页自动刷新体感是否仍需进一步收紧。
-  - 进入 `Phase 5`，处理 cleanup provenance、手动删除来源和当前页处理链路隔离。
+  - 继续观察 same-device writer 文案在真实论坛中的体感，确认是否还需要进一步收紧为更多静默场景。
+- 进入 `Phase 5`，处理 cleanup provenance、手动删除来源和当前页处理链路隔离。
 - 风险 / 限制：
   - 当前 probe gate 主要面向阅读进度相关的短时本地未稳定状态，cleanup provenance 仍未结构化。
   - `soft block` 与 retry 仍是当前标签页运行时状态，不会跨刷新持久化。
-  - 核心数据 snapshot resync 与 comparable cache TTL 已覆盖当前高价值 key，但更激进的全量 fresh snapshot 策略仍属于后续稳定性增强。
+  - 核心数据 snapshot resync 与 comparable cache TTL 已覆盖当前高价值 key；本轮 follow-up 又把 `background / foreground_followup` 默认导出切到 `fresh snapshot`，但更激进的全量 fresh snapshot 策略仍属于后续稳定性增强。
 - 下一步：
   - 开始 `Phase 5`，把 cleanup 分支改成有来源、有线程边界、能校验前后关系的结构化状态。
+
+## 10. 2026-04-21 Follow-up
+
+- 已继续补齐“同机误判远端更新”的 Phase 4 遗漏链路：
+  - `background / foreground_followup` 现在默认都用 `fresh snapshot`
+  - 新增 `s1p_core_data_refresh_signal`，当前页在核心数据监听不可靠时也能通过 signal + storage snapshot 收敛
+  - same-session quiet handling 已从 foreground probe 扩展到 background / per-load / daily 的自动拉取刷新策略
+- 新增 `same-device remote write` 识别：
+  - 当本机配置了 `syncDeviceId` 且远端 `syncMeta.lastWriter.deviceId` 命中当前设备时，自动拉取文案会改成“同设备已同步更新”
+  - same-session 仍优先静默，不再把同机会话自己的刚写远端误说成“外部远端变化”
+- 本轮补跑验证：
+  - `node --check S1Plus.js`
+  - `node sync-across-multiple-tab/scripts/test-core-data-snapshot-resync.js`
+  - `node sync-across-multiple-tab/scripts/test-foreground-same-session-remote-write.js`
+  - `node sync-across-multiple-tab/scripts/test-foreground-trigger-integration.js`
+  - `node sync-across-multiple-tab/scripts/test-foreground-remote-probe.js`
+  - `node sync-across-multiple-tab/scripts/test-foreground-probe-diagnostics-feedback.js`
+  - `node sync-across-multiple-tab/scripts/test-safe-sync-execution.js`
+  - `node sync-across-multiple-tab/scripts/test-background-open-passive-session.js`

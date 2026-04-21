@@ -9,6 +9,7 @@ const enabledSettings = {
   syncRemoteGistId: "gist-id",
   syncRemotePat: "pat-token",
   syncCheckOnReturnToForeground: true,
+  syncDeviceId: "Mac-Main",
 };
 
 const createHarness = () =>
@@ -84,8 +85,63 @@ const testSameSessionRemoteWriteStaysQuiet = async () => {
   assert.equal(reloadCount, 1);
 };
 
+const testSameDeviceRemoteWriteUsesSpecificCopy = async () => {
+  const { hooks, sandbox } = createHarness();
+  const remoteUpdatedAt = "2026-04-18T06:00:00Z";
+  const messages = [];
+  let scheduledReload = null;
+
+  sandbox.document.visibilityState = "visible";
+
+  const result = await hooks.checkRemoteFreshnessOnForeground(
+    "foreground_resume",
+    {
+      settingsSnapshot: enabledSettings,
+      acquireRemoteProbeLock: async () => true,
+      releaseRemoteProbeLockValue: () => {},
+      fetchRemoteData: async () => ({
+        meta: {
+          updatedAt: remoteUpdatedAt,
+        },
+      }),
+      requestForegroundRemoteSyncCheck: async () => ({
+        status: "success",
+        action: "pulled",
+        sameDeviceRemoteWrite: true,
+        remoteWriter: {
+          deviceId: "Mac-Main",
+          action: "pushed",
+          syncMode: "background",
+          createdAt: Date.now(),
+        },
+      }),
+      showMessage: (message, isSuccess) => {
+        messages.push({ message, isSuccess });
+      },
+      setTimeoutFn: (callback, delay) => {
+        scheduledReload = { callback, delay };
+        return 1;
+      },
+      locationObject: {
+        reload: () => {},
+      },
+    }
+  );
+
+  assert.equal(result.sameDeviceRemoteWrite, true);
+  assert.equal(messages.length, 1);
+  assert.match(messages[0].message, /同设备「Mac-Main」已同步更新/);
+  assert.equal(messages[0].isSuccess, true);
+  assert.ok(scheduledReload, "同设备写入仍应保留必要的自动刷新。");
+  assert.equal(
+    hooks.getSyncDiagnostics().lastProbeSameDeviceRemoteWrite,
+    true
+  );
+};
+
 const main = async () => {
   await testSameSessionRemoteWriteStaysQuiet();
+  await testSameDeviceRemoteWriteUsesSpecificCopy();
   console.log("[foreground-same-session-remote-write] checks passed.");
 };
 

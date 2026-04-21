@@ -712,6 +712,43 @@ Phase 7 真正完成的是：
 - 更激进的全量 fresh snapshot 导出策略
 - `s1p_last_modified` 与更多非核心缓存层的一致性治理
 
+### 8.8 follow-up 修复进展（2026-04-21）
+
+本轮继续把“同机误判远端更新”的剩余链路补齐，重点不是再改结果码，而是把背景路径、本地收敛与远端来源识别真正接上：
+
+1. 后台自动同步现在默认也使用 `fresh snapshot`
+   - `resolveAutoSyncExecutionOptions()` 对 `background / foreground_followup` 默认开启 `useFreshLocalSnapshot`
+   - 背景自动同步不再更容易拿着旧 cache 去和新远端版本比较
+2. 核心数据跨标签收敛新增显式 signal fallback
+   - 新增 `s1p_core_data_refresh_signal`
+   - `saveBlockedThreads / saveBlockedUsers / saveUserTags / saveBookmarkedReplies / saveBlockedPosts / saveTitleFilterRules / saveReadProgress` 在本地值真实变更后都会发 signal
+   - 当前页即使没收到可靠的 `isCrossContextChange`，也能回退到 storage snapshot 收敛
+3. same-session 降噪从 foreground probe 扩展到后台 / 每次加载 / 每日首次刷新策略
+   - `handleBackgroundAutoSyncResult()` 现在也会对 `sameSessionRemoteWrite` 做静默处理
+   - `per_load` 与 `daily` 的自动拉取刷新策略也统一接入同样的 quiet handling
+4. 新增可选 `syncDeviceId`，只做远端来源溯源
+   - 同步设置页新增“同步设备 ID”输入框
+   - 该字段只保存在本地，不会写进同步数据的 `data.settings`
+   - 其唯一用途是给远端写入附带可读来源，帮助判断“这次云端更新是谁发起的”
+5. 远端同步文件新增 `syncMeta.lastWriter`
+   - 顶层元信息独立于 `data`
+   - 不参与 `contentHash / baseContentHash`
+   - 当前会记录 `deviceId / sessionId / sourceTabId / threadId / action / syncMode / createdAt`
+6. same-device remote write 现在可被识别并降噪
+   - 当前设备若设置了 `syncDeviceId`，foreground / background / per-load / daily 路径都会识别最近远端 writer 是否来自同设备
+   - same-session 仍优先静默
+   - same-device 但非 same-session 时，提示文案会改成“同设备已同步更新”，不再泛化成“外部云端较新”
+7. 诊断与回归同步补齐
+   - 诊断新增：
+     - `本机设备 ID`
+     - `最近远端写入`
+     - `最近探测是否同设备写入`
+   - 新增 / 扩展脚本测试：
+     - `scripts/test-core-data-snapshot-resync.js`
+     - `scripts/test-foreground-same-session-remote-write.js`
+     - `scripts/test-post-sync-refresh-policy.js`
+     - `scripts/test-sync-settings-ui.js`
+
 ## 9. 测试与验收
 
 ### 9.1 当前脚本测试覆盖
@@ -724,13 +761,19 @@ Phase 7 真正完成的是：
 - `scripts/test-core-data-snapshot-resync.js`
   - 验证核心数据监听缺失时，foreground resync 仍能收敛
   - 验证 foreground follow-up 的 `fresh snapshot` 导出可绕过旧 cache
+  - 验证 background 默认也会走 `fresh snapshot`
+  - 验证 `syncDeviceId` 只保存在本地，不会进入同步数据的 `settings`
 - `scripts/test-foreground-trigger-integration.js`
   - 覆盖 `visibilitychange / pageshow(persisted)` 下的 snapshot resync、`pending_recovery_settle` 和 probe 串行化
 - `scripts/test-foreground-same-session-remote-write.js`
   - 覆盖“同机会话刚 push，另一页回前台”的 quiet handling、诊断标记与必要刷新保留
+  - 覆盖 same-device writer 的定向提示与诊断标记
 - `scripts/test-post-sync-refresh-policy.js`
   - 验证 `pulled / merged_read_progress` 在列表页、帖子页、设置脏态页上的刷新策略
   - 验证 quiet handling 的 `suppressMessage` 分支会静默保留刷新，而不会再弹“远端更新”类提示
+  - 验证 same-device 自动拉取会改用定向文案
+- `scripts/test-sync-settings-ui.js`
+  - 验证同步设备 ID 输入框、说明文案与保存 / 回填 wiring
 
 ### 9.2 浏览器手测场景
 
@@ -757,6 +800,7 @@ Phase 7 真正完成的是：
    - 是否命中 core data snapshot resync
    - 是否因为 pending recovery 延迟了 foreground probe
    - 是否识别为 same-session remote write
+   - 若已配置 `syncDeviceId`，最近远端 writer 是否来自同设备
 
 ## 10. 建议的默认实施顺序
 

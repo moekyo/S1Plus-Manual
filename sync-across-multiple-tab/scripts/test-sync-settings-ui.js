@@ -54,6 +54,30 @@ const expectMatch = (pattern, message) => {
     "同步设置页未通过统一 helper 回填自动检查模式控件。",
   ],
   [
+    /for="s1p-sync-device-id-input">同步设备 ID/,
+    "同步设置页缺少同步设备 ID 标签。",
+  ],
+  [
+    /id="s1p-sync-device-id-input" class="s1p-input s1p-input-full" placeholder="例如：MacBook-Pro-主力机"/,
+    "同步设置页缺少同步设备 ID 输入框。",
+  ],
+  [
+    /留空则忽略，不会同步到其他设备，也不参与冲突裁决/,
+    "同步设备 ID 说明文案未明确 local-only 与非决策语义。",
+  ],
+  [
+    /syncSettingsControls = \{[\s\S]*syncDeviceIdInput: modal\.querySelector\("#s1p-sync-device-id-input"\)/,
+    "同步设备 ID 输入框未接入同步设置控件集合。",
+  ],
+  [
+    /applySyncSettingsToModal\s*=\s*\(settingsSnapshot\)\s*=>\s*\{[\s\S]*syncDeviceIdInput\.value = settingsSnapshot\.syncDeviceId \|\| "";/,
+    "同步设置页未回填同步设备 ID。",
+  ],
+  [
+    /buildSyncSettingsFromModal\s*=\s*\(\)\s*=>\s*\{[\s\S]*syncDeviceId: syncDeviceIdInput\.value\.trim\(\),/,
+    "保存设置时未收集同步设备 ID。",
+  ],
+  [
     /setTemplateTooltip\(\s*syncAutoCheckModeHelpBtn,\s*SYNC_AUTO_CHECK_MODE_HELP_TOOLTIP_TEXT,\s*SYNC_AUTO_CHECK_MODE_HELP_TOOLTIP_CONFIG\s*\)/,
     "自动检查模式说明按钮仍未绑定到独立 tooltip 模板。",
   ],

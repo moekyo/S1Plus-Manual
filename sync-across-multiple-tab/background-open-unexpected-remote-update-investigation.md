@@ -23,6 +23,19 @@
 
 - [same-device-unexpected-remote-update-findings-and-fix-plan.md](./same-device-unexpected-remote-update-findings-and-fix-plan.md)
 
+2026-04-21 follow-up：
+
+- 本轮已按上述结论继续落地一组补丁：
+  - `background / foreground_followup` 默认改用 `fresh snapshot`
+  - 新增 `s1p_core_data_refresh_signal`
+  - 新增可选 `syncDeviceId` 与远端 `syncMeta.lastWriter`
+  - same-session / same-device 的自动拉取提示与诊断已补齐
+- 这份文档仍保留为调查记录；实际落地与验证请以：
+  - [same-device-unexpected-remote-update-findings-and-fix-plan.md](./same-device-unexpected-remote-update-findings-and-fix-plan.md)
+  - [Phase 4](./sync_multitab_redesign/phases/phase_4_foreground_probe_and_visible_poll.md)
+  - [Phase 7](./sync_multitab_redesign/phases/phase_7_diagnostics_and_regression.md)
+    的 follow-up 更新为准。
+
 ## 2. 现象描述
 
 用户当前使用场景：

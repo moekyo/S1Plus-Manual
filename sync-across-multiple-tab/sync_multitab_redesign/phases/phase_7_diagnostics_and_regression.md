@@ -156,6 +156,30 @@
 - 下一步：
   - 先用新的“启动摘要 + 调试轨迹”复现并确认后台开帖页的真实生命周期，再决定是继续收紧 Phase 2 的“真实阅读成立”条件，还是去修 `GM_openInTab` 背景打开链路上的启动期判断
 
+## 11. 2026-04-21 Follow-up
+
+- 诊断继续补齐“同机误判远端更新”所需字段：
+  - `本机设备 ID`
+  - `最近远端写入`
+  - `最近探测是否同设备写入`
+- 远端同步文件新增 `syncMeta.lastWriter`，诊断可直接看到最近一次远端写入来自哪个设备 / 会话 / 标签页，以及动作与模式。
+- 固定脚本回归基线继续扩大：
+  - `sync-across-multiple-tab/scripts/test-core-data-snapshot-resync.js`
+    - 增加 background 默认 `fresh snapshot`
+    - 增加 `syncDeviceId` local-only 导出校验
+  - `sync-across-multiple-tab/scripts/test-foreground-same-session-remote-write.js`
+    - 增加 same-device writer 提示与诊断标记
+  - `sync-across-multiple-tab/scripts/test-post-sync-refresh-policy.js`
+    - 增加 same-device 刷新文案与 background wiring 断言
+  - `sync-across-multiple-tab/scripts/test-sync-settings-ui.js`
+    - 增加同步设备 ID 输入框 / 说明 / 保存回填断言
+- 本轮补跑验证：
+  - `node --check S1Plus.js`
+  - `node sync-across-multiple-tab/scripts/test-core-data-snapshot-resync.js`
+  - `node sync-across-multiple-tab/scripts/test-foreground-same-session-remote-write.js`
+  - `node sync-across-multiple-tab/scripts/test-post-sync-refresh-policy.js`
+  - `node sync-across-multiple-tab/scripts/test-sync-settings-ui.js`
+
 ## 10. 固定回归 Checklist
 
 1. 单标签页正常阅读
