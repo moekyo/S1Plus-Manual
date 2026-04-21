@@ -902,6 +902,10 @@
   const NAVBAR_SYNC_ALERT_SESSION_DISMISS_KEY =
     "s1p_nav_sync_alert_session_dismissed_signature";
   const SETTINGS_CROSS_TAB_SIGNAL_KEY = "s1p_settings_refresh_signal";
+  const CORE_DATA_CROSS_TAB_SIGNAL_KEY = "s1p_core_data_refresh_signal";
+  const SYNC_RUNTIME_SESSION_ID = `s1p_session_${Date.now()}_${Math.random()
+    .toString(36)
+    .slice(2)}`;
   const SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID = `s1p_tab_${Date.now()}_${Math.random()
     .toString(36)
     .slice(2)}`;
@@ -6780,10 +6784,13 @@
     lastProbeTriggeredSync: false,
     lastProbeTriggeredSyncResult: "",
     lastProbeSameSessionRemoteWrite: false,
+    lastProbeSameDeviceRemoteWrite: false,
     lastTriggerSource: "",
     lastPageVisibility: "",
     lastTabId: "",
     lastThreadId: "",
+    lastLocalSyncDeviceId: "",
+    lastRemoteWriterSummary: "",
     lastLocalHash: "",
     lastRemoteHash: "",
     lastBaselineHash: "",
@@ -6918,10 +6925,15 @@
       lastProbeSameSessionRemoteWrite: normalizeFlag(
         source.lastProbeSameSessionRemoteWrite
       ),
+      lastProbeSameDeviceRemoteWrite: normalizeFlag(
+        source.lastProbeSameDeviceRemoteWrite
+      ),
       lastTriggerSource: normalizeText(source.lastTriggerSource, 80),
       lastPageVisibility: normalizeText(source.lastPageVisibility, 32),
       lastTabId: normalizeText(source.lastTabId, 80),
       lastThreadId: normalizeText(source.lastThreadId, 40),
+      lastLocalSyncDeviceId: normalizeText(source.lastLocalSyncDeviceId, 80),
+      lastRemoteWriterSummary: normalizeText(source.lastRemoteWriterSummary, 220),
       lastLocalHash: normalizeText(source.lastLocalHash, 20),
       lastRemoteHash: normalizeText(source.lastRemoteHash, 20),
       lastBaselineHash: normalizeText(source.lastBaselineHash, 20),
@@ -7385,6 +7397,19 @@
       }) ||
       resolveSyncTriggerSourceFromReasonText(options.triggerReason) ||
       "";
+    const resolvedRemoteWriterSummary =
+      Object.prototype.hasOwnProperty.call(options, "remoteWriterSummary")
+        ? normalizeSyncDiagnosticText(options.remoteWriterSummary, 220)
+        : Object.prototype.hasOwnProperty.call(options, "remoteWriter")
+          ? normalizeSyncDiagnosticText(
+              buildRemoteSyncWriterSummary(options.remoteWriter),
+              220
+            )
+          : current.lastRemoteWriterSummary || "";
+    const resolvedLocalSyncDeviceId =
+      Object.prototype.hasOwnProperty.call(options, "localSyncDeviceId")
+        ? normalizeRemoteProbeText(options.localSyncDeviceId, 80)
+        : getLocalSyncDeviceId() || current.lastLocalSyncDeviceId || "";
 
     return {
       ...current,
@@ -7406,6 +7431,8 @@
         ? normalizeSyncDiagnosticText(options.tabId, 80)
         : normalizeSyncDiagnosticText(SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID, 80),
       lastThreadId: resolveSyncDiagnosticsThreadId(options.threadId),
+      lastLocalSyncDeviceId: resolvedLocalSyncDeviceId,
+      lastRemoteWriterSummary: resolvedRemoteWriterSummary,
       lastLocalHash: Object.prototype.hasOwnProperty.call(options, "localHash")
         ? normalizeSyncDiagnosticHash(options.localHash)
         : current.lastLocalHash || "",
@@ -7489,7 +7516,19 @@
     lastObservedAt: 0,
     lastSyncedRemoteUpdatedAt: null,
   });
+  const REMOTE_SYNC_LAST_WRITER_DEFAULT = Object.freeze({
+    deviceId: "",
+    sessionId: "",
+    sourceTabId: "",
+    threadId: "",
+    action: "",
+    syncMode: "",
+    remoteUpdatedAt: null,
+    createdAt: 0,
+  });
   const LOCAL_SESSION_REMOTE_WRITE_DEFAULT = Object.freeze({
+    deviceId: "",
+    sessionId: "",
     sourceTabId: "",
     threadId: "",
     action: "",
@@ -7517,6 +7556,84 @@
       .replace(/[<>]/g, "")
       .trim()
       .slice(0, maxLength);
+  const getLocalSyncDeviceId = (settingsSnapshot = null) => {
+    const sourceSettings =
+      settingsSnapshot && typeof settingsSnapshot === "object"
+        ? settingsSnapshot
+        : typeof getSettings === "function"
+          ? getSettings()
+          : null;
+    return normalizeRemoteProbeText(sourceSettings?.syncDeviceId, 80);
+  };
+  const normalizeRemoteSyncLastWriter = (value) => {
+    const source = sanitizeRecordObject(value);
+    const deviceId = normalizeRemoteProbeText(source.deviceId, 80);
+    const createdAt = normalizeRemoteProbeTimestamp(source.createdAt);
+    if (!deviceId || !createdAt) {
+      return null;
+    }
+    return {
+      deviceId,
+      sessionId: normalizeRemoteProbeText(source.sessionId, 120),
+      sourceTabId: normalizeRemoteProbeText(source.sourceTabId, 80),
+      threadId: normalizeNumericId(source.threadId) || "",
+      action: normalizeRemoteProbeText(source.action, 80),
+      syncMode: normalizeRemoteProbeText(source.syncMode, 60),
+      remoteUpdatedAt: normalizeRemoteProbeUpdatedAt(source.remoteUpdatedAt),
+      createdAt,
+    };
+  };
+  const normalizeRemoteSyncMeta = (value) => {
+    const source = sanitizeRecordObject(value);
+    const lastWriter = normalizeRemoteSyncLastWriter(source.lastWriter);
+    return lastWriter ? { lastWriter } : null;
+  };
+  const getRemoteSyncLastWriter = (remoteGistObject) =>
+    normalizeRemoteSyncMeta(remoteGistObject?.syncMeta)?.lastWriter || null;
+  const buildRemoteSyncWriterMetadata = (
+    {
+      action = "",
+      syncMode = "",
+      threadId = "",
+      sourceTabId = SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID,
+      sessionId = SYNC_RUNTIME_SESSION_ID,
+      deviceId = "",
+      remoteUpdatedAt = null,
+      createdAt = Date.now(),
+    } = {},
+    settingsSnapshot = null
+  ) => {
+    const resolvedDeviceId =
+      normalizeRemoteProbeText(deviceId, 80) || getLocalSyncDeviceId(settingsSnapshot);
+    if (!resolvedDeviceId) {
+      return null;
+    }
+    return normalizeRemoteSyncLastWriter({
+      deviceId: resolvedDeviceId,
+      sessionId,
+      sourceTabId,
+      threadId,
+      action,
+      syncMode,
+      remoteUpdatedAt,
+      createdAt,
+    });
+  };
+  const attachRemoteSyncMetaToDataObject = (dataObject, writer = null) => {
+    const normalizedDataObject = sanitizeRecordObject(dataObject);
+    const normalizedWriter = normalizeRemoteSyncLastWriter(writer);
+    if (!normalizedWriter) {
+      const nextDataObject = { ...normalizedDataObject };
+      delete nextDataObject.syncMeta;
+      return nextDataObject;
+    }
+    return {
+      ...normalizedDataObject,
+      syncMeta: {
+        lastWriter: normalizedWriter,
+      },
+    };
+  };
   const getNormalizedRemoteProbeState = (key, fallbackValue, normalizeState) =>
     normalizeState(GM_getValue(key, fallbackValue));
   const getRemoteProbeStateSignature = (value) =>
@@ -7581,6 +7698,9 @@
       return { ...LOCAL_SESSION_REMOTE_WRITE_DEFAULT };
     }
     return {
+      deviceId: normalizeRemoteProbeText(source.deviceId, 80),
+      sessionId:
+        normalizeRemoteProbeText(source.sessionId, 120) || SYNC_RUNTIME_SESSION_ID,
       sourceTabId:
         normalizeSyncDiagnosticText(source.sourceTabId, 80) ||
         SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID,
@@ -7622,6 +7742,7 @@
       case "smart_progress_push":
       case "smart_merge_pull":
       case "manual_push":
+      case "force_push":
       case "manual_force_push_repair":
         return true;
       default:
@@ -7634,6 +7755,8 @@
     remoteUpdatedAt = null,
     threadId = "",
     syncMode = "",
+    deviceId = "",
+    sessionId = SYNC_RUNTIME_SESSION_ID,
     sourceTabId = SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID,
     createdAt = Date.now(),
   } = {}) => {
@@ -7641,6 +7764,8 @@
       return { ...LOCAL_SESSION_REMOTE_WRITE_DEFAULT };
     }
     return setLastLocalSessionRemoteWrite({
+      deviceId: normalizeRemoteProbeText(deviceId, 80) || getLocalSyncDeviceId(),
+      sessionId,
       sourceTabId,
       threadId,
       action,
@@ -7655,6 +7780,8 @@
     remoteUpdatedAt = null,
     threadId = "",
     syncMode = "",
+    deviceId = "",
+    sessionId = SYNC_RUNTIME_SESSION_ID,
   } = {}) => {
     const normalizedRemoteUpdatedAt =
       normalizeRemoteProbeUpdatedAt(remoteUpdatedAt);
@@ -7666,6 +7793,8 @@
       remoteUpdatedAt: normalizedRemoteUpdatedAt,
       threadId,
       syncMode,
+      deviceId,
+      sessionId,
     });
   };
 
@@ -7687,6 +7816,42 @@
     }
     return null;
   };
+  const isRecentRemoteSyncWriter = (writer, now = Date.now()) => {
+    if (!writer || typeof writer !== "object") {
+      return false;
+    }
+    return now - (Number(writer.createdAt) || 0) <= LOCAL_SESSION_REMOTE_WRITE_TTL_MS;
+  };
+  const resolveRecentRemoteWriteMatch = ({
+    remoteUpdatedAt = null,
+    remoteWriter = null,
+    settingsSnapshot = null,
+    now = Date.now(),
+  } = {}) => {
+    const normalizedRemoteWriter = normalizeRemoteSyncLastWriter(remoteWriter);
+    const localDeviceId = getLocalSyncDeviceId(settingsSnapshot);
+    const sameSessionRemoteWrite = getMatchingLocalSessionRemoteWrite({
+      remoteUpdatedAt,
+      now,
+    });
+    const sameDeviceRemoteWrite = Boolean(
+      localDeviceId &&
+        normalizedRemoteWriter?.deviceId &&
+        localDeviceId === normalizedRemoteWriter.deviceId &&
+        isRecentRemoteSyncWriter(normalizedRemoteWriter, now)
+    );
+    return {
+      localDeviceId,
+      remoteWriter: normalizedRemoteWriter,
+      sameSessionRemoteWrite,
+      sameDeviceRemoteWrite,
+    };
+  };
+  const buildRecentRemoteWriteResultContext = (match = null) => ({
+    remoteWriter: match?.remoteWriter || null,
+    sameSessionRemoteWrite: Boolean(match?.sameSessionRemoteWrite),
+    sameDeviceRemoteWrite: match?.sameDeviceRemoteWrite === true,
+  });
 
   const normalizeRemoteProbeSharedCooldownState = (value) => {
     const source = sanitizeRecordObject(value);
@@ -7862,6 +8027,8 @@
     triggeredSyncResult = "",
     lastSyncedRemoteUpdatedAt = null,
     sameSessionRemoteWrite = false,
+    sameDeviceRemoteWrite = false,
+    remoteWriter = null,
     triggerSource = "",
     triggerReason = "",
   } = {}) => {
@@ -7951,6 +8118,11 @@
         220
       ),
       lastProbeSameSessionRemoteWrite: sameSessionRemoteWrite === true,
+      lastProbeSameDeviceRemoteWrite: sameDeviceRemoteWrite === true,
+      lastRemoteWriterSummary:
+        normalizeSyncDiagnosticText(buildRemoteSyncWriterSummary(remoteWriter), 220) ||
+        nextDiagnostics.lastRemoteWriterSummary ||
+        "",
     });
   };
 
@@ -8027,6 +8199,28 @@
     }
     return new Date(parsed).toLocaleString("zh-CN", { hour12: false });
   };
+  const buildRemoteSyncWriterSummary = (writer) => {
+    const normalizedWriter = normalizeRemoteSyncLastWriter(writer);
+    if (!normalizedWriter) {
+      return "";
+    }
+    const parts = [
+      `device=${normalizedWriter.deviceId}`,
+      `action=${normalizedWriter.action || "unknown"}`,
+      `mode=${normalizedWriter.syncMode || "unknown"}`,
+    ];
+    if (normalizedWriter.threadId) {
+      parts.push(`tid=${normalizedWriter.threadId}`);
+    }
+    if (normalizedWriter.sessionId) {
+      parts.push(`session=${normalizedWriter.sessionId}`);
+    }
+    if (normalizedWriter.sourceTabId) {
+      parts.push(`tab=${normalizedWriter.sourceTabId}`);
+    }
+    parts.push(`at=${formatSyncTime(normalizedWriter.createdAt)}`);
+    return parts.join(" | ");
+  };
 
   const formatProbeTriggeredSyncForDisplay = (diagnostics) => {
     if (!diagnostics.lastProbeTimestamp) {
@@ -8075,6 +8269,8 @@
       ["页面可见性", diagnostics.lastPageVisibility || "—"],
       ["标签页 ID", diagnostics.lastTabId || "—"],
       ["帖子 ID", diagnostics.lastThreadId || "—"],
+      ["本机设备 ID", diagnostics.lastLocalSyncDeviceId || "—"],
+      ["最近远端写入", diagnostics.lastRemoteWriterSummary || "—"],
       ["最近结果类型", diagnostics.lastSyncResultKind || "—"],
       ["最近结果码", diagnostics.lastSyncResultCode || "—"],
       ["最近阻断级别", diagnostics.lastSyncBlockKind || "—"],
@@ -8127,6 +8323,10 @@
       [
         "最近探测是否同机会话写入",
         formatSyncDiagnosticYesNo(diagnostics.lastProbeSameSessionRemoteWrite),
+      ],
+      [
+        "最近探测是否同设备写入",
+        formatSyncDiagnosticYesNo(diagnostics.lastProbeSameDeviceRemoteWrite),
       ],
       [
         "探测是否触发安全同步",
@@ -8525,38 +8725,47 @@
     syncLockMode = null,
     triggerSource = ""
   ) => {
+    const resolveFreshSnapshotDefault = (syncMode) =>
+      syncMode === AUTO_SYNC_MODE_BACKGROUND ||
+      syncMode === AUTO_SYNC_MODE_FOREGROUND_FOLLOWUP;
     if (typeof modeOrIsStartupSync === "string") {
+      const syncMode =
+        normalizeAutoSyncExecutionMode(modeOrIsStartupSync) ||
+        AUTO_SYNC_MODE_BACKGROUND;
       return {
-        syncMode:
-          normalizeAutoSyncExecutionMode(modeOrIsStartupSync) ||
-          AUTO_SYNC_MODE_BACKGROUND,
+        syncMode,
         syncLockMode,
         triggerSource,
-        useFreshLocalSnapshot: false,
+        useFreshLocalSnapshot: resolveFreshSnapshotDefault(syncMode),
       };
     }
 
     if (isObjectRecord(modeOrIsStartupSync)) {
+      const syncMode =
+        normalizeAutoSyncExecutionMode(modeOrIsStartupSync.mode) ||
+        (modeOrIsStartupSync.isStartupSync === true
+          ? AUTO_SYNC_MODE_STARTUP
+          : AUTO_SYNC_MODE_BACKGROUND);
       return {
-        syncMode:
-          normalizeAutoSyncExecutionMode(modeOrIsStartupSync.mode) ||
-          (modeOrIsStartupSync.isStartupSync === true
-            ? AUTO_SYNC_MODE_STARTUP
-            : AUTO_SYNC_MODE_BACKGROUND),
+        syncMode,
         syncLockMode: modeOrIsStartupSync.syncLockMode || null,
         triggerSource: String(modeOrIsStartupSync.triggerSource || ""),
-        useFreshLocalSnapshot: modeOrIsStartupSync.useFreshLocalSnapshot === true,
+        useFreshLocalSnapshot:
+          typeof modeOrIsStartupSync.useFreshLocalSnapshot === "boolean"
+            ? modeOrIsStartupSync.useFreshLocalSnapshot
+            : resolveFreshSnapshotDefault(syncMode),
       };
     }
 
+    const syncMode =
+      modeOrIsStartupSync === true
+        ? AUTO_SYNC_MODE_STARTUP
+        : AUTO_SYNC_MODE_BACKGROUND;
     return {
-      syncMode:
-        modeOrIsStartupSync === true
-          ? AUTO_SYNC_MODE_STARTUP
-          : AUTO_SYNC_MODE_BACKGROUND,
+      syncMode,
       syncLockMode,
       triggerSource,
-      useFreshLocalSnapshot: false,
+      useFreshLocalSnapshot: resolveFreshSnapshotDefault(syncMode),
     };
   };
 
@@ -10100,8 +10309,44 @@
     threadPageMessage: `${successLeadSentence}当前在帖子页，暂不自动刷新。`,
     dirtySettingsMessage: `${successLeadSentence}当前有未保存的设置编辑，暂不自动刷新。`,
   });
+  const createSameDeviceAutoPullRefreshMessages = (
+    deviceId = "",
+    action = "pulled",
+    sourceLabel = ""
+  ) => {
+    const normalizedDeviceId = normalizeRemoteProbeText(deviceId, 40);
+    const sameDeviceLabel = normalizedDeviceId
+      ? `同设备「${normalizedDeviceId}」`
+      : "同设备";
+    const leadPrefix = sourceLabel ? `${sourceLabel}检测到` : "检测到";
+    if (action === "force_pulled") {
+      return createAutoPullRefreshMessages(
+        `${leadPrefix}${sameDeviceLabel}已同步更新，已按强制策略覆盖本地。正在刷新页面...`,
+        `${leadPrefix}${sameDeviceLabel}已同步更新，已按强制策略覆盖本地。`
+      );
+    }
+    if (action === "merged_read_progress") {
+      return createAutoPullRefreshMessages(
+        `${leadPrefix}${sameDeviceLabel}已同步更新，已保留本地阅读进度并完成自动合并。正在刷新页面...`,
+        `${leadPrefix}${sameDeviceLabel}已同步更新，已保留本地阅读进度并完成自动合并。`
+      );
+    }
+    return createAutoPullRefreshMessages(
+      `${leadPrefix}${sameDeviceLabel}已同步更新，已自动拉取到本地。正在刷新页面...`,
+      `${leadPrefix}${sameDeviceLabel}已同步更新，已自动拉取到本地。`
+    );
+  };
 
-  const getDefaultAutoPullRefreshMessages = (action = "pulled") => {
+  const getDefaultAutoPullRefreshMessages = (
+    action = "pulled",
+    options = {}
+  ) => {
+    if (options.sameDeviceDeviceId) {
+      return createSameDeviceAutoPullRefreshMessages(
+        options.sameDeviceDeviceId,
+        action
+      );
+    }
     if (action === "force_pulled") {
       return createAutoPullRefreshMessages(
         "启动同步已按强制策略使用云端备份覆盖本地。正在刷新页面...",
@@ -10122,10 +10367,18 @@
 
   const getAutoPullRefreshMessagesForSource = (
     source = "generic",
-    action = "pulled"
+    action = "pulled",
+    options = {}
   ) => {
     switch (source) {
       case "background":
+        if (options.sameDeviceDeviceId) {
+          return createSameDeviceAutoPullRefreshMessages(
+            options.sameDeviceDeviceId,
+            action,
+            "后台自动同步"
+          );
+        }
         if (action === "merged_read_progress") {
           return createAutoPullRefreshMessages(
             "后台自动同步检测到云端变化，已保留本地阅读进度并完成自动合并。正在刷新页面...",
@@ -10137,6 +10390,13 @@
           "后台自动同步发现云端备份较新，已自动拉取到本地。"
         );
       case "daily":
+        if (options.sameDeviceDeviceId) {
+          return createSameDeviceAutoPullRefreshMessages(
+            options.sameDeviceDeviceId,
+            action,
+            "每日首次同步"
+          );
+        }
         if (action === "merged_read_progress") {
           return createAutoPullRefreshMessages(
             "每日首次同步检测到云端变化，已保留本地阅读进度并完成自动合并。正在刷新页面...",
@@ -10151,8 +10411,18 @@
           "每日首次同步发现云端备份较新，已自动拉取到本地。"
         );
       default:
-        return getDefaultAutoPullRefreshMessages(action);
+        return getDefaultAutoPullRefreshMessages(action, options);
     }
+  };
+  const getSameDeviceRefreshMessageOptions = (syncResult = null) => {
+    if (!syncResult?.sameDeviceRemoteWrite) {
+      return {};
+    }
+    const sameDeviceDeviceId = normalizeRemoteProbeText(
+      syncResult?.remoteWriter?.deviceId,
+      40
+    );
+    return sameDeviceDeviceId ? { sameDeviceDeviceId } : {};
   };
 
   const getAutoPullRefreshPlan = (options = {}) => {
@@ -10210,7 +10480,7 @@
     options.reason || `auto_pull:${action}`;
 
   const getAutoPullRefreshMessages = (options = {}, action = "pulled") => {
-    const defaultMessages = getDefaultAutoPullRefreshMessages(action);
+    const defaultMessages = getDefaultAutoPullRefreshMessages(action, options);
     if (!options.messages || typeof options.messages !== "object") {
       return defaultMessages;
     }
@@ -10481,6 +10751,10 @@
       sameSessionRemoteWrite:
         options.sameSessionRemoteWrite === true ||
         result?.sameSessionRemoteWrite === true,
+      sameDeviceRemoteWrite:
+        options.sameDeviceRemoteWrite === true ||
+        result?.sameDeviceRemoteWrite === true,
+      remoteWriter: options.remoteWriter || result?.remoteWriter || null,
       triggerSource: options.triggerReason,
       triggerReason: options.triggerReason,
     });
@@ -11696,6 +11970,7 @@
     }
     invalidateLocalDataHashCache();
     GM_setValue("s1p_blocked_threads", normalizedThreads);
+    emitCoreDataCrossTabSignal("s1p_blocked_threads");
     setComparableStoredValue("s1p_blocked_threads", normalizedThreads);
     setCoreDataCacheValue(blockedThreadsCache, normalizedThreads);
     if (!suppressSyncTrigger) {
@@ -11713,6 +11988,7 @@
     }
     invalidateLocalDataHashCache();
     GM_setValue("s1p_blocked_users", normalizedUsers);
+    emitCoreDataCrossTabSignal("s1p_blocked_users");
     setComparableStoredValue("s1p_blocked_users", normalizedUsers);
     setCoreDataCacheValue(blockedUsersCache, normalizedUsers);
     if (!suppressSyncTrigger) {
@@ -11728,6 +12004,7 @@
     }
     invalidateLocalDataHashCache();
     GM_setValue("s1p_user_tags", normalizedTags);
+    emitCoreDataCrossTabSignal("s1p_user_tags");
     setComparableStoredValue("s1p_user_tags", normalizedTags);
     setCoreDataCacheValue(userTagsCache, normalizedTags);
     if (!suppressSyncTrigger) {
@@ -11752,6 +12029,7 @@
     }
     invalidateLocalDataHashCache();
     GM_setValue("s1p_bookmarked_replies", normalizedReplies);
+    emitCoreDataCrossTabSignal("s1p_bookmarked_replies");
     setComparableStoredValue("s1p_bookmarked_replies", normalizedReplies);
     setCoreDataCacheValue(bookmarkedRepliesCache, normalizedReplies);
     if (!suppressSyncTrigger) {
@@ -11909,6 +12187,7 @@
     }
     invalidateLocalDataHashCache();
     GM_setValue("s1p_blocked_posts", normalizedPosts);
+    emitCoreDataCrossTabSignal("s1p_blocked_posts");
     setComparableStoredValue("s1p_blocked_posts", normalizedPosts);
     setCoreDataCacheValue(blockedPostsCache, normalizedPosts);
     if (!suppressSyncTrigger) {
@@ -12043,6 +12322,7 @@
     }
     invalidateLocalDataHashCache();
     GM_setValue("s1p_title_filter_rules", normalizedRules);
+    emitCoreDataCrossTabSignal("s1p_title_filter_rules");
     setComparableStoredValue("s1p_title_filter_rules", normalizedRules);
     setCoreDataCacheValue(titleFilterRulesCache, normalizedRules);
     if (!suppressSyncTrigger) {
@@ -13191,6 +13471,7 @@
     }
     invalidateLocalDataHashCache();
     GM_setValue("s1p_read_progress", normalizedProgress);
+    emitCoreDataCrossTabSignal("s1p_read_progress");
     setComparableStoredValue("s1p_read_progress", normalizedProgress);
     setCoreDataCacheValue(readProgressCache, normalizedProgress);
     if (!suppressSyncTrigger) {
@@ -17959,7 +18240,8 @@
 
   const getSyncedSettings = (settings = null) => {
     const sourceSettings = settings || getSettings();
-    const { syncRemoteGistId, syncRemotePat, ...syncedSettings } = sourceSettings;
+    const { syncRemoteGistId, syncRemotePat, syncDeviceId, ...syncedSettings } =
+      sourceSettings;
     return syncedSettings;
   };
 
@@ -18235,6 +18517,7 @@
         );
         delete importedSettings.syncRemoteGistId;
         delete importedSettings.syncRemotePat;
+        delete importedSettings.syncDeviceId;
         const {
           settings: mergedSettingsForImport,
           migrationApplied: settingsTransformedDuringImport,
@@ -19414,9 +19697,11 @@
               result.action === "merged_read_progress"
                 ? "background_merge_refresh"
                 : "background_auto_pull",
+            suppressMessage: result.sameSessionRemoteWrite === true,
             messages: getAutoPullRefreshMessagesForSource(
               "background",
-              result.action
+              result.action,
+              getSameDeviceRefreshMessageOptions(result)
             ),
           });
         }
@@ -19505,11 +19790,20 @@
   };
 
   const pushRemoteData = async (dataObject, options = {}) => {
-    const { expectedRemoteUpdatedAt } = options;
+    const { expectedRemoteUpdatedAt, writerContext = null, settingsSnapshot = null } =
+      options;
     const { syncRemoteGistId, syncRemotePat } = getSettings();
     if (!syncRemoteGistId || !syncRemotePat) {
       throw new Error("配置不完整");
     }
+    const writerMetadata = buildRemoteSyncWriterMetadata(
+      writerContext,
+      settingsSnapshot
+    );
+    const payloadDataObject = attachRemoteSyncMetaToDataObject(
+      dataObject,
+      writerMetadata
+    );
 
     if (typeof expectedRemoteUpdatedAt !== "undefined") {
       const { meta } = await fetchRemoteData({
@@ -19530,7 +19824,7 @@
     const payload = {
       files: {
         "s1plus_sync.json": {
-          content: JSON.stringify(dataObject, null, 2),
+          content: JSON.stringify(payloadDataObject, null, 2),
         },
       },
     };
@@ -19554,7 +19848,12 @@
         updatedAt = null;
       }
 
-      return { success: true, message: "数据已成功推送到Gist。", updatedAt };
+      return {
+        success: true,
+        message: "数据已成功推送到Gist。",
+        updatedAt,
+        writerMetadata,
+      };
     } catch (error) {
       if (error.code === REMOTE_VERSION_CONFLICT_CODE) {
         throw error;
@@ -19726,6 +20025,8 @@
     }
 
     let data, version, contentHash, baseContentHash, lastUpdated;
+    const syncMeta = normalizeRemoteSyncMeta(remoteGistObject.syncMeta);
+    const lastWriter = syncMeta?.lastWriter || null;
 
     // 场景1: 新版数据结构 (v4.0+)
     if (remoteGistObject.data && remoteGistObject.version >= 4.0) {
@@ -19781,6 +20082,8 @@
       contentHash,
       baseContentHash,
       lastUpdated,
+      syncMeta,
+      lastWriter,
       full: remoteGistObject,
     };
   };
@@ -19845,8 +20148,10 @@
     const exportLocalDataOptions = executionOptions.useFreshLocalSnapshot
       ? { useFreshSnapshot: true }
       : {};
+    const localSyncDeviceId = getLocalSyncDeviceId(settings);
     let syncDiagnosticsContext = {
       triggerSource: resolvedTriggerSource,
+      localSyncDeviceId,
     };
     const updateSyncDiagnosticsContext = (partial = {}) => {
       syncDiagnosticsContext = {
@@ -19927,12 +20232,18 @@
           getCurrentThreadId() ||
           "",
         syncMode,
+        deviceId: localSyncDeviceId,
+        sessionId: SYNC_RUNTIME_SESSION_ID,
       });
       resetAutoSyncFailureState();
       recordSyncSuccess(action, syncMode, {
         ...syncDiagnosticsContext,
         reason:
           extraResult && typeof extraResult === "object" ? extraResult.reason : "",
+        remoteWriter:
+          extraResult && typeof extraResult === "object"
+            ? extraResult.remoteWriter || null
+            : null,
       });
       updateLastSyncTimeDisplay();
       const baseResult = { status: "success", action };
@@ -19989,12 +20300,19 @@
           () =>
             pushRemoteData(localData, {
               expectedRemoteUpdatedAt: remoteMeta.updatedAt,
+              writerContext: {
+                action: "pushed_initial",
+                syncMode,
+                threadId: getCurrentThreadId() || "",
+              },
+              settingsSnapshot: settings,
             })
         );
         GM_setValue("s1p_last_sync_timestamp", Date.now());
         return asSuccessResult("pushed_initial", {
           contentHash: localData.contentHash,
           remoteUpdatedAt: pushResult?.updatedAt || null,
+          remoteWriter: pushResult?.writerMetadata || null,
         });
       }
 
@@ -20006,12 +20324,20 @@
         "export_local_data",
         () => exportLocalDataObject(exportLocalDataOptions)
       );
+      const recentRemoteWriteMatch = resolveRecentRemoteWriteMatch({
+        remoteUpdatedAt: remoteMeta.updatedAt,
+        remoteWriter: remote.lastWriter,
+        settingsSnapshot: settings,
+      });
+      const recentRemoteWriteResultContext =
+        buildRecentRemoteWriteResultContext(recentRemoteWriteMatch);
       updateSyncDiagnosticsContext({
         localHash: shortHashForLog(localDataObject.contentHash),
         remoteHash: shortHashForLog(remote.contentHash),
         baselineHash: shortHashForLog(getSyncBaselineState()?.contentHash),
         cleanupInfo: getPendingCleanupInfo(),
         threadId: getCurrentThreadId() || "",
+        remoteWriter: recentRemoteWriteMatch.remoteWriter,
       });
 
       const versionDecision = decideSyncActionByVersion({
@@ -20056,6 +20382,7 @@
           return asSuccessResult("no_change", {
             contentHash: localDataObject.contentHash,
             remoteUpdatedAt: remoteMeta.updatedAt || null,
+            ...recentRemoteWriteResultContext,
           });
 
         case "force_pull":
@@ -20076,6 +20403,7 @@
           return asSuccessResult("force_pulled", {
             contentHash: remote.contentHash,
             remoteUpdatedAt: remoteMeta.updatedAt || null,
+            ...recentRemoteWriteResultContext,
           });
 
         case "pull":
@@ -20094,6 +20422,7 @@
           return asSuccessResult("pulled", {
             contentHash: remote.contentHash,
             remoteUpdatedAt: remoteMeta.updatedAt || null,
+            ...recentRemoteWriteResultContext,
           });
 
         case "skip_push_on_startup":
@@ -20127,12 +20456,19 @@
               () =>
                 pushRemoteData(localDataObject, {
                   expectedRemoteUpdatedAt: remoteMeta.updatedAt,
+                  writerContext: {
+                    action: "pushed",
+                    syncMode,
+                    threadId: getCurrentThreadId() || "",
+                  },
+                  settingsSnapshot: settings,
                 })
             );
             GM_setValue("s1p_last_sync_timestamp", Date.now());
             return asSuccessResult("pushed", {
               contentHash: localDataObject.contentHash,
               remoteUpdatedAt: pushResult?.updatedAt || null,
+              remoteWriter: pushResult?.writerMetadata || null,
             });
           }
 
@@ -20203,6 +20539,12 @@
               () =>
                 pushRemoteData(mergedPayload, {
                   expectedRemoteUpdatedAt: remoteMeta.updatedAt,
+                  writerContext: {
+                    action: "merged_read_progress",
+                    syncMode,
+                    threadId: getCurrentThreadId() || "",
+                  },
+                  settingsSnapshot: settings,
                 })
             );
             assertAutoSyncLockOwned("apply_merged_payload");
@@ -20213,6 +20555,11 @@
             return asSuccessResult("merged_read_progress", {
               contentHash: mergedContentHash,
               remoteUpdatedAt: pushResult?.updatedAt || null,
+              remoteWriter: pushResult?.writerMetadata || null,
+              sameSessionRemoteWrite:
+                recentRemoteWriteResultContext.sameSessionRemoteWrite,
+              sameDeviceRemoteWrite:
+                recentRemoteWriteResultContext.sameDeviceRemoteWrite,
             });
           }
       }
@@ -20712,6 +21059,12 @@
           applyRefreshPolicyForSyncResult
         )(syncResult, {
           reason: `foreground_retry:${normalizedReason}`,
+          suppressMessage: syncResult?.sameSessionRemoteWrite === true,
+          messages: getAutoPullRefreshMessagesForSource(
+            "generic",
+            syncResult?.action,
+            getSameDeviceRefreshMessageOptions(syncResult)
+          ),
         });
         (
           options.maybeShowForegroundProbeFeedback ||
@@ -20981,11 +21334,21 @@
         clearForegroundRemoteSyncRetry();
       }
       let refreshPlan = null;
+      const matchedSameSessionRemoteWrite =
+        Boolean(sameSessionRemoteWrite) ||
+        syncRequestResult?.sameSessionRemoteWrite === true;
+      const matchedSameDeviceRemoteWrite =
+        syncRequestResult?.sameDeviceRemoteWrite === true;
       if (shouldApplyAutoPullRefreshForSyncResult(syncRequestResult)) {
         refreshPlan = applyRefreshPolicyForSyncResult(syncRequestResult, {
           reason: `foreground_probe:${normalizedReason}`,
           showMessage: overrides.showMessage,
-          suppressMessage: Boolean(sameSessionRemoteWrite),
+          suppressMessage: matchedSameSessionRemoteWrite,
+          messages: getAutoPullRefreshMessagesForSource(
+            "generic",
+            syncRequestResult?.action,
+            getSameDeviceRefreshMessageOptions(syncRequestResult)
+          ),
           locationObject: overrides.locationObject,
           setTimeoutFn: overrides.setTimeoutFn,
         });
@@ -21000,7 +21363,9 @@
           lastObservedRemoteUpdatedAt,
           syncRequestResult,
           refreshPlan,
-          sameSessionRemoteWrite: Boolean(sameSessionRemoteWrite),
+          sameSessionRemoteWrite: matchedSameSessionRemoteWrite,
+          sameDeviceRemoteWrite: matchedSameDeviceRemoteWrite,
+          remoteWriter: syncRequestResult?.remoteWriter || null,
           snapshotResyncResult,
           settingsSnapshotResynced,
         },
@@ -21011,7 +21376,9 @@
             formatForegroundProbeSyncResultForDiagnostics(syncRequestResult),
           lastSyncedRemoteUpdatedAt: getLastRemoteProbeInfo()
             .lastSyncedRemoteUpdatedAt || lastSyncedRemoteUpdatedAt,
-          sameSessionRemoteWrite: Boolean(sameSessionRemoteWrite),
+          sameSessionRemoteWrite: matchedSameSessionRemoteWrite,
+          sameDeviceRemoteWrite: matchedSameDeviceRemoteWrite,
+          remoteWriter: syncRequestResult?.remoteWriter || null,
         }
       );
     })();
@@ -21071,6 +21438,7 @@
       consumeBackgroundOpenThreadHint,
       getAutoPullRefreshPlan,
       applyAutoPullRefreshPolicy,
+      getAutoPullRefreshMessagesForSource,
       clearPendingAutoPullReloadTimer,
       runStartupModeAutoSyncCheck,
       requestForegroundRemoteSyncCheck,
@@ -21170,6 +21538,7 @@
     syncForcePullOnStartup: false, // <-- [新增] 新增功能开关
     syncDirectChoiceMode: false,
     syncBookmarkFullContent: false,
+    syncDeviceId: "",
     syncRemoteGistId: "",
     syncRemotePat: "",
     syncTokenExpiryEnabled: false, // [新增] Token 过期提醒
@@ -21501,6 +21870,15 @@
     }
     settings.syncBookmarkFullContent = normalizedSyncBookmarkFullContent;
 
+    const normalizedSyncDeviceId = normalizeRemoteProbeText(
+      settings.syncDeviceId,
+      80
+    );
+    if (settings.syncDeviceId !== normalizedSyncDeviceId) {
+      markMigration("sync_device_id_normalized");
+    }
+    settings.syncDeviceId = normalizedSyncDeviceId;
+
     const normalizedLimitImagesBySize = normalizeBooleanWithDefault(
       settings.limitImagesBySize,
       true
@@ -21646,6 +22024,10 @@
       releaseRemoteProbeLockValue,
       clearRemoteProbeState,
       setSyncBaselineState,
+      resolveAutoSyncExecutionOptions,
+      buildRemoteSyncWriterMetadata,
+      getRemoteSyncLastWriter,
+      resolveRecentRemoteWriteMatch,
       exportLocalDataObject,
     };
   }
@@ -21719,6 +22101,7 @@
     "syncShowAutoSyncIndicator",
     "syncForcePullOnStartup",
     "syncBookmarkFullContent",
+    "syncDeviceId",
     "syncTokenExpiryEnabled",
     "syncTokenExpiryDate",
   ];
@@ -21817,11 +22200,55 @@
       ts: Number(rawValue) || 0,
     };
   };
+  const parseCoreDataCrossTabSignalPayload = (rawValue) => {
+    if (
+      rawValue &&
+      typeof rawValue === "object" &&
+      !Array.isArray(rawValue)
+    ) {
+      return {
+        sender:
+          typeof rawValue.sender === "string" ? rawValue.sender : "",
+        ts: Number(rawValue.ts) || 0,
+        key: normalizeSyncDiagnosticText(rawValue.key, 80),
+      };
+    }
+    return {
+      sender: "",
+      ts: 0,
+      key: "",
+    };
+  };
+  const emitCoreDataCrossTabSignal = (key) => {
+    const normalizedKey = normalizeSyncDiagnosticText(key, 80);
+    if (!normalizedKey) {
+      return false;
+    }
+    GM_setValue(CORE_DATA_CROSS_TAB_SIGNAL_KEY, {
+      ts: Date.now(),
+      key: normalizedKey,
+      sender: SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID,
+      nonce: Math.random(),
+    });
+    return true;
+  };
   const shouldHandleCoreDataCrossTabChange = (
     key,
     newValue,
     isCrossContextChange
   ) => {
+    if (key === CORE_DATA_CROSS_TAB_SIGNAL_KEY) {
+      const signalPayload = parseCoreDataCrossTabSignalPayload(newValue);
+      if (
+        signalPayload.sender &&
+        signalPayload.sender === SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID
+      ) {
+        return false;
+      }
+      return Boolean(
+        signalPayload.key && (isCrossContextChange || signalPayload.sender)
+      );
+    }
     if (key !== SETTINGS_CROSS_TAB_SIGNAL_KEY) {
       return Boolean(isCrossContextChange);
     }
@@ -22505,6 +22932,17 @@
           ) {
             return;
           }
+          if (key === CORE_DATA_CROSS_TAB_SIGNAL_KEY) {
+            const signalPayload = parseCoreDataCrossTabSignalPayload(newValue);
+            if (!signalPayload.key) {
+              return;
+            }
+            syncCoreDataFromStorageSnapshotIfNeeded({
+              keys: [signalPayload.key],
+              applyImmediately: false,
+            });
+            return;
+          }
           setComparableStoredValue(key, newValue);
           if (cacheState) {
             setCoreDataCacheValue(cacheState, newValue);
@@ -22521,6 +22959,7 @@
     bindCoreDataCacheSync("s1p_title_filter_rules", titleFilterRulesCache);
     bindCoreDataCacheSync("s1p_user_tags", userTagsCache);
     bindCoreDataCacheSync("s1p_bookmarked_replies", bookmarkedRepliesCache);
+    bindCoreDataCacheSync(CORE_DATA_CROSS_TAB_SIGNAL_KEY);
     bindCoreDataCacheSync(SETTINGS_CROSS_TAB_SIGNAL_KEY);
     document.addEventListener("visibilitychange", () => {
       if (
@@ -22927,7 +23366,13 @@
       assertManualSyncLockOwned("before_export_local_data");
       const localData = await exportLocalDataObject();
       assertManualSyncLockOwned("before_push_remote_data");
-      await pushRemoteData(localData);
+      const forcePushResult = await pushRemoteData(localData, {
+        writerContext: {
+          action: "force_push",
+          syncMode: "manual",
+          threadId: getCurrentThreadId() || "",
+        },
+      });
       assertManualSyncLockOwned("after_push_remote_data");
       // [FIX] 强制推送后清除残留的清理标记
       clearPendingCleanupInfo();
@@ -22935,9 +23380,19 @@
       clearAutoSyncConflictPause();
       GM_setValue("s1p_last_sync_timestamp", Date.now());
       setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_SUCCESS);
+      recordSuccessfulRemoteWriteIfNeeded({
+        action: "force_push",
+        remoteUpdatedAt: forcePushResult?.updatedAt || null,
+        threadId: getCurrentThreadId() || "",
+        syncMode: "manual",
+        deviceId: getLocalSyncDeviceId(),
+        sessionId: SYNC_RUNTIME_SESSION_ID,
+      });
       resetAutoSyncFailureState();
       recordSyncSuccess("force_push", "manual", {
         triggerSource: SYNC_TRIGGER_SOURCE_MANUAL_SYNC,
+        localSyncDeviceId: getLocalSyncDeviceId(),
+        remoteWriter: forcePushResult?.writerMetadata || null,
         localHash: shortHashForLog(localData.contentHash),
         baselineHash: shortHashForLog(getSyncBaselineState()?.contentHash),
       });
@@ -25639,6 +26094,11 @@
             </label>
           </div>
           <p class="s1p-setting-desc">关闭时仅同步 280 字预览（更快更省流量）；开启后会同步完整收藏内容（跨设备可查看全文，但体积更大）。</p>
+          <div class="s1p-settings-item s1p-settings-item-column s1p-settings-item-top12">
+            <label class="s1p-settings-label" for="s1p-sync-device-id-input">同步设备 ID</label>
+            <input type="text" id="s1p-sync-device-id-input" class="s1p-input s1p-input-full" placeholder="例如：MacBook-Pro-主力机" autocomplete="off" data-s1p-sync-control>
+          </div>
+          <p class="s1p-setting-desc">可选，仅用于标记这台设备发起的远程同步，方便诊断“是谁写了云端”。留空则忽略，不会同步到其他设备，也不参与冲突裁决。</p>
           <div class="s1p-settings-item s1p-settings-item-column">
             <label class="s1p-settings-label" for="s1p-remote-gist-id-input">Gist ID</label>
             <input type="text" id="s1p-remote-gist-id-input" class="s1p-input s1p-input-full" placeholder="从 Gist 网址中复制的那一长串 ID" autocomplete="off" data-s1p-sync-control>
@@ -26152,6 +26612,7 @@
       bookmarkFullContentToggle: modal.querySelector(
         "#s1p-sync-bookmark-full-content-toggle"
       ),
+      syncDeviceIdInput: modal.querySelector("#s1p-sync-device-id-input"),
       remoteGistIdInput: modal.querySelector("#s1p-remote-gist-id-input"),
       remotePatInput: modal.querySelector("#s1p-remote-pat-input"),
       forcePullWrapper: modal.querySelector("#s1p-force-pull-subgroup"),
@@ -26173,6 +26634,7 @@
       autoSyncIndicatorToggle,
       autoSyncIndicatorSubGroup,
       bookmarkFullContentToggle,
+      syncDeviceIdInput,
       remoteGistIdInput,
       remotePatInput,
       forcePullWrapper,
@@ -26404,6 +26866,7 @@
     );
     bindDirtyListenerForTextInput(remoteGistIdInput);
     bindDirtyListenerForTextInput(remotePatInput);
+    bindDirtyListenerForTextInput(syncDeviceIdInput);
 
     // [新增] Token 过期提醒逻辑
     const normalizeTokenExpiryDateValue = (value) => {
@@ -26489,6 +26952,7 @@
         settingsSnapshot.syncShowAutoSyncIndicator !== false;
       bookmarkFullContentToggle.checked =
         settingsSnapshot.syncBookmarkFullContent === true;
+      syncDeviceIdInput.value = settingsSnapshot.syncDeviceId || "";
       forcePullToggle.checked = settingsSnapshot.syncForcePullOnStartup === true;
       directChoiceModeToggle.checked =
         settingsSnapshot.syncDirectChoiceMode === true;
@@ -26516,6 +26980,7 @@
         syncForcePullOnStartup: dailySyncToggle.checked && forcePullToggle.checked,
         syncDirectChoiceMode: directChoiceModeToggle.checked === true,
         syncBookmarkFullContent: bookmarkFullContentToggle.checked,
+        syncDeviceId: syncDeviceIdInput.value.trim(),
         syncRemoteGistId: remoteGistIdInput.value.trim(),
         syncRemotePat: remotePatInput.value.trim(),
         syncTokenExpiryEnabled: tokenExpiryToggle.checked,
@@ -30528,6 +30993,7 @@
         recordSyncAttempt("manual", "manual_sync");
         const buildManualSyncDiagnosticsContext = (overrides = {}) => ({
           triggerSource: SYNC_TRIGGER_SOURCE_MANUAL_SYNC,
+          localSyncDeviceId: getLocalSyncDeviceId(settings),
           ...overrides,
         });
         const noteManualSuccess = (
@@ -30550,6 +31016,8 @@
               getCurrentThreadId() ||
               "",
             syncMode: "manual",
+            deviceId: getLocalSyncDeviceId(settings),
+            sessionId: SYNC_RUNTIME_SESSION_ID,
           });
           resetAutoSyncFailureState();
           recordSyncSuccess(
@@ -30669,6 +31137,8 @@
                     noteManualSuccess("initial_pull_recover", {
                       contentHash: latestRemoteDataObj.contentHash,
                       remoteUpdatedAt: latestRemoteUpdatedAt,
+                    }, {
+                      remoteWriter: latestRemoteDataObj.lastWriter || null,
                     });
                     showMessage("恢复成功！页面即将刷新。", true);
                     setTimeout(() => location.reload(), 1200);
@@ -30730,6 +31200,12 @@
                     () =>
                       pushRemoteData(localData, {
                         expectedRemoteUpdatedAt: remoteMetaUpdatedAt,
+                        writerContext: {
+                          action: "initial_push_seed",
+                          syncMode: "manual",
+                          threadId: getCurrentThreadId() || "",
+                        },
+                        settingsSnapshot: settings,
                       })
                   );
                   GM_setValue("s1p_last_sync_timestamp", Date.now());
@@ -30740,18 +31216,20 @@
                   noteManualSuccess("initial_push_seed", {
                     contentHash: localData.contentHash,
                     remoteUpdatedAt: pushResult?.updatedAt || null,
+                  }, {
+                    remoteWriter: pushResult?.writerMetadata || null,
                   });
                   showMessage("推送成功！已初始化云端备份。", true);
                   resolve(true);
                 } catch (e) {
                   if (e?.code === REMOTE_VERSION_CONFLICT_CODE) {
-                  noteManualConflict("remote_changed_before_initial_push");
-                  showMessage(
-                    "推送失败：云端数据已变化，请重新发起全局手动同步。",
-                    false
-                  );
-                  resolve(false);
-                  return;
+                    noteManualConflict("remote_changed_before_initial_push");
+                    showMessage(
+                      "推送失败：云端数据已变化，请重新发起全局手动同步。",
+                      false
+                    );
+                    resolve(false);
+                    return;
                   }
                   noteManualFailure(e.message);
                   showMessage(`推送失败: ${e.message}`, false);
@@ -30796,6 +31274,16 @@
             remoteDataObject: remote,
             remoteUpdatedAt: remoteMetaUpdatedAt,
           });
+          const currentThreadId = getCurrentThreadId();
+          const pendingCleanupInfo = getPendingCleanupInfo();
+          const decisionDiagnostics = {
+            localHash: shortHashForLog(localDataObject.contentHash),
+            remoteHash: shortHashForLog(remote.contentHash),
+            baselineHash: shortHashForLog(getSyncBaselineState()?.contentHash),
+            cleanupInfo: pendingCleanupInfo,
+            threadId: currentThreadId || "",
+            remoteWriter: remote.lastWriter || null,
+          };
 
           if (remote.contentHash === localDataObject.contentHash) {
             clearPendingCleanupInfo();
@@ -30813,15 +31301,6 @@
           }
 
           const localNewer = versionDecision.localNewer === true;
-          const currentThreadId = getCurrentThreadId();
-          const pendingCleanupInfo = getPendingCleanupInfo();
-          const decisionDiagnostics = {
-            localHash: shortHashForLog(localDataObject.contentHash),
-            remoteHash: shortHashForLog(remote.contentHash),
-            baselineHash: shortHashForLog(getSyncBaselineState()?.contentHash),
-            cleanupInfo: pendingCleanupInfo,
-            threadId: currentThreadId || "",
-          };
           const activeConflictPause = getActiveAutoSyncConflictPause();
           const cleanupShortcutDecision = await evaluateCleanupSyncShortcut({
             pendingCleanupInfo,
@@ -30869,6 +31348,12 @@
                 () =>
                   pushRemoteData(localDataObject, {
                     expectedRemoteUpdatedAt: remoteMetaUpdatedAt,
+                    writerContext: {
+                      action: "cleanup_shortcut_push",
+                      syncMode: "manual",
+                      threadId: getCurrentThreadId() || "",
+                    },
+                    settingsSnapshot: settings,
                   })
               );
               clearPendingCleanupInfo();
@@ -30883,7 +31368,10 @@
                   contentHash: localDataObject.contentHash,
                   remoteUpdatedAt: pushResult?.updatedAt || null,
                 },
-                decisionDiagnostics
+                {
+                  ...decisionDiagnostics,
+                  remoteWriter: pushResult?.writerMetadata || null,
+                }
               );
               showMessage(cleanupMessages.successMessage, true);
               return resolve(true);
@@ -30923,6 +31411,12 @@
                   () =>
                     pushRemoteData(localDataObject, {
                       expectedRemoteUpdatedAt: remoteMetaUpdatedAt,
+                      writerContext: {
+                        action: "smart_progress_push",
+                        syncMode: "manual",
+                        threadId: getCurrentThreadId() || "",
+                      },
+                      settingsSnapshot: settings,
                     })
                 );
                 GM_setValue("s1p_last_sync_timestamp", Date.now());
@@ -30932,7 +31426,10 @@
                     contentHash: localDataObject.contentHash,
                     remoteUpdatedAt: pushResult?.updatedAt || null,
                   },
-                  decisionDiagnostics
+                  {
+                    ...decisionDiagnostics,
+                    remoteWriter: pushResult?.writerMetadata || null,
+                  }
                 );
                 showMessage("智能同步成功！已将本地最新进度推送到云端。", true);
                 return resolve(true);
@@ -30964,6 +31461,12 @@
                 () =>
                   pushRemoteData(mergedPayload, {
                     expectedRemoteUpdatedAt: remoteMetaUpdatedAt,
+                    writerContext: {
+                      action: "smart_merge_pull",
+                      syncMode: "manual",
+                      threadId: getCurrentThreadId() || "",
+                    },
+                    settingsSnapshot: settings,
                   })
               );
               assertManualSyncLockOwned("smart_merge_pull_import");
@@ -30977,7 +31480,10 @@
                   contentHash: mergedContentHash,
                   remoteUpdatedAt: pushResult?.updatedAt || null,
                 },
-                decisionDiagnostics
+                {
+                  ...decisionDiagnostics,
+                  remoteWriter: pushResult?.writerMetadata || null,
+                }
               );
               applyAutoPullRefreshPolicy({
                 action: "merged_read_progress",
@@ -31045,6 +31551,7 @@
                     {
                       ...decisionDiagnostics,
                       remoteHash: shortHashForLog(latestRemote.contentHash),
+                      remoteWriter: latestRemote.lastWriter || null,
                     }
                   );
                   showMessage(`拉取成功！页面即将刷新。`, true);
@@ -31081,6 +31588,12 @@
                   () =>
                     pushRemoteData(localDataObject, {
                       expectedRemoteUpdatedAt: remoteMetaUpdatedAt,
+                      writerContext: {
+                        action: "manual_push",
+                        syncMode: "manual",
+                        threadId: getCurrentThreadId() || "",
+                      },
+                      settingsSnapshot: settings,
                     })
                 );
                 clearPendingCleanupInfo();
@@ -31095,7 +31608,10 @@
                     contentHash: localDataObject.contentHash,
                     remoteUpdatedAt: pushResult?.updatedAt || null,
                   },
-                  decisionDiagnostics
+                  {
+                    ...decisionDiagnostics,
+                    remoteWriter: pushResult?.writerMetadata || null,
+                  }
                 );
                 showMessage("推送成功！已更新云端备份。", true);
                 resolve(true);
@@ -31164,6 +31680,12 @@
                     () =>
                       pushRemoteData(localDataObjectForPush, {
                         expectedRemoteUpdatedAt: remoteMetaUpdatedAt,
+                        writerContext: {
+                          action: "manual_force_push_repair",
+                          syncMode: "manual",
+                          threadId: getCurrentThreadId() || "",
+                        },
+                        settingsSnapshot: settings,
                       })
                   );
                   GM_setValue("s1p_last_sync_timestamp", Date.now());
@@ -31174,6 +31696,8 @@
                   noteManualSuccess("manual_force_push_repair", {
                     contentHash: localDataObjectForPush.contentHash,
                     remoteUpdatedAt: pushResult?.updatedAt || null,
+                  }, {
+                    remoteWriter: pushResult?.writerMetadata || null,
                   });
                   showMessage("推送成功！已使用本地数据修复云端备份。", true);
                   resolve(true);
@@ -35486,6 +36010,12 @@
         if (shouldApplyAutoPullRefreshForSyncResult(result)) {
           applyRefreshPolicyForSyncResult(result, {
             reason: "per_load_auto_pull",
+            suppressMessage: result.sameSessionRemoteWrite === true,
+            messages: getAutoPullRefreshMessagesForSource(
+              "generic",
+              result.action,
+              getSameDeviceRefreshMessageOptions(result)
+            ),
           });
           return true;
         }
@@ -35571,9 +36101,11 @@
                 : result.action === "merged_read_progress"
                   ? "daily_startup_merged_read_progress"
                   : "daily_startup_pull",
+            suppressMessage: result.sameSessionRemoteWrite === true,
             messages: getAutoPullRefreshMessagesForSource(
               "daily",
-              result.action
+              result.action,
+              getSameDeviceRefreshMessageOptions(result)
             ),
           });
           return true;

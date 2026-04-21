@@ -2,13 +2,20 @@
 "use strict";
 
 const assert = require("assert/strict");
-const { createHarness: createBaseHarness } = require("./s1plus-test-helpers");
+const {
+  createHarness: createBaseHarness,
+  sourceCode,
+} = require("./s1plus-test-helpers");
 const toPlainObject = (value) => JSON.parse(JSON.stringify(value));
 
 const createHarness = () =>
   createBaseHarness({
     hookErrorMessage: "未能从 S1Plus.js 暴露核心数据快照收敛测试钩子。",
   });
+
+const expectMatch = (pattern, message) => {
+  assert.match(sourceCode, pattern, message);
+};
 
 const testReadProgressSnapshotResyncRefreshesStaleCache = () => {
   const { hooks, sandbox } = createHarness();
@@ -96,10 +103,79 @@ const testNoopSnapshotResyncStaysQuietWhenUnchanged = () => {
   assert.deepStrictEqual(toPlainObject(result.changedKeys), []);
 };
 
+const testBackgroundAutoSyncDefaultsToFreshSnapshot = () => {
+  const { hooks } = createHarness();
+
+  assert.equal(
+    hooks.resolveAutoSyncExecutionOptions("background").useFreshLocalSnapshot,
+    true
+  );
+  assert.equal(
+    hooks.resolveAutoSyncExecutionOptions({
+      mode: "foreground_followup",
+    }).useFreshLocalSnapshot,
+    true
+  );
+  assert.equal(
+    hooks.resolveAutoSyncExecutionOptions(true).useFreshLocalSnapshot,
+    false
+  );
+};
+
+const testSyncDeviceIdStaysLocalOnlyInExport = async () => {
+  const { hooks, sandbox } = createHarness();
+  sandbox.GM_setValue("s1p_settings", {
+    syncDeviceId: " Mac-Main ",
+    syncRemoteGistId: "gist-id",
+    syncRemotePat: "pat-token",
+  });
+
+  const normalizedSettings = hooks.buildNormalizedSettings(
+    sandbox.GM_getValue("s1p_settings", {})
+  ).settings;
+  assert.equal(normalizedSettings.syncDeviceId, "Mac-Main");
+
+  const exported = await hooks.exportLocalDataObject({
+    useFreshSnapshot: true,
+    compactBookmarksForSync: false,
+    compactBlockedPostsForSync: false,
+  });
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(exported.data.settings, "syncDeviceId"),
+    false
+  );
+};
+
+const testCoreDataCrossTabSignalWiringPresent = () => {
+  expectMatch(
+    /const CORE_DATA_CROSS_TAB_SIGNAL_KEY = "s1p_core_data_refresh_signal";/,
+    "未新增核心数据跨标签 signal key。"
+  );
+  expectMatch(
+    /const emitCoreDataCrossTabSignal = \(key\) => \{/,
+    "未新增核心数据跨标签 signal helper。"
+  );
+  expectMatch(
+    /emitCoreDataCrossTabSignal\("s1p_read_progress"\);/,
+    "阅读进度保存后未发送核心数据跨标签 signal。"
+  );
+  expectMatch(
+    /bindCoreDataCacheSync\(CORE_DATA_CROSS_TAB_SIGNAL_KEY\);/,
+    "核心数据缓存同步未监听新的 signal key。"
+  );
+  expectMatch(
+    /if \(key === CORE_DATA_CROSS_TAB_SIGNAL_KEY\) \{[\s\S]*syncCoreDataFromStorageSnapshotIfNeeded\(\{[\s\S]*keys: \[signalPayload\.key\]/m,
+    "核心数据 signal 未回退到 storage snapshot 收敛。"
+  );
+};
+
 const main = async () => {
   testReadProgressSnapshotResyncRefreshesStaleCache();
   await testFreshSnapshotExportBypassesStaleCache();
   testNoopSnapshotResyncStaysQuietWhenUnchanged();
+  testBackgroundAutoSyncDefaultsToFreshSnapshot();
+  await testSyncDeviceIdStaysLocalOnlyInExport();
+  testCoreDataCrossTabSignalWiringPresent();
   console.log("[core-data-snapshot-resync] checks passed.");
 };
 
