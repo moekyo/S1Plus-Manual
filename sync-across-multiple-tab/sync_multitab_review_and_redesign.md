@@ -290,6 +290,16 @@
   - 前台恢复会先做核心数据 snapshot 收敛，并在 `pending_recovery` 已挂起时暂停即时 probe
   - same-session remote write 已能被识别并静默处理，foreground follow-up 也已改用 fresh snapshot 规避旧 cache 干扰
 
+### 8.8A Phase 4 Follow-up（2026-04-21）
+
+- 继续补齐“同机误判远端更新”的剩余链路：
+  - `background / foreground_followup` 现在默认都用 `fresh snapshot`
+  - 新增 `s1p_core_data_refresh_signal`，核心数据监听不可靠时也能通过 signal + storage snapshot 收敛当前页 cache
+  - same-session quiet handling 已扩展到 background / per-load / daily 的自动拉取刷新策略
+- 新增 same-device 识别：
+  - 本机设置了 `syncDeviceId` 后，远端 `syncMeta.lastWriter.deviceId` 命中当前设备时，会改用“同设备已同步更新”类提示
+  - same-session 仍优先静默，避免把同机会话自己的刚写远端继续误说成“外部云端变化”
+
 ### 8.9 Phase 5 本轮落地内容
 
 - 在 `S1Plus.js` 中把 `s1p_pending_cleanup_info` 从全局数字计数升级为结构化 cleanup provenance，统一记录：
@@ -415,6 +425,18 @@
   - cleanup shortcut 的 apply / reject 已能直接从诊断里识别
   - 后台开帖页的生命周期与阅读进度确认链路现在也能直接落进诊断，不再只能靠推测
   - 多标签相关的 probe / retry / refresh / cleanup / 文案链路已形成固定脚本基线
+
+### 8.14A Phase 7 Follow-up（2026-04-21）
+
+- 诊断与回归继续扩大：
+  - 诊断新增 `本机设备 ID`、`最近远端写入`、`最近探测是否同设备写入`
+  - 远端同步文件新增 `syncMeta.lastWriter`，用于可观测性，不参与 `contentHash / baseContentHash`
+  - 新增 / 扩展脚本：
+    - `sync-across-multiple-tab/scripts/test-core-data-snapshot-resync.js`
+    - `sync-across-multiple-tab/scripts/test-foreground-same-session-remote-write.js`
+    - `sync-across-multiple-tab/scripts/test-post-sync-refresh-policy.js`
+    - `sync-across-multiple-tab/scripts/test-sync-settings-ui.js`
+- 这轮 follow-up 的目标不是改写 Phase 4 / 7 已完成结论，而是把同机误判远端更新的剩余观察盲区补齐，并把对应场景固化进脚本基线。
 
 ### 8.15 下一步
 

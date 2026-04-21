@@ -63,8 +63,16 @@ const testStaticWiring = () => {
     "Phase 7 未将后台自动同步成功接入刷新策略。"
   );
   expectMatch(
+    /const handleBackgroundAutoSyncResult = async[\s\S]*?suppressMessage:\s*result\.sameSessionRemoteWrite === true[\s\S]*?getSameDeviceRefreshMessageOptions\(result\)/m,
+    "后台自动同步结果未区分 same-session 静默与 same-device 文案。"
+  );
+  expectMatch(
     /refreshPlan = applyRefreshPolicyForSyncResult\(syncRequestResult,\s*\{[\s\S]*?reason:\s*`foreground_probe:\$\{normalizedReason\}`/m,
     "Phase 7 未将前台远端探测命中的 follow-up sync 接入刷新策略。"
+  );
+  expectMatch(
+    /const createSameDeviceAutoPullRefreshMessages = \(\s*deviceId = "",\s*action = "pulled",\s*sourceLabel = ""\s*\) => \{/m,
+    "未新增 same-device 自动拉取提示文案 helper。"
   );
 };
 
@@ -240,6 +248,17 @@ const testSuppressMessageKeepsReloadQuiet = () => {
   hooks.clearPendingAutoPullReloadTimer();
 };
 
+const testSameDeviceBackgroundCopyUsesSpecificMessage = () => {
+  const { hooks } = createHarness();
+
+  const messages = hooks.getAutoPullRefreshMessagesForSource("background", "pulled", {
+    sameDeviceDeviceId: "Mac-Main",
+  });
+
+  assert.match(messages.reloadMessage, /后台自动同步检测到同设备「Mac-Main」已同步更新/);
+  assert.match(messages.threadPageMessage, /当前在帖子页，暂不自动刷新/);
+};
+
 const testDirtySettingsSuppressesReload = () => {
   const { hooks } = createHarness();
   hooks.clearPendingAutoPullReloadTimer();
@@ -281,6 +300,7 @@ const main = async () => {
   testThreadPageShowsSoftPromptOnly();
   testMergedReadProgressThreadUsesMergeCopy();
   testSuppressMessageKeepsReloadQuiet();
+  testSameDeviceBackgroundCopyUsesSpecificMessage();
   testDirtySettingsSuppressesReload();
   console.log("Phase 7 post-sync refresh policy checks passed.");
 };
