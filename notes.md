@@ -1,5 +1,23 @@
 # Notes: Cross-Device Sync Pull Optimization
 
+## 2026-04-21 Runtime Cleanup Note
+
+- “自动检查云端更新”的运行时链路已从 `S1Plus.js` 删除。
+- 保留内容：
+  - 设置页里的三段式控件、问号说明、现有文案
+  - `syncPerLoadCheckEnabled`
+  - `syncCheckOnReturnToForeground`
+- 当前这两个设置只用于 UI 回显和保存，不再触发：
+  - 每次加载检查
+  - 首次可见检查
+  - 回到前台检查
+  - visible poll
+- 当前仍保留实际运行行为的自动同步来源只有：
+  - `daily_startup`
+  - `background_push`
+  - `manual_sync`
+- 下方其余笔记保留为历史设计记录，不再代表当前运行时实现。
+
 ## Current Behavior Findings
 
 ### Automatic push path

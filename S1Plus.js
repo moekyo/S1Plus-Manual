@@ -612,23 +612,9 @@
   let navbarPersistentSyncAlertDismissedSignature = null;
   let hasPendingBackgroundSync = false;
   let backgroundSyncRetryTimeout = null;
-  let lastForegroundProbeAt = 0;
-  let foregroundProbeInFlightPromise = null;
-  let foregroundRemoteSyncCheckInFlightPromise = null;
-  let lastUserInteractionAt = 0;
-  let visibleRemoteProbeTimer = null;
-  let currentVisibleProbeIntervalMs = 0;
   let pendingAutoPullReloadTimer = null;
   let pendingAutoPullReloadReason = "";
-  let foregroundRemoteSyncRetryTimer = null;
-  let foregroundRemoteSyncRetryDueAt = 0;
-  let foregroundRemoteSyncRetryAttempts = 0;
-  let foregroundRemoteSyncRetryReason = "";
   let foregroundFollowUpSoftBlockState = null;
-  let lastForegroundProbeFeedbackState = {
-    key: "",
-    timestamp: 0,
-  };
 
   const isManualSyncActionBusy = () =>
     Boolean(manualSyncInFlightPromise || forceSyncInFlight);
@@ -741,10 +727,7 @@
   const PENDING_AUTO_SYNC_KEY = "s1p_pending_auto_sync_request";
   const DEFERRED_STARTUP_SYNC_KEY = "s1p_deferred_startup_sync";
   const SYNC_TRIGGER_SOURCE_DAILY_STARTUP = "daily_startup";
-  const SYNC_TRIGGER_SOURCE_PER_LOAD = "per_load";
-  const SYNC_TRIGGER_SOURCE_PAGE_LOAD_VISIBLE = "page_load_visible";
   const SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME = "foreground_resume";
-  const SYNC_TRIGGER_SOURCE_VISIBLE_POLL = "visible_poll";
   const SYNC_TRIGGER_SOURCE_BACKGROUND_PUSH = "background_push";
   const SYNC_TRIGGER_SOURCE_MANUAL_SYNC = "manual_sync";
   const AUTO_SYNC_MODE_BACKGROUND = "background";
@@ -766,13 +749,6 @@
     SYNC_TRIGGER_SOURCE_BACKGROUND_PUSH;
   const AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP =
     SYNC_TRIGGER_SOURCE_DAILY_STARTUP;
-  const AUTO_SYNC_INDICATOR_SOURCE_PER_LOAD = SYNC_TRIGGER_SOURCE_PER_LOAD;
-  const AUTO_SYNC_INDICATOR_SOURCE_PAGE_LOAD_VISIBLE =
-    SYNC_TRIGGER_SOURCE_PAGE_LOAD_VISIBLE;
-  const AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME =
-    SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME;
-  const AUTO_SYNC_INDICATOR_SOURCE_VISIBLE_POLL =
-    SYNC_TRIGGER_SOURCE_VISIBLE_POLL;
   const AUTO_SYNC_INDICATOR_SOURCE_MANUAL_SYNC =
     SYNC_TRIGGER_SOURCE_MANUAL_SYNC;
   const AUTO_SYNC_INDICATOR_ENTER_DURATION_MS = 220;
@@ -920,9 +896,6 @@
   const REMOTE_PROBE_SHARED_COOLDOWN_MS = 45 * 1000;
   const REMOTE_PROBE_LOCAL_COOLDOWN_MS = 12 * 1000;
   const REMOTE_PROBE_LOCK_TTL_MS = 8 * 1000;
-  const REMOTE_PROBE_VISIBLE_POLL_ACTIVE_INTERVAL_MS = 4 * 60 * 1000;
-  const REMOTE_PROBE_VISIBLE_POLL_IDLE_INTERVAL_MS = 12 * 60 * 1000;
-  const REMOTE_PROBE_VISIBLE_POLL_IDLE_AFTER_MS = 15 * 60 * 1000;
   const AUTO_PULL_RELOAD_DELAY_MS = 1500;
   const SYNC_LOCK_LOST_CODE = "SYNC_LOCK_LOST";
   const SYNC_CONFLICT_MODAL_COOLDOWN_LOCK_KEY =
@@ -930,21 +903,7 @@
   const SYNC_CONFLICT_MODAL_COOLDOWN_LOCK_TTL_MS = 1500;
   const AUTO_SYNC_CIRCUIT_BREAKER_THRESHOLD = 3;
   const AUTO_SYNC_CIRCUIT_OPEN_DURATION_MS = 10 * 60 * 1000;
-  const FOREGROUND_PROBE_FEEDBACK_COOLDOWN_MS = 15 * 1000;
-  const FOREGROUND_REMOTE_SYNC_RETRY_BASE_DELAY_MS = 1200;
-  const FOREGROUND_REMOTE_SYNC_RETRY_MAX_DELAY_MS = 30 * 1000;
-  const FOREGROUND_REMOTE_SYNC_RETRY_MAX_ATTEMPTS = 6;
-  const FOREGROUND_REMOTE_SYNC_RETRY_SETTLE_BUFFER_MS = 300;
-  const FOREGROUND_PROBE_INITIALIZATION_NOISE_GRACE_MS = 8 * 1000;
   const LOCAL_SESSION_REMOTE_WRITE_TTL_MS = 5 * 60 * 1000;
-  const FOREGROUND_PROBE_SOFT_BLOCK_REASON_PENDING_WRITE =
-    "read_progress_pending_write";
-  const FOREGROUND_PROBE_SOFT_BLOCK_REASON_SYNC_DEBOUNCE =
-    "read_progress_sync_debounce";
-  const FOREGROUND_PROBE_SOFT_BLOCK_REASON_INITIALIZATION_NOISE =
-    "read_progress_initialization_noise";
-  const FOREGROUND_PROBE_SKIP_REASON_PENDING_RECOVERY_SETTLE =
-    "pending_recovery_settle";
   const CLEANUP_PROVENANCE_SOURCE_AUTO_EXPIRE = "auto_expire_cleanup";
   const CLEANUP_PROVENANCE_SOURCE_MANUAL_SINGLE = "manual_single_delete";
   const CLEANUP_PROVENANCE_SOURCE_MANUAL_GROUP = "manual_group_delete";
@@ -7882,250 +7841,6 @@
       normalizeState: normalizeRemoteProbeSharedCooldownState,
     });
 
-  const getRemoteProbeSharedCooldownRemainingMs = (now = Date.now()) => {
-    const lastObservedAt = getRemoteProbeSharedCooldownState().lastObservedAt;
-    if (!lastObservedAt) {
-      return 0;
-    }
-    return Math.max(
-      0,
-      REMOTE_PROBE_SHARED_COOLDOWN_MS - (now - lastObservedAt)
-    );
-  };
-
-  const isRemoteProbeSharedCooldownActive = (now = Date.now()) =>
-    getRemoteProbeSharedCooldownRemainingMs(now) > 0;
-
-  const getForegroundProbeLocalCooldownRemainingMs = (now = Date.now()) => {
-    if (!lastForegroundProbeAt) {
-      return 0;
-    }
-    return Math.max(0, REMOTE_PROBE_LOCAL_COOLDOWN_MS - (now - lastForegroundProbeAt));
-  };
-
-  const isForegroundProbeLocalCooldownActive = (now = Date.now()) =>
-    getForegroundProbeLocalCooldownRemainingMs(now) > 0;
-
-  const markForegroundProbeLocalAttempt = (timestamp = Date.now()) => {
-    const normalizedTimestamp = normalizeRemoteProbeTimestamp(timestamp) || Date.now();
-    lastForegroundProbeAt = normalizedTimestamp;
-    return normalizedTimestamp;
-  };
-
-  const recordRemoteProbeObservation = ({
-    remoteUpdatedAt = null,
-    observedAt = Date.now(),
-    checkedBy = BACKGROUND_SYNC_OWNER_ID,
-  } = {}) => {
-    const normalizedObservedAt =
-      normalizeRemoteProbeTimestamp(observedAt) || Date.now();
-    const normalizedRemoteUpdatedAt =
-      normalizeRemoteProbeUpdatedAt(remoteUpdatedAt);
-    const normalizedCheckedBy =
-      normalizeRemoteProbeText(checkedBy, 120) || BACKGROUND_SYNC_OWNER_ID;
-
-    const nextProbeInfo = setLastRemoteProbeInfo({
-      lastObservedRemoteUpdatedAt: normalizedRemoteUpdatedAt,
-      lastObservedAt: normalizedObservedAt,
-    });
-    const nextSharedCooldown = setRemoteProbeSharedCooldownState({
-      lastObservedRemoteUpdatedAt: normalizedRemoteUpdatedAt,
-      lastObservedAt: normalizedObservedAt,
-      checkedBy: normalizedCheckedBy,
-    });
-
-    return {
-      probeInfo: nextProbeInfo,
-      sharedCooldown: nextSharedCooldown,
-    };
-  };
-
-  const getForegroundProbeDiagnosticResult = (result) => {
-    const normalizedStatus =
-      normalizeRemoteProbeText(result?.status, 80) || "unknown";
-    if (normalizedStatus === "unchanged" || normalizedStatus === "changed") {
-      return normalizedStatus;
-    }
-    if (normalizedStatus === "failure") {
-      const normalizedReason =
-        normalizeRemoteProbeText(result?.reason, 80) || "";
-      return normalizedReason ? `failure_${normalizedReason}` : "failure";
-    }
-    if (normalizedStatus !== "skipped") {
-      return normalizedStatus;
-    }
-
-    switch (result?.reason) {
-      case "local_cooldown":
-        return "throttled_local_cooldown";
-      case "shared_cooldown":
-        return "throttled_shared_cooldown";
-      case "disabled":
-      case "foreground_check_disabled":
-        return "skipped_disabled";
-      case "conflict_paused":
-        return "skipped_conflict_pause";
-      case "circuit_open":
-        return "skipped_circuit_open";
-      case "sync_lock_active":
-      case "foreground_sync_in_flight":
-        return "skipped_active_sync";
-      case "probe_in_flight":
-        return "skipped_probe_in_flight";
-      case "probe_lock_unavailable":
-        return "skipped_probe_lock_unavailable";
-      case "followup_retry_pending":
-        return "skipped_followup_retry_pending";
-      case "remote_updated_at_missing":
-        return "skipped_remote_metadata_missing";
-      default: {
-        const normalizedReason =
-          normalizeRemoteProbeText(result?.reason, 80) || "unknown";
-        return `skipped_${normalizedReason}`;
-      }
-    }
-  };
-
-  const formatForegroundProbeSyncResultForDiagnostics = (syncResult) => {
-    if (!syncResult || typeof syncResult !== "object") {
-      return "";
-    }
-
-    const normalizedStatus =
-      normalizeRemoteProbeText(syncResult.status, 40) || "unknown";
-    if (normalizedStatus === "success") {
-      const normalizedAction =
-        normalizeRemoteProbeText(syncResult.action, 60) || "unknown";
-      const normalizedReason = normalizeRemoteProbeText(syncResult.reason, 80);
-      return normalizedReason
-        ? `success:${normalizedAction}:${normalizedReason}`
-        : `success:${normalizedAction}`;
-    }
-    if (normalizedStatus === "blocked") {
-      const blockLevel =
-        normalizeRemoteProbeText(syncResult.blockLevel, 40) || "soft";
-      const normalizedReason =
-        normalizeRemoteProbeText(syncResult.reason, 120) || "generic";
-      return `blocked:${blockLevel}:${normalizedReason}`;
-    }
-    if (normalizedStatus === "failure") {
-      const errorText = sanitizeDiagnosticText(syncResult.error || "unknown", 140);
-      return `failure:${errorText || "unknown"}`;
-    }
-    const normalizedReason =
-      normalizeRemoteProbeText(syncResult.reason, 120) || "generic";
-    return `${normalizedStatus}:${normalizedReason}`;
-  };
-
-  const recordForegroundProbeDiagnostics = ({
-    timestamp = Date.now(),
-    remoteUpdatedAt = null,
-    result = "unknown",
-    probeResult = null,
-    syncRequestResult = null,
-    triggeredSync = false,
-    triggeredSyncResult = "",
-    lastSyncedRemoteUpdatedAt = null,
-    sameSessionRemoteWrite = false,
-    sameDeviceRemoteWrite = false,
-    remoteWriter = null,
-    triggerSource = "",
-    triggerReason = "",
-  } = {}) => {
-    const current = getSyncDiagnostics();
-    const latestProbeInfo = getLastRemoteProbeInfo();
-    const normalizedTimestamp =
-      normalizeRemoteProbeTimestamp(timestamp) || Date.now();
-    const normalizedRemoteUpdatedAt = normalizeRemoteProbeUpdatedAt(
-      remoteUpdatedAt
-    );
-    const normalizedLastSyncedRemoteUpdatedAt =
-      normalizeRemoteProbeUpdatedAt(lastSyncedRemoteUpdatedAt) ||
-      latestProbeInfo.lastSyncedRemoteUpdatedAt ||
-      current.lastSyncedRemoteUpdatedAt ||
-      "";
-    let nextDiagnostics = mergeSyncDiagnosticsContext(current, {
-      triggerSource,
-      triggerReason,
-      localHash: current.lastLocalHash,
-      remoteHash: current.lastRemoteHash,
-      baselineHash: current.lastBaselineHash,
-    });
-    const normalizedSyncStatus =
-      normalizeRemoteProbeText(syncRequestResult?.status, 40) || "";
-    if (normalizedSyncStatus === "success") {
-      nextDiagnostics = mergeSyncDiagnosticsContext(nextDiagnostics, {
-        syncResultKind: "success",
-        syncResultCode: getStableSyncResultCode({
-          action: syncRequestResult?.action,
-          reason: syncRequestResult?.reason,
-          fallback: "foreground_probe_sync_success",
-        }),
-        syncBlockKind: "",
-        syncBlockReason: "",
-      });
-    } else if (normalizedSyncStatus === "blocked") {
-      const normalizedBlockReason =
-        normalizeRemoteProbeText(syncRequestResult?.reason, 160) ||
-        "foreground_probe_blocked";
-      nextDiagnostics = mergeSyncDiagnosticsContext(nextDiagnostics, {
-        syncResultKind: "blocked",
-        syncResultCode: normalizedBlockReason,
-        syncBlockKind:
-          normalizeRemoteProbeText(syncRequestResult?.blockLevel, 60) || "soft",
-        syncBlockReason: normalizedBlockReason,
-      });
-    } else if (normalizedSyncStatus === "conflict") {
-      const normalizedConflictReason =
-        normalizeRemoteProbeText(syncRequestResult?.reason, 160) ||
-        "foreground_probe_conflict";
-      nextDiagnostics = mergeSyncDiagnosticsContext(nextDiagnostics, {
-        syncResultKind: "conflict",
-        syncResultCode: normalizedConflictReason,
-        syncBlockKind: "hard",
-        syncBlockReason: normalizedConflictReason,
-      });
-    } else if (normalizedSyncStatus === "failure") {
-      nextDiagnostics = mergeSyncDiagnosticsContext(nextDiagnostics, {
-        syncResultKind: "failure",
-        syncResultCode:
-          sanitizeDiagnosticText(syncRequestResult?.error || "unknown", 160) ||
-          "foreground_probe_failure",
-        syncBlockKind: "",
-        syncBlockReason: "",
-      });
-    } else {
-      nextDiagnostics = mergeSyncDiagnosticsContext(nextDiagnostics, {
-        syncResultKind: "probe",
-        syncResultCode:
-          normalizeRemoteProbeText(result, 160) ||
-          getForegroundProbeDiagnosticResult(probeResult),
-        syncBlockKind: "",
-        syncBlockReason: "",
-      });
-    }
-
-    saveSyncDiagnostics({
-      ...nextDiagnostics,
-      lastProbeTimestamp: normalizedTimestamp,
-      lastProbeRemoteUpdatedAt:
-        normalizedRemoteUpdatedAt || current.lastProbeRemoteUpdatedAt || "",
-      lastSyncedRemoteUpdatedAt: normalizedLastSyncedRemoteUpdatedAt,
-      lastProbeResult: normalizeRemoteProbeText(result, 120),
-      lastProbeTriggeredSync: triggeredSync === true,
-      lastProbeTriggeredSyncResult: sanitizeDiagnosticText(
-        triggeredSyncResult,
-        220
-      ),
-      lastProbeSameSessionRemoteWrite: sameSessionRemoteWrite === true,
-      lastProbeSameDeviceRemoteWrite: sameDeviceRemoteWrite === true,
-      lastRemoteWriterSummary:
-        normalizeSyncDiagnosticText(buildRemoteSyncWriterSummary(remoteWriter), 220) ||
-        nextDiagnostics.lastRemoteWriterSummary ||
-        "",
-    });
-  };
-
   const normalizeRemoteProbeLockValue = (value) => {
     const source = sanitizeRecordObject(value);
     const owner = normalizeRemoteProbeText(source.owner, 120);
@@ -8188,17 +7903,6 @@
     return new Date(timestamp).toLocaleString("zh-CN", { hour12: false });
   };
 
-  const formatRemoteProbeUpdatedAtForDisplay = (value) => {
-    const normalized = String(value || "").trim();
-    if (!normalized) {
-      return "—";
-    }
-    const parsed = Date.parse(normalized);
-    if (!Number.isFinite(parsed)) {
-      return normalized;
-    }
-    return new Date(parsed).toLocaleString("zh-CN", { hour12: false });
-  };
   const buildRemoteSyncWriterSummary = (writer) => {
     const normalizedWriter = normalizeRemoteSyncLastWriter(writer);
     if (!normalizedWriter) {
@@ -8220,13 +7924,6 @@
     }
     parts.push(`at=${formatSyncTime(normalizedWriter.createdAt)}`);
     return parts.join(" | ");
-  };
-
-  const formatProbeTriggeredSyncForDisplay = (diagnostics) => {
-    if (!diagnostics.lastProbeTimestamp) {
-      return "—";
-    }
-    return diagnostics.lastProbeTriggeredSync ? "是" : "否";
   };
 
   const formatSyncDiagnosticYesNo = (value) => (value === true ? "是" : "否");
@@ -8307,34 +8004,6 @@
                 : "—"
             }`
           : "—",
-      ],
-      ["最近探测", formatSyncTime(diagnostics.lastProbeTimestamp)],
-      [
-        "最近探测远端版本",
-        formatRemoteProbeUpdatedAtForDisplay(diagnostics.lastProbeRemoteUpdatedAt),
-      ],
-      [
-        "最近已同步远端版本",
-        formatRemoteProbeUpdatedAtForDisplay(
-          diagnostics.lastSyncedRemoteUpdatedAt
-        ),
-      ],
-      ["最近探测结果", diagnostics.lastProbeResult || "—"],
-      [
-        "最近探测是否同机会话写入",
-        formatSyncDiagnosticYesNo(diagnostics.lastProbeSameSessionRemoteWrite),
-      ],
-      [
-        "最近探测是否同设备写入",
-        formatSyncDiagnosticYesNo(diagnostics.lastProbeSameDeviceRemoteWrite),
-      ],
-      [
-        "探测是否触发安全同步",
-        formatProbeTriggeredSyncForDisplay(diagnostics),
-      ],
-      [
-        "最近探测后同步结果",
-        diagnostics.lastProbeTriggeredSyncResult || "—",
       ],
       [
         "失败原因",
@@ -8616,42 +8285,6 @@
     }
 
     if (
-      normalizedReason === SYNC_TRIGGER_SOURCE_PAGE_LOAD_VISIBLE ||
-      normalizedReason.endsWith(`:${SYNC_TRIGGER_SOURCE_PAGE_LOAD_VISIBLE}`)
-    ) {
-      return SYNC_TRIGGER_SOURCE_PAGE_LOAD_VISIBLE;
-    }
-
-    if (
-      normalizedReason === SYNC_TRIGGER_SOURCE_VISIBLE_POLL ||
-      normalizedReason === "visible_poll_active" ||
-      normalizedReason === "visible_poll_idle" ||
-      normalizedReason.endsWith(":visible_poll_active") ||
-      normalizedReason.endsWith(":visible_poll_idle") ||
-      normalizedReason.endsWith(`:${SYNC_TRIGGER_SOURCE_VISIBLE_POLL}`)
-    ) {
-      return SYNC_TRIGGER_SOURCE_VISIBLE_POLL;
-    }
-
-    if (
-      normalizedReason === SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME ||
-      normalizedReason === "visibilitychange" ||
-      normalizedReason === "pageshow" ||
-      normalizedReason.endsWith(`:${SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME}`) ||
-      normalizedReason.endsWith(":visibilitychange") ||
-      normalizedReason.endsWith(":pageshow")
-    ) {
-      return SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME;
-    }
-
-    if (
-      normalizedReason === SYNC_TRIGGER_SOURCE_PER_LOAD ||
-      normalizedReason.endsWith(`:${SYNC_TRIGGER_SOURCE_PER_LOAD}`)
-    ) {
-      return SYNC_TRIGGER_SOURCE_PER_LOAD;
-    }
-
-    if (
       normalizedReason === SYNC_TRIGGER_SOURCE_DAILY_STARTUP ||
       normalizedReason.endsWith(`:${SYNC_TRIGGER_SOURCE_DAILY_STARTUP}`)
     ) {
@@ -8683,20 +8316,13 @@
 
     switch (normalizedSource) {
       case SYNC_TRIGGER_SOURCE_DAILY_STARTUP:
-      case SYNC_TRIGGER_SOURCE_PER_LOAD:
-      case SYNC_TRIGGER_SOURCE_PAGE_LOAD_VISIBLE:
-      case SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME:
-      case SYNC_TRIGGER_SOURCE_VISIBLE_POLL:
       case SYNC_TRIGGER_SOURCE_BACKGROUND_PUSH:
       case SYNC_TRIGGER_SOURCE_MANUAL_SYNC:
         return normalizedSource;
       case LEGACY_AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND:
         return SYNC_TRIGGER_SOURCE_BACKGROUND_PUSH;
       case LEGACY_AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_FOLLOWUP:
-        return (
-          resolveSyncTriggerSourceFromReasonText(options.reason) ||
-          SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME
-        );
+        return resolveSyncTriggerSourceFromReasonText(options.reason);
       default:
         return (
           resolveSyncTriggerSourceFromReasonText(normalizedSource) ||
@@ -8833,8 +8459,6 @@
       settingsSnapshot.syncRemoteEnabled === true &&
       settingsSnapshot.syncShowAutoSyncIndicator !== false &&
       (settingsSnapshot.syncDailyFirstLoad === true ||
-        settingsSnapshot.syncPerLoadCheckEnabled === true ||
-        settingsSnapshot.syncCheckOnReturnToForeground === true ||
         settingsSnapshot.syncAutoEnabled === true)
     );
 
@@ -9376,140 +9000,6 @@
     return getForegroundFollowUpSoftBlockState();
   };
 
-  const isForegroundProbeRetryableSoftBlockReason = (reason = "") => {
-    const normalizedReason = normalizeRemoteProbeText(reason, 120);
-    return (
-      normalizedReason === FOREGROUND_PROBE_SOFT_BLOCK_REASON_PENDING_WRITE ||
-      normalizedReason === FOREGROUND_PROBE_SOFT_BLOCK_REASON_SYNC_DEBOUNCE ||
-      normalizedReason === FOREGROUND_PROBE_SOFT_BLOCK_REASON_INITIALIZATION_NOISE
-    );
-  };
-
-  const getForegroundProbeRetryWaitUntil = (
-    readProgressGuard,
-    now = Date.now()
-  ) => {
-    if (!readProgressGuard || typeof readProgressGuard !== "object") {
-      return 0;
-    }
-
-    const candidateTimestamps = [];
-    const normalizedNow = normalizeRemoteProbeTimestamp(now) || Date.now();
-    const pendingSaveDueAt = Number(readProgressGuard.pendingSaveDueAt) || 0;
-    const pendingPersistDueAt = Number(readProgressGuard.pendingPersistDueAt) || 0;
-    const syncDebounceDueAt = Number(readProgressGuard.syncDebounceDueAt) || 0;
-    const lastPersistedAt = Number(readProgressGuard.lastPersistedAt) || 0;
-    const initializationNoiseUntil =
-      readProgressGuard.lastPersistWasInitializationNoise === true &&
-      lastPersistedAt > 0
-        ? lastPersistedAt + FOREGROUND_PROBE_INITIALIZATION_NOISE_GRACE_MS
-        : 0;
-
-    if (pendingSaveDueAt > normalizedNow) {
-      candidateTimestamps.push(pendingSaveDueAt);
-    }
-    if (pendingPersistDueAt > normalizedNow) {
-      candidateTimestamps.push(pendingPersistDueAt);
-    }
-    if (syncDebounceDueAt > normalizedNow) {
-      candidateTimestamps.push(syncDebounceDueAt);
-    }
-    if (initializationNoiseUntil > normalizedNow) {
-      candidateTimestamps.push(initializationNoiseUntil);
-    }
-
-    return candidateTimestamps.length > 0 ? Math.max(...candidateTimestamps) : 0;
-  };
-
-  const resolveForegroundProbeRetryDelayMs = (
-    attempt = 0,
-    preferredDelayMs = 0
-  ) => {
-    const exponentialDelayMs = Math.min(
-      FOREGROUND_REMOTE_SYNC_RETRY_MAX_DELAY_MS,
-      FOREGROUND_REMOTE_SYNC_RETRY_BASE_DELAY_MS * 2 ** Math.max(0, attempt)
-    );
-    const normalizedPreferredDelayMs = Math.max(
-      0,
-      Math.floor(Number(preferredDelayMs) || 0)
-    );
-    if (!normalizedPreferredDelayMs) {
-      return exponentialDelayMs;
-    }
-    return Math.max(
-      exponentialDelayMs,
-      Math.min(
-        FOREGROUND_REMOTE_SYNC_RETRY_MAX_DELAY_MS,
-        normalizedPreferredDelayMs
-      )
-    );
-  };
-
-  const getForegroundProbeGateBlockResult = ({
-    triggerSource = SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME,
-    triggerReason = "",
-    now = Date.now(),
-    readProgressGuardState = null,
-  } = {}) => {
-    const normalizedNow = normalizeRemoteProbeTimestamp(now) || Date.now();
-    const readProgressGuard = cloneForegroundFollowUpReadProgressGuardState(
-      readProgressGuardState && typeof readProgressGuardState === "object"
-        ? readProgressGuardState
-        : typeof getReadProgressProbeGuardState === "function"
-          ? getReadProgressProbeGuardState()
-          : null
-    );
-    if (!readProgressGuard) {
-      return null;
-    }
-
-    const retryWaitUntil = getForegroundProbeRetryWaitUntil(
-      readProgressGuard,
-      normalizedNow
-    );
-    let blockReason = "";
-    if (readProgressGuard.hasPendingWrite) {
-      blockReason = FOREGROUND_PROBE_SOFT_BLOCK_REASON_PENDING_WRITE;
-    } else if (readProgressGuard.isInSyncDebounceWindow) {
-      blockReason = FOREGROUND_PROBE_SOFT_BLOCK_REASON_SYNC_DEBOUNCE;
-    } else if (
-      readProgressGuard.lastPersistWasInitializationNoise === true &&
-      retryWaitUntil > normalizedNow
-    ) {
-      blockReason = FOREGROUND_PROBE_SOFT_BLOCK_REASON_INITIALIZATION_NOISE;
-    }
-
-    if (!blockReason) {
-      return null;
-    }
-
-    const retryAfterMs = resolveForegroundProbeRetryDelayMs(
-      foregroundRemoteSyncRetryAttempts,
-      retryWaitUntil > normalizedNow
-        ? retryWaitUntil - normalizedNow + FOREGROUND_REMOTE_SYNC_RETRY_SETTLE_BUFFER_MS
-        : FOREGROUND_REMOTE_SYNC_RETRY_BASE_DELAY_MS
-    );
-    const softBlockState = setForegroundFollowUpSoftBlock({
-      reason: blockReason,
-      triggerSource,
-      triggerReason,
-      syncAction: "probe_gate_blocked",
-    });
-
-    return {
-      status: "blocked",
-      blockLevel: "soft",
-      blockScope:
-        softBlockState?.scope || FOREGROUND_FOLLOWUP_SOFT_BLOCK_SCOPE_TAB,
-      reason: blockReason,
-      action: "probe_gate_blocked",
-      retryAfterMs,
-      retryWaitUntil,
-      readProgressGuard,
-      softBlockState,
-    };
-  };
-
   const getAutoSyncConflictPauseState = () => {
     const saved = GM_getValue(AUTO_SYNC_CONFLICT_PAUSE_KEY, null);
     if (
@@ -9569,7 +9059,6 @@
   };
 
   const setAutoSyncConflictPause = (reason = "generic") => {
-    clearForegroundRemoteSyncRetry();
     clearForegroundFollowUpSoftBlock();
     GM_setValue(AUTO_SYNC_CONFLICT_PAUSE_KEY, {
       paused: true,
@@ -9825,247 +9314,9 @@
     };
   };
 
-  const triggerForegroundRemoteFreshnessProbe = (
-    reason = "visibilitychange",
-    overrides = {}
-  ) => {
-    if (document.visibilityState !== "visible") {
-      return Promise.resolve(createForegroundTriggerSkippedResult("document_hidden"));
-    }
-
-    const checkRemoteFreshnessOnForegroundFn =
-      overrides.checkRemoteFreshnessOnForeground || checkRemoteFreshnessOnForeground;
-    const checkRemoteFreshnessOnForegroundOverrides =
-      overrides.checkRemoteFreshnessOnForegroundOverrides || {};
-    const probeTimestamp =
-      Number.isFinite(checkRemoteFreshnessOnForegroundOverrides.now) &&
-      checkRemoteFreshnessOnForegroundOverrides.now > 0
-        ? Math.floor(checkRemoteFreshnessOnForegroundOverrides.now)
-        : Date.now();
-
-    return Promise.resolve(
-      checkRemoteFreshnessOnForegroundFn(
-        reason,
-        checkRemoteFreshnessOnForegroundOverrides
-      )
-    ).catch((error) => {
-      const errorMessage = error?.message || String(error);
-      console.error(
-        `S1 Plus: 前台远端更新探测触发失败(${reason}):`,
-        error
-      );
-      return finalizeForegroundProbeResult(
-        {
-          status: "failure",
-          reason: "probe_trigger_error",
-          error: errorMessage,
-        },
-        {
-          timestamp: probeTimestamp,
-          triggerReason: reason,
-          showMessage:
-            checkRemoteFreshnessOnForegroundOverrides.showMessage ||
-            overrides.showMessage,
-        }
-      );
-    });
-  };
-
   const createForegroundTriggerSkippedResult = (reason) => ({
     status: "skipped",
     reason,
-  });
-
-  const normalizeVisibleRemoteFreshnessTimestamp = (timestamp = Date.now()) =>
-    normalizeRemoteProbeTimestamp(timestamp) || Date.now();
-
-  const isForegroundRemoteFreshnessCheckEnabled = (settingsSnapshot) =>
-    Boolean(
-      settingsSnapshot.syncRemoteEnabled &&
-      settingsSnapshot.syncRemoteGistId &&
-      settingsSnapshot.syncRemotePat &&
-      settingsSnapshot.syncCheckOnReturnToForeground === true
-    );
-
-  const isVisibleRemoteFreshnessPollingEnabled = (settingsSnapshot) =>
-    isForegroundRemoteFreshnessCheckEnabled(settingsSnapshot);
-
-  const getVisibleRemoteFreshnessPollingMode = (intervalMs) => {
-    if (intervalMs >= REMOTE_PROBE_VISIBLE_POLL_IDLE_INTERVAL_MS) {
-      return "idle";
-    }
-    return "active";
-  };
-
-  const getVisibleRemoteFreshnessPollingReason = (intervalMs) => {
-    if (getVisibleRemoteFreshnessPollingMode(intervalMs) === "idle") {
-      return "visible_poll_idle";
-    }
-    return "visible_poll_active";
-  };
-
-  const createVisibleRemoteFreshnessActivityResult = (
-    activityTimestamp,
-    intervalMs
-  ) => ({
-    status: "recorded",
-    lastUserInteractionAt: activityTimestamp,
-    intervalMs: intervalMs || 0,
-  });
-
-  const stopVisibleRemoteFreshnessPollingWithReason = (reason) => {
-    stopVisibleRemoteFreshnessPolling();
-    return createForegroundTriggerSkippedResult(reason);
-  };
-
-  const markVisibleRemoteFreshnessUserActivity = (timestamp = Date.now()) => {
-    const normalizedTimestamp =
-      normalizeVisibleRemoteFreshnessTimestamp(timestamp);
-    lastUserInteractionAt = normalizedTimestamp;
-    return normalizedTimestamp;
-  };
-
-  const getVisibleRemoteFreshnessPollingIntervalMs = (now = Date.now()) => {
-    const normalizedNow = normalizeVisibleRemoteFreshnessTimestamp(now);
-    const inactivityMs = lastUserInteractionAt
-      ? Math.max(0, normalizedNow - lastUserInteractionAt)
-      : 0;
-    if (inactivityMs >= REMOTE_PROBE_VISIBLE_POLL_IDLE_AFTER_MS) {
-      return REMOTE_PROBE_VISIBLE_POLL_IDLE_INTERVAL_MS;
-    }
-    return REMOTE_PROBE_VISIBLE_POLL_ACTIVE_INTERVAL_MS;
-  };
-
-  const stopVisibleRemoteFreshnessPolling = () => {
-    if (visibleRemoteProbeTimer) {
-      clearTimeout(visibleRemoteProbeTimer);
-      visibleRemoteProbeTimer = null;
-    }
-    currentVisibleProbeIntervalMs = 0;
-    return { status: "stopped" };
-  };
-
-  const scheduleVisibleRemoteFreshnessPolling = (options = {}) => {
-    const settingsSnapshot = options.settingsSnapshot || getSettings();
-    const now = normalizeVisibleRemoteFreshnessTimestamp(options.now);
-    if (options.resetActivity === true || !lastUserInteractionAt) {
-      markVisibleRemoteFreshnessUserActivity(now);
-    }
-
-    if (document.visibilityState !== "visible") {
-      return stopVisibleRemoteFreshnessPollingWithReason("document_hidden");
-    }
-
-    if (!isVisibleRemoteFreshnessPollingEnabled(settingsSnapshot)) {
-      const reason =
-        settingsSnapshot.syncCheckOnReturnToForeground === true
-          ? "disabled"
-          : "foreground_check_disabled";
-      return stopVisibleRemoteFreshnessPollingWithReason(reason);
-    }
-
-    const intervalMs = getVisibleRemoteFreshnessPollingIntervalMs(now);
-    const pollingMode = getVisibleRemoteFreshnessPollingMode(intervalMs);
-    const pollReason = getVisibleRemoteFreshnessPollingReason(intervalMs);
-    const checkRemoteFreshnessOnForegroundFn =
-      options.checkRemoteFreshnessOnForeground || checkRemoteFreshnessOnForeground;
-    const checkRemoteFreshnessOverrides =
-      options.checkRemoteFreshnessOnForegroundOverrides || {};
-
-    stopVisibleRemoteFreshnessPolling();
-    currentVisibleProbeIntervalMs = intervalMs;
-    visibleRemoteProbeTimer = setTimeout(async () => {
-      visibleRemoteProbeTimer = null;
-      currentVisibleProbeIntervalMs = 0;
-
-      if (document.visibilityState !== "visible") {
-        return;
-      }
-
-      try {
-        await checkRemoteFreshnessOnForegroundFn(
-          pollReason,
-          checkRemoteFreshnessOverrides
-        );
-      } catch (error) {
-        console.error(
-          `S1 Plus: 可见页面远端更新轮询失败(${pollReason}):`,
-          error
-        );
-      } finally {
-        scheduleVisibleRemoteFreshnessPolling();
-      }
-    }, intervalMs);
-
-    return {
-      status: "scheduled",
-      intervalMs,
-      mode: pollingMode,
-      lastUserInteractionAt,
-    };
-  };
-
-  const syncVisibleRemoteFreshnessPollingForCurrentState = (options = {}) => {
-    if (document.visibilityState !== "visible") {
-      return stopVisibleRemoteFreshnessPolling();
-    }
-    return scheduleVisibleRemoteFreshnessPolling(options);
-  };
-
-  const handleVisibleRemoteFreshnessUserActivity = (options = {}) => {
-    const now = normalizeVisibleRemoteFreshnessTimestamp(options.now);
-    const previousIntervalMs = currentVisibleProbeIntervalMs;
-    const activityTimestamp = markVisibleRemoteFreshnessUserActivity(now);
-
-    if (document.visibilityState !== "visible" || !visibleRemoteProbeTimer) {
-      return createVisibleRemoteFreshnessActivityResult(
-        activityTimestamp,
-        previousIntervalMs
-      );
-    }
-
-    const nextIntervalMs = getVisibleRemoteFreshnessPollingIntervalMs(now);
-    if (
-      previousIntervalMs >= REMOTE_PROBE_VISIBLE_POLL_IDLE_INTERVAL_MS &&
-      nextIntervalMs < previousIntervalMs
-    ) {
-      return scheduleVisibleRemoteFreshnessPolling({
-        ...options,
-        now,
-      });
-    }
-
-    return createVisibleRemoteFreshnessActivityResult(
-      activityTimestamp,
-      previousIntervalMs
-    );
-  };
-
-  const bindVisibleRemoteFreshnessPollingActivityHooks = () => {
-    if (window.__s1pVisibleRemoteFreshnessPollingActivityBound) {
-      return;
-    }
-    window.__s1pVisibleRemoteFreshnessPollingActivityBound = true;
-
-    const handleUserActivity = () => {
-      handleVisibleRemoteFreshnessUserActivity();
-    };
-
-    window.addEventListener("pointerdown", handleUserActivity, {
-      capture: true,
-      passive: true,
-    });
-    document.addEventListener("keydown", handleUserActivity, true);
-    window.addEventListener("scroll", handleUserActivity, {
-      capture: true,
-      passive: true,
-    });
-  };
-
-  const getVisibleRemoteFreshnessPollingRuntimeState = () => ({
-    lastUserInteractionAt,
-    currentVisibleProbeIntervalMs,
-    hasTimer: Boolean(visibleRemoteProbeTimer),
   });
 
   const clearPendingAutoPullReloadTimer = () => {
@@ -10583,189 +9834,6 @@
     });
   };
 
-  const hasScheduledAutoPullReload = (refreshPlan) => {
-    const reloadStatus = String(refreshPlan?.reloadSchedule?.status || "");
-    return reloadStatus === "scheduled" || reloadStatus === "already_scheduled";
-  };
-
-  const handleInitialForegroundRemoteFreshnessCheck = async (overrides = {}) => {
-    const settings = overrides.settingsSnapshot || getSettings();
-    if (!isForegroundRemoteFreshnessCheckEnabled(settings)) {
-      return false;
-    }
-    if (document.visibilityState !== "visible") {
-      return false;
-    }
-    const triggerForegroundRemoteFreshnessProbeFn =
-      overrides.triggerForegroundRemoteFreshnessProbe ||
-      triggerForegroundRemoteFreshnessProbe;
-
-    // 新开页面不会触发“回到前台”事件；这里补一次首次可见探测，
-    // 同时继续复用共享冷却和跨标签锁，避免多标签重复请求云端。
-    const probeResult = await triggerForegroundRemoteFreshnessProbeFn(
-      SYNC_TRIGGER_SOURCE_PAGE_LOAD_VISIBLE,
-      overrides.triggerForegroundRemoteFreshnessProbeOverrides || {}
-    );
-    return hasScheduledAutoPullReload(probeResult?.refreshPlan);
-  };
-
-  const isVisibleRemoteFreshnessPollingReason = (reason = "") => {
-    const normalizedReason = normalizeRemoteProbeText(reason, 120);
-    return (
-      normalizedReason === SYNC_TRIGGER_SOURCE_VISIBLE_POLL ||
-      normalizedReason === "visible_poll_active" ||
-      normalizedReason === "visible_poll_idle"
-    );
-  };
-
-  const shouldEmitForegroundProbeFeedback = (feedbackKey, now = Date.now()) => {
-    const normalizedKey = normalizeRemoteProbeText(feedbackKey, 160);
-    const normalizedNow = normalizeRemoteProbeTimestamp(now) || Date.now();
-    if (!normalizedKey) {
-      return false;
-    }
-    if (
-      lastForegroundProbeFeedbackState.key === normalizedKey &&
-      normalizedNow - lastForegroundProbeFeedbackState.timestamp <
-      FOREGROUND_PROBE_FEEDBACK_COOLDOWN_MS
-    ) {
-      return false;
-    }
-    lastForegroundProbeFeedbackState = {
-      key: normalizedKey,
-      timestamp: normalizedNow,
-    };
-    return true;
-  };
-
-  const getForegroundProbeFeedbackDescriptor = (result) => {
-    if (!result || typeof result !== "object") {
-      return null;
-    }
-
-    if (result.status === "skipped") {
-      return null;
-    }
-
-    if (result.status !== "changed") {
-      return null;
-    }
-
-    const syncResult = result.syncRequestResult;
-    if (!syncResult || typeof syncResult !== "object") {
-      return null;
-    }
-
-    if (syncResult.status === "blocked") {
-      return null;
-    }
-
-    if (
-      syncResult.status === "success" &&
-      syncResult.action === "skipped_push_on_startup"
-    ) {
-      return {
-        key: "foreground_probe_local_changes_block_pull",
-        message:
-          "检测到云端有变化，但当前标签页还有未稳定的本地状态。已先暂停这次自动拉取；如需立即处理，请发起一次全局手动同步。",
-        isSuccess: false,
-        allowDuringPolling: true,
-      };
-    }
-
-    if (syncResult.status === "conflict") {
-      return {
-        key: "foreground_probe_conflict_detected",
-        message:
-          "检测到云端与本地都可能已有变化，已暂停自动处理。请发起一次全局手动同步决定保留哪一侧。",
-        isSuccess: false,
-        allowDuringPolling: true,
-      };
-    }
-
-    if (syncResult.status === "skipped") {
-      return null;
-    }
-
-    return null;
-  };
-
-  const maybeShowForegroundProbeFeedback = (result, options = {}) => {
-    const descriptor = getForegroundProbeFeedbackDescriptor(result);
-    if (!descriptor) {
-      return false;
-    }
-
-    const normalizedTriggerReason =
-      normalizeRemoteProbeText(options.triggerReason, 120) || "";
-    if (
-      isVisibleRemoteFreshnessPollingReason(normalizedTriggerReason) &&
-      descriptor.allowDuringPolling !== true
-    ) {
-      return false;
-    }
-
-    const now =
-      normalizeRemoteProbeTimestamp(options.now) || Date.now();
-    if (!shouldEmitForegroundProbeFeedback(descriptor.key, now)) {
-      return false;
-    }
-
-    const showMessageFn = options.showMessage || showMessage;
-    showMessageFn(descriptor.message, descriptor.isSuccess);
-    return true;
-  };
-
-  const finalizeForegroundProbeResult = (result, options = {}) => {
-    const normalizedTimestamp =
-      normalizeRemoteProbeTimestamp(options.timestamp) || Date.now();
-    const triggeredSyncResult =
-      typeof options.triggeredSyncResult === "string"
-        ? options.triggeredSyncResult
-        : formatForegroundProbeSyncResultForDiagnostics(result?.syncRequestResult);
-    const remoteUpdatedAt = Object.prototype.hasOwnProperty.call(
-      options,
-      "remoteUpdatedAt"
-    )
-      ? options.remoteUpdatedAt
-      : result?.remoteUpdatedAt ?? result?.lastObservedRemoteUpdatedAt ?? null;
-    const lastSyncedRemoteUpdatedAt = Object.prototype.hasOwnProperty.call(
-      options,
-      "lastSyncedRemoteUpdatedAt"
-    )
-      ? options.lastSyncedRemoteUpdatedAt
-      : result?.lastSyncedRemoteUpdatedAt ?? null;
-
-    recordForegroundProbeDiagnostics({
-      timestamp: normalizedTimestamp,
-      remoteUpdatedAt,
-      result: getForegroundProbeDiagnosticResult(result),
-      probeResult: result,
-      syncRequestResult: result?.syncRequestResult,
-      triggeredSync:
-        typeof options.triggeredSync === "boolean"
-          ? options.triggeredSync
-          : Boolean(result?.syncRequestResult),
-      triggeredSyncResult,
-      lastSyncedRemoteUpdatedAt,
-      sameSessionRemoteWrite:
-        options.sameSessionRemoteWrite === true ||
-        result?.sameSessionRemoteWrite === true,
-      sameDeviceRemoteWrite:
-        options.sameDeviceRemoteWrite === true ||
-        result?.sameDeviceRemoteWrite === true,
-      remoteWriter: options.remoteWriter || result?.remoteWriter || null,
-      triggerSource: options.triggerReason,
-      triggerReason: options.triggerReason,
-    });
-    maybeShowForegroundProbeFeedback(result, {
-      triggerReason: options.triggerReason,
-      showMessage: options.showMessage,
-      now: normalizedTimestamp,
-    });
-    return result;
-  };
-
   const getPendingAutoSyncRecoveryFn = (overrides = {}) =>
     overrides.recoverPendingAutoSyncIfNeeded || recoverPendingAutoSyncIfNeeded;
 
@@ -10813,18 +9881,11 @@
         createForegroundTriggerSkippedResult("pageshow_not_persisted")
       );
     }
-    if (recoveryResult?.status === "scheduled") {
-      return Promise.resolve({
-        status: "skipped",
-        reason: FOREGROUND_PROBE_SKIP_REASON_PENDING_RECOVERY_SETTLE,
-        recoveryResult,
-      });
-    }
-
-    return triggerForegroundRemoteFreshnessProbe(
-      SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME,
-      overrides
-    );
+    return Promise.resolve({
+      status: recoveryResult?.status || "idle",
+      reason: "pageshow_recovery_checked",
+      recoveryResult: recoveryResult || null,
+    });
   };
 
   const handlePendingAutoSyncRecoveryVisibilityChange = (overrides = {}) => {
@@ -10835,18 +9896,12 @@
     const { coreDataSnapshotResyncResult } =
       resyncForegroundStateFromStorageSnapshot(overrides);
     const recoveryResult = getPendingAutoSyncRecoveryFn(overrides)();
-    if (recoveryResult?.status === "scheduled") {
-      return Promise.resolve({
-        status: "skipped",
-        reason: FOREGROUND_PROBE_SKIP_REASON_PENDING_RECOVERY_SETTLE,
-        recoveryResult,
-        coreDataSnapshotResyncResult,
-      });
-    }
-    return triggerForegroundRemoteFreshnessProbe(
-      SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME,
-      overrides
-    );
+    return Promise.resolve({
+      status: recoveryResult?.status || "idle",
+      reason: "visibility_recovery_checked",
+      recoveryResult: recoveryResult || null,
+      coreDataSnapshotResyncResult,
+    });
   };
 
   const bindPendingAutoSyncRecoveryHooks = () => {
@@ -10854,29 +9909,15 @@
       return;
     }
     window.__s1pPendingAutoSyncRecoveryBound = true;
-    bindVisibleRemoteFreshnessPollingActivityHooks();
-    syncVisibleRemoteFreshnessPollingForCurrentState({
-      resetActivity: true,
-    });
 
     // 处理浏览器后退缓存（bfcache）恢复场景：页面不会重新执行 main。
     window.addEventListener("pageshow", (event) => {
       void handlePendingAutoSyncRecoveryPageShow(event);
-      syncVisibleRemoteFreshnessPollingForCurrentState({
-        resetActivity: Boolean(event && event.persisted),
-      });
     });
 
-    // 处理标签页从后台恢复到前台的场景。
+    // 处理标签页从后台恢复到前台的场景，仅保留本地状态收敛与 pending recovery。
     document.addEventListener("visibilitychange", () => {
       void handlePendingAutoSyncRecoveryVisibilityChange();
-      if (document.visibilityState === "visible") {
-        syncVisibleRemoteFreshnessPollingForCurrentState({
-          resetActivity: true,
-        });
-        return;
-      }
-      stopVisibleRemoteFreshnessPolling();
     });
   };
 
@@ -20745,674 +19786,10 @@
     return result;
   };
 
-  const runForegroundFollowUpAutoSyncCheck = async (options = {}) => {
-    const {
-      acquireStartupSyncLock: acquireStartupSyncLockFn = acquireStartupSyncLock,
-      startStartupSyncLockHeartbeat:
-        startStartupSyncLockHeartbeatFn = startStartupSyncLockHeartbeat,
-      stopStartupSyncLockHeartbeat:
-        stopStartupSyncLockHeartbeatFn = stopStartupSyncLockHeartbeat,
-      releaseStartupSyncLock: releaseStartupSyncLockFn = releaseStartupSyncLock,
-      performAutoSync: performAutoSyncFn = performAutoSync,
-      lockUnavailableResult = {
-        status: "skipped",
-        reason: "foreground_followup_lock_unavailable",
-      },
-      triggerSource = "",
-      onLockUnavailable,
-      beforePerform,
-      onBeforePerform,
-      onAfterRelease,
-    } = options;
-
-    if (!(await acquireStartupSyncLockFn())) {
-      if (typeof onLockUnavailable === "function") {
-        await onLockUnavailable();
-      }
-      return lockUnavailableResult;
-    }
-
-    startStartupSyncLockHeartbeatFn();
-    try {
-      if (typeof beforePerform === "function") {
-        const beforePerformResult = await beforePerform();
-        if (
-          beforePerformResult &&
-          typeof beforePerformResult === "object" &&
-          beforePerformResult.skip === true
-        ) {
-          return beforePerformResult.result;
-        }
-      }
-
-      clearForegroundFollowUpSoftBlock();
-      if (typeof onBeforePerform === "function") {
-        await onBeforePerform();
-      }
-      return await performAutoSyncFn({
-        mode: AUTO_SYNC_MODE_FOREGROUND_FOLLOWUP,
-        syncLockMode: SYNC_LOCK_MODE_STARTUP,
-        useFreshLocalSnapshot: true,
-        triggerSource:
-          normalizeSyncTriggerSource(triggerSource) ||
-          SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME,
-      });
-    } finally {
-      stopStartupSyncLockHeartbeatFn();
-      releaseStartupSyncLockFn();
-      if (typeof onAfterRelease === "function") {
-        await onAfterRelease();
-      }
-    }
-  };
-
-  const runForegroundFollowUpAutoSyncCheckWithIndicator = async ({
-    source = AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME,
-    reason = "",
-    onIndicatorStart,
-    followUpOptions = {},
-  } = {}) => {
-    const resolvedSource =
-      normalizeAutoSyncIndicatorSource(source) ||
-      AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME;
-    const normalizedReason = normalizeAutoSyncIndicatorReason(reason);
-    const followUpOnBeforePerform = followUpOptions.onBeforePerform;
-    let indicatorCycleToken = "";
-    let result = null;
-
-    try {
-      result = await runForegroundFollowUpAutoSyncCheck({
-        ...followUpOptions,
-        triggerSource: resolvedSource,
-        onBeforePerform: async () => {
-          indicatorCycleToken = startAutoSyncIndicatorCycle(resolvedSource, {
-            reason: normalizedReason,
-          });
-          if (typeof onIndicatorStart === "function") {
-            await onIndicatorStart();
-          }
-          if (typeof followUpOnBeforePerform === "function") {
-            await followUpOnBeforePerform();
-          }
-        },
-      });
-    } catch (error) {
-      if (indicatorCycleToken) {
-        finishAutoSyncIndicatorCycle(
-          indicatorCycleToken,
-          AUTO_SYNC_INDICATOR_PHASE_FAILURE,
-          {
-            source: resolvedSource,
-            reason: normalizedReason,
-          }
-        );
-      }
-      throw error;
-    }
-
-    if (indicatorCycleToken) {
-      finishAutoSyncIndicatorCycle(
-        indicatorCycleToken,
-        getAutoSyncIndicatorPhaseFromResult(result),
-        {
-          source: resolvedSource,
-          reason: getAutoSyncIndicatorReasonFromResult(result) || normalizedReason,
-        }
-      );
-    }
-
-    return result;
-  };
-
-  const requestForegroundRemoteSyncCheck = async (
-    reason = "remote_probe_changed",
-    overrides = {}
-  ) => {
-    const settingsSnapshot = overrides.settingsSnapshot || getSettings();
-    const skipResult = getRemoteSyncExecutionSkipResult(settingsSnapshot);
-    if (skipResult) {
-      return skipResult;
-    }
-
-    if (foregroundRemoteSyncCheckInFlightPromise) {
-      return {
-        status: "skipped",
-        reason: "foreground_sync_in_flight",
-      };
-    }
-
-    const normalizedReason =
-      normalizeRemoteProbeText(reason, 120) || "remote_probe_changed";
-    const resolvedSource =
-      normalizeSyncTriggerSource(normalizedReason) ||
-      AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME;
-    const runPromise = runForegroundFollowUpAutoSyncCheckWithIndicator({
-      source: resolvedSource,
-      reason: normalizedReason,
-      onIndicatorStart: () => {
-        console.log(
-          `S1 Plus: 远端探测命中更新，正在执行前台 follow-up 同步检查(${normalizedReason})...`
-        );
-      },
-      followUpOptions: {
-        acquireStartupSyncLock: overrides.acquireStartupSyncLock,
-        startStartupSyncLockHeartbeat: overrides.startStartupSyncLockHeartbeat,
-        stopStartupSyncLockHeartbeat: overrides.stopStartupSyncLockHeartbeat,
-        releaseStartupSyncLock: overrides.releaseStartupSyncLock,
-        performAutoSync: overrides.performAutoSync,
-        onLockUnavailable: () => {
-          console.log(
-            `S1 Plus: 前台远端检查(${normalizedReason})发现已有同步任务在执行，已跳过本轮 follow-up sync。`
-          );
-        },
-      },
-    });
-
-    foregroundRemoteSyncCheckInFlightPromise = runPromise;
-    try {
-      return await runPromise;
-    } finally {
-      if (foregroundRemoteSyncCheckInFlightPromise === runPromise) {
-        foregroundRemoteSyncCheckInFlightPromise = null;
-      }
-    }
-  };
-
-  const clearForegroundRemoteSyncRetry = () => {
-    if (foregroundRemoteSyncRetryTimer) {
-      clearTimeout(foregroundRemoteSyncRetryTimer);
-      foregroundRemoteSyncRetryTimer = null;
-    }
-    foregroundRemoteSyncRetryDueAt = 0;
-    foregroundRemoteSyncRetryAttempts = 0;
-    foregroundRemoteSyncRetryReason = "";
-  };
-
-  const getForegroundRemoteSyncRetryRemainingMs = (now = Date.now()) => {
-    const normalizedNow = normalizeRemoteProbeTimestamp(now) || Date.now();
-    if (!foregroundRemoteSyncRetryDueAt) {
-      return 0;
-    }
-    return Math.max(0, foregroundRemoteSyncRetryDueAt - normalizedNow);
-  };
-
-  const isForegroundRemoteSyncRetryableSkipResult = (syncResult) =>
-    Boolean(
-      syncResult &&
-      typeof syncResult === "object" &&
-      syncResult.status === "skipped" &&
-      (
-        syncResult.reason === "foreground_followup_lock_unavailable" ||
-        syncResult.reason === "foreground_sync_in_flight" ||
-        syncResult.reason === "lock_lost"
-      )
-    );
-
-  const isForegroundRemoteSyncRetryableResult = (syncResult) =>
-    isForegroundRemoteSyncRetryableSkipResult(syncResult) ||
-    Boolean(
-      syncResult &&
-      typeof syncResult === "object" &&
-      syncResult.status === "blocked" &&
-      syncResult.blockLevel === "soft" &&
-      isForegroundProbeRetryableSoftBlockReason(syncResult.reason)
-    );
-
-  const scheduleForegroundRemoteSyncRetry = (
-    reason = "remote_probe_retry",
-    options = {}
-  ) => {
-    if (document.visibilityState !== "visible") {
-      clearForegroundRemoteSyncRetry();
-      return { status: "suppressed", reason: "document_hidden" };
-    }
-    const normalizedReason =
-      normalizeRemoteProbeText(reason, 120) || "remote_probe_retry";
-    const resolvedSource =
-      normalizeSyncTriggerSource(normalizedReason) ||
-      AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME;
-    const preferredDelayMs = Math.max(
-      0,
-      Math.floor(Number(options.preferredDelayMs) || 0)
-    );
-    if (
-      foregroundRemoteSyncRetryTimer &&
-      foregroundRemoteSyncRetryReason === normalizedReason
-    ) {
-      return {
-        status: "already_scheduled",
-        attempt: foregroundRemoteSyncRetryAttempts,
-        retryAfterMs: getForegroundRemoteSyncRetryRemainingMs(),
-        reason: normalizedReason,
-      };
-    }
-    if (getActiveAutoSyncConflictPause()) {
-      clearForegroundRemoteSyncRetry();
-      return { status: "suppressed", reason: "conflict_paused" };
-    }
-    if (foregroundRemoteSyncRetryAttempts >= FOREGROUND_REMOTE_SYNC_RETRY_MAX_ATTEMPTS) {
-      console.warn(
-        "S1 Plus: 前台远端检查补偿重试达到上限，将等待下一次前台探测触发。"
-      );
-      clearForegroundRemoteSyncRetry();
-      return { status: "dropped", reason: "retry_limit_reached" };
-    }
-    const retryDelayMs = resolveForegroundProbeRetryDelayMs(
-      foregroundRemoteSyncRetryAttempts,
-      preferredDelayMs
-    );
-    foregroundRemoteSyncRetryAttempts += 1;
-    foregroundRemoteSyncRetryReason = normalizedReason;
-    foregroundRemoteSyncRetryDueAt = Date.now() + retryDelayMs;
-    setAutoSyncIndicatorPendingState(
-      resolvedSource,
-      "foreground_followup_retry"
-    );
-
-    if (foregroundRemoteSyncRetryTimer) {
-      clearTimeout(foregroundRemoteSyncRetryTimer);
-    }
-    foregroundRemoteSyncRetryTimer = setTimeout(async () => {
-      foregroundRemoteSyncRetryTimer = null;
-      foregroundRemoteSyncRetryDueAt = 0;
-      if (document.visibilityState !== "visible") {
-        clearForegroundRemoteSyncRetry();
-        return;
-      }
-
-      try {
-        const gateBlockResult = (
-          options.getForegroundProbeGateBlockResult ||
-          getForegroundProbeGateBlockResult
-        )({
-          triggerSource: resolvedSource,
-          triggerReason: normalizedReason,
-          now: Date.now(),
-        });
-        if (gateBlockResult) {
-          scheduleForegroundRemoteSyncRetry(normalizedReason, {
-            ...options,
-            preferredDelayMs: gateBlockResult.retryAfterMs,
-          });
-          return;
-        }
-
-        const syncResult = await (
-          options.requestForegroundRemoteSyncCheck ||
-          requestForegroundRemoteSyncCheck
-        )(
-          normalizedReason,
-          options.requestForegroundRemoteSyncCheckOverrides || {}
-        );
-        if (isForegroundRemoteSyncRetryableResult(syncResult)) {
-          scheduleForegroundRemoteSyncRetry(normalizedReason, {
-            ...options,
-            preferredDelayMs:
-              Number(syncResult?.retryAfterMs) || preferredDelayMs,
-          });
-          return;
-        }
-
-        clearForegroundRemoteSyncRetry();
-        (
-          options.applyRefreshPolicyForSyncResult ||
-          applyRefreshPolicyForSyncResult
-        )(syncResult, {
-          reason: `foreground_retry:${normalizedReason}`,
-          suppressMessage: syncResult?.sameSessionRemoteWrite === true,
-          messages: getAutoPullRefreshMessagesForSource(
-            "generic",
-            syncResult?.action,
-            getSameDeviceRefreshMessageOptions(syncResult)
-          ),
-        });
-        (
-          options.maybeShowForegroundProbeFeedback ||
-          maybeShowForegroundProbeFeedback
-        )(
-          { status: "changed", syncRequestResult: syncResult },
-          {
-            triggerReason: normalizedReason,
-          }
-        );
-      } catch (error) {
-        console.error(
-          `S1 Plus: 前台远端检查补偿重试失败(${normalizedReason}):`,
-          error
-        );
-        clearForegroundRemoteSyncRetry();
-      }
-    }, retryDelayMs);
-
-    return {
-      status: "scheduled",
-      retryAfterMs: retryDelayMs,
-      attempt: foregroundRemoteSyncRetryAttempts,
-      reason: normalizedReason,
-    };
-  };
-
-  const checkRemoteFreshnessOnForeground = async (
-    reason = "visibility",
-    overrides = {}
-  ) => {
-    const now =
-      Number.isFinite(overrides.now) && overrides.now > 0
-        ? Math.floor(overrides.now)
-        : Date.now();
-    const finalizeResult = (result, extraOptions = {}) =>
-      finalizeForegroundProbeResult(result, {
-        timestamp: now,
-        triggerReason: reason,
-        showMessage: overrides.showMessage,
-        ...extraOptions,
-      });
-    const settingsSnapshot = overrides.settingsSnapshot || getSettings();
-    const skipResult = getRemoteSyncExecutionSkipResult(settingsSnapshot);
-    if (skipResult) {
-      return finalizeResult(skipResult);
-    }
-    if (settingsSnapshot.syncCheckOnReturnToForeground !== true) {
-      return finalizeResult({
-        status: "skipped",
-        reason: "foreground_check_disabled",
-      });
-    }
-
-    if (foregroundProbeInFlightPromise) {
-      return finalizeResult({ status: "skipped", reason: "probe_in_flight" });
-    }
-    if (foregroundRemoteSyncCheckInFlightPromise) {
-      return finalizeResult({
-        status: "skipped",
-        reason: "foreground_sync_in_flight",
-      });
-    }
-    const foregroundRetryRemainingMs =
-      getForegroundRemoteSyncRetryRemainingMs(now);
-    if (foregroundRetryRemainingMs > 0) {
-      return finalizeResult({
-        status: "skipped",
-        reason: "followup_retry_pending",
-        retryAfterMs: foregroundRetryRemainingMs,
-      });
-    }
-    if (hasAnyActiveSyncLock(now)) {
-      return finalizeResult({ status: "skipped", reason: "sync_lock_active" });
-    }
-    if (isForegroundProbeLocalCooldownActive(now)) {
-      return finalizeResult({
-        status: "skipped",
-        reason: "local_cooldown",
-        retryAfterMs: getForegroundProbeLocalCooldownRemainingMs(now),
-      });
-    }
-
-    const sharedCooldownState = getRemoteProbeSharedCooldownState();
-    if (isRemoteProbeSharedCooldownActive(now)) {
-      return finalizeResult(
-        {
-          status: "skipped",
-          reason: "shared_cooldown",
-          retryAfterMs: getRemoteProbeSharedCooldownRemainingMs(now),
-          checkedBy: sharedCooldownState.checkedBy || "",
-          lastObservedRemoteUpdatedAt:
-            sharedCooldownState.lastObservedRemoteUpdatedAt || null,
-        },
-        {
-          remoteUpdatedAt: sharedCooldownState.lastObservedRemoteUpdatedAt || null,
-        }
-      );
-    }
-
-    const acquireRemoteProbeLockFn =
-      overrides.acquireRemoteProbeLock || acquireRemoteProbeLock;
-    const releaseRemoteProbeLockValueFn =
-      overrides.releaseRemoteProbeLockValue || releaseRemoteProbeLockValue;
-    const fetchRemoteDataFn = overrides.fetchRemoteData || fetchRemoteData;
-    const requestForegroundRemoteSyncCheckFn =
-      overrides.requestForegroundRemoteSyncCheck || requestForegroundRemoteSyncCheck;
-    const getForegroundProbeGateBlockResultFn =
-      overrides.getForegroundProbeGateBlockResult ||
-      getForegroundProbeGateBlockResult;
-    const normalizedReason =
-      normalizeRemoteProbeText(reason, 120) || "visibility";
-    const retryOptions = {
-      ...(overrides.foregroundRemoteSyncRetryOptions || {}),
-    };
-    if (!retryOptions.getForegroundProbeGateBlockResult) {
-      retryOptions.getForegroundProbeGateBlockResult =
-        getForegroundProbeGateBlockResultFn;
-    }
-    if (!retryOptions.requestForegroundRemoteSyncCheck) {
-      retryOptions.requestForegroundRemoteSyncCheck =
-        requestForegroundRemoteSyncCheckFn;
-    }
-    if (!retryOptions.requestForegroundRemoteSyncCheckOverrides) {
-      retryOptions.requestForegroundRemoteSyncCheckOverrides =
-        overrides.requestForegroundRemoteSyncCheckOverrides || {};
-    }
-
-    markForegroundProbeLocalAttempt(now);
-
-    const runPromise = (async () => {
-      const probeInfoBefore = getLastRemoteProbeInfo();
-      const baselineState = getSyncBaselineState();
-      const lastSyncedRemoteUpdatedAt =
-        probeInfoBefore.lastSyncedRemoteUpdatedAt ||
-        baselineState?.remoteUpdatedAt ||
-        null;
-      const lastObservedRemoteUpdatedAt =
-        probeInfoBefore.lastObservedRemoteUpdatedAt || null;
-
-      if (
-        !(await acquireRemoteProbeLockFn({
-          owner: BACKGROUND_SYNC_OWNER_ID,
-          reason: normalizedReason,
-        }))
-      ) {
-        return finalizeResult({
-          status: "skipped",
-          reason: "probe_lock_unavailable",
-        });
-      }
-
-      let remoteMeta = null;
-      try {
-        const probeResult = await fetchRemoteDataFn({ metadataOnly: true });
-        remoteMeta =
-          probeResult && typeof probeResult === "object" ? probeResult.meta : null;
-      } finally {
-        releaseRemoteProbeLockValueFn(BACKGROUND_SYNC_OWNER_ID);
-      }
-
-      const remoteUpdatedAt = normalizeRemoteProbeUpdatedAt(
-        remoteMeta?.updatedAt
-      );
-      recordRemoteProbeObservation({
-        remoteUpdatedAt,
-        observedAt: now,
-      });
-
-      if (!remoteUpdatedAt) {
-        return finalizeResult(
-          {
-            status: "skipped",
-            reason: "remote_updated_at_missing",
-            lastSyncedRemoteUpdatedAt,
-            lastObservedRemoteUpdatedAt,
-          },
-          {
-            remoteUpdatedAt: null,
-            lastSyncedRemoteUpdatedAt,
-          }
-        );
-      }
-
-      if (
-        lastSyncedRemoteUpdatedAt &&
-        remoteUpdatedAt === lastSyncedRemoteUpdatedAt
-      ) {
-        return finalizeResult(
-          {
-            status: "unchanged",
-            reason: "remote_already_synced",
-            remoteUpdatedAt,
-            lastSyncedRemoteUpdatedAt,
-            lastObservedRemoteUpdatedAt,
-          },
-          {
-            remoteUpdatedAt,
-            lastSyncedRemoteUpdatedAt,
-          }
-        );
-      }
-
-      const sameSessionRemoteWrite = getMatchingLocalSessionRemoteWrite({
-        remoteUpdatedAt,
-        now,
-      });
-      let snapshotResyncResult = null;
-      let settingsSnapshotResynced = false;
-      if (sameSessionRemoteWrite) {
-        const snapshotSyncResult = resyncForegroundStateFromStorageSnapshot(
-          overrides,
-          { includeSettings: true }
-        );
-        snapshotResyncResult = snapshotSyncResult.coreDataSnapshotResyncResult;
-        settingsSnapshotResynced = snapshotSyncResult.settingsSnapshotResynced;
-      }
-
-      const gateBlockResult = getForegroundProbeGateBlockResultFn({
-        triggerSource: normalizeSyncTriggerSource(normalizedReason) ||
-          SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME,
-        triggerReason: normalizedReason,
-        now,
-      });
-      if (gateBlockResult) {
-        const retryPlan = scheduleForegroundRemoteSyncRetry(
-          `remote_probe_changed:${normalizedReason}`,
-          {
-            ...retryOptions,
-            preferredDelayMs: gateBlockResult.retryAfterMs,
-          }
-        );
-        return finalizeResult(
-          {
-            status: "changed",
-            reason: "remote_changed",
-            remoteUpdatedAt,
-            lastSyncedRemoteUpdatedAt,
-            lastObservedRemoteUpdatedAt,
-            syncRequestResult: gateBlockResult,
-            retryPlan,
-            sameSessionRemoteWrite: Boolean(sameSessionRemoteWrite),
-            snapshotResyncResult,
-            settingsSnapshotResynced,
-          },
-          {
-            remoteUpdatedAt,
-            triggeredSync: false,
-            triggeredSyncResult:
-              formatForegroundProbeSyncResultForDiagnostics(gateBlockResult),
-            lastSyncedRemoteUpdatedAt,
-            sameSessionRemoteWrite: Boolean(sameSessionRemoteWrite),
-          }
-        );
-      }
-
-      const syncRequestResult = await requestForegroundRemoteSyncCheckFn(
-        `remote_probe_changed:${normalizedReason}`,
-        overrides.requestForegroundRemoteSyncCheckOverrides || {}
-      );
-      if (isForegroundRemoteSyncRetryableResult(syncRequestResult)) {
-        scheduleForegroundRemoteSyncRetry(`remote_probe_changed:${normalizedReason}`, {
-          ...retryOptions,
-          preferredDelayMs: Number(syncRequestResult?.retryAfterMs) || 0,
-        });
-      } else {
-        clearForegroundRemoteSyncRetry();
-      }
-      let refreshPlan = null;
-      const matchedSameSessionRemoteWrite =
-        Boolean(sameSessionRemoteWrite) ||
-        syncRequestResult?.sameSessionRemoteWrite === true;
-      const matchedSameDeviceRemoteWrite =
-        syncRequestResult?.sameDeviceRemoteWrite === true;
-      if (shouldApplyAutoPullRefreshForSyncResult(syncRequestResult)) {
-        refreshPlan = applyRefreshPolicyForSyncResult(syncRequestResult, {
-          reason: `foreground_probe:${normalizedReason}`,
-          showMessage: overrides.showMessage,
-          suppressMessage: matchedSameSessionRemoteWrite,
-          messages: getAutoPullRefreshMessagesForSource(
-            "generic",
-            syncRequestResult?.action,
-            getSameDeviceRefreshMessageOptions(syncRequestResult)
-          ),
-          locationObject: overrides.locationObject,
-          setTimeoutFn: overrides.setTimeoutFn,
-        });
-      }
-
-      return finalizeResult(
-        {
-          status: "changed",
-          reason: "remote_changed",
-          remoteUpdatedAt,
-          lastSyncedRemoteUpdatedAt,
-          lastObservedRemoteUpdatedAt,
-          syncRequestResult,
-          refreshPlan,
-          sameSessionRemoteWrite: matchedSameSessionRemoteWrite,
-          sameDeviceRemoteWrite: matchedSameDeviceRemoteWrite,
-          remoteWriter: syncRequestResult?.remoteWriter || null,
-          snapshotResyncResult,
-          settingsSnapshotResynced,
-        },
-        {
-          remoteUpdatedAt,
-          triggeredSync: true,
-          triggeredSyncResult:
-            formatForegroundProbeSyncResultForDiagnostics(syncRequestResult),
-          lastSyncedRemoteUpdatedAt: getLastRemoteProbeInfo()
-            .lastSyncedRemoteUpdatedAt || lastSyncedRemoteUpdatedAt,
-          sameSessionRemoteWrite: matchedSameSessionRemoteWrite,
-          sameDeviceRemoteWrite: matchedSameDeviceRemoteWrite,
-          remoteWriter: syncRequestResult?.remoteWriter || null,
-        }
-      );
-    })();
-
-    foregroundProbeInFlightPromise = runPromise;
-    try {
-      return await runPromise;
-    } catch (error) {
-      const errorMessage = error?.message || String(error);
-      console.error(
-        `S1 Plus: 前台远端更新探测执行失败(${normalizedReason}):`,
-        error
-      );
-      return finalizeResult({
-        status: "failure",
-        reason: "probe_execution_error",
-        error: errorMessage,
-      });
-    } finally {
-      if (foregroundProbeInFlightPromise === runPromise) {
-        foregroundProbeInFlightPromise = null;
-      }
-    }
-  };
-
   if (IS_S1P_TEST_MODE) {
     const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
     testHookHost.__S1P_TEST_HOOKS__ = {
       ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
-      getRemoteProbeSharedCooldownRemainingMs,
-      isRemoteProbeSharedCooldownActive,
-      getForegroundProbeLocalCooldownRemainingMs,
-      isForegroundProbeLocalCooldownActive,
-      recordRemoteProbeObservation,
       getLastLocalSessionRemoteWrite,
       setLastLocalSessionRemoteWrite,
       recordLocalSessionRemoteWrite,
@@ -21420,15 +19797,7 @@
       getSyncDiagnostics,
       resetSyncDiagnostics,
       buildSyncDiagnosticsSummary,
-      acquireRemoteProbeLock,
       hasAnyActiveSyncLock,
-      markVisibleRemoteFreshnessUserActivity,
-      getVisibleRemoteFreshnessPollingIntervalMs,
-      stopVisibleRemoteFreshnessPolling,
-      scheduleVisibleRemoteFreshnessPolling,
-      syncVisibleRemoteFreshnessPollingForCurrentState,
-      handleVisibleRemoteFreshnessUserActivity,
-      getVisibleRemoteFreshnessPollingRuntimeState,
       hasDirtySettingsModalEdits,
       isThreadDetailPageForAutoPullRefresh,
       isLightweightListPageForAutoPullRefresh,
@@ -21441,11 +19810,6 @@
       getAutoPullRefreshMessagesForSource,
       clearPendingAutoPullReloadTimer,
       runStartupModeAutoSyncCheck,
-      requestForegroundRemoteSyncCheck,
-      scheduleForegroundRemoteSyncRetry,
-      getForegroundRemoteSyncRetryRemainingMs,
-      checkRemoteFreshnessOnForeground,
-      getForegroundProbeGateBlockResult,
       hasEnabledAutoSyncIndicatorPath,
       getAutoSyncIndicatorState,
       setAutoSyncIndicatorResolvedPhase,
@@ -21456,9 +19820,6 @@
       getAutoSyncIndicatorTitle: (...args) => getAutoSyncIndicatorTitle(...args),
       decideSyncActionByVersion,
       performAutoSync,
-      runForegroundFollowUpAutoSyncCheck,
-      triggerForegroundRemoteFreshnessProbe,
-      handleInitialForegroundRemoteFreshnessCheck,
       handlePendingAutoSyncRecoveryPageShow,
       handlePendingAutoSyncRecoveryVisibilityChange,
       getForegroundFollowUpSoftBlockState,
@@ -22509,7 +20870,6 @@
   const runFullSettingsCrossTabRefresh = (changedPathSet) => {
     initializeNavbar();
     applyChanges();
-    syncVisibleRemoteFreshnessPollingForCurrentState();
     markSettingsRuntimeAppliedSnapshot(getSettings());
     syncOpenSettingsModalFromCrossTab({
       changedPathSet,
@@ -22568,12 +20928,7 @@
       hasSettingPathInChangedSet(changedPathSet, "customNavLinks") ||
       hasSettingPathInChangedSet(changedPathSet, "syncRemoteEnabled") ||
       hasSettingPathInChangedSet(changedPathSet, "syncDailyFirstLoad") ||
-      hasSettingPathInChangedSet(changedPathSet, "syncPerLoadCheckEnabled") ||
       hasSettingPathInChangedSet(changedPathSet, "syncAutoEnabled") ||
-      hasSettingPathInChangedSet(
-        changedPathSet,
-        "syncCheckOnReturnToForeground"
-      ) ||
       hasSettingPathInChangedSet(changedPathSet, "syncShowAutoSyncIndicator") ||
       hasSettingPathInChangedSet(changedPathSet, "syncDirectChoiceMode");
     if (shouldReinitializeNavbar) {
@@ -22654,7 +21009,6 @@
     }
 
     markSettingsRuntimeAppliedSnapshot(settings);
-    syncVisibleRemoteFreshnessPollingForCurrentState();
     syncOpenSettingsModalFromCrossTab({ changedPathSet });
     return false;
   };
@@ -23072,7 +21426,6 @@
       );
     }
     console.log("S1 Plus: Settings saved.");
-    syncVisibleRemoteFreshnessPollingForCurrentState();
     if (!suppressSyncTrigger) {
       updateLastModifiedTimestamp();
     } else if (markDataChangedWhenSuppressed) {
@@ -23506,14 +21859,6 @@
         return "后台自动同步";
       case AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP:
         return "每日首次同步";
-      case AUTO_SYNC_INDICATOR_SOURCE_PER_LOAD:
-        return "每次加载检查";
-      case AUTO_SYNC_INDICATOR_SOURCE_PAGE_LOAD_VISIBLE:
-        return "首次可见检查";
-      case AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME:
-        return "回到前台检查";
-      case AUTO_SYNC_INDICATOR_SOURCE_VISIBLE_POLL:
-        return "可见页轮询检查";
       case AUTO_SYNC_INDICATOR_SOURCE_MANUAL_SYNC:
         return "手动同步";
       default:
@@ -23544,13 +21889,6 @@
           ? "自动同步：待处理"
           : `自动同步：${sourceLabel}待处理`;
       case AUTO_SYNC_INDICATOR_PHASE_RUNNING:
-        if (
-          source === AUTO_SYNC_INDICATOR_SOURCE_PAGE_LOAD_VISIBLE ||
-          source === AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME ||
-          source === AUTO_SYNC_INDICATOR_SOURCE_VISIBLE_POLL
-        ) {
-          return `自动同步：${sourceLabel}命中更新，正在同步`;
-        }
         return sourceLabel === "自动同步"
           ? "自动同步：同步中"
           : `自动同步：${sourceLabel}中`;
@@ -35980,49 +34318,6 @@
     );
   };
 
-  const handlePerLoadSyncCheck = async () => {
-    const settings = getSettings();
-    if (
-      !settings.syncPerLoadCheckEnabled ||
-      !settings.syncRemoteEnabled ||
-      !settings.syncRemoteGistId ||
-      !settings.syncRemotePat
-    ) {
-      return false;
-    }
-
-    const result = await runStartupModeAutoSyncCheckWithIndicator({
-      source: AUTO_SYNC_INDICATOR_SOURCE_PER_LOAD,
-      onIndicatorStart: () => {
-        console.log("S1 Plus: 正在执行每次页面加载同步检查...");
-      },
-      startupOptions: {
-        onLockUnavailable: () => {
-          console.log(
-            "S1 Plus: 检测到其他同步任务正在执行，本次常规启动同步检查已跳过。"
-          );
-        },
-      },
-    });
-
-    switch (result.status) {
-      case "success":
-        if (shouldApplyAutoPullRefreshForSyncResult(result)) {
-          applyRefreshPolicyForSyncResult(result, {
-            reason: "per_load_auto_pull",
-            suppressMessage: result.sameSessionRemoteWrite === true,
-            messages: getAutoPullRefreshMessagesForSource(
-              "generic",
-              result.action,
-              getSameDeviceRefreshMessageOptions(result)
-            ),
-          });
-          return true;
-        }
-        break;
-    }
-    return false;
-  };
   const handleStartupSync = async () => {
     const settings = getSettings();
     if (!settings.syncRemoteEnabled || !settings.syncDailyFirstLoad) {
@@ -36216,7 +34511,6 @@
     const scheduledAt = Date.now();
     const runStartupOrchestratorFlow = async ({
       skipDailyStartupSync = false,
-      suppressStartupOnlyChecks = false,
     } = {}) => {
       try {
         const startupSyncResult = skipDailyStartupSync
@@ -36224,23 +34518,6 @@
           : await handleStartupSync();
         if (startupSyncResult === true) {
           return;
-        }
-
-        if (!suppressStartupOnlyChecks) {
-          const isReloadingAfterPerLoadSync = await handlePerLoadSyncCheck();
-          if (isReloadingAfterPerLoadSync) {
-            return;
-          }
-
-          const isReloadingAfterInitialForegroundProbe =
-            await handleInitialForegroundRemoteFreshnessCheck();
-          if (isReloadingAfterInitialForegroundProbe) {
-            return;
-          }
-        } else {
-          console.log(
-            "S1 Plus: 启动流程已过新鲜窗口，已跳过每次加载同步检查与首次可见前台探测。"
-          );
         }
 
         let tokenPopupWasShown = false;
@@ -36281,7 +34558,6 @@
             );
           }
           runStartupOrchestratorFlow({
-            suppressStartupOnlyChecks: true,
           });
           return;
         case "defer_daily_startup":
@@ -36299,17 +34575,15 @@
           );
           runStartupOrchestratorFlow({
             skipDailyStartupSync: true,
-            suppressStartupOnlyChecks: true,
           });
           return;
         case "skip_stale_startup_only_checks":
         default:
           console.log(
-            `S1 Plus: 启动同步流程触发过晚（${elapsedMs}ms），已跳过本页启动期专属同步检查。`
+            `S1 Plus: 启动同步流程触发过晚（${elapsedMs}ms），已跳过本页延迟启动同步。`
           );
           runStartupOrchestratorFlow({
             skipDailyStartupSync: true,
-            suppressStartupOnlyChecks: true,
           });
       }
     };

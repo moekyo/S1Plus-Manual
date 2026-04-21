@@ -40,26 +40,26 @@ const testIndicatorVisibilityCoversAllAutoPaths = () => {
   assert.strictEqual(
     hooks.hasEnabledAutoSyncIndicatorPath({
       ...baseSettings,
-      syncPerLoadCheckEnabled: true,
+      syncAutoEnabled: true,
     }),
     true,
-    "仅开启每次加载检查时，指示器仍应允许显示。"
+    "仅开启后台自动同步时，指示器仍应允许显示。"
+  );
+  assert.strictEqual(
+    hooks.hasEnabledAutoSyncIndicatorPath({
+      ...baseSettings,
+      syncPerLoadCheckEnabled: true,
+    }),
+    false,
+    "仅开启每次加载检查时，指示器不应再驱动导航状态指示器显示。"
   );
   assert.strictEqual(
     hooks.hasEnabledAutoSyncIndicatorPath({
       ...baseSettings,
       syncCheckOnReturnToForeground: true,
     }),
-    true,
-    "仅开启回到前台检查时，指示器仍应允许显示。"
-  );
-  assert.strictEqual(
-    hooks.hasEnabledAutoSyncIndicatorPath({
-      ...baseSettings,
-      syncAutoEnabled: true,
-    }),
-    true,
-    "仅开启后台自动同步时，指示器仍应允许显示。"
+    false,
+    "仅开启回到前台检查时，指示器不应再驱动导航状态指示器显示。"
   );
   assert.strictEqual(
     hooks.hasEnabledAutoSyncIndicatorPath(baseSettings),
@@ -90,7 +90,8 @@ const testSourceAwareTitlesAndMappings = () => {
       displayPhase: "running",
       displaySource: "foreground_followup",
     }),
-    "自动同步：回到前台检查命中更新，正在同步"
+    "自动同步：同步中",
+    "旧的前台自动检查来源应降级为通用标题。"
   );
   assert.strictEqual(
     hooks.getAutoSyncIndicatorPhaseFromResult({
@@ -148,13 +149,15 @@ const testAutoSyncEntryPointsBindIndicatorSources = () => {
     /const handleStartupSync = async[\s\S]*?runStartupModeAutoSyncCheckWithIndicator\(\{\s*source:\s*AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP/m,
     "每日首次加载同步未绑定 daily_startup 指示器来源。"
   );
-  expectMatch(
-    /const handlePerLoadSyncCheck = async[\s\S]*?runStartupModeAutoSyncCheckWithIndicator\(\{\s*source:\s*AUTO_SYNC_INDICATOR_SOURCE_PER_LOAD/m,
-    "每次页面加载同步检查未绑定 per_load 指示器来源。"
+  assert.doesNotMatch(
+    sourceCode,
+    /const handlePerLoadSyncCheck = async/m,
+    "自动检查运行入口 handlePerLoadSyncCheck 应已移除。"
   );
-  expectMatch(
-    /const requestForegroundRemoteSyncCheck = async[\s\S]*?runForegroundFollowUpAutoSyncCheckWithIndicator\(\{\s*source:\s*resolvedSource/m,
-    "前台 follow-up sync 未绑定专用 foreground_followup 指示器 helper。"
+  assert.doesNotMatch(
+    sourceCode,
+    /const requestForegroundRemoteSyncCheck = async/m,
+    "前台自动检查 follow-up 入口应已移除。"
   );
 };
 

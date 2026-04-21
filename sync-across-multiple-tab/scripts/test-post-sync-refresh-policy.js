@@ -55,10 +55,6 @@ const testStaticWiring = () => {
     "Phase 7 未将设置弹窗脏状态暴露为可被同步逻辑检测的 DOM 标记。"
   );
   expectMatch(
-    /const handlePerLoadSyncCheck = async[\s\S]*?applyRefreshPolicyForSyncResult\(result,\s*\{\s*reason:\s*"per_load_auto_pull"/m,
-    "Phase 7 未将每次加载同步成功接入刷新策略。"
-  );
-  expectMatch(
     /const handleBackgroundAutoSyncResult = async[\s\S]*?applyRefreshPolicyForSyncResult\(result,\s*\{[\s\S]*?reason:\s*result\.action === "merged_read_progress"[\s\S]*?"background_auto_pull"/m,
     "Phase 7 未将后台自动同步成功接入刷新策略。"
   );
@@ -67,12 +63,18 @@ const testStaticWiring = () => {
     "后台自动同步结果未区分 same-session 静默与 same-device 文案。"
   );
   expectMatch(
-    /refreshPlan = applyRefreshPolicyForSyncResult\(syncRequestResult,\s*\{[\s\S]*?reason:\s*`foreground_probe:\$\{normalizedReason\}`/m,
-    "Phase 7 未将前台远端探测命中的 follow-up sync 接入刷新策略。"
-  );
-  expectMatch(
     /const createSameDeviceAutoPullRefreshMessages = \(\s*deviceId = "",\s*action = "pulled",\s*sourceLabel = ""\s*\) => \{/m,
     "未新增 same-device 自动拉取提示文案 helper。"
+  );
+  assert.doesNotMatch(
+    sourceCode,
+    /const handlePerLoadSyncCheck = async/m,
+    "自动检查专属的每次加载入口应已移除。"
+  );
+  assert.doesNotMatch(
+    sourceCode,
+    /foreground_probe:/m,
+    "自动检查专属的前台探测刷新原因应已移除。"
   );
 };
 

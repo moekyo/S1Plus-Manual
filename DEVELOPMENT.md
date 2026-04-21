@@ -257,13 +257,9 @@ node sync-across-multiple-tab/scripts/test-settings-migration.js
 
 - 启动期现在通过 startup orchestrator 决定执行路径：`fresh` 页面运行完整启动链路，`stale` 页面只顺延每日首次同步或直接跳过启动专属检查。
 - 设置迁移归一化函数 `buildNormalizedSettings()` 现会返回 `migrationReasons`，用于定位本次迁移是由哪些旧字段/脏值触发。
-- 同步检查模式已拆分为两个独立设置：`syncDailyFirstLoad` 仅控制“每日首次加载时同步”，`syncPerLoadCheckEnabled` 仅控制“每次页面加载时检查同步”；不要再依赖“关闭前者等于开启后者”的旧隐式语义。
-- 当前触发源命名已显式收口为：
+- `syncPerLoadCheckEnabled` 和 `syncCheckOnReturnToForeground` 仍保留为设置 UI 的兼容字段，用于三段式“自动检查云端更新”控件的回显与保存；当前版本不再让它们驱动任何自动检查运行时行为。
+- 当前仍有效的自动同步触发源只保留：
   - `daily_startup`
-  - `per_load`
-  - `page_load_visible`
-  - `foreground_resume`
-  - `visible_poll`
   - `background_push`
   - `manual_sync`
 
