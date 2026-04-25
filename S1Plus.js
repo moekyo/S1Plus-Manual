@@ -1116,15 +1116,15 @@
       items: [
         {
           label: "关闭",
-          body: "完全关闭自动检查；不会在页面首次可见、页面加载或切回前台时主动检查云端更新。",
+          body: "关闭额外自动检查；每日首次同步、手动同步和本地变更后台同步仍按各自开关运行。",
         },
         {
-          label: "每次加载检查",
-          body: "每次打开论坛页面时直接执行一次安全同步检查，响应最快，但检查频率也最高。",
+          label: "每次加载",
+          body: "每次打开论坛页面时执行一次安全同步检查，响应最快，但检查频率也最高。",
         },
         {
-          label: "回到前台检查",
-          body: "论坛页面首次可见、标签页回到前台或从后退缓存恢复时，会先做轻量远端探测；只有确认云端有更新后才继续执行安全同步检查。",
+          label: "回到前台",
+          body: "页面首次可见、标签页回到前台或从后退缓存恢复时，先轻量探测云端；只有确认有更新才继续安全同步。",
         },
       ],
     },
@@ -1132,17 +1132,17 @@
       title: "区别说明",
       items: [
         {
-          label: "每次加载检查",
+          label: "每次加载",
           body: "适合希望打开页面就立刻校验云端状态的场景。",
         },
         {
-          label: "回到前台检查",
-          body: "更偏向跨设备切换场景；新开页面首次可见或回到前台时立即探测。页面持续可见时的低频复查由下方独立开关控制。",
+          label: "回到前台",
+          body: "更适合跨设备切换；持续可见页面的低频复查由同组高级开关控制。",
         },
       ],
     },
   ];
-  const SYNC_AUTO_CHECK_MODE_HELP_TOOLTIP_TEXT = "查看自动检查方式说明";
+  const SYNC_AUTO_CHECK_MODE_HELP_TOOLTIP_TEXT = "查看检查策略说明";
   const applyTooltipDatasetConfig = (element, config = {}) => {
     if (!(element instanceof Element)) {
       return;
@@ -4126,6 +4126,34 @@
     #s1p-remote-sync-controls-wrapper.is-disabled {
       opacity: 0.5;
     }
+    .s1p-sync-settings-section {
+      padding: 14px 0;
+      border-top: 1px solid var(--s1p-pri);
+    }
+    .s1p-sync-settings-section:first-child {
+      border-top: none;
+      padding-top: 4px;
+    }
+    .s1p-sync-settings-section-title {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 4px;
+      color: var(--s1p-text);
+    }
+    .s1p-sync-settings-section-desc {
+      margin-top: 0;
+      margin-bottom: 8px;
+    }
+    .s1p-sync-settings-section .s1p-setting-desc {
+      margin-top: 0;
+    }
+    .s1p-sync-settings-section .s1p-settings-sub-group {
+      margin-bottom: 4px;
+    }
+    .s1p-sync-auto-check-desc {
+      margin-bottom: 10px;
+    }
+    #s1p-visible-remote-polling-subgroup.is-disabled,
     #s1p-auto-sync-indicator-subgroup.is-disabled {
       opacity: 0.5;
       pointer-events: none;
@@ -23359,6 +23387,7 @@
         markDataChangedWhenSuppressed: Boolean(
           suppressSyncTriggerOrOptions.markDataChangedWhenSuppressed
         ),
+        forceWrite: Boolean(suppressSyncTriggerOrOptions.forceWrite),
       };
     }
     return {
@@ -23366,6 +23395,7 @@
       markDataChangedWhenSuppressed: Boolean(
         legacyMarkDataChangedWhenSuppressed
       ),
+      forceWrite: false,
     };
   };
 
@@ -23375,14 +23405,17 @@
     suppressSyncTriggerOrOptions = false,
     legacyMarkDataChangedWhenSuppressed = false
   ) => {
-    const { suppressSyncTrigger, markDataChangedWhenSuppressed } =
+    const { suppressSyncTrigger, markDataChangedWhenSuppressed, forceWrite } =
       normalizeSaveSettingsOptions(
         suppressSyncTriggerOrOptions,
         legacyMarkDataChangedWhenSuppressed
       );
     const normalizedSettings = buildNormalizedSettings(settings).settings;
     const currentSettings = getSettings();
-    if (!hasComparableValueChanged(currentSettings, normalizedSettings)) {
+    if (
+      !forceWrite &&
+      !hasComparableValueChanged(currentSettings, normalizedSettings)
+    ) {
       setSettingsCache(normalizedSettings);
       return;
     }
@@ -23427,10 +23460,21 @@
     saveSettings(settings, {
       suppressSyncTrigger: true,
       markDataChangedWhenSuppressed: true,
+      forceWrite: true,
     });
     console.log("S1 Plus: 设置迁移完成。");
     return true;
   };
+
+  if (IS_S1P_TEST_MODE) {
+    const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
+    testHookHost.__S1P_TEST_HOOKS__ = {
+      ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
+      getSettings,
+      saveSettings,
+      migrateLegacySettingsIfNeeded,
+    };
+  }
 
   let interfaceTitleBaseCache = null;
   let lastAppliedCustomTitleSuffix = "";
@@ -26356,112 +26400,135 @@
             <span class="s1p-slider"></span>
           </label>
         </div>
-        <p class="s1p-setting-desc">启用后，你可以在导航栏发起全局手动同步，或开启下面的自动同步。</p>
+        <p class="s1p-setting-desc">启用后，你可以在导航栏发起全局手动同步，也可以配置云端更新检查和本地变更后台同步。</p>
 
         <div id="s1p-remote-sync-controls-wrapper">
-          <div class="s1p-settings-item">
-            <label class="s1p-settings-label" for="s1p-daily-first-load-sync-enabled-toggle">启用每日首次加载时同步</label>
-            <label class="s1p-switch">
-              <input type="checkbox" id="s1p-daily-first-load-sync-enabled-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
-              <span class="s1p-slider"></span>
-            </label>
-          </div>
-          <p class="s1p-setting-desc">启用后，每天第一次打开论坛时会自动检查并同步数据。关闭它后，不会再隐式切换成“每次页面加载时检查”。此功能独立于下方的“自动后台同步”。</p>
+          <div class="s1p-sync-settings-section" id="s1p-cloud-update-check-section">
+            <div class="s1p-sync-settings-section-title">云端更新检查</div>
+            <p class="s1p-setting-desc s1p-sync-settings-section-desc">决定何时主动查看云端是否有新数据；发现变化后仍会进入安全同步判断，不会直接覆盖本地。</p>
 
-          <div id="s1p-force-pull-subgroup" class="s1p-settings-sub-group">
             <div class="s1p-settings-item">
-              <label class="s1p-settings-label" for="s1p-force-pull-on-startup-toggle">启动时强制拉取云端数据</label>
+              <label class="s1p-settings-label" for="s1p-daily-first-load-sync-enabled-toggle">每日首次打开时同步</label>
               <label class="s1p-switch">
-                <input type="checkbox" id="s1p-force-pull-on-startup-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
+                <input type="checkbox" id="s1p-daily-first-load-sync-enabled-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
                 <span class="s1p-slider"></span>
               </label>
             </div>
-            <p class="s1p-setting-desc s1p-warning-text">开启后，每日首次加载时若检测到云端与本地数据不一致，将总是使用云端数据覆盖本地，不再进行提示。请谨慎开启，这可能导致本地未同步的修改丢失。</p>
+            <p class="s1p-setting-desc">每天第一次打开论坛时执行一次安全同步检查；关闭后不会再隐式切换为“每次加载”。</p>
+
+            <div id="s1p-force-pull-subgroup" class="s1p-settings-sub-group">
+              <div class="s1p-settings-item">
+                <label class="s1p-settings-label" for="s1p-force-pull-on-startup-toggle">启动时强制拉取云端数据</label>
+                <label class="s1p-switch">
+                  <input type="checkbox" id="s1p-force-pull-on-startup-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
+                  <span class="s1p-slider"></span>
+                </label>
+              </div>
+              <p class="s1p-setting-desc s1p-warning-text">仅作用于每日首次打开时同步；若云端与本地不一致，将直接用云端覆盖本地。请谨慎开启。</p>
+            </div>
+
+            <div class="s1p-settings-item s1p-sync-auto-check-item">
+              <div class="s1p-settings-label-with-help">
+                <label class="s1p-settings-label" for="s1p-sync-auto-check-mode-control">检查策略</label>
+                <button id="s1p-sync-auto-check-mode-help-btn" type="button" class="s1p-help-icon-btn" aria-label="查看检查策略说明">${SVG_ICON_HELP_CIRCLE}</button>
+              </div>
+              <div id="s1p-sync-auto-check-mode-control" class="s1p-segmented-control s1p-sync-auto-check-control" data-s1p-sync-control>
+                <div class="s1p-segmented-control-slider"></div>
+                <div class="s1p-segmented-control-option active" data-value="off">关闭</div>
+                <div class="s1p-segmented-control-option" data-value="per_load">每次加载</div>
+                <div class="s1p-segmented-control-option" data-value="foreground">回到前台</div>
+              </div>
+            </div>
+            <p class="s1p-setting-desc s1p-sync-auto-check-desc">这是每日首次同步之外的额外检查：可完全关闭，也可选择每次页面加载检查，或仅在页面首次可见、回到前台、后退缓存恢复时轻量探测。</p>
+
+            <div id="s1p-visible-remote-polling-subgroup" class="s1p-settings-sub-group s1p-settings-sub-group-flat">
+              <div class="s1p-settings-item">
+                <label class="s1p-settings-label" for="s1p-visible-remote-polling-enabled-toggle">持续可见时低频复查</label>
+                <label class="s1p-switch">
+                  <input type="checkbox" id="s1p-visible-remote-polling-enabled-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
+                  <span class="s1p-slider"></span>
+                </label>
+              </div>
+              <p class="s1p-setting-desc">仅在“回到前台”策略下生效；页面一直保持可见时，活跃约 4 分钟、空闲约 12 分钟轻量探测一次云端。</p>
+            </div>
           </div>
 
-          <div class="s1p-settings-item s1p-sync-auto-check-item">
-            <div class="s1p-settings-label-with-help">
-              <label class="s1p-settings-label" for="s1p-sync-auto-check-mode-control">自动检查云端更新</label>
-              <button id="s1p-sync-auto-check-mode-help-btn" type="button" class="s1p-help-icon-btn" aria-label="查看自动检查方式说明">${SVG_ICON_HELP_CIRCLE}</button>
-            </div>
-            <div id="s1p-sync-auto-check-mode-control" class="s1p-segmented-control s1p-sync-auto-check-control" data-s1p-sync-control>
-              <div class="s1p-segmented-control-slider"></div>
-              <div class="s1p-segmented-control-option active" data-value="off">关闭</div>
-              <div class="s1p-segmented-control-option" data-value="per_load">每次加载</div>
-	              <div class="s1p-segmented-control-option" data-value="foreground">回到前台</div>
-	            </div>
-	          </div>
-	          <div id="s1p-visible-remote-polling-subgroup" class="s1p-settings-sub-group s1p-settings-sub-group-flat">
-	            <div class="s1p-settings-item">
-	              <label class="s1p-settings-label" for="s1p-visible-remote-polling-enabled-toggle">页面保持可见时低频检查云端更新</label>
-	              <label class="s1p-switch">
-	                <input type="checkbox" id="s1p-visible-remote-polling-enabled-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
-	                <span class="s1p-slider"></span>
-	              </label>
-	            </div>
-	            <p class="s1p-setting-desc">开启后，页面保持可见时会按活跃约 4 分钟、空闲约 12 分钟低频探测云端；关闭后只在页面打开或回到前台时检查。</p>
-	          </div>
-	          <div id="s1p-auto-sync-indicator-subgroup" class="s1p-settings-sub-group s1p-settings-sub-group-flat">
+          <div class="s1p-sync-settings-section" id="s1p-background-auto-sync-section">
+            <div class="s1p-sync-settings-section-title">自动上传本地变更</div>
             <div class="s1p-settings-item">
-              <label class="s1p-settings-label" for="s1p-show-auto-sync-indicator-toggle">显示自动同步状态指示器</label>
+              <label class="s1p-settings-label" for="s1p-auto-sync-enabled-toggle">本地变更后自动后台同步</label>
               <label class="s1p-switch">
-                <input type="checkbox" id="s1p-show-auto-sync-indicator-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
+                <input type="checkbox" id="s1p-auto-sync-enabled-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
                 <span class="s1p-slider"></span>
               </label>
             </div>
-            <p class="s1p-setting-desc">开启后，会在导航栏显示自动同步状态摘要，包括每日首次、每次加载、页面首次可见/回到前台检查后的自动同步，以及后台自动同步。</p>
+            <p class="s1p-setting-desc">启用后，屏蔽、标记、阅读进度等本地数据变化会在停止操作后自动上传或合并；关闭后仍可手动同步，也不影响上方云端更新检查。</p>
           </div>
-          <div class="s1p-settings-item">
-            <label class="s1p-settings-label" for="s1p-auto-sync-enabled-toggle">启用自动后台同步</label>
-            <label class="s1p-switch">
-              <input type="checkbox" id="s1p-auto-sync-enabled-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
-              <span class="s1p-slider"></span>
-            </label>
-          </div>
-          <p class="s1p-setting-desc">启用后，数据将在停止操作5秒后自动同步。关闭后将切换为纯手动同步模式。</p>
-          <div class="s1p-settings-item">
-            <label class="s1p-settings-label" for="s1p-direct-choice-mode-toggle">启用手动同步高级模式 (悬停选择)</label>
-            <label class="s1p-switch">
-              <input type="checkbox" id="s1p-direct-choice-mode-toggle" class="s1p-settings-checkbox">
-              <span class="s1p-slider"></span>
-            </label>
-          </div>
-          <p class="s1p-setting-desc">关闭时，点击同步按钮将智能判断；开启时，悬停同步按钮可直接选择推送或拉取。</p>
-          <div class="s1p-settings-item">
-            <label class="s1p-settings-label" for="s1p-sync-bookmark-full-content-toggle">收藏回复同步完整正文</label>
-            <label class="s1p-switch">
-              <input type="checkbox" id="s1p-sync-bookmark-full-content-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
-              <span class="s1p-slider"></span>
-            </label>
-          </div>
-          <p class="s1p-setting-desc">关闭时仅同步 280 字预览（更快更省流量）；开启后会同步完整收藏内容（跨设备可查看全文，但体积更大）。</p>
-          <div class="s1p-settings-item s1p-settings-item-column s1p-settings-item-top12">
-            <label class="s1p-settings-label" for="s1p-sync-device-id-input">同步设备 ID</label>
-            <input type="text" id="s1p-sync-device-id-input" class="s1p-input s1p-input-full" placeholder="例如：MacBook-Pro-主力机" autocomplete="off" data-s1p-sync-control>
-          </div>
-          <p class="s1p-setting-desc">可选，仅用于标记这台设备发起的远程同步，方便诊断“是谁写了云端”。留空则忽略，不会同步到其他设备，也不参与冲突裁决。</p>
-          <div class="s1p-settings-item s1p-settings-item-column">
-            <label class="s1p-settings-label" for="s1p-remote-gist-id-input">Gist ID</label>
-            <input type="text" id="s1p-remote-gist-id-input" class="s1p-input s1p-input-full" placeholder="从 Gist 网址中复制的那一长串 ID" autocomplete="off" data-s1p-sync-control>
-          </div>
-          <div class="s1p-settings-item s1p-settings-item-column s1p-settings-item-top12">
-            <label class="s1p-settings-label" for="s1p-remote-pat-input">GitHub Personal Access Token (PAT)</label>
-            <div class="s1p-relative-full">
-              <input type="password" id="s1p-remote-pat-input" class="s1p-input s1p-input-with-right-icon" placeholder="ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" autocomplete="new-password" data-s1p-sync-control>
-              <button id="s1p-toggle-pat-visibility" type="button" class="s1p-icon-btn-overlay">
-                ${SVG_ICON_EYE}
-              </button>
+
+          <div class="s1p-sync-settings-section" id="s1p-sync-status-section">
+            <div class="s1p-sync-settings-section-title">状态显示</div>
+            <div id="s1p-auto-sync-indicator-subgroup" class="s1p-settings-sub-group s1p-settings-sub-group-flat">
+              <div class="s1p-settings-item">
+                <label class="s1p-settings-label" for="s1p-show-auto-sync-indicator-toggle">显示导航栏同步状态</label>
+                <label class="s1p-switch">
+                  <input type="checkbox" id="s1p-show-auto-sync-indicator-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
+                  <span class="s1p-slider"></span>
+                </label>
+              </div>
+              <p class="s1p-setting-desc">只影响导航栏状态提示，不改变同步行为；会覆盖每日首次、每次加载、前台复查、可见页复查、后台同步和手动同步。</p>
             </div>
           </div>
-          <div class="s1p-settings-item s1p-settings-item-top12">
-            <label class="s1p-settings-label" for="s1p-token-expiry-reminder-toggle">Sync Token 更新提醒</label>
-            <label class="s1p-switch">
-              <input type="checkbox" id="s1p-token-expiry-reminder-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
-              <span class="s1p-slider"></span>
-            </label>
+
+          <div class="s1p-sync-settings-section" id="s1p-sync-manual-options-section">
+            <div class="s1p-sync-settings-section-title">手动同步与数据选项</div>
+            <div class="s1p-settings-item">
+              <label class="s1p-settings-label" for="s1p-direct-choice-mode-toggle">手动同步高级模式 (悬停选择)</label>
+              <label class="s1p-switch">
+                <input type="checkbox" id="s1p-direct-choice-mode-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
+                <span class="s1p-slider"></span>
+              </label>
+            </div>
+            <p class="s1p-setting-desc">关闭时，点击同步按钮将智能判断；开启时，悬停同步按钮可直接选择推送或拉取。</p>
+            <div class="s1p-settings-item">
+              <label class="s1p-settings-label" for="s1p-sync-bookmark-full-content-toggle">收藏回复同步完整正文</label>
+              <label class="s1p-switch">
+                <input type="checkbox" id="s1p-sync-bookmark-full-content-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
+                <span class="s1p-slider"></span>
+              </label>
+            </div>
+            <p class="s1p-setting-desc">关闭时仅同步 280 字预览（更快更省流量）；开启后会同步完整收藏内容（跨设备可查看全文，但体积更大）。</p>
+            <div class="s1p-settings-item s1p-settings-item-column s1p-settings-item-top12">
+              <label class="s1p-settings-label" for="s1p-sync-device-id-input">同步设备 ID</label>
+              <input type="text" id="s1p-sync-device-id-input" class="s1p-input s1p-input-full" placeholder="例如：MacBook-Pro-主力机" autocomplete="off" data-s1p-sync-control>
+            </div>
+            <p class="s1p-setting-desc">可选，仅用于标记这台设备发起的远程同步，方便诊断“是谁写了云端”。留空则忽略，不会同步到其他设备，也不参与冲突裁决。</p>
           </div>
-          <p class="s1p-setting-desc">开启后会在 Token 到期前三天弹窗提醒</p>
-          <div id="s1p-token-expiry-info-container" class="s1p-setting-desc s1p-sync-token-expiry-info"></div>
+
+          <div class="s1p-sync-settings-section" id="s1p-github-connection-section">
+            <div class="s1p-sync-settings-section-title">GitHub 连接</div>
+            <div class="s1p-settings-item s1p-settings-item-column">
+              <label class="s1p-settings-label" for="s1p-remote-gist-id-input">Gist ID</label>
+              <input type="text" id="s1p-remote-gist-id-input" class="s1p-input s1p-input-full" placeholder="从 Gist 网址中复制的那一长串 ID" autocomplete="off" data-s1p-sync-control>
+            </div>
+            <div class="s1p-settings-item s1p-settings-item-column s1p-settings-item-top12">
+              <label class="s1p-settings-label" for="s1p-remote-pat-input">GitHub Personal Access Token (PAT)</label>
+              <div class="s1p-relative-full">
+                <input type="password" id="s1p-remote-pat-input" class="s1p-input s1p-input-with-right-icon" placeholder="ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" autocomplete="new-password" data-s1p-sync-control>
+                <button id="s1p-toggle-pat-visibility" type="button" class="s1p-icon-btn-overlay">
+                  ${SVG_ICON_EYE}
+                </button>
+              </div>
+            </div>
+            <div class="s1p-settings-item s1p-settings-item-top12">
+              <label class="s1p-settings-label" for="s1p-token-expiry-reminder-toggle">Sync Token 更新提醒</label>
+              <label class="s1p-switch">
+                <input type="checkbox" id="s1p-token-expiry-reminder-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
+                <span class="s1p-slider"></span>
+              </label>
+            </div>
+            <p class="s1p-setting-desc">开启后会在 Token 到期前三天弹窗提醒。</p>
+            <div id="s1p-token-expiry-info-container" class="s1p-setting-desc s1p-sync-token-expiry-info"></div>
+          </div>
           <div class="s1p-notice">
             <div class="s1p-notice-icon"></div>
             <div class="s1p-notice-content">
@@ -27106,8 +27173,9 @@
       setSettingsModalDirtyState(SETTINGS_MODAL_DIRTY_TAB.SYNC_SETTINGS, true);
 
     const updateForcePullState = () => {
-      const isDailySyncEnabled = dailySyncToggle.checked;
-      if (isDailySyncEnabled) {
+      const isEnabled =
+        remoteToggle.checked === true && dailySyncToggle.checked === true;
+      if (isEnabled) {
         forcePullWrapper.style.opacity = "1";
         forcePullWrapper.style.pointerEvents = "auto";
         forcePullToggle.disabled = false;
@@ -27127,10 +27195,15 @@
     };
 
     const updateVisibleRemotePollingToggleState = () => {
+      const isForegroundMode = getSyncAutoCheckModeControlValue() === "foreground";
       const isEnabled =
         remoteToggle.checked === true &&
-        getSyncAutoCheckModeControlValue() === "foreground";
+        isForegroundMode;
       if (visibleRemotePollingSubGroup) {
+        visibleRemotePollingSubGroup.classList.toggle(
+          "s1p-hidden",
+          !isForegroundMode
+        );
         visibleRemotePollingSubGroup.classList.toggle("is-disabled", !isEnabled);
       }
       if (visibleRemotePollingToggle) {
@@ -27139,6 +27212,7 @@
     };
 
     dailySyncToggle.addEventListener("change", updateForcePullState);
+    remoteToggle.addEventListener("change", updateForcePullState);
     remoteToggle.addEventListener("change", updateAutoSyncIndicatorToggleState);
     remoteToggle.addEventListener("change", updateVisibleRemotePollingToggleState);
     autoSyncToggle.addEventListener("change", updateAutoSyncIndicatorToggleState);
@@ -27210,6 +27284,7 @@
 
     remoteToggle.addEventListener("change", () => {
       updateRemoteSyncInputsState();
+      updateForcePullState();
       updateAutoSyncIndicatorToggleState();
       updateVisibleRemotePollingToggleState();
     });
