@@ -180,6 +180,40 @@
   - `node sync-across-multiple-tab/scripts/test-post-sync-refresh-policy.js`
   - `node sync-across-multiple-tab/scripts/test-sync-settings-ui.js`
 
+## 12. 2026-04-25 Follow-up
+
+- 复盘用户再次复现的“后台自动同步检测到云端变化，已保留本地阅读进度并完成自动合并”提示，确认它命中的是后台 `merged_read_progress` 分支，不是前台 probe 或 visible poll。
+- 修正 `performAutoSync()` 中 `merged_read_progress` 的结果返回结构：
+  - `syncBaseline` 只保存 `contentHash / remoteUpdatedAt`
+  - `sameSessionRemoteWrite`、`sameDeviceRemoteWrite`、`remoteWriter`、`appliedRemoteWriter` 放入 `extraResult`
+- 修正后，`handleBackgroundAutoSyncResult()` 能真正读到 same-session / same-device 标记：
+  - same-session 自动合并可静默，不再弹“云端变化”
+  - same-device 自动合并可使用“同设备已同步更新”文案
+  - external 自动合并继续保留云端变化提示
+- 回归基线补充：
+  - `sync-across-multiple-tab/scripts/test-post-sync-refresh-policy.js`
+    - 静态断言 `merged_read_progress` 必须把来源上下文放入 `extraResult`
+    - 增加 same-device + `merged_read_progress` 的后台文案断言
+- 本轮补跑验证：
+  - `node --check S1Plus.js`
+  - `node sync-across-multiple-tab/scripts/test-auto-sync-indicator-linkage.js`
+  - `node sync-across-multiple-tab/scripts/test-background-open-passive-session.js`
+  - `node sync-across-multiple-tab/scripts/test-cleanup-provenance-guard.js`
+  - `node sync-across-multiple-tab/scripts/test-core-data-snapshot-resync.js`
+  - `node sync-across-multiple-tab/scripts/test-foreground-probe-diagnostics-feedback.js`
+  - `node sync-across-multiple-tab/scripts/test-foreground-probe-gate-retry.js`
+  - `node sync-across-multiple-tab/scripts/test-foreground-remote-probe.js`
+  - `node sync-across-multiple-tab/scripts/test-foreground-same-session-remote-write.js`
+  - `node sync-across-multiple-tab/scripts/test-foreground-trigger-integration.js`
+  - `node sync-across-multiple-tab/scripts/test-phase6-interaction-copy.js`
+  - `node sync-across-multiple-tab/scripts/test-post-sync-refresh-policy.js`
+  - `node sync-across-multiple-tab/scripts/test-remote-probe-state.js`
+  - `node sync-across-multiple-tab/scripts/test-safe-sync-execution.js`
+  - `node sync-across-multiple-tab/scripts/test-settings-migration.js`
+  - `node sync-across-multiple-tab/scripts/test-sync-settings-ui.js`
+  - `node sync-across-multiple-tab/scripts/test-visible-remote-polling.js`
+  - `git diff --check`
+
 ## 10. 固定回归 Checklist
 
 1. 单标签页正常阅读

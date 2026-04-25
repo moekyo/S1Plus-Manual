@@ -108,3 +108,29 @@
 - 内容冲突仍必须由 hash、baseline、可合并性判断决定，不能因为设备 ID 相同就跳过数据安全检查。
 
 结论：设备 ID 是诊断与文案降噪字段，不是同步冲突的裁决字段。
+
+## 7. 2026-04-25 追加发现：后台 `merged_read_progress` 来源标记丢失
+
+用户再次复现的提示文案是：
+
+- “后台自动同步检测到云端变化，已保留本地阅读进度并完成自动合并。当前在帖子页，暂不自动刷新。”
+
+这条文案只来自 `handleBackgroundAutoSyncResult()` 处理 `success + merged_read_progress` 的路径，不是前台 probe，也不是可见页低频轮询。
+
+本次 review 确认一个独立缺陷：
+
+1. `performAutoSync()` 在进入阅读进度自动合并前，会通过 `resolveRecentRemoteWriteMatch()` 计算远端写入是否属于 same-session 或 same-device。
+2. `pulled` / `force_pulled` / `no_change` 已经把 `recentRemoteWriteResultContext` 放在 `asSuccessResult()` 第三个参数 `extraResult` 里，因此提示层可以读到 `result.sameSessionRemoteWrite` / `result.sameDeviceRemoteWrite`。
+3. 但 `merged_read_progress` 分支把这些字段放进了第二个参数 `syncBaseline`。`asSuccessResult(action, syncBaseline, extraResult)` 只会把第三个参数合并进最终返回值，第二个参数只用于更新 baseline。
+4. 结果是：后台自动合并已经知道“这可能是本会话 / 同设备写入”，但 `handleBackgroundAutoSyncResult()` 读到的 `result.sameSessionRemoteWrite` 为空，于是无法静默，也无法使用 same-device 文案，最终退回“云端变化”的泛化提示。
+
+已修正：
+
+- `merged_read_progress` 现在只把 `contentHash / remoteUpdatedAt` 放进 `syncBaseline`。
+- `reason`、`remoteWriter`、`appliedRemoteWriter`、`sameSessionRemoteWrite`、`sameDeviceRemoteWrite` 放进 `extraResult`。
+- 后台刷新策略可正确执行：
+  - same-session：静默处理，必要时刷新但不弹“云端变化”。
+  - same-device：显示“同设备已同步更新”文案。
+  - external：保留“云端变化”文案。
+
+边界仍然存在：如果没有设置 `syncDeviceId`，且某次同机写入已经超过 same-session 记录 TTL，系统无法可靠证明它来自同一台物理设备。这时仍可能只能按 external 处理。因此建议给 Mac / Windows 分别设置清晰的同步设备 ID，用于后续诊断和文案降噪。

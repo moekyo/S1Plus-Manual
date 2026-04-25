@@ -67,6 +67,10 @@ const testStaticWiring = () => {
     "后台自动同步结果未区分 same-session 静默与 same-device 文案。"
   );
   expectMatch(
+    /return asSuccessResult\(\s*"merged_read_progress",\s*\{\s*contentHash:\s*mergedContentHash,\s*remoteUpdatedAt:\s*pushResult\?\.updatedAt \|\| null,\s*\},\s*\{[\s\S]*?reason:\s*versionDecision\.reason \|\| "read_progress_auto_merge"[\s\S]*?\.\.\.recentRemoteWriteResultContext[\s\S]*?appliedRemoteWriter:\s*pushResult\?\.writerMetadata \|\| null[\s\S]*?\}\s*\)/m,
+    "merged_read_progress 结果必须把 same-session / same-device 写入上下文放到 extraResult，提示层才能读取。"
+  );
+  expectMatch(
     /refreshPlan = applyRefreshPolicyForSyncResult\(syncRequestResult,\s*\{[\s\S]*?reason:\s*`foreground_probe:\$\{normalizedReason\}`/m,
     "Phase 7 未将前台远端探测命中的 follow-up sync 接入刷新策略。"
   );
@@ -259,6 +263,24 @@ const testSameDeviceBackgroundCopyUsesSpecificMessage = () => {
   assert.match(messages.threadPageMessage, /当前在帖子页，暂不自动刷新/);
 };
 
+const testSameDeviceBackgroundMergedCopyUsesSpecificMessage = () => {
+  const { hooks } = createHarness();
+
+  const messages = hooks.getAutoPullRefreshMessagesForSource(
+    "background",
+    "merged_read_progress",
+    {
+      sameDeviceDeviceId: "Mac-Main",
+    }
+  );
+
+  assert.match(
+    messages.reloadMessage,
+    /后台自动同步检测到同设备「Mac-Main」已同步更新，已保留本地阅读进度并完成自动合并/
+  );
+  assert.match(messages.threadPageMessage, /当前在帖子页，暂不自动刷新/);
+};
+
 const testDirtySettingsSuppressesReload = () => {
   const { hooks } = createHarness();
   hooks.clearPendingAutoPullReloadTimer();
@@ -301,6 +323,7 @@ const main = async () => {
   testMergedReadProgressThreadUsesMergeCopy();
   testSuppressMessageKeepsReloadQuiet();
   testSameDeviceBackgroundCopyUsesSpecificMessage();
+  testSameDeviceBackgroundMergedCopyUsesSpecificMessage();
   testDirtySettingsSuppressesReload();
   console.log("Phase 7 post-sync refresh policy checks passed.");
 };
