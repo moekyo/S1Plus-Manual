@@ -64,6 +64,8 @@
   - 当前“后台开帖后误报云端更新”这条低频问题的专题调查记录、已排除项、诊断字段解释和下次复现场景的取证步骤
 - [same-device-unexpected-remote-update-findings-and-fix-plan.md](./same-device-unexpected-remote-update-findings-and-fix-plan.md)
   - 本轮关于“同机远端更新提示”的完整收口文档，汇总根因分层、修复优先级与后续验收计划
+- [sync_settings_ia_redesign.md](./sync_settings_ia_redesign.md)
+  - 设置同步页中“云端更新检查 / 自动后台同步 / 状态指示器 / 可见页复查”的真实字段映射、父子关系、文案与落地建议
 
 ### 3.2 分阶段文档
 

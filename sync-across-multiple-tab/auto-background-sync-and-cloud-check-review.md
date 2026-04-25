@@ -134,3 +134,17 @@
   - external：保留“云端变化”文案。
 
 边界仍然存在：如果没有设置 `syncDeviceId`，且某次同机写入已经超过 same-session 记录 TTL，系统无法可靠证明它来自同一台物理设备。这时仍可能只能按 external 处理。因此建议给 Mac / Windows 分别设置清晰的同步设备 ID，用于后续诊断和文案降噪。
+
+## 8. 2026-04-25 追加：设置区 IA 与迁移落盘修复
+
+本轮重新梳理了“自动检查云端更新 / 自动后台同步 / 可见页低频复查 / 状态指示器”的真实代码关系，完整表格与 UI 落地方案见：
+
+- [sync_settings_ia_redesign.md](./sync_settings_ia_redesign.md)
+
+本次结论：
+
+- “检查策略”只负责云端更新检查的触发时机，不等同于本地变更后台上传。
+- “本地变更后自动后台同步”由 `syncAutoEnabled` 控制，是本地 dirty 驱动，不是轮询云端。
+- “持续可见时低频复查”是“回到前台”策略的高级子项，不能独立于 `syncCheckOnReturnToForeground` 生效。
+- “显示导航栏同步状态”只是展示层，不改变同步行为，也不应作为后台同步的子项。
+- 旧字段清理迁移需要强制写回规范化设置；否则 `saveSettings()` 会因为归一化对象相等而跳过 `GM_setValue`，导致 `legacy_setting_key_removed:*` 每次加载都重复出现。

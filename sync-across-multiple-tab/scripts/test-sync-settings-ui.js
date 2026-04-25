@@ -10,64 +10,80 @@ const expectMatch = (pattern, message) => {
 
 [
   [
-    /for="s1p-show-auto-sync-indicator-toggle">显示自动同步状态指示器/,
-    "同步设置页未更新自动同步指示器的新文案。",
+    /<div class="s1p-sync-settings-section-title">云端更新检查<\/div>/,
+    "同步设置页缺少云端更新检查分组。",
   ],
   [
-    /id="s1p-auto-sync-indicator-subgroup" class="s1p-settings-sub-group s1p-settings-sub-group-flat"/,
-    "自动同步指示器设置仍保留子项缩进样式。",
+    /发现变化后仍会进入安全同步判断，不会直接覆盖本地/,
+    "云端更新检查说明未准确表达 probe 后仍需安全同步判断。",
   ],
   [
-    /包括每日首次、每次加载、页面首次可见\/回到前台检查后的自动同步，以及后台自动同步/,
-    "自动同步指示器说明文案未覆盖统一联动语义。",
-  ],
-  [
-    /for="s1p-sync-auto-check-mode-control">自动检查云端更新/,
-    "同步设置页缺少新的自动检查模式标签。",
+    /for="s1p-sync-auto-check-mode-control">检查策略/,
+    "同步设置页缺少新的检查策略标签。",
   ],
   [
     /id="s1p-sync-auto-check-mode-control" class="s1p-segmented-control s1p-sync-auto-check-control" data-s1p-sync-control/,
-    "同步设置页缺少新的自动检查模式分段控件。",
+    "同步设置页缺少检查策略分段控件。",
   ],
   [
-    /id="s1p-sync-auto-check-mode-help-btn"[\s\S]*查看自动检查方式说明/,
-    "同步设置页缺少自动检查模式说明问号按钮。",
+    /id="s1p-sync-auto-check-mode-help-btn"[\s\S]*查看检查策略说明/,
+    "同步设置页缺少检查策略说明问号按钮。",
   ],
   [
     /const SYNC_AUTO_CHECK_MODE_HELP_TOOLTIP_CONFIG = Object\.freeze\(\{[\s\S]*templateId:\s*SYNC_AUTO_CHECK_MODE_TOOLTIP_TEMPLATE_ID,/,
-    "自动检查模式说明未使用独立的 tooltip 配置。",
+    "检查策略说明未使用独立的 tooltip 配置。",
   ],
   [
-    /页面持续可见时的低频复查由下方独立开关控制/,
-    "自动检查模式说明未标明可见页低频轮询已拆为独立开关。",
+    /关闭额外自动检查；每日首次同步、手动同步和本地变更后台同步仍按各自开关运行/,
+    "检查策略说明未说明关闭模式不影响其他同步入口。",
+  ],
+  [
+    /持续可见页面的低频复查由同组高级开关控制/,
+    "检查策略说明未标明可见页低频复查是同组高级开关。",
   ],
   [
     /const resolveSyncAutoCheckModeValue = \(settingsSnapshot = \{\}\) => \{[\s\S]*syncPerLoadCheckEnabled[\s\S]*syncCheckOnReturnToForeground/,
-    "同步设置页缺少自动检查模式的回填映射 helper。",
+    "同步设置页缺少检查策略的回填映射 helper。",
   ],
   [
     /syncAutoCheckModeControl\.addEventListener\("click",[\s\S]*markSyncSettingsDirty\(\);/,
-    "同步设置页切换自动检查模式时未标记为脏状态。",
+    "同步设置页切换检查策略时未标记为脏状态。",
   ],
   [
     /applySyncSettingsToModal\s*=\s*\(settingsSnapshot\)\s*=>\s*\{[\s\S]*setSyncAutoCheckModeControlValue\(\s*resolveSyncAutoCheckModeValue\(settingsSnapshot\)/,
-    "同步设置页未通过统一 helper 回填自动检查模式控件。",
+    "同步设置页未通过统一 helper 回填检查策略控件。",
   ],
   [
-    /for="s1p-visible-remote-polling-enabled-toggle">页面保持可见时低频检查云端更新/,
-    "同步设置页缺少可见页低频轮询子开关。",
+    /for="s1p-visible-remote-polling-enabled-toggle">持续可见时低频复查/,
+    "同步设置页缺少持续可见低频复查子开关。",
   ],
   [
     /syncVisibleRemotePollingEnabled:\s*visibleRemotePollingToggle\?\.checked === true/,
-    "保存设置时未收集可见页低频轮询开关。",
+    "保存设置时未收集持续可见低频复查开关。",
   ],
   [
     /settingsSnapshot\.syncVisibleRemotePollingEnabled === true/,
-    "同步设置页未回填可见页低频轮询开关。",
+    "同步设置页未回填持续可见低频复查开关。",
   ],
   [
-    /const updateVisibleRemotePollingToggleState = \(\) => \{[\s\S]*getSyncAutoCheckModeControlValue\(\) === "foreground"[\s\S]*visibleRemotePollingToggle\.disabled = !isEnabled;/,
-    "可见页低频轮询子开关未被回到前台模式门控。",
+    /const updateVisibleRemotePollingToggleState = \(\) => \{[\s\S]*isForegroundMode = getSyncAutoCheckModeControlValue\(\) === "foreground"[\s\S]*"s1p-hidden"[\s\S]*visibleRemotePollingToggle\.disabled = !isEnabled;/,
+    "持续可见低频复查子开关未被回到前台模式门控并隐藏。",
+  ],
+  [
+    /<div class="s1p-sync-settings-section-title">自动上传本地变更<\/div>[\s\S]*for="s1p-auto-sync-enabled-toggle">本地变更后自动后台同步/,
+    "自动后台同步未归入自动上传本地变更分组。",
+  ],
+  [
+    /关闭后仍可手动同步，也不影响上方云端更新检查/,
+    "自动后台同步说明未区分本地变更上传与云端更新检查。",
+  ],
+  [
+    /<div class="s1p-sync-settings-section-title">状态显示<\/div>[\s\S]*for="s1p-show-auto-sync-indicator-toggle">显示导航栏同步状态/,
+    "同步状态指示器未归入状态显示分组。",
+  ],
+  [
+    /只影响导航栏状态提示，不改变同步行为；会覆盖每日首次、每次加载、前台复查、可见页复查、后台同步和手动同步/,
+    "同步状态指示器说明未表达其独立展示语义。",
   ],
   [
     /for="s1p-sync-device-id-input">同步设备 ID/,
@@ -95,7 +111,7 @@ const expectMatch = (pattern, message) => {
   ],
   [
     /setTemplateTooltip\(\s*syncAutoCheckModeHelpBtn,\s*SYNC_AUTO_CHECK_MODE_HELP_TOOLTIP_TEXT,\s*SYNC_AUTO_CHECK_MODE_HELP_TOOLTIP_CONFIG\s*\)/,
-    "自动检查模式说明按钮仍未绑定到独立 tooltip 模板。",
+    "检查策略说明按钮仍未绑定到独立 tooltip 模板。",
   ],
   [
     /const refreshSyncTabControlsFromSettings = \(\) => \{\s*applySyncSettingsToModal\(getSettings\(\)\);/m,
@@ -107,15 +123,15 @@ const expectMatch = (pattern, message) => {
   ],
   [
     /buildSyncSettingsFromModal\s*=\s*\(\)\s*=>\s*\{[\s\S]*const syncAutoCheckMode = getSyncAutoCheckModeControlValue\(\);[\s\S]*applySyncAutoCheckModeToSettings\(nextSettings, syncAutoCheckMode\);/,
-    "保存设置时未从新的自动检查模式控件收集值。",
+    "保存设置时未从新的检查策略控件收集值。",
   ],
   [
     /data-value="off">关闭<\/div>[\s\S]*data-value="per_load">每次加载<\/div>[\s\S]*data-value="foreground">回到前台<\/div>/,
-    "同步设置页缺少自动检查模式的三个选项。",
+    "同步设置页缺少检查策略的三个选项。",
   ],
   [
-    /s1p-daily-first-load-sync-enabled-toggle[\s\S]*id="s1p-force-pull-subgroup"[\s\S]*id="s1p-sync-auto-check-mode-control"[\s\S]*id="s1p-visible-remote-polling-subgroup"[\s\S]*id="s1p-auto-sync-indicator-subgroup"[\s\S]*id="s1p-auto-sync-enabled-toggle"/,
-    "自动同步指示器设置未提升为自动后台同步之前的独立选项。",
+    /s1p-cloud-update-check-section[\s\S]*s1p-daily-first-load-sync-enabled-toggle[\s\S]*id="s1p-sync-auto-check-mode-control"[\s\S]*id="s1p-visible-remote-polling-subgroup"[\s\S]*s1p-background-auto-sync-section[\s\S]*id="s1p-auto-sync-enabled-toggle"[\s\S]*s1p-sync-status-section[\s\S]*id="s1p-auto-sync-indicator-subgroup"/,
+    "同步设置页未按云端更新检查、自动上传本地变更、状态显示重排。",
   ],
 ].forEach(([pattern, message]) => {
   expectMatch(pattern, message);
@@ -125,6 +141,18 @@ const expectMatch = (pattern, message) => {
   [
     /选择一种自动检查方式：关闭、每次页面加载时检查，或仅在标签页回到前台时检查。上方“每日首次加载时同步”仍为独立开关。/,
     "自动检查模式下方的冗余说明文案未移除。",
+  ],
+  [
+    /for="s1p-show-auto-sync-indicator-toggle">显示自动同步状态指示器/,
+    "自动同步指示器仍使用旧文案。",
+  ],
+  [
+    /for="s1p-auto-sync-enabled-toggle">启用自动后台同步/,
+    "自动后台同步仍使用旧文案。",
+  ],
+  [
+    /for="s1p-sync-auto-check-mode-control">自动检查云端更新/,
+    "检查策略仍使用旧的总标题文案。",
   ],
   [
     /s1p-sync-toast-debug-panel|data-s1p-sync-toast-debug|同步提示调试（临时）/,
