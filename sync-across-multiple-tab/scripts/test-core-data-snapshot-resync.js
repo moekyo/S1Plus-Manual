@@ -13,6 +13,13 @@ const createHarness = () =>
     hookErrorMessage: "未能从 S1Plus.js 暴露核心数据快照收敛测试钩子。",
   });
 
+const enabledSettings = {
+  syncRemoteEnabled: true,
+  syncRemoteGistId: "gist-id",
+  syncRemotePat: "pat-token",
+  syncCheckOnReturnToForeground: true,
+};
+
 const expectMatch = (pattern, message) => {
   assert.match(sourceCode, pattern, message);
 };
@@ -146,6 +153,48 @@ const testSyncDeviceIdStaysLocalOnlyInExport = async () => {
   );
 };
 
+const testForegroundProbeResyncsSnapshotBeforeFollowUp = async () => {
+  const { hooks, sandbox } = createHarness();
+  const calls = [];
+  sandbox.document.visibilityState = "visible";
+  hooks.setSyncBaselineState({
+    contentHash: "baseline-hash",
+    remoteUpdatedAt: "2026-04-18T09:00:00Z",
+  });
+
+  const result = await hooks.checkRemoteFreshnessOnForeground("foreground_resume", {
+    now: 1760004400000,
+    settingsSnapshot: enabledSettings,
+    acquireRemoteProbeLock: async () => true,
+    releaseRemoteProbeLockValue: () => {},
+    fetchRemoteData: async () => ({
+      meta: {
+        updatedAt: "2026-04-18T09:10:00Z",
+      },
+    }),
+    syncCoreDataFromStorageSnapshotIfNeeded: () => {
+      calls.push("core");
+      return { didSync: true, changedKeys: ["s1p_read_progress"] };
+    },
+    syncSettingsFromStorageSnapshotIfNeeded: () => {
+      calls.push("settings");
+      return true;
+    },
+    requestForegroundRemoteSyncCheck: async () => {
+      calls.push("follow-up");
+      return {
+        status: "success",
+        action: "no_change",
+        reason: "hash_equal_with_remote_timestamp_drift",
+      };
+    },
+  });
+
+  assert.deepStrictEqual(calls, ["core", "settings", "follow-up"]);
+  assert.equal(result.status, "unchanged");
+  assert.equal(result.reason, "hash_equal_after_resync");
+};
+
 const testCoreDataCrossTabSignalWiringPresent = () => {
   expectMatch(
     /const CORE_DATA_CROSS_TAB_SIGNAL_KEY = "s1p_core_data_refresh_signal";/,
@@ -175,6 +224,7 @@ const main = async () => {
   testNoopSnapshotResyncStaysQuietWhenUnchanged();
   testBackgroundAutoSyncDefaultsToFreshSnapshot();
   await testSyncDeviceIdStaysLocalOnlyInExport();
+  await testForegroundProbeResyncsSnapshotBeforeFollowUp();
   testCoreDataCrossTabSignalWiringPresent();
   console.log("[core-data-snapshot-resync] checks passed.");
 };

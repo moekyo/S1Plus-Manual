@@ -300,6 +300,20 @@
   - 本机设置了 `syncDeviceId` 后，远端 `syncMeta.lastWriter.deviceId` 命中当前设备时，会改用“同设备已同步更新”类提示
   - same-session 仍优先静默，避免把同机会话自己的刚写远端继续误说成“外部云端变化”
 
+### 8.8B Follow-up（2026-04-25）
+
+- 已把 `visible_poll` 从“回到前台检查”中拆成独立设置 `syncVisibleRemotePollingEnabled`：
+  - 新用户与旧用户默认关闭
+  - 只有 `syncCheckOnReturnToForeground=true` 且该子开关也开启时，才会安排活跃约 4 分钟 / 空闲约 12 分钟的可见页低频探测
+  - 保存设置、跨标签设置刷新、远程同步配置启停都会重新同步轮询状态，关闭后立即停止 timer
+- 前台 probe 在命中 `updated_at` 变化后，会先做 storage snapshot 收敛，再进入完整 foreground follow-up 判断。
+- 远端变化结果补充来源分层：
+  - `hash_equal_after_resync` 静默更新 baseline，不提示、不刷新
+  - `same_session_write` 静默处理
+  - `same_device_write` 使用同设备文案
+  - `external_remote_change` 保留云端更新语义
+- 新增 review 文档：`auto-background-sync-and-cloud-check-review.md`。
+
 ### 8.9 Phase 5 本轮落地内容
 
 - 在 `S1Plus.js` 中把 `s1p_pending_cleanup_info` 从全局数字计数升级为结构化 cleanup provenance，统一记录：

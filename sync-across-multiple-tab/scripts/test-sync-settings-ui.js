@@ -38,8 +38,8 @@ const expectMatch = (pattern, message) => {
     "自动检查模式说明未使用独立的 tooltip 配置。",
   ],
   [
-    /页面持续可见时[\s\S]*低频复查/,
-    "自动检查模式说明未覆盖可见页低频轮询的实际行为。",
+    /页面持续可见时的低频复查由下方独立开关控制/,
+    "自动检查模式说明未标明可见页低频轮询已拆为独立开关。",
   ],
   [
     /const resolveSyncAutoCheckModeValue = \(settingsSnapshot = \{\}\) => \{[\s\S]*syncPerLoadCheckEnabled[\s\S]*syncCheckOnReturnToForeground/,
@@ -52,6 +52,22 @@ const expectMatch = (pattern, message) => {
   [
     /applySyncSettingsToModal\s*=\s*\(settingsSnapshot\)\s*=>\s*\{[\s\S]*setSyncAutoCheckModeControlValue\(\s*resolveSyncAutoCheckModeValue\(settingsSnapshot\)/,
     "同步设置页未通过统一 helper 回填自动检查模式控件。",
+  ],
+  [
+    /for="s1p-visible-remote-polling-enabled-toggle">页面保持可见时低频检查云端更新/,
+    "同步设置页缺少可见页低频轮询子开关。",
+  ],
+  [
+    /syncVisibleRemotePollingEnabled:\s*visibleRemotePollingToggle\?\.checked === true/,
+    "保存设置时未收集可见页低频轮询开关。",
+  ],
+  [
+    /settingsSnapshot\.syncVisibleRemotePollingEnabled === true/,
+    "同步设置页未回填可见页低频轮询开关。",
+  ],
+  [
+    /const updateVisibleRemotePollingToggleState = \(\) => \{[\s\S]*getSyncAutoCheckModeControlValue\(\) === "foreground"[\s\S]*visibleRemotePollingToggle\.disabled = !isEnabled;/,
+    "可见页低频轮询子开关未被回到前台模式门控。",
   ],
   [
     /for="s1p-sync-device-id-input">同步设备 ID/,
@@ -98,7 +114,7 @@ const expectMatch = (pattern, message) => {
     "同步设置页缺少自动检查模式的三个选项。",
   ],
   [
-    /s1p-daily-first-load-sync-enabled-toggle[\s\S]*id="s1p-force-pull-subgroup"[\s\S]*id="s1p-sync-auto-check-mode-control"[\s\S]*id="s1p-auto-sync-indicator-subgroup"[\s\S]*id="s1p-auto-sync-enabled-toggle"/,
+    /s1p-daily-first-load-sync-enabled-toggle[\s\S]*id="s1p-force-pull-subgroup"[\s\S]*id="s1p-sync-auto-check-mode-control"[\s\S]*id="s1p-visible-remote-polling-subgroup"[\s\S]*id="s1p-auto-sync-indicator-subgroup"[\s\S]*id="s1p-auto-sync-enabled-toggle"/,
     "自动同步指示器设置未提升为自动后台同步之前的独立选项。",
   ],
 ].forEach(([pattern, message]) => {
