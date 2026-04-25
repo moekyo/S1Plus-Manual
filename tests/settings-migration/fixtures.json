@@ -163,7 +163,8 @@
     "expected": {
       "migrationApplied": false,
       "settings": {
-        "syncCheckOnReturnToForeground": true
+        "syncCheckOnReturnToForeground": true,
+        "syncVisibleRemotePollingEnabled": false
       },
       "reasonsInclude": []
     }
@@ -177,7 +178,8 @@
     "expected": {
       "migrationApplied": true,
       "settings": {
-        "syncCheckOnReturnToForeground": true
+        "syncCheckOnReturnToForeground": true,
+        "syncVisibleRemotePollingEnabled": false
       },
       "reasonsInclude": [
         "sync_check_on_return_to_foreground_migrated_from_sync_state"
@@ -193,11 +195,27 @@
     "expected": {
       "migrationApplied": true,
       "settings": {
-        "syncCheckOnReturnToForeground": false
+        "syncCheckOnReturnToForeground": false,
+        "syncVisibleRemotePollingEnabled": false
       },
       "reasonsInclude": [
         "sync_check_on_return_to_foreground_normalized",
         "sync_check_on_return_to_foreground_migrated_from_sync_state"
+      ]
+    }
+  },
+  {
+    "name": "visible_remote_polling_enabled_must_be_explicit_boolean",
+    "input": {
+      "syncVisibleRemotePollingEnabled": "true"
+    },
+    "expected": {
+      "migrationApplied": true,
+      "settings": {
+        "syncVisibleRemotePollingEnabled": false
+      },
+      "reasonsInclude": [
+        "sync_visible_remote_polling_enabled_normalized"
       ]
     }
   },
@@ -256,6 +274,7 @@
       },
       "autoLinkPlainTextUrls": true,
       "syncCheckOnReturnToForeground": true,
+      "syncVisibleRemotePollingEnabled": false,
       "syncTokenExpiryEnabled": false,
       "syncTokenExpiryDate": null
     },
@@ -266,7 +285,8 @@
         "openInNewTab.nav": true,
         "openInNewTab.threadDetail": true,
         "openInNewTab.postContentLinks": false,
-        "autoLinkPlainTextUrls": true
+        "autoLinkPlainTextUrls": true,
+        "syncVisibleRemotePollingEnabled": false
       },
       "reasonsInclude": []
     }
