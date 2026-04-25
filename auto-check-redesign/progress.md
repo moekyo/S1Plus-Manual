@@ -1,0 +1,389 @@
+# Progress: 自动同步统一架构重构
+
+## Documentation Scaffold Update
+
+- Status: Completed
+- Completed:
+  - 建立了 `auto-check-redesign/` 下的文档跟踪面，包含 `task_plan.md`、`progress.md`、`notes.md` 和 `phases/` 目录。
+  - 将自动同步重构拆分为 7 个实现阶段，并为每个阶段创建了可被 `phase-progress-updater` 持续更新的独立文档。
+  - 为每个阶段文档统一了固定结构，包含目标、边界、交付物、验收标准和执行进度区块。
+  - 保留现有 `README.md` 作为总交接入口，不把新阶段跟踪混入旧 `sync-across-multiple-tab/` 文档体系。
+- Validation:
+  - 已完成目录与文件骨架创建。
+  - 已完成 `README.md` 与新文档体系的职责对齐检查，确认高层入口与阶段跟踪面不冲突。
+- Remaining:
+  - 该条目创建时 7 个实现阶段仍未开始；最新阶段状态见下方后续更新。
+  - 后续每推进一个阶段，都需要同步更新 `task_plan.md`、`progress.md` 和对应 phase 文档。
+- Risks / Limitations:
+  - 当前只有文档规格，没有任何新自动同步实现代码。
+  - 真实浏览器与多标签手测约束还未进入阶段性验证。
+- Next:
+  - 从 `Phase 1` 开始，细化领域模型、设置迁移和兼容边界，作为后续实现的统一前提。
+
+## Plan Refinement Update: Optional Device ID
+
+- Status: Completed
+- Completed:
+  - 根据后续讨论，把可选 `syncDeviceId` 正式纳入新架构方案，而不是只保留在现有代码里。
+  - 明确 `syncDeviceId` 的职责是“来源归因”，用于区分 same-session、same-device 和 cross-device。
+  - 明确 `syncDeviceId` 不能替代 `contentHash`、`baseContentHash`、`updated_at` 和 session / tab 级上下文。
+  - 把这一定位同步写入总入口文档、任务总表、研究笔记和相关 phase 文档，避免后续实现时被误用成新的真相源。
+- Validation:
+  - 已对照当前 `S1Plus.js`，确认 `syncDeviceId`、`syncMeta.lastWriter`、same-device 判定和设置 UI 在当前代码基线中已经存在。
+  - 已完成自动同步重构文档体系内的角色收口，相关 phase 规格已同步更新。
+- Remaining:
+  - Phase 1 已把 `syncDeviceId` 的“可选 + 归因”定位落进 settings 迁移、payload 边界和 writer metadata；reconcile 结果分类、状态入口文案和诊断字段仍在后续阶段继续落地。
+- Risks / Limitations:
+  - 仅靠 `syncDeviceId` 不能解决误报；如果后续实现把它误当成同步判定主依据，反而会制造新的误判。
+- Next:
+  - 在 `Phase 1` 明确迁移规则，在 `Phase 4` 明确 same-session / same-device / cross-device 分类契约。
+
+## Plan Refinement Update: 13 Review Findings Consolidated
+
+- Status: Completed
+- Completed:
+  - 将 13 条 review findings 收敛进 `README.md`、`task_plan.md` 和 `phases/` 阶段规格。
+  - 增加架构锁定项，明确不恢复旧 `per_load`、`daily_startup` 与新 `startup` 分离、自动获取不做普通 push、最低诊断随阶段前移。
+  - 在 Phase 1 固定旧字段迁移表、`syncForcePullOnStartup` 显式高级项策略、writer metadata 契约和 payload / contentHash 边界。
+  - 在 Phase 2 / 3 固定协调器旁路收编清单、`manual_request` 边界，以及 `pending_recovery` 高于 `local_dirty` 的统一优先级。
+  - 在 Phase 4 / 5 / 6 / 7 固定 safe-to-probe 硬前置、自动获取允许结果、page × sync result 矩阵、非自动同步配置保留清单和诊断落地节奏。
+- Validation:
+  - 已执行文档关键字一致性检查，覆盖 `per_load`、`startup`、`daily_startup`、`syncForcePullOnStartup`、`manual_request`、`pending_recovery` 等高风险术语。
+  - 已检查 Phase 2 / Phase 3 优先级描述，确保不再前后矛盾。
+- Remaining:
+  - 该条目创建时实现阶段尚未开始；Phase 1 当前已在下方记录完成。
+  - 后续 Phase 2-7 仍需要继续按这些锁定项落地协调器、自动推送、自动获取、页面应用、状态入口和诊断矩阵。
+- Risks / Limitations:
+  - 当前更新只提升方案确定性，真实浏览器、多标签和 Tampermonkey 时序仍需在实现阶段验证。
+- Next:
+  - Phase 1 已完成；下一步等待用户明确选择 `Phase 2`。
+
+## Phase 1 Implementation Update
+
+- Status: Completed
+- Completed:
+  - 在 `S1Plus.js` 中新增自动获取设置枚举 `off` / `startup` / `safe_foreground`，新安装默认 `off`。
+  - 固定 Phase 2+ 可复用的领域命名：`SyncIntent` 类型、协调器优先级、协调器状态、tab guard 状态和状态入口 view model 分类。
+  - 将旧 `syncPerLoadCheckEnabled=true` 和 `syncCheckOnReturnToForeground=true` 迁移为 `syncAutoFetchMode=safe_foreground`；旧 `per_load` 运行语义不会保留为 true。
+  - 保留 `syncDailyFirstLoad` / `daily_startup` 的独立能力，不把它自动迁入 `syncAutoFetchMode=startup`。
+  - 将本机同步策略、远端连接凭据、状态入口偏好、Token 提醒和可选 `syncDeviceId` 从远端 settings payload / business `contentHash` 中剔除。
+  - 调整 writer metadata 契约：`syncMeta.lastWriter` 不再要求 `deviceId` 非空，未配置设备 ID 时仍记录 session / tab / action / mode / writtenAt 等来源归因字段。
+  - 更新设置迁移夹具和迁移脚本，覆盖默认 `off`、旧字段迁移、intent 优先级、payload 边界和无 `deviceId` writer metadata。
+- Changed Files:
+  - `S1Plus.js`
+  - `tests/settings-migration/fixtures.json`
+  - `sync-across-multiple-tab/scripts/test-settings-migration.js`
+  - `auto-check-redesign/task_plan.md`
+  - `auto-check-redesign/progress.md`
+  - `auto-check-redesign/phases/phase_1_sync_domain_model_and_migration.md`
+- Validation:
+  - `node --check S1Plus.js`
+  - `node sync-across-multiple-tab/scripts/test-settings-migration.js`
+  - `node sync-across-multiple-tab/scripts/test-sync-settings-ui.js`
+  - `node sync-across-multiple-tab/scripts/test-safe-sync-execution.js`
+  - `node sync-across-multiple-tab/scripts/test-post-sync-refresh-policy.js`
+  - `node sync-across-multiple-tab/scripts/test-auto-sync-indicator-linkage.js`
+  - `node sync-across-multiple-tab/scripts/test-background-open-passive-session.js`
+  - `node sync-across-multiple-tab/scripts/test-cleanup-provenance-guard.js`
+- Remaining:
+  - Phase 1 不接真实触发器、不建立协调器、不重做设置 UI；这些仍分别属于 Phase 2、Phase 4 和 Phase 6。
+  - 旧设置 UI 仍显示历史分段文案；保存时已写入新 `syncAutoFetchMode`，但用户面收口要等 Phase 6。
+  - 真实 Tampermonkey / 多标签 / bfcache 行为还未手测，本阶段仅完成静态与脚本级验证。
+- Risks / Limitations:
+  - 既有远端 payload 若仍含旧本机策略字段，下一次拉取后会按新边界本地剔除；后续 Phase 2-4 需要在协调器 / reconcile 中继续处理这类 payload 边界迁移带来的版本差异。
+  - `startup` 枚举已进入模型，但当前旧 UI 尚无显式选择入口，不能由 `daily_startup` 自动推导。
+- Next:
+  - 用户明确选择后进入 `Phase 2`，把现有自动入口改为只发 `SyncIntent`，并建立统一协调器 / lease / view model 流水线。
+
+## Phase 2 Implementation Update
+
+- Status: Completed
+- Completed:
+  - 在 `S1Plus.js` 中新增同步协调器运行骨架，覆盖 intent 归一化、固定优先级、queue、defer / skip / requeue / completed 决策记录、状态持久化和 `SyncStatusViewModel` 映射。
+  - 收编后台自动推送入口：`triggerRemoteSyncPush` 现在只提交 `local_dirty` intent，执行由协调器调用 `runBackgroundSyncCoordinatorIntent`。
+  - 收编 pending recovery：`recoverPendingAutoSyncIfNeeded` 仍负责判断遗留待同步请求，但实际补同步通过 `pending_recovery` intent 进入协调器，优先级高于 `local_dirty`。
+  - 收编 startup due：`runStartupModeAutoSyncCheckWithIndicator` 先提交 `startup_due` intent，再在协调器内复用既有 startup lock / heartbeat / `performAutoSync` 路径。
+  - 收编手动同步边界：手动同步、强制推送、强制拉取登记为 `manual_request` 协调器活动，用于解释状态并阻塞自动 intent drain；原有强制推送、强制拉取和高级选择 UI 未被自动化替换。
+  - 将防抖等待、同步中 dirty、background retry 和 daily startup defer 的 pending 状态改由协调器 preview / view model 写入，触发器不再直接写 pending 指示器。
+  - 扩展同步诊断面，记录最近 intent 名称 / 来源 / priority / 入队时间、协调器 decision reason、lease owner / source、queue summary 和最近拒绝原因。
+  - 新增 `sync-across-multiple-tab/scripts/test-sync-coordinator-intent-pipeline.js`，覆盖优先级、queue 顺序、view model 映射和自动入口不直连执行器。
+- Changed Files:
+  - `S1Plus.js`
+  - `sync-across-multiple-tab/scripts/test-sync-coordinator-intent-pipeline.js`
+  - `auto-check-redesign/task_plan.md`
+  - `auto-check-redesign/progress.md`
+  - `auto-check-redesign/phases/phase_2_sync_coordinator_and_intent_pipeline.md`
+- Validation:
+  - `node --check S1Plus.js`
+  - `node sync-across-multiple-tab/scripts/test-sync-coordinator-intent-pipeline.js`
+  - `node sync-across-multiple-tab/scripts/test-safe-sync-execution.js`
+  - `node sync-across-multiple-tab/scripts/test-auto-sync-indicator-linkage.js`
+  - `node sync-across-multiple-tab/scripts/test-settings-migration.js`
+  - `node sync-across-multiple-tab/scripts/test-sync-settings-ui.js`
+  - `node sync-across-multiple-tab/scripts/test-post-sync-refresh-policy.js`
+  - `node sync-across-multiple-tab/scripts/test-background-open-passive-session.js`
+  - `node sync-across-multiple-tab/scripts/test-cleanup-provenance-guard.js`
+  - `node sync-across-multiple-tab/scripts/test-core-data-snapshot-resync.js`
+  - 关键字一致性搜索覆盖 `per_load`、`startup`、`daily_startup`、`syncForcePullOnStartup`、`manual_request`、`pending_recovery`、`payload`、`contentHash`、`pulled`、`Phase 7`。
+  - 关键字一致性搜索覆盖 `per_load`、`startup`、`daily_startup`、`syncForcePullOnStartup`、`manual_request`、`pending_recovery`、`payload`、`contentHash`、`pulled`、`Phase 7`。
+- Remaining:
+  - `foreground_resume` / `visible_poll` 的真实安全 probe、read-only reconcile 和 safe-to-probe gate 尚未实现，继续留给 `Phase 4`。
+  - 后台自动推送仍保守复用现有 background lock / retry / drain 行为，完整共享 lease 标准化留给 `Phase 3`。
+  - 导航栏统一状态入口和诊断整理仍留给 `Phase 6` / `Phase 7`。
+  - 真实论坛页、Tampermonkey、多标签和 bfcache 组合行为仍需后续手测。
+- Risks / Limitations:
+  - 协调器已成为自动入口的调度上游，但为了降低回归风险，本阶段没有重写 `performAutoSync` 内部 push / pull / conflict 判定。
+  - `manual_request` 已参与互斥和诊断，但手动选择弹窗期间仍依赖现有 `manualSyncInFlightPromise` 维持自动 queue defer。
+- Next:
+  - 等用户明确选择后进入 `Phase 3`，把后台自动推送、retry 和 drain 进一步改造成共享 lease / queue 的标准路径。
+
+## Phase 3 Implementation Update
+
+- Status: Completed
+- Completed:
+  - 在 `S1Plus.js` 中为 coordinator queue 增加后台 intent 合并能力：多个 `local_dirty` 共享一次 drain，命中正在运行的后台 drain 时并入当前执行，避免重复排队或双轨状态。
+  - 固定 `pending_recovery` 与 `local_dirty` 的互斥关系：排队中的 `local_dirty` 会被 `pending_recovery` 吸收，recovery settle 优先完成后再处理新的本地脏写语义。
+  - 新增 shared lease 包装层，统一 coordinator 对 background / startup / manual 锁、heartbeat、release 的访问；后台推送执行器已改用该包装层申请 background lease。
+  - 将后台 retry 改为 delayed `local_dirty` intent，不再由独立 timeout 绕回 `triggerRemoteSyncPush("background_retry")`；retry 去重、最大次数和排队状态由 coordinator 记录。
+  - 增加后台推送 drain 诊断字段与显示行，记录最近 drain loop 数、合并 intent 数和 retry 原因。
+  - 扩展 `sync-across-multiple-tab/scripts/test-sync-coordinator-intent-pipeline.js`，覆盖 `local_dirty` 合并、`pending_recovery` 吸收 queued dirty、后台 lease 包装和 retry 重新入队规则。
+- Changed Files:
+  - `S1Plus.js`
+  - `sync-across-multiple-tab/scripts/test-sync-coordinator-intent-pipeline.js`
+  - `auto-check-redesign/task_plan.md`
+  - `auto-check-redesign/progress.md`
+  - `auto-check-redesign/phases/phase_3_auto_push_and_shared_lease.md`
+- Validation:
+  - `node --check S1Plus.js`
+  - `node sync-across-multiple-tab/scripts/test-sync-coordinator-intent-pipeline.js`
+  - `node sync-across-multiple-tab/scripts/test-safe-sync-execution.js`
+  - `node sync-across-multiple-tab/scripts/test-auto-sync-indicator-linkage.js`
+  - `node sync-across-multiple-tab/scripts/test-settings-migration.js`
+  - `node sync-across-multiple-tab/scripts/test-sync-settings-ui.js`
+  - `node sync-across-multiple-tab/scripts/test-post-sync-refresh-policy.js`
+  - `node sync-across-multiple-tab/scripts/test-background-open-passive-session.js`
+  - `node sync-across-multiple-tab/scripts/test-cleanup-provenance-guard.js`
+  - `node sync-across-multiple-tab/scripts/test-core-data-snapshot-resync.js`
+- Remaining:
+  - Phase 3 不实现远端 probe / reconcile、不调整 thread pull 后刷新策略、不升级导航栏状态中心 UI；这些仍分别留给 Phase 4、Phase 5 和 Phase 6。
+  - `performAutoSync` 内部 push / pull / conflict 判定保持现有稳定实现，本阶段只收敛后台推送的调度、lease、retry 与 drain。
+  - 真实论坛页、Tampermonkey、多标签、bfcache 和网络异常组合仍需后续手测。
+- Risks / Limitations:
+  - shared lease 包装已提供 background / startup / manual 控制器，但本阶段只把后台推送执行器切到该包装；手动同步 UI 和 startup 外层流程仍保留既有结构。
+  - delayed retry 依赖 coordinator queue 的定时 drain；真实用户脚本环境中的后台定时器节流需要 Phase 7 手测矩阵继续覆盖。
+- Next:
+  - 等用户明确选择后进入 `Phase 4`，基于 shared lease / queue 接入只读 probe、safe-to-probe gate 和 reconcile，且自动获取链路不得做普通 push。
+
+## Phase 4 Implementation Update
+
+- Status: Completed
+- Completed:
+  - 在 `S1Plus.js` 中新增独立 `startup_due` 自动获取来源，并保持它与既有 `daily_startup` 每日首次同步分离。
+  - 将 `startup_due` / `foreground_resume` / `visible_poll` 统一接入 coordinator intent；前台恢复由 `visibilitychange` / persisted `pageshow` 触发，可见页轮询使用保守 5 分钟间隔和 probe cooldown。
+  - 新增 `safe to probe` gate：probe 前先做 core data snapshot resync，并检查 pending recovery settle；dirty settings modal、pending read-progress write、同步防抖、local dirty pending、manual request、阅读中的 thread page 和未稳定后台恢复状态都会 tab-local defer。
+  - 新增 read-only `probe -> reconcile` 主链路：`updated_at` 只作为 freshness hint，只有必要时才拉取完整远端 payload，再用 `contentHash` / `baseContentHash` / baseline / writer metadata 判定结果。
+  - 固定自动获取结果为 `no_change`、`pull_candidate`、`read_progress_merge_candidate`、`manual_required`、`defer`；执行器不直接调用 `performAutoSync`、`pushRemoteData` 或 `importLocalData`。
+  - 本地较新时只转交 `local_dirty` / background push 或要求手动处理，不由自动获取链路普通 push。
+  - 落地 same-session / same-device / cross-device / unknown 归因；`syncDeviceId` 缺失只降低归因精度，不改变 hash / baseline 判定。
+  - 扩展同步诊断字段与摘要展示，记录 probe freshness、remoteUpdatedAt、本地/远端/base/baseline hash、writer attribution、reconcile result、allowed action 和 safe gate 拒绝原因。
+  - 新增 `sync-across-multiple-tab/scripts/test-safe-auto-pull-probe-reconcile.js` 覆盖 Phase 4 结果映射和 read-only 约束。
+- Changed Files:
+  - `S1Plus.js`
+  - `sync-across-multiple-tab/scripts/test-safe-auto-pull-probe-reconcile.js`
+  - `auto-check-redesign/task_plan.md`
+  - `auto-check-redesign/progress.md`
+  - `auto-check-redesign/phases/phase_4_safe_auto_pull_probe_and_reconcile.md`
+- Validation:
+  - `node --check S1Plus.js`
+  - `node sync-across-multiple-tab/scripts/test-safe-auto-pull-probe-reconcile.js`
+  - `node sync-across-multiple-tab/scripts/test-sync-coordinator-intent-pipeline.js`
+  - `node sync-across-multiple-tab/scripts/test-core-data-snapshot-resync.js`
+  - `node sync-across-multiple-tab/scripts/test-safe-sync-execution.js`
+  - `node sync-across-multiple-tab/scripts/test-auto-sync-indicator-linkage.js`
+  - `node sync-across-multiple-tab/scripts/test-settings-migration.js`
+  - `node sync-across-multiple-tab/scripts/test-sync-settings-ui.js`
+  - `node sync-across-multiple-tab/scripts/test-post-sync-refresh-policy.js`
+  - `node sync-across-multiple-tab/scripts/test-background-open-passive-session.js`
+  - `node sync-across-multiple-tab/scripts/test-cleanup-provenance-guard.js`
+  - 关键字一致性搜索覆盖 `per_load`、`startup`、`daily_startup`、`syncForcePullOnStartup`、`manual_request`、`pending_recovery`、`payload`、`contentHash`、`pulled`、`Phase 7`；新脚本额外断言 Phase 4 自动获取执行器不直接 `performAutoSync` / `pushRemoteData` / `importLocalData`。
+- Remaining:
+  - Phase 4 不实现页面 apply / refresh / soft prompt 文案；普通 pull candidate 如何在 thread/list/generic 页面应用留给 `Phase 5`。
+  - 设置 UI 仍保留旧三段式显示，用户面收口和统一状态入口留给 `Phase 6`。
+  - 真实论坛页、Tampermonkey、多标签、bfcache 与长时间可见页轮询仍需 `Phase 7` 手测矩阵验证。
+- Risks / Limitations:
+  - `visible_poll` 依赖浏览器定时器，真实后台节流可能让探测晚于脚本级测试。
+  - 远端确有变化时当前阶段只记录候选 / 手动 / defer，不展示最终处理体验；这是 Phase 5 / 6 的工作边界。
+- Next:
+  - 等用户明确选择后进入 `Phase 5`，基于 Phase 4 的结果类型实现页面应用与刷新策略。
+
+## Phase 5 Implementation Update
+
+- Status: Completed
+- Completed:
+  - 在 `S1Plus.js` 中固定页面 apply 分类为 `thread` / `list` / `generic`，不再让刷新策略返回旧的 `thread_detail` / `lightweight_list` 临场分类。
+  - 将页面应用策略收敛为 `silent`、`defer`、`soft_prompt`、`auto_refresh`、`manual_required`，并显式记录 `refreshDecision`：`none`、`prompt`、`reload`、`deferred`。
+  - 固定普通 `pulled` 的页面行为：thread 页 soft prompt 且不自动 reload；list / generic 页面在没有本地 guard 时调度自动刷新。
+  - 固定 `merged_read_progress` 的页面行为：thread 页 soft prompt；list / generic 页面静默处理，不再为了只读进度合并调度刷新。
+  - 将 dirty settings modal、pending write、同步 debounce、后台恢复未稳定等当前页 guard 收敛为 `defer`，并保持 tab-local 语义，不升级为全局冲突。
+  - 增加 Phase 5 最低诊断字段：page type、sync result、apply policy、refresh decision、blocked reason，并在诊断摘要中显示最近页面 apply / 刷新决策。
+  - 扩展 `sync-across-multiple-tab/scripts/test-post-sync-refresh-policy.js`，覆盖新矩阵、dirty modal defer、`conflict_manual` 不刷新、thread `pulled` 不 reload、read_progress merge 静默处理和诊断字段记录。
+- Changed Files:
+  - `S1Plus.js`
+  - `sync-across-multiple-tab/scripts/test-post-sync-refresh-policy.js`
+  - `auto-check-redesign/task_plan.md`
+  - `auto-check-redesign/progress.md`
+  - `auto-check-redesign/notes.md`
+  - `auto-check-redesign/phases/phase_5_page_apply_and_refresh_policy.md`
+- Validation:
+  - `node --check S1Plus.js`
+  - `node sync-across-multiple-tab/scripts/test-post-sync-refresh-policy.js`
+  - `node sync-across-multiple-tab/scripts/test-safe-auto-pull-probe-reconcile.js`
+  - `node sync-across-multiple-tab/scripts/test-sync-coordinator-intent-pipeline.js`
+  - `node sync-across-multiple-tab/scripts/test-safe-sync-execution.js`
+  - `node sync-across-multiple-tab/scripts/test-auto-sync-indicator-linkage.js`
+  - `node sync-across-multiple-tab/scripts/test-settings-migration.js`
+  - `node sync-across-multiple-tab/scripts/test-sync-settings-ui.js`
+  - `node sync-across-multiple-tab/scripts/test-background-open-passive-session.js`
+  - `node sync-across-multiple-tab/scripts/test-cleanup-provenance-guard.js`
+  - `node sync-across-multiple-tab/scripts/test-core-data-snapshot-resync.js`
+  - `node sync-across-multiple-tab/scripts/test-phase6-interaction-copy.js`
+  - 关键字一致性搜索覆盖 `per_load`、`daily_startup`、`syncForcePullOnStartup`、`manual_request`、`pending_recovery`、`contentHash`、`pulled`、`force_pulled`、`Phase 7`。
+- Remaining:
+  - Phase 5 不重做设置 UI，不设计统一状态入口；`conflict_manual` / deferred 的主要入口展示仍交给 `Phase 6`。
+  - Phase 5 不扩展完整诊断矩阵；本阶段只落地 page apply 所需最低字段，统一整理仍交给 `Phase 7`。
+  - 真实论坛页、Tampermonkey、多标签、bfcache、长时间可见页轮询和用户实际阅读中的软提示节奏仍需 `Phase 7` 手测矩阵覆盖。
+- Risks / Limitations:
+  - `merged_read_progress` 在 list / generic 页面现在静默处理，不主动 reload；如果未来需要即时刷新列表上的阅读进度标识，应在 Phase 6/7 结合状态入口或局部重绘策略评估，而不是恢复全页刷新。
+  - 当前 `conflict_manual` 只固定“不刷新 + 手动处理”策略；完整用户入口仍依赖 Phase 6 状态中心。
+- Next:
+  - 等用户明确选择后进入 `Phase 6`，基于 Phase 5 的页面策略收口设置 UI 和统一状态入口。
+
+## Phase 6 Implementation Update
+
+- Status: Completed
+- Completed:
+  - 在 `S1Plus.js` 中重做同步设置区，将用户主模型收口为 `自动推送本地改动`、`自动获取云端更新`、`同步状态入口`。
+  - 将 `自动获取云端更新` UI 固定为 `off` / `startup` / `safe_foreground`，旧 `per_load` / `foreground` 不再暴露给用户，只在保存 helper 中保留兼容映射到 `safe_foreground`。
+  - 保留每日首次全量同步和 `syncForcePullOnStartup`，并在 UI 文案中明确它们独立于 `自动获取云端更新=startup`。
+  - 保留并重分区展示 Gist ID、GitHub PAT、Token 到期提醒、收藏完整正文同步、手动同步高级模式和手动同步入口，避免三项主模型吞掉连接配置、凭据、安全提醒和手动能力。
+  - 明确设备 ID 为可选来源归因输入，不同步到其他设备，也不单独改变拉取、推送或冲突判断结果。
+  - 新增统一状态入口 view model，固定状态枚举为 `idle`、`queued_push`、`probing`、`syncing`、`applied`、`deferred_local_busy`、`conflict_manual`、`paused_failure`。
+  - 将导航栏自动同步指示器升级为可点击状态入口：tooltip 和点击面板都基于同一 view model 解释状态、原因、来源和可用动作；延后 / 冲突 / 暂停状态会导向全局手动同步。
+  - 更新 `test-sync-settings-ui.js` 和 `test-auto-sync-indicator-linkage.js`，覆盖 Phase 6 设置结构、状态入口可见性、状态枚举映射和手动同步动作映射。
+- Changed Files:
+  - `S1Plus.js`
+  - `sync-across-multiple-tab/scripts/test-sync-settings-ui.js`
+  - `sync-across-multiple-tab/scripts/test-auto-sync-indicator-linkage.js`
+  - `auto-check-redesign/task_plan.md`
+  - `auto-check-redesign/progress.md`
+  - `auto-check-redesign/notes.md`
+  - `auto-check-redesign/phases/phase_6_settings_ui_and_status_hub.md`
+- Validation:
+  - `node --check S1Plus.js`
+  - `node sync-across-multiple-tab/scripts/test-sync-settings-ui.js`
+  - `node sync-across-multiple-tab/scripts/test-auto-sync-indicator-linkage.js`
+  - `node sync-across-multiple-tab/scripts/test-phase6-interaction-copy.js`
+  - `node sync-across-multiple-tab/scripts/test-sync-coordinator-intent-pipeline.js`
+  - `node sync-across-multiple-tab/scripts/test-safe-auto-pull-probe-reconcile.js`
+  - `node sync-across-multiple-tab/scripts/test-post-sync-refresh-policy.js`
+  - `node sync-across-multiple-tab/scripts/test-settings-migration.js`
+  - `node sync-across-multiple-tab/scripts/test-safe-sync-execution.js`
+  - `node sync-across-multiple-tab/scripts/test-background-open-passive-session.js`
+  - `node sync-across-multiple-tab/scripts/test-cleanup-provenance-guard.js`
+  - `node sync-across-multiple-tab/scripts/test-core-data-snapshot-resync.js`
+  - 关键字一致性搜索覆盖 `per_load`、`startup`、`daily_startup`、`syncForcePullOnStartup`、`manual_request`、`pending_recovery`、`payload`、`contentHash`、`pulled`、`Phase 7`。
+- Remaining:
+  - Phase 6 不扩展完整诊断矩阵；新增状态入口只展示核心状态、主要原因和手动处理动作，诊断整理继续留给 Phase 7。
+  - 真实论坛页、Tampermonkey、多标签、bfcache、窄导航栏和 S1 NUX 主题下的视觉 / 点击体验仍需 Phase 7 手测矩阵验证。
+- Risks / Limitations:
+  - 状态入口点击面板尚未经过真实浏览器视觉验收；脚本级测试只验证结构、映射和文案。
+  - 每日首次全量同步作为独立高级项继续显示，后续需要在 Phase 7 手测和文案检查中确认不会与 `startup` 自动获取策略混淆。
+- Next:
+  - 等用户明确选择后进入 `Phase 7`，围绕本阶段固定的设置模型和状态入口整理诊断展示、回归矩阵和真实浏览器手测清单。
+
+## Phase 7 Implementation Update
+
+- Status: Completed
+- Completed:
+  - 在 `S1Plus.js` 中新增统一诊断事实快照 `buildSyncDiagnosticsFactSnapshot(...)`，按 intent、probe、reconcile、apply、runtime、attribution 六层组织同步事实。
+  - 将导航栏状态入口接入同一诊断事实源：`buildSyncStatusEntryViewModel(...)` 现在携带 `diagnosticSummary`，点击面板展示 intent / reconcile / tab guard 摘要。
+  - 扩展设置面板诊断和复制诊断摘要，顶部新增状态入口摘要、诊断层级覆盖、全局保护、当前 Tab Guard、归因摘要，再保留既有详细字段和阅读进度调试轨迹。
+  - 新增 `auto-check-redesign/regression_matrix.md`，固定多设备、多标签、同机不同标签三类矩阵；每类均覆盖正常路径、defer 路径、冲突路径、恢复路径，并要求配置 `deviceId` 与未配置 `deviceId` 两种模式都覆盖。
+  - 新增真实浏览器手测清单，覆盖 thread page 长时间阅读、后台开多个帖子、bfcache 恢复、visible poll、same-device remote write、dirty settings modal、每日首次同步与 startup 自动获取区分，以及 S1 标准主题 / S1 NUX 主题状态入口视觉检查。
+  - 新增 `sync-across-multiple-tab/scripts/test-phase7-diagnostics-regression-matrix.js`，验证统一诊断快照、状态入口诊断摘要、诊断输出行和回归矩阵文档覆盖。
+- Changed Files:
+  - `S1Plus.js`
+  - `sync-across-multiple-tab/scripts/test-phase7-diagnostics-regression-matrix.js`
+  - `auto-check-redesign/README.md`
+  - `auto-check-redesign/regression_matrix.md`
+  - `auto-check-redesign/task_plan.md`
+  - `auto-check-redesign/progress.md`
+  - `auto-check-redesign/notes.md`
+  - `auto-check-redesign/phases/phase_7_diagnostics_and_regression_matrix.md`
+- Validation:
+  - `node --check S1Plus.js`
+  - `node sync-across-multiple-tab/scripts/test-phase7-diagnostics-regression-matrix.js`
+  - `node sync-across-multiple-tab/scripts/test-sync-coordinator-intent-pipeline.js`
+  - `node sync-across-multiple-tab/scripts/test-safe-auto-pull-probe-reconcile.js`
+  - `node sync-across-multiple-tab/scripts/test-post-sync-refresh-policy.js`
+  - `node sync-across-multiple-tab/scripts/test-auto-sync-indicator-linkage.js`
+  - `node sync-across-multiple-tab/scripts/test-sync-settings-ui.js`
+  - `node sync-across-multiple-tab/scripts/test-settings-migration.js`
+  - `node sync-across-multiple-tab/scripts/test-background-open-passive-session.js`
+  - `node sync-across-multiple-tab/scripts/test-core-data-snapshot-resync.js`
+  - `node sync-across-multiple-tab/scripts/test-safe-sync-execution.js`
+  - `node sync-across-multiple-tab/scripts/test-cleanup-provenance-guard.js`
+  - `node sync-across-multiple-tab/scripts/test-phase6-interaction-copy.js`
+  - 关键字一致性搜索覆盖 `per_load`、`startup`、`daily_startup`、`syncForcePullOnStartup`、`manual_request`、`pending_recovery`、`payload`、`contentHash`、`pulled`、`force_pulled`、`Phase 7`。
+- Remaining:
+  - 真实 Stage1st 页面 + Tampermonkey / Greasemonkey 下的多标签、bfcache、长时间 visible poll、状态入口窄导航栏和 S1 NUX 主题视觉验收仍需按 `auto-check-redesign/regression_matrix.md` 手动补跑。
+  - 后续若新增自动同步入口或结果类型，需要同步扩展统一诊断事实源、Phase 7 回归脚本和矩阵文档。
+- Risks / Limitations:
+  - Node harness 可验证状态机、结果码、诊断字段和文档矩阵，但不能完整模拟真实 GM API、多标签生命周期、后台定时器节流和论坛主题 DOM 差异。
+  - 状态入口只展示紧凑诊断摘要；长排障信息仍以设置面板诊断和复制诊断为准。
+- Next:
+  - 代码阶段 7 个 phase 已完成；下一步是在真实论坛环境补跑 `regression_matrix.md` 的手测清单，并把任何新失败样本映射回对应 phase。
+
+## Post-Phase 7 Follow-up: 自动同步四项回归修复
+
+- Status: Completed
+- Completed:
+  - 修复旧设置迁移只在缓存层生效、未写回 GM 存储的问题：`saveSettings` 新增 `forcePersist` 选项，`migrateLegacySettingsIfNeeded()` 强制持久化规范化后的 `s1p_settings`，避免每次打开论坛都重复打印迁移日志。
+  - 补全 `safe_foreground` 的 `probe -> reconcile -> apply` 后半段：`pull_candidate` 会重新确认远端版本后受控导入本地并走既有页面 apply / refresh 策略；`read_progress_merge_candidate` 会在仍可合并时执行阅读进度 merge 并用远端版本保护回写；`manual_required` / `defer` 不覆盖本地。
+  - 统一前台恢复入口：`visibilitychange(visible)`、persisted `pageshow` 和普通 `window focus` 都会触发 `foreground_resume` 自动获取调度；前台恢复可绕过 shared cooldown，但仍保留 safe gate、本地短冷却、probe lock 和 pending recovery settle。
+  - 修复状态入口 pending 生命周期：coordinator 中的自动获取 intent 完成后会统一解析为 success / conflict / failure / idle；成功应用或无变化显示成功态一段时间，defer / skipped 不再长期停留三点 pending。
+  - 调整同步设置 UI 间距：自动获取说明段落新增专用类并覆盖全局负 margin，避免右侧分段开关与下方说明贴边。
+- Changed Files:
+  - `S1Plus.js`
+  - `sync-across-multiple-tab/scripts/test-settings-migration.js`
+  - `sync-across-multiple-tab/scripts/test-safe-auto-pull-probe-reconcile.js`
+  - `sync-across-multiple-tab/scripts/test-auto-sync-indicator-linkage.js`
+  - `sync-across-multiple-tab/scripts/test-sync-settings-ui.js`
+  - `auto-check-redesign/README.md`
+  - `auto-check-redesign/development_prompt.md`
+  - `auto-check-redesign/task_plan.md`
+  - `auto-check-redesign/progress.md`
+  - `auto-check-redesign/notes.md`
+  - `auto-check-redesign/phases/phase_1_sync_domain_model_and_migration.md`
+  - `auto-check-redesign/phases/phase_4_safe_auto_pull_probe_and_reconcile.md`
+  - `auto-check-redesign/phases/phase_6_settings_ui_and_status_hub.md`
+- Validation:
+  - `node --check S1Plus.js`
+  - `node sync-across-multiple-tab/scripts/test-settings-migration.js`
+  - `node sync-across-multiple-tab/scripts/test-auto-sync-indicator-linkage.js`
+  - `node sync-across-multiple-tab/scripts/test-safe-auto-pull-probe-reconcile.js`
+  - `node sync-across-multiple-tab/scripts/test-sync-settings-ui.js`
+  - `node sync-across-multiple-tab/scripts/test-phase7-diagnostics-regression-matrix.js`
+  - `node sync-across-multiple-tab/scripts/test-background-open-passive-session.js`
+  - `node sync-across-multiple-tab/scripts/test-sync-coordinator-intent-pipeline.js`
+  - `node sync-across-multiple-tab/scripts/test-cleanup-provenance-guard.js`
+  - `node sync-across-multiple-tab/scripts/test-safe-sync-execution.js`
+  - `node sync-across-multiple-tab/scripts/test-phase6-interaction-copy.js`
+  - `node sync-across-multiple-tab/scripts/test-core-data-snapshot-resync.js`
+  - `node sync-across-multiple-tab/scripts/test-post-sync-refresh-policy.js`
+- Remaining:
+  - 真实设备 A / B、Tampermonkey / Greasemonkey、Stage1st 标准主题和 S1 NUX 主题仍需按 `regression_matrix.md` 手动补跑，尤其是“设备 A 推送后，设备 B 激活已打开页面是否立即拉取”的端到端验证。
+- Risks / Limitations:
+  - Node harness 已覆盖迁移持久化、候选 apply、focus 前台触发和状态入口解析，但不能完整模拟真实浏览器多设备网络时序、GM 跨标签延迟和论坛 DOM 主题差异。
+- Next:
+  - 在真实论坛环境补跑用户报告的四个场景；若再发现失败样本，先映射到 Phase 1 / 4 / 5 / 6 / 7 的既有边界，再补对应回归用例。
