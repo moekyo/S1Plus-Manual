@@ -1510,6 +1510,16 @@
       --s1p-image-preview-max-width: 800px;
       --s1p-image-preview-max-height: 1200px;
       --s1p-image-viewer-viewport-bg: #d4ddce;
+      --s1p-image-viewer-loading-bg: rgba(237, 241, 230, 0.96);
+      --s1p-image-viewer-loading-border: rgba(2, 44, 128, 0.14);
+      --s1p-image-viewer-loading-text: #1b2f63;
+      --s1p-image-viewer-loading-spinner-track: rgba(2, 44, 128, 0.2);
+      --s1p-image-viewer-loading-spinner-active: #174ea6;
+      --s1p-image-viewer-loading-cancel-bg: #1f2a44;
+      --s1p-image-viewer-loading-cancel-text: #ffffff;
+      --s1p-image-viewer-loading-cancel-hover-bg: #174ea6;
+      --s1p-image-viewer-loading-cancel-hover-text: #ffffff;
+      --s1p-image-viewer-loading-cancel-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
       /* 帖子工具栏二级菜单层级：保持低于 Discuz 原生回复弹窗 #fwin_reply (z-index: 201) */
       --s1p-post-toolbar-layer-z: 180;
 
@@ -5618,9 +5628,9 @@
       gap: 8px;
       padding: 7px 12px;
       border-radius: 12px;
-      border: none;
-      background: #edf1e6;
-      color: var(--s1p-t, #022c80);
+      border: 1px solid var(--s1p-image-viewer-loading-border);
+      background: var(--s1p-image-viewer-loading-bg);
+      color: var(--s1p-image-viewer-loading-text);
       box-shadow: 0 10px 24px rgba(var(--s1p-shadow-color-rgb), 0.2);
       font-size: 12px;
       font-weight: 600;
@@ -5636,8 +5646,8 @@
       width: 12px;
       height: 12px;
       border-radius: 50%;
-      border: 2px solid rgba(2, 44, 128, 0.22);
-      border-top-color: #022c80;
+      border: 2px solid var(--s1p-image-viewer-loading-spinner-track);
+      border-top-color: var(--s1p-image-viewer-loading-spinner-active);
       animation: s1p-image-viewer-switch-loading-spin 0.82s linear infinite;
       flex: 0 0 auto;
     }
@@ -5652,6 +5662,16 @@
       font-weight: 600;
       line-height: 1;
       white-space: nowrap;
+      background-color: var(--s1p-image-viewer-loading-cancel-bg);
+      color: var(--s1p-image-viewer-loading-cancel-text);
+      box-shadow: var(--s1p-image-viewer-loading-cancel-shadow);
+      transform: none;
+    }
+    .s1p-image-viewer__switch-cancel-btn:hover {
+      background-color: var(--s1p-image-viewer-loading-cancel-hover-bg);
+      color: var(--s1p-image-viewer-loading-cancel-hover-text);
+      box-shadow: var(--s1p-image-viewer-loading-cancel-shadow);
+      transform: none;
     }
     @keyframes s1p-image-viewer-switch-loading-spin {
       from {
@@ -6249,6 +6269,16 @@
         --s1p-progress-delete-hover-bg: rgb(154, 41, 28);
         --s1p-progress-delete-text: #ffffff;
         --s1p-image-viewer-viewport-bg: #222a32;
+        --s1p-image-viewer-loading-bg: rgba(17, 24, 39, 0.94);
+        --s1p-image-viewer-loading-border: rgba(148, 163, 184, 0.24);
+        --s1p-image-viewer-loading-text: #e5edf6;
+        --s1p-image-viewer-loading-spinner-track: rgba(226, 232, 240, 0.22);
+        --s1p-image-viewer-loading-spinner-active: #93c5fd;
+        --s1p-image-viewer-loading-cancel-bg: rgba(148, 163, 184, 0.18);
+        --s1p-image-viewer-loading-cancel-text: #f8fafc;
+        --s1p-image-viewer-loading-cancel-hover-bg: #2563eb;
+        --s1p-image-viewer-loading-cancel-hover-text: #ffffff;
+        --s1p-image-viewer-loading-cancel-shadow: inset 0 0 0 1px rgba(226, 232, 240, 0.12);
         --s1p-focus-ring: rgba(96, 165, 250, 0.56);
         --s1p-sync-alert-local-change-bg: rgba(239, 68, 68, 0.24);
         --s1p-sync-alert-local-change-text: #fecaca;
