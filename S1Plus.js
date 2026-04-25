@@ -20813,15 +20813,23 @@
               suppressPostSync: true,
             });
             GM_setValue("s1p_last_sync_timestamp", Date.now());
-            return asSuccessResult("merged_read_progress", {
-              contentHash: mergedContentHash,
-              remoteUpdatedAt: pushResult?.updatedAt || null,
-              remoteWriter: pushResult?.writerMetadata || null,
-              sameSessionRemoteWrite:
-                recentRemoteWriteResultContext.sameSessionRemoteWrite,
-              sameDeviceRemoteWrite:
-                recentRemoteWriteResultContext.sameDeviceRemoteWrite,
-            });
+            return asSuccessResult(
+              "merged_read_progress",
+              {
+                contentHash: mergedContentHash,
+                remoteUpdatedAt: pushResult?.updatedAt || null,
+              },
+              {
+                reason: versionDecision.reason || "read_progress_auto_merge",
+                remoteUpdatedAt: pushResult?.updatedAt || null,
+                ...recentRemoteWriteResultContext,
+                remoteWriter:
+                  recentRemoteWriteResultContext.remoteWriter ||
+                  pushResult?.writerMetadata ||
+                  null,
+                appliedRemoteWriter: pushResult?.writerMetadata || null,
+              }
+            );
           }
       }
     } catch (error) {

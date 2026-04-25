@@ -452,6 +452,17 @@
     - `sync-across-multiple-tab/scripts/test-sync-settings-ui.js`
 - 这轮 follow-up 的目标不是改写 Phase 4 / 7 已完成结论，而是把同机误判远端更新的剩余观察盲区补齐，并把对应场景固化进脚本基线。
 
+### 8.14B Phase 7 Follow-up（2026-04-25）
+
+- 继续追查“后台自动同步检测到云端变化，已保留本地阅读进度并完成自动合并”的复现，确认命中后台 `merged_read_progress` 路径。
+- 修正 `performAutoSync()` 的 `merged_read_progress` 返回结构：same-session / same-device / writer 上下文现在随 `extraResult` 返回给提示与刷新策略，而不是误放进只用于 baseline 的参数。
+- 这轮修正解决的是后台阅读进度自动合并路径的来源标记丢失问题：
+  - same-session 自动合并应静默
+  - same-device 自动合并应显示同设备文案
+  - external 自动合并才保留云端变化文案
+- 回归基线更新：
+  - `sync-across-multiple-tab/scripts/test-post-sync-refresh-policy.js` 增加 `merged_read_progress` 来源上下文返回结构断言，以及 same-device 自动合并文案断言。
+
 ### 8.15 下一步
 
 - 先按“列表页后台打开多个帖子、只阅读其中一个”的路径复现一次，并复制新的阅读进度调试轨迹。
