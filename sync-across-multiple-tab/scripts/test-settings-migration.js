@@ -41,7 +41,8 @@ const createElementStub = () => ({
   value: "",
 });
 
-const createSandbox = () => {
+const createSandbox = (initialStore = {}) => {
+  const store = new Map(Object.entries(initialStore));
   const documentElement = {
     style: {
       setProperty: noop,
@@ -53,6 +54,7 @@ const createSandbox = () => {
 
   const sandbox = {
     __S1P_TEST_MODE__: true,
+    __S1P_TEST_STORE__: store,
     console,
     URL,
     URLSearchParams,
@@ -110,8 +112,11 @@ const createSandbox = () => {
         return [];
       }
     },
-    GM_getValue: (_key, defaultValue) => defaultValue,
-    GM_setValue: noop,
+    GM_getValue: (key, defaultValue) =>
+      store.has(key) ? store.get(key) : defaultValue,
+    GM_setValue: (key, value) => {
+      store.set(key, value);
+    },
     GM_addStyle: noop,
     GM_deleteValue: noop,
     GM_xmlhttpRequest: noop,
@@ -240,3 +245,54 @@ fixtures.forEach((fixture, index) => {
 console.log(
   `[settings-migration] ${passedCount}/${fixtures.length} 个迁移用例通过。`
 );
+
+{
+  const legacySettings = {
+    syncRemoteEnabled: true,
+    syncAutoEnabled: true,
+    syncAutoFetchMode: "foreground",
+  };
+  const migrationSandbox = createSandbox({
+    s1p_settings: legacySettings,
+  });
+  vm.createContext(migrationSandbox);
+  vm.runInContext(sourceCode, migrationSandbox, {
+    filename: "S1Plus.js",
+    timeout: 20000,
+  });
+  assert.strictEqual(
+    migrationSandbox.__S1P_TEST_HOOKS__.migrateLegacySettingsIfNeeded(),
+    true,
+    "[legacy-key-persistence] 含旧字段的设置应触发一次迁移"
+  );
+
+  const persistedSettings = migrationSandbox.__S1P_TEST_STORE__.get(
+    "s1p_settings"
+  );
+  assert.ok(
+    persistedSettings &&
+      typeof persistedSettings === "object" &&
+      !Array.isArray(persistedSettings),
+    "[legacy-key-persistence] 迁移后应写回规范化设置对象"
+  );
+  assert.strictEqual(
+    Object.prototype.hasOwnProperty.call(persistedSettings, "syncAutoFetchMode"),
+    false,
+    "[legacy-key-persistence] 旧字段 syncAutoFetchMode 应在一次迁移后从存储中移除"
+  );
+
+  const secondPass = migrationSandbox.__S1P_TEST_HOOKS__.buildNormalizedSettings(
+    persistedSettings
+  );
+  assert.strictEqual(
+    secondPass.migrationApplied,
+    false,
+    "[legacy-key-persistence] 已写回的设置不应在下一次加载继续触发迁移"
+  );
+  assert.ok(
+    migrationSandbox.__S1P_TEST_STORE__.has("s1p_last_modified"),
+    "[legacy-key-persistence] 设置迁移应继续推进本地修改时间戳"
+  );
+}
+
+console.log("[settings-migration] 旧字段清理落盘回归用例通过。");
