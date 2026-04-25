@@ -73,6 +73,7 @@ const testSameSessionRemoteWriteStaysQuiet = async () => {
 
   assert.deepStrictEqual(calls, ["core", "settings"]);
   assert.strictEqual(result.sameSessionRemoteWrite, true);
+  assert.strictEqual(result.remoteChangeKind, "same_session_write");
   assert.strictEqual(messages.length, 0);
   assert.ok(scheduledReload, "同机会话 quiet handling 仍应保持必要的自动刷新。");
   assert.equal(result.refreshPlan.reloadSchedule.status, "scheduled");
@@ -129,6 +130,7 @@ const testSameDeviceRemoteWriteUsesSpecificCopy = async () => {
   );
 
   assert.equal(result.sameDeviceRemoteWrite, true);
+  assert.equal(result.remoteChangeKind, "same_device_write");
   assert.equal(messages.length, 1);
   assert.match(messages[0].message, /同设备「Mac-Main」已同步更新/);
   assert.equal(messages[0].isSuccess, true);
@@ -139,9 +141,98 @@ const testSameDeviceRemoteWriteUsesSpecificCopy = async () => {
   );
 };
 
+const testExternalRemoteWriteKeepsCloudCopy = async () => {
+  const { hooks, sandbox } = createHarness();
+  const remoteUpdatedAt = "2026-04-18T07:00:00Z";
+  const messages = [];
+
+  sandbox.document.visibilityState = "visible";
+
+  const result = await hooks.checkRemoteFreshnessOnForeground(
+    "foreground_resume",
+    {
+      settingsSnapshot: enabledSettings,
+      acquireRemoteProbeLock: async () => true,
+      releaseRemoteProbeLockValue: () => {},
+      fetchRemoteData: async () => ({
+        meta: {
+          updatedAt: remoteUpdatedAt,
+        },
+      }),
+      requestForegroundRemoteSyncCheck: async () => ({
+        status: "success",
+        action: "pulled",
+        remoteWriter: {
+          deviceId: "Windows-Idle",
+          action: "pushed",
+          syncMode: "background",
+          createdAt: Date.now(),
+        },
+      }),
+      showMessage: (message, isSuccess) => {
+        messages.push({ message, isSuccess });
+      },
+      setTimeoutFn: () => 1,
+      locationObject: {
+        reload: () => {},
+      },
+    }
+  );
+
+  assert.equal(result.remoteChangeKind, "external_remote_change");
+  assert.equal(messages.length, 1);
+  assert.match(messages[0].message, /检测到云端备份比当前页面更新/);
+};
+
+const testHashEqualAfterResyncStaysQuiet = async () => {
+  const { hooks, sandbox } = createHarness();
+  const remoteUpdatedAt = "2026-04-18T08:00:00Z";
+  const messages = [];
+  let scheduledReload = null;
+
+  sandbox.document.visibilityState = "visible";
+
+  const result = await hooks.checkRemoteFreshnessOnForeground(
+    "foreground_resume",
+    {
+      settingsSnapshot: enabledSettings,
+      acquireRemoteProbeLock: async () => true,
+      releaseRemoteProbeLockValue: () => {},
+      fetchRemoteData: async () => ({
+        meta: {
+          updatedAt: remoteUpdatedAt,
+        },
+      }),
+      requestForegroundRemoteSyncCheck: async () => ({
+        status: "success",
+        action: "no_change",
+        reason: "hash_equal_with_remote_timestamp_drift",
+      }),
+      showMessage: (message, isSuccess) => {
+        messages.push({ message, isSuccess });
+      },
+      setTimeoutFn: (callback, delay) => {
+        scheduledReload = { callback, delay };
+        return 1;
+      },
+      locationObject: {
+        reload: () => {},
+      },
+    }
+  );
+
+  assert.equal(result.status, "unchanged");
+  assert.equal(result.reason, "hash_equal_after_resync");
+  assert.equal(result.remoteChangeKind, "hash_equal_after_resync");
+  assert.deepStrictEqual(messages, []);
+  assert.equal(scheduledReload, null);
+};
+
 const main = async () => {
   await testSameSessionRemoteWriteStaysQuiet();
   await testSameDeviceRemoteWriteUsesSpecificCopy();
+  await testExternalRemoteWriteKeepsCloudCopy();
+  await testHashEqualAfterResyncStaysQuiet();
   console.log("[foreground-same-session-remote-write] checks passed.");
 };
 

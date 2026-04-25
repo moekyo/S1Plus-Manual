@@ -163,3 +163,16 @@
   - `node sync-across-multiple-tab/scripts/test-foreground-probe-diagnostics-feedback.js`
   - `node sync-across-multiple-tab/scripts/test-safe-sync-execution.js`
   - `node sync-across-multiple-tab/scripts/test-background-open-passive-session.js`
+
+## 11. 2026-04-25 Follow-up
+
+- `visible_poll` 已从“回到前台检查”中拆出为独立设置 `syncVisibleRemotePollingEnabled`，默认关闭。
+- `syncCheckOnReturnToForeground=true` 现在只表示页面首次可见、回到前台、bfcache 恢复时做一次性远端 freshness probe。
+- 页面持续可见时的低频 probe 需要同时开启 `syncCheckOnReturnToForeground` 和 `syncVisibleRemotePollingEnabled`。
+- 前台 probe 命中远端 `updated_at` 变化后，会先执行 storage snapshot 收敛，再用 fresh local snapshot 进入 foreground follow-up。
+- 新增远端变化来源分层：
+  - `hash_equal_after_resync`
+  - `same_session_write`
+  - `same_device_write`
+  - `external_remote_change`
+- 新增 review 文档：`../auto-background-sync-and-cloud-check-review.md`。

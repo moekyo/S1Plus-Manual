@@ -200,6 +200,7 @@ const enabledSettings = {
   syncRemoteGistId: "gist-id",
   syncRemotePat: "pat-token",
   syncCheckOnReturnToForeground: true,
+  syncVisibleRemotePollingEnabled: true,
 };
 
 const expectMatch = (pattern, message) => {
@@ -210,6 +211,10 @@ const testStaticWiring = () => {
   expectMatch(
     /bindVisibleRemoteFreshnessPollingActivityHooks\(\);\s*syncVisibleRemoteFreshnessPollingForCurrentState\(\{\s*resetActivity:\s*true,/m,
     "Phase 5 未在前台恢复钩子绑定时初始化可见页轮询。"
+  );
+  expectMatch(
+    /const isVisibleRemoteFreshnessPollingEnabled = \(settingsSnapshot\) =>\s*isForegroundRemoteFreshnessCheckEnabled\(settingsSnapshot\) &&\s*settingsSnapshot\.syncVisibleRemotePollingEnabled === true;/m,
+    "可见页低频轮询未拆成独立开关。"
   );
   expectMatch(
     /window\.addEventListener\("pointerdown",\s*handleUserActivity,\s*\{\s*capture:\s*true,\s*passive:\s*true,/m,
@@ -223,6 +228,32 @@ const testStaticWiring = () => {
     /window\.addEventListener\("scroll",\s*handleUserActivity,\s*\{\s*capture:\s*true,\s*passive:\s*true,/m,
     "Phase 5 未绑定滚动活跃度监听。"
   );
+};
+
+const testForegroundCheckAloneDoesNotScheduleVisiblePolling = () => {
+  const { hooks, timerControls } = createHarness();
+  hooks.scheduleVisibleRemoteFreshnessPolling({
+    now: 1760000940000,
+    resetActivity: true,
+    settingsSnapshot: enabledSettings,
+  });
+  assert.ok(timerControls.getLatestTimer(), "前置条件：开启时应已安排 timer。");
+
+  const result = hooks.scheduleVisibleRemoteFreshnessPolling({
+    now: 1760000950000,
+    resetActivity: true,
+    settingsSnapshot: {
+      syncRemoteEnabled: true,
+      syncRemoteGistId: "gist-id",
+      syncRemotePat: "pat-token",
+      syncCheckOnReturnToForeground: true,
+      syncVisibleRemotePollingEnabled: false,
+    },
+  });
+
+  assert.strictEqual(result.status, "skipped");
+  assert.strictEqual(result.reason, "visible_polling_disabled");
+  assert.strictEqual(timerControls.getLatestTimer(), null);
 };
 
 const testVisiblePageSchedulesActivePolling = () => {
@@ -356,6 +387,7 @@ const testNewInteractionRestoresActiveInterval = () => {
 
 const run = async () => {
   testStaticWiring();
+  testForegroundCheckAloneDoesNotScheduleVisiblePolling();
   testVisiblePageSchedulesActivePolling();
   testHiddenPageStopsPolling();
   await testPollingTimerRunsProbeAndReschedules();
