@@ -2284,7 +2284,6 @@
       border: 1px solid var(--s1p-pri);
       border-radius: 6px;
       padding: 12px;
-      margin-top: 12px;
     }
     .s1p-notice-top16 {
       margin-top: 16px;
