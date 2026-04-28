@@ -741,6 +741,7 @@
   const PENDING_AUTO_SYNC_KEY = "s1p_pending_auto_sync_request";
   const LAST_LOCAL_DIRTY_PROVENANCE_KEY = "s1p_last_local_dirty_provenance";
   const DEFERRED_STARTUP_SYNC_KEY = "s1p_deferred_startup_sync";
+  const STARTUP_AUTO_SYNC_LAST_TS_KEY = "s1p_startup_auto_sync_last_ts";
   const SYNC_TRIGGER_SOURCE_DAILY_STARTUP = "daily_startup";
   const SYNC_TRIGGER_SOURCE_PER_LOAD = "per_load";
   const SYNC_TRIGGER_SOURCE_PAGE_LOAD_VISIBLE = "page_load_visible";
@@ -938,6 +939,7 @@
   const FOREGROUND_REMOTE_SYNC_RETRY_SETTLE_BUFFER_MS = 300;
   const FOREGROUND_PROBE_INITIALIZATION_NOISE_GRACE_MS = 8 * 1000;
   const LOCAL_SESSION_REMOTE_WRITE_TTL_MS = 5 * 60 * 1000;
+  const STARTUP_AUTO_SYNC_COOLDOWN_MS = 5 * 60 * 1000;
   const FOREGROUND_PROBE_SOFT_BLOCK_REASON_PENDING_WRITE =
     "read_progress_pending_write";
   const FOREGROUND_PROBE_SOFT_BLOCK_REASON_SYNC_DEBOUNCE =
@@ -9920,6 +9922,19 @@
     clearDeferredStartupSyncRequest();
   };
 
+  const shouldRefreshStartupAutoSyncCooldown = (result = null) => {
+    if (result?.status === "success") {
+      return true;
+    }
+    if (result?.status !== "skipped") {
+      return false;
+    }
+    return (
+      result.reason === "daily_sync_already_completed" ||
+      result.reason === "conflict_paused"
+    );
+  };
+
   const shouldDeferDailyStartupSyncForToday = (
     settingsSnapshot,
     today = getCurrentDailySyncDateKey(),
@@ -10816,6 +10831,28 @@
     }
 
     const action = syncResult.action || "pulled";
+    const isSameMachineWrite =
+      syncResult.sameSessionRemoteWrite === true ||
+      syncResult.sameDeviceRemoteWrite === true;
+    if (isSameMachineWrite) {
+      console.log("S1 Plus: 同机归因自动刷新已抑制", {
+        action,
+        sameSessionRemoteWrite: syncResult.sameSessionRemoteWrite === true,
+        sameDeviceRemoteWrite: syncResult.sameDeviceRemoteWrite === true,
+        deviceId: syncResult?.remoteWriter?.deviceId || "",
+      });
+      return {
+        policy: "same_machine_suppressed",
+        pageType: "generic",
+        shouldReload: false,
+        action,
+        reloadSchedule: {
+          status: "suppressed",
+          reason: "same_machine_write",
+        },
+      };
+    }
+
     const allowThreadSoftPrompt = action === "merged_read_progress";
     return applyAutoPullRefreshPolicy({
       ...options,
@@ -36438,6 +36475,15 @@
       return false;
     }
 
+    const lastStartupAutoSyncAt =
+      Number(GM_getValue(STARTUP_AUTO_SYNC_LAST_TS_KEY, 0)) || 0;
+    if (
+      Date.now() - lastStartupAutoSyncAt <
+      STARTUP_AUTO_SYNC_COOLDOWN_MS
+    ) {
+      return false;
+    }
+
     const result = await runStartupModeAutoSyncCheckWithIndicator({
       source: AUTO_SYNC_INDICATOR_SOURCE_PER_LOAD,
       onIndicatorStart: () => {
@@ -36452,10 +36498,14 @@
       },
     });
 
+    if (shouldRefreshStartupAutoSyncCooldown(result)) {
+      GM_setValue(STARTUP_AUTO_SYNC_LAST_TS_KEY, Date.now());
+    }
+
     switch (result.status) {
       case "success":
         if (shouldApplyAutoPullRefreshForSyncResult(result)) {
-          applyRefreshPolicyForSyncResult(result, {
+          const refreshPlan = applyRefreshPolicyForSyncResult(result, {
             reason: "per_load_auto_pull",
             suppressMessage: result.sameSessionRemoteWrite === true,
             messages: getAutoPullRefreshMessagesForSource(
@@ -36464,7 +36514,7 @@
               getSameDeviceRefreshMessageOptions(result)
             ),
           });
-          return true;
+          return hasScheduledAutoPullReload(refreshPlan);
         }
         break;
     }
@@ -36538,10 +36588,14 @@
       clearDeferredStartupSyncRequest();
     }
 
+    if (shouldRefreshStartupAutoSyncCooldown(result)) {
+      GM_setValue(STARTUP_AUTO_SYNC_LAST_TS_KEY, Date.now());
+    }
+
     switch (result.status) {
       case "success":
         if (shouldApplyAutoPullRefreshForSyncResult(result)) {
-          applyRefreshPolicyForSyncResult(result, {
+          const refreshPlan = applyRefreshPolicyForSyncResult(result, {
             reason:
               result.action === "force_pulled"
                 ? "daily_startup_force_pull"
@@ -36555,7 +36609,7 @@
               getSameDeviceRefreshMessageOptions(result)
             ),
           });
-          return true;
+          return hasScheduledAutoPullReload(refreshPlan);
         } else if (result.action === "skipped_push_on_startup") {
           const skippedByLocalChangeDuringSync =
             result.reason === "local_changed_during_sync";
