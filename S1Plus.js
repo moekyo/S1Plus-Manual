@@ -2253,9 +2253,34 @@
       /* [S1P-FIX V4] 统一为在 Windows 上视觉对齐的偏移值 */
       top: -1px;
     }
-    /* --- [新增] 为手动同步弹窗设定更宽的尺寸 --- */
+    /* --- [新增] 为手动同步弹窗设定更宽的尺寸，并防止小屏截断操作区 --- */
     .s1p-sync-modal .s1p-confirm-content {
-      width: 580px;
+      width: min(580px, calc(100vw - 24px));
+      max-width: calc(100vw - 24px);
+      max-height: calc(100vh - 24px);
+      max-height: calc(100dvh - 24px);
+      display: flex;
+      flex-direction: column;
+    }
+    .s1p-sync-modal .s1p-confirm-body {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-width: thin;
+    }
+    .s1p-sync-modal .s1p-confirm-footer {
+      flex: 0 0 auto;
+      flex-wrap: wrap;
+      background-color: var(--s1p-bg);
+    }
+    .s1p-sync-modal .s1p-sync-comparison-label,
+    .s1p-sync-modal .s1p-sync-comparison-value {
+      min-width: 0;
+    }
+    .s1p-sync-modal .s1p-sync-comparison-value {
+      overflow-wrap: anywhere;
+      text-align: center;
     }
 
     .s1p-progress-update-badge {
@@ -5290,6 +5315,61 @@
 
       :is(.s1p-local-sync-buttons, .s1p-diag-actions) {
         flex-wrap: wrap;
+      }
+
+      .s1p-sync-modal {
+        align-items: stretch;
+        padding: 8px;
+        box-sizing: border-box;
+      }
+      .s1p-sync-modal .s1p-confirm-content {
+        width: 100%;
+        max-width: 100%;
+        max-height: calc(100vh - 16px);
+        max-height: calc(100dvh - 16px);
+        border-radius: 10px;
+      }
+      .s1p-sync-modal .s1p-confirm-body {
+        padding: 14px;
+        font-size: 15px;
+      }
+      .s1p-sync-modal .s1p-confirm-footer {
+        justify-content: stretch;
+        gap: 8px;
+        padding: 10px 14px 14px;
+      }
+      .s1p-sync-modal .s1p-confirm-btn {
+        flex: 1 1 120px;
+        min-height: 40px;
+        padding: 8px 10px;
+      }
+      .s1p-sync-modal .s1p-notice {
+        gap: 8px;
+        padding: 10px;
+      }
+      .s1p-sync-modal .s1p-sync-last-action {
+        text-align: left;
+      }
+      .s1p-sync-modal .s1p-sync-comparison-table {
+        margin-top: 12px;
+        border-radius: 7px;
+        font-size: 13px;
+      }
+      .s1p-sync-modal .s1p-sync-comparison-row {
+        grid-template-columns: minmax(64px, 0.7fr) minmax(0, 1fr) minmax(0, 1fr);
+      }
+      .s1p-sync-modal .s1p-sync-comparison-header > div,
+      .s1p-sync-modal .s1p-sync-comparison-label,
+      .s1p-sync-modal .s1p-sync-comparison-value {
+        padding: 8px 6px;
+      }
+      .s1p-sync-modal .s1p-sync-comparison-label {
+        white-space: normal;
+        font-size: 12px;
+      }
+      .s1p-sync-modal .s1p-sync-comparison-value {
+        font-size: 12px;
+        line-height: 1.35;
       }
     }
 
