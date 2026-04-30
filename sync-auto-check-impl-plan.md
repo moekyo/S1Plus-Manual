@@ -435,3 +435,26 @@ if (decision.shouldReload || decision.shouldNotify) {
   - 冷却窗口仍为固定 5 分钟，后续如反馈延迟感过强，可再评估是否缩短或配置化。
 - 下一步：
   - 按验证清单做浏览器侧回归，重点看单设备多标签、per_load 快速翻页、跨设备远端变化三类路径。
+
+---
+
+## 实施状态（2026-04-30）
+
+- 状态：Step 3 已完成。
+- 本轮完成：
+  - 新增前台 probe follow-up sync 的刷新节制判断：`no_change` / `hash_equal_after_resync` / `sameSessionRemoteWrite` / `sameDeviceRemoteWrite` 不再进入 `applyRefreshPolicyForSyncResult`。
+  - 前台 probe 正常路径与 foreground retry 路径都返回/记录 `foreground_probe_suppressed` 计划或日志，保留诊断可见性但不调度 reload。
+  - `performAutoSync` 的 `no_change` 结果附带前台刷新抑制原因，帮助 probe 层识别 hash 等价或同机 hash 等价结果。
+  - `both_changed_since_baseline` / `both_changed_since_baseline_by_updated_at` 且无法自动合并时，如果命中同会话/同设备归因，只增强 console 与同步诊断结果码；仍返回原冲突 reason，继续暂停自动同步等待手动处理。
+- 涉及文件：
+  - `S1Plus.js`
+  - `sync-auto-check-impl-plan.md`
+- 验证：
+  - `node --check S1Plus.js` 通过。
+  - `git diff --check` 通过。
+- 剩余工作：
+  - 真实 Tampermonkey / Greasemonkey 环境中仍需回归前台恢复、visible poll、foreground retry、同机不可合并冲突诊断四类路径。
+- 风险 / 限制：
+  - Step 3 仍保持 `metadataOnly` probe 轻量设计；不会在 probe 阶段拉取 content hash，因此不能阻止所有 follow-up sync，只阻止 no-op / 同机归因结果进入刷新策略。
+- 下一步：
+  - 进行浏览器侧 Step 3 回归后，再决定是否进入 Step 4 验证项或 Step 5 集中决策函数收敛。
