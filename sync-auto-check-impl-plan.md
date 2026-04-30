@@ -244,6 +244,8 @@ foreground probe (metadataOnly) → updated_at 变更
 
 **可选增强**：在 `runStartupModeAutoSyncCheck` 之后（L20604+），如果 `versionDecision` 是 `no_change` 且 `recentRemoteWriteResultContext` 显示同机归因，标记 result 为静默完成，禁止后续 apply。此改动影响面限于 `performAutoSync` 内部，不改变接口。
 
+**当前进度（2026-04-30）**：Step 3 已实现基础节制逻辑，但浏览器侧验收继续观察，不在本文档中标记为完全验收。后续重点看前台恢复、visible poll、foreground retry、同机不可合并冲突诊断四类路径是否符合预期。
+
 ---
 
 ### Step 3b：同机冲突诊断增强，不自动解决
@@ -309,24 +311,63 @@ if (isBothChangedReason && !canAutoMergeReadProgress) {
 3. 检查 `s1p_readingProgress` 是否产生了新写入
 4. 如果有漏网场景（如 `visibilitychange` hidden→visible 切换瞬间的 race），记录具体的触发时序后再补 guard
 
-**结论**：Step 4 降级为验证项，不在本方案中作为代码实现项。当前三重 guard 已覆盖主要场景。
+**验证辅助**：当前 `S1Plus.js` 中已加入临时 `s1pBgReadTest.start()` / `s1pBgReadTest.report()` / `s1pBgReadTest.reset()` 验证器，用于记录测试开始时的阅读进度快照，并在等待一段时间后判断后台开帖是否造成新增或更新。
+
+**验证记录（2026-04-30）**：已完成一轮后台开帖验证。`s1pBgReadTest.start()` 于 `2026/4/30 23:44:23` 建立快照，初始 `readProgressCount: 1190`，初始 `lastModified: 2026/4/30 23:20:58`；约 `415742ms` 后执行 `s1pBgReadTest.report()`，返回 `verdict: "PASS"`、`changedCount: 0`。本轮未发现后台被动打开帖子造成阅读进度新增或更新。
+
+**结论**：Step 4 当前作为验证项已通过一轮真实浏览器检查，不在本方案中追加业务逻辑改动。若后续验证器返回 `WARN` / `FAIL`，再根据具体变更记录定位漏网时序并补 guard。
 
 ---
 
 ## 实施：Step 5（收敛到集中决策函数）
 
-在 Step 1-2 完成后执行。
+在 Step 1-2 完成后执行。Step 3 的浏览器侧观察不阻塞 Step 5，但 Step 5 不能依赖"Step 3 已完全验收"这个假设。
+
+### 实施边界
+
+Step 5 只做现有自动同步结果的**刷新/提示决策收敛**，不扩大同步行为：
+
+- 只新增纯函数，不引入 `SyncCoordinator` / `SyncIntent` / 全局 queue / lease / circuit breaker。
+- 只决定 `shouldApply`、`shouldReload`、`shouldNotify`、`suppressMessage`、`reason` 等 UI 后续动作，不重新决定 push/pull/merge/conflict。
+- 不自动解决冲突，不新增本地覆盖远端，不改变 `conflict -> 手动同步` 默认路径。
+- 优先替换自动同步路径：`per_load`、`daily_startup`、foreground probe/follow-up、foreground retry；手动同步主流程和冲突弹窗保持原行为。
+- 保留 `applyRefreshPolicyForSyncResult` / `applyAutoPullRefreshPolicy` 作为执行层；集中决策函数只产出判断或计划，不直接执行 reload、toast、GM 写入。
+
+### 实施顺序
+
+1. 盘点 `shouldApplyAutoPullRefreshForSyncResult`、`applyRefreshPolicyForSyncResult`、`hasScheduledAutoPullReload` 的现有调用点。
+2. 在现有刷新策略 helper 附近新增集中决策函数，先不替换调用点。
+3. 先替换 startup/per_load 两个入口，确认 `same_machine_suppressed`、`thread_soft_prompt`、`reload_now` 返回值都保持等价。
+4. 再替换 foreground probe/follow-up 与 foreground retry 路径，把 Step 3 已有的 no-op / 同机抑制原因接入同一决策出口。
+5. 最后删除或收窄重复判断，保留必要的兼容 wrapper，避免一次性重排手动同步和冲突处理。
 
 ### 目标形态
 
 ```javascript
 const decideWhatToDoWithRemoteChange = (syncResult, context = {}) => {
+  // 0. 非可 apply 的结果 → 统一返回 no-op
+  if (!shouldApplyAutoPullRefreshForSyncResult(syncResult)) {
+    return {
+      shouldApply: false,
+      shouldReload: false,
+      shouldNotify: false,
+      suppressMessage: true,
+      reason: syncResult?.reason || "not_applicable",
+    };
+  }
+
   // 1. 同 session / 同 device 归因 → 不 reload，不通知
   if (
     syncResult.sameSessionRemoteWrite === true ||
     syncResult.sameDeviceRemoteWrite === true
   ) {
-    return { shouldReload: false, shouldNotify: false, reason: "same_machine_write" };
+    return {
+      shouldApply: false,
+      shouldReload: false,
+      shouldNotify: false,
+      suppressMessage: true,
+      reason: "same_machine_write",
+    };
   }
 
   // 2. 跨设备或外部变更 → 按页面类型 + action 决策
@@ -345,9 +386,12 @@ const decideWhatToDoWithRemoteChange = (syncResult, context = {}) => {
     plan.policy === "settings_dirty";
 
   return {
+    shouldApply: true,
     shouldReload: plan.shouldReload,
     shouldNotify: plan.shouldReload || needsSoftPrompt,
+    suppressMessage: !(plan.shouldReload || needsSoftPrompt),
     reason: plan.policy,
+    refreshPlan: plan,
   };
 };
 ```
@@ -387,6 +431,8 @@ if (decision.shouldReload || decision.shouldNotify) {
 ```
 
 纯函数，不写 GM 存储，不管锁生命周期。**只做判断，不做执行。**
+
+**验收重点**：Step 5 成功的标准不是新增能力，而是调用点从散落的 `shouldApplyAutoPullRefreshForSyncResult` + `applyRefreshPolicyForSyncResult` + `hasScheduledAutoPullReload` 组合，收敛到同一个决策出口；行为上除已定义的同机/no-op 抑制外，应保持现有自动同步表现等价。
 
 ---
 
@@ -440,21 +486,25 @@ if (decision.shouldReload || decision.shouldNotify) {
 
 ## 实施状态（2026-04-30）
 
-- 状态：Step 3 已完成。
+- 状态：Step 3 已实现，浏览器侧验收后续继续观察；Step 4 已完成一轮验证，结果通过。
 - 本轮完成：
   - 新增前台 probe follow-up sync 的刷新节制判断：`no_change` / `hash_equal_after_resync` / `sameSessionRemoteWrite` / `sameDeviceRemoteWrite` 不再进入 `applyRefreshPolicyForSyncResult`。
   - 前台 probe 正常路径与 foreground retry 路径都返回/记录 `foreground_probe_suppressed` 计划或日志，保留诊断可见性但不调度 reload。
   - `performAutoSync` 的 `no_change` 结果附带前台刷新抑制原因，帮助 probe 层识别 hash 等价或同机 hash 等价结果。
   - `both_changed_since_baseline` / `both_changed_since_baseline_by_updated_at` 且无法自动合并时，如果命中同会话/同设备归因，只增强 console 与同步诊断结果码；仍返回原冲突 reason，继续暂停自动同步等待手动处理。
+  - 新增临时 `s1pBgReadTest` 验证器，用于更低操作成本地观察后台标签页是否产生阅读进度假脏写。
 - 涉及文件：
   - `S1Plus.js`
   - `sync-auto-check-impl-plan.md`
 - 验证：
   - `node --check S1Plus.js` 通过。
   - `git diff --check` 通过。
+  - Step 4 浏览器侧验证通过：`s1pBgReadTest.report()` 返回 `verdict: "PASS"`、`changedCount: 0`，观察时长约 `415742ms`。
 - 剩余工作：
-  - 真实 Tampermonkey / Greasemonkey 环境中仍需回归前台恢复、visible poll、foreground retry、同机不可合并冲突诊断四类路径。
+  - Step 3 浏览器侧验收继续观察：仍需回归前台恢复、visible poll、foreground retry、同机不可合并冲突诊断四类路径。
+  - Step 4 暂无新增代码动作；若后续验证器出现 `WARN` / `FAIL`，再补充具体 guard。
 - 风险 / 限制：
   - Step 3 仍保持 `metadataOnly` probe 轻量设计；不会在 probe 阶段拉取 content hash，因此不能阻止所有 follow-up sync，只阻止 no-op / 同机归因结果进入刷新策略。
+  - Step 4 本轮验证只证明观察窗口内没有阅读进度假脏写，不等同于覆盖所有浏览器/主题/打开方式组合。
 - 下一步：
-  - 进行浏览器侧 Step 3 回归后，再决定是否进入 Step 4 验证项或 Step 5 集中决策函数收敛。
+  - Step 3 继续按真实使用慢慢观察；若未出现异常，可进入 Step 5 的集中决策函数收敛。
