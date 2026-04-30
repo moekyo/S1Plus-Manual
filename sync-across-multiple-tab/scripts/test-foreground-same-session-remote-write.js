@@ -75,15 +75,13 @@ const testSameSessionRemoteWriteStaysQuiet = async () => {
   assert.strictEqual(result.sameSessionRemoteWrite, true);
   assert.strictEqual(result.remoteChangeKind, "same_session_write");
   assert.strictEqual(messages.length, 0);
-  assert.ok(scheduledReload, "同机会话 quiet handling 仍应保持必要的自动刷新。");
-  assert.equal(result.refreshPlan.reloadSchedule.status, "scheduled");
+  assert.equal(scheduledReload, null, "同机会话写入不应调度自动刷新。");
+  assert.equal(result.refreshPlan.reloadSchedule.status, "suppressed");
+  assert.equal(result.refreshPlan.policy, "foreground_probe_suppressed");
   assert.equal(
     hooks.getSyncDiagnostics().lastProbeSameSessionRemoteWrite,
     true
   );
-
-  scheduledReload.callback();
-  assert.equal(reloadCount, 1);
 };
 
 const testSameDeviceRemoteWriteUsesSpecificCopy = async () => {
@@ -131,10 +129,8 @@ const testSameDeviceRemoteWriteUsesSpecificCopy = async () => {
 
   assert.equal(result.sameDeviceRemoteWrite, true);
   assert.equal(result.remoteChangeKind, "same_device_write");
-  assert.equal(messages.length, 1);
-  assert.match(messages[0].message, /同设备「Mac-Main」已同步更新/);
-  assert.equal(messages[0].isSuccess, true);
-  assert.ok(scheduledReload, "同设备写入仍应保留必要的自动刷新。");
+  assert.equal(messages.length, 0, "同设备写入不应弹出提示。");
+  assert.equal(scheduledReload, null, "同设备写入不应调度自动刷新。");
   assert.equal(
     hooks.getSyncDiagnostics().lastProbeSameDeviceRemoteWrite,
     true
