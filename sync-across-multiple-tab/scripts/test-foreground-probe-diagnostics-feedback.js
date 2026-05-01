@@ -55,10 +55,15 @@ const testStaticWiring = () => {
 };
 
 const testUnchangedProbeUpdatesDiagnosticsQuietly = async () => {
-  const { hooks } = createHarness();
+  const { sandbox, hooks } = createHarness();
   hooks.setSyncBaselineState({
     contentHash: "baseline-hash",
     remoteUpdatedAt: "2026-04-11T12:30:00Z",
+  });
+  sandbox.GM_setValue("s1p_sync_baseline_state", {
+    contentHash: "baseline-hash",
+    remoteUpdatedAt: "2026-04-11T12:30:00Z",
+    savedAt: 0,
   });
 
   const messages = [];

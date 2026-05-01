@@ -925,6 +925,10 @@
   const REMOTE_PROBE_VISIBLE_POLL_ACTIVE_INTERVAL_MS = 4 * 60 * 1000;
   const REMOTE_PROBE_VISIBLE_POLL_IDLE_INTERVAL_MS = 12 * 60 * 1000;
   const REMOTE_PROBE_VISIBLE_POLL_IDLE_AFTER_MS = 15 * 60 * 1000;
+  const EQUAL_UPDATED_AT_PROBE_VERIFY_STATE_KEY =
+    "s1p_remote_probe_equal_updated_at_verify_state";
+  const EQUAL_UPDATED_AT_PROBE_EQUAL_PROBE_VERIFY_DELAY_MS = 1200;
+  const EQUAL_UPDATED_AT_PROBE_VERIFY_STATE_TTL_MS = 120 * 1000;
   const AUTO_PULL_RELOAD_DELAY_MS = 1500;
   const SYNC_LOCK_LOST_CODE = "SYNC_LOCK_LOST";
   const SYNC_CONFLICT_MODAL_COOLDOWN_LOCK_KEY =
@@ -8070,6 +8074,44 @@
     }
     return now - (Number(writer.createdAt) || 0) <= LOCAL_SESSION_REMOTE_WRITE_TTL_MS;
   };
+  const isLocalSessionWriteConsistentWithRemoteWriter = (
+    recentWrite,
+    remoteWriter
+  ) => {
+    if (!recentWrite || !remoteWriter || typeof remoteWriter !== "object") {
+      return true;
+    }
+    const recentDeviceId = normalizeRemoteProbeText(recentWrite.deviceId, 80);
+    const recentSessionId = normalizeRemoteProbeText(recentWrite.sessionId, 120);
+    const recentSourceTabId = normalizeSyncDiagnosticText(
+      recentWrite.sourceTabId,
+      80
+    );
+    if (
+      recentDeviceId &&
+      remoteWriter.deviceId &&
+      recentDeviceId !== normalizeRemoteProbeText(remoteWriter.deviceId, 80)
+    ) {
+      return false;
+    }
+    if (
+      recentSessionId &&
+      remoteWriter.sessionId &&
+      recentSessionId !==
+        normalizeRemoteProbeText(remoteWriter.sessionId, 120)
+    ) {
+      return false;
+    }
+    if (
+      recentSourceTabId &&
+      remoteWriter.sourceTabId &&
+      recentSourceTabId !==
+        normalizeSyncDiagnosticText(remoteWriter.sourceTabId, 80)
+    ) {
+      return false;
+    }
+    return true;
+  };
   const resolveRecentRemoteWriteMatch = ({
     remoteUpdatedAt = null,
     remoteWriter = null,
@@ -8078,10 +8120,22 @@
   } = {}) => {
     const normalizedRemoteWriter = normalizeRemoteSyncLastWriter(remoteWriter);
     const localDeviceId = getLocalSyncDeviceId(settingsSnapshot);
-    const sameSessionRemoteWrite = getMatchingLocalSessionRemoteWrite({
+    let sameSessionRemoteWriteCandidate = getMatchingLocalSessionRemoteWrite({
       remoteUpdatedAt,
       now,
     });
+    if (sameSessionRemoteWriteCandidate && normalizedRemoteWriter) {
+      const recentWriteForConsistency = getLastLocalSessionRemoteWrite();
+      if (
+        !isLocalSessionWriteConsistentWithRemoteWriter(
+          recentWriteForConsistency,
+          normalizedRemoteWriter
+        )
+      ) {
+        sameSessionRemoteWriteCandidate = null;
+      }
+    }
+    const sameSessionRemoteWrite = sameSessionRemoteWriteCandidate;
     const sameDeviceRemoteWrite = Boolean(
       localDeviceId &&
         normalizedRemoteWriter?.deviceId &&
@@ -8268,6 +8322,58 @@
       probeInfo: nextProbeInfo,
       sharedCooldown: nextSharedCooldown,
     };
+  };
+
+  const getEqualUpdatedAtProbeVerificationPlan = ({
+    remoteUpdatedAt = null,
+    now = Date.now(),
+  } = {}) => {
+    const normalizedRemoteUpdatedAt =
+      normalizeRemoteProbeUpdatedAt(remoteUpdatedAt);
+    if (!normalizedRemoteUpdatedAt) {
+      return { shouldVerify: false, delayMs: 0, reason: "missing_updated_at" };
+    }
+    const verifyState = GM_getValue(
+      EQUAL_UPDATED_AT_PROBE_VERIFY_STATE_KEY,
+      null
+    );
+    if (
+      verifyState &&
+      typeof verifyState === "object" &&
+      verifyState.remoteUpdatedAt === normalizedRemoteUpdatedAt
+    ) {
+      const stateAge = now - Number(verifyState.scheduledAt || 0);
+      if (stateAge <= EQUAL_UPDATED_AT_PROBE_VERIFY_STATE_TTL_MS) {
+        return { shouldVerify: false, delayMs: 0, reason: "already_scheduled" };
+      }
+      GM_deleteValue(EQUAL_UPDATED_AT_PROBE_VERIFY_STATE_KEY);
+    }
+    const recentWrite = getLastLocalSessionRemoteWrite();
+    const hasRecentRemoteWrite =
+      Boolean(recentWrite.remoteUpdatedAt) &&
+      now - Number(recentWrite.createdAt || 0) <=
+        LOCAL_SESSION_REMOTE_WRITE_TTL_MS;
+    const baselineState = getSyncBaselineState();
+    const baselineRecentlySaved =
+      Boolean(baselineState?.savedAt) &&
+      now - Number(baselineState.savedAt || 0) <= 10000;
+    if (!hasRecentRemoteWrite && !baselineRecentlySaved) {
+      return {
+        shouldVerify: false,
+        delayMs: 0,
+        reason: "no_suspicious_condition",
+      };
+    }
+    GM_setValue(EQUAL_UPDATED_AT_PROBE_VERIFY_STATE_KEY, {
+      remoteUpdatedAt: normalizedRemoteUpdatedAt,
+      scheduledAt: now,
+      status: "scheduled",
+    });
+    const delayMs = baselineRecentlySaved
+      ? 3000
+      : EQUAL_UPDATED_AT_PROBE_EQUAL_PROBE_VERIFY_DELAY_MS +
+        Math.floor(Math.random() * 800);
+    return { shouldVerify: true, delayMs };
   };
 
   const getForegroundProbeDiagnosticResult = (result) => {
@@ -10053,6 +10159,24 @@
     return (
       result.reason === "daily_sync_already_completed" ||
       result.reason === "conflict_paused"
+    );
+  };
+
+  const shouldClearDeferredStartupSyncOnResult = (
+    syncResult,
+    shouldResumeDeferredStartupSync
+  ) => {
+    if (!shouldResumeDeferredStartupSync) {
+      return false;
+    }
+    return (
+      syncResult.status === "conflict" ||
+      syncResult.status === "success" ||
+      (syncResult.status === "skipped" &&
+        (
+          syncResult.reason === "conflict_paused" ||
+          syncResult.reason === "daily_sync_already_completed"
+        ))
     );
   };
 
@@ -19476,7 +19600,10 @@
     if (!contentHash) {
       return null;
     }
-    return { contentHash, remoteUpdatedAt };
+    const savedAt = Number.isFinite(Number(saved.savedAt))
+      ? Number(saved.savedAt)
+      : 0;
+    return { contentHash, remoteUpdatedAt, savedAt };
   };
 
   const setSyncBaselineState = ({ contentHash = null, remoteUpdatedAt = null } = {}) => {
@@ -21341,6 +21468,7 @@
       onLockUnavailable,
       beforePerform,
       onBeforePerform,
+      onBeforeRelease,
       onAfterRelease,
     } = options;
 
@@ -21360,6 +21488,16 @@
           typeof beforePerformResult === "object" &&
           beforePerformResult.skip === true
         ) {
+          if (typeof onBeforeRelease === "function") {
+            try {
+              await onBeforeRelease(beforePerformResult.result);
+            } catch (e) {
+              console.error(
+                "S1 Plus (Sync): onBeforeRelease 回调失败 (skip):",
+                e
+              );
+            }
+          }
           return beforePerformResult.result;
         }
       }
@@ -21367,12 +21505,20 @@
       if (typeof onBeforePerform === "function") {
         await onBeforePerform();
       }
-      return await performAutoSyncFn(
+      const result = await performAutoSyncFn(
         true,
         SYNC_LOCK_MODE_STARTUP,
         normalizeSyncTriggerSource(triggerSource) ||
           SYNC_TRIGGER_SOURCE_DAILY_STARTUP
       );
+      if (typeof onBeforeRelease === "function") {
+        try {
+          await onBeforeRelease(result);
+        } catch (e) {
+          console.error("S1 Plus (Sync): onBeforeRelease 回调失败:", e);
+        }
+      }
+      return result;
     } finally {
       stopStartupSyncLockHeartbeatFn();
       releaseStartupSyncLockFn();
@@ -21659,6 +21805,7 @@
   ) => {
     if (document.visibilityState !== "visible") {
       clearForegroundRemoteSyncRetry();
+      GM_deleteValue(EQUAL_UPDATED_AT_PROBE_VERIFY_STATE_KEY);
       return { status: "suppressed", reason: "document_hidden" };
     }
     const normalizedReason =
@@ -21683,6 +21830,7 @@
     }
     if (getActiveAutoSyncConflictPause()) {
       clearForegroundRemoteSyncRetry();
+      GM_deleteValue(EQUAL_UPDATED_AT_PROBE_VERIFY_STATE_KEY);
       return { status: "suppressed", reason: "conflict_paused" };
     }
     if (foregroundRemoteSyncRetryAttempts >= FOREGROUND_REMOTE_SYNC_RETRY_MAX_ATTEMPTS) {
@@ -21690,6 +21838,7 @@
         "S1 Plus: 前台远端检查补偿重试达到上限，将等待下一次前台探测触发。"
       );
       clearForegroundRemoteSyncRetry();
+      GM_deleteValue(EQUAL_UPDATED_AT_PROBE_VERIFY_STATE_KEY);
       return { status: "dropped", reason: "retry_limit_reached" };
     }
     const retryDelayMs = resolveForegroundProbeRetryDelayMs(
@@ -21712,6 +21861,7 @@
       foregroundRemoteSyncRetryDueAt = 0;
       if (document.visibilityState !== "visible") {
         clearForegroundRemoteSyncRetry();
+        GM_deleteValue(EQUAL_UPDATED_AT_PROBE_VERIFY_STATE_KEY);
         return;
       }
 
@@ -21800,6 +21950,7 @@
           error
         );
         clearForegroundRemoteSyncRetry();
+        GM_deleteValue(EQUAL_UPDATED_AT_PROBE_VERIFY_STATE_KEY);
       }
     }, retryDelayMs);
 
@@ -21972,6 +22123,33 @@
         lastSyncedRemoteUpdatedAt &&
         remoteUpdatedAt === lastSyncedRemoteUpdatedAt
       ) {
+        const verifyPlan = getEqualUpdatedAtProbeVerificationPlan({
+          remoteUpdatedAt,
+          now,
+        });
+        if (verifyPlan.shouldVerify) {
+          scheduleForegroundRemoteSyncRetry(
+            `remote_probe_equal_ambiguous:${normalizedReason}`,
+            {
+              ...retryOptions,
+              preferredDelayMs: verifyPlan.delayMs,
+            }
+          );
+          return finalizeResult(
+            {
+              status: "unchanged",
+              reason: "remote_updated_at_equal_pending_verification",
+              remoteUpdatedAt,
+              lastSyncedRemoteUpdatedAt,
+              lastObservedRemoteUpdatedAt,
+            },
+            {
+              remoteUpdatedAt,
+              triggeredSync: false,
+              lastSyncedRemoteUpdatedAt,
+            }
+          );
+        }
         return finalizeResult(
           {
             status: "unchanged",
@@ -22088,10 +22266,25 @@
       } else {
         clearForegroundRemoteSyncRetry();
       }
+      const hasAuthoritativeSyncAttribution = (syncResult) =>
+        syncResult &&
+        typeof syncResult === "object" &&
+        (
+          Object.prototype.hasOwnProperty.call(
+            syncResult,
+            "sameSessionRemoteWrite"
+          ) ||
+          Object.prototype.hasOwnProperty.call(
+            syncResult,
+            "sameDeviceRemoteWrite"
+          ) ||
+          Boolean(syncResult.remoteWriter)
+        );
       let refreshPlan = null;
       const matchedSameSessionRemoteWrite =
-        Boolean(sameSessionRemoteWrite) ||
-        syncRequestResult?.sameSessionRemoteWrite === true;
+        hasAuthoritativeSyncAttribution(syncRequestResult)
+          ? syncRequestResult.sameSessionRemoteWrite === true
+          : Boolean(sameSessionRemoteWrite);
       const matchedSameDeviceRemoteWrite =
         syncRequestResult?.sameDeviceRemoteWrite === true;
       const matchedRemoteWriter = syncRequestResult?.remoteWriter || null;
@@ -22267,6 +22460,7 @@
       getCleanupNoticeDescriptor,
       getManualSyncRootCauseDescriptor,
       createManualSyncPreflightHtml,
+      shouldClearDeferredStartupSyncOnResult,
       getAutoPullRefreshMessagesForSource,
       getNavbarPersistentSyncAlertDescriptor: (...args) =>
         getNavbarPersistentSyncAlertDescriptor(...args),
@@ -36902,12 +37096,13 @@
             "S1 Plus: 检测到其他同步任务正在执行，本次常规启动同步检查已跳过。"
           );
         },
+        onBeforeRelease: (syncResult) => {
+          if (shouldRefreshStartupAutoSyncCooldown(syncResult)) {
+            GM_setValue(STARTUP_AUTO_SYNC_LAST_TS_KEY, Date.now());
+          }
+        },
       },
     });
-
-    if (shouldRefreshStartupAutoSyncCooldown(result)) {
-      GM_setValue(STARTUP_AUTO_SYNC_LAST_TS_KEY, Date.now());
-    }
 
     switch (result.status) {
       case "success":
@@ -36986,28 +37181,27 @@
         onAfterRelease: () => {
           console.log("S1 Plus: 同步锁已释放。");
         },
+        onBeforeRelease: (syncResult) => {
+          if (
+            syncResult.status === "success" &&
+            syncResult.action !== "skipped_push_on_startup"
+          ) {
+            markDailyStartupSyncCompletedForToday(today);
+          } else if (
+            shouldClearDeferredStartupSyncOnResult(
+              syncResult,
+              shouldResumeDeferredStartupSync
+            )
+          ) {
+            clearDeferredStartupSyncRequest();
+          }
+
+          if (shouldRefreshStartupAutoSyncCooldown(syncResult)) {
+            GM_setValue(STARTUP_AUTO_SYNC_LAST_TS_KEY, Date.now());
+          }
+        },
       },
     });
-    if (
-      result.status === "success" &&
-      result.action !== "skipped_push_on_startup"
-    ) {
-      markDailyStartupSyncCompletedForToday(today);
-    } else if (
-      shouldResumeDeferredStartupSync &&
-      (
-        result.status === "conflict" ||
-        result.status === "success" ||
-        (result.status === "skipped" && result.reason === "conflict_paused")
-      )
-    ) {
-      clearDeferredStartupSyncRequest();
-    }
-
-    if (shouldRefreshStartupAutoSyncCooldown(result)) {
-      GM_setValue(STARTUP_AUTO_SYNC_LAST_TS_KEY, Date.now());
-    }
-
     switch (result.status) {
       case "success":
         {
