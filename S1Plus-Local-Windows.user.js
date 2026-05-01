@@ -15,6 +15,7 @@
 // @grant        GM_download
 // @grant        GM_addValueChangeListener
 // @connect      *
+// @run-at       document-start
 // ==/UserScript==
 
 (function () {
