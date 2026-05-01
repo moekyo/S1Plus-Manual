@@ -15,6 +15,7 @@
 // @grant        GM_addValueChangeListener
 // @connect      *
 // @license      MIT
+// @run-at       document-start
 // ==/UserScript==
 
 (function () {
@@ -6512,12 +6513,55 @@
       color: var(--t, #d1d5db) !important;
       -webkit-text-fill-color: var(--t, #d1d5db) !important;
     }
+    td.t_f .s1p-light-bg-content,
+    td.t_f.s1p-light-bg-content,
+    td.t_f [data-s1p-light-bg-removed],
+    td.t_f[data-s1p-light-bg-removed] {
+      background-color: transparent !important;
+      background-image: none !important;
+    }
+    @media (prefers-color-scheme: dark) {
+      td.t_f [style*="background-color:white" i],
+      td.t_f [style*="background-color: white" i],
+      td.t_f [style*="background:white" i],
+      td.t_f [style*="background: white" i],
+      td.t_f [style*="background-color:#fff;" i],
+      td.t_f [style*="background-color: #fff;" i],
+      td.t_f [style$="background-color:#fff" i],
+      td.t_f [style$="background-color: #fff" i],
+      td.t_f [style*="background-color:#ffffff" i],
+      td.t_f [style*="background-color: #ffffff" i],
+      td.t_f [style*="background:#fff;" i],
+      td.t_f [style*="background: #fff;" i],
+      td.t_f [style$="background:#fff" i],
+      td.t_f [style$="background: #fff" i],
+      td.t_f [style*="background:#ffffff" i],
+      td.t_f [style*="background: #ffffff" i],
+      td.t_f [style*="background-color:rgb(249,249,249)" i],
+      td.t_f [style*="background-color: rgb(249,249,249)" i],
+      td.t_f [style*="background-color:rgb(249, 249, 249)" i],
+      td.t_f [style*="background-color: rgb(249, 249, 249)" i],
+      td.t_f [bgcolor="white" i],
+      td.t_f [bgcolor="#fff" i],
+      td.t_f [bgcolor="#ffffff" i],
+      td.t_f [bgcolor="fff" i],
+      td.t_f [bgcolor="ffffff" i] {
+        background-color: transparent !important;
+        background-image: none !important;
+      }
+    }
   `);
 
   // --- S1 NUX 兼容性检测 ---
   let isS1NuxEnabled = false;
   const NUX_DARK_TEXT_MIN_CONTRAST_RATIO = 2.8;
   const NUX_DARK_TEXT_FIX_CLASS = "s1p-nux-dark-text-fixed";
+  const NUX_LIGHT_BG_CONTENT_CLASS = "s1p-light-bg-content";
+  const NUX_LIGHT_BG_MIN_LUMINANCE = 0.72;
+  const NUX_LIGHT_BG_REMOVED_ATTR = "data-s1p-light-bg-removed";
+  const NUX_LIGHT_BG_ORIGINAL_STYLE_ATTR = "data-s1p-light-bg-original-style";
+  const NUX_LIGHT_BG_ORIGINAL_BGCOLOR_ATTR = "data-s1p-light-bg-original-bgcolor";
+  const NUX_LIGHT_BG_ORIGINAL_COLOR_ATTR = "data-s1p-light-bg-original-color";
   const NUX_DARK_TEXT_CANDIDATE_SELECTOR =
     [
       "td.t_f [style*='color:']",
@@ -6534,6 +6578,26 @@
       "td.t_f u[color]",
       "td.t_f li[color]",
       "td.t_f blockquote[color]",
+    ].join(", ");
+  const NUX_LIGHT_BG_CANDIDATE_SELECTOR =
+    [
+      "td.t_f[style*='background']",
+      "td.t_f[style*='Background']",
+      "td.t_f[style*='BACKGROUND']",
+      "td.t_f[bgcolor]",
+      "td.t_f[data-s1p-light-bg-removed]",
+      "td.t_f [style*='background']",
+      "td.t_f [style*='Background']",
+      "td.t_f [style*='BACKGROUND']",
+      "td.t_f [bgcolor]",
+      "td.t_f [data-s1p-light-bg-removed]",
+      "td.t_f table",
+      "td.t_f td",
+      "td.t_f th",
+      "td.t_f blockquote",
+      "td.t_f div.quote",
+      "td.t_f pre",
+      "td.t_f code",
     ].join(", ");
   const NUX_DARK_TEXT_IGNORED_TAGS = new Set([
     "IMG",
@@ -6565,6 +6629,18 @@
 
   const parseRgbaColor = (colorText) => {
     const colorTextSafe = String(colorText || "").trim();
+    const namedColorMap = {
+      black: "#000000",
+      white: "#ffffff",
+      transparent: "rgba(0, 0, 0, 0)",
+    };
+    if (Object.prototype.hasOwnProperty.call(namedColorMap, colorTextSafe.toLowerCase())) {
+      return parseRgbaColor(namedColorMap[colorTextSafe.toLowerCase()]);
+    }
+    const bareHexMatch = colorTextSafe.match(/^([0-9a-f]{3}|[0-9a-f]{6})$/i);
+    if (bareHexMatch) {
+      return parseRgbaColor(`#${bareHexMatch[1]}`);
+    }
     const hexMatch = colorTextSafe.match(/^#([0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i);
     if (hexMatch) {
       const hex = hexMatch[1];
@@ -6756,6 +6832,144 @@
     return fallback;
   };
 
+  const serializeRgbaColor = (color) => {
+    if (!color) {
+      return "";
+    }
+    const alpha = Math.max(0, Math.min(1, Number(color.a) || 0));
+    const red = Math.max(0, Math.min(255, Math.round(color.r)));
+    const green = Math.max(0, Math.min(255, Math.round(color.g)));
+    const blue = Math.max(0, Math.min(255, Math.round(color.b)));
+    if (alpha >= 0.995) {
+      return `rgb(${red}, ${green}, ${blue})`;
+    }
+    return `rgba(${red}, ${green}, ${blue}, ${Number(alpha.toFixed(3))})`;
+  };
+
+  const parseBackgroundColorFromStyleText = (styleText) => {
+    if (!styleText) {
+      return null;
+    }
+    const probe = document.createElement("span");
+    probe.setAttribute("style", styleText);
+    return (
+      parseRgbaColor(probe.style.backgroundColor) ||
+      parseRgbaColor(probe.style.background)
+    );
+  };
+
+  const resolveStoredNuxLightBgOriginalColor = (node) => {
+    if (!(node instanceof HTMLElement)) {
+      return null;
+    }
+    const storedColor = parseRgbaColor(node.getAttribute(NUX_LIGHT_BG_ORIGINAL_COLOR_ATTR));
+    if (storedColor) {
+      return storedColor;
+    }
+    const originalStyleColor = parseBackgroundColorFromStyleText(
+      node.getAttribute(NUX_LIGHT_BG_ORIGINAL_STYLE_ATTR)
+    );
+    if (originalStyleColor && originalStyleColor.a > 0.02) {
+      return originalStyleColor;
+    }
+    return parseRgbaColor(node.getAttribute(NUX_LIGHT_BG_ORIGINAL_BGCOLOR_ATTR));
+  };
+
+  const resolveNuxLightBgOriginalColor = (node, postContent) => {
+    const storedColor = resolveStoredNuxLightBgOriginalColor(node);
+    if (storedColor) {
+      return storedColor;
+    }
+    return resolveEffectiveBackgroundColor(node, postContent);
+  };
+
+  const isNuxLightBackgroundColor = (color) =>
+    !!color && color.a > 0.02 && getRelativeLuminance(color) >= NUX_LIGHT_BG_MIN_LUMINANCE;
+
+  const elementHasNuxLightBgHint = (node) => {
+    if (!(node instanceof HTMLElement)) {
+      return false;
+    }
+    if (node.hasAttribute("bgcolor")) {
+      return true;
+    }
+    const styleText = String(node.getAttribute("style") || "");
+    if (/\bbackground(?:-color)?\s*:/i.test(styleText)) {
+      return true;
+    }
+    return ["TABLE", "TD", "TH", "BLOCKQUOTE", "PRE", "CODE"].includes(node.tagName) ||
+      node.matches("div.quote");
+  };
+
+  const shouldApplyNuxLightBgContentFix = (node) => {
+    if (!(node instanceof HTMLElement) || !elementHasNuxLightBgHint(node)) {
+      return false;
+    }
+    const postContent = node.closest("td.t_f");
+    if (!postContent) {
+      return false;
+    }
+    return isNuxLightBackgroundColor(resolveNuxLightBgOriginalColor(node, postContent));
+  };
+
+  const applyNuxLightBgContentFixToNode = (node) => {
+    if (!(node instanceof HTMLElement)) {
+      return;
+    }
+    const postContent = node.closest("td.t_f");
+    const originalBackgroundColor = resolveNuxLightBgOriginalColor(node, postContent);
+    if (!node.hasAttribute(NUX_LIGHT_BG_ORIGINAL_STYLE_ATTR)) {
+      node.setAttribute(
+        NUX_LIGHT_BG_ORIGINAL_STYLE_ATTR,
+        node.getAttribute("style") || ""
+      );
+    }
+    if (!node.hasAttribute(NUX_LIGHT_BG_ORIGINAL_BGCOLOR_ATTR)) {
+      node.setAttribute(
+        NUX_LIGHT_BG_ORIGINAL_BGCOLOR_ATTR,
+        node.getAttribute("bgcolor") || ""
+      );
+    }
+    if (!node.hasAttribute(NUX_LIGHT_BG_ORIGINAL_COLOR_ATTR)) {
+      node.setAttribute(
+        NUX_LIGHT_BG_ORIGINAL_COLOR_ATTR,
+        serializeRgbaColor(originalBackgroundColor)
+      );
+    }
+    node.classList.add(NUX_LIGHT_BG_CONTENT_CLASS);
+    node.setAttribute(NUX_LIGHT_BG_REMOVED_ATTR, "true");
+    node.removeAttribute("bgcolor");
+    node.style.setProperty("background-color", "transparent", "important");
+    node.style.setProperty("background-image", "none", "important");
+  };
+
+  const restoreNuxLightBgContentNode = (node) => {
+    if (!(node instanceof HTMLElement)) {
+      return;
+    }
+    node.classList.remove(NUX_LIGHT_BG_CONTENT_CLASS);
+    if (node.hasAttribute(NUX_LIGHT_BG_ORIGINAL_STYLE_ATTR)) {
+      const originalStyle = node.getAttribute(NUX_LIGHT_BG_ORIGINAL_STYLE_ATTR);
+      if (originalStyle) {
+        node.setAttribute("style", originalStyle);
+      } else {
+        node.removeAttribute("style");
+      }
+      node.removeAttribute(NUX_LIGHT_BG_ORIGINAL_STYLE_ATTR);
+    }
+    if (node.hasAttribute(NUX_LIGHT_BG_ORIGINAL_BGCOLOR_ATTR)) {
+      const originalBgcolor = node.getAttribute(NUX_LIGHT_BG_ORIGINAL_BGCOLOR_ATTR);
+      if (originalBgcolor) {
+        node.setAttribute("bgcolor", originalBgcolor);
+      } else {
+        node.removeAttribute("bgcolor");
+      }
+      node.removeAttribute(NUX_LIGHT_BG_ORIGINAL_BGCOLOR_ATTR);
+    }
+    node.removeAttribute(NUX_LIGHT_BG_ORIGINAL_COLOR_ATTR);
+    node.removeAttribute(NUX_LIGHT_BG_REMOVED_ATTR);
+  };
+
   const shouldApplyNuxDarkTextFix = (node) => {
     if (!(node instanceof HTMLElement)) {
       return false;
@@ -6820,13 +7034,35 @@
       });
       return nodes;
     };
-
     if (!isNuxDarkThemeActive()) {
+      collectBySelector(
+        `.${NUX_LIGHT_BG_CONTENT_CLASS}, [${NUX_LIGHT_BG_REMOVED_ATTR}]`
+      ).forEach((node) => restoreNuxLightBgContentNode(node));
       collectBySelector(`.${NUX_DARK_TEXT_FIX_CLASS}`).forEach((node) => {
         node.classList.remove(NUX_DARK_TEXT_FIX_CLASS);
       });
       return;
     }
+
+    collectBySelector(
+      `.${NUX_LIGHT_BG_CONTENT_CLASS}, [${NUX_LIGHT_BG_REMOVED_ATTR}]`
+    ).forEach((node) => {
+      if (!(node instanceof HTMLElement)) {
+        return;
+      }
+      if (!shouldApplyNuxLightBgContentFix(node)) {
+        restoreNuxLightBgContentNode(node);
+      }
+    });
+
+    collectBySelector(NUX_LIGHT_BG_CANDIDATE_SELECTOR).forEach((node) => {
+      if (!(node instanceof HTMLElement)) {
+        return;
+      }
+      if (shouldApplyNuxLightBgContentFix(node)) {
+        applyNuxLightBgContentFixToNode(node);
+      }
+    });
 
     collectBySelector(`.${NUX_DARK_TEXT_FIX_CLASS}`).forEach((node) => {
       if (!(node instanceof HTMLElement)) {
@@ -38267,6 +38503,10 @@
   }
 
   if (!IS_S1P_TEST_MODE) {
-    main();
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", main, { once: true });
+    } else {
+      main();
+    }
   }
 })();
