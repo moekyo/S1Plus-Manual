@@ -197,6 +197,153 @@ const testLockUnavailableSkipsWithoutHeartbeat = async () => {
   });
 };
 
+const testOnBeforeReleaseFiresBeforeLockRelease = async () => {
+  const { sandbox, hooks } = createHarness();
+  let lockHeld = false;
+  let onBeforeReleaseSeenLock = null;
+  const calls = [];
+
+  const result = await hooks.runStartupModeAutoSyncCheck({
+    acquireStartupSyncLock: async () => {
+      calls.push("acquire");
+      lockHeld = true;
+      return true;
+    },
+    startStartupSyncLockHeartbeat: () => { calls.push("hb:start"); },
+    stopStartupSyncLockHeartbeat: () => { calls.push("hb:stop"); },
+    releaseStartupSyncLock: () => {
+      lockHeld = false;
+      calls.push("release");
+    },
+    beforePerform: async () => {
+      calls.push("beforePerform");
+      return null;
+    },
+    onBeforeRelease: (syncResult) => {
+      onBeforeReleaseSeenLock = lockHeld;
+      calls.push("onBeforeRelease");
+    },
+    onAfterRelease: () => {
+      calls.push("onAfterRelease");
+    },
+    performAutoSync: async () => {
+      calls.push("perform");
+      return { status: "success", action: "pulled" };
+    },
+  });
+
+  assert.strictEqual(onBeforeReleaseSeenLock, true,
+    "onBeforeRelease 应在锁仍然持有时执行");
+  assert.deepStrictEqual(calls, [
+    "acquire",
+    "hb:start",
+    "beforePerform",
+    "perform",
+    "onBeforeRelease",
+    "hb:stop",
+    "release",
+    "onAfterRelease",
+  ]);
+  assert.deepStrictEqual(toPlainObject(result), {
+    status: "success",
+    action: "pulled",
+  });
+};
+
+const testOnBeforeReleaseFiresOnSkipBeforeLockRelease = async () => {
+  const { sandbox, hooks } = createHarness();
+  let lockHeld = false;
+  let onBeforeReleaseSeenLock = null;
+  let onBeforeReleaseSeenReason = null;
+  const calls = [];
+
+  const result = await hooks.runStartupModeAutoSyncCheck({
+    acquireStartupSyncLock: async () => {
+      calls.push("acquire");
+      lockHeld = true;
+      return true;
+    },
+    startStartupSyncLockHeartbeat: () => { calls.push("hb:start"); },
+    stopStartupSyncLockHeartbeat: () => { calls.push("hb:stop"); },
+    releaseStartupSyncLock: () => {
+      lockHeld = false;
+      calls.push("release");
+    },
+    beforePerform: async () => {
+      calls.push("beforePerform");
+      return {
+        skip: true,
+        result: { status: "skipped", reason: "daily_sync_already_completed" },
+      };
+    },
+    onBeforeRelease: (syncResult) => {
+      onBeforeReleaseSeenLock = lockHeld;
+      onBeforeReleaseSeenReason = syncResult?.reason;
+      calls.push("onBeforeRelease");
+    },
+    performAutoSync: async () => {
+      calls.push("perform");
+      throw new Error("beforePerform 已跳过, 不应到达 perform");
+    },
+  });
+
+  assert.strictEqual(onBeforeReleaseSeenLock, true,
+    "skip 路径下 onBeforeRelease 应在锁仍然持有时执行");
+  assert.strictEqual(onBeforeReleaseSeenReason, "daily_sync_already_completed",
+    "onBeforeRelease 应能拿到 skip 原因 daily_sync_already_completed");
+  assert.deepStrictEqual(calls, [
+    "acquire",
+    "hb:start",
+    "beforePerform",
+    "onBeforeRelease",
+    "hb:stop",
+    "release",
+  ]);
+  assert.deepStrictEqual(toPlainObject(result), {
+    status: "skipped",
+    reason: "daily_sync_already_completed",
+  });
+};
+
+const testShouldClearDeferredStartupSyncOnResult = () => {
+  const { hooks } = createHarness();
+
+  // deferred 未激活时不清理
+  assert.strictEqual(hooks.shouldClearDeferredStartupSyncOnResult(
+    { status: "skipped", reason: "daily_sync_already_completed" }, false
+  ), false);
+
+  // skipped + daily_sync_already_completed → 清理（本次新增的修复点）
+  assert.strictEqual(hooks.shouldClearDeferredStartupSyncOnResult(
+    { status: "skipped", reason: "daily_sync_already_completed" }, true
+  ), true);
+
+  // skipped + conflict_paused → 清理（已有行为）
+  assert.strictEqual(hooks.shouldClearDeferredStartupSyncOnResult(
+    { status: "skipped", reason: "conflict_paused" }, true
+  ), true);
+
+  // success → 清理
+  assert.strictEqual(hooks.shouldClearDeferredStartupSyncOnResult(
+    { status: "success", action: "pulled" }, true
+  ), true);
+
+  // conflict → 清理
+  assert.strictEqual(hooks.shouldClearDeferredStartupSyncOnResult(
+    { status: "conflict", reason: "both_changed_since_baseline" }, true
+  ), true);
+
+  // skipped + 其他 reason → 不清理（startup_lock_unavailable 等不应清 deferred）
+  assert.strictEqual(hooks.shouldClearDeferredStartupSyncOnResult(
+    { status: "skipped", reason: "startup_lock_unavailable" }, true
+  ), false);
+
+  // failure → 不清理
+  assert.strictEqual(hooks.shouldClearDeferredStartupSyncOnResult(
+    { status: "failure", error: "test" }, true
+  ), false);
+};
+
 const testDecisionSplitsStartupBackgroundAndForegroundFollowUp = () => {
   const { hooks } = createHarness();
   hooks.setSyncBaselineState({
@@ -260,6 +407,9 @@ const testPhase3CallSitesUseDedicatedHelpers = () => {
   await testForegroundFollowUpUsesDedicatedExecutionMode();
   await testBeforePerformCanShortCircuitSafely();
   await testLockUnavailableSkipsWithoutHeartbeat();
+  await testOnBeforeReleaseFiresBeforeLockRelease();
+  await testOnBeforeReleaseFiresOnSkipBeforeLockRelease();
+  testShouldClearDeferredStartupSyncOnResult();
   testDecisionSplitsStartupBackgroundAndForegroundFollowUp();
   testPhase3CallSitesUseDedicatedHelpers();
 
