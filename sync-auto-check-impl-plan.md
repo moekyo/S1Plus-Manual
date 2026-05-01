@@ -508,3 +508,30 @@ if (decision.shouldReload || decision.shouldNotify) {
   - Step 4 本轮验证只证明观察窗口内没有阅读进度假脏写，不等同于覆盖所有浏览器/主题/打开方式组合。
 - 下一步：
   - Step 3 继续按真实使用慢慢观察；若未出现异常，可进入 Step 5 的集中决策函数收敛。
+
+---
+
+## 实施状态（2026-05-01）
+
+- 状态：Step 5 已完成代码收敛，浏览器侧场景验收仍待真实 Tampermonkey / Greasemonkey 环境继续执行。
+- 本轮完成：
+  - 在刷新策略 helper 附近新增 `decideWhatToDoWithRemoteChange`，集中产出 `shouldApply`、`shouldReload`、`shouldNotify`、`suppressMessage`、`reason`、`refreshPlan`。
+  - 将 `sameSessionRemoteWrite` / `sameDeviceRemoteWrite`、foreground no-op / hash 等价、同机 suppressed plan 都统一接入同一个决策出口。
+  - `applyRefreshPolicyForSyncResult` 保留为执行层 wrapper，改为消费集中决策结果；`applyAutoPullRefreshPolicy` 可复用预先决出的刷新计划。
+  - `background`、`per_load`、`daily_startup`、foreground probe/follow-up、foreground retry 路径均改为先调用集中决策函数，再按 `shouldReload || shouldNotify` 决定是否进入执行层。
+  - 删除 Step 3 遗留的独立 `createSuppressedForegroundProbeRefreshPlan`，避免 foreground suppressed 判断继续散落在旧 helper 中。
+  - 测试 hook 暴露 `decideWhatToDoWithRemoteChange`，便于后续针对决策矩阵做浏览器/单元化验证。
+- 涉及文件：
+  - `S1Plus.js`
+  - `sync-auto-check-impl-plan.md`
+- 验证：
+  - `node --check S1Plus.js` 通过。
+  - `git diff --check` 通过。
+- 剩余工作：
+  - 真实浏览器环境继续按验证清单回归：单设备多标签、per_load 快速翻页、跨设备远端变化、foreground probe/follow-up、foreground retry、同机不可合并冲突诊断。
+  - Step 3 的浏览器侧长期观察仍未完全关闭；Step 5 不依赖该观察结果。
+- 风险 / 限制：
+  - 本轮只做决策出口收敛，不新增同步能力，不改变手动同步和冲突弹窗默认路径。
+  - 自动同步后是否 reload / toast 的页面类型判断仍复用原 `getAutoPullRefreshPlan`，实际 DOM 场景仍需浏览器侧确认。
+- 下一步：
+  - 在 Tampermonkey / Greasemonkey 中执行验证清单，重点观察 suppressed 决策是否不刷新、不提示，跨设备远端变化是否仍按原策略刷新或提示。
