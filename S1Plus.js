@@ -4232,7 +4232,17 @@
       line-height: 1.5;
       text-align: center;
     }
-    .s1p-modal-content .s1p-toast-notification {
+    #s1p-global-toast-root {
+      position: fixed;
+      inset: 0;
+      z-index: 100120;
+      pointer-events: none;
+      overflow: visible;
+    }
+    #s1p-global-toast-root .s1p-toast-notification {
+      z-index: auto;
+    }
+    .s1p-modal-content > .s1p-toast-notification {
       position: absolute;
       bottom: 15px;
       max-width: calc(100% - 32px);
@@ -25993,13 +26003,37 @@
   const formatDate = (timestamp) => new Date(timestamp).toLocaleString("zh-CN");
 
   let currentToast = null; // 用一个全局变量来管理当前的提示框实例
+  const GLOBAL_TOAST_ROOT_ID = "s1p-global-toast-root";
+
+  const getGlobalToastRoot = () => {
+    let root = document.getElementById(GLOBAL_TOAST_ROOT_ID);
+    if (!root) {
+      root = document.createElement("div");
+      root.id = GLOBAL_TOAST_ROOT_ID;
+      document.body.appendChild(root);
+    } else if (root.parentElement !== document.body) {
+      document.body.appendChild(root);
+    }
+    return root;
+  };
+
+  const resolveToastMountTarget = (options = {}) => {
+    const explicitTarget =
+      options && options.container instanceof Element ? options.container : null;
+    if (explicitTarget) {
+      return explicitTarget;
+    }
+    return getGlobalToastRoot();
+  };
 
   /**
-   * [MODIFIED] 显示消息，支持 true(成功)/false(失败)/null(中立) 三种状态
+   * [MODIFIED] 显示消息，支持 true(成功)/false(失败)/null(中立) 三种状态。
+   * 默认挂载到全局 toast root；需要面板内提示时显式传入 container。
    * @param {string} message - 要显示的消息内容。
    * @param {boolean|null} isSuccess - 消息状态。
+   * @param {{container?: Element}=} options - 可选的局部挂载容器。
    */
-  const showMessage = (message, isSuccess) => {
+  const showMessage = (message, isSuccess, options = {}) => {
     // 如果上一个提示框还存在，立即移除，防止重叠
     if (currentToast) {
       currentToast.remove();
@@ -26020,12 +26054,7 @@
     toast.className = toastClass;
     // --- [修正结束] ---
 
-    const modalContent = document.querySelector(".s1p-modal-content");
-    if (modalContent) {
-      modalContent.appendChild(toast);
-    } else {
-      document.body.appendChild(toast);
-    }
+    resolveToastMountTarget(options).appendChild(toast);
     currentToast = toast;
 
     // 让动画生效
@@ -27106,6 +27135,10 @@
         </div>`;
 
     document.body.appendChild(modal);
+    const tokenConfigContent = modal.querySelector(".s1p-token-config-content");
+    const showTokenConfigMessage = (message, isSuccess) => {
+      showMessage(message, isSuccess, { container: tokenConfigContent });
+    };
 
     // 动画显示
     requestAnimationFrame(() => {
@@ -27184,7 +27217,7 @@
       const timestamp = expiryDate.getTime();
 
       if (timestamp < Date.now()) {
-        showMessage("过期日期不能早于当前时间", false);
+        showTokenConfigMessage("过期日期不能早于当前时间", false);
         return;
       }
 
@@ -27481,6 +27514,9 @@
         </div>`;
 
     const modalContent = modal.querySelector(".s1p-modal-content");
+    const showSettingsMessage = (message, isSuccess) => {
+      showMessage(message, isSuccess, { container: modalContent });
+    };
     if (shouldAutoFitModalWidth && requiredWidth > 600) {
       modalContent.style.width = `${requiredWidth}px`;
     }
@@ -27801,7 +27837,7 @@
       if (uniqueLabels.length === 0) {
         return;
       }
-      showMessage(
+      showSettingsMessage(
         `检测到其他标签页设置变更，已保留当前未保存编辑（${uniqueLabels.join("、")}）。请先保存后再查看最新状态。`,
         null
       );
@@ -28140,7 +28176,7 @@
           versionClickCount = 0;
           const nextVisible = !isSyncDiagnosticsVisible;
           setSyncDiagnosticsVisible(nextVisible);
-          showMessage(
+          showSettingsMessage(
             nextVisible
               ? "同步诊断信息已启用（仅当前设置窗口）。"
               : "同步诊断信息已隐藏。",
@@ -28988,7 +29024,7 @@
         const userName = normalizeUsernameInput(rawUsernameInput);
 
         if (!userName) {
-          showMessage("请输入用户名。", false);
+          showSettingsMessage("请输入用户名。", false);
           usernameInput.focus();
           return;
         }
@@ -28998,18 +29034,18 @@
           (entry) => normalizeUsernameInput(entry?.name) === userName
         );
         if (duplicatedByName) {
-          showMessage(`用户 ${userName} 已在屏蔽列表中。`, false);
+          showSettingsMessage(`用户 ${userName} 已在屏蔽列表中。`, false);
           return;
         }
 
         setSubmittingState(true);
-        showMessage(`正在查找用户 ${userName}...`, null);
+        showSettingsMessage(`正在查找用户 ${userName}...`, null);
         try {
           const userId = await resolveUidByUsername(userName);
           const latestBlockedUsers = getBlockedUsers();
           if (latestBlockedUsers[userId]) {
             const existingName = latestBlockedUsers[userId]?.name || userName;
-            showMessage(`用户 ${existingName} 已在屏蔽列表中。`, false);
+            showSettingsMessage(`用户 ${existingName} 已在屏蔽列表中。`, false);
             setSubmittingState(false);
             return;
           }
@@ -29036,13 +29072,13 @@
           );
         } catch (error) {
           if (error?.code === "UID_NOT_FOUND") {
-            showMessage("未找到该用户名，请检查后重试。", false);
+            showSettingsMessage("未找到该用户名，请检查后重试。", false);
             usernameInput.focus();
             usernameInput.select();
           } else if (error?.code === "LOOKUP_REQUEST_FAILED") {
-            showMessage("查询用户失败，请稍后重试。", false);
+            showSettingsMessage("查询用户失败，请稍后重试。", false);
           } else {
-            showMessage("手动屏蔽失败，请稍后重试。", false);
+            showSettingsMessage("手动屏蔽失败，请稍后重试。", false);
           }
           setSubmittingState(false);
         }
@@ -29752,7 +29788,7 @@
                   SETTINGS_MODAL_DIRTY_TAB.THREAD_RULES,
                   true
                 );
-                showMessage("未保存的新规则已移除。", null);
+                showSettingsMessage("未保存的新规则已移除。", null);
                 return;
               }
               const currentRules = getTitleFilterRules();
@@ -29767,7 +29803,7 @@
                 SETTINGS_MODAL_DIRTY_TAB.THREAD_RULES,
                 false
               );
-              showMessage("规则已成功删除。", true);
+              showSettingsMessage("规则已成功删除。", true);
             },
             "确认删除",
             { allowSubtitleHtml: true }
@@ -29776,7 +29812,7 @@
         }
         if (target.id === "s1p-keyword-rules-save-btn") {
           saveKeywordRules();
-          showMessage("规则已保存！", true);
+          showSettingsMessage("规则已保存！", true);
           return true;
         }
         return false;
@@ -30028,7 +30064,7 @@
             addProgressJumpButtons();
           }
           renderGeneralSettingsTab();
-          showMessage("“链接打开方式（新标签页）”已恢复默认。", true);
+          showSettingsMessage("“链接打开方式（新标签页）”已恢复默认。", true);
         });
       }
 
@@ -30278,7 +30314,7 @@
             heightInput.value = String(latestSettings.imagePreviewMaxHeight);
           }
           applyImageSizeLimits();
-          showMessage(
+          showSettingsMessage(
             "\u5df2\u6062\u590d\u9ed8\u8ba4\u5927\u56fe\u9650\u5236\uff1a800 / 1200 px\u3002",
             true
           );
@@ -30464,7 +30500,7 @@
                 SETTINGS_MODAL_DIRTY_TAB.NAV_SETTINGS,
                 true
               );
-              showMessage("链接已从列表移除。", true);
+              showSettingsMessage("链接已从列表移除。", true);
             },
             "确认删除",
             { allowSubtitleHtml: true }
@@ -30487,7 +30523,7 @@
               );
               renderNavSettingsTab();
               initializeNavbar();
-              showMessage("导航栏已恢复为默认设置！", true);
+              showSettingsMessage("导航栏已恢复为默认设置！", true);
             },
             "确认恢复"
           );
@@ -30515,9 +30551,9 @@
           setSettingsModalDirtyState(SETTINGS_MODAL_DIRTY_TAB.NAV_SETTINGS, false);
           initializeNavbar();
           if (normalizedCustomNavLinks.length < rawCustomNavLinks.length) {
-            showMessage("检测到不安全导航链接，已自动忽略。", false);
+            showSettingsMessage("检测到不安全导航链接，已自动忽略。", false);
           }
-          showMessage("设置已保存！", true);
+          showSettingsMessage("设置已保存！", true);
           return true;
         }
         return false;
@@ -31511,7 +31547,7 @@
                   renderThreadTab();
                   updateObservedModalBodyTabContent();
                 });
-                showMessage("帖子已取消屏蔽。", true);
+                showSettingsMessage("帖子已取消屏蔽。", true);
               },
               "确认取消"
             );
@@ -31566,12 +31602,12 @@
               const message = wasSynced
                 ? `已取消对 ${userName} 的屏蔽并从论坛同步移除。`
                 : `已取消对 ${userName} 的屏蔽。`;
-              showMessage(message, true);
+              showSettingsMessage(message, true);
             } else {
               const failureMessage = wasSynced
                 ? `取消失败：无法从论坛黑名单移除，已保留本地屏蔽状态。`
                 : `取消失败：请稍后重试。`;
-              showMessage(failureMessage, false);
+              showSettingsMessage(failureMessage, false);
             }
           },
           "确认取消"
@@ -31594,7 +31630,7 @@
               renderThreadTab();
               updateObservedModalBodyTabContent();
             });
-            showMessage("楼层已取消屏蔽。", true);
+            showSettingsMessage("楼层已取消屏蔽。", true);
           },
           "确认取消"
         );
@@ -31616,7 +31652,7 @@
               renderBookmarksTab();
               updateObservedModalBodyTabContent();
             });
-            showMessage("已取消收藏。", true);
+            showSettingsMessage("已取消收藏。", true);
           },
           "确认取消"
         );
@@ -31630,17 +31666,17 @@
         navigator.clipboard
           .writeText(dataToExport)
           .then(() => {
-            showMessage("数据已导出并复制到剪贴板", true);
+            showSettingsMessage("数据已导出并复制到剪贴板", true);
           })
           .catch(() => {
-            showMessage("自动复制失败，请手动复制", false);
+            showSettingsMessage("自动复制失败，请手动复制", false);
           });
       }
       if (e.target.id === "s1p-local-import-btn") {
         const jsonStr = syncTextarea.value.trim();
-        if (!jsonStr) return showMessage("请先粘贴要导入的数据", false);
+        if (!jsonStr) return showSettingsMessage("请先粘贴要导入的数据", false);
         const result = importLocalData(jsonStr);
-        showMessage(result.message, result.success);
+        showSettingsMessage(result.message, result.success);
         if (result.success) {
           refreshSettingsTabWithLazyPolicy("threads", renderThreadTab);
           refreshSettingsTabWithLazyPolicy("users", renderUserTab);
@@ -31664,7 +31700,7 @@
           modal.querySelectorAll(".s1p-clear-data-checkbox:checked")
         ).map((chk) => chk.dataset.clearKey);
         if (selectedKeys.length === 0) {
-          return showMessage("请至少选择一个要清除的数据项。", false);
+          return showSettingsMessage("请至少选择一个要清除的数据项。", false);
         }
 
         const itemsToClear = selectedKeys
@@ -31733,7 +31769,7 @@
             );
             refreshSettingsTabWithLazyPolicy("tags", renderTagsTab);
             refreshSettingsTabWithLazyPolicy("bookmarks", renderBookmarksTab);
-            showMessage("选中的本地数据已成功清除。", true);
+            showSettingsMessage("选中的本地数据已成功清除。", true);
           },
           "确认清除"
         );
@@ -31836,7 +31872,7 @@
             showMessage("设置已保存，正在启动首次同步检查...", null);
             await handleManualSync(false, true); // 标记为首次设置
           } else {
-            showMessage("远程同步设置已保存。", true);
+            showSettingsMessage("远程同步设置已保存。", true);
           }
         } finally {
           button.disabled = false;
@@ -31878,7 +31914,7 @@
         const diagnosticsText = buildSyncDiagnosticsSummary();
         try {
           await navigator.clipboard.writeText(diagnosticsText);
-          showMessage("同步诊断已复制到剪贴板。", true);
+          showSettingsMessage("同步诊断已复制到剪贴板。", true);
         } catch (_) {
           const tempTextarea = document.createElement("textarea");
           tempTextarea.value = diagnosticsText;
@@ -31890,7 +31926,7 @@
           tempTextarea.select();
           try {
             const copied = document.execCommand("copy");
-            showMessage(
+            showSettingsMessage(
               copied
                 ? "同步诊断已复制到剪贴板。"
                 : "复制失败，请稍后重试。",
@@ -31909,7 +31945,7 @@
           () => {
             resetSyncDiagnostics();
             updateLastSyncTimeDisplay();
-            showMessage("同步诊断已重置。", true);
+            showSettingsMessage("同步诊断已重置。", true);
           },
           "确认重置"
         );
@@ -31922,7 +31958,7 @@
         if (gistId) {
           GM_openInTab(`https://gist.github.com/${gistId}`, true);
         } else {
-          showMessage("请先填写 Gist ID。", false);
+          showSettingsMessage("请先填写 Gist ID。", false);
         }
       }
 
@@ -31957,7 +31993,7 @@
                 renderTagsTab();
                 updateObservedModalBodyTabContent();
               });
-              showMessage(`已删除对 ${userName} 的标记。`, true);
+              showSettingsMessage(`已删除对 ${userName} 的标记。`, true);
             },
             "确认删除"
           );
@@ -31979,7 +32015,7 @@
             saveUserTags(tags);
             refreshUserPostsOnPage(userId);
             renderTagsTab();
-            showMessage(`已更新对 ${userName} 的标记。`, true);
+            showSettingsMessage(`已更新对 ${userName} 的标记。`, true);
           } else {
             createConfirmationModal(
               `标记内容为空`,
@@ -31989,7 +32025,7 @@
                 saveUserTags(tags);
                 refreshUserPostsOnPage(userId);
                 renderTagsTab();
-                showMessage(`已删除对 ${userName} 的标记。`, true);
+                showSettingsMessage(`已删除对 ${userName} 的标记。`, true);
               },
               "确认删除"
             );
@@ -32002,15 +32038,15 @@
           navigator.clipboard
             .writeText(dataToExport)
             .then(() => {
-              showMessage("用户标记已导出并复制到剪贴板。", true);
+              showSettingsMessage("用户标记已导出并复制到剪贴板。", true);
             })
             .catch(() => {
-              showMessage("复制失败，请手动复制。", false);
+              showSettingsMessage("复制失败，请手动复制。", false);
             });
         } else if (target.id === "s1p-import-tags-btn") {
           const textarea = targetTab.querySelector("#s1p-tags-sync-textarea");
           const jsonStr = textarea.value.trim();
-          if (!jsonStr) return showMessage("请先粘贴要导入的数据。", false);
+          if (!jsonStr) return showSettingsMessage("请先粘贴要导入的数据。", false);
 
           try {
             const imported = JSON.parse(jsonStr);
@@ -32035,7 +32071,7 @@
                 const mergedTags = { ...currentTags, ...sanitizedImported };
                 saveUserTags(mergedTags);
                 renderTagsTab();
-                showMessage(
+                showSettingsMessage(
                   `成功导入/更新 ${Object.keys(sanitizedImported).length} 条用户标记。`,
                   true
                 );
@@ -32045,7 +32081,7 @@
               "确认导入"
             );
           } catch (e) {
-            showMessage(`导入失败: ${e.message}`, false);
+            showSettingsMessage(`导入失败: ${e.message}`, false);
           }
         }
       }
