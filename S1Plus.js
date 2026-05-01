@@ -4767,6 +4767,9 @@
     .s1p-setting-desc-top-negative4 {
       margin-top: -4px;
     }
+    .s1p-setting-desc.s1p-setting-desc-compact-follow {
+      margin-bottom: 4px;
+    }
     .s1p-flex-row-center-gap12 {
       display: flex;
       align-items: center;
@@ -4804,14 +4807,14 @@
     }
     .s1p-link-open-mode-group {
       display: grid;
-      gap: 8px;
+      gap: 4px;
     }
     .s1p-link-open-mode-item {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 12px;
-      padding: 6px 0;
+      padding: 4px 0;
     }
     .s1p-link-open-mode-desc {
       margin-top: 0;
@@ -4898,7 +4901,7 @@
       gap: 6px;
     }
     .s1p-hide-system-blocked-posts-item {
-      margin-top: 8px;
+      margin-top: 0;
     }
     .s1p-image-size-limit-header {
       display: flex;
@@ -29917,9 +29920,15 @@
                         <label class="s1p-switch"><input type="checkbox" id="s1p-autoLinkPlainTextUrls" class="s1p-settings-checkbox" data-setting="autoLinkPlainTextUrls" ${settings.autoLinkPlainTextUrls ? "checked" : ""
         }><span class="s1p-slider"></span></label>
                     </div>
-                    <p class="s1p-setting-desc s1p-setting-desc-top-negative4">处理常见 http://、https://、www. 开头的纯文本链接；原本已可点击的链接会自动跳过。</p>
+                    <p class="s1p-setting-desc s1p-setting-desc-top-negative4 s1p-setting-desc-compact-follow">处理常见 http://、https://、www. 开头的纯文本链接；原本已可点击的链接会自动跳过。</p>
+                    <div class="s1p-settings-item s1p-hide-system-blocked-posts-item">
+                        <label class="s1p-settings-label" for="s1p-hideSystemBlockedPosts">默认隐藏被系统屏蔽的楼层</label>
+                        <label class="s1p-switch"><input type="checkbox" id="s1p-hideSystemBlockedPosts" class="s1p-settings-checkbox" data-setting="hideSystemBlockedPosts" ${settings.hideSystemBlockedPosts ? "checked" : ""
+        }><span class="s1p-slider"></span></label>
+                    </div>
+                    <p class="s1p-setting-desc s1p-setting-desc-compact-follow">开启后，被屏蔽楼层将被自动隐藏。</p>
 
-                     <div class="s1p-settings-item s1p-settings-item-top16">
+                    <div class="s1p-settings-item">
                         <label class="s1p-settings-label" for="s1p-enableReadProgress">启用阅读进度跟踪</label>
                         <label class="s1p-switch"><input type="checkbox" id="s1p-enableReadProgress" data-feature="enableReadProgress" class="s1p-feature-toggle" ${settings.enableReadProgress ? "checked" : ""
         }><span class="s1p-slider"></span></label>
@@ -30010,12 +30019,6 @@
                             </div>
                         </div>
                     </div>
-                    <div class="s1p-settings-item s1p-hide-system-blocked-posts-item">
-                        <label class="s1p-settings-label" for="s1p-hideSystemBlockedPosts">默认隐藏被系统屏蔽的楼层</label>
-                        <label class="s1p-switch"><input type="checkbox" id="s1p-hideSystemBlockedPosts" class="s1p-settings-checkbox" data-setting="hideSystemBlockedPosts" ${settings.hideSystemBlockedPosts ? "checked" : ""
-        }><span class="s1p-slider"></span></label>
-                    </div>
-                    <p class="s1p-setting-desc">开启后，被屏蔽楼层将被自动隐藏。</p>
                 </div>
                 <div class="s1p-settings-group s1p-link-open-mode-section">
                         <div class="s1p-settings-group-head">
