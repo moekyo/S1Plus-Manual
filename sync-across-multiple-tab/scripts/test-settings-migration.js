@@ -55,6 +55,7 @@ const createSandbox = (initialStore = {}) => {
   const sandbox = {
     __S1P_TEST_MODE__: true,
     __S1P_TEST_STORE__: store,
+    __S1P_TEST_STORAGE__: store,
     console,
     URL,
     URLSearchParams,
@@ -118,7 +119,9 @@ const createSandbox = (initialStore = {}) => {
       store.set(key, value);
     },
     GM_addStyle: noop,
-    GM_deleteValue: noop,
+    GM_deleteValue: (key) => {
+      store.delete(key);
+    },
     GM_xmlhttpRequest: noop,
     GM_openInTab: noop,
     GM_download: noop,
@@ -241,6 +244,13 @@ fixtures.forEach((fixture, index) => {
 
   passedCount += 1;
 });
+
+if (
+  typeof hooks.migrateLegacySettingsIfNeeded !== "function" ||
+  typeof hooks.getSettings !== "function"
+) {
+  throw new Error("未能从 S1Plus.js 暴露设置迁移持久化测试钩子。");
+}
 
 console.log(
   `[settings-migration] ${passedCount}/${fixtures.length} 个迁移用例通过。`
