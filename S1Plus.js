@@ -4245,7 +4245,11 @@
     .s1p-modal-content > .s1p-toast-notification {
       position: absolute;
       bottom: 15px;
+      box-sizing: border-box;
       max-width: calc(100% - 32px);
+      white-space: normal;
+      overflow-wrap: anywhere;
+      line-height: 1.5;
     }
     .s1p-toast-notification.visible {
       opacity: 1;
@@ -31838,7 +31842,7 @@
             currentSettings.syncRemoteGistId &&
             currentSettings.syncRemotePat
           ) {
-            if (didPatChange) {
+          if (didPatChange) {
               showMessage("设置已保存，正在验证新的 Token 凭据...", null);
               try {
                 await fetchRemoteData({ metadataOnly: true });
@@ -38538,11 +38542,37 @@
     }
   }
 
-  if (!IS_S1P_TEST_MODE) {
-    if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", main, { once: true });
-    } else {
-      main();
+  const runMainWhenDocumentBodyReady = () => {
+    let didRunMain = false;
+    const runMain = () => {
+      if (didRunMain) {
+        return;
+      }
+      didRunMain = true;
+      main().catch((error) => {
+        console.error("S1 Plus: 初始化失败:", error);
+      });
+    };
+
+    if (document.body) {
+      runMain();
+      return;
     }
+
+    const runWhenReady = () => {
+      if (!document.body) {
+        window.setTimeout(runWhenReady, 0);
+        return;
+      }
+      document.removeEventListener("DOMContentLoaded", runWhenReady);
+      runMain();
+    };
+
+    document.addEventListener("DOMContentLoaded", runWhenReady, { once: true });
+    window.setTimeout(runWhenReady, 0);
+  };
+
+  if (!IS_S1P_TEST_MODE) {
+    runMainWhenDocumentBodyReady();
   }
 })();
