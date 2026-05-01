@@ -8183,35 +8183,6 @@
     }
     return "";
   };
-  const createSuppressedForegroundProbeRefreshPlan = (
-    syncResult = null,
-    { suppressReason = "", remoteChangeKind = "" } = {}
-  ) => {
-    const normalizedSuppressReason =
-      normalizeRemoteProbeText(suppressReason, 120) ||
-      "foreground_probe_suppressed";
-    const action = syncResult?.action || "unknown";
-    console.log("S1 Plus: 前台探测刷新策略已跳过", {
-      action,
-      suppressReason: normalizedSuppressReason,
-      remoteChangeKind,
-      sameSessionRemoteWrite: syncResult?.sameSessionRemoteWrite === true,
-      sameDeviceRemoteWrite: syncResult?.sameDeviceRemoteWrite === true,
-      deviceId: syncResult?.remoteWriter?.deviceId || "",
-    });
-    return {
-      policy: "foreground_probe_suppressed",
-      pageType: "generic",
-      shouldReload: false,
-      action,
-      remoteChangeKind,
-      reloadSchedule: {
-        status: "suppressed",
-        reason: normalizedSuppressReason,
-      },
-    };
-  };
-
   const normalizeRemoteProbeSharedCooldownState = (value) => {
     const source = sanitizeRecordObject(value);
     return {
@@ -10875,6 +10846,195 @@
     };
   };
 
+  const isSoftAutoPullRefreshNotificationPlan = (plan = null) =>
+    plan?.policy === "thread_soft_prompt" ||
+    plan?.policy === "settings_dirty";
+
+  const getAutoPullRefreshDecisionSource = (context = {}) =>
+    normalizeRemoteProbeText(context.source, 80) ||
+    normalizeRemoteProbeText(context.triggerSource, 80) ||
+    "generic";
+
+  const createSuppressedRemoteChangeRefreshPlan = (
+    syncResult = null,
+    {
+      policy = "remote_change_suppressed",
+      suppressReason = "",
+      remoteChangeKind = "",
+      pageType = "generic",
+    } = {}
+  ) => {
+    const action = syncResult?.action || "unknown";
+    const normalizedSuppressReason =
+      normalizeRemoteProbeText(suppressReason, 120) || policy;
+    return {
+      policy,
+      pageType,
+      shouldReload: false,
+      action,
+      remoteChangeKind,
+      reloadSchedule: {
+        status: "suppressed",
+        reason: normalizedSuppressReason,
+      },
+    };
+  };
+
+  const logSuppressedRemoteChangeDecision = (
+    decision = null,
+    syncResult = null,
+    context = {}
+  ) => {
+    if (!decision?.refreshPlan) {
+      return;
+    }
+    const reason = normalizeRemoteProbeText(decision.reason, 120);
+    if (reason === "same_machine_write") {
+      console.log("S1 Plus: 同机归因自动刷新已抑制", {
+        action: syncResult?.action || decision.action || "unknown",
+        source: decision.source || getAutoPullRefreshDecisionSource(context),
+        sameSessionRemoteWrite:
+          syncResult?.sameSessionRemoteWrite === true ||
+          context.sameSessionRemoteWrite === true,
+        sameDeviceRemoteWrite:
+          syncResult?.sameDeviceRemoteWrite === true ||
+          context.sameDeviceRemoteWrite === true,
+        deviceId:
+          syncResult?.remoteWriter?.deviceId ||
+          context.remoteWriter?.deviceId ||
+          "",
+      });
+      return;
+    }
+    if (decision.refreshPlan.policy === "foreground_probe_suppressed") {
+      console.log("S1 Plus: 前台探测刷新策略已跳过", {
+        action: syncResult?.action || decision.action || "unknown",
+        suppressReason: reason || decision.refreshPlan.reloadSchedule?.reason || "",
+        remoteChangeKind: decision.refreshPlan.remoteChangeKind || "",
+        sameSessionRemoteWrite:
+          syncResult?.sameSessionRemoteWrite === true ||
+          context.sameSessionRemoteWrite === true,
+        sameDeviceRemoteWrite:
+          syncResult?.sameDeviceRemoteWrite === true ||
+          context.sameDeviceRemoteWrite === true,
+        deviceId:
+          syncResult?.remoteWriter?.deviceId ||
+          context.remoteWriter?.deviceId ||
+          "",
+      });
+    }
+  };
+
+  const decideWhatToDoWithRemoteChange = (syncResult, context = {}) => {
+    const source = getAutoPullRefreshDecisionSource(context);
+    const remoteChangeKind =
+      normalizeRemoteProbeText(context.remoteChangeKind, 120) ||
+      normalizeRemoteProbeText(syncResult?.remoteChangeKind, 120) ||
+      "";
+    const shouldReturnSuppressedPlan =
+      source === "foreground" || context.createSuppressedPlan === true;
+    const explicitSuppressReason =
+      normalizeRemoteProbeText(context.suppressReason, 120) ||
+      (
+        shouldReturnSuppressedPlan
+          ? getForegroundProbeRefreshSuppressReason(syncResult, remoteChangeKind)
+          : ""
+      );
+    const isSameMachineWrite =
+      syncResult?.sameSessionRemoteWrite === true ||
+      syncResult?.sameDeviceRemoteWrite === true ||
+      context.sameSessionRemoteWrite === true ||
+      context.sameDeviceRemoteWrite === true ||
+      remoteChangeKind === "same_session_write" ||
+      remoteChangeKind === "same_device_write";
+
+    if (!shouldApplyAutoPullRefreshForSyncResult(syncResult)) {
+      if (isSameMachineWrite && syncResult?.action === "no_change") {
+        const suppressedPolicy =
+          source === "foreground"
+            ? "foreground_probe_suppressed"
+            : "same_machine_suppressed";
+        const suppressedReason = explicitSuppressReason || "same_machine_write";
+        return {
+          shouldApply: false,
+          shouldReload: false,
+          shouldNotify: false,
+          suppressMessage: true,
+          reason: suppressedReason,
+          source,
+          action: "no_change",
+          refreshPlan: createSuppressedRemoteChangeRefreshPlan(syncResult, {
+            policy: suppressedPolicy,
+            suppressReason: suppressedReason,
+            remoteChangeKind,
+          }),
+        };
+      }
+      const reason =
+        explicitSuppressReason ||
+        normalizeRemoteProbeText(syncResult?.reason, 120) ||
+        normalizeRemoteProbeText(syncResult?.action, 120) ||
+        "not_applicable";
+      return {
+        shouldApply: false,
+        shouldReload: false,
+        shouldNotify: false,
+        suppressMessage: true,
+        reason,
+        source,
+        action: syncResult?.action || "unknown",
+        refreshPlan:
+          shouldReturnSuppressedPlan && explicitSuppressReason
+            ? createSuppressedRemoteChangeRefreshPlan(syncResult, {
+                policy: "foreground_probe_suppressed",
+                suppressReason: explicitSuppressReason,
+                remoteChangeKind,
+              })
+            : null,
+      };
+    }
+
+    const action = syncResult.action || "pulled";
+    const refreshPlan = getAutoPullRefreshPlan({
+      ...context,
+      action,
+      allowThreadSoftPrompt: action === "merged_read_progress",
+    });
+    const shouldNotify =
+      refreshPlan.shouldReload || isSoftAutoPullRefreshNotificationPlan(refreshPlan);
+    if (isSameMachineWrite && refreshPlan.policy !== "settings_dirty") {
+      const suppressedPolicy =
+        source === "foreground"
+          ? "foreground_probe_suppressed"
+          : "same_machine_suppressed";
+      return {
+        shouldApply: false,
+        shouldReload: false,
+        shouldNotify: false,
+        suppressMessage: true,
+        reason: "same_machine_write",
+        source,
+        action,
+        refreshPlan: createSuppressedRemoteChangeRefreshPlan(syncResult, {
+          policy: suppressedPolicy,
+          suppressReason: "same_machine_write",
+          remoteChangeKind,
+        }),
+      };
+    }
+
+    return {
+      shouldApply: true,
+      shouldReload: refreshPlan.shouldReload === true,
+      shouldNotify,
+      suppressMessage: !shouldNotify,
+      reason: refreshPlan.policy,
+      source,
+      action,
+      refreshPlan,
+    };
+  };
+
   const getAutoPullRefreshDisplayMessage = (plan, messages) => {
     if (plan.policy === "settings_dirty") {
       return messages.dirtySettingsMessage;
@@ -10937,7 +11097,12 @@
     const messages = getAutoPullRefreshMessages(options, action);
     const showMessageFn = options.showMessage || showMessage;
     const shouldShowMessage = options.suppressMessage !== true;
-    const plan = getAutoPullRefreshPlan(options);
+    const plan =
+      options.refreshPlan &&
+      typeof options.refreshPlan === "object" &&
+      typeof options.refreshPlan.policy === "string"
+        ? options.refreshPlan
+        : getAutoPullRefreshPlan(options);
     const refreshReason = getAutoPullRefreshReason(options, action);
     console.log("S1 Plus: 自动拉取刷新策略判定", {
       action,
@@ -10976,38 +11141,28 @@
   };
 
   const applyRefreshPolicyForSyncResult = (syncResult, options = {}) => {
-    if (!shouldApplyAutoPullRefreshForSyncResult(syncResult)) {
-      return null;
+    const decision =
+      options.remoteChangeDecision ||
+      decideWhatToDoWithRemoteChange(syncResult, options);
+
+    if (!decision.shouldApply) {
+      logSuppressedRemoteChangeDecision(decision, syncResult, options);
+      return decision.refreshPlan || null;
     }
 
-    const action = syncResult.action || "pulled";
-    const isSameMachineWrite =
-      syncResult.sameSessionRemoteWrite === true ||
-      syncResult.sameDeviceRemoteWrite === true;
-    if (isSameMachineWrite) {
-      console.log("S1 Plus: 同机归因自动刷新已抑制", {
-        action,
-        sameSessionRemoteWrite: syncResult.sameSessionRemoteWrite === true,
-        sameDeviceRemoteWrite: syncResult.sameDeviceRemoteWrite === true,
-        deviceId: syncResult?.remoteWriter?.deviceId || "",
-      });
-      return {
-        policy: "same_machine_suppressed",
-        pageType: "generic",
-        shouldReload: false,
-        action,
-        reloadSchedule: {
-          status: "suppressed",
-          reason: "same_machine_write",
-        },
-      };
-    }
-
-    const allowThreadSoftPrompt = action === "merged_read_progress";
+    const action = decision.action || syncResult?.action || "pulled";
+    const suppressMessage = Object.prototype.hasOwnProperty.call(
+      options,
+      "suppressMessage"
+    )
+      ? options.suppressMessage
+      : decision.suppressMessage;
     return applyAutoPullRefreshPolicy({
       ...options,
       action,
-      allowThreadSoftPrompt,
+      suppressMessage,
+      allowThreadSoftPrompt: action === "merged_read_progress",
+      refreshPlan: decision.refreshPlan,
     });
   };
 
@@ -20133,13 +20288,23 @@
         break;
 
       case "success":
-        if (shouldApplyAutoPullRefreshForSyncResult(result)) {
+        {
+          const decision = decideWhatToDoWithRemoteChange(result, {
+            source: "background",
+          });
+          if (!decision.shouldReload && !decision.shouldNotify) {
+            logSuppressedRemoteChangeDecision(decision, result, {
+              source: "background",
+            });
+            break;
+          }
           applyRefreshPolicyForSyncResult(result, {
+            remoteChangeDecision: decision,
             reason:
               result.action === "merged_read_progress"
                 ? "background_merge_refresh"
                 : "background_auto_pull",
-            suppressMessage: result.sameSessionRemoteWrite === true,
+            suppressMessage: !decision.shouldNotify,
             messages: getAutoPullRefreshMessagesForSource(
               "background",
               result.action,
@@ -21590,25 +21755,34 @@
           sameDeviceRemoteWrite: syncResult?.sameDeviceRemoteWrite === true,
           remoteWriter: syncResult?.remoteWriter || null,
         });
-        const foregroundRefreshSuppressReason =
-          getForegroundProbeRefreshSuppressReason(syncResult, remoteChangeKind);
-        if (foregroundRefreshSuppressReason) {
-          createSuppressedForegroundProbeRefreshPlan(syncResult, {
-            suppressReason: foregroundRefreshSuppressReason,
-            remoteChangeKind,
-          });
-        } else {
+        const decision = decideWhatToDoWithRemoteChange(syncResult, {
+          source: "foreground",
+          remoteChangeKind,
+          sameSessionRemoteWrite: syncResult?.sameSessionRemoteWrite === true,
+          sameDeviceRemoteWrite: syncResult?.sameDeviceRemoteWrite === true,
+          remoteWriter: syncResult?.remoteWriter || null,
+        });
+        if (decision.shouldReload || decision.shouldNotify) {
           (
             options.applyRefreshPolicyForSyncResult ||
             applyRefreshPolicyForSyncResult
           )(syncResult, {
+            remoteChangeDecision: decision,
             reason: `foreground_retry:${normalizedReason}`,
-            suppressMessage: syncResult?.sameSessionRemoteWrite === true,
+            suppressMessage: !decision.shouldNotify,
             messages: getAutoPullRefreshMessagesForSource(
               "foreground",
               syncResult?.action,
               getSameDeviceRefreshMessageOptions(syncResult)
             ),
+          });
+        } else {
+          logSuppressedRemoteChangeDecision(decision, syncResult, {
+            source: "foreground",
+            remoteChangeKind,
+            sameSessionRemoteWrite: syncResult?.sameSessionRemoteWrite === true,
+            sameDeviceRemoteWrite: syncResult?.sameDeviceRemoteWrite === true,
+            remoteWriter: syncResult?.remoteWriter || null,
           });
         }
         (
@@ -21927,24 +22101,22 @@
         sameDeviceRemoteWrite: matchedSameDeviceRemoteWrite,
         remoteWriter: matchedRemoteWriter,
       });
-      const foregroundRefreshSuppressReason =
-        getForegroundProbeRefreshSuppressReason(
-          syncRequestResult,
-          remoteChangeKind
-        );
-      if (foregroundRefreshSuppressReason) {
-        refreshPlan = createSuppressedForegroundProbeRefreshPlan(
-          syncRequestResult,
-          {
-            suppressReason: foregroundRefreshSuppressReason,
-            remoteChangeKind,
-          }
-        );
-      } else if (shouldApplyAutoPullRefreshForSyncResult(syncRequestResult)) {
+      const decision = decideWhatToDoWithRemoteChange(syncRequestResult, {
+        source: "foreground",
+        remoteChangeKind,
+        sameSessionRemoteWrite: matchedSameSessionRemoteWrite,
+        sameDeviceRemoteWrite: matchedSameDeviceRemoteWrite,
+        remoteWriter: matchedRemoteWriter,
+        showMessage: overrides.showMessage,
+        locationObject: overrides.locationObject,
+        setTimeoutFn: overrides.setTimeoutFn,
+      });
+      if (decision.shouldReload || decision.shouldNotify) {
         refreshPlan = applyRefreshPolicyForSyncResult(syncRequestResult, {
+          remoteChangeDecision: decision,
           reason: `foreground_probe:${normalizedReason}`,
           showMessage: overrides.showMessage,
-          suppressMessage: matchedSameSessionRemoteWrite,
+          suppressMessage: !decision.shouldNotify,
           messages: getAutoPullRefreshMessagesForSource(
             "foreground",
             syncRequestResult?.action,
@@ -21952,6 +22124,15 @@
           ),
           locationObject: overrides.locationObject,
           setTimeoutFn: overrides.setTimeoutFn,
+        });
+      } else {
+        refreshPlan = decision.refreshPlan;
+        logSuppressedRemoteChangeDecision(decision, syncRequestResult, {
+          source: "foreground",
+          remoteChangeKind,
+          sameSessionRemoteWrite: matchedSameSessionRemoteWrite,
+          sameDeviceRemoteWrite: matchedSameDeviceRemoteWrite,
+          remoteWriter: matchedRemoteWriter,
         });
       }
       const isHashEqualAfterResync =
@@ -22046,6 +22227,7 @@
       registerBackgroundOpenThreadHintForUrl,
       consumeBackgroundOpenThreadHint,
       getAutoPullRefreshPlan,
+      decideWhatToDoWithRemoteChange,
       applyAutoPullRefreshPolicy,
       getAutoPullRefreshMessagesForSource,
       clearPendingAutoPullReloadTimer,
@@ -36729,10 +36911,20 @@
 
     switch (result.status) {
       case "success":
-        if (shouldApplyAutoPullRefreshForSyncResult(result)) {
+        {
+          const decision = decideWhatToDoWithRemoteChange(result, {
+            source: "per_load",
+          });
+          if (!decision.shouldReload && !decision.shouldNotify) {
+            logSuppressedRemoteChangeDecision(decision, result, {
+              source: "per_load",
+            });
+            return false;
+          }
           const refreshPlan = applyRefreshPolicyForSyncResult(result, {
+            remoteChangeDecision: decision,
             reason: "per_load_auto_pull",
-            suppressMessage: result.sameSessionRemoteWrite === true,
+            suppressMessage: !decision.shouldNotify,
             messages: getAutoPullRefreshMessagesForSource(
               "generic",
               result.action,
@@ -36741,7 +36933,6 @@
           });
           return hasScheduledAutoPullReload(refreshPlan);
         }
-        break;
     }
     return false;
   };
@@ -36819,64 +37010,76 @@
 
     switch (result.status) {
       case "success":
-        if (shouldApplyAutoPullRefreshForSyncResult(result)) {
-          const refreshPlan = applyRefreshPolicyForSyncResult(result, {
-            reason:
-              result.action === "force_pulled"
-                ? "daily_startup_force_pull"
-                : result.action === "merged_read_progress"
-                  ? "daily_startup_merged_read_progress"
-                  : "daily_startup_pull",
-            suppressMessage: result.sameSessionRemoteWrite === true,
-            messages: getAutoPullRefreshMessagesForSource(
-              "daily",
-              result.action,
-              getSameDeviceRefreshMessageOptions(result)
-            ),
+        {
+          const decision = decideWhatToDoWithRemoteChange(result, {
+            source: "daily_startup",
           });
-          return hasScheduledAutoPullReload(refreshPlan);
-        } else if (result.action === "skipped_push_on_startup") {
-          const skippedByLocalChangeDuringSync =
-            result.reason === "local_changed_during_sync";
-          const conflictModalType = skippedByLocalChangeDuringSync
-            ? "local_changed_during_sync"
-            : "startup_local_newer";
-          if (!(await shouldShowConflictModal(conflictModalType))) {
-            showMessage(
-              skippedByLocalChangeDuringSync
-                ? "检测到您在自动同步期间有本地操作，已暂停自动拉取以保护更改。请稍后在导航栏发起全局手动同步。"
-                : "检测到本地数据较新，已进入提示冷却。请稍后在导航栏发起全局手动同步。",
-              false
-            );
-            return false;
+          if (decision.shouldReload || decision.shouldNotify) {
+            const refreshPlan = applyRefreshPolicyForSyncResult(result, {
+              remoteChangeDecision: decision,
+              reason:
+                result.action === "force_pulled"
+                  ? "daily_startup_force_pull"
+                  : result.action === "merged_read_progress"
+                    ? "daily_startup_merged_read_progress"
+                    : "daily_startup_pull",
+              suppressMessage: !decision.shouldNotify,
+              messages: getAutoPullRefreshMessagesForSource(
+                "daily",
+                result.action,
+                getSameDeviceRefreshMessageOptions(result)
+              ),
+            });
+            return hasScheduledAutoPullReload(refreshPlan);
           }
-          createAdvancedConfirmationModal(
-            "检测到本地有未同步的更改",
-            skippedByLocalChangeDuringSync
-              ? "<p>S1 Plus 检测到您在自动同步过程中进行了本地操作。为避免云端拉取覆盖您的新更改，本轮自动拉取已暂停。</p><p>如果继续，将发起一次全局手动同步来决定整套数据的去向，而不是只处理当前帖子。</p>"
-              : "<p>S1 Plus 在启动时发现，您的本地数据比云端备份要新。这可能意味着您在其他设备的工作未推送，或有离线修改未同步。</p><p>为防止数据丢失，自动同步已暂停。接下来如继续，将进入一次全局手动同步判断。</p>",
-            [
-              {
-                text: "稍后处理",
-                className: "s1p-cancel",
-                action: () => {
-                  showMessage("同步已暂停，您可稍后从导航栏发起全局手动同步。", null);
+          logSuppressedRemoteChangeDecision(decision, result, {
+            source: "daily_startup",
+          });
+          const shouldShowDailySuccessToast =
+            decision.reason !== "same_machine_write" &&
+            !decision.refreshPlan &&
+            result.action !== "pushed_initial";
+          if (result.action === "skipped_push_on_startup") {
+            const skippedByLocalChangeDuringSync =
+              result.reason === "local_changed_during_sync";
+            const conflictModalType = skippedByLocalChangeDuringSync
+              ? "local_changed_during_sync"
+              : "startup_local_newer";
+            if (!(await shouldShowConflictModal(conflictModalType))) {
+              showMessage(
+                skippedByLocalChangeDuringSync
+                  ? "检测到您在自动同步期间有本地操作，已暂停自动拉取以保护更改。请稍后在导航栏发起全局手动同步。"
+                  : "检测到本地数据较新，已进入提示冷却。请稍后在导航栏发起全局手动同步。",
+                false
+              );
+              return false;
+            }
+            createAdvancedConfirmationModal(
+              "检测到本地有未同步的更改",
+              skippedByLocalChangeDuringSync
+                ? "<p>S1 Plus 检测到您在自动同步过程中进行了本地操作。为避免云端拉取覆盖您的新更改，本轮自动拉取已暂停。</p><p>如果继续，将发起一次全局手动同步来决定整套数据的去向，而不是只处理当前帖子。</p>"
+                : "<p>S1 Plus 在启动时发现，您的本地数据比云端备份要新。这可能意味着您在其他设备的工作未推送，或有离线修改未同步。</p><p>为防止数据丢失，自动同步已暂停。接下来如继续，将进入一次全局手动同步判断。</p>",
+              [
+                {
+                  text: "稍后处理",
+                  className: "s1p-cancel",
+                  action: () => {
+                    showMessage("同步已暂停，您可稍后从导航栏发起全局手动同步。", null);
+                  },
                 },
-              },
-              {
-                text: "发起全局同步",
-                className: "s1p-confirm",
-                action: () => {
-                  // [S1P-UX-FIX] 调用时传入 true，进入静默模式，避免弹出多余的提示
-                  handleManualSync(true);
+                {
+                  text: "发起全局同步",
+                  className: "s1p-confirm",
+                  action: () => {
+                    // [S1P-UX-FIX] 调用时传入 true，进入静默模式，避免弹出多余的提示
+                    handleManualSync(true);
+                  },
                 },
-              },
-            ],
-            { allowBodyHtml: true }
-          );
-          return "popup_shown"; // [FIX] 标记已显示弹窗，阻止后续 Token 过期弹窗覆盖
-        } else {
-          if (result.action !== "pushed_initial") {
+              ],
+              { allowBodyHtml: true }
+            );
+            return "popup_shown"; // [FIX] 标记已显示弹窗，阻止后续 Token 过期弹窗覆盖
+          } else if (shouldShowDailySuccessToast) {
             showMessage("每日首次同步完成，数据已是最新。", true);
           }
         }

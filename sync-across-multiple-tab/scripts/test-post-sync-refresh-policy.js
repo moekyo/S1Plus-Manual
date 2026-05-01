@@ -55,7 +55,7 @@ const testStaticWiring = () => {
     "Phase 7 未将设置弹窗脏状态暴露为可被同步逻辑检测的 DOM 标记。"
   );
   expectMatch(
-    /const handlePerLoadSyncCheck = async[\s\S]*?applyRefreshPolicyForSyncResult\(result,\s*\{\s*reason:\s*"per_load_auto_pull"/m,
+    /const handlePerLoadSyncCheck = async[\s\S]*?applyRefreshPolicyForSyncResult\(result,\s*\{[\s\S]*?reason:\s*"per_load_auto_pull"/m,
     "Phase 7 未将每次加载同步成功接入刷新策略。"
   );
   expectMatch(
@@ -63,8 +63,8 @@ const testStaticWiring = () => {
     "Phase 7 未将后台自动同步成功接入刷新策略。"
   );
   expectMatch(
-    /const handleBackgroundAutoSyncResult = async[\s\S]*?suppressMessage:\s*result\.sameSessionRemoteWrite === true[\s\S]*?getSameDeviceRefreshMessageOptions\(result\)/m,
-    "后台自动同步结果未区分 same-session 静默与 same-device 文案。"
+    /const handleBackgroundAutoSyncResult = async[\s\S]*?suppressMessage:\s*!decision\.shouldNotify[\s\S]*?getSameDeviceRefreshMessageOptions\(result\)/m,
+    "后台自动同步结果未通过决策函数区分 same-session 静默与 same-device 文案。"
   );
   expectMatch(
     /return asSuccessResult\(\s*"merged_read_progress",\s*\{\s*contentHash:\s*mergedContentHash,\s*remoteUpdatedAt:\s*pushResult\?\.updatedAt \|\| null,\s*\},\s*\{[\s\S]*?reason:\s*versionDecision\.reason \|\| "read_progress_auto_merge"[\s\S]*?\.\.\.recentRemoteWriteResultContext[\s\S]*?appliedRemoteWriter:\s*pushResult\?\.writerMetadata \|\| null[\s\S]*?\}\s*\)/m,
@@ -315,6 +315,106 @@ const testDirtySettingsSuppressesReload = () => {
   assert.equal(messages[0].isSuccess, null);
 };
 
+const testSameMachineDecisionSuppressesListReload = () => {
+  const { hooks } = createHarness();
+
+  const decision = hooks.decideWhatToDoWithRemoteChange(
+    {
+      status: "success",
+      action: "pulled",
+      sameDeviceRemoteWrite: true,
+    },
+    {
+      source: "background",
+      document: createQueryDocument({ hasThreadList: true }),
+      href: "https://stage1st.com/2b/forum-1-1.html",
+      search: "",
+    }
+  );
+
+  assert.equal(decision.shouldApply, false);
+  assert.equal(decision.shouldReload, false);
+  assert.equal(decision.shouldNotify, false);
+  assert.equal(decision.reason, "same_machine_write");
+  assert.equal(decision.refreshPlan.policy, "same_machine_suppressed");
+};
+
+const testDirtySettingsDecisionWinsOverSameMachineSuppression = () => {
+  const { hooks } = createHarness();
+
+  const decision = hooks.decideWhatToDoWithRemoteChange(
+    {
+      status: "success",
+      action: "pulled",
+      sameDeviceRemoteWrite: true,
+    },
+    {
+      source: "daily_startup",
+      document: createQueryDocument({
+        hasThreadList: true,
+        hasDirtySettings: true,
+      }),
+      href: "https://stage1st.com/2b/forum-1-1.html",
+      search: "",
+    }
+  );
+
+  assert.equal(decision.shouldApply, true);
+  assert.equal(decision.shouldReload, false);
+  assert.equal(decision.shouldNotify, true);
+  assert.equal(decision.suppressMessage, false);
+  assert.equal(decision.reason, "settings_dirty");
+  assert.equal(decision.refreshPlan.policy, "settings_dirty");
+};
+
+const testSameMachineNoChangeDecisionSuppressesDailyToast = () => {
+  const { hooks } = createHarness();
+
+  const decision = hooks.decideWhatToDoWithRemoteChange(
+    {
+      status: "success",
+      action: "no_change",
+      sameDeviceRemoteWrite: true,
+    },
+    {
+      source: "daily_startup",
+    }
+  );
+
+  assert.equal(decision.shouldApply, false);
+  assert.equal(decision.shouldReload, false);
+  assert.equal(decision.shouldNotify, false);
+  assert.equal(decision.reason, "same_machine_write");
+  assert.equal(decision.refreshPlan.policy, "same_machine_suppressed");
+};
+
+const testForegroundSameMachineNoChangeKeepsSpecificReason = () => {
+  const { hooks } = createHarness();
+
+  const decision = hooks.decideWhatToDoWithRemoteChange(
+    {
+      status: "success",
+      action: "no_change",
+      sameDeviceRemoteWrite: true,
+      foregroundRefreshSuppressReason: "same_machine_hash_equal",
+    },
+    {
+      source: "foreground",
+      remoteChangeKind: "same_device_write",
+    }
+  );
+
+  assert.equal(decision.shouldApply, false);
+  assert.equal(decision.shouldReload, false);
+  assert.equal(decision.shouldNotify, false);
+  assert.equal(decision.reason, "same_machine_hash_equal");
+  assert.equal(decision.refreshPlan.policy, "foreground_probe_suppressed");
+  assert.equal(
+    decision.refreshPlan.reloadSchedule.reason,
+    "same_machine_hash_equal"
+  );
+};
+
 const main = async () => {
   testStaticWiring();
   testRefreshPlanDetection();
@@ -325,6 +425,10 @@ const main = async () => {
   testSameDeviceBackgroundCopyUsesSpecificMessage();
   testSameDeviceBackgroundMergedCopyUsesSpecificMessage();
   testDirtySettingsSuppressesReload();
+  testSameMachineDecisionSuppressesListReload();
+  testDirtySettingsDecisionWinsOverSameMachineSuppression();
+  testSameMachineNoChangeDecisionSuppressesDailyToast();
+  testForegroundSameMachineNoChangeKeepsSpecificReason();
   console.log("Phase 7 post-sync refresh policy checks passed.");
 };
 
