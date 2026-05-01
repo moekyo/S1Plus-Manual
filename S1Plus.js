@@ -6640,6 +6640,8 @@
   const NUX_VINE_SEC_SIGNATURE = { r: 54, g: 255, b: 114 };
   const NUX_THEME_SEC_SIGNATURE_TOLERANCE = 3;
   let isNuxDarkModeChangeListenerBound = false;
+  let isNuxCompatibilityStyleInjected = false;
+  const NUX_DETECTION_RETRY_DELAYS = [80, 240, 700, 1500, 3000];
 
   const parseRgbaColor = (colorText) => {
     const colorTextSafe = String(colorText || "").trim();
@@ -7119,38 +7121,63 @@
     isNuxDarkModeChangeListenerBound = true;
   };
 
-  const detectS1Nux = () => {
+  const injectNuxCompatibilityStyles = () => {
+    if (isNuxCompatibilityStyleInjected) {
+      return;
+    }
+    isNuxCompatibilityStyleInjected = true;
+
+    // 仅当 NUX 启用时才注入深色模式专用样式，避免影响 NUX 禁用时的浅色模式
+    GM_addStyle(`
+      @media (prefers-color-scheme: dark) {
+        /* 输入框焦点：使用深灰色背景 */
+        .s1p-input:focus {
+          background-color: #3e3d3d;
+          border-color: var(--s1p-sec-h);
+        }
+        /* 删除按钮：使用白色图标 */
+        .s1p-editor-btn.s1p-delete-button {
+          background-image: url("${SVG_ICON_DELETE_HOVER}") !important;
+        }
+        /* 状态标识：使用深色背景和浅色文字 */
+        :root {
+          --s1p-list-item-status-bg: #3e3d3d;
+          --s1p-list-item-status-text: #d1d5db;
+        }
+      }
+    `);
+  };
+
+  const applyNuxCompatibilityFixes = () => {
+    injectNuxCompatibilityStyles();
+    bindNuxDarkModeChangeListener();
+    applyNuxDarkTextContrastFix();
+    applyNuxTransitionIsolationFix();
+    applyNuxSegmentedContrastFix();
+    applyNuxVineTabToneFix();
+  };
+
+  const detectS1Nux = ({ logWhenMissing = true } = {}) => {
+    if (isS1NuxEnabled) {
+      applyNuxCompatibilityFixes();
+      return true;
+    }
+
     const archiverLink = document.querySelector('a[href*="archiver"]');
     if (archiverLink) {
       const style = window.getComputedStyle(archiverLink, "::before");
       if (style && style.content.includes("NUXISENABLED")) {
         console.log("S1 Plus: S1 NUX is enabled");
         isS1NuxEnabled = true;
-
-        // [新增] 仅当 NUX 启用时才注入深色模式专用样式，避免影响 NUX 禁用时的浅色模式
-        GM_addStyle(`
-          @media (prefers-color-scheme: dark) {
-            /* 输入框焦点：使用深灰色背景 */
-            .s1p-input:focus {
-              background-color: #3e3d3d;
-              border-color: var(--s1p-sec-h);
-            }
-            /* 删除按钮：使用白色图标 */
-            .s1p-editor-btn.s1p-delete-button {
-              background-image: url("${SVG_ICON_DELETE_HOVER}") !important;
-            }
-            /* 状态标识：使用深色背景和浅色文字 */
-            :root {
-              --s1p-list-item-status-bg: #3e3d3d;
-              --s1p-list-item-status-text: #d1d5db;
-            }
-          }
-        `);
-        bindNuxDarkModeChangeListener();
-      } else {
-        console.log("S1 Plus: S1 NUX is not enabled");
+        applyNuxCompatibilityFixes();
+        return true;
       }
     }
+
+    if (logWhenMissing) {
+      console.log("S1 Plus: S1 NUX is not enabled");
+    }
+    return false;
   };
 
   let dynamicallyHiddenThreads = {};
@@ -37611,6 +37638,7 @@
   const runStartupSyncFlowDeferred = ({
     welcomePopupWasShown = false,
     shouldTryNuxRecommendation = false,
+    waitForNuxDetection = null,
   } = {}) => {
     const scheduledAt = Date.now();
     const runStartupOrchestratorFlow = async ({
@@ -37654,6 +37682,9 @@
           startupSyncResult !== "popup_shown" &&
           !tokenPopupWasShown
         ) {
+          if (waitForNuxDetection && typeof waitForNuxDetection.then === "function") {
+            await waitForNuxDetection;
+          }
           handleNuxRecommendation();
         }
       } catch (error) {
@@ -37861,30 +37892,238 @@
     return false;
   };
 
-  async function main() {
-    // [即时生效] 立即应用楼层屏蔽CSS类，防止FOUC (Flash of Unstyled Content)
-    // 必须在页面初始化早期执行
-    hideSystemBlockedPosts();
-    migrateLegacySettingsIfNeeded();
+  const S1P_INIT_PHASES = Object.freeze({
+    DOCUMENT_START: "document-start",
+    BODY_READY: "body-ready",
+    FORUM_READY: "forum-ready",
+    SERVICES_READY: "services-ready",
+    CONTENT_READY: "content-ready",
+    DEFERRED: "deferred",
+  });
 
-    // [修改] 调用欢迎弹窗并接收其状态
-    const welcomePopupWasShown = showFirstTimeWelcomeIfNeeded();
+  const createS1PlusInitializationContext = () => ({
+    startedAt: Date.now(),
+    phaseResults: Object.create(null),
+    backgroundTasks: new Map(),
+    welcomePopupWasShown: false,
+    shouldTryNuxRecommendation: true,
+    nuxDetectionPromise: null,
+  });
 
-    migrateLegacyReadProgressData();
-    await cleanupOldReadProgress();
-    detectS1Nux();
-    const shouldTryNuxRecommendation = !welcomePopupWasShown;
+  const waitForDocumentBodyReady = () => {
+    if (document.body) {
+      return Promise.resolve(document.body);
+    }
 
-    initializeNavbar();
-    registerAutoSyncIndicatorDebugApi();
-    initializeAutoSyncIndicatorCrossTabSync();
-    bindPendingAutoSyncRecoveryHooks();
-    recoverPendingAutoSyncIfNeeded();
-    initializeGenericDisplayPopover();
-    initializeSettingsCacheSync();
-    initializeSettingsFallbackSync();
-    initializeCoreDataCacheSync();
-    initializeReadProgressCrossTabRefresh();
+    return new Promise((resolve) => {
+      const runWhenReady = () => {
+        if (!document.body) {
+          window.setTimeout(runWhenReady, 0);
+          return;
+        }
+        document.removeEventListener("DOMContentLoaded", runWhenReady);
+        resolve(document.body);
+      };
+
+      document.addEventListener("DOMContentLoaded", runWhenReady, { once: true });
+      window.setTimeout(runWhenReady, 0);
+    });
+  };
+
+  const normalizeInitializationRetryDelays = (retryDelays) =>
+    Array.isArray(retryDelays)
+      ? retryDelays
+        .map((delay) => Number(delay))
+        .filter((delay) => Number.isFinite(delay) && delay >= 0)
+      : [];
+
+  const getInitializationTaskLabel = (phaseName, task) =>
+    `${phaseName}/${task?.name || "anonymous task"}`;
+
+  const runInitializationTaskWithRetry = async (phaseName, task, context) => {
+    const retryDelays = normalizeInitializationRetryDelays(task.retryDelays);
+    let lastResult;
+    let lastError = null;
+
+    for (let attempt = 0; ; attempt += 1) {
+      const taskMeta = { phaseName, attempt };
+      try {
+        lastResult = await task.run(context, taskMeta);
+        lastError = null;
+        const shouldRetry =
+          typeof task.shouldRetry === "function" &&
+          task.shouldRetry(lastResult, context, taskMeta);
+        if (!shouldRetry) {
+          if (typeof task.onComplete === "function") {
+            await task.onComplete(lastResult, context, taskMeta);
+          }
+          return lastResult;
+        }
+      } catch (error) {
+        lastError = error;
+        if (task.retryOnError !== true) {
+          const taskLabel = getInitializationTaskLabel(phaseName, task);
+          console.error(`S1 Plus: 初始化任务失败 (${taskLabel}):`, error);
+          if (!task.optional) {
+            throw error;
+          }
+          return undefined;
+        }
+      }
+
+      const retryDelay = retryDelays[attempt];
+      if (!Number.isFinite(retryDelay)) {
+        if (typeof task.onExhausted === "function") {
+          return task.onExhausted(lastResult, context, {
+            phaseName,
+            attempt,
+            error: lastError,
+          });
+        }
+        if (lastError) {
+          const taskLabel = getInitializationTaskLabel(phaseName, task);
+          console.error(`S1 Plus: 初始化任务重试后仍失败 (${taskLabel}):`, lastError);
+          if (!task.optional) {
+            throw lastError;
+          }
+        }
+        return lastResult;
+      }
+
+      await sleep(retryDelay);
+    }
+  };
+
+  const runInitializationTask = async (phaseName, task, context) => {
+    const taskLabel = getInitializationTaskLabel(phaseName, task);
+    const taskPromise = runInitializationTaskWithRetry(phaseName, task, context);
+    if (task.blocking === false) {
+      const guardedTaskPromise = taskPromise.catch((error) => {
+        console.error(`S1 Plus: 后台初始化任务失败 (${taskLabel}):`, error);
+      });
+      if (task.contextKey) {
+        context[task.contextKey] = guardedTaskPromise;
+      }
+      context.backgroundTasks.set(taskLabel, guardedTaskPromise);
+      guardedTaskPromise.finally(() => {
+        context.backgroundTasks.delete(taskLabel);
+      });
+      return undefined;
+    }
+    if (task.contextKey) {
+      context[task.contextKey] = taskPromise;
+    }
+    return taskPromise;
+  };
+
+  const runInitializationPhase = async (phaseName, tasks, context) => {
+    const phaseStartedAt = Date.now();
+    for (const task of tasks) {
+      if (!task || typeof task.run !== "function") {
+        continue;
+      }
+      await runInitializationTask(phaseName, task, context);
+    }
+    context.phaseResults[phaseName] = {
+      completedAt: Date.now(),
+      durationMs: Date.now() - phaseStartedAt,
+    };
+  };
+
+  async function main(initializationContext = createS1PlusInitializationContext()) {
+    await runInitializationPhase(
+      S1P_INIT_PHASES.BODY_READY,
+      [
+        {
+          name: "apply system-blocked post visibility",
+          run: () => hideSystemBlockedPosts(),
+        },
+        {
+          name: "migrate legacy settings",
+          run: () => migrateLegacySettingsIfNeeded(),
+        },
+        {
+          name: "show version welcome",
+          run: (context) => {
+            context.welcomePopupWasShown = showFirstTimeWelcomeIfNeeded();
+            context.shouldTryNuxRecommendation = !context.welcomePopupWasShown;
+          },
+        },
+        {
+          name: "migrate read progress",
+          run: () => migrateLegacyReadProgressData(),
+        },
+        {
+          name: "cleanup old read progress",
+          run: () => cleanupOldReadProgress(),
+        },
+      ],
+      initializationContext
+    );
+
+    await runInitializationPhase(
+      S1P_INIT_PHASES.FORUM_READY,
+      [
+        {
+          name: "detect S1 NUX",
+          blocking: false,
+          optional: true,
+          contextKey: "nuxDetectionPromise",
+          retryDelays: NUX_DETECTION_RETRY_DELAYS,
+          run: () => detectS1Nux({ logWhenMissing: false }),
+          shouldRetry: (isDetected) => isDetected !== true,
+          onExhausted: () => detectS1Nux({ logWhenMissing: true }),
+        },
+        {
+          name: "initialize navbar",
+          run: () => initializeNavbar(),
+        },
+      ],
+      initializationContext
+    );
+
+    await runInitializationPhase(
+      S1P_INIT_PHASES.SERVICES_READY,
+      [
+        {
+          name: "register auto-sync indicator debug api",
+          run: () => registerAutoSyncIndicatorDebugApi(),
+        },
+        {
+          name: "initialize auto-sync indicator cross-tab sync",
+          run: () => initializeAutoSyncIndicatorCrossTabSync(),
+        },
+        {
+          name: "bind pending auto-sync recovery hooks",
+          run: () => bindPendingAutoSyncRecoveryHooks(),
+        },
+        {
+          name: "recover pending auto-sync",
+          run: () => recoverPendingAutoSyncIfNeeded(),
+        },
+        {
+          name: "initialize generic display popover",
+          run: () => initializeGenericDisplayPopover(),
+        },
+        {
+          name: "initialize settings cache sync",
+          run: () => initializeSettingsCacheSync(),
+        },
+        {
+          name: "initialize settings fallback sync",
+          run: () => initializeSettingsFallbackSync(),
+        },
+        {
+          name: "initialize core data cache sync",
+          run: () => initializeCoreDataCacheSync(),
+        },
+        {
+          name: "initialize read-progress cross-tab refresh",
+          run: () => initializeReadProgressCrossTabRefresh(),
+        },
+      ],
+      initializationContext
+    );
 
     let observer = null;
     let observerApplyTimer = null;
@@ -38448,16 +38687,48 @@
       }, DOM_OBSERVER_DEBOUNCE_MS);
     };
 
-    observer = new MutationObserver(observerCallback);
-    applyChanges();
-    const watchTarget = resolveObserverWatchTarget();
-    observer.observe(watchTarget, { childList: true, subtree: true });
+    await runInitializationPhase(
+      S1P_INIT_PHASES.CONTENT_READY,
+      [
+        {
+          name: "create DOM mutation observer",
+          run: () => {
+            observer = new MutationObserver(observerCallback);
+          },
+        },
+        {
+          name: "apply initial DOM changes",
+          run: () => applyChanges(),
+        },
+        {
+          name: "observe forum DOM changes",
+          run: () => {
+            const watchTarget = resolveObserverWatchTarget();
+            observer.observe(watchTarget, { childList: true, subtree: true });
+          },
+        },
+      ],
+      initializationContext
+    );
 
-    // 初始化完成后再调度启动同步，避免每日首次加载时主流程阻塞。
-    runStartupSyncFlowDeferred({
-      welcomePopupWasShown,
-      shouldTryNuxRecommendation,
-    });
+    await runInitializationPhase(
+      S1P_INIT_PHASES.DEFERRED,
+      [
+        {
+          name: "schedule startup sync flow",
+          blocking: false,
+          run: (context) => {
+            // 初始化完成后再调度启动同步，避免每日首次加载时主流程阻塞。
+            runStartupSyncFlowDeferred({
+              welcomePopupWasShown: context.welcomePopupWasShown,
+              shouldTryNuxRecommendation: context.shouldTryNuxRecommendation,
+              waitForNuxDetection: context.nuxDetectionPromise,
+            });
+          },
+        },
+      ],
+      initializationContext
+    );
   }
 
   function applyChanges() {
@@ -38542,37 +38813,29 @@
     }
   }
 
-  const runMainWhenDocumentBodyReady = () => {
-    let didRunMain = false;
-    const runMain = () => {
-      if (didRunMain) {
-        return;
-      }
-      didRunMain = true;
-      main().catch((error) => {
+  const runS1PlusInitializer = () => {
+    const initializationContext = createS1PlusInitializationContext();
+    const documentStartPhasePromise = runInitializationPhase(
+      S1P_INIT_PHASES.DOCUMENT_START,
+      [
+        {
+          name: "apply early system-blocked post visibility",
+          optional: true,
+          run: () => hideSystemBlockedPosts(),
+        },
+      ],
+      initializationContext
+    );
+
+    waitForDocumentBodyReady()
+      .then(() => documentStartPhasePromise)
+      .then(() => main(initializationContext))
+      .catch((error) => {
         console.error("S1 Plus: 初始化失败:", error);
       });
-    };
-
-    if (document.body) {
-      runMain();
-      return;
-    }
-
-    const runWhenReady = () => {
-      if (!document.body) {
-        window.setTimeout(runWhenReady, 0);
-        return;
-      }
-      document.removeEventListener("DOMContentLoaded", runWhenReady);
-      runMain();
-    };
-
-    document.addEventListener("DOMContentLoaded", runWhenReady, { once: true });
-    window.setTimeout(runWhenReady, 0);
   };
 
   if (!IS_S1P_TEST_MODE) {
-    runMainWhenDocumentBodyReady();
+    runS1PlusInitializer();
   }
 })();

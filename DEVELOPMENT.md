@@ -161,9 +161,18 @@ node sync-across-multiple-tab/scripts/test-settings-migration.js
 
 ### 4.5 页面增强主入口
 
-- `main`：初始化总控
+- `runS1PlusInitializer`：脚本实际入口，先运行 `document-start` 阶段，再等待 `document.body`。
+- `S1P_INIT_PHASES` / `runInitializationPhase`：分阶段初始化框架，当前阶段为 `document-start`、`body-ready`、`forum-ready`、`services-ready`、`content-ready`、`deferred`。
+- `main`：body ready 后的初始化总控，按阶段调度迁移、论坛 DOM 依赖任务、服务注册、内容扫描与延后同步。
 - `applyChanges`：全量应用
 - `MutationObserver` 增量分发：列表/帖子/引用/评分/提醒五路处理
+
+实现约束（维护时请保持）：
+
+- `document-start` 阶段只放低依赖、防闪烁类任务；不要依赖完整论坛 DOM。
+- 依赖论坛结构或 NUX 标记的逻辑应放在 `forum-ready`，并通过框架的 `retryDelays` / `shouldRetry` 表达等待条件。
+- 首次 DOM 扫描和 MutationObserver 挂载属于 `content-ready`；启动同步、推荐弹窗等非首屏任务属于 `deferred`。
+- 后台任务如果会影响后续判断，应通过 `contextKey` 暴露 promise，例如 NUX 推荐会等待 `nuxDetectionPromise`，避免检测未结束时误判。
 
 ### 4.6 增强悬浮控件（Floating Controls）
 
