@@ -4236,7 +4236,8 @@
       pointer-events: none;
       max-width: min(80vw, 560px);
       white-space: normal;
-      word-break: break-word;
+      overflow-wrap: break-word;
+      word-break: normal;
       line-height: 1.5;
       text-align: center;
     }
@@ -26086,26 +26087,35 @@
     return getGlobalToastRoot();
   };
 
-  const applyLocalToastResponsiveWidth = (toast, mountTarget, options = {}) => {
+  const applyToastResponsiveWidth = (toast, mountTarget, options = {}) => {
     if (
       !(toast instanceof Element) ||
-      !(mountTarget instanceof Element) ||
-      mountTarget.id === GLOBAL_TOAST_ROOT_ID
+      !(mountTarget instanceof Element)
     ) {
       return;
     }
 
-    const containerRect = mountTarget.getBoundingClientRect();
-    const containerWidth = Math.floor(containerRect.width || mountTarget.clientWidth || 0);
-    if (containerWidth <= 0) {
-      return;
-    }
+    const isGlobal = mountTarget.id === GLOBAL_TOAST_ROOT_ID;
+    let availableWidth;
 
-    const parsedInset = Number(options.horizontalInsetPx);
-    const horizontalInset = Number.isFinite(parsedInset)
-      ? Math.max(0, parsedInset)
-      : 16;
-    const availableWidth = Math.max(80, containerWidth - horizontalInset * 2);
+    if (isGlobal) {
+      const viewportWidth = document.documentElement.clientWidth || window.innerWidth || 0;
+      if (viewportWidth <= 0) {
+        return;
+      }
+      availableWidth = Math.min(viewportWidth * 0.8, 560);
+    } else {
+      const containerRect = mountTarget.getBoundingClientRect();
+      const containerWidth = Math.floor(containerRect.width || mountTarget.clientWidth || 0);
+      if (containerWidth <= 0) {
+        return;
+      }
+      const parsedInset = Number(options.horizontalInsetPx);
+      const horizontalInset = Number.isFinite(parsedInset)
+        ? Math.max(0, parsedInset)
+        : 16;
+      availableWidth = Math.max(80, containerWidth - horizontalInset * 2);
+    }
 
     toast.style.maxWidth = "none";
     toast.style.width = "max-content";
@@ -26165,7 +26175,7 @@
 
     const mountTarget = resolveToastMountTarget(options);
     mountTarget.appendChild(toast);
-    applyLocalToastResponsiveWidth(toast, mountTarget, options);
+    applyToastResponsiveWidth(toast, mountTarget, options);
     currentToast = toast;
     let toastDismissed = false;
     toast.__s1pDismissToast = (reason = "dismissed") => {
