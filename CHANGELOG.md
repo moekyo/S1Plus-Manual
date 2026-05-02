@@ -42,6 +42,8 @@
 ### 🐛 界面细节修复 (UI Fixes)
 
 - **帖子内浅色背景块深色模式修复**: 深色模式下会移除帖子正文内 `font/style/bgcolor/table/td/blockquote/code/pre` 等常见结构上的浅色背景，避免白底或浅灰底内容在 NUX 深色文字色下变得不可读，并通过 `document-start` 降低刷新时闪现。
+- **深色模式下帖子黑字可读性修复（`textLuminance` 误杀）**: 去掉了 `shouldApplyNuxDarkTextFix` 中 `textLuminance > backgroundLuminance` 的拦截条件。该条件原意是跳过"亮字在暗底"（已可读）的情况，但会误杀 `rgb(34,34,34)` 这类亮度仅略高于极暗背景（如 `#19212f`）的深色文字——虽然文字比背景亮，但对比度可能低至 1.14，几乎不可读。移除后仅保留 `backgroundLuminance > 0.55` 来排除浅色背景场景。
+- **深色模式下帖子黑字修复反馈环修复**: `shouldApplyNuxDarkTextFix` 原先用 `window.getComputedStyle(node).color` 计算对比度，但 `.s1p-nux-dark-text-fixed` class 打上后 CSS 已将文字变为主题亮色，导致后续重算时读到修复后的亮色 → 对比度很高 → 误判为"已可读，无需修复" → 删除 class → 文字变回暗色 → 再次判定需要修复 → 无限 toggle。改为优先取 `node.style.color`（内联原始色，不受 fix class 影响），仅在无内联色时才 fallback 到 computed color。
 - **NUX 深色输入框聚焦白底修复**: NUX 检测改为由初始化框架托管的后台重试任务，避免 `document-start` 过早执行时错过 NUX 标记，导致设置面板输入框聚焦后回退到白色背景。
 - **同步设置区信息架构重组**: “设置同步”页按真实逻辑拆为“云端更新检查”“自动上传本地变更”“状态显示”等分组；“检查策略”与“本地变更后自动后台同步”不再平铺混在一起，“持续可见时低频复查”也只在“回到前台”策略下显示。
 - **自动检查模式说明文案优化**: 将"回到前台检查"与"持续可见时复查"的模式描述文案拆分，移除各模式说明中已由独立开关控制的"页面持续可见时"表述，减少用户困惑。
