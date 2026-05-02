@@ -2944,6 +2944,13 @@
       border-color: var(--s1p-sec);
       background-color: var(--s1p-white);
     }
+    .s1p-input.s1p-input-error {
+      border-color: var(--s1p-red);
+      box-shadow: 0 0 0 2px rgba(216, 59, 59, 0.16);
+    }
+    .s1p-input.s1p-input-error:focus {
+      border-color: var(--s1p-red);
+    }
     .s1p-textarea {
       resize: vertical;
       min-height: 80px;
@@ -4223,6 +4230,7 @@
       color: var(--s1p-t); /* <-- 修改了此行 */
       background-color: var(--s1p-bg); /* <-- 修改了此行 */
       box-shadow: 0 4px 12px rgba(var(--s1p-shadow-color-rgb), 0.15);
+      box-sizing: border-box;
       opacity: 0;
       transition: opacity 0.3s ease-out, transform 0.3s ease-out;
       pointer-events: none;
@@ -4248,7 +4256,8 @@
       box-sizing: border-box;
       max-width: calc(100% - 32px);
       white-space: normal;
-      overflow-wrap: anywhere;
+      overflow-wrap: break-word;
+      word-break: normal;
       line-height: 1.5;
     }
     .s1p-toast-notification.visible {
@@ -10546,6 +10555,7 @@
     if (
       !settings.syncRemoteEnabled ||
       !settings.syncAutoEnabled ||
+      !getLocalSyncDeviceId(settings) ||
       !settings.syncRemoteGistId ||
       !settings.syncRemotePat
     ) {
@@ -11878,6 +11888,18 @@
       return;
     }
 
+    const settings = getSettings();
+    if (
+      !settings.syncRemoteEnabled ||
+      !settings.syncAutoEnabled ||
+      !getLocalSyncDeviceId(settings) ||
+      !settings.syncRemoteGistId ||
+      !settings.syncRemotePat
+    ) {
+      clearAutoSyncRuntimeQueue();
+      return;
+    }
+
     hasPendingBackgroundSync = true;
     setAutoSyncIndicatorPendingPhase(reason);
 
@@ -11949,9 +11971,11 @@
     if (
       !settings.syncRemoteEnabled ||
       !settings.syncAutoEnabled ||
+      !getLocalSyncDeviceId(settings) ||
       !settings.syncRemoteGistId ||
       !settings.syncRemotePat
     ) {
+      clearAutoSyncRuntimeQueue();
       return;
     }
     if (getActiveAutoSyncConflictPause()) {
@@ -20895,9 +20919,11 @@
     if (
       !settings.syncRemoteEnabled ||
       !settings.syncAutoEnabled ||
+      !getLocalSyncDeviceId(settings) ||
       !settings.syncRemoteGistId ||
       !settings.syncRemotePat
     ) {
+      clearAutoSyncRuntimeQueue();
       return;
     }
     const conflictPauseState = getActiveAutoSyncConflictPause();
@@ -26060,21 +26086,70 @@
     return getGlobalToastRoot();
   };
 
+  const applyLocalToastResponsiveWidth = (toast, mountTarget, options = {}) => {
+    if (
+      !(toast instanceof Element) ||
+      !(mountTarget instanceof Element) ||
+      mountTarget.id === GLOBAL_TOAST_ROOT_ID
+    ) {
+      return;
+    }
+
+    const containerRect = mountTarget.getBoundingClientRect();
+    const containerWidth = Math.floor(containerRect.width || mountTarget.clientWidth || 0);
+    if (containerWidth <= 0) {
+      return;
+    }
+
+    const parsedInset = Number(options.horizontalInsetPx);
+    const horizontalInset = Number.isFinite(parsedInset)
+      ? Math.max(0, parsedInset)
+      : 16;
+    const availableWidth = Math.max(80, containerWidth - horizontalInset * 2);
+
+    toast.style.maxWidth = "none";
+    toast.style.width = "max-content";
+    toast.style.whiteSpace = "nowrap";
+    toast.style.overflowWrap = "normal";
+    toast.style.wordBreak = "normal";
+
+    const requiredWidth = Math.ceil(
+      toast.getBoundingClientRect().width || toast.scrollWidth || 0
+    );
+    toast.style.maxWidth = `${availableWidth}px`;
+    if (requiredWidth > availableWidth) {
+      toast.style.width = `${availableWidth}px`;
+      toast.style.whiteSpace = "normal";
+      toast.style.overflowWrap = "break-word";
+    } else if (requiredWidth > 0) {
+      toast.style.width = `${requiredWidth}px`;
+    }
+  };
+
   /**
    * [MODIFIED] 显示消息，支持 true(成功)/false(失败)/null(中立) 三种状态。
    * 默认挂载到全局 toast root；需要面板内提示时显式传入 container。
    * @param {string} message - 要显示的消息内容。
    * @param {boolean|null} isSuccess - 消息状态。
-   * @param {{container?: Element}=} options - 可选的局部挂载容器。
+   * @param {{container?: Element, durationMs?: number, onDismiss?: Function}=} options - 可选的局部挂载容器与退场回调。
    */
   const showMessage = (message, isSuccess, options = {}) => {
     // 如果上一个提示框还存在，立即移除，防止重叠
     if (currentToast) {
-      currentToast.remove();
+      if (typeof currentToast.__s1pDismissToast === "function") {
+        currentToast.__s1pDismissToast("replaced");
+      } else {
+        currentToast.remove();
+      }
     }
 
     const toast = document.createElement("div");
     toast.textContent = message;
+    const onDismiss =
+      typeof options.onDismiss === "function" ? options.onDismiss : null;
+    const durationMs = Number.isFinite(Number(options.durationMs))
+      ? Math.max(0, Number(options.durationMs))
+      : 3000;
 
     // --- [核心修正] ---
     // 使用更完善的逻辑来处理三种状态
@@ -26088,8 +26163,30 @@
     toast.className = toastClass;
     // --- [修正结束] ---
 
-    resolveToastMountTarget(options).appendChild(toast);
+    const mountTarget = resolveToastMountTarget(options);
+    mountTarget.appendChild(toast);
+    applyLocalToastResponsiveWidth(toast, mountTarget, options);
     currentToast = toast;
+    let toastDismissed = false;
+    toast.__s1pDismissToast = (reason = "dismissed") => {
+      if (toastDismissed) {
+        return;
+      }
+      toastDismissed = true;
+      if (toast.parentNode) {
+        toast.remove();
+      }
+      if (currentToast === toast) {
+        currentToast = null;
+      }
+      if (onDismiss) {
+        try {
+          onDismiss({ reason, toast });
+        } catch (error) {
+          console.warn("S1 Plus: toast 退场回调执行失败。", error);
+        }
+      }
+    };
 
     // 让动画生效
     setTimeout(() => {
@@ -26102,16 +26199,14 @@
       toast.addEventListener(
         "transitionend",
         () => {
-          if (toast.parentNode) {
-            toast.remove();
-          }
-          if (currentToast === toast) {
-            currentToast = null;
-          }
+          toast.__s1pDismissToast("timeout");
         },
         { once: true }
       );
-    }, 3000);
+      setTimeout(() => {
+        toast.__s1pDismissToast("timeout_fallback");
+      }, 400);
+    }, durationMs);
   };
 
   const dismissExistingConfirmModal = (
@@ -27403,6 +27498,11 @@
               </label>
             </div>
             <p class="s1p-setting-desc">启用后，屏蔽、标记、阅读进度等本地数据变化会在停止操作后自动上传或合并；关闭后仍可手动同步，也不影响上方云端更新检查。</p>
+            <div class="s1p-settings-item s1p-settings-item-column">
+              <label class="s1p-settings-label" for="s1p-sync-device-id-input">同步设备 ID（自动上传必填）</label>
+              <input type="text" id="s1p-sync-device-id-input" class="s1p-input s1p-input-full" placeholder="例如：MacBook-Pro-主力机" maxlength="80" autocomplete="off" data-s1p-sync-control>
+            </div>
+            <p class="s1p-setting-desc">开启自动上传本地变更时必填，用于标记这台设备写入的云端记录，方便其他页面或同设备环境识别“这是本机刚同步的变更”。这个 ID 会写入云端记录元信息，但不会作为设置同步到其他设备。</p>
           </div>
 
           <div class="s1p-sync-settings-section" id="s1p-sync-status-section">
@@ -27437,11 +27537,6 @@
               </label>
             </div>
             <p class="s1p-setting-desc">关闭时仅同步 280 字预览（更快更省流量）；开启后会同步完整收藏内容（跨设备可查看全文，但体积更大）。</p>
-            <div class="s1p-settings-item s1p-settings-item-column s1p-settings-item-top12">
-              <label class="s1p-settings-label" for="s1p-sync-device-id-input">同步设备 ID</label>
-              <input type="text" id="s1p-sync-device-id-input" class="s1p-input s1p-input-full" placeholder="例如：MacBook-Pro-主力机" autocomplete="off" data-s1p-sync-control>
-            </div>
-            <p class="s1p-setting-desc">可选，仅用于标记这台设备发起的远程同步，方便诊断“是谁写了云端”。留空则忽略，不会同步到其他设备，也不参与冲突裁决。</p>
           </div>
 
           <div class="s1p-sync-settings-section" id="s1p-github-connection-section">
@@ -27548,8 +27643,8 @@
         </div>`;
 
     const modalContent = modal.querySelector(".s1p-modal-content");
-    const showSettingsMessage = (message, isSuccess) => {
-      showMessage(message, isSuccess, { container: modalContent });
+    const showSettingsMessage = (message, isSuccess, options = {}) => {
+      showMessage(message, isSuccess, { ...options, container: modalContent });
     };
     if (shouldAutoFitModalWidth && requiredWidth > 600) {
       modalContent.style.width = `${requiredWidth}px`;
@@ -28137,6 +28232,96 @@
       autoSyncIndicatorToggle.disabled = !isEnabled;
     };
 
+    const isSyncDeviceIdRequiredForAutoUpload = (settingsSnapshot = null) => {
+      if (settingsSnapshot && typeof settingsSnapshot === "object") {
+        return (
+          settingsSnapshot.syncRemoteEnabled === true &&
+          settingsSnapshot.syncAutoEnabled === true
+        );
+      }
+      return remoteToggle.checked === true && autoSyncToggle.checked === true;
+    };
+
+    const clearSyncDeviceIdInputError = () => {
+      syncDeviceIdInput.classList.remove("s1p-input-error");
+      syncDeviceIdInput.removeAttribute("aria-invalid");
+    };
+
+    const SYNC_DEVICE_ID_REQUIRED_MESSAGE =
+      "开启自动上传本地变更前，请先填写同步设备 ID。";
+
+    const markSyncDeviceIdInputError = ({
+      focusInput = false,
+      scrollBlock = "nearest",
+    } = {}) => {
+      syncDeviceIdInput.classList.add("s1p-input-error");
+      syncDeviceIdInput.setAttribute("aria-invalid", "true");
+      syncDeviceIdInput.scrollIntoView({
+        block: scrollBlock,
+        behavior: "smooth",
+      });
+      if (focusInput) {
+        syncDeviceIdInput.focus({ preventScroll: true });
+      }
+    };
+
+    const disableAutoSyncToggleAfterDeviceIdPrompt = () => {
+      if (!modal.isConnected || syncDeviceIdInput.value.trim()) {
+        return;
+      }
+      if (autoSyncToggle.checked) {
+        autoSyncToggle.checked = false;
+      }
+      updateAutoSyncIndicatorToggleState();
+      updateSyncDeviceIdRequirementState();
+      refreshSyncSettingsDirtyStateFromModal();
+    };
+
+    const updateSyncDeviceIdRequirementState = () => {
+      const isRequired = isSyncDeviceIdRequiredForAutoUpload();
+      syncDeviceIdInput.required = isRequired;
+      syncDeviceIdInput.setAttribute(
+        "aria-required",
+        isRequired ? "true" : "false"
+      );
+      if (!isRequired || syncDeviceIdInput.value.trim()) {
+        clearSyncDeviceIdInputError();
+      }
+    };
+
+    const notifySyncDeviceIdRequiredIfNeeded = (options = {}) => {
+      updateSyncDeviceIdRequirementState();
+      if (
+        !isSyncDeviceIdRequiredForAutoUpload() ||
+        syncDeviceIdInput.value.trim()
+      ) {
+        return false;
+      }
+
+      markSyncDeviceIdInputError(options);
+      showSettingsMessage(SYNC_DEVICE_ID_REQUIRED_MESSAGE, false, {
+        onDismiss: disableAutoSyncToggleAfterDeviceIdPrompt,
+      });
+      return true;
+    };
+
+    const validateSyncDeviceIdRequirement = (settingsSnapshot = null) => {
+      if (!isSyncDeviceIdRequiredForAutoUpload(settingsSnapshot)) {
+        clearSyncDeviceIdInputError();
+        return true;
+      }
+      const normalizedDeviceId =
+        settingsSnapshot?.syncDeviceId || syncDeviceIdInput.value.trim();
+      if (normalizedDeviceId) {
+        clearSyncDeviceIdInputError();
+        return true;
+      }
+
+      markSyncDeviceIdInputError({ focusInput: true, scrollBlock: "center" });
+      showSettingsMessage(SYNC_DEVICE_ID_REQUIRED_MESSAGE, false);
+      return false;
+    };
+
     const updateVisibleRemotePollingToggleState = () => {
       const isForegroundMode = getSyncAutoCheckModeControlValue() === "foreground";
       const isEnabled =
@@ -28158,7 +28343,11 @@
     remoteToggle.addEventListener("change", updateForcePullState);
     remoteToggle.addEventListener("change", updateAutoSyncIndicatorToggleState);
     remoteToggle.addEventListener("change", updateVisibleRemotePollingToggleState);
+    remoteToggle.addEventListener("change", updateSyncDeviceIdRequirementState);
     autoSyncToggle.addEventListener("change", updateAutoSyncIndicatorToggleState);
+    autoSyncToggle.addEventListener("change", () => {
+      notifySyncDeviceIdRequiredIfNeeded({ focusInput: true });
+    });
     if (syncAutoCheckModeHelpBtn) {
       setTemplateTooltip(
         syncAutoCheckModeHelpBtn,
@@ -28230,6 +28419,7 @@
       updateForcePullState();
       updateAutoSyncIndicatorToggleState();
       updateVisibleRemotePollingToggleState();
+      notifySyncDeviceIdRequiredIfNeeded({ focusInput: true });
     });
     const bindDirtyListenerForTextInput = (inputControl) => {
       inputControl.addEventListener("input", markSyncSettingsDirty);
@@ -28250,6 +28440,7 @@
     bindDirtyListenerForTextInput(remoteGistIdInput);
     bindDirtyListenerForTextInput(remotePatInput);
     bindDirtyListenerForTextInput(syncDeviceIdInput);
+    syncDeviceIdInput.addEventListener("input", updateSyncDeviceIdRequirementState);
 
     // [新增] Token 过期提醒逻辑
     const normalizeTokenExpiryDateValue = (value) => {
@@ -28354,6 +28545,7 @@
       updateForcePullState();
       updateAutoSyncIndicatorToggleState();
       updateVisibleRemotePollingToggleState();
+      updateSyncDeviceIdRequirementState();
       updateTokenExpiryInfo();
     };
     const buildSyncSettingsFromModal = () => {
@@ -28378,6 +28570,17 @@
       };
       applySyncAutoCheckModeToSettings(nextSettings, syncAutoCheckMode);
       return nextSettings;
+    };
+    const refreshSyncSettingsDirtyStateFromModal = () => {
+      const currentSettings = getSettings();
+      const modalSettings = buildSyncSettingsFromModal();
+      const isDirty = Object.entries(modalSettings).some(([key, value]) =>
+        hasComparableValueChanged(currentSettings[key], value)
+      );
+      setSettingsModalDirtyState(
+        SETTINGS_MODAL_DIRTY_TAB.SYNC_SETTINGS,
+        isDirty
+      );
     };
 
     applySyncSettingsToModal(settings);
@@ -31836,6 +32039,9 @@
             ...previousSettings,
             ...buildSyncSettingsFromModal(),
           };
+          if (!validateSyncDeviceIdRequirement(currentSettings)) {
+            return;
+          }
           const didRemoteTargetChange =
             String(previousSettings.syncRemoteGistId || "").trim() !==
             currentSettings.syncRemoteGistId;
