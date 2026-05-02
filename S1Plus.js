@@ -4234,7 +4234,7 @@
       opacity: 0;
       transition: opacity 0.3s ease-out, transform 0.3s ease-out;
       pointer-events: none;
-      max-width: min(80vw, 560px);
+      max-width: calc(100vw - 32px);
       white-space: normal;
       overflow-wrap: break-word;
       word-break: normal;
@@ -26103,7 +26103,11 @@
       if (viewportWidth <= 0) {
         return;
       }
-      availableWidth = Math.min(viewportWidth * 0.8, 560);
+      const parsedInset = Number(options.horizontalInsetPx);
+      const horizontalInset = Number.isFinite(parsedInset)
+        ? Math.max(0, parsedInset)
+        : 16;
+      availableWidth = Math.max(80, viewportWidth - horizontalInset * 2);
     } else {
       const containerRect = mountTarget.getBoundingClientRect();
       const containerWidth = Math.floor(containerRect.width || mountTarget.clientWidth || 0);
