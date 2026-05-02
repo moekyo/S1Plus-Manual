@@ -7018,7 +7018,10 @@
       return false;
     }
 
-    const textColor = parseRgbaColor(window.getComputedStyle(node).color);
+    const rawInlineColor = parseRgbaColor(node.style.color) ||
+      parseRgbaColor(node.style.webkitTextFillColor) ||
+      (hasLegacyColorAttr ? parseRgbaColor(node.getAttribute("color")) : null);
+    const textColor = rawInlineColor || parseRgbaColor(window.getComputedStyle(node).color);
     if (!textColor || textColor.a <= 0.08) {
       return false;
     }
@@ -7032,7 +7035,7 @@
 
     const textLuminance = getRelativeLuminance(textColor);
     const backgroundLuminance = getRelativeLuminance(backgroundColor);
-    if (textLuminance > backgroundLuminance || backgroundLuminance > 0.55) {
+    if (backgroundLuminance > 0.55) {
       return false;
     }
 
@@ -7102,7 +7105,8 @@
       }
     });
 
-    collectBySelector(NUX_DARK_TEXT_CANDIDATE_SELECTOR).forEach((node) => {
+    const candidates = collectBySelector(NUX_DARK_TEXT_CANDIDATE_SELECTOR);
+    candidates.forEach((node) => {
       if (!(node instanceof HTMLElement)) {
         return;
       }
