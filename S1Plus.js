@@ -6577,6 +6577,10 @@
         background-image: none !important;
       }
     }
+
+    #hiddenpoststip {
+      display: none !important;
+    }
   `);
 
   // --- S1 NUX 兼容性检测 ---
@@ -24478,9 +24482,9 @@
     const blacklistTip = document.getElementById("hiddenpoststip");
     if (blacklistTip) {
       if (generalSettingsEnabled && settings.hideBlacklistTip) {
-        blacklistTip.style.display = "none";
-      } else {
         blacklistTip.style.removeProperty("display");
+      } else {
+        blacklistTip.style.setProperty("display", "block", "important");
       }
     }
 
