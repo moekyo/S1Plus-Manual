@@ -222,7 +222,7 @@ s1p_settings.syncShowTitleSyncStatus
 
 默认值：
 
-true
+false
 
 说明文字：
 
