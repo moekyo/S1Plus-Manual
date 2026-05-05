@@ -360,6 +360,48 @@ const testOwnerDueReReadsStateAndSkipsStaleGeneration = () => {
   });
 };
 
+const testOwnerDueConsumesSharedStateBeforeTrigger = () => {
+  const { constants, hooks, setState, getState } = getSharedDebounceApi();
+  const now = 7_500_000;
+  let triggerCount = 0;
+  let stateVisibleToTrigger = undefined;
+
+  setState(
+    seedSharedState({
+      generation: 2,
+      ownerTabId: "tab-a",
+      ownerLeaseUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS,
+      dueAt: now,
+      maxWaitUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
+      firstDirtyAt: now - 10_000,
+      lastDirtyAt: now - 1_000,
+      maxLastModified: 752,
+      sources: { read_progress: 2 },
+      reason: "debounced_read_progress",
+    })
+  );
+
+  const result = hooks.handleSharedBackgroundSyncDebounceDue({
+    now,
+    tabId: "tab-a",
+    expectedGeneration: 2,
+    triggerRemoteSyncPush: () => {
+      triggerCount += 1;
+      stateVisibleToTrigger = getState();
+    },
+  });
+
+  assert.equal(triggerCount, 1);
+  assert.equal(stateVisibleToTrigger, null);
+  assert.equal(getState(), null);
+  assert.deepEqual(toPlainObject(result), {
+    status: "triggered",
+    reason: "debounced_read_progress",
+    generation: 2,
+    maxLastModified: 752,
+  });
+};
+
 const testCoveredSuccessClearsPendingAndSharedState = () => {
   const { constants, hooks, store, setState, getState } = getSharedDebounceApi();
   const now = 8_000_000;
@@ -581,6 +623,7 @@ const main = () => {
   testOnlyOwnerSchedulesTimerAndValidLeasePreventsSteal();
   testExpiredOwnerLeaseAllowsTakeover();
   testOwnerDueReReadsStateAndSkipsStaleGeneration();
+  testOwnerDueConsumesSharedStateBeforeTrigger();
   testCoveredSuccessClearsPendingAndSharedState();
   testNewerDirtyRetainsPendingAndSchedulesShortFollowUp();
   testDisabledOrBlockedStatesClearSchedulerState();

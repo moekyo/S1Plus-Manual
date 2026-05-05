@@ -76,6 +76,7 @@ sync-across-multiple-tab/scripts/test-background-sync-shared-debounce.js
 - [x] owner lease 未过期时，其他标签页不能抢占。
 - [x] owner lease 过期后，其他标签页可以接管。
 - [x] owner timer 到点前重读 shared state，旧 generation 不触发同步。
+- [x] owner timer 到点触发时先消费 shared state，避免留下过期 owner。
 - [x] 同步成功只清理已覆盖的 pending / shared debounce。
 - [x] 同步期间出现 newer dirty 时保留 pending，并安排短 follow-up。
 - [x] 远程同步关闭、自动同步关闭、配置不完整、冲突暂停时清理调度状态。
@@ -92,71 +93,79 @@ Phase A 实现结果（2026-05-05）：
 
 新增常量：
 
-- [ ] `BACKGROUND_SYNC_DEBOUNCE_STATE_KEY = "s1p_background_sync_debounce_state"`
-- [ ] `BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS`
-- [ ] `BACKGROUND_SYNC_DEBOUNCE_OWNER_HEARTBEAT_MS`
-- [ ] `BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS`
-- [ ] `BACKGROUND_SYNC_DEBOUNCE_FOLLOW_UP_SETTLE_MS`
+- [x] `BACKGROUND_SYNC_DEBOUNCE_STATE_KEY = "s1p_background_sync_debounce_state"`
+- [x] `BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS`
+- [x] `BACKGROUND_SYNC_DEBOUNCE_OWNER_HEARTBEAT_MS`
+- [x] `BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS`
+- [x] `BACKGROUND_SYNC_DEBOUNCE_FOLLOW_UP_SETTLE_MS`
 
 新增 state helper：
 
-- [ ] `normalizeBackgroundSyncDebounceState(value)`
-- [ ] `getBackgroundSyncDebounceState()`
-- [ ] `setBackgroundSyncDebounceState(state)`
-- [ ] `clearBackgroundSyncDebounceState()`
-- [ ] `mergeBackgroundSyncDebounceSources(state, source)`
-- [ ] `mergeBackgroundSyncDebounceThreadIds(state, threadId)`
-- [ ] `getBackgroundSyncDebounceReason(source)`
+- [x] `normalizeBackgroundSyncDebounceState(value)`
+- [x] `getBackgroundSyncDebounceState()`
+- [x] `setBackgroundSyncDebounceState(state)`
+- [x] `clearBackgroundSyncDebounceState()`
+- [x] `mergeBackgroundSyncDebounceSources(state, source)`
+- [x] `mergeBackgroundSyncDebounceThreadIds(state, threadId)`
+- [x] `getBackgroundSyncDebounceReason(source)`
 
 state 字段至少包括：
 
-- [ ] `version`
-- [ ] `generation`
-- [ ] `ownerTabId`
-- [ ] `ownerLeaseUntil`
-- [ ] `dueAt`
-- [ ] `maxWaitUntil`
-- [ ] `firstDirtyAt`
-- [ ] `lastDirtyAt`
-- [ ] `maxLastModified`
-- [ ] `sources`
-- [ ] `threadIds`
-- [ ] `reason`
+- [x] `version`
+- [x] `generation`
+- [x] `ownerTabId`
+- [x] `ownerLeaseUntil`
+- [x] `dueAt`
+- [x] `maxWaitUntil`
+- [x] `firstDirtyAt`
+- [x] `lastDirtyAt`
+- [x] `maxLastModified`
+- [x] `sources`
+- [x] `threadIds`
+- [x] `reason`
 
 调度规则：
 
-- [ ] `requestSharedBackgroundSyncDebounce({ source, lastModified, threadId })` 更新共享状态。
-- [ ] 每次 dirty 更新递增 `generation`。
-- [ ] `maxLastModified` 取最大本地修改时间。
-- [ ] `firstDirtyAt` 保留最早 dirty 时间。
-- [ ] `lastDirtyAt` 更新为最近 dirty 时间。
-- [ ] `sources` 聚合计数。
-- [ ] `threadIds` 去重并限制长度，避免状态无限膨胀。
-- [ ] `read_progress` dueAt 使用 trailing debounce，但受 `maxWaitUntil` 约束。
-- [ ] `general` dueAt 不被后续 `read_progress` 推迟。
+- [x] `requestSharedBackgroundSyncDebounce({ source, lastModified, threadId })` 更新共享状态。
+- [x] 每次 dirty 更新递增 `generation`。
+- [x] `maxLastModified` 取最大本地修改时间。
+- [x] `firstDirtyAt` 保留最早 dirty 时间。
+- [x] `lastDirtyAt` 更新为最近 dirty 时间。
+- [x] `sources` 聚合计数。
+- [x] `threadIds` 去重并限制长度，避免状态无限膨胀。
+- [x] `read_progress` dueAt 使用 trailing debounce，但受 `maxWaitUntil` 约束。
+- [x] `general` dueAt 不被后续 `read_progress` 推迟。
 
 ## Phase C: owner / timer / lifecycle
 
 新增 owner helper：
 
-- [ ] `tryAcquireBackgroundSyncDebounceOwner(state, now)`
-- [ ] `refreshBackgroundSyncDebounceOwnerLease()`
-- [ ] `releaseBackgroundSyncDebounceOwner()`
-- [ ] `scheduleSharedBackgroundSyncDebounceTimer(state)`
-- [ ] `clearSharedBackgroundSyncDebounceTimer()`
-- [ ] `handleSharedBackgroundSyncDebounceDue()`
+- [x] `tryAcquireBackgroundSyncDebounceOwner(state, now)`
+- [x] `refreshBackgroundSyncDebounceOwnerLease()`
+- [x] `releaseBackgroundSyncDebounceOwner()`
+- [x] `scheduleSharedBackgroundSyncDebounceTimer(state)`
+- [x] `clearSharedBackgroundSyncDebounceTimer()`
+- [x] `handleSharedBackgroundSyncDebounceDue()`
 
 owner 行为：
 
-- [ ] 当前标签页成为 owner 后才启动本地 timer。
-- [ ] owner timer 使用 shared state 的 `dueAt`。
-- [ ] owner heartbeat 只刷新 debounce owner lease，不替代 background/global sync lock。
-- [ ] owner 到点后重读 state，校验 `generation` 和 owner 身份。
-- [ ] owner 到点后调用 `triggerRemoteSyncPush(reason, schedulerContext)`。
-- [ ] owner 页面 `pagehide` / `beforeunload` 时释放 owner。
-- [ ] owner lease 过期后，存活标签页可接管。
-- [ ] 如果 `GM_addValueChangeListener` 可用，监听 shared state 变化以便接管或重排 timer。
-- [ ] 如果 listener 不可用，依靠 dirty 触发、visibility/page lifecycle、pending recovery 兜底。
+- [x] 当前标签页成为 owner 后才启动本地 timer。
+- [x] owner timer 使用 shared state 的 `dueAt`。
+- [x] owner heartbeat 只刷新 debounce owner lease，不替代 background/global sync lock。
+- [x] owner 到点后重读 state，校验 `generation` 和 owner 身份。
+- [x] owner 到点后调用 `triggerRemoteSyncPush(reason, schedulerContext)`。
+- [x] owner 页面 `pagehide` / `beforeunload` 时释放 owner。
+- [x] owner lease 过期后，存活标签页可接管。
+- [x] 如果 `GM_addValueChangeListener` 可用，监听 shared state 变化以便接管或重排 timer。
+- [x] 如果 listener 不可用，依靠 dirty 触发、visibility/page lifecycle、pending recovery 兜底。
+
+Phase B / C 实现结果（2026-05-05）：
+
+- 已在 `S1Plus.js` 增加 `s1p_background_sync_debounce_state` 共享调度状态、owner lease / heartbeat / max wait / follow-up settle 常量，以及 state normalize/get/set/clear、source/threadId 合并和 reason helper。
+- 已实现 `requestSharedBackgroundSyncDebounce()`：多次 dirty 递增 `generation`，聚合 `sources` / `threadIds`，保留 `firstDirtyAt`，更新 `lastDirtyAt`，维护 `maxLastModified`；`read_progress` 使用 20 秒 trailing debounce 并受 `maxWaitUntil` 限制，已有 `general` dueAt 不会被后续阅读进度推迟。
+- 已实现 owner 获取、续租、释放、timer 调度、到点重读 state 校验、`GM_addValueChangeListener` 接管/重排，以及 `pagehide` / `beforeunload` / `visibilitychange` 生命周期处理。
+- 已将 `debouncedTriggerRemoteSyncPush()` 保留为兼容 wrapper，内部转入 shared scheduler；`updateLastModifiedTimestamp(..., { triggerSync: true })` 写 pending 后进入 shared scheduler；owner 到点触发前会消费 shared state，避免 Phase D/F 未接入前留下过期 owner。本轮未重构自动拉取侧，未改变 `performAutoSync()` 的核心裁决。
+- 验证结果：`node -c S1Plus.js` 通过；`node sync-across-multiple-tab/scripts/test-background-sync-shared-debounce.js` 通过。
 
 ## Phase D: pending 聚合与覆盖清理
 
@@ -169,22 +178,22 @@ owner 行为：
 
 新增 covered 清理 helper：
 
-- [ ] `clearPendingAutoSyncRequestIfCovered(coveredLastModified, context)`
-- [ ] `clearSharedBackgroundSyncDebounceIfCovered({ generation, coveredLastModified })`
-- [ ] 当前 shared state `generation` 未变且 `maxLastModified <= coveredLastModified` 时才清理。
-- [ ] 当前 shared state `generation` 变大时保留 pending。
-- [ ] 当前 `maxLastModified > coveredLastModified` 时保留 pending。
-- [ ] 保留 pending 时安排 `BACKGROUND_SYNC_DEBOUNCE_FOLLOW_UP_SETTLE_MS` 短 follow-up。
+- [x] `clearPendingAutoSyncRequestIfCovered(coveredLastModified, context)`
+- [x] `clearSharedBackgroundSyncDebounceIfCovered({ generation, coveredLastModified })`
+- [x] 当前 shared state `generation` 未变且 `maxLastModified <= coveredLastModified` 时才清理。
+- [x] 当前 shared state `generation` 变大时保留 pending。
+- [x] 当前 `maxLastModified > coveredLastModified` 时保留 pending。
+- [x] 保留 pending 时安排 `BACKGROUND_SYNC_DEBOUNCE_FOLLOW_UP_SETTLE_MS` 短 follow-up。
 - [ ] 冲突暂停、手动同步完成、远程同步关闭时仍能主动清理调度状态。
 
 ## Phase E: 接入 dirty 写入链路
 
-- [ ] 保留 `debouncedTriggerRemoteSyncPush()` 作为 wrapper。
-- [ ] wrapper 内部改为调用 `requestSharedBackgroundSyncDebounce()`。
-- [ ] `updateLastModifiedTimestamp(source, { triggerSync: true })` 写 pending 后进入 shared scheduler。
-- [ ] `triggerSync=false` 只更新时间戳和 provenance，不进入 shared scheduler。
+- [x] 保留 `debouncedTriggerRemoteSyncPush()` 作为 wrapper。
+- [x] wrapper 内部改为调用 `requestSharedBackgroundSyncDebounce()`。
+- [x] `updateLastModifiedTimestamp(source, { triggerSync: true })` 写 pending 后进入 shared scheduler。
+- [x] `triggerSync=false` 只更新时间戳和 provenance，不进入 shared scheduler。
 - [ ] 初始同步 / 后台同步进行中出现 dirty 时，继续设置现有 dirty flag，并确保 pending / shared state 不被本轮成功误清。
-- [ ] `readProgressSyncDebounceDueAt` 改为读取 shared debounce dueAt，供 foreground gate 判断阅读进度仍在 settle window。
+- [x] `readProgressSyncDebounceDueAt` 改为读取 shared debounce dueAt，供 foreground gate 判断阅读进度仍在 settle window。
 - [ ] 清理旧 `remotePushTimeout` 路径，或让它只作为 shared owner timer 使用。
 
 ## Phase F: 接入后台同步执行结果
@@ -306,8 +315,8 @@ node sync-across-multiple-tab/scripts/test-visible-remote-polling.js
 
 - [x] Phase 0: 准备与代码定位
 - [x] Phase A: 测试先行
-- [ ] Phase B: 引入 shared debounce state
-- [ ] Phase C: owner / timer / lifecycle
+- [x] Phase B: 引入 shared debounce state
+- [x] Phase C: owner / timer / lifecycle
 - [ ] Phase D: pending 聚合与覆盖清理
 - [ ] Phase E: 接入 dirty 写入链路
 - [ ] Phase F: 接入后台同步执行结果
