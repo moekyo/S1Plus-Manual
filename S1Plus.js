@@ -726,6 +726,13 @@
   const REMOTE_VERSION_CONFLICT_CODE = "REMOTE_VERSION_CHANGED";
   const READ_PROGRESS_SYNC_DEBOUNCE_MS = 20 * 1000;
   const DEFAULT_SYNC_DEBOUNCE_MS = 5 * 1000;
+  const BACKGROUND_SYNC_DEBOUNCE_STATE_KEY =
+    "s1p_background_sync_debounce_state";
+  const BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS = 30 * 1000;
+  const BACKGROUND_SYNC_DEBOUNCE_OWNER_HEARTBEAT_MS = 10 * 1000;
+  const BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS = 60 * 1000;
+  const BACKGROUND_SYNC_DEBOUNCE_FOLLOW_UP_SETTLE_MS = 600;
+  const BACKGROUND_SYNC_DEBOUNCE_THREAD_ID_LIMIT = 20;
   const SYNC_CONFLICT_MODAL_COOLDOWN_MS = 2 * 60 * 1000;
   const SYNC_CONFLICT_MODAL_COOLDOWN_GROUP_MAP = Object.freeze({
     background_conflict: "sync_conflict",
@@ -11925,12 +11932,18 @@
     }, Math.max(0, delayMs));
   };
 
-  // [MODIFIED] 为远程推送增加防抖机制，并防止重入
+  // [MODIFIED] 共享后台推送防抖调度器：跨标签合并 dirty，由一个 owner 标签页负责 timer。
   let remotePushTimeout;
   let remotePushDueTimestamp = 0;
   let remotePushScheduledReason = "debounced_local_change";
   let readProgressSyncDebounceDueAt = 0;
   let readProgressSyncDebounceReason = "";
+  let sharedBackgroundSyncDebounceTimer = null;
+  let sharedBackgroundSyncDebounceTimerIsExternal = false;
+  let sharedBackgroundSyncDebounceTimerDueAt = 0;
+  let sharedBackgroundSyncDebounceTimerGeneration = 0;
+  let sharedBackgroundSyncDebounceHeartbeatTimer = null;
+
   const clearReadProgressSyncDebounceState = () => {
     readProgressSyncDebounceDueAt = 0;
     readProgressSyncDebounceReason = "";
@@ -11939,6 +11952,659 @@
     readProgressSyncDebounceDueAt = Math.max(0, Number(dueAt) || 0);
     readProgressSyncDebounceReason = String(reason || "").trim();
   };
+  const normalizeBackgroundSyncDebounceSource = (source = "general") =>
+    String(source || "").trim() === "read_progress" ? "read_progress" : "general";
+  const getBackgroundSyncDebounceReason = (source = "general") =>
+    normalizeBackgroundSyncDebounceSource(source) === "read_progress"
+      ? "debounced_read_progress"
+      : "debounced_local_change";
+  const getBackgroundSyncDebounceSettleMs = (source = "general") =>
+    normalizeBackgroundSyncDebounceSource(source) === "read_progress"
+      ? READ_PROGRESS_SYNC_DEBOUNCE_MS
+      : DEFAULT_SYNC_DEBOUNCE_MS;
+  const normalizeBackgroundSyncDebounceTimestamp = (value) => {
+    const normalized = Number(value);
+    return Number.isFinite(normalized) && normalized > 0 ? normalized : 0;
+  };
+  const getBackgroundSyncDebounceTabId = (options = {}) =>
+    normalizeSyncDiagnosticText(options.tabId, 120) ||
+    SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID;
+  const normalizeBackgroundSyncDebounceSources = (value) => {
+    const source = sanitizeRecordObject(value);
+    const normalizedSources = {};
+    Object.keys(source).forEach((key) => {
+      const normalizedKey = normalizeBackgroundSyncDebounceSource(key);
+      const count = Math.max(0, Math.floor(Number(source[key]) || 0));
+      if (count > 0) {
+        normalizedSources[normalizedKey] =
+          (normalizedSources[normalizedKey] || 0) + count;
+      }
+    });
+    return normalizedSources;
+  };
+  const normalizeBackgroundSyncDebounceThreadIds = (value) => {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+    const seen = new Set();
+    const threadIds = [];
+    value.forEach((item) => {
+      const threadId =
+        normalizeNumericId(item) || normalizeSyncDiagnosticText(item, 40);
+      if (!threadId || seen.has(threadId)) {
+        return;
+      }
+      seen.add(threadId);
+      threadIds.push(threadId);
+    });
+    return threadIds.slice(0, BACKGROUND_SYNC_DEBOUNCE_THREAD_ID_LIMIT);
+  };
+  const normalizeBackgroundSyncDebounceState = (value) => {
+    if (!isObjectRecord(value)) {
+      return null;
+    }
+    const generation = Math.max(0, Math.floor(Number(value.generation) || 0));
+    const dueAt = normalizeBackgroundSyncDebounceTimestamp(value.dueAt);
+    const maxWaitUntil = normalizeBackgroundSyncDebounceTimestamp(
+      value.maxWaitUntil
+    );
+    const firstDirtyAt = normalizeBackgroundSyncDebounceTimestamp(
+      value.firstDirtyAt
+    );
+    const lastDirtyAt = normalizeBackgroundSyncDebounceTimestamp(
+      value.lastDirtyAt
+    );
+    const maxLastModified = normalizeBackgroundSyncDebounceTimestamp(
+      value.maxLastModified ?? value.lastModified
+    );
+    if (
+      generation <= 0 ||
+      dueAt <= 0 ||
+      maxWaitUntil <= 0 ||
+      firstDirtyAt <= 0 ||
+      lastDirtyAt <= 0 ||
+      maxLastModified <= 0
+    ) {
+      return null;
+    }
+    const sources = normalizeBackgroundSyncDebounceSources(value.sources);
+    const reason =
+      normalizeSyncDiagnosticText(value.reason, 80) ||
+      (sources.general
+        ? "debounced_local_change"
+        : getBackgroundSyncDebounceReason("read_progress"));
+    return {
+      version: 1,
+      generation,
+      ownerTabId: normalizeSyncDiagnosticText(value.ownerTabId, 120),
+      ownerLeaseUntil: normalizeBackgroundSyncDebounceTimestamp(
+        value.ownerLeaseUntil
+      ),
+      dueAt,
+      maxWaitUntil,
+      firstDirtyAt,
+      lastDirtyAt,
+      maxLastModified,
+      sources,
+      threadIds: normalizeBackgroundSyncDebounceThreadIds(value.threadIds),
+      reason,
+    };
+  };
+  const syncReadProgressDebounceStateFromSharedState = (stateInput = null) => {
+    const state = stateInput
+      ? normalizeBackgroundSyncDebounceState(stateInput)
+      : getBackgroundSyncDebounceState();
+    if (
+      state &&
+      state.reason === "debounced_read_progress" &&
+      state.dueAt > Date.now()
+    ) {
+      setReadProgressSyncDebounceState(state.dueAt, state.reason);
+      return;
+    }
+    clearReadProgressSyncDebounceState();
+  };
+  const getBackgroundSyncDebounceState = () =>
+    normalizeBackgroundSyncDebounceState(
+      GM_getValue(BACKGROUND_SYNC_DEBOUNCE_STATE_KEY, null)
+    );
+  const setBackgroundSyncDebounceState = (state) => {
+    const normalized = normalizeBackgroundSyncDebounceState(state);
+    if (!normalized) {
+      GM_deleteValue(BACKGROUND_SYNC_DEBOUNCE_STATE_KEY);
+      syncReadProgressDebounceStateFromSharedState(null);
+      return null;
+    }
+    GM_setValue(BACKGROUND_SYNC_DEBOUNCE_STATE_KEY, normalized);
+    syncReadProgressDebounceStateFromSharedState(normalized);
+    return normalized;
+  };
+  const stopSharedBackgroundSyncDebounceOwnerHeartbeat = () => {
+    if (sharedBackgroundSyncDebounceHeartbeatTimer) {
+      clearInterval(sharedBackgroundSyncDebounceHeartbeatTimer);
+      sharedBackgroundSyncDebounceHeartbeatTimer = null;
+    }
+  };
+  const clearSharedBackgroundSyncDebounceTimer = ({
+    stopHeartbeat = true,
+  } = {}) => {
+    if (sharedBackgroundSyncDebounceTimer) {
+      if (!sharedBackgroundSyncDebounceTimerIsExternal) {
+        clearTimeout(sharedBackgroundSyncDebounceTimer);
+      }
+      sharedBackgroundSyncDebounceTimer = null;
+    }
+    sharedBackgroundSyncDebounceTimerIsExternal = false;
+    sharedBackgroundSyncDebounceTimerDueAt = 0;
+    sharedBackgroundSyncDebounceTimerGeneration = 0;
+    if (stopHeartbeat) {
+      stopSharedBackgroundSyncDebounceOwnerHeartbeat();
+    }
+  };
+  const clearBackgroundSyncDebounceState = () => {
+    clearSharedBackgroundSyncDebounceTimer();
+    GM_deleteValue(BACKGROUND_SYNC_DEBOUNCE_STATE_KEY);
+    clearReadProgressSyncDebounceState();
+  };
+  const mergeBackgroundSyncDebounceSources = (state, source) => {
+    const normalizedSource = normalizeBackgroundSyncDebounceSource(source);
+    const sources = normalizeBackgroundSyncDebounceSources(state?.sources);
+    sources[normalizedSource] = (sources[normalizedSource] || 0) + 1;
+    return sources;
+  };
+  const mergeBackgroundSyncDebounceThreadIds = (state, threadId) => {
+    const threadIds = normalizeBackgroundSyncDebounceThreadIds(state?.threadIds);
+    const normalizedThreadId =
+      normalizeNumericId(threadId) ||
+      normalizeSyncDiagnosticText(threadId, 40);
+    if (normalizedThreadId && !threadIds.includes(normalizedThreadId)) {
+      threadIds.push(normalizedThreadId);
+    }
+    return threadIds.slice(0, BACKGROUND_SYNC_DEBOUNCE_THREAD_ID_LIMIT);
+  };
+  const isBackgroundSyncDebounceRequestAllowed = ({
+    settingsSnapshot = null,
+    conflictPauseState = undefined,
+  } = {}) => {
+    const settings =
+      settingsSnapshot && typeof settingsSnapshot === "object"
+        ? settingsSnapshot
+        : getSettings();
+    if (
+      !settings.syncRemoteEnabled ||
+      !settings.syncAutoEnabled ||
+      !getLocalSyncDeviceId(settings) ||
+      !settings.syncRemoteGistId ||
+      !settings.syncRemotePat
+    ) {
+      return { allowed: false, reason: "sync_not_ready" };
+    }
+    const activeConflictPause =
+      conflictPauseState === undefined
+        ? getActiveAutoSyncConflictPause()
+        : conflictPauseState;
+    if (activeConflictPause) {
+      return { allowed: false, reason: "conflict_paused" };
+    }
+    return { allowed: true, reason: "" };
+  };
+  const calculateBackgroundSyncDebounceDueAt = ({
+    currentState = null,
+    source = "general",
+    now = Date.now(),
+    maxWaitUntil = 0,
+  } = {}) => {
+    const normalizedSource = normalizeBackgroundSyncDebounceSource(source);
+    const candidateDueAt =
+      now + getBackgroundSyncDebounceSettleMs(normalizedSource);
+    const boundedDueAt = Math.min(candidateDueAt, maxWaitUntil || candidateDueAt);
+    if (normalizedSource === "general") {
+      return {
+        dueAt: boundedDueAt,
+        reason: getBackgroundSyncDebounceReason("general"),
+      };
+    }
+    if (currentState?.reason === "debounced_local_change") {
+      return {
+        dueAt: currentState.dueAt,
+        reason: currentState.reason,
+      };
+    }
+    return {
+      dueAt: boundedDueAt,
+      reason: getBackgroundSyncDebounceReason("read_progress"),
+    };
+  };
+  const startSharedBackgroundSyncDebounceOwnerHeartbeat = ({
+    tabId = SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID,
+  } = {}) => {
+    if (sharedBackgroundSyncDebounceHeartbeatTimer) {
+      clearInterval(sharedBackgroundSyncDebounceHeartbeatTimer);
+    }
+    sharedBackgroundSyncDebounceHeartbeatTimer = setInterval(() => {
+      if (!refreshBackgroundSyncDebounceOwnerLease({ tabId })) {
+        stopSharedBackgroundSyncDebounceOwnerHeartbeat();
+      }
+    }, BACKGROUND_SYNC_DEBOUNCE_OWNER_HEARTBEAT_MS);
+  };
+  const scheduleSharedBackgroundSyncDebounceTimer = (
+    stateInput = null,
+    options = {}
+  ) => {
+    const state = normalizeBackgroundSyncDebounceState(stateInput) || getBackgroundSyncDebounceState();
+    const now = Number(options.now) || Date.now();
+    const tabId = getBackgroundSyncDebounceTabId(options);
+    if (!state || state.ownerTabId !== tabId) {
+      return false;
+    }
+
+    const delayMs = Math.max(0, state.dueAt - now);
+    clearSharedBackgroundSyncDebounceTimer({ stopHeartbeat: false });
+    sharedBackgroundSyncDebounceTimerDueAt = state.dueAt;
+    sharedBackgroundSyncDebounceTimerGeneration = state.generation;
+
+    const context = {
+      generation: state.generation,
+      dueAt: state.dueAt,
+      maxLastModified: state.maxLastModified,
+      reason: state.reason,
+      ownerTabId: state.ownerTabId,
+    };
+    if (typeof options.scheduleTimer === "function") {
+      sharedBackgroundSyncDebounceTimer = options.scheduleTimer(delayMs, context);
+      sharedBackgroundSyncDebounceTimerIsExternal = true;
+      return true;
+    }
+
+    sharedBackgroundSyncDebounceTimer = setTimeout(() => {
+      sharedBackgroundSyncDebounceTimer = null;
+      sharedBackgroundSyncDebounceTimerIsExternal = false;
+      sharedBackgroundSyncDebounceTimerDueAt = 0;
+      const expectedGeneration = sharedBackgroundSyncDebounceTimerGeneration;
+      sharedBackgroundSyncDebounceTimerGeneration = 0;
+      handleSharedBackgroundSyncDebounceDue({
+        expectedGeneration,
+        scheduledDueAt: state.dueAt,
+        tabId,
+      });
+    }, delayMs);
+    sharedBackgroundSyncDebounceTimerIsExternal = false;
+    startSharedBackgroundSyncDebounceOwnerHeartbeat({ tabId });
+    return true;
+  };
+  const tryAcquireBackgroundSyncDebounceOwner = (
+    stateInput = null,
+    now = Date.now(),
+    options = {}
+  ) => {
+    const currentState =
+      normalizeBackgroundSyncDebounceState(stateInput) ||
+      getBackgroundSyncDebounceState();
+    if (!currentState) {
+      return false;
+    }
+    const tabId = getBackgroundSyncDebounceTabId(options);
+    const ownerLeaseIsValid =
+      currentState.ownerTabId &&
+      currentState.ownerTabId !== tabId &&
+      currentState.ownerLeaseUntil > now;
+    if (ownerLeaseIsValid) {
+      return false;
+    }
+    const nextState = {
+      ...currentState,
+      ownerTabId: tabId,
+      ownerLeaseUntil: now + BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS,
+    };
+    setBackgroundSyncDebounceState(nextState);
+    const verifiedState = getBackgroundSyncDebounceState();
+    const acquired = Boolean(
+      verifiedState &&
+        verifiedState.ownerTabId === tabId &&
+        verifiedState.generation === nextState.generation
+    );
+    if (!acquired) {
+      return false;
+    }
+    scheduleSharedBackgroundSyncDebounceTimer(verifiedState, {
+      ...options,
+      now,
+      tabId,
+    });
+    return true;
+  };
+  const refreshBackgroundSyncDebounceOwnerLease = (options = {}) => {
+    const state = getBackgroundSyncDebounceState();
+    const tabId = getBackgroundSyncDebounceTabId(options);
+    if (!state || state.ownerTabId !== tabId) {
+      return false;
+    }
+    setBackgroundSyncDebounceState({
+      ...state,
+      ownerLeaseUntil:
+        (Number(options.now) || Date.now()) +
+        BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS,
+    });
+    return true;
+  };
+  const releaseBackgroundSyncDebounceOwner = (options = {}) => {
+    const state = getBackgroundSyncDebounceState();
+    const tabId = getBackgroundSyncDebounceTabId(options);
+    if (!state || state.ownerTabId !== tabId) {
+      return false;
+    }
+    clearSharedBackgroundSyncDebounceTimer();
+    setBackgroundSyncDebounceState({
+      ...state,
+      ownerTabId: "",
+      ownerLeaseUntil: 0,
+    });
+    return true;
+  };
+  const handleSharedBackgroundSyncDebounceDue = (options = {}) => {
+    const now = Number(options.now) || Date.now();
+    const tabId = getBackgroundSyncDebounceTabId(options);
+    const state = getBackgroundSyncDebounceState();
+    if (!state) {
+      return { status: "skipped", reason: "no_shared_debounce_state" };
+    }
+    if (state.ownerTabId !== tabId) {
+      return {
+        status: "skipped",
+        reason: "not_owner",
+        currentOwnerTabId: state.ownerTabId,
+      };
+    }
+    if (
+      Number(options.expectedGeneration) > 0 &&
+      state.generation !== Number(options.expectedGeneration)
+    ) {
+      return {
+        status: "skipped",
+        reason: "stale_generation",
+        currentGeneration: state.generation,
+        expectedGeneration: Number(options.expectedGeneration),
+      };
+    }
+    if (state.dueAt > now) {
+      scheduleSharedBackgroundSyncDebounceTimer(state, {
+        ...options,
+        now,
+        tabId,
+      });
+      return {
+        status: "scheduled",
+        reason: "not_due",
+        delayMs: state.dueAt - now,
+      };
+    }
+
+    const schedulerContext = {
+      debounceGeneration: state.generation,
+      intendedMaxLastModified: state.maxLastModified,
+      scheduledDueAt: state.dueAt,
+      schedulerReason: state.reason,
+    };
+    clearBackgroundSyncDebounceState();
+    const triggerFn =
+      typeof options.triggerRemoteSyncPush === "function"
+        ? options.triggerRemoteSyncPush
+        : triggerRemoteSyncPush;
+    triggerFn(state.reason, schedulerContext);
+    return {
+      status: "triggered",
+      reason: state.reason,
+      generation: state.generation,
+      maxLastModified: state.maxLastModified,
+    };
+  };
+  const scheduleBackgroundSyncDebounceFollowUp = (
+    scheduleFollowUp,
+    context = {}
+  ) => {
+    if (typeof scheduleFollowUp !== "function") {
+      return false;
+    }
+    scheduleFollowUp(BACKGROUND_SYNC_DEBOUNCE_FOLLOW_UP_SETTLE_MS, {
+      reason: "newer_dirty_follow_up",
+      ...context,
+    });
+    return true;
+  };
+  const getPendingAutoSyncRequestMaxLastModified = (pending) => {
+    if (!isObjectRecord(pending)) {
+      return 0;
+    }
+    return Math.max(
+      normalizeBackgroundSyncDebounceTimestamp(pending.maxLastModified),
+      normalizeBackgroundSyncDebounceTimestamp(pending.lastModified)
+    );
+  };
+  const clearPendingAutoSyncRequestIfCovered = (
+    coveredLastModified,
+    context = {}
+  ) => {
+    const pending = GM_getValue(PENDING_AUTO_SYNC_KEY, null);
+    if (!isObjectRecord(pending)) {
+      return { status: "skipped", reason: "no_pending_auto_sync" };
+    }
+    const pendingMaxLastModified =
+      getPendingAutoSyncRequestMaxLastModified(pending);
+    if (pendingMaxLastModified <= Number(coveredLastModified || 0)) {
+      clearPendingAutoSyncRequest();
+      return {
+        status: "cleared",
+        reason: "covered",
+        pendingMaxLastModified,
+      };
+    }
+    const followUpScheduled = scheduleBackgroundSyncDebounceFollowUp(
+      context.scheduleFollowUp,
+      {
+        debounceGeneration: context.debounceGeneration,
+        pendingMaxLastModified,
+        coveredLastModified: Number(coveredLastModified || 0),
+      }
+    );
+    return {
+      status: "retained",
+      reason: "newer_pending",
+      pendingMaxLastModified,
+      followUpScheduled,
+    };
+  };
+  const clearSharedBackgroundSyncDebounceIfCovered = ({
+    generation = 0,
+    coveredLastModified = 0,
+    scheduleFollowUp = null,
+  } = {}) => {
+    const state = getBackgroundSyncDebounceState();
+    if (!state) {
+      return { status: "skipped", reason: "no_shared_debounce_state" };
+    }
+    const coveredGeneration = Math.max(0, Math.floor(Number(generation) || 0));
+    const coveredLocalLastModified = Number(coveredLastModified || 0);
+    if (
+      state.generation === coveredGeneration &&
+      state.maxLastModified <= coveredLocalLastModified
+    ) {
+      clearBackgroundSyncDebounceState();
+      return {
+        status: "cleared",
+        reason: "covered",
+        generation: coveredGeneration,
+      };
+    }
+    const followUpScheduled = scheduleBackgroundSyncDebounceFollowUp(
+      scheduleFollowUp,
+      {
+        generation: state.generation,
+        coveredGeneration,
+        maxLastModified: state.maxLastModified,
+        coveredLastModified: coveredLocalLastModified,
+      }
+    );
+    return {
+      status: "retained",
+      reason:
+        state.generation !== coveredGeneration
+          ? "newer_generation"
+          : "newer_dirty",
+      generation: state.generation,
+      maxLastModified: state.maxLastModified,
+      followUpScheduled,
+    };
+  };
+  const requestSharedBackgroundSyncDebounce = (
+    request = {},
+    options = {}
+  ) => {
+    const now = Number(options.now) || Date.now();
+    const readiness = isBackgroundSyncDebounceRequestAllowed(options);
+    if (!readiness.allowed) {
+      clearBackgroundSyncDebounceState();
+      return { status: "skipped", reason: readiness.reason };
+    }
+
+    const source = normalizeBackgroundSyncDebounceSource(request.source);
+    const currentState = getBackgroundSyncDebounceState();
+    const firstDirtyAt = currentState?.firstDirtyAt || now;
+    const maxWaitUntil =
+      currentState?.maxWaitUntil ||
+      firstDirtyAt + BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS;
+    const maxLastModified = Math.max(
+      currentState?.maxLastModified || 0,
+      normalizeBackgroundSyncDebounceTimestamp(request.lastModified) ||
+        GM_getValue("s1p_last_modified", 0) ||
+        now
+    );
+    const dueDecision = calculateBackgroundSyncDebounceDueAt({
+      currentState,
+      source,
+      now,
+      maxWaitUntil,
+    });
+    const tabId = getBackgroundSyncDebounceTabId(options);
+    const currentOwnerIsReusable =
+      currentState?.ownerTabId &&
+      currentState.ownerTabId !== tabId &&
+      currentState.ownerLeaseUntil > now;
+    const nextState = {
+      version: 1,
+      generation: (currentState?.generation || 0) + 1,
+      ownerTabId: currentOwnerIsReusable
+        ? currentState.ownerTabId
+        : tabId,
+      ownerLeaseUntil: currentOwnerIsReusable
+        ? currentState.ownerLeaseUntil
+        : now + BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS,
+      dueAt: dueDecision.dueAt,
+      maxWaitUntil,
+      firstDirtyAt,
+      lastDirtyAt: now,
+      maxLastModified,
+      sources: mergeBackgroundSyncDebounceSources(currentState, source),
+      threadIds: mergeBackgroundSyncDebounceThreadIds(
+        currentState,
+        request.threadId
+      ),
+      reason: dueDecision.reason,
+    };
+
+    const savedState = setBackgroundSyncDebounceState(nextState);
+    setAutoSyncIndicatorPendingPhase(savedState?.reason || dueDecision.reason);
+    const isOwner = Boolean(savedState && savedState.ownerTabId === tabId);
+    if (isOwner) {
+      scheduleSharedBackgroundSyncDebounceTimer(savedState, {
+        ...options,
+        now,
+        tabId,
+      });
+    }
+    return {
+      status: "scheduled",
+      reason: savedState?.reason || dueDecision.reason,
+      isOwner,
+      state: savedState,
+    };
+  };
+  const handleSharedBackgroundSyncDebounceStateChange = (newValue) => {
+    const state = normalizeBackgroundSyncDebounceState(newValue);
+    syncReadProgressDebounceStateFromSharedState(state);
+    if (!state) {
+      clearSharedBackgroundSyncDebounceTimer();
+      return;
+    }
+    const now = Date.now();
+    if (state.ownerTabId === SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID) {
+      scheduleSharedBackgroundSyncDebounceTimer(state, {
+        now,
+        tabId: SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID,
+      });
+      return;
+    }
+    clearSharedBackgroundSyncDebounceTimer();
+    if (!state.ownerTabId || state.ownerLeaseUntil <= now) {
+      tryAcquireBackgroundSyncDebounceOwner(state, now);
+    }
+  };
+  const bindSharedBackgroundSyncDebounceLifecycleHooks = () => {
+    if (window.__s1pBackgroundSyncDebounceLifecycleBound) {
+      return;
+    }
+    window.__s1pBackgroundSyncDebounceLifecycleBound = true;
+
+    if (typeof GM_addValueChangeListener === "function") {
+      GM_addValueChangeListener(
+        BACKGROUND_SYNC_DEBOUNCE_STATE_KEY,
+        (_key, _oldValue, newValue) => {
+          handleSharedBackgroundSyncDebounceStateChange(newValue);
+        }
+      );
+    }
+
+    window.addEventListener("pagehide", () => {
+      releaseBackgroundSyncDebounceOwner();
+    });
+    window.addEventListener("beforeunload", () => {
+      releaseBackgroundSyncDebounceOwner();
+    });
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+      const state = getBackgroundSyncDebounceState();
+      if (!state) {
+        return;
+      }
+      const now = Date.now();
+      if (state.ownerTabId === SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID) {
+        scheduleSharedBackgroundSyncDebounceTimer(state, {
+          now,
+          tabId: SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID,
+        });
+        return;
+      }
+      if (!state.ownerTabId || state.ownerLeaseUntil <= now) {
+        tryAcquireBackgroundSyncDebounceOwner(state, now);
+      }
+    });
+  };
+  const getBackgroundSyncDebounceRuntimeStateForTest = () => ({
+    hasOwnerTimer: Boolean(sharedBackgroundSyncDebounceTimer),
+    ownerTimerDueAt: sharedBackgroundSyncDebounceTimerDueAt,
+    ownerTimerGeneration: sharedBackgroundSyncDebounceTimerGeneration,
+    ownerHeartbeatActive: Boolean(sharedBackgroundSyncDebounceHeartbeatTimer),
+  });
+  const getBackgroundSyncDebounceTestConstants = () => ({
+    BACKGROUND_SYNC_DEBOUNCE_STATE_KEY,
+    READ_PROGRESS_SYNC_DEBOUNCE_MS,
+    DEFAULT_SYNC_DEBOUNCE_MS,
+    BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS,
+    BACKGROUND_SYNC_DEBOUNCE_OWNER_HEARTBEAT_MS,
+    BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
+    BACKGROUND_SYNC_DEBOUNCE_FOLLOW_UP_SETTLE_MS,
+  });
   const clearRemotePushDebounceTimer = () => {
     if (remotePushTimeout) {
       clearTimeout(remotePushTimeout);
@@ -11955,6 +12621,7 @@
       backgroundSyncRetryTimeout = null;
     }
     clearRemotePushDebounceTimer();
+    clearBackgroundSyncDebounceState();
   };
   const armRemotePushTimer = (dueTimestamp, reason) => {
     remotePushDueTimestamp = dueTimestamp;
@@ -11974,58 +12641,23 @@
     }, Math.max(0, dueTimestamp - Date.now()));
   };
 
-  const debouncedTriggerRemoteSyncPush = ({ source = "general" } = {}) => {
-    const settings = getSettings();
-    // [MODIFIED] 增加对自动同步子开关的判断
-    if (
-      !settings.syncRemoteEnabled ||
-      !settings.syncAutoEnabled ||
-      !getLocalSyncDeviceId(settings) ||
-      !settings.syncRemoteGistId ||
-      !settings.syncRemotePat
-    ) {
-      clearAutoSyncRuntimeQueue();
-      return;
-    }
-    if (getActiveAutoSyncConflictPause()) {
-      clearRemotePushDebounceTimer();
-      return;
-    }
-    setAutoSyncIndicatorPendingPhase(
-      source === "read_progress"
-        ? "debounced_read_progress"
-        : "debounced_local_change"
-    );
-    const debounceMs =
-      source === "read_progress"
-        ? READ_PROGRESS_SYNC_DEBOUNCE_MS
-        : DEFAULT_SYNC_DEBOUNCE_MS;
-    const nextDueTimestamp = Date.now() + debounceMs;
-    const nextReason =
-      source === "read_progress"
-        ? "debounced_read_progress"
-        : "debounced_local_change";
-
-    if (!remotePushTimeout) {
-      armRemotePushTimer(nextDueTimestamp, nextReason);
-      return;
-    }
-
-    if (source === "general") {
-      // 普通数据改动保持标准防抖：以最后一次改动为准。
-      clearTimeout(remotePushTimeout);
-      armRemotePushTimer(nextDueTimestamp, nextReason);
-      return;
-    }
-
-    // 阅读进度改动不应推迟已经安排好的普通同步。
-    if (remotePushScheduledReason === "debounced_local_change") {
-      return;
-    }
-
-    // 仅在当前也是阅读进度任务时做 trailing debounce。
-    clearTimeout(remotePushTimeout);
-    armRemotePushTimer(nextDueTimestamp, nextReason);
+  const debouncedTriggerRemoteSyncPush = ({
+    source = "general",
+    lastModified = null,
+    threadId = null,
+  } = {}) => {
+    return requestSharedBackgroundSyncDebounce({
+      source,
+      lastModified:
+        typeof lastModified === "number"
+          ? lastModified
+          : GM_getValue("s1p_last_modified", 0),
+      threadId:
+        threadId ||
+        (typeof getCurrentThreadId === "function" && getCurrentThreadId()) ||
+        readProgressContext?.threadId ||
+        "",
+    });
   };
 
   // 只有在数据实际变动时才更新时间戳；可按需仅更新时间戳而不触发自动同步
@@ -12090,7 +12722,14 @@
     recordReadProgressLastModifiedDebug("written");
     if (triggerSync) {
       markPendingAutoSyncRequest(source, nextLastModified);
-      debouncedTriggerRemoteSyncPush({ source });
+      debouncedTriggerRemoteSyncPush({
+        source,
+        lastModified: nextLastModified,
+        threadId:
+          (typeof getCurrentThreadId === "function" && getCurrentThreadId()) ||
+          readProgressContext?.threadId ||
+          "",
+      });
     }
   };
 
@@ -22755,8 +23394,23 @@
       getAutoSyncIndicatorTitle: (...args) => getAutoSyncIndicatorTitle(...args),
 	      decideSyncActionByVersion,
 	      getForegroundRemoteChangeKind,
-	      getSyncResultRemoteWriteMatchKind,
+      getSyncResultRemoteWriteMatchKind,
 	      performAutoSync,
+      normalizeBackgroundSyncDebounceState,
+      getBackgroundSyncDebounceState,
+      setBackgroundSyncDebounceState,
+      clearBackgroundSyncDebounceState,
+      requestSharedBackgroundSyncDebounce,
+      tryAcquireBackgroundSyncDebounceOwner,
+      refreshBackgroundSyncDebounceOwnerLease,
+      releaseBackgroundSyncDebounceOwner,
+      scheduleSharedBackgroundSyncDebounceTimer,
+      clearSharedBackgroundSyncDebounceTimer,
+      handleSharedBackgroundSyncDebounceDue,
+      clearPendingAutoSyncRequestIfCovered,
+      clearSharedBackgroundSyncDebounceIfCovered,
+      getBackgroundSyncDebounceRuntimeStateForTest,
+      getBackgroundSyncDebounceTestConstants,
       runForegroundFollowUpAutoSyncCheck,
       triggerForegroundRemoteFreshnessProbe,
       handleInitialForegroundRemoteFreshnessCheck,
@@ -38323,6 +38977,10 @@
         {
           name: "initialize auto-sync indicator cross-tab sync",
           run: () => initializeAutoSyncIndicatorCrossTabSync(),
+        },
+        {
+          name: "bind shared background sync debounce lifecycle",
+          run: () => bindSharedBackgroundSyncDebounceLifecycleHooks(),
         },
         {
           name: "bind pending auto-sync recovery hooks",
