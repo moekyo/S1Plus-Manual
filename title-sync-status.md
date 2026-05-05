@@ -1,5 +1,9 @@
 # 新增功能：标签页标题同步状态提示
 
+后续实现请以独立清单推进：
+
+- [标签页标题同步状态实现清单](./title-sync-status-implementation-checklist.md)
+
 ## 目标
 
 新增一个纯展示层功能：在浏览器标签页标题开头显示当前远程同步状态，让用户在 S1 页面不处于前台时，也能通过标签页标题看到同步进度或结果。
@@ -75,6 +79,19 @@
 
 不显示任何前缀，标题恢复原样。
 
+同步状态源到标题前缀的推荐映射：
+
+```text
+idle: 不显示
+pending: 不显示
+running: [同步中.] / [同步中..] / [同步中...]
+success: [同步成功]
+failure: [同步失败]
+conflict: [冲突]
+```
+
+`pending` 不显示前缀是有意设计：例如后台推送 shared debounce 仍在等待 settle window 时，标题不应提前显示“同步中”。只有真正进入 running 后才显示同步中动画。
+
 ---
 
 ## 状态切换规则
@@ -115,15 +132,22 @@
 
 ### 前台判断
 
-前台判断以 document.visibilityState === 'visible' 为准。
+前台判断应同时考虑 `document.visibilityState` 和 `document.hasFocus()`。
 
-只要任意存活的 S1 标签页 visibilityState 为 visible，所有 S1 标签页都不显示标题同步状态。
+推荐判断：
+
+```js
+isForegroundS1Tab = document.visibilityState === "visible" && document.hasFocus();
+```
+
+只要任意存活的 S1 标签页被判定为前台，所有 S1 标签页都不显示标题同步状态。
 
 注意：
 
 - 用户切到同一个浏览器里的非 S1 标签页时，所有 S1 标签页都应视为后台。
 - 用户切到其他应用时，所有 S1 标签页也应视为后台。
 - 只有当前正在被用户查看的 S1 标签页，才算作前台 S1 标签页。
+- 某些浏览器中，切到其他应用时当前标签页仍可能保持 `document.visibilityState === "visible"`。因此必须结合 `document.hasFocus()`，并监听 `visibilitychange`、`focus`、`blur`、`pageshow`、`pagehide`。
 
 ### 负责人标签页定义
 
@@ -135,12 +159,20 @@
 
 ### 推荐实现方式
 
-推荐使用：
+推荐优先使用：
+
+- `GM_setValue`
+- `GM_getValue`
+- `GM_deleteValue`
+- `GM_addValueChangeListener`
+
+如果当前脚本管理器不支持可靠的 GM value listener，可降级使用：
 
 - localStorage
 - storage event
 - 每个标签页的 heartbeat
 - document.visibilitychange
+- window focus / blur
 - beforeunload / pagehide
 
 每个 S1 标签页启动时生成一个唯一 tabId，并记录：
@@ -155,6 +187,8 @@
 每个标签页定期刷新自己的 lastSeen。
 
 如果某个标签页的 lastSeen 超过 2 分钟没有更新，则认为该标签页已经关闭、崩溃或失效，应从协调判断中忽略。
+
+负责人接管可以使用更短 lease，例如 20 到 30 秒。这样负责人标签页关闭后，剩余标签页不必等待完整 2 分钟才接管。presence TTL 仍可保留 2 分钟，以降低后台 timer 被浏览器限流时的误判风险。
 
 ---
 
@@ -263,6 +297,44 @@ Stage1st - 某帖子 - S1 Plus
 - 不在多个地方无序直接写 document.title
 - 如果当前代码已有统一标题刷新函数，应优先复用或扩展它
 - 如果没有统一标题刷新函数，应尽量新增一个小型标题组合函数，统一处理标题前缀和后缀
+
+推荐新增统一标题组合函数，例如：
+
+```js
+refreshDocumentTitle()
+```
+
+所有标题写入都应收口到该函数。该函数负责组合：
+
+```text
+同步状态前缀 + 原始标题 + 自定义标题后缀
+```
+
+现有“自定义标题后缀”逻辑不应继续单独直接写 `document.title`，否则容易和同步状态前缀互相覆盖。
+
+---
+
+## 与导航栏状态开关的关系
+
+`syncShowTitleSyncStatus` 与 `syncShowAutoSyncIndicator` 应是两个彼此独立的展示开关。
+
+- 关闭“显示导航栏同步状态”不应影响标题同步状态。
+- 关闭“显示标签页标题同步状态”不应影响导航栏同步状态。
+- 两者只共用同一套同步状态源，不互相作为启用前提。
+
+标题同步状态应直接消费统一状态源，例如 `resolveAutoSyncIndicatorDisplayPhase()` 的结果，而不是复制一套独立同步状态判断。
+
+---
+
+## 实现顺序建议
+
+建议在后台同步 shared scheduler / 统一状态源增强完成后再实现本功能。
+
+理由：
+
+- 标题提示会直接放大状态源抖动。
+- 如果状态源仍存在 `success -> pending / running -> success` 的短时间跳变，标题栏也会跟着跳。
+- 先让统一状态源稳定，再让标题只消费最终 display phase，能减少标题层特殊补丁。
 
 ---
 
@@ -387,3 +459,8 @@ Stage1st - 某帖子 - S1 Plus
 16. 关闭开关后，所有标题恢复原样，并停止相关 timer。
 17. 远程同步关闭时，该开关置灰禁用。
 18. 不修改现有同步核心逻辑。
+19. 切到其他应用时，当前 S1 标签页应因 `document.hasFocus() === false` 被视为后台。
+20. 关闭导航栏同步状态开关时，标题同步状态仍可独立工作。
+21. 标题同步状态应通过统一标题组合函数写入，不与自定义标题后缀互相覆盖。
+22. 如果负责人标签页关闭，剩余标签页应在 owner lease 过期后接管，不必等待完整 presence TTL。
+23. `pending` 状态不显示标题前缀，`running` 才显示同步中动画。
