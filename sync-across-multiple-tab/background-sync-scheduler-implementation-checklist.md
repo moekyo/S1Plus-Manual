@@ -223,45 +223,45 @@ Phase D / E / F 实现结果（2026-05-05）：
 
 推送侧状态：
 
-- [ ] `hasActivePendingAutoSyncRequest()` 同时识别 pending request 和 active shared debounce state。
-- [ ] `resolveAutoSyncIndicatorDisplayPhase()` 在 shared pending / retry 存在时保持 `pending`。
-- [ ] 有 background/global active lock 时显示 `running`。
-- [ ] 无 pending、无 active lock、无 retry 时才显示最终 success / failure / conflict。
+- [x] `hasActivePendingAutoSyncRequest()` 同时识别 pending request 和 active shared debounce state。
+- [x] `resolveAutoSyncIndicatorDisplayPhase()` 在 shared pending / retry 存在时保持 `pending`。
+- [x] 有 background/global active lock 时显示 `running`。
+- [x] 无 pending、无 active lock、无 retry 时才显示最终 success / failure / conflict。
 
 拉取侧小增强：
 
-- [ ] 保持现有 foreground freshness probe / cooldown / gate 流程。
-- [ ] foreground probe in-flight 时统一状态源可表达探测中。
-- [ ] foreground follow-up sync in-flight 时统一状态源可表达 running。
-- [ ] foreground retry pending 时统一状态源可表达 pending。
-- [ ] foreground gate 暂缓时诊断能显示 block reason / retryAfterMs。
-- [ ] 不把 foreground 拉取侧接入 shared debounce scheduler。
-- [ ] 不让 `foreground_followup` 本地较新时自动 push。
+- [x] 保持现有 foreground freshness probe / cooldown / gate 流程。
+- [x] foreground probe in-flight 时统一状态源可表达探测中。
+- [x] foreground follow-up sync in-flight 时统一状态源可表达 running。
+- [x] foreground retry pending 时统一状态源可表达 pending。
+- [x] foreground gate 暂缓时诊断能显示 block reason / retryAfterMs。
+- [x] 不把 foreground 拉取侧接入 shared debounce scheduler。
+- [x] 不让 `foreground_followup` 本地较新时自动 push。
 
 诊断字段：
 
-- [ ] shared scheduler owner。
-- [ ] owner lease 剩余时间。
-- [ ] dueAt / maxWaitUntil。
-- [ ] generation。
-- [ ] sources。
-- [ ] threadIds。
-- [ ] maxLastModified。
-- [ ] coveredGeneration。
-- [ ] coveredLastModified。
-- [ ] drain-loop 轮次。
-- [ ] 成功后是否保留 newer pending。
+- [x] shared scheduler owner。
+- [x] owner lease 剩余时间。
+- [x] dueAt / maxWaitUntil。
+- [x] generation。
+- [x] sources。
+- [x] threadIds。
+- [x] maxLastModified。
+- [x] coveredGeneration。
+- [x] coveredLastModified。
+- [x] drain-loop 轮次。
+- [x] 成功后是否保留 newer pending。
 
 ## Phase H: 设置、暂停与清理
 
-- [ ] 远程同步关闭时清理 shared debounce state。
-- [ ] 自动同步关闭时清理 shared debounce state。
-- [ ] Gist ID / PAT / device ID 配置不完整时清理 shared debounce state。
-- [ ] conflict pause 开启时清理 owner timer，并阻止新 owner 启动。
-- [ ] conflict pause 清除后，不主动同步旧 dirty；依靠 pending recovery 或下一次 dirty 触发。
-- [ ] 手动同步开始时阻止后台 owner 触发。
-- [ ] 手动同步成功后清理已覆盖 pending / shared debounce。
-- [ ] 页面恢复可见时尝试 recover pending 并接管过期 owner。
+- [x] 远程同步关闭时清理 shared debounce state。
+- [x] 自动同步关闭时清理 shared debounce state。
+- [x] Gist ID / PAT / device ID 配置不完整时清理 shared debounce state。
+- [x] conflict pause 开启时清理 owner timer，并阻止新 owner 启动。
+- [x] conflict pause 清除后，不主动同步旧 dirty；依靠 pending recovery 或下一次 dirty 触发。
+- [x] 手动同步开始时阻止后台 owner 触发。
+- [x] 手动同步成功后清理已覆盖 pending / shared debounce。
+- [x] 页面恢复可见时尝试 recover pending 并接管过期 owner。
 
 ## Phase I: 回归验证
 
@@ -299,6 +299,13 @@ node sync-across-multiple-tab/scripts/test-foreground-same-session-remote-write.
 node sync-across-multiple-tab/scripts/test-visible-remote-polling.js
 ```
 
+Phase G / H / I 实现结果（2026-05-05）：
+
+- Phase G 已完成：统一状态源现在同时读取 shared debounce、pending request、background retry、foreground retry、foreground probe/follow-up in-flight 和全局同步锁；shared pending / retry 会覆盖旧 success/failure TTL 显示为 pending，active lock / foreground in-flight 会显示 running；标题文案可区分前台探测中、follow-up 同步中和前台重试等待。
+- Phase G 诊断已完成：同步诊断默认值、规范化、面板和复制摘要新增 shared scheduler owner、lease、dueAt、maxWaitUntil、generation、sources、threadIds、maxLastModified、covered generation / lastModified、drain-loop 轮次、cleanup 结果、是否保留 newer pending，以及 foreground gate / retry 的 retryAfterMs / retryWaitUntil。
+- Phase H 已完成：远程同步关闭、自动同步关闭、Gist ID / PAT / device ID 不完整、conflict pause 和手动同步开始都会停止 shared scheduler runtime；conflict pause 清除后不主动触发旧 dirty；手动同步成功沿用现有成功清理路径清掉已覆盖 pending / shared debounce；页面恢复可见继续走 pending recovery 和过期 owner 接管。
+- Phase I 已完成：下列语法检查、专项测试、同步回归和建议补跑项均已执行通过。`test-sync-settings-ui.js` 首轮发现设备 ID 说明文案缺少 local-only / 非裁决语义，本轮已补齐后重跑通过。
+
 ## 手工验收
 
 - [ ] 打开多个帖子逐个阅读，短时间内多个阅读进度 dirty 尽量合并为一次后台推送。
@@ -328,6 +335,6 @@ node sync-across-multiple-tab/scripts/test-visible-remote-polling.js
 - [x] Phase D: pending 聚合与覆盖清理
 - [x] Phase E: 接入 dirty 写入链路
 - [x] Phase F: 接入后台同步执行结果
-- [ ] Phase G: 统一状态源与诊断增强
-- [ ] Phase H: 设置、暂停与清理
-- [ ] Phase I: 回归验证
+- [x] Phase G: 统一状态源与诊断增强
+- [x] Phase H: 设置、暂停与清理
+- [x] Phase I: 回归验证

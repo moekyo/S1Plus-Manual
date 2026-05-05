@@ -14,6 +14,9 @@ const createHarness = () => {
   });
 };
 
+const BACKGROUND_SYNC_DEBOUNCE_STATE_KEY =
+  "s1p_background_sync_debounce_state";
+
 const expectMatch = (pattern, message) => {
   assert.match(sourceCode, pattern, message);
 };
@@ -139,6 +142,53 @@ const testIndicatorCyclePersistsSourceToResolvedState = () => {
   assert.strictEqual(state.lastResolvedSource, "daily_startup");
 };
 
+const testSharedSchedulerAndLocksFeedUnifiedDisplayState = () => {
+  const { hooks, store } = createHarness();
+  const now = Date.now();
+
+  hooks.setAutoSyncIndicatorResolvedPhase("success", {
+    source: "background",
+    reason: "previous_success",
+  });
+  store.set(BACKGROUND_SYNC_DEBOUNCE_STATE_KEY, {
+    version: 1,
+    generation: 12,
+    ownerTabId: "tab-a",
+    ownerLeaseUntil: now + 30000,
+    dueAt: now + 20000,
+    maxWaitUntil: now + 60000,
+    firstDirtyAt: now,
+    lastDirtyAt: now,
+    maxLastModified: now,
+    sources: { read_progress: 2 },
+    threadIds: ["123"],
+    reason: "debounced_read_progress",
+  });
+
+  let resolvedState = toPlainObject(
+    hooks.resolveAutoSyncIndicatorDisplayPhase()
+  );
+  assert.equal(resolvedState.displayPhase, "pending");
+  assert.equal(resolvedState.displaySource, "background_push");
+  assert.equal(resolvedState.displayReason, "debounced_read_progress");
+  assert.equal(
+    hooks.hasActivePendingAutoSyncRequest(),
+    true,
+    "shared debounce state should count as active pending work."
+  );
+
+  store.delete(BACKGROUND_SYNC_DEBOUNCE_STATE_KEY);
+  store.set("s1p_sync_global_lock", {
+    owner: "other-tab",
+    mode: "background",
+    timestamp: now,
+    ttlMs: 60000,
+  });
+  resolvedState = toPlainObject(hooks.resolveAutoSyncIndicatorDisplayPhase());
+  assert.equal(resolvedState.displayPhase, "running");
+  assert.equal(resolvedState.displaySource, "background_push");
+};
+
 const testAutoSyncEntryPointsBindIndicatorSources = () => {
   expectMatch(
     /const runStartupModeAutoSyncCheckWithIndicator = async[\s\S]*?startAutoSyncIndicatorCycle\(resolvedSource/m,
@@ -162,6 +212,7 @@ const testAutoSyncEntryPointsBindIndicatorSources = () => {
   testIndicatorVisibilityCoversAllAutoPaths();
   testSourceAwareTitlesAndMappings();
   testIndicatorCyclePersistsSourceToResolvedState();
+  testSharedSchedulerAndLocksFeedUnifiedDisplayState();
   testAutoSyncEntryPointsBindIndicatorSources();
 
   console.log("[auto-sync-indicator-linkage] Auto sync indicator linkage verified.");

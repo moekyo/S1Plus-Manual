@@ -7253,6 +7253,21 @@
     lastSyncResultCode: "",
     lastSyncBlockKind: "",
     lastSyncBlockReason: "",
+    lastForegroundProbeRetryAfterMs: 0,
+    lastForegroundProbeRetryWaitUntil: 0,
+    lastSharedSchedulerOwner: "",
+    lastSharedSchedulerOwnerLeaseUntil: 0,
+    lastSharedSchedulerDueAt: 0,
+    lastSharedSchedulerMaxWaitUntil: 0,
+    lastSharedSchedulerGeneration: 0,
+    lastSharedSchedulerSources: "",
+    lastSharedSchedulerThreadIds: Object.freeze([]),
+    lastSharedSchedulerMaxLastModified: 0,
+    lastSharedSchedulerCoveredGeneration: 0,
+    lastSharedSchedulerCoveredLastModified: 0,
+    lastSharedSchedulerDrainLoopCount: 0,
+    lastSharedSchedulerRetainedNewerPending: false,
+    lastSharedSchedulerCleanupResult: "",
     lastHadConfirmedVisiblePost: false,
     lastReadProgressStartupSnapshot: "",
     lastReadProgressConfirmationReason: "",
@@ -7403,6 +7418,56 @@
       lastSyncResultCode: normalizeText(source.lastSyncResultCode, 160),
       lastSyncBlockKind: normalizeText(source.lastSyncBlockKind, 60),
       lastSyncBlockReason: normalizeText(source.lastSyncBlockReason, 160),
+      lastForegroundProbeRetryAfterMs: normalizeCount(
+        source.lastForegroundProbeRetryAfterMs
+      ),
+      lastForegroundProbeRetryWaitUntil: normalizeTimestamp(
+        source.lastForegroundProbeRetryWaitUntil
+      ),
+      lastSharedSchedulerOwner: normalizeText(
+        source.lastSharedSchedulerOwner,
+        120
+      ),
+      lastSharedSchedulerOwnerLeaseUntil: normalizeTimestamp(
+        source.lastSharedSchedulerOwnerLeaseUntil
+      ),
+      lastSharedSchedulerDueAt: normalizeTimestamp(
+        source.lastSharedSchedulerDueAt
+      ),
+      lastSharedSchedulerMaxWaitUntil: normalizeTimestamp(
+        source.lastSharedSchedulerMaxWaitUntil
+      ),
+      lastSharedSchedulerGeneration: normalizeCount(
+        source.lastSharedSchedulerGeneration
+      ),
+      lastSharedSchedulerSources: normalizeText(
+        source.lastSharedSchedulerSources,
+        220
+      ),
+      lastSharedSchedulerThreadIds: normalizeTextList(
+        source.lastSharedSchedulerThreadIds,
+        40,
+        BACKGROUND_SYNC_DEBOUNCE_THREAD_ID_LIMIT
+      ),
+      lastSharedSchedulerMaxLastModified: normalizeTimestamp(
+        source.lastSharedSchedulerMaxLastModified
+      ),
+      lastSharedSchedulerCoveredGeneration: normalizeCount(
+        source.lastSharedSchedulerCoveredGeneration
+      ),
+      lastSharedSchedulerCoveredLastModified: normalizeTimestamp(
+        source.lastSharedSchedulerCoveredLastModified
+      ),
+      lastSharedSchedulerDrainLoopCount: normalizeCount(
+        source.lastSharedSchedulerDrainLoopCount
+      ),
+      lastSharedSchedulerRetainedNewerPending: normalizeFlag(
+        source.lastSharedSchedulerRetainedNewerPending
+      ),
+      lastSharedSchedulerCleanupResult: normalizeText(
+        source.lastSharedSchedulerCleanupResult,
+        220
+      ),
       lastHadConfirmedVisiblePost: normalizeFlag(
         source.lastHadConfirmedVisiblePost
       ),
@@ -7945,6 +8010,33 @@
       Object.prototype.hasOwnProperty.call(options, "localSyncDeviceId")
         ? normalizeRemoteProbeText(options.localSyncDeviceId, 80)
         : getLocalSyncDeviceId() || current.lastLocalSyncDeviceId || "";
+    const schedulerSnapshot = getBackgroundSyncSchedulerDiagnosticsSnapshot({
+      schedulerContext: options.schedulerContext || options,
+      cleanupResult: options.schedulerCleanupResult || options.cleanupResult,
+      drainLoopCount: options.schedulerDrainLoopCount,
+    });
+    const foregroundRetryAfterMs = Math.max(
+      0,
+      Math.floor(
+        Number(
+          Object.prototype.hasOwnProperty.call(
+            options,
+            "foregroundProbeRetryAfterMs"
+          )
+            ? options.foregroundProbeRetryAfterMs
+            : current.lastForegroundProbeRetryAfterMs
+        ) || 0
+      )
+    );
+    const foregroundRetryWaitUntil =
+      normalizeRemoteProbeTimestamp(
+        Object.prototype.hasOwnProperty.call(
+          options,
+          "foregroundProbeRetryWaitUntil"
+        )
+          ? options.foregroundProbeRetryWaitUntil
+          : current.lastForegroundProbeRetryWaitUntil
+      ) || 0;
 
     return {
       ...current,
@@ -8041,6 +8133,53 @@
       )
         ? normalizeSyncDiagnosticText(options.syncBlockReason, 160)
         : current.lastSyncBlockReason || "",
+      lastForegroundProbeRetryAfterMs: foregroundRetryAfterMs,
+      lastForegroundProbeRetryWaitUntil: foregroundRetryWaitUntil,
+      lastSharedSchedulerOwner:
+        schedulerSnapshot.owner || current.lastSharedSchedulerOwner || "",
+      lastSharedSchedulerOwnerLeaseUntil:
+        schedulerSnapshot.ownerLeaseUntil ||
+        current.lastSharedSchedulerOwnerLeaseUntil ||
+        0,
+      lastSharedSchedulerDueAt:
+        schedulerSnapshot.dueAt || current.lastSharedSchedulerDueAt || 0,
+      lastSharedSchedulerMaxWaitUntil:
+        schedulerSnapshot.maxWaitUntil ||
+        current.lastSharedSchedulerMaxWaitUntil ||
+        0,
+      lastSharedSchedulerGeneration:
+        schedulerSnapshot.generation ||
+        current.lastSharedSchedulerGeneration ||
+        0,
+      lastSharedSchedulerSources:
+        schedulerSnapshot.sources || current.lastSharedSchedulerSources || "",
+      lastSharedSchedulerThreadIds:
+        schedulerSnapshot.threadIds.length > 0
+          ? schedulerSnapshot.threadIds
+          : current.lastSharedSchedulerThreadIds || [],
+      lastSharedSchedulerMaxLastModified:
+        schedulerSnapshot.maxLastModified ||
+        current.lastSharedSchedulerMaxLastModified ||
+        0,
+      lastSharedSchedulerCoveredGeneration:
+        schedulerSnapshot.coveredGeneration ||
+        current.lastSharedSchedulerCoveredGeneration ||
+        0,
+      lastSharedSchedulerCoveredLastModified:
+        schedulerSnapshot.coveredLastModified ||
+        current.lastSharedSchedulerCoveredLastModified ||
+        0,
+      lastSharedSchedulerDrainLoopCount:
+        schedulerSnapshot.drainLoopCount ||
+        current.lastSharedSchedulerDrainLoopCount ||
+        0,
+      lastSharedSchedulerRetainedNewerPending:
+        schedulerSnapshot.retainedNewerPending ||
+        current.lastSharedSchedulerRetainedNewerPending === true,
+      lastSharedSchedulerCleanupResult:
+        schedulerSnapshot.cleanupResult ||
+        current.lastSharedSchedulerCleanupResult ||
+        "",
       lastHadConfirmedVisiblePost: Object.prototype.hasOwnProperty.call(
         options,
         "hadConfirmedVisiblePost"
@@ -8846,6 +8985,21 @@
         syncBlockReason: "",
       });
     }
+    const retryAfterMs = Math.max(
+      0,
+      Math.floor(
+        Number(
+          syncRequestResult?.retryAfterMs ||
+            probeResult?.retryAfterMs ||
+            probeResult?.retryPlan?.retryAfterMs ||
+            0
+        ) || 0
+      )
+    );
+    const retryWaitUntil =
+      normalizeRemoteProbeTimestamp(syncRequestResult?.retryWaitUntil) ||
+      normalizeRemoteProbeTimestamp(probeResult?.retryWaitUntil) ||
+      (retryAfterMs > 0 ? normalizedTimestamp + retryAfterMs : 0);
 
     saveSyncDiagnostics({
       ...nextDiagnostics,
@@ -8862,6 +9016,8 @@
       lastProbeSameSessionRemoteWrite: sameSessionRemoteWrite === true,
       lastProbeSameDeviceRemoteWrite: sameDeviceRemoteWrite === true,
       lastProbeWriterMatchKind: normalizeSyncDiagnosticText(writerMatchKind, 80),
+      lastForegroundProbeRetryAfterMs: retryAfterMs,
+      lastForegroundProbeRetryWaitUntil: retryWaitUntil,
       lastRemoteWriterSummary:
         normalizeSyncDiagnosticText(buildRemoteSyncWriterSummary(remoteWriter), 220) ||
         nextDiagnostics.lastRemoteWriterSummary ||
@@ -8997,7 +9153,146 @@
       .replace(/[<>]/g, "")
       .slice(0, maxLength);
 
+  const formatSyncDiagnosticDuration = (durationMs) => {
+    const normalizedMs = Math.max(0, Math.floor(Number(durationMs) || 0));
+    if (!normalizedMs) {
+      return "—";
+    }
+    if (normalizedMs < 1000) {
+      return `${normalizedMs}ms`;
+    }
+    return `${Math.ceil(normalizedMs / 1000)}s`;
+  };
+
+  const formatSyncSchedulerSources = (sources = null) => {
+    const normalizedSources =
+      typeof normalizeBackgroundSyncDebounceSources === "function"
+        ? normalizeBackgroundSyncDebounceSources(sources)
+        : sanitizeRecordObject(sources);
+    const entries = Object.keys(normalizedSources)
+      .sort()
+      .map((source) => {
+        const count = Math.max(
+          0,
+          Math.floor(Number(normalizedSources[source]) || 0)
+        );
+        return count > 0
+          ? `${normalizeSyncDiagnosticText(source, 40)}=${count}`
+          : "";
+      })
+      .filter(Boolean);
+    return entries.length > 0 ? entries.join(", ") : "";
+  };
+
+  const getBackgroundSyncSchedulerDiagnosticsSnapshot = ({
+    schedulerContext = null,
+    cleanupResult = null,
+    drainLoopCount = 0,
+  } = {}) => {
+    const now = Date.now();
+    const sharedState =
+      typeof getBackgroundSyncDebounceState === "function"
+        ? getBackgroundSyncDebounceState()
+        : null;
+    const normalizedContext =
+      typeof normalizeBackgroundSyncSchedulerContext === "function"
+        ? normalizeBackgroundSyncSchedulerContext(schedulerContext || {})
+        : {};
+    const normalizedCleanup =
+      cleanupResult && typeof cleanupResult === "object"
+        ? cleanupResult
+        : {};
+    const pendingCleanup = normalizedCleanup.pendingCleanup || {};
+    const sharedDebounceCleanup = normalizedCleanup.sharedDebounceCleanup || {};
+    const retainedNewerPending =
+      pendingCleanup.status === "retained" ||
+      sharedDebounceCleanup.status === "retained" ||
+      normalizedCleanup.followUpQueued === true;
+    const cleanupParts = [];
+    if (pendingCleanup.status) {
+      cleanupParts.push(
+        `pending=${pendingCleanup.status}:${pendingCleanup.reason || "unknown"}`
+      );
+    }
+    if (sharedDebounceCleanup.status) {
+      cleanupParts.push(
+        `shared=${sharedDebounceCleanup.status}:${
+          sharedDebounceCleanup.reason || "unknown"
+        }`
+      );
+    }
+    if (normalizedCleanup.followUpQueued === true) {
+      cleanupParts.push("followUp=queued");
+    }
+
+    return {
+      owner: sharedState?.ownerTabId || "",
+      ownerLeaseUntil: sharedState?.ownerLeaseUntil || 0,
+      ownerLeaseRemainingMs:
+        sharedState?.ownerLeaseUntil > now
+          ? sharedState.ownerLeaseUntil - now
+          : 0,
+      dueAt: sharedState?.dueAt || normalizedContext.scheduledDueAt || 0,
+      maxWaitUntil: sharedState?.maxWaitUntil || 0,
+      generation:
+        sharedState?.generation || normalizedContext.debounceGeneration || 0,
+      sources: formatSyncSchedulerSources(sharedState?.sources),
+      threadIds: Array.isArray(sharedState?.threadIds)
+        ? sharedState.threadIds
+        : [],
+      maxLastModified:
+        sharedState?.maxLastModified ||
+        normalizedContext.intendedMaxLastModified ||
+        0,
+      coveredGeneration:
+        Math.max(
+          0,
+          Math.floor(
+            Number(
+              normalizedCleanup.debounceGeneration ||
+                normalizedContext.debounceGeneration ||
+                0
+            ) || 0
+          )
+        ),
+      coveredLastModified:
+        Number(normalizedCleanup.coveredLastModified) ||
+        Number(normalizedCleanup.coveredLocalLastUpdated) ||
+        0,
+      drainLoopCount: Math.max(0, Math.floor(Number(drainLoopCount) || 0)),
+      retainedNewerPending,
+      cleanupResult: cleanupParts.join(" | "),
+    };
+  };
+
   const buildSyncDiagnosticsRows = (diagnostics) => {
+    const schedulerSnapshot = getBackgroundSyncSchedulerDiagnosticsSnapshot();
+    const schedulerOwner =
+      schedulerSnapshot.owner || diagnostics.lastSharedSchedulerOwner || "";
+    const schedulerOwnerLeaseUntil =
+      schedulerSnapshot.ownerLeaseUntil ||
+      diagnostics.lastSharedSchedulerOwnerLeaseUntil ||
+      0;
+    const schedulerDueAt =
+      schedulerSnapshot.dueAt || diagnostics.lastSharedSchedulerDueAt || 0;
+    const schedulerMaxWaitUntil =
+      schedulerSnapshot.maxWaitUntil ||
+      diagnostics.lastSharedSchedulerMaxWaitUntil ||
+      0;
+    const schedulerGeneration =
+      schedulerSnapshot.generation ||
+      diagnostics.lastSharedSchedulerGeneration ||
+      0;
+    const schedulerSources =
+      schedulerSnapshot.sources || diagnostics.lastSharedSchedulerSources || "";
+    const schedulerThreadIds =
+      schedulerSnapshot.threadIds.length > 0
+        ? schedulerSnapshot.threadIds
+        : diagnostics.lastSharedSchedulerThreadIds || [];
+    const schedulerMaxLastModified =
+      schedulerSnapshot.maxLastModified ||
+      diagnostics.lastSharedSchedulerMaxLastModified ||
+      0;
     const rows = [
       ["最近动作", diagnostics.lastActionType || "—"],
       ["最近尝试", formatSyncTime(diagnostics.lastAttemptTimestamp)],
@@ -9018,6 +9313,62 @@
       ["最近结果码", diagnostics.lastSyncResultCode || "—"],
       ["最近阻断级别", diagnostics.lastSyncBlockKind || "—"],
       ["最近阻断原因", diagnostics.lastSyncBlockReason || "—"],
+      [
+        "前台重试等待",
+        diagnostics.lastForegroundProbeRetryAfterMs
+          ? formatSyncDiagnosticDuration(diagnostics.lastForegroundProbeRetryAfterMs)
+          : "—",
+      ],
+      [
+        "前台重试时间",
+        formatSyncTime(diagnostics.lastForegroundProbeRetryWaitUntil),
+      ],
+      ["共享调度 owner", schedulerOwner || "—"],
+      [
+        "共享调度 lease",
+        schedulerOwnerLeaseUntil
+          ? `${formatSyncTime(schedulerOwnerLeaseUntil)} (${formatSyncDiagnosticDuration(
+              schedulerSnapshot.ownerLeaseRemainingMs
+            )})`
+          : "—",
+      ],
+      ["共享调度 dueAt", formatSyncTime(schedulerDueAt)],
+      ["共享调度 maxWait", formatSyncTime(schedulerMaxWaitUntil)],
+      [
+        "共享调度 generation",
+        schedulerGeneration ? String(schedulerGeneration) : "—",
+      ],
+      ["共享调度 sources", schedulerSources || "—"],
+      [
+        "共享调度 threadIds",
+        schedulerThreadIds.length > 0 ? schedulerThreadIds.join(", ") : "—",
+      ],
+      ["共享调度 maxModified", formatSyncTime(schedulerMaxLastModified)],
+      [
+        "共享调度 covered",
+        diagnostics.lastSharedSchedulerCoveredGeneration ||
+        diagnostics.lastSharedSchedulerCoveredLastModified
+          ? `gen=${diagnostics.lastSharedSchedulerCoveredGeneration || 0} | ${formatSyncTime(
+              diagnostics.lastSharedSchedulerCoveredLastModified
+            )}`
+          : "—",
+      ],
+      [
+        "共享调度 drain",
+        diagnostics.lastSharedSchedulerDrainLoopCount
+          ? String(diagnostics.lastSharedSchedulerDrainLoopCount)
+          : "—",
+      ],
+      [
+        "共享调度保留 newer pending",
+        formatSyncDiagnosticYesNo(
+          diagnostics.lastSharedSchedulerRetainedNewerPending
+        ),
+      ],
+      [
+        "共享调度 cleanup",
+        diagnostics.lastSharedSchedulerCleanupResult || "—",
+      ],
       ["待处理 cleanup 来源", diagnostics.lastCleanupSource || "—"],
       ["待处理 cleanup 数量", String(diagnostics.lastPendingCleanupCount || 0)],
       ["本地哈希", formatSyncDiagnosticHashForDisplay(diagnostics.lastLocalHash)],
@@ -9607,9 +9958,122 @@
     );
   };
 
+  const getAutoSyncIndicatorSourceForActiveLock = (
+    now = Date.now(),
+    fallbackSource = ""
+  ) => {
+    const normalizedFallback = normalizeAutoSyncIndicatorSource(fallbackSource);
+    const globalLock = getGlobalSyncLockValue();
+    const resolveSourceForMode = (mode) => {
+      switch (mode) {
+        case SYNC_LOCK_MODE_BACKGROUND:
+          return AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND;
+        case SYNC_LOCK_MODE_MANUAL:
+          return AUTO_SYNC_INDICATOR_SOURCE_MANUAL_SYNC;
+        case SYNC_LOCK_MODE_STARTUP:
+          return normalizedFallback || AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP;
+        default:
+          return normalizedFallback || AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND;
+      }
+    };
+
+    if (isGlobalSyncLockValid(globalLock, now)) {
+      return resolveSourceForMode(globalLock.mode);
+    }
+    if (isModeSyncLockValid(getBackgroundSyncLockValue(), BACKGROUND_SYNC_LOCK_TTL_MS, now)) {
+      return AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND;
+    }
+    if (isModeSyncLockValid(getManualSyncLockValue(), MANUAL_SYNC_LOCK_TTL_MS, now)) {
+      return AUTO_SYNC_INDICATOR_SOURCE_MANUAL_SYNC;
+    }
+    if (isModeSyncLockValid(getStartupSyncLockValue(), STARTUP_SYNC_LOCK_TTL_MS, now)) {
+      return normalizedFallback || AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP;
+    }
+    return normalizedFallback || AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND;
+  };
+
+  const getAutoSyncRuntimePendingDisplayState = (now = Date.now()) => {
+    const foregroundRetryRemainingMs =
+      typeof getForegroundRemoteSyncRetryRemainingMs === "function"
+        ? getForegroundRemoteSyncRetryRemainingMs(now)
+        : 0;
+    if (foregroundRetryRemainingMs > 0) {
+      return {
+        hasPending: true,
+        source: AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME,
+        reason: "foreground_followup_retry",
+      };
+    }
+
+    const sharedState =
+      typeof getBackgroundSyncDebounceState === "function"
+        ? getBackgroundSyncDebounceState()
+        : null;
+    if (sharedState) {
+      return {
+        hasPending: true,
+        source: AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+        reason: sharedState.reason || "shared_background_debounce",
+      };
+    }
+
+    if (backgroundSyncRetryTimeout || hasPendingBackgroundSync) {
+      return {
+        hasPending: true,
+        source: AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+        reason: backgroundSyncRetryTimeout ? "background_retry" : "background_queue",
+      };
+    }
+
+    const pending =
+      typeof getPendingAutoSyncRequest === "function"
+        ? getPendingAutoSyncRequest()
+        : GM_getValue(PENDING_AUTO_SYNC_KEY, null);
+    if (pending && typeof pending === "object") {
+      return {
+        hasPending: true,
+        source: AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+        reason:
+          normalizePendingAutoSyncSource(pending.source) || "pending_auto_sync",
+      };
+    }
+
+    return { hasPending: false, source: "", reason: "" };
+  };
+
+  const getAutoSyncRuntimeRunningDisplayState = (
+    now = Date.now(),
+    stateInput = null
+  ) => {
+    const state = stateInput
+      ? normalizeAutoSyncIndicatorState(stateInput)
+      : getAutoSyncIndicatorState();
+    if (hasAnyActiveSyncLock(now)) {
+      return {
+        isRunning: true,
+        source: getAutoSyncIndicatorSourceForActiveLock(now, state.source),
+        reason: state.reason || "sync_lock_active",
+      };
+    }
+    if (foregroundRemoteSyncCheckInFlightPromise) {
+      return {
+        isRunning: true,
+        source: AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME,
+        reason: "foreground_followup_in_flight",
+      };
+    }
+    if (foregroundProbeInFlightPromise) {
+      return {
+        isRunning: true,
+        source: AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME,
+        reason: "foreground_probe_in_flight",
+      };
+    }
+    return { isRunning: false, source: "", reason: "" };
+  };
+
   const hasActivePendingAutoSyncRequest = () => {
-    const pending = GM_getValue(PENDING_AUTO_SYNC_KEY, null);
-    return Boolean(pending && typeof pending === "object");
+    return getAutoSyncRuntimePendingDisplayState().hasPending === true;
   };
 
   const getAutoSyncIndicatorResolvedTtlMs = (phase) => {
@@ -9675,9 +10139,9 @@
       ? normalizeAutoSyncIndicatorState(stateInput)
       : getAutoSyncIndicatorState();
     const now = Date.now();
-    const hasActiveBackgroundLock = hasActiveBackgroundSyncLock(now);
-    const hasActiveSyncLock = hasAnyActiveSyncLock(now);
-    const hasPendingRequest = hasActivePendingAutoSyncRequest();
+    const runningState = getAutoSyncRuntimeRunningDisplayState(now, state);
+    const pendingState = getAutoSyncRuntimePendingDisplayState(now);
+    const hasPendingRequest = pendingState.hasPending === true;
     const hasConflictPause = Boolean(getActiveAutoSyncConflictPause());
     const hasOpenCircuit = getAutoSyncCircuitState().open;
     const canShowPending = hasPendingRequest && !hasConflictPause && !hasOpenCircuit;
@@ -9688,11 +10152,11 @@
       displayReason: normalizeAutoSyncIndicatorReason(displayReason),
     });
 
-    if (hasActiveBackgroundLock) {
+    if (runningState.isRunning) {
       return buildDisplayState(
         AUTO_SYNC_INDICATOR_PHASE_RUNNING,
-        AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
-        state.reason
+        runningState.source,
+        runningState.reason || state.reason
       );
     }
 
@@ -9741,7 +10205,7 @@
     };
 
     if (state.phase === AUTO_SYNC_INDICATOR_PHASE_RUNNING) {
-      if (hasActiveSyncLock || autoSyncIndicatorWriteInFlightCount > 0) {
+      if (autoSyncIndicatorWriteInFlightCount > 0) {
         return buildDisplayState(
           AUTO_SYNC_INDICATOR_PHASE_RUNNING,
           state.source,
@@ -9757,8 +10221,8 @@
       if (fallbackState.phase === AUTO_SYNC_INDICATOR_PHASE_IDLE && canShowPending) {
         return buildDisplayState(
           AUTO_SYNC_INDICATOR_PHASE_PENDING,
-          AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
-          state.reason
+          pendingState.source || AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+          pendingState.reason || state.reason
         );
       }
       return buildDisplayState(
@@ -9769,13 +10233,14 @@
     }
 
     if (state.phase === AUTO_SYNC_INDICATOR_PHASE_PENDING) {
-      const shouldKeepPending =
-        canShowPending || now - state.timestamp <= AUTO_SYNC_INDICATOR_PENDING_STALE_MS;
+      const shouldKeepPending = canShowPending;
       if (shouldKeepPending) {
         return buildDisplayState(
           AUTO_SYNC_INDICATOR_PHASE_PENDING,
-          state.source || AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
-          state.reason
+          pendingState.source ||
+            state.source ||
+            AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+          pendingState.reason || state.reason
         );
       }
       const fallbackState = resolveWithTtl(
@@ -9791,6 +10256,14 @@
       );
     }
 
+    if (canShowPending) {
+      return buildDisplayState(
+        AUTO_SYNC_INDICATOR_PHASE_PENDING,
+        pendingState.source || AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+        pendingState.reason || state.reason
+      );
+    }
+
     const resolvedState = resolveWithTtl(
       state.phase,
       state.timestamp,
@@ -9800,8 +10273,8 @@
     if (resolvedState.phase === AUTO_SYNC_INDICATOR_PHASE_IDLE && canShowPending) {
       return buildDisplayState(
         AUTO_SYNC_INDICATOR_PHASE_PENDING,
-        AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
-        state.reason
+        pendingState.source || AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+        pendingState.reason || state.reason
       );
     }
       return buildDisplayState(
@@ -10327,6 +10800,7 @@
   const setAutoSyncConflictPause = (reason = "generic") => {
     clearForegroundRemoteSyncRetry();
     clearForegroundFollowUpSoftBlock();
+    clearAutoSyncRuntimeQueue();
     GM_setValue(AUTO_SYNC_CONFLICT_PAUSE_KEY, {
       paused: true,
       reason: String(reason || "generic"),
@@ -12463,6 +12937,25 @@
         delayMs: state.dueAt - now,
       };
     }
+    if (hasAnyActiveSyncLock(now)) {
+      const retryDelayMs = 1000;
+      scheduleSharedBackgroundSyncDebounceTimer(
+        {
+          ...state,
+          dueAt: now + retryDelayMs,
+        },
+        {
+          ...options,
+          now,
+          tabId,
+        }
+      );
+      return {
+        status: "scheduled",
+        reason: "sync_lock_active",
+        delayMs: retryDelayMs,
+      };
+    }
 
     const schedulerContext = {
       debounceGeneration: state.generation,
@@ -12677,6 +13170,26 @@
       followUpQueued,
     };
   };
+  const recordBackgroundSchedulerCleanupDiagnostics = ({
+    schedulerContext = {},
+    cleanupResult = null,
+    drainLoopCount = 0,
+  } = {}) => {
+    const normalizedCleanup =
+      cleanupResult && typeof cleanupResult === "object" ? cleanupResult : null;
+    if (!normalizedCleanup) {
+      return false;
+    }
+    const current = getSyncDiagnostics();
+    saveSyncDiagnostics(
+      mergeSyncDiagnosticsContext(current, {
+        schedulerContext,
+        schedulerCleanupResult: normalizedCleanup,
+        schedulerDrainLoopCount: drainLoopCount,
+      })
+    );
+    return true;
+  };
   const requestSharedBackgroundSyncDebounce = (
     request = {},
     options = {}
@@ -12839,6 +13352,18 @@
     clearRemotePushDebounceTimer();
     clearBackgroundSyncDebounceState();
   };
+  const reconcileBackgroundSyncSchedulerForSettings = (
+    settingsSnapshot = null
+  ) => {
+    const readiness = isBackgroundSyncDebounceRequestAllowed({
+      settingsSnapshot,
+    });
+    if (readiness.allowed) {
+      return { status: "ready" };
+    }
+    clearAutoSyncRuntimeQueue();
+    return { status: "cleared", reason: readiness.reason };
+  };
   const debouncedTriggerRemoteSyncPush = ({
     source = "general",
     lastModified = null,
@@ -12906,6 +13431,14 @@
       syncDirtyDuringSync = true;
       syncDirtyTimestamp = Math.max(syncDirtyTimestamp, nextLastModified);
       if (triggerSync) {
+        const readiness = isBackgroundSyncDebounceRequestAllowed();
+        if (!readiness.allowed) {
+          clearAutoSyncRuntimeQueue();
+          console.log(
+            `S1 Plus: 同步进行中检测到本地变更，但后台自动同步不可用(${readiness.reason})，已停止共享调度。`
+          );
+          return;
+        }
         syncDirtyNeedsFollowUpSync = true;
         hasPendingBackgroundSync = true;
         markPendingAutoSyncRequest(source, nextLastModified, {
@@ -12925,6 +13458,11 @@
     GM_setValue("s1p_last_modified", nextLastModified);
     recordReadProgressLastModifiedDebug("written");
     if (triggerSync) {
+      const readiness = isBackgroundSyncDebounceRequestAllowed();
+      if (!readiness.allowed) {
+        clearAutoSyncRuntimeQueue();
+        return;
+      }
       markPendingAutoSyncRequest(source, nextLastModified, {
         threadId: currentThreadIdForDirty,
       });
@@ -21865,6 +22403,11 @@
                     result,
                     runSchedulerContext
                   );
+                recordBackgroundSchedulerCleanupDiagnostics({
+                  schedulerContext: runSchedulerContext,
+                  cleanupResult: result.backgroundSchedulerCleanup,
+                  drainLoopCount: drainCount,
+                });
               }
             }
             const phaseFromResult = getAutoSyncIndicatorPhaseFromResult(result);
@@ -23626,6 +24169,10 @@
       getForegroundProbeGateBlockResult,
       hasEnabledAutoSyncIndicatorPath,
       getAutoSyncIndicatorState,
+      resolveAutoSyncIndicatorDisplayPhase,
+      hasActivePendingAutoSyncRequest,
+      getAutoSyncRuntimePendingDisplayState,
+      getAutoSyncRuntimeRunningDisplayState,
       setAutoSyncIndicatorResolvedPhase,
       startAutoSyncIndicatorCycle,
       finishAutoSyncIndicatorCycle,
@@ -24715,7 +25262,9 @@
     initializeNavbar();
     applyChanges();
     syncVisibleRemoteFreshnessPollingForCurrentState();
-    markSettingsRuntimeAppliedSnapshot(getSettings());
+    const settings = getSettings();
+    reconcileBackgroundSyncSchedulerForSettings(settings);
+    markSettingsRuntimeAppliedSnapshot(settings);
     syncOpenSettingsModalFromCrossTab({
       changedPathSet,
       forceFullApply: true,
@@ -24859,6 +25408,7 @@
     }
 
     markSettingsRuntimeAppliedSnapshot(settings);
+    reconcileBackgroundSyncSchedulerForSettings(settings);
     syncVisibleRemoteFreshnessPollingForCurrentState();
     syncOpenSettingsModalFromCrossTab({ changedPathSet });
     return false;
@@ -25283,6 +25833,7 @@
     }
     console.log("S1 Plus: Settings saved.");
     syncVisibleRemoteFreshnessPollingForCurrentState();
+    reconcileBackgroundSyncSchedulerForSettings(normalizedSettings);
     if (!suppressSyncTrigger) {
       updateLastModifiedTimestamp();
     } else if (markDataChangedWhenSuppressed) {
@@ -25577,6 +26128,7 @@
       }
       return;
     }
+    clearAutoSyncRuntimeQueue();
     startManualSyncLockHeartbeat();
     const assertManualSyncLockOwned = (stage) => {
       assertSyncLockOwned(SYNC_LOCK_MODE_MANUAL, `force_push:${stage}`);
@@ -25661,6 +26213,7 @@
       }
       return;
     }
+    clearAutoSyncRuntimeQueue();
     startManualSyncLockHeartbeat();
     const assertManualSyncLockOwned = (stage) => {
       assertSyncLockOwned(SYNC_LOCK_MODE_MANUAL, `force_pull:${stage}`);
@@ -25763,10 +26316,19 @@
 
     switch (phase) {
       case AUTO_SYNC_INDICATOR_PHASE_PENDING:
+        if (reason === "foreground_followup_retry") {
+          return `自动同步：${sourceLabel}等待重试`;
+        }
         return sourceLabel === "自动同步"
           ? "自动同步：待处理"
           : `自动同步：${sourceLabel}待处理`;
       case AUTO_SYNC_INDICATOR_PHASE_RUNNING:
+        if (reason === "foreground_probe_in_flight") {
+          return `自动同步：${sourceLabel}正在探测`;
+        }
+        if (reason === "foreground_followup_in_flight") {
+          return `自动同步：${sourceLabel}命中更新，正在同步`;
+        }
         if (
           source === AUTO_SYNC_INDICATOR_SOURCE_PAGE_LOAD_VISIBLE ||
           source === AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME ||
@@ -28420,7 +28982,7 @@
               <label class="s1p-settings-label" for="s1p-sync-device-id-input">同步设备 ID（自动上传必填）</label>
               <input type="text" id="s1p-sync-device-id-input" class="s1p-input s1p-input-full" placeholder="例如：MacBook-Pro-主力机" maxlength="80" autocomplete="off" data-s1p-sync-control>
             </div>
-            <p class="s1p-setting-desc">开启自动上传本地变更时必填，用于标记这台设备写入的云端记录，方便其他页面或同设备环境识别“这是本机刚同步的变更”。这个 ID 会写入云端记录元信息，但不会作为设置同步到其他设备。</p>
+            <p class="s1p-setting-desc">开启自动上传本地变更时必填，用于标记这台设备写入的云端记录，方便其他页面或同设备环境识别“这是本机刚同步的变更”。留空则忽略，不会同步到其他设备，也不参与冲突裁决；填写后只写入云端记录元信息，不会作为设置同步到其他设备。</p>
           </div>
 
           <div class="s1p-sync-settings-section" id="s1p-sync-status-section">
@@ -33453,6 +34015,7 @@
       showMessage(MANUAL_SYNC_LOCK_BUSY_MESSAGE, false);
       return false;
     }
+    clearAutoSyncRuntimeQueue();
     startManualSyncLockHeartbeat();
     let manualSyncLockHeldByThisRun = true;
 
