@@ -4,6 +4,9 @@
 
 > 打开多个帖子标签页逐个阅读；阅读过程中部分页面已经触发阅读进度保存和后台推送；看完后切到非 S1 页面，观察到同步状态出现多次“同步中 -> 成功 -> 同步中 -> 成功”。
 
+后续实现请以独立清单推进：
+
+- [后台同步共享调度器实现清单](./background-sync-scheduler-implementation-checklist.md)
 
 ## Review 结论
 
@@ -253,6 +256,30 @@ const intendedMaxLastModified = state.maxLastModified;
 - 远端推送前 `updated_at` 检查
 
 本优化只改变“什么时候、由哪个标签页发起后台同步”。
+
+## 自动推送与自动拉取的关系
+
+结论：架构对齐，但不是行为镜像。更准确的边界是“触发侧分治，执行侧统一”。
+
+两侧实现后应保持同一条高层流水线：
+
+```text
+触发源 -> 各自的共享协调 / gate -> 全局同步锁 -> performAutoSync() -> 统一状态源 -> 导航栏 / 标题 / 诊断
+```
+
+但两侧触发语义不同，不能做成完全镜像：
+
+- 自动推送是本地 dirty 驱动，重点是 debounce、跨标签 owner、pending 覆盖判定。
+- 自动拉取是远端 freshness 驱动，重点是 metadata probe、cooldown、same-session / same-device 判断和本地状态 gate。
+- 后台推送在 `background` 模式下可以自动 push；前台拉取在 `foreground_followup` 下遇到本地较新时应 soft block / retry，或等待用户发起全局手动同步，而不是反向自动 push。
+
+因此本方案的实施边界是：
+
+- 拉取侧：维持现有 freshness probe / cooldown / gate 流程，只在状态展示和诊断需要时接入统一状态源增强。
+- 推送侧：新增跨标签 shared debounce scheduler，合并本地 dirty，减少多标签重复后台推送。
+- 共同层：继续共用全局同步锁、`performAutoSync()` 裁决核心、统一状态源和诊断体系。
+
+拉取侧接入统一状态源属于小增强，不是重构拉取逻辑。目标是让导航栏、标题、诊断面板能正确表达“前台拉取检查正在探测 / 等待 retry / 被 gate 暂缓 / follow-up 同步中 / 已完成”。它不应把拉取侧改成 shared debounce scheduler，也不应把 metadata probe 改成后台推送式调度，更不应让 `foreground_followup` 在本地较新时偷偷变成自动推送。
 
 ## 其他建议优化
 
