@@ -171,10 +171,10 @@ Phase B / C 实现结果（2026-05-05）：
 
 升级 pending 结构，保留 legacy 兼容：
 
-- [ ] `markPendingAutoSyncRequest()` 写入 `lastModified`，同时写入 `maxLastModified`。
-- [ ] pending 聚合 `sources`、`threadIds`、`firstDirtyAt`、`lastDirtyAt`。
-- [ ] 读取 pending 时兼容旧结构的 `lastModified`。
-- [ ] `recoverPendingAutoSyncIfNeeded()` 使用 `maxLastModified || lastModified` 判断是否仍需补发。
+- [x] `markPendingAutoSyncRequest()` 写入 `lastModified`，同时写入 `maxLastModified`。
+- [x] pending 聚合 `sources`、`threadIds`、`firstDirtyAt`、`lastDirtyAt`。
+- [x] 读取 pending 时兼容旧结构的 `lastModified`。
+- [x] `recoverPendingAutoSyncIfNeeded()` 使用 `maxLastModified || lastModified` 判断是否仍需补发。
 
 新增 covered 清理 helper：
 
@@ -184,7 +184,7 @@ Phase B / C 实现结果（2026-05-05）：
 - [x] 当前 shared state `generation` 变大时保留 pending。
 - [x] 当前 `maxLastModified > coveredLastModified` 时保留 pending。
 - [x] 保留 pending 时安排 `BACKGROUND_SYNC_DEBOUNCE_FOLLOW_UP_SETTLE_MS` 短 follow-up。
-- [ ] 冲突暂停、手动同步完成、远程同步关闭时仍能主动清理调度状态。
+- [x] 冲突暂停、手动同步完成、远程同步关闭时仍能主动清理调度状态。
 
 ## Phase E: 接入 dirty 写入链路
 
@@ -192,24 +192,32 @@ Phase B / C 实现结果（2026-05-05）：
 - [x] wrapper 内部改为调用 `requestSharedBackgroundSyncDebounce()`。
 - [x] `updateLastModifiedTimestamp(source, { triggerSync: true })` 写 pending 后进入 shared scheduler。
 - [x] `triggerSync=false` 只更新时间戳和 provenance，不进入 shared scheduler。
-- [ ] 初始同步 / 后台同步进行中出现 dirty 时，继续设置现有 dirty flag，并确保 pending / shared state 不被本轮成功误清。
+- [x] 初始同步 / 后台同步进行中出现 dirty 时，继续设置现有 dirty flag，并确保 pending / shared state 不被本轮成功误清。
 - [x] `readProgressSyncDebounceDueAt` 改为读取 shared debounce dueAt，供 foreground gate 判断阅读进度仍在 settle window。
-- [ ] 清理旧 `remotePushTimeout` 路径，或让它只作为 shared owner timer 使用。
+- [x] 清理旧 `remotePushTimeout` 路径，或让它只作为 shared owner timer 使用。
 
 ## Phase F: 接入后台同步执行结果
 
-- [ ] `triggerRemoteSyncPush(reason, options)` 接收 scheduler context：
+- [x] `triggerRemoteSyncPush(reason, options)` 接收 scheduler context：
   - `debounceGeneration`
   - `intendedMaxLastModified`
   - `scheduledDueAt`
   - `schedulerReason`
-- [ ] 进入同步前记录本轮计划覆盖的 `generation` 和 `maxLastModified`。
-- [ ] `performAutoSync()` 的成功结果补充只读诊断字段，例如 `coveredLocalLastUpdated`，不参与裁决。
-- [ ] background 成功后用 covered helper 清 pending / shared debounce。
-- [ ] background 失败后保留 pending，并走现有 retry / circuit breaker。
-- [ ] background 冲突后清 runtime queue，设置 conflict pause，避免继续自动推送。
-- [ ] drain-loop 继续负责消化同一个 owner 同步执行期间产生的 dirty。
-- [ ] shared debounce 只负责合并同步开始前跨标签产生的 dirty。
+- [x] 进入同步前记录本轮计划覆盖的 `generation` 和 `maxLastModified`。
+- [x] `performAutoSync()` 的成功结果补充只读诊断字段，例如 `coveredLocalLastUpdated`，不参与裁决。
+- [x] background 成功后用 covered helper 清 pending / shared debounce。
+- [x] background 失败后保留 pending，并走现有 retry / circuit breaker。
+- [x] background 冲突后清 runtime queue，设置 conflict pause，避免继续自动推送。
+- [x] drain-loop 继续负责消化同一个 owner 同步执行期间产生的 dirty。
+- [x] shared debounce 只负责合并同步开始前跨标签产生的 dirty。
+
+Phase D / E / F 实现结果（2026-05-05）：
+
+- Phase D 已完成：`s1p_pending_auto_sync_request` 升级为聚合结构，保留 legacy `lastModified` 读取兼容，并新增 `maxLastModified`、`sources`、`threadIds`、`firstDirtyAt`、`lastDirtyAt`；pending recovery 改用 `maxLastModified || lastModified` 判断是否仍需补发。
+- Phase E 已完成：`updateLastModifiedTimestamp(..., { triggerSync: true })` 写入聚合 pending 后进入 shared scheduler；`triggerSync=false` 仅更新时间戳和 provenance；同步进行中 dirty 继续走现有 dirty flag / follow-up 机制，且不会被本轮后台成功无条件清除；旧 `remotePushTimeout` / `armRemotePushTimer()` per-tab 路径已移除。
+- Phase F 已完成：`triggerRemoteSyncPush(reason, options)` 接收 scheduler context，后台执行前记录本轮 `debounceGeneration` / `intendedMaxLastModified`；`performAutoSync()` 成功结果补充 `coveredLocalLastUpdated` / `coveredLastModified` 只读字段；background 成功后按 covered helper 清理 pending/shared debounce，newer dirty 会保留并排短 follow-up；background failure 保留 pending 并继续 retry / circuit breaker；background conflict 继续清 runtime queue 并进入冲突暂停。
+- 本轮未改变 `performAutoSync()` 的核心裁决语义；`foreground_followup` 本地较新仍走 `skip_push_on_foreground_followup` soft block，不会自动 push。
+- 验证结果：`node -c S1Plus.js` 通过；`node sync-across-multiple-tab/scripts/test-background-sync-shared-debounce.js` 通过；`node sync-across-multiple-tab/scripts/test-safe-sync-execution.js` 通过；`node sync-across-multiple-tab/scripts/test-background-open-passive-session.js` 通过；`node sync-across-multiple-tab/scripts/test-post-sync-refresh-policy.js` 通过。
 
 ## Phase G: 统一状态源与诊断增强
 
@@ -317,9 +325,9 @@ node sync-across-multiple-tab/scripts/test-visible-remote-polling.js
 - [x] Phase A: 测试先行
 - [x] Phase B: 引入 shared debounce state
 - [x] Phase C: owner / timer / lifecycle
-- [ ] Phase D: pending 聚合与覆盖清理
-- [ ] Phase E: 接入 dirty 写入链路
-- [ ] Phase F: 接入后台同步执行结果
+- [x] Phase D: pending 聚合与覆盖清理
+- [x] Phase E: 接入 dirty 写入链路
+- [x] Phase F: 接入后台同步执行结果
 - [ ] Phase G: 统一状态源与诊断增强
 - [ ] Phase H: 设置、暂停与清理
 - [ ] Phase I: 回归验证

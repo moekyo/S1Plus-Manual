@@ -10375,15 +10375,145 @@
     return { count: nextCount, opened: true, until };
   };
 
-  const markPendingAutoSyncRequest = (source = "general", lastModified = null) => {
-    GM_setValue(PENDING_AUTO_SYNC_KEY, {
-      source: String(source || "general"),
-      lastModified:
-        typeof lastModified === "number"
-          ? lastModified
-          : GM_getValue("s1p_last_modified", 0),
-      createdAt: Date.now(),
+  const normalizePendingAutoSyncSource = (source = "general") =>
+    normalizeSyncDiagnosticText(source, 80) || "general";
+
+  const normalizePendingAutoSyncTimestamp = (value) => {
+    const normalized = Number(value);
+    return Number.isFinite(normalized) && normalized > 0 ? normalized : 0;
+  };
+
+  const normalizePendingAutoSyncSources = (value) => {
+    const source = sanitizeRecordObject(value);
+    const normalizedSources = {};
+    Object.keys(source).forEach((key) => {
+      const normalizedKey = normalizePendingAutoSyncSource(key);
+      const count = Math.max(0, Math.floor(Number(source[key]) || 0));
+      if (count > 0) {
+        normalizedSources[normalizedKey] =
+          (normalizedSources[normalizedKey] || 0) + count;
+      }
     });
+    return normalizedSources;
+  };
+
+  const normalizePendingAutoSyncThreadIds = (value) => {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+    const seen = new Set();
+    const threadIds = [];
+    value.forEach((item) => {
+      const threadId =
+        normalizeNumericId(item) || normalizeSyncDiagnosticText(item, 40);
+      if (!threadId || seen.has(threadId)) {
+        return;
+      }
+      seen.add(threadId);
+      threadIds.push(threadId);
+    });
+    return threadIds.slice(0, BACKGROUND_SYNC_DEBOUNCE_THREAD_ID_LIMIT);
+  };
+
+  const mergePendingAutoSyncSources = (pending, source) => {
+    const sources = normalizePendingAutoSyncSources(pending?.sources);
+    if (
+      Object.keys(sources).length === 0 &&
+      pending &&
+      typeof pending.source === "string"
+    ) {
+      const legacySource = normalizePendingAutoSyncSource(pending.source);
+      sources[legacySource] = (sources[legacySource] || 0) + 1;
+    }
+    const normalizedSource = normalizePendingAutoSyncSource(source);
+    sources[normalizedSource] = (sources[normalizedSource] || 0) + 1;
+    return sources;
+  };
+
+  const mergePendingAutoSyncThreadIds = (pending, threadId) => {
+    const threadIds = normalizePendingAutoSyncThreadIds(pending?.threadIds);
+    const normalizedThreadId =
+      normalizeNumericId(threadId) ||
+      normalizeSyncDiagnosticText(threadId, 40);
+    if (normalizedThreadId && !threadIds.includes(normalizedThreadId)) {
+      threadIds.push(normalizedThreadId);
+    }
+    return threadIds.slice(0, BACKGROUND_SYNC_DEBOUNCE_THREAD_ID_LIMIT);
+  };
+
+  const normalizePendingAutoSyncRequest = (value) => {
+    if (!isObjectRecord(value)) {
+      return null;
+    }
+    const lastModified = normalizePendingAutoSyncTimestamp(value.lastModified);
+    const maxLastModified = Math.max(
+      normalizePendingAutoSyncTimestamp(value.maxLastModified),
+      lastModified
+    );
+    if (maxLastModified <= 0) {
+      return null;
+    }
+    const createdAt = normalizePendingAutoSyncTimestamp(value.createdAt);
+    const firstDirtyAt =
+      normalizePendingAutoSyncTimestamp(value.firstDirtyAt) ||
+      createdAt ||
+      normalizePendingAutoSyncTimestamp(value.lastDirtyAt);
+    const lastDirtyAt =
+      normalizePendingAutoSyncTimestamp(value.lastDirtyAt) ||
+      createdAt ||
+      firstDirtyAt;
+    const source = normalizePendingAutoSyncSource(value.source);
+    const sources = normalizePendingAutoSyncSources(value.sources);
+    if (Object.keys(sources).length === 0) {
+      sources[source] = 1;
+    }
+    return {
+      version: 1,
+      source,
+      lastModified: lastModified || maxLastModified,
+      maxLastModified,
+      createdAt,
+      firstDirtyAt,
+      lastDirtyAt,
+      sources,
+      threadIds: normalizePendingAutoSyncThreadIds(value.threadIds),
+    };
+  };
+
+  const getPendingAutoSyncRequest = () =>
+    normalizePendingAutoSyncRequest(GM_getValue(PENDING_AUTO_SYNC_KEY, null));
+
+  const markPendingAutoSyncRequest = (
+    source = "general",
+    lastModified = null,
+    options = {}
+  ) => {
+    const now = normalizePendingAutoSyncTimestamp(options.now) || Date.now();
+    const existingPending = getPendingAutoSyncRequest();
+    const normalizedSource = normalizePendingAutoSyncSource(source);
+    const effectiveLastModified =
+      normalizePendingAutoSyncTimestamp(lastModified) ||
+      normalizePendingAutoSyncTimestamp(GM_getValue("s1p_last_modified", 0)) ||
+      now;
+    const nextPending = {
+      version: 1,
+      source: normalizedSource,
+      lastModified: effectiveLastModified,
+      maxLastModified: Math.max(
+        existingPending?.maxLastModified || 0,
+        effectiveLastModified
+      ),
+      createdAt: existingPending?.createdAt || now,
+      firstDirtyAt: existingPending?.firstDirtyAt || existingPending?.createdAt || now,
+      lastDirtyAt: now,
+      sources: mergePendingAutoSyncSources(existingPending, normalizedSource),
+      threadIds: mergePendingAutoSyncThreadIds(
+        existingPending,
+        options.threadId
+      ),
+    };
+    GM_setValue(PENDING_AUTO_SYNC_KEY, nextPending);
+    return nextPending;
   };
 
   const clearPendingAutoSyncRequest = () => {
@@ -10550,18 +10680,17 @@
   };
 
   const recoverPendingAutoSyncIfNeeded = () => {
-    const pending = GM_getValue(PENDING_AUTO_SYNC_KEY, null);
-    if (!pending || typeof pending !== "object") {
+    const pending = getPendingAutoSyncRequest();
+    if (!pending) {
       return { status: "skipped", reason: "no_pending_auto_sync" };
     }
 
     const diagnostics = getSyncDiagnostics();
-    const pendingCreatedAt =
-      typeof pending.createdAt === "number" ? pending.createdAt : 0;
+    const pendingDirtyAt = pending.lastDirtyAt || pending.createdAt || 0;
     if (
       diagnostics.lastConflictTimestamp > 0 &&
-      pendingCreatedAt > 0 &&
-      pendingCreatedAt <= diagnostics.lastConflictTimestamp
+      pendingDirtyAt > 0 &&
+      pendingDirtyAt <= diagnostics.lastConflictTimestamp
     ) {
       clearPendingAutoSyncRequest();
       return { status: "cleared", reason: "conflict_newer_than_pending" };
@@ -10582,8 +10711,7 @@
       return { status: "skipped", reason: "conflict_paused" };
     }
 
-    const pendingLastModified =
-      typeof pending.lastModified === "number" ? pending.lastModified : 0;
+    const pendingLastModified = pending.maxLastModified || pending.lastModified || 0;
     const currentLastModified = GM_getValue("s1p_last_modified", 0);
     const effectiveLastModified = Math.max(pendingLastModified, currentLastModified);
     const lastSyncTs = GM_getValue("s1p_last_sync_timestamp", 0);
@@ -11933,9 +12061,6 @@
   };
 
   // [MODIFIED] 共享后台推送防抖调度器：跨标签合并 dirty，由一个 owner 标签页负责 timer。
-  let remotePushTimeout;
-  let remotePushDueTimestamp = 0;
-  let remotePushScheduledReason = "debounced_local_change";
   let readProgressSyncDebounceDueAt = 0;
   let readProgressSyncDebounceReason = "";
   let sharedBackgroundSyncDebounceTimer = null;
@@ -12365,27 +12490,24 @@
     if (typeof scheduleFollowUp !== "function") {
       return false;
     }
-    scheduleFollowUp(BACKGROUND_SYNC_DEBOUNCE_FOLLOW_UP_SETTLE_MS, {
+    return scheduleFollowUp(BACKGROUND_SYNC_DEBOUNCE_FOLLOW_UP_SETTLE_MS, {
       reason: "newer_dirty_follow_up",
       ...context,
-    });
-    return true;
+    }) !== false;
   };
   const getPendingAutoSyncRequestMaxLastModified = (pending) => {
-    if (!isObjectRecord(pending)) {
+    const normalizedPending = normalizePendingAutoSyncRequest(pending);
+    if (!normalizedPending) {
       return 0;
     }
-    return Math.max(
-      normalizeBackgroundSyncDebounceTimestamp(pending.maxLastModified),
-      normalizeBackgroundSyncDebounceTimestamp(pending.lastModified)
-    );
+    return normalizedPending.maxLastModified || normalizedPending.lastModified || 0;
   };
   const clearPendingAutoSyncRequestIfCovered = (
     coveredLastModified,
     context = {}
   ) => {
-    const pending = GM_getValue(PENDING_AUTO_SYNC_KEY, null);
-    if (!isObjectRecord(pending)) {
+    const pending = getPendingAutoSyncRequest();
+    if (!pending) {
       return { status: "skipped", reason: "no_pending_auto_sync" };
     }
     const pendingMaxLastModified =
@@ -12453,6 +12575,106 @@
       generation: state.generation,
       maxLastModified: state.maxLastModified,
       followUpScheduled,
+    };
+  };
+  const normalizeBackgroundSyncSchedulerContext = (context = {}) => {
+    if (!isObjectRecord(context)) {
+      return {
+        debounceGeneration: 0,
+        intendedMaxLastModified: 0,
+        scheduledDueAt: 0,
+        schedulerReason: "",
+      };
+    }
+    return {
+      debounceGeneration: Math.max(
+        0,
+        Math.floor(Number(context.debounceGeneration) || 0)
+      ),
+      intendedMaxLastModified: normalizeBackgroundSyncDebounceTimestamp(
+        context.intendedMaxLastModified
+      ),
+      scheduledDueAt: normalizeBackgroundSyncDebounceTimestamp(
+        context.scheduledDueAt
+      ),
+      schedulerReason: normalizeSyncDiagnosticText(context.schedulerReason, 80),
+    };
+  };
+  const resolveBackgroundSyncSchedulerContextForRun = (context = {}) => {
+    const normalizedContext = normalizeBackgroundSyncSchedulerContext(context);
+    const sharedState = getBackgroundSyncDebounceState();
+    const pending = getPendingAutoSyncRequest();
+    return {
+      debounceGeneration:
+        normalizedContext.debounceGeneration || sharedState?.generation || 0,
+      intendedMaxLastModified:
+        normalizedContext.intendedMaxLastModified ||
+        sharedState?.maxLastModified ||
+        pending?.maxLastModified ||
+        pending?.lastModified ||
+        0,
+      scheduledDueAt:
+        normalizedContext.scheduledDueAt || sharedState?.dueAt || 0,
+      schedulerReason:
+        normalizedContext.schedulerReason || sharedState?.reason || "",
+    };
+  };
+  const getCoveredLastModifiedFromSyncResult = (result = null) => {
+    if (!isObjectRecord(result)) {
+      return 0;
+    }
+    return Math.max(
+      normalizeBackgroundSyncDebounceTimestamp(result.coveredLastModified),
+      normalizeBackgroundSyncDebounceTimestamp(result.coveredLocalLastUpdated)
+    );
+  };
+  const cleanupBackgroundSchedulerAfterSuccess = (
+    result,
+    schedulerContext = {}
+  ) => {
+    const coveredLastModified = getCoveredLastModifiedFromSyncResult(result);
+    if (coveredLastModified <= 0) {
+      return {
+        status: "skipped",
+        reason: "missing_covered_last_modified",
+      };
+    }
+
+    const resolvedContext =
+      resolveBackgroundSyncSchedulerContextForRun(schedulerContext);
+    let followUpQueued = false;
+    const scheduleFollowUpOnce = (delayMs, followUpContext = {}) => {
+      if (followUpQueued) {
+        return false;
+      }
+      followUpQueued = true;
+      requestBackgroundSyncRun(
+        followUpContext.reason || "newer_dirty_follow_up",
+        delayMs
+      );
+      return true;
+    };
+    const pendingCleanup = clearPendingAutoSyncRequestIfCovered(
+      coveredLastModified,
+      {
+        debounceGeneration: resolvedContext.debounceGeneration,
+        scheduleFollowUp: scheduleFollowUpOnce,
+      }
+    );
+    const sharedDebounceCleanup = clearSharedBackgroundSyncDebounceIfCovered({
+      generation: resolvedContext.debounceGeneration,
+      coveredLastModified,
+      scheduleFollowUp: scheduleFollowUpOnce,
+    });
+
+    return {
+      status: "completed",
+      coveredLastModified,
+      debounceGeneration: resolvedContext.debounceGeneration,
+      intendedMaxLastModified: resolvedContext.intendedMaxLastModified,
+      pendingCleanup,
+      sharedDebounceCleanup,
+      followUpQueued,
     };
   };
   const requestSharedBackgroundSyncDebounce = (
@@ -12606,12 +12828,6 @@
     BACKGROUND_SYNC_DEBOUNCE_FOLLOW_UP_SETTLE_MS,
   });
   const clearRemotePushDebounceTimer = () => {
-    if (remotePushTimeout) {
-      clearTimeout(remotePushTimeout);
-      remotePushTimeout = null;
-    }
-    remotePushDueTimestamp = 0;
-    remotePushScheduledReason = "debounced_local_change";
     clearReadProgressSyncDebounceState();
   };
   const clearAutoSyncRuntimeQueue = () => {
@@ -12623,24 +12839,6 @@
     clearRemotePushDebounceTimer();
     clearBackgroundSyncDebounceState();
   };
-  const armRemotePushTimer = (dueTimestamp, reason) => {
-    remotePushDueTimestamp = dueTimestamp;
-    remotePushScheduledReason = reason;
-    if (reason === "debounced_read_progress") {
-      setReadProgressSyncDebounceState(dueTimestamp, reason);
-    } else {
-      clearReadProgressSyncDebounceState();
-    }
-    remotePushTimeout = setTimeout(() => {
-      remotePushTimeout = null;
-      remotePushDueTimestamp = 0;
-      const triggerReason = remotePushScheduledReason;
-      remotePushScheduledReason = "debounced_local_change";
-      clearReadProgressSyncDebounceState();
-      triggerRemoteSyncPush(triggerReason);
-    }, Math.max(0, dueTimestamp - Date.now()));
-  };
-
   const debouncedTriggerRemoteSyncPush = ({
     source = "general",
     lastModified = null,
@@ -12698,6 +12896,10 @@
         ),
       });
     };
+    const currentThreadIdForDirty =
+      (typeof getCurrentThreadId === "function" && getCurrentThreadId()) ||
+      readProgressContext?.threadId ||
+      "";
     // 如果初始同步正在进行，不直接丢弃信号，改为记录 dirty 标记并在同步后补跑。
     if (isInitialSyncInProgress) {
       recordReadProgressLastModifiedDebug("initial_sync_in_progress");
@@ -12706,7 +12908,9 @@
       if (triggerSync) {
         syncDirtyNeedsFollowUpSync = true;
         hasPendingBackgroundSync = true;
-        markPendingAutoSyncRequest(source, nextLastModified);
+        markPendingAutoSyncRequest(source, nextLastModified, {
+          threadId: currentThreadIdForDirty,
+        });
         setAutoSyncIndicatorPendingPhase(`${source}_dirty_during_sync`);
         console.log(
           "S1 Plus: 同步进行中检测到本地变更，已记录为待补同步任务。"
@@ -12721,14 +12925,13 @@
     GM_setValue("s1p_last_modified", nextLastModified);
     recordReadProgressLastModifiedDebug("written");
     if (triggerSync) {
-      markPendingAutoSyncRequest(source, nextLastModified);
+      markPendingAutoSyncRequest(source, nextLastModified, {
+        threadId: currentThreadIdForDirty,
+      });
       debouncedTriggerRemoteSyncPush({
         source,
         lastModified: nextLastModified,
-        threadId:
-          (typeof getCurrentThreadId === "function" && getCurrentThreadId()) ||
-          readProgressContext?.threadId ||
-          "",
+        threadId: currentThreadIdForDirty,
       });
     }
   };
@@ -21364,6 +21567,9 @@
 
       case "failure":
         showMessage(`后台同步失败: ${result.error}`, false);
+        if (!result.failureState?.open) {
+          scheduleBackgroundSyncRetry(1200);
+        }
         break;
 
       case "success":
@@ -21562,7 +21768,9 @@
   };
 
   // [MODIFIED] 触发式推送函数，加入 single-flight + pending + 跨标签锁
-  const triggerRemoteSyncPush = (reason = "local_change") => {
+  const triggerRemoteSyncPush = (reason = "local_change", options = {}) => {
+    const initialSchedulerContext =
+      normalizeBackgroundSyncSchedulerContext(options);
     const settings = getSettings();
     if (
       !settings.syncRemoteEnabled ||
@@ -21640,11 +21848,25 @@
           startBackgroundSyncLockHeartbeat();
           try {
             console.log("S1 Plus: 检测到数据变更，触发后台智能同步检查...");
+            const runSchedulerContext =
+              resolveBackgroundSyncSchedulerContextForRun(
+                drainCount === 1 ? initialSchedulerContext : {}
+              );
             const result = await performAutoSync(
               false,
               SYNC_LOCK_MODE_BACKGROUND,
               SYNC_TRIGGER_SOURCE_BACKGROUND_PUSH
             );
+            if (result && typeof result === "object") {
+              result.backgroundSchedulerContext = runSchedulerContext;
+              if (result.status === "success") {
+                result.backgroundSchedulerCleanup =
+                  cleanupBackgroundSchedulerAfterSuccess(
+                    result,
+                    runSchedulerContext
+                  );
+              }
+            }
             const phaseFromResult = getAutoSyncIndicatorPhaseFromResult(result);
             if (phaseFromResult) {
               indicatorFinalPhase = phaseFromResult;
@@ -21905,7 +22127,9 @@
         setAutoSyncConflictPause(pauseReason);
         clearAutoSyncRuntimeQueue();
       } else {
-        clearPendingAutoSyncRequest();
+        if (syncMode !== AUTO_SYNC_MODE_BACKGROUND) {
+          clearPendingAutoSyncRequest();
+        }
         clearAutoSyncConflictPause();
       }
       if (syncBaseline) {
@@ -21934,7 +22158,17 @@
             : null,
       });
       updateLastSyncTimeDisplay();
+      const coveredLocalLastUpdated = Math.max(
+        normalizeBackgroundSyncDebounceTimestamp(
+          extraResult?.coveredLocalLastUpdated
+        ),
+        normalizeBackgroundSyncDebounceTimestamp(extraResult?.coveredLastModified)
+      );
       const baseResult = { status: "success", action };
+      if (coveredLocalLastUpdated > 0) {
+        baseResult.coveredLocalLastUpdated = coveredLocalLastUpdated;
+        baseResult.coveredLastModified = coveredLocalLastUpdated;
+      }
       if (
         extraResult &&
         typeof extraResult === "object" &&
@@ -22009,6 +22243,7 @@
           {
             remoteUpdatedAt: pushResult?.updatedAt || null,
             remoteWriter: pushResult?.writerMetadata || null,
+            coveredLocalLastUpdated: localData.lastUpdated,
           }
         );
       }
@@ -22094,6 +22329,7 @@
                 ? "same_machine_hash_equal"
                 : "hash_equal_after_resync",
               ...recentRemoteWriteResultContext,
+              coveredLocalLastUpdated: localDataObject.lastUpdated,
             }
           );
 
@@ -22122,6 +22358,7 @@
               reason: versionDecision.reason || "force_pull",
               remoteUpdatedAt: remoteMeta.updatedAt || null,
               ...recentRemoteWriteResultContext,
+              coveredLocalLastUpdated: localDataObject.lastUpdated,
             }
           );
 
@@ -22148,6 +22385,7 @@
               reason: versionDecision.reason || "pull",
               remoteUpdatedAt: remoteMeta.updatedAt || null,
               ...recentRemoteWriteResultContext,
+              coveredLocalLastUpdated: localDataObject.lastUpdated,
             }
           );
 
@@ -22200,6 +22438,7 @@
               {
                 remoteUpdatedAt: pushResult?.updatedAt || null,
                 remoteWriter: pushResult?.writerMetadata || null,
+                coveredLocalLastUpdated: localDataObject.lastUpdated,
               }
             );
           }
@@ -22335,6 +22574,7 @@
                   pushResult?.writerMetadata ||
                   null,
                 appliedRemoteWriter: pushResult?.writerMetadata || null,
+                coveredLocalLastUpdated: localDataObject.lastUpdated,
               }
             );
           }
@@ -25358,6 +25598,7 @@
       // [FIX] 强制推送后清除残留的清理标记
       clearPendingCleanupInfo();
       clearPendingAutoSyncRequest();
+      clearAutoSyncRuntimeQueue();
       clearAutoSyncConflictPause();
       GM_setValue("s1p_last_sync_timestamp", Date.now());
       setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_SUCCESS);
@@ -25444,6 +25685,7 @@
         // [FIX] 强制拉取成功后清除残留的清理标记
         clearPendingCleanupInfo();
         clearPendingAutoSyncRequest();
+        clearAutoSyncRuntimeQueue();
         clearAutoSyncConflictPause();
         GM_setValue("s1p_last_sync_timestamp", Date.now());
         setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_SUCCESS);
@@ -33275,6 +33517,7 @@
           diagnosticContext = {}
         ) => {
           clearPendingAutoSyncRequest();
+          clearAutoSyncRuntimeQueue();
           clearAutoSyncConflictPause();
           // 手动同步成功后，立即覆盖后台指示器的旧失败/冲突态，避免残留样式持续到 TTL 结束。
           setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_SUCCESS);
