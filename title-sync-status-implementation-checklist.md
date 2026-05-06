@@ -112,30 +112,37 @@ Phase A 实现结果（2026-05-06）：
 
 ## Phase B: 设置项与 UI
 
-- [ ] 在默认设置中新增 `syncShowTitleSyncStatus: false`。
-- [ ] 在设置归一化 / 迁移路径中纳入 `syncShowTitleSyncStatus`。
-- [ ] 在设置保存路径中纳入 `syncShowTitleSyncStatus`。
-- [ ] 在“设置同步 -> 状态显示”区块中，在“显示导航栏同步状态”后新增开关。
-- [ ] 开关文案为“显示标签页标题同步状态”。
-- [ ] 说明文案为“开启后，仅当所有 S1 标签页都不在前台时，第一个标签页标题会在同步发生时显示状态提示（同步中/成功/失败/冲突）。”
-- [ ] 样式复用“显示导航栏同步状态”开关。
-- [ ] 远程同步关闭时置灰禁用。
-- [ ] 禁用行为与“显示导航栏同步状态”开关保持一致。
-- [ ] 更新 `test-sync-settings-ui.js`，断言标题状态开关位于状态显示区块。
+- [x] 在默认设置中新增 `syncShowTitleSyncStatus: false`。
+- [x] 在设置归一化 / 迁移路径中纳入 `syncShowTitleSyncStatus`。
+- [x] 在设置保存路径中纳入 `syncShowTitleSyncStatus`。
+- [x] 在“设置同步 -> 状态显示”区块中，在“显示导航栏同步状态”后新增开关。
+- [x] 开关文案为“显示标签页标题同步状态”。
+- [x] 说明文案为“开启后，仅当所有 S1 标签页都不在前台时，第一个标签页标题会在同步发生时显示状态提示（同步中/成功/失败/冲突）。”
+- [x] 样式复用“显示导航栏同步状态”开关。
+- [x] 远程同步关闭时置灰禁用。
+- [x] 禁用行为与“显示导航栏同步状态”开关保持一致。
+- [x] 更新 `test-sync-settings-ui.js`，断言标题状态开关位于状态显示区块。
+
+Phase B 实现结果（2026-05-06）：
+
+- 已在 `defaultSettings` 新增 `syncShowTitleSyncStatus: false`，并通过 `buildNormalizedSettings()` 以显式布尔值归一化；新增迁移 fixture 覆盖非布尔旧值会回落为 `false`。
+- 已把 `syncShowTitleSyncStatus` 纳入设置保存、跨标签设置同步刷新、设置面板回填和重置默认路径；该设置会随 `getSyncedSettings()` 的设置同步数据一起导出/导入，不包含本地凭据。
+- 已在“设置同步 -> 状态显示”里紧跟“显示导航栏同步状态”新增标题状态开关，复用同一 switch/sub-group 样式；远程同步关闭时随同组控件置灰禁用。
+- 已更新 `sync-across-multiple-tab/scripts/test-sync-settings-ui.js`，断言开关位置、文案、禁用逻辑、保存回填和控件接线。
 
 ## Phase C: 统一标题组合函数
 
 新增或重构标题写入路径：
 
-- [ ] 新增 `refreshDocumentTitle()`。
-- [ ] 新增 `getCurrentTitleSyncStatusPrefix()`。
-- [ ] 新增 `stripLastAppliedTitleSyncStatusPrefix(title)`。
-- [ ] 新增 `composeDocumentTitle({ prefix, titleBase, suffix })`。
-- [ ] 现有自定义标题后缀改为调用 `refreshDocumentTitle()`。
-- [ ] 标题同步状态也只调用 `refreshDocumentTitle()`。
-- [ ] 不再在多个路径直接写 `document.title`。
-- [ ] 每次写标题前先剥离本功能上次添加的前缀。
-- [ ] 页面原始标题变化时，能更新 titleBase，不被旧前缀污染。
+- [x] 新增 `refreshDocumentTitle()`。
+- [x] 新增 `getCurrentTitleSyncStatusPrefix()`。
+- [x] 新增 `stripLastAppliedTitleSyncStatusPrefix(title)`。
+- [x] 新增 `composeDocumentTitle({ prefix, titleBase, suffix })`。
+- [x] 现有自定义标题后缀改为调用 `refreshDocumentTitle()`。
+- [x] 标题同步状态也只调用 `refreshDocumentTitle()`。
+- [x] 不再在多个路径直接写 `document.title`。
+- [x] 每次写标题前先剥离本功能上次添加的前缀。
+- [x] 页面原始标题变化时，能更新 titleBase，不被旧前缀污染。
 
 标题组合顺序：
 
@@ -148,6 +155,14 @@ Phase A 实现结果（2026-05-06）：
 ```text
 原始标题 自定义标题后缀
 ```
+
+Phase C 实现结果（2026-05-06）：
+
+- 已新增统一标题组合路径：`composeDocumentTitle()` 负责 `[同步状态前缀] 原始标题 自定义标题后缀` 的顺序，`refreshDocumentTitle()` 是唯一直接写入 `document.title` 的函数。
+- 已将原有自定义标题后缀从 `applyInterfaceCustomizations()` 内的直接写入改为调用 `refreshDocumentTitle()`；`resolveInterfaceTitleBase()` 会先剥离本轮标题状态前缀，再处理旧后缀和论坛原始标题格式。
+- 已新增标题状态相关纯函数与测试钩子：`getCurrentTitleSyncStatusPrefix()`、`stripLastAppliedTitleSyncStatusPrefix()`、`getTitleSyncStatusPrefixForPhase()`、`isTitleSyncStatusForegroundTab()`、`resolveTitleSyncStatusTabDisplayDecision()` 和 `getTitleSyncStatusTestConstants()`。
+- 验证结果：`node -c S1Plus.js`、`node sync-across-multiple-tab/scripts/test-title-sync-status.js`、`node sync-across-multiple-tab/scripts/test-sync-settings-ui.js`、`node sync-across-multiple-tab/scripts/test-settings-migration.js` 均已通过。
+- 剩余：Phase D-F 的真实运行时监听、动画 timer、GM presence / owner lease 写入和跨标签清理仍未落地；本轮只完成设置接线、统一标题组合与可测试的纯逻辑。
 
 ## Phase D: 标题状态映射与动画
 
@@ -281,8 +296,8 @@ node sync-across-multiple-tab/scripts/test-foreground-trigger-integration.js
 
 - [x] Phase 0: 准备与代码定位
 - [x] Phase A: 测试先行
-- [ ] Phase B: 设置项与 UI
-- [ ] Phase C: 统一标题组合函数
+- [x] Phase B: 设置项与 UI
+- [x] Phase C: 统一标题组合函数
 - [ ] Phase D: 标题状态映射与动画
 - [ ] Phase E: 多标签 presence 与负责人选举
 - [ ] Phase F: 跨标签通知与资源清理
