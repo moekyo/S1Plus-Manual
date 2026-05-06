@@ -17,6 +17,7 @@ const TITLE_SYNC_STATUS_REQUIRED_HOOKS = [
   "stripLastAppliedTitleSyncStatusPrefix",
   "getTitleSyncStatusPrefixForPhase",
   "isTitleSyncStatusForegroundTab",
+  "shouldWriteCurrentTitleSyncStatusPresence",
   "resolveTitleSyncStatusTabDisplayDecision",
   "hasEnabledTitleSyncStatusPath",
   "getTitleSyncStatusRuntimeStateForTest",
@@ -250,6 +251,7 @@ const testUnifiedStateMappingAndTtl = () => {
   assert.equal(constants.TITLE_SYNC_STATUS_SUCCESS_TTL_MS, 2 * 60 * 1000);
   assert.equal(constants.TITLE_SYNC_STATUS_FAILURE_TTL_MS, 5 * 60 * 1000);
   assert.equal(constants.TITLE_SYNC_STATUS_CONFLICT_TTL_MS, 10 * 60 * 1000);
+  assert.equal(constants.TITLE_SYNC_STATUS_UNIFIED_STATE_DEBOUNCE_MS, 100);
 
   const idleState = toPlainObject(
     hooks.resolveAutoSyncIndicatorDisplayPhase(createResolvedState("idle", now))
@@ -486,16 +488,95 @@ const testMultiTabForegroundAndOwnerCoordination = () => {
 const testPresenceTtlOwnerLeaseAndForegroundTtlPause = () => {
   const { hooks } = createHarness();
   const decide = requireHook(hooks, "resolveTitleSyncStatusTabDisplayDecision");
+  const shouldWritePresence = requireHook(
+    hooks,
+    "shouldWriteCurrentTitleSyncStatusPresence"
+  );
   const getConstants = requireHook(hooks, "getTitleSyncStatusTestConstants");
   const constants = getConstants();
   const now = Date.now();
   const settings = createReadySettings();
 
   assert.equal(constants.TITLE_SYNC_STATUS_PRESENCE_TTL_MS, 2 * 60 * 1000);
+  assert.equal(constants.TITLE_SYNC_STATUS_PRESENCE_REFRESH_MIN_MS, 40 * 1000);
   assert.ok(
     constants.TITLE_SYNC_STATUS_OWNER_LEASE_MS >= 20 * 1000 &&
       constants.TITLE_SYNC_STATUS_OWNER_LEASE_MS <= 30 * 1000,
     "owner lease should stay in the recommended 20s-30s range."
+  );
+
+  const previousPresence = createTab({
+    tabId: "tab-a",
+    createdAt: now - 1_000,
+    lastSeen: now,
+    visibilityState: "hidden",
+    hasFocus: false,
+  });
+  assert.equal(
+    shouldWritePresence({
+      previousTabRecord: previousPresence,
+      currentTabRecord: {
+        ...previousPresence,
+        lastSeen: now + constants.TITLE_SYNC_STATUS_HEARTBEAT_MS,
+      },
+      now: now + constants.TITLE_SYNC_STATUS_HEARTBEAT_MS,
+    }),
+    false,
+    "heartbeat 内前后台状态未变且未到 presence 刷新间隔时，应跳过跨标签 presence 写入。"
+  );
+  assert.equal(
+    shouldWritePresence({
+      previousTabRecord: previousPresence,
+      currentTabRecord: {
+        ...previousPresence,
+        lastSeen: now + 1_000,
+        visibilityState: "visible",
+        hasFocus: true,
+        isForeground: true,
+      },
+      now: now + 1_000,
+    }),
+    true,
+    "前后台状态变化时应立即写入 presence 通知其他标签。"
+  );
+  assert.equal(
+    shouldWritePresence({
+      previousTabRecord: previousPresence,
+      currentTabRecord: {
+        ...previousPresence,
+        lastSeen: now + constants.TITLE_SYNC_STATUS_PRESENCE_REFRESH_MIN_MS + 1,
+      },
+      now: now + constants.TITLE_SYNC_STATUS_PRESENCE_REFRESH_MIN_MS + 1,
+    }),
+    true,
+    "超过 presence 刷新间隔后应写入 lastSeen，避免存活标签被 TTL 误清理。"
+  );
+  assert.equal(
+    shouldWritePresence({
+      previousTabRecord: null,
+      currentTabRecord: previousPresence,
+      now,
+    }),
+    true,
+    "首次 presence 记录必须写入。"
+  );
+  assert.equal(
+    shouldWritePresence({
+      previousTabRecord: null,
+      remove: true,
+      now,
+    }),
+    false,
+    "释放不存在的 presence 记录时应跳过无效写入。"
+  );
+  assert.equal(
+    shouldWritePresence({
+      previousTabRecord: previousPresence,
+      remove: true,
+      now,
+    }),
+    true,
+    "释放已存在的 presence 记录时必须写入删除。"
   );
 
   const staleOwnerTabs = [
@@ -619,6 +700,25 @@ const testDisplayPhaseOnlyAndNoTitleSchedulerRewrite = () => {
     decide({
       currentTabId: "tab-a",
       tabs: hiddenOwnerTab,
+      state: {},
+      settings,
+      now,
+    }),
+    {
+      shouldDisplay: false,
+      shouldRunAnimationTimer: false,
+      ownerTabId: "tab-a",
+      displayPhase: "idle",
+      prefix: "",
+      hasForegroundTab: false,
+    },
+    "缺少 displayPhase 的空统一状态应显式回落为 idle。"
+  );
+
+  assertDisplayDecision(
+    decide({
+      currentTabId: "tab-a",
+      tabs: hiddenOwnerTab,
       state: createResolvedState("success", now),
       settings,
       now,
@@ -731,6 +831,21 @@ const testDisplayPhaseOnlyAndNoTitleSchedulerRewrite = () => {
     /const resolvedState = resolveAutoSyncIndicatorDisplayPhase\(\);/,
     "标题运行时应通过统一状态源获取 display phase。"
   );
+  assert.match(
+    titleSource,
+    /setTimeout\(\s*flushTitleSyncStatusUnifiedStateChange,\s*TITLE_SYNC_STATUS_UNIFIED_STATE_DEBOUNCE_MS\s*\)/,
+    "统一状态源通知应通过短 debounce 合并本地刷新和 fallback signal。"
+  );
+  assert.match(
+    titleSource,
+    /const shouldWriteCurrentTitleSyncStatusPresence = \(\{[\s\S]*TITLE_SYNC_STATUS_PRESENCE_REFRESH_MIN_MS/,
+    "presence heartbeat 写入应通过刷新间隔和前后台签名判断减振。"
+  );
+  assert.match(
+    titleSource,
+    /const shouldWrite = shouldWriteCurrentTitleSyncStatusPresence\(\{/,
+    "presence 写入路径应调用减振判断函数。"
+  );
   assert.doesNotMatch(
     titleSource,
     /getBackgroundSyncDebounceState|BACKGROUND_SYNC_DEBOUNCE|requestForegroundRemoteSyncCheck|scheduleForegroundRemoteSyncRetry|getForegroundProbeGateBlockResult|getRemoteProbeSharedCooldown|performAutoSync|setAutoSyncIndicatorPendingState|setAutoSyncIndicatorResolvedPhase/,
@@ -803,6 +918,10 @@ const testSettingsDefaultsUiAndIndependence = () => {
   expectMatch(
     /titleSyncStatusToggle\.disabled = !isEnabled;/,
     "远程同步关闭时，标题同步状态开关应置灰禁用。"
+  );
+  expectMatch(
+    /#s1p-title-sync-status-subgroup\.is-disabled[\s\S]*opacity: 0\.5;[\s\S]*pointer-events: none;/,
+    "标题同步状态子设置组缺少 disabled 视觉置灰样式。"
   );
   expectMatch(
     /syncShowTitleSyncStatus:\s*titleSyncStatusToggle\.checked/,
