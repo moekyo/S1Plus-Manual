@@ -48,6 +48,14 @@ const expectNotMatch = (pattern, message) => {
   assert.doesNotMatch(sourceCode, pattern, message);
 };
 
+const getTitleSyncStatusSource = () => {
+  const match = sourceCode.match(
+    /let interfaceTitleBaseCache[\s\S]*?\/\/ --- 界面定制功能 ---/
+  );
+  assert.ok(match, "未能定位标题同步状态实现区块。");
+  return match[0];
+};
+
 const createReadySettings = (overrides = {}) => ({
   syncRemoteEnabled: true,
   syncDailyFirstLoad: true,
@@ -69,6 +77,18 @@ const createResolvedState = (phase, timestamp = Date.now()) => ({
   lastResolvedTimestamp: timestamp,
   lastResolvedSource: "background_push",
   lastResolvedReason: `test_${phase}`,
+});
+
+const createUnifiedDisplayState = (
+  displayPhase,
+  timestamp = Date.now(),
+  overrides = {}
+) => ({
+  ...createResolvedState(displayPhase, timestamp),
+  displayPhase,
+  displaySource: "background_push",
+  displayReason: `test_${displayPhase}`,
+  ...overrides,
 });
 
 const createTab = ({
@@ -308,7 +328,7 @@ const testMultiTabForegroundAndOwnerCoordination = () => {
   const decide = requireHook(hooks, "resolveTitleSyncStatusTabDisplayDecision");
   const now = Date.now();
   const settings = createReadySettings();
-  const state = createResolvedState("running", now);
+  const state = createUnifiedDisplayState("running", now);
 
   assert.equal(
     isForegroundTab({ visibilityState: "visible", hasFocus: true }),
@@ -498,7 +518,7 @@ const testPresenceTtlOwnerLeaseAndForegroundTtlPause = () => {
     decide({
       currentTabId: "tab-b",
       tabs: staleOwnerTabs,
-      state: createResolvedState("success", now - 30 * 1000),
+      state: createUnifiedDisplayState("success", now - 30 * 1000),
       settings,
       now,
       previousOwner: {
@@ -530,7 +550,7 @@ const testPresenceTtlOwnerLeaseAndForegroundTtlPause = () => {
           hasFocus: true,
         }),
       ],
-      state: createResolvedState("success", successTimestamp),
+      state: createUnifiedDisplayState("success", successTimestamp),
       settings,
       now: now + 30 * 1000,
     }),
@@ -544,6 +564,14 @@ const testPresenceTtlOwnerLeaseAndForegroundTtlPause = () => {
     },
     "切回前台只暂停标题显示，不应清除或重置统一状态源结果。"
   );
+  const expiredSuccessState = toPlainObject(
+    hooks.resolveAutoSyncIndicatorDisplayPhase(
+      createResolvedState(
+        "success",
+        Date.now() - constants.TITLE_SYNC_STATUS_SUCCESS_TTL_MS - 50
+      )
+    )
+  );
   assertDisplayDecision(
     decide({
       currentTabId: "tab-a",
@@ -556,9 +584,9 @@ const testPresenceTtlOwnerLeaseAndForegroundTtlPause = () => {
           hasFocus: false,
         }),
       ],
-      state: createResolvedState("success", successTimestamp),
+      state: expiredSuccessState,
       settings,
-      now: now + 130 * 1000,
+      now: Date.now(),
     }),
     {
       shouldDisplay: false,
@@ -569,6 +597,149 @@ const testPresenceTtlOwnerLeaseAndForegroundTtlPause = () => {
       hasForegroundTab: false,
     },
     "前后台切换不应重置 success TTL，超过 2 分钟后应恢复原始标题。"
+  );
+};
+
+const testDisplayPhaseOnlyAndNoTitleSchedulerRewrite = () => {
+  const { hooks, store } = createHarness();
+  const decide = requireHook(hooks, "resolveTitleSyncStatusTabDisplayDecision");
+  const now = Date.now();
+  const settings = createReadySettings();
+  const hiddenOwnerTab = [
+    createTab({
+      tabId: "tab-a",
+      createdAt: now,
+      lastSeen: now,
+      visibilityState: "hidden",
+      hasFocus: false,
+    }),
+  ];
+
+  assertDisplayDecision(
+    decide({
+      currentTabId: "tab-a",
+      tabs: hiddenOwnerTab,
+      state: createResolvedState("success", now),
+      settings,
+      now,
+    }),
+    {
+      shouldDisplay: false,
+      shouldRunAnimationTimer: false,
+      ownerTabId: "tab-a",
+      displayPhase: "idle",
+      prefix: "",
+      hasForegroundTab: false,
+    },
+    "标题层不应从原始 phase 自行推导状态，只消费统一状态源暴露的 displayPhase。"
+  );
+
+  assertDisplayDecision(
+    decide({
+      currentTabId: "tab-a",
+      tabs: hiddenOwnerTab,
+      state: {
+        ...createResolvedState("success", now),
+        displayPhase: "pending",
+        displaySource: "background_push",
+        displayReason: "debounced_read_progress",
+      },
+      settings,
+      now,
+    }),
+    {
+      shouldDisplay: false,
+      shouldRunAnimationTimer: false,
+      ownerTabId: "tab-a",
+      displayPhase: "pending",
+      prefix: "",
+      hasForegroundTab: false,
+    },
+    "success -> pending 的稳定结果应来自统一 displayPhase，标题层只按 pending 映射为空前缀。"
+  );
+
+  store.set(BACKGROUND_SYNC_DEBOUNCE_STATE_KEY, {
+    version: 1,
+    generation: 2,
+    ownerTabId: "tab-a",
+    ownerLeaseUntil: now + 30 * 1000,
+    dueAt: now + 10 * 1000,
+    maxWaitUntil: now + 60 * 1000,
+    firstDirtyAt: now,
+    lastDirtyAt: now,
+    maxLastModified: now,
+    sources: { settings: 1 },
+    threadIds: [],
+    reason: "debounced_local_change",
+  });
+  const unifiedPendingState = toPlainObject(
+    hooks.resolveAutoSyncIndicatorDisplayPhase(createResolvedState("success", now))
+  );
+  assert.equal(unifiedPendingState.displayPhase, "pending");
+  assertDisplayDecision(
+    decide({
+      currentTabId: "tab-a",
+      tabs: hiddenOwnerTab,
+      state: unifiedPendingState,
+      settings,
+      now,
+    }),
+    {
+      shouldDisplay: false,
+      shouldRunAnimationTimer: false,
+      ownerTabId: "tab-a",
+      displayPhase: "pending",
+      prefix: "",
+      hasForegroundTab: false,
+    },
+    "shared debounce 的标题表现应来自统一状态源的 pending display phase。"
+  );
+
+  store.delete(BACKGROUND_SYNC_DEBOUNCE_STATE_KEY);
+  store.set("s1p_sync_global_lock", {
+    owner: "other-tab",
+    mode: "background",
+    timestamp: now,
+    ttlMs: 60 * 1000,
+  });
+  const unifiedRunningState = toPlainObject(
+    hooks.resolveAutoSyncIndicatorDisplayPhase(createResolvedState("success", now))
+  );
+  assert.equal(unifiedRunningState.displayPhase, "running");
+  assertDisplayDecision(
+    decide({
+      currentTabId: "tab-a",
+      tabs: hiddenOwnerTab,
+      state: unifiedRunningState,
+      settings,
+      now,
+    }),
+    {
+      shouldDisplay: true,
+      shouldRunAnimationTimer: true,
+      ownerTabId: "tab-a",
+      displayPhase: "running",
+      prefix: "[同步中.]",
+      hasForegroundTab: false,
+    },
+    "running -> success 的稳定结果应来自统一 displayPhase，标题层不额外裁决。"
+  );
+
+  const titleSource = getTitleSyncStatusSource();
+  assert.match(
+    titleSource,
+    /const resolvedState = resolveAutoSyncIndicatorDisplayPhase\(\);/,
+    "标题运行时应通过统一状态源获取 display phase。"
+  );
+  assert.doesNotMatch(
+    titleSource,
+    /getBackgroundSyncDebounceState|BACKGROUND_SYNC_DEBOUNCE|requestForegroundRemoteSyncCheck|scheduleForegroundRemoteSyncRetry|getForegroundProbeGateBlockResult|getRemoteProbeSharedCooldown|performAutoSync|setAutoSyncIndicatorPendingState|setAutoSyncIndicatorResolvedPhase/,
+    "标题层不应读取 shared debounce、foreground probe/retry/gate 或同步执行入口。"
+  );
+  assert.doesNotMatch(
+    titleSource,
+    /displayPhase\s*\|\|\s*(?:resolvedState|state|source)\.phase|(?:resolvedState|state|source)\.displayPhase\s*\|\|\s*(?:resolvedState|state|source)\.phase/,
+    "标题层不应在缺少 displayPhase 时回退读取原始 phase。"
   );
 };
 
@@ -657,6 +828,7 @@ const tests = [
   ["unified state mapping and ttl", testUnifiedStateMappingAndTtl],
   ["multi-tab foreground and owner coordination", testMultiTabForegroundAndOwnerCoordination],
   ["presence ttl, owner lease, foreground ttl pause", testPresenceTtlOwnerLeaseAndForegroundTtlPause],
+  ["display phase only and no title scheduler rewrite", testDisplayPhaseOnlyAndNoTitleSchedulerRewrite],
   ["settings defaults, ui, and independence", testSettingsDefaultsUiAndIndependence],
 ];
 
