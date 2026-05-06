@@ -909,6 +909,17 @@
   const AUTO_SYNC_INDICATOR_SUCCESS_TTL_MS = 2 * 60 * 1000;
   const AUTO_SYNC_INDICATOR_FAILURE_TTL_MS = 5 * 60 * 1000;
   const AUTO_SYNC_INDICATOR_CONFLICT_TTL_MS = 10 * 60 * 1000;
+  const TITLE_SYNC_STATUS_ANIMATION_INTERVAL_MS = 500;
+  const TITLE_SYNC_STATUS_SUCCESS_TTL_MS = AUTO_SYNC_INDICATOR_SUCCESS_TTL_MS;
+  const TITLE_SYNC_STATUS_FAILURE_TTL_MS = AUTO_SYNC_INDICATOR_FAILURE_TTL_MS;
+  const TITLE_SYNC_STATUS_CONFLICT_TTL_MS = AUTO_SYNC_INDICATOR_CONFLICT_TTL_MS;
+  const TITLE_SYNC_STATUS_PRESENCE_TTL_MS = 2 * 60 * 1000;
+  const TITLE_SYNC_STATUS_OWNER_LEASE_MS = 25 * 1000;
+  const TITLE_SYNC_STATUS_RUNNING_PREFIXES = Object.freeze([
+    "[同步中.]",
+    "[同步中..]",
+    "[同步中...]",
+  ]);
   const NAVBAR_SYNC_ALERT_SESSION_DISMISS_KEY =
     "s1p_nav_sync_alert_session_dismissed_signature";
   const SETTINGS_CROSS_TAB_SIGNAL_KEY = "s1p_settings_refresh_signal";
@@ -24368,6 +24379,7 @@
     syncCheckOnReturnToForeground: true,
     syncVisibleRemotePollingEnabled: false,
     syncShowAutoSyncIndicator: true,
+    syncShowTitleSyncStatus: false,
     syncForcePullOnStartup: false, // <-- [新增] 新增功能开关
     syncDirectChoiceMode: false,
     syncBookmarkFullContent: false,
@@ -24672,6 +24684,11 @@
       "sync_show_auto_sync_indicator_normalized"
     );
     applyNormalizedBooleanSetting(
+      "syncShowTitleSyncStatus",
+      settings.syncShowTitleSyncStatus === true,
+      "sync_show_title_sync_status_normalized"
+    );
+    applyNormalizedBooleanSetting(
       "syncForcePullOnStartup",
       settings.syncDailyFirstLoad === true &&
         settings.syncForcePullOnStartup === true,
@@ -24940,6 +24957,7 @@
     "syncCheckOnReturnToForeground",
     "syncVisibleRemotePollingEnabled",
     "syncShowAutoSyncIndicator",
+    "syncShowTitleSyncStatus",
     "syncForcePullOnStartup",
     "syncBookmarkFullContent",
     "syncDeviceId",
@@ -25418,6 +25436,7 @@
         "syncCheckOnReturnToForeground"
       ) ||
       hasSettingPathInChangedSet(changedPathSet, "syncShowAutoSyncIndicator") ||
+      hasSettingPathInChangedSet(changedPathSet, "syncShowTitleSyncStatus") ||
       hasSettingPathInChangedSet(changedPathSet, "syncDirectChoiceMode");
     if (shouldReinitializeNavbar) {
       initializeNavbar();
@@ -25433,6 +25452,12 @@
       hasSettingPathInChangedSet(changedPathSet, "customTitleSuffix")
     ) {
       applyInterfaceCustomizations();
+    }
+    if (
+      hasSettingPathInChangedSet(changedPathSet, "syncRemoteEnabled") ||
+      hasSettingPathInChangedSet(changedPathSet, "syncShowTitleSyncStatus")
+    ) {
+      refreshDocumentTitle();
     }
     if (hasSettingPathInChangedSet(changedPathSet, "enhanceFloatingControls")) {
       manageFloatingControls();
@@ -25964,10 +25989,219 @@
 
   let interfaceTitleBaseCache = null;
   let lastAppliedCustomTitleSuffix = "";
+  let lastAppliedTitleSyncStatusPrefix = "";
+  let lastAppliedDocumentTitle = "";
+  const titleSyncStatusRuntimeState = {
+    currentPrefix: "",
+    animationFrame: 0,
+    animationTimerActive: false,
+  };
   const TITLE_BASE_PATTERN =
     /^(.+?)(?:论坛)?(?:\s*-\s*Stage1st)?\s*-\s*stage1\/s1\s+游戏动漫论坛$/;
+  const getTitleSyncStatusTestConstants = () => ({
+    TITLE_SYNC_STATUS_ANIMATION_INTERVAL_MS,
+    TITLE_SYNC_STATUS_SUCCESS_TTL_MS,
+    TITLE_SYNC_STATUS_FAILURE_TTL_MS,
+    TITLE_SYNC_STATUS_CONFLICT_TTL_MS,
+    TITLE_SYNC_STATUS_PRESENCE_TTL_MS,
+    TITLE_SYNC_STATUS_OWNER_LEASE_MS,
+  });
+  const getTitleSyncStatusPrefixForPhase = (
+    phase,
+    { animationFrame = titleSyncStatusRuntimeState.animationFrame } = {}
+  ) => {
+    const normalizedPhase =
+      normalizeAutoSyncIndicatorPhase(phase, {
+        allowRunning: true,
+        allowPending: true,
+      }) || AUTO_SYNC_INDICATOR_PHASE_IDLE;
+    switch (normalizedPhase) {
+      case AUTO_SYNC_INDICATOR_PHASE_RUNNING: {
+        const frameIndex =
+          Math.abs(Math.floor(Number(animationFrame) || 0)) %
+          TITLE_SYNC_STATUS_RUNNING_PREFIXES.length;
+        return TITLE_SYNC_STATUS_RUNNING_PREFIXES[frameIndex];
+      }
+      case AUTO_SYNC_INDICATOR_PHASE_SUCCESS:
+        return "[同步成功]";
+      case AUTO_SYNC_INDICATOR_PHASE_FAILURE:
+        return "[同步失败]";
+      case AUTO_SYNC_INDICATOR_PHASE_CONFLICT:
+        return "[冲突]";
+      case AUTO_SYNC_INDICATOR_PHASE_PENDING:
+      case AUTO_SYNC_INDICATOR_PHASE_IDLE:
+      default:
+        return "";
+    }
+  };
+  const stripLastAppliedTitleSyncStatusPrefix = (
+    title,
+    prefix = lastAppliedTitleSyncStatusPrefix
+  ) => {
+    const sourceTitle = String(title || "");
+    const candidates = [];
+    const explicitPrefix = String(prefix || "").trim();
+    if (explicitPrefix) {
+      candidates.push(explicitPrefix);
+    }
+    const lastPrefix = String(lastAppliedTitleSyncStatusPrefix || "").trim();
+    if (lastPrefix && !candidates.includes(lastPrefix)) {
+      candidates.push(lastPrefix);
+    }
+    for (const candidate of candidates) {
+      if (sourceTitle.startsWith(`${candidate} `)) {
+        return sourceTitle.slice(candidate.length + 1);
+      }
+      if (sourceTitle.startsWith(candidate)) {
+        return sourceTitle.slice(candidate.length);
+      }
+    }
+    return sourceTitle;
+  };
+  const composeDocumentTitle = ({ prefix = "", titleBase = "", suffix = "" } = {}) => {
+    const normalizedPrefix = String(prefix || "").trim();
+    const normalizedTitleBase = String(titleBase || "");
+    const normalizedSuffix = String(suffix || "");
+    const titleWithSuffix = `${normalizedTitleBase}${normalizedSuffix}`;
+    return normalizedPrefix
+      ? `${normalizedPrefix} ${titleWithSuffix}`
+      : titleWithSuffix;
+  };
+  const hasEnabledTitleSyncStatusPath = (settingsSnapshot = {}) =>
+    Boolean(
+      settingsSnapshot.syncRemoteEnabled === true &&
+      settingsSnapshot.syncShowTitleSyncStatus === true
+    );
+  const isTitleSyncStatusForegroundTab = (tabSnapshot = null) => {
+    if (
+      tabSnapshot &&
+      typeof tabSnapshot === "object" &&
+      typeof tabSnapshot.isForeground === "boolean"
+    ) {
+      return tabSnapshot.isForeground;
+    }
+    const visibilityState =
+      tabSnapshot && typeof tabSnapshot === "object"
+        ? tabSnapshot.visibilityState
+        : document.visibilityState;
+    const hasFocus =
+      tabSnapshot && typeof tabSnapshot === "object"
+        ? tabSnapshot.hasFocus
+        : typeof document.hasFocus === "function" && document.hasFocus();
+    return visibilityState === "visible" && hasFocus === true;
+  };
+  const resolveTitleSyncStatusDisplayPhase = (
+    stateInput = null,
+    now = Date.now()
+  ) => {
+    const resolvedState =
+      stateInput && typeof stateInput === "object" && "displayPhase" in stateInput
+        ? stateInput
+        : normalizeAutoSyncIndicatorState(stateInput);
+    const displayPhase =
+      normalizeAutoSyncIndicatorPhase(
+        resolvedState.displayPhase || resolvedState.phase,
+        { allowRunning: true, allowPending: true }
+      ) || AUTO_SYNC_INDICATOR_PHASE_IDLE;
+    if (
+      displayPhase === AUTO_SYNC_INDICATOR_PHASE_IDLE ||
+      displayPhase === AUTO_SYNC_INDICATOR_PHASE_PENDING ||
+      displayPhase === AUTO_SYNC_INDICATOR_PHASE_RUNNING
+    ) {
+      return displayPhase;
+    }
+    const ttlMs = getAutoSyncIndicatorResolvedTtlMs(displayPhase);
+    if (ttlMs <= 0) {
+      return displayPhase;
+    }
+    const timestamp = Number(
+      resolvedState.displayTimestamp ||
+        resolvedState.timestamp ||
+        resolvedState.lastResolvedTimestamp
+    ) || 0;
+    return now - timestamp <= ttlMs
+      ? displayPhase
+      : AUTO_SYNC_INDICATOR_PHASE_IDLE;
+  };
+  const resolveTitleSyncStatusTabDisplayDecision = ({
+    currentTabId = "",
+    tabs = [],
+    state = null,
+    settings = {},
+    now = Date.now(),
+    previousOwner = null,
+    animationFrame = 0,
+  } = {}) => {
+    const normalizedCurrentTabId = String(currentTabId || "");
+    const liveTabs = (Array.isArray(tabs) ? tabs : [])
+      .map((tab) => {
+        const tabRecord =
+          tab && typeof tab === "object" && !Array.isArray(tab) ? tab : {};
+        const tabId = String(tabRecord.tabId || "");
+        return {
+          ...tabRecord,
+          tabId,
+          createdAt: Number(tabRecord.createdAt) || 0,
+          lastSeen: Number(tabRecord.lastSeen) || 0,
+        };
+      })
+      .filter(
+        (tab) =>
+          tab.tabId &&
+          now - tab.lastSeen <= TITLE_SYNC_STATUS_PRESENCE_TTL_MS
+      )
+      .sort((a, b) => {
+        if (a.createdAt !== b.createdAt) {
+          return a.createdAt - b.createdAt;
+        }
+        return a.tabId.localeCompare(b.tabId);
+      });
+    const hasForegroundTab = liveTabs.some(isTitleSyncStatusForegroundTab);
+    const previousOwnerTabId = String(previousOwner?.tabId || "");
+    const previousOwnerLeaseUntil = Number(previousOwner?.leaseUntil) || 0;
+    const previousOwnerStillLive = liveTabs.some(
+      (tab) => tab.tabId === previousOwnerTabId
+    );
+    const ownerTabId =
+      previousOwnerTabId &&
+      previousOwnerStillLive &&
+      previousOwnerLeaseUntil > now
+        ? previousOwnerTabId
+        : liveTabs[0]?.tabId || normalizedCurrentTabId;
+    const displayPhase = resolveTitleSyncStatusDisplayPhase(state, now);
+    const rawPrefix = getTitleSyncStatusPrefixForPhase(displayPhase, {
+      animationFrame,
+    });
+    const shouldDisplay = Boolean(
+      hasEnabledTitleSyncStatusPath(settings) &&
+      rawPrefix &&
+      !hasForegroundTab &&
+      normalizedCurrentTabId &&
+      normalizedCurrentTabId === ownerTabId
+    );
+    return {
+      shouldDisplay,
+      shouldRunAnimationTimer:
+        shouldDisplay && displayPhase === AUTO_SYNC_INDICATOR_PHASE_RUNNING,
+      ownerTabId,
+      displayPhase,
+      prefix: shouldDisplay ? rawPrefix : "",
+      hasForegroundTab,
+    };
+  };
+  const getCurrentTitleSyncStatusPrefix = () => {
+    if (!hasEnabledTitleSyncStatusPath(getSettings())) {
+      return "";
+    }
+    return String(titleSyncStatusRuntimeState.currentPrefix || "");
+  };
+  const getTitleSyncStatusRuntimeStateForTest = () => ({
+    ...titleSyncStatusRuntimeState,
+    lastAppliedTitleSyncStatusPrefix,
+  });
   const resolveInterfaceTitleBase = () => {
-    const currentTitle = String(document.title || "");
+    const rawTitle = String(document.title || "");
+    const currentTitle = stripLastAppliedTitleSyncStatusPrefix(rawTitle);
     const matched = currentTitle.match(TITLE_BASE_PATTERN);
     if (matched && matched[1]) {
       interfaceTitleBaseCache = matched[1];
@@ -25986,11 +26220,62 @@
         return interfaceTitleBaseCache;
       }
     }
-    if (!interfaceTitleBaseCache) {
+    if (!interfaceTitleBaseCache || rawTitle !== lastAppliedDocumentTitle) {
       interfaceTitleBaseCache = currentTitle;
     }
     return interfaceTitleBaseCache;
   };
+  const refreshDocumentTitle = (options = {}) => {
+    const settingsSnapshot =
+      options.settingsSnapshot && typeof options.settingsSnapshot === "object"
+        ? options.settingsSnapshot
+        : getSettings();
+    const generalSettingsEnabled =
+      settingsSnapshot.enableGeneralSettings === true;
+    const titleBase =
+      typeof options.titleBase === "string"
+        ? options.titleBase
+        : resolveInterfaceTitleBase();
+    const nextSuffix =
+      typeof options.suffix === "string"
+        ? options.suffix
+        : generalSettingsEnabled
+          ? String(settingsSnapshot.customTitleSuffix || "")
+          : "";
+    const nextPrefix =
+      typeof options.prefix === "string"
+        ? options.prefix
+        : getCurrentTitleSyncStatusPrefix();
+    const nextTitle = composeDocumentTitle({
+      prefix: nextPrefix,
+      titleBase,
+      suffix: nextSuffix,
+    });
+    if (document.title !== nextTitle) {
+      document.title = nextTitle;
+    }
+    lastAppliedCustomTitleSuffix = nextSuffix;
+    lastAppliedTitleSyncStatusPrefix = String(nextPrefix || "").trim();
+    lastAppliedDocumentTitle = nextTitle;
+    return nextTitle;
+  };
+
+  if (IS_S1P_TEST_MODE) {
+    const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
+    testHookHost.__S1P_TEST_HOOKS__ = {
+      ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
+      getTitleSyncStatusTestConstants,
+      composeDocumentTitle,
+      stripLastAppliedTitleSyncStatusPrefix,
+      getTitleSyncStatusPrefixForPhase,
+      isTitleSyncStatusForegroundTab,
+      resolveTitleSyncStatusTabDisplayDecision,
+      hasEnabledTitleSyncStatusPath,
+      getTitleSyncStatusRuntimeStateForTest,
+      refreshDocumentTitle,
+      getCurrentTitleSyncStatusPrefix,
+    };
+  }
 
   // --- 界面定制功能 ---
   const applyInterfaceCustomizations = () => {
@@ -26022,12 +26307,7 @@
       }
     }
 
-    const titleBase = resolveInterfaceTitleBase();
-    const nextSuffix = generalSettingsEnabled
-      ? String(settings.customTitleSuffix || "")
-      : "";
-    document.title = nextSuffix ? `${titleBase}${nextSuffix}` : titleBase;
-    lastAppliedCustomTitleSuffix = nextSuffix;
+    refreshDocumentTitle({ settingsSnapshot: settings });
   };
 
   /**
@@ -29086,6 +29366,16 @@
               </div>
               <p class="s1p-setting-desc">只影响导航栏状态提示，不改变同步行为；会覆盖每日首次、每次加载、前台复查、可见页复查、后台同步和手动同步。</p>
             </div>
+            <div id="s1p-title-sync-status-subgroup" class="s1p-settings-sub-group s1p-settings-sub-group-flat">
+              <div class="s1p-settings-item">
+                <label class="s1p-settings-label" for="s1p-show-title-sync-status-toggle">显示标签页标题同步状态</label>
+                <label class="s1p-switch">
+                  <input type="checkbox" id="s1p-show-title-sync-status-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
+                  <span class="s1p-slider"></span>
+                </label>
+              </div>
+              <p class="s1p-setting-desc">开启后，仅当所有 S1 标签页都不在前台时，第一个标签页标题会在同步发生时显示状态提示（同步中/成功/失败/冲突）。</p>
+            </div>
           </div>
 
           <div class="s1p-sync-settings-section" id="s1p-sync-manual-options-section">
@@ -29630,6 +29920,10 @@
       autoSyncIndicatorSubGroup: modal.querySelector(
         "#s1p-auto-sync-indicator-subgroup"
       ),
+      titleSyncStatusToggle: modal.querySelector("#s1p-show-title-sync-status-toggle"),
+      titleSyncStatusSubGroup: modal.querySelector(
+        "#s1p-title-sync-status-subgroup"
+      ),
       bookmarkFullContentToggle: modal.querySelector(
         "#s1p-sync-bookmark-full-content-toggle"
       ),
@@ -29656,6 +29950,8 @@
       autoSyncToggle,
       autoSyncIndicatorToggle,
       autoSyncIndicatorSubGroup,
+      titleSyncStatusToggle,
+      titleSyncStatusSubGroup,
       bookmarkFullContentToggle,
       syncDeviceIdInput,
       remoteGistIdInput,
@@ -29801,6 +30097,14 @@
       autoSyncIndicatorToggle.disabled = !isEnabled;
     };
 
+    const updateTitleSyncStatusToggleState = () => {
+      const isEnabled = remoteToggle.checked === true;
+      if (titleSyncStatusSubGroup) {
+        titleSyncStatusSubGroup.classList.toggle("is-disabled", !isEnabled);
+      }
+      titleSyncStatusToggle.disabled = !isEnabled;
+    };
+
     const isSyncDeviceIdRequiredForAutoUpload = (settingsSnapshot = null) => {
       if (settingsSnapshot && typeof settingsSnapshot === "object") {
         return (
@@ -29911,6 +30215,7 @@
     dailySyncToggle.addEventListener("change", updateForcePullState);
     remoteToggle.addEventListener("change", updateForcePullState);
     remoteToggle.addEventListener("change", updateAutoSyncIndicatorToggleState);
+    remoteToggle.addEventListener("change", updateTitleSyncStatusToggleState);
     remoteToggle.addEventListener("change", updateVisibleRemotePollingToggleState);
     remoteToggle.addEventListener("change", updateSyncDeviceIdRequirementState);
     autoSyncToggle.addEventListener("change", updateAutoSyncIndicatorToggleState);
@@ -29987,6 +30292,7 @@
       updateRemoteSyncInputsState();
       updateForcePullState();
       updateAutoSyncIndicatorToggleState();
+      updateTitleSyncStatusToggleState();
       updateVisibleRemotePollingToggleState();
       notifySyncDeviceIdRequiredIfNeeded({ focusInput: true });
     });
@@ -29999,6 +30305,7 @@
       dailySyncToggle,
       autoSyncToggle,
       autoSyncIndicatorToggle,
+      titleSyncStatusToggle,
       visibleRemotePollingToggle,
       forcePullToggle,
       directChoiceModeToggle,
@@ -30093,6 +30400,8 @@
       autoSyncToggle.checked = settingsSnapshot.syncAutoEnabled === true;
       autoSyncIndicatorToggle.checked =
         settingsSnapshot.syncShowAutoSyncIndicator !== false;
+      titleSyncStatusToggle.checked =
+        settingsSnapshot.syncShowTitleSyncStatus === true;
       if (visibleRemotePollingToggle) {
         visibleRemotePollingToggle.checked =
           settingsSnapshot.syncVisibleRemotePollingEnabled === true;
@@ -30113,6 +30422,7 @@
       updateRemoteSyncInputsState();
       updateForcePullState();
       updateAutoSyncIndicatorToggleState();
+      updateTitleSyncStatusToggleState();
       updateVisibleRemotePollingToggleState();
       updateSyncDeviceIdRequirementState();
       updateTokenExpiryInfo();
@@ -30128,6 +30438,7 @@
         syncVisibleRemotePollingEnabled:
           visibleRemotePollingToggle?.checked === true,
         syncShowAutoSyncIndicator: autoSyncIndicatorToggle.checked,
+        syncShowTitleSyncStatus: titleSyncStatusToggle.checked,
         syncForcePullOnStartup: dailySyncToggle.checked && forcePullToggle.checked,
         syncDirectChoiceMode: directChoiceModeToggle.checked === true,
         syncBookmarkFullContent: bookmarkFullContentToggle.checked,
@@ -32941,6 +33252,7 @@
           "syncCheckOnReturnToForeground",
           "syncVisibleRemotePollingEnabled",
           "syncShowAutoSyncIndicator",
+          "syncShowTitleSyncStatus",
           "syncForcePullOnStartup",
           "syncDirectChoiceMode",
           "syncBookmarkFullContent",
@@ -33641,6 +33953,7 @@
           }
           setSettingsModalDirtyState(SETTINGS_MODAL_DIRTY_TAB.SYNC_SETTINGS, false);
           updateNavbarSyncButton();
+          refreshDocumentTitle({ settingsSnapshot: currentSettings });
 
           if (
             currentSettings.syncRemoteEnabled &&
