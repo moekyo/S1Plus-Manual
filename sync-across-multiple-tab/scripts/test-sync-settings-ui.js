@@ -86,6 +86,30 @@ const expectMatch = (pattern, message) => {
     "同步状态指示器说明未表达其独立展示语义。",
   ],
   [
+    /id="s1p-auto-sync-indicator-subgroup"[\s\S]*id="s1p-title-sync-status-subgroup"[\s\S]*for="s1p-show-title-sync-status-toggle">显示标签页标题同步状态/,
+    "标题同步状态开关未位于导航栏同步状态开关之后。",
+  ],
+  [
+    /开启后，仅当所有 S1 标签页都不在前台时，第一个标签页标题会在同步发生时显示状态提示（同步中\/成功\/失败\/冲突）。/,
+    "标题同步状态开关说明文案不符合预期。",
+  ],
+  [
+    /titleSyncStatusToggle:\s*modal\.querySelector\("#s1p-show-title-sync-status-toggle"\)/,
+    "标题同步状态开关未接入同步设置控件集合。",
+  ],
+  [
+    /const updateTitleSyncStatusToggleState = \(\) => \{[\s\S]*titleSyncStatusToggle\.disabled = !isEnabled;/,
+    "标题同步状态开关未随远程同步总开关置灰。",
+  ],
+  [
+    /syncShowTitleSyncStatus:\s*titleSyncStatusToggle\.checked/,
+    "保存设置时未收集标题同步状态开关。",
+  ],
+  [
+    /settingsSnapshot\.syncShowTitleSyncStatus === true/,
+    "同步设置页未回填标题同步状态开关。",
+  ],
+  [
     /for="s1p-sync-device-id-input">同步设备 ID/,
     "同步设置页缺少同步设备 ID 标签。",
   ],

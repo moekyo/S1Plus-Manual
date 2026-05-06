@@ -220,6 +220,21 @@
     }
   },
   {
+    "name": "title_sync_status_setting_must_be_explicit_boolean",
+    "input": {
+      "syncShowTitleSyncStatus": "true"
+    },
+    "expected": {
+      "migrationApplied": true,
+      "settings": {
+        "syncShowTitleSyncStatus": false
+      },
+      "reasonsInclude": [
+        "sync_show_title_sync_status_normalized"
+      ]
+    }
+  },
+  {
     "name": "image_preview_bounds_clamped",
     "input": {
       "imagePreviewMaxWidth": 99999,
