@@ -245,12 +245,19 @@ Phase F 实现结果（2026-05-06）：
 
 ## Phase G: 与统一状态源增强的关系
 
-- [ ] 如果后台 shared scheduler 尚未完成，标题功能仍只消费现有 display phase，不自行补防抖。
-- [ ] 如果后台 shared scheduler 已完成，标题功能应自动受益于更稳定的 display phase。
-- [ ] 标题功能不单独解决 `success -> pending / running -> success` 抖动。
-- [ ] 标题功能不读取后台 shared debounce state 做单独判断，除非统一状态源已暴露该 display phase。
-- [ ] foreground probe / follow-up / retry / gate 的标题表现来自统一状态源小增强。
-- [ ] 标题层不改 foreground probe / cooldown / gate 流程。
+- [x] 如果后台 shared scheduler 尚未完成，标题功能仍只消费现有 display phase，不自行补防抖。
+- [x] 如果后台 shared scheduler 已完成，标题功能应自动受益于更稳定的 display phase。
+- [x] 标题功能不单独解决 `success -> pending / running -> success` 抖动。
+- [x] 标题功能不读取后台 shared debounce state 做单独判断，除非统一状态源已暴露该 display phase。
+- [x] foreground probe / follow-up / retry / gate 的标题表现来自统一状态源小增强。
+- [x] 标题层不改 foreground probe / cooldown / gate 流程。
+
+Phase G 实现结果（2026-05-06）：
+
+- 已将标题层 display phase 解析收窄为只读取统一状态源输出里的 `displayPhase`；没有 `displayPhase` 的原始 `phase` 不会被标题层当作同步状态显示。
+- 已补充 `test-title-sync-status.js` 回归：覆盖 raw `phase` 不生效、统一 `displayPhase: pending` 时标题保持无前缀、shared debounce / active lock 只通过 `resolveAutoSyncIndicatorDisplayPhase()` 影响标题展示。
+- 已增加标题实现区块静态断言，确认标题层不读取 `getBackgroundSyncDebounceState`，不调用 foreground probe / retry / gate / cooldown 相关入口，不调用 `performAutoSync()`，不调用 `setAutoSyncIndicatorPendingState()` / `setAutoSyncIndicatorResolvedPhase()`。
+- 本轮未修改统一状态源增强逻辑，未改 foreground probe / cooldown / gate 流程，未新增同步触发逻辑。
 
 ## Phase H: 回归验证
 
@@ -281,6 +288,15 @@ node sync-across-multiple-tab/scripts/test-safe-sync-execution.js
 node sync-across-multiple-tab/scripts/test-foreground-probe-gate-retry.js
 node sync-across-multiple-tab/scripts/test-foreground-trigger-integration.js
 ```
+
+Phase H 验证结果（2026-05-06）：
+
+- `node -c S1Plus.js`：通过。
+- `node sync-across-multiple-tab/scripts/test-title-sync-status.js`：通过，7/7 个测试组通过。
+- `node sync-across-multiple-tab/scripts/test-auto-sync-indicator-linkage.js`：通过。
+- `node sync-across-multiple-tab/scripts/test-sync-settings-ui.js`：通过。
+- `node sync-across-multiple-tab/scripts/test-settings-migration.js`：通过，15/15 个迁移用例通过，旧字段清理落盘回归通过。
+- 本轮未触碰统一状态源本体，因此未触发 `test-safe-sync-execution.js`、`test-foreground-probe-gate-retry.js`、`test-foreground-trigger-integration.js` 的补跑条件。
 
 ## 手工验收
 
@@ -320,5 +336,5 @@ node sync-across-multiple-tab/scripts/test-foreground-trigger-integration.js
 - [x] Phase D: 标题状态映射与动画
 - [x] Phase E: 多标签 presence 与负责人选举
 - [x] Phase F: 跨标签通知与资源清理
-- [ ] Phase G: 与统一状态源增强的关系
-- [ ] Phase H: 回归验证
+- [x] Phase G: 与统一状态源增强的关系
+- [x] Phase H: 回归验证
