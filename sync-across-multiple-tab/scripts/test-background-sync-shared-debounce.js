@@ -126,6 +126,7 @@ const seedSharedState = ({
   sources = { general: 1 },
   threadIds = [],
   reason = "debounced_local_change",
+  dueSource = reason === "debounced_local_change" ? "general" : "read_progress",
 } = {}) => ({
   version: 1,
   generation,
@@ -139,6 +140,7 @@ const seedSharedState = ({
   sources,
   threadIds,
   reason,
+  dueSource,
 });
 
 const testReadProgressDirtyMergesIntoSingleSharedState = () => {
@@ -174,6 +176,7 @@ const testReadProgressDirtyMergesIntoSingleSharedState = () => {
     sources: { read_progress: 2 },
     threadIds: ["123", "456"],
     reason: "debounced_read_progress",
+    dueSource: "read_progress",
   });
   assert.equal(
     timers.calls.length,
@@ -314,6 +317,7 @@ const testExpiredOwnerLeaseAllowsTakeover = () => {
 
   const acquired = hooks.tryAcquireBackgroundSyncDebounceOwner(getState(), now, {
     tabId: "tab-b",
+    settingsSnapshot: readySyncSettings,
     scheduleTimer: timers.scheduleTimer,
   });
 
@@ -592,6 +596,7 @@ const testOwnerReleaseLeavesPendingRecoverableAndAllowsTakeover = () => {
     now + 1,
     {
       tabId: "tab-b",
+      settingsSnapshot: readySyncSettings,
       scheduleTimer: timers.scheduleTimer,
     }
   );
@@ -615,6 +620,115 @@ const testRuntimeStateDoesNotExposeLegacyPerTabTimerAsSharedOwner = () => {
   });
 };
 
+const testLockActiveReschedulePersistsDueAt = () => {
+  const { constants, hooks, store, setState, getState } = getSharedDebounceApi();
+  const timers = createTimerSpy();
+  const now = 12_000_000;
+
+  setState(
+    seedSharedState({
+      generation: 6,
+      ownerTabId: "tab-a",
+      ownerLeaseUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS,
+      dueAt: now,
+      maxWaitUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
+      firstDirtyAt: now - 3_000,
+      lastDirtyAt: now - 1_000,
+      maxLastModified: 1201,
+      sources: { read_progress: 1 },
+      threadIds: ["1201"],
+      reason: "debounced_read_progress",
+      dueSource: "read_progress",
+    })
+  );
+  store.set("s1p_background_sync_lock", {
+    owner: "other-tab",
+    timestamp: now,
+  });
+
+  const result = hooks.handleSharedBackgroundSyncDebounceDue({
+    now,
+    tabId: "tab-a",
+    expectedGeneration: 6,
+    settingsSnapshot: readySyncSettings,
+    scheduleTimer: timers.scheduleTimer,
+    triggerRemoteSyncPush: () => {
+      throw new Error("sync should be delayed while a lock is active");
+    },
+  });
+
+  assert.deepEqual(toPlainObject(result), {
+    status: "scheduled",
+    reason: "sync_lock_active",
+    delayMs: 1000,
+  });
+  assert.equal(getState().dueAt, now + 1000);
+  assert.equal(
+    getState().ownerLeaseUntil,
+    now + constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS
+  );
+  assert.equal(timers.calls.length, 1);
+  assert.equal(timers.calls[0].delayMs, 1000);
+};
+
+const testSharedDebounceWriteRetriesWhenVerificationLosesRequest = () => {
+  const { request, getState, sandbox, store } = getSharedDebounceApi();
+  const timers = createTimerSpy();
+  const now = 13_000_000;
+  const originalSetValue = sandbox.GM_setValue;
+  let intercepted = false;
+
+  sandbox.GM_setValue = (key, value) => {
+    originalSetValue(key, value);
+    if (key !== BACKGROUND_SYNC_DEBOUNCE_STATE_KEY || intercepted) {
+      return;
+    }
+    intercepted = true;
+    originalSetValue(
+      key,
+      seedSharedState({
+        generation: value.generation,
+        ownerTabId: "tab-b",
+        ownerLeaseUntil: now + 20_000,
+        dueAt: now + DEFAULT_SYNC_DEBOUNCE_MS,
+        maxWaitUntil: now + 60_000,
+        firstDirtyAt: now,
+        lastDirtyAt: now,
+        maxLastModified: 1300,
+        sources: { general: 1 },
+        threadIds: ["other-thread"],
+        reason: "debounced_local_change",
+        dueSource: "general",
+      })
+    );
+  };
+
+  let result;
+  try {
+    result = request(
+      { source: "read_progress", lastModified: 1301, threadId: "1301" },
+      { now, tabId: "tab-a", scheduleTimer: timers.scheduleTimer }
+    );
+  } finally {
+    sandbox.GM_setValue = originalSetValue;
+  }
+
+  const state = getState();
+  assert.equal(toPlainObject(result).retryCount, 1);
+  assert.equal(state.generation, 2);
+  assert.equal(state.ownerTabId, "tab-b");
+  assert.equal(state.maxLastModified, 1301);
+  assert.deepEqual(state.sources, { general: 1, read_progress: 1 });
+  assert.deepEqual(state.threadIds, ["other-thread", "1301"]);
+  assert.equal(state.dueAt, now + DEFAULT_SYNC_DEBOUNCE_MS);
+  assert.equal(state.dueSource, "general");
+  assert.equal(timers.calls.length, 0);
+  assert.equal(
+    store.get(BACKGROUND_SYNC_DEBOUNCE_STATE_KEY).threadIds.includes("1301"),
+    true
+  );
+};
+
 const main = () => {
   testReadProgressDirtyMergesIntoSingleSharedState();
   testSourceSpecificSettleWindows();
@@ -629,6 +743,8 @@ const main = () => {
   testDisabledOrBlockedStatesClearSchedulerState();
   testOwnerReleaseLeavesPendingRecoverableAndAllowsTakeover();
   testRuntimeStateDoesNotExposeLegacyPerTabTimerAsSharedOwner();
+  testLockActiveReschedulePersistsDueAt();
+  testSharedDebounceWriteRetriesWhenVerificationLosesRequest();
 
   console.log("[background-sync-shared-debounce] Shared debounce scheduler checks passed.");
 };
