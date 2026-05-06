@@ -915,6 +915,11 @@
   const TITLE_SYNC_STATUS_CONFLICT_TTL_MS = AUTO_SYNC_INDICATOR_CONFLICT_TTL_MS;
   const TITLE_SYNC_STATUS_PRESENCE_TTL_MS = 2 * 60 * 1000;
   const TITLE_SYNC_STATUS_OWNER_LEASE_MS = 25 * 1000;
+  const TITLE_SYNC_STATUS_HEARTBEAT_MS = 10 * 1000;
+  const TITLE_SYNC_STATUS_PRESENCE_KEY = "s1p_title_sync_status_tabs";
+  const TITLE_SYNC_STATUS_OWNER_KEY = "s1p_title_sync_status_owner";
+  const TITLE_SYNC_STATUS_FALLBACK_SIGNAL_KEY =
+    "s1p_title_sync_status_signal";
   const TITLE_SYNC_STATUS_RUNNING_PREFIXES = Object.freeze([
     "[同步中.]",
     "[同步中..]",
@@ -10114,6 +10119,7 @@
       );
     }
     renderNavbarAutoSyncIndicator(normalized);
+    notifyTitleSyncStatusUnifiedStateChanged("auto_sync_indicator_state");
     return normalized;
   };
 
@@ -25371,6 +25377,7 @@
     syncVisibleRemoteFreshnessPollingForCurrentState();
     const settings = getSettings();
     reconcileBackgroundSyncSchedulerForSettings(settings);
+    refreshTitleSyncStatusPresenceAndDisplay("settings_full_apply");
     markSettingsRuntimeAppliedSnapshot(settings);
     syncOpenSettingsModalFromCrossTab({
       changedPathSet,
@@ -25457,7 +25464,7 @@
       hasSettingPathInChangedSet(changedPathSet, "syncRemoteEnabled") ||
       hasSettingPathInChangedSet(changedPathSet, "syncShowTitleSyncStatus")
     ) {
-      refreshDocumentTitle();
+      refreshTitleSyncStatusPresenceAndDisplay("settings_changed");
     }
     if (hasSettingPathInChangedSet(changedPathSet, "enhanceFloatingControls")) {
       manageFloatingControls();
@@ -25991,10 +25998,25 @@
   let lastAppliedCustomTitleSuffix = "";
   let lastAppliedTitleSyncStatusPrefix = "";
   let lastAppliedDocumentTitle = "";
+  const titleSyncStatusTabCreatedAt = Date.now();
+  const titleSyncStatusTabId = `s1p_title_tab_${titleSyncStatusTabCreatedAt}_${Math.random()
+    .toString(36)
+    .slice(2, 10)}`;
+  let titleSyncStatusHeartbeatTimer = null;
+  let titleSyncStatusAnimationTimer = null;
+  let titleSyncStatusExpiryTimer = null;
   const titleSyncStatusRuntimeState = {
     currentPrefix: "",
     animationFrame: 0,
     animationTimerActive: false,
+    displayPhase: AUTO_SYNC_INDICATOR_PHASE_IDLE,
+    ownerTabId: "",
+    hasForegroundTab: false,
+    shouldDisplay: false,
+    shouldRunAnimationTimer: false,
+    storageMode: "",
+    lastPresenceWriteAt: 0,
+    lastOwnerLeaseRefreshAt: 0,
   };
   const TITLE_BASE_PATTERN =
     /^(.+?)(?:论坛)?(?:\s*-\s*Stage1st)?\s*-\s*stage1\/s1\s+游戏动漫论坛$/;
@@ -26005,6 +26027,9 @@
     TITLE_SYNC_STATUS_CONFLICT_TTL_MS,
     TITLE_SYNC_STATUS_PRESENCE_TTL_MS,
     TITLE_SYNC_STATUS_OWNER_LEASE_MS,
+    TITLE_SYNC_STATUS_HEARTBEAT_MS,
+    TITLE_SYNC_STATUS_PRESENCE_KEY,
+    TITLE_SYNC_STATUS_OWNER_KEY,
   });
   const getTitleSyncStatusPrefixForPhase = (
     phase,
@@ -26090,6 +26115,259 @@
         : typeof document.hasFocus === "function" && document.hasFocus();
     return visibilityState === "visible" && hasFocus === true;
   };
+  const isCurrentTitleSyncStatusForegroundTab = () => {
+    if (typeof document.hasFocus !== "function") {
+      return false;
+    }
+    return document.visibilityState === "visible" && document.hasFocus();
+  };
+  const canUseTitleSyncStatusGmValueChannel = () =>
+    typeof GM_getValue === "function" &&
+    typeof GM_setValue === "function" &&
+    typeof GM_addValueChangeListener === "function";
+  const getTitleSyncStatusLocalStorage = () => {
+    try {
+      if (typeof window !== "undefined" && window.localStorage) {
+        return window.localStorage;
+      }
+      if (typeof localStorage !== "undefined") {
+        return localStorage;
+      }
+    } catch (error) {
+      return null;
+    }
+    return null;
+  };
+  const getTitleSyncStatusStorageMode = () => {
+    if (canUseTitleSyncStatusGmValueChannel()) {
+      return "gm";
+    }
+    return getTitleSyncStatusLocalStorage() ? "localStorage" : "none";
+  };
+  const readTitleSyncStatusStorageValue = (key, fallbackValue = null) => {
+    if (canUseTitleSyncStatusGmValueChannel()) {
+      return GM_getValue(key, fallbackValue);
+    }
+    const storage = getTitleSyncStatusLocalStorage();
+    if (!storage) {
+      return fallbackValue;
+    }
+    const rawValue = storage.getItem(key);
+    if (!rawValue) {
+      return fallbackValue;
+    }
+    try {
+      return JSON.parse(rawValue);
+    } catch (error) {
+      return fallbackValue;
+    }
+  };
+  const writeTitleSyncStatusStorageValue = (key, value) => {
+    if (canUseTitleSyncStatusGmValueChannel()) {
+      GM_setValue(key, value);
+      return true;
+    }
+    const storage = getTitleSyncStatusLocalStorage();
+    if (!storage) {
+      return false;
+    }
+    try {
+      storage.setItem(key, JSON.stringify(value));
+      return true;
+    } catch (error) {
+      console.warn("S1 Plus: 标题同步状态 fallback 写入失败:", error);
+      return false;
+    }
+  };
+  const deleteTitleSyncStatusStorageValue = (key) => {
+    if (canUseTitleSyncStatusGmValueChannel()) {
+      if (typeof GM_deleteValue === "function") {
+        GM_deleteValue(key);
+      } else {
+        GM_setValue(key, null);
+      }
+      return true;
+    }
+    const storage = getTitleSyncStatusLocalStorage();
+    if (!storage) {
+      return false;
+    }
+    try {
+      storage.removeItem(key);
+      return true;
+    } catch (error) {
+      return false;
+    }
+  };
+  const emitTitleSyncStatusFallbackSignal = (reason = "") => {
+    if (canUseTitleSyncStatusGmValueChannel()) {
+      return false;
+    }
+    const storage = getTitleSyncStatusLocalStorage();
+    if (!storage) {
+      return false;
+    }
+    try {
+      storage.setItem(
+        TITLE_SYNC_STATUS_FALLBACK_SIGNAL_KEY,
+        JSON.stringify({
+          ts: Date.now(),
+          sender: titleSyncStatusTabId,
+          reason: String(reason || ""),
+          nonce: Math.random(),
+        })
+      );
+      return true;
+    } catch (error) {
+      return false;
+    }
+  };
+  const normalizeTitleSyncStatusTabRecord = (tabRecord, fallback = {}) => {
+    const source = sanitizeRecordObject(tabRecord);
+    const fallbackSource = sanitizeRecordObject(fallback);
+    const tabId = String(source.tabId || fallbackSource.tabId || "").trim();
+    const createdAt =
+      Number(source.createdAt) || Number(fallbackSource.createdAt) || 0;
+    const lastSeen =
+      Number(source.lastSeen) || Number(fallbackSource.lastSeen) || 0;
+    const visibilityState = String(
+      source.visibilityState || fallbackSource.visibilityState || "hidden"
+    );
+    const hasFocus =
+      typeof source.hasFocus === "boolean"
+        ? source.hasFocus
+        : fallbackSource.hasFocus === true;
+    const isForeground =
+      typeof source.isForeground === "boolean"
+        ? source.isForeground
+        : visibilityState === "visible" && hasFocus === true;
+    return {
+      tabId,
+      createdAt,
+      lastSeen,
+      visibilityState,
+      hasFocus,
+      isForeground,
+    };
+  };
+  const normalizeTitleSyncStatusPresenceState = (value = null) => {
+    const source = sanitizeRecordObject(value);
+    const rawTabs = Array.isArray(value)
+      ? value
+      : Array.isArray(source.tabs)
+        ? source.tabs
+        : isObjectRecord(source.tabs)
+          ? Object.values(source.tabs)
+          : [];
+    const tabs = {};
+    rawTabs.forEach((rawTab) => {
+      const tab = normalizeTitleSyncStatusTabRecord(rawTab);
+      if (tab.tabId) {
+        tabs[tab.tabId] = tab;
+      }
+    });
+    return {
+      version: 1,
+      updatedAt: Number(source.updatedAt) || 0,
+      tabs,
+    };
+  };
+  const normalizeTitleSyncStatusOwnerState = (value = null) => {
+    const source = sanitizeRecordObject(value);
+    return {
+      tabId: String(source.tabId || "").trim(),
+      leaseUntil: Number(source.leaseUntil) || 0,
+      updatedAt: Number(source.updatedAt) || 0,
+    };
+  };
+  const getTitleSyncStatusPresenceState = () =>
+    normalizeTitleSyncStatusPresenceState(
+      readTitleSyncStatusStorageValue(TITLE_SYNC_STATUS_PRESENCE_KEY, null)
+    );
+  const getTitleSyncStatusOwnerState = () =>
+    normalizeTitleSyncStatusOwnerState(
+      readTitleSyncStatusStorageValue(TITLE_SYNC_STATUS_OWNER_KEY, null)
+    );
+  const getCurrentTitleSyncStatusTabRecord = (now = Date.now()) => {
+    const hasFocus =
+      typeof document.hasFocus === "function" ? document.hasFocus() : false;
+    return {
+      tabId: titleSyncStatusTabId,
+      createdAt: titleSyncStatusTabCreatedAt,
+      lastSeen: now,
+      visibilityState: String(document.visibilityState || "hidden"),
+      hasFocus,
+      isForeground: isCurrentTitleSyncStatusForegroundTab(),
+    };
+  };
+  const pruneTitleSyncStatusPresenceTabs = (tabs = {}, now = Date.now()) => {
+    const nextTabs = {};
+    Object.values(tabs).forEach((rawTab) => {
+      const tab = normalizeTitleSyncStatusTabRecord(rawTab);
+      if (
+        tab.tabId &&
+        tab.lastSeen > 0 &&
+        now - tab.lastSeen <= TITLE_SYNC_STATUS_PRESENCE_TTL_MS
+      ) {
+        nextTabs[tab.tabId] = tab;
+      }
+    });
+    return nextTabs;
+  };
+  const writeCurrentTitleSyncStatusPresence = ({
+    remove = false,
+    reason = "",
+  } = {}) => {
+    const now = Date.now();
+    const state = getTitleSyncStatusPresenceState();
+    const tabs = pruneTitleSyncStatusPresenceTabs(state.tabs, now);
+    if (remove) {
+      delete tabs[titleSyncStatusTabId];
+    } else {
+      tabs[titleSyncStatusTabId] = getCurrentTitleSyncStatusTabRecord(now);
+    }
+    const nextState = {
+      version: 1,
+      updatedAt: now,
+      tabs,
+    };
+    const didWrite = writeTitleSyncStatusStorageValue(
+      TITLE_SYNC_STATUS_PRESENCE_KEY,
+      nextState
+    );
+    if (didWrite) {
+      titleSyncStatusRuntimeState.lastPresenceWriteAt = now;
+      emitTitleSyncStatusFallbackSignal(reason || "presence");
+    }
+    return nextState;
+  };
+  const writeTitleSyncStatusOwnerLease = (now = Date.now()) => {
+    const nextOwner = {
+      tabId: titleSyncStatusTabId,
+      leaseUntil: now + TITLE_SYNC_STATUS_OWNER_LEASE_MS,
+      updatedAt: now,
+    };
+    const didWrite = writeTitleSyncStatusStorageValue(
+      TITLE_SYNC_STATUS_OWNER_KEY,
+      nextOwner
+    );
+    if (didWrite) {
+      titleSyncStatusRuntimeState.lastOwnerLeaseRefreshAt = now;
+      emitTitleSyncStatusFallbackSignal("owner");
+    }
+    return nextOwner;
+  };
+  const releaseTitleSyncStatusOwnerLease = () => {
+    const owner = getTitleSyncStatusOwnerState();
+    if (owner.tabId && owner.tabId !== titleSyncStatusTabId) {
+      return false;
+    }
+    const didDelete = deleteTitleSyncStatusStorageValue(TITLE_SYNC_STATUS_OWNER_KEY);
+    if (didDelete) {
+      emitTitleSyncStatusFallbackSignal("owner_release");
+    }
+    return didDelete;
+  };
   const resolveTitleSyncStatusDisplayPhase = (
     stateInput = null,
     now = Date.now()
@@ -26162,12 +26440,32 @@
     const previousOwnerStillLive = liveTabs.some(
       (tab) => tab.tabId === previousOwnerTabId
     );
-    const ownerTabId =
+    const earliestLiveTabId = liveTabs[0]?.tabId || "";
+    const previousOwnerCanKeepLease = Boolean(
       previousOwnerTabId &&
-      previousOwnerStillLive &&
-      previousOwnerLeaseUntil > now
+        previousOwnerTabId === earliestLiveTabId &&
+        previousOwnerStillLive &&
+        previousOwnerLeaseUntil > now
+    );
+    let ownerCandidates = liveTabs;
+    if (
+      previousOwnerTabId &&
+      previousOwnerTabId === earliestLiveTabId &&
+      !previousOwnerCanKeepLease
+    ) {
+      ownerCandidates = liveTabs.filter(
+        (tab) =>
+          tab.tabId !== previousOwnerTabId ||
+          tab.tabId === normalizedCurrentTabId
+      );
+      if (ownerCandidates.length === 0) {
+        ownerCandidates = liveTabs;
+      }
+    }
+    const ownerTabId =
+      previousOwnerCanKeepLease
         ? previousOwnerTabId
-        : liveTabs[0]?.tabId || normalizedCurrentTabId;
+        : ownerCandidates[0]?.tabId || normalizedCurrentTabId;
     const displayPhase = resolveTitleSyncStatusDisplayPhase(state, now);
     const rawPrefix = getTitleSyncStatusPrefixForPhase(displayPhase, {
       animationFrame,
@@ -26258,6 +26556,288 @@
     lastAppliedTitleSyncStatusPrefix = String(nextPrefix || "").trim();
     lastAppliedDocumentTitle = nextTitle;
     return nextTitle;
+  };
+  const isTitleSyncStatusResultPhase = (phase) =>
+    phase === AUTO_SYNC_INDICATOR_PHASE_SUCCESS ||
+    phase === AUTO_SYNC_INDICATOR_PHASE_FAILURE ||
+    phase === AUTO_SYNC_INDICATOR_PHASE_CONFLICT;
+  const getTitleSyncStatusPhaseTimestamp = (stateInput = null) => {
+    const source = sanitizeRecordObject(stateInput);
+    return (
+      Number(
+        source.displayTimestamp ||
+          source.timestamp ||
+          source.lastResolvedTimestamp
+      ) || 0
+    );
+  };
+  const stopTitleSyncStatusExpiryTimer = () => {
+    if (titleSyncStatusExpiryTimer) {
+      clearTimeout(titleSyncStatusExpiryTimer);
+      titleSyncStatusExpiryTimer = null;
+    }
+  };
+  const stopTitleSyncStatusAnimationTimer = () => {
+    if (titleSyncStatusAnimationTimer) {
+      clearInterval(titleSyncStatusAnimationTimer);
+      titleSyncStatusAnimationTimer = null;
+    }
+    titleSyncStatusRuntimeState.animationTimerActive = false;
+  };
+  const scheduleTitleSyncStatusExpiryTimer = (
+    resolvedState,
+    displayPhase,
+    now = Date.now()
+  ) => {
+    stopTitleSyncStatusExpiryTimer();
+    if (!isTitleSyncStatusResultPhase(displayPhase)) {
+      return;
+    }
+    const ttlMs = getAutoSyncIndicatorResolvedTtlMs(displayPhase);
+    const timestamp = getTitleSyncStatusPhaseTimestamp(resolvedState);
+    const remainingMs = ttlMs - (now - timestamp);
+    if (remainingMs <= 0) {
+      syncTitleSyncStatusRuntime({ reason: "result_ttl_expired" });
+      return;
+    }
+    titleSyncStatusExpiryTimer = setTimeout(() => {
+      titleSyncStatusExpiryTimer = null;
+      syncTitleSyncStatusRuntime({ reason: "result_ttl_expired" });
+    }, remainingMs + 25);
+  };
+  const startTitleSyncStatusAnimationTimer = () => {
+    if (titleSyncStatusAnimationTimer) {
+      titleSyncStatusRuntimeState.animationTimerActive = true;
+      return;
+    }
+    titleSyncStatusRuntimeState.animationTimerActive = true;
+    titleSyncStatusAnimationTimer = setInterval(() => {
+      titleSyncStatusRuntimeState.animationFrame =
+        (titleSyncStatusRuntimeState.animationFrame + 1) %
+        TITLE_SYNC_STATUS_RUNNING_PREFIXES.length;
+      syncTitleSyncStatusRuntime({ reason: "animation_tick" });
+    }, TITLE_SYNC_STATUS_ANIMATION_INTERVAL_MS);
+  };
+  const restoreTitleSyncStatusDocumentTitle = (settingsSnapshot = getSettings()) => {
+    titleSyncStatusRuntimeState.currentPrefix = "";
+    titleSyncStatusRuntimeState.shouldDisplay = false;
+    titleSyncStatusRuntimeState.shouldRunAnimationTimer = false;
+    return refreshDocumentTitle({
+      settingsSnapshot,
+      prefix: "",
+    });
+  };
+  const stopTitleSyncStatusDisplay = ({
+    settingsSnapshot = getSettings(),
+    restoreTitle = true,
+  } = {}) => {
+    stopTitleSyncStatusAnimationTimer();
+    stopTitleSyncStatusExpiryTimer();
+    titleSyncStatusRuntimeState.currentPrefix = "";
+    titleSyncStatusRuntimeState.shouldDisplay = false;
+    titleSyncStatusRuntimeState.shouldRunAnimationTimer = false;
+    if (restoreTitle) {
+      restoreTitleSyncStatusDocumentTitle(settingsSnapshot);
+    }
+  };
+  const maybeRefreshTitleSyncStatusOwnerLease = (
+    decision,
+    now = Date.now(),
+    { force = false } = {}
+  ) => {
+    if (
+      !decision ||
+      decision.ownerTabId !== titleSyncStatusTabId ||
+      decision.hasForegroundTab
+    ) {
+      return null;
+    }
+    const owner = getTitleSyncStatusOwnerState();
+    const remainingMs =
+      owner.tabId === titleSyncStatusTabId ? owner.leaseUntil - now : 0;
+    if (!force && remainingMs > TITLE_SYNC_STATUS_OWNER_LEASE_MS / 2) {
+      return owner;
+    }
+    return writeTitleSyncStatusOwnerLease(now);
+  };
+  const syncTitleSyncStatusRuntime = ({
+    reason = "",
+    forceOwnerLease = false,
+  } = {}) => {
+    const now = Date.now();
+    const settings = getSettings();
+    titleSyncStatusRuntimeState.storageMode = getTitleSyncStatusStorageMode();
+
+    if (!hasEnabledTitleSyncStatusPath(settings)) {
+      stopTitleSyncStatusHeartbeat();
+      const presenceState = getTitleSyncStatusPresenceState();
+      if (presenceState.tabs[titleSyncStatusTabId]) {
+        writeCurrentTitleSyncStatusPresence({
+          remove: true,
+          reason: "disabled",
+        });
+      }
+      releaseTitleSyncStatusOwnerLease();
+      titleSyncStatusRuntimeState.displayPhase = AUTO_SYNC_INDICATOR_PHASE_IDLE;
+      titleSyncStatusRuntimeState.ownerTabId = "";
+      titleSyncStatusRuntimeState.hasForegroundTab = false;
+      stopTitleSyncStatusDisplay({ settingsSnapshot: settings });
+      return {
+        shouldDisplay: false,
+        shouldRunAnimationTimer: false,
+        ownerTabId: "",
+        displayPhase: AUTO_SYNC_INDICATOR_PHASE_IDLE,
+        prefix: "",
+        hasForegroundTab: false,
+      };
+    }
+
+    const resolvedState = resolveAutoSyncIndicatorDisplayPhase();
+    const nextDisplayPhase = resolveTitleSyncStatusDisplayPhase(
+      resolvedState,
+      now
+    );
+    if (
+      nextDisplayPhase === AUTO_SYNC_INDICATOR_PHASE_RUNNING &&
+      titleSyncStatusRuntimeState.displayPhase !== AUTO_SYNC_INDICATOR_PHASE_RUNNING
+    ) {
+      titleSyncStatusRuntimeState.animationFrame = 0;
+    }
+    if (nextDisplayPhase !== AUTO_SYNC_INDICATOR_PHASE_RUNNING) {
+      titleSyncStatusRuntimeState.animationFrame = 0;
+    }
+
+    const presenceState = getTitleSyncStatusPresenceState();
+    const currentTabRecord = getCurrentTitleSyncStatusTabRecord(now);
+    const tabs = Object.values(presenceState.tabs);
+    if (!tabs.some((tab) => tab.tabId === titleSyncStatusTabId)) {
+      tabs.push(currentTabRecord);
+    }
+    const owner = getTitleSyncStatusOwnerState();
+    const decision = resolveTitleSyncStatusTabDisplayDecision({
+      currentTabId: titleSyncStatusTabId,
+      tabs,
+      state: resolvedState,
+      settings,
+      now,
+      previousOwner: owner,
+      animationFrame: titleSyncStatusRuntimeState.animationFrame,
+    });
+
+    maybeRefreshTitleSyncStatusOwnerLease(decision, now, {
+      force: forceOwnerLease,
+    });
+
+    titleSyncStatusRuntimeState.currentPrefix = decision.prefix;
+    titleSyncStatusRuntimeState.displayPhase = decision.displayPhase;
+    titleSyncStatusRuntimeState.ownerTabId = decision.ownerTabId;
+    titleSyncStatusRuntimeState.hasForegroundTab = decision.hasForegroundTab;
+    titleSyncStatusRuntimeState.shouldDisplay = decision.shouldDisplay;
+    titleSyncStatusRuntimeState.shouldRunAnimationTimer =
+      decision.shouldRunAnimationTimer;
+    refreshDocumentTitle({
+      settingsSnapshot: settings,
+      prefix: decision.prefix,
+    });
+
+    if (decision.shouldRunAnimationTimer) {
+      startTitleSyncStatusAnimationTimer();
+    } else {
+      stopTitleSyncStatusAnimationTimer();
+    }
+    scheduleTitleSyncStatusExpiryTimer(resolvedState, decision.displayPhase, now);
+    return {
+      ...decision,
+      reason: String(reason || ""),
+    };
+  };
+  const notifyTitleSyncStatusUnifiedStateChanged = (reason = "") => {
+    emitTitleSyncStatusFallbackSignal(reason || "unified_state");
+    if (window.__s1pTitleSyncStatusCrossTabSyncBound) {
+      syncTitleSyncStatusRuntime({ reason: reason || "unified_state" });
+    }
+  };
+  const startTitleSyncStatusHeartbeat = () => {
+    if (titleSyncStatusHeartbeatTimer) {
+      return;
+    }
+    titleSyncStatusHeartbeatTimer = setInterval(() => {
+      writeCurrentTitleSyncStatusPresence({ reason: "heartbeat" });
+      syncTitleSyncStatusRuntime({ reason: "heartbeat" });
+    }, TITLE_SYNC_STATUS_HEARTBEAT_MS);
+  };
+  const stopTitleSyncStatusHeartbeat = () => {
+    if (titleSyncStatusHeartbeatTimer) {
+      clearInterval(titleSyncStatusHeartbeatTimer);
+      titleSyncStatusHeartbeatTimer = null;
+    }
+  };
+  const refreshTitleSyncStatusPresenceAndDisplay = (reason = "") => {
+    const settings = getSettings();
+    if (hasEnabledTitleSyncStatusPath(settings)) {
+      writeCurrentTitleSyncStatusPresence({ reason });
+      startTitleSyncStatusHeartbeat();
+    }
+    syncTitleSyncStatusRuntime({
+      reason,
+      forceOwnerLease: reason === "pageshow" || reason === "init",
+    });
+  };
+  const releaseTitleSyncStatusPresenceAndDisplay = (reason = "") => {
+    stopTitleSyncStatusHeartbeat();
+    writeCurrentTitleSyncStatusPresence({ remove: true, reason });
+    releaseTitleSyncStatusOwnerLease();
+    stopTitleSyncStatusDisplay({ restoreTitle: true });
+  };
+  const initializeTitleSyncStatusCrossTabSync = () => {
+    if (window.__s1pTitleSyncStatusCrossTabSyncBound) {
+      return;
+    }
+    window.__s1pTitleSyncStatusCrossTabSyncBound = true;
+
+    refreshTitleSyncStatusPresenceAndDisplay("init");
+
+    if (canUseTitleSyncStatusGmValueChannel()) {
+      GM_addValueChangeListener(AUTO_SYNC_INDICATOR_STATE_KEY, () => {
+        syncTitleSyncStatusRuntime({ reason: "state_change" });
+      });
+      GM_addValueChangeListener(TITLE_SYNC_STATUS_PRESENCE_KEY, () => {
+        syncTitleSyncStatusRuntime({ reason: "presence_change" });
+      });
+      GM_addValueChangeListener(TITLE_SYNC_STATUS_OWNER_KEY, () => {
+        syncTitleSyncStatusRuntime({ reason: "owner_change" });
+      });
+    } else if (getTitleSyncStatusLocalStorage()) {
+      window.addEventListener("storage", (event) => {
+        if (
+          event.key === TITLE_SYNC_STATUS_PRESENCE_KEY ||
+          event.key === TITLE_SYNC_STATUS_OWNER_KEY ||
+          event.key === TITLE_SYNC_STATUS_FALLBACK_SIGNAL_KEY
+        ) {
+          syncTitleSyncStatusRuntime({ reason: "storage_change" });
+        }
+      });
+    }
+
+    document.addEventListener("visibilitychange", () => {
+      refreshTitleSyncStatusPresenceAndDisplay("visibilitychange");
+    });
+    window.addEventListener("focus", () => {
+      refreshTitleSyncStatusPresenceAndDisplay("focus");
+    });
+    window.addEventListener("blur", () => {
+      refreshTitleSyncStatusPresenceAndDisplay("blur");
+    });
+    window.addEventListener("pageshow", () => {
+      startTitleSyncStatusHeartbeat();
+      refreshTitleSyncStatusPresenceAndDisplay("pageshow");
+    });
+    window.addEventListener("pagehide", () => {
+      releaseTitleSyncStatusPresenceAndDisplay("pagehide");
+    });
+    window.addEventListener("beforeunload", () => {
+      releaseTitleSyncStatusPresenceAndDisplay("beforeunload");
+    });
   };
 
   if (IS_S1P_TEST_MODE) {
@@ -33954,6 +34534,7 @@
           setSettingsModalDirtyState(SETTINGS_MODAL_DIRTY_TAB.SYNC_SETTINGS, false);
           updateNavbarSyncButton();
           refreshDocumentTitle({ settingsSnapshot: currentSettings });
+          refreshTitleSyncStatusPresenceAndDisplay("settings_saved");
 
           if (
             currentSettings.syncRemoteEnabled &&
@@ -40185,6 +40766,10 @@
         {
           name: "initialize auto-sync indicator cross-tab sync",
           run: () => initializeAutoSyncIndicatorCrossTabSync(),
+        },
+        {
+          name: "initialize title sync status cross-tab sync",
+          run: () => initializeTitleSyncStatusCrossTabSync(),
         },
         {
           name: "bind shared background sync debounce lifecycle",

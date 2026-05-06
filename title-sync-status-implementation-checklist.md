@@ -166,63 +166,82 @@ Phase C 实现结果（2026-05-06）：
 
 ## Phase D: 标题状态映射与动画
 
-- [ ] 标题状态直接消费统一状态源 display phase。
-- [ ] 推荐复用 `resolveAutoSyncIndicatorDisplayPhase()`。
-- [ ] `idle` 不显示。
-- [ ] `pending` 不显示。
-- [ ] `running` 显示同步中动画。
-- [ ] `success` 显示 `[同步成功]`。
-- [ ] `failure` 显示 `[同步失败]`。
-- [ ] `conflict` 显示 `[冲突]`。
-- [ ] 同步中动画每 500ms 在 `[同步中.]`、`[同步中..]`、`[同步中...]` 间切换。
-- [ ] running 覆盖尚未过期的 success / failure / conflict。
-- [ ] 结果状态过期后恢复原始标题。
-- [ ] 前后台切换只暂停标题显示，不重置状态 TTL。
-- [ ] 状态过期时停止动画 timer。
+- [x] 标题状态直接消费统一状态源 display phase。
+- [x] 推荐复用 `resolveAutoSyncIndicatorDisplayPhase()`。
+- [x] `idle` 不显示。
+- [x] `pending` 不显示。
+- [x] `running` 显示同步中动画。
+- [x] `success` 显示 `[同步成功]`。
+- [x] `failure` 显示 `[同步失败]`。
+- [x] `conflict` 显示 `[冲突]`。
+- [x] 同步中动画每 500ms 在 `[同步中.]`、`[同步中..]`、`[同步中...]` 间切换。
+- [x] running 覆盖尚未过期的 success / failure / conflict。
+- [x] 结果状态过期后恢复原始标题。
+- [x] 前后台切换只暂停标题显示，不重置状态 TTL。
+- [x] 状态过期时停止动画 timer。
+
+Phase D 实现结果（2026-05-06）：
+
+- 已新增标题状态运行时调度，实际展示路径直接调用 `resolveAutoSyncIndicatorDisplayPhase()`，再将 display phase 映射为标题前缀；标题层未读取 shared debounce state 做特殊判断。
+- 已实现 `idle` / `pending` 无前缀，`running` 三帧动画，`success` / `failure` / `conflict` 结果前缀；进入 `running` 时会重置到 `[同步中.]` 并覆盖未过期结果状态。
+- 已按统一状态源 TTL 安排结果状态过期检查，过期后通过 `refreshDocumentTitle()` 恢复原始标题和自定义后缀；前后台切换只影响是否显示，不修改统一状态源时间戳。
 
 ## Phase E: 多标签 presence 与负责人选举
 
 推荐优先使用 GM value：
 
-- [ ] 新增标题状态 presence key，例如 `s1p_title_sync_status_tabs`。
-- [ ] 新增当前标签页唯一 `titleSyncStatusTabId`。
-- [ ] 每个标签页记录 `tabId`、`createdAt`、`lastSeen`、`isForeground`。
-- [ ] `isForeground` 使用 `document.visibilityState === "visible" && document.hasFocus()`。
-- [ ] 监听 `visibilitychange`。
-- [ ] 监听 `focus`。
-- [ ] 监听 `blur`。
-- [ ] 监听 `pageshow`。
-- [ ] 监听 `pagehide`。
-- [ ] 监听 `beforeunload`。
-- [ ] 定期 heartbeat 更新 `lastSeen`。
-- [ ] `lastSeen` 超过 2 分钟的标签页从 presence 判断中忽略。
-- [ ] owner lease 使用 20 到 30 秒，负责人关闭后可更快接管。
-- [ ] 当前仍存活标签页中 `createdAt` 最早者为负责人。
-- [ ] 如果有任意标签页 `isForeground === true`，所有标题状态都隐藏。
-- [ ] 只有负责人标签页可以显示标题状态。
-- [ ] 非负责人标签页必须恢复原始标题并停止动画 timer。
+- [x] 新增标题状态 presence key，例如 `s1p_title_sync_status_tabs`。
+- [x] 新增当前标签页唯一 `titleSyncStatusTabId`。
+- [x] 每个标签页记录 `tabId`、`createdAt`、`lastSeen`、`isForeground`。
+- [x] `isForeground` 使用 `document.visibilityState === "visible" && document.hasFocus()`。
+- [x] 监听 `visibilitychange`。
+- [x] 监听 `focus`。
+- [x] 监听 `blur`。
+- [x] 监听 `pageshow`。
+- [x] 监听 `pagehide`。
+- [x] 监听 `beforeunload`。
+- [x] 定期 heartbeat 更新 `lastSeen`。
+- [x] `lastSeen` 超过 2 分钟的标签页从 presence 判断中忽略。
+- [x] owner lease 使用 20 到 30 秒，负责人关闭后可更快接管。
+- [x] 当前仍存活标签页中 `createdAt` 最早者为负责人。
+- [x] 如果有任意标签页 `isForeground === true`，所有标题状态都隐藏。
+- [x] 只有负责人标签页可以显示标题状态。
+- [x] 非负责人标签页必须恢复原始标题并停止动画 timer。
 
 fallback：
 
-- [ ] 如果 GM value listener 不可用，使用 `localStorage` 和 `storage` event。
-- [ ] fallback 仅负责同源标签协调。
-- [ ] fallback 仍需满足 owner / presence / foreground 规则。
+- [x] 如果 GM value listener 不可用，使用 `localStorage` 和 `storage` event。
+- [x] fallback 仅负责同源标签协调。
+- [x] fallback 仍需满足 owner / presence / foreground 规则。
+
+Phase E 实现结果（2026-05-06）：
+
+- 已新增 `s1p_title_sync_status_tabs` presence、`s1p_title_sync_status_owner` owner lease 和当前标签页唯一 tab id；presence 记录包含 `tabId`、`createdAt`、`lastSeen`、`visibilityState`、`hasFocus`、`isForeground`。
+- 前台判定使用 `document.visibilityState === "visible" && document.hasFocus()`；`visibilitychange`、`focus`、`blur`、`pageshow` 会立即刷新 presence，`pagehide` / `beforeunload` 会释放当前标签页 presence。
+- 已实现 2 分钟 presence TTL、25 秒 owner lease、createdAt 最早负责人、任意前台隐藏、非负责人恢复标题并停动画；GM value listener 不可用时降级到同源 `localStorage` + `storage` event。
 
 ## Phase F: 跨标签通知与资源清理
 
-- [ ] 使用 `GM_addValueChangeListener` 监听统一状态源变化。
-- [ ] 使用 `GM_addValueChangeListener` 或 storage event 监听 presence 变化。
-- [ ] 任意 S1 标签页切回前台时，所有标签页立即恢复原始标题。
-- [ ] 任意 S1 标签页切回前台时，负责人停止动画 timer。
-- [ ] 所有 S1 标签页进入后台后，重新选举负责人。
-- [ ] 用户关闭 `syncShowTitleSyncStatus` 时，所有标签页恢复原始标题。
-- [ ] 用户关闭 `syncShowTitleSyncStatus` 时，停止动画 timer。
-- [ ] 远程同步关闭时，所有标签页恢复原始标题。
-- [ ] 远程同步关闭时，停止动画 timer。
-- [ ] 页面 `pagehide` / `beforeunload` 时释放当前标签页 presence。
-- [ ] 页面 `pagehide` / `beforeunload` 时停止动画 timer。
-- [ ] 非负责人标签页不运行动画 timer。
-- [ ] 不需要显示状态时，不进行高频轮询。
+- [x] 使用 `GM_addValueChangeListener` 监听统一状态源变化。
+- [x] 使用 `GM_addValueChangeListener` 或 storage event 监听 presence 变化。
+- [x] 任意 S1 标签页切回前台时，所有标签页立即恢复原始标题。
+- [x] 任意 S1 标签页切回前台时，负责人停止动画 timer。
+- [x] 所有 S1 标签页进入后台后，重新选举负责人。
+- [x] 用户关闭 `syncShowTitleSyncStatus` 时，所有标签页恢复原始标题。
+- [x] 用户关闭 `syncShowTitleSyncStatus` 时，停止动画 timer。
+- [x] 远程同步关闭时，所有标签页恢复原始标题。
+- [x] 远程同步关闭时，停止动画 timer。
+- [x] 页面 `pagehide` / `beforeunload` 时释放当前标签页 presence。
+- [x] 页面 `pagehide` / `beforeunload` 时停止动画 timer。
+- [x] 非负责人标签页不运行动画 timer。
+- [x] 不需要显示状态时，不进行高频轮询。
+
+Phase F 实现结果（2026-05-06）：
+
+- 已在标题运行时监听统一状态源、presence 和 owner 变化；GM value listener 可用时使用 GM，缺失时通过 localStorage signal 通知同源标签重新读取状态。
+- 已把设置保存、设置跨标签刷新、远程同步关闭、标题状态开关关闭接入标题运行时，确保恢复原始标题、释放 owner、停止动画 timer 和 heartbeat。
+- 已在 `pagehide` / `beforeunload` 清理 presence 与 timer；不展示时不启动动画，标题状态关闭或远程同步关闭时也不保留 heartbeat。
+- 验证结果：`node -c S1Plus.js`、`node sync-across-multiple-tab/scripts/test-title-sync-status.js`、`node sync-across-multiple-tab/scripts/test-auto-sync-indicator-linkage.js`、`node sync-across-multiple-tab/scripts/test-sync-settings-ui.js` 均已通过。
 
 ## Phase G: 与统一状态源增强的关系
 
@@ -298,8 +317,8 @@ node sync-across-multiple-tab/scripts/test-foreground-trigger-integration.js
 - [x] Phase A: 测试先行
 - [x] Phase B: 设置项与 UI
 - [x] Phase C: 统一标题组合函数
-- [ ] Phase D: 标题状态映射与动画
-- [ ] Phase E: 多标签 presence 与负责人选举
-- [ ] Phase F: 跨标签通知与资源清理
+- [x] Phase D: 标题状态映射与动画
+- [x] Phase E: 多标签 presence 与负责人选举
+- [x] Phase F: 跨标签通知与资源清理
 - [ ] Phase G: 与统一状态源增强的关系
 - [ ] Phase H: 回归验证
