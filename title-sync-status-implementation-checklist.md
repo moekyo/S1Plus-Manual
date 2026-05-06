@@ -27,24 +27,32 @@
 
 ## Phase 0: 准备与代码定位
 
-- [ ] 回读 `title-sync-status.md`。
-- [ ] 确认本轮只实现标题同步状态展示，不改同步核心。
-- [ ] 定位现有自定义标题后缀逻辑：
+- [x] 回读 `title-sync-status.md`。
+- [x] 确认本轮只实现标题同步状态展示，不改同步核心。
+- [x] 定位现有自定义标题后缀逻辑：
   - `resolveInterfaceTitleBase()`
   - `applyInterfaceCustomizations()`
   - `lastAppliedCustomTitleSuffix`
   - `document.title` 写入点
-- [ ] 定位统一状态源：
+- [x] 定位统一状态源：
   - `AUTO_SYNC_INDICATOR_STATE_KEY`
   - `getAutoSyncIndicatorState()`
   - `resolveAutoSyncIndicatorDisplayPhase()`
   - `getAutoSyncIndicatorResolvedTtlMs()`
   - `initializeAutoSyncIndicatorCrossTabSync()`
-- [ ] 定位同步状态设置项 UI：
+- [x] 定位同步状态设置项 UI：
   - `syncShowAutoSyncIndicator`
   - “设置同步 -> 状态显示”区块
   - `test-sync-settings-ui.js`
-- [ ] 确认当前工作树是否有用户未提交改动，避免误改无关文件。
+- [x] 确认当前工作树是否有用户未提交改动，避免误改无关文件。
+
+Phase 0 定位结果（2026-05-06）：
+
+- 已回读标题同步状态需求、后台 shared scheduler review 和 shared scheduler 实现清单；确认 shared scheduler / 统一状态源增强已经完成，本轮标题功能只消费现有统一状态源。
+- 现有自定义标题后缀仍由 `resolveInterfaceTitleBase()` / `applyInterfaceCustomizations()` 维护，`lastAppliedCustomTitleSuffix` 用于剥离旧后缀，当前 `document.title` 写入点仍在 `applyInterfaceCustomizations()` 内。
+- 统一状态源入口已定位：`AUTO_SYNC_INDICATOR_STATE_KEY`、`getAutoSyncIndicatorState()`、`resolveAutoSyncIndicatorDisplayPhase()`、`getAutoSyncIndicatorResolvedTtlMs()` 和 `initializeAutoSyncIndicatorCrossTabSync()`；其中 display phase 已接入 shared debounce / pending / active lock / foreground probe 等状态。
+- 同步状态设置 UI 已定位：“设置同步 -> 状态显示”区块当前只有 `syncShowAutoSyncIndicator`，对应测试为 `sync-across-multiple-tab/scripts/test-sync-settings-ui.js`。
+- 本轮首次检查曾看到 `S1Plus.js` 和 `sync-across-multiple-tab/scripts/test-background-sync-shared-debounce.js` 处于已修改状态；本轮未编辑这两个文件。最终核对时，当前工作树只剩本轮新增/更新的标题状态测试与清单文件。
 
 ## Phase A: 测试先行
 
@@ -56,43 +64,51 @@ sync-across-multiple-tab/scripts/test-title-sync-status.js
 
 覆盖标题组合：
 
-- [ ] 无同步状态时：标题为 `原始标题 + 自定义标题后缀`。
-- [ ] running 时：标题为 `[同步中.] 原始标题 + 自定义标题后缀`。
-- [ ] success 时：标题为 `[同步成功] 原始标题 + 自定义标题后缀`。
-- [ ] failure 时：标题为 `[同步失败] 原始标题 + 自定义标题后缀`。
-- [ ] conflict 时：标题为 `[冲突] 原始标题 + 自定义标题后缀`。
-- [ ] 重复刷新不会叠加多个同步状态前缀。
-- [ ] 自定义标题后缀更新后，前缀仍保留或按状态正确清除。
+- [x] 无同步状态时：标题为 `原始标题 + 自定义标题后缀`。
+- [x] running 时：标题为 `[同步中.] 原始标题 + 自定义标题后缀`。
+- [x] success 时：标题为 `[同步成功] 原始标题 + 自定义标题后缀`。
+- [x] failure 时：标题为 `[同步失败] 原始标题 + 自定义标题后缀`。
+- [x] conflict 时：标题为 `[冲突] 原始标题 + 自定义标题后缀`。
+- [x] 重复刷新不会叠加多个同步状态前缀。
+- [x] 自定义标题后缀更新后，前缀仍保留或按状态正确清除。
 
 覆盖状态映射：
 
-- [ ] `idle` 不显示。
-- [ ] `pending` 不显示。
-- [ ] `running` 显示同步中动画。
-- [ ] `success` 显示 2 分钟。
-- [ ] `failure` 显示 5 分钟。
-- [ ] `conflict` 显示 10 分钟。
-- [ ] 前后台切换不重置结果状态 TTL。
+- [x] `idle` 不显示。
+- [x] `pending` 不显示。
+- [x] `running` 显示同步中动画。
+- [x] `success` 显示 2 分钟。
+- [x] `failure` 显示 5 分钟。
+- [x] `conflict` 显示 10 分钟。
+- [x] 前后台切换不重置结果状态 TTL。
 
 覆盖多标签协调：
 
-- [ ] 单个 S1 标签页 visible 且 focused 时不显示。
-- [ ] 单个 S1 标签页 hidden 时可显示。
-- [ ] 单个 S1 标签页 visible 但 `document.hasFocus() === false` 时视为后台。
-- [ ] 多个 S1 标签页中任意一个前台时，所有标签页都不显示。
-- [ ] 所有 S1 标签页都后台时，只负责人标签页显示。
-- [ ] 非负责人标签页不启动动画 timer。
-- [ ] 负责人关闭后，其他标签页在 owner lease 过期后接管。
-- [ ] 超过 presence TTL 的标签页被忽略，不阻塞显示。
+- [x] 单个 S1 标签页 visible 且 focused 时不显示。
+- [x] 单个 S1 标签页 hidden 时可显示。
+- [x] 单个 S1 标签页 visible 但 `document.hasFocus() === false` 时视为后台。
+- [x] 多个 S1 标签页中任意一个前台时，所有标签页都不显示。
+- [x] 所有 S1 标签页都后台时，只负责人标签页显示。
+- [x] 非负责人标签页不启动动画 timer。
+- [x] 负责人关闭后，其他标签页在 owner lease 过期后接管。
+- [x] 超过 presence TTL 的标签页被忽略，不阻塞显示。
 
 覆盖设置：
 
-- [ ] `syncShowTitleSyncStatus` 默认 `false`。
-- [ ] 关闭远程同步时，标题状态开关置灰。
-- [ ] 关闭标题状态开关后，标题恢复原样并停止动画 timer。
-- [ ] 关闭导航栏状态开关不影响标题状态。
-- [ ] 关闭标题状态开关不影响导航栏状态。
-- [ ] 设置项随设置同步。
+- [x] `syncShowTitleSyncStatus` 默认 `false`。
+- [x] 关闭远程同步时，标题状态开关置灰。
+- [x] 关闭标题状态开关后，标题恢复原样并停止动画 timer。
+- [x] 关闭导航栏状态开关不影响标题状态。
+- [x] 关闭标题状态开关不影响导航栏状态。
+- [x] 设置项随设置同步。
+
+Phase A 实现结果（2026-05-06）：
+
+- 已新增 `sync-across-multiple-tab/scripts/test-title-sync-status.js`，以红灯测试形式锁定标题组合、状态前缀映射、统一状态源 TTL、多标签前后台协调、presence / owner lease、设置项默认值、UI 接线和导航栏/标题状态开关独立性。
+- 测试脚本定义了后续实现需要暴露的窄范围测试钩子：`composeDocumentTitle()`、`stripLastAppliedTitleSyncStatusPrefix()`、`getTitleSyncStatusPrefixForPhase()`、`isTitleSyncStatusForegroundTab()`、`resolveTitleSyncStatusTabDisplayDecision()`、`hasEnabledTitleSyncStatusPath()`、`getTitleSyncStatusRuntimeStateForTest()` 和 `getTitleSyncStatusTestConstants()`。
+- 本轮未实现标题同步状态功能、未新增 `syncShowTitleSyncStatus` 设置、未重构 `document.title` 写入路径、未接入多标签 presence / owner 逻辑；新增测试当前预期失败于缺少标题同步状态测试钩子和 Phase B+ 功能。
+- 本轮未改 `performAutoSync()`，未改 shared scheduler，未新增同步触发逻辑，未在标题层处理同步状态抖动。
+- 验证结果：`node -c S1Plus.js` 通过；`node sync-across-multiple-tab/scripts/test-title-sync-status.js` 失败 6/6 个测试组，失败点均为缺少 Phase B+ 将实现/暴露的标题同步状态测试钩子，符合 Phase A 红灯预期。
 
 ## Phase B: 设置项与 UI
 
@@ -263,8 +279,8 @@ node sync-across-multiple-tab/scripts/test-foreground-trigger-integration.js
 
 ## 实现进度
 
-- [ ] Phase 0: 准备与代码定位
-- [ ] Phase A: 测试先行
+- [x] Phase 0: 准备与代码定位
+- [x] Phase A: 测试先行
 - [ ] Phase B: 设置项与 UI
 - [ ] Phase C: 统一标题组合函数
 - [ ] Phase D: 标题状态映射与动画
