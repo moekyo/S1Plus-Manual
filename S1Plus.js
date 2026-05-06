@@ -916,6 +916,10 @@
   const TITLE_SYNC_STATUS_PRESENCE_TTL_MS = 2 * 60 * 1000;
   const TITLE_SYNC_STATUS_OWNER_LEASE_MS = 25 * 1000;
   const TITLE_SYNC_STATUS_HEARTBEAT_MS = 10 * 1000;
+  const TITLE_SYNC_STATUS_PRESENCE_REFRESH_MIN_MS = Math.floor(
+    TITLE_SYNC_STATUS_PRESENCE_TTL_MS / 3
+  );
+  const TITLE_SYNC_STATUS_UNIFIED_STATE_DEBOUNCE_MS = 100;
   const TITLE_SYNC_STATUS_PRESENCE_KEY = "s1p_title_sync_status_tabs";
   const TITLE_SYNC_STATUS_OWNER_KEY = "s1p_title_sync_status_owner";
   const TITLE_SYNC_STATUS_FALLBACK_SIGNAL_KEY =
@@ -4215,7 +4219,8 @@
       margin-bottom: 10px;
     }
     #s1p-visible-remote-polling-subgroup.is-disabled,
-    #s1p-auto-sync-indicator-subgroup.is-disabled {
+    #s1p-auto-sync-indicator-subgroup.is-disabled,
+    #s1p-title-sync-status-subgroup.is-disabled {
       opacity: 0.5;
       pointer-events: none;
     }
@@ -26005,6 +26010,8 @@
   let titleSyncStatusHeartbeatTimer = null;
   let titleSyncStatusAnimationTimer = null;
   let titleSyncStatusExpiryTimer = null;
+  let titleSyncStatusUnifiedStateDebounceTimer = null;
+  let pendingTitleSyncStatusUnifiedStateReason = "";
   const titleSyncStatusRuntimeState = {
     currentPrefix: "",
     animationFrame: 0,
@@ -26017,6 +26024,9 @@
     storageMode: "",
     lastPresenceWriteAt: 0,
     lastOwnerLeaseRefreshAt: 0,
+    isSyncing: false,
+    currentTabRecord: null,
+    lastPresenceWriteSkippedAt: 0,
   };
   const TITLE_BASE_PATTERN =
     /^(.+?)(?:论坛)?(?:\s*-\s*Stage1st)?\s*-\s*stage1\/s1\s+游戏动漫论坛$/;
@@ -26028,6 +26038,8 @@
     TITLE_SYNC_STATUS_PRESENCE_TTL_MS,
     TITLE_SYNC_STATUS_OWNER_LEASE_MS,
     TITLE_SYNC_STATUS_HEARTBEAT_MS,
+    TITLE_SYNC_STATUS_PRESENCE_REFRESH_MIN_MS,
+    TITLE_SYNC_STATUS_UNIFIED_STATE_DEBOUNCE_MS,
     TITLE_SYNC_STATUS_PRESENCE_KEY,
     TITLE_SYNC_STATUS_OWNER_KEY,
   });
@@ -26300,6 +26312,46 @@
       isForeground: isCurrentTitleSyncStatusForegroundTab(),
     };
   };
+  const getTitleSyncStatusPresenceWriteSignature = (tabRecord = null) => {
+    const tab = normalizeTitleSyncStatusTabRecord(tabRecord);
+    return [
+      String(tab.visibilityState || "hidden"),
+      tab.hasFocus === true ? "1" : "0",
+      tab.isForeground === true ? "1" : "0",
+    ].join("|");
+  };
+  const shouldWriteCurrentTitleSyncStatusPresence = ({
+    currentTabRecord = null,
+    previousTabRecord = null,
+    remove = false,
+    force = false,
+    now = Date.now(),
+  } = {}) => {
+    const previousTab = normalizeTitleSyncStatusTabRecord(previousTabRecord);
+    if (force) {
+      return true;
+    }
+    if (remove) {
+      return Boolean(previousTab.tabId);
+    }
+
+    const currentTab = normalizeTitleSyncStatusTabRecord(currentTabRecord);
+    if (!currentTab.tabId) {
+      return false;
+    }
+    if (!previousTab.tabId || previousTab.tabId !== currentTab.tabId) {
+      return true;
+    }
+    if (
+      getTitleSyncStatusPresenceWriteSignature(currentTab) !==
+      getTitleSyncStatusPresenceWriteSignature(previousTab)
+    ) {
+      return true;
+    }
+    return (
+      now - previousTab.lastSeen >= TITLE_SYNC_STATUS_PRESENCE_REFRESH_MIN_MS
+    );
+  };
   const pruneTitleSyncStatusPresenceTabs = (tabs = {}, now = Date.now()) => {
     const nextTabs = {};
     Object.values(tabs).forEach((rawTab) => {
@@ -26317,20 +26369,35 @@
   const writeCurrentTitleSyncStatusPresence = ({
     remove = false,
     reason = "",
+    force = false,
   } = {}) => {
     const now = Date.now();
     const state = getTitleSyncStatusPresenceState();
     const tabs = pruneTitleSyncStatusPresenceTabs(state.tabs, now);
+    const previousTabRecord = tabs[titleSyncStatusTabId] || null;
+    const currentTabRecord = getCurrentTitleSyncStatusTabRecord(now);
+    titleSyncStatusRuntimeState.currentTabRecord = currentTabRecord;
     if (remove) {
       delete tabs[titleSyncStatusTabId];
     } else {
-      tabs[titleSyncStatusTabId] = getCurrentTitleSyncStatusTabRecord(now);
+      tabs[titleSyncStatusTabId] = currentTabRecord;
     }
     const nextState = {
       version: 1,
       updatedAt: now,
       tabs,
     };
+    const shouldWrite = shouldWriteCurrentTitleSyncStatusPresence({
+      currentTabRecord,
+      previousTabRecord,
+      remove,
+      force,
+      now,
+    });
+    if (!shouldWrite) {
+      titleSyncStatusRuntimeState.lastPresenceWriteSkippedAt = now;
+      return nextState;
+    }
     const didWrite = writeTitleSyncStatusStorageValue(
       TITLE_SYNC_STATUS_PRESENCE_KEY,
       nextState
@@ -26434,6 +26501,8 @@
       previousOwnerTabId === earliestLiveTabId &&
       !previousOwnerCanKeepLease
     ) {
+      // The expired earliest owner may renew only from its own tab. Other tabs
+      // skip it so a throttled/stalled owner can be taken over quickly.
       ownerCandidates = liveTabs.filter(
         (tab) =>
           tab.tabId !== previousOwnerTabId ||
@@ -26612,6 +26681,7 @@
     settingsSnapshot = getSettings(),
     restoreTitle = true,
   } = {}) => {
+    cancelTitleSyncStatusUnifiedStateDebounce();
     stopTitleSyncStatusAnimationTimer();
     stopTitleSyncStatusExpiryTimer();
     titleSyncStatusRuntimeState.currentPrefix = "";
@@ -26641,7 +26711,7 @@
     }
     return writeTitleSyncStatusOwnerLease(now);
   };
-  const syncTitleSyncStatusRuntime = ({
+  const runTitleSyncStatusRuntimeSync = ({
     reason = "",
     forceOwnerLease = false,
   } = {}) => {
@@ -26729,10 +26799,59 @@
       reason: String(reason || ""),
     };
   };
-  const notifyTitleSyncStatusUnifiedStateChanged = (reason = "") => {
-    emitTitleSyncStatusFallbackSignal(reason || "unified_state");
+  const getTitleSyncStatusRuntimeDecisionSnapshot = (reason = "") => ({
+    shouldDisplay: Boolean(titleSyncStatusRuntimeState.shouldDisplay),
+    shouldRunAnimationTimer: Boolean(
+      titleSyncStatusRuntimeState.shouldRunAnimationTimer
+    ),
+    ownerTabId: titleSyncStatusRuntimeState.ownerTabId || "",
+    displayPhase:
+      titleSyncStatusRuntimeState.displayPhase || AUTO_SYNC_INDICATOR_PHASE_IDLE,
+    prefix: titleSyncStatusRuntimeState.currentPrefix || "",
+    hasForegroundTab: Boolean(titleSyncStatusRuntimeState.hasForegroundTab),
+    reason: String(reason || ""),
+  });
+  const syncTitleSyncStatusRuntime = (options = {}) => {
+    const runtimeOptions =
+      options && typeof options === "object" && !Array.isArray(options)
+        ? options
+        : {};
+    if (titleSyncStatusRuntimeState.isSyncing) {
+      return getTitleSyncStatusRuntimeDecisionSnapshot(runtimeOptions.reason);
+    }
+    titleSyncStatusRuntimeState.isSyncing = true;
+    try {
+      return runTitleSyncStatusRuntimeSync(runtimeOptions);
+    } finally {
+      titleSyncStatusRuntimeState.isSyncing = false;
+    }
+  };
+  const flushTitleSyncStatusUnifiedStateChange = () => {
+    titleSyncStatusUnifiedStateDebounceTimer = null;
+    const reason =
+      pendingTitleSyncStatusUnifiedStateReason || "unified_state";
+    pendingTitleSyncStatusUnifiedStateReason = "";
+    emitTitleSyncStatusFallbackSignal(reason);
     if (window.__s1pTitleSyncStatusCrossTabSyncBound) {
-      syncTitleSyncStatusRuntime({ reason: reason || "unified_state" });
+      syncTitleSyncStatusRuntime({ reason });
+    }
+  };
+  const cancelTitleSyncStatusUnifiedStateDebounce = () => {
+    if (titleSyncStatusUnifiedStateDebounceTimer) {
+      clearTimeout(titleSyncStatusUnifiedStateDebounceTimer);
+      titleSyncStatusUnifiedStateDebounceTimer = null;
+    }
+    pendingTitleSyncStatusUnifiedStateReason = "";
+  };
+  const notifyTitleSyncStatusUnifiedStateChanged = (reason = "") => {
+    pendingTitleSyncStatusUnifiedStateReason =
+      String(reason || pendingTitleSyncStatusUnifiedStateReason || "") ||
+      "unified_state";
+    if (!titleSyncStatusUnifiedStateDebounceTimer) {
+      titleSyncStatusUnifiedStateDebounceTimer = setTimeout(
+        flushTitleSyncStatusUnifiedStateChange,
+        TITLE_SYNC_STATUS_UNIFIED_STATE_DEBOUNCE_MS
+      );
     }
   };
   const startTitleSyncStatusHeartbeat = () => {
@@ -26827,6 +26946,7 @@
       stripLastAppliedTitleSyncStatusPrefix,
       getTitleSyncStatusPrefixForPhase,
       isTitleSyncStatusForegroundTab,
+      shouldWriteCurrentTitleSyncStatusPresence,
       resolveTitleSyncStatusTabDisplayDecision,
       hasEnabledTitleSyncStatusPath,
       getTitleSyncStatusRuntimeStateForTest,
