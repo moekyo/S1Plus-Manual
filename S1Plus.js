@@ -26369,37 +26369,18 @@
     return didDelete;
   };
   const resolveTitleSyncStatusDisplayPhase = (
-    stateInput = null,
-    now = Date.now()
+    stateInput = null
   ) => {
     const resolvedState =
-      stateInput && typeof stateInput === "object" && "displayPhase" in stateInput
+      stateInput && typeof stateInput === "object" && !Array.isArray(stateInput)
         ? stateInput
-        : normalizeAutoSyncIndicatorState(stateInput);
-    const displayPhase =
+        : {};
+    return (
       normalizeAutoSyncIndicatorPhase(
-        resolvedState.displayPhase || resolvedState.phase,
+        resolvedState.displayPhase,
         { allowRunning: true, allowPending: true }
-      ) || AUTO_SYNC_INDICATOR_PHASE_IDLE;
-    if (
-      displayPhase === AUTO_SYNC_INDICATOR_PHASE_IDLE ||
-      displayPhase === AUTO_SYNC_INDICATOR_PHASE_PENDING ||
-      displayPhase === AUTO_SYNC_INDICATOR_PHASE_RUNNING
-    ) {
-      return displayPhase;
-    }
-    const ttlMs = getAutoSyncIndicatorResolvedTtlMs(displayPhase);
-    if (ttlMs <= 0) {
-      return displayPhase;
-    }
-    const timestamp = Number(
-      resolvedState.displayTimestamp ||
-        resolvedState.timestamp ||
-        resolvedState.lastResolvedTimestamp
-    ) || 0;
-    return now - timestamp <= ttlMs
-      ? displayPhase
-      : AUTO_SYNC_INDICATOR_PHASE_IDLE;
+      ) || AUTO_SYNC_INDICATOR_PHASE_IDLE
+    );
   };
   const resolveTitleSyncStatusTabDisplayDecision = ({
     currentTabId = "",
@@ -26466,7 +26447,7 @@
       previousOwnerCanKeepLease
         ? previousOwnerTabId
         : ownerCandidates[0]?.tabId || normalizedCurrentTabId;
-    const displayPhase = resolveTitleSyncStatusDisplayPhase(state, now);
+    const displayPhase = resolveTitleSyncStatusDisplayPhase(state);
     const rawPrefix = getTitleSyncStatusPrefixForPhase(displayPhase, {
       animationFrame,
     });
@@ -26693,10 +26674,7 @@
     }
 
     const resolvedState = resolveAutoSyncIndicatorDisplayPhase();
-    const nextDisplayPhase = resolveTitleSyncStatusDisplayPhase(
-      resolvedState,
-      now
-    );
+    const nextDisplayPhase = resolveTitleSyncStatusDisplayPhase(resolvedState);
     if (
       nextDisplayPhase === AUTO_SYNC_INDICATOR_PHASE_RUNNING &&
       titleSyncStatusRuntimeState.displayPhase !== AUTO_SYNC_INDICATOR_PHASE_RUNNING
