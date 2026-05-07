@@ -17,8 +17,15 @@ const TITLE_SYNC_STATUS_REQUIRED_HOOKS = [
   "stripLastAppliedTitleSyncStatusPrefix",
   "getTitleSyncStatusPrefixForPhase",
   "isTitleSyncStatusForegroundTab",
+  "isTitleSyncStatusLeaseWorthyPhase",
+  "getTitleSyncStatusTabPresenceKey",
+  "getTitleSyncStatusPresenceState",
   "shouldWriteCurrentTitleSyncStatusPresence",
+  "writeCurrentTitleSyncStatusPresence",
   "resolveTitleSyncStatusTabDisplayDecision",
+  "writeTitleSyncStatusOwnerLease",
+  "releaseTitleSyncStatusOwnerLease",
+  "maybeRefreshTitleSyncStatusOwnerLease",
   "hasEnabledTitleSyncStatusPath",
   "getTitleSyncStatusRuntimeStateForTest",
 ];
@@ -96,6 +103,7 @@ const createTab = ({
   tabId,
   createdAt,
   lastSeen,
+  lastActiveAt,
   visibilityState = "hidden",
   hasFocus = false,
   isForeground,
@@ -103,12 +111,18 @@ const createTab = ({
   tabId,
   createdAt,
   lastSeen,
+  lastActiveAt:
+    typeof lastActiveAt === "number"
+      ? lastActiveAt
+      : visibilityState === "visible"
+        ? lastSeen
+        : 0,
   visibilityState,
   hasFocus,
   isForeground:
     typeof isForeground === "boolean"
       ? isForeground
-      : visibilityState === "visible" && hasFocus === true,
+      : visibilityState === "visible",
 });
 
 const assertDisplayDecision = (actual, expected, message) => {
@@ -328,6 +342,8 @@ const testMultiTabForegroundAndOwnerCoordination = () => {
   const { hooks } = createHarness();
   const isForegroundTab = requireHook(hooks, "isTitleSyncStatusForegroundTab");
   const decide = requireHook(hooks, "resolveTitleSyncStatusTabDisplayDecision");
+  const getConstants = requireHook(hooks, "getTitleSyncStatusTestConstants");
+  const constants = getConstants();
   const now = Date.now();
   const settings = createReadySettings();
   const state = createUnifiedDisplayState("running", now);
@@ -339,8 +355,8 @@ const testMultiTabForegroundAndOwnerCoordination = () => {
   );
   assert.equal(
     isForegroundTab({ visibilityState: "visible", hasFocus: false }),
-    false,
-    "visible 但 document.hasFocus() 为 false 时应视为后台。"
+    true,
+    "visible 的 S1 标签页即使焦点在 DevTools/地址栏，也应抑制后台标题同步状态。"
   );
   assert.equal(
     isForegroundTab({ visibilityState: "hidden", hasFocus: false }),
@@ -407,6 +423,7 @@ const testMultiTabForegroundAndOwnerCoordination = () => {
       tabId: "tab-a",
       createdAt: now - 2_000,
       lastSeen: now,
+      lastActiveAt: now - 8_000,
       visibilityState: "hidden",
       hasFocus: false,
     }),
@@ -414,6 +431,7 @@ const testMultiTabForegroundAndOwnerCoordination = () => {
       tabId: "tab-b",
       createdAt: now - 1_000,
       lastSeen: now,
+      lastActiveAt: now - 1_000,
       visibilityState: "hidden",
       hasFocus: false,
     }),
@@ -427,14 +445,14 @@ const testMultiTabForegroundAndOwnerCoordination = () => {
       now,
     }),
     {
-      shouldDisplay: true,
-      shouldRunAnimationTimer: true,
-      ownerTabId: "tab-a",
+      shouldDisplay: false,
+      shouldRunAnimationTimer: false,
+      ownerTabId: "tab-b",
       displayPhase: "running",
-      prefix: "[同步中.]",
+      prefix: "",
       hasForegroundTab: false,
     },
-    "所有 S1 标签页都在后台时，createdAt 最早的负责人显示标题状态。"
+    "所有 S1 标签页都在后台时，最近离开的负责人显示标题状态。"
   );
   assertDisplayDecision(
     decide({
@@ -445,6 +463,28 @@ const testMultiTabForegroundAndOwnerCoordination = () => {
       now,
     }),
     {
+      shouldDisplay: true,
+      shouldRunAnimationTimer: true,
+      ownerTabId: "tab-b",
+      displayPhase: "running",
+      prefix: "[同步中.]",
+      hasForegroundTab: false,
+    },
+    "最近离开的负责人标签页显示标题状态。"
+  );
+  assertDisplayDecision(
+    decide({
+      currentTabId: "tab-b",
+      tabs: multiTabs,
+      state,
+      settings,
+      now,
+      previousOwner: {
+        tabId: "tab-a",
+        leaseUntil: now + constants.TITLE_SYNC_STATUS_OWNER_LEASE_MS,
+      },
+    }),
+    {
       shouldDisplay: false,
       shouldRunAnimationTimer: false,
       ownerTabId: "tab-a",
@@ -452,7 +492,7 @@ const testMultiTabForegroundAndOwnerCoordination = () => {
       prefix: "",
       hasForegroundTab: false,
     },
-    "非负责人标签页不显示前缀，也不启动动画 timer。"
+    "已有有效 owner lease 时，即使它不是最近离开的标签，也应保持 owner 稳定直到 lease 过期。"
   );
 
   const foregroundTabs = [
@@ -461,6 +501,7 @@ const testMultiTabForegroundAndOwnerCoordination = () => {
       tabId: "tab-b",
       createdAt: now - 1_000,
       lastSeen: now,
+      lastActiveAt: now,
       visibilityState: "visible",
       hasFocus: true,
     }),
@@ -476,7 +517,7 @@ const testMultiTabForegroundAndOwnerCoordination = () => {
     {
       shouldDisplay: false,
       shouldRunAnimationTimer: false,
-      ownerTabId: "tab-a",
+      ownerTabId: "tab-b",
       displayPhase: "running",
       prefix: "",
       hasForegroundTab: true,
@@ -681,6 +722,145 @@ const testPresenceTtlOwnerLeaseAndForegroundTtlPause = () => {
   );
 };
 
+const testOwnerLeaseGuardPreventsCrossTabSelfTrigger = () => {
+  const { hooks, store } = createHarness();
+  const getConstants = requireHook(hooks, "getTitleSyncStatusTestConstants");
+  const constants = getConstants();
+  const writeOwnerLease = requireHook(hooks, "writeTitleSyncStatusOwnerLease");
+  const releaseOwnerLease = requireHook(hooks, "releaseTitleSyncStatusOwnerLease");
+  const maybeRefreshOwnerLease = requireHook(
+    hooks,
+    "maybeRefreshTitleSyncStatusOwnerLease"
+  );
+  const isLeaseWorthyPhase = requireHook(
+    hooks,
+    "isTitleSyncStatusLeaseWorthyPhase"
+  );
+  const now = Date.now();
+  const ownerKey = constants.TITLE_SYNC_STATUS_OWNER_KEY;
+
+  assert.equal(isLeaseWorthyPhase("running"), true);
+  assert.equal(isLeaseWorthyPhase("success"), true);
+  assert.equal(isLeaseWorthyPhase("pending"), false);
+  assert.equal(isLeaseWorthyPhase("idle"), false);
+
+  store.set(ownerKey, {
+    tabId: "other-tab",
+    leaseUntil: now + constants.TITLE_SYNC_STATUS_OWNER_LEASE_MS,
+    updatedAt: now,
+  });
+  const blockedOwner = toPlainObject(
+    writeOwnerLease(now + 1, { reason: "owner_change" })
+  );
+  assert.equal(blockedOwner.tabId, "other-tab");
+  assert.equal(
+    store.get(ownerKey).tabId,
+    "other-tab",
+    "有效的其他 owner lease 存在时，当前 tab 不应覆盖 owner key。"
+  );
+
+  const blockedByRuntime = toPlainObject(
+    maybeRefreshOwnerLease(
+      {
+        ownerTabId: "this-tab-decision-is-stale",
+        displayPhase: "running",
+        hasForegroundTab: false,
+      },
+      now + 2,
+      { allowOwnerLeaseRefresh: false, reason: "owner_change" }
+    )
+  );
+  assert.equal(
+    blockedByRuntime.tabId,
+    "other-tab",
+    "owner_change 触发的 runtime 不应抢写 owner lease。"
+  );
+
+  store.delete(ownerKey);
+  assert.equal(
+    releaseOwnerLease(),
+    false,
+    "owner 为空时释放 lease 不应 GM_deleteValue 制造额外 owner change。"
+  );
+  assert.equal(store.has(ownerKey), false);
+};
+
+const testPartitionedPresenceStorage = () => {
+  const { hooks, store } = createHarness();
+  const getConstants = requireHook(hooks, "getTitleSyncStatusTestConstants");
+  const constants = getConstants();
+  const getPresenceKey = requireHook(hooks, "getTitleSyncStatusTabPresenceKey");
+  const writePresence = requireHook(hooks, "writeCurrentTitleSyncStatusPresence");
+  const getPresenceState = requireHook(hooks, "getTitleSyncStatusPresenceState");
+  const now = Date.now();
+
+  const currentState = toPlainObject(
+    writePresence({ reason: "init", force: true })
+  );
+  const currentTabId = Object.keys(currentState.tabs)[0];
+  const currentPresenceKey = getPresenceKey(currentTabId);
+  assert.ok(
+    currentPresenceKey.startsWith(
+      constants.TITLE_SYNC_STATUS_TAB_PRESENCE_KEY_PREFIX
+    ),
+    "当前 tab presence 应写入 partitioned per-tab key。"
+  );
+  assert.equal(
+    store.has(constants.TITLE_SYNC_STATUS_PRESENCE_KEY),
+    false,
+    "新版 presence 写入不应再覆盖旧的整对象 aggregate key。"
+  );
+  assert.equal(store.has(currentPresenceKey), true);
+  assert.equal(
+    store.get(constants.TITLE_SYNC_STATUS_PRESENCE_SIGNAL_KEY).action,
+    "upsert",
+    "partitioned presence 写入后应通过 signal key 通知其它 tab。"
+  );
+
+  const otherPresenceKey = getPresenceKey("other-tab");
+  store.set(otherPresenceKey, {
+    tabId: "other-tab",
+    createdAt: now - 2000,
+    lastSeen: now,
+    lastActiveAt: now - 1000,
+    visibilityState: "hidden",
+    hasFocus: false,
+    isForeground: false,
+  });
+  store.set(constants.TITLE_SYNC_STATUS_PRESENCE_KEY, {
+    version: 1,
+    updatedAt: now,
+    tabs: {
+      "legacy-tab": {
+        tabId: "legacy-tab",
+        createdAt: now - 3000,
+        lastSeen: now,
+        lastActiveAt: now - 3000,
+        visibilityState: "hidden",
+        hasFocus: false,
+        isForeground: false,
+      },
+    },
+  });
+
+  const mergedState = toPlainObject(getPresenceState());
+  assert.equal(
+    Object.keys(mergedState.tabs).length,
+    3,
+    "presence 读取应合并 partitioned records 和 legacy aggregate，兼容滚动升级。"
+  );
+  assert.equal(mergedState.tabs["other-tab"].tabId, "other-tab");
+  assert.equal(mergedState.tabs["legacy-tab"].tabId, "legacy-tab");
+
+  writePresence({ remove: true, reason: "pagehide", force: true });
+  assert.equal(store.has(currentPresenceKey), false);
+  assert.equal(
+    store.get(constants.TITLE_SYNC_STATUS_PRESENCE_SIGNAL_KEY).action,
+    "remove",
+    "移除当前 tab presence 时也应通过 signal key 通知其它 tab。"
+  );
+};
+
 const testDisplayPhaseOnlyAndNoTitleSchedulerRewrite = () => {
   const { hooks, store } = createHarness();
   const decide = requireHook(hooks, "resolveTitleSyncStatusTabDisplayDecision");
@@ -828,7 +1008,7 @@ const testDisplayPhaseOnlyAndNoTitleSchedulerRewrite = () => {
   const titleSource = getTitleSyncStatusSource();
   assert.match(
     titleSource,
-    /const resolvedState = resolveAutoSyncIndicatorDisplayPhase\(\);/,
+    /const resolvedState = resolveAutoSyncIndicatorDisplayPhase\(null,\s*\{\s*allowCache:\s*true,\s*\}\s*\);/,
     "标题运行时应通过统一状态源获取 display phase。"
   );
   assert.match(
@@ -845,6 +1025,21 @@ const testDisplayPhaseOnlyAndNoTitleSchedulerRewrite = () => {
     titleSource,
     /const shouldWrite = shouldWriteCurrentTitleSyncStatusPresence\(\{/,
     "presence 写入路径应调用减振判断函数。"
+  );
+  assert.match(
+    titleSource,
+    /scheduleTitleSyncStatusCrossTabRuntimeSync\("owner_change",\s*\{\s*allowOwnerLeaseRefresh:\s*false/,
+    "owner change listener 应走 debounce，且不允许在监听回调中续租 owner。"
+  );
+  assert.doesNotMatch(
+    titleSource,
+    /syncTitleSyncStatusRuntime\(\{\s*reason:\s*"animation_tick"/,
+    "running 标题动画 tick 不应重跑完整 runtime。"
+  );
+  assert.match(
+    titleSource,
+    /resolveAutoSyncIndicatorDisplayPhase\(null,\s*\{\s*allowCache:\s*true,\s*\}\s*\)/,
+    "标题状态 runtime 的统一状态解析应显式使用短缓存，避免影响其它实时读取路径。"
   );
   assert.doesNotMatch(
     titleSource,
@@ -908,7 +1103,7 @@ const testSettingsDefaultsUiAndIndependence = () => {
     "同步设置页状态显示区缺少标题同步状态开关。"
   );
   expectMatch(
-    /开启后，仅当所有 S1 标签页都不在前台时，第一个标签页标题会在同步发生时显示状态提示（同步中\/成功\/失败\/冲突）/,
+    /开启后，仅当所有 S1 标签页都不在前台时，最近离开的 S1 标签页标题会在同步发生时显示状态提示（同步中\/成功\/失败\/冲突）/,
     "标题同步状态开关缺少指定说明文案。"
   );
   expectMatch(
@@ -947,6 +1142,8 @@ const tests = [
   ["unified state mapping and ttl", testUnifiedStateMappingAndTtl],
   ["multi-tab foreground and owner coordination", testMultiTabForegroundAndOwnerCoordination],
   ["presence ttl, owner lease, foreground ttl pause", testPresenceTtlOwnerLeaseAndForegroundTtlPause],
+  ["partitioned presence storage", testPartitionedPresenceStorage],
+  ["owner lease guard prevents cross-tab self trigger", testOwnerLeaseGuardPreventsCrossTabSelfTrigger],
   ["display phase only and no title scheduler rewrite", testDisplayPhaseOnlyAndNoTitleSchedulerRewrite],
   ["settings defaults, ui, and independence", testSettingsDefaultsUiAndIndependence],
 ];

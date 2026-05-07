@@ -96,6 +96,24 @@ const testSourceAwareTitlesAndMappings = () => {
     "自动同步：回到前台检查命中更新，正在同步"
   );
   assert.strictEqual(
+    hooks.getAutoSyncIndicatorDisplayKind({
+      displayPhase: "running",
+      displaySource: "foreground_resume",
+      displayReason: "foreground_probe_in_flight",
+    }),
+    "probe",
+    "前台 metadata 探测应使用独立的 probe 视觉状态。"
+  );
+  assert.strictEqual(
+    hooks.getAutoSyncIndicatorDisplayKind({
+      displayPhase: "running",
+      displaySource: "background",
+      displayReason: "sync_lock_active",
+    }),
+    "sync",
+    "真正同步执行应保留 sync 视觉状态。"
+  );
+  assert.strictEqual(
     hooks.getAutoSyncIndicatorPhaseFromResult({
       status: "success",
       action: "skipped_push_on_startup",
@@ -205,6 +223,18 @@ const testAutoSyncEntryPointsBindIndicatorSources = () => {
   expectMatch(
     /const requestForegroundRemoteSyncCheck = async[\s\S]*?runForegroundFollowUpAutoSyncCheckWithIndicator\(\{\s*source:\s*resolvedSource/m,
     "前台 follow-up sync 未绑定专用 foreground_followup 指示器 helper。"
+  );
+  expectMatch(
+    /indicatorLi\.dataset\.syncKind\s*=\s*displayKind/,
+    "导航栏指示器未把探测/同步视觉类型写入 data-sync-kind。"
+  );
+  expectMatch(
+    /s1p-auto-sync-kind-\$\{displayKind\}/,
+    "导航栏指示器 SVG 未按探测/同步视觉类型添加 class。"
+  );
+  expectMatch(
+    /foreground_probe_in_flight[\s\S]*?return "probe"/,
+    "前台 metadata 探测未映射到独立的 probe 视觉类型。"
   );
 };
 
