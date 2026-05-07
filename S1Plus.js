@@ -13,6 +13,7 @@
 // @grant        GM_openInTab
 // @grant        GM_download
 // @grant        GM_addValueChangeListener
+// @grant        GM_listValues
 // @connect      *
 // @license      MIT
 // @run-at       document-start
@@ -920,7 +921,13 @@
     TITLE_SYNC_STATUS_PRESENCE_TTL_MS / 3
   );
   const TITLE_SYNC_STATUS_UNIFIED_STATE_DEBOUNCE_MS = 100;
+  const TITLE_SYNC_STATUS_CROSS_TAB_EVENT_DEBOUNCE_MS = 150;
+  const AUTO_SYNC_INDICATOR_DISPLAY_PHASE_CACHE_TTL_MS = 250;
   const TITLE_SYNC_STATUS_PRESENCE_KEY = "s1p_title_sync_status_tabs";
+  const TITLE_SYNC_STATUS_TAB_PRESENCE_KEY_PREFIX =
+    "s1p_title_sync_status_tab:";
+  const TITLE_SYNC_STATUS_PRESENCE_SIGNAL_KEY =
+    "s1p_title_sync_status_presence_signal";
   const TITLE_SYNC_STATUS_OWNER_KEY = "s1p_title_sync_status_owner";
   const TITLE_SYNC_STATUS_FALLBACK_SIGNAL_KEY =
     "s1p_title_sync_status_signal";
@@ -1830,6 +1837,17 @@
         transform: translateX(0) scale(1);
       }
     }
+    @keyframes s1p-auto-sync-probe-sweep {
+      0%,
+      100% {
+        opacity: 0.28;
+        transform: translateX(-1.4px) scaleX(0.72);
+      }
+      48% {
+        opacity: 1;
+        transform: translateX(1.1px) scaleX(1);
+      }
+    }
     #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-entering {
       animation: s1p-auto-sync-indicator-enter ${AUTO_SYNC_INDICATOR_ENTER_DURATION_MS}ms cubic-bezier(0.22, 1, 0.36, 1) both;
     }
@@ -1884,6 +1902,19 @@
     }
     #s1p-nav-auto-sync-indicator[data-sync-state="running"] svg {
       opacity: 1;
+    }
+    #s1p-nav-auto-sync-indicator[data-sync-kind="probe"] svg {
+      color: color-mix(in srgb, var(--s1p-t) 70%, var(--s1p-pri) 30%);
+    }
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-probe path,
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-probe circle {
+      stroke: currentColor;
+      stroke-width: 1.8px;
+    }
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-probe path:nth-of-type(2) {
+      transform-box: fill-box;
+      transform-origin: center;
+      animation: s1p-auto-sync-probe-sweep 1.1s ease-in-out infinite;
     }
     #s1p-nav-auto-sync-indicator[data-sync-state="success"] svg {
       opacity: 1;
@@ -1998,6 +2029,9 @@
         transition: none !important;
       }
       #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer .s1p-pending-dot {
+        animation: none !important;
+      }
+      #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-probe path {
         animation: none !important;
       }
     }
@@ -10111,9 +10145,15 @@
   };
 
   let autoSyncIndicatorWriteInFlightCount = 0;
+  let autoSyncIndicatorDisplayPhaseCache = null;
+
+  const invalidateAutoSyncIndicatorDisplayPhaseCache = () => {
+    autoSyncIndicatorDisplayPhaseCache = null;
+  };
 
   const persistAutoSyncIndicatorState = (nextState) => {
     const normalized = normalizeAutoSyncIndicatorState(nextState);
+    invalidateAutoSyncIndicatorDisplayPhaseCache();
     autoSyncIndicatorWriteInFlightCount += 1;
     try {
       GM_setValue(AUTO_SYNC_INDICATOR_STATE_KEY, normalized);
@@ -10156,7 +10196,18 @@
     };
   };
 
-  const resolveAutoSyncIndicatorDisplayPhase = (stateInput = null) => {
+  const resolveAutoSyncIndicatorDisplayPhase = (
+    stateInput = null,
+    options = {}
+  ) => {
+    const canUseCache = options.allowCache === true && !stateInput;
+    if (
+      canUseCache &&
+      autoSyncIndicatorDisplayPhaseCache &&
+      autoSyncIndicatorDisplayPhaseCache.expiresAt > Date.now()
+    ) {
+      return { ...autoSyncIndicatorDisplayPhaseCache.state };
+    }
     const state = stateInput
       ? normalizeAutoSyncIndicatorState(stateInput)
       : getAutoSyncIndicatorState();
@@ -10173,12 +10224,25 @@
       displaySource: normalizeAutoSyncIndicatorSource(displaySource),
       displayReason: normalizeAutoSyncIndicatorReason(displayReason),
     });
+    const finishDisplayState = (resolvedState, branch = "") => {
+      if (canUseCache) {
+        autoSyncIndicatorDisplayPhaseCache = {
+          expiresAt:
+            Date.now() + AUTO_SYNC_INDICATOR_DISPLAY_PHASE_CACHE_TTL_MS,
+          state: { ...resolvedState },
+        };
+      }
+      return resolvedState;
+    };
 
     if (runningState.isRunning) {
-      return buildDisplayState(
-        AUTO_SYNC_INDICATOR_PHASE_RUNNING,
-        runningState.source,
-        runningState.reason || state.reason
+      return finishDisplayState(
+        buildDisplayState(
+          AUTO_SYNC_INDICATOR_PHASE_RUNNING,
+          runningState.source,
+          runningState.reason || state.reason
+        ),
+        "running_lock"
       );
     }
 
@@ -10228,10 +10292,13 @@
 
     if (state.phase === AUTO_SYNC_INDICATOR_PHASE_RUNNING) {
       if (autoSyncIndicatorWriteInFlightCount > 0) {
-        return buildDisplayState(
-          AUTO_SYNC_INDICATOR_PHASE_RUNNING,
-          state.source,
-          state.reason
+        return finishDisplayState(
+          buildDisplayState(
+            AUTO_SYNC_INDICATOR_PHASE_RUNNING,
+            state.source,
+            state.reason
+          ),
+          "running_write_in_flight"
         );
       }
       const fallbackState = resolveWithTtl(
@@ -10241,28 +10308,37 @@
         state.lastResolvedReason
       );
       if (fallbackState.phase === AUTO_SYNC_INDICATOR_PHASE_IDLE && canShowPending) {
-        return buildDisplayState(
-          AUTO_SYNC_INDICATOR_PHASE_PENDING,
-          pendingState.source || AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
-          pendingState.reason || state.reason
+        return finishDisplayState(
+          buildDisplayState(
+            AUTO_SYNC_INDICATOR_PHASE_PENDING,
+            pendingState.source || AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+            pendingState.reason || state.reason
+          ),
+          "running_fallback_pending"
         );
       }
-      return buildDisplayState(
-        fallbackState.phase,
-        fallbackState.source,
-        fallbackState.reason
+      return finishDisplayState(
+        buildDisplayState(
+          fallbackState.phase,
+          fallbackState.source,
+          fallbackState.reason
+        ),
+        "running_fallback_ttl"
       );
     }
 
     if (state.phase === AUTO_SYNC_INDICATOR_PHASE_PENDING) {
       const shouldKeepPending = canShowPending;
       if (shouldKeepPending) {
-        return buildDisplayState(
-          AUTO_SYNC_INDICATOR_PHASE_PENDING,
-          pendingState.source ||
-            state.source ||
-            AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
-          pendingState.reason || state.reason
+        return finishDisplayState(
+          buildDisplayState(
+            AUTO_SYNC_INDICATOR_PHASE_PENDING,
+            pendingState.source ||
+              state.source ||
+              AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+            pendingState.reason || state.reason
+          ),
+          "pending_keep"
         );
       }
       const fallbackState = resolveWithTtl(
@@ -10271,18 +10347,24 @@
         state.lastResolvedSource,
         state.lastResolvedReason
       );
-      return buildDisplayState(
-        fallbackState.phase,
-        fallbackState.source,
-        fallbackState.reason
+      return finishDisplayState(
+        buildDisplayState(
+          fallbackState.phase,
+          fallbackState.source,
+          fallbackState.reason
+        ),
+        "pending_fallback_ttl"
       );
     }
 
     if (canShowPending) {
-      return buildDisplayState(
-        AUTO_SYNC_INDICATOR_PHASE_PENDING,
-        pendingState.source || AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
-        pendingState.reason || state.reason
+      return finishDisplayState(
+        buildDisplayState(
+          AUTO_SYNC_INDICATOR_PHASE_PENDING,
+          pendingState.source || AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+          pendingState.reason || state.reason
+        ),
+        "pending_runtime"
       );
     }
 
@@ -10293,17 +10375,23 @@
       state.reason
     );
     if (resolvedState.phase === AUTO_SYNC_INDICATOR_PHASE_IDLE && canShowPending) {
-      return buildDisplayState(
-        AUTO_SYNC_INDICATOR_PHASE_PENDING,
-        pendingState.source || AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
-        pendingState.reason || state.reason
+      return finishDisplayState(
+        buildDisplayState(
+          AUTO_SYNC_INDICATOR_PHASE_PENDING,
+          pendingState.source || AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+          pendingState.reason || state.reason
+        ),
+        "resolved_idle_pending"
       );
     }
-      return buildDisplayState(
+    return finishDisplayState(
+      buildDisplayState(
         resolvedState.phase,
         resolvedState.source,
         resolvedState.reason
-      );
+      ),
+      "resolved_ttl"
+    );
   };
 
   const buildAutoSyncIndicatorResolvedState = ({
@@ -11175,6 +11263,62 @@
     };
   };
 
+  const isBackgroundSyncDebounceStateCoveringPendingRequest = (
+    stateInput = null,
+    pendingInput = null
+  ) => {
+    const state = normalizeBackgroundSyncDebounceState(stateInput);
+    const pending = normalizePendingAutoSyncRequest(pendingInput);
+    if (!state || !pending) {
+      return false;
+    }
+    const pendingSources = Object.keys(pending.sources);
+    if (pendingSources.length === 0) {
+      return false;
+    }
+    const coversSources = pendingSources.every((source) =>
+      isBackgroundSyncDebounceStateCoveringRequest(state, {
+        source,
+        lastModified: pending.maxLastModified,
+      })
+    );
+    if (!coversSources) {
+      return false;
+    }
+    return pending.threadIds.every((threadId) =>
+      isBackgroundSyncDebounceStateCoveringRequest(state, {
+        source: pending.source,
+        lastModified: pending.maxLastModified,
+        threadId,
+      })
+    );
+  };
+  const getPendingAutoSyncSharedDebounceCoverage = (
+    pendingInput = null,
+    now = Date.now(),
+    options = {}
+  ) => {
+    const pending = normalizePendingAutoSyncRequest(pendingInput);
+    const state = getBackgroundSyncDebounceState();
+    if (!pending || !state) {
+      return { covered: false, state: null, reason: "no_shared_debounce_state" };
+    }
+    if (!isBackgroundSyncDebounceStateCoveringPendingRequest(state, pending)) {
+      return { covered: false, state, reason: "shared_debounce_not_covering" };
+    }
+    if (state.ownerTabId && state.ownerLeaseUntil > now) {
+      return { covered: true, state, reason: "covered_by_shared_debounce" };
+    }
+    if (tryAcquireBackgroundSyncDebounceOwner(state, now, options)) {
+      return {
+        covered: true,
+        state: getBackgroundSyncDebounceState(),
+        reason: "covered_by_recovered_shared_debounce_owner",
+      };
+    }
+    return { covered: true, state, reason: "covered_by_shared_debounce" };
+  };
+
   const recoverPendingAutoSyncIfNeeded = () => {
     const pending = getPendingAutoSyncRequest();
     if (!pending) {
@@ -11215,6 +11359,17 @@
     if (effectiveLastModified <= lastSyncTs) {
       clearPendingAutoSyncRequest();
       return { status: "cleared", reason: "already_synced" };
+    }
+
+    const sharedDebounceCoverage =
+      getPendingAutoSyncSharedDebounceCoverage(pending, Date.now(), {
+        settingsSnapshot: settings,
+      });
+    if (sharedDebounceCoverage.covered) {
+      return {
+        status: "skipped",
+        reason: sharedDebounceCoverage.reason,
+      };
     }
 
     if (
@@ -12699,6 +12854,7 @@
     );
   const setBackgroundSyncDebounceState = (state) => {
     const normalized = normalizeBackgroundSyncDebounceState(state);
+    invalidateAutoSyncIndicatorDisplayPhaseCache();
     if (!normalized) {
       GM_deleteValue(BACKGROUND_SYNC_DEBOUNCE_STATE_KEY);
       syncReadProgressDebounceStateFromSharedState(null);
@@ -12732,6 +12888,7 @@
   };
   const clearBackgroundSyncDebounceState = () => {
     clearSharedBackgroundSyncDebounceTimer();
+    invalidateAutoSyncIndicatorDisplayPhaseCache();
     GM_deleteValue(BACKGROUND_SYNC_DEBOUNCE_STATE_KEY);
     clearReadProgressSyncDebounceState();
   };
@@ -12948,7 +13105,10 @@
     const tabId = getBackgroundSyncDebounceTabId(options);
     const state = getBackgroundSyncDebounceState();
     if (!state) {
-      return { status: "skipped", reason: "no_shared_debounce_state" };
+      return {
+        status: "skipped",
+        reason: "no_shared_debounce_state",
+      };
     }
     if (state.ownerTabId !== tabId) {
       return {
@@ -13301,7 +13461,7 @@
     for (let attempt = 0; attempt < maxWriteAttempts; attempt += 1) {
       const currentState = getBackgroundSyncDebounceState();
       const firstDirtyAt = currentState?.firstDirtyAt || now;
-      const maxWaitUntil =
+      let maxWaitUntil =
         currentState?.maxWaitUntil ||
         firstDirtyAt + BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS;
       const maxLastModified = Math.max(
@@ -13314,6 +13474,18 @@
         now,
         maxWaitUntil,
       });
+      const forceDelayMs = Math.max(0, Number(options.forceDelayMs) || 0);
+      if (forceDelayMs > 0) {
+        const forcedDueAt = now + forceDelayMs;
+        maxWaitUntil = Math.max(maxWaitUntil, forcedDueAt);
+        dueDecision = {
+          dueAt: forcedDueAt,
+          reason:
+            normalizeSyncDiagnosticText(options.forceReason, 80) ||
+            dueDecision.reason,
+          dueSource: source,
+        };
+      }
       const currentOwnerIsReusable =
         currentState?.ownerTabId &&
         currentState.ownerTabId !== tabId &&
@@ -21695,6 +21867,7 @@
   };
 
   const setGlobalSyncLock = (mode, timestamp, ttlMs) => {
+    invalidateAutoSyncIndicatorDisplayPhaseCache();
     GM_setValue(GLOBAL_SYNC_LOCK_KEY, {
       owner: BACKGROUND_SYNC_OWNER_ID,
       mode,
@@ -21723,6 +21896,7 @@
       currentLock.owner === BACKGROUND_SYNC_OWNER_ID &&
       currentLock.mode === mode
     ) {
+      invalidateAutoSyncIndicatorDisplayPhaseCache();
       GM_deleteValue(GLOBAL_SYNC_LOCK_KEY);
     }
   };
@@ -22139,6 +22313,35 @@
     }
   };
 
+  const queueBackgroundSyncRetryViaSharedScheduler = (
+    delayMs = BACKGROUND_SYNC_LOCK_RETRY_DELAY_MS,
+    reason = "background_retry",
+    options = {}
+  ) => {
+    const pending = getPendingAutoSyncRequest();
+    const now = Date.now();
+    const lastModified =
+      pending?.maxLastModified ||
+      pending?.lastModified ||
+      GM_getValue("s1p_last_modified", 0) ||
+      now;
+    const threadId = Array.isArray(pending?.threadIds)
+      ? pending.threadIds[0] || ""
+      : "";
+    return requestSharedBackgroundSyncDebounce(
+      {
+        source: pending?.source || "general",
+        lastModified,
+        threadId,
+      },
+      {
+        forceDelayMs: Math.max(0, delayMs),
+        forceReason: reason,
+        ...options,
+      }
+    );
+  };
+
   const scheduleBackgroundSyncRetry = (
     delayMs = BACKGROUND_SYNC_LOCK_RETRY_DELAY_MS
   ) => {
@@ -22153,6 +22356,25 @@
 
     hasPendingBackgroundSync = true;
     setAutoSyncIndicatorPendingPhase("background_retry");
+    const sharedRetryResult = queueBackgroundSyncRetryViaSharedScheduler(
+      delayMs,
+      "background_retry"
+    );
+    if (sharedRetryResult?.status === "scheduled") {
+      if (backgroundSyncRetryTimeout) {
+        clearTimeout(backgroundSyncRetryTimeout);
+        backgroundSyncRetryTimeout = null;
+      }
+      return;
+    }
+    if (
+      sharedRetryResult?.status === "skipped" &&
+      (sharedRetryResult.reason === "sync_not_ready" ||
+        sharedRetryResult.reason === "conflict_paused")
+    ) {
+      clearAutoSyncRuntimeQueue();
+      return;
+    }
     if (backgroundSyncRetryTimeout) {
       clearTimeout(backgroundSyncRetryTimeout);
     }
@@ -24290,21 +24512,27 @@
       getAutoSyncIndicatorPhaseFromResult,
       getAutoSyncIndicatorReasonFromResult,
       getAutoSyncIndicatorTitle: (...args) => getAutoSyncIndicatorTitle(...args),
-	      decideSyncActionByVersion,
-	      getForegroundRemoteChangeKind,
+      getAutoSyncIndicatorDisplayKind: (...args) =>
+        getAutoSyncIndicatorDisplayKind(...args),
+      decideSyncActionByVersion,
+      getForegroundRemoteChangeKind,
       getSyncResultRemoteWriteMatchKind,
-	      performAutoSync,
+      performAutoSync,
       normalizeBackgroundSyncDebounceState,
       getBackgroundSyncDebounceState,
       setBackgroundSyncDebounceState,
       clearBackgroundSyncDebounceState,
       requestSharedBackgroundSyncDebounce,
+      queueBackgroundSyncRetryViaSharedScheduler,
+      scheduleBackgroundSyncRetry,
       tryAcquireBackgroundSyncDebounceOwner,
       refreshBackgroundSyncDebounceOwnerLease,
       releaseBackgroundSyncDebounceOwner,
       scheduleSharedBackgroundSyncDebounceTimer,
       clearSharedBackgroundSyncDebounceTimer,
       handleSharedBackgroundSyncDebounceDue,
+      isBackgroundSyncDebounceStateCoveringPendingRequest,
+      getPendingAutoSyncSharedDebounceCoverage,
       clearPendingAutoSyncRequestIfCovered,
       clearSharedBackgroundSyncDebounceIfCovered,
       getBackgroundSyncDebounceRuntimeStateForTest,
@@ -26007,11 +26235,17 @@
   const titleSyncStatusTabId = `s1p_title_tab_${titleSyncStatusTabCreatedAt}_${Math.random()
     .toString(36)
     .slice(2, 10)}`;
+  const titleSyncStatusOwnerToken = `${titleSyncStatusTabId}_${Math.random()
+    .toString(36)
+    .slice(2, 10)}`;
   let titleSyncStatusHeartbeatTimer = null;
   let titleSyncStatusAnimationTimer = null;
   let titleSyncStatusExpiryTimer = null;
   let titleSyncStatusUnifiedStateDebounceTimer = null;
+  let titleSyncStatusCrossTabRuntimeDebounceTimer = null;
   let pendingTitleSyncStatusUnifiedStateReason = "";
+  let pendingTitleSyncStatusCrossTabRuntimeReason = "";
+  let pendingTitleSyncStatusCrossTabAllowsOwnerLeaseRefresh = false;
   const titleSyncStatusRuntimeState = {
     currentPrefix: "",
     animationFrame: 0,
@@ -26040,7 +26274,10 @@
     TITLE_SYNC_STATUS_HEARTBEAT_MS,
     TITLE_SYNC_STATUS_PRESENCE_REFRESH_MIN_MS,
     TITLE_SYNC_STATUS_UNIFIED_STATE_DEBOUNCE_MS,
+    TITLE_SYNC_STATUS_CROSS_TAB_EVENT_DEBOUNCE_MS,
     TITLE_SYNC_STATUS_PRESENCE_KEY,
+    TITLE_SYNC_STATUS_TAB_PRESENCE_KEY_PREFIX,
+    TITLE_SYNC_STATUS_PRESENCE_SIGNAL_KEY,
     TITLE_SYNC_STATUS_OWNER_KEY,
   });
   const getTitleSyncStatusPrefixForPhase = (
@@ -26125,13 +26362,10 @@
       tabSnapshot && typeof tabSnapshot === "object"
         ? tabSnapshot.hasFocus
         : typeof document.hasFocus === "function" && document.hasFocus();
-    return visibilityState === "visible" && hasFocus === true;
+    return visibilityState === "visible";
   };
   const isCurrentTitleSyncStatusForegroundTab = () => {
-    if (typeof document.hasFocus !== "function") {
-      return false;
-    }
-    return document.visibilityState === "visible" && document.hasFocus();
+    return document.visibilityState === "visible";
   };
   const canUseTitleSyncStatusGmValueChannel = () =>
     typeof GM_getValue === "function" &&
@@ -26211,6 +26445,80 @@
       return false;
     }
   };
+  const listTitleSyncStatusStorageKeys = () => {
+    if (canUseTitleSyncStatusGmValueChannel()) {
+      if (typeof GM_listValues === "function") {
+        try {
+          return GM_listValues().map((key) => String(key || ""));
+        } catch (_) {
+          return [];
+        }
+      }
+      return [];
+    }
+    const storage = getTitleSyncStatusLocalStorage();
+    if (!storage || typeof storage.length !== "number") {
+      return [];
+    }
+    const keys = [];
+    for (let index = 0; index < storage.length; index += 1) {
+      const key =
+        typeof storage.key === "function" ? storage.key(index) : null;
+      if (key) {
+        keys.push(String(key));
+      }
+    }
+    return keys;
+  };
+  const encodeTitleSyncStatusPresenceTabId = (tabId = "") =>
+    encodeURIComponent(String(tabId || "").trim());
+  const decodeTitleSyncStatusPresenceTabId = (encodedTabId = "") => {
+    try {
+      return decodeURIComponent(String(encodedTabId || ""));
+    } catch (_) {
+      return String(encodedTabId || "");
+    }
+  };
+  const getTitleSyncStatusTabPresenceKey = (tabId = "") => {
+    const normalizedTabId = String(tabId || "").trim();
+    return normalizedTabId
+      ? `${TITLE_SYNC_STATUS_TAB_PRESENCE_KEY_PREFIX}${encodeTitleSyncStatusPresenceTabId(normalizedTabId)}`
+      : "";
+  };
+  const isTitleSyncStatusTabPresenceKey = (key = "") =>
+    String(key || "").startsWith(TITLE_SYNC_STATUS_TAB_PRESENCE_KEY_PREFIX);
+  const getTitleSyncStatusTabIdFromPresenceKey = (key = "") => {
+    const sourceKey = String(key || "");
+    if (!isTitleSyncStatusTabPresenceKey(sourceKey)) {
+      return "";
+    }
+    return decodeTitleSyncStatusPresenceTabId(
+      sourceKey.slice(TITLE_SYNC_STATUS_TAB_PRESENCE_KEY_PREFIX.length)
+    );
+  };
+  const emitTitleSyncStatusPresenceSignal = ({
+    reason = "",
+    action = "upsert",
+    tabId = titleSyncStatusTabId,
+    now = Date.now(),
+  } = {}) => {
+    const signal = {
+      version: 1,
+      updatedAt: now,
+      tabId: String(tabId || ""),
+      action: String(action || "upsert"),
+      reason: String(reason || ""),
+      nonce: Math.random(),
+    };
+    const didWrite = writeTitleSyncStatusStorageValue(
+      TITLE_SYNC_STATUS_PRESENCE_SIGNAL_KEY,
+      signal
+    );
+    if (!didWrite) {
+      emitTitleSyncStatusFallbackSignal(reason || "presence_signal");
+    }
+    return didWrite;
+  };
   const emitTitleSyncStatusFallbackSignal = (reason = "") => {
     if (canUseTitleSyncStatusGmValueChannel()) {
       return false;
@@ -26242,6 +26550,8 @@
       Number(source.createdAt) || Number(fallbackSource.createdAt) || 0;
     const lastSeen =
       Number(source.lastSeen) || Number(fallbackSource.lastSeen) || 0;
+    const lastActiveAt =
+      Number(source.lastActiveAt) || Number(fallbackSource.lastActiveAt) || 0;
     const visibilityState = String(
       source.visibilityState || fallbackSource.visibilityState || "hidden"
     );
@@ -26252,11 +26562,12 @@
     const isForeground =
       typeof source.isForeground === "boolean"
         ? source.isForeground
-        : visibilityState === "visible" && hasFocus === true;
+        : visibilityState === "visible";
     return {
       tabId,
       createdAt,
       lastSeen,
+      lastActiveAt,
       visibilityState,
       hasFocus,
       isForeground,
@@ -26290,26 +26601,68 @@
       tabId: String(source.tabId || "").trim(),
       leaseUntil: Number(source.leaseUntil) || 0,
       updatedAt: Number(source.updatedAt) || 0,
+      token: String(source.token || "").trim(),
+      generation: Math.max(0, Math.floor(Number(source.generation) || 0)),
     };
   };
-  const getTitleSyncStatusPresenceState = () =>
-    normalizeTitleSyncStatusPresenceState(
+  const readTitleSyncStatusPartitionedPresenceTabs = () => {
+    const tabs = {};
+    listTitleSyncStatusStorageKeys().forEach((key) => {
+      if (!isTitleSyncStatusTabPresenceKey(key)) {
+        return;
+      }
+      const fallbackTabId = getTitleSyncStatusTabIdFromPresenceKey(key);
+      const tab = normalizeTitleSyncStatusTabRecord(
+        readTitleSyncStatusStorageValue(key, null),
+        { tabId: fallbackTabId }
+      );
+      if (tab.tabId) {
+        tabs[tab.tabId] = tab;
+      }
+    });
+    return tabs;
+  };
+  const getTitleSyncStatusPresenceState = () => {
+    const legacyState = normalizeTitleSyncStatusPresenceState(
       readTitleSyncStatusStorageValue(TITLE_SYNC_STATUS_PRESENCE_KEY, null)
     );
+    const partitionedTabs = readTitleSyncStatusPartitionedPresenceTabs();
+    const tabs = {
+      ...legacyState.tabs,
+      ...partitionedTabs,
+    };
+    return {
+      version: 2,
+      updatedAt: Math.max(
+        Number(legacyState.updatedAt) || 0,
+        ...Object.values(tabs).map((tab) => Number(tab.lastSeen) || 0)
+      ),
+      tabs,
+    };
+  };
   const getTitleSyncStatusOwnerState = () =>
     normalizeTitleSyncStatusOwnerState(
       readTitleSyncStatusStorageValue(TITLE_SYNC_STATUS_OWNER_KEY, null)
     );
-  const getCurrentTitleSyncStatusTabRecord = (now = Date.now()) => {
+  const getCurrentTitleSyncStatusTabRecord = (
+    now = Date.now(),
+    previousTabRecord = null
+  ) => {
     const hasFocus =
       typeof document.hasFocus === "function" ? document.hasFocus() : false;
+    const previousTab = normalizeTitleSyncStatusTabRecord(previousTabRecord);
+    const isForeground = isCurrentTitleSyncStatusForegroundTab();
     return {
       tabId: titleSyncStatusTabId,
       createdAt: titleSyncStatusTabCreatedAt,
       lastSeen: now,
+      lastActiveAt:
+        isForeground || previousTab.isForeground === true
+          ? now
+          : previousTab.lastActiveAt || 0,
       visibilityState: String(document.visibilityState || "hidden"),
       hasFocus,
-      isForeground: isCurrentTitleSyncStatusForegroundTab(),
+      isForeground,
     };
   };
   const getTitleSyncStatusPresenceWriteSignature = (tabRecord = null) => {
@@ -26366,27 +26719,60 @@
     });
     return nextTabs;
   };
+  let lastTitleSyncStatusPresenceGcAt = 0;
+  const deleteExpiredTitleSyncStatusPresenceRecords = (now = Date.now()) => {
+    if (now - lastTitleSyncStatusPresenceGcAt < TITLE_SYNC_STATUS_PRESENCE_TTL_MS) {
+      return 0;
+    }
+    lastTitleSyncStatusPresenceGcAt = now;
+    let deletedCount = 0;
+    listTitleSyncStatusStorageKeys().forEach((key) => {
+      if (!isTitleSyncStatusTabPresenceKey(key)) {
+        return;
+      }
+      const tab = normalizeTitleSyncStatusTabRecord(
+        readTitleSyncStatusStorageValue(key, null),
+        { tabId: getTitleSyncStatusTabIdFromPresenceKey(key) }
+      );
+      if (
+        tab.tabId &&
+        tab.tabId !== titleSyncStatusTabId &&
+        (!tab.lastSeen ||
+          now - tab.lastSeen > TITLE_SYNC_STATUS_PRESENCE_TTL_MS * 2)
+      ) {
+        if (deleteTitleSyncStatusStorageValue(key)) {
+          deletedCount += 1;
+        }
+      }
+    });
+    return deletedCount;
+  };
   const writeCurrentTitleSyncStatusPresence = ({
     remove = false,
     reason = "",
     force = false,
   } = {}) => {
     const now = Date.now();
-    const state = getTitleSyncStatusPresenceState();
-    const tabs = pruneTitleSyncStatusPresenceTabs(state.tabs, now);
-    const previousTabRecord = tabs[titleSyncStatusTabId] || null;
-    const currentTabRecord = getCurrentTitleSyncStatusTabRecord(now);
+    const presenceKey = getTitleSyncStatusTabPresenceKey(titleSyncStatusTabId);
+    const rawPreviousTabRecord = readTitleSyncStatusStorageValue(
+      presenceKey,
+      null
+    );
+    const previousTabRecord = rawPreviousTabRecord
+      ? normalizeTitleSyncStatusTabRecord(rawPreviousTabRecord, {
+          tabId: titleSyncStatusTabId,
+        })
+      : null;
+    const currentTabRecord = getCurrentTitleSyncStatusTabRecord(
+      now,
+      previousTabRecord
+    );
     titleSyncStatusRuntimeState.currentTabRecord = currentTabRecord;
-    if (remove) {
-      delete tabs[titleSyncStatusTabId];
-    } else {
-      tabs[titleSyncStatusTabId] = currentTabRecord;
-    }
-    const nextState = {
-      version: 1,
+    const buildLocalPresenceResult = () => ({
+      version: 2,
       updatedAt: now,
-      tabs,
-    };
+      tabs: remove ? {} : { [titleSyncStatusTabId]: currentTabRecord },
+    });
     const shouldWrite = shouldWriteCurrentTitleSyncStatusPresence({
       currentTabRecord,
       previousTabRecord,
@@ -26396,23 +26782,56 @@
     });
     if (!shouldWrite) {
       titleSyncStatusRuntimeState.lastPresenceWriteSkippedAt = now;
-      return nextState;
+      return buildLocalPresenceResult();
     }
-    const didWrite = writeTitleSyncStatusStorageValue(
-      TITLE_SYNC_STATUS_PRESENCE_KEY,
-      nextState
-    );
+    let didWrite = false;
+    if (remove) {
+      didWrite = deleteTitleSyncStatusStorageValue(presenceKey);
+    } else {
+      didWrite = writeTitleSyncStatusStorageValue(
+        presenceKey,
+        currentTabRecord
+      );
+    }
     if (didWrite) {
       titleSyncStatusRuntimeState.lastPresenceWriteAt = now;
-      emitTitleSyncStatusFallbackSignal(reason || "presence");
+      emitTitleSyncStatusPresenceSignal({
+        reason: reason || "presence",
+        action: remove ? "remove" : "upsert",
+        tabId: titleSyncStatusTabId,
+        now,
+      });
+      deleteExpiredTitleSyncStatusPresenceRecords(now);
     }
-    return nextState;
+    return buildLocalPresenceResult();
   };
-  const writeTitleSyncStatusOwnerLease = (now = Date.now()) => {
+  const writeTitleSyncStatusOwnerLease = (
+    now = Date.now(),
+    { force = false, reason = "" } = {}
+  ) => {
+    const currentOwner = getTitleSyncStatusOwnerState();
+    if (
+      currentOwner.tabId &&
+      currentOwner.tabId !== titleSyncStatusTabId &&
+      currentOwner.leaseUntil > now
+    ) {
+      return currentOwner;
+    }
+    const currentOwnerIsThisContext =
+      currentOwner.tabId === titleSyncStatusTabId &&
+      (!currentOwner.token || currentOwner.token === titleSyncStatusOwnerToken);
+    const remainingMs = currentOwnerIsThisContext
+      ? currentOwner.leaseUntil - now
+      : 0;
+    if (!force && remainingMs > TITLE_SYNC_STATUS_OWNER_LEASE_MS / 2) {
+      return currentOwner;
+    }
     const nextOwner = {
       tabId: titleSyncStatusTabId,
       leaseUntil: now + TITLE_SYNC_STATUS_OWNER_LEASE_MS,
       updatedAt: now,
+      token: titleSyncStatusOwnerToken,
+      generation: (currentOwner.generation || 0) + 1,
     };
     const didWrite = writeTitleSyncStatusStorageValue(
       TITLE_SYNC_STATUS_OWNER_KEY,
@@ -26422,11 +26841,25 @@
       titleSyncStatusRuntimeState.lastOwnerLeaseRefreshAt = now;
       emitTitleSyncStatusFallbackSignal("owner");
     }
-    return nextOwner;
+    const verifiedOwner = getTitleSyncStatusOwnerState();
+    if (
+      verifiedOwner.tabId !== titleSyncStatusTabId ||
+      verifiedOwner.token !== titleSyncStatusOwnerToken ||
+      verifiedOwner.generation !== nextOwner.generation
+    ) {
+      return verifiedOwner;
+    }
+    return verifiedOwner;
   };
   const releaseTitleSyncStatusOwnerLease = () => {
     const owner = getTitleSyncStatusOwnerState();
     if (owner.tabId && owner.tabId !== titleSyncStatusTabId) {
+      return false;
+    }
+    if (owner.token && owner.token !== titleSyncStatusOwnerToken) {
+      return false;
+    }
+    if (!owner.tabId) {
       return false;
     }
     const didDelete = deleteTitleSyncStatusStorageValue(TITLE_SYNC_STATUS_OWNER_KEY);
@@ -26449,6 +26882,14 @@
       ) || AUTO_SYNC_INDICATOR_PHASE_IDLE
     );
   };
+  const isTitleSyncStatusLeaseWorthyPhase = (phase) => {
+    const normalizedPhase =
+      normalizeAutoSyncIndicatorPhase(phase, {
+        allowRunning: true,
+        allowPending: true,
+      }) || AUTO_SYNC_INDICATOR_PHASE_IDLE;
+    return Boolean(getTitleSyncStatusPrefixForPhase(normalizedPhase));
+  };
   const resolveTitleSyncStatusTabDisplayDecision = ({
     currentTabId = "",
     tabs = [],
@@ -26469,6 +26910,7 @@
           tabId,
           createdAt: Number(tabRecord.createdAt) || 0,
           lastSeen: Number(tabRecord.lastSeen) || 0,
+          lastActiveAt: Number(tabRecord.lastActiveAt) || 0,
         };
       })
       .filter(
@@ -26488,28 +26930,45 @@
     const previousOwnerStillLive = liveTabs.some(
       (tab) => tab.tabId === previousOwnerTabId
     );
-    const earliestLiveTabId = liveTabs[0]?.tabId || "";
+    const ownerPreferredTabs = [...liveTabs].sort((a, b) => {
+      if (a.lastActiveAt !== b.lastActiveAt) {
+        return b.lastActiveAt - a.lastActiveAt;
+      }
+      if (a.createdAt !== b.createdAt) {
+        return b.createdAt - a.createdAt;
+      }
+      return a.tabId.localeCompare(b.tabId);
+    });
+    const preferredOwnerTabId = ownerPreferredTabs[0]?.tabId || "";
     const previousOwnerCanKeepLease = Boolean(
       previousOwnerTabId &&
-        previousOwnerTabId === earliestLiveTabId &&
         previousOwnerStillLive &&
         previousOwnerLeaseUntil > now
     );
-    let ownerCandidates = liveTabs;
+    let ownerCandidates = ownerPreferredTabs;
     if (
       previousOwnerTabId &&
-      previousOwnerTabId === earliestLiveTabId &&
+      previousOwnerTabId === preferredOwnerTabId &&
       !previousOwnerCanKeepLease
     ) {
-      // The expired earliest owner may renew only from its own tab. Other tabs
+      // The expired preferred owner may renew only from its own tab. Other tabs
       // skip it so a throttled/stalled owner can be taken over quickly.
       ownerCandidates = liveTabs.filter(
         (tab) =>
           tab.tabId !== previousOwnerTabId ||
           tab.tabId === normalizedCurrentTabId
       );
+      ownerCandidates = ownerCandidates.sort((a, b) => {
+        if (a.lastActiveAt !== b.lastActiveAt) {
+          return b.lastActiveAt - a.lastActiveAt;
+        }
+        if (a.createdAt !== b.createdAt) {
+          return b.createdAt - a.createdAt;
+        }
+        return a.tabId.localeCompare(b.tabId);
+      });
       if (ownerCandidates.length === 0) {
-        ownerCandidates = liveTabs;
+        ownerCandidates = ownerPreferredTabs;
       }
     }
     const ownerTabId =
@@ -26655,6 +27114,23 @@
       syncTitleSyncStatusRuntime({ reason: "result_ttl_expired" });
     }, remainingMs + 25);
   };
+  const refreshTitleSyncStatusAnimationFrame = () => {
+    if (
+      !titleSyncStatusRuntimeState.shouldRunAnimationTimer ||
+      !titleSyncStatusRuntimeState.shouldDisplay ||
+      titleSyncStatusRuntimeState.displayPhase !== AUTO_SYNC_INDICATOR_PHASE_RUNNING
+    ) {
+      stopTitleSyncStatusAnimationTimer();
+      return;
+    }
+    titleSyncStatusRuntimeState.currentPrefix =
+      getTitleSyncStatusPrefixForPhase(AUTO_SYNC_INDICATOR_PHASE_RUNNING, {
+        animationFrame: titleSyncStatusRuntimeState.animationFrame,
+      });
+    refreshDocumentTitle({
+      prefix: titleSyncStatusRuntimeState.currentPrefix,
+    });
+  };
   const startTitleSyncStatusAnimationTimer = () => {
     if (titleSyncStatusAnimationTimer) {
       titleSyncStatusRuntimeState.animationTimerActive = true;
@@ -26665,7 +27141,7 @@
       titleSyncStatusRuntimeState.animationFrame =
         (titleSyncStatusRuntimeState.animationFrame + 1) %
         TITLE_SYNC_STATUS_RUNNING_PREFIXES.length;
-      syncTitleSyncStatusRuntime({ reason: "animation_tick" });
+      refreshTitleSyncStatusAnimationFrame();
     }, TITLE_SYNC_STATUS_ANIMATION_INTERVAL_MS);
   };
   const restoreTitleSyncStatusDocumentTitle = (settingsSnapshot = getSettings()) => {
@@ -26682,6 +27158,7 @@
     restoreTitle = true,
   } = {}) => {
     cancelTitleSyncStatusUnifiedStateDebounce();
+    cancelTitleSyncStatusCrossTabRuntimeDebounce();
     stopTitleSyncStatusAnimationTimer();
     stopTitleSyncStatusExpiryTimer();
     titleSyncStatusRuntimeState.currentPrefix = "";
@@ -26694,26 +27171,36 @@
   const maybeRefreshTitleSyncStatusOwnerLease = (
     decision,
     now = Date.now(),
-    { force = false } = {}
+    { force = false, allowOwnerLeaseRefresh = true, reason = "" } = {}
   ) => {
+    if (!allowOwnerLeaseRefresh) {
+      return getTitleSyncStatusOwnerState();
+    }
     if (
       !decision ||
       decision.ownerTabId !== titleSyncStatusTabId ||
-      decision.hasForegroundTab
+      decision.hasForegroundTab ||
+      !isTitleSyncStatusLeaseWorthyPhase(decision.displayPhase)
     ) {
-      return null;
+      return getTitleSyncStatusOwnerState();
     }
     const owner = getTitleSyncStatusOwnerState();
-    const remainingMs =
-      owner.tabId === titleSyncStatusTabId ? owner.leaseUntil - now : 0;
+    if (owner.tabId && owner.tabId !== titleSyncStatusTabId && owner.leaseUntil > now) {
+      return owner;
+    }
+    const ownerIsThisContext =
+      owner.tabId === titleSyncStatusTabId &&
+      (!owner.token || owner.token === titleSyncStatusOwnerToken);
+    const remainingMs = ownerIsThisContext ? owner.leaseUntil - now : 0;
     if (!force && remainingMs > TITLE_SYNC_STATUS_OWNER_LEASE_MS / 2) {
       return owner;
     }
-    return writeTitleSyncStatusOwnerLease(now);
+    return writeTitleSyncStatusOwnerLease(now, { force, reason });
   };
   const runTitleSyncStatusRuntimeSync = ({
     reason = "",
     forceOwnerLease = false,
+    allowOwnerLeaseRefresh = true,
   } = {}) => {
     const now = Date.now();
     const settings = getSettings();
@@ -26743,7 +27230,9 @@
       };
     }
 
-    const resolvedState = resolveAutoSyncIndicatorDisplayPhase();
+    const resolvedState = resolveAutoSyncIndicatorDisplayPhase(null, {
+      allowCache: true,
+    });
     const nextDisplayPhase = resolveTitleSyncStatusDisplayPhase(resolvedState);
     if (
       nextDisplayPhase === AUTO_SYNC_INDICATOR_PHASE_RUNNING &&
@@ -26756,13 +27245,16 @@
     }
 
     const presenceState = getTitleSyncStatusPresenceState();
-    const currentTabRecord = getCurrentTitleSyncStatusTabRecord(now);
-    const tabs = Object.values(presenceState.tabs);
-    if (!tabs.some((tab) => tab.tabId === titleSyncStatusTabId)) {
-      tabs.push(currentTabRecord);
-    }
+    const currentTabRecord = getCurrentTitleSyncStatusTabRecord(
+      now,
+      presenceState.tabs[titleSyncStatusTabId] || null
+    );
+    const tabs = Object.values(presenceState.tabs).filter(
+      (tab) => tab?.tabId !== titleSyncStatusTabId
+    );
+    tabs.push(currentTabRecord);
     const owner = getTitleSyncStatusOwnerState();
-    const decision = resolveTitleSyncStatusTabDisplayDecision({
+    let decision = resolveTitleSyncStatusTabDisplayDecision({
       currentTabId: titleSyncStatusTabId,
       tabs,
       state: resolvedState,
@@ -26772,9 +27264,39 @@
       animationFrame: titleSyncStatusRuntimeState.animationFrame,
     });
 
-    maybeRefreshTitleSyncStatusOwnerLease(decision, now, {
+    const effectiveOwner = maybeRefreshTitleSyncStatusOwnerLease(decision, now, {
       force: forceOwnerLease,
+      allowOwnerLeaseRefresh,
+      reason,
     });
+    if (
+      effectiveOwner &&
+      effectiveOwner.tabId &&
+      effectiveOwner.tabId !== titleSyncStatusTabId &&
+      effectiveOwner.leaseUntil > now &&
+      decision.ownerTabId === titleSyncStatusTabId
+    ) {
+      decision = {
+        ...decision,
+        shouldDisplay: false,
+        shouldRunAnimationTimer: false,
+        ownerTabId: effectiveOwner.tabId,
+        prefix: "",
+      };
+    } else if (
+      decision.ownerTabId === titleSyncStatusTabId &&
+      !allowOwnerLeaseRefresh &&
+      (!effectiveOwner ||
+        effectiveOwner.tabId !== titleSyncStatusTabId ||
+        effectiveOwner.leaseUntil <= now)
+    ) {
+      decision = {
+        ...decision,
+        shouldDisplay: false,
+        shouldRunAnimationTimer: false,
+        prefix: "",
+      };
+    }
 
     titleSyncStatusRuntimeState.currentPrefix = decision.prefix;
     titleSyncStatusRuntimeState.displayPhase = decision.displayPhase;
@@ -26821,10 +27343,50 @@
     }
     titleSyncStatusRuntimeState.isSyncing = true;
     try {
-      return runTitleSyncStatusRuntimeSync(runtimeOptions);
+      const decision = runTitleSyncStatusRuntimeSync(runtimeOptions);
+      return decision;
     } finally {
       titleSyncStatusRuntimeState.isSyncing = false;
     }
+  };
+  const flushTitleSyncStatusCrossTabRuntimeSync = () => {
+    titleSyncStatusCrossTabRuntimeDebounceTimer = null;
+    const reason =
+      pendingTitleSyncStatusCrossTabRuntimeReason || "cross_tab_change";
+    const allowOwnerLeaseRefresh =
+      pendingTitleSyncStatusCrossTabAllowsOwnerLeaseRefresh === true;
+    pendingTitleSyncStatusCrossTabRuntimeReason = "";
+    pendingTitleSyncStatusCrossTabAllowsOwnerLeaseRefresh = false;
+    syncTitleSyncStatusRuntime({
+      reason,
+      allowOwnerLeaseRefresh,
+    });
+  };
+  const scheduleTitleSyncStatusCrossTabRuntimeSync = (
+    reason = "cross_tab_change",
+    { allowOwnerLeaseRefresh = false } = {}
+  ) => {
+    pendingTitleSyncStatusCrossTabRuntimeReason =
+      String(reason || pendingTitleSyncStatusCrossTabRuntimeReason || "") ||
+      "cross_tab_change";
+    pendingTitleSyncStatusCrossTabAllowsOwnerLeaseRefresh =
+      pendingTitleSyncStatusCrossTabAllowsOwnerLeaseRefresh ||
+      allowOwnerLeaseRefresh === true;
+    if (titleSyncStatusCrossTabRuntimeDebounceTimer) {
+      return;
+    }
+    titleSyncStatusCrossTabRuntimeDebounceTimer = setTimeout(
+      flushTitleSyncStatusCrossTabRuntimeSync,
+      TITLE_SYNC_STATUS_CROSS_TAB_EVENT_DEBOUNCE_MS
+    );
+  };
+  const cancelTitleSyncStatusCrossTabRuntimeDebounce = () => {
+    if (titleSyncStatusCrossTabRuntimeDebounceTimer) {
+      clearTimeout(titleSyncStatusCrossTabRuntimeDebounceTimer);
+      titleSyncStatusCrossTabRuntimeDebounceTimer = null;
+    }
+    pendingTitleSyncStatusCrossTabRuntimeReason = "";
+    pendingTitleSyncStatusCrossTabAllowsOwnerLeaseRefresh = false;
   };
   const flushTitleSyncStatusUnifiedStateChange = () => {
     titleSyncStatusUnifiedStateDebounceTimer = null;
@@ -26895,23 +27457,67 @@
     refreshTitleSyncStatusPresenceAndDisplay("init");
 
     if (canUseTitleSyncStatusGmValueChannel()) {
-      GM_addValueChangeListener(AUTO_SYNC_INDICATOR_STATE_KEY, () => {
-        syncTitleSyncStatusRuntime({ reason: "state_change" });
-      });
-      GM_addValueChangeListener(TITLE_SYNC_STATUS_PRESENCE_KEY, () => {
-        syncTitleSyncStatusRuntime({ reason: "presence_change" });
-      });
-      GM_addValueChangeListener(TITLE_SYNC_STATUS_OWNER_KEY, () => {
-        syncTitleSyncStatusRuntime({ reason: "owner_change" });
-      });
+      GM_addValueChangeListener(
+        AUTO_SYNC_INDICATOR_STATE_KEY,
+        (_key, oldValue, newValue, isCrossContextChange) => {
+          const oldState = normalizeAutoSyncIndicatorState(oldValue);
+          const nextState = normalizeAutoSyncIndicatorState(newValue);
+          const differsFromPrevious = hasComparableValueChanged(
+            oldState,
+            nextState
+          );
+          if (
+            !isCrossContextChange &&
+            (autoSyncIndicatorWriteInFlightCount > 0 || !differsFromPrevious)
+          ) {
+            return;
+          }
+          invalidateAutoSyncIndicatorDisplayPhaseCache();
+          scheduleTitleSyncStatusCrossTabRuntimeSync("state_change", {
+            allowOwnerLeaseRefresh: false,
+          });
+        }
+      );
+      GM_addValueChangeListener(
+        TITLE_SYNC_STATUS_PRESENCE_SIGNAL_KEY,
+        (_key, oldValue, newValue, isCrossContextChange) => {
+          scheduleTitleSyncStatusCrossTabRuntimeSync("presence_change", {
+            allowOwnerLeaseRefresh: false,
+          });
+        }
+      );
+      GM_addValueChangeListener(
+        TITLE_SYNC_STATUS_PRESENCE_KEY,
+        (_key, oldValue, newValue, isCrossContextChange) => {
+          const oldState = normalizeTitleSyncStatusPresenceState(oldValue);
+          const nextState = normalizeTitleSyncStatusPresenceState(newValue);
+          scheduleTitleSyncStatusCrossTabRuntimeSync("legacy_presence_change", {
+            allowOwnerLeaseRefresh: false,
+          });
+        }
+      );
+      GM_addValueChangeListener(
+        TITLE_SYNC_STATUS_OWNER_KEY,
+        (_key, oldValue, newValue, isCrossContextChange) => {
+          const oldOwner = normalizeTitleSyncStatusOwnerState(oldValue);
+          const nextOwner = normalizeTitleSyncStatusOwnerState(newValue);
+          scheduleTitleSyncStatusCrossTabRuntimeSync("owner_change", {
+            allowOwnerLeaseRefresh: false,
+          });
+        }
+      );
     } else if (getTitleSyncStatusLocalStorage()) {
       window.addEventListener("storage", (event) => {
         if (
           event.key === TITLE_SYNC_STATUS_PRESENCE_KEY ||
+          event.key === TITLE_SYNC_STATUS_PRESENCE_SIGNAL_KEY ||
+          isTitleSyncStatusTabPresenceKey(event.key) ||
           event.key === TITLE_SYNC_STATUS_OWNER_KEY ||
           event.key === TITLE_SYNC_STATUS_FALLBACK_SIGNAL_KEY
         ) {
-          syncTitleSyncStatusRuntime({ reason: "storage_change" });
+          scheduleTitleSyncStatusCrossTabRuntimeSync("storage_change", {
+            allowOwnerLeaseRefresh: false,
+          });
         }
       });
     }
@@ -26946,8 +27552,15 @@
       stripLastAppliedTitleSyncStatusPrefix,
       getTitleSyncStatusPrefixForPhase,
       isTitleSyncStatusForegroundTab,
+      isTitleSyncStatusLeaseWorthyPhase,
+      getTitleSyncStatusTabPresenceKey,
+      getTitleSyncStatusPresenceState,
       shouldWriteCurrentTitleSyncStatusPresence,
+      writeCurrentTitleSyncStatusPresence,
       resolveTitleSyncStatusTabDisplayDecision,
+      writeTitleSyncStatusOwnerLease,
+      releaseTitleSyncStatusOwnerLease,
+      maybeRefreshTitleSyncStatusOwnerLease,
       hasEnabledTitleSyncStatusPath,
       getTitleSyncStatusRuntimeStateForTest,
       refreshDocumentTitle,
@@ -27407,11 +28020,40 @@
     }
   };
 
-  const getAutoSyncIndicatorIconHtmlByPhase = (phase) => {
+  const isForegroundProbeDisplayState = (stateInput = null) => {
+    const phase =
+      normalizeAutoSyncIndicatorPhase(stateInput?.displayPhase, {
+        allowRunning: true,
+      }) || AUTO_SYNC_INDICATOR_PHASE_IDLE;
+    const reason = normalizeAutoSyncIndicatorReason(
+      stateInput?.displayReason || stateInput?.reason
+    );
+    return (
+      phase === AUTO_SYNC_INDICATOR_PHASE_RUNNING &&
+      reason === "foreground_probe_in_flight"
+    );
+  };
+  const getAutoSyncIndicatorDisplayKind = (stateInput = null) => {
+    if (isForegroundProbeDisplayState(stateInput)) {
+      return "probe";
+    }
+    const phase =
+      normalizeAutoSyncIndicatorPhase(stateInput?.displayPhase, {
+        allowRunning: true,
+      }) || AUTO_SYNC_INDICATOR_PHASE_IDLE;
+    if (phase === AUTO_SYNC_INDICATOR_PHASE_RUNNING) {
+      return "sync";
+    }
+    return phase;
+  };
+  const getAutoSyncIndicatorIconHtmlByPhase = (phase, displayKind = "") => {
     switch (phase) {
       case AUTO_SYNC_INDICATOR_PHASE_PENDING:
         return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 16" fill="currentColor"><circle class="s1p-pending-dot" cx="4" cy="8" r="1.75"></circle><circle class="s1p-pending-dot" cx="10" cy="8" r="1.75"></circle><circle class="s1p-pending-dot" cx="16" cy="8" r="1.75"></circle></svg>`;
       case AUTO_SYNC_INDICATOR_PHASE_RUNNING:
+        if (displayKind === "probe") {
+          return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="7" r="3.9"></circle><path d="M10.9 9.9L15 13"></path><path d="M5.6 7H10.2"></path></svg>`;
+        }
         return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 16" fill="currentColor"><circle class="s1p-dot" cx="4" cy="8" r="1.75"></circle><circle class="s1p-dot" cx="10" cy="8" r="1.75"></circle><circle class="s1p-dot" cx="16" cy="8" r="1.75"></circle></svg>`;
       case AUTO_SYNC_INDICATOR_PHASE_SUCCESS:
         return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="1 1 22 22" fill="currentColor"><path d="M4 12C4 7.58172 7.58172 4 12 4C16.4183 4 20 7.58172 20 12C20 16.4183 16.4183 20 12 20C7.58172 20 4 16.4183 4 12ZM12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2ZM17.4571 9.45711L16.0429 8.04289L11 13.0858L8.20711 10.2929L6.79289 11.7071L11 15.9142L17.4571 9.45711Z"></path></svg>`;
@@ -27424,14 +28066,21 @@
     }
   };
 
-  const createNavbarAutoSyncIndicatorLayer = (phase) => {
+  const createNavbarAutoSyncIndicatorLayer = (phase, displayKind = "") => {
     const layer = document.createElement("span");
     layer.className = "s1p-nav-auto-sync-indicator-layer";
     layer.dataset.phase = phase;
-    setSanitizedIconHtml(layer, getAutoSyncIndicatorIconHtmlByPhase(phase));
+    layer.dataset.kind = displayKind || phase;
+    setSanitizedIconHtml(
+      layer,
+      getAutoSyncIndicatorIconHtmlByPhase(phase, displayKind)
+    );
     const svg = layer.querySelector("svg");
     if (svg) {
       svg.classList.add(`s1p-auto-sync-${phase}`);
+      if (displayKind) {
+        svg.classList.add(`s1p-auto-sync-kind-${displayKind}`);
+      }
     }
     return layer;
   };
@@ -27802,6 +28451,7 @@
     );
     if (layers.length === 0) {
       delete iconHost.dataset.renderedPhase;
+      delete iconHost.dataset.renderedKind;
       return null;
     }
     const activeLayer = layers[layers.length - 1];
@@ -27812,6 +28462,8 @@
     );
     activeLayer.classList.add("is-active");
     iconHost.dataset.renderedPhase = activeLayer.dataset.phase || "";
+    iconHost.dataset.renderedKind =
+      activeLayer.dataset.kind || activeLayer.dataset.phase || "";
     return activeLayer;
   };
 
@@ -28115,12 +28767,17 @@
       normalizeAutoSyncIndicatorPhase(resolvedState.displayPhase, {
         allowRunning: true,
       }) || AUTO_SYNC_INDICATOR_PHASE_IDLE;
+    const displayKind = getAutoSyncIndicatorDisplayKind(resolvedState);
     const reducedMotion = isS1pReducedMotionPreferred();
     const currentLayer = stabilizeNavbarAutoSyncIndicatorLayers(iconHost);
     const currentPhase = currentLayer?.dataset.phase || "";
+    const currentKind = currentLayer?.dataset.kind || currentPhase;
 
-    if (currentPhase !== displayPhase) {
-      const nextLayer = createNavbarAutoSyncIndicatorLayer(displayPhase);
+    if (currentPhase !== displayPhase || currentKind !== displayKind) {
+      const nextLayer = createNavbarAutoSyncIndicatorLayer(
+        displayPhase,
+        displayKind
+      );
       const transitionClassNames = getNavbarAutoSyncIndicatorTransitionClassNames(
         currentPhase,
         displayPhase
@@ -28150,9 +28807,11 @@
         }, AUTO_SYNC_INDICATOR_ENTER_DURATION_MS);
       }
       iconHost.dataset.renderedPhase = displayPhase;
+      iconHost.dataset.renderedKind = displayKind;
     }
 
     indicatorLi.dataset.syncState = displayPhase;
+    indicatorLi.dataset.syncKind = displayKind;
     indicatorLi.dataset.syncSource =
       normalizeAutoSyncIndicatorSource(resolvedState.displaySource) || "";
     setCustomTooltip(indicatorLi, getAutoSyncIndicatorTitle(resolvedState));
@@ -30052,7 +30711,7 @@
                   <span class="s1p-slider"></span>
                 </label>
               </div>
-              <p class="s1p-setting-desc">开启后，仅当所有 S1 标签页都不在前台时，第一个标签页标题会在同步发生时显示状态提示（同步中/成功/失败/冲突）。</p>
+              <p class="s1p-setting-desc">开启后，仅当所有 S1 标签页都不在前台时，最近离开的 S1 标签页标题会在同步发生时显示状态提示（同步中/成功/失败/冲突）。</p>
             </div>
           </div>
 
