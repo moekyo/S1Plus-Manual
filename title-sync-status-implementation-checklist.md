@@ -117,7 +117,7 @@ Phase A 实现结果（2026-05-06）：
 - [x] 在设置保存路径中纳入 `syncShowTitleSyncStatus`。
 - [x] 在“设置同步 -> 状态显示”区块中，在“显示导航栏同步状态”后新增开关。
 - [x] 开关文案为“显示标签页标题同步状态”。
-- [x] 说明文案为“开启后，仅当所有 S1 标签页都不在前台时，第一个标签页标题会在同步发生时显示状态提示（同步中/成功/失败/冲突）。”
+- [x] 说明文案为“开启后，仅当所有 S1 标签页都不在前台时，最近离开的 S1 标签页标题会在同步发生时显示状态提示（同步中/成功/失败/冲突）。”
 - [x] 样式复用“显示导航栏同步状态”开关。
 - [x] 远程同步关闭时置灰禁用。
 - [x] 禁用行为与“显示导航栏同步状态”开关保持一致。
@@ -203,7 +203,7 @@ Phase D 实现结果（2026-05-06）：
 - [x] 定期 heartbeat 更新 `lastSeen`。
 - [x] `lastSeen` 超过 2 分钟的标签页从 presence 判断中忽略。
 - [x] owner lease 使用 20 到 30 秒，负责人关闭后可更快接管。
-- [x] 当前仍存活标签页中 `createdAt` 最早者为负责人。
+- [x] 当前仍存活标签页中最近离开前台 / 最近活跃者为负责人。
 - [x] 如果有任意标签页 `isForeground === true`，所有标题状态都隐藏。
 - [x] 只有负责人标签页可以显示标题状态。
 - [x] 非负责人标签页必须恢复原始标题并停止动画 timer。
@@ -218,7 +218,7 @@ Phase E 实现结果（2026-05-06）：
 
 - 已新增 `s1p_title_sync_status_tabs` presence、`s1p_title_sync_status_owner` owner lease 和当前标签页唯一 tab id；presence 记录包含 `tabId`、`createdAt`、`lastSeen`、`visibilityState`、`hasFocus`、`isForeground`。
 - 前台判定使用 `document.visibilityState === "visible" && document.hasFocus()`；`visibilitychange`、`focus`、`blur`、`pageshow` 会立即刷新 presence，`pagehide` / `beforeunload` 会释放当前标签页 presence。
-- 已实现 2 分钟 presence TTL、25 秒 owner lease、createdAt 最早负责人、任意前台隐藏、非负责人恢复标题并停动画；GM value listener 不可用时降级到同源 `localStorage` + `storage` event。
+- 已实现 2 分钟 presence TTL、25 秒 owner lease、最近离开前台 / 最近活跃负责人、任意前台隐藏、非负责人恢复标题并停动画；GM value listener 不可用时降级到同源 `localStorage` + `storage` event。
 
 ## Phase F: 跨标签通知与资源清理
 

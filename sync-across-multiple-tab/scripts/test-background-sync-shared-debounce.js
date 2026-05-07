@@ -19,12 +19,16 @@ const REQUIRED_SHARED_DEBOUNCE_HOOKS = [
   "setBackgroundSyncDebounceState",
   "clearBackgroundSyncDebounceState",
   "requestSharedBackgroundSyncDebounce",
+  "queueBackgroundSyncRetryViaSharedScheduler",
+  "scheduleBackgroundSyncRetry",
   "tryAcquireBackgroundSyncDebounceOwner",
   "refreshBackgroundSyncDebounceOwnerLease",
   "releaseBackgroundSyncDebounceOwner",
   "scheduleSharedBackgroundSyncDebounceTimer",
   "clearSharedBackgroundSyncDebounceTimer",
   "handleSharedBackgroundSyncDebounceDue",
+  "isBackgroundSyncDebounceStateCoveringPendingRequest",
+  "getPendingAutoSyncSharedDebounceCoverage",
   "clearPendingAutoSyncRequestIfCovered",
   "clearSharedBackgroundSyncDebounceIfCovered",
   "getBackgroundSyncDebounceRuntimeStateForTest",
@@ -208,6 +212,33 @@ const testSourceSpecificSettleWindows = () => {
   );
   assert.equal(generalHarness.getState().dueAt, now + DEFAULT_SYNC_DEBOUNCE_MS);
   assert.equal(generalHarness.getState().reason, "debounced_local_change");
+};
+
+const testForcedRetryUsesSharedSchedulerDueAt = () => {
+  const { hooks, getState } = getSharedDebounceApi();
+  const timers = createTimerSpy();
+  const now = 2_500_000;
+  const result = hooks.queueBackgroundSyncRetryViaSharedScheduler(
+    1200,
+    "background_retry",
+    {
+      now,
+      tabId: "tab-a",
+      settingsSnapshot: readySyncSettings,
+      scheduleTimer: timers.scheduleTimer,
+    }
+  );
+
+  assert.equal(result.status, "scheduled");
+  assert.equal(result.reason, "background_retry");
+  assert.equal(result.isOwner, true);
+  assert.equal(getState().dueAt, now + 1200);
+  assert.equal(getState().reason, "background_retry");
+  assert.equal(
+    timers.calls[0].delayMs,
+    1200,
+    "background retry 应由 shared debounce owner 排 timer，而不是每个 tab 自己排 retry timer。"
+  );
 };
 
 const testGeneralDueAtIsNotDelayedByReadProgress = () => {
@@ -729,9 +760,55 @@ const testSharedDebounceWriteRetriesWhenVerificationLosesRequest = () => {
   );
 };
 
+const testPendingRecoveryRecognizesCoveredSharedDebounce = () => {
+  const { constants, hooks, setState } = getSharedDebounceApi();
+  const now = 14_000_000;
+  const state = seedSharedState({
+    generation: 8,
+    ownerTabId: "tab-a",
+    ownerLeaseUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS,
+    dueAt: now + READ_PROGRESS_SYNC_DEBOUNCE_MS,
+    maxWaitUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
+    firstDirtyAt: now,
+    lastDirtyAt: now,
+    maxLastModified: 1402,
+    sources: { read_progress: 1, general: 1 },
+    threadIds: ["1402"],
+    reason: "debounced_read_progress",
+    dueSource: "read_progress",
+  });
+  const pending = {
+    source: "read_progress",
+    sources: { read_progress: 1, general: 1 },
+    lastModified: 1401,
+    maxLastModified: 1402,
+    createdAt: now,
+    firstDirtyAt: now,
+    lastDirtyAt: now,
+    threadIds: ["1402"],
+  };
+
+  setState(state);
+
+  assert.equal(
+    hooks.isBackgroundSyncDebounceStateCoveringPendingRequest(state, pending),
+    true,
+    "shared debounce 覆盖 pending 的所有 source/thread/maxLastModified 时，应阻止 per-tab pending recovery。"
+  );
+  assert.deepEqual(
+    toPlainObject(hooks.getPendingAutoSyncSharedDebounceCoverage(pending, now)),
+    {
+      covered: true,
+      state,
+      reason: "covered_by_shared_debounce",
+    }
+  );
+};
+
 const main = () => {
   testReadProgressDirtyMergesIntoSingleSharedState();
   testSourceSpecificSettleWindows();
+  testForcedRetryUsesSharedSchedulerDueAt();
   testGeneralDueAtIsNotDelayedByReadProgress();
   testReadProgressTrailingDebounceStopsAtMaxWait();
   testOnlyOwnerSchedulesTimerAndValidLeasePreventsSteal();
@@ -745,6 +822,7 @@ const main = () => {
   testRuntimeStateDoesNotExposeLegacyPerTabTimerAsSharedOwner();
   testLockActiveReschedulePersistsDueAt();
   testSharedDebounceWriteRetriesWhenVerificationLosesRequest();
+  testPendingRecoveryRecognizesCoveredSharedDebounce();
 
   console.log("[background-sync-shared-debounce] Shared debounce scheduler checks passed.");
 };

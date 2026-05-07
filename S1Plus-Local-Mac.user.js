@@ -14,6 +14,7 @@
 // @grant        GM_openInTab
 // @grant        GM_download
 // @grant        GM_addValueChangeListener
+// @grant        GM_listValues
 // @connect      *
 // @run-at       document-start
 // ==/UserScript==

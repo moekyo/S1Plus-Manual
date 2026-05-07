@@ -1,5 +1,16 @@
 ## [Unreleased]
 
+### 🚀 跨标签架构性能重构 (Cross-tab Architecture Performance Refactor)
+
+- **标题同步状态 presence 分区存储**: presence 从单 key aggregate 拆为 per-tab key (`s1p_title_sync_status_tab:<tabId>`) + 独立 signal key，消除多标签页对同一个 key 的竞争写入与 JSON 序列化开销。
+- **owner lease 令牌校验**: owner lease 写入新增 `token` + `generation` 字段，写后立即读回校验，杜绝幽灵 owner 和误覆盖；`releaseTitleSyncStatusOwnerLease` 增加 tabId / token / 空 owner 三重 guard，消除空 `GM_deleteValue` 跨标签自激风险。
+- **跨标签 GM listener 防抖收口**: `GM_addValueChangeListener` 回调统一走 150ms debounce (`scheduleTitleSyncStatusCrossTabRuntimeSync`)，且 cross-tab 事件 `allowOwnerLeaseRefresh: false`，杜绝 owner lease storm。
+- **标题动画 tick 脱耦**: 运行中 `[同步中.]` 动画的 500ms tick 改为仅更新 `currentPrefix` + `document.title`，不再触发完整 `syncTitleSyncStatusRuntime`，避免每次 tick 执行 8+ 次同步 GM 读。
+- **display phase 短缓存**: `resolveAutoSyncIndicatorDisplayPhase` 新增 250ms TTL 缓存，标题层高频调用（heartbeat / animation tick）可在缓存命中时短路全部 GM 读取。
+- **pending recovery 接入 shared scheduler**: `recoverPendingAutoSyncIfNeeded` 新增 `getPendingAutoSyncSharedDebounceCoverage` 检查，已由 shared debounce 覆盖的 pending 不再各自排 per-tab 同步，消除连续打开多个页面时的 N 倍重复同步链。
+- **retry 链优先走 shared scheduler**: `scheduleBackgroundSyncRetry` 新增 `queueBackgroundSyncRetryViaSharedScheduler` 路径，锁争抢 retry 由 shared owner 统一排队，仅 fallback 时才走 per-tab timer。
+- **调试基础设施清理**: 移除性能诊断期间添加的 `s1pPerfDebug` 系统（`localStorage` 标记、指标收集、刷盘定时器等），恢复生产环境零开销。
+
 ### ✨ 多标签页同步重构 (Multi-tab Sync Redesign)
 
 - **启动同步改为显式 orchestrator**: 启动期现在会根据页面是否仍在“新鲜窗口”内决定执行完整启动链路、顺延每日首次同步，或直接跳过过期的启动专属检查，减少旧页面晚到触发自动刷新。

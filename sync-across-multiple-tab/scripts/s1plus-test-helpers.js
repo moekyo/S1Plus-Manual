@@ -149,6 +149,7 @@ const createSandbox = ({
     GM_openInTab: noop,
     GM_download: noop,
     GM_addValueChangeListener: noop,
+    GM_listValues: () => Array.from(store.keys()),
   };
 
   sandbox.window.document = sandbox.document;
