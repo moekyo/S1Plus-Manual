@@ -12,6 +12,7 @@ const BACKGROUND_SYNC_DEBOUNCE_STATE_KEY =
 const PENDING_AUTO_SYNC_KEY = "s1p_pending_auto_sync_request";
 const READ_PROGRESS_SYNC_DEBOUNCE_MS = 20 * 1000;
 const DEFAULT_SYNC_DEBOUNCE_MS = 5 * 1000;
+const AUTO_SYNC_CLEAN_STATE_COOLDOWN_MS = 5 * 60 * 1000;
 
 const REQUIRED_SHARED_DEBOUNCE_HOOKS = [
   "normalizeBackgroundSyncDebounceState",
@@ -91,6 +92,11 @@ const getSharedDebounceApi = () => {
     constants.BACKGROUND_SYNC_DEBOUNCE_FOLLOW_UP_SETTLE_MS >= 300 &&
       constants.BACKGROUND_SYNC_DEBOUNCE_FOLLOW_UP_SETTLE_MS <= 1500,
     "follow-up settle should stay in the short 300ms-1500ms window."
+  );
+  assert.equal(
+    constants.AUTO_SYNC_CLEAN_STATE_COOLDOWN_MS,
+    AUTO_SYNC_CLEAN_STATE_COOLDOWN_MS,
+    "clean-state fence cooldown should stay at the internal 5-minute window."
   );
 
   return {
@@ -239,6 +245,94 @@ const testForcedRetryUsesSharedSchedulerDueAt = () => {
     1200,
     "background retry 应由 shared debounce owner 排 timer，而不是每个 tab 自己排 retry timer。"
   );
+};
+
+const testCleanStateFenceSkipsCoveredAutoPush = () => {
+  const { hooks, store } = getSharedDebounceApi();
+  const now = 7_000_000;
+  store.set("s1p_last_sync_timestamp", now - 1000);
+  store.set("s1p_last_modified", now - 2000);
+
+  const cleanDecision = hooks.shouldSkipAutoSyncDueToCleanState({
+    direction: "push",
+    triggerSource: "background_push",
+    reason: "background_retry",
+    now,
+  });
+  assert.equal(cleanDecision.skip, true);
+  assert.equal(cleanDecision.result.reason, "clean_state_fence");
+  assert.equal(cleanDecision.result.direction, "push");
+
+  store.set(PENDING_AUTO_SYNC_KEY, {
+    version: 1,
+    source: "general",
+    lastModified: now - 1500,
+    maxLastModified: now - 1500,
+    createdAt: now - 1500,
+    firstDirtyAt: now - 1500,
+    lastDirtyAt: now - 1500,
+    sources: { general: 1 },
+    threadIds: [],
+  });
+  const pendingDecision = hooks.shouldSkipAutoSyncDueToCleanState({
+    direction: "push",
+    triggerSource: "background_push",
+    reason: "pending_recovery",
+    now,
+  });
+  assert.equal(
+    pendingDecision.skip,
+    false,
+    "pending auto-sync request exists 时不应被 clean-state fence 吞掉。"
+  );
+
+  store.delete(PENDING_AUTO_SYNC_KEY);
+  store.set("s1p_last_modified", now + 1);
+  const dirtyDecision = hooks.shouldSkipAutoSyncDueToCleanState({
+    direction: "push",
+    triggerSource: "background_push",
+    reason: "local_change",
+    now,
+  });
+  assert.equal(
+    dirtyDecision.skip,
+    false,
+    "本地 last_modified 晚于上次成功同步时，自动 push 必须放行。"
+  );
+};
+
+const testSharedDebounceDueClearsCoveredCleanState = () => {
+  const { hooks, store, getState } = getSharedDebounceApi();
+  const now = 8_000_000;
+  store.set("s1p_last_sync_timestamp", now - 1000);
+  store.set("s1p_last_modified", now - 2000);
+  hooks.setBackgroundSyncDebounceState(
+    seedSharedState({
+      generation: 22,
+      ownerTabId: "tab-a",
+      ownerLeaseUntil: now + 10_000,
+      dueAt: now - 1,
+      maxWaitUntil: now + 30_000,
+      firstDirtyAt: now - 5000,
+      lastDirtyAt: now - 4000,
+      maxLastModified: now - 2000,
+    })
+  );
+
+  let triggerCount = 0;
+  const result = hooks.handleSharedBackgroundSyncDebounceDue({
+    now,
+    tabId: "tab-a",
+    expectedGeneration: 22,
+    triggerRemoteSyncPush: () => {
+      triggerCount += 1;
+    },
+  });
+
+  assert.equal(result.status, "skipped");
+  assert.equal(result.reason, "clean_state_fence");
+  assert.equal(triggerCount, 0, "covered debounce state 不应继续触发实际 push。");
+  assert.equal(getState(), null, "covered debounce state 命中 fence 后应被清理。");
 };
 
 const testGeneralDueAtIsNotDelayedByReadProgress = () => {
@@ -809,6 +903,8 @@ const main = () => {
   testReadProgressDirtyMergesIntoSingleSharedState();
   testSourceSpecificSettleWindows();
   testForcedRetryUsesSharedSchedulerDueAt();
+  testCleanStateFenceSkipsCoveredAutoPush();
+  testSharedDebounceDueClearsCoveredCleanState();
   testGeneralDueAtIsNotDelayedByReadProgress();
   testReadProgressTrailingDebounceStopsAtMaxWait();
   testOnlyOwnerSchedulesTimerAndValidLeasePreventsSteal();
