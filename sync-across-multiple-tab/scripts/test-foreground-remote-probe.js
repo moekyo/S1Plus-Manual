@@ -164,6 +164,8 @@ const enabledSettings = {
   syncCheckOnReturnToForeground: true,
 };
 
+const CLEAN_STATE_COOLDOWN_MS = 5 * 60 * 1000;
+
 const testUnchangedRemoteSkipsFollowUpSync = async () => {
   const { sandbox, hooks } = createHarness();
   hooks.setSyncBaselineState({
@@ -278,6 +280,133 @@ const testSharedCooldownSuppressesRepeatedProbe = async () => {
   assert.strictEqual(fetchCount, 0, "共享 cooldown 命中后不应再次访问远端元数据。");
 };
 
+const testCleanStateFenceSkipsForegroundProbeWithinCooldown = async () => {
+  const { hooks, store } = createHarness();
+  const now = 1760000250000;
+  store.set("s1p_last_sync_timestamp", now - 60 * 1000);
+  store.set("s1p_last_modified", now - 90 * 1000);
+
+  let fetchCount = 0;
+  const result = await hooks.checkRemoteFreshnessOnForeground("pageshow", {
+    now,
+    settingsSnapshot: enabledSettings,
+    fetchRemoteData: async () => {
+      fetchCount += 1;
+      throw new Error("clean-state fence 命中后不应访问远端 metadata。");
+    },
+  });
+
+  assert.strictEqual(result.status, "skipped");
+  assert.strictEqual(result.reason, "clean_state_fence");
+  assert.strictEqual(result.direction, "pull");
+  assert.strictEqual(fetchCount, 0, "clean pull fence 应实现零网络开销。");
+  assert.strictEqual(
+    store.get("s1p_last_sync_timestamp"),
+    now - 60 * 1000,
+    "clean-state fence 跳过不应刷新 lastSuccessfulSyncTs。"
+  );
+};
+
+const testCleanStateFenceAllowsForegroundProbeAfterCooldownOrLocalMutation =
+  async () => {
+    {
+      const { hooks, store } = createHarness();
+      const now = 1760000260000;
+      store.set("s1p_last_sync_timestamp", now - CLEAN_STATE_COOLDOWN_MS - 1);
+      store.set("s1p_last_modified", now - CLEAN_STATE_COOLDOWN_MS - 10);
+      hooks.setSyncBaselineState({
+        contentHash: "baseline-hash",
+        remoteUpdatedAt: "2026-04-11T12:30:00Z",
+      });
+
+      let fetchCount = 0;
+      const result = await hooks.checkRemoteFreshnessOnForeground("visibility", {
+        now,
+        settingsSnapshot: enabledSettings,
+        fetchRemoteData: async () => {
+          fetchCount += 1;
+          return { meta: { updatedAt: "2026-04-11T12:30:00Z" } };
+        },
+      });
+
+      assert.strictEqual(fetchCount, 1);
+      assert.notStrictEqual(result.reason, "clean_state_fence");
+      assert.strictEqual(
+        result.status,
+        "unchanged",
+        "超过 clean-state cooldown 后应允许自动 pull probe 检查远端。"
+      );
+    }
+
+    {
+      const { hooks, store } = createHarness();
+      const now = 1760000270000;
+      store.set("s1p_last_sync_timestamp", now - 60 * 1000);
+      store.set("s1p_last_modified", now + 1);
+      hooks.setSyncBaselineState({
+        contentHash: "baseline-hash",
+        remoteUpdatedAt: "2026-04-11T12:30:00Z",
+      });
+
+      let fetchCount = 0;
+      const result = await hooks.checkRemoteFreshnessOnForeground(
+        "visibilitychange",
+        {
+          now,
+          settingsSnapshot: enabledSettings,
+          fetchRemoteData: async () => {
+            fetchCount += 1;
+            return { meta: { updatedAt: "2026-04-11T12:30:00Z" } };
+          },
+        }
+      );
+
+      assert.strictEqual(fetchCount, 1);
+      assert.notStrictEqual(
+        result.reason,
+        "clean_state_fence",
+        "本地有新变更时，自动 pull probe 不应被 clean-state fence 拦截。"
+      );
+    }
+  };
+
+const testCleanStateFenceDoesNotApplyToManualSource = () => {
+  const { hooks, store } = createHarness();
+  const now = 1760000280000;
+  store.set("s1p_last_sync_timestamp", now - 1000);
+  store.set("s1p_last_modified", now - 2000);
+
+  const decision = hooks.shouldSkipAutoSyncDueToCleanState({
+    direction: "push",
+    triggerSource: "manual_sync",
+    reason: "manual_push",
+    now,
+  });
+  assert.strictEqual(
+    decision.skip,
+    false,
+    "用户主动手动同步不应被 Clean State Fence 拦截。"
+  );
+};
+
+const testCleanStateFenceCodeGuards = () => {
+  assert.match(
+    sourceCode,
+    /const shouldRecordSuccessfulSyncTimestamp = \(action\) =>[\s\S]*?skipped_push_on_startup[\s\S]*?skip_push_on_foreground_followup/,
+    "未实际推送的 foreground follow-up soft block 不应刷新 lastSuccessfulSyncTs。"
+  );
+  assert.match(
+    sourceCode,
+    /const cleanStateFenceTriggerSource =[\s\S]*?normalizeSyncTriggerSource\(overrides\.triggerSource[\s\S]*?normalizeSyncTriggerSource\(normalizedReason\)/,
+    "foreground pull fence 应优先使用调用方显式 triggerSource，再回退到 reason 推导。"
+  );
+  assert.match(
+    sourceCode,
+    /const triggerRemoteSyncPush = \(reason = "local_change"[\s\S]*?shouldSkipAutoSyncDueToCleanState\(\{[\s\S]*?allowCoveredBackgroundDebounceState:\s*true/,
+    "background push 直调路径应允许已被成功同步覆盖的 debounce state 命中 clean-state fence。"
+  );
+};
+
 const testProbeLockRejectsOtherOwner = async () => {
   const { hooks } = createHarness();
   hooks.setRemoteProbeLockValue({
@@ -346,6 +475,10 @@ const testGuardConditionsSkipEarly = async () => {
   await testUnchangedRemoteSkipsFollowUpSync();
   await testChangedRemoteTriggersSafeFollowUpSync();
   await testSharedCooldownSuppressesRepeatedProbe();
+  await testCleanStateFenceSkipsForegroundProbeWithinCooldown();
+  await testCleanStateFenceAllowsForegroundProbeAfterCooldownOrLocalMutation();
+  testCleanStateFenceDoesNotApplyToManualSource();
+  testCleanStateFenceCodeGuards();
   await testProbeLockRejectsOtherOwner();
   await testGuardConditionsSkipEarly();
 

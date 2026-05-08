@@ -749,6 +749,8 @@
   const PENDING_CLEANUP_INFO_KEY = "s1p_pending_cleanup_info";
   const PENDING_AUTO_SYNC_KEY = "s1p_pending_auto_sync_request";
   const LAST_LOCAL_DIRTY_PROVENANCE_KEY = "s1p_last_local_dirty_provenance";
+  const LAST_LOCAL_MODIFIED_KEY = "s1p_last_modified";
+  const LAST_SYNC_TIMESTAMP_KEY = "s1p_last_sync_timestamp";
   const DEFERRED_STARTUP_SYNC_KEY = "s1p_deferred_startup_sync";
   const STARTUP_AUTO_SYNC_LAST_TS_KEY = "s1p_startup_auto_sync_last_ts";
   const SYNC_TRIGGER_SOURCE_DAILY_STARTUP = "daily_startup";
@@ -761,6 +763,8 @@
   const AUTO_SYNC_MODE_BACKGROUND = "background";
   const AUTO_SYNC_MODE_STARTUP = "startup";
   const AUTO_SYNC_MODE_FOREGROUND_FOLLOWUP = "foreground_followup";
+  const AUTO_SYNC_CLEAN_STATE_COOLDOWN_MS = 5 * 60 * 1000;
+  const AUTO_SYNC_CLEAN_STATE_LOG_THROTTLE_MS = 30 * 1000;
   const FOREGROUND_FOLLOWUP_SOFT_BLOCK_SCOPE_TAB = "tab";
   const FOREGROUND_FOLLOWUP_SOFT_BLOCK_SCOPE_THREAD = "thread";
   const LEGACY_AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND = "background";
@@ -8146,7 +8150,7 @@
     )
       ? normalizeLocalDirtyProvenance(options.dirtyProvenance)
       : getLastLocalDirtyProvenance();
-    const storedLastModified = Number(GM_getValue("s1p_last_modified", 0));
+    const storedLastModified = Number(GM_getValue(LAST_LOCAL_MODIFIED_KEY, 0));
     const resolvedTriggerSource =
       normalizeSyncTriggerSource(options.triggerSource, {
         reason: options.triggerReason,
@@ -11413,7 +11417,7 @@
     const normalizedSource = normalizePendingAutoSyncSource(source);
     const effectiveLastModified =
       normalizePendingAutoSyncTimestamp(lastModified) ||
-      normalizePendingAutoSyncTimestamp(GM_getValue("s1p_last_modified", 0)) ||
+      normalizePendingAutoSyncTimestamp(GM_getValue(LAST_LOCAL_MODIFIED_KEY, 0)) ||
       now;
     const nextPending = {
       version: 1,
@@ -11688,7 +11692,7 @@
     }
 
     const pendingLastModified = pending.maxLastModified || pending.lastModified || 0;
-    const currentLastModified = GM_getValue("s1p_last_modified", 0);
+    const currentLastModified = GM_getValue(LAST_LOCAL_MODIFIED_KEY, 0);
     const effectiveLastModified = Math.max(pendingLastModified, currentLastModified);
     const lastSyncTs = GM_getValue("s1p_last_sync_timestamp", 0);
 
@@ -13228,6 +13232,161 @@
     GM_deleteValue(BACKGROUND_SYNC_DEBOUNCE_STATE_KEY);
     clearReadProgressSyncDebounceState();
   };
+
+  let lastAutoSyncCleanStateFenceLogKey = "";
+  let lastAutoSyncCleanStateFenceLogAt = 0;
+
+  const normalizeAutoSyncCleanStateDirection = (direction = "") => {
+    const normalized = String(direction || "").trim();
+    return normalized === "push" || normalized === "pull" ? normalized : "";
+  };
+
+  const isAutoSyncCleanStateFenceSource = (source = "") => {
+    const normalizedSource = normalizeSyncTriggerSource(source);
+    // Fence applies to automatic trigger sources; manual and startup checks keep
+    // their existing explicit skip rules so users can force a sync when needed.
+    return Boolean(
+      normalizedSource &&
+        normalizedSource !== SYNC_TRIGGER_SOURCE_MANUAL_SYNC &&
+        normalizedSource !== SYNC_TRIGGER_SOURCE_DAILY_STARTUP &&
+        normalizedSource !== SYNC_TRIGGER_SOURCE_PER_LOAD
+    );
+  };
+
+  const getAutoSyncCleanStateSnapshot = (now = Date.now()) => {
+    const pending = getPendingAutoSyncRequest();
+    const debounceState = getBackgroundSyncDebounceState();
+    const lastSuccessfulSyncTs =
+      normalizePendingAutoSyncTimestamp(GM_getValue(LAST_SYNC_TIMESTAMP_KEY, 0));
+    const lastLocalMutationTs =
+      normalizePendingAutoSyncTimestamp(GM_getValue(LAST_LOCAL_MODIFIED_KEY, 0));
+    const pendingMaxLastModified =
+      pending?.maxLastModified || pending?.lastModified || 0;
+    const debounceMaxLastModified = debounceState?.maxLastModified || 0;
+    return {
+      now,
+      lastSuccessfulSyncTs,
+      lastLocalMutationTs,
+      timeSinceLastSync: lastSuccessfulSyncTs > 0 ? now - lastSuccessfulSyncTs : 0,
+      pending,
+      pendingExists: Boolean(pending),
+      pendingMaxLastModified,
+      backgroundDebounceState: debounceState,
+      backgroundDebounceExists: Boolean(debounceState),
+      backgroundDebounceMaxLastModified: debounceMaxLastModified,
+    };
+  };
+
+  const logAutoSyncCleanStateFenceSkip = ({
+    direction = "",
+    triggerSource = "",
+    reason = "",
+    snapshot = {},
+  } = {}) => {
+    const now = Number(snapshot.now) || Date.now();
+    const logKey = [
+      normalizeAutoSyncCleanStateDirection(direction) || "unknown",
+      normalizeSyncTriggerSource(triggerSource) || "unknown_source",
+      normalizeRemoteProbeText(reason, 80) || "unknown_reason",
+    ].join(":");
+    if (
+      logKey === lastAutoSyncCleanStateFenceLogKey &&
+      now - lastAutoSyncCleanStateFenceLogAt <
+        AUTO_SYNC_CLEAN_STATE_LOG_THROTTLE_MS
+    ) {
+      return;
+    }
+    lastAutoSyncCleanStateFenceLogKey = logKey;
+    lastAutoSyncCleanStateFenceLogAt = now;
+    console.log(
+      `S1 Plus: Clean State Fence 命中，已跳过本轮自动${
+        direction === "pull" ? "拉取检查" : "推送"
+      }。`,
+      {
+        direction,
+        triggerSource,
+        reason,
+        lastSuccessfulSyncTs: snapshot.lastSuccessfulSyncTs || 0,
+        lastLocalMutationTs: snapshot.lastLocalMutationTs || 0,
+        timeSinceLastSync: snapshot.timeSinceLastSync || 0,
+        pendingExists: snapshot.pendingExists === true,
+        pendingMaxLastModified: snapshot.pendingMaxLastModified || 0,
+        backgroundDebounceExists: snapshot.backgroundDebounceExists === true,
+        backgroundDebounceMaxLastModified:
+          snapshot.backgroundDebounceMaxLastModified || 0,
+      }
+    );
+  };
+
+  const shouldSkipAutoSyncDueToCleanState = ({
+    direction = "",
+    triggerSource = "",
+    reason = "",
+    now = Date.now(),
+    allowCoveredBackgroundDebounceState = false,
+  } = {}) => {
+    const normalizedDirection = normalizeAutoSyncCleanStateDirection(direction);
+    const normalizedTriggerSource = normalizeSyncTriggerSource(triggerSource);
+    if (
+      !normalizedDirection ||
+      !isAutoSyncCleanStateFenceSource(normalizedTriggerSource)
+    ) {
+      return { skip: false, reason: "not_auto_clean_state_source" };
+    }
+
+    const snapshot = getAutoSyncCleanStateSnapshot(now);
+    const lastSuccessfulSyncTs = snapshot.lastSuccessfulSyncTs;
+    if (lastSuccessfulSyncTs <= 0) {
+      return { skip: false, reason: "no_successful_sync" };
+    }
+    if (snapshot.pendingExists) {
+      return { skip: false, reason: "pending_auto_sync_request_exists", snapshot };
+    }
+    if (
+      snapshot.backgroundDebounceExists &&
+      !(
+        allowCoveredBackgroundDebounceState === true &&
+        snapshot.backgroundDebounceMaxLastModified <= lastSuccessfulSyncTs
+      )
+    ) {
+      return { skip: false, reason: "background_debounce_state_exists", snapshot };
+    }
+    if (snapshot.lastLocalMutationTs > lastSuccessfulSyncTs) {
+      return { skip: false, reason: "local_mutation_after_last_sync", snapshot };
+    }
+    if (
+      normalizedDirection === "pull" &&
+      snapshot.timeSinceLastSync > AUTO_SYNC_CLEAN_STATE_COOLDOWN_MS
+    ) {
+      return { skip: false, reason: "pull_cooldown_elapsed", snapshot };
+    }
+
+    const result = {
+      status: "skipped",
+      reason: "clean_state_fence",
+      direction: normalizedDirection,
+      triggerSource: normalizedTriggerSource,
+      triggerReason: normalizeRemoteProbeText(reason, 120) || "",
+      lastSuccessfulSyncTs,
+      lastLocalMutationTs: snapshot.lastLocalMutationTs,
+      timeSinceLastSync: snapshot.timeSinceLastSync,
+      pendingExists: snapshot.pendingExists,
+      backgroundDebounceExists: snapshot.backgroundDebounceExists,
+    };
+    logAutoSyncCleanStateFenceSkip({
+      direction: normalizedDirection,
+      triggerSource: normalizedTriggerSource,
+      reason,
+      snapshot,
+    });
+    return {
+      skip: true,
+      reason: "clean_state_fence",
+      snapshot,
+      result,
+    };
+  };
+
   const mergeBackgroundSyncDebounceSources = (state, source) => {
     const normalizedSource = normalizeBackgroundSyncDebounceSource(source);
     const sources = normalizeBackgroundSyncDebounceSources(state?.sources);
@@ -13492,6 +13651,22 @@
         status: "scheduled",
         reason: "sync_lock_active",
         delayMs: retryDelayMs,
+      };
+    }
+
+    const cleanStateFence = shouldSkipAutoSyncDueToCleanState({
+      direction: "push",
+      triggerSource: SYNC_TRIGGER_SOURCE_BACKGROUND_PUSH,
+      reason: state.reason,
+      now,
+      allowCoveredBackgroundDebounceState: true,
+    });
+    if (cleanStateFence.skip) {
+      clearBackgroundSyncDebounceState();
+      return {
+        ...cleanStateFence.result,
+        generation: state.generation,
+        maxLastModified: state.maxLastModified,
       };
     }
 
@@ -13786,7 +13961,7 @@
     const source = normalizeBackgroundSyncDebounceSource(request.source);
     const requestLastModified =
       normalizeBackgroundSyncDebounceTimestamp(request.lastModified) ||
-      GM_getValue("s1p_last_modified", 0) ||
+      GM_getValue(LAST_LOCAL_MODIFIED_KEY, 0) ||
       now;
     const tabId = getBackgroundSyncDebounceTabId(options);
     let savedState = null;
@@ -13961,6 +14136,7 @@
     BACKGROUND_SYNC_DEBOUNCE_OWNER_HEARTBEAT_MS,
     BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
     BACKGROUND_SYNC_DEBOUNCE_FOLLOW_UP_SETTLE_MS,
+    AUTO_SYNC_CLEAN_STATE_COOLDOWN_MS,
   });
   const clearAutoSyncRuntimeQueue = () => {
     hasPendingBackgroundSync = false;
@@ -13993,7 +14169,7 @@
       lastModified:
         typeof lastModified === "number"
           ? lastModified
-          : GM_getValue("s1p_last_modified", 0),
+          : GM_getValue(LAST_LOCAL_MODIFIED_KEY, 0),
       threadId:
         threadId ||
         (typeof getCurrentThreadId === "function" && getCurrentThreadId()) ||
@@ -14007,7 +14183,7 @@
     source = "general",
     { triggerSync = true } = {}
   ) => {
-    const currentLastModified = GM_getValue("s1p_last_modified", 0);
+    const currentLastModified = GM_getValue(LAST_LOCAL_MODIFIED_KEY, 0);
     const nextLastModified = Math.max(Date.now(), currentLastModified + 1);
     recordLastLocalDirtyProvenance({
       source,
@@ -14074,7 +14250,7 @@
       }
       return;
     }
-    GM_setValue("s1p_last_modified", nextLastModified);
+    GM_setValue(LAST_LOCAL_MODIFIED_KEY, nextLastModified);
     recordReadProgressLastModifiedDebug("written");
     if (triggerSync) {
       const readiness = isBackgroundSyncDebounceRequestAllowed();
@@ -21373,7 +21549,7 @@
       compactBlockedPostsForSync,
     });
     const dataSnapshot = deepCloneSyncValue(data);
-    const lastUpdated = GM_getValue("s1p_last_modified", 0);
+    const lastUpdated = GM_getValue(LAST_LOCAL_MODIFIED_KEY, 0);
     const lastUpdatedFormatted = new Date(lastUpdated).toLocaleString("zh-CN", {
       hour12: false,
     });
@@ -21762,7 +21938,8 @@
       }
 
       const importedLastUpdated = Number(imported.lastUpdated);
-      const currentLastModified = Number(GM_getValue("s1p_last_modified", 0)) || 0;
+      const currentLastModified =
+        Number(GM_getValue(LAST_LOCAL_MODIFIED_KEY, 0)) || 0;
       const maxAllowedImportedLastUpdated =
         Date.now() + SYNC_TIMESTAMP_SKEW_TOLERANCE_MS;
       const normalizedImportedLastUpdated =
@@ -21773,7 +21950,7 @@
         normalizedImportedLastUpdated,
         currentLastModified + 1
       );
-      GM_setValue("s1p_last_modified", safeLastUpdated);
+      GM_setValue(LAST_LOCAL_MODIFIED_KEY, safeLastUpdated);
       if (suppressSyncTrigger && hasSuppressedSyncedDataTransform) {
         updateLastModifiedTimestamp("general", { triggerSync: false });
       }
@@ -22659,7 +22836,7 @@
     const lastModified =
       pending?.maxLastModified ||
       pending?.lastModified ||
-      GM_getValue("s1p_last_modified", 0) ||
+      GM_getValue(LAST_LOCAL_MODIFIED_KEY, 0) ||
       now;
     const threadId = Array.isArray(pending?.threadIds)
       ? pending.threadIds[0] || ""
@@ -23006,6 +23183,17 @@
       return;
     }
 
+    const cleanStateFence = shouldSkipAutoSyncDueToCleanState({
+      direction: "push",
+      triggerSource: SYNC_TRIGGER_SOURCE_BACKGROUND_PUSH,
+      reason,
+      allowCoveredBackgroundDebounceState: true,
+    });
+    if (cleanStateFence.skip) {
+      hasPendingBackgroundSync = false;
+      return cleanStateFence.result;
+    }
+
     if (!isInitialSyncInProgress && !isBackgroundAutoSyncInProgress) {
       backgroundSyncRetryAttempts = 0;
     }
@@ -23326,8 +23514,14 @@
       }
       return baseResult;
     };
+    const shouldRecordSuccessfulSyncTimestamp = (action) =>
+      action !== "skipped_push_on_startup" &&
+      action !== "skip_push_on_foreground_followup";
     const asSuccessResult = (action, syncBaseline = null, extraResult = null) => {
       syncOutcome = "success";
+      if (shouldRecordSuccessfulSyncTimestamp(action)) {
+        GM_setValue(LAST_SYNC_TIMESTAMP_KEY, Date.now());
+      }
       if (action === "skipped_push_on_startup") {
         // 启动安全模式命中“本地较新”时，冻结后续自动同步，等待手动同步决策。
         const pauseReason =
@@ -23846,13 +24040,13 @@
       } else if (syncOutcome === "lock_lost") {
         console.warn("S1 Plus (Sync): 由于锁失效，当前自动同步已提前终止。");
       } else if (syncDirtyDuringSync) {
-        const currentLastModified = GM_getValue("s1p_last_modified", 0);
+        const currentLastModified = GM_getValue(LAST_LOCAL_MODIFIED_KEY, 0);
         const nextDirtyLastModified = Math.max(
           syncDirtyTimestamp || Date.now(),
           currentLastModified + 1
         );
         GM_setValue(
-          "s1p_last_modified",
+          LAST_LOCAL_MODIFIED_KEY,
           nextDirtyLastModified
         );
         if (syncDirtyNeedsFollowUpSync) {
@@ -24489,6 +24683,24 @@
         overrides.requestForegroundRemoteSyncCheckOverrides || {};
     }
 
+    const cleanStateFenceTriggerSource =
+      normalizeSyncTriggerSource(overrides.triggerSource, {
+        reason: normalizedReason,
+      }) ||
+      normalizeSyncTriggerSource(normalizedReason) ||
+      (isVisibleRemoteFreshnessPollingReason(normalizedReason)
+        ? SYNC_TRIGGER_SOURCE_VISIBLE_POLL
+        : SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME);
+    const cleanStateFence = shouldSkipAutoSyncDueToCleanState({
+      direction: "pull",
+      triggerSource: cleanStateFenceTriggerSource,
+      reason: normalizedReason,
+      now,
+    });
+    if (cleanStateFence.skip) {
+      return finalizeResult(cleanStateFence.result);
+    }
+
     markForegroundProbeLocalAttempt(now);
 
     const runPromise = (async () => {
@@ -24865,13 +25077,17 @@
       getAutoSyncRuntimePendingDisplayState,
       getAutoSyncRuntimeRunningDisplayState,
       setAutoSyncIndicatorResolvedPhase,
+      setAutoSyncIndicatorActiveOperation,
       startAutoSyncIndicatorCycle,
       finishAutoSyncIndicatorCycle,
+      getAutoSyncIndicatorOperationFromSyncAction,
       getAutoSyncIndicatorPhaseFromResult,
       getAutoSyncIndicatorReasonFromResult,
       getAutoSyncIndicatorTitle: (...args) => getAutoSyncIndicatorTitle(...args),
       getAutoSyncIndicatorDisplayKind: (...args) =>
         getAutoSyncIndicatorDisplayKind(...args),
+      getAutoSyncCleanStateSnapshot,
+      shouldSkipAutoSyncDueToCleanState,
       decideSyncActionByVersion,
       getForegroundRemoteChangeKind,
       getSyncResultRemoteWriteMatchKind,
