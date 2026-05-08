@@ -773,6 +773,10 @@
   const AUTO_SYNC_INDICATOR_PHASE_SUCCESS = "success";
   const AUTO_SYNC_INDICATOR_PHASE_FAILURE = "failure";
   const AUTO_SYNC_INDICATOR_PHASE_CONFLICT = "conflict";
+  const AUTO_SYNC_INDICATOR_OPERATION_SYNC = "sync";
+  const AUTO_SYNC_INDICATOR_OPERATION_PUSH = "push";
+  const AUTO_SYNC_INDICATOR_OPERATION_PULL = "pull";
+  const AUTO_SYNC_INDICATOR_OPERATION_PROBE = "probe";
   const AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND =
     SYNC_TRIGGER_SOURCE_BACKGROUND_PUSH;
   const AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP =
@@ -786,8 +790,13 @@
     SYNC_TRIGGER_SOURCE_VISIBLE_POLL;
   const AUTO_SYNC_INDICATOR_SOURCE_MANUAL_SYNC =
     SYNC_TRIGGER_SOURCE_MANUAL_SYNC;
-  const AUTO_SYNC_INDICATOR_ENTER_DURATION_MS = 220;
-  const AUTO_SYNC_INDICATOR_EXIT_DURATION_MS = 170;
+  const AUTO_SYNC_INDICATOR_ENTER_DURATION_MS = 320;
+  const AUTO_SYNC_INDICATOR_EXIT_DURATION_MS = 260;
+  const AUTO_SYNC_INDICATOR_TRANSITION_CLEANUP_MS =
+    Math.max(
+      AUTO_SYNC_INDICATOR_ENTER_DURATION_MS,
+      AUTO_SYNC_INDICATOR_EXIT_DURATION_MS
+    ) + 40;
   const AUTO_SYNC_INDICATOR_DEBUG_PANEL_ID = "s1p-auto-sync-debug-panel";
   const AUTO_SYNC_INDICATOR_DEBUG_PHASE_OPTIONS = Object.freeze({
     allowRunning: true,
@@ -907,13 +916,14 @@
     },
   ]);
   const AUTO_SYNC_INDICATOR_PENDING_STALE_MS = 90 * 1000;
-  const AUTO_SYNC_INDICATOR_SUCCESS_TTL_MS = 2 * 60 * 1000;
-  const AUTO_SYNC_INDICATOR_FAILURE_TTL_MS = 5 * 60 * 1000;
-  const AUTO_SYNC_INDICATOR_CONFLICT_TTL_MS = 10 * 60 * 1000;
+  const AUTO_SYNC_INDICATOR_RUNNING_MIN_VISIBLE_MS = 650;
+  const AUTO_SYNC_INDICATOR_SUCCESS_TTL_MS = 2400;
+  const AUTO_SYNC_INDICATOR_FAILURE_TTL_MS = 9000;
+  const AUTO_SYNC_INDICATOR_CONFLICT_TTL_MS = 12 * 1000;
   const TITLE_SYNC_STATUS_ANIMATION_INTERVAL_MS = 500;
-  const TITLE_SYNC_STATUS_SUCCESS_TTL_MS = AUTO_SYNC_INDICATOR_SUCCESS_TTL_MS;
-  const TITLE_SYNC_STATUS_FAILURE_TTL_MS = AUTO_SYNC_INDICATOR_FAILURE_TTL_MS;
-  const TITLE_SYNC_STATUS_CONFLICT_TTL_MS = AUTO_SYNC_INDICATOR_CONFLICT_TTL_MS;
+  const TITLE_SYNC_STATUS_SUCCESS_TTL_MS = 2 * 60 * 1000;
+  const TITLE_SYNC_STATUS_FAILURE_TTL_MS = 5 * 60 * 1000;
+  const TITLE_SYNC_STATUS_CONFLICT_TTL_MS = 10 * 60 * 1000;
   const TITLE_SYNC_STATUS_PRESENCE_TTL_MS = 2 * 60 * 1000;
   const TITLE_SYNC_STATUS_OWNER_LEASE_MS = 25 * 1000;
   const TITLE_SYNC_STATUS_HEARTBEAT_MS = 10 * 1000;
@@ -1799,6 +1809,54 @@
         transform: translateY(2px) scale(0.78) rotate(8deg);
       }
     }
+    @keyframes s1p-auto-sync-indicator-soft-enter {
+      0% {
+        opacity: 0;
+        transform: translateY(1px) scale(0.82) rotate(0deg);
+      }
+      58% {
+        opacity: 0.92;
+        transform: translateY(0) scale(1.04) rotate(0deg);
+      }
+      100% {
+        opacity: 1;
+        transform: translateY(0) scale(1) rotate(0deg);
+      }
+    }
+    @keyframes s1p-auto-sync-indicator-soft-exit {
+      0% {
+        opacity: 1;
+        transform: translateY(0) scale(1) rotate(0deg);
+      }
+      100% {
+        opacity: 0;
+        transform: translateY(1px) scale(0.88) rotate(0deg);
+      }
+    }
+    @keyframes s1p-auto-sync-indicator-active-to-idle-enter {
+      0% {
+        opacity: 0;
+        transform: translateY(0) scale(0.48) rotate(0deg);
+      }
+      42% {
+        opacity: 0;
+        transform: translateY(0) scale(0.62) rotate(0deg);
+      }
+      100% {
+        opacity: 1;
+        transform: translateY(0) scale(1) rotate(0deg);
+      }
+    }
+    @keyframes s1p-auto-sync-indicator-probe-exit {
+      0% {
+        opacity: 1;
+        transform: translateY(0) scale(1) rotate(0deg);
+      }
+      100% {
+        opacity: 0;
+        transform: translate(-1px, 1px) scale(0.88) rotate(-5deg);
+      }
+    }
     @keyframes s1p-auto-sync-indicator-idle-to-pending-enter {
       0% {
         opacity: 0.42;
@@ -1837,15 +1895,34 @@
         transform: translateX(0) scale(1);
       }
     }
-    @keyframes s1p-auto-sync-probe-sweep {
+    @keyframes s1p-auto-sync-operation-breathe {
       0%,
       100% {
-        opacity: 0.28;
-        transform: translateX(-1.4px) scaleX(0.72);
+        transform: scale(0.94);
+        opacity: 0.78;
       }
-      48% {
+      50% {
+        transform: scale(1.09);
         opacity: 1;
-        transform: translateX(1.1px) scaleX(1);
+      }
+    }
+    @keyframes s1p-auto-sync-probe-search {
+      0%,
+      100% {
+        transform: translate(0, -1px) rotate(-3deg);
+        opacity: 0.88;
+      }
+      25% {
+        transform: translate(1.2px, 0) rotate(3deg);
+        opacity: 1;
+      }
+      50% {
+        transform: translate(0, 1px) rotate(5deg);
+        opacity: 0.96;
+      }
+      75% {
+        transform: translate(-1.2px, 0) rotate(-3deg);
+        opacity: 1;
       }
     }
     #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-entering {
@@ -1853,6 +1930,18 @@
     }
     #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-exiting {
       animation: s1p-auto-sync-indicator-exit ${AUTO_SYNC_INDICATOR_EXIT_DURATION_MS}ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    }
+    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-entering.s1p-auto-sync-transition-soft-enter {
+      animation: s1p-auto-sync-indicator-soft-enter ${AUTO_SYNC_INDICATOR_ENTER_DURATION_MS}ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    }
+    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-exiting.s1p-auto-sync-transition-soft-exit {
+      animation: s1p-auto-sync-indicator-soft-exit ${AUTO_SYNC_INDICATOR_EXIT_DURATION_MS}ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    }
+    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-entering.s1p-auto-sync-transition-active-to-idle {
+      animation: s1p-auto-sync-indicator-active-to-idle-enter ${AUTO_SYNC_INDICATOR_ENTER_DURATION_MS}ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    }
+    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-exiting.s1p-auto-sync-transition-probe-origin {
+      animation: s1p-auto-sync-indicator-probe-exit ${AUTO_SYNC_INDICATOR_ENTER_DURATION_MS}ms cubic-bezier(0.16, 1, 0.3, 1) both;
     }
     #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-entering.s1p-auto-sync-transition-idle-to-pending {
       animation: none;
@@ -1883,7 +1972,7 @@
     #s1p-nav-auto-sync-indicator svg {
       width: 16px;
       height: 16px;
-      color: var(--t, var(--s1p-t));
+      color: var(--s1p-t);
       position: relative;
       top: 1.5px;
       vector-effect: non-scaling-stroke;
@@ -1903,18 +1992,28 @@
     #s1p-nav-auto-sync-indicator[data-sync-state="running"] svg {
       opacity: 1;
     }
-    #s1p-nav-auto-sync-indicator[data-sync-kind="probe"] svg {
-      color: color-mix(in srgb, var(--s1p-t) 70%, var(--s1p-pri) 30%);
-    }
-    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-probe path,
-    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-probe circle {
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-push path,
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-pull path,
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-probe path {
       stroke: currentColor;
-      stroke-width: 1.8px;
+      stroke-width: 0.6px;
+      stroke-linejoin: round;
     }
-    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-probe path:nth-of-type(2) {
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-push,
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-pull {
       transform-box: fill-box;
       transform-origin: center;
-      animation: s1p-auto-sync-probe-sweep 1.1s ease-in-out infinite;
+      animation: s1p-auto-sync-operation-breathe 1.15s ease-in-out infinite;
+    }
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-probe {
+      transform-box: fill-box;
+      transform-origin: center;
+      animation: s1p-auto-sync-probe-search 1.35s ease-in-out infinite;
+    }
+    #s1p-nav-auto-sync-indicator[data-sync-state="pending"] svg.s1p-auto-sync-kind-push,
+    #s1p-nav-auto-sync-indicator[data-sync-state="pending"] svg.s1p-auto-sync-kind-pull {
+      animation-duration: 1.55s;
+      opacity: 0.86;
     }
     #s1p-nav-auto-sync-indicator[data-sync-state="success"] svg {
       opacity: 1;
@@ -2031,7 +2130,9 @@
       #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer .s1p-pending-dot {
         animation: none !important;
       }
-      #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-probe path {
+      #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-push,
+      #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-pull,
+      #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-probe {
         animation: none !important;
       }
     }
@@ -9771,6 +9872,23 @@
     phase === AUTO_SYNC_INDICATOR_PHASE_RUNNING ||
     phase === AUTO_SYNC_INDICATOR_PHASE_PENDING;
 
+  const isAutoSyncIndicatorResultPhase = (phase) =>
+    phase === AUTO_SYNC_INDICATOR_PHASE_SUCCESS ||
+    phase === AUTO_SYNC_INDICATOR_PHASE_FAILURE ||
+    phase === AUTO_SYNC_INDICATOR_PHASE_CONFLICT;
+
+  const normalizeAutoSyncIndicatorOperation = (operation) => {
+    switch (String(operation || "").trim()) {
+      case AUTO_SYNC_INDICATOR_OPERATION_SYNC:
+      case AUTO_SYNC_INDICATOR_OPERATION_PUSH:
+      case AUTO_SYNC_INDICATOR_OPERATION_PULL:
+      case AUTO_SYNC_INDICATOR_OPERATION_PROBE:
+        return String(operation || "").trim();
+      default:
+        return "";
+    }
+  };
+
   const resolveSyncTriggerSourceFromReasonText = (reason = "") => {
     const normalizedReason = String(reason || "").trim();
     if (!normalizedReason) {
@@ -9797,9 +9915,11 @@
 
     if (
       normalizedReason === SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME ||
+      normalizedReason === "visibility" ||
       normalizedReason === "visibilitychange" ||
       normalizedReason === "pageshow" ||
       normalizedReason.endsWith(`:${SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME}`) ||
+      normalizedReason.endsWith(":visibility") ||
       normalizedReason.endsWith(":visibilitychange") ||
       normalizedReason.endsWith(":pageshow")
     ) {
@@ -9948,6 +10068,7 @@
     const token = typeof raw.token === "string" ? raw.token : "";
     const source = normalizeAutoSyncIndicatorSource(raw.source);
     const reason = normalizeAutoSyncIndicatorReason(raw.reason);
+    const operation = normalizeAutoSyncIndicatorOperation(raw.operation);
     const isActivePhase = isAutoSyncIndicatorActivePhase(phase);
 
     const fallbackResolvedPhase =
@@ -9978,6 +10099,7 @@
       token,
       source,
       reason,
+      operation,
       lastResolvedPhase,
       lastResolvedTimestamp,
       lastResolvedSource,
@@ -10131,7 +10253,19 @@
     return getAutoSyncRuntimePendingDisplayState().hasPending === true;
   };
 
-  const getAutoSyncIndicatorResolvedTtlMs = (phase) => {
+  const getAutoSyncIndicatorResolvedTtlMs = (phase, options = {}) => {
+    if (options.ttlProfile === "title") {
+      switch (phase) {
+        case AUTO_SYNC_INDICATOR_PHASE_SUCCESS:
+          return TITLE_SYNC_STATUS_SUCCESS_TTL_MS;
+        case AUTO_SYNC_INDICATOR_PHASE_FAILURE:
+          return TITLE_SYNC_STATUS_FAILURE_TTL_MS;
+        case AUTO_SYNC_INDICATOR_PHASE_CONFLICT:
+          return TITLE_SYNC_STATUS_CONFLICT_TTL_MS;
+        default:
+          return 0;
+      }
+    }
     switch (phase) {
       case AUTO_SYNC_INDICATOR_PHASE_SUCCESS:
         return AUTO_SYNC_INDICATOR_SUCCESS_TTL_MS;
@@ -10146,9 +10280,77 @@
 
   let autoSyncIndicatorWriteInFlightCount = 0;
   let autoSyncIndicatorDisplayPhaseCache = null;
+  let autoSyncIndicatorDeferredResolveTimer = null;
+  let autoSyncIndicatorDeferredResolveToken = "";
 
   const invalidateAutoSyncIndicatorDisplayPhaseCache = () => {
     autoSyncIndicatorDisplayPhaseCache = null;
+  };
+
+  const clearAutoSyncIndicatorDeferredResolve = () => {
+    if (autoSyncIndicatorDeferredResolveTimer) {
+      clearTimeout(autoSyncIndicatorDeferredResolveTimer);
+      autoSyncIndicatorDeferredResolveTimer = null;
+    }
+    autoSyncIndicatorDeferredResolveToken = "";
+  };
+
+  const getAutoSyncIndicatorMinimumRunningDelayMs = (stateInput = null) => {
+    const state = normalizeAutoSyncIndicatorState(stateInput);
+    if (state.phase !== AUTO_SYNC_INDICATOR_PHASE_RUNNING) {
+      return 0;
+    }
+    const startedAt = Number(state.timestamp) || 0;
+    if (!startedAt) {
+      return 0;
+    }
+    const elapsedMs = Date.now() - startedAt;
+    return Math.max(
+      0,
+      AUTO_SYNC_INDICATOR_RUNNING_MIN_VISIBLE_MS - elapsedMs
+    );
+  };
+
+  const shouldDeferAutoSyncIndicatorResolvedPhase = (
+    current,
+    requestedPhase,
+    options = {}
+  ) =>
+    options.skipMinVisibleDelay !== true &&
+    isAutoSyncIndicatorResultPhase(requestedPhase) &&
+    getAutoSyncIndicatorMinimumRunningDelayMs(current) > 0;
+
+  const scheduleAutoSyncIndicatorDeferredResolve = ({
+    token = "",
+    phase = "",
+    source = "",
+    reason = "",
+    delayMs = 0,
+  } = {}) => {
+    clearAutoSyncIndicatorDeferredResolve();
+    const normalizedPhase = normalizeAutoSyncIndicatorPhase(phase, {
+      allowRunning: false,
+      allowPending: false,
+    });
+    if (!normalizedPhase) {
+      return false;
+    }
+    autoSyncIndicatorDeferredResolveToken = String(token || "");
+    autoSyncIndicatorDeferredResolveTimer = setTimeout(() => {
+      autoSyncIndicatorDeferredResolveTimer = null;
+      const expectedToken = autoSyncIndicatorDeferredResolveToken;
+      autoSyncIndicatorDeferredResolveToken = "";
+      const current = getAutoSyncIndicatorState();
+      if (expectedToken && current.token !== expectedToken) {
+        return;
+      }
+      setAutoSyncIndicatorResolvedPhase(normalizedPhase, {
+        source,
+        reason,
+        skipMinVisibleDelay: true,
+      });
+    }, Math.max(0, Math.floor(Number(delayMs) || 0)) + 20);
+    return true;
   };
 
   const persistAutoSyncIndicatorState = (nextState) => {
@@ -10200,11 +10402,13 @@
     stateInput = null,
     options = {}
   ) => {
+    const ttlProfile = options.ttlProfile === "title" ? "title" : "indicator";
     const canUseCache = options.allowCache === true && !stateInput;
     if (
       canUseCache &&
       autoSyncIndicatorDisplayPhaseCache &&
-      autoSyncIndicatorDisplayPhaseCache.expiresAt > Date.now()
+      autoSyncIndicatorDisplayPhaseCache.expiresAt > Date.now() &&
+      autoSyncIndicatorDisplayPhaseCache.ttlProfile === ttlProfile
     ) {
       return { ...autoSyncIndicatorDisplayPhaseCache.state };
     }
@@ -10223,12 +10427,14 @@
       displayPhase,
       displaySource: normalizeAutoSyncIndicatorSource(displaySource),
       displayReason: normalizeAutoSyncIndicatorReason(displayReason),
+      displayOperation: normalizeAutoSyncIndicatorOperation(state.operation),
     });
     const finishDisplayState = (resolvedState, branch = "") => {
       if (canUseCache) {
         autoSyncIndicatorDisplayPhaseCache = {
           expiresAt:
             Date.now() + AUTO_SYNC_INDICATOR_DISPLAY_PHASE_CACHE_TTL_MS,
+          ttlProfile,
           state: { ...resolvedState },
         };
       }
@@ -10268,7 +10474,9 @@
           reason: normalizeAutoSyncIndicatorReason(reason),
         };
       }
-      const ttlMs = getAutoSyncIndicatorResolvedTtlMs(normalizedPhase);
+      const ttlMs = getAutoSyncIndicatorResolvedTtlMs(normalizedPhase, {
+        ttlProfile,
+      });
       if (ttlMs <= 0) {
         return {
           phase: normalizedPhase,
@@ -10291,6 +10499,20 @@
     };
 
     if (state.phase === AUTO_SYNC_INDICATOR_PHASE_RUNNING) {
+      const runningStartedAt = Number(state.timestamp) || 0;
+      const runningVisibleMs = runningStartedAt
+        ? now - runningStartedAt
+        : AUTO_SYNC_INDICATOR_RUNNING_MIN_VISIBLE_MS;
+      if (runningVisibleMs < AUTO_SYNC_INDICATOR_RUNNING_MIN_VISIBLE_MS) {
+        return finishDisplayState(
+          buildDisplayState(
+            AUTO_SYNC_INDICATOR_PHASE_RUNNING,
+            state.source,
+            state.reason
+          ),
+          "running_min_visible"
+        );
+      }
       if (autoSyncIndicatorWriteInFlightCount > 0) {
         return finishDisplayState(
           buildDisplayState(
@@ -10433,6 +10655,7 @@
       token: token || current.token || "",
       source: resolvedSource,
       reason: resolvedReason,
+      operation: "",
       lastResolvedPhase: resolvedPhase,
       lastResolvedTimestamp: now,
       lastResolvedSource: resolvedSource,
@@ -10442,7 +10665,8 @@
 
   const setAutoSyncIndicatorPendingState = (
     source = AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
-    reason = "background_queue"
+    reason = "background_queue",
+    options = {}
   ) => {
     const current = getAutoSyncIndicatorState();
     if (current.phase === AUTO_SYNC_INDICATOR_PHASE_RUNNING) {
@@ -10461,21 +10685,30 @@
     const resolvedSource =
       normalizeAutoSyncIndicatorSource(source) ||
       AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND;
+    clearAutoSyncIndicatorDeferredResolve();
     persistAutoSyncIndicatorState({
       phase: AUTO_SYNC_INDICATOR_PHASE_PENDING,
       timestamp: now,
       token: current.token || "",
       source: resolvedSource,
       reason: normalizeAutoSyncIndicatorReason(reason),
+      operation: normalizeAutoSyncIndicatorOperation(options.operation),
       ...lastResolvedSnapshot,
     });
     return true;
   };
 
-  const setAutoSyncIndicatorPendingPhase = (reason = "background_queue") =>
+  const setAutoSyncIndicatorPendingPhase = (
+    reason = "background_queue",
+    options = {}
+  ) =>
     setAutoSyncIndicatorPendingState(
       AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
-      reason
+      reason,
+      {
+        operation: AUTO_SYNC_INDICATOR_OPERATION_PUSH,
+        ...options,
+      }
     );
 
   const startAutoSyncIndicatorCycle = (source = "", options = {}) => {
@@ -10487,12 +10720,14 @@
     const token = `${BACKGROUND_SYNC_OWNER_ID}_${Date.now()}_${Math.random()
       .toString(36)
       .slice(2, 7)}`;
+    clearAutoSyncIndicatorDeferredResolve();
     persistAutoSyncIndicatorState({
       phase: AUTO_SYNC_INDICATOR_PHASE_RUNNING,
       timestamp: Date.now(),
       token,
       source: resolvedSource,
       reason: normalizeAutoSyncIndicatorReason(options.reason),
+      operation: normalizeAutoSyncIndicatorOperation(options.operation),
       ...lastResolvedSnapshot,
     });
     return token;
@@ -10508,6 +10743,7 @@
       allowPending: false,
     });
     const persistResolvedState = (persistToken) => {
+      clearAutoSyncIndicatorDeferredResolve();
       persistAutoSyncIndicatorState(
         buildAutoSyncIndicatorResolvedState({
           current,
@@ -10525,9 +10761,34 @@
         current.phase === AUTO_SYNC_INDICATOR_PHASE_RUNNING &&
         !hasAnyActiveSyncLock()
       ) {
+        if (
+          shouldDeferAutoSyncIndicatorResolvedPhase(
+            current,
+            requestedPhase,
+            options
+          )
+        ) {
+          return scheduleAutoSyncIndicatorDeferredResolve({
+            token: current.token || token,
+            phase: requestedPhase,
+            source: options.source,
+            reason: options.reason,
+            delayMs: getAutoSyncIndicatorMinimumRunningDelayMs(current),
+          });
+        }
         return persistResolvedState(current.token || token);
       }
       return false;
+    }
+
+    if (shouldDeferAutoSyncIndicatorResolvedPhase(current, requestedPhase, options)) {
+      return scheduleAutoSyncIndicatorDeferredResolve({
+        token,
+        phase: requestedPhase,
+        source: options.source,
+        reason: options.reason,
+        delayMs: getAutoSyncIndicatorMinimumRunningDelayMs(current),
+      });
     }
 
     return persistResolvedState(token);
@@ -10542,6 +10803,16 @@
       return false;
     }
     const current = getAutoSyncIndicatorState();
+    if (shouldDeferAutoSyncIndicatorResolvedPhase(current, resolvedPhase, options)) {
+      return scheduleAutoSyncIndicatorDeferredResolve({
+        token: current.token || "",
+        phase: resolvedPhase,
+        source: options.source,
+        reason: options.reason,
+        delayMs: getAutoSyncIndicatorMinimumRunningDelayMs(current),
+      });
+    }
+    clearAutoSyncIndicatorDeferredResolve();
     persistAutoSyncIndicatorState(
       buildAutoSyncIndicatorResolvedState({
         current,
@@ -10551,6 +10822,71 @@
       })
     );
     return true;
+  };
+
+  const refreshAutoSyncIndicatorRuntimeDisplay = (
+    reason = "runtime_state_changed"
+  ) => {
+    clearAutoSyncIndicatorDeferredResolve();
+    invalidateAutoSyncIndicatorDisplayPhaseCache();
+    renderNavbarAutoSyncIndicator();
+    notifyTitleSyncStatusUnifiedStateChanged(reason);
+  };
+
+  const refreshAutoSyncIndicatorAfterManualLockRelease = () =>
+    refreshAutoSyncIndicatorRuntimeDisplay("manual_sync_lock_released");
+
+  const setAutoSyncIndicatorActiveOperation = (operation, options = {}) => {
+    const normalizedOperation = normalizeAutoSyncIndicatorOperation(operation);
+    if (!normalizedOperation) {
+      return false;
+    }
+    const current = getAutoSyncIndicatorState();
+    if (!isAutoSyncIndicatorActivePhase(current.phase)) {
+      return false;
+    }
+    const nextSource =
+      normalizeAutoSyncIndicatorSource(options.source) || current.source || "";
+    const nextReason =
+      normalizeAutoSyncIndicatorReason(options.reason) || current.reason || "";
+    if (
+      current.operation === normalizedOperation &&
+      current.source === nextSource &&
+      current.reason === nextReason
+    ) {
+      return false;
+    }
+    persistAutoSyncIndicatorState({
+      ...current,
+      timestamp: Date.now(),
+      source: nextSource,
+      reason: nextReason,
+      operation: normalizedOperation,
+    });
+    return true;
+  };
+
+  const getAutoSyncIndicatorOperationFromSyncAction = (action) => {
+    switch (String(action || "").trim()) {
+      case "pull":
+      case "force_pull":
+      case "pulled":
+      case "force_pulled":
+      case "initial_pull_recover":
+      case "manual_pull":
+        return AUTO_SYNC_INDICATOR_OPERATION_PULL;
+      case "push":
+      case "pushed":
+      case "pushed_initial":
+      case "initial_push_seed":
+      case "manual_push":
+      case "manual_force_push_repair":
+      case "cleanup_shortcut_push":
+      case "smart_progress_push":
+        return AUTO_SYNC_INDICATOR_OPERATION_PUSH;
+      default:
+        return "";
+    }
   };
 
   const getAutoSyncIndicatorPhaseFromResult = (result = null) => {
@@ -23088,6 +23424,10 @@
         );
       if (Object.keys(rawRemoteData).length === 0) {
         console.log(`S1 Plus (Sync): 远程为空，推送本地数据...`);
+        setAutoSyncIndicatorActiveOperation(AUTO_SYNC_INDICATOR_OPERATION_PUSH, {
+          source: resolvedTriggerSource,
+          reason: "initial_push",
+        });
         const localData = await runWithAutoSyncLockGuard(
           "export_local_data_initial_push",
           () => exportLocalDataObject(exportLocalDataOptions)
@@ -23160,6 +23500,14 @@
         forcePullOnStartup: settings.syncForcePullOnStartup,
       });
       const syncAction = versionDecision.action;
+      const indicatorOperationForAction =
+        getAutoSyncIndicatorOperationFromSyncAction(syncAction);
+      if (indicatorOperationForAction) {
+        setAutoSyncIndicatorActiveOperation(indicatorOperationForAction, {
+          source: resolvedTriggerSource,
+          reason: versionDecision.reason || syncAction,
+        });
+      }
       const guardAgainstDirtyPullOverwrite = (stage) => {
         if (!syncDirtyNeedsFollowUpSync) {
           return null;
@@ -23411,6 +23759,10 @@
             console.warn(
               "S1 Plus (Sync): 检测到仅阅读进度分歧，正在执行自动合并并回写云端。"
             );
+            setAutoSyncIndicatorActiveOperation(AUTO_SYNC_INDICATOR_OPERATION_PUSH, {
+              source: resolvedTriggerSource,
+              reason: "read_progress_auto_merge",
+            });
             const { payload: mergedPayload, contentHash: mergedContentHash } =
               await runWithAutoSyncLockGuard(
                 "build_merged_read_progress_payload",
@@ -23825,6 +24177,7 @@
     } finally {
       if (foregroundRemoteSyncCheckInFlightPromise === runPromise) {
         foregroundRemoteSyncCheckInFlightPromise = null;
+        refreshAutoSyncIndicatorRuntimeDisplay("foreground_followup_finished");
       }
     }
   };
@@ -23920,7 +24273,10 @@
     foregroundRemoteSyncRetryDueAt = Date.now() + retryDelayMs;
     setAutoSyncIndicatorPendingState(
       resolvedSource,
-      "foreground_followup_retry"
+      "foreground_followup_retry",
+      {
+        operation: AUTO_SYNC_INDICATOR_OPERATION_PULL,
+      }
     );
 
     if (foregroundRemoteSyncRetryTimer) {
@@ -24436,6 +24792,7 @@
     })();
 
     foregroundProbeInFlightPromise = runPromise;
+    refreshAutoSyncIndicatorRuntimeDisplay("foreground_probe_started");
     try {
       return await runPromise;
     } catch (error) {
@@ -24452,6 +24809,7 @@
     } finally {
       if (foregroundProbeInFlightPromise === runPromise) {
         foregroundProbeInFlightPromise = null;
+        refreshAutoSyncIndicatorRuntimeDisplay("foreground_probe_finished");
       }
     }
   };
@@ -26265,6 +26623,7 @@
   const TITLE_BASE_PATTERN =
     /^(.+?)(?:论坛)?(?:\s*-\s*Stage1st)?\s*-\s*stage1\/s1\s+游戏动漫论坛$/;
   const getTitleSyncStatusTestConstants = () => ({
+    AUTO_SYNC_INDICATOR_RUNNING_MIN_VISIBLE_MS,
     TITLE_SYNC_STATUS_ANIMATION_INTERVAL_MS,
     TITLE_SYNC_STATUS_SUCCESS_TTL_MS,
     TITLE_SYNC_STATUS_FAILURE_TTL_MS,
@@ -27102,7 +27461,9 @@
     if (!isTitleSyncStatusResultPhase(displayPhase)) {
       return;
     }
-    const ttlMs = getAutoSyncIndicatorResolvedTtlMs(displayPhase);
+    const ttlMs = getAutoSyncIndicatorResolvedTtlMs(displayPhase, {
+      ttlProfile: "title",
+    });
     const timestamp = getTitleSyncStatusPhaseTimestamp(resolvedState);
     const remainingMs = ttlMs - (now - timestamp);
     if (remainingMs <= 0) {
@@ -27232,6 +27593,7 @@
 
     const resolvedState = resolveAutoSyncIndicatorDisplayPhase(null, {
       allowCache: true,
+      ttlProfile: "title",
     });
     const nextDisplayPhase = resolveTitleSyncStatusDisplayPhase(resolvedState);
     if (
@@ -27766,6 +28128,46 @@
     return menu;
   };
 
+  let navbarAutoSyncIndicatorExpiryTimer = null;
+  const stopNavbarAutoSyncIndicatorExpiryTimer = () => {
+    if (navbarAutoSyncIndicatorExpiryTimer) {
+      clearTimeout(navbarAutoSyncIndicatorExpiryTimer);
+      navbarAutoSyncIndicatorExpiryTimer = null;
+    }
+  };
+
+  const getAutoSyncIndicatorDisplayTimestamp = (stateInput = null) => {
+    const source = sanitizeRecordObject(stateInput);
+    return (
+      Number(
+        source.displayTimestamp ||
+          source.timestamp ||
+          source.lastResolvedTimestamp
+      ) || 0
+    );
+  };
+
+  const scheduleNavbarAutoSyncIndicatorExpiryTimer = (
+    resolvedState,
+    displayPhase,
+    now = Date.now()
+  ) => {
+    stopNavbarAutoSyncIndicatorExpiryTimer();
+    if (!isAutoSyncIndicatorResultPhase(displayPhase)) {
+      return;
+    }
+    const ttlMs = getAutoSyncIndicatorResolvedTtlMs(displayPhase);
+    const timestamp = getAutoSyncIndicatorDisplayTimestamp(resolvedState);
+    const remainingMs = ttlMs - (now - timestamp);
+    if (remainingMs <= 0) {
+      return;
+    }
+    navbarAutoSyncIndicatorExpiryTimer = setTimeout(() => {
+      navbarAutoSyncIndicatorExpiryTimer = null;
+      renderNavbarAutoSyncIndicator();
+    }, remainingMs + AUTO_SYNC_INDICATOR_EXIT_DURATION_MS + 25);
+  };
+
   /**
    * [NEW] 强制推送处理器，用于手动将本地数据覆盖到云端。
    */
@@ -27847,6 +28249,7 @@
       forceSyncInFlight = false;
       stopManualSyncLockHeartbeat();
       releaseManualSyncLock();
+      refreshAutoSyncIndicatorAfterManualLockRelease();
       if (icon) {
         icon.classList.remove("s1p-syncing");
         setTimeout(() => (icon.style.transform = ""), 1200); // 重置 transform
@@ -27929,6 +28332,7 @@
       forceSyncInFlight = false;
       stopManualSyncLockHeartbeat();
       releaseManualSyncLock();
+      refreshAutoSyncIndicatorAfterManualLockRelease();
       if (icon) {
         icon.classList.remove("s1p-syncing");
         setTimeout(() => (icon.style.transform = ""), 1200); // 重置 transform
@@ -27957,6 +28361,48 @@
     }
   };
 
+  const resolveAutoSyncIndicatorDisplayOperation = (stateInput = null) => {
+    const phase =
+      normalizeAutoSyncIndicatorPhase(stateInput?.displayPhase, {
+        allowRunning: true,
+      }) || AUTO_SYNC_INDICATOR_PHASE_IDLE;
+    if (!isAutoSyncIndicatorActivePhase(phase)) {
+      return "";
+    }
+    const reason = normalizeAutoSyncIndicatorReason(
+      stateInput?.displayReason || stateInput?.reason
+    );
+    if (reason === "foreground_probe_in_flight") {
+      return AUTO_SYNC_INDICATOR_OPERATION_PROBE;
+    }
+
+    const explicitOperation =
+      normalizeAutoSyncIndicatorOperation(stateInput?.displayOperation) ||
+      normalizeAutoSyncIndicatorOperation(stateInput?.operation);
+    if (
+      explicitOperation &&
+      explicitOperation !== AUTO_SYNC_INDICATOR_OPERATION_PROBE
+    ) {
+      return explicitOperation;
+    }
+
+    const source = normalizeAutoSyncIndicatorSource(
+      stateInput?.displaySource || stateInput?.source
+    );
+    switch (source) {
+      case AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND:
+        return AUTO_SYNC_INDICATOR_OPERATION_PUSH;
+      case AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP:
+      case AUTO_SYNC_INDICATOR_SOURCE_PER_LOAD:
+      case AUTO_SYNC_INDICATOR_SOURCE_PAGE_LOAD_VISIBLE:
+      case AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME:
+      case AUTO_SYNC_INDICATOR_SOURCE_VISIBLE_POLL:
+        return AUTO_SYNC_INDICATOR_OPERATION_PULL;
+      default:
+        return AUTO_SYNC_INDICATOR_OPERATION_SYNC;
+    }
+  };
+
   const getAutoSyncIndicatorTitle = (stateInput = null) => {
     const resolvedState =
       stateInput && typeof stateInput === "object" && "displayPhase" in stateInput
@@ -27973,28 +28419,32 @@
       resolvedState.displayReason || resolvedState.reason
     );
     const sourceLabel = getAutoSyncIndicatorSourceLabel(source);
+    const displayOperation =
+      resolveAutoSyncIndicatorDisplayOperation(resolvedState);
 
     switch (phase) {
       case AUTO_SYNC_INDICATOR_PHASE_PENDING:
         if (reason === "foreground_followup_retry") {
           return `自动同步：${sourceLabel}等待重试`;
         }
+        if (displayOperation === AUTO_SYNC_INDICATOR_OPERATION_PUSH) {
+          return `自动同步：${sourceLabel}待推送`;
+        }
+        if (displayOperation === AUTO_SYNC_INDICATOR_OPERATION_PULL) {
+          return `自动同步：${sourceLabel}待拉取`;
+        }
         return sourceLabel === "自动同步"
           ? "自动同步：待处理"
           : `自动同步：${sourceLabel}待处理`;
       case AUTO_SYNC_INDICATOR_PHASE_RUNNING:
         if (reason === "foreground_probe_in_flight") {
-          return `自动同步：${sourceLabel}正在探测`;
+          return `自动同步：${sourceLabel}正在检查云端更新`;
         }
-        if (reason === "foreground_followup_in_flight") {
-          return `自动同步：${sourceLabel}命中更新，正在同步`;
+        if (displayOperation === AUTO_SYNC_INDICATOR_OPERATION_PUSH) {
+          return `自动同步：${sourceLabel}推送中`;
         }
-        if (
-          source === AUTO_SYNC_INDICATOR_SOURCE_PAGE_LOAD_VISIBLE ||
-          source === AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME ||
-          source === AUTO_SYNC_INDICATOR_SOURCE_VISIBLE_POLL
-        ) {
-          return `自动同步：${sourceLabel}命中更新，正在同步`;
+        if (displayOperation === AUTO_SYNC_INDICATOR_OPERATION_PULL) {
+          return `自动同步：${sourceLabel}拉取中`;
         }
         return sourceLabel === "自动同步"
           ? "自动同步：同步中"
@@ -28020,41 +28470,43 @@
     }
   };
 
-  const isForegroundProbeDisplayState = (stateInput = null) => {
-    const phase =
-      normalizeAutoSyncIndicatorPhase(stateInput?.displayPhase, {
-        allowRunning: true,
-      }) || AUTO_SYNC_INDICATOR_PHASE_IDLE;
-    const reason = normalizeAutoSyncIndicatorReason(
-      stateInput?.displayReason || stateInput?.reason
-    );
-    return (
-      phase === AUTO_SYNC_INDICATOR_PHASE_RUNNING &&
-      reason === "foreground_probe_in_flight"
-    );
-  };
   const getAutoSyncIndicatorDisplayKind = (stateInput = null) => {
-    if (isForegroundProbeDisplayState(stateInput)) {
-      return "probe";
-    }
     const phase =
       normalizeAutoSyncIndicatorPhase(stateInput?.displayPhase, {
         allowRunning: true,
       }) || AUTO_SYNC_INDICATOR_PHASE_IDLE;
-    if (phase === AUTO_SYNC_INDICATOR_PHASE_RUNNING) {
-      return "sync";
+    if (isAutoSyncIndicatorActivePhase(phase)) {
+      return (
+        resolveAutoSyncIndicatorDisplayOperation(stateInput) ||
+        AUTO_SYNC_INDICATOR_OPERATION_SYNC
+      );
     }
     return phase;
   };
   const getAutoSyncIndicatorIconHtmlByPhase = (phase, displayKind = "") => {
+    const normalizedDisplayKind =
+      normalizeAutoSyncIndicatorOperation(displayKind) || displayKind;
+    const syncDotsSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 16" fill="currentColor"><circle class="s1p-dot s1p-pending-dot" cx="4" cy="8" r="1.75"></circle><circle class="s1p-dot s1p-pending-dot" cx="10" cy="8" r="1.75"></circle><circle class="s1p-dot s1p-pending-dot" cx="16" cy="8" r="1.75"></circle></svg>`;
+    const pushCloudSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M1 14.5C1 12.1716 2.22429 10.1291 4.06426 8.9812C4.56469 5.044 7.92686 2 12 2C16.0731 2 19.4353 5.044 19.9357 8.9812C21.7757 10.1291 23 12.1716 23 14.5C23 17.9216 20.3562 20.7257 17 20.9811L7 21C3.64378 20.7257 1 17.9216 1 14.5ZM16.8483 18.9868C19.1817 18.8093 21 16.8561 21 14.5C21 12.927 20.1884 11.4962 18.8771 10.6781L18.0714 10.1754L17.9517 9.23338C17.5735 6.25803 15.0288 4 12 4C8.97116 4 6.42647 6.25803 6.0483 9.23338L5.92856 10.1754L5.12288 10.6781C3.81156 11.4962 3 12.927 3 14.5C3 16.8561 4.81833 18.8093 7.1517 18.9868L7.325 19H16.675L16.8483 18.9868ZM13 13V17H11V13H8L12 8L16 13H13Z"></path></svg>`;
+    const pullCloudSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M1 14.5C1 12.1716 2.22429 10.1291 4.06426 8.9812C4.56469 5.044 7.92686 2 12 2C16.0731 2 19.4353 5.044 19.9357 8.9812C21.7757 10.1291 23 12.1716 23 14.5C23 17.9216 20.3562 20.7257 17 20.9811L7 21C3.64378 20.7257 1 17.9216 1 14.5ZM16.8483 18.9868C19.1817 18.8093 21 16.8561 21 14.5C21 12.927 20.1884 11.4962 18.8771 10.6781L18.0714 10.1754L17.9517 9.23338C17.5735 6.25803 15.0288 4 12 4C8.97116 4 6.42647 6.25803 6.0483 9.23338L5.92856 10.1754L5.12288 10.6781C3.81156 11.4962 3 12.927 3 14.5C3 16.8561 4.81833 18.8093 7.1517 18.9868L7.325 19H16.675L16.8483 18.9868ZM13 12H16L12 17L8 12H11V8H13V12Z"></path></svg>`;
+    const probeSearchSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M11 2C15.968 2 20 6.032 20 11C20 15.968 15.968 20 11 20C6.032 20 2 15.968 2 11C2 6.032 6.032 2 11 2ZM11 18C14.8675 18 18 14.8675 18 11C18 7.1325 14.8675 4 11 4C7.1325 4 4 7.1325 4 11C4 14.8675 7.1325 18 11 18ZM19.4853 18.0711L22.3137 20.8995L20.8995 22.3137L18.0711 19.4853L19.4853 18.0711Z"></path></svg>`;
+    const getActiveOperationSvg = () => {
+      switch (normalizedDisplayKind) {
+        case AUTO_SYNC_INDICATOR_OPERATION_PUSH:
+          return pushCloudSvg;
+        case AUTO_SYNC_INDICATOR_OPERATION_PULL:
+          return pullCloudSvg;
+        case AUTO_SYNC_INDICATOR_OPERATION_PROBE:
+          return probeSearchSvg;
+        default:
+          return syncDotsSvg;
+      }
+    };
     switch (phase) {
       case AUTO_SYNC_INDICATOR_PHASE_PENDING:
-        return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 16" fill="currentColor"><circle class="s1p-pending-dot" cx="4" cy="8" r="1.75"></circle><circle class="s1p-pending-dot" cx="10" cy="8" r="1.75"></circle><circle class="s1p-pending-dot" cx="16" cy="8" r="1.75"></circle></svg>`;
+        return getActiveOperationSvg();
       case AUTO_SYNC_INDICATOR_PHASE_RUNNING:
-        if (displayKind === "probe") {
-          return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="7" r="3.9"></circle><path d="M10.9 9.9L15 13"></path><path d="M5.6 7H10.2"></path></svg>`;
-        }
-        return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 16" fill="currentColor"><circle class="s1p-dot" cx="4" cy="8" r="1.75"></circle><circle class="s1p-dot" cx="10" cy="8" r="1.75"></circle><circle class="s1p-dot" cx="16" cy="8" r="1.75"></circle></svg>`;
+        return getActiveOperationSvg();
       case AUTO_SYNC_INDICATOR_PHASE_SUCCESS:
         return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="1 1 22 22" fill="currentColor"><path d="M4 12C4 7.58172 7.58172 4 12 4C16.4183 4 20 7.58172 20 12C20 16.4183 16.4183 20 12 20C7.58172 20 4 16.4183 4 12ZM12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2ZM17.4571 9.45711L16.0429 8.04289L11 13.0858L8.20711 10.2929L6.79289 11.7071L11 15.9142L17.4571 9.45711Z"></path></svg>`;
       case AUTO_SYNC_INDICATOR_PHASE_FAILURE:
@@ -28115,6 +28567,7 @@
         token: "",
         source: "",
         reason: "",
+        operation: "",
         lastResolvedPhase: AUTO_SYNC_INDICATOR_PHASE_IDLE,
         lastResolvedTimestamp: now,
         lastResolvedSource: "",
@@ -28127,6 +28580,7 @@
       token: `debug_${normalizedPhase}_${now}`,
       source: normalizedSource,
       reason: normalizedReason,
+      operation: "",
       lastResolvedPhase:
         isPendingPhase ? AUTO_SYNC_INDICATOR_PHASE_IDLE : normalizedPhase,
       lastResolvedTimestamp: now,
@@ -28413,7 +28867,9 @@
 
   const getNavbarAutoSyncIndicatorTransitionClassNames = (
     fromPhase = "",
-    toPhase = ""
+    toPhase = "",
+    fromKind = "",
+    toKind = ""
   ) => {
     const normalizedFrom =
       normalizeAutoSyncIndicatorPhase(fromPhase, {
@@ -28423,19 +28879,102 @@
       normalizeAutoSyncIndicatorPhase(toPhase, {
         allowRunning: true,
       }) || "";
+    const normalizedFromKind =
+      normalizeAutoSyncIndicatorOperation(fromKind) || normalizedFrom;
+    const normalizedToKind =
+      normalizeAutoSyncIndicatorOperation(toKind) || normalizedTo;
+    const result = {
+      entering: "",
+      exiting: "",
+    };
+    const addEntering = (className) => {
+      if (!className) {
+        return;
+      }
+      result.entering = [result.entering, className].filter(Boolean).join(" ");
+    };
+    const addExiting = (className) => {
+      if (!className) {
+        return;
+      }
+      result.exiting = [result.exiting, className].filter(Boolean).join(" ");
+    };
     if (
       normalizedFrom === AUTO_SYNC_INDICATOR_PHASE_IDLE &&
       normalizedTo === AUTO_SYNC_INDICATOR_PHASE_PENDING
     ) {
-      return {
-        entering: "s1p-auto-sync-transition-idle-to-pending",
-        exiting: "s1p-auto-sync-transition-idle-to-pending-origin",
-      };
+      addEntering("s1p-auto-sync-transition-idle-to-pending");
+      addExiting("s1p-auto-sync-transition-idle-to-pending-origin");
+      return result;
     }
-    return {
-      entering: "",
-      exiting: "",
-    };
+    if (
+      isAutoSyncIndicatorActivePhase(normalizedFrom) &&
+      normalizedTo === AUTO_SYNC_INDICATOR_PHASE_IDLE
+    ) {
+      addEntering("s1p-auto-sync-transition-active-to-idle");
+      addExiting("s1p-auto-sync-transition-soft-exit");
+    } else if (
+      isAutoSyncIndicatorActivePhase(normalizedFrom) &&
+      isAutoSyncIndicatorResultPhase(normalizedTo)
+    ) {
+      addEntering("s1p-auto-sync-transition-soft-enter");
+      addExiting("s1p-auto-sync-transition-soft-exit");
+    } else if (
+      isAutoSyncIndicatorResultPhase(normalizedFrom) &&
+      normalizedTo === AUTO_SYNC_INDICATOR_PHASE_IDLE
+    ) {
+      addEntering("s1p-auto-sync-transition-active-to-idle");
+      addExiting("s1p-auto-sync-transition-soft-exit");
+    } else if (
+      normalizedFrom &&
+      normalizedTo &&
+      normalizedFrom !== normalizedTo
+    ) {
+      addEntering("s1p-auto-sync-transition-soft-enter");
+      addExiting("s1p-auto-sync-transition-soft-exit");
+    }
+    if (
+      normalizedFromKind === AUTO_SYNC_INDICATOR_OPERATION_PROBE &&
+      normalizedToKind !== AUTO_SYNC_INDICATOR_OPERATION_PROBE
+    ) {
+      addExiting("s1p-auto-sync-transition-probe-origin");
+    }
+    return result;
+  };
+
+  const addNavbarAutoSyncIndicatorClassNames = (element, classNames = "") => {
+    if (!element || !classNames) {
+      return;
+    }
+    String(classNames)
+      .split(/\s+/)
+      .filter(Boolean)
+      .forEach((className) => element.classList.add(className));
+  };
+
+  const getNavbarAutoSyncIndicatorLayerDisplayKind = (layer) =>
+    layer?.dataset?.kind || layer?.dataset?.phase || "";
+
+  const getNavbarAutoSyncIndicatorTransitionTargetLayer = (
+    iconHost,
+    displayPhase,
+    displayKind
+  ) => {
+    if (!iconHost?.__s1pAutoSyncIndicatorCleanupTimer) {
+      return null;
+    }
+    const layers = Array.from(
+      iconHost.querySelectorAll(".s1p-nav-auto-sync-indicator-layer")
+    );
+    const targetLayer = layers[layers.length - 1];
+    if (
+      targetLayer &&
+      targetLayer.dataset.phase === displayPhase &&
+      getNavbarAutoSyncIndicatorLayerDisplayKind(targetLayer) === displayKind
+    ) {
+      return targetLayer;
+    }
+    return null;
   };
 
   const stabilizeNavbarAutoSyncIndicatorLayers = (iconHost) => {
@@ -28463,7 +29002,7 @@
     activeLayer.classList.add("is-active");
     iconHost.dataset.renderedPhase = activeLayer.dataset.phase || "";
     iconHost.dataset.renderedKind =
-      activeLayer.dataset.kind || activeLayer.dataset.phase || "";
+      getNavbarAutoSyncIndicatorLayerDisplayKind(activeLayer);
     return activeLayer;
   };
 
@@ -28715,6 +29254,7 @@
       if (existingIndicator) {
         existingIndicator.remove();
       }
+      stopNavbarAutoSyncIndicatorExpiryTimer();
       return null;
     }
 
@@ -28769,9 +29309,14 @@
       }) || AUTO_SYNC_INDICATOR_PHASE_IDLE;
     const displayKind = getAutoSyncIndicatorDisplayKind(resolvedState);
     const reducedMotion = isS1pReducedMotionPreferred();
-    const currentLayer = stabilizeNavbarAutoSyncIndicatorLayers(iconHost);
+    const currentLayer =
+      getNavbarAutoSyncIndicatorTransitionTargetLayer(
+        iconHost,
+        displayPhase,
+        displayKind
+      ) || stabilizeNavbarAutoSyncIndicatorLayers(iconHost);
     const currentPhase = currentLayer?.dataset.phase || "";
-    const currentKind = currentLayer?.dataset.kind || currentPhase;
+    const currentKind = getNavbarAutoSyncIndicatorLayerDisplayKind(currentLayer);
 
     if (currentPhase !== displayPhase || currentKind !== displayKind) {
       const nextLayer = createNavbarAutoSyncIndicatorLayer(
@@ -28780,7 +29325,9 @@
       );
       const transitionClassNames = getNavbarAutoSyncIndicatorTransitionClassNames(
         currentPhase,
-        displayPhase
+        displayPhase,
+        currentKind,
+        displayKind
       );
       if (!currentLayer || reducedMotion) {
         nextLayer.classList.add("is-active");
@@ -28788,13 +29335,15 @@
       } else {
         currentLayer.classList.remove("is-active");
         currentLayer.classList.add("is-exiting");
-        if (transitionClassNames.exiting) {
-          currentLayer.classList.add(transitionClassNames.exiting);
-        }
+        addNavbarAutoSyncIndicatorClassNames(
+          currentLayer,
+          transitionClassNames.exiting
+        );
         nextLayer.classList.add("is-entering");
-        if (transitionClassNames.entering) {
-          nextLayer.classList.add(transitionClassNames.entering);
-        }
+        addNavbarAutoSyncIndicatorClassNames(
+          nextLayer,
+          transitionClassNames.entering
+        );
         iconHost.appendChild(nextLayer);
         iconHost.__s1pAutoSyncIndicatorCleanupTimer = setTimeout(() => {
           if (!nextLayer.isConnected) {
@@ -28804,7 +29353,7 @@
           nextLayer.classList.remove("is-entering");
           nextLayer.classList.add("is-active");
           iconHost.__s1pAutoSyncIndicatorCleanupTimer = null;
-        }, AUTO_SYNC_INDICATOR_ENTER_DURATION_MS);
+        }, AUTO_SYNC_INDICATOR_TRANSITION_CLEANUP_MS);
       }
       iconHost.dataset.renderedPhase = displayPhase;
       iconHost.dataset.renderedKind = displayKind;
@@ -28815,6 +29364,14 @@
     indicatorLi.dataset.syncSource =
       normalizeAutoSyncIndicatorSource(resolvedState.displaySource) || "";
     setCustomTooltip(indicatorLi, getAutoSyncIndicatorTitle(resolvedState));
+    if (isDebugPreviewActive) {
+      stopNavbarAutoSyncIndicatorExpiryTimer();
+    } else {
+      scheduleNavbarAutoSyncIndicatorExpiryTimer(
+        resolvedState,
+        displayPhase
+      );
+    }
     renderNavbarPersistentSyncAlert();
     updateAutoSyncIndicatorDebugPanelState();
   };
@@ -36585,6 +37142,7 @@
     return manualSyncInFlightPromise.finally(() => {
       stopManualSyncLockHeartbeat();
       releaseManualSyncLock();
+      refreshAutoSyncIndicatorAfterManualLockRelease();
       manualSyncLockHeldByThisRun = false;
       manualSyncInFlightPromise = null;
     });
@@ -41153,7 +41711,10 @@
           );
           setAutoSyncIndicatorPendingState(
             AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP,
-            "daily_startup_deferred"
+            "daily_startup_deferred",
+            {
+              operation: AUTO_SYNC_INDICATOR_OPERATION_PULL,
+            }
           );
           console.log(
             `S1 Plus: 启动同步流程触发过晚（${elapsedMs}ms），每日首次同步已顺延到下一个新页面执行。`
