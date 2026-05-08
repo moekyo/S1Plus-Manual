@@ -262,13 +262,16 @@ const testUnifiedStateMappingAndTtl = () => {
   const now = Date.now();
 
   assert.equal(constants.TITLE_SYNC_STATUS_ANIMATION_INTERVAL_MS, 500);
+  assert.equal(constants.AUTO_SYNC_INDICATOR_RUNNING_MIN_VISIBLE_MS, 650);
   assert.equal(constants.TITLE_SYNC_STATUS_SUCCESS_TTL_MS, 2 * 60 * 1000);
   assert.equal(constants.TITLE_SYNC_STATUS_FAILURE_TTL_MS, 5 * 60 * 1000);
   assert.equal(constants.TITLE_SYNC_STATUS_CONFLICT_TTL_MS, 10 * 60 * 1000);
   assert.equal(constants.TITLE_SYNC_STATUS_UNIFIED_STATE_DEBOUNCE_MS, 100);
 
   const idleState = toPlainObject(
-    hooks.resolveAutoSyncIndicatorDisplayPhase(createResolvedState("idle", now))
+    hooks.resolveAutoSyncIndicatorDisplayPhase(createResolvedState("idle", now), {
+      ttlProfile: "title",
+    })
   );
   assert.equal(idleState.displayPhase, "idle");
   assert.equal(getPrefix(idleState.displayPhase), "");
@@ -288,7 +291,9 @@ const testUnifiedStateMappingAndTtl = () => {
     reason: "debounced_read_progress",
   });
   const pendingState = toPlainObject(
-    hooks.resolveAutoSyncIndicatorDisplayPhase(createResolvedState("success", now))
+    hooks.resolveAutoSyncIndicatorDisplayPhase(createResolvedState("success", now), {
+      ttlProfile: "title",
+    })
   );
   assert.equal(pendingState.displayPhase, "pending");
   assert.equal(
@@ -305,7 +310,9 @@ const testUnifiedStateMappingAndTtl = () => {
     ttlMs: 60 * 1000,
   });
   const runningState = toPlainObject(
-    hooks.resolveAutoSyncIndicatorDisplayPhase(createResolvedState("success", now))
+    hooks.resolveAutoSyncIndicatorDisplayPhase(createResolvedState("success", now), {
+      ttlProfile: "title",
+    })
   );
   assert.equal(runningState.displayPhase, "running");
   assert.equal(getPrefix(runningState.displayPhase, { animationFrame: 0 }), "[同步中.]");
@@ -318,7 +325,8 @@ const testUnifiedStateMappingAndTtl = () => {
   ].forEach(([phase, ttlMs, expectedPrefix]) => {
     const activeState = toPlainObject(
       hooks.resolveAutoSyncIndicatorDisplayPhase(
-        createResolvedState(phase, now - ttlMs + 50)
+        createResolvedState(phase, now - ttlMs + 50),
+        { ttlProfile: "title" }
       )
     );
     assert.equal(activeState.displayPhase, phase);
@@ -326,7 +334,8 @@ const testUnifiedStateMappingAndTtl = () => {
 
     const expiredState = toPlainObject(
       hooks.resolveAutoSyncIndicatorDisplayPhase(
-        createResolvedState(phase, now - ttlMs - 50)
+        createResolvedState(phase, now - ttlMs - 50),
+        { ttlProfile: "title" }
       )
     );
     assert.equal(
@@ -1008,8 +1017,8 @@ const testDisplayPhaseOnlyAndNoTitleSchedulerRewrite = () => {
   const titleSource = getTitleSyncStatusSource();
   assert.match(
     titleSource,
-    /const resolvedState = resolveAutoSyncIndicatorDisplayPhase\(null,\s*\{\s*allowCache:\s*true,\s*\}\s*\);/,
-    "标题运行时应通过统一状态源获取 display phase。"
+    /const resolvedState = resolveAutoSyncIndicatorDisplayPhase\(null,\s*\{\s*allowCache:\s*true,\s*ttlProfile:\s*"title",\s*\}\s*\);/,
+    "标题运行时应通过统一状态源获取 display phase，并使用标题专属 TTL。"
   );
   assert.match(
     titleSource,
@@ -1038,7 +1047,7 @@ const testDisplayPhaseOnlyAndNoTitleSchedulerRewrite = () => {
   );
   assert.match(
     titleSource,
-    /resolveAutoSyncIndicatorDisplayPhase\(null,\s*\{\s*allowCache:\s*true,\s*\}\s*\)/,
+    /resolveAutoSyncIndicatorDisplayPhase\(null,\s*\{\s*allowCache:\s*true,\s*ttlProfile:\s*"title",\s*\}\s*\)/,
     "标题状态 runtime 的统一状态解析应显式使用短缓存，避免影响其它实时读取路径。"
   );
   assert.doesNotMatch(
