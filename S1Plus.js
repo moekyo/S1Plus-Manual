@@ -27,6 +27,124 @@
   const SCRIPT_VERSION = "6.10.0";
   const SCRIPT_RELEASE_DATE = "2026-03-28";
 
+  // --- 全局调试控制台 ---
+  const DEBUG_MODE = false;
+  const DEBUG_CONSOLE_PANEL_ID = "s1p-debug-console-panel";
+  const DEBUG_CONSOLE_VISIBLE_KEY = "s1p_debug_console_visible";
+  const LOG_BUFFER_MAX = 500;
+  const LOG_RENDER_MAX = 200;
+  const VERSION_HOVER_REVEAL_MS = 4000;
+  const DEBUG_CONSOLE_MIN_WIDTH = 320;
+  const DEBUG_CONSOLE_MIN_HEIGHT = 240;
+  let logBuffer = [];
+  let logFilters = { log: true, warn: true, error: true, debug: true };
+  let logSearchKeyword = "";
+  let logDirty = false;
+  let logAutoScroll = true;
+  let logPanelRafId = null;
+  let logCollectorStarted = false;
+  const _originalConsole = {};
+  const _consoleMethods = ["log", "warn", "error", "debug"];
+
+  const isDebugConsolePersistentlyVisible = () => {
+    if (DEBUG_MODE) return true;
+    try {
+      return GM_getValue(DEBUG_CONSOLE_VISIBLE_KEY, false) === true;
+    } catch (error) {
+      return false;
+    }
+  };
+
+  const setDebugConsolePersistentlyVisible = (visible) => {
+    try {
+      GM_setValue(DEBUG_CONSOLE_VISIBLE_KEY, visible === true);
+    } catch (error) {}
+  };
+
+  const formatLogArgument = (value, seen = new WeakSet()) => {
+    if (value instanceof Error) {
+      return value.stack || value.message || String(value);
+    }
+    if (typeof value === "string") return value;
+    if (value === null) return "null";
+    if (value === undefined) return "undefined";
+    if (typeof value === "bigint") return String(value) + "n";
+    if (typeof value === "symbol") return String(value);
+    if (typeof value === "function") {
+      return "[Function " + (value.name || "anonymous") + "]";
+    }
+    if (typeof value !== "object") return String(value);
+    if (typeof Node !== "undefined" && value instanceof Node) {
+      return value.outerHTML || value.nodeName || String(value);
+    }
+    try {
+      return JSON.stringify(value, (key, nestedValue) => {
+        if (typeof nestedValue === "bigint") return String(nestedValue) + "n";
+        if (typeof nestedValue === "function") {
+          return "[Function " + (nestedValue.name || "anonymous") + "]";
+        }
+        if (nestedValue instanceof Error) {
+          return nestedValue.stack || nestedValue.message || String(nestedValue);
+        }
+        if (nestedValue && typeof nestedValue === "object") {
+          if (seen.has(nestedValue)) return "[Circular]";
+          seen.add(nestedValue);
+        }
+        return nestedValue;
+      });
+    } catch (error) {
+      try {
+        return String(value);
+      } catch (stringifyError) {
+        return "[Unserializable]";
+      }
+    }
+  };
+
+  const formatLogArguments = (args) => {
+    return Array.from(args || []).map((arg) => formatLogArgument(arg)).join(" ");
+  };
+
+  const formatLogEntryForCopy = (entry) => {
+    return (
+      "[" +
+      new Date(entry.ts).toISOString() +
+      "] [" +
+      String(entry.level || "").toUpperCase() +
+      "] " +
+      String(entry.message || "")
+    );
+  };
+
+  const pushLog = (entry) => {
+    if (!logCollectorStarted) return;
+    if (logBuffer.length >= LOG_BUFFER_MAX) logBuffer.shift();
+    logBuffer.push({ ts: Date.now(), ...entry });
+    logDirty = true;
+    scheduleLogRender();
+  };
+
+  const startLogCollector = () => {
+    if (logCollectorStarted) return;
+    logCollectorStarted = true;
+    _consoleMethods.forEach((method) => {
+      _originalConsole[method] =
+        typeof console[method] === "function"
+          ? console[method].bind(console)
+          : () => {};
+      console[method] = (...args) => {
+        _originalConsole[method](...args);
+        pushLog({ level: method, message: formatLogArguments(args), args: [] });
+      };
+    });
+    window.addEventListener("error", (e) => {
+      pushLog({ level: "error", message: "[onerror] " + e.message + " at " + e.filename + ":" + e.lineno, args: [] });
+    });
+    window.addEventListener("unhandledrejection", (e) => {
+      pushLog({ level: "error", message: "[unhandledrejection] " + formatLogArgument(e.reason), args: [] });
+    });
+  };
+
   // --- [新增] SHA-256 哈希计算库 (基于 Web Crypto API) ---
   /**
    * 计算字符串的 SHA-256 哈希值。
@@ -2031,7 +2149,7 @@
       right: 16px;
       bottom: 18px;
       z-index: 2147483642;
-      width: min(320px, calc(100vw - 24px));
+      width: min(440px, calc(100vw - 24px));
       display: flex;
       flex-direction: column;
       align-items: stretch;
@@ -2120,11 +2238,246 @@
       #s1p-debug-panel-host {
         right: 8px;
         bottom: 8px;
-        width: min(320px, calc(100vw - 16px));
+        width: min(440px, calc(100vw - 16px));
       }
       .s1p-debug-panel {
         padding: 10px;
       }
+    }
+    #s1p-debug-console-panel {
+      --s1p-debug-console-panel-bg: rgba(255, 255, 255, 0.18);
+      --s1p-debug-console-surface: #f8fafc;
+      --s1p-debug-console-surface-soft: #eef2f7;
+      --s1p-debug-console-surface-raised: #ffffff;
+      --s1p-debug-console-button-bg: #f1f5f9;
+      --s1p-debug-console-button-border: #c7d2df;
+      align-self: flex-end;
+      box-sizing: border-box;
+      width: min(440px, calc(100vw - 24px));
+      height: min(520px, calc(100vh - 36px));
+      min-width: min(320px, calc(100vw - 24px));
+      min-height: 240px;
+      max-width: calc(100vw - 24px);
+      max-height: calc(100vh - 36px);
+      overflow: hidden;
+      position: relative;
+      padding: 18px 22px 16px;
+    }
+    @media (prefers-color-scheme: dark) {
+      #s1p-debug-console-panel {
+        --s1p-debug-console-panel-bg: rgba(8, 13, 24, 0.24);
+        --s1p-debug-console-surface: #172033;
+        --s1p-debug-console-surface-soft: #202b3d;
+        --s1p-debug-console-surface-raised: #243248;
+        --s1p-debug-console-button-bg: #27364d;
+        --s1p-debug-console-button-border: #3d506b;
+      }
+    }
+    #s1p-debug-console-panel.s1p-debug-panel {
+      background: var(--s1p-debug-console-panel-bg);
+      border-color: var(--s1p-debug-console-button-border);
+      backdrop-filter: blur(12px) saturate(1.2);
+    }
+    #s1p-debug-console-panel .s1p-debug-panel-head {
+      padding: 5px 2px 2px 8px;
+    }
+    .s1p-debug-console-head-actions {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      margin-left: auto;
+    }
+    #s1p-debug-console-panel .s1p-debug-btn.s1p-debug-console-feedback {
+      background: var(--s1p-sec) !important;
+      border-color: var(--s1p-sec) !important;
+      color: var(--s1p-white) !important;
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--s1p-sec) 18%, transparent);
+    }
+    .s1p-debug-console-log-area {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      max-height: none;
+      font-family: "SF Mono", "Menlo", "Monaco", "Cascadia Code", monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      background: var(--s1p-debug-console-surface-soft);
+      border-radius: 8px;
+      padding: 6px 0;
+    }
+    .s1p-debug-console-log-line {
+      display: grid;
+      grid-template-columns: auto auto minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 8px 5px 10px;
+      border-bottom: 1px solid var(--s1p-border);
+    }
+    .s1p-debug-console-log-ts {
+      color: var(--s1p-desc-t);
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+    .s1p-debug-console-log-level {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 48px;
+      height: 22px;
+      font-weight: 600;
+      text-align: center;
+      line-height: 1;
+      border-radius: 5px;
+      padding: 0 4px;
+    }
+    .s1p-debug-console-log-level[data-level="error"] {
+      color: var(--s1p-tag-red);
+      background: color-mix(in srgb, var(--s1p-tag-red) 15%, transparent);
+    }
+    .s1p-debug-console-log-level[data-level="warn"] {
+      color: var(--s1p-tag-orange);
+      background: color-mix(in srgb, var(--s1p-tag-orange) 15%, transparent);
+    }
+    .s1p-debug-console-log-level[data-level="log"] {
+      color: var(--s1p-t);
+    }
+    .s1p-debug-console-log-level[data-level="debug"] {
+      color: var(--s1p-desc-t);
+    }
+    .s1p-debug-console-log-msg {
+      min-width: 0;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      color: var(--s1p-t);
+    }
+    .s1p-debug-console-copy-line {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 46px;
+      min-height: 26px;
+      font-size: 12px;
+      line-height: 1.2;
+      transform: none !important;
+      opacity: 0.9;
+    }
+    .s1p-debug-console-log-line:hover .s1p-debug-console-copy-line,
+    .s1p-debug-console-copy-line:focus-visible {
+      opacity: 1;
+    }
+    .s1p-debug-console-filter-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: nowrap;
+      position: relative;
+    }
+    .s1p-debug-console-level-buttons {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 0 0 auto;
+    }
+    #s1p-debug-console-panel .s1p-debug-console-level-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      box-sizing: border-box;
+      width: auto;
+      min-width: 58px;
+      height: 32px;
+      min-height: 32px;
+      padding: 6px 10px;
+      font-size: 12px;
+      line-height: 1.2;
+      transform: none !important;
+    }
+    #s1p-debug-console-panel .s1p-debug-console-level-btn.is-active {
+      opacity: 1;
+    }
+    #s1p-debug-console-panel .s1p-debug-console-level-btn:not(.is-active) {
+      opacity: 0.48;
+    }
+    #s1p-debug-console-panel .s1p-debug-console-level-btn:hover {
+      opacity: 1;
+    }
+    .s1p-debug-console-filter-bar input {
+      flex: 1;
+      min-width: 0;
+      box-sizing: border-box;
+      height: 32px;
+      min-height: 32px;
+      padding: 0 10px;
+      font-size: 12px;
+      line-height: 32px;
+      border: 1px solid var(--s1p-border);
+      border-radius: 6px;
+      background: var(--s1p-debug-console-surface-raised);
+      color: var(--s1p-t);
+      outline: none;
+      box-shadow: none;
+      transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+    }
+    .s1p-debug-console-filter-bar input:focus,
+    .s1p-debug-console-filter-bar input:focus-visible {
+      border-color: var(--s1p-sec);
+      background: var(--s1p-debug-console-surface-raised);
+      box-shadow: 0 0 0 2px var(--s1p-focus-ring);
+      outline: none;
+    }
+    .s1p-debug-console-filter-bar input::placeholder {
+      color: var(--s1p-desc-t);
+    }
+    .s1p-debug-console-resize-handle {
+      position: absolute;
+      z-index: 2;
+      touch-action: none;
+    }
+    .s1p-debug-console-resize-handle[data-edge="left"] {
+      left: 0;
+      top: 38px;
+      bottom: 0;
+      width: 14px;
+      cursor: ew-resize;
+    }
+    .s1p-debug-console-resize-handle[data-edge="top"] {
+      left: 38px;
+      right: 0;
+      top: 0;
+      height: 14px;
+      cursor: ns-resize;
+    }
+    .s1p-debug-console-resize-handle[data-edge="top-left"] {
+      left: 0;
+      top: 0;
+      width: 38px;
+      height: 38px;
+      cursor: nwse-resize;
+      z-index: 4;
+    }
+    .s1p-debug-console-resize-handle[data-edge="top-left"]::before {
+      content: "";
+      position: absolute;
+      left: 8px;
+      top: 8px;
+      width: 9px;
+      height: 9px;
+      border-left: 2px solid var(--s1p-desc-t);
+      border-top: 2px solid var(--s1p-desc-t);
+      opacity: 0.45;
+    }
+    #s1p-debug-console-panel.s1p-debug-console-resizing {
+      user-select: none;
+    }
+    .s1p-debug-console-dot {
+      display: inline-block;
+      width: 4px;
+      height: 4px;
+      margin-left: 6px;
+      border-radius: 50%;
+      background: var(--s1p-desc-t);
+      opacity: 0.6;
+      vertical-align: middle;
     }
     @media (prefers-reduced-motion: reduce) {
       #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer {
@@ -28963,6 +29316,7 @@
     hideAction = "hide",
     hideLabel = "隐藏",
     onAction = null,
+    onHide = null,
   }) => {
     const panel = document.createElement("div");
     panel.id = id;
@@ -29010,6 +29364,9 @@
       }
       if (action === hideAction) {
         panel.classList.add("s1p-hidden");
+        if (typeof onHide === "function") {
+          onHide(panel);
+        }
         return;
       }
       if (typeof onAction === "function") {
@@ -29641,6 +29998,338 @@
       }
     );
     host.__s1pAutoSyncIndicatorDebug = debugApi;
+  };
+
+  const isDebugConsolePanelVisible = () => {
+    const panel = document.getElementById(DEBUG_CONSOLE_PANEL_ID);
+    return !!panel && !panel.classList.contains("s1p-hidden");
+  };
+
+  const scheduleLogRender = () => {
+    if (!isDebugConsolePanelVisible()) return;
+    if (logPanelRafId) return;
+    logPanelRafId = requestAnimationFrame(() => {
+      logPanelRafId = null;
+      renderLogPanel();
+    });
+  };
+
+  const buildLogLineDOM = (entry) => {
+    const line = document.createElement("div");
+    line.className = "s1p-debug-console-log-line";
+
+    const ts = document.createElement("span");
+    ts.className = "s1p-debug-console-log-ts";
+    ts.textContent = new Date(entry.ts).toLocaleTimeString("zh-CN", { hour12: false }) + "." + String(entry.ts % 1000).padStart(3, "0");
+
+    const level = document.createElement("span");
+    level.className = "s1p-debug-console-log-level";
+    level.dataset.level = entry.level;
+    level.textContent = entry.level.toUpperCase();
+
+    const msg = document.createElement("span");
+    msg.className = "s1p-debug-console-log-msg";
+    msg.textContent = entry.message;
+
+    const copyBtn = createS1pDebugButton({
+      label: "复制",
+      kind: "utility",
+      sizeClassName: "s1p-btn-sm s1p-debug-console-copy-line",
+    });
+    copyBtn.title = "复制这一条日志";
+    copyBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      copyDebugConsoleText(formatLogEntryForCopy(entry));
+      showDebugConsoleButtonFeedback(copyBtn, "已复制");
+    });
+
+    line.append(ts, level, msg, copyBtn);
+    return line;
+  };
+
+  const applyLogFilters = (logs) => {
+    return logs.filter((entry) => {
+      if (!logFilters[entry.level]) return false;
+      if (logSearchKeyword && !String(entry.message || "").toLowerCase().includes(logSearchKeyword.toLowerCase())) return false;
+      return true;
+    });
+  };
+
+  const copyDebugConsoleText = (text) => {
+    const normalizedText = String(text || "");
+    if (
+      typeof navigator !== "undefined" &&
+      navigator.clipboard &&
+      typeof navigator.clipboard.writeText === "function"
+    ) {
+      navigator.clipboard.writeText(normalizedText).catch(() => {
+        fallbackCopyDebugConsoleText(normalizedText);
+      });
+      return;
+    }
+    fallbackCopyDebugConsoleText(normalizedText);
+  };
+
+  const fallbackCopyDebugConsoleText = (text) => {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.cssText = "position:fixed;left:-9999px;top:-9999px;";
+    document.body.appendChild(textarea);
+    textarea.select();
+    try {
+      document.execCommand("copy");
+    } catch (error) {
+    } finally {
+      textarea.remove();
+    }
+  };
+
+  const showDebugConsoleButtonFeedback = (button, feedbackLabel, durationMs = 1100) => {
+    if (!(button instanceof HTMLButtonElement)) return;
+    if (!button.dataset.s1pDebugOriginalLabel) {
+      button.dataset.s1pDebugOriginalLabel = button.textContent || "";
+    }
+    if (button.__s1pDebugFeedbackTimer) {
+      clearTimeout(button.__s1pDebugFeedbackTimer);
+    }
+    button.textContent = feedbackLabel;
+    button.classList.add("s1p-debug-console-feedback");
+    button.__s1pDebugFeedbackTimer = setTimeout(() => {
+      button.textContent = button.dataset.s1pDebugOriginalLabel || "";
+      button.classList.remove("s1p-debug-console-feedback");
+      button.__s1pDebugFeedbackTimer = null;
+    }, durationMs);
+  };
+
+  const clampDebugConsolePanelSize = (value, min, max) => {
+    return Math.min(Math.max(value, min), Math.max(min, max));
+  };
+
+  const setDebugConsolePanelSize = (panel, width, height) => {
+    const maxWidth = window.innerWidth - 24;
+    const maxHeight = window.innerHeight - 36;
+    if (Number.isFinite(width)) {
+      panel.style.width =
+        clampDebugConsolePanelSize(width, DEBUG_CONSOLE_MIN_WIDTH, maxWidth) + "px";
+    }
+    if (Number.isFinite(height)) {
+      panel.style.height =
+        clampDebugConsolePanelSize(height, DEBUG_CONSOLE_MIN_HEIGHT, maxHeight) + "px";
+    }
+  };
+
+  const attachDebugConsoleResizeHandles = (panel) => {
+    if (!panel || panel.__s1pDebugConsoleResizeHandlesAttached) return;
+    panel.__s1pDebugConsoleResizeHandlesAttached = true;
+
+    ["top-left", "left", "top"].forEach((edge) => {
+      const handle = document.createElement("div");
+      handle.className = "s1p-debug-console-resize-handle";
+      handle.dataset.edge = edge;
+      handle.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        event.stopPropagation();
+
+        const startX = event.clientX;
+        const startY = event.clientY;
+        const startRect = panel.getBoundingClientRect();
+        const previousBodyCursor = document.body.style.cursor;
+        document.body.style.cursor = window.getComputedStyle(handle).cursor;
+        panel.classList.add("s1p-debug-console-resizing");
+        handle.setPointerCapture?.(event.pointerId);
+
+        const onPointerMove = (moveEvent) => {
+          const dx = moveEvent.clientX - startX;
+          const dy = moveEvent.clientY - startY;
+          const nextWidth = edge.includes("left")
+            ? startRect.width - dx
+            : startRect.width;
+          const nextHeight = edge.includes("top")
+            ? startRect.height - dy
+            : startRect.height;
+          setDebugConsolePanelSize(panel, nextWidth, nextHeight);
+        };
+
+        const stopResize = () => {
+          panel.classList.remove("s1p-debug-console-resizing");
+          document.body.style.cursor = previousBodyCursor;
+          document.removeEventListener("pointermove", onPointerMove);
+          document.removeEventListener("pointerup", stopResize);
+          document.removeEventListener("pointercancel", stopResize);
+          handle.releasePointerCapture?.(event.pointerId);
+        };
+
+        document.addEventListener("pointermove", onPointerMove);
+        document.addEventListener("pointerup", stopResize);
+        document.addEventListener("pointercancel", stopResize);
+      });
+      panel.appendChild(handle);
+    });
+  };
+
+  const updateLogLevelFilterControls = (container) => {
+    if (!container) return;
+    container.querySelectorAll(".s1p-debug-console-level-btn").forEach((button) => {
+      const level = button.dataset.s1pLogLevel;
+      const isActive = logFilters[level] === true;
+      button.classList.toggle("is-active", isActive);
+      button.setAttribute("aria-pressed", isActive ? "true" : "false");
+    });
+  };
+
+  const renderLogPanel = () => {
+    if (!logDirty) return;
+    const panel = document.getElementById(DEBUG_CONSOLE_PANEL_ID);
+    if (!panel) return;
+    if (panel.classList.contains("s1p-hidden")) return;
+    logDirty = false;
+
+    const logArea = panel.querySelector(".s1p-debug-console-log-area");
+    const statusBar = panel.querySelector("[data-s1p-log-status]");
+    if (!logArea || !statusBar) return;
+
+    const filtered = applyLogFilters(logBuffer);
+    const renderLogs = filtered.slice(-LOG_RENDER_MAX);
+    const wasAtBottom = logArea.scrollTop + logArea.clientHeight >= logArea.scrollHeight - 10;
+
+    logArea.innerHTML = "";
+    const frag = document.createDocumentFragment();
+    renderLogs.forEach((entry) => frag.appendChild(buildLogLineDOM(entry)));
+    logArea.appendChild(frag);
+
+    if (logAutoScroll || wasAtBottom) {
+      logArea.scrollTop = logArea.scrollHeight;
+    }
+
+    statusBar.textContent =
+      "共 " +
+      logBuffer.length +
+      " 条（匹配 " +
+      filtered.length +
+      " 条，渲染 " +
+      renderLogs.length +
+      " 条）";
+  };
+
+  const initializeDebugConsolePanel = ({ persistVisible = true } = {}) => {
+    startLogCollector();
+    if (persistVisible) {
+      setDebugConsolePersistentlyVisible(true);
+    }
+    const existing = document.getElementById(DEBUG_CONSOLE_PANEL_ID);
+    if (existing) {
+      existing.classList.remove("s1p-hidden");
+      logDirty = true;
+      renderLogPanel();
+      return existing;
+    }
+
+    const panel = createS1pDebugPanelShell({
+      id: DEBUG_CONSOLE_PANEL_ID,
+      title: "调试控制台",
+      hideAction: "hide-console",
+      hideLabel: "隐藏",
+      onAction: (action, button) => {
+        if (action === "hide-console") return;
+        if (action === "clear-logs") {
+          logBuffer = [];
+          logDirty = true;
+          renderLogPanel();
+          showDebugConsoleButtonFeedback(button, "已清空");
+          return;
+        }
+        if (action === "copy-logs") {
+          const text = logBuffer.map((entry) => formatLogEntryForCopy(entry)).join("\n");
+          copyDebugConsoleText(text);
+          showDebugConsoleButtonFeedback(button, "已复制");
+          return;
+        }
+      },
+      onHide: () => {
+        setDebugConsolePersistentlyVisible(false);
+      },
+    });
+    attachDebugConsoleResizeHandles(panel);
+
+    const head = panel.querySelector(".s1p-debug-panel-head");
+    const hideButton = head.querySelector('[data-s1p-debug-action="hide-console"]');
+    const btnGroup = document.createElement("div");
+    btnGroup.className = "s1p-debug-console-head-actions";
+    btnGroup.appendChild(createS1pDebugButton({ label: "清空", action: "clear-logs", kind: "utility" }));
+    btnGroup.appendChild(createS1pDebugButton({ label: "复制", action: "copy-logs", kind: "utility" }));
+    if (hideButton) {
+      btnGroup.appendChild(hideButton);
+    }
+    head.appendChild(btnGroup);
+
+    const filterBar = document.createElement("div");
+    filterBar.className = "s1p-debug-console-filter-bar";
+
+    const levelButtons = document.createElement("div");
+    levelButtons.className = "s1p-debug-console-level-buttons";
+    _consoleMethods.forEach((method) => {
+      const button = createS1pDebugButton({
+        label: method.toUpperCase(),
+        kind: "utility",
+        sizeClassName: "s1p-debug-console-level-btn",
+      });
+      button.dataset.s1pLogLevel = method;
+      button.setAttribute("aria-pressed", "true");
+      button.addEventListener("click", (event) => {
+        event.stopPropagation();
+        logFilters[method] = !logFilters[method];
+        updateLogLevelFilterControls(levelButtons);
+        logDirty = true;
+        renderLogPanel();
+      });
+      levelButtons.appendChild(button);
+    });
+    updateLogLevelFilterControls(levelButtons);
+    filterBar.appendChild(levelButtons);
+
+    const searchInput = document.createElement("input");
+    searchInput.type = "text";
+    searchInput.placeholder = "搜索日志...";
+    searchInput.addEventListener("input", () => {
+      logSearchKeyword = searchInput.value.trim();
+      logDirty = true;
+      renderLogPanel();
+    });
+    filterBar.appendChild(searchInput);
+
+    panel.appendChild(filterBar);
+
+    const logArea = document.createElement("div");
+    logArea.className = "s1p-debug-console-log-area";
+    logArea.addEventListener("scroll", () => {
+      logAutoScroll = logArea.scrollTop + logArea.clientHeight >= logArea.scrollHeight - 10;
+    });
+    panel.appendChild(logArea);
+
+    const statusBar = document.createElement("div");
+    statusBar.className = "s1p-debug-panel-note";
+    statusBar.setAttribute("data-s1p-log-status", "");
+    statusBar.textContent = "共 0 条";
+    panel.appendChild(statusBar);
+
+    const host = ensureS1pDebugPanelHost();
+    host.appendChild(panel);
+
+    logDirty = true;
+    renderLogPanel();
+    return panel;
+  };
+
+  const toggleDebugConsolePanel = () => {
+    const panel = document.getElementById(DEBUG_CONSOLE_PANEL_ID);
+    if (panel && !panel.classList.contains("s1p-hidden")) {
+      panel.classList.add("s1p-hidden");
+      setDebugConsolePersistentlyVisible(false);
+    } else {
+      initializeDebugConsolePanel();
+    }
   };
 
   const initializeAutoSyncIndicatorCrossTabSync = () => {
@@ -32374,7 +33063,15 @@
     if (versionFooter) {
       let versionClickCount = 0;
       let versionClickTimer = null;
+      let debugHoverTimer = null;
+      let debugHoverDot = null;
       versionFooter.addEventListener("click", () => {
+        if (debugHoverDot && debugHoverDot.isConnected) {
+          debugHoverDot.remove();
+          debugHoverDot = null;
+          toggleDebugConsolePanel();
+          return;
+        }
         versionClickCount += 1;
         if (versionClickTimer) {
           clearTimeout(versionClickTimer);
@@ -32395,6 +33092,19 @@
           versionClickCount = 0;
           versionClickTimer = null;
         }, 1200);
+      });
+      versionFooter.addEventListener("mouseenter", () => {
+        if (debugHoverTimer) clearTimeout(debugHoverTimer);
+        debugHoverTimer = setTimeout(() => {
+          debugHoverDot = document.createElement("span");
+          debugHoverDot.className = "s1p-debug-console-dot";
+          versionFooter.appendChild(debugHoverDot);
+          debugHoverTimer = null;
+        }, VERSION_HOVER_REVEAL_MS);
+      });
+      versionFooter.addEventListener("mouseleave", () => {
+        if (debugHoverTimer) { clearTimeout(debugHoverTimer); debugHoverTimer = null; }
+        if (debugHoverDot) { debugHoverDot.remove(); debugHoverDot = null; }
       });
     }
 
@@ -42942,6 +43652,15 @@
             });
           },
         },
+        {
+          name: "auto-show debug console if enabled",
+          optional: true,
+          run: () => {
+            if (isDebugConsolePersistentlyVisible()) {
+              initializeDebugConsolePanel({ persistVisible: false });
+            }
+          },
+        },
       ],
       initializationContext
     );
@@ -43038,6 +43757,15 @@
           name: "apply early system-blocked post visibility",
           optional: true,
           run: () => hideSystemBlockedPosts(),
+        },
+        {
+          name: "start debug log collector",
+          optional: true,
+          run: () => {
+            if (isDebugConsolePersistentlyVisible()) {
+              startLogCollector();
+            }
+          },
         },
       ],
       initializationContext
