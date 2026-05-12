@@ -31,6 +31,7 @@
   const DEBUG_MODE = false;
   const DEBUG_CONSOLE_PANEL_ID = "s1p-debug-console-panel";
   const DEBUG_CONSOLE_VISIBLE_KEY = "s1p_debug_console_visible";
+  const DEBUG_CONSOLE_SIZE_KEY = "s1p_debug_console_size";
   const LOG_BUFFER_MAX = 500;
   const LOG_RENDER_MAX = 200;
   const VERSION_HOVER_REVEAL_MS = 4000;
@@ -30106,6 +30107,38 @@
     return Math.min(Math.max(value, min), Math.max(min, max));
   };
 
+  const normalizeDebugConsolePanelSize = (rawSize) => {
+    if (!rawSize || typeof rawSize !== "object") return null;
+    const width = Number(rawSize.width);
+    const height = Number(rawSize.height);
+    if (!Number.isFinite(width) || !Number.isFinite(height)) return null;
+    if (width <= 0 || height <= 0) return null;
+    return { width, height };
+  };
+
+  const getSavedDebugConsolePanelSize = () => {
+    try {
+      return normalizeDebugConsolePanelSize(
+        GM_getValue(DEBUG_CONSOLE_SIZE_KEY, null)
+      );
+    } catch (error) {
+      return null;
+    }
+  };
+
+  const saveDebugConsolePanelSize = (panel) => {
+    if (!(panel instanceof HTMLElement)) return;
+    const rect = panel.getBoundingClientRect();
+    const size = normalizeDebugConsolePanelSize({
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+    });
+    if (!size) return;
+    try {
+      GM_setValue(DEBUG_CONSOLE_SIZE_KEY, size);
+    } catch (error) {}
+  };
+
   const setDebugConsolePanelSize = (panel, width, height) => {
     const maxWidth = window.innerWidth - 24;
     const maxHeight = window.innerHeight - 36;
@@ -30117,6 +30150,12 @@
       panel.style.height =
         clampDebugConsolePanelSize(height, DEBUG_CONSOLE_MIN_HEIGHT, maxHeight) + "px";
     }
+  };
+
+  const applySavedDebugConsolePanelSize = (panel) => {
+    const savedSize = getSavedDebugConsolePanelSize();
+    if (!savedSize) return;
+    setDebugConsolePanelSize(panel, savedSize.width, savedSize.height);
   };
 
   const attachDebugConsoleResizeHandles = (panel) => {
@@ -30159,6 +30198,7 @@
           document.removeEventListener("pointerup", stopResize);
           document.removeEventListener("pointercancel", stopResize);
           handle.releasePointerCapture?.(event.pointerId);
+          saveDebugConsolePanelSize(panel);
         };
 
         document.addEventListener("pointermove", onPointerMove);
@@ -30221,6 +30261,7 @@
     const existing = document.getElementById(DEBUG_CONSOLE_PANEL_ID);
     if (existing) {
       existing.classList.remove("s1p-hidden");
+      applySavedDebugConsolePanelSize(existing);
       logDirty = true;
       renderLogPanel();
       return existing;
@@ -30316,6 +30357,7 @@
 
     const host = ensureS1pDebugPanelHost();
     host.appendChild(panel);
+    applySavedDebugConsolePanelSize(panel);
 
     logDirty = true;
     renderLogPanel();
