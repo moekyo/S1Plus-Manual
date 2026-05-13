@@ -122,7 +122,7 @@ const createTab = ({
   isForeground:
     typeof isForeground === "boolean"
       ? isForeground
-      : visibilityState === "visible",
+      : visibilityState === "visible" && hasFocus === true,
 });
 
 const assertDisplayDecision = (actual, expected, message) => {
@@ -364,8 +364,8 @@ const testMultiTabForegroundAndOwnerCoordination = () => {
   );
   assert.equal(
     isForegroundTab({ visibilityState: "visible", hasFocus: false }),
-    true,
-    "visible 的 S1 标签页即使焦点在 DevTools/地址栏，也应抑制后台标题同步状态。"
+    false,
+    "visible 但 document.hasFocus() 为 false 时，应按后台 S1 标签页处理。"
   );
   assert.equal(
     isForegroundTab({ visibilityState: "hidden", hasFocus: false }),
@@ -816,8 +816,13 @@ const testPartitionedPresenceStorage = () => {
   );
   assert.equal(
     store.has(constants.TITLE_SYNC_STATUS_PRESENCE_KEY),
-    false,
-    "新版 presence 写入不应再覆盖旧的整对象 aggregate key。"
+    true,
+    "新版 presence 写入应同步维护 aggregate 兼容镜像，供无法枚举 GM key 的环境读取。"
+  );
+  assert.equal(
+    store.get(constants.TITLE_SYNC_STATUS_PRESENCE_KEY).tabs[currentTabId].tabId,
+    currentTabId,
+    "aggregate 兼容镜像应包含当前 tab presence。"
   );
   assert.equal(store.has(currentPresenceKey), true);
   assert.equal(
@@ -867,6 +872,52 @@ const testPartitionedPresenceStorage = () => {
     store.get(constants.TITLE_SYNC_STATUS_PRESENCE_SIGNAL_KEY).action,
     "remove",
     "移除当前 tab presence 时也应通过 signal key 通知其它 tab。"
+  );
+
+  const fallbackHarness = createHarness({ includeGmListValues: false });
+  const fallbackHooks = fallbackHarness.hooks;
+  const fallbackStore = fallbackHarness.store;
+  const fallbackConstants = requireHook(
+    fallbackHooks,
+    "getTitleSyncStatusTestConstants"
+  )();
+  const fallbackWritePresence = requireHook(
+    fallbackHooks,
+    "writeCurrentTitleSyncStatusPresence"
+  );
+  const fallbackGetPresenceState = requireHook(
+    fallbackHooks,
+    "getTitleSyncStatusPresenceState"
+  );
+  fallbackStore.set(fallbackConstants.TITLE_SYNC_STATUS_PRESENCE_KEY, {
+    version: 2,
+    updatedAt: now,
+    tabs: {
+      "other-visible-tab": {
+        tabId: "other-visible-tab",
+        createdAt: now - 5000,
+        lastSeen: now,
+        lastActiveAt: now,
+        visibilityState: "visible",
+        hasFocus: true,
+        isForeground: true,
+      },
+    },
+  });
+  const fallbackLocalState = toPlainObject(
+    fallbackWritePresence({ reason: "init", force: true })
+  );
+  const fallbackCurrentTabId = Object.keys(fallbackLocalState.tabs)[0];
+  const fallbackMergedState = toPlainObject(fallbackGetPresenceState());
+  assert.equal(
+    fallbackMergedState.tabs["other-visible-tab"].isForeground,
+    true,
+    "GM_listValues 不可用时，应仍能从 aggregate 镜像看到其它前台 S1 标签页。"
+  );
+  assert.equal(
+    fallbackMergedState.tabs[fallbackCurrentTabId].tabId,
+    fallbackCurrentTabId,
+    "GM_listValues 不可用时，当前 tab 写入也应合并到 aggregate 镜像。"
   );
 };
 
