@@ -219,6 +219,18 @@ const testSharedSchedulerAndLocksFeedUnifiedDisplayState = () => {
   );
 
   store.delete(BACKGROUND_SYNC_DEBOUNCE_STATE_KEY);
+  store.set(AUTO_SYNC_INDICATOR_STATE_KEY, {
+    phase: "running",
+    timestamp: now,
+    token: "foreground-stale-operation",
+    source: "foreground_resume",
+    reason: "foreground_followup_in_flight",
+    operation: "pull",
+    lastResolvedPhase: "idle",
+    lastResolvedTimestamp: now,
+    lastResolvedSource: "",
+    lastResolvedReason: "",
+  });
   store.set("s1p_sync_global_lock", {
     owner: "other-tab",
     mode: "background",
@@ -228,6 +240,11 @@ const testSharedSchedulerAndLocksFeedUnifiedDisplayState = () => {
   resolvedState = toPlainObject(hooks.resolveAutoSyncIndicatorDisplayPhase());
   assert.equal(resolvedState.displayPhase, "running");
   assert.equal(resolvedState.displaySource, "background_push");
+  assert.equal(
+    hooks.getAutoSyncIndicatorDisplayKind(resolvedState),
+    "push",
+    "active lock 来源切到后台推送时，不应沿用旧 foreground running 的 pull operation。"
+  );
 };
 
 const testAutoSyncEntryPointsBindIndicatorSources = () => {

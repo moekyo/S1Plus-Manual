@@ -10349,6 +10349,41 @@
     return normalizeSyncTriggerSource(source);
   };
 
+  const isStartupModeAutoSyncIndicatorSource = (source) => {
+    switch (normalizeAutoSyncIndicatorSource(source)) {
+      case AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP:
+      case AUTO_SYNC_INDICATOR_SOURCE_PER_LOAD:
+      case AUTO_SYNC_INDICATOR_SOURCE_PAGE_LOAD_VISIBLE:
+      case AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME:
+      case AUTO_SYNC_INDICATOR_SOURCE_VISIBLE_POLL:
+        return true;
+      default:
+        return false;
+    }
+  };
+
+  const getDefaultAutoSyncIndicatorOperationForSource = (
+    source,
+    reason = ""
+  ) => {
+    const normalizedReason = normalizeAutoSyncIndicatorReason(reason);
+    if (normalizedReason === "foreground_probe_in_flight") {
+      return AUTO_SYNC_INDICATOR_OPERATION_PROBE;
+    }
+    switch (normalizeAutoSyncIndicatorSource(source)) {
+      case AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND:
+        return AUTO_SYNC_INDICATOR_OPERATION_PUSH;
+      case AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP:
+      case AUTO_SYNC_INDICATOR_SOURCE_PER_LOAD:
+      case AUTO_SYNC_INDICATOR_SOURCE_PAGE_LOAD_VISIBLE:
+      case AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME:
+      case AUTO_SYNC_INDICATOR_SOURCE_VISIBLE_POLL:
+        return AUTO_SYNC_INDICATOR_OPERATION_PULL;
+      default:
+        return AUTO_SYNC_INDICATOR_OPERATION_SYNC;
+    }
+  };
+
   const normalizeAutoSyncExecutionMode = (mode) => {
     switch (String(mode || "").trim()) {
       case AUTO_SYNC_MODE_STARTUP:
@@ -10506,7 +10541,9 @@
         case SYNC_LOCK_MODE_MANUAL:
           return AUTO_SYNC_INDICATOR_SOURCE_MANUAL_SYNC;
         case SYNC_LOCK_MODE_STARTUP:
-          return normalizedFallback || AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP;
+          return isStartupModeAutoSyncIndicatorSource(normalizedFallback)
+            ? normalizedFallback
+            : AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP;
         default:
           return normalizedFallback || AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND;
       }
@@ -10780,13 +10817,39 @@
     const hasConflictPause = Boolean(getActiveAutoSyncConflictPause());
     const hasOpenCircuit = getAutoSyncCircuitState().open;
     const canShowPending = hasPendingRequest && !hasConflictPause && !hasOpenCircuit;
-    const buildDisplayState = (displayPhase, displaySource = "", displayReason = "") => ({
-      ...state,
-      displayPhase,
-      displaySource: normalizeAutoSyncIndicatorSource(displaySource),
-      displayReason: normalizeAutoSyncIndicatorReason(displayReason),
-      displayOperation: normalizeAutoSyncIndicatorOperation(state.operation),
-    });
+    const buildDisplayState = (displayPhase, displaySource = "", displayReason = "") => {
+      const normalizedDisplaySource =
+        normalizeAutoSyncIndicatorSource(displaySource);
+      const normalizedDisplayReason =
+        normalizeAutoSyncIndicatorReason(displayReason);
+      const stateSource = normalizeAutoSyncIndicatorSource(state.source);
+      let displayOperation = normalizeAutoSyncIndicatorOperation(state.operation);
+      if (isAutoSyncIndicatorActivePhase(displayPhase)) {
+        if (
+          displayOperation &&
+          normalizedDisplaySource &&
+          stateSource &&
+          normalizedDisplaySource !== stateSource
+        ) {
+          displayOperation = "";
+        }
+        if (!displayOperation) {
+          displayOperation = getDefaultAutoSyncIndicatorOperationForSource(
+            normalizedDisplaySource,
+            normalizedDisplayReason
+          );
+        }
+      } else {
+        displayOperation = "";
+      }
+      return {
+        ...state,
+        displayPhase,
+        displaySource: normalizedDisplaySource,
+        displayReason: normalizedDisplayReason,
+        displayOperation,
+      };
+    };
     const finishDisplayState = (resolvedState, branch = "") => {
       if (canUseCache) {
         autoSyncIndicatorDisplayPhaseCache = {
@@ -11085,7 +11148,12 @@
       token,
       source: resolvedSource,
       reason: normalizeAutoSyncIndicatorReason(options.reason),
-      operation: normalizeAutoSyncIndicatorOperation(options.operation),
+      operation:
+        normalizeAutoSyncIndicatorOperation(options.operation) ||
+        getDefaultAutoSyncIndicatorOperationForSource(
+          resolvedSource,
+          options.reason
+        ),
       ...lastResolvedSnapshot,
     });
     return token;
@@ -27291,10 +27359,12 @@
       tabSnapshot && typeof tabSnapshot === "object"
         ? tabSnapshot.hasFocus
         : typeof document.hasFocus === "function" && document.hasFocus();
-    return visibilityState === "visible";
+    return visibilityState === "visible" && hasFocus === true;
   };
   const isCurrentTitleSyncStatusForegroundTab = () => {
-    return document.visibilityState === "visible";
+    const hasFocus =
+      typeof document.hasFocus === "function" && document.hasFocus();
+    return document.visibilityState === "visible" && hasFocus === true;
   };
   const canUseTitleSyncStatusGmValueChannel = () =>
     typeof GM_getValue === "function" &&
@@ -27491,7 +27561,7 @@
     const isForeground =
       typeof source.isForeground === "boolean"
         ? source.isForeground
-        : visibilityState === "visible";
+        : visibilityState === "visible" && hasFocus === true;
     return {
       tabId,
       createdAt,
@@ -27676,6 +27746,28 @@
     });
     return deletedCount;
   };
+  const writeTitleSyncStatusAggregatePresenceRecord = (
+    tabRecord,
+    { remove = false, now = Date.now() } = {}
+  ) => {
+    const aggregateState = normalizeTitleSyncStatusPresenceState(
+      readTitleSyncStatusStorageValue(TITLE_SYNC_STATUS_PRESENCE_KEY, null)
+    );
+    const tabs = pruneTitleSyncStatusPresenceTabs(aggregateState.tabs, now);
+    const normalizedTab = normalizeTitleSyncStatusTabRecord(tabRecord, {
+      tabId: titleSyncStatusTabId,
+    });
+    if (remove) {
+      delete tabs[titleSyncStatusTabId];
+    } else if (normalizedTab.tabId) {
+      tabs[normalizedTab.tabId] = normalizedTab;
+    }
+    return writeTitleSyncStatusStorageValue(TITLE_SYNC_STATUS_PRESENCE_KEY, {
+      version: 2,
+      updatedAt: now,
+      tabs,
+    });
+  };
   const writeCurrentTitleSyncStatusPresence = ({
     remove = false,
     reason = "",
@@ -27723,6 +27815,10 @@
       );
     }
     if (didWrite) {
+      writeTitleSyncStatusAggregatePresenceRecord(currentTabRecord, {
+        remove,
+        now,
+      });
       titleSyncStatusRuntimeState.lastPresenceWriteAt = now;
       emitTitleSyncStatusPresenceSignal({
         reason: reason || "presence",
@@ -28959,18 +29055,7 @@
     const source = normalizeAutoSyncIndicatorSource(
       stateInput?.displaySource || stateInput?.source
     );
-    switch (source) {
-      case AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND:
-        return AUTO_SYNC_INDICATOR_OPERATION_PUSH;
-      case AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP:
-      case AUTO_SYNC_INDICATOR_SOURCE_PER_LOAD:
-      case AUTO_SYNC_INDICATOR_SOURCE_PAGE_LOAD_VISIBLE:
-      case AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME:
-      case AUTO_SYNC_INDICATOR_SOURCE_VISIBLE_POLL:
-        return AUTO_SYNC_INDICATOR_OPERATION_PULL;
-      default:
-        return AUTO_SYNC_INDICATOR_OPERATION_SYNC;
-    }
+    return getDefaultAutoSyncIndicatorOperationForSource(source, reason);
   };
 
   const getAutoSyncIndicatorTitle = (stateInput = null) => {
