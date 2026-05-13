@@ -68,6 +68,7 @@ const createSandbox = ({
   search = "",
   visibilityState = "visible",
   includeSessionStorage = false,
+  includeGmListValues = true,
 } = {}) => {
   const store = new Map();
   const { sessionStore, sessionStorage } = createSessionStorageStub();
@@ -149,8 +150,11 @@ const createSandbox = ({
     GM_openInTab: noop,
     GM_download: noop,
     GM_addValueChangeListener: noop,
-    GM_listValues: () => Array.from(store.keys()),
   };
+
+  if (includeGmListValues) {
+    sandbox.GM_listValues = () => Array.from(store.keys());
+  }
 
   sandbox.window.document = sandbox.document;
   sandbox.window.navigator = sandbox.navigator;
