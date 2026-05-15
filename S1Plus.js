@@ -2062,10 +2062,10 @@
         opacity: 0.46;
       }
       38% {
-        opacity: 0.98;
+        opacity: 1;
       }
       62% {
-        opacity: 0.98;
+        opacity: 1;
       }
       86% {
         opacity: 0.46;
@@ -2084,10 +2084,10 @@
         opacity: 0.46;
       }
       38% {
-        opacity: 0.98;
+        opacity: 1;
       }
       62% {
-        opacity: 0.98;
+        opacity: 1;
       }
       86% {
         opacity: 0.46;
@@ -2133,6 +2133,14 @@
     }
     #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-exiting.s1p-auto-sync-transition-pending-to-running-origin {
       animation: s1p-auto-sync-indicator-pending-to-running-exit 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    }
+    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.s1p-auto-sync-layer-kind-push.s1p-auto-sync-transition-pending-to-running,
+    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.s1p-auto-sync-layer-kind-push.s1p-auto-sync-transition-pending-to-running-origin {
+      transform-origin: 50% 0%;
+    }
+    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.s1p-auto-sync-layer-kind-pull.s1p-auto-sync-transition-pending-to-running,
+    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.s1p-auto-sync-layer-kind-pull.s1p-auto-sync-transition-pending-to-running-origin {
+      transform-origin: 50% 100%;
     }
     #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-entering.s1p-auto-sync-transition-active-to-idle {
       animation: s1p-auto-sync-indicator-active-to-idle-enter ${AUTO_SYNC_INDICATOR_ENTER_DURATION_MS}ms cubic-bezier(0.22, 1, 0.36, 1) both;
@@ -2199,8 +2207,14 @@
     }
     #s1p-nav-auto-sync-indicator[data-sync-state="running"] svg.s1p-auto-sync-kind-push,
     #s1p-nav-auto-sync-indicator[data-sync-state="running"] svg.s1p-auto-sync-kind-pull {
-      opacity: 0.96;
+      opacity: 1;
       transform: scale(1.18);
+    }
+    #s1p-nav-auto-sync-indicator[data-sync-state="running"] svg.s1p-auto-sync-kind-push {
+      transform-origin: 50% 0%;
+    }
+    #s1p-nav-auto-sync-indicator[data-sync-state="running"] svg.s1p-auto-sync-kind-pull {
+      transform-origin: 50% 100%;
     }
     #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-push path,
     #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-pull path,
@@ -31526,6 +31540,9 @@
     layer.className = "s1p-nav-auto-sync-indicator-layer";
     layer.dataset.phase = phase;
     layer.dataset.kind = displayKind || phase;
+    if (displayKind) {
+      layer.classList.add(`s1p-auto-sync-layer-kind-${displayKind}`);
+    }
     setSanitizedIconHtml(
       layer,
       getAutoSyncIndicatorIconHtmlByPhase(phase, displayKind)
