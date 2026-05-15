@@ -38,6 +38,14 @@
   const VERSION_HOVER_REVEAL_MS = 4000;
   const DEBUG_CONSOLE_MIN_WIDTH = 320;
   const DEBUG_CONSOLE_MIN_HEIGHT = 240;
+  const SCROLL_DEBUG_ENABLED_KEY = "s1p_scroll_debug_enabled";
+  const SCROLL_DEBUG_EVENTS_KEY = "s1p_scroll_debug_events";
+  const SCROLL_DEBUG_DEFAULT_ENABLED = true;
+  const SCROLL_DEBUG_EVENT_LIMIT = 120;
+  const SCROLL_DEBUG_LOAD_MONITOR_MS = 8 * 1000;
+  const SCROLL_DEBUG_SCROLL_THROTTLE_MS = 250;
+  const SCROLL_DEBUG_NEAR_BOTTOM_PX = 48;
+  const SCROLL_DEBUG_RECENT_INTERACTION_GRACE_MS = 1500;
   let logBuffer = [];
   let logFilters = { log: true, warn: true, error: true, debug: true };
   let logSearchKeyword = "";
@@ -64,6 +72,463 @@
     try {
       GM_setValue(DEBUG_CONSOLE_VISIBLE_KEY, visible === true);
     } catch (error) {}
+  };
+
+  let scrollDebugEventBuffer = null;
+  let scrollDebugLifecycleBound = false;
+  let scrollDebugLoadMonitorUntil = Date.now() + SCROLL_DEBUG_LOAD_MONITOR_MS;
+  let scrollDebugLastScrollLogAt = 0;
+  let scrollDebugLastUserInteractionAt = 0;
+  let scrollDebugLastUserInteractionType = "";
+  let scrollDebugLastBottomCandidateAt = 0;
+  let scrollDebugLastSnapshot = null;
+  const SCROLL_DEBUG_SESSION_ID = `scroll_${Date.now()}_${Math.random()
+    .toString(36)
+    .slice(2, 8)}`;
+
+  const getScrollDebugEnabled = () => {
+    try {
+      return (
+        GM_getValue(
+          SCROLL_DEBUG_ENABLED_KEY,
+          SCROLL_DEBUG_DEFAULT_ENABLED
+        ) !== false
+      );
+    } catch (error) {
+      return SCROLL_DEBUG_DEFAULT_ENABLED;
+    }
+  };
+
+  const setScrollDebugEnabled = (enabled) => {
+    try {
+      GM_setValue(SCROLL_DEBUG_ENABLED_KEY, enabled === true);
+    } catch (error) {}
+  };
+
+  const normalizeScrollDebugText = (value, maxLength = 240) => {
+    const normalized = String(value ?? "").trim();
+    if (normalized.length <= maxLength) {
+      return normalized;
+    }
+    return `${normalized.slice(0, Math.max(0, maxLength - 3))}...`;
+  };
+
+  const describeScrollDebugElement = (element) => {
+    if (
+      typeof Element === "undefined" ||
+      !(element instanceof Element)
+    ) {
+      return "";
+    }
+    const tagName = String(element.tagName || "").toLowerCase();
+    const idPart = element.id ? `#${element.id}` : "";
+    const classPart =
+      element.classList && element.classList.length > 0
+        ? `.${Array.from(element.classList).slice(0, 4).join(".")}`
+        : "";
+    const namePart =
+      element.getAttribute("name")
+        ? `[name="${normalizeScrollDebugText(
+            element.getAttribute("name"),
+            40
+          )}"]`
+        : "";
+    return normalizeScrollDebugText(
+      `${tagName}${idPart}${classPart}${namePart}`,
+      180
+    );
+  };
+
+  const sanitizeScrollDebugDetail = (value, seen = new WeakSet()) => {
+    if (value === null || value === undefined) {
+      return value;
+    }
+    if (typeof value === "string") {
+      return normalizeScrollDebugText(value, 500);
+    }
+    if (
+      typeof value === "number" ||
+      typeof value === "boolean"
+    ) {
+      return value;
+    }
+    if (typeof value === "bigint") {
+      return String(value);
+    }
+    if (typeof value === "function") {
+      return `[Function ${value.name || "anonymous"}]`;
+    }
+    if (
+      typeof Element !== "undefined" &&
+      value instanceof Element
+    ) {
+      return describeScrollDebugElement(value);
+    }
+    if (typeof value !== "object") {
+      return normalizeScrollDebugText(value, 240);
+    }
+    if (seen.has(value)) {
+      return "[Circular]";
+    }
+    seen.add(value);
+    if (Array.isArray(value)) {
+      return value
+        .slice(0, 24)
+        .map((item) => sanitizeScrollDebugDetail(item, seen));
+    }
+    const result = {};
+    Object.keys(value)
+      .slice(0, 32)
+      .forEach((key) => {
+        result[key] = sanitizeScrollDebugDetail(value[key], seen);
+      });
+    return result;
+  };
+
+  const countScrollDebugSelector = (selector) => {
+    try {
+      return document.querySelectorAll(selector).length;
+    } catch (error) {
+      return 0;
+    }
+  };
+
+  const getScrollDebugNavigationType = () => {
+    try {
+      const performanceObject =
+        typeof performance !== "undefined" ? performance : null;
+      const navigationEntry = performanceObject
+        ?.getEntriesByType?.("navigation")
+        ?.find((entry) => entry && entry.type);
+      if (navigationEntry?.type) {
+        return navigationEntry.type;
+      }
+      const legacyType = performanceObject?.navigation?.type;
+      return legacyType === 1
+        ? "reload"
+        : legacyType === 2
+          ? "back_forward"
+          : legacyType === 0
+            ? "navigate"
+            : "";
+    } catch (error) {
+      return "";
+    }
+  };
+
+  const buildScrollDebugSnapshot = () => {
+    const docEl = document.documentElement;
+    const body = document.body;
+    const scrollingElement = document.scrollingElement || docEl || body;
+    const innerHeight = Number(window.innerHeight) || 0;
+    const scrollY = Math.max(
+      0,
+      Number(window.scrollY) ||
+        Number(window.pageYOffset) ||
+        Number(scrollingElement?.scrollTop) ||
+        0
+    );
+    const scrollX = Math.max(
+      0,
+      Number(window.scrollX) ||
+        Number(window.pageXOffset) ||
+        Number(scrollingElement?.scrollLeft) ||
+        0
+    );
+    const scrollHeight = Math.max(
+      Number(docEl?.scrollHeight) || 0,
+      Number(body?.scrollHeight) || 0,
+      Number(scrollingElement?.scrollHeight) || 0,
+      innerHeight
+    );
+    const clientHeight = Math.max(
+      Number(docEl?.clientHeight) || 0,
+      Number(body?.clientHeight) || 0,
+      Number(scrollingElement?.clientHeight) || 0,
+      innerHeight
+    );
+    const maxScrollY = Math.max(0, scrollHeight - innerHeight);
+    const distanceToBottom = Math.max(0, maxScrollY - scrollY);
+    const now = Date.now();
+    return {
+      href: normalizeScrollDebugText(window.location?.href || "", 500),
+      pathname: normalizeScrollDebugText(window.location?.pathname || "", 180),
+      search: normalizeScrollDebugText(window.location?.search || "", 240),
+      hash: normalizeScrollDebugText(window.location?.hash || "", 160),
+      referrer: normalizeScrollDebugText(document.referrer || "", 300),
+      navigationType: getScrollDebugNavigationType(),
+      readyState: document.readyState || "",
+      visibilityState: document.visibilityState || "",
+      hasFocus:
+        typeof document.hasFocus === "function" ? document.hasFocus() : null,
+      scrollRestoration:
+        typeof history !== "undefined" ? history.scrollRestoration || "" : "",
+      scrollX: Math.round(scrollX),
+      scrollY: Math.round(scrollY),
+      innerWidth: Number(window.innerWidth) || 0,
+      innerHeight,
+      clientHeight,
+      scrollHeight,
+      maxScrollY: Math.round(maxScrollY),
+      distanceToBottom: Math.round(distanceToBottom),
+      nearBottom:
+        maxScrollY > 400 && distanceToBottom <= SCROLL_DEBUG_NEAR_BOTTOM_PX,
+      bodyChildCount: body?.childElementCount || 0,
+      postCount: countScrollDebugSelector('#postlist table[id^="pid"]'),
+      threadRowCount: countScrollDebugSelector(
+        'tbody[id^="normalthread_"], tbody[id^="stickthread_"]'
+      ),
+      s1pHiddenCount: countScrollDebugSelector(
+        ".s1p-hidden-by-keyword, .s1p-hidden-by-quote, .s1p-hidden-blocked-rating-block"
+      ),
+      activeElement: describeScrollDebugElement(document.activeElement),
+      lastUserInteractionType: scrollDebugLastUserInteractionType,
+      lastUserInteractionAgeMs: scrollDebugLastUserInteractionAt
+        ? now - scrollDebugLastUserInteractionAt
+        : null,
+    };
+  };
+
+  const getStoredScrollDebugEvents = () => {
+    if (Array.isArray(scrollDebugEventBuffer)) {
+      return scrollDebugEventBuffer;
+    }
+    try {
+      const storedEvents = GM_getValue(SCROLL_DEBUG_EVENTS_KEY, []);
+      scrollDebugEventBuffer = Array.isArray(storedEvents)
+        ? storedEvents.slice(-SCROLL_DEBUG_EVENT_LIMIT)
+        : [];
+    } catch (error) {
+      scrollDebugEventBuffer = [];
+    }
+    return scrollDebugEventBuffer;
+  };
+
+  const persistScrollDebugEvents = (events) => {
+    scrollDebugEventBuffer = Array.isArray(events)
+      ? events.slice(-SCROLL_DEBUG_EVENT_LIMIT)
+      : [];
+    try {
+      GM_setValue(SCROLL_DEBUG_EVENTS_KEY, scrollDebugEventBuffer);
+    } catch (error) {}
+    return scrollDebugEventBuffer;
+  };
+
+  const appendScrollDebugRecord = (record) => {
+    const events = getStoredScrollDebugEvents().slice();
+    events.push(record);
+    persistScrollDebugEvents(events);
+    return record;
+  };
+
+  const pickScrollDebugSnapshotSummary = (snapshot) => {
+    if (!snapshot || typeof snapshot !== "object") {
+      return null;
+    }
+    return {
+      readyState: snapshot.readyState,
+      visibilityState: snapshot.visibilityState,
+      scrollY: snapshot.scrollY,
+      innerHeight: snapshot.innerHeight,
+      scrollHeight: snapshot.scrollHeight,
+      maxScrollY: snapshot.maxScrollY,
+      distanceToBottom: snapshot.distanceToBottom,
+      nearBottom: snapshot.nearBottom,
+      hash: snapshot.hash,
+      activeElement: snapshot.activeElement,
+    };
+  };
+
+  const shouldRecordUnexpectedBottomCandidate = (phase, snapshot, now) => {
+    if (
+      !snapshot?.nearBottom ||
+      snapshot.maxScrollY <= 400 ||
+      now > scrollDebugLoadMonitorUntil ||
+      now - scrollDebugLastBottomCandidateAt < 1000 ||
+      String(phase || "").startsWith("unexpected_bottom")
+    ) {
+      return false;
+    }
+    return (
+      !scrollDebugLastUserInteractionAt ||
+      now - scrollDebugLastUserInteractionAt >
+        SCROLL_DEBUG_RECENT_INTERACTION_GRACE_MS
+    );
+  };
+
+  const recordScrollDebugEvent = (phase, detail = {}) => {
+    if (!getScrollDebugEnabled()) {
+      return null;
+    }
+    const now = Date.now();
+    const previousSnapshot = scrollDebugLastSnapshot;
+    const snapshot = buildScrollDebugSnapshot();
+    const record = {
+      id: `${SCROLL_DEBUG_SESSION_ID}_${now}_${Math.random()
+        .toString(36)
+        .slice(2, 6)}`,
+      sessionId: SCROLL_DEBUG_SESSION_ID,
+      ts: now,
+      time: new Date(now).toISOString(),
+      phase: normalizeScrollDebugText(phase, 120) || "event",
+      detail: sanitizeScrollDebugDetail(detail),
+      snapshot,
+    };
+    appendScrollDebugRecord(record);
+
+    if (shouldRecordUnexpectedBottomCandidate(phase, snapshot, now)) {
+      scrollDebugLastBottomCandidateAt = now;
+      appendScrollDebugRecord({
+        id: `${SCROLL_DEBUG_SESSION_ID}_${now}_bottom`,
+        sessionId: SCROLL_DEBUG_SESSION_ID,
+        ts: now,
+        time: new Date(now).toISOString(),
+        phase: "unexpected_bottom_candidate",
+        detail: {
+          triggeredBy: normalizeScrollDebugText(phase, 120) || "event",
+          previous: pickScrollDebugSnapshotSummary(previousSnapshot),
+          current: pickScrollDebugSnapshotSummary(snapshot),
+          monitorRemainingMs: Math.max(0, scrollDebugLoadMonitorUntil - now),
+          lastUserInteractionType: scrollDebugLastUserInteractionType,
+          lastUserInteractionAgeMs: scrollDebugLastUserInteractionAt
+            ? now - scrollDebugLastUserInteractionAt
+            : null,
+        },
+        snapshot,
+      });
+    }
+
+    scrollDebugLastSnapshot = snapshot;
+    return record;
+  };
+
+  const clearScrollDebugEvents = () => persistScrollDebugEvents([]);
+
+  const dumpScrollDebugEvents = ({ table = false } = {}) => {
+    const events = getStoredScrollDebugEvents().slice();
+    try {
+      if (table && typeof console.table === "function") {
+        console.table(
+          events.map((event) => ({
+            time: event.time,
+            phase: event.phase,
+            scrollY: event.snapshot?.scrollY,
+            maxScrollY: event.snapshot?.maxScrollY,
+            distanceToBottom: event.snapshot?.distanceToBottom,
+            nearBottom: event.snapshot?.nearBottom,
+            readyState: event.snapshot?.readyState,
+            hash: event.snapshot?.hash,
+          }))
+        );
+      } else {
+        console.log("S1 Plus scroll debug events:", events);
+      }
+    } catch (error) {}
+    return events;
+  };
+
+  const registerScrollDebugApi = () => {
+    const api = {
+      enable: () => {
+        setScrollDebugEnabled(true);
+        return recordScrollDebugEvent("scroll_debug_enabled");
+      },
+      disable: () => {
+        recordScrollDebugEvent("scroll_debug_disabled");
+        setScrollDebugEnabled(false);
+        return true;
+      },
+      isEnabled: () => getScrollDebugEnabled(),
+      dump: (options = {}) => dumpScrollDebugEvents(options),
+      table: () => dumpScrollDebugEvents({ table: true }),
+      clear: () => clearScrollDebugEvents(),
+      mark: (phase = "manual_mark", detail = {}) =>
+        recordScrollDebugEvent(phase, detail),
+    };
+    [
+      typeof globalThis !== "undefined" ? globalThis : null,
+      typeof window !== "undefined" ? window : null,
+    ]
+      .filter(Boolean)
+      .forEach((host) => {
+        try {
+          host.__S1P_SCROLL_DEBUG__ = api;
+          host.__s1pScrollDebug = api;
+        } catch (error) {}
+      });
+    return api;
+  };
+
+  const handleScrollDebugUserInteraction = (event) => {
+    scrollDebugLastUserInteractionAt = Date.now();
+    scrollDebugLastUserInteractionType = String(event?.type || "interaction");
+  };
+
+  const initializeScrollDebugLifecycle = () => {
+    registerScrollDebugApi();
+    if (scrollDebugLifecycleBound) {
+      return;
+    }
+    scrollDebugLifecycleBound = true;
+    scrollDebugLoadMonitorUntil = Date.now() + SCROLL_DEBUG_LOAD_MONITOR_MS;
+
+    ["wheel", "touchstart", "pointerdown", "mousedown"].forEach((type) => {
+      document.addEventListener(type, handleScrollDebugUserInteraction, {
+        capture: true,
+        passive: true,
+      });
+    });
+    document.addEventListener(
+      "keydown",
+      handleScrollDebugUserInteraction,
+      true
+    );
+
+    window.addEventListener(
+      "scroll",
+      () => {
+        const now = Date.now();
+        if (
+          now > scrollDebugLoadMonitorUntil ||
+          now - scrollDebugLastScrollLogAt < SCROLL_DEBUG_SCROLL_THROTTLE_MS
+        ) {
+          return;
+        }
+        scrollDebugLastScrollLogAt = now;
+        recordScrollDebugEvent("window_scroll");
+      },
+      { passive: true }
+    );
+    document.addEventListener("DOMContentLoaded", () => {
+      recordScrollDebugEvent("dom_content_loaded");
+    });
+    window.addEventListener("load", () => {
+      recordScrollDebugEvent("window_load");
+    });
+    window.addEventListener("pageshow", (event) => {
+      scrollDebugLoadMonitorUntil = Date.now() + SCROLL_DEBUG_LOAD_MONITOR_MS;
+      recordScrollDebugEvent("pageshow", {
+        persisted: event?.persisted === true,
+      });
+    });
+    document.addEventListener("visibilitychange", () => {
+      recordScrollDebugEvent("visibilitychange", {
+        visibilityState: document.visibilityState,
+      });
+    });
+    window.addEventListener("pagehide", (event) => {
+      recordScrollDebugEvent("pagehide", {
+        persisted: event?.persisted === true,
+      });
+    });
+    window.addEventListener("beforeunload", () => {
+      recordScrollDebugEvent("beforeunload");
+    });
+    recordScrollDebugEvent("scroll_debug_lifecycle_init", {
+      defaultEnabled: SCROLL_DEBUG_DEFAULT_ENABLED,
+      eventLimit: SCROLL_DEBUG_EVENT_LIMIT,
+      loadMonitorMs: SCROLL_DEBUG_LOAD_MONITOR_MS,
+    });
   };
 
   const formatLogArgument = (value, seen = new WeakSet()) => {
@@ -14303,7 +14768,16 @@
     }
 
     pendingAutoPullReloadReason = normalizedReason;
+    recordScrollDebugEvent("auto_pull_reload_scheduled", {
+      reason: normalizedReason,
+      reloadDelayMs,
+    });
     pendingAutoPullReloadTimer = setTimeoutFn(() => {
+      const fireReason = pendingAutoPullReloadReason || normalizedReason;
+      recordScrollDebugEvent("auto_pull_reload_fire", {
+        reason: fireReason,
+        reloadDelayMs,
+      });
       pendingAutoPullReloadTimer = null;
       pendingAutoPullReloadReason = "";
       if (locationObject && typeof locationObject.reload === "function") {
@@ -31319,7 +31793,15 @@
         updateLastSyncTimeDisplay();
         completionResult = { status: "success", action: "force_pull" };
         showMessage("拉取成功！页面即将刷新以应用新数据。", true);
-        setTimeout(() => location.reload(), 1500);
+        recordScrollDebugEvent("manual_force_pull_reload_scheduled", {
+          reloadDelayMs: 1500,
+        });
+        setTimeout(() => {
+          recordScrollDebugEvent("manual_force_pull_reload_fire", {
+            reloadDelayMs: 1500,
+          });
+          location.reload();
+        }, 1500);
       } else {
         throw new Error(result.message);
       }
@@ -40157,7 +40639,15 @@
                       remoteWriter: latestRemoteDataObj.lastWriter || null,
                     });
                     showMessage("恢复成功！页面即将刷新。", true);
-                    setTimeout(() => location.reload(), 1200);
+                    recordScrollDebugEvent("manual_initial_pull_reload_scheduled", {
+                      reloadDelayMs: 1200,
+                    });
+                    setTimeout(() => {
+                      recordScrollDebugEvent("manual_initial_pull_reload_fire", {
+                        reloadDelayMs: 1200,
+                      });
+                      location.reload();
+                    }, 1200);
                     resolveManualSync(true);
                   } else {
                     noteManualFailure(result.message);
@@ -40595,7 +41085,15 @@
                     }
                   );
                   showMessage(`拉取成功！页面即将刷新。`, true);
-                  setTimeout(() => location.reload(), 1200);
+                  recordScrollDebugEvent("manual_pull_reload_scheduled", {
+                    reloadDelayMs: 1200,
+                  });
+                  setTimeout(() => {
+                    recordScrollDebugEvent("manual_pull_reload_fire", {
+                      reloadDelayMs: 1200,
+                    });
+                    location.reload();
+                  }, 1200);
                   resolveManualSync(true);
                 } else {
                   noteManualFailure(result.message, decisionDiagnostics);
@@ -45748,16 +46246,30 @@
 
   const runInitializationPhase = async (phaseName, tasks, context) => {
     const phaseStartedAt = Date.now();
-    for (const task of tasks) {
-      if (!task || typeof task.run !== "function") {
-        continue;
+    let completed = false;
+    recordScrollDebugEvent("init_phase_start", {
+      phaseName,
+      taskCount: Array.isArray(tasks) ? tasks.length : 0,
+    });
+    try {
+      for (const task of tasks) {
+        if (!task || typeof task.run !== "function") {
+          continue;
+        }
+        await runInitializationTask(phaseName, task, context);
       }
-      await runInitializationTask(phaseName, task, context);
+      completed = true;
+      context.phaseResults[phaseName] = {
+        completedAt: Date.now(),
+        durationMs: Date.now() - phaseStartedAt,
+      };
+    } finally {
+      recordScrollDebugEvent("init_phase_end", {
+        phaseName,
+        completed,
+        durationMs: Date.now() - phaseStartedAt,
+      });
     }
-    context.phaseResults[phaseName] = {
-      completedAt: Date.now(),
-      durationMs: Date.now() - phaseStartedAt,
-    };
   };
 
   async function main(initializationContext = createS1PlusInitializationContext()) {
@@ -46389,6 +46901,20 @@
       observerApplyTimer = setTimeout(() => {
         observerApplyTimer = null;
         observerIsApplying = true;
+        const observerDebugDetails = {
+          navReinit: observerPendingNavReinit,
+          threadRefresh: observerPendingThreadRefresh,
+          postRefresh: observerPendingPostRefresh,
+          fullApply: observerRequireFullApply,
+          threadRows: observerPendingThreadRows.size,
+          postTables: observerPendingPostTables.size,
+          quoteScopes: observerPendingQuoteScopes.size,
+          ratingsScopes: observerPendingRatingsScopes.size,
+          notificationScopes: observerPendingNotificationScopes.size,
+          threadNeedsFullRefresh: observerPendingThreadNeedsFullRefresh,
+          postNeedsFullRefresh: observerPendingPostNeedsFullRefresh,
+        };
+        recordScrollDebugEvent("dom_observer_apply_start", observerDebugDetails);
         observer.disconnect();
         try {
           if (observerPendingNavReinit) {
@@ -46421,6 +46947,7 @@
           const watchTarget = resolveObserverWatchTarget();
           observer.observe(watchTarget, { childList: true, subtree: true });
           observerIsApplying = false;
+          recordScrollDebugEvent("dom_observer_apply_end", observerDebugDetails);
         }
       }, DOM_OBSERVER_DEBOUNCE_MS);
     };
@@ -46485,6 +47012,15 @@
     const shouldEnableReadProgress =
       settings.enableGeneralSettings === true &&
       settings.enableReadProgress === true;
+    recordScrollDebugEvent("apply_changes_start", {
+      enableGeneralSettings: settings.enableGeneralSettings === true,
+      enablePostBlocking: shouldEnablePostBlocking,
+      enableUserBlocking: shouldEnableUserBlocking,
+      enableReadProgress: shouldEnableReadProgress,
+      hideImagesByDefault: settings.hideImagesByDefault === true,
+      limitImagesBySize: settings.limitImagesBySize === true,
+      cleanupMode: settings.cleanupMode,
+    });
     let hasRestoredManagedVisibility = false;
     const ensureManagedVisibilityRestored = () => {
       if (hasRestoredManagedVisibility) {
@@ -46558,9 +47094,13 @@
     } catch (e) {
       console.error("S1 Plus: Error caught while running autoSign():", e);
     }
+    recordScrollDebugEvent("apply_changes_end", {
+      restoredManagedVisibility: hasRestoredManagedVisibility,
+    });
   }
 
   const runS1PlusInitializer = () => {
+    initializeScrollDebugLifecycle();
     const initializationContext = createS1PlusInitializationContext();
     const documentStartPhasePromise = runInitializationPhase(
       S1P_INIT_PHASES.DOCUMENT_START,
@@ -46580,7 +47120,12 @@
     );
 
     waitForDocumentBodyReady()
-      .then(() => documentStartPhasePromise)
+      .then((body) => {
+        recordScrollDebugEvent("body_ready_detected", {
+          bodyChildCount: body?.childElementCount || 0,
+        });
+        return documentStartPhasePromise;
+      })
       .then(() => main(initializationContext))
       .catch((error) => {
         console.error("S1 Plus: 初始化失败:", error);
