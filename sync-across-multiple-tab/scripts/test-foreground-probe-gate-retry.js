@@ -15,12 +15,67 @@ const createHarness = () => {
   });
 };
 
+const AUTO_SYNC_INDICATOR_STATE_KEY = "s1p_auto_sync_indicator_state";
+
 const enabledSettings = {
   syncRemoteEnabled: true,
   syncRemoteGistId: "gist-id",
   syncRemotePat: "pat-token",
   syncCheckOnReturnToForeground: true,
 };
+
+const testRetryPendingKeepsExplicitOperationWhenPendingWriteIsDeduped =
+  async () => {
+    const { hooks, store } = createHarness();
+    const now = Date.now();
+    store.set(AUTO_SYNC_INDICATOR_STATE_KEY, {
+      phase: "pending",
+      timestamp: now,
+      token: "",
+      source: "foreground_resume",
+      reason: "foreground_probe_verification_retry",
+      operation: "",
+      lastResolvedPhase: "idle",
+      lastResolvedTimestamp: now,
+      lastResolvedSource: "",
+      lastResolvedReason: "",
+    });
+
+    let retrySyncCalls = 0;
+    const scheduleResult = hooks.scheduleForegroundRemoteSyncRetry(
+      "remote_probe_changed:visible_poll_active",
+      {
+        preferredDelayMs: 20,
+        indicatorReason: "foreground_probe_changed_retry",
+        indicatorOperation: "sync",
+        getForegroundProbeGateBlockResult: () => null,
+        requestForegroundRemoteSyncCheck: async () => {
+          retrySyncCalls += 1;
+          return {
+            status: "success",
+            action: "no_change",
+          };
+        },
+        applyRefreshPolicyForSyncResult: () => null,
+        maybeShowForegroundProbeFeedback: () => false,
+      }
+    );
+
+    assert.equal(scheduleResult.status, "scheduled");
+    const resolvedState = toPlainObject(
+      hooks.resolveAutoSyncIndicatorDisplayPhase()
+    );
+    assert.equal(resolvedState.displayPhase, "pending");
+    assert.equal(resolvedState.displaySource, "visible_poll");
+    assert.equal(
+      hooks.getAutoSyncIndicatorDisplayKind(resolvedState),
+      "sync",
+      "pending 状态写入被去重时，运行时 retry operation 仍应优先保留，不能因旧 source 回退成 pull。"
+    );
+
+    await wait(1500);
+    assert.equal(retrySyncCalls, 1);
+  };
 
 const testProbeGateBlocksChangedRemoteAndRetriesAfterLocalSettles = async () => {
   const { hooks } = createHarness();
@@ -74,6 +129,16 @@ const testProbeGateBlocksChangedRemoteAndRetriesAfterLocalSettles = async () => 
   assert.equal(result.syncRequestResult?.reason, "read_progress_pending_write");
   assert.equal(result.retryPlan?.status, "scheduled");
   assert.equal(messages.length, 0, "probe gate 命中时应保持静默。");
+  const pendingIndicatorState = toPlainObject(
+    hooks.resolveAutoSyncIndicatorDisplayPhase()
+  );
+  assert.equal(pendingIndicatorState.displayPhase, "pending");
+  assert.equal(pendingIndicatorState.displaySource, "visible_poll");
+  assert.equal(
+    hooks.getAutoSyncIndicatorDisplayKind(pendingIndicatorState),
+    "sync",
+    "远端变化被前台门禁暂缓时，pending 指示器应显示中性三点，避免误显示待拉取。"
+  );
 
   const diagnostics = toPlainObject(hooks.getSyncDiagnostics());
   assert.equal(diagnostics.lastProbeResult, "changed");
@@ -151,6 +216,7 @@ const testRetryPendingSuppressesRepeatedForegroundProbe = async () => {
 };
 
 const run = async () => {
+  await testRetryPendingKeepsExplicitOperationWhenPendingWriteIsDeduped();
   await testProbeGateBlocksChangedRemoteAndRetriesAfterLocalSettles();
   await testRetryPendingSuppressesRepeatedForegroundProbe();
   console.log("[foreground-probe-gate-retry] Phase 4 probe gate and retry verified.");

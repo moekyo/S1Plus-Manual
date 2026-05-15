@@ -101,6 +101,7 @@
 - 本轮完成：
   - 为 `foreground_resume` / `visible_poll` 接入显式 probe gate，在阅读进度 `pending write`、同步防抖窗口和最近初始化噪声保护窗口内优先返回当前标签页 `soft block`。
   - 前台补偿重试现在会记录剩余等待时间，并在真正执行 follow-up sync 之前再次检查 probe gate，等待本地状态稳定后再继续。
+  - 云端 `updated_at` 与本地已同步版本相同后的保守二次确认，以及 metadata-only 发现 `updated_at` 变新但前台补同步被本地待写入门禁暂缓的复查等待，都会以中性 `sync` pending / running 展示；最终 `hash_equal / no_change` 直接回到 idle，不再显示为待拉取或同步成功。
   - 当前标签页已有前台 retry pending 时，新的前台 probe 会直接返回 `followup_retry_pending`，避免 `visibilitychange/pageshow` 与 visible poll 重复拉起同一份旧状态。
   - 保持 visible poll 低打扰：probe gate 命中时不再升级成高严重度提示，仍只在真正冲突场景上浮。
   - `foreground_resume` / `pageshow(persisted)` 现在会先做核心数据 storage snapshot 收敛，再决定是否继续执行远端 freshness probe。
@@ -169,6 +170,7 @@
 - `visible_poll` 已从“回到前台检查”中拆出为独立设置 `syncVisibleRemotePollingEnabled`，默认关闭。
 - `syncCheckOnReturnToForeground=true` 现在只表示页面首次可见、回到前台、bfcache 恢复时做一次性远端 freshness probe。
 - 页面持续可见时的低频 probe 需要同时开启 `syncCheckOnReturnToForeground` 和 `syncVisibleRemotePollingEnabled`。
+- 前台 metadata-only probe 不能被本地 `clean-state fence` 吞掉；本地没有待推送只能证明本机不需要 push，不能证明其他设备没有写入远端。
 - 前台 probe 命中远端 `updated_at` 变化后，会先执行 storage snapshot 收敛，再用 fresh local snapshot 进入 foreground follow-up。
 - 新增远端变化来源分层：
   - `hash_equal_after_resync`
