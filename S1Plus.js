@@ -32,8 +32,9 @@
   const DEBUG_CONSOLE_PANEL_ID = "s1p-debug-console-panel";
   const DEBUG_CONSOLE_VISIBLE_KEY = "s1p_debug_console_visible";
   const DEBUG_CONSOLE_SIZE_KEY = "s1p_debug_console_size";
-  const LOG_BUFFER_MAX = 500;
+  const LOG_BUFFER_MAX = 1000;
   const LOG_RENDER_MAX = 200;
+  const LOG_COLLAPSED_MESSAGE_MAX_LENGTH = 180;
   const VERSION_HOVER_REVEAL_MS = 4000;
   const DEBUG_CONSOLE_MIN_WIDTH = 320;
   const DEBUG_CONSOLE_MIN_HEIGHT = 240;
@@ -42,6 +43,9 @@
   let logSearchKeyword = "";
   let logDirty = false;
   let logAutoScroll = true;
+  let logExpandAll = false;
+  let nextLogEntryId = 1;
+  let expandedLogEntryIds = new Set();
   let logPanelRafId = null;
   let logCollectorStarted = false;
   const _originalConsole = {};
@@ -120,7 +124,7 @@
   const pushLog = (entry) => {
     if (!logCollectorStarted) return;
     if (logBuffer.length >= LOG_BUFFER_MAX) logBuffer.shift();
-    logBuffer.push({ ts: Date.now(), ...entry });
+    logBuffer.push({ id: nextLogEntryId++, ts: Date.now(), ...entry });
     logDirty = true;
     scheduleLogRender();
   };
@@ -1164,6 +1168,8 @@
   const READ_PROGRESS_STARTUP_SUMMARY_LIMIT = 8;
   // 同步诊断里保留最近几条阅读进度调试事件，便于复盘后台开帖页的生命周期。
   const READ_PROGRESS_DEBUG_EVENT_LIMIT = 12;
+  // 同步过程 trace 会落到诊断面板，方便复盘一次同步从触发到收尾的完整路径。
+  const SYNC_TRACE_EVENT_LIMIT = 30;
   // 调试开关：开启后输出阅读进度楼层解析与兜底链路日志。
   const READ_PROGRESS_PARSE_DEBUG = false;
   const READ_PROGRESS_INTERACTION_CONFIRM_KEYS = new Set([
@@ -2308,8 +2314,8 @@
     }
     .s1p-debug-console-log-line {
       display: grid;
-      grid-template-columns: auto auto minmax(0, 1fr) auto;
-      align-items: center;
+      grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+      align-items: start;
       gap: 6px;
       padding: 5px 8px 5px 10px;
       border-bottom: 1px solid var(--s1p-border);
@@ -2351,6 +2357,12 @@
       overflow-wrap: anywhere;
       color: var(--s1p-t);
     }
+    .s1p-debug-console-log-msg.is-collapsed {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .s1p-debug-console-expand-line,
     .s1p-debug-console-copy-line {
       display: inline-flex;
       align-items: center;
@@ -2362,7 +2374,13 @@
       transform: none !important;
       opacity: 0.9;
     }
+    .s1p-debug-console-expand-line[aria-hidden="true"] {
+      visibility: hidden;
+      pointer-events: none;
+    }
     .s1p-debug-console-log-line:hover .s1p-debug-console-copy-line,
+    .s1p-debug-console-log-line:hover .s1p-debug-console-expand-line,
+    .s1p-debug-console-expand-line:focus-visible,
     .s1p-debug-console-copy-line:focus-visible {
       opacity: 1;
     }
@@ -7767,6 +7785,12 @@
     lastSyncResultCode: "",
     lastSyncBlockKind: "",
     lastSyncBlockReason: "",
+    lastSyncTraceTimestamp: 0,
+    lastSyncTraceScope: "",
+    lastSyncTracePhase: "",
+    lastSyncTraceStatus: "",
+    lastSyncTraceSummary: "",
+    syncTraceEvents: Object.freeze([]),
     lastForegroundProbeRetryAfterMs: 0,
     lastForegroundProbeRetryWaitUntil: 0,
     lastSharedSchedulerOwner: "",
@@ -7932,6 +7956,16 @@
       lastSyncResultCode: normalizeText(source.lastSyncResultCode, 160),
       lastSyncBlockKind: normalizeText(source.lastSyncBlockKind, 60),
       lastSyncBlockReason: normalizeText(source.lastSyncBlockReason, 160),
+      lastSyncTraceTimestamp: normalizeTimestamp(source.lastSyncTraceTimestamp),
+      lastSyncTraceScope: normalizeText(source.lastSyncTraceScope, 80),
+      lastSyncTracePhase: normalizeText(source.lastSyncTracePhase, 80),
+      lastSyncTraceStatus: normalizeText(source.lastSyncTraceStatus, 80),
+      lastSyncTraceSummary: normalizeText(source.lastSyncTraceSummary, 500),
+      syncTraceEvents: normalizeTextList(
+        source.syncTraceEvents,
+        500,
+        SYNC_TRACE_EVENT_LIMIT
+      ),
       lastForegroundProbeRetryAfterMs: normalizeCount(
         source.lastForegroundProbeRetryAfterMs
       ),
@@ -9618,20 +9652,26 @@
       return "";
     }
     const parts = [
-      `device=${normalizedWriter.deviceId}`,
-      `action=${normalizedWriter.action || "unknown"}`,
-      `mode=${normalizedWriter.syncMode || "unknown"}`,
+      `设备=${normalizedWriter.deviceId}`,
+      `动作=${getAutoSyncCompletionActionDescription(
+        normalizedWriter.action || "unknown"
+      )}`,
+      `模式=${getSyncTraceScopeLabel(
+        normalizedWriter.syncMode
+          ? `${normalizedWriter.syncMode}_auto_sync`
+          : "auto_sync"
+      )}`,
     ];
     if (normalizedWriter.threadId) {
-      parts.push(`tid=${normalizedWriter.threadId}`);
+      parts.push(`帖子=${normalizedWriter.threadId}`);
     }
     if (normalizedWriter.sessionId) {
-      parts.push(`session=${normalizedWriter.sessionId}`);
+      parts.push(`会话=${normalizedWriter.sessionId}`);
     }
     if (normalizedWriter.sourceTabId) {
-      parts.push(`tab=${normalizedWriter.sourceTabId}`);
+      parts.push(`标签=${normalizedWriter.sourceTabId}`);
     }
-    parts.push(`at=${formatSyncTime(normalizedWriter.createdAt)}`);
+    parts.push(`时间=${formatSyncTime(normalizedWriter.createdAt)}`);
     return parts.join(" | ");
   };
 
@@ -9649,16 +9689,31 @@
     return normalized || "—";
   };
 
-  const formatSyncDiagnosticTriggerSource = (source) => {
+  const getSyncDiagnosticTriggerSourceLabel = (source) => {
     const normalizedSource = normalizeSyncTriggerSource(source);
     if (!normalizedSource) {
-      return "—";
+      return "";
     }
     const sourceLabel = getAutoSyncIndicatorSourceLabel(normalizedSource);
-    if (!sourceLabel || sourceLabel === "自动同步") {
-      return normalizedSource;
+    if (sourceLabel && sourceLabel !== "自动同步") {
+      return sourceLabel;
     }
-    return `${sourceLabel} (${normalizedSource})`;
+    switch (normalizedSource) {
+      case LEGACY_AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND:
+      case AUTO_SYNC_MODE_BACKGROUND:
+        return "后台自动同步";
+      case LEGACY_AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_FOLLOWUP:
+      case AUTO_SYNC_MODE_FOREGROUND_FOLLOWUP:
+        return "前台补同步";
+      case AUTO_SYNC_MODE_STARTUP:
+        return "启动同步";
+      default:
+        return getAutoSyncCompletionReasonDescription(normalizedSource);
+    }
+  };
+
+  const formatSyncDiagnosticTriggerSource = (source) => {
+    return getSyncDiagnosticTriggerSourceLabel(source) || "—";
   };
 
   const sanitizeDiagnosticText = (text, maxLength = 220) =>
@@ -9691,11 +9746,79 @@
           Math.floor(Number(normalizedSources[source]) || 0)
         );
         return count > 0
-          ? `${normalizeSyncDiagnosticText(source, 40)}=${count}`
+          ? `${formatSyncDiagnosticTriggerSource(source)}=${count}`
           : "";
       })
       .filter(Boolean);
     return entries.length > 0 ? entries.join(", ") : "";
+  };
+
+  const getReadableSyncDiagnosticCodePart = (part = "") => {
+    const normalized = normalizeSyncDiagnosticText(part, 120);
+    if (!normalized) {
+      return "";
+    }
+    const scopeLabel = getSyncTraceScopeLabel(
+      normalized === "background"
+        ? "background_auto_sync"
+        : normalized === "startup"
+          ? "startup_auto_sync"
+          : normalized === "foreground_followup"
+            ? "foreground_followup_sync"
+            : normalized
+    );
+    if (scopeLabel && scopeLabel !== normalized) {
+      return scopeLabel;
+    }
+    const statusLabel = getSyncTraceStatusLabel(normalized);
+    if (statusLabel && statusLabel !== normalized) {
+      return statusLabel;
+    }
+    const actionLabel = getSyncTraceActionValueLabel(normalized);
+    if (actionLabel && actionLabel !== normalized) {
+      return actionLabel;
+    }
+    const reasonLabel = getSyncTraceReasonValueLabel(normalized);
+    if (reasonLabel && reasonLabel !== normalized) {
+      return reasonLabel;
+    }
+    switch (normalized) {
+      case "attempt":
+        return "尝试";
+      case "soft":
+        return "软阻断";
+      case "hard":
+        return "硬阻断";
+      case "probe":
+        return "云端探测";
+      default:
+        return normalized;
+    }
+  };
+
+  const formatSyncDiagnosticCodeLabel = (value = "") => {
+    const normalized = normalizeSyncDiagnosticText(value, 220);
+    if (!normalized) {
+      return "—";
+    }
+    return normalized
+      .split(":")
+      .map((part) => getReadableSyncDiagnosticCodePart(part))
+      .filter(Boolean)
+      .join(" / ");
+  };
+
+  const formatSyncDiagnosticVisibilityLabel = (value = "") => {
+    switch (String(value || "").trim()) {
+      case "visible":
+        return "前台可见";
+      case "hidden":
+        return "后台隐藏";
+      case "prerender":
+        return "预渲染";
+      default:
+        return value || "—";
+    }
   };
 
   const getBackgroundSyncSchedulerDiagnosticsSnapshot = ({
@@ -9725,18 +9848,20 @@
     const cleanupParts = [];
     if (pendingCleanup.status) {
       cleanupParts.push(
-        `pending=${pendingCleanup.status}:${pendingCleanup.reason || "unknown"}`
+        `待同步=${formatSyncDiagnosticCodeLabel(pendingCleanup.status)}:${
+          getAutoSyncCompletionReasonDescription(pendingCleanup.reason)
+        }`
       );
     }
     if (sharedDebounceCleanup.status) {
       cleanupParts.push(
-        `shared=${sharedDebounceCleanup.status}:${
-          sharedDebounceCleanup.reason || "unknown"
+        `共享调度=${formatSyncDiagnosticCodeLabel(sharedDebounceCleanup.status)}:${
+          getAutoSyncCompletionReasonDescription(sharedDebounceCleanup.reason)
         }`
       );
     }
     if (normalizedCleanup.followUpQueued === true) {
-      cleanupParts.push("followUp=queued");
+      cleanupParts.push("后续同步=已排队");
     }
 
     return {
@@ -9808,7 +9933,7 @@
       diagnostics.lastSharedSchedulerMaxLastModified ||
       0;
     const rows = [
-      ["最近动作", diagnostics.lastActionType || "—"],
+      ["最近动作", formatSyncDiagnosticCodeLabel(diagnostics.lastActionType)],
       ["最近尝试", formatSyncTime(diagnostics.lastAttemptTimestamp)],
       ["最近成功", formatSyncTime(diagnostics.lastSuccessTimestamp)],
       ["最近冲突", formatSyncTime(diagnostics.lastConflictTimestamp)],
@@ -9818,15 +9943,50 @@
         "最近触发源",
         formatSyncDiagnosticTriggerSource(diagnostics.lastTriggerSource),
       ],
-      ["页面可见性", diagnostics.lastPageVisibility || "—"],
+      [
+        "页面可见性",
+        formatSyncDiagnosticVisibilityLabel(diagnostics.lastPageVisibility),
+      ],
       ["标签页 ID", diagnostics.lastTabId || "—"],
       ["帖子 ID", diagnostics.lastThreadId || "—"],
       ["本机设备 ID", diagnostics.lastLocalSyncDeviceId || "—"],
       ["最近远端写入", diagnostics.lastRemoteWriterSummary || "—"],
-      ["最近结果类型", diagnostics.lastSyncResultKind || "—"],
-      ["最近结果码", diagnostics.lastSyncResultCode || "—"],
-      ["最近阻断级别", diagnostics.lastSyncBlockKind || "—"],
-      ["最近阻断原因", diagnostics.lastSyncBlockReason || "—"],
+      [
+        "最近结果类型",
+        formatSyncDiagnosticCodeLabel(diagnostics.lastSyncResultKind),
+      ],
+      [
+        "最近结果码",
+        formatSyncDiagnosticCodeLabel(diagnostics.lastSyncResultCode),
+      ],
+      ["最近过程时间", formatSyncTime(diagnostics.lastSyncTraceTimestamp)],
+      [
+        "最近过程范围",
+        diagnostics.lastSyncTraceScope
+          ? getSyncTraceScopeLabel(diagnostics.lastSyncTraceScope)
+          : "—",
+      ],
+      [
+        "最近过程阶段",
+        diagnostics.lastSyncTracePhase
+          ? getSyncTracePhaseLabel(diagnostics.lastSyncTracePhase)
+          : "—",
+      ],
+      [
+        "最近过程状态",
+        diagnostics.lastSyncTraceStatus
+          ? getSyncTraceStatusLabel(diagnostics.lastSyncTraceStatus)
+          : "—",
+      ],
+      ["最近过程摘要", diagnostics.lastSyncTraceSummary || "—"],
+      [
+        "最近阻断级别",
+        formatSyncDiagnosticCodeLabel(diagnostics.lastSyncBlockKind),
+      ],
+      [
+        "最近阻断原因",
+        formatSyncDiagnosticCodeLabel(diagnostics.lastSyncBlockReason),
+      ],
       [
         "前台重试等待",
         diagnostics.lastForegroundProbeRetryAfterMs
@@ -9837,38 +9997,38 @@
         "前台重试时间",
         formatSyncTime(diagnostics.lastForegroundProbeRetryWaitUntil),
       ],
-      ["共享调度 owner", schedulerOwner || "—"],
+      ["共享调度负责标签", schedulerOwner || "—"],
       [
-        "共享调度 lease",
+        "共享调度租约",
         schedulerOwnerLeaseUntil
           ? `${formatSyncTime(schedulerOwnerLeaseUntil)} (${formatSyncDiagnosticDuration(
               schedulerSnapshot.ownerLeaseRemainingMs
             )})`
           : "—",
       ],
-      ["共享调度 dueAt", formatSyncTime(schedulerDueAt)],
-      ["共享调度 maxWait", formatSyncTime(schedulerMaxWaitUntil)],
+      ["共享调度执行时间", formatSyncTime(schedulerDueAt)],
+      ["共享调度最长等待", formatSyncTime(schedulerMaxWaitUntil)],
       [
-        "共享调度 generation",
+        "共享调度代次",
         schedulerGeneration ? String(schedulerGeneration) : "—",
       ],
-      ["共享调度 sources", schedulerSources || "—"],
+      ["共享调度来源", schedulerSources || "—"],
       [
-        "共享调度 threadIds",
+        "共享调度帖子",
         schedulerThreadIds.length > 0 ? schedulerThreadIds.join(", ") : "—",
       ],
-      ["共享调度 maxModified", formatSyncTime(schedulerMaxLastModified)],
+      ["共享调度最大修改", formatSyncTime(schedulerMaxLastModified)],
       [
-        "共享调度 covered",
+        "共享调度已覆盖",
         diagnostics.lastSharedSchedulerCoveredGeneration ||
         diagnostics.lastSharedSchedulerCoveredLastModified
-          ? `gen=${diagnostics.lastSharedSchedulerCoveredGeneration || 0} | ${formatSyncTime(
+          ? `代次=${diagnostics.lastSharedSchedulerCoveredGeneration || 0} | ${formatSyncTime(
               diagnostics.lastSharedSchedulerCoveredLastModified
             )}`
           : "—",
       ],
       [
-        "共享调度 drain",
+        "共享调度队列轮次",
         diagnostics.lastSharedSchedulerDrainLoopCount
           ? String(diagnostics.lastSharedSchedulerDrainLoopCount)
           : "—",
@@ -9880,11 +10040,11 @@
         ),
       ],
       [
-        "共享调度 cleanup",
+        "共享调度清理结果",
         diagnostics.lastSharedSchedulerCleanupResult || "—",
       ],
-      ["待处理 cleanup 来源", diagnostics.lastCleanupSource || "—"],
-      ["待处理 cleanup 数量", String(diagnostics.lastPendingCleanupCount || 0)],
+      ["待处理清理来源", diagnostics.lastCleanupSource || "—"],
+      ["待处理清理数量", String(diagnostics.lastPendingCleanupCount || 0)],
       ["本地哈希", formatSyncDiagnosticHashForDisplay(diagnostics.lastLocalHash)],
       ["远端哈希", formatSyncDiagnosticHashForDisplay(diagnostics.lastRemoteHash)],
       [
@@ -9896,7 +10056,7 @@
         formatSyncDiagnosticHashForDisplay(diagnostics.lastAppliedContentHash),
       ],
       ["最近本地修改", formatSyncTime(diagnostics.lastLocalModified)],
-      ["最近 dirty 来源", diagnostics.lastDirtySource || "—"],
+      ["最近本地变更来源", diagnostics.lastDirtySource || "—"],
       [
         "已确认可见楼层",
         formatSyncDiagnosticYesNo(diagnostics.lastHadConfirmedVisiblePost),
@@ -9933,7 +10093,7 @@
           diagnostics.lastSyncedRemoteUpdatedAt
         ),
       ],
-      ["最近探测结果", diagnostics.lastProbeResult || "—"],
+      ["最近探测结果", formatSyncDiagnosticCodeLabel(diagnostics.lastProbeResult)],
       [
         "最近探测是否同机会话写入",
         formatSyncDiagnosticYesNo(diagnostics.lastProbeSameSessionRemoteWrite),
@@ -9942,14 +10102,19 @@
         "最近探测是否同设备写入",
         formatSyncDiagnosticYesNo(diagnostics.lastProbeSameDeviceRemoteWrite),
       ],
-      ["最近探测写入来源", diagnostics.lastProbeWriterMatchKind || "—"],
+      [
+        "最近探测写入来源",
+        diagnostics.lastProbeWriterMatchKind
+          ? getSyncTraceRemoteChangeKindLabel(diagnostics.lastProbeWriterMatchKind)
+          : "—",
+      ],
       [
         "探测是否触发安全同步",
         formatProbeTriggeredSyncForDisplay(diagnostics),
       ],
       [
         "最近探测后同步结果",
-        diagnostics.lastProbeTriggeredSyncResult || "—",
+        formatSyncDiagnosticCodeLabel(diagnostics.lastProbeTriggeredSyncResult),
       ],
       [
         "失败原因",
@@ -9958,6 +10123,16 @@
           : "—",
       ],
     ];
+    const syncTraceEvents = Array.isArray(diagnostics.syncTraceEvents)
+      ? diagnostics.syncTraceEvents.slice().reverse()
+      : [];
+    if (syncTraceEvents.length === 0) {
+      rows.push(["同步过程", "—"]);
+    } else {
+      syncTraceEvents.forEach((eventSummary, index) => {
+        rows.push([`同步过程 ${index + 1}`, eventSummary]);
+      });
+    }
     const startupSummaries = Array.isArray(diagnostics.readProgressStartupSummaries)
       ? diagnostics.readProgressStartupSummaries.slice().reverse()
       : [];
@@ -9994,6 +10169,695 @@
       ),
     ];
     return lines.join("\n");
+  };
+
+  const getSyncTraceScopeLabel = (scope = "") => {
+    switch (String(scope || "").trim()) {
+      case "startup_orchestrator":
+        return "启动同步编排器";
+      case "startup_auto_sync":
+        return "每日首次同步";
+      case "per_load_sync":
+        return "每次加载同步";
+      case "foreground_probe":
+        return "云端更新检查";
+      case "foreground_followup_sync":
+        return "前台补同步";
+      case "background_auto_sync":
+        return "后台自动同步";
+      case "shared_background_scheduler":
+        return "共享后台调度";
+      case "auto_sync":
+        return "自动同步检查";
+      case "remote_probe":
+        return "云端元数据读取";
+      case "remote_fetch":
+        return "云端同步文件读取";
+      case "remote_push":
+        return "云端推送";
+      case "manual_sync":
+        return "手动同步";
+      case "force_push":
+        return "强制推送";
+      case "force_pull":
+        return "强制拉取";
+      case "clean_state_fence":
+        return "干净状态跳过";
+      default:
+        return normalizeSyncDiagnosticText(scope, 80) || "同步";
+    }
+  };
+
+  const getSyncTracePhaseLabel = (phase = "") => {
+    switch (String(phase || "").trim()) {
+      case "startup_orchestrator_decision":
+        return "启动编排决策";
+      case "daily_startup_sync_skipped":
+        return "每日首次同步跳过";
+      case "per_load_sync_skipped":
+        return "每次加载检查跳过";
+      case "initial_foreground_probe_skipped":
+        return "首次可见检查跳过";
+      case "foreground_probe_start":
+        return "云端更新检查开始";
+      case "foreground_probe_lock_acquired":
+        return "已取得探测锁";
+      case "foreground_probe_fetch_metadata":
+        return "读取云端更新时间";
+      case "foreground_probe_metadata_done":
+        return "云端更新时间读取完成";
+      case "foreground_probe_followup_start":
+        return "触发前台补同步";
+      case "foreground_probe_followup_result":
+        return "前台补同步返回";
+      case "foreground_probe_followup_blocked":
+        return "前台补同步暂缓";
+      case "remote_fetch_start":
+        return "云端读取开始";
+      case "remote_fetch_done":
+        return "云端读取完成";
+      case "remote_fetch_error":
+        return "云端读取失败";
+      case "remote_push_start":
+        return "云端推送开始";
+      case "remote_push_done":
+        return "云端推送完成";
+      case "remote_push_error":
+        return "云端推送失败";
+      case "remote_push_conflict":
+        return "云端推送冲突";
+      case "background_request_queued":
+        return "后台请求入队";
+      case "background_request_waiting":
+        return "后台请求等待";
+      case "background_request_skipped":
+        return "后台请求跳过";
+      case "background_retry_scheduled":
+        return "后台重试排队";
+      case "background_retry_skipped":
+        return "后台重试跳过";
+      case "background_push_waiting":
+        return "后台推送等待";
+      case "background_run_start":
+        return "后台同步开始";
+      case "background_result_handling":
+        return "后台结果处理";
+      case "pending_recovery_scheduled":
+        return "遗留变更补发";
+      case "shared_scheduler_scheduled":
+        return "共享调度已登记";
+      case "shared_scheduler_triggered":
+        return "共享调度已触发";
+      case "shared_scheduler_rescheduled":
+        return "共享调度已延后";
+      case "shared_scheduler_skipped":
+      case "shared_scheduler_due_skipped":
+        return "共享调度跳过";
+      case "auto_sync_start":
+        return "自动同步开始";
+      case "auto_sync_fetch_remote":
+        return "读取云端数据";
+      case "auto_sync_fetch_remote_done":
+        return "云端数据读取完成";
+      case "auto_sync_decision":
+        return "同步决策";
+      case "auto_sync_action_start":
+        return "同步动作开始";
+      case "auto_sync_safety_pause":
+        return "安全暂停";
+      case "auto_sync_soft_block":
+        return "软阻断";
+      case "auto_sync_conflict_analysis":
+        return "冲突分析";
+      case "startup_lock_acquired":
+        return "启动同步锁取得";
+      case "startup_lock_released":
+        return "启动同步锁释放";
+      case "foreground_followup_lock_acquired":
+        return "前台补同步锁取得";
+      case "foreground_followup_lock_released":
+        return "前台补同步锁释放";
+      case "manual_sync_lock_acquired":
+        return "手动同步锁取得";
+      case "manual_sync_lock_released":
+        return "手动同步锁释放";
+      case "manual_sync_lock_released_for_choice":
+        return "等待选择前释放锁";
+      case "manual_sync_lock_reacquired":
+        return "选择动作重新取锁";
+      case "manual_sync_start":
+        return "手动同步开始";
+      case "manual_sync_remote_loaded":
+        return "手动同步读取云端";
+      case "manual_sync_decision":
+        return "手动同步决策";
+      case "manual_sync_waiting_user_choice":
+        return "等待用户选择";
+      case "manual_sync_action_success":
+        return "手动动作成功";
+      case "manual_sync_action_failure":
+        return "手动动作失败";
+      case "manual_sync_action_conflict":
+        return "手动动作冲突";
+      case "force_push_start":
+        return "强制推送开始";
+      case "force_push_export_done":
+        return "本地数据导出完成";
+      case "force_pull_start":
+        return "强制拉取开始";
+      case "complete":
+        return "收尾";
+      default:
+        return normalizeSyncDiagnosticText(phase, 80) || "事件";
+    }
+  };
+
+  const getSyncTraceStatusLabel = (status = "") => {
+    switch (String(status || "").trim()) {
+      case "running":
+        return "执行中";
+      case "scheduled":
+        return "已排队";
+      case "cleared":
+        return "已清理";
+      case "retained":
+        return "已保留";
+      case "waiting":
+        return "等待中";
+      case "triggered":
+        return "已触发";
+      case "success":
+        return "成功";
+      case "failure":
+        return "失败";
+      case "conflict":
+        return "冲突";
+      case "blocked":
+        return "已暂缓";
+      case "skipped":
+        return "已跳过";
+      case "unchanged":
+        return "无变化";
+      case "changed":
+        return "发现变化";
+      case "released":
+        return "已释放";
+      case "unknown":
+        return "未知";
+      default:
+        return normalizeSyncDiagnosticText(status, 80);
+    }
+  };
+
+  const getSyncTraceDetailKeyLabel = (key = "") => {
+    switch (String(key || "").trim()) {
+      case "action":
+      case "followupAction":
+        return "动作";
+      case "reason":
+        return "原因";
+      case "triggerReason":
+        return "触发原因";
+      case "followupReason":
+        return "后续原因";
+      case "blockReason":
+        return "阻断原因";
+      case "beforePerformReason":
+        return "前置跳过原因";
+      case "conflictReason":
+        return "冲突原因";
+      case "status":
+      case "followupStatus":
+        return "状态";
+      case "source":
+      case "requestSource":
+        return "来源";
+      case "triggerSource":
+        return "触发源";
+      case "scope":
+        return "范围";
+      case "mode":
+      case "syncMode":
+        return "同步模式";
+      case "direction":
+        return "方向";
+      case "operation":
+        return "操作";
+      case "elapsedMs":
+        return "耗时";
+      case "delayMs":
+        return "延迟";
+      case "retryAfterMs":
+        return "重试等待";
+      case "cooldownMs":
+        return "冷却时间";
+      case "today":
+        return "今日";
+      case "lastSyncDate":
+        return "上次每日同步";
+      case "hasDeferredStartupSync":
+        return "有顺延同步";
+      case "isInitialSetup":
+        return "初始化设置";
+      case "suppressInitialMessage":
+        return "静默启动提示";
+      case "syncPerLoadCheckEnabled":
+        return "每次加载检查启用";
+      case "syncRemoteEnabled":
+        return "远程同步启用";
+      case "metadataOnly":
+        return "仅读元数据";
+      case "hasSyncFile":
+        return "有同步文件";
+      case "remoteEmpty":
+        return "云端为空";
+      case "fileTruncated":
+        return "文件被截断";
+      case "updatedAt":
+        return "云端更新时间";
+      case "remoteUpdatedAt":
+        return "当前云端版本";
+      case "expectedRemoteUpdatedAt":
+        return "预期云端版本";
+      case "actualRemoteUpdatedAt":
+        return "实际云端版本";
+      case "lastObservedRemoteUpdatedAt":
+        return "最近观测云端版本";
+      case "lastSyncedRemoteUpdatedAt":
+        return "最近已同步云端版本";
+      case "lastStartupAutoSyncAt":
+        return "上次启动同步";
+      case "lastSuccessfulSyncTs":
+        return "最近成功同步";
+      case "lastLocalMutationTs":
+        return "最近本地改动";
+      case "timeSinceLastSync":
+        return "距上次同步";
+      case "localUpdatedAt":
+      case "lastUpdated":
+        return "本地更新时间";
+      case "localHash":
+        return "本地哈希";
+      case "remoteHash":
+        return "云端哈希";
+      case "baselineHash":
+        return "基线哈希";
+      case "contentHash":
+        return "内容哈希";
+      case "remoteChangeKind":
+      case "writerMatchKind":
+        return "云端变化归因";
+      case "sameSessionRemoteWrite":
+        return "同会话写入";
+      case "sameDeviceRemoteWrite":
+        return "同设备写入";
+      case "pendingExists":
+        return "有待同步请求";
+      case "pendingMaxLastModified":
+        return "待同步最大修改";
+      case "backgroundDebounceExists":
+        return "有后台防抖";
+      case "backgroundDebounceMaxLastModified":
+        return "后台防抖最大修改";
+      case "generation":
+      case "currentGeneration":
+      case "expectedGeneration":
+        return "调度代次";
+      case "isOwner":
+        return "本页负责执行";
+      case "ownerTabId":
+      case "currentOwnerTabId":
+      case "tabId":
+        return "标签页";
+      case "dueAt":
+      case "scheduledDueAt":
+        return "计划执行";
+      case "maxWaitUntil":
+        return "最长等待到";
+      case "maxLastModified":
+        return "最大修改时间";
+      case "retryCount":
+        return "重试次数";
+      case "drainCount":
+        return "队列轮次";
+      case "triggeredSync":
+        return "已触发后续同步";
+      case "triggeredSyncResult":
+        return "后续同步结果";
+      case "syncRequestResult":
+        return "后续同步结果";
+      case "retryPlan":
+        return "重试计划";
+      case "refreshPlan":
+        return "刷新计划";
+      case "snapshotResyncResult":
+        return "本地快照收敛";
+      case "settingsSnapshotResynced":
+        return "设置快照已收敛";
+      case "checkedBy":
+        return "检查标签";
+      case "pausedAt":
+        return "暂停时间";
+      case "until":
+        return "恢复时间";
+      case "failureState":
+        return "失败保护";
+      case "remoteWriter":
+        return "远端写入";
+      case "threadId":
+        return "帖子 ID";
+      case "error":
+        return "错误";
+      case "stage":
+        return "阶段";
+      default:
+        return normalizeSyncDiagnosticText(key, 40);
+    }
+  };
+
+  const getSyncTraceActionValueLabel = (value = "") => {
+    switch (String(value || "").trim()) {
+      case "run_fresh_startup_flow":
+        return "执行启动同步流程";
+      case "resume_deferred_daily_startup":
+        return "补执行顺延的每日首次同步";
+      case "defer_daily_startup":
+        return "顺延每日首次同步";
+      case "skip_stale_startup_only_checks":
+        return "跳过过期启动检查";
+      case "push":
+      case "pushed":
+        return "推送";
+      case "pull":
+      case "pulled":
+        return "拉取";
+      case "force_pull":
+      case "force_pulled":
+        return "强制拉取";
+      case "force_push":
+        return "强制推送";
+      case "skip_push_on_startup":
+        return "启动安全模式暂缓推送";
+      case "skip_push_on_foreground_followup":
+        return "前台检查暂缓推送";
+      case "no_change":
+        return "无变化";
+      case "probe_gate_blocked":
+        return "探测门禁暂缓";
+      default:
+        return getAutoSyncCompletionActionDescription(value);
+    }
+  };
+
+  const getSyncTraceRemoteChangeKindLabel = (value = "") => {
+    switch (String(value || "").trim()) {
+      case "same_session_write":
+        return "同一浏览会话刚写入";
+      case "same_device_write":
+        return "同设备刚写入";
+      case "external_remote_change":
+        return "其他设备或会话写入";
+      case "hash_equal_after_resync":
+        return "本地快照收敛后哈希一致";
+      case "same_machine_write":
+        return "同机写入";
+      default:
+        return getAutoSyncCompletionReasonDescription(value);
+    }
+  };
+
+  const getSyncTraceRefreshPolicyLabel = (value = "") => {
+    switch (String(value || "").trim()) {
+      case "reload_now":
+        return "立即刷新";
+      case "thread_soft_prompt":
+        return "帖子页软提示";
+      case "settings_dirty":
+        return "设置面板有未保存修改";
+      case "remote_change_suppressed":
+        return "已抑制自动刷新";
+      case "foreground_probe_suppressed":
+        return "前台探测已抑制刷新";
+      case "same_machine_suppressed":
+        return "同机写入已抑制刷新";
+      default:
+        return getAutoSyncCompletionReasonDescription(value);
+    }
+  };
+
+  const getSyncTracePageTypeLabel = (value = "") => {
+    switch (String(value || "").trim()) {
+      case "generic":
+        return "普通页面";
+      case "thread_detail":
+        return "帖子详情页";
+      case "lightweight_list":
+        return "列表页";
+      case "settings_modal":
+        return "设置面板";
+      default:
+        return normalizeSyncDiagnosticText(value, 80) || "未知页面";
+    }
+  };
+
+  const getSyncTraceApplyModeLabel = (value = "") => {
+    switch (String(value || "").trim()) {
+      case "immediate":
+        return "立即应用";
+      case "scheduled":
+        return "排队应用";
+      default:
+        return normalizeSyncDiagnosticText(value, 80) || "未知";
+    }
+  };
+
+  const getSyncTraceOperationValueLabel = (value = "") => {
+    switch (String(value || "").trim()) {
+      case AUTO_SYNC_INDICATOR_OPERATION_SYNC:
+        return "同步";
+      case AUTO_SYNC_INDICATOR_OPERATION_PUSH:
+        return "推送";
+      case AUTO_SYNC_INDICATOR_OPERATION_PULL:
+        return "拉取";
+      case AUTO_SYNC_INDICATOR_OPERATION_PROBE:
+        return "探测";
+      default:
+        return getSyncTraceActionValueLabel(value);
+    }
+  };
+
+  const getSyncTraceStageLabel = (value = "") => {
+    const normalized = String(value || "").trim();
+    if (!normalized) {
+      return "";
+    }
+    const stagePartLabels = {
+      auto_sync: "自动同步",
+      background: "后台",
+      startup: "启动",
+      foreground_followup: "前台补同步",
+      before: "执行前",
+      after: "执行后",
+      unknown: "未知阶段",
+      fetch_remote_data: "读取云端数据",
+      export_local_data_initial_push: "导出本地数据用于初始化推送",
+      push_initial_data: "初始化推送",
+      validate_remote_data: "校验云端数据",
+      export_local_data: "导出本地数据",
+      push_latest_local_data: "推送最新本地数据",
+      calc_local_comparable_hash: "计算本地可比哈希",
+      calc_remote_comparable_hash: "计算云端可比哈希",
+      apply_merged_payload: "应用合并数据",
+      push_merged_read_progress: "推送合并后的阅读进度",
+      apply_force_pull_remote_data: "应用强制拉取数据",
+      apply_pull_remote_data: "应用拉取数据",
+      return_no_change: "返回无变化结果",
+      return_conflict: "返回冲突结果",
+      return_skip_push_on_startup: "返回启动暂缓推送结果",
+      return_skip_push_on_foreground_followup: "返回前台暂缓推送结果",
+    };
+    return normalized
+      .split(":")
+      .filter(Boolean)
+      .map((part) => stagePartLabels[part] || normalizeSyncDiagnosticText(part, 80))
+      .filter(Boolean)
+      .join(" / ");
+  };
+
+  const getSyncTraceReasonValueLabel = (value = "") => {
+    const normalized = String(value || "").trim();
+    if (!normalized) {
+      return "";
+    }
+    const separatorIndex = normalized.indexOf(":");
+    if (separatorIndex > 0) {
+      const prefix = normalized.slice(0, separatorIndex);
+      const suffix = normalized.slice(separatorIndex + 1);
+      const suffixLabel = getAutoSyncCompletionReasonDescription(suffix);
+      switch (prefix) {
+        case "foreground_probe":
+          return `云端更新检查：${suffixLabel}`;
+        case "remote_probe_changed":
+          return `云端版本变化：${suffixLabel}`;
+        case "same_machine_conflict":
+          return `同机归因冲突：${getSyncTraceRemoteChangeKindLabel(suffix)}`;
+        default:
+          return `${getAutoSyncCompletionReasonDescription(prefix)}：${suffixLabel}`;
+      }
+    }
+    return getAutoSyncCompletionReasonDescription(normalized);
+  };
+
+  const formatSyncTraceNumericValue = (key = "", value = 0) => {
+    const normalized = Number(value);
+    if (!Number.isFinite(normalized)) {
+      return "";
+    }
+    if (/At$|Ts$|Until$/i.test(String(key || "")) && normalized > 1000000000000) {
+      return formatSyncTime(normalized);
+    }
+    if (/Ms$/.test(String(key || "")) || key === "timeSinceLastSync") {
+      return formatSyncDiagnosticDuration(normalized);
+    }
+    return String(normalized);
+  };
+
+  const getSyncTraceObjectValueLabel = (key = "", rawValue = null) => {
+    const source = sanitizeRecordObject(rawValue);
+    switch (String(key || "").trim()) {
+      case "syncRequestResult":
+        return [
+          source.status ? `状态=${getSyncTraceStatusLabel(source.status)}` : "",
+          source.action ? `动作=${getSyncTraceActionValueLabel(source.action)}` : "",
+          source.reason
+            ? `原因=${getAutoSyncCompletionReasonDescription(source.reason)}`
+            : "",
+        ]
+          .filter(Boolean)
+          .join("，");
+      case "retryPlan":
+        return [
+          source.status ? `状态=${getSyncTraceStatusLabel(source.status)}` : "",
+          source.retryAfterMs
+            ? `等待=${formatSyncDiagnosticDuration(source.retryAfterMs)}`
+            : "",
+          source.reason
+            ? `原因=${getAutoSyncCompletionReasonDescription(source.reason)}`
+            : "",
+        ]
+          .filter(Boolean)
+          .join("，");
+      case "refreshPlan":
+        return [
+          source.policy ? `策略=${getSyncTraceRefreshPolicyLabel(source.policy)}` : "",
+          source.pageType ? `页面=${getSyncTracePageTypeLabel(source.pageType)}` : "",
+          Object.prototype.hasOwnProperty.call(source, "shouldReload")
+            ? `刷新=${source.shouldReload === true ? "是" : "否"}`
+            : "",
+          source.remoteChangeKind
+            ? `归因=${getSyncTraceRemoteChangeKindLabel(source.remoteChangeKind)}`
+            : "",
+        ]
+          .filter(Boolean)
+          .join("，");
+      case "snapshotResyncResult":
+        return [
+          Object.prototype.hasOwnProperty.call(source, "didSync")
+            ? `已收敛=${source.didSync === true ? "是" : "否"}`
+            : "",
+          Array.isArray(source.changedKeys)
+            ? `变更键=${source.changedKeys.length}`
+            : "",
+          source.applyMode
+            ? `应用=${getSyncTraceApplyModeLabel(source.applyMode)}`
+            : "",
+        ]
+          .filter(Boolean)
+          .join("，");
+      case "failureState":
+        return [
+          Object.prototype.hasOwnProperty.call(source, "open")
+            ? `保护开启=${source.open === true ? "是" : "否"}`
+            : "",
+          source.until ? `恢复=${formatSyncTime(source.until)}` : "",
+        ]
+          .filter(Boolean)
+          .join("，");
+      case "remoteWriter":
+        return buildRemoteSyncWriterSummary(source);
+      default:
+        return Object.keys(source).length > 0 ? "对象详情见复制内容" : "";
+    }
+  };
+
+  const getSyncTraceDetailValueLabel = (key = "", rawValue = "") => {
+    if (typeof rawValue === "boolean") {
+      return rawValue ? "是" : "否";
+    }
+    if (typeof rawValue === "number") {
+      return formatSyncTraceNumericValue(key, rawValue);
+    }
+    const value = String(rawValue || "").trim();
+    if (!value) {
+      return "";
+    }
+    switch (String(key || "").trim()) {
+      case "action":
+      case "followupAction":
+        return getSyncTraceActionValueLabel(value);
+      case "reason":
+      case "triggerReason":
+      case "followupReason":
+      case "blockReason":
+      case "beforePerformReason":
+      case "conflictReason":
+        return getSyncTraceReasonValueLabel(value);
+      case "status":
+      case "followupStatus":
+      case "triggeredSyncResult":
+        return getSyncTraceStatusLabel(value);
+      case "triggerSource":
+        return getSyncDiagnosticTriggerSourceLabel(value) || value;
+      case "source":
+      case "requestSource":
+        if (value === "read_progress") {
+          return "阅读进度";
+        }
+        if (value === "general") {
+          return "普通数据";
+        }
+        return getSyncDiagnosticTriggerSourceLabel(value) || getSyncTraceReasonValueLabel(value);
+      case "direction":
+        return getSyncTraceOperationValueLabel(value);
+      case "operation":
+        return getSyncTraceOperationValueLabel(value);
+      case "remoteChangeKind":
+      case "writerMatchKind":
+        return getSyncTraceRemoteChangeKindLabel(value);
+      case "mode":
+      case "syncMode":
+        return getSyncTraceScopeLabel(
+          value === "startup"
+            ? "startup_auto_sync"
+            : value === "background"
+              ? "background_auto_sync"
+              : value === "manual"
+                ? "manual_sync"
+                : value === "foreground_followup"
+                  ? "foreground_followup_sync"
+                : value
+        );
+      case "pageType":
+        return getSyncTracePageTypeLabel(value);
+      case "policy":
+        return getSyncTraceRefreshPolicyLabel(value);
+      case "applyMode":
+        return getSyncTraceApplyModeLabel(value);
+      case "stage":
+        return getSyncTraceStageLabel(value);
+      default:
+        return normalizeSyncDiagnosticText(value, 160);
+    }
   };
 
   const recordSyncAttempt = (mode = "background", trigger = "auto") => {
@@ -10087,6 +10951,92 @@
       lastConflictTimestamp: Date.now(),
       lastActionType: `${mode}:conflict:${reason || "generic"}`,
     });
+  };
+
+  const buildSyncTraceDetailsSummary = (details = {}) => {
+    const source = sanitizeRecordObject(details);
+    const entries = Object.keys(source)
+      .sort()
+      .map((key) => {
+        const normalizedKey = getSyncTraceDetailKeyLabel(key);
+        if (!normalizedKey) {
+          return "";
+        }
+        const rawValue = source[key];
+        if (rawValue === null || typeof rawValue === "undefined" || rawValue === "") {
+          return "";
+        }
+        let normalizedValue = "";
+        if (
+          typeof rawValue === "boolean" ||
+          typeof rawValue === "number" ||
+          typeof rawValue === "string"
+        ) {
+          normalizedValue = getSyncTraceDetailValueLabel(key, rawValue);
+        } else {
+          normalizedValue = getSyncTraceObjectValueLabel(key, rawValue);
+        }
+        return normalizedValue && normalizedValue !== "—"
+          ? `${normalizedKey}=${normalizedValue}`
+          : "";
+      })
+      .filter(Boolean)
+      .slice(0, 10);
+    return entries.join(", ");
+  };
+
+  const recordSyncTraceEvent = (phase = "", options = {}) => {
+    const now = Number(options.timestamp) || Date.now();
+    const scope = normalizeSyncDiagnosticText(options.scope, 80) || "sync";
+    const normalizedPhase =
+      normalizeSyncDiagnosticText(phase || options.phase, 80) || "event";
+    const status = normalizeSyncDiagnosticText(options.status, 80);
+    const message = normalizeSyncDiagnosticText(options.message, 260);
+    const details = sanitizeRecordObject(options.details);
+    const detailSummary = buildSyncTraceDetailsSummary(details);
+    const summaryParts = [
+      formatSyncTime(now),
+      getSyncTraceScopeLabel(scope),
+      getSyncTracePhaseLabel(normalizedPhase),
+      status ? `状态=${getSyncTraceStatusLabel(status) || status}` : "",
+      message,
+      detailSummary,
+    ].filter(Boolean);
+    const summary = normalizeSyncDiagnosticText(summaryParts.join(" | "), 500);
+    const current = getSyncDiagnostics();
+    const nextEvents = [
+      ...(Array.isArray(current.syncTraceEvents)
+        ? current.syncTraceEvents
+        : []),
+      summary,
+    ].slice(-SYNC_TRACE_EVENT_LIMIT);
+    saveSyncDiagnostics({
+      ...current,
+      lastSyncTraceTimestamp: now,
+      lastSyncTraceScope: scope,
+      lastSyncTracePhase: normalizedPhase,
+      lastSyncTraceStatus: status,
+      lastSyncTraceSummary: summary,
+      syncTraceEvents: nextEvents,
+    });
+
+    if (options.logToConsole === false) {
+      return summary;
+    }
+    const level = ["debug", "log", "warn", "error"].includes(options.level)
+      ? options.level
+      : "log";
+    const baseConsoleMessage =
+      normalizeSyncDiagnosticText(options.consoleMessage, 500) ||
+      `S1 Plus (SyncTrace): ${summary}`;
+    const consoleMessage =
+      detailSummary &&
+      options.consoleMessage &&
+      options.omitDetailsInConsole !== true
+        ? `${baseConsoleMessage} 详情：${detailSummary}`
+        : baseConsoleMessage;
+    console[level](consoleMessage);
+    return summary;
   };
 
   const recordCoreDataSnapshotResync = (
@@ -12146,6 +13096,18 @@
     console.log(
       "S1 Plus: 检测到跨页面遗留的待同步变更，正在补发后台同步任务。"
     );
+    recordSyncTraceEvent("pending_recovery_scheduled", {
+      scope: "background_auto_sync",
+      status: "scheduled",
+      message: "检测到跨页面遗留待同步变更，已补发后台同步任务",
+      details: {
+        pendingLastModified,
+        currentLastModified,
+        effectiveLastModified,
+        lastSyncTs,
+        delayMs: 600,
+      },
+    });
     requestBackgroundSyncRun("pending_recovery", 600);
     return {
       status: "scheduled",
@@ -13145,9 +14107,20 @@
   const handleInitialForegroundRemoteFreshnessCheck = async (overrides = {}) => {
     const settings = overrides.settingsSnapshot || getSettings();
     if (!isForegroundRemoteFreshnessCheckEnabled(settings)) {
+      recordSyncTraceEvent("initial_foreground_probe_skipped", {
+        scope: "foreground_probe",
+        status: "skipped",
+        message: "首次可见云端更新检查未启用",
+      });
       return false;
     }
     if (document.visibilityState !== "visible") {
+      recordSyncTraceEvent("initial_foreground_probe_skipped", {
+        scope: "foreground_probe",
+        status: "skipped",
+        message: "首次可见云端更新检查因页面不可见而跳过",
+        details: { visibilityState: document.visibilityState || "" },
+      });
       return false;
     }
     const triggerForegroundRemoteFreshnessProbeFn =
@@ -13442,6 +14415,12 @@
   ) => {
     if (getActiveAutoSyncConflictPause()) {
       clearAutoSyncRuntimeQueue();
+      recordSyncTraceEvent("background_request_skipped", {
+        scope: "background_auto_sync",
+        status: "skipped",
+        message: "后台自动同步请求被冲突暂停拦截",
+        details: { reason, blockReason: "conflict_paused" },
+      });
       return;
     }
 
@@ -13454,13 +14433,35 @@
       !settings.syncRemotePat
     ) {
       clearAutoSyncRuntimeQueue();
+      recordSyncTraceEvent("background_request_skipped", {
+        scope: "background_auto_sync",
+        status: "skipped",
+        message: "后台自动同步请求被配置门禁拦截",
+        details: { reason, blockReason: "sync_not_ready" },
+      });
       return;
     }
 
     hasPendingBackgroundSync = true;
     setAutoSyncIndicatorPendingPhase(reason);
+    recordSyncTraceEvent("background_request_queued", {
+      scope: "background_auto_sync",
+      status: "scheduled",
+      message: "后台自动同步请求已进入本标签页队列",
+      details: { reason, delayMs },
+    });
 
     if (isInitialSyncInProgress || isBackgroundAutoSyncInProgress) {
+      recordSyncTraceEvent("background_request_waiting", {
+        scope: "background_auto_sync",
+        status: "scheduled",
+        message: "后台自动同步等待当前同步结束",
+        details: {
+          reason,
+          isInitialSyncInProgress,
+          isBackgroundAutoSyncInProgress,
+        },
+      });
       return;
     }
 
@@ -13720,11 +14721,18 @@
     }
     lastAutoSyncCleanStateFenceLogKey = logKey;
     lastAutoSyncCleanStateFenceLogAt = now;
-    console.log(
-      `S1 Plus: Clean State Fence 命中，已跳过本轮自动${
-        direction === "pull" ? "拉取检查" : "推送"
-      }。`,
-      {
+    emitSyncCompletionLog({
+      scope: "clean_state_fence",
+      scopeLabel: direction === "pull" ? "自动拉取检查" : "自动推送",
+      outcome: "skipped",
+      result: {
+        status: "skipped",
+        reason: "clean_state_fence",
+        direction,
+        triggerSource,
+        triggerReason: reason,
+      },
+      details: {
         direction,
         triggerSource,
         reason,
@@ -13736,8 +14744,8 @@
         backgroundDebounceExists: snapshot.backgroundDebounceExists === true,
         backgroundDebounceMaxLastModified:
           snapshot.backgroundDebounceMaxLastModified || 0,
-      }
-    );
+      },
+    });
   };
 
   const shouldSkipAutoSyncDueToCleanState = ({
@@ -14022,12 +15030,29 @@
     const tabId = getBackgroundSyncDebounceTabId(options);
     const state = getBackgroundSyncDebounceState();
     if (!state) {
+      recordSyncTraceEvent("shared_scheduler_due_skipped", {
+        scope: "shared_background_scheduler",
+        status: "skipped",
+        message: "共享后台调度到期但状态不存在",
+        details: { reason: "no_shared_debounce_state" },
+      });
       return {
         status: "skipped",
         reason: "no_shared_debounce_state",
       };
     }
     if (state.ownerTabId !== tabId) {
+      recordSyncTraceEvent("shared_scheduler_due_skipped", {
+        scope: "shared_background_scheduler",
+        status: "skipped",
+        message: "共享后台调度到期但当前标签页不是 owner",
+        details: {
+          reason: "not_owner",
+          currentOwnerTabId: state.ownerTabId,
+          tabId,
+          generation: state.generation,
+        },
+      });
       return {
         status: "skipped",
         reason: "not_owner",
@@ -14038,6 +15063,16 @@
       Number(options.expectedGeneration) > 0 &&
       state.generation !== Number(options.expectedGeneration)
     ) {
+      recordSyncTraceEvent("shared_scheduler_due_skipped", {
+        scope: "shared_background_scheduler",
+        status: "skipped",
+        message: "共享后台调度到期但 generation 已过期",
+        details: {
+          reason: "stale_generation",
+          currentGeneration: state.generation,
+          expectedGeneration: Number(options.expectedGeneration),
+        },
+      });
       return {
         status: "skipped",
         reason: "stale_generation",
@@ -14050,6 +15085,16 @@
         ...options,
         now,
         tabId,
+      });
+      recordSyncTraceEvent("shared_scheduler_rescheduled", {
+        scope: "shared_background_scheduler",
+        status: "scheduled",
+        message: "共享后台调度尚未到期，已重新设置 timer",
+        details: {
+          reason: "not_due",
+          generation: state.generation,
+          delayMs: state.dueAt - now,
+        },
       });
       return {
         status: "scheduled",
@@ -14068,6 +15113,16 @@
         ...options,
         now,
         tabId,
+      });
+      recordSyncTraceEvent("shared_scheduler_rescheduled", {
+        scope: "shared_background_scheduler",
+        status: "scheduled",
+        message: "共享后台调度因同步锁占用延后",
+        details: {
+          reason: "sync_lock_active",
+          generation: state.generation,
+          delayMs: retryDelayMs,
+        },
       });
       return {
         status: "scheduled",
@@ -14103,6 +15158,17 @@
       typeof options.triggerRemoteSyncPush === "function"
         ? options.triggerRemoteSyncPush
         : triggerRemoteSyncPush;
+    recordSyncTraceEvent("shared_scheduler_triggered", {
+      scope: "shared_background_scheduler",
+      status: "triggered",
+      message: "共享后台调度到期，触发后台同步",
+      details: {
+        reason: state.reason,
+        generation: state.generation,
+        maxLastModified: state.maxLastModified,
+        scheduledDueAt: state.dueAt,
+      },
+    });
     triggerFn(state.reason, schedulerContext);
     return {
       status: "triggered",
@@ -14377,6 +15443,15 @@
     const readiness = isBackgroundSyncDebounceRequestAllowed(options);
     if (!readiness.allowed) {
       clearBackgroundSyncDebounceState();
+      recordSyncTraceEvent("shared_scheduler_skipped", {
+        scope: "shared_background_scheduler",
+        status: "skipped",
+        message: "共享后台调度请求被门禁拦截",
+        details: {
+          reason: readiness.reason,
+          requestSource: request.source,
+        },
+      });
       return { status: "skipped", reason: readiness.reason };
     }
 
@@ -14474,6 +15549,23 @@
         tabId,
       });
     }
+    recordSyncTraceEvent("shared_scheduler_scheduled", {
+      scope: "shared_background_scheduler",
+      status: "scheduled",
+      message: isOwner
+        ? "共享后台调度已登记，本标签页负责执行"
+        : "共享后台调度已登记，等待 owner 标签页执行",
+      details: {
+        reason: savedState?.reason || dueDecision.reason,
+        source,
+        isOwner,
+        generation: savedState?.generation || 0,
+        dueAt: savedState?.dueAt || 0,
+        maxWaitUntil: savedState?.maxWaitUntil || 0,
+        maxLastModified: savedState?.maxLastModified || 0,
+        retryCount,
+      },
+    });
     return {
       status: "scheduled",
       reason: savedState?.reason || dueDecision.reason,
@@ -23286,11 +24378,23 @@
         source: AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
         reason: "conflict_paused",
       });
+      recordSyncTraceEvent("background_retry_skipped", {
+        scope: "background_auto_sync",
+        status: "skipped",
+        message: "后台同步重试被冲突暂停拦截",
+        details: { delayMs },
+      });
       return;
     }
 
     hasPendingBackgroundSync = true;
     setAutoSyncIndicatorPendingPhase("background_retry");
+    recordSyncTraceEvent("background_retry_scheduled", {
+      scope: "background_auto_sync",
+      status: "scheduled",
+      message: "后台同步重试已排队",
+      details: { delayMs },
+    });
     const sharedRetryResult = queueBackgroundSyncRetryViaSharedScheduler(
       delayMs,
       "background_retry"
@@ -23332,6 +24436,17 @@
   };
 
   const handleBackgroundAutoSyncResult = async (result) => {
+    recordSyncTraceEvent("background_result_handling", {
+      scope: "background_auto_sync",
+      status: result?.status || "unknown",
+      message: "后台同步结果进入 UI/刷新处理",
+      details: {
+        status: result?.status || "",
+        action: result?.action || "",
+        reason: result?.reason || "",
+        error: result?.error || "",
+      },
+    });
     switch (result.status) {
       case "conflict":
         if (result.reason === "local_changed_during_sync") {
@@ -23418,8 +24533,21 @@
 
   const fetchRemoteData = async (options = {}) => {
     const { metadataOnly = false } = options;
+    recordSyncTraceEvent("remote_fetch_start", {
+      scope: metadataOnly ? "remote_probe" : "remote_fetch",
+      status: "running",
+      message: metadataOnly ? "开始读取云端元数据" : "开始读取云端同步文件",
+      details: { metadataOnly },
+    });
     const { syncRemoteGistId, syncRemotePat } = getSettings();
     if (!syncRemoteGistId || !syncRemotePat) {
+      recordSyncTraceEvent("remote_fetch_error", {
+        scope: metadataOnly ? "remote_probe" : "remote_fetch",
+        status: "failure",
+        message: "云端读取配置不完整",
+        details: { metadataOnly },
+        level: "error",
+      });
       throw new Error("配置不完整");
     }
 
@@ -23438,11 +24566,32 @@
       gistData = JSON.parse(response.responseText);
     } catch (error) {
       if (error instanceof SyntaxError) {
+        recordSyncTraceEvent("remote_fetch_error", {
+          scope: metadataOnly ? "remote_probe" : "remote_fetch",
+          status: "failure",
+          message: "解析 Gist 元数据失败",
+          details: { metadataOnly, error: error.message },
+          level: "error",
+        });
         throw new Error("解析Gist元数据失败。");
       }
       if (typeof error.status === "number") {
+        recordSyncTraceEvent("remote_fetch_error", {
+          scope: metadataOnly ? "remote_probe" : "remote_fetch",
+          status: "failure",
+          message: "GitHub API 读取请求失败",
+          details: { metadataOnly, status: error.status },
+          level: "error",
+        });
         throw new Error(`GitHub API请求失败，状态码: ${error.status}`);
       }
+      recordSyncTraceEvent("remote_fetch_error", {
+        scope: metadataOnly ? "remote_probe" : "remote_fetch",
+        status: "failure",
+        message: "云端读取请求失败",
+        details: { metadataOnly, error: error.message || String(error) },
+        level: "error",
+      });
       throw error;
     }
 
@@ -23475,7 +24624,7 @@
       }
     }
 
-    return {
+    const result = {
       data: parsedData,
       meta: {
         updatedAt:
@@ -23485,13 +24634,49 @@
         fileTruncated: Boolean(syncFile?.truncated),
       },
     };
+    recordSyncTraceEvent("remote_fetch_done", {
+      scope: metadataOnly ? "remote_probe" : "remote_fetch",
+      status: "success",
+      message: metadataOnly ? "云端元数据读取完成" : "云端同步文件读取完成",
+      details: {
+        metadataOnly,
+        hasSyncFile: Boolean(syncFile),
+        remoteEmpty: Object.keys(parsedData).length === 0,
+        updatedAt: result.meta.updatedAt || "",
+        fileTruncated: result.meta.fileTruncated === true,
+      },
+    });
+    return result;
   };
 
   const pushRemoteData = async (dataObject, options = {}) => {
     const { expectedRemoteUpdatedAt, writerContext = null, settingsSnapshot = null } =
       options;
+    recordSyncTraceEvent("remote_push_start", {
+      scope: "remote_push",
+      status: "running",
+      message: "开始推送同步文件到云端",
+      details: {
+        action: writerContext?.action || "",
+        syncMode: writerContext?.syncMode || "",
+        threadId: writerContext?.threadId || "",
+        expectedRemoteUpdatedAt:
+          typeof expectedRemoteUpdatedAt === "undefined"
+            ? ""
+            : expectedRemoteUpdatedAt || "",
+        contentHash: shortHashForLog(dataObject?.contentHash),
+        lastUpdated: dataObject?.lastUpdated || 0,
+      },
+    });
     const { syncRemoteGistId, syncRemotePat } = getSettings();
     if (!syncRemoteGistId || !syncRemotePat) {
+      recordSyncTraceEvent("remote_push_error", {
+        scope: "remote_push",
+        status: "failure",
+        message: "云端推送配置不完整",
+        details: { action: writerContext?.action || "" },
+        level: "error",
+      });
       throw new Error("配置不完整");
     }
     const writerMetadata = buildRemoteSyncWriterMetadata(
@@ -23508,6 +24693,17 @@
         metadataOnly: true,
       });
       if (meta.updatedAt !== expectedRemoteUpdatedAt) {
+        recordSyncTraceEvent("remote_push_conflict", {
+          scope: "remote_push",
+          status: "conflict",
+          message: "推送前发现云端版本变化，已停止覆盖",
+          details: {
+            action: writerContext?.action || "",
+            expectedRemoteUpdatedAt,
+            actualRemoteUpdatedAt: meta.updatedAt || "",
+          },
+          level: "warn",
+        });
         throw createRemoteVersionConflictError(
           "云端数据在推送前已发生变化，已停止自动覆盖。",
           {
@@ -23546,6 +24742,17 @@
         updatedAt = null;
       }
 
+      recordSyncTraceEvent("remote_push_done", {
+        scope: "remote_push",
+        status: "success",
+        message: "同步文件已推送到云端",
+        details: {
+          action: writerContext?.action || "",
+          syncMode: writerContext?.syncMode || "",
+          updatedAt: updatedAt || "",
+          contentHash: shortHashForLog(payloadDataObject?.contentHash),
+        },
+      });
       return {
         success: true,
         message: "数据已成功推送到Gist。",
@@ -23554,6 +24761,16 @@
       };
     } catch (error) {
       if (error.code === REMOTE_VERSION_CONFLICT_CODE) {
+        recordSyncTraceEvent("remote_push_conflict", {
+          scope: "remote_push",
+          status: "conflict",
+          message: "推送请求被云端版本保护拦截",
+          details: {
+            action: writerContext?.action || "",
+            error: error.message || String(error),
+          },
+          level: "warn",
+        });
         throw error;
       }
 
@@ -23569,6 +24786,17 @@
       } catch (_) {
         errorMessage += "请检查网络连接或 Gist 配置。";
       }
+      recordSyncTraceEvent("remote_push_error", {
+        scope: "remote_push",
+        status: "failure",
+        message: "推送同步文件到云端失败",
+        details: {
+          action: writerContext?.action || "",
+          status: error.status || "",
+          error: errorMessage,
+        },
+        level: "error",
+      });
       throw new Error(errorMessage);
     }
   };
@@ -23586,6 +24814,13 @@
       !settings.syncRemotePat
     ) {
       clearAutoSyncRuntimeQueue();
+      emitSyncCompletionLog({
+        scope: "background_auto_sync",
+        scopeLabel: "后台自动同步",
+        outcome: "skipped",
+        result: { status: "skipped", reason: "sync_not_ready" },
+        details: { reason },
+      });
       return;
     }
     const conflictPauseState = getActiveAutoSyncConflictPause();
@@ -23602,6 +24837,20 @@
           pausedAt: conflictPauseState.timestamp || 0,
         }
       );
+      emitSyncCompletionLog({
+        scope: "background_auto_sync",
+        scopeLabel: "后台自动同步",
+        outcome: "skipped",
+        result: {
+          status: "skipped",
+          reason: "conflict_paused",
+          conflictReason: conflictPauseState.reason || "generic",
+        },
+        details: {
+          triggerReason: reason,
+          pausedAt: conflictPauseState.timestamp || 0,
+        },
+      });
       return;
     }
 
@@ -23625,6 +24874,16 @@
       console.log(
         `S1 Plus: 后台同步请求(${reason})已加入队列，等待当前同步完成。`
       );
+      recordSyncTraceEvent("background_push_waiting", {
+        scope: "background_auto_sync",
+        status: "scheduled",
+        message: "后台同步请求已入队，等待当前同步完成",
+        details: {
+          reason,
+          isInitialSyncInProgress,
+          isBackgroundAutoSyncInProgress,
+        },
+      });
       return;
     }
 
@@ -23652,6 +24911,16 @@
             console.log(
               "S1 Plus: 检测到其他同步任务正在执行，稍后将重试。"
             );
+            emitSyncCompletionLog({
+              scope: "background_auto_sync",
+              scopeLabel: "后台自动同步",
+              outcome: "skipped",
+              result: {
+                status: "skipped",
+                reason: "background_lock_unavailable",
+              },
+              details: { reason, drainCount },
+            });
             scheduleBackgroundSyncRetry();
             break;
           }
@@ -23665,6 +24934,12 @@
           startBackgroundSyncLockHeartbeat();
           try {
             console.log("S1 Plus: 检测到数据变更，触发后台智能同步检查...");
+            recordSyncTraceEvent("background_run_start", {
+              scope: "background_auto_sync",
+              status: "running",
+              message: "后台智能同步开始执行",
+              details: { reason, drainCount },
+            });
             const runSchedulerContext =
               resolveBackgroundSyncSchedulerContextForRun(
                 drainCount === 1 ? initialSchedulerContext : {}
@@ -23851,6 +25126,378 @@
     return null;
   };
 
+  const getAutoSyncCompletionActionDescription = (action = "") => {
+    switch (String(action || "").trim()) {
+      case "no_change":
+        return "本地与远程一致，无需同步";
+      case "manual_sync":
+        return "手动同步已完成";
+      case "pushed":
+        return "已推送本地数据到云端";
+      case "force_push":
+        return "已强制推送本地数据到云端";
+      case "manual_push":
+        return "已按手动选择推送本地数据到云端";
+      case "cleanup_shortcut_push":
+        return "已按删除记录捷径推送本地数据到云端";
+      case "smart_progress_push":
+        return "已推送当前帖子的阅读进度";
+      case "pushed_initial":
+      case "initial_push_seed":
+        return "远程为空，已初始化云端备份";
+      case "initial_pull_recover":
+        return "已从云端恢复初始化数据";
+      case "pulled":
+        return "已拉取云端数据并应用到本地";
+      case "force_pull":
+        return "已强制拉取云端数据并应用到本地";
+      case "force_pulled":
+        return "已按强制策略拉取云端数据";
+      case "manual_pull":
+        return "已按手动选择拉取云端数据";
+      case "merged_read_progress":
+      case "smart_merge_pull":
+        return "已合并阅读进度并回写云端";
+      case "manual_force_push_repair":
+        return "已使用本地数据修复云端备份";
+      case "probe_gate_blocked":
+        return "前台补同步被安全门禁暂缓";
+      case "skip_push_on_startup":
+        return "启动安全模式暂缓推送，等待手动同步";
+      case "skip_push_on_foreground_followup":
+        return "前台检查暂缓推送，等待更安全的同步入口";
+      default:
+        return normalizeSyncDiagnosticText(action, 80) || "已完成";
+    }
+  };
+
+  const getAutoSyncCompletionReasonDescription = (reason = "") => {
+    switch (String(reason || "").trim()) {
+      case "disabled":
+        return "远程同步配置未启用或不完整";
+      case "conflict_paused":
+        return "自动同步已因冲突暂停";
+      case "generic":
+        return "未提供具体原因";
+      case "circuit_open":
+        return "连续失败保护开启";
+      case "lock_lost":
+        return "同步锁失效";
+      case "manual_sync_busy":
+        return "已有手动同步正在进行";
+      case "force_sync_busy":
+        return "已有强制同步正在进行";
+      case "manual_sync_cancelled":
+        return "用户取消了本次手动同步";
+      case "manual_sync_failed":
+        return "手动同步失败";
+      case "manual_conflict":
+      case "manual_decision_required":
+        return "手动同步需要用户决策";
+      case "page_load_visible":
+        return "页面加载后首次可见";
+      case "foreground_resume":
+      case "visibilitychange":
+      case "visibility":
+        return "页面回到前台";
+      case "pageshow":
+        return "页面显示或从缓存恢复";
+      case "visible_poll":
+      case "visible_poll_active":
+        return "可见页定期检查";
+      case "debounced_read_progress":
+        return "阅读进度防抖同步";
+      case "debounced_local_change":
+        return "本地变更防抖同步";
+      case "background_retry":
+        return "后台同步重试";
+      case "pending_recovery":
+        return "跨页面遗留变更补发";
+      case "not_due":
+        return "尚未到计划执行时间";
+      case "not_owner":
+        return "当前标签页不是共享调度 owner";
+      case "stale_generation":
+        return "共享调度代次已过期";
+      case "no_shared_debounce_state":
+        return "共享后台调度状态不存在";
+      case "initial_push":
+        return "云端为空，准备初始化推送";
+      case "startup_lock_unavailable":
+        return "启动同步锁被其他标签页占用";
+      case "daily_sync_already_completed":
+        return "今日每日首次同步已经完成";
+      case "startup_auto_sync_cooldown":
+        return "启动同步冷却期内已有同步执行过";
+      case "foreground_followup_lock_unavailable":
+        return "前台补同步锁被其他任务占用";
+      case "background_lock_unavailable":
+        return "后台同步锁被其他任务占用";
+      case "foreground_check_disabled":
+        return "前台云端更新检查未启用";
+      case "probe_in_flight":
+        return "已有云端更新检查正在执行";
+      case "foreground_sync_in_flight":
+        return "前台补同步正在执行";
+      case "followup_retry_pending":
+        return "前台补同步正在等待重试窗口";
+      case "sync_lock_active":
+        return "已有同步锁处于活动状态";
+      case "local_cooldown":
+        return "本标签页云端更新检查仍在本地冷却期";
+      case "shared_cooldown":
+        return "其他标签页刚完成云端更新检查，仍在共享冷却期";
+      case "probe_lock_unavailable":
+        return "云端更新检查锁被其他标签页占用";
+      case "remote_updated_at_missing":
+        return "云端版本时间缺失，无法判断是否更新";
+      case "skipped_active_sync":
+        return "已有同步任务正在执行，云端检查已跳过";
+      case "skipped_probe_in_flight":
+        return "已有云端更新检查正在执行，本次已跳过";
+      case "skipped_probe_lock_unavailable":
+        return "云端更新检查锁被其他标签页占用，本次已跳过";
+      case "skipped_followup_retry_pending":
+        return "前台补同步正在等待重试窗口，本次已跳过";
+      case "skipped_remote_metadata_missing":
+        return "云端版本时间缺失，本次已跳过";
+      case "foreground_probe_sync_success":
+        return "前台探测触发的安全同步成功";
+      case "foreground_probe_failure":
+        return "前台云端更新检查失败";
+      case "remote_already_synced":
+        return "云端版本与本地已同步版本一致";
+      case "remote_updated_at_equal_pending_verification":
+        return "云端版本时间相同，已安排二次确认";
+      case "baseline_synced_after_resync":
+        return "本地快照收敛后确认已同步";
+      case "hash_equal_after_resync":
+        return "本地快照收敛后哈希一致";
+      case "remote_changed":
+        return "发现云端版本变化";
+      case "remote_changed_since_baseline":
+        return "云端数据较基线有变化";
+      case "read_progress_pending_write":
+        return "阅读进度仍有待写入内容";
+      case "read_progress_auto_merge":
+        return "仅阅读进度存在分歧，可自动合并";
+      case "clean_state_fence":
+        return "本地与调度状态干净，已由干净状态门禁跳过";
+      case "no_pending_auto_sync":
+        return "没有待补发的自动同步请求";
+      case "sync_not_ready":
+        return "远程同步配置未就绪";
+      case "already_synced":
+        return "已经由较新的同步覆盖";
+      case "conflict_newer_than_pending":
+        return "冲突状态比待同步请求更新";
+      case "background_sync_busy":
+        return "后台同步队列仍在执行或等待";
+      case "covered_by_shared_debounce":
+        return "待同步变更已由共享后台调度覆盖";
+      case "covered_by_recovered_shared_debounce_owner":
+        return "待同步变更已由恢复后的共享后台调度 owner 覆盖";
+      case "local_changed_during_sync":
+        return "同步期间检测到本地改动";
+      case "local_changed_since_baseline":
+        return "本地数据较新，前台检查已暂缓";
+      case "local_newer":
+      case "timestamp_local_newer":
+        return "本地数据比云端新";
+      case "remote_newer":
+      case "timestamp_remote_newer":
+        return "云端数据比本地新";
+      case "both_changed_since_baseline":
+        return "本地和云端都较基线有变化";
+      case "both_changed_since_baseline_by_updated_at":
+        return "本地和云端更新时间都晚于基线";
+      case "version_conflict":
+        return "本地与云端版本存在冲突";
+      case "same_machine_write":
+        return "同机或同会话刚写入云端";
+      case "same_session_write":
+        return "同一浏览会话刚写入云端";
+      case "same_device_write":
+        return "同设备刚写入云端";
+      case "external_remote_change":
+        return "其他设备或会话写入云端";
+      case "not_applicable":
+        return "当前结果不需要自动刷新";
+      case "foreground_probe_suppressed":
+        return "前台探测已抑制刷新";
+      case "same_machine_suppressed":
+        return "同机写入已抑制刷新";
+      case "remote_change_suppressed":
+        return "云端变化刷新已抑制";
+      case "remote_changed_before_push":
+        return "推送前检测到云端版本变化";
+      case "remote_changed_before_initial_push":
+        return "初始化推送前检测到云端版本变化";
+      case "remote_changed_before_cleanup_push":
+        return "删除记录捷径推送前检测到云端版本变化";
+      case "remote_changed_before_smart_push":
+        return "智能阅读进度推送前检测到云端版本变化";
+      case "remote_changed_before_manual_push":
+        return "手动推送前检测到云端版本变化";
+      case "remote_changed_before_repair_push":
+        return "修复推送前检测到云端版本变化";
+      case "startup_local_newer":
+        return "启动时检测到本地数据较新";
+      case "startup_conflict":
+        return "启动同步冲突";
+      case "background_conflict":
+        return "后台同步冲突";
+      case "auto_conflict_paused":
+        return "自动同步冲突暂停";
+      default:
+        return normalizeSyncDiagnosticText(reason, 120) || "未提供原因";
+    }
+  };
+
+  const formatAutoSyncCompletionLogMessage = ({
+    outcome = "unknown",
+    result = null,
+    scopeLabel = "同步检查",
+  } = {}) => {
+    const normalizedResult = isObjectRecord(result) ? result : {};
+    const status = String(normalizedResult.status || "").trim();
+    const action = String(normalizedResult.action || "").trim();
+    const reason = String(normalizedResult.reason || "").trim();
+    const completionPrefix = `S1 Plus (Sync): ${
+      normalizeSyncDiagnosticText(scopeLabel, 80) || "同步检查"
+    }完成`;
+
+    if (status === "success") {
+      if (action === "skipped_push_on_startup") {
+        const detail = getAutoSyncCompletionReasonDescription(
+          reason || "startup_local_newer"
+        );
+        return `${completionPrefix}：已暂停（${detail}，等待手动同步）。`;
+      }
+      return `${completionPrefix}：成功（${getAutoSyncCompletionActionDescription(action)}）。`;
+    }
+
+    if (status === "failure") {
+      const detail =
+        normalizeSyncDiagnosticText(normalizedResult.error, 160) ||
+        getAutoSyncCompletionReasonDescription(reason);
+      return `${completionPrefix}：失败（${detail}）。`;
+    }
+
+    if (status === "conflict") {
+      return `${completionPrefix}：冲突（${getAutoSyncCompletionReasonDescription(reason)}，已暂停自动同步）。`;
+    }
+
+    if (status === "blocked") {
+      return `${completionPrefix}：已暂缓（${getAutoSyncCompletionReasonDescription(reason)}）。`;
+    }
+
+    if (status === "skipped") {
+      if (reason === "lock_lost") {
+        const stage = getSyncTraceStageLabel(normalizedResult.stage);
+        return `${completionPrefix}：已中止（同步锁失效${stage ? `，阶段：${stage}` : ""}）。`;
+      }
+      return `${completionPrefix}：已跳过（${getAutoSyncCompletionReasonDescription(reason)}）。`;
+    }
+
+    if (status === "unchanged") {
+      return `${completionPrefix}：无变化（${getAutoSyncCompletionReasonDescription(reason)}）。`;
+    }
+
+    if (status === "changed") {
+      const syncRequestResult = isObjectRecord(normalizedResult.syncRequestResult)
+        ? normalizedResult.syncRequestResult
+        : null;
+      let syncActionDescription = "";
+      if (syncRequestResult) {
+        const followupStatus = String(syncRequestResult.status || "").trim();
+        if (followupStatus === "success") {
+          syncActionDescription = getAutoSyncCompletionActionDescription(
+            syncRequestResult.action || "success"
+          );
+        } else if (followupStatus === "blocked") {
+          syncActionDescription = `后续同步已暂缓：${getAutoSyncCompletionReasonDescription(
+            syncRequestResult.reason || syncRequestResult.action || "blocked"
+          )}`;
+        } else if (followupStatus === "skipped") {
+          syncActionDescription = `后续同步已跳过：${getAutoSyncCompletionReasonDescription(
+            syncRequestResult.reason || syncRequestResult.action || "skipped"
+          )}`;
+        } else if (followupStatus === "failure") {
+          syncActionDescription = `后续同步失败：${
+            normalizeSyncDiagnosticText(syncRequestResult.error, 120) ||
+            getAutoSyncCompletionReasonDescription(syncRequestResult.reason)
+          }`;
+        } else {
+          syncActionDescription = getAutoSyncCompletionActionDescription(
+            syncRequestResult.action || followupStatus
+          );
+        }
+      }
+      return `${completionPrefix}：发现变化（${
+        syncActionDescription || getAutoSyncCompletionReasonDescription(reason)
+      }）。`;
+    }
+
+    if (status === "scheduled") {
+      return `${completionPrefix}：已排队（${getAutoSyncCompletionReasonDescription(reason)}）。`;
+    }
+
+    if (status === "cleared") {
+      return `${completionPrefix}：已清理（${getAutoSyncCompletionReasonDescription(reason)}）。`;
+    }
+
+    switch (String(outcome || "").trim()) {
+      case "failure":
+        return `${completionPrefix}：失败（未拿到明确错误信息）。`;
+      case "conflict":
+        return `${completionPrefix}：冲突（已暂停自动同步）。`;
+      case "lock_lost":
+        return `${completionPrefix}：已中止（同步锁失效）。`;
+      case "soft_blocked":
+        return `${completionPrefix}：已暂缓（等待后续安全处理）。`;
+      case "success":
+        return `${completionPrefix}：成功（已完成）。`;
+      default:
+        return `${completionPrefix}：状态未知（未拿到明确结果）。`;
+    }
+  };
+
+  const emitSyncCompletionLog = ({
+    scope = "sync",
+    scopeLabel = "同步检查",
+    outcome = "unknown",
+    result = null,
+    details = {},
+    level = "",
+  } = {}) => {
+    const normalizedResult = isObjectRecord(result) ? result : {};
+    const status =
+      normalizeSyncDiagnosticText(normalizedResult.status, 80) ||
+      normalizeSyncDiagnosticText(outcome, 80) ||
+      "unknown";
+    const message = formatAutoSyncCompletionLogMessage({
+      outcome,
+      result: normalizedResult,
+      scopeLabel,
+    });
+    const normalizedDetails = sanitizeRecordObject(details);
+    const normalizedLevel =
+      level ||
+      (status === "failure" ? "error" : status === "conflict" ? "warn" : "log");
+    return recordSyncTraceEvent("complete", {
+      scope,
+      status,
+      message,
+      details: {
+        ...normalizedDetails,
+        ...normalizedResult,
+      },
+      level: normalizedLevel,
+      consoleMessage: message,
+    });
+  };
+
   // [MODIFIED] 自动同步控制器 (逻辑优化版)
   const performAutoSync = async (
     modeOrIsStartupSync = false,
@@ -23867,6 +25514,16 @@
     const settings = getSettings();
     const skipResult = getRemoteSyncExecutionSkipResult(settings);
     if (skipResult) {
+      emitSyncCompletionLog({
+        scope: "auto_sync",
+        scopeLabel: "同步检查",
+        outcome: "skipped",
+        result: skipResult,
+        details: {
+          mode: syncMode,
+          triggerSource: executionOptions.triggerSource || "",
+        },
+      });
       return skipResult;
     }
 
@@ -23907,6 +25564,13 @@
       return result;
     };
     let syncOutcome = "unknown";
+    let syncCompletionResult = null;
+    const rememberSyncCompletionResult = (result) => {
+      if (result && typeof result === "object" && !Array.isArray(result)) {
+        syncCompletionResult = result;
+      }
+      return result;
+    };
     const asSoftBlockedResult = (reason, extraResult = null) => {
       syncOutcome = "soft_blocked";
       const softBlockState = setForegroundFollowUpSoftBlock({
@@ -23932,9 +25596,9 @@
         typeof extraResult === "object" &&
         !Array.isArray(extraResult)
       ) {
-        return { ...baseResult, ...extraResult };
+        return rememberSyncCompletionResult({ ...baseResult, ...extraResult });
       }
-      return baseResult;
+      return rememberSyncCompletionResult(baseResult);
     };
     const shouldRecordSuccessfulSyncTimestamp = (action) =>
       action !== "skipped_push_on_startup" &&
@@ -24002,9 +25666,9 @@
         typeof extraResult === "object" &&
         !Array.isArray(extraResult)
       ) {
-        return { ...baseResult, ...extraResult };
+        return rememberSyncCompletionResult({ ...baseResult, ...extraResult });
       }
-      return baseResult;
+      return rememberSyncCompletionResult(baseResult);
     };
     const asConflictResult = (reason, extraDiagnosticsContext = {}) => {
       syncOutcome = "conflict";
@@ -24017,7 +25681,7 @@
         ...extraDiagnosticsContext,
       });
       updateLastSyncTimeDisplay();
-      return { status: "conflict", reason };
+      return rememberSyncCompletionResult({ status: "conflict", reason });
     };
 
     // 在进入自动同步临界区前，先执行一次本地旧数据结构迁移。
@@ -24032,14 +25696,52 @@
     isInitialSyncInProgress = true;
     recordSyncAttempt(syncMode, resolvedTriggerSource);
     console.log(`S1 Plus (Sync): 启动同步检查... (模式: ${syncMode})`);
+    recordSyncTraceEvent("auto_sync_start", {
+      scope: "auto_sync",
+      status: "running",
+      message: "自动同步检查开始",
+      details: {
+        mode: syncMode,
+        triggerSource: resolvedTriggerSource,
+        lockMode: executionOptions.syncLockMode || "",
+        useFreshLocalSnapshot: executionOptions.useFreshLocalSnapshot === true,
+      },
+    });
 
     try {
+      recordSyncTraceEvent("auto_sync_fetch_remote", {
+        scope: "auto_sync",
+        status: "running",
+        message: "正在读取云端同步数据",
+        details: { mode: syncMode, triggerSource: resolvedTriggerSource },
+      });
       const { data: rawRemoteData, meta: remoteMeta } =
         await runWithAutoSyncLockGuard("fetch_remote_data", () =>
           fetchRemoteData()
         );
+      recordSyncTraceEvent("auto_sync_fetch_remote_done", {
+        scope: "auto_sync",
+        status: "running",
+        message: "云端同步数据读取完成",
+        details: {
+          mode: syncMode,
+          remoteEmpty: Object.keys(rawRemoteData).length === 0,
+          remoteUpdatedAt: remoteMeta?.updatedAt || "",
+          fileTruncated: remoteMeta?.fileTruncated === true,
+        },
+      });
       if (Object.keys(rawRemoteData).length === 0) {
         console.log(`S1 Plus (Sync): 远程为空，推送本地数据...`);
+        recordSyncTraceEvent("auto_sync_decision", {
+          scope: "auto_sync",
+          status: "running",
+          message: "同步决策：云端为空，准备初始化推送",
+          details: {
+            mode: syncMode,
+            action: "pushed_initial",
+            remoteUpdatedAt: remoteMeta?.updatedAt || "",
+          },
+        });
         setAutoSyncIndicatorActiveOperation(AUTO_SYNC_INDICATOR_OPERATION_PUSH, {
           source: resolvedTriggerSource,
           reason: "initial_push",
@@ -24116,6 +25818,23 @@
         forcePullOnStartup: settings.syncForcePullOnStartup,
       });
       const syncAction = versionDecision.action;
+      recordSyncTraceEvent("auto_sync_decision", {
+        scope: "auto_sync",
+        status: "running",
+        message: "同步决策完成",
+        details: {
+          mode: syncMode,
+          triggerSource: resolvedTriggerSource,
+          action: syncAction,
+          reason: versionDecision.reason || "",
+          localHash: shortHashForLog(localDataObject.contentHash),
+          remoteHash: shortHashForLog(remote.contentHash),
+          baselineHash: shortHashForLog(getSyncBaselineState()?.contentHash),
+          localUpdatedAt: localDataObject.lastUpdated || 0,
+          remoteUpdatedAt: remoteMeta.updatedAt || "",
+          remoteChangeKind: recentRemoteWriteMatchKind,
+        },
+      });
       const indicatorOperationForAction =
         getAutoSyncIndicatorOperationFromSyncAction(syncAction);
       if (indicatorOperationForAction) {
@@ -24177,6 +25896,16 @@
           console.log(
             `S1 Plus (Sync): 检测到启动时强制拉取已开启，将使用云端数据覆盖本地。`
           );
+          recordSyncTraceEvent("auto_sync_action_start", {
+            scope: "auto_sync",
+            status: "running",
+            message: "开始强制应用云端数据",
+            details: {
+              mode: syncMode,
+              action: "force_pull",
+              remoteUpdatedAt: remoteMeta.updatedAt || "",
+            },
+          });
           {
             const dirtyGuardResult = guardAgainstDirtyPullOverwrite("force_pull");
             if (dirtyGuardResult) {
@@ -24204,6 +25933,16 @@
 
         case "pull":
           console.log(`S1 Plus (Sync): 远程数据比本地新，正在后台应用...`);
+          recordSyncTraceEvent("auto_sync_action_start", {
+            scope: "auto_sync",
+            status: "running",
+            message: "开始拉取并应用云端数据",
+            details: {
+              mode: syncMode,
+              action: "pull",
+              remoteUpdatedAt: remoteMeta.updatedAt || "",
+            },
+          });
           {
             const dirtyGuardResult = guardAgainstDirtyPullOverwrite("pull");
             if (dirtyGuardResult) {
@@ -24233,6 +25972,16 @@
           console.warn(
             `S1 Plus (Sync): 启动同步检测到本地数据较新，已跳过自动推送以确保数据安全。如有需要，请手动同步。`
           );
+          recordSyncTraceEvent("auto_sync_safety_pause", {
+            scope: "auto_sync",
+            status: "success",
+            message: "启动安全同步检测到本地较新，等待手动同步",
+            details: {
+              mode: syncMode,
+              action: "skipped_push_on_startup",
+              reason: versionDecision.reason || "startup_local_newer",
+            },
+          });
           assertAutoSyncLockOwned("return_skip_push_on_startup");
           return asSuccessResult("skipped_push_on_startup");
 
@@ -24244,6 +25993,17 @@
               triggerSource: resolvedTriggerSource,
             }
           );
+          recordSyncTraceEvent("auto_sync_soft_block", {
+            scope: "auto_sync",
+            status: "blocked",
+            message: "前台补同步检测到本地较新，已软阻断",
+            details: {
+              mode: syncMode,
+              action: "skip_push_on_foreground_followup",
+              reason: versionDecision.reason || "local_changed_since_baseline",
+              triggerSource: resolvedTriggerSource,
+            },
+          });
           assertAutoSyncLockOwned("return_skip_push_on_foreground_followup");
           return asSoftBlockedResult(
             versionDecision.reason || "local_changed_since_baseline",
@@ -24254,6 +26014,17 @@
 
         case "push":
           console.log(`S1 Plus (Sync): 本地数据比远程新，正在后台推送...`);
+          recordSyncTraceEvent("auto_sync_action_start", {
+            scope: "auto_sync",
+            status: "running",
+            message: "开始推送本地数据到云端",
+            details: {
+              mode: syncMode,
+              action: "push",
+              localHash: shortHashForLog(localDataObject.contentHash),
+              remoteUpdatedAt: remoteMeta.updatedAt || "",
+            },
+          });
           {
             const pushResult = await runWithAutoSyncLockGuard(
               "push_latest_local_data",
@@ -24292,6 +26063,21 @@
             localBaseHash: shortHashForLog(localDataObject.baseContentHash),
             remoteBaseHash: shortHashForLog(remote.baseContentHash),
             remoteUpdatedAt: remoteMeta.updatedAt || "n/a",
+          });
+          recordSyncTraceEvent("auto_sync_conflict_analysis", {
+            scope: "auto_sync",
+            status: "running",
+            message: "进入自动同步冲突分析",
+            details: {
+              mode: syncMode,
+              reason: versionDecision.reason || "version_conflict",
+              localHash: shortHashForLog(localDataObject.contentHash),
+              remoteHash: shortHashForLog(remote.contentHash),
+              baselineHash: shortHashForLog(getSyncBaselineState()?.contentHash),
+              localBaseHash: shortHashForLog(localDataObject.baseContentHash),
+              remoteBaseHash: shortHashForLog(remote.baseContentHash),
+              remoteUpdatedAt: remoteMeta.updatedAt || "",
+            },
           });
           {
             const isBothChangedReason =
@@ -24375,6 +26161,16 @@
             console.warn(
               "S1 Plus (Sync): 检测到仅阅读进度分歧，正在执行自动合并并回写云端。"
             );
+            recordSyncTraceEvent("auto_sync_action_start", {
+              scope: "auto_sync",
+              status: "running",
+              message: "开始自动合并阅读进度并回写云端",
+              details: {
+                mode: syncMode,
+                action: "merged_read_progress",
+                reason: versionDecision.reason || "read_progress_auto_merge",
+              },
+            });
             setAutoSyncIndicatorActiveOperation(AUTO_SYNC_INDICATOR_OPERATION_PUSH, {
               source: resolvedTriggerSource,
               reason: "read_progress_auto_merge",
@@ -24434,19 +26230,23 @@
           mode: error?.syncLockMode || syncLockMode || syncMode,
           stage: error?.syncLockStage || "unknown",
         });
-        return {
+        return rememberSyncCompletionResult({
           status: "skipped",
           reason: "lock_lost",
           mode: error?.syncLockMode || syncLockMode || syncMode,
           stage: error?.syncLockStage || "unknown",
-        };
+        });
       }
       syncOutcome = "failure";
       console.error("S1 Plus: 自动同步失败:", error);
       recordSyncFailure(error.message, syncMode, syncDiagnosticsContext);
       const failureState = registerAutoSyncFailure(syncMode);
       updateLastSyncTimeDisplay();
-      return { status: "failure", error: error.message, failureState };
+      return rememberSyncCompletionResult({
+        status: "failure",
+        error: error.message,
+        failureState,
+      });
     } finally {
       isInitialSyncInProgress = false;
       if (syncOutcome === "conflict") {
@@ -24485,7 +26285,16 @@
       syncDirtyDuringSync = false;
       syncDirtyNeedsFollowUpSync = false;
       syncDirtyTimestamp = 0;
-      console.log("S1 Plus (Sync): 同步检查完成。");
+      emitSyncCompletionLog({
+        scope: "auto_sync",
+        scopeLabel: "同步检查",
+        outcome: syncOutcome,
+        result: syncCompletionResult,
+        details: {
+          mode: syncMode,
+          triggerSource: resolvedTriggerSource,
+        },
+      });
     }
   };
 
@@ -24514,9 +26323,22 @@
       if (typeof onLockUnavailable === "function") {
         await onLockUnavailable();
       }
+      emitSyncCompletionLog({
+        scope: "startup_auto_sync",
+        scopeLabel: "每日首次同步",
+        outcome: "skipped",
+        result: lockUnavailableResult,
+        details: { triggerSource },
+      });
       return lockUnavailableResult;
     }
 
+    recordSyncTraceEvent("startup_lock_acquired", {
+      scope: "startup_auto_sync",
+      status: "running",
+      message: "每日首次同步已取得启动同步锁",
+      details: { triggerSource },
+    });
     startStartupSyncLockHeartbeatFn();
     try {
       if (typeof beforePerform === "function") {
@@ -24536,6 +26358,16 @@
               );
             }
           }
+          emitSyncCompletionLog({
+            scope: "startup_auto_sync",
+            scopeLabel: "每日首次同步",
+            outcome: beforePerformResult.result?.status || "skipped",
+            result: beforePerformResult.result,
+            details: {
+              triggerSource,
+              beforePerformReason: beforePerformResult.reason || "",
+            },
+          });
           return beforePerformResult.result;
         }
       }
@@ -24560,6 +26392,12 @@
     } finally {
       stopStartupSyncLockHeartbeatFn();
       releaseStartupSyncLockFn();
+      recordSyncTraceEvent("startup_lock_released", {
+        scope: "startup_auto_sync",
+        status: "released",
+        message: "每日首次同步已释放启动同步锁",
+        details: { triggerSource },
+      });
       if (typeof onAfterRelease === "function") {
         await onAfterRelease();
       }
@@ -24648,9 +26486,22 @@
       if (typeof onLockUnavailable === "function") {
         await onLockUnavailable();
       }
+      emitSyncCompletionLog({
+        scope: "foreground_followup_sync",
+        scopeLabel: "前台补同步",
+        outcome: "skipped",
+        result: lockUnavailableResult,
+        details: { triggerSource },
+      });
       return lockUnavailableResult;
     }
 
+    recordSyncTraceEvent("foreground_followup_lock_acquired", {
+      scope: "foreground_followup_sync",
+      status: "running",
+      message: "前台补同步已取得同步锁",
+      details: { triggerSource },
+    });
     startStartupSyncLockHeartbeatFn();
     try {
       if (typeof beforePerform === "function") {
@@ -24660,6 +26511,16 @@
           typeof beforePerformResult === "object" &&
           beforePerformResult.skip === true
         ) {
+          emitSyncCompletionLog({
+            scope: "foreground_followup_sync",
+            scopeLabel: "前台补同步",
+            outcome: beforePerformResult.result?.status || "skipped",
+            result: beforePerformResult.result,
+            details: {
+              triggerSource,
+              beforePerformReason: beforePerformResult.reason || "",
+            },
+          });
           return beforePerformResult.result;
         }
       }
@@ -24679,6 +26540,12 @@
     } finally {
       stopStartupSyncLockHeartbeatFn();
       releaseStartupSyncLockFn();
+      recordSyncTraceEvent("foreground_followup_lock_released", {
+        scope: "foreground_followup_sync",
+        status: "released",
+        message: "前台补同步已释放同步锁",
+        details: { triggerSource },
+      });
       if (typeof onAfterRelease === "function") {
         await onAfterRelease();
       }
@@ -25012,13 +26879,38 @@
       Number.isFinite(overrides.now) && overrides.now > 0
         ? Math.floor(overrides.now)
         : Date.now();
-    const finalizeResult = (result, extraOptions = {}) =>
-      finalizeForegroundProbeResult(result, {
+    const normalizedReason =
+      normalizeRemoteProbeText(reason, 120) || "visibility";
+    let foregroundProbeCompletionLogged = false;
+    const finalizeResult = (result, extraOptions = {}) => {
+      const finalized = finalizeForegroundProbeResult(result, {
         timestamp: now,
         triggerReason: reason,
         showMessage: overrides.showMessage,
         ...extraOptions,
       });
+      if (!foregroundProbeCompletionLogged) {
+        foregroundProbeCompletionLogged = true;
+        emitSyncCompletionLog({
+          scope: "foreground_probe",
+          scopeLabel: "云端更新检查",
+          outcome: finalized.status || result?.status || "unknown",
+          result: finalized,
+          details: {
+            triggerReason: normalizedReason,
+            remoteUpdatedAt:
+              finalized.remoteUpdatedAt || extraOptions.remoteUpdatedAt || "",
+            retryAfterMs: finalized.retryAfterMs || 0,
+            triggeredSync: finalized.syncRequestResult ? true : false,
+            triggeredSyncResult:
+              finalized.syncRequestResult?.status ||
+              finalized.syncRequestResult?.action ||
+              "",
+          },
+        });
+      }
+      return finalized;
+    };
     const settingsSnapshot = overrides.settingsSnapshot || getSettings();
     const skipResult = getRemoteSyncExecutionSkipResult(settingsSnapshot);
     if (skipResult) {
@@ -25087,8 +26979,6 @@
     const getForegroundProbeGateBlockResultFn =
       overrides.getForegroundProbeGateBlockResult ||
       getForegroundProbeGateBlockResult;
-    const normalizedReason =
-      normalizeRemoteProbeText(reason, 120) || "visibility";
     const retryOptions = {
       ...(overrides.foregroundRemoteSyncRetryOptions || {}),
     };
@@ -25124,6 +27014,15 @@
     }
 
     markForegroundProbeLocalAttempt(now);
+    recordSyncTraceEvent("foreground_probe_start", {
+      scope: "foreground_probe",
+      status: "running",
+      message: "前台云端更新检查开始",
+      details: {
+        reason: normalizedReason,
+        triggerSource: cleanStateFenceTriggerSource,
+      },
+    });
 
     const runPromise = (async () => {
       const probeInfoBefore = getLastRemoteProbeInfo();
@@ -25146,9 +27045,25 @@
           reason: "probe_lock_unavailable",
         });
       }
+      recordSyncTraceEvent("foreground_probe_lock_acquired", {
+        scope: "foreground_probe",
+        status: "running",
+        message: "前台云端更新检查已取得探测锁",
+        details: { reason: normalizedReason },
+      });
 
       let remoteMeta = null;
       try {
+        recordSyncTraceEvent("foreground_probe_fetch_metadata", {
+          scope: "foreground_probe",
+          status: "running",
+          message: "正在读取云端更新时间",
+          details: {
+            reason: normalizedReason,
+            lastSyncedRemoteUpdatedAt,
+            lastObservedRemoteUpdatedAt,
+          },
+        });
         const probeResult = await fetchRemoteDataFn({ metadataOnly: true });
         remoteMeta =
           probeResult && typeof probeResult === "object" ? probeResult.meta : null;
@@ -25162,6 +27077,17 @@
       recordRemoteProbeObservation({
         remoteUpdatedAt,
         observedAt: now,
+      });
+      recordSyncTraceEvent("foreground_probe_metadata_done", {
+        scope: "foreground_probe",
+        status: "running",
+        message: "云端更新时间读取完成",
+        details: {
+          reason: normalizedReason,
+          remoteUpdatedAt: remoteUpdatedAt || "",
+          lastSyncedRemoteUpdatedAt: lastSyncedRemoteUpdatedAt || "",
+          lastObservedRemoteUpdatedAt: lastObservedRemoteUpdatedAt || "",
+        },
       });
 
       if (!remoteUpdatedAt) {
@@ -25287,6 +27213,17 @@
             preferredDelayMs: gateBlockResult.retryAfterMs,
           }
         );
+        recordSyncTraceEvent("foreground_probe_followup_blocked", {
+          scope: "foreground_probe",
+          status: "blocked",
+          message: "发现云端变化，但前台补同步门禁要求稍后重试",
+          details: {
+            reason: normalizedReason,
+            remoteUpdatedAt,
+            blockReason: gateBlockResult.reason || "",
+            retryAfterMs: gateBlockResult.retryAfterMs || 0,
+          },
+        });
         return finalizeResult(
           {
             status: "changed",
@@ -25314,10 +27251,33 @@
         );
       }
 
+      recordSyncTraceEvent("foreground_probe_followup_start", {
+        scope: "foreground_probe",
+        status: "running",
+        message: "发现云端变化，开始触发前台补同步",
+        details: {
+          reason: normalizedReason,
+          remoteUpdatedAt,
+          lastSyncedRemoteUpdatedAt,
+          writerMatchKind: preSyncWriterMatchKind,
+        },
+      });
       const syncRequestResult = await requestForegroundRemoteSyncCheckFn(
         `remote_probe_changed:${normalizedReason}`,
         overrides.requestForegroundRemoteSyncCheckOverrides || {}
       );
+      recordSyncTraceEvent("foreground_probe_followup_result", {
+        scope: "foreground_probe",
+        status: syncRequestResult?.status || "unknown",
+        message: "云端变化检查已触发前台补同步",
+        details: {
+          reason: normalizedReason,
+          remoteUpdatedAt,
+          followupStatus: syncRequestResult?.status || "",
+          followupAction: syncRequestResult?.action || "",
+          followupReason: syncRequestResult?.reason || "",
+        },
+      });
       if (isForegroundRemoteSyncRetryableResult(syncRequestResult)) {
         scheduleForegroundRemoteSyncRetry(`remote_probe_changed:${normalizedReason}`, {
           ...retryOptions,
@@ -25505,6 +27465,9 @@
       getAutoSyncIndicatorOperationFromSyncAction,
       getAutoSyncIndicatorPhaseFromResult,
       getAutoSyncIndicatorReasonFromResult,
+      formatAutoSyncCompletionLogMessage,
+      recordSyncTraceEvent,
+      emitSyncCompletionLog,
       getAutoSyncIndicatorTitle: (...args) => getAutoSyncIndicatorTitle(...args),
       getAutoSyncIndicatorDisplayKind: (...args) =>
         getAutoSyncIndicatorDisplayKind(...args),
@@ -28845,6 +30808,12 @@
       if (icon) {
         icon.classList.remove("s1p-syncing");
       }
+      emitSyncCompletionLog({
+        scope: "force_push",
+        scopeLabel: "强制推送",
+        outcome: "skipped",
+        result: { status: "skipped", reason: "force_sync_busy" },
+      });
       return;
     }
     forceSyncInFlight = true;
@@ -28854,6 +30823,12 @@
       if (icon) {
         icon.classList.remove("s1p-syncing");
       }
+      emitSyncCompletionLog({
+        scope: "force_push",
+        scopeLabel: "强制推送",
+        outcome: "skipped",
+        result: { status: "skipped", reason: "manual_sync_busy" },
+      });
       return;
     }
     clearAutoSyncRuntimeQueue();
@@ -28862,10 +30837,26 @@
       assertSyncLockOwned(SYNC_LOCK_MODE_MANUAL, `force_push:${stage}`);
     };
     recordSyncAttempt("manual", "force_push");
+    let completionResult = null;
+    recordSyncTraceEvent("force_push_start", {
+      scope: "force_push",
+      status: "running",
+      message: "强制推送开始",
+      details: { triggerSource: SYNC_TRIGGER_SOURCE_MANUAL_SYNC },
+    });
     showMessage("正在向云端推送数据...", null);
     try {
       assertManualSyncLockOwned("before_export_local_data");
       const localData = await exportLocalDataObject();
+      recordSyncTraceEvent("force_push_export_done", {
+        scope: "force_push",
+        status: "running",
+        message: "强制推送已导出本地数据",
+        details: {
+          localHash: shortHashForLog(localData.contentHash),
+          lastUpdated: localData.lastUpdated || 0,
+        },
+      });
       assertManualSyncLockOwned("before_push_remote_data");
       const forcePushResult = await pushRemoteData(localData, {
         writerContext: {
@@ -28899,10 +30890,16 @@
         baselineHash: shortHashForLog(getSyncBaselineState()?.contentHash),
       });
       updateLastSyncTimeDisplay();
+      completionResult = { status: "success", action: "force_push" };
       showMessage("推送成功！已更新云端备份。", true);
     } catch (e) {
       if (e?.code === SYNC_LOCK_LOST_CODE) {
         showMessage("手动同步锁已失效，本次任务已中止，请重新发起同步。", false);
+        completionResult = {
+          status: "skipped",
+          reason: "lock_lost",
+          stage: e?.syncLockStage || "unknown",
+        };
         return;
       }
       setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_FAILURE);
@@ -28910,8 +30907,15 @@
         triggerSource: SYNC_TRIGGER_SOURCE_MANUAL_SYNC,
       });
       updateLastSyncTimeDisplay();
+      completionResult = { status: "failure", error: e.message };
       showMessage(`推送失败: ${e.message}`, false);
     } finally {
+      emitSyncCompletionLog({
+        scope: "force_push",
+        scopeLabel: "强制推送",
+        outcome: completionResult?.status || "unknown",
+        result: completionResult,
+      });
       forceSyncInFlight = false;
       stopManualSyncLockHeartbeat();
       releaseManualSyncLock();
@@ -28931,6 +30935,12 @@
       if (icon) {
         icon.classList.remove("s1p-syncing");
       }
+      emitSyncCompletionLog({
+        scope: "force_pull",
+        scopeLabel: "强制拉取",
+        outcome: "skipped",
+        result: { status: "skipped", reason: "force_sync_busy" },
+      });
       return;
     }
     forceSyncInFlight = true;
@@ -28940,6 +30950,12 @@
       if (icon) {
         icon.classList.remove("s1p-syncing");
       }
+      emitSyncCompletionLog({
+        scope: "force_pull",
+        scopeLabel: "强制拉取",
+        outcome: "skipped",
+        result: { status: "skipped", reason: "manual_sync_busy" },
+      });
       return;
     }
     clearAutoSyncRuntimeQueue();
@@ -28948,6 +30964,13 @@
       assertSyncLockOwned(SYNC_LOCK_MODE_MANUAL, `force_pull:${stage}`);
     };
     recordSyncAttempt("manual", "force_pull");
+    let completionResult = null;
+    recordSyncTraceEvent("force_pull_start", {
+      scope: "force_pull",
+      status: "running",
+      message: "强制拉取开始",
+      details: { triggerSource: SYNC_TRIGGER_SOURCE_MANUAL_SYNC },
+    });
     showMessage("正在从云端拉取数据...", null);
     try {
       assertManualSyncLockOwned("before_fetch_remote_data");
@@ -28978,6 +31001,7 @@
           baselineHash: shortHashForLog(getSyncBaselineState()?.contentHash),
         });
         updateLastSyncTimeDisplay();
+        completionResult = { status: "success", action: "force_pull" };
         showMessage("拉取成功！页面即将刷新以应用新数据。", true);
         setTimeout(() => location.reload(), 1500);
       } else {
@@ -28986,6 +31010,11 @@
     } catch (e) {
       if (e?.code === SYNC_LOCK_LOST_CODE) {
         showMessage("手动同步锁已失效，本次任务已中止，请重新发起同步。", false);
+        completionResult = {
+          status: "skipped",
+          reason: "lock_lost",
+          stage: e?.syncLockStage || "unknown",
+        };
         return;
       }
       setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_FAILURE);
@@ -28993,8 +31022,15 @@
         triggerSource: SYNC_TRIGGER_SOURCE_MANUAL_SYNC,
       });
       updateLastSyncTimeDisplay();
+      completionResult = { status: "failure", error: e.message };
       showMessage(`拉取失败: ${e.message}`, false);
     } finally {
+      emitSyncCompletionLog({
+        scope: "force_pull",
+        scopeLabel: "强制拉取",
+        outcome: completionResult?.status || "unknown",
+        result: completionResult,
+      });
       forceSyncInFlight = false;
       stopManualSyncLockHeartbeat();
       releaseManualSyncLock();
@@ -30100,9 +32136,40 @@
     });
   };
 
+  const isDebugConsoleLogEntryExpanded = (entry) => {
+    if (logExpandAll) {
+      return true;
+    }
+    return expandedLogEntryIds.has(entry?.id);
+  };
+
+  const getDebugConsoleLogMessageForDisplay = (entry, expanded) => {
+    const message = String(entry?.message || "");
+    if (expanded || message.length <= LOG_COLLAPSED_MESSAGE_MAX_LENGTH) {
+      return message;
+    }
+    return `${message.slice(0, LOG_COLLAPSED_MESSAGE_MAX_LENGTH).trimEnd()} ...`;
+  };
+
+  const updateDebugConsoleExpandAllButton = (panel = null) => {
+    const targetPanel = panel || document.getElementById(DEBUG_CONSOLE_PANEL_ID);
+    const button = targetPanel?.querySelector(
+      '[data-s1p-debug-action="toggle-expand-logs"]'
+    );
+    if (!(button instanceof HTMLButtonElement)) {
+      return;
+    }
+    button.textContent = logExpandAll ? "收起全部" : "展开全部";
+    button.title = logExpandAll ? "收起所有长日志" : "展开所有长日志";
+  };
+
   const buildLogLineDOM = (entry) => {
     const line = document.createElement("div");
     line.className = "s1p-debug-console-log-line";
+    const fullMessage = String(entry.message || "");
+    const isExpandable = fullMessage.length > LOG_COLLAPSED_MESSAGE_MAX_LENGTH;
+    const isExpanded = isExpandable && isDebugConsoleLogEntryExpanded(entry);
+    line.classList.toggle("is-expanded", isExpanded);
 
     const ts = document.createElement("span");
     ts.className = "s1p-debug-console-log-ts";
@@ -30115,7 +32182,32 @@
 
     const msg = document.createElement("span");
     msg.className = "s1p-debug-console-log-msg";
-    msg.textContent = entry.message;
+    msg.classList.toggle("is-collapsed", isExpandable && !isExpanded);
+    msg.textContent = getDebugConsoleLogMessageForDisplay(entry, isExpanded);
+
+    const expandBtn = createS1pDebugButton({
+      label: isExpanded ? "收起" : "展开",
+      kind: "utility",
+      sizeClassName: "s1p-btn-sm s1p-debug-console-expand-line",
+    });
+    expandBtn.title = isExpanded ? "收起这一条日志" : "展开这一条日志";
+    if (!isExpandable) {
+      expandBtn.setAttribute("aria-hidden", "true");
+      expandBtn.tabIndex = -1;
+    }
+    expandBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (!isExpandable) {
+        return;
+      }
+      if (expandedLogEntryIds.has(entry.id)) {
+        expandedLogEntryIds.delete(entry.id);
+      } else {
+        expandedLogEntryIds.add(entry.id);
+      }
+      logDirty = true;
+      renderLogPanel();
+    });
 
     const copyBtn = createS1pDebugButton({
       label: "复制",
@@ -30129,7 +32221,7 @@
       showDebugConsoleButtonFeedback(copyBtn, "已复制");
     });
 
-    line.append(ts, level, msg, copyBtn);
+    line.append(ts, level, msg, expandBtn, copyBtn);
     return line;
   };
 
@@ -30336,6 +32428,7 @@
       " 条，渲染 " +
       renderLogs.length +
       " 条）";
+    updateDebugConsoleExpandAllButton(panel);
   };
 
   const initializeDebugConsolePanel = ({ persistVisible = true } = {}) => {
@@ -30361,9 +32454,20 @@
         if (action === "hide-console") return;
         if (action === "clear-logs") {
           logBuffer = [];
+          expandedLogEntryIds = new Set();
           logDirty = true;
           renderLogPanel();
           showDebugConsoleButtonFeedback(button, "已清空");
+          return;
+        }
+        if (action === "toggle-expand-logs") {
+          logExpandAll = !logExpandAll;
+          if (logExpandAll) {
+            expandedLogEntryIds = new Set();
+          }
+          updateDebugConsoleExpandAllButton(panel);
+          logDirty = true;
+          renderLogPanel();
           return;
         }
         if (action === "copy-logs") {
@@ -30385,10 +32489,12 @@
     btnGroup.className = "s1p-debug-console-head-actions";
     btnGroup.appendChild(createS1pDebugButton({ label: "清空", action: "clear-logs", kind: "utility" }));
     btnGroup.appendChild(createS1pDebugButton({ label: "复制", action: "copy-logs", kind: "utility" }));
+    btnGroup.appendChild(createS1pDebugButton({ label: "展开全部", action: "toggle-expand-logs", kind: "utility" }));
     if (hideButton) {
       btnGroup.appendChild(hideButton);
     }
     head.appendChild(btnGroup);
+    updateDebugConsoleExpandAllButton(panel);
 
     const filterBar = document.createElement("div");
     filterBar.className = "s1p-debug-console-filter-bar";
@@ -37352,22 +39458,46 @@
       if (!suppressInitialMessage) {
         showMessage("手动同步正在进行，请稍候...", null);
       }
+      emitSyncCompletionLog({
+        scope: "manual_sync",
+        scopeLabel: "手动同步",
+        outcome: "skipped",
+        result: { status: "skipped", reason: "manual_sync_busy" },
+      });
       return manualSyncInFlightPromise;
     }
     if (forceSyncInFlight) {
       if (!suppressInitialMessage) {
         showMessage("手动同步正在进行，请稍候...", null);
       }
+      emitSyncCompletionLog({
+        scope: "manual_sync",
+        scopeLabel: "手动同步",
+        outcome: "skipped",
+        result: { status: "skipped", reason: "force_sync_busy" },
+      });
       return false;
     }
 
     if (!(await acquireManualSyncLock())) {
       showMessage(MANUAL_SYNC_LOCK_BUSY_MESSAGE, false);
+      emitSyncCompletionLog({
+        scope: "manual_sync",
+        scopeLabel: "手动同步",
+        outcome: "skipped",
+        result: { status: "skipped", reason: "manual_sync_busy" },
+      });
       return false;
     }
     clearAutoSyncRuntimeQueue();
     startManualSyncLockHeartbeat();
     let manualSyncLockHeldByThisRun = true;
+    recordSyncTraceEvent("manual_sync_lock_acquired", {
+      scope: "manual_sync",
+      status: "running",
+      message: "手动同步已取得同步锁",
+      details: { isInitialSetup },
+    });
 
     const assertManualSyncLockOwned = (stage) => {
       assertSyncLockOwned(SYNC_LOCK_MODE_MANUAL, `manual_sync:${stage}`);
@@ -37385,6 +39515,11 @@
       stopManualSyncLockHeartbeat();
       releaseManualSyncLock();
       manualSyncLockHeldByThisRun = false;
+      recordSyncTraceEvent("manual_sync_lock_released_for_choice", {
+        scope: "manual_sync",
+        status: "waiting",
+        message: "手动同步进入用户选择阶段，已临时释放同步锁",
+      });
     };
     const ensureManualSyncLockForDecisionAction = async (stage) => {
       if (manualSyncLockHeldByThisRun && isSyncLockOwned(SYNC_LOCK_MODE_MANUAL)) {
@@ -37406,6 +39541,41 @@
     };
 
     manualSyncInFlightPromise = new Promise((resolve) => {
+      let manualCompletionLogged = false;
+      let manualCompletionResult = null;
+      const setManualCompletionResult = (result) => {
+        if (result && typeof result === "object" && !Array.isArray(result)) {
+          manualCompletionResult = result;
+        }
+        return manualCompletionResult;
+      };
+      const getManualCompletionResultForValue = (value) => {
+        if (manualCompletionResult) {
+          return manualCompletionResult;
+        }
+        if (value === true) {
+          return { status: "success", action: "manual_sync" };
+        }
+        if (value === false) {
+          return { status: "failure", reason: "manual_sync_failed" };
+        }
+        return { status: "skipped", reason: "manual_sync_cancelled" };
+      };
+      const resolveManualSync = (value, result = null) => {
+        if (result) {
+          setManualCompletionResult(result);
+        }
+        if (!manualCompletionLogged) {
+          manualCompletionLogged = true;
+          emitSyncCompletionLog({
+            scope: "manual_sync",
+            scopeLabel: "手动同步",
+            outcome: getManualCompletionResultForValue(value).status,
+            result: getManualCompletionResultForValue(value),
+          });
+        }
+        resolve(value);
+      };
       (async () => {
         const settings = getSettings();
         if (
@@ -37414,11 +39584,24 @@
           !settings.syncRemotePat
         ) {
           showMessage("远程同步未启用或配置不完整。", false);
-          return resolve(false);
+          return resolveManualSync(false, {
+            status: "skipped",
+            reason: "sync_not_ready",
+          });
         }
 
         let remoteMetaUpdatedAt;
         recordSyncAttempt("manual", "manual_sync");
+        recordSyncTraceEvent("manual_sync_start", {
+          scope: "manual_sync",
+          status: "running",
+          message: isInitialSetup ? "初始化手动同步开始" : "手动同步开始",
+          details: {
+            isInitialSetup,
+            suppressInitialMessage,
+            triggerSource: SYNC_TRIGGER_SOURCE_MANUAL_SYNC,
+          },
+        });
         const buildManualSyncDiagnosticsContext = (overrides = {}) => ({
           triggerSource: SYNC_TRIGGER_SOURCE_MANUAL_SYNC,
           localSyncDeviceId: getLocalSyncDeviceId(settings),
@@ -37429,6 +39612,11 @@
           syncBaseline = null,
           diagnosticContext = {}
         ) => {
+          setManualCompletionResult({
+            status: "success",
+            action,
+            remoteUpdatedAt: syncBaseline?.remoteUpdatedAt || null,
+          });
           clearPendingAutoSyncRequest();
           clearAutoSyncRuntimeQueue();
           clearAutoSyncConflictPause();
@@ -37454,18 +39642,43 @@
             "manual",
             buildManualSyncDiagnosticsContext(diagnosticContext)
           );
+          recordSyncTraceEvent("manual_sync_action_success", {
+            scope: "manual_sync",
+            status: "success",
+            message: "手动同步动作成功",
+            details: {
+              action,
+              remoteUpdatedAt: syncBaseline?.remoteUpdatedAt || "",
+              contentHash: shortHashForLog(syncBaseline?.contentHash),
+            },
+          });
           updateLastSyncTimeDisplay();
         };
         const noteManualFailure = (message, diagnosticContext = {}) => {
+          setManualCompletionResult({
+            status: "failure",
+            error: message || "未知错误",
+          });
           setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_FAILURE);
           recordSyncFailure(
             message,
             "manual",
             buildManualSyncDiagnosticsContext(diagnosticContext)
           );
+          recordSyncTraceEvent("manual_sync_action_failure", {
+            scope: "manual_sync",
+            status: "failure",
+            message: "手动同步动作失败",
+            details: { error: message || "未知错误" },
+            level: "error",
+          });
           updateLastSyncTimeDisplay();
         };
         const noteManualConflict = (reason, diagnosticContext = {}) => {
+          setManualCompletionResult({
+            status: "conflict",
+            reason: reason || "manual_conflict",
+          });
           clearPendingAutoSyncRequest();
           clearForegroundFollowUpSoftBlock();
           setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_CONFLICT);
@@ -37474,24 +39687,45 @@
             "manual",
             buildManualSyncDiagnosticsContext(diagnosticContext)
           );
+          recordSyncTraceEvent("manual_sync_action_conflict", {
+            scope: "manual_sync",
+            status: "conflict",
+            message: "手动同步动作检测到冲突",
+            details: { reason: reason || "manual_conflict" },
+            level: "warn",
+          });
           updateLastSyncTimeDisplay();
         };
         const tryReacquireDecisionLock = async (stage) => {
           if (await ensureManualSyncLockForDecisionAction(stage)) {
+            recordSyncTraceEvent("manual_sync_lock_reacquired", {
+              scope: "manual_sync",
+              status: "running",
+              message: "手动同步选择动作已重新取得锁",
+              details: { stage },
+            });
             return true;
           }
-          resolve(false);
+          resolveManualSync(false, {
+            status: "skipped",
+            reason: "manual_sync_busy",
+            stage,
+          });
           return false;
         };
-        const resolveWithLockLostNotice = () => {
+        const resolveWithLockLostNotice = (stage = "") => {
           showMessage(MANUAL_SYNC_LOCK_LOST_MESSAGE, false);
-          resolve(false);
+          resolveManualSync(false, {
+            status: "skipped",
+            reason: "lock_lost",
+            stage,
+          });
         };
         const handleManualLockLostError = (error) => {
           if (error?.code !== SYNC_LOCK_LOST_CODE) {
             return false;
           }
-          resolveWithLockLostNotice();
+          resolveWithLockLostNotice(error?.syncLockStage || "unknown");
           return true;
         };
         const fetchLatestValidatedRemoteForDecision = async (
@@ -37532,6 +39766,16 @@
             typeof meta?.updatedAt === "string" ? meta.updatedAt : undefined;
 
           const remoteExists = Object.keys(rawRemoteData).length > 0;
+          recordSyncTraceEvent("manual_sync_remote_loaded", {
+            scope: "manual_sync",
+            status: "running",
+            message: "手动同步已读取云端数据",
+            details: {
+              remoteExists,
+              remoteUpdatedAt: remoteMetaUpdatedAt || "",
+              isInitialSetup,
+            },
+          });
 
           // [优化] 如果是首次设置且本地为空环境，且云端有数据，则直接引导拉取
           if (isInitialSetup && isLocalDataEmpty() && remoteExists) {
@@ -37571,11 +39815,11 @@
                     });
                     showMessage("恢复成功！页面即将刷新。", true);
                     setTimeout(() => location.reload(), 1200);
-                    resolve(true);
+                    resolveManualSync(true);
                   } else {
                     noteManualFailure(result.message);
                     showMessage(`恢复失败: ${result.message}`, false);
-                    resolve(false);
+                    resolveManualSync(false);
                   }
                 } catch (error) {
                   if (handleManualLockLostError(error)) {
@@ -37583,7 +39827,7 @@
                   }
                   noteManualFailure(error?.message || "恢复失败");
                   showMessage(`恢复失败: ${error?.message || "未知错误"}`, false);
-                  resolve(false);
+                  resolveManualSync(false);
                 }
               },
             };
@@ -37592,10 +39836,16 @@
               className: "s1p-cancel",
               action: () => {
                 showMessage("已跳过数据恢复。", null);
-                resolve(null);
+                resolveManualSync(null);
               },
             };
             releaseManualSyncLockForDecision();
+            recordSyncTraceEvent("manual_sync_waiting_user_choice", {
+              scope: "manual_sync",
+              status: "waiting",
+              message: "初始化同步等待用户确认是否从云端恢复",
+              details: { choice: "initial_pull_recover" },
+            });
             createAdvancedConfirmationModal(
               "初始化 S1 Plus 同步",
               "检测到这台电脑尚无本地数据，但云端已有备份，是否立即从云端恢复您的配置？",
@@ -37603,7 +39853,7 @@
               {
                 modalClassName: "s1p-sync-modal",
                 onDismiss: () => {
-                  resolve(null);
+                  resolveManualSync(null);
                 },
               }
             );
@@ -37649,7 +39899,7 @@
                     remoteWriter: pushResult?.writerMetadata || null,
                   });
                   showMessage("推送成功！已初始化云端备份。", true);
-                  resolve(true);
+                  resolveManualSync(true);
                 } catch (e) {
                   if (e?.code === REMOTE_VERSION_CONFLICT_CODE) {
                     noteManualConflict("remote_changed_before_initial_push");
@@ -37657,12 +39907,12 @@
                       "推送失败：云端数据已变化，请重新发起全局手动同步。",
                       false
                     );
-                    resolve(false);
+                    resolveManualSync(false);
                     return;
                   }
                   noteManualFailure(e.message);
                   showMessage(`推送失败: ${e.message}`, false);
-                  resolve(false);
+                  resolveManualSync(false);
                 }
               },
             };
@@ -37671,10 +39921,16 @@
               className: "s1p-cancel",
               action: () => {
                 showMessage("操作已取消。", null);
-                resolve(null);
+                resolveManualSync(null);
               },
             };
             releaseManualSyncLockForDecision();
+            recordSyncTraceEvent("manual_sync_waiting_user_choice", {
+              scope: "manual_sync",
+              status: "waiting",
+              message: "初始化同步等待用户确认是否推送本地数据",
+              details: { choice: "initial_push_seed" },
+            });
             createAdvancedConfirmationModal(
               "初始化云端同步",
               "<p>检测到云端备份为空，是否将当前本地数据作为初始版本推送到云端？</p>",
@@ -37683,7 +39939,7 @@
                 modalClassName: "s1p-sync-modal",
                 allowBodyHtml: true,
                 onDismiss: () => {
-                  resolve(null);
+                  resolveManualSync(null);
                 },
               }
             );
@@ -37713,6 +39969,18 @@
             threadId: currentThreadId || "",
             remoteWriter: remote.lastWriter || null,
           };
+          recordSyncTraceEvent("manual_sync_decision", {
+            scope: "manual_sync",
+            status: "running",
+            message: "手动同步决策完成",
+            details: {
+              action: versionDecision.action || "",
+              reason: versionDecision.reason || "",
+              localNewer: versionDecision.localNewer === true,
+              remoteUpdatedAt: remoteMetaUpdatedAt || "",
+              ...decisionDiagnostics,
+            },
+          });
 
           if (remote.contentHash === localDataObject.contentHash) {
             clearPendingCleanupInfo();
@@ -37726,7 +39994,7 @@
               },
               decisionDiagnostics
             );
-            return resolve(true);
+            return resolveManualSync(true);
           }
 
           const localNewer = versionDecision.localNewer === true;
@@ -37803,7 +40071,7 @@
                 }
               );
               showMessage(cleanupMessages.successMessage, true);
-              return resolve(true);
+              return resolveManualSync(true);
             } catch (e) {
               if (e?.code === REMOTE_VERSION_CONFLICT_CODE) {
                 noteManualConflict(
@@ -37814,11 +40082,11 @@
                   "自动推送失败：云端数据已变化，请重新发起全局手动同步。",
                   false
                 );
-                return resolve(false);
+                return resolveManualSync(false);
               }
               noteManualFailure(e.message, decisionDiagnostics);
               showMessage(`自动推送失败: ${e.message}`, false);
-              return resolve(false);
+              return resolveManualSync(false);
             }
           }
 
@@ -37861,7 +40129,7 @@
                   }
                 );
                 showMessage("智能同步成功！已将本地最新进度推送到云端。", true);
-                return resolve(true);
+                return resolveManualSync(true);
               } catch (e) {
                 if (e?.code === REMOTE_VERSION_CONFLICT_CODE) {
                   noteManualConflict(
@@ -37872,11 +40140,11 @@
                     "智能推送失败：云端数据已变化，请重新发起全局手动同步。",
                     false
                   );
-                  return resolve(false);
+                  return resolveManualSync(false);
                 }
                 noteManualFailure(e.message, decisionDiagnostics);
                 showMessage(`智能推送失败: ${e.message}`, false);
-                return resolve(false);
+                return resolveManualSync(false);
               }
             } else {
               showMessage("智能同步：正在合并云端数据与当前阅读进度...", null);
@@ -37922,7 +40190,7 @@
                   "智能同步成功！已保留并合并最新阅读进度。"
                 ),
               });
-              return resolve(true);
+              return resolveManualSync(true);
             }
           }
           // --- 智能检查结束 ---
@@ -37985,11 +40253,11 @@
                   );
                   showMessage(`拉取成功！页面即将刷新。`, true);
                   setTimeout(() => location.reload(), 1200);
-                  resolve(true);
+                  resolveManualSync(true);
                 } else {
                   noteManualFailure(result.message, decisionDiagnostics);
                   showMessage(`导入失败: ${result.message}`, false);
-                  resolve(false);
+                  resolveManualSync(false);
                 }
               } catch (error) {
                 if (handleManualLockLostError(error)) {
@@ -38000,7 +40268,7 @@
                   decisionDiagnostics
                 );
                 showMessage(`导入失败: ${error?.message || "未知错误"}`, false);
-                resolve(false);
+                resolveManualSync(false);
               }
             },
           };
@@ -38043,7 +40311,7 @@
                   }
                 );
                 showMessage("推送成功！已更新云端备份。", true);
-                resolve(true);
+                resolveManualSync(true);
               } catch (e) {
                 if (e?.code === REMOTE_VERSION_CONFLICT_CODE) {
                   noteManualConflict(
@@ -38054,12 +40322,12 @@
                     "推送失败：云端数据已变化，请重新发起全局手动同步。",
                     false
                   );
-                  resolve(false);
+                  resolveManualSync(false);
                   return;
                 }
                 noteManualFailure(e.message, decisionDiagnostics);
                 showMessage(`推送失败: ${e.message}`, false);
-                resolve(false);
+                resolveManualSync(false);
               }
             },
           };
@@ -38068,10 +40336,20 @@
             className: "s1p-cancel",
             action: () => {
               showMessage("操作已取消。", null);
-              resolve(null);
+              resolveManualSync(null);
             },
           };
           releaseManualSyncLockForDecision();
+          recordSyncTraceEvent("manual_sync_waiting_user_choice", {
+            scope: "manual_sync",
+            status: "waiting",
+            message: "手动同步等待用户选择拉取、推送或取消",
+            details: {
+              action: versionDecision.action || "",
+              reason: versionDecision.reason || "",
+              isConflict,
+            },
+          });
           createAdvancedConfirmationModal(
             "手动同步选择",
             bodyHtml,
@@ -38080,7 +40358,7 @@
               modalClassName: "s1p-sync-modal",
               allowBodyHtml: true,
               onDismiss: () => {
-                resolve(null);
+                resolveManualSync(null);
               },
             }
           );
@@ -38129,7 +40407,7 @@
                     remoteWriter: pushResult?.writerMetadata || null,
                   });
                   showMessage("推送成功！已使用本地数据修复云端备份。", true);
-                  resolve(true);
+                  resolveManualSync(true);
                 } catch (e) {
                   if (e?.code === REMOTE_VERSION_CONFLICT_CODE) {
                     noteManualConflict("remote_changed_before_repair_push");
@@ -38137,12 +40415,12 @@
                       "强制推送失败：云端数据已变化，请重新发起全局手动同步。",
                       false
                     );
-                    resolve(false);
+                    resolveManualSync(false);
                     return;
                   }
                   noteManualFailure(e.message);
                   showMessage(`强制推送失败: ${e.message}`, false);
-                  resolve(false);
+                  resolveManualSync(false);
                 }
               },
             };
@@ -38151,10 +40429,16 @@
               className: "s1p-cancel",
               action: () => {
                 showMessage("操作已取消。云端备份仍处于损坏状态。", null);
-                resolve(null);
+                resolveManualSync(null);
               },
             };
             releaseManualSyncLockForDecision();
+            recordSyncTraceEvent("manual_sync_waiting_user_choice", {
+              scope: "manual_sync",
+              status: "waiting",
+              message: "云端备份损坏，等待用户确认是否强制修复",
+              details: { choice: "manual_force_push_repair" },
+            });
             createAdvancedConfirmationModal(
               "检测到云端备份损坏",
               `<p class="s1p-sync-danger-text">云端备份文件校验失败，为保护数据已暂停同步。</p><p>是否用当前健康的本地数据强制覆盖云端损坏的备份？</p>`,
@@ -38163,14 +40447,14 @@
                 modalClassName: "s1p-sync-modal",
                 allowBodyHtml: true,
                 onDismiss: () => {
-                  resolve(null);
+                  resolveManualSync(null);
                 },
               }
             );
           } else {
             noteManualFailure(error.message);
             showMessage(`操作失败: ${error.message}`, false);
-            resolve(false);
+            resolveManualSync(false);
           }
         }
       })().catch((error) => {
@@ -38180,7 +40464,7 @@
             stage: error?.syncLockStage || "unknown",
           });
           showMessage(MANUAL_SYNC_LOCK_LOST_MESSAGE, false);
-          resolve(false);
+          resolveManualSync(false);
           return;
         }
         const fallbackMessage = error?.message || "未知错误";
@@ -38188,7 +40472,7 @@
         recordSyncFailure(fallbackMessage, "manual");
         updateLastSyncTimeDisplay();
         showMessage(`操作失败: ${fallbackMessage}`, false);
-        resolve(false);
+        resolveManualSync(false);
       });
     });
 
@@ -38196,6 +40480,11 @@
       stopManualSyncLockHeartbeat();
       releaseManualSyncLock();
       refreshAutoSyncIndicatorAfterManualLockRelease();
+      recordSyncTraceEvent("manual_sync_lock_released", {
+        scope: "manual_sync",
+        status: "released",
+        message: "手动同步已释放同步锁并刷新指示器",
+      });
       manualSyncLockHeldByThisRun = false;
       manualSyncInFlightPromise = null;
     });
@@ -42418,6 +44707,15 @@
       !settings.syncRemoteGistId ||
       !settings.syncRemotePat
     ) {
+      recordSyncTraceEvent("per_load_sync_skipped", {
+        scope: "per_load_sync",
+        status: "skipped",
+        message: "每次页面加载同步检查未启用或配置不完整",
+        details: {
+          syncPerLoadCheckEnabled: settings.syncPerLoadCheckEnabled === true,
+          syncRemoteEnabled: settings.syncRemoteEnabled === true,
+        },
+      });
       return false;
     }
 
@@ -42427,6 +44725,19 @@
       Date.now() - lastStartupAutoSyncAt <
       STARTUP_AUTO_SYNC_COOLDOWN_MS
     ) {
+      emitSyncCompletionLog({
+        scope: "per_load_sync",
+        scopeLabel: "每次加载同步检查",
+        outcome: "skipped",
+        result: {
+          status: "skipped",
+          reason: "startup_auto_sync_cooldown",
+        },
+        details: {
+          lastStartupAutoSyncAt,
+          cooldownMs: STARTUP_AUTO_SYNC_COOLDOWN_MS,
+        },
+      });
       return false;
     }
 
@@ -42480,6 +44791,15 @@
     const settings = getSettings();
     if (!settings.syncRemoteEnabled || !settings.syncDailyFirstLoad) {
       clearDeferredStartupSyncRequest();
+      recordSyncTraceEvent("daily_startup_sync_skipped", {
+        scope: "startup_auto_sync",
+        status: "skipped",
+        message: "每日首次同步未启用或远程同步未启用",
+        details: {
+          syncRemoteEnabled: settings.syncRemoteEnabled === true,
+          syncDailyFirstLoad: settings.syncDailyFirstLoad === true,
+        },
+      });
       return false;
     }
 
@@ -42489,6 +44809,16 @@
     const shouldResumeDeferredStartupSync = Boolean(deferredStartupSync);
 
     if (today === lastSyncDate && !shouldResumeDeferredStartupSync) {
+      emitSyncCompletionLog({
+        scope: "startup_auto_sync",
+        scopeLabel: "每日首次同步",
+        outcome: "skipped",
+        result: {
+          status: "skipped",
+          reason: "daily_sync_already_completed",
+        },
+        details: { today, lastSyncDate },
+      });
       return false;
     }
 
@@ -42737,6 +45067,18 @@
       const freshnessState =
         decision && typeof decision === "object" ? decision.freshnessState || {} : {};
       const elapsedMs = Number(freshnessState.elapsedMs) || 0;
+      recordSyncTraceEvent("startup_orchestrator_decision", {
+        scope: "startup_orchestrator",
+        status: "running",
+        message: "启动同步编排器完成决策",
+        details: {
+          action: decision?.action || "",
+          elapsedMs,
+          today: freshnessState.today || "",
+          lastSyncDate: freshnessState.lastSyncDate || "",
+          hasDeferredStartupSync: freshnessState.hasDeferredStartupSync === true,
+        },
+      });
 
       switch (decision?.action) {
         case "run_fresh_startup_flow":
@@ -43888,11 +46230,7 @@
         {
           name: "start debug log collector",
           optional: true,
-          run: () => {
-            if (isDebugConsolePersistentlyVisible()) {
-              startLogCollector();
-            }
-          },
+          run: () => startLogCollector(),
         },
       ],
       initializationContext
