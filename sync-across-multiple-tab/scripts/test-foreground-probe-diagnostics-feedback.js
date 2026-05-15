@@ -224,8 +224,14 @@ const testActiveSyncSkipStaysQuiet = async () => {
   assert.equal(messages.length, 0, "已有同步任务时自动检查应保持静默。");
 
   const diagnosticsText = hooks.buildSyncDiagnosticsSummary();
-  assert.match(diagnosticsText, /最近结果码: skipped_active_sync/);
-  assert.match(diagnosticsText, /最近探测结果: skipped_active_sync/);
+  assert.match(
+    diagnosticsText,
+    /最近结果码: 已有同步任务正在执行，云端检查已跳过/
+  );
+  assert.match(
+    diagnosticsText,
+    /最近探测结果: 已有同步任务正在执行，云端检查已跳过/
+  );
   assert.match(diagnosticsText, /探测是否触发安全同步: 否/);
 };
 

@@ -280,34 +280,51 @@ const testSharedCooldownSuppressesRepeatedProbe = async () => {
   assert.strictEqual(fetchCount, 0, "共享 cooldown 命中后不应再次访问远端元数据。");
 };
 
-const testCleanStateFenceSkipsForegroundProbeWithinCooldown = async () => {
+const testCleanStateDoesNotSkipForegroundProbeWithinCooldown = async () => {
   const { hooks, store } = createHarness();
   const now = 1760000250000;
   store.set("s1p_last_sync_timestamp", now - 60 * 1000);
   store.set("s1p_last_modified", now - 90 * 1000);
+  hooks.setSyncBaselineState({
+    contentHash: "baseline-hash",
+    remoteUpdatedAt: "2026-04-11T12:30:00Z",
+  });
 
   let fetchCount = 0;
+  let followUpCount = 0;
   const result = await hooks.checkRemoteFreshnessOnForeground("pageshow", {
     now,
     settingsSnapshot: enabledSettings,
     fetchRemoteData: async () => {
       fetchCount += 1;
-      throw new Error("clean-state fence 命中后不应访问远端 metadata。");
+      return {
+        meta: {
+          updatedAt: "2026-04-11T12:45:00Z",
+        },
+      };
+    },
+    requestForegroundRemoteSyncCheck: async () => {
+      followUpCount += 1;
+      return { status: "success", action: "pulled" };
     },
   });
 
-  assert.strictEqual(result.status, "skipped");
-  assert.strictEqual(result.reason, "clean_state_fence");
-  assert.strictEqual(result.direction, "pull");
-  assert.strictEqual(fetchCount, 0, "clean pull fence 应实现零网络开销。");
+  assert.strictEqual(result.status, "changed");
+  assert.strictEqual(result.reason, "remote_changed");
+  assert.strictEqual(fetchCount, 1, "本地干净不能跳过前台远端 metadata probe。");
+  assert.strictEqual(
+    followUpCount,
+    1,
+    "冷却窗口内发现远端变化时仍应触发 follow-up safe sync。"
+  );
   assert.strictEqual(
     store.get("s1p_last_sync_timestamp"),
     now - 60 * 1000,
-    "clean-state fence 跳过不应刷新 lastSuccessfulSyncTs。"
+    "metadata probe 本身不应刷新 lastSuccessfulSyncTs。"
   );
 };
 
-const testCleanStateFenceAllowsForegroundProbeAfterCooldownOrLocalMutation =
+const testForegroundProbeRunsAfterCooldownOrLocalMutation =
   async () => {
     {
       const { hooks, store } = createHarness();
@@ -334,7 +351,7 @@ const testCleanStateFenceAllowsForegroundProbeAfterCooldownOrLocalMutation =
       assert.strictEqual(
         result.status,
         "unchanged",
-        "超过 clean-state cooldown 后应允许自动 pull probe 检查远端。"
+        "超过 clean-state cooldown 后仍应允许自动 pull probe 检查远端。"
       );
     }
 
@@ -387,9 +404,38 @@ const testCleanStateFenceDoesNotApplyToManualSource = () => {
     false,
     "用户主动手动同步不应被 Clean State Fence 拦截。"
   );
+
+  for (const triggerSource of [
+    "page_load_visible",
+    "foreground_resume",
+    "visible_poll",
+  ]) {
+    const foregroundDecision = hooks.shouldSkipAutoSyncDueToCleanState({
+      direction: "pull",
+      triggerSource,
+      reason: `${triggerSource}_probe`,
+      now,
+    });
+    assert.strictEqual(
+      foregroundDecision.skip,
+      false,
+      `${triggerSource} metadata probe 不应被本地 clean-state fence 拦截。`
+    );
+  }
 };
 
 const testCleanStateFenceCodeGuards = () => {
+  const foregroundProbeStart = sourceCode.indexOf(
+    "const checkRemoteFreshnessOnForeground = async"
+  );
+  const foregroundProbeEnd = sourceCode.indexOf(
+    "if (IS_S1P_TEST_MODE)",
+    foregroundProbeStart
+  );
+  const foregroundProbeSource = sourceCode.slice(
+    foregroundProbeStart,
+    foregroundProbeEnd
+  );
   assert.match(
     sourceCode,
     /const shouldRecordSuccessfulSyncTimestamp = \(action\) =>[\s\S]*?skipped_push_on_startup[\s\S]*?skip_push_on_foreground_followup/,
@@ -397,8 +443,13 @@ const testCleanStateFenceCodeGuards = () => {
   );
   assert.match(
     sourceCode,
-    /const cleanStateFenceTriggerSource =[\s\S]*?normalizeSyncTriggerSource\(overrides\.triggerSource[\s\S]*?normalizeSyncTriggerSource\(normalizedReason\)/,
-    "foreground pull fence 应优先使用调用方显式 triggerSource，再回退到 reason 推导。"
+    /const isAutoSyncCleanStateFenceSource =[\s\S]*?normalizedSource === SYNC_TRIGGER_SOURCE_BACKGROUND_PUSH/,
+    "clean-state fence 应只覆盖本地自动 push 去重，不能覆盖前台 metadata probe。"
+  );
+  assert.doesNotMatch(
+    foregroundProbeSource,
+    /shouldSkipAutoSyncDueToCleanState\(/,
+    "checkRemoteFreshnessOnForeground 不应在读取远端 metadata 前使用本地 clean-state fence。"
   );
   assert.match(
     sourceCode,
@@ -475,8 +526,8 @@ const testGuardConditionsSkipEarly = async () => {
   await testUnchangedRemoteSkipsFollowUpSync();
   await testChangedRemoteTriggersSafeFollowUpSync();
   await testSharedCooldownSuppressesRepeatedProbe();
-  await testCleanStateFenceSkipsForegroundProbeWithinCooldown();
-  await testCleanStateFenceAllowsForegroundProbeAfterCooldownOrLocalMutation();
+  await testCleanStateDoesNotSkipForegroundProbeWithinCooldown();
+  await testForegroundProbeRunsAfterCooldownOrLocalMutation();
   testCleanStateFenceDoesNotApplyToManualSource();
   testCleanStateFenceCodeGuards();
   await testProbeLockRejectsOtherOwner();

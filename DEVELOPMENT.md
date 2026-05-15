@@ -106,6 +106,10 @@ node sync-across-multiple-tab/scripts/test-settings-migration.js
 - 调试面板只覆盖导航栏指示器的预览显示，不会改写真实同步状态
 - 面板中的“实际 phase/source”仍然读取真实状态，可用于对照预览覆盖
 - `running` 等状态的调试预览会跳过真实同步锁门控，仅用于人工观察 UI，不代表同步任务真的在执行
+- 它与设置面板内的“同步诊断信息”不是同一块面板：设置页底部版本区域三连击只切换当前设置窗口内的诊断信息。
+- 它与右下角“调试控制台”也不是同一块面板：调试控制台通过设置页底部版本区域悬停 4s 后出现的小点切换，会持久记录是否显示；同步指示器调试面板只通过 `window.__s1pAutoSyncIndicatorDebug` 控制，不会自动持久显示。
+- 右下角浮动面板共用 `#s1p-debug-panel-host` 容器并以 flex 列表堆叠，面板 id 和内部状态彼此独立；同时打开时只会上下排列，不会改写对方的状态。
+- 右下角调试控制台的日志列表和复制内容会去掉消息正文里重复的本地时间前缀，只保留统一的行首时间，避免排查时看到两套时间戳。
 - 这套面板框架应优先作为通用调试容器复用，而不是为每个功能再单独写一套浮动面板
 
 ## 3. 多机协作流程（Git）
@@ -284,6 +288,7 @@ node sync-across-multiple-tab/scripts/test-settings-migration.js
 - 自动同步熔断（连续失败 3 次暂停 10 分钟）
 - 冲突暂停门控，防止冲突态继续自动推送
 - 前台探测使用独立的 probe 锁、共享冷却和本地冷却，避免多个标签页同时做 metadata-only probe
+- `clean-state fence` 只用于本地自动 push 去重：本地干净不能证明另一台设备没有更新 Gist，因此页面首次可见 / 回到前台 / 可见页轮询的 metadata-only probe 不得用它跳过远端 `updated_at` 检查。
 - 前台 follow-up sync 的局部脏状态优先落为 soft block；只有真正的全局冲突或明确需要人工处理时才升级为 hard pause
 
 ### 6.4 跨页面补偿
@@ -292,6 +297,7 @@ node sync-across-multiple-tab/scripts/test-settings-migration.js
 - `pageshow`（含 bfcache）/`visibilitychange` 自动恢复补同步
 - “每次页面加载时检查同步”会复用启动同步锁链路，避免多标签页同时发起远端检查。
 - 前台 probe 命中远端变化但 follow-up sync 因锁占用等原因未能执行时，会登记补偿重试而不是直接丢弃本轮自动拉取机会。
+- 自动拉取后需要刷新列表页 / 普通页时，默认延迟 `AUTO_PULL_RELOAD_DELAY_MS`（当前 3.2s）再刷新；刷新提示的 toast 会覆盖完整等待窗口，避免用户还没看清提示就被页面刷新打断。
 - 后台打开帖子页会写入短寿命 opener hint；线程页会据此把会话标记为 `passiveBackgroundOpened`，降低后台开帖造成的假阅读进度。
 
 ### 6.5 统一自动同步指示器流转 (Auto Sync Indicator)
@@ -304,24 +310,36 @@ node sync-across-multiple-tab/scripts/test-settings-migration.js
 
 #### 详细节点与时序图
 1. **触发 (Pending)**
-   - 本地数据变更时，调用 `setAutoSyncIndicatorPendingPhase(reason)` 进入防抖队列。
-   - 显示静止的三个点图标，不会打断正在执行的其他同步任务。
+   - 本地数据变更时，调用 `setAutoSyncIndicatorPendingPhase(reason)` 进入后台防抖 / 重试 / pending 队列。
+   - Pending 会根据 `source + operation` 显示方向：后台本地变更默认是 `push`，启动 / 每次加载 / 首次可见 / 回到前台 / 可见页轮询默认是 `pull`。
+   - 云端 `updated_at` 与本地已同步版本相同、但仍需二次确认的前台补偿重试，使用中性的三点 `sync` pending，并标记为“等待二次确认”，不显示为待拉取。
+   - metadata-only probe 只发现 `updated_at` 变新、但前台补同步被本地 pending write / debounce 门禁暂缓时，也使用中性的三点 `sync` pending；等 full sync 真的决策出 `pull` 后才显示拉取方向。
+   - Pending 的 `push` / `pull` 使用 running 单箭头 path 静态叠成双箭头，不再维护独立双箭头 SVG；动画只属于真正执行中的 `running`。
+   - Pending 方向图标会放大到 `1.3`，切入相同方向的 Running 箭头队列时使用专门的尺寸衔接动画，避免从静态双箭头硬切到较小动态图标。
+   - 只有无法判定方向时才回退到三点 `sync` 图标。
 2. **执行 (Running)**
    - 防抖结束，或某条自动同步路径真正进入执行阶段后，调用对应的 indicator cycle 入口生成加锁 `token`。
-   - 图标触发 `.s1p-auto-sync-running` 类，内部三个小点（`.s1p-dot`）执行 `s1p-auto-sync-dot-bounce` 波浪形依次跳动动画。
+   - 启动 / 前台 follow-up 这类“先检查再决策”的完整安全同步，在真正判定 `push` / `pull` 前先显示中性的三点 `sync` 图标，避免出现“先向下再向上”的误导性方向反转。
+   - `push` 使用纯向上箭头队列动画，箭头持续上行；`pull` 使用纯向下箭头队列动画，箭头持续下行。Running 的方向队列会放大到 `1.18`，两者都继承 `currentColor`，并沿用统一的 `0.6px` 同色描边来保持与成功 / 失败图标的视觉重量一致。
+   - `probe` 只表示前台 metadata-only 云端探测，图标为放大镜，使用独立的巡视式位移动画，不与真正的拉取 / 推送混用。
+   - 前台 probe 有防闪策略：开始后延迟 `AUTO_SYNC_INDICATOR_PROBE_SHOW_DELAY_MS`（当前 160ms）才显示；如果已经显示，则至少保留 `AUTO_SYNC_INDICATOR_PROBE_MIN_VISIBLE_MS`（当前 560ms）后再切到拉取、成功或待命。
 3. **结算 (Success / Failure / Conflict)**
-   - 网络合并完成后，调用 `finishBackgroundAutoSyncIndicatorCycle(token, phase)`。
+   - 网络合并完成后，调用 `finishAutoSyncIndicatorCycle(token, phase)` 或 `setAutoSyncIndicatorResolvedPhase(phase)`。
    - **Success (成功)**：图标变为打勾（静止，无动画）。
+   - `hash_equal` / `no_change` 这类二次确认结果会直接回到 `Idle`，不显示成功勾，也不会写入标题栏的 `[同步成功]` 提示。
    - **Failure / Conflict (失败或冲突)**：图标变为减号（静止，无动画）。
 4. **冷却与复位 (Cooldown & Revert)**
-   - 根据结算类型进行自动倒计时冷却：Success (2分钟) / Failure (5分钟) / Conflict (10分钟)。
+   - 导航栏指示器根据结算类型进行秒级倒计时冷却：Success (2.4s) / Failure (9s) / Conflict (12s)。标题同步状态有独立的分钟级 TTL，不要混用两者。
    - TTL 到期后，随页面可见（visibilitychange）或聚焦重新触发 UI 渲染，自动复位回空闲时极简的单点 `idle` 状态。
 
 实现注意：
 
-- metadata-only probe 的 `unchanged` / `cooldown` / `skipped` 不应点亮 indicator。
-- 只有真正进入 follow-up safe sync 或后台自动同步执行时，才切换到 `running`。
+- 快速完成的 metadata-only probe 不应点亮 indicator；慢 probe 只显示放大镜，不提前表达为拉取。
+- `remote_probe_equal_ambiguous:*` 只是“版本时间相同后的保守二次确认”，不是远端更新命中；日志、pending 图标和标题状态都不要把它表达为拉取。
+- 前台 retry pending 的运行时 `source` 必须从 `remote_probe_*:<triggerSource>` 原因中还原，不能统一写成 `foreground_resume`；否则 `displayOperation` 会被来源不一致保护丢弃，重新默认成待拉取箭头。
+- 只有真正进入 follow-up safe sync、后台自动同步、手动同步锁，或达到可见阈值的 probe，才切换到 `running`。
 - 当前实现已经为不同来源保留 `source` 字段，后续扩展时优先沿用现有来源枚举，而不是新增自由文本。
+- `setSanitizedIconHtml()` 的 SVG 白名单允许 `path.class`，因为 push/pull 队列动画依赖 `.s1p-sync-flow-arrow`；新增图标 class 时仍需走白名单，不要绕过 sanitizer。
 
 ```mermaid
 %%{init: {
@@ -354,14 +372,23 @@ sequenceDiagram
 
     Note over I: Idle（单点）
     U->>D: 本地数据变更
-    D->>I: Pending（三点静止）
+    D->>I: Pending（单箭头叠成的静态方向图标）
     D->>S: 防抖结束，提交同步任务
-    S->>I: Running（三点跳动）
+    S->>I: Running（箭头队列流动）
     S->>G: 拉取/合并/按需推送
+
+    opt 前台 metadata probe
+        S->>I: 160ms 后显示放大镜
+        I->>I: 已显示则至少保留 560ms
+        S->>I: 版本时间相同但需确认时显示三点 pending
+    end
 
     alt 同步成功
         G-->>S: 200 OK
         S->>I: Success（打勾）
+    else 二次确认无变化
+        G-->>S: hash_equal / no_change
+        S->>I: Idle（不显示成功）
     else 请求失败
         G-->>S: 4xx/5xx 或超时
         S->>I: Failure（减号）
@@ -370,7 +397,7 @@ sequenceDiagram
         S->>I: Conflict（减号）
     end
 
-    Note over I: TTL 冷却（Success 2m / Failure 5m / Conflict 10m）
+    Note over I: 导航栏 TTL 冷却（Success 2.4s / Failure 9s / Conflict 12s）
     opt 冷却期出现新变更
         U->>D: 触发新变更
         D->>I: 立即切回 Pending

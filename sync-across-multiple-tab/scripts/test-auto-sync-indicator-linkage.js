@@ -129,12 +129,59 @@ const testSourceAwareTitlesAndMappings = () => {
     "实际同步方向已明确时，应优先使用 operation 覆盖默认来源推断。"
   );
   assert.strictEqual(
+    hooks.getAutoSyncIndicatorTitle({
+      displayPhase: "pending",
+      displaySource: "foreground_resume",
+      displayReason: "foreground_probe_verification_retry",
+      displayOperation: "sync",
+    }),
+    "自动同步：回到前台检查等待二次确认"
+  );
+  assert.strictEqual(
+    hooks.getAutoSyncIndicatorDisplayKind({
+      displayPhase: "pending",
+      displaySource: "foreground_resume",
+      displayReason: "foreground_probe_verification_retry",
+      displayOperation: "sync",
+    }),
+    "sync",
+    "云端版本时间相同的二次确认 pending 应使用中性三点，而不是拉取箭头。"
+  );
+  assert.strictEqual(
+    hooks.getAutoSyncIndicatorTitle({
+      displayPhase: "pending",
+      displaySource: "page_load_visible",
+      displayReason: "foreground_probe_changed_retry",
+      displayOperation: "sync",
+    }),
+    "自动同步：首次可见检查等待云端复查"
+  );
+  assert.strictEqual(
+    hooks.getAutoSyncIndicatorDisplayKind({
+      displayPhase: "pending",
+      displaySource: "page_load_visible",
+      displayReason: "foreground_probe_changed_retry",
+      displayOperation: "sync",
+    }),
+    "sync",
+    "metadata-only 发现 updated_at 变化但补同步被门禁暂缓时，应先用中性三点等待复查。"
+  );
+  assert.strictEqual(
     hooks.getAutoSyncIndicatorPhaseFromResult({
       status: "success",
       action: "skipped_push_on_startup",
     }),
     "conflict",
     "启动安全同步命中 skipped_push_on_startup 时应落到 conflict。"
+  );
+  assert.strictEqual(
+    hooks.getAutoSyncIndicatorPhaseFromResult({
+      status: "success",
+      action: "no_change",
+      reason: "hash_equal",
+    }),
+    "idle",
+    "二次确认得到 no_change/hash_equal 时不应显示成功态或写入标题成功提示。"
   );
   assert.strictEqual(
     hooks.getAutoSyncIndicatorReasonFromResult({
@@ -245,12 +292,47 @@ const testSharedSchedulerAndLocksFeedUnifiedDisplayState = () => {
     "push",
     "active lock 来源切到后台推送时，不应沿用旧 foreground running 的 pull operation。"
   );
+
+  store.set(AUTO_SYNC_INDICATOR_STATE_KEY, {
+    phase: "pending",
+    timestamp: now,
+    token: "",
+    source: "foreground_resume",
+    reason: "foreground_probe_verification_retry",
+    operation: "",
+    lastResolvedPhase: "idle",
+    lastResolvedTimestamp: now,
+    lastResolvedSource: "",
+    lastResolvedReason: "",
+  });
+  store.set("s1p_sync_global_lock", {
+    owner: "other-tab",
+    mode: "startup",
+    timestamp: now,
+    ttlMs: 60000,
+  });
+  resolvedState = toPlainObject(hooks.resolveAutoSyncIndicatorDisplayPhase());
+  assert.equal(resolvedState.displayPhase, "running");
+  assert.equal(resolvedState.displaySource, "foreground_resume");
+  assert.equal(
+    hooks.getAutoSyncIndicatorDisplayKind(resolvedState),
+    "sync",
+    "前台二次确认进入 running 锁窗口时仍应保持中性三点，不能回退成默认拉取箭头。"
+  );
 };
 
 const testAutoSyncEntryPointsBindIndicatorSources = () => {
   expectMatch(
     /const runStartupModeAutoSyncCheckWithIndicator = async[\s\S]*?startAutoSyncIndicatorCycle\(resolvedSource/m,
     "自动同步指示器缺少统一的启动同步封装 helper。"
+  );
+  expectMatch(
+    /runStartupModeAutoSyncCheckWithIndicator[\s\S]*?startAutoSyncIndicatorCycle\(resolvedSource,\s*\{[\s\S]*?operation:\s*AUTO_SYNC_INDICATOR_OPERATION_SYNC/m,
+    "启动/加载类安全同步在决策前应使用中性 sync 图标，避免误显示拉取后又切推送。"
+  );
+  expectMatch(
+    /runForegroundFollowUpAutoSyncCheckWithIndicator[\s\S]*?startAutoSyncIndicatorCycle\(resolvedSource,\s*\{[\s\S]*?operation:\s*AUTO_SYNC_INDICATOR_OPERATION_SYNC/m,
+    "前台 follow-up 安全同步在决策前应使用中性 sync 图标，避免误显示拉取后又切推送。"
   );
   expectMatch(
     /const handleStartupSync = async[\s\S]*?runStartupModeAutoSyncCheckWithIndicator\(\{\s*source:\s*AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP/m,
@@ -277,12 +359,64 @@ const testAutoSyncEntryPointsBindIndicatorSources = () => {
     "前台 metadata 探测未映射到独立的 probe 视觉类型。"
   );
   expectMatch(
+    /remote_probe_equal_ambiguous:\$\{normalizedReason\}[\s\S]*?indicatorReason:\s*"foreground_probe_verification_retry"[\s\S]*?indicatorOperation:\s*AUTO_SYNC_INDICATOR_OPERATION_SYNC/,
+    "云端版本时间相同的二次确认 pending 应使用中性 sync 图标，避免误显示为待拉取。"
+  );
+  expectMatch(
+    /remote_probe_changed:\$\{normalizedReason\}[\s\S]*?indicatorReason:\s*"foreground_probe_changed_retry"[\s\S]*?indicatorOperation:\s*AUTO_SYNC_INDICATOR_OPERATION_SYNC/,
+    "metadata-only 发现 updated_at 变化但补同步暂缓时，应使用中性 sync pending，避免过早显示待拉取。"
+  );
+  expectMatch(
+    /const indicatorOperation[\s\S]*?normalizeAutoSyncIndicatorOperation\(options\.indicatorOperation\)[\s\S]*?AUTO_SYNC_INDICATOR_OPERATION_PULL/,
+    "真正远端变化的前台补偿重试仍应默认按 pull 待拉取展示。"
+  );
+  expectMatch(
+    /isEqualUpdatedAtProbeVerificationReason[\s\S]*?云端版本时间相同，正在执行前台二次确认同步检查/,
+    "版本时间相同的前台二次确认日志不应再写成远端探测命中更新。"
+  );
+  expectMatch(
     /s1p-auto-sync-kind-push[\s\S]*?s1p-auto-sync-kind-pull[\s\S]*?s1p-auto-sync-kind-probe/,
     "导航栏指示器缺少推送/拉取/probe 三类动态图标 class。"
   );
   expectMatch(
-    /s1p-auto-sync-operation-breathe/,
-    "推送/拉取动态图标缺少呼吸动画。"
+    /s1p-auto-sync-arrow-flow-up[\s\S]*?s1p-auto-sync-arrow-flow-down/,
+    "推送/拉取动态图标缺少方向箭头队列动画。"
+  );
+  expectMatch(
+    /s1p-auto-sync-arrow-flow-up[\s\S]*?translateY\(13\.5px\)[\s\S]*?translateY\(-13\.5px\)[\s\S]*?s1p-auto-sync-arrow-flow-down[\s\S]*?translateY\(-13\.5px\)[\s\S]*?translateY\(13\.5px\)/,
+    "推送/拉取箭头队列应使用完整轨道匀速位移，保证上下方向的视觉路径清晰。"
+  );
+  expectMatch(
+    /s1p-auto-sync-indicator-pending-to-running-enter[\s\S]*?scale\(1\.12\)[\s\S]*?s1p-auto-sync-indicator-pending-to-running-exit[\s\S]*?scale\(0\.91\)/,
+    "pending 方向图标进入 running 箭头队列时应有专门的尺寸衔接动画。"
+  );
+  expectMatch(
+    /data-sync-state="running"[\s\S]*?s1p-auto-sync-kind-push[\s\S]*?transform:\s*scale\(1\.18\)/,
+    "running 推送/拉取箭头队列应略微放大，和 pending 双箭头尺寸更连贯。"
+  );
+  expectMatch(
+    /animation-duration:\s*3\.15s;[\s\S]*?nth-child\(1\)[\s\S]*?animation-delay:\s*-2\.1s;[\s\S]*?nth-child\(2\)[\s\S]*?animation-delay:\s*-1\.05s;[\s\S]*?nth-child\(3\)[\s\S]*?animation-delay:\s*0s;/,
+    "推送/拉取箭头队列应以稳定错相铺满队列，避免三枚箭头一起跳变。"
+  );
+  expectNoMatch(
+    /@keyframes s1p-auto-sync-arrow-flow-(?:up|down)\s*\{(?:(?!@keyframes)[\s\S])*?scale\(/,
+    "推送/拉取箭头队列不应在关键帧里缩放，避免产生先快后稳的错觉。"
+  );
+  expectMatch(
+    /const pushArrowPath = "M11\.9999 10\.8284[\s\S]*?const pullArrowPath = "M11\.9999 13\.1714[\s\S]*?const pendingPushSvg = `<svg[\s\S]*?s1p-sync-pending-arrow[\s\S]*?\$\{pushArrowPath\}[\s\S]*?const pendingPullSvg = `<svg[\s\S]*?s1p-sync-pending-arrow[\s\S]*?\$\{pullArrowPath\}/,
+    "pending 推送/拉取应复用 running 的单箭头 path 静态叠成双箭头。"
+  );
+  expectNoMatch(
+    /M12 4\.83582|M12 19\.1642/,
+    "pending 不应继续使用独立的双箭头 SVG path。"
+  );
+  expectMatch(
+    /case AUTO_SYNC_INDICATOR_PHASE_PENDING:[\s\S]*?return getOperationSvg\(\{\s*animated:\s*false\s*\}\);[\s\S]*?case AUTO_SYNC_INDICATOR_PHASE_RUNNING:[\s\S]*?return getOperationSvg\(\{\s*animated:\s*true\s*\}\);/,
+    "pending 应保持静态方向图标，只有 running 才使用箭头队列动画。"
+  );
+  expectMatch(
+    /data-sync-state="pending"[\s\S]*?s1p-auto-sync-kind-push[\s\S]*?transform:\s*scale\(1\.3\)/,
+    "pending 推送/拉取静态双箭头应按当前视觉校准放大到 1.3。"
   );
   expectMatch(
     /s1p-auto-sync-probe-search[\s\S]*?translate\(1\.2px,\s*0\)[\s\S]*?translate\(-1\.2px,\s*0\)/,
@@ -330,15 +464,15 @@ const testAutoSyncEntryPointsBindIndicatorSources = () => {
   );
   expectMatch(
     /foregroundRemoteSyncCheckInFlightPromise = null;[\s\S]*?refreshAutoSyncIndicatorRuntimeDisplay\("foreground_followup_finished"\)/,
-    "前台 follow-up promise 清理后应立即重绘，避免 no_change 后仍显示拉取呼吸动画。"
+    "前台 follow-up promise 清理后应立即重绘，避免 no_change 后仍显示拉取箭头动画。"
   );
   expectMatch(
-    /foregroundProbeInFlightPromise = runPromise;[\s\S]*?refreshAutoSyncIndicatorRuntimeDisplay\("foreground_probe_started"\)/,
-    "前台 metadata probe 开始后应立即重绘，确保放大镜探测动画可见。"
+    /foregroundProbeInFlightPromise = runPromise;[\s\S]*?scheduleForegroundProbeIndicatorDisplay\(/,
+    "前台 metadata probe 开始后应延迟显示，避免快速请求造成放大镜闪烁。"
   );
   expectMatch(
-    /foregroundProbeInFlightPromise = null;[\s\S]*?refreshAutoSyncIndicatorRuntimeDisplay\("foreground_probe_finished"\)/,
-    "前台 metadata probe promise 清理后应立即重绘，避免探测图标残留。"
+    /foregroundProbeInFlightPromise = null;[\s\S]*?settleForegroundProbeIndicatorDisplay\("foreground_probe_finished"\)/,
+    "前台 metadata probe promise 清理后应通过最短可见时间收束探测图标。"
   );
   expectMatch(
     /s1p-auto-sync-kind-push path[\s\S]*?stroke:\s*currentColor;[\s\S]*?stroke-width:\s*0\.6px/,
@@ -347,6 +481,14 @@ const testAutoSyncEntryPointsBindIndicatorSources = () => {
   expectMatch(
     /AUTO_SYNC_INDICATOR_RUNNING_MIN_VISIBLE_MS\s*=\s*650/,
     "同步中状态应有轻量最短展示时间，避免立刻硬切到结果态。"
+  );
+  expectMatch(
+    /AUTO_SYNC_INDICATOR_PROBE_SHOW_DELAY_MS\s*=\s*160[\s\S]*?AUTO_SYNC_INDICATOR_PROBE_MIN_VISIBLE_MS\s*=\s*560/,
+    "前台 probe 指示器应有延迟显示和最短可见时间，避免快速 metadata 请求闪烁。"
+  );
+  expectMatch(
+    /path:\s*\[[\s\S]*?"class"[\s\S]*?"d"/,
+    "图标 sanitizer 应允许 path class，以便推送/拉取箭头队列动画生效。"
   );
   expectMatch(
     /scheduleAutoSyncIndicatorDeferredResolve[\s\S]*?skipMinVisibleDelay:\s*true/,

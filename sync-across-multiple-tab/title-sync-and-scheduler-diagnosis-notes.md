@@ -16,9 +16,10 @@
 - 切回详情页前台会触发 `handlePendingAutoSyncRecoveryVisibilityChange()`：核心数据快照 resync、pending recovery，然后做前台远端 freshness probe。
 - 前台 freshness probe / follow-up 明确不属于共享后台 debounce 的范围。即使没有新的后台 push，它也可能让导航栏显示运行态，因为它正在做 metadata 探测或一次很快的 follow-up。
 - same-session / same-device 写入会抑制 reload / toast，但导航栏指示器仍会展示 probe / follow-up 活动，因为它消费统一状态源。
+- 修复后，`remote_probe_equal_ambiguous:*` 只表示“云端版本时间相同后的二次确认”。这一路 pending 和 running 锁窗口都使用中性三点，后续 `hash_equal / no_change` 会回到 idle，不再写入导航栏成功勾或标题栏 `[同步成功]`。
 
 ## 已实现修复
 - presence 记录新增 `lastActiveAt`。
 - 标题状态 owner 现在优先选择 `lastActiveAt` 最新的存活标签页，并以较新的 `createdAt` 作为兜底。
 - 运行时决策会用当前标签页的实时 visibility / focus 状态覆盖旧 presence，同时保留已有 `lastActiveAt`。
-- 导航栏自动同步指示器新增 `probe` 展示类型：`foreground_probe_in_flight` 使用独立的放大镜视觉状态，与真正同步执行的三个点区分。
+- 导航栏自动同步指示器新增 `probe` 展示类型：`foreground_probe_in_flight` 使用独立的放大镜视觉状态；真正同步执行时按方向展示 push / pull 箭头队列。

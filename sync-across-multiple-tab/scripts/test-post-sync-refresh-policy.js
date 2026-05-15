@@ -126,8 +126,8 @@ const testListPageSchedulesReload = () => {
     href: "https://stage1st.com/2b/forum-1-1.html",
     search: "",
     action: "pulled",
-    showMessage: (message, isSuccess) => {
-      messages.push({ message, isSuccess });
+    showMessage: (message, isSuccess, options = {}) => {
+      messages.push({ message, isSuccess, options });
     },
     setTimeoutFn: (callback, delay) => {
       scheduledTimer = { callback, delay };
@@ -142,15 +142,20 @@ const testListPageSchedulesReload = () => {
 
   assert.equal(result.policy, "reload_now");
   assert.equal(result.reloadSchedule.status, "scheduled");
-  assert.equal(result.reloadSchedule.reloadDelayMs, 1500);
+  assert.equal(result.reloadSchedule.reloadDelayMs, 3200);
   assert.equal(messages.length, 1);
   assert.equal(
     messages[0].message,
     "检测到云端备份比当前页面更新，已自动拉取到本地。正在刷新页面..."
   );
   assert.equal(messages[0].isSuccess, true);
+  assert.equal(
+    messages[0].options.durationMs,
+    3800,
+    "自动拉取刷新前的 toast 应至少覆盖完整刷新等待窗口，避免提示刚出现就被刷新打断。"
+  );
   assert.ok(scheduledTimer, "列表页应当调度自动刷新。");
-  assert.equal(scheduledTimer.delay, 1500);
+  assert.equal(scheduledTimer.delay, 3200);
 
   scheduledTimer.callback();
   assert.equal(reloadCount, 1);
@@ -246,7 +251,7 @@ const testSuppressMessageKeepsReloadQuiet = () => {
 
   assert.equal(result.policy, "reload_now");
   assert.equal(result.reloadSchedule.status, "scheduled");
-  assert.equal(result.reloadSchedule.reloadDelayMs, 1500);
+  assert.equal(result.reloadSchedule.reloadDelayMs, 3200);
   assert.deepStrictEqual(messages, []);
   assert.ok(scheduledTimer, "静默处理仍应保留必要的自动刷新。");
   hooks.clearPendingAutoPullReloadTimer();
