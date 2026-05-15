@@ -1221,6 +1221,8 @@
   let foregroundRemoteSyncRetryIndicatorReason = "";
   let foregroundRemoteSyncRetryIndicatorOperation = "";
   let foregroundFollowUpSoftBlockState = null;
+  let lastAutoSyncIndicatorDisplaySession = null;
+  let autoSyncIndicatorDisplaySessionHiddenAt = 0;
   let lastForegroundProbeFeedbackState = {
     key: "",
     timestamp: 0,
@@ -1375,6 +1377,10 @@
   const AUTO_SYNC_INDICATOR_OPERATION_PUSH = "push";
   const AUTO_SYNC_INDICATOR_OPERATION_PULL = "pull";
   const AUTO_SYNC_INDICATOR_OPERATION_PROBE = "probe";
+  const AUTO_SYNC_INDICATOR_REASON_FOREGROUND_PROBE_VERIFICATION_RETRY =
+    "foreground_probe_verification_retry";
+  const AUTO_SYNC_INDICATOR_REASON_FOREGROUND_PROBE_CHANGED_RETRY =
+    "foreground_probe_changed_retry";
   const AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND =
     SYNC_TRIGGER_SOURCE_BACKGROUND_PUSH;
   const AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP =
@@ -1517,6 +1523,10 @@
   const AUTO_SYNC_INDICATOR_RUNNING_MIN_VISIBLE_MS = 650;
   const AUTO_SYNC_INDICATOR_PROBE_SHOW_DELAY_MS = 160;
   const AUTO_SYNC_INDICATOR_PROBE_MIN_VISIBLE_MS = 560;
+  const AUTO_SYNC_INDICATOR_DISPLAY_SESSION_MERGE_WINDOW_MS = 30 * 1000;
+  const AUTO_SYNC_INDICATOR_DISPLAY_SESSION_SETTLING_MIN_MS = 900;
+  const AUTO_SYNC_INDICATOR_DISPLAY_SESSION_SETTLING_MAX_MS = 5 * 1000;
+  const AUTO_SYNC_INDICATOR_DISPLAY_SESSION_HIDDEN_STALE_MS = 60 * 1000;
   const AUTO_SYNC_INDICATOR_SUCCESS_TTL_MS = 2400;
   const AUTO_SYNC_INDICATOR_FAILURE_TTL_MS = 9000;
   const AUTO_SYNC_INDICATOR_CONFLICT_TTL_MS = 12 * 1000;
@@ -9384,6 +9394,7 @@
     threadId: "",
     action: "",
     remoteUpdatedAt: null,
+    contentHash: "",
     syncMode: "",
     createdAt: 0,
   });
@@ -9558,6 +9569,7 @@
       threadId: normalizeNumericId(source.threadId) || "",
       action: normalizeRemoteProbeText(source.action, 80),
       remoteUpdatedAt: normalizeRemoteProbeUpdatedAt(source.remoteUpdatedAt),
+      contentHash: normalizeSyncDiagnosticHash(source.contentHash),
       syncMode: normalizeRemoteProbeText(source.syncMode, 60),
       createdAt,
     };
@@ -9604,6 +9616,7 @@
   const recordLocalSessionRemoteWrite = ({
     action = "",
     remoteUpdatedAt = null,
+    contentHash = "",
     threadId = "",
     syncMode = "",
     deviceId = "",
@@ -9614,21 +9627,25 @@
     if (!isPushLikeSyncAction(action)) {
       return { ...LOCAL_SESSION_REMOTE_WRITE_DEFAULT };
     }
-    return setLastLocalSessionRemoteWrite({
+    const normalizedWrite = setLastLocalSessionRemoteWrite({
       deviceId: normalizeRemoteProbeText(deviceId, 80) || getLocalSyncDeviceId(),
       sessionId,
       sourceTabId,
       threadId,
       action,
       remoteUpdatedAt,
+      contentHash,
       syncMode,
       createdAt,
     });
+    rememberAutoSyncIndicatorDisplaySessionFromRemoteWrite(normalizedWrite);
+    return normalizedWrite;
   };
 
   const recordSuccessfulRemoteWriteIfNeeded = ({
     action = "",
     remoteUpdatedAt = null,
+    contentHash = "",
     threadId = "",
     syncMode = "",
     deviceId = "",
@@ -9642,6 +9659,7 @@
     return recordLocalSessionRemoteWrite({
       action,
       remoteUpdatedAt: normalizedRemoteUpdatedAt,
+      contentHash,
       threadId,
       syncMode,
       deviceId,
@@ -12226,17 +12244,25 @@
       typeof getForegroundRemoteSyncRetryRemainingMs === "function"
         ? getForegroundRemoteSyncRetryRemainingMs(now)
         : 0;
-    if (foregroundRetryRemainingMs > 0) {
-      return {
-        hasPending: true,
-        source:
-          normalizeSyncTriggerSource(foregroundRemoteSyncRetryReason) ||
-          AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME,
-        reason:
-          foregroundRemoteSyncRetryIndicatorReason ||
-          "foreground_followup_retry",
-        operation: foregroundRemoteSyncRetryIndicatorOperation,
-      };
+    const foregroundRetryPendingState =
+      foregroundRetryRemainingMs > 0
+        ? {
+            hasPending: true,
+            source:
+              normalizeSyncTriggerSource(foregroundRemoteSyncRetryReason) ||
+              AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME,
+            reason:
+              foregroundRemoteSyncRetryIndicatorReason ||
+              "foreground_followup_retry",
+            operation: foregroundRemoteSyncRetryIndicatorOperation,
+            sources: {},
+          }
+        : null;
+    if (
+      foregroundRetryPendingState?.operation ===
+      AUTO_SYNC_INDICATOR_OPERATION_PULL
+    ) {
+      return foregroundRetryPendingState;
     }
 
     const sharedState =
@@ -12248,6 +12274,7 @@
         hasPending: true,
         source: AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
         reason: sharedState.reason || "shared_background_debounce",
+        sources: sharedState.sources,
       };
     }
 
@@ -12256,6 +12283,7 @@
         hasPending: true,
         source: AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
         reason: backgroundSyncRetryTimeout ? "background_retry" : "background_queue",
+        sources: buildAutoSyncIndicatorSingleSourceMap("general"),
       };
     }
 
@@ -12269,10 +12297,17 @@
         source: AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
         reason:
           normalizePendingAutoSyncSource(pending.source) || "pending_auto_sync",
+        sources: buildAutoSyncIndicatorSingleSourceMap(
+          normalizePendingAutoSyncSource(pending.source) || "general"
+        ),
       };
     }
 
-    return { hasPending: false, source: "", reason: "" };
+    if (foregroundRetryPendingState) {
+      return foregroundRetryPendingState;
+    }
+
+    return { hasPending: false, source: "", reason: "", sources: {} };
   };
 
   const getAutoSyncRuntimeRunningDisplayState = (
@@ -12375,6 +12410,440 @@
 
   const invalidateAutoSyncIndicatorDisplayPhaseCache = () => {
     autoSyncIndicatorDisplayPhaseCache = null;
+  };
+
+  const normalizeAutoSyncIndicatorLocalChangeSources = (value = null) => {
+    const raw = sanitizeRecordObject(value);
+    const normalizedSources = {};
+    Object.keys(raw).forEach((key) => {
+      const normalizedKey =
+        normalizeSyncDiagnosticText(key, 80) || "general";
+      const count = Math.max(0, Math.floor(Number(raw[key]) || 0));
+      if (count > 0) {
+        normalizedSources[normalizedKey] =
+          (normalizedSources[normalizedKey] || 0) + count;
+      }
+    });
+    return normalizedSources;
+  };
+
+  const buildAutoSyncIndicatorSingleSourceMap = (source = "") => {
+    const normalizedSource =
+      normalizeSyncDiagnosticText(source, 80) || "general";
+    return normalizedSource ? { [normalizedSource]: 1 } : {};
+  };
+
+  const normalizeAutoSyncIndicatorDisplaySessionThreadIds = (value = []) => {
+    const items = Array.isArray(value) ? value : [value];
+    const seen = new Set();
+    const threadIds = [];
+    items.forEach((item) => {
+      const threadId =
+        normalizeNumericId(item) || normalizeSyncDiagnosticText(item, 40);
+      if (!threadId || seen.has(threadId)) {
+        return;
+      }
+      seen.add(threadId);
+      threadIds.push(threadId);
+    });
+    return threadIds.slice(0, BACKGROUND_SYNC_DEBOUNCE_THREAD_ID_LIMIT);
+  };
+
+  const clearLastAutoSyncIndicatorDisplaySession = () => {
+    if (!lastAutoSyncIndicatorDisplaySession) {
+      autoSyncIndicatorDisplaySessionHiddenAt = 0;
+      return null;
+    }
+    lastAutoSyncIndicatorDisplaySession = null;
+    autoSyncIndicatorDisplaySessionHiddenAt = 0;
+    invalidateAutoSyncIndicatorDisplayPhaseCache();
+    return null;
+  };
+
+  const normalizeAutoSyncIndicatorDisplaySession = (
+    session = null,
+    now = Date.now()
+  ) => {
+    if (!session || typeof session !== "object" || Array.isArray(session)) {
+      return null;
+    }
+    const direction =
+      normalizeAutoSyncIndicatorOperation(session.direction) ||
+      getAutoSyncIndicatorOperationFromSyncAction(session.action);
+    if (
+      direction !== AUTO_SYNC_INDICATOR_OPERATION_PUSH &&
+      direction !== AUTO_SYNC_INDICATOR_OPERATION_PULL
+    ) {
+      return null;
+    }
+    const completedAt =
+      normalizeRemoteProbeTimestamp(session.completedAt) ||
+      normalizeRemoteProbeTimestamp(session.createdAt) ||
+      now;
+    if (now - completedAt > AUTO_SYNC_INDICATOR_DISPLAY_SESSION_MERGE_WINDOW_MS) {
+      return null;
+    }
+    const source =
+      normalizeAutoSyncIndicatorSource(session.source) ||
+      (direction === AUTO_SYNC_INDICATOR_OPERATION_PULL
+        ? AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME
+        : AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND);
+    const kind =
+      direction === AUTO_SYNC_INDICATOR_OPERATION_PULL
+        ? "remote_pull_session"
+        : "local_push_session";
+    return {
+      kind,
+      direction,
+      source,
+      reason:
+        normalizeAutoSyncIndicatorReason(session.reason) ||
+        normalizeRemoteProbeText(session.action, 120) ||
+        "",
+      threadIds: normalizeAutoSyncIndicatorDisplaySessionThreadIds(
+        session.threadIds || session.threadId
+      ),
+      startedAt:
+        normalizeRemoteProbeTimestamp(session.startedAt) || completedAt,
+      completedAt,
+      remoteUpdatedAt: normalizeRemoteProbeUpdatedAt(session.remoteUpdatedAt),
+      contentHash: normalizeRemoteProbeText(session.contentHash, 120) || "",
+      sameSessionWrite: session.sameSessionWrite !== false,
+      settlingStartedAt:
+        normalizeRemoteProbeTimestamp(session.settlingStartedAt) || 0,
+    };
+  };
+
+  const getLastAutoSyncIndicatorDisplaySession = (now = Date.now()) => {
+    const visibilityState =
+      typeof document !== "undefined"
+        ? document.visibilityState || "visible"
+        : "visible";
+    if (visibilityState === "hidden") {
+      if (!autoSyncIndicatorDisplaySessionHiddenAt) {
+        autoSyncIndicatorDisplaySessionHiddenAt = now;
+      }
+      return normalizeAutoSyncIndicatorDisplaySession(
+        lastAutoSyncIndicatorDisplaySession,
+        now
+      );
+    }
+    if (
+      autoSyncIndicatorDisplaySessionHiddenAt > 0 &&
+      now - autoSyncIndicatorDisplaySessionHiddenAt >
+        AUTO_SYNC_INDICATOR_DISPLAY_SESSION_HIDDEN_STALE_MS
+    ) {
+      return clearLastAutoSyncIndicatorDisplaySession();
+    }
+    autoSyncIndicatorDisplaySessionHiddenAt = 0;
+    const normalized = normalizeAutoSyncIndicatorDisplaySession(
+      lastAutoSyncIndicatorDisplaySession,
+      now
+    );
+    if (!normalized) {
+      return clearLastAutoSyncIndicatorDisplaySession();
+    }
+    lastAutoSyncIndicatorDisplaySession = normalized;
+    return { ...normalized };
+  };
+
+  const setLastAutoSyncIndicatorDisplaySession = (session = null) => {
+    const normalized = normalizeAutoSyncIndicatorDisplaySession(session);
+    if (!normalized) {
+      return clearLastAutoSyncIndicatorDisplaySession();
+    }
+    lastAutoSyncIndicatorDisplaySession = normalized;
+    invalidateAutoSyncIndicatorDisplayPhaseCache();
+    return { ...normalized };
+  };
+
+  const rememberAutoSyncIndicatorDisplaySessionFromRemoteWrite = (
+    write = null
+  ) => {
+    const normalizedWrite = normalizeLocalSessionRemoteWrite(write);
+    if (!isPushLikeSyncAction(normalizedWrite.action)) {
+      return null;
+    }
+    const normalizedSyncMode = normalizeSyncDiagnosticText(
+      normalizedWrite.syncMode,
+      40
+    );
+    if (
+      normalizedSyncMode === SYNC_TRIGGER_SOURCE_MANUAL_SYNC ||
+      normalizedSyncMode === "manual" ||
+      normalizeRemoteProbeText(normalizedWrite.action, 80).startsWith("manual_")
+    ) {
+      return clearLastAutoSyncIndicatorDisplaySession();
+    }
+    return setLastAutoSyncIndicatorDisplaySession({
+      kind: "local_push_session",
+      direction: AUTO_SYNC_INDICATOR_OPERATION_PUSH,
+      source: AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+      reason: normalizedWrite.action || "local_push",
+      threadId: normalizedWrite.threadId,
+      startedAt: normalizedWrite.createdAt,
+      completedAt: normalizedWrite.createdAt,
+      remoteUpdatedAt: normalizedWrite.remoteUpdatedAt,
+      contentHash: normalizedWrite.contentHash,
+      sameSessionWrite: true,
+    });
+  };
+
+  const hasAutoSyncIndicatorLocalPendingSource = (pendingState = null) =>
+    Boolean(
+      pendingState &&
+        pendingState.hasPending === true &&
+        normalizeAutoSyncIndicatorSource(pendingState.source) ===
+          AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND
+    );
+
+  const markAutoSyncIndicatorDisplaySessionSettlingStarted = (
+    session,
+    now = Date.now()
+  ) => {
+    if (!session || session.sameSessionWrite !== true) {
+      return 0;
+    }
+    const settlingStartedAt =
+      Number(session.settlingStartedAt) > 0
+        ? Number(session.settlingStartedAt)
+        : now;
+    lastAutoSyncIndicatorDisplaySession = {
+      ...session,
+      settlingStartedAt,
+    };
+    return settlingStartedAt;
+  };
+
+  const canInheritAutoSyncIndicatorPushSettling = (
+    session = null,
+    now = Date.now()
+  ) =>
+    Boolean(
+      session &&
+        session.direction === AUTO_SYNC_INDICATOR_OPERATION_PUSH &&
+        session.sameSessionWrite === true &&
+        now - (Number(session.completedAt) || 0) <=
+          AUTO_SYNC_INDICATOR_DISPLAY_SESSION_MERGE_WINDOW_MS
+    );
+
+  const shouldShowAutoSyncIndicatorSettling = (
+    session = null,
+    now = Date.now(),
+    options = {}
+  ) => {
+    if (!canInheritAutoSyncIndicatorPushSettling(session, now)) {
+      return false;
+    }
+    const settlingStartedAt =
+      options.startFromNow === true
+        ? markAutoSyncIndicatorDisplaySessionSettlingStarted(session, now)
+        : Number(session.completedAt) || now;
+    return (
+      now - settlingStartedAt <=
+      AUTO_SYNC_INDICATOR_DISPLAY_SESSION_SETTLING_MAX_MS
+    );
+  };
+
+  const applyAutoSyncIndicatorDisplaySession = (
+    resolvedState,
+    {
+      now = Date.now(),
+      pendingState = null,
+      runningState = null,
+      canShowPending = false,
+    } = {}
+  ) => {
+    const phase =
+      normalizeAutoSyncIndicatorPhase(resolvedState?.displayPhase, {
+        allowRunning: true,
+      }) || AUTO_SYNC_INDICATOR_PHASE_IDLE;
+    const source = normalizeAutoSyncIndicatorSource(
+      resolvedState?.displaySource || resolvedState?.source
+    );
+    const reason = normalizeAutoSyncIndicatorReason(
+      resolvedState?.displayReason || resolvedState?.reason
+    );
+    const operation = resolveAutoSyncIndicatorDisplayOperation(resolvedState);
+    const pendingSources = normalizeAutoSyncIndicatorLocalChangeSources(
+      pendingState?.sources
+    );
+    const withSession = (
+      nextState,
+      {
+        kind = "",
+        direction = "",
+        substate = "",
+        sources = pendingSources,
+        session = null,
+      } = {}
+    ) => ({
+      ...nextState,
+      displaySessionKind: kind,
+      displayDominantDirection: direction,
+      displaySubstate: substate,
+      displayPendingSources: normalizeAutoSyncIndicatorLocalChangeSources(
+        sources
+      ),
+      displaySessionStartedAt: Number(session?.startedAt) || 0,
+      displaySessionCompletedAt: Number(session?.completedAt) || 0,
+      displaySessionSettlingStartedAt: Number(session?.settlingStartedAt) || 0,
+      displaySessionRemoteUpdatedAt: session?.remoteUpdatedAt || "",
+    });
+
+    if (
+      phase === AUTO_SYNC_INDICATOR_PHASE_FAILURE ||
+      phase === AUTO_SYNC_INDICATOR_PHASE_CONFLICT ||
+      source === AUTO_SYNC_INDICATOR_SOURCE_MANUAL_SYNC
+    ) {
+      clearLastAutoSyncIndicatorDisplaySession();
+      return withSession(resolvedState, {
+        kind:
+          source === AUTO_SYNC_INDICATOR_SOURCE_MANUAL_SYNC
+            ? "manual_session"
+            : "blocked_session",
+        direction:
+          phase === AUTO_SYNC_INDICATOR_PHASE_FAILURE ||
+          phase === AUTO_SYNC_INDICATOR_PHASE_CONFLICT
+            ? "blocked"
+            : operation || AUTO_SYNC_INDICATOR_OPERATION_SYNC,
+        substate:
+          phase === AUTO_SYNC_INDICATOR_PHASE_FAILURE ||
+          phase === AUTO_SYNC_INDICATOR_PHASE_CONFLICT
+            ? "blocked"
+            : "running",
+      });
+    }
+
+    if (operation === AUTO_SYNC_INDICATOR_OPERATION_PULL) {
+      clearLastAutoSyncIndicatorDisplaySession();
+      return withSession(resolvedState, {
+        kind: "remote_pull_session",
+        direction: AUTO_SYNC_INDICATOR_OPERATION_PULL,
+        substate:
+          phase === AUTO_SYNC_INDICATOR_PHASE_RUNNING ? "running" : "pending",
+      });
+    }
+
+    if (
+      phase === AUTO_SYNC_INDICATOR_PHASE_RUNNING &&
+      operation === AUTO_SYNC_INDICATOR_OPERATION_PUSH
+    ) {
+      return withSession(resolvedState, {
+        kind: "local_push_session",
+        direction: AUTO_SYNC_INDICATOR_OPERATION_PUSH,
+        substate: "running",
+      });
+    }
+
+    const hasLocalPending =
+      canShowPending && hasAutoSyncIndicatorLocalPendingSource(pendingState);
+    if (hasLocalPending) {
+      return withSession(
+        {
+          ...resolvedState,
+          displayPhase: AUTO_SYNC_INDICATOR_PHASE_PENDING,
+          displaySource: AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+          displayReason:
+            normalizeAutoSyncIndicatorReason(pendingState.reason) ||
+            reason ||
+            "local_pending_push",
+          displayOperation: AUTO_SYNC_INDICATOR_OPERATION_PUSH,
+        },
+        {
+          kind: "local_push_session",
+          direction: AUTO_SYNC_INDICATOR_OPERATION_PUSH,
+          substate: "pending",
+        }
+      );
+    }
+
+    const lastSession = getLastAutoSyncIndicatorDisplaySession(now);
+    if (
+      phase === AUTO_SYNC_INDICATOR_PHASE_PENDING &&
+      reason ===
+        AUTO_SYNC_INDICATOR_REASON_FOREGROUND_PROBE_VERIFICATION_RETRY &&
+      shouldShowAutoSyncIndicatorSettling(lastSession, now, {
+        startFromNow: true,
+      })
+    ) {
+      const settlingSession =
+        getLastAutoSyncIndicatorDisplaySession(now) || lastSession;
+      return withSession(
+        {
+          ...resolvedState,
+          displayPhase: AUTO_SYNC_INDICATOR_PHASE_PENDING,
+          displaySource:
+            settlingSession.source || AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+          displayReason: "push_settling_verification",
+          displayOperation: AUTO_SYNC_INDICATOR_OPERATION_PUSH,
+        },
+        {
+          kind: "local_push_session",
+          direction: AUTO_SYNC_INDICATOR_OPERATION_PUSH,
+          substate: "settling",
+          session: settlingSession,
+        }
+      );
+    }
+
+    if (
+      phase === AUTO_SYNC_INDICATOR_PHASE_IDLE &&
+      shouldShowAutoSyncIndicatorSettling(lastSession, now) &&
+      now - (Number(lastSession?.completedAt) || 0) <
+        AUTO_SYNC_INDICATOR_DISPLAY_SESSION_SETTLING_MIN_MS
+    ) {
+      return withSession(
+        {
+          ...resolvedState,
+          displayPhase: AUTO_SYNC_INDICATOR_PHASE_PENDING,
+          displaySource:
+            lastSession.source || AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+          displayReason: "push_settling",
+          displayOperation: AUTO_SYNC_INDICATOR_OPERATION_PUSH,
+        },
+        {
+          kind: "local_push_session",
+          direction: AUTO_SYNC_INDICATOR_OPERATION_PUSH,
+          substate: "settling",
+          session: lastSession,
+        }
+      );
+    }
+
+    if (
+      phase === AUTO_SYNC_INDICATOR_PHASE_RUNNING &&
+      operation === AUTO_SYNC_INDICATOR_OPERATION_PROBE
+    ) {
+      return withSession(resolvedState, {
+        kind: "cloud_probe_session",
+        direction: AUTO_SYNC_INDICATOR_OPERATION_PROBE,
+        substate: "running",
+      });
+    }
+
+    if (
+      reason === AUTO_SYNC_INDICATOR_REASON_FOREGROUND_PROBE_CHANGED_RETRY ||
+      runningState?.operation === AUTO_SYNC_INDICATOR_OPERATION_PROBE
+    ) {
+      return withSession(resolvedState, {
+        kind: "cloud_probe_session",
+        direction:
+          operation === AUTO_SYNC_INDICATOR_OPERATION_PROBE
+            ? AUTO_SYNC_INDICATOR_OPERATION_PROBE
+            : AUTO_SYNC_INDICATOR_OPERATION_SYNC,
+        substate:
+          phase === AUTO_SYNC_INDICATOR_PHASE_RUNNING ? "running" : "pending",
+      });
+    }
+
+    return withSession(resolvedState, {
+      kind: "",
+      direction: isAutoSyncIndicatorActivePhase(phase)
+        ? operation || AUTO_SYNC_INDICATOR_OPERATION_SYNC
+        : "",
+      substate: phase,
+    });
   };
 
   const clearAutoSyncIndicatorDeferredResolve = () => {
@@ -12555,15 +13024,21 @@
       };
     };
     const finishDisplayState = (resolvedState, branch = "") => {
+      const displayState = applyAutoSyncIndicatorDisplaySession(resolvedState, {
+        now,
+        pendingState,
+        runningState,
+        canShowPending,
+      });
       if (canUseCache) {
         autoSyncIndicatorDisplayPhaseCache = {
           expiresAt:
             Date.now() + AUTO_SYNC_INDICATOR_DISPLAY_PHASE_CACHE_TTL_MS,
           ttlProfile,
-          state: { ...resolvedState },
+          state: { ...displayState },
         };
       }
-      return resolvedState;
+      return displayState;
     };
 
     if (runningState.isRunning) {
@@ -12984,6 +13459,12 @@
       normalizeAutoSyncIndicatorSource(options.source) || current.source || "";
     const nextReason =
       normalizeAutoSyncIndicatorReason(options.reason) || current.reason || "";
+    if (
+      normalizedOperation === AUTO_SYNC_INDICATOR_OPERATION_PULL ||
+      nextSource === AUTO_SYNC_INDICATOR_SOURCE_MANUAL_SYNC
+    ) {
+      clearLastAutoSyncIndicatorDisplaySession();
+    }
     if (
       current.operation === normalizedOperation &&
       current.source === nextSource &&
@@ -26403,6 +26884,8 @@
         action,
         remoteUpdatedAt:
           extraResult?.remoteUpdatedAt ?? syncBaseline?.remoteUpdatedAt ?? null,
+        contentHash:
+          extraResult?.contentHash ?? syncBaseline?.contentHash ?? "",
         threadId:
           normalizeNumericId(syncDiagnosticsContext.threadId) ||
           getCurrentThreadId() ||
@@ -27900,7 +28383,8 @@
             {
               ...retryOptions,
               preferredDelayMs: verifyPlan.delayMs,
-              indicatorReason: "foreground_probe_verification_retry",
+              indicatorReason:
+                AUTO_SYNC_INDICATOR_REASON_FOREGROUND_PROBE_VERIFICATION_RETRY,
               indicatorOperation: AUTO_SYNC_INDICATOR_OPERATION_SYNC,
             }
           );
@@ -27994,7 +28478,8 @@
           {
             ...retryOptions,
             preferredDelayMs: gateBlockResult.retryAfterMs,
-            indicatorReason: "foreground_probe_changed_retry",
+            indicatorReason:
+              AUTO_SYNC_INDICATOR_REASON_FOREGROUND_PROBE_CHANGED_RETRY,
             indicatorOperation: AUTO_SYNC_INDICATOR_OPERATION_SYNC,
           }
         );
@@ -28067,7 +28552,8 @@
         scheduleForegroundRemoteSyncRetry(`remote_probe_changed:${normalizedReason}`, {
           ...retryOptions,
           preferredDelayMs: Number(syncRequestResult?.retryAfterMs) || 0,
-          indicatorReason: "foreground_probe_changed_retry",
+          indicatorReason:
+            AUTO_SYNC_INDICATOR_REASON_FOREGROUND_PROBE_CHANGED_RETRY,
           indicatorOperation: AUTO_SYNC_INDICATOR_OPERATION_SYNC,
         });
       } else {
@@ -28239,6 +28725,7 @@
       runStartupModeAutoSyncCheck,
       requestForegroundRemoteSyncCheck,
       scheduleForegroundRemoteSyncRetry,
+      clearForegroundRemoteSyncRetry,
       getForegroundRemoteSyncRetryRemainingMs,
       checkRemoteFreshnessOnForeground,
       getForegroundProbeGateBlockResult,
@@ -28248,6 +28735,10 @@
       hasActivePendingAutoSyncRequest,
       getAutoSyncRuntimePendingDisplayState,
       getAutoSyncRuntimeRunningDisplayState,
+      getLastAutoSyncIndicatorDisplaySession,
+      setLastAutoSyncIndicatorDisplaySession,
+      clearLastAutoSyncIndicatorDisplaySession,
+      rememberAutoSyncIndicatorDisplaySessionFromRemoteWrite,
       setAutoSyncIndicatorResolvedPhase,
       setAutoSyncIndicatorActiveOperation,
       startAutoSyncIndicatorCycle,
@@ -31572,6 +32063,24 @@
     now = Date.now()
   ) => {
     stopNavbarAutoSyncIndicatorExpiryTimer();
+    if (resolvedState?.displaySubstate === "settling") {
+      const settlingStartedAt =
+        Number(resolvedState.displaySessionSettlingStartedAt) || 0;
+      const completedAt = Number(resolvedState.displaySessionCompletedAt) || 0;
+      const settlingUntil =
+        resolvedState.displayReason === "push_settling_verification" &&
+        settlingStartedAt > 0
+          ? settlingStartedAt + AUTO_SYNC_INDICATOR_DISPLAY_SESSION_SETTLING_MAX_MS
+          : completedAt + AUTO_SYNC_INDICATOR_DISPLAY_SESSION_SETTLING_MIN_MS;
+      const remainingMs = settlingUntil - now;
+      if (remainingMs > 0) {
+        navbarAutoSyncIndicatorExpiryTimer = setTimeout(() => {
+          navbarAutoSyncIndicatorExpiryTimer = null;
+          renderNavbarAutoSyncIndicator();
+        }, remainingMs + AUTO_SYNC_INDICATOR_EXIT_DURATION_MS + 25);
+      }
+      return;
+    }
     if (!isAutoSyncIndicatorResultPhase(displayPhase)) {
       return;
     }
@@ -31666,6 +32175,7 @@
       recordSuccessfulRemoteWriteIfNeeded({
         action: "force_push",
         remoteUpdatedAt: forcePushResult?.updatedAt || null,
+        contentHash: localData.contentHash,
         threadId: getCurrentThreadId() || "",
         syncMode: "manual",
         deviceId: getLocalSyncDeviceId(),
@@ -31861,6 +32371,37 @@
     }
   };
 
+  const getAutoSyncIndicatorLocalChangeLabel = (sources = null) => {
+    const normalizedSources = normalizeAutoSyncIndicatorLocalChangeSources(sources);
+    const sourceNames = Object.keys(normalizedSources);
+    if (
+      sourceNames.length === 1 &&
+      sourceNames[0] === "read_progress"
+    ) {
+      return "阅读进度";
+    }
+    if (
+      sourceNames.length === 1 &&
+      (
+        sourceNames[0] === "cleanup" ||
+        sourceNames[0] === "read_progress_cleanup"
+      )
+    ) {
+      return "清理结果";
+    }
+    if (
+      sourceNames.length > 0 &&
+      sourceNames.every((sourceName) =>
+        sourceName === "read_progress" ||
+        sourceName === "cleanup" ||
+        sourceName === "read_progress_cleanup"
+      )
+    ) {
+      return "阅读记录变更";
+    }
+    return "本地变更";
+  };
+
   const resolveAutoSyncIndicatorDisplayOperation = (stateInput = null) => {
     const phase =
       normalizeAutoSyncIndicatorPhase(stateInput?.displayPhase, {
@@ -31910,36 +32451,58 @@
     const sourceLabel = getAutoSyncIndicatorSourceLabel(source);
     const displayOperation =
       resolveAutoSyncIndicatorDisplayOperation(resolvedState);
+    const displaySubstate = String(resolvedState.displaySubstate || "");
+    const displaySessionKind = String(resolvedState.displaySessionKind || "");
+    const localChangeLabel = getAutoSyncIndicatorLocalChangeLabel(
+      resolvedState.displayPendingSources
+    );
 
     switch (phase) {
       case AUTO_SYNC_INDICATOR_PHASE_PENDING:
-        if (reason === "foreground_probe_verification_retry") {
-          return `自动同步：${sourceLabel}等待二次确认`;
+        if (
+          displaySessionKind === "local_push_session" &&
+          displaySubstate === "settling"
+        ) {
+          return "自动同步：推送完成，正在确认云端状态";
         }
-        if (reason === "foreground_probe_changed_retry") {
-          return `自动同步：${sourceLabel}等待云端复查`;
+        if (
+          reason ===
+          AUTO_SYNC_INDICATOR_REASON_FOREGROUND_PROBE_VERIFICATION_RETRY
+        ) {
+          return "自动同步：等待二次确认";
         }
-        if (reason === "foreground_followup_retry") {
-          return `自动同步：${sourceLabel}等待重试`;
+        if (
+          reason === AUTO_SYNC_INDICATOR_REASON_FOREGROUND_PROBE_CHANGED_RETRY
+        ) {
+          return "自动同步：云端有变化，等待本地状态稳定后复查";
+        }
+        if (
+          reason === "foreground_followup_retry" &&
+          displayOperation !== AUTO_SYNC_INDICATOR_OPERATION_PULL
+        ) {
+          return "自动同步：等待本地状态稳定后重试";
         }
         if (displayOperation === AUTO_SYNC_INDICATOR_OPERATION_PUSH) {
-          return `自动同步：${sourceLabel}待推送`;
+          return `自动同步：${localChangeLabel}待推送`;
         }
         if (displayOperation === AUTO_SYNC_INDICATOR_OPERATION_PULL) {
-          return `自动同步：${sourceLabel}待拉取`;
+          return "自动同步：云端更新待拉取";
         }
         return sourceLabel === "自动同步"
           ? "自动同步：待处理"
           : `自动同步：${sourceLabel}待处理`;
       case AUTO_SYNC_INDICATOR_PHASE_RUNNING:
-        if (reason === "foreground_probe_in_flight") {
-          return `自动同步：${sourceLabel}正在检查云端更新`;
-        }
         if (displayOperation === AUTO_SYNC_INDICATOR_OPERATION_PUSH) {
-          return `自动同步：${sourceLabel}推送中`;
+          return `自动同步：${localChangeLabel}推送中`;
         }
         if (displayOperation === AUTO_SYNC_INDICATOR_OPERATION_PULL) {
-          return `自动同步：${sourceLabel}拉取中`;
+          return "自动同步：云端更新拉取中";
+        }
+        if (
+          reason === "foreground_probe_in_flight" ||
+          displayOperation === AUTO_SYNC_INDICATOR_OPERATION_PROBE
+        ) {
+          return "自动同步：正在检查云端更新";
         }
         return sourceLabel === "自动同步"
           ? "自动同步：同步中"
@@ -32882,6 +33445,8 @@
     indicatorLi.dataset.syncKind = displayKind;
     indicatorLi.dataset.syncSource =
       normalizeAutoSyncIndicatorSource(resolvedState.displaySource) || "";
+    indicatorLi.dataset.syncSession = resolvedState.displaySessionKind || "";
+    indicatorLi.dataset.syncSubstate = resolvedState.displaySubstate || "";
     setCustomTooltip(indicatorLi, getAutoSyncIndicatorTitle(resolvedState));
     if (isDebugPreviewActive) {
       stopNavbarAutoSyncIndicatorExpiryTimer();
@@ -40453,6 +41018,7 @@
           recordSuccessfulRemoteWriteIfNeeded({
             action,
             remoteUpdatedAt: syncBaseline?.remoteUpdatedAt || null,
+            contentHash: syncBaseline?.contentHash || "",
             threadId:
               normalizeNumericId(diagnosticContext.threadId) ||
               getCurrentThreadId() ||

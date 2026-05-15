@@ -84,21 +84,21 @@ const testSourceAwareTitlesAndMappings = () => {
       displayPhase: "pending",
       displaySource: "background",
     }),
-    "自动同步：后台自动同步待推送"
+    "自动同步：本地变更待推送"
   );
   assert.strictEqual(
     hooks.getAutoSyncIndicatorTitle({
       displayPhase: "running",
       displaySource: "daily_startup",
     }),
-    "自动同步：每日首次同步拉取中"
+    "自动同步：云端更新拉取中"
   );
   assert.strictEqual(
     hooks.getAutoSyncIndicatorTitle({
       displayPhase: "running",
       displaySource: "foreground_followup",
     }),
-    "自动同步：回到前台检查拉取中"
+    "自动同步：云端更新拉取中"
   );
   assert.strictEqual(
     hooks.getAutoSyncIndicatorDisplayKind({
@@ -135,7 +135,7 @@ const testSourceAwareTitlesAndMappings = () => {
       displayReason: "foreground_probe_verification_retry",
       displayOperation: "sync",
     }),
-    "自动同步：回到前台检查等待二次确认"
+    "自动同步：等待二次确认"
   );
   assert.strictEqual(
     hooks.getAutoSyncIndicatorDisplayKind({
@@ -154,7 +154,7 @@ const testSourceAwareTitlesAndMappings = () => {
       displayReason: "foreground_probe_changed_retry",
       displayOperation: "sync",
     }),
-    "自动同步：首次可见检查等待云端复查"
+    "自动同步：云端有变化，等待本地状态稳定后复查"
   );
   assert.strictEqual(
     hooks.getAutoSyncIndicatorDisplayKind({
@@ -321,6 +321,182 @@ const testSharedSchedulerAndLocksFeedUnifiedDisplayState = () => {
   );
 };
 
+const testDisplaySessionCoalescesPushVerification = () => {
+  const { hooks, store } = createHarness();
+  const now = Date.now();
+  hooks.clearLastAutoSyncIndicatorDisplaySession();
+  hooks.rememberAutoSyncIndicatorDisplaySessionFromRemoteWrite({
+    action: "pushed",
+    remoteUpdatedAt: "2026-05-15T16:24:35Z",
+    threadId: "2268704",
+    syncMode: "background",
+    createdAt: now - 1500,
+  });
+
+  hooks.scheduleForegroundRemoteSyncRetry(
+    "remote_probe_equal_ambiguous:foreground_resume",
+    {
+      preferredDelayMs: 20,
+      indicatorReason: "foreground_probe_verification_retry",
+      indicatorOperation: "sync",
+      getForegroundProbeGateBlockResult: () => null,
+      requestForegroundRemoteSyncCheck: async () => ({
+        status: "success",
+        action: "no_change",
+      }),
+      applyRefreshPolicyForSyncResult: () => null,
+      maybeShowForegroundProbeFeedback: () => false,
+    }
+  );
+
+  let resolvedState = toPlainObject(hooks.resolveAutoSyncIndicatorDisplayPhase());
+  assert.equal(resolvedState.displayPhase, "pending");
+  assert.equal(resolvedState.displaySessionKind, "local_push_session");
+  assert.equal(resolvedState.displaySubstate, "settling");
+  assert.equal(
+    hooks.getAutoSyncIndicatorDisplayKind(resolvedState),
+    "push",
+    "同机会话刚推送后的二次确认应继承 push 主方向，而不是切回中性 sync。"
+  );
+  assert.equal(
+    hooks.getAutoSyncIndicatorTitle(resolvedState),
+    "自动同步：推送完成，正在确认云端状态"
+  );
+
+  store.set(BACKGROUND_SYNC_DEBOUNCE_STATE_KEY, {
+    version: 1,
+    generation: 13,
+    ownerTabId: "tab-a",
+    ownerLeaseUntil: now + 30000,
+    dueAt: now + 20000,
+    maxWaitUntil: now + 60000,
+    firstDirtyAt: now,
+    lastDirtyAt: now,
+    maxLastModified: now,
+    sources: { read_progress: 1 },
+    threadIds: ["2268704"],
+    reason: "debounced_read_progress",
+  });
+  resolvedState = toPlainObject(hooks.resolveAutoSyncIndicatorDisplayPhase());
+  assert.equal(resolvedState.displayPhase, "pending");
+  assert.equal(resolvedState.displaySubstate, "pending");
+  assert.equal(
+    hooks.getAutoSyncIndicatorDisplayKind(resolvedState),
+    "push",
+    "settling 期间出现新的同方向本地 dirty 时，应直接续到 push pending。"
+  );
+  assert.equal(
+    hooks.getAutoSyncIndicatorTitle(resolvedState),
+    "自动同步：阅读进度待推送"
+  );
+
+  store.set(BACKGROUND_SYNC_DEBOUNCE_STATE_KEY, {
+    version: 1,
+    generation: 14,
+    ownerTabId: "tab-a",
+    ownerLeaseUntil: now + 30000,
+    dueAt: now + 20000,
+    maxWaitUntil: now + 60000,
+    firstDirtyAt: now,
+    lastDirtyAt: now,
+    maxLastModified: now,
+    sources: { read_progress: 1, user_tags: 1 },
+    threadIds: ["2268704"],
+    reason: "debounced_mixed_local_changes",
+  });
+  resolvedState = toPlainObject(hooks.resolveAutoSyncIndicatorDisplayPhase());
+  assert.equal(
+    hooks.getAutoSyncIndicatorTitle(resolvedState),
+    "自动同步：本地变更待推送",
+    "多个本地来源交织时，tooltip 应升级为本地变更，而不是硬写阅读进度。"
+  );
+
+  store.delete(BACKGROUND_SYNC_DEBOUNCE_STATE_KEY);
+  hooks.clearForegroundRemoteSyncRetry();
+  hooks.setLastAutoSyncIndicatorDisplaySession({
+    direction: "push",
+    source: "background_push",
+    completedAt: Date.now() - 31000,
+    remoteUpdatedAt: "2026-05-15T16:24:35Z",
+    sameSessionWrite: true,
+  });
+  hooks.scheduleForegroundRemoteSyncRetry(
+    "remote_probe_equal_ambiguous:foreground_resume",
+    {
+      preferredDelayMs: 20,
+      indicatorReason: "foreground_probe_verification_retry",
+      indicatorOperation: "sync",
+      getForegroundProbeGateBlockResult: () => null,
+      requestForegroundRemoteSyncCheck: async () => ({
+        status: "success",
+        action: "no_change",
+      }),
+      applyRefreshPolicyForSyncResult: () => null,
+      maybeShowForegroundProbeFeedback: () => false,
+    }
+  );
+  resolvedState = toPlainObject(hooks.resolveAutoSyncIndicatorDisplayPhase());
+  assert.equal(resolvedState.displayPhase, "pending");
+  assert.equal(
+    hooks.getAutoSyncIndicatorDisplayKind(resolvedState),
+    "sync",
+    "超过会话归并窗口后的 foreground probe 不应继承旧 push 方向。"
+  );
+  hooks.clearForegroundRemoteSyncRetry();
+  hooks.clearLastAutoSyncIndicatorDisplaySession();
+};
+
+const testPullRetryKeepsCloudDirectionOverLocalPending = () => {
+  const { hooks, store } = createHarness();
+  const now = Date.now();
+  hooks.clearLastAutoSyncIndicatorDisplaySession();
+  hooks.scheduleForegroundRemoteSyncRetry(
+    "remote_probe_changed:foreground_resume",
+    {
+      preferredDelayMs: 20,
+      indicatorReason: "foreground_followup_retry",
+      indicatorOperation: "pull",
+      getForegroundProbeGateBlockResult: () => null,
+      requestForegroundRemoteSyncCheck: async () => ({
+        status: "success",
+        action: "pulled",
+      }),
+      applyRefreshPolicyForSyncResult: () => null,
+      maybeShowForegroundProbeFeedback: () => false,
+    }
+  );
+  store.set(BACKGROUND_SYNC_DEBOUNCE_STATE_KEY, {
+    version: 1,
+    generation: 15,
+    ownerTabId: "tab-a",
+    ownerLeaseUntil: now + 30000,
+    dueAt: now + 20000,
+    maxWaitUntil: now + 60000,
+    firstDirtyAt: now,
+    lastDirtyAt: now,
+    maxLastModified: now,
+    sources: { read_progress: 1 },
+    threadIds: ["2268704"],
+    reason: "debounced_read_progress",
+  });
+
+  const resolvedState = toPlainObject(hooks.resolveAutoSyncIndicatorDisplayPhase());
+  assert.equal(resolvedState.displayPhase, "pending");
+  assert.equal(resolvedState.displaySessionKind, "remote_pull_session");
+  assert.equal(
+    hooks.getAutoSyncIndicatorDisplayKind(resolvedState),
+    "pull",
+    "明确的 pull retry 应保留云端拉取方向，不能被本地 pending push 盖掉。"
+  );
+  assert.equal(
+    hooks.getAutoSyncIndicatorTitle(resolvedState),
+    "自动同步：云端更新待拉取"
+  );
+
+  hooks.clearForegroundRemoteSyncRetry();
+  store.delete(BACKGROUND_SYNC_DEBOUNCE_STATE_KEY);
+};
+
 const testAutoSyncEntryPointsBindIndicatorSources = () => {
   expectMatch(
     /const runStartupModeAutoSyncCheckWithIndicator = async[\s\S]*?startAutoSyncIndicatorCycle\(resolvedSource/m,
@@ -359,11 +535,11 @@ const testAutoSyncEntryPointsBindIndicatorSources = () => {
     "前台 metadata 探测未映射到独立的 probe 视觉类型。"
   );
   expectMatch(
-    /remote_probe_equal_ambiguous:\$\{normalizedReason\}[\s\S]*?indicatorReason:\s*"foreground_probe_verification_retry"[\s\S]*?indicatorOperation:\s*AUTO_SYNC_INDICATOR_OPERATION_SYNC/,
+    /remote_probe_equal_ambiguous:\$\{normalizedReason\}[\s\S]*?indicatorReason:\s*AUTO_SYNC_INDICATOR_REASON_FOREGROUND_PROBE_VERIFICATION_RETRY[\s\S]*?indicatorOperation:\s*AUTO_SYNC_INDICATOR_OPERATION_SYNC/,
     "云端版本时间相同的二次确认 pending 应使用中性 sync 图标，避免误显示为待拉取。"
   );
   expectMatch(
-    /remote_probe_changed:\$\{normalizedReason\}[\s\S]*?indicatorReason:\s*"foreground_probe_changed_retry"[\s\S]*?indicatorOperation:\s*AUTO_SYNC_INDICATOR_OPERATION_SYNC/,
+    /remote_probe_changed:\$\{normalizedReason\}[\s\S]*?indicatorReason:\s*AUTO_SYNC_INDICATOR_REASON_FOREGROUND_PROBE_CHANGED_RETRY[\s\S]*?indicatorOperation:\s*AUTO_SYNC_INDICATOR_OPERATION_SYNC/,
     "metadata-only 发现 updated_at 变化但补同步暂缓时，应使用中性 sync pending，避免过早显示待拉取。"
   );
   expectMatch(
@@ -505,6 +681,8 @@ const testAutoSyncEntryPointsBindIndicatorSources = () => {
   testSourceAwareTitlesAndMappings();
   testIndicatorCyclePersistsSourceToResolvedState();
   testSharedSchedulerAndLocksFeedUnifiedDisplayState();
+  testDisplaySessionCoalescesPushVerification();
+  testPullRetryKeepsCloudDirectionOverLocalPending();
   testAutoSyncEntryPointsBindIndicatorSources();
 
   console.log("[auto-sync-indicator-linkage] Auto sync indicator linkage verified.");
