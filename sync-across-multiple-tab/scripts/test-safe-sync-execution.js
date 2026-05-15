@@ -387,7 +387,182 @@ const testDecisionSplitsStartupBackgroundAndForegroundFollowUp = () => {
   );
 };
 
+const testAutoSyncCompletionLogMessageIsSpecific = () => {
+  const { hooks } = createHarness();
+
+  assert.equal(
+    hooks.formatAutoSyncCompletionLogMessage({
+      outcome: "success",
+      result: { status: "success", action: "no_change" },
+    }),
+    "S1 Plus (Sync): 同步检查完成：成功（本地与远程一致，无需同步）。"
+  );
+  assert.equal(
+    hooks.formatAutoSyncCompletionLogMessage({
+      outcome: "success",
+      result: { status: "success", action: "pushed" },
+    }),
+    "S1 Plus (Sync): 同步检查完成：成功（已推送本地数据到云端）。"
+  );
+  assert.equal(
+    hooks.formatAutoSyncCompletionLogMessage({
+      outcome: "failure",
+      result: { status: "failure", error: "GitHub API请求失败" },
+    }),
+    "S1 Plus (Sync): 同步检查完成：失败（GitHub API请求失败）。"
+  );
+  assert.equal(
+    hooks.formatAutoSyncCompletionLogMessage({
+      outcome: "conflict",
+      result: { status: "conflict", reason: "remote_changed_before_push" },
+    }),
+    "S1 Plus (Sync): 同步检查完成：冲突（推送前检测到云端版本变化，已暂停自动同步）。"
+  );
+  assert.equal(
+    hooks.formatAutoSyncCompletionLogMessage({
+      outcome: "lock_lost",
+      result: {
+        status: "skipped",
+        reason: "lock_lost",
+        stage: "push_latest_local_data:after",
+      },
+    }),
+    "S1 Plus (Sync): 同步检查完成：已中止（同步锁失效，阶段：推送最新本地数据 / 执行后）。"
+  );
+  assert.equal(
+    hooks.formatAutoSyncCompletionLogMessage({
+      scopeLabel: "云端更新检查",
+      outcome: "success",
+      result: { status: "unchanged", reason: "remote_already_synced" },
+    }),
+    "S1 Plus (Sync): 云端更新检查完成：无变化（云端版本与本地已同步版本一致）。"
+  );
+  assert.equal(
+    hooks.formatAutoSyncCompletionLogMessage({
+      scopeLabel: "强制推送",
+      outcome: "success",
+      result: { status: "success", action: "force_push" },
+    }),
+    "S1 Plus (Sync): 强制推送完成：成功（已强制推送本地数据到云端）。"
+  );
+  assert.equal(
+    hooks.formatAutoSyncCompletionLogMessage({
+      scopeLabel: "云端更新检查",
+      outcome: "changed",
+      result: {
+        status: "changed",
+        reason: "remote_changed",
+        syncRequestResult: {
+          status: "blocked",
+          reason: "read_progress_pending_write",
+        },
+      },
+    }),
+    "S1 Plus (Sync): 云端更新检查完成：发现变化（后续同步已暂缓：阅读进度仍有待写入内容）。"
+  );
+};
+
+const testSyncTraceEventsAreShownInDiagnostics = () => {
+  const { hooks } = createHarness();
+  hooks.resetSyncDiagnostics();
+
+  hooks.recordSyncTraceEvent("auto_sync_decision", {
+    scope: "auto_sync",
+    status: "running",
+    message: "同步决策完成",
+    details: {
+      action: "push",
+      reason: "local_newer",
+    },
+    logToConsole: false,
+    timestamp: 1778774439486,
+  });
+
+  const diagnostics = hooks.getSyncDiagnostics();
+  assert.equal(diagnostics.lastSyncTraceScope, "auto_sync");
+  assert.equal(diagnostics.lastSyncTracePhase, "auto_sync_decision");
+  assert.equal(diagnostics.lastSyncTraceStatus, "running");
+  assert.match(diagnostics.lastSyncTraceSummary, /同步决策完成/);
+  assert.equal(diagnostics.syncTraceEvents.length, 1);
+  assert.match(
+    hooks.buildSyncDiagnosticsSummary(),
+    /同步过程 1: .*同步决策完成/
+  );
+};
+
+const testSyncTraceDetailsUseChineseLabels = () => {
+  const { hooks } = createHarness();
+  hooks.resetSyncDiagnostics();
+
+  hooks.recordSyncTraceEvent("foreground_probe_followup_result", {
+    scope: "foreground_probe",
+    status: "changed",
+    message: "前台补同步返回",
+    details: {
+      triggerSource: "foreground_resume",
+      reason: "remote_probe_changed:pageshow",
+      remoteChangeKind: "external_remote_change",
+      refreshPlan: {
+        policy: "reload_now",
+        pageType: "generic",
+        shouldReload: true,
+      },
+      snapshotResyncResult: {
+        didSync: true,
+        changedKeys: ["read_progress"],
+        applyMode: "immediate",
+      },
+      until: 1778777843938,
+    },
+    logToConsole: false,
+    timestamp: 1778774439486,
+  });
+
+  const diagnostics = hooks.getSyncDiagnostics();
+  assert.match(diagnostics.lastSyncTraceSummary, /触发源=回到前台检查/);
+  assert.match(
+    diagnostics.lastSyncTraceSummary,
+    /原因=云端版本变化：页面显示或从缓存恢复/
+  );
+  assert.match(
+    diagnostics.lastSyncTraceSummary,
+    /云端变化归因=其他设备或会话写入/
+  );
+  assert.match(
+    diagnostics.lastSyncTraceSummary,
+    /刷新计划=策略=立即刷新，页面=普通页面，刷新=是/
+  );
+  assert.match(
+    diagnostics.lastSyncTraceSummary,
+    /本地快照收敛=已收敛=是，变更键=1，应用=立即应用/
+  );
+  assert.doesNotMatch(
+    diagnostics.lastSyncTraceSummary,
+    /foreground_resume|external_remote_change|reload_now|generic|immediate/
+  );
+};
+
 const testPhase3CallSitesUseDedicatedHelpers = () => {
+  expectMatch(
+    /name: "start debug log collector"[\s\S]*?run: \(\) => startLogCollector\(\)/m,
+    "调试日志收集器未在 document-start 无条件启动，打开调试面板后会丢失早期同步日志。"
+  );
+  expectMatch(
+    /const checkRemoteFreshnessOnForeground = async[\s\S]*?scopeLabel: "云端更新检查"/m,
+    "云端更新检查未接入统一完成日志。"
+  );
+  expectMatch(
+    /const handleManualSync = async[\s\S]*?scopeLabel: "手动同步"/m,
+    "手动同步未接入统一完成日志。"
+  );
+  expectMatch(
+    /const handleForcePush = async[\s\S]*?scopeLabel: "强制推送"/m,
+    "强制推送未接入统一完成日志。"
+  );
+  expectMatch(
+    /const handleForcePull = async[\s\S]*?scopeLabel: "强制拉取"/m,
+    "强制拉取未接入统一完成日志。"
+  );
   expectMatch(
     /const requestForegroundRemoteSyncCheck = async[\s\S]*?runForegroundFollowUpAutoSyncCheckWithIndicator\(\{/m,
     "前台 follow-up sync 入口未切到专用 foreground_followup helper。"
@@ -400,6 +575,18 @@ const testPhase3CallSitesUseDedicatedHelpers = () => {
     /const handleStartupSync = async[\s\S]*?runStartupModeAutoSyncCheckWithIndicator\(\{/m,
     "每日首次加载同步未复用统一的启动安全同步 helper。"
   );
+  expectMatch(
+    /LOG_COLLAPSED_MESSAGE_MAX_LENGTH\s*=\s*180/,
+    "调试控制台长日志没有默认折叠长度。"
+  );
+  expectMatch(
+    /data-s1p-debug-action="toggle-expand-logs"/,
+    "调试控制台缺少展开全部/收起全部按钮。"
+  );
+  expectMatch(
+    /s1p-debug-console-expand-line/,
+    "调试控制台缺少单条日志展开按钮。"
+  );
 };
 
 (async () => {
@@ -411,6 +598,9 @@ const testPhase3CallSitesUseDedicatedHelpers = () => {
   await testOnBeforeReleaseFiresOnSkipBeforeLockRelease();
   testShouldClearDeferredStartupSyncOnResult();
   testDecisionSplitsStartupBackgroundAndForegroundFollowUp();
+  testAutoSyncCompletionLogMessageIsSpecific();
+  testSyncTraceEventsAreShownInDiagnostics();
+  testSyncTraceDetailsUseChineseLabels();
   testPhase3CallSitesUseDedicatedHelpers();
 
   console.log("[safe-sync-execution] Phase 3 sync execution layering verified.");
