@@ -41,6 +41,7 @@
 - **自动同步 Clean State Fence**: 自动推送/前台拉取新增洁净状态栅栏；最近成功同步后若本地无可同步变更、无 pending request、无仍需处理的 shared debounce，短窗口内会跳过无意义自动同步与 metadata probe，避免网络请求和状态闪烁；未实际推送的 foreground follow-up soft block 不会被记为成功同步。
 - **标题同步结果保留时间修复**: 标签页标题同步状态与导航栏指示器解耦 TTL，标题上的 `[同步成功]` / `[同步失败]` 继续保留分钟级可见窗口，避免用户切回前结果已消失。
 - **前台拉取刷新文案细化**: 前台检查触发的自动拉取现在有独立刷新提示，并对同设备写入场景给出区分文案，减少"云端有更新"的误读。
+- **导航栏同步指示器视觉会话聚合**: 自动同步指示器不再把内部状态机步骤（pending/running/verification）机械暴露为多次独立同步。新增视觉会话层 `applyAutoSyncIndicatorDisplaySession()`，将同机会话推送后的二次确认归并为 `push settling` 收尾态，连续本地变更（如阅读进度）在导航栏上表现为连贯的推送会话。新增短期运行时记忆 `lastAutoSyncIndicatorDisplaySession`（30s 归并窗口、900ms 最短收尾、5s 最长收尾），确保远端 pull 信号不被本地 pending push 掩盖。hover tooltip 全面替换为用户语义（"推送完成，正在确认云端状态"/"本地变更推送中"/"云端更新待拉取"），不再暴露内部 source 原名。
 
 ### 🔧 技术改进、测试与文档 (Refactoring, Tests & Docs)
 
