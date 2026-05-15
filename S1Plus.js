@@ -111,14 +111,12 @@
   };
 
   const formatLogEntryForCopy = (entry) => {
-    return (
-      "[" +
-      new Date(entry.ts).toISOString() +
-      "] [" +
-      String(entry.level || "").toUpperCase() +
-      "] " +
-      String(entry.message || "")
-    );
+    let message = String(entry.message || "");
+    message = message.replace(/\d{4}\/\d{1,2}\/\d{1,2}\s+\d{1,2}:\d{2}:\d{2}\s*\|\s*/, "");
+    const d = new Date(entry.ts);
+    const pad = (n) => String(n).padStart(2, "0");
+    const ts = d.getFullYear() + "-" + (d.getMonth() + 1) + "-" + d.getDate() + " " + pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds());
+    return "[" + ts + "] [" + String(entry.level || "").toUpperCase() + "] " + message;
   };
 
   const pushLog = (entry) => {
@@ -672,6 +670,7 @@
           "stroke-linejoin",
         ],
         path: [
+          "class",
           "d",
           "fill",
           "style",
@@ -740,6 +739,11 @@
   let lastForegroundProbeAt = 0;
   let foregroundProbeInFlightPromise = null;
   let foregroundRemoteSyncCheckInFlightPromise = null;
+  let foregroundProbeIndicatorDelayTimer = null;
+  let foregroundProbeIndicatorReleaseTimer = null;
+  let foregroundProbeIndicatorVisibleSince = 0;
+  let foregroundProbeIndicatorSource = "";
+  let foregroundProbeIndicatorReason = "";
   let lastUserInteractionAt = 0;
   let visibleRemoteProbeTimer = null;
   let currentVisibleProbeIntervalMs = 0;
@@ -749,6 +753,8 @@
   let foregroundRemoteSyncRetryDueAt = 0;
   let foregroundRemoteSyncRetryAttempts = 0;
   let foregroundRemoteSyncRetryReason = "";
+  let foregroundRemoteSyncRetryIndicatorReason = "";
+  let foregroundRemoteSyncRetryIndicatorOperation = "";
   let foregroundFollowUpSoftBlockState = null;
   let lastForegroundProbeFeedbackState = {
     key: "",
@@ -1044,6 +1050,8 @@
   ]);
   const AUTO_SYNC_INDICATOR_PENDING_STALE_MS = 90 * 1000;
   const AUTO_SYNC_INDICATOR_RUNNING_MIN_VISIBLE_MS = 650;
+  const AUTO_SYNC_INDICATOR_PROBE_SHOW_DELAY_MS = 160;
+  const AUTO_SYNC_INDICATOR_PROBE_MIN_VISIBLE_MS = 560;
   const AUTO_SYNC_INDICATOR_SUCCESS_TTL_MS = 2400;
   const AUTO_SYNC_INDICATOR_FAILURE_TTL_MS = 9000;
   const AUTO_SYNC_INDICATOR_CONFLICT_TTL_MS = 12 * 1000;
@@ -1101,7 +1109,8 @@
     "s1p_remote_probe_equal_updated_at_verify_state";
   const EQUAL_UPDATED_AT_PROBE_EQUAL_PROBE_VERIFY_DELAY_MS = 1200;
   const EQUAL_UPDATED_AT_PROBE_VERIFY_STATE_TTL_MS = 120 * 1000;
-  const AUTO_PULL_RELOAD_DELAY_MS = 1500;
+  const AUTO_PULL_RELOAD_DELAY_MS = 3200;
+  const AUTO_PULL_RELOAD_TOAST_GRACE_MS = 600;
   const SYNC_LOCK_LOST_CODE = "SYNC_LOCK_LOST";
   const SYNC_CONFLICT_MODAL_COOLDOWN_LOCK_KEY =
     "s1p_sync_conflict_modal_cooldown_lock";
@@ -1962,6 +1971,26 @@
         transform: translateY(1px) scale(0.88) rotate(0deg);
       }
     }
+    @keyframes s1p-auto-sync-indicator-pending-to-running-enter {
+      0% {
+        opacity: 0.72;
+        transform: translateY(0) scale(1.12) rotate(0deg);
+      }
+      100% {
+        opacity: 1;
+        transform: translateY(0) scale(1) rotate(0deg);
+      }
+    }
+    @keyframes s1p-auto-sync-indicator-pending-to-running-exit {
+      0% {
+        opacity: 0.86;
+        transform: translateY(0) scale(1) rotate(0deg);
+      }
+      100% {
+        opacity: 0;
+        transform: translateY(0) scale(0.91) rotate(0deg);
+      }
+    }
     @keyframes s1p-auto-sync-indicator-active-to-idle-enter {
       0% {
         opacity: 0;
@@ -2024,15 +2053,48 @@
         transform: translateX(0) scale(1);
       }
     }
-    @keyframes s1p-auto-sync-operation-breathe {
-      0%,
-      100% {
-        transform: scale(0.94);
-        opacity: 0.78;
+    @keyframes s1p-auto-sync-arrow-flow-up {
+      0% {
+        opacity: 0;
+        transform: translateY(13.5px);
       }
-      50% {
-        transform: scale(1.09);
-        opacity: 1;
+      14% {
+        opacity: 0.46;
+      }
+      38% {
+        opacity: 0.98;
+      }
+      62% {
+        opacity: 0.98;
+      }
+      86% {
+        opacity: 0.46;
+      }
+      100% {
+        opacity: 0;
+        transform: translateY(-13.5px);
+      }
+    }
+    @keyframes s1p-auto-sync-arrow-flow-down {
+      0% {
+        opacity: 0;
+        transform: translateY(-13.5px);
+      }
+      14% {
+        opacity: 0.46;
+      }
+      38% {
+        opacity: 0.98;
+      }
+      62% {
+        opacity: 0.98;
+      }
+      86% {
+        opacity: 0.46;
+      }
+      100% {
+        opacity: 0;
+        transform: translateY(13.5px);
       }
     }
     @keyframes s1p-auto-sync-probe-search {
@@ -2065,6 +2127,12 @@
     }
     #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-exiting.s1p-auto-sync-transition-soft-exit {
       animation: s1p-auto-sync-indicator-soft-exit ${AUTO_SYNC_INDICATOR_EXIT_DURATION_MS}ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    }
+    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-entering.s1p-auto-sync-transition-pending-to-running {
+      animation: s1p-auto-sync-indicator-pending-to-running-enter 240ms cubic-bezier(0.25, 1, 0.5, 1) both;
+    }
+    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-exiting.s1p-auto-sync-transition-pending-to-running-origin {
+      animation: s1p-auto-sync-indicator-pending-to-running-exit 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
     }
     #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-entering.s1p-auto-sync-transition-active-to-idle {
       animation: s1p-auto-sync-indicator-active-to-idle-enter ${AUTO_SYNC_INDICATOR_ENTER_DURATION_MS}ms cubic-bezier(0.22, 1, 0.36, 1) both;
@@ -2107,6 +2175,14 @@
       vector-effect: non-scaling-stroke;
       shape-rendering: geometricPrecision;
     }
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-push,
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-pull {
+      transform-box: fill-box;
+      transform-origin: center;
+      transition-property: transform, opacity !important;
+      transition-duration: 220ms !important;
+      transition-timing-function: cubic-bezier(0.25, 1, 0.5, 1) !important;
+    }
     #s1p-nav-auto-sync-indicator svg path {
       stroke: currentColor;
       stroke-width: 0.6px;
@@ -2121,6 +2197,11 @@
     #s1p-nav-auto-sync-indicator[data-sync-state="running"] svg {
       opacity: 1;
     }
+    #s1p-nav-auto-sync-indicator[data-sync-state="running"] svg.s1p-auto-sync-kind-push,
+    #s1p-nav-auto-sync-indicator[data-sync-state="running"] svg.s1p-auto-sync-kind-pull {
+      opacity: 0.96;
+      transform: scale(1.18);
+    }
     #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-push path,
     #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-pull path,
     #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-probe path {
@@ -2128,11 +2209,48 @@
       stroke-width: 0.6px;
       stroke-linejoin: round;
     }
-    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-push,
-    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-pull {
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-push .s1p-sync-flow-arrow,
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-pull .s1p-sync-flow-arrow {
+      opacity: 0;
       transform-box: fill-box;
       transform-origin: center;
-      animation: s1p-auto-sync-operation-breathe 1.15s ease-in-out infinite;
+      will-change: opacity, transform;
+      animation-duration: 3.15s;
+      animation-timing-function: linear;
+      animation-iteration-count: infinite;
+      animation-fill-mode: both;
+    }
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-push .s1p-sync-flow-arrow {
+      animation-name: s1p-auto-sync-arrow-flow-up;
+    }
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-pull .s1p-sync-flow-arrow {
+      animation-name: s1p-auto-sync-arrow-flow-down;
+    }
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-push .s1p-sync-flow-arrow:nth-child(1),
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-pull .s1p-sync-flow-arrow:nth-child(1) {
+      animation-delay: -2.1s;
+    }
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-push .s1p-sync-flow-arrow:nth-child(2),
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-pull .s1p-sync-flow-arrow:nth-child(2) {
+      animation-delay: -1.05s;
+    }
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-push .s1p-sync-flow-arrow:nth-child(3),
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-pull .s1p-sync-flow-arrow:nth-child(3) {
+      animation-delay: 0s;
+    }
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-push .s1p-sync-pending-arrow,
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-pull .s1p-sync-pending-arrow {
+      opacity: 0.92;
+      transform-box: fill-box;
+      transform-origin: center;
+    }
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-push .s1p-sync-pending-arrow:nth-child(1),
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-pull .s1p-sync-pending-arrow:nth-child(1) {
+      transform: translateY(-3.6px);
+    }
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-push .s1p-sync-pending-arrow:nth-child(2),
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-pull .s1p-sync-pending-arrow:nth-child(2) {
+      transform: translateY(3.6px);
     }
     #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-probe {
       transform-box: fill-box;
@@ -2141,8 +2259,9 @@
     }
     #s1p-nav-auto-sync-indicator[data-sync-state="pending"] svg.s1p-auto-sync-kind-push,
     #s1p-nav-auto-sync-indicator[data-sync-state="pending"] svg.s1p-auto-sync-kind-pull {
-      animation-duration: 1.55s;
       opacity: 0.86;
+      transform: scale(1.3);
+      transform-origin: center;
     }
     #s1p-nav-auto-sync-indicator[data-sync-state="success"] svg {
       opacity: 1;
@@ -2510,6 +2629,15 @@
       #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-pull,
       #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-probe {
         animation: none !important;
+      }
+      #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-push .s1p-sync-flow-arrow,
+      #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-pull .s1p-sync-flow-arrow {
+        animation: none !important;
+        opacity: 0 !important;
+      }
+      #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-push .s1p-sync-flow-arrow:nth-child(2),
+      #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-pull .s1p-sync-flow-arrow:nth-child(2) {
+        opacity: 1 !important;
       }
     }
 
@@ -11514,6 +11642,106 @@
     return normalizedFallback || AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND;
   };
 
+  const clearForegroundProbeIndicatorDelayTimer = () => {
+    if (foregroundProbeIndicatorDelayTimer) {
+      clearTimeout(foregroundProbeIndicatorDelayTimer);
+      foregroundProbeIndicatorDelayTimer = null;
+    }
+  };
+
+  const clearForegroundProbeIndicatorReleaseTimer = () => {
+    if (foregroundProbeIndicatorReleaseTimer) {
+      clearTimeout(foregroundProbeIndicatorReleaseTimer);
+      foregroundProbeIndicatorReleaseTimer = null;
+    }
+  };
+
+  const resetForegroundProbeIndicatorDisplayState = () => {
+    foregroundProbeIndicatorVisibleSince = 0;
+    foregroundProbeIndicatorSource = "";
+    foregroundProbeIndicatorReason = "";
+  };
+
+  const getForegroundProbeIndicatorDisplayState = (now = Date.now()) => {
+    const visibleSince = Number(foregroundProbeIndicatorVisibleSince) || 0;
+    if (!visibleSince) {
+      return { isVisible: false, isHolding: false, remainingMs: 0 };
+    }
+    const elapsedMs = Math.max(0, now - visibleSince);
+    const remainingMs = Math.max(
+      0,
+      AUTO_SYNC_INDICATOR_PROBE_MIN_VISIBLE_MS - elapsedMs
+    );
+    const isVisible = Boolean(foregroundProbeInFlightPromise || remainingMs > 0);
+    if (!isVisible) {
+      return { isVisible: false, isHolding: false, remainingMs: 0 };
+    }
+    return {
+      isVisible: true,
+      isHolding: remainingMs > 0,
+      remainingMs,
+      source:
+        normalizeAutoSyncIndicatorSource(foregroundProbeIndicatorSource) ||
+        AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME,
+      reason:
+        normalizeAutoSyncIndicatorReason(foregroundProbeIndicatorReason) ||
+        "foreground_probe_in_flight",
+    };
+  };
+
+  const scheduleForegroundProbeIndicatorDisplay = (source = "", reason = "") => {
+    clearForegroundProbeIndicatorDelayTimer();
+    clearForegroundProbeIndicatorReleaseTimer();
+    resetForegroundProbeIndicatorDisplayState();
+    foregroundProbeIndicatorSource =
+      normalizeAutoSyncIndicatorSource(source) ||
+      AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME;
+    foregroundProbeIndicatorReason = "foreground_probe_in_flight";
+
+    foregroundProbeIndicatorDelayTimer = setTimeout(() => {
+      foregroundProbeIndicatorDelayTimer = null;
+      if (
+        !foregroundProbeInFlightPromise ||
+        foregroundRemoteSyncCheckInFlightPromise ||
+        hasAnyActiveSyncLock()
+      ) {
+        resetForegroundProbeIndicatorDisplayState();
+        return;
+      }
+      foregroundProbeIndicatorVisibleSince = Date.now();
+      refreshAutoSyncIndicatorRuntimeDisplay(
+        reason || "foreground_probe_visible"
+      );
+    }, AUTO_SYNC_INDICATOR_PROBE_SHOW_DELAY_MS);
+  };
+
+  const settleForegroundProbeIndicatorDisplay = (
+    reason = "foreground_probe_finished"
+  ) => {
+    clearForegroundProbeIndicatorDelayTimer();
+    clearForegroundProbeIndicatorReleaseTimer();
+    const hadVisibleProbe = Boolean(foregroundProbeIndicatorVisibleSince);
+    const displayState = getForegroundProbeIndicatorDisplayState();
+    if (!displayState.isVisible) {
+      resetForegroundProbeIndicatorDisplayState();
+      if (hadVisibleProbe) {
+        refreshAutoSyncIndicatorRuntimeDisplay(reason);
+      }
+      return;
+    }
+    if (displayState.remainingMs > 0) {
+      foregroundProbeIndicatorReleaseTimer = setTimeout(() => {
+        foregroundProbeIndicatorReleaseTimer = null;
+        resetForegroundProbeIndicatorDisplayState();
+        refreshAutoSyncIndicatorRuntimeDisplay("foreground_probe_released");
+      }, displayState.remainingMs + 20);
+      refreshAutoSyncIndicatorRuntimeDisplay(reason);
+      return;
+    }
+    resetForegroundProbeIndicatorDisplayState();
+    refreshAutoSyncIndicatorRuntimeDisplay(reason);
+  };
+
   const getAutoSyncRuntimePendingDisplayState = (now = Date.now()) => {
     const foregroundRetryRemainingMs =
       typeof getForegroundRemoteSyncRetryRemainingMs === "function"
@@ -11522,8 +11750,13 @@
     if (foregroundRetryRemainingMs > 0) {
       return {
         hasPending: true,
-        source: AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME,
-        reason: "foreground_followup_retry",
+        source:
+          normalizeSyncTriggerSource(foregroundRemoteSyncRetryReason) ||
+          AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME,
+        reason:
+          foregroundRemoteSyncRetryIndicatorReason ||
+          "foreground_followup_retry",
+        operation: foregroundRemoteSyncRetryIndicatorOperation,
       };
     }
 
@@ -11570,25 +11803,58 @@
     const state = stateInput
       ? normalizeAutoSyncIndicatorState(stateInput)
       : getAutoSyncIndicatorState();
-    if (hasAnyActiveSyncLock(now)) {
+    const probeDisplayState = getForegroundProbeIndicatorDisplayState(now);
+    if (probeDisplayState.isHolding) {
       return {
         isRunning: true,
-        source: getAutoSyncIndicatorSourceForActiveLock(now, state.source),
+        source: probeDisplayState.source,
+        reason: probeDisplayState.reason,
+        operation: AUTO_SYNC_INDICATOR_OPERATION_PROBE,
+      };
+    }
+    if (hasAnyActiveSyncLock(now)) {
+      const activeLockSource = getAutoSyncIndicatorSourceForActiveLock(
+        now,
+        state.source
+      );
+      const stateSource = normalizeAutoSyncIndicatorSource(state.source);
+      const activeLockOperation =
+        (
+          stateSource && stateSource === activeLockSource
+            ? normalizeAutoSyncIndicatorOperation(state.operation)
+            : ""
+        ) ||
+        (isStartupModeAutoSyncIndicatorSource(activeLockSource)
+          ? AUTO_SYNC_INDICATOR_OPERATION_SYNC
+          : "");
+      return {
+        isRunning: true,
+        source: activeLockSource,
         reason: state.reason || "sync_lock_active",
+        operation: activeLockOperation,
       };
     }
     if (foregroundRemoteSyncCheckInFlightPromise) {
       return {
         isRunning: true,
-        source: AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME,
+        source:
+          (
+            isStartupModeAutoSyncIndicatorSource(state.source)
+              ? normalizeAutoSyncIndicatorSource(state.source)
+              : ""
+          ) || AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME,
         reason: "foreground_followup_in_flight",
+        operation:
+          normalizeAutoSyncIndicatorOperation(state.operation) ||
+          AUTO_SYNC_INDICATOR_OPERATION_SYNC,
       };
     }
-    if (foregroundProbeInFlightPromise) {
+    if (probeDisplayState.isVisible && foregroundProbeInFlightPromise) {
       return {
         isRunning: true,
-        source: AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME,
-        reason: "foreground_probe_in_flight",
+        source: probeDisplayState.source,
+        reason: probeDisplayState.reason,
+        operation: AUTO_SYNC_INDICATOR_OPERATION_PROBE,
       };
     }
     return { isRunning: false, source: "", reason: "" };
@@ -11767,15 +12033,24 @@
     const hasConflictPause = Boolean(getActiveAutoSyncConflictPause());
     const hasOpenCircuit = getAutoSyncCircuitState().open;
     const canShowPending = hasPendingRequest && !hasConflictPause && !hasOpenCircuit;
-    const buildDisplayState = (displayPhase, displaySource = "", displayReason = "") => {
+    const buildDisplayState = (
+      displayPhase,
+      displaySource = "",
+      displayReason = "",
+      displayOperationOverride = ""
+    ) => {
       const normalizedDisplaySource =
         normalizeAutoSyncIndicatorSource(displaySource);
       const normalizedDisplayReason =
         normalizeAutoSyncIndicatorReason(displayReason);
       const stateSource = normalizeAutoSyncIndicatorSource(state.source);
-      let displayOperation = normalizeAutoSyncIndicatorOperation(state.operation);
+      const overrideOperation =
+        normalizeAutoSyncIndicatorOperation(displayOperationOverride);
+      let displayOperation =
+        overrideOperation || normalizeAutoSyncIndicatorOperation(state.operation);
       if (isAutoSyncIndicatorActivePhase(displayPhase)) {
         if (
+          !overrideOperation &&
           displayOperation &&
           normalizedDisplaySource &&
           stateSource &&
@@ -11817,7 +12092,8 @@
         buildDisplayState(
           AUTO_SYNC_INDICATOR_PHASE_RUNNING,
           runningState.source,
-          runningState.reason || state.reason
+          runningState.reason || state.reason,
+          runningState.operation
         ),
         "running_lock"
       );
@@ -11905,7 +12181,8 @@
           buildDisplayState(
             AUTO_SYNC_INDICATOR_PHASE_PENDING,
             pendingState.source || AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
-            pendingState.reason || state.reason
+            pendingState.reason || state.reason,
+            pendingState.operation
           ),
           "running_fallback_pending"
         );
@@ -11929,7 +12206,8 @@
             pendingState.source ||
               state.source ||
               AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
-            pendingState.reason || state.reason
+            pendingState.reason || state.reason,
+            pendingState.operation
           ),
           "pending_keep"
         );
@@ -11955,7 +12233,8 @@
         buildDisplayState(
           AUTO_SYNC_INDICATOR_PHASE_PENDING,
           pendingState.source || AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
-          pendingState.reason || state.reason
+          pendingState.reason || state.reason,
+          pendingState.operation
         ),
         "pending_runtime"
       );
@@ -11972,7 +12251,8 @@
         buildDisplayState(
           AUTO_SYNC_INDICATOR_PHASE_PENDING,
           pendingState.source || AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
-          pendingState.reason || state.reason
+          pendingState.reason || state.reason,
+          pendingState.operation
         ),
         "resolved_idle_pending"
       );
@@ -12271,6 +12551,9 @@
     }
     switch (result.status) {
       case "success":
+        if (result.action === "no_change") {
+          return AUTO_SYNC_INDICATOR_PHASE_IDLE;
+        }
         if (result.action === "skipped_push_on_startup") {
           return AUTO_SYNC_INDICATOR_PHASE_CONFLICT;
         }
@@ -14065,7 +14348,12 @@
       setTimeoutFn: options.setTimeoutFn,
     });
     if (reloadSchedule.status !== "already_scheduled" && shouldShowMessage) {
-      showMessageFn(messages.reloadMessage, true);
+      showMessageFn(messages.reloadMessage, true, {
+        durationMs: Math.max(
+          3000,
+          reloadSchedule.reloadDelayMs + AUTO_PULL_RELOAD_TOAST_GRACE_MS
+        ),
+      });
     }
     return {
       ...plan,
@@ -14666,14 +14954,10 @@
 
   const isAutoSyncCleanStateFenceSource = (source = "") => {
     const normalizedSource = normalizeSyncTriggerSource(source);
-    // Fence applies to automatic trigger sources; manual and startup checks keep
-    // their existing explicit skip rules so users can force a sync when needed.
-    return Boolean(
-      normalizedSource &&
-        normalizedSource !== SYNC_TRIGGER_SOURCE_MANUAL_SYNC &&
-        normalizedSource !== SYNC_TRIGGER_SOURCE_DAILY_STARTUP &&
-        normalizedSource !== SYNC_TRIGGER_SOURCE_PER_LOAD
-    );
+    // Local clean state can only prove that an automatic push is already covered.
+    // It must not suppress metadata-only pull probes, because another device may
+    // have updated the remote Gist while this tab stayed locally clean.
+    return normalizedSource === SYNC_TRIGGER_SOURCE_BACKGROUND_PUSH;
   };
 
   const getAutoSyncCleanStateSnapshot = (now = Date.now()) => {
@@ -26425,6 +26709,7 @@
         onBeforePerform: async () => {
           indicatorCycleToken = startAutoSyncIndicatorCycle(resolvedSource, {
             reason: normalizedReason,
+            operation: AUTO_SYNC_INDICATOR_OPERATION_SYNC,
           });
           if (typeof onIndicatorStart === "function") {
             await onIndicatorStart();
@@ -26573,6 +26858,7 @@
         onBeforePerform: async () => {
           indicatorCycleToken = startAutoSyncIndicatorCycle(resolvedSource, {
             reason: normalizedReason,
+            operation: AUTO_SYNC_INDICATOR_OPERATION_SYNC,
           });
           if (typeof onIndicatorStart === "function") {
             await onIndicatorStart();
@@ -26610,6 +26896,11 @@
     return result;
   };
 
+  const isEqualUpdatedAtProbeVerificationReason = (reason = "") =>
+    normalizeRemoteProbeText(reason, 120).startsWith(
+      "remote_probe_equal_ambiguous:"
+    );
+
   const requestForegroundRemoteSyncCheck = async (
     reason = "remote_probe_changed",
     overrides = {}
@@ -26636,9 +26927,10 @@
       source: resolvedSource,
       reason: normalizedReason,
       onIndicatorStart: () => {
-        console.log(
-          `S1 Plus: 远端探测命中更新，正在执行前台 follow-up 同步检查(${normalizedReason})...`
-        );
+        const message = isEqualUpdatedAtProbeVerificationReason(normalizedReason)
+          ? "云端版本时间相同，正在执行前台二次确认同步检查"
+          : "远端探测命中更新，正在执行前台 follow-up 同步检查";
+        console.log(`S1 Plus: ${message}(${normalizedReason})...`);
       },
       followUpOptions: {
         acquireStartupSyncLock: overrides.acquireStartupSyncLock,
@@ -26673,6 +26965,8 @@
     foregroundRemoteSyncRetryDueAt = 0;
     foregroundRemoteSyncRetryAttempts = 0;
     foregroundRemoteSyncRetryReason = "";
+    foregroundRemoteSyncRetryIndicatorReason = "";
+    foregroundRemoteSyncRetryIndicatorOperation = "";
   };
 
   const getForegroundRemoteSyncRetryRemainingMs = (now = Date.now()) => {
@@ -26719,6 +27013,12 @@
     const resolvedSource =
       normalizeSyncTriggerSource(normalizedReason) ||
       AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME;
+    const indicatorReason =
+      normalizeAutoSyncIndicatorReason(options.indicatorReason) ||
+      "foreground_followup_retry";
+    const indicatorOperation =
+      normalizeAutoSyncIndicatorOperation(options.indicatorOperation) ||
+      AUTO_SYNC_INDICATOR_OPERATION_PULL;
     const preferredDelayMs = Math.max(
       0,
       Math.floor(Number(options.preferredDelayMs) || 0)
@@ -26753,12 +27053,14 @@
     );
     foregroundRemoteSyncRetryAttempts += 1;
     foregroundRemoteSyncRetryReason = normalizedReason;
+    foregroundRemoteSyncRetryIndicatorReason = indicatorReason;
+    foregroundRemoteSyncRetryIndicatorOperation = indicatorOperation;
     foregroundRemoteSyncRetryDueAt = Date.now() + retryDelayMs;
     setAutoSyncIndicatorPendingState(
       resolvedSource,
-      "foreground_followup_retry",
+      indicatorReason,
       {
-        operation: AUTO_SYNC_INDICATOR_OPERATION_PULL,
+        operation: indicatorOperation,
       }
     );
 
@@ -26995,7 +27297,7 @@
         overrides.requestForegroundRemoteSyncCheckOverrides || {};
     }
 
-    const cleanStateFenceTriggerSource =
+    const probeTriggerSource =
       normalizeSyncTriggerSource(overrides.triggerSource, {
         reason: normalizedReason,
       }) ||
@@ -27003,15 +27305,6 @@
       (isVisibleRemoteFreshnessPollingReason(normalizedReason)
         ? SYNC_TRIGGER_SOURCE_VISIBLE_POLL
         : SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME);
-    const cleanStateFence = shouldSkipAutoSyncDueToCleanState({
-      direction: "pull",
-      triggerSource: cleanStateFenceTriggerSource,
-      reason: normalizedReason,
-      now,
-    });
-    if (cleanStateFence.skip) {
-      return finalizeResult(cleanStateFence.result);
-    }
 
     markForegroundProbeLocalAttempt(now);
     recordSyncTraceEvent("foreground_probe_start", {
@@ -27020,7 +27313,7 @@
       message: "前台云端更新检查开始",
       details: {
         reason: normalizedReason,
-        triggerSource: cleanStateFenceTriggerSource,
+        triggerSource: probeTriggerSource,
       },
     });
 
@@ -27119,6 +27412,8 @@
             {
               ...retryOptions,
               preferredDelayMs: verifyPlan.delayMs,
+              indicatorReason: "foreground_probe_verification_retry",
+              indicatorOperation: AUTO_SYNC_INDICATOR_OPERATION_SYNC,
             }
           );
           return finalizeResult(
@@ -27211,6 +27506,8 @@
           {
             ...retryOptions,
             preferredDelayMs: gateBlockResult.retryAfterMs,
+            indicatorReason: "foreground_probe_changed_retry",
+            indicatorOperation: AUTO_SYNC_INDICATOR_OPERATION_SYNC,
           }
         );
         recordSyncTraceEvent("foreground_probe_followup_blocked", {
@@ -27282,6 +27579,8 @@
         scheduleForegroundRemoteSyncRetry(`remote_probe_changed:${normalizedReason}`, {
           ...retryOptions,
           preferredDelayMs: Number(syncRequestResult?.retryAfterMs) || 0,
+          indicatorReason: "foreground_probe_changed_retry",
+          indicatorOperation: AUTO_SYNC_INDICATOR_OPERATION_SYNC,
         });
       } else {
         clearForegroundRemoteSyncRetry();
@@ -27386,7 +27685,10 @@
     })();
 
     foregroundProbeInFlightPromise = runPromise;
-    refreshAutoSyncIndicatorRuntimeDisplay("foreground_probe_started");
+    scheduleForegroundProbeIndicatorDisplay(
+      probeTriggerSource,
+      "foreground_probe_visible"
+    );
     try {
       return await runPromise;
     } catch (error) {
@@ -27403,7 +27705,7 @@
     } finally {
       if (foregroundProbeInFlightPromise === runPromise) {
         foregroundProbeInFlightPromise = null;
-        refreshAutoSyncIndicatorRuntimeDisplay("foreground_probe_finished");
+        settleForegroundProbeIndicatorDisplay("foreground_probe_finished");
       }
     }
   };
@@ -31115,6 +31417,12 @@
 
     switch (phase) {
       case AUTO_SYNC_INDICATOR_PHASE_PENDING:
+        if (reason === "foreground_probe_verification_retry") {
+          return `自动同步：${sourceLabel}等待二次确认`;
+        }
+        if (reason === "foreground_probe_changed_retry") {
+          return `自动同步：${sourceLabel}等待云端复查`;
+        }
         if (reason === "foreground_followup_retry") {
           return `自动同步：${sourceLabel}等待重试`;
         }
@@ -31178,15 +31486,19 @@
     const normalizedDisplayKind =
       normalizeAutoSyncIndicatorOperation(displayKind) || displayKind;
     const syncDotsSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 16" fill="currentColor"><circle class="s1p-dot s1p-pending-dot" cx="4" cy="8" r="1.75"></circle><circle class="s1p-dot s1p-pending-dot" cx="10" cy="8" r="1.75"></circle><circle class="s1p-dot s1p-pending-dot" cx="16" cy="8" r="1.75"></circle></svg>`;
-    const pushCloudSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M1 14.5C1 12.1716 2.22429 10.1291 4.06426 8.9812C4.56469 5.044 7.92686 2 12 2C16.0731 2 19.4353 5.044 19.9357 8.9812C21.7757 10.1291 23 12.1716 23 14.5C23 17.9216 20.3562 20.7257 17 20.9811L7 21C3.64378 20.7257 1 17.9216 1 14.5ZM16.8483 18.9868C19.1817 18.8093 21 16.8561 21 14.5C21 12.927 20.1884 11.4962 18.8771 10.6781L18.0714 10.1754L17.9517 9.23338C17.5735 6.25803 15.0288 4 12 4C8.97116 4 6.42647 6.25803 6.0483 9.23338L5.92856 10.1754L5.12288 10.6781C3.81156 11.4962 3 12.927 3 14.5C3 16.8561 4.81833 18.8093 7.1517 18.9868L7.325 19H16.675L16.8483 18.9868ZM13 13V17H11V13H8L12 8L16 13H13Z"></path></svg>`;
-    const pullCloudSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M1 14.5C1 12.1716 2.22429 10.1291 4.06426 8.9812C4.56469 5.044 7.92686 2 12 2C16.0731 2 19.4353 5.044 19.9357 8.9812C21.7757 10.1291 23 12.1716 23 14.5C23 17.9216 20.3562 20.7257 17 20.9811L7 21C3.64378 20.7257 1 17.9216 1 14.5ZM16.8483 18.9868C19.1817 18.8093 21 16.8561 21 14.5C21 12.927 20.1884 11.4962 18.8771 10.6781L18.0714 10.1754L17.9517 9.23338C17.5735 6.25803 15.0288 4 12 4C8.97116 4 6.42647 6.25803 6.0483 9.23338L5.92856 10.1754L5.12288 10.6781C3.81156 11.4962 3 12.927 3 14.5C3 16.8561 4.81833 18.8093 7.1517 18.9868L7.325 19H16.675L16.8483 18.9868ZM13 12H16L12 17L8 12H11V8H13V12Z"></path></svg>`;
+    const pushArrowPath = "M11.9999 10.8284L7.0502 15.7782L5.63599 14.364L11.9999 8L18.3639 14.364L16.9497 15.7782L11.9999 10.8284Z";
+    const pullArrowPath = "M11.9999 13.1714L16.9497 8.22168L18.3639 9.63589L11.9999 15.9999L5.63599 9.63589L7.0502 8.22168L11.9999 13.1714Z";
+    const pendingPushSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path class="s1p-sync-pending-arrow" d="${pushArrowPath}"></path><path class="s1p-sync-pending-arrow" d="${pushArrowPath}"></path></svg>`;
+    const pendingPullSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path class="s1p-sync-pending-arrow" d="${pullArrowPath}"></path><path class="s1p-sync-pending-arrow" d="${pullArrowPath}"></path></svg>`;
+    const pushFlowSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path class="s1p-sync-flow-arrow" d="${pushArrowPath}"></path><path class="s1p-sync-flow-arrow" d="${pushArrowPath}"></path><path class="s1p-sync-flow-arrow" d="${pushArrowPath}"></path></svg>`;
+    const pullFlowSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path class="s1p-sync-flow-arrow" d="${pullArrowPath}"></path><path class="s1p-sync-flow-arrow" d="${pullArrowPath}"></path><path class="s1p-sync-flow-arrow" d="${pullArrowPath}"></path></svg>`;
     const probeSearchSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M11 2C15.968 2 20 6.032 20 11C20 15.968 15.968 20 11 20C6.032 20 2 15.968 2 11C2 6.032 6.032 2 11 2ZM11 18C14.8675 18 18 14.8675 18 11C18 7.1325 14.8675 4 11 4C7.1325 4 4 7.1325 4 11C4 14.8675 7.1325 18 11 18ZM19.4853 18.0711L22.3137 20.8995L20.8995 22.3137L18.0711 19.4853L19.4853 18.0711Z"></path></svg>`;
-    const getActiveOperationSvg = () => {
+    const getOperationSvg = ({ animated = false } = {}) => {
       switch (normalizedDisplayKind) {
         case AUTO_SYNC_INDICATOR_OPERATION_PUSH:
-          return pushCloudSvg;
+          return animated ? pushFlowSvg : pendingPushSvg;
         case AUTO_SYNC_INDICATOR_OPERATION_PULL:
-          return pullCloudSvg;
+          return animated ? pullFlowSvg : pendingPullSvg;
         case AUTO_SYNC_INDICATOR_OPERATION_PROBE:
           return probeSearchSvg;
         default:
@@ -31195,9 +31507,9 @@
     };
     switch (phase) {
       case AUTO_SYNC_INDICATOR_PHASE_PENDING:
-        return getActiveOperationSvg();
+        return getOperationSvg({ animated: false });
       case AUTO_SYNC_INDICATOR_PHASE_RUNNING:
-        return getActiveOperationSvg();
+        return getOperationSvg({ animated: true });
       case AUTO_SYNC_INDICATOR_PHASE_SUCCESS:
         return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="1 1 22 22" fill="currentColor"><path d="M4 12C4 7.58172 7.58172 4 12 4C16.4183 4 20 7.58172 20 12C20 16.4183 16.4183 20 12 20C7.58172 20 4 16.4183 4 12ZM12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2ZM17.4571 9.45711L16.0429 8.04289L11 13.0858L8.20711 10.2929L6.79289 11.7071L11 15.9142L17.4571 9.45711Z"></path></svg>`;
       case AUTO_SYNC_INDICATOR_PHASE_FAILURE:
@@ -31600,6 +31912,19 @@
     ) {
       addEntering("s1p-auto-sync-transition-idle-to-pending");
       addExiting("s1p-auto-sync-transition-idle-to-pending-origin");
+      return result;
+    }
+    if (
+      normalizedFrom === AUTO_SYNC_INDICATOR_PHASE_PENDING &&
+      normalizedTo === AUTO_SYNC_INDICATOR_PHASE_RUNNING &&
+      normalizedFromKind === normalizedToKind &&
+      (
+        normalizedToKind === AUTO_SYNC_INDICATOR_OPERATION_PUSH ||
+        normalizedToKind === AUTO_SYNC_INDICATOR_OPERATION_PULL
+      )
+    ) {
+      addEntering("s1p-auto-sync-transition-pending-to-running");
+      addExiting("s1p-auto-sync-transition-pending-to-running-origin");
       return result;
     }
     if (
@@ -32144,7 +32469,8 @@
   };
 
   const getDebugConsoleLogMessageForDisplay = (entry, expanded) => {
-    const message = String(entry?.message || "");
+    let message = String(entry?.message || "");
+    message = message.replace(/\d{4}\/\d{1,2}\/\d{1,2}\s+\d{1,2}:\d{2}:\d{2}\s*\|\s*/, "");
     if (expanded || message.length <= LOG_COLLAPSED_MESSAGE_MAX_LENGTH) {
       return message;
     }
@@ -32173,7 +32499,7 @@
 
     const ts = document.createElement("span");
     ts.className = "s1p-debug-console-log-ts";
-    ts.textContent = new Date(entry.ts).toLocaleTimeString("zh-CN", { hour12: false }) + "." + String(entry.ts % 1000).padStart(3, "0");
+    ts.textContent = new Date(entry.ts).toLocaleTimeString("zh-CN", { hour12: false });
 
     const level = document.createElement("span");
     level.className = "s1p-debug-console-log-level";
