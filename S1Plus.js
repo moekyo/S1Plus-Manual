@@ -12239,6 +12239,17 @@
     refreshAutoSyncIndicatorRuntimeDisplay(reason);
   };
 
+  const isAutoSyncIndicatorPendingTimestampFresh = (
+    timestamp,
+    now = Date.now()
+  ) => {
+    const normalizedTimestamp = Number(timestamp) || 0;
+    return Boolean(
+      normalizedTimestamp > 0 &&
+        now - normalizedTimestamp < AUTO_SYNC_INDICATOR_PENDING_STALE_MS
+    );
+  };
+
   const getAutoSyncRuntimePendingDisplayState = (now = Date.now()) => {
     const foregroundRetryRemainingMs =
       typeof getForegroundRemoteSyncRetryRemainingMs === "function"
@@ -12271,8 +12282,10 @@
         : null;
     if (
       sharedState &&
-      now - (Number(sharedState.maxWaitUntil) || Number(sharedState.dueAt) || 0) <
-        AUTO_SYNC_INDICATOR_PENDING_STALE_MS
+      isAutoSyncIndicatorPendingTimestampFresh(
+        Number(sharedState.maxWaitUntil) || Number(sharedState.dueAt) || 0,
+        now
+      )
     ) {
       return {
         hasPending: true,
@@ -12295,7 +12308,17 @@
       typeof getPendingAutoSyncRequest === "function"
         ? getPendingAutoSyncRequest()
         : GM_getValue(PENDING_AUTO_SYNC_KEY, null);
-    if (pending && typeof pending === "object") {
+    if (
+      pending &&
+      typeof pending === "object" &&
+      isAutoSyncIndicatorPendingTimestampFresh(
+        pending.lastDirtyAt ||
+          pending.createdAt ||
+          pending.maxLastModified ||
+          pending.lastModified,
+        now
+      )
+    ) {
       return {
         hasPending: true,
         source: AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
@@ -13455,6 +13478,7 @@
         phase: resolvedPhase,
         source: options.source,
         reason: options.reason,
+        operation: options.operation,
         delayMs: getAutoSyncIndicatorMinimumRunningDelayMs(current),
       });
     }
@@ -13531,11 +13555,14 @@
       case "push":
       case "pushed":
       case "pushed_initial":
+      case "force_push":
       case "initial_push_seed":
       case "manual_push":
       case "manual_force_push_repair":
       case "cleanup_shortcut_push":
       case "smart_progress_push":
+      case "merged_read_progress":
+      case "smart_merge_pull":
         return AUTO_SYNC_INDICATOR_OPERATION_PUSH;
       default:
         return "";
@@ -13595,16 +13622,24 @@
     result = null,
     hadSuccessfulWrite = false,
     lastSuccessfulWriteAction = "",
+    hadSuccessfulOperation = false,
+    lastSuccessfulOperation = "",
   } = {}) => {
     const resultAction = normalizeSyncDiagnosticText(result?.action, 80);
     const resultOperation =
       getAutoSyncIndicatorOperationFromSyncAction(result?.action);
-    const isNewSuccess =
-      result?.status === "success" && isPushLikeSyncAction(resultAction);
-    const nextHadSuccessfulWrite = hadSuccessfulWrite || Boolean(isNewSuccess);
-    const nextLastSuccessfulWriteAction =
-      lastSuccessfulWriteAction ||
-      (isNewSuccess ? (resultOperation || resultAction) : "");
+    const isSuccessfulDirectionalResult =
+      result?.status === "success" && Boolean(resultOperation);
+    const nextHadSuccessfulOperation =
+      hadSuccessfulOperation ||
+      hadSuccessfulWrite ||
+      Boolean(isSuccessfulDirectionalResult);
+    const previousSuccessfulOperation =
+      normalizeAutoSyncIndicatorOperation(lastSuccessfulOperation) ||
+      normalizeAutoSyncIndicatorOperation(lastSuccessfulWriteAction);
+    const nextLastSuccessfulOperation = isSuccessfulDirectionalResult
+      ? resultOperation
+      : previousSuccessfulOperation;
     const phaseFromResult = getAutoSyncIndicatorPhaseFromResult(result);
     const reasonFromResult = getAutoSyncIndicatorReasonFromResult(result);
 
@@ -13612,29 +13647,35 @@
       return {
         phase: currentPhase,
         reason: currentReason,
-        hadSuccessfulWrite: nextHadSuccessfulWrite,
-        lastSuccessfulWriteAction: nextLastSuccessfulWriteAction,
+        hadSuccessfulWrite: nextHadSuccessfulOperation,
+        hadSuccessfulOperation: nextHadSuccessfulOperation,
+        lastSuccessfulWriteAction: nextLastSuccessfulOperation,
+        lastSuccessfulOperation: nextLastSuccessfulOperation,
       };
     }
 
     if (
       phaseFromResult === AUTO_SYNC_INDICATOR_PHASE_IDLE &&
       resultAction === "no_change" &&
-      nextHadSuccessfulWrite
+      nextHadSuccessfulOperation
     ) {
       return {
         phase: currentPhase || AUTO_SYNC_INDICATOR_PHASE_SUCCESS,
         reason: currentReason || reasonFromResult,
-        hadSuccessfulWrite: nextHadSuccessfulWrite,
-        lastSuccessfulWriteAction: nextLastSuccessfulWriteAction,
+        hadSuccessfulWrite: nextHadSuccessfulOperation,
+        hadSuccessfulOperation: nextHadSuccessfulOperation,
+        lastSuccessfulWriteAction: nextLastSuccessfulOperation,
+        lastSuccessfulOperation: nextLastSuccessfulOperation,
       };
     }
 
     return {
       phase: phaseFromResult,
       reason: reasonFromResult || currentReason,
-      hadSuccessfulWrite: nextHadSuccessfulWrite,
-      lastSuccessfulWriteAction: nextLastSuccessfulWriteAction,
+      hadSuccessfulWrite: nextHadSuccessfulOperation,
+      hadSuccessfulOperation: nextHadSuccessfulOperation,
+      lastSuccessfulWriteAction: nextLastSuccessfulOperation,
+      lastSuccessfulOperation: nextLastSuccessfulOperation,
     };
   };
 
@@ -26234,8 +26275,8 @@
       let indicatorCycleToken = "";
       let indicatorFinalPhase = "";
       let indicatorFinalReason = "";
-      let indicatorHadSuccessfulWrite = false;
-      let indicatorLastSuccessfulWriteAction = "";
+      let indicatorHadSuccessfulOperation = false;
+      let indicatorLastSuccessfulOperation = "";
       isBackgroundAutoSyncInProgress = true;
       let drainCount = 0;
 
@@ -26309,14 +26350,16 @@
               currentPhase: indicatorFinalPhase,
               currentReason: indicatorFinalReason,
               result,
-              hadSuccessfulWrite: indicatorHadSuccessfulWrite,
-              lastSuccessfulWriteAction: indicatorLastSuccessfulWriteAction,
+              hadSuccessfulOperation: indicatorHadSuccessfulOperation,
+              lastSuccessfulOperation: indicatorLastSuccessfulOperation,
             });
             indicatorFinalPhase = indicatorCompletion.phase;
             indicatorFinalReason = indicatorCompletion.reason;
-            indicatorHadSuccessfulWrite =
+            indicatorHadSuccessfulOperation =
+              indicatorCompletion.hadSuccessfulOperation ||
               indicatorCompletion.hadSuccessfulWrite;
-            indicatorLastSuccessfulWriteAction =
+            indicatorLastSuccessfulOperation =
+              indicatorCompletion.lastSuccessfulOperation ||
               indicatorCompletion.lastSuccessfulWriteAction;
             await handleBackgroundAutoSyncResult(result);
           } finally {
@@ -26357,14 +26400,14 @@
             {
               source: AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
               reason: indicatorFinalReason || reason,
-              operation: indicatorLastSuccessfulWriteAction,
+              operation: indicatorLastSuccessfulOperation,
             }
           );
         } else if (indicatorFinalPhase) {
           setAutoSyncIndicatorResolvedPhase(indicatorFinalPhase, {
             source: AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
             reason: indicatorFinalReason || reason,
-            operation: indicatorLastSuccessfulWriteAction,
+            operation: indicatorLastSuccessfulOperation,
           });
         }
       }
@@ -27802,12 +27845,16 @@
     }
 
     if (indicatorCycleToken) {
+      const resultOperation = getAutoSyncIndicatorOperationFromSyncAction(
+        result?.action
+      );
       finishAutoSyncIndicatorCycle(
         indicatorCycleToken,
         getAutoSyncIndicatorPhaseFromResult(result),
         {
           source: resolvedSource,
           reason: getAutoSyncIndicatorReasonFromResult(result) || normalizedReason,
+          operation: resultOperation,
         }
       );
     }
@@ -27951,12 +27998,16 @@
     }
 
     if (indicatorCycleToken) {
+      const resultOperation = getAutoSyncIndicatorOperationFromSyncAction(
+        result?.action
+      );
       finishAutoSyncIndicatorCycle(
         indicatorCycleToken,
         getAutoSyncIndicatorPhaseFromResult(result),
         {
           source: resolvedSource,
           reason: getAutoSyncIndicatorReasonFromResult(result) || normalizedReason,
+          operation: resultOperation,
         }
       );
     }
@@ -32269,7 +32320,11 @@
       clearAutoSyncRuntimeQueue();
       clearAutoSyncConflictPause();
       GM_setValue("s1p_last_sync_timestamp", Date.now());
-      setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_SUCCESS);
+      setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_SUCCESS, {
+        source: AUTO_SYNC_INDICATOR_SOURCE_MANUAL_SYNC,
+        reason: "force_push",
+        operation: AUTO_SYNC_INDICATOR_OPERATION_PUSH,
+      });
       recordSuccessfulRemoteWriteIfNeeded({
         action: "force_push",
         remoteUpdatedAt: forcePushResult?.updatedAt || null,
@@ -32391,7 +32446,11 @@
         clearAutoSyncRuntimeQueue();
         clearAutoSyncConflictPause();
         GM_setValue("s1p_last_sync_timestamp", Date.now());
-        setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_SUCCESS);
+        setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_SUCCESS, {
+          source: AUTO_SYNC_INDICATOR_SOURCE_MANUAL_SYNC,
+          reason: "force_pull",
+          operation: AUTO_SYNC_INDICATOR_OPERATION_PULL,
+        });
         resetAutoSyncFailureState();
         recordSyncSuccess("force_pull", "manual", {
           triggerSource: SYNC_TRIGGER_SOURCE_MANUAL_SYNC,
@@ -41125,7 +41184,11 @@
           clearAutoSyncRuntimeQueue();
           clearAutoSyncConflictPause();
           // 手动同步成功后，立即覆盖后台指示器的旧失败/冲突态，避免残留样式持续到 TTL 结束。
-          setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_SUCCESS);
+          setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_SUCCESS, {
+            source: AUTO_SYNC_INDICATOR_SOURCE_MANUAL_SYNC,
+            reason: action,
+            operation: getAutoSyncIndicatorOperationFromSyncAction(action),
+          });
           if (syncBaseline) {
             setSyncBaselineState(syncBaseline);
           }

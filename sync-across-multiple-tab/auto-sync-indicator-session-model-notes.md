@@ -42,7 +42,7 @@ hover tooltip 中还会出现“回到前台检查等待二次确认”一类文
 - 快速完成的 foreground metadata probe 延迟显示，避免放大镜闪一下。
 - `remote_probe_equal_ambiguous:*` 用中性三点，不提前误显示为待拉取。
 - `metadata-only` 发现 `updated_at` 变化但 full sync 尚未决策时，也先用中性 sync pending。
-- `hash_equal` / `no_change` 的二次确认结果直接回到 idle，不显示成功勾。
+- 没有前置写入的 `hash_equal` / `no_change` 可以安静回到 idle；但如果它是同一轮 push / pull 成功后的确认，不能覆盖刚完成的成功态方向。
 
 这些都是正确方向：不要把“检查”误画成“拉取”，也不要在还没决策前显示错误方向。
 
@@ -391,7 +391,7 @@ hover tooltip 可以保留完整内部细节，但应换成用户更容易理解
 | 独立 foreground probe | 回到前台检查正在检查云端更新 | 正在检查云端更新 |
 | probe 发现远端更新但暂缓 | 等待云端复查 | 云端有变化，等待本地状态稳定后复查 |
 | full sync 决策为 pull | 待拉取 / 拉取中 | 云端更新待拉取 / 云端更新拉取中 |
-| no_change / hash_equal | 同步成功 | 已确认本地与云端一致 |
+| no_change / hash_equal | 无前置写入时安静回 idle；作为写入后的确认时保留成功态方向 | 已确认本地与云端一致 |
 
 这样既不牺牲诊断细节，也不会让“回到前台检查”这种来源名成为用户的主理解。
 
@@ -449,7 +449,7 @@ probe -> pull pending -> pull running
 4. 未决策的 foreground probe 不显示为待拉取。
 5. 真正拉取云端数据时，必须明确显示向下箭头。
 6. hover tooltip 能解释当前细节，但不直接暴露让用户误解的内部来源名。
-7. 没有前置成功写入的 `no_change` / `hash_equal` 回 idle；同一轮 drain 内已有成功推送后的 `no_change` 确认不能覆盖 push success（保留为 success + push 方向）。
+7. 没有前置成功写入的 `no_change` / `hash_equal` 回 idle；同一轮 drain 内已有成功推送或拉取后的确认不能覆盖 success 方向（保留为 success + push / pull）。
 8. settling 期间如果 1 秒内出现新的本地 dirty，不闪烁 idle / sync，而是直接续到 `push pending`。
 9. 同时存在阅读进度和其他本地变更时，非 hover 仍显示 push，tooltip 升级为“本地变更待推送 / 推送中”。
 10. 超过会话归并窗口后触发的 foreground probe 不继承旧 push 方向。
@@ -465,9 +465,15 @@ probe -> pull pending -> pull running
 4. `getAutoSyncRuntimePendingDisplayState` 中 pull retry 短路返回，确保远端 pull 信号不被本地 pending push 掩盖。
 5. `getAutoSyncIndicatorTitle` 移除 sourceLabel，改用 `getAutoSyncIndicatorLocalChangeLabel` 按来源组合输出用户语义（阅读进度 / 清理结果 / 阅读记录变更 / 本地变更）。
 6. `startAutoSyncIndicatorExpiryTimer` 对 settling 子状态做专门过期处理，区分 `push_settling_verification`（用 settlingStartedAt+MAX）和普通 settling（用 completedAt+MIN）。
-7. `test-auto-sync-indicator-linkage.js` ：
+7. 成功态方向由同步结果 / 手动动作 `action` 派生并透传到 `finishAutoSyncIndicatorCycle()` 或 `setAutoSyncIndicatorResolvedPhase()`，即使经过最短 running 时长的延迟落态，push / pull 完成后也分别保留 `displayDominantDirection`，tooltip 显示“本地变更已推送”或“云端更新已拉取”。
+8. 后台 drain 记录“最后一次有方向的成功结果”而不是只记录是否发生过 push-like 写入，避免后续 `no_change` 把 pull / push success 压成泛化成功。
+9. pending stale 保护同时覆盖 shared debounce 和 `PENDING_AUTO_SYNC_KEY`，旧的待同步请求超过窗口后不再驱动导航栏显示“待推送”。
+10. `test-auto-sync-indicator-linkage.js` ：
    - `testDisplaySessionCoalescesPushVerification`：同机会话 push settling 继承、新 dirty 续接、多来源 tooltip、过期 session 不继承。
    - `testPullRetryKeepsCloudDirectionOverLocalPending`：pull retry + 本地 pending 并存时 pull 方向不被掩盖。
+   - `testSuccessDisplayKeepsDirectionalCompletion`：push / pull 成功态保留方向和 tooltip。
+   - `testDeferredResolvedPhaseKeepsOperation`：延迟落成功态时仍保留 operation。
+   - `testStalePendingAutoSyncRequestDoesNotDisplay`：过期 pending request 不再显示待推送，新鲜 pending request 仍正常显示。
    - 已有测试的 tooltip 断言全部更新为用户语义（不再含 sourceLabel）。
 
 核心思路：底层继续诚实，导航栏表层少一点内部碎片感。
