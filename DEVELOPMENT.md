@@ -287,7 +287,7 @@ node sync-across-multiple-tab/scripts/test-settings-migration.js
 - 锁心跳续租，失锁即中止
 - 自动同步熔断（连续失败 3 次暂停 10 分钟）
 - 冲突暂停门控，防止冲突态继续自动推送
-- 前台探测使用独立的 probe 锁、共享冷却和本地冷却，避免多个标签页同时做 metadata-only probe
+- 前台探测使用独立的 probe 锁、共享冷却（45s，跨标签）和本地冷却（12s，当前标签），避免多个标签页同时做 metadata-only probe
 - `clean-state fence` 只用于本地自动 push 去重：本地干净不能证明另一台设备没有更新 Gist，因此页面首次可见 / 回到前台 / 可见页轮询的 metadata-only probe 不得用它跳过远端 `updated_at` 检查。
 - 前台 follow-up sync 的局部脏状态优先落为 soft block；只有真正的全局冲突或明确需要人工处理时才升级为 hard pause
 
