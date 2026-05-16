@@ -544,8 +544,8 @@ const testSyncTraceDetailsUseChineseLabels = () => {
 
 const testPhase3CallSitesUseDedicatedHelpers = () => {
   expectMatch(
-    /name: "start debug log collector"[\s\S]*?run: \(\) => startLogCollector\(\)/m,
-    "调试日志收集器未在 document-start 无条件启动，打开调试面板后会丢失早期同步日志。"
+    /name: "start debug log collector"[\s\S]*?if \(isDebugConsolePersistentlyVisible\(\)\)\s*\{\s*startLogCollector\(\)/m,
+    "调试日志收集器未在 document-start 按面板可见性条件启动。"
   );
   expectMatch(
     /const checkRemoteFreshnessOnForeground = async[\s\S]*?scopeLabel: "云端更新检查"/m,
