@@ -91,26 +91,38 @@ node sync-across-multiple-tab/scripts/test-settings-migration.js
 - cleanup provenance 与手动同步分支
 - 设置迁移与同步设置 UI
 
-### 2.5 导航栏同步指示器调试面板
+### 2.5 右下角统一调试面板
 
-仓库里保留了一套可复用的浮动调试面板框架，当前已有一个“自动同步指示器调试”实例，但默认不自动显示。
+代码中保留了可复用的浮动调试面板框架，现整合为统一的 `#s1p-debug-unified-panel`，通过 tabs 组织三个子面板，默认不自动显示。
 
-需要手动观察导航栏自动同步指示器的状态切换或动画时，可在浏览器控制台执行：
+**入口方式**：设置弹窗底部版本号悬停 4s 出现小圆点后点击，打开统一面板；无其他入口。
 
-- `window.__s1pAutoSyncIndicatorDebug.showPanel()`
-- `window.__s1pAutoSyncIndicatorDebug.hidePanel()`
-- `window.__s1pAutoSyncIndicatorDebug.clear()`
+**面板结构**：
 
-使用约束：
+| Tab | 内容 | 说明 |
+|-----|------|------|
+| 日志 | 调试控制台 | 捕获 console 输出、JS 错误、unhandledrejection；支持按级别筛选、关键词搜索、复制/清空/展开；可拖拽 resize，尺寸持久化到 `s1p_debug_console_size` |
+| 诊断信息 | 同步诊断 | 展示 `buildSyncDiagnosticsRows()` 的诊断行（最近动作/触发源/结果/阻断/哈希/探测等）；[刷新][复制诊断][重置诊断] 按钮 |
+| 指示器调试 | 同步指示器调试 | 手动切换指示器 phase、选择 source/operation、播放转场 Demo；只覆盖导航栏指示器预览，不改真实同步状态 |
+
+**实现要点**：
+
+- tab bar 复用 `s1p-tabs` 样式（与设置面板 tab 统一），靠左对齐，带 slider 高亮动画
+- 面板搜索框复用 `.s1p-input` 样式
+- 日志 tab 的 toolbar 布局为 head-actions 在上行、filter-bar 在下行
+- 诊断信息 tab 的重置操作使用内联确认栏而非原生 `confirm()` 弹窗
+- 指示器调试面板仍可通过 `window.__s1pAutoSyncIndicatorDebug` API 控制：
+  - `showPanel()` — 打开统一面板并切到指示器调试 tab
+  - `hidePanel()` — 隐藏统一面板
+  - `clear()` — 清除调试覆盖
+
+**使用约束**：
 
 - 调试面板只覆盖导航栏指示器的预览显示，不会改写真实同步状态
-- 面板中的“实际 phase/source”仍然读取真实状态，可用于对照预览覆盖
-- `running` 等状态的调试预览会跳过真实同步锁门控，仅用于人工观察 UI，不代表同步任务真的在执行
-- 它与设置面板内的“同步诊断信息”不是同一块面板：设置页底部版本区域三连击只切换当前设置窗口内的诊断信息。
-- 它与右下角“调试控制台”也不是同一块面板：调试控制台通过设置页底部版本区域悬停 4s 后出现的小点切换，会持久记录是否显示；同步指示器调试面板只通过 `window.__s1pAutoSyncIndicatorDebug` 控制，不会自动持久显示。
-- 右下角浮动面板共用 `#s1p-debug-panel-host` 容器并以 flex 列表堆叠，面板 id 和内部状态彼此独立；同时打开时只会上下排列，不会改写对方的状态。
-- 右下角调试控制台的日志列表和复制内容会去掉消息正文里重复的本地时间前缀，只保留统一的行首时间，避免排查时看到两套时间戳。
-- 这套面板框架应优先作为通用调试容器复用，而不是为每个功能再单独写一套浮动面板
+- 面板中“实际 phase/source/operation”仍读取真实状态，可用于对照预览覆盖
+- `running` 等状态的调试预览会跳过真实同步锁门控，仅用于人工观察 UI
+- 统一面板的显示状态持久化到 `s1p_debug_console_visible`；尺寸持久化到 `s1p_debug_console_size`
+- 这套面板框架应优先作为通用调试容器复用，而非为每个功能再单独写一套浮动面板
 
 ## 3. 多机协作流程（Git）
 

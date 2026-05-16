@@ -29,7 +29,9 @@
 
   // --- 全局调试控制台 ---
   const DEBUG_MODE = false;
+  const DEBUG_UNIFIED_PANEL_ID = "s1p-debug-unified-panel";
   const DEBUG_CONSOLE_PANEL_ID = "s1p-debug-console-panel";
+  const DEBUG_SYNC_DIAGNOSTICS_PANEL_ID = "s1p-debug-sync-diagnostics-panel";
   const DEBUG_CONSOLE_VISIBLE_KEY = "s1p_debug_console_visible";
   const DEBUG_CONSOLE_SIZE_KEY = "s1p_debug_console_size";
   const LOG_BUFFER_MAX = 1000;
@@ -1450,6 +1452,70 @@
       reason: "debug_conflict",
     },
   ]);
+  const AUTO_SYNC_INDICATOR_DEBUG_SOURCE_BUTTONS = Object.freeze([
+    {
+      label: "后台推送",
+      action: `source:${AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND}`,
+      source: AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+    },
+    {
+      label: "每日首次",
+      action: `source:${AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP}`,
+      source: AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP,
+    },
+    {
+      label: "每次加载",
+      action: `source:${AUTO_SYNC_INDICATOR_SOURCE_PER_LOAD}`,
+      source: AUTO_SYNC_INDICATOR_SOURCE_PER_LOAD,
+    },
+    {
+      label: "首次可见",
+      action: `source:${AUTO_SYNC_INDICATOR_SOURCE_PAGE_LOAD_VISIBLE}`,
+      source: AUTO_SYNC_INDICATOR_SOURCE_PAGE_LOAD_VISIBLE,
+    },
+    {
+      label: "回到前台",
+      action: `source:${AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME}`,
+      source: AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME,
+    },
+    {
+      label: "可见轮询",
+      action: `source:${AUTO_SYNC_INDICATOR_SOURCE_VISIBLE_POLL}`,
+      source: AUTO_SYNC_INDICATOR_SOURCE_VISIBLE_POLL,
+    },
+    {
+      label: "手动同步",
+      action: `source:${AUTO_SYNC_INDICATOR_SOURCE_MANUAL_SYNC}`,
+      source: AUTO_SYNC_INDICATOR_SOURCE_MANUAL_SYNC,
+    },
+  ]);
+  const AUTO_SYNC_INDICATOR_DEBUG_OPERATION_BUTTONS = Object.freeze([
+    {
+      label: "自动",
+      action: "operation:auto",
+      operation: "",
+    },
+    {
+      label: "Sync",
+      action: `operation:${AUTO_SYNC_INDICATOR_OPERATION_SYNC}`,
+      operation: AUTO_SYNC_INDICATOR_OPERATION_SYNC,
+    },
+    {
+      label: "Push",
+      action: `operation:${AUTO_SYNC_INDICATOR_OPERATION_PUSH}`,
+      operation: AUTO_SYNC_INDICATOR_OPERATION_PUSH,
+    },
+    {
+      label: "Pull",
+      action: `operation:${AUTO_SYNC_INDICATOR_OPERATION_PULL}`,
+      operation: AUTO_SYNC_INDICATOR_OPERATION_PULL,
+    },
+    {
+      label: "Probe",
+      action: `operation:${AUTO_SYNC_INDICATOR_OPERATION_PROBE}`,
+      operation: AUTO_SYNC_INDICATOR_OPERATION_PROBE,
+    },
+  ]);
   const AUTO_SYNC_INDICATOR_DEBUG_SEQUENCE_BUTTONS = Object.freeze([
     {
       label: "待机 → Pending",
@@ -1498,6 +1564,30 @@
           label,
           action,
           kind,
+        })
+      ),
+    },
+    {
+      label: "来源",
+      layoutClassName: "s1p-debug-panel-grid",
+      buttons: AUTO_SYNC_INDICATOR_DEBUG_SOURCE_BUTTONS.map(
+        ({ label, action, source }) => ({
+          label,
+          action,
+          kind: "utility",
+          source,
+        })
+      ),
+    },
+    {
+      label: "操作",
+      layoutClassName: "s1p-debug-panel-grid",
+      buttons: AUTO_SYNC_INDICATOR_DEBUG_OPERATION_BUTTONS.map(
+        ({ label, action, operation }) => ({
+          label,
+          action,
+          kind: "utility",
+          operation,
         })
       ),
     },
@@ -2860,7 +2950,7 @@
         padding: 10px;
       }
     }
-    #s1p-debug-console-panel {
+    #s1p-debug-unified-panel {
       --s1p-debug-console-panel-bg: rgba(255, 255, 255, 0.18);
       --s1p-debug-console-surface: #f8fafc;
       --s1p-debug-console-surface-soft: #eef2f7;
@@ -2880,7 +2970,7 @@
       padding: 18px 22px 16px;
     }
     @media (prefers-color-scheme: dark) {
-      #s1p-debug-console-panel {
+      #s1p-debug-unified-panel {
         --s1p-debug-console-panel-bg: rgba(8, 13, 24, 0.24);
         --s1p-debug-console-surface: #172033;
         --s1p-debug-console-surface-soft: #202b3d;
@@ -2889,21 +2979,76 @@
         --s1p-debug-console-button-border: #3d506b;
       }
     }
-    #s1p-debug-console-panel.s1p-debug-panel {
+    #s1p-debug-unified-panel.s1p-debug-panel {
       background: var(--s1p-debug-console-panel-bg);
       border-color: var(--s1p-debug-console-button-border);
       backdrop-filter: blur(12px) saturate(1.2);
     }
-    #s1p-debug-console-panel .s1p-debug-panel-head {
+    #s1p-debug-unified-panel .s1p-debug-panel-head {
       padding: 5px 2px 2px 8px;
+    }
+    #s1p-debug-unified-panel .s1p-tabs {
+      margin-bottom: 8px;
+      align-self: flex-start;
+      width: auto;
+    }
+    #s1p-debug-unified-panel .s1p-tab-btn {
+      font-size: 12px;
+      padding: 5px 12px;
+    }
+    #s1p-debug-unified-panel .s1p-debug-panel-group .s1p-debug-btn.is-active {
+      opacity: 1;
+      background: var(--s1p-sec);
+      border-color: var(--s1p-sec);
+      color: var(--s1p-white);
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--s1p-sec) 18%, transparent);
+    }
+    .s1p-debug-tab-content {
+      flex: 1 1 auto;
+      min-height: 0;
+      display: grid;
+      grid-template-areas: "s1p-debug-tab";
+    }
+    #s1p-debug-unified-panel .s1p-debug-tab-pane {
+      display: flex;
+      grid-area: s1p-debug-tab;
+      flex-direction: column;
+      gap: 8px;
+      min-height: 0;
+      padding-top: 16px;
+      overflow: hidden auto;
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transition: opacity 0.18s ease, visibility 0.18s ease;
+    }
+    #s1p-debug-unified-panel .s1p-debug-tab-pane.s1p-hidden {
+      display: flex;
+    }
+    #s1p-debug-unified-panel .s1p-debug-tab-pane.is-active {
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+    }
+    .s1p-debug-console-toolbar,
+    .s1p-debug-diagnostics-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      min-width: 0;
+    }
+    .s1p-debug-console-toolbar .s1p-debug-console-filter-bar {
+      flex-basis: 100%;
     }
     .s1p-debug-console-head-actions {
       display: flex;
       align-items: center;
+      flex-wrap: wrap;
       gap: 4px;
       margin-left: auto;
     }
-    #s1p-debug-console-panel .s1p-debug-btn.s1p-debug-console-feedback {
+    #s1p-debug-unified-panel .s1p-debug-btn.s1p-debug-console-feedback {
       background: var(--s1p-sec) !important;
       border-color: var(--s1p-sec) !important;
       color: var(--s1p-white) !important;
@@ -2999,6 +3144,8 @@
       gap: 8px;
       flex-wrap: nowrap;
       position: relative;
+      flex: 1 1 260px;
+      min-width: 0;
     }
     .s1p-debug-console-level-buttons {
       display: flex;
@@ -3006,7 +3153,7 @@
       gap: 8px;
       flex: 0 0 auto;
     }
-    #s1p-debug-console-panel .s1p-debug-console-level-btn {
+    #s1p-debug-unified-panel .s1p-debug-console-level-btn {
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -3020,13 +3167,13 @@
       line-height: 1.2;
       transform: none !important;
     }
-    #s1p-debug-console-panel .s1p-debug-console-level-btn.is-active {
+    #s1p-debug-unified-panel .s1p-debug-console-level-btn.is-active {
       opacity: 1;
     }
-    #s1p-debug-console-panel .s1p-debug-console-level-btn:not(.is-active) {
+    #s1p-debug-unified-panel .s1p-debug-console-level-btn:not(.is-active) {
       opacity: 0.48;
     }
-    #s1p-debug-console-panel .s1p-debug-console-level-btn:hover {
+    #s1p-debug-unified-panel .s1p-debug-console-level-btn:hover {
       opacity: 1;
     }
     .s1p-debug-console-filter-bar input {
@@ -3035,23 +3182,11 @@
       box-sizing: border-box;
       height: 32px;
       min-height: 32px;
-      padding: 0 10px;
-      font-size: 12px;
       line-height: 32px;
-      border: 1px solid var(--s1p-border);
-      border-radius: 6px;
-      background: var(--s1p-debug-console-surface-raised);
-      color: var(--s1p-t);
-      outline: none;
-      box-shadow: none;
-      transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
     }
-    .s1p-debug-console-filter-bar input:focus,
-    .s1p-debug-console-filter-bar input:focus-visible {
-      border-color: var(--s1p-sec);
-      background: var(--s1p-debug-console-surface-raised);
-      box-shadow: 0 0 0 2px var(--s1p-focus-ring);
-      outline: none;
+    #s1p-debug-unified-panel .s1p-input {
+      font-size: 12px;
+      padding: 0 10px;
     }
     .s1p-debug-console-filter-bar input::placeholder {
       color: var(--s1p-desc-t);
@@ -3094,7 +3229,47 @@
       border-top: 2px solid var(--s1p-desc-t);
       opacity: 0.45;
     }
-    #s1p-debug-console-panel.s1p-debug-console-resizing {
+    .s1p-debug-diagnostics-panel {
+      gap: 0;
+    }
+    .s1p-debug-diagnostics-row.s1p-debug-console-log-line {
+      grid-template-columns: minmax(96px, 0.34fr) minmax(0, 1fr);
+      align-items: start;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .s1p-debug-diagnostics-row span {
+      color: var(--s1p-desc-t);
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+    .s1p-debug-diagnostics-row strong {
+      color: var(--s1p-t);
+      font-weight: 600;
+      min-width: 0;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+    .s1p-debug-confirm-inline {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: var(--s1p-debug-console-surface-soft);
+      color: var(--s1p-desc-t);
+      font-size: 11px;
+      line-height: 1.45;
+    }
+    .s1p-debug-confirm-inline.s1p-hidden {
+      display: none;
+    }
+    .s1p-debug-confirm-inline .s1p-debug-panel-actions {
+      width: auto;
+      min-width: 160px;
+    }
+    #s1p-debug-unified-panel.s1p-debug-console-resizing {
       user-select: none;
     }
     .s1p-debug-console-dot {
@@ -6144,43 +6319,6 @@
       font-size: 14px;
       font-weight: 500;
     }
-    .s1p-diag-wrapper {
-      margin-bottom: 12px;
-    }
-    .s1p-diag-header {
-      padding-bottom: 8px;
-    }
-    .s1p-diag-actions {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    .s1p-diag-btn {
-      height: 28px;
-      padding: 0 10px;
-    }
-    .s1p-diag-panel {
-      display: grid;
-      grid-template-columns: 1fr;
-      gap: 0;
-    }
-    .s1p-diag-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 6px 0;
-      gap: 12px;
-    }
-    .s1p-diag-label {
-      font-size: 12px;
-      color: var(--s1p-desc-t);
-    }
-    .s1p-diag-value {
-      font-size: 12px;
-      color: var(--s1p-t);
-      word-break: break-word;
-      text-align: right;
-    }
     .s1p-settings-section-title-label {
       /* [优化 V2] 调整主要分组标题，响应用户反馈 */
       font-size: 16px;
@@ -6502,7 +6640,7 @@
         padding: 6px 10px !important;
       }
 
-      :is(.s1p-local-sync-buttons, .s1p-diag-actions) {
+      .s1p-local-sync-buttons {
         flex-wrap: wrap;
       }
 
@@ -17259,7 +17397,7 @@
 
   // [NEW] 更新上次同步时间的显示
   const updateSyncDiagnosticsPanel = () => {
-    const panel = document.querySelector("#s1p-sync-diagnostics-panel");
+    const panel = document.getElementById(DEBUG_SYNC_DIAGNOSTICS_PANEL_ID);
     if (!panel) return;
 
     const diagnostics = getSyncDiagnostics();
@@ -17268,14 +17406,13 @@
     panel.textContent = "";
     rows.forEach(([label, value]) => {
       const row = document.createElement("div");
-      row.className = "s1p-diag-row";
+      row.className =
+        "s1p-debug-console-log-line s1p-debug-panel-status s1p-debug-diagnostics-row";
 
       const labelEl = document.createElement("span");
-      labelEl.className = "s1p-diag-label";
       labelEl.textContent = String(label ?? "");
 
-      const valueEl = document.createElement("span");
-      valueEl.className = "s1p-diag-value";
+      const valueEl = document.createElement("strong");
       valueEl.textContent = String(value ?? "");
 
       row.appendChild(labelEl);
@@ -32877,6 +33014,9 @@
 
   let autoSyncIndicatorDebugOverrideState = null;
   let autoSyncIndicatorDebugSequenceTimer = null;
+  let autoSyncIndicatorDebugSelectedSource =
+    AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND;
+  let autoSyncIndicatorDebugSelectedOperation = "";
 
   const normalizeAutoSyncIndicatorDebugPhase = (phase, fallback = "") =>
     normalizeAutoSyncIndicatorPhase(
@@ -32887,7 +33027,8 @@
   const buildAutoSyncIndicatorDebugState = (
     phase,
     source = AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
-    reason = ""
+    reason = "",
+    operation = ""
   ) => {
     const normalizedPhase = normalizeAutoSyncIndicatorDebugPhase(
       phase,
@@ -32895,6 +33036,12 @@
     );
     const normalizedSource = normalizeAutoSyncIndicatorSource(source) || "";
     const normalizedReason = normalizeAutoSyncIndicatorReason(reason) || "";
+    const normalizedOperation =
+      normalizeAutoSyncIndicatorOperation(operation) ||
+      getDefaultAutoSyncIndicatorOperationForSource(
+        normalizedSource,
+        normalizedReason
+      );
     const now = Date.now();
     const isIdlePhase = normalizedPhase === AUTO_SYNC_INDICATOR_PHASE_IDLE;
     const isPendingPhase = normalizedPhase === AUTO_SYNC_INDICATOR_PHASE_PENDING;
@@ -32918,7 +33065,7 @@
       token: `debug_${normalizedPhase}_${now}`,
       source: normalizedSource,
       reason: normalizedReason,
-      operation: "",
+      operation: normalizedOperation,
       lastResolvedPhase:
         isPendingPhase ? AUTO_SYNC_INDICATOR_PHASE_IDLE : normalizedPhase,
       lastResolvedTimestamp: now,
@@ -32951,6 +33098,7 @@
     {
       source = AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
       reason = "debug_sequence",
+      operation = "",
       stepDelayMs = 700,
       loop = false,
     } = {}
@@ -32969,7 +33117,8 @@
       autoSyncIndicatorDebugOverrideState = buildAutoSyncIndicatorDebugState(
         nextPhase,
         source,
-        `${reason}:${nextPhase}`
+        `${reason}:${nextPhase}`,
+        operation
       );
       renderNavbarAutoSyncIndicator(autoSyncIndicatorDebugOverrideState);
       index += 1;
@@ -32990,6 +33139,8 @@
 
   const buildAutoSyncIndicatorDebugDisplayState = (stateInput) => {
     const previewState = normalizeAutoSyncIndicatorState(stateInput);
+    const displayOperation =
+      normalizeAutoSyncIndicatorOperation(previewState.operation) || "";
     return {
       ...previewState,
       displayPhase: normalizeAutoSyncIndicatorDebugPhase(
@@ -32998,6 +33149,12 @@
       ),
       displaySource: normalizeAutoSyncIndicatorSource(previewState.source) || "",
       displayReason: normalizeAutoSyncIndicatorReason(previewState.reason) || "",
+      displayOperation,
+      displayDominantDirection:
+        displayOperation === AUTO_SYNC_INDICATOR_OPERATION_PUSH ||
+        displayOperation === AUTO_SYNC_INDICATOR_OPERATION_PULL
+          ? displayOperation
+          : "",
     };
   };
 
@@ -33008,11 +33165,33 @@
     }
     const actualState = getAutoSyncIndicatorState();
     const previewState = autoSyncIndicatorDebugOverrideState;
+    const actualDisplayState = resolveAutoSyncIndicatorDisplayPhase(actualState);
+    const previewDisplayState = previewState
+      ? buildAutoSyncIndicatorDebugDisplayState(previewState)
+      : null;
     [
       ["actual-phase", actualState.phase || AUTO_SYNC_INDICATOR_PHASE_IDLE],
       ["actual-source", actualState.source || "—"],
+      [
+        "actual-operation",
+        resolveAutoSyncIndicatorDisplayOperation(actualDisplayState) || "—",
+      ],
       ["preview-phase", previewState?.phase || "无"],
       ["preview-source", previewState?.source || "—"],
+      [
+        "preview-operation",
+        previewDisplayState
+          ? resolveAutoSyncIndicatorDisplayOperation(previewDisplayState) || "—"
+          : "—",
+      ],
+      [
+        "selected-source",
+        autoSyncIndicatorDebugSelectedSource || "—",
+      ],
+      [
+        "selected-operation",
+        autoSyncIndicatorDebugSelectedOperation || "自动",
+      ],
     ].forEach(([statusKey, text]) => {
       const statusEl = panel.querySelector(
         `[data-s1p-auto-sync-debug-status='${statusKey}']`
@@ -33021,6 +33200,24 @@
         statusEl.textContent = text;
       }
     });
+    panel
+      .querySelectorAll("[data-s1p-auto-sync-debug-source]")
+      .forEach((button) => {
+        const isActive =
+          button.dataset.s1pAutoSyncDebugSource ===
+          autoSyncIndicatorDebugSelectedSource;
+        button.classList.toggle("is-active", isActive);
+        button.setAttribute("aria-pressed", isActive ? "true" : "false");
+      });
+    panel
+      .querySelectorAll("[data-s1p-auto-sync-debug-operation]")
+      .forEach((button) => {
+        const isActive =
+          (button.dataset.s1pAutoSyncDebugOperation || "") ===
+          autoSyncIndicatorDebugSelectedOperation;
+        button.classList.toggle("is-active", isActive);
+        button.setAttribute("aria-pressed", isActive ? "true" : "false");
+      });
   };
 
   const ensureS1pDebugPanelHost = () => {
@@ -33039,6 +33236,8 @@
     action = "",
     kind = "",
     sizeClassName = "",
+    source = "",
+    operation = null,
   } = {}) => {
     const button = document.createElement("button");
     button.type = "button";
@@ -33049,6 +33248,12 @@
     }
     if (kind) {
       button.dataset.kind = kind;
+    }
+    if (source) {
+      button.dataset.s1pAutoSyncDebugSource = source;
+    }
+    if (operation !== null) {
+      button.dataset.s1pAutoSyncDebugOperation = operation || "";
     }
     return button;
   };
@@ -33146,65 +33351,168 @@
     return panel;
   };
 
-  const hideS1pDebugPanel = (panelId) => {
-    document.getElementById(panelId)?.classList.add("s1p-hidden");
+  const hideDebugUnifiedPanel = () => {
+    document.getElementById(DEBUG_UNIFIED_PANEL_ID)?.classList.add("s1p-hidden");
+    setDebugConsolePersistentlyVisible(false);
   };
+
+  const DEBUG_UNIFIED_TABS = Object.freeze([
+    { key: "log", label: "日志" },
+    { key: "diagnostics", label: "诊断信息" },
+    { key: "indicator", label: "指示器调试" },
+  ]);
+
+  const normalizeDebugUnifiedTabKey = (tabKey = "") =>
+    DEBUG_UNIFIED_TABS.some((tab) => tab.key === tabKey) ? tabKey : "log";
+
+  const switchDebugUnifiedPanelTab = (tabKey = "log") => {
+    const panel = document.getElementById(DEBUG_UNIFIED_PANEL_ID);
+    if (!panel) {
+      return;
+    }
+    const activeTab = normalizeDebugUnifiedTabKey(tabKey);
+    panel.querySelectorAll("[data-tab]").forEach((button) => {
+      const isActive = button.dataset.tab === activeTab;
+      button.classList.toggle("active", isActive);
+    });
+    positionDebugUnifiedPanelTabSlider();
+    panel.querySelectorAll("[data-s1p-debug-tab-pane]").forEach((pane) => {
+      const isActive = pane.dataset.s1pDebugTabPane === activeTab;
+      pane.classList.toggle("is-active", isActive);
+      pane.classList.toggle("s1p-hidden", !isActive);
+    });
+    if (activeTab === "log") {
+      logDirty = true;
+      renderLogPanel();
+    } else if (activeTab === "diagnostics") {
+      updateSyncDiagnosticsPanel();
+    } else if (activeTab === "indicator") {
+      updateAutoSyncIndicatorDebugPanelState();
+    }
+  };
+
+  const positionDebugUnifiedPanelTabSlider = () => {
+    const panel = document.getElementById(DEBUG_UNIFIED_PANEL_ID);
+    if (!panel) return;
+    const tabsDiv = panel.querySelector(".s1p-tabs");
+    if (!tabsDiv) return;
+    const slider = tabsDiv.querySelector(".s1p-tab-slider");
+    const activeBtn = tabsDiv.querySelector(".s1p-tab-btn.active");
+    if (!slider || !activeBtn) return;
+    const tabsRect = tabsDiv.getBoundingClientRect();
+    const btnRect = activeBtn.getBoundingClientRect();
+    slider.style.left = `${btnRect.left - tabsRect.left}px`;
+    slider.style.width = `${btnRect.width}px`;
+    slider.style.transition =
+      "left 0.25s ease, width 0.25s ease";
+  };
+
+  const getSelectedAutoSyncIndicatorDebugSource = () =>
+    normalizeAutoSyncIndicatorSource(autoSyncIndicatorDebugSelectedSource) ||
+    AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND;
+
+  const getSelectedAutoSyncIndicatorDebugOperation = () =>
+    normalizeAutoSyncIndicatorOperation(autoSyncIndicatorDebugSelectedOperation);
 
   const triggerAutoSyncIndicatorDebugAction = (action) => {
-    const api = globalThis.__s1pAutoSyncIndicatorDebug;
-    if (!api) {
+    const normalizedAction = String(action || "");
+    const phaseButton = AUTO_SYNC_INDICATOR_DEBUG_PHASE_BUTTONS.find(
+      (buttonConfig) => buttonConfig.action === normalizedAction
+    );
+    if (phaseButton) {
+      setAutoSyncIndicatorDebugOverride(
+        buildAutoSyncIndicatorDebugState(
+          phaseButton.phase,
+          getSelectedAutoSyncIndicatorDebugSource(),
+          phaseButton.reason,
+          getSelectedAutoSyncIndicatorDebugOperation()
+        )
+      );
       return;
     }
-    if (
-      AUTO_SYNC_INDICATOR_DEBUG_PHASE_BUTTONS.some(
-        (buttonConfig) => buttonConfig.action === action
-      )
-    ) {
-      api[action]?.();
+
+    const sourceButton = AUTO_SYNC_INDICATOR_DEBUG_SOURCE_BUTTONS.find(
+      (buttonConfig) => buttonConfig.action === normalizedAction
+    );
+    if (sourceButton) {
+      autoSyncIndicatorDebugSelectedSource =
+        normalizeAutoSyncIndicatorSource(sourceButton.source) ||
+        AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND;
+      updateAutoSyncIndicatorDebugPanelState();
       return;
     }
-    if (
-      AUTO_SYNC_INDICATOR_DEBUG_SEQUENCE_BUTTONS.some(
-        (buttonConfig) => buttonConfig.action === action
-      )
-    ) {
-      api[action]?.(900, false);
+
+    const operationButton = AUTO_SYNC_INDICATOR_DEBUG_OPERATION_BUTTONS.find(
+      (buttonConfig) => buttonConfig.action === normalizedAction
+    );
+    if (operationButton) {
+      autoSyncIndicatorDebugSelectedOperation =
+        normalizeAutoSyncIndicatorOperation(operationButton.operation) || "";
+      updateAutoSyncIndicatorDebugPanelState();
       return;
     }
-    if (action === "stop" || action === "clear") {
-      api[action]?.();
+
+    const sequenceButton = AUTO_SYNC_INDICATOR_DEBUG_SEQUENCE_BUTTONS.find(
+      (buttonConfig) => buttonConfig.action === normalizedAction
+    );
+    if (sequenceButton) {
+      runAutoSyncIndicatorDebugSequence(sequenceButton.phases, {
+        source: getSelectedAutoSyncIndicatorDebugSource(),
+        operation: getSelectedAutoSyncIndicatorDebugOperation(),
+        reason: sequenceButton.reason,
+        stepDelayMs: 900,
+        loop: false,
+      });
+      return;
+    }
+
+    if (normalizedAction === "stop") {
+      stopAutoSyncIndicatorDebugSequence();
+      return;
+    }
+    if (normalizedAction === "clear") {
+      clearAutoSyncIndicatorDebugOverride();
     }
   };
 
-  const initializeAutoSyncIndicatorDebugPanel = () => {
-    const existingPanel = document.getElementById(AUTO_SYNC_INDICATOR_DEBUG_PANEL_ID);
-    if (existingPanel) {
-      existingPanel.classList.remove("s1p-hidden");
-      updateAutoSyncIndicatorDebugPanelState();
-      return existingPanel;
-    }
-    const panel = createS1pDebugPanelShell({
-      id: AUTO_SYNC_INDICATOR_DEBUG_PANEL_ID,
-      title: "同步指示器调试",
-      note: "只覆盖导航指示器显示，不修改真实同步状态。",
-      statusMarkup: `
-        <span>实际 phase</span><strong data-s1p-auto-sync-debug-status="actual-phase">—</strong>
-        <span>实际 source</span><strong data-s1p-auto-sync-debug-status="actual-source">—</strong>
-        <span>预览 phase</span><strong data-s1p-auto-sync-debug-status="preview-phase">无</strong>
-        <span>预览 source</span><strong data-s1p-auto-sync-debug-status="preview-source">—</strong>
-      `,
-      onAction: (action) => {
-        triggerAutoSyncIndicatorDebugAction(action);
-        updateAutoSyncIndicatorDebugPanelState();
-      },
-    });
+  const createAutoSyncIndicatorDebugTabContent = () => {
+    const panel = document.createElement("div");
+    panel.id = AUTO_SYNC_INDICATOR_DEBUG_PANEL_ID;
+    panel.className = "s1p-debug-tab-pane s1p-hidden";
+    panel.dataset.s1pDebugTabPane = "indicator";
+
+    const noteEl = document.createElement("div");
+    noteEl.className = "s1p-debug-panel-note";
+    noteEl.textContent = "只覆盖导航指示器显示，不修改真实同步状态。";
+    panel.appendChild(noteEl);
+
+    const statusWrapper = document.createElement("div");
+    statusWrapper.className = "s1p-debug-panel-status";
+    statusWrapper.innerHTML = `
+      <span>实际 phase</span><strong data-s1p-auto-sync-debug-status="actual-phase">—</strong>
+      <span>实际 source</span><strong data-s1p-auto-sync-debug-status="actual-source">—</strong>
+      <span>实际 operation</span><strong data-s1p-auto-sync-debug-status="actual-operation">—</strong>
+      <span>预览 phase</span><strong data-s1p-auto-sync-debug-status="preview-phase">无</strong>
+      <span>预览 source</span><strong data-s1p-auto-sync-debug-status="preview-source">—</strong>
+      <span>预览 operation</span><strong data-s1p-auto-sync-debug-status="preview-operation">—</strong>
+      <span>选择 source</span><strong data-s1p-auto-sync-debug-status="selected-source">—</strong>
+      <span>选择 operation</span><strong data-s1p-auto-sync-debug-status="selected-operation">自动</strong>
+    `;
+    panel.appendChild(statusWrapper);
+
     AUTO_SYNC_INDICATOR_DEBUG_PANEL_GROUPS.forEach((groupConfig) => {
       panel.appendChild(createS1pDebugPanelGroup(groupConfig));
     });
-    const host = ensureS1pDebugPanelHost();
-    host.appendChild(panel);
-    updateAutoSyncIndicatorDebugPanelState();
     return panel;
+  };
+
+  const initializeAutoSyncIndicatorDebugPanel = () => {
+    initializeDebugUnifiedPanel({
+      activeTab: "indicator",
+      persistVisible: true,
+    });
+    updateAutoSyncIndicatorDebugPanelState();
+    return document.getElementById(AUTO_SYNC_INDICATOR_DEBUG_PANEL_ID);
   };
 
   const getNavbarAutoSyncIndicatorTransitionClassNames = (
@@ -33742,7 +34050,7 @@
       getActualState: () => getAutoSyncIndicatorState(),
       getPreviewState: () => autoSyncIndicatorDebugOverrideState,
       showPanel: () => initializeAutoSyncIndicatorDebugPanel(),
-      hidePanel: () => hideS1pDebugPanel(AUTO_SYNC_INDICATOR_DEBUG_PANEL_ID),
+      hidePanel: () => hideDebugUnifiedPanel(),
       clear: () => clearAutoSyncIndicatorDebugOverride(),
       stop: () => stopAutoSyncIndicatorDebugSequence(),
       show: (
@@ -33750,21 +34058,27 @@
         {
           source = AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
           reason = "debug_manual",
+          operation = "",
         } = {}
       ) =>
         setAutoSyncIndicatorDebugOverride(
-          buildAutoSyncIndicatorDebugState(phase, source, reason)
+          buildAutoSyncIndicatorDebugState(phase, source, reason, operation)
         ),
       demo: (stepDelayMs = 700) =>
         runAutoSyncIndicatorDebugSequence(undefined, {
           stepDelayMs,
+          source: getSelectedAutoSyncIndicatorDebugSource(),
+          operation: getSelectedAutoSyncIndicatorDebugOperation(),
         }),
     };
     AUTO_SYNC_INDICATOR_DEBUG_PHASE_BUTTONS.forEach(
       ({ action, phase, reason }) => {
-        debugApi[action] = (source = AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND) =>
+        debugApi[action] = (
+          source = AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+          operation = ""
+        ) =>
           setAutoSyncIndicatorDebugOverride(
-            buildAutoSyncIndicatorDebugState(phase, source, reason)
+            buildAutoSyncIndicatorDebugState(phase, source, reason, operation)
           );
       }
     );
@@ -33778,6 +34092,8 @@
             stepDelayMs,
             loop,
             reason,
+            source: getSelectedAutoSyncIndicatorDebugSource(),
+            operation: getSelectedAutoSyncIndicatorDebugOperation(),
           });
       }
     );
@@ -33785,7 +34101,7 @@
   };
 
   const isDebugConsolePanelVisible = () => {
-    const panel = document.getElementById(DEBUG_CONSOLE_PANEL_ID);
+    const panel = document.getElementById(DEBUG_UNIFIED_PANEL_ID);
     return !!panel && !panel.classList.contains("s1p-hidden");
   };
 
@@ -34063,7 +34379,7 @@
     if (!logDirty) return;
     const panel = document.getElementById(DEBUG_CONSOLE_PANEL_ID);
     if (!panel) return;
-    if (panel.classList.contains("s1p-hidden")) return;
+    if (!isDebugConsolePanelVisible()) return;
     logDirty = false;
 
     const logArea = panel.querySelector(".s1p-debug-console-log-area");
@@ -34094,70 +34410,14 @@
     updateDebugConsoleExpandAllButton(panel);
   };
 
-  const initializeDebugConsolePanel = ({ persistVisible = true } = {}) => {
-    startLogCollector();
-    if (persistVisible) {
-      setDebugConsolePersistentlyVisible(true);
-    }
-    const existing = document.getElementById(DEBUG_CONSOLE_PANEL_ID);
-    if (existing) {
-      existing.classList.remove("s1p-hidden");
-      applySavedDebugConsolePanelSize(existing);
-      logDirty = true;
-      renderLogPanel();
-      return existing;
-    }
+  const createDebugConsoleLogTabContent = () => {
+    const panel = document.createElement("div");
+    panel.id = DEBUG_CONSOLE_PANEL_ID;
+    panel.className = "s1p-debug-tab-pane s1p-hidden";
+    panel.dataset.s1pDebugTabPane = "log";
 
-    const panel = createS1pDebugPanelShell({
-      id: DEBUG_CONSOLE_PANEL_ID,
-      title: "调试控制台",
-      hideAction: "hide-console",
-      hideLabel: "隐藏",
-      onAction: (action, button) => {
-        if (action === "hide-console") return;
-        if (action === "clear-logs") {
-          logBuffer = [];
-          expandedLogEntryIds = new Set();
-          logDirty = true;
-          renderLogPanel();
-          showDebugConsoleButtonFeedback(button, "已清空");
-          return;
-        }
-        if (action === "toggle-expand-logs") {
-          logExpandAll = !logExpandAll;
-          if (logExpandAll) {
-            expandedLogEntryIds = new Set();
-          }
-          updateDebugConsoleExpandAllButton(panel);
-          logDirty = true;
-          renderLogPanel();
-          return;
-        }
-        if (action === "copy-logs") {
-          const text = logBuffer.map((entry) => formatLogEntryForCopy(entry)).join("\n");
-          copyDebugConsoleText(text);
-          showDebugConsoleButtonFeedback(button, "已复制");
-          return;
-        }
-      },
-      onHide: () => {
-        setDebugConsolePersistentlyVisible(false);
-      },
-    });
-    attachDebugConsoleResizeHandles(panel);
-
-    const head = panel.querySelector(".s1p-debug-panel-head");
-    const hideButton = head.querySelector('[data-s1p-debug-action="hide-console"]');
-    const btnGroup = document.createElement("div");
-    btnGroup.className = "s1p-debug-console-head-actions";
-    btnGroup.appendChild(createS1pDebugButton({ label: "清空", action: "clear-logs", kind: "utility" }));
-    btnGroup.appendChild(createS1pDebugButton({ label: "复制", action: "copy-logs", kind: "utility" }));
-    btnGroup.appendChild(createS1pDebugButton({ label: "展开全部", action: "toggle-expand-logs", kind: "utility" }));
-    if (hideButton) {
-      btnGroup.appendChild(hideButton);
-    }
-    head.appendChild(btnGroup);
-    updateDebugConsoleExpandAllButton(panel);
+    const toolbar = document.createElement("div");
+    toolbar.className = "s1p-debug-console-toolbar";
 
     const filterBar = document.createElement("div");
     filterBar.className = "s1p-debug-console-filter-bar";
@@ -34186,7 +34446,9 @@
 
     const searchInput = document.createElement("input");
     searchInput.type = "text";
+    searchInput.className = "s1p-input";
     searchInput.placeholder = "搜索日志...";
+    searchInput.value = logSearchKeyword;
     searchInput.addEventListener("input", () => {
       logSearchKeyword = searchInput.value.trim();
       logDirty = true;
@@ -34194,12 +34456,38 @@
     });
     filterBar.appendChild(searchInput);
 
-    panel.appendChild(filterBar);
+    const btnGroup = document.createElement("div");
+    btnGroup.className = "s1p-debug-console-head-actions";
+    btnGroup.appendChild(
+      createS1pDebugButton({
+        label: "清空",
+        action: "clear-logs",
+        kind: "utility",
+      })
+    );
+    btnGroup.appendChild(
+      createS1pDebugButton({
+        label: "复制",
+        action: "copy-logs",
+        kind: "utility",
+      })
+    );
+    btnGroup.appendChild(
+      createS1pDebugButton({
+        label: "展开全部",
+        action: "toggle-expand-logs",
+        kind: "utility",
+      })
+    );
+    toolbar.appendChild(btnGroup);
+    toolbar.appendChild(filterBar);
+    panel.appendChild(toolbar);
 
     const logArea = document.createElement("div");
     logArea.className = "s1p-debug-console-log-area";
     logArea.addEventListener("scroll", () => {
-      logAutoScroll = logArea.scrollTop + logArea.clientHeight >= logArea.scrollHeight - 10;
+      logAutoScroll =
+        logArea.scrollTop + logArea.clientHeight >= logArea.scrollHeight - 10;
     });
     panel.appendChild(logArea);
 
@@ -34209,22 +34497,209 @@
     statusBar.textContent = "共 0 条";
     panel.appendChild(statusBar);
 
-    const host = ensureS1pDebugPanelHost();
-    host.appendChild(panel);
-    applySavedDebugConsolePanelSize(panel);
-
-    logDirty = true;
-    renderLogPanel();
+    updateDebugConsoleExpandAllButton(panel);
     return panel;
   };
 
-  const toggleDebugConsolePanel = () => {
-    const panel = document.getElementById(DEBUG_CONSOLE_PANEL_ID);
+  const createDebugSyncDiagnosticsTabContent = () => {
+    const panel = document.createElement("div");
+    panel.className = "s1p-debug-tab-pane s1p-hidden";
+    panel.dataset.s1pDebugTabPane = "diagnostics";
+
+    const toolbar = document.createElement("div");
+    toolbar.className = "s1p-debug-diagnostics-toolbar";
+    toolbar.appendChild(
+      createS1pDebugButton({
+        label: "刷新",
+        action: "refresh-diagnostics",
+        kind: "utility",
+      })
+    );
+    toolbar.appendChild(
+      createS1pDebugButton({
+        label: "复制诊断",
+        action: "copy-diagnostics",
+        kind: "utility",
+      })
+    );
+    toolbar.appendChild(
+      createS1pDebugButton({
+        label: "重置诊断",
+        action: "request-reset-diagnostics",
+        kind: "utility",
+      })
+    );
+    panel.appendChild(toolbar);
+
+    const confirmRow = document.createElement("div");
+    confirmRow.className = "s1p-debug-confirm-inline s1p-hidden";
+    confirmRow.dataset.s1pDebugDiagnosticsConfirm = "reset";
+    const confirmText = document.createElement("span");
+    confirmText.textContent = "清空最近同步诊断记录，不影响实际同步数据。";
+    const confirmActions = document.createElement("div");
+    confirmActions.className = "s1p-debug-panel-actions";
+    confirmActions.appendChild(
+      createS1pDebugButton({
+        label: "确认重置",
+        action: "confirm-reset-diagnostics",
+        kind: "utility",
+      })
+    );
+    confirmActions.appendChild(
+      createS1pDebugButton({
+        label: "取消",
+        action: "cancel-reset-diagnostics",
+        kind: "utility",
+      })
+    );
+    confirmRow.append(confirmText, confirmActions);
+    panel.appendChild(confirmRow);
+
+    const diagnosticsPanel = document.createElement("div");
+    diagnosticsPanel.id = DEBUG_SYNC_DIAGNOSTICS_PANEL_ID;
+    diagnosticsPanel.className =
+      "s1p-debug-console-log-area s1p-debug-diagnostics-panel";
+    panel.appendChild(diagnosticsPanel);
+    return panel;
+  };
+
+  const setDebugDiagnosticsResetConfirmationVisible = (visible) => {
+    const confirmRow = document.querySelector(
+      "[data-s1p-debug-diagnostics-confirm='reset']"
+    );
+    if (confirmRow) {
+      confirmRow.classList.toggle("s1p-hidden", visible !== true);
+    }
+  };
+
+  const handleDebugUnifiedPanelAction = (action, button) => {
+    if (action.startsWith("switch-tab:")) {
+      switchDebugUnifiedPanelTab(action.slice("switch-tab:".length));
+      return;
+    }
+    if (action === "clear-logs") {
+      logBuffer = [];
+      expandedLogEntryIds = new Set();
+      logDirty = true;
+      renderLogPanel();
+      showDebugConsoleButtonFeedback(button, "已清空");
+      return;
+    }
+    if (action === "toggle-expand-logs") {
+      logExpandAll = !logExpandAll;
+      if (logExpandAll) {
+        expandedLogEntryIds = new Set();
+      }
+      updateDebugConsoleExpandAllButton();
+      logDirty = true;
+      renderLogPanel();
+      return;
+    }
+    if (action === "copy-logs") {
+      const text = logBuffer
+        .map((entry) => formatLogEntryForCopy(entry))
+        .join("\n");
+      copyDebugConsoleText(text);
+      showDebugConsoleButtonFeedback(button, "已复制");
+      return;
+    }
+    if (action === "refresh-diagnostics") {
+      updateSyncDiagnosticsPanel();
+      showDebugConsoleButtonFeedback(button, "已刷新");
+      return;
+    }
+    if (action === "copy-diagnostics") {
+      copyDebugConsoleText(buildSyncDiagnosticsSummary());
+      showDebugConsoleButtonFeedback(button, "已复制");
+      return;
+    }
+    if (action === "request-reset-diagnostics") {
+      setDebugDiagnosticsResetConfirmationVisible(true);
+      return;
+    }
+    if (action === "cancel-reset-diagnostics") {
+      setDebugDiagnosticsResetConfirmationVisible(false);
+      return;
+    }
+    if (action === "confirm-reset-diagnostics") {
+      resetSyncDiagnostics();
+      updateLastSyncTimeDisplay();
+      updateSyncDiagnosticsPanel();
+      setDebugDiagnosticsResetConfirmationVisible(false);
+      showDebugConsoleButtonFeedback(button, "已重置");
+      return;
+    }
+    triggerAutoSyncIndicatorDebugAction(action);
+    updateAutoSyncIndicatorDebugPanelState();
+  };
+
+  const initializeDebugUnifiedPanel = ({
+    persistVisible = true,
+    activeTab = "log",
+  } = {}) => {
+    startLogCollector();
+    if (persistVisible) {
+      setDebugConsolePersistentlyVisible(true);
+    }
+    const existing = document.getElementById(DEBUG_UNIFIED_PANEL_ID);
+    if (existing) {
+      existing.classList.remove("s1p-hidden");
+      applySavedDebugConsolePanelSize(existing);
+      switchDebugUnifiedPanelTab(activeTab);
+      return existing;
+    }
+
+    const panel = createS1pDebugPanelShell({
+      id: DEBUG_UNIFIED_PANEL_ID,
+      title: "S1 Plus 调试",
+      hideAction: "hide-debug-unified",
+      hideLabel: "隐藏",
+      onAction: handleDebugUnifiedPanelAction,
+      onHide: () => {
+        setDebugConsolePersistentlyVisible(false);
+      },
+    });
+
+    const tabBarHtml = DEBUG_UNIFIED_TABS.map(({ key, label }, index) => {
+      const isActive = index === 0;
+      return `<button
+        class="s1p-tab-btn${isActive ? " active" : ""}"
+        data-tab="${key}"
+        data-s1p-debug-action="switch-tab:${key}"
+        type="button"
+      >${label}</button>`;
+    }).join("");
+    const tabsDiv = document.createElement("div");
+    tabsDiv.className = "s1p-tabs";
+    tabsDiv.innerHTML =
+      '<div class="s1p-tab-slider"></div>' + tabBarHtml;
+    panel.appendChild(tabsDiv);
+
+    const content = document.createElement("div");
+    content.className = "s1p-debug-tab-content";
+    content.appendChild(createDebugConsoleLogTabContent());
+    content.appendChild(createDebugSyncDiagnosticsTabContent());
+    content.appendChild(createAutoSyncIndicatorDebugTabContent());
+    panel.appendChild(content);
+
+    const host = ensureS1pDebugPanelHost();
+    host.appendChild(panel);
+    attachDebugConsoleResizeHandles(panel);
+    applySavedDebugConsolePanelSize(panel);
+    switchDebugUnifiedPanelTab(activeTab);
+    return panel;
+  };
+
+  const toggleDebugUnifiedPanel = () => {
+    const panel = document.getElementById(DEBUG_UNIFIED_PANEL_ID);
     if (panel && !panel.classList.contains("s1p-hidden")) {
       panel.classList.add("s1p-hidden");
       setDebugConsolePersistentlyVisible(false);
     } else {
-      initializeDebugConsolePanel();
+      initializeDebugUnifiedPanel({
+        activeTab: "log",
+        persistVisible: true,
+      });
     }
   };
 
@@ -35962,16 +36437,6 @@
       <div class="s1p-settings-group">
         <div class="s1p-settings-group-title s1p-settings-section-title-label">远程同步 (通过GitHub Gist)</div>
         <div id="s1p-last-sync-time-container" class="s1p-setting-desc s1p-sync-last-sync-time"></div>
-        <div id="s1p-sync-diagnostics-wrapper" class="s1p-settings-sub-group s1p-diag-wrapper s1p-hidden">
-          <div class="s1p-settings-item s1p-diag-header">
-            <label class="s1p-settings-label">同步诊断信息</label>
-            <div class="s1p-diag-actions">
-              <button id="s1p-sync-diagnostics-copy-btn" class="s1p-btn s1p-diag-btn" type="button">复制诊断</button>
-              <button id="s1p-sync-diagnostics-reset-btn" class="s1p-btn s1p-diag-btn" type="button">重置诊断</button>
-            </div>
-          </div>
-          <div id="s1p-sync-diagnostics-panel" class="s1p-diag-panel"></div>
-        </div>
         <div class="s1p-settings-item">
           <label class="s1p-settings-label" for="s1p-remote-enabled-toggle">启用远程同步</label>
           <label class="s1p-switch">
@@ -36941,53 +37406,18 @@
     }
 
     const settings = getSettings();
-    const syncDiagnosticsWrapper = modal.querySelector(
-      "#s1p-sync-diagnostics-wrapper"
-    );
-    let isSyncDiagnosticsVisible = false;
-    const setSyncDiagnosticsVisible = (visible) => {
-      if (!syncDiagnosticsWrapper) return;
-      isSyncDiagnosticsVisible = visible;
-      syncDiagnosticsWrapper.classList.toggle("s1p-hidden", !visible);
-      if (visible) {
-        updateSyncDiagnosticsPanel();
-      }
-    };
-    setSyncDiagnosticsVisible(false);
 
     const versionFooter = modal.querySelector(".s1p-modal-footer");
     if (versionFooter) {
-      let versionClickCount = 0;
-      let versionClickTimer = null;
       let debugHoverTimer = null;
       let debugHoverDot = null;
       versionFooter.addEventListener("click", () => {
         if (debugHoverDot && debugHoverDot.isConnected) {
           debugHoverDot.remove();
           debugHoverDot = null;
-          toggleDebugConsolePanel();
+          toggleDebugUnifiedPanel();
           return;
         }
-        versionClickCount += 1;
-        if (versionClickTimer) {
-          clearTimeout(versionClickTimer);
-        }
-        if (versionClickCount >= 3) {
-          versionClickCount = 0;
-          const nextVisible = !isSyncDiagnosticsVisible;
-          setSyncDiagnosticsVisible(nextVisible);
-          showSettingsMessage(
-            nextVisible
-              ? "同步诊断信息已启用（仅当前设置窗口）。"
-              : "同步诊断信息已隐藏。",
-            true
-          );
-          return;
-        }
-        versionClickTimer = setTimeout(() => {
-          versionClickCount = 0;
-          versionClickTimer = null;
-        }, 1200);
       });
       versionFooter.addEventListener("mouseenter", () => {
         if (debugHoverTimer) clearTimeout(debugHoverTimer);
@@ -40747,47 +41177,6 @@
           }
           updateRemoteSyncInputsState();
         }
-      }
-
-      if (e.target.id === "s1p-sync-diagnostics-copy-btn") {
-        const diagnosticsText = buildSyncDiagnosticsSummary();
-        try {
-          await navigator.clipboard.writeText(diagnosticsText);
-          showSettingsMessage("同步诊断已复制到剪贴板。", true);
-        } catch (_) {
-          const tempTextarea = document.createElement("textarea");
-          tempTextarea.value = diagnosticsText;
-          tempTextarea.style.position = "fixed";
-          tempTextarea.style.opacity = "0";
-          tempTextarea.style.pointerEvents = "none";
-          document.body.appendChild(tempTextarea);
-          tempTextarea.focus();
-          tempTextarea.select();
-          try {
-            const copied = document.execCommand("copy");
-            showSettingsMessage(
-              copied
-                ? "同步诊断已复制到剪贴板。"
-                : "复制失败，请稍后重试。",
-              copied
-            );
-          } finally {
-            tempTextarea.remove();
-          }
-        }
-      }
-
-      if (e.target.id === "s1p-sync-diagnostics-reset-btn") {
-        createConfirmationModal(
-          "确认重置同步诊断吗？",
-          "将清空最近同步成功/失败/冲突记录，不影响实际同步数据。",
-          () => {
-            resetSyncDiagnostics();
-            updateLastSyncTimeDisplay();
-            showSettingsMessage("同步诊断已重置。", true);
-          },
-          "确认重置"
-        );
       }
 
       if (e.target.id === "s1p-open-gist-page-btn") {
@@ -47835,11 +48224,11 @@
           },
         },
         {
-          name: "auto-show debug console if enabled",
+          name: "auto-show debug panel if enabled",
           optional: true,
           run: () => {
             if (isDebugConsolePersistentlyVisible()) {
-              initializeDebugConsolePanel({ persistVisible: false });
+              initializeDebugUnifiedPanel({ persistVisible: false });
             }
           },
         },
