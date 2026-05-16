@@ -17,6 +17,7 @@ const createHarness = () => {
 const BACKGROUND_SYNC_DEBOUNCE_STATE_KEY =
   "s1p_background_sync_debounce_state";
 const AUTO_SYNC_INDICATOR_STATE_KEY = "s1p_auto_sync_indicator_state";
+const PENDING_AUTO_SYNC_KEY = "s1p_pending_auto_sync_request";
 
 const expectMatch = (pattern, message) => {
   assert.match(sourceCode, pattern, message);
@@ -228,6 +229,45 @@ const testIndicatorCyclePersistsSourceToResolvedState = () => {
   assert.strictEqual(state.source, "daily_startup");
   assert.strictEqual(state.operation, "");
   assert.strictEqual(state.lastResolvedSource, "daily_startup");
+};
+
+const testDeferredResolvedPhaseKeepsOperation = async () => {
+  const { hooks, store } = createHarness();
+  const token = hooks.startAutoSyncIndicatorCycle("foreground_resume", {
+    operation: "pull",
+    reason: "foreground_probe",
+  });
+  const runningState = toPlainObject(hooks.getAutoSyncIndicatorState());
+  store.set(AUTO_SYNC_INDICATOR_STATE_KEY, {
+    ...runningState,
+    token,
+    timestamp: Date.now() - 645,
+  });
+
+  assert.equal(
+    hooks.setAutoSyncIndicatorResolvedPhase("success", {
+      source: "foreground_resume",
+      reason: "pulled",
+      operation: "pull",
+    }),
+    true
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 80));
+
+  const state = toPlainObject(hooks.getAutoSyncIndicatorState());
+  assert.equal(state.phase, "success");
+  assert.equal(
+    state.operation,
+    "pull",
+    "延迟落成功态也必须保留调用方传入的 pull 方向。"
+  );
+  const resolvedState = toPlainObject(hooks.resolveAutoSyncIndicatorDisplayPhase());
+  assert.equal(hooks.getAutoSyncIndicatorDisplayKind(resolvedState), "pull");
+  assert.equal(
+    hooks.getAutoSyncIndicatorTitle(resolvedState),
+    "自动同步：云端更新已拉取"
+  );
 };
 
 const testSharedSchedulerAndLocksFeedUnifiedDisplayState = () => {
@@ -497,6 +537,70 @@ const testPullRetryKeepsCloudDirectionOverLocalPending = () => {
   store.delete(BACKGROUND_SYNC_DEBOUNCE_STATE_KEY);
 };
 
+const testSuccessDisplayKeepsDirectionalCompletion = () => {
+  {
+    const { hooks, store } = createHarness();
+    const token = hooks.startAutoSyncIndicatorCycle("background_push", {
+      operation: "push",
+      reason: "read_progress",
+    });
+    const runningState = toPlainObject(hooks.getAutoSyncIndicatorState());
+    store.set(AUTO_SYNC_INDICATOR_STATE_KEY, {
+      ...runningState,
+      timestamp: Date.now() - 1000,
+    });
+    hooks.finishAutoSyncIndicatorCycle(token, "success", {
+      source: "background_push",
+      reason: "pushed",
+      operation: "push",
+    });
+    const resolvedState = toPlainObject(hooks.resolveAutoSyncIndicatorDisplayPhase());
+    assert.equal(resolvedState.displayPhase, "success");
+    assert.equal(resolvedState.displaySessionKind, "local_push_session");
+    assert.equal(resolvedState.displaySubstate, "done");
+    assert.equal(
+      hooks.getAutoSyncIndicatorDisplayKind(resolvedState),
+      "push",
+      "push success 应保留推送方向，不能退回泛化成功态。"
+    );
+    assert.equal(
+      hooks.getAutoSyncIndicatorTitle(resolvedState),
+      "自动同步：本地变更已推送"
+    );
+  }
+
+  {
+    const { hooks, store } = createHarness();
+    const token = hooks.startAutoSyncIndicatorCycle("foreground_resume", {
+      operation: "pull",
+      reason: "pull",
+    });
+    const runningState = toPlainObject(hooks.getAutoSyncIndicatorState());
+    store.set(AUTO_SYNC_INDICATOR_STATE_KEY, {
+      ...runningState,
+      timestamp: Date.now() - 1000,
+    });
+    hooks.finishAutoSyncIndicatorCycle(token, "success", {
+      source: "foreground_resume",
+      reason: "pull",
+      operation: "pull",
+    });
+    const resolvedState = toPlainObject(hooks.resolveAutoSyncIndicatorDisplayPhase());
+    assert.equal(resolvedState.displayPhase, "success");
+    assert.equal(resolvedState.displaySessionKind, "remote_pull_session");
+    assert.equal(resolvedState.displaySubstate, "done");
+    assert.equal(
+      hooks.getAutoSyncIndicatorDisplayKind(resolvedState),
+      "pull",
+      "pull success 应保留拉取方向，不能显示成普通成功态。"
+    );
+    assert.equal(
+      hooks.getAutoSyncIndicatorTitle(resolvedState),
+      "自动同步：云端更新已拉取"
+    );
+  }
+};
+
 const testBackgroundDrainKeepsSuccessAfterPushVerification = () => {
   const { hooks } = createHarness();
   const pushedCompletion = hooks.resolveAutoSyncIndicatorDrainCompletion({
@@ -507,11 +611,13 @@ const testBackgroundDrainKeepsSuccessAfterPushVerification = () => {
   });
   assert.equal(pushedCompletion.phase, "success");
   assert.equal(pushedCompletion.hadSuccessfulWrite, true);
+  assert.equal(pushedCompletion.lastSuccessfulOperation, "push");
 
   const verificationCompletion = hooks.resolveAutoSyncIndicatorDrainCompletion({
     currentPhase: pushedCompletion.phase,
     currentReason: pushedCompletion.reason,
     hadSuccessfulWrite: pushedCompletion.hadSuccessfulWrite,
+    lastSuccessfulOperation: pushedCompletion.lastSuccessfulOperation,
     result: {
       status: "success",
       action: "no_change",
@@ -522,6 +628,27 @@ const testBackgroundDrainKeepsSuccessAfterPushVerification = () => {
     verificationCompletion.phase,
     "success",
     "同一轮后台 drain 已经推送成功后，后续 hash_equal/no_change 只应作为确认，不应把最终展示态压回 idle。"
+  );
+  assert.equal(
+    verificationCompletion.lastSuccessfulOperation,
+    "push",
+    "no_change 确认不应覆盖上一条成功方向。"
+  );
+
+  const pulledCompletion = hooks.resolveAutoSyncIndicatorDrainCompletion({
+    currentPhase: pushedCompletion.phase,
+    currentReason: pushedCompletion.reason,
+    hadSuccessfulOperation: pushedCompletion.hadSuccessfulOperation,
+    lastSuccessfulOperation: pushedCompletion.lastSuccessfulOperation,
+    result: {
+      status: "success",
+      action: "pulled",
+    },
+  });
+  assert.equal(
+    pulledCompletion.lastSuccessfulOperation,
+    "pull",
+    "drain 应记录最后一次有方向的成功结果，而不是停留在第一次 push-like 成功。"
   );
 
   const plainNoChangeCompletion = hooks.resolveAutoSyncIndicatorDrainCompletion({
@@ -535,6 +662,55 @@ const testBackgroundDrainKeepsSuccessAfterPushVerification = () => {
     plainNoChangeCompletion.phase,
     "idle",
     "没有先发生 push 的普通 no_change 仍应安静回 idle。"
+  );
+};
+
+const testStalePendingAutoSyncRequestDoesNotDisplay = () => {
+  const { hooks, store } = createHarness();
+  const now = Date.now();
+  const staleAt = now - 120000;
+  store.set(PENDING_AUTO_SYNC_KEY, {
+    version: 1,
+    source: "read_progress",
+    lastModified: staleAt,
+    maxLastModified: staleAt,
+    createdAt: staleAt,
+    firstDirtyAt: staleAt,
+    lastDirtyAt: staleAt,
+    sources: { read_progress: 1 },
+    threadIds: ["2268704"],
+  });
+
+  let resolvedState = toPlainObject(hooks.resolveAutoSyncIndicatorDisplayPhase());
+  assert.notEqual(
+    resolvedState.displayPhase,
+    "pending",
+    "过期 pending auto sync request 不应继续让导航栏显示待推送。"
+  );
+  assert.equal(hooks.hasActivePendingAutoSyncRequest(), false);
+
+  store.set(PENDING_AUTO_SYNC_KEY, {
+    version: 1,
+    source: "read_progress",
+    lastModified: now,
+    maxLastModified: now,
+    createdAt: now,
+    firstDirtyAt: now,
+    lastDirtyAt: now,
+    sources: { read_progress: 1 },
+    threadIds: ["2268704"],
+  });
+
+  resolvedState = toPlainObject(hooks.resolveAutoSyncIndicatorDisplayPhase());
+  assert.equal(resolvedState.displayPhase, "pending");
+  assert.equal(
+    hooks.getAutoSyncIndicatorDisplayKind(resolvedState),
+    "push",
+    "新鲜 pending auto sync request 仍应显示待推送。"
+  );
+  assert.equal(
+    hooks.getAutoSyncIndicatorTitle(resolvedState),
+    "自动同步：阅读进度待推送"
   );
 };
 
@@ -721,10 +897,13 @@ const testAutoSyncEntryPointsBindIndicatorSources = () => {
   testIndicatorVisibilityCoversAllAutoPaths();
   testSourceAwareTitlesAndMappings();
   testIndicatorCyclePersistsSourceToResolvedState();
+  await testDeferredResolvedPhaseKeepsOperation();
   testSharedSchedulerAndLocksFeedUnifiedDisplayState();
   testDisplaySessionCoalescesPushVerification();
   testPullRetryKeepsCloudDirectionOverLocalPending();
+  testSuccessDisplayKeepsDirectionalCompletion();
   testBackgroundDrainKeepsSuccessAfterPushVerification();
+  testStalePendingAutoSyncRequestDoesNotDisplay();
   testAutoSyncEntryPointsBindIndicatorSources();
 
   console.log("[auto-sync-indicator-linkage] Auto sync indicator linkage verified.");
