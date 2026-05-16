@@ -12269,7 +12269,11 @@
       typeof getBackgroundSyncDebounceState === "function"
         ? getBackgroundSyncDebounceState()
         : null;
-    if (sharedState) {
+    if (
+      sharedState &&
+      now - (Number(sharedState.maxWaitUntil) || Number(sharedState.dueAt) || 0) <
+        AUTO_SYNC_INDICATOR_PENDING_STALE_MS
+    ) {
       return {
         hasPending: true,
         source: AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
@@ -12837,6 +12841,32 @@
       });
     }
 
+    if (phase === AUTO_SYNC_INDICATOR_PHASE_SUCCESS) {
+      const storedOperation =
+        normalizeAutoSyncIndicatorOperation(resolvedState.operation);
+      if (
+        storedOperation === AUTO_SYNC_INDICATOR_OPERATION_PUSH ||
+        storedOperation === AUTO_SYNC_INDICATOR_OPERATION_PULL
+      ) {
+        return withSession(resolvedState, {
+          kind:
+            storedOperation === AUTO_SYNC_INDICATOR_OPERATION_PUSH
+              ? "local_push_session"
+              : "remote_pull_session",
+          direction: storedOperation,
+          substate: "done",
+        });
+      }
+      const lastSession = getLastAutoSyncIndicatorDisplaySession(now);
+      if (lastSession) {
+        return withSession(resolvedState, {
+          kind: lastSession.kind,
+          direction: lastSession.direction,
+          substate: "done",
+        });
+      }
+    }
+
     return withSession(resolvedState, {
       kind: "",
       direction: isAutoSyncIndicatorActivePhase(phase)
@@ -12884,6 +12914,7 @@
     phase = "",
     source = "",
     reason = "",
+    operation = "",
     delayMs = 0,
   } = {}) => {
     clearAutoSyncIndicatorDeferredResolve();
@@ -12906,6 +12937,7 @@
       setAutoSyncIndicatorResolvedPhase(normalizedPhase, {
         source,
         reason,
+        operation,
         skipMinVisibleDelay: true,
       });
     }, Math.max(0, Math.floor(Number(delayMs) || 0)) + 20);
@@ -13226,6 +13258,7 @@
     requestedPhase = "",
     source = "",
     reason = "",
+    operation = "",
     token = "",
   }) => {
     const resolvedPhase =
@@ -13260,7 +13293,7 @@
       token: token || current.token || "",
       source: resolvedSource,
       reason: resolvedReason,
-      operation: "",
+      operation: normalizeAutoSyncIndicatorOperation(operation),
       lastResolvedPhase: resolvedPhase,
       lastResolvedTimestamp: now,
       lastResolvedSource: resolvedSource,
@@ -13360,6 +13393,7 @@
           requestedPhase,
           source: options.source,
           reason: options.reason,
+          operation: options.operation,
           token: persistToken || token,
         })
       );
@@ -13383,6 +13417,7 @@
             phase: requestedPhase,
             source: options.source,
             reason: options.reason,
+            operation: options.operation,
             delayMs: getAutoSyncIndicatorMinimumRunningDelayMs(current),
           });
         }
@@ -13397,6 +13432,7 @@
         phase: requestedPhase,
         source: options.source,
         reason: options.reason,
+        operation: options.operation,
         delayMs: getAutoSyncIndicatorMinimumRunningDelayMs(current),
       });
     }
@@ -13429,6 +13465,7 @@
         requestedPhase: resolvedPhase,
         source: options.source,
         reason: options.reason,
+        operation: options.operation,
       })
     );
     return true;
@@ -13550,6 +13587,55 @@
       return normalizeAutoSyncIndicatorReason(result.reason);
     }
     return normalizeAutoSyncIndicatorReason(result.reason);
+  };
+
+  const resolveAutoSyncIndicatorDrainCompletion = ({
+    currentPhase = "",
+    currentReason = "",
+    result = null,
+    hadSuccessfulWrite = false,
+    lastSuccessfulWriteAction = "",
+  } = {}) => {
+    const resultAction = normalizeSyncDiagnosticText(result?.action, 80);
+    const resultOperation =
+      getAutoSyncIndicatorOperationFromSyncAction(result?.action);
+    const isNewSuccess =
+      result?.status === "success" && isPushLikeSyncAction(resultAction);
+    const nextHadSuccessfulWrite = hadSuccessfulWrite || Boolean(isNewSuccess);
+    const nextLastSuccessfulWriteAction =
+      lastSuccessfulWriteAction ||
+      (isNewSuccess ? (resultOperation || resultAction) : "");
+    const phaseFromResult = getAutoSyncIndicatorPhaseFromResult(result);
+    const reasonFromResult = getAutoSyncIndicatorReasonFromResult(result);
+
+    if (!phaseFromResult) {
+      return {
+        phase: currentPhase,
+        reason: currentReason,
+        hadSuccessfulWrite: nextHadSuccessfulWrite,
+        lastSuccessfulWriteAction: nextLastSuccessfulWriteAction,
+      };
+    }
+
+    if (
+      phaseFromResult === AUTO_SYNC_INDICATOR_PHASE_IDLE &&
+      resultAction === "no_change" &&
+      nextHadSuccessfulWrite
+    ) {
+      return {
+        phase: currentPhase || AUTO_SYNC_INDICATOR_PHASE_SUCCESS,
+        reason: currentReason || reasonFromResult,
+        hadSuccessfulWrite: nextHadSuccessfulWrite,
+        lastSuccessfulWriteAction: nextLastSuccessfulWriteAction,
+      };
+    }
+
+    return {
+      phase: phaseFromResult,
+      reason: reasonFromResult || currentReason,
+      hadSuccessfulWrite: nextHadSuccessfulWrite,
+      lastSuccessfulWriteAction: nextLastSuccessfulWriteAction,
+    };
   };
 
   const cloneForegroundFollowUpReadProgressGuardState = (state = null) => {
@@ -26148,6 +26234,8 @@
       let indicatorCycleToken = "";
       let indicatorFinalPhase = "";
       let indicatorFinalReason = "";
+      let indicatorHadSuccessfulWrite = false;
+      let indicatorLastSuccessfulWriteAction = "";
       isBackgroundAutoSyncInProgress = true;
       let drainCount = 0;
 
@@ -26217,12 +26305,19 @@
                 });
               }
             }
-            const phaseFromResult = getAutoSyncIndicatorPhaseFromResult(result);
-            if (phaseFromResult) {
-              indicatorFinalPhase = phaseFromResult;
-              indicatorFinalReason =
-                getAutoSyncIndicatorReasonFromResult(result) || indicatorFinalReason;
-            }
+            const indicatorCompletion = resolveAutoSyncIndicatorDrainCompletion({
+              currentPhase: indicatorFinalPhase,
+              currentReason: indicatorFinalReason,
+              result,
+              hadSuccessfulWrite: indicatorHadSuccessfulWrite,
+              lastSuccessfulWriteAction: indicatorLastSuccessfulWriteAction,
+            });
+            indicatorFinalPhase = indicatorCompletion.phase;
+            indicatorFinalReason = indicatorCompletion.reason;
+            indicatorHadSuccessfulWrite =
+              indicatorCompletion.hadSuccessfulWrite;
+            indicatorLastSuccessfulWriteAction =
+              indicatorCompletion.lastSuccessfulWriteAction;
             await handleBackgroundAutoSyncResult(result);
           } finally {
             stopBackgroundSyncLockHeartbeat();
@@ -26262,12 +26357,14 @@
             {
               source: AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
               reason: indicatorFinalReason || reason,
+              operation: indicatorLastSuccessfulWriteAction,
             }
           );
         } else if (indicatorFinalPhase) {
           setAutoSyncIndicatorResolvedPhase(indicatorFinalPhase, {
             source: AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
             reason: indicatorFinalReason || reason,
+            operation: indicatorLastSuccessfulWriteAction,
           });
         }
       }
@@ -28746,6 +28843,7 @@
       getAutoSyncIndicatorOperationFromSyncAction,
       getAutoSyncIndicatorPhaseFromResult,
       getAutoSyncIndicatorReasonFromResult,
+      resolveAutoSyncIndicatorDrainCompletion,
       formatAutoSyncCompletionLogMessage,
       recordSyncTraceEvent,
       emitSyncCompletionLog,
@@ -32508,6 +32606,14 @@
           ? "自动同步：同步中"
           : `自动同步：${sourceLabel}中`;
       case AUTO_SYNC_INDICATOR_PHASE_SUCCESS:
+        if (displaySubstate === "done") {
+          if (displaySessionKind === "local_push_session") {
+            return "自动同步：本地变更已推送";
+          }
+          if (displaySessionKind === "remote_pull_session") {
+            return "自动同步：云端更新已拉取";
+          }
+        }
         return sourceLabel === "自动同步"
           ? "自动同步：自动同步已完成"
           : `自动同步：${sourceLabel}已完成`;
@@ -32538,6 +32644,14 @@
         resolveAutoSyncIndicatorDisplayOperation(stateInput) ||
         AUTO_SYNC_INDICATOR_OPERATION_SYNC
       );
+    }
+    if (
+      phase === AUTO_SYNC_INDICATOR_PHASE_SUCCESS &&
+      stateInput?.displayDominantDirection
+    ) {
+      return normalizeAutoSyncIndicatorOperation(
+        stateInput.displayDominantDirection
+      ) || phase;
     }
     return phase;
   };

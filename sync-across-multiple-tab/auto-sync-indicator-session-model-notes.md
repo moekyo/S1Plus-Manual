@@ -449,7 +449,7 @@ probe -> pull pending -> pull running
 4. 未决策的 foreground probe 不显示为待拉取。
 5. 真正拉取云端数据时，必须明确显示向下箭头。
 6. hover tooltip 能解释当前细节，但不直接暴露让用户误解的内部来源名。
-7. `hash_equal` / `no_change` 的二次确认仍然不显示成功勾，最终安静回 idle。
+7. 没有前置成功写入的 `no_change` / `hash_equal` 回 idle；同一轮 drain 内已有成功推送后的 `no_change` 确认不能覆盖 push success（保留为 success + push 方向）。
 8. settling 期间如果 1 秒内出现新的本地 dirty，不闪烁 idle / sync，而是直接续到 `push pending`。
 9. 同时存在阅读进度和其他本地变更时，非 hover 仍显示 push，tooltip 升级为“本地变更待推送 / 推送中”。
 10. 超过会话归并窗口后触发的 foreground probe 不继承旧 push 方向。
