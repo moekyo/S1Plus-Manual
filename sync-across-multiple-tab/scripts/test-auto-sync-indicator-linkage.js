@@ -497,6 +497,47 @@ const testPullRetryKeepsCloudDirectionOverLocalPending = () => {
   store.delete(BACKGROUND_SYNC_DEBOUNCE_STATE_KEY);
 };
 
+const testBackgroundDrainKeepsSuccessAfterPushVerification = () => {
+  const { hooks } = createHarness();
+  const pushedCompletion = hooks.resolveAutoSyncIndicatorDrainCompletion({
+    result: {
+      status: "success",
+      action: "pushed",
+    },
+  });
+  assert.equal(pushedCompletion.phase, "success");
+  assert.equal(pushedCompletion.hadSuccessfulWrite, true);
+
+  const verificationCompletion = hooks.resolveAutoSyncIndicatorDrainCompletion({
+    currentPhase: pushedCompletion.phase,
+    currentReason: pushedCompletion.reason,
+    hadSuccessfulWrite: pushedCompletion.hadSuccessfulWrite,
+    result: {
+      status: "success",
+      action: "no_change",
+      reason: "hash_equal",
+    },
+  });
+  assert.equal(
+    verificationCompletion.phase,
+    "success",
+    "同一轮后台 drain 已经推送成功后，后续 hash_equal/no_change 只应作为确认，不应把最终展示态压回 idle。"
+  );
+
+  const plainNoChangeCompletion = hooks.resolveAutoSyncIndicatorDrainCompletion({
+    result: {
+      status: "success",
+      action: "no_change",
+      reason: "hash_equal",
+    },
+  });
+  assert.equal(
+    plainNoChangeCompletion.phase,
+    "idle",
+    "没有先发生 push 的普通 no_change 仍应安静回 idle。"
+  );
+};
+
 const testAutoSyncEntryPointsBindIndicatorSources = () => {
   expectMatch(
     /const runStartupModeAutoSyncCheckWithIndicator = async[\s\S]*?startAutoSyncIndicatorCycle\(resolvedSource/m,
@@ -683,6 +724,7 @@ const testAutoSyncEntryPointsBindIndicatorSources = () => {
   testSharedSchedulerAndLocksFeedUnifiedDisplayState();
   testDisplaySessionCoalescesPushVerification();
   testPullRetryKeepsCloudDirectionOverLocalPending();
+  testBackgroundDrainKeepsSuccessAfterPushVerification();
   testAutoSyncEntryPointsBindIndicatorSources();
 
   console.log("[auto-sync-indicator-linkage] Auto sync indicator linkage verified.");
