@@ -468,11 +468,14 @@ probe -> pull pending -> pull running
 7. 成功态方向由同步结果 / 手动动作 `action` 派生并透传到 `finishAutoSyncIndicatorCycle()` 或 `setAutoSyncIndicatorResolvedPhase()`，即使经过最短 running 时长的延迟落态，push / pull 完成后也分别保留 `displayDominantDirection`，tooltip 显示“本地变更已推送”或“云端更新已拉取”。
 8. 后台 drain 记录“最后一次有方向的成功结果”而不是只记录是否发生过 push-like 写入，避免后续 `no_change` 把 pull / push success 压成泛化成功。
 9. pending stale 保护同时覆盖 shared debounce 和 `PENDING_AUTO_SYNC_KEY`，旧的待同步请求超过窗口后不再驱动导航栏显示“待推送”。
-10. `test-auto-sync-indicator-linkage.js` ：
+10. 锁 TTL 继续用于同步安全，但导航栏 running 展示只信最近仍在续租的锁，避免 startup/manual 这类 3 分钟锁残留把“同步中”动画拖到用户可感知的长时间。
+11. `remote_probe_changed:*` 触发的前台 follow-up 在 full sync 决策前继续显示 probe 语义；真正决策为 push / pull 后再切方向。
+12. `test-auto-sync-indicator-linkage.js` ：
    - `testDisplaySessionCoalescesPushVerification`：同机会话 push settling 继承、新 dirty 续接、多来源 tooltip、过期 session 不继承。
    - `testPullRetryKeepsCloudDirectionOverLocalPending`：pull retry + 本地 pending 并存时 pull 方向不被掩盖。
    - `testSuccessDisplayKeepsDirectionalCompletion`：push / pull 成功态保留方向和 tooltip。
    - `testDeferredResolvedPhaseKeepsOperation`：延迟落成功态时仍保留 operation。
+   - `testForegroundFollowupLockDisplayDoesNotUseFullLockTtl`：锁 TTL 内但已停止续租时不再让导航栏保持 running，`remote_probe_changed` follow-up 决策前保持放大镜。
    - `testStalePendingAutoSyncRequestDoesNotDisplay`：过期 pending request 不再显示待推送，新鲜 pending request 仍正常显示。
    - 已有测试的 tooltip 断言全部更新为用户语义（不再含 sourceLabel）。
 

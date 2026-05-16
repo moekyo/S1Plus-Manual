@@ -18,6 +18,8 @@ const BACKGROUND_SYNC_DEBOUNCE_STATE_KEY =
   "s1p_background_sync_debounce_state";
 const AUTO_SYNC_INDICATOR_STATE_KEY = "s1p_auto_sync_indicator_state";
 const PENDING_AUTO_SYNC_KEY = "s1p_pending_auto_sync_request";
+const STARTUP_SYNC_LOCK_KEY = "s1p_startup_sync_lock";
+const GLOBAL_SYNC_LOCK_KEY = "s1p_sync_global_lock";
 
 const expectMatch = (pattern, message) => {
   assert.match(sourceCode, pattern, message);
@@ -358,6 +360,81 @@ const testSharedSchedulerAndLocksFeedUnifiedDisplayState = () => {
     hooks.getAutoSyncIndicatorDisplayKind(resolvedState),
     "sync",
     "前台二次确认进入 running 锁窗口时仍应保持中性三点，不能回退成默认拉取箭头。"
+  );
+};
+
+const testForegroundFollowupLockDisplayDoesNotUseFullLockTtl = () => {
+  const { hooks, store } = createHarness();
+  const now = Date.now();
+  const setForegroundState = (overrides = {}) => {
+    store.set(AUTO_SYNC_INDICATOR_STATE_KEY, {
+      phase: "success",
+      timestamp: now - 3000,
+      token: "",
+      source: "foreground_resume",
+      reason: "hash_equal",
+      operation: "",
+      lastResolvedPhase: "success",
+      lastResolvedTimestamp: now - 3000,
+      lastResolvedSource: "foreground_resume",
+      lastResolvedReason: "hash_equal",
+      ...overrides,
+    });
+  };
+  const setStartupLocks = (timestamp) => {
+    store.set(STARTUP_SYNC_LOCK_KEY, {
+      owner: "other-tab",
+      timestamp,
+    });
+    store.set(GLOBAL_SYNC_LOCK_KEY, {
+      owner: "other-tab",
+      mode: "startup",
+      timestamp,
+      ttlMs: 3 * 60 * 1000,
+    });
+  };
+
+  setForegroundState();
+  setStartupLocks(now - 120000);
+  let resolvedState = toPlainObject(hooks.resolveAutoSyncIndicatorDisplayPhase());
+  assert.notEqual(
+    resolvedState.displayPhase,
+    "running",
+    "超过指示器展示窗口的 startup 锁不能继续把导航栏渲染成回到前台检查中。"
+  );
+
+  setForegroundState();
+  setStartupLocks(now - 5000);
+  resolvedState = toPlainObject(hooks.resolveAutoSyncIndicatorDisplayPhase());
+  assert.equal(resolvedState.displayPhase, "running");
+  assert.equal(resolvedState.displaySource, "foreground_resume");
+  assert.equal(
+    hooks.getAutoSyncIndicatorTitle(resolvedState),
+    "自动同步：回到前台检查中",
+    "新鲜 startup 锁仍应能展示正在运行，避免真实同步中没有反馈。"
+  );
+
+  setForegroundState({
+    phase: "running",
+    timestamp: now,
+    token: "probe-followup",
+    reason: "remote_probe_changed:foreground_resume",
+    operation: "probe",
+    lastResolvedPhase: "idle",
+    lastResolvedTimestamp: now,
+    lastResolvedSource: "",
+    lastResolvedReason: "",
+  });
+  setStartupLocks(now - 1000);
+  resolvedState = toPlainObject(hooks.resolveAutoSyncIndicatorDisplayPhase());
+  assert.equal(
+    hooks.getAutoSyncIndicatorDisplayKind(resolvedState),
+    "probe",
+    "remote_probe_changed 触发的前台 follow-up 在决策前应保持放大镜 probe 语义，而不是中性三点。"
+  );
+  assert.equal(
+    hooks.getAutoSyncIndicatorTitle(resolvedState),
+    "自动同步：正在检查云端更新"
   );
 };
 
@@ -724,8 +801,8 @@ const testAutoSyncEntryPointsBindIndicatorSources = () => {
     "启动/加载类安全同步在决策前应使用中性 sync 图标，避免误显示拉取后又切推送。"
   );
   expectMatch(
-    /runForegroundFollowUpAutoSyncCheckWithIndicator[\s\S]*?startAutoSyncIndicatorCycle\(resolvedSource,\s*\{[\s\S]*?operation:\s*AUTO_SYNC_INDICATOR_OPERATION_SYNC/m,
-    "前台 follow-up 安全同步在决策前应使用中性 sync 图标，避免误显示拉取后又切推送。"
+    /runForegroundFollowUpAutoSyncCheckWithIndicator[\s\S]*?startAutoSyncIndicatorCycle\(resolvedSource,\s*\{[\s\S]*?operation:\s*getForegroundFollowUpInitialIndicatorOperation\(normalizedReason\)/m,
+    "前台 follow-up 安全同步应按触发原因决定初始图标，remote_probe_changed 在决策前保持 probe 语义。"
   );
   expectMatch(
     /const handleStartupSync = async[\s\S]*?runStartupModeAutoSyncCheckWithIndicator\(\{\s*source:\s*AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP/m,
@@ -758,6 +835,14 @@ const testAutoSyncEntryPointsBindIndicatorSources = () => {
   expectMatch(
     /remote_probe_changed:\$\{normalizedReason\}[\s\S]*?indicatorReason:\s*AUTO_SYNC_INDICATOR_REASON_FOREGROUND_PROBE_CHANGED_RETRY[\s\S]*?indicatorOperation:\s*AUTO_SYNC_INDICATOR_OPERATION_SYNC/,
     "metadata-only 发现 updated_at 变化但补同步暂缓时，应使用中性 sync pending，避免过早显示待拉取。"
+  );
+  expectMatch(
+    /const isChangedUpdatedAtProbeFollowUpReason[\s\S]*?remote_probe_changed:[\s\S]*?const getForegroundFollowUpInitialIndicatorOperation[\s\S]*?AUTO_SYNC_INDICATOR_OPERATION_PROBE[\s\S]*?AUTO_SYNC_INDICATOR_OPERATION_SYNC/,
+    "remote_probe_changed 触发的前台 follow-up 在 full sync 决策前应继续显示 probe，而不是中性三点。"
+  );
+  expectMatch(
+    /AUTO_SYNC_INDICATOR_LOCK_DISPLAY_STALE_MS[\s\S]*?getAutoSyncIndicatorActiveLockDisplayState[\s\S]*?isAutoSyncIndicatorLockFreshForDisplay/,
+    "导航栏不能用完整同步锁 TTL 保持 running；锁展示应有更短的 stale 窗口。"
   );
   expectMatch(
     /const indicatorOperation[\s\S]*?normalizeAutoSyncIndicatorOperation\(options\.indicatorOperation\)[\s\S]*?AUTO_SYNC_INDICATOR_OPERATION_PULL/,
@@ -899,6 +984,7 @@ const testAutoSyncEntryPointsBindIndicatorSources = () => {
   testIndicatorCyclePersistsSourceToResolvedState();
   await testDeferredResolvedPhaseKeepsOperation();
   testSharedSchedulerAndLocksFeedUnifiedDisplayState();
+  testForegroundFollowupLockDisplayDoesNotUseFullLockTtl();
   testDisplaySessionCoalescesPushVerification();
   testPullRetryKeepsCloudDirectionOverLocalPending();
   testSuccessDisplayKeepsDirectionalCompletion();
