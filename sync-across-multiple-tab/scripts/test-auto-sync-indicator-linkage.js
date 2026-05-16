@@ -272,6 +272,101 @@ const testDeferredResolvedPhaseKeepsOperation = async () => {
   );
 };
 
+const testForegroundFollowupRefreshKeepsDeferredSuccess = async () => {
+  const { hooks, store } = createHarness();
+  const result = await hooks.requestForegroundRemoteSyncCheck(
+    "remote_probe_changed:visibility",
+    {
+      settingsSnapshot: {
+        syncRemoteEnabled: true,
+        syncRemoteGistId: "gist-id",
+        syncRemotePat: "token",
+      },
+      acquireStartupSyncLock: async () => true,
+      startStartupSyncLockHeartbeat: () => {},
+      stopStartupSyncLockHeartbeat: () => {},
+      releaseStartupSyncLock: () => {},
+      performAutoSync: async () => {
+        const runningState = toPlainObject(hooks.getAutoSyncIndicatorState());
+        store.set(AUTO_SYNC_INDICATOR_STATE_KEY, {
+          ...runningState,
+          timestamp: Date.now() - 400,
+        });
+        return {
+          status: "success",
+          action: "pulled",
+          reason: "remote_changed_since_baseline",
+        };
+      },
+    }
+  );
+
+  assert.equal(result.status, "success");
+  assert.equal(result.action, "pulled");
+
+  const messages = [];
+  const timers = [];
+  const refreshPlan = hooks.applyAutoPullRefreshPolicy({
+    action: "pulled",
+    refreshPlan: {
+      policy: "reload_now",
+      pageType: "generic",
+      shouldReload: true,
+      reloadDelayMs: 3200,
+    },
+    showMessage: (message, isSuccess, options = {}) => {
+      messages.push({ message, isSuccess, options });
+    },
+    setTimeoutFn: (callback, delay) => {
+      timers.push({ callback, delay });
+      return timers.length;
+    },
+    locationObject: {
+      reload: () => {},
+    },
+  });
+
+  assert.equal(refreshPlan.reloadSchedule.status, "scheduled");
+  assert.ok(
+    refreshPlan.reloadSchedule.indicatorSettleDelayMs > 0,
+    "刷新策略应等待已排队的导航栏 success 落态。"
+  );
+  assert.ok(
+    refreshPlan.reloadSchedule.reloadDelayMs > 3200,
+    "页面刷新倒计时应从导航栏结果态可见后开始计算。"
+  );
+  assert.equal(
+    messages.length,
+    0,
+    "导航栏 success 还在 deferred 时，不应立即显示“即将刷新页面”的 toast。"
+  );
+  assert.ok(
+    timers.some(
+      (timer) =>
+        timer.delay > 0 &&
+        timer.delay <= refreshPlan.reloadSchedule.indicatorSettleDelayMs + 5
+    ),
+    "应安排一个短延迟，在导航栏 success 可见后再显示刷新 toast。"
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 340));
+
+  const state = toPlainObject(hooks.getAutoSyncIndicatorState());
+  assert.equal(
+    state.phase,
+    "success",
+    "前台 follow-up 结束后的运行态重绘不能取消已排队的 success 落态。"
+  );
+  assert.equal(state.operation, "pull");
+  const resolvedState = toPlainObject(hooks.resolveAutoSyncIndicatorDisplayPhase());
+  assert.equal(hooks.getAutoSyncIndicatorDisplayKind(resolvedState), "pull");
+  assert.equal(
+    hooks.getAutoSyncIndicatorTitle(resolvedState),
+    "自动同步：云端更新已拉取"
+  );
+  hooks.clearPendingAutoPullReloadTimer();
+};
+
 const testSharedSchedulerAndLocksFeedUnifiedDisplayState = () => {
   const { hooks, store } = createHarness();
   const now = Date.now();
@@ -933,8 +1028,12 @@ const testAutoSyncEntryPointsBindIndicatorSources = () => {
     "手动同步释放锁后应立即重绘导航栏指示器，避免残留“手动同步中”。"
   );
   expectMatch(
-    /const refreshAutoSyncIndicatorRuntimeDisplay = \([\s\S]*?clearAutoSyncIndicatorDeferredResolve\(\);[\s\S]*?renderNavbarAutoSyncIndicator\(\)/,
-    "运行态刷新前应清理 deferred resolve timer，避免旧状态回写。"
+    /const refreshAutoSyncIndicatorRuntimeDisplay = \([\s\S]*?\) => \{\s*invalidateAutoSyncIndicatorDisplayPhaseCache\(\);\s*renderNavbarAutoSyncIndicator\(\)/,
+    "运行态刷新应立即重绘导航栏指示器。"
+  );
+  expectNoMatch(
+    /const refreshAutoSyncIndicatorRuntimeDisplay = \([\s\S]*?\) => \{\s*clearAutoSyncIndicatorDeferredResolve\(\);/,
+    "运行态刷新不能取消已排队的结果态，否则快速前台拉取会在刷新前看不到成功。"
   );
   expectMatch(
     /return manualSyncInFlightPromise\.finally\(\(\) => \{[\s\S]*?releaseManualSyncLock\(\);[\s\S]*?refreshAutoSyncIndicatorAfterManualLockRelease\(\);/,
@@ -983,6 +1082,7 @@ const testAutoSyncEntryPointsBindIndicatorSources = () => {
   testSourceAwareTitlesAndMappings();
   testIndicatorCyclePersistsSourceToResolvedState();
   await testDeferredResolvedPhaseKeepsOperation();
+  await testForegroundFollowupRefreshKeepsDeferredSuccess();
   testSharedSchedulerAndLocksFeedUnifiedDisplayState();
   testForegroundFollowupLockDisplayDoesNotUseFullLockTtl();
   testDisplaySessionCoalescesPushVerification();

@@ -12497,6 +12497,7 @@
   let autoSyncIndicatorDisplayPhaseCache = null;
   let autoSyncIndicatorDeferredResolveTimer = null;
   let autoSyncIndicatorDeferredResolveToken = "";
+  let autoSyncIndicatorDeferredResolveDueAt = 0;
 
   const invalidateAutoSyncIndicatorDisplayPhaseCache = () => {
     autoSyncIndicatorDisplayPhaseCache = null;
@@ -12968,6 +12969,7 @@
       autoSyncIndicatorDeferredResolveTimer = null;
     }
     autoSyncIndicatorDeferredResolveToken = "";
+    autoSyncIndicatorDeferredResolveDueAt = 0;
   };
 
   const getAutoSyncIndicatorMinimumRunningDelayMs = (stateInput = null) => {
@@ -13011,9 +13013,13 @@
     if (!normalizedPhase) {
       return false;
     }
+    const normalizedDelayMs =
+      Math.max(0, Math.floor(Number(delayMs) || 0)) + 20;
     autoSyncIndicatorDeferredResolveToken = String(token || "");
+    autoSyncIndicatorDeferredResolveDueAt = Date.now() + normalizedDelayMs;
     autoSyncIndicatorDeferredResolveTimer = setTimeout(() => {
       autoSyncIndicatorDeferredResolveTimer = null;
+      autoSyncIndicatorDeferredResolveDueAt = 0;
       const expectedToken = autoSyncIndicatorDeferredResolveToken;
       autoSyncIndicatorDeferredResolveToken = "";
       const current = getAutoSyncIndicatorState();
@@ -13026,8 +13032,15 @@
         operation,
         skipMinVisibleDelay: true,
       });
-    }, Math.max(0, Math.floor(Number(delayMs) || 0)) + 20);
+    }, normalizedDelayMs);
     return true;
+  };
+
+  const getAutoSyncIndicatorDeferredResolveRemainingMs = (now = Date.now()) => {
+    if (!autoSyncIndicatorDeferredResolveTimer) {
+      return 0;
+    }
+    return Math.max(0, autoSyncIndicatorDeferredResolveDueAt - now);
   };
 
   const persistAutoSyncIndicatorState = (nextState) => {
@@ -13561,7 +13574,6 @@
   const refreshAutoSyncIndicatorRuntimeDisplay = (
     reason = "runtime_state_changed"
   ) => {
-    clearAutoSyncIndicatorDeferredResolve();
     invalidateAutoSyncIndicatorDisplayPhaseCache();
     renderNavbarAutoSyncIndicator();
     notifyTitleSyncStatusUnifiedStateChanged(reason);
@@ -15500,23 +15512,42 @@
       };
     }
 
+    // Keep the reload countdown behind the queued success state when a fast sync
+    // is still honoring the indicator's minimum running time.
+    const indicatorSettleDelayMs =
+      getAutoSyncIndicatorDeferredResolveRemainingMs();
+    const effectiveReloadDelayMs =
+      plan.reloadDelayMs + indicatorSettleDelayMs;
     const reloadSchedule = scheduleAutoPullReload({
       reason: refreshReason,
-      reloadDelayMs: plan.reloadDelayMs,
+      reloadDelayMs: effectiveReloadDelayMs,
       locationObject: options.locationObject,
       setTimeoutFn: options.setTimeoutFn,
     });
     if (reloadSchedule.status !== "already_scheduled" && shouldShowMessage) {
-      showMessageFn(messages.reloadMessage, true, {
-        durationMs: Math.max(
-          3000,
-          reloadSchedule.reloadDelayMs + AUTO_PULL_RELOAD_TOAST_GRACE_MS
-        ),
-      });
+      const showReloadMessage = () => {
+        showMessageFn(messages.reloadMessage, true, {
+          durationMs: Math.max(
+            3000,
+            plan.reloadDelayMs + AUTO_PULL_RELOAD_TOAST_GRACE_MS
+          ),
+        });
+      };
+      if (indicatorSettleDelayMs > 0) {
+        (options.setTimeoutFn || setTimeout)(
+          showReloadMessage,
+          indicatorSettleDelayMs
+        );
+      } else {
+        showReloadMessage();
+      }
     }
     return {
       ...plan,
-      reloadSchedule,
+      reloadSchedule: {
+        ...reloadSchedule,
+        indicatorSettleDelayMs,
+      },
     };
   };
 
