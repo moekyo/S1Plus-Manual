@@ -57,7 +57,14 @@
   let nextLogEntryId = 1;
   let expandedLogEntryIds = new Set();
   let logPanelRafId = null;
+  let logPersistTimeoutId = null;
+  const LOG_PERSIST_DEBOUNCE_MS = 300;
+  const LOG_SESSION_STORAGE_KEY = "s1p_log_buffer";
   let logCollectorStarted = false;
+  let _logOnError = null;
+  let _logOnUnhandledRejection = null;
+  let _logOnBeforeUnload = null;
+  let _originalConsoleCaptured = false;
   const _originalConsole = {};
   const _consoleMethods = ["log", "warn", "error", "debug"];
 
@@ -592,27 +599,107 @@
     logBuffer.push({ id: nextLogEntryId++, ts: Date.now(), ...entry });
     logDirty = true;
     scheduleLogRender();
+    scheduleLogPersistence();
+  };
+
+  const persistLogBuffer = () => {
+    try {
+      if (!window.sessionStorage) return;
+      const payload = {
+        entries: logBuffer,
+        nextId: nextLogEntryId,
+        expandedIds: [...expandedLogEntryIds],
+      };
+      window.sessionStorage.setItem(LOG_SESSION_STORAGE_KEY, JSON.stringify(payload));
+    } catch (_) {
+      // sessionStorage 不可用或配额已满时静默忽略
+    }
+  };
+
+  const scheduleLogPersistence = () => {
+    if (logPersistTimeoutId) clearTimeout(logPersistTimeoutId);
+    logPersistTimeoutId = setTimeout(() => {
+      logPersistTimeoutId = null;
+      persistLogBuffer();
+    }, LOG_PERSIST_DEBOUNCE_MS);
+  };
+
+  const restoreLogBufferFromSession = () => {
+    try {
+      if (!window.sessionStorage) return;
+      const raw = window.sessionStorage.getItem(LOG_SESSION_STORAGE_KEY);
+      if (!raw) return;
+      const payload = JSON.parse(raw);
+      if (!payload || !Array.isArray(payload.entries)) return;
+      logBuffer = payload.entries;
+      nextLogEntryId = typeof payload.nextId === "number" && Number.isFinite(payload.nextId) ? payload.nextId : logBuffer.reduce((max, e) => Math.max(max, e?.id || 0), 0) + 1;
+      expandedLogEntryIds = Array.isArray(payload.expandedIds) ? new Set(payload.expandedIds) : new Set();
+      logDirty = true;
+    } catch (_) {
+      // 数据损坏时静默忽略，保留空 buffer
+    }
   };
 
   const startLogCollector = () => {
     if (logCollectorStarted) return;
+    restoreLogBufferFromSession();
     logCollectorStarted = true;
+    if (!_originalConsoleCaptured) {
+      _consoleMethods.forEach((method) => {
+        _originalConsole[method] =
+          typeof console[method] === "function"
+            ? console[method].bind(console)
+            : () => {};
+      });
+      _originalConsoleCaptured = true;
+    }
     _consoleMethods.forEach((method) => {
-      _originalConsole[method] =
-        typeof console[method] === "function"
-          ? console[method].bind(console)
-          : () => {};
       console[method] = (...args) => {
         _originalConsole[method](...args);
         pushLog({ level: method, message: formatLogArguments(args), args: [] });
       };
     });
-    window.addEventListener("error", (e) => {
+    _logOnError = (e) => {
       pushLog({ level: "error", message: "[onerror] " + e.message + " at " + e.filename + ":" + e.lineno, args: [] });
-    });
-    window.addEventListener("unhandledrejection", (e) => {
+    };
+    window.addEventListener("error", _logOnError);
+    _logOnUnhandledRejection = (e) => {
       pushLog({ level: "error", message: "[unhandledrejection] " + formatLogArgument(e.reason), args: [] });
+    };
+    window.addEventListener("unhandledrejection", _logOnUnhandledRejection);
+    _logOnBeforeUnload = () => {
+      if (logPersistTimeoutId) {
+        clearTimeout(logPersistTimeoutId);
+        logPersistTimeoutId = null;
+      }
+      persistLogBuffer();
+    };
+    window.addEventListener("beforeunload", _logOnBeforeUnload);
+  };
+
+  const stopLogCollector = () => {
+    if (!logCollectorStarted) return;
+    if (logPersistTimeoutId) {
+      clearTimeout(logPersistTimeoutId);
+      logPersistTimeoutId = null;
+    }
+    persistLogBuffer();
+    _consoleMethods.forEach((method) => {
+      console[method] = _originalConsole[method];
     });
+    if (_logOnError) {
+      window.removeEventListener("error", _logOnError);
+      _logOnError = null;
+    }
+    if (_logOnUnhandledRejection) {
+      window.removeEventListener("unhandledrejection", _logOnUnhandledRejection);
+      _logOnUnhandledRejection = null;
+    }
+    if (_logOnBeforeUnload) {
+      window.removeEventListener("beforeunload", _logOnBeforeUnload);
+      _logOnBeforeUnload = null;
+    }
+    logCollectorStarted = false;
   };
 
   // --- [新增] SHA-256 哈希计算库 (基于 Web Crypto API) ---
@@ -33354,6 +33441,7 @@
   const hideDebugUnifiedPanel = () => {
     document.getElementById(DEBUG_UNIFIED_PANEL_ID)?.classList.add("s1p-hidden");
     setDebugConsolePersistentlyVisible(false);
+    stopLogCollector();
   };
 
   const DEBUG_UNIFIED_TABS = Object.freeze([
@@ -34580,7 +34668,13 @@
     if (action === "clear-logs") {
       logBuffer = [];
       expandedLogEntryIds = new Set();
+      nextLogEntryId = 1;
       logDirty = true;
+      try {
+        if (window.sessionStorage) {
+          window.sessionStorage.removeItem(LOG_SESSION_STORAGE_KEY);
+        }
+      } catch (_) {}
       renderLogPanel();
       showDebugConsoleButtonFeedback(button, "已清空");
       return;
@@ -34657,6 +34751,7 @@
       onAction: handleDebugUnifiedPanelAction,
       onHide: () => {
         setDebugConsolePersistentlyVisible(false);
+        stopLogCollector();
       },
     });
 
@@ -34695,6 +34790,7 @@
     if (panel && !panel.classList.contains("s1p-hidden")) {
       panel.classList.add("s1p-hidden");
       setDebugConsolePersistentlyVisible(false);
+      stopLogCollector();
     } else {
       initializeDebugUnifiedPanel({
         activeTab: "log",
@@ -48345,7 +48441,11 @@
         {
           name: "start debug log collector",
           optional: true,
-          run: () => startLogCollector(),
+          run: () => {
+            if (isDebugConsolePersistentlyVisible()) {
+              startLogCollector();
+            }
+          },
         },
       ],
       initializationContext

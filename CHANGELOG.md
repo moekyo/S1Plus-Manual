@@ -11,6 +11,13 @@
 - **retry 链优先走 shared scheduler**: `scheduleBackgroundSyncRetry` 新增 `queueBackgroundSyncRetryViaSharedScheduler` 路径，锁争抢 retry 由 shared owner 统一排队，仅 fallback 时才走 per-tab timer。
 - **调试基础设施清理**: 移除性能诊断期间添加的 `s1pPerfDebug` 系统（`localStorage` 标记、指标收集、刷盘定时器等），恢复生产环境零开销。
 
+### 🔧 调试控制台增强 (Debug Console Improvements)
+
+- **日志按需收集**: 调试日志收集器不再在页面加载时无条件启动，仅在调试面板可见（`s1p_debug_console_visible` 为 true）时才在 `document-start` 阶段启动；面板隐藏时调用 `stopLogCollector` 恢复原始 console 方法并移除事件监听器，避免空闲时的性能开销。
+- **日志刷新保留**: 日志缓冲区通过 `sessionStorage`（键 `s1p_log_buffer`）持久化，同标签页刷新后自动恢复（包括展开状态）；关闭标签页后销毁。每条日志 300ms 防抖写入，页面离开时同步刷盘。
+- **日志收集器可重复启停**: 新增 `startLogCollector` / `stopLogCollector` 生命周期管理，原始 console 引用仅在首次启动时捕获（`_originalConsoleCaptured` 守卫），避免多轮启停造成的 `.bind()` 嵌套累积。
+- **清空日志完整重置**: 清空操作同时清除 `sessionStorage`、`nextLogEntryId` 和 `expandedLogEntryIds`，确保后续收集从 ID=1 开始且刷新后无残留。
+
 ### ✨ 多标签页同步重构 (Multi-tab Sync Redesign)
 
 - **启动同步改为显式 orchestrator**: 启动期现在会根据页面是否仍在“新鲜窗口”内决定执行完整启动链路、顺延每日首次同步，或直接跳过过期的启动专属检查，减少旧页面晚到触发自动刷新。
