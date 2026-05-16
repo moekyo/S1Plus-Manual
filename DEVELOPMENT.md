@@ -101,7 +101,7 @@ node sync-across-multiple-tab/scripts/test-settings-migration.js
 
 | Tab | 内容 | 说明 |
 |-----|------|------|
-| 日志 | 调试控制台 | 捕获 console 输出、JS 错误、unhandledrejection；支持按级别筛选、关键词搜索、复制/清空/展开；可拖拽 resize，尺寸持久化到 `s1p_debug_console_size` |
+| 日志 | 调试控制台 | 捕获 console 输出、JS 错误、unhandledrejection；支持按级别筛选、关键词搜索、复制/清空/展开；可拖拽 resize，尺寸持久化到 `s1p_debug_console_size`；日志缓冲区最多保留 1000 条，通过 `sessionStorage` 在同标签页刷新后自动恢复，关闭标签页后销毁 |
 | 诊断信息 | 同步诊断 | 展示 `buildSyncDiagnosticsRows()` 的诊断行（最近动作/触发源/结果/阻断/哈希/探测等）；[刷新][复制诊断][重置诊断] 按钮 |
 | 指示器调试 | 同步指示器调试 | 手动切换指示器 phase、选择 source/operation、播放转场 Demo；只覆盖导航栏指示器预览，不改真实同步状态 |
 
@@ -121,7 +121,10 @@ node sync-across-multiple-tab/scripts/test-settings-migration.js
 - 调试面板只覆盖导航栏指示器的预览显示，不会改写真实同步状态
 - 面板中“实际 phase/source/operation”仍读取真实状态，可用于对照预览覆盖
 - `running` 等状态的调试预览会跳过真实同步锁门控，仅用于人工观察 UI
-- 统一面板的显示状态持久化到 `s1p_debug_console_visible`；尺寸持久化到 `s1p_debug_console_size`
+- 统一面板的显示状态持久化到 `s1p_debug_console_visible`（GM 存储，跨标签一致）；尺寸持久化到 `s1p_debug_console_size`（GM 存储）
+- 日志收集器生命周期：仅在调试面板可见时启动（`document-start` 阶段检查 `s1p_debug_console_visible`）；面板隐藏时调用 `stopLogCollector()` 恢复原始 console 方法并移除事件监听器
+- 日志持久化：通过 `sessionStorage` 键 `s1p_log_buffer` 实现，每条日志 300ms 防抖写入；刷新页面后 `restoreLogBufferFromSession()` 自动恢复（包括展开状态）；清空日志时同步清除 sessionStorage
+- 日志收集器可在同页面会话内多次启停（通过 `startLogCollector` / `stopLogCollector`），原始 console 引用仅在首次启动时捕获（`_originalConsoleCaptured` 守卫），避免多轮 bind 嵌套
 - 这套面板框架应优先作为通用调试容器复用，而非为每个功能再单独写一套浮动面板
 
 ## 3. 多机协作流程（Git）
@@ -258,6 +261,15 @@ node sync-across-multiple-tab/scripts/test-settings-migration.js
 - `s1p_blocked_posts_collapsed_threads`
 - `signedDate_<uid>` / `signedAttemptDate_<uid>`（自动签到）
 - `s1p_v<version>_welcomed`（版本欢迎弹窗）
+- `s1p_debug_console_visible`（调试面板显示状态，GM 存储，跨标签一致）
+- `s1p_debug_console_size`（调试面板尺寸，GM 存储）
+
+### 5.5 sessionStorage 键
+
+以下键使用 `sessionStorage`（同标签页刷新保留，关闭标签页销毁）：
+
+- `s1p_log_buffer`（调试日志缓冲区 JSON，含 entries / nextId / expandedIds）
+- `s1p_navbar_sync_alert_session_dismiss_key`（导航栏同步提醒会话级关闭标记）
 
 ## 6. 同步机制要点（开发必须了解）
 
