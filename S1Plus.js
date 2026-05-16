@@ -1523,6 +1523,7 @@
   const AUTO_SYNC_INDICATOR_RUNNING_MIN_VISIBLE_MS = 650;
   const AUTO_SYNC_INDICATOR_PROBE_SHOW_DELAY_MS = 160;
   const AUTO_SYNC_INDICATOR_PROBE_MIN_VISIBLE_MS = 560;
+  const AUTO_SYNC_INDICATOR_LOCK_DISPLAY_STALE_MS = 15 * 1000;
   const AUTO_SYNC_INDICATOR_DISPLAY_SESSION_MERGE_WINDOW_MS = 30 * 1000;
   const AUTO_SYNC_INDICATOR_DISPLAY_SESSION_SETTLING_MIN_MS = 900;
   const AUTO_SYNC_INDICATOR_DISPLAY_SESSION_SETTLING_MAX_MS = 5 * 1000;
@@ -12139,6 +12140,67 @@
     return normalizedFallback || AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND;
   };
 
+  const isAutoSyncIndicatorLockFreshForDisplay = (
+    lock,
+    now = Date.now()
+  ) => {
+    const timestamp = Number(lock?.timestamp) || 0;
+    return Boolean(
+      timestamp > 0 &&
+        now - timestamp <= AUTO_SYNC_INDICATOR_LOCK_DISPLAY_STALE_MS
+    );
+  };
+
+  const getAutoSyncIndicatorActiveLockDisplayState = (
+    now = Date.now(),
+    fallbackSource = ""
+  ) => {
+    const globalLock = getGlobalSyncLockValue();
+    if (
+      isGlobalSyncLockValid(globalLock, now) &&
+      isAutoSyncIndicatorLockFreshForDisplay(globalLock, now)
+    ) {
+      return {
+        isActive: true,
+        source: getAutoSyncIndicatorSourceForActiveLock(now, fallbackSource),
+      };
+    }
+    const backgroundLock = getBackgroundSyncLockValue();
+    if (
+      isModeSyncLockValid(backgroundLock, BACKGROUND_SYNC_LOCK_TTL_MS, now) &&
+      isAutoSyncIndicatorLockFreshForDisplay(backgroundLock, now)
+    ) {
+      return {
+        isActive: true,
+        source: AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+      };
+    }
+    const manualLock = getManualSyncLockValue();
+    if (
+      isModeSyncLockValid(manualLock, MANUAL_SYNC_LOCK_TTL_MS, now) &&
+      isAutoSyncIndicatorLockFreshForDisplay(manualLock, now)
+    ) {
+      return {
+        isActive: true,
+        source: AUTO_SYNC_INDICATOR_SOURCE_MANUAL_SYNC,
+      };
+    }
+    const startupLock = getStartupSyncLockValue();
+    if (
+      isModeSyncLockValid(startupLock, STARTUP_SYNC_LOCK_TTL_MS, now) &&
+      isAutoSyncIndicatorLockFreshForDisplay(startupLock, now)
+    ) {
+      const fallback = normalizeAutoSyncIndicatorSource(fallbackSource);
+      return {
+        isActive: true,
+        source: isStartupModeAutoSyncIndicatorSource(fallback)
+          ? fallback
+          : AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP,
+      };
+    }
+    return { isActive: false, source: "" };
+  };
+
   const clearForegroundProbeIndicatorDelayTimer = () => {
     if (foregroundProbeIndicatorDelayTimer) {
       clearTimeout(foregroundProbeIndicatorDelayTimer);
@@ -12353,11 +12415,12 @@
         operation: AUTO_SYNC_INDICATOR_OPERATION_PROBE,
       };
     }
-    if (hasAnyActiveSyncLock(now)) {
-      const activeLockSource = getAutoSyncIndicatorSourceForActiveLock(
-        now,
-        state.source
-      );
+    const activeLockDisplayState = getAutoSyncIndicatorActiveLockDisplayState(
+      now,
+      state.source
+    );
+    if (activeLockDisplayState.isActive) {
+      const activeLockSource = activeLockDisplayState.source;
       const stateSource = normalizeAutoSyncIndicatorSource(state.source);
       const activeLockOperation =
         (
@@ -27973,7 +28036,8 @@
         onBeforePerform: async () => {
           indicatorCycleToken = startAutoSyncIndicatorCycle(resolvedSource, {
             reason: normalizedReason,
-            operation: AUTO_SYNC_INDICATOR_OPERATION_SYNC,
+            operation:
+              getForegroundFollowUpInitialIndicatorOperation(normalizedReason),
           });
           if (typeof onIndicatorStart === "function") {
             await onIndicatorStart();
@@ -28019,6 +28083,14 @@
     normalizeRemoteProbeText(reason, 120).startsWith(
       "remote_probe_equal_ambiguous:"
     );
+
+  const isChangedUpdatedAtProbeFollowUpReason = (reason = "") =>
+    normalizeRemoteProbeText(reason, 120).startsWith("remote_probe_changed:");
+
+  const getForegroundFollowUpInitialIndicatorOperation = (reason = "") =>
+    isChangedUpdatedAtProbeFollowUpReason(reason)
+      ? AUTO_SYNC_INDICATOR_OPERATION_PROBE
+      : AUTO_SYNC_INDICATOR_OPERATION_SYNC;
 
   const requestForegroundRemoteSyncCheck = async (
     reason = "remote_probe_changed",
@@ -32577,10 +32649,7 @@
     const explicitOperation =
       normalizeAutoSyncIndicatorOperation(stateInput?.displayOperation) ||
       normalizeAutoSyncIndicatorOperation(stateInput?.operation);
-    if (
-      explicitOperation &&
-      explicitOperation !== AUTO_SYNC_INDICATOR_OPERATION_PROBE
-    ) {
+    if (explicitOperation) {
       return explicitOperation;
     }
 
