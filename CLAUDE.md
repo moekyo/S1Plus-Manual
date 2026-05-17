@@ -4,80 +4,119 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-S1 Plus is a Tampermonkey/Greasemonkey userscript that enhances the Stage1st forum experience. It's a single-file JavaScript application (~23,200 lines) providing advanced forum management features including post/user blocking, user tagging, reply bookmarking, reading progress tracking, and cloud synchronization.
+S1 Plus is a single-file Tampermonkey/Greasemonkey userscript (~43,000 lines) that enhances the Stage1st forum. All logic lives in `S1Plus.js`. No build system, no bundler, no compilation step.
 
 ## Development Commands
 
-This project has no traditional build system. Development workflow:
+- **Edit**: Modify `S1Plus.js` directly. No build step.
+- **Local dev loader**: Use `S1Plus-Local-Mac.user.js` (Mac) or `S1Plus-Local-Windows.user.js` (Windows) as a Tampermonkey loader that `@require`s the local `S1Plus.js` file. Edit source, refresh page — changes apply instantly. Requires "Allow access to file URLs" enabled in Tampermonkey extension settings.
+- **Tests** (sync/migration only):
+  - Settings migration: `node tests/settings-migration/test-settings-migration.js`
+  - Other sync tests in `tests/` (e.g. `test-foreground-remote-probe.js`, `test-background-open-passive-session.js`, `test-cleanup-provenance-guard.js`)
+  - All tests run via Node.js. The test helper (`s1plus-test-helpers.js`) loads `S1Plus.js` in a `vm` sandbox stubbing browser/GM APIs.
+  - **Test mode**: Set `globalThis.__S1P_TEST_MODE__ = true` before loading the script. This disables auto-startup (`document-start` handler), returns `{}` from `buildNormalizedSettings`, and exposes internal functions at `globalThis.__S1P_TEST_HOOKS__` (including `exportLocalDataObject`, `buildNormalizedSettings`, sync probe/lock state helpers).
+  - There are no unit tests for non-sync features; those are tested manually in-browser.
+- **No lint/typecheck**: This project has none.
 
-- **Direct editing**: Edit `S1Plus.js` directly
-- **Testing**: Install the script in Tampermonkey/Greasemonkey and test in browser
-- **Version updates**: Manually update version in script metadata (lines 4, 20)
-- **Distribution**: Upload to GreasyFork for auto-updates
+## Architecture
 
-## Architecture & Key Patterns
+### Initialization Phases
 
-### Single-File Architecture
-All functionality is contained in `S1Plus.js`. The script follows these patterns:
+The script runs at `document-start` per `@run-at metadata`. Initialization proceeds through ordered phases (`S1P_INIT_PHASES`): `document-start` → `body-ready` → `forum-ready` → `services-ready` → `content-ready` → `deferred`. The `document-start` phase must only contain low-dependency, anti-flicker tasks. Forum-structure-dependent logic belongs in `forum-ready`. First DOM scan + MutationObserver mount belong in `content-ready`. Sync startup, recommendation popups etc. go in `deferred`.
 
-- **Data Storage**: Uses Greasemonkey API (`GM_setValue`, `GM_getValue`) for persistence
-- **UI Creation**: Dynamic HTML generation with CSS injection via `GM_addStyle`
-- **Event Handling**: Delegated event listeners for dynamically created elements
-- **Async Operations**: Modern async/await for cloud sync operations
-- **Naming Convention**: `s1p` prefix for all script-specific elements and functions
+### Data Storage
 
-### Core Components
+Uses Greasemonkey API (`GM_setValue` / `GM_getValue`). All keys are `s1p_` + `snake_case`.
 
-1. **Settings Modal** (`createManagementModal`): Central configuration interface with 7 tabs
-2. **Cloud Sync System**: GitHub Gist-based synchronization with SHA-256 integrity verification
-3. **Content Filtering**: Post/user blocking with regex/keyword support
-4. **UI Enhancements**: Reading progress, image management, navigation customization
+Core business data keys:
+- `s1p_settings`
+- `s1p_blocked_threads`
+- `s1p_blocked_users`
+- `s1p_blocked_posts`
+- `s1p_user_tags`
+- `s1p_bookmarked_replies`
+- `s1p_title_filter_rules`
+- `s1p_read_progress`
 
-### Data Structures
+Sync & lock keys (partial list — see `DEVELOPMENT.md` for full):
+- `s1p_last_modified`, `s1p_last_sync_timestamp`, `s1p_sync_baseline_state`
+- `s1p_background_sync_lock`, `s1p_manual_sync_lock`, `s1p_startup_sync_lock`, `s1p_sync_global_lock`
 
-Key data objects stored via GM API:
-- `s1p_settings`: Core configuration and feature toggles
-- `s1p_blockedThreads`: Blocked post IDs
-- `s1p_blockedUsers`: Blocked user data with linked blocking options
-- `s1p_userTags`: User tagging system
-- `s1p_bookmarkedReplies`: Bookmarked replies (v5.0+)
-- `s1p_readingProgress`: Reading position tracking
-- `s1p_syncData`: Cloud sync configuration and timestamps
-- `s1p_title_filter_rules` / `s1p_title_keywords`: Title filtering rules
-- `s1p_blocked_posts_collapsed_threads`: Collapsed thread state for blocked posts
+The sync data object (`exportLocalDataObject`) uses version `5.0` with keys `version`, `lastUpdated`, `contentHash`, `baseContentHash`, `data`. Internal data keys use `snake_case` (e.g., `data.read_progress`).
 
-### Security Considerations
+### Naming Convention
 
-- **GitHub PAT Handling**: Personal Access Tokens are stored locally, never logged
-- **Data Integrity**: SHA-256 hash verification prevents corrupted sync data
-- **Conflict Resolution**: User choice for handling sync conflicts
-- **Input Validation**: Regex patterns validated before application
+`CSS classes`, `IDs`, `storage keys`, and `function names` all use an `s1p` prefix.
 
-## Development Guidelines
+## Critical Code Patterns (must follow)
 
-### When Adding Features
-1. Follow existing `s1p` naming convention
-2. Add corresponding UI in appropriate settings tab
-3. Include data in sync system if user-configurable
-4. Update version number and changelog
-5. Test on both standard and S1 NUX themes
+### Settings Architecture
 
-### Code Style
-- Chinese comments for user-facing features
-- English for technical implementation
-- Consistent indentation (4 spaces)
-- Descriptive function names with clear purpose
+Every read and write goes through the normalization layer:
 
-### Testing Considerations
-- Test on different Stage1st page types (forum list, thread view, search results)
-- Verify compatibility with S1 NUX theme
-- Check mobile responsiveness
-- Test sync functionality with different network conditions
-- Validate data migration from older versions
+- **`defaultSettings`** (L25139): canonical default values for every setting key
+- **`buildNormalizedSettings(raw)`** (L25206): schema migration + normalization applied on EVERY `getSettings()` and `saveSettings()` call. Handles old→new key mapping (`openInNewTab` → `open_in_new_tab`), boolean normalization, key removal, enum migration. **When adding a new setting, you MUST update BOTH `defaultSettings` and `buildNormalizedSettings`**, or the setting will not survive reads/writes for users with existing data.
+- **`getSettings()`**: reads from 1-second TTL cache (`SETTINGS_CACHE_TTL_MS`). Calls `buildNormalizedSettings` on cache miss. Use `invalidateSettingsCache()` to force re-read.
+- **`getSettingsForWrite()`**: deep clones the cached settings (via `structuredClone`), returns a fresh mutable copy.
+- **`saveSettings(settings)`**: normalizes via `buildNormalizedSettings`, writes `GM_setValue("s1p_settings", ...)`, updates `last_modified` timestamp, writes cross-tab signal, triggers sync.
 
-### Common Pitfalls
-- Forum structure changes may break selectors
-- Sticky posts require special handling
-- Different URL patterns affect feature detection
-- Sync conflicts need careful timestamp handling
-- CSS conflicts with forum's dynamic styling
+```js
+const settings = getSettingsForWrite(); // deep clone, safe to mutate
+// modify settings...
+saveSettings(settings); // normalizes, persists, triggers sync
+```
+
+### DOM Safety
+- User-generated content → `textContent` (not `innerHTML`)
+- If HTML is required → `sanitizeHtmlFragment()` first
+- Links → `getSafeUrlAttributeValue()` for href attributes
+- Sanitize object keys → `sanitizeRecordObject()` to prevent prototype pollution
+
+### Event Handling
+- Use delegated event listeners for dynamically created elements (DOM is frequently rebuilt by forum JS and MutationObserver)
+- Settings modal tabs: single delegated click handler checks `target.closest(".s1p-tab-btn")` → calls `switchSettingsTab()`
+- Inline menus/popups: call corresponding `destroy`/`dismiss` on close
+
+## S1 NUX Theme Conflict
+
+`S1 NUX.css` has a global rule `*:not(.v-binder-follower-content) { transition-duration: .15s }` that overrides S1 Plus animation durations. Always test with both standard and NUX themes. Higher-specificity selectors or `!important` on critical transitions may be needed.
+
+## Cross-Tab Synchronization
+
+The script uses `GM_addValueChangeListener` to detect data changes from other tabs and keep all open tabs in sync.
+
+**Settings cross-tab** (`initializeSettingsCacheSync`): When another tab changes `s1p_settings`, the listener detects what changed and applies the update on this tab. Changed keys are classified into 3 tiers:
+- **Full apply**: `enablePostBlocking`, `enableGeneralSettings`, etc. → re-runs `applyChanges()` completely
+- **Lightweight**: `hideImagesByDefault`, `limitImagesBySize`, navbar options, sync GUI keys → runs targeted apply functions
+- **Passive**: `readingProgressCleanupDays`, sync timing options, etc. → updates cache only, no UI refresh
+
+**Core data cross-tab** (`initializeCoreDataCacheSync`): Listens to all 7 business data keys + a cross-tab signal key. On change from another tab, updates the local cache and schedules a debounced DOM refresh. When the tab becomes visible (`visibilitychange`), pending refreshes are applied immediately.
+
+**Signal mechanism**: Each tab has a unique `SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID`. When a tab writes data (e.g., `saveSettings`), it includes its source ID. Other tabs skip changes from their own source ID to avoid self-reactions. The `s1p_settings_refresh_signal` key acts as a cross-tab heartbeat.
+
+**Open settings modal sync**: If the settings modal is open when another tab changes settings, the modal's UI is re-synced (currently active tab re-renders, navbar button updates, etc.).
+
+**Fallback polling**: If `GM_addValueChangeListener` is unreliable, `initializeSettingsFallbackSync` polls `s1p_settings` at intervals (1.5s → 20s exponential backoff), checking a signal health window to determine whether listener-based sync is healthy.
+
+## Release Workflow
+
+1. Update `@version` in script metadata (line 4)
+2. Update `SCRIPT_VERSION` and `SCRIPT_RELEASE_DATE` constants (lines 27-28)
+3. Update `CHANGELOG.md`
+4. Update welcome popup text in `showFirstTimeWelcomeIfNeeded`
+5. Use the `s1plus-release` skill for the standardized release process
+
+## Key Gotchas
+
+- Forum HTML structure can change; selectors may break. Verify on list page, thread page, and search results.
+- The sync system has 3 lock types (manual/background/startup) + 1 global lock. Modifying sync logic is high-risk; carefully test concurrency.
+- Settings tab height transitions have complex pixel-locking reconciliation via `ResizeObserver`. If something jitters on tab switch, look at `animateSettingsModalBodyHeight`, `scheduleModalBodyHeightReconcile`, and `updateObservedModalBodyTabContent`.
+- Sticky posts and collapsed threads require special DOM handling.
+- `@connect *` in script metadata — used because `GM_xmlhttpRequest` targets GitHub Gist API.
+
+## Related Docs
+
+- `DEVELOPMENT.md` — comprehensive dev manual (code module map, storage key catalog, sync mechanics, test checklists, animation debugging)
+- `CHANGELOG.md` — version history
+- `README.md` — user-facing overview
+- `sync-across-multiple-tab/` — multi-tab sync redesign docs and test scripts
