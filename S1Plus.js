@@ -3172,12 +3172,14 @@
       }
     }
     #s1p-debug-unified-panel {
-      --s1p-debug-console-panel-bg: rgba(255, 255, 255, 0.18);
+      --s1p-debug-console-panel-bg: rgba(255, 255, 255, 0.08);
       --s1p-debug-console-surface: #f8fafc;
       --s1p-debug-console-surface-soft: #eef2f7;
       --s1p-debug-console-surface-raised: #ffffff;
       --s1p-debug-console-button-bg: #f1f5f9;
       --s1p-debug-console-button-border: #c7d2df;
+      --s1p-debug-indicator-text: #062a6f;
+      --s1p-debug-indicator-muted: #25477a;
       align-self: flex-end;
       box-sizing: border-box;
       width: min(440px, calc(100vw - 24px));
@@ -3192,24 +3194,27 @@
     }
     @media (prefers-color-scheme: dark) {
       #s1p-debug-unified-panel {
-        --s1p-debug-console-panel-bg: rgba(8, 13, 24, 0.24);
+        --s1p-debug-console-panel-bg: rgba(8, 13, 24, 0.14);
         --s1p-debug-console-surface: #172033;
         --s1p-debug-console-surface-soft: #202b3d;
         --s1p-debug-console-surface-raised: #243248;
         --s1p-debug-console-button-bg: #27364d;
         --s1p-debug-console-button-border: #3d506b;
+        --s1p-debug-indicator-text: #e6efff;
+        --s1p-debug-indicator-muted: #b9c8e0;
       }
     }
     #s1p-debug-unified-panel.s1p-debug-panel {
       background: var(--s1p-debug-console-panel-bg);
-      border-color: var(--s1p-debug-console-button-border);
-      backdrop-filter: blur(12px) saturate(1.2);
+      border: none;
+      backdrop-filter: blur(5px) saturate(1.08);
+      gap: 6px;
     }
     #s1p-debug-unified-panel .s1p-debug-panel-head {
       padding: 5px 2px 2px 8px;
     }
     #s1p-debug-unified-panel .s1p-tabs {
-      margin-bottom: 8px;
+      margin-bottom: 0;
       align-self: flex-start;
       width: auto;
     }
@@ -3236,7 +3241,7 @@
       flex-direction: column;
       gap: 8px;
       min-height: 0;
-      padding-top: 16px;
+      padding-top: 4px;
       overflow: hidden auto;
       opacity: 0;
       visibility: hidden;
@@ -3250,6 +3255,11 @@
       opacity: 1;
       visibility: visible;
       pointer-events: auto;
+    }
+    #s1p-auto-sync-debug-panel.s1p-debug-tab-pane {
+      padding: 10px;
+      border-radius: 8px;
+      background: color-mix(in srgb, var(--s1p-debug-console-surface-soft) 90%, transparent);
     }
     .s1p-debug-console-toolbar,
     .s1p-debug-diagnostics-toolbar {
@@ -3411,6 +3421,22 @@
     }
     .s1p-debug-console-filter-bar input::placeholder {
       color: var(--s1p-desc-t);
+    }
+    #s1p-auto-sync-debug-panel .s1p-debug-panel-note {
+      color: var(--s1p-debug-indicator-text);
+      font-weight: 600;
+    }
+    #s1p-auto-sync-debug-panel .s1p-debug-panel-status {
+      color: var(--s1p-debug-indicator-muted);
+    }
+    #s1p-auto-sync-debug-panel .s1p-debug-panel-status strong {
+      color: var(--s1p-debug-indicator-text);
+      font-weight: 700;
+    }
+    #s1p-auto-sync-debug-panel .s1p-debug-panel-group-label {
+      align-self: flex-start;
+      color: var(--s1p-debug-indicator-text);
+      letter-spacing: 0;
     }
     .s1p-debug-console-resize-handle {
       position: absolute;
