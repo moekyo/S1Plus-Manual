@@ -62,7 +62,7 @@
 
 - 这类文案对应自动同步结果 `merged_read_progress`
 - 表示“当前页本地也有阅读进度改动，同时云端版本也已经变化，但双方差异可被判定为只涉及 `read_progress`，于是走了自动合并”
-- 线程页命中 `merged_read_progress` 时会走 soft prompt，而不是立刻刷新
+- 早期策略下线程页命中 `merged_read_progress` 会走 soft prompt；2026-05-17 后阅读进度自动合并统一降级为 inline refresh，不再立刻刷新
 
 需要澄清的一点：
 
@@ -769,8 +769,8 @@ Phase 7 真正完成的是：
   - 覆盖“同机会话刚 push，另一页回前台”的 quiet handling、诊断标记与必要刷新保留
   - 覆盖 same-device writer 的定向提示与诊断标记
 - `scripts/test-post-sync-refresh-policy.js`
-  - 验证 `pulled / merged_read_progress` 在列表页、帖子页、设置脏态页上的刷新策略
-  - 验证 quiet handling 的 `suppressMessage` 分支会静默保留刷新，而不会再弹“远端更新”类提示
+  - 验证 `pulled` 与 `merged_read_progress` 分层后的刷新策略：普通拉取保留必要 reload，阅读进度自动合并走 inline refresh
+  - 验证 quiet handling 的 `suppressMessage` 分支不会再弹“远端更新”类提示，阅读进度自动合并仍会保留 inline refresh
   - 验证 same-device 自动拉取会改用定向文案
 - `scripts/test-sync-settings-ui.js`
   - 验证同步设备 ID 输入框、说明文案与保存 / 回填 wiring
