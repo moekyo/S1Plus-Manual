@@ -124,7 +124,7 @@ node sync-across-multiple-tab/scripts/test-settings-migration.js
 - 统一面板的显示状态持久化到 `s1p_debug_console_visible`（GM 存储，跨标签一致）；尺寸持久化到 `s1p_debug_console_size`（GM 存储）
 - 日志收集器生命周期：仅在调试面板可见时启动（`document-start` 阶段检查 `s1p_debug_console_visible`）；面板隐藏时调用 `stopLogCollector()` 恢复原始 console 方法并移除事件监听器
 - 日志持久化：通过 `sessionStorage` 键 `s1p_log_buffer` 实现，每条日志 300ms 防抖写入；刷新页面后 `restoreLogBufferFromSession()` 自动恢复（包括展开状态）；清空日志时同步清除 sessionStorage
-- 日志收集器可在同页面会话内多次启停（通过 `startLogCollector` / `stopLogCollector`），原始 console 引用仅在首次启动时捕获（`_originalConsoleCaptured` 守卫），避免多轮 bind 嵌套
+- 日志收集器可在同页面会话内多次启停（通过 `startLogCollector` / `stopLogCollector`），每次启动捕获当前 console 引用，并在停止时只恢复 S1 Plus 自己安装的 wrapper，避免多轮 bind 嵌套或覆盖其他脚本后续安装的 console patch
 - 这套面板框架应优先作为通用调试容器复用，而非为每个功能再单独写一套浮动面板
 
 ## 3. 多机协作流程（Git）

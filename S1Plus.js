@@ -66,6 +66,7 @@
   let _logOnBeforeUnload = null;
   let _originalConsoleCaptured = false;
   const _originalConsole = {};
+  const _consoleWrappers = {};
   const _consoleMethods = ["log", "warn", "error", "debug"];
 
   const isDebugConsolePersistentlyVisible = () => {
@@ -602,13 +603,24 @@
     scheduleLogPersistence();
   };
 
+  const shouldRemovePersistedLogBuffer = () =>
+    logBuffer.length === 0 &&
+    nextLogEntryId === 1 &&
+    expandedLogEntryIds.size === 0 &&
+    logExpandAll !== true;
+
   const persistLogBuffer = () => {
     try {
       if (!window.sessionStorage) return;
+      if (shouldRemovePersistedLogBuffer()) {
+        window.sessionStorage.removeItem(LOG_SESSION_STORAGE_KEY);
+        return;
+      }
       const payload = {
         entries: logBuffer,
         nextId: nextLogEntryId,
         expandedIds: [...expandedLogEntryIds],
+        expandAll: logExpandAll === true,
       };
       window.sessionStorage.setItem(LOG_SESSION_STORAGE_KEY, JSON.stringify(payload));
     } catch (_) {
@@ -624,6 +636,37 @@
     }, LOG_PERSIST_DEBOUNCE_MS);
   };
 
+  const normalizeRestoredLogEntryId = (value) => {
+    const normalized = Number(value);
+    return Number.isSafeInteger(normalized) && normalized > 0
+      ? normalized
+      : null;
+  };
+
+  const normalizeRestoredLogEntry = (entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      return null;
+    }
+    const id = normalizeRestoredLogEntryId(entry.id);
+    const ts = Number(entry.ts);
+    const level = String(entry.level || "");
+    if (
+      id === null ||
+      !Number.isFinite(ts) ||
+      ts <= 0 ||
+      !_consoleMethods.includes(level)
+    ) {
+      return null;
+    }
+    return {
+      id,
+      ts,
+      level,
+      message: String(entry.message ?? ""),
+      args: [],
+    };
+  };
+
   const restoreLogBufferFromSession = () => {
     try {
       if (!window.sessionStorage) return;
@@ -631,9 +674,29 @@
       if (!raw) return;
       const payload = JSON.parse(raw);
       if (!payload || !Array.isArray(payload.entries)) return;
-      logBuffer = payload.entries;
-      nextLogEntryId = typeof payload.nextId === "number" && Number.isFinite(payload.nextId) ? payload.nextId : logBuffer.reduce((max, e) => Math.max(max, e?.id || 0), 0) + 1;
-      expandedLogEntryIds = Array.isArray(payload.expandedIds) ? new Set(payload.expandedIds) : new Set();
+      logBuffer = payload.entries
+        .map((entry) => normalizeRestoredLogEntry(entry))
+        .filter(Boolean)
+        .slice(-LOG_BUFFER_MAX);
+      if (logBuffer.length === 0) {
+        nextLogEntryId = 1;
+        expandedLogEntryIds = new Set();
+        logExpandAll = false;
+        logDirty = true;
+        return;
+      }
+      const maxRestoredId = logBuffer.reduce((max, entry) => Math.max(max, entry.id), 0);
+      const restoredNextId = normalizeRestoredLogEntryId(payload.nextId);
+      nextLogEntryId = Math.max(restoredNextId || 1, maxRestoredId + 1);
+      const restoredEntryIds = new Set(logBuffer.map((entry) => entry.id));
+      expandedLogEntryIds = Array.isArray(payload.expandedIds)
+        ? new Set(
+          payload.expandedIds
+            .map((id) => normalizeRestoredLogEntryId(id))
+            .filter((id) => id !== null && restoredEntryIds.has(id))
+        )
+        : new Set();
+      logExpandAll = payload.expandAll === true;
       logDirty = true;
     } catch (_) {
       // 数据损坏时静默忽略，保留空 buffer
@@ -648,16 +711,22 @@
       _consoleMethods.forEach((method) => {
         _originalConsole[method] =
           typeof console[method] === "function"
-            ? console[method].bind(console)
+            ? console[method]
             : () => {};
       });
       _originalConsoleCaptured = true;
     }
     _consoleMethods.forEach((method) => {
-      console[method] = (...args) => {
-        _originalConsole[method](...args);
-        pushLog({ level: method, message: formatLogArguments(args), args: [] });
+      const originalConsoleMethod = _originalConsole[method];
+      const originalConsoleTarget = console;
+      const wrapper = (...args) => {
+        originalConsoleMethod.apply(originalConsoleTarget, args);
+        if (_consoleWrappers[method] === wrapper && console[method] === wrapper) {
+          pushLog({ level: method, message: formatLogArguments(args), args: [] });
+        }
       };
+      _consoleWrappers[method] = wrapper;
+      console[method] = wrapper;
     });
     _logOnError = (e) => {
       pushLog({ level: "error", message: "[onerror] " + e.message + " at " + e.filename + ":" + e.lineno, args: [] });
@@ -685,7 +754,10 @@
     }
     persistLogBuffer();
     _consoleMethods.forEach((method) => {
-      console[method] = _originalConsole[method];
+      if (_consoleWrappers[method] && console[method] === _consoleWrappers[method]) {
+        console[method] = _originalConsole[method];
+      }
+      _consoleWrappers[method] = null;
     });
     if (_logOnError) {
       window.removeEventListener("error", _logOnError);
@@ -700,7 +772,69 @@
       _logOnBeforeUnload = null;
     }
     logCollectorStarted = false;
+    _originalConsoleCaptured = false;
   };
+
+  if (IS_S1P_TEST_MODE) {
+    const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
+    const getDebugLogCollectorStateForTest = () => ({
+      logBuffer: logBuffer.map((entry) => ({ ...entry })),
+      nextLogEntryId,
+      expandedLogEntryIds: [...expandedLogEntryIds],
+      logExpandAll,
+      logCollectorStarted,
+    });
+    const setDebugLogCollectorStateForTest = ({
+      entries = [],
+      nextId = 1,
+      expandedIds = [],
+      expandAll = false,
+    } = {}) => {
+      logBuffer = Array.isArray(entries)
+        ? entries.map((entry) => normalizeRestoredLogEntry(entry)).filter(Boolean)
+        : [];
+      const maxRestoredId = logBuffer.reduce((max, entry) => Math.max(max, entry.id), 0);
+      const normalizedNextId = normalizeRestoredLogEntryId(nextId);
+      nextLogEntryId = Math.max(normalizedNextId || 1, maxRestoredId + 1);
+      const restoredEntryIds = new Set(logBuffer.map((entry) => entry.id));
+      expandedLogEntryIds = Array.isArray(expandedIds)
+        ? new Set(
+          expandedIds
+            .map((id) => normalizeRestoredLogEntryId(id))
+            .filter((id) => id !== null && restoredEntryIds.has(id))
+        )
+        : new Set();
+      logExpandAll = expandAll === true;
+      logDirty = true;
+    };
+    const resetDebugLogCollectorStateForTest = () => {
+      stopLogCollector();
+      if (logPersistTimeoutId) {
+        clearTimeout(logPersistTimeoutId);
+        logPersistTimeoutId = null;
+      }
+      logBuffer = [];
+      expandedLogEntryIds = new Set();
+      logExpandAll = false;
+      nextLogEntryId = 1;
+      logDirty = false;
+      logCollectorStarted = false;
+      _originalConsoleCaptured = false;
+      _consoleMethods.forEach((method) => {
+        _consoleWrappers[method] = null;
+      });
+    };
+    testHookHost.__S1P_TEST_HOOKS__ = {
+      ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
+      startLogCollector,
+      stopLogCollector,
+      persistLogBuffer,
+      restoreLogBufferFromSession,
+      getDebugLogCollectorStateForTest,
+      setDebugLogCollectorStateForTest,
+      resetDebugLogCollectorStateForTest,
+    };
+  }
 
   // --- [新增] SHA-256 哈希计算库 (基于 Web Crypto API) ---
   /**
@@ -34273,6 +34407,7 @@
         expandedLogEntryIds.add(entry.id);
       }
       logDirty = true;
+      scheduleLogPersistence();
       renderLogPanel();
     });
 
@@ -34668,6 +34803,7 @@
     if (action === "clear-logs") {
       logBuffer = [];
       expandedLogEntryIds = new Set();
+      logExpandAll = false;
       nextLogEntryId = 1;
       logDirty = true;
       try {
@@ -34686,6 +34822,7 @@
       }
       updateDebugConsoleExpandAllButton();
       logDirty = true;
+      scheduleLogPersistence();
       renderLogPanel();
       return;
     }
