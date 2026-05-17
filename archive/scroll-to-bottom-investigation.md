@@ -3,107 +3,47 @@
 ## 问题现象
 
 - 刷新 Stage1st 页面后，视口偶尔会落到页面底部附近。
-- 刷新前可能在顶部，也可能在页面中间。
-- 目前不是必现，也没有只限定在列表页或帖子页；列表页、帖子页以外的页面也可能出现。
+- 问题不是必现；同一页面连续刷新时，可能某次停在顶部，某次在 `pageshow` 后突然跳到底部。
+- 已观察到的复现页包含论坛列表页，例如 `/2b/forum-157-1.html`。
 
-## 当前代码判断
+## 日志结论
 
-- 目前排查到的 S1 Plus 代码里，没有普通页面加载后主动执行“滚到底部”的逻辑。
-- 代码中确实存在滚到底部调用，但它属于增强悬浮控件的“返回底部”按钮，只应在用户点击时触发。
-- 设置弹窗里也有少量 `scrollIntoView()`，但它们只作用于设置弹窗中的同步设置项，不属于普通刷新流程。
+滚动诊断日志显示，异常轮次的加载流程从 `document-start` 到 `pageshow` 都保持在顶部：
 
-## 当前假设
+- `scrollY=0`
+- `hash=""`
+- `navigationType="reload"`
+- `history.scrollRestoration="auto"`
+- 没有用户交互
+- 没有同步拉取触发的 `location.reload()`
 
-- 更可疑的是浏览器原生滚动位置恢复、论坛自身 DOM 加载时序、S1 Plus 对页面布局的修改共同形成竞态。
-- 刷新时浏览器会尝试恢复原来的 `scrollY`。
-- 如果恢复发生时页面高度暂时较短，浏览器可能把目标滚动位置夹到当时的最大滚动位置，也就是接近底部。
-- 随后论坛内容、图片、脚本插入或 S1 Plus 的屏蔽/隐藏/阅读进度/图片处理等逻辑继续改变页面高度，于是最终表现为“刷新后莫名其妙到了底部”。
+异常发生在 `pageshow` 后约 8ms：浏览器触发一次原生 `window_scroll`，直接从 `scrollY=0` 跳到 `scrollY=maxScrollY`。这说明触发点不是 S1 Plus 初始化任务、MutationObserver、阅读进度、同步刷新，也不是悬浮控件的“返回底部”按钮，而是浏览器原生滚动恢复在 reload 后异步恢复了一个陈旧位置。
 
-## 临时诊断策略
+## 根因判断
 
-- `S1Plus.js` 中已经加入临时滚动诊断。
-- 这套诊断默认开启，不需要用户在控制台里手动开启。
-- 不做设置页开关；这不是正式功能。
-- 等根因确认并修复后，应该直接移除这套临时诊断代码。
+根因是 reload 时浏览器的原生滚动恢复与论坛页面加载时序形成竞态。
 
-## 日志保存方式
+Chrome 会在 `history.scrollRestoration="auto"` 时尝试恢复历史滚动位置。异常轮次里，恢复动作晚于 `pageshow`，并且恢复目标被夹到当前页面的最大可滚动位置，所以表现为“刷新后自动滚到底部”。
 
-- 日志通过 `GM_setValue("s1p_scroll_debug_events", ...)` 保存。
-- 使用最多 120 条的环形缓冲区。
-- 日志会跨刷新保留，所以即使问题发生在刷新过程中，刷新后的页面仍然可以读取上一轮记录。
+## 已落地修复
 
-## 控制台命令
+`S1Plus.js` 中保留了一个窄范围 reload scroll guard：
 
-这些命令只是用来查看或管理已经捕获的日志，不是用来开启诊断。
+- 在 `pagehide` / `beforeunload` 时，用 `sessionStorage` 记录当前页面的滚动位置。
+- 下一次同 URL 且 `navigationType="reload"` 时，如果上一轮记录显示刷新前在顶部附近，且当前 URL 没有 hash，才临时介入。
+- 介入时短暂设置 `history.scrollRestoration="manual"`，避免浏览器恢复陈旧滚动位置。
+- 如果加载后短窗口内仍无用户交互地跳到页面底部附近，则拉回到刷新前记录的顶部位置。
+- `pageshow` 后 2.5 秒释放保护，并恢复原来的 `history.scrollRestoration`。
 
-```js
-__S1P_SCROLL_DEBUG__.table()
-```
+这避免了全局禁用滚动恢复，因此用户在页面中部刷新后仍可保留浏览器默认恢复体验。
 
-打印简化表格，适合第一眼查看。
+## 清理结果
 
-```js
-__S1P_SCROLL_DEBUG__.dump()
-```
+临时滚动诊断系统已经移除：
 
-返回完整事件对象，适合复制出来进一步分析。
+- 不再写入 `GM_setValue("s1p_scroll_debug_events", ...)`。
+- 不再暴露 `__S1P_SCROLL_DEBUG__` / `__s1pScrollDebug` 控制台 API。
+- 不再记录初始化阶段、MutationObserver、同步 reload 等调试事件。
+- 本地 loader 不需要 `unsafeWindow` grant。
 
-```js
-__S1P_SCROLL_DEBUG__.clear()
-```
-
-清空已保存的诊断日志。
-
-```js
-__S1P_SCROLL_DEBUG__.mark("这里写标记")
-```
-
-手动插入一条标记，方便对照自己的操作。
-
-## 复现后重点看什么
-
-- 优先找 `unexpected_bottom_candidate` 事件。
-- 看它前后的事件，尤其是：
-  - `phase`
-  - `scrollY`
-  - `maxScrollY`
-  - `distanceToBottom`
-  - `scrollHeight`
-  - `hash`
-  - `navigationType`
-  - `scrollRestoration`
-  - `lastUserInteractionAgeMs`
-  - `auto_pull_reload_*`
-  - `manual_*_reload_*`
-
-## 当前已记录的关键节点
-
-- `scroll_debug_lifecycle_init`
-- `dom_content_loaded`
-- `pageshow`
-- `window_load`
-- `window_scroll`
-- `visibilitychange`
-- `pagehide`
-- `beforeunload`
-- `init_phase_start`
-- `init_phase_end`
-- `body_ready_detected`
-- `apply_changes_start`
-- `apply_changes_end`
-- `dom_observer_apply_start`
-- `dom_observer_apply_end`
-- `auto_pull_reload_scheduled`
-- `auto_pull_reload_fire`
-- `manual_force_pull_reload_scheduled`
-- `manual_force_pull_reload_fire`
-- `manual_initial_pull_reload_scheduled`
-- `manual_initial_pull_reload_fire`
-- `manual_pull_reload_scheduled`
-- `manual_pull_reload_fire`
-
-## 后续处理原则
-
-- 先用日志判断到底是浏览器滚动恢复、论坛锚点跳转、同步刷新，还是 S1 Plus 的布局变化触发了异常。
-- 在确认根因前，不直接改成 `history.scrollRestoration = "manual"`，避免破坏正常刷新恢复位置的体验。
-- 修复后删除临时诊断代码和本文档中不再需要的临时说明。
+保留的持久状态只有当前标签页内的 `sessionStorage` key：`s1p_reload_scroll_guard_state`。它用于下一次同页 reload 的窄范围判断，不参与 GM 存储或跨标签同步。
