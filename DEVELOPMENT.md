@@ -64,7 +64,7 @@
 ### 2.3 迁移回归校验（建议每次改设置迁移后执行）
 
 ```bash
-node sync-across-multiple-tab/scripts/test-settings-migration.js
+node tests/settings-migration/test-settings-migration.js
 ```
 
 说明：
@@ -74,7 +74,7 @@ node sync-across-multiple-tab/scripts/test-settings-migration.js
 
 ### 2.4 同步回归脚本（本轮多标签页重构）
 
-当前仓库把同步专项测试脚本收敛在 `sync-across-multiple-tab/scripts/`，常见入口包括：
+当前仓库把同步专项测试脚本收敛在 `tests/`，常见入口包括：
 
 - `test-foreground-remote-probe.js`
 - `test-foreground-trigger-integration.js`
@@ -113,6 +113,8 @@ node sync-across-multiple-tab/scripts/test-settings-migration.js
 - 诊断信息 tab 的重置操作使用内联确认栏而非原生 `confirm()` 弹窗
 - 统一面板外层保留轻磨砂玻璃，但 blur 控制在低强度（当前 `blur(5px)`），避免调试时完全糊住背后论坛内容
 - 指示器调试 tab 的主体内容使用单一无边框浅底 surface 承托文字和按钮，避免文字直接落在复杂磨砂背景上；不要给内部说明/状态块再叠独立边框卡片
+- 调试面板内承载长列表的实底 surface 应由滚动视口自己负责圆角裁切（如日志区使用 `overflow: hidden auto` + 透明轨道滚动条），不要把圆角放到内部列表行上，否则滚动到中间会露出直角截面
+- 深色模式下统一调试面板主容器阴影使用大半径低透明度的单层阴影，避免在深背景上形成可见分层断带
 - 指示器调试面板仍可通过 `window.__s1pAutoSyncIndicatorDebug` API 控制：
   - `showPanel()` — 打开统一面板并切到指示器调试 tab
   - `hidePanel()` — 隐藏统一面板
@@ -541,8 +543,14 @@ animateSettingsModalBodyHeight(modalBody, () => {
 4. `.s1p-feature-content` 自身动画目前被禁用  
 这是当前代码中的显式状态（`transition: none`），用于避免与父容器高度动画叠加导致节奏混乱。
 
-5. Tab 切换复用同一套父容器高度过渡  
+5. Tab 切换复用同一套父容器高度过渡
 Tab 内容本体仍为 `display` 切换；视觉过渡来自 `.s1p-modal-body` 的高度动画，能根据不同 tab 内容高度平滑收敛。
+
+6. 设置面板的 tabs 与滚动实底分层
+设置面板 tab bar 是 `.s1p-modal-content` 的直接子元素，留在外层磨砂玻璃层；`.s1p-modal-body` 只包裹 `.s1p-tab-panels`，同时承担纯色实底、滚动视口、圆角裁切和高度动画。不要把 tabs 放回 `.s1p-modal-body`，也不要把圆角/背景下沉到 `.s1p-tab-panels` 或列表行，否则滚动到中间时会出现直角截面。
+
+7. 滚动条与圆角裁切
+设置面板滚动视口使用 `overflow: hidden auto`、透明滚动条轨道与内缩圆角滑块，避免滚动条沟槽破坏实底圆角。`scrollbar-gutter` 只使用 `stable`，不要恢复成 `stable both-edges`，否则左右两侧会出现直角沟槽。
 
 ### 11.3 与 S1 NUX 的动画冲突
 

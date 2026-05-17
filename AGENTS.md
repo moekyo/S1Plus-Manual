@@ -11,8 +11,8 @@ S1 Plus is a single-file Tampermonkey/Greasemonkey userscript (~43,000 lines) th
 - **Edit**: Modify `S1Plus.js` directly. No build step.
 - **Local dev loader**: Use `S1Plus-Local-Mac.user.js` (Mac) or `S1Plus-Local-Windows.user.js` (Windows) as a Tampermonkey loader that `@require`s the local `S1Plus.js` file. Edit source, refresh page — changes apply instantly. Requires "Allow access to file URLs" enabled in Tampermonkey extension settings.
 - **Tests** (sync/migration only):
-  - Settings migration: `node sync-across-multiple-tab/scripts/test-settings-migration.js`
-  - Other sync tests in `sync-across-multiple-tab/scripts/` (e.g. `test-foreground-remote-probe.js`, `test-background-open-passive-session.js`, `test-cleanup-provenance-guard.js`)
+  - Settings migration: `node tests/settings-migration/test-settings-migration.js`
+  - Other sync tests in `tests/` (e.g. `test-foreground-remote-probe.js`, `test-background-open-passive-session.js`, `test-cleanup-provenance-guard.js`)
   - All tests run via Node.js. The test helper (`s1plus-test-helpers.js`) loads `S1Plus.js` in a `vm` sandbox stubbing browser/GM APIs.
   - **Test mode**: Set `globalThis.__S1P_TEST_MODE__ = true` before loading the script. This disables auto-startup (`document-start` handler), returns `{}` from `buildNormalizedSettings`, and exposes internal functions at `globalThis.__S1P_TEST_HOOKS__` (including `exportLocalDataObject`, `buildNormalizedSettings`, sync probe/lock state helpers).
   - There are no unit tests for non-sync features; those are tested manually in-browser.
