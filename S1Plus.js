@@ -3180,6 +3180,7 @@
       --s1p-debug-console-button-border: #c7d2df;
       --s1p-debug-indicator-text: #062a6f;
       --s1p-debug-indicator-muted: #25477a;
+      --s1p-debug-panel-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
       align-self: flex-end;
       box-sizing: border-box;
       width: min(440px, calc(100vw - 24px));
@@ -3202,11 +3203,13 @@
         --s1p-debug-console-button-border: #3d506b;
         --s1p-debug-indicator-text: #e6efff;
         --s1p-debug-indicator-muted: #b9c8e0;
+        --s1p-debug-panel-shadow: 0 30px 90px rgba(0, 0, 0, 0.28);
       }
     }
     #s1p-debug-unified-panel.s1p-debug-panel {
       background: var(--s1p-debug-console-panel-bg);
       border: none;
+      box-shadow: var(--s1p-debug-panel-shadow);
       backdrop-filter: blur(5px) saturate(1.08);
       gap: 6px;
     }
@@ -3258,7 +3261,7 @@
     }
     #s1p-auto-sync-debug-panel.s1p-debug-tab-pane {
       padding: 10px;
-      border-radius: 8px;
+      border-radius: 12px;
       background: color-mix(in srgb, var(--s1p-debug-console-surface-soft) 90%, transparent);
     }
     .s1p-debug-console-toolbar,
@@ -3288,14 +3291,28 @@
     .s1p-debug-console-log-area {
       flex: 1 1 auto;
       min-height: 0;
-      overflow-y: auto;
+      overflow: hidden auto;
       max-height: none;
       font-family: "SF Mono", "Menlo", "Monaco", "Cascadia Code", monospace;
       font-size: 12px;
       line-height: 1.5;
       background: var(--s1p-debug-console-surface-soft);
-      border-radius: 8px;
+      border-radius: 12px;
       padding: 6px 0;
+      scrollbar-color: var(--s1p-settings-scrollbar-thumb) transparent;
+      scrollbar-gutter: stable;
+    }
+    .s1p-debug-console-log-area::-webkit-scrollbar {
+      width: 14px;
+    }
+    .s1p-debug-console-log-area::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    .s1p-debug-console-log-area::-webkit-scrollbar-thumb {
+      background-color: var(--s1p-settings-scrollbar-thumb);
+      background-clip: content-box;
+      border: 4px solid transparent;
+      border-radius: 999px;
     }
     .s1p-debug-console-log-line {
       display: grid;
@@ -3503,7 +3520,7 @@
       justify-content: space-between;
       gap: 8px;
       padding: 8px 10px;
-      border-radius: 8px;
+      border-radius: 12px;
       background: var(--s1p-debug-console-surface-soft);
       color: var(--s1p-desc-t);
       font-size: 11px;
@@ -5243,6 +5260,7 @@
       align-items: center;
     }
     .s1p-modal {
+      background-color: transparent;
       justify-content: center;
       align-items: center;
       z-index: 9999;
@@ -5282,6 +5300,24 @@
       /* 移除 font-smoothing，让各平台使用默认的最优渲染方式 */
       /* macOS 默认使用 antialiased，Windows 默认使用 ClearType 子像素抗锯齿 */
     }
+    .s1p-modal > .s1p-modal-content {
+      --s1p-settings-panel-bg: rgba(255, 255, 255, 0.26);
+      --s1p-settings-content-bg: var(--s1p-bg);
+      --s1p-settings-scrollbar-thumb: rgba(37, 71, 122, 0.42);
+      background: var(--s1p-settings-panel-bg);
+      border: none;
+      border-radius: 12px;
+      box-shadow: 0 18px 44px rgba(0, 0, 0, 0.22);
+      -webkit-backdrop-filter: blur(8px) saturate(1.08);
+      backdrop-filter: blur(8px) saturate(1.08);
+    }
+    @media (prefers-color-scheme: dark) {
+      .s1p-modal > .s1p-modal-content {
+        --s1p-settings-panel-bg: rgba(30, 41, 59, 0.46);
+        --s1p-settings-content-bg: #172033;
+        --s1p-settings-scrollbar-thumb: rgba(148, 163, 184, 0.46);
+      }
+    }
     .s1p-modal-header {
       background: var(--s1p-pri);
       padding: 16px;
@@ -5289,6 +5325,10 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
+    }
+    .s1p-modal > .s1p-modal-content > .s1p-modal-header {
+      background: transparent;
+      border-bottom-color: transparent;
     }
     .s1p-modal-title {
       /* [优化 V2] 微调主标题尺寸 */
@@ -5328,8 +5368,27 @@
       flex-grow: 0;
     }
     .s1p-modal > .s1p-modal-content > .s1p-modal-body {
-      scrollbar-gutter: stable both-edges;
+      margin: 0 16px;
+      padding: 0;
+      background: var(--s1p-settings-content-bg);
+      border-radius: 12px;
+      box-sizing: border-box;
+      overflow: hidden auto;
+      scrollbar-color: var(--s1p-settings-scrollbar-thumb) transparent;
+      scrollbar-gutter: stable;
       transition: height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .s1p-modal > .s1p-modal-content > .s1p-modal-body::-webkit-scrollbar {
+      width: 14px;
+    }
+    .s1p-modal > .s1p-modal-content > .s1p-modal-body::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    .s1p-modal > .s1p-modal-content > .s1p-modal-body::-webkit-scrollbar-thumb {
+      background-color: var(--s1p-settings-scrollbar-thumb);
+      background-clip: content-box;
+      border: 4px solid transparent;
+      border-radius: 999px;
     }
     @supports not (scrollbar-gutter: stable) {
       .s1p-modal > .s1p-modal-content > .s1p-modal-body {
@@ -5352,6 +5411,10 @@
       border-top: 1px solid var(--s1p-pri);
       text-align: right;
       font-size: 12px;
+    }
+    .s1p-modal > .s1p-modal-content > .s1p-modal-footer {
+      background: transparent;
+      border-top-color: transparent;
     }
     .s1p-token-config-modal {
       z-index: 20000;
@@ -5467,7 +5530,10 @@
       grid-template-columns: minmax(0, 1fr);
       align-items: start;
     }
-    .s1p-modal > .s1p-modal-content .s1p-tab-content {
+    .s1p-modal > .s1p-modal-content > .s1p-modal-body > .s1p-tab-panels {
+      padding: 8px 16px;
+    }
+    .s1p-modal > .s1p-modal-content > .s1p-modal-body > .s1p-tab-content {
       grid-column: 1;
       grid-row: 1;
       width: 100%;
@@ -5504,6 +5570,10 @@
     .s1p-tabs-wrapper {
       display: flex;
       justify-content: center;
+    }
+    .s1p-modal > .s1p-modal-content > .s1p-tabs-wrapper {
+      box-sizing: border-box;
+      padding: 0 16px;
     }
     .s1p-empty {
       text-align: center;
@@ -6799,6 +6869,10 @@
         padding: 8px 12px 12px;
         overflow-x: hidden;
       }
+      .s1p-modal > .s1p-modal-content > .s1p-modal-body {
+        margin: 0 8px;
+        padding: 0;
+      }
       .s1p-modal-footer {
         padding: 10px 12px;
       }
@@ -6809,6 +6883,14 @@
         overflow-y: hidden;
         -webkit-overflow-scrolling: touch;
         padding-bottom: 2px;
+      }
+      .s1p-modal > .s1p-modal-content > .s1p-tabs-wrapper {
+        padding-left: 8px;
+        padding-right: 8px;
+      }
+      .s1p-modal > .s1p-modal-content .s1p-tab-panels {
+        padding-left: 10px;
+        padding-right: 10px;
       }
       .s1p-tabs {
         min-width: max-content;
@@ -36895,17 +36977,19 @@
             ></div>`;
         })
         .join("");
-      return `
+      return {
+        tabsHtml: `
         <div class="s1p-tabs-wrapper">
           <div class="s1p-tabs">
             <div class="s1p-tab-slider"></div>
             ${tabButtonsHtml}
           </div>
-        </div>
-        <div class="s1p-tab-panels">${tabPanelsHtml}</div>
-      `;
+        </div>`,
+        panelsHtml: `<div class="s1p-tab-panels">${tabPanelsHtml}</div>`,
+      };
     };
 
+    const settingsModalTabsHtml = buildSettingsModalTabsHtml();
     const modal = document.createElement("div");
     modal.className = "s1p-modal";
     modal.style.opacity = "0";
@@ -36914,8 +36998,9 @@
       ariaLabel: "关闭设置面板",
       tooltipText: "关闭设置面板",
     })}</div>
+            ${settingsModalTabsHtml.tabsHtml}
             <div class="s1p-modal-body">
-                ${buildSettingsModalTabsHtml()}
+                ${settingsModalTabsHtml.panelsHtml}
             </div>
             <div class="s1p-modal-footer">版本: ${SCRIPT_VERSION} (${SCRIPT_RELEASE_DATE})</div>
         </div>`;
