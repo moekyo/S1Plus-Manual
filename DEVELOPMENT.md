@@ -111,6 +111,8 @@ node sync-across-multiple-tab/scripts/test-settings-migration.js
 - 面板搜索框复用 `.s1p-input` 样式
 - 日志 tab 的 toolbar 布局为 head-actions 在上行、filter-bar 在下行
 - 诊断信息 tab 的重置操作使用内联确认栏而非原生 `confirm()` 弹窗
+- 统一面板外层保留轻磨砂玻璃，但 blur 控制在低强度（当前 `blur(5px)`），避免调试时完全糊住背后论坛内容
+- 指示器调试 tab 的主体内容使用单一无边框浅底 surface 承托文字和按钮，避免文字直接落在复杂磨砂背景上；不要给内部说明/状态块再叠独立边框卡片
 - 指示器调试面板仍可通过 `window.__s1pAutoSyncIndicatorDebug` API 控制：
   - `showPanel()` — 打开统一面板并切到指示器调试 tab
   - `hidePanel()` — 隐藏统一面板
