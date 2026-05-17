@@ -5533,7 +5533,7 @@
     .s1p-modal > .s1p-modal-content > .s1p-modal-body > .s1p-tab-panels {
       padding: 8px 16px;
     }
-    .s1p-modal > .s1p-modal-content > .s1p-modal-body > .s1p-tab-content {
+    .s1p-modal > .s1p-modal-content > .s1p-modal-body > .s1p-tab-panels > .s1p-tab-content {
       grid-column: 1;
       grid-row: 1;
       width: 100%;
