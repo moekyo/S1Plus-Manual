@@ -15,7 +15,7 @@
 
 - **日志按需收集**: 调试日志收集器不再在页面加载时无条件启动，仅在调试面板可见（`s1p_debug_console_visible` 为 true）时才在 `document-start` 阶段启动；面板隐藏时调用 `stopLogCollector` 恢复原始 console 方法并移除事件监听器，避免空闲时的性能开销。
 - **日志刷新保留**: 日志缓冲区通过 `sessionStorage`（键 `s1p_log_buffer`）持久化，同标签页刷新后自动恢复（包括展开状态）；关闭标签页后销毁。每条日志 300ms 防抖写入，页面离开时同步刷盘。
-- **日志收集器可重复启停**: 新增 `startLogCollector` / `stopLogCollector` 生命周期管理，原始 console 引用仅在首次启动时捕获（`_originalConsoleCaptured` 守卫），避免多轮启停造成的 `.bind()` 嵌套累积。
+- **日志收集器可重复启停**: 新增 `startLogCollector` / `stopLogCollector` 生命周期管理，每次启动捕获当前 console 引用并只恢复 S1 Plus 自己安装的 wrapper，避免多轮启停造成的 `.bind()` 嵌套累积，也避免覆盖其他脚本后续安装的 console patch。
 - **清空日志完整重置**: 清空操作同时清除 `sessionStorage`、`nextLogEntryId` 和 `expandedLogEntryIds`，确保后续收集从 ID=1 开始且刷新后无残留。
 
 ### ✨ 多标签页同步重构 (Multi-tab Sync Redesign)
