@@ -214,6 +214,37 @@
   - `node sync-across-multiple-tab/scripts/test-visible-remote-polling.js`
   - `git diff --check`
 
+## 13. 2026-05-17 Follow-up
+
+- 本轮日志里的刷新来自后台 `merged_read_progress` 后的 `background_merge_refresh`，不是前台 probe 二次确认。
+- 刷新策略回归已更新：
+  - 普通 `pulled / force_pulled` 仍按页面类型决定是否 reload。
+  - `merged_read_progress` 改为 `read_progress_merged_inline`，列表页只刷新阅读进度按钮，不再排队整页 reload。
+  - same-session / same-device 的阅读进度合并不会被完全吞掉，仍会走 inline refresh，但保持静默。
+- 回归基线补充：
+  - `tests/test-post-sync-refresh-policy.js`
+    - 断言 `merged_read_progress` 列表页策略为 `read_progress_merged_inline`
+    - 断言静默阅读进度合并不会调度整页刷新
+    - 断言 same-machine 阅读进度合并仍会执行 inline refresh
+- 本轮补跑验证：
+  - `node --check S1Plus.js`
+  - `node tests/test-post-sync-refresh-policy.js`
+  - `node tests/test-safe-sync-execution.js`
+  - `node tests/test-auto-sync-indicator-linkage.js`
+  - `node tests/test-foreground-same-session-remote-write.js`
+  - `node tests/test-foreground-trigger-integration.js`
+  - `node tests/test-background-open-passive-session.js`
+  - `node tests/test-core-data-snapshot-resync.js`
+  - `node tests/test-background-sync-shared-debounce.js`
+  - `node tests/test-cleanup-provenance-guard.js`
+  - `node tests/test-foreground-probe-diagnostics-feedback.js`
+  - `node tests/test-foreground-probe-gate-retry.js`
+  - `node tests/test-foreground-remote-probe.js`
+  - `node tests/test-visible-remote-polling.js`
+  - `node tests/test-sync-settings-ui.js`
+  - `node tests/test-phase6-interaction-copy.js`
+  - `node tests/settings-migration/test-settings-migration.js`
+
 ## 10. 固定回归 Checklist
 
 1. 单标签页正常阅读

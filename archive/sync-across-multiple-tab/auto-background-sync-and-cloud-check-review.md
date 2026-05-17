@@ -129,7 +129,7 @@
 - `merged_read_progress` 现在只把 `contentHash / remoteUpdatedAt` 放进 `syncBaseline`。
 - `reason`、`remoteWriter`、`appliedRemoteWriter`、`sameSessionRemoteWrite`、`sameDeviceRemoteWrite` 放进 `extraResult`。
 - 后台刷新策略可正确执行：
-  - same-session：静默处理，必要时刷新但不弹“云端变化”。
+  - same-session：静默处理，必要时执行页面内收敛但不弹“云端变化”。
   - same-device：显示“同设备已同步更新”文案。
   - external：保留“云端变化”文案。
 
@@ -148,3 +148,14 @@
 - “持续可见时低频复查”是“回到前台”策略的高级子项，不能独立于 `syncCheckOnReturnToForeground` 生效。
 - “显示导航栏同步状态”只是展示层，不改变同步行为，也不应作为后台同步的子项。
 - 旧字段清理迁移需要强制写回规范化设置；否则 `saveSettings()` 会因为归一化对象相等而跳过 `GM_setValue`，导致 `legacy_setting_key_removed:*` 每次加载都重复出现。
+
+## 9. 2026-05-17 追加：后台阅读进度自动合并不再整页刷新
+
+本轮日志确认，页面刷新来自 `success + merged_read_progress` 进入 `background_merge_refresh`，不是后续前台 probe 拉取。由于 `merged_read_progress` 只涉及阅读进度，且合并 payload 已在同步流程中导入本地，列表页无需按普通云端拉取整页 reload。
+
+已修正：
+
+- `merged_read_progress` 的刷新策略改为 `read_progress_merged_inline`。
+- 列表页只调度阅读进度按钮原地刷新，不再排队 `location.reload()`。
+- 后台、每次加载、每日首次和前台 follow-up 路径都会执行这条 non-reload policy；即使不显示 toast，也不会跳过页面内收敛。
+- `pulled / force_pulled` 仍沿用原有自动拉取刷新策略，避免真正云端拉取被误降级。

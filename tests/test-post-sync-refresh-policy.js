@@ -112,6 +112,16 @@ const testRefreshPlanDetection = () => {
   assert.equal(dirtyPlan.policy, "settings_dirty");
   assert.equal(dirtyPlan.pageType, "settings_modal");
   assert.equal(dirtyPlan.shouldReload, false);
+
+  const mergedListPlan = hooks.getAutoPullRefreshPlan({
+    document: createQueryDocument({ hasThreadList: true }),
+    href: "https://stage1st.com/2b/forum-1-1.html",
+    search: "",
+    action: "merged_read_progress",
+  });
+  assert.equal(mergedListPlan.policy, "read_progress_merged_inline");
+  assert.equal(mergedListPlan.pageType, "lightweight_list");
+  assert.equal(mergedListPlan.shouldReload, false);
 };
 
 const testListPageSchedulesReload = () => {
@@ -216,21 +226,23 @@ const testMergedReadProgressThreadUsesMergeCopy = () => {
     },
   });
 
-  assert.equal(result.policy, "thread_soft_prompt");
+  assert.equal(result.policy, "read_progress_merged_inline");
+  assert.equal(result.pageType, "thread_detail");
   assert.equal(result.reloadSchedule.status, "suppressed");
   assert.equal(timerScheduled, false);
   assert.equal(messages.length, 1);
   assert.match(messages[0].message, /已保留本地阅读进度并完成自动合并/);
-  assert.match(messages[0].message, /当前在帖子页，暂不自动刷新/);
+  assert.doesNotMatch(messages[0].message, /正在刷新页面/);
   assert.equal(messages[0].isSuccess, null);
 };
 
-const testSuppressMessageKeepsReloadQuiet = () => {
+const testSuppressMessageKeepsReadProgressMergeQuietAndInline = () => {
   const { hooks } = createHarness();
   hooks.clearPendingAutoPullReloadTimer();
 
   const messages = [];
   let scheduledTimer = null;
+  let inlineRefreshCount = 0;
   const result = hooks.applyAutoPullRefreshPolicy({
     document: createQueryDocument({ hasThreadList: true }),
     href: "https://stage1st.com/2b/forum-1-1.html",
@@ -244,16 +256,21 @@ const testSuppressMessageKeepsReloadQuiet = () => {
       scheduledTimer = { callback, delay };
       return 1;
     },
+    refreshReadProgressList: () => {
+      inlineRefreshCount += 1;
+    },
     locationObject: {
       reload: noop,
     },
   });
 
-  assert.equal(result.policy, "reload_now");
-  assert.equal(result.reloadSchedule.status, "scheduled");
-  assert.equal(result.reloadSchedule.reloadDelayMs, 3200);
+  assert.equal(result.policy, "read_progress_merged_inline");
+  assert.equal(result.reloadSchedule.status, "suppressed");
+  assert.equal(result.reloadSchedule.reason, "read_progress_merged_inline");
+  assert.equal(result.inlineRefresh.status, "scheduled");
   assert.deepStrictEqual(messages, []);
-  assert.ok(scheduledTimer, "静默处理仍应保留必要的自动刷新。");
+  assert.equal(inlineRefreshCount, 1);
+  assert.equal(scheduledTimer, null, "阅读进度自动合并不应再调度整页刷新。");
   hooks.clearPendingAutoPullReloadTimer();
 };
 
@@ -344,6 +361,53 @@ const testSameMachineDecisionSuppressesListReload = () => {
   assert.equal(decision.refreshPlan.policy, "same_machine_suppressed");
 };
 
+const testMergedReadProgressDecisionUsesInlineRefresh = () => {
+  const { hooks } = createHarness();
+
+  const decision = hooks.decideWhatToDoWithRemoteChange(
+    {
+      status: "success",
+      action: "merged_read_progress",
+    },
+    {
+      source: "background",
+      document: createQueryDocument({ hasThreadList: true }),
+      href: "https://stage1st.com/2b/forum-1-1.html",
+      search: "",
+    }
+  );
+
+  assert.equal(decision.shouldApply, true);
+  assert.equal(decision.shouldReload, false);
+  assert.equal(decision.shouldNotify, false);
+  assert.equal(decision.reason, "read_progress_merged_inline");
+  assert.equal(decision.refreshPlan.policy, "read_progress_merged_inline");
+};
+
+const testSameMachineMergedReadProgressKeepsInlineRefresh = () => {
+  const { hooks } = createHarness();
+
+  const decision = hooks.decideWhatToDoWithRemoteChange(
+    {
+      status: "success",
+      action: "merged_read_progress",
+      sameDeviceRemoteWrite: true,
+    },
+    {
+      source: "background",
+      document: createQueryDocument({ hasThreadList: true }),
+      href: "https://stage1st.com/2b/forum-1-1.html",
+      search: "",
+    }
+  );
+
+  assert.equal(decision.shouldApply, true);
+  assert.equal(decision.shouldReload, false);
+  assert.equal(decision.shouldNotify, false);
+  assert.equal(decision.reason, "same_machine_read_progress_merged");
+  assert.equal(decision.refreshPlan.policy, "read_progress_merged_inline");
+};
+
 const testDirtySettingsDecisionWinsOverSameMachineSuppression = () => {
   const { hooks } = createHarness();
 
@@ -426,11 +490,13 @@ const main = async () => {
   testListPageSchedulesReload();
   testThreadPageShowsSoftPromptOnly();
   testMergedReadProgressThreadUsesMergeCopy();
-  testSuppressMessageKeepsReloadQuiet();
+  testSuppressMessageKeepsReadProgressMergeQuietAndInline();
   testSameDeviceBackgroundCopyUsesSpecificMessage();
   testSameDeviceBackgroundMergedCopyUsesSpecificMessage();
   testDirtySettingsSuppressesReload();
   testSameMachineDecisionSuppressesListReload();
+  testMergedReadProgressDecisionUsesInlineRefresh();
+  testSameMachineMergedReadProgressKeepsInlineRefresh();
   testDirtySettingsDecisionWinsOverSameMachineSuppression();
   testSameMachineNoChangeDecisionSuppressesDailyToast();
   testForegroundSameMachineNoChangeKeepsSpecificReason();

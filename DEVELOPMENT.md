@@ -88,6 +88,8 @@ node tests/settings-migration/test-settings-migration.js
 
 - 前台探测 / 可见页轮询
 - 自动拉取后的刷新策略
+  - `pulled / force_pulled`：列表页 / 普通页可按策略延迟整页刷新
+  - `merged_read_progress`：只表示阅读进度自动合并，已导入本地后应走 `read_progress_merged_inline` 原地刷新阅读进度按钮，不应排队整页 reload
 - cleanup provenance 与手动同步分支
 - 设置迁移与同步设置 UI
 
@@ -326,6 +328,7 @@ node tests/settings-migration/test-settings-migration.js
 - “每次页面加载时检查同步”会复用启动同步锁链路，避免多标签页同时发起远端检查。
 - 前台 probe 命中远端变化但 follow-up sync 因锁占用等原因未能执行时，会登记补偿重试而不是直接丢弃本轮自动拉取机会。
 - 自动拉取后需要刷新列表页 / 普通页时，默认延迟 `AUTO_PULL_RELOAD_DELAY_MS`（当前 3.2s）再刷新；刷新提示的 toast 会覆盖完整等待窗口，避免用户还没看清提示就被页面刷新打断。
+- `merged_read_progress` 是例外：它只代表阅读进度分歧已安全自动合并，合并 payload 已通过 `importLocalData()` 导入本地。列表页应只调用阅读进度按钮原地刷新策略 `read_progress_merged_inline`，同会话/同设备场景也要保留这次 inline refresh，但保持静默。
 - 后台打开帖子页会写入短寿命 opener hint；线程页会据此把会话标记为 `passiveBackgroundOpened`，降低后台开帖造成的假阅读进度。
 
 ### 6.5 统一自动同步指示器流转 (Auto Sync Indicator)
