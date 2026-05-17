@@ -178,3 +178,38 @@
   - `same_device_write`
   - `external_remote_change`
 - 新增 review 文档：`../auto-background-sync-and-cloud-check-review.md`。
+
+## 12. 2026-05-17 Follow-up
+
+- 本轮用户日志显示：后台同步先完成 `merged_read_progress`，随后列表页刷新来自 `background_merge_refresh`，而不是后续前台首次可见 probe 的自动拉取；前台二次确认最终为 `hash_equal / same_machine_hash_equal` 并已静默。
+- 因此优化点落在 post-sync refresh policy：
+  - `merged_read_progress` 是阅读进度专用自动合并，合并结果已经导入本地，不再按普通 `pulled` 处理。
+  - 列表页策略从 `reload_now` 降级为 `read_progress_merged_inline`，只调度阅读进度按钮原地刷新。
+  - `pulled / force_pulled` 仍保持原有整页刷新策略，避免把真正云端拉取也静默掉。
+  - same-session / same-device 的阅读进度合并会保留 inline refresh，但不显示“云端变化 / 正在刷新页面”。
+- 涉及文件：
+  - `S1Plus.js`
+  - `tests/test-post-sync-refresh-policy.js`
+  - `archive/sync-across-multiple-tab/sync_multitab_review_and_redesign.md`
+  - `archive/sync-across-multiple-tab/sync_multitab_redesign/phases/phase_4_foreground_probe_and_visible_poll.md`
+- 验证：
+  - `node --check S1Plus.js`
+  - `node tests/test-post-sync-refresh-policy.js`
+  - `node tests/test-safe-sync-execution.js`
+  - `node tests/test-auto-sync-indicator-linkage.js`
+  - `node tests/test-foreground-same-session-remote-write.js`
+  - `node tests/test-foreground-trigger-integration.js`
+  - `node tests/test-background-open-passive-session.js`
+  - `node tests/test-core-data-snapshot-resync.js`
+  - `node tests/test-background-sync-shared-debounce.js`
+  - `node tests/test-cleanup-provenance-guard.js`
+  - `node tests/test-foreground-probe-diagnostics-feedback.js`
+  - `node tests/test-foreground-probe-gate-retry.js`
+  - `node tests/test-foreground-remote-probe.js`
+  - `node tests/test-visible-remote-polling.js`
+  - `node tests/test-sync-settings-ui.js`
+  - `node tests/test-phase6-interaction-copy.js`
+  - `node tests/settings-migration/test-settings-migration.js`
+- 剩余工作：
+  - 真实论坛 + Tampermonkey 多标签手测仍需补跑，重点确认列表页阅读进度按钮会原地更新且不发生整页 reload。
+  - 若仍出现后台未激活帖子页制造阅读进度写入，应继续回到 Phase 2 的真实阅读确认条件排查。

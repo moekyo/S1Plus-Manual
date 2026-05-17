@@ -419,7 +419,8 @@
   - 记录初始 `visibility / focus`、首次 `visibilitychange / pageshow / focus`、首个可见楼层候选、首次确认、首次入队写入、首次 `read_progress` 时间戳更新
   - 即使当前活跃页后续产生大量滚轮事件，也不会再把后台页启动时的证据刷掉
 - 自动拉取后的刷新策略继续收口到统一 helper，并补齐了对应回归，确保：
-  - 列表页自动刷新
+  - 普通拉取在列表页自动刷新
+  - 阅读进度自动合并只做列表页原地刷新
   - 帖子页 soft prompt
   - 设置弹窗有未保存编辑时抑制刷新
 - Phase 7 的固定脚本回归基线已收口到以下脚本：
@@ -465,9 +466,23 @@
 - 回归基线更新：
   - `sync-across-multiple-tab/scripts/test-post-sync-refresh-policy.js` 增加 `merged_read_progress` 来源上下文返回结构断言，以及 same-device 自动合并文案断言。
 
+### 8.14C Phase 4/7 Follow-up（2026-05-17）
+
+- 复盘本次日志后确认：刷新不是第二轮前台 probe 拉取触发的；真正触发 reload 的是后台 `merged_read_progress` 结果进入 `background_merge_refresh`。
+- `merged_read_progress` 只代表阅读进度层面的安全自动合并，合并 payload 已经在同步流程内 `importLocalData()` 到本地，因此不再需要把列表页当成普通自动拉取来整页刷新。
+- 刷新策略已拆分：
+  - `pulled / force_pulled` 继续保留原有列表页 reload、帖子页保护和设置脏态保护。
+  - `merged_read_progress` 改为 `read_progress_merged_inline`，列表页只原地刷新阅读进度按钮，不排队 `location.reload()`。
+  - 后台 / 每次加载 / 每日首次 / 前台 follow-up 即使该策略不需要 toast，也会执行这条 non-reload refresh policy，避免“静默”到页面 UI 不收敛。
+  - same-session / same-device 的阅读进度自动合并同样保留原地刷新，但不再显示“云端变化 / 正在刷新页面”。
+- `tests/test-post-sync-refresh-policy.js` 已补充：
+  - `merged_read_progress` 列表页策略应为 `read_progress_merged_inline`
+  - 静默自动合并应触发阅读进度列表原地刷新而不是整页 reload
+  - same-machine `merged_read_progress` 不能被完全吞掉，仍要走 inline refresh
+
 ### 8.15 下一步
 
-- 先按“列表页后台打开多个帖子、只阅读其中一个”的路径复现一次，并复制新的阅读进度调试轨迹。
+- 先按“列表页后台打开多个帖子、只阅读其中一个”的路径复现一次，并确认后台 `merged_read_progress` 只更新列表阅读进度按钮，不再整页刷新。
 - 复现时优先看新的“启动摘要”列表，再用 `阅读调试 1..N` 补细节。
 - 再根据轨迹判断是继续收紧 Phase 2 的真实阅读确认条件，还是去修后台开帖页启动期的可见性判定。
 - 继续把这套脚本回归作为后续同步改动的默认基线。

@@ -15316,6 +15316,9 @@
     action === "force_pulled" ||
     action === "merged_read_progress";
 
+  const isMergedReadProgressRefreshAction = (action) =>
+    action === "merged_read_progress";
+
   const shouldApplyAutoPullRefreshForSyncResult = (syncResult) =>
     Boolean(
       syncResult &&
@@ -15507,11 +15510,15 @@
 
   const createAutoPullRefreshMessages = (
     reloadMessage,
-    successLeadSentence
+    successLeadSentence,
+    inlineReadProgressMessage = ""
   ) => ({
     reloadMessage,
     threadPageMessage: `${successLeadSentence}当前在帖子页，暂不自动刷新。`,
     dirtySettingsMessage: `${successLeadSentence}当前有未保存的设置编辑，暂不自动刷新。`,
+    inlineReadProgressMessage:
+      inlineReadProgressMessage ||
+      `${successLeadSentence}当前页面阅读进度已更新。`,
   });
   const createSameDeviceAutoPullRefreshMessages = (
     deviceId = "",
@@ -15532,7 +15539,8 @@
     if (action === "merged_read_progress") {
       return createAutoPullRefreshMessages(
         `${leadPrefix}${sameDeviceLabel}已同步更新，已保留本地阅读进度并完成自动合并。正在刷新页面...`,
-        `${leadPrefix}${sameDeviceLabel}已同步更新，已保留本地阅读进度并完成自动合并。`
+        `${leadPrefix}${sameDeviceLabel}已同步更新，已保留本地阅读进度并完成自动合并。`,
+        `${leadPrefix}${sameDeviceLabel}已同步阅读进度，已自动合并并更新当前页面。`
       );
     }
     return createAutoPullRefreshMessages(
@@ -15559,8 +15567,9 @@
     }
     if (action === "merged_read_progress") {
       return createAutoPullRefreshMessages(
-        "检测到云端有变化，已保留本地阅读进度并完成自动合并。正在刷新页面...",
-        "检测到云端有变化，已保留本地阅读进度并完成自动合并。"
+        "检测到云端阅读进度变化，已保留本地阅读进度并完成自动合并。正在刷新页面...",
+        "检测到云端阅读进度变化，已保留本地阅读进度并完成自动合并。",
+        "已保留本地阅读进度并完成自动合并，当前页面已更新。"
       );
     }
     return createAutoPullRefreshMessages(
@@ -15585,8 +15594,9 @@
         }
         if (action === "merged_read_progress") {
           return createAutoPullRefreshMessages(
-            "后台自动同步检测到云端变化，已保留本地阅读进度并完成自动合并。正在刷新页面...",
-            "后台自动同步检测到云端变化，已保留本地阅读进度并完成自动合并。"
+            "后台自动同步检测到云端阅读进度变化，已保留本地阅读进度并完成自动合并。正在刷新页面...",
+            "后台自动同步检测到云端阅读进度变化，已保留本地阅读进度并完成自动合并。",
+            "后台自动同步已合并阅读进度，当前页面已更新。"
           );
         }
         return createAutoPullRefreshMessages(
@@ -15603,8 +15613,9 @@
         }
         if (action === "merged_read_progress") {
           return createAutoPullRefreshMessages(
-            "每日首次同步检测到云端变化，已保留本地阅读进度并完成自动合并。正在刷新页面...",
-            "每日首次同步检测到云端变化，已保留本地阅读进度并完成自动合并。"
+            "每日首次同步检测到云端阅读进度变化，已保留本地阅读进度并完成自动合并。正在刷新页面...",
+            "每日首次同步检测到云端阅读进度变化，已保留本地阅读进度并完成自动合并。",
+            "每日首次同步已合并阅读进度，当前页面已更新。"
           );
         }
         if (action === "force_pulled") {
@@ -15624,8 +15635,9 @@
         }
         if (action === "merged_read_progress") {
           return createAutoPullRefreshMessages(
-            "前台检查检测到云端变化，已保留本地阅读进度并完成自动合并。正在刷新页面...",
-            "前台检查检测到云端变化，已保留本地阅读进度并完成自动合并。"
+            "前台检查检测到云端阅读进度变化，已保留本地阅读进度并完成自动合并。正在刷新页面...",
+            "前台检查检测到云端阅读进度变化，已保留本地阅读进度并完成自动合并。",
+            "前台检查已合并阅读进度，当前页面已更新。"
           );
         }
         return createAutoPullRefreshMessages(
@@ -15651,6 +15663,20 @@
     const reloadDelayMs = getNormalizedAutoPullReloadDelayMs(
       options.reloadDelayMs
     );
+    if (isMergedReadProgressRefreshAction(options.action)) {
+      let pageType = "generic";
+      if (isThreadDetailPageForAutoPullRefresh(options)) {
+        pageType = "thread_detail";
+      } else if (isLightweightListPageForAutoPullRefresh(options)) {
+        pageType = "lightweight_list";
+      }
+      return {
+        policy: "read_progress_merged_inline",
+        pageType,
+        shouldReload: false,
+        reloadDelayMs,
+      };
+    }
     if (hasDirtySettingsModalEdits(options)) {
       return {
         policy: "settings_dirty",
@@ -15848,6 +15874,21 @@
     const shouldNotify =
       refreshPlan.shouldReload || isSoftAutoPullRefreshNotificationPlan(refreshPlan);
     if (isSameMachineWrite && refreshPlan.policy !== "settings_dirty") {
+      if (
+        isMergedReadProgressRefreshAction(action) &&
+        refreshPlan.policy === "read_progress_merged_inline"
+      ) {
+        return {
+          shouldApply: true,
+          shouldReload: false,
+          shouldNotify: false,
+          suppressMessage: true,
+          reason: "same_machine_read_progress_merged",
+          source,
+          action,
+          refreshPlan,
+        };
+      }
       const suppressedPolicy =
         source === "foreground"
           ? "foreground_probe_suppressed"
@@ -15884,7 +15925,37 @@
     if (plan.policy === "settings_dirty") {
       return messages.dirtySettingsMessage;
     }
+    if (plan.policy === "read_progress_merged_inline") {
+      return messages.inlineReadProgressMessage || messages.threadPageMessage;
+    }
     return messages.threadPageMessage;
+  };
+
+  const applyReadProgressMergedInlineRefresh = (plan, options = {}) => {
+    if (plan?.policy !== "read_progress_merged_inline") {
+      return null;
+    }
+    if (plan.pageType !== "lightweight_list") {
+      return {
+        status: "skipped",
+        reason: plan.pageType || "not_lightweight_list",
+      };
+    }
+    const refreshReadProgressList =
+      typeof options.refreshReadProgressList === "function"
+        ? options.refreshReadProgressList
+        : scheduleProgressJumpButtonsRefresh;
+    if (typeof refreshReadProgressList !== "function") {
+      return {
+        status: "skipped",
+        reason: "refresh_unavailable",
+      };
+    }
+    refreshReadProgressList();
+    return {
+      status: "scheduled",
+      reason: "read_progress_merged_inline",
+    };
   };
 
   const getAutoPullRefreshReason = (options = {}, action = "pulled") =>
@@ -15967,11 +16038,13 @@
       suppressMessage: shouldShowMessage ? "no" : "yes",
     });
     if (!plan.shouldReload) {
+      const inlineRefresh = applyReadProgressMergedInlineRefresh(plan, options);
       if (shouldShowMessage) {
         showMessageFn(getAutoPullRefreshDisplayMessage(plan, messages), null);
       }
       return {
         ...plan,
+        inlineRefresh,
         reloadSchedule: {
           status: "suppressed",
           reason: plan.policy,
@@ -26438,7 +26511,11 @@
           const decision = decideWhatToDoWithRemoteChange(result, {
             source: "background",
           });
-          if (!decision.shouldReload && !decision.shouldNotify) {
+          if (
+            !decision.shouldApply &&
+            !decision.shouldReload &&
+            !decision.shouldNotify
+          ) {
             logSuppressedRemoteChangeDecision(decision, result, {
               source: "background",
             });
@@ -28811,7 +28888,11 @@
           sameDeviceRemoteWrite: syncResult?.sameDeviceRemoteWrite === true,
           remoteWriter: syncResult?.remoteWriter || null,
         });
-        if (decision.shouldReload || decision.shouldNotify) {
+        if (
+          decision.shouldApply ||
+          decision.shouldReload ||
+          decision.shouldNotify
+        ) {
           (
             options.applyRefreshPolicyForSyncResult ||
             applyRefreshPolicyForSyncResult
@@ -29314,7 +29395,11 @@
         locationObject: overrides.locationObject,
         setTimeoutFn: overrides.setTimeoutFn,
       });
-      if (decision.shouldReload || decision.shouldNotify) {
+      if (
+        decision.shouldApply ||
+        decision.shouldReload ||
+        decision.shouldNotify
+      ) {
         refreshPlan = applyRefreshPolicyForSyncResult(syncRequestResult, {
           remoteChangeDecision: decision,
           reason: `foreground_probe:${normalizedReason}`,
@@ -47183,7 +47268,11 @@
           const decision = decideWhatToDoWithRemoteChange(result, {
             source: "per_load",
           });
-          if (!decision.shouldReload && !decision.shouldNotify) {
+          if (
+            !decision.shouldApply &&
+            !decision.shouldReload &&
+            !decision.shouldNotify
+          ) {
             logSuppressedRemoteChangeDecision(decision, result, {
               source: "per_load",
             });
@@ -47300,7 +47389,11 @@
           const decision = decideWhatToDoWithRemoteChange(result, {
             source: "daily_startup",
           });
-          if (decision.shouldReload || decision.shouldNotify) {
+          if (
+            decision.shouldApply ||
+            decision.shouldReload ||
+            decision.shouldNotify
+          ) {
             const refreshPlan = applyRefreshPolicyForSyncResult(result, {
               remoteChangeDecision: decision,
               reason:
