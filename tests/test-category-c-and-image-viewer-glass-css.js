@@ -38,6 +38,14 @@ const assertHasGlassFilterVariable = (block, selector, variableName) => {
   );
 };
 
+const assertHasOriginalImageViewerToolbarFilter = (block) => {
+  assert.match(
+    block,
+    /-webkit-backdrop-filter:\s*blur\(8px\) saturate\(1\.08\);[\s\S]*backdrop-filter:\s*blur\(8px\) saturate\(1\.08\);/,
+    "图片查看器工具栏应还原为修改前的工具栏磨砂样式。"
+  );
+};
+
 const assertBorderlessOuterSurface = (block, selector) => {
   const visibleBorderDeclarations = Array.from(
     block.matchAll(/\bborder(?:-color)?:\s*([^;]+)/g),
@@ -116,30 +124,26 @@ assert.match(
   /background:\s*var\(--s1p-image-viewer-toolbar-bg\)/,
   "图片查看器工具栏应使用自身背景，不再继承面板底色。"
 );
-assertHasGlassFilterVariable(
-  imageViewerToolbarBlock,
-  ".s1p-image-viewer__toolbar",
-  "--s1p-dialog-glass-filter"
+assertHasOriginalImageViewerToolbarFilter(imageViewerToolbarBlock);
+assert.match(
+  sourceCode,
+  /--s1p-image-viewer-toolbar-bg:\s*rgba\(255,\s*255,\s*255,\s*0\.85\);/,
+  "浅色图片查看器工具栏应还原为修改前背景。"
 );
 assert.match(
   sourceCode,
-  /--s1p-image-viewer-toolbar-bg:\s*rgba\(255,\s*255,\s*255,\s*0\.94\);/,
-  "浅色图片查看器工具栏应使用独立等效玻璃背景。"
-);
-assert.match(
-  sourceCode,
-  /--s1p-image-viewer-toolbar-bg:\s*rgba\(18,\s*27,\s*45,\s*0\.98\);/,
-  "深色图片查看器工具栏应使用独立等效玻璃背景。"
+  /--s1p-image-viewer-toolbar-bg:\s*rgba\(18,\s*27,\s*45,\s*0\.97\);/,
+  "深色图片查看器工具栏应还原为修改前背景。"
 );
 assert.match(
   sourceCode,
   /--s1p-image-viewer-viewport-bg:\s*rgba\(226,\s*232,\s*222,\s*0\.7\);/,
-  "浅色图片舞台应使用独立等效玻璃背景。"
+  "浅色图片舞台应还原为修改前稳定主题底色。"
 );
 assert.match(
   sourceCode,
   /--s1p-image-viewer-viewport-bg:\s*rgba\(33,\s*42,\s*52,\s*0\.9\);/,
-  "深色图片舞台应使用独立等效玻璃背景。"
+  "深色图片舞台应还原为修改前稳定主题底色。"
 );
 assert.match(
   sourceCode,
@@ -154,11 +158,11 @@ assert.match(
 assert.equal(
   Array.from(
     sourceCode.matchAll(
-      /--s1p-image-viewer-viewport-glass-filter:\s*blur\(3px\) saturate\(1\.02\);/g
+      /--s1p-image-viewer-viewport-glass-filter:\s*blur\(6px\) saturate\(1\.04\);/g
     )
   ).length,
   2,
-  "浅色和深色图片舞台应使用一致的轻磨砂滤镜。"
+  "浅色和深色图片舞台应还原为修改前的一致轻磨砂滤镜。"
 );
 assert.ok(
   !sourceCode.includes("--s1p-image-viewer-viewport-backdrop-filter"),
