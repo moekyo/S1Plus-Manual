@@ -2290,22 +2290,28 @@
       --s1p-border: #d1d5db;
       --s1p-hover-overlay: rgba(0, 0, 0, 0.08);
       /* 全屏蒙版只负责无色磨砂 blur，具体面板背景由各自容器控制。 */
-      --s1p-overlay-blur: 1.6px;
-      --s1p-dialog-glass-bg: rgba(255, 255, 255, 0.42);
+      --s1p-overlay-blur: 0.8px;
+      --s1p-dialog-glass-bg: rgba(255, 255, 255, 0.78);
+      --s1p-dialog-glass-filter: blur(3px) saturate(1.02);
       --s1p-dialog-glass-shadow: 0 18px 44px rgba(0, 0, 0, 0.22);
       --s1p-dialog-glass-divider: rgba(37, 71, 122, 0.16);
-      --s1p-popover-glass-bg: rgba(255, 255, 255, 0.52);
+      --s1p-dialog-text: #10234f;
+      --s1p-dialog-muted-text: #334a72;
+      --s1p-popover-glass-bg: rgba(255, 255, 255, 0.82);
+      --s1p-popover-glass-filter: blur(3px) saturate(1.02);
       --s1p-popover-glass-shadow: 0 16px 34px rgba(0, 0, 0, 0.2);
       --s1p-popover-solid-bg: var(--s1p-bg);
       --s1p-popover-solid-shadow: 0 10px 24px rgba(var(--s1p-shadow-color-rgb), 0.16);
-      --s1p-toast-glass-bg: rgba(255, 255, 255, 0.62);
+      --s1p-toast-glass-bg: rgba(255, 255, 255, 0.9);
+      --s1p-toast-glass-filter: blur(3px) saturate(1.02);
       --s1p-toast-glass-shadow: 0 12px 28px rgba(0, 0, 0, 0.18);
       --s1p-toast-success-bg: rgba(34, 197, 94, 0.86);
       --s1p-toast-error-bg: rgba(239, 68, 68, 0.88);
-      --s1p-floating-control-glass-bg: rgba(255, 255, 255, 0.54);
+      --s1p-floating-control-glass-bg: rgba(255, 255, 255, 0.86);
+      --s1p-floating-control-glass-filter: blur(3px) saturate(1.02);
       --s1p-floating-control-glass-shadow: 0 8px 20px rgba(0, 0, 0, 0.18);
       --s1p-image-viewer-panel-shadow: var(--s1p-dialog-glass-shadow);
-      --s1p-image-viewer-toolbar-bg: rgba(255, 255, 255, 0.85);
+      --s1p-image-viewer-toolbar-bg: rgba(255, 255, 255, 0.92);
       --s1p-settings-scrollbar-thumb: rgba(37, 71, 122, 0.42);
       --s1p-settings-scrollbar-thumb-hover: rgba(37, 71, 122, 0.58);
       --s1p-settings-scrollbar-track: transparent;
@@ -2389,7 +2395,7 @@
       --s1p-image-preview-max-height: 1200px;
       --s1p-image-viewer-viewport-bg: rgba(226, 232, 222, 0.7);
       --s1p-image-viewer-viewport-glass-bg: rgba(255, 255, 255, 0.04);
-      --s1p-image-viewer-viewport-glass-filter: blur(6px) saturate(1.04);
+      --s1p-image-viewer-viewport-glass-filter: blur(3px) saturate(1.02);
       --s1p-image-viewer-loading-bg: rgba(237, 241, 230, 0.96);
       --s1p-image-viewer-loading-text: #1b2f63;
       --s1p-image-viewer-loading-spinner-track: rgba(2, 44, 128, 0.2);
@@ -3101,7 +3107,8 @@
       border: none;
       box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
       color: var(--s1p-t);
-      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: var(--s1p-dialog-glass-filter);
+      backdrop-filter: var(--s1p-dialog-glass-filter);
       pointer-events: auto;
     }
     .s1p-debug-panel.s1p-hidden {
@@ -3218,7 +3225,8 @@
       background: var(--s1p-debug-console-panel-bg);
       border: none;
       box-shadow: var(--s1p-debug-panel-shadow);
-      backdrop-filter: blur(5px) saturate(1.08);
+      -webkit-backdrop-filter: var(--s1p-dialog-glass-filter);
+      backdrop-filter: var(--s1p-dialog-glass-filter);
       gap: 6px;
     }
     #s1p-debug-unified-panel .s1p-debug-panel-head {
@@ -3758,12 +3766,13 @@
 
     /* --- 手动同步弹窗样式 --- */
     .s1p-sync-choice-info {
-      background-color: var(--s1p-sub);
+      background-color: color-mix(in srgb, var(--s1p-dialog-glass-bg) 72%, var(--s1p-bg) 28%);
       border-radius: 6px;
       padding: 12px;
       margin-top: 12px;
       font-size: 13px;
       line-height: 1.7;
+      color: var(--s1p-dialog-muted-text);
     }
     .s1p-sync-choice-info-row {
       display: flex;
@@ -3772,7 +3781,7 @@
     }
     .s1p-sync-choice-info-label {
       font-weight: 500;
-      color: var(--s1p-t);
+      color: var(--s1p-dialog-text);
     }
     .s1p-sync-choice-info-time {
       font-family: monospace, sans-serif;
@@ -3785,20 +3794,21 @@
     /* --- [MODIFIED V3] 手动同步对比弹窗样式 (美化版) --- */
     .s1p-sync-last-action {
       font-size: 13px;
-      color: var(--s1p-desc-t);
+      color: var(--s1p-dialog-muted-text);
       text-align: center;
       margin: 12px 0 4px 0;
       padding: 8px;
-      background-color: var(--s1p-sub);
+      background-color: color-mix(in srgb, var(--s1p-dialog-glass-bg) 72%, var(--s1p-bg) 28%);
       border-radius: 6px;
     }
     .s1p-sync-comparison-table {
       margin-top: 16px;
-      background: var(--s1p-bg);
+      background: color-mix(in srgb, var(--s1p-dialog-glass-bg) 74%, var(--s1p-bg) 26%);
       border: 1px solid var(--s1p-border);
       border-radius: 8px;
       overflow: hidden;
       font-size: 14px;
+      color: var(--s1p-dialog-text);
     }
     .s1p-sync-comparison-row {
       display: grid;
@@ -3812,16 +3822,16 @@
     }
     /* 斑马条纹效果 */
     .s1p-sync-comparison-row:nth-child(even) {
-      background-color: var(--s1p-sub);
+      background-color: color-mix(in srgb, var(--s1p-dialog-glass-bg) 84%, var(--s1p-sub) 16%);
     }
     .s1p-sync-comparison-row:hover {
-      background-color: var(--s1p-pri);
+      background-color: color-mix(in srgb, var(--s1p-dialog-glass-bg) 78%, var(--s1p-pri) 22%);
     }
     /* 表头样式 */
     .s1p-sync-comparison-header {
       font-weight: 600;
-      background-color: var(--s1p-sub) !important;
-      color: var(--s1p-t);
+      background-color: color-mix(in srgb, var(--s1p-dialog-glass-bg) 66%, var(--s1p-sub) 34%) !important;
+      color: var(--s1p-dialog-text);
       border-bottom: 1px solid var(--s1p-border);
     }
     .s1p-sync-comparison-header > div {
@@ -3838,7 +3848,7 @@
     }
     .s1p-sync-comparison-label {
       font-weight: 500;
-      color: var(--s1p-t);
+      color: var(--s1p-dialog-text);
       white-space: nowrap;
       font-size: 13px;
     }
@@ -4278,8 +4288,8 @@
       border-radius: 8px;
       box-shadow: var(--s1p-popover-glass-shadow);
       border: none !important;
-      -webkit-backdrop-filter: blur(6px) saturate(1.05);
-      backdrop-filter: blur(6px) saturate(1.05);
+      -webkit-backdrop-filter: var(--s1p-popover-glass-filter);
+      backdrop-filter: var(--s1p-popover-glass-filter);
     }
     .s1p-confirm-container {
       display: flex;
@@ -4291,8 +4301,8 @@
       border-radius: 8px;
       box-shadow: var(--s1p-popover-glass-shadow);
       border: none;
-      -webkit-backdrop-filter: blur(6px) saturate(1.05);
-      backdrop-filter: blur(6px) saturate(1.05);
+      -webkit-backdrop-filter: var(--s1p-popover-glass-filter);
+      backdrop-filter: var(--s1p-popover-glass-filter);
       overflow: hidden;
     }
     .s1p-inline-confirm-menu.s1p-has-remark-input {
@@ -4589,8 +4599,8 @@
       border: none;
       border-radius: 12px;
       box-shadow: var(--s1p-popover-glass-shadow);
-      -webkit-backdrop-filter: blur(6px) saturate(1.05);
-      backdrop-filter: blur(6px) saturate(1.05);
+      -webkit-backdrop-filter: var(--s1p-popover-glass-filter);
+      backdrop-filter: var(--s1p-popover-glass-filter);
       box-sizing: border-box;
       opacity: 0;
       visibility: hidden;
@@ -4706,8 +4716,8 @@
       border: none;
       border-radius: 8px;
       box-shadow: var(--s1p-popover-glass-shadow);
-      -webkit-backdrop-filter: blur(6px) saturate(1.05);
-      backdrop-filter: blur(6px) saturate(1.05);
+      -webkit-backdrop-filter: var(--s1p-popover-glass-filter);
+      backdrop-filter: var(--s1p-popover-glass-filter);
       box-sizing: border-box;
       padding: 10px 14px;
       font-size: 13px;
@@ -4747,8 +4757,8 @@
     .s1p-generic-display-popover.s1p-generic-display-popover-doc {
       background: var(--s1p-popover-glass-bg);
       box-shadow: var(--s1p-popover-glass-shadow);
-      -webkit-backdrop-filter: blur(6px) saturate(1.05);
-      backdrop-filter: blur(6px) saturate(1.05);
+      -webkit-backdrop-filter: var(--s1p-popover-glass-filter);
+      backdrop-filter: var(--s1p-popover-glass-filter);
       padding: 16px 18px;
       line-height: 1.65;
       width: max-content;
@@ -4818,8 +4828,8 @@
       border: none;
       border-radius: 8px;
       box-shadow: var(--s1p-popover-glass-shadow);
-      -webkit-backdrop-filter: blur(6px) saturate(1.05);
-      backdrop-filter: blur(6px) saturate(1.05);
+      -webkit-backdrop-filter: var(--s1p-popover-glass-filter);
+      backdrop-filter: var(--s1p-popover-glass-filter);
       box-sizing: border-box;
       z-index: 20005; /* Above modal */
       padding: 16px;
@@ -5339,7 +5349,7 @@
       /* macOS 默认使用 antialiased，Windows 默认使用 ClearType 子像素抗锯齿 */
     }
     .s1p-modal > .s1p-modal-content {
-      --s1p-settings-panel-bg: rgba(255, 255, 255, 0.26);
+      --s1p-settings-panel-bg: rgba(255, 255, 255, 0.78);
       --s1p-settings-content-bg: var(--s1p-bg);
       --s1p-settings-scrollbar-thumb: rgba(37, 71, 122, 0.42);
       --s1p-settings-scrollbar-thumb-hover: rgba(37, 71, 122, 0.58);
@@ -5348,12 +5358,12 @@
       border: none;
       border-radius: 12px;
       box-shadow: 0 18px 44px rgba(0, 0, 0, 0.22);
-      -webkit-backdrop-filter: blur(8px) saturate(1.08);
-      backdrop-filter: blur(8px) saturate(1.08);
+      -webkit-backdrop-filter: var(--s1p-dialog-glass-filter);
+      backdrop-filter: var(--s1p-dialog-glass-filter);
     }
     @media (prefers-color-scheme: dark) {
       .s1p-modal > .s1p-modal-content {
-        --s1p-settings-panel-bg: rgba(30, 41, 59, 0.46);
+        --s1p-settings-panel-bg: rgba(17, 24, 39, 0.86);
         --s1p-settings-content-bg: #172033;
         --s1p-settings-scrollbar-thumb: rgba(148, 163, 184, 0.46);
         --s1p-settings-scrollbar-thumb-hover: rgba(148, 163, 184, 0.64);
@@ -5481,13 +5491,14 @@
     }
     .s1p-token-config-content {
       background: var(--s1p-dialog-glass-bg);
+      color: var(--s1p-dialog-text);
       border: none;
       width: 400px;
       max-width: 90%;
       border-radius: 12px;
       box-shadow: var(--s1p-dialog-glass-shadow);
-      -webkit-backdrop-filter: blur(8px) saturate(1.08);
-      backdrop-filter: blur(8px) saturate(1.08);
+      -webkit-backdrop-filter: var(--s1p-dialog-glass-filter);
+      backdrop-filter: var(--s1p-dialog-glass-filter);
       transition: none;
       backface-visibility: hidden;
       transform-origin: center;
@@ -5941,8 +5952,8 @@
       background: var(--s1p-toast-glass-bg);
       border: none;
       box-shadow: var(--s1p-toast-glass-shadow);
-      -webkit-backdrop-filter: blur(8px) saturate(1.08);
-      backdrop-filter: blur(8px) saturate(1.08);
+      -webkit-backdrop-filter: var(--s1p-toast-glass-filter);
+      backdrop-filter: var(--s1p-toast-glass-filter);
       box-sizing: border-box;
       opacity: 0;
       transition: opacity 0.3s ease-out, transform 0.3s ease-out;
@@ -6064,11 +6075,12 @@
     }
     .s1p-confirm-content {
       background: var(--s1p-dialog-glass-bg);
+      color: var(--s1p-dialog-text);
       border: none;
       border-radius: 12px;
       box-shadow: var(--s1p-dialog-glass-shadow);
-      -webkit-backdrop-filter: blur(8px) saturate(1.08);
-      backdrop-filter: blur(8px) saturate(1.08);
+      -webkit-backdrop-filter: var(--s1p-dialog-glass-filter);
+      backdrop-filter: var(--s1p-dialog-glass-filter);
       width: 480px;
       max-width: 90%;
       text-align: left;
@@ -6090,7 +6102,7 @@
     }
     .s1p-confirm-body .s1p-confirm-subtitle {
       font-size: 14px;
-      color: var(--s1p-desc-t);
+      color: var(--s1p-dialog-muted-text);
     }
     .s1p-confirm-footer {
       padding: 12px 24px 20px;
@@ -7338,8 +7350,8 @@
       padding: 10px 12px;
       border-bottom: 1px solid var(--s1p-dialog-glass-divider);
       background: var(--s1p-image-viewer-toolbar-bg);
-      -webkit-backdrop-filter: blur(8px) saturate(1.08);
-      backdrop-filter: blur(8px) saturate(1.08);
+      -webkit-backdrop-filter: var(--s1p-dialog-glass-filter);
+      backdrop-filter: var(--s1p-dialog-glass-filter);
       flex-wrap: wrap;
     }
     .s1p-image-viewer__save-status-overlay {
@@ -7544,8 +7556,8 @@
       align-items: center;
       justify-content: center;
       box-shadow: var(--s1p-floating-control-glass-shadow);
-      -webkit-backdrop-filter: blur(8px) saturate(1.08);
-      backdrop-filter: blur(8px) saturate(1.08);
+      -webkit-backdrop-filter: var(--s1p-floating-control-glass-filter);
+      backdrop-filter: var(--s1p-floating-control-glass-filter);
       opacity: 0;
       pointer-events: none;
       transition: opacity 0.18s ease,
@@ -7806,8 +7818,8 @@
       border: none;
       border-radius: 10px 0 0 10px;
       box-shadow: var(--s1p-floating-control-glass-shadow);
-      -webkit-backdrop-filter: blur(8px) saturate(1.08);
-      backdrop-filter: blur(8px) saturate(1.08);
+      -webkit-backdrop-filter: var(--s1p-floating-control-glass-filter);
+      backdrop-filter: var(--s1p-floating-control-glass-filter);
       cursor: pointer;
       display: flex;
       align-items: center;
@@ -7863,8 +7875,8 @@
       border-radius: 50%;
       background: var(--s1p-floating-control-glass-bg);
       box-shadow: var(--s1p-floating-control-glass-shadow);
-      -webkit-backdrop-filter: blur(8px) saturate(1.08);
-      backdrop-filter: blur(8px) saturate(1.08);
+      -webkit-backdrop-filter: var(--s1p-floating-control-glass-filter);
+      backdrop-filter: var(--s1p-floating-control-glass-filter);
       transition: all 0.2s ease-in-out;
       padding: 0;
       box-sizing: border-box;
@@ -8114,22 +8126,28 @@
 
         --s1p-border: #4b5563;
         --s1p-hover-overlay: rgba(255, 255, 255, 0.15);
-        --s1p-overlay-blur: 1.8px;
-        --s1p-dialog-glass-bg: rgba(30, 41, 59, 0.58);
+        --s1p-overlay-blur: 0.9px;
+        --s1p-dialog-glass-bg: rgba(17, 24, 39, 0.88);
+        --s1p-dialog-glass-filter: blur(3px) saturate(1.02);
         --s1p-dialog-glass-shadow: 0 18px 44px rgba(0, 0, 0, 0.28);
         --s1p-dialog-glass-divider: rgba(148, 163, 184, 0.2);
-        --s1p-popover-glass-bg: rgba(30, 41, 59, 0.76);
+        --s1p-dialog-text: #f1f5f9;
+        --s1p-dialog-muted-text: #cbd5e1;
+        --s1p-popover-glass-bg: rgba(17, 24, 39, 0.9);
+        --s1p-popover-glass-filter: blur(3px) saturate(1.02);
         --s1p-popover-glass-shadow: 0 18px 38px rgba(0, 0, 0, 0.32);
         --s1p-popover-solid-bg: var(--s1p-bg);
         --s1p-popover-solid-shadow: 0 12px 28px rgba(0, 0, 0, 0.34);
-        --s1p-toast-glass-bg: rgba(30, 41, 59, 0.72);
+        --s1p-toast-glass-bg: rgba(17, 24, 39, 0.92);
+        --s1p-toast-glass-filter: blur(3px) saturate(1.02);
         --s1p-toast-glass-shadow: 0 14px 34px rgba(0, 0, 0, 0.34);
         --s1p-toast-success-bg: rgba(22, 163, 74, 0.86);
         --s1p-toast-error-bg: rgba(185, 28, 28, 0.88);
-        --s1p-floating-control-glass-bg: rgba(30, 41, 59, 0.68);
+        --s1p-floating-control-glass-bg: rgba(17, 24, 39, 0.88);
+        --s1p-floating-control-glass-filter: blur(3px) saturate(1.02);
         --s1p-floating-control-glass-shadow: 0 10px 24px rgba(0, 0, 0, 0.32);
         --s1p-image-viewer-panel-shadow: var(--s1p-dialog-glass-shadow);
-        --s1p-image-viewer-toolbar-bg: rgba(18, 27, 45, 0.97);
+        --s1p-image-viewer-toolbar-bg: rgba(18, 27, 45, 0.98);
         --s1p-settings-scrollbar-thumb: rgba(148, 163, 184, 0.46);
         --s1p-settings-scrollbar-thumb-hover: rgba(148, 163, 184, 0.64);
         --s1p-settings-scrollbar-track: transparent;
@@ -8138,7 +8156,7 @@
         --s1p-progress-delete-text: #ffffff;
         --s1p-image-viewer-viewport-bg: rgba(33, 42, 52, 0.9);
         --s1p-image-viewer-viewport-glass-bg: rgba(148, 163, 184, 0.035);
-        --s1p-image-viewer-viewport-glass-filter: blur(6px) saturate(1.04);
+        --s1p-image-viewer-viewport-glass-filter: blur(3px) saturate(1.02);
         --s1p-image-viewer-loading-bg: rgba(17, 24, 39, 0.94);
         --s1p-image-viewer-loading-text: #e5edf6;
         --s1p-image-viewer-loading-spinner-track: rgba(226, 232, 240, 0.22);

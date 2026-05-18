@@ -6,6 +6,7 @@ const { sourceCode } = require("./s1plus-test-helpers");
 
 const requiredVariables = [
   "--s1p-popover-glass-bg",
+  "--s1p-popover-glass-filter",
   "--s1p-popover-glass-shadow",
   "--s1p-popover-solid-bg",
   "--s1p-popover-solid-shadow",
@@ -19,8 +20,8 @@ for (const variableName of requiredVariables) {
 }
 
 assert.ok(
-  sourceCode.includes("--s1p-popover-glass-bg: rgba(255, 255, 255, 0.52);"),
-  "浅色 Light popover glass 应保持无色白透明玻璃，不应带主题底色。"
+  sourceCode.includes("--s1p-popover-glass-bg: rgba(255, 255, 255, 0.82);"),
+  "浅色 Light popover glass 应使用更实的白色背景，避免内容透底影响阅读。"
 );
 assert.ok(
   !sourceCode.includes("--s1p-popover-glass-bg: rgba(236, 237, 235"),
@@ -63,8 +64,8 @@ const assertGlassPopover = (selector) => {
   assertBorderlessOuterSurface(block, selector);
   assert.match(
     block,
-    /backdrop-filter:\s*blur\(6px\) saturate\(1\.05\)/,
-    `${selector} 应使用 6px 轻磨砂。`
+    /backdrop-filter:\s*var\(--s1p-popover-glass-filter\)/,
+    `${selector} 应使用统一的轻量 popover 磨砂变量。`
   );
 };
 
