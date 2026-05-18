@@ -14,23 +14,23 @@ const expectIncludes = (needle, message) => {
     "浅色全屏蒙版 blur 应足够轻，不能把论坛背景糊成低对比噪声。",
   ],
   [
-    "--s1p-dialog-glass-bg: rgba(255, 255, 255, 0.78);",
-    "浅色确认弹窗背景应更实，保证正文可读性。",
+    "--s1p-dialog-glass-bg: rgba(255, 255, 255, 0.84);",
+    "浅色确认弹窗背景应更实但仍保留玻璃透明度，保证正文可读性。",
   ],
   [
     "--s1p-dialog-glass-filter: blur(3px) saturate(1.02);",
     "确认弹窗应使用轻量玻璃滤镜变量。",
   ],
   [
-    "--s1p-popover-glass-bg: rgba(255, 255, 255, 0.82);",
-    "浅色悬浮控件背景应更实，避免透出帖子内容。",
+    "--s1p-popover-glass-bg: rgba(255, 255, 255, 0.86);",
+    "浅色悬浮控件背景应稍微更实，避免透出帖子内容。",
   ],
   [
     "--s1p-popover-glass-filter: blur(3px) saturate(1.02);",
     "悬浮控件应使用轻量玻璃滤镜变量。",
   ],
   [
-    "--s1p-toast-glass-bg: rgba(255, 255, 255, 0.9);",
+    "--s1p-toast-glass-bg: rgba(255, 255, 255, 0.92);",
     "浅色 toast 背景应足够实，避免短提示被背景干扰。",
   ],
   [
@@ -38,7 +38,7 @@ const expectIncludes = (needle, message) => {
     "toast 应使用轻量玻璃滤镜变量。",
   ],
   [
-    "--s1p-floating-control-glass-bg: rgba(255, 255, 255, 0.86);",
+    "--s1p-floating-control-glass-bg: rgba(255, 255, 255, 0.89);",
     "浅色浮动控件背景应更实，避免图标可见性下降。",
   ],
   [
@@ -67,19 +67,19 @@ const darkMediaBlock = sourceCode.slice(darkMediaIndex, darkMediaIndex + 2600);
     "深色全屏蒙版 blur 也应保持轻量。",
   ],
   [
-    "--s1p-dialog-glass-bg: rgba(17, 24, 39, 0.88);",
+    "--s1p-dialog-glass-bg: rgba(17, 24, 39, 0.91);",
     "深色确认弹窗背景应更实，避免背景文字透出。",
   ],
   [
-    "--s1p-popover-glass-bg: rgba(17, 24, 39, 0.9);",
+    "--s1p-popover-glass-bg: rgba(17, 24, 39, 0.92);",
     "深色悬浮控件背景应更实。",
   ],
   [
-    "--s1p-toast-glass-bg: rgba(17, 24, 39, 0.92);",
+    "--s1p-toast-glass-bg: rgba(17, 24, 39, 0.94);",
     "深色 toast 背景应更实。",
   ],
   [
-    "--s1p-floating-control-glass-bg: rgba(17, 24, 39, 0.88);",
+    "--s1p-floating-control-glass-bg: rgba(17, 24, 39, 0.91);",
     "深色浮动控件背景应更实。",
   ],
   [
@@ -123,6 +123,17 @@ assertSurfaceUsesFilterVariable(
 assertSurfaceUsesFilterVariable(
   ".s1p-modal > .s1p-modal-content",
   "--s1p-dialog-glass-filter"
+);
+assert.match(
+  getRuleBlock(".s1p-modal > .s1p-modal-content"),
+  /--s1p-settings-panel-bg:\s*rgba\(255, 255, 255, 0\.82\)/,
+  "设置面板 shell 背景应略微加实，但仍保留磨砂玻璃层。"
+);
+assert.ok(
+  sourceCode.includes(
+    "--s1p-settings-panel-bg: rgba(17, 24, 39, 0.88);"
+  ),
+  "深色设置面板 shell 背景应同步加实。"
 );
 assertSurfaceUsesFilterVariable(
   ".s1p-tag-popover",
