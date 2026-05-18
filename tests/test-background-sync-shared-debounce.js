@@ -33,6 +33,7 @@ const REQUIRED_SHARED_DEBOUNCE_HOOKS = [
   "clearPendingAutoSyncRequestIfCovered",
   "clearSharedBackgroundSyncDebounceIfCovered",
   "getBackgroundSyncDebounceRuntimeStateForTest",
+  "getBackgroundAutoSyncRuntimeStateForTest",
   "getBackgroundSyncDebounceTestConstants",
 ];
 
@@ -245,6 +246,30 @@ const testForcedRetryUsesSharedSchedulerDueAt = () => {
     1200,
     "background retry 应由 shared debounce owner 排 timer，而不是每个 tab 自己排 retry timer。"
   );
+};
+
+const testSharedRetryDoesNotKeepLocalDrainPending = () => {
+  const { hooks, getState, sandbox, clearState } = getSharedDebounceApi();
+  sandbox.GM_setValue("s1p_settings", readySyncSettings);
+  sandbox.GM_setValue("s1p_last_modified", 2_600_001);
+
+  hooks.scheduleBackgroundSyncRetry(1200);
+
+  const runtimeState = hooks.getBackgroundAutoSyncRuntimeStateForTest();
+  assert.equal(getState().reason, "background_retry");
+  assert.equal(
+    runtimeState.hasPendingBackgroundSync,
+    false,
+    "shared retry scheduling must not keep the current background drain loop pending."
+  );
+  assert.equal(
+    runtimeState.hasLocalRetryTimer,
+    false,
+    "shared retry scheduling should not also arm a per-tab retry timer."
+  );
+
+  hooks.clearSharedBackgroundSyncDebounceTimer();
+  clearState();
 };
 
 const testCleanStateFenceSkipsCoveredAutoPush = () => {
@@ -903,6 +928,7 @@ const main = () => {
   testReadProgressDirtyMergesIntoSingleSharedState();
   testSourceSpecificSettleWindows();
   testForcedRetryUsesSharedSchedulerDueAt();
+  testSharedRetryDoesNotKeepLocalDrainPending();
   testCleanStateFenceSkipsCoveredAutoPush();
   testSharedDebounceDueClearsCoveredCleanState();
   testGeneralDueAtIsNotDelayedByReadProgress();
