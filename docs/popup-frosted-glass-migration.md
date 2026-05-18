@@ -36,7 +36,7 @@
 }
 ```
 
-> 说明：全屏蒙版不再保留全局黑色遮罩变量，只提供统一无色 blur。各弹窗外壳用自身的 Dialog/Shell/Image viewer glass 背景承担层次。
+> 说明：全屏蒙版不再保留全局黑色遮罩变量，只提供统一无色 blur。设置/确认等弹窗外壳用自身 Dialog/Shell 背景承担层次；图片查看器则由工具栏与图片舞台各自承担背景，面板壳不再参与叠色。
 
 ### 1.3 ★ 内容面板磨砂玻璃（核心参考）— 行 5303-5312
 
@@ -106,7 +106,7 @@ modalContent.style.setProperty(
 |------|---------|---------|---------|------|
 | Shell glass | 设置面板外壳 | `rgba(255, 255, 255, 0.26)` | `rgba(30, 41, 59, 0.46)` | 设置面板内部已有实底内容区，外壳可以更通透 |
 | Dialog glass | 确认/输入/Token/同步选择等决策弹窗 | `var(--s1p-dialog-glass-bg)` = `rgba(255, 255, 255, 0.42)` | `var(--s1p-dialog-glass-bg)` = `rgba(30, 41, 59, 0.58)` | 小表单和决策弹窗需要更稳，避免背景文字抢戏 |
-| Image viewer glass | 图片查看器外壳/图片舞台 | 外壳 `rgba(255,255,255,0.42)`；舞台 `rgba(212,221,206,0.72)` | 外壳 `rgba(30,41,59,0.58)`；舞台 `rgba(34,42,50,0.76)` | 全屏蒙版无色磨砂；图片舞台沿用原浅黄绿/深色底色并轻磨砂 |
+| Image viewer glass | 图片查看器工具栏/图片舞台 | 工具栏 `rgba(255,255,255,0.85)`；舞台底色 `rgba(226,232,222,0.7)` + 独立轻磨砂层 | 工具栏 `rgba(18,27,45,0.97)`；舞台底色 `rgba(33,42,52,0.9)` + 独立轻磨砂层 | 面板壳透明，只负责裁切/阴影；浅色和深色舞台都使用“底色层 + 磨砂层” |
 | Utility glass | Toast、浮动控制 | `var(--s1p-toast-glass-bg)` / `var(--s1p-floating-control-glass-bg)` | 对应深色变量 | 覆盖页面内容的轻量 UI 使用轻磨砂，状态色 Toast 保留语义色 |
 | Solid content | 同步对比表格、日期输入、图片读数控件 | `var(--s1p-bg)` | `var(--s1p-bg)` | 信息密集或需要精确阅读的子内容保留实底 |
 | Light popover glass | B1/B2/B4/B6/B7/B8 与文档型帮助浮层 | `var(--s1p-popover-glass-bg)` = `rgba(255,255,255,0.52)` | `var(--s1p-popover-glass-bg)` = `rgba(30,41,59,0.76)` | 面板感较强的确认浮层和 tooltip 使用无色、保守轻磨砂，不使用 dialog/shell 透明度 |
@@ -161,7 +161,7 @@ border: none;
 | A2 | 确认对话框 | 通用确认/取消（清空数据、屏蔽确认等） | `.s1p-confirm-content` | 35589 | Dialog glass：`0.42` / `0.58` + blur | ✅ 已完成 |
 | A3 | 高级确认对话框 | 自定义标题/内容/按钮的增强确认框 | `.s1p-confirm-content` (同上) | 42910 | 继承 A2（共用选择器） | ✅ 已完成 |
 | A4 | 输入框弹窗 | 带文本输入区的表单弹窗（编辑屏蔽备注） | `.s1p-confirm-content` (同上) | 35705 | 继承 A2（共用选择器） | ✅ 已完成 |
-| A5 | 图片查看器 | 全屏查看图片，支持缩放/平移/翻页/批量保存 | `.s1p-image-viewer__panel` | 23966 | Image viewer glass 外壳 + 半透明深色图片舞台 | ✅ 已完成 |
+| A5 | 图片查看器 | 全屏查看图片，支持缩放/平移/翻页/批量保存 | `.s1p-image-viewer__panel` | 23966 | 透明结构壳 + 独立工具栏/图片舞台玻璃背景 | ✅ 已完成 |
 | A6 | Token配置弹窗 | GitHub Token 过期日期设置（含日期选择器） | `.s1p-token-config-content` | 36568 | Dialog glass：`0.42` / `0.58` + blur | ✅ 已完成，待视觉确认 |
 | A7 | 手动屏蔽用户弹窗 | 手动输入用户名/UID 屏蔽用户（含备注） | `.s1p-confirm-content` (同上) | 38530 | 继承 A2（共用选择器） | ✅ 已完成 |
 | A8 | 阅读进度详情弹窗 | 阅读记录按时间分组展示，支持按组删除 | `.s1p-confirm-content` (同上) | 46940 | 继承 A2（共用选择器） | ✅ 已完成 |
@@ -285,22 +285,20 @@ border: none;
   width: min(96vw, 1600px);
   height: min(94vh, 1200px);
   border-radius: 12px;
-  background: var(--s1p-image-viewer-panel-bg);
+  background: transparent;
   border: none;
   box-shadow: var(--s1p-image-viewer-panel-shadow);
-  -webkit-backdrop-filter: blur(8px) saturate(1.08);
-  backdrop-filter: blur(8px) saturate(1.08);
   ...
 }
 ```
 
-> Review 决策更新：图片查看器改为玻璃外壳，但全屏蒙版不使用深色遮罩，和设置面板一样保持无色磨砂。`.s1p-image-viewer__viewport` 沿用原浅色 `#d4ddce` / 深色 `#222a32` 的色相，改成半透明轻磨砂，避免论坛正文直接干扰图片判断。
+> Review 决策更新：图片查看器面板壳改为透明结构层，只保留裁切、阴影和动画；全屏蒙版不使用深色遮罩，和设置面板一样保持无色磨砂。`.s1p-image-viewer__toolbar` 与 `.s1p-image-viewer__viewport` 各自铺背景；图片舞台本体铺稳定主题底色，`.s1p-image-viewer__viewport::before` 单独提供轻磨砂层，浅色和深色保持同一处理。
 
 **注意事项**:
 - 全屏蒙版统一是 `background-color: transparent` + blur，不再需要图片查看器单独覆写黑色遮罩。
-- 面板自身使用 `blur(8px) saturate(1.08)`。
-- 工具栏使用 `--s1p-image-viewer-toolbar-bg` 透明继承玻璃外壳。
-- 图片舞台使用 `blur(6px) saturate(1.04)` 的轻磨砂，并保留浅色浅黄绿 / 深色深灰蓝的原设计倾向。
+- 面板自身不铺背景、不使用 `backdrop-filter`，避免在工具栏/舞台下面再叠一层 alpha。
+- 工具栏使用 `--s1p-image-viewer-toolbar-bg` 和 `blur(8px) saturate(1.08)`。
+- 图片舞台使用 `--s1p-image-viewer-viewport-bg` 作为稳定底色；磨砂层由 `--s1p-image-viewer-viewport-glass-bg` 和 `--s1p-image-viewer-viewport-glass-filter` 控制，浅色和深色都保持 `blur(6px) saturate(1.04)`。以后调舞台透明度优先改底色变量，只在需要微调玻璃感时改磨砂层变量。
 - 缩放/页码胶囊等读数控件继续保持清晰实底，优先保证读数可读性。
 
 ### 步骤 4：类别 C 覆盖式控件 — 已完成
@@ -365,7 +363,7 @@ border: none;
 - `.s1p-inline-confirm-menu`、`.s1p-confirm-card`、`.s1p-options-menu.s1p-confirm-wrapper` 使用 Light popover glass；带备注输入框的确认菜单外层保持透明，内部确认条和备注区各自轻磨砂。
 - `.s1p-inline-action-menu`、`.s1p-tag-options-menu` 保持 Solid popover；纯操作入口主容器不显示描边。
 - S1 NUX 启用时，设置面板内部滚动条滑块会跟随 NUX 的 `--prid` / `--pridb`；track 保持透明并裁切圆角，避免 NUX 的 `--bg` 轨道形成直角沟槽。
-- `.s1p-image-viewer` 全屏蒙版已改为无色磨砂；`.s1p-image-viewer__panel` 是玻璃外壳；`.s1p-image-viewer__viewport` 沿用浅黄绿/深色底并改为轻磨砂图片舞台。
+- `.s1p-image-viewer` 全屏蒙版已改为无色磨砂；`.s1p-image-viewer__panel` 是透明结构壳；`.s1p-image-viewer__toolbar` 与 `.s1p-image-viewer__viewport` 分别承担独立玻璃背景。
 - `.s1p-toast-notification` 已改为 Light utility glass；success/error 保留状态色但改为半透明状态色玻璃。
 - `#s1p-controls-handle` 与 `#s1p-floating-controls` 内按钮已改为 Light utility glass。
 - `#s1p-debug-unified-panel` 已经是磨砂玻璃风格；`#s1p-auto-sync-debug-panel` 作为调试面板内部标签页归入 C3，不单独迁移。

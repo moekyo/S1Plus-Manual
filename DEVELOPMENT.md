@@ -248,11 +248,11 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 当前弹窗与浮层按“外层负责分层、内部负责功能边界”维护：
 
 - 全屏蒙版只提供无色 blur：`.s1p-modal`、`.s1p-confirm-modal`、`.s1p-token-config-modal`、`.s1p-image-viewer` 使用 `background-color: transparent` + `blur(var(--s1p-overlay-blur))`，不要恢复全局黑色遮罩变量。
-- Dialog glass 用于确认、输入、Token、同步选择等决策弹窗；Shell glass 用于设置面板外壳；Image viewer glass 用于图片查看器外壳；Light popover glass 用于 B1/B2、确认型浮层、普通短 tooltip 和文档型帮助浮层。
+- Dialog glass 用于确认、输入、Token、同步选择等决策弹窗；Shell glass 用于设置面板外壳；Image viewer glass 用于图片查看器工具栏和图片舞台；Light popover glass 用于 B1/B2、确认型浮层、普通短 tooltip 和文档型帮助浮层。
 - 纯操作入口菜单（帖子内联操作、标签选项菜单）保持实底，不添加 `backdrop-filter`。
 - 自定义 UI 最外层容器默认 `border: none`，依靠背景、阴影和 blur 分层；不要给外壳补 1px 线框来“找边界”。
 - 输入框、按钮、状态 chip、分隔线、表格、设置面板内部列表项属于功能性边界，可按可读性保留边框。
-- 图片查看器图片舞台使用专用变量 `--s1p-image-viewer-viewport-bg`：浅色沿用 `#d4ddce` 色相，深色沿用 `#222a32` 色相，并通过半透明 + 6px blur 做轻磨砂；不要改回通用深色遮罩。
+- 图片查看器面板 `.s1p-image-viewer__panel` 只负责圆角裁切、阴影和动画，不铺背景、不做 `backdrop-filter`；工具栏和图片舞台分别用 `--s1p-image-viewer-toolbar-bg`、`--s1p-image-viewer-viewport-bg` 独立控制，避免父子透明背景叠加导致舞台调参互相牵连。图片舞台本体只铺稳定主题底色，`.s1p-image-viewer__viewport::before` 用 `--s1p-image-viewer-viewport-glass-bg` + `--s1p-image-viewer-viewport-glass-filter` 负责磨砂层；浅色和深色必须保持同一套“底色层 + 磨砂层”结构，避免只在某个主题下直接过滤原页面。
 - 设置面板滚动视口负责圆角裁切和滚动条样式；S1 NUX 下滚动条 thumb 通过 `applyNuxSettingsScrollbarThemeFix()` 跟随 NUX 主题色，track 保持透明。
 
 ## 5. 存储键说明（GM Key）
