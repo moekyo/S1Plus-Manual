@@ -138,7 +138,7 @@ const testSourceAwareTitlesAndMappings = () => {
       displayReason: "foreground_probe_verification_retry",
       displayOperation: "sync",
     }),
-    "自动同步：等待二次确认"
+    "自动同步：确认云端状态中"
   );
   assert.strictEqual(
     hooks.getAutoSyncIndicatorDisplayKind({
@@ -148,7 +148,7 @@ const testSourceAwareTitlesAndMappings = () => {
       displayOperation: "sync",
     }),
     "sync",
-    "云端版本时间相同的二次确认 pending 应使用中性三点，而不是拉取箭头。"
+    "云端版本时间相同的内部复查在保底映射中仍应使用中性三点，而不是拉取箭头。"
   );
   assert.strictEqual(
     hooks.getAutoSyncIndicatorTitle({
@@ -648,11 +648,16 @@ const testDisplaySessionCoalescesPushVerification = () => {
     }
   );
   resolvedState = toPlainObject(hooks.resolveAutoSyncIndicatorDisplayPhase());
-  assert.equal(resolvedState.displayPhase, "pending");
+  assert.equal(resolvedState.displayPhase, "idle");
   assert.equal(
     hooks.getAutoSyncIndicatorDisplayKind(resolvedState),
-    "sync",
-    "超过会话归并窗口后的 foreground probe 不应继承旧 push 方向。"
+    "idle",
+    "超过会话归并窗口后的等值二次确认应静默执行，不再点亮导航栏 pending。"
+  );
+  assert.equal(
+    hooks.getAutoSyncIndicatorTitle(resolvedState),
+    "自动同步：待命",
+    "静默等值二次确认不应继续显示旧的等待确认文案。"
   );
   hooks.clearForegroundRemoteSyncRetry();
   hooks.clearLastAutoSyncIndicatorDisplaySession();
@@ -925,7 +930,11 @@ const testAutoSyncEntryPointsBindIndicatorSources = () => {
   );
   expectMatch(
     /remote_probe_equal_ambiguous:\$\{normalizedReason\}[\s\S]*?indicatorReason:\s*AUTO_SYNC_INDICATOR_REASON_FOREGROUND_PROBE_VERIFICATION_RETRY[\s\S]*?indicatorOperation:\s*AUTO_SYNC_INDICATOR_OPERATION_SYNC/,
-    "云端版本时间相同的二次确认 pending 应使用中性 sync 图标，避免误显示为待拉取。"
+    "云端版本时间相同的内部复查应保留中性 sync operation，避免异常显示时误表达为待拉取。"
+  );
+  expectMatch(
+    /shouldSuppressAutoSyncIndicatorEqualVerificationDisplay[\s\S]*?AUTO_SYNC_INDICATOR_REASON_FOREGROUND_PROBE_VERIFICATION_RETRY[\s\S]*?buildSilentAutoSyncIndicatorIdleDisplayState/,
+    "等值二次校验没有 push settling 上下文时，应被显示层静默折回待命。"
   );
   expectMatch(
     /remote_probe_changed:\$\{normalizedReason\}[\s\S]*?indicatorReason:\s*AUTO_SYNC_INDICATOR_REASON_FOREGROUND_PROBE_CHANGED_RETRY[\s\S]*?indicatorOperation:\s*AUTO_SYNC_INDICATOR_OPERATION_SYNC/,

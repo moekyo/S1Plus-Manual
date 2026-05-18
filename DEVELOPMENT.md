@@ -367,37 +367,41 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 指示器现在用于反馈“自动同步体系”的摘要状态，而不再只是后台自动同步子模块的状态灯。
 
 #### 简易流转全览
-完全的极简状态单线变迁路径如下：
-> `Idle` ➞ *(本地更改)* ➞ `Pending` ➞ *(防抖结束)* ➞ `Running` ➞ *(网络返回)* ➞ `Success / Failure / Conflict` ➞ *(TTL时间结束)* ➞ `Idle`
+最常见的本地变更路径如下：
+> `Idle` ➞ *(本地更改)* ➞ `Pending(push)` ➞ *(防抖结束)* ➞ `Running(push)` ➞ *(网络返回)* ➞ `Success / Failure / Conflict` ➞ *(TTL 结束)* ➞ `Idle`
 
-#### 详细节点与时序图
-1. **触发 (Pending)**
-   - 本地数据变更时，调用 `setAutoSyncIndicatorPendingPhase(reason)` 进入后台防抖 / 重试 / pending 队列。
-   - Pending 会根据 `source + operation` 显示方向：后台本地变更默认是 `push`，启动 / 每次加载 / 首次可见 / 回到前台 / 可见页轮询默认是 `pull`。
-   - 云端 `updated_at` 与本地已同步版本相同、但仍需二次确认的前台补偿重试，使用中性的三点 `sync` pending，并标记为“等待二次确认”，不显示为待拉取。
-   - metadata-only probe 只发现 `updated_at` 变新、但前台补同步被本地 pending write / debounce 门禁暂缓时，也使用中性的三点 `sync` pending；等 full sync 真的决策出 `pull` 后才显示拉取方向。
-   - Pending 的 `push` / `pull` 使用 running 单箭头 path 静态叠成双箭头，不再维护独立双箭头 SVG；动画只属于真正执行中的 `running`。
-   - Pending 方向图标会放大到 `1.3`，切入相同方向的 Running 箭头队列时使用专门的尺寸衔接动画，避免从静态双箭头硬切到较小动态图标。
-   - 只有无法判定方向时才回退到三点 `sync` 图标。
-2. **执行 (Running)**
-   - 防抖结束，或某条自动同步路径真正进入执行阶段后，调用对应的 indicator cycle 入口生成加锁 `token`。
-   - 启动 / 前台 follow-up 这类“先检查再决策”的完整安全同步，在真正判定 `push` / `pull` 前先显示中性的三点 `sync` 图标，避免出现“先向下再向上”的误导性方向反转。
-   - `push` 使用纯向上箭头队列动画，箭头持续上行；`pull` 使用纯向下箭头队列动画，箭头持续下行。Running 的方向队列会放大到 `1.18`，两者都继承 `currentColor`，并沿用统一的 `0.6px` 同色描边来保持与成功 / 失败图标的视觉重量一致。
-   - `probe` 只表示前台 metadata-only 云端探测，图标为放大镜，使用独立的巡视式位移动画，不与真正的拉取 / 推送混用。
-   - 前台 probe 有防闪策略：开始后延迟 `AUTO_SYNC_INDICATOR_PROBE_SHOW_DELAY_MS`（当前 160ms）才显示；如果已经显示，则至少保留 `AUTO_SYNC_INDICATOR_PROBE_MIN_VISIBLE_MS`（当前 560ms）后再切到拉取、成功或待命。
-3. **结算 (Success / Failure / Conflict)**
-   - 网络合并完成后，调用 `finishAutoSyncIndicatorCycle(token, phase)` 或 `setAutoSyncIndicatorResolvedPhase(phase)`。
-   - **Success (成功)**：图标变为打勾（静止，无动画）。
-   - `hash_equal` / `no_change` 这类二次确认结果会直接回到 `Idle`，不显示成功勾，也不会写入标题栏的 `[同步成功]` 提示。
-   - **Failure / Conflict (失败或冲突)**：图标变为减号（静止，无动画）。
-4. **冷却与复位 (Cooldown & Revert)**
-   - 导航栏指示器根据结算类型进行秒级倒计时冷却：Success (2.4s) / Failure (9s) / Conflict (12s)。标题同步状态有独立的分钟级 TTL，不要混用两者。
-   - TTL 到期后，随页面可见（visibilitychange）或聚焦重新触发 UI 渲染，自动复位回空闲时极简的单点 `idle` 状态。
+前台云端检查路径是两段式：
+> `Idle` ➞ `Running(probe)` ➞ *(metadata unchanged)* ➞ `Idle`
+> `Idle` ➞ `Running(probe)` ➞ *(metadata changed)* ➞ `Pending(sync)` 或 `Running(sync/pull)` ➞ `Success / Failure / Conflict / Idle`
+
+#### 显示状态解析顺序
+`resolveAutoSyncIndicatorDisplayPhase()` 会把持久化状态、运行时锁、pending 队列和视觉会话合成为导航栏最终显示态。当前优先级如下：
+
+1. **真实运行态优先**
+   - 慢速前台 metadata probe 达到可见阈值后显示 `Running(probe)`。
+   - 真实同步锁仍有效时显示 `Running`，方向来自当前锁或已明确的 `operation`。
+   - 前台 follow-up safe sync promise 未完成时显示 `Running(sync)`，直到真正决策出 `push` / `pull`。
+   - 持久化 `running` 状态未达到 `AUTO_SYNC_INDICATOR_RUNNING_MIN_VISIBLE_MS`（当前 650ms）或写入仍在进行时，会继续显示 running，避免刚开始就硬切走。
+2. **可见 pending**
+   - 后台 shared debounce、后台 retry、pending auto-sync request 显示为 `Pending(push)`，并按来源归纳为“阅读进度 / 清理结果 / 本地变更待推送”。
+   - 前台发现云端 `updated_at` 变新、但本地 pending write / debounce 门禁要求稍后复查时，显示 `Pending(sync)`，文案为“云端有变化，等待本地状态稳定后复查”。这表示可能有云端更新待处理，必须保留。
+   - 前台 follow-up 已确认需要拉取但暂时重试时，显示 `Pending(pull)`，优先级高于本地 push pending，避免远端更新被本地队列盖住。
+   - 云端 `updated_at` 与本地已同步版本相同的 `remote_probe_equal_ambiguous:*` 只安排内部二次校验，不再单独点亮导航栏 pending；只有刚刚同标签页完成自动推送且仍在视觉归并窗口内时，才合并显示为 `Pending(push)` 收尾态“推送完成，正在确认云端状态”。
+3. **结果态 TTL**
+   - 网络合并完成后，调用 `finishAutoSyncIndicatorCycle(token, phase)` 或 `setAutoSyncIndicatorResolvedPhase(phase)` 写入 `Success / Failure / Conflict`。
+   - `Success` 显示打勾；`Failure / Conflict` 显示减号。
+   - `hash_equal` / `no_change` 这类等值二次校验结果直接回到 `Idle`，不显示成功勾，也不会写入标题栏的 `[同步成功]` 提示。
+   - 导航栏 TTL：Success 2.4s / Failure 9s / Conflict 12s。标题同步状态有独立的分钟级 TTL，不要混用。
+4. **视觉会话层**
+   - `applyAutoSyncIndicatorDisplaySession()` 负责把内部步骤合成用户语义：本地 push session、远端 pull session、cloud probe session、manual session、blocked session。
+   - 刚完成的自动推送会记录 `lastAutoSyncIndicatorDisplaySession`（30s 归并窗口、900ms 最短收尾、5s 最长收尾）。如果随后出现等值二次校验，会被合并成 push settling，而不是显示内部 verification pending。
+   - 如果 settling 期间又出现新的本地 dirty / shared debounce，立即续到 `Pending(push)`，文案按本地来源重新计算。
+   - 过期的 push session 不再影响后续前台 probe；等值二次校验静默执行，导航栏保持 `Idle`。
 
 实现注意：
 
 - 快速完成的 metadata-only probe 不应点亮 indicator；慢 probe 只显示放大镜，不提前表达为拉取。
-- `remote_probe_equal_ambiguous:*` 只是“版本时间相同后的保守二次确认”，不是远端更新命中；日志、pending 图标和标题状态都不要把它表达为拉取。
+- `remote_probe_equal_ambiguous:*` 只是“版本时间相同后的保守二次确认”，不是远端更新命中；除刚完成本标签页自动推送后的 push settling 收尾外，导航栏和标题状态都应静默，不要显示为 pending、拉取或成功。
 - 前台 retry pending 的运行时 `source` 必须从 `remote_probe_*:<triggerSource>` 原因中还原，不能统一写成 `foreground_resume`；否则 `displayOperation` 会被来源不一致保护丢弃，重新默认成待拉取箭头。
 - 只有真正进入 follow-up safe sync、后台自动同步、手动同步锁，或达到可见阈值的 probe，才切换到 `running`。
 - 当前实现已经为不同来源保留 `source` 字段，后续扩展时优先沿用现有来源枚举，而不是新增自由文本。
@@ -442,7 +446,10 @@ sequenceDiagram
     opt 前台 metadata probe
         S->>I: 160ms 后显示放大镜
         I->>I: 已显示则至少保留 560ms
-        S->>I: 版本时间相同但需确认时显示三点 pending
+        S->>I: 版本时间相同的内部复查默认静默
+        opt 刚完成同标签页自动推送
+            S->>I: 合并为 push settling（推送完成，确认云端状态）
+        end
     end
 
     alt 同步成功
