@@ -1476,6 +1476,11 @@
     AUTO_SYNC_INDICATOR_PHASE_RUNNING,
     AUTO_SYNC_INDICATOR_PHASE_SUCCESS,
   ]);
+  const AUTO_SYNC_INDICATOR_DEBUG_DEFAULT_SEQUENCE_STEPS = Object.freeze(
+    AUTO_SYNC_INDICATOR_DEBUG_DEFAULT_SEQUENCE_PHASES.map((phase) =>
+      Object.freeze({ phase })
+    )
+  );
   const AUTO_SYNC_INDICATOR_DEBUG_PHASE_BUTTONS = Object.freeze([
     {
       label: "待机",
@@ -1583,29 +1588,67 @@
       label: "待机 → Pending",
       action: "idleToPending",
       kind: "transition",
-      phases: Object.freeze([
-        AUTO_SYNC_INDICATOR_PHASE_IDLE,
-        AUTO_SYNC_INDICATOR_PHASE_PENDING,
+      steps: Object.freeze([
+        Object.freeze({ phase: AUTO_SYNC_INDICATOR_PHASE_IDLE }),
+        Object.freeze({ phase: AUTO_SYNC_INDICATOR_PHASE_PENDING }),
       ]),
       reason: "debug_idle_to_pending",
     },
     {
-      label: "Pending → Running",
-      action: "pendingToRunning",
+      label: "Push 待处理 → Running",
+      action: "pushPendingToRunning",
       kind: "transition",
-      phases: Object.freeze([
-        AUTO_SYNC_INDICATOR_PHASE_PENDING,
-        AUTO_SYNC_INDICATOR_PHASE_RUNNING,
+      steps: Object.freeze([
+        Object.freeze({
+          phase: AUTO_SYNC_INDICATOR_PHASE_PENDING,
+          operation: AUTO_SYNC_INDICATOR_OPERATION_PUSH,
+        }),
+        Object.freeze({
+          phase: AUTO_SYNC_INDICATOR_PHASE_RUNNING,
+          operation: AUTO_SYNC_INDICATOR_OPERATION_PUSH,
+        }),
       ]),
-      reason: "debug_pending_to_running",
+      reason: "debug_push_pending_to_running",
+    },
+    {
+      label: "Pull 待处理 → Running",
+      action: "pullPendingToRunning",
+      kind: "transition",
+      steps: Object.freeze([
+        Object.freeze({
+          phase: AUTO_SYNC_INDICATOR_PHASE_PENDING,
+          operation: AUTO_SYNC_INDICATOR_OPERATION_PULL,
+        }),
+        Object.freeze({
+          phase: AUTO_SYNC_INDICATOR_PHASE_RUNNING,
+          operation: AUTO_SYNC_INDICATOR_OPERATION_PULL,
+        }),
+      ]),
+      reason: "debug_pull_pending_to_running",
+    },
+    {
+      label: "Probe → Pull",
+      action: "probeToPull",
+      kind: "transition",
+      steps: Object.freeze([
+        Object.freeze({
+          phase: AUTO_SYNC_INDICATOR_PHASE_RUNNING,
+          operation: AUTO_SYNC_INDICATOR_OPERATION_PROBE,
+        }),
+        Object.freeze({
+          phase: AUTO_SYNC_INDICATOR_PHASE_RUNNING,
+          operation: AUTO_SYNC_INDICATOR_OPERATION_PULL,
+        }),
+      ]),
+      reason: "debug_probe_to_pull",
     },
     {
       label: "Running → Success",
       action: "runningToSuccess",
       kind: "transition",
-      phases: Object.freeze([
-        AUTO_SYNC_INDICATOR_PHASE_RUNNING,
-        AUTO_SYNC_INDICATOR_PHASE_SUCCESS,
+      steps: Object.freeze([
+        Object.freeze({ phase: AUTO_SYNC_INDICATOR_PHASE_RUNNING }),
+        Object.freeze({ phase: AUTO_SYNC_INDICATOR_PHASE_SUCCESS }),
       ]),
       reason: "debug_running_to_success",
     },
@@ -1613,7 +1656,7 @@
       label: "整套 Demo",
       action: "demo",
       kind: "transition",
-      phases: AUTO_SYNC_INDICATOR_DEBUG_DEFAULT_SEQUENCE_PHASES,
+      steps: AUTO_SYNC_INDICATOR_DEBUG_DEFAULT_SEQUENCE_STEPS,
       reason: "debug_sequence",
     },
   ]);
@@ -2629,7 +2672,7 @@
     }
     @keyframes s1p-auto-sync-indicator-pending-to-running-exit {
       0% {
-        opacity: 0.86;
+        opacity: 1;
         transform: translateY(0) scale(1) rotate(0deg);
       }
       100% {
@@ -2639,7 +2682,7 @@
     }
     @keyframes s1p-auto-sync-pending-to-running-svg {
       0% {
-        opacity: 0.86;
+        opacity: 1;
         transform: scale(1.25);
       }
       100% {
@@ -2655,6 +2698,26 @@
       100% {
         opacity: var(--s1p-sync-arrow-bridge-end-opacity, 1);
         transform: translateY(var(--s1p-sync-arrow-bridge-end-y, 0));
+      }
+    }
+    @keyframes s1p-auto-sync-indicator-probe-to-operation-enter {
+      0% {
+        opacity: 0;
+        transform: translateY(0) scale(0.96) rotate(0deg);
+      }
+      100% {
+        opacity: 1;
+        transform: translateY(0) scale(1) rotate(0deg);
+      }
+    }
+    @keyframes s1p-auto-sync-indicator-probe-to-operation-exit {
+      0% {
+        opacity: 1;
+        transform: translateY(0) scale(1) rotate(0deg);
+      }
+      100% {
+        opacity: 0;
+        transform: translateY(0) scale(0.92) rotate(0deg);
       }
     }
     @keyframes s1p-auto-sync-indicator-active-to-idle-enter {
@@ -2814,6 +2877,12 @@
     #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-exiting.s1p-auto-sync-transition-probe-origin {
       animation: s1p-auto-sync-indicator-probe-exit ${AUTO_SYNC_INDICATOR_ENTER_DURATION_MS}ms cubic-bezier(0.16, 1, 0.3, 1) both;
     }
+    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-entering.s1p-auto-sync-transition-probe-to-operation {
+      animation: s1p-auto-sync-indicator-probe-to-operation-enter 220ms cubic-bezier(0.25, 1, 0.5, 1) both;
+    }
+    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-exiting.s1p-auto-sync-transition-probe-to-operation-origin {
+      animation: s1p-auto-sync-indicator-probe-to-operation-exit 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    }
     #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-entering.s1p-auto-sync-transition-idle-to-pending {
       animation: none;
       opacity: 1;
@@ -2923,35 +2992,35 @@
     }
     #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-pending.s1p-auto-sync-kind-push,
     #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-pending.s1p-auto-sync-kind-pull {
-      opacity: 0.86;
+      opacity: 1;
       transform: scale(1.25);
       transform-origin: center;
     }
     #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-pending.s1p-auto-sync-kind-push .s1p-sync-flow-arrow,
     #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-pending.s1p-auto-sync-kind-pull .s1p-sync-flow-arrow {
-      opacity: 0.92;
+      opacity: 1;
       transform-box: fill-box;
       transform-origin: center;
     }
     #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-pending.s1p-auto-sync-kind-push .s1p-sync-flow-arrow:nth-child(1) {
-      transform: translateY(-3.6px);
+      transform: translateY(-4.5px);
     }
     #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-pending.s1p-auto-sync-kind-push .s1p-sync-flow-arrow:nth-child(2) {
-      transform: translateY(3.6px);
+      transform: translateY(4.5px);
     }
     #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-pending.s1p-auto-sync-kind-push .s1p-sync-flow-arrow:nth-child(3) {
       opacity: 0;
-      transform: translateY(8.6px);
+      transform: translateY(13.5px);
     }
     #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-pending.s1p-auto-sync-kind-pull .s1p-sync-flow-arrow:nth-child(1) {
-      transform: translateY(3.6px);
+      transform: translateY(4.5px);
     }
     #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-pending.s1p-auto-sync-kind-pull .s1p-sync-flow-arrow:nth-child(2) {
-      transform: translateY(-3.6px);
+      transform: translateY(-4.5px);
     }
     #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-pending.s1p-auto-sync-kind-pull .s1p-sync-flow-arrow:nth-child(3) {
       opacity: 0;
-      transform: translateY(-8.6px);
+      transform: translateY(-13.5px);
     }
     #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-entering.s1p-auto-sync-transition-pending-to-running svg.s1p-auto-sync-running.s1p-auto-sync-kind-push,
     #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-entering.s1p-auto-sync-transition-pending-to-running svg.s1p-auto-sync-running.s1p-auto-sync-kind-pull {
@@ -2967,35 +3036,35 @@
       animation-delay: 0s;
     }
     #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-entering.s1p-auto-sync-transition-pending-to-running svg.s1p-auto-sync-running.s1p-auto-sync-kind-push .s1p-sync-flow-arrow:nth-child(1) {
-      --s1p-sync-arrow-bridge-start-y: -3.6px;
+      --s1p-sync-arrow-bridge-start-y: -4.5px;
       --s1p-sync-arrow-bridge-end-y: -4.5px;
-      --s1p-sync-arrow-bridge-end-opacity: 0.92;
+      --s1p-sync-arrow-bridge-end-opacity: 1;
     }
     #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-entering.s1p-auto-sync-transition-pending-to-running svg.s1p-auto-sync-running.s1p-auto-sync-kind-push .s1p-sync-flow-arrow:nth-child(2) {
-      --s1p-sync-arrow-bridge-start-y: 3.6px;
+      --s1p-sync-arrow-bridge-start-y: 4.5px;
       --s1p-sync-arrow-bridge-end-y: 4.5px;
-      --s1p-sync-arrow-bridge-end-opacity: 0.92;
+      --s1p-sync-arrow-bridge-end-opacity: 1;
     }
     #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-entering.s1p-auto-sync-transition-pending-to-running svg.s1p-auto-sync-running.s1p-auto-sync-kind-push .s1p-sync-flow-arrow:nth-child(3) {
       --s1p-sync-arrow-bridge-start-opacity: 0;
       --s1p-sync-arrow-bridge-end-opacity: 0;
-      --s1p-sync-arrow-bridge-start-y: 8.6px;
+      --s1p-sync-arrow-bridge-start-y: 13.5px;
       --s1p-sync-arrow-bridge-end-y: 13.5px;
     }
     #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-entering.s1p-auto-sync-transition-pending-to-running svg.s1p-auto-sync-running.s1p-auto-sync-kind-pull .s1p-sync-flow-arrow:nth-child(1) {
-      --s1p-sync-arrow-bridge-start-y: 3.6px;
+      --s1p-sync-arrow-bridge-start-y: 4.5px;
       --s1p-sync-arrow-bridge-end-y: 4.5px;
-      --s1p-sync-arrow-bridge-end-opacity: 0.92;
+      --s1p-sync-arrow-bridge-end-opacity: 1;
     }
     #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-entering.s1p-auto-sync-transition-pending-to-running svg.s1p-auto-sync-running.s1p-auto-sync-kind-pull .s1p-sync-flow-arrow:nth-child(2) {
-      --s1p-sync-arrow-bridge-start-y: -3.6px;
+      --s1p-sync-arrow-bridge-start-y: -4.5px;
       --s1p-sync-arrow-bridge-end-y: -4.5px;
-      --s1p-sync-arrow-bridge-end-opacity: 0.92;
+      --s1p-sync-arrow-bridge-end-opacity: 1;
     }
     #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-entering.s1p-auto-sync-transition-pending-to-running svg.s1p-auto-sync-running.s1p-auto-sync-kind-pull .s1p-sync-flow-arrow:nth-child(3) {
       --s1p-sync-arrow-bridge-start-opacity: 0;
       --s1p-sync-arrow-bridge-end-opacity: 0;
-      --s1p-sync-arrow-bridge-start-y: -8.6px;
+      --s1p-sync-arrow-bridge-start-y: -13.5px;
       --s1p-sync-arrow-bridge-end-y: -13.5px;
     }
     #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-probe {
@@ -33591,8 +33660,42 @@
     renderNavbarAutoSyncIndicator();
   };
 
+  const normalizeAutoSyncIndicatorDebugSequenceStep = (
+    step,
+    {
+      source = AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+      reason = "debug_sequence",
+      operation = "",
+    } = {}
+  ) => {
+    const rawStep =
+      step && typeof step === "object" ? step : { phase: step };
+    const normalizedPhase = normalizeAutoSyncIndicatorDebugPhase(rawStep.phase);
+    if (!normalizedPhase) {
+      return null;
+    }
+    const hasOwnSource = Object.prototype.hasOwnProperty.call(rawStep, "source");
+    const hasOwnReason = Object.prototype.hasOwnProperty.call(rawStep, "reason");
+    const hasOwnOperation = Object.prototype.hasOwnProperty.call(
+      rawStep,
+      "operation"
+    );
+    return {
+      phase: normalizedPhase,
+      source:
+        normalizeAutoSyncIndicatorSource(hasOwnSource ? rawStep.source : source) ||
+        AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+      reason:
+        normalizeAutoSyncIndicatorReason(hasOwnReason ? rawStep.reason : reason) ||
+        "debug_sequence",
+      operation: hasOwnOperation
+        ? normalizeAutoSyncIndicatorOperation(rawStep.operation)
+        : normalizeAutoSyncIndicatorOperation(operation),
+    };
+  };
+
   const runAutoSyncIndicatorDebugSequence = (
-    phases = AUTO_SYNC_INDICATOR_DEBUG_DEFAULT_SEQUENCE_PHASES,
+    steps = AUTO_SYNC_INDICATOR_DEBUG_DEFAULT_SEQUENCE_STEPS,
     {
       source = AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
       reason = "debug_sequence",
@@ -33602,25 +33705,34 @@
     } = {}
   ) => {
     stopAutoSyncIndicatorDebugSequence();
-    const normalizedPhases = phases
-      .map((phase) => normalizeAutoSyncIndicatorDebugPhase(phase))
+    const rawSteps = Array.isArray(steps)
+      ? steps
+      : AUTO_SYNC_INDICATOR_DEBUG_DEFAULT_SEQUENCE_STEPS;
+    const normalizedSteps = rawSteps
+      .map((step) =>
+        normalizeAutoSyncIndicatorDebugSequenceStep(step, {
+          source,
+          reason,
+          operation,
+        })
+      )
       .filter(Boolean);
-    if (normalizedPhases.length === 0) {
+    if (normalizedSteps.length === 0) {
       clearAutoSyncIndicatorDebugOverride();
       return;
     }
     let index = 0;
     const renderNext = () => {
-      const nextPhase = normalizedPhases[index];
+      const nextStep = normalizedSteps[index];
       autoSyncIndicatorDebugOverrideState = buildAutoSyncIndicatorDebugState(
-        nextPhase,
-        source,
-        `${reason}:${nextPhase}`,
-        operation
+        nextStep.phase,
+        nextStep.source,
+        `${nextStep.reason}:${nextStep.phase}`,
+        nextStep.operation
       );
       renderNavbarAutoSyncIndicator(autoSyncIndicatorDebugOverrideState);
       index += 1;
-      if (index >= normalizedPhases.length) {
+      if (index >= normalizedSteps.length) {
         if (!loop) {
           autoSyncIndicatorDebugSequenceTimer = null;
           return;
@@ -33656,6 +33768,20 @@
     };
   };
 
+  const formatAutoSyncIndicatorDebugDisplaySummary = (displayState) => {
+    if (!displayState) {
+      return "—";
+    }
+    const displayPhase =
+      normalizeAutoSyncIndicatorPhase(displayState.displayPhase, {
+        allowRunning: true,
+        allowPending: true,
+      }) || AUTO_SYNC_INDICATOR_PHASE_IDLE;
+    const displayOperation =
+      resolveAutoSyncIndicatorDisplayOperation(displayState) || "";
+    return displayOperation ? `${displayPhase} / ${displayOperation}` : displayPhase;
+  };
+
   const updateAutoSyncIndicatorDebugPanelState = () => {
     const panel = document.getElementById(AUTO_SYNC_INDICATOR_DEBUG_PANEL_ID);
     if (!panel) {
@@ -33674,6 +33800,10 @@
         "actual-operation",
         resolveAutoSyncIndicatorDisplayOperation(actualDisplayState) || "—",
       ],
+      [
+        "actual-display",
+        formatAutoSyncIndicatorDebugDisplaySummary(actualDisplayState),
+      ],
       ["preview-phase", previewState?.phase || "无"],
       ["preview-source", previewState?.source || "—"],
       [
@@ -33681,6 +33811,10 @@
         previewDisplayState
           ? resolveAutoSyncIndicatorDisplayOperation(previewDisplayState) || "—"
           : "—",
+      ],
+      [
+        "preview-display",
+        formatAutoSyncIndicatorDebugDisplaySummary(previewDisplayState),
       ],
       [
         "selected-source",
@@ -33955,7 +34089,7 @@
       (buttonConfig) => buttonConfig.action === normalizedAction
     );
     if (sequenceButton) {
-      runAutoSyncIndicatorDebugSequence(sequenceButton.phases, {
+      runAutoSyncIndicatorDebugSequence(sequenceButton.steps, {
         source: getSelectedAutoSyncIndicatorDebugSource(),
         operation: getSelectedAutoSyncIndicatorDebugOperation(),
         reason: sequenceButton.reason,
@@ -33991,9 +34125,11 @@
       <span>实际 phase</span><strong data-s1p-auto-sync-debug-status="actual-phase">—</strong>
       <span>实际 source</span><strong data-s1p-auto-sync-debug-status="actual-source">—</strong>
       <span>实际 operation</span><strong data-s1p-auto-sync-debug-status="actual-operation">—</strong>
+      <span>实际显示</span><strong data-s1p-auto-sync-debug-status="actual-display">—</strong>
       <span>预览 phase</span><strong data-s1p-auto-sync-debug-status="preview-phase">无</strong>
       <span>预览 source</span><strong data-s1p-auto-sync-debug-status="preview-source">—</strong>
       <span>预览 operation</span><strong data-s1p-auto-sync-debug-status="preview-operation">—</strong>
+      <span>预览显示</span><strong data-s1p-auto-sync-debug-status="preview-display">—</strong>
       <span>选择 source</span><strong data-s1p-auto-sync-debug-status="selected-source">—</strong>
       <span>选择 operation</span><strong data-s1p-auto-sync-debug-status="selected-operation">自动</strong>
     `;
@@ -34067,6 +34203,19 @@
     ) {
       addEntering("s1p-auto-sync-transition-pending-to-running");
       addExiting("s1p-auto-sync-transition-pending-to-running-origin");
+      return result;
+    }
+    if (
+      normalizedFrom === AUTO_SYNC_INDICATOR_PHASE_RUNNING &&
+      normalizedTo === AUTO_SYNC_INDICATOR_PHASE_RUNNING &&
+      normalizedFromKind === AUTO_SYNC_INDICATOR_OPERATION_PROBE &&
+      (
+        normalizedToKind === AUTO_SYNC_INDICATOR_OPERATION_PUSH ||
+        normalizedToKind === AUTO_SYNC_INDICATOR_OPERATION_PULL
+      )
+    ) {
+      addEntering("s1p-auto-sync-transition-probe-to-operation");
+      addExiting("s1p-auto-sync-transition-probe-to-operation-origin");
       return result;
     }
     if (
@@ -34582,12 +34731,12 @@
       }
     );
     AUTO_SYNC_INDICATOR_DEBUG_SEQUENCE_BUTTONS.forEach(
-      ({ action, phases, reason }) => {
+      ({ action, steps, reason }) => {
         if (action === "demo") {
           return;
         }
         debugApi[action] = (stepDelayMs = 800, loop = false) =>
-          runAutoSyncIndicatorDebugSequence(phases, {
+          runAutoSyncIndicatorDebugSequence(steps, {
             stepDelayMs,
             loop,
             reason,
@@ -34596,6 +34745,20 @@
           });
       }
     );
+    debugApi.pendingToRunning = (stepDelayMs = 800, loop = false) =>
+      runAutoSyncIndicatorDebugSequence(
+        [
+          { phase: AUTO_SYNC_INDICATOR_PHASE_PENDING },
+          { phase: AUTO_SYNC_INDICATOR_PHASE_RUNNING },
+        ],
+        {
+          stepDelayMs,
+          loop,
+          reason: "debug_pending_to_running",
+          source: getSelectedAutoSyncIndicatorDebugSource(),
+          operation: getSelectedAutoSyncIndicatorDebugOperation(),
+        }
+      );
     host.__s1pAutoSyncIndicatorDebug = debugApi;
   };
 

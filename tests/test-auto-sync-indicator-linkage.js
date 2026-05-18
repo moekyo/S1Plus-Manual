@@ -970,11 +970,35 @@ const testAutoSyncEntryPointsBindIndicatorSources = () => {
   );
   expectMatch(
     /s1p-auto-sync-pending-to-running-svg[\s\S]*?scale\(1\.25\)[\s\S]*?scale\(1\.18\)[\s\S]*?s1p-auto-sync-pending-to-running-arrow-bridge/,
-    "pending 方向图标进入 running 箭头队列时应有专门的尺寸和箭头间距衔接动画。"
+    "pending 方向图标进入 running 箭头队列时应有专门的尺寸和队列相位衔接动画。"
+  );
+  expectMatch(
+    /s1p-auto-sync-pending\.s1p-auto-sync-kind-push \.s1p-sync-flow-arrow:nth-child\(1\)[\s\S]*?translateY\(-4\.5px\)[\s\S]*?s1p-auto-sync-pending\.s1p-auto-sync-kind-push \.s1p-sync-flow-arrow:nth-child\(2\)[\s\S]*?translateY\(4\.5px\)[\s\S]*?--s1p-sync-arrow-bridge-start-y:\s*4\.5px;[\s\S]*?--s1p-sync-arrow-bridge-end-y:\s*4\.5px;/,
+    "pending 推送箭头应直接对齐 running 队列相位，避免切换时先向反方向后退。"
+  );
+  expectMatch(
+    /svg\.s1p-auto-sync-pending\.s1p-auto-sync-kind-push[\s\S]*?opacity:\s*1;[\s\S]*?transform:\s*scale\(1\.25\)[\s\S]*?s1p-auto-sync-pending\.s1p-auto-sync-kind-push \.s1p-sync-flow-arrow[\s\S]*?opacity:\s*1;/,
+    "pending 推送/拉取箭头不能用半透明弱化，否则会比手动同步按钮显灰。"
   );
   expectMatch(
     /svg\.s1p-auto-sync-running\.s1p-auto-sync-kind-push[\s\S]*?transform:\s*scale\(1\.18\)/,
     "running 推送/拉取箭头队列应略微放大，和 pending 双箭头尺寸更连贯。"
+  );
+  expectMatch(
+    /s1p-auto-sync-indicator-probe-to-operation-enter[\s\S]*?rotate\(0deg\)[\s\S]*?s1p-auto-sync-indicator-probe-to-operation-exit[\s\S]*?rotate\(0deg\)[\s\S]*?s1p-auto-sync-transition-probe-to-operation/,
+    "probe 切换到推送/拉取 running 时应使用无横向摇摆、无旋转的专用转场。"
+  );
+  expectMatch(
+    /AUTO_SYNC_INDICATOR_DEBUG_DEFAULT_SEQUENCE_STEPS[\s\S]*?label:\s*"Push 待处理 → Running"[\s\S]*?operation:\s*AUTO_SYNC_INDICATOR_OPERATION_PUSH[\s\S]*?label:\s*"Pull 待处理 → Running"[\s\S]*?operation:\s*AUTO_SYNC_INDICATOR_OPERATION_PULL[\s\S]*?label:\s*"Probe → Pull"[\s\S]*?operation:\s*AUTO_SYNC_INDICATOR_OPERATION_PROBE[\s\S]*?operation:\s*AUTO_SYNC_INDICATOR_OPERATION_PULL/,
+    "指示器调试面板应提供与当前实现一致的固定转场预览入口。"
+  );
+  expectMatch(
+    /normalizeAutoSyncIndicatorDebugSequenceStep[\s\S]*?hasOwnOperation[\s\S]*?nextStep\.operation[\s\S]*?runAutoSyncIndicatorDebugSequence\(sequenceButton\.steps/,
+    "指示器调试转场应支持每一步指定 operation，才能预览 probe -> pull 这类同 phase 换 kind 的路径。"
+  );
+  expectMatch(
+    /actual-display[\s\S]*?formatAutoSyncIndicatorDebugDisplaySummary\(actualDisplayState\)[\s\S]*?preview-display[\s\S]*?formatAutoSyncIndicatorDebugDisplaySummary\(previewDisplayState\)/,
+    "指示器调试面板应显示实际/预览经过显示层解析后的最终状态。"
   );
   expectMatch(
     /animation-duration:\s*3\.15s;[\s\S]*?nth-child\(1\)[\s\S]*?animation-delay:\s*-2\.1s;[\s\S]*?nth-child\(2\)[\s\S]*?animation-delay:\s*-1\.05s;[\s\S]*?nth-child\(3\)[\s\S]*?animation-delay:\s*0s;/,
