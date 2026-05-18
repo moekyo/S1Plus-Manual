@@ -13394,6 +13394,46 @@
     });
   };
 
+  // Equal-updated-at verification is a conservative safety retry. Keep the retry,
+  // but avoid exposing it as a separate navbar pending state.
+  const shouldSuppressAutoSyncIndicatorEqualVerificationDisplay = (
+    displayState = null
+  ) => {
+    const phase =
+      normalizeAutoSyncIndicatorPhase(displayState?.displayPhase, {
+        allowRunning: true,
+      }) || AUTO_SYNC_INDICATOR_PHASE_IDLE;
+    const reason = normalizeAutoSyncIndicatorReason(
+      displayState?.displayReason || displayState?.reason
+    );
+    if (
+      phase !== AUTO_SYNC_INDICATOR_PHASE_PENDING ||
+      reason !== AUTO_SYNC_INDICATOR_REASON_FOREGROUND_PROBE_VERIFICATION_RETRY
+    ) {
+      return false;
+    }
+    return !(
+      displayState?.displaySessionKind === "local_push_session" &&
+      displayState?.displaySubstate === "settling"
+    );
+  };
+
+  const buildSilentAutoSyncIndicatorIdleDisplayState = (displayState = {}) => ({
+    ...displayState,
+    displayPhase: AUTO_SYNC_INDICATOR_PHASE_IDLE,
+    displaySource: "",
+    displayReason: "",
+    displayOperation: "",
+    displaySessionKind: "",
+    displayDominantDirection: "",
+    displaySubstate: AUTO_SYNC_INDICATOR_PHASE_IDLE,
+    displayPendingSources: {},
+    displaySessionStartedAt: 0,
+    displaySessionCompletedAt: 0,
+    displaySessionSettlingStartedAt: 0,
+    displaySessionRemoteUpdatedAt: "",
+  });
+
   const clearAutoSyncIndicatorDeferredResolve = () => {
     if (autoSyncIndicatorDeferredResolveTimer) {
       clearTimeout(autoSyncIndicatorDeferredResolveTimer);
@@ -13592,15 +13632,19 @@
         runningState,
         canShowPending,
       });
+      const visibleDisplayState =
+        shouldSuppressAutoSyncIndicatorEqualVerificationDisplay(displayState)
+          ? buildSilentAutoSyncIndicatorIdleDisplayState(displayState)
+          : displayState;
       if (canUseCache) {
         autoSyncIndicatorDisplayPhaseCache = {
           expiresAt:
             Date.now() + AUTO_SYNC_INDICATOR_DISPLAY_PHASE_CACHE_TTL_MS,
           ttlProfile,
-          state: { ...displayState },
+          state: { ...visibleDisplayState },
         };
       }
-      return displayState;
+      return visibleDisplayState;
     };
 
     if (runningState.isRunning) {
@@ -33226,7 +33270,7 @@
           reason ===
           AUTO_SYNC_INDICATOR_REASON_FOREGROUND_PROBE_VERIFICATION_RETRY
         ) {
-          return "自动同步：等待二次确认";
+          return "自动同步：确认云端状态中";
         }
         if (
           reason === AUTO_SYNC_INDICATOR_REASON_FOREGROUND_PROBE_CHANGED_RETRY
