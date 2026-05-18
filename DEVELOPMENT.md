@@ -405,6 +405,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - 前台 retry pending 的运行时 `source` 必须从 `remote_probe_*:<triggerSource>` 原因中还原，不能统一写成 `foreground_resume`；否则 `displayOperation` 会被来源不一致保护丢弃，重新默认成待拉取箭头。
 - 只有真正进入 follow-up safe sync、后台自动同步、手动同步锁，或达到可见阈值的 probe，才切换到 `running`。
 - 当前实现已经为不同来源保留 `source` 字段，后续扩展时优先沿用现有来源枚举，而不是新增自由文本。
+- 推送/拉取方向图标的 `Pending` 与 `Running` 共用同一组三箭头 SVG：`Pending` 仅显示压近的前两枚箭头并整体 `scale(1.25)`，`Running` 启动三箭头队列并整体 `scale(1.18)`；`pending -> running` 过渡通过 bridge 动画把前两枚箭头拉开、第三枚接入，避免替换图标式硬切。
 - `setSanitizedIconHtml()` 的 SVG 白名单允许 `path.class`，因为 push/pull 队列动画依赖 `.s1p-sync-flow-arrow`；新增图标 class 时仍需走白名单，不要绕过 sanitizer。
 
 ```mermaid
