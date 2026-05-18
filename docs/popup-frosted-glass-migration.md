@@ -42,7 +42,7 @@
 
 ```css
 .s1p-modal > .s1p-modal-content {
-  --s1p-settings-panel-bg: rgba(255, 255, 255, 0.78);
+  --s1p-settings-panel-bg: rgba(255, 255, 255, 0.82);
   --s1p-settings-content-bg: var(--s1p-bg);
   --s1p-settings-scrollbar-thumb: rgba(37, 71, 122, 0.42);
   --s1p-settings-scrollbar-thumb-hover: rgba(37, 71, 122, 0.58);
@@ -61,7 +61,7 @@
 ```css
 @media (prefers-color-scheme: dark) {
   .s1p-modal > .s1p-modal-content {
-    --s1p-settings-panel-bg: rgba(17, 24, 39, 0.86);
+    --s1p-settings-panel-bg: rgba(17, 24, 39, 0.88);
     --s1p-settings-content-bg: #172033;
     --s1p-settings-scrollbar-thumb: rgba(148, 163, 184, 0.46);
     --s1p-settings-scrollbar-thumb-hover: rgba(148, 163, 184, 0.64);
@@ -104,12 +104,12 @@ modalContent.style.setProperty(
 
 | 层级 | 适用范围 | 浅色背景 | 深色背景 | 说明 |
 |------|---------|---------|---------|------|
-| Shell glass | 设置面板外壳 | `rgba(255, 255, 255, 0.78)` | `rgba(17, 24, 39, 0.86)` | 设置面板内部已有实底内容区，外壳仍需足够实，避免背景文字透进标题和 tab 区 |
-| Dialog glass | 确认/输入/Token/同步选择等决策弹窗 | `var(--s1p-dialog-glass-bg)` = `rgba(255, 255, 255, 0.78)` | `var(--s1p-dialog-glass-bg)` = `rgba(17, 24, 39, 0.88)` | 表单、确认、冲突决策、同步选择等信息密集弹窗优先保证文字可读 |
-| Image viewer glass | 图片查看器工具栏/图片舞台 | 工具栏 `rgba(255,255,255,0.92)`；舞台底色 `rgba(226,232,222,0.7)` + 独立轻磨砂层 | 工具栏 `rgba(18,27,45,0.98)`；舞台底色 `rgba(33,42,52,0.9)` + 独立轻磨砂层 | 面板壳透明，只负责裁切/阴影；浅色和深色舞台都使用“底色层 + 磨砂层” |
-| Utility glass | Toast、浮动控制 | `rgba(255,255,255,0.9)` / `rgba(255,255,255,0.86)` | `rgba(17,24,39,0.92)` / `rgba(17,24,39,0.88)` | 覆盖页面内容的轻量 UI 也要有更实背景，状态色 Toast 保留语义色 |
+| Shell glass | 设置面板外壳 | `rgba(255, 255, 255, 0.82)` | `rgba(17, 24, 39, 0.88)` | 设置面板内部已有实底内容区，外壳再加实一点，避免背景文字透进标题和 tab 区 |
+| Dialog glass | 确认/输入/Token/同步选择等决策弹窗 | `var(--s1p-dialog-glass-bg)` = `rgba(255, 255, 255, 0.84)` | `var(--s1p-dialog-glass-bg)` = `rgba(17, 24, 39, 0.91)` | 表单、确认、冲突决策、同步选择等信息密集弹窗优先保证文字可读，同时保留轻磨砂 |
+| Image viewer glass | 图片查看器工具栏/图片舞台 | 工具栏 `rgba(255,255,255,0.94)`；舞台底色 `rgba(226,232,222,0.7)` + 独立轻磨砂层 | 工具栏 `rgba(18,27,45,0.98)`；舞台底色 `rgba(33,42,52,0.9)` + 独立轻磨砂层 | 面板壳透明，只负责裁切/阴影；浅色和深色舞台都使用“底色层 + 磨砂层” |
+| Utility glass | Toast、浮动控制 | `rgba(255,255,255,0.92)` / `rgba(255,255,255,0.89)` | `rgba(17,24,39,0.94)` / `rgba(17,24,39,0.91)` | 覆盖页面内容的轻量 UI 也要有更实背景，状态色 Toast 保留语义色 |
 | Solid content | 同步对比表格、日期输入、图片读数控件 | dialog 背景与实底混合 | dialog 背景与实底混合 | 信息密集或需要精确阅读的子内容必须建立自身背景，不直接浮在透明面板上 |
-| Light popover glass | B1/B2/B4/B6/B7/B8 与文档型帮助浮层 | `var(--s1p-popover-glass-bg)` = `rgba(255,255,255,0.82)` | `var(--s1p-popover-glass-bg)` = `rgba(17,24,39,0.9)` | 面板感较强的确认浮层和 tooltip 使用保守轻磨砂，不使用 dialog/shell 透明度 |
+| Light popover glass | B1/B2/B4/B6/B7/B8 与文档型帮助浮层 | `var(--s1p-popover-glass-bg)` = `rgba(255,255,255,0.86)` | `var(--s1p-popover-glass-bg)` = `rgba(17,24,39,0.92)` | 面板感较强的确认浮层和 tooltip 使用保守轻磨砂，不使用 dialog/shell 透明度 |
 | Solid popover | B3/B5 等即时操作菜单 | `var(--s1p-popover-solid-bg)` | `var(--s1p-popover-solid-bg)` | 操作入口菜单保持实底，只统一背景、阴影和圆角；主容器不显示描边 |
 
 Dialog/Shell/Popover/Utility 层都通过变量控制轻量滤镜，最外层容器统一不显示描边；不要在组件规则里重新硬编码 `blur(6px)` 或 `blur(8px)`：
@@ -125,39 +125,39 @@ border: none;
 
 ```css
 :root {
-  --s1p-dialog-glass-bg: rgba(255, 255, 255, 0.78);
+  --s1p-dialog-glass-bg: rgba(255, 255, 255, 0.84);
   --s1p-dialog-glass-filter: blur(3px) saturate(1.02);
   --s1p-dialog-glass-shadow: 0 18px 44px rgba(0, 0, 0, 0.22);
   --s1p-dialog-glass-divider: rgba(37, 71, 122, 0.16);
   --s1p-dialog-text: #10234f;
   --s1p-dialog-muted-text: #334a72;
-  --s1p-popover-glass-bg: rgba(255, 255, 255, 0.82);
+  --s1p-popover-glass-bg: rgba(255, 255, 255, 0.86);
   --s1p-popover-glass-filter: blur(3px) saturate(1.02);
   --s1p-popover-glass-shadow: 0 16px 34px rgba(0, 0, 0, 0.2);
   --s1p-popover-solid-bg: var(--s1p-bg);
   --s1p-popover-solid-shadow: 0 10px 24px rgba(var(--s1p-shadow-color-rgb), 0.16);
-  --s1p-toast-glass-bg: rgba(255, 255, 255, 0.9);
+  --s1p-toast-glass-bg: rgba(255, 255, 255, 0.92);
   --s1p-toast-glass-filter: blur(3px) saturate(1.02);
-  --s1p-floating-control-glass-bg: rgba(255, 255, 255, 0.86);
+  --s1p-floating-control-glass-bg: rgba(255, 255, 255, 0.89);
   --s1p-floating-control-glass-filter: blur(3px) saturate(1.02);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --s1p-dialog-glass-bg: rgba(17, 24, 39, 0.88);
+    --s1p-dialog-glass-bg: rgba(17, 24, 39, 0.91);
     --s1p-dialog-glass-filter: blur(3px) saturate(1.02);
     --s1p-dialog-glass-shadow: 0 18px 44px rgba(0, 0, 0, 0.28);
     --s1p-dialog-glass-divider: rgba(148, 163, 184, 0.2);
     --s1p-dialog-text: #f1f5f9;
     --s1p-dialog-muted-text: #cbd5e1;
-    --s1p-popover-glass-bg: rgba(17, 24, 39, 0.9);
+    --s1p-popover-glass-bg: rgba(17, 24, 39, 0.92);
     --s1p-popover-glass-filter: blur(3px) saturate(1.02);
     --s1p-popover-glass-shadow: 0 18px 38px rgba(0, 0, 0, 0.32);
     --s1p-popover-solid-bg: var(--s1p-bg);
     --s1p-popover-solid-shadow: 0 12px 28px rgba(0, 0, 0, 0.34);
-    --s1p-toast-glass-bg: rgba(17, 24, 39, 0.92);
+    --s1p-toast-glass-bg: rgba(17, 24, 39, 0.94);
     --s1p-toast-glass-filter: blur(3px) saturate(1.02);
-    --s1p-floating-control-glass-bg: rgba(17, 24, 39, 0.88);
+    --s1p-floating-control-glass-bg: rgba(17, 24, 39, 0.91);
     --s1p-floating-control-glass-filter: blur(3px) saturate(1.02);
   }
 }
@@ -173,12 +173,12 @@ border: none;
 
 | # | 弹窗 | 用途 | 内容面板选择器 | 当前背景 | 状态 |
 |---|------|------|-------------|---------|------|
-| A1 | 设置面板 | S1 Plus 全部设置（7个标签页） | `.s1p-modal > .s1p-modal-content` | Shell glass：`0.78` / `0.86` + 轻量 filter | ✅ 已完成 |
-| A2 | 确认对话框 | 通用确认/取消（清空数据、屏蔽确认等） | `.s1p-confirm-content` | Dialog glass：`0.78` / `0.88` + 轻量 filter | ✅ 已完成 |
+| A1 | 设置面板 | S1 Plus 全部设置（7个标签页） | `.s1p-modal > .s1p-modal-content` | Shell glass：`0.82` / `0.88` + 轻量 filter | ✅ 已完成 |
+| A2 | 确认对话框 | 通用确认/取消（清空数据、屏蔽确认等） | `.s1p-confirm-content` | Dialog glass：`0.84` / `0.91` + 轻量 filter | ✅ 已完成 |
 | A3 | 高级确认对话框 | 自定义标题/内容/按钮的增强确认框 | `.s1p-confirm-content` (同上) | 继承 A2（共用选择器） | ✅ 已完成 |
 | A4 | 输入框弹窗 | 带文本输入区的表单弹窗（编辑屏蔽备注） | `.s1p-confirm-content` (同上) | 继承 A2（共用选择器） | ✅ 已完成 |
 | A5 | 图片查看器 | 全屏查看图片，支持缩放/平移/翻页/批量保存 | `.s1p-image-viewer__panel` | 透明结构壳 + 独立工具栏/图片舞台玻璃背景 | ✅ 已完成 |
-| A6 | Token配置弹窗 | GitHub Token 过期日期设置（含日期选择器） | `.s1p-token-config-content` | Dialog glass：`0.78` / `0.88` + 轻量 filter | ✅ 已完成 |
+| A6 | Token配置弹窗 | GitHub Token 过期日期设置（含日期选择器） | `.s1p-token-config-content` | Dialog glass：`0.84` / `0.91` + 轻量 filter | ✅ 已完成 |
 | A7 | 手动屏蔽用户弹窗 | 手动输入用户名/UID 屏蔽用户（含备注） | `.s1p-confirm-content` (同上) | 继承 A2（共用选择器） | ✅ 已完成 |
 | A8 | 阅读进度详情弹窗 | 阅读记录按时间分组展示，支持按组删除 | `.s1p-confirm-content` (同上) | 继承 A2（共用选择器） | ✅ 已完成 |
 | A9 | 欢迎/更新弹窗 | 首次安装/版本更新后展示更新内容 | `.s1p-confirm-content` (同上) | 继承 A2（共用选择器） | ✅ 已完成 |
@@ -363,6 +363,12 @@ border: none;
 - `.s1p-confirm-content` 和 `.s1p-token-config-content` 使用 `--s1p-dialog-text` / `--s1p-dialog-muted-text`，覆盖手动同步选择、同步冲突、欢迎弹窗、Token 提醒、阅读记录详情、手动屏蔽用户等共享确认弹窗。
 - 手动同步选择/冲突弹窗里的 `.s1p-sync-choice-info`、`.s1p-sync-last-action`、`.s1p-sync-comparison-table`、表头和行状态都建立自身背景并使用 dialog 文本 token，不再把表格和说明文字直接压在透明玻璃上。
 - 新增 `tests/test-glass-surface-readability-css.js`，约束浅色/深色 token、强 blur 禁止项、同步选择弹窗内部可读性；现有 popover / category C 测试同步改为检查 filter 变量。
+
+### 2026-05-18 玻璃实度微调
+
+- 保持全屏 overlay blur 和 `blur(3px) saturate(1.02)` 轻量 filter 不变，只把承载文字的 surface 背景略微加实。
+- Dialog 从浅色 `0.78` / 深色 `0.88` 调到 `0.84` / `0.91`；Shell 从 `0.78` / `0.86` 调到 `0.82` / `0.88`。
+- Light popover 调到浅色 `0.86` / 深色 `0.92`；Toast 和浮动控件分别调到 `0.92` / `0.94`、`0.89` / `0.91`；图片查看器浅色工具栏调到 `0.94`。
 
 ### 已确认可继续保留
 

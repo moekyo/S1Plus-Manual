@@ -257,7 +257,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - 全屏蒙版只提供无色 blur：`.s1p-modal`、`.s1p-confirm-modal`、`.s1p-token-config-modal`、`.s1p-image-viewer` 使用 `background-color: transparent` + `blur(var(--s1p-overlay-blur))`，不要恢复全局黑色遮罩变量。
 - Overlay blur 必须保持低强度（当前浅色 `0.8px`、深色 `0.9px`）；不要用全屏 blur 来制造层次，文字承载面应靠自身背景、阴影和轻量 filter 保证可读性。
 - Dialog glass 用于确认、输入、Token、同步选择等决策弹窗；Shell glass 用于设置面板外壳；Image viewer glass 用于图片查看器工具栏和图片舞台；Light popover glass 用于 B1/B2、确认型浮层、普通短 tooltip 和文档型帮助浮层。
-- Dialog / popover / toast / floating-control 都必须通过对应 `--s1p-*-glass-bg` 与 `--s1p-*-glass-filter` 变量调参，不要在组件规则里硬编码 `blur(6px)` / `blur(8px)` 这类强磨砂。
+- Dialog / popover / toast / floating-control 都必须通过对应 `--s1p-*-glass-bg` 与 `--s1p-*-glass-filter` 变量调参；优先微调背景 alpha 保证可读性，保持轻量 filter，不要在组件规则里硬编码 `blur(6px)` / `blur(8px)` 这类强磨砂。
 - 决策弹窗正文走 `--s1p-dialog-text`，说明文字走 `--s1p-dialog-muted-text`；同步选择、同步冲突、欢迎、Token、阅读记录详情、手动屏蔽等共享 `.s1p-confirm-content` 的弹窗都要继承这套深浅模式文本 token。
 - 纯操作入口菜单（帖子内联操作、标签选项菜单）保持实底，不添加 `backdrop-filter`。
 - 自定义 UI 最外层容器默认 `border: none`，依靠背景、阴影和 blur 分层；不要给外壳补 1px 线框来“找边界”。

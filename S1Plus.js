@@ -2291,27 +2291,27 @@
       --s1p-hover-overlay: rgba(0, 0, 0, 0.08);
       /* 全屏蒙版只负责无色磨砂 blur，具体面板背景由各自容器控制。 */
       --s1p-overlay-blur: 0.8px;
-      --s1p-dialog-glass-bg: rgba(255, 255, 255, 0.78);
+      --s1p-dialog-glass-bg: rgba(255, 255, 255, 0.84);
       --s1p-dialog-glass-filter: blur(3px) saturate(1.02);
       --s1p-dialog-glass-shadow: 0 18px 44px rgba(0, 0, 0, 0.22);
       --s1p-dialog-glass-divider: rgba(37, 71, 122, 0.16);
       --s1p-dialog-text: #10234f;
       --s1p-dialog-muted-text: #334a72;
-      --s1p-popover-glass-bg: rgba(255, 255, 255, 0.82);
+      --s1p-popover-glass-bg: rgba(255, 255, 255, 0.86);
       --s1p-popover-glass-filter: blur(3px) saturate(1.02);
       --s1p-popover-glass-shadow: 0 16px 34px rgba(0, 0, 0, 0.2);
       --s1p-popover-solid-bg: var(--s1p-bg);
       --s1p-popover-solid-shadow: 0 10px 24px rgba(var(--s1p-shadow-color-rgb), 0.16);
-      --s1p-toast-glass-bg: rgba(255, 255, 255, 0.9);
+      --s1p-toast-glass-bg: rgba(255, 255, 255, 0.92);
       --s1p-toast-glass-filter: blur(3px) saturate(1.02);
       --s1p-toast-glass-shadow: 0 12px 28px rgba(0, 0, 0, 0.18);
       --s1p-toast-success-bg: rgba(34, 197, 94, 0.86);
       --s1p-toast-error-bg: rgba(239, 68, 68, 0.88);
-      --s1p-floating-control-glass-bg: rgba(255, 255, 255, 0.86);
+      --s1p-floating-control-glass-bg: rgba(255, 255, 255, 0.89);
       --s1p-floating-control-glass-filter: blur(3px) saturate(1.02);
       --s1p-floating-control-glass-shadow: 0 8px 20px rgba(0, 0, 0, 0.18);
       --s1p-image-viewer-panel-shadow: var(--s1p-dialog-glass-shadow);
-      --s1p-image-viewer-toolbar-bg: rgba(255, 255, 255, 0.92);
+      --s1p-image-viewer-toolbar-bg: rgba(255, 255, 255, 0.94);
       --s1p-settings-scrollbar-thumb: rgba(37, 71, 122, 0.42);
       --s1p-settings-scrollbar-thumb-hover: rgba(37, 71, 122, 0.58);
       --s1p-settings-scrollbar-track: transparent;
@@ -5349,7 +5349,7 @@
       /* macOS 默认使用 antialiased，Windows 默认使用 ClearType 子像素抗锯齿 */
     }
     .s1p-modal > .s1p-modal-content {
-      --s1p-settings-panel-bg: rgba(255, 255, 255, 0.78);
+      --s1p-settings-panel-bg: rgba(255, 255, 255, 0.82);
       --s1p-settings-content-bg: var(--s1p-bg);
       --s1p-settings-scrollbar-thumb: rgba(37, 71, 122, 0.42);
       --s1p-settings-scrollbar-thumb-hover: rgba(37, 71, 122, 0.58);
@@ -5363,7 +5363,7 @@
     }
     @media (prefers-color-scheme: dark) {
       .s1p-modal > .s1p-modal-content {
-        --s1p-settings-panel-bg: rgba(17, 24, 39, 0.86);
+        --s1p-settings-panel-bg: rgba(17, 24, 39, 0.88);
         --s1p-settings-content-bg: #172033;
         --s1p-settings-scrollbar-thumb: rgba(148, 163, 184, 0.46);
         --s1p-settings-scrollbar-thumb-hover: rgba(148, 163, 184, 0.64);
@@ -8127,23 +8127,23 @@
         --s1p-border: #4b5563;
         --s1p-hover-overlay: rgba(255, 255, 255, 0.15);
         --s1p-overlay-blur: 0.9px;
-        --s1p-dialog-glass-bg: rgba(17, 24, 39, 0.88);
+        --s1p-dialog-glass-bg: rgba(17, 24, 39, 0.91);
         --s1p-dialog-glass-filter: blur(3px) saturate(1.02);
         --s1p-dialog-glass-shadow: 0 18px 44px rgba(0, 0, 0, 0.28);
         --s1p-dialog-glass-divider: rgba(148, 163, 184, 0.2);
         --s1p-dialog-text: #f1f5f9;
         --s1p-dialog-muted-text: #cbd5e1;
-        --s1p-popover-glass-bg: rgba(17, 24, 39, 0.9);
+        --s1p-popover-glass-bg: rgba(17, 24, 39, 0.92);
         --s1p-popover-glass-filter: blur(3px) saturate(1.02);
         --s1p-popover-glass-shadow: 0 18px 38px rgba(0, 0, 0, 0.32);
         --s1p-popover-solid-bg: var(--s1p-bg);
         --s1p-popover-solid-shadow: 0 12px 28px rgba(0, 0, 0, 0.34);
-        --s1p-toast-glass-bg: rgba(17, 24, 39, 0.92);
+        --s1p-toast-glass-bg: rgba(17, 24, 39, 0.94);
         --s1p-toast-glass-filter: blur(3px) saturate(1.02);
         --s1p-toast-glass-shadow: 0 14px 34px rgba(0, 0, 0, 0.34);
         --s1p-toast-success-bg: rgba(22, 163, 74, 0.86);
         --s1p-toast-error-bg: rgba(185, 28, 28, 0.88);
-        --s1p-floating-control-glass-bg: rgba(17, 24, 39, 0.88);
+        --s1p-floating-control-glass-bg: rgba(17, 24, 39, 0.91);
         --s1p-floating-control-glass-filter: blur(3px) saturate(1.02);
         --s1p-floating-control-glass-shadow: 0 10px 24px rgba(0, 0, 0, 0.32);
         --s1p-image-viewer-panel-shadow: var(--s1p-dialog-glass-shadow);

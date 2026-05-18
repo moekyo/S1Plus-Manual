@@ -20,8 +20,8 @@ for (const variableName of requiredVariables) {
 }
 
 assert.ok(
-  sourceCode.includes("--s1p-popover-glass-bg: rgba(255, 255, 255, 0.82);"),
-  "浅色 Light popover glass 应使用更实的白色背景，避免内容透底影响阅读。"
+  sourceCode.includes("--s1p-popover-glass-bg: rgba(255, 255, 255, 0.86);"),
+  "浅色 Light popover glass 应使用稍微更实的白色背景，避免内容透底影响阅读。"
 );
 assert.ok(
   !sourceCode.includes("--s1p-popover-glass-bg: rgba(236, 237, 235"),
