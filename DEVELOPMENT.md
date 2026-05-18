@@ -124,7 +124,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 |-----|------|------|
 | 日志 | 调试控制台 | 捕获 console 输出、JS 错误、unhandledrejection；支持按级别筛选、关键词搜索、复制/清空/展开；可拖拽 resize，尺寸持久化到 `s1p_debug_console_size`；日志缓冲区最多保留 1000 条，通过 `sessionStorage` 在同标签页刷新后自动恢复，关闭标签页后销毁 |
 | 诊断信息 | 同步诊断 | 展示 `buildSyncDiagnosticsRows()` 的诊断行（最近动作/触发源/结果/阻断/哈希/探测等）；[刷新][复制诊断][重置诊断] 按钮 |
-| 指示器调试 | 同步指示器调试 | 手动切换指示器 phase、选择 source/operation、播放转场 Demo；只覆盖导航栏指示器预览，不改真实同步状态 |
+| 指示器调试 | 同步指示器调试 | 手动切换指示器 phase、选择 source/operation、播放固定转场 Demo（含 pending push/pull → running、probe → pull）；只覆盖导航栏指示器预览，不改真实同步状态 |
 
 **实现要点**：
 
@@ -140,11 +140,13 @@ node tests/test-category-c-and-image-viewer-glass-css.js
   - `showPanel()` — 打开统一面板并切到指示器调试 tab
   - `hidePanel()` — 隐藏统一面板
   - `clear()` — 清除调试覆盖
+  - `pushPendingToRunning()` / `pullPendingToRunning()` — 预览 pending 方向箭头接入 running 队列的转场
+  - `probeToPull()` — 预览放大镜 probe 切换到拉取队列的转场
 
 **使用约束**：
 
 - 调试面板只覆盖导航栏指示器的预览显示，不会改写真实同步状态
-- 面板中“实际 phase/source/operation”仍读取真实状态，可用于对照预览覆盖
+- 面板中“实际 phase/source/operation”和“实际显示”仍读取真实状态，可用于对照预览覆盖；“预览显示”展示经显示层解析后的 `phase / operation`，用于确认调试覆盖是否真的命中目标图标类型
 - `running` 等状态的调试预览会跳过真实同步锁门控，仅用于人工观察 UI
 - 统一面板的显示状态持久化到 `s1p_debug_console_visible`（GM 存储，跨标签一致）；尺寸持久化到 `s1p_debug_console_size`（GM 存储）
 - 日志收集器生命周期：仅在调试面板可见时启动（`document-start` 阶段检查 `s1p_debug_console_visible`）；面板隐藏时调用 `stopLogCollector()` 恢复原始 console 方法并移除事件监听器
@@ -405,7 +407,8 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - 前台 retry pending 的运行时 `source` 必须从 `remote_probe_*:<triggerSource>` 原因中还原，不能统一写成 `foreground_resume`；否则 `displayOperation` 会被来源不一致保护丢弃，重新默认成待拉取箭头。
 - 只有真正进入 follow-up safe sync、后台自动同步、手动同步锁，或达到可见阈值的 probe，才切换到 `running`。
 - 当前实现已经为不同来源保留 `source` 字段，后续扩展时优先沿用现有来源枚举，而不是新增自由文本。
-- 推送/拉取方向图标的 `Pending` 与 `Running` 共用同一组三箭头 SVG：`Pending` 仅显示压近的前两枚箭头并整体 `scale(1.25)`，`Running` 启动三箭头队列并整体 `scale(1.18)`；`pending -> running` 过渡通过 bridge 动画把前两枚箭头拉开、第三枚接入，避免替换图标式硬切。
+- 推送/拉取方向图标的 `Pending` 与 `Running` 共用同一组三箭头 SVG：`Pending` 仅显示前两枚箭头并整体 `scale(1.25)`，两枚箭头直接对齐 `Running` 队列接手相位；`Running` 启动三箭头队列并整体 `scale(1.18)`。`pending -> running` 过渡只做缩放和第三枚接入，不要让已有箭头先向同步方向的反方向拉开。方向图标本体不要用半透明弱化，颜色需与 `#s1p-nav-sync-btn` 的 `var(--s1p-t)` 保持一致。调试面板的固定转场必须覆盖 push / pull 两个 pending 方向。
+- 常规远端拉取链路是 `Probe(放大镜)` → `Running(pull)`；`Pending(pull)` 只用于已确认云端有变化、但本地状态或锁暂时挡住 follow-up 拉取的等待态。`Probe` 切到推送/拉取 running 时使用专门的无旋转、无横向位移转场，不复用默认 enter/probe-exit 的摇摆动画。
 - `setSanitizedIconHtml()` 的 SVG 白名单允许 `path.class`，因为 push/pull 队列动画依赖 `.s1p-sync-flow-arrow`；新增图标 class 时仍需走白名单，不要绕过 sanitizer。
 
 ```mermaid
@@ -439,7 +442,7 @@ sequenceDiagram
 
     Note over I: Idle（单点）
     U->>D: 本地数据变更
-    D->>I: Pending（单箭头叠成的静态方向图标）
+    D->>I: Pending（三箭头结构的前两枚，对齐 Running 队列相位）
     D->>S: 防抖结束，提交同步任务
     S->>I: Running（箭头队列流动）
     S->>G: 拉取/合并/按需推送
