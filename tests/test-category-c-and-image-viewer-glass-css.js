@@ -123,7 +123,7 @@ assertHasGlassFilterVariable(
 );
 assert.match(
   sourceCode,
-  /--s1p-image-viewer-toolbar-bg:\s*rgba\(255,\s*255,\s*255,\s*0\.92\);/,
+  /--s1p-image-viewer-toolbar-bg:\s*rgba\(255,\s*255,\s*255,\s*0\.94\);/,
   "浅色图片查看器工具栏应使用独立等效玻璃背景。"
 );
 assert.match(
