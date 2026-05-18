@@ -102,6 +102,7 @@ node tests/settings-migration/test-settings-migration.js
 
 ```bash
 node tests/test-popover-surface-css.js
+node tests/test-glass-surface-readability-css.js
 node tests/test-settings-tab-panel-css.js
 node tests/test-category-c-and-image-viewer-glass-css.js
 ```
@@ -109,6 +110,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 覆盖重点：
 
 - 类型 B 浮层分层：用户标记编辑器 / 日期选择器 / 确认型浮层 / 普通短 tooltip / 文档型帮助浮层使用轻磨砂；纯操作入口菜单保持实底。
+- 弹窗与浮层可读性：全屏蒙版只保留低强度无色 blur，承载文字的 dialog / popover / toast / 浮动控件必须使用更实的背景与轻量滤镜变量，浅色、深色模式都要同步维护。
 - 自定义 UI 最外层容器不显示描边；输入框、按钮、分割线、表格和设置面板内部列表项仍可保留功能性边界。
 - 设置面板滚动条复用脚本自定义样式，并在 S1 NUX 启用时跟随 `--prid` / `--pridb`，轨道保持透明。
 - 图片查看器全屏蒙版保持无色 blur，图片舞台沿用浅色浅黄绿 / 深色深灰蓝主题底色并轻磨砂。
@@ -135,7 +137,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - 面板搜索框复用 `.s1p-input` 样式
 - 日志 tab 的 toolbar 布局为 head-actions 在上行、filter-bar 在下行
 - 诊断信息 tab 的重置操作使用内联确认栏而非原生 `confirm()` 弹窗
-- 统一面板外层保留轻磨砂玻璃，但 blur 控制在低强度（当前 `blur(5px)`），避免调试时完全糊住背后论坛内容
+- 统一面板外层复用 `--s1p-dialog-glass-filter`，避免调试时完全糊住背后论坛内容
 - 指示器调试 tab 的主体内容使用单一无边框浅底 surface 承托文字和按钮，避免文字直接落在复杂磨砂背景上；不要给内部说明/状态块再叠独立边框卡片
 - 调试面板内承载长列表的实底 surface 应由滚动视口自己负责圆角裁切（如日志区使用 `overflow: hidden auto` + 透明轨道滚动条），不要把圆角放到内部列表行上，否则滚动到中间会露出直角截面
 - 深色模式下统一调试面板主容器阴影使用大半径低透明度的单层阴影，避免在深背景上形成可见分层断带
@@ -253,7 +255,10 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 当前弹窗与浮层按“外层负责分层、内部负责功能边界”维护：
 
 - 全屏蒙版只提供无色 blur：`.s1p-modal`、`.s1p-confirm-modal`、`.s1p-token-config-modal`、`.s1p-image-viewer` 使用 `background-color: transparent` + `blur(var(--s1p-overlay-blur))`，不要恢复全局黑色遮罩变量。
+- Overlay blur 必须保持低强度（当前浅色 `0.8px`、深色 `0.9px`）；不要用全屏 blur 来制造层次，文字承载面应靠自身背景、阴影和轻量 filter 保证可读性。
 - Dialog glass 用于确认、输入、Token、同步选择等决策弹窗；Shell glass 用于设置面板外壳；Image viewer glass 用于图片查看器工具栏和图片舞台；Light popover glass 用于 B1/B2、确认型浮层、普通短 tooltip 和文档型帮助浮层。
+- Dialog / popover / toast / floating-control 都必须通过对应 `--s1p-*-glass-bg` 与 `--s1p-*-glass-filter` 变量调参，不要在组件规则里硬编码 `blur(6px)` / `blur(8px)` 这类强磨砂。
+- 决策弹窗正文走 `--s1p-dialog-text`，说明文字走 `--s1p-dialog-muted-text`；同步选择、同步冲突、欢迎、Token、阅读记录详情、手动屏蔽等共享 `.s1p-confirm-content` 的弹窗都要继承这套深浅模式文本 token。
 - 纯操作入口菜单（帖子内联操作、标签选项菜单）保持实底，不添加 `backdrop-filter`。
 - 自定义 UI 最外层容器默认 `border: none`，依靠背景、阴影和 blur 分层；不要给外壳补 1px 线框来“找边界”。
 - 输入框、按钮、状态 chip、分隔线、表格、设置面板内部列表项属于功能性边界，可按可读性保留边框。

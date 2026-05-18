@@ -15,7 +15,9 @@ const getRuleBlock = (selector) => {
 
 [
   "--s1p-toast-glass-bg",
+  "--s1p-toast-glass-filter",
   "--s1p-floating-control-glass-bg",
+  "--s1p-floating-control-glass-filter",
   "--s1p-image-viewer-toolbar-bg",
   "--s1p-image-viewer-viewport-bg",
   "--s1p-image-viewer-viewport-glass-bg",
@@ -28,19 +30,11 @@ assert.ok(
   "图片查看器面板不应再保留独立背景变量，避免与舞台透明度叠加。"
 );
 
-const assertHasGlassFilter = (block, selector) => {
+const assertHasGlassFilterVariable = (block, selector, variableName) => {
   assert.match(
     block,
-    /-webkit-backdrop-filter:\s*blur\(8px\) saturate\(1\.08\);[\s\S]*backdrop-filter:\s*blur\(8px\) saturate\(1\.08\);/,
-    `${selector} 应使用 8px 磨砂滤镜。`
-  );
-};
-
-const assertHasLightGlassFilter = (block, selector) => {
-  assert.match(
-    block,
-    /-webkit-backdrop-filter:\s*blur\(6px\) saturate\(1\.04\);[\s\S]*backdrop-filter:\s*blur\(6px\) saturate\(1\.04\);/,
-    `${selector} 应使用 6px 轻磨砂滤镜。`
+    new RegExp(`-webkit-backdrop-filter:\\s*var\\(${variableName}\\);[\\s\\S]*backdrop-filter:\\s*var\\(${variableName}\\);`),
+    `${selector} 应使用 ${variableName} 轻量磨砂滤镜。`
   );
 };
 
@@ -63,7 +57,11 @@ assert.match(
   "Toast 应使用轻磨砂背景。"
 );
 assertBorderlessOuterSurface(toastBlock, ".s1p-toast-notification");
-assertHasGlassFilter(toastBlock, ".s1p-toast-notification");
+assertHasGlassFilterVariable(
+  toastBlock,
+  ".s1p-toast-notification",
+  "--s1p-toast-glass-filter"
+);
 assert.match(
   getRuleBlock(".s1p-toast-notification.success"),
   /background:\s*var\(--s1p-toast-success-bg\)/,
@@ -118,15 +116,19 @@ assert.match(
   /background:\s*var\(--s1p-image-viewer-toolbar-bg\)/,
   "图片查看器工具栏应使用自身背景，不再继承面板底色。"
 );
-assertHasGlassFilter(imageViewerToolbarBlock, ".s1p-image-viewer__toolbar");
+assertHasGlassFilterVariable(
+  imageViewerToolbarBlock,
+  ".s1p-image-viewer__toolbar",
+  "--s1p-dialog-glass-filter"
+);
 assert.match(
   sourceCode,
-  /--s1p-image-viewer-toolbar-bg:\s*rgba\(255,\s*255,\s*255,\s*0\.85\);/,
+  /--s1p-image-viewer-toolbar-bg:\s*rgba\(255,\s*255,\s*255,\s*0\.92\);/,
   "浅色图片查看器工具栏应使用独立等效玻璃背景。"
 );
 assert.match(
   sourceCode,
-  /--s1p-image-viewer-toolbar-bg:\s*rgba\(18,\s*27,\s*45,\s*0\.97\);/,
+  /--s1p-image-viewer-toolbar-bg:\s*rgba\(18,\s*27,\s*45,\s*0\.98\);/,
   "深色图片查看器工具栏应使用独立等效玻璃背景。"
 );
 assert.match(
@@ -152,7 +154,7 @@ assert.match(
 assert.equal(
   Array.from(
     sourceCode.matchAll(
-      /--s1p-image-viewer-viewport-glass-filter:\s*blur\(6px\) saturate\(1\.04\);/g
+      /--s1p-image-viewer-viewport-glass-filter:\s*blur\(3px\) saturate\(1\.02\);/g
     )
   ).length,
   2,
@@ -212,7 +214,11 @@ assert.match(
   "浮动控制把手应使用轻磨砂背景。"
 );
 assertBorderlessOuterSurface(floatingHandleBlock, "#s1p-controls-handle");
-assertHasGlassFilter(floatingHandleBlock, "#s1p-controls-handle");
+assertHasGlassFilterVariable(
+  floatingHandleBlock,
+  "#s1p-controls-handle",
+  "--s1p-floating-control-glass-filter"
+);
 
 const floatingButtonSelector =
   "#s1p-floating-controls a,\n    #s1p-floating-controls button";
@@ -223,7 +229,11 @@ assert.match(
   "浮动控制按钮应使用轻磨砂背景。"
 );
 assertBorderlessOuterSurface(floatingButtonBlock, floatingButtonSelector);
-assertHasGlassFilter(floatingButtonBlock, floatingButtonSelector);
+assertHasGlassFilterVariable(
+  floatingButtonBlock,
+  floatingButtonSelector,
+  "--s1p-floating-control-glass-filter"
+);
 
 assertBorderlessOuterSurface(
   getRuleBlock(".s1p-debug-panel"),
@@ -235,8 +245,8 @@ assertBorderlessOuterSurface(
 );
 assert.match(
   getRuleBlock("#s1p-debug-unified-panel.s1p-debug-panel"),
-  /backdrop-filter:\s*blur\(5px\) saturate\(1\.08\)/,
-  "调试面板已经是磨砂玻璃风格，不应回退为实底。"
+  /backdrop-filter:\s*var\(--s1p-dialog-glass-filter\)/,
+  "调试面板应复用轻量弹窗磨砂变量，不应回退为实底。"
 );
 
 console.log(
