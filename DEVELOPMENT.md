@@ -83,6 +83,8 @@ node tests/settings-migration/test-settings-migration.js
 - `test-safe-sync-execution.js`
 - `test-cleanup-provenance-guard.js`
 - `test-background-open-passive-session.js`
+- `test-background-sync-shared-debounce.js`
+- `test-remote-push-uncertain-write.js`
 
 建议在改动以下能力后优先回归对应脚本：
 
@@ -91,6 +93,7 @@ node tests/settings-migration/test-settings-migration.js
   - `pulled / force_pulled`：列表页 / 普通页可按策略延迟整页刷新
   - `merged_read_progress`：只表示阅读进度自动合并，已导入本地后应走 `read_progress_merged_inline` 原地刷新阅读进度按钮，不应排队整页 reload
 - cleanup provenance 与手动同步分支
+- Gist PATCH 结果不确定、metadata-only 诊断日志、后台 shared retry
 - 设置迁移与同步设置 UI
 
 ### 2.5 UI 样式静态校验
@@ -351,6 +354,8 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - 自动同步熔断（连续失败 3 次暂停 10 分钟）
 - 冲突暂停门控，防止冲突态继续自动推送
 - 前台探测使用独立的 probe 锁、共享冷却（45s，跨标签）和本地冷却（12s，当前标签），避免多个标签页同时做 metadata-only probe
+- `pushRemoteData()` 在 PATCH 超时或网络错误这类“写入结果不确定”的失败后，必须完整读取一次云端同步文件；若云端 `contentHash` 已等于刚才的 payload，则本次推送视为成功并使用复查得到的 `updated_at` 更新后续基线，避免“实际已写入但误报失败”引发重复重试和假冲突。
+- metadata-only 读取只用于判断 Gist `updated_at` / 文件存在性，不解析同步文件内容；诊断日志不得输出 `remoteEmpty`，否则会把“未读取内容”误写成“云端为空”。
 - `clean-state fence` 只用于本地自动 push 去重：本地干净不能证明另一台设备没有更新 Gist，因此页面首次可见 / 回到前台 / 可见页轮询的 metadata-only probe 不得用它跳过远端 `updated_at` 检查。
 - 前台 follow-up sync 的局部脏状态优先落为 soft block；只有真正的全局冲突或明确需要人工处理时才升级为 hard pause
 
@@ -360,6 +365,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - `pageshow`（含 bfcache）/`visibilitychange` 自动恢复补同步
 - “每次页面加载时检查同步”会复用启动同步锁链路，避免多标签页同时发起远端检查。
 - 前台 probe 命中远端变化但 follow-up sync 因锁占用等原因未能执行时，会登记补偿重试而不是直接丢弃本轮自动拉取机会。
+- 后台失败重试优先交给 shared scheduler；一旦 shared owner 已登记 retry，本标签页当前 drain loop 必须清掉本地 pending，不得继续下一轮即时同步。只有 shared scheduler 不可用时，才回退到 per-tab retry timer。
 - 自动拉取后需要刷新列表页 / 普通页时，默认延迟 `AUTO_PULL_RELOAD_DELAY_MS`（当前 3.2s）再刷新；刷新提示的 toast 会覆盖完整等待窗口，避免用户还没看清提示就被页面刷新打断。
 - `merged_read_progress` 是例外：它只代表阅读进度分歧已安全自动合并，合并 payload 已通过 `importLocalData()` 导入本地。列表页应只调用阅读进度按钮原地刷新策略 `read_progress_merged_inline`，同会话/同设备场景也要保留这次 inline refresh，但保持静默。
 - 后台打开帖子页会写入短寿命 opener hint；线程页会据此把会话标记为 `passiveBackgroundOpened`，降低后台开帖造成的假阅读进度。

@@ -11460,6 +11460,8 @@
         return "云端推送开始";
       case "remote_push_done":
         return "云端推送完成";
+      case "remote_push_confirmed_after_error":
+        return "云端推送已确认";
       case "remote_push_error":
         return "云端推送失败";
       case "remote_push_conflict":
@@ -17815,6 +17817,12 @@
     ownerTimerDueAt: sharedBackgroundSyncDebounceTimerDueAt,
     ownerTimerGeneration: sharedBackgroundSyncDebounceTimerGeneration,
     ownerHeartbeatActive: Boolean(sharedBackgroundSyncDebounceHeartbeatTimer),
+  });
+  const getBackgroundAutoSyncRuntimeStateForTest = () => ({
+    hasPendingBackgroundSync,
+    hasLocalRetryTimer: Boolean(backgroundSyncRetryTimeout),
+    isBackgroundAutoSyncInProgress,
+    isInitialSyncInProgress,
   });
   const getBackgroundSyncDebounceTestConstants = () => ({
     BACKGROUND_SYNC_DEBOUNCE_STATE_KEY,
@@ -26560,7 +26568,6 @@
       return;
     }
 
-    hasPendingBackgroundSync = true;
     setAutoSyncIndicatorPendingPhase("background_retry");
     recordSyncTraceEvent("background_retry_scheduled", {
       scope: "background_auto_sync",
@@ -26573,6 +26580,7 @@
       "background_retry"
     );
     if (sharedRetryResult?.status === "scheduled") {
+      hasPendingBackgroundSync = false;
       if (backgroundSyncRetryTimeout) {
         clearTimeout(backgroundSyncRetryTimeout);
         backgroundSyncRetryTimeout = null;
@@ -26587,6 +26595,7 @@
       clearAutoSyncRuntimeQueue();
       return;
     }
+    hasPendingBackgroundSync = true;
     if (backgroundSyncRetryTimeout) {
       clearTimeout(backgroundSyncRetryTimeout);
     }
@@ -26818,12 +26827,66 @@
       details: {
         metadataOnly,
         hasSyncFile: Boolean(syncFile),
-        remoteEmpty: Object.keys(parsedData).length === 0,
+        remoteEmpty: metadataOnly ? undefined : Object.keys(parsedData).length === 0,
         updatedAt: result.meta.updatedAt || "",
         fileTruncated: result.meta.fileTruncated === true,
       },
     });
     return result;
+  };
+
+  const isRemotePushFailureOutcomeUncertain = (error) => {
+    if (!error || typeof error !== "object") {
+      return false;
+    }
+    if (error.code === "REQUEST_TIMEOUT") {
+      return true;
+    }
+    const status = Number(error.status);
+    if (Number.isFinite(status) && REMOTE_SYNC_RETRYABLE_STATUS.has(status)) {
+      return true;
+    }
+    return error.retryable === true && !Number.isFinite(status);
+  };
+
+  const confirmRemotePushAfterUncertainFailure = async ({
+    payloadDataObject,
+    writerContext = null,
+    writerMetadata = null,
+  } = {}) => {
+    if (!payloadDataObject?.contentHash) {
+      return null;
+    }
+    try {
+      const { data: rawRemoteData, meta } = await fetchRemoteData();
+      if (!rawRemoteData || Object.keys(rawRemoteData).length === 0) {
+        return null;
+      }
+      const remoteDataObject = await migrateAndValidateRemoteData(rawRemoteData);
+      if (remoteDataObject.contentHash !== payloadDataObject.contentHash) {
+        return null;
+      }
+      recordSyncTraceEvent("remote_push_confirmed_after_error", {
+        scope: "remote_push",
+        status: "success",
+        message: "推送请求结果不确定，但复查确认云端内容已更新",
+        details: {
+          action: writerContext?.action || "",
+          syncMode: writerContext?.syncMode || "",
+          updatedAt: meta?.updatedAt || "",
+          contentHash: shortHashForLog(payloadDataObject.contentHash),
+        },
+      });
+      return {
+        success: true,
+        message: "数据已成功推送到Gist。",
+        updatedAt: meta?.updatedAt || null,
+        writerMetadata,
+        confirmedAfterError: true,
+      };
+    } catch (_) {
+      return null;
+    }
   };
 
   const pushRemoteData = async (dataObject, options = {}) => {
@@ -26949,6 +27012,17 @@
           level: "warn",
         });
         throw error;
+      }
+
+      if (isRemotePushFailureOutcomeUncertain(error)) {
+        const confirmedPush = await confirmRemotePushAfterUncertainFailure({
+          payloadDataObject,
+          writerContext,
+          writerMetadata,
+        });
+        if (confirmedPush) {
+          return confirmedPush;
+        }
       }
 
       let errorMessage = `Gist 更新失败${typeof error.status === "number" ? ` (状态码: ${error.status})` : ""
@@ -29720,6 +29794,8 @@
       decideSyncActionByVersion,
       getForegroundRemoteChangeKind,
       getSyncResultRemoteWriteMatchKind,
+      fetchRemoteData,
+      pushRemoteData,
       performAutoSync,
       normalizeBackgroundSyncDebounceState,
       getBackgroundSyncDebounceState,
@@ -29739,6 +29815,7 @@
       clearPendingAutoSyncRequestIfCovered,
       clearSharedBackgroundSyncDebounceIfCovered,
       getBackgroundSyncDebounceRuntimeStateForTest,
+      getBackgroundAutoSyncRuntimeStateForTest,
       getBackgroundSyncDebounceTestConstants,
       runForegroundFollowUpAutoSyncCheck,
       triggerForegroundRemoteFreshnessProbe,

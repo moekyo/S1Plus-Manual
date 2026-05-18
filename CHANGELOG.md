@@ -36,6 +36,9 @@
 - **长时间开启页面的晚到启动同步误触发修复**: 启动同步即使因页面挂起或后台恢复而晚到，也只会顺延真正需要顺延的每日首次同步，不再在旧页面上补跑每次加载检查或首次可见前台探测。
 - **同机多标签页误报“云端有更新”修复**: 阅读进度写入链路新增“真实阅读确认”门槛与后台打开帖子的被动模式，降低后台开帖、初始化观察器和 synthetic progress 造成的假本地改动。
 - **前台探测命中远端变化但偶发不自动拉取修复**: follow-up sync 若因锁占用、已有同步在执行或短暂失效被跳过，会自动安排补偿重试，而不是直接冷却掉本轮机会。
+- **Gist 写入结果不确定的假失败修复**: 自动推送遇到 PATCH 超时/网络错误后会复查云端同步文件；若内容哈希已匹配刚写入的 payload，则确认本次推送成功并更新后续基线，避免“实际已写入但报失败”继续重试并制造假冲突。
+- **后台 shared retry 立即重入修复**: 后台失败重试交给 shared scheduler 后，本标签页不再保留当前 drain loop 的本地 pending，避免日志中出现“等待 owner 执行”后又由本页立刻开始下一轮同步。
+- **metadata-only 诊断误导修复**: 仅读取 Gist 元数据的 probe 不再输出“云端为空”，避免把“未读取同步文件内容”误判成远端数据为空。
 - **自动拉取后页面无感或误刷新修复**: `pulled`、`force_pulled`、`merged_read_progress` 等结果统一接入同一套刷新策略；线程页也会按规则刷新，同时只有真实本地改动才会阻止自动拉取覆盖。
 - **同会话远端写入误判修复**: 前台探测新增 same-session remote write 识别，降低“当前设备其他标签页刚写过云端”后又被本页误提示成外部远端更新的概率。
 - **自动同步指示器残留 running 态修复**: `running` 展示改为严格依赖真实活动同步锁，不再因跨标签页遗留状态长期显示“后台同步中”。
@@ -72,6 +75,7 @@
 - **同步操作结果上下文充实**: `asSuccessResult` 的同步结果现在携带 `reason` 与 `remoteUpdatedAt` 详情，供同步诊断链路回溯每次自动同步的具体决策依据。
 - **保留可复用调试面板框架**: 新增一套默认隐藏的浮动调试面板基础设施，当前接入了导航栏自动同步指示器的手动预览入口；需要时可通过 `window.__s1pAutoSyncIndicatorDebug.showPanel()` 按需启用。
 - **回归脚本覆盖补齐**: 新增前台探测、可见页轮询、same-session remote write、refresh policy、cleanup provenance、safe sync execution、settings migration 等多组测试脚本。
+- **远端推送不确定写入回归**: 新增 `test-remote-push-uncertain-write.js`，覆盖 PATCH 超时但云端内容已写入的确认路径，以及 metadata-only 日志不再误报 `remoteEmpty`。
 - **多标签页同步专题文档补齐**: 新增问题总表、覆盖矩阵、阶段文档、执行提示和调查记录，方便继续沿阶段推进或回溯具体现象。
 - **本地开发 Loader 调整**: 仓库新增 `S1Plus-Local-Mac.user.js` 和 `S1Plus-Local-Windows.user.js`，并同步校准开发文档中的本地加载说明。
 
