@@ -1,6 +1,6 @@
 # 弹窗磨砂玻璃统一样式迁移文档
 
-> **状态**: 进行中（确认类弹窗、Token 配置弹窗、图片查看器、日期选择器、类型 B 轻量浮层与类别 C 覆盖式控件整理已完成）
+> **状态**: 已完成当前统一方案（确认类弹窗、同步选择/冲突、欢迎弹窗、Token 配置、图片查看器、日期选择器、类型 B 轻量浮层与类别 C 覆盖式控件均已纳入可读性约束）
 > **目标**: 统一全屏模态弹窗的磨砂玻璃语言，并按使用场景区分透明度，避免表单/决策弹窗被背景文字干扰
 
 ---
@@ -13,12 +13,12 @@
 
 **浅色模式**：
 ```css
---s1p-overlay-blur: 1.6px;
+--s1p-overlay-blur: 0.8px;
 ```
 
 **深色模式**：
 ```css
---s1p-overlay-blur: 1.8px;
+--s1p-overlay-blur: 0.9px;
 ```
 
 ### 1.2 全屏蒙版层（overlay backdrop）
@@ -36,13 +36,13 @@
 }
 ```
 
-> 说明：全屏蒙版不再保留全局黑色遮罩变量，只提供统一无色 blur。设置/确认等弹窗外壳用自身 Dialog/Shell 背景承担层次；图片查看器则由工具栏与图片舞台各自承担背景，面板壳不再参与叠色。
+> 说明：全屏蒙版不再保留全局黑色遮罩变量，只提供低强度无色 blur。不要用全屏 blur 制造文字承载层次；设置/确认等弹窗外壳用自身 Dialog/Shell 背景、阴影和轻量 filter 保证可读性；图片查看器则由工具栏与图片舞台各自承担背景，面板壳不再参与叠色。
 
-### 1.3 ★ 内容面板磨砂玻璃（核心参考）— 行 5303-5312
+### 1.3 ★ 内容面板磨砂玻璃（核心参考）
 
 ```css
 .s1p-modal > .s1p-modal-content {
-  --s1p-settings-panel-bg: rgba(255, 255, 255, 0.26);
+  --s1p-settings-panel-bg: rgba(255, 255, 255, 0.78);
   --s1p-settings-content-bg: var(--s1p-bg);
   --s1p-settings-scrollbar-thumb: rgba(37, 71, 122, 0.42);
   --s1p-settings-scrollbar-thumb-hover: rgba(37, 71, 122, 0.58);
@@ -51,17 +51,17 @@
   border: none;
   border-radius: 12px;
   box-shadow: 0 18px 44px rgba(0, 0, 0, 0.22);
-  -webkit-backdrop-filter: blur(8px) saturate(1.08);
-  backdrop-filter: blur(8px) saturate(1.08);
+  -webkit-backdrop-filter: var(--s1p-dialog-glass-filter);
+  backdrop-filter: var(--s1p-dialog-glass-filter);
 }
 ```
 
-**深色模式覆盖** — 行 5314-5319:
+**深色模式覆盖**：
 
 ```css
 @media (prefers-color-scheme: dark) {
   .s1p-modal > .s1p-modal-content {
-    --s1p-settings-panel-bg: rgba(30, 41, 59, 0.46);
+    --s1p-settings-panel-bg: rgba(17, 24, 39, 0.86);
     --s1p-settings-content-bg: #172033;
     --s1p-settings-scrollbar-thumb: rgba(148, 163, 184, 0.46);
     --s1p-settings-scrollbar-thumb-hover: rgba(148, 163, 184, 0.64);
@@ -82,7 +82,7 @@ modalContent.style.setProperty(
 );
 ```
 
-### 1.4 嵌套弹窗防双重模糊 — 行 5993-6002
+### 1.4 嵌套弹窗防双重模糊
 
 ```css
 .s1p-modal ~ .s1p-confirm-modal,
@@ -104,50 +104,66 @@ modalContent.style.setProperty(
 
 | 层级 | 适用范围 | 浅色背景 | 深色背景 | 说明 |
 |------|---------|---------|---------|------|
-| Shell glass | 设置面板外壳 | `rgba(255, 255, 255, 0.26)` | `rgba(30, 41, 59, 0.46)` | 设置面板内部已有实底内容区，外壳可以更通透 |
-| Dialog glass | 确认/输入/Token/同步选择等决策弹窗 | `var(--s1p-dialog-glass-bg)` = `rgba(255, 255, 255, 0.42)` | `var(--s1p-dialog-glass-bg)` = `rgba(30, 41, 59, 0.58)` | 小表单和决策弹窗需要更稳，避免背景文字抢戏 |
-| Image viewer glass | 图片查看器工具栏/图片舞台 | 工具栏 `rgba(255,255,255,0.85)`；舞台底色 `rgba(226,232,222,0.7)` + 独立轻磨砂层 | 工具栏 `rgba(18,27,45,0.97)`；舞台底色 `rgba(33,42,52,0.9)` + 独立轻磨砂层 | 面板壳透明，只负责裁切/阴影；浅色和深色舞台都使用“底色层 + 磨砂层” |
-| Utility glass | Toast、浮动控制 | `var(--s1p-toast-glass-bg)` / `var(--s1p-floating-control-glass-bg)` | 对应深色变量 | 覆盖页面内容的轻量 UI 使用轻磨砂，状态色 Toast 保留语义色 |
-| Solid content | 同步对比表格、日期输入、图片读数控件 | `var(--s1p-bg)` | `var(--s1p-bg)` | 信息密集或需要精确阅读的子内容保留实底 |
-| Light popover glass | B1/B2/B4/B6/B7/B8 与文档型帮助浮层 | `var(--s1p-popover-glass-bg)` = `rgba(255,255,255,0.52)` | `var(--s1p-popover-glass-bg)` = `rgba(30,41,59,0.76)` | 面板感较强的确认浮层和 tooltip 使用无色、保守轻磨砂，不使用 dialog/shell 透明度 |
+| Shell glass | 设置面板外壳 | `rgba(255, 255, 255, 0.78)` | `rgba(17, 24, 39, 0.86)` | 设置面板内部已有实底内容区，外壳仍需足够实，避免背景文字透进标题和 tab 区 |
+| Dialog glass | 确认/输入/Token/同步选择等决策弹窗 | `var(--s1p-dialog-glass-bg)` = `rgba(255, 255, 255, 0.78)` | `var(--s1p-dialog-glass-bg)` = `rgba(17, 24, 39, 0.88)` | 表单、确认、冲突决策、同步选择等信息密集弹窗优先保证文字可读 |
+| Image viewer glass | 图片查看器工具栏/图片舞台 | 工具栏 `rgba(255,255,255,0.92)`；舞台底色 `rgba(226,232,222,0.7)` + 独立轻磨砂层 | 工具栏 `rgba(18,27,45,0.98)`；舞台底色 `rgba(33,42,52,0.9)` + 独立轻磨砂层 | 面板壳透明，只负责裁切/阴影；浅色和深色舞台都使用“底色层 + 磨砂层” |
+| Utility glass | Toast、浮动控制 | `rgba(255,255,255,0.9)` / `rgba(255,255,255,0.86)` | `rgba(17,24,39,0.92)` / `rgba(17,24,39,0.88)` | 覆盖页面内容的轻量 UI 也要有更实背景，状态色 Toast 保留语义色 |
+| Solid content | 同步对比表格、日期输入、图片读数控件 | dialog 背景与实底混合 | dialog 背景与实底混合 | 信息密集或需要精确阅读的子内容必须建立自身背景，不直接浮在透明面板上 |
+| Light popover glass | B1/B2/B4/B6/B7/B8 与文档型帮助浮层 | `var(--s1p-popover-glass-bg)` = `rgba(255,255,255,0.82)` | `var(--s1p-popover-glass-bg)` = `rgba(17,24,39,0.9)` | 面板感较强的确认浮层和 tooltip 使用保守轻磨砂，不使用 dialog/shell 透明度 |
 | Solid popover | B3/B5 等即时操作菜单 | `var(--s1p-popover-solid-bg)` | `var(--s1p-popover-solid-bg)` | 操作入口菜单保持实底，只统一背景、阴影和圆角；主容器不显示描边 |
 
-Dialog/Shell 层的通用滤镜和结构仍保持一致；Popover 层单独使用 6px blur，最外层容器统一不显示描边：
+Dialog/Shell/Popover/Utility 层都通过变量控制轻量滤镜，最外层容器统一不显示描边；不要在组件规则里重新硬编码 `blur(6px)` 或 `blur(8px)`：
 
 ```css
--webkit-backdrop-filter: blur(8px) saturate(1.08);
-backdrop-filter: blur(8px) saturate(1.08);
+-webkit-backdrop-filter: var(--s1p-dialog-glass-filter);
+backdrop-filter: var(--s1p-dialog-glass-filter);
 border-radius: 12px;
 border: none;
 ```
 
-当前代码新增的 dialog / popover 变量：
+当前代码的 dialog / popover / utility 变量：
 
 ```css
 :root {
-  --s1p-dialog-glass-bg: rgba(255, 255, 255, 0.42);
+  --s1p-dialog-glass-bg: rgba(255, 255, 255, 0.78);
+  --s1p-dialog-glass-filter: blur(3px) saturate(1.02);
   --s1p-dialog-glass-shadow: 0 18px 44px rgba(0, 0, 0, 0.22);
   --s1p-dialog-glass-divider: rgba(37, 71, 122, 0.16);
-  --s1p-popover-glass-bg: rgba(255, 255, 255, 0.52);
+  --s1p-dialog-text: #10234f;
+  --s1p-dialog-muted-text: #334a72;
+  --s1p-popover-glass-bg: rgba(255, 255, 255, 0.82);
+  --s1p-popover-glass-filter: blur(3px) saturate(1.02);
   --s1p-popover-glass-shadow: 0 16px 34px rgba(0, 0, 0, 0.2);
   --s1p-popover-solid-bg: var(--s1p-bg);
   --s1p-popover-solid-shadow: 0 10px 24px rgba(var(--s1p-shadow-color-rgb), 0.16);
+  --s1p-toast-glass-bg: rgba(255, 255, 255, 0.9);
+  --s1p-toast-glass-filter: blur(3px) saturate(1.02);
+  --s1p-floating-control-glass-bg: rgba(255, 255, 255, 0.86);
+  --s1p-floating-control-glass-filter: blur(3px) saturate(1.02);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --s1p-dialog-glass-bg: rgba(30, 41, 59, 0.58);
+    --s1p-dialog-glass-bg: rgba(17, 24, 39, 0.88);
+    --s1p-dialog-glass-filter: blur(3px) saturate(1.02);
     --s1p-dialog-glass-shadow: 0 18px 44px rgba(0, 0, 0, 0.28);
     --s1p-dialog-glass-divider: rgba(148, 163, 184, 0.2);
-    --s1p-popover-glass-bg: rgba(30, 41, 59, 0.76);
+    --s1p-dialog-text: #f1f5f9;
+    --s1p-dialog-muted-text: #cbd5e1;
+    --s1p-popover-glass-bg: rgba(17, 24, 39, 0.9);
+    --s1p-popover-glass-filter: blur(3px) saturate(1.02);
     --s1p-popover-glass-shadow: 0 18px 38px rgba(0, 0, 0, 0.32);
     --s1p-popover-solid-bg: var(--s1p-bg);
     --s1p-popover-solid-shadow: 0 12px 28px rgba(0, 0, 0, 0.34);
+    --s1p-toast-glass-bg: rgba(17, 24, 39, 0.92);
+    --s1p-toast-glass-filter: blur(3px) saturate(1.02);
+    --s1p-floating-control-glass-bg: rgba(17, 24, 39, 0.88);
+    --s1p-floating-control-glass-filter: blur(3px) saturate(1.02);
   }
 }
 ```
 
-> **关键点**: 设置面板外壳可以通透；凡是承载表单、确认、冲突决策、同步选择的弹窗，统一走 Dialog glass。
+> **关键点**: 全屏蒙版只做轻微背景分离；凡是承载表单、确认、冲突决策、同步选择的弹窗，统一走 Dialog glass 和 `--s1p-dialog-text` / `--s1p-dialog-muted-text`。如果新增弹窗或浮层，先选择所属 surface token，再补测试，不要局部硬编码强 blur。
 
 ---
 
@@ -155,54 +171,54 @@ border: none;
 
 ### 类别 A：全屏模态弹窗（统一磨砂或明确排除）— 12 个
 
-| # | 弹窗 | 用途 | 内容面板选择器 | 创建行号 | 当前背景 | 状态 |
-|---|------|------|-------------|---------|---------|------|
-| A1 | 设置面板 | S1 Plus 全部设置（7个标签页） | `.s1p-modal > .s1p-modal-content` | 36994 | `rgba(255,255,255,0.26)` + blur | ✅ 已有磨砂 |
-| A2 | 确认对话框 | 通用确认/取消（清空数据、屏蔽确认等） | `.s1p-confirm-content` | 35589 | Dialog glass：`0.42` / `0.58` + blur | ✅ 已完成 |
-| A3 | 高级确认对话框 | 自定义标题/内容/按钮的增强确认框 | `.s1p-confirm-content` (同上) | 42910 | 继承 A2（共用选择器） | ✅ 已完成 |
-| A4 | 输入框弹窗 | 带文本输入区的表单弹窗（编辑屏蔽备注） | `.s1p-confirm-content` (同上) | 35705 | 继承 A2（共用选择器） | ✅ 已完成 |
-| A5 | 图片查看器 | 全屏查看图片，支持缩放/平移/翻页/批量保存 | `.s1p-image-viewer__panel` | 23966 | 透明结构壳 + 独立工具栏/图片舞台玻璃背景 | ✅ 已完成 |
-| A6 | Token配置弹窗 | GitHub Token 过期日期设置（含日期选择器） | `.s1p-token-config-content` | 36568 | Dialog glass：`0.42` / `0.58` + blur | ✅ 已完成，待视觉确认 |
-| A7 | 手动屏蔽用户弹窗 | 手动输入用户名/UID 屏蔽用户（含备注） | `.s1p-confirm-content` (同上) | 38530 | 继承 A2（共用选择器） | ✅ 已完成 |
-| A8 | 阅读进度详情弹窗 | 阅读记录按时间分组展示，支持按组删除 | `.s1p-confirm-content` (同上) | 46940 | 继承 A2（共用选择器） | ✅ 已完成 |
-| A9 | 欢迎/更新弹窗 | 首次安装/版本更新后展示更新内容 | `.s1p-confirm-content` (同上) | 47599 | 继承 A2（共用选择器） | ✅ 已完成 |
-| A10 | NUX推荐弹窗 | NUX 主题推荐用户切换到标准主题 | `.s1p-confirm-content` (同上) | 46362 | 继承 A2（共用选择器） | ✅ 已完成 |
-| A11 | Token过期警告 | 后台同步 Token 即将到期提醒 | `.s1p-confirm-content` (同上) | 47644 | 继承 A2（共用选择器） | ✅ 已完成 |
-| A12 | 同步对比对话框 | 多端数据冲突时展示差异，供用户选择合并 | `.s1p-confirm-content` (同上) | 34220 | 继承 A2（共用选择器） | ✅ 已完成 |
+| # | 弹窗 | 用途 | 内容面板选择器 | 当前背景 | 状态 |
+|---|------|------|-------------|---------|------|
+| A1 | 设置面板 | S1 Plus 全部设置（7个标签页） | `.s1p-modal > .s1p-modal-content` | Shell glass：`0.78` / `0.86` + 轻量 filter | ✅ 已完成 |
+| A2 | 确认对话框 | 通用确认/取消（清空数据、屏蔽确认等） | `.s1p-confirm-content` | Dialog glass：`0.78` / `0.88` + 轻量 filter | ✅ 已完成 |
+| A3 | 高级确认对话框 | 自定义标题/内容/按钮的增强确认框 | `.s1p-confirm-content` (同上) | 继承 A2（共用选择器） | ✅ 已完成 |
+| A4 | 输入框弹窗 | 带文本输入区的表单弹窗（编辑屏蔽备注） | `.s1p-confirm-content` (同上) | 继承 A2（共用选择器） | ✅ 已完成 |
+| A5 | 图片查看器 | 全屏查看图片，支持缩放/平移/翻页/批量保存 | `.s1p-image-viewer__panel` | 透明结构壳 + 独立工具栏/图片舞台玻璃背景 | ✅ 已完成 |
+| A6 | Token配置弹窗 | GitHub Token 过期日期设置（含日期选择器） | `.s1p-token-config-content` | Dialog glass：`0.78` / `0.88` + 轻量 filter | ✅ 已完成 |
+| A7 | 手动屏蔽用户弹窗 | 手动输入用户名/UID 屏蔽用户（含备注） | `.s1p-confirm-content` (同上) | 继承 A2（共用选择器） | ✅ 已完成 |
+| A8 | 阅读进度详情弹窗 | 阅读记录按时间分组展示，支持按组删除 | `.s1p-confirm-content` (同上) | 继承 A2（共用选择器） | ✅ 已完成 |
+| A9 | 欢迎/更新弹窗 | 首次安装/版本更新后展示更新内容 | `.s1p-confirm-content` (同上) | 继承 A2（共用选择器） | ✅ 已完成 |
+| A10 | NUX推荐弹窗 | NUX 主题推荐用户切换到标准主题 | `.s1p-confirm-content` (同上) | 继承 A2（共用选择器） | ✅ 已完成 |
+| A11 | Token过期警告 | 后台同步 Token 即将到期提醒 | `.s1p-confirm-content` (同上) | 继承 A2（共用选择器） | ✅ 已完成 |
+| A12 | 同步选择 / 同步对比对话框 | 多端数据冲突时展示差异，供用户选择合并或拉取/推送 | `.s1p-confirm-content` (同上) | 继承 A2；内部说明块、上次操作和对比表格使用 dialog 文本 token 与自身背景 | ✅ 已完成 |
 
 > 注：A2~A4, A7~A12 共 9 个弹窗共享 `.s1p-confirm-content` 选择器，改一处即可覆盖全部。
 
 ### 类别 B：绝对定位浮层弹窗 — 8 个
 
-| # | 弹窗 | 选择器 | 创建行号 | 用途 | 样式决策 |
-|---|------|--------|---------|------|---------|
-| B1 | 用户标记编辑器 | `#s1p-tag-popover-main` | 43254 | 添加/编辑用户标签+颜色选择器 | ✅ Light popover glass |
-| B2 | 日期选择器 | `.s1p-date-picker` | 36337 | Token过期日期选择 | ✅ Light popover glass |
-| B3 | 帖子内联操作菜单 | `.s1p-inline-action-menu` | 32600 | 帖子旁操作按钮栏 | ✅ Solid popover |
-| B4 | 内联确认菜单 | `.s1p-inline-confirm-menu` | 36040 | "屏蔽该帖子/用户？" | ✅ Light popover glass |
-| B5 | 标签选项菜单 | `.s1p-tag-options-menu` | 45662 | 标签编辑/删除下拉菜单 | ✅ Solid popover |
-| B6 | 标签删除确认 | (复用 `.s1p-inline-confirm-menu`) | 45508 | 删除标签确认 | ✅ Light popover glass |
-| B7 | 主题屏蔽选项菜单 | `.s1p-options-menu.s1p-confirm-wrapper:not(.s1p-inline-confirm-menu)` | 43162 | 屏蔽列表中的操作菜单 | ✅ Light popover glass |
-| B8 | 通用提示浮层 | `#s1p-generic-display-popover` | 43508 | hover tooltip | ✅ Light popover glass |
+| # | 弹窗 | 选择器 | 用途 | 样式决策 |
+|---|------|--------|------|---------|
+| B1 | 用户标记编辑器 | `#s1p-tag-popover-main` | 添加/编辑用户标签+颜色选择器 | ✅ Light popover glass |
+| B2 | 日期选择器 | `.s1p-date-picker` | Token过期日期选择 | ✅ Light popover glass |
+| B3 | 帖子内联操作菜单 | `.s1p-inline-action-menu` | 帖子旁操作按钮栏 | ✅ Solid popover |
+| B4 | 内联确认菜单 | `.s1p-inline-confirm-menu` | "屏蔽该帖子/用户？" | ✅ Light popover glass |
+| B5 | 标签选项菜单 | `.s1p-tag-options-menu` | 标签编辑/删除下拉菜单 | ✅ Solid popover |
+| B6 | 标签删除确认 | (复用 `.s1p-inline-confirm-menu`) | 删除标签确认 | ✅ Light popover glass |
+| B7 | 主题屏蔽选项菜单 | `.s1p-options-menu.s1p-confirm-wrapper:not(.s1p-inline-confirm-menu)` | 屏蔽列表中的操作菜单 | ✅ Light popover glass |
+| B8 | 通用提示浮层 | `#s1p-generic-display-popover` | hover tooltip | ✅ Light popover glass |
 
-> 注：类型 B 不整体套用全屏弹窗的 `0.26` 透明度。B1/B2/B4/B6/B7/B8 和文档型帮助浮层作为小面板或确认提示使用更保守的 Light popover glass；B3/B5 作为纯操作入口菜单保持实底，只统一阴影、圆角和背景变量。
+> 注：类型 B 不整体套用全屏弹窗透明度。B1/B2/B4/B6/B7/B8 和文档型帮助浮层作为小面板或确认提示使用更实的 Light popover glass；B3/B5 作为纯操作入口菜单保持实底，只统一阴影、圆角和背景变量。
 
 ### 类别 C：通知/面板/内部组件 — 12 个
 
-| # | 弹窗 | 选择器 | 创建行号 | 用途 | 磨砂？ |
-|---|------|--------|---------|------|--------|
-| C1 | 全局Toast | `#s1p-global-toast-root` | 35413 | 页面底部成功/错误/中性消息通知 | ✅ Light utility glass |
-| C2 | 设置面板内Toast | (modal内) | 37009 | 设置面板内的操作结果通知 | ✅ Light utility glass |
-| C3 | 调试面板 | `#s1p-debug-unified-panel` | 34975 | 开发用统一调试面板（Log/同步诊断/自动同步） | ✅ 已是磨砂玻璃 |
-| C4 | 自动同步调试面板 | `#s1p-auto-sync-debug-panel` | 33839 | 调试面板内的自动同步标签页 | ✅ 归入 C3，不单独迁移 |
-| C5 | 浮动控制按钮 | `#s1p-floating-controls-wrapper` | 46668 | 右侧悬浮置顶/置底/设置按钮 | ✅ Light utility glass |
-| C6 | 通知折叠 | `.s1p-notification-wrapper` | 19531 | 论坛通知帖子的展开/折叠控制 | 不需要（页面内嵌元素，不覆盖其他内容） |
-| C7 | 引用折叠 | `.s1p-quote-toggle` | 19430 | 帖子中长引用的展开/折叠控制 | 不需要（同上） |
-| C8 | 可折叠区块 | `.s1p-collapsible-header` | 38987 | 设置面板中屏蔽列表等可折叠区域 | 不需要（嵌套在已有磨砂的设置面板内） |
-| C9 | 设置Tab导航 | `.s1p-tab-btn` | 36742 | 设置面板内切换各设置页签 | 不需要（同上） |
-| C10 | 分段控制器 | `.s1p-segmented-control` | 36820 | 设置面板内选项分段选择（如同步模式） | 不需要（同上） |
-| C11 | 列表分页 | `.s1p-list-pagination` | 37192 | 设置面板内长列表翻页控件 | 不需要（同上） |
-| C12 | 书签搜索框 | `#s1p-bookmark-search-input` | 38262 | 设置面板内书签列表搜索过滤 | 不需要（同上） |
+| # | 弹窗 | 选择器 | 用途 | 磨砂？ |
+|---|------|--------|------|--------|
+| C1 | 全局Toast | `#s1p-global-toast-root` | 页面底部成功/错误/中性消息通知 | ✅ Light utility glass |
+| C2 | 设置面板内Toast | (modal内) | 设置面板内的操作结果通知 | ✅ Light utility glass |
+| C3 | 调试面板 | `#s1p-debug-unified-panel` | 开发用统一调试面板（Log/同步诊断/自动同步） | ✅ 复用 dialog 轻量 filter |
+| C4 | 自动同步调试面板 | `#s1p-auto-sync-debug-panel` | 调试面板内的自动同步标签页 | ✅ 归入 C3，不单独迁移 |
+| C5 | 浮动控制按钮 | `#s1p-floating-controls-wrapper` | 右侧悬浮置顶/置底/设置按钮 | ✅ Light utility glass |
+| C6 | 通知折叠 | `.s1p-notification-wrapper` | 论坛通知帖子的展开/折叠控制 | 不需要（页面内嵌元素，不覆盖其他内容） |
+| C7 | 引用折叠 | `.s1p-quote-toggle` | 帖子中长引用的展开/折叠控制 | 不需要（同上） |
+| C8 | 可折叠区块 | `.s1p-collapsible-header` | 设置面板中屏蔽列表等可折叠区域 | 不需要（嵌套在已有磨砂的设置面板内） |
+| C9 | 设置Tab导航 | `.s1p-tab-btn` | 设置面板内切换各设置页签 | 不需要（同上） |
+| C10 | 分段控制器 | `.s1p-segmented-control` | 设置面板内选项分段选择（如同步模式） | 不需要（同上） |
+| C11 | 列表分页 | `.s1p-list-pagination` | 设置面板内长列表翻页控件 | 不需要（同上） |
+| C12 | 书签搜索框 | `#s1p-bookmark-search-input` | 设置面板内书签列表搜索过滤 | 不需要（同上） |
 
 ---
 
@@ -212,7 +228,7 @@ border: none;
 
 影响所有 A2~A4, A7~A12（共 9 个弹窗），改一处全部生效。
 
-**当前样式** — 行 6003-6016:
+**旧样式**：
 ```css
 .s1p-confirm-content {
   background-color: var(--s1p-bg);
@@ -222,56 +238,45 @@ border: none;
 }
 ```
 
-**目标样式**（改为磨砂玻璃）:
+**当前样式**（更实背景 + 轻量 filter）:
 ```css
 .s1p-confirm-content {
   background: var(--s1p-dialog-glass-bg);
+  color: var(--s1p-dialog-text);
   border: none;
   border-radius: 12px;
   box-shadow: var(--s1p-dialog-glass-shadow);
-  -webkit-backdrop-filter: blur(8px) saturate(1.08);
-  backdrop-filter: blur(8px) saturate(1.08);
+  -webkit-backdrop-filter: var(--s1p-dialog-glass-filter);
+  backdrop-filter: var(--s1p-dialog-glass-filter);
   ...
 }
 ```
 
 **注意事项**:
-- `.s1p-confirm-body` 内文字颜色 (`--s1p-t`) 需要确认在磨砂背景上的可读性
+- `.s1p-confirm-body .s1p-confirm-subtitle` 使用 `--s1p-dialog-muted-text`，避免说明文字在复杂背景下过浅或过暗
 - `.s1p-confirm-footer` 当前保持透明，继承父级 `.s1p-confirm-content` 的磨砂背景
 - `.s1p-sync-modal .s1p-confirm-footer` 已移除 `background-color: var(--s1p-bg)`，避免手动同步选择弹窗 footer 重新变成实底
-- `.s1p-sync-comparison-table` 已改为实底 `var(--s1p-bg)`，避免同步对比内容在玻璃面板上可读性下降
+- `.s1p-sync-choice-info`、`.s1p-sync-last-action`、`.s1p-sync-comparison-table` 使用 dialog 背景混合色与 dialog 文本 token，避免同步选择/冲突对比弹窗直接透出论坛列表文字
 - 嵌套嵌套时 (`.s1p-modal ~ .s1p-confirm-modal`) 的防双重模糊规则已存在，无需额外处理
 
-### 步骤 2：Token 配置弹窗内容面板（`.s1p-token-config-content`）— 已完成，待视觉确认
+### 步骤 2：Token 配置弹窗内容面板（`.s1p-token-config-content`）— 已完成
 
-**当前样式** — 行 5424-5433:
+**当前样式**:
 ```css
 .s1p-token-config-content {
   background: var(--s1p-dialog-glass-bg);
+  color: var(--s1p-dialog-text);
   border: none;
   width: 400px;
   max-width: 90%;
   border-radius: 12px;
   box-shadow: var(--s1p-dialog-glass-shadow);
-  -webkit-backdrop-filter: blur(8px) saturate(1.08);
-  backdrop-filter: blur(8px) saturate(1.08);
+  -webkit-backdrop-filter: var(--s1p-dialog-glass-filter);
+  backdrop-filter: var(--s1p-dialog-glass-filter);
 }
 ```
 
 > Review 备注：`.s1p-token-config-content` 的父级是 `.s1p-token-config-modal`，不会命中 `.s1p-modal > .s1p-modal-content`，因此需要单独声明完整磨砂配方。header/footer 已改为透明继承，只保留浅色/深色下的轻分割线；日期输入框仍保留实底以保证可读性。
-
-**目标样式**:
-```css
-.s1p-token-config-content {
-  background: var(--s1p-dialog-glass-bg);
-  border: none;
-  border-radius: 12px;
-  box-shadow: var(--s1p-dialog-glass-shadow);
-  -webkit-backdrop-filter: blur(8px) saturate(1.08);
-  backdrop-filter: blur(8px) saturate(1.08);
-  ...
-}
-```
 
 **注意事项**:
 - `.s1p-token-config-header` / `.s1p-token-config-footer` 当前透明继承父级磨砂，只保留轻分割线
@@ -297,8 +302,8 @@ border: none;
 **注意事项**:
 - 全屏蒙版统一是 `background-color: transparent` + blur，不再需要图片查看器单独覆写黑色遮罩。
 - 面板自身不铺背景、不使用 `backdrop-filter`，避免在工具栏/舞台下面再叠一层 alpha。
-- 工具栏使用 `--s1p-image-viewer-toolbar-bg` 和 `blur(8px) saturate(1.08)`。
-- 图片舞台使用 `--s1p-image-viewer-viewport-bg` 作为稳定底色；磨砂层由 `--s1p-image-viewer-viewport-glass-bg` 和 `--s1p-image-viewer-viewport-glass-filter` 控制，浅色和深色都保持 `blur(6px) saturate(1.04)`。以后调舞台透明度优先改底色变量，只在需要微调玻璃感时改磨砂层变量。
+- 工具栏使用 `--s1p-image-viewer-toolbar-bg` 和 `--s1p-dialog-glass-filter`。
+- 图片舞台使用 `--s1p-image-viewer-viewport-bg` 作为稳定底色；磨砂层由 `--s1p-image-viewer-viewport-glass-bg` 和 `--s1p-image-viewer-viewport-glass-filter` 控制，浅色和深色都保持 `blur(3px) saturate(1.02)`。以后调舞台透明度优先改底色变量，只在需要微调玻璃感时改磨砂层变量。
 - 缩放/页码胶囊等读数控件继续保持清晰实底，优先保证读数可读性。
 
 ### 步骤 4：类别 C 覆盖式控件 — 已完成
@@ -310,8 +315,8 @@ border: none;
   background: var(--s1p-toast-glass-bg);
   border: none;
   box-shadow: var(--s1p-toast-glass-shadow);
-  -webkit-backdrop-filter: blur(8px) saturate(1.08);
-  backdrop-filter: blur(8px) saturate(1.08);
+  -webkit-backdrop-filter: var(--s1p-toast-glass-filter);
+  backdrop-filter: var(--s1p-toast-glass-filter);
 }
 
 #s1p-controls-handle,
@@ -319,14 +324,14 @@ border: none;
 #s1p-floating-controls button {
   background: var(--s1p-floating-control-glass-bg);
   box-shadow: var(--s1p-floating-control-glass-shadow);
-  -webkit-backdrop-filter: blur(8px) saturate(1.08);
-  backdrop-filter: blur(8px) saturate(1.08);
+  -webkit-backdrop-filter: var(--s1p-floating-control-glass-filter);
+  backdrop-filter: var(--s1p-floating-control-glass-filter);
 }
 ```
 
 **处理结果**:
 - C1/C2 Toast 使用 Light utility glass；成功/错误状态保留状态色，但改为半透明状态色玻璃。
-- C3 调试面板已是磨砂玻璃风格，不重复迁移。
+- C3 调试面板复用 `--s1p-dialog-glass-filter`，不单独维护 blur 数值。
 - C4 自动同步调试面板是 C3 内部标签页，归入 C3。
 - C5 浮动控制把手和按钮使用 Light utility glass。
 - C6~C12 是页面内嵌或设置面板内部控件，不迁移。
@@ -351,6 +356,14 @@ border: none;
 
 ## 六、2026-05-17 Review 记录
 
+### 2026-05-18 可读性回归更新
+
+- 全屏 overlay blur 下调到浅色 `0.8px`、深色 `0.9px`，避免背景论坛文字被糊成低对比噪声。
+- Dialog / popover / toast / floating-control 全部改为更实背景 + `blur(3px) saturate(1.02)` 轻量 filter，并通过 `--s1p-*-glass-filter` 变量集中维护。
+- `.s1p-confirm-content` 和 `.s1p-token-config-content` 使用 `--s1p-dialog-text` / `--s1p-dialog-muted-text`，覆盖手动同步选择、同步冲突、欢迎弹窗、Token 提醒、阅读记录详情、手动屏蔽用户等共享确认弹窗。
+- 手动同步选择/冲突弹窗里的 `.s1p-sync-choice-info`、`.s1p-sync-last-action`、`.s1p-sync-comparison-table`、表头和行状态都建立自身背景并使用 dialog 文本 token，不再把表格和说明文字直接压在透明玻璃上。
+- 新增 `tests/test-glass-surface-readability-css.js`，约束浅色/深色 token、强 blur 禁止项、同步选择弹窗内部可读性；现有 popover / category C 测试同步改为检查 filter 变量。
+
 ### 已确认可继续保留
 
 - `.s1p-confirm-content` 已改为 Dialog glass，覆盖 A2~A4、A7~A12，也覆盖手动同步选择/冲突对比弹窗。
@@ -366,14 +379,14 @@ border: none;
 - `.s1p-image-viewer` 全屏蒙版已改为无色磨砂；`.s1p-image-viewer__panel` 是透明结构壳；`.s1p-image-viewer__toolbar` 与 `.s1p-image-viewer__viewport` 分别承担独立玻璃背景。
 - `.s1p-toast-notification` 已改为 Light utility glass；success/error 保留状态色但改为半透明状态色玻璃。
 - `#s1p-controls-handle` 与 `#s1p-floating-controls` 内按钮已改为 Light utility glass。
-- `#s1p-debug-unified-panel` 已经是磨砂玻璃风格；`#s1p-auto-sync-debug-panel` 作为调试面板内部标签页归入 C3，不单独迁移。
+- `#s1p-debug-unified-panel` 复用 dialog 轻量 filter；`#s1p-auto-sync-debug-panel` 作为调试面板内部标签页归入 C3，不单独迁移。
 - 自定义 UI 的最外层容器统一不显示描边；输入框、按钮、分割线、表格和设置面板内部列表项仍保留必要的功能性边界。
-- 同步对比表格使用实底 `var(--s1p-bg)`，表头改为低调的 `var(--s1p-sub)`，可读性比直接透玻璃更稳。
+- 同步对比表格使用 dialog 背景混合色与 `--s1p-dialog-text`，表头改为同体系的低调背景，可读性比直接透玻璃更稳。
 - 类型 B 已按“轻量浮层统一样式”处理：B1/B2/B4/B6/B7/B8 与文档型帮助浮层轻磨砂，B3/B5 实底。
 
 ### 仍需处理的问题
 
-- **手动视觉验证未完成**：Dialog glass 新透明度、A5 图片查看器无色全屏蒙版和主题色轻磨砂图片舞台、C1/C2 Toast、C5 浮动控制、Light popover 日期选择器、B1/B4/B6/B7/B8/文档型帮助浮层轻磨砂、B3/B5 实底浮层、设置面板滚动条跟随 NUX 主题、浅色、深色、NUX、窄屏、Token 配置、输入框弹窗、欢迎弹窗、同步选择/冲突对比弹窗都还需要浏览器实测。
+- **手动视觉验证未完成**：Dialog glass 新透明度、A5 图片查看器无色全屏蒙版和主题色轻磨砂图片舞台、C1/C2 Toast、C5 浮动控制、Light popover 日期选择器、B1/B4/B6/B7/B8/文档型帮助浮层轻磨砂、B3/B5 实底浮层、设置面板滚动条跟随 NUX 主题、浅色、深色、NUX、窄屏、Token 配置、输入框弹窗、欢迎弹窗、同步选择/冲突对比弹窗仍建议浏览器截图验收。
 
 ### 建议下一步
 
@@ -386,27 +399,17 @@ border: none;
 
 ---
 
-## 七、相关文件行号索引
+## 七、相关维护入口
 
-| 内容 | 行号范围 |
+| 内容 | 维护入口 |
 |------|---------|
-| CSS 变量 — 浅色蒙版 blur | 全局变量区 |
-| CSS 变量 — 深色蒙版 blur | 深色变量区 |
-| 蒙版层无色磨砂规则 | 全局弹层 CSS |
-| 设置面板内容磨砂（参考） | 5303-5312 |
-| 设置面板深色模式 | 5314-5319 |
-| 确认框内容当前样式 | 6003-6016 |
-| Token弹窗内容当前样式 | 5424-5433 |
-| 嵌套防双重模糊 | 5993-6002 |
-| 图片查看器面板当前样式 | 7237-7242 |
-| 创建确认框函数 | 35589 |
-| 创建高级确认框函数 | 42910 |
-| 创建输入框弹窗函数 | 35705 |
-| 创建图片查看器 | 23966 |
-| 创建Token配置弹窗 | 36568 |
-| 创建手动屏蔽弹窗 | 38530 |
-| 创建阅读进度详情弹窗 | 46940 |
-| 创建欢迎弹窗 | 47599 |
-| 创建NUX推荐弹窗 | 46362 |
-| Token过期警告 | 47644 |
-| 同步对比对话框 | 34220 |
+| 全局玻璃 token | `:root` 与深色模式变量区中的 `--s1p-overlay-blur`、`--s1p-dialog-*`、`--s1p-popover-*`、`--s1p-toast-*`、`--s1p-floating-control-*` |
+| 全屏蒙版规则 | `.s1p-modal`、`.s1p-confirm-modal`、`.s1p-token-config-modal`、`.s1p-image-viewer` |
+| 设置面板 shell glass | `.s1p-modal > .s1p-modal-content` |
+| 共享确认类弹窗 | `.s1p-confirm-content`、`.s1p-confirm-body`、`.s1p-confirm-footer` |
+| 手动同步选择/冲突内部可读性 | `.s1p-sync-choice-info`、`.s1p-sync-last-action`、`.s1p-sync-comparison-table` |
+| Token 配置弹窗 | `.s1p-token-config-content`、`.s1p-token-config-header`、`.s1p-token-config-footer` |
+| 图片查看器 | `.s1p-image-viewer__panel`、`.s1p-image-viewer__toolbar`、`.s1p-image-viewer__viewport` |
+| 类型 B 轻量浮层 | `.s1p-confirm-wrapper`、`.s1p-tag-popover`、`.s1p-generic-display-popover`、`.s1p-date-picker` |
+| 类型 C 覆盖式控件 | `.s1p-toast-notification`、`#s1p-controls-handle`、`#s1p-floating-controls button`、`#s1p-debug-unified-panel` |
+| 静态回归测试 | `tests/test-glass-surface-readability-css.js`、`tests/test-popover-surface-css.js`、`tests/test-category-c-and-image-viewer-glass-css.js`、`tests/test-settings-tab-panel-css.js` |
