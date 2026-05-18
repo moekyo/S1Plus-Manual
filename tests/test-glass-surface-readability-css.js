@@ -30,12 +30,12 @@ const expectIncludes = (needle, message) => {
     "悬浮控件应使用轻量玻璃滤镜变量。",
   ],
   [
-    "--s1p-toast-glass-bg: rgba(255, 255, 255, 0.92);",
-    "浅色 toast 背景应足够实，避免短提示被背景干扰。",
+    "--s1p-toast-glass-bg: rgba(255, 255, 255, 0.84);",
+    "浅色 toast 背景应更通透，同时通过磨砂滤镜保持短提示可读。",
   ],
   [
-    "--s1p-toast-glass-filter: blur(3px) saturate(1.02);",
-    "toast 应使用轻量玻璃滤镜变量。",
+    "--s1p-toast-glass-filter: blur(4px) saturate(1.03);",
+    "toast 应使用略强一点的玻璃滤镜来补偿更通透的背景。",
   ],
   [
     "--s1p-floating-control-glass-bg: rgba(255, 255, 255, 0.89);",
@@ -75,8 +75,8 @@ const darkMediaBlock = sourceCode.slice(darkMediaIndex, darkMediaIndex + 2600);
     "深色悬浮控件背景应更实。",
   ],
   [
-    "--s1p-toast-glass-bg: rgba(17, 24, 39, 0.94);",
-    "深色 toast 背景应更实。",
+    "--s1p-toast-glass-bg: rgba(17, 24, 39, 0.88);",
+    "深色 toast 背景应更通透，同时保持可读性。",
   ],
   [
     "--s1p-floating-control-glass-bg: rgba(17, 24, 39, 0.91);",
@@ -154,10 +154,19 @@ assertSurfaceUsesFilterVariable(
 
 const strongGlassFilterPattern =
   /(?:-webkit-)?backdrop-filter:\s*blur\((?:6|8)px\) saturate\(1\.0[458]\)/;
+const sourceWithoutImageViewerRestoredRules = sourceCode
+  .replace(
+    /\n    \.s1p-image-viewer__toolbar \{[\s\S]*?\n    \}/,
+    "\n    .s1p-image-viewer__toolbar { /* restored image viewer style omitted */\n    }"
+  )
+  .replace(
+    /--s1p-image-viewer-viewport-glass-filter:\s*blur\(6px\) saturate\(1\.04\);/g,
+    "--s1p-image-viewer-viewport-glass-filter: __restored_image_viewer_filter__;"
+  );
 assert.doesNotMatch(
-  sourceCode,
+  sourceWithoutImageViewerRestoredRules,
   strongGlassFilterPattern,
-  "弹窗、悬浮层和自定义控件不应继续硬编码 6px/8px 的强磨砂滤镜。"
+  "弹窗、悬浮层和自定义控件不应继续硬编码 6px/8px 的强磨砂滤镜；图片查看器还原样式除外。"
 );
 
 assert.match(

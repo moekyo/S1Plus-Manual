@@ -106,8 +106,8 @@ modalContent.style.setProperty(
 |------|---------|---------|---------|------|
 | Shell glass | 设置面板外壳 | `rgba(255, 255, 255, 0.82)` | `rgba(17, 24, 39, 0.88)` | 设置面板内部已有实底内容区，外壳再加实一点，避免背景文字透进标题和 tab 区 |
 | Dialog glass | 确认/输入/Token/同步选择等决策弹窗 | `var(--s1p-dialog-glass-bg)` = `rgba(255, 255, 255, 0.84)` | `var(--s1p-dialog-glass-bg)` = `rgba(17, 24, 39, 0.91)` | 表单、确认、冲突决策、同步选择等信息密集弹窗优先保证文字可读，同时保留轻磨砂 |
-| Image viewer glass | 图片查看器工具栏/图片舞台 | 工具栏 `rgba(255,255,255,0.94)`；舞台底色 `rgba(226,232,222,0.7)` + 独立轻磨砂层 | 工具栏 `rgba(18,27,45,0.98)`；舞台底色 `rgba(33,42,52,0.9)` + 独立轻磨砂层 | 面板壳透明，只负责裁切/阴影；浅色和深色舞台都使用“底色层 + 磨砂层” |
-| Utility glass | Toast、浮动控制 | `rgba(255,255,255,0.92)` / `rgba(255,255,255,0.89)` | `rgba(17,24,39,0.94)` / `rgba(17,24,39,0.91)` | 覆盖页面内容的轻量 UI 也要有更实背景，状态色 Toast 保留语义色 |
+| Image viewer glass | 图片查看器工具栏/图片舞台 | 工具栏 `rgba(255,255,255,0.85)`；舞台底色 `rgba(226,232,222,0.7)` + 独立轻磨砂层 | 工具栏 `rgba(18,27,45,0.97)`；舞台底色 `rgba(33,42,52,0.9)` + 独立轻磨砂层 | 图片查看器恢复修改前样式：面板壳透明，只负责裁切/阴影；工具栏和舞台沿用原有独立玻璃参数 |
+| Utility glass | Toast、浮动控制 | Toast `rgba(255,255,255,0.84)`；浮动控制 `rgba(255,255,255,0.89)` | Toast `rgba(17,24,39,0.88)`；浮动控制 `rgba(17,24,39,0.91)` | 覆盖页面内容的轻量 UI 要保持可读；Toast 比面板类 surface 更通透，靠 `blur(4px) saturate(1.03)` 保留玻璃感 |
 | Solid content | 同步对比表格、日期输入、图片读数控件 | dialog 背景与实底混合 | dialog 背景与实底混合 | 信息密集或需要精确阅读的子内容必须建立自身背景，不直接浮在透明面板上 |
 | Light popover glass | B1/B2/B4/B6/B7/B8 与文档型帮助浮层 | `var(--s1p-popover-glass-bg)` = `rgba(255,255,255,0.86)` | `var(--s1p-popover-glass-bg)` = `rgba(17,24,39,0.92)` | 面板感较强的确认浮层和 tooltip 使用保守轻磨砂，不使用 dialog/shell 透明度 |
 | Solid popover | B3/B5 等即时操作菜单 | `var(--s1p-popover-solid-bg)` | `var(--s1p-popover-solid-bg)` | 操作入口菜单保持实底，只统一背景、阴影和圆角；主容器不显示描边 |
@@ -136,8 +136,8 @@ border: none;
   --s1p-popover-glass-shadow: 0 16px 34px rgba(0, 0, 0, 0.2);
   --s1p-popover-solid-bg: var(--s1p-bg);
   --s1p-popover-solid-shadow: 0 10px 24px rgba(var(--s1p-shadow-color-rgb), 0.16);
-  --s1p-toast-glass-bg: rgba(255, 255, 255, 0.92);
-  --s1p-toast-glass-filter: blur(3px) saturate(1.02);
+  --s1p-toast-glass-bg: rgba(255, 255, 255, 0.84);
+  --s1p-toast-glass-filter: blur(4px) saturate(1.03);
   --s1p-floating-control-glass-bg: rgba(255, 255, 255, 0.89);
   --s1p-floating-control-glass-filter: blur(3px) saturate(1.02);
 }
@@ -155,8 +155,8 @@ border: none;
     --s1p-popover-glass-shadow: 0 18px 38px rgba(0, 0, 0, 0.32);
     --s1p-popover-solid-bg: var(--s1p-bg);
     --s1p-popover-solid-shadow: 0 12px 28px rgba(0, 0, 0, 0.34);
-    --s1p-toast-glass-bg: rgba(17, 24, 39, 0.94);
-    --s1p-toast-glass-filter: blur(3px) saturate(1.02);
+    --s1p-toast-glass-bg: rgba(17, 24, 39, 0.88);
+    --s1p-toast-glass-filter: blur(4px) saturate(1.03);
     --s1p-floating-control-glass-bg: rgba(17, 24, 39, 0.91);
     --s1p-floating-control-glass-filter: blur(3px) saturate(1.02);
   }
@@ -302,8 +302,8 @@ border: none;
 **注意事项**:
 - 全屏蒙版统一是 `background-color: transparent` + blur，不再需要图片查看器单独覆写黑色遮罩。
 - 面板自身不铺背景、不使用 `backdrop-filter`，避免在工具栏/舞台下面再叠一层 alpha。
-- 工具栏使用 `--s1p-image-viewer-toolbar-bg` 和 `--s1p-dialog-glass-filter`。
-- 图片舞台使用 `--s1p-image-viewer-viewport-bg` 作为稳定底色；磨砂层由 `--s1p-image-viewer-viewport-glass-bg` 和 `--s1p-image-viewer-viewport-glass-filter` 控制，浅色和深色都保持 `blur(3px) saturate(1.02)`。以后调舞台透明度优先改底色变量，只在需要微调玻璃感时改磨砂层变量。
+- 工具栏使用 `--s1p-image-viewer-toolbar-bg` 和修改前的 `blur(8px) saturate(1.08)` 工具栏滤镜。
+- 图片舞台使用 `--s1p-image-viewer-viewport-bg` 作为稳定底色；磨砂层由 `--s1p-image-viewer-viewport-glass-bg` 和 `--s1p-image-viewer-viewport-glass-filter` 控制，浅色和深色都保持修改前的 `blur(6px) saturate(1.04)`。以后调舞台透明度优先改底色变量，只在需要微调玻璃感时改磨砂层变量。
 - 缩放/页码胶囊等读数控件继续保持清晰实底，优先保证读数可读性。
 
 ### 步骤 4：类别 C 覆盖式控件 — 已完成
@@ -369,6 +369,12 @@ border: none;
 - 保持全屏 overlay blur 和 `blur(3px) saturate(1.02)` 轻量 filter 不变，只把承载文字的 surface 背景略微加实。
 - Dialog 从浅色 `0.78` / 深色 `0.88` 调到 `0.84` / `0.91`；Shell 从 `0.78` / `0.86` 调到 `0.82` / `0.88`。
 - Light popover 调到浅色 `0.86` / 深色 `0.92`；Toast 和浮动控件分别调到 `0.92` / `0.94`、`0.89` / `0.91`；图片查看器浅色工具栏调到 `0.94`。
+
+### 2026-05-19 Toast 通透度回调 / 图片查看器还原
+
+- Toast 从浅色 `0.92` / 深色 `0.94` 回调到 `0.84` / `0.88`，并把 toast 专用滤镜调到 `blur(4px) saturate(1.03)`，在保持可读性的前提下增加磨砂玻璃感。
+- 图片查看器恢复到修改前样式：工具栏 `0.85` / `0.97`，图片舞台稳定底色 `0.7` / `0.9`，工具栏滤镜 `blur(8px) saturate(1.08)`，舞台磨砂 `blur(6px) saturate(1.04)`。
+- 图片查看器仍保持“透明结构壳 + 稳定底色层 + 独立磨砂层”的结构，不再跟随 dialog 的 3px 轻滤镜。
 
 ### 已确认可继续保留
 
