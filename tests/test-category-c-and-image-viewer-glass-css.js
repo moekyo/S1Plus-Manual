@@ -16,12 +16,17 @@ const getRuleBlock = (selector) => {
 [
   "--s1p-toast-glass-bg",
   "--s1p-floating-control-glass-bg",
-  "--s1p-image-viewer-panel-bg",
   "--s1p-image-viewer-toolbar-bg",
   "--s1p-image-viewer-viewport-bg",
+  "--s1p-image-viewer-viewport-glass-bg",
+  "--s1p-image-viewer-viewport-glass-filter",
 ].forEach((variableName) => {
   assert.ok(sourceCode.includes(variableName), `缺少变量 ${variableName}。`);
 });
+assert.ok(
+  !sourceCode.includes("--s1p-image-viewer-panel-bg"),
+  "图片查看器面板不应再保留独立背景变量，避免与舞台透明度叠加。"
+);
 
 const assertHasGlassFilter = (block, selector) => {
   assert.match(
@@ -90,8 +95,13 @@ assert.match(
 );
 assert.match(
   imageViewerPanelBlock,
-  /background:\s*var\(--s1p-image-viewer-panel-bg\)/,
-  "图片查看器面板应使用磨砂玻璃背景。"
+  /background:\s*transparent/,
+  "图片查看器面板应保持透明，只负责裁切和阴影。"
+);
+assert.doesNotMatch(
+  imageViewerPanelBlock,
+  /backdrop-filter:/,
+  "图片查看器面板不应再提供 backdrop-filter，避免影响舞台独立调参。"
 );
 assert.match(
   imageViewerPanelBlock,
@@ -102,21 +112,60 @@ assertBorderlessOuterSurface(
   imageViewerPanelBlock,
   ".s1p-image-viewer__panel"
 );
-assertHasGlassFilter(imageViewerPanelBlock, ".s1p-image-viewer__panel");
+const imageViewerToolbarBlock = getRuleBlock(".s1p-image-viewer__toolbar");
 assert.match(
-  getRuleBlock(".s1p-image-viewer__toolbar"),
+  imageViewerToolbarBlock,
   /background:\s*var\(--s1p-image-viewer-toolbar-bg\)/,
-  "图片查看器工具栏应透明继承玻璃外壳。"
+  "图片查看器工具栏应使用自身背景，不再继承面板底色。"
+);
+assertHasGlassFilter(imageViewerToolbarBlock, ".s1p-image-viewer__toolbar");
+assert.match(
+  sourceCode,
+  /--s1p-image-viewer-toolbar-bg:\s*rgba\(255,\s*255,\s*255,\s*0\.85\);/,
+  "浅色图片查看器工具栏应使用独立等效玻璃背景。"
 );
 assert.match(
   sourceCode,
-  /--s1p-image-viewer-viewport-bg:\s*rgba\(212,\s*221,\s*206,\s*0\.72\);/,
-  "浅色图片舞台应沿用原浅黄绿色底色并改为半透明玻璃。"
+  /--s1p-image-viewer-toolbar-bg:\s*rgba\(18,\s*27,\s*45,\s*0\.97\);/,
+  "深色图片查看器工具栏应使用独立等效玻璃背景。"
 );
 assert.match(
   sourceCode,
-  /--s1p-image-viewer-viewport-bg:\s*rgba\(34,\s*42,\s*50,\s*0\.76\);/,
-  "深色图片舞台应沿用原深色底色并改为半透明玻璃。"
+  /--s1p-image-viewer-viewport-bg:\s*rgba\(226,\s*232,\s*222,\s*0\.7\);/,
+  "浅色图片舞台应使用独立等效玻璃背景。"
+);
+assert.match(
+  sourceCode,
+  /--s1p-image-viewer-viewport-bg:\s*rgba\(33,\s*42,\s*52,\s*0\.9\);/,
+  "深色图片舞台应使用独立等效玻璃背景。"
+);
+assert.match(
+  sourceCode,
+  /--s1p-image-viewer-viewport-glass-bg:\s*rgba\(255,\s*255,\s*255,\s*0\.04\);/,
+  "浅色图片舞台应通过独立磨砂层保留玻璃感。"
+);
+assert.match(
+  sourceCode,
+  /--s1p-image-viewer-viewport-glass-bg:\s*rgba\(148,\s*163,\s*184,\s*0\.035\);/,
+  "深色图片舞台应通过独立磨砂层保留玻璃感。"
+);
+assert.equal(
+  Array.from(
+    sourceCode.matchAll(
+      /--s1p-image-viewer-viewport-glass-filter:\s*blur\(6px\) saturate\(1\.04\);/g
+    )
+  ).length,
+  2,
+  "浅色和深色图片舞台应使用一致的轻磨砂滤镜。"
+);
+assert.ok(
+  !sourceCode.includes("--s1p-image-viewer-viewport-backdrop-filter"),
+  "图片舞台不应再使用旧的直接 backdrop-filter 变量。"
+);
+assert.doesNotMatch(
+  sourceCode,
+  /--s1p-image-viewer-viewport-glass-filter:\s*none;/,
+  "深色图片舞台不应禁用磨砂滤镜，应和浅色保持同一处理。"
 );
 const imageViewerViewportBlock = getRuleBlock(".s1p-image-viewer__viewport");
 assert.match(
@@ -124,7 +173,29 @@ assert.match(
   /background:\s*var\(--s1p-image-viewer-viewport-bg\)/,
   "图片查看器图片舞台应使用专用主题玻璃背景。"
 );
-assertHasLightGlassFilter(imageViewerViewportBlock, ".s1p-image-viewer__viewport");
+assert.match(
+  imageViewerViewportBlock,
+  /isolation:\s*isolate/,
+  "图片舞台应建立独立层叠上下文，固定底色层和磨砂层的关系。"
+);
+assert.doesNotMatch(
+  imageViewerViewportBlock,
+  /backdrop-filter:/,
+  "图片舞台本体不应直接采样页面背景，磨砂应交给独立伪元素层。"
+);
+const imageViewerViewportGlassBlock = getRuleBlock(
+  ".s1p-image-viewer__viewport::before"
+);
+assert.match(
+  imageViewerViewportGlassBlock,
+  /background:\s*var\(--s1p-image-viewer-viewport-glass-bg\)/,
+  "图片舞台磨砂层应使用独立背景变量。"
+);
+assert.match(
+  imageViewerViewportGlassBlock,
+  /backdrop-filter:\s*var\(--s1p-image-viewer-viewport-glass-filter\)/,
+  "图片舞台磨砂层应使用独立滤镜变量。"
+);
 assert.ok(
   !sourceCode.includes("--s1p-image-viewer-loading-border"),
   "图片切换加载浮层已统一无描边，不应保留 loading border 变量。"

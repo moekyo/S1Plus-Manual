@@ -2261,9 +2261,8 @@
       --s1p-toast-error-bg: rgba(239, 68, 68, 0.88);
       --s1p-floating-control-glass-bg: rgba(255, 255, 255, 0.54);
       --s1p-floating-control-glass-shadow: 0 8px 20px rgba(0, 0, 0, 0.18);
-      --s1p-image-viewer-panel-bg: rgba(255, 255, 255, 0.42);
       --s1p-image-viewer-panel-shadow: var(--s1p-dialog-glass-shadow);
-      --s1p-image-viewer-toolbar-bg: rgba(255, 255, 255, 0.16);
+      --s1p-image-viewer-toolbar-bg: rgba(255, 255, 255, 0.85);
       --s1p-settings-scrollbar-thumb: rgba(37, 71, 122, 0.42);
       --s1p-settings-scrollbar-thumb-hover: rgba(37, 71, 122, 0.58);
       --s1p-settings-scrollbar-track: transparent;
@@ -2345,7 +2344,9 @@
       --s1p-username-text: #0b2163; /* Dark Blue */
       --s1p-image-preview-max-width: 800px;
       --s1p-image-preview-max-height: 1200px;
-      --s1p-image-viewer-viewport-bg: rgba(212, 221, 206, 0.72);
+      --s1p-image-viewer-viewport-bg: rgba(226, 232, 222, 0.7);
+      --s1p-image-viewer-viewport-glass-bg: rgba(255, 255, 255, 0.04);
+      --s1p-image-viewer-viewport-glass-filter: blur(6px) saturate(1.04);
       --s1p-image-viewer-loading-bg: rgba(237, 241, 230, 0.96);
       --s1p-image-viewer-loading-text: #1b2f63;
       --s1p-image-viewer-loading-spinner-track: rgba(2, 44, 128, 0.2);
@@ -7152,11 +7153,10 @@
       width: min(96vw, 1600px);
       height: min(94vh, 1200px);
       border-radius: 12px;
-      background: var(--s1p-image-viewer-panel-bg);
+      /* 面板只负责裁切和阴影；工具栏与舞台各自铺背景，避免透明度互相叠加。 */
+      background: transparent;
       border: none;
       box-shadow: var(--s1p-image-viewer-panel-shadow);
-      -webkit-backdrop-filter: blur(8px) saturate(1.08);
-      backdrop-filter: blur(8px) saturate(1.08);
       overflow: hidden;
       display: flex;
       flex-direction: column;
@@ -7189,6 +7189,8 @@
       padding: 10px 12px;
       border-bottom: 1px solid var(--s1p-dialog-glass-divider);
       background: var(--s1p-image-viewer-toolbar-bg);
+      -webkit-backdrop-filter: blur(8px) saturate(1.08);
+      backdrop-filter: blur(8px) saturate(1.08);
       flex-wrap: wrap;
     }
     .s1p-image-viewer__save-status-overlay {
@@ -7297,10 +7299,19 @@
       flex: 1;
       overflow: hidden;
       background: var(--s1p-image-viewer-viewport-bg);
-      -webkit-backdrop-filter: blur(6px) saturate(1.04);
-      backdrop-filter: blur(6px) saturate(1.04);
+      isolation: isolate;
       cursor: grab;
       user-select: none;
+    }
+    .s1p-image-viewer__viewport::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+      background: var(--s1p-image-viewer-viewport-glass-bg);
+      -webkit-backdrop-filter: var(--s1p-image-viewer-viewport-glass-filter);
+      backdrop-filter: var(--s1p-image-viewer-viewport-glass-filter);
     }
     .s1p-image-viewer__switch-loading {
       position: absolute;
@@ -7968,16 +7979,17 @@
         --s1p-toast-error-bg: rgba(185, 28, 28, 0.88);
         --s1p-floating-control-glass-bg: rgba(30, 41, 59, 0.68);
         --s1p-floating-control-glass-shadow: 0 10px 24px rgba(0, 0, 0, 0.32);
-        --s1p-image-viewer-panel-bg: rgba(30, 41, 59, 0.58);
         --s1p-image-viewer-panel-shadow: var(--s1p-dialog-glass-shadow);
-        --s1p-image-viewer-toolbar-bg: rgba(15, 23, 42, 0.2);
+        --s1p-image-viewer-toolbar-bg: rgba(18, 27, 45, 0.97);
         --s1p-settings-scrollbar-thumb: rgba(148, 163, 184, 0.46);
         --s1p-settings-scrollbar-thumb-hover: rgba(148, 163, 184, 0.64);
         --s1p-settings-scrollbar-track: transparent;
         --s1p-progress-delete-bg: var(--s1p-progress-hot);
         --s1p-progress-delete-hover-bg: rgb(154, 41, 28);
         --s1p-progress-delete-text: #ffffff;
-        --s1p-image-viewer-viewport-bg: rgba(34, 42, 50, 0.76);
+        --s1p-image-viewer-viewport-bg: rgba(33, 42, 52, 0.9);
+        --s1p-image-viewer-viewport-glass-bg: rgba(148, 163, 184, 0.035);
+        --s1p-image-viewer-viewport-glass-filter: blur(6px) saturate(1.04);
         --s1p-image-viewer-loading-bg: rgba(17, 24, 39, 0.94);
         --s1p-image-viewer-loading-text: #e5edf6;
         --s1p-image-viewer-loading-spinner-track: rgba(226, 232, 240, 0.22);
