@@ -2619,8 +2619,8 @@
     }
     @keyframes s1p-auto-sync-indicator-pending-to-running-enter {
       0% {
-        opacity: 0.72;
-        transform: translateY(0) scale(1.12) rotate(0deg);
+        opacity: 1;
+        transform: translateY(0) scale(1) rotate(0deg);
       }
       100% {
         opacity: 1;
@@ -2634,7 +2634,27 @@
       }
       100% {
         opacity: 0;
-        transform: translateY(0) scale(0.91) rotate(0deg);
+        transform: translateY(0) scale(1) rotate(0deg);
+      }
+    }
+    @keyframes s1p-auto-sync-pending-to-running-svg {
+      0% {
+        opacity: 0.86;
+        transform: scale(1.25);
+      }
+      100% {
+        opacity: 1;
+        transform: scale(1.18);
+      }
+    }
+    @keyframes s1p-auto-sync-pending-to-running-arrow-bridge {
+      0% {
+        opacity: var(--s1p-sync-arrow-bridge-start-opacity, 0.92);
+        transform: translateY(var(--s1p-sync-arrow-bridge-start-y, 0));
+      }
+      100% {
+        opacity: var(--s1p-sync-arrow-bridge-end-opacity, 1);
+        transform: translateY(var(--s1p-sync-arrow-bridge-end-y, 0));
       }
     }
     @keyframes s1p-auto-sync-indicator-active-to-idle-enter {
@@ -2851,15 +2871,15 @@
     #s1p-nav-auto-sync-indicator[data-sync-state="running"] svg {
       opacity: 1;
     }
-    #s1p-nav-auto-sync-indicator[data-sync-state="running"] svg.s1p-auto-sync-kind-push,
-    #s1p-nav-auto-sync-indicator[data-sync-state="running"] svg.s1p-auto-sync-kind-pull {
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-running.s1p-auto-sync-kind-push,
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-running.s1p-auto-sync-kind-pull {
       opacity: 1;
       transform: scale(1.18);
     }
-    #s1p-nav-auto-sync-indicator[data-sync-state="running"] svg.s1p-auto-sync-kind-push {
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-running.s1p-auto-sync-kind-push {
       transform-origin: 50% 0%;
     }
-    #s1p-nav-auto-sync-indicator[data-sync-state="running"] svg.s1p-auto-sync-kind-pull {
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-running.s1p-auto-sync-kind-pull {
       transform-origin: 50% 100%;
     }
     #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-push path,
@@ -2875,53 +2895,113 @@
       transform-box: fill-box;
       transform-origin: center;
       will-change: opacity, transform;
+    }
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-running.s1p-auto-sync-kind-push .s1p-sync-flow-arrow,
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-running.s1p-auto-sync-kind-pull .s1p-sync-flow-arrow {
       animation-duration: 3.15s;
       animation-timing-function: linear;
       animation-iteration-count: infinite;
       animation-fill-mode: both;
     }
-    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-push .s1p-sync-flow-arrow {
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-running.s1p-auto-sync-kind-push .s1p-sync-flow-arrow {
       animation-name: s1p-auto-sync-arrow-flow-up;
     }
-    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-pull .s1p-sync-flow-arrow {
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-running.s1p-auto-sync-kind-pull .s1p-sync-flow-arrow {
       animation-name: s1p-auto-sync-arrow-flow-down;
     }
-    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-push .s1p-sync-flow-arrow:nth-child(1),
-    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-pull .s1p-sync-flow-arrow:nth-child(1) {
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-running.s1p-auto-sync-kind-push .s1p-sync-flow-arrow:nth-child(1),
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-running.s1p-auto-sync-kind-pull .s1p-sync-flow-arrow:nth-child(1) {
       animation-delay: -2.1s;
     }
-    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-push .s1p-sync-flow-arrow:nth-child(2),
-    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-pull .s1p-sync-flow-arrow:nth-child(2) {
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-running.s1p-auto-sync-kind-push .s1p-sync-flow-arrow:nth-child(2),
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-running.s1p-auto-sync-kind-pull .s1p-sync-flow-arrow:nth-child(2) {
       animation-delay: -1.05s;
     }
-    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-push .s1p-sync-flow-arrow:nth-child(3),
-    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-pull .s1p-sync-flow-arrow:nth-child(3) {
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-running.s1p-auto-sync-kind-push .s1p-sync-flow-arrow:nth-child(3),
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-running.s1p-auto-sync-kind-pull .s1p-sync-flow-arrow:nth-child(3) {
       animation-delay: 0s;
     }
-    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-push .s1p-sync-pending-arrow,
-    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-pull .s1p-sync-pending-arrow {
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-pending.s1p-auto-sync-kind-push,
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-pending.s1p-auto-sync-kind-pull {
+      opacity: 0.86;
+      transform: scale(1.25);
+      transform-origin: center;
+    }
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-pending.s1p-auto-sync-kind-push .s1p-sync-flow-arrow,
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-pending.s1p-auto-sync-kind-pull .s1p-sync-flow-arrow {
       opacity: 0.92;
       transform-box: fill-box;
       transform-origin: center;
     }
-    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-push .s1p-sync-pending-arrow:nth-child(1),
-    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-pull .s1p-sync-pending-arrow:nth-child(1) {
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-pending.s1p-auto-sync-kind-push .s1p-sync-flow-arrow:nth-child(1) {
       transform: translateY(-3.6px);
     }
-    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-push .s1p-sync-pending-arrow:nth-child(2),
-    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-pull .s1p-sync-pending-arrow:nth-child(2) {
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-pending.s1p-auto-sync-kind-push .s1p-sync-flow-arrow:nth-child(2) {
       transform: translateY(3.6px);
+    }
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-pending.s1p-auto-sync-kind-push .s1p-sync-flow-arrow:nth-child(3) {
+      opacity: 0;
+      transform: translateY(8.6px);
+    }
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-pending.s1p-auto-sync-kind-pull .s1p-sync-flow-arrow:nth-child(1) {
+      transform: translateY(3.6px);
+    }
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-pending.s1p-auto-sync-kind-pull .s1p-sync-flow-arrow:nth-child(2) {
+      transform: translateY(-3.6px);
+    }
+    #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-pending.s1p-auto-sync-kind-pull .s1p-sync-flow-arrow:nth-child(3) {
+      opacity: 0;
+      transform: translateY(-8.6px);
+    }
+    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-entering.s1p-auto-sync-transition-pending-to-running svg.s1p-auto-sync-running.s1p-auto-sync-kind-push,
+    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-entering.s1p-auto-sync-transition-pending-to-running svg.s1p-auto-sync-running.s1p-auto-sync-kind-pull {
+      animation: s1p-auto-sync-pending-to-running-svg 320ms cubic-bezier(0.25, 1, 0.5, 1) both;
+    }
+    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-entering.s1p-auto-sync-transition-pending-to-running svg.s1p-auto-sync-running.s1p-auto-sync-kind-push .s1p-sync-flow-arrow,
+    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-entering.s1p-auto-sync-transition-pending-to-running svg.s1p-auto-sync-running.s1p-auto-sync-kind-pull .s1p-sync-flow-arrow {
+      animation-name: s1p-auto-sync-pending-to-running-arrow-bridge;
+      animation-duration: 320ms;
+      animation-timing-function: cubic-bezier(0.25, 1, 0.5, 1);
+      animation-iteration-count: 1;
+      animation-fill-mode: both;
+      animation-delay: 0s;
+    }
+    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-entering.s1p-auto-sync-transition-pending-to-running svg.s1p-auto-sync-running.s1p-auto-sync-kind-push .s1p-sync-flow-arrow:nth-child(1) {
+      --s1p-sync-arrow-bridge-start-y: -3.6px;
+      --s1p-sync-arrow-bridge-end-y: -4.5px;
+      --s1p-sync-arrow-bridge-end-opacity: 0.92;
+    }
+    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-entering.s1p-auto-sync-transition-pending-to-running svg.s1p-auto-sync-running.s1p-auto-sync-kind-push .s1p-sync-flow-arrow:nth-child(2) {
+      --s1p-sync-arrow-bridge-start-y: 3.6px;
+      --s1p-sync-arrow-bridge-end-y: 4.5px;
+      --s1p-sync-arrow-bridge-end-opacity: 0.92;
+    }
+    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-entering.s1p-auto-sync-transition-pending-to-running svg.s1p-auto-sync-running.s1p-auto-sync-kind-push .s1p-sync-flow-arrow:nth-child(3) {
+      --s1p-sync-arrow-bridge-start-opacity: 0;
+      --s1p-sync-arrow-bridge-end-opacity: 0;
+      --s1p-sync-arrow-bridge-start-y: 8.6px;
+      --s1p-sync-arrow-bridge-end-y: 13.5px;
+    }
+    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-entering.s1p-auto-sync-transition-pending-to-running svg.s1p-auto-sync-running.s1p-auto-sync-kind-pull .s1p-sync-flow-arrow:nth-child(1) {
+      --s1p-sync-arrow-bridge-start-y: 3.6px;
+      --s1p-sync-arrow-bridge-end-y: 4.5px;
+      --s1p-sync-arrow-bridge-end-opacity: 0.92;
+    }
+    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-entering.s1p-auto-sync-transition-pending-to-running svg.s1p-auto-sync-running.s1p-auto-sync-kind-pull .s1p-sync-flow-arrow:nth-child(2) {
+      --s1p-sync-arrow-bridge-start-y: -3.6px;
+      --s1p-sync-arrow-bridge-end-y: -4.5px;
+      --s1p-sync-arrow-bridge-end-opacity: 0.92;
+    }
+    #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer.is-entering.s1p-auto-sync-transition-pending-to-running svg.s1p-auto-sync-running.s1p-auto-sync-kind-pull .s1p-sync-flow-arrow:nth-child(3) {
+      --s1p-sync-arrow-bridge-start-opacity: 0;
+      --s1p-sync-arrow-bridge-end-opacity: 0;
+      --s1p-sync-arrow-bridge-start-y: -8.6px;
+      --s1p-sync-arrow-bridge-end-y: -13.5px;
     }
     #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-probe {
       transform-box: fill-box;
       transform-origin: center;
       animation: s1p-auto-sync-probe-search 1.35s ease-in-out infinite;
-    }
-    #s1p-nav-auto-sync-indicator[data-sync-state="pending"] svg.s1p-auto-sync-kind-push,
-    #s1p-nav-auto-sync-indicator[data-sync-state="pending"] svg.s1p-auto-sync-kind-pull {
-      opacity: 0.86;
-      transform: scale(1.3);
-      transform-origin: center;
     }
     #s1p-nav-auto-sync-indicator[data-sync-state="success"] svg {
       opacity: 1;
@@ -3418,13 +3498,13 @@
       #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-probe {
         animation: none !important;
       }
-      #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-push .s1p-sync-flow-arrow,
-      #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-pull .s1p-sync-flow-arrow {
+      #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-running.s1p-auto-sync-kind-push .s1p-sync-flow-arrow,
+      #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-running.s1p-auto-sync-kind-pull .s1p-sync-flow-arrow {
         animation: none !important;
         opacity: 0 !important;
       }
-      #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-push .s1p-sync-flow-arrow:nth-child(2),
-      #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-kind-pull .s1p-sync-flow-arrow:nth-child(2) {
+      #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-running.s1p-auto-sync-kind-push .s1p-sync-flow-arrow:nth-child(2),
+      #s1p-nav-auto-sync-indicator svg.s1p-auto-sync-running.s1p-auto-sync-kind-pull .s1p-sync-flow-arrow:nth-child(2) {
         opacity: 1 !important;
       }
     }
@@ -33376,17 +33456,17 @@
     const syncDotsSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 16" fill="currentColor"><circle class="s1p-dot s1p-pending-dot" cx="4" cy="8" r="1.75"></circle><circle class="s1p-dot s1p-pending-dot" cx="10" cy="8" r="1.75"></circle><circle class="s1p-dot s1p-pending-dot" cx="16" cy="8" r="1.75"></circle></svg>`;
     const pushArrowPath = "M11.9999 10.8284L7.0502 15.7782L5.63599 14.364L11.9999 8L18.3639 14.364L16.9497 15.7782L11.9999 10.8284Z";
     const pullArrowPath = "M11.9999 13.1714L16.9497 8.22168L18.3639 9.63589L11.9999 15.9999L5.63599 9.63589L7.0502 8.22168L11.9999 13.1714Z";
-    const pendingPushSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path class="s1p-sync-pending-arrow" d="${pushArrowPath}"></path><path class="s1p-sync-pending-arrow" d="${pushArrowPath}"></path></svg>`;
-    const pendingPullSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path class="s1p-sync-pending-arrow" d="${pullArrowPath}"></path><path class="s1p-sync-pending-arrow" d="${pullArrowPath}"></path></svg>`;
-    const pushFlowSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path class="s1p-sync-flow-arrow" d="${pushArrowPath}"></path><path class="s1p-sync-flow-arrow" d="${pushArrowPath}"></path><path class="s1p-sync-flow-arrow" d="${pushArrowPath}"></path></svg>`;
-    const pullFlowSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path class="s1p-sync-flow-arrow" d="${pullArrowPath}"></path><path class="s1p-sync-flow-arrow" d="${pullArrowPath}"></path><path class="s1p-sync-flow-arrow" d="${pullArrowPath}"></path></svg>`;
+    const buildArrowQueueSvg = (arrowPath) =>
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path class="s1p-sync-flow-arrow" d="${arrowPath}"></path><path class="s1p-sync-flow-arrow" d="${arrowPath}"></path><path class="s1p-sync-flow-arrow" d="${arrowPath}"></path></svg>`;
+    const pushArrowQueueSvg = buildArrowQueueSvg(pushArrowPath);
+    const pullArrowQueueSvg = buildArrowQueueSvg(pullArrowPath);
     const probeSearchSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M11 2C15.968 2 20 6.032 20 11C20 15.968 15.968 20 11 20C6.032 20 2 15.968 2 11C2 6.032 6.032 2 11 2ZM11 18C14.8675 18 18 14.8675 18 11C18 7.1325 14.8675 4 11 4C7.1325 4 4 7.1325 4 11C4 14.8675 7.1325 18 11 18ZM19.4853 18.0711L22.3137 20.8995L20.8995 22.3137L18.0711 19.4853L19.4853 18.0711Z"></path></svg>`;
-    const getOperationSvg = ({ animated = false } = {}) => {
+    const getOperationSvg = () => {
       switch (normalizedDisplayKind) {
         case AUTO_SYNC_INDICATOR_OPERATION_PUSH:
-          return animated ? pushFlowSvg : pendingPushSvg;
+          return pushArrowQueueSvg;
         case AUTO_SYNC_INDICATOR_OPERATION_PULL:
-          return animated ? pullFlowSvg : pendingPullSvg;
+          return pullArrowQueueSvg;
         case AUTO_SYNC_INDICATOR_OPERATION_PROBE:
           return probeSearchSvg;
         default:
@@ -33395,9 +33475,8 @@
     };
     switch (phase) {
       case AUTO_SYNC_INDICATOR_PHASE_PENDING:
-        return getOperationSvg({ animated: false });
       case AUTO_SYNC_INDICATOR_PHASE_RUNNING:
-        return getOperationSvg({ animated: true });
+        return getOperationSvg();
       case AUTO_SYNC_INDICATOR_PHASE_SUCCESS:
         return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="1 1 22 22" fill="currentColor"><path d="M4 12C4 7.58172 7.58172 4 12 4C16.4183 4 20 7.58172 20 12C20 16.4183 16.4183 20 12 20C7.58172 20 4 16.4183 4 12ZM12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2ZM17.4571 9.45711L16.0429 8.04289L11 13.0858L8.20711 10.2929L6.79289 11.7071L11 15.9142L17.4571 9.45711Z"></path></svg>`;
       case AUTO_SYNC_INDICATOR_PHASE_FAILURE:
