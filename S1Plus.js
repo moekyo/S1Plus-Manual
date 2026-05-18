@@ -2302,8 +2302,8 @@
       --s1p-popover-glass-shadow: 0 16px 34px rgba(0, 0, 0, 0.2);
       --s1p-popover-solid-bg: var(--s1p-bg);
       --s1p-popover-solid-shadow: 0 10px 24px rgba(var(--s1p-shadow-color-rgb), 0.16);
-      --s1p-toast-glass-bg: rgba(255, 255, 255, 0.92);
-      --s1p-toast-glass-filter: blur(3px) saturate(1.02);
+      --s1p-toast-glass-bg: rgba(255, 255, 255, 0.84);
+      --s1p-toast-glass-filter: blur(4px) saturate(1.03);
       --s1p-toast-glass-shadow: 0 12px 28px rgba(0, 0, 0, 0.18);
       --s1p-toast-success-bg: rgba(34, 197, 94, 0.86);
       --s1p-toast-error-bg: rgba(239, 68, 68, 0.88);
@@ -2311,7 +2311,7 @@
       --s1p-floating-control-glass-filter: blur(3px) saturate(1.02);
       --s1p-floating-control-glass-shadow: 0 8px 20px rgba(0, 0, 0, 0.18);
       --s1p-image-viewer-panel-shadow: var(--s1p-dialog-glass-shadow);
-      --s1p-image-viewer-toolbar-bg: rgba(255, 255, 255, 0.94);
+      --s1p-image-viewer-toolbar-bg: rgba(255, 255, 255, 0.85);
       --s1p-settings-scrollbar-thumb: rgba(37, 71, 122, 0.42);
       --s1p-settings-scrollbar-thumb-hover: rgba(37, 71, 122, 0.58);
       --s1p-settings-scrollbar-track: transparent;
@@ -2395,7 +2395,7 @@
       --s1p-image-preview-max-height: 1200px;
       --s1p-image-viewer-viewport-bg: rgba(226, 232, 222, 0.7);
       --s1p-image-viewer-viewport-glass-bg: rgba(255, 255, 255, 0.04);
-      --s1p-image-viewer-viewport-glass-filter: blur(3px) saturate(1.02);
+      --s1p-image-viewer-viewport-glass-filter: blur(6px) saturate(1.04);
       --s1p-image-viewer-loading-bg: rgba(237, 241, 230, 0.96);
       --s1p-image-viewer-loading-text: #1b2f63;
       --s1p-image-viewer-loading-spinner-track: rgba(2, 44, 128, 0.2);
@@ -7350,8 +7350,8 @@
       padding: 10px 12px;
       border-bottom: 1px solid var(--s1p-dialog-glass-divider);
       background: var(--s1p-image-viewer-toolbar-bg);
-      -webkit-backdrop-filter: var(--s1p-dialog-glass-filter);
-      backdrop-filter: var(--s1p-dialog-glass-filter);
+      -webkit-backdrop-filter: blur(8px) saturate(1.08);
+      backdrop-filter: blur(8px) saturate(1.08);
       flex-wrap: wrap;
     }
     .s1p-image-viewer__save-status-overlay {
@@ -8138,8 +8138,8 @@
         --s1p-popover-glass-shadow: 0 18px 38px rgba(0, 0, 0, 0.32);
         --s1p-popover-solid-bg: var(--s1p-bg);
         --s1p-popover-solid-shadow: 0 12px 28px rgba(0, 0, 0, 0.34);
-        --s1p-toast-glass-bg: rgba(17, 24, 39, 0.94);
-        --s1p-toast-glass-filter: blur(3px) saturate(1.02);
+        --s1p-toast-glass-bg: rgba(17, 24, 39, 0.88);
+        --s1p-toast-glass-filter: blur(4px) saturate(1.03);
         --s1p-toast-glass-shadow: 0 14px 34px rgba(0, 0, 0, 0.34);
         --s1p-toast-success-bg: rgba(22, 163, 74, 0.86);
         --s1p-toast-error-bg: rgba(185, 28, 28, 0.88);
@@ -8147,7 +8147,7 @@
         --s1p-floating-control-glass-filter: blur(3px) saturate(1.02);
         --s1p-floating-control-glass-shadow: 0 10px 24px rgba(0, 0, 0, 0.32);
         --s1p-image-viewer-panel-shadow: var(--s1p-dialog-glass-shadow);
-        --s1p-image-viewer-toolbar-bg: rgba(18, 27, 45, 0.98);
+        --s1p-image-viewer-toolbar-bg: rgba(18, 27, 45, 0.97);
         --s1p-settings-scrollbar-thumb: rgba(148, 163, 184, 0.46);
         --s1p-settings-scrollbar-thumb-hover: rgba(148, 163, 184, 0.64);
         --s1p-settings-scrollbar-track: transparent;
@@ -8156,7 +8156,7 @@
         --s1p-progress-delete-text: #ffffff;
         --s1p-image-viewer-viewport-bg: rgba(33, 42, 52, 0.9);
         --s1p-image-viewer-viewport-glass-bg: rgba(148, 163, 184, 0.035);
-        --s1p-image-viewer-viewport-glass-filter: blur(3px) saturate(1.02);
+        --s1p-image-viewer-viewport-glass-filter: blur(6px) saturate(1.04);
         --s1p-image-viewer-loading-bg: rgba(17, 24, 39, 0.94);
         --s1p-image-viewer-loading-text: #e5edf6;
         --s1p-image-viewer-loading-spinner-track: rgba(226, 232, 240, 0.22);
