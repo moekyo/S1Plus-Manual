@@ -969,11 +969,11 @@ const testAutoSyncEntryPointsBindIndicatorSources = () => {
     "推送/拉取箭头队列应使用完整轨道匀速位移，保证上下方向的视觉路径清晰。"
   );
   expectMatch(
-    /s1p-auto-sync-indicator-pending-to-running-enter[\s\S]*?scale\(1\.12\)[\s\S]*?s1p-auto-sync-indicator-pending-to-running-exit[\s\S]*?scale\(0\.91\)/,
-    "pending 方向图标进入 running 箭头队列时应有专门的尺寸衔接动画。"
+    /s1p-auto-sync-pending-to-running-svg[\s\S]*?scale\(1\.25\)[\s\S]*?scale\(1\.18\)[\s\S]*?s1p-auto-sync-pending-to-running-arrow-bridge/,
+    "pending 方向图标进入 running 箭头队列时应有专门的尺寸和箭头间距衔接动画。"
   );
   expectMatch(
-    /data-sync-state="running"[\s\S]*?s1p-auto-sync-kind-push[\s\S]*?transform:\s*scale\(1\.18\)/,
+    /svg\.s1p-auto-sync-running\.s1p-auto-sync-kind-push[\s\S]*?transform:\s*scale\(1\.18\)/,
     "running 推送/拉取箭头队列应略微放大，和 pending 双箭头尺寸更连贯。"
   );
   expectMatch(
@@ -985,20 +985,24 @@ const testAutoSyncEntryPointsBindIndicatorSources = () => {
     "推送/拉取箭头队列不应在关键帧里缩放，避免产生先快后稳的错觉。"
   );
   expectMatch(
-    /const pushArrowPath = "M11\.9999 10\.8284[\s\S]*?const pullArrowPath = "M11\.9999 13\.1714[\s\S]*?const pendingPushSvg = `<svg[\s\S]*?s1p-sync-pending-arrow[\s\S]*?\$\{pushArrowPath\}[\s\S]*?const pendingPullSvg = `<svg[\s\S]*?s1p-sync-pending-arrow[\s\S]*?\$\{pullArrowPath\}/,
-    "pending 推送/拉取应复用 running 的单箭头 path 静态叠成双箭头。"
+    /const pushArrowPath = "M11\.9999 10\.8284[\s\S]*?const pullArrowPath = "M11\.9999 13\.1714[\s\S]*?const buildArrowQueueSvg[\s\S]*?s1p-sync-flow-arrow[\s\S]*?const pushArrowQueueSvg = buildArrowQueueSvg\(pushArrowPath\)[\s\S]*?const pullArrowQueueSvg = buildArrowQueueSvg\(pullArrowPath\)/,
+    "pending 与 running 推送/拉取应复用同一组三箭头 SVG 结构。"
+  );
+  expectNoMatch(
+    /s1p-sync-pending-arrow/,
+    "pending 推送/拉取不应再使用独立的双箭头 path class。"
   );
   expectNoMatch(
     /M12 4\.83582|M12 19\.1642/,
     "pending 不应继续使用独立的双箭头 SVG path。"
   );
   expectMatch(
-    /case AUTO_SYNC_INDICATOR_PHASE_PENDING:[\s\S]*?return getOperationSvg\(\{\s*animated:\s*false\s*\}\);[\s\S]*?case AUTO_SYNC_INDICATOR_PHASE_RUNNING:[\s\S]*?return getOperationSvg\(\{\s*animated:\s*true\s*\}\);/,
-    "pending 应保持静态方向图标，只有 running 才使用箭头队列动画。"
+    /case AUTO_SYNC_INDICATOR_PHASE_PENDING:\s*case AUTO_SYNC_INDICATOR_PHASE_RUNNING:[\s\S]*?return getOperationSvg\(\);/,
+    "pending 与 running 应复用同一方向图标结构，由 phase class 决定静态或流动表现。"
   );
   expectMatch(
-    /data-sync-state="pending"[\s\S]*?s1p-auto-sync-kind-push[\s\S]*?transform:\s*scale\(1\.3\)/,
-    "pending 推送/拉取静态双箭头应按当前视觉校准放大到 1.3。"
+    /svg\.s1p-auto-sync-pending\.s1p-auto-sync-kind-push[\s\S]*?transform:\s*scale\(1\.25\)/,
+    "pending 推送/拉取静态双箭头应按当前视觉校准放大到 1.25。"
   );
   expectMatch(
     /s1p-auto-sync-probe-search[\s\S]*?translate\(1\.2px,\s*0\)[\s\S]*?translate\(-1\.2px,\s*0\)/,
