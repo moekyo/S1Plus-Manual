@@ -93,7 +93,26 @@ node tests/settings-migration/test-settings-migration.js
 - cleanup provenance 与手动同步分支
 - 设置迁移与同步设置 UI
 
-### 2.5 右下角统一调试面板
+### 2.5 UI 样式静态校验
+
+弹窗、浮层、滚动条、图片查看器等样式改动后，建议运行以下静态脚本：
+
+```bash
+node tests/test-popover-surface-css.js
+node tests/test-settings-tab-panel-css.js
+node tests/test-category-c-and-image-viewer-glass-css.js
+```
+
+覆盖重点：
+
+- 类型 B 浮层分层：用户标记编辑器 / 日期选择器 / 确认型浮层 / 普通短 tooltip / 文档型帮助浮层使用轻磨砂；纯操作入口菜单保持实底。
+- 自定义 UI 最外层容器不显示描边；输入框、按钮、分割线、表格和设置面板内部列表项仍可保留功能性边界。
+- 设置面板滚动条复用脚本自定义样式，并在 S1 NUX 启用时跟随 `--prid` / `--pridb`，轨道保持透明。
+- 图片查看器全屏蒙版保持无色 blur，图片舞台沿用浅色浅黄绿 / 深色深灰蓝主题底色并轻磨砂。
+
+这些脚本只做源码级 CSS 断言，不能替代浏览器截图验收；涉及透明度、背景复杂度和 NUX 主题时仍需手动打开页面观察。
+
+### 2.6 右下角统一调试面板
 
 代码中保留了可复用的浮动调试面板框架，现整合为统一的 `#s1p-debug-unified-panel`，通过 tabs 组织三个子面板，默认不自动显示。
 
@@ -223,6 +242,18 @@ node tests/settings-migration/test-settings-migration.js
 - 若模板 tooltip 依赖测宽缓存，需保持 `resize` 时清空缓存并重测，避免旧视口宽度残留。
 - 需要取消 tooltip 时，优先走 `clearCustomTooltip`，不要只删 `fullTag` 或 class。
 - 手柄需同步 `aria-expanded`，动作型入口优先使用 `button`，仅导航型入口使用 `a`。
+
+### 4.8 UI 表面样式约定
+
+当前弹窗与浮层按“外层负责分层、内部负责功能边界”维护：
+
+- 全屏蒙版只提供无色 blur：`.s1p-modal`、`.s1p-confirm-modal`、`.s1p-token-config-modal`、`.s1p-image-viewer` 使用 `background-color: transparent` + `blur(var(--s1p-overlay-blur))`，不要恢复全局黑色遮罩变量。
+- Dialog glass 用于确认、输入、Token、同步选择等决策弹窗；Shell glass 用于设置面板外壳；Image viewer glass 用于图片查看器外壳；Light popover glass 用于 B1/B2、确认型浮层、普通短 tooltip 和文档型帮助浮层。
+- 纯操作入口菜单（帖子内联操作、标签选项菜单）保持实底，不添加 `backdrop-filter`。
+- 自定义 UI 最外层容器默认 `border: none`，依靠背景、阴影和 blur 分层；不要给外壳补 1px 线框来“找边界”。
+- 输入框、按钮、状态 chip、分隔线、表格、设置面板内部列表项属于功能性边界，可按可读性保留边框。
+- 图片查看器图片舞台使用专用变量 `--s1p-image-viewer-viewport-bg`：浅色沿用 `#d4ddce` 色相，深色沿用 `#222a32` 色相，并通过半透明 + 6px blur 做轻磨砂；不要改回通用深色遮罩。
+- 设置面板滚动视口负责圆角裁切和滚动条样式；S1 NUX 下滚动条 thumb 通过 `applyNuxSettingsScrollbarThemeFix()` 跟随 NUX 主题色，track 保持透明。
 
 ## 5. 存储键说明（GM Key）
 
@@ -478,6 +509,8 @@ sequenceDiagram
 - 收藏展开/搜索/取消收藏
 - 阅读进度记录、跳转、清理（自动/手动）
 - 图片查看器（缩放、拖拽、长按、切图、关闭恢复焦点）
+- 弹窗/浮层表面：设置面板、确认框、Token 配置、日期选择器、用户标记编辑器、帖子/楼层/用户屏蔽即时确认、标签菜单、文档型帮助浮层、普通短 tooltip、Toast、右侧浮动控制
+- 浅色 / 深色 / S1 NUX 三套主题下的设置面板滚动条、图片查看器和浮层可读性
 - 纯文本链接自动转换与新标签行为
 - 自动签到（正常/失败退避）
 
