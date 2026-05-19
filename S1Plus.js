@@ -3089,7 +3089,7 @@
       position: fixed;
       right: 16px;
       bottom: 18px;
-      z-index: 2147483642;
+      z-index: 10001;
       width: min(440px, calc(100vw - 24px));
       display: flex;
       flex-direction: column;
@@ -34014,8 +34014,8 @@
     title = "",
     note = "",
     statusMarkup = "",
-    hideAction = "hide",
-    hideLabel = "隐藏",
+    closeAriaLabel = "关闭调试面板",
+    closeTooltipText = "关闭调试面板",
     onAction = null,
     onHide = null,
   }) => {
@@ -34031,11 +34031,9 @@
     titleEl.textContent = title;
     head.appendChild(titleEl);
     head.appendChild(
-      createS1pDebugButton({
-        label: hideLabel,
-        action: hideAction,
-        kind: "utility",
-        sizeClassName: "s1p-btn-sm",
+      createModalCloseButton({
+        ariaLabel: closeAriaLabel,
+        tooltipText: closeTooltipText,
       })
     );
     panel.appendChild(head);
@@ -34055,19 +34053,19 @@
     }
 
     panel.addEventListener("click", (event) => {
+      if (event.target.closest(".s1p-settings-close-btn")) {
+        panel.classList.add("s1p-hidden");
+        if (typeof onHide === "function") {
+          onHide(panel);
+        }
+        return;
+      }
       const button = event.target.closest("[data-s1p-debug-action]");
       if (!(button instanceof HTMLButtonElement)) {
         return;
       }
       const action = String(button.dataset.s1pDebugAction || "");
       if (!action) {
-        return;
-      }
-      if (action === hideAction) {
-        panel.classList.add("s1p-hidden");
-        if (typeof onHide === "function") {
-          onHide(panel);
-        }
         return;
       }
       if (typeof onAction === "function") {
@@ -35418,8 +35416,6 @@
     const panel = createS1pDebugPanelShell({
       id: DEBUG_UNIFIED_PANEL_ID,
       title: "S1 Plus 调试",
-      hideAction: "hide-debug-unified",
-      hideLabel: "隐藏",
       onAction: handleDebugUnifiedPanelAction,
       onHide: () => {
         setDebugConsolePersistentlyVisible(false);
