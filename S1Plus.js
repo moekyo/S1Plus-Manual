@@ -3497,17 +3497,21 @@
       height: 38px;
       cursor: nwse-resize;
       z-index: 4;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
-    .s1p-debug-console-resize-handle[data-edge="top-left"]::before {
-      content: "";
-      position: absolute;
-      left: 8px;
-      top: 8px;
-      width: 9px;
-      height: 9px;
-      border-left: 2px solid var(--s1p-desc-t);
-      border-top: 2px solid var(--s1p-desc-t);
-      opacity: 0.45;
+    .s1p-debug-console-resize-handle[data-edge="top-left"] > svg {
+      display: block;
+      width: 16px;
+      height: 16px;
+      flex-shrink: 0;
+      color: var(--s1p-t);
+    }
+    .s1p-debug-console-resize-handle[data-edge="top-left"] > svg path {
+      stroke: currentColor;
+      stroke-width: 0.6px;
+      stroke-linejoin: round;
     }
     .s1p-debug-diagnostics-panel {
       gap: 0;
@@ -35078,6 +35082,9 @@
       const handle = document.createElement("div");
       handle.className = "s1p-debug-console-resize-handle";
       handle.dataset.edge = edge;
+      if (edge === "top-left") {
+        setSanitizedIconHtml(handle, '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M7 8.41421V12L5 12L5 5L12 5V7L8.41421 7L17 15.5858V12L19 12L19 19H12V17H15.5858L7 8.41421Z"></path></svg>');
+      }
       handle.addEventListener("pointerdown", (event) => {
         if (event.button !== 0) return;
         event.preventDefault();
