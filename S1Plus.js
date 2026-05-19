@@ -34090,6 +34090,7 @@
     { key: "log", label: "日志" },
     { key: "diagnostics", label: "诊断信息" },
     { key: "indicator", label: "指示器调试" },
+    { key: "ui-components", label: "UI 组件" },
   ]);
 
   const normalizeDebugUnifiedTabKey = (tabKey = "") =>
@@ -35173,6 +35174,589 @@
     updateDebugConsoleExpandAllButton(panel);
   };
 
+  const UI_COMPONENT_CATEGORIES = [
+    { key: "buttons", label: "按钮" },
+    { key: "toggles", label: "开关" },
+    { key: "segmented", label: "分段控制器" },
+    { key: "inputs", label: "输入框" },
+    { key: "datepicker", label: "日期选择器" },
+    { key: "colorpicker", label: "颜色选择器" },
+    { key: "toasts", label: "提示通知" },
+    { key: "badges", label: "徽章标签" },
+    { key: "cards", label: "卡片分组" },
+    { key: "lists", label: "列表条目" },
+    { key: "confirmbars", label: "确认栏" },
+    { key: "accordion", label: "可折叠" },
+    { key: "tooltips", label: "工具提示" },
+    { key: "inlineedit", label: "内联编辑" },
+    { key: "spinners", label: "加载指示器" },
+    { key: "previews", label: "弹窗预览" },
+  ];
+
+  const switchUIComponentCategory = (panel, categoryKey) => {
+    panel.querySelectorAll(".s1p-ui-showcase-cat-btn").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.s1pUiCat === categoryKey);
+    });
+    panel.querySelectorAll(".s1p-ui-showcase-section").forEach((section) => {
+      section.classList.toggle("is-active", section.dataset.s1pUiSection === categoryKey);
+      section.classList.toggle("s1p-hidden", section.dataset.s1pUiSection !== categoryKey);
+    });
+  };
+
+  const createShowcaseSectionHeader = (title, desc) =>
+    `<div class="s1p-ui-showcase-section-header"><span class="s1p-ui-showcase-section-title">${title}</span><span class="s1p-ui-showcase-section-desc">${desc}</span></div>`;
+
+  const createShowcaseVariantLabel = (label) =>
+    `<span class="s1p-ui-showcase-variant-label">${label}</span>`;
+
+  const createShowcaseVariantRow = (label, html, extraClass = "") =>
+    `<div class="s1p-ui-showcase-variant${extraClass ? " " + extraClass : ""}">${createShowcaseVariantLabel(label)}<div class="s1p-ui-showcase-variant-render">${html}</div></div>`;
+
+  const buildButtonShowcase = () => {
+    const variants = [
+      { label: "默认", cls: "s1p-btn", text: "按钮" },
+      { label: "悬停态", cls: "s1p-btn s1p-ui-force-hover", text: "按钮" },
+      { label: "禁用态", cls: "s1p-btn", text: "按钮", disabled: true },
+      { label: "小按钮", cls: "s1p-btn s1p-btn-sm", text: "小" },
+      { label: "小-悬停", cls: "s1p-btn s1p-btn-sm s1p-ui-force-hover", text: "小" },
+      { label: "小-禁用", cls: "s1p-btn s1p-btn-sm", text: "小", disabled: true },
+      { label: "危险(悬停)", cls: "s1p-btn s1p-danger s1p-ui-force-hover", text: "危险" },
+      { label: "红色(悬停)", cls: "s1p-btn s1p-red-btn s1p-ui-force-hover", text: "红色" },
+      { label: "确认栏按钮", cls: "s1p-confirm-btn", text: "确认" },
+      { label: "确认悬停", cls: "s1p-confirm-btn s1p-ui-force-hover", text: "确认" },
+      { label: "内联切换", cls: "s1p-inline-toggle-btn", text: "显示" },
+      { label: "内联-悬停", cls: "s1p-inline-toggle-btn s1p-ui-force-hover", text: "显示" },
+    ];
+    return (
+      createShowcaseSectionHeader("按钮", "s1p-btn / s1p-primary / s1p-danger / s1p-red-btn / s1p-btn-sm") +
+      '<div class="s1p-ui-showcase-grid">' +
+      variants
+        .map((v) =>
+          createShowcaseVariantRow(
+            v.label,
+            `<button class="${v.cls}" type="button"${v.disabled ? " disabled" : ""}>${v.text}</button>`
+          )
+        )
+        .join("") +
+      "</div>"
+    );
+  };
+
+  const buildToggleShowcase = () => {
+    const variants = [
+      { label: "开启", html: '<label class="s1p-switch"><input type="checkbox" checked><span class="s1p-slider"></span></label>' },
+      { label: "关闭", html: '<label class="s1p-switch"><input type="checkbox"><span class="s1p-slider"></span></label>' },
+      { label: "开启-禁用", html: '<label class="s1p-switch"><input type="checkbox" checked disabled><span class="s1p-slider"></span></label>' },
+      { label: "关闭-禁用", html: '<label class="s1p-switch"><input type="checkbox" disabled><span class="s1p-slider"></span></label>' },
+      { label: "条目小开关-开", html: '<label class="s1p-switch s1p-item-toggle"><input type="checkbox" checked><span class="s1p-slider"></span></label>' },
+      { label: "条目小开关-关", html: '<label class="s1p-switch s1p-item-toggle"><input type="checkbox"><span class="s1p-slider"></span></label>' },
+      { label: "功能大开关", html: '<div class="s1p-feature-toggle"><div class="s1p-feature-toggle-item"><span>示例功能</span><label class="s1p-switch"><input type="checkbox" checked><span class="s1p-slider"></span></label></div></div>' },
+    ];
+    return (
+      createShowcaseSectionHeader("开关", "s1p-switch / s1p-slider / s1p-item-toggle") +
+      '<div class="s1p-ui-showcase-grid">' +
+      variants.map((v) => createShowcaseVariantRow(v.label, v.html)).join("") +
+      "</div>"
+    );
+  };
+
+  const buildSegmentedShowcase = () => {
+    const html =
+      '<div class="s1p-segmented-control" style="position:relative;"><div class="s1p-segmented-control-slider" style="position:absolute;top:2px;left:0;height:calc(100% - 4px);background-color:var(--s1p-sec);border-radius:5px;width:52px;"></div><div class="s1p-segmented-control-option active" style="position:relative;z-index:1;padding:4px 12px;color:var(--s1p-white);font-weight:500;border-radius:4px;">选项A</div><div class="s1p-segmented-control-option" style="position:relative;z-index:1;padding:4px 12px;color:var(--s1p-desc-t);border-radius:4px;">选项B</div><div class="s1p-segmented-control-option" style="position:relative;z-index:1;padding:4px 12px;color:var(--s1p-desc-t);border-radius:4px;">选项C</div></div>';
+    return createShowcaseSectionHeader("分段控制器", "s1p-segmented-control") + '<div class="s1p-ui-showcase-grid">' + createShowcaseVariantRow("三选项", html) + "</div>";
+  };
+
+  const buildInputShowcase = () => {
+    const variants = [
+      { label: "默认", html: '<input class="s1p-input" type="text" placeholder="请输入内容...">' },
+      { label: "聚焦态", html: '<input class="s1p-input s1p-ui-force-focus" type="text" value="已输入的文字">' },
+      { label: "错误态", html: '<input class="s1p-input s1p-input-error" type="text" value="错误输入">' },
+      { label: "禁用态", html: '<input class="s1p-input" type="text" value="禁用状态" disabled>' },
+      { label: "带右侧图标", html: '<div style="position:relative;display:inline-block;"><input class="s1p-input s1p-input-with-right-icon" type="password" value="password123" style="padding-right:36px;"><span class="s1p-icon-btn-overlay" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);cursor:pointer;opacity:0.5;">👁</span></div>' },
+      { label: "搜索框", html: '<div class="s1p-search-input-wrapper"><span class="s1p-search-icon">🔍</span><input class="s1p-input" type="text" placeholder="搜索..." style="padding-left:32px;"><button class="s1p-search-clear-btn" type="button">✕</button></div>' },
+      { label: "全宽输入", html: '<input class="s1p-input s1p-input-full" type="text" value="全宽输入框" style="width:100%;">' },
+      { label: "文本域", html: '<textarea class="s1p-input s1p-textarea" placeholder="请输入文本...">文本区域内容</textarea>' },
+      { label: "搜索图标+输入", html: '<div style="display:flex;align-items:center;gap:4px;background:var(--s1p-bg);border:1px solid var(--s1p-pri);border-radius:6px;padding:4px 8px;"><span style="opacity:0.4;">🔍</span><input style="border:none;outline:none;background:transparent;flex:1;font-size:14px;color:var(--s1p-t);" type="text" placeholder="搜索..." value="关键词"></div>' },
+    ];
+    return (
+      createShowcaseSectionHeader("输入框", "s1p-input / s1p-input-full / s1p-input-error / s1p-textarea") +
+      '<div class="s1p-ui-showcase-grid">' +
+      variants.map((v) => createShowcaseVariantRow(v.label, v.html)).join("") +
+      "</div>"
+    );
+  };
+
+  const buildDatePickerShowcase = () => {
+    return (
+      createShowcaseSectionHeader("日期选择器", "createDatePicker()") +
+      '<div class="s1p-ui-showcase-grid">' +
+      createShowcaseVariantRow(
+        "日期输入",
+        '<div style="display:flex;align-items:center;gap:4px;"><input class="s1p-input" type="text" value="2026-05-19" readonly style="width:140px;"><button class="s1p-btn s1p-btn-sm" type="button" data-s1p-ui-action="open-datepicker">📅 选择日期</button></div>'
+      ) +
+      "</div>"
+    );
+  };
+
+  const buildColorPickerShowcase = () => {
+    const colors = ["red", "orange", "yellow", "green", "blue", "purple"];
+    const colorLabels = { red: "红", orange: "橙", yellow: "黄", green: "绿", blue: "蓝", purple: "紫" };
+    const swatches = colors
+      .map(
+        (c) =>
+          `<div class="s1p-color-option" style="background-color:var(--s1p-tag-${c});width:28px;height:28px;border-radius:6px;display:inline-block;cursor:pointer;margin:2px;" title="${colorLabels[c]}"></div>`
+      )
+      .join("");
+    const tagPills = colors
+      .map((c) => {
+        const containerCls = c === "yellow" ? "" : " color-is-light";
+        return `<span class="s1p-user-tag-display" style="background-color:var(--s1p-tag-${c});color:${c === "yellow" ? "#422006" : "var(--s1p-white)"};display:inline-block;padding:2px 8px;border-radius:4px;font-size:12px;margin:2px;">标签${colorLabels[c]}</span>`;
+      })
+      .join("");
+    const historyItems = colors
+      .slice(0, 3)
+      .map(
+        (c) =>
+          `<span class="s1p-history-tag-item" style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:12px;margin:2px;background-color:var(--s1p-tag-${c});color:${c === "yellow" ? "#422006" : "var(--s1p-white)"};">历史${colorLabels[c]}</span>`
+      )
+      .join("");
+    return (
+      createShowcaseSectionHeader("颜色选择器", "s1p-color-option / s1p-user-tag-display") +
+      '<div class="s1p-ui-showcase-grid">' +
+      createShowcaseVariantRow("色块选择", `<div class="s1p-color-picker" style="display:flex;gap:4px;">${swatches}</div>`) +
+      createShowcaseVariantRow("标签药丸", `<div style="display:flex;flex-wrap:wrap;gap:4px;">${tagPills}</div>`) +
+      createShowcaseVariantRow("历史标签", `<div class="s1p-history-tags-list" style="display:flex;flex-wrap:wrap;gap:4px;">${historyItems}</div>`) +
+      "</div>"
+    );
+  };
+
+  const buildToastShowcase = () => {
+    return (
+      createShowcaseSectionHeader("提示通知", "showMessage() — s1p-toast-notification") +
+      '<div class="s1p-ui-showcase-grid">' +
+      createShowcaseVariantRow(
+        "中性提示",
+        '<button class="s1p-btn s1p-btn-sm" type="button" data-s1p-ui-action="toast-neutral">触发中性提示</button>'
+      ) +
+      createShowcaseVariantRow(
+        "成功提示",
+        '<button class="s1p-btn s1p-btn-sm" type="button" data-s1p-ui-action="toast-success">触发成功提示</button>'
+      ) +
+      createShowcaseVariantRow(
+        "错误提示",
+        '<button class="s1p-btn s1p-btn-sm" type="button" data-s1p-ui-action="toast-error">触发错误提示</button>'
+      ) +
+      "</div>"
+    );
+  };
+
+  const buildBadgeShowcase = () => {
+    const colors = ["red", "orange", "yellow", "green", "blue", "purple"];
+    const colorLabels = { red: "红", orange: "橙", yellow: "黄", green: "绿", blue: "蓝", purple: "紫" };
+    const tagPills = colors
+      .map(
+        (c) =>
+          `<div class="s1p-user-tag-container s1p-tag-color-${c}" style="display:inline-flex;align-items:center;border-radius:4px;overflow:hidden;margin:2px;"><span class="s1p-user-tag-display">用户标签${colorLabels[c]}</span></div>`
+      )
+      .join("");
+    const remarkHtml = '<span class="s1p-user-remark-display" style="font-size:12px;color:var(--s1p-desc-t);margin:2px;">备注文字示例</span>';
+    const updateBadge = '<span class="s1p-progress-update-badge" style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:11px;font-weight:600;background-color:var(--s1p-tag-orange);color:var(--s1p-white);margin:2px;">内容更新</span>';
+    const replyBadge = '<span class="s1p-new-replies-badge" style="display:inline-block;padding:1px 6px;border-radius:10px;font-size:11px;font-weight:600;background-color:#3b82f6;color:var(--s1p-white);margin:2px;">+12</span>';
+    const codeBadge = '<span class="s1p-inline-code-badge" style="font-family:monospace;font-size:12px;background:var(--s1p-sub);padding:1px 4px;border-radius:3px;margin:2px;">Ctrl+S</span>';
+    const bookmarkHint = '<span class="s1p-bookmark-preview-only-hint" style="font-size:11px;color:var(--s1p-desc-t);margin:2px;">(仅预览)</span>';
+    return (
+      createShowcaseSectionHeader("徽章标签", "s1p-user-tag-display / s1p-progress-update-badge / s1p-new-replies-badge") +
+      '<div class="s1p-ui-showcase-grid">' +
+      createShowcaseVariantRow("标签药丸(全色)", `<div style="display:flex;flex-wrap:wrap;gap:4px;">${tagPills}</div>`) +
+      createShowcaseVariantRow("用户备注", `<div style="display:flex;align-items:center;gap:4px;">${remarkHtml}</div>`) +
+      createShowcaseVariantRow("内容更新徽章", `<div style="display:flex;align-items:center;gap:4px;">${updateBadge}</div>`) +
+      createShowcaseVariantRow("新回复徽章", `<div style="display:flex;align-items:center;gap:4px;">${replyBadge}</div>`) +
+      createShowcaseVariantRow("内联代码", `<div style="display:flex;align-items:center;gap:4px;">${codeBadge}</div>`) +
+      createShowcaseVariantRow("仅预览提示", `<div style="display:flex;align-items:center;gap:4px;">${bookmarkHint}</div>`) +
+      "</div>"
+    );
+  };
+
+  const buildCardShowcase = () => {
+    const settingsGroup = `<div class="s1p-settings-group" style="border:1px solid var(--s1p-pri);border-radius:8px;padding:12px;margin:4px 0;"><div class="s1p-settings-sub-group" style="border-bottom:1px solid var(--s1p-pri);padding-bottom:8px;margin-bottom:8px;font-weight:600;font-size:13px;">设置分组标题</div><div class="s1p-settings-item" style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;"><span>设置项 A</span><label class="s1p-switch"><input type="checkbox" checked><span class="s1p-slider"></span></label></div><div class="s1p-settings-item" style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-top:1px solid var(--s1p-sub);"><span>设置项 B (带描述)</span><input class="s1p-input" type="text" value="示例值" style="width:120px;"></div></div>`;
+    return (
+      createShowcaseSectionHeader("卡片分组", "s1p-settings-group / s1p-settings-item") +
+      '<div class="s1p-ui-showcase-grid">' +
+      createShowcaseVariantRow("设置分组", settingsGroup) +
+      "</div>"
+    );
+  };
+
+  const buildListShowcase = () => {
+    const blockedUser = `<div class="s1p-item" style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border:1px solid var(--s1p-pri);border-radius:6px;margin:4px 0;"><div class="s1p-item-info"><span class="s1p-item-title" style="font-weight:600;">被屏蔽用户</span><span class="s1p-item-meta" style="color:var(--s1p-desc-t);font-size:12px;margin-left:8px;">UID: 12345</span></div><label class="s1p-switch s1p-item-toggle"><input type="checkbox" checked><span class="s1p-slider"></span></label></div>`;
+    const blockedThread = `<div class="s1p-item" style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border:1px solid var(--s1p-pri);border-radius:6px;margin:4px 0;"><div class="s1p-item-info"><span class="s1p-item-title" style="font-weight:600;">被屏蔽主题标题</span><span class="s1p-item-meta" style="color:var(--s1p-desc-t);font-size:12px;margin-left:8px;">TID: 1111111</span></div><button class="s1p-btn s1p-btn-sm s1p-danger" type="button">取消屏蔽</button></div>`;
+    const emptyState = `<div class="s1p-empty" style="text-align:center;padding:24px;color:var(--s1p-desc-t);font-size:14px;">暂无数据</div>`;
+    const pagination = `<div class="s1p-list-pagination" style="display:flex;align-items:center;justify-content:center;gap:12px;padding:8px 0;"><button class="s1p-btn s1p-btn-sm" type="button" disabled>上一页</button><span class="s1p-list-pagination-info" style="font-size:13px;color:var(--s1p-t);">第 1/3 页</span><button class="s1p-btn s1p-btn-sm" type="button">下一页</button></div>`;
+    return (
+      createShowcaseSectionHeader("列表条目", "s1p-list / s1p-item / s1p-list-pagination / s1p-empty") +
+      '<div class="s1p-ui-showcase-grid">' +
+      createShowcaseVariantRow("屏蔽用户项", blockedUser) +
+      createShowcaseVariantRow("屏蔽主题项", blockedThread) +
+      createShowcaseVariantRow("空状态", emptyState) +
+      createShowcaseVariantRow("分页", pagination) +
+      "</div>"
+    );
+  };
+
+  const buildConfirmBarShowcase = () => {
+    const simple = `<div class="s1p-confirm-container"><div class="s1p-confirm-bar" style="display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid var(--s1p-pri);border-radius:6px;background:var(--s1p-bg);"><span class="s1p-confirm-text" style="flex:1;font-size:13px;">确认执行此操作？</span><span class="s1p-confirm-separator" style="color:var(--s1p-pri);">|</span><button class="s1p-confirm-action-btn s1p-btn s1p-btn-sm" type="button">确认</button><button class="s1p-confirm-action-btn s1p-btn s1p-btn-sm s1p-danger" type="button">取消</button></div></div>`;
+    const withRemark = `<div class="s1p-confirm-container"><div class="s1p-confirm-bar s1p-confirm-bar-card" style="display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid var(--s1p-pri);border-radius:6px;background:var(--s1p-bg);"><span class="s1p-confirm-text" style="flex:1;font-size:13px;">屏蔽该用户？</span><span class="s1p-confirm-separator" style="color:var(--s1p-pri);">|</span><button class="s1p-confirm-action-btn s1p-btn s1p-btn-sm" type="button">确认</button><button class="s1p-confirm-action-btn s1p-btn s1p-btn-sm s1p-danger" type="button">取消</button></div><div class="s1p-confirm-remark-area" style="margin-top:4px;padding:8px;border:1px dashed var(--s1p-pri);border-radius:4px;"><textarea class="s1p-confirm-input s1p-input" placeholder="备注（可选）" style="font-size:13px;min-height:40px;">屏蔽原因...</textarea></div></div>`;
+    return (
+      createShowcaseSectionHeader("确认栏", "s1p-confirm-bar / buildConfirmationMarkup()") +
+      '<div class="s1p-ui-showcase-grid">' +
+      createShowcaseVariantRow("纯文本确认栏", simple) +
+      createShowcaseVariantRow("带备注确认栏", withRemark) +
+      "</div>"
+    );
+  };
+
+  const buildAccordionShowcase = () => {
+    const html = `<div class="s1p-collapsible-header" style="display:flex;align-items:center;gap:6px;padding:8px 12px;border:1px solid var(--s1p-pri);border-radius:6px;cursor:pointer;background:var(--s1p-bg);" data-s1p-ui-action="toggle-accordion-demo"><span class="s1p-expander-arrow s1p-ui-accordion-arrow" style="transition:transform 0.2s;display:inline-block;">▶</span><span style="font-weight:600;">点击展开内容</span></div><div class="s1p-collapsible-content s1p-ui-accordion-body s1p-hidden" style="padding:8px 12px;border:1px solid var(--s1p-pri);border-top:none;border-radius:0 0 6px 6px;">折叠区域的内容，可以包含任意富文本或组件。这里是一段示例文字。</div>`;
+    return (
+      createShowcaseSectionHeader("可折叠", "s1p-collapsible-header / s1p-collapsible-content") +
+      '<div class="s1p-ui-showcase-grid">' +
+      createShowcaseVariantRow("可折叠区域", html) +
+      "</div>"
+    );
+  };
+
+  const buildTooltipShowcase = () => {
+    return (
+      createShowcaseSectionHeader("工具提示", "setCustomTooltip() / s1p-has-tooltip") +
+      '<div class="s1p-ui-showcase-grid">' +
+      createShowcaseVariantRow(
+        "纯文本提示",
+        '<button class="s1p-btn s1p-btn-sm s1p-has-tooltip" type="button" title="这是一个纯文本提示">悬浮查看</button>'
+      ) +
+      createShowcaseVariantRow(
+        "图标提示",
+        '<span class="s1p-has-tooltip" style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:var(--s1p-sub);cursor:help;font-size:14px;" title="帮助信息">?</span>'
+      ) +
+      createShowcaseVariantRow(
+        "长文本提示",
+        '<span class="s1p-has-tooltip" style="cursor:help;border-bottom:1px dashed var(--s1p-sec);" title="这是一段很长的提示文本，用于展示 tooltip 在长文本场景下的显示效果">鼠标悬停在此处查看长文本提示</span>'
+      ) +
+      "</div>"
+    );
+  };
+
+  const buildInlineEditShowcase = () => {
+    const editMode = `<div class="s1p-edit-mode-header" style="display:flex;align-items:center;gap:6px;padding:4px 0;"><span style="font-weight:600;font-size:13px;">编辑标签</span></div><div style="display:flex;align-items:center;gap:6px;"><input class="s1p-input" type="text" value="示例标签" style="width:140px;"><div class="s1p-color-option" style="background-color:var(--s1p-tag-blue);width:24px;height:24px;border-radius:4px;display:inline-block;"></div></div><div class="s1p-edit-mode-actions" style="display:flex;gap:6px;margin-top:6px;"><button class="s1p-btn s1p-btn-sm" type="button">保存</button><button class="s1p-btn s1p-btn-sm s1p-danger" type="button">取消</button></div>`;
+    const remarkEdit = `<div style="display:flex;align-items:center;gap:6px;"><input class="s1p-input" type="text" value="备注内容" style="width:160px;"><button class="s1p-btn s1p-btn-sm" type="button">保存</button><button class="s1p-btn s1p-btn-sm s1p-danger" type="button">取消</button></div>`;
+    return (
+      createShowcaseSectionHeader("内联编辑", "s1p-edit-mode-header / s1p-item-editor") +
+      '<div class="s1p-ui-showcase-grid">' +
+      createShowcaseVariantRow("标签编辑模式", `<div style="display:flex;flex-direction:column;gap:4px;">${editMode}</div>`) +
+      createShowcaseVariantRow("备注编辑", remarkEdit) +
+      "</div>"
+    );
+  };
+
+  const buildSpinnerShowcase = () => {
+    const switchingSpinner = `<div class="s1p-image-viewer__switch-loading" style="display:flex;align-items:center;gap:8px;padding:12px 16px;border-radius:8px;background:var(--s1p-sub);"><div class="s1p-image-viewer__switch-loading-spinner" style="width:24px;height:24px;border:3px solid var(--s1p-pri);border-top-color:var(--s1p-sec);border-radius:50%;animation:s1p-spin 0.8s linear infinite;"></div><span class="s1p-image-viewer__switch-loading-text" style="font-size:13px;">加载中...</span></div>`;
+    const simpleSpinner = `<div style="width:28px;height:28px;border:3px solid var(--s1p-pri);border-top-color:var(--s1p-sec);border-radius:50%;animation:s1p-spin 0.8s linear infinite;"></div>`;
+    return (
+      createShowcaseSectionHeader("加载指示器", "s1p-image-viewer__switch-loading-spinner") +
+      '<div class="s1p-ui-showcase-grid">' +
+      createShowcaseVariantRow("小型旋转器", simpleSpinner) +
+      createShowcaseVariantRow("带文字加载", switchingSpinner) +
+      "</div>"
+    );
+  };
+
+  const buildPreviewShowcase = () => {
+    const items = [
+      { label: "确认模态框", action: "open-confirm-modal" },
+      { label: "输入模态框", action: "open-input-modal" },
+      { label: "高级确认模态框", action: "open-advanced-confirm" },
+      { label: "欢迎弹窗", action: "open-welcome-popup" },
+      { label: "图片查看器(示例URL)", action: "open-image-viewer" },
+    ];
+    return (
+      createShowcaseSectionHeader("弹窗预览", "点击按钮打开真实弹窗查看效果") +
+      '<div class="s1p-ui-showcase-grid">' +
+      items
+        .map(
+          (item) =>
+            createShowcaseVariantRow(
+              item.label,
+              `<button class="s1p-btn" type="button" data-s1p-ui-action="${item.action}">打开 ${item.label}</button>`
+            )
+        )
+        .join("") +
+      "</div>"
+    );
+  };
+
+  const getSectionRendererByKey = (key) => {
+    switch (key) {
+      case "buttons": return buildButtonShowcase;
+      case "toggles": return buildToggleShowcase;
+      case "segmented": return buildSegmentedShowcase;
+      case "inputs": return buildInputShowcase;
+      case "datepicker": return buildDatePickerShowcase;
+      case "colorpicker": return buildColorPickerShowcase;
+      case "toasts": return buildToastShowcase;
+      case "badges": return buildBadgeShowcase;
+      case "cards": return buildCardShowcase;
+      case "lists": return buildListShowcase;
+      case "confirmbars": return buildConfirmBarShowcase;
+      case "accordion": return buildAccordionShowcase;
+      case "tooltips": return buildTooltipShowcase;
+      case "inlineedit": return buildInlineEditShowcase;
+      case "spinners": return buildSpinnerShowcase;
+      case "previews": return buildPreviewShowcase;
+      default: return () => "";
+    }
+  };
+
+  const createDebugUIComponentsTabContent = () => {
+    const panel = document.createElement("div");
+    panel.className = "s1p-debug-tab-pane s1p-hidden s1p-ui-showcase-panel";
+    panel.dataset.s1pDebugTabPane = "ui-components";
+
+    const style = document.createElement("style");
+    style.textContent = `
+      .s1p-ui-showcase-panel {
+        padding: 0 !important;
+        overflow: hidden !important;
+      }
+      .s1p-ui-showcase-layout {
+        display: flex;
+        height: 100%;
+        min-height: 0;
+      }
+      .s1p-ui-showcase-sidebar {
+        width: 130px;
+        flex-shrink: 0;
+        overflow-y: auto;
+        overflow-x: hidden;
+        border-right: 1px solid var(--s1p-pri);
+        padding: 6px 0;
+        background: var(--s1p-bg);
+      }
+      .s1p-ui-showcase-cat-btn {
+        display: block;
+        width: 100%;
+        padding: 7px 12px;
+        font-size: 12px;
+        color: var(--s1p-desc-t);
+        background: transparent;
+        border: none;
+        cursor: pointer;
+        text-align: left;
+        transition: background 0.15s, color 0.15s;
+        white-space: nowrap;
+      }
+      .s1p-ui-showcase-cat-btn:hover {
+        background: var(--s1p-sub);
+        color: var(--s1p-t);
+      }
+      .s1p-ui-showcase-cat-btn.active {
+        background: var(--s1p-sec);
+        color: var(--s1p-white);
+        font-weight: 600;
+      }
+      .s1p-ui-showcase-content {
+        flex: 1;
+        overflow-y: auto;
+        overflow-x: hidden;
+        padding: 8px 12px;
+        min-width: 0;
+      }
+      .s1p-ui-showcase-section {
+        display: none;
+      }
+      .s1p-ui-showcase-section.is-active {
+        display: block;
+      }
+      .s1p-ui-showcase-section-header {
+        margin-bottom: 10px;
+        padding-bottom: 6px;
+        border-bottom: 1px solid var(--s1p-pri);
+      }
+      .s1p-ui-showcase-section-title {
+        font-size: 14px;
+        font-weight: 700;
+        color: var(--s1p-t);
+      }
+      .s1p-ui-showcase-section-desc {
+        display: block;
+        font-size: 11px;
+        color: var(--s1p-desc-t);
+        margin-top: 2px;
+        font-family: monospace;
+      }
+      .s1p-ui-showcase-grid {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .s1p-ui-showcase-variant {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 6px 10px;
+        border: 1px solid var(--s1p-sub);
+        border-radius: 6px;
+        min-width: 0;
+        background: var(--s1p-bg);
+      }
+      .s1p-ui-showcase-variant-label {
+        width: 85px;
+        flex-shrink: 0;
+        font-size: 11px;
+        color: var(--s1p-desc-t);
+        font-family: monospace;
+        text-align: right;
+      }
+      .s1p-ui-showcase-variant-render {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+        min-width: 0;
+      }
+      .s1p-ui-showcase-variant-block {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      .s1p-ui-showcase-variant-block .s1p-ui-showcase-variant-label {
+        width: auto;
+        text-align: left;
+      }
+      .s1p-ui-showcase-variant-block .s1p-ui-showcase-variant-render {
+        width: 100%;
+      }
+      .s1p-ui-force-hover {
+        background-color: var(--s1p-sub-h) !important;
+        color: var(--s1p-sub-h-t) !important;
+        transform: translateY(-3px) !important;
+        box-shadow: 0 3px 6px rgba(var(--s1p-shadow-color-rgb), 0.18) !important;
+      }
+      .s1p-btn.s1p-red-btn.s1p-ui-force-hover,
+      .s1p-btn.s1p-danger.s1p-ui-force-hover {
+        background-color: var(--s1p-red-h) !important;
+        border-color: transparent !important;
+        color: var(--s1p-white) !important;
+      }
+      .s1p-confirm-btn.s1p-ui-force-hover {
+        background-color: var(--s1p-red-h) !important;
+        border-color: transparent !important;
+        color: var(--s1p-white) !important;
+      }
+      .s1p-ui-force-focus {
+        border-color: var(--s1p-sec) !important;
+        background-color: var(--s1p-white) !important;
+        outline: none !important;
+      }
+      @keyframes s1p-spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+      .s1p-ui-showcase-section-header + .s1p-ui-showcase-grid {
+        margin-top: 4px;
+      }
+    `;
+    panel.appendChild(style);
+
+    const layout = document.createElement("div");
+    layout.className = "s1p-ui-showcase-layout";
+
+    const sidebar = document.createElement("div");
+    sidebar.className = "s1p-ui-showcase-sidebar";
+    sidebar.innerHTML = UI_COMPONENT_CATEGORIES.map(
+      (cat, idx) =>
+        `<button class="s1p-ui-showcase-cat-btn${idx === 0 ? " active" : ""}" type="button" data-s1p-ui-cat="${cat.key}">${cat.label}</button>`
+    ).join("");
+    sidebar.addEventListener("click", (e) => {
+      const btn = e.target.closest(".s1p-ui-showcase-cat-btn");
+      if (!btn) return;
+      switchUIComponentCategory(panel, btn.dataset.s1pUiCat);
+    });
+    layout.appendChild(sidebar);
+
+    const content = document.createElement("div");
+    content.className = "s1p-ui-showcase-content";
+    content.addEventListener("click", (e) => {
+      const target = e.target.closest("[data-s1p-ui-action]");
+      if (!target) return;
+      const action = target.dataset.s1pUiAction;
+      if (action === "toast-neutral") {
+        if (typeof showMessage === "function") showMessage("这是一条中性提示");
+      } else if (action === "toast-success") {
+        if (typeof showMessage === "function") showMessage("操作成功", "success");
+      } else if (action === "toast-error") {
+        if (typeof showMessage === "function") showMessage("操作失败", "error");
+      } else if (action === "open-confirm-modal") {
+        if (typeof createConfirmationModal === "function") {
+          createConfirmationModal("标题", "这里是模态框的内容描述", "确认", "取消", () => {}, () => {});
+        }
+      } else if (action === "open-input-modal") {
+        if (typeof createInputModal === "function") {
+          createInputModal("输入框标题", "请输入内容", "", "确定", "取消", (val) => {
+            if (typeof showMessage === "function") showMessage("输入值: " + (val || "(空)"));
+          });
+        }
+      } else if (action === "open-advanced-confirm") {
+        if (typeof createAdvancedConfirmationModal === "function") {
+          createAdvancedConfirmationModal({
+            title: "高级确认弹窗",
+            bodyHtml: "<div><p>这是高级确认弹窗的 <strong>HTML 内容</strong>。</p><p>可以放入任意组件。</p></div>",
+            customClass: "",
+            buttons: [
+              { text: "取消", class: "s1p-btn s1p-danger", onClick: () => {}, closeOnClick: true },
+              { text: "确认", class: "s1p-btn", onClick: () => { if (typeof showMessage === "function") showMessage("已确认", "success"); }, closeOnClick: true },
+            ],
+          });
+        }
+      } else if (action === "open-welcome-popup") {
+        if (typeof showFirstTimeWelcomeIfNeeded === "function") {
+          showFirstTimeWelcomeIfNeeded();
+        }
+      } else if (action === "open-datepicker") {
+        if (typeof createDatePicker === "function") {
+          const fakeInput = target.previousElementSibling;
+          createDatePicker(fakeInput, () => {});
+        }
+      } else if (action === "open-image-viewer") {
+        if (typeof openS1pImageViewer === "function") {
+          openS1pImageViewer([
+            { url: "https://picsum.photos/800/600?random=1", filename: "示例图片-1.jpg", loading: false },
+            { url: "https://picsum.photos/800/600?random=2", filename: "示例图片-2.jpg", loading: false },
+          ], 0);
+        }
+      } else if (action === "toggle-accordion-demo") {
+        const arrow = target.querySelector(".s1p-ui-accordion-arrow");
+        const body = target.parentElement.querySelector(".s1p-ui-accordion-body");
+        if (arrow && body) {
+          const isOpen = !body.classList.contains("s1p-hidden");
+          body.classList.toggle("s1p-hidden", isOpen);
+          arrow.style.transform = isOpen ? "" : "rotate(90deg)";
+        }
+      }
+    });
+
+    UI_COMPONENT_CATEGORIES.forEach((cat) => {
+      const section = document.createElement("div");
+      section.className = `s1p-ui-showcase-section${cat.key === "buttons" ? " is-active" : " s1p-hidden"}`;
+      section.dataset.s1pUiSection = cat.key;
+      const renderer = getSectionRendererByKey(cat.key);
+      section.innerHTML = renderer();
+      content.appendChild(section);
+    });
+    layout.appendChild(content);
+
+    panel.appendChild(layout);
+    return panel;
+  };
+
   const createDebugConsoleLogTabContent = () => {
     const panel = document.createElement("div");
     panel.id = DEBUG_CONSOLE_PANEL_ID;
@@ -35450,6 +36034,7 @@
     content.appendChild(createDebugConsoleLogTabContent());
     content.appendChild(createDebugSyncDiagnosticsTabContent());
     content.appendChild(createAutoSyncIndicatorDebugTabContent());
+    content.appendChild(createDebugUIComponentsTabContent());
     panel.appendChild(content);
 
     const host = ensureS1pDebugPanelHost();
