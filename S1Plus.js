@@ -37,7 +37,7 @@
   const LOG_BUFFER_MAX = 1000;
   const LOG_RENDER_MAX = 200;
   const LOG_COLLAPSED_MESSAGE_MAX_LENGTH = 180;
-  const VERSION_HOVER_REVEAL_MS = 4000;
+  const VERSION_HOVER_REVEAL_MS = 5000;
   const DEBUG_CONSOLE_MIN_WIDTH = 320;
   const DEBUG_CONSOLE_MIN_HEIGHT = 240;
   // Keep reloads from restoring a stale near-bottom scroll position when
@@ -2277,6 +2277,27 @@
     // 倒序看帖 - 箭头向上 (Thickened 0.5)
     sortDesc: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="2 2 20 20" fill="currentColor" stroke="currentColor" stroke-width="0.5"><path d="M13 19V7.83L17.59 12.42L19 11L12 4L5 11L6.41 12.41L11 7.83V19H13Z"></path></svg>`,
   };
+
+  // --- 图片查看器图标 ---
+  const SVG_ICON_ZOOM_OUT = `<svg class="s1p-image-viewer__zoom-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M18.031 16.6168L22.3137 20.8995L20.8995 22.3137L16.6168 18.031C15.0769 19.263 13.124 20 11 20C6.032 20 2 15.968 2 11C2 6.032 6.032 2 11 2C15.968 2 20 6.032 20 11C20 13.124 19.263 15.0769 18.031 16.6168ZM16.0247 15.8748C17.2475 14.6146 18 12.8956 18 11C18 7.1325 14.8675 4 11 4C7.1325 4 4 7.1325 4 11C4 14.8675 7.1325 18 11 18C12.8956 18 14.6146 17.2475 15.8748 16.0247L16.0247 15.8748ZM7 10H15V12H7V10Z"></path></svg>`;
+  const SVG_ICON_ZOOM_IN = `<svg class="s1p-image-viewer__zoom-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M18.031 16.6168L22.3137 20.8995L20.8995 22.3137L16.6168 18.031C15.0769 19.263 13.124 20 11 20C6.032 20 2 15.968 2 11C2 6.032 6.032 2 11 2C15.968 2 20 6.032 20 11C20 13.124 19.263 15.0769 18.031 16.6168ZM16.0247 15.8748C17.2475 14.6146 18 12.8956 18 11C18 7.1325 14.8675 4 11 4C7.1325 4 4 7.1325 4 11C4 14.8675 7.1325 18 11 18C12.8956 18 14.6146 17.2475 15.8748 16.0247L16.0247 15.8748ZM10 10V7H12V10H15V12H12V15H10V12H7V10H10Z"></path></svg>`;
+  const SVG_ICON_CHEVRON_UP = `<svg class="s1p-image-viewer__zoom-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M7.41 14.59 12 10l4.59 4.59L18 13.17l-6-6-6 6z"></path></svg>`;
+  const SVG_ICON_CHEVRON_DOWN = `<svg class="s1p-image-viewer__zoom-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="m7.41 8.59 4.59 4.58 4.59-4.58L18 10l-6 6-6-6z"></path></svg>`;
+  const SVG_ICON_CHEVRON_LEFT = `<svg class="s1p-image-viewer__nav-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M12.5 4.5L7 10l5.5 5.5"></path></svg>`;
+  const SVG_ICON_CHEVRON_RIGHT = `<svg class="s1p-image-viewer__nav-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M7.5 4.5L13 10l-5.5 5.5"></path></svg>`;
+
+  // --- 同步状态图标 ---
+  const SVG_ICON_SYNC_SUCCESS = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="1 1 22 22" fill="currentColor"><path d="M4 12C4 7.58172 7.58172 4 12 4C16.4183 4 20 7.58172 20 12C20 16.4183 16.4183 20 12 20C7.58172 20 4 16.4183 4 12ZM12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2ZM17.4571 9.45711L16.0429 8.04289L11 13.0858L8.20711 10.2929L6.79289 11.7071L11 15.9142L17.4571 9.45711Z"></path></svg>`;
+  const SVG_ICON_SYNC_FAILURE = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="1 1 22 22" fill="currentColor"><path d="M12 22C6.47715 22 2 17.5228 2 12C2 6.47715 6.47715 2 12 2C17.5228 2 22 6.47715 22 12C22 17.5228 17.5228 22 12 22ZM12 20C16.4183 20 20 16.4183 20 12C20 7.58172 16.4183 4 12 4C7.58172 4 4 7.58172 4 12C4 16.4183 7.58172 20 12 20ZM7 11H17V13H7V11Z"></path></svg>`;
+  const SVG_ICON_SYNC_IDLE = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="8" r="2.25"></circle></svg>`;
+  const SVG_ICON_SYNC_REFRESH = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4C14.7486 4 17.1749 5.38626 18.6156 7.5H16V9.5H22V3.5H20V5.99936C18.1762 3.57166 15.2724 2 12 2C6.47715 2 2 6.47715 2 12H4C4 7.58172 7.58172 4 12 4ZM20 12C20 16.4183 16.4183 20 12 20C9.25144 20 6.82508 18.6137 5.38443 16.5H8V14.5H2V20.5H4V18.0006C5.82381 20.4283 8.72764 22 12 22C17.5228 22 22 17.5228 22 12H20Z"></path></svg>`;
+
+  // --- 通用 UI 图标 ---
+  const SVG_ICON_RESIZE_DIAGONAL = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M7 8.41421V12L5 12L5 5L12 5V7L8.41421 7L17 15.5858V12L19 12L19 19H12V17H15.5858L7 8.41421Z"></path></svg>`;
+  const SVG_ICON_SEARCH = `<svg class="s1p-search-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" /></svg>`;
+  const SVG_ICON_X_CIRCLE = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" /></svg>`;
+  const SVG_ICON_GRID = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="16" height="16" class="s1p-progress-detail-btn-icon"><path d="M3 3H21C21.5523 3 22 3.44772 22 4V20C22 20.5523 21.5523 21 21 21H3C2.44772 21 2 20.5523 2 20V4C2 3.44772 2.44772 3 3 3ZM4 5V19H20V5H4ZM7 7H11V11H7V7ZM7 13H11V17H7V13ZM13 7H17V11H13V7ZM13 13H17V17H13V13Z"></path></svg>`;
+  const SVG_ICON_KEBAB = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>`;
 
   GM_addStyle(`
     /* --- 通用颜色 --- */
@@ -6870,7 +6891,13 @@
     .s1p-search-clear-btn svg {
       width: 12px;
       height: 12px;
-      color: var(--s1p-icon-arrow);
+      color: var(--s1p-t);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .s1p-search-clear-btn:hover {
+        background-color: rgba(255, 255, 255, 0.12);
+      }
     }
 
     /* --- 搜索关键词高亮 --- */
@@ -24124,16 +24151,7 @@
             data-full-tag="\u7f29\u5c0f\uff08\u957f\u6309\u53ef\u8fde\u7eed\u7f29\u653e\uff09"
             aria-label="\u7f29\u5c0f\uff08\u957f\u6309\u53ef\u8fde\u7eed\u7f29\u653e\uff09"
           >
-            <svg
-              class="s1p-image-viewer__zoom-icon"
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="currentColor"
-              aria-hidden="true"
-              focusable="false"
-            >
-              <path d="M18.031 16.6168L22.3137 20.8995L20.8995 22.3137L16.6168 18.031C15.0769 19.263 13.124 20 11 20C6.032 20 2 15.968 2 11C2 6.032 6.032 2 11 2C15.968 2 20 6.032 20 11C20 13.124 19.263 15.0769 18.031 16.6168ZM16.0247 15.8748C17.2475 14.6146 18 12.8956 18 11C18 7.1325 14.8675 4 11 4C7.1325 4 4 7.1325 4 11C4 14.8675 7.1325 18 11 18C12.8956 18 14.6146 17.2475 15.8748 16.0247L16.0247 15.8748ZM7 10H15V12H7V10Z"></path>
-            </svg>
+            ${SVG_ICON_ZOOM_OUT}
           </button>
           <button
             type="button"
@@ -24142,16 +24160,7 @@
             data-full-tag="\u653e\u5927\uff08\u957f\u6309\u53ef\u8fde\u7eed\u7f29\u653e\uff09"
             aria-label="\u653e\u5927\uff08\u957f\u6309\u53ef\u8fde\u7eed\u7f29\u653e\uff09"
           >
-            <svg
-              class="s1p-image-viewer__zoom-icon"
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="currentColor"
-              aria-hidden="true"
-              focusable="false"
-            >
-              <path d="M18.031 16.6168L22.3137 20.8995L20.8995 22.3137L16.6168 18.031C15.0769 19.263 13.124 20 11 20C6.032 20 2 15.968 2 11C2 6.032 6.032 2 11 2C15.968 2 20 6.032 20 11C20 13.124 19.263 15.0769 18.031 16.6168ZM16.0247 15.8748C17.2475 14.6146 18 12.8956 18 11C18 7.1325 14.8675 4 11 4C7.1325 4 4 7.1325 4 11C4 14.8675 7.1325 18 11 18C12.8956 18 14.6146 17.2475 15.8748 16.0247L16.0247 15.8748ZM10 10V7H12V10H15V12H12V15H10V12H7V10H10Z"></path>
-            </svg>
+            ${SVG_ICON_ZOOM_IN}
           </button>
           <button
             type="button"
@@ -24160,16 +24169,7 @@
             data-full-tag="\u5411\u4e0a\u6eda\u52a8\uff08\u957f\u6309\u53ef\u8fde\u7eed\u6eda\u52a8\uff09"
             aria-label="\u5411\u4e0a\u6eda\u52a8\uff08\u957f\u6309\u53ef\u8fde\u7eed\u6eda\u52a8\uff09"
           >
-            <svg
-              class="s1p-image-viewer__zoom-icon"
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="currentColor"
-              aria-hidden="true"
-              focusable="false"
-            >
-              <path d="M7.41 14.59 12 10l4.59 4.59L18 13.17l-6-6-6 6z"></path>
-            </svg>
+            ${SVG_ICON_CHEVRON_UP}
           </button>
           <button
             type="button"
@@ -24178,16 +24178,7 @@
             data-full-tag="\u5411\u4e0b\u6eda\u52a8\uff08\u957f\u6309\u53ef\u8fde\u7eed\u6eda\u52a8\uff09"
             aria-label="\u5411\u4e0b\u6eda\u52a8\uff08\u957f\u6309\u53ef\u8fde\u7eed\u6eda\u52a8\uff09"
           >
-            <svg
-              class="s1p-image-viewer__zoom-icon"
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="currentColor"
-              aria-hidden="true"
-              focusable="false"
-            >
-              <path d="m7.41 8.59 4.59 4.58 4.59-4.58L18 10l-6 6-6-6z"></path>
-            </svg>
+            ${SVG_ICON_CHEVRON_DOWN}
           </button>
           <button type="button" class="s1p-btn" data-action="fit">\u5b8c\u6574\u663e\u793a</button>
           <button type="button" class="s1p-btn" data-action="reset">\u653e\u5927\u663e\u793a</button>
@@ -24203,9 +24194,7 @@
         </div>
         <div class="s1p-image-viewer__viewport">
           <button type="button" class="s1p-image-viewer__nav-btn" data-action="prev" aria-label="\u4e0a\u4e00\u5f20">
-            <svg class="s1p-image-viewer__nav-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
-              <path d="M12.5 4.5L7 10l5.5 5.5"></path>
-            </svg>
+            ${SVG_ICON_CHEVRON_LEFT}
           </button>
           <div class="s1p-image-viewer__image-stage s1p-image-viewer__image-stage--ghost">
             <img class="s1p-image-viewer__image s1p-image-viewer__image-ghost" alt="" />
@@ -24219,9 +24208,7 @@
             <button type="button" class="s1p-btn s1p-image-viewer__switch-cancel-btn" data-action="cancel-switch">\u53d6\u6d88</button>
           </div>
           <button type="button" class="s1p-image-viewer__nav-btn" data-action="next" aria-label="\u4e0b\u4e00\u5f20">
-            <svg class="s1p-image-viewer__nav-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
-              <path d="M7.5 4.5L13 10l-5.5 5.5"></path>
-            </svg>
+            ${SVG_ICON_CHEVRON_RIGHT}
           </button>
         </div>
       </div>
@@ -33646,13 +33633,13 @@
       case AUTO_SYNC_INDICATOR_PHASE_RUNNING:
         return getOperationSvg();
       case AUTO_SYNC_INDICATOR_PHASE_SUCCESS:
-        return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="1 1 22 22" fill="currentColor"><path d="M4 12C4 7.58172 7.58172 4 12 4C16.4183 4 20 7.58172 20 12C20 16.4183 16.4183 20 12 20C7.58172 20 4 16.4183 4 12ZM12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2ZM17.4571 9.45711L16.0429 8.04289L11 13.0858L8.20711 10.2929L6.79289 11.7071L11 15.9142L17.4571 9.45711Z"></path></svg>`;
+        return SVG_ICON_SYNC_SUCCESS;
       case AUTO_SYNC_INDICATOR_PHASE_FAILURE:
       case AUTO_SYNC_INDICATOR_PHASE_CONFLICT:
-        return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="1 1 22 22" fill="currentColor"><path d="M12 22C6.47715 22 2 17.5228 2 12C2 6.47715 6.47715 2 12 2C17.5228 2 22 6.47715 22 12C22 17.5228 17.5228 22 12 22ZM12 20C16.4183 20 20 16.4183 20 12C20 7.58172 16.4183 4 12 4C7.58172 4 4 7.58172 4 12C4 16.4183 7.58172 20 12 20ZM7 11H17V13H7V11Z"></path></svg>`;
+        return SVG_ICON_SYNC_FAILURE;
       case AUTO_SYNC_INDICATOR_PHASE_IDLE:
       default:
-        return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="8" r="2.25"></circle></svg>`;
+        return SVG_ICON_SYNC_IDLE;
     }
   };
 
@@ -35084,7 +35071,7 @@
       handle.className = "s1p-debug-console-resize-handle";
       handle.dataset.edge = edge;
       if (edge === "top-left") {
-        setSanitizedIconHtml(handle, '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M7 8.41421V12L5 12L5 5L12 5V7L8.41421 7L17 15.5858V12L19 12L19 19H12V17H15.5858L7 8.41421Z"></path></svg>');
+        setSanitizedIconHtml(handle, SVG_ICON_RESIZE_DIAGONAL);
       }
       handle.addEventListener("pointerdown", (event) => {
         if (event.button !== 0) return;
@@ -36133,7 +36120,7 @@
     // --- [核心修正] 恢复为原始的、基于“填充(fill)”的实心图标定义 ---
     setSanitizedIconHtml(
       a,
-      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4C14.7486 4 17.1749 5.38626 18.6156 7.5H16V9.5H22V3.5H20V5.99936C18.1762 3.57166 15.2724 2 12 2C6.47715 2 2 6.47715 2 12H4C4 7.58172 7.58172 4 12 4ZM20 12C20 16.4183 16.4183 20 12 20C9.25144 20 6.82508 18.6137 5.38443 16.5H8V14.5H2V20.5H4V18.0006C5.82381 20.4283 8.72764 22 12 22C17.5228 22 22 17.5228 22 12H20Z"></path></svg>`
+      SVG_ICON_SYNC_REFRESH
     );
     li.appendChild(a);
 
@@ -37385,10 +37372,10 @@
         `<path d="M9 5l7 7-7 7" /></svg>`;
       const prevYearHtml =
         leftArrowSvg +
-        `<span class="s1p-dp-year-arrow-offset"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 19l-7-7 7-7" /></svg></span>`;
+        `<span class="s1p-dp-year-arrow-offset">${leftArrowSvg}</span>`;
       const nextYearHtml =
         rightArrowSvg +
-        `<span class="s1p-dp-year-arrow-offset"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7" /></svg></span>`;
+        `<span class="s1p-dp-year-arrow-offset">${rightArrowSvg}</span>`;
 
       const prevYearBtn = createNavBtn("prev-year", "上一年", prevYearHtml);
       const prevMonthBtn = createNavBtn("prev-month", "上个月", leftArrowSvg);
@@ -39276,9 +39263,9 @@
 	                        <div class="s1p-settings-group s1p-settings-group-margin-bottom16">
 	                            <div class="s1p-search-input-wrapper">
 	                                <input type="text" id="s1p-bookmark-search-input" class="s1p-input" placeholder="搜索内容、作者、标题..." autocomplete="off" value="${escapeAttr(normalizedSearchQuery)}">
-	                                <svg class="s1p-search-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" /></svg>
-	                                <button id="s1p-bookmark-search-clear-btn" class="s1p-search-clear-btn s1p-has-tooltip${normalizedSearchQuery ? "" : " hidden"}" data-full-tag="清空搜索" aria-label="清空搜索">
-	                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" /></svg>
+                                ${SVG_ICON_SEARCH}
+                                <button id="s1p-bookmark-search-clear-btn" class="s1p-search-clear-btn s1p-has-tooltip${normalizedSearchQuery ? "" : " hidden"}" data-full-tag="清空搜索" aria-label="清空搜索">
+                                    ${SVG_ICON_X_CIRCLE}
 	                                </button>
 	                            </div>
 	                        </div>`
@@ -40539,9 +40526,7 @@
                                     <div class="s1p-segmented-control-option ${settings.cleanupMode === 'manual' ? 'active' : ''}" data-value="manual">手动</div>
                                 </div>
                                 <button id="s1p-open-progress-detail-btn" class="s1p-btn s1p-progress-detail-btn ${settings.cleanupMode === 'manual' ? '' : 's1p-hidden'}">
-                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="16" height="16" class="s1p-progress-detail-btn-icon">
-                                        <path d="M3 3H21C21.5523 3 22 3.44772 22 4V20C22 20.5523 21.5523 21 21 21H3C2.44772 21 2 20.5523 2 20V4C2 3.44772 2.44772 3 3 3ZM4 5V19H20V5H4ZM7 7H11V11H7V7ZM7 13H11V17H7V13ZM13 7H17V11H13V7ZM13 13H17V17H13V13Z"></path>
-                                    </svg>
+                                    ${SVG_ICON_GRID}
                                     阅读记录详情
                                 </button>
                             </div>
@@ -44159,7 +44144,7 @@
       setCustomTooltip(optionsBtn, "屏蔽此贴");
       setSanitizedIconHtml(
         optionsBtn,
-        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>`
+        SVG_ICON_KEBAB
       );
 
       const optionsMenu = document.createElement("div");
