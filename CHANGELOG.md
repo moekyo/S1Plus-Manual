@@ -19,6 +19,21 @@
 - **日志刷新保留**: 日志缓冲区通过 `sessionStorage`（键 `s1p_log_buffer`）持久化，同标签页刷新后自动恢复（包括展开状态）；关闭标签页后销毁。每条日志 300ms 防抖写入，页面离开时同步刷盘。
 - **日志收集器可重复启停**: 新增 `startLogCollector` / `stopLogCollector` 生命周期管理，每次启动捕获当前 console 引用并只恢复 S1 Plus 自己安装的 wrapper，避免多轮启停造成的 `.bind()` 嵌套累积，也避免覆盖其他脚本后续安装的 console patch。
 - **清空日志完整重置**: 清空操作同时清除 `sessionStorage`、`nextLogEntryId` 和 `expandedLogEntryIds`，确保后续收集从 ID=1 开始且刷新后无残留。
+- **调试面板三态状态机**: `s1p_debug_console_visible` 从布尔值升级为 expanded / collapsed / closed 三态，日志收集器生命周期跟随三态启停；collapsed 态面板隐藏但 FAB 按钮保留，closed 态完全清理。
+- **FAB 悬浮按钮**: 调试面板收起后右下角新增圆形悬浮按钮（虫虫图标），hover 2 秒后渐变为关闭 X 图标支持快速完全关闭；点击展开时播放弹簧缩放动画（panel 从 FAB 位置 morph 弹出），点击收起时播放阻尼旋转摇晃动画（shake with decay，800ms，22°/15°/9°/5° 衰减），模拟被面板收起碰撞的物理感。
+- **面板收起按钮**: 统一调试面板 header 新增专用收起箭头按钮，收起时面板 morph 缩小至 FAB 位置后隐藏，FAB 重新出现。
+- **调试容器卡片统一样式**: 提取 `s1p-debug-section` 通用卡片类（padding: 10px / border-radius: 12px / 半透背景），自动同步面板、日志区、诊断面板、UI 组件展示区四个容器统一适配；调试面板 CSS 变量从 `#s1p-debug-unified-panel` 移至 `#s1p-debug-panel-host` 扩大作用域。
+- **日志复制改为可见即所得**: 复制按钮只复制当前搜索/类型过滤后可见的日志条目，并在按钮反馈中显示实际条数（如「已复制 N 条」）。
+- **确认栏交互增强**: 确认/取消按钮从文字标签改为图标按钮（checkmark / X SVG），确认栏支持展开备注区。
+
+### ✨ UI 组件展示区（新增）
+
+- **UI 组件展示 tab**: 调试面板新增「UI 组件」tab，按类别（按钮、输入框、开关、标签、分段控制器、状态标识、卡片分组、列表条目、确认栏、阅读进度、弹窗浮层等）展示 S1 Plus 所有 UI 组件的视觉样式与交互态，方便开发调试和样式回归。
+- **展示区侧边栏玻璃化**: 侧边栏使用独立圆角磨砂玻璃条（backdrop-filter blur 12px），类别按钮为圆角药丸形（border-radius: 8px）带激活微阴影，独立居中分割线，整体与调试面板玻璃化风格一致。
+- **展示区 HTML 去内联化**: 展示区全部 HTML 片段去除内联 style，改用实际 S1 Plus CSS class 渲染，确保展示效果与生产环境一致。
+- **展示区专用样式覆写**: 新增展示区面板独立的样式规则（按钮悬停态、设置分组、列表分页、空白态、确认栏等），确保组件在调试面板卡片内正确渲染。
+- **展示区交互修正**: toast 回调适配 `showMessage` 新签名（第二个参数改为 boolean），模态框 API 适配新函数签名，图片查看器适配单图模式；分类按钮激活态文字在浅色/深色模式自动适配（走 `var(--s1p-sub-h-t)`）。
+- **调试面板测试基础设施**: 新增 `test-debug-panel-collapse.js`（面板收起/展开动画、FAB 状态切换、三态持久化测试）和 `test-ui-showcase-panel.js`（展示区渲染完整性测试）；测试钩子暴露 `getDebugConsoleState` / `setDebugConsoleState` 等三态 API。
 
 ### ✨ 多标签页同步重构 (Multi-tab Sync Redesign)
 

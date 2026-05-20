@@ -32,8 +32,18 @@
   const DEBUG_UNIFIED_PANEL_ID = "s1p-debug-unified-panel";
   const DEBUG_CONSOLE_PANEL_ID = "s1p-debug-console-panel";
   const DEBUG_SYNC_DIAGNOSTICS_PANEL_ID = "s1p-debug-sync-diagnostics-panel";
+  const DEBUG_PANEL_FAB_ID = "s1p-debug-fab";
   const DEBUG_CONSOLE_VISIBLE_KEY = "s1p_debug_console_visible";
   const DEBUG_CONSOLE_SIZE_KEY = "s1p_debug_console_size";
+  const DEBUG_CONSOLE_STATE_EXPANDED = "expanded";
+  const DEBUG_CONSOLE_STATE_COLLAPSED = "collapsed";
+  const DEBUG_CONSOLE_STATE_CLOSED = "closed";
+  const DEBUG_HOVER_REVEAL_MS = 2000;
+  const DEBUG_PANEL_TRANSITION_MS = 300;
+  const DEBUG_COLLAPSE_ICON_SVG =
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M12 15.6315L20.9679 10.8838L20.0321 9.11619L12 13.3685L3.9679 9.11619L3.03212 10.8838L12 15.6315Z"/></svg>`;
+  const DEBUG_FAB_ICON_SVG =
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M13 19.9C15.2822 19.4367 17 17.419 17 15V12C17 11.299 16.8564 10.6219 16.5846 10H7.41538C7.14358 10.6219 7 11.299 7 12V15C7 17.419 8.71776 19.4367 11 19.9V14H13V19.9ZM5.5358 17.6907C5.19061 16.8623 5 15.9534 5 15H2V13H5V12C5 11.3573 5.08661 10.7348 5.2488 10.1436L3.0359 8.86602L4.0359 7.13397L6.05636 8.30049C6.11995 8.19854 6.18609 8.09835 6.25469 8H17.7453C17.8139 8.09835 17.88 8.19854 17.9436 8.30049L19.9641 7.13397L20.9641 8.86602L18.7512 10.1436C18.9134 10.7348 19 11.3573 19 12V13H22V15H19C19 15.9534 18.8094 16.8623 18.4642 17.6907L20.9641 19.134L19.9641 20.866L17.4383 19.4077C16.1549 20.9893 14.1955 22 12 22C9.80453 22 7.84512 20.9893 6.56171 19.4077L4.0359 20.866L3.0359 19.134L5.5358 17.6907ZM8 6C8 3.79086 9.79086 2 12 2C14.2091 2 16 3.79086 16 6H8Z"/></svg>`;
   const LOG_BUFFER_MAX = 1000;
   const LOG_RENDER_MAX = 200;
   const LOG_COLLAPSED_MESSAGE_MAX_LENGTH = 180;
@@ -69,19 +79,52 @@
   const _consoleWrappers = {};
   const _consoleMethods = ["log", "warn", "error", "debug"];
 
-  const isDebugConsolePersistentlyVisible = () => {
-    if (DEBUG_MODE) return true;
-    try {
-      return GM_getValue(DEBUG_CONSOLE_VISIBLE_KEY, false) === true;
-    } catch (error) {
-      return false;
+  const normalizeDebugConsoleState = (state) => {
+    if (state === true) {
+      return DEBUG_CONSOLE_STATE_EXPANDED;
+    }
+    if (state === false || state === null || state === undefined) {
+      return DEBUG_CONSOLE_STATE_CLOSED;
+    }
+    switch (state) {
+      case DEBUG_CONSOLE_STATE_EXPANDED:
+      case DEBUG_CONSOLE_STATE_COLLAPSED:
+      case DEBUG_CONSOLE_STATE_CLOSED:
+        return state;
+      default:
+        return DEBUG_CONSOLE_STATE_CLOSED;
     }
   };
 
-  const setDebugConsolePersistentlyVisible = (visible) => {
+  const getDebugConsoleState = () => {
+    if (DEBUG_MODE) {
+      return DEBUG_CONSOLE_STATE_EXPANDED;
+    }
     try {
-      GM_setValue(DEBUG_CONSOLE_VISIBLE_KEY, visible === true);
+      return normalizeDebugConsoleState(
+        GM_getValue(DEBUG_CONSOLE_VISIBLE_KEY, DEBUG_CONSOLE_STATE_CLOSED)
+      );
+    } catch (error) {
+      return DEBUG_CONSOLE_STATE_CLOSED;
+    }
+  };
+
+  const setDebugConsoleState = (state) => {
+    try {
+      GM_setValue(DEBUG_CONSOLE_VISIBLE_KEY, normalizeDebugConsoleState(state));
     } catch (error) {}
+  };
+
+  const isDebugConsolePersistentlyVisible = () => {
+    const state = getDebugConsoleState();
+    return (
+      state === DEBUG_CONSOLE_STATE_EXPANDED ||
+      state === DEBUG_CONSOLE_STATE_COLLAPSED
+    );
+  };
+
+  const setDebugConsolePersistentlyVisible = (visible) => {
+    setDebugConsoleState(visible);
   };
 
   let reloadScrollGuardState = null;
@@ -668,6 +711,12 @@
     };
     testHookHost.__S1P_TEST_HOOKS__ = {
       ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
+      getDebugConsoleStateForTest: getDebugConsoleState,
+      setDebugConsoleStateForTest: setDebugConsoleState,
+      isDebugConsolePersistentlyVisibleForTest:
+        isDebugConsolePersistentlyVisible,
+      setDebugConsolePersistentlyVisibleForTest:
+        setDebugConsolePersistentlyVisible,
       startLogCollector,
       stopLogCollector,
       persistLogBuffer,
@@ -3107,6 +3156,15 @@
       opacity: 1;
     }
     #s1p-debug-panel-host {
+      --s1p-debug-console-panel-bg: rgba(255, 255, 255, 0.08);
+      --s1p-debug-console-surface: #f8fafc;
+      --s1p-debug-console-surface-soft: #eef2f7;
+      --s1p-debug-console-surface-raised: #ffffff;
+      --s1p-debug-console-button-bg: #f1f5f9;
+      --s1p-debug-console-button-border: #c7d2df;
+      --s1p-debug-indicator-text: #062a6f;
+      --s1p-debug-indicator-muted: #25477a;
+      --s1p-debug-panel-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
       position: fixed;
       right: 16px;
       bottom: 18px;
@@ -3140,6 +3198,25 @@
       align-items: center;
       justify-content: space-between;
       gap: 8px;
+    }
+    .s1p-debug-panel .s1p-debug-panel-head-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex: 0 0 auto;
+    }
+    .s1p-debug-collapse-btn {
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+    }
+    .s1p-debug-collapse-btn svg {
+      width: 16px;
+      height: 16px;
     }
     .s1p-debug-panel .s1p-debug-panel-title {
       font-size: 13px;
@@ -3208,15 +3285,6 @@
       }
     }
     #s1p-debug-unified-panel {
-      --s1p-debug-console-panel-bg: rgba(255, 255, 255, 0.08);
-      --s1p-debug-console-surface: #f8fafc;
-      --s1p-debug-console-surface-soft: #eef2f7;
-      --s1p-debug-console-surface-raised: #ffffff;
-      --s1p-debug-console-button-bg: #f1f5f9;
-      --s1p-debug-console-button-border: #c7d2df;
-      --s1p-debug-indicator-text: #062a6f;
-      --s1p-debug-indicator-muted: #25477a;
-      --s1p-debug-panel-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
       align-self: flex-end;
       box-sizing: border-box;
       width: min(440px, calc(100vw - 24px));
@@ -3230,7 +3298,7 @@
       padding: 18px 22px 16px;
     }
     @media (prefers-color-scheme: dark) {
-      #s1p-debug-unified-panel {
+      #s1p-debug-panel-host {
         --s1p-debug-console-panel-bg: rgba(8, 13, 24, 0.14);
         --s1p-debug-console-surface: #172033;
         --s1p-debug-console-surface-soft: #202b3d;
@@ -3249,6 +3317,148 @@
       -webkit-backdrop-filter: var(--s1p-dialog-glass-filter);
       backdrop-filter: var(--s1p-dialog-glass-filter);
       gap: 6px;
+    }
+    #s1p-debug-fab {
+      position: absolute;
+      right: -8px;
+      bottom: -8px;
+      z-index: 3;
+      width: 44px;
+      height: 44px;
+      padding: 0;
+      border: none;
+      border-radius: 50%;
+      color: var(--s1p-t);
+      background: var(--s1p-debug-console-panel-bg);
+      box-shadow: var(--s1p-debug-panel-shadow);
+      -webkit-backdrop-filter: var(--s1p-dialog-glass-filter);
+      backdrop-filter: var(--s1p-dialog-glass-filter);
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      cursor: pointer;
+      pointer-events: auto;
+      transform-origin: 50% 50%;
+      transition:
+        opacity 300ms cubic-bezier(0.34, 1.56, 0.64, 1) !important,
+        transform 300ms cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+    }
+    #s1p-debug-fab.s1p-fab-hidden {
+      opacity: 0;
+      pointer-events: none;
+      transform: scale(0.62);
+    }
+    #s1p-debug-fab .s1p-fab-icon,
+    #s1p-debug-fab .s1p-fab-x-icon {
+      grid-area: 1 / 1;
+      width: 24px;
+      height: 24px;
+      display: grid;
+      place-items: center;
+      transition:
+        opacity 180ms ease !important,
+        transform 180ms ease !important;
+    }
+    #s1p-debug-fab .s1p-fab-icon svg,
+    #s1p-debug-fab .s1p-fab-x-icon svg {
+      width: 24px;
+      height: 24px;
+    }
+    #s1p-debug-fab .s1p-fab-x-icon {
+      opacity: 0;
+      transform: scale(0.72) rotate(-24deg);
+    }
+    #s1p-debug-fab.s1p-fab-close-ready .s1p-fab-icon {
+      opacity: 0;
+      transform: scale(0.72) rotate(24deg);
+    }
+    #s1p-debug-fab.s1p-fab-close-ready .s1p-fab-x-icon {
+      opacity: 1;
+      transform: scale(1) rotate(0deg);
+    }
+    .s1p-debug-panel.s1p-collapsing,
+    .s1p-debug-panel.s1p-expanding {
+      transform-origin: 100% 100%;
+      will-change: transform, opacity;
+      animation-duration: 300ms !important;
+      animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+      animation-fill-mode: both;
+    }
+    .s1p-debug-panel.s1p-collapsing {
+      animation-name: s1p-debug-panel-collapse;
+    }
+    .s1p-debug-panel.s1p-expanding {
+      animation-name: s1p-debug-panel-expand;
+    }
+    #s1p-debug-fab.s1p-collapsing,
+    #s1p-debug-fab.s1p-expanding {
+      will-change: transform, opacity;
+      animation-fill-mode: both;
+    }
+    #s1p-debug-fab.s1p-collapsing {
+      animation-name: s1p-debug-fab-shake;
+      animation-duration: 800ms !important;
+      animation-timing-function: linear !important;
+    }
+    #s1p-debug-fab.s1p-expanding {
+      animation-name: s1p-debug-fab-exit;
+      animation-duration: 300ms !important;
+      animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+    }
+    #s1p-debug-unified-panel.s1p-collapsed {
+      opacity: 0;
+      pointer-events: none;
+      transform: scale(
+        var(--s1p-debug-panel-morph-scale-x, 0.12),
+        var(--s1p-debug-panel-morph-scale-y, 0.12)
+      );
+      transform-origin: 100% 100%;
+    }
+    @keyframes s1p-debug-panel-collapse {
+      from {
+        opacity: 1;
+        transform: scale(1);
+      }
+      to {
+        opacity: 0;
+        transform: scale(
+          var(--s1p-debug-panel-morph-scale-x, 0.12),
+          var(--s1p-debug-panel-morph-scale-y, 0.12)
+        );
+      }
+    }
+    @keyframes s1p-debug-panel-expand {
+      from {
+        opacity: 0;
+        transform: scale(
+          var(--s1p-debug-panel-morph-scale-x, 0.12),
+          var(--s1p-debug-panel-morph-scale-y, 0.12)
+        );
+      }
+      to {
+        opacity: 1;
+        transform: scale(1);
+      }
+    }
+    @keyframes s1p-debug-fab-shake {
+      0%   { opacity: 0; transform: scale(0.56) rotate(0deg); }
+      13%  { opacity: 1; transform: scale(0.70) rotate(30deg); }
+      26%  { opacity: 1; transform: scale(0.88) rotate(-22deg); }
+      39%  { opacity: 1; transform: scale(0.97) rotate(13deg); }
+      52%  { opacity: 1; transform: scale(1)    rotate(-7deg); }
+      65%  { opacity: 1; transform: scale(1)    rotate(3deg); }
+      80%  { opacity: 1; transform: scale(1)    rotate(-1deg); }
+      100% { opacity: 1; transform: scale(1)    rotate(0deg); }
+    }
+    @keyframes s1p-debug-fab-exit {
+      from {
+        opacity: 1;
+        transform: scale(1);
+      }
+      to {
+        opacity: 0;
+        transform: scale(0.56);
+      }
     }
     #s1p-debug-unified-panel .s1p-debug-panel-head {
       padding: 5px 2px 2px 8px;
@@ -3296,7 +3506,7 @@
       visibility: visible;
       pointer-events: auto;
     }
-    #s1p-auto-sync-debug-panel.s1p-debug-tab-pane {
+    #s1p-debug-unified-panel .s1p-debug-section {
       padding: 10px;
       border-radius: 12px;
       background: color-mix(in srgb, var(--s1p-debug-console-surface-soft) 90%, transparent);
@@ -3333,9 +3543,6 @@
       font-family: "SF Mono", "Menlo", "Monaco", "Cascadia Code", monospace;
       font-size: 12px;
       line-height: 1.5;
-      background: var(--s1p-debug-console-surface-soft);
-      border-radius: 12px;
-      padding: 6px 0;
       scrollbar-color: var(--s1p-settings-scrollbar-thumb) transparent;
       scrollbar-gutter: stable;
     }
@@ -34008,6 +34215,7 @@
     closeAriaLabel = "关闭调试面板",
     closeTooltipText = "关闭调试面板",
     onAction = null,
+    onCollapse = null,
     onHide = null,
   }) => {
     const panel = document.createElement("div");
@@ -34021,12 +34229,24 @@
     titleEl.className = "s1p-debug-panel-title";
     titleEl.textContent = title;
     head.appendChild(titleEl);
-    head.appendChild(
+
+    const headActions = document.createElement("div");
+    headActions.className = "s1p-debug-panel-head-actions";
+    const collapseButton = document.createElement("button");
+    collapseButton.type = "button";
+    collapseButton.className =
+      `${MODAL_CLOSE_BUTTON_BASE_CLASS} s1p-debug-collapse-btn`;
+    collapseButton.setAttribute("aria-label", "收起调试面板");
+    setCustomTooltip(collapseButton, "收起调试面板");
+    setSanitizedIconHtml(collapseButton, DEBUG_COLLAPSE_ICON_SVG);
+    headActions.appendChild(collapseButton);
+    headActions.appendChild(
       createModalCloseButton({
         ariaLabel: closeAriaLabel,
         tooltipText: closeTooltipText,
       })
     );
+    head.appendChild(headActions);
     panel.appendChild(head);
 
     if (note) {
@@ -34044,6 +34264,12 @@
     }
 
     panel.addEventListener("click", (event) => {
+      if (event.target.closest(".s1p-debug-collapse-btn")) {
+        if (typeof onCollapse === "function") {
+          onCollapse(panel);
+        }
+        return;
+      }
       if (event.target.closest(".s1p-settings-close-btn")) {
         panel.classList.add("s1p-hidden");
         if (typeof onHide === "function") {
@@ -34067,9 +34293,224 @@
     return panel;
   };
 
+  const getDebugPanelFAB = () => document.getElementById(DEBUG_PANEL_FAB_ID);
+
+  const removeDebugPanelFAB = () => {
+    const fab = getDebugPanelFAB();
+    if (!fab) {
+      return;
+    }
+    if (fab.__s1pDebugFabClearHoverTimer) {
+      fab.__s1pDebugFabClearHoverTimer();
+    }
+    fab.remove();
+  };
+
+  const setDebugPanelFABCloseReady = (fab, closeReady) => {
+    if (!fab) {
+      return;
+    }
+    fab.classList.toggle("s1p-fab-close-ready", closeReady === true);
+    fab.setAttribute(
+      "aria-label",
+      closeReady === true ? "关闭调试面板" : "展开调试面板"
+    );
+    setCustomTooltip(
+      fab,
+      closeReady === true ? "关闭调试面板" : "展开调试面板"
+    );
+  };
+
+  const createDebugPanelFAB = ({ hidden = false } = {}) => {
+    const existing = getDebugPanelFAB();
+    if (existing) {
+      existing.classList.toggle("s1p-fab-hidden", hidden === true);
+      return existing;
+    }
+
+    const host = ensureS1pDebugPanelHost();
+    const fab = document.createElement("button");
+    fab.id = DEBUG_PANEL_FAB_ID;
+    fab.type = "button";
+    fab.className = `s1p-debug-fab${hidden ? " s1p-fab-hidden" : ""}`;
+    fab.setAttribute("aria-label", "展开调试面板");
+    setCustomTooltip(fab, "展开调试面板");
+
+    const bugIcon = document.createElement("span");
+    bugIcon.className = "s1p-fab-icon";
+    setSanitizedIconHtml(bugIcon, DEBUG_FAB_ICON_SVG);
+    const closeIcon = document.createElement("span");
+    closeIcon.className = "s1p-fab-x-icon";
+    setSanitizedIconHtml(closeIcon, MODAL_CLOSE_BUTTON_ICON_SVG);
+    fab.append(bugIcon, closeIcon);
+
+    let hoverTimer = null;
+    const clearHoverTimer = () => {
+      if (hoverTimer) {
+        clearTimeout(hoverTimer);
+        hoverTimer = null;
+      }
+    };
+    fab.__s1pDebugFabClearHoverTimer = clearHoverTimer;
+    fab.addEventListener("mouseenter", () => {
+      clearHoverTimer();
+      hoverTimer = setTimeout(() => {
+        hoverTimer = null;
+        setDebugPanelFABCloseReady(fab, true);
+      }, DEBUG_HOVER_REVEAL_MS);
+    });
+    fab.addEventListener("mouseleave", () => {
+      clearHoverTimer();
+      setDebugPanelFABCloseReady(fab, false);
+    });
+    fab.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (fab.classList.contains("s1p-fab-close-ready")) {
+        collapseDebugPanel(document.getElementById(DEBUG_UNIFIED_PANEL_ID), fab);
+        return;
+      }
+      expandDebugPanel(document.getElementById(DEBUG_UNIFIED_PANEL_ID), fab);
+    });
+
+    host.appendChild(fab);
+    return fab;
+  };
+
+  const finishDebugPanelTransition = (panel, fab) => {
+    if (panel) {
+      panel.classList.remove("s1p-collapsing", "s1p-expanding");
+      panel.style.transform = "";
+      panel.style.opacity = "";
+      panel.style.removeProperty?.("--s1p-debug-panel-morph-scale-x");
+      panel.style.removeProperty?.("--s1p-debug-panel-morph-scale-y");
+    }
+    if (fab) {
+      fab.classList.remove("s1p-collapsing", "s1p-expanding");
+      fab.style.transform = "";
+      fab.style.opacity = "";
+    }
+  };
+
+  const setDebugPanelMorphScale = (panel, fab) => {
+    try {
+      const panelRect = panel?.getBoundingClientRect?.();
+      const fabRect = fab?.getBoundingClientRect?.();
+      if (
+        !panelRect ||
+        !fabRect ||
+        panelRect.width <= 0 ||
+        panelRect.height <= 0 ||
+        fabRect.width <= 0 ||
+        fabRect.height <= 0
+      ) {
+        return;
+      }
+      const scaleX = Math.max(
+        0.04,
+        Math.min(1, fabRect.width / panelRect.width)
+      );
+      const scaleY = Math.max(
+        0.04,
+        Math.min(1, fabRect.height / panelRect.height)
+      );
+      panel.style.setProperty?.(
+        "--s1p-debug-panel-morph-scale-x",
+        scaleX.toFixed(4)
+      );
+      panel.style.setProperty?.(
+        "--s1p-debug-panel-morph-scale-y",
+        scaleY.toFixed(4)
+      );
+    } catch (error) {}
+  };
+
+  const clearDebugPanelTransitionTimer = (panel) => {
+    if (!panel?.__s1pDebugPanelTransitionTimer) {
+      return;
+    }
+    clearTimeout(panel.__s1pDebugPanelTransitionTimer);
+    panel.__s1pDebugPanelTransitionTimer = null;
+    panel.__s1pDebugPanelTransitionKind = "";
+  };
+
+  const collapseDebugPanel = (panel, fab = null) => {
+    const targetPanel = panel || document.getElementById(DEBUG_UNIFIED_PANEL_ID);
+    if (!(targetPanel instanceof HTMLElement)) {
+      setDebugConsoleState(DEBUG_CONSOLE_STATE_COLLAPSED);
+      createDebugPanelFAB({ hidden: false });
+      startLogCollector();
+      return;
+    }
+    const targetFab = fab || createDebugPanelFAB({ hidden: false });
+    setDebugConsoleState(DEBUG_CONSOLE_STATE_COLLAPSED);
+    startLogCollector();
+    setDebugPanelFABCloseReady(targetFab, false);
+    setDebugPanelMorphScale(targetPanel, targetFab);
+    targetPanel.classList.remove("s1p-hidden", "s1p-expanding");
+    targetPanel.classList.add("s1p-collapsing", "s1p-collapsed");
+    targetFab.classList.remove("s1p-fab-hidden", "s1p-expanding");
+    targetFab.classList.add("s1p-collapsing");
+    clearDebugPanelTransitionTimer(targetPanel);
+    targetPanel.__s1pDebugPanelTransitionKind = "collapse";
+    targetPanel.__s1pDebugPanelTransitionTimer = setTimeout(() => {
+      if (
+        targetPanel.__s1pDebugPanelTransitionKind === "collapse" &&
+        getDebugConsoleState() === DEBUG_CONSOLE_STATE_COLLAPSED
+      ) {
+        targetPanel.classList.add("s1p-hidden");
+      }
+      targetPanel.__s1pDebugPanelTransitionTimer = null;
+      targetPanel.__s1pDebugPanelTransitionKind = "";
+      finishDebugPanelTransition(targetPanel, targetFab);
+    }, DEBUG_PANEL_TRANSITION_MS);
+  };
+
+  const expandDebugPanel = (panel = null, fab = null) => {
+    const targetFab = fab || getDebugPanelFAB();
+    setDebugConsoleState(DEBUG_CONSOLE_STATE_EXPANDED);
+    startLogCollector();
+    setDebugPanelFABCloseReady(targetFab, false);
+
+    let targetPanel = panel || document.getElementById(DEBUG_UNIFIED_PANEL_ID);
+    if (!(targetPanel instanceof HTMLElement)) {
+      targetPanel = initializeDebugUnifiedPanel({
+        persistVisible: true,
+        activeTab: "log",
+        forceState: DEBUG_CONSOLE_STATE_EXPANDED,
+      });
+    }
+    if (!(targetPanel instanceof HTMLElement)) {
+      return targetPanel;
+    }
+    clearDebugPanelTransitionTimer(targetPanel);
+    if (targetFab) {
+      setDebugPanelMorphScale(targetPanel, targetFab);
+    }
+    targetPanel.classList.remove("s1p-hidden", "s1p-collapsed", "s1p-collapsing");
+    targetPanel.classList.add("s1p-expanding");
+    if (targetFab) {
+      targetFab.classList.remove("s1p-collapsing");
+      targetFab.classList.add("s1p-expanding", "s1p-fab-hidden");
+    }
+    targetPanel.__s1pDebugPanelTransitionKind = "expand";
+    targetPanel.__s1pDebugPanelTransitionTimer = setTimeout(() => {
+      targetPanel.__s1pDebugPanelTransitionTimer = null;
+      targetPanel.__s1pDebugPanelTransitionKind = "";
+      finishDebugPanelTransition(targetPanel, targetFab);
+    }, DEBUG_PANEL_TRANSITION_MS);
+    return targetPanel;
+  };
+
   const hideDebugUnifiedPanel = () => {
-    document.getElementById(DEBUG_UNIFIED_PANEL_ID)?.classList.add("s1p-hidden");
-    setDebugConsolePersistentlyVisible(false);
+    const panel = document.getElementById(DEBUG_UNIFIED_PANEL_ID);
+    if (panel) {
+      clearDebugPanelTransitionTimer(panel);
+      panel.classList.add("s1p-hidden");
+      panel.classList.remove("s1p-collapsed", "s1p-collapsing", "s1p-expanding");
+    }
+    removeDebugPanelFAB();
+    setDebugConsoleState(DEBUG_CONSOLE_STATE_CLOSED);
     stopLogCollector();
   };
 
@@ -34196,7 +34637,7 @@
   const createAutoSyncIndicatorDebugTabContent = () => {
     const panel = document.createElement("div");
     panel.id = AUTO_SYNC_INDICATOR_DEBUG_PANEL_ID;
-    panel.className = "s1p-debug-tab-pane s1p-hidden";
+    panel.className = "s1p-debug-tab-pane s1p-hidden s1p-debug-section";
     panel.dataset.s1pDebugTabPane = "indicator";
 
     const noteEl = document.createElement("div");
@@ -35204,6 +35645,8 @@
       { label: "默认", cls: "s1p-btn", text: "按钮" },
       { label: "悬停态", cls: "s1p-btn s1p-ui-force-hover", text: "按钮" },
       { label: "禁用态", cls: "s1p-btn", text: "按钮", disabled: true },
+      { label: "主按钮", cls: "s1p-btn s1p-primary", text: "按钮" },
+      { label: "主按钮-悬停", cls: "s1p-btn s1p-primary s1p-ui-force-hover", text: "按钮" },
       { label: "小按钮", cls: "s1p-btn s1p-btn-sm", text: "小" },
       { label: "小-悬停", cls: "s1p-btn s1p-btn-sm s1p-ui-force-hover", text: "小" },
       { label: "小-禁用", cls: "s1p-btn s1p-btn-sm", text: "小", disabled: true },
@@ -35237,7 +35680,7 @@
       { label: "关闭-禁用", html: '<label class="s1p-switch"><input type="checkbox" disabled><span class="s1p-slider"></span></label>' },
       { label: "条目小开关-开", html: '<label class="s1p-switch s1p-item-toggle"><input type="checkbox" checked><span class="s1p-slider"></span></label>' },
       { label: "条目小开关-关", html: '<label class="s1p-switch s1p-item-toggle"><input type="checkbox"><span class="s1p-slider"></span></label>' },
-      { label: "功能大开关", html: '<div class="s1p-feature-toggle"><div class="s1p-feature-toggle-item"><span>示例功能</span><label class="s1p-switch"><input type="checkbox" checked><span class="s1p-slider"></span></label></div></div>' },
+      { label: "功能大开关", html: '<div class="s1p-settings-group"><div class="s1p-settings-item s1p-feature-toggle-item"><label class="s1p-settings-label s1p-settings-section-title-label">示例功能</label><label class="s1p-switch"><input type="checkbox" checked><span class="s1p-slider"></span></label></div></div>' },
     ];
     return (
       createShowcaseSectionHeader("开关", "s1p-switch / s1p-slider / s1p-item-toggle") +
@@ -35249,7 +35692,7 @@
 
   const buildSegmentedShowcase = () => {
     const html =
-      '<div class="s1p-segmented-control" style="position:relative;"><div class="s1p-segmented-control-slider" style="position:absolute;top:2px;left:0;height:calc(100% - 4px);background-color:var(--s1p-sec);border-radius:5px;width:52px;"></div><div class="s1p-segmented-control-option active" style="position:relative;z-index:1;padding:4px 12px;color:var(--s1p-white);font-weight:500;border-radius:4px;">选项A</div><div class="s1p-segmented-control-option" style="position:relative;z-index:1;padding:4px 12px;color:var(--s1p-desc-t);border-radius:4px;">选项B</div><div class="s1p-segmented-control-option" style="position:relative;z-index:1;padding:4px 12px;color:var(--s1p-desc-t);border-radius:4px;">选项C</div></div>';
+      '<div class="s1p-segmented-control"><div class="s1p-segmented-control-slider" style="width:52px;"></div><div class="s1p-segmented-control-option active">选项A</div><div class="s1p-segmented-control-option">选项B</div><div class="s1p-segmented-control-option">选项C</div></div>';
     return createShowcaseSectionHeader("分段控制器", "s1p-segmented-control") + '<div class="s1p-ui-showcase-grid">' + createShowcaseVariantRow("三选项", html) + "</div>";
   };
 
@@ -35365,7 +35808,7 @@
   };
 
   const buildCardShowcase = () => {
-    const settingsGroup = `<div class="s1p-settings-group" style="border:1px solid var(--s1p-pri);border-radius:8px;padding:12px;margin:4px 0;"><div class="s1p-settings-sub-group" style="border-bottom:1px solid var(--s1p-pri);padding-bottom:8px;margin-bottom:8px;font-weight:600;font-size:13px;">设置分组标题</div><div class="s1p-settings-item" style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;"><span>设置项 A</span><label class="s1p-switch"><input type="checkbox" checked><span class="s1p-slider"></span></label></div><div class="s1p-settings-item" style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-top:1px solid var(--s1p-sub);"><span>设置项 B (带描述)</span><input class="s1p-input" type="text" value="示例值" style="width:120px;"></div></div>`;
+    const settingsGroup = `<div class="s1p-settings-group"><div class="s1p-settings-group-title s1p-settings-section-title-label">设置分组标题</div><div class="s1p-settings-item"><label class="s1p-settings-label">设置项 A</label><label class="s1p-switch"><input type="checkbox" checked><span class="s1p-slider"></span></label></div><div class="s1p-settings-item"><label class="s1p-settings-label">设置项 B (带描述)</label><input class="s1p-input" type="text" value="示例值"></div></div>`;
     return (
       createShowcaseSectionHeader("卡片分组", "s1p-settings-group / s1p-settings-item") +
       '<div class="s1p-ui-showcase-grid">' +
@@ -35375,10 +35818,10 @@
   };
 
   const buildListShowcase = () => {
-    const blockedUser = `<div class="s1p-item" style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border:1px solid var(--s1p-pri);border-radius:6px;margin:4px 0;"><div class="s1p-item-info"><span class="s1p-item-title" style="font-weight:600;">被屏蔽用户</span><span class="s1p-item-meta" style="color:var(--s1p-desc-t);font-size:12px;margin-left:8px;">UID: 12345</span></div><label class="s1p-switch s1p-item-toggle"><input type="checkbox" checked><span class="s1p-slider"></span></label></div>`;
-    const blockedThread = `<div class="s1p-item" style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border:1px solid var(--s1p-pri);border-radius:6px;margin:4px 0;"><div class="s1p-item-info"><span class="s1p-item-title" style="font-weight:600;">被屏蔽主题标题</span><span class="s1p-item-meta" style="color:var(--s1p-desc-t);font-size:12px;margin-left:8px;">TID: 1111111</span></div><button class="s1p-btn s1p-btn-sm s1p-danger" type="button">取消屏蔽</button></div>`;
-    const emptyState = `<div class="s1p-empty" style="text-align:center;padding:24px;color:var(--s1p-desc-t);font-size:14px;">暂无数据</div>`;
-    const pagination = `<div class="s1p-list-pagination" style="display:flex;align-items:center;justify-content:center;gap:12px;padding:8px 0;"><button class="s1p-btn s1p-btn-sm" type="button" disabled>上一页</button><span class="s1p-list-pagination-info" style="font-size:13px;color:var(--s1p-t);">第 1/3 页</span><button class="s1p-btn s1p-btn-sm" type="button">下一页</button></div>`;
+    const blockedUser = `<div class="s1p-item"><div class="s1p-item-info"><div class="s1p-item-title">被屏蔽用户</div><div class="s1p-item-meta">UID: 12345</div></div><label class="s1p-switch s1p-item-toggle"><input type="checkbox" checked><span class="s1p-slider"></span></label></div>`;
+    const blockedThread = `<div class="s1p-item"><div class="s1p-item-info"><div class="s1p-item-title">被屏蔽主题标题</div><div class="s1p-item-meta">TID: 1111111</div></div><button class="s1p-btn s1p-btn-sm s1p-danger" type="button">取消屏蔽</button></div>`;
+    const emptyState = `<div class="s1p-empty">暂无数据</div>`;
+    const pagination = `<div class="s1p-list-pagination"><button class="s1p-btn s1p-list-pagination-btn" type="button" disabled>上一页</button><span class="s1p-list-pagination-info">第 1/3 页</span><button class="s1p-btn s1p-list-pagination-btn" type="button">下一页</button></div>`;
     return (
       createShowcaseSectionHeader("列表条目", "s1p-list / s1p-item / s1p-list-pagination / s1p-empty") +
       '<div class="s1p-ui-showcase-grid">' +
@@ -35391,8 +35834,8 @@
   };
 
   const buildConfirmBarShowcase = () => {
-    const simple = `<div class="s1p-confirm-container"><div class="s1p-confirm-bar" style="display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid var(--s1p-pri);border-radius:6px;background:var(--s1p-bg);"><span class="s1p-confirm-text" style="flex:1;font-size:13px;">确认执行此操作？</span><span class="s1p-confirm-separator" style="color:var(--s1p-pri);">|</span><button class="s1p-confirm-action-btn s1p-btn s1p-btn-sm" type="button">确认</button><button class="s1p-confirm-action-btn s1p-btn s1p-btn-sm s1p-danger" type="button">取消</button></div></div>`;
-    const withRemark = `<div class="s1p-confirm-container"><div class="s1p-confirm-bar s1p-confirm-bar-card" style="display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid var(--s1p-pri);border-radius:6px;background:var(--s1p-bg);"><span class="s1p-confirm-text" style="flex:1;font-size:13px;">屏蔽该用户？</span><span class="s1p-confirm-separator" style="color:var(--s1p-pri);">|</span><button class="s1p-confirm-action-btn s1p-btn s1p-btn-sm" type="button">确认</button><button class="s1p-confirm-action-btn s1p-btn s1p-btn-sm s1p-danger" type="button">取消</button></div><div class="s1p-confirm-remark-area" style="margin-top:4px;padding:8px;border:1px dashed var(--s1p-pri);border-radius:4px;"><textarea class="s1p-confirm-input s1p-input" placeholder="备注（可选）" style="font-size:13px;min-height:40px;">屏蔽原因...</textarea></div></div>`;
+    const simple = `<div class="s1p-confirm-container"><div class="s1p-confirm-bar"><span class="s1p-confirm-text">确认执行此操作？</span><span class="s1p-confirm-separator"></span><button class="s1p-confirm-action-btn s1p-confirm" type="button" title="确认"></button><button class="s1p-confirm-action-btn s1p-cancel" type="button" title="取消"></button></div></div>`;
+    const withRemark = `<div class="s1p-confirm-container"><div class="s1p-confirm-bar s1p-has-expander"><span class="s1p-confirm-text">屏蔽该用户？</span><span class="s1p-confirm-separator"></span><button class="s1p-confirm-action-btn s1p-confirm" type="button" title="确认"></button><button class="s1p-confirm-action-btn s1p-cancel" type="button" title="取消"></button></div><div class="s1p-confirm-remark-area"><textarea class="s1p-confirm-input s1p-input" placeholder="备注（可选）">屏蔽原因...</textarea></div></div>`;
     return (
       createShowcaseSectionHeader("确认栏", "s1p-confirm-bar / buildConfirmationMarkup()") +
       '<div class="s1p-ui-showcase-grid">' +
@@ -35517,37 +35960,51 @@
         display: flex;
         height: 100%;
         min-height: 0;
+        box-sizing: border-box;
       }
       .s1p-ui-showcase-sidebar {
         width: 130px;
         flex-shrink: 0;
         overflow-y: auto;
         overflow-x: hidden;
-        border-right: 1px solid var(--s1p-pri);
-        padding: 6px 0;
-        background: var(--s1p-bg);
+        padding: 10px 0;
+        border-radius: 10px;
+        background: color-mix(in srgb, var(--s1p-debug-console-surface-soft) 40%, transparent);
+        -webkit-backdrop-filter: blur(12px);
+        backdrop-filter: blur(12px);
+      }
+      .s1p-ui-showcase-divider {
+        width: 1px;
+        margin: 10px 4px;
+        flex-shrink: 0;
+        background: color-mix(in srgb, var(--s1p-pri) 50%, transparent);
+        border-radius: 1px;
       }
       .s1p-ui-showcase-cat-btn {
         display: block;
-        width: 100%;
+        width: calc(100% - 12px);
+        margin: 2px 6px;
         padding: 7px 12px;
-        font-size: 12px;
+        font-size: 11px;
+        font-weight: 600;
         color: var(--s1p-desc-t);
         background: transparent;
         border: none;
+        border-radius: 8px;
         cursor: pointer;
         text-align: left;
-        transition: background 0.15s, color 0.15s;
+        transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
         white-space: nowrap;
       }
       .s1p-ui-showcase-cat-btn:hover {
-        background: var(--s1p-sub);
+        background: color-mix(in srgb, var(--s1p-pri) 15%, transparent);
         color: var(--s1p-t);
       }
       .s1p-ui-showcase-cat-btn.active {
         background: var(--s1p-sec);
-        color: var(--s1p-white);
+        color: var(--s1p-sub-h-t);
         font-weight: 600;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
       }
       .s1p-ui-showcase-content {
         flex: 1;
@@ -35565,10 +36022,10 @@
       .s1p-ui-showcase-section-header {
         margin-bottom: 10px;
         padding-bottom: 6px;
-        border-bottom: 1px solid var(--s1p-pri);
+        border-bottom: 1px solid color-mix(in srgb, var(--s1p-pri) 20%, transparent);
       }
       .s1p-ui-showcase-section-title {
-        font-size: 14px;
+        font-size: 13px;
         font-weight: 700;
         color: var(--s1p-t);
       }
@@ -35589,10 +36046,10 @@
         align-items: center;
         gap: 10px;
         padding: 6px 10px;
-        border: 1px solid var(--s1p-sub);
+        border: none;
         border-radius: 6px;
         min-width: 0;
-        background: var(--s1p-bg);
+        background: color-mix(in srgb, var(--s1p-debug-console-surface-soft) 90%, transparent);
       }
       .s1p-ui-showcase-variant-label {
         width: 85px;
@@ -35620,6 +36077,46 @@
       }
       .s1p-ui-showcase-variant-block .s1p-ui-showcase-variant-render {
         width: 100%;
+      }
+      .s1p-ui-showcase-panel .s1p-btn.s1p-primary {
+        background-color: #3b82f6;
+        color: var(--s1p-white);
+      }
+      .s1p-ui-showcase-panel .s1p-btn.s1p-primary.s1p-ui-force-hover {
+        background-color: #2563eb;
+      }
+      .s1p-ui-showcase-panel .s1p-settings-group {
+        width: 100%;
+        box-sizing: border-box;
+      }
+      .s1p-ui-showcase-panel .s1p-settings-item .s1p-input {
+        min-width: 0;
+        width: 140px;
+      }
+      .s1p-ui-showcase-panel .s1p-list-pagination {
+        justify-content: center;
+        margin-top: 0;
+      }
+      .s1p-ui-showcase-panel .s1p-empty {
+        width: 100%;
+        text-align: center;
+        padding: 22px 8px;
+        color: var(--s1p-desc-t);
+        font-size: 13px;
+      }
+      .s1p-ui-showcase-panel .s1p-confirm-bar {
+        width: 100%;
+      }
+      .s1p-ui-showcase-panel .s1p-confirm-remark-area {
+        margin-top: 4px;
+        padding: 8px;
+        border: 1px dashed var(--s1p-pri);
+        border-radius: 4px;
+      }
+      .s1p-ui-showcase-panel .s1p-confirm-input {
+        width: 100%;
+        min-height: 44px;
+        box-sizing: border-box;
       }
       .s1p-ui-force-hover {
         background-color: var(--s1p-sub-h) !important;
@@ -35654,7 +36151,7 @@
     panel.appendChild(style);
 
     const layout = document.createElement("div");
-    layout.className = "s1p-ui-showcase-layout";
+    layout.className = "s1p-ui-showcase-layout s1p-debug-section";
 
     const sidebar = document.createElement("div");
     sidebar.className = "s1p-ui-showcase-sidebar";
@@ -35669,6 +36166,10 @@
     });
     layout.appendChild(sidebar);
 
+    const divider = document.createElement("div");
+    divider.className = "s1p-ui-showcase-divider";
+    layout.appendChild(divider);
+
     const content = document.createElement("div");
     content.className = "s1p-ui-showcase-content";
     content.addEventListener("click", (e) => {
@@ -35678,46 +36179,58 @@
       if (action === "toast-neutral") {
         if (typeof showMessage === "function") showMessage("这是一条中性提示");
       } else if (action === "toast-success") {
-        if (typeof showMessage === "function") showMessage("操作成功", "success");
+        if (typeof showMessage === "function") showMessage("操作成功", true);
       } else if (action === "toast-error") {
-        if (typeof showMessage === "function") showMessage("操作失败", "error");
+        if (typeof showMessage === "function") showMessage("操作失败", false);
       } else if (action === "open-confirm-modal") {
         if (typeof createConfirmationModal === "function") {
-          createConfirmationModal("标题", "这里是模态框的内容描述", "确认", "取消", () => {}, () => {});
+          createConfirmationModal("确认模态框", "这里是模态框的内容描述", () => {
+            if (typeof showMessage === "function") {
+              showMessage("已确认", true);
+            }
+          }, "确认");
         }
       } else if (action === "open-input-modal") {
         if (typeof createInputModal === "function") {
-          createInputModal("输入框标题", "请输入内容", "", "确定", "取消", (val) => {
+          createInputModal("输入框标题", "请输入内容", "", (val) => {
             if (typeof showMessage === "function") showMessage("输入值: " + (val || "(空)"));
-          });
+          }, "确定", "请输入内容");
         }
       } else if (action === "open-advanced-confirm") {
         if (typeof createAdvancedConfirmationModal === "function") {
-          createAdvancedConfirmationModal({
-            title: "高级确认弹窗",
-            bodyHtml: "<div><p>这是高级确认弹窗的 <strong>HTML 内容</strong>。</p><p>可以放入任意组件。</p></div>",
-            customClass: "",
-            buttons: [
-              { text: "取消", class: "s1p-btn s1p-danger", onClick: () => {}, closeOnClick: true },
-              { text: "确认", class: "s1p-btn", onClick: () => { if (typeof showMessage === "function") showMessage("已确认", "success"); }, closeOnClick: true },
+          createAdvancedConfirmationModal(
+            "高级确认弹窗",
+            "<div><p>这是高级确认弹窗的 <strong>HTML 内容</strong>。</p><p>可以放入任意组件。</p></div>",
+            [
+              { text: "取消", className: "s1p-btn s1p-danger", onClick: () => {}, closeOnClick: true },
+              { text: "确认", className: "s1p-btn", onClick: () => { if (typeof showMessage === "function") showMessage("已确认", true); }, closeOnClick: true },
             ],
-          });
+            { allowBodyHtml: true }
+          );
         }
       } else if (action === "open-welcome-popup") {
-        if (typeof showFirstTimeWelcomeIfNeeded === "function") {
-          showFirstTimeWelcomeIfNeeded();
+        if (typeof createConfirmationModal === "function") {
+          createConfirmationModal(
+            "欢迎弹窗",
+            "实际弹窗由首次运行或版本更新触发，此处仅展示入口样式。",
+            () => {},
+            "确认"
+          );
         }
       } else if (action === "open-datepicker") {
         if (typeof createDatePicker === "function") {
-          const fakeInput = target.previousElementSibling;
-          createDatePicker(fakeInput, () => {});
+          const dateInput = target
+            .closest(".s1p-ui-showcase-variant")
+            ?.querySelector("input[readonly]");
+          if (dateInput) {
+            createDatePicker(dateInput, new Date(), (selectedDate) => {
+              dateInput.value = selectedDate.toISOString().slice(0, 10);
+            });
+          }
         }
       } else if (action === "open-image-viewer") {
         if (typeof openS1pImageViewer === "function") {
-          openS1pImageViewer([
-            { url: "https://picsum.photos/800/600?random=1", filename: "示例图片-1.jpg", loading: false },
-            { url: "https://picsum.photos/800/600?random=2", filename: "示例图片-2.jpg", loading: false },
-          ], 0);
+          openS1pImageViewer("https://picsum.photos/800/600");
         }
       } else if (action === "toggle-accordion-demo") {
         const arrow = target.querySelector(".s1p-ui-accordion-arrow");
@@ -35818,7 +36331,7 @@
     panel.appendChild(toolbar);
 
     const logArea = document.createElement("div");
-    logArea.className = "s1p-debug-console-log-area";
+    logArea.className = "s1p-debug-console-log-area s1p-debug-section";
     logArea.addEventListener("scroll", () => {
       logAutoScroll =
         logArea.scrollTop + logArea.clientHeight >= logArea.scrollHeight - 10;
@@ -35892,7 +36405,7 @@
     const diagnosticsPanel = document.createElement("div");
     diagnosticsPanel.id = DEBUG_SYNC_DIAGNOSTICS_PANEL_ID;
     diagnosticsPanel.className =
-      "s1p-debug-console-log-area s1p-debug-diagnostics-panel";
+      "s1p-debug-section s1p-debug-diagnostics-panel";
     panel.appendChild(diagnosticsPanel);
     return panel;
   };
@@ -35938,11 +36451,12 @@
       return;
     }
     if (action === "copy-logs") {
-      const text = logBuffer
+      const filtered = applyLogFilters(logBuffer);
+      const text = filtered
         .map((entry) => formatLogEntryForCopy(entry))
         .join("\n");
       copyDebugConsoleText(text);
-      showDebugConsoleButtonFeedback(button, "已复制");
+      showDebugConsoleButtonFeedback(button, `已复制 ${filtered.length} 条`);
       return;
     }
     if (action === "refresh-diagnostics") {
@@ -35978,16 +36492,29 @@
   const initializeDebugUnifiedPanel = ({
     persistVisible = true,
     activeTab = "log",
+    forceState = "",
   } = {}) => {
     startLogCollector();
+    const targetState =
+      forceState ||
+      (persistVisible ? DEBUG_CONSOLE_STATE_EXPANDED : getDebugConsoleState());
     if (persistVisible) {
-      setDebugConsolePersistentlyVisible(true);
+      setDebugConsoleState(targetState);
+    }
+    if (
+      targetState === DEBUG_CONSOLE_STATE_COLLAPSED &&
+      persistVisible !== true
+    ) {
+      document.getElementById(DEBUG_UNIFIED_PANEL_ID)?.remove();
+      createDebugPanelFAB({ hidden: false });
+      return null;
     }
     const existing = document.getElementById(DEBUG_UNIFIED_PANEL_ID);
     if (existing) {
-      existing.classList.remove("s1p-hidden");
+      existing.classList.remove("s1p-hidden", "s1p-collapsed", "s1p-collapsing");
       applySavedDebugConsolePanelSize(existing);
       switchDebugUnifiedPanelTab(activeTab);
+      createDebugPanelFAB({ hidden: true });
       return existing;
     }
 
@@ -35995,9 +36522,11 @@
       id: DEBUG_UNIFIED_PANEL_ID,
       title: "S1 Plus 调试",
       onAction: handleDebugUnifiedPanelAction,
+      onCollapse: (panelElement) => {
+        collapseDebugPanel(panelElement);
+      },
       onHide: () => {
-        setDebugConsolePersistentlyVisible(false);
-        stopLogCollector();
+        hideDebugUnifiedPanel();
       },
     });
 
@@ -36029,22 +36558,41 @@
     attachDebugConsoleResizeHandles(panel);
     applySavedDebugConsolePanelSize(panel);
     switchDebugUnifiedPanelTab(activeTab);
+    createDebugPanelFAB({ hidden: true });
     return panel;
   };
 
   const toggleDebugUnifiedPanel = () => {
     const panel = document.getElementById(DEBUG_UNIFIED_PANEL_ID);
-    if (panel && !panel.classList.contains("s1p-hidden")) {
-      panel.classList.add("s1p-hidden");
-      setDebugConsolePersistentlyVisible(false);
-      stopLogCollector();
+    const state = getDebugConsoleState();
+    if (
+      state === DEBUG_CONSOLE_STATE_EXPANDED ||
+      state === DEBUG_CONSOLE_STATE_COLLAPSED ||
+      (panel && !panel.classList.contains("s1p-hidden")) ||
+      getDebugPanelFAB()
+    ) {
+      hideDebugUnifiedPanel();
     } else {
+      setDebugConsoleState(DEBUG_CONSOLE_STATE_EXPANDED);
       initializeDebugUnifiedPanel({
         activeTab: "log",
         persistVisible: true,
+        forceState: DEBUG_CONSOLE_STATE_EXPANDED,
       });
     }
   };
+
+  if (IS_S1P_TEST_MODE) {
+    const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
+    testHookHost.__S1P_TEST_HOOKS__ = {
+      ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
+      initializeDebugUnifiedPanelForTest: initializeDebugUnifiedPanel,
+      hideDebugUnifiedPanelForTest: hideDebugUnifiedPanel,
+      toggleDebugUnifiedPanelForTest: toggleDebugUnifiedPanel,
+      collapseDebugPanelForTest: collapseDebugPanel,
+      expandDebugPanelForTest: expandDebugPanel,
+    };
+  }
 
   const initializeAutoSyncIndicatorCrossTabSync = () => {
     if (window.__s1pAutoSyncIndicatorCrossTabSyncBound) {

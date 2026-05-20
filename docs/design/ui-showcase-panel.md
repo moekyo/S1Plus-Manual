@@ -131,8 +131,23 @@
 
 ---
 
-## 9. 悬而未决
+## 9. 已知问题与修复记录
 
-- 弹窗预览中的"高级确认弹窗"需要 `createAdvancedConfirmationModal()` 可用
-- 日期选择器需要在论坛页面环境下才能正常渲染（依赖全局 CSS 变量）
-- 图片查看器用 picsum.photos 示例 URL（实际调用需 `@connect` 授权，但仅此场景影响可接受）
+- 调试面板视觉统一：展示面板侧边栏、展示项背景、分隔线和标题字号已改为复用 `#s1p-debug-unified-panel` 的玻璃表面变量，避免与日志/诊断标签页割裂。
+- 真实组件结构对齐：确认栏改用 `s1p-confirm-action-btn s1p-confirm` / `s1p-confirm-action-btn s1p-cancel` 圆形图标按钮；功能大开关和设置分组改回真实 `s1p-settings-group` / `s1p-settings-item` 层级；分段控制器移除重复内联样式，仅保留静态 slider 宽度用于预览。
+- 弹窗预览调用修复：确认弹窗、输入弹窗、高级确认弹窗、日期选择器、Toast 和图片查看器均已按当前实现的真实函数签名调用。
+- 欢迎弹窗预览修复：不再调用受版本标记控制的 `showFirstTimeWelcomeIfNeeded()`，改用普通确认弹窗展示入口样式，保证点击必有反馈。
+- 图片查看器预览修复：`openS1pImageViewer()` 现在传入字符串 URL；面板内仍使用 picsum.photos 示例图，实际加载依赖用户脚本的 `@connect` 授权环境。
+
+---
+
+## 10. 依赖函数签名速查
+
+```js
+createConfirmationModal(title, subtitle, onConfirm, confirmText = "确定", options = {})
+createInputModal(title, subtitle, defaultValue, onConfirm, confirmText = "确定", placeholder = "", options = {})
+createAdvancedConfirmationModal(title, bodyHtml, buttons, options = {})
+createDatePicker(inputEl, initialDate: Date, onSelect: fn)
+showMessage(message, isSuccess: boolean | null, options = {})
+openS1pImageViewer(sourceUrl: string, options = {})
+```
