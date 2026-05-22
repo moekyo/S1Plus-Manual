@@ -3188,12 +3188,8 @@
       gap: 10px;
       padding: 12px;
       border-radius: 12px;
-      background: color-mix(in srgb, var(--s1p-bg-alt) 88%, black 12%);
-      border: none;
       box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
       color: var(--s1p-t);
-      -webkit-backdrop-filter: var(--s1p-dialog-glass-filter);
-      backdrop-filter: var(--s1p-dialog-glass-filter);
       pointer-events: auto;
     }
     .s1p-debug-panel.s1p-hidden {
@@ -35910,7 +35906,13 @@
       { label: "确认模态框", action: "open-confirm-modal" },
       { label: "输入模态框", action: "open-input-modal" },
       { label: "高级确认模态框", action: "open-advanced-confirm" },
-      { label: "欢迎弹窗", action: "open-welcome-popup" },
+      { label: "版本欢迎弹窗", action: "open-version-welcome-popup" },
+      { label: "S1 NUX 推荐弹窗", action: "open-nux-recommend-popup" },
+      { label: "手动同步选择", action: "open-sync-choice-modal" },
+      { label: "启动同步冲突", action: "open-sync-conflict-modal" },
+      { label: "Token 过期提醒", action: "open-token-expiry-modal" },
+      { label: "Token 日期配置", action: "open-token-config-modal" },
+      { label: "阅读记录详情", action: "open-reading-progress-modal" },
       { label: "图片查看器(示例URL)", action: "open-image-viewer" },
     ];
     return (
@@ -35927,6 +35929,160 @@
         .join("") +
       "</div>"
     );
+  };
+
+  const createUiShowcaseSyncPreviewHtml = () => `
+    <div>
+      <h2 class="s1p-sync-conflict-title">检测到同步冲突！</h2>
+      <p>无法安全自动判定新旧，请仔细选择要保留的版本。</p>
+      <div class="s1p-sync-last-action">这台电脑上次手动操作: 于 2026/5/22 21:30:12 <strong>推送</strong>了数据</div>
+      <div class="s1p-sync-choice-info">
+        <div class="s1p-sync-choice-info-row">
+          <span class="s1p-sync-choice-info-label">本地数据</span>
+          <span class="s1p-sync-choice-info-time">2026/5/22 22:04:19 <span class="s1p-sync-choice-newer">(较新)</span></span>
+        </div>
+        <div class="s1p-sync-choice-info-row">
+          <span class="s1p-sync-choice-info-label">云端备份</span>
+          <span class="s1p-sync-choice-info-time">2026/5/22 21:58:03</span>
+        </div>
+      </div>
+      <div class="s1p-sync-comparison-table">
+        <div class="s1p-sync-comparison-row s1p-sync-comparison-header">
+          <div>数据项</div>
+          <div>本地</div>
+          <div>云端</div>
+        </div>
+        <div class="s1p-sync-comparison-row">
+          <div class="s1p-sync-comparison-label">屏蔽用户</div>
+          <div class="s1p-sync-comparison-value">24</div>
+          <div class="s1p-sync-comparison-value">22</div>
+        </div>
+        <div class="s1p-sync-comparison-row">
+          <div class="s1p-sync-comparison-label">回复收藏</div>
+          <div class="s1p-sync-comparison-value">38 <span class="s1p-newer-badge">(较新)</span></div>
+          <div class="s1p-sync-comparison-value">37</div>
+        </div>
+        <div class="s1p-sync-comparison-row">
+          <div class="s1p-sync-comparison-label">阅读进度</div>
+          <div class="s1p-sync-comparison-value">413 <span class="s1p-progress-update-badge">(内容更新)</span></div>
+          <div class="s1p-sync-comparison-value">413</div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const createUiShowcaseReadingProgressHtml = () => `
+    <div class="s1p-sync-comparison-table">
+      <div class="s1p-sync-comparison-row s1p-sync-comparison-header">
+        <div class="s1p-sync-comparison-label">时间范围</div>
+        <div class="s1p-sync-comparison-value">记录数</div>
+        <div class="s1p-sync-comparison-value">操作</div>
+      </div>
+      <div class="s1p-sync-comparison-row">
+        <div class="s1p-sync-comparison-label">今天<span class="s1p-progress-group-period">2026年5月22日</span></div>
+        <div class="s1p-sync-comparison-value">7 条</div>
+        <div class="s1p-sync-comparison-value"><span class="s1p-btn s1p-red-btn">删除</span></div>
+      </div>
+      <div class="s1p-sync-comparison-row">
+        <div class="s1p-sync-comparison-label">本周<span class="s1p-progress-group-period">2026年5月15日 - 2026年5月21日</span></div>
+        <div class="s1p-sync-comparison-value">54 条</div>
+        <div class="s1p-sync-comparison-value"><span class="s1p-btn s1p-red-btn">删除</span></div>
+      </div>
+      <div class="s1p-sync-comparison-row">
+        <div class="s1p-sync-comparison-label">本月<span class="s1p-progress-group-period">2026年4月 - 2026年5月</span></div>
+        <div class="s1p-sync-comparison-value">155 条</div>
+        <div class="s1p-sync-comparison-value"><span class="s1p-btn s1p-red-btn">删除</span></div>
+      </div>
+    </div>
+  `;
+
+  const UI_SHOWCASE_PREVIEW_BACKDROP_ID = "s1p-ui-showcase-preview-backdrop";
+  let uiShowcasePreviewBackdropCleanupTimer = 0;
+
+  const removeUiShowcasePreviewBackdrop = () => {
+    if (uiShowcasePreviewBackdropCleanupTimer) {
+      window.clearTimeout(uiShowcasePreviewBackdropCleanupTimer);
+      uiShowcasePreviewBackdropCleanupTimer = 0;
+    }
+    document
+      .querySelectorAll(`#${UI_SHOWCASE_PREVIEW_BACKDROP_ID}`)
+      .forEach((node) => node.remove());
+  };
+
+  const hasActiveUiShowcasePreviewLayer = () =>
+    Boolean(
+      document.querySelector(".s1p-confirm-modal") ||
+        document.querySelector(".s1p-token-config-modal") ||
+        document.querySelector(".s1p-image-viewer.is-visible")
+    );
+
+  const scheduleUiShowcasePreviewBackdropCleanup = () => {
+    if (uiShowcasePreviewBackdropCleanupTimer) {
+      window.clearTimeout(uiShowcasePreviewBackdropCleanupTimer);
+    }
+    uiShowcasePreviewBackdropCleanupTimer = window.setTimeout(() => {
+      uiShowcasePreviewBackdropCleanupTimer = 0;
+      if (!hasActiveUiShowcasePreviewLayer()) {
+        removeUiShowcasePreviewBackdrop();
+      } else {
+        scheduleUiShowcasePreviewBackdropCleanup();
+      }
+    }, 300);
+  };
+
+  const ensureUiShowcasePreviewBackdrop = () => {
+    removeUiShowcasePreviewBackdrop();
+    const backdrop = document.createElement("div");
+    backdrop.id = UI_SHOWCASE_PREVIEW_BACKDROP_ID;
+    backdrop.setAttribute("aria-hidden", "true");
+    backdrop.innerHTML = `
+      <div class="s1p-ui-showcase-preview-backdrop-inner">
+        <div class="s1p-ui-showcase-preview-backdrop-title">S1 Plus 玻璃效果可读性测试背景</div>
+        <div class="s1p-ui-showcase-preview-backdrop-grid">
+          <span>同步冲突提示文字</span><span>2026/05/22 22:04:19</span><span>本地数据较新</span>
+          <span>阅读记录详情列表</span><span>413 条记录</span><span>删除按钮区域</span>
+          <span>S1 NUX 推荐说明</span><span>Token 即将过期</span><span>欢迎弹窗内容</span>
+          <span>ABCDEFGHIJKLMNOPQRSTUVWXYZ</span><span>0123456789</span><span>http://example.com/thread-123</span>
+        </div>
+      </div>`;
+    document.body.appendChild(backdrop);
+    scheduleUiShowcasePreviewBackdropCleanup();
+  };
+
+  const dismissUiShowcasePreviewLayers = () => {
+    removeUiShowcasePreviewBackdrop();
+
+    document.querySelectorAll(".s1p-confirm-modal").forEach((modal) => {
+      modal.remove();
+    });
+
+    document
+      .querySelectorAll(".s1p-token-config-modal")
+      .forEach((tokenConfigModal) => {
+        tokenConfigModal.remove();
+      });
+
+    document.querySelectorAll(".s1p-date-picker").forEach((picker) => {
+      picker.remove();
+    });
+
+    document.querySelectorAll(".s1p-image-viewer").forEach((viewer) => {
+      viewer.classList.remove("is-visible", "is-overlay-open", "is-panel-open");
+      viewer.setAttribute("aria-hidden", "true");
+    });
+
+    if (
+      typeof closeS1pImageViewer === "function" &&
+      s1pImageViewerState &&
+      (s1pImageViewerState.isOpen || s1pImageViewerState.isClosing)
+    ) {
+      if (s1pImageViewerState.isOpen) {
+        closeS1pImageViewer();
+      }
+      if (typeof finalizeS1pImageViewerCloseState === "function") {
+        finalizeS1pImageViewerCloseState();
+      }
+    }
   };
 
   const getSectionRendererByKey = (key) => {
@@ -36153,6 +36309,61 @@
       .s1p-ui-showcase-section-header + .s1p-ui-showcase-grid {
         margin-top: 4px;
       }
+      #s1p-ui-showcase-preview-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        pointer-events: none;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 32px;
+        box-sizing: border-box;
+        background:
+          repeating-linear-gradient(
+            0deg,
+            rgba(2, 44, 128, 0.075) 0,
+            rgba(2, 44, 128, 0.075) 1px,
+            transparent 1px,
+            transparent 34px
+          ),
+          repeating-linear-gradient(
+            90deg,
+            rgba(37, 99, 235, 0.06) 0,
+            rgba(37, 99, 235, 0.06) 1px,
+            transparent 1px,
+            transparent 56px
+          ),
+          color-mix(in srgb, var(--s1p-bg) 72%, transparent);
+      }
+      .s1p-ui-showcase-preview-backdrop-inner {
+        width: min(960px, calc(100vw - 64px));
+        border-radius: 10px;
+        padding: 20px;
+        color: var(--s1p-t);
+        background: rgba(255, 255, 255, 0.36);
+        box-shadow: 0 18px 52px rgba(0, 0, 0, 0.18);
+      }
+      .s1p-ui-showcase-preview-backdrop-title {
+        font-size: 22px;
+        font-weight: 700;
+        margin-bottom: 14px;
+      }
+      .s1p-ui-showcase-preview-backdrop-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+        font-size: 16px;
+        font-weight: 600;
+        line-height: 1.5;
+      }
+      .s1p-ui-showcase-preview-backdrop-grid span {
+        min-width: 0;
+        padding: 10px 12px;
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.5);
+        overflow-wrap: anywhere;
+      }
     `;
     panel.appendChild(style);
 
@@ -36182,6 +36393,10 @@
       const target = e.target.closest("[data-s1p-ui-action]");
       if (!target) return;
       const action = target.dataset.s1pUiAction;
+      if (String(action || "").startsWith("open-") && action !== "open-datepicker") {
+        dismissUiShowcasePreviewLayers();
+        ensureUiShowcasePreviewBackdrop();
+      }
       if (action === "toast-neutral") {
         if (typeof showMessage === "function") showMessage("这是一条中性提示");
       } else if (action === "toast-success") {
@@ -36208,19 +36423,97 @@
             "高级确认弹窗",
             "<div><p>这是高级确认弹窗的 <strong>HTML 内容</strong>。</p><p>可以放入任意组件。</p></div>",
             [
-              { text: "取消", className: "s1p-btn s1p-danger", onClick: () => {}, closeOnClick: true },
-              { text: "确认", className: "s1p-btn", onClick: () => { if (typeof showMessage === "function") showMessage("已确认", true); }, closeOnClick: true },
+              { text: "取消", className: "s1p-btn s1p-danger", action: () => {} },
+              { text: "确认", className: "s1p-btn", action: () => { if (typeof showMessage === "function") showMessage("已确认", true); } },
             ],
             { allowBodyHtml: true }
           );
         }
-      } else if (action === "open-welcome-popup") {
-        if (typeof createConfirmationModal === "function") {
-          createConfirmationModal(
-            "欢迎弹窗",
-            "实际弹窗由首次运行或版本更新触发，此处仅展示入口样式。",
-            () => {},
-            "确认"
+      } else if (action === "open-version-welcome-popup") {
+        if (typeof createAdvancedConfirmationModal === "function") {
+          createAdvancedConfirmationModal(
+            `S1 Plus v${SCRIPT_VERSION} 更新亮点`,
+            "<p>已更新至当前版本。这里展示版本升级欢迎弹窗的真实壳和内容排版。</p><p>链接跳转更稳定了，旧设置升级也更平滑。</p>",
+            [{ text: "我明白了", className: "s1p-confirm", action: () => {} }],
+            {
+              modalClassName: "s1p-welcome-modal",
+              allowBodyHtml: true,
+            }
+          );
+        }
+      } else if (action === "open-nux-recommend-popup") {
+        if (typeof createAdvancedConfirmationModal === "function") {
+          createAdvancedConfirmationModal(
+            "S1 Plus 体验升级推荐",
+            '<p>检测到您尚未安装 <strong>S1 NUX</strong> 论坛美化扩展。</p><p>S1 Plus 与 S1 NUX 搭配使用可获得更好的论坛浏览体验。</p><div class="s1p-notice s1p-notice-top16 s1p-notice-gap8"><div class="s1p-notice-icon"></div><div class="s1p-notice-content"><a href="https://stage1st.com/2b/thread-1826103-1-2.html" target="_blank" rel="noopener noreferrer">点击此处，了解 S1 NUX 详情</a><p>这里是安全预览，不会修改推荐设置。</p></div></div>',
+            [
+              { text: "不再提示", className: "s1p-cancel", action: () => {} },
+              { text: "前往安装", className: "s1p-confirm", action: () => {} },
+            ],
+            {
+              modalClassName: "s1p-nux-recommend-modal",
+              allowBodyHtml: true,
+            }
+          );
+        }
+      } else if (action === "open-sync-choice-modal") {
+        if (typeof createAdvancedConfirmationModal === "function") {
+          createAdvancedConfirmationModal(
+            "手动同步选择",
+            createUiShowcaseSyncPreviewHtml(),
+            [
+              { text: "从云端拉取", className: "s1p-confirm", action: () => {} },
+              { text: "推送本地数据", className: "s1p-confirm", action: () => {} },
+              { text: "取消", className: "s1p-cancel", action: () => {} },
+            ],
+            {
+              modalClassName: "s1p-sync-modal",
+              allowBodyHtml: true,
+            }
+          );
+        }
+      } else if (action === "open-sync-conflict-modal") {
+        if (typeof createAdvancedConfirmationModal === "function") {
+          createAdvancedConfirmationModal(
+            "检测到同步冲突",
+            "<p>S1 Plus 在启动同步时发现，本地数据和云端备份可能都已更改。</p><p>为防止数据丢失，自动同步已暂停。接下来如继续，将进入一次全局手动同步。</p>",
+            [
+              { text: "稍后处理", className: "s1p-cancel", action: () => {} },
+              { text: "发起全局同步", className: "s1p-confirm", action: () => {} },
+            ],
+            { allowBodyHtml: true }
+          );
+        }
+      } else if (action === "open-token-expiry-modal") {
+        if (typeof createAdvancedConfirmationModal === "function") {
+          createAdvancedConfirmationModal(
+            "Sync Token 即将过期",
+            "<p>您的 GitHub Personal Access Token 将于 <strong>3</strong> 天后过期。</p><p>请及时更新 Token 以免影响同步功能。</p>",
+            [
+              { text: "知道了", className: "s1p-btn", action: () => {} },
+              { text: "前往生成", className: "s1p-btn", action: () => {} },
+              { text: "已更新", className: "s1p-confirm", action: () => {} },
+            ],
+            {
+              modalClassName: "s1p-token-expiry-modal",
+              allowBodyHtml: true,
+            }
+          );
+        }
+      } else if (action === "open-token-config-modal") {
+        if (typeof openTokenExpiryConfigModal === "function") {
+          openTokenExpiryConfigModal(() => {}, () => {});
+        }
+      } else if (action === "open-reading-progress-modal") {
+        if (typeof createAdvancedConfirmationModal === "function") {
+          createAdvancedConfirmationModal(
+            "阅读记录详情",
+            `<p>共 413 条阅读记录</p>${createUiShowcaseReadingProgressHtml()}`,
+            [{ text: "关闭", className: "s1p-confirm", action: () => {} }],
+            {
+              modalClassName: "s1p-reading-progress-modal",
+              allowBodyHtml: true,
+            }
           );
         }
       } else if (action === "open-datepicker") {
