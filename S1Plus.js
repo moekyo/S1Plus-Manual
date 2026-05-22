@@ -2371,6 +2371,8 @@
       --s1p-dialog-glass-filter: blur(3px) saturate(1.02);
       --s1p-dialog-glass-shadow: 0 18px 44px rgba(0, 0, 0, 0.22);
       --s1p-dialog-glass-divider: rgba(37, 71, 122, 0.16);
+      --s1p-glass-panel-bg: rgba(255, 255, 255, 0.08);
+      --s1p-glass-panel-filter: var(--s1p-dialog-glass-filter);
       --s1p-dialog-text: #10234f;
       --s1p-dialog-muted-text: #334a72;
       --s1p-popover-glass-bg: rgba(255, 255, 255, 0.86);
@@ -2485,7 +2487,6 @@
       --s1p-post-toolbar-layer-z: 180;
 
     }
-
     /* --- [新增的功能] 系统屏蔽楼层隐藏 --- */
     html.s1p-hide-system-blocked-enabled table.plhin:has(.locked) {
       display: none !important;
@@ -3162,7 +3163,6 @@
       opacity: 1;
     }
     #s1p-debug-panel-host {
-      --s1p-debug-console-panel-bg: rgba(255, 255, 255, 0.08);
       --s1p-debug-console-surface: #f8fafc;
       --s1p-debug-console-surface-soft: #eef2f7;
       --s1p-debug-console-surface-raised: #ffffff;
@@ -3305,7 +3305,6 @@
     }
     @media (prefers-color-scheme: dark) {
       #s1p-debug-panel-host {
-        --s1p-debug-console-panel-bg: rgba(8, 13, 24, 0.14);
         --s1p-debug-console-surface: #172033;
         --s1p-debug-console-surface-soft: #202b3d;
         --s1p-debug-console-surface-raised: #243248;
@@ -3317,11 +3316,8 @@
       }
     }
     #s1p-debug-unified-panel.s1p-debug-panel {
-      background: var(--s1p-debug-console-panel-bg);
       border: none;
       box-shadow: var(--s1p-debug-panel-shadow);
-      -webkit-backdrop-filter: var(--s1p-dialog-glass-filter);
-      backdrop-filter: var(--s1p-dialog-glass-filter);
       gap: 6px;
     }
     #s1p-debug-fab {
@@ -3335,10 +3331,7 @@
       border: none;
       border-radius: 50%;
       color: var(--s1p-t);
-      background: var(--s1p-debug-console-panel-bg);
       box-shadow: var(--s1p-debug-panel-shadow);
-      -webkit-backdrop-filter: var(--s1p-dialog-glass-filter);
-      backdrop-filter: var(--s1p-dialog-glass-filter);
       display: grid;
       place-items: center;
       overflow: hidden;
@@ -5551,6 +5544,8 @@
       align-items: center;
       z-index: 9999;
       transition: opacity 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
     }
     .s1p-modal.s1p-modal-opening .s1p-modal-content {
       animation: s1p-settings-modal-scale-in 0.28s cubic-bezier(0.22, 1, 0.36, 1)
@@ -5573,6 +5568,7 @@
       display: flex;
       flex-direction: column;
       position: relative;
+      z-index: 1;
       transition: none;
       backface-visibility: hidden;
       transform-origin: center;
@@ -5587,21 +5583,16 @@
       /* macOS 默认使用 antialiased，Windows 默认使用 ClearType 子像素抗锯齿 */
     }
     .s1p-modal > .s1p-modal-content {
-      --s1p-settings-panel-bg: rgba(255, 255, 255, 0.82);
       --s1p-settings-content-bg: var(--s1p-bg);
       --s1p-settings-scrollbar-thumb: rgba(37, 71, 122, 0.42);
       --s1p-settings-scrollbar-thumb-hover: rgba(37, 71, 122, 0.58);
       --s1p-settings-scrollbar-track: transparent;
-      background: var(--s1p-settings-panel-bg);
       border: none;
       border-radius: 12px;
       box-shadow: 0 18px 44px rgba(0, 0, 0, 0.22);
-      -webkit-backdrop-filter: var(--s1p-dialog-glass-filter);
-      backdrop-filter: var(--s1p-dialog-glass-filter);
     }
     @media (prefers-color-scheme: dark) {
       .s1p-modal > .s1p-modal-content {
-        --s1p-settings-panel-bg: rgba(17, 24, 39, 0.88);
         --s1p-settings-content-bg: #172033;
         --s1p-settings-scrollbar-thumb: rgba(148, 163, 184, 0.46);
         --s1p-settings-scrollbar-thumb-hover: rgba(148, 163, 184, 0.64);
@@ -5659,7 +5650,7 @@
     .s1p-modal > .s1p-modal-content > .s1p-modal-body {
       margin: 0 16px;
       padding: 0;
-      background: var(--s1p-settings-content-bg);
+      background: transparent;
       border-radius: 12px;
       box-sizing: border-box;
       overflow: hidden auto;
@@ -5842,6 +5833,8 @@
     }
     .s1p-modal > .s1p-modal-content > .s1p-modal-body > .s1p-tab-panels {
       padding: 8px 16px;
+      background: color-mix(in srgb, var(--s1p-settings-content-bg) 90%, transparent);
+      border-radius: 12px;
     }
     .s1p-modal > .s1p-modal-content > .s1p-modal-body > .s1p-tab-panels > .s1p-tab-content {
       grid-column: 1;
@@ -6687,6 +6680,12 @@
     }
     .s1p-hidden {
       display: none;
+    }
+    .s1p-glass-panel {
+      background: var(--s1p-glass-panel-bg);
+      border: none;
+      -webkit-backdrop-filter: var(--s1p-glass-panel-filter);
+      backdrop-filter: var(--s1p-glass-panel-filter);
     }
     .s1p-input-full {
       width: 100%;
@@ -8375,6 +8374,7 @@
         --s1p-dialog-glass-filter: blur(3px) saturate(1.02);
         --s1p-dialog-glass-shadow: 0 18px 44px rgba(0, 0, 0, 0.28);
         --s1p-dialog-glass-divider: rgba(148, 163, 184, 0.2);
+        --s1p-glass-panel-bg: rgba(8, 13, 24, 0.14);
         --s1p-dialog-text: #f1f5f9;
         --s1p-dialog-muted-text: #cbd5e1;
         --s1p-popover-glass-bg: rgba(17, 24, 39, 0.92);
@@ -34226,7 +34226,7 @@
   }) => {
     const panel = document.createElement("div");
     panel.id = id;
-    panel.className = "s1p-debug-panel";
+    panel.className = "s1p-debug-panel s1p-glass-panel";
 
     const head = document.createElement("div");
     head.className = "s1p-debug-panel-head";
@@ -34338,7 +34338,7 @@
     const fab = document.createElement("button");
     fab.id = DEBUG_PANEL_FAB_ID;
     fab.type = "button";
-    fab.className = `s1p-debug-fab${hidden ? " s1p-fab-hidden" : ""}`;
+    fab.className = `s1p-debug-fab s1p-glass-panel${hidden ? " s1p-fab-hidden" : ""}`;
     fab.setAttribute("aria-label", "展开调试面板");
     setCustomTooltip(fab, "展开调试面板");
 
@@ -38549,7 +38549,7 @@
     const modal = document.createElement("div");
     modal.className = "s1p-modal";
     modal.style.opacity = "0";
-    modal.innerHTML = `<div class="s1p-modal-content">
+    modal.innerHTML = `<div class="s1p-modal-content s1p-glass-panel">
             <div class="s1p-modal-header"><div class="s1p-modal-title">S1 Plus 设置</div>${buildModalCloseButtonHtml({
       ariaLabel: "关闭设置面板",
       tooltipText: "关闭设置面板",

@@ -81,6 +81,14 @@ saveSettings(settings); // normalizes, persists, triggers sync
 
 `S1 NUX.css` has a global rule `*:not(.v-binder-follower-content) { transition-duration: .15s }` that overrides S1 Plus animation durations. Always test with both standard and NUX themes. Higher-specificity selectors or `!important` on critical transitions may be needed.
 
+## UI Surface Glass
+
+- Reuse `.s1p-glass-panel` for large shell-style frosted glass surfaces such as the settings modal content and unified debug panel. Tune `--s1p-glass-panel-bg` / `--s1p-glass-panel-filter`; do not create per-panel duplicate variables for the same effect.
+- Do not put `.s1p-glass-panel` inside a parent that also has `backdrop-filter`. Nested backdrop roots sample different intermediate backgrounds and can make settings/debug panels diverge visually.
+- Settings panel `.s1p-modal` must keep `backdrop-filter: none`; the visible shell is `.s1p-modal-content.s1p-glass-panel`.
+- Keep shell blur aligned with `--s1p-dialog-glass-filter`. Avoid hardcoded strong blur such as `blur(12px)`, which turns high-contrast forum text behind the panel into smeared color blocks.
+- Settings `.s1p-modal-body` is the transparent scroll/clipping layer. `.s1p-tab-panels` owns the content background and uses the same 90% opacity pattern as `s1p-debug-section`, without changing its color token.
+
 ## Cross-Tab Synchronization
 
 The script uses `GM_addValueChangeListener` to detect data changes from other tabs and keep all open tabs in sync.
