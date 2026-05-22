@@ -1329,6 +1329,7 @@
   let foregroundProbeIndicatorVisibleSince = 0;
   let foregroundProbeIndicatorSource = "";
   let foregroundProbeIndicatorReason = "";
+  let startupSyncUserInteractionAt = 0;
   let lastUserInteractionAt = 0;
   let visibleRemoteProbeTimer = null;
   let currentVisibleProbeIntervalMs = 0;
@@ -1871,10 +1872,12 @@
   const CLEANUP_PROVENANCE_TTL_MS = 2 * 60 * 60 * 1000;
   // 当时间戳相差过大时，不再自动依据“谁大谁新”做决策，转为冲突保护。
   const SYNC_TIMESTAMP_SKEW_TOLERANCE_MS = 12 * 60 * 60 * 1000;
-  // 启动同步仅做一个很短的延时，让页面先完成首轮初始化，
-  // 同时限制必须在页面打开后的短窗口内执行，避免浏览数分钟后才突然补触发并刷新。
+  // 启动同步仅做一个很短的延时，让页面先完成首轮初始化。
+  // 若论坛首开慢加载但用户尚未实际操作页面，可放宽新鲜窗口，避免首次可见 probe
+  // 被误判为过期并静默跳过；一旦用户开始浏览，仍按基础窗口保护，避免晚到刷新。
   const STARTUP_SYNC_DEFER_DELAY_MS = 80;
-  const STARTUP_SYNC_MAX_DELAY_MS = 4000;
+  const STARTUP_SYNC_BASE_FRESH_WINDOW_MS = 4000;
+  const STARTUP_SYNC_IDLE_FRESH_WINDOW_MS = 15000;
   const DOM_OBSERVER_DEBOUNCE_MS = 120;
   const SETTINGS_CACHE_TTL_MS = 1000;
   const CORE_DATA_CACHE_TTL_MS = 1000;
@@ -15264,25 +15267,78 @@
         today !== lastSyncDate
     );
 
-  const getStartupSyncFreshnessState = (scheduledAt = Date.now()) => {
-    const elapsedMs = Date.now() - scheduledAt;
+  const markStartupSyncUserInteraction = (timestamp = Date.now()) => {
+    startupSyncUserInteractionAt = Number(timestamp) || Date.now();
+    return startupSyncUserInteractionAt;
+  };
+
+  const bindStartupSyncFreshnessActivityHooks = () => {
+    if (window.__s1pStartupSyncFreshnessActivityBound) {
+      return;
+    }
+    window.__s1pStartupSyncFreshnessActivityBound = true;
+    const handleUserActivity = () => {
+      markStartupSyncUserInteraction();
+    };
+    window.addEventListener("pointerdown", handleUserActivity, {
+      capture: true,
+      passive: true,
+    });
+    window.addEventListener("wheel", handleUserActivity, {
+      capture: true,
+      passive: true,
+    });
+    window.addEventListener("touchstart", handleUserActivity, {
+      capture: true,
+      passive: true,
+    });
+    document.addEventListener("keydown", handleUserActivity, true);
+  };
+
+  const getStartupSyncFreshnessState = (
+    scheduledAt = Date.now(),
+    options = {}
+  ) => {
+    const now = Number(options.now) || Date.now();
+    const elapsedMs = now - scheduledAt;
     const today = getCurrentDailySyncDateKey();
     const deferredStartupSyncRequest = getDeferredStartupSyncRequest(today);
+    const hasUserInteractionBeforeStartupDecision =
+      startupSyncUserInteractionAt > 0 && startupSyncUserInteractionAt <= now;
+    const visibilityState =
+      typeof options.visibilityState === "string"
+        ? options.visibilityState
+        : document.visibilityState || "visible";
+    const isWithinBaseFreshWindow =
+      elapsedMs <= STARTUP_SYNC_BASE_FRESH_WINDOW_MS;
+    const isWithinIdleFreshWindow =
+      elapsedMs <= STARTUP_SYNC_IDLE_FRESH_WINDOW_MS;
+    const canExtendFreshWindow =
+      visibilityState === "visible" &&
+      !hasUserInteractionBeforeStartupDecision &&
+      isWithinIdleFreshWindow;
     return {
       elapsedMs,
       today,
       lastSyncDate: GM_getValue("s1p_last_daily_sync_date", null),
       deferredStartupSyncRequest,
       hasDeferredStartupSync: Boolean(deferredStartupSyncRequest),
-      isStaleStartupFlow: elapsedMs > STARTUP_SYNC_MAX_DELAY_MS,
+      startupSyncUserInteractionAt,
+      hasUserInteractionBeforeStartupDecision,
+      visibilityState,
+      freshnessWindowMs: canExtendFreshWindow
+        ? STARTUP_SYNC_IDLE_FRESH_WINDOW_MS
+        : STARTUP_SYNC_BASE_FRESH_WINDOW_MS,
+      isStaleStartupFlow: !(isWithinBaseFreshWindow || canExtendFreshWindow),
     };
   };
 
   const getStartupSyncOrchestratorDecision = (
     scheduledAt = Date.now(),
-    settingsSnapshot = getSettings()
+    settingsSnapshot = getSettings(),
+    options = {}
   ) => {
-    const freshnessState = getStartupSyncFreshnessState(scheduledAt);
+    const freshnessState = getStartupSyncFreshnessState(scheduledAt, options);
     if (!freshnessState.isStaleStartupFlow) {
       return {
         action: "run_fresh_startup_flow",
@@ -30038,6 +30094,9 @@
       runForegroundFollowUpAutoSyncCheck,
       triggerForegroundRemoteFreshnessProbe,
       handleInitialForegroundRemoteFreshnessCheck,
+      markStartupSyncUserInteraction,
+      getStartupSyncFreshnessState,
+      getStartupSyncOrchestratorDecision,
       handlePendingAutoSyncRecoveryPageShow,
       handlePendingAutoSyncRecoveryVisibilityChange,
       getForegroundFollowUpSoftBlockState,
@@ -49341,6 +49400,10 @@
           today: freshnessState.today || "",
           lastSyncDate: freshnessState.lastSyncDate || "",
           hasDeferredStartupSync: freshnessState.hasDeferredStartupSync === true,
+          freshnessWindowMs: freshnessState.freshnessWindowMs || 0,
+          hasUserInteractionBeforeStartupDecision:
+            freshnessState.hasUserInteractionBeforeStartupDecision === true,
+          visibilityState: freshnessState.visibilityState || "",
         },
       });
 
@@ -49685,6 +49748,10 @@
     await runInitializationPhase(
       S1P_INIT_PHASES.BODY_READY,
       [
+        {
+          name: "bind startup sync freshness activity hooks",
+          run: () => bindStartupSyncFreshnessActivityHooks(),
+        },
         {
           name: "apply system-blocked post visibility",
           run: () => hideSystemBlockedPosts(),

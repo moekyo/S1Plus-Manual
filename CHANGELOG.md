@@ -2,6 +2,7 @@
 
 ### 🚀 跨标签架构性能重构 (Cross-tab Architecture Performance Refactor)
 
+- **启动同步新鲜窗口动态化**: 启动同步编排器保留 4 秒基础新鲜窗口；若论坛首开加载较慢但页面仍可见且用户尚未点击、滚动或键盘操作，则临时放宽到 15 秒，避免首次可见云端 probe 被误跳过，同时防止已开始浏览的旧页面晚到刷新。
 - **标题同步状态 presence 分区存储**: presence 从单 key aggregate 拆为 per-tab key (`s1p_title_sync_status_tab:<tabId>`) + 独立 signal key，消除多标签页对同一个 key 的竞争写入与 JSON 序列化开销。
 - **owner lease 令牌校验**: owner lease 写入新增 `token` + `generation` 字段，写后立即读回校验，杜绝幽灵 owner 和误覆盖；`releaseTitleSyncStatusOwnerLease` 增加 tabId / token / 空 owner 三重 guard，消除空 `GM_deleteValue` 跨标签自激风险。
 - **跨标签 GM listener 防抖收口**: `GM_addValueChangeListener` 回调统一走 150ms debounce (`scheduleTitleSyncStatusCrossTabRuntimeSync`)，且 cross-tab 事件 `allowOwnerLeaseRefresh: false`，杜绝 owner lease storm。
