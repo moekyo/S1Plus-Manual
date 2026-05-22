@@ -3530,7 +3530,7 @@
     #s1p-debug-unified-panel .s1p-debug-btn.s1p-debug-console-feedback {
       background: var(--s1p-sec) !important;
       border-color: var(--s1p-sec) !important;
-      color: var(--s1p-white) !important;
+      color: var(--s1p-sub-h-t) !important;
       box-shadow: 0 0 0 2px color-mix(in srgb, var(--s1p-sec) 18%, transparent);
     }
     .s1p-debug-console-log-area {
