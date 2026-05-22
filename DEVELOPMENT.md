@@ -120,7 +120,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 
 ### 2.6 右下角统一调试面板
 
-代码中保留了可复用的浮动调试面板框架，现整合为统一的 `#s1p-debug-unified-panel`，通过 tabs 组织三个子面板，默认不自动显示。
+代码中保留了可复用的浮动调试面板框架，现整合为统一的 `#s1p-debug-unified-panel`，通过 tabs 组织四个子面板，默认不自动显示。
 
 **入口方式**：设置弹窗底部版本号悬停 4s 出现小圆点后点击，打开统一面板；无其他入口。
 
@@ -131,6 +131,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 | 日志 | 调试控制台 | 捕获 console 输出、JS 错误、unhandledrejection；支持按级别筛选、关键词搜索、复制/清空/展开；可拖拽 resize，尺寸持久化到 `s1p_debug_console_size`；日志缓冲区最多保留 1000 条，通过 `sessionStorage` 在同标签页刷新后自动恢复，关闭标签页后销毁 |
 | 诊断信息 | 同步诊断 | 展示 `buildSyncDiagnosticsRows()` 的诊断行（最近动作/触发源/结果/阻断/哈希/探测等）；[刷新][复制诊断][重置诊断] 按钮 |
 | 指示器调试 | 同步指示器调试 | 手动切换指示器 phase、选择 source/operation、播放固定转场 Demo（含 pending push/pull → running、probe → pull）；只覆盖导航栏指示器预览，不改真实同步状态 |
+| UI 组件 | 组件展示与弹窗预览 | 按类别展示按钮、开关、输入、列表、确认栏、tooltip 等组件；弹窗预览覆盖确认/输入/高级确认、版本欢迎、S1 NUX 推荐、手动同步选择、启动同步冲突、Token 过期提醒、Token 日期配置、阅读记录详情、图片查看器等场景 |
 
 **实现要点**：
 
@@ -139,6 +140,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - 日志 tab 的 toolbar 布局为 head-actions 在上行、filter-bar 在下行
 - 诊断信息 tab 的重置操作使用内联确认栏而非原生 `confirm()` 弹窗
 - 统一面板外层复用 `.s1p-glass-panel`，与设置面板共享同一套外壳磨砂参数；不要在调试面板选择器里另写 `background` / `backdrop-filter`
+- UI 组件 tab 的弹窗预览会在打开真实弹窗前挂载临时可读性测试背景，并清理旧的预览弹层、Token 配置弹窗、日期选择器和图片查看器状态；这只服务人工视觉回归，不应影响真实业务弹窗入口
 - 指示器调试 tab 的主体内容使用单一无边框浅底 surface 承托文字和按钮，避免文字直接落在复杂磨砂背景上；不要给内部说明/状态块再叠独立边框卡片
 - 调试面板内承载长列表的实底 surface 应由滚动视口自己负责圆角裁切（如日志区使用 `overflow: hidden auto` + 透明轨道滚动条），不要把圆角放到内部列表行上，否则滚动到中间会露出直角截面
 - 深色模式下统一调试面板主容器阴影使用大半径低透明度的单层阴影，避免在深背景上形成可见分层断带
