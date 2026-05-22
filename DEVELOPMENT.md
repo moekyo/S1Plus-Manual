@@ -78,6 +78,7 @@ node tests/settings-migration/test-settings-migration.js
 
 - `test-foreground-remote-probe.js`
 - `test-foreground-trigger-integration.js`
+- `test-startup-sync-freshness.js`
 - `test-visible-remote-polling.js`
 - `test-post-sync-refresh-policy.js`
 - `test-safe-sync-execution.js`
@@ -348,6 +349,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 补充：
 
 - 启动期现在通过 startup orchestrator 决定执行路径：`fresh` 页面运行完整启动链路，`stale` 页面只顺延每日首次同步或直接跳过启动专属检查。
+- 启动新鲜度不是单一硬编码超时：基础新鲜窗口为 `STARTUP_SYNC_BASE_FRESH_WINDOW_MS`（当前 4s）；若流程晚到但页面仍可见且自调度以来没有用户点击、滚轮、触摸或键盘操作，则可延长到 `STARTUP_SYNC_IDLE_FRESH_WINDOW_MS`（当前 15s）。这样首开慢加载仍能执行首次可见云端 probe，而已开始浏览的旧页面不会晚到触发自动拉取/刷新。
 - 设置迁移归一化函数 `buildNormalizedSettings()` 现会返回 `migrationReasons`，用于定位本次迁移是由哪些旧字段/脏值触发。
 - 同步检查模式已拆分为两个独立设置：`syncDailyFirstLoad` 仅控制“每日首次加载时同步”，`syncPerLoadCheckEnabled` 仅控制“每次页面加载时检查同步”；不要再依赖“关闭前者等于开启后者”的旧隐式语义。
 - 当前触发源命名已显式收口为：
