@@ -127,6 +127,12 @@
     setDebugConsoleState(visible);
   };
 
+  const getS1pLayoutViewportWidth = () =>
+    document.documentElement?.clientWidth || window.innerWidth || 0;
+
+  const getS1pLayoutViewportHeight = () =>
+    document.documentElement?.clientHeight || window.innerHeight || 0;
+
   let reloadScrollGuardState = null;
   let reloadScrollGuardLifecycleBound = false;
   let reloadScrollGuardReleaseTimer = null;
@@ -33251,7 +33257,7 @@
       menuRect.height / 2;
     let left;
 
-    const spaceOnRight = window.innerWidth - anchorRect.right;
+    const spaceOnRight = getS1pLayoutViewportWidth() - anchorRect.right;
     const requiredSpace = menuRect.width + 16;
 
     if (spaceOnRight >= requiredSpace) {
@@ -35485,8 +35491,8 @@
   };
 
   const setDebugConsolePanelSize = (panel, width, height) => {
-    const maxWidth = window.innerWidth - 24;
-    const maxHeight = window.innerHeight - 36;
+    const maxWidth = getS1pLayoutViewportWidth() - 24;
+    const maxHeight = getS1pLayoutViewportHeight() - 36;
     if (Number.isFinite(width)) {
       panel.style.width =
         clampDebugConsolePanelSize(width, DEBUG_CONSOLE_MIN_WIDTH, maxWidth) + "px";
@@ -36995,7 +37001,7 @@
     let availableWidth;
 
     if (isGlobal) {
-      const viewportWidth = document.documentElement.clientWidth || window.innerWidth || 0;
+      const viewportWidth = getS1pLayoutViewportWidth();
       if (viewportWidth <= 0) {
         return;
       }
@@ -37641,7 +37647,7 @@
 
     // 重新计算 left，确保包含展开后的潜在宽度（虽然初始是隐藏的，但尽量留足空间）
     let left;
-    const spaceOnRight = window.innerWidth - anchorRect.right;
+    const spaceOnRight = getS1pLayoutViewportWidth() - anchorRect.right;
     const requiredSpace = 320; // 预估展开后的宽度
 
     if (spaceOnRight >= requiredSpace) {
@@ -44751,7 +44757,7 @@
         const menuWidth = optionsMenu.offsetWidth || 120;
         const viewportPadding = 8;
         const spaceOnLeft = rect.left;
-        const spaceOnRight = window.innerWidth - rect.right;
+        const spaceOnRight = getS1pLayoutViewportWidth() - rect.right;
         const shouldOpenRight =
           spaceOnLeft < menuWidth + viewportPadding && spaceOnRight > spaceOnLeft;
 
@@ -44834,8 +44840,9 @@
       let top = rect.bottom + window.scrollY + 5;
       let left = rect.left + window.scrollX;
 
-      if (left + popoverRect.width > window.innerWidth - 10) {
-        left = window.innerWidth - popoverRect.width - 10;
+      const layoutViewportWidth = getS1pLayoutViewportWidth();
+      if (left + popoverRect.width > layoutViewportWidth - 10) {
+        left = layoutViewportWidth - popoverRect.width - 10;
       }
       if (left < 10) {
         left = 10;
@@ -45322,7 +45329,7 @@
       if (!behavior?.measureWidth || !behavior.templateId) {
         return "";
       }
-      return `${behavior.templateId}::${behavior.maxWidth}::${window.innerWidth}`;
+      return `${behavior.templateId}::${behavior.maxWidth}::${getS1pLayoutViewportWidth()}`;
     };
     const applyTooltipMeasuredWidth = (
       behavior,
@@ -45371,6 +45378,12 @@
       const tooltipGap = GENERIC_TOOLTIP_GAP_PX;
       const shouldOpenAtSide =
         behavior?.position === GENERIC_TOOLTIP_POSITION_SIDE;
+      const viewportTop = window.scrollY;
+      const viewportLeft = window.scrollX;
+      const layoutViewportWidth = getS1pLayoutViewportWidth();
+      const layoutViewportHeight = getS1pLayoutViewportHeight();
+      const viewportRight = viewportLeft + layoutViewportWidth;
+      const viewportBottom = viewportTop + layoutViewportHeight;
       let top;
       let left;
 
@@ -45379,7 +45392,7 @@
           rect.top + window.scrollY + rect.height / 2 - tooltipHeight / 2;
         left = rect.right + window.scrollX + tooltipGap;
 
-        if (left + tooltipWidth > window.scrollX + window.innerWidth - viewportPadding) {
+        if (left + tooltipWidth > viewportRight - viewportPadding) {
           left = rect.left + window.scrollX - tooltipWidth - tooltipGap;
         }
       } else {
@@ -45391,10 +45404,6 @@
         }
       }
 
-      const viewportTop = window.scrollY;
-      const viewportLeft = window.scrollX;
-      const viewportRight = window.scrollX + window.innerWidth;
-      const viewportBottom = window.scrollY + window.innerHeight;
       const minTop = viewportTop + viewportPadding;
       const maxTop = viewportBottom - tooltipHeight - viewportPadding;
       const minLeft = viewportLeft + viewportPadding;
@@ -47083,7 +47092,7 @@
     const top = anchorRect.top + window.scrollY - 2;
 
     let left;
-    const spaceOnRight = window.innerWidth - anchorRect.right;
+    const spaceOnRight = getS1pLayoutViewportWidth() - anchorRect.right;
     const requiredSpace = menuRect.width + 10;
 
     if (spaceOnRight >= requiredSpace) {

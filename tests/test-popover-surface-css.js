@@ -117,5 +117,43 @@ assert.match(
   /width:\s*max-content/,
   "紧凑 tooltip 应按内容宽度测量，避免显示后反复换行。"
 );
+const tooltipPositionStart = sourceCode.indexOf(
+  "const positionTooltipPopover ="
+);
+assert.notEqual(tooltipPositionStart, -1, "缺少 tooltip 定位函数。");
+const tooltipPositionEnd = sourceCode.indexOf(
+  "const applyTooltipLayout =",
+  tooltipPositionStart
+);
+assert.notEqual(tooltipPositionEnd, -1, "无法解析 tooltip 定位函数边界。");
+const tooltipPositionBlock = sourceCode.slice(
+  tooltipPositionStart,
+  tooltipPositionEnd
+);
+assert.match(
+  sourceCode,
+  /const getS1pLayoutViewportWidth = \(\) =>\s*document\.documentElement\?\.clientWidth\s*\|\|\s*window\.innerWidth/s,
+  "应集中提供布局视口宽度 helper，避免浮层定位直接使用 innerWidth。"
+);
+assert.match(
+  tooltipPositionBlock,
+  /layoutViewportWidth\s*=\s*getS1pLayoutViewportWidth\(\)/,
+  "tooltip 横向夹取应使用 documentElement.clientWidth，避免在有垂直滚动条时按 innerWidth 放进滚动条槽。"
+);
+assert.doesNotMatch(
+  tooltipPositionBlock,
+  /window\.scrollX\s*\+\s*window\.innerWidth/,
+  "tooltip 右侧边界不应直接使用 window.innerWidth。"
+);
+assert.doesNotMatch(
+  sourceCode,
+  /spaceOnRight\s*=\s*window\.innerWidth/,
+  "浮层右侧空间判断不应直接使用 window.innerWidth。"
+);
+assert.doesNotMatch(
+  sourceCode,
+  /left\s*\+\s*\w+(?:\.\w+)*\s*>\s*window\.innerWidth/,
+  "浮层右侧夹取不应直接使用 window.innerWidth。"
+);
 
 console.log("[popover-surface-css] Type B popover surface CSS verified.");

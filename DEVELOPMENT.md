@@ -111,6 +111,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 
 - 类型 B 浮层分层：用户标记编辑器 / 日期选择器 / 确认型浮层 / 普通短 tooltip / 文档型帮助浮层使用轻磨砂；纯操作入口菜单保持实底。
 - 弹窗与浮层可读性：全屏蒙版只保留低强度无色 blur，承载文字的 dialog / popover / toast / 浮动控件必须使用更实的背景与轻量滤镜变量，浅色、深色模式都要同步维护。
+- 弹窗与浮层定位：所有贴近右侧边界的 tooltip / popover / inline menu 必须使用布局视口宽度（`document.documentElement.clientWidth`，当前封装为 `getS1pLayoutViewportWidth()`）做横向夹取，不要直接用 `window.innerWidth`。`window.innerWidth` 会包含垂直滚动条槽，tooltip 可能被放进滚动条槽内，hover 时触发 1px 水平滚动条。
 - 自定义 UI 最外层容器不显示描边；输入框、按钮、分割线、表格和设置面板内部列表项仍可保留功能性边界。
 - 设置面板滚动条复用脚本自定义样式，并在 S1 NUX 启用时跟随 `--prid` / `--pridb`，轨道保持透明。
 - 图片查看器全屏蒙版保持无色 blur，图片舞台沿用浅色浅黄绿 / 深色深灰蓝主题底色并轻磨砂。
@@ -246,7 +247,8 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 实现约束（维护时请保持）：
 
 - 新增富文本 tooltip 时，优先在 `tooltipTemplateConfigs` 中登记行为配置，再通过 `setTemplateTooltip` 接入调用点。
-- 若模板 tooltip 依赖测宽缓存，需保持 `resize` 时清空缓存并重测，避免旧视口宽度残留。
+- 若模板 tooltip 依赖测宽缓存，需保持 `resize` 时清空缓存并重测，避免旧视口宽度残留；宽度缓存 key 也应使用 `getS1pLayoutViewportWidth()`，不要直接读 `window.innerWidth`。
+- Tooltip 的 `positionTooltipPopover()` 横向边界必须基于布局视口（`getS1pLayoutViewportWidth()` + `window.scrollX`）。不要用 `window.scrollX + window.innerWidth` 作为右边界，否则有垂直滚动条时，靠右 tooltip 会落入滚动条槽并临时撑出底部水平滚动条。
 - 需要取消 tooltip 时，优先走 `clearCustomTooltip`，不要只删 `fullTag` 或 class。
 - 手柄需同步 `aria-expanded`，动作型入口优先使用 `button`，仅导航型入口使用 `a`。
 
