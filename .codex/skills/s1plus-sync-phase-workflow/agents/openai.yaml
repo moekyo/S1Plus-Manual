@@ -1,4 +1,0 @@
-interface:
-  display_name: "S1Plus Sync Phases"
-  short_description: "Run phased sync redesign work"
-  default_prompt: "Use $s1plus-sync-phase-workflow to implement the next sync redesign phase and update the phase docs."

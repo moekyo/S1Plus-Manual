@@ -1858,6 +1858,11 @@
     "read_progress_sync_debounce";
   const FOREGROUND_PROBE_SOFT_BLOCK_REASON_INITIALIZATION_NOISE =
     "read_progress_initialization_noise";
+  const LOCAL_SYNC_DELTA_KIND_NO_CHANGE = "no_change";
+  const LOCAL_SYNC_DELTA_KIND_READ_PROGRESS_ONLY =
+    "read_progress_only_changed";
+  const LOCAL_SYNC_DELTA_KIND_CORE_CHANGED = "core_changed";
+  const LOCAL_SYNC_DELTA_KIND_UNKNOWN = "unknown_changed";
   const FOREGROUND_PROBE_SKIP_REASON_PENDING_RECOVERY_SETTLE =
     "pending_recovery_settle";
   const CLEANUP_PROVENANCE_SOURCE_AUTO_EXPIRE = "auto_expire_cleanup";
@@ -11948,6 +11953,16 @@
       case "remoteChangeKind":
       case "writerMatchKind":
         return "云端变化归因";
+      case "localChangeKind":
+        return "本地变更类型";
+      case "localDeltaReason":
+        return "本地变更依据";
+      case "pendingSources":
+        return "待同步来源";
+      case "backgroundDebounceSources":
+        return "后台防抖来源";
+      case "sharedDebounceCovered":
+        return "共享调度覆盖";
       case "sameSessionRemoteWrite":
         return "同会话写入";
       case "sameDeviceRemoteWrite":
@@ -12039,6 +12054,8 @@
         return "强制推送";
       case "skip_push_on_startup":
         return "启动安全模式暂缓推送";
+      case "merge_read_progress":
+        return "合并阅读进度并回写云端";
       case "skip_push_on_foreground_followup":
         return "前台检查暂缓推送";
       case "no_change":
@@ -12315,6 +12332,30 @@
       case "remoteChangeKind":
       case "writerMatchKind":
         return getSyncTraceRemoteChangeKindLabel(value);
+      case "localChangeKind":
+        switch (value) {
+          case LOCAL_SYNC_DELTA_KIND_NO_CHANGE:
+            return "无本地变更";
+          case LOCAL_SYNC_DELTA_KIND_READ_PROGRESS_ONLY:
+            return "仅阅读进度";
+          case LOCAL_SYNC_DELTA_KIND_CORE_CHANGED:
+            return "核心数据变更";
+          case LOCAL_SYNC_DELTA_KIND_UNKNOWN:
+            return "未知本地变更";
+          default:
+            return getSyncTraceReasonValueLabel(value);
+        }
+      case "localDeltaReason":
+        return getSyncTraceReasonValueLabel(value);
+      case "pendingSources":
+      case "backgroundDebounceSources":
+        return value
+          .split(",")
+          .map((item) =>
+            getSyncTraceDetailValueLabel("source", item.trim()) || item.trim()
+          )
+          .filter(Boolean)
+          .join("+");
       case "mode":
       case "syncMode":
         return getSyncTraceScopeLabel(
@@ -14535,6 +14576,7 @@
       case "manual_force_push_repair":
       case "cleanup_shortcut_push":
       case "smart_progress_push":
+      case "merge_read_progress":
       case "merged_read_progress":
       case "smart_merge_pull":
         return AUTO_SYNC_INDICATOR_OPERATION_PUSH;
@@ -26249,12 +26291,154 @@
     }
   };
 
+  const getSyncDeltaSourceNames = (sources = {}) =>
+    Object.keys(sanitizeRecordObject(sources))
+      .map((source) => normalizePendingAutoSyncSource(source))
+      .filter(Boolean)
+      .sort();
+
+  const buildLocalSyncDeltaSourceContext = ({
+    pendingRequest = undefined,
+    backgroundDebounceState = undefined,
+    dirtyProvenance = undefined,
+  } = {}) => {
+    const pending =
+      pendingRequest === undefined
+        ? getPendingAutoSyncRequest()
+        : normalizePendingAutoSyncRequest(pendingRequest);
+    const debounceState =
+      backgroundDebounceState === undefined
+        ? getBackgroundSyncDebounceState()
+        : normalizeBackgroundSyncDebounceState(backgroundDebounceState);
+    const provenance =
+      dirtyProvenance === undefined
+        ? getLastLocalDirtyProvenance()
+        : normalizeLocalDirtyProvenance(dirtyProvenance);
+    const pendingSources = getSyncDeltaSourceNames(pending?.sources);
+    const backgroundDebounceSources = getSyncDeltaSourceNames(
+      debounceState?.sources
+    );
+    const dirtySource = normalizePendingAutoSyncSource(provenance?.source);
+    const signalSources = [
+      ...pendingSources,
+      ...backgroundDebounceSources,
+      dirtySource,
+    ].filter(Boolean);
+    const onlyReadProgressSignals =
+      signalSources.length > 0 &&
+      signalSources.every((source) => source === "read_progress");
+    return {
+      pending,
+      debounceState,
+      dirtyProvenance: provenance,
+      pendingSources,
+      backgroundDebounceSources,
+      dirtySource,
+      onlyReadProgressSignals,
+      sharedDebounceCovered: isBackgroundSyncDebounceStateCoveringPendingRequest(
+        debounceState,
+        pending
+      ),
+    };
+  };
+
+  const classifyLocalSyncDelta = ({
+    localDataObject = null,
+    remoteDataObject = null,
+    pendingRequest = undefined,
+    backgroundDebounceState = undefined,
+    dirtyProvenance = undefined,
+  } = {}) => {
+    const sourceContext = buildLocalSyncDeltaSourceContext({
+      pendingRequest,
+      backgroundDebounceState,
+      dirtyProvenance,
+    });
+    const localHash =
+      typeof localDataObject?.contentHash === "string"
+        ? localDataObject.contentHash
+        : "";
+    const remoteHash =
+      typeof remoteDataObject?.contentHash === "string"
+        ? remoteDataObject.contentHash
+        : "";
+    const localBaseHash =
+      typeof localDataObject?.baseContentHash === "string"
+        ? localDataObject.baseContentHash
+        : "";
+    const remoteBaseHash =
+      typeof remoteDataObject?.baseContentHash === "string"
+        ? remoteDataObject.baseContentHash
+        : "";
+    const baseHashesComparable = Boolean(localBaseHash && remoteBaseHash);
+    const baseHashesEqual =
+      baseHashesComparable && localBaseHash === remoteBaseHash;
+
+    if (localHash && remoteHash && localHash === remoteHash) {
+      return {
+        kind: LOCAL_SYNC_DELTA_KIND_NO_CHANGE,
+        reason: "hash_equal",
+        strictReadProgressOnly: false,
+        ...sourceContext,
+      };
+    }
+
+    if (baseHashesEqual) {
+      return {
+        kind: LOCAL_SYNC_DELTA_KIND_READ_PROGRESS_ONLY,
+        reason: "base_hash_equal_without_read_progress",
+        strictReadProgressOnly: true,
+        ...sourceContext,
+      };
+    }
+
+    if (baseHashesComparable) {
+      return {
+        kind: LOCAL_SYNC_DELTA_KIND_CORE_CHANGED,
+        reason: "base_hash_changed_without_read_progress",
+        strictReadProgressOnly: false,
+        ...sourceContext,
+      };
+    }
+
+    if (sourceContext.onlyReadProgressSignals) {
+      return {
+        kind: LOCAL_SYNC_DELTA_KIND_UNKNOWN,
+        reason: "read_progress_sources_only",
+        strictReadProgressOnly: false,
+        ...sourceContext,
+      };
+    }
+
+    return {
+      kind: LOCAL_SYNC_DELTA_KIND_UNKNOWN,
+      reason: "missing_comparable_base_hash",
+      strictReadProgressOnly: false,
+      ...sourceContext,
+    };
+  };
+
+  const getLocalSyncDeltaTraceDetails = (classification = null) => {
+    if (!classification || typeof classification !== "object") {
+      return {};
+    }
+    return {
+      localChangeKind: classification.kind || LOCAL_SYNC_DELTA_KIND_UNKNOWN,
+      localDeltaReason: classification.reason || "local_delta_unknown",
+      pendingSources: classification.pendingSources?.join(",") || "",
+      backgroundDebounceSources:
+        classification.backgroundDebounceSources?.join(",") || "",
+      sharedDebounceCovered: classification.sharedDebounceCovered === true,
+    };
+  };
+
   const decideSyncActionByVersion = ({
     localDataObject,
     remoteDataObject,
     remoteUpdatedAt = undefined,
     syncMode = AUTO_SYNC_MODE_BACKGROUND,
     forcePullOnStartup = false,
+    localDeltaClassification = null,
   }) => {
     const resolvedSyncMode =
       normalizeAutoSyncExecutionMode(syncMode) || AUTO_SYNC_MODE_BACKGROUND;
@@ -26265,6 +26449,10 @@
         : isStartupSync
           ? "skip_push_on_startup"
           : "push";
+    const localDelta =
+      localDeltaClassification && typeof localDeltaClassification === "object"
+        ? localDeltaClassification
+        : classifyLocalSyncDelta({ localDataObject, remoteDataObject });
     if (
       !localDataObject ||
       !remoteDataObject ||
@@ -26314,6 +26502,18 @@
 
       if (remoteChangedByHash === false) {
         if (localChanged) {
+          if (
+            isStartupSync &&
+            localDelta.strictReadProgressOnly === true
+          ) {
+            return {
+              action: "merge_read_progress",
+              reason: "startup_read_progress_only_changed",
+              localNewer: true,
+              localChangeKind: localDelta.kind,
+              localDeltaReason: localDelta.reason,
+            };
+          }
           return {
             action: localNewerAction,
             reason: remoteChangedByUpdatedAt
@@ -26355,6 +26555,18 @@
           };
         }
         if (localChanged && !remoteChangedByUpdatedAt) {
+          if (
+            isStartupSync &&
+            localDelta.strictReadProgressOnly === true
+          ) {
+            return {
+              action: "merge_read_progress",
+              reason: "startup_read_progress_only_changed",
+              localNewer: true,
+              localChangeKind: localDelta.kind,
+              localDeltaReason: localDelta.reason,
+            };
+          }
           return {
             action: localNewerAction,
             reason: "local_changed_since_baseline",
@@ -27853,6 +28065,8 @@
       case "merged_read_progress":
       case "smart_merge_pull":
         return "已合并阅读进度并回写云端";
+      case "merge_read_progress":
+        return "合并阅读进度并回写云端";
       case "manual_force_push_repair":
         return "已使用本地数据修复云端备份";
       case "probe_gate_blocked":
@@ -27976,6 +28190,18 @@
         return "阅读进度仍有待写入内容";
       case "read_progress_auto_merge":
         return "仅阅读进度存在分歧，可自动合并";
+      case "startup_read_progress_only_changed":
+        return "启动时仅阅读进度本地较新";
+      case "base_hash_equal_without_read_progress":
+        return "除阅读进度外数据一致";
+      case "base_hash_changed_without_read_progress":
+        return "除阅读进度外也有数据变化";
+      case "read_progress_sources_only":
+        return "待同步来源仅包含阅读进度";
+      case "missing_comparable_base_hash":
+        return "缺少可比基础哈希";
+      case "local_delta_unknown":
+        return "本地变更类型未知";
       case "clean_state_fence":
         return "本地与调度状态干净，已由干净状态门禁跳过";
       case "no_pending_auto_sync":
@@ -28487,6 +28713,10 @@
         "export_local_data",
         () => exportLocalDataObject(exportLocalDataOptions)
       );
+      const localDeltaClassification = classifyLocalSyncDelta({
+        localDataObject,
+        remoteDataObject: remote,
+      });
       const recentRemoteWriteMatch = resolveRecentRemoteWriteMatch({
         remoteUpdatedAt: remoteMeta.updatedAt,
         remoteWriter: remote.lastWriter,
@@ -28513,6 +28743,7 @@
         remoteUpdatedAt: remoteMeta.updatedAt,
         syncMode,
         forcePullOnStartup: settings.syncForcePullOnStartup,
+        localDeltaClassification,
       });
       const syncAction = versionDecision.action;
       recordSyncTraceEvent("auto_sync_decision", {
@@ -28530,6 +28761,7 @@
           localUpdatedAt: localDataObject.lastUpdated || 0,
           remoteUpdatedAt: remoteMeta.updatedAt || "",
           remoteChangeKind: recentRemoteWriteMatchKind,
+          ...getLocalSyncDeltaTraceDetails(localDeltaClassification),
         },
       });
       const indicatorOperationForAction =
@@ -28564,6 +28796,85 @@
           });
         }
         return asConflictResult("local_changed_during_sync");
+      };
+      const mergeReadProgressAndPush = async ({
+        reason = "",
+        message = "开始自动合并阅读进度并回写云端",
+      } = {}) => {
+        const mergeReason =
+          reason || versionDecision.reason || "read_progress_auto_merge";
+        console.warn(
+          "S1 Plus (Sync): 检测到仅阅读进度分歧，正在执行自动合并并回写云端。"
+        );
+        recordSyncTraceEvent("auto_sync_action_start", {
+          scope: "auto_sync",
+          status: "running",
+          message,
+          details: {
+            mode: syncMode,
+            action: "merged_read_progress",
+            reason: mergeReason,
+            ...getLocalSyncDeltaTraceDetails(localDeltaClassification),
+          },
+        });
+        setAutoSyncIndicatorActiveOperation(AUTO_SYNC_INDICATOR_OPERATION_PUSH, {
+          source: resolvedTriggerSource,
+          reason: "read_progress_auto_merge",
+        });
+        const { payload: mergedPayload, contentHash: mergedContentHash } =
+          await runWithAutoSyncLockGuard(
+            "build_merged_read_progress_payload",
+            () => buildMergedReadProgressPayload(localDataObject, remote)
+          );
+
+        const pushResult = await runWithAutoSyncLockGuard(
+          "push_merged_read_progress",
+          () =>
+            pushRemoteData(mergedPayload, {
+              expectedRemoteUpdatedAt: remoteMeta.updatedAt,
+              writerContext: {
+                action: "merged_read_progress",
+                syncMode,
+                threadId: getCurrentThreadId() || "",
+              },
+              settingsSnapshot: settings,
+            })
+        );
+        assertAutoSyncLockOwned("apply_merged_payload");
+        importLocalData(JSON.stringify(mergedPayload), {
+          suppressPostSync: true,
+        });
+        GM_setValue("s1p_last_sync_timestamp", Date.now());
+        const result = asSuccessResult(
+          "merged_read_progress",
+          {
+            contentHash: mergedContentHash,
+            remoteUpdatedAt: pushResult?.updatedAt || null,
+          },
+          {
+            reason: mergeReason,
+            remoteUpdatedAt: pushResult?.updatedAt || null,
+            ...recentRemoteWriteResultContext,
+            remoteWriter:
+              recentRemoteWriteResultContext.remoteWriter ||
+              pushResult?.writerMetadata ||
+              null,
+            appliedRemoteWriter: pushResult?.writerMetadata || null,
+            coveredLocalLastUpdated: localDataObject.lastUpdated,
+            localChangeKind:
+              localDeltaClassification.kind || LOCAL_SYNC_DELTA_KIND_UNKNOWN,
+            localDeltaReason:
+              localDeltaClassification.reason || "local_delta_unknown",
+          }
+        );
+        if (syncMode !== AUTO_SYNC_MODE_BACKGROUND) {
+          result.backgroundSchedulerCleanup =
+            cleanupBackgroundSchedulerAfterSuccess(result);
+          recordBackgroundSchedulerCleanupDiagnostics({
+            cleanupResult: result.backgroundSchedulerCleanup,
+          });
+        }
+        return result;
       };
 
       // --- 执行阶段 ---
@@ -28664,6 +28975,23 @@
               coveredLocalLastUpdated: localDataObject.lastUpdated,
             }
           );
+
+        case "merge_read_progress":
+          recordSyncTraceEvent("auto_sync_read_progress_local_newer", {
+            scope: "auto_sync",
+            status: "running",
+            message: "启动同步检测到仅阅读进度本地较新，转入自动合并",
+            details: {
+              mode: syncMode,
+              action: syncAction,
+              reason: versionDecision.reason || "startup_read_progress_only_changed",
+              ...getLocalSyncDeltaTraceDetails(localDeltaClassification),
+            },
+          });
+          return await mergeReadProgressAndPush({
+            reason: versionDecision.reason || "startup_read_progress_only_changed",
+            message: "开始自动合并启动期阅读进度并回写云端",
+          });
 
         case "skip_push_on_startup":
           console.warn(
@@ -28855,65 +29183,9 @@
               );
             }
 
-            console.warn(
-              "S1 Plus (Sync): 检测到仅阅读进度分歧，正在执行自动合并并回写云端。"
-            );
-            recordSyncTraceEvent("auto_sync_action_start", {
-              scope: "auto_sync",
-              status: "running",
-              message: "开始自动合并阅读进度并回写云端",
-              details: {
-                mode: syncMode,
-                action: "merged_read_progress",
-                reason: versionDecision.reason || "read_progress_auto_merge",
-              },
+            return await mergeReadProgressAndPush({
+              reason: versionDecision.reason || "read_progress_auto_merge",
             });
-            setAutoSyncIndicatorActiveOperation(AUTO_SYNC_INDICATOR_OPERATION_PUSH, {
-              source: resolvedTriggerSource,
-              reason: "read_progress_auto_merge",
-            });
-            const { payload: mergedPayload, contentHash: mergedContentHash } =
-              await runWithAutoSyncLockGuard(
-                "build_merged_read_progress_payload",
-                () => buildMergedReadProgressPayload(localDataObject, remote)
-              );
-
-            const pushResult = await runWithAutoSyncLockGuard(
-              "push_merged_read_progress",
-              () =>
-                pushRemoteData(mergedPayload, {
-                  expectedRemoteUpdatedAt: remoteMeta.updatedAt,
-                  writerContext: {
-                    action: "merged_read_progress",
-                    syncMode,
-                    threadId: getCurrentThreadId() || "",
-                  },
-                  settingsSnapshot: settings,
-                })
-            );
-            assertAutoSyncLockOwned("apply_merged_payload");
-            importLocalData(JSON.stringify(mergedPayload), {
-              suppressPostSync: true,
-            });
-            GM_setValue("s1p_last_sync_timestamp", Date.now());
-            return asSuccessResult(
-              "merged_read_progress",
-              {
-                contentHash: mergedContentHash,
-                remoteUpdatedAt: pushResult?.updatedAt || null,
-              },
-              {
-                reason: versionDecision.reason || "read_progress_auto_merge",
-                remoteUpdatedAt: pushResult?.updatedAt || null,
-                ...recentRemoteWriteResultContext,
-                remoteWriter:
-                  recentRemoteWriteResultContext.remoteWriter ||
-                  pushResult?.writerMetadata ||
-                  null,
-                appliedRemoteWriter: pushResult?.writerMetadata || null,
-                coveredLocalLastUpdated: localDataObject.lastUpdated,
-              }
-            );
           }
       }
     } catch (error) {
@@ -30223,6 +30495,8 @@
       getAutoSyncCleanStateSnapshot,
       shouldSkipAutoSyncDueToCleanState,
       decideSyncActionByVersion,
+      classifyLocalSyncDelta,
+      getLocalSyncDeltaTraceDetails,
       getForegroundRemoteChangeKind,
       getSyncResultRemoteWriteMatchKind,
       fetchRemoteData,
