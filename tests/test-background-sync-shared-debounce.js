@@ -27,6 +27,8 @@ const REQUIRED_SHARED_DEBOUNCE_HOOKS = [
   "releaseBackgroundSyncDebounceOwner",
   "scheduleSharedBackgroundSyncDebounceTimer",
   "clearSharedBackgroundSyncDebounceTimer",
+  "scheduleSharedBackgroundSyncDebounceOwnerRecoveryTimer",
+  "recoverSharedBackgroundSyncDebounceOwnerIfNeeded",
   "flushSharedBackgroundSyncDebounceForHiddenPage",
   "queueSharedBackgroundSyncDebounceHiddenFlush",
   "handleSharedBackgroundSyncDebounceDue",
@@ -92,6 +94,11 @@ const getSharedDebounceApi = () => {
     "owner lease must be positive."
   );
   assert.ok(
+    constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_RECOVERY_GRACE_MS > 0 &&
+      constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_RECOVERY_GRACE_MS <= 1000,
+    "owner recovery grace should be a short handoff buffer."
+  );
+  assert.ok(
     constants.BACKGROUND_SYNC_DEBOUNCE_FOLLOW_UP_SETTLE_MS >= 300 &&
       constants.BACKGROUND_SYNC_DEBOUNCE_FOLLOW_UP_SETTLE_MS <= 1500,
     "follow-up settle should stay in the short 300ms-1500ms window."
@@ -125,6 +132,15 @@ const createTimerSpy = () => {
     return `timer-${calls.length}`;
   };
   return { calls, scheduleTimer };
+};
+
+const createRecoveryTimerSpy = () => {
+  const calls = [];
+  const scheduleRecoveryTimer = (delayMs, context = {}, callback = null) => {
+    calls.push({ delayMs, context: toPlainObject(context), callback });
+    return `recovery-timer-${calls.length}`;
+  };
+  return { calls, scheduleRecoveryTimer };
 };
 
 const seedSharedState = ({
@@ -476,6 +492,102 @@ const testExpiredOwnerLeaseAllowsTakeover = () => {
   assert.equal(acquired, true);
   assert.equal(getState().ownerTabId, "tab-b");
   assert.equal(timers.calls.length, 1);
+};
+
+const testVisibleTabWatchesActiveOwnerLeaseForRecovery = () => {
+  const { constants, hooks, setState, getState } = getSharedDebounceApi();
+  const recoveryTimers = createRecoveryTimerSpy();
+  const now = 6_500_000;
+
+  setState(
+    seedSharedState({
+      generation: 8,
+      ownerTabId: "tab-a",
+      ownerLeaseUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS,
+      dueAt: now + READ_PROGRESS_SYNC_DEBOUNCE_MS,
+      maxWaitUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
+      firstDirtyAt: now - 2_000,
+      lastDirtyAt: now - 500,
+      maxLastModified: 6501,
+      sources: { read_progress: 1 },
+      threadIds: ["6501"],
+      reason: "debounced_read_progress",
+      dueSource: "read_progress",
+    })
+  );
+
+  const result = hooks.recoverSharedBackgroundSyncDebounceOwnerIfNeeded(now, {
+    tabId: "tab-b",
+    settingsSnapshot: readySyncSettings,
+    scheduleRecoveryTimer: recoveryTimers.scheduleRecoveryTimer,
+  });
+
+  assert.deepEqual(toPlainObject(result), {
+    status: "scheduled",
+    reason: "owner_lease_watch",
+    currentOwnerTabId: "tab-a",
+  });
+  assert.equal(
+    recoveryTimers.calls.length,
+    1,
+    "visible non-owner tabs should arm a lease-expiry recovery watch."
+  );
+  assert.equal(
+    recoveryTimers.calls[0].delayMs,
+    constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS +
+      constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_RECOVERY_GRACE_MS
+  );
+  assert.equal(
+    getState().ownerTabId,
+    "tab-a",
+    "watching the lease must not steal a still-valid owner immediately."
+  );
+};
+
+const testOwnerLeaseRecoveryCallbackTakesOverAndRunsPastDueTimer = () => {
+  const { constants, hooks, setState, getState } = getSharedDebounceApi();
+  const ownerTimers = createTimerSpy();
+  const recoveryTimers = createRecoveryTimerSpy();
+  const now = 6_800_000;
+
+  setState(
+    seedSharedState({
+      generation: 9,
+      ownerTabId: "tab-a",
+      ownerLeaseUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS,
+      dueAt: now + READ_PROGRESS_SYNC_DEBOUNCE_MS,
+      maxWaitUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
+      firstDirtyAt: now - 2_000,
+      lastDirtyAt: now - 500,
+      maxLastModified: 6801,
+      sources: { read_progress: 1 },
+      threadIds: ["6801"],
+      reason: "debounced_read_progress",
+      dueSource: "read_progress",
+    })
+  );
+
+  hooks.recoverSharedBackgroundSyncDebounceOwnerIfNeeded(now, {
+    tabId: "tab-b",
+    settingsSnapshot: readySyncSettings,
+    scheduleTimer: ownerTimers.scheduleTimer,
+    scheduleRecoveryTimer: recoveryTimers.scheduleRecoveryTimer,
+  });
+
+  assert.equal(typeof recoveryTimers.calls[0].callback, "function");
+  recoveryTimers.calls[0].callback();
+
+  assert.equal(getState().ownerTabId, "tab-b");
+  assert.equal(
+    ownerTimers.calls.length,
+    1,
+    "the recovered owner should schedule the shared debounce timer."
+  );
+  assert.equal(
+    ownerTimers.calls[0].delayMs,
+    0,
+    "a past-due shared debounce should run immediately after owner recovery."
+  );
 };
 
 const testOwnerDueReReadsStateAndSkipsStaleGeneration = () => {
@@ -1107,6 +1219,8 @@ const main = async () => {
   testReadProgressTrailingDebounceStopsAtMaxWait();
   testOnlyOwnerSchedulesTimerAndValidLeasePreventsSteal();
   testExpiredOwnerLeaseAllowsTakeover();
+  testVisibleTabWatchesActiveOwnerLeaseForRecovery();
+  testOwnerLeaseRecoveryCallbackTakesOverAndRunsPastDueTimer();
   testOwnerDueReReadsStateAndSkipsStaleGeneration();
   testOwnerDueConsumesSharedStateBeforeTrigger();
   testCoveredSuccessClearsPendingAndSharedState();
