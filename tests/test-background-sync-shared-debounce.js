@@ -935,6 +935,73 @@ const testLockActiveReschedulePersistsDueAt = () => {
   assert.equal(timers.calls[0].delayMs, 1000);
 };
 
+const testLockActiveRescheduleLogIsThrottled = () => {
+  const { constants, hooks, store, setState, getState } = getSharedDebounceApi();
+  const timers = createTimerSpy();
+  const now = 12_500_000;
+
+  setState(
+    seedSharedState({
+      generation: 6,
+      ownerTabId: "tab-a",
+      ownerLeaseUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS,
+      dueAt: now,
+      maxWaitUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
+      firstDirtyAt: now - 3_000,
+      lastDirtyAt: now - 1_000,
+      maxLastModified: 1251,
+      sources: { read_progress: 1 },
+      threadIds: ["1251"],
+      reason: "debounced_read_progress",
+      dueSource: "read_progress",
+    })
+  );
+  store.set("s1p_background_sync_lock", {
+    owner: "other-tab",
+    timestamp: now,
+  });
+  hooks.resetSyncDiagnostics();
+
+  const callDue = (at) =>
+    hooks.handleSharedBackgroundSyncDebounceDue({
+      now: at,
+      tabId: "tab-a",
+      expectedGeneration: 6,
+      forceDue: true,
+      settingsSnapshot: readySyncSettings,
+      scheduleTimer: timers.scheduleTimer,
+      triggerRemoteSyncPush: () => {
+        throw new Error("sync should be delayed while a lock is active");
+      },
+    });
+
+  const countRescheduleLogs = () =>
+    hooks.getSyncDiagnostics().syncTraceEvents.filter((event) =>
+      event.includes("共享调度已延后")
+    ).length;
+
+  assert.equal(callDue(now).reason, "sync_lock_active");
+  assert.equal(countRescheduleLogs(), 1);
+
+  assert.equal(callDue(now + 500).reason, "sync_lock_active");
+  assert.equal(
+    countRescheduleLogs(),
+    1,
+    "同一 generation + reason 在 1 秒内不应重复写共享调度延后日志。"
+  );
+  assert.equal(getState().dueAt, now + 1_500);
+  assert.equal(timers.calls.length, 2);
+
+  assert.equal(callDue(now + 1_001).reason, "sync_lock_active");
+  assert.equal(
+    countRescheduleLogs(),
+    2,
+    "超过 1 秒后，同一 generation + reason 可以再次写共享调度延后日志。"
+  );
+  assert.equal(getState().dueAt, now + 2_001);
+  assert.equal(timers.calls.length, 3);
+};
+
 const testSharedDebounceWriteRetriesWhenVerificationLosesRequest = () => {
   const { request, getState, sandbox, store } = getSharedDebounceApi();
   const timers = createTimerSpy();
@@ -1229,6 +1296,7 @@ const main = async () => {
   testOwnerReleaseLeavesPendingRecoverableAndAllowsTakeover();
   testRuntimeStateDoesNotExposeLegacyPerTabTimerAsSharedOwner();
   testLockActiveReschedulePersistsDueAt();
+  testLockActiveRescheduleLogIsThrottled();
   testSharedDebounceWriteRetriesWhenVerificationLosesRequest();
   testPendingRecoveryRecognizesCoveredSharedDebounce();
   testHiddenOwnerFlushForcesPendingSchedulerBeforeTimerDue();
