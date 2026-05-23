@@ -1447,6 +1447,7 @@
     "s1p_background_sync_debounce_state";
   const BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS = 30 * 1000;
   const BACKGROUND_SYNC_DEBOUNCE_OWNER_HEARTBEAT_MS = 10 * 1000;
+  const BACKGROUND_SYNC_DEBOUNCE_OWNER_RECOVERY_GRACE_MS = 50;
   const BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS = 60 * 1000;
   const BACKGROUND_SYNC_DEBOUNCE_FOLLOW_UP_SETTLE_MS = 600;
   const BACKGROUND_SYNC_DEBOUNCE_THREAD_ID_LIMIT = 20;
@@ -17018,6 +17019,9 @@
   let sharedBackgroundSyncDebounceTimerDueAt = 0;
   let sharedBackgroundSyncDebounceTimerGeneration = 0;
   let sharedBackgroundSyncDebounceHeartbeatTimer = null;
+  let sharedBackgroundSyncDebounceOwnerRecoveryTimer = null;
+  let sharedBackgroundSyncDebounceOwnerRecoveryTimerIsExternal = false;
+  let sharedBackgroundSyncDebounceOwnerRecoveryTimerDueAt = 0;
 
   const clearReadProgressSyncDebounceState = () => {
     readProgressSyncDebounceDueAt = 0;
@@ -17185,8 +17189,19 @@
       stopSharedBackgroundSyncDebounceOwnerHeartbeat();
     }
   };
+  const clearSharedBackgroundSyncDebounceOwnerRecoveryTimer = () => {
+    if (sharedBackgroundSyncDebounceOwnerRecoveryTimer) {
+      if (!sharedBackgroundSyncDebounceOwnerRecoveryTimerIsExternal) {
+        clearTimeout(sharedBackgroundSyncDebounceOwnerRecoveryTimer);
+      }
+      sharedBackgroundSyncDebounceOwnerRecoveryTimer = null;
+    }
+    sharedBackgroundSyncDebounceOwnerRecoveryTimerIsExternal = false;
+    sharedBackgroundSyncDebounceOwnerRecoveryTimerDueAt = 0;
+  };
   const clearBackgroundSyncDebounceState = () => {
     clearSharedBackgroundSyncDebounceTimer();
+    clearSharedBackgroundSyncDebounceOwnerRecoveryTimer();
     invalidateAutoSyncIndicatorDisplayPhaseCache();
     GM_deleteValue(BACKGROUND_SYNC_DEBOUNCE_STATE_KEY);
     clearReadProgressSyncDebounceState();
@@ -17454,6 +17469,7 @@
       return false;
     }
 
+    clearSharedBackgroundSyncDebounceOwnerRecoveryTimer();
     const delayMs = Math.max(0, state.dueAt - now);
     clearSharedBackgroundSyncDebounceTimer({ stopHeartbeat: false });
     sharedBackgroundSyncDebounceTimerDueAt = state.dueAt;
@@ -17556,6 +17572,156 @@
       ownerLeaseUntil: 0,
     });
     return true;
+  };
+  const scheduleSharedBackgroundSyncDebounceOwnerRecoveryTimer = (
+    stateInput = null,
+    options = {}
+  ) => {
+    const state =
+      normalizeBackgroundSyncDebounceState(stateInput) ||
+      getBackgroundSyncDebounceState();
+    const now = Number(options.now) || Date.now();
+    const tabId = getBackgroundSyncDebounceTabId(options);
+    clearSharedBackgroundSyncDebounceOwnerRecoveryTimer();
+    if (
+      !state ||
+      document.visibilityState !== "visible" ||
+      !state.ownerTabId ||
+      state.ownerTabId === tabId ||
+      state.ownerLeaseUntil <= now
+    ) {
+      return false;
+    }
+
+    const recoveryDueAt =
+      state.ownerLeaseUntil + BACKGROUND_SYNC_DEBOUNCE_OWNER_RECOVERY_GRACE_MS;
+    const delayMs = Math.max(0, recoveryDueAt - now);
+    sharedBackgroundSyncDebounceOwnerRecoveryTimerDueAt = recoveryDueAt;
+
+    const context = {
+      generation: state.generation,
+      ownerTabId: state.ownerTabId,
+      ownerLeaseUntil: state.ownerLeaseUntil,
+      dueAt: state.dueAt,
+      recoveryDueAt,
+      reason: state.reason,
+    };
+    const runRecovery = () => {
+      sharedBackgroundSyncDebounceOwnerRecoveryTimer = null;
+      sharedBackgroundSyncDebounceOwnerRecoveryTimerIsExternal = false;
+      sharedBackgroundSyncDebounceOwnerRecoveryTimerDueAt = 0;
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+      const latestState = getBackgroundSyncDebounceState();
+      if (!latestState || latestState.generation !== state.generation) {
+        return;
+      }
+      const recoveryNow = Date.now();
+      if (
+        latestState.ownerTabId &&
+        latestState.ownerTabId !== tabId &&
+        latestState.ownerLeaseUntil > recoveryNow
+      ) {
+        scheduleSharedBackgroundSyncDebounceOwnerRecoveryTimer(latestState, {
+          ...options,
+          now: recoveryNow,
+          tabId,
+        });
+        return;
+      }
+      if (latestState.ownerTabId === tabId) {
+        scheduleSharedBackgroundSyncDebounceTimer(latestState, {
+          ...options,
+          now: recoveryNow,
+          tabId,
+        });
+        return;
+      }
+      const acquired = tryAcquireBackgroundSyncDebounceOwner(
+        latestState,
+        recoveryNow,
+        {
+          ...options,
+          now: recoveryNow,
+          tabId,
+        }
+      );
+      recordSyncTraceEvent("shared_scheduler_owner_recovery", {
+        scope: "shared_background_scheduler",
+        status: acquired ? "scheduled" : "skipped",
+        message: acquired
+          ? "共享后台调度 owner 租约过期，当前可见页已接管"
+          : "共享后台调度 owner 租约过期，但当前可见页接管失败",
+        details: {
+          reason: acquired ? "owner_lease_expired" : "owner_recovery_failed",
+          generation: latestState.generation,
+          previousOwnerTabId: latestState.ownerTabId,
+          dueAt: latestState.dueAt,
+          ownerLeaseUntil: latestState.ownerLeaseUntil,
+        },
+      });
+    };
+
+    if (typeof options.scheduleRecoveryTimer === "function") {
+      sharedBackgroundSyncDebounceOwnerRecoveryTimer =
+        options.scheduleRecoveryTimer(delayMs, context, runRecovery);
+      sharedBackgroundSyncDebounceOwnerRecoveryTimerIsExternal = true;
+      return true;
+    }
+
+    sharedBackgroundSyncDebounceOwnerRecoveryTimer = setTimeout(
+      runRecovery,
+      delayMs
+    );
+    sharedBackgroundSyncDebounceOwnerRecoveryTimerIsExternal = false;
+    return true;
+  };
+  const recoverSharedBackgroundSyncDebounceOwnerIfNeeded = (
+    now = Date.now(),
+    options = {}
+  ) => {
+    const state = getBackgroundSyncDebounceState();
+    const tabId = getBackgroundSyncDebounceTabId(options);
+    if (!state) {
+      clearSharedBackgroundSyncDebounceOwnerRecoveryTimer();
+      return { status: "skipped", reason: "no_shared_debounce_state" };
+    }
+    if (state.ownerTabId === tabId) {
+      const scheduled = scheduleSharedBackgroundSyncDebounceTimer(state, {
+        ...options,
+        now,
+        tabId,
+      });
+      return {
+        status: scheduled ? "scheduled" : "skipped",
+        reason: scheduled ? "current_tab_owner_timer_scheduled" : "timer_failed",
+      };
+    }
+    if (state.ownerTabId && state.ownerLeaseUntil > now) {
+      const scheduled = scheduleSharedBackgroundSyncDebounceOwnerRecoveryTimer(
+        state,
+        {
+          ...options,
+          now,
+          tabId,
+        }
+      );
+      return {
+        status: scheduled ? "scheduled" : "skipped",
+        reason: scheduled ? "owner_lease_watch" : "active_other_owner",
+        currentOwnerTabId: state.ownerTabId,
+      };
+    }
+    const acquired = tryAcquireBackgroundSyncDebounceOwner(state, now, {
+      ...options,
+      now,
+      tabId,
+    });
+    return {
+      status: acquired ? "scheduled" : "skipped",
+      reason: acquired ? "owner_recovered" : "owner_acquire_failed",
+    };
   };
   const handleSharedBackgroundSyncDebounceDue = (options = {}) => {
     const now = Number(options.now) || Date.now();
@@ -18116,6 +18282,7 @@
     syncReadProgressDebounceStateFromSharedState(state);
     if (!state) {
       clearSharedBackgroundSyncDebounceTimer();
+      clearSharedBackgroundSyncDebounceOwnerRecoveryTimer();
       return;
     }
     const now = Date.now();
@@ -18135,7 +18302,9 @@
       if (acquired && document.visibilityState !== "visible") {
         queueSharedBackgroundSyncDebounceHiddenFlush("storage_hidden_takeover");
       }
+      return;
     }
+    scheduleSharedBackgroundSyncDebounceOwnerRecoveryTimer(state, { now });
   };
   let sharedBackgroundSyncDebounceHiddenFlushTask = null;
   let sharedBackgroundSyncDebouncePageUnloading = false;
@@ -18322,7 +18491,9 @@
       }
       if (!state.ownerTabId || state.ownerLeaseUntil <= now) {
         tryAcquireBackgroundSyncDebounceOwner(state, now);
+        return;
       }
+      scheduleSharedBackgroundSyncDebounceOwnerRecoveryTimer(state, { now });
     });
   };
   const getBackgroundSyncDebounceRuntimeStateForTest = () => ({
@@ -18343,6 +18514,7 @@
     DEFAULT_SYNC_DEBOUNCE_MS,
     BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS,
     BACKGROUND_SYNC_DEBOUNCE_OWNER_HEARTBEAT_MS,
+    BACKGROUND_SYNC_DEBOUNCE_OWNER_RECOVERY_GRACE_MS,
     BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
     BACKGROUND_SYNC_DEBOUNCE_FOLLOW_UP_SETTLE_MS,
     AUTO_SYNC_CLEAN_STATE_COOLDOWN_MS,
@@ -30514,6 +30686,8 @@
       releaseBackgroundSyncDebounceOwner,
       scheduleSharedBackgroundSyncDebounceTimer,
       clearSharedBackgroundSyncDebounceTimer,
+      scheduleSharedBackgroundSyncDebounceOwnerRecoveryTimer,
+      recoverSharedBackgroundSyncDebounceOwnerIfNeeded,
       flushSharedBackgroundSyncDebounceForHiddenPage,
       queueSharedBackgroundSyncDebounceHiddenFlush,
       handleSharedBackgroundSyncDebounceDue,
@@ -50251,6 +50425,10 @@
         {
           name: "bind shared background sync debounce lifecycle",
           run: () => bindSharedBackgroundSyncDebounceLifecycleHooks(),
+        },
+        {
+          name: "recover shared background sync debounce owner",
+          run: () => recoverSharedBackgroundSyncDebounceOwnerIfNeeded(),
         },
         {
           name: "bind pending auto-sync recovery hooks",

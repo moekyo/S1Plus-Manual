@@ -133,7 +133,7 @@ Fallback polling (`initializeSettingsFallbackSync`) polls settings if `GM_addVal
 - `syncCheckOnReturnToForeground` controls lightweight foreground remote metadata probes.
 - Startup freshness uses a dynamic window: 4 seconds by default, extended up to 15 seconds only when the page is visible and no user click, wheel, touch, or key interaction has happened before the startup decision.
 - Foreground probes must not be skipped just because local data appears clean; local clean state does not prove the remote Gist has not changed.
-- Shared background push debounce uses one cross-tab owner, but hidden owner tabs must not rely only on their own `setTimeout`; visibility/storage-owner recovery should force pending push work through the shared scheduler so another visible S1 Plus page can also recover it.
+- Shared background push debounce uses one cross-tab owner, but hidden/frozen owner tabs must not rely only on their own `setTimeout`; visibility/storage-owner recovery should force pending push work through the shared scheduler. Visible non-owner pages should also watch the owner lease and take over after expiry so pending read-progress pushes do not stay stuck as `Pending(push)` with no diagnostic progress.
 
 ## Release Workflow
 
