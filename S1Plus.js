@@ -1451,6 +1451,7 @@
   const BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS = 60 * 1000;
   const BACKGROUND_SYNC_DEBOUNCE_FOLLOW_UP_SETTLE_MS = 600;
   const BACKGROUND_SYNC_DEBOUNCE_THREAD_ID_LIMIT = 20;
+  const SHARED_BACKGROUND_SYNC_RESCHEDULE_LOG_THROTTLE_MS = 1000;
   const SYNC_CONFLICT_MODAL_COOLDOWN_MS = 2 * 60 * 1000;
   const SYNC_CONFLICT_MODAL_COOLDOWN_GROUP_MAP = Object.freeze({
     background_conflict: "sync_conflict",
@@ -13884,6 +13885,30 @@
     );
   };
 
+  const shouldSuppressAutoSyncIndicatorProbeDisplayForTitle = (
+    displayState = null,
+    { ttlProfile = "" } = {}
+  ) => {
+    if (ttlProfile !== "title") {
+      return false;
+    }
+    const phase =
+      normalizeAutoSyncIndicatorPhase(displayState?.displayPhase, {
+        allowRunning: true,
+      }) || AUTO_SYNC_INDICATOR_PHASE_IDLE;
+    const operation =
+      normalizeAutoSyncIndicatorOperation(displayState?.displayOperation) ||
+      normalizeAutoSyncIndicatorOperation(
+        displayState?.displayDominantDirection
+      ) ||
+      normalizeAutoSyncIndicatorOperation(displayState?.operation);
+    return Boolean(
+      phase === AUTO_SYNC_INDICATOR_PHASE_RUNNING &&
+        operation === AUTO_SYNC_INDICATOR_OPERATION_PROBE &&
+        displayState?.displaySessionKind === "cloud_probe_session"
+    );
+  };
+
   const buildSilentAutoSyncIndicatorIdleDisplayState = (displayState = {}) => ({
     ...displayState,
     displayPhase: AUTO_SYNC_INDICATOR_PHASE_IDLE,
@@ -14098,10 +14123,14 @@
         runningState,
         canShowPending,
       });
-      const visibleDisplayState =
-        shouldSuppressAutoSyncIndicatorEqualVerificationDisplay(displayState)
-          ? buildSilentAutoSyncIndicatorIdleDisplayState(displayState)
-          : displayState;
+      const shouldSuppressDisplay =
+        shouldSuppressAutoSyncIndicatorEqualVerificationDisplay(displayState) ||
+        shouldSuppressAutoSyncIndicatorProbeDisplayForTitle(displayState, {
+          ttlProfile,
+        });
+      const visibleDisplayState = shouldSuppressDisplay
+        ? buildSilentAutoSyncIndicatorIdleDisplayState(displayState)
+        : displayState;
       if (canUseCache) {
         autoSyncIndicatorDisplayPhaseCache = {
           expiresAt:
@@ -17022,6 +17051,8 @@
   let sharedBackgroundSyncDebounceOwnerRecoveryTimer = null;
   let sharedBackgroundSyncDebounceOwnerRecoveryTimerIsExternal = false;
   let sharedBackgroundSyncDebounceOwnerRecoveryTimerDueAt = 0;
+  let lastSharedBackgroundSyncRescheduleLogKey = "";
+  let lastSharedBackgroundSyncRescheduleLogAt = 0;
 
   const clearReadProgressSyncDebounceState = () => {
     readProgressSyncDebounceDueAt = 0;
@@ -17048,6 +17079,30 @@
   const getBackgroundSyncDebounceTabId = (options = {}) =>
     normalizeSyncDiagnosticText(options.tabId, 120) ||
     SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID;
+  const shouldLogSharedBackgroundSyncReschedule = ({
+    generation = 0,
+    reason = "",
+    now = Date.now(),
+  } = {}) => {
+    const normalizedGeneration = Math.max(
+      0,
+      Math.floor(Number(generation) || 0)
+    );
+    const normalizedReason =
+      normalizeSyncDiagnosticText(reason, 80) || "unknown";
+    const normalizedNow = Number(now) || Date.now();
+    const key = `${normalizedGeneration}:${normalizedReason}`;
+    if (
+      key === lastSharedBackgroundSyncRescheduleLogKey &&
+      normalizedNow - lastSharedBackgroundSyncRescheduleLogAt <
+        SHARED_BACKGROUND_SYNC_RESCHEDULE_LOG_THROTTLE_MS
+    ) {
+      return false;
+    }
+    lastSharedBackgroundSyncRescheduleLogKey = key;
+    lastSharedBackgroundSyncRescheduleLogAt = normalizedNow;
+    return true;
+  };
   const normalizeBackgroundSyncDebounceSources = (value) => {
     const source = sanitizeRecordObject(value);
     const normalizedSources = {};
@@ -17813,16 +17868,24 @@
         now,
         tabId,
       });
-      recordSyncTraceEvent("shared_scheduler_rescheduled", {
-        scope: "shared_background_scheduler",
-        status: "scheduled",
-        message: "共享后台调度因同步锁占用延后",
-        details: {
-          reason: "sync_lock_active",
+      if (
+        shouldLogSharedBackgroundSyncReschedule({
           generation: state.generation,
-          delayMs: retryDelayMs,
-        },
-      });
+          reason: "sync_lock_active",
+          now,
+        })
+      ) {
+        recordSyncTraceEvent("shared_scheduler_rescheduled", {
+          scope: "shared_background_scheduler",
+          status: "scheduled",
+          message: "共享后台调度因同步锁占用延后",
+          details: {
+            reason: "sync_lock_active",
+            generation: state.generation,
+            delayMs: retryDelayMs,
+          },
+        });
+      }
       return {
         status: "scheduled",
         reason: "sync_lock_active",

@@ -318,6 +318,31 @@ const testUnifiedStateMappingAndTtl = () => {
   assert.equal(getPrefix(runningState.displayPhase, { animationFrame: 0 }), "[同步中.]");
   store.delete("s1p_sync_global_lock");
 
+  const foregroundProbeRunningState = {
+    ...createResolvedState("running", now),
+    source: "foreground_resume",
+    reason: "foreground_probe_in_flight",
+    operation: "probe",
+  };
+  const navbarProbeState = toPlainObject(
+    hooks.resolveAutoSyncIndicatorDisplayPhase(foregroundProbeRunningState)
+  );
+  assert.equal(navbarProbeState.displayPhase, "running");
+  assert.equal(navbarProbeState.displayOperation, "probe");
+  assert.equal(navbarProbeState.displaySessionKind, "cloud_probe_session");
+
+  const titleProbeState = toPlainObject(
+    hooks.resolveAutoSyncIndicatorDisplayPhase(foregroundProbeRunningState, {
+      ttlProfile: "title",
+    })
+  );
+  assert.equal(
+    titleProbeState.displayPhase,
+    "idle",
+    "纯前台云端探测不应让后台标签标题短暂显示同步中。"
+  );
+  assert.equal(getPrefix(titleProbeState.displayPhase), "");
+
   [
     ["success", constants.TITLE_SYNC_STATUS_SUCCESS_TTL_MS, "[同步成功]"],
     ["failure", constants.TITLE_SYNC_STATUS_FAILURE_TTL_MS, "[同步失败]"],
