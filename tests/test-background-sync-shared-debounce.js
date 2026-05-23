@@ -27,6 +27,8 @@ const REQUIRED_SHARED_DEBOUNCE_HOOKS = [
   "releaseBackgroundSyncDebounceOwner",
   "scheduleSharedBackgroundSyncDebounceTimer",
   "clearSharedBackgroundSyncDebounceTimer",
+  "flushSharedBackgroundSyncDebounceForHiddenPage",
+  "queueSharedBackgroundSyncDebounceHiddenFlush",
   "handleSharedBackgroundSyncDebounceDue",
   "isBackgroundSyncDebounceStateCoveringPendingRequest",
   "getPendingAutoSyncSharedDebounceCoverage",
@@ -924,7 +926,177 @@ const testPendingRecoveryRecognizesCoveredSharedDebounce = () => {
   );
 };
 
-const main = () => {
+const testHiddenOwnerFlushForcesPendingSchedulerBeforeTimerDue = () => {
+  const { constants, hooks, setState, getState } = getSharedDebounceApi();
+  const now = 15_000_000;
+  const dueAt = now + READ_PROGRESS_SYNC_DEBOUNCE_MS;
+  let triggerCount = 0;
+  let triggerReason = "";
+  let schedulerContext = null;
+
+  setState(
+    seedSharedState({
+      generation: 9,
+      ownerTabId: "tab-a",
+      ownerLeaseUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS,
+      dueAt,
+      maxWaitUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
+      firstDirtyAt: now - 1000,
+      lastDirtyAt: now,
+      maxLastModified: 1501,
+      sources: { read_progress: 1 },
+      threadIds: ["1501"],
+      reason: "debounced_read_progress",
+      dueSource: "read_progress",
+    })
+  );
+
+  const result = hooks.flushSharedBackgroundSyncDebounceForHiddenPage({
+    now,
+    tabId: "tab-a",
+    settingsSnapshot: readySyncSettings,
+    triggerRemoteSyncPush: (reason, context) => {
+      triggerCount += 1;
+      triggerReason = reason;
+      schedulerContext = toPlainObject(context);
+    },
+  });
+
+  assert.equal(result.status, "triggered");
+  assert.equal(triggerCount, 1);
+  assert.equal(triggerReason, "debounced_read_progress");
+  assert.equal(schedulerContext.scheduledDueAt, dueAt);
+  assert.equal(schedulerContext.debounceGeneration, 9);
+  assert.equal(schedulerContext.intendedMaxLastModified, 1501);
+  assert.equal(getState(), null);
+};
+
+const testHiddenPageCanRecoverExpiredOwnerAndFlushImmediately = () => {
+  const { constants, hooks, setState, getState } = getSharedDebounceApi();
+  const timers = createTimerSpy();
+  const now = 16_000_000;
+  let triggerCount = 0;
+
+  setState(
+    seedSharedState({
+      generation: 10,
+      ownerTabId: "closed-tab",
+      ownerLeaseUntil: now - 1,
+      dueAt: now + READ_PROGRESS_SYNC_DEBOUNCE_MS,
+      maxWaitUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
+      firstDirtyAt: now - 1000,
+      lastDirtyAt: now,
+      maxLastModified: 1601,
+      sources: { read_progress: 1 },
+      threadIds: ["1601"],
+      reason: "debounced_read_progress",
+      dueSource: "read_progress",
+    })
+  );
+
+  const result = hooks.flushSharedBackgroundSyncDebounceForHiddenPage({
+    now,
+    tabId: "tab-a",
+    settingsSnapshot: readySyncSettings,
+    scheduleTimer: timers.scheduleTimer,
+    triggerRemoteSyncPush: () => {
+      triggerCount += 1;
+    },
+  });
+
+  assert.equal(result.status, "triggered");
+  assert.equal(triggerCount, 1);
+  assert.equal(
+    timers.calls.length,
+    1,
+    "接管过期 owner 时会先登记本标签页 timer，再由隐藏页补发立即消费。"
+  );
+  assert.equal(getState(), null);
+};
+
+const testHiddenFlushDoesNotStealActiveOtherOwner = () => {
+  const { constants, hooks, setState, getState } = getSharedDebounceApi();
+  const now = 17_000_000;
+  let triggerCount = 0;
+  const state = seedSharedState({
+    generation: 11,
+    ownerTabId: "tab-b",
+    ownerLeaseUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS,
+    dueAt: now + READ_PROGRESS_SYNC_DEBOUNCE_MS,
+    maxWaitUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
+    firstDirtyAt: now - 1000,
+    lastDirtyAt: now,
+    maxLastModified: 1701,
+    sources: { read_progress: 1 },
+    threadIds: ["1701"],
+    reason: "debounced_read_progress",
+    dueSource: "read_progress",
+  });
+
+  setState(state);
+
+  const result = hooks.flushSharedBackgroundSyncDebounceForHiddenPage({
+    now,
+    tabId: "tab-a",
+    settingsSnapshot: readySyncSettings,
+    triggerRemoteSyncPush: () => {
+      triggerCount += 1;
+    },
+  });
+
+  assert.deepEqual(toPlainObject(result), {
+    status: "skipped",
+    reason: "owned_by_active_other_tab",
+    currentOwnerTabId: "tab-b",
+  });
+  assert.equal(triggerCount, 0);
+  assert.deepEqual(getState(), state);
+};
+
+const testQueuedHiddenFlushRunsDeferredTask = async () => {
+  const { constants, hooks, setState, getState } = getSharedDebounceApi();
+  const now = 18_000_000;
+  let triggerCount = 0;
+
+  setState(
+    seedSharedState({
+      generation: 12,
+      ownerTabId: "tab-a",
+      ownerLeaseUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS,
+      dueAt: now + READ_PROGRESS_SYNC_DEBOUNCE_MS,
+      maxWaitUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
+      firstDirtyAt: now - 1000,
+      lastDirtyAt: now,
+      maxLastModified: 1801,
+      sources: { read_progress: 1 },
+      threadIds: ["1801"],
+      reason: "debounced_read_progress",
+      dueSource: "read_progress",
+    })
+  );
+
+  hooks.queueSharedBackgroundSyncDebounceHiddenFlush("test_hidden_queue", {
+    now,
+    tabId: "tab-a",
+    settingsSnapshot: readySyncSettings,
+    triggerRemoteSyncPush: () => {
+      triggerCount += 1;
+    },
+  });
+
+  assert.equal(
+    triggerCount,
+    0,
+    "hidden flush queue 应先让当前事件轮次完成，而不是同步执行。"
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  assert.equal(triggerCount, 1);
+  assert.equal(getState(), null);
+};
+
+const main = async () => {
   testReadProgressDirtyMergesIntoSingleSharedState();
   testSourceSpecificSettleWindows();
   testForcedRetryUsesSharedSchedulerDueAt();
@@ -945,8 +1117,15 @@ const main = () => {
   testLockActiveReschedulePersistsDueAt();
   testSharedDebounceWriteRetriesWhenVerificationLosesRequest();
   testPendingRecoveryRecognizesCoveredSharedDebounce();
+  testHiddenOwnerFlushForcesPendingSchedulerBeforeTimerDue();
+  testHiddenPageCanRecoverExpiredOwnerAndFlushImmediately();
+  testHiddenFlushDoesNotStealActiveOtherOwner();
+  await testQueuedHiddenFlushRunsDeferredTask();
 
   console.log("[background-sync-shared-debounce] Shared debounce scheduler checks passed.");
 };
 
-main();
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
