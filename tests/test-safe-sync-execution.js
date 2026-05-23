@@ -387,6 +387,106 @@ const testDecisionSplitsStartupBackgroundAndForegroundFollowUp = () => {
   );
 };
 
+const testStartupReadProgressOnlyLocalDeltaAutoMerges = () => {
+  const { hooks } = createHarness();
+  hooks.setSyncBaselineState({
+    contentHash: "baseline",
+    remoteUpdatedAt: "2026-04-11T12:30:00Z",
+  });
+
+  const localDataObject = {
+    contentHash: "local-read-progress",
+    baseContentHash: "same-core",
+    lastUpdated: 200,
+    data: {
+      settings: { foo: true },
+      read_progress: {
+        123: { page: "1", lastReadFloor: "20", timestamp: 200 },
+      },
+    },
+  };
+  const remoteDataObject = {
+    contentHash: "baseline",
+    baseContentHash: "same-core",
+    lastUpdated: 100,
+    data: {
+      settings: { foo: true },
+      read_progress: {
+        123: { page: "1", lastReadFloor: "10", timestamp: 100 },
+      },
+    },
+  };
+
+  const classification = hooks.classifyLocalSyncDelta({
+    localDataObject,
+    remoteDataObject,
+  });
+  assert.equal(classification.kind, "read_progress_only_changed");
+  assert.equal(classification.strictReadProgressOnly, true);
+
+  const startupDecision = hooks.decideSyncActionByVersion({
+    localDataObject,
+    remoteDataObject,
+    remoteUpdatedAt: "2026-04-11T12:30:00Z",
+    syncMode: "startup",
+    localDeltaClassification: classification,
+  });
+  const backgroundDecision = hooks.decideSyncActionByVersion({
+    localDataObject,
+    remoteDataObject,
+    remoteUpdatedAt: "2026-04-11T12:30:00Z",
+    syncMode: "background",
+    localDeltaClassification: classification,
+  });
+
+  assert.equal(startupDecision.action, "merge_read_progress");
+  assert.equal(startupDecision.reason, "startup_read_progress_only_changed");
+  assert.equal(startupDecision.localChangeKind, "read_progress_only_changed");
+  assert.equal(backgroundDecision.action, "push");
+};
+
+const testStartupCoreLocalDeltaStillPauses = () => {
+  const { hooks } = createHarness();
+  hooks.setSyncBaselineState({
+    contentHash: "baseline",
+    remoteUpdatedAt: "2026-04-11T12:30:00Z",
+  });
+
+  const localDataObject = {
+    contentHash: "local-core",
+    baseContentHash: "changed-core",
+    lastUpdated: 200,
+    data: {
+      settings: { foo: false },
+      read_progress: {},
+    },
+  };
+  const remoteDataObject = {
+    contentHash: "baseline",
+    baseContentHash: "same-core",
+    lastUpdated: 100,
+    data: {
+      settings: { foo: true },
+      read_progress: {},
+    },
+  };
+
+  const classification = hooks.classifyLocalSyncDelta({
+    localDataObject,
+    remoteDataObject,
+  });
+  const startupDecision = hooks.decideSyncActionByVersion({
+    localDataObject,
+    remoteDataObject,
+    remoteUpdatedAt: "2026-04-11T12:30:00Z",
+    syncMode: "startup",
+    localDeltaClassification: classification,
+  });
+
+  assert.equal(classification.kind, "core_changed");
+  assert.equal(startupDecision.action, "skip_push_on_startup");
+};
+
 const testAutoSyncCompletionLogMessageIsSpecific = () => {
   const { hooks } = createHarness();
 
@@ -598,6 +698,8 @@ const testPhase3CallSitesUseDedicatedHelpers = () => {
   await testOnBeforeReleaseFiresOnSkipBeforeLockRelease();
   testShouldClearDeferredStartupSyncOnResult();
   testDecisionSplitsStartupBackgroundAndForegroundFollowUp();
+  testStartupReadProgressOnlyLocalDeltaAutoMerges();
+  testStartupCoreLocalDeltaStillPauses();
   testAutoSyncCompletionLogMessageIsSpecific();
   testSyncTraceEventsAreShownInDiagnostics();
   testSyncTraceDetailsUseChineseLabels();

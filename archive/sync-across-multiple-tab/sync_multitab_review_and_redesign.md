@@ -480,9 +480,32 @@
   - 静默自动合并应触发阅读进度列表原地刷新而不是整页 reload
   - same-machine `merged_read_progress` 不能被完全吞掉，仍要走 inline refresh
 
+### 8.14D Phase 3/4/7 Follow-up（2026-05-24）
+
+- 本轮用户日志显示：后台 `merged_read_progress` 在 `01:22:30` 已成功收敛，但当前帖子在 `01:22:47` 又产生一次真实阅读进度写入；随后 `01:22:49` 的每日首次启动同步看到“云端等于基线、本地较新”，旧策略把它升级为 `skipped_push_on_startup` 和全局 hard pause。
+- 修复方向从“隐藏提示”改为三段式同步意图分层：
+  - 新增本地变更分类器，优先用 `baseContentHash` 判断“除阅读进度外是否一致”；pending/source 只作为诊断辅助，不单独触发自动推送。
+  - `startup` 模式下若确认本地较新仅由阅读进度造成，决策动作改为 `merge_read_progress`，不再进入 `skipped_push_on_startup`。
+  - 原 conflict 分支中的阅读进度自动合并被抽成共用路径，启动期 read-progress-only local newer 与双边 read-progress-only conflict 复用同一套 `merged_read_progress` 回写、导入、来源归因和刷新策略。
+- 安全边界保持不变：
+  - `settings / threads / users / user_tags / title_filter_rules / bookmarked_replies / blocked_posts` 等核心数据变化会导致 `baseContentHash` 不一致，仍保留启动安全暂停。
+  - 缺少可比 base hash 时不会仅凭 pending 来源自动推送，避免旧数据或异常数据被误判为低风险阅读进度。
+- 本轮验证：
+  - `node --check S1Plus.js`
+  - `node tests/test-safe-sync-execution.js`
+  - `node tests/test-background-sync-shared-debounce.js`
+  - `node tests/test-post-sync-refresh-policy.js`
+  - `node tests/test-startup-sync-freshness.js`
+  - `node tests/test-foreground-trigger-integration.js`
+  - `node tests/test-foreground-remote-probe.js`
+  - `node tests/test-auto-sync-indicator-linkage.js`
+  - `node tests/test-foreground-probe-gate-retry.js`
+  - `node tests/test-core-data-snapshot-resync.js`
+  - `node tests/settings-migration/test-settings-migration.js`
+
 ### 8.15 下一步
 
-- 先按“列表页后台打开多个帖子、只阅读其中一个”的路径复现一次，并确认后台 `merged_read_progress` 只更新列表阅读进度按钮，不再整页刷新。
+- 先按“列表页后台打开多个帖子、只阅读其中一个”的路径复现一次，并确认启动同步遇到仅阅读进度本地较新时走 `merge_read_progress / merged_read_progress`，不再弹出全局未同步更改提示。
 - 复现时优先看新的“启动摘要”列表，再用 `阅读调试 1..N` 补细节。
-- 再根据轨迹判断是继续收紧 Phase 2 的真实阅读确认条件，还是去修后台开帖页启动期的可见性判定。
+- 再根据轨迹判断是否仍需要继续收紧 Phase 2 的真实阅读确认条件，或补充更多 startup read-progress-only 的多标签真实手测。
 - 继续把这套脚本回归作为后续同步改动的默认基线。

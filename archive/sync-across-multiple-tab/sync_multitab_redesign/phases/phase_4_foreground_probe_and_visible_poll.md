@@ -213,3 +213,37 @@
 - 剩余工作：
   - 真实论坛 + Tampermonkey 多标签手测仍需补跑，重点确认列表页阅读进度按钮会原地更新且不发生整页 reload。
   - 若仍出现后台未激活帖子页制造阅读进度写入，应继续回到 Phase 2 的真实阅读确认条件排查。
+
+## 13. 2026-05-24 Follow-up
+
+- 本轮现象不是前台 probe 误拉取，而是启动同步在后台阅读进度刚收敛后，又撞上当前帖子新产生的阅读进度本地写入，并把它当成启动期本地较新 hard pause。
+- 落地三段式修正：
+  - 新增 `classifyLocalSyncDelta()`，用 `baseContentHash` 严格识别 `read_progress_only_changed`；pending request、shared debounce 和 dirty provenance 只进入诊断摘要。
+  - `decideSyncActionByVersion()` 在 `startup + local_changed_since_baseline + read_progress_only_changed` 时返回 `merge_read_progress`，不再返回 `skip_push_on_startup`。
+  - `performAutoSync()` 把阅读进度合并回写抽成 `mergeReadProgressAndPush()`，供 startup read-progress-only 与原 conflict 自动合并分支共用。
+- 关键保护：
+  - 核心数据 base hash 不一致时仍保持启动安全暂停。
+  - 缺少 base hash 时不会仅凭来源字段自动合并，避免异常旧数据误推。
+  - 非后台模式完成 `merged_read_progress` 后会尝试清理已覆盖的 pending / shared debounce，避免旧调度残留再次触发。
+- 涉及文件：
+  - `S1Plus.js`
+  - `tests/test-safe-sync-execution.js`
+  - `tests/test-post-sync-refresh-policy.js`
+  - `CHANGELOG.md`
+  - `archive/sync-across-multiple-tab/sync_multitab_review_and_redesign.md`
+  - `archive/sync-across-multiple-tab/sync_multitab_redesign/phases/phase_4_foreground_probe_and_visible_poll.md`
+- 验证：
+  - `node --check S1Plus.js`
+  - `node tests/test-safe-sync-execution.js`
+  - `node tests/test-background-sync-shared-debounce.js`
+  - `node tests/test-post-sync-refresh-policy.js`
+  - `node tests/test-startup-sync-freshness.js`
+  - `node tests/test-foreground-trigger-integration.js`
+  - `node tests/test-foreground-remote-probe.js`
+  - `node tests/test-auto-sync-indicator-linkage.js`
+  - `node tests/test-foreground-probe-gate-retry.js`
+  - `node tests/test-core-data-snapshot-resync.js`
+  - `node tests/settings-migration/test-settings-migration.js`
+- 剩余工作：
+  - 在真实 Tampermonkey 多标签页环境复现用户日志路径，确认弹窗消失且阅读进度正常回写云端。
+  - 若仍出现后台未真实阅读就产生 read_progress，应继续回到 Phase 2 的阅读确认条件排查。
