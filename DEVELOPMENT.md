@@ -267,11 +267,12 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - `.s1p-glass-panel` 是设置面板与调试面板共用的外壳玻璃效果。复用时给最外层可见容器加这个类，并通过 `--s1p-glass-panel-bg` / `--s1p-glass-panel-filter` 调整；不要再创建 `--s1p-settings-panel-bg`、`--s1p-debug-console-panel-bg` 这类局部副本。
 - `.s1p-glass-panel` 的正确采样路径是“可见外壳直接过滤页面背景”。不要把它放进另一个带 `backdrop-filter` 的父级里，也不要同时给父级和子级都加 blur；浏览器会建立 backdrop root，子级可能只采样到父级处理后的结果，导致设置面板与调试面板视觉不一致。
 - Shell glass 的 blur 强度应跟随 `--s1p-dialog-glass-filter`（当前 `blur(3px) saturate(1.02)`）。不要为了“看起来更糊”硬编码 `blur(12px)` 等强滤镜；高对比小字会扩散成色块，反而不像调试面板的自然磨砂。
-- Dialog glass 用于确认、输入、Token、同步选择等决策弹窗；Shell glass（`.s1p-glass-panel`）用于设置面板、调试面板和同类大外壳；Image viewer glass 用于图片查看器工具栏和图片舞台；Light popover glass 用于 B1/B2、确认型浮层、普通短 tooltip 和文档型帮助浮层。
-- Dialog / popover / toast / floating-control 都必须通过对应 `--s1p-*-glass-bg` 与 `--s1p-*-glass-filter` 变量调参；优先微调背景 alpha 保证可读性，保持轻量 filter，不要在组件规则里硬编码 `blur(6px)` / `blur(8px)` 这类强磨砂。
-- Toast 是短时提示，比 dialog / popover 更轻：可用更通透的 `--s1p-toast-glass-bg` 与略强一点的 toast 专用 filter 保留玻璃感，但不要影响成功/错误提示的可读性。
+- Dialog glass 用于确认、输入、Token、同步选择等决策弹窗；Shell glass（`.s1p-glass-panel`）用于设置面板、调试面板和同类大外壳；Image viewer glass 用于图片查看器工具栏和图片舞台；Floating surface（`--s1p-floating-surface-*` / `.s1p-floating-surface`）用于用户标记编辑器、日期选择器、确认型浮层、普通短 tooltip、文档型帮助浮层、标签菜单和 Toast 这类轻量浮层。
+- 轻量浮层必须优先复用 `--s1p-floating-surface-bg`、`--s1p-floating-surface-filter` 和 `--s1p-floating-surface-shadow`；需要贴近 tooltip 的特殊工具条（如导航栏拉取/推送行内菜单）可在这套变量基础上拆出局部 surface 变量，但不要回退到旧的实底 popover。带备注确认菜单的外层只负责布局，玻璃材质放在子 surface 上，避免中间 gap 被父级 backdrop 连成整块。
+- Dialog / floating surface / toast / floating-control 都必须通过对应 `--s1p-*-bg`、`--s1p-*-filter` 与 `--s1p-*-shadow` 变量调参；优先微调背景 alpha 保证可读性，保持轻量 filter，不要在组件规则里硬编码 `blur(6px)` / `blur(8px)` 这类强磨砂。
+- Toast 是短时提示，默认复用 floating surface；成功/错误提示可以保留语义色背景，但仍应保持透明度与磨砂一致，不要退回不透明色块。
 - 决策弹窗正文走 `--s1p-dialog-text`，说明文字走 `--s1p-dialog-muted-text`；同步选择、同步冲突、欢迎、Token、阅读记录详情、手动屏蔽等共享 `.s1p-confirm-content` 的弹窗都要继承这套深浅模式文本 token。
-- 纯操作入口菜单（帖子内联操作、标签选项菜单）保持实底，不添加 `backdrop-filter`。
+- 纯操作入口菜单不再默认保持实底；标签选项菜单复用 floating surface，导航栏拉取/推送行内菜单使用更轻的局部 surface。若新增操作入口菜单，先按可读性判断复用 floating surface 或拆局部变量，不要直接套旧 `--s1p-popover-solid-*`。
 - 自定义 UI 最外层容器默认 `border: none`，依靠背景、阴影和 blur 分层；不要给外壳补 1px 线框来“找边界”。
 - 输入框、按钮、状态 chip、分隔线、表格、设置面板内部列表项属于功能性边界，可按可读性保留边框。
 - 图片查看器面板 `.s1p-image-viewer__panel` 只负责圆角裁切、阴影和动画，不铺背景、不做 `backdrop-filter`；工具栏和图片舞台分别用 `--s1p-image-viewer-toolbar-bg`、`--s1p-image-viewer-viewport-bg` 独立控制，避免父子透明背景叠加导致舞台调参互相牵连。图片舞台本体只铺稳定主题底色，`.s1p-image-viewer__viewport::before` 用 `--s1p-image-viewer-viewport-glass-bg` + `--s1p-image-viewer-viewport-glass-filter` 负责磨砂层；浅色和深色必须保持同一套“底色层 + 磨砂层”结构，避免只在某个主题下直接过滤原页面。
