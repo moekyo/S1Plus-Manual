@@ -1087,7 +1087,208 @@ const testDisplayPhaseOnlyAndNoTitleSchedulerRewrite = () => {
       prefix: "[同步中.]",
       hasForegroundTab: false,
     },
-    "running -> success 的稳定结果应来自统一 displayPhase，标题层不额外裁决。"
+    "后台推送 running 状态仍应显示标签页标题同步中提示。"
+  );
+
+  const sourceMismatchPullState = toPlainObject(
+    hooks.resolveAutoSyncIndicatorDisplayPhase({
+      ...createResolvedState("running", now),
+      source: "foreground_resume",
+      reason: "foreground_followup_in_flight",
+      operation: "pull",
+    })
+  );
+  assert.equal(sourceMismatchPullState.displayPhase, "running");
+  assert.equal(sourceMismatchPullState.source, "foreground_resume");
+  assert.equal(sourceMismatchPullState.operation, "pull");
+  assert.equal(sourceMismatchPullState.displaySource, "background_push");
+  assert.equal(
+    sourceMismatchPullState.displayOperation,
+    "push",
+    "source mismatch 时统一显示态可能把 background source 默认成 push。"
+  );
+  assertDisplayDecision(
+    decide({
+      currentTabId: "tab-a",
+      tabs: hiddenOwnerTab,
+      state: sourceMismatchPullState,
+      settings,
+      now,
+    }),
+    {
+      shouldDisplay: false,
+      shouldRunAnimationTimer: false,
+      ownerTabId: "tab-a",
+      displayPhase: "idle",
+      prefix: "",
+      hasForegroundTab: false,
+    },
+    "原始拉取状态即使被上游 source mismatch 默认成 push，也不应点亮标签页标题。"
+  );
+
+  assertDisplayDecision(
+    decide({
+      currentTabId: "tab-a",
+      tabs: hiddenOwnerTab,
+      state: createUnifiedDisplayState("running", now, {
+        displayOperation: "pull",
+        displaySessionKind: "remote_pull_session",
+        displayDominantDirection: "pull",
+      }),
+      settings,
+      now,
+    }),
+    {
+      shouldDisplay: false,
+      shouldRunAnimationTimer: false,
+      ownerTabId: "tab-a",
+      displayPhase: "idle",
+      prefix: "",
+      hasForegroundTab: false,
+    },
+    "拉取中的统一状态不应点亮标签页标题同步状态。"
+  );
+
+  assertDisplayDecision(
+    decide({
+      currentTabId: "tab-a",
+      tabs: hiddenOwnerTab,
+      state: createUnifiedDisplayState("success", now, {
+        displayOperation: "pull",
+        displaySessionKind: "remote_pull_session",
+        displayDominantDirection: "pull",
+        displaySubstate: "done",
+      }),
+      settings,
+      now,
+    }),
+    {
+      shouldDisplay: false,
+      shouldRunAnimationTimer: false,
+      ownerTabId: "tab-a",
+      displayPhase: "idle",
+      prefix: "",
+      hasForegroundTab: false,
+    },
+    "拉取成功的统一状态不应保留标签页标题成功提示。"
+  );
+
+  assertDisplayDecision(
+    decide({
+      currentTabId: "tab-a",
+      tabs: hiddenOwnerTab,
+      state: createUnifiedDisplayState("running", now, {
+        displayOperation: "probe",
+        displaySessionKind: "cloud_probe_session",
+        displayDominantDirection: "probe",
+      }),
+      settings,
+      now,
+    }),
+    {
+      shouldDisplay: false,
+      shouldRunAnimationTimer: false,
+      ownerTabId: "tab-a",
+      displayPhase: "idle",
+      prefix: "",
+      hasForegroundTab: false,
+    },
+    "云端探测的统一状态不应点亮标签页标题同步状态。"
+  );
+
+  assertDisplayDecision(
+    decide({
+      currentTabId: "tab-a",
+      tabs: hiddenOwnerTab,
+      state: createUnifiedDisplayState("failure", now, {
+        displayOperation: "push",
+        displaySessionKind: "local_push_session",
+        displayDominantDirection: "push",
+      }),
+      settings,
+      now,
+    }),
+    {
+      shouldDisplay: true,
+      shouldRunAnimationTimer: false,
+      ownerTabId: "tab-a",
+      displayPhase: "failure",
+      prefix: "[同步失败]",
+      hasForegroundTab: false,
+    },
+    "推送失败仍应显示标签页标题失败提示。"
+  );
+
+  assertDisplayDecision(
+    decide({
+      currentTabId: "tab-a",
+      tabs: hiddenOwnerTab,
+      state: createUnifiedDisplayState("conflict", now, {
+        displayOperation: "",
+        displaySessionKind: "blocked_session",
+        displayDominantDirection: "blocked",
+      }),
+      settings,
+      now,
+    }),
+    {
+      shouldDisplay: true,
+      shouldRunAnimationTimer: false,
+      ownerTabId: "tab-a",
+      displayPhase: "conflict",
+      prefix: "[冲突]",
+      hasForegroundTab: false,
+    },
+    "未标明为拉取或探测的冲突仍应保留标签页标题提示。"
+  );
+
+  assertDisplayDecision(
+    decide({
+      currentTabId: "tab-a",
+      tabs: hiddenOwnerTab,
+      state: createUnifiedDisplayState("conflict", now, {
+        displayOperation: "pull",
+        displaySessionKind: "remote_pull_session",
+        displayDominantDirection: "pull",
+      }),
+      settings,
+      now,
+    }),
+    {
+      shouldDisplay: false,
+      shouldRunAnimationTimer: false,
+      ownerTabId: "tab-a",
+      displayPhase: "idle",
+      prefix: "",
+      hasForegroundTab: false,
+    },
+    "明确标记为拉取侧的冲突不应点亮标签页标题同步状态。"
+  );
+
+  assertDisplayDecision(
+    decide({
+      currentTabId: "tab-a",
+      tabs: hiddenOwnerTab,
+      state: createUnifiedDisplayState("running", now, {
+        source: "foreground_resume",
+        displaySource: "background_push",
+        displayOperation: "",
+        displaySessionKind: "",
+        displayDominantDirection: "",
+        operation: "",
+      }),
+      settings,
+      now,
+    }),
+    {
+      shouldDisplay: false,
+      shouldRunAnimationTimer: false,
+      ownerTabId: "tab-a",
+      displayPhase: "idle",
+      prefix: "",
+      hasForegroundTab: false,
+    },
+    "source mismatch 时，标题层不应仅凭 background display source 自行默认成推送方向。"
   );
 
   const titleSource = getTitleSyncStatusSource();
@@ -1188,7 +1389,7 @@ const testSettingsDefaultsUiAndIndependence = () => {
     "同步设置页状态显示区缺少标题同步状态开关。"
   );
   expectMatch(
-    /开启后，仅当所有 S1 标签页都不在前台时，最近离开的 S1 标签页标题会在同步发生时显示状态提示（同步中\/成功\/失败\/冲突）/,
+    /开启后，仅当所有 S1 标签页都不在前台时，最近离开的 S1 标签页标题会在本地推送或同步冲突时显示状态提示（同步中\/成功\/失败\/冲突）/,
     "标题同步状态开关缺少指定说明文案。"
   );
   expectMatch(
