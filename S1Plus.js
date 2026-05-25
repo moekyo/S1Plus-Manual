@@ -2388,16 +2388,24 @@
       --s1p-popover-glass-bg: rgba(255, 255, 255, 0.86);
       --s1p-popover-glass-filter: blur(3px) saturate(1.02);
       --s1p-popover-glass-shadow: 0 16px 34px rgba(0, 0, 0, 0.2);
+      --s1p-floating-surface-bg: rgba(255, 255, 255, 0.48);
+      --s1p-floating-surface-filter: blur(6px) saturate(1.08);
+      --s1p-floating-surface-shadow: 0 7px 18px rgba(0, 0, 0, 0.1);
+      --s1p-inline-action-surface-bg: rgba(255, 255, 255, 0.34);
+      --s1p-inline-action-surface-shadow: 0 5px 14px rgba(0, 0, 0, 0.08);
+      --s1p-inline-action-hover-bg: rgba(255, 255, 255, 0.32);
       --s1p-popover-solid-bg: var(--s1p-bg);
       --s1p-popover-solid-shadow: 0 10px 24px rgba(var(--s1p-shadow-color-rgb), 0.16);
-      --s1p-toast-glass-bg: rgba(255, 255, 255, 0.84);
-      --s1p-toast-glass-filter: blur(4px) saturate(1.03);
-      --s1p-toast-glass-shadow: 0 12px 28px rgba(0, 0, 0, 0.18);
-      --s1p-toast-success-bg: rgba(34, 197, 94, 0.86);
-      --s1p-toast-error-bg: rgba(239, 68, 68, 0.88);
+      --s1p-toast-glass-bg: var(--s1p-floating-surface-bg);
+      --s1p-toast-glass-filter: var(--s1p-floating-surface-filter);
+      --s1p-toast-glass-shadow: var(--s1p-floating-surface-shadow);
+      --s1p-toast-success-bg: rgba(34, 197, 94, 0.72);
+      --s1p-toast-error-bg: rgba(239, 68, 68, 0.74);
       --s1p-floating-control-glass-bg: rgba(255, 255, 255, 0.89);
       --s1p-floating-control-glass-filter: blur(3px) saturate(1.02);
       --s1p-floating-control-glass-shadow: 0 8px 20px rgba(0, 0, 0, 0.18);
+      --s1p-floating-control-handle-bg: rgba(255, 255, 255, 0.48);
+      --s1p-floating-control-handle-dot: rgba(2, 44, 128, 0.62);
       --s1p-image-viewer-panel-shadow: var(--s1p-dialog-glass-shadow);
       --s1p-image-viewer-toolbar-bg: rgba(255, 255, 255, 0.85);
       --s1p-settings-scrollbar-thumb: rgba(37, 71, 122, 0.42);
@@ -2475,6 +2483,12 @@
       --s1p-tag-green: #22C55E;
       --s1p-tag-blue: #3B82F6;
       --s1p-tag-purple: #8B5CF6;
+      --s1p-tag-red-text: var(--s1p-white);
+      --s1p-tag-orange-text: var(--s1p-white);
+      --s1p-tag-yellow-text: var(--s1p-white);
+      --s1p-tag-green-text: var(--s1p-white);
+      --s1p-tag-blue-text: var(--s1p-white);
+      --s1p-tag-purple-text: var(--s1p-white);
       
       /* -- [新增] 用户名高亮 -- */
       --s1p-username-bg: #bccda8; /* Sage Green */
@@ -4521,26 +4535,33 @@
     /* --- [MODIFIED] 统一确认菜单容器 (去除间距以统一高度) --- */
     .s1p-confirm-wrapper {
       padding: 0 !important;
-      background: var(--s1p-popover-glass-bg);
+      background: var(--s1p-floating-surface-bg);
       border-radius: 8px;
-      box-shadow: var(--s1p-popover-glass-shadow);
+      box-shadow: var(--s1p-floating-surface-shadow);
       border: none !important;
-      -webkit-backdrop-filter: var(--s1p-popover-glass-filter);
-      backdrop-filter: var(--s1p-popover-glass-filter);
+      -webkit-backdrop-filter: var(--s1p-floating-surface-filter);
+      backdrop-filter: var(--s1p-floating-surface-filter);
     }
     .s1p-confirm-container {
       display: flex;
       flex-direction: column;
       gap: 10px;
     }
-    .s1p-confirm-card {
-      background: var(--s1p-popover-glass-bg);
+    .s1p-floating-surface {
+      background: var(--s1p-floating-surface-bg);
       border-radius: 8px;
-      box-shadow: var(--s1p-popover-glass-shadow);
+      box-shadow: var(--s1p-floating-surface-shadow);
       border: none;
-      -webkit-backdrop-filter: var(--s1p-popover-glass-filter);
-      backdrop-filter: var(--s1p-popover-glass-filter);
+      -webkit-backdrop-filter: var(--s1p-floating-surface-filter);
+      backdrop-filter: var(--s1p-floating-surface-filter);
       overflow: hidden;
+    }
+    .s1p-confirm-wrapper.s1p-has-remark-input {
+      background: transparent !important;
+      box-shadow: none !important;
+      border: none !important;
+      -webkit-backdrop-filter: none !important;
+      backdrop-filter: none !important;
     }
     .s1p-inline-confirm-menu.s1p-has-remark-input {
       background: transparent !important;
@@ -4637,12 +4658,14 @@
       display: flex;
       align-items: center;
       gap: 4px;
-      background: var(--s1p-popover-solid-bg);
+      background: var(--s1p-inline-action-surface-bg);
       border: none;
       border-radius: 8px;
-      box-shadow: var(--s1p-popover-solid-shadow);
+      box-shadow: var(--s1p-inline-action-surface-shadow);
+      -webkit-backdrop-filter: var(--s1p-floating-surface-filter);
+      backdrop-filter: var(--s1p-floating-surface-filter);
       box-sizing: border-box;
-      padding: 5px;
+      padding: 4px;
       opacity: 0;
       visibility: hidden;
       transform: translateY(5px) scale(0.95);
@@ -4674,7 +4697,7 @@
       transition: background-color 0.2s ease, color 0.2s ease;
     }
     .s1p-inline-action-menu .s1p-action-btn:hover {
-      background-color: var(--s1p-sub);
+      background-color: var(--s1p-inline-action-hover-bg);
     }
 
     /* --- [MODIFIED] Icon Styling within Action Buttons --- */
@@ -4832,12 +4855,12 @@
       position: absolute;
       z-index: 10001;
       width: 300px;
-      background: var(--s1p-popover-glass-bg);
+      background: var(--s1p-floating-surface-bg);
       border: none;
       border-radius: 12px;
-      box-shadow: var(--s1p-popover-glass-shadow);
-      -webkit-backdrop-filter: var(--s1p-popover-glass-filter);
-      backdrop-filter: var(--s1p-popover-glass-filter);
+      box-shadow: var(--s1p-floating-surface-shadow);
+      -webkit-backdrop-filter: var(--s1p-floating-surface-filter);
+      backdrop-filter: var(--s1p-floating-surface-filter);
       box-sizing: border-box;
       opacity: 0;
       visibility: hidden;
@@ -4949,12 +4972,12 @@
       position: absolute;
       z-index: 10003;
       max-width: min(350px, calc(100vw - 20px));
-      background: var(--s1p-popover-glass-bg);
+      background: var(--s1p-floating-surface-bg);
       border: none;
       border-radius: 8px;
-      box-shadow: var(--s1p-popover-glass-shadow);
-      -webkit-backdrop-filter: var(--s1p-popover-glass-filter);
-      backdrop-filter: var(--s1p-popover-glass-filter);
+      box-shadow: var(--s1p-floating-surface-shadow);
+      -webkit-backdrop-filter: var(--s1p-floating-surface-filter);
+      backdrop-filter: var(--s1p-floating-surface-filter);
       box-sizing: border-box;
       padding: 10px 14px;
       font-size: 13px;
@@ -4992,10 +5015,10 @@
       z-index: 100010;
     }
     .s1p-generic-display-popover.s1p-generic-display-popover-doc {
-      background: var(--s1p-popover-glass-bg);
-      box-shadow: var(--s1p-popover-glass-shadow);
-      -webkit-backdrop-filter: var(--s1p-popover-glass-filter);
-      backdrop-filter: var(--s1p-popover-glass-filter);
+      background: var(--s1p-floating-surface-bg);
+      box-shadow: var(--s1p-floating-surface-shadow);
+      -webkit-backdrop-filter: var(--s1p-floating-surface-filter);
+      backdrop-filter: var(--s1p-floating-surface-filter);
       padding: 16px 18px;
       line-height: 1.65;
       width: max-content;
@@ -5061,12 +5084,12 @@
       position: absolute;
       /* top/left managed by JS */
       width: 280px;
-      background: var(--s1p-popover-glass-bg);
+      background: var(--s1p-floating-surface-bg);
       border: none;
       border-radius: 8px;
-      box-shadow: var(--s1p-popover-glass-shadow);
-      -webkit-backdrop-filter: var(--s1p-popover-glass-filter);
-      backdrop-filter: var(--s1p-popover-glass-filter);
+      box-shadow: var(--s1p-floating-surface-shadow);
+      -webkit-backdrop-filter: var(--s1p-floating-surface-filter);
+      backdrop-filter: var(--s1p-floating-surface-filter);
       box-sizing: border-box;
       z-index: 20005; /* Above modal */
       padding: 16px;
@@ -5328,7 +5351,7 @@
     .s1p-user-tag-container.s1p-tag-color-red .s1p-user-tag-display,
     .s1p-user-tag-container.s1p-tag-color-red .s1p-user-tag-options {
       background-color: var(--s1p-tag-red);
-      color: var(--s1p-white);
+      color: var(--s1p-tag-red-text);
     }
     .s1p-user-tag-container.s1p-tag-color-red .s1p-user-tag-options:hover {
       filter: brightness(0.9);
@@ -5336,7 +5359,7 @@
     .s1p-user-tag-container.s1p-tag-color-orange .s1p-user-tag-display,
     .s1p-user-tag-container.s1p-tag-color-orange .s1p-user-tag-options {
       background-color: var(--s1p-tag-orange);
-      color: var(--s1p-white);
+      color: var(--s1p-tag-orange-text);
     }
     .s1p-user-tag-container.s1p-tag-color-orange .s1p-user-tag-options:hover {
       filter: brightness(0.9);
@@ -5344,7 +5367,7 @@
     .s1p-user-tag-container.s1p-tag-color-yellow .s1p-user-tag-display,
     .s1p-user-tag-container.s1p-tag-color-yellow .s1p-user-tag-options {
       background-color: var(--s1p-tag-yellow);
-      color: #422006;
+      color: var(--s1p-tag-yellow-text);
     }
     .s1p-user-tag-container.s1p-tag-color-yellow .s1p-user-tag-options:hover {
       filter: brightness(0.9);
@@ -5352,7 +5375,7 @@
     .s1p-user-tag-container.s1p-tag-color-green .s1p-user-tag-display,
     .s1p-user-tag-container.s1p-tag-color-green .s1p-user-tag-options {
       background-color: var(--s1p-tag-green);
-      color: var(--s1p-white);
+      color: var(--s1p-tag-green-text);
     }
     .s1p-user-tag-container.s1p-tag-color-green .s1p-user-tag-options:hover {
       filter: brightness(0.9);
@@ -5360,7 +5383,7 @@
     .s1p-user-tag-container.s1p-tag-color-blue .s1p-user-tag-display,
     .s1p-user-tag-container.s1p-tag-color-blue .s1p-user-tag-options {
       background-color: var(--s1p-tag-blue);
-      color: var(--s1p-white);
+      color: var(--s1p-tag-blue-text);
     }
     .s1p-user-tag-container.s1p-tag-color-blue .s1p-user-tag-options:hover {
       filter: brightness(0.9);
@@ -5368,7 +5391,7 @@
     .s1p-user-tag-container.s1p-tag-color-purple .s1p-user-tag-display,
     .s1p-user-tag-container.s1p-tag-color-purple .s1p-user-tag-options {
       background-color: var(--s1p-tag-purple);
-      color: var(--s1p-white);
+      color: var(--s1p-tag-purple-text);
     }
     .s1p-user-tag-container.s1p-tag-color-purple .s1p-user-tag-options:hover {
       filter: brightness(0.9);
@@ -5471,12 +5494,12 @@
       transform: scale(1.02);
     }
     /* 历史标记颜色变体 */
-    .s1p-history-tag-item[data-color="red"] { background-color: var(--s1p-tag-red); color: #fff; }
-    .s1p-history-tag-item[data-color="orange"] { background-color: var(--s1p-tag-orange); color: #fff; }
-    .s1p-history-tag-item[data-color="yellow"] { background-color: var(--s1p-tag-yellow); color: #333; }
-    .s1p-history-tag-item[data-color="green"] { background-color: var(--s1p-tag-green); color: #fff; }
-    .s1p-history-tag-item[data-color="blue"] { background-color: var(--s1p-tag-blue); color: #fff; }
-    .s1p-history-tag-item[data-color="purple"] { background-color: var(--s1p-tag-purple); color: #fff; }
+    .s1p-history-tag-item[data-color="red"] { background-color: var(--s1p-tag-red); color: var(--s1p-tag-red-text); }
+    .s1p-history-tag-item[data-color="orange"] { background-color: var(--s1p-tag-orange); color: var(--s1p-tag-orange-text); }
+    .s1p-history-tag-item[data-color="yellow"] { background-color: var(--s1p-tag-yellow); color: var(--s1p-tag-yellow-text); }
+    .s1p-history-tag-item[data-color="green"] { background-color: var(--s1p-tag-green); color: var(--s1p-tag-green-text); }
+    .s1p-history-tag-item[data-color="blue"] { background-color: var(--s1p-tag-blue); color: var(--s1p-tag-blue-text); }
+    .s1p-history-tag-item[data-color="purple"] { background-color: var(--s1p-tag-purple); color: var(--s1p-tag-purple-text); }
     .s1p-history-tag-item[data-color="red"]:hover { filter: brightness(1.1); }
     .s1p-history-tag-item[data-color="orange"]:hover { filter: brightness(1.1); }
     .s1p-history-tag-item[data-color="yellow"]:hover { filter: brightness(1.05); }
@@ -5488,10 +5511,12 @@
     .s1p-tag-options-menu {
       position: absolute;
       z-index: 10002;
-      background: var(--s1p-popover-solid-bg);
+      background: var(--s1p-floating-surface-bg);
       border: none;
       border-radius: 8px;
-      box-shadow: var(--s1p-popover-solid-shadow);
+      box-shadow: var(--s1p-floating-surface-shadow);
+      -webkit-backdrop-filter: var(--s1p-floating-surface-filter);
+      backdrop-filter: var(--s1p-floating-surface-filter);
       box-sizing: border-box;
       padding: 4px;
       display: flex;
@@ -8070,7 +8095,7 @@
       transform: translateY(-50%);
       width: 20px;
       height: 40px;
-      background: var(--s1p-glass-panel-bg);
+      background: var(--s1p-floating-control-handle-bg);
       border: none;
       border-radius: 10px 0 0 10px;
       box-shadow: var(--s1p-floating-control-glass-shadow);
@@ -8088,7 +8113,7 @@
       display: block;
       width: 4px;
       height: 16px;
-      background-color: var(--s1p-icon-color);
+      background-color: var(--s1p-floating-control-handle-dot);
       -webkit-mask-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 4 16' fill='currentColor'%3e%3ccircle cx='2' cy='2' r='1.5'/%3e%3ccircle cx='2' cy='8' r='1.5'/%3e%3ccircle cx='2' cy='14' r='1.5'/%3e%3c/svg%3e");
       mask-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 4 16' fill='currentColor'%3e%3ccircle cx='2' cy='2' r='1.5'/%3e%3ccircle cx='2' cy='8' r='1.5'/%3e%3ccircle cx='2' cy='14' r='1.5'/%3e%3c/svg%3e");
       -webkit-mask-size: contain;
@@ -8375,6 +8400,12 @@
         --s1p-tag-green: #10B981;
         --s1p-tag-blue: #60A5FA;
         --s1p-tag-purple: #A78BFA;
+        --s1p-tag-red-text: #422006;
+        --s1p-tag-orange-text: #422006;
+        --s1p-tag-yellow-text: #422006;
+        --s1p-tag-green-text: #422006;
+        --s1p-tag-blue-text: #422006;
+        --s1p-tag-purple-text: #422006;
 
         /* -- 用户名高亮 (深色模式) -- */
         --s1p-username-bg: #3F4F3A;
@@ -8393,16 +8424,24 @@
         --s1p-popover-glass-bg: rgba(17, 24, 39, 0.92);
         --s1p-popover-glass-filter: blur(3px) saturate(1.02);
         --s1p-popover-glass-shadow: 0 18px 38px rgba(0, 0, 0, 0.32);
+        --s1p-floating-surface-bg: rgba(17, 24, 39, 0.82);
+        --s1p-floating-surface-filter: blur(3px) saturate(1.02);
+        --s1p-floating-surface-shadow: 0 12px 26px rgba(0, 0, 0, 0.28);
+        --s1p-inline-action-surface-bg: rgba(17, 24, 39, 0.74);
+        --s1p-inline-action-surface-shadow: 0 10px 22px rgba(0, 0, 0, 0.24);
+        --s1p-inline-action-hover-bg: rgba(148, 163, 184, 0.16);
         --s1p-popover-solid-bg: var(--s1p-bg);
         --s1p-popover-solid-shadow: 0 12px 28px rgba(0, 0, 0, 0.34);
-        --s1p-toast-glass-bg: rgba(17, 24, 39, 0.88);
-        --s1p-toast-glass-filter: blur(4px) saturate(1.03);
-        --s1p-toast-glass-shadow: 0 14px 34px rgba(0, 0, 0, 0.34);
-        --s1p-toast-success-bg: rgba(22, 163, 74, 0.86);
-        --s1p-toast-error-bg: rgba(185, 28, 28, 0.88);
+        --s1p-toast-glass-bg: var(--s1p-floating-surface-bg);
+        --s1p-toast-glass-filter: var(--s1p-floating-surface-filter);
+        --s1p-toast-glass-shadow: var(--s1p-floating-surface-shadow);
+        --s1p-toast-success-bg: rgba(22, 163, 74, 0.76);
+        --s1p-toast-error-bg: rgba(185, 28, 28, 0.78);
         --s1p-floating-control-glass-bg: rgba(17, 24, 39, 0.91);
         --s1p-floating-control-glass-filter: blur(3px) saturate(1.02);
         --s1p-floating-control-glass-shadow: 0 10px 24px rgba(0, 0, 0, 0.32);
+        --s1p-floating-control-handle-bg: rgba(17, 24, 39, 0.68);
+        --s1p-floating-control-handle-dot: rgba(226, 232, 240, 0.82);
         --s1p-image-viewer-panel-shadow: var(--s1p-dialog-glass-shadow);
         --s1p-image-viewer-toolbar-bg: rgba(18, 27, 45, 0.97);
         --s1p-settings-scrollbar-thumb: rgba(148, 163, 184, 0.46);
@@ -8468,18 +8507,8 @@
         box-shadow: 0 2px 5px rgba(0, 0, 0, 0.4),
           inset 0 1px 0 rgba(255, 255, 255, 0.07);
       }
-      .s1p-options-menu,
-      .s1p-inline-action-menu,
-      .s1p-tag-options-menu {
+      .s1p-options-menu:not(.s1p-confirm-wrapper) {
         box-shadow: var(--s1p-popover-solid-shadow);
-      }
-      .s1p-tag-popover,
-      .s1p-date-picker,
-      .s1p-generic-display-popover,
-      .s1p-confirm-wrapper,
-      .s1p-confirm-card,
-      .s1p-generic-display-popover.s1p-generic-display-popover-doc {
-        box-shadow: var(--s1p-popover-glass-shadow);
       }
       .s1p-modal-content {
         box-shadow: 0 5px 20px rgba(0, 0, 0, 0.3);
@@ -36546,14 +36575,14 @@
     const tagPills = colors
       .map((c) => {
         const containerCls = c === "yellow" ? "" : " color-is-light";
-        return `<span class="s1p-user-tag-display" style="background-color:var(--s1p-tag-${c});color:${c === "yellow" ? "#422006" : "var(--s1p-white)"};display:inline-block;padding:2px 8px;border-radius:4px;font-size:12px;margin:2px;">标签${colorLabels[c]}</span>`;
+        return `<span class="s1p-user-tag-display" style="background-color:var(--s1p-tag-${c});color:var(--s1p-tag-${c}-text);display:inline-block;padding:2px 8px;border-radius:4px;font-size:12px;margin:2px;">标签${colorLabels[c]}</span>`;
       })
       .join("");
     const historyItems = colors
       .slice(0, 3)
       .map(
         (c) =>
-          `<span class="s1p-history-tag-item" style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:12px;margin:2px;background-color:var(--s1p-tag-${c});color:${c === "yellow" ? "#422006" : "var(--s1p-white)"};">历史${colorLabels[c]}</span>`
+          `<span class="s1p-history-tag-item" style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:12px;margin:2px;background-color:var(--s1p-tag-${c});color:var(--s1p-tag-${c}-text);">历史${colorLabels[c]}</span>`
       )
       .join("");
     return (
@@ -38577,7 +38606,7 @@
 
     if (hasRemarkInput) {
       const barCard = document.createElement("div");
-      barCard.className = "s1p-confirm-card s1p-confirm-bar-card";
+      barCard.className = "s1p-floating-surface s1p-confirm-bar-card";
       barCard.appendChild(bar);
       container.appendChild(barCard);
     } else {
@@ -38587,7 +38616,7 @@
     if (hasRemarkInput) {
       const uniqueId = `s1p-confirm-${Date.now()}`;
       const remarkArea = document.createElement("div");
-      remarkArea.className = "s1p-confirm-card s1p-confirm-remark-area";
+      remarkArea.className = "s1p-floating-surface s1p-confirm-remark-area";
       remarkArea.id = `${uniqueId}-remark-area`;
 
       const label = document.createElement("div");
@@ -48123,6 +48152,12 @@
     const parent = container.parentElement;
     const authiDiv = container.querySelector(".authi");
     if (authiDiv && parent) {
+      const actionsWrapper = container.querySelector(".s1p-authi-actions-wrapper");
+      if (actionsWrapper) {
+        actionsWrapper.querySelectorAll("a:not(.s1p-authi-action)").forEach((link) => {
+          authiDiv.appendChild(link);
+        });
+      }
       // 将原生 .authi 元素移回其原始位置（即总容器的前面）
       parent.insertBefore(authiDiv, container);
       resetAuthiLayoutState(authiDiv);
@@ -48522,9 +48557,20 @@
 
     authiDiv.querySelectorAll('a').forEach(link => {
       const linkText = link.textContent.trim();
-      const isAuthorLink = (link.href.includes('authorid=') && (linkText === "只看该作者" || linkText === "只看该用户" || link.title === "只看该用户" || link.querySelector('svg')));
-      const isShowAllLink = (linkText === "显示全部楼层" || link.title === "显示全部楼层");
-      const isOrderLink = (linkText.includes("倒序") || linkText.includes("正序"));
+      const tooltipText = String(link.dataset.fullTag || link.title || "").trim();
+      const isAuthorLink =
+        link.href.includes('authorid=') &&
+        (linkText === "只看该作者" ||
+          linkText === "只看该用户" ||
+          tooltipText === "只看该用户" ||
+          link.querySelector('svg'));
+      const isShowAllLink =
+        linkText === "显示全部楼层" || tooltipText === "显示全部楼层";
+      const isOrderLink =
+        linkText.includes("倒序") ||
+        linkText.includes("正序") ||
+        tooltipText.includes("倒序") ||
+        tooltipText.includes("正序");
 
       if (isAuthorLink) nativeLinks.author = link;
       else if (isShowAllLink) nativeLinks.showAll = link;
