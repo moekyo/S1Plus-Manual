@@ -33138,12 +33138,80 @@
       stateInput && typeof stateInput === "object" && !Array.isArray(stateInput)
         ? stateInput
         : {};
-    return (
+    const displayPhase =
       normalizeAutoSyncIndicatorPhase(
         resolvedState.displayPhase,
         { allowRunning: true, allowPending: true }
-      ) || AUTO_SYNC_INDICATOR_PHASE_IDLE
+      ) || AUTO_SYNC_INDICATOR_PHASE_IDLE;
+    if (
+      displayPhase === AUTO_SYNC_INDICATOR_PHASE_IDLE ||
+      displayPhase === AUTO_SYNC_INDICATOR_PHASE_PENDING
+    ) {
+      return displayPhase;
+    }
+    const sessionKind = String(resolvedState.displaySessionKind || "");
+    const originalOperation = normalizeAutoSyncIndicatorOperation(
+      resolvedState.operation
     );
+    const displayOperation = normalizeAutoSyncIndicatorOperation(
+      resolvedState.displayOperation
+    );
+    const displayDominantDirection = normalizeAutoSyncIndicatorOperation(
+      resolvedState.displayDominantDirection
+    );
+    const originalSource = normalizeAutoSyncIndicatorSource(
+      resolvedState.source
+    );
+    const displaySource = normalizeAutoSyncIndicatorSource(
+      resolvedState.displaySource
+    );
+    const hasSourceMismatch = Boolean(
+      originalSource && displaySource && originalSource !== displaySource
+    );
+    const hasDefaultedBackgroundPush = Boolean(
+      hasSourceMismatch &&
+        displaySource === AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND &&
+        originalOperation !== AUTO_SYNC_INDICATOR_OPERATION_PUSH &&
+        (sessionKind === "local_push_session" ||
+          displayDominantDirection === AUTO_SYNC_INDICATOR_OPERATION_PUSH ||
+          displayOperation === AUTO_SYNC_INDICATOR_OPERATION_PUSH)
+    );
+    if (
+      hasDefaultedBackgroundPush ||
+      originalOperation === AUTO_SYNC_INDICATOR_OPERATION_PULL ||
+      originalOperation === AUTO_SYNC_INDICATOR_OPERATION_PROBE
+    ) {
+      return AUTO_SYNC_INDICATOR_PHASE_IDLE;
+    }
+    let direction = "";
+    if (sessionKind === "local_push_session") {
+      direction = AUTO_SYNC_INDICATOR_OPERATION_PUSH;
+    } else if (sessionKind === "remote_pull_session") {
+      direction = AUTO_SYNC_INDICATOR_OPERATION_PULL;
+    } else if (sessionKind === "cloud_probe_session") {
+      direction = AUTO_SYNC_INDICATOR_OPERATION_PROBE;
+    }
+    direction =
+      direction ||
+      displayDominantDirection ||
+      displayOperation ||
+      originalOperation;
+    if (
+      !direction &&
+      !hasSourceMismatch &&
+      (displaySource || originalSource) === AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND
+    ) {
+      direction = AUTO_SYNC_INDICATOR_OPERATION_PUSH;
+    }
+    if (displayPhase === AUTO_SYNC_INDICATOR_PHASE_CONFLICT) {
+      return direction === AUTO_SYNC_INDICATOR_OPERATION_PULL ||
+        direction === AUTO_SYNC_INDICATOR_OPERATION_PROBE
+        ? AUTO_SYNC_INDICATOR_PHASE_IDLE
+        : displayPhase;
+    }
+    return direction === AUTO_SYNC_INDICATOR_OPERATION_PUSH
+      ? displayPhase
+      : AUTO_SYNC_INDICATOR_PHASE_IDLE;
   };
   const isTitleSyncStatusLeaseWorthyPhase = (phase) => {
     const normalizedPhase =
@@ -39460,7 +39528,7 @@
                   <span class="s1p-slider"></span>
                 </label>
               </div>
-              <p class="s1p-setting-desc">开启后，仅当所有 S1 标签页都不在前台时，最近离开的 S1 标签页标题会在同步发生时显示状态提示（同步中/成功/失败/冲突）。</p>
+              <p class="s1p-setting-desc">开启后，仅当所有 S1 标签页都不在前台时，最近离开的 S1 标签页标题会在本地推送或同步冲突时显示状态提示（同步中/成功/失败/冲突）。</p>
             </div>
           </div>
 
