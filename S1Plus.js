@@ -8055,6 +8055,13 @@
       transform: translateY(-50%);
       z-index: 9998;
       pointer-events: none;
+      --s1p-floating-control-glass-filter: var(--s1p-glass-panel-filter);
+      --s1p-floating-control-glass-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
+    }
+    @media (prefers-color-scheme: dark) {
+      #s1p-floating-controls-wrapper {
+        --s1p-floating-control-glass-shadow: 0 30px 90px rgba(0, 0, 0, 0.28);
+      }
     }
     #s1p-controls-handle {
       position: absolute;
@@ -8063,7 +8070,7 @@
       transform: translateY(-50%);
       width: 20px;
       height: 40px;
-      background: var(--s1p-floating-control-glass-bg);
+      background: var(--s1p-glass-panel-bg);
       border: none;
       border-radius: 10px 0 0 10px;
       box-shadow: var(--s1p-floating-control-glass-shadow);
@@ -8122,7 +8129,7 @@
       width: 40px;
       height: 40px;
       border-radius: 50%;
-      background: var(--s1p-floating-control-glass-bg);
+      background: var(--s1p-glass-panel-bg);
       box-shadow: var(--s1p-floating-control-glass-shadow);
       -webkit-backdrop-filter: var(--s1p-floating-control-glass-filter);
       backdrop-filter: var(--s1p-floating-control-glass-filter);
