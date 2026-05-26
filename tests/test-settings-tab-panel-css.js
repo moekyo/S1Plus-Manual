@@ -35,11 +35,54 @@ assert.match(
 const modalBodySelector =
   ".s1p-modal > .s1p-modal-content > .s1p-modal-body";
 const modalBodyIndex = sourceCode.indexOf(`${modalBodySelector} {`);
+const modalOverlayIndex = sourceCode.indexOf(".s1p-fullscreen-modal::before {");
 
 assert.notEqual(
   modalBodyIndex,
   -1,
   "设置面板 modal body 缺少 scoped 样式规则。"
+);
+assert.notEqual(
+  modalOverlayIndex,
+  -1,
+  "设置面板必须复用统一全屏弹层伪元素蒙版。"
+);
+assert.match(
+  sourceCode.slice(modalOverlayIndex, modalOverlayIndex + 420),
+  /pointer-events:\s*none;[\s\S]*backdrop-filter:\s*blur\(var\(--s1p-overlay-blur\)\);/,
+  "统一全屏蒙版应复用全局 blur 变量，且不能拦截点击关闭。"
+);
+assert.ok(
+  sourceCode.includes('buildS1pFullscreenModalClassName("s1p-modal")'),
+  "设置面板 root 必须挂载统一全屏弹层基础类。"
+);
+assert.ok(
+  !sourceCode.includes('buildS1pFullscreenModalClassName("s1p-token-config-modal")'),
+  "Token 日期配置是设置面板内部二级弹窗，不应挂载统一全屏蒙版类。"
+);
+assert.ok(
+  sourceCode.includes(
+    'const settingsModalContent = document.querySelector(\n      ".s1p-modal > .s1p-modal-content"\n    );'
+  ) && sourceCode.includes("modalHost.appendChild(modal);"),
+  "Token 日期配置应优先挂载到设置面板内容容器，由设置面板承载。"
+);
+const tokenConfigModalIndex = sourceCode.indexOf(
+  ".s1p-token-config-modal {"
+);
+assert.notEqual(
+  tokenConfigModalIndex,
+  -1,
+  "Token 日期配置缺少局部弹窗容器样式。"
+);
+assert.match(
+  sourceCode.slice(tokenConfigModalIndex, tokenConfigModalIndex + 520),
+  /position:\s*absolute;[\s\S]*inset:\s*0;[\s\S]*background:\s*color-mix\(in srgb,\s*var\(--s1p-settings-content-bg,\s*var\(--s1p-bg\)\) 18%,\s*transparent\);/,
+  "Token 日期配置应作为设置面板内部覆盖层，而不是全屏蒙版。"
+);
+assert.match(
+  sourceCode.slice(modalBodyIndex, modalBodyIndex + 420),
+  /background:\s*color-mix\(in srgb,\s*var\(--s1p-settings-content-bg\) 90%,\s*transparent\);/,
+  "设置面板滚动视口必须持有固定背景，避免滚动时圆角随内容移走。"
 );
 assert.match(
   sourceCode.slice(modalBodyIndex, modalBodyIndex + 760),
@@ -80,6 +123,11 @@ assert.ok(
   sourceCode.includes("::-webkit-scrollbar-track-piece") &&
     sourceCode.includes("::-webkit-scrollbar-corner"),
   "设置面板应覆盖 WebKit track-piece/corner，避免 NUX 或浏览器默认轨道露出直角。"
+);
+assert.match(
+  sourceCode.slice(hiddenIndex - 220, hiddenIndex),
+  /background:\s*transparent;[\s\S]*border-radius:\s*0;/,
+  "设置面板 tab 内容容器不能持有圆角背景，否则滚动时会露出直角。"
 );
 assert.ok(
   sourceCode.slice(modalBodyIndex, modalBodyIndex + 1800).includes(

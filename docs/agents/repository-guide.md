@@ -103,9 +103,13 @@ saveSettings(settings);
 
 - Reuse `.s1p-glass-panel` for large shell-style frosted glass surfaces such as settings and debug panels.
 - Do not nest `.s1p-glass-panel` inside another `backdrop-filter` root.
-- Settings panel `.s1p-modal` must keep `backdrop-filter: none`; `.s1p-modal-content.s1p-glass-panel` is the visible shell.
-- Keep shell blur aligned with `--s1p-dialog-glass-filter`; avoid hardcoded strong blur such as `blur(12px)`.
-- Settings `.s1p-modal-body` is the transparent scroll/clipping layer; `.s1p-tab-panels` owns the content background.
+- Top-level fullscreen modals use `.s1p-fullscreen-modal` for viewport coverage and the unified backdrop pseudo-element.
+- Settings panel `.s1p-modal` must keep direct `backdrop-filter: none`; `.s1p-modal-content.s1p-glass-panel` is the visible shell.
+- Settings-local secondary dialogs such as `.s1p-token-config-modal` should be mounted inside `.s1p-modal-content`, not promoted to `.s1p-fullscreen-modal`.
+- Confirm dialog content shells (`.s1p-confirm-content`) use the floating-surface material variables (`--s1p-floating-surface-*`) for background, shadow, and filter while keeping dialog text tokens for readability.
+- Keep settings/debug shell blur aligned with `--s1p-dialog-glass-filter`; avoid hardcoded strong blur such as `blur(12px)`.
+- Keep `--s1p-dialog-glass-*` available for settings/debug glass panels, settings-local Token date configuration, and dense inner surfaces such as sync comparison blocks.
+- Settings `.s1p-modal-body` owns the rounded scroll viewport background and clipping; `.s1p-tab-panels` stays transparent.
 
 ## S1 NUX Theme Conflict
 
