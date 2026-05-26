@@ -82,22 +82,30 @@ assert.match(
 );
 
 const imageViewerPanelBlock = getRuleBlock(".s1p-image-viewer__panel");
-const overlayBlock = getRuleBlock(
-  ".s1p-modal,\n    .s1p-confirm-modal,\n    .s1p-token-config-modal,\n    .s1p-image-viewer"
-);
+const fullscreenModalBlock = getRuleBlock(".s1p-fullscreen-modal");
+const fullscreenBackdropBlock = getRuleBlock(".s1p-fullscreen-modal::before");
 assert.ok(
   !sourceCode.includes("--s1p-overlay-backdrop"),
   "全屏蒙版不应再保留全局黑色遮罩变量。"
 );
 assert.match(
-  overlayBlock,
+  fullscreenModalBlock,
   /background-color:\s*transparent/,
   "全屏蒙版应统一保持无色磨砂，不应使用深色遮罩。"
 );
 assert.match(
-  overlayBlock,
+  fullscreenModalBlock,
+  /backdrop-filter:\s*none/,
+  "全屏 root 自身不应创建 backdrop-filter 根，避免嵌套玻璃面板。"
+);
+assert.match(
+  fullscreenBackdropBlock,
   /backdrop-filter:\s*blur\(var\(--s1p-overlay-blur\)\)/,
-  "全屏蒙版仍应保留统一 blur。"
+  "统一全屏伪元素蒙版仍应保留统一 blur。"
+);
+assert.ok(
+  sourceCode.includes('buildS1pFullscreenModalClassName("s1p-image-viewer")'),
+  "图片查看器应挂载统一全屏弹层基础类。"
 );
 assert.match(
   imageViewerPanelBlock,
@@ -214,8 +222,8 @@ assertBorderlessOuterSurface(
 const floatingHandleBlock = getRuleBlock("#s1p-controls-handle");
 assert.match(
   floatingHandleBlock,
-  /background:\s*var\(--s1p-floating-control-glass-bg\)/,
-  "浮动控制把手应使用轻磨砂背景。"
+  /background:\s*var\(--s1p-floating-control-handle-bg\)/,
+  "浮动控制把手应使用独立的轻磨砂把手背景。"
 );
 assertBorderlessOuterSurface(floatingHandleBlock, "#s1p-controls-handle");
 assertHasGlassFilterVariable(
@@ -229,8 +237,8 @@ const floatingButtonSelector =
 const floatingButtonBlock = getRuleBlock(floatingButtonSelector);
 assert.match(
   floatingButtonBlock,
-  /background:\s*var\(--s1p-floating-control-glass-bg\)/,
-  "浮动控制按钮应使用轻磨砂背景。"
+  /background:\s*var\(--s1p-glass-panel-bg\)/,
+  "浮动控制按钮应复用统一 glass panel 背景。"
 );
 assertBorderlessOuterSurface(floatingButtonBlock, floatingButtonSelector);
 assertHasGlassFilterVariable(
@@ -248,9 +256,13 @@ assertBorderlessOuterSurface(
   "#s1p-debug-unified-panel.s1p-debug-panel"
 );
 assert.match(
-  getRuleBlock("#s1p-debug-unified-panel.s1p-debug-panel"),
-  /backdrop-filter:\s*var\(--s1p-dialog-glass-filter\)/,
-  "调试面板应复用轻量弹窗磨砂变量，不应回退为实底。"
+  getRuleBlock(".s1p-glass-panel"),
+  /backdrop-filter:\s*var\(--s1p-glass-panel-filter\)/,
+  "调试面板应通过 s1p-glass-panel 复用轻量弹窗磨砂变量。"
+);
+assert.ok(
+  sourceCode.includes('panel.className = "s1p-debug-panel s1p-glass-panel";'),
+  "调试面板 root 应挂载 s1p-glass-panel。"
 );
 
 console.log(

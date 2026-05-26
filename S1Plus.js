@@ -972,6 +972,7 @@
   const PLAIN_URL_AUTOLINK_DATA_VALUE = "url";
   const PLAIN_URL_AUTOLINK_FALLBACK_ROOT_IDS = ["postlist", "ct"];
   const PLAIN_URL_AUTOLINK_SKIP_SELECTOR = [
+    ".s1p-fullscreen-modal",
     "a",
     "script",
     "style",
@@ -1057,6 +1058,7 @@
     ".s1p-authi-actions-wrapper";
   const OPEN_IN_NEW_TAB_EXCLUDED_SCOPE_SELECTOR =
     [
+      ".s1p-fullscreen-modal",
       ".s1p-modal",
       ".s1p-confirm-modal",
       ".s1p-options-menu",
@@ -2363,6 +2365,11 @@
   const SVG_ICON_X_CIRCLE = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" /></svg>`;
   const SVG_ICON_GRID = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="16" height="16" class="s1p-progress-detail-btn-icon"><path d="M3 3H21C21.5523 3 22 3.44772 22 4V20C22 20.5523 21.5523 21 21 21H3C2.44772 21 2 20.5523 2 20V4C2 3.44772 2.44772 3 3 3ZM4 5V19H20V5H4ZM7 7H11V11H7V7ZM7 13H11V17H7V13ZM13 7H17V11H13V7ZM13 13H17V17H13V13Z"></path></svg>`;
   const SVG_ICON_KEBAB = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>`;
+  const S1P_FULLSCREEN_MODAL_CLASS = "s1p-fullscreen-modal";
+  const buildS1pFullscreenModalClassName = (...classNames) =>
+    [S1P_FULLSCREEN_MODAL_CLASS, ...classNames]
+      .filter(Boolean)
+      .join(" ");
 
   GM_addStyle(`
     /* --- 通用颜色 --- */
@@ -5550,17 +5557,7 @@
     }
 
     /* --- 设置面板样式 --- */
-    .s1p-modal,
-    .s1p-confirm-modal,
-    .s1p-token-config-modal,
-    .s1p-image-viewer {
-      background-color: transparent;
-      -webkit-backdrop-filter: blur(var(--s1p-overlay-blur));
-      backdrop-filter: blur(var(--s1p-overlay-blur));
-    }
-    .s1p-modal,
-    .s1p-confirm-modal,
-    .s1p-token-config-modal {
+    .s1p-fullscreen-modal {
       position: fixed;
       top: 0;
       left: 0;
@@ -5569,14 +5566,28 @@
       display: flex;
       justify-content: center;
       align-items: center;
+      background-color: transparent;
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
+    .s1p-fullscreen-modal::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+      -webkit-backdrop-filter: blur(var(--s1p-overlay-blur));
+      backdrop-filter: blur(var(--s1p-overlay-blur));
+    }
+    .s1p-fullscreen-modal > * {
+      position: relative;
+      z-index: 1;
     }
     .s1p-modal {
       justify-content: center;
       align-items: center;
       z-index: 9999;
       transition: opacity 0.25s cubic-bezier(0.22, 1, 0.36, 1);
-      -webkit-backdrop-filter: none;
-      backdrop-filter: none;
     }
     .s1p-modal.s1p-modal-opening .s1p-modal-content {
       animation: s1p-settings-modal-scale-in 0.28s cubic-bezier(0.22, 1, 0.36, 1)
@@ -5681,7 +5692,7 @@
     .s1p-modal > .s1p-modal-content > .s1p-modal-body {
       margin: 0 16px;
       padding: 0;
-      background: transparent;
+      background: color-mix(in srgb, var(--s1p-settings-content-bg) 90%, transparent);
       border-radius: 12px;
       box-sizing: border-box;
       overflow: hidden auto;
@@ -5745,9 +5756,25 @@
       border-top-color: transparent;
     }
     .s1p-token-config-modal {
+      position: absolute;
+      inset: 0;
       z-index: 20000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-sizing: border-box;
+      padding: 16px;
+      background: color-mix(in srgb, var(--s1p-settings-content-bg, var(--s1p-bg)) 18%, transparent);
       opacity: 0;
       transition: opacity 0.2s ease;
+    }
+    .s1p-token-config-modal--detached {
+      position: fixed;
+      background: transparent;
+    }
+    .s1p-token-config-modal > * {
+      position: relative;
+      z-index: 1;
     }
     .s1p-token-config-content {
       background: var(--s1p-dialog-glass-bg);
@@ -5755,6 +5782,7 @@
       border: none;
       width: 400px;
       max-width: 90%;
+      max-height: min(80vh, calc(100% - 32px));
       border-radius: 12px;
       box-shadow: var(--s1p-dialog-glass-shadow);
       -webkit-backdrop-filter: var(--s1p-dialog-glass-filter);
@@ -5864,8 +5892,8 @@
     }
     .s1p-modal > .s1p-modal-content > .s1p-modal-body > .s1p-tab-panels {
       padding: 8px 16px;
-      background: color-mix(in srgb, var(--s1p-settings-content-bg) 90%, transparent);
-      border-radius: 12px;
+      background: transparent;
+      border-radius: 0;
     }
     .s1p-modal > .s1p-modal-content > .s1p-modal-body > .s1p-tab-panels > .s1p-tab-content {
       grid-column: 1;
@@ -6326,23 +6354,23 @@
       transition: none;
     }
     /* 嵌套在已打开的全屏弹层上时，次级弹窗不再叠加第二层蒙版。 */
-    .s1p-modal ~ .s1p-confirm-modal,
-    .s1p-modal ~ .s1p-token-config-modal,
-    .s1p-image-viewer ~ .s1p-confirm-modal,
-    .s1p-image-viewer ~ .s1p-token-config-modal {
+    .s1p-modal ~ .s1p-fullscreen-modal,
+    .s1p-image-viewer ~ .s1p-fullscreen-modal {
       background: transparent;
-      -webkit-backdrop-filter: none;
-      backdrop-filter: none;
       box-shadow: none;
     }
+    .s1p-modal ~ .s1p-fullscreen-modal::before,
+    .s1p-image-viewer ~ .s1p-fullscreen-modal::before {
+      display: none;
+    }
     .s1p-confirm-content {
-      background: var(--s1p-dialog-glass-bg);
+      background: var(--s1p-floating-surface-bg);
       color: var(--s1p-dialog-text);
       border: none;
       border-radius: 12px;
-      box-shadow: var(--s1p-dialog-glass-shadow);
-      -webkit-backdrop-filter: var(--s1p-dialog-glass-filter);
-      backdrop-filter: var(--s1p-dialog-glass-filter);
+      box-shadow: var(--s1p-floating-surface-shadow);
+      -webkit-backdrop-filter: var(--s1p-floating-surface-filter);
+      backdrop-filter: var(--s1p-floating-surface-filter);
       width: 480px;
       max-width: 90%;
       text-align: left;
@@ -7562,12 +7590,7 @@
     /* --- 模式 B: 增强控件关闭 (默认状态) --- */
     /* 默认隐藏脚本创建的控件 */
     .s1p-image-viewer {
-      position: fixed;
-      inset: 0;
       z-index: 100000;
-      display: flex;
-      align-items: center;
-      justify-content: center;
       opacity: 0;
       visibility: hidden;
       pointer-events: none;
@@ -24867,7 +24890,7 @@
     }
     disposeS1pImageViewerToolbarContinuousActions();
     const overlay = document.createElement("div");
-    overlay.className = "s1p-image-viewer";
+    overlay.className = buildS1pFullscreenModalClassName("s1p-image-viewer");
     overlay.setAttribute("aria-hidden", "true");
     overlay.innerHTML = `
       <div class="s1p-image-viewer__panel" role="dialog" aria-modal="true" aria-label="S1 Plus \u56fe\u7247\u67e5\u770b\u5668">
@@ -38279,7 +38302,7 @@
 
     dismissExistingConfirmModal({ reason: "replaced", immediate: true });
     const modal = document.createElement("div");
-    modal.className = "s1p-confirm-modal";
+    modal.className = buildS1pFullscreenModalClassName("s1p-confirm-modal");
 
     const content = document.createElement("div");
     content.className = "s1p-confirm-content";
@@ -38397,7 +38420,7 @@
 
     dismissExistingConfirmModal({ reason: "replaced", immediate: true });
     const modal = document.createElement("div");
-    modal.className = "s1p-confirm-modal";
+    modal.className = buildS1pFullscreenModalClassName("s1p-confirm-modal");
 
     const content = document.createElement("div");
     content.className = "s1p-confirm-content";
@@ -39249,11 +39272,18 @@
    */
   const openTokenExpiryConfigModal = (onSave, onCancel) => {
     const currentSettings = getSettings();
-    // [FIX] 不移除现有的设置面板 (.s1p-modal)，而是叠加一个新的模态框
-    // document.querySelector(".s1p-modal")?.remove(); 
+    const settingsModalContent = document.querySelector(
+      ".s1p-modal > .s1p-modal-content"
+    );
+    const modalHost = settingsModalContent || document.body;
 
     const modal = document.createElement("div");
-    modal.className = "s1p-token-config-modal"; // [FIX] 使用不同的类名以避免冲突 (CSS需适配或复用样式)
+    modal.className = [
+      "s1p-token-config-modal",
+      settingsModalContent ? "" : "s1p-token-config-modal--detached",
+    ]
+      .filter(Boolean)
+      .join(" ");
 
     // 默认过期日期：优先读取已保存的配置
     let defaultDate;
@@ -39305,7 +39335,7 @@
             </div>
         </div>`;
 
-    document.body.appendChild(modal);
+    modalHost.appendChild(modal);
     const tokenConfigContent = modal.querySelector(".s1p-token-config-content");
     const showTokenConfigMessage = (message, isSuccess) => {
       showMessage(message, isSuccess, { container: tokenConfigContent });
@@ -39673,7 +39703,7 @@
 
     const settingsModalTabsHtml = buildSettingsModalTabsHtml();
     const modal = document.createElement("div");
-    modal.className = "s1p-modal";
+    modal.className = buildS1pFullscreenModalClassName("s1p-modal");
     modal.style.opacity = "0";
     modal.innerHTML = `<div class="s1p-modal-content s1p-glass-panel">
             <div class="s1p-modal-header"><div class="s1p-modal-title">S1 Plus 设置</div>${buildModalCloseButtonHtml({
@@ -41217,7 +41247,7 @@
       dismissExistingConfirmModal({ reason: "replaced", immediate: true });
 
       const modal = document.createElement("div");
-      modal.className = "s1p-confirm-modal";
+      modal.className = buildS1pFullscreenModalClassName("s1p-confirm-modal");
 
       const content = document.createElement("div");
       content.className = "s1p-confirm-content";
@@ -45598,7 +45628,7 @@
     // [修改] 新弹窗创建前优雅关闭旧弹窗，避免覆盖导致的流程悬挂。
     dismissExistingConfirmModal({ reason: "replaced", immediate: true });
     const modal = document.createElement("div");
-    modal.className = "s1p-confirm-modal";
+    modal.className = buildS1pFullscreenModalClassName("s1p-confirm-modal");
 
     // [新增] 如果传入了自定义类名，则添加到 modal 元素上
     if (modalClassName) {
@@ -49644,7 +49674,10 @@
 
     // 创建弹窗
     const modal = document.createElement("div");
-    modal.className = "s1p-confirm-modal s1p-reading-progress-modal";
+    modal.className = buildS1pFullscreenModalClassName(
+      "s1p-confirm-modal",
+      "s1p-reading-progress-modal"
+    );
 
     const content = document.createElement("div");
     content.className = "s1p-confirm-content s1p-reading-progress-content";
