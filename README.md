@@ -115,9 +115,10 @@ S1 Plus 是一个面向 Stage1st（S1）的用户脚本，目标是让论坛浏�
   - 后台打开帖子页默认保持被动，不轻易制造本地脏数据
   - 当前标签页 / 当前线程的局部脏状态不再轻易升级成全局暂停
 - 并发控制：
-  - 手动/后台/启动三类锁
+  - 手动/后台/启动/前台补同步四类锁
   - 全局同步锁统一互斥
   - 锁心跳与失锁中止
+  - 导航栏直接拉取 / 推送是用户显式覆盖操作，会先取消当前自动同步、待同步队列和冲突暂停，再按用户选择执行
 - 稳定性机制：
   - 请求超时 + 重试
   - 自动同步熔断（连续失败暂停）
@@ -201,7 +202,8 @@ S1 Plus 是一个面向 Stage1st（S1）的用户脚本，目标是让论坛浏�
 
 - “设置同步”页的配置项是**手动保存模式**，改完需点“保存设置”
 - 手动同步会智能判断推送/拉取/冲突
-- 高级模式下可悬停同步按钮直接选“推送/拉取”
+- 高级模式下可悬停同步按钮直接选“推送/拉取”；这两个按钮优先级最高，会取消当前自动同步、待同步队列和冲突暂停，然后按你点的方向执行
+- “推送”会用本地数据覆盖云端，“拉取”会用云端数据覆盖本地；直接选择时请确认当前要保留哪一端
 - 同步执行期间不要求页面一直保持前台：可以切到其他标签页、页面或软件，但不要关闭、刷新、后退或跳转发起同步的那个 S1 标签页；如果弹出拉取/推送决策框，需要回到该页手动确认
 - 发生冲突时自动同步会暂停，需手动决策
 - 同步设备 ID 只约束“自动上传本地变更”：开启该开关时必须填写，用于标记这台设备写入云端的来源；仅开启云端更新检查或手动同步时不强制填写
@@ -257,8 +259,9 @@ S1 Plus 是一个面向 Stage1st（S1）的用户脚本，目标是让论坛浏�
 
 - 更新日志：[`CHANGELOG.md`](./CHANGELOG.md)
 - 开发文档：[`DEVELOPMENT.md`](./DEVELOPMENT.md)
-- 多标签页同步重构总览：[`sync_multitab_review_and_redesign.md`](./sync-across-multiple-tab/sync_multitab_review_and_redesign.md)
-- 覆盖矩阵：[`coverage_matrix.md`](./sync-across-multiple-tab/sync_multitab_redesign/coverage_matrix.md)
+- 多标签页同步重构总览：[`sync_multitab_review_and_redesign.md`](./archive/sync-across-multiple-tab/sync_multitab_review_and_redesign.md)
+- 覆盖矩阵：[`coverage_matrix.md`](./archive/sync-across-multiple-tab/sync_multitab_redesign/coverage_matrix.md)
+- 标题同步状态与运行中恢复边界：[`sync-title-status-handoff-review.md`](./docs/sync-title-status-handoff-review.md)
 
 ## 反馈
 
