@@ -119,10 +119,11 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 
 - 类型 B 浮层分层：用户标记编辑器 / 日期选择器 / 确认型浮层 / 普通短 tooltip / 文档型帮助浮层使用轻磨砂；纯操作入口菜单保持实底。
 - 弹窗与浮层可读性：全屏蒙版只保留低强度无色 blur，确认类一级弹窗本体复用 floating surface 背景、阴影和滤镜；设置/调试大面板、Token 日期配置和同步弹窗内部信息块继续使用 dialog glass 变量。浅色、深色模式都要同步维护。
+- 设置承载的二级弹窗：Token 有效期、阅读记录详情、设置内确认/输入弹窗、设置内手动同步选择等必须显式 opt-in 到 settings secondary glass（`S1P_SETTINGS_SECONDARY_GLASS_CLASS`、`buildSettingsSecondaryGlassClassName()` 或 `useSettingsSecondaryGlass: true`），不要通过全局 `.s1p-modal` 查询推断上下文。
 - 弹窗与浮层定位：所有贴近右侧边界的 tooltip / popover / inline menu 必须使用布局视口宽度（`document.documentElement.clientWidth`，当前封装为 `getS1pLayoutViewportWidth()`）做横向夹取，不要直接用 `window.innerWidth`。`window.innerWidth` 会包含垂直滚动条槽，tooltip 可能被放进滚动条槽内，hover 时触发 1px 水平滚动条。
 - 自定义 UI 最外层容器不显示描边；输入框、按钮、分割线、表格和设置面板内部列表项仍可保留功能性边界。
 - 设置面板滚动条复用脚本自定义样式，并在 S1 NUX 启用时跟随 `--prid` / `--pridb`，轨道保持透明。
-- 图片查看器全屏蒙版保持无色 blur，图片舞台沿用浅色浅黄绿 / 深色深灰蓝主题底色并轻磨砂。
+- 图片查看器全屏蒙版保持无色 blur，图片舞台沿用浅色浅黄绿 / 深色深灰蓝主题底色并轻磨砂；上一张/下一张按钮的默认态阴影只通过 `--s1p-image-viewer-nav-btn-shadow` 调整，不要连带修改 hover、背景或 blur。
 
 这些脚本只做源码级 CSS 断言，不能替代浏览器截图验收；涉及透明度、背景复杂度和 NUX 主题时仍需手动打开页面观察。
 
@@ -272,6 +273,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - `.s1p-glass-panel` 的正确采样路径是“可见外壳直接过滤页面背景”。不要把它放进另一个带 `backdrop-filter` 的父级里，也不要同时给父级和子级都加 blur；浏览器会建立 backdrop root，子级可能只采样到父级处理后的结果，导致设置面板与调试面板视觉不一致。
 - Shell glass 的 blur 强度应跟随 `--s1p-dialog-glass-filter`（当前 `blur(3px) saturate(1.02)`）。不要为了“看起来更糊”硬编码 `blur(12px)` 等强滤镜；高对比小字会扩散成色块，反而不像调试面板的自然磨砂。
 - Confirm dialog content（`.s1p-confirm-content`）复用 floating surface 的 `--s1p-floating-surface-bg`、`--s1p-floating-surface-filter` 和 `--s1p-floating-surface-shadow`，但正文仍走 `--s1p-dialog-text` / `--s1p-dialog-muted-text` 保证深浅模式可读性。Dialog glass（`--s1p-dialog-glass-*`）保留给设置/调试大面板、Token 日期配置和手动同步选择/对比表格等内部信息块；Shell glass（`.s1p-glass-panel`）用于设置面板、调试面板和同类大外壳；Image viewer glass 用于图片查看器工具栏和图片舞台；Floating surface（`--s1p-floating-surface-*` / `.s1p-floating-surface`）也用于用户标记编辑器、日期选择器、确认型浮层、普通短 tooltip、文档型帮助浮层、标签菜单和 Toast 这类轻量浮层。
+- Settings secondary glass（`.s1p-settings-secondary-glass`）只用于设置面板承载的二级窗口。通用 `createConfirmationModal` / `createInputModal` / `createAdvancedConfirmationModal` 必须通过 `useSettingsSecondaryGlass: true` 显式启用；设置面板内部可使用本地 helper 统一传参。不要在这些通用工厂里用 `document.querySelector(".s1p-modal ...")` 做全局回退，否则残留设置面板会让非设置弹窗误套主题。
 - 轻量浮层必须优先复用 `--s1p-floating-surface-bg`、`--s1p-floating-surface-filter` 和 `--s1p-floating-surface-shadow`；需要贴近 tooltip 的特殊工具条（如导航栏拉取/推送行内菜单）可在这套变量基础上拆出局部 surface 变量，但不要回退到旧的实底 popover。带备注确认菜单的外层只负责布局，玻璃材质放在子 surface 上，避免中间 gap 被父级 backdrop 连成整块。
 - Dialog glass / floating surface / toast / floating-control 都必须通过对应 `--s1p-*-bg`、`--s1p-*-filter` 与 `--s1p-*-shadow` 变量调参；优先微调背景 alpha 保证可读性，保持轻量 filter，不要在组件规则里硬编码 `blur(6px)` / `blur(8px)` 这类强磨砂。一级确认弹窗本体的背景、阴影和滤镜必须整体走 floating surface，不要只切换其中一项。
 - Toast 是短时提示，默认复用 floating surface；成功/错误提示可以保留语义色背景，但仍应保持透明度与磨砂一致，不要退回不透明色块。
@@ -279,8 +281,8 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - 纯操作入口菜单不再默认保持实底；标签选项菜单复用 floating surface，导航栏拉取/推送行内菜单使用更轻的局部 surface。若新增操作入口菜单，先按可读性判断复用 floating surface 或拆局部变量，不要直接套旧 `--s1p-popover-solid-*`。
 - 自定义 UI 最外层容器默认 `border: none`，依靠背景、阴影和 blur 分层；不要给外壳补 1px 线框来“找边界”。
 - 输入框、按钮、状态 chip、分隔线、表格、设置面板内部列表项属于功能性边界，可按可读性保留边框。
-- 图片查看器面板 `.s1p-image-viewer__panel` 只负责圆角裁切、阴影和动画，不铺背景、不做 `backdrop-filter`；工具栏和图片舞台分别用 `--s1p-image-viewer-toolbar-bg`、`--s1p-image-viewer-viewport-bg` 独立控制，避免父子透明背景叠加导致舞台调参互相牵连。图片舞台本体只铺稳定主题底色，`.s1p-image-viewer__viewport::before` 用 `--s1p-image-viewer-viewport-glass-bg` + `--s1p-image-viewer-viewport-glass-filter` 负责磨砂层；浅色和深色必须保持同一套“底色层 + 磨砂层”结构，避免只在某个主题下直接过滤原页面。
-- 设置面板 `.s1p-modal-body` 负责滚动视口、圆角裁切、滚动条样式和固定内容底色，使用 `color-mix(in srgb, var(--s1p-settings-content-bg) 90%, transparent)`；`.s1p-tab-panels` 保持透明且不再持有圆角背景，避免滚动中右侧 scrollbar gutter 露出直角。S1 NUX 下滚动条 thumb 通过 `applyNuxSettingsScrollbarThemeFix()` 跟随 NUX 主题色，track 保持透明。
+- 图片查看器面板 `.s1p-image-viewer__panel` 只负责圆角裁切、阴影和动画，不铺背景、不做 `backdrop-filter`；工具栏和图片舞台分别用 `--s1p-image-viewer-toolbar-bg`、`--s1p-image-viewer-viewport-bg` 独立控制，避免父子透明背景叠加导致舞台调参互相牵连。图片舞台本体只铺稳定主题底色，`.s1p-image-viewer__viewport::before` 用 `--s1p-image-viewer-viewport-glass-bg` + `--s1p-image-viewer-viewport-glass-filter` 负责磨砂层；浅色和深色必须保持同一套“底色层 + 磨砂层”结构，避免只在某个主题下直接过滤原页面。图片查看器上一张/下一张按钮的默认态阴影使用 `--s1p-image-viewer-nav-btn-shadow`，只调默认阴影时不要改 hover shadow、背景或 blur。
+- 设置面板 `.s1p-modal-body` 负责滚动视口、圆角裁切、滚动条样式和固定内容底色，使用 `--s1p-settings-body-surface-bg`（浅色约 `color-mix(... 94%, transparent)`，深色约 `color-mix(... 98%, transparent)`）；`.s1p-tab-panels` 保持透明且不再持有圆角背景，避免滚动中右侧 scrollbar gutter 露出直角。S1 NUX 下滚动条 thumb 通过 `applyNuxSettingsScrollbarThemeFix()` 跟随 NUX 主题色，track 保持透明。
 
 ## 5. 存储键说明（GM Key）
 
@@ -642,7 +644,7 @@ animateSettingsModalBodyHeight(modalBody, () => {
 Tab 内容本体仍为 `display` 切换；视觉过渡来自 `.s1p-modal-body` 的高度动画，能根据不同 tab 内容高度平滑收敛。
 
 6. 设置面板的 tabs、滚动视口与内容底色分层
-设置面板 tab bar 是 `.s1p-modal-content.s1p-glass-panel` 的直接子元素，留在外层磨砂玻璃层；`.s1p-modal-body` 负责滚动视口、圆角裁切、滚动条样式、高度动画和固定内容底色，透明度使用 `color-mix(... 90%, transparent)` 与 `s1p-debug-section` 对齐；`.s1p-tab-panels` 保持透明且不承担圆角背景。不要把 tabs 放回 `.s1p-modal-body`；也不要把内容底色放回 `.s1p-tab-panels`，否则滚动期间 scrollbar gutter 容易露出直角；列表行仍不应各自承担外层圆角。
+设置面板 tab bar 是 `.s1p-modal-content.s1p-glass-panel` 的直接子元素，留在外层磨砂玻璃层；`.s1p-modal-body` 负责滚动视口、圆角裁切、滚动条样式、高度动画和固定内容底色，透明度通过 `--s1p-settings-body-surface-bg` 控制（浅色约 `color-mix(... 94%, transparent)`，深色约 `color-mix(... 98%, transparent)`）；`.s1p-tab-panels` 保持透明且不承担圆角背景。不要把 tabs 放回 `.s1p-modal-body`；也不要把内容底色放回 `.s1p-tab-panels`，否则滚动期间 scrollbar gutter 容易露出直角；列表行仍不应各自承担外层圆角。
 
 7. 滚动条与圆角裁切
 设置面板滚动视口使用 `overflow: hidden auto`、透明滚动条轨道与内缩圆角滑块，避免滚动条沟槽破坏实底圆角。`scrollbar-gutter` 只使用 `stable`，不要恢复成 `stable both-edges`，否则左右两侧会出现直角沟槽。

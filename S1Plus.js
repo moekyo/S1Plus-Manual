@@ -2372,10 +2372,21 @@
   const SVG_ICON_GRID = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="16" height="16" class="s1p-progress-detail-btn-icon"><path d="M3 3H21C21.5523 3 22 3.44772 22 4V20C22 20.5523 21.5523 21 21 21H3C2.44772 21 2 20.5523 2 20V4C2 3.44772 2.44772 3 3 3ZM4 5V19H20V5H4ZM7 7H11V11H7V7ZM7 13H11V17H7V13ZM13 7H17V11H13V7ZM13 13H17V17H13V13Z"></path></svg>`;
   const SVG_ICON_KEBAB = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>`;
   const S1P_FULLSCREEN_MODAL_CLASS = "s1p-fullscreen-modal";
+  const S1P_SETTINGS_SECONDARY_GLASS_CLASS = "s1p-settings-secondary-glass";
   const buildS1pFullscreenModalClassName = (...classNames) =>
     [S1P_FULLSCREEN_MODAL_CLASS, ...classNames]
       .filter(Boolean)
       .join(" ");
+  const buildSettingsSecondaryGlassClassName = (...classNames) =>
+    [S1P_SETTINGS_SECONDARY_GLASS_CLASS, ...classNames]
+      .filter(Boolean)
+      .join(" ");
+  const isSettingsSecondaryGlassContext = (anchor = null) =>
+    Boolean(
+      anchor?.closest?.(
+        ".s1p-modal, .s1p-token-config-modal:not(.s1p-token-config-modal--detached)"
+      )
+    );
 
   GM_addStyle(`
     /* --- 通用颜色 --- */
@@ -2394,6 +2405,21 @@
       --s1p-dialog-glass-filter: blur(3px) saturate(1.02);
       --s1p-dialog-glass-shadow: 0 18px 44px rgba(0, 0, 0, 0.22);
       --s1p-dialog-glass-divider: rgba(37, 71, 122, 0.16);
+      --s1p-settings-secondary-glass-bg: linear-gradient(
+        180deg,
+        color-mix(in srgb, var(--s1p-white) 42%, transparent),
+        color-mix(in srgb, var(--s1p-bg) 88%, transparent)
+      );
+      --s1p-settings-secondary-glass-border: color-mix(in srgb, var(--s1p-white) 68%, var(--s1p-border) 32%);
+      --s1p-settings-secondary-glass-shadow:
+        0 18px 40px rgba(16, 35, 79, 0.16),
+        inset 0 1px 0 color-mix(in srgb, var(--s1p-white) 72%, transparent);
+      --s1p-settings-secondary-glass-filter: blur(9px) saturate(1.06);
+      --s1p-settings-secondary-table-bg: color-mix(in srgb, var(--s1p-white) 74%, transparent);
+      --s1p-settings-secondary-table-border: color-mix(in srgb, var(--s1p-border) 82%, var(--s1p-dialog-text) 18%);
+      --s1p-settings-secondary-row-border: color-mix(in srgb, var(--s1p-pri) 72%, var(--s1p-border) 28%);
+      --s1p-settings-secondary-header-bg: color-mix(in srgb, var(--s1p-sub) 86%, transparent);
+      --s1p-settings-secondary-row-hover-bg: color-mix(in srgb, var(--s1p-pri) 52%, transparent);
       --s1p-glass-panel-bg: rgba(255, 255, 255, 0.08);
       --s1p-glass-panel-filter: var(--s1p-dialog-glass-filter);
       --s1p-dialog-text: #10234f;
@@ -2412,8 +2438,9 @@
       --s1p-toast-glass-bg: var(--s1p-floating-surface-bg);
       --s1p-toast-glass-filter: var(--s1p-floating-surface-filter);
       --s1p-toast-glass-shadow: var(--s1p-floating-surface-shadow);
-      --s1p-toast-success-bg: rgba(34, 197, 94, 0.72);
-      --s1p-toast-error-bg: rgba(239, 68, 68, 0.74);
+      --s1p-toast-state-filter: blur(6px) saturate(1.18);
+      --s1p-toast-success-bg: rgba(34, 197, 94, 0.9);
+      --s1p-toast-error-bg: rgba(239, 68, 68, 0.9);
       --s1p-floating-control-glass-bg: rgba(255, 255, 255, 0.89);
       --s1p-floating-control-glass-filter: blur(3px) saturate(1.02);
       --s1p-floating-control-glass-shadow: 0 8px 20px rgba(0, 0, 0, 0.18);
@@ -2421,6 +2448,7 @@
       --s1p-floating-control-handle-dot: rgba(2, 44, 128, 0.62);
       --s1p-image-viewer-panel-shadow: var(--s1p-dialog-glass-shadow);
       --s1p-image-viewer-toolbar-bg: rgba(255, 255, 255, 0.85);
+      --s1p-image-viewer-nav-btn-shadow: 0 4px 12px rgba(0, 0, 0, 0.10);
       --s1p-settings-scrollbar-thumb: rgba(37, 71, 122, 0.42);
       --s1p-settings-scrollbar-thumb-hover: rgba(37, 71, 122, 0.58);
       --s1p-settings-scrollbar-track: transparent;
@@ -2436,6 +2464,9 @@
       --s1p-sub-h: #2563eb;
       --s1p-sub-h-t: var(--s1p-white);
       --s1p-focus-ring: rgba(59, 130, 246, 0.48);
+      --s1p-settings-secondary-text: var(--s1p-t);
+      --s1p-settings-secondary-muted-text: var(--s1p-desc-t);
+      --s1p-settings-secondary-empty-text: color-mix(in srgb, var(--s1p-desc-t) 52%, transparent);
 
       /* -- 状态色 -- */
       --s1p-red: #ef4444;
@@ -2508,9 +2539,9 @@
       --s1p-username-text: #0b2163; /* Dark Blue */
       --s1p-image-preview-max-width: 800px;
       --s1p-image-preview-max-height: 1200px;
-      --s1p-image-viewer-viewport-bg: rgba(226, 232, 222, 0.7);
-      --s1p-image-viewer-viewport-glass-bg: rgba(255, 255, 255, 0.04);
-      --s1p-image-viewer-viewport-glass-filter: blur(6px) saturate(1.04);
+      --s1p-image-viewer-viewport-bg: rgba(226, 232, 222, 0.88);
+      --s1p-image-viewer-viewport-glass-bg: rgba(255, 255, 255, 0.10);
+      --s1p-image-viewer-viewport-glass-filter: blur(6px) saturate(1.06);
       --s1p-image-viewer-loading-bg: rgba(237, 241, 230, 0.96);
       --s1p-image-viewer-loading-text: #1b2f63;
       --s1p-image-viewer-loading-spinner-track: rgba(2, 44, 128, 0.2);
@@ -5632,6 +5663,7 @@
     }
     .s1p-modal > .s1p-modal-content {
       --s1p-settings-content-bg: var(--s1p-bg);
+      --s1p-settings-body-surface-bg: color-mix(in srgb, var(--s1p-settings-content-bg) 94%, transparent);
       --s1p-settings-scrollbar-thumb: rgba(37, 71, 122, 0.42);
       --s1p-settings-scrollbar-thumb-hover: rgba(37, 71, 122, 0.58);
       --s1p-settings-scrollbar-track: transparent;
@@ -5642,6 +5674,7 @@
     @media (prefers-color-scheme: dark) {
       .s1p-modal > .s1p-modal-content {
         --s1p-settings-content-bg: #172033;
+        --s1p-settings-body-surface-bg: color-mix(in srgb, var(--s1p-settings-content-bg) 98%, transparent);
         --s1p-settings-scrollbar-thumb: rgba(148, 163, 184, 0.46);
         --s1p-settings-scrollbar-thumb-hover: rgba(148, 163, 184, 0.64);
       }
@@ -5698,7 +5731,7 @@
     .s1p-modal > .s1p-modal-content > .s1p-modal-body {
       margin: 0 16px;
       padding: 0;
-      background: color-mix(in srgb, var(--s1p-settings-content-bg) 90%, transparent);
+      background: var(--s1p-settings-body-surface-bg);
       border-radius: 12px;
       box-sizing: border-box;
       overflow: hidden auto;
@@ -6288,10 +6321,14 @@
     .s1p-toast-notification.success {
       background: var(--s1p-toast-success-bg);
       color: var(--s1p-white);
+      -webkit-backdrop-filter: var(--s1p-toast-state-filter);
+      backdrop-filter: var(--s1p-toast-state-filter);
     }
     .s1p-toast-notification.error {
       background: var(--s1p-toast-error-bg);
       color: var(--s1p-white);
+      -webkit-backdrop-filter: var(--s1p-toast-state-filter);
+      backdrop-filter: var(--s1p-toast-state-filter);
     }
     .s1p-toast-notification.error.visible {
       animation: s1p-toast-shake 0.5s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
@@ -6400,6 +6437,44 @@
       font-size: 14px;
       color: var(--s1p-dialog-muted-text);
     }
+    .s1p-settings-secondary-glass {
+      --s1p-dialog-text: var(--s1p-settings-secondary-text);
+      --s1p-dialog-muted-text: var(--s1p-settings-secondary-muted-text);
+      background: var(--s1p-settings-secondary-glass-bg);
+      border: 1px solid var(--s1p-settings-secondary-glass-border);
+      box-shadow: var(--s1p-settings-secondary-glass-shadow);
+      color: var(--s1p-settings-secondary-text);
+      -webkit-backdrop-filter: var(--s1p-settings-secondary-glass-filter);
+      backdrop-filter: var(--s1p-settings-secondary-glass-filter);
+    }
+    .s1p-settings-secondary-glass :is(
+      .s1p-confirm-title,
+      .s1p-modal-title,
+      .s1p-settings-label,
+      .s1p-dp-title,
+      .s1p-dp-day,
+      .s1p-input
+    ) {
+      color: var(--s1p-settings-secondary-text);
+    }
+    .s1p-settings-secondary-glass :is(
+      .s1p-confirm-subtitle,
+      .s1p-setting-desc,
+      .s1p-dp-weekdays,
+      .s1p-dp-nav-btn,
+      .s1p-progress-group-period
+    ) {
+      color: var(--s1p-settings-secondary-muted-text);
+    }
+    .s1p-settings-secondary-glass :is(
+      .s1p-btn:not(:hover),
+      .s1p-confirm-btn:not(:hover)
+    ) {
+      color: var(--s1p-settings-secondary-text);
+    }
+    .s1p-settings-secondary-glass .s1p-dp-day.other-month {
+      color: var(--s1p-settings-secondary-empty-text);
+    }
     .s1p-confirm-footer {
       padding: 12px 24px 20px;
       display: flex;
@@ -6470,6 +6545,8 @@
     }
     /* 表格改为真正的CSS Grid，确保列对齐 */
     .s1p-reading-progress-modal .s1p-sync-comparison-table {
+      background: var(--s1p-settings-secondary-table-bg);
+      border-color: var(--s1p-settings-secondary-table-border);
       display: grid;
       grid-template-columns: auto 1fr auto;
       pointer-events: auto;
@@ -6478,19 +6555,24 @@
       display: contents;
     }
     .s1p-reading-progress-modal .s1p-sync-comparison-row > div {
-      padding: 12px 16px;
-      border-bottom: 1px solid var(--s1p-pri);
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--s1p-settings-secondary-row-border);
+      background-color: transparent;
+      transition: background-color 0.2s ease;
     }
     .s1p-reading-progress-modal .s1p-sync-comparison-header > div {
-      background-color: var(--s1p-pri);
+      background-color: var(--s1p-settings-secondary-header-bg);
       font-weight: 600;
+      border-bottom-color: var(--s1p-border);
     }
     .s1p-reading-progress-modal .s1p-sync-comparison-row:last-child > div {
       border-bottom: none;
     }
-    /* 斑马条纹 - 每3个单元格为一行 */
     .s1p-reading-progress-modal .s1p-sync-comparison-row:nth-child(even) > div {
-      background-color: var(--s1p-sub);
+      background-color: transparent;
+    }
+    .s1p-reading-progress-modal .s1p-sync-comparison-row:hover > div {
+      background-color: var(--s1p-settings-secondary-row-hover-bg);
     }
     /* 列对齐 */
     .s1p-reading-progress-modal .s1p-sync-comparison-label {
@@ -7858,7 +7940,7 @@
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      box-shadow: var(--s1p-floating-control-glass-shadow);
+      box-shadow: var(--s1p-image-viewer-nav-btn-shadow);
       -webkit-backdrop-filter: var(--s1p-floating-control-glass-filter);
       backdrop-filter: var(--s1p-floating-control-glass-filter);
       opacity: 0;
@@ -8447,6 +8529,22 @@
         --s1p-dialog-glass-filter: blur(3px) saturate(1.02);
         --s1p-dialog-glass-shadow: 0 18px 44px rgba(0, 0, 0, 0.28);
         --s1p-dialog-glass-divider: rgba(148, 163, 184, 0.2);
+        --s1p-settings-secondary-text: #e8dfcf;
+        --s1p-settings-secondary-muted-text: color-mix(in srgb, var(--s1p-settings-secondary-text) 78%, transparent);
+        --s1p-settings-secondary-empty-text: color-mix(in srgb, var(--s1p-settings-secondary-text) 44%, transparent);
+        --s1p-settings-secondary-glass-bg: linear-gradient(
+          180deg,
+          color-mix(in srgb, var(--s1p-bg) 84%, rgba(255, 255, 255, 0.18) 16%),
+          color-mix(in srgb, var(--s1p-bg) 90%, transparent)
+        );
+        --s1p-settings-secondary-glass-border: transparent;
+        --s1p-settings-secondary-glass-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
+        --s1p-settings-secondary-glass-filter: blur(9px) saturate(1.08);
+        --s1p-settings-secondary-table-bg: color-mix(in srgb, var(--s1p-bg) 82%, transparent);
+        --s1p-settings-secondary-table-border: color-mix(in srgb, var(--s1p-border) 84%, var(--s1p-white) 16%);
+        --s1p-settings-secondary-row-border: color-mix(in srgb, var(--s1p-border) 72%, var(--s1p-pri) 28%);
+        --s1p-settings-secondary-header-bg: color-mix(in srgb, var(--s1p-sub) 82%, transparent);
+        --s1p-settings-secondary-row-hover-bg: color-mix(in srgb, var(--s1p-pri) 42%, transparent);
         --s1p-glass-panel-bg: rgba(8, 13, 24, 0.14);
         --s1p-dialog-text: #f1f5f9;
         --s1p-dialog-muted-text: #cbd5e1;
@@ -8464,6 +8562,7 @@
         --s1p-toast-glass-bg: var(--s1p-floating-surface-bg);
         --s1p-toast-glass-filter: var(--s1p-floating-surface-filter);
         --s1p-toast-glass-shadow: var(--s1p-floating-surface-shadow);
+        --s1p-toast-state-filter: var(--s1p-toast-glass-filter);
         --s1p-toast-success-bg: rgba(22, 163, 74, 0.76);
         --s1p-toast-error-bg: rgba(185, 28, 28, 0.78);
         --s1p-floating-control-glass-bg: rgba(17, 24, 39, 0.91);
@@ -8473,6 +8572,7 @@
         --s1p-floating-control-handle-dot: rgba(226, 232, 240, 0.82);
         --s1p-image-viewer-panel-shadow: var(--s1p-dialog-glass-shadow);
         --s1p-image-viewer-toolbar-bg: rgba(18, 27, 45, 0.97);
+        --s1p-image-viewer-nav-btn-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
         --s1p-settings-scrollbar-thumb: rgba(148, 163, 184, 0.46);
         --s1p-settings-scrollbar-thumb-hover: rgba(148, 163, 184, 0.64);
         --s1p-settings-scrollbar-track: transparent;
@@ -8565,6 +8665,7 @@
       #s1p-floating-controls button {
         box-shadow: var(--s1p-floating-control-glass-shadow);
       }
+
 
       .s1p-toast-notification {
         background: var(--s1p-toast-glass-bg);
@@ -38589,7 +38690,11 @@
     confirmText = "确定",
     options = {}
   ) => {
-    const { allowSubtitleHtml = false, onDismiss = null } = options;
+    const {
+      allowSubtitleHtml = false,
+      onDismiss = null,
+      useSettingsSecondaryGlass = false,
+    } = options;
 
     dismissExistingConfirmModal({ reason: "replaced", immediate: true });
     const modal = document.createElement("div");
@@ -38597,6 +38702,9 @@
 
     const content = document.createElement("div");
     content.className = "s1p-confirm-content";
+    if (useSettingsSecondaryGlass) {
+      content.classList.add(S1P_SETTINGS_SECONDARY_GLASS_CLASS);
+    }
 
     const body = document.createElement("div");
     body.className = "s1p-confirm-body";
@@ -38707,7 +38815,11 @@
     placeholder = "",
     options = {}
   ) => {
-    const { allowSubtitleHtml = false, onDismiss = null } = options;
+    const {
+      allowSubtitleHtml = false,
+      onDismiss = null,
+      useSettingsSecondaryGlass = false,
+    } = options;
 
     dismissExistingConfirmModal({ reason: "replaced", immediate: true });
     const modal = document.createElement("div");
@@ -38715,6 +38827,9 @@
 
     const content = document.createElement("div");
     content.className = "s1p-confirm-content";
+    if (useSettingsSecondaryGlass) {
+      content.classList.add(S1P_SETTINGS_SECONDARY_GLASS_CLASS);
+    }
 
     const body = document.createElement("div");
     body.className = "s1p-confirm-body";
@@ -39340,6 +39455,9 @@
       if (!picker) {
         picker = document.createElement("div");
         picker.className = "s1p-date-picker";
+        if (isSettingsSecondaryGlassContext(inputEl)) {
+          picker.classList.add(S1P_SETTINGS_SECONDARY_GLASS_CLASS);
+        }
         document.body.appendChild(picker);
 
         picker.addEventListener("click", (e) => e.stopPropagation());
@@ -39594,9 +39712,15 @@
       const day = String(d.getDate()).padStart(2, '0');
       return `${y}-${m}-${day}`;
     };
+    const tokenConfigContentClassName = settingsModalContent
+      ? buildSettingsSecondaryGlassClassName(
+        "s1p-modal-content",
+        "s1p-token-config-content"
+      )
+      : "s1p-modal-content s1p-token-config-content";
 
     modal.innerHTML = `
-        <div class="s1p-modal-content s1p-token-config-content">
+        <div class="${tokenConfigContentClassName}">
             <div class="s1p-modal-header s1p-token-config-header">
                 <div class="s1p-modal-title s1p-token-config-title">设置 Token 有效期</div>
                 ${buildModalCloseButtonHtml({
@@ -40012,6 +40136,49 @@
     const showSettingsMessage = (message, isSuccess, options = {}) => {
       showMessage(message, isSuccess, { ...options, container: modalContent });
     };
+    const withSettingsSecondaryGlassOptions = (options = {}) => ({
+      ...(options || {}),
+      useSettingsSecondaryGlass: true,
+    });
+    const createSettingsConfirmationModal = (
+      title,
+      subtitle,
+      onConfirm,
+      confirmText = "确定",
+      options = {}
+    ) =>
+      createConfirmationModal(
+        title,
+        subtitle,
+        onConfirm,
+        confirmText,
+        withSettingsSecondaryGlassOptions(options)
+      );
+    const createSettingsInputModal = (
+      title,
+      subtitle,
+      defaultValue,
+      onConfirm,
+      confirmText = "确定",
+      placeholder = "",
+      options = {}
+    ) =>
+      createInputModal(
+        title,
+        subtitle,
+        defaultValue,
+        onConfirm,
+        confirmText,
+        placeholder,
+        withSettingsSecondaryGlassOptions(options)
+      );
+    const runSettingsManualSync = (
+      suppressInitialMessage = false,
+      isInitialSetup = false
+    ) =>
+      handleManualSync(suppressInitialMessage, isInitialSetup, {
+        useSettingsSecondaryGlass: true,
+      });
     if (shouldAutoFitModalWidth && requiredWidth > 600) {
       modalContent.style.width = `${requiredWidth}px`;
     }
@@ -41541,7 +41708,9 @@
       modal.className = buildS1pFullscreenModalClassName("s1p-confirm-modal");
 
       const content = document.createElement("div");
-      content.className = "s1p-confirm-content";
+      content.className = buildSettingsSecondaryGlassClassName(
+        "s1p-confirm-content"
+      );
 
       const body = document.createElement("div");
       body.className = "s1p-confirm-body";
@@ -41885,7 +42054,7 @@
         const blockedUsers = getBlockedUsers();
         const userName = blockedUsers[userId]?.name || `用户 #${userId}`;
         const safeUserName = escapeHTML(userName);
-        createInputModal(
+        createSettingsInputModal(
           "编辑备注",
           `请为 <strong>${safeUserName}</strong> 添加或修改备注（留空则删除备注）：`,
           currentRemark,
@@ -42384,7 +42553,7 @@
           const pattern =
             item.querySelector(".s1p-keyword-rule-pattern").value.trim() || "空规则";
           const safePatternForHtml = escapeHTML(pattern);
-          createConfirmationModal(
+          createSettingsConfirmationModal(
             "确认删除该屏蔽规则吗？",
             `规则内容: <code class="s1p-inline-code-badge">${safePatternForHtml}</code><br>此操作将立即生效并从存储中删除该规则。`,
             () => {
@@ -43095,7 +43264,7 @@
           const name =
             item.querySelector(".s1p-nav-name").value.trim() || "未命名链接";
           const safeNameForHtml = escapeHTML(name);
-          createConfirmationModal(
+          createSettingsConfirmationModal(
             "确认删除该导航链接吗？",
             `链接名称: ${safeNameForHtml}<br>此操作仅在UI上移除，需要点击下方的“保存设置”按钮才会真正生效。`,
             () => {
@@ -43117,7 +43286,7 @@
           return true;
         }
         if (target.id === "s1p-nav-restore-btn") {
-          createConfirmationModal(
+          createSettingsConfirmationModal(
             "确认要恢复默认导航栏吗？",
             "您当前的自定义导航链接将被重置为脚本的默认设置。",
             () => {
@@ -44147,7 +44316,7 @@
         const title = item
           ? item.querySelector(".s1p-item-title").textContent.trim()
           : `帖子 #${unblockThreadId}`;
-        createConfirmationModal(
+        createSettingsConfirmationModal(
           "确认取消屏蔽该帖子吗？",
           `帖子标题: ${title}`,
               () => {
@@ -44187,7 +44356,7 @@
           userName = `用户 #${unblockUserId}`;
         }
 
-        createConfirmationModal(
+        createSettingsConfirmationModal(
           `确认取消屏蔽 “${userName}” 吗？`,
           "该用户及其主题帖（如果已关联屏蔽）将被取消屏蔽。",
           async () => {
@@ -44230,7 +44399,7 @@
         const title = item
           ? item.querySelector(".s1p-item-title").textContent.trim()
           : `楼层 #${unblockPostId}`;
-        createConfirmationModal(
+        createSettingsConfirmationModal(
           "确认取消屏蔽该楼层吗？",
           `楼层信息: ${title}`,
           () => {
@@ -44249,7 +44418,7 @@
       const removeBookmarkId = target.closest('[data-action="remove-bookmark"]')
         ?.dataset.postId;
       if (removeBookmarkId) {
-        createConfirmationModal(
+        createSettingsConfirmationModal(
           "确认取消收藏该回复吗？",
           "此操作将从您的收藏列表中永久移除该条目。",
           () => {
@@ -44316,7 +44485,7 @@
         const itemsToClear = selectedKeys
           .map((key) => `“${dataClearanceConfig[key].label}”`)
           .join("、");
-        createConfirmationModal(
+        createSettingsConfirmationModal(
           "确认要清除所选数据吗？",
           `即将删除 ${itemsToClear} 的所有数据，此操作不可逆！`,
           () => {
@@ -44485,7 +44654,7 @@
               }
             }
             showMessage("设置已保存，正在启动首次同步检查...", null);
-            await handleManualSync(false, true); // 标记为首次设置
+            await runSettingsManualSync(false, true); // 标记为首次设置
           } else {
             showSettingsMessage("远程同步设置已保存。", true);
           }
@@ -44514,7 +44683,7 @@
         }
 
         try {
-          await handleManualSync();
+          await runSettingsManualSync();
         } finally {
           manualSyncButton.textContent = originalButtonText;
           manualSyncButton.disabled = false;
@@ -44554,7 +44723,7 @@
         if (action === "cancel-tag-edit") renderTagsTab();
         if (action === "delete-tag-item") {
           const userName = target.dataset.userName;
-          createConfirmationModal(
+          createSettingsConfirmationModal(
             `确认删除对 "${userName}" 的标记吗?`,
             "此操作不可撤销。",
             () => {
@@ -44591,7 +44760,7 @@
             renderTagsTab();
             showSettingsMessage(`已更新对 ${userName} 的标记。`, true);
           } else {
-            createConfirmationModal(
+            createSettingsConfirmationModal(
               `标记内容为空`,
               "您希望删除对该用户的标记吗？",
               () => {
@@ -44637,7 +44806,7 @@
               )
                 throw new Error(`用户 #${key} 的数据格式不正确。`);
             });
-            createConfirmationModal(
+            createSettingsConfirmationModal(
               "确认导入用户标记吗？",
               "导入的数据将覆盖现有相同用户的标记。",
               () => {
@@ -44845,12 +45014,19 @@
 
   const handleManualSync = async (
     suppressInitialMessage = false,
-    isInitialSetup = false
+    isInitialSetup = false,
+    options = {}
   ) => {
     const MANUAL_SYNC_LOCK_BUSY_MESSAGE =
       "当前有其他同步任务正在执行，本次手动同步已跳过，请稍后再试。";
     const MANUAL_SYNC_LOCK_LOST_MESSAGE =
       "手动同步锁已失效，本次任务已中止，请重新发起同步。";
+    const useSettingsSecondaryGlass =
+      options?.useSettingsSecondaryGlass === true;
+    const withManualSyncModalOptions = (modalOptions = {}) => ({
+      ...(modalOptions || {}),
+      ...(useSettingsSecondaryGlass ? { useSettingsSecondaryGlass: true } : {}),
+    });
 
     if (manualSyncInFlightPromise) {
       if (!suppressInitialMessage) {
@@ -45255,12 +45431,12 @@
               "初始化 S1 Plus 同步",
               "检测到这台电脑尚无本地数据，但云端已有备份，是否立即从云端恢复您的配置？",
               [pullAction, cancelAction],
-              {
+              withManualSyncModalOptions({
                 modalClassName: "s1p-sync-modal",
                 onDismiss: () => {
                   resolveManualSync(null);
                 },
-              }
+              })
             );
             return;
           }
@@ -45340,13 +45516,13 @@
               "初始化云端同步",
               "<p>检测到云端备份为空，是否将当前本地数据作为初始版本推送到云端？</p>",
               [pushAction, cancelAction],
-              {
+              withManualSyncModalOptions({
                 modalClassName: "s1p-sync-modal",
                 allowBodyHtml: true,
                 onDismiss: () => {
                   resolveManualSync(null);
                 },
-              }
+              })
             );
             return;
           }
@@ -45761,13 +45937,13 @@
             "手动同步选择",
             bodyHtml,
             [pullAction, pushAction, cancelAction],
-            {
+            withManualSyncModalOptions({
               modalClassName: "s1p-sync-modal",
               allowBodyHtml: true,
               onDismiss: () => {
                 resolveManualSync(null);
               },
-            }
+            })
           );
         } catch (error) {
           if (handleManualLockLostError(error)) {
@@ -45850,13 +46026,13 @@
               "检测到云端备份损坏",
               `<p class="s1p-sync-danger-text">云端备份文件校验失败，为保护数据已暂停同步。</p><p>是否用当前健康的本地数据强制覆盖云端损坏的备份？</p>`,
               [forcePushAction, cancelAction],
-              {
+              withManualSyncModalOptions({
                 modalClassName: "s1p-sync-modal",
                 allowBodyHtml: true,
                 onDismiss: () => {
                   resolveManualSync(null);
                 },
-              }
+              })
             );
           } else {
             noteManualFailure(error.message);
@@ -45908,6 +46084,7 @@
       allowTitleHtml = false,
       allowBodyHtml = false,
       onDismiss = null,
+      useSettingsSecondaryGlass = false,
     } = options;
     const renderedTitle = allowTitleHtml
       ? sanitizeAdvancedModalHtml(title)
@@ -45928,6 +46105,9 @@
 
     const content = document.createElement("div");
     content.className = "s1p-confirm-content";
+    if (useSettingsSecondaryGlass) {
+      content.classList.add(S1P_SETTINGS_SECONDARY_GLASS_CLASS);
+    }
 
     const body = document.createElement("div");
     body.className = "s1p-confirm-body";
@@ -49971,7 +50151,10 @@
     );
 
     const content = document.createElement("div");
-    content.className = "s1p-confirm-content s1p-reading-progress-content";
+    content.className = buildSettingsSecondaryGlassClassName(
+      "s1p-confirm-content",
+      "s1p-reading-progress-content"
+    );
 
     const closeIcon = createModalCloseButton({
       ariaLabel: "关闭窗口",
@@ -50072,7 +50255,7 @@
               },
             },
           ],
-          { allowBodyHtml: true }
+          { allowBodyHtml: true, useSettingsSecondaryGlass: true }
         );
       });
       actionCell.appendChild(deleteBtn);
