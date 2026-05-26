@@ -13999,6 +13999,26 @@
     );
   };
 
+  const getAutoSyncIndicatorLiveRunnerOwnerIdForTitle = (now = Date.now()) =>
+    isSyncLockOwned(SYNC_LOCK_MODE_BACKGROUND, now) ? BACKGROUND_SYNC_OWNER_ID : "";
+
+  const shouldSuppressAutoSyncIndicatorRunningForTitle = (
+    displayState = null,
+    { ttlProfile = "", now = Date.now() } = {}
+  ) => {
+    if (ttlProfile !== "title") {
+      return false;
+    }
+    const phase =
+      normalizeAutoSyncIndicatorPhase(displayState?.displayPhase, {
+        allowRunning: true,
+      }) || AUTO_SYNC_INDICATOR_PHASE_IDLE;
+    if (phase !== AUTO_SYNC_INDICATOR_PHASE_RUNNING) {
+      return false;
+    }
+    return !getAutoSyncIndicatorLiveRunnerOwnerIdForTitle(now);
+  };
+
   const buildSilentAutoSyncIndicatorIdleDisplayState = (displayState = {}) => ({
     ...displayState,
     displayPhase: AUTO_SYNC_INDICATOR_PHASE_IDLE,
@@ -14013,6 +14033,7 @@
     displaySessionCompletedAt: 0,
     displaySessionSettlingStartedAt: 0,
     displaySessionRemoteUpdatedAt: "",
+    displayLiveRunnerOwnerId: "",
   });
 
   const clearAutoSyncIndicatorDeferredResolve = () => {
@@ -14207,16 +14228,34 @@
       };
     };
     const finishDisplayState = (resolvedState, branch = "") => {
-      const displayState = applyAutoSyncIndicatorDisplaySession(resolvedState, {
+      let displayState = applyAutoSyncIndicatorDisplaySession(resolvedState, {
         now,
         pendingState,
         runningState,
         canShowPending,
       });
+      if (
+        ttlProfile === "title" &&
+        displayState.displayPhase === AUTO_SYNC_INDICATOR_PHASE_RUNNING
+      ) {
+        const liveRunnerOwnerId = getAutoSyncIndicatorLiveRunnerOwnerIdForTitle(
+          now
+        );
+        if (liveRunnerOwnerId) {
+          displayState = {
+            ...displayState,
+            displayLiveRunnerOwnerId: liveRunnerOwnerId,
+          };
+        }
+      }
       const shouldSuppressDisplay =
         shouldSuppressAutoSyncIndicatorEqualVerificationDisplay(displayState) ||
         shouldSuppressAutoSyncIndicatorProbeDisplayForTitle(displayState, {
           ttlProfile,
+        }) ||
+        shouldSuppressAutoSyncIndicatorRunningForTitle(displayState, {
+          ttlProfile,
+          now,
         });
       const visibleDisplayState = shouldSuppressDisplay
         ? buildSilentAutoSyncIndicatorIdleDisplayState(displayState)
@@ -14315,12 +14354,22 @@
           "running_write_in_flight"
         );
       }
-      const fallbackState = resolveWithTtl(
-        state.lastResolvedPhase,
-        state.lastResolvedTimestamp,
-        state.lastResolvedSource,
-        state.lastResolvedReason
+      const canUseLastResolvedFallback = !(
+        ttlProfile === "title" &&
+        Number(state.lastResolvedTimestamp) < Number(state.timestamp)
       );
+      const fallbackState = canUseLastResolvedFallback
+        ? resolveWithTtl(
+            state.lastResolvedPhase,
+            state.lastResolvedTimestamp,
+            state.lastResolvedSource,
+            state.lastResolvedReason
+          )
+        : {
+            phase: AUTO_SYNC_INDICATOR_PHASE_IDLE,
+            source: "",
+            reason: "",
+          };
       if (fallbackState.phase === AUTO_SYNC_INDICATOR_PHASE_IDLE && canShowPending) {
         return finishDisplayState(
           buildDisplayState(
@@ -30932,6 +30981,8 @@
       hasEnabledAutoSyncIndicatorPath,
       getAutoSyncIndicatorState,
       resolveAutoSyncIndicatorDisplayPhase,
+      getAutoSyncIndicatorLiveRunnerOwnerIdForTitle,
+      shouldSuppressAutoSyncIndicatorRunningForTitle,
       hasActivePendingAutoSyncRequest,
       getAutoSyncRuntimePendingDisplayState,
       getAutoSyncRuntimeRunningDisplayState,
@@ -32719,6 +32770,11 @@
     /^(.+?)(?:论坛)?(?:\s*-\s*Stage1st)?\s*-\s*stage1\/s1\s+游戏动漫论坛$/;
   const getTitleSyncStatusTestConstants = () => ({
     AUTO_SYNC_INDICATOR_RUNNING_MIN_VISIBLE_MS,
+    BACKGROUND_SYNC_OWNER_ID,
+    BACKGROUND_SYNC_LOCK_KEY,
+    BACKGROUND_SYNC_LOCK_TTL_MS,
+    GLOBAL_SYNC_LOCK_KEY,
+    SYNC_LOCK_MODE_BACKGROUND,
     TITLE_SYNC_STATUS_ANIMATION_INTERVAL_MS,
     TITLE_SYNC_STATUS_SUCCESS_TTL_MS,
     TITLE_SYNC_STATUS_FAILURE_TTL_MS,
@@ -33008,6 +33064,9 @@
       Number(source.lastSeen) || Number(fallbackSource.lastSeen) || 0;
     const lastActiveAt =
       Number(source.lastActiveAt) || Number(fallbackSource.lastActiveAt) || 0;
+    const syncOwnerId = String(
+      source.syncOwnerId || fallbackSource.syncOwnerId || ""
+    ).trim();
     const visibilityState = String(
       source.visibilityState || fallbackSource.visibilityState || "hidden"
     );
@@ -33024,6 +33083,7 @@
       createdAt,
       lastSeen,
       lastActiveAt,
+      syncOwnerId,
       visibilityState,
       hasFocus,
       isForeground,
@@ -33116,6 +33176,7 @@
         isForeground || previousTab.isForeground === true
           ? now
           : previousTab.lastActiveAt || 0,
+      syncOwnerId: BACKGROUND_SYNC_OWNER_ID,
       visibilityState: String(document.visibilityState || "hidden"),
       hasFocus,
       isForeground,
@@ -33289,13 +33350,14 @@
   };
   const writeTitleSyncStatusOwnerLease = (
     now = Date.now(),
-    { force = false, reason = "" } = {}
+    { force = false, reason = "", allowExistingOwnerOverride = false } = {}
   ) => {
     const currentOwner = getTitleSyncStatusOwnerState();
     if (
       currentOwner.tabId &&
       currentOwner.tabId !== titleSyncStatusTabId &&
-      currentOwner.leaseUntil > now
+      currentOwner.leaseUntil > now &&
+      !allowExistingOwnerOverride
     ) {
       return currentOwner;
     }
@@ -33450,6 +33512,8 @@
     animationFrame = 0,
   } = {}) => {
     const normalizedCurrentTabId = String(currentTabId || "");
+    const stateRecord =
+      state && typeof state === "object" && !Array.isArray(state) ? state : {};
     const liveTabs = (Array.isArray(tabs) ? tabs : [])
       .map((tab) => {
         const tabRecord =
@@ -33461,6 +33525,7 @@
           createdAt: Number(tabRecord.createdAt) || 0,
           lastSeen: Number(tabRecord.lastSeen) || 0,
           lastActiveAt: Number(tabRecord.lastActiveAt) || 0,
+          syncOwnerId: String(tabRecord.syncOwnerId || "").trim(),
         };
       })
       .filter(
@@ -33480,6 +33545,18 @@
     const previousOwnerStillLive = liveTabs.some(
       (tab) => tab.tabId === previousOwnerTabId
     );
+    const displayPhase = resolveTitleSyncStatusDisplayPhase(stateRecord);
+    const displayIsRunning =
+      displayPhase === AUTO_SYNC_INDICATOR_PHASE_RUNNING;
+    const displayIsResultPhase = isAutoSyncIndicatorResultPhase(displayPhase);
+    const displayLiveRunnerOwnerId = String(
+      stateRecord.displayLiveRunnerOwnerId || ""
+    ).trim();
+    const liveRunnerTab =
+      displayIsRunning && displayLiveRunnerOwnerId
+        ? liveTabs.find((tab) => tab.syncOwnerId === displayLiveRunnerOwnerId)
+        : null;
+    const hasVerifiedLiveRunner = !displayIsRunning || Boolean(liveRunnerTab);
     const ownerPreferredTabs = [...liveTabs].sort((a, b) => {
       if (a.lastActiveAt !== b.lastActiveAt) {
         return b.lastActiveAt - a.lastActiveAt;
@@ -33522,13 +33599,41 @@
       }
     }
     const ownerTabId =
-      previousOwnerCanKeepLease
-        ? previousOwnerTabId
-        : ownerCandidates[0]?.tabId || normalizedCurrentTabId;
-    const displayPhase = resolveTitleSyncStatusDisplayPhase(state);
-    const rawPrefix = getTitleSyncStatusPrefixForPhase(displayPhase, {
-      animationFrame,
-    });
+      displayIsRunning
+        ? liveRunnerTab?.tabId || ""
+        : previousOwnerCanKeepLease
+          ? previousOwnerTabId
+          : ownerCandidates[0]?.tabId || normalizedCurrentTabId;
+    const rawPrefix = hasVerifiedLiveRunner
+      ? getTitleSyncStatusPrefixForPhase(displayPhase, {
+          animationFrame,
+        })
+      : "";
+    const canRefreshOwnerLease = Boolean(
+      rawPrefix && (!displayIsRunning || liveRunnerTab)
+    );
+    const isCurrentTabSelectedOwner = Boolean(
+      normalizedCurrentTabId && normalizedCurrentTabId === ownerTabId
+    );
+    const allowOwnerLeaseHandoff = Boolean(
+      canRefreshOwnerLease &&
+        isCurrentTabSelectedOwner &&
+        !hasForegroundTab &&
+        (displayIsRunning ||
+          (displayIsResultPhase &&
+            (!previousOwnerTabId ||
+              !previousOwnerStillLive ||
+              previousOwnerLeaseUntil <= now)))
+    );
+    const allowExistingOwnerOverride = Boolean(
+      allowOwnerLeaseHandoff &&
+        ((displayIsRunning && liveRunnerTab?.tabId === normalizedCurrentTabId) ||
+          (displayIsResultPhase &&
+            previousOwnerTabId &&
+            !previousOwnerStillLive))
+    );
+    const ownerLeaseOverrideTabId =
+      allowExistingOwnerOverride && !displayIsRunning ? previousOwnerTabId : "";
     const shouldDisplay = Boolean(
       hasEnabledTitleSyncStatusPath(settings) &&
       rawPrefix &&
@@ -33544,6 +33649,10 @@
       displayPhase,
       prefix: shouldDisplay ? rawPrefix : "",
       hasForegroundTab,
+      canRefreshOwnerLease,
+      allowOwnerLeaseHandoff,
+      allowExistingOwnerOverride,
+      ownerLeaseOverrideTabId,
     };
   };
   const getCurrentTitleSyncStatusPrefix = () => {
@@ -33725,20 +33834,31 @@
     now = Date.now(),
     { force = false, allowOwnerLeaseRefresh = true, reason = "" } = {}
   ) => {
-    if (!allowOwnerLeaseRefresh) {
-      return getTitleSyncStatusOwnerState();
+    const owner = getTitleSyncStatusOwnerState();
+    const allowExplicitHandoff = decision?.allowOwnerLeaseHandoff === true;
+    if (!allowOwnerLeaseRefresh && !allowExplicitHandoff) {
+      return owner;
     }
     if (
       !decision ||
       decision.ownerTabId !== titleSyncStatusTabId ||
       decision.hasForegroundTab ||
+      decision.canRefreshOwnerLease === false ||
       !isTitleSyncStatusLeaseWorthyPhase(decision.displayPhase)
     ) {
-      return getTitleSyncStatusOwnerState();
-    }
-    const owner = getTitleSyncStatusOwnerState();
-    if (owner.tabId && owner.tabId !== titleSyncStatusTabId && owner.leaseUntil > now) {
       return owner;
+    }
+    const ownerLeaseOverrideTabId = String(
+      decision.ownerLeaseOverrideTabId || ""
+    );
+    const canOverrideExistingOwner = Boolean(
+      decision.allowExistingOwnerOverride === true &&
+        (!ownerLeaseOverrideTabId || owner.tabId === ownerLeaseOverrideTabId)
+    );
+    if (owner.tabId && owner.tabId !== titleSyncStatusTabId && owner.leaseUntil > now) {
+      if (!canOverrideExistingOwner) {
+        return owner;
+      }
     }
     const ownerIsThisContext =
       owner.tabId === titleSyncStatusTabId &&
@@ -33747,7 +33867,11 @@
     if (!force && remainingMs > TITLE_SYNC_STATUS_OWNER_LEASE_MS / 2) {
       return owner;
     }
-    return writeTitleSyncStatusOwnerLease(now, { force, reason });
+    return writeTitleSyncStatusOwnerLease(now, {
+      force,
+      reason,
+      allowExistingOwnerOverride: canOverrideExistingOwner,
+    });
   };
   const runTitleSyncStatusRuntimeSync = ({
     reason = "",
