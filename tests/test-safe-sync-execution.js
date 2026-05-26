@@ -8,6 +8,10 @@ const {
   toPlainObject,
 } = require("./s1plus-test-helpers");
 
+const GLOBAL_SYNC_LOCK_KEY = "s1p_sync_global_lock";
+const FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY =
+  "s1p_foreground_followup_sync_lock";
+
 const createHarness = () => {
   return createBaseHarness({
     hookErrorMessage: "未能从 S1Plus.js 暴露 Phase 3 测试钩子。",
@@ -113,7 +117,7 @@ const testForegroundFollowUpUsesDedicatedExecutionMode = async () => {
     "heartbeat:start",
     "beforePerform",
     "onBeforePerform",
-    "perform:foreground_followup:startup:foreground_resume",
+    "perform:foreground_followup:foreground_followup:foreground_resume",
     "heartbeat:stop",
     "release",
     "afterRelease",
@@ -123,6 +127,56 @@ const testForegroundFollowUpUsesDedicatedExecutionMode = async () => {
     blockLevel: "soft",
     reason: "local_changed_during_sync",
   });
+};
+
+const testForegroundFollowUpUsesShortDedicatedLock = async () => {
+  const { hooks, store } = createHarness();
+  let performOptions = null;
+  let modeLockDuringPerform = null;
+  let globalLockDuringPerform = null;
+  const now = 1_000_000;
+
+  const result = await hooks.runForegroundFollowUpAutoSyncCheck({
+    performAutoSync: async (options) => {
+      performOptions = options;
+      modeLockDuringPerform = store.get(FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY);
+      globalLockDuringPerform = store.get(GLOBAL_SYNC_LOCK_KEY);
+      return { status: "success", action: "no_change" };
+    },
+  });
+
+  assert.equal(performOptions.syncLockMode, "foreground_followup");
+  assert.equal(performOptions.mode, "foreground_followup");
+  assert.ok(modeLockDuringPerform, "前台补同步应持有独立模式锁。");
+  assert.equal(globalLockDuringPerform.mode, "foreground_followup");
+  assert.equal(
+    globalLockDuringPerform.ttlMs,
+    45 * 1000,
+    "前台补同步锁不应复用 3 分钟启动锁租约。"
+  );
+  assert.deepStrictEqual(toPlainObject(result), {
+    status: "success",
+    action: "no_change",
+  });
+  assert.equal(store.has(FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY), false);
+  assert.equal(store.has(GLOBAL_SYNC_LOCK_KEY), false);
+
+  store.set(FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY, {
+    owner: "other-tab",
+    timestamp: now,
+  });
+  store.set(GLOBAL_SYNC_LOCK_KEY, {
+    owner: "other-tab",
+    mode: "foreground_followup",
+    timestamp: now,
+    ttlMs: 45 * 1000,
+  });
+  assert.equal(hooks.hasAnyActiveSyncLock(now + 44_000), true);
+  assert.equal(
+    hooks.hasAnyActiveSyncLock(now + 46_000),
+    false,
+    "卡住的前台补同步锁应按 45 秒租约过期，而不是沿用 3 分钟启动锁。"
+  );
 };
 
 const testBeforePerformCanShortCircuitSafely = async () => {
@@ -692,6 +746,7 @@ const testPhase3CallSitesUseDedicatedHelpers = () => {
 (async () => {
   await testRuntimeReusesStartupExecutionPath();
   await testForegroundFollowUpUsesDedicatedExecutionMode();
+  await testForegroundFollowUpUsesShortDedicatedLock();
   await testBeforePerformCanShortCircuitSafely();
   await testLockUnavailableSkipsWithoutHeartbeat();
   await testOnBeforeReleaseFiresBeforeLockRelease();

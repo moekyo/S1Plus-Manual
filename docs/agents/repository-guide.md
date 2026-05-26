@@ -67,6 +67,7 @@ Sync and lock keys include:
 - `s1p_background_sync_lock`
 - `s1p_manual_sync_lock`
 - `s1p_startup_sync_lock`
+- `s1p_foreground_followup_sync_lock`
 - `s1p_sync_global_lock`
 
 The sync export object (`exportLocalDataObject`) uses version `5.0` with `version`, `lastUpdated`, `contentHash`, `baseContentHash`, and `data`. Internal data keys use `snake_case`, such as `data.read_progress`.
@@ -151,7 +152,7 @@ Use the `s1plus-release` skill for releases. The standard workflow updates:
 ## Gotchas
 
 - Forum HTML structure can change; verify list page, thread page, and search results.
-- Sync has manual/background/startup locks plus a global lock. Sync changes require focused concurrency tests.
+- Sync has manual/background/startup/foreground-follow-up locks plus a global lock. Sync changes require focused concurrency tests.
 - Settings tab height transitions use `ResizeObserver`; if tab switching jitters, inspect `animateSettingsModalBodyHeight`, `scheduleModalBodyHeightReconcile`, and `updateObservedModalBodyTabContent`.
 - Sticky posts and collapsed threads require special DOM handling.
 - `@connect *` exists because `GM_xmlhttpRequest` targets the GitHub Gist API.

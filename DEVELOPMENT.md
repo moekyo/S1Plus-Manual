@@ -308,6 +308,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - `s1p_background_sync_lock`
 - `s1p_manual_sync_lock`
 - `s1p_startup_sync_lock`
+- `s1p_foreground_followup_sync_lock`
 - `s1p_sync_global_lock`
 - `s1p_sync_conflict_modal_cooldown_lock`
 - `s1p_settings_refresh_signal`
@@ -369,7 +370,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 
 ### 6.3 并发与保护
 
-- 三类模式锁（手动/后台/启动）
+- 四类模式锁（手动/后台/启动/前台补同步）
 - 全局锁防互撞
 - 锁心跳续租，失锁即中止
 - 自动同步熔断（连续失败 3 次暂停 10 分钟）
@@ -379,6 +380,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - metadata-only 读取只用于判断 Gist `updated_at` / 文件存在性，不解析同步文件内容；诊断日志不得输出 `remoteEmpty`，否则会把“未读取内容”误写成“云端为空”。
 - `clean-state fence` 只用于本地自动 push 去重：本地干净不能证明另一台设备没有更新 Gist，因此页面首次可见 / 回到前台 / 可见页轮询的 metadata-only probe 不得用它跳过远端 `updated_at` 检查。
 - 前台 follow-up sync 的局部脏状态优先落为 soft block；只有真正的全局冲突或明确需要人工处理时才升级为 hard pause
+- 前台 follow-up sync 使用独立的短租约模式锁（45s），不要复用 3 分钟启动锁；正常任务靠心跳续租，卡住或冻结的标签页不会长时间阻塞后台阅读进度推送。
 
 ### 6.4 跨页面补偿
 
