@@ -198,6 +198,8 @@ Safer behavior:
 4. Re-run sync from fresh local and remote snapshots.
 5. Let hash/version/conflict checks decide the outcome.
 
+**Manual override exception:** the navbar's direct pull/push buttons are user-commanded operations, not automatic running recovery. When the user explicitly chooses one direction, the current tab may preempt the existing auto-sync state: abort current-tab remote requests, clear pending queues/conflict pause, delete mode/global locks, stop heartbeats, and then reacquire the manual/global lock for the selected operation. This exception does not change the running recovery rule above; `pagehide` / `beforeunload` and cross-tab recovery still wait for lock expiry.
+
 ### 6. Lock checks do not fully fence remote writes — risk is low
 
 `performAutoSync()` checks lock ownership before and after guarded async stages. This helps stop local follow-up work after lock loss.
@@ -256,6 +258,7 @@ Rules:
 - No immediate running takeover was added.
 - Background sync lock expiry remains the recovery fence.
 - Pending dirty and shared scheduler recovery continue to drive later safe retries.
+- Explicit navbar direct pull/push is the only intentional preemption path, because it is a user override and reruns from the selected direction after acquiring a fresh manual lock.
 - Verified with `node tests/test-safe-sync-execution.js`.
 
 ### Phase 4: Optional remote write fencing
@@ -297,6 +300,7 @@ Possible approaches:
 - If the old worker actually completed, recovery becomes no-op or clears pending as already synced.
 - If the old worker failed before writing, recovery performs the needed push.
 - If remote changed independently during the gap, recovery goes to conflict or safe pull/push decision.
+- Direct navbar pull/push clears existing sync state only when the user explicitly chooses the operation; retry backoff cancellation is covered by `test-safe-sync-execution.js`.
 
 ## Open Questions — Resolved (2026-05-26 grill session)
 
@@ -314,7 +318,7 @@ Possible approaches:
 3. **Live Runner owner selection** — implemented by storing `syncOwnerId` in title presence and matching it against `displayLiveRunnerOwnerId`.
 4. **Stale running fallback guard** — implemented for `ttlProfile: "title"` when `lastResolvedTimestamp < state.timestamp`.
 5. **Scheduler recovery** — unchanged; existing tests cover it.
-6. **Running sync recovery** — unchanged and conservative; recovery waits for lock expiry.
+6. **Running sync recovery** — unchanged and conservative; recovery waits for lock expiry except for explicit navbar direct pull/push, which is a user override rather than automatic recovery.
 7. **Remote write fencing** — deferred. Not needed for current scope; risk is low.
 
 > Full implementation plan: [sync-title-status-grill-findings.md](./sync-title-status-grill-findings.md#implementation-decisions)

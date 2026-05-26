@@ -99,6 +99,9 @@ node tests/settings-migration/test-settings-migration.js
   - `test-background-sync-shared-debounce.js` 覆盖阅读进度 pending / shared debounce 清理与后续补同步
 - cleanup provenance 与手动同步分支
 - Gist PATCH 结果不确定、metadata-only 诊断日志、后台 shared retry
+- 导航栏直接拉取 / 推送的手动覆盖路径
+  - `test-safe-sync-execution.js` 覆盖 manual override 清理手动、后台、启动、前台补同步与全局锁，清理 pending auto sync，并重置运行时 pending、retry、heartbeat 状态
+  - 同脚本覆盖远端请求重试退避期间被手动覆盖取消后不会再发起下一次 HTTP 请求
 - 设置迁移与同步设置 UI
 - 标签页标题同步状态、Title Owner handoff、Running Phase / Live Runner 语义
   - 先跑 `node tests/test-title-sync-status.js`
@@ -214,6 +217,8 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - `fetchRemoteData` / `pushRemoteData`
 - `performAutoSync`（自动同步决策与执行）
 - `handleManualSync`（手动同步流程）
+- `handleForcePull` / `handleForcePush`（导航栏直接拉取 / 推送）
+- `preemptActiveSyncForManualOverride`（显式手动覆盖时抢占当前同步状态）
 - `decideSyncActionByVersion`（基线 + 哈希 + 时间戳判定）
 
 ### 4.4 UI 主干
@@ -394,7 +399,30 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - 前台 follow-up sync 使用独立的短租约模式锁（45s），不要复用 3 分钟启动锁；正常任务靠心跳续租，卡住或冻结的标签页不会长时间阻塞后台阅读进度推送。
 - Running Sync 不可跨标签页即时接管。关闭运行中的标签页时，不要在 `pagehide` / `beforeunload` 清理执行锁，也不要让其它标签页直接继承 `[同步中]`；必须等锁按 TTL 失效后，通过 pending dirty / shared scheduler / retry 机制恢复。
 
-### 6.4 跨页面补偿
+### 6.4 手动覆盖：导航栏直接拉取 / 推送
+
+高级同步模式下，悬停导航栏同步按钮后选择的“拉取”或“推送”是显式手动覆盖路径，优先级高于冲突暂停、待同步队列、自动同步运行态和已有同步锁。用户点下以后，当前自动体系的状态要先被取消，再按用户指定方向重新开始一次手动操作。
+
+入口顺序：
+
+1. `handleForcePull()` / `handleForcePush()`
+2. `acquireManualSyncLock({ preemptActiveSync: true, operation })`
+3. `preemptActiveSyncForManualOverride(operation)`
+4. 重新获取手动锁与全局锁后执行实际拉取或推送
+
+`preemptActiveSyncForManualOverride()` 的职责边界：
+
+- 取消当前标签页正在执行的远端 `GM_xmlhttpRequest`，并递增取消代次，使 `runRemoteRequestWithRetry()` 在请求前、响应后和重试退避结束后都能识别旧操作已失效。
+- 清理 pending auto sync、shared/background runtime queue、前台补同步 retry、soft block、自动拉取 reload 定时器与冲突暂停状态。
+- 停止手动、后台、启动、前台补同步的心跳，并删除 `s1p_manual_sync_lock`、`s1p_background_sync_lock`、`s1p_startup_sync_lock`、`s1p_foreground_followup_sync_lock`、`s1p_sync_global_lock`。
+- 重置当前标签页的自动同步运行时标志，例如 `hasPendingBackgroundSync`、`isBackgroundAutoSyncInProgress`、`isInitialSyncInProgress`、后台 retry 计数与 pending dirty 标记。
+- 刷新导航栏同步指示器和常驻提示，避免 UI 继续显示旧的 pending、running 或 conflict。
+
+取消远端请求是 best effort：当前标签页还没完成的 `GM_xmlhttpRequest` 会被 abort；其它标签页或浏览器已经发出的网络写入不能被物理撤回。因此这个路径只用于用户主动点击的覆盖操作，不用于自动恢复。旧 worker 后续必须被锁检查、取消代次和 retry 检查拦住；新的强制推送不带旧的 `expectedUpdatedAt`，新的强制拉取会重新读取云端快照。
+
+不要把这条手动覆盖路径复用到 `pagehide` / `beforeunload` 或跨标签自动接管。自动恢复仍然保持上一节的保守策略：等待锁按 TTL 失效，再通过 pending dirty / shared scheduler / retry 从新快照重跑。
+
+### 6.5 跨页面补偿
 
 - `s1p_pending_auto_sync_request` 用于跨页面补发
 - `pageshow`（含 bfcache）/`visibilitychange` 自动恢复补同步
@@ -407,7 +435,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - 非后台模式（例如每日首次启动同步）完成 `merged_read_progress` 后，也要清理已覆盖的 pending request / shared debounce，避免启动期自动合并成功后又被旧的阅读进度调度重复触发。
 - 后台打开帖子页会写入短寿命 opener hint；线程页会据此把会话标记为 `passiveBackgroundOpened`，降低后台开帖造成的假阅读进度。
 
-### 6.5 统一自动同步指示器流转 (Auto Sync Indicator)
+### 6.6 统一自动同步指示器流转 (Auto Sync Indicator)
 
 指示器现在用于反馈“自动同步体系”的摘要状态，而不再只是后台自动同步子模块的状态灯。
 

@@ -49,6 +49,7 @@
 
 ### 🐛 同步稳定性修复 (Sync Stability Fixes)
 
+- **导航栏直接拉取/推送优先级修复**: 高级同步菜单里的“拉取”“推送”现在作为显式手动覆盖操作处理；点击后会取消当前自动同步、待同步队列、冲突暂停、相关锁与重试退避，再按用户指定方向执行，避免冲突态或同步中状态挡住用户的最终选择。
 - **设置旧字段迁移重复触发修复**: 设置迁移现在会强制写回已清理的规范化设置，避免 `syncAutoFetchMode` 等旧字段因保存短路残留在本地存储里，导致每次打开论坛都重复提示“检测到旧版设置结构”。
 - **长时间开启页面的晚到启动同步误触发修复**: 启动同步即使因页面挂起或后台恢复而晚到，也只会顺延真正需要顺延的每日首次同步，不再在旧页面上补跑每次加载检查或首次可见前台探测。
 - **同机多标签页误报“云端有更新”修复**: 阅读进度写入链路新增“真实阅读确认”门槛与后台打开帖子的被动模式，降低后台开帖、初始化观察器和 synthetic progress 造成的假本地改动。
@@ -95,6 +96,7 @@
 - **本地脏数据溯源记录**: 新增 `recordLastLocalDirtyProvenance` 追踪每次本地数据变更的来源（阅读进度/通用写入等）、标签页 ID 与帖子 ID，同步诊断可据此区分同一设备内不同页面的独立变更。
 - **远端写入来源分类**: 引入 `getRemoteWriteMatchKind` / `getForegroundRemoteChangeKind` 三级分类（`same_session_write` / `same_device_write` / `external_remote_change`），前台探测和安全同步执行结果均接入此分类，降低跨标签页误报。
 - **同步操作结果上下文充实**: `asSuccessResult` 的同步结果现在携带 `reason` 与 `remoteUpdatedAt` 详情，供同步诊断链路回溯每次自动同步的具体决策依据。
+- **手动覆盖同步测试补齐**: `test-safe-sync-execution.js` 新增覆盖导航栏直接拉取/推送抢占现有锁、pending 队列、运行时标志与心跳的场景，并验证远端请求重试退避期间被取消后不会继续发起下一次 HTTP 请求。
 - **保留可复用调试面板框架**: 新增一套默认隐藏的浮动调试面板基础设施，当前接入了导航栏自动同步指示器的手动预览入口；需要时可通过 `window.__s1pAutoSyncIndicatorDebug.showPanel()` 按需启用。
 - **回归脚本覆盖补齐**: 新增前台探测、可见页轮询、same-session remote write、refresh policy、cleanup provenance、safe sync execution、settings migration 等多组测试脚本。
 - **远端推送不确定写入回归**: 新增 `test-remote-push-uncertain-write.js`，覆盖 PATCH 超时但云端内容已写入的确认路径，以及 metadata-only 日志不再误报 `remoteEmpty`。
