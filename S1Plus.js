@@ -1346,6 +1346,9 @@
   let foregroundFollowUpSoftBlockState = null;
   let lastAutoSyncIndicatorDisplaySession = null;
   let autoSyncIndicatorDisplaySessionHiddenAt = 0;
+  const activeRemoteSyncRequestHandles = new Set();
+  let remoteSyncCancelGeneration = 0;
+  let remoteSyncCancelReason = "manual_override";
   let lastForegroundProbeFeedbackState = {
     key: "",
     timestamp: 0,
@@ -1449,6 +1452,7 @@
   const REMOTE_SYNC_RETRY_BASE_DELAY_MS = 600;
   const REMOTE_SYNC_RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
   const REMOTE_VERSION_CONFLICT_CODE = "REMOTE_VERSION_CHANGED";
+  const REMOTE_SYNC_CANCELLED_CODE = "REMOTE_SYNC_CANCELLED";
   const READ_PROGRESS_SYNC_DEBOUNCE_MS = 20 * 1000;
   const DEFAULT_SYNC_DEBOUNCE_MS = 5 * 1000;
   const BACKGROUND_SYNC_DEBOUNCE_STATE_KEY =
@@ -18810,7 +18814,58 @@
     hasLocalRetryTimer: Boolean(backgroundSyncRetryTimeout),
     isBackgroundAutoSyncInProgress,
     isInitialSyncInProgress,
+    backgroundSyncRetryAttempts,
+    manualSyncLockHeartbeatActive: Boolean(manualSyncLockHeartbeatTimer),
+    backgroundSyncLockHeartbeatActive: Boolean(backgroundSyncLockHeartbeatTimer),
+    startupSyncLockHeartbeatActive: Boolean(startupSyncLockHeartbeatTimer),
+    foregroundFollowUpSyncLockHeartbeatActive: Boolean(
+      foregroundFollowUpSyncLockHeartbeatTimer
+    ),
   });
+  const seedSyncRuntimeStateForManualOverrideTest = (state = {}) => {
+    if (!IS_S1P_TEST_MODE) {
+      return getBackgroundAutoSyncRuntimeStateForTest();
+    }
+    const source = sanitizeRecordObject(state);
+    hasPendingBackgroundSync = source.hasPendingBackgroundSync === true;
+    isBackgroundAutoSyncInProgress =
+      source.isBackgroundAutoSyncInProgress === true;
+    isInitialSyncInProgress = source.isInitialSyncInProgress === true;
+    backgroundSyncRetryAttempts =
+      Math.max(0, Math.floor(Number(source.backgroundSyncRetryAttempts) || 0));
+
+    if (backgroundSyncRetryTimeout) {
+      clearTimeout(backgroundSyncRetryTimeout);
+      backgroundSyncRetryTimeout = null;
+    }
+    if (source.hasLocalRetryTimer === true) {
+      backgroundSyncRetryTimeout = setTimeout(() => {}, 60 * 1000);
+    }
+
+    const seedHeartbeat = (currentTimer, enabled) => {
+      if (currentTimer) {
+        clearInterval(currentTimer);
+      }
+      return enabled === true ? setInterval(() => {}, 60 * 1000) : null;
+    };
+    manualSyncLockHeartbeatTimer = seedHeartbeat(
+      manualSyncLockHeartbeatTimer,
+      source.manualSyncLockHeartbeatActive
+    );
+    backgroundSyncLockHeartbeatTimer = seedHeartbeat(
+      backgroundSyncLockHeartbeatTimer,
+      source.backgroundSyncLockHeartbeatActive
+    );
+    startupSyncLockHeartbeatTimer = seedHeartbeat(
+      startupSyncLockHeartbeatTimer,
+      source.startupSyncLockHeartbeatActive
+    );
+    foregroundFollowUpSyncLockHeartbeatTimer = seedHeartbeat(
+      foregroundFollowUpSyncLockHeartbeatTimer,
+      source.foregroundFollowUpSyncLockHeartbeatActive
+    );
+    return getBackgroundAutoSyncRuntimeStateForTest();
+  };
   const getBackgroundSyncDebounceTestConstants = () => ({
     BACKGROUND_SYNC_DEBOUNCE_STATE_KEY,
     READ_PROGRESS_SYNC_DEBOUNCE_MS,
@@ -26654,33 +26709,127 @@
     return error;
   };
 
+  const createRemoteSyncCancelledError = (reason = "manual_override") => {
+    const error = new Error("同步请求已取消。");
+    error.code = REMOTE_SYNC_CANCELLED_CODE;
+    error.cancelReason = reason;
+    return error;
+  };
+
+  const assertRemoteSyncNotCancelled = (generation) => {
+    if (remoteSyncCancelGeneration !== generation) {
+      throw createRemoteSyncCancelledError(remoteSyncCancelReason);
+    }
+  };
+
+  const cancelActiveRemoteSyncRequests = (reason = "manual_override") => {
+    remoteSyncCancelReason =
+      normalizeSyncDiagnosticText(reason, 80) || "manual_override";
+    remoteSyncCancelGeneration += 1;
+    let cancelledCount = 0;
+    activeRemoteSyncRequestHandles.forEach((requestHandle) => {
+      if (!requestHandle || typeof requestHandle.abort !== "function") {
+        return;
+      }
+      cancelledCount += 1;
+      try {
+        requestHandle.abort();
+      } catch (error) {
+        console.warn("S1 Plus: 取消同步请求失败。", error);
+      }
+    });
+    activeRemoteSyncRequestHandles.clear();
+    recordSyncTraceEvent("remote_requests_cancelled", {
+      scope: "manual_override",
+      status: "skipped",
+      message: "用户直接拉取/推送已取消仍在等待的远端请求",
+      details: { reason: remoteSyncCancelReason, cancelledCount },
+    });
+    return cancelledCount;
+  };
+
   const gmRequestWithTimeout = (requestOptions) =>
     new Promise((resolve, reject) => {
-      GM_xmlhttpRequest({
-        timeout: REMOTE_SYNC_REQUEST_TIMEOUT_MS,
-        ...requestOptions,
-        onload: (response) => {
-          resolve(response);
-        },
-        ontimeout: () => {
-          const timeoutError = new Error("请求超时。");
-          timeoutError.retryable = true;
-          timeoutError.code = "REQUEST_TIMEOUT";
-          reject(timeoutError);
-        },
-        onerror: () => {
-          const networkError = new Error("网络请求失败。");
-          networkError.retryable = true;
-          reject(networkError);
-        },
-      });
+      let settled = false;
+      let requestHandle = null;
+      const cleanupRequestHandle = () => {
+        if (requestHandle) {
+          activeRemoteSyncRequestHandles.delete(requestHandle);
+        }
+      };
+      const resolveOnce = (value) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanupRequestHandle();
+        resolve(value);
+      };
+      const rejectOnce = (error) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanupRequestHandle();
+        reject(error);
+      };
+
+      try {
+        requestHandle = GM_xmlhttpRequest({
+          timeout: REMOTE_SYNC_REQUEST_TIMEOUT_MS,
+          ...requestOptions,
+          onload: (response) => {
+            resolveOnce(response);
+          },
+          ontimeout: () => {
+            const timeoutError = new Error("请求超时。");
+            timeoutError.retryable = true;
+            timeoutError.code = "REQUEST_TIMEOUT";
+            rejectOnce(timeoutError);
+          },
+          onerror: () => {
+            const networkError = new Error("网络请求失败。");
+            networkError.retryable = true;
+            rejectOnce(networkError);
+          },
+          onabort: () => {
+            rejectOnce(createRemoteSyncCancelledError(remoteSyncCancelReason));
+          },
+        });
+      } catch (error) {
+        rejectOnce(error);
+        return;
+      }
+
+      if (
+        !settled &&
+        requestHandle &&
+        typeof requestHandle.abort === "function"
+      ) {
+        activeRemoteSyncRequestHandles.add(requestHandle);
+      }
     });
 
-  const runRemoteRequestWithRetry = async (requestOptions) => {
+  const runRemoteRequestWithRetry = async (requestOptions, options = {}) => {
+    const startingCancelGeneration = remoteSyncCancelGeneration;
+    const sleepFn =
+      typeof options.sleep === "function" ? options.sleep : sleep;
+    const retryBaseDelayMs =
+      Number.isFinite(Number(options.retryBaseDelayMs)) &&
+      Number(options.retryBaseDelayMs) >= 0
+        ? Number(options.retryBaseDelayMs)
+        : REMOTE_SYNC_RETRY_BASE_DELAY_MS;
+    const retryJitterMs =
+      Number.isFinite(Number(options.retryJitterMs)) &&
+      Number(options.retryJitterMs) >= 0
+        ? Number(options.retryJitterMs)
+        : 200;
     let attempt = 0;
     while (attempt <= REMOTE_SYNC_MAX_RETRIES) {
+      assertRemoteSyncNotCancelled(startingCancelGeneration);
       try {
         const response = await gmRequestWithTimeout(requestOptions);
+        assertRemoteSyncNotCancelled(startingCancelGeneration);
         if (response.status >= 200 && response.status < 300) {
           return response;
         }
@@ -26699,6 +26848,9 @@
           isRetryableGitHubRateLimit403;
         throw httpError;
       } catch (error) {
+        if (error?.code === REMOTE_SYNC_CANCELLED_CODE) {
+          throw error;
+        }
         const canRetry =
           attempt < REMOTE_SYNC_MAX_RETRIES &&
           (error.retryable || REMOTE_SYNC_RETRYABLE_STATUS.has(error.status));
@@ -26708,9 +26860,10 @@
         }
 
         const backoffMs =
-          REMOTE_SYNC_RETRY_BASE_DELAY_MS * Math.pow(2, attempt) +
-          Math.floor(Math.random() * 200);
-        await sleep(backoffMs);
+          retryBaseDelayMs * Math.pow(2, attempt) +
+          Math.floor(Math.random() * retryJitterMs);
+        await sleepFn(backoffMs);
+        assertRemoteSyncNotCancelled(startingCancelGeneration);
         attempt += 1;
       }
     }
@@ -27355,7 +27508,12 @@
     }
   };
 
-  const acquireManualSyncLock = async () => {
+  const acquireManualSyncLock = async (options = {}) => {
+    const shouldPreemptActiveSync = options?.preemptActiveSync === true;
+    if (shouldPreemptActiveSync) {
+      preemptActiveSyncForManualOverride(options.operation || "manual_override");
+    }
+
     const now = Date.now();
     const currentLock = getManualSyncLockValue();
     const lockIsValid =
@@ -27363,13 +27521,21 @@
     const globalLock = getGlobalSyncLockValue();
     const globalLockIsValid = isGlobalSyncLockValid(globalLock, now);
 
-    if (lockIsValid && currentLock.owner !== BACKGROUND_SYNC_OWNER_ID) {
-      return false;
-    }
-    if (hasActiveOtherModeSyncLock(SYNC_LOCK_MODE_MANUAL, now)) {
+    if (
+      !shouldPreemptActiveSync &&
+      lockIsValid &&
+      currentLock.owner !== BACKGROUND_SYNC_OWNER_ID
+    ) {
       return false;
     }
     if (
+      !shouldPreemptActiveSync &&
+      hasActiveOtherModeSyncLock(SYNC_LOCK_MODE_MANUAL, now)
+    ) {
+      return false;
+    }
+    if (
+      !shouldPreemptActiveSync &&
       globalLockIsValid &&
       (globalLock.owner !== BACKGROUND_SYNC_OWNER_ID ||
         globalLock.mode !== SYNC_LOCK_MODE_MANUAL)
@@ -27761,6 +27927,56 @@
     }
   };
 
+  const forceReleaseSyncLocksForManualOverride = () => {
+    invalidateAutoSyncIndicatorDisplayPhaseCache();
+    GM_deleteValue(MANUAL_SYNC_LOCK_KEY);
+    GM_deleteValue(BACKGROUND_SYNC_LOCK_KEY);
+    GM_deleteValue(FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY);
+    GM_deleteValue(STARTUP_SYNC_LOCK_KEY);
+    GM_deleteValue(GLOBAL_SYNC_LOCK_KEY);
+  };
+
+  const preemptActiveSyncForManualOverride = (operation = "manual_override") => {
+    const normalizedOperation =
+      normalizeSyncDiagnosticText(operation, 80) || "manual_override";
+    const cancelledRequestCount =
+      cancelActiveRemoteSyncRequests(normalizedOperation);
+
+    clearPendingAutoPullReloadTimer();
+    clearForegroundRemoteSyncRetry();
+    clearForegroundFollowUpSoftBlock();
+    clearPendingAutoSyncRequest();
+    clearAutoSyncRuntimeQueue();
+    clearAutoSyncConflictPause();
+
+    stopManualSyncLockHeartbeat();
+    stopBackgroundSyncLockHeartbeat();
+    stopForegroundFollowUpSyncLockHeartbeat();
+    stopStartupSyncLockHeartbeat();
+    forceReleaseSyncLocksForManualOverride();
+
+    hasPendingBackgroundSync = false;
+    isBackgroundAutoSyncInProgress = false;
+    isInitialSyncInProgress = false;
+    syncDirtyDuringSync = false;
+    syncDirtyNeedsFollowUpSync = false;
+    syncDirtyTimestamp = 0;
+    backgroundSyncRetryAttempts = 0;
+
+    recordSyncTraceEvent("manual_override_preempted_sync", {
+      scope: "manual_override",
+      status: "skipped",
+      message: "用户直接拉取/推送已取消当前同步队列和同步锁",
+      details: {
+        operation: normalizedOperation,
+        cancelledRequestCount,
+      },
+    });
+    refreshAutoSyncIndicatorRuntimeDisplay("manual_override_preempted_sync");
+    renderNavbarPersistentSyncAlert();
+    return { cancelledRequestCount };
+  };
+
   const queueBackgroundSyncRetryViaSharedScheduler = (
     delayMs = BACKGROUND_SYNC_LOCK_RETRY_DELAY_MS,
     reason = "background_retry",
@@ -28000,6 +28216,20 @@
           level: "error",
         });
         throw new Error("解析Gist元数据失败。");
+      }
+      if (error?.code === REMOTE_SYNC_CANCELLED_CODE) {
+        recordSyncTraceEvent("remote_fetch_cancelled", {
+          scope: metadataOnly ? "remote_probe" : "remote_fetch",
+          status: "skipped",
+          message: metadataOnly
+            ? "读取云端元数据请求已被用户直接拉取/推送取消"
+            : "读取云端同步文件请求已被用户直接拉取/推送取消",
+          details: {
+            metadataOnly,
+            cancelReason: error.cancelReason || "",
+          },
+        });
+        throw error;
       }
       if (typeof error.status === "number") {
         recordSyncTraceEvent("remote_fetch_error", {
@@ -28250,6 +28480,18 @@
             error: error.message || String(error),
           },
           level: "warn",
+        });
+        throw error;
+      }
+      if (error.code === REMOTE_SYNC_CANCELLED_CODE) {
+        recordSyncTraceEvent("remote_push_cancelled", {
+          scope: "remote_push",
+          status: "skipped",
+          message: "推送请求已被用户直接拉取/推送取消",
+          details: {
+            action: writerContext?.action || "",
+            cancelReason: error.cancelReason || "",
+          },
         });
         throw error;
       }
@@ -28695,6 +28937,8 @@
         return "已有强制同步正在进行";
       case "manual_sync_cancelled":
         return "用户取消了本次手动同步";
+      case "manual_override_cancelled":
+        return "用户直接拉取/推送已接管";
       case "manual_sync_failed":
         return "手动同步失败";
       case "manual_conflict":
@@ -29801,6 +30045,19 @@
           reason: "lock_lost",
           mode: error?.syncLockMode || syncLockMode || syncMode,
           stage: error?.syncLockStage || "unknown",
+        });
+      }
+      if (error?.code === REMOTE_SYNC_CANCELLED_CODE) {
+        syncOutcome = "cancelled";
+        console.warn("S1 Plus (Sync): 同步请求已被用户直接拉取/推送取消。", {
+          mode: syncMode,
+          triggerSource: resolvedTriggerSource,
+          reason: error.cancelReason || "",
+        });
+        return rememberSyncCompletionResult({
+          status: "skipped",
+          reason: "manual_override_cancelled",
+          mode: syncMode,
         });
       }
       syncOutcome = "failure";
@@ -31114,7 +31371,12 @@
       getSyncResultRemoteWriteMatchKind,
       fetchRemoteData,
       pushRemoteData,
+      runRemoteRequestWithRetry,
       performAutoSync,
+      acquireManualSyncLock,
+      preemptActiveSyncForManualOverride,
+      cancelActiveRemoteSyncRequests,
+      seedSyncRuntimeStateForManualOverrideTest,
       normalizeBackgroundSyncDebounceState,
       getBackgroundSyncDebounceState,
       setBackgroundSyncDebounceState,
@@ -34622,8 +34884,13 @@
       return;
     }
     forceSyncInFlight = true;
-    if (!(await acquireManualSyncLock())) {
-      showMessage("当前有其他同步任务正在执行，请稍后再试。", false);
+    if (
+      !(await acquireManualSyncLock({
+        preemptActiveSync: true,
+        operation: "force_push",
+      }))
+    ) {
+      showMessage("无法取得手动同步锁，请稍后重试。", false);
       forceSyncInFlight = false;
       if (icon) {
         icon.classList.remove("s1p-syncing");
@@ -34636,7 +34903,6 @@
       });
       return;
     }
-    clearAutoSyncRuntimeQueue();
     startManualSyncLockHeartbeat();
     const assertManualSyncLockOwned = (stage) => {
       assertSyncLockOwned(SYNC_LOCK_MODE_MANUAL, `force_push:${stage}`);
@@ -34712,6 +34978,14 @@
         };
         return;
       }
+      if (e?.code === REMOTE_SYNC_CANCELLED_CODE) {
+        completionResult = {
+          status: "skipped",
+          reason: "manual_override_cancelled",
+        };
+        showMessage("本次推送已被新的直接同步操作接管。", null);
+        return;
+      }
       setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_FAILURE);
       recordSyncFailure(e.message, "manual", {
         triggerSource: SYNC_TRIGGER_SOURCE_MANUAL_SYNC,
@@ -34754,8 +35028,13 @@
       return;
     }
     forceSyncInFlight = true;
-    if (!(await acquireManualSyncLock())) {
-      showMessage("当前有其他同步任务正在执行，请稍后再试。", false);
+    if (
+      !(await acquireManualSyncLock({
+        preemptActiveSync: true,
+        operation: "force_pull",
+      }))
+    ) {
+      showMessage("无法取得手动同步锁，请稍后重试。", false);
       forceSyncInFlight = false;
       if (icon) {
         icon.classList.remove("s1p-syncing");
@@ -34768,7 +35047,6 @@
       });
       return;
     }
-    clearAutoSyncRuntimeQueue();
     startManualSyncLockHeartbeat();
     const assertManualSyncLockOwned = (stage) => {
       assertSyncLockOwned(SYNC_LOCK_MODE_MANUAL, `force_pull:${stage}`);
@@ -34831,6 +35109,14 @@
           reason: "lock_lost",
           stage: e?.syncLockStage || "unknown",
         };
+        return;
+      }
+      if (e?.code === REMOTE_SYNC_CANCELLED_CODE) {
+        completionResult = {
+          status: "skipped",
+          reason: "manual_override_cancelled",
+        };
+        showMessage("本次拉取已被新的直接同步操作接管。", null);
         return;
       }
       setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_FAILURE);

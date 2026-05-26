@@ -56,6 +56,8 @@ RUNNING aged → resolveWithTtl(lastResolvedPhase)
 
 **Note:** Lock expiry is from the LAST HEARTBEAT TIMESTAMP, not from tab close. Worst case: heartbeat just refreshed (timestamp = now), tab closes → other tabs must wait full 45s.
 
+**Exception:** navbar direct pull/push is not recovery. It is an explicit user override, so the current tab may clear queues, locks, heartbeats, conflict pause, and retry backoff before reacquiring the manual/global lock for the chosen operation. This exception must not be generalized to `pagehide` / `beforeunload` or automatic cross-tab takeover.
+
 ### Finding 6 ⚠ Lock checks do not fully fence remote writes — risk is low
 
 **Verified but risk assessment adjusted.** `pushRemoteData`:
@@ -103,7 +105,7 @@ No code changes needed. `test-background-sync-shared-debounce.js` covers owner r
 
 ### Phase 3: Running recovery
 
-✅ Existing behavior satisfies all four rules (wait for lock expiry, preserve pending dirty, re-run from fresh snapshots, let conflict/hash checks decide). New diagnostic states (running / waiting for stale lock / pending recovery scheduled / recovery skipped) deferred to diagnostics panel only — not navbar or title.
+✅ Existing behavior satisfies all four automatic recovery rules (wait for lock expiry, preserve pending dirty, re-run from fresh snapshots, let conflict/hash checks decide). New diagnostic states (running / waiting for stale lock / pending recovery scheduled / recovery skipped) deferred to diagnostics panel only — not navbar or title. Explicit navbar direct pull/push remains a separate user override path.
 
 ### Phase 4: Remote write fencing
 

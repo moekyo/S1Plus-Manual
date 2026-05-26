@@ -141,6 +141,7 @@ Fallback polling (`initializeSettingsFallbackSync`) polls settings if `GM_addVal
 - Startup freshness uses a dynamic window: 4 seconds by default, extended up to 15 seconds only when the page is visible and no user click, wheel, touch, or key interaction has happened before the startup decision.
 - Foreground probes must not be skipped just because local data appears clean; local clean state does not prove the remote Gist has not changed.
 - Shared background push debounce uses one cross-tab owner, but hidden/frozen owner tabs must not rely only on their own `setTimeout`; visibility/storage-owner recovery should force pending push work through the shared scheduler. Visible non-owner pages should also watch the owner lease and take over after expiry so pending read-progress pushes do not stay stuck as `Pending(push)` with no diagnostic progress.
+- Navbar direct pull/push (`handleForcePull` / `handleForcePush`) is an explicit manual override, not an automatic recovery path. It may preempt active auto sync by clearing queues, conflict pause, mode/global locks, heartbeats, and retry backoff before acquiring the manual lock. Keep `pagehide` / `beforeunload` recovery conservative: wait for lock expiry and rerun from fresh snapshots.
 
 ## Release Workflow
 
@@ -155,6 +156,7 @@ Use the `s1plus-release` skill for releases. The standard workflow updates:
 
 - Forum HTML structure can change; verify list page, thread page, and search results.
 - Sync has manual/background/startup/foreground-follow-up locks plus a global lock. Sync changes require focused concurrency tests.
+- If a sync change touches manual override, run `node tests/test-safe-sync-execution.js`; it covers direct pull/push preemption of locks, pending queues, runtime flags, heartbeats, and retry-backoff cancellation.
 - Settings tab height transitions use `ResizeObserver`; if tab switching jitters, inspect `animateSettingsModalBodyHeight`, `scheduleModalBodyHeightReconcile`, and `updateObservedModalBodyTabContent`.
 - Sticky posts and collapsed threads require special DOM handling.
 - `@connect *` exists because `GM_xmlhttpRequest` targets the GitHub Gist API.

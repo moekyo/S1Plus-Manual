@@ -9,8 +9,12 @@ const {
 } = require("./s1plus-test-helpers");
 
 const GLOBAL_SYNC_LOCK_KEY = "s1p_sync_global_lock";
+const MANUAL_SYNC_LOCK_KEY = "s1p_manual_sync_lock";
+const BACKGROUND_SYNC_LOCK_KEY = "s1p_background_sync_lock";
+const STARTUP_SYNC_LOCK_KEY = "s1p_startup_sync_lock";
 const FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY =
   "s1p_foreground_followup_sync_lock";
+const PENDING_AUTO_SYNC_KEY = "s1p_pending_auto_sync_request";
 
 const createHarness = () => {
   return createBaseHarness({
@@ -176,6 +180,129 @@ const testForegroundFollowUpUsesShortDedicatedLock = async () => {
     hooks.hasAnyActiveSyncLock(now + 46_000),
     false,
     "卡住的前台补同步锁应按 45 秒租约过期，而不是沿用 3 分钟启动锁。"
+  );
+};
+
+const testManualOverridePreemptsAutoSyncLocks = async () => {
+  const { hooks, store } = createHarness();
+  const now = Date.now();
+
+  store.set(BACKGROUND_SYNC_LOCK_KEY, {
+    owner: "other-background-tab",
+    timestamp: now,
+  });
+  store.set(STARTUP_SYNC_LOCK_KEY, {
+    owner: "other-startup-tab",
+    timestamp: now,
+  });
+  store.set(FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY, {
+    owner: "other-foreground-tab",
+    timestamp: now,
+  });
+  store.set(GLOBAL_SYNC_LOCK_KEY, {
+    owner: "other-background-tab",
+    mode: "background",
+    timestamp: now,
+    ttlMs: 45 * 1000,
+  });
+  store.set(MANUAL_SYNC_LOCK_KEY, {
+    owner: "other-manual-tab",
+    timestamp: now,
+  });
+  store.set(PENDING_AUTO_SYNC_KEY, {
+    version: 1,
+    source: "read_progress",
+    lastModified: now,
+    maxLastModified: now,
+    createdAt: now,
+    firstDirtyAt: now,
+    lastDirtyAt: now,
+    sources: { read_progress: 1 },
+    threadIds: ["123"],
+  });
+  hooks.seedSyncRuntimeStateForManualOverrideTest({
+    hasPendingBackgroundSync: true,
+    hasLocalRetryTimer: true,
+    isBackgroundAutoSyncInProgress: true,
+    isInitialSyncInProgress: true,
+    backgroundSyncRetryAttempts: 7,
+    manualSyncLockHeartbeatActive: true,
+    backgroundSyncLockHeartbeatActive: true,
+    startupSyncLockHeartbeatActive: true,
+    foregroundFollowUpSyncLockHeartbeatActive: true,
+  });
+
+  hooks.preemptActiveSyncForManualOverride("force_pull");
+
+  assert.equal(store.has(MANUAL_SYNC_LOCK_KEY), false);
+  assert.equal(store.has(BACKGROUND_SYNC_LOCK_KEY), false);
+  assert.equal(store.has(STARTUP_SYNC_LOCK_KEY), false);
+  assert.equal(store.has(FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY), false);
+  assert.equal(store.has(GLOBAL_SYNC_LOCK_KEY), false);
+  assert.equal(store.has(PENDING_AUTO_SYNC_KEY), false);
+  const runtimeState = hooks.getBackgroundAutoSyncRuntimeStateForTest();
+  assert.equal(runtimeState.hasPendingBackgroundSync, false);
+  assert.equal(runtimeState.hasLocalRetryTimer, false);
+  assert.equal(runtimeState.isBackgroundAutoSyncInProgress, false);
+  assert.equal(runtimeState.isInitialSyncInProgress, false);
+  assert.equal(runtimeState.backgroundSyncRetryAttempts, 0);
+  assert.equal(runtimeState.manualSyncLockHeartbeatActive, false);
+  assert.equal(runtimeState.backgroundSyncLockHeartbeatActive, false);
+  assert.equal(runtimeState.startupSyncLockHeartbeatActive, false);
+  assert.equal(runtimeState.foregroundFollowUpSyncLockHeartbeatActive, false);
+
+  const acquired = await hooks.acquireManualSyncLock({
+    preemptActiveSync: true,
+    operation: "force_push",
+  });
+  assert.equal(acquired, true);
+  assert.ok(store.get(MANUAL_SYNC_LOCK_KEY));
+  assert.equal(store.get(GLOBAL_SYNC_LOCK_KEY).mode, "manual");
+};
+
+const testManualOverrideCancelsRemoteRetryBackoff = async () => {
+  const { hooks, sandbox } = createHarness();
+  let requestCount = 0;
+
+  sandbox.GM_xmlhttpRequest = (options) => {
+    requestCount += 1;
+    setTimeout(() => {
+      options.onload({
+        status: 500,
+        responseText: "server error",
+      });
+    }, 0);
+    return {
+      abort: () => {
+        if (typeof options.onabort === "function") {
+          options.onabort();
+        }
+      },
+    };
+  };
+
+  await assert.rejects(
+    hooks.runRemoteRequestWithRetry(
+      {
+        method: "GET",
+        url: "https://example.invalid/s1plus-test",
+      },
+      {
+        retryBaseDelayMs: 0,
+        retryJitterMs: 0,
+        sleep: async () => {
+          hooks.cancelActiveRemoteSyncRequests("force_pull");
+        },
+      }
+    ),
+    (error) =>
+      error?.code === "REMOTE_SYNC_CANCELLED" &&
+      error?.cancelReason === "force_pull"
+  );
+  assert.equal(
+    requestCount,
+    1,
+    "manual override during retry backoff must not allow a stale retry request."
   );
 };
 
@@ -747,6 +874,8 @@ const testPhase3CallSitesUseDedicatedHelpers = () => {
   await testRuntimeReusesStartupExecutionPath();
   await testForegroundFollowUpUsesDedicatedExecutionMode();
   await testForegroundFollowUpUsesShortDedicatedLock();
+  await testManualOverridePreemptsAutoSyncLocks();
+  await testManualOverrideCancelsRemoteRetryBackoff();
   await testBeforePerformCanShortCircuitSafely();
   await testLockUnavailableSkipsWithoutHeartbeat();
   await testOnBeforeReleaseFiresBeforeLockRelease();
