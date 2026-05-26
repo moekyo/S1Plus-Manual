@@ -5,6 +5,11 @@ const assert = require("assert/strict");
 const { sourceCode } = require("./s1plus-test-helpers");
 
 const requiredVariables = [
+  "--s1p-floating-surface-bg",
+  "--s1p-floating-surface-filter",
+  "--s1p-floating-surface-shadow",
+  "--s1p-inline-action-surface-bg",
+  "--s1p-inline-action-surface-shadow",
   "--s1p-popover-glass-bg",
   "--s1p-popover-glass-filter",
   "--s1p-popover-glass-shadow",
@@ -54,18 +59,33 @@ const assertBorderlessOuterSurface = (block, selector) => {
   );
 };
 
-const assertGlassPopover = (selector) => {
+const assertFloatingSurface = (selector) => {
   const block = getRuleBlock(selector);
   assert.match(
     block,
-    /background:\s*var\(--s1p-popover-glass-bg\)/,
-    `${selector} 应使用轻磨砂浮层背景。`
+    /background:\s*var\(--s1p-floating-surface-bg\)/,
+    `${selector} 应使用统一浮动面背景。`
   );
   assertBorderlessOuterSurface(block, selector);
   assert.match(
     block,
-    /backdrop-filter:\s*var\(--s1p-popover-glass-filter\)/,
-    `${selector} 应使用统一的轻量 popover 磨砂变量。`
+    /backdrop-filter:\s*var\(--s1p-floating-surface-filter\)/,
+    `${selector} 应使用统一浮动面磨砂变量。`
+  );
+};
+
+const assertInlineActionSurface = (selector) => {
+  const block = getRuleBlock(selector);
+  assert.match(
+    block,
+    /background:\s*var\(--s1p-inline-action-surface-bg\)/,
+    `${selector} 应使用轻量行内操作背景。`
+  );
+  assertBorderlessOuterSurface(block, selector);
+  assert.match(
+    block,
+    /backdrop-filter:\s*var\(--s1p-floating-surface-filter\)/,
+    `${selector} 应复用统一浮动面磨砂变量。`
   );
 };
 
@@ -84,18 +104,18 @@ const assertSolidPopover = (selector) => {
   );
 };
 
-assertGlassPopover(".s1p-tag-popover");
-assertGlassPopover(".s1p-date-picker");
-assertGlassPopover(".s1p-confirm-wrapper");
-assertGlassPopover(".s1p-confirm-card");
-assertGlassPopover(".s1p-generic-display-popover");
-assertGlassPopover(
+assertFloatingSurface(".s1p-tag-popover");
+assertFloatingSurface(".s1p-date-picker");
+assertFloatingSurface(".s1p-confirm-wrapper");
+assertFloatingSurface(".s1p-floating-surface");
+assertFloatingSurface(".s1p-generic-display-popover");
+assertFloatingSurface(".s1p-tag-options-menu");
+assertFloatingSurface(
   ".s1p-generic-display-popover.s1p-generic-display-popover-doc"
 );
+assertInlineActionSurface(".s1p-inline-action-menu");
 
 assertSolidPopover(".s1p-options-menu");
-assertSolidPopover(".s1p-inline-action-menu");
-assertSolidPopover(".s1p-tag-options-menu");
 
 assert.ok(
   !sourceCode.includes(

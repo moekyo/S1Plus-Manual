@@ -15,11 +15,11 @@ const expectIncludes = (needle, message) => {
   ],
   [
     "--s1p-dialog-glass-bg: rgba(255, 255, 255, 0.84);",
-    "浅色确认弹窗背景应更实但仍保留玻璃透明度，保证正文可读性。",
+    "浅色 dialog 玻璃背景应更实但仍保留透明度，保证设置面板和 Token 日期配置可读性。",
   ],
   [
     "--s1p-dialog-glass-filter: blur(3px) saturate(1.02);",
-    "确认弹窗应使用轻量玻璃滤镜变量。",
+    "dialog 玻璃面应保留轻量滤镜变量。",
   ],
   [
     "--s1p-popover-glass-bg: rgba(255, 255, 255, 0.86);",
@@ -30,12 +30,20 @@ const expectIncludes = (needle, message) => {
     "悬浮控件应使用轻量玻璃滤镜变量。",
   ],
   [
-    "--s1p-toast-glass-bg: rgba(255, 255, 255, 0.84);",
-    "浅色 toast 背景应更通透，同时通过磨砂滤镜保持短提示可读。",
+    "--s1p-floating-surface-bg: rgba(255, 255, 255, 0.48);",
+    "浅色浮动面背景应保持通透，同时通过磨砂滤镜保持可读。",
   ],
   [
-    "--s1p-toast-glass-filter: blur(4px) saturate(1.03);",
-    "toast 应使用略强一点的玻璃滤镜来补偿更通透的背景。",
+    "--s1p-floating-surface-filter: blur(6px) saturate(1.08);",
+    "浅色浮动面应使用统一磨砂滤镜。",
+  ],
+  [
+    "--s1p-toast-glass-bg: var(--s1p-floating-surface-bg);",
+    "toast 背景应复用统一浮动面背景。",
+  ],
+  [
+    "--s1p-toast-glass-filter: var(--s1p-floating-surface-filter);",
+    "toast 应复用统一浮动面磨砂滤镜。",
   ],
   [
     "--s1p-floating-control-glass-bg: rgba(255, 255, 255, 0.89);",
@@ -68,15 +76,19 @@ const darkMediaBlock = sourceCode.slice(darkMediaIndex, darkMediaIndex + 2600);
   ],
   [
     "--s1p-dialog-glass-bg: rgba(17, 24, 39, 0.91);",
-    "深色确认弹窗背景应更实，避免背景文字透出。",
+    "深色 dialog 玻璃背景应更实，避免背景文字透出。",
   ],
   [
     "--s1p-popover-glass-bg: rgba(17, 24, 39, 0.92);",
     "深色悬浮控件背景应更实。",
   ],
   [
-    "--s1p-toast-glass-bg: rgba(17, 24, 39, 0.88);",
-    "深色 toast 背景应更通透，同时保持可读性。",
+    "--s1p-floating-surface-bg: rgba(17, 24, 39, 0.82);",
+    "深色浮动面背景应保持可读。",
+  ],
+  [
+    "--s1p-toast-glass-bg: var(--s1p-floating-surface-bg);",
+    "深色 toast 背景应复用统一浮动面背景。",
   ],
   [
     "--s1p-floating-control-glass-bg: rgba(17, 24, 39, 0.91);",
@@ -112,40 +124,71 @@ const assertSurfaceUsesFilterVariable = (selector, filterVariable) => {
   );
 };
 
-assertSurfaceUsesFilterVariable(
+const assertSurfaceUsesMaterialVariables = (
+  selector,
+  { backgroundVariable, shadowVariable, filterVariable }
+) => {
+  const block = getRuleBlock(selector);
+  assert.match(
+    block,
+    new RegExp(`background:\\s*var\\(${backgroundVariable}\\);`),
+    `${selector} 应使用 ${backgroundVariable} 作为背景。`
+  );
+  assert.match(
+    block,
+    new RegExp(`box-shadow:\\s*var\\(${shadowVariable}\\);`),
+    `${selector} 应使用 ${shadowVariable} 作为阴影。`
+  );
+  assert.match(
+    block,
+    new RegExp(`-webkit-backdrop-filter:\\s*var\\(${filterVariable}\\);[\\s\\S]*backdrop-filter:\\s*var\\(${filterVariable}\\);`),
+    `${selector} 应使用 ${filterVariable}，不能硬编码强 blur。`
+  );
+  return block;
+};
+
+const confirmContentBlock = assertSurfaceUsesMaterialVariables(
   ".s1p-confirm-content",
-  "--s1p-dialog-glass-filter"
+  {
+    backgroundVariable: "--s1p-floating-surface-bg",
+    shadowVariable: "--s1p-floating-surface-shadow",
+    filterVariable: "--s1p-floating-surface-filter",
+  }
+);
+assert.doesNotMatch(
+  confirmContentBlock,
+  /--s1p-dialog-glass-(?:bg|shadow|filter)/,
+  "一级确认弹窗本体应复用 floating surface 材质，不应再引用 dialog glass 背景、阴影或滤镜。"
 );
 assertSurfaceUsesFilterVariable(
   ".s1p-token-config-content",
   "--s1p-dialog-glass-filter"
 );
 assertSurfaceUsesFilterVariable(
-  ".s1p-modal > .s1p-modal-content",
-  "--s1p-dialog-glass-filter"
+  ".s1p-glass-panel",
+  "--s1p-glass-panel-filter"
 );
-assert.match(
-  getRuleBlock(".s1p-modal > .s1p-modal-content"),
-  /--s1p-settings-panel-bg:\s*rgba\(255, 255, 255, 0\.82\)/,
-  "设置面板 shell 背景应略微加实，但仍保留磨砂玻璃层。"
+assert.ok(
+  sourceCode.includes("--s1p-glass-panel-filter: var(--s1p-dialog-glass-filter);"),
+  "统一 glass panel 滤镜应指向弹窗玻璃滤镜变量。"
 );
 assert.ok(
   sourceCode.includes(
-    "--s1p-settings-panel-bg: rgba(17, 24, 39, 0.88);"
+    'modal.innerHTML = `<div class="s1p-modal-content s1p-glass-panel">'
   ),
-  "深色设置面板 shell 背景应同步加实。"
+  "设置面板 shell 应复用统一 glass panel 背景和滤镜。"
 );
 assertSurfaceUsesFilterVariable(
   ".s1p-tag-popover",
-  "--s1p-popover-glass-filter"
+  "--s1p-floating-surface-filter"
 );
 assertSurfaceUsesFilterVariable(
   ".s1p-generic-display-popover",
-  "--s1p-popover-glass-filter"
+  "--s1p-floating-surface-filter"
 );
 assertSurfaceUsesFilterVariable(
   ".s1p-date-picker",
-  "--s1p-popover-glass-filter"
+  "--s1p-floating-surface-filter"
 );
 assertSurfaceUsesFilterVariable(
   ".s1p-toast-notification",
@@ -170,7 +213,7 @@ assert.doesNotMatch(
 );
 
 assert.match(
-  getRuleBlock(".s1p-confirm-content"),
+  confirmContentBlock,
   /color:\s*var\(--s1p-dialog-text\)/,
   "确认弹窗正文应使用独立文本 token。"
 );
