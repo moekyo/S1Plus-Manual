@@ -85,6 +85,7 @@ node tests/settings-migration/test-settings-migration.js
 - `test-cleanup-provenance-guard.js`
 - `test-background-open-passive-session.js`
 - `test-background-sync-shared-debounce.js`
+- `test-title-sync-status.js`
 - `test-remote-push-uncertain-write.js`
 
 建议在改动以下能力后优先回归对应脚本：
@@ -99,6 +100,9 @@ node tests/settings-migration/test-settings-migration.js
 - cleanup provenance 与手动同步分支
 - Gist PATCH 结果不确定、metadata-only 诊断日志、后台 shared retry
 - 设置迁移与同步设置 UI
+- 标签页标题同步状态、Title Owner handoff、Running Phase / Live Runner 语义
+  - 先跑 `node tests/test-title-sync-status.js`
+  - 若触及 sync lock / background sync lock，再跑 `node tests/test-background-sync-shared-debounce.js` 和 `node tests/test-safe-sync-execution.js`
 
 ### 2.5 UI 样式静态校验
 
@@ -312,6 +316,11 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - `s1p_sync_global_lock`
 - `s1p_sync_conflict_modal_cooldown_lock`
 - `s1p_settings_refresh_signal`
+- `s1p_title_sync_status_tabs`（标题同步状态 aggregate presence 镜像）
+- `s1p_title_sync_status_tab:<tabId>`（标题同步状态 per-tab presence）
+- `s1p_title_sync_status_presence_signal`（标题 presence 变更通知）
+- `s1p_title_sync_status_owner`（标题 Title Owner lease）
+- `s1p_title_sync_status_signal`（localStorage fallback signal）
 
 ### 5.4 其他状态
 
@@ -381,6 +390,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - `clean-state fence` 只用于本地自动 push 去重：本地干净不能证明另一台设备没有更新 Gist，因此页面首次可见 / 回到前台 / 可见页轮询的 metadata-only probe 不得用它跳过远端 `updated_at` 检查。
 - 前台 follow-up sync 的局部脏状态优先落为 soft block；只有真正的全局冲突或明确需要人工处理时才升级为 hard pause
 - 前台 follow-up sync 使用独立的短租约模式锁（45s），不要复用 3 分钟启动锁；正常任务靠心跳续租，卡住或冻结的标签页不会长时间阻塞后台阅读进度推送。
+- Running Sync 不可跨标签页即时接管。关闭运行中的标签页时，不要在 `pagehide` / `beforeunload` 清理执行锁，也不要让其它标签页直接继承 `[同步中]`；必须等锁按 TTL 失效后，通过 pending dirty / shared scheduler / retry 机制恢复。
 
 ### 6.4 跨页面补偿
 
@@ -437,6 +447,10 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - `remote_probe_equal_ambiguous:*` 只是“版本时间相同后的保守二次确认”，不是远端更新命中；除刚完成本标签页自动推送后的 push settling 收尾外，导航栏和标题状态都应静默，不要显示为 pending、拉取或成功。
 - 标题同步状态使用 `ttlProfile: "title"` 时必须静默纯 `cloud_probe_session` 的 `Running(probe)` 和明确的远端拉取状态；metadata-only probe 仅用于检查云端版本，不应让后台标签标题显示 `[同步中.]`，云端拉取也不应占用标题提示。
 - 标题路径不得仅凭 `displaySource: background_push` 推断为本地推送。若原始 `operation` 是 `pull` / `probe`，或原始 source 与 display source 不一致导致显示态被默认成 background push，标题必须静默；这个保护只属于标签页标题消费者，不改变导航栏指示器或实际同步状态。
+- 标题 `Running Phase` 必须绑定 Live Runner：`ttlProfile: "title"` 下，只有当前标签页仍持有有效 background sync lock / global background lock 时，`resolveAutoSyncIndicatorDisplayPhase()` 才能保留 running 并写出 `displayLiveRunnerOwnerId`。其它标签页即使看到新鲜锁，也必须回到 idle，避免 ghost running。
+- 标题 Title Owner 选择在 `Running Phase` 下必须优先 Live Runner：presence 记录里的 `syncOwnerId` 用于匹配 `displayLiveRunnerOwnerId`。普通“最近活动 tab”规则只适用于 Result Phase。
+- Result Phase（success / failure / conflict）可以跨标签页 handoff：旧 Title Owner 关闭、presence 失效或 owner lease 失效时，剩余后台 S1 标签页可以显式刷新/取得 Title Owner lease 并继续显示结果 TTL。这个 handoff 不得用于 Running Phase。
+- stale running 不得回退旧结果：如果最新 Sync Indicator State 是 running，但标题层无法验证 Live Runner，且 `lastResolvedTimestamp < state.timestamp`，标题保持 idle，等待 resolved-state writer（如 `finishAutoSyncIndicatorCycle()` / `setAutoSyncIndicatorResolvedPhase()`）写入新的 Result Phase。
 - 前台 retry pending 的运行时 `source` 必须从 `remote_probe_*:<triggerSource>` 原因中还原，不能统一写成 `foreground_resume`；否则 `displayOperation` 会被来源不一致保护丢弃，重新默认成待拉取箭头。
 - 只有真正进入 follow-up safe sync、后台自动同步、手动同步锁，或达到可见阈值的 probe，才切换到 `running`。
 - 当前实现已经为不同来源保留 `source` 字段，后续扩展时优先沿用现有来源枚举，而不是新增自由文本。

@@ -75,6 +75,19 @@ const createReadySettings = (overrides = {}) => ({
   ...overrides,
 });
 
+const setBackgroundSyncLocks = (store, constants, owner, timestamp = Date.now()) => {
+  store.set(constants.BACKGROUND_SYNC_LOCK_KEY, {
+    owner,
+    timestamp,
+  });
+  store.set(constants.GLOBAL_SYNC_LOCK_KEY, {
+    owner,
+    mode: constants.SYNC_LOCK_MODE_BACKGROUND,
+    timestamp,
+    ttlMs: constants.BACKGROUND_SYNC_LOCK_TTL_MS,
+  });
+};
+
 const createResolvedState = (phase, timestamp = Date.now()) => ({
   phase,
   timestamp,
@@ -104,6 +117,7 @@ const createTab = ({
   createdAt,
   lastSeen,
   lastActiveAt,
+  syncOwnerId = "",
   visibilityState = "hidden",
   hasFocus = false,
   isForeground,
@@ -117,6 +131,7 @@ const createTab = ({
       : visibilityState === "visible"
         ? lastSeen
         : 0,
+  syncOwnerId,
   visibilityState,
   hasFocus,
   isForeground:
@@ -303,20 +318,36 @@ const testUnifiedStateMappingAndTtl = () => {
   );
   store.delete(BACKGROUND_SYNC_DEBOUNCE_STATE_KEY);
 
-  store.set("s1p_sync_global_lock", {
-    owner: "other-tab",
-    mode: "background",
-    timestamp: now,
-    ttlMs: 60 * 1000,
-  });
-  const runningState = toPlainObject(
+  setBackgroundSyncLocks(store, constants, constants.BACKGROUND_SYNC_OWNER_ID, now);
+  const liveRunnerTitleState = toPlainObject(
     hooks.resolveAutoSyncIndicatorDisplayPhase(createResolvedState("success", now), {
       ttlProfile: "title",
     })
   );
-  assert.equal(runningState.displayPhase, "running");
-  assert.equal(getPrefix(runningState.displayPhase, { animationFrame: 0 }), "[同步中.]");
-  store.delete("s1p_sync_global_lock");
+  assert.equal(liveRunnerTitleState.displayPhase, "running");
+  assert.equal(
+    liveRunnerTitleState.displayLiveRunnerOwnerId,
+    constants.BACKGROUND_SYNC_OWNER_ID,
+    "Running Phase 标题状态必须标记当前 Live Runner owner。"
+  );
+  assert.equal(
+    getPrefix(liveRunnerTitleState.displayPhase, { animationFrame: 0 }),
+    "[同步中.]"
+  );
+
+  setBackgroundSyncLocks(store, constants, "closed-runner-tab", now);
+  const ghostRunningTitleState = toPlainObject(
+    hooks.resolveAutoSyncIndicatorDisplayPhase(createResolvedState("success", now), {
+      ttlProfile: "title",
+    })
+  );
+  assert.equal(
+    ghostRunningTitleState.displayPhase,
+    "idle",
+    "Running Phase 不能只凭其它 tab 留下的新鲜锁在标题显示同步中。"
+  );
+  store.delete(constants.BACKGROUND_SYNC_LOCK_KEY);
+  store.delete(constants.GLOBAL_SYNC_LOCK_KEY);
 
   const foregroundProbeRunningState = {
     ...createResolvedState("running", now),
@@ -380,7 +411,10 @@ const testMultiTabForegroundAndOwnerCoordination = () => {
   const constants = getConstants();
   const now = Date.now();
   const settings = createReadySettings();
-  const state = createUnifiedDisplayState("running", now);
+  const liveRunnerOwnerId = "sync-owner-a";
+  const state = createUnifiedDisplayState("running", now, {
+    displayLiveRunnerOwnerId: liveRunnerOwnerId,
+  });
 
   assert.equal(
     isForegroundTab({ visibilityState: "visible", hasFocus: true }),
@@ -406,6 +440,7 @@ const testMultiTabForegroundAndOwnerCoordination = () => {
           tabId: "tab-a",
           createdAt: now,
           lastSeen: now,
+          syncOwnerId: liveRunnerOwnerId,
           visibilityState: "visible",
           hasFocus: true,
         }),
@@ -433,6 +468,7 @@ const testMultiTabForegroundAndOwnerCoordination = () => {
           tabId: "tab-a",
           createdAt: now,
           lastSeen: now,
+          syncOwnerId: liveRunnerOwnerId,
           visibilityState: "hidden",
           hasFocus: false,
         }),
@@ -458,6 +494,7 @@ const testMultiTabForegroundAndOwnerCoordination = () => {
       createdAt: now - 2_000,
       lastSeen: now,
       lastActiveAt: now - 8_000,
+      syncOwnerId: liveRunnerOwnerId,
       visibilityState: "hidden",
       hasFocus: false,
     }),
@@ -466,6 +503,7 @@ const testMultiTabForegroundAndOwnerCoordination = () => {
       createdAt: now - 1_000,
       lastSeen: now,
       lastActiveAt: now - 1_000,
+      syncOwnerId: "sync-owner-b",
       visibilityState: "hidden",
       hasFocus: false,
     }),
@@ -479,14 +517,14 @@ const testMultiTabForegroundAndOwnerCoordination = () => {
       now,
     }),
     {
-      shouldDisplay: false,
-      shouldRunAnimationTimer: false,
-      ownerTabId: "tab-b",
+      shouldDisplay: true,
+      shouldRunAnimationTimer: true,
+      ownerTabId: "tab-a",
       displayPhase: "running",
-      prefix: "",
+      prefix: "[同步中.]",
       hasForegroundTab: false,
     },
-    "所有 S1 标签页都在后台时，最近离开的负责人显示标题状态。"
+    "Running Phase 应优先 Live Runner，而不是最近离开的普通 Title Owner。"
   );
   assertDisplayDecision(
     decide({
@@ -497,14 +535,14 @@ const testMultiTabForegroundAndOwnerCoordination = () => {
       now,
     }),
     {
-      shouldDisplay: true,
-      shouldRunAnimationTimer: true,
-      ownerTabId: "tab-b",
+      shouldDisplay: false,
+      shouldRunAnimationTimer: false,
+      ownerTabId: "tab-a",
       displayPhase: "running",
-      prefix: "[同步中.]",
+      prefix: "",
       hasForegroundTab: false,
     },
-    "最近离开的负责人标签页显示标题状态。"
+    "非 Live Runner 即使更近活跃，也不能显示 Running Phase 标题。"
   );
   assertDisplayDecision(
     decide({
@@ -514,7 +552,7 @@ const testMultiTabForegroundAndOwnerCoordination = () => {
       settings,
       now,
       previousOwner: {
-        tabId: "tab-a",
+        tabId: "tab-b",
         leaseUntil: now + constants.TITLE_SYNC_STATUS_OWNER_LEASE_MS,
       },
     }),
@@ -526,7 +564,7 @@ const testMultiTabForegroundAndOwnerCoordination = () => {
       prefix: "",
       hasForegroundTab: false,
     },
-    "已有有效 owner lease 时，即使它不是最近离开的标签，也应保持 owner 稳定直到 lease 过期。"
+    "Running Phase 下，Live Runner 应覆盖普通 Title Owner 的有效 lease。"
   );
 
   const foregroundTabs = [
@@ -536,6 +574,7 @@ const testMultiTabForegroundAndOwnerCoordination = () => {
       createdAt: now - 1_000,
       lastSeen: now,
       lastActiveAt: now,
+      syncOwnerId: "sync-owner-b",
       visibilityState: "visible",
       hasFocus: true,
     }),
@@ -551,7 +590,7 @@ const testMultiTabForegroundAndOwnerCoordination = () => {
     {
       shouldDisplay: false,
       shouldRunAnimationTimer: false,
-      ownerTabId: "tab-b",
+      ownerTabId: "tab-a",
       displayPhase: "running",
       prefix: "",
       hasForegroundTab: true,
@@ -756,6 +795,197 @@ const testPresenceTtlOwnerLeaseAndForegroundTtlPause = () => {
   );
 };
 
+const testResultPhaseHandoffAndRunningLiveRunnerBoundaries = () => {
+  const { hooks, store } = createHarness();
+  const decide = requireHook(hooks, "resolveTitleSyncStatusTabDisplayDecision");
+  const maybeRefreshOwnerLease = requireHook(
+    hooks,
+    "maybeRefreshTitleSyncStatusOwnerLease"
+  );
+  const writePresence = requireHook(hooks, "writeCurrentTitleSyncStatusPresence");
+  const getConstants = requireHook(hooks, "getTitleSyncStatusTestConstants");
+  const constants = getConstants();
+  const now = Date.now();
+  const settings = createReadySettings();
+  const currentPresence = toPlainObject(
+    writePresence({ reason: "init", force: true })
+  );
+  const currentTab = Object.values(currentPresence.tabs)[0];
+  const currentTabId = currentTab.tabId;
+  const staleOwner = {
+    tabId: "closed-title-owner",
+    leaseUntil: now + constants.TITLE_SYNC_STATUS_OWNER_LEASE_MS,
+    updatedAt: now,
+    generation: 7,
+  };
+
+  store.set(constants.TITLE_SYNC_STATUS_OWNER_KEY, staleOwner);
+  const successHandoffDecision = decide({
+    currentTabId,
+    tabs: [currentTab],
+    state: createUnifiedDisplayState("success", now - 1000),
+    settings,
+    now,
+    previousOwner: staleOwner,
+  });
+  assertDisplayDecision(
+    successHandoffDecision,
+    {
+      shouldDisplay: true,
+      shouldRunAnimationTimer: false,
+      ownerTabId: currentTabId,
+      displayPhase: "success",
+      prefix: "[同步成功]",
+      hasForegroundTab: false,
+    },
+    "Result Phase 当前 Title Owner 关闭后，剩余 S1 tab 应能成为标题 owner。"
+  );
+  const refreshedOwner = toPlainObject(
+    maybeRefreshOwnerLease(successHandoffDecision, now, {
+      allowOwnerLeaseRefresh: false,
+      reason: "presence_change",
+    })
+  );
+  assert.equal(
+    refreshedOwner.tabId,
+    currentTabId,
+    "Result Phase handoff 应允许 presence_change 路径显式刷新 owner lease。"
+  );
+  assert.equal(store.get(constants.TITLE_SYNC_STATUS_OWNER_KEY).tabId, currentTabId);
+
+  [
+    ["success", "[同步成功]"],
+    ["failure", "[同步失败]"],
+    ["conflict", "[冲突]"],
+  ].forEach(([phase, prefix]) => {
+    assertDisplayDecision(
+      decide({
+        currentTabId,
+        tabs: [currentTab],
+        state: createUnifiedDisplayState(phase, now - 500),
+        settings,
+        now,
+      }),
+      {
+        shouldDisplay: true,
+        shouldRunAnimationTimer: false,
+        ownerTabId: currentTabId,
+        displayPhase: phase,
+        prefix,
+        hasForegroundTab: false,
+      },
+      `Result Phase handoff 不应破坏普通 ${phase} 标题显示。`
+    );
+  });
+
+  const ghostRunningDecision = decide({
+    currentTabId,
+    tabs: [currentTab],
+    state: createUnifiedDisplayState("running", now, {
+      displayOperation: "push",
+      displaySessionKind: "local_push_session",
+      displayDominantDirection: "push",
+    }),
+    settings,
+    now,
+    previousOwner: staleOwner,
+  });
+  assertDisplayDecision(
+    ghostRunningDecision,
+    {
+      shouldDisplay: false,
+      shouldRunAnimationTimer: false,
+      ownerTabId: "",
+      displayPhase: "running",
+      prefix: "",
+      hasForegroundTab: false,
+    },
+    "Running Phase 缺少 Live Runner 证据时，普通 Title Owner 不得接管同步中标题。"
+  );
+
+  const liveRunnerState = createUnifiedDisplayState("running", now, {
+    displayLiveRunnerOwnerId: "runner-sync-owner",
+    displayOperation: "push",
+    displaySessionKind: "local_push_session",
+    displayDominantDirection: "push",
+  });
+  const liveRunnerTabs = [
+    createTab({
+      tabId: "runner-tab",
+      createdAt: now - 2000,
+      lastSeen: now,
+      lastActiveAt: now - 9000,
+      syncOwnerId: "runner-sync-owner",
+    }),
+    createTab({
+      tabId: "recent-background-tab",
+      createdAt: now - 1000,
+      lastSeen: now,
+      lastActiveAt: now - 100,
+      syncOwnerId: "other-sync-owner",
+    }),
+  ];
+  assertDisplayDecision(
+    decide({
+      currentTabId: "runner-tab",
+      tabs: liveRunnerTabs,
+      state: liveRunnerState,
+      settings,
+      now,
+      previousOwner: {
+        tabId: "recent-background-tab",
+        leaseUntil: now + constants.TITLE_SYNC_STATUS_OWNER_LEASE_MS,
+      },
+    }),
+    {
+      shouldDisplay: true,
+      shouldRunAnimationTimer: true,
+      ownerTabId: "runner-tab",
+      displayPhase: "running",
+      prefix: "[同步中.]",
+      hasForegroundTab: false,
+    },
+    "Running Phase 有真实 Live Runner 时，Title Owner 必须优先 Live Runner。"
+  );
+  assertDisplayDecision(
+    decide({
+      currentTabId: "recent-background-tab",
+      tabs: liveRunnerTabs,
+      state: liveRunnerState,
+      settings,
+      now,
+    }),
+    {
+      shouldDisplay: false,
+      shouldRunAnimationTimer: false,
+      ownerTabId: "runner-tab",
+      displayPhase: "running",
+      prefix: "",
+      hasForegroundTab: false,
+    },
+    "非 Live Runner 即使是最近活动后台 tab，也不得显示 Running Phase 标题。"
+  );
+
+  const staleRunningTitleState = toPlainObject(
+    hooks.resolveAutoSyncIndicatorDisplayPhase(
+      {
+        ...createResolvedState("running", now - 5000),
+        operation: "push",
+        lastResolvedPhase: "success",
+        lastResolvedTimestamp: now - 10_000,
+        lastResolvedSource: "background_push",
+        lastResolvedReason: "previous_success",
+      },
+      { ttlProfile: "title" }
+    )
+  );
+  assert.equal(
+    staleRunningTitleState.displayPhase,
+    "idle",
+    "stale Running Phase 不应回退显示旧 success/failure/conflict。"
+  );
+};
+
 const testOwnerLeaseGuardPreventsCrossTabSelfTrigger = () => {
   const { hooks, store } = createHarness();
   const getConstants = requireHook(hooks, "getTitleSyncStatusTestConstants");
@@ -949,6 +1179,8 @@ const testPartitionedPresenceStorage = () => {
 const testDisplayPhaseOnlyAndNoTitleSchedulerRewrite = () => {
   const { hooks, store } = createHarness();
   const decide = requireHook(hooks, "resolveTitleSyncStatusTabDisplayDecision");
+  const getConstants = requireHook(hooks, "getTitleSyncStatusTestConstants");
+  const constants = getConstants();
   const now = Date.now();
   const settings = createReadySettings();
   const hiddenOwnerTab = [
@@ -1061,12 +1293,7 @@ const testDisplayPhaseOnlyAndNoTitleSchedulerRewrite = () => {
   );
 
   store.delete(BACKGROUND_SYNC_DEBOUNCE_STATE_KEY);
-  store.set("s1p_sync_global_lock", {
-    owner: "other-tab",
-    mode: "background",
-    timestamp: now,
-    ttlMs: 60 * 1000,
-  });
+  setBackgroundSyncLocks(store, constants, "closed-runner-tab", now);
   const unifiedRunningState = toPlainObject(
     hooks.resolveAutoSyncIndicatorDisplayPhase(createResolvedState("success", now))
   );
@@ -1080,14 +1307,14 @@ const testDisplayPhaseOnlyAndNoTitleSchedulerRewrite = () => {
       now,
     }),
     {
-      shouldDisplay: true,
-      shouldRunAnimationTimer: true,
-      ownerTabId: "tab-a",
+      shouldDisplay: false,
+      shouldRunAnimationTimer: false,
+      ownerTabId: "",
       displayPhase: "running",
-      prefix: "[同步中.]",
+      prefix: "",
       hasForegroundTab: false,
     },
-    "后台推送 running 状态仍应显示标签页标题同步中提示。"
+    "非 title profile 可保留 Running Phase，但标题层缺少 Live Runner 证据时必须 suppress。"
   );
 
   const sourceMismatchPullState = toPlainObject(
@@ -1125,6 +1352,8 @@ const testDisplayPhaseOnlyAndNoTitleSchedulerRewrite = () => {
     },
     "原始拉取状态即使被上游 source mismatch 默认成 push，也不应点亮标签页标题。"
   );
+  store.delete(constants.BACKGROUND_SYNC_LOCK_KEY);
+  store.delete(constants.GLOBAL_SYNC_LOCK_KEY);
 
   assertDisplayDecision(
     decide({
@@ -1428,6 +1657,10 @@ const tests = [
   ["unified state mapping and ttl", testUnifiedStateMappingAndTtl],
   ["multi-tab foreground and owner coordination", testMultiTabForegroundAndOwnerCoordination],
   ["presence ttl, owner lease, foreground ttl pause", testPresenceTtlOwnerLeaseAndForegroundTtlPause],
+  [
+    "result phase handoff and running live runner boundaries",
+    testResultPhaseHandoffAndRunningLiveRunnerBoundaries,
+  ],
   ["partitioned presence storage", testPartitionedPresenceStorage],
   ["owner lease guard prevents cross-tab self trigger", testOwnerLeaseGuardPreventsCrossTabSelfTrigger],
   ["display phase only and no title scheduler rewrite", testDisplayPhaseOnlyAndNoTitleSchedulerRewrite],
