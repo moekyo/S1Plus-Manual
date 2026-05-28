@@ -261,6 +261,8 @@ console.log(
     syncRemoteEnabled: true,
     syncAutoEnabled: true,
     syncAutoFetchMode: "foreground",
+    syncDirectChoiceMode: true,
+    syncCheckOnReturnToForeground: true,
   };
   const migrationSandbox = createSandbox({
     s1p_settings: legacySettings,
@@ -289,6 +291,11 @@ console.log(
     Object.prototype.hasOwnProperty.call(persistedSettings, "syncAutoFetchMode"),
     false,
     "[legacy-key-persistence] 旧字段 syncAutoFetchMode 应在一次迁移后从存储中移除"
+  );
+  assert.strictEqual(
+    Object.prototype.hasOwnProperty.call(persistedSettings, "syncDirectChoiceMode"),
+    false,
+    "[legacy-key-persistence] 旧字段 syncDirectChoiceMode 应在一次迁移后从存储中移除"
   );
 
   const secondPass = migrationSandbox.__S1P_TEST_HOOKS__.buildNormalizedSettings(
