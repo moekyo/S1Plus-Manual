@@ -712,11 +712,11 @@ const testAutoSyncCompletionLogMessageIsSpecific = () => {
   );
   assert.equal(
     hooks.formatAutoSyncCompletionLogMessage({
-      scopeLabel: "云端更新检查",
+      scopeLabel: "自动拉取检查",
       outcome: "success",
       result: { status: "unchanged", reason: "remote_already_synced" },
     }),
-    "S1 Plus (Sync): 云端更新检查完成：无变化（云端版本与本地已同步版本一致）。"
+    "S1 Plus (Sync): 自动拉取检查完成：无变化（云端版本与本地已同步版本一致）。"
   );
   assert.equal(
     hooks.formatAutoSyncCompletionLogMessage({
@@ -728,7 +728,7 @@ const testAutoSyncCompletionLogMessageIsSpecific = () => {
   );
   assert.equal(
     hooks.formatAutoSyncCompletionLogMessage({
-      scopeLabel: "云端更新检查",
+      scopeLabel: "自动拉取检查",
       outcome: "changed",
       result: {
         status: "changed",
@@ -739,7 +739,7 @@ const testAutoSyncCompletionLogMessageIsSpecific = () => {
         },
       },
     }),
-    "S1 Plus (Sync): 云端更新检查完成：发现变化（后续同步已暂缓：阅读进度仍有待写入内容）。"
+    "S1 Plus (Sync): 自动拉取检查完成：发现变化（后续同步已暂缓：阅读进度仍有待写入内容）。"
   );
 };
 
@@ -829,8 +829,8 @@ const testPhase3CallSitesUseDedicatedHelpers = () => {
     "调试日志收集器未在 document-start 按面板可见性条件启动。"
   );
   expectMatch(
-    /const checkRemoteFreshnessOnForeground = async[\s\S]*?scopeLabel: "云端更新检查"/m,
-    "云端更新检查未接入统一完成日志。"
+    /const checkRemoteFreshnessOnForeground = async[\s\S]*?scopeLabel: "自动拉取检查"/m,
+    "自动拉取检查未接入统一完成日志。"
   );
   expectMatch(
     /const handleManualSync = async[\s\S]*?scopeLabel: "手动同步"/m,

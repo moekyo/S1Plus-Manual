@@ -2053,7 +2053,7 @@
       items: [
         {
           label: "关闭",
-          body: "关闭额外自动检查；每日首次同步、手动同步和本地变更后台同步仍按各自开关运行。",
+          body: "关闭额外自动拉取检查；每日首次同步、手动同步和自动推送仍按各自开关运行。",
         },
         {
           label: "每次加载",
@@ -2074,7 +2074,7 @@
         },
         {
           label: "回到前台",
-          body: "更适合跨设备切换；持续可见页面的低频复查由同组高级开关控制。",
+          body: "更适合跨设备切换；持续可见页面的低频复查由同组子开关控制。",
         },
       ],
     },
@@ -11836,7 +11836,7 @@
       case "per_load_sync":
         return "每次加载同步";
       case "foreground_probe":
-        return "云端更新检查";
+        return "自动拉取检查";
       case "foreground_followup_sync":
         return "前台补同步";
       case "background_auto_sync":
@@ -11875,7 +11875,7 @@
       case "initial_foreground_probe_skipped":
         return "首次可见检查跳过";
       case "foreground_probe_start":
-        return "云端更新检查开始";
+        return "自动拉取检查开始";
       case "foreground_probe_lock_acquired":
         return "已取得探测锁";
       case "foreground_probe_fetch_metadata":
@@ -12366,7 +12366,7 @@
       const suffixLabel = getAutoSyncCompletionReasonDescription(suffix);
       switch (prefix) {
         case "foreground_probe":
-          return `云端更新检查：${suffixLabel}`;
+          return `自动拉取检查：${suffixLabel}`;
         case "remote_probe_changed":
           return `云端版本变化：${suffixLabel}`;
         case "same_machine_conflict":
@@ -16920,7 +16920,7 @@
       recordSyncTraceEvent("initial_foreground_probe_skipped", {
         scope: "foreground_probe",
         status: "skipped",
-        message: "首次可见云端更新检查未启用",
+        message: "首次可见自动拉取检查未启用",
       });
       return false;
     }
@@ -16928,7 +16928,7 @@
       recordSyncTraceEvent("initial_foreground_probe_skipped", {
         scope: "foreground_probe",
         status: "skipped",
-        message: "首次可见云端更新检查因页面不可见而跳过",
+        message: "首次可见自动拉取检查因页面不可见而跳过",
         details: { visibilityState: document.visibilityState || "" },
       });
       return false;
@@ -28668,11 +28668,11 @@
 
           startBackgroundSyncLockHeartbeat();
           try {
-            console.log("S1 Plus: 检测到数据变更，触发后台智能同步检查...");
+            console.log("S1 Plus: 检测到数据变更，触发后台同步检查...");
             recordSyncTraceEvent("background_run_start", {
               scope: "background_auto_sync",
               status: "running",
-              message: "后台智能同步开始执行",
+              message: "后台同步开始执行",
               details: { reason, drainCount },
             });
             const runSchedulerContext =
@@ -28984,9 +28984,9 @@
       case "background_lock_unavailable":
         return "后台同步锁被其他任务占用";
       case "foreground_check_disabled":
-        return "前台云端更新检查未启用";
+        return "前台自动拉取检查未启用";
       case "probe_in_flight":
-        return "已有云端更新检查正在执行";
+        return "已有自动拉取检查正在执行";
       case "foreground_sync_in_flight":
         return "前台补同步正在执行";
       case "followup_retry_pending":
@@ -28994,19 +28994,19 @@
       case "sync_lock_active":
         return "已有同步锁处于活动状态";
       case "local_cooldown":
-        return "本标签页云端更新检查仍在本地冷却期";
+        return "本标签页自动拉取检查仍在本地冷却期";
       case "shared_cooldown":
-        return "其他标签页刚完成云端更新检查，仍在共享冷却期";
+        return "其他标签页刚完成自动拉取检查，仍在共享冷却期";
       case "probe_lock_unavailable":
-        return "云端更新检查锁被其他标签页占用";
+        return "自动拉取检查锁被其他标签页占用";
       case "remote_updated_at_missing":
         return "云端版本时间缺失，无法判断是否更新";
       case "skipped_active_sync":
-        return "已有同步任务正在执行，云端检查已跳过";
+        return "已有同步任务正在执行，自动拉取检查已跳过";
       case "skipped_probe_in_flight":
-        return "已有云端更新检查正在执行，本次已跳过";
+        return "已有自动拉取检查正在执行，本次已跳过";
       case "skipped_probe_lock_unavailable":
-        return "云端更新检查锁被其他标签页占用，本次已跳过";
+        return "自动拉取检查锁被其他标签页占用，本次已跳过";
       case "skipped_followup_retry_pending":
         return "前台补同步正在等待重试窗口，本次已跳过";
       case "skipped_remote_metadata_missing":
@@ -29014,7 +29014,7 @@
       case "foreground_probe_sync_success":
         return "前台探测触发的安全同步成功";
       case "foreground_probe_failure":
-        return "前台云端更新检查失败";
+        return "前台自动拉取检查失败";
       case "remote_already_synced":
         return "云端版本与本地已同步版本一致";
       case "remote_updated_at_equal_pending_verification":
@@ -30769,7 +30769,7 @@
         foregroundProbeCompletionLogged = true;
         emitSyncCompletionLog({
           scope: "foreground_probe",
-          scopeLabel: "云端更新检查",
+          scopeLabel: "自动拉取检查",
           outcome: finalized.status || result?.status || "unknown",
           result: finalized,
           details: {
@@ -30884,7 +30884,7 @@
     recordSyncTraceEvent("foreground_probe_start", {
       scope: "foreground_probe",
       status: "running",
-      message: "前台云端更新检查开始",
+      message: "前台自动拉取检查开始",
       details: {
         reason: normalizedReason,
         triggerSource: probeTriggerSource,
@@ -30915,7 +30915,7 @@
       recordSyncTraceEvent("foreground_probe_lock_acquired", {
         scope: "foreground_probe",
         status: "running",
-        message: "前台云端更新检查已取得探测锁",
+        message: "前台自动拉取检查已取得探测锁",
         details: { reason: normalizedReason },
       });
 
@@ -31487,7 +31487,6 @@
     syncShowAutoSyncIndicator: true,
     syncShowTitleSyncStatus: false,
     syncForcePullOnStartup: false, // <-- [新增] 新增功能开关
-    syncDirectChoiceMode: false,
     syncBookmarkFullContent: false,
     syncDeviceId: "",
     syncRemoteGistId: "",
@@ -31800,12 +31799,6 @@
         settings.syncForcePullOnStartup === true,
       "sync_force_pull_on_startup_normalized"
     );
-    applyNormalizedBooleanSetting(
-      "syncDirectChoiceMode",
-      settings.syncDirectChoiceMode === true,
-      "sync_direct_choice_mode_normalized"
-    );
-
     const normalizedTokenExpiryEnabled = settings.syncTokenExpiryEnabled === true;
     if (settings.syncTokenExpiryEnabled !== normalizedTokenExpiryEnabled) {
       markMigration("sync_token_expiry_enabled_normalized");
@@ -32047,7 +32040,6 @@
     "syncRemoteEnabled",
     "syncRemoteGistId",
     "syncRemotePat",
-    "syncDirectChoiceMode",
   ];
   const SETTINGS_CROSS_TAB_PASSIVE_PATHS = [
     "readingProgressCleanupDays",
@@ -32543,8 +32535,7 @@
         "syncCheckOnReturnToForeground"
       ) ||
       hasSettingPathInChangedSet(changedPathSet, "syncShowAutoSyncIndicator") ||
-      hasSettingPathInChangedSet(changedPathSet, "syncShowTitleSyncStatus") ||
-      hasSettingPathInChangedSet(changedPathSet, "syncDirectChoiceMode");
+      hasSettingPathInChangedSet(changedPathSet, "syncShowTitleSyncStatus");
     if (shouldReinitializeNavbar) {
       initializeNavbar();
     } else if (
@@ -38505,121 +38496,52 @@
     );
     li.appendChild(a);
 
-    if (settings.syncDirectChoiceMode) {
-      // --- [MODIFIED] 模式2: 高级模式 (点击->智能判断 | 悬停->直接选择) ---
-      let activeMenu = null;
-
-      // [核心修改] 为高级模式下的按钮增加与默认模式完全相同的“点击”行为
-      a.addEventListener("click", async (e) => {
-        e.preventDefault();
-        const icon = a.querySelector("svg");
-        if (!icon || icon.classList.contains("s1p-syncing")) return;
-
-        icon.classList.remove("s1p-sync-success", "s1p-sync-error");
-        icon.classList.add("s1p-syncing");
-
-        try {
-          // 调用我们已优化的核心同步函数
-          await handleManualSync();
-          // 注意：由于handleManualSync现在自己处理所有反馈，这里不再需要处理其返回值来增删图标class
-          icon.classList.remove("s1p-syncing");
-        } catch (error) {
-          icon.classList.remove("s1p-syncing");
-          console.error("S1 Plus: Manual sync handler threw an error:", error);
-        } finally {
-          // 移除动画类，并重置可能存在的transform
-          setTimeout(() => {
-            icon.classList.remove("s1p-sync-success", "s1p-sync-error");
-            icon.style.transform = "";
-          }, 1200);
+    let activeMenu = null;
+    const pullIconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M1 14.5C1 12.1716 2.22429 10.1291 4.06426 8.9812C4.56469 5.044 7.92686 2 12 2C16.0731 2 19.4353 5.044 19.9357 8.9812C21.7757 10.1291 23 12.1716 23 14.5C23 17.9216 20.3562 20.7257 17 20.9811L7 21C3.64378 20.7257 1 17.9216 1 14.5ZM16.8483 18.9868C19.1817 18.8093 21 16.8561 21 14.5C21 12.927 20.1884 11.4962 18.8771 10.6781L18.0714 10.1754L17.9517 9.23338C17.5735 6.25803 15.0288 4 12 4C8.97116 4 6.42647 6.25803 6.0483 9.23338L5.92856 10.1754L5.12288 10.6781C3.81156 11.4962 3 12.927 3 14.5C3 16.8561 4.81833 18.8093 7.1517 18.9868L7.325 19H16.675L16.8483 18.9868ZM13 12H16L12 17L8 12H11V8H13V12Z"></path></svg>`;
+    const pushIconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M1 14.5C1 12.1716 2.22429 10.1291 4.06426 8.9812C4.56469 5.044 7.92686 2 12 2C16.0731 2 19.4353 5.044 19.9357 8.9812C21.7757 10.1291 23 12.1716 23 14.5C23 17.9216 20.3562 20.7257 17 20.9811L7 21C3.64378 20.7257 1 17.9216 1 14.5ZM16.8483 18.9868C19.1817 18.8093 21 16.8561 21 14.5C21 12.927 20.1884 11.4962 18.8771 10.6781L18.0714 10.1754L17.9517 9.23338C17.5735 6.25803 15.0288 4 12 4C8.97116 4 6.42647 6.25803 6.0483 9.23338L5.92856 10.1754L5.12288 10.6781C3.81156 11.4962 3 12.927 3 14.5C3 16.8561 4.81833 18.8093 7.1517 18.9868L7.325 19H16.675L16.8483 18.9868ZM13 13V17H11V13H8L12 8L16 13H13Z"></path></svg>`;
+    const openSyncChoiceMenu = () => {
+      const existingMenu = document.querySelector(".s1p-inline-action-menu");
+      if (existingMenu && existingMenu === activeMenu) {
+        existingMenu.s1p_api?.cancelHideTimer?.();
+        return;
+      }
+      activeMenu = createInlineActionMenu(
+        li,
+        [
+          {
+            label: `${pullIconSVG} <span>拉取</span>`,
+            allowLabelHtml: true,
+            action: "pull",
+            title:
+              "用云端备份覆盖您当前的本地数据，本地未同步的修改将丢失！",
+            callback: handleForcePull,
+          },
+          {
+            label: `${pushIconSVG} <span>推送</span>`,
+            allowLabelHtml: true,
+            action: "push",
+            title: "将您当前的本地数据覆盖到云端备份，此操作不可逆。",
+            callback: handleForcePush,
+          },
+        ],
+        () => {
+          activeMenu = null;
+        },
+        {
+          positionAnchorElement: a.querySelector("svg"),
+          anchorGapPx: 8,
         }
-      });
-
-      const pullIconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M1 14.5C1 12.1716 2.22429 10.1291 4.06426 8.9812C4.56469 5.044 7.92686 2 12 2C16.0731 2 19.4353 5.044 19.9357 8.9812C21.7757 10.1291 23 12.1716 23 14.5C23 17.9216 20.3562 20.7257 17 20.9811L7 21C3.64378 20.7257 1 17.9216 1 14.5ZM16.8483 18.9868C19.1817 18.8093 21 16.8561 21 14.5C21 12.927 20.1884 11.4962 18.8771 10.6781L18.0714 10.1754L17.9517 9.23338C17.5735 6.25803 15.0288 4 12 4C8.97116 4 6.42647 6.25803 6.0483 9.23338L5.92856 10.1754L5.12288 10.6781C3.81156 11.4962 3 12.927 3 14.5C3 16.8561 4.81833 18.8093 7.1517 18.9868L7.325 19H16.675L16.8483 18.9868ZM13 12H16L12 17L8 12H11V8H13V12Z"></path></svg>`;
-      const pushIconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M1 14.5C1 12.1716 2.22429 10.1291 4.06426 8.9812C4.56469 5.044 7.92686 2 12 2C16.0731 2 19.4353 5.044 19.9357 8.9812C21.7757 10.1291 23 12.1716 23 14.5C23 17.9216 20.3562 20.7257 17 20.9811L7 21C3.64378 20.7257 1 17.9216 1 14.5ZM16.8483 18.9868C19.1817 18.8093 21 16.8561 21 14.5C21 12.927 20.1884 11.4962 18.8771 10.6781L18.0714 10.1754L17.9517 9.23338C17.5735 6.25803 15.0288 4 12 4C8.97116 4 6.42647 6.25803 6.0483 9.23338L5.92856 10.1754L5.12288 10.6781C3.81156 11.4962 3 12.927 3 14.5C3 16.8561 4.81833 18.8093 7.1517 18.9868L7.325 19H16.675L16.8483 18.9868ZM13 13V17H11V13H8L12 8L16 13H13Z"></path></svg>`;
-
-      li.addEventListener("mouseenter", () => {
-        const existingMenu = document.querySelector(".s1p-inline-action-menu");
-        if (existingMenu) {
-          existingMenu.dispatchEvent(new MouseEvent("mouseenter"));
-        } else {
-          activeMenu = createInlineActionMenu(
-            li,
-            [
-              {
-                label: `${pullIconSVG} <span>拉取</span>`,
-                allowLabelHtml: true,
-                action: "pull",
-                title:
-                  "用云端备份覆盖您当前的本地数据，本地未同步的修改将丢失！",
-                callback: handleForcePull,
-              },
-              {
-                label: `${pushIconSVG} <span>推送</span>`,
-                allowLabelHtml: true,
-                action: "push",
-                title: "将您当前的本地数据覆盖到云端备份，此操作不可逆。",
-                callback: handleForcePush,
-              },
-            ],
-            () => {
-              activeMenu = null;
-            },
-            {
-              positionAnchorElement: a.querySelector("svg"),
-              anchorGapPx: 8,
-            }
-          );
-        }
-      });
-    } else {
-      // --- 模式1: 默认模式 (点击后智能判断) ---
-      a.addEventListener("click", async (e) => {
-        e.preventDefault();
-        const icon = a.querySelector("svg");
-        if (!icon || icon.classList.contains("s1p-syncing")) return;
-
-        icon.classList.remove("s1p-sync-success", "s1p-sync-error");
-        icon.classList.add("s1p-syncing");
-
-        try {
-          // 调用我们已优化的核心同步函数
-          await handleManualSync();
-          icon.classList.remove("s1p-syncing");
-        } catch (error) {
-          icon.classList.remove("s1p-syncing");
-          console.error("S1 Plus: Manual sync handler threw an error:", error);
-        } finally {
-          setTimeout(() => {
-            icon.classList.remove("s1p-sync-success", "s1p-sync-error");
-            icon.style.transform = "";
-          }, 1200);
-        }
-      });
-
-      a.addEventListener("mouseover", (e) => {
-        const popover = document.getElementById("s1p-generic-display-popover");
-        if (popover && popover.s1p_api) {
-          popover.s1p_api.show(
-            e.currentTarget,
-            "发起全局手动同步（智能判断，会综合比较云端变化、阅读进度与 cleanup 记录）"
-          );
-        }
-      });
-      a.addEventListener("mouseout", () => {
-        const popover = document.getElementById("s1p-generic-display-popover");
-        if (popover && popover.s1p_api) {
-          popover.s1p_api.hide();
-        }
-      });
-    }
-
-    if (settings.syncDirectChoiceMode) {
-      setCustomTooltip(
-        a,
-        "点击发起全局手动同步；悬停可直接选择全局拉取或全局推送。"
       );
-    }
+    };
+    a.addEventListener("click", (e) => {
+      e.preventDefault();
+      openSyncChoiceMenu();
+    });
+    li.addEventListener("mouseenter", openSyncChoiceMenu);
+    setCustomTooltip(
+      a,
+      "点击或悬停选择全局拉取或全局推送；直接操作会优先中断正在进行的自动同步。"
+    );
 
     managerLink.insertAdjacentElement("afterend", li);
     renderNavbarAutoSyncIndicator();
@@ -40198,11 +40120,41 @@
             <span class="s1p-slider"></span>
           </label>
         </div>
-        <p class="s1p-setting-desc">启用后，你可以在导航栏发起全局手动同步，也可以配置云端更新检查和本地变更后台同步。</p>
+        <p class="s1p-setting-desc">启用后，你可以在导航栏直接选择推送或拉取，也可以配置自动推送、自动拉取和状态显示。</p>
 
         <div id="s1p-remote-sync-controls-wrapper">
-          <div class="s1p-sync-settings-section" id="s1p-cloud-update-check-section">
-            <div class="s1p-sync-settings-section-title">云端更新检查</div>
+          <div class="s1p-sync-settings-section" id="s1p-manual-sync-section">
+            <div class="s1p-sync-settings-section-title">手动同步</div>
+            <p class="s1p-setting-desc s1p-sync-settings-section-desc">导航栏同步按钮可点击或悬停打开“拉取 / 推送”菜单；这两个直接操作会优先中断正在进行的自动同步，并按你选择的方向执行。</p>
+            <div class="s1p-settings-item">
+              <label class="s1p-settings-label" for="s1p-sync-bookmark-full-content-toggle">收藏回复同步完整正文</label>
+              <label class="s1p-switch">
+                <input type="checkbox" id="s1p-sync-bookmark-full-content-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
+                <span class="s1p-slider"></span>
+              </label>
+            </div>
+            <p class="s1p-setting-desc">影响所有远程导出的收藏回复内容，包括自动推送；关闭时仅同步 280 字预览（更快更省流量），开启后跨设备可查看全文但体积更大。</p>
+          </div>
+
+          <div class="s1p-sync-settings-section" id="s1p-auto-push-section">
+            <div class="s1p-sync-settings-section-title">自动推送</div>
+            <div class="s1p-settings-item">
+              <label class="s1p-settings-label" for="s1p-auto-sync-enabled-toggle">本地变更后自动后台同步</label>
+              <label class="s1p-switch">
+                <input type="checkbox" id="s1p-auto-sync-enabled-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
+                <span class="s1p-slider"></span>
+              </label>
+            </div>
+            <p class="s1p-setting-desc">启用后，屏蔽、标记、阅读进度等本地数据变化会在停止操作后自动推送或合并；关闭后仍可手动推送/拉取，也不影响自动拉取。</p>
+            <div class="s1p-settings-item s1p-settings-item-column">
+              <label class="s1p-settings-label" for="s1p-sync-device-id-input">同步设备 ID（自动推送必填）</label>
+              <input type="text" id="s1p-sync-device-id-input" class="s1p-input s1p-input-full" placeholder="例如：MacBook-Pro-主力机" maxlength="80" autocomplete="off" data-s1p-sync-control>
+            </div>
+            <p class="s1p-setting-desc">开启自动推送时必填，用于标记这台设备写入的云端记录，方便其他页面或同设备环境识别“这是本机刚同步的变更”。留空则忽略，不会同步到其他设备，也不参与冲突裁决；填写后只写入云端记录元信息，不会作为设置同步到其他设备。</p>
+          </div>
+
+          <div class="s1p-sync-settings-section" id="s1p-auto-pull-section">
+            <div class="s1p-sync-settings-section-title">自动拉取</div>
             <p class="s1p-setting-desc s1p-sync-settings-section-desc">决定何时主动查看云端是否有新数据；发现变化后仍会进入安全同步判断，不会直接覆盖本地。</p>
 
             <div class="s1p-settings-item">
@@ -40216,7 +40168,7 @@
 
             <div id="s1p-force-pull-subgroup" class="s1p-settings-sub-group">
               <div class="s1p-settings-item">
-                <label class="s1p-settings-label" for="s1p-force-pull-on-startup-toggle">启动时强制拉取云端数据</label>
+                <label class="s1p-settings-label" for="s1p-force-pull-on-startup-toggle">启动时强制拉取</label>
                 <label class="s1p-switch">
                   <input type="checkbox" id="s1p-force-pull-on-startup-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
                   <span class="s1p-slider"></span>
@@ -40237,7 +40189,7 @@
                 <div class="s1p-segmented-control-option" data-value="foreground">回到前台</div>
               </div>
             </div>
-            <p class="s1p-setting-desc s1p-sync-auto-check-desc">这是每日首次同步之外的额外检查：可完全关闭，也可选择每次页面加载检查，或仅在页面首次可见、回到前台、后退缓存恢复时轻量探测。</p>
+            <p class="s1p-setting-desc s1p-sync-auto-check-desc">这是每日首次同步之外的额外自动拉取检查：可完全关闭，也可选择每次页面加载检查，或仅在页面首次可见、回到前台、后退缓存恢复时轻量探测。</p>
 
             <div id="s1p-visible-remote-polling-subgroup" class="s1p-settings-sub-group s1p-settings-sub-group-flat">
               <div class="s1p-settings-item">
@@ -40249,23 +40201,6 @@
               </div>
               <p class="s1p-setting-desc">仅在“回到前台”策略下生效；页面一直保持可见时，活跃约 4 分钟、空闲约 12 分钟轻量探测一次云端。</p>
             </div>
-          </div>
-
-          <div class="s1p-sync-settings-section" id="s1p-background-auto-sync-section">
-            <div class="s1p-sync-settings-section-title">自动上传本地变更</div>
-            <div class="s1p-settings-item">
-              <label class="s1p-settings-label" for="s1p-auto-sync-enabled-toggle">本地变更后自动后台同步</label>
-              <label class="s1p-switch">
-                <input type="checkbox" id="s1p-auto-sync-enabled-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
-                <span class="s1p-slider"></span>
-              </label>
-            </div>
-            <p class="s1p-setting-desc">启用后，屏蔽、标记、阅读进度等本地数据变化会在停止操作后自动上传或合并；关闭后仍可手动同步，也不影响上方云端更新检查。</p>
-            <div class="s1p-settings-item s1p-settings-item-column">
-              <label class="s1p-settings-label" for="s1p-sync-device-id-input">同步设备 ID（自动上传必填）</label>
-              <input type="text" id="s1p-sync-device-id-input" class="s1p-input s1p-input-full" placeholder="例如：MacBook-Pro-主力机" maxlength="80" autocomplete="off" data-s1p-sync-control>
-            </div>
-            <p class="s1p-setting-desc">开启自动上传本地变更时必填，用于标记这台设备写入的云端记录，方便其他页面或同设备环境识别“这是本机刚同步的变更”。留空则忽略，不会同步到其他设备，也不参与冲突裁决；填写后只写入云端记录元信息，不会作为设置同步到其他设备。</p>
           </div>
 
           <div class="s1p-sync-settings-section" id="s1p-sync-status-section">
@@ -40292,26 +40227,6 @@
             </div>
           </div>
 
-          <div class="s1p-sync-settings-section" id="s1p-sync-manual-options-section">
-            <div class="s1p-sync-settings-section-title">手动同步与数据选项</div>
-            <div class="s1p-settings-item">
-              <label class="s1p-settings-label" for="s1p-direct-choice-mode-toggle">手动同步高级模式 (悬停选择)</label>
-              <label class="s1p-switch">
-                <input type="checkbox" id="s1p-direct-choice-mode-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
-                <span class="s1p-slider"></span>
-              </label>
-            </div>
-            <p class="s1p-setting-desc">关闭时，点击同步按钮将智能判断；开启时，悬停同步按钮可直接选择推送或拉取。</p>
-            <div class="s1p-settings-item">
-              <label class="s1p-settings-label" for="s1p-sync-bookmark-full-content-toggle">收藏回复同步完整正文</label>
-              <label class="s1p-switch">
-                <input type="checkbox" id="s1p-sync-bookmark-full-content-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
-                <span class="s1p-slider"></span>
-              </label>
-            </div>
-            <p class="s1p-setting-desc">关闭时仅同步 280 字预览（更快更省流量）；开启后会同步完整收藏内容（跨设备可查看全文，但体积更大）。</p>
-          </div>
-
           <div class="s1p-sync-settings-section" id="s1p-github-connection-section">
             <div class="s1p-sync-settings-section-title">GitHub 连接</div>
             <div class="s1p-settings-item s1p-settings-item-column">
@@ -40328,7 +40243,7 @@
               </div>
             </div>
             <div class="s1p-settings-item s1p-settings-item-top12">
-              <label class="s1p-settings-label" for="s1p-token-expiry-reminder-toggle">Sync Token 更新提醒</label>
+              <label class="s1p-settings-label" for="s1p-token-expiry-reminder-toggle">Token 过期提醒</label>
               <label class="s1p-switch">
                 <input type="checkbox" id="s1p-token-expiry-reminder-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
                 <span class="s1p-slider"></span>
@@ -40893,9 +40808,6 @@
       remotePatInput: modal.querySelector("#s1p-remote-pat-input"),
       forcePullWrapper: modal.querySelector("#s1p-force-pull-subgroup"),
       forcePullToggle: modal.querySelector("#s1p-force-pull-on-startup-toggle"),
-      directChoiceModeToggle: modal.querySelector(
-        "#s1p-direct-choice-mode-toggle"
-      ),
       tokenExpiryToggle: modal.querySelector(
         "#s1p-token-expiry-reminder-toggle"
       ),
@@ -40919,7 +40831,6 @@
       remotePatInput,
       forcePullWrapper,
       forcePullToggle,
-      directChoiceModeToggle,
       tokenExpiryToggle,
     } = syncSettingsControls;
     const moveSegmentedControlSlider = (control, skipAnimation = false) => {
@@ -41082,7 +40993,7 @@
     };
 
     const SYNC_DEVICE_ID_REQUIRED_MESSAGE =
-      "开启自动上传本地变更前，请先填写同步设备 ID。";
+      "开启自动推送前，请先填写同步设备 ID。";
 
     const markSyncDeviceIdInputError = ({
       focusInput = false,
@@ -41255,7 +41166,6 @@
       titleSyncStatusToggle,
       visibleRemotePollingToggle,
       forcePullToggle,
-      directChoiceModeToggle,
       bookmarkFullContentToggle,
     ].forEach((toggleControl) =>
       toggleControl?.addEventListener("change", markSyncSettingsDirty)
@@ -41357,8 +41267,6 @@
         settingsSnapshot.syncBookmarkFullContent === true;
       syncDeviceIdInput.value = settingsSnapshot.syncDeviceId || "";
       forcePullToggle.checked = settingsSnapshot.syncForcePullOnStartup === true;
-      directChoiceModeToggle.checked =
-        settingsSnapshot.syncDirectChoiceMode === true;
       tokenExpiryToggle.checked = settingsSnapshot.syncTokenExpiryEnabled === true;
       pendingTokenExpiryDate = normalizeTokenExpiryDateValue(
         settingsSnapshot.syncTokenExpiryDate
@@ -41387,7 +41295,6 @@
         syncShowAutoSyncIndicator: autoSyncIndicatorToggle.checked,
         syncShowTitleSyncStatus: titleSyncStatusToggle.checked,
         syncForcePullOnStartup: dailySyncToggle.checked && forcePullToggle.checked,
-        syncDirectChoiceMode: directChoiceModeToggle.checked === true,
         syncBookmarkFullContent: bookmarkFullContentToggle.checked,
         syncDeviceId: syncDeviceIdInput.value.trim(),
         syncRemoteGistId: remoteGistIdInput.value.trim(),
@@ -44201,7 +44108,6 @@
           "syncShowAutoSyncIndicator",
           "syncShowTitleSyncStatus",
           "syncForcePullOnStartup",
-          "syncDirectChoiceMode",
           "syncBookmarkFullContent",
           "syncRemoteGistId",
           "syncRemotePat",
@@ -45957,7 +45863,7 @@
             }
           }
 
-          // 智能检查：当在帖子内，且只有当前帖子的阅读进度变化时，自动同步
+          // 当在帖子内且只有当前帖子的阅读进度变化时，自动处理。
           if (
             currentThreadId &&
             !isInitialSyncInProgress &&
@@ -45966,7 +45872,7 @@
           ) {
             if (localNewer) {
               showMessage(
-                "智能同步：阅读进度已更新，正在自动推送到云端...",
+                "阅读进度已更新，正在自动推送到云端...",
                 null
               );
               try {
@@ -45995,7 +45901,7 @@
                     remoteWriter: pushResult?.writerMetadata || null,
                   }
                 );
-                showMessage("智能同步成功！已将本地最新进度推送到云端。", true);
+                showMessage("已将本地最新进度推送到云端。", true);
                 return resolveManualSync(true);
               } catch (e) {
                 if (e?.code === REMOTE_VERSION_CONFLICT_CODE) {
@@ -46004,17 +45910,17 @@
                     decisionDiagnostics
                   );
                   showMessage(
-                    "智能推送失败：云端数据已变化，请重新发起全局手动同步。",
+                    "自动推送失败：云端数据已变化，请重新发起全局手动同步。",
                     false
                   );
                   return resolveManualSync(false);
                 }
                 noteManualFailure(e.message, decisionDiagnostics);
-                showMessage(`智能推送失败: ${e.message}`, false);
+                showMessage(`自动推送失败: ${e.message}`, false);
                 return resolveManualSync(false);
               }
             } else {
-              showMessage("智能同步：正在合并云端数据与当前阅读进度...", null);
+              showMessage("正在合并云端数据与当前阅读进度...", null);
               const { payload: mergedPayload, contentHash: mergedContentHash } =
                 await runWithManualSyncLockGuard(
                   "build_smart_merge_pull_payload",
@@ -46053,16 +45959,16 @@
                 action: "merged_read_progress",
                 reason: "manual_smart_merge_pull",
                 messages: createAutoPullRefreshMessages(
-                  "智能同步成功！已保留并合并最新阅读进度。正在刷新页面...",
-                  "智能同步成功！已保留并合并最新阅读进度。"
+                  "已保留并合并最新阅读进度。正在刷新页面...",
+                  "已保留并合并最新阅读进度。"
                 ),
               });
               return resolveManualSync(true);
             }
           }
-          // --- 智能检查结束 ---
+          // --- 阅读进度自动处理结束 ---
 
-          // 如果以上智能检查都未通过，则进入手动选择流程
+          // 如果以上自动处理未通过，则进入手动选择流程
           const isConflict = versionDecision.action === "conflict";
           if (isConflict) {
             noteManualConflict(
