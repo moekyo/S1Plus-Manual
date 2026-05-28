@@ -235,6 +235,22 @@
     }
   },
   {
+    "name": "sync_direct_choice_mode_removed",
+    "input": {
+      "syncDirectChoiceMode": true,
+      "syncCheckOnReturnToForeground": true
+    },
+    "expected": {
+      "migrationApplied": true,
+      "absentPaths": [
+        "syncDirectChoiceMode"
+      ],
+      "reasonsInclude": [
+        "legacy_setting_key_removed:syncDirectChoiceMode"
+      ]
+    }
+  },
+  {
     "name": "image_preview_bounds_clamped",
     "input": {
       "imagePreviewMaxWidth": 99999,
