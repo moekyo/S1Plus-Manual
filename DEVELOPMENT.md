@@ -429,7 +429,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - “每次页面加载时检查同步”会复用启动同步锁链路，避免多标签页同时发起远端检查。
 - 前台 probe 命中远端变化但 follow-up sync 因锁占用等原因未能执行时，会登记补偿重试而不是直接丢弃本轮自动拉取机会。
 - 后台失败重试优先交给 shared scheduler；一旦 shared owner 已登记 retry，本标签页当前 drain loop 必须清掉本地 pending，不得继续下一轮即时同步。只有 shared scheduler 不可用时，才回退到 per-tab retry timer。
-- shared background scheduler 的 owner 标签页被隐藏或冻结时，不能只依赖 owner 页的 `setTimeout` 到期；隐藏页会通过可取消 task 补发 pending 推送。必须覆盖三类 hidden owner 入口：本页新登记 shared debounce 并成为 owner、初始化/恢复时发现本页仍是 owner、初始化/恢复时接管已过期 owner。storage 变更导致隐藏页成为/接管 owner 时也要触发补发。可见的非 owner 页必须在看到有效 owner lease 时设置短期恢复观察，到 lease 过期仍未续租就接管 owner 并重新排 shared timer；若原 `dueAt` 已过期，应立即进入后台推送。关闭/卸载页只延后释放 owner，实际补发仍由 pending request、owner lease 和其他 S1 Plus 页面恢复兜底。
+- shared background scheduler 的 owner 标签页被隐藏或冻结时，不能只依赖 owner 页的 `setTimeout` 到期。生命周期事件必须先进入 sync lifecycle checkpoint：先 finalize 本地变更（尤其是阅读进度），再重新读取 pending/shared scheduler 状态，然后隐藏页要么强制补发 pending 推送，要么释放 owner 让其他页面接管。storage 变更导致隐藏页成为/接管 owner 时仍要触发补发；可见的非 owner 页必须在看到有效 owner lease 时设置短期恢复观察，到 lease 过期仍未续租就接管 owner 并重新排 shared timer；若原 `dueAt` 已过期，应立即进入后台推送。关闭/卸载页只做本地 finalize + owner handoff，不假设网络写入能完成，实际补发仍由 pending request、owner lease 和其他 S1 Plus 页面恢复兜底。
 - 自动拉取后需要刷新列表页 / 普通页时，默认延迟 `AUTO_PULL_RELOAD_DELAY_MS`（当前 3.2s）再刷新；刷新提示的 toast 会覆盖完整等待窗口，避免用户还没看清提示就被页面刷新打断。
 - `merged_read_progress` 是例外：它只代表阅读进度分歧已安全自动合并，合并 payload 已通过 `importLocalData()` 导入本地。列表页应只调用阅读进度按钮原地刷新策略 `read_progress_merged_inline`，同会话/同设备场景也要保留这次 inline refresh，但保持静默。
 - 非后台模式（例如每日首次启动同步）完成 `merged_read_progress` 后，也要清理已覆盖的 pending request / shared debounce，避免启动期自动合并成功后又被旧的阅读进度调度重复触发。
