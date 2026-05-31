@@ -17992,6 +17992,13 @@
         now,
         tabId,
       });
+      if (scheduled && document.visibilityState !== "visible") {
+        queueSharedBackgroundSyncDebounceHiddenFlush("recovery_hidden_owner", {
+          ...options,
+          now,
+          tabId,
+        });
+      }
       return {
         status: scheduled ? "scheduled" : "skipped",
         reason: scheduled ? "current_tab_owner_timer_scheduled" : "timer_failed",
@@ -18017,6 +18024,13 @@
       now,
       tabId,
     });
+    if (acquired && document.visibilityState !== "visible") {
+      queueSharedBackgroundSyncDebounceHiddenFlush("recovery_hidden_takeover", {
+        ...options,
+        now,
+        tabId,
+      });
+    }
     return {
       status: acquired ? "scheduled" : "skipped",
       reason: acquired ? "owner_recovered" : "owner_acquire_failed",
@@ -18553,11 +18567,21 @@
     setAutoSyncIndicatorPendingPhase(savedState?.reason || dueDecision.reason);
     const isOwner = Boolean(savedState && savedState.ownerTabId === tabId);
     if (isOwner) {
-      scheduleSharedBackgroundSyncDebounceTimer(savedState, {
-        ...options,
-        now,
-        tabId,
-      });
+      const ownerTimerScheduled = scheduleSharedBackgroundSyncDebounceTimer(
+        savedState,
+        {
+          ...options,
+          now,
+          tabId,
+        }
+      );
+      if (ownerTimerScheduled && document.visibilityState !== "visible") {
+        queueSharedBackgroundSyncDebounceHiddenFlush("request_hidden_owner", {
+          ...options,
+          now,
+          tabId,
+        });
+      }
     }
     recordSyncTraceEvent("shared_scheduler_scheduled", {
       scope: "shared_background_scheduler",

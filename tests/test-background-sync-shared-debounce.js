@@ -590,6 +590,63 @@ const testOwnerLeaseRecoveryCallbackTakesOverAndRunsPastDueTimer = () => {
   );
 };
 
+const testHiddenCurrentOwnerRecoveryQueuesImmediateFlush = async () => {
+  const { constants, hooks, setState, getState, sandbox } = getSharedDebounceApi();
+  const ownerTimers = createTimerSpy();
+  const now = 6_900_000;
+  const dueAt = now + READ_PROGRESS_SYNC_DEBOUNCE_MS;
+  let triggerCount = 0;
+  let triggerReason = "";
+  let schedulerContext = null;
+
+  sandbox.document.visibilityState = "hidden";
+  setState(
+    seedSharedState({
+      generation: 10,
+      ownerTabId: "tab-a",
+      ownerLeaseUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS,
+      dueAt,
+      maxWaitUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
+      firstDirtyAt: now - 2_000,
+      lastDirtyAt: now - 500,
+      maxLastModified: 6901,
+      sources: { read_progress: 1 },
+      threadIds: ["6901"],
+      reason: "debounced_read_progress",
+      dueSource: "read_progress",
+    })
+  );
+
+  const result = hooks.recoverSharedBackgroundSyncDebounceOwnerIfNeeded(now, {
+    tabId: "tab-a",
+    settingsSnapshot: readySyncSettings,
+    scheduleTimer: ownerTimers.scheduleTimer,
+    triggerRemoteSyncPush: (reason, context) => {
+      triggerCount += 1;
+      triggerReason = reason;
+      schedulerContext = toPlainObject(context);
+    },
+  });
+
+  assert.equal(result.status, "scheduled");
+  assert.equal(result.reason, "current_tab_owner_timer_scheduled");
+  assert.equal(ownerTimers.calls.length, 1);
+  assert.equal(
+    triggerCount,
+    0,
+    "hidden owner recovery should defer the flush until the current turn completes."
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  assert.equal(triggerCount, 1);
+  assert.equal(triggerReason, "debounced_read_progress");
+  assert.equal(schedulerContext.scheduledDueAt, dueAt);
+  assert.equal(schedulerContext.debounceGeneration, 10);
+  assert.equal(schedulerContext.intendedMaxLastModified, 6901);
+  assert.equal(getState(), null);
+};
+
 const testOwnerDueReReadsStateAndSkipsStaleGeneration = () => {
   const { constants, hooks, setState } = getSharedDebounceApi();
   const now = 7_000_000;
@@ -1193,6 +1250,54 @@ const testHiddenPageCanRecoverExpiredOwnerAndFlushImmediately = () => {
   assert.equal(getState(), null);
 };
 
+const testHiddenRecoveryOfExpiredOwnerQueuesImmediateFlush = async () => {
+  const { constants, hooks, setState, getState, sandbox } = getSharedDebounceApi();
+  const ownerTimers = createTimerSpy();
+  const now = 16_500_000;
+  const dueAt = now + READ_PROGRESS_SYNC_DEBOUNCE_MS;
+  let triggerCount = 0;
+  let triggerReason = "";
+
+  sandbox.document.visibilityState = "hidden";
+  setState(
+    seedSharedState({
+      generation: 11,
+      ownerTabId: "closed-tab",
+      ownerLeaseUntil: now - 1,
+      dueAt,
+      maxWaitUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
+      firstDirtyAt: now - 1000,
+      lastDirtyAt: now,
+      maxLastModified: 16501,
+      sources: { read_progress: 1 },
+      threadIds: ["16501"],
+      reason: "debounced_read_progress",
+      dueSource: "read_progress",
+    })
+  );
+
+  const result = hooks.recoverSharedBackgroundSyncDebounceOwnerIfNeeded(now, {
+    tabId: "tab-a",
+    settingsSnapshot: readySyncSettings,
+    scheduleTimer: ownerTimers.scheduleTimer,
+    triggerRemoteSyncPush: (reason) => {
+      triggerCount += 1;
+      triggerReason = reason;
+    },
+  });
+
+  assert.equal(result.status, "scheduled");
+  assert.equal(result.reason, "owner_recovered");
+  assert.equal(getState().ownerTabId, "tab-a");
+  assert.equal(ownerTimers.calls.length, 1);
+
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  assert.equal(triggerCount, 1);
+  assert.equal(triggerReason, "debounced_read_progress");
+  assert.equal(getState(), null);
+};
+
 const testHiddenFlushDoesNotStealActiveOtherOwner = () => {
   const { constants, hooks, setState, getState } = getSharedDebounceApi();
   const now = 17_000_000;
@@ -1275,6 +1380,47 @@ const testQueuedHiddenFlushRunsDeferredTask = async () => {
   assert.equal(getState(), null);
 };
 
+const testHiddenOwnerRequestQueuesImmediateFlushWhileAlreadyHidden = async () => {
+  const { request, getState, sandbox } = getSharedDebounceApi();
+  const now = 18_500_000;
+  const dueAt = now + READ_PROGRESS_SYNC_DEBOUNCE_MS;
+  let triggerCount = 0;
+  let triggerReason = "";
+  let schedulerContext = null;
+
+  sandbox.document.visibilityState = "hidden";
+
+  const result = request(
+    { source: "read_progress", lastModified: 18501, threadId: "18501" },
+    {
+      now,
+      tabId: "tab-a",
+      triggerRemoteSyncPush: (reason, context) => {
+        triggerCount += 1;
+        triggerReason = reason;
+        schedulerContext = toPlainObject(context);
+      },
+    }
+  );
+
+  assert.equal(result.status, "scheduled");
+  assert.equal(result.isOwner, true);
+  assert.equal(
+    triggerCount,
+    0,
+    "hidden owner request should defer the flush until the current turn completes."
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  assert.equal(triggerCount, 1);
+  assert.equal(triggerReason, "debounced_read_progress");
+  assert.equal(schedulerContext.scheduledDueAt, dueAt);
+  assert.equal(schedulerContext.debounceGeneration, 1);
+  assert.equal(schedulerContext.intendedMaxLastModified, 18501);
+  assert.equal(getState(), null);
+};
+
 const main = async () => {
   testReadProgressDirtyMergesIntoSingleSharedState();
   testSourceSpecificSettleWindows();
@@ -1288,6 +1434,7 @@ const main = async () => {
   testExpiredOwnerLeaseAllowsTakeover();
   testVisibleTabWatchesActiveOwnerLeaseForRecovery();
   testOwnerLeaseRecoveryCallbackTakesOverAndRunsPastDueTimer();
+  await testHiddenCurrentOwnerRecoveryQueuesImmediateFlush();
   testOwnerDueReReadsStateAndSkipsStaleGeneration();
   testOwnerDueConsumesSharedStateBeforeTrigger();
   testCoveredSuccessClearsPendingAndSharedState();
@@ -1301,8 +1448,10 @@ const main = async () => {
   testPendingRecoveryRecognizesCoveredSharedDebounce();
   testHiddenOwnerFlushForcesPendingSchedulerBeforeTimerDue();
   testHiddenPageCanRecoverExpiredOwnerAndFlushImmediately();
+  await testHiddenRecoveryOfExpiredOwnerQueuesImmediateFlush();
   testHiddenFlushDoesNotStealActiveOtherOwner();
   await testQueuedHiddenFlushRunsDeferredTask();
+  await testHiddenOwnerRequestQueuesImmediateFlushWhileAlreadyHidden();
 
   console.log("[background-sync-shared-debounce] Shared debounce scheduler checks passed.");
 };
