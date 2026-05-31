@@ -39,6 +39,8 @@ const REQUIRED_SHARED_DEBOUNCE_HOOKS = [
   "getBackgroundSyncDebounceRuntimeStateForTest",
   "getBackgroundAutoSyncRuntimeStateForTest",
   "getBackgroundSyncDebounceTestConstants",
+  "registerSyncLifecycleLocalMutationFinalizer",
+  "runSyncLifecycleCheckpoint",
 ];
 
 const readySyncSettings = Object.freeze({
@@ -1421,6 +1423,187 @@ const testHiddenOwnerRequestQueuesImmediateFlushWhileAlreadyHidden = async () =>
   assert.equal(getState(), null);
 };
 
+const testLifecycleCheckpointFinalizesLocalDirtyBeforeHiddenFlush = async () => {
+  const { hooks, getState, sandbox } = getSharedDebounceApi();
+  const ownerTimers = createTimerSpy();
+  const now = 18_900_000;
+  let finalizerCalled = false;
+  let triggerCount = 0;
+  let triggerReason = "";
+  let schedulerContext = null;
+
+  sandbox.document.visibilityState = "hidden";
+  hooks.registerSyncLifecycleLocalMutationFinalizer(
+    "test_read_progress_finalize",
+    () => {
+      finalizerCalled = true;
+      hooks.requestSharedBackgroundSyncDebounce(
+        { source: "read_progress", lastModified: 18901, threadId: "18901" },
+        {
+          now,
+          tabId: "tab-a",
+          settingsSnapshot: readySyncSettings,
+          scheduleTimer: ownerTimers.scheduleTimer,
+          triggerRemoteSyncPush: (reason, context) => {
+            triggerCount += 1;
+            triggerReason = reason;
+            schedulerContext = toPlainObject(context);
+          },
+        }
+      );
+    }
+  );
+
+  const result = hooks.runSyncLifecycleCheckpoint("visibility_hidden", {
+    phase: "hidden",
+    now,
+    tabId: "tab-a",
+    settingsSnapshot: readySyncSettings,
+    scheduleTimer: ownerTimers.scheduleTimer,
+    triggerRemoteSyncPush: (reason, context) => {
+      triggerCount += 1;
+      triggerReason = reason;
+      schedulerContext = toPlainObject(context);
+    },
+  });
+
+  assert.equal(finalizerCalled, true);
+  assert.equal(
+    triggerCount,
+    1,
+    "hidden checkpoint must not depend on a queued MessageChannel/setTimeout flush after local dirty is finalized."
+  );
+  assert.equal(triggerReason, "debounced_read_progress");
+  assert.equal(schedulerContext.debounceGeneration, 1);
+  assert.equal(schedulerContext.intendedMaxLastModified, 18901);
+  assert.equal(result.schedulerResult.status, "triggered");
+  assert.equal(getState(), null);
+
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(
+    triggerCount,
+    1,
+    "the older queued hidden flush fallback should find no state and must not trigger a second push."
+  );
+};
+
+const testLifecycleCheckpointHandsOffHiddenOwnerWhenFlushCannotRun = () => {
+  const { constants, hooks, setState, getState, sandbox, store } =
+    getSharedDebounceApi();
+  const ownerTimers = createTimerSpy();
+  const now = 19_200_000;
+  let triggerCount = 0;
+
+  sandbox.document.visibilityState = "hidden";
+  store.set("s1p_sync_global_lock", {
+    owner: "other-sync-owner",
+    timestamp: now,
+    mode: "background",
+    ttlMs: 30_000,
+  });
+  setState(
+    seedSharedState({
+      generation: 13,
+      ownerTabId: "tab-a",
+      ownerLeaseUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS,
+      dueAt: now + READ_PROGRESS_SYNC_DEBOUNCE_MS,
+      maxWaitUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
+      firstDirtyAt: now - 1000,
+      lastDirtyAt: now,
+      maxLastModified: 19201,
+      sources: { read_progress: 1 },
+      threadIds: ["19201"],
+      reason: "debounced_read_progress",
+      dueSource: "read_progress",
+    })
+  );
+
+  const result = hooks.runSyncLifecycleCheckpoint("visibility_hidden", {
+    phase: "hidden",
+    now,
+    tabId: "tab-a",
+    settingsSnapshot: readySyncSettings,
+    scheduleTimer: ownerTimers.scheduleTimer,
+    triggerRemoteSyncPush: () => {
+      triggerCount += 1;
+    },
+  });
+
+  assert.equal(triggerCount, 0);
+  assert.equal(result.schedulerResult.status, "scheduled");
+  assert.equal(result.schedulerResult.reason, "sync_lock_active");
+  assert.equal(result.handoffResult.status, "released");
+  assert.equal(result.handoffResult.reason, "owner_handoff");
+  assert.equal(getState().ownerTabId, "");
+};
+
+const testLifecycleCheckpointPagehideFinalizesButDoesNotStartPush = async () => {
+  const { constants, hooks, setState, getState, sandbox } =
+    getSharedDebounceApi();
+  const now = 19_600_000;
+  let finalizerCalled = false;
+  let triggerCount = 0;
+
+  sandbox.document.visibilityState = "hidden";
+  hooks.registerSyncLifecycleLocalMutationFinalizer(
+    "test_pagehide_finalize",
+    () => {
+      finalizerCalled = true;
+      hooks.requestSharedBackgroundSyncDebounce(
+        { source: "read_progress", lastModified: 19602, threadId: "19602" },
+        {
+          now,
+          tabId: "tab-a",
+          settingsSnapshot: readySyncSettings,
+          triggerRemoteSyncPush: () => {
+            triggerCount += 1;
+          },
+        }
+      );
+    }
+  );
+  setState(
+    seedSharedState({
+      generation: 14,
+      ownerTabId: "tab-a",
+      ownerLeaseUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS,
+      dueAt: now,
+      maxWaitUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
+      firstDirtyAt: now - 1000,
+      lastDirtyAt: now,
+      maxLastModified: 19601,
+      sources: { read_progress: 1 },
+      threadIds: ["19601"],
+      reason: "debounced_read_progress",
+      dueSource: "read_progress",
+    })
+  );
+
+  const result = hooks.runSyncLifecycleCheckpoint("pagehide", {
+    phase: "pagehide",
+    now,
+    tabId: "tab-a",
+    settingsSnapshot: readySyncSettings,
+    triggerRemoteSyncPush: () => {
+      triggerCount += 1;
+    },
+  });
+
+  assert.equal(finalizerCalled, true);
+  assert.equal(triggerCount, 0);
+  assert.equal(result.schedulerResult.status, "skipped");
+  assert.equal(result.schedulerResult.reason, "lifecycle_unload_handoff");
+  assert.equal(result.handoffResult.status, "released");
+  assert.equal(getState().ownerTabId, "");
+
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(
+    triggerCount,
+    0,
+    "pagehide checkpoint must cancel queued hidden flush fallbacks and leave recovery to durable pending/shared state."
+  );
+};
+
 const main = async () => {
   testReadProgressDirtyMergesIntoSingleSharedState();
   testSourceSpecificSettleWindows();
@@ -1452,6 +1635,9 @@ const main = async () => {
   testHiddenFlushDoesNotStealActiveOtherOwner();
   await testQueuedHiddenFlushRunsDeferredTask();
   await testHiddenOwnerRequestQueuesImmediateFlushWhileAlreadyHidden();
+  await testLifecycleCheckpointFinalizesLocalDirtyBeforeHiddenFlush();
+  testLifecycleCheckpointHandsOffHiddenOwnerWhenFlushCannotRun();
+  await testLifecycleCheckpointPagehideFinalizesButDoesNotStartPush();
 
   console.log("[background-sync-shared-debounce] Shared debounce scheduler checks passed.");
 };
