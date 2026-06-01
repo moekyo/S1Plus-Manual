@@ -226,11 +226,11 @@ const testActiveSyncSkipStaysQuiet = async () => {
   const diagnosticsText = hooks.buildSyncDiagnosticsSummary();
   assert.match(
     diagnosticsText,
-    /最近结果码: 已有同步任务正在执行，云端检查已跳过/
+    /最近结果码: 已有同步任务正在执行，自动拉取检查已跳过/
   );
   assert.match(
     diagnosticsText,
-    /最近探测结果: 已有同步任务正在执行，云端检查已跳过/
+    /最近探测结果: 已有同步任务正在执行，自动拉取检查已跳过/
   );
   assert.match(diagnosticsText, /探测是否触发安全同步: 否/);
 };

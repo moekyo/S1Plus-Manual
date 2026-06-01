@@ -69,8 +69,8 @@ const testRetryPendingKeepsExplicitOperationWhenPendingWriteIsDeduped =
     assert.equal(resolvedState.displaySource, "visible_poll");
     assert.equal(
       hooks.getAutoSyncIndicatorDisplayKind(resolvedState),
-      "sync",
-      "pending 状态写入被去重时，运行时 retry operation 仍应优先保留，不能因旧 source 回退成 pull。"
+      "probe",
+      "pending 状态写入被去重时，运行时 retry 应保持云端复查语义，不能因旧 source 回退成 pull。"
     );
 
     await wait(1500);
@@ -136,8 +136,8 @@ const testProbeGateBlocksChangedRemoteAndRetriesAfterLocalSettles = async () => 
   assert.equal(pendingIndicatorState.displaySource, "visible_poll");
   assert.equal(
     hooks.getAutoSyncIndicatorDisplayKind(pendingIndicatorState),
-    "sync",
-    "远端变化被前台门禁暂缓时，pending 指示器应显示中性三点，避免误显示待拉取。"
+    "probe",
+    "远端变化被前台门禁暂缓时，pending 指示器应显示放大镜复查态，避免误显示待拉取。"
   );
 
   const diagnostics = toPlainObject(hooks.getSyncDiagnostics());
