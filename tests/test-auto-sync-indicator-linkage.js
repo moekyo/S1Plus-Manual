@@ -147,8 +147,8 @@ const testSourceAwareTitlesAndMappings = () => {
       displayReason: "foreground_probe_verification_retry",
       displayOperation: "sync",
     }),
-    "sync",
-    "云端版本时间相同的内部复查在保底映射中仍应使用中性三点，而不是拉取箭头。"
+    "probe",
+    "云端版本时间相同的内部复查应显示放大镜确认态，而不是中性三点或拉取箭头。"
   );
   assert.strictEqual(
     hooks.getAutoSyncIndicatorTitle({
@@ -166,8 +166,8 @@ const testSourceAwareTitlesAndMappings = () => {
       displayReason: "foreground_probe_changed_retry",
       displayOperation: "sync",
     }),
-    "sync",
-    "metadata-only 发现 updated_at 变化但补同步被门禁暂缓时，应先用中性三点等待复查。"
+    "probe",
+    "metadata-only 发现 updated_at 变化但补同步被门禁暂缓时，应显示放大镜等待复查。"
   );
   assert.strictEqual(
     hooks.getAutoSyncIndicatorPhaseFromResult({
@@ -453,8 +453,8 @@ const testSharedSchedulerAndLocksFeedUnifiedDisplayState = () => {
   assert.equal(resolvedState.displaySource, "foreground_resume");
   assert.equal(
     hooks.getAutoSyncIndicatorDisplayKind(resolvedState),
-    "sync",
-    "前台二次确认进入 running 锁窗口时仍应保持中性三点，不能回退成默认拉取箭头。"
+    "probe",
+    "前台二次确认进入 running 锁窗口时应显示放大镜确认态，不能回退成默认拉取箭头。"
   );
 };
 
@@ -567,8 +567,8 @@ const testDisplaySessionCoalescesPushVerification = () => {
   assert.equal(resolvedState.displaySubstate, "settling");
   assert.equal(
     hooks.getAutoSyncIndicatorDisplayKind(resolvedState),
-    "push",
-    "同机会话刚推送后的二次确认应继承 push 主方向，而不是切回中性 sync。"
+    "probe",
+    "同机会话刚推送后的二次确认应显示为云端确认探测，而不是待推送箭头。"
   );
   assert.equal(
     hooks.getAutoSyncIndicatorTitle(resolvedState),

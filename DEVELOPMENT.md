@@ -401,7 +401,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 
 ### 6.4 手动覆盖：导航栏直接拉取 / 推送
 
-导航栏同步按钮点击或悬停后选择的“拉取”或“推送”是显式手动覆盖路径，优先级高于冲突暂停、待同步队列、自动同步运行态和已有同步锁。用户点下以后，当前自动体系的状态要先被取消，再按用户指定方向重新开始一次手动操作。
+导航栏同步按钮的点击和悬停都会打开同一个“拉取 / 推送”菜单；点击只是键盘、触摸或 hover 不可靠场景的备用入口，不直接执行同步。菜单里选择的“拉取”或“推送”才是显式手动覆盖路径，优先级高于冲突暂停、待同步队列、自动同步运行态和已有同步锁。用户点下方向以后，当前自动体系的状态要先被取消，再按用户指定方向重新开始一次手动操作。
 
 入口顺序：
 
@@ -445,7 +445,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 
 前台云端检查路径是两段式：
 > `Idle` ➞ `Running(probe)` ➞ *(metadata unchanged)* ➞ `Idle`
-> `Idle` ➞ `Running(probe)` ➞ *(metadata changed)* ➞ `Pending(sync)` 或 `Running(sync/pull)` ➞ `Success / Failure / Conflict / Idle`
+> `Idle` ➞ `Running(probe)` ➞ *(metadata changed)* ➞ `Pending(probe)` 或 `Running(sync/pull)` ➞ `Success / Failure / Conflict / Idle`
 
 #### 显示状态解析顺序
 `resolveAutoSyncIndicatorDisplayPhase()` 会把持久化状态、运行时锁、pending 队列和视觉会话合成为导航栏最终显示态。当前优先级如下：
@@ -457,9 +457,9 @@ node tests/test-category-c-and-image-viewer-glass-css.js
    - 持久化 `running` 状态未达到 `AUTO_SYNC_INDICATOR_RUNNING_MIN_VISIBLE_MS`（当前 650ms）或写入仍在进行时，会继续显示 running，避免刚开始就硬切走。
 2. **可见 pending**
    - 后台 shared debounce、后台 retry、pending auto-sync request 显示为 `Pending(push)`，并按来源归纳为“阅读进度 / 清理结果 / 本地变更待推送”。
-   - 前台发现云端 `updated_at` 变新、但本地 pending write / debounce 门禁要求稍后复查时，显示 `Pending(sync)`，文案为“云端有变化，等待本地状态稳定后复查”。这表示可能有云端更新待处理，必须保留。
+   - 前台发现云端 `updated_at` 变新、但本地 pending write / debounce 门禁要求稍后复查时，显示 `Pending(probe)`，文案为“云端有变化，等待本地状态稳定后复查”。这表示可能有云端更新待处理，必须保留，但视觉上仍是放大镜复查态，不提前表达为拉取或同步三点。
    - 前台 follow-up 已确认需要拉取但暂时重试时，显示 `Pending(pull)`，优先级高于本地 push pending，避免远端更新被本地队列盖住。
-   - 云端 `updated_at` 与本地已同步版本相同的 `remote_probe_equal_ambiguous:*` 只安排内部二次校验，不再单独点亮导航栏 pending；只有刚刚同标签页完成自动推送且仍在视觉归并窗口内时，才合并显示为 `Pending(push)` 收尾态“推送完成，正在确认云端状态”。
+   - 云端 `updated_at` 与本地已同步版本相同的 `remote_probe_equal_ambiguous:*` 只安排内部二次校验，不再单独点亮导航栏 pending；只有刚刚同标签页完成自动推送且仍在视觉归并窗口内时，才合并显示为 `Pending(probe)` 收尾态“推送完成，正在确认云端状态”。
 3. **结果态 TTL**
    - 网络合并完成后，调用 `finishAutoSyncIndicatorCycle(token, phase)` 或 `setAutoSyncIndicatorResolvedPhase(phase)` 写入 `Success / Failure / Conflict`。
    - `Success` 显示打勾；`Failure / Conflict` 显示减号。
@@ -467,14 +467,14 @@ node tests/test-category-c-and-image-viewer-glass-css.js
    - 导航栏 TTL：Success 2.4s / Failure 9s / Conflict 12s。标题同步状态有独立的分钟级 TTL，不要混用。
 4. **视觉会话层**
    - `applyAutoSyncIndicatorDisplaySession()` 负责把内部步骤合成用户语义：本地 push session、远端 pull session、cloud probe session、manual session、blocked session。
-   - 刚完成的自动推送会记录 `lastAutoSyncIndicatorDisplaySession`（30s 归并窗口、900ms 最短收尾、5s 最长收尾）。如果随后出现等值二次校验，会被合并成 push settling，而不是显示内部 verification pending。
+   - 刚完成的自动推送会记录 `lastAutoSyncIndicatorDisplaySession`（30s 归并窗口、900ms 最短收尾、5s 最长收尾）。如果随后出现等值二次校验，会被合并成 push settling，并用放大镜显示云端确认态，而不是显示内部 verification pending 或继续沿用待推送箭头。
    - 如果 settling 期间又出现新的本地 dirty / shared debounce，立即续到 `Pending(push)`，文案按本地来源重新计算。
    - 过期的 push session 不再影响后续前台 probe；等值二次校验静默执行，导航栏保持 `Idle`。
 
 实现注意：
 
 - 快速完成的 metadata-only probe 不应点亮 indicator；慢 probe 只显示放大镜，不提前表达为拉取。
-- `remote_probe_equal_ambiguous:*` 只是“版本时间相同后的保守二次确认”，不是远端更新命中；除刚完成本标签页自动推送后的 push settling 收尾外，导航栏和标题状态都应静默，不要显示为 pending、拉取或成功。
+- `remote_probe_equal_ambiguous:*` 只是“版本时间相同后的保守二次确认”，不是远端更新命中；除刚完成本标签页自动推送后的 push settling 收尾外，导航栏和标题状态都应静默，不要显示为 pending、拉取或成功。push settling 收尾若显示在导航栏，也必须是放大镜确认态，不是待推送箭头。
 - 标题同步状态使用 `ttlProfile: "title"` 时必须静默纯 `cloud_probe_session` 的 `Running(probe)` 和明确的远端拉取状态；metadata-only probe 仅用于检查云端版本，不应让后台标签标题显示 `[同步中.]`，云端拉取也不应占用标题提示。
 - 标题路径不得仅凭 `displaySource: background_push` 推断为本地推送。若原始 `operation` 是 `pull` / `probe`，或原始 source 与 display source 不一致导致显示态被默认成 background push，标题必须静默；这个保护只属于标签页标题消费者，不改变导航栏指示器或实际同步状态。
 - 标题 `Running Phase` 必须绑定 Live Runner：`ttlProfile: "title"` 下，只有当前标签页仍持有有效 background sync lock / global background lock 时，`resolveAutoSyncIndicatorDisplayPhase()` 才能保留 running 并写出 `displayLiveRunnerOwnerId`。其它标签页即使看到新鲜锁，也必须回到 idle，避免 ghost running。
@@ -482,6 +482,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - Result Phase（success / failure / conflict）可以跨标签页 handoff：旧 Title Owner 关闭、presence 失效或 owner lease 失效时，剩余后台 S1 标签页可以显式刷新/取得 Title Owner lease 并继续显示结果 TTL。这个 handoff 不得用于 Running Phase。
 - stale running 不得回退旧结果：如果最新 Sync Indicator State 是 running，但标题层无法验证 Live Runner，且 `lastResolvedTimestamp < state.timestamp`，标题保持 idle，等待 resolved-state writer（如 `finishAutoSyncIndicatorCycle()` / `setAutoSyncIndicatorResolvedPhase()`）写入新的 Result Phase。
 - 前台 retry pending 的运行时 `source` 必须从 `remote_probe_*:<triggerSource>` 原因中还原，不能统一写成 `foreground_resume`；否则 `displayOperation` 会被来源不一致保护丢弃，重新默认成待拉取箭头。
+- 前台 retry pending 的 `foreground_probe_verification_retry` / `foreground_probe_changed_retry` 必须解析成 `operation: probe` 的显示态；它们分别代表云端确认或等待复查，不应该复用中性三点，也不应该回退成 push/pull 箭头。
 - 只有真正进入 follow-up safe sync、后台自动同步、手动同步锁，或达到可见阈值的 probe，才切换到 `running`。
 - 当前实现已经为不同来源保留 `source` 字段，后续扩展时优先沿用现有来源枚举，而不是新增自由文本。
 - 推送/拉取方向图标的 `Pending` 与 `Running` 共用同一组三箭头 SVG：`Pending` 仅显示前两枚箭头并整体 `scale(1.25)`，两枚箭头直接对齐 `Running` 队列接手相位；`Running` 启动三箭头队列并整体 `scale(1.18)`。`pending -> running` 过渡只做缩放和第三枚接入，不要让已有箭头先向同步方向的反方向拉开。方向图标本体不要用半透明弱化，颜色需与 `#s1p-nav-sync-btn` 的 `var(--s1p-t)` 保持一致。调试面板的固定转场必须覆盖 push / pull 两个 pending 方向。

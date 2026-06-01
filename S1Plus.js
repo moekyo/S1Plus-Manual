@@ -13067,7 +13067,12 @@
     reason = ""
   ) => {
     const normalizedReason = normalizeAutoSyncIndicatorReason(reason);
-    if (normalizedReason === "foreground_probe_in_flight") {
+    if (
+      normalizedReason === "foreground_probe_in_flight" ||
+      normalizedReason ===
+        AUTO_SYNC_INDICATOR_REASON_FOREGROUND_PROBE_VERIFICATION_RETRY ||
+      normalizedReason === AUTO_SYNC_INDICATOR_REASON_FOREGROUND_PROBE_CHANGED_RETRY
+    ) {
       return AUTO_SYNC_INDICATOR_OPERATION_PROBE;
     }
     switch (normalizeAutoSyncIndicatorSource(source)) {
@@ -35684,7 +35689,17 @@
     const reason = normalizeAutoSyncIndicatorReason(
       stateInput?.displayReason || stateInput?.reason
     );
-    if (reason === "foreground_probe_in_flight") {
+    if (
+      reason === "foreground_probe_in_flight" ||
+      reason === AUTO_SYNC_INDICATOR_REASON_FOREGROUND_PROBE_VERIFICATION_RETRY ||
+      reason === AUTO_SYNC_INDICATOR_REASON_FOREGROUND_PROBE_CHANGED_RETRY
+    ) {
+      return AUTO_SYNC_INDICATOR_OPERATION_PROBE;
+    }
+    if (
+      stateInput?.displaySessionKind === "local_push_session" &&
+      stateInput?.displaySubstate === "settling"
+    ) {
       return AUTO_SYNC_INDICATOR_OPERATION_PROBE;
     }
 
