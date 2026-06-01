@@ -105,6 +105,7 @@ saveSettings(settings);
 - Reuse `.s1p-glass-panel` for large shell-style frosted glass surfaces such as settings and debug panels.
 - Do not nest `.s1p-glass-panel` inside another `backdrop-filter` root.
 - Top-level fullscreen modals use `.s1p-fullscreen-modal` for viewport coverage and the unified backdrop pseudo-element.
+- Top-level fullscreen modal motion should preserve queue order: open the backdrop before the content shell, and close the content shell before fading the backdrop.
 - Settings panel `.s1p-modal` must keep direct `backdrop-filter: none`; `.s1p-modal-content.s1p-glass-panel` is the visible shell.
 - Settings-local secondary dialogs such as `.s1p-token-config-modal` should be mounted inside `.s1p-modal-content`, not promoted to `.s1p-fullscreen-modal`.
 - Settings-hosted secondary dialogs use the explicit secondary glass opt-in (`S1P_SETTINGS_SECONDARY_GLASS_CLASS`, `buildSettingsSecondaryGlassClassName()`, or `useSettingsSecondaryGlass: true`). Do not infer this state from a global `.s1p-modal` query; only use anchored checks such as `isSettingsSecondaryGlassContext(inputEl)` when the trigger element is known.
