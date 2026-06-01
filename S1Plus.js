@@ -2376,6 +2376,15 @@
   const SVG_ICON_GRID = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="16" height="16" class="s1p-progress-detail-btn-icon"><path d="M3 3H21C21.5523 3 22 3.44772 22 4V20C22 20.5523 21.5523 21 21 21H3C2.44772 21 2 20.5523 2 20V4C2 3.44772 2.44772 3 3 3ZM4 5V19H20V5H4ZM7 7H11V11H7V7ZM7 13H11V17H7V13ZM13 7H17V11H13V7ZM13 13H17V17H13V13Z"></path></svg>`;
   const SVG_ICON_KEBAB = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>`;
   const S1P_FULLSCREEN_MODAL_CLASS = "s1p-fullscreen-modal";
+  const S1P_FULLSCREEN_MODAL_BACKDROP_OPEN_CLASS =
+    "s1p-fullscreen-modal-backdrop-open";
+  const S1P_FULLSCREEN_MODAL_CONTENT_OPEN_CLASS =
+    "s1p-fullscreen-modal-content-open";
+  const S1P_FULLSCREEN_MODAL_OPENING_CLASS = "s1p-modal-opening";
+  const S1P_FULLSCREEN_MODAL_CLOSING_CLASS = "s1p-modal-closing";
+  const S1P_FULLSCREEN_MODAL_BACKDROP_ANIMATION_MS = 160;
+  const S1P_FULLSCREEN_MODAL_CONTENT_ENTER_DELAY_MS = 170;
+  const S1P_FULLSCREEN_MODAL_ANIMATION_FALLBACK_GAP_MS = 60;
   const S1P_SETTINGS_SECONDARY_GLASS_CLASS = "s1p-settings-secondary-glass";
   const buildS1pFullscreenModalClassName = (...classNames) =>
     [S1P_FULLSCREEN_MODAL_CLASS, ...classNames]
@@ -5617,8 +5626,14 @@
       inset: 0;
       z-index: 0;
       pointer-events: none;
+      opacity: 0;
       -webkit-backdrop-filter: blur(var(--s1p-overlay-blur));
       backdrop-filter: blur(var(--s1p-overlay-blur));
+      transition: opacity ${S1P_FULLSCREEN_MODAL_BACKDROP_ANIMATION_MS}ms cubic-bezier(0.22, 1, 0.36, 1) !important;
+      will-change: opacity;
+    }
+    .s1p-fullscreen-modal.${S1P_FULLSCREEN_MODAL_BACKDROP_OPEN_CLASS}::before {
+      opacity: 1;
     }
     .s1p-fullscreen-modal > * {
       position: relative;
@@ -5628,11 +5643,19 @@
       justify-content: center;
       align-items: center;
       z-index: 9999;
-      transition: opacity 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+      transition: none;
+    }
+    .s1p-modal > .s1p-modal-content {
+      opacity: 0;
+      transform: translate3d(0, 10px, 0) scale(0.985);
+    }
+    .s1p-modal.${S1P_FULLSCREEN_MODAL_CONTENT_OPEN_CLASS} > .s1p-modal-content {
+      opacity: 1;
+      transform: translate3d(0, 0, 0) scale(1);
     }
     .s1p-modal.s1p-modal-opening .s1p-modal-content {
       animation: s1p-settings-modal-scale-in 0.28s cubic-bezier(0.22, 1, 0.36, 1)
-        both;
+        ${S1P_FULLSCREEN_MODAL_CONTENT_ENTER_DELAY_MS}ms both;
       will-change: transform, opacity;
     }
     .s1p-modal.s1p-modal-closing .s1p-modal-content {
@@ -5779,6 +5802,23 @@
       }
     }
     @media (prefers-reduced-motion: reduce) {
+      .s1p-fullscreen-modal::before,
+      .s1p-modal > .s1p-modal-content,
+      .s1p-confirm-modal > .s1p-confirm-content {
+        transition: none !important;
+        animation: none !important;
+      }
+      .s1p-modal.s1p-modal-opening > .s1p-modal-content,
+      .s1p-confirm-modal.s1p-modal-opening > .s1p-confirm-content,
+      .s1p-modal.${S1P_FULLSCREEN_MODAL_CONTENT_OPEN_CLASS} > .s1p-modal-content,
+      .s1p-confirm-modal.${S1P_FULLSCREEN_MODAL_CONTENT_OPEN_CLASS} > .s1p-confirm-content {
+        opacity: 1 !important;
+        transform: none !important;
+      }
+      .s1p-modal.s1p-modal-closing > .s1p-modal-content,
+      .s1p-confirm-modal.s1p-modal-closing > .s1p-confirm-content {
+        opacity: 0 !important;
+      }
       .s1p-modal > .s1p-modal-content > .s1p-modal-body {
         transition: none !important;
       }
@@ -6371,7 +6411,7 @@
         opacity: 1;
       }
       to {
-        transform: scale(0.97);
+        transform: scale(0.95);
         opacity: 0;
       }
     }
@@ -6397,8 +6437,25 @@
     }
     .s1p-confirm-modal {
       z-index: 10000;
-      animation: s1p-fade-in 0.2s ease-out;
       transition: none;
+    }
+    .s1p-confirm-modal > .s1p-confirm-content {
+      opacity: 0;
+      transform: scale(0.95);
+    }
+    .s1p-confirm-modal.${S1P_FULLSCREEN_MODAL_CONTENT_OPEN_CLASS} > .s1p-confirm-content {
+      opacity: 1;
+      transform: scale(1);
+    }
+    .s1p-confirm-modal.s1p-modal-opening > .s1p-confirm-content {
+      animation: s1p-scale-in 0.25s cubic-bezier(0.22, 1, 0.36, 1)
+        ${S1P_FULLSCREEN_MODAL_CONTENT_ENTER_DELAY_MS}ms both;
+      will-change: transform, opacity;
+    }
+    .s1p-confirm-modal.s1p-modal-closing > .s1p-confirm-content {
+      animation: s1p-scale-out 0.25s cubic-bezier(0.22, 1, 0.36, 1)
+        forwards;
+      will-change: transform, opacity;
     }
     /* 嵌套在已打开的全屏弹层上时，次级弹窗不再叠加第二层蒙版。 */
     .s1p-modal ~ .s1p-fullscreen-modal,
@@ -6422,7 +6479,6 @@
       max-width: 90%;
       text-align: left;
       overflow: hidden;
-      animation: s1p-scale-in 0.25s ease-out;
       transition: none;
       backface-visibility: hidden;
       transform-origin: center;
@@ -22817,6 +22873,194 @@
     }
     return Math.max(0, Number(durationMs) || 0);
   };
+  const resolveS1pFullscreenModalAnimationDuration = (durationMs) => {
+    if (isS1pReducedMotionPreferred()) {
+      return 0;
+    }
+    return Math.max(0, Number(durationMs) || 0);
+  };
+  const runS1pFullscreenModalOpenSequence = (
+    modal,
+    {
+      content = null,
+      contentAnimationMs = 250,
+      fallbackGapMs = S1P_FULLSCREEN_MODAL_ANIMATION_FALLBACK_GAP_MS,
+      onContentOpened = null,
+    } = {}
+  ) => {
+    if (!(modal instanceof Element)) {
+      return;
+    }
+    const contentEl = content instanceof Element ? content : null;
+    const safeContentDuration =
+      resolveS1pFullscreenModalAnimationDuration(
+        S1P_FULLSCREEN_MODAL_CONTENT_ENTER_DELAY_MS + contentAnimationMs
+      );
+    const safeFallbackGap = Math.max(0, Number(fallbackGapMs) || 0);
+    let contentAnimationEndHandler = null;
+    let fallbackTimer = 0;
+    let settled = false;
+    const unbindContentAnimationEnd = () => {
+      if (!contentEl || !contentAnimationEndHandler) {
+        return;
+      }
+      contentEl.removeEventListener("animationend", contentAnimationEndHandler);
+      contentEl.removeEventListener("animationcancel", contentAnimationEndHandler);
+      contentAnimationEndHandler = null;
+    };
+
+    const finalizeContentOpen = () => {
+      if (settled || !modal.isConnected) {
+        return;
+      }
+      settled = true;
+      unbindContentAnimationEnd();
+      if (fallbackTimer) {
+        window.clearTimeout(fallbackTimer);
+        fallbackTimer = 0;
+      }
+      if (modal.classList.contains(S1P_FULLSCREEN_MODAL_CLOSING_CLASS)) {
+        return;
+      }
+      modal.classList.remove(S1P_FULLSCREEN_MODAL_OPENING_CLASS);
+      modal.classList.add(S1P_FULLSCREEN_MODAL_CONTENT_OPEN_CLASS);
+      if (typeof onContentOpened === "function") {
+        onContentOpened();
+      }
+    };
+
+    modal.classList.remove(
+      S1P_FULLSCREEN_MODAL_CLOSING_CLASS,
+      S1P_FULLSCREEN_MODAL_CONTENT_OPEN_CLASS
+    );
+
+    window.requestAnimationFrame(() => {
+      if (!modal.isConnected) {
+        return;
+      }
+      modal.classList.add(S1P_FULLSCREEN_MODAL_BACKDROP_OPEN_CLASS);
+      modal.classList.add(S1P_FULLSCREEN_MODAL_OPENING_CLASS);
+      if (!contentEl || safeContentDuration <= 0) {
+        finalizeContentOpen();
+        return;
+      }
+      contentAnimationEndHandler = (event) => {
+        if (event.target === contentEl) {
+          finalizeContentOpen();
+        }
+      };
+      contentEl.addEventListener("animationend", contentAnimationEndHandler);
+      contentEl.addEventListener("animationcancel", contentAnimationEndHandler);
+      fallbackTimer = window.setTimeout(
+        finalizeContentOpen,
+        safeContentDuration + safeFallbackGap
+      );
+    });
+  };
+  const closeS1pFullscreenModalWithSequence = (
+    modal,
+    {
+      content = null,
+      immediate = false,
+      contentAnimationMs = 250,
+      backdropAnimationMs = S1P_FULLSCREEN_MODAL_BACKDROP_ANIMATION_MS,
+      fallbackGapMs = S1P_FULLSCREEN_MODAL_ANIMATION_FALLBACK_GAP_MS,
+      onRemove = null,
+    } = {}
+  ) => {
+    if (!(modal instanceof Element)) {
+      return;
+    }
+    const contentEl = content instanceof Element ? content : null;
+    const safeContentDuration =
+      resolveS1pFullscreenModalAnimationDuration(contentAnimationMs);
+    const safeBackdropDuration =
+      resolveS1pFullscreenModalAnimationDuration(backdropAnimationMs);
+    const safeFallbackGap = Math.max(0, Number(fallbackGapMs) || 0);
+    let contentTimer = 0;
+    let backdropTimer = 0;
+    let contentAnimationEndHandler = null;
+    let contentClosed = false;
+    let removed = false;
+    const unbindContentAnimationEnd = () => {
+      if (!contentEl || !contentAnimationEndHandler) {
+        return;
+      }
+      contentEl.removeEventListener("animationend", contentAnimationEndHandler);
+      contentEl.removeEventListener("animationcancel", contentAnimationEndHandler);
+      contentAnimationEndHandler = null;
+    };
+
+    const removeModal = () => {
+      if (removed) {
+        return;
+      }
+      removed = true;
+      if (contentTimer) {
+        window.clearTimeout(contentTimer);
+        contentTimer = 0;
+      }
+      unbindContentAnimationEnd();
+      if (backdropTimer) {
+        window.clearTimeout(backdropTimer);
+        backdropTimer = 0;
+      }
+      if (modal.isConnected) {
+        modal.remove();
+      }
+      if (typeof onRemove === "function") {
+        onRemove();
+      }
+    };
+
+    if (immediate) {
+      removeModal();
+      return;
+    }
+
+    const closeBackdrop = () => {
+      if (contentClosed || removed || !modal.isConnected) {
+        return;
+      }
+      contentClosed = true;
+      if (contentTimer) {
+        window.clearTimeout(contentTimer);
+        contentTimer = 0;
+      }
+      unbindContentAnimationEnd();
+      modal.classList.remove(S1P_FULLSCREEN_MODAL_BACKDROP_OPEN_CLASS);
+      if (safeBackdropDuration <= 0) {
+        removeModal();
+        return;
+      }
+      backdropTimer = window.setTimeout(
+        removeModal,
+        safeBackdropDuration + safeFallbackGap
+      );
+    };
+
+    modal.classList.remove(
+      S1P_FULLSCREEN_MODAL_OPENING_CLASS,
+      S1P_FULLSCREEN_MODAL_CONTENT_OPEN_CLASS
+    );
+    modal.classList.add(S1P_FULLSCREEN_MODAL_CLOSING_CLASS);
+
+    if (!contentEl || safeContentDuration <= 0) {
+      closeBackdrop();
+      return;
+    }
+    contentAnimationEndHandler = (event) => {
+      if (event.target === contentEl) {
+        closeBackdrop();
+      }
+    };
+    contentEl.addEventListener("animationend", contentAnimationEndHandler);
+    contentEl.addEventListener("animationcancel", contentAnimationEndHandler);
+    contentTimer = window.setTimeout(
+      closeBackdrop,
+      safeContentDuration + safeFallbackGap
+    );
+  };
   const hideS1pGenericDisplayPopoverImmediately = () => {
     const popover = document.getElementById("s1p-generic-display-popover");
     if (popover && popover.s1p_api && typeof popover.s1p_api.hide === "function") {
@@ -22976,6 +23220,10 @@
     state.overlay.classList.remove("is-visible");
     state.overlay.classList.remove("is-panel-open");
     state.overlay.classList.remove("is-overlay-open");
+    state.overlay.classList.remove(S1P_FULLSCREEN_MODAL_BACKDROP_OPEN_CLASS);
+    state.overlay.classList.remove(S1P_FULLSCREEN_MODAL_CONTENT_OPEN_CLASS);
+    state.overlay.classList.remove(S1P_FULLSCREEN_MODAL_OPENING_CLASS);
+    state.overlay.classList.remove(S1P_FULLSCREEN_MODAL_CLOSING_CLASS);
     state.overlay.classList.remove("is-nav-visible");
     state.overlay.classList.remove("has-gallery");
     state.overlay.classList.remove("is-switch-loading");
@@ -24017,6 +24265,7 @@
       if (!canContinueS1pImageViewerClosing()) {
         return;
       }
+      latestState.overlay.classList.remove(S1P_FULLSCREEN_MODAL_BACKDROP_OPEN_CLASS);
       latestState.overlay.classList.remove("is-overlay-open");
       if (closeAnimationDurationMs <= 0) {
         finalizeS1pImageViewerCloseState();
@@ -25795,6 +26044,7 @@
       if (!latestState.isOpen || !latestState.overlay) {
         return;
       }
+      latestState.overlay.classList.add(S1P_FULLSCREEN_MODAL_BACKDROP_OPEN_CLASS);
       latestState.overlay.classList.add("is-overlay-open");
       if (openPanelDelayMs <= 0) {
         latestState.overlay.classList.add("is-panel-open");
@@ -37828,7 +38078,12 @@
     });
 
     document.querySelectorAll(".s1p-image-viewer").forEach((viewer) => {
-      viewer.classList.remove("is-visible", "is-overlay-open", "is-panel-open");
+      viewer.classList.remove(
+        "is-visible",
+        "is-overlay-open",
+        "is-panel-open",
+        S1P_FULLSCREEN_MODAL_BACKDROP_OPEN_CLASS
+      );
       viewer.setAttribute("aria-hidden", "true");
     });
 
@@ -39213,16 +39468,12 @@
         settleDismiss(reason);
       }
       closing = true;
-      if (immediate) {
-        modal.remove();
-        return;
-      }
       const confirmContent = modal.querySelector(".s1p-confirm-content");
-      if (confirmContent) {
-        confirmContent.style.animation = "s1p-scale-out 0.25s ease-out forwards";
-      }
-      modal.style.animation = "s1p-fade-out 0.25s ease-out forwards";
-      setTimeout(() => modal.remove(), 250);
+      closeS1pFullscreenModalWithSequence(modal, {
+        content: confirmContent,
+        immediate,
+        contentAnimationMs: 250,
+      });
     };
     modal.s1p_api = {
       dismiss: ({ reason = "dismissed", immediate = false } = {}) =>
@@ -39245,6 +39496,10 @@
       }
     });
     document.body.appendChild(modal);
+    runS1pFullscreenModalOpenSequence(modal, {
+      content,
+      contentAnimationMs: 250,
+    });
   };
 
   /**
@@ -39350,16 +39605,12 @@
         settleDismiss(reason);
       }
       closing = true;
-      if (immediate) {
-        modal.remove();
-        return;
-      }
       const content = modal.querySelector(".s1p-confirm-content");
-      if (content) {
-        content.style.animation = "s1p-scale-out 0.25s ease-out forwards";
-      }
-      modal.style.animation = "s1p-fade-out 0.25s ease-out forwards";
-      setTimeout(() => modal.remove(), 250);
+      closeS1pFullscreenModalWithSequence(modal, {
+        content,
+        immediate,
+        contentAnimationMs: 250,
+      });
     };
     modal.s1p_api = {
       dismiss: ({ reason = "dismissed", immediate = false } = {}) =>
@@ -39407,6 +39658,10 @@
       }
     });
     document.body.appendChild(modal);
+    runS1pFullscreenModalOpenSequence(modal, {
+      content,
+      contentAnimationMs: 250,
+    });
   };
 
   /**
@@ -40556,7 +40811,6 @@
     const settingsModalTabsHtml = buildSettingsModalTabsHtml();
     const modal = document.createElement("div");
     modal.className = buildS1pFullscreenModalClassName("s1p-modal");
-    modal.style.opacity = "0";
     modal.innerHTML = `<div class="s1p-modal-content s1p-glass-panel">
             <div class="s1p-modal-header"><div class="s1p-modal-title">S1 Plus 设置</div>${buildModalCloseButtonHtml({
       ariaLabel: "关闭设置面板",
@@ -42211,13 +42465,11 @@
       const closeModal = ({ immediate = false } = {}) => {
         if (isClosing) return;
         isClosing = true;
-        if (immediate) {
-          modal.remove();
-          return;
-        }
-        content.style.animation = "s1p-scale-out 0.25s ease-out forwards";
-        modal.style.animation = "s1p-fade-out 0.25s ease-out forwards";
-        setTimeout(() => modal.remove(), 250);
+        closeS1pFullscreenModalWithSequence(modal, {
+          content,
+          immediate,
+          contentAnimationMs: 250,
+        });
       };
 
       const setSubmittingState = (submitting) => {
@@ -42330,6 +42582,10 @@
       });
 
       document.body.appendChild(modal);
+      runS1pFullscreenModalOpenSequence(modal, {
+        content,
+        contentAnimationMs: 250,
+      });
       setTimeout(() => {
         usernameInput.focus();
         usernameInput.select();
@@ -43772,8 +44028,6 @@
     let modalBodyContentResizeObserver = null;
     let observedModalBodyTabContent = null;
     let modalBodyObserverIgnoreCallbacks = 0;
-    let settingsModalOpenAnimationTimer = 0;
-    let settingsModalCloseAnimationTimer = 0;
     let modalBodyHeightAnimationTimer = 0;
     let modalBodyHeightReconcileRaf = 0;
     let modalBodyHeightPendingReconcile = false;
@@ -43785,8 +44039,6 @@
     const SETTINGS_MODAL_BODY_HEIGHT_ANIMATION_MS = 350;
     const SETTINGS_MODAL_BODY_HEIGHT_EPSILON_PX = 1;
     const SETTINGS_MODAL_BODY_HEIGHT_RECONCILE_COOLDOWN_MS = 100;
-    const SETTINGS_MODAL_OPEN_ANIMATION_NAME = "s1p-settings-modal-scale-in";
-    const SETTINGS_MODAL_CLOSE_ANIMATION_NAME = "s1p-settings-modal-scale-out";
     let isClosingManagementModal = false;
     const SETTINGS_MODAL_CLOSE_ANIMATION_MS = 250;
     const getSettingsModalTabIndex = (tabKey) =>
@@ -44189,50 +44441,15 @@
       cancelSettingsModalNeighborPrewarm();
       clearSettingsModalBookmarkSearchTimer();
       settingsModalBookmarkSearchComposing = false;
-      if (settingsModalOpenAnimationTimer) {
-        window.clearTimeout(settingsModalOpenAnimationTimer);
-        settingsModalOpenAnimationTimer = 0;
-      }
-      if (settingsModalCloseAnimationTimer) {
-        window.clearTimeout(settingsModalCloseAnimationTimer);
-        settingsModalCloseAnimationTimer = 0;
-      }
       stopModalBodyHeightAnimation(modal.querySelector(".s1p-modal-body"), {
         resetToAuto: true,
       });
-      modal.classList.remove("s1p-modal-opening");
       modal.style.pointerEvents = "none";
-      modal.style.opacity = "0";
-      modal.classList.add("s1p-modal-closing");
-      const finalizeClose = () => {
-        if (settingsModalCloseAnimationTimer) {
-          window.clearTimeout(settingsModalCloseAnimationTimer);
-          settingsModalCloseAnimationTimer = 0;
-        }
-        if (modal.isConnected) {
-          modal.remove();
-        }
-      };
-      modalContent.addEventListener(
-        "animationend",
-        (event) => {
-          if (event.target !== modalContent) {
-            return;
-          }
-          if (
-            event.animationName &&
-            event.animationName !== SETTINGS_MODAL_CLOSE_ANIMATION_NAME
-          ) {
-            return;
-          }
-          finalizeClose();
-        },
-        { once: true }
-      );
-      settingsModalCloseAnimationTimer = window.setTimeout(
-        finalizeClose,
-        SETTINGS_MODAL_CLOSE_ANIMATION_MS + SETTINGS_MODAL_ANIMATION_FALLBACK_GAP_MS
-      );
+      closeS1pFullscreenModalWithSequence(modal, {
+        content: modalContent,
+        contentAnimationMs: SETTINGS_MODAL_CLOSE_ANIMATION_MS,
+        fallbackGapMs: SETTINGS_MODAL_ANIMATION_FALLBACK_GAP_MS,
+      });
     };
     settingsModalEscKeydownHandler = bindEscCloseForStyledModal({
       onClose: closeManagementModal,
@@ -44434,38 +44651,10 @@
       updateObservedModalBodyTabContent();
     }
 
-    modal.classList.add("s1p-modal-opening");
-    modalContent.addEventListener(
-      "animationend",
-      (event) => {
-        if (event.target !== modalContent) {
-          return;
-        }
-        if (
-          event.animationName &&
-          event.animationName !== SETTINGS_MODAL_OPEN_ANIMATION_NAME
-        ) {
-          return;
-        }
-        modal.classList.remove("s1p-modal-opening");
-      },
-      { once: true }
-    );
-    settingsModalOpenAnimationTimer = window.setTimeout(
-      () => {
-        settingsModalOpenAnimationTimer = 0;
-        if (!modal.isConnected) {
-          return;
-        }
-        modal.classList.remove("s1p-modal-opening");
-      },
-      SETTINGS_MODAL_OPEN_ANIMATION_MS + SETTINGS_MODAL_ANIMATION_FALLBACK_GAP_MS
-    );
-    requestAnimationFrame(() => {
-      if (!modal.isConnected || isClosingManagementModal) {
-        return;
-      }
-      modal.style.opacity = "1";
+    runS1pFullscreenModalOpenSequence(modal, {
+      content: modalContent,
+      contentAnimationMs: SETTINGS_MODAL_OPEN_ANIMATION_MS,
+      fallbackGapMs: SETTINGS_MODAL_ANIMATION_FALLBACK_GAP_MS,
     });
     // [REPLACE ENTIRE EVENT LISTENER BLOCK]
     modal.addEventListener("change", (e) => {
@@ -46610,16 +46799,12 @@
         settleDismiss(reason);
       }
       closing = true;
-      if (immediate) {
-        modal.remove();
-        return;
-      }
       const confirmContent = modal.querySelector(".s1p-confirm-content");
-      if (confirmContent) {
-        confirmContent.style.animation = "s1p-scale-out 0.25s ease-out forwards";
-      }
-      modal.style.animation = "s1p-fade-out 0.25s ease-out forwards";
-      setTimeout(() => modal.remove(), 250);
+      closeS1pFullscreenModalWithSequence(modal, {
+        content: confirmContent,
+        immediate,
+        contentAnimationMs: 250,
+      });
     };
 
     modal.s1p_api = {
@@ -46656,6 +46841,10 @@
     });
 
     document.body.appendChild(modal);
+    runS1pFullscreenModalOpenSequence(modal, {
+      content,
+      contentAnimationMs: 250,
+    });
   };
 
   const addBlockButtonsToThreadRows = (rows = []) => {
@@ -50723,9 +50912,10 @@
       }
       isClosing = true;
       clearReadingProgressModalEscHandler();
-      content.style.animation = "s1p-scale-out 0.25s ease-out forwards";
-      modal.style.animation = "s1p-fade-out 0.25s ease-out forwards";
-      setTimeout(() => modal.remove(), 250);
+      closeS1pFullscreenModalWithSequence(modal, {
+        content,
+        contentAnimationMs: 250,
+      });
     };
     readingProgressModalEscHandler = bindEscCloseForStyledModal({
       onClose: closeModal,
@@ -50747,6 +50937,10 @@
     }
 
     document.body.appendChild(modal);
+    runS1pFullscreenModalOpenSequence(modal, {
+      content,
+      contentAnimationMs: 250,
+    });
   };
 
   const notifyAutoSyncConflictPausedIfNeeded = async () => {
