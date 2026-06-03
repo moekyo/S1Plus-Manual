@@ -15793,6 +15793,7 @@
       return { covered: false, state, reason: "shared_debounce_not_covering" };
     }
     if (state.ownerTabId && state.ownerLeaseUntil > now) {
+      recoverSharedBackgroundSyncDebounceOwnerIfNeeded(now, options);
       return { covered: true, state, reason: "covered_by_shared_debounce" };
     }
     if (tryAcquireBackgroundSyncDebounceOwner(state, now, options)) {

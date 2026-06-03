@@ -1121,6 +1121,7 @@ const testSharedDebounceWriteRetriesWhenVerificationLosesRequest = () => {
 
 const testPendingRecoveryRecognizesCoveredSharedDebounce = () => {
   const { constants, hooks, setState } = getSharedDebounceApi();
+  const recoveryTimers = createRecoveryTimerSpy();
   const now = 14_000_000;
   const state = seedSharedState({
     generation: 8,
@@ -1155,12 +1156,75 @@ const testPendingRecoveryRecognizesCoveredSharedDebounce = () => {
     "shared debounce 覆盖 pending 的所有 source/thread/maxLastModified 时，应阻止 per-tab pending recovery。"
   );
   assert.deepEqual(
-    toPlainObject(hooks.getPendingAutoSyncSharedDebounceCoverage(pending, now)),
+    toPlainObject(
+      hooks.getPendingAutoSyncSharedDebounceCoverage(pending, now, {
+        tabId: "tab-b",
+        settingsSnapshot: readySyncSettings,
+        scheduleRecoveryTimer: recoveryTimers.scheduleRecoveryTimer,
+      })
+    ),
     {
       covered: true,
       state,
       reason: "covered_by_shared_debounce",
     }
+  );
+};
+
+const testPendingRecoveryWatchesCoveredActiveSharedOwner = () => {
+  const { constants, hooks, setState } = getSharedDebounceApi();
+  const recoveryTimers = createRecoveryTimerSpy();
+  const now = 14_500_000;
+  const state = seedSharedState({
+    generation: 9,
+    ownerTabId: "hidden-owner",
+    ownerLeaseUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS,
+    dueAt: now + READ_PROGRESS_SYNC_DEBOUNCE_MS,
+    maxWaitUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
+    firstDirtyAt: now,
+    lastDirtyAt: now,
+    maxLastModified: 14502,
+    sources: { read_progress: 1 },
+    threadIds: ["14502"],
+    reason: "debounced_read_progress",
+    dueSource: "read_progress",
+  });
+  const pending = {
+    source: "read_progress",
+    sources: { read_progress: 1 },
+    lastModified: 14502,
+    maxLastModified: 14502,
+    createdAt: now,
+    firstDirtyAt: now,
+    lastDirtyAt: now,
+    threadIds: ["14502"],
+  };
+
+  setState(state);
+
+  assert.deepEqual(
+    toPlainObject(
+      hooks.getPendingAutoSyncSharedDebounceCoverage(pending, now, {
+        tabId: "visible-tab",
+        settingsSnapshot: readySyncSettings,
+        scheduleRecoveryTimer: recoveryTimers.scheduleRecoveryTimer,
+      })
+    ),
+    {
+      covered: true,
+      state,
+      reason: "covered_by_shared_debounce",
+    }
+  );
+  assert.equal(
+    recoveryTimers.calls.length,
+    1,
+    "pending recovery 被 shared debounce 覆盖时，可见非 owner 仍要观察 owner lease，避免隐藏 owner 卡住推送。"
+  );
+  assert.equal(
+    recoveryTimers.calls[0].delayMs,
+    constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS +
+      constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_RECOVERY_GRACE_MS
   );
 };
 
@@ -1629,6 +1693,7 @@ const main = async () => {
   testLockActiveRescheduleLogIsThrottled();
   testSharedDebounceWriteRetriesWhenVerificationLosesRequest();
   testPendingRecoveryRecognizesCoveredSharedDebounce();
+  testPendingRecoveryWatchesCoveredActiveSharedOwner();
   testHiddenOwnerFlushForcesPendingSchedulerBeforeTimerDue();
   testHiddenPageCanRecoverExpiredOwnerAndFlushImmediately();
   await testHiddenRecoveryOfExpiredOwnerQueuesImmediateFlush();
