@@ -2410,12 +2410,21 @@
   const S1P_FULLSCREEN_MODAL_CONTENT_ENTER_DELAY_MS = 170;
   const S1P_FULLSCREEN_MODAL_ANIMATION_FALLBACK_GAP_MS = 60;
   const S1P_SETTINGS_SECONDARY_GLASS_CLASS = "s1p-settings-secondary-glass";
+  const S1P_FIRST_LEVEL_GLASS_CLASS = "s1p-first-level-glass";
+  const S1P_FIRST_LEVEL_GLASS_SETTINGS_PRESET_CLASS =
+    "s1p-first-level-glass--settings";
+  const S1P_FIRST_LEVEL_GLASS_CONFIRM_PRESET_CLASS =
+    "s1p-first-level-glass--confirm";
   const buildS1pFullscreenModalClassName = (...classNames) =>
     [S1P_FULLSCREEN_MODAL_CLASS, ...classNames]
       .filter(Boolean)
       .join(" ");
   const buildSettingsSecondaryGlassClassName = (...classNames) =>
     [S1P_SETTINGS_SECONDARY_GLASS_CLASS, ...classNames]
+      .filter(Boolean)
+      .join(" ");
+  const buildFirstLevelGlassClassName = (presetClassName, ...classNames) =>
+    [...classNames, S1P_FIRST_LEVEL_GLASS_CLASS, presetClassName]
       .filter(Boolean)
       .join(" ");
   const isSettingsSecondaryGlassContext = (anchor = null) =>
@@ -2467,6 +2476,12 @@
       --s1p-floating-surface-bg: rgba(255, 255, 255, 0.48);
       --s1p-floating-surface-filter: blur(6px) saturate(1.08);
       --s1p-floating-surface-shadow: 0 7px 18px rgba(0, 0, 0, 0.1);
+      --s1p-first-level-glass-settings-bg: var(--s1p-glass-panel-bg);
+      --s1p-first-level-glass-settings-filter: var(--s1p-glass-panel-filter);
+      --s1p-first-level-glass-settings-shadow: var(--s1p-dialog-glass-shadow);
+      --s1p-first-level-glass-confirm-bg: var(--s1p-floating-surface-bg);
+      --s1p-first-level-glass-confirm-filter: var(--s1p-floating-surface-filter);
+      --s1p-first-level-glass-confirm-shadow: var(--s1p-floating-surface-shadow);
       --s1p-inline-action-surface-bg: rgba(255, 255, 255, 0.34);
       --s1p-inline-action-surface-shadow: 0 5px 14px rgba(0, 0, 0, 0.08);
       --s1p-inline-action-hover-bg: rgba(255, 255, 255, 0.32);
@@ -5863,7 +5878,6 @@
       --s1p-settings-scrollbar-track: transparent;
       border: none;
       border-radius: 12px;
-      box-shadow: 0 18px 44px rgba(0, 0, 0, 0.22);
     }
     @media (prefers-color-scheme: dark) {
       .s1p-modal > .s1p-modal-content {
@@ -6635,13 +6649,9 @@
       display: none;
     }
     .s1p-confirm-content {
-      background: var(--s1p-floating-surface-bg);
       color: var(--s1p-dialog-text);
       border: none;
       border-radius: 12px;
-      box-shadow: var(--s1p-floating-surface-shadow);
-      -webkit-backdrop-filter: var(--s1p-floating-surface-filter);
-      backdrop-filter: var(--s1p-floating-surface-filter);
       width: 480px;
       max-width: 90%;
       text-align: left;
@@ -7060,6 +7070,22 @@
       border: none;
       -webkit-backdrop-filter: var(--s1p-glass-panel-filter);
       backdrop-filter: var(--s1p-glass-panel-filter);
+    }
+    .s1p-first-level-glass--settings {
+      --s1p-first-level-glass-bg: var(--s1p-first-level-glass-settings-bg);
+      --s1p-first-level-glass-filter: var(--s1p-first-level-glass-settings-filter);
+      --s1p-first-level-glass-shadow: var(--s1p-first-level-glass-settings-shadow);
+    }
+    .s1p-first-level-glass--confirm {
+      --s1p-first-level-glass-bg: var(--s1p-first-level-glass-confirm-bg);
+      --s1p-first-level-glass-filter: var(--s1p-first-level-glass-confirm-filter);
+      --s1p-first-level-glass-shadow: var(--s1p-first-level-glass-confirm-shadow);
+    }
+    .s1p-first-level-glass {
+      background: var(--s1p-first-level-glass-bg);
+      box-shadow: var(--s1p-first-level-glass-shadow);
+      -webkit-backdrop-filter: var(--s1p-first-level-glass-filter);
+      backdrop-filter: var(--s1p-first-level-glass-filter);
     }
     .s1p-input-full {
       width: 100%;
@@ -39839,7 +39865,12 @@
     modal.className = buildS1pFullscreenModalClassName("s1p-confirm-modal");
 
     const content = document.createElement("div");
-    content.className = "s1p-confirm-content";
+    content.className = useSettingsSecondaryGlass
+      ? "s1p-confirm-content"
+      : buildFirstLevelGlassClassName(
+        S1P_FIRST_LEVEL_GLASS_CONFIRM_PRESET_CLASS,
+        "s1p-confirm-content"
+      );
     if (useSettingsSecondaryGlass) {
       content.classList.add(S1P_SETTINGS_SECONDARY_GLASS_CLASS);
     }
@@ -39964,7 +39995,12 @@
     modal.className = buildS1pFullscreenModalClassName("s1p-confirm-modal");
 
     const content = document.createElement("div");
-    content.className = "s1p-confirm-content";
+    content.className = useSettingsSecondaryGlass
+      ? "s1p-confirm-content"
+      : buildFirstLevelGlassClassName(
+        S1P_FIRST_LEVEL_GLASS_CONFIRM_PRESET_CLASS,
+        "s1p-confirm-content"
+      );
     if (useSettingsSecondaryGlass) {
       content.classList.add(S1P_SETTINGS_SECONDARY_GLASS_CLASS);
     }
@@ -41274,7 +41310,11 @@
     const settingsModalTabsHtml = buildSettingsModalTabsHtml();
     const modal = document.createElement("div");
     modal.className = buildS1pFullscreenModalClassName("s1p-modal");
-    modal.innerHTML = `<div class="s1p-modal-content s1p-glass-panel">
+    modal.innerHTML = `<div class="${buildFirstLevelGlassClassName(
+      S1P_FIRST_LEVEL_GLASS_SETTINGS_PRESET_CLASS,
+      "s1p-modal-content",
+      "s1p-glass-panel"
+    )}">
             <div class="s1p-modal-header"><div class="s1p-modal-title">S1 Plus 设置</div>${buildModalCloseButtonHtml({
       ariaLabel: "关闭设置面板",
       tooltipText: "关闭设置面板",
@@ -47430,7 +47470,12 @@
     }
 
     const content = document.createElement("div");
-    content.className = "s1p-confirm-content";
+    content.className = useSettingsSecondaryGlass
+      ? "s1p-confirm-content"
+      : buildFirstLevelGlassClassName(
+        S1P_FIRST_LEVEL_GLASS_CONFIRM_PRESET_CLASS,
+        "s1p-confirm-content"
+      );
     if (useSettingsSecondaryGlass) {
       content.classList.add(S1P_SETTINGS_SECONDARY_GLASS_CLASS);
     }
