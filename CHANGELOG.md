@@ -4,6 +4,14 @@
 
 - **滚轮行为可配置**: 通用设置中新增 S1 Plus 图片查看器滚轮行为选项，可在“调整缩放比例”和“上下滚动页面”之间切换；同一区域新增自定义 range slider，随当前模式调整滚轮缩放幅度或滚动画布幅度，并按鼠标/触控板滚轮信号平滑折算，支持按当前模式单独恢复默认。
 
+### 🪟 一级窗口玻璃系统重构 (First-Level Glass System Refactor)
+
+- **玻璃材质抽象集中化**: 新增 `.s1p-first-level-glass` 基础类以及 `--settings` / `--confirm` 预设变体，统一管理一级弹窗/面板的背景、阴影与 backdrop-filter 材质变量，取代此前分散在 `.s1p-confirm-content` 和 `.s1p-modal-content` 中的硬编码 floating surface 变量。
+- **确认弹窗材质迁移**: `.s1p-confirm-content` 在非 settings-secondary 上下文中自动应用 `.s1p-first-level-glass--confirm`，继承 floating surface 同款背景、阴影与滤镜；保持 `s1p-confirm-content` 作为语义/布局类，仅负责尺寸、滚动与文本 token。
+- **设置面板统一接入**: `.s1p-modal-content` 在设置面板场景中改为通过 `buildFirstLevelGlassClassName(S1P_FIRST_LEVEL_GLASS_SETTINGS_PRESET_CLASS, ...)` 接入一级玻璃系统，不再在设置面板选择器内单独绑定背景/阴影。
+- **材质变量收口**: 新增 `--s1p-first-level-glass-settings-bg/filter/shadow` 与 `--s1p-first-level-glass-confirm-bg/filter/shadow`，分别映射到 dialog glass 和 floating surface 变量，消除三级确认弹窗与设置面板的材质样式分散。
+
+
 ### 🚀 跨标签架构性能重构 (Cross-tab Architecture Performance Refactor)
 
 - **启动同步新鲜窗口动态化**: 启动同步编排器保留 4 秒基础新鲜窗口；若论坛首开加载较慢但页面仍可见且用户尚未点击、滚动或键盘操作，则临时放宽到 15 秒，避免首次可见云端 probe 被误跳过，同时防止已开始浏览的旧页面晚到刷新。

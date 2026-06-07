@@ -109,7 +109,8 @@ saveSettings(settings);
 - Settings panel `.s1p-modal` must keep direct `backdrop-filter: none`; `.s1p-modal-content.s1p-glass-panel` is the visible shell.
 - Settings-local secondary dialogs such as `.s1p-token-config-modal` should be mounted inside `.s1p-modal-content`, not promoted to `.s1p-fullscreen-modal`.
 - Settings-hosted secondary dialogs use the explicit secondary glass opt-in (`S1P_SETTINGS_SECONDARY_GLASS_CLASS`, `buildSettingsSecondaryGlassClassName()`, or `useSettingsSecondaryGlass: true`). Do not infer this state from a global `.s1p-modal` query; only use anchored checks such as `isSettingsSecondaryGlassContext(inputEl)` when the trigger element is known.
-- Confirm dialog content shells (`.s1p-confirm-content`) use the floating-surface material variables (`--s1p-floating-surface-*`) for background, shadow, and filter while keeping dialog text tokens for readability.
+- First-level window glass is centralized on `.s1p-first-level-glass` plus a preset class. Use `s1p-first-level-glass--settings` for the main settings shell and `s1p-first-level-glass--confirm` for generic top-level confirm/input/advanced dialogs.
+- Keep `.s1p-modal-content`, `.s1p-glass-panel`, and `.s1p-confirm-content` as structural/semantic classes. The first-level glass class owns background, shadow, and filter; the structural classes should keep layout, sizing, scrolling, text, and motion behavior.
 - Keep settings/debug shell blur aligned with `--s1p-dialog-glass-filter`; avoid hardcoded strong blur such as `blur(12px)`.
 - Keep `--s1p-dialog-glass-*` available for settings/debug glass panels, settings-local Token date configuration, and dense inner surfaces such as sync comparison blocks.
 - Settings `.s1p-modal-body` owns the rounded scroll viewport background and clipping; `.s1p-tab-panels` stays transparent.
