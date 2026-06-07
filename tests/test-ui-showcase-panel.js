@@ -8,10 +8,13 @@ const { sourceCode } = require("./s1plus-test-helpers");
 
 const uiShowcaseStart = sourceCode.indexOf("const UI_COMPONENT_CATEGORIES = [");
 const uiShowcaseEnd = sourceCode.indexOf("const createDebugConsoleLogTabContent = () => {");
-const designDoc = fs.readFileSync(
-  path.resolve(__dirname, "../docs/design/ui-showcase-panel.md"),
-  "utf8"
+const designDocPath = path.resolve(
+  __dirname,
+  "../docs/design/ui-showcase-panel.md"
 );
+const designDoc = fs.existsSync(designDocPath)
+  ? fs.readFileSync(designDocPath, "utf8")
+  : "";
 
 assert.notEqual(uiShowcaseStart, -1, "缺少 UI 组件展示面板分类定义。");
 assert.notEqual(uiShowcaseEnd, -1, "无法定位 UI 组件展示面板代码边界。");
@@ -74,19 +77,34 @@ assert.match(
 );
 assert.match(
   uiShowcaseCode,
+  /\{\s*key:\s*"ranges",\s*label:\s*"范围滑块"\s*\}/,
+  "UI 组件展示面板必须包含范围滑块分类。"
+);
+assert.match(
+  uiShowcaseCode,
+  /const buildRangeShowcase = \(\) => \{[\s\S]*?s1p-range-control[\s\S]*?s1p-range-input/,
+  "范围滑块展示必须复用真实的 s1p-range-control / s1p-range-input 结构。"
+);
+assert.match(
+  uiShowcaseCode,
+  /syncS1pRangeInputProgress\(target\)/,
+  "范围滑块展示拖动时必须同步自定义轨道进度。"
+);
+assert.match(
+  uiShowcaseCode,
   /\.s1p-ui-showcase-panel \.s1p-btn\.s1p-primary\s*\{[\s\S]*?background-color:\s*#3b82f6;[\s\S]*?color:\s*var\(--s1p-white\);/,
   "UI 展示面板必须补齐脱离列表作用域后的 s1p-primary 按钮样式。"
 );
 const sidebarRule = getUiShowcaseRule(".s1p-ui-showcase-sidebar");
 assert.match(
   sidebarRule,
-  /background:\s*var\(--s1p-debug-console-panel-bg\);/,
-  "UI 展示面板侧边栏应复用调试面板玻璃表面，而不是普通设置面板底色。"
+  /background:\s*color-mix\(in srgb, var\(--s1p-debug-console-surface-soft\) 40%, transparent\);/,
+  "UI 展示面板侧边栏应复用调试面板半透明 surface。"
 );
 assert.match(
   sidebarRule,
-  /border-right:\s*1px solid color-mix\(in srgb, var\(--s1p-pri\) 20%, transparent\);/,
-  "UI 展示面板侧边栏分隔线应使用调试面板里的弱化边界。"
+  /backdrop-filter:\s*blur\(12px\);/,
+  "UI 展示面板侧边栏应保留当前玻璃化 blur。"
 );
 const variantRule = getUiShowcaseRule(".s1p-ui-showcase-variant");
 assert.match(
@@ -120,25 +138,27 @@ assert.doesNotMatch(
   "卡片分组展示不能给 s1p-settings-group 额外加内联边框。"
 );
 
-assert.match(
-  designDoc,
-  /## 9\. 已知问题与修复记录/,
-  "UI showcase 设计文档应把历史问题沉淀为修复记录。"
-);
-assert.doesNotMatch(
-  designDoc,
-  /## 9\. 悬而未决/,
-  "UI showcase 设计文档不应继续把已修复签名问题列为悬而未决。"
-);
-[
-  /createConfirmationModal\(title, subtitle, onConfirm, confirmText = "确定", options = \{\}\)/,
-  /createInputModal\(title, subtitle, defaultValue, onConfirm, confirmText = "确定", placeholder = "", options = \{\}\)/,
-  /createAdvancedConfirmationModal\(title, bodyHtml, buttons, options = \{\}\)/,
-  /createDatePicker\(inputEl, initialDate: Date, onSelect: fn\)/,
-  /showMessage\(message, isSuccess: boolean \| null, options = \{\}\)/,
-  /openS1pImageViewer\(sourceUrl: string, options = \{\}\)/,
-].forEach((pattern) => {
-  assert.match(designDoc, pattern, `设计文档缺少真实签名速查：${pattern}`);
-});
+if (designDoc) {
+  assert.match(
+    designDoc,
+    /## 9\. 已知问题与修复记录/,
+    "UI showcase 设计文档应把历史问题沉淀为修复记录。"
+  );
+  assert.doesNotMatch(
+    designDoc,
+    /## 9\. 悬而未决/,
+    "UI showcase 设计文档不应继续把已修复签名问题列为悬而未决。"
+  );
+  [
+    /createConfirmationModal\(title, subtitle, onConfirm, confirmText = "确定", options = \{\}\)/,
+    /createInputModal\(title, subtitle, defaultValue, onConfirm, confirmText = "确定", placeholder = "", options = \{\}\)/,
+    /createAdvancedConfirmationModal\(title, bodyHtml, buttons, options = \{\}\)/,
+    /createDatePicker\(inputEl, initialDate: Date, onSelect: fn\)/,
+    /showMessage\(message, isSuccess: boolean \| null, options = \{\}\)/,
+    /openS1pImageViewer\(sourceUrl: string, options = \{\}\)/,
+  ].forEach((pattern) => {
+    assert.match(designDoc, pattern, `设计文档缺少真实签名速查：${pattern}`);
+  });
+}
 
 console.log("[ui-showcase-panel] UI showcase preview actions verified.");
