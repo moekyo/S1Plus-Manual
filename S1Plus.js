@@ -2199,6 +2199,16 @@
   const S1P_IMAGE_VIEWER_MIN_SCALE = 0.08;
   const S1P_IMAGE_VIEWER_MAX_SCALE = 8;
   const S1P_IMAGE_VIEWER_ZOOM_STEP = 0.16;
+  const S1P_IMAGE_VIEWER_WHEEL_MODE_ZOOM = "zoom";
+  const S1P_IMAGE_VIEWER_WHEEL_MODE_SCROLL = "scroll";
+  const S1P_IMAGE_VIEWER_WHEEL_ZOOM_STEP_DEFAULT_PERCENT = 6;
+  const S1P_IMAGE_VIEWER_WHEEL_ZOOM_STEP_MIN_PERCENT = 1;
+  const S1P_IMAGE_VIEWER_WHEEL_ZOOM_STEP_MAX_PERCENT = 18;
+  const S1P_IMAGE_VIEWER_WHEEL_SCROLL_STEP_DEFAULT_PERCENT = 6;
+  const S1P_IMAGE_VIEWER_WHEEL_SCROLL_STEP_MIN_PERCENT = 1;
+  const S1P_IMAGE_VIEWER_WHEEL_SCROLL_STEP_MAX_PERCENT = 16;
+  const S1P_IMAGE_VIEWER_WHEEL_DELTA_REFERENCE_PX = 100;
+  const S1P_IMAGE_VIEWER_WHEEL_DELTA_MAX_UNITS = 4;
   const S1P_IMAGE_VIEWER_SCROLL_STEP_RATIO = 0.24;
   const S1P_IMAGE_VIEWER_SCROLL_STEP_MIN_PX = 56;
   const S1P_IMAGE_VIEWER_SCROLL_STEP_MAX_PX = 360;
@@ -2238,6 +2248,20 @@
       Math.max(IMAGE_PREVIEW_LIMIT_MIN, rounded)
     );
   };
+  const normalizeBoundedIntegerValue = (value, fallback, min, max) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) {
+      return fallback;
+    }
+    const safeMin = Number(min);
+    const safeMax = Number(max);
+    const rounded = Math.round(parsed);
+    return Math.min(safeMax, Math.max(safeMin, rounded));
+  };
+  const normalizeS1pImageViewerWheelMode = (value) =>
+    value === S1P_IMAGE_VIEWER_WHEEL_MODE_SCROLL
+      ? S1P_IMAGE_VIEWER_WHEEL_MODE_SCROLL
+      : S1P_IMAGE_VIEWER_WHEEL_MODE_ZOOM;
   const normalizeBooleanWithDefault = (value, defaultValue = true) =>
     typeof value === "boolean" ? value : defaultValue;
   const resolveImagePreviewLimitState = (rawSettings = {}) => {
@@ -4316,6 +4340,149 @@
     .s1p-segmented-control-option:not(.active):hover {
       background-color: var(--s1p-pri);
       color: var(--s1p-t);
+    }
+    /* --- 通用范围滑块控件 --- */
+    .s1p-range-control {
+      display: grid;
+      gap: 8px;
+      width: min(100%, 360px);
+      padding: 2px 0 6px;
+    }
+    .s1p-range-control-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .s1p-range-actions {
+      display: inline-flex;
+      flex: 0 0 auto;
+      align-items: center;
+      gap: 6px;
+    }
+    .s1p-range-label {
+      min-width: 0;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--s1p-t);
+      line-height: 1.4;
+    }
+    .s1p-range-value {
+      flex: 0 0 auto;
+      min-width: 52px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--s1p-sec) 14%, transparent);
+      color: var(--s1p-t);
+      font-size: 12px;
+      font-weight: 600;
+      line-height: 1.5;
+      text-align: center;
+      font-variant-numeric: tabular-nums;
+    }
+    .s1p-range-actions .s1p-btn.s1p-range-reset-btn {
+      min-height: 24px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 500;
+      line-height: 1.5;
+      transform: none;
+    }
+    .s1p-range-actions .s1p-btn.s1p-range-reset-btn:hover {
+      transform: translateY(-1px);
+    }
+    .s1p-range-input {
+      --s1p-range-progress: 50%;
+      width: 100%;
+      height: 24px;
+      margin: 0;
+      padding: 0;
+      background: transparent;
+      cursor: pointer;
+      accent-color: var(--s1p-sec);
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .s1p-range-input:focus {
+      outline: none;
+    }
+    .s1p-range-input::-webkit-slider-runnable-track {
+      height: 6px;
+      border-radius: 999px;
+      background: linear-gradient(
+        90deg,
+        var(--s1p-sec) 0 var(--s1p-range-progress),
+        color-mix(in srgb, var(--s1p-sub) 86%, transparent)
+          var(--s1p-range-progress) 100%
+      );
+      box-shadow: inset 0 0 0 1px rgba(var(--s1p-shadow-color-rgb), 0.06);
+    }
+    .s1p-range-input::-webkit-slider-thumb {
+      width: 18px;
+      height: 18px;
+      margin-top: -6px;
+      border: 2px solid var(--s1p-sec);
+      border-radius: 50%;
+      background: var(--s1p-white);
+      box-shadow: 0 2px 5px rgba(var(--s1p-shadow-color-rgb), 0.18);
+      -webkit-appearance: none;
+      appearance: none;
+      transition: transform 0.16s ease, box-shadow 0.16s ease;
+    }
+    .s1p-range-input:hover::-webkit-slider-thumb {
+      transform: scale(1.06);
+      box-shadow: 0 3px 7px rgba(var(--s1p-shadow-color-rgb), 0.22);
+    }
+    .s1p-range-input:focus-visible::-webkit-slider-thumb {
+      box-shadow: 0 0 0 4px color-mix(in srgb, var(--s1p-sec) 24%, transparent),
+        0 2px 5px rgba(var(--s1p-shadow-color-rgb), 0.18);
+    }
+    .s1p-range-input::-moz-range-track {
+      height: 6px;
+      border: none;
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--s1p-sub) 86%, transparent);
+      box-shadow: inset 0 0 0 1px rgba(var(--s1p-shadow-color-rgb), 0.06);
+    }
+    .s1p-range-input::-moz-range-progress {
+      height: 6px;
+      border-radius: 999px;
+      background: var(--s1p-sec);
+    }
+    .s1p-range-input::-moz-range-thumb {
+      width: 14px;
+      height: 14px;
+      border: 2px solid var(--s1p-sec);
+      border-radius: 50%;
+      background: var(--s1p-white);
+      box-shadow: 0 2px 5px rgba(var(--s1p-shadow-color-rgb), 0.18);
+      transition: transform 0.16s ease, box-shadow 0.16s ease;
+    }
+    .s1p-range-input:hover::-moz-range-thumb {
+      transform: scale(1.06);
+      box-shadow: 0 3px 7px rgba(var(--s1p-shadow-color-rgb), 0.22);
+    }
+    .s1p-range-input:focus-visible::-moz-range-thumb {
+      box-shadow: 0 0 0 4px color-mix(in srgb, var(--s1p-sec) 24%, transparent),
+        0 2px 5px rgba(var(--s1p-shadow-color-rgb), 0.18);
+    }
+    .s1p-range-desc {
+      margin: -2px 0 0;
+      color: var(--s1p-desc-t);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .s1p-range-input::-webkit-slider-thumb,
+      .s1p-range-input::-moz-range-thumb {
+        transition: none !important;
+      }
+      .s1p-range-input:hover::-webkit-slider-thumb,
+      .s1p-range-input:hover::-moz-range-thumb {
+        transform: none !important;
+      }
     }
     /* S1 NUX 部分深色主题下，分段控件激活项改用深色文字以提升对比度 */
     .s1p-modal.s1p-nux-segmented-contrast-fix .s1p-segmented-control-option.active {
@@ -7011,6 +7178,21 @@
       margin-top: 6px;
       margin-bottom: 16px;
     }
+    .s1p-image-viewer-wheel-group {
+      margin-top: 0;
+      margin-bottom: 14px;
+    }
+    .s1p-image-viewer-wheel-group > .s1p-settings-item {
+      padding-top: 4px;
+      padding-bottom: 6px;
+    }
+    .s1p-image-viewer-wheel-range {
+      width: 100%;
+      margin-top: 2px;
+    }
+    .s1p-image-viewer-wheel-range .s1p-range-control {
+      width: 100%;
+    }
     .s1p-link-open-mode-item .s1p-settings-label {
       flex: 1 1 auto;
     }
@@ -7457,10 +7639,18 @@
         flex: 1 1 100%;
       }
 
-      :is(#s1p-cleanupModeContainer, #s1p-readingProgressCleanupContainer) {
+      :is(
+          #s1p-cleanupModeContainer,
+          #s1p-readingProgressCleanupContainer,
+          #s1p-imageViewerWheelModeContainer
+        ) {
         flex-wrap: wrap;
       }
-      :is(#s1p-cleanupModeContainer, #s1p-readingProgressCleanupContainer)
+      :is(
+          #s1p-cleanupModeContainer,
+          #s1p-readingProgressCleanupContainer,
+          #s1p-imageViewerWheelModeContainer
+        )
         > .s1p-settings-label {
         flex: 1 1 100%;
         padding-left: 0 !important;
@@ -7483,6 +7673,16 @@
         overflow-x: auto;
         overflow-y: hidden;
         -webkit-overflow-scrolling: touch;
+      }
+      #s1p-imageViewerWheelMode-control {
+        max-width: 100%;
+        overflow-x: auto;
+        overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
+      }
+      .s1p-image-viewer-wheel-range,
+      .s1p-image-viewer-wheel-range .s1p-range-control {
+        width: 100%;
       }
       #s1p-readingProgressCleanupDays-control {
         width: 100%;
@@ -25143,13 +25343,109 @@
     }
     clearS1pImageViewerTransformButtonAnimation();
     event.preventDefault();
-    zoomS1pImageViewerByStep(event.deltaY < 0 ? 1 : -1);
+    const deltaY = Number(event.deltaY || 0);
+    if (deltaY === 0) {
+      return;
+    }
+    const wheelMode = normalizeS1pImageViewerWheelMode(
+      getSettings().imageViewerWheelMode
+    );
+    const wheelDeltaUnits = resolveS1pImageViewerWheelDeltaUnits(event);
+    if (wheelDeltaUnits === 0) {
+      return;
+    }
+    if (wheelMode === S1P_IMAGE_VIEWER_WHEEL_MODE_SCROLL) {
+      scrollS1pImageViewerByWheelDelta(wheelDeltaUnits, {
+        stepRatio: resolveS1pImageViewerWheelScrollStepRatio(),
+      });
+      return;
+    }
+    zoomS1pImageViewerByWheelDelta(wheelDeltaUnits, {
+      stepRatio: resolveS1pImageViewerWheelZoomStepRatio(),
+    });
   };
-  const zoomS1pImageViewerByStep = (direction) => {
+  const resolveS1pImageViewerWheelDeltaUnits = (event) => {
+    const rawDeltaY = Number(event?.deltaY || 0);
+    if (!Number.isFinite(rawDeltaY) || rawDeltaY === 0) {
+      return 0;
+    }
+    let pixelDeltaY = rawDeltaY;
+    const deltaMode = Number(event?.deltaMode || 0);
+    if (deltaMode === 1) {
+      pixelDeltaY *= 16;
+    } else if (deltaMode === 2) {
+      const viewportSize = getS1pImageViewerViewportSize();
+      pixelDeltaY *= Math.max(
+        1,
+        Number(viewportSize.height || window.innerHeight || 1)
+      );
+    }
+    if (!Number.isFinite(pixelDeltaY) || pixelDeltaY === 0) {
+      return 0;
+    }
+    const rawUnits = pixelDeltaY / S1P_IMAGE_VIEWER_WHEEL_DELTA_REFERENCE_PX;
+    if (!Number.isFinite(rawUnits) || rawUnits === 0) {
+      return 0;
+    }
+    const units = Math.min(
+      S1P_IMAGE_VIEWER_WHEEL_DELTA_MAX_UNITS,
+      Math.abs(rawUnits)
+    );
+    return rawUnits < 0 ? -units : units;
+  };
+  const resolveS1pImageViewerWheelZoomStepRatio = () => {
+    const settings = getSettings();
+    return (
+      normalizeBoundedIntegerValue(
+        settings.imageViewerWheelZoomStepPercent,
+        S1P_IMAGE_VIEWER_WHEEL_ZOOM_STEP_DEFAULT_PERCENT,
+        S1P_IMAGE_VIEWER_WHEEL_ZOOM_STEP_MIN_PERCENT,
+        S1P_IMAGE_VIEWER_WHEEL_ZOOM_STEP_MAX_PERCENT
+      ) / 100
+    );
+  };
+  const resolveS1pImageViewerWheelScrollStepRatio = () => {
+    const settings = getSettings();
+    return (
+      normalizeBoundedIntegerValue(
+        settings.imageViewerWheelScrollStepPercent,
+        S1P_IMAGE_VIEWER_WHEEL_SCROLL_STEP_DEFAULT_PERCENT,
+        S1P_IMAGE_VIEWER_WHEEL_SCROLL_STEP_MIN_PERCENT,
+        S1P_IMAGE_VIEWER_WHEEL_SCROLL_STEP_MAX_PERCENT
+      ) / 100
+    );
+  };
+  const zoomS1pImageViewerByWheelDelta = (
+    deltaUnits,
+    { stepRatio = resolveS1pImageViewerWheelZoomStepRatio() } = {}
+  ) => {
+    const normalizedDeltaUnits = Number(deltaUnits);
+    if (!Number.isFinite(normalizedDeltaUnits) || normalizedDeltaUnits === 0) {
+      return false;
+    }
+    const safeStepRatio = Math.max(
+      0.001,
+      Math.min(1, Number(stepRatio) || resolveS1pImageViewerWheelZoomStepRatio())
+    );
+    const zoomBase = 1 + safeStepRatio;
+    const zoomFactor =
+      normalizedDeltaUnits > 0
+        ? 1 / Math.pow(zoomBase, normalizedDeltaUnits)
+        : Math.pow(zoomBase, Math.abs(normalizedDeltaUnits));
+    return applyS1pImageViewerZoomFactor(zoomFactor);
+  };
+  const zoomS1pImageViewerByStep = (
+    direction,
+    { stepRatio = S1P_IMAGE_VIEWER_ZOOM_STEP } = {}
+  ) => {
+    const safeStepRatio = Math.max(
+      0.01,
+      Math.min(2, Number(stepRatio) || S1P_IMAGE_VIEWER_ZOOM_STEP)
+    );
     const zoomFactor =
       Number(direction) >= 0
-        ? 1 + S1P_IMAGE_VIEWER_ZOOM_STEP
-        : 1 / (1 + S1P_IMAGE_VIEWER_ZOOM_STEP);
+        ? 1 + safeStepRatio
+        : 1 / (1 + safeStepRatio);
     return applyS1pImageViewerZoomFactor(zoomFactor);
   };
   const applyS1pImageViewerZoomFactor = (zoomFactor) => {
@@ -25197,18 +25493,24 @@
     const zoomFactor = Math.pow(stepScalePerBaseline, normalizedProgress);
     return applyS1pImageViewerZoomFactor(zoomFactor);
   };
-  const resolveS1pImageViewerScrollStepPx = () => {
+  const resolveS1pImageViewerScrollStepPx = (
+    stepRatio = S1P_IMAGE_VIEWER_SCROLL_STEP_RATIO
+  ) => {
     const state = s1pImageViewerState;
     if (!state.isOpen || !state.viewport) {
       return 0;
     }
     const viewportSize = getS1pImageViewerViewportSize();
     const viewportHeight = Number(viewportSize.height || 0);
+    const safeStepRatio = Math.max(
+      0.01,
+      Math.min(2, Number(stepRatio) || S1P_IMAGE_VIEWER_SCROLL_STEP_RATIO)
+    );
     const scrollStepPx = Math.min(
       S1P_IMAGE_VIEWER_SCROLL_STEP_MAX_PX,
       Math.max(
         S1P_IMAGE_VIEWER_SCROLL_STEP_MIN_PX,
-        viewportHeight * S1P_IMAGE_VIEWER_SCROLL_STEP_RATIO
+        viewportHeight * safeStepRatio
       )
     );
     if (!Number.isFinite(scrollStepPx) || scrollStepPx <= 0) {
@@ -25216,18 +25518,47 @@
     }
     return scrollStepPx;
   };
-  const scrollS1pImageViewerByStep = (direction) => {
+  const scrollS1pImageViewerByStep = (
+    direction,
+    { stepRatio = S1P_IMAGE_VIEWER_SCROLL_STEP_RATIO } = {}
+  ) => {
     const state = s1pImageViewerState;
     if (!state.isOpen || !state.viewport) {
       return false;
     }
-    const scrollStepPx = resolveS1pImageViewerScrollStepPx();
+    const scrollStepPx = resolveS1pImageViewerScrollStepPx(stepRatio);
     if (scrollStepPx <= 0) {
       return false;
     }
     const normalizedDirection = Number(direction);
     const deltaY = normalizedDirection >= 0 ? -scrollStepPx : scrollStepPx;
     state.translateY += deltaY;
+    applyS1pImageViewerTransform();
+    return true;
+  };
+  const scrollS1pImageViewerByWheelDelta = (
+    deltaUnits,
+    { stepRatio = resolveS1pImageViewerWheelScrollStepRatio() } = {}
+  ) => {
+    const state = s1pImageViewerState;
+    if (!state.isOpen || !state.viewport) {
+      return false;
+    }
+    const normalizedDeltaUnits = Number(deltaUnits);
+    if (!Number.isFinite(normalizedDeltaUnits) || normalizedDeltaUnits === 0) {
+      return false;
+    }
+    const viewportSize = getS1pImageViewerViewportSize();
+    const viewportHeight = Math.max(1, Number(viewportSize.height || 0));
+    const safeStepRatio = Math.max(
+      0.001,
+      Math.min(1, Number(stepRatio) || resolveS1pImageViewerWheelScrollStepRatio())
+    );
+    const distance = viewportHeight * safeStepRatio * Math.abs(normalizedDeltaUnits);
+    if (!Number.isFinite(distance) || distance <= 0) {
+      return false;
+    }
+    state.translateY += normalizedDeltaUnits > 0 ? -distance : distance;
     applyS1pImageViewerTransform();
     return true;
   };
@@ -31956,6 +32287,11 @@
     limitImagesBySize: true,
     useS1PlusImageViewer: true,
     imageViewerDefaultFullDisplay: false,
+    imageViewerWheelMode: S1P_IMAGE_VIEWER_WHEEL_MODE_ZOOM,
+    imageViewerWheelZoomStepPercent:
+      S1P_IMAGE_VIEWER_WHEEL_ZOOM_STEP_DEFAULT_PERCENT,
+    imageViewerWheelScrollStepPercent:
+      S1P_IMAGE_VIEWER_WHEEL_SCROLL_STEP_DEFAULT_PERCENT,
     imagePreviewMaxWidth: IMAGE_PREVIEW_DEFAULT_WIDTH,
     imagePreviewMaxHeight: IMAGE_PREVIEW_DEFAULT_HEIGHT,
     enhanceFloatingControls: true,
@@ -32358,6 +32694,50 @@
     settings.imageViewerDefaultFullDisplay =
       normalizedImageViewerDefaultFullDisplay;
 
+    const normalizedImageViewerWheelMode = normalizeS1pImageViewerWheelMode(
+      settings.imageViewerWheelMode
+    );
+    if (settings.imageViewerWheelMode !== normalizedImageViewerWheelMode) {
+      markMigration("image_viewer_wheel_mode_normalized");
+    }
+    settings.imageViewerWheelMode = normalizedImageViewerWheelMode;
+
+    const normalizedImageViewerWheelZoomStepPercent =
+      normalizeBoundedIntegerValue(
+        settings.imageViewerWheelZoomStepPercent,
+        S1P_IMAGE_VIEWER_WHEEL_ZOOM_STEP_DEFAULT_PERCENT,
+        S1P_IMAGE_VIEWER_WHEEL_ZOOM_STEP_MIN_PERCENT,
+        S1P_IMAGE_VIEWER_WHEEL_ZOOM_STEP_MAX_PERCENT
+      );
+    if (
+      !Object.is(
+        settings.imageViewerWheelZoomStepPercent,
+        normalizedImageViewerWheelZoomStepPercent
+      )
+    ) {
+      markMigration("image_viewer_wheel_zoom_step_percent_normalized");
+    }
+    settings.imageViewerWheelZoomStepPercent =
+      normalizedImageViewerWheelZoomStepPercent;
+
+    const normalizedImageViewerWheelScrollStepPercent =
+      normalizeBoundedIntegerValue(
+        settings.imageViewerWheelScrollStepPercent,
+        S1P_IMAGE_VIEWER_WHEEL_SCROLL_STEP_DEFAULT_PERCENT,
+        S1P_IMAGE_VIEWER_WHEEL_SCROLL_STEP_MIN_PERCENT,
+        S1P_IMAGE_VIEWER_WHEEL_SCROLL_STEP_MAX_PERCENT
+      );
+    if (
+      !Object.is(
+        settings.imageViewerWheelScrollStepPercent,
+        normalizedImageViewerWheelScrollStepPercent
+      )
+    ) {
+      markMigration("image_viewer_wheel_scroll_step_percent_normalized");
+    }
+    settings.imageViewerWheelScrollStepPercent =
+      normalizedImageViewerWheelScrollStepPercent;
+
     const normalizedImagePreviewMaxWidth = normalizeImagePreviewLimitValue(
       settings.imagePreviewMaxWidth,
       IMAGE_PREVIEW_DEFAULT_WIDTH
@@ -32518,6 +32898,9 @@
     "limitImagesBySize",
     "useS1PlusImageViewer",
     "imageViewerDefaultFullDisplay",
+    "imageViewerWheelMode",
+    "imageViewerWheelZoomStepPercent",
+    "imageViewerWheelScrollStepPercent",
     "imagePreviewMaxWidth",
     "imagePreviewMaxHeight",
     "showReadIndicator",
@@ -37636,6 +38019,7 @@
     { key: "toggles", label: "开关" },
     { key: "segmented", label: "分段控制器" },
     { key: "inputs", label: "输入框" },
+    { key: "ranges", label: "范围滑块" },
     { key: "datepicker", label: "日期选择器" },
     { key: "colorpicker", label: "颜色选择器" },
     { key: "toasts", label: "提示通知" },
@@ -37741,6 +38125,24 @@
       createShowcaseSectionHeader("输入框", "s1p-input / s1p-input-full / s1p-input-error / s1p-textarea") +
       '<div class="s1p-ui-showcase-grid">' +
       variants.map((v) => createShowcaseVariantRow(v.label, v.html)).join("") +
+      "</div>"
+    );
+  };
+
+  const buildRangeShowcase = () => {
+    const rangeHtml =
+      '<div class="s1p-range-control">' +
+      '<div class="s1p-range-control-head">' +
+      '<label class="s1p-range-label" for="s1p-ui-showcase-range">滚轮缩放幅度</label>' +
+      '<output class="s1p-range-value" for="s1p-ui-showcase-range">6%</output>' +
+      "</div>" +
+      '<input id="s1p-ui-showcase-range" class="s1p-range-input" type="range" min="1" max="18" step="1" value="6">' +
+      '<p class="s1p-range-desc">缩放幅度约 6%，并会按鼠标或触控板信号自动折算。</p>' +
+      "</div>";
+    return (
+      createShowcaseSectionHeader("范围滑块", "s1p-range-control / s1p-range-input") +
+      '<div class="s1p-ui-showcase-grid">' +
+      createShowcaseVariantRow("默认", rangeHtml, "s1p-ui-showcase-variant-block") +
       "</div>"
     );
   };
@@ -38123,6 +38525,7 @@
       case "toggles": return buildToggleShowcase;
       case "segmented": return buildSegmentedShowcase;
       case "inputs": return buildInputShowcase;
+      case "ranges": return buildRangeShowcase;
       case "datepicker": return buildDatePickerShowcase;
       case "colorpicker": return buildColorPickerShowcase;
       case "toasts": return buildToastShowcase;
@@ -38421,6 +38824,23 @@
 
     const content = document.createElement("div");
     content.className = "s1p-ui-showcase-content";
+    content.addEventListener("input", (e) => {
+      const target = e.target;
+      if (
+        !target ||
+        !target.classList ||
+        !target.classList.contains("s1p-range-input")
+      ) {
+        return;
+      }
+      syncS1pRangeInputProgress(target);
+      const rangeValue = target
+        .closest(".s1p-range-control")
+        ?.querySelector(".s1p-range-value");
+      if (rangeValue) {
+        rangeValue.textContent = `${target.value}%`;
+      }
+    });
     content.addEventListener("click", (e) => {
       const target = e.target.closest("[data-s1p-ui-action]");
       if (!target) return;
@@ -38581,6 +39001,9 @@
       const renderer = getSectionRendererByKey(cat.key);
       section.innerHTML = renderer();
       content.appendChild(section);
+    });
+    content.querySelectorAll(".s1p-range-input").forEach((input) => {
+      syncS1pRangeInputProgress(input);
     });
     layout.appendChild(content);
 
@@ -40152,6 +40575,30 @@
     if (fontsReady && typeof fontsReady.then === "function") {
       fontsReady.then(syncSliderPosition).catch(() => {});
     }
+  };
+  const syncS1pRangeInputProgress = (input) => {
+    if (
+      !input ||
+      !input.style ||
+      typeof input.style.setProperty !== "function"
+    ) {
+      return;
+    }
+    const min = Number(input.min || 0);
+    const max = Number(input.max || 100);
+    const value = Number(input.value || min);
+    const boundedValue =
+      Number.isFinite(value) && Number.isFinite(min) && Number.isFinite(max)
+        ? Math.min(max, Math.max(min, value))
+        : min;
+    const progress =
+      Number.isFinite(min) && Number.isFinite(max) && max > min
+        ? ((boundedValue - min) / (max - min)) * 100
+        : 0;
+    input.style.setProperty(
+      "--s1p-range-progress",
+      `${Math.min(100, Math.max(0, progress)).toFixed(2)}%`
+    );
   };
 
   /**
@@ -43321,6 +43768,77 @@
       const imageViewerDefaultMode = settings.imageViewerDefaultFullDisplay
         ? "full"
         : "max-width";
+      const imageViewerWheelMode = normalizeS1pImageViewerWheelMode(
+        settings.imageViewerWheelMode
+      );
+      const getImageViewerWheelSliderConfig = (
+        mode,
+        sourceSettings = settings
+      ) => {
+        const normalizedMode = normalizeS1pImageViewerWheelMode(mode);
+        if (normalizedMode === S1P_IMAGE_VIEWER_WHEEL_MODE_SCROLL) {
+          const value = normalizeBoundedIntegerValue(
+            sourceSettings.imageViewerWheelScrollStepPercent,
+            S1P_IMAGE_VIEWER_WHEEL_SCROLL_STEP_DEFAULT_PERCENT,
+            S1P_IMAGE_VIEWER_WHEEL_SCROLL_STEP_MIN_PERCENT,
+            S1P_IMAGE_VIEWER_WHEEL_SCROLL_STEP_MAX_PERCENT
+          );
+          return {
+            label: "滚轮滚动幅度",
+            settingKey: "imageViewerWheelScrollStepPercent",
+            min: S1P_IMAGE_VIEWER_WHEEL_SCROLL_STEP_MIN_PERCENT,
+            max: S1P_IMAGE_VIEWER_WHEEL_SCROLL_STEP_MAX_PERCENT,
+            step: 1,
+            value,
+            output: `${value}%`,
+            desc: `滚动幅度约 ${value}% 可视高度，并会按鼠标或触控板信号自动折算。`,
+          };
+        }
+        const value = normalizeBoundedIntegerValue(
+          sourceSettings.imageViewerWheelZoomStepPercent,
+          S1P_IMAGE_VIEWER_WHEEL_ZOOM_STEP_DEFAULT_PERCENT,
+          S1P_IMAGE_VIEWER_WHEEL_ZOOM_STEP_MIN_PERCENT,
+          S1P_IMAGE_VIEWER_WHEEL_ZOOM_STEP_MAX_PERCENT
+        );
+        return {
+          label: "滚轮缩放幅度",
+          settingKey: "imageViewerWheelZoomStepPercent",
+          min: S1P_IMAGE_VIEWER_WHEEL_ZOOM_STEP_MIN_PERCENT,
+          max: S1P_IMAGE_VIEWER_WHEEL_ZOOM_STEP_MAX_PERCENT,
+          step: 1,
+          value,
+          output: `${value}%`,
+          desc: `缩放幅度约 ${value}%，并会按鼠标或触控板信号自动折算。`,
+        };
+      };
+      const getImageViewerWheelDefaultStepPercent = (mode) =>
+        normalizeS1pImageViewerWheelMode(mode) ===
+        S1P_IMAGE_VIEWER_WHEEL_MODE_SCROLL
+          ? S1P_IMAGE_VIEWER_WHEEL_SCROLL_STEP_DEFAULT_PERCENT
+          : S1P_IMAGE_VIEWER_WHEEL_ZOOM_STEP_DEFAULT_PERCENT;
+      const getRangeProgressPercent = ({ min, max, value }) => {
+        const safeMin = Number(min);
+        const safeMax = Number(max);
+        const safeValue = Number(value);
+        if (
+          !Number.isFinite(safeMin) ||
+          !Number.isFinite(safeMax) ||
+          !Number.isFinite(safeValue) ||
+          safeMax <= safeMin
+        ) {
+          return "0.00";
+        }
+        return (
+          (Math.min(safeMax, Math.max(safeMin, safeValue)) - safeMin) /
+          (safeMax - safeMin) *
+          100
+        ).toFixed(2);
+      };
+      const imageViewerWheelSliderConfig =
+        getImageViewerWheelSliderConfig(imageViewerWheelMode);
+      const imageViewerWheelSliderProgress = getRangeProgressPercent(
+        imageViewerWheelSliderConfig
+      );
       const renderLinkOpenModeControlHtml = ({
         key,
         label,
@@ -43434,6 +43952,41 @@
                             </div>
                         </div>
                         <p class="s1p-setting-desc s1p-image-viewer-default-mode-desc"><strong>完整显示</strong>会完整适配可视区域；<strong>放大显示</strong>会优先铺满宽度（竖图可能需要滚动）。</p>
+                    </div>
+                    <div class="s1p-settings-sub-group s1p-image-viewer-wheel-group">
+                        <div class="s1p-settings-item" id="s1p-imageViewerWheelModeContainer">
+                            <label class="s1p-settings-label" for="s1p-imageViewerWheelMode-control">S1 Plus 查看器鼠标滚轮行为</label>
+                            <div id="s1p-imageViewerWheelMode-control" class="s1p-segmented-control">
+                                <div class="s1p-segmented-control-slider"></div>
+                                <div class="s1p-segmented-control-option ${imageViewerWheelMode === S1P_IMAGE_VIEWER_WHEEL_MODE_ZOOM ? "active" : ""}" data-value="${S1P_IMAGE_VIEWER_WHEEL_MODE_ZOOM}">调整缩放比例</div>
+                                <div class="s1p-segmented-control-option ${imageViewerWheelMode === S1P_IMAGE_VIEWER_WHEEL_MODE_SCROLL ? "active" : ""}" data-value="${S1P_IMAGE_VIEWER_WHEEL_MODE_SCROLL}">上下滚动页面</div>
+                            </div>
+                        </div>
+                        <div class="s1p-image-viewer-wheel-range">
+                            <div class="s1p-range-control">
+                                <div class="s1p-range-control-head">
+                                    <label id="s1p-imageViewerWheelStepLabel" class="s1p-range-label" for="s1p-imageViewerWheelStepSlider">${imageViewerWheelSliderConfig.label}</label>
+                                    <div class="s1p-range-actions">
+                                        <output id="s1p-imageViewerWheelStepValue" class="s1p-range-value" for="s1p-imageViewerWheelStepSlider">${imageViewerWheelSliderConfig.output}</output>
+                                        <button id="s1p-imageViewerWheelStepResetBtn" type="button" class="s1p-btn s1p-range-reset-btn">恢复默认</button>
+                                    </div>
+                                </div>
+                                <input
+                                  type="range"
+                                  id="s1p-imageViewerWheelStepSlider"
+                                  class="s1p-range-input"
+                                  min="${imageViewerWheelSliderConfig.min}"
+                                  max="${imageViewerWheelSliderConfig.max}"
+                                  step="${imageViewerWheelSliderConfig.step}"
+                                  value="${imageViewerWheelSliderConfig.value}"
+                                  data-s1p-setting-key="${imageViewerWheelSliderConfig.settingKey}"
+                                  style="--s1p-range-progress: ${imageViewerWheelSliderProgress}%"
+                                  aria-labelledby="s1p-imageViewerWheelStepLabel"
+                                  aria-describedby="s1p-imageViewerWheelStepDesc"
+                                >
+                                <p id="s1p-imageViewerWheelStepDesc" class="s1p-range-desc">${imageViewerWheelSliderConfig.desc}</p>
+                            </div>
+                        </div>
                     </div>
                     <div class="s1p-settings-item">
                         <label class="s1p-settings-label" for="s1p-limitImagesBySize">\u9650\u5236\u8d85\u5927\u56fe\u7247\u5c3a\u5bf8\uff08\u70b9\u51fb\u67e5\u770b\u539f\u56fe\uff09</label>
@@ -43680,6 +44233,141 @@
           if (s1pImageViewerState.isOpen) {
             applyS1pImageViewerDefaultTransform();
           }
+        });
+      }
+      const imageViewerWheelModeControl = tabContent.querySelector(
+        "#s1p-imageViewerWheelMode-control"
+      );
+      const imageViewerWheelStepSlider = tabContent.querySelector(
+        "#s1p-imageViewerWheelStepSlider"
+      );
+      const imageViewerWheelStepLabel = tabContent.querySelector(
+        "#s1p-imageViewerWheelStepLabel"
+      );
+      const imageViewerWheelStepValue = tabContent.querySelector(
+        "#s1p-imageViewerWheelStepValue"
+      );
+      const imageViewerWheelStepDesc = tabContent.querySelector(
+        "#s1p-imageViewerWheelStepDesc"
+      );
+      const imageViewerWheelStepResetBtn = tabContent.querySelector(
+        "#s1p-imageViewerWheelStepResetBtn"
+      );
+      const withImageViewerWheelSliderValue = (config, mode, rawValue) => {
+        const value = normalizeBoundedIntegerValue(
+          rawValue,
+          config.value,
+          config.min,
+          config.max
+        );
+        return {
+          ...config,
+          value,
+          output: `${value}%`,
+          desc:
+            normalizeS1pImageViewerWheelMode(mode) ===
+            S1P_IMAGE_VIEWER_WHEEL_MODE_SCROLL
+              ? `滚动幅度约 ${value}% 可视高度，并会按鼠标或触控板信号自动折算。`
+              : `缩放幅度约 ${value}%，并会按鼠标或触控板信号自动折算。`,
+        };
+      };
+      const syncImageViewerWheelSlider = (
+        mode = getSettings().imageViewerWheelMode,
+        { valueOverride = null } = {}
+      ) => {
+        if (!imageViewerWheelStepSlider) {
+          return;
+        }
+        const normalizedMode = normalizeS1pImageViewerWheelMode(mode);
+        const latestSettings = getSettings();
+        let config = getImageViewerWheelSliderConfig(
+          normalizedMode,
+          latestSettings
+        );
+        if (valueOverride !== null) {
+          config = withImageViewerWheelSliderValue(
+            config,
+            normalizedMode,
+            valueOverride
+          );
+        }
+        imageViewerWheelStepSlider.min = String(config.min);
+        imageViewerWheelStepSlider.max = String(config.max);
+        imageViewerWheelStepSlider.step = String(config.step);
+        imageViewerWheelStepSlider.value = String(config.value);
+        imageViewerWheelStepSlider.dataset.s1pSettingKey = config.settingKey;
+        if (imageViewerWheelStepLabel) {
+          imageViewerWheelStepLabel.textContent = config.label;
+        }
+        if (imageViewerWheelStepValue) {
+          imageViewerWheelStepValue.textContent = config.output;
+        }
+        if (imageViewerWheelStepDesc) {
+          imageViewerWheelStepDesc.textContent = config.desc;
+        }
+        syncS1pRangeInputProgress(imageViewerWheelStepSlider);
+      };
+      if (imageViewerWheelModeControl) {
+        moveSlider(imageViewerWheelModeControl, true);
+        imageViewerWheelModeControl.addEventListener("click", (event) => {
+          const option = event.target.closest(".s1p-segmented-control-option");
+          if (!option || option.classList.contains("active")) {
+            return;
+          }
+          const modeValue = normalizeS1pImageViewerWheelMode(option.dataset.value);
+          const currentSettings = getSettingsForWrite();
+          currentSettings.imageViewerWheelMode = modeValue;
+          saveSettings(currentSettings);
+          imageViewerWheelModeControl
+            .querySelectorAll(".s1p-segmented-control-option")
+            .forEach((opt) => opt.classList.remove("active"));
+          option.classList.add("active");
+          moveSlider(imageViewerWheelModeControl);
+          syncImageViewerWheelSlider(modeValue);
+        });
+      }
+      if (imageViewerWheelStepSlider) {
+        syncImageViewerWheelSlider(imageViewerWheelMode);
+        imageViewerWheelStepSlider.addEventListener("input", () => {
+          syncImageViewerWheelSlider(getSettings().imageViewerWheelMode, {
+            valueOverride: imageViewerWheelStepSlider.value,
+          });
+        });
+        imageViewerWheelStepSlider.addEventListener("change", () => {
+          const settingKey = imageViewerWheelStepSlider.dataset.s1pSettingKey;
+          if (
+            settingKey !== "imageViewerWheelZoomStepPercent" &&
+            settingKey !== "imageViewerWheelScrollStepPercent"
+          ) {
+            return;
+          }
+          const currentSettings = getSettingsForWrite();
+          currentSettings[settingKey] = parseInt(
+            imageViewerWheelStepSlider.value,
+            10
+          );
+          saveSettings(currentSettings);
+          syncImageViewerWheelSlider(getSettings().imageViewerWheelMode);
+        });
+      }
+      if (imageViewerWheelStepResetBtn) {
+        imageViewerWheelStepResetBtn.addEventListener("click", (event) => {
+          event.preventDefault();
+          const modeValue = normalizeS1pImageViewerWheelMode(
+            getSettings().imageViewerWheelMode
+          );
+          const config = getImageViewerWheelSliderConfig(modeValue);
+          const currentSettings = getSettingsForWrite();
+          currentSettings[config.settingKey] =
+            getImageViewerWheelDefaultStepPercent(modeValue);
+          saveSettings(currentSettings);
+          syncImageViewerWheelSlider(modeValue);
+          showSettingsMessage(
+            modeValue === S1P_IMAGE_VIEWER_WHEEL_MODE_SCROLL
+              ? "滚轮滚动幅度已恢复默认。"
+              : "滚轮缩放幅度已恢复默认。",
+            true
+          );
         });
       }
 
@@ -44529,6 +45217,9 @@
           "limitImagesBySize",
           "useS1PlusImageViewer",
           "imageViewerDefaultFullDisplay",
+          "imageViewerWheelMode",
+          "imageViewerWheelZoomStepPercent",
+          "imageViewerWheelScrollStepPercent",
           "imagePreviewMaxWidth",
           "imagePreviewMaxHeight",
           "hideSystemBlockedPosts",
@@ -44683,7 +45374,9 @@
         const value =
           target.type === "checkbox"
             ? target.checked
-            : target.type === "number" || target.tagName === "SELECT"
+            : target.type === "number" ||
+                target.type === "range" ||
+                target.tagName === "SELECT"
               ? parseInt(target.value, 10)
               : target.value;
 

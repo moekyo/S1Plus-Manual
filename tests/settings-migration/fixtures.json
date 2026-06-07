@@ -269,6 +269,27 @@
     }
   },
   {
+    "name": "image_viewer_wheel_settings_normalization",
+    "input": {
+      "imageViewerWheelMode": "freewheel",
+      "imageViewerWheelZoomStepPercent": 999,
+      "imageViewerWheelScrollStepPercent": 0
+    },
+    "expected": {
+      "migrationApplied": true,
+      "settings": {
+        "imageViewerWheelMode": "zoom",
+        "imageViewerWheelZoomStepPercent": 18,
+        "imageViewerWheelScrollStepPercent": 1
+      },
+      "reasonsInclude": [
+        "image_viewer_wheel_mode_normalized",
+        "image_viewer_wheel_zoom_step_percent_normalized",
+        "image_viewer_wheel_scroll_step_percent_normalized"
+      ]
+    }
+  },
+  {
     "name": "sync_auto_check_mode_dual_flags_collapse_to_per_load",
     "input": {
       "syncRemoteEnabled": true,

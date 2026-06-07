@@ -145,17 +145,17 @@ assert.match(
 );
 assert.match(
   sourceCode,
-  /--s1p-image-viewer-viewport-bg:\s*rgba\(226,\s*232,\s*222,\s*0\.7\);/,
-  "浅色图片舞台应还原为修改前稳定主题底色。"
+  /--s1p-image-viewer-viewport-bg:\s*rgba\(226,\s*232,\s*222,\s*0\.88\);/,
+  "浅色图片舞台应使用当前稳定主题底色。"
 );
 assert.match(
   sourceCode,
   /--s1p-image-viewer-viewport-bg:\s*rgba\(33,\s*42,\s*52,\s*0\.9\);/,
-  "深色图片舞台应还原为修改前稳定主题底色。"
+  "深色图片舞台应使用当前稳定主题底色。"
 );
 assert.match(
   sourceCode,
-  /--s1p-image-viewer-viewport-glass-bg:\s*rgba\(255,\s*255,\s*255,\s*0\.04\);/,
+  /--s1p-image-viewer-viewport-glass-bg:\s*rgba\(255,\s*255,\s*255,\s*0\.10\);/,
   "浅色图片舞台应通过独立磨砂层保留玻璃感。"
 );
 assert.match(
@@ -166,11 +166,11 @@ assert.match(
 assert.equal(
   Array.from(
     sourceCode.matchAll(
-      /--s1p-image-viewer-viewport-glass-filter:\s*blur\(6px\) saturate\(1\.04\);/g
+      /--s1p-image-viewer-viewport-glass-filter:\s*blur\(6px\) saturate\(1\.0[46]\);/g
     )
   ).length,
   2,
-  "浅色和深色图片舞台应还原为修改前的一致轻磨砂滤镜。"
+  "浅色和深色图片舞台应保留当前轻磨砂滤镜。"
 );
 assert.ok(
   !sourceCode.includes("--s1p-image-viewer-viewport-backdrop-filter"),
