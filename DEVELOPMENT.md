@@ -1,4 +1,4 @@
-# S1 Plus 开发手册（当前代码基线：v6.10.0 + 当前分支未发布同步重构）
+# S1 Plus 开发手册（当前代码基线：v6.10.0 + 当前分支未发布同步重构与玻璃系统重构）
 
 > 本文档基于当前 `S1Plus.js` 实现整理，用于指导后续开发、调试、测试与发布。
 
@@ -121,7 +121,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 覆盖重点：
 
 - 类型 B 浮层分层：用户标记编辑器 / 日期选择器 / 确认型浮层 / 普通短 tooltip / 文档型帮助浮层使用轻磨砂；纯操作入口菜单保持实底。
-- 弹窗与浮层可读性：全屏蒙版只保留低强度无色 blur，确认类一级弹窗本体复用 floating surface 背景、阴影和滤镜；设置/调试大面板、Token 日期配置和同步弹窗内部信息块继续使用 dialog glass 变量。浅色、深色模式都要同步维护。
+- 弹窗与浮层可读性：全屏蒙版只保留低强度无色 blur，确认类一级弹窗本体通过 `.s1p-first-level-glass--confirm` 间接复用 floating surface 背景、阴影和滤镜；设置/调试大面板通过 `.s1p-first-level-glass--settings` 间接使用 dialog glass 变量，Token 日期配置和同步弹窗内部信息块继续使用 dialog glass 变量。浅色、深色模式都要同步维护。
 - 设置承载的二级弹窗：Token 有效期、阅读记录详情、设置内确认/输入弹窗、设置内手动同步选择等必须显式 opt-in 到 settings secondary glass（`S1P_SETTINGS_SECONDARY_GLASS_CLASS`、`buildSettingsSecondaryGlassClassName()` 或 `useSettingsSecondaryGlass: true`），不要通过全局 `.s1p-modal` 查询推断上下文。
 - 弹窗与浮层定位：所有贴近右侧边界的 tooltip / popover / inline menu 必须使用布局视口宽度（`document.documentElement.clientWidth`，当前封装为 `getS1pLayoutViewportWidth()`）做横向夹取，不要直接用 `window.innerWidth`。`window.innerWidth` 会包含垂直滚动条槽，tooltip 可能被放进滚动条槽内，hover 时触发 1px 水平滚动条。
 - 自定义 UI 最外层容器不显示描边；输入框、按钮、分割线、表格和设置面板内部列表项仍可保留功能性边界。
@@ -277,10 +277,11 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - `.s1p-glass-panel` 是设置面板与调试面板共用的外壳玻璃效果。复用时给最外层可见容器加这个类，并通过 `--s1p-glass-panel-bg` / `--s1p-glass-panel-filter` 调整；不要再创建 `--s1p-settings-panel-bg`、`--s1p-debug-console-panel-bg` 这类局部副本。
 - `.s1p-glass-panel` 的正确采样路径是“可见外壳直接过滤页面背景”。不要把它放进另一个带 `backdrop-filter` 的父级里，也不要同时给父级和子级都加 blur；浏览器会建立 backdrop root，子级可能只采样到父级处理后的结果，导致设置面板与调试面板视觉不一致。
 - Shell glass 的 blur 强度应跟随 `--s1p-dialog-glass-filter`（当前 `blur(3px) saturate(1.02)`）。不要为了“看起来更糊”硬编码 `blur(12px)` 等强滤镜；高对比小字会扩散成色块，反而不像调试面板的自然磨砂。
-- Confirm dialog content（`.s1p-confirm-content`）复用 floating surface 的 `--s1p-floating-surface-bg`、`--s1p-floating-surface-filter` 和 `--s1p-floating-surface-shadow`，但正文仍走 `--s1p-dialog-text` / `--s1p-dialog-muted-text` 保证深浅模式可读性。Dialog glass（`--s1p-dialog-glass-*`）保留给设置/调试大面板、Token 日期配置和手动同步选择/对比表格等内部信息块；Shell glass（`.s1p-glass-panel`）用于设置面板、调试面板和同类大外壳；Image viewer glass 用于图片查看器工具栏和图片舞台；Floating surface（`--s1p-floating-surface-*` / `.s1p-floating-surface`）也用于用户标记编辑器、日期选择器、确认型浮层、普通短 tooltip、文档型帮助浮层、标签菜单和 Toast 这类轻量浮层。
+- 一级窗口玻璃集中由 `.s1p-first-level-glass` 加上预设变体类接管：`.s1p-first-level-glass--confirm` 映射到 floating surface 变量（`--s1p-floating-surface-bg/filter/shadow`），用于通用确认/输入/高级确认弹窗；`.s1p-first-level-glass--settings` 映射到 dialog glass 变量（`--s1p-glass-panel-bg/filter`、`--s1p-dialog-glass-shadow`），用于设置面板。`.s1p-modal-content`、`.s1p-glass-panel` 和 `.s1p-confirm-content` 保持为结构/语义类，只负责布局、尺寸、滚动、文本和动效，不拥有背景、阴影或 filter。
+- Confirm dialog content（`.s1p-confirm-content`）正文走 `--s1p-dialog-text` / `--s1p-dialog-muted-text` 保证深浅模式可读性；在非 settings-secondary 上下文中自动附加 `.s1p-first-level-glass--confirm`，由一级玻璃类统一提供材质。Dialog glass（`--s1p-dialog-glass-*`）保留给 Token 日期配置和手动同步选择/对比表格等内部信息块；Shell glass（`.s1p-glass-panel`）用于设置面板、调试面板和同类大外壳；Image viewer glass 用于图片查看器工具栏和图片舞台；Floating surface（`--s1p-floating-surface-*` / `.s1p-floating-surface`）用于用户标记编辑器、日期选择器、确认型浮层、普通短 tooltip、文档型帮助浮层、标签菜单和 Toast 这类轻量浮层。
 - Settings secondary glass（`.s1p-settings-secondary-glass`）只用于设置面板承载的二级窗口。通用 `createConfirmationModal` / `createInputModal` / `createAdvancedConfirmationModal` 必须通过 `useSettingsSecondaryGlass: true` 显式启用；设置面板内部可使用本地 helper 统一传参。不要在这些通用工厂里用 `document.querySelector(".s1p-modal ...")` 做全局回退，否则残留设置面板会让非设置弹窗误套主题。
 - 轻量浮层必须优先复用 `--s1p-floating-surface-bg`、`--s1p-floating-surface-filter` 和 `--s1p-floating-surface-shadow`；需要贴近 tooltip 的特殊工具条（如导航栏拉取/推送行内菜单）可在这套变量基础上拆出局部 surface 变量，但不要回退到旧的实底 popover。带备注确认菜单的外层只负责布局，玻璃材质放在子 surface 上，避免中间 gap 被父级 backdrop 连成整块。
-- Dialog glass / floating surface / toast / floating-control 都必须通过对应 `--s1p-*-bg`、`--s1p-*-filter` 与 `--s1p-*-shadow` 变量调参；优先微调背景 alpha 保证可读性，保持轻量 filter，不要在组件规则里硬编码 `blur(6px)` / `blur(8px)` 这类强磨砂。一级确认弹窗本体的背景、阴影和滤镜必须整体走 floating surface，不要只切换其中一项。
+- Dialog glass / floating surface / toast / floating-control 都必须通过对应 `--s1p-*-bg`、`--s1p-*-filter` 与 `--s1p-*-shadow` 变量调参；优先微调背景 alpha 保证可读性，保持轻量 filter，不要在组件规则里硬编码 `blur(6px)` / `blur(8px)` 这类强磨砂。一级确认弹窗本体必须通过 `.s1p-first-level-glass--confirm` 预设整体应用材质，不要在其规则内单独切换背景、阴影或滤镜中的某一项。
 - Toast 是短时提示，默认复用 floating surface；成功/错误提示可以保留语义色背景，但仍应保持透明度与磨砂一致，不要退回不透明色块。
 - 决策弹窗正文走 `--s1p-dialog-text`，说明文字走 `--s1p-dialog-muted-text`；同步选择、同步冲突、欢迎、Token、阅读记录详情、手动屏蔽等共享 `.s1p-confirm-content` 的弹窗都要继承这套深浅模式文本 token。
 - 纯操作入口菜单不再默认保持实底；标签选项菜单复用 floating surface，导航栏拉取/推送行内菜单使用更轻的局部 surface。若新增操作入口菜单，先按可读性判断复用 floating surface 或拆局部变量，不要直接套旧 `--s1p-popover-solid-*`。
