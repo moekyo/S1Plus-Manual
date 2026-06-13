@@ -114,6 +114,20 @@ The script uses `GM_addValueChangeListener` to detect data changes from other ta
 - Sticky posts and collapsed threads require special DOM handling.
 - `@connect *` in script metadata — used because `GM_xmlhttpRequest` targets GitHub Gist API.
 
+## Agent skills
+
+### Issue tracker
+
+Issues live as markdown files under `.scratch/<feature-slug>/`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Defaults: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` at root + `docs/adr/`. See `docs/agents/domain.md`.
+
 ## Related Docs
 
 - `DEVELOPMENT.md` — comprehensive dev manual (code module map, storage key catalog, sync mechanics, test checklists, animation debugging)
