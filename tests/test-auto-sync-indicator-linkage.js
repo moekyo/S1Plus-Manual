@@ -16,6 +16,7 @@ const createHarness = () => {
 
 const BACKGROUND_SYNC_DEBOUNCE_STATE_KEY =
   "s1p_background_sync_debounce_state";
+const BACKGROUND_SYNC_LOCK_KEY = "s1p_background_sync_lock";
 const AUTO_SYNC_INDICATOR_STATE_KEY = "s1p_auto_sync_indicator_state";
 const PENDING_AUTO_SYNC_KEY = "s1p_pending_auto_sync_request";
 const STARTUP_SYNC_LOCK_KEY = "s1p_startup_sync_lock";
@@ -891,6 +892,75 @@ const testStalePendingAutoSyncRequestDoesNotDisplay = () => {
   );
 };
 
+const testBackgroundPushRunningRequiresCurrentLiveRunner = () => {
+  const { hooks, store } = createHarness();
+  const now = Date.now();
+  const constants = hooks.getTitleSyncStatusTestConstants();
+  const pendingRequest = {
+    version: 1,
+    source: "read_progress",
+    lastModified: now,
+    maxLastModified: now,
+    createdAt: now,
+    firstDirtyAt: now,
+    lastDirtyAt: now,
+    sources: { read_progress: 1 },
+    threadIds: ["2283403"],
+  };
+  const setBackgroundLocks = (owner, timestamp = now - 5000) => {
+    store.set(BACKGROUND_SYNC_LOCK_KEY, {
+      owner,
+      timestamp,
+    });
+    store.set(GLOBAL_SYNC_LOCK_KEY, {
+      owner,
+      mode: "background",
+      timestamp,
+      ttlMs: constants.BACKGROUND_SYNC_LOCK_TTL_MS,
+    });
+  };
+
+  store.set(PENDING_AUTO_SYNC_KEY, pendingRequest);
+  store.set(AUTO_SYNC_INDICATOR_STATE_KEY, {
+    phase: "success",
+    timestamp: now - 3000,
+    token: "",
+    source: "background_push",
+    reason: "previous_push",
+    operation: "push",
+    lastResolvedPhase: "success",
+    lastResolvedTimestamp: now - 3000,
+    lastResolvedSource: "background_push",
+    lastResolvedReason: "previous_push",
+  });
+
+  setBackgroundLocks("other-tab");
+  let resolvedState = toPlainObject(hooks.resolveAutoSyncIndicatorDisplayPhase());
+  assert.equal(
+    resolvedState.displayPhase,
+    "pending",
+    "其他标签页留下的新鲜后台同步锁不能把待推送状态渲染成推送中动画。"
+  );
+  assert.equal(hooks.getAutoSyncIndicatorDisplayKind(resolvedState), "push");
+  assert.equal(
+    hooks.getAutoSyncIndicatorTitle(resolvedState),
+    "自动同步：阅读进度待推送"
+  );
+
+  setBackgroundLocks(constants.BACKGROUND_SYNC_OWNER_ID);
+  resolvedState = toPlainObject(hooks.resolveAutoSyncIndicatorDisplayPhase());
+  assert.equal(
+    resolvedState.displayPhase,
+    "running",
+    "当前标签页自己持有后台同步锁时，仍应显示真正的推送中动画。"
+  );
+  assert.equal(hooks.getAutoSyncIndicatorDisplayKind(resolvedState), "push");
+  assert.equal(
+    hooks.getAutoSyncIndicatorTitle(resolvedState),
+    "自动同步：阅读进度推送中"
+  );
+};
+
 const testAutoSyncEntryPointsBindIndicatorSources = () => {
   expectMatch(
     /const runStartupModeAutoSyncCheckWithIndicator = async[\s\S]*?startAutoSyncIndicatorCycle\(resolvedSource/m,
@@ -1127,6 +1197,7 @@ const testAutoSyncEntryPointsBindIndicatorSources = () => {
   testSuccessDisplayKeepsDirectionalCompletion();
   testBackgroundDrainKeepsSuccessAfterPushVerification();
   testStalePendingAutoSyncRequestDoesNotDisplay();
+  testBackgroundPushRunningRequiresCurrentLiveRunner();
   testAutoSyncEntryPointsBindIndicatorSources();
 
   console.log("[auto-sync-indicator-linkage] Auto sync indicator linkage verified.");
