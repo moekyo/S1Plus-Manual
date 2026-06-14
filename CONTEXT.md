@@ -50,6 +50,7 @@ _Avoid_: live-runner heartbeat, runner election
 - A **Running Sync** holds a **Sync Lock** and renews it via heartbeat
 - **Ghost Running** occurs when a **Sync Lock** exists but no **Live Runner** holds it
 - The **Sync Indicator State** derives its current phase from **Sync Lock** freshness, **Pending Dirty**, and the last recorded **Result Phase**
+- For the navbar, **Pending Dirty** takes precedence over a foreign background **Sync Lock**. Another tab's fresh background lock must not upgrade a pending local push into a running push animation; only the current tab as **Live Runner** may do that.
 - The **Title Owner** reads the **Sync Indicator State** to decide what prefix to display
 - For **Running Sync**, the **Title Owner** must resolve to the **Live Runner** using the title live-runner mapping; ordinary recency-based ownership applies to **Result Phases**
 - The **Scheduler Owner** manages the debounce timer independently from both **Sync Lock** and **Title Owner**
