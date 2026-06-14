@@ -13781,7 +13781,8 @@
 
   const getAutoSyncRuntimeRunningDisplayState = (
     now = Date.now(),
-    stateInput = null
+    stateInput = null,
+    options = {}
   ) => {
     const state = stateInput
       ? normalizeAutoSyncIndicatorState(stateInput)
@@ -13801,6 +13802,13 @@
     );
     if (activeLockDisplayState.isActive) {
       const activeLockSource = activeLockDisplayState.source;
+      if (
+        options.suppressForeignBackgroundLockWhenPending === true &&
+        activeLockSource === AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND &&
+        !isSyncLockOwned(SYNC_LOCK_MODE_BACKGROUND, now)
+      ) {
+        return { isRunning: false, source: "", reason: "" };
+      }
       const stateSource = normalizeAutoSyncIndicatorSource(state.source);
       const activeLockOperation =
         (
@@ -14571,12 +14579,15 @@
       ? normalizeAutoSyncIndicatorState(stateInput)
       : getAutoSyncIndicatorState();
     const now = Date.now();
-    const runningState = getAutoSyncRuntimeRunningDisplayState(now, state);
     const pendingState = getAutoSyncRuntimePendingDisplayState(now);
     const hasPendingRequest = pendingState.hasPending === true;
     const hasConflictPause = Boolean(getActiveAutoSyncConflictPause());
     const hasOpenCircuit = getAutoSyncCircuitState().open;
     const canShowPending = hasPendingRequest && !hasConflictPause && !hasOpenCircuit;
+    const runningState = getAutoSyncRuntimeRunningDisplayState(now, state, {
+      suppressForeignBackgroundLockWhenPending:
+        ttlProfile !== "title" && canShowPending,
+    });
     const buildDisplayState = (
       displayPhase,
       displaySource = "",
