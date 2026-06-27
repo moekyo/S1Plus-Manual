@@ -27502,10 +27502,9 @@
         Number.isFinite(importedLastUpdated) && importedLastUpdated > 0
           ? Math.min(importedLastUpdated, maxAllowedImportedLastUpdated)
           : Date.now();
-      const safeLastUpdated = Math.max(
-        normalizedImportedLastUpdated,
-        currentLastModified + 1
-      );
+      const safeLastUpdated = suppressSyncTrigger
+        ? normalizedImportedLastUpdated
+        : Math.max(normalizedImportedLastUpdated, currentLastModified + 1);
       GM_setValue(LAST_LOCAL_MODIFIED_KEY, safeLastUpdated);
       if (suppressSyncTrigger && hasSuppressedSyncedDataTransform) {
         updateLastModifiedTimestamp("general", { triggerSync: false });
@@ -27556,6 +27555,45 @@
     } finally {
       trackReadProgressInThread();
     }
+  };
+
+  const buildSyncBaselineStateForDataPair = ({
+    localDataObject = null,
+    remoteDataObject = null,
+    remoteUpdatedAt = null,
+  } = {}) => {
+    const localContentHash =
+      typeof localDataObject?.contentHash === "string" &&
+        localDataObject.contentHash
+        ? localDataObject.contentHash
+        : null;
+    const remoteContentHash =
+      typeof remoteDataObject?.contentHash === "string" &&
+        remoteDataObject.contentHash
+        ? remoteDataObject.contentHash
+        : localContentHash;
+    return {
+      contentHash: localContentHash || remoteContentHash,
+      localContentHash: localContentHash || remoteContentHash,
+      remoteContentHash,
+      remoteUpdatedAt,
+    };
+  };
+
+  const buildImportedSyncBaselineState = async ({
+    remoteDataObject = null,
+    remoteUpdatedAt = null,
+    exportOptions = {},
+  } = {}) => {
+    const importedLocalDataObject = await exportLocalDataObject({
+      ...(exportOptions || {}),
+      useFreshSnapshot: true,
+    });
+    return buildSyncBaselineStateForDataPair({
+      localDataObject: importedLocalDataObject,
+      remoteDataObject,
+      remoteUpdatedAt,
+    });
   };
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -27746,12 +27784,47 @@
     const savedAt = Number.isFinite(Number(saved.savedAt))
       ? Number(saved.savedAt)
       : 0;
-    return { contentHash, remoteUpdatedAt, savedAt };
+    const localContentHash =
+      typeof saved.localContentHash === "string" && saved.localContentHash
+        ? saved.localContentHash
+        : contentHash;
+    const remoteContentHash =
+      typeof saved.remoteContentHash === "string" && saved.remoteContentHash
+        ? saved.remoteContentHash
+        : contentHash;
+    return {
+      contentHash,
+      localContentHash,
+      remoteContentHash,
+      remoteUpdatedAt,
+      savedAt,
+    };
   };
 
-  const setSyncBaselineState = ({ contentHash = null, remoteUpdatedAt = null } = {}) => {
-    const nextContentHash =
+  const setSyncBaselineState = ({
+    contentHash = null,
+    localContentHash = null,
+    remoteContentHash = null,
+    remoteUpdatedAt = null,
+  } = {}) => {
+    const normalizedContentHash =
       typeof contentHash === "string" && contentHash ? contentHash : null;
+    const normalizedLocalContentHash =
+      typeof localContentHash === "string" && localContentHash
+        ? localContentHash
+        : null;
+    const normalizedRemoteContentHash =
+      typeof remoteContentHash === "string" && remoteContentHash
+        ? remoteContentHash
+        : null;
+    const nextContentHash =
+      normalizedContentHash ||
+      normalizedLocalContentHash ||
+      normalizedRemoteContentHash;
+    const nextLocalContentHash =
+      normalizedLocalContentHash || nextContentHash;
+    const nextRemoteContentHash =
+      normalizedRemoteContentHash || nextContentHash;
     const nextRemoteUpdatedAt =
       typeof remoteUpdatedAt === "string" && remoteUpdatedAt
         ? remoteUpdatedAt
@@ -27759,6 +27832,8 @@
 
     GM_setValue(SYNC_BASELINE_STATE_KEY, {
       contentHash: nextContentHash,
+      localContentHash: nextLocalContentHash,
+      remoteContentHash: nextRemoteContentHash,
       remoteUpdatedAt: nextRemoteUpdatedAt,
       savedAt: Date.now(),
     });
@@ -27769,6 +27844,8 @@
       saveSyncDiagnostics({
         ...mergeSyncDiagnosticsContext(getSyncDiagnostics(), {
           baselineHash: shortHashForLog(nextContentHash),
+          baselineLocalHash: shortHashForLog(nextLocalContentHash),
+          baselineRemoteHash: shortHashForLog(nextRemoteContentHash),
           lastAppliedContentHash: shortHashForLog(nextContentHash),
         }),
         lastAppliedContentHash: shortHashForLog(nextContentHash),
@@ -27949,11 +28026,16 @@
 
     const baselineState = getSyncBaselineState();
     if (baselineState) {
-      const localChanged = localDataObject.contentHash !== baselineState.contentHash;
+      const baselineLocalContentHash =
+        baselineState.localContentHash || baselineState.contentHash;
+      const baselineRemoteContentHash =
+        baselineState.remoteContentHash || baselineState.contentHash;
+      const localChanged =
+        localDataObject.contentHash !== baselineLocalContentHash;
       const remoteChangedByHash =
         typeof remoteDataObject.contentHash === "string" &&
           remoteDataObject.contentHash
-          ? remoteDataObject.contentHash !== baselineState.contentHash
+          ? remoteDataObject.contentHash !== baselineRemoteContentHash
           : null;
       const hasComparableRemoteUpdatedAt =
         typeof remoteUpdatedAt === "string" &&
@@ -30583,10 +30665,11 @@
           assertAutoSyncLockOwned("return_no_change");
           return asSuccessResult(
             "no_change",
-            {
-              contentHash: localDataObject.contentHash,
+            buildSyncBaselineStateForDataPair({
+              localDataObject,
+              remoteDataObject: remote,
               remoteUpdatedAt: remoteMeta.updatedAt || null,
-            },
+            }),
             {
               reason: versionDecision.reason || "hash_equal",
               remoteUpdatedAt: remoteMeta.updatedAt || null,
@@ -30623,13 +30706,19 @@
           importLocalData(JSON.stringify(remote.full), {
             suppressPostSync: true,
           });
+          const forcePullSyncBaseline = await runWithAutoSyncLockGuard(
+            "export_imported_local_data_after_force_pull",
+            () =>
+              buildImportedSyncBaselineState({
+                remoteDataObject: remote,
+                remoteUpdatedAt: remoteMeta.updatedAt || null,
+                exportOptions: exportLocalDataOptions,
+              })
+          );
           GM_setValue("s1p_last_sync_timestamp", Date.now());
           return asSuccessResult(
             "force_pulled",
-            {
-              contentHash: remote.contentHash,
-              remoteUpdatedAt: remoteMeta.updatedAt || null,
-            },
+            forcePullSyncBaseline,
             {
               reason: versionDecision.reason || "force_pull",
               remoteUpdatedAt: remoteMeta.updatedAt || null,
@@ -30660,13 +30749,19 @@
           importLocalData(JSON.stringify(remote.full), {
             suppressPostSync: true,
           });
+          const pullSyncBaseline = await runWithAutoSyncLockGuard(
+            "export_imported_local_data_after_pull",
+            () =>
+              buildImportedSyncBaselineState({
+                remoteDataObject: remote,
+                remoteUpdatedAt: remoteMeta.updatedAt || null,
+                exportOptions: exportLocalDataOptions,
+              })
+          );
           GM_setValue("s1p_last_sync_timestamp", Date.now());
           return asSuccessResult(
             "pulled",
-            {
-              contentHash: remote.contentHash,
-              remoteUpdatedAt: remoteMeta.updatedAt || null,
-            },
+            pullSyncBaseline,
             {
               reason: versionDecision.reason || "pull",
               remoteUpdatedAt: remoteMeta.updatedAt || null,
@@ -32222,6 +32317,7 @@
         getAutoSyncIndicatorDisplayKind(...args),
       getAutoSyncCleanStateSnapshot,
       shouldSkipAutoSyncDueToCleanState,
+      buildSyncBaselineStateForDataPair,
       decideSyncActionByVersion,
       classifyLocalSyncDelta,
       getLocalSyncDeltaTraceDetails,
@@ -35965,7 +36061,7 @@
     showMessage("正在从云端拉取数据...", null);
     try {
       assertManualSyncLockOwned("before_fetch_remote_data");
-      const { data: remoteData } = await fetchRemoteData();
+      const { data: remoteData, meta: remoteMeta = {} } = await fetchRemoteData();
       assertManualSyncLockOwned("after_fetch_remote_data");
       if (Object.keys(remoteData).length === 0) {
         throw new Error("云端没有数据，无法拉取。");
@@ -35978,12 +36074,17 @@
       });
       assertManualSyncLockOwned("after_import_local_data");
       if (result.success) {
+        const syncBaseline = await buildImportedSyncBaselineState({
+          remoteDataObject: validatedRemote,
+          remoteUpdatedAt: remoteMeta.updatedAt || null,
+        });
         // [FIX] 强制拉取成功后清除残留的清理标记
         clearPendingCleanupInfo();
         clearPendingAutoSyncRequest();
         clearAutoSyncRuntimeQueue();
         clearAutoSyncConflictPause();
         GM_setValue("s1p_last_sync_timestamp", Date.now());
+        setSyncBaselineState(syncBaseline);
         setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_SUCCESS, {
           source: AUTO_SYNC_INDICATOR_SOURCE_MANUAL_SYNC,
           reason: "force_pull",
@@ -35993,6 +36094,7 @@
         recordSyncSuccess("force_pull", "manual", {
           triggerSource: SYNC_TRIGGER_SOURCE_MANUAL_SYNC,
           remoteHash: shortHashForLog(validatedRemote.contentHash),
+          localHash: shortHashForLog(syncBaseline.localContentHash),
           baselineHash: shortHashForLog(getSyncBaselineState()?.contentHash),
         });
         updateLastSyncTimeDisplay();
@@ -46762,13 +46864,18 @@
                     }
                   );
                   if (result.success) {
-                    GM_setValue("s1p_last_sync_timestamp", Date.now());
-                    noteManualSuccess("initial_pull_recover", {
-                      contentHash: latestRemoteDataObj.contentHash,
+                    const syncBaseline = await buildImportedSyncBaselineState({
+                      remoteDataObject: latestRemoteDataObj,
                       remoteUpdatedAt: latestRemoteUpdatedAt,
-                    }, {
-                      remoteWriter: latestRemoteDataObj.lastWriter || null,
                     });
+                    GM_setValue("s1p_last_sync_timestamp", Date.now());
+                    noteManualSuccess(
+                      "initial_pull_recover",
+                      syncBaseline,
+                      {
+                        remoteWriter: latestRemoteDataObj.lastWriter || null,
+                      }
+                    );
                     showMessage("恢复成功！页面即将刷新。", true);
                     setTimeout(() => {
                       location.reload();
@@ -46940,16 +47047,17 @@
             },
           });
 
-          if (remote.contentHash === localDataObject.contentHash) {
+          if (versionDecision.action === "no_change") {
             clearPendingCleanupInfo();
             showMessage("数据已是最新，无需同步。", true);
             GM_setValue("s1p_last_sync_timestamp", Date.now());
             noteManualSuccess(
               "no_change",
-              {
-                contentHash: localDataObject.contentHash,
+              buildSyncBaselineStateForDataPair({
+                localDataObject,
+                remoteDataObject: remote,
                 remoteUpdatedAt: remoteMetaUpdatedAt || null,
-              },
+              }),
               decisionDiagnostics
             );
             return resolveManualSync(true);
@@ -47191,6 +47299,10 @@
                   suppressPostSync: true,
                 });
                 if (result.success) {
+                  const syncBaseline = await buildImportedSyncBaselineState({
+                    remoteDataObject: latestRemote,
+                    remoteUpdatedAt: latestRemoteUpdatedAt,
+                  });
                   clearPendingCleanupInfo();
                   GM_setValue("s1p_last_sync_timestamp", Date.now());
                   GM_setValue("s1p_last_manual_sync_info", {
@@ -47199,10 +47311,7 @@
                   });
                   noteManualSuccess(
                     "manual_pull",
-                    {
-                      contentHash: latestRemote.contentHash,
-                      remoteUpdatedAt: latestRemoteUpdatedAt,
-                    },
+                    syncBaseline,
                     {
                       ...decisionDiagnostics,
                       remoteHash: shortHashForLog(latestRemote.contentHash),

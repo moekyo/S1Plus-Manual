@@ -668,6 +668,87 @@ const testStartupCoreLocalDeltaStillPauses = () => {
   assert.equal(startupDecision.action, "skip_push_on_startup");
 };
 
+const testPulledNormalizedBaselineComparesLocalAndRemoteSides = () => {
+  const { hooks } = createHarness();
+  hooks.setSyncBaselineState({
+    contentHash: "local-normalized-after-pull",
+    localContentHash: "local-normalized-after-pull",
+    remoteContentHash: "remote-original-before-normalization",
+    remoteUpdatedAt: "2026-06-27T13:24:01Z",
+  });
+
+  const importedLocalDataObject = {
+    contentHash: "local-normalized-after-pull",
+    baseContentHash: "local-normalized-base",
+    lastUpdated: 200,
+    data: {
+      settings: { foo: true, migratedDefault: true },
+      read_progress: {},
+    },
+  };
+  const unchangedRemoteDataObject = {
+    contentHash: "remote-original-before-normalization",
+    baseContentHash: "remote-original-base",
+    lastUpdated: 100,
+    data: {
+      settings: { foo: true },
+      read_progress: {},
+    },
+  };
+
+  const cleanDecision = hooks.decideSyncActionByVersion({
+    localDataObject: importedLocalDataObject,
+    remoteDataObject: unchangedRemoteDataObject,
+    remoteUpdatedAt: "2026-06-27T13:24:01Z",
+    syncMode: "startup",
+  });
+  assert.equal(cleanDecision.action, "no_change");
+  assert.equal(cleanDecision.reason, "hash_equal_since_baseline");
+
+  const baselineAfterNoChange = hooks.buildSyncBaselineStateForDataPair({
+    localDataObject: importedLocalDataObject,
+    remoteDataObject: unchangedRemoteDataObject,
+    remoteUpdatedAt: "2026-06-27T13:24:01Z",
+  });
+  hooks.setSyncBaselineState(baselineAfterNoChange);
+  const foregroundRetryDecision = hooks.decideSyncActionByVersion({
+    localDataObject: importedLocalDataObject,
+    remoteDataObject: unchangedRemoteDataObject,
+    remoteUpdatedAt: "2026-06-27T13:24:01Z",
+    syncMode: "foreground_followup",
+  });
+  assert.equal(foregroundRetryDecision.action, "no_change");
+  assert.equal(
+    foregroundRetryDecision.reason,
+    "hash_equal_since_baseline",
+    "启动 no-change 成功后不能把 remoteContentHash 压扁成本地哈希，否则前台二次确认会重复拉取。"
+  );
+
+  const localChangedDecision = hooks.decideSyncActionByVersion({
+    localDataObject: {
+      ...importedLocalDataObject,
+      contentHash: "local-edited-after-pull",
+      baseContentHash: "local-edited-base",
+    },
+    remoteDataObject: unchangedRemoteDataObject,
+    remoteUpdatedAt: "2026-06-27T13:24:01Z",
+    syncMode: "startup",
+  });
+  assert.equal(localChangedDecision.action, "skip_push_on_startup");
+
+  const remoteChangedDecision = hooks.decideSyncActionByVersion({
+    localDataObject: importedLocalDataObject,
+    remoteDataObject: {
+      ...unchangedRemoteDataObject,
+      contentHash: "remote-changed-after-pull",
+      baseContentHash: "remote-changed-base",
+    },
+    remoteUpdatedAt: "2026-06-27T14:00:00Z",
+    syncMode: "startup",
+  });
+  assert.equal(remoteChangedDecision.action, "pull");
+};
+
 const testAutoSyncCompletionLogMessageIsSpecific = () => {
   const { hooks } = createHarness();
 
@@ -884,6 +965,7 @@ const testPhase3CallSitesUseDedicatedHelpers = () => {
   testDecisionSplitsStartupBackgroundAndForegroundFollowUp();
   testStartupReadProgressOnlyLocalDeltaAutoMerges();
   testStartupCoreLocalDeltaStillPauses();
+  testPulledNormalizedBaselineComparesLocalAndRemoteSides();
   testAutoSyncCompletionLogMessageIsSpecific();
   testSyncTraceEventsAreShownInDiagnostics();
   testSyncTraceDetailsUseChineseLabels();
