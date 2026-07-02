@@ -58,6 +58,11 @@
   const RELOAD_SCROLL_GUARD_NEAR_BOTTOM_PX = 48;
   const RELOAD_SCROLL_GUARD_ACTIVE_MS = 2500;
   const RELOAD_SCROLL_GUARD_STATE_MAX_AGE_MS = 5 * 60 * 1000;
+  const POST_HASH_ANCHOR_SCROLL_MARGIN_FALLBACK_PX = 48;
+  const POST_HASH_ANCHOR_SCROLL_MARGIN_GAP_PX = 8;
+  const POST_HASH_ANCHOR_BOTTOM_GAP_PX = 80;
+  const POST_HASH_ANCHOR_TOP_OBSTRUCTION_SCAN_PX = 180;
+  const POST_HASH_ANCHOR_TOP_OBSTRUCTION_MIN_WIDTH_PX = 240;
   let logBuffer = [];
   let logFilters = { log: true, warn: true, error: true, debug: true };
   let logSearchKeyword = "";
@@ -432,6 +437,221 @@
     );
   };
 
+  let postHashAnchorAlignmentBound = false;
+
+  const getPostHashTargetCandidateIds = (hash = "") => {
+    const rawHash = String(hash || "").trim();
+    const rawTargetId = rawHash.startsWith("#") ? rawHash.slice(1) : rawHash;
+    if (!rawTargetId) {
+      return [];
+    }
+
+    let targetId = rawTargetId;
+    try {
+      targetId = decodeURIComponent(rawTargetId);
+    } catch (error) {}
+
+    const pidMatch = targetId.match(/^pid(\d+)$/);
+    if (pidMatch && pidMatch[1]) {
+      return [`pid${pidMatch[1]}`, `post_${pidMatch[1]}`];
+    }
+
+    const postWrapperMatch = targetId.match(/^post_(\d+)$/);
+    if (postWrapperMatch && postWrapperMatch[1]) {
+      return [`pid${postWrapperMatch[1]}`, `post_${postWrapperMatch[1]}`];
+    }
+
+    return [];
+  };
+
+  const getPostAnchorTopObstructionBottomPx = (
+    doc = document,
+    win = window
+  ) => {
+    const candidateElements = new Set();
+    const navElement = doc?.getElementById?.("nv");
+    if (navElement) {
+      candidateElements.add(navElement);
+    }
+    if (typeof doc?.querySelectorAll === "function") {
+      try {
+        doc.querySelectorAll("body *").forEach((element) => {
+          candidateElements.add(element);
+        });
+      } catch (error) {}
+    }
+
+    const viewportWidth =
+      Number(win?.innerWidth) || Number(doc?.documentElement?.clientWidth) || 0;
+    const minObstructionWidth = viewportWidth
+      ? Math.min(
+          POST_HASH_ANCHOR_TOP_OBSTRUCTION_MIN_WIDTH_PX,
+          viewportWidth * 0.25
+        )
+      : POST_HASH_ANCHOR_TOP_OBSTRUCTION_MIN_WIDTH_PX;
+    let topObstructionBottom = 0;
+
+    candidateElements.forEach((element) => {
+      if (!element || typeof element.getBoundingClientRect !== "function") {
+        return;
+      }
+      const computedStyle =
+        typeof win?.getComputedStyle === "function"
+          ? win.getComputedStyle(element)
+          : null;
+      const position = String(computedStyle?.position || "").trim();
+      if (position !== "fixed" && position !== "sticky") {
+        return;
+      }
+      if (
+        computedStyle?.display === "none" ||
+        computedStyle?.visibility === "hidden"
+      ) {
+        return;
+      }
+
+      const rect = element.getBoundingClientRect();
+      const top = Number(rect?.top);
+      const bottom = Number(rect?.bottom);
+      const left = Number(rect?.left) || 0;
+      const right = Number(rect?.right) || 0;
+      const width = Number(rect?.width) || Math.max(0, right - left);
+      const height = Number(rect?.height) || Math.max(0, bottom - top);
+      if (
+        !Number.isFinite(top) ||
+        !Number.isFinite(bottom) ||
+        bottom <= 0 ||
+        top > POST_HASH_ANCHOR_TOP_OBSTRUCTION_SCAN_PX ||
+        width < minObstructionWidth ||
+        height <= 0
+      ) {
+        return;
+      }
+      if (viewportWidth && (right <= 0 || left >= viewportWidth)) {
+        return;
+      }
+
+      topObstructionBottom = Math.max(topObstructionBottom, bottom);
+    });
+
+    return topObstructionBottom;
+  };
+
+  const getPostAnchorScrollOffsetPx = (
+    doc = document,
+    win = window
+  ) => {
+    const fallbackOffset = POST_HASH_ANCHOR_SCROLL_MARGIN_FALLBACK_PX;
+    const topObstructionBottom = getPostAnchorTopObstructionBottomPx(doc, win);
+    if (!topObstructionBottom) {
+      return fallbackOffset;
+    }
+    return Math.max(
+      fallbackOffset,
+      Math.ceil(topObstructionBottom + POST_HASH_ANCHOR_SCROLL_MARGIN_GAP_PX)
+    );
+  };
+
+  const getPostHashAnchorScrollTop = ({
+    currentScrollY = 0,
+    targetTop = 0,
+    offsetPx = POST_HASH_ANCHOR_SCROLL_MARGIN_FALLBACK_PX,
+  } = {}) =>
+    Math.max(
+      0,
+      Math.round(
+        (Number(currentScrollY) || 0) +
+          (Number(targetTop) || 0) -
+          Math.max(0, Number(offsetPx) || 0)
+      )
+    );
+
+  const refreshPostAnchorScrollMargin = () => {
+    const offsetPx = getPostAnchorScrollOffsetPx();
+    document.documentElement?.style?.setProperty(
+      "--s1p-post-anchor-scroll-margin-top",
+      `${offsetPx}px`
+    );
+    return offsetPx;
+  };
+
+  const resolvePostHashTargetElement = (
+    hash = window.location?.hash || "",
+    doc = document
+  ) => {
+    const candidateIds = getPostHashTargetCandidateIds(hash);
+    for (const candidateId of candidateIds) {
+      const targetElement = doc?.getElementById?.(candidateId);
+      if (targetElement) {
+        return targetElement;
+      }
+    }
+    return null;
+  };
+
+  const alignPostHashTargetBelowTopObstructions = () => {
+    const targetElement = resolvePostHashTargetElement();
+    if (
+      !targetElement ||
+      typeof targetElement.getBoundingClientRect !== "function"
+    ) {
+      refreshPostAnchorScrollMargin();
+      return false;
+    }
+
+    const offsetPx = refreshPostAnchorScrollMargin();
+    const targetRect = targetElement.getBoundingClientRect();
+    const targetTop = Number(targetRect?.top);
+    if (!Number.isFinite(targetTop)) {
+      return false;
+    }
+
+    const viewportHeight = Number(window.innerHeight) || 0;
+    const lowerVisibleEdge =
+      viewportHeight > 0
+        ? Math.max(offsetPx, viewportHeight - POST_HASH_ANCHOR_BOTTOM_GAP_PX)
+        : Number.POSITIVE_INFINITY;
+    if (targetTop >= offsetPx - 1 && targetTop <= lowerVisibleEdge) {
+      return false;
+    }
+
+    const targetScrollTop = getPostHashAnchorScrollTop({
+      currentScrollY: window.scrollY || window.pageYOffset || 0,
+      targetTop,
+      offsetPx,
+    });
+    try {
+      window.scrollTo({
+        top: targetScrollTop,
+        left: 0,
+        behavior: "auto",
+      });
+    } catch (error) {
+      window.scrollTo(0, targetScrollTop);
+    }
+    return true;
+  };
+
+  const schedulePostHashTargetAlignment = () => {
+    refreshPostAnchorScrollMargin();
+    [0, 120].forEach((delayMs) => {
+      window.setTimeout(alignPostHashTargetBelowTopObstructions, delayMs);
+    });
+  };
+
+  const initializePostHashAnchorAlignment = () => {
+    if (postHashAnchorAlignmentBound) {
+      return;
+    }
+    postHashAnchorAlignmentBound = true;
+    refreshPostAnchorScrollMargin();
+    window.addEventListener("hashchange", schedulePostHashTargetAlignment);
+    window.addEventListener("load", schedulePostHashTargetAlignment, {
+      once: true,
+    });
+    schedulePostHashTargetAlignment();
+  };
+
   const formatLogArgument = (value, seen = new WeakSet()) => {
     if (value instanceof Error) {
       return value.stack || value.message || String(value);
@@ -727,6 +947,9 @@
       stopLogCollector,
       persistLogBuffer,
       restoreLogBufferFromSession,
+      getPostHashTargetCandidateIdsForTest: getPostHashTargetCandidateIds,
+      getPostAnchorScrollOffsetForTest: getPostAnchorScrollOffsetPx,
+      getPostHashAnchorScrollTopForTest: getPostHashAnchorScrollTop,
       getDebugLogCollectorStateForTest,
       setDebugLogCollectorStateForTest,
       resetDebugLogCollectorStateForTest,
@@ -4944,6 +5167,11 @@
       width: 20px;
       height: 20px;
       flex-shrink: 0; /* 防止图标被压缩 */
+    }
+
+    #postlist table[id^="pid"],
+    #postlist div[id^="post_"] {
+      scroll-margin-top: var(--s1p-post-anchor-scroll-margin-top, 48px);
     }
 
     /* --- 阅读进度UI样式 --- */
@@ -53367,6 +53595,7 @@
 
   const runS1PlusInitializer = () => {
     initializeReloadScrollRestorationGuard();
+    initializePostHashAnchorAlignment();
     const initializationContext = createS1PlusInitializationContext();
     const documentStartPhasePromise = runInitializationPhase(
       S1P_INIT_PHASES.DOCUMENT_START,
