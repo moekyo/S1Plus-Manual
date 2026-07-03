@@ -2422,6 +2422,9 @@
   const S1P_IMAGE_VIEWER_MIN_SCALE = 0.08;
   const S1P_IMAGE_VIEWER_MAX_SCALE = 8;
   const S1P_IMAGE_VIEWER_ZOOM_STEP = 0.16;
+  const S1P_IMAGE_VIEWER_DEFAULT_ZOOM_SCALE_DEFAULT_PERCENT = 100;
+  const S1P_IMAGE_VIEWER_DEFAULT_ZOOM_SCALE_MIN_PERCENT = 60;
+  const S1P_IMAGE_VIEWER_DEFAULT_ZOOM_SCALE_MAX_PERCENT = 100;
   const S1P_IMAGE_VIEWER_WHEEL_MODE_ZOOM = "zoom";
   const S1P_IMAGE_VIEWER_WHEEL_MODE_SCROLL = "scroll";
   const S1P_IMAGE_VIEWER_WHEEL_ZOOM_STEP_DEFAULT_PERCENT = 6;
@@ -2485,6 +2488,13 @@
     value === S1P_IMAGE_VIEWER_WHEEL_MODE_SCROLL
       ? S1P_IMAGE_VIEWER_WHEEL_MODE_SCROLL
       : S1P_IMAGE_VIEWER_WHEEL_MODE_ZOOM;
+  const normalizeS1pImageViewerDefaultZoomScalePercent = (value) =>
+    normalizeBoundedIntegerValue(
+      value,
+      S1P_IMAGE_VIEWER_DEFAULT_ZOOM_SCALE_DEFAULT_PERCENT,
+      S1P_IMAGE_VIEWER_DEFAULT_ZOOM_SCALE_MIN_PERCENT,
+      S1P_IMAGE_VIEWER_DEFAULT_ZOOM_SCALE_MAX_PERCENT
+    );
   const normalizeBooleanWithDefault = (value, defaultValue = true) =>
     typeof value === "boolean" ? value : defaultValue;
   const resolveImagePreviewLimitState = (rawSettings = {}) => {
@@ -7432,6 +7442,14 @@
       margin-top: 6px;
       margin-bottom: 16px;
     }
+    .s1p-image-viewer-default-scale-range {
+      width: 100%;
+      margin-top: -8px;
+      margin-bottom: 16px;
+    }
+    .s1p-image-viewer-default-scale-range .s1p-range-control {
+      width: 100%;
+    }
     .s1p-image-viewer-wheel-group {
       margin-top: 0;
       margin-bottom: 14px;
@@ -7934,6 +7952,8 @@
         overflow-y: hidden;
         -webkit-overflow-scrolling: touch;
       }
+      .s1p-image-viewer-default-scale-range,
+      .s1p-image-viewer-default-scale-range .s1p-range-control,
       .s1p-image-viewer-wheel-range,
       .s1p-image-viewer-wheel-range .s1p-range-control {
         width: 100%;
@@ -24546,7 +24566,7 @@
   const applyS1pImageViewerFitBySize = (
     naturalWidth,
     naturalHeight,
-    { contain = false, allowUpscale = false } = {}
+    { contain = false, allowUpscale = false, scaleRatio = 1 } = {}
   ) => {
     const state = s1pImageViewerState;
     if (!state.viewport) {
@@ -24566,6 +24586,12 @@
     let baseScale = widthScale;
     if (contain) {
       baseScale = containScale;
+    } else {
+      const safeScaleRatio = Math.min(
+        1,
+        Math.max(0.01, Number(scaleRatio) || 1)
+      );
+      baseScale *= safeScaleRatio;
     }
     if (!allowUpscale) {
       baseScale = Math.min(1, baseScale);
@@ -24589,6 +24615,11 @@
     return applyS1pImageViewerFitBySize(naturalWidth, naturalHeight, {
       contain: shouldContain,
       allowUpscale: !shouldContain,
+      scaleRatio: shouldContain
+        ? 1
+        : normalizeS1pImageViewerDefaultZoomScalePercent(
+            settings.imageViewerDefaultZoomScalePercent
+          ) / 100,
     });
   };
   const applyS1pImageViewerDefaultTransform = () => {
@@ -24613,6 +24644,10 @@
     return applyS1pImageViewerFitBySize(naturalWidth, naturalHeight, {
       contain: false,
       allowUpscale: true,
+      scaleRatio:
+        normalizeS1pImageViewerDefaultZoomScalePercent(
+          getSettings().imageViewerDefaultZoomScalePercent
+        ) / 100,
     });
   };
   const fitS1pImageViewerContainToViewport = () => {
@@ -32648,6 +32683,8 @@
     limitImagesBySize: true,
     useS1PlusImageViewer: true,
     imageViewerDefaultFullDisplay: false,
+    imageViewerDefaultZoomScalePercent:
+      S1P_IMAGE_VIEWER_DEFAULT_ZOOM_SCALE_DEFAULT_PERCENT,
     imageViewerWheelMode: S1P_IMAGE_VIEWER_WHEEL_MODE_ZOOM,
     imageViewerWheelZoomStepPercent:
       S1P_IMAGE_VIEWER_WHEEL_ZOOM_STEP_DEFAULT_PERCENT,
@@ -33055,6 +33092,21 @@
     settings.imageViewerDefaultFullDisplay =
       normalizedImageViewerDefaultFullDisplay;
 
+    const normalizedImageViewerDefaultZoomScalePercent =
+      normalizeS1pImageViewerDefaultZoomScalePercent(
+        settings.imageViewerDefaultZoomScalePercent
+      );
+    if (
+      !Object.is(
+        settings.imageViewerDefaultZoomScalePercent,
+        normalizedImageViewerDefaultZoomScalePercent
+      )
+    ) {
+      markMigration("image_viewer_default_zoom_scale_percent_normalized");
+    }
+    settings.imageViewerDefaultZoomScalePercent =
+      normalizedImageViewerDefaultZoomScalePercent;
+
     const normalizedImageViewerWheelMode = normalizeS1pImageViewerWheelMode(
       settings.imageViewerWheelMode
     );
@@ -33259,6 +33311,7 @@
     "limitImagesBySize",
     "useS1PlusImageViewer",
     "imageViewerDefaultFullDisplay",
+    "imageViewerDefaultZoomScalePercent",
     "imageViewerWheelMode",
     "imageViewerWheelZoomStepPercent",
     "imageViewerWheelScrollStepPercent",
@@ -33818,10 +33871,15 @@
       hasSettingPathInChangedSet(
         changedPathSet,
         "imageViewerDefaultFullDisplay"
-      ) &&
-      s1pImageViewerState.isOpen
+      ) ||
+      hasSettingPathInChangedSet(
+        changedPathSet,
+        "imageViewerDefaultZoomScalePercent"
+      )
     ) {
-      applyS1pImageViewerDefaultTransform();
+      if (s1pImageViewerState.isOpen) {
+        applyS1pImageViewerDefaultTransform();
+      }
     }
     if (hasSettingPathInChangedSet(changedPathSet, "openInNewTab")) {
       applyGlobalLinkBehavior();
@@ -44152,6 +44210,26 @@
       const imageViewerWheelMode = normalizeS1pImageViewerWheelMode(
         settings.imageViewerWheelMode
       );
+      const getImageViewerDefaultZoomScaleConfig = (
+        sourceSettings = settings
+      ) => {
+        const value = normalizeS1pImageViewerDefaultZoomScalePercent(
+          sourceSettings.imageViewerDefaultZoomScalePercent
+        );
+        return {
+          label: "铺满宽度比例",
+          settingKey: "imageViewerDefaultZoomScalePercent",
+          min: S1P_IMAGE_VIEWER_DEFAULT_ZOOM_SCALE_MIN_PERCENT,
+          max: S1P_IMAGE_VIEWER_DEFAULT_ZOOM_SCALE_MAX_PERCENT,
+          step: 1,
+          value,
+          output: `${value}%`,
+          desc:
+            value === S1P_IMAGE_VIEWER_DEFAULT_ZOOM_SCALE_MAX_PERCENT
+              ? "默认放大显示会按铺满宽度打开；顶部百分比显示图片实际缩放。"
+              : `默认放大显示会按铺满宽度的 ${value}% 打开；顶部百分比显示图片实际缩放。`,
+        };
+      };
       const getImageViewerWheelSliderConfig = (
         mode,
         sourceSettings = settings
@@ -44219,6 +44297,11 @@
         getImageViewerWheelSliderConfig(imageViewerWheelMode);
       const imageViewerWheelSliderProgress = getRangeProgressPercent(
         imageViewerWheelSliderConfig
+      );
+      const imageViewerDefaultZoomScaleConfig =
+        getImageViewerDefaultZoomScaleConfig();
+      const imageViewerDefaultZoomScaleProgress = getRangeProgressPercent(
+        imageViewerDefaultZoomScaleConfig
       );
       const renderLinkOpenModeControlHtml = ({
         key,
@@ -44332,7 +44415,32 @@
                                 <div class="s1p-segmented-control-option ${imageViewerDefaultMode === "max-width" ? "active" : ""}" data-value="max-width">放大显示</div>
                             </div>
                         </div>
-                        <p class="s1p-setting-desc s1p-image-viewer-default-mode-desc"><strong>完整显示</strong>会完整适配可视区域；<strong>放大显示</strong>会优先铺满宽度（竖图可能需要滚动）。</p>
+                        <p class="s1p-setting-desc s1p-image-viewer-default-mode-desc"><strong>完整显示</strong>会完整适配可视区域；<strong>放大显示</strong>会以铺满宽度为 100% 调整默认宽度（竖图可能需要滚动）。</p>
+                        <div id="s1p-imageViewerDefaultZoomScaleContainer" class="s1p-image-viewer-default-scale-range ${imageViewerDefaultMode === "full" ? "s1p-hidden" : ""}">
+                            <div class="s1p-range-control">
+                                <div class="s1p-range-control-head">
+                                    <label id="s1p-imageViewerDefaultZoomScaleLabel" class="s1p-range-label" for="s1p-imageViewerDefaultZoomScaleSlider">${imageViewerDefaultZoomScaleConfig.label}</label>
+                                    <div class="s1p-range-actions">
+                                        <output id="s1p-imageViewerDefaultZoomScaleValue" class="s1p-range-value" for="s1p-imageViewerDefaultZoomScaleSlider">${imageViewerDefaultZoomScaleConfig.output}</output>
+                                        <button id="s1p-imageViewerDefaultZoomScaleResetBtn" type="button" class="s1p-btn s1p-range-reset-btn">恢复默认</button>
+                                    </div>
+                                </div>
+                                <input
+                                  type="range"
+                                  id="s1p-imageViewerDefaultZoomScaleSlider"
+                                  class="s1p-range-input"
+                                  min="${imageViewerDefaultZoomScaleConfig.min}"
+                                  max="${imageViewerDefaultZoomScaleConfig.max}"
+                                  step="${imageViewerDefaultZoomScaleConfig.step}"
+                                  value="${imageViewerDefaultZoomScaleConfig.value}"
+                                  data-s1p-setting-key="${imageViewerDefaultZoomScaleConfig.settingKey}"
+                                  style="--s1p-range-progress: ${imageViewerDefaultZoomScaleProgress}%"
+                                  aria-labelledby="s1p-imageViewerDefaultZoomScaleLabel"
+                                  aria-describedby="s1p-imageViewerDefaultZoomScaleDesc"
+                                >
+                                <p id="s1p-imageViewerDefaultZoomScaleDesc" class="s1p-range-desc">${imageViewerDefaultZoomScaleConfig.desc}</p>
+                            </div>
+                        </div>
                     </div>
                     <div class="s1p-settings-sub-group s1p-image-viewer-wheel-group">
                         <div class="s1p-settings-item" id="s1p-imageViewerWheelModeContainer">
@@ -44595,8 +44703,78 @@
       const imageViewerDefaultModeControl = tabContent.querySelector(
         "#s1p-imageViewerDefaultMode-control"
       );
+      const imageViewerDefaultZoomScaleContainer = tabContent.querySelector(
+        "#s1p-imageViewerDefaultZoomScaleContainer"
+      );
+      const imageViewerDefaultZoomScaleSlider = tabContent.querySelector(
+        "#s1p-imageViewerDefaultZoomScaleSlider"
+      );
+      const imageViewerDefaultZoomScaleValue = tabContent.querySelector(
+        "#s1p-imageViewerDefaultZoomScaleValue"
+      );
+      const imageViewerDefaultZoomScaleDesc = tabContent.querySelector(
+        "#s1p-imageViewerDefaultZoomScaleDesc"
+      );
+      const imageViewerDefaultZoomScaleResetBtn = tabContent.querySelector(
+        "#s1p-imageViewerDefaultZoomScaleResetBtn"
+      );
+      const withImageViewerDefaultZoomScaleValue = (config, rawValue) => {
+        const value = normalizeBoundedIntegerValue(
+          rawValue,
+          config.value,
+          config.min,
+          config.max
+        );
+        return {
+          ...config,
+          value,
+          output: `${value}%`,
+          desc:
+            value === S1P_IMAGE_VIEWER_DEFAULT_ZOOM_SCALE_MAX_PERCENT
+              ? "默认放大显示会按铺满宽度打开；顶部百分比显示图片实际缩放。"
+              : `默认放大显示会按铺满宽度的 ${value}% 打开；顶部百分比显示图片实际缩放。`,
+        };
+      };
+      const syncImageViewerDefaultZoomScaleSlider = ({
+        valueOverride = null,
+      } = {}) => {
+        if (!imageViewerDefaultZoomScaleSlider) {
+          return;
+        }
+        let config = getImageViewerDefaultZoomScaleConfig(getSettings());
+        if (valueOverride !== null) {
+          config = withImageViewerDefaultZoomScaleValue(config, valueOverride);
+        }
+        imageViewerDefaultZoomScaleSlider.min = String(config.min);
+        imageViewerDefaultZoomScaleSlider.max = String(config.max);
+        imageViewerDefaultZoomScaleSlider.step = String(config.step);
+        imageViewerDefaultZoomScaleSlider.value = String(config.value);
+        imageViewerDefaultZoomScaleSlider.dataset.s1pSettingKey =
+          config.settingKey;
+        if (imageViewerDefaultZoomScaleValue) {
+          imageViewerDefaultZoomScaleValue.textContent = config.output;
+        }
+        if (imageViewerDefaultZoomScaleDesc) {
+          imageViewerDefaultZoomScaleDesc.textContent = config.desc;
+        }
+        syncS1pRangeInputProgress(imageViewerDefaultZoomScaleSlider);
+      };
+      const syncImageViewerDefaultZoomScaleVisibility = (
+        isFullDisplay = getSettings().imageViewerDefaultFullDisplay === true
+      ) => {
+        if (!imageViewerDefaultZoomScaleContainer) {
+          return;
+        }
+        imageViewerDefaultZoomScaleContainer.classList.toggle(
+          "s1p-hidden",
+          isFullDisplay
+        );
+      };
       if (imageViewerDefaultModeControl) {
         moveSlider(imageViewerDefaultModeControl, true);
+        syncImageViewerDefaultZoomScaleVisibility(
+          imageViewerDefaultMode === "full"
+        );
         imageViewerDefaultModeControl.addEventListener("click", (event) => {
           const option = event.target.closest(".s1p-segmented-control-option");
           if (!option || option.classList.contains("active")) {
@@ -44611,10 +44789,59 @@
             .forEach((opt) => opt.classList.remove("active"));
           option.classList.add("active");
           moveSlider(imageViewerDefaultModeControl);
+          syncImageViewerDefaultZoomScaleVisibility(modeValue === "full");
           if (s1pImageViewerState.isOpen) {
             applyS1pImageViewerDefaultTransform();
           }
         });
+      }
+      if (imageViewerDefaultZoomScaleSlider) {
+        syncImageViewerDefaultZoomScaleSlider();
+        imageViewerDefaultZoomScaleSlider.addEventListener("input", () => {
+          syncImageViewerDefaultZoomScaleSlider({
+            valueOverride: imageViewerDefaultZoomScaleSlider.value,
+          });
+        });
+        imageViewerDefaultZoomScaleSlider.addEventListener("change", () => {
+          const settingKey =
+            imageViewerDefaultZoomScaleSlider.dataset.s1pSettingKey;
+          if (settingKey !== "imageViewerDefaultZoomScalePercent") {
+            return;
+          }
+          const currentSettings = getSettingsForWrite();
+          currentSettings[settingKey] = parseInt(
+            imageViewerDefaultZoomScaleSlider.value,
+            10
+          );
+          saveSettings(currentSettings);
+          syncImageViewerDefaultZoomScaleSlider();
+          if (
+            currentSettings.imageViewerDefaultFullDisplay !== true &&
+            s1pImageViewerState.isOpen
+          ) {
+            applyS1pImageViewerDefaultTransform();
+          }
+        });
+      }
+      if (imageViewerDefaultZoomScaleResetBtn) {
+        imageViewerDefaultZoomScaleResetBtn.addEventListener(
+          "click",
+          (event) => {
+            event.preventDefault();
+            const currentSettings = getSettingsForWrite();
+            currentSettings.imageViewerDefaultZoomScalePercent =
+              S1P_IMAGE_VIEWER_DEFAULT_ZOOM_SCALE_DEFAULT_PERCENT;
+            saveSettings(currentSettings);
+            syncImageViewerDefaultZoomScaleSlider();
+            if (
+              currentSettings.imageViewerDefaultFullDisplay !== true &&
+              s1pImageViewerState.isOpen
+            ) {
+              applyS1pImageViewerDefaultTransform();
+            }
+            showSettingsMessage("铺满宽度比例已恢复默认。", true);
+          }
+        );
       }
       const imageViewerWheelModeControl = tabContent.querySelector(
         "#s1p-imageViewerWheelMode-control"
@@ -45598,6 +45825,7 @@
           "limitImagesBySize",
           "useS1PlusImageViewer",
           "imageViewerDefaultFullDisplay",
+          "imageViewerDefaultZoomScalePercent",
           "imageViewerWheelMode",
           "imageViewerWheelZoomStepPercent",
           "imageViewerWheelScrollStepPercent",
