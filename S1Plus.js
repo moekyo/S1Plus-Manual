@@ -2749,6 +2749,7 @@
       --s1p-sub-h: #2563eb;
       --s1p-sub-h-t: var(--s1p-white);
       --s1p-focus-ring: rgba(59, 130, 246, 0.48);
+      --s1p-range-value-bg: color-mix(in srgb, var(--s1p-sec) 14%, transparent);
       --s1p-settings-secondary-text: var(--s1p-t);
       --s1p-settings-secondary-muted-text: var(--s1p-desc-t);
       --s1p-settings-secondary-empty-text: color-mix(in srgb, var(--s1p-desc-t) 52%, transparent);
@@ -4621,7 +4622,7 @@
       min-width: 52px;
       padding: 2px 8px;
       border-radius: 999px;
-      background: color-mix(in srgb, var(--s1p-sec) 14%, transparent);
+      background: var(--s1p-range-value-bg);
       color: var(--s1p-t);
       font-size: 12px;
       font-weight: 600;
@@ -9126,6 +9127,7 @@
         --s1p-image-viewer-loading-cancel-hover-text: #ffffff;
         --s1p-image-viewer-loading-cancel-shadow: inset 0 0 0 1px rgba(226, 232, 240, 0.12);
         --s1p-focus-ring: rgba(96, 165, 250, 0.56);
+        --s1p-range-value-bg: color-mix(in srgb, #cacaca 14%, transparent);
         --s1p-sync-alert-local-change-bg: rgba(239, 68, 68, 0.24);
         --s1p-sync-alert-local-change-text: #fecaca;
         --s1p-sync-alert-local-change-dot: #fb7185;
