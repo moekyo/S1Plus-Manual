@@ -17618,6 +17618,282 @@
     });
   };
 
+  const s1pNormalizeSyncResultPhaseSource = (source = "generic") => {
+    switch (source) {
+      case "background":
+      case "daily_startup":
+      case "per_load":
+      case "foreground":
+        return source;
+      default:
+        return "generic";
+    }
+  };
+
+  const s1pGetSyncResultPhaseConflictPauseIntent = (result = null) => {
+    if (result?.status === "conflict") {
+      return {
+        kind: "pause",
+        reason:
+          normalizeRemoteProbeText(result.reason, 120) || "sync_conflict",
+      };
+    }
+    if (
+      result?.status === "success" &&
+      result.action === "skipped_push_on_startup"
+    ) {
+      return {
+        kind: "pause",
+        reason:
+          result.reason === "local_changed_during_sync"
+            ? "local_changed_during_sync"
+            : "startup_local_newer",
+      };
+    }
+    if (result?.status === "success") {
+      return { kind: "clear", reason: "successful_sync" };
+    }
+    return null;
+  };
+
+  const s1pGetSyncResultPhaseRetryIntent = (
+    result = null,
+    { source = "generic" } = {}
+  ) => {
+    const normalizedSource = s1pNormalizeSyncResultPhaseSource(source);
+    if (normalizedSource === "background") {
+      if (result?.status === "failure" && !result.failureState?.open) {
+        return {
+          kind: "background",
+          reason: "failure",
+          delayMs: 1200,
+        };
+      }
+      if (result?.status === "skipped" && result.reason === "lock_lost") {
+        return {
+          kind: "background",
+          reason: "lock_lost",
+          delayMs: 1200,
+        };
+      }
+      return null;
+    }
+    if (normalizedSource !== "foreground") {
+      return null;
+    }
+    const isRetryableSkip = Boolean(
+      result?.status === "skipped" &&
+        (result.reason === "foreground_followup_lock_unavailable" ||
+          result.reason === "foreground_sync_in_flight" ||
+          result.reason === "lock_lost")
+    );
+    const isRetryableSoftBlock = Boolean(
+      result?.status === "blocked" &&
+        result.blockLevel === "soft" &&
+        isForegroundProbeRetryableSoftBlockReason(result.reason)
+    );
+    if (!isRetryableSkip && !isRetryableSoftBlock) {
+      return null;
+    }
+    return {
+      kind: "foreground",
+      reason: normalizeRemoteProbeText(result.reason, 120) || "retryable",
+      delayMs: Math.max(0, Number(result.retryAfterMs) || 0),
+    };
+  };
+
+  const s1pGetSyncResultPhaseNotificationIntent = (
+    result = null,
+    { source = "generic", refreshIntent = null } = {}
+  ) => {
+    const normalizedSource = s1pNormalizeSyncResultPhaseSource(source);
+    if (result?.status === "conflict") {
+      return {
+        kind:
+          result.reason === "local_changed_during_sync"
+            ? "conflict_local_changed_during_sync"
+            : "conflict",
+      };
+    }
+    if (result?.status === "failure") {
+      return { kind: "failure" };
+    }
+    if (result?.status === "skipped") {
+      switch (result.reason) {
+        case "conflict_paused":
+          return { kind: "conflict_paused" };
+        case "lock_lost":
+          return { kind: "lock_lost" };
+        case "circuit_open":
+          return { kind: "circuit_open" };
+        default:
+          return { kind: "none" };
+      }
+    }
+    if (
+      result?.status === "success" &&
+      result.action === "skipped_push_on_startup"
+    ) {
+      return {
+        kind:
+          result.reason === "local_changed_during_sync"
+            ? "startup_local_changed_during_sync"
+            : "startup_local_newer",
+      };
+    }
+    if (
+      result?.status === "success" &&
+      normalizedSource === "daily_startup" &&
+      refreshIntent?.kind === "suppress" &&
+      refreshIntent.decision?.reason !== "same_machine_write" &&
+      !refreshIntent.decision?.refreshPlan &&
+      result.action !== "pushed_initial"
+    ) {
+      return { kind: "success_current" };
+    }
+    return { kind: "none" };
+  };
+
+  const s1pCreateSyncResultPhasePolicy = (adapters = {}) => {
+    const decideRemoteChange =
+      typeof adapters.decideRemoteChange === "function"
+        ? adapters.decideRemoteChange
+        : decideWhatToDoWithRemoteChange;
+    const applyRefresh =
+      typeof adapters.applyRefresh === "function"
+        ? adapters.applyRefresh
+        : applyRefreshPolicyForSyncResult;
+    const logSuppressed =
+      typeof adapters.logSuppressed === "function"
+        ? adapters.logSuppressed
+        : logSuppressedRemoteChangeDecision;
+    const pauseConflict =
+      typeof adapters.pauseConflict === "function"
+        ? adapters.pauseConflict
+        : setAutoSyncConflictPause;
+    const clearConflictPause =
+      typeof adapters.clearConflictPause === "function"
+        ? adapters.clearConflictPause
+        : clearAutoSyncConflictPause;
+
+    const resolve = (result = null, options = {}) => {
+      const source = s1pNormalizeSyncResultPhaseSource(options.source);
+      let refreshIntent = { kind: "none", decision: null };
+      if (result?.status === "success") {
+        const decision = decideRemoteChange(result, {
+          source,
+          ...(options.remoteChangeContext || {}),
+        });
+        refreshIntent = {
+          kind:
+            decision.shouldApply ||
+            decision.shouldReload ||
+            decision.shouldNotify
+              ? "apply"
+              : "suppress",
+          decision,
+        };
+      }
+      return {
+        source,
+        status: normalizeRemoteProbeText(result?.status, 80) || "unknown",
+        action: normalizeRemoteProbeText(result?.action, 80) || "",
+        refreshIntent,
+        conflictPauseIntent: s1pGetSyncResultPhaseConflictPauseIntent(result),
+        retryIntent: s1pGetSyncResultPhaseRetryIntent(result, { source }),
+        notificationIntent: s1pGetSyncResultPhaseNotificationIntent(result, {
+          source,
+          refreshIntent,
+        }),
+      };
+    };
+
+    const handle = async (result = null, options = {}) => {
+      const policy = resolve(result, options);
+      let conflictPauseResult = null;
+      let refreshPlan = null;
+      let notificationResult = null;
+      let retryResult = null;
+      const intentErrors = [];
+      const runBestEffortIntent = async (intent, callback) => {
+        try {
+          return await callback();
+        } catch (error) {
+          const message = error?.message || String(error);
+          intentErrors.push({ intent, message });
+          console.error(
+            `S1 Plus: Result Phase ${intent} 处理失败，已继续执行其它结果意图。`,
+            error
+          );
+          return null;
+        }
+      };
+
+      if (policy.conflictPauseIntent) {
+        conflictPauseResult = await runBestEffortIntent(
+          "conflict_pause",
+          () =>
+            policy.conflictPauseIntent.kind === "clear"
+              ? clearConflictPause(result, policy)
+              : pauseConflict(
+                  policy.conflictPauseIntent.reason,
+                  result,
+                  policy
+                )
+        );
+      }
+      if (policy.refreshIntent.kind === "apply") {
+        refreshPlan = await runBestEffortIntent("refresh", () =>
+          applyRefresh(result, {
+            ...(options.refreshOptions || {}),
+            remoteChangeDecision: policy.refreshIntent.decision,
+          })
+        );
+      } else if (policy.refreshIntent.kind === "suppress") {
+        await runBestEffortIntent("refresh_suppression", () =>
+          logSuppressed(policy.refreshIntent.decision, result, {
+            source: policy.source,
+            ...(options.remoteChangeContext || {}),
+          })
+        );
+        refreshPlan = policy.refreshIntent.decision?.refreshPlan || null;
+      }
+      if (
+        policy.notificationIntent.kind !== "none" &&
+        typeof options.notify === "function"
+      ) {
+        notificationResult = await runBestEffortIntent(
+          "notification",
+          () => options.notify(policy.notificationIntent, result)
+        );
+      }
+      if (policy.retryIntent && typeof options.scheduleRetry === "function") {
+        retryResult = await runBestEffortIntent(
+          "retry",
+          () => options.scheduleRetry(policy.retryIntent, result, policy)
+        );
+      }
+
+      return {
+        ...policy,
+        conflictPauseResult,
+        refreshPlan,
+        notificationResult,
+        retryResult,
+        intentErrors,
+      };
+    };
+
+    return { resolve, handle };
+  };
+
+  const syncResultPhasePolicy = s1pCreateSyncResultPhasePolicy();
+
+  const s1pHasScheduledSyncResultPhaseRetry = (retryResult) => {
+    const status = String(retryResult?.status || "");
+    return status === "scheduled" || status === "already_scheduled";
+  };
+
   const hasScheduledAutoPullReload = (refreshPlan) => {
     const reloadStatus = String(refreshPlan?.reloadSchedule?.status || "");
     return reloadStatus === "scheduled" || reloadStatus === "already_scheduled";
@@ -29778,6 +30054,68 @@
     }
   };
 
+  const s1pNotifyBackgroundSyncResultPhase = async (
+    intent,
+    result,
+    runtime = {}
+  ) => {
+    const showMessageFn = runtime.showMessage || showMessage;
+    const shouldShowConflictModalFn =
+      runtime.shouldShowConflictModal || shouldShowConflictModal;
+    const createAdvancedConfirmationModalFn =
+      runtime.createAdvancedConfirmationModal || createAdvancedConfirmationModal;
+    const handleManualSyncFn = runtime.handleManualSync || handleManualSync;
+    switch (intent.kind) {
+      case "conflict_local_changed_during_sync":
+        showMessageFn(
+          "检测到您在后台自动同步期间有本地操作，已暂停自动拉取以保护更改。请稍后发起全局手动同步。",
+          false
+        );
+        return "notified";
+      case "conflict":
+        if (!(await shouldShowConflictModalFn("background_conflict"))) {
+          showMessageFn(
+            "再次检测到后台同步冲突，已进入提示冷却。请稍后发起全局手动同步。",
+            false
+          );
+          return "cooldown_notified";
+        }
+        createAdvancedConfirmationModalFn(
+          "检测到后台同步冲突",
+          "<p>S1 Plus 在后台自动同步时发现，本地与云端备份可能都已更改。为防止数据丢失，自动同步已暂停。</p><p>接下来如果继续，将发起一次全局手动同步来决定保留哪一侧，而不是只处理当前帖子。</p>",
+          [
+            {
+              text: "稍后处理",
+              className: "s1p-cancel",
+              action: () => {
+                showMessageFn("同步已暂停，您可以稍后在导航栏发起全局手动同步。", null);
+              },
+            },
+            {
+              text: "发起全局同步",
+              className: "s1p-confirm",
+              action: () => {
+                handleManualSyncFn();
+              },
+            },
+          ],
+          { allowBodyHtml: true }
+        );
+        return "popup_shown";
+      case "failure":
+        showMessageFn(`后台同步失败: ${result.error}`, false);
+        return "notified";
+      case "conflict_paused":
+        console.log("S1 Plus: 后台自动同步因冲突暂停状态被门控。");
+        return "logged";
+      case "lock_lost":
+        console.warn("S1 Plus: 后台自动同步因锁失效中止，稍后将自动重试。");
+        return "logged";
+      default:
+        return null;
+    }
+  };
+
   const handleBackgroundAutoSyncResult = async (result) => {
     recordSyncTraceEvent("background_result_handling", {
       scope: "background_auto_sync",
@@ -29790,92 +30128,23 @@
         error: result?.error || "",
       },
     });
-    switch (result.status) {
-      case "conflict":
-        if (result.reason === "local_changed_during_sync") {
-          showMessage(
-            "检测到您在后台自动同步期间有本地操作，已暂停自动拉取以保护更改。请稍后发起全局手动同步。",
-            false
-          );
-          break;
-        }
-        if (!(await shouldShowConflictModal("background_conflict"))) {
-          showMessage(
-            "再次检测到后台同步冲突，已进入提示冷却。请稍后发起全局手动同步。",
-            false
-          );
-          break;
-        }
-        createAdvancedConfirmationModal(
-          "检测到后台同步冲突",
-          "<p>S1 Plus 在后台自动同步时发现，本地与云端备份可能都已更改。为防止数据丢失，自动同步已暂停。</p><p>接下来如果继续，将发起一次全局手动同步来决定保留哪一侧，而不是只处理当前帖子。</p>",
-          [
-            {
-              text: "稍后处理",
-              className: "s1p-cancel",
-              action: () => {
-                showMessage("同步已暂停，您可以稍后在导航栏发起全局手动同步。", null);
-              },
-            },
-            {
-              text: "发起全局同步",
-              className: "s1p-confirm",
-              action: () => {
-                handleManualSync();
-              },
-            },
-          ],
-          { allowBodyHtml: true }
-        );
-        break;
-
-      case "failure":
-        showMessage(`后台同步失败: ${result.error}`, false);
-        if (!result.failureState?.open) {
-          scheduleBackgroundSyncRetry(1200);
-        }
-        break;
-
-      case "success":
-        {
-          const decision = decideWhatToDoWithRemoteChange(result, {
-            source: "background",
-          });
-          if (
-            !decision.shouldApply &&
-            !decision.shouldReload &&
-            !decision.shouldNotify
-          ) {
-            logSuppressedRemoteChangeDecision(decision, result, {
-              source: "background",
-            });
-            break;
-          }
-          applyRefreshPolicyForSyncResult(result, {
-            remoteChangeDecision: decision,
-            reason:
-              result.action === "merged_read_progress"
-                ? "background_merge_refresh"
-                : "background_auto_pull",
-            suppressMessage: !decision.shouldNotify,
-            messages: getAutoPullRefreshMessagesForSource(
-              "background",
-              result.action,
-              getSameDeviceRefreshMessageOptions(result)
-            ),
-          });
-        }
-        break;
-
-      case "skipped":
-        if (result.reason === "conflict_paused") {
-          console.log("S1 Plus: 后台自动同步因冲突暂停状态被门控。");
-        } else if (result.reason === "lock_lost") {
-          console.warn("S1 Plus: 后台自动同步因锁失效中止，稍后将自动重试。");
-          scheduleBackgroundSyncRetry(1200);
-        }
-        break;
-    }
+    return syncResultPhasePolicy.handle(result, {
+      source: "background",
+      refreshOptions: {
+        reason:
+          result?.action === "merged_read_progress"
+            ? "background_merge_refresh"
+            : "background_auto_pull",
+        messages: getAutoPullRefreshMessagesForSource(
+          "background",
+          result?.action,
+          getSameDeviceRefreshMessageOptions(result)
+        ),
+      },
+      notify: s1pNotifyBackgroundSyncResultPhase,
+      scheduleRetry: (intent) =>
+        scheduleBackgroundSyncRetry(intent.delayMs),
+    });
   };
 
   const runBackgroundAutoSyncIteration = async (options = {}) => {
@@ -31124,21 +31393,10 @@
       if (shouldRecordSuccessfulSyncTimestamp(action)) {
         GM_setValue(LAST_SYNC_TIMESTAMP_KEY, Date.now());
       }
-      if (action === "skipped_push_on_startup") {
-        // 启动安全模式命中“本地较新”时，冻结后续自动同步，等待手动同步决策。
-        const pauseReason =
-          extraResult &&
-          typeof extraResult === "object" &&
-          extraResult.reason === "local_changed_during_sync"
-            ? "local_changed_during_sync"
-            : "startup_local_newer";
-        setAutoSyncConflictPause(pauseReason);
-        clearAutoSyncRuntimeQueue();
-      } else {
+      if (action !== "skipped_push_on_startup") {
         if (syncMode !== AUTO_SYNC_MODE_BACKGROUND) {
           clearPendingAutoSyncRequest();
         }
-        clearAutoSyncConflictPause();
       }
       if (syncBaseline) {
         setSyncBaselineState(syncBaseline);
@@ -31191,8 +31449,6 @@
     const asConflictResult = (reason, extraDiagnosticsContext = {}) => {
       syncOutcome = "conflict";
       clearPendingAutoSyncRequest();
-      setAutoSyncConflictPause(reason);
-      clearAutoSyncRuntimeQueue();
       resetAutoSyncFailureState();
       recordSyncConflict(reason, syncMode, {
         ...syncDiagnosticsContext,
@@ -32342,28 +32598,6 @@
     return Math.max(0, foregroundRemoteSyncRetryDueAt - normalizedNow);
   };
 
-  const isForegroundRemoteSyncRetryableSkipResult = (syncResult) =>
-    Boolean(
-      syncResult &&
-      typeof syncResult === "object" &&
-      syncResult.status === "skipped" &&
-      (
-        syncResult.reason === "foreground_followup_lock_unavailable" ||
-        syncResult.reason === "foreground_sync_in_flight" ||
-        syncResult.reason === "lock_lost"
-      )
-    );
-
-  const isForegroundRemoteSyncRetryableResult = (syncResult) =>
-    isForegroundRemoteSyncRetryableSkipResult(syncResult) ||
-    Boolean(
-      syncResult &&
-      typeof syncResult === "object" &&
-      syncResult.status === "blocked" &&
-      syncResult.blockLevel === "soft" &&
-      isForegroundProbeRetryableSoftBlockReason(syncResult.reason)
-    );
-
   const scheduleForegroundRemoteSyncRetry = (
     reason = "remote_probe_retry",
     options = {}
@@ -32465,56 +32699,47 @@
           normalizedReason,
           options.requestForegroundRemoteSyncCheckOverrides || {}
         );
-        if (isForegroundRemoteSyncRetryableResult(syncResult)) {
-          scheduleForegroundRemoteSyncRetry(normalizedReason, {
-            ...options,
-            preferredDelayMs:
-              Number(syncResult?.retryAfterMs) || preferredDelayMs,
-          });
-          return;
-        }
-
-        clearForegroundRemoteSyncRetry();
         const remoteChangeKind = getForegroundRemoteChangeKind({
           syncRequestResult: syncResult,
           sameSessionRemoteWrite: syncResult?.sameSessionRemoteWrite === true,
           sameDeviceRemoteWrite: syncResult?.sameDeviceRemoteWrite === true,
           remoteWriter: syncResult?.remoteWriter || null,
         });
-        const decision = decideWhatToDoWithRemoteChange(syncResult, {
+        const resultPhasePolicy =
+          options.syncResultPhasePolicy ||
+          (typeof options.applyRefreshPolicyForSyncResult === "function"
+            ? s1pCreateSyncResultPhasePolicy({
+                applyRefresh: options.applyRefreshPolicyForSyncResult,
+              })
+            : syncResultPhasePolicy);
+        const outcome = await resultPhasePolicy.handle(syncResult, {
           source: "foreground",
-          remoteChangeKind,
-          sameSessionRemoteWrite: syncResult?.sameSessionRemoteWrite === true,
-          sameDeviceRemoteWrite: syncResult?.sameDeviceRemoteWrite === true,
-          remoteWriter: syncResult?.remoteWriter || null,
-        });
-        if (
-          decision.shouldApply ||
-          decision.shouldReload ||
-          decision.shouldNotify
-        ) {
-          (
-            options.applyRefreshPolicyForSyncResult ||
-            applyRefreshPolicyForSyncResult
-          )(syncResult, {
-            remoteChangeDecision: decision,
+          remoteChangeContext: {
+            remoteChangeKind,
+            sameSessionRemoteWrite:
+              syncResult?.sameSessionRemoteWrite === true,
+            sameDeviceRemoteWrite:
+              syncResult?.sameDeviceRemoteWrite === true,
+            remoteWriter: syncResult?.remoteWriter || null,
+          },
+          refreshOptions: {
             reason: `foreground_retry:${normalizedReason}`,
-            suppressMessage: !decision.shouldNotify,
             messages: getAutoPullRefreshMessagesForSource(
               "foreground",
               syncResult?.action,
               getSameDeviceRefreshMessageOptions(syncResult)
             ),
-          });
-        } else {
-          logSuppressedRemoteChangeDecision(decision, syncResult, {
-            source: "foreground",
-            remoteChangeKind,
-            sameSessionRemoteWrite: syncResult?.sameSessionRemoteWrite === true,
-            sameDeviceRemoteWrite: syncResult?.sameDeviceRemoteWrite === true,
-            remoteWriter: syncResult?.remoteWriter || null,
-          });
+          },
+          scheduleRetry: (intent) =>
+            scheduleForegroundRemoteSyncRetry(normalizedReason, {
+              ...options,
+              preferredDelayMs: intent.delayMs || preferredDelayMs,
+            }),
+        });
+        if (s1pHasScheduledSyncResultPhaseRetry(outcome.retryResult)) {
+          return;
         }
+        clearForegroundRemoteSyncRetry();
         (
           options.maybeShowForegroundProbeFeedback ||
           maybeShowForegroundProbeFeedback
@@ -32946,17 +33171,6 @@
           followupReason: syncRequestResult?.reason || "",
         },
       });
-      if (isForegroundRemoteSyncRetryableResult(syncRequestResult)) {
-        scheduleForegroundRemoteSyncRetry(`remote_probe_changed:${normalizedReason}`, {
-          ...retryOptions,
-          preferredDelayMs: Number(syncRequestResult?.retryAfterMs) || 0,
-          indicatorReason:
-            AUTO_SYNC_INDICATOR_REASON_FOREGROUND_PROBE_CHANGED_RETRY,
-          indicatorOperation: AUTO_SYNC_INDICATOR_OPERATION_SYNC,
-        });
-      } else {
-        clearForegroundRemoteSyncRetry();
-      }
       const hasAuthoritativeSyncAttribution = (syncResult) =>
         syncResult &&
         typeof syncResult === "object" &&
@@ -32985,26 +33199,22 @@
         sameDeviceRemoteWrite: matchedSameDeviceRemoteWrite,
         remoteWriter: matchedRemoteWriter,
       });
-      const decision = decideWhatToDoWithRemoteChange(syncRequestResult, {
+      const resultPhasePolicy =
+        overrides.syncResultPhasePolicy || syncResultPhasePolicy;
+      const outcome = await resultPhasePolicy.handle(syncRequestResult, {
         source: "foreground",
-        remoteChangeKind,
-        sameSessionRemoteWrite: matchedSameSessionRemoteWrite,
-        sameDeviceRemoteWrite: matchedSameDeviceRemoteWrite,
-        remoteWriter: matchedRemoteWriter,
-        showMessage: overrides.showMessage,
-        locationObject: overrides.locationObject,
-        setTimeoutFn: overrides.setTimeoutFn,
-      });
-      if (
-        decision.shouldApply ||
-        decision.shouldReload ||
-        decision.shouldNotify
-      ) {
-        refreshPlan = applyRefreshPolicyForSyncResult(syncRequestResult, {
-          remoteChangeDecision: decision,
+        remoteChangeContext: {
+          remoteChangeKind,
+          sameSessionRemoteWrite: matchedSameSessionRemoteWrite,
+          sameDeviceRemoteWrite: matchedSameDeviceRemoteWrite,
+          remoteWriter: matchedRemoteWriter,
+          showMessage: overrides.showMessage,
+          locationObject: overrides.locationObject,
+          setTimeoutFn: overrides.setTimeoutFn,
+        },
+        refreshOptions: {
           reason: `foreground_probe:${normalizedReason}`,
           showMessage: overrides.showMessage,
-          suppressMessage: !decision.shouldNotify,
           messages: getAutoPullRefreshMessagesForSource(
             "foreground",
             syncRequestResult?.action,
@@ -33012,16 +33222,22 @@
           ),
           locationObject: overrides.locationObject,
           setTimeoutFn: overrides.setTimeoutFn,
-        });
-      } else {
-        refreshPlan = decision.refreshPlan;
-        logSuppressedRemoteChangeDecision(decision, syncRequestResult, {
-          source: "foreground",
-          remoteChangeKind,
-          sameSessionRemoteWrite: matchedSameSessionRemoteWrite,
-          sameDeviceRemoteWrite: matchedSameDeviceRemoteWrite,
-          remoteWriter: matchedRemoteWriter,
-        });
+        },
+        scheduleRetry: (intent) =>
+          scheduleForegroundRemoteSyncRetry(
+            `remote_probe_changed:${normalizedReason}`,
+            {
+              ...retryOptions,
+              preferredDelayMs: intent.delayMs,
+              indicatorReason:
+                AUTO_SYNC_INDICATOR_REASON_FOREGROUND_PROBE_CHANGED_RETRY,
+              indicatorOperation: AUTO_SYNC_INDICATOR_OPERATION_SYNC,
+            }
+          ),
+      });
+      refreshPlan = outcome.refreshPlan;
+      if (!s1pHasScheduledSyncResultPhaseRetry(outcome.retryResult)) {
+        clearForegroundRemoteSyncRetry();
       }
       const isHashEqualAfterResync =
         remoteChangeKind === "hash_equal_after_resync";
@@ -33122,6 +33338,8 @@
       getAutoPullRefreshPlan,
       decideWhatToDoWithRemoteChange,
       applyAutoPullRefreshPolicy,
+      s1pCreateSyncResultPhasePolicy,
+      s1pNotifyBackgroundSyncResultPhase,
       getAutoPullRefreshMessagesForSource,
       clearPendingAutoPullReloadTimer,
       runStartupModeAutoSyncCheck,
@@ -52781,8 +52999,8 @@
     );
   };
 
-  const handlePerLoadSyncCheck = async () => {
-    const settings = getSettings();
+  const handlePerLoadSyncCheck = async (overrides = {}) => {
+    const settings = overrides.settings || getSettings();
     if (
       !settings.syncPerLoadCheckEnabled ||
       !settings.syncRemoteEnabled ||
@@ -52823,7 +53041,10 @@
       return false;
     }
 
-    const result = await runStartupModeAutoSyncCheckWithIndicator({
+    const result = await (
+      overrides.runStartupModeAutoSyncCheckWithIndicator ||
+      runStartupModeAutoSyncCheckWithIndicator
+    )({
       source: AUTO_SYNC_INDICATOR_SOURCE_PER_LOAD,
       onIndicatorStart: () => {
         console.log("S1 Plus: 正在执行每次页面加载同步检查...");
@@ -52840,39 +53061,139 @@
       },
     });
 
-    switch (result.status) {
-      case "success":
-        {
-          const decision = decideWhatToDoWithRemoteChange(result, {
-            source: "per_load",
-          });
-          if (
-            !decision.shouldApply &&
-            !decision.shouldReload &&
-            !decision.shouldNotify
-          ) {
-            logSuppressedRemoteChangeDecision(decision, result, {
-              source: "per_load",
-            });
-            return false;
-          }
-          const refreshPlan = applyRefreshPolicyForSyncResult(result, {
-            remoteChangeDecision: decision,
-            reason: "per_load_auto_pull",
-            suppressMessage: !decision.shouldNotify,
-            messages: getAutoPullRefreshMessagesForSource(
-              "generic",
-              result.action,
-              getSameDeviceRefreshMessageOptions(result)
-            ),
-          });
-          return hasScheduledAutoPullReload(refreshPlan);
-        }
-    }
-    return false;
+    const resultPhasePolicy =
+      overrides.syncResultPhasePolicy || syncResultPhasePolicy;
+    const outcome = await resultPhasePolicy.handle(result, {
+      source: "per_load",
+      refreshOptions: {
+        reason: "per_load_auto_pull",
+        messages: getAutoPullRefreshMessagesForSource(
+          "generic",
+          result?.action,
+          getSameDeviceRefreshMessageOptions(result)
+        ),
+      },
+    });
+    return hasScheduledAutoPullReload(outcome.refreshPlan);
   };
-  const handleStartupSync = async () => {
-    const settings = getSettings();
+
+  const s1pNotifyDailyStartupSyncResultPhase = async (
+    intent,
+    result,
+    runtime = {}
+  ) => {
+    const showMessageFn = runtime.showMessage || showMessage;
+    const shouldShowConflictModalFn =
+      runtime.shouldShowConflictModal || shouldShowConflictModal;
+    const createAdvancedConfirmationModalFn =
+      runtime.createAdvancedConfirmationModal || createAdvancedConfirmationModal;
+    const handleManualSyncFn = runtime.handleManualSync || handleManualSync;
+    const notifyAutoSyncConflictPausedIfNeededFn =
+      runtime.notifyAutoSyncConflictPausedIfNeeded ||
+      notifyAutoSyncConflictPausedIfNeeded;
+    if (
+      intent.kind === "startup_local_changed_during_sync" ||
+      intent.kind === "startup_local_newer"
+    ) {
+      const skippedByLocalChangeDuringSync =
+        intent.kind === "startup_local_changed_during_sync";
+      const conflictModalType = skippedByLocalChangeDuringSync
+        ? "local_changed_during_sync"
+        : "startup_local_newer";
+      if (!(await shouldShowConflictModalFn(conflictModalType))) {
+        showMessageFn(
+          skippedByLocalChangeDuringSync
+            ? "检测到您在自动同步期间有本地操作，已暂停自动拉取以保护更改。请稍后在导航栏发起全局手动同步。"
+            : "检测到本地数据较新，已进入提示冷却。请稍后在导航栏发起全局手动同步。",
+          false
+        );
+        return "cooldown_notified";
+      }
+      createAdvancedConfirmationModalFn(
+        "检测到本地有未同步的更改",
+        skippedByLocalChangeDuringSync
+          ? "<p>S1 Plus 检测到您在自动同步过程中进行了本地操作。为避免云端拉取覆盖您的新更改，本轮自动拉取已暂停。</p><p>如果继续，将发起一次全局手动同步来决定整套数据的去向，而不是只处理当前帖子。</p>"
+          : "<p>S1 Plus 在启动时发现，您的本地数据比云端备份要新。这可能意味着您在其他设备的工作未推送，或有离线修改未同步。</p><p>为防止数据丢失，自动同步已暂停。接下来如继续，将进入一次全局手动同步判断。</p>",
+        [
+          {
+            text: "稍后处理",
+            className: "s1p-cancel",
+            action: () => {
+              showMessageFn("同步已暂停，您可稍后从导航栏发起全局手动同步。", null);
+            },
+          },
+          {
+            text: "发起全局同步",
+            className: "s1p-confirm",
+            action: () => {
+              handleManualSyncFn(true);
+            },
+          },
+        ],
+        { allowBodyHtml: true }
+      );
+      return "popup_shown";
+    }
+
+    switch (intent.kind) {
+      case "success_current":
+        showMessageFn("每日首次同步完成，数据已是最新。", true);
+        return "notified";
+      case "failure":
+        showMessageFn(`每日首次同步失败: ${result.error}`, false);
+        return "notified";
+      case "conflict":
+      case "conflict_local_changed_during_sync":
+        if (!(await shouldShowConflictModalFn("startup_conflict"))) {
+          showMessageFn(
+            "再次检测到启动同步冲突，已进入提示冷却。请稍后发起全局手动同步。",
+            false
+          );
+          return "cooldown_notified";
+        }
+        createAdvancedConfirmationModalFn(
+          "检测到同步冲突",
+          "<p>S1 Plus 在自动同步时发现，本地数据和云端备份可能都已更改。</p><p>为防止数据丢失，自动同步已暂停。接下来如继续，将发起一次全局手动同步来决定保留哪一侧。</p>",
+          [
+            {
+              text: "稍后处理",
+              className: "s1p-cancel",
+              action: () => {
+                showMessageFn("同步已暂停，您可以稍后在导航栏发起全局手动同步。", null);
+              },
+            },
+            {
+              text: "发起全局同步",
+              className: "s1p-confirm",
+              action: () => {
+                handleManualSyncFn(true);
+              },
+            },
+          ],
+          { allowBodyHtml: true }
+        );
+        return "popup_shown";
+      case "circuit_open":
+        showMessageFn(
+          `自动同步因连续失败已暂停，预计恢复时间：${new Date(
+            result.until
+          ).toLocaleTimeString("zh-CN", { hour12: false })}。`,
+          false
+        );
+        return "notified";
+      case "conflict_paused":
+        await notifyAutoSyncConflictPausedIfNeededFn();
+        return "notified";
+      case "lock_lost":
+        showMessageFn("启动同步因锁失效已中止，本次将跳过。", false);
+        return "notified";
+      default:
+        return null;
+    }
+  };
+
+  const handleStartupSync = async (overrides = {}) => {
+    const settings = overrides.settings || getSettings();
     if (!settings.syncRemoteEnabled || !settings.syncDailyFirstLoad) {
       clearDeferredStartupSyncRequest();
       recordSyncTraceEvent("daily_startup_sync_skipped", {
@@ -52912,7 +53233,10 @@
       );
     }
 
-    const result = await runStartupModeAutoSyncCheckWithIndicator({
+    const result = await (
+      overrides.runStartupModeAutoSyncCheckWithIndicator ||
+      runStartupModeAutoSyncCheckWithIndicator
+    )({
       source: AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP,
       onIndicatorStart: () => {
         console.log("S1 Plus: 正在执行每日首次加载同步...");
@@ -52947,145 +53271,63 @@
         },
       },
     });
-    switch (result.status) {
-      case "success":
-        {
-          const decision = decideWhatToDoWithRemoteChange(result, {
-            source: "daily_startup",
-          });
-          if (
-            decision.shouldApply ||
-            decision.shouldReload ||
-            decision.shouldNotify
-          ) {
-            const refreshPlan = applyRefreshPolicyForSyncResult(result, {
-              remoteChangeDecision: decision,
-              reason:
-                result.action === "force_pulled"
-                  ? "daily_startup_force_pull"
-                  : result.action === "merged_read_progress"
-                    ? "daily_startup_merged_read_progress"
-                    : "daily_startup_pull",
-              suppressMessage: !decision.shouldNotify,
-              messages: getAutoPullRefreshMessagesForSource(
-                "daily",
-                result.action,
-                getSameDeviceRefreshMessageOptions(result)
-              ),
-            });
-            return hasScheduledAutoPullReload(refreshPlan);
-          }
-          logSuppressedRemoteChangeDecision(decision, result, {
-            source: "daily_startup",
-          });
-          const shouldShowDailySuccessToast =
-            decision.reason !== "same_machine_write" &&
-            !decision.refreshPlan &&
-            result.action !== "pushed_initial";
-          if (result.action === "skipped_push_on_startup") {
-            const skippedByLocalChangeDuringSync =
-              result.reason === "local_changed_during_sync";
-            const conflictModalType = skippedByLocalChangeDuringSync
-              ? "local_changed_during_sync"
-              : "startup_local_newer";
-            if (!(await shouldShowConflictModal(conflictModalType))) {
-              showMessage(
-                skippedByLocalChangeDuringSync
-                  ? "检测到您在自动同步期间有本地操作，已暂停自动拉取以保护更改。请稍后在导航栏发起全局手动同步。"
-                  : "检测到本地数据较新，已进入提示冷却。请稍后在导航栏发起全局手动同步。",
-                false
-              );
-              return false;
-            }
-            createAdvancedConfirmationModal(
-              "检测到本地有未同步的更改",
-              skippedByLocalChangeDuringSync
-                ? "<p>S1 Plus 检测到您在自动同步过程中进行了本地操作。为避免云端拉取覆盖您的新更改，本轮自动拉取已暂停。</p><p>如果继续，将发起一次全局手动同步来决定整套数据的去向，而不是只处理当前帖子。</p>"
-                : "<p>S1 Plus 在启动时发现，您的本地数据比云端备份要新。这可能意味着您在其他设备的工作未推送，或有离线修改未同步。</p><p>为防止数据丢失，自动同步已暂停。接下来如继续，将进入一次全局手动同步判断。</p>",
-              [
-                {
-                  text: "稍后处理",
-                  className: "s1p-cancel",
-                  action: () => {
-                    showMessage("同步已暂停，您可稍后从导航栏发起全局手动同步。", null);
-                  },
-                },
-                {
-                  text: "发起全局同步",
-                  className: "s1p-confirm",
-                  action: () => {
-                    // [S1P-UX-FIX] 调用时传入 true，进入静默模式，避免弹出多余的提示
-                    handleManualSync(true);
-                  },
-                },
-              ],
-              { allowBodyHtml: true }
-            );
-            return "popup_shown"; // [FIX] 标记已显示弹窗，阻止后续 Token 过期弹窗覆盖
-          } else if (shouldShowDailySuccessToast) {
-            showMessage("每日首次同步完成，数据已是最新。", true);
-          }
-        }
-        break;
-      case "failure":
-        showMessage(`每日首次同步失败: ${result.error}`, false);
-        break;
-
-      case "conflict":
-        if (!(await shouldShowConflictModal("startup_conflict"))) {
-          showMessage(
-            "再次检测到启动同步冲突，已进入提示冷却。请稍后发起全局手动同步。",
-            false
-          );
-          return false;
-        }
-        createAdvancedConfirmationModal(
-          "检测到同步冲突",
-          "<p>S1 Plus 在自动同步时发现，本地数据和云端备份可能都已更改。</p><p>为防止数据丢失，自动同步已暂停。接下来如继续，将发起一次全局手动同步来决定保留哪一侧。</p>",
-          [
-            {
-              text: "稍后处理",
-              className: "s1p-cancel",
-              action: () => {
-                showMessage("同步已暂停，您可以稍后在导航栏发起全局手动同步。", null);
-              },
-            },
-            {
-              text: "发起全局同步",
-              className: "s1p-confirm",
-              action: () => {
-                // [S1P-UX-FIX] 此处也应进入静默模式
-                handleManualSync(true);
-              },
-            },
-          ],
-          { allowBodyHtml: true }
-        );
-        return "popup_shown"; // [FIX] 标记已显示弹窗，阻止后续 Token 过期弹窗覆盖
-      case "skipped":
-        if (result.reason === "circuit_open") {
-          showMessage(
-            `自动同步因连续失败已暂停，预计恢复时间：${new Date(
-              result.until
-            ).toLocaleTimeString("zh-CN", { hour12: false })}。`,
-            false
-          );
-        } else if (result.reason === "conflict_paused") {
-          await notifyAutoSyncConflictPausedIfNeeded();
-        } else if (result.reason === "lock_lost") {
-          showMessage("启动同步因锁失效已中止，本次将跳过。", false);
-        }
-        break;
+    const resultPhasePolicy =
+      overrides.syncResultPhasePolicy || syncResultPhasePolicy;
+    const outcome = await resultPhasePolicy.handle(result, {
+      source: "daily_startup",
+      refreshOptions: {
+        reason:
+          result?.action === "force_pulled"
+            ? "daily_startup_force_pull"
+            : result?.action === "merged_read_progress"
+              ? "daily_startup_merged_read_progress"
+              : "daily_startup_pull",
+        messages: getAutoPullRefreshMessagesForSource(
+          "daily",
+          result?.action,
+          getSameDeviceRefreshMessageOptions(result)
+        ),
+      },
+      notify: s1pNotifyDailyStartupSyncResultPhase,
+    });
+    if (outcome.notificationResult === "popup_shown") {
+      return "popup_shown";
     }
-
-    return false;
+    return hasScheduledAutoPullReload(outcome.refreshPlan);
   };
+
+  if (IS_S1P_TEST_MODE) {
+    const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
+    testHookHost.__S1P_TEST_HOOKS__ = {
+      ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
+      handlePerLoadSyncCheck,
+      handleStartupSync,
+      s1pNotifyDailyStartupSyncResultPhase,
+    };
+  }
 
   const runStartupSyncFlowDeferred = ({
     welcomePopupWasShown = false,
     shouldTryNuxRecommendation = false,
     waitForNuxDetection = null,
+    overrides = {},
   } = {}) => {
+    const handleStartupSyncFn =
+      overrides.handleStartupSync || handleStartupSync;
+    const handlePerLoadSyncCheckFn =
+      overrides.handlePerLoadSyncCheck || handlePerLoadSyncCheck;
+    const handleInitialForegroundRemoteFreshnessCheckFn =
+      overrides.handleInitialForegroundRemoteFreshnessCheck ||
+      handleInitialForegroundRemoteFreshnessCheck;
+    const checkTokenExpiryFn = overrides.checkTokenExpiry || checkTokenExpiry;
+    const handleNuxRecommendationFn =
+      overrides.handleNuxRecommendation || handleNuxRecommendation;
+    const getStartupSyncOrchestratorDecisionFn =
+      overrides.getStartupSyncOrchestratorDecision ||
+      getStartupSyncOrchestratorDecision;
+    const scheduleTimeoutFn =
+      overrides.scheduleTimeout ||
+      ((callback, delayMs) => window.setTimeout(callback, delayMs));
     const scheduledAt = Date.now();
     const runStartupOrchestratorFlow = async ({
       skipDailyStartupSync = false,
@@ -53094,19 +53336,20 @@
       try {
         const startupSyncResult = skipDailyStartupSync
           ? false
-          : await handleStartupSync();
+          : await handleStartupSyncFn();
         if (startupSyncResult === true) {
           return;
         }
 
         if (!suppressStartupOnlyChecks) {
-          const isReloadingAfterPerLoadSync = await handlePerLoadSyncCheck();
+          const isReloadingAfterPerLoadSync =
+            await handlePerLoadSyncCheckFn();
           if (isReloadingAfterPerLoadSync) {
             return;
           }
 
           const isReloadingAfterInitialForegroundProbe =
-            await handleInitialForegroundRemoteFreshnessCheck();
+            await handleInitialForegroundRemoteFreshnessCheckFn();
           if (isReloadingAfterInitialForegroundProbe) {
             return;
           }
@@ -53119,7 +53362,7 @@
         let tokenPopupWasShown = false;
         // 保持原有顺序：同步流程结束后再做 Token 过期提醒，避免弹窗互相覆盖。
         if (!welcomePopupWasShown && startupSyncResult !== "popup_shown") {
-          tokenPopupWasShown = checkTokenExpiry() === true;
+          tokenPopupWasShown = checkTokenExpiryFn() === true;
         }
 
         if (
@@ -53131,7 +53374,7 @@
           if (waitForNuxDetection && typeof waitForNuxDetection.then === "function") {
             await waitForNuxDetection;
           }
-          handleNuxRecommendation();
+          handleNuxRecommendationFn();
         }
       } catch (error) {
         console.error("S1 Plus: 延迟执行启动同步流程失败:", error);
@@ -53160,8 +53403,7 @@
 
       switch (decision?.action) {
         case "run_fresh_startup_flow":
-          runStartupOrchestratorFlow();
-          return;
+          return runStartupOrchestratorFlow();
         case "resume_deferred_daily_startup":
           {
             const deferredRequest = freshnessState.deferredStartupSyncRequest;
@@ -53172,10 +53414,9 @@
               `S1 Plus: 启动同步流程触发过晚（${elapsedMs}ms），当前页面将优先补执行已顺延的每日首次同步（scheduledBy: ${scheduledBy}）。`
             );
           }
-          runStartupOrchestratorFlow({
+          return runStartupOrchestratorFlow({
             suppressStartupOnlyChecks: true,
           });
-          return;
         case "defer_daily_startup":
           markDeferredStartupSyncRequest(
             "startup_flow_delayed",
@@ -53192,31 +53433,37 @@
           console.log(
             `S1 Plus: 启动同步流程触发过晚（${elapsedMs}ms），每日首次同步已顺延到下一个新页面执行。`
           );
-          runStartupOrchestratorFlow({
+          return runStartupOrchestratorFlow({
             skipDailyStartupSync: true,
             suppressStartupOnlyChecks: true,
           });
-          return;
         case "skip_stale_startup_only_checks":
         default:
           console.log(
             `S1 Plus: 启动同步流程触发过晚（${elapsedMs}ms），已跳过本页启动期专属同步检查。`
           );
-          runStartupOrchestratorFlow({
+          return runStartupOrchestratorFlow({
             skipDailyStartupSync: true,
             suppressStartupOnlyChecks: true,
           });
       }
     };
     const runFlowIfFresh = () => {
-      const startupOrchestratorDecision = getStartupSyncOrchestratorDecision(
-        scheduledAt
-      );
-      runStartupOrchestratorDecision(startupOrchestratorDecision);
+      const startupOrchestratorDecision =
+        getStartupSyncOrchestratorDecisionFn(scheduledAt);
+      return runStartupOrchestratorDecision(startupOrchestratorDecision);
     };
 
-    window.setTimeout(runFlowIfFresh, STARTUP_SYNC_DEFER_DELAY_MS);
+    scheduleTimeoutFn(runFlowIfFresh, STARTUP_SYNC_DEFER_DELAY_MS);
   };
+
+  if (IS_S1P_TEST_MODE) {
+    const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
+    testHookHost.__S1P_TEST_HOOKS__ = {
+      ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
+      runStartupSyncFlowDeferred,
+    };
+  }
 
   /**
    * [MODIFIED] 首次加载此版本时，显示更新亮点弹窗，并返回是否显示了弹窗。

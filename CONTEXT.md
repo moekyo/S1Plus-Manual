@@ -36,6 +36,10 @@ _Avoid_: unsaved changes, local delta
 A completed sync outcome — success, failure, or conflict — that was explicitly committed by a resolved-state writer such as `finishAutoSyncIndicatorCycle` or `setAutoSyncIndicatorResolvedPhase`. Result phases are safe to display across tabs because they describe an already-completed action, not an in-progress one.
 _Avoid_: final state, outcome
 
+**Result Phase Policy**:
+The deep module interface `syncResultPhasePolicy.handle(result, context)`. After Running Sync releases its mode and global Sync Locks, it turns the completed result into refresh, conflict-pause, retry, and notification intents. Background, daily startup, per-load, and foreground follow-up callers share this decision path; source-specific copy, modal content, and refresh adapters remain outside the module. A retry intent describes policy, while `retryResult.status` proves whether its adapter actually scheduled work; foreground consumers preserve retry state only for `scheduled` or `already_scheduled` results.
+_Avoid_: result switch, post-sync UI handler
+
 **Ghost Running**:
 A title display of `[同步中...]` that appears when a tab sees a fresh sync lock but no live tab is actually executing sync. Caused by a worker tab closing without releasing its lock. Maximum duration: 45 seconds (lock TTL).
 _Avoid_: phantom sync, false running
@@ -59,6 +63,7 @@ _Avoid_: live-runner heartbeat, runner election
 - For **Running Sync**, the **Title Owner** must resolve to the **Live Runner** using the title live-runner mapping; ordinary recency-based ownership applies to **Result Phases**
 - The **Scheduler Owner** manages the debounce timer independently from both **Sync Lock** and **Title Owner**
 - **Result Phases** can transfer between tabs; **Running Sync** cannot; **Pending Dirty** can be recovered by a new **Scheduler Owner**
+- The **Result Phase Policy** runs only after **Running Sync** releases its Sync Locks; callers consume its intents instead of switching on result status independently
 - A stale **Running Sync** title does not fall back to an older **Result Phase**; it stays idle until a resolved-state writer commits a new Result Phase or pending recovery produces one
 
 ## Example dialogue
