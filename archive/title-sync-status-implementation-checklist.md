@@ -37,7 +37,7 @@
 - [x] 定位统一状态源：
   - `AUTO_SYNC_INDICATOR_STATE_KEY`
   - `getAutoSyncIndicatorState()`
-  - `resolveAutoSyncIndicatorDisplayPhase()`
+  - `readSyncIndicatorStateProjection({ surface })`
   - `getAutoSyncIndicatorResolvedTtlMs()`
   - `initializeAutoSyncIndicatorCrossTabSync()`
 - [x] 定位同步状态设置项 UI：
@@ -50,7 +50,7 @@ Phase 0 定位结果（2026-05-06）：
 
 - 已回读标题同步状态需求、后台 shared scheduler review 和 shared scheduler 实现清单；确认 shared scheduler / 统一状态源增强已经完成，本轮标题功能只消费现有统一状态源。
 - 现有自定义标题后缀仍由 `resolveInterfaceTitleBase()` / `applyInterfaceCustomizations()` 维护，`lastAppliedCustomTitleSuffix` 用于剥离旧后缀，当前 `document.title` 写入点仍在 `applyInterfaceCustomizations()` 内。
-- 统一状态源入口已定位：`AUTO_SYNC_INDICATOR_STATE_KEY`、`getAutoSyncIndicatorState()`、`resolveAutoSyncIndicatorDisplayPhase()`、`getAutoSyncIndicatorResolvedTtlMs()` 和 `initializeAutoSyncIndicatorCrossTabSync()`；其中 display phase 已接入 shared debounce / pending / active lock / foreground probe 等状态。
+- 统一状态源入口已定位：`AUTO_SYNC_INDICATOR_STATE_KEY`、`getAutoSyncIndicatorState()`、`readSyncIndicatorStateProjection({ surface })`、`getAutoSyncIndicatorResolvedTtlMs()` 和 `initializeAutoSyncIndicatorCrossTabSync()`；其中 display phase 已接入 shared debounce / pending / active lock / foreground probe 等状态。
 - 同步状态设置 UI 已定位：“设置同步 -> 状态显示”区块当前只有 `syncShowAutoSyncIndicator`，对应测试为 `sync-across-multiple-tab/scripts/test-sync-settings-ui.js`。
 - 本轮首次检查曾看到 `S1Plus.js` 和 `sync-across-multiple-tab/scripts/test-background-sync-shared-debounce.js` 处于已修改状态；本轮未编辑这两个文件。最终核对时，当前工作树只剩本轮新增/更新的标题状态测试与清单文件。
 
@@ -167,7 +167,7 @@ Phase C 实现结果（2026-05-06）：
 ## Phase D: 标题状态映射与动画
 
 - [x] 标题状态直接消费统一状态源 display phase。
-- [x] 推荐复用 `resolveAutoSyncIndicatorDisplayPhase()`。
+- [x] 推荐复用 `readSyncIndicatorStateProjection({ surface })`。
 - [x] `idle` 不显示。
 - [x] `pending` 不显示。
 - [x] `running` 显示同步中动画。
@@ -182,7 +182,7 @@ Phase C 实现结果（2026-05-06）：
 
 Phase D 实现结果（2026-05-06）：
 
-- 已新增标题状态运行时调度，实际展示路径直接调用 `resolveAutoSyncIndicatorDisplayPhase()`，再将 display phase 映射为标题前缀；标题层未读取 shared debounce state 做特殊判断。
+- 已新增标题状态运行时调度，实际展示路径直接调用 `readSyncIndicatorStateProjection({ surface: "title" })`，再将 display phase 映射为标题前缀；标题层未读取 shared debounce state 做特殊判断。
 - 已实现 `idle` / `pending` 无前缀，`running` 三帧动画，`success` / `failure` / `conflict` 结果前缀；进入 `running` 时会重置到 `[同步中.]` 并覆盖未过期结果状态。
 - 已按统一状态源 TTL 安排结果状态过期检查，过期后通过 `refreshDocumentTitle()` 恢复原始标题和自定义后缀；前后台切换只影响是否显示，不修改统一状态源时间戳。
 
@@ -255,7 +255,7 @@ Phase F 实现结果（2026-05-06）：
 Phase G 实现结果（2026-05-06）：
 
 - 已将标题层 display phase 解析收窄为只读取统一状态源输出里的 `displayPhase`；没有 `displayPhase` 的原始 `phase` 不会被标题层当作同步状态显示。
-- 已补充 `test-title-sync-status.js` 回归：覆盖 raw `phase` 不生效、统一 `displayPhase: pending` 时标题保持无前缀、shared debounce / active lock 只通过 `resolveAutoSyncIndicatorDisplayPhase()` 影响标题展示。
+- 已补充 `test-title-sync-status.js` 回归：覆盖 raw `phase` 不生效、统一 `displayPhase: pending` 时标题保持无前缀、shared debounce / active lock 只通过 `readSyncIndicatorStateProjection({ surface: "title" })` 影响标题展示。
 - 已增加标题实现区块静态断言，确认标题层不读取 `getBackgroundSyncDebounceState`，不调用 foreground probe / retry / gate / cooldown 相关入口，不调用 `performAutoSync()`，不调用 `setAutoSyncIndicatorPendingState()` / `setAutoSyncIndicatorResolvedPhase()`。
 - 本轮未修改统一状态源增强逻辑，未改 foreground probe / cooldown / gate 流程，未新增同步触发逻辑。
 

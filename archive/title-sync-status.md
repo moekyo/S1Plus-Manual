@@ -327,7 +327,7 @@ refreshDocumentTitle()
 - 关闭“显示标签页标题同步状态”不应影响导航栏同步状态。
 - 两者只共用同一套同步状态源，不互相作为启用前提。
 
-标题同步状态应直接消费统一状态源，例如 `resolveAutoSyncIndicatorDisplayPhase()` 的结果，而不是复制一套独立同步状态判断。
+标题同步状态应通过 `readSyncIndicatorStateProjection({ surface: "title" })` 直接消费统一投影，而不是复制一套独立同步状态判断。
 
 ---
 

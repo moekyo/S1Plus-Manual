@@ -33133,7 +33133,12 @@
       getForegroundProbeGateBlockResult,
       hasEnabledAutoSyncIndicatorPath,
       getAutoSyncIndicatorState,
+      getSyncIndicatorStateProjectionTestConstants: () => ({
+        SURFACE_NAVBAR: SYNC_INDICATOR_STATE_PROJECTION_SURFACE_NAVBAR,
+        SURFACE_TITLE: SYNC_INDICATOR_STATE_PROJECTION_SURFACE_TITLE,
+      }),
       readSyncIndicatorStateProjection,
+      resolveTitleSyncIndicatorProjectionPhase,
       getAutoSyncIndicatorLiveRunnerOwnerIdForTitle,
       shouldSuppressAutoSyncIndicatorRunningForTitle,
       hasActivePendingAutoSyncRequest,
@@ -36375,6 +36380,7 @@
       maybeRefreshTitleSyncStatusOwnerLease,
       hasEnabledTitleSyncStatusPath,
       getTitleSyncStatusRuntimeStateForTest,
+      runTitleSyncStatusRuntimeSync,
       refreshDocumentTitle,
       getCurrentTitleSyncStatusPrefix,
     };

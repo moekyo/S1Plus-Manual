@@ -73,7 +73,7 @@ RUNNING aged → resolveWithTtl(lastResolvedPhase)
 
 ### Q1: Should navbar keep showing running while title suppresses it?
 
-**Yes.** Navbar and title use same `resolveAutoSyncIndicatorDisplayPhase` but differ via `ttlProfile`. Title will have stricter running detection; navbar keeps existing lock-freshness display. Two different strictness levels per display context.
+**Yes.** Navbar and title consume the same `readSyncIndicatorStateProjection()` interface with different `surface` values. The title surface has stricter running detection; the navbar surface keeps existing lock-freshness display. Two different strictness levels remain explicit at the projection boundary.
 
 ### Q2: Should title be stricter for all active states or only running?
 
@@ -91,12 +91,12 @@ RUNNING aged → resolveWithTtl(lastResolvedPhase)
 
 **1.2** Block running handoff for title unless verified live runner:
 - **Approach:** Added `shouldSuppressAutoSyncIndicatorRunningForTitle()` and `getAutoSyncIndicatorLiveRunnerOwnerIdForTitle()`.
-- **Logic:** When `ttlProfile === "title"` and the display phase is Running Phase, the title profile requires the current tab to own the active background sync lock. If not, it suppresses to idle for title only.
+- **Logic:** When `surface === "title"` and the display phase is Running Phase, the title projection requires the current tab to own the active background sync lock. If not, it suppresses to idle for title only.
 - **Title Owner rule:** During Running Phase, the Live Runner takes precedence over normal recency-based Title Owner election. Presence records now include `syncOwnerId`, and resolved title running state includes `displayLiveRunnerOwnerId`; `resolveTitleSyncStatusTabDisplayDecision()` matches those to select the Live Runner tab.
 - **Boundary:** A non-runner tab suppresses running even if it is the ordinary Title Owner or a stale owner lease still exists.
 
 **1.3** Suppress stale running → old result fallback for title:
-- **Logic:** In the running fallback path, when `ttlProfile === "title"`, check `lastResolvedTimestamp >= state.timestamp`. If not, the result is pre-running-cycle and title display suppresses to idle.
+- **Logic:** In the running fallback path for the title projection, check `lastResolvedTimestamp >= state.timestamp`. If not, the result is pre-running-cycle and title display suppresses to idle.
 - **Guard:** If `lastResolvedTimestamp >= state.timestamp`, result was committed by a resolved-state writer during or after the current running cycle → allow display.
 
 ### Phase 2: Scheduler recovery
@@ -130,9 +130,9 @@ All in `tests/test-title-sync-status.js`:
 
 All changes in `S1Plus.js`:
 
-1. **New functions** `shouldSuppressAutoSyncIndicatorRunningForTitle(displayState, { ttlProfile })` and `getAutoSyncIndicatorLiveRunnerOwnerIdForTitle(now)`. They make title Running Phase depend on a current-tab-owned background sync lock.
+1. **Projection policy** `readSyncIndicatorStateProjection({ surface: "title" })` delegates to `shouldSuppressAutoSyncIndicatorRunningForTitle()` and `getAutoSyncIndicatorLiveRunnerOwnerIdForTitle()`. Together they make title Running Phase depend on a current-tab-owned background sync lock.
 
-2. **Call point** in `resolveAutoSyncIndicatorDisplayPhase` → `finishDisplayState`, alongside existing probe suppression. Title running state receives `displayLiveRunnerOwnerId` only when the current tab is the verified Live Runner.
+2. **Call point** in `projectSyncIndicatorState()` → `finishDisplayState`, alongside existing probe suppression. Title running state receives `displayLiveRunnerOwnerId` only when the current tab is the verified Live Runner.
 
 3. **Presence metadata:** title presence records include `syncOwnerId`, allowing the title owner election to map a Live Runner lock owner back to a live S1 tab.
 
@@ -140,7 +140,7 @@ All changes in `S1Plus.js`:
 
 5. **Running owner selection** in title runtime: when display phase is running, prefer the Live Runner over normal recency-based Title Owner election.
 
-6. **Stale fallback guard** in running → `lastResolvedPhase` fallback path: when `ttlProfile === "title"`, check `lastResolvedTimestamp >= state.timestamp` before allowing fallback. If not, suppress to idle.
+6. **Stale fallback guard** in the title projection's running → `lastResolvedPhase` fallback path: check `lastResolvedTimestamp >= state.timestamp` before allowing fallback. If not, suppress to idle.
 
 7. **Export hooks** for new functions and constants to test harness.
 

@@ -14,8 +14,30 @@ const createHarness = () => {
   });
 };
 
-const readNavbarProjection = (hooks, state = null) =>
-  hooks.readSyncIndicatorStateProjection({ surface: "navbar", state });
+const getProjectionSurfaces = (hooks) =>
+  hooks.getSyncIndicatorStateProjectionTestConstants();
+
+const readNavbarProjection = (
+  hooks,
+  state = null,
+  { allowCache = false } = {}
+) =>
+  hooks.readSyncIndicatorStateProjection({
+    surface: getProjectionSurfaces(hooks).SURFACE_NAVBAR,
+    state,
+    allowCache,
+  });
+
+const readTitleProjection = (
+  hooks,
+  state = null,
+  { allowCache = false } = {}
+) =>
+  hooks.readSyncIndicatorStateProjection({
+    surface: getProjectionSurfaces(hooks).SURFACE_TITLE,
+    state,
+    allowCache,
+  });
 
 const BACKGROUND_SYNC_DEBOUNCE_STATE_KEY =
   "s1p_background_sync_debounce_state";
@@ -484,19 +506,33 @@ const testSyncIndicatorStateProjectionSurfaceContract = () => {
   };
 
   const navbarResult = toPlainObject(
-    hooks.readSyncIndicatorStateProjection({
-      surface: "navbar",
-      state: resultState,
-    })
+    readNavbarProjection(hooks, resultState)
   );
   const titleResult = toPlainObject(
-    hooks.readSyncIndicatorStateProjection({
-      surface: "title",
-      state: resultState,
-    })
+    readTitleProjection(hooks, resultState)
   );
   assert.equal(navbarResult.displayPhase, "idle");
   assert.equal(titleResult.displayPhase, "success");
+
+  const defaultSurfaceResult = toPlainObject(
+    hooks.readSyncIndicatorStateProjection({ state: resultState })
+  );
+  assert.equal(
+    defaultSurfaceResult.projectionSurface,
+    getProjectionSurfaces(hooks).SURFACE_NAVBAR
+  );
+  assert.equal(defaultSurfaceResult.displayPhase, navbarResult.displayPhase);
+  const malformedInputResult = toPlainObject(
+    hooks.readSyncIndicatorStateProjection({
+      surface: "unexpected",
+      state: "invalid",
+    })
+  );
+  assert.equal(
+    malformedInputResult.projectionSurface,
+    getProjectionSurfaces(hooks).SURFACE_NAVBAR
+  );
+  assert.equal(malformedInputResult.displayPhase, "idle");
 
   const pullResultState = {
     ...resultState,
@@ -509,19 +545,78 @@ const testSyncIndicatorStateProjectionSurfaceContract = () => {
     lastResolvedReason: "pulled",
   };
   assert.equal(
-    hooks.readSyncIndicatorStateProjection({
-      surface: "navbar",
-      state: pullResultState,
-    }).displayPhase,
+    readNavbarProjection(hooks, pullResultState).displayPhase,
     "success"
   );
   assert.equal(
-    hooks.readSyncIndicatorStateProjection({
-      surface: "title",
-      state: pullResultState,
-    }).displayPhase,
+    readTitleProjection(hooks, pullResultState).displayPhase,
     "idle",
     "Title surface 应在投影层抑制拉取侧结果，而不是交给 Title Owner 二次解释。"
+  );
+
+  const cloudProbeState = {
+    ...resultState,
+    phase: "running",
+    timestamp: now,
+    source: "foreground_resume",
+    reason: "foreground_probe_in_flight",
+    operation: "probe",
+    lastResolvedPhase: "idle",
+    lastResolvedTimestamp: now,
+    lastResolvedSource: "",
+    lastResolvedReason: "",
+  };
+  assert.equal(
+    readTitleProjection(hooks, cloudProbeState).displayPhase,
+    "idle",
+    "cloud probe session 必须在 Title 投影中静默。"
+  );
+  assert.equal(
+    readTitleProjection(hooks, {
+      ...resultState,
+      phase: "conflict",
+      timestamp: now,
+      source: "foreground_resume",
+      reason: "probe_conflict",
+      operation: "probe",
+      lastResolvedPhase: "conflict",
+      lastResolvedTimestamp: now,
+      lastResolvedSource: "foreground_resume",
+      lastResolvedReason: "probe_conflict",
+    }).displayPhase,
+    "idle",
+    "probe 方向的 conflict 不应显示在 Title。"
+  );
+  assert.equal(
+    readTitleProjection(hooks, {
+      ...resultState,
+      timestamp: now,
+      operation: "",
+      lastResolvedTimestamp: now,
+    }).displayPhase,
+    "success",
+    "未显式标注方向的 background result 应回退为 push 并保留 Title 结果态。"
+  );
+
+  const constants = hooks.getTitleSyncStatusTestConstants();
+  store.set(BACKGROUND_SYNC_LOCK_KEY, {
+    owner: constants.BACKGROUND_SYNC_OWNER_ID,
+    timestamp: now,
+  });
+  store.set(GLOBAL_SYNC_LOCK_KEY, {
+    owner: constants.BACKGROUND_SYNC_OWNER_ID,
+    mode: "background",
+    timestamp: now,
+    ttlMs: 60000,
+  });
+  assert.equal(
+    readTitleProjection(hooks, {
+      ...cloudProbeState,
+      reason: "foreground_followup_in_flight",
+      operation: "sync",
+    }).displayPhase,
+    "idle",
+    "source mismatch 默认出的 background push 不能绕过 Title 的原始方向保护。"
   );
 
   store.set(GLOBAL_SYNC_LOCK_KEY, {
@@ -531,16 +626,10 @@ const testSyncIndicatorStateProjectionSurfaceContract = () => {
     ttlMs: 60000,
   });
   const navbarForeignRunning = toPlainObject(
-    hooks.readSyncIndicatorStateProjection({
-      surface: "navbar",
-      state: resultState,
-    })
+    readNavbarProjection(hooks, resultState)
   );
   const titleForeignRunning = toPlainObject(
-    hooks.readSyncIndicatorStateProjection({
-      surface: "title",
-      state: resultState,
-    })
+    readTitleProjection(hooks, resultState)
   );
   assert.equal(
     navbarForeignRunning.displayPhase,
@@ -553,6 +642,147 @@ const testSyncIndicatorStateProjectionSurfaceContract = () => {
     "Title 投影不能仅凭外来 Sync Lock 产生 Ghost Running。"
   );
   assert.equal(titleForeignRunning.displayLiveRunnerOwnerId, "");
+
+  const cacheHarness = createHarness();
+  const cacheNow = Date.now();
+  cacheHarness.store.set(AUTO_SYNC_INDICATOR_STATE_KEY, {
+    ...resultState,
+    timestamp: cacheNow,
+    lastResolvedTimestamp: cacheNow,
+  });
+  const cachedSuccess = toPlainObject(
+    readTitleProjection(cacheHarness.hooks, null, { allowCache: true })
+  );
+  assert.equal(cachedSuccess.displayPhase, "success");
+  cacheHarness.store.set(AUTO_SYNC_INDICATOR_STATE_KEY, {
+    ...resultState,
+    phase: "conflict",
+    timestamp: cacheNow,
+    reason: "conflict_after_cache_write",
+    lastResolvedPhase: "conflict",
+    lastResolvedTimestamp: cacheNow,
+    lastResolvedReason: "conflict_after_cache_write",
+  });
+  assert.equal(
+    readTitleProjection(cacheHarness.hooks, null, { allowCache: true })
+      .displayPhase,
+    "success",
+    "allowCache 命中时应复用 250ms 内的 Title 投影。"
+  );
+  assert.equal(
+    readTitleProjection(cacheHarness.hooks).displayPhase,
+    "conflict",
+    "关闭 allowCache 时必须重新读取最新持久化状态。"
+  );
+};
+
+const testTitleProjectionPhasePolicyBranches = () => {
+  const { hooks } = createHarness();
+  const resolveTitlePhase = hooks.resolveTitleSyncIndicatorProjectionPhase;
+  assert.equal(typeof resolveTitlePhase, "function");
+
+  [
+    [null, "idle", "null input"],
+    ["invalid", "idle", "malformed input"],
+    [[], "idle", "array input"],
+    [{ displayPhase: "pending" }, "pending", "pending phase"],
+    [
+      { displayPhase: "success", operation: "push" },
+      "success",
+      "original push direction",
+    ],
+    [
+      {
+        displayPhase: "failure",
+        operation: "sync",
+        displaySessionKind: "local_push_session",
+      },
+      "failure",
+      "local push session direction",
+    ],
+    [
+      {
+        displayPhase: "success",
+        operation: "sync",
+        displaySessionKind: "remote_pull_session",
+      },
+      "idle",
+      "remote pull session suppression",
+    ],
+    [
+      {
+        displayPhase: "running",
+        operation: "sync",
+        displaySessionKind: "cloud_probe_session",
+      },
+      "idle",
+      "cloud probe session suppression",
+    ],
+    [
+      {
+        displayPhase: "success",
+        operation: "sync",
+        displayDominantDirection: "push",
+      },
+      "success",
+      "dominant push direction",
+    ],
+    [
+      {
+        displayPhase: "success",
+        operation: "sync",
+        displayOperation: "push",
+      },
+      "success",
+      "display operation push direction",
+    ],
+    [
+      {
+        displayPhase: "success",
+        source: "background_push",
+        displaySource: "background_push",
+      },
+      "success",
+      "background source push fallback",
+    ],
+    [
+      {
+        displayPhase: "success",
+        source: "foreground_resume",
+        displaySource: "foreground_resume",
+      },
+      "idle",
+      "directionless foreground result suppression",
+    ],
+    [
+      { displayPhase: "conflict", operation: "push" },
+      "conflict",
+      "push conflict",
+    ],
+    [
+      { displayPhase: "conflict", operation: "pull" },
+      "idle",
+      "pull conflict suppression",
+    ],
+    [
+      { displayPhase: "conflict", operation: "probe" },
+      "idle",
+      "probe conflict suppression",
+    ],
+    [
+      {
+        displayPhase: "success",
+        source: "foreground_resume",
+        displaySource: "background_push",
+        operation: "sync",
+        displaySessionKind: "local_push_session",
+      },
+      "idle",
+      "defaulted background push suppression",
+    ],
+  ].forEach(([state, expectedPhase, label]) => {
+    assert.equal(resolveTitlePhase(state), expectedPhase, label);
+  });
 };
 
 const testForegroundFollowupLockDisplayDoesNotUseFullLockTtl = () => {
@@ -1288,6 +1518,7 @@ const testAutoSyncEntryPointsBindIndicatorSources = () => {
   await testForegroundFollowupRefreshKeepsDeferredSuccess();
   testSharedSchedulerAndLocksFeedUnifiedDisplayState();
   testSyncIndicatorStateProjectionSurfaceContract();
+  testTitleProjectionPhasePolicyBranches();
   testForegroundFollowupLockDisplayDoesNotUseFullLockTtl();
   testDisplaySessionCoalescesPushVerification();
   testPullRetryKeepsCloudDirectionOverLocalPending();

@@ -259,7 +259,7 @@ Running Sync 的 implementation 负责模式锁、全局锁、心跳、远端事
   - 新增 `readSyncIndicatorStateProjection({ surface, state, allowCache })` 作为唯一投影 interface；`projectSyncIndicatorState()` 集中 Pending Dirty、fresh Sync Lock、Result Phase、conflict/circuit gate、TTL 与视觉会话 implementation。
   - Navbar、导航栏 tooltip/debug 状态和 Title runtime 全部迁移到投影 interface；删除 Title Owner 内部的方向/source phase 解释器。
   - `navbar` surface 保留外来后台锁与本地 pending 的既有反馈差异；`title` surface 集中 Live Runner、pull/probe 静默、push 侧 Result Phase 与分钟级 TTL 规则。
-  - 删除旧 `resolveAutoSyncIndicatorDisplayPhase` 测试 hook，既有 indicator、foreground retry 与 title 场景改从新 interface 验证行为。
+  - 删除旧 display-phase 测试 hook，既有 indicator、foreground retry 与 title 场景改从新 interface 验证行为。
 - 自动验证：
   - `node --check S1Plus.js` 通过。
   - `node tests/test-auto-sync-indicator-linkage.js` 通过。
@@ -270,8 +270,15 @@ Running Sync 的 implementation 负责模式锁、全局锁、心跳、远端事
 - 独立审查：
   - 使用一个主 subagent 联合审查 Standards 与 Phase 4 spec，确认 2 个 P2、0 个 P1/P3；运行时高风险语义未发现缺陷。
   - 删除 Title runtime 新增的 wiring regex，让 projection/consumer 边界继续由 interface 行为场景验证。
-  - 修正 `DEVELOPMENT.md` 仍引用已删除 `resolveAutoSyncIndicatorDisplayPhase()` 的旧说明，统一为 `readSyncIndicatorStateProjection({ surface })`。
+  - 修正 `DEVELOPMENT.md` 的旧投影入口说明，统一为 `readSyncIndicatorStateProjection({ surface })`。
   - 修复后重新运行 indicator/title 定向测试、语法检查和 `git diff --check`，全部通过。
+- 综合复审修复：
+  - 针对 `f5d44c6` + `9cdd3a2` 的综合复审，补齐 2 个 P1、5 个 P2 与 2 个 P3 覆盖/一致性问题；未发现需要改变生产语义的缺陷。
+  - `allowCache: true` 已覆盖缓存写入、250ms 内命中与禁用缓存后的实时读取；默认 surface、非法 surface、null/畸形 Title 投影输入均有显式测试。
+  - Title 投影策略补齐 push/pull/probe、三类 session、方向 fallback、conflict、source mismatch/defaulted background push 等分支；测试改用导出的 surface 常量。
+  - 新增真实 Title runtime 集成测试，从持久化 pull success 经投影、Title Owner 到 `refreshDocumentTitle()`，验证标题不会出现 `[同步成功]`。
+  - 清理 `CHANGELOG.md`、ADR、交接/审查文档与归档清单中的已删除投影入口名，统一指向 `readSyncIndicatorStateProjection({ surface })`。
+  - 修复后再次运行 4 项高风险定向验证与全仓 30 个测试文件，全部通过；`node --check S1Plus.js` 与 `git diff --check` 通过。
 - 保持不变：
   - 未修改视觉样式、动画设计、Result Phase TTL 数值、持久化 schema 或 Title Owner handoff 规则。
 - 尚未完成：
