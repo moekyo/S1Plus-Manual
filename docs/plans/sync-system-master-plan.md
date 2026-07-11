@@ -2,10 +2,10 @@
 
 ## 当前状态
 
-- 计划状态：Phase 1、Phase 2 与 Phase 3 实现、自动验证和独立审查已完成，真实多窗口点验待执行。
-- 总体进度：0/6 个阶段完成。
-- 当前阶段：Phase 3，等待真实多窗口点验。
-- 代码状态：Phase 3 生命周期 adapter、interface 场景测试和架构文档已完成并通过审查后复验。
+- 计划状态：Phase 1、Phase 2 与 Phase 3 实现、自动验证和独立审查已完成；Phase 4 实现与自动验证已完成，独立审查待执行；真实多窗口点验仍待执行。
+- 总体实施进度：4/6 个阶段已完成代码实现，其中 3 个阶段已完成独立审查。
+- 当前阶段：Phase 4，等待独立审查。
+- 代码状态：Phase 4 Sync Indicator State 投影 interface、Navbar/Title consumer 迁移、场景测试和架构文档已完成。
 - 架构依据：2026-07-11 完成同步锁遗留问题的实机复现、代码定位和架构复核。
 
 ## 背景
@@ -232,11 +232,11 @@ Running Sync 的 implementation 负责模式锁、全局锁、心跳、远端事
   - `git diff --check` 通过。
 - 尚未完成：
   - Phase 1/Phase 2/Phase 3 真实多窗口手动点验。
-- 下一步：按本文件多窗口步骤做 Phase 1/Phase 2/Phase 3 联合人工验收，追加取消离页与确认离页场景；通过后再进入 Phase 4。
+- 后续仍需按本文件多窗口步骤做 Phase 1/Phase 2/Phase 3 联合人工验收，追加取消离页与确认离页场景；Phase 4 已进入自动实现，但不能用自动验证替代这组真实点验。
 
 ## Phase 4：深化 Sync Indicator State 投影
 
-- 状态：未开始。
+- 状态：实现与自动验证已完成，独立审查待执行。
 - 目标：集中 Pending Dirty、Sync Lock、Live Runner、Result Phase 和 TTL 到展示状态的投影规则。
 - 实施范围：
   - 让 Navbar 与 Title Owner 使用同一份状态事实。
@@ -252,6 +252,26 @@ Running Sync 的 implementation 负责模式锁、全局锁、心跳、远端事
   - Result Phase 仍可通过 Title Owner handoff，Running Sync 仍不可转移。
   - 删除依赖内部状态拼接和源码正则的重复测试。
 - 主要文件：`S1Plus.js`、`tests/test-auto-sync-indicator-linkage.js`、`tests/test-title-sync-status.js`、`DEVELOPMENT.md`、`CONTEXT.md`。
+
+### Phase 4 进度更新
+
+- 已完成：
+  - 新增 `readSyncIndicatorStateProjection({ surface, state, allowCache })` 作为唯一投影 interface；`projectSyncIndicatorState()` 集中 Pending Dirty、fresh Sync Lock、Result Phase、conflict/circuit gate、TTL 与视觉会话 implementation。
+  - Navbar、导航栏 tooltip/debug 状态和 Title runtime 全部迁移到投影 interface；删除 Title Owner 内部的方向/source phase 解释器。
+  - `navbar` surface 保留外来后台锁与本地 pending 的既有反馈差异；`title` surface 集中 Live Runner、pull/probe 静默、push 侧 Result Phase 与分钟级 TTL 规则。
+  - 删除旧 `resolveAutoSyncIndicatorDisplayPhase` 测试 hook，既有 indicator、foreground retry 与 title 场景改从新 interface 验证行为。
+- 自动验证：
+  - `node --check S1Plus.js` 通过。
+  - `node tests/test-auto-sync-indicator-linkage.js` 通过。
+  - `node tests/test-title-sync-status.js` 通过。
+  - `node tests/test-foreground-probe-gate-retry.js` 通过。
+  - `git diff --check` 通过。
+- 保持不变：
+  - 未修改视觉样式、动画设计、Result Phase TTL 数值、持久化 schema 或 Title Owner handoff 规则。
+- 尚未完成：
+  - Phase 4 独立审查与审查后复验。
+  - Phase 1/Phase 2/Phase 3 真实多窗口手动点验。
+- 下一步：启动一个 subagent 联合审查仓库规范与 Phase 4 spec；修复 findings 并复验后，再评估 Phase 5 进入门槛。
 
 ## Phase 5：有条件地深化 Result Phase Policy
 

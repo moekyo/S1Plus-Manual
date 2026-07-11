@@ -5,8 +5,12 @@ Sync execution and status display for the S1 Plus Tampermonkey userscript. Cover
 ## Language
 
 **Sync Indicator State**:
-The shared persisted state (`s1p_auto_sync_indicator_state`) that drives both the navbar sync icon and the browser tab title prefix. Stores the current phase (running/pending/success/failure/conflict/idle), the last resolved result, and a per-cycle token.
+The shared persisted state (`s1p_auto_sync_indicator_state`) that records the current sync phase, the last resolved result, and a per-cycle token. Consumers do not interpret this record directly; they read it through the Sync Indicator State Projection.
 _Avoid_: display state, UI state
+
+**Sync Indicator State Projection**:
+The deep module interface `readSyncIndicatorStateProjection({ surface })`. It combines Sync Indicator State, Pending Dirty, fresh Sync Locks, Live Runner evidence, Result Phase, conflict/circuit gates, and the existing surface TTL into one projected fact for either `navbar` or `title`. Navbar and Title Owner share the same priority implementation; surface-specific policy stays inside the projection.
+_Avoid_: title state parser, navbar state parser
 
 **Sync Lock**:
 A mutual-exclusion guard stored in GM storage that prevents multiple tabs from executing sync simultaneously. Each lock has an owner (per-tab random ID), a timestamp refreshed by heartbeat, and a TTL. Locks exist per mode (background, startup, manual) plus a global lock.
@@ -49,9 +53,9 @@ _Avoid_: live-runner heartbeat, runner election
 - A **Sync Lock** is owned by exactly one tab (identified by per-tab random ID)
 - A **Running Sync** holds a **Sync Lock** and renews it via heartbeat
 - **Ghost Running** occurs when a **Sync Lock** exists but no **Live Runner** holds it
-- The **Sync Indicator State** derives its current phase from **Sync Lock** freshness, **Pending Dirty**, and the last recorded **Result Phase**
+- The **Sync Indicator State Projection** derives the displayed phase from **Sync Indicator State**, **Sync Lock** freshness, **Pending Dirty**, and the last recorded **Result Phase**
 - For the navbar, **Pending Dirty** takes precedence over a foreign background **Sync Lock**. Another tab's fresh background lock must not upgrade a pending local push into a running push animation; only the current tab as **Live Runner** may do that.
-- The **Title Owner** reads the **Sync Indicator State** to decide what prefix to display
+- The navbar and **Title Owner** both read the **Sync Indicator State Projection**; neither reinterprets locks, pending work, directions, or Result Phase TTL independently
 - For **Running Sync**, the **Title Owner** must resolve to the **Live Runner** using the title live-runner mapping; ordinary recency-based ownership applies to **Result Phases**
 - The **Scheduler Owner** manages the debounce timer independently from both **Sync Lock** and **Title Owner**
 - **Result Phases** can transfer between tabs; **Running Sync** cannot; **Pending Dirty** can be recovered by a new **Scheduler Owner**
