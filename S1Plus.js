@@ -1731,6 +1731,8 @@
   const AUTO_SYNC_INDICATOR_PHASE_SUCCESS = "success";
   const AUTO_SYNC_INDICATOR_PHASE_FAILURE = "failure";
   const AUTO_SYNC_INDICATOR_PHASE_CONFLICT = "conflict";
+  const SYNC_INDICATOR_STATE_PROJECTION_SURFACE_NAVBAR = "navbar";
+  const SYNC_INDICATOR_STATE_PROJECTION_SURFACE_TITLE = "title";
   const AUTO_SYNC_INDICATOR_OPERATION_SYNC = "sync";
   const AUTO_SYNC_INDICATOR_OPERATION_PUSH = "push";
   const AUTO_SYNC_INDICATOR_OPERATION_PULL = "pull";
@@ -14812,7 +14814,7 @@
     };
   };
 
-  const resolveAutoSyncIndicatorDisplayPhase = (
+  const projectSyncIndicatorState = (
     stateInput = null,
     options = {}
   ) => {
@@ -15113,6 +15115,120 @@
       ),
       "resolved_ttl"
     );
+  };
+
+  const resolveTitleSyncIndicatorProjectionPhase = (projectedState = null) => {
+    const state =
+      projectedState &&
+      typeof projectedState === "object" &&
+      !Array.isArray(projectedState)
+        ? projectedState
+        : {};
+    const displayPhase =
+      normalizeAutoSyncIndicatorPhase(state.displayPhase, {
+        allowRunning: true,
+        allowPending: true,
+      }) || AUTO_SYNC_INDICATOR_PHASE_IDLE;
+    if (
+      displayPhase === AUTO_SYNC_INDICATOR_PHASE_IDLE ||
+      displayPhase === AUTO_SYNC_INDICATOR_PHASE_PENDING
+    ) {
+      return displayPhase;
+    }
+    const sessionKind = String(state.displaySessionKind || "");
+    const originalOperation = normalizeAutoSyncIndicatorOperation(
+      state.operation
+    );
+    const displayOperation = normalizeAutoSyncIndicatorOperation(
+      state.displayOperation
+    );
+    const displayDominantDirection = normalizeAutoSyncIndicatorOperation(
+      state.displayDominantDirection
+    );
+    const originalSource = normalizeAutoSyncIndicatorSource(state.source);
+    const displaySource = normalizeAutoSyncIndicatorSource(
+      state.displaySource
+    );
+    const hasSourceMismatch = Boolean(
+      originalSource && displaySource && originalSource !== displaySource
+    );
+    const hasDefaultedBackgroundPush = Boolean(
+      hasSourceMismatch &&
+        displaySource === AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND &&
+        originalOperation !== AUTO_SYNC_INDICATOR_OPERATION_PUSH &&
+        (sessionKind === "local_push_session" ||
+          displayDominantDirection === AUTO_SYNC_INDICATOR_OPERATION_PUSH ||
+          displayOperation === AUTO_SYNC_INDICATOR_OPERATION_PUSH)
+    );
+    if (
+      hasDefaultedBackgroundPush ||
+      originalOperation === AUTO_SYNC_INDICATOR_OPERATION_PULL ||
+      originalOperation === AUTO_SYNC_INDICATOR_OPERATION_PROBE
+    ) {
+      return AUTO_SYNC_INDICATOR_PHASE_IDLE;
+    }
+    let direction = "";
+    if (sessionKind === "local_push_session") {
+      direction = AUTO_SYNC_INDICATOR_OPERATION_PUSH;
+    } else if (sessionKind === "remote_pull_session") {
+      direction = AUTO_SYNC_INDICATOR_OPERATION_PULL;
+    } else if (sessionKind === "cloud_probe_session") {
+      direction = AUTO_SYNC_INDICATOR_OPERATION_PROBE;
+    }
+    direction =
+      direction ||
+      displayDominantDirection ||
+      displayOperation ||
+      originalOperation;
+    if (
+      !direction &&
+      !hasSourceMismatch &&
+      (displaySource || originalSource) ===
+        AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND
+    ) {
+      direction = AUTO_SYNC_INDICATOR_OPERATION_PUSH;
+    }
+    if (displayPhase === AUTO_SYNC_INDICATOR_PHASE_CONFLICT) {
+      return direction === AUTO_SYNC_INDICATOR_OPERATION_PULL ||
+        direction === AUTO_SYNC_INDICATOR_OPERATION_PROBE
+        ? AUTO_SYNC_INDICATOR_PHASE_IDLE
+        : displayPhase;
+    }
+    return direction === AUTO_SYNC_INDICATOR_OPERATION_PUSH
+      ? displayPhase
+      : AUTO_SYNC_INDICATOR_PHASE_IDLE;
+  };
+
+  const readSyncIndicatorStateProjection = ({
+    surface = SYNC_INDICATOR_STATE_PROJECTION_SURFACE_NAVBAR,
+    state = null,
+    allowCache = false,
+  } = {}) => {
+    const normalizedSurface =
+      surface === SYNC_INDICATOR_STATE_PROJECTION_SURFACE_TITLE
+        ? SYNC_INDICATOR_STATE_PROJECTION_SURFACE_TITLE
+        : SYNC_INDICATOR_STATE_PROJECTION_SURFACE_NAVBAR;
+    const projectedState = projectSyncIndicatorState(state, {
+      allowCache,
+      ttlProfile:
+        normalizedSurface === SYNC_INDICATOR_STATE_PROJECTION_SURFACE_TITLE
+          ? "title"
+          : "indicator",
+    });
+    if (
+      normalizedSurface === SYNC_INDICATOR_STATE_PROJECTION_SURFACE_TITLE &&
+      resolveTitleSyncIndicatorProjectionPhase(projectedState) !==
+        projectedState.displayPhase
+    ) {
+      return {
+        ...buildSilentAutoSyncIndicatorIdleDisplayState(projectedState),
+        projectionSurface: normalizedSurface,
+      };
+    }
+    return {
+      ...projectedState,
+      projectionSurface: normalizedSurface,
+    };
   };
 
   const buildAutoSyncIndicatorResolvedState = ({
@@ -33017,7 +33133,7 @@
       getForegroundProbeGateBlockResult,
       hasEnabledAutoSyncIndicatorPath,
       getAutoSyncIndicatorState,
-      resolveAutoSyncIndicatorDisplayPhase,
+      readSyncIndicatorStateProjection,
       getAutoSyncIndicatorLiveRunnerOwnerIdForTitle,
       shouldSuppressAutoSyncIndicatorRunningForTitle,
       hasActivePendingAutoSyncRequest,
@@ -35505,88 +35621,6 @@
     }
     return didDelete;
   };
-  const resolveTitleSyncStatusDisplayPhase = (
-    stateInput = null
-  ) => {
-    const resolvedState =
-      stateInput && typeof stateInput === "object" && !Array.isArray(stateInput)
-        ? stateInput
-        : {};
-    const displayPhase =
-      normalizeAutoSyncIndicatorPhase(
-        resolvedState.displayPhase,
-        { allowRunning: true, allowPending: true }
-      ) || AUTO_SYNC_INDICATOR_PHASE_IDLE;
-    if (
-      displayPhase === AUTO_SYNC_INDICATOR_PHASE_IDLE ||
-      displayPhase === AUTO_SYNC_INDICATOR_PHASE_PENDING
-    ) {
-      return displayPhase;
-    }
-    const sessionKind = String(resolvedState.displaySessionKind || "");
-    const originalOperation = normalizeAutoSyncIndicatorOperation(
-      resolvedState.operation
-    );
-    const displayOperation = normalizeAutoSyncIndicatorOperation(
-      resolvedState.displayOperation
-    );
-    const displayDominantDirection = normalizeAutoSyncIndicatorOperation(
-      resolvedState.displayDominantDirection
-    );
-    const originalSource = normalizeAutoSyncIndicatorSource(
-      resolvedState.source
-    );
-    const displaySource = normalizeAutoSyncIndicatorSource(
-      resolvedState.displaySource
-    );
-    const hasSourceMismatch = Boolean(
-      originalSource && displaySource && originalSource !== displaySource
-    );
-    const hasDefaultedBackgroundPush = Boolean(
-      hasSourceMismatch &&
-        displaySource === AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND &&
-        originalOperation !== AUTO_SYNC_INDICATOR_OPERATION_PUSH &&
-        (sessionKind === "local_push_session" ||
-          displayDominantDirection === AUTO_SYNC_INDICATOR_OPERATION_PUSH ||
-          displayOperation === AUTO_SYNC_INDICATOR_OPERATION_PUSH)
-    );
-    if (
-      hasDefaultedBackgroundPush ||
-      originalOperation === AUTO_SYNC_INDICATOR_OPERATION_PULL ||
-      originalOperation === AUTO_SYNC_INDICATOR_OPERATION_PROBE
-    ) {
-      return AUTO_SYNC_INDICATOR_PHASE_IDLE;
-    }
-    let direction = "";
-    if (sessionKind === "local_push_session") {
-      direction = AUTO_SYNC_INDICATOR_OPERATION_PUSH;
-    } else if (sessionKind === "remote_pull_session") {
-      direction = AUTO_SYNC_INDICATOR_OPERATION_PULL;
-    } else if (sessionKind === "cloud_probe_session") {
-      direction = AUTO_SYNC_INDICATOR_OPERATION_PROBE;
-    }
-    direction =
-      direction ||
-      displayDominantDirection ||
-      displayOperation ||
-      originalOperation;
-    if (
-      !direction &&
-      !hasSourceMismatch &&
-      (displaySource || originalSource) === AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND
-    ) {
-      direction = AUTO_SYNC_INDICATOR_OPERATION_PUSH;
-    }
-    if (displayPhase === AUTO_SYNC_INDICATOR_PHASE_CONFLICT) {
-      return direction === AUTO_SYNC_INDICATOR_OPERATION_PULL ||
-        direction === AUTO_SYNC_INDICATOR_OPERATION_PROBE
-        ? AUTO_SYNC_INDICATOR_PHASE_IDLE
-        : displayPhase;
-    }
-    return direction === AUTO_SYNC_INDICATOR_OPERATION_PUSH
-      ? displayPhase
-      : AUTO_SYNC_INDICATOR_PHASE_IDLE;
-  };
   const isTitleSyncStatusLeaseWorthyPhase = (phase) => {
     const normalizedPhase =
       normalizeAutoSyncIndicatorPhase(phase, {
@@ -35638,7 +35672,11 @@
     const previousOwnerStillLive = liveTabs.some(
       (tab) => tab.tabId === previousOwnerTabId
     );
-    const displayPhase = resolveTitleSyncStatusDisplayPhase(stateRecord);
+    const displayPhase =
+      normalizeAutoSyncIndicatorPhase(stateRecord.displayPhase, {
+        allowRunning: true,
+        allowPending: true,
+      }) || AUTO_SYNC_INDICATOR_PHASE_IDLE;
     const displayIsRunning =
       displayPhase === AUTO_SYNC_INDICATOR_PHASE_RUNNING;
     const displayIsResultPhase = isAutoSyncIndicatorResultPhase(displayPhase);
@@ -35999,11 +36037,15 @@
       };
     }
 
-    const resolvedState = resolveAutoSyncIndicatorDisplayPhase(null, {
+    const resolvedState = readSyncIndicatorStateProjection({
+      surface: SYNC_INDICATOR_STATE_PROJECTION_SURFACE_TITLE,
       allowCache: true,
-      ttlProfile: "title",
     });
-    const nextDisplayPhase = resolveTitleSyncStatusDisplayPhase(resolvedState);
+    const nextDisplayPhase =
+      normalizeAutoSyncIndicatorPhase(resolvedState.displayPhase, {
+        allowRunning: true,
+        allowPending: true,
+      }) || AUTO_SYNC_INDICATOR_PHASE_IDLE;
     if (
       nextDisplayPhase === AUTO_SYNC_INDICATOR_PHASE_RUNNING &&
       titleSyncStatusRuntimeState.displayPhase !== AUTO_SYNC_INDICATOR_PHASE_RUNNING
@@ -36974,7 +37016,10 @@
     const resolvedState =
       stateInput && typeof stateInput === "object" && "displayPhase" in stateInput
         ? stateInput
-        : resolveAutoSyncIndicatorDisplayPhase(stateInput);
+        : readSyncIndicatorStateProjection({
+            surface: SYNC_INDICATOR_STATE_PROJECTION_SURFACE_NAVBAR,
+            state: stateInput,
+          });
     const phase =
       normalizeAutoSyncIndicatorPhase(resolvedState.displayPhase, {
         allowRunning: true,
@@ -37364,7 +37409,10 @@
     }
     const actualState = getAutoSyncIndicatorState();
     const previewState = autoSyncIndicatorDebugOverrideState;
-    const actualDisplayState = resolveAutoSyncIndicatorDisplayPhase(actualState);
+    const actualDisplayState = readSyncIndicatorStateProjection({
+      surface: SYNC_INDICATOR_STATE_PROJECTION_SURFACE_NAVBAR,
+      state: actualState,
+    });
     const previewDisplayState = previewState
       ? buildAutoSyncIndicatorDebugDisplayState(previewState)
       : null;
@@ -38421,7 +38469,10 @@
       : stateInput;
     const resolvedState = isDebugPreviewActive
       ? buildAutoSyncIndicatorDebugDisplayState(effectiveStateInput)
-      : resolveAutoSyncIndicatorDisplayPhase(effectiveStateInput);
+      : readSyncIndicatorStateProjection({
+          surface: SYNC_INDICATOR_STATE_PROJECTION_SURFACE_NAVBAR,
+          state: effectiveStateInput,
+        });
     const displayPhase =
       normalizeAutoSyncIndicatorPhase(resolvedState.displayPhase, {
         allowRunning: true,

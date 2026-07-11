@@ -14,6 +14,9 @@ const createHarness = () => {
   });
 };
 
+const readNavbarProjection = (hooks, state = null) =>
+  hooks.readSyncIndicatorStateProjection({ surface: "navbar", state });
+
 const BACKGROUND_SYNC_DEBOUNCE_STATE_KEY =
   "s1p_background_sync_debounce_state";
 const BACKGROUND_SYNC_LOCK_KEY = "s1p_background_sync_lock";
@@ -265,7 +268,7 @@ const testDeferredResolvedPhaseKeepsOperation = async () => {
     "pull",
     "延迟落成功态也必须保留调用方传入的 pull 方向。"
   );
-  const resolvedState = toPlainObject(hooks.resolveAutoSyncIndicatorDisplayPhase());
+  const resolvedState = toPlainObject(readNavbarProjection(hooks));
   assert.equal(hooks.getAutoSyncIndicatorDisplayKind(resolvedState), "pull");
   assert.equal(
     hooks.getAutoSyncIndicatorTitle(resolvedState),
@@ -359,7 +362,7 @@ const testForegroundFollowupRefreshKeepsDeferredSuccess = async () => {
     "前台 follow-up 结束后的运行态重绘不能取消已排队的 success 落态。"
   );
   assert.equal(state.operation, "pull");
-  const resolvedState = toPlainObject(hooks.resolveAutoSyncIndicatorDisplayPhase());
+  const resolvedState = toPlainObject(readNavbarProjection(hooks));
   assert.equal(hooks.getAutoSyncIndicatorDisplayKind(resolvedState), "pull");
   assert.equal(
     hooks.getAutoSyncIndicatorTitle(resolvedState),
@@ -392,7 +395,7 @@ const testSharedSchedulerAndLocksFeedUnifiedDisplayState = () => {
   });
 
   let resolvedState = toPlainObject(
-    hooks.resolveAutoSyncIndicatorDisplayPhase()
+    readNavbarProjection(hooks)
   );
   assert.equal(resolvedState.displayPhase, "pending");
   assert.equal(resolvedState.displaySource, "background_push");
@@ -422,7 +425,7 @@ const testSharedSchedulerAndLocksFeedUnifiedDisplayState = () => {
     timestamp: now,
     ttlMs: 60000,
   });
-  resolvedState = toPlainObject(hooks.resolveAutoSyncIndicatorDisplayPhase());
+  resolvedState = toPlainObject(readNavbarProjection(hooks));
   assert.equal(resolvedState.displayPhase, "running");
   assert.equal(resolvedState.displaySource, "background_push");
   assert.equal(
@@ -449,7 +452,7 @@ const testSharedSchedulerAndLocksFeedUnifiedDisplayState = () => {
     timestamp: now,
     ttlMs: 60000,
   });
-  resolvedState = toPlainObject(hooks.resolveAutoSyncIndicatorDisplayPhase());
+  resolvedState = toPlainObject(readNavbarProjection(hooks));
   assert.equal(resolvedState.displayPhase, "running");
   assert.equal(resolvedState.displaySource, "foreground_resume");
   assert.equal(
@@ -457,6 +460,99 @@ const testSharedSchedulerAndLocksFeedUnifiedDisplayState = () => {
     "probe",
     "前台二次确认进入 running 锁窗口时应显示放大镜确认态，不能回退成默认拉取箭头。"
   );
+};
+
+const testSyncIndicatorStateProjectionSurfaceContract = () => {
+  const { hooks, store } = createHarness();
+  assert.equal(
+    typeof hooks.readSyncIndicatorStateProjection,
+    "function",
+    "Phase 4 应暴露统一 Sync Indicator State 投影 interface。"
+  );
+  const now = Date.now();
+  const resultState = {
+    phase: "success",
+    timestamp: now - 5000,
+    token: "phase-4-result",
+    source: "background_push",
+    reason: "pushed",
+    operation: "push",
+    lastResolvedPhase: "success",
+    lastResolvedTimestamp: now - 5000,
+    lastResolvedSource: "background_push",
+    lastResolvedReason: "pushed",
+  };
+
+  const navbarResult = toPlainObject(
+    hooks.readSyncIndicatorStateProjection({
+      surface: "navbar",
+      state: resultState,
+    })
+  );
+  const titleResult = toPlainObject(
+    hooks.readSyncIndicatorStateProjection({
+      surface: "title",
+      state: resultState,
+    })
+  );
+  assert.equal(navbarResult.displayPhase, "idle");
+  assert.equal(titleResult.displayPhase, "success");
+
+  const pullResultState = {
+    ...resultState,
+    timestamp: now,
+    source: "foreground_resume",
+    reason: "pulled",
+    operation: "pull",
+    lastResolvedTimestamp: now,
+    lastResolvedSource: "foreground_resume",
+    lastResolvedReason: "pulled",
+  };
+  assert.equal(
+    hooks.readSyncIndicatorStateProjection({
+      surface: "navbar",
+      state: pullResultState,
+    }).displayPhase,
+    "success"
+  );
+  assert.equal(
+    hooks.readSyncIndicatorStateProjection({
+      surface: "title",
+      state: pullResultState,
+    }).displayPhase,
+    "idle",
+    "Title surface 应在投影层抑制拉取侧结果，而不是交给 Title Owner 二次解释。"
+  );
+
+  store.set(GLOBAL_SYNC_LOCK_KEY, {
+    owner: "other-tab",
+    mode: "background",
+    timestamp: now,
+    ttlMs: 60000,
+  });
+  const navbarForeignRunning = toPlainObject(
+    hooks.readSyncIndicatorStateProjection({
+      surface: "navbar",
+      state: resultState,
+    })
+  );
+  const titleForeignRunning = toPlainObject(
+    hooks.readSyncIndicatorStateProjection({
+      surface: "title",
+      state: resultState,
+    })
+  );
+  assert.equal(
+    navbarForeignRunning.displayPhase,
+    "running",
+    "Navbar 应保留外来新鲜后台锁的运行中反馈。"
+  );
+  assert.equal(
+    titleForeignRunning.displayPhase,
+    "idle",
+    "Title 投影不能仅凭外来 Sync Lock 产生 Ghost Running。"
+  );
+  assert.equal(titleForeignRunning.displayLiveRunnerOwnerId, "");
 };
 
 const testForegroundFollowupLockDisplayDoesNotUseFullLockTtl = () => {
@@ -492,7 +588,7 @@ const testForegroundFollowupLockDisplayDoesNotUseFullLockTtl = () => {
 
   setForegroundState();
   setStartupLocks(now - 120000);
-  let resolvedState = toPlainObject(hooks.resolveAutoSyncIndicatorDisplayPhase());
+  let resolvedState = toPlainObject(readNavbarProjection(hooks));
   assert.notEqual(
     resolvedState.displayPhase,
     "running",
@@ -501,7 +597,7 @@ const testForegroundFollowupLockDisplayDoesNotUseFullLockTtl = () => {
 
   setForegroundState();
   setStartupLocks(now - 5000);
-  resolvedState = toPlainObject(hooks.resolveAutoSyncIndicatorDisplayPhase());
+  resolvedState = toPlainObject(readNavbarProjection(hooks));
   assert.equal(resolvedState.displayPhase, "running");
   assert.equal(resolvedState.displaySource, "foreground_resume");
   assert.equal(
@@ -522,7 +618,7 @@ const testForegroundFollowupLockDisplayDoesNotUseFullLockTtl = () => {
     lastResolvedReason: "",
   });
   setStartupLocks(now - 1000);
-  resolvedState = toPlainObject(hooks.resolveAutoSyncIndicatorDisplayPhase());
+  resolvedState = toPlainObject(readNavbarProjection(hooks));
   assert.equal(
     hooks.getAutoSyncIndicatorDisplayKind(resolvedState),
     "probe",
@@ -562,7 +658,7 @@ const testDisplaySessionCoalescesPushVerification = () => {
     }
   );
 
-  let resolvedState = toPlainObject(hooks.resolveAutoSyncIndicatorDisplayPhase());
+  let resolvedState = toPlainObject(readNavbarProjection(hooks));
   assert.equal(resolvedState.displayPhase, "pending");
   assert.equal(resolvedState.displaySessionKind, "local_push_session");
   assert.equal(resolvedState.displaySubstate, "settling");
@@ -590,7 +686,7 @@ const testDisplaySessionCoalescesPushVerification = () => {
     threadIds: ["2268704"],
     reason: "debounced_read_progress",
   });
-  resolvedState = toPlainObject(hooks.resolveAutoSyncIndicatorDisplayPhase());
+  resolvedState = toPlainObject(readNavbarProjection(hooks));
   assert.equal(resolvedState.displayPhase, "pending");
   assert.equal(resolvedState.displaySubstate, "pending");
   assert.equal(
@@ -617,7 +713,7 @@ const testDisplaySessionCoalescesPushVerification = () => {
     threadIds: ["2268704"],
     reason: "debounced_mixed_local_changes",
   });
-  resolvedState = toPlainObject(hooks.resolveAutoSyncIndicatorDisplayPhase());
+  resolvedState = toPlainObject(readNavbarProjection(hooks));
   assert.equal(
     hooks.getAutoSyncIndicatorTitle(resolvedState),
     "自动同步：本地变更待推送",
@@ -648,7 +744,7 @@ const testDisplaySessionCoalescesPushVerification = () => {
       maybeShowForegroundProbeFeedback: () => false,
     }
   );
-  resolvedState = toPlainObject(hooks.resolveAutoSyncIndicatorDisplayPhase());
+  resolvedState = toPlainObject(readNavbarProjection(hooks));
   assert.equal(resolvedState.displayPhase, "idle");
   assert.equal(
     hooks.getAutoSyncIndicatorDisplayKind(resolvedState),
@@ -698,7 +794,7 @@ const testPullRetryKeepsCloudDirectionOverLocalPending = () => {
     reason: "debounced_read_progress",
   });
 
-  const resolvedState = toPlainObject(hooks.resolveAutoSyncIndicatorDisplayPhase());
+  const resolvedState = toPlainObject(readNavbarProjection(hooks));
   assert.equal(resolvedState.displayPhase, "pending");
   assert.equal(resolvedState.displaySessionKind, "remote_pull_session");
   assert.equal(
@@ -732,7 +828,7 @@ const testSuccessDisplayKeepsDirectionalCompletion = () => {
       reason: "pushed",
       operation: "push",
     });
-    const resolvedState = toPlainObject(hooks.resolveAutoSyncIndicatorDisplayPhase());
+    const resolvedState = toPlainObject(readNavbarProjection(hooks));
     assert.equal(resolvedState.displayPhase, "success");
     assert.equal(resolvedState.displaySessionKind, "local_push_session");
     assert.equal(resolvedState.displaySubstate, "done");
@@ -763,7 +859,7 @@ const testSuccessDisplayKeepsDirectionalCompletion = () => {
       reason: "pull",
       operation: "pull",
     });
-    const resolvedState = toPlainObject(hooks.resolveAutoSyncIndicatorDisplayPhase());
+    const resolvedState = toPlainObject(readNavbarProjection(hooks));
     assert.equal(resolvedState.displayPhase, "success");
     assert.equal(resolvedState.displaySessionKind, "remote_pull_session");
     assert.equal(resolvedState.displaySubstate, "done");
@@ -859,7 +955,7 @@ const testStalePendingAutoSyncRequestDoesNotDisplay = () => {
     threadIds: ["2268704"],
   });
 
-  let resolvedState = toPlainObject(hooks.resolveAutoSyncIndicatorDisplayPhase());
+  let resolvedState = toPlainObject(readNavbarProjection(hooks));
   assert.notEqual(
     resolvedState.displayPhase,
     "pending",
@@ -879,7 +975,7 @@ const testStalePendingAutoSyncRequestDoesNotDisplay = () => {
     threadIds: ["2268704"],
   });
 
-  resolvedState = toPlainObject(hooks.resolveAutoSyncIndicatorDisplayPhase());
+  resolvedState = toPlainObject(readNavbarProjection(hooks));
   assert.equal(resolvedState.displayPhase, "pending");
   assert.equal(
     hooks.getAutoSyncIndicatorDisplayKind(resolvedState),
@@ -935,7 +1031,7 @@ const testBackgroundPushRunningRequiresCurrentLiveRunner = () => {
   });
 
   setBackgroundLocks("other-tab");
-  let resolvedState = toPlainObject(hooks.resolveAutoSyncIndicatorDisplayPhase());
+  let resolvedState = toPlainObject(readNavbarProjection(hooks));
   assert.equal(
     resolvedState.displayPhase,
     "pending",
@@ -948,7 +1044,7 @@ const testBackgroundPushRunningRequiresCurrentLiveRunner = () => {
   );
 
   setBackgroundLocks(constants.BACKGROUND_SYNC_OWNER_ID);
-  resolvedState = toPlainObject(hooks.resolveAutoSyncIndicatorDisplayPhase());
+  resolvedState = toPlainObject(readNavbarProjection(hooks));
   assert.equal(
     resolvedState.displayPhase,
     "running",
@@ -1191,6 +1287,7 @@ const testAutoSyncEntryPointsBindIndicatorSources = () => {
   await testDeferredResolvedPhaseKeepsOperation();
   await testForegroundFollowupRefreshKeepsDeferredSuccess();
   testSharedSchedulerAndLocksFeedUnifiedDisplayState();
+  testSyncIndicatorStateProjectionSurfaceContract();
   testForegroundFollowupLockDisplayDoesNotUseFullLockTtl();
   testDisplaySessionCoalescesPushVerification();
   testPullRetryKeepsCloudDirectionOverLocalPending();
