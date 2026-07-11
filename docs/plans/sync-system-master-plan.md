@@ -2,10 +2,10 @@
 
 ## 当前状态
 
-- 计划状态：Phase 1 到 Phase 4 的实现、自动验证和独立审查已完成；Phase 1 到 Phase 3 真实多窗口点验仍待执行。
-- 总体实施进度：4/6 个阶段已完成代码实现和独立审查。
-- 当前阶段：Phase 4 已完成，下一步评估 Phase 5 进入门槛。
-- 代码状态：Phase 4 Sync Indicator State 投影 interface、Navbar/Title consumer 迁移、场景测试、架构文档和 review fixes 已完成并复验。
+- 计划状态：Phase 1 到 Phase 5 的实现、自动验证和独立审查已完成；Phase 1 到 Phase 3 真实多窗口点验仍待执行。
+- 总体实施进度：5/6 个阶段已完成代码实现和独立审查。
+- 当前阶段：Phase 5 已完成，下一步进入 Phase 6 同步系统 façade。
+- 代码状态：Phase 5 Result Phase Policy interface、四类自动同步结果 consumer 迁移、锁后冲突暂停/清除、失败隔离、场景测试和 review fixes 已完成并复验。
 - 架构依据：2026-07-11 完成同步锁遗留问题的实机复现、代码定位和架构复核。
 
 ## 背景
@@ -287,7 +287,7 @@ Running Sync 的 implementation 负责模式锁、全局锁、心跳、远端事
 
 ## Phase 5：有条件地深化 Result Phase Policy
 
-- 状态：未开始，进入门槛尚未验证。
+- 状态：已完成实现、自动验证、独立审查和审查修复。
 - 目标：确认后台、启动、每次加载和前台补同步是否共享足够多的结果策略；只有能形成真实 depth 时才收拢。
 - 进入门槛：
   - 至少两个调用路径共享相同的刷新、提示或重试规则。
@@ -305,6 +305,30 @@ Running Sync 的 implementation 负责模式锁、全局锁、心跳、远端事
   - 通过门槛时，调用者只消费结果策略，不重复维护状态 switch。
   - 未通过门槛时，文档记录跳过原因，运行行为和测试保持不变。
 - 主要文件：`S1Plus.js`、`tests/test-post-sync-refresh-policy.js`，通过门槛后再确定其他受影响测试。
+
+### Phase 5 进入门槛评估
+
+- 结论：通过，三项门槛全部满足。
+- 共享规则证据：后台、每日启动、每次加载和前台补同步都重复执行远端变化决策、刷新或静默处理；后台失败/失锁与前台 soft block/锁竞争都需要统一产出重试意图。
+- deletion test：删除 Result Phase Policy 后，success/failure/conflict/skipped switch、冲突暂停、刷新静默和 retry 判定会重新分散到至少四个调用点。
+- 测试替代：删除 `tests/test-post-sync-refresh-policy.js` 中针对后台、每次加载和前台 wiring 的源码正则，改为 policy interface 行为场景与真实后台锁释放顺序回归。
+
+### Phase 5 实现记录
+
+- 新增 `syncResultPhasePolicy.handle(result, context)`，集中产出并执行 refresh、conflict-pause、retry 与 notification intents。
+- 后台、每日启动、每次加载、前台 follow-up 和前台 retry consumer 全部迁移到 policy；调用者只保留来源特有的提示文案、冲突弹窗与刷新 adapter。
+- 自动同步成功后的 conflict pause 清除，以及 conflict / `skipped_push_on_startup` 的 conflict pause 写入，已从 Running Sync 事务移到 Result Phase Policy；生产路径测试在实际写入 pause 时断言后台模式锁和全局锁均已释放。
+- 后台 failure/lock-lost 与前台 retryable soft block/lock result 的 retry 规则由 policy 统一决定，实际 shared scheduler 或前台 timer 仍由来源 adapter 执行。
+- 文档已更新：`CONTEXT.md` 增加 Result Phase Policy 领域定义，`DEVELOPMENT.md` 记录唯一 interface 与锁后执行边界。
+- 独立审查：一个 subagent 同时检查 Standards 与 Phase 5 spec；Standards 为 0 findings，Spec 初审发现 2 个 P1：intent adapter 异常会阻断后续 retry，以及每日启动/每次加载缺少生产入口 wiring 行为测试。
+- 审查修复：各 intent 通过 best-effort 边界独立执行并把错误记录到 `intentErrors`，notification/refresh/pause 失败不再阻断 retry；新增生产 `handlePerLoadSyncCheck()` / `handleStartupSync()` 行为场景，验证 Result Phase Policy、indicator source、refresh reason 和 daily notification adapter，并删除被替代的 wiring regex。
+- 复审结果：原 subagent 确认 2 个 P1 均 Closed，新 P1/P2 为 0 findings。
+- 外部综合复审复核：`skipped_push_on_startup` 弹窗和 `handleStartupSync()` 的 reload-true 返回均为旧行为，不作为行为变更修复；确认 foreground consumer 把 `retryIntent` 误当成已成功调度的真实 P2。
+- 后续审查修复：foreground probe 与 retry timer consumer 仅在 `retryResult.status` 为 `scheduled` / `already_scheduled` 时保留 retry runtime，否则清理旧 timer、dueAt 和尝试计数；补充每日启动 reload 的完整编排短路、foreground policy source/reason/schedule adapter、pause/refresh/notification/retry 多重失败累积、daily/background notification 弹窗与冷却、`success_current` 和 same-machine 排除场景。
+- 后续双轴复审：Standards 发现新增顶层函数未使用 `s1p` 前缀，Spec 变体验证发现 daily `startup_conflict` 冷却和 `pauseConflict` 写入失败仍未被测试杀死；统一顶层函数与 hooks 命名，并补足两条行为场景后，原审查 agent 复核均为 Closed，新 P1/P2 为 0 findings。
+- 自动验证：`node --check S1Plus.js`、Result Phase/Running Sync/foreground/startup 定向测试、`git diff --check` 全部通过；审查修复后全仓 30 个测试文件再次全部通过。
+- 尚未完成：Phase 1 到 Phase 3 真实多窗口手动点验仍待执行。
+- 下一步：进入 Phase 6，建立同步系统 façade。
 
 ## Phase 6：建立同步系统 façade
 

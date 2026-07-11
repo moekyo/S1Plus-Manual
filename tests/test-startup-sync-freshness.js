@@ -67,4 +67,55 @@ decision = hiddenHarness.hooks.getStartupSyncOrchestratorDecision(
 assert.strictEqual(decision.action, "defer_daily_startup");
 assert.strictEqual(decision.freshnessState.freshnessWindowMs, 4000);
 
-console.log("[startup-sync-freshness] dynamic startup freshness verified.");
+const testScheduledDailyReloadShortCircuitsStartupOrchestrator = async () => {
+  const startupHarness = createHarness();
+  const calls = [];
+  let scheduledFlow = null;
+  startupHarness.hooks.runStartupSyncFlowDeferred({
+    welcomePopupWasShown: false,
+    shouldTryNuxRecommendation: true,
+    overrides: {
+      getStartupSyncOrchestratorDecision: () => ({
+        action: "run_fresh_startup_flow",
+        freshnessState: {},
+      }),
+      scheduleTimeout: (callback) => {
+        scheduledFlow = callback();
+      },
+      handleStartupSync: async () => {
+        calls.push("daily");
+        return true;
+      },
+      handlePerLoadSyncCheck: async () => {
+        calls.push("per_load");
+        return false;
+      },
+      handleInitialForegroundRemoteFreshnessCheck: async () => {
+        calls.push("foreground");
+        return false;
+      },
+      checkTokenExpiry: () => {
+        calls.push("token");
+        return false;
+      },
+      handleNuxRecommendation: () => {
+        calls.push("nux");
+      },
+    },
+  });
+  await scheduledFlow;
+
+  assert.deepStrictEqual(
+    calls,
+    ["daily"],
+    "每日启动同步已经安排 reload 时，不应继续运行 per-load、foreground、Token 或 NUX。"
+  );
+};
+
+(async () => {
+  await testScheduledDailyReloadShortCircuitsStartupOrchestrator();
+  console.log("[startup-sync-freshness] dynamic startup freshness verified.");
+})().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

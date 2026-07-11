@@ -55,29 +55,518 @@ const testStaticWiring = () => {
     "Phase 7 未将设置弹窗脏状态暴露为可被同步逻辑检测的 DOM 标记。"
   );
   expectMatch(
-    /const handlePerLoadSyncCheck = async[\s\S]*?applyRefreshPolicyForSyncResult\(result,\s*\{[\s\S]*?reason:\s*"per_load_auto_pull"/m,
-    "Phase 7 未将每次加载同步成功接入刷新策略。"
-  );
-  expectMatch(
-    /const handleBackgroundAutoSyncResult = async[\s\S]*?applyRefreshPolicyForSyncResult\(result,\s*\{[\s\S]*?reason:\s*result\.action === "merged_read_progress"[\s\S]*?"background_auto_pull"/m,
-    "Phase 7 未将后台自动同步成功接入刷新策略。"
-  );
-  expectMatch(
-    /const handleBackgroundAutoSyncResult = async[\s\S]*?suppressMessage:\s*!decision\.shouldNotify[\s\S]*?getSameDeviceRefreshMessageOptions\(result\)/m,
-    "后台自动同步结果未通过决策函数区分 same-session 静默与 same-device 文案。"
-  );
-  expectMatch(
     /const mergeReadProgressAndPush = async[\s\S]*?const result = asSuccessResult\(\s*"merged_read_progress",\s*\{\s*contentHash:\s*mergedContentHash,\s*remoteUpdatedAt:\s*pushResult\?\.updatedAt \|\| null,\s*\},\s*\{[\s\S]*?reason:\s*mergeReason[\s\S]*?\.\.\.recentRemoteWriteResultContext[\s\S]*?appliedRemoteWriter:\s*pushResult\?\.writerMetadata \|\| null[\s\S]*?\}\s*\)/m,
     "merged_read_progress 结果必须把 same-session / same-device 写入上下文放到 extraResult，提示层才能读取。"
-  );
-  expectMatch(
-    /refreshPlan = applyRefreshPolicyForSyncResult\(syncRequestResult,\s*\{[\s\S]*?reason:\s*`foreground_probe:\$\{normalizedReason\}`/m,
-    "Phase 7 未将前台远端探测命中的 follow-up sync 接入刷新策略。"
   );
   expectMatch(
     /const createSameDeviceAutoPullRefreshMessages = \(\s*deviceId = "",\s*action = "pulled",\s*sourceLabel = ""\s*\) => \{/m,
     "未新增 same-device 自动拉取提示文案 helper。"
   );
+};
+
+const testResultPhasePolicyOwnsRefreshAndSuppression = async () => {
+  const { hooks } = createHarness();
+  const calls = [];
+  const policy = hooks.s1pCreateSyncResultPhasePolicy({
+    decideRemoteChange: (result, context) => ({
+      shouldApply: result.action === "pulled",
+      shouldReload: result.action === "pulled",
+      shouldNotify: result.action === "pulled",
+      suppressMessage: result.action !== "pulled",
+      reason: result.action === "pulled" ? "reload_now" : "not_applicable",
+      source: context.source,
+      action: result.action,
+      refreshPlan:
+        result.action === "pulled"
+          ? { policy: "reload_now", shouldReload: true }
+          : null,
+    }),
+    applyRefresh: (result, options) => {
+      calls.push(`refresh:${options.remoteChangeDecision.source}`);
+      return {
+        ...options.remoteChangeDecision.refreshPlan,
+        reloadSchedule: { status: "scheduled" },
+      };
+    },
+    logSuppressed: (decision) => {
+      calls.push(`suppressed:${decision.action}`);
+    },
+    pauseConflict: (reason) => {
+      calls.push(`pause:${reason}`);
+    },
+    clearConflictPause: () => {
+      calls.push("pause:clear");
+    },
+  });
+
+  const applied = await policy.handle(
+    { status: "success", action: "pulled" },
+    { source: "background" }
+  );
+  assert.equal(applied.refreshIntent.kind, "apply");
+  assert.equal(applied.refreshPlan.reloadSchedule.status, "scheduled");
+  assert.deepStrictEqual(calls, ["pause:clear", "refresh:background"]);
+
+  calls.length = 0;
+  const suppressed = await policy.handle(
+    { status: "success", action: "no_change" },
+    { source: "per_load" }
+  );
+  assert.equal(suppressed.refreshIntent.kind, "suppress");
+  assert.equal(suppressed.refreshPlan, null);
+  assert.deepStrictEqual(calls, ["pause:clear", "suppressed:no_change"]);
+};
+
+const testResultPhasePolicyOwnsConflictAndRetryIntents = async () => {
+  const { hooks } = createHarness();
+  const calls = [];
+  const policy = hooks.s1pCreateSyncResultPhasePolicy({
+    decideRemoteChange: () => ({
+      shouldApply: false,
+      shouldReload: false,
+      shouldNotify: false,
+      suppressMessage: true,
+      reason: "not_applicable",
+      action: "unknown",
+      refreshPlan: null,
+    }),
+    applyRefresh: () => null,
+    logSuppressed: noop,
+    pauseConflict: (reason) => {
+      calls.push(`pause:${reason}`);
+    },
+  });
+
+  const conflict = await policy.handle(
+    { status: "conflict", reason: "remote_newer" },
+    {
+      source: "background",
+      notify: (intent) => {
+        calls.push(`notify:${intent.kind}`);
+      },
+    }
+  );
+  assert.equal(conflict.conflictPauseIntent.reason, "remote_newer");
+  assert.equal(conflict.notificationIntent.kind, "conflict");
+  assert.deepStrictEqual(calls, ["pause:remote_newer", "notify:conflict"]);
+
+  calls.length = 0;
+  const failure = await policy.handle(
+    {
+      status: "failure",
+      error: "network down",
+      failureState: { open: false },
+    },
+    {
+      source: "background",
+      notify: (intent) => {
+        calls.push(`notify:${intent.kind}`);
+      },
+      scheduleRetry: (intent) => {
+        calls.push(`retry:${intent.kind}:${intent.delayMs}`);
+        return { status: "scheduled" };
+      },
+    }
+  );
+  assert.equal(failure.retryIntent.kind, "background");
+  assert.equal(failure.retryIntent.delayMs, 1200);
+  assert.deepStrictEqual(calls, ["notify:failure", "retry:background:1200"]);
+
+  calls.length = 0;
+  const foregroundBlocked = await policy.handle(
+    {
+      status: "blocked",
+      blockLevel: "soft",
+      reason: "read_progress_pending_write",
+      retryAfterMs: 2600,
+    },
+    {
+      source: "foreground",
+      scheduleRetry: (intent) => {
+        calls.push(`retry:${intent.kind}:${intent.delayMs}`);
+      },
+    }
+  );
+  assert.equal(foregroundBlocked.retryIntent.kind, "foreground");
+  assert.equal(foregroundBlocked.retryIntent.delayMs, 2600);
+  assert.deepStrictEqual(calls, ["retry:foreground:2600"]);
+};
+
+const testResultPhasePolicyDefersSourceSpecificProductBehavior = async () => {
+  const { hooks } = createHarness();
+  const calls = [];
+  const policy = hooks.s1pCreateSyncResultPhasePolicy({
+    decideRemoteChange: () => ({
+      shouldApply: false,
+      shouldReload: false,
+      shouldNotify: false,
+      suppressMessage: true,
+      reason: "startup_local_newer",
+      action: "skipped_push_on_startup",
+      refreshPlan: null,
+    }),
+    applyRefresh: () => null,
+    logSuppressed: noop,
+    pauseConflict: (reason) => {
+      calls.push(`pause:${reason}`);
+    },
+  });
+
+  const outcome = await policy.handle(
+    {
+      status: "success",
+      action: "skipped_push_on_startup",
+      reason: "local_changed_during_sync",
+    },
+    {
+      source: "daily_startup",
+      notify: (intent) => {
+        calls.push(`notify:${intent.kind}`);
+        return "popup_shown";
+      },
+    }
+  );
+
+  assert.equal(
+    outcome.conflictPauseIntent.reason,
+    "local_changed_during_sync"
+  );
+  assert.equal(
+    outcome.notificationIntent.kind,
+    "startup_local_changed_during_sync"
+  );
+  assert.equal(outcome.notificationResult, "popup_shown");
+  assert.deepStrictEqual(calls, [
+    "pause:local_changed_during_sync",
+    "notify:startup_local_changed_during_sync",
+  ]);
+};
+
+const testResultPhasePolicyIsolatesAdapterFailuresBeforeRetry = async () => {
+  const { hooks } = createHarness();
+  const calls = [];
+  const policy = hooks.s1pCreateSyncResultPhasePolicy({
+    decideRemoteChange: () => ({
+      shouldApply: false,
+      shouldReload: false,
+      shouldNotify: false,
+      suppressMessage: true,
+      reason: "not_applicable",
+      action: "unknown",
+      refreshPlan: null,
+    }),
+    applyRefresh: () => null,
+    logSuppressed: noop,
+    pauseConflict: noop,
+    clearConflictPause: noop,
+  });
+
+  const outcome = await policy.handle(
+    {
+      status: "failure",
+      error: "network down",
+      failureState: { open: false },
+    },
+    {
+      source: "background",
+      notify: () => {
+        calls.push("notify");
+        throw new Error("toast failed");
+      },
+      scheduleRetry: (intent) => {
+        calls.push(`retry:${intent.delayMs}`);
+        return { status: "scheduled" };
+      },
+    }
+  );
+
+  assert.deepStrictEqual(calls, ["notify", "retry:1200"]);
+  assert.equal(outcome.retryResult.status, "scheduled");
+  assert.equal(outcome.intentErrors.length, 1);
+  assert.equal(outcome.intentErrors[0].intent, "notification");
+  assert.match(outcome.intentErrors[0].message, /toast failed/);
+};
+
+const testResultPhasePolicyAccumulatesIndependentAdapterFailures = async () => {
+  const { hooks } = createHarness();
+  const policy = hooks.s1pCreateSyncResultPhasePolicy({
+    decideRemoteChange: (result) => ({
+      shouldApply: result.action === "pulled",
+      shouldReload: result.action === "pulled",
+      shouldNotify: false,
+      suppressMessage: true,
+      reason: result.action === "pulled" ? "reload_now" : "already_current",
+      action: result.action,
+      refreshPlan: null,
+    }),
+    applyRefresh: () => {
+      throw new Error("refresh failed");
+    },
+    logSuppressed: () => {
+      throw new Error("suppression failed");
+    },
+    pauseConflict: noop,
+    clearConflictPause: () => {
+      throw new Error("pause clear failed");
+    },
+  });
+
+  const accumulated = await policy.handle(
+    { status: "success", action: "no_change" },
+    {
+      source: "daily_startup",
+      notify: () => {
+        throw new Error("daily notification failed");
+      },
+    }
+  );
+  assert.deepStrictEqual(
+    Array.from(accumulated.intentErrors, ({ intent }) => intent),
+    ["conflict_pause", "refresh_suppression", "notification"]
+  );
+
+  const refreshFailure = await policy.handle(
+    { status: "success", action: "pulled" },
+    { source: "per_load" }
+  );
+  assert.deepStrictEqual(
+    Array.from(refreshFailure.intentErrors, ({ intent }) => intent),
+    ["conflict_pause", "refresh"]
+  );
+
+  const pauseFailurePolicy = hooks.s1pCreateSyncResultPhasePolicy({
+    pauseConflict: () => {
+      throw new Error("pause write failed");
+    },
+  });
+  const pauseFailure = await pauseFailurePolicy.handle({
+    status: "conflict",
+    reason: "remote_newer",
+  });
+  assert.deepStrictEqual(
+    Array.from(pauseFailure.intentErrors, ({ intent }) => intent),
+    ["conflict_pause"]
+  );
+
+  const retryFailure = await policy.handle(
+    {
+      status: "failure",
+      error: "network down",
+      failureState: { open: false },
+    },
+    {
+      source: "background",
+      notify: noop,
+      scheduleRetry: () => {
+        throw new Error("retry scheduling failed");
+      },
+    }
+  );
+  assert.equal(retryFailure.retryResult, null);
+  assert.deepStrictEqual(
+    Array.from(retryFailure.intentErrors, ({ intent }) => intent),
+    ["retry"]
+  );
+};
+
+const testProductionResultPhaseNotificationAdapters = async () => {
+  {
+    const { hooks } = createHarness();
+    const policy = hooks.s1pCreateSyncResultPhasePolicy({
+      decideRemoteChange: () => ({
+        shouldApply: false,
+        shouldReload: false,
+        shouldNotify: false,
+        suppressMessage: true,
+        reason: "startup_local_newer",
+        action: "skipped_push_on_startup",
+        refreshPlan: null,
+      }),
+    });
+    const result = {
+      status: "success",
+      action: "skipped_push_on_startup",
+      reason: "startup_local_newer",
+    };
+    let modalCheckCount = 0;
+    const notify = (intent, syncResult) =>
+      hooks.s1pNotifyDailyStartupSyncResultPhase(intent, syncResult, {
+        shouldShowConflictModal: async () => modalCheckCount++ === 0,
+        createAdvancedConfirmationModal: noop,
+        showMessage: noop,
+      });
+    const first = await policy.handle(result, {
+      source: "daily_startup",
+      notify,
+    });
+    const second = await policy.handle(result, {
+      source: "daily_startup",
+      notify,
+    });
+    assert.equal(first.notificationIntent.kind, "startup_local_newer");
+    assert.equal(first.notificationResult, "popup_shown");
+    assert.equal(second.notificationResult, "cooldown_notified");
+  }
+
+  {
+    const { hooks } = createHarness();
+    const policy = hooks.s1pCreateSyncResultPhasePolicy();
+    const result = { status: "conflict", reason: "remote_newer" };
+    let modalCheckCount = 0;
+    const notify = (intent, syncResult) =>
+      hooks.s1pNotifyBackgroundSyncResultPhase(intent, syncResult, {
+        shouldShowConflictModal: async () => modalCheckCount++ === 0,
+        createAdvancedConfirmationModal: noop,
+        showMessage: noop,
+      });
+    const first = await policy.handle(result, {
+      source: "background",
+      notify,
+    });
+    const second = await policy.handle(result, {
+      source: "background",
+      notify,
+    });
+    assert.equal(first.notificationResult, "popup_shown");
+    assert.equal(second.notificationResult, "cooldown_notified");
+  }
+
+  {
+    const { hooks } = createHarness();
+    const policy = hooks.s1pCreateSyncResultPhasePolicy();
+    const result = { status: "conflict", reason: "remote_newer" };
+    let modalCheckCount = 0;
+    const notify = (intent, syncResult) =>
+      hooks.s1pNotifyDailyStartupSyncResultPhase(intent, syncResult, {
+        shouldShowConflictModal: async () => modalCheckCount++ === 0,
+        createAdvancedConfirmationModal: noop,
+        showMessage: noop,
+      });
+    const first = await policy.handle(result, {
+      source: "daily_startup",
+      notify,
+    });
+    const second = await policy.handle(result, {
+      source: "daily_startup",
+      notify,
+    });
+    assert.equal(first.notificationIntent.kind, "conflict");
+    assert.equal(first.notificationResult, "popup_shown");
+    assert.equal(second.notificationResult, "cooldown_notified");
+  }
+
+  {
+    const { hooks } = createHarness();
+    let notificationCount = 0;
+    const createPolicy = (reason) =>
+      hooks.s1pCreateSyncResultPhasePolicy({
+        decideRemoteChange: () => ({
+          shouldApply: false,
+          shouldReload: false,
+          shouldNotify: false,
+          suppressMessage: true,
+          reason,
+          action: "no_change",
+          refreshPlan: null,
+        }),
+      });
+    const notify = async (...args) => {
+      notificationCount += 1;
+      return hooks.s1pNotifyDailyStartupSyncResultPhase(args[0], args[1], {
+        showMessage: noop,
+      });
+    };
+    const current = await createPolicy("already_current").handle(
+      { status: "success", action: "no_change" },
+      { source: "daily_startup", notify }
+    );
+    const sameMachine = await createPolicy("same_machine_write").handle(
+      { status: "success", action: "no_change" },
+      { source: "daily_startup", notify }
+    );
+    assert.equal(current.notificationIntent.kind, "success_current");
+    assert.equal(current.notificationResult, "notified");
+    assert.equal(sameMachine.notificationIntent.kind, "none");
+    assert.equal(sameMachine.notificationResult, null);
+    assert.equal(notificationCount, 1);
+  }
+};
+
+const testProductionStartupConsumersRouteThroughResultPhasePolicy = async () => {
+  const { hooks } = createHarness();
+  const calls = [];
+  const entryCalls = [];
+  const resultPhasePolicy = {
+    handle: async (result, options) => {
+      calls.push({ result, options });
+      return options.source === "per_load"
+        ? {
+            refreshPlan: { reloadSchedule: { status: "scheduled" } },
+            notificationResult: null,
+          }
+        : {
+            refreshPlan: null,
+            notificationResult: "popup_shown",
+          };
+    },
+  };
+
+  const perLoadResult = await hooks.handlePerLoadSyncCheck({
+    settings: {
+      syncPerLoadCheckEnabled: true,
+      syncRemoteEnabled: true,
+      syncRemoteGistId: "gist-id",
+      syncRemotePat: "pat",
+    },
+    runStartupModeAutoSyncCheckWithIndicator: async (options) => {
+      entryCalls.push(options);
+      return { status: "success", action: "pulled" };
+    },
+    syncResultPhasePolicy: resultPhasePolicy,
+  });
+  assert.equal(perLoadResult, true);
+  assert.equal(calls[0].options.source, "per_load");
+  assert.equal(calls[0].result.action, "pulled");
+  assert.equal(calls[0].options.refreshOptions.reason, "per_load_auto_pull");
+  assert.equal(entryCalls[0].source, "per_load");
+
+  const dailyResult = await hooks.handleStartupSync({
+    settings: {
+      syncRemoteEnabled: true,
+      syncDailyFirstLoad: true,
+    },
+    runStartupModeAutoSyncCheckWithIndicator: async (options) => {
+      entryCalls.push(options);
+      return { status: "conflict", reason: "remote_newer" };
+    },
+    syncResultPhasePolicy: resultPhasePolicy,
+  });
+  assert.equal(dailyResult, "popup_shown");
+  assert.equal(calls[1].options.source, "daily_startup");
+  assert.equal(calls[1].result.status, "conflict");
+  assert.equal(
+    calls[1].options.notify,
+    hooks.s1pNotifyDailyStartupSyncResultPhase
+  );
+  assert.equal(entryCalls[1].source, "daily_startup");
+
+  const reloadResult = await hooks.handleStartupSync({
+    settings: {
+      syncRemoteEnabled: true,
+      syncDailyFirstLoad: true,
+    },
+    runStartupModeAutoSyncCheckWithIndicator: async () => ({
+      status: "success",
+      action: "pulled",
+    }),
+    syncResultPhasePolicy: {
+      handle: async () => ({
+        refreshPlan: { reloadSchedule: { status: "scheduled" } },
+        notificationResult: null,
+      }),
+    },
+  });
+  assert.equal(reloadResult, true);
 };
 
 const testRefreshPlanDetection = () => {
@@ -486,6 +975,13 @@ const testForegroundSameMachineNoChangeKeepsSpecificReason = () => {
 
 const main = async () => {
   testStaticWiring();
+  await testResultPhasePolicyOwnsRefreshAndSuppression();
+  await testResultPhasePolicyOwnsConflictAndRetryIntents();
+  await testResultPhasePolicyDefersSourceSpecificProductBehavior();
+  await testResultPhasePolicyIsolatesAdapterFailuresBeforeRetry();
+  await testResultPhasePolicyAccumulatesIndependentAdapterFailures();
+  await testProductionResultPhaseNotificationAdapters();
+  await testProductionStartupConsumersRouteThroughResultPhasePolicy();
   testRefreshPlanDetection();
   testListPageSchedulesReload();
   testThreadPageShowsSoftPromptOnly();
