@@ -17,6 +17,13 @@ const createHarness = () =>
     hookErrorMessage: "未能从 S1Plus.js 暴露 same-session remote write 测试钩子。",
   });
 
+const requestForegroundProbe = (hooks, reason, options = {}) =>
+  hooks.s1pSyncSystem.requestSync({
+    kind: "foreground_probe",
+    reason,
+    options,
+  });
+
 const testSameSessionRemoteWriteStaysQuiet = async () => {
   const { hooks, sandbox } = createHarness();
   const remoteUpdatedAt = "2026-04-18T05:00:00Z";
@@ -33,7 +40,7 @@ const testSameSessionRemoteWriteStaysQuiet = async () => {
     syncMode: "background",
   });
 
-  const result = await hooks.checkRemoteFreshnessOnForeground(
+  const result = await requestForegroundProbe(hooks,
     "foreground_resume",
     {
       settingsSnapshot: enabledSettings,
@@ -92,7 +99,7 @@ const testSameDeviceRemoteWriteUsesSpecificCopy = async () => {
 
   sandbox.document.visibilityState = "visible";
 
-  const result = await hooks.checkRemoteFreshnessOnForeground(
+  const result = await requestForegroundProbe(hooks,
     "foreground_resume",
     {
       settingsSnapshot: enabledSettings,
@@ -144,7 +151,7 @@ const testExternalRemoteWriteKeepsCloudCopy = async () => {
 
   sandbox.document.visibilityState = "visible";
 
-  const result = await hooks.checkRemoteFreshnessOnForeground(
+  const result = await requestForegroundProbe(hooks,
     "foreground_resume",
     {
       settingsSnapshot: enabledSettings,
@@ -188,7 +195,7 @@ const testHashEqualAfterResyncStaysQuiet = async () => {
 
   sandbox.document.visibilityState = "visible";
 
-  const result = await hooks.checkRemoteFreshnessOnForeground(
+  const result = await requestForegroundProbe(hooks,
     "foreground_resume",
     {
       settingsSnapshot: enabledSettings,

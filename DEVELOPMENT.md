@@ -87,6 +87,7 @@ node tests/settings-migration/test-settings-migration.js
 - `test-background-sync-shared-debounce.js`
 - `test-title-sync-status.js`
 - `test-remote-push-uncertain-write.js`
+- `test-sync-system-facade.js`
 
 建议在改动以下能力后优先回归对应脚本：
 
@@ -392,9 +393,10 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - 锁心跳续租，失锁即中止
 - 四类模式锁共用同一份 mode profile 和锁 implementation；后台、启动、前台补同步通过 `runRunningSync()` 统一执行“取得锁 → 启动心跳 → 运行完整事务 → 停止心跳并释放锁”的生命周期。手动同步只复用锁 implementation，主动抢占流程仍保持独立。
 - `runRunningSync()` 不接受独立 finalizer；`runTransaction` 只有在基线、远端 writer、已覆盖 pending/shared generation 等事务收尾全部完成后才可 resolve。导航栏/标题状态、刷新、提示、冲突弹窗和重试调度属于 Result Phase，必须等模式锁和全局锁释放后执行。
+- `s1pSyncSystem` 是页面代码唯一的同步系统 façade。页面本地变更调用 `recordLocalMutation()`，生命周期场景调用 `handleLifecycle()`，手动/启动/前台/后台请求调用 `requestSync()`，Navbar 与 Title Owner 调用 `readState()`；初始化只调用一次 `initialize()`，由 façade 依次绑定 lifecycle support、恢复 Scheduler Owner 并恢复 Pending Dirty。任一恢复步骤失败时，façade 必须先 handoff Scheduler Owner、再 unbind lifecycle support，并允许下一次初始化重试。页面代码不得直接协调内部锁、timer、generation、owner lease、Result Phase Policy 或状态投影。
 - `s1pSyncResultPhasePolicy.handle(result, context)` 是自动同步 Result Phase 的唯一决策 interface。后台、每日启动、每次加载和前台补同步在 Running Sync 释放模式锁与全局锁后，把结果交给该 module；module 集中决定刷新/静默、冲突暂停或清除、后台/前台重试和通知意图。调用者只保留确实不同的文案、弹窗和刷新 adapter，不再维护各自的 result status switch。各 intent 通过 best-effort 边界独立执行并记录 `intentErrors`；提示、刷新或冲突状态 adapter 失败时仍必须继续执行 retry intent。`retryIntent` 只表示策略决定，前台调用者必须读取 `retryResult.status`，且只有 `scheduled` / `already_scheduled` 才能保留已排队状态；后台 adapter 则显式返回 `scheduled` / `delegated` / `blocked`。adapter 抛错、返回空值或拒绝调度时必须清理旧 retry runtime。
 - 停止心跳和锁后清理属于 best-effort cleanup：它们自身失败时必须记录警告，但不能阻断锁释放或吞掉已经产生的同步结果；锁获取抛出的异常和 lock-unavailable callback 失败仍向调用者传播，普通锁竞争则返回 skipped 结果。
-- Pending Dirty、shared generation、Scheduler Owner/lease、due timer、covered cleanup 和 retry 策略统一由 `pendingDirtyScheduler` module 管理。module 通过 `createPendingDirtyScheduler()` 在构造时绑定 clock、tab、settings 和 timer adapter；调用者只表达 `queue()`、`recover()`、`recoverPending()`、`runDue()`、`flush()`、`complete()`、`handoff()`、`retry()` 或 `reset()` 等语义操作。owner 获取、续租、generation、timer 和 coverage helper 属于 implementation，不再暴露为测试 interface；`inspect()` 仅用于读取场景结果。
+- Pending Dirty、shared generation、Scheduler Owner/lease、due timer、covered cleanup 和 retry 策略统一由 `pendingDirtyScheduler` module 管理。module 通过 `createPendingDirtyScheduler()` 在构造时绑定 clock、tab、settings 和 timer adapter；调用者只表达 `queue()`、`recover()`、`recoverPending()`、`runDue()`、`flush()`、`complete()`、`handoff()`、`retry()` 或 `reset()` 等语义操作。`handoff()` 同时停止本页的 owner recovery watch；即使当前页不是 owner，也不能留下稍后自动接管的 recovery timer。owner 获取、续租、generation、timer 和 coverage helper 属于 implementation，不再暴露为测试 interface；`inspect()` 仅用于读取场景结果。
 - `readSyncIndicatorStateProjection({ surface: "navbar" | "title" })` 是 Sync Indicator State 投影的唯一 interface。implementation 集中读取 Pending Dirty、fresh Sync Lock、Live Runner、Result Phase、conflict/circuit gate 和既有 TTL，并按 `running > pending > result/conflict > idle` 的事实顺序产出 surface 状态。Navbar 保留“外来后台锁不覆盖本地 pending”的反馈规则；Title surface 额外要求 Live Runner 并只保留本地 push 侧结果。Title Owner 收到投影后只负责 presence、owner lease、handoff 和 Live Runner tab 匹配，不再按 source/operation 二次解释 phase。
 - `s1pSyncLifecycleAdapter` 是同步系统唯一的浏览器生命周期入口。`visibilitychange`、`pageshow`、`pagehide` 和 `beforeunload` 只绑定一次，再由 `handle()` 映射为 hidden、visible、pageshow、pagehide、beforeunload phase。每个 phase 都先运行 sync lifecycle checkpoint，使本地 finalizer（尤其是阅读进度）先落盘，再执行 Scheduler flush/recover/handoff；visible/pageshow 随后才重读前台存储快照、恢复 Pending Dirty、执行远端 freshness probe 和刷新可见页 polling。adapter 的 `bind()` / `unbind()` 必须成对管理四个 DOM listener、共享 GM listener lease、前台 activity hooks 和 polling timer；多个 adapter 复用一份 GM/activity listener，最后一个 lease 释放时才真正移除。pagehide/beforeunload 不接管 Running Sync，也不删除其锁。卸载 handoff 使用 generation fence 阻止当前页被自己的 GM change callback 立即选回 owner；如果 `beforeunload` 被取消，只有仍存活、仍可见且没有更新生命周期 transition 的页面才会在下一轮 task 恢复 Scheduler Owner。
 - `pendingDirtyScheduler.retry()` 先尝试 shared scheduler；只有共享状态连续写入后仍不能覆盖当前 dirty 时才选择本地 retry fallback。不能把写入竞争失败误报为 shared scheduled，否则本轮 dirty 可能没有任何实际 owner 或 timer。
@@ -486,8 +488,9 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 
 - 快速完成的 metadata-only probe 不应点亮 indicator；慢 probe 只显示放大镜，不提前表达为拉取。
 - `remote_probe_equal_ambiguous:*` 只是“版本时间相同后的保守二次确认”，不是远端更新命中；除刚完成本标签页自动推送后的 push settling 收尾外，导航栏和标题状态都应静默，不要显示为 pending、拉取或成功。push settling 收尾若显示在导航栏，也必须是放大镜确认态，不是待推送箭头。
-- Navbar 与 Title Owner 必须通过 `readSyncIndicatorStateProjection({ surface })` 读取状态，不得各自拼接 Pending Dirty、Sync Lock、Result Phase 或 TTL。`projectSyncIndicatorState()` 是内部 implementation，不作为调用者或测试 hook。
+- Navbar 与 Title Owner 必须通过 `s1pSyncSystem.readState({ surface })` 读取状态；façade 内部再委托 Sync Indicator State Projection，不得由页面调用者拼接 Pending Dirty、Sync Lock、Result Phase 或 TTL。`readSyncIndicatorStateProjection()` 与 `projectSyncIndicatorState()` 都是内部 implementation，不作为页面调用者或生产 singleton test hook。
 - 自动同步结果调用者必须通过 `s1pSyncResultPhasePolicy.handle()` 消费 Result Phase，不得各自重新判断 success / failure / conflict / skipped。`s1pCreateSyncResultPhasePolicy()` 只用于构造生产 module 和注入边界 adapter 的场景测试；刷新文案、冲突弹窗内容与实际 timer/reload 仍由各来源 adapter 负责。
+- 系统级测试优先通过 `s1pSyncSystem` 验证本地变化、生命周期、同步 intent 和状态读取；不要重新暴露生产 `pendingDirtyScheduler`、`s1pSyncLifecycleAdapter`、`readSyncIndicatorStateProjection()` 或 foreground/startup consumer singleton 作为全局 test hook。内部 module constructor 的专用场景测试可以保留。
 - `surface: "title"` 必须静默纯 `cloud_probe_session` 的 `Running(probe)` 和明确的远端拉取状态；metadata-only probe 仅用于检查云端版本，不应让后台标签标题显示 `[同步中.]`，云端拉取也不应占用标题提示。
 - Title 投影不得仅凭 `displaySource: background_push` 推断为本地推送。若原始 `operation` 是 `pull` / `probe`，或原始 source 与 display source 不一致导致显示态被默认成 background push，投影必须静默；这个保护只属于 `title` surface，不改变 Navbar 投影或实际同步状态。
 - Title `Running Phase` 必须绑定 Live Runner：`surface: "title"` 下，只有当前标签页仍持有有效 background sync lock / global background lock 时，投影才保留 running 并写出 `displayLiveRunnerOwnerId`。其它标签页即使看到新鲜锁，也必须回到 idle，避免 ghost running。
