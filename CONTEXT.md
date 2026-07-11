@@ -41,7 +41,7 @@ The deep module interface `s1pSyncResultPhasePolicy.handle(result, context)`. Af
 _Avoid_: result switch, post-sync UI handler
 
 **Sync System Façade**:
-The final page-facing interface `s1pSyncSystem`. Page code uses `initialize()`, `dispose()`, `recordLocalMutation()`, `handleLifecycle()`, `requestSync()`, and `readState()` to express sync intent without coordinating Sync Locks, Scheduler Owner leases, timers, generations, lifecycle support, Result Phase handling, or projection internals. The façade owns startup recovery ordering and routes semantic sync requests to the existing deep modules.
+The final page-facing interface `s1pSyncSystem`. Page code uses `initialize()`, `recordLocalMutation()`, `handleLifecycle()`, `requestSync()`, and `readState()` to express sync intent without coordinating Sync Locks, Scheduler Owner leases, timers, generations, lifecycle support, Result Phase handling, or projection internals. `dispose()` is reserved for explicit host teardown such as tests or a future SPA remount; ordinary `pagehide` / `beforeunload` cleanup stays inside `handleLifecycle()` because the browser destroys the page context. The façade owns startup recovery ordering and routes semantic sync requests to the existing deep modules.
 _Avoid_: sync manager, sync service, global sync helpers
 
 **Ghost Running**:

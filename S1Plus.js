@@ -53557,7 +53557,7 @@
       adapters.lifecycleAdapter || s1pSyncLifecycleAdapter;
     const scheduler = adapters.pendingDirtyScheduler || pendingDirtyScheduler;
     const recoverPending =
-      adapters.recoverPendingAutoSync || recoverPendingAutoSyncIfNeeded;
+      adapters.recoverPendingAutoSyncIfNeeded || recoverPendingAutoSyncIfNeeded;
     const recordLocalMutation =
       adapters.recordLocalMutation || s1pRecordLocalMutation;
     const requestBackgroundPush =
@@ -53623,8 +53623,12 @@
       if (!initialized) {
         return { status: "skipped", reason: "already_disposed" };
       }
-      const lifecycle = lifecycleAdapter.unbind();
-      initialized = false;
+      let lifecycle;
+      try {
+        lifecycle = lifecycleAdapter.unbind();
+      } finally {
+        initialized = false;
+      }
       return { status: "disposed", lifecycle };
     };
 
