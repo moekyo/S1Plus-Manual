@@ -181,6 +181,10 @@ Running Sync 的 implementation 负责模式锁、全局锁、心跳、远端事
   - 按用户要求启用一个 subagent 联合检查 Standards 与 Phase 2 spec，发现 2 个 P2，均已修正。
   - covered cleanup 增加删除前 identity 复核与删除后 `last_modified` 恢复，覆盖 pending/shared 两种 read-delete 竞争，避免新 dirty 被旧同步删除。
   - 将浅层 `resume(context.phase/pending)` dispatcher 改为构造时绑定 adapter 的语义 interface，并再次替换测试，使 queued、retained、covered、handoff、recovered 和 Sync Lock 场景不再协调内部状态字段。
+  - 针对 commit `cb587c8` 的综合复审继续收紧 interface：`handoff()` 直接委托返回语义结果，`scheduleFallback` 改为构造期必需 adapter，并删除静默的 `strategy: "none"` 分支。
+  - 并发删除恢复复用与最新 `last_modified` 精确匹配的本地 dirty provenance，保留 `read_progress` 来源和 threadId，避免恢复后退化为普通数据的 5 秒策略。
+  - 补齐 blocked retry、缺失 fallback adapter 与 read-progress 并发恢复测试；内部 hooks 不回填，继续以 `inspect()` interface 与 SyncTrace 作为测试快照和生产诊断面。
+  - 修复后按 Standards/Spec 两轴独立复审：Spec 0 findings；Standards 的新增函数 `s1p` 前缀问题已修正并复审关闭，最终 0 个未解决 findings。
 - 自动验证：
   - `node --check S1Plus.js` 通过。
   - 16 个 sync / foreground / startup / remote 相关测试文件全部通过。
