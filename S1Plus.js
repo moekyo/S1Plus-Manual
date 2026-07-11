@@ -18478,7 +18478,10 @@
     const state = getBackgroundSyncDebounceState();
     const tabId = getBackgroundSyncDebounceTabId(options);
     if (!state || state.ownerTabId !== tabId) {
-      return false;
+      return {
+        status: "skipped",
+        reason: "owner_release_failed",
+      };
     }
     clearSharedBackgroundSyncDebounceTimer();
     setBackgroundSyncDebounceState({
@@ -18486,7 +18489,10 @@
       ownerTabId: "",
       ownerLeaseUntil: 0,
     });
-    return true;
+    return {
+      status: "released",
+      reason: "owner_handoff",
+    };
   };
   const scheduleSharedBackgroundSyncDebounceOwnerRecoveryTimer = (
     stateInput = null,
@@ -19066,9 +19072,17 @@
       latestLocalModified > coveredLastModified &&
       Math.max(durablePendingMax, durableSharedMax) < latestLocalModified
     ) {
+      const latestDirtyProvenance = getLastLocalDirtyProvenance();
+      const hasMatchingProvenance =
+        latestDirtyProvenance.lastModified === latestLocalModified;
       const recoveredPending = markPendingAutoSyncRequest(
-        "general",
-        latestLocalModified
+        hasMatchingProvenance ? latestDirtyProvenance.source : "general",
+        latestLocalModified,
+        {
+          threadId: hasMatchingProvenance
+            ? latestDirtyProvenance.threadId
+            : "",
+        }
       );
       concurrentDirtyRecovery = {
         status: "recovered",
@@ -19752,7 +19766,36 @@
     );
     return getBackgroundAutoSyncRuntimeStateForTest();
   };
+  const s1pScheduleLocalBackgroundSyncRetryFallback = (fallbackDelayMs) => {
+    hasPendingBackgroundSync = true;
+    if (backgroundSyncRetryTimeout) {
+      clearTimeout(backgroundSyncRetryTimeout);
+    }
+    backgroundSyncRetryTimeout = setTimeout(() => {
+      backgroundSyncRetryTimeout = null;
+      if (isInitialSyncInProgress || isBackgroundAutoSyncInProgress) {
+        backgroundSyncRetryAttempts += 1;
+        if (
+          backgroundSyncRetryAttempts >= BACKGROUND_SYNC_MAX_RETRY_ATTEMPTS
+        ) {
+          console.warn(
+            "S1 Plus: 后台同步重试达到上限，已暂停当前重试链，等待下一次同步触发。"
+          );
+          return;
+        }
+        scheduleBackgroundSyncRetry(fallbackDelayMs);
+        return;
+      }
+      backgroundSyncRetryAttempts = 0;
+      triggerRemoteSyncPush("background_retry");
+    }, fallbackDelayMs);
+  };
   const createPendingDirtyScheduler = (adapter = {}) => {
+    if (typeof adapter.scheduleFallback !== "function") {
+      throw new TypeError(
+        "Pending Dirty Scheduler requires a scheduleFallback adapter."
+      );
+    }
     const readAdapterValue = (value, fallback) =>
       typeof value === "function" ? value() : value ?? fallback;
     const resolveContext = (overrides = {}) => ({
@@ -19774,8 +19817,7 @@
         overrides.triggerRemoteSyncPush || adapter.triggerRemoteSyncPush,
       scheduleFollowUp:
         overrides.scheduleFollowUp || adapter.scheduleFollowUp,
-      scheduleFallback:
-        overrides.scheduleFallback || adapter.scheduleFallback,
+      scheduleFallback: adapter.scheduleFallback,
       triggerReason: overrides.triggerReason,
     });
     const queue = (dirty = {}, overrides = {}) => {
@@ -19841,15 +19883,8 @@
           schedulerContext,
           resolveContext(overrides)
         ),
-      handoff: (overrides = {}) => {
-        const released = releaseBackgroundSyncDebounceOwner(
-          resolveContext(overrides)
-        );
-        return {
-          status: released ? "released" : "skipped",
-          reason: released ? "owner_handoff" : "owner_release_failed",
-        };
-      },
+      handoff: (overrides = {}) =>
+        releaseBackgroundSyncDebounceOwner(resolveContext(overrides)),
       retry: (
         { delayMs = 0, reason = "background_retry" } = {},
         overrides = {}
@@ -19884,19 +19919,11 @@
         ) {
           return { ...sharedResult, strategy: "blocked" };
         }
-        if (typeof context.scheduleFallback === "function") {
-          context.scheduleFallback(Math.max(0, Number(delayMs) || 0), reason);
-          return {
-            status: "scheduled",
-            reason,
-            strategy: "local",
-            sharedResult,
-          };
-        }
+        context.scheduleFallback(Math.max(0, Number(delayMs) || 0), reason);
         return {
-          status: "skipped",
-          reason: sharedResult?.reason || "local_retry_unavailable",
-          strategy: "none",
+          status: "scheduled",
+          reason,
+          strategy: "local",
           sharedResult,
         };
       },
@@ -19912,6 +19939,7 @@
     clock: () => Date.now(),
     tabId: () => SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID,
     settings: () => getSettings(),
+    scheduleFallback: s1pScheduleLocalBackgroundSyncRetryFallback,
   });
   const clearAutoSyncRuntimeQueue = () => {
     hasPendingBackgroundSync = false;
@@ -29297,36 +29325,10 @@
       message: "后台同步重试已排队",
       details: { delayMs },
     });
-    const retryResult = pendingDirtyScheduler.retry(
-      { delayMs, reason: "background_retry" },
-      {
-        scheduleFallback: (fallbackDelayMs) => {
-          hasPendingBackgroundSync = true;
-          if (backgroundSyncRetryTimeout) {
-            clearTimeout(backgroundSyncRetryTimeout);
-          }
-          backgroundSyncRetryTimeout = setTimeout(() => {
-            backgroundSyncRetryTimeout = null;
-            if (isInitialSyncInProgress || isBackgroundAutoSyncInProgress) {
-              backgroundSyncRetryAttempts += 1;
-              if (
-                backgroundSyncRetryAttempts >=
-                BACKGROUND_SYNC_MAX_RETRY_ATTEMPTS
-              ) {
-                console.warn(
-                  "S1 Plus: 后台同步重试达到上限，已暂停当前重试链，等待下一次同步触发。"
-                );
-                return;
-              }
-              scheduleBackgroundSyncRetry(fallbackDelayMs);
-              return;
-            }
-            backgroundSyncRetryAttempts = 0;
-            triggerRemoteSyncPush("background_retry");
-          }, fallbackDelayMs);
-        },
-      }
-    );
+    const retryResult = pendingDirtyScheduler.retry({
+      delayMs,
+      reason: "background_retry",
+    });
     if (retryResult.strategy === "shared") {
       hasPendingBackgroundSync = false;
       if (backgroundSyncRetryTimeout) {

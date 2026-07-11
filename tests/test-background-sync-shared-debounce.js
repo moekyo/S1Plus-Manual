@@ -10,6 +10,7 @@ const {
 const DEBOUNCE_STATE_KEY = "s1p_background_sync_debounce_state";
 const PENDING_KEY = "s1p_pending_auto_sync_request";
 const LAST_MODIFIED_KEY = "s1p_last_modified";
+const LAST_DIRTY_PROVENANCE_KEY = "s1p_last_local_dirty_provenance";
 const GLOBAL_SYNC_LOCK_KEY = "s1p_sync_global_lock";
 const READ_PROGRESS_DELAY_MS = 20 * 1000;
 const GENERAL_DELAY_MS = 5 * 1000;
@@ -270,6 +271,35 @@ const testRetrySelectsSharedThenLocalFallbackOnWriteLoss = () => {
   ]);
 };
 
+const testSchedulerRequiresRetryFallbackAdapter = () => {
+  const { hooks } = createScenario({ now: 9_500_000 });
+
+  assert.throws(
+    () =>
+      hooks.createPendingDirtyScheduler({
+        clock: () => 9_500_000,
+        tabId: () => "tab-a",
+        settings: () => readySettings,
+      }),
+    /scheduleFallback adapter/
+  );
+};
+
+const testRetryReportsBlockedStrategyWithoutLocalFallback = () => {
+  const { makeScheduler } = createScenario({ now: 9_600_000 });
+  const disabled = makeScheduler({
+    tabId: "tab-a",
+    settings: { ...readySettings, syncAutoEnabled: false },
+  });
+
+  const result = disabled.scheduler.retry({ delayMs: 1200 });
+
+  assert.equal(result.status, "skipped");
+  assert.equal(result.reason, "sync_not_ready");
+  assert.equal(result.strategy, "blocked");
+  assert.equal(disabled.fallbacks.length, 0);
+};
+
 const testHiddenFlushDoesNotStealLiveOwnerButRecoversExpiredOwner = () => {
   const { clock, makeScheduler } = createScenario({ now: 10_000_000 });
   const tabA = makeScheduler({ tabId: "tab-a" });
@@ -335,16 +365,24 @@ const testCleanupRecoversDirtyWrittenDuringDeleteRace = () => {
       injected = true;
       clock.now += 1;
       store.set(LAST_MODIFIED_KEY, 1202);
+      store.set(LAST_DIRTY_PROVENANCE_KEY, {
+        source: "read_progress",
+        lastModified: 1202,
+        createdAt: clock.now,
+        triggerSync: true,
+        tabId: "tab-a",
+        threadId: "1202",
+      });
       store.set(PENDING_KEY, {
         version: 1,
-        source: "general",
+        source: "read_progress",
         lastModified: 1202,
         maxLastModified: 1202,
         createdAt: clock.now,
         firstDirtyAt: clock.now,
         lastDirtyAt: clock.now,
-        sources: { general: 1 },
-        threadIds: [],
+        sources: { read_progress: 1 },
+        threadIds: ["1202"],
       });
     }
     originalDeleteValue(key);
@@ -361,6 +399,13 @@ const testCleanupRecoversDirtyWrittenDuringDeleteRace = () => {
 
   assert.equal(result.concurrentDirtyRecovery.status, "recovered");
   assert.equal(tabA.scheduler.inspect().pending.maxLastModified, 1202);
+  assert.equal(tabA.scheduler.inspect().pending.source, "read_progress");
+  assert.deepEqual(toPlainObject(tabA.scheduler.inspect().pending.sources), {
+    read_progress: 1,
+  });
+  assert.deepEqual(toPlainObject(tabA.scheduler.inspect().pending.threadIds), [
+    "1202",
+  ]);
   assert.equal(tabA.followUps.length, 1);
 };
 
@@ -462,6 +507,8 @@ const main = async () => {
   testNewerDirtyIsRetainedWithOneFollowUp();
   testPendingRecoveryWatchesExistingSchedulerOwner();
   testRetrySelectsSharedThenLocalFallbackOnWriteLoss();
+  testSchedulerRequiresRetryFallbackAdapter();
+  testRetryReportsBlockedStrategyWithoutLocalFallback();
   testHiddenFlushDoesNotStealLiveOwnerButRecoversExpiredOwner();
   testQueueRetriesConcurrentStorageWrite();
   testCleanupRecoversDirtyWrittenDuringDeleteRace();
