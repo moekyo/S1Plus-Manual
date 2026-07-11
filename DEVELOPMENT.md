@@ -392,6 +392,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - 锁心跳续租，失锁即中止
 - 四类模式锁共用同一份 mode profile 和锁 implementation；后台、启动、前台补同步通过 `runRunningSync()` 统一执行“取得锁 → 启动心跳 → 运行完整事务 → 停止心跳并释放锁”的生命周期。手动同步只复用锁 implementation，主动抢占流程仍保持独立。
 - `runRunningSync()` 不接受独立 finalizer；`runTransaction` 只有在基线、远端 writer、已覆盖 pending/shared generation 等事务收尾全部完成后才可 resolve。导航栏/标题状态、刷新、提示、冲突弹窗和重试调度属于 Result Phase，必须等模式锁和全局锁释放后执行。
+- 停止心跳和锁后清理属于 best-effort cleanup：它们自身失败时必须记录警告，但不能阻断锁释放或吞掉已经产生的同步结果；锁获取抛出的异常和 lock-unavailable callback 失败仍向调用者传播，普通锁竞争则返回 skipped 结果。
 - 自动同步熔断（连续失败 3 次暂停 10 分钟）
 - 冲突暂停门控，防止冲突态继续自动推送
 - 前台探测使用独立的 probe 锁、共享冷却（45s，跨标签）和本地冷却（12s，当前标签），避免多个标签页同时做 metadata-only probe

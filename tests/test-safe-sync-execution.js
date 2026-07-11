@@ -269,6 +269,108 @@ const testRunningSyncKeepsLockReleasedWhenResultHandlingFails = async () => {
   assert.equal(lockHeld, false);
 };
 
+const testRunningSyncContinuesResultHandlingWhenAfterReleaseFails = async () => {
+  const { hooks } = createHarness();
+  const calls = [];
+  let lockHeld = false;
+
+  const result = await hooks.runRunningSync({
+    mode: "background",
+    lockAdapter: {
+      acquire: async () => {
+        lockHeld = true;
+        calls.push("lock:acquire");
+        return true;
+      },
+      startHeartbeat: () => calls.push("heartbeat:start"),
+      stopHeartbeat: () => calls.push("heartbeat:stop"),
+      release: () => {
+        lockHeld = false;
+        calls.push("lock:release");
+      },
+    },
+    runTransaction: async () => {
+      calls.push("transaction:run");
+      return { status: "success", action: "pushed" };
+    },
+    afterRelease: async () => {
+      assert.equal(lockHeld, false);
+      calls.push("afterRelease");
+      throw new Error("after release failed");
+    },
+    handleResult: async () => {
+      assert.equal(lockHeld, false);
+      calls.push("result:handle");
+    },
+  });
+
+  assert.deepStrictEqual(calls, [
+    "lock:acquire",
+    "heartbeat:start",
+    "transaction:run",
+    "heartbeat:stop",
+    "lock:release",
+    "afterRelease",
+    "result:handle",
+  ]);
+  assert.deepStrictEqual(toPlainObject(result), {
+    status: "success",
+    action: "pushed",
+  });
+};
+
+const testRunningSyncContinuesResultHandlingWhenHeartbeatStopFails = async () => {
+  const { hooks } = createHarness();
+  const calls = [];
+  let lockHeld = false;
+
+  const result = await hooks.runRunningSync({
+    mode: "background",
+    lockAdapter: {
+      acquire: async () => {
+        lockHeld = true;
+        calls.push("lock:acquire");
+        return true;
+      },
+      startHeartbeat: () => calls.push("heartbeat:start"),
+      stopHeartbeat: () => {
+        calls.push("heartbeat:stop");
+        throw new Error("heartbeat stop failed");
+      },
+      release: () => {
+        lockHeld = false;
+        calls.push("lock:release");
+      },
+    },
+    runTransaction: async () => {
+      calls.push("transaction:run");
+      return { status: "success", action: "no_change" };
+    },
+    afterRelease: async () => {
+      assert.equal(lockHeld, false);
+      calls.push("afterRelease");
+    },
+    handleResult: async () => {
+      assert.equal(lockHeld, false);
+      calls.push("result:handle");
+    },
+  });
+
+  assert.deepStrictEqual(calls, [
+    "lock:acquire",
+    "heartbeat:start",
+    "transaction:run",
+    "heartbeat:stop",
+    "lock:release",
+    "afterRelease",
+    "result:handle",
+  ]);
+  assert.deepStrictEqual(toPlainObject(result), {
+    status: "success",
+    action: "no_change",
+  });
+};
+
 const testRunningSyncReleasesLockWhenHeartbeatStartFails = async () => {
   const { hooks } = createHarness();
   const calls = [];
@@ -421,6 +523,160 @@ const testRunningSyncModeProfilesPreserveLocksAndTtls = async () => {
     assert.equal(store.has(testCase.lockKey), false);
     assert.equal(store.has(GLOBAL_SYNC_LOCK_KEY), false);
   }
+};
+
+const testExpiredOwnedModeLockCanBeReacquired = async () => {
+  const { hooks, store } = createHarness();
+  const staleTimestamp = Date.now() - 4 * 60 * 1000;
+  store.set(BACKGROUND_SYNC_LOCK_KEY, {
+    owner: hooks.BACKGROUND_SYNC_OWNER_ID,
+    timestamp: staleTimestamp,
+  });
+  store.set(GLOBAL_SYNC_LOCK_KEY, {
+    owner: hooks.BACKGROUND_SYNC_OWNER_ID,
+    mode: "background",
+    timestamp: staleTimestamp,
+    ttlMs: 45 * 1000,
+  });
+
+  let acquiredModeLock = null;
+  const result = await hooks.runRunningSync({
+    mode: "background",
+    runTransaction: async () => {
+      acquiredModeLock = store.get(BACKGROUND_SYNC_LOCK_KEY);
+      return { status: "success", action: "no_change" };
+    },
+  });
+
+  assert.equal(result.status, "success");
+  assert.ok(acquiredModeLock.timestamp > staleTimestamp);
+  assert.equal(store.has(BACKGROUND_SYNC_LOCK_KEY), false);
+  assert.equal(store.has(GLOBAL_SYNC_LOCK_KEY), false);
+};
+
+const testValidOtherModeLockBlocksNonPreemptiveAcquire = async () => {
+  const { hooks, store } = createHarness();
+  const timestamp = Date.now();
+  const startupLock = { owner: "other-tab", timestamp };
+  const globalLock = {
+    owner: "other-tab",
+    mode: "startup",
+    timestamp,
+    ttlMs: 3 * 60 * 1000,
+  };
+  store.set(STARTUP_SYNC_LOCK_KEY, startupLock);
+  store.set(GLOBAL_SYNC_LOCK_KEY, globalLock);
+  let transactionRan = false;
+
+  const result = await hooks.runRunningSync({
+    mode: "background",
+    runTransaction: async () => {
+      transactionRan = true;
+      return { status: "success" };
+    },
+  });
+
+  assert.deepStrictEqual(toPlainObject(result), {
+    status: "skipped",
+    reason: "sync_lock_unavailable",
+  });
+  assert.equal(transactionRan, false);
+  assert.deepStrictEqual(store.get(STARTUP_SYNC_LOCK_KEY), startupLock);
+  assert.deepStrictEqual(store.get(GLOBAL_SYNC_LOCK_KEY), globalLock);
+};
+
+const testOwnershipVerificationFailureRollsBackOwnedModeLock = async () => {
+  const { hooks, store } = createHarness();
+  const competingGlobalLock = {
+    owner: "other-tab",
+    mode: "startup",
+    timestamp: Date.now(),
+    ttlMs: 3 * 60 * 1000,
+  };
+  let transactionRan = false;
+
+  const runningSync = hooks.runRunningSync({
+    mode: "background",
+    runTransaction: async () => {
+      transactionRan = true;
+      return { status: "success" };
+    },
+  });
+  setTimeout(() => {
+    store.set(GLOBAL_SYNC_LOCK_KEY, competingGlobalLock);
+  }, 10);
+
+  const result = await runningSync;
+  assert.deepStrictEqual(toPlainObject(result), {
+    status: "skipped",
+    reason: "sync_lock_unavailable",
+  });
+  assert.equal(transactionRan, false);
+  assert.equal(
+    store.has(BACKGROUND_SYNC_LOCK_KEY),
+    false,
+    "ownership verification 失败后必须回滚本标签页写入的模式锁。"
+  );
+  assert.deepStrictEqual(
+    store.get(GLOBAL_SYNC_LOCK_KEY),
+    competingGlobalLock,
+    "回滚不得删除竞争标签页取得的全局锁。"
+  );
+};
+
+const testLockUnavailableCallbackFailurePropagatesWithoutStartingSync = async () => {
+  const { hooks } = createHarness();
+  const calls = [];
+
+  await assert.rejects(
+    hooks.runRunningSync({
+      mode: "background",
+      lockAdapter: {
+        acquire: async () => false,
+        startHeartbeat: () => calls.push("heartbeat:start"),
+        stopHeartbeat: () => calls.push("heartbeat:stop"),
+        release: () => calls.push("lock:release"),
+      },
+      onLockUnavailable: async () => {
+        calls.push("lock:unavailable");
+        throw new Error("lock unavailable callback failed");
+      },
+      runTransaction: async () => {
+        calls.push("transaction:run");
+        return { status: "success" };
+      },
+    }),
+    /lock unavailable callback failed/
+  );
+
+  assert.deepStrictEqual(calls, ["lock:unavailable"]);
+};
+
+const testAcquireFailurePropagatesWithoutStartingSync = async () => {
+  const { hooks } = createHarness();
+  const calls = [];
+
+  await assert.rejects(
+    hooks.runRunningSync({
+      mode: "background",
+      lockAdapter: {
+        acquire: async () => {
+          calls.push("lock:acquire");
+          throw new Error("lock acquire failed");
+        },
+        startHeartbeat: () => calls.push("heartbeat:start"),
+        stopHeartbeat: () => calls.push("heartbeat:stop"),
+        release: () => calls.push("lock:release"),
+      },
+      runTransaction: async () => {
+        calls.push("transaction:run");
+        return { status: "success" };
+      },
+    }),
+    /lock acquire failed/
+  );
+
+  assert.deepStrictEqual(calls, ["lock:acquire"]);
 };
 
 const testManualOverridePreemptsAutoSyncLocks = async () => {
@@ -1202,9 +1458,16 @@ const testPhase3CallSitesUseDedicatedHelpers = () => {
   await testForegroundFollowUpUsesShortDedicatedLock();
   await testRunningSyncReleasesBeforeResultHandling();
   await testRunningSyncKeepsLockReleasedWhenResultHandlingFails();
+  await testRunningSyncContinuesResultHandlingWhenAfterReleaseFails();
+  await testRunningSyncContinuesResultHandlingWhenHeartbeatStopFails();
   await testRunningSyncReleasesLockWhenHeartbeatStartFails();
   await testBackgroundIterationReleasesPersistedLocksBeforePendingResult();
   await testRunningSyncModeProfilesPreserveLocksAndTtls();
+  await testExpiredOwnedModeLockCanBeReacquired();
+  await testValidOtherModeLockBlocksNonPreemptiveAcquire();
+  await testOwnershipVerificationFailureRollsBackOwnedModeLock();
+  await testLockUnavailableCallbackFailurePropagatesWithoutStartingSync();
+  await testAcquireFailurePropagatesWithoutStartingSync();
   await testManualOverridePreemptsAutoSyncLocks();
   await testManualOverrideCancelsRemoteRetryBackoff();
   await testBeforePerformCanShortCircuitSafely();
