@@ -15,6 +15,8 @@ const STARTUP_SYNC_LOCK_KEY = "s1p_startup_sync_lock";
 const FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY =
   "s1p_foreground_followup_sync_lock";
 const PENDING_AUTO_SYNC_KEY = "s1p_pending_auto_sync_request";
+const DEFERRED_STARTUP_SYNC_KEY = "s1p_deferred_startup_sync";
+const STARTUP_AUTO_SYNC_LAST_TS_KEY = "s1p_startup_auto_sync_last_ts";
 
 const createHarness = () => {
   return createBaseHarness({
@@ -181,6 +183,244 @@ const testForegroundFollowUpUsesShortDedicatedLock = async () => {
     false,
     "卡住的前台补同步锁应按 45 秒租约过期，而不是沿用 3 分钟启动锁。"
   );
+};
+
+const testRunningSyncReleasesBeforeResultHandling = async () => {
+  const { hooks } = createHarness();
+  const calls = [];
+  let lockHeld = false;
+
+  const result = await hooks.runRunningSync({
+    mode: "background",
+    lockAdapter: {
+      acquire: async () => {
+        calls.push("lock:acquire");
+        lockHeld = true;
+        return true;
+      },
+      startHeartbeat: () => {
+        calls.push("heartbeat:start");
+      },
+      stopHeartbeat: () => {
+        calls.push("heartbeat:stop");
+      },
+      release: () => {
+        calls.push("lock:release");
+        lockHeld = false;
+      },
+    },
+    runTransaction: async () => {
+      assert.equal(lockHeld, true, "同步事务必须在持锁状态下执行。");
+      calls.push("transaction:run");
+      const syncResult = { status: "success", action: "pushed" };
+      calls.push("transaction:finalize");
+      return { ...syncResult, finalized: true };
+    },
+    handleResult: async (syncResult) => {
+      assert.equal(lockHeld, false, "Result Phase 处理开始前必须释放锁。");
+      assert.equal(syncResult.finalized, true);
+      calls.push("result:handle");
+    },
+  });
+
+  assert.deepStrictEqual(calls, [
+    "lock:acquire",
+    "heartbeat:start",
+    "transaction:run",
+    "transaction:finalize",
+    "heartbeat:stop",
+    "lock:release",
+    "result:handle",
+  ]);
+  assert.deepStrictEqual(toPlainObject(result), {
+    status: "success",
+    action: "pushed",
+    finalized: true,
+  });
+};
+
+const testRunningSyncKeepsLockReleasedWhenResultHandlingFails = async () => {
+  const { hooks } = createHarness();
+  let lockHeld = false;
+
+  await assert.rejects(
+    hooks.runRunningSync({
+      mode: "background",
+      lockAdapter: {
+        acquire: async () => {
+          lockHeld = true;
+          return true;
+        },
+        startHeartbeat: () => {},
+        stopHeartbeat: () => {},
+        release: () => {
+          lockHeld = false;
+        },
+      },
+      runTransaction: async () => ({ status: "success" }),
+      handleResult: async () => {
+        assert.equal(lockHeld, false);
+        throw new Error("result handling failed");
+      },
+    }),
+    /result handling failed/
+  );
+
+  assert.equal(lockHeld, false);
+};
+
+const testRunningSyncReleasesLockWhenHeartbeatStartFails = async () => {
+  const { hooks } = createHarness();
+  const calls = [];
+  let lockHeld = false;
+
+  await assert.rejects(
+    hooks.runRunningSync({
+      mode: "background",
+      lockAdapter: {
+        acquire: async () => {
+          lockHeld = true;
+          calls.push("lock:acquire");
+          return true;
+        },
+        startHeartbeat: () => {
+          calls.push("heartbeat:start");
+          throw new Error("heartbeat start failed");
+        },
+        stopHeartbeat: () => calls.push("heartbeat:stop"),
+        release: () => {
+          lockHeld = false;
+          calls.push("lock:release");
+        },
+      },
+      runTransaction: async () => {
+        calls.push("transaction:run");
+        return { status: "success" };
+      },
+    }),
+    /heartbeat start failed/
+  );
+
+  assert.equal(lockHeld, false);
+  assert.deepStrictEqual(calls, [
+    "lock:acquire",
+    "heartbeat:start",
+    "lock:release",
+  ]);
+};
+
+const testBackgroundIterationReleasesPersistedLocksBeforePendingResult = async () => {
+  const { hooks, store } = createHarness();
+  let signalResultStarted;
+  let releaseResultHandler;
+  const resultStarted = new Promise((resolve) => {
+    signalResultStarted = resolve;
+  });
+  const resultGate = new Promise((resolve) => {
+    releaseResultHandler = resolve;
+  });
+
+  const iterationPromise = hooks.runBackgroundAutoSyncIteration({
+    reason: "phase1_result_gate",
+    drainCount: 1,
+    initialSchedulerContext: {
+      debounceGeneration: 3,
+      intendedMaxLastModified: 100,
+    },
+    performAutoSync: async (isStartupSafetyMode, lockMode, triggerSource) => {
+      assert.equal(isStartupSafetyMode, false);
+      assert.equal(lockMode, "background");
+      assert.equal(triggerSource, "background_push");
+      assert.ok(store.get(BACKGROUND_SYNC_LOCK_KEY));
+      assert.equal(store.get(GLOBAL_SYNC_LOCK_KEY)?.mode, "background");
+      return {
+        status: "success",
+        action: "pushed",
+        coveredLastModified: 100,
+      };
+    },
+    handleBackgroundAutoSyncResult: async (syncResult) => {
+      assert.equal(
+        syncResult.backgroundSchedulerCleanup?.status,
+        "completed",
+        "scheduler cleanup 必须由生产迭代 seam 在事务返回前完成。"
+      );
+      signalResultStarted();
+      await resultGate;
+    },
+  });
+
+  await resultStarted;
+  assert.equal(
+    store.has(BACKGROUND_SYNC_LOCK_KEY),
+    false,
+    "Result Phase 即使永久等待，后台模式锁也必须已经释放。"
+  );
+  assert.equal(
+    store.has(GLOBAL_SYNC_LOCK_KEY),
+    false,
+    "Result Phase 即使永久等待，全局锁也必须已经释放。"
+  );
+
+  releaseResultHandler();
+  const iteration = await iterationPromise;
+  assert.equal(iteration.result.status, "success");
+  assert.ok(iteration.indicatorCompletion);
+};
+
+const testRunningSyncModeProfilesPreserveLocksAndTtls = async () => {
+  const { hooks, store } = createHarness();
+  const cases = [
+    {
+      mode: "background",
+      lockKey: BACKGROUND_SYNC_LOCK_KEY,
+      ttlMs: 45 * 1000,
+    },
+    {
+      mode: "foreground_followup",
+      lockKey: FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY,
+      ttlMs: 45 * 1000,
+    },
+    {
+      mode: "startup",
+      lockKey: STARTUP_SYNC_LOCK_KEY,
+      ttlMs: 3 * 60 * 1000,
+    },
+    {
+      mode: "manual",
+      lockKey: MANUAL_SYNC_LOCK_KEY,
+      ttlMs: 3 * 60 * 1000,
+    },
+  ];
+
+  for (const testCase of cases) {
+    let modeLockDuringTransaction = null;
+    let globalLockDuringTransaction = null;
+    let modeLockDuringResultHandling = null;
+    let globalLockDuringResultHandling = null;
+
+    await hooks.runRunningSync({
+      mode: testCase.mode,
+      runTransaction: async () => {
+        modeLockDuringTransaction = store.get(testCase.lockKey);
+        globalLockDuringTransaction = store.get(GLOBAL_SYNC_LOCK_KEY);
+        return { status: "success", action: "no_change" };
+      },
+      handleResult: async () => {
+        modeLockDuringResultHandling = store.get(testCase.lockKey) || null;
+        globalLockDuringResultHandling =
+          store.get(GLOBAL_SYNC_LOCK_KEY) || null;
+      },
+    });
+
+    assert.ok(modeLockDuringTransaction, `${testCase.mode} 应取得模式锁。`);
+    assert.equal(globalLockDuringTransaction.mode, testCase.mode);
+    assert.equal(globalLockDuringTransaction.ttlMs, testCase.ttlMs);
+    assert.equal(modeLockDuringResultHandling, null);
+    assert.equal(globalLockDuringResultHandling, null);
+    assert.equal(store.has(testCase.lockKey), false);
+    assert.equal(store.has(GLOBAL_SYNC_LOCK_KEY), false);
+  }
 };
 
 const testManualOverridePreemptsAutoSyncLocks = async () => {
@@ -378,10 +618,10 @@ const testLockUnavailableSkipsWithoutHeartbeat = async () => {
   });
 };
 
-const testOnBeforeReleaseFiresBeforeLockRelease = async () => {
-  const { sandbox, hooks } = createHarness();
+const testStartupCompletionPolicyRunsBeforeLockRelease = async () => {
+  const { hooks, store } = createHarness();
   let lockHeld = false;
-  let onBeforeReleaseSeenLock = null;
+  let cooldownSeenAtRelease = null;
   const calls = [];
 
   const result = await hooks.runStartupModeAutoSyncCheck({
@@ -393,6 +633,7 @@ const testOnBeforeReleaseFiresBeforeLockRelease = async () => {
     startStartupSyncLockHeartbeat: () => { calls.push("hb:start"); },
     stopStartupSyncLockHeartbeat: () => { calls.push("hb:stop"); },
     releaseStartupSyncLock: () => {
+      cooldownSeenAtRelease = store.get(STARTUP_AUTO_SYNC_LAST_TS_KEY) || 0;
       lockHeld = false;
       calls.push("release");
     },
@@ -400,11 +641,11 @@ const testOnBeforeReleaseFiresBeforeLockRelease = async () => {
       calls.push("beforePerform");
       return null;
     },
-    onBeforeRelease: (syncResult) => {
-      onBeforeReleaseSeenLock = lockHeld;
-      calls.push("onBeforeRelease");
+    completionPolicy: {
+      refreshStartupAutoSyncCooldown: true,
     },
     onAfterRelease: () => {
+      assert.equal(lockHeld, false);
       calls.push("onAfterRelease");
     },
     performAutoSync: async () => {
@@ -413,14 +654,13 @@ const testOnBeforeReleaseFiresBeforeLockRelease = async () => {
     },
   });
 
-  assert.strictEqual(onBeforeReleaseSeenLock, true,
-    "onBeforeRelease 应在锁仍然持有时执行");
+  assert.ok(cooldownSeenAtRelease > 0,
+    "启动同步 cooldown 必须在锁释放前由 completion policy 持久化。");
   assert.deepStrictEqual(calls, [
     "acquire",
     "hb:start",
     "beforePerform",
     "perform",
-    "onBeforeRelease",
     "hb:stop",
     "release",
     "onAfterRelease",
@@ -431,12 +671,16 @@ const testOnBeforeReleaseFiresBeforeLockRelease = async () => {
   });
 };
 
-const testOnBeforeReleaseFiresOnSkipBeforeLockRelease = async () => {
-  const { sandbox, hooks } = createHarness();
+const testStartupCompletionPolicyRunsOnSkipBeforeLockRelease = async () => {
+  const { hooks, store } = createHarness();
   let lockHeld = false;
-  let onBeforeReleaseSeenLock = null;
-  let onBeforeReleaseSeenReason = null;
+  let deferredExistsAtRelease = null;
+  let cooldownSeenAtRelease = null;
   const calls = [];
+  store.set(DEFERRED_STARTUP_SYNC_KEY, {
+    date: "2026-07-11",
+    requestedAt: Date.now(),
+  });
 
   const result = await hooks.runStartupModeAutoSyncCheck({
     acquireStartupSyncLock: async () => {
@@ -447,6 +691,8 @@ const testOnBeforeReleaseFiresOnSkipBeforeLockRelease = async () => {
     startStartupSyncLockHeartbeat: () => { calls.push("hb:start"); },
     stopStartupSyncLockHeartbeat: () => { calls.push("hb:stop"); },
     releaseStartupSyncLock: () => {
+      deferredExistsAtRelease = store.has(DEFERRED_STARTUP_SYNC_KEY);
+      cooldownSeenAtRelease = store.get(STARTUP_AUTO_SYNC_LAST_TS_KEY) || 0;
       lockHeld = false;
       calls.push("release");
     },
@@ -457,10 +703,10 @@ const testOnBeforeReleaseFiresOnSkipBeforeLockRelease = async () => {
         result: { status: "skipped", reason: "daily_sync_already_completed" },
       };
     },
-    onBeforeRelease: (syncResult) => {
-      onBeforeReleaseSeenLock = lockHeld;
-      onBeforeReleaseSeenReason = syncResult?.reason;
-      calls.push("onBeforeRelease");
+    completionPolicy: {
+      dailyDate: "2026-07-11",
+      shouldResumeDeferredStartupSync: true,
+      refreshStartupAutoSyncCooldown: true,
     },
     performAutoSync: async () => {
       calls.push("perform");
@@ -468,15 +714,14 @@ const testOnBeforeReleaseFiresOnSkipBeforeLockRelease = async () => {
     },
   });
 
-  assert.strictEqual(onBeforeReleaseSeenLock, true,
-    "skip 路径下 onBeforeRelease 应在锁仍然持有时执行");
-  assert.strictEqual(onBeforeReleaseSeenReason, "daily_sync_already_completed",
-    "onBeforeRelease 应能拿到 skip 原因 daily_sync_already_completed");
+  assert.equal(deferredExistsAtRelease, false,
+    "skip 路径必须在释放锁前清除已完成的 deferred startup 请求。");
+  assert.ok(cooldownSeenAtRelease > 0,
+    "skip 路径必须在释放锁前刷新启动同步 cooldown。");
   assert.deepStrictEqual(calls, [
     "acquire",
     "hb:start",
     "beforePerform",
-    "onBeforeRelease",
     "hb:stop",
     "release",
   ]);
@@ -955,12 +1200,17 @@ const testPhase3CallSitesUseDedicatedHelpers = () => {
   await testRuntimeReusesStartupExecutionPath();
   await testForegroundFollowUpUsesDedicatedExecutionMode();
   await testForegroundFollowUpUsesShortDedicatedLock();
+  await testRunningSyncReleasesBeforeResultHandling();
+  await testRunningSyncKeepsLockReleasedWhenResultHandlingFails();
+  await testRunningSyncReleasesLockWhenHeartbeatStartFails();
+  await testBackgroundIterationReleasesPersistedLocksBeforePendingResult();
+  await testRunningSyncModeProfilesPreserveLocksAndTtls();
   await testManualOverridePreemptsAutoSyncLocks();
   await testManualOverrideCancelsRemoteRetryBackoff();
   await testBeforePerformCanShortCircuitSafely();
   await testLockUnavailableSkipsWithoutHeartbeat();
-  await testOnBeforeReleaseFiresBeforeLockRelease();
-  await testOnBeforeReleaseFiresOnSkipBeforeLockRelease();
+  await testStartupCompletionPolicyRunsBeforeLockRelease();
+  await testStartupCompletionPolicyRunsOnSkipBeforeLockRelease();
   testShouldClearDeferredStartupSyncOnResult();
   testDecisionSplitsStartupBackgroundAndForegroundFollowUp();
   testStartupReadProgressOnlyLocalDeltaAutoMerges();

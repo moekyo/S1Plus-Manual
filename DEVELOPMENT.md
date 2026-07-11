@@ -390,6 +390,8 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - 四类模式锁（手动/后台/启动/前台补同步）
 - 全局锁防互撞
 - 锁心跳续租，失锁即中止
+- 四类模式锁共用同一份 mode profile 和锁 implementation；后台、启动、前台补同步通过 `runRunningSync()` 统一执行“取得锁 → 启动心跳 → 运行完整事务 → 停止心跳并释放锁”的生命周期。手动同步只复用锁 implementation，主动抢占流程仍保持独立。
+- `runRunningSync()` 不接受独立 finalizer；`runTransaction` 只有在基线、远端 writer、已覆盖 pending/shared generation 等事务收尾全部完成后才可 resolve。导航栏/标题状态、刷新、提示、冲突弹窗和重试调度属于 Result Phase，必须等模式锁和全局锁释放后执行。
 - 自动同步熔断（连续失败 3 次暂停 10 分钟）
 - 冲突暂停门控，防止冲突态继续自动推送
 - 前台探测使用独立的 probe 锁、共享冷却（45s，跨标签）和本地冷却（12s，当前标签），避免多个标签页同时做 metadata-only probe
@@ -398,7 +400,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - `clean-state fence` 只用于本地自动 push 去重：本地干净不能证明另一台设备没有更新 Gist，因此页面首次可见 / 回到前台 / 可见页轮询的 metadata-only probe 不得用它跳过远端 `updated_at` 检查。
 - 前台 follow-up sync 的局部脏状态优先落为 soft block；只有真正的全局冲突或明确需要人工处理时才升级为 hard pause
 - 前台 follow-up sync 使用独立的短租约模式锁（45s），不要复用 3 分钟启动锁；正常任务靠心跳续租，卡住或冻结的标签页不会长时间阻塞后台阅读进度推送。
-- Running Sync 不可跨标签页即时接管。关闭运行中的标签页时，不要在 `pagehide` / `beforeunload` 清理执行锁，也不要让其它标签页直接继承 `[同步中]`；必须等锁按 TTL 失效后，通过 pending dirty / shared scheduler / retry 机制恢复。
+- Running Sync 不可跨标签页即时接管。关闭运行中的标签页时，如果事务尚未 settle，不要在 `pagehide` / `beforeunload` 清理执行锁，也不要让其它标签页直接继承 `[同步中]`；必须等锁按 TTL 失效后，通过 pending dirty / shared scheduler / retry 机制恢复。事务已经 settle 时，Running Sync 必须在进入 Result Phase 前释放锁，避免页面在刷新或弹窗处理中关闭后留下无效执行锁。
 
 ### 6.4 手动覆盖：导航栏直接拉取 / 推送
 

@@ -28477,8 +28477,63 @@
     };
   };
 
-  const getManualSyncLockValue = () => {
-    const lock = GM_getValue(MANUAL_SYNC_LOCK_KEY, null);
+  const getSyncLockModeProfile = (mode) => {
+    switch (mode) {
+      case SYNC_LOCK_MODE_MANUAL:
+        return {
+          lockKey: MANUAL_SYNC_LOCK_KEY,
+          displayName: "手动同步",
+          ttlMs: MANUAL_SYNC_LOCK_TTL_MS,
+          heartbeatMs: MANUAL_SYNC_LOCK_HEARTBEAT_MS,
+          getHeartbeatTimer: () => manualSyncLockHeartbeatTimer,
+          setHeartbeatTimer: (timer) => {
+            manualSyncLockHeartbeatTimer = timer;
+          },
+        };
+      case SYNC_LOCK_MODE_BACKGROUND:
+        return {
+          lockKey: BACKGROUND_SYNC_LOCK_KEY,
+          displayName: "后台同步",
+          ttlMs: BACKGROUND_SYNC_LOCK_TTL_MS,
+          heartbeatMs: BACKGROUND_SYNC_LOCK_HEARTBEAT_MS,
+          getHeartbeatTimer: () => backgroundSyncLockHeartbeatTimer,
+          setHeartbeatTimer: (timer) => {
+            backgroundSyncLockHeartbeatTimer = timer;
+          },
+        };
+      case SYNC_LOCK_MODE_FOREGROUND_FOLLOWUP:
+        return {
+          lockKey: FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY,
+          displayName: "前台补同步",
+          ttlMs: FOREGROUND_FOLLOWUP_SYNC_LOCK_TTL_MS,
+          heartbeatMs: FOREGROUND_FOLLOWUP_SYNC_LOCK_HEARTBEAT_MS,
+          getHeartbeatTimer: () => foregroundFollowUpSyncLockHeartbeatTimer,
+          setHeartbeatTimer: (timer) => {
+            foregroundFollowUpSyncLockHeartbeatTimer = timer;
+          },
+        };
+      case SYNC_LOCK_MODE_STARTUP:
+        return {
+          lockKey: STARTUP_SYNC_LOCK_KEY,
+          displayName: "启动同步",
+          ttlMs: STARTUP_SYNC_LOCK_TTL_MS,
+          heartbeatMs: STARTUP_SYNC_LOCK_HEARTBEAT_MS,
+          getHeartbeatTimer: () => startupSyncLockHeartbeatTimer,
+          setHeartbeatTimer: (timer) => {
+            startupSyncLockHeartbeatTimer = timer;
+          },
+        };
+      default:
+        return null;
+    }
+  };
+
+  const getModeSyncLockValue = (mode) => {
+    const profile = getSyncLockModeProfile(mode);
+    if (!profile) {
+      return null;
+    }
+    const lock = GM_getValue(profile.lockKey, null);
     if (
       lock &&
       typeof lock === "object" &&
@@ -28489,6 +28544,14 @@
     }
     return null;
   };
+  const getManualSyncLockValue = () =>
+    getModeSyncLockValue(SYNC_LOCK_MODE_MANUAL);
+  const getBackgroundSyncLockValue = () =>
+    getModeSyncLockValue(SYNC_LOCK_MODE_BACKGROUND);
+  const getForegroundFollowUpSyncLockValue = () =>
+    getModeSyncLockValue(SYNC_LOCK_MODE_FOREGROUND_FOLLOWUP);
+  const getStartupSyncLockValue = () =>
+    getModeSyncLockValue(SYNC_LOCK_MODE_STARTUP);
 
   const getGlobalSyncLockValue = () => {
     const lock = GM_getValue(GLOBAL_SYNC_LOCK_KEY, null);
@@ -28519,33 +28582,19 @@
     Boolean(lock && now - lock.timestamp < lock.ttlMs);
 
   const hasActiveOtherModeSyncLock = (currentMode, now = Date.now()) => {
-    const lockStates = [
-      {
-        mode: SYNC_LOCK_MODE_MANUAL,
-        lock: getManualSyncLockValue(),
-        ttlMs: MANUAL_SYNC_LOCK_TTL_MS,
-      },
-      {
-        mode: SYNC_LOCK_MODE_BACKGROUND,
-        lock: getBackgroundSyncLockValue(),
-        ttlMs: BACKGROUND_SYNC_LOCK_TTL_MS,
-      },
-      {
-        mode: SYNC_LOCK_MODE_FOREGROUND_FOLLOWUP,
-        lock: getForegroundFollowUpSyncLockValue(),
-        ttlMs: FOREGROUND_FOLLOWUP_SYNC_LOCK_TTL_MS,
-      },
-      {
-        mode: SYNC_LOCK_MODE_STARTUP,
-        lock: getStartupSyncLockValue(),
-        ttlMs: STARTUP_SYNC_LOCK_TTL_MS,
-      },
-    ];
-
-    return lockStates.some(
-      ({ mode, lock, ttlMs }) =>
-        mode !== currentMode && isModeSyncLockValid(lock, ttlMs, now)
-    );
+    return [
+      SYNC_LOCK_MODE_MANUAL,
+      SYNC_LOCK_MODE_BACKGROUND,
+      SYNC_LOCK_MODE_FOREGROUND_FOLLOWUP,
+      SYNC_LOCK_MODE_STARTUP,
+    ].some((mode) => {
+      const profile = getSyncLockModeProfile(mode);
+      return Boolean(
+        mode !== currentMode &&
+          profile &&
+          isModeSyncLockValid(getModeSyncLockValue(mode), profile.ttlMs, now)
+      );
+    });
   };
 
   const hasAnyActiveSyncLock = (now = Date.now()) => {
@@ -28629,30 +28678,13 @@
   };
 
   const getSyncLockStateByMode = (mode) => {
-    switch (mode) {
-      case SYNC_LOCK_MODE_MANUAL:
-        return {
-          getModeLock: getManualSyncLockValue,
-          ttlMs: MANUAL_SYNC_LOCK_TTL_MS,
-        };
-      case SYNC_LOCK_MODE_BACKGROUND:
-        return {
-          getModeLock: getBackgroundSyncLockValue,
-          ttlMs: BACKGROUND_SYNC_LOCK_TTL_MS,
-        };
-      case SYNC_LOCK_MODE_FOREGROUND_FOLLOWUP:
-        return {
-          getModeLock: getForegroundFollowUpSyncLockValue,
-          ttlMs: FOREGROUND_FOLLOWUP_SYNC_LOCK_TTL_MS,
-        };
-      case SYNC_LOCK_MODE_STARTUP:
-        return {
-          getModeLock: getStartupSyncLockValue,
-          ttlMs: STARTUP_SYNC_LOCK_TTL_MS,
-        };
-      default:
-        return null;
-    }
+    const profile = getSyncLockModeProfile(mode);
+    return profile
+      ? {
+        getModeLock: () => getModeSyncLockValue(mode),
+        ttlMs: profile.ttlMs,
+      }
+      : null;
   };
 
   const isSyncLockOwned = (mode, now = Date.now()) => {
@@ -28679,20 +28711,8 @@
     );
   };
 
-  const getSyncLockModeDisplayName = (mode) => {
-    switch (mode) {
-      case SYNC_LOCK_MODE_MANUAL:
-        return "手动同步";
-      case SYNC_LOCK_MODE_BACKGROUND:
-        return "后台同步";
-      case SYNC_LOCK_MODE_FOREGROUND_FOLLOWUP:
-        return "前台补同步";
-      case SYNC_LOCK_MODE_STARTUP:
-        return "启动同步";
-      default:
-        return "同步";
-    }
-  };
+  const getSyncLockModeDisplayName = (mode) =>
+    getSyncLockModeProfile(mode)?.displayName || "同步";
 
   const createSyncLockLostError = (mode, stage = "unknown") => {
     const error = new Error(
@@ -28713,16 +28733,20 @@
     }
   };
 
-  const acquireManualSyncLock = async (options = {}) => {
-    const shouldPreemptActiveSync = options?.preemptActiveSync === true;
+  const acquireModeSyncLock = async (mode, options = {}) => {
+    const profile = getSyncLockModeProfile(mode);
+    if (!profile) {
+      return false;
+    }
+    const shouldPreemptActiveSync =
+      mode === SYNC_LOCK_MODE_MANUAL && options?.preemptActiveSync === true;
     if (shouldPreemptActiveSync) {
       preemptActiveSyncForManualOverride(options.operation || "manual_override");
     }
 
     const now = Date.now();
-    const currentLock = getManualSyncLockValue();
-    const lockIsValid =
-      currentLock && now - currentLock.timestamp < MANUAL_SYNC_LOCK_TTL_MS;
+    const currentLock = getModeSyncLockValue(mode);
+    const lockIsValid = isModeSyncLockValid(currentLock, profile.ttlMs, now);
     const globalLock = getGlobalSyncLockValue();
     const globalLockIsValid = isGlobalSyncLockValid(globalLock, now);
 
@@ -28733,403 +28757,200 @@
     ) {
       return false;
     }
-    if (
-      !shouldPreemptActiveSync &&
-      hasActiveOtherModeSyncLock(SYNC_LOCK_MODE_MANUAL, now)
-    ) {
+    if (!shouldPreemptActiveSync && hasActiveOtherModeSyncLock(mode, now)) {
       return false;
     }
     if (
       !shouldPreemptActiveSync &&
       globalLockIsValid &&
       (globalLock.owner !== BACKGROUND_SYNC_OWNER_ID ||
-        globalLock.mode !== SYNC_LOCK_MODE_MANUAL)
+        globalLock.mode !== mode)
     ) {
       return false;
     }
 
-    GM_setValue(MANUAL_SYNC_LOCK_KEY, {
+    GM_setValue(profile.lockKey, {
       owner: BACKGROUND_SYNC_OWNER_ID,
       timestamp: now,
     });
-    setGlobalSyncLock(SYNC_LOCK_MODE_MANUAL, now, MANUAL_SYNC_LOCK_TTL_MS);
+    setGlobalSyncLock(mode, now, profile.ttlMs);
 
     const acquired = await verifySyncLockOwnership(() => {
-      const verifiedModeLock = getManualSyncLockValue();
+      const verifiedModeLock = getModeSyncLockValue(mode);
       const verifiedGlobalLock = getGlobalSyncLockValue();
       return (
         verifiedModeLock &&
         verifiedModeLock.owner === BACKGROUND_SYNC_OWNER_ID &&
         verifiedGlobalLock &&
         verifiedGlobalLock.owner === BACKGROUND_SYNC_OWNER_ID &&
-        verifiedGlobalLock.mode === SYNC_LOCK_MODE_MANUAL
+        verifiedGlobalLock.mode === mode
       );
     });
     if (!acquired) {
-      releaseManualSyncLock();
+      releaseModeSyncLock(mode);
     }
     return acquired;
   };
 
-  const refreshManualSyncLock = () => {
-    const currentLock = getManualSyncLockValue();
+  const refreshModeSyncLock = (mode) => {
+    const profile = getSyncLockModeProfile(mode);
+    if (!profile) {
+      return false;
+    }
+    const currentLock = getModeSyncLockValue(mode);
     if (!currentLock || currentLock.owner !== BACKGROUND_SYNC_OWNER_ID) {
       return false;
     }
-    if (!refreshGlobalSyncLock(SYNC_LOCK_MODE_MANUAL, MANUAL_SYNC_LOCK_TTL_MS)) {
+    if (!refreshGlobalSyncLock(mode, profile.ttlMs)) {
       return false;
     }
-    GM_setValue(MANUAL_SYNC_LOCK_KEY, {
+    GM_setValue(profile.lockKey, {
       owner: BACKGROUND_SYNC_OWNER_ID,
       timestamp: Date.now(),
     });
     return true;
   };
 
-  const releaseManualSyncLock = () => {
-    const currentLock = getManualSyncLockValue();
+  const releaseModeSyncLock = (mode) => {
+    const profile = getSyncLockModeProfile(mode);
+    if (!profile) {
+      return;
+    }
+    const currentLock = getModeSyncLockValue(mode);
     if (currentLock && currentLock.owner === BACKGROUND_SYNC_OWNER_ID) {
-      GM_deleteValue(MANUAL_SYNC_LOCK_KEY);
+      GM_deleteValue(profile.lockKey);
     }
-    releaseGlobalSyncLock(SYNC_LOCK_MODE_MANUAL);
+    releaseGlobalSyncLock(mode);
   };
 
-  const startManualSyncLockHeartbeat = () => {
-    if (manualSyncLockHeartbeatTimer) {
-      clearInterval(manualSyncLockHeartbeatTimer);
-    }
-    manualSyncLockHeartbeatTimer = setInterval(() => {
-      if (!refreshManualSyncLock()) {
-        stopManualSyncLockHeartbeat();
-        console.warn("S1 Plus: 手动同步锁续租失败，当前任务将中止。");
-      }
-    }, MANUAL_SYNC_LOCK_HEARTBEAT_MS);
-  };
-
-  const stopManualSyncLockHeartbeat = () => {
-    if (manualSyncLockHeartbeatTimer) {
-      clearInterval(manualSyncLockHeartbeatTimer);
-      manualSyncLockHeartbeatTimer = null;
+  const stopModeSyncLockHeartbeat = (mode) => {
+    const profile = getSyncLockModeProfile(mode);
+    const timer = profile?.getHeartbeatTimer();
+    if (timer) {
+      clearInterval(timer);
+      profile.setHeartbeatTimer(null);
     }
   };
 
-  const getBackgroundSyncLockValue = () => {
-    const lock = GM_getValue(BACKGROUND_SYNC_LOCK_KEY, null);
-    if (
-      lock &&
-      typeof lock === "object" &&
-      lock.owner &&
-      typeof lock.timestamp === "number"
-    ) {
-      return lock;
+  const startModeSyncLockHeartbeat = (mode) => {
+    const profile = getSyncLockModeProfile(mode);
+    if (!profile) {
+      return;
     }
-    return null;
-  };
-
-  const acquireBackgroundSyncLock = async () => {
-    const now = Date.now();
-    const currentLock = getBackgroundSyncLockValue();
-    const lockIsValid =
-      currentLock && now - currentLock.timestamp < BACKGROUND_SYNC_LOCK_TTL_MS;
-    const globalLock = getGlobalSyncLockValue();
-    const globalLockIsValid = isGlobalSyncLockValid(globalLock, now);
-
-    if (lockIsValid && currentLock.owner !== BACKGROUND_SYNC_OWNER_ID) {
-      return false;
-    }
-    if (hasActiveOtherModeSyncLock(SYNC_LOCK_MODE_BACKGROUND, now)) {
-      return false;
-    }
-    if (
-      globalLockIsValid &&
-      (globalLock.owner !== BACKGROUND_SYNC_OWNER_ID ||
-        globalLock.mode !== SYNC_LOCK_MODE_BACKGROUND)
-    ) {
-      return false;
-    }
-
-    GM_setValue(BACKGROUND_SYNC_LOCK_KEY, {
-      owner: BACKGROUND_SYNC_OWNER_ID,
-      timestamp: now,
-    });
-    setGlobalSyncLock(
-      SYNC_LOCK_MODE_BACKGROUND,
-      now,
-      BACKGROUND_SYNC_LOCK_TTL_MS
+    stopModeSyncLockHeartbeat(mode);
+    profile.setHeartbeatTimer(
+      setInterval(() => {
+        if (!refreshModeSyncLock(mode)) {
+          stopModeSyncLockHeartbeat(mode);
+          console.warn(
+            `S1 Plus: ${profile.displayName}锁续租失败，当前任务将中止。`
+          );
+        }
+      }, profile.heartbeatMs)
     );
-
-    const acquired = await verifySyncLockOwnership(() => {
-      const verifiedModeLock = getBackgroundSyncLockValue();
-      const verifiedGlobalLock = getGlobalSyncLockValue();
-      return (
-        verifiedModeLock &&
-        verifiedModeLock.owner === BACKGROUND_SYNC_OWNER_ID &&
-        verifiedGlobalLock &&
-        verifiedGlobalLock.owner === BACKGROUND_SYNC_OWNER_ID &&
-        verifiedGlobalLock.mode === SYNC_LOCK_MODE_BACKGROUND
-      );
-    });
-    if (!acquired) {
-      releaseBackgroundSyncLock();
-    }
-    return acquired;
   };
 
-  const refreshBackgroundSyncLock = () => {
-    const currentLock = getBackgroundSyncLockValue();
-    if (!currentLock || currentLock.owner !== BACKGROUND_SYNC_OWNER_ID) {
-      return false;
-    }
-    if (
-      !refreshGlobalSyncLock(
-        SYNC_LOCK_MODE_BACKGROUND,
-        BACKGROUND_SYNC_LOCK_TTL_MS
-      )
-    ) {
-      return false;
-    }
-    GM_setValue(BACKGROUND_SYNC_LOCK_KEY, {
-      owner: BACKGROUND_SYNC_OWNER_ID,
-      timestamp: Date.now(),
-    });
-    return true;
-  };
+  const acquireManualSyncLock = (options = {}) =>
+    acquireModeSyncLock(SYNC_LOCK_MODE_MANUAL, options);
+  const refreshManualSyncLock = () =>
+    refreshModeSyncLock(SYNC_LOCK_MODE_MANUAL);
+  const releaseManualSyncLock = () =>
+    releaseModeSyncLock(SYNC_LOCK_MODE_MANUAL);
+  const startManualSyncLockHeartbeat = () =>
+    startModeSyncLockHeartbeat(SYNC_LOCK_MODE_MANUAL);
+  const stopManualSyncLockHeartbeat = () =>
+    stopModeSyncLockHeartbeat(SYNC_LOCK_MODE_MANUAL);
 
-  const releaseBackgroundSyncLock = () => {
-    const currentLock = getBackgroundSyncLockValue();
-    if (currentLock && currentLock.owner === BACKGROUND_SYNC_OWNER_ID) {
-      GM_deleteValue(BACKGROUND_SYNC_LOCK_KEY);
-    }
-    releaseGlobalSyncLock(SYNC_LOCK_MODE_BACKGROUND);
-  };
+  const acquireBackgroundSyncLock = () =>
+    acquireModeSyncLock(SYNC_LOCK_MODE_BACKGROUND);
+  const refreshBackgroundSyncLock = () =>
+    refreshModeSyncLock(SYNC_LOCK_MODE_BACKGROUND);
+  const releaseBackgroundSyncLock = () =>
+    releaseModeSyncLock(SYNC_LOCK_MODE_BACKGROUND);
+  const startBackgroundSyncLockHeartbeat = () =>
+    startModeSyncLockHeartbeat(SYNC_LOCK_MODE_BACKGROUND);
+  const stopBackgroundSyncLockHeartbeat = () =>
+    stopModeSyncLockHeartbeat(SYNC_LOCK_MODE_BACKGROUND);
 
-  const startBackgroundSyncLockHeartbeat = () => {
-    if (backgroundSyncLockHeartbeatTimer) {
-      clearInterval(backgroundSyncLockHeartbeatTimer);
-    }
-    backgroundSyncLockHeartbeatTimer = setInterval(() => {
-      if (!refreshBackgroundSyncLock()) {
-        stopBackgroundSyncLockHeartbeat();
-        console.warn("S1 Plus: 后台同步锁续租失败，当前任务将中止。");
+  const acquireForegroundFollowUpSyncLock = () =>
+    acquireModeSyncLock(SYNC_LOCK_MODE_FOREGROUND_FOLLOWUP);
+  const refreshForegroundFollowUpSyncLock = () =>
+    refreshModeSyncLock(SYNC_LOCK_MODE_FOREGROUND_FOLLOWUP);
+  const releaseForegroundFollowUpSyncLock = () =>
+    releaseModeSyncLock(SYNC_LOCK_MODE_FOREGROUND_FOLLOWUP);
+  const startForegroundFollowUpSyncLockHeartbeat = () =>
+    startModeSyncLockHeartbeat(SYNC_LOCK_MODE_FOREGROUND_FOLLOWUP);
+  const stopForegroundFollowUpSyncLockHeartbeat = () =>
+    stopModeSyncLockHeartbeat(SYNC_LOCK_MODE_FOREGROUND_FOLLOWUP);
+
+  const acquireStartupSyncLock = () =>
+    acquireModeSyncLock(SYNC_LOCK_MODE_STARTUP);
+  const refreshStartupSyncLock = () =>
+    refreshModeSyncLock(SYNC_LOCK_MODE_STARTUP);
+  const releaseStartupSyncLock = () =>
+    releaseModeSyncLock(SYNC_LOCK_MODE_STARTUP);
+  const startStartupSyncLockHeartbeat = () =>
+    startModeSyncLockHeartbeat(SYNC_LOCK_MODE_STARTUP);
+  const stopStartupSyncLockHeartbeat = () =>
+    stopModeSyncLockHeartbeat(SYNC_LOCK_MODE_STARTUP);
+
+  const getRunningSyncLockAdapter = (mode) =>
+    getSyncLockModeProfile(mode)
+      ? {
+        acquire: () => acquireModeSyncLock(mode),
+        startHeartbeat: () => startModeSyncLockHeartbeat(mode),
+        stopHeartbeat: () => stopModeSyncLockHeartbeat(mode),
+        release: () => releaseModeSyncLock(mode),
       }
-    }, BACKGROUND_SYNC_LOCK_HEARTBEAT_MS);
-  };
+      : null;
 
-  const stopBackgroundSyncLockHeartbeat = () => {
-    if (backgroundSyncLockHeartbeatTimer) {
-      clearInterval(backgroundSyncLockHeartbeatTimer);
-      backgroundSyncLockHeartbeatTimer = null;
-    }
-  };
+  const runRunningSync = async (options = {}) => {
+    const {
+      mode,
+      lockAdapter = getRunningSyncLockAdapter(mode),
+      lockUnavailableResult = {
+        status: "skipped",
+        reason: "sync_lock_unavailable",
+      },
+      onLockUnavailable,
+      runTransaction,
+      afterRelease,
+      handleResult,
+    } = options;
 
-  const getForegroundFollowUpSyncLockValue = () => {
-    const lock = GM_getValue(FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY, null);
-    if (
-      lock &&
-      typeof lock === "object" &&
-      lock.owner &&
-      typeof lock.timestamp === "number"
-    ) {
-      return lock;
+    if (!lockAdapter || typeof runTransaction !== "function") {
+      throw new Error("Running Sync 缺少有效的锁 adapter 或事务 implementation。");
     }
-    return null;
-  };
-
-  const acquireForegroundFollowUpSyncLock = async () => {
-    const now = Date.now();
-    const currentLock = getForegroundFollowUpSyncLockValue();
-    const lockIsValid =
-      currentLock &&
-      now - currentLock.timestamp < FOREGROUND_FOLLOWUP_SYNC_LOCK_TTL_MS;
-    const globalLock = getGlobalSyncLockValue();
-    const globalLockIsValid = isGlobalSyncLockValid(globalLock, now);
-
-    if (lockIsValid && currentLock.owner !== BACKGROUND_SYNC_OWNER_ID) {
-      return false;
-    }
-    if (hasActiveOtherModeSyncLock(SYNC_LOCK_MODE_FOREGROUND_FOLLOWUP, now)) {
-      return false;
-    }
-    if (
-      globalLockIsValid &&
-      (globalLock.owner !== BACKGROUND_SYNC_OWNER_ID ||
-        globalLock.mode !== SYNC_LOCK_MODE_FOREGROUND_FOLLOWUP)
-    ) {
-      return false;
-    }
-
-    GM_setValue(FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY, {
-      owner: BACKGROUND_SYNC_OWNER_ID,
-      timestamp: now,
-    });
-    setGlobalSyncLock(
-      SYNC_LOCK_MODE_FOREGROUND_FOLLOWUP,
-      now,
-      FOREGROUND_FOLLOWUP_SYNC_LOCK_TTL_MS
-    );
-
-    const acquired = await verifySyncLockOwnership(() => {
-      const verifiedModeLock = getForegroundFollowUpSyncLockValue();
-      const verifiedGlobalLock = getGlobalSyncLockValue();
-      return (
-        verifiedModeLock &&
-        verifiedModeLock.owner === BACKGROUND_SYNC_OWNER_ID &&
-        verifiedGlobalLock &&
-        verifiedGlobalLock.owner === BACKGROUND_SYNC_OWNER_ID &&
-        verifiedGlobalLock.mode === SYNC_LOCK_MODE_FOREGROUND_FOLLOWUP
-      );
-    });
-    if (!acquired) {
-      releaseForegroundFollowUpSyncLock();
-    }
-    return acquired;
-  };
-
-  const refreshForegroundFollowUpSyncLock = () => {
-    const currentLock = getForegroundFollowUpSyncLockValue();
-    if (!currentLock || currentLock.owner !== BACKGROUND_SYNC_OWNER_ID) {
-      return false;
-    }
-    if (
-      !refreshGlobalSyncLock(
-        SYNC_LOCK_MODE_FOREGROUND_FOLLOWUP,
-        FOREGROUND_FOLLOWUP_SYNC_LOCK_TTL_MS
-      )
-    ) {
-      return false;
-    }
-    GM_setValue(FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY, {
-      owner: BACKGROUND_SYNC_OWNER_ID,
-      timestamp: Date.now(),
-    });
-    return true;
-  };
-
-  const releaseForegroundFollowUpSyncLock = () => {
-    const currentLock = getForegroundFollowUpSyncLockValue();
-    if (currentLock && currentLock.owner === BACKGROUND_SYNC_OWNER_ID) {
-      GM_deleteValue(FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY);
-    }
-    releaseGlobalSyncLock(SYNC_LOCK_MODE_FOREGROUND_FOLLOWUP);
-  };
-
-  const startForegroundFollowUpSyncLockHeartbeat = () => {
-    if (foregroundFollowUpSyncLockHeartbeatTimer) {
-      clearInterval(foregroundFollowUpSyncLockHeartbeatTimer);
-    }
-    foregroundFollowUpSyncLockHeartbeatTimer = setInterval(() => {
-      if (!refreshForegroundFollowUpSyncLock()) {
-        stopForegroundFollowUpSyncLockHeartbeat();
-        console.warn("S1 Plus: 前台补同步锁续租失败，当前任务将中止。");
+    if (!(await lockAdapter.acquire())) {
+      if (typeof onLockUnavailable === "function") {
+        await onLockUnavailable();
       }
-    }, FOREGROUND_FOLLOWUP_SYNC_LOCK_HEARTBEAT_MS);
-  };
-
-  const stopForegroundFollowUpSyncLockHeartbeat = () => {
-    if (foregroundFollowUpSyncLockHeartbeatTimer) {
-      clearInterval(foregroundFollowUpSyncLockHeartbeatTimer);
-      foregroundFollowUpSyncLockHeartbeatTimer = null;
-    }
-  };
-
-  const getStartupSyncLockValue = () => {
-    const lock = GM_getValue(STARTUP_SYNC_LOCK_KEY, null);
-    if (
-      lock &&
-      typeof lock === "object" &&
-      lock.owner &&
-      typeof lock.timestamp === "number"
-    ) {
-      return lock;
-    }
-    return null;
-  };
-
-  const acquireStartupSyncLock = async () => {
-    const now = Date.now();
-    const currentLock = getStartupSyncLockValue();
-    const lockIsValid =
-      currentLock && now - currentLock.timestamp < STARTUP_SYNC_LOCK_TTL_MS;
-    const globalLock = getGlobalSyncLockValue();
-    const globalLockIsValid = isGlobalSyncLockValid(globalLock, now);
-
-    if (lockIsValid && currentLock.owner !== BACKGROUND_SYNC_OWNER_ID) {
-      return false;
-    }
-    if (hasActiveOtherModeSyncLock(SYNC_LOCK_MODE_STARTUP, now)) {
-      return false;
-    }
-    if (
-      globalLockIsValid &&
-      (globalLock.owner !== BACKGROUND_SYNC_OWNER_ID ||
-        globalLock.mode !== SYNC_LOCK_MODE_STARTUP)
-    ) {
-      return false;
+      return lockUnavailableResult;
     }
 
-    GM_setValue(STARTUP_SYNC_LOCK_KEY, {
-      owner: BACKGROUND_SYNC_OWNER_ID,
-      timestamp: now,
-    });
-    setGlobalSyncLock(SYNC_LOCK_MODE_STARTUP, now, STARTUP_SYNC_LOCK_TTL_MS);
-
-    const acquired = await verifySyncLockOwnership(() => {
-      const verifiedModeLock = getStartupSyncLockValue();
-      const verifiedGlobalLock = getGlobalSyncLockValue();
-      return (
-        verifiedModeLock &&
-        verifiedModeLock.owner === BACKGROUND_SYNC_OWNER_ID &&
-        verifiedGlobalLock &&
-        verifiedGlobalLock.owner === BACKGROUND_SYNC_OWNER_ID &&
-        verifiedGlobalLock.mode === SYNC_LOCK_MODE_STARTUP
-      );
-    });
-    if (!acquired) {
-      releaseStartupSyncLock();
-    }
-    return acquired;
-  };
-
-  const refreshStartupSyncLock = () => {
-    const currentLock = getStartupSyncLockValue();
-    if (!currentLock || currentLock.owner !== BACKGROUND_SYNC_OWNER_ID) {
-      return false;
-    }
-    if (!refreshGlobalSyncLock(SYNC_LOCK_MODE_STARTUP, STARTUP_SYNC_LOCK_TTL_MS)) {
-      return false;
-    }
-    GM_setValue(STARTUP_SYNC_LOCK_KEY, {
-      owner: BACKGROUND_SYNC_OWNER_ID,
-      timestamp: Date.now(),
-    });
-    return true;
-  };
-
-  const releaseStartupSyncLock = () => {
-    const currentLock = getStartupSyncLockValue();
-    if (currentLock && currentLock.owner === BACKGROUND_SYNC_OWNER_ID) {
-      GM_deleteValue(STARTUP_SYNC_LOCK_KEY);
-    }
-    releaseGlobalSyncLock(SYNC_LOCK_MODE_STARTUP);
-  };
-
-  const startStartupSyncLockHeartbeat = () => {
-    if (startupSyncLockHeartbeatTimer) {
-      clearInterval(startupSyncLockHeartbeatTimer);
-    }
-    startupSyncLockHeartbeatTimer = setInterval(() => {
-      if (!refreshStartupSyncLock()) {
-        stopStartupSyncLockHeartbeat();
-        console.warn("S1 Plus: 启动同步锁续租失败，当前任务将中止。");
+    let heartbeatStarted = false;
+    let result;
+    try {
+      lockAdapter.startHeartbeat();
+      heartbeatStarted = true;
+      result = await runTransaction();
+    } finally {
+      try {
+        if (heartbeatStarted) {
+          lockAdapter.stopHeartbeat();
+        }
+      } finally {
+        lockAdapter.release();
       }
-    }, STARTUP_SYNC_LOCK_HEARTBEAT_MS);
-  };
-
-  const stopStartupSyncLockHeartbeat = () => {
-    if (startupSyncLockHeartbeatTimer) {
-      clearInterval(startupSyncLockHeartbeatTimer);
-      startupSyncLockHeartbeatTimer = null;
+      if (typeof afterRelease === "function") {
+        await afterRelease();
+      }
     }
+
+    if (typeof handleResult === "function") {
+      await handleResult(result);
+    }
+    return result;
   };
 
   const forceReleaseSyncLocksForManualOverride = () => {
@@ -29376,6 +29197,89 @@
         }
         break;
     }
+  };
+
+  const runBackgroundAutoSyncIteration = async (options = {}) => {
+    const {
+      reason = "local_change",
+      drainCount = 1,
+      initialSchedulerContext = {},
+      indicatorCycleToken = "",
+      indicatorCompletionState = {},
+      performAutoSync: performAutoSyncFn = performAutoSync,
+      handleBackgroundAutoSyncResult:
+        handleBackgroundAutoSyncResultFn = handleBackgroundAutoSyncResult,
+      onLockUnavailable,
+    } = options;
+    let nextIndicatorCycleToken = indicatorCycleToken;
+    let indicatorCompletion = null;
+    let runSchedulerContext = null;
+
+    const result = await runRunningSync({
+      mode: SYNC_LOCK_MODE_BACKGROUND,
+      lockUnavailableResult: {
+        status: "skipped",
+        reason: "background_lock_unavailable",
+      },
+      onLockUnavailable,
+      runTransaction: async () => {
+        if (!nextIndicatorCycleToken) {
+          nextIndicatorCycleToken = startAutoSyncIndicatorCycle(
+            AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+            { reason }
+          );
+        }
+        console.log("S1 Plus: 检测到数据变更，触发后台同步检查...");
+        recordSyncTraceEvent("background_run_start", {
+          scope: "background_auto_sync",
+          status: "running",
+          message: "后台同步开始执行",
+          details: { reason, drainCount },
+        });
+        runSchedulerContext = resolveBackgroundSyncSchedulerContextForRun(
+          drainCount === 1 ? initialSchedulerContext : {}
+        );
+        const syncResult = await performAutoSyncFn(
+          false,
+          SYNC_LOCK_MODE_BACKGROUND,
+          SYNC_TRIGGER_SOURCE_BACKGROUND_PUSH
+        );
+        if (syncResult && typeof syncResult === "object") {
+          syncResult.backgroundSchedulerContext = runSchedulerContext;
+          if (syncResult.status === "success") {
+            syncResult.backgroundSchedulerCleanup =
+              cleanupBackgroundSchedulerAfterSuccess(
+                syncResult,
+                runSchedulerContext
+              );
+            recordBackgroundSchedulerCleanupDiagnostics({
+              schedulerContext: runSchedulerContext,
+              cleanupResult: syncResult.backgroundSchedulerCleanup,
+              drainLoopCount: drainCount,
+            });
+          }
+        }
+        return syncResult;
+      },
+      handleResult: async (syncResult) => {
+        indicatorCompletion = resolveAutoSyncIndicatorDrainCompletion({
+          currentPhase: indicatorCompletionState.currentPhase || "",
+          currentReason: indicatorCompletionState.currentReason || "",
+          result: syncResult,
+          hadSuccessfulOperation:
+            indicatorCompletionState.hadSuccessfulOperation === true,
+          lastSuccessfulOperation:
+            indicatorCompletionState.lastSuccessfulOperation || "",
+        });
+        await handleBackgroundAutoSyncResultFn(syncResult);
+      },
+    });
+
+    return {
+      result,
+      indicatorCycleToken: nextIndicatorCycleToken,
+      indicatorCompletion,
+    };
   };
 
   const fetchRemoteData = async (options = {}) => {
@@ -29846,71 +29750,38 @@
           hasPendingBackgroundSync = false;
           drainCount += 1;
 
-          if (!(await acquireBackgroundSyncLock())) {
-            hasPendingBackgroundSync = true;
-            console.log(
-              "S1 Plus: 检测到其他同步任务正在执行，稍后将重试。"
-            );
-            emitSyncCompletionLog({
-              scope: "background_auto_sync",
-              scopeLabel: "后台自动同步",
-              outcome: "skipped",
-              result: {
-                status: "skipped",
-                reason: "background_lock_unavailable",
-              },
-              details: { reason, drainCount },
-            });
-            scheduleBackgroundSyncRetry();
-            break;
-          }
-          if (!indicatorCycleToken) {
-            indicatorCycleToken = startAutoSyncIndicatorCycle(
-              AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
-              { reason }
-            );
-          }
-
-          startBackgroundSyncLockHeartbeat();
-          try {
-            console.log("S1 Plus: 检测到数据变更，触发后台同步检查...");
-            recordSyncTraceEvent("background_run_start", {
-              scope: "background_auto_sync",
-              status: "running",
-              message: "后台同步开始执行",
-              details: { reason, drainCount },
-            });
-            const runSchedulerContext =
-              resolveBackgroundSyncSchedulerContextForRun(
-                drainCount === 1 ? initialSchedulerContext : {}
-              );
-            const result = await performAutoSync(
-              false,
-              SYNC_LOCK_MODE_BACKGROUND,
-              SYNC_TRIGGER_SOURCE_BACKGROUND_PUSH
-            );
-            if (result && typeof result === "object") {
-              result.backgroundSchedulerContext = runSchedulerContext;
-              if (result.status === "success") {
-                result.backgroundSchedulerCleanup =
-                  cleanupBackgroundSchedulerAfterSuccess(
-                    result,
-                    runSchedulerContext
-                  );
-                recordBackgroundSchedulerCleanupDiagnostics({
-                  schedulerContext: runSchedulerContext,
-                  cleanupResult: result.backgroundSchedulerCleanup,
-                  drainLoopCount: drainCount,
-                });
-              }
-            }
-            const indicatorCompletion = resolveAutoSyncIndicatorDrainCompletion({
+          const iteration = await runBackgroundAutoSyncIteration({
+            reason,
+            drainCount,
+            initialSchedulerContext,
+            indicatorCycleToken,
+            indicatorCompletionState: {
               currentPhase: indicatorFinalPhase,
               currentReason: indicatorFinalReason,
-              result,
               hadSuccessfulOperation: indicatorHadSuccessfulOperation,
               lastSuccessfulOperation: indicatorLastSuccessfulOperation,
-            });
+            },
+            onLockUnavailable: () => {
+              hasPendingBackgroundSync = true;
+              console.log(
+                "S1 Plus: 检测到其他同步任务正在执行，稍后将重试。"
+              );
+              emitSyncCompletionLog({
+                scope: "background_auto_sync",
+                scopeLabel: "后台自动同步",
+                outcome: "skipped",
+                result: {
+                  status: "skipped",
+                  reason: "background_lock_unavailable",
+                },
+                details: { reason, drainCount },
+              });
+              scheduleBackgroundSyncRetry();
+            },
+          });
+          indicatorCycleToken = iteration.indicatorCycleToken;
+          const indicatorCompletion = iteration.indicatorCompletion;
+          if (indicatorCompletion) {
             indicatorFinalPhase = indicatorCompletion.phase;
             indicatorFinalReason = indicatorCompletion.reason;
             indicatorHadSuccessfulOperation =
@@ -29919,10 +29790,10 @@
             indicatorLastSuccessfulOperation =
               indicatorCompletion.lastSuccessfulOperation ||
               indicatorCompletion.lastSuccessfulWriteAction;
-            await handleBackgroundAutoSyncResult(result);
-          } finally {
-            stopBackgroundSyncLockHeartbeat();
-            releaseBackgroundSyncLock();
+          }
+          const result = iteration.result;
+          if (result?.reason === "background_lock_unavailable") {
+            break;
           }
         }
 
@@ -31339,6 +31210,35 @@
     }
   };
 
+  const finalizeStartupRunningSyncResult = (result, policy = {}) => {
+    if (!result || typeof result !== "object") {
+      return result;
+    }
+    const dailyDate = String(policy.dailyDate || "").trim();
+    if (dailyDate) {
+      if (
+        result.status === "success" &&
+        result.action !== "skipped_push_on_startup"
+      ) {
+        markDailyStartupSyncCompletedForToday(dailyDate);
+      } else if (
+        shouldClearDeferredStartupSyncOnResult(
+          result,
+          policy.shouldResumeDeferredStartupSync === true
+        )
+      ) {
+        clearDeferredStartupSyncRequest();
+      }
+    }
+    if (
+      policy.refreshStartupAutoSyncCooldown === true &&
+      shouldRefreshStartupAutoSyncCooldown(result)
+    ) {
+      GM_setValue(STARTUP_AUTO_SYNC_LAST_TS_KEY, Date.now());
+    }
+    return result;
+  };
+
   const runStartupModeAutoSyncCheck = async (options = {}) => {
     const {
       acquireStartupSyncLock: acquireStartupSyncLockFn = acquireStartupSyncLock,
@@ -31356,93 +31256,88 @@
       onLockUnavailable,
       beforePerform,
       onBeforePerform,
-      onBeforeRelease,
+      completionPolicy = null,
       onAfterRelease,
     } = options;
-
-    if (!(await acquireStartupSyncLockFn())) {
-      if (typeof onLockUnavailable === "function") {
-        await onLockUnavailable();
-      }
-      emitSyncCompletionLog({
-        scope: "startup_auto_sync",
-        scopeLabel: "每日首次同步",
-        outcome: "skipped",
-        result: lockUnavailableResult,
-        details: { triggerSource },
-      });
-      return lockUnavailableResult;
-    }
-
-    recordSyncTraceEvent("startup_lock_acquired", {
-      scope: "startup_auto_sync",
-      status: "running",
-      message: "每日首次同步已取得启动同步锁",
-      details: { triggerSource },
-    });
-    startStartupSyncLockHeartbeatFn();
-    try {
-      if (typeof beforePerform === "function") {
-        const beforePerformResult = await beforePerform();
-        if (
-          beforePerformResult &&
-          typeof beforePerformResult === "object" &&
-          beforePerformResult.skip === true
-        ) {
-          if (typeof onBeforeRelease === "function") {
-            try {
-              await onBeforeRelease(beforePerformResult.result);
-            } catch (e) {
-              console.error(
-                "S1 Plus (Sync): onBeforeRelease 回调失败 (skip):",
-                e
-              );
-            }
+    return runRunningSync({
+      mode: SYNC_LOCK_MODE_STARTUP,
+      lockAdapter: {
+        acquire: acquireStartupSyncLockFn,
+        startHeartbeat: startStartupSyncLockHeartbeatFn,
+        stopHeartbeat: stopStartupSyncLockHeartbeatFn,
+        release: releaseStartupSyncLockFn,
+      },
+      lockUnavailableResult,
+      onLockUnavailable: async () => {
+        if (typeof onLockUnavailable === "function") {
+          await onLockUnavailable();
+        }
+        emitSyncCompletionLog({
+          scope: "startup_auto_sync",
+          scopeLabel: "每日首次同步",
+          outcome: "skipped",
+          result: lockUnavailableResult,
+          details: { triggerSource },
+        });
+      },
+      runTransaction: async () => {
+        recordSyncTraceEvent("startup_lock_acquired", {
+          scope: "startup_auto_sync",
+          status: "running",
+          message: "每日首次同步已取得启动同步锁",
+          details: { triggerSource },
+        });
+        if (typeof beforePerform === "function") {
+          const beforePerformResult = await beforePerform();
+          if (
+            beforePerformResult &&
+            typeof beforePerformResult === "object" &&
+            beforePerformResult.skip === true
+          ) {
+            const skipResult = finalizeStartupRunningSyncResult(
+              beforePerformResult.result,
+              completionPolicy || {}
+            );
+            emitSyncCompletionLog({
+              scope: "startup_auto_sync",
+              scopeLabel: "每日首次同步",
+              outcome: skipResult?.status || "skipped",
+              result: skipResult,
+              details: {
+                triggerSource,
+                beforePerformReason: beforePerformResult.reason || "",
+              },
+            });
+            return skipResult;
           }
-          emitSyncCompletionLog({
-            scope: "startup_auto_sync",
-            scopeLabel: "每日首次同步",
-            outcome: beforePerformResult.result?.status || "skipped",
-            result: beforePerformResult.result,
-            details: {
-              triggerSource,
-              beforePerformReason: beforePerformResult.reason || "",
-            },
-          });
-          return beforePerformResult.result;
         }
-      }
 
-      if (typeof onBeforePerform === "function") {
-        await onBeforePerform();
-      }
-      const result = await performAutoSyncFn(
-        true,
-        SYNC_LOCK_MODE_STARTUP,
-        normalizeSyncTriggerSource(triggerSource) ||
-          SYNC_TRIGGER_SOURCE_DAILY_STARTUP
-      );
-      if (typeof onBeforeRelease === "function") {
-        try {
-          await onBeforeRelease(result);
-        } catch (e) {
-          console.error("S1 Plus (Sync): onBeforeRelease 回调失败:", e);
+        if (typeof onBeforePerform === "function") {
+          await onBeforePerform();
         }
-      }
-      return result;
-    } finally {
-      stopStartupSyncLockHeartbeatFn();
-      releaseStartupSyncLockFn();
-      recordSyncTraceEvent("startup_lock_released", {
-        scope: "startup_auto_sync",
-        status: "released",
-        message: "每日首次同步已释放启动同步锁",
-        details: { triggerSource },
-      });
-      if (typeof onAfterRelease === "function") {
-        await onAfterRelease();
-      }
-    }
+        const result = await performAutoSyncFn(
+          true,
+          SYNC_LOCK_MODE_STARTUP,
+          normalizeSyncTriggerSource(triggerSource) ||
+            SYNC_TRIGGER_SOURCE_DAILY_STARTUP
+        );
+        return finalizeStartupRunningSyncResult(
+          result,
+          completionPolicy || {}
+        );
+      },
+      afterRelease: async () => {
+        recordSyncTraceEvent("startup_lock_released", {
+          scope: "startup_auto_sync",
+          status: "released",
+          message: "每日首次同步已释放启动同步锁",
+          details: { triggerSource },
+        });
+        if (typeof onAfterRelease === "function") {
+          await onAfterRelease();
+        }
+      },
+    });
   };
 
   const runStartupModeAutoSyncCheckWithIndicator = async ({
@@ -31533,75 +31428,80 @@
       onBeforePerform,
       onAfterRelease,
     } = options;
-
-    if (!(await acquireForegroundFollowUpSyncLockFn())) {
-      if (typeof onLockUnavailable === "function") {
-        await onLockUnavailable();
-      }
-      emitSyncCompletionLog({
-        scope: "foreground_followup_sync",
-        scopeLabel: "前台补同步",
-        outcome: "skipped",
-        result: lockUnavailableResult,
-        details: { triggerSource },
-      });
-      return lockUnavailableResult;
-    }
-
-    recordSyncTraceEvent("foreground_followup_lock_acquired", {
-      scope: "foreground_followup_sync",
-      status: "running",
-      message: "前台补同步已取得同步锁",
-      details: { triggerSource },
-    });
-    startForegroundFollowUpSyncLockHeartbeatFn();
-    try {
-      if (typeof beforePerform === "function") {
-        const beforePerformResult = await beforePerform();
-        if (
-          beforePerformResult &&
-          typeof beforePerformResult === "object" &&
-          beforePerformResult.skip === true
-        ) {
-          emitSyncCompletionLog({
-            scope: "foreground_followup_sync",
-            scopeLabel: "前台补同步",
-            outcome: beforePerformResult.result?.status || "skipped",
-            result: beforePerformResult.result,
-            details: {
-              triggerSource,
-              beforePerformReason: beforePerformResult.reason || "",
-            },
-          });
-          return beforePerformResult.result;
+    return runRunningSync({
+      mode: SYNC_LOCK_MODE_FOREGROUND_FOLLOWUP,
+      lockAdapter: {
+        acquire: acquireForegroundFollowUpSyncLockFn,
+        startHeartbeat: startForegroundFollowUpSyncLockHeartbeatFn,
+        stopHeartbeat: stopForegroundFollowUpSyncLockHeartbeatFn,
+        release: releaseForegroundFollowUpSyncLockFn,
+      },
+      lockUnavailableResult,
+      onLockUnavailable: async () => {
+        if (typeof onLockUnavailable === "function") {
+          await onLockUnavailable();
         }
-      }
+        emitSyncCompletionLog({
+          scope: "foreground_followup_sync",
+          scopeLabel: "前台补同步",
+          outcome: "skipped",
+          result: lockUnavailableResult,
+          details: { triggerSource },
+        });
+      },
+      runTransaction: async () => {
+        recordSyncTraceEvent("foreground_followup_lock_acquired", {
+          scope: "foreground_followup_sync",
+          status: "running",
+          message: "前台补同步已取得同步锁",
+          details: { triggerSource },
+        });
+        if (typeof beforePerform === "function") {
+          const beforePerformResult = await beforePerform();
+          if (
+            beforePerformResult &&
+            typeof beforePerformResult === "object" &&
+            beforePerformResult.skip === true
+          ) {
+            emitSyncCompletionLog({
+              scope: "foreground_followup_sync",
+              scopeLabel: "前台补同步",
+              outcome: beforePerformResult.result?.status || "skipped",
+              result: beforePerformResult.result,
+              details: {
+                triggerSource,
+                beforePerformReason: beforePerformResult.reason || "",
+              },
+            });
+            return beforePerformResult.result;
+          }
+        }
 
-      clearForegroundFollowUpSoftBlock();
-      if (typeof onBeforePerform === "function") {
-        await onBeforePerform();
-      }
-      return await performAutoSyncFn({
-        mode: AUTO_SYNC_MODE_FOREGROUND_FOLLOWUP,
-        syncLockMode: SYNC_LOCK_MODE_FOREGROUND_FOLLOWUP,
-        useFreshLocalSnapshot: true,
-        triggerSource:
-          normalizeSyncTriggerSource(triggerSource) ||
-          SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME,
-      });
-    } finally {
-      stopForegroundFollowUpSyncLockHeartbeatFn();
-      releaseForegroundFollowUpSyncLockFn();
-      recordSyncTraceEvent("foreground_followup_lock_released", {
-        scope: "foreground_followup_sync",
-        status: "released",
-        message: "前台补同步已释放同步锁",
-        details: { triggerSource },
-      });
-      if (typeof onAfterRelease === "function") {
-        await onAfterRelease();
-      }
-    }
+        clearForegroundFollowUpSoftBlock();
+        if (typeof onBeforePerform === "function") {
+          await onBeforePerform();
+        }
+        return performAutoSyncFn({
+          mode: AUTO_SYNC_MODE_FOREGROUND_FOLLOWUP,
+          syncLockMode: SYNC_LOCK_MODE_FOREGROUND_FOLLOWUP,
+          useFreshLocalSnapshot: true,
+          triggerSource:
+            normalizeSyncTriggerSource(triggerSource) ||
+            SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME,
+        });
+      },
+      afterRelease: async () => {
+        recordSyncTraceEvent("foreground_followup_lock_released", {
+          scope: "foreground_followup_sync",
+          status: "released",
+          message: "前台补同步已释放同步锁",
+          details: { triggerSource },
+        });
+        if (typeof onAfterRelease === "function") {
+          await onAfterRelease();
+        }
+      },
+    });
   };
 
   const runForegroundFollowUpAutoSyncCheckWithIndicator = async ({
@@ -32592,6 +32492,8 @@
       pushRemoteData,
       runRemoteRequestWithRetry,
       performAutoSync,
+      runRunningSync,
+      runBackgroundAutoSyncIteration,
       acquireManualSyncLock,
       preemptActiveSyncForManualOverride,
       cancelActiveRemoteSyncRequests,
@@ -52338,10 +52240,8 @@
             "S1 Plus: 检测到其他同步任务正在执行，本次常规启动同步检查已跳过。"
           );
         },
-        onBeforeRelease: (syncResult) => {
-          if (shouldRefreshStartupAutoSyncCooldown(syncResult)) {
-            GM_setValue(STARTUP_AUTO_SYNC_LAST_TS_KEY, Date.now());
-          }
+        completionPolicy: {
+          refreshStartupAutoSyncCooldown: true,
         },
       },
     });
@@ -52446,24 +52346,10 @@
         onAfterRelease: () => {
           console.log("S1 Plus: 同步锁已释放。");
         },
-        onBeforeRelease: (syncResult) => {
-          if (
-            syncResult.status === "success" &&
-            syncResult.action !== "skipped_push_on_startup"
-          ) {
-            markDailyStartupSyncCompletedForToday(today);
-          } else if (
-            shouldClearDeferredStartupSyncOnResult(
-              syncResult,
-              shouldResumeDeferredStartupSync
-            )
-          ) {
-            clearDeferredStartupSyncRequest();
-          }
-
-          if (shouldRefreshStartupAutoSyncCooldown(syncResult)) {
-            GM_setValue(STARTUP_AUTO_SYNC_LAST_TS_KEY, Date.now());
-          }
+        completionPolicy: {
+          dailyDate: today,
+          shouldResumeDeferredStartupSync,
+          refreshStartupAutoSyncCooldown: true,
         },
       },
     });
