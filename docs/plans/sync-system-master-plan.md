@@ -2,10 +2,10 @@
 
 ## 当前状态
 
-- 计划状态：规划已完成，等待实施批准。
+- 计划状态：Phase 1 实现、自动验证和独立审查已完成，真实多窗口点验待执行。
 - 总体进度：0/6 个阶段完成。
-- 当前阶段：尚未开始实施。
-- 代码状态：本计划创建时没有同步运行时代码改动。
+- 当前阶段：Phase 1，等待真实多窗口点验。
+- 代码状态：Phase 1 运行代码、测试和架构文档已完成并通过自动复验。
 - 架构依据：2026-07-11 完成同步锁遗留问题的实机复现、代码定位和架构复核。
 
 ## 背景
@@ -106,7 +106,7 @@ Running Sync 的 implementation 负责模式锁、全局锁、心跳、远端事
 
 ## Phase 1：深化 Running Sync
 
-- 状态：未开始。
+- 状态：实现、自动验证和独立审查已完成；真实多窗口点验待执行。
 - 目标：让后台、启动和前台补同步复用同一套 Running Sync 生命周期，修复事务完成后仍持锁的问题。
 - 实施范围：
   - 收敛四组模式锁中重复的读取、获取、验证、续租、停止心跳和释放逻辑。
@@ -124,6 +124,27 @@ Running Sync 的 implementation 负责模式锁、全局锁、心跳、远端事
   - Result Phase 处理抛出异常时，不会重新占用或延长执行锁。
   - 启动和前台补同步的现有锁 TTL、失锁和指示器行为不变。
 - 主要文件：`S1Plus.js`、`tests/test-safe-sync-execution.js`、`tests/test-background-sync-shared-debounce.js`、`DEVELOPMENT.md`、`docs/agents/repository-guide.md`。
+
+### Phase 1 进度更新
+
+- 已完成：
+  - 新增 `runRunningSync()`，统一后台、启动和前台补同步的锁、心跳、完整事务、释放锁和 Result Phase 顺序；该 interface 不接受独立 finalizer，事务收尾必须在 `runTransaction` resolve 前完成。
+  - 新增 mode profile，让手动、后台、启动和前台补同步共用模式锁读取、获取、续租和释放 implementation。
+  - 新增生产路径 `runBackgroundAutoSyncIteration()` seam，将后台 scheduler cleanup 保留在同步事务内，将指示器聚合和 `handleBackgroundAutoSyncResult()` 移到锁释放后。
+  - 保留手动同步的主动抢占流程，只复用模式锁 implementation。
+  - 新增 Running Sync interface 场景测试，覆盖完整事务收尾、Result Phase 失败、心跳启动失败释放和四种模式 TTL。
+  - 新增真实 GM 后台模式锁与全局锁回归：生产后台迭代进入永久等待的 Result Phase 后，两把锁均已释放，且 scheduler cleanup 已在锁内完成。
+- 独立审查：
+  - 使用一个 subagent 同时按仓库规范与 Phase 1 spec 审查，发现 2 个 P2，均已修正。
+  - 移除“先调用再拒绝”的异步 finalizer 设计，避免异步 continuation 在锁释放后继续修改事务状态。
+  - 用生产后台迭代 seam 和真实持久化锁替代只依赖 fake lock adapter 的关键回归，并加入可长期 pending 的 Result Phase gate。
+- 自动验证：
+  - `node --check S1Plus.js` 通过。
+  - 16 个 sync / foreground / startup / remote 相关测试文件全部通过。
+  - `git diff --check` 通过。
+- 尚未完成：
+  - 真实多窗口手动点验，本轮自动实现环境尚未执行。
+- 下一步：按本文件的多窗口步骤完成 Phase 1 人工验收；通过后将 Phase 1 标为已完成，再进入 Phase 2。
 
 ## Phase 2：深化 Pending Dirty Scheduler
 
