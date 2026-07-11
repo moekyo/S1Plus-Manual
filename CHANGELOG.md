@@ -108,6 +108,12 @@
 
 ### 🔧 技术改进、测试与文档 (Refactoring, Tests & Docs)
 
+- **同步系统六阶段架构收口**: 完成 Running Sync、Pending Dirty Scheduler、浏览器生命周期 adapter、Sync Indicator State Projection、Result Phase Policy 与最终 `s1pSyncSystem` façade 的分层重构；页面调用者现在只表达本地变更、生命周期变化、同步意图和状态读取，不再直接协调锁、timer、generation 或 owner lease。
+- **Running Sync 事务边界深化**: 后台、启动和前台补同步统一通过 `runRunningSync()` 管理模式锁、全局锁与心跳；远端 writer、baseline 和 pending/shared coverage 全部落定后才释放事务，刷新、提示、冲突处理与重试统一延后到锁释放后的 Result Phase，减少已完成网络事务仍残留同步锁的情况。
+- **Pending Dirty Scheduler 模块化**: Pending Dirty、shared generation、Scheduler Owner lease、due timer、covered cleanup 与 retry 选择统一收口到 `pendingDirtyScheduler`；跨标签新 dirty 的 read-delete 竞争会重建 pending 并只安排一次 follow-up，handoff 也会停止非 owner 页残留的 recovery watch。
+- **生命周期与状态投影统一**: `s1pSyncLifecycleAdapter` 集中处理 visibility/pageshow/pagehide/beforeunload，并固定“本地 finalizer → Scheduler checkpoint → 前台恢复”的顺序；Navbar 与 Title Owner 统一通过状态投影读取 Running、Pending、Result 与 conflict/circuit 事实，避免两套状态解释逐渐漂移。
+- **Result Phase 与系统入口收口**: `s1pSyncResultPhasePolicy` 统一决定自动同步后的刷新、冲突暂停、提示和重试，adapter 故障按 best-effort 隔离；`s1pSyncSystem` 作为唯一页面同步入口，集中初始化恢复顺序并提供可回滚、可重试的显式 teardown 语义。
+- **同步测试边界清理**: 系统级测试改为优先穿过 `s1pSyncSystem`，删除已被 façade 场景替代的 production singleton hooks；新增 façade 合约、初始化失败回滚、六条本地变更返回路径、九种同步意图映射及关键生命周期覆盖。六阶段实现与独立审查均已完成，全仓 31 个测试文件通过。
 - **初始化流程分阶段框架**: `document-start` 启动后，初始化被拆分为 `document-start`、`body-ready`、`forum-ready`、`services-ready`、`content-ready` 与 `deferred` 阶段，支持后台可重试任务、阶段结果记录和错误隔离，降低过早启动带来的 DOM 时序问题。
 - **同步状态模型分层**: 新增 tab-local / thread-local 的前台 follow-up soft block，与全局 hard pause 分离，避免一个标签页的局部脏状态冻结所有标签页。
 - **阅读进度与自动合并链路收敛**: 阅读进度候选、确认、持久化、自动合并 payload 构建和同步后刷新入口统一复用辅助函数，减少重复分支。
