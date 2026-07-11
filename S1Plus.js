@@ -28937,13 +28937,27 @@
     } finally {
       try {
         if (heartbeatStarted) {
-          lockAdapter.stopHeartbeat();
+          try {
+            lockAdapter.stopHeartbeat();
+          } catch (error) {
+            console.warn(
+              "S1 Plus: Running Sync 停止锁心跳失败，已继续释放同步锁。",
+              error
+            );
+          }
         }
       } finally {
         lockAdapter.release();
       }
       if (typeof afterRelease === "function") {
-        await afterRelease();
+        try {
+          await afterRelease();
+        } catch (error) {
+          console.warn(
+            "S1 Plus: Running Sync 锁后清理失败，已继续处理同步结果。",
+            error
+          );
+        }
       }
     }
 
@@ -29791,8 +29805,8 @@
               indicatorCompletion.lastSuccessfulOperation ||
               indicatorCompletion.lastSuccessfulWriteAction;
           }
-          const result = iteration.result;
-          if (result?.reason === "background_lock_unavailable") {
+          const iterationResult = iteration.result;
+          if (iterationResult?.reason === "background_lock_unavailable") {
             break;
           }
         }

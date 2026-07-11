@@ -138,6 +138,9 @@ Running Sync 的 implementation 负责模式锁、全局锁、心跳、远端事
   - 使用一个 subagent 同时按仓库规范与 Phase 1 spec 审查，发现 2 个 P2，均已修正。
   - 移除“先调用再拒绝”的异步 finalizer 设计，避免异步 continuation 在锁释放后继续修改事务状态。
   - 用生产后台迭代 seam 和真实持久化锁替代只依赖 fake lock adapter 的关键回归，并加入可长期 pending 的 Result Phase gate。
+  - consolidated review 的后续问题已修正：`afterRelease` 和停止心跳失败改为记录警告并继续释放锁/处理既有结果，drain loop 变量遮蔽已消除。
+  - 补齐模式锁过期重取、其他模式锁阻塞、ownership verification 失败回滚，以及锁获取/lock-unavailable callback 异常传播的边界测试。
+  - 修复后按 Standards/Spec 两轴复审：0 个硬性规范问题，0 个 spec findings；仅修正文档中普通锁竞争与锁获取异常的措辞区分。
 - 自动验证：
   - `node --check S1Plus.js` 通过。
   - 16 个 sync / foreground / startup / remote 相关测试文件全部通过。
