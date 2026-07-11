@@ -2,10 +2,10 @@
 
 ## 当前状态
 
-- 计划状态：Phase 1 到 Phase 5 的实现、自动验证和独立审查已完成；Phase 1 到 Phase 3 真实多窗口点验仍待执行。
-- 总体实施进度：5/6 个阶段已完成代码实现和独立审查。
-- 当前阶段：Phase 5 已完成，下一步进入 Phase 6 同步系统 façade。
-- 代码状态：Phase 5 Result Phase Policy interface、四类自动同步结果 consumer 迁移、锁后冲突暂停/清除、失败隔离、场景测试和 review fixes 已完成并复验。
+- 计划状态：Phase 1 到 Phase 6 已完成实现、自动验证和独立审查；Phase 1 到 Phase 3 真实多窗口点验仍待执行。
+- 总体实施进度：6/6 个阶段已完成代码实现，6/6 个阶段已完成独立审查。
+- 当前阶段：六个架构阶段全部完成；后续仅剩 Phase 1 到 Phase 3 的真实多窗口点验。
+- 代码状态：`s1pSyncSystem` façade、页面调用者迁移、可回滚初始化恢复编排、系统 interface 测试和被替代 test hook 清理已完成，通过全仓自动测试与独立终审。
 - 架构依据：2026-07-11 完成同步锁遗留问题的实机复现、代码定位和架构复核。
 
 ## 背景
@@ -333,7 +333,7 @@ Running Sync 的 implementation 负责模式锁、全局锁、心跳、远端事
 
 ## Phase 6：建立同步系统 façade
 
-- 状态：未开始。
+- 状态：实现、自动验证和独立审查已完成。
 - 目标：在内部 module 已经具备 depth 后，为页面调用者建立最终同步入口。
 - 实施范围：
   - 页面代码只表达本地变化、生命周期变化、同步请求和状态读取。
@@ -349,6 +349,19 @@ Running Sync 的 implementation 负责模式锁、全局锁、心跳、远端事
   - 系统级测试可以从同步意图运行到最终状态，不穿透内部 implementation。
   - 删除 façade 后，复杂度会重新分散到多个调用点，证明该 module 具有真实 depth。
 - 主要文件：`S1Plus.js`、同步相关测试、`DEVELOPMENT.md`、`docs/agents/repository-guide.md`、`CONTEXT.md`。
+
+### Phase 6 实现记录
+
+- 新增 `s1pSyncSystem`，以 `initialize / dispose / recordLocalMutation / handleLifecycle / requestSync / readState` 作为唯一页面 interface；Running Sync、Pending Dirty Scheduler、生命周期 adapter、Result Phase Policy 和 Sync Indicator State Projection 保持内部 implementation。
+- `initialize()` 集中执行 lifecycle support 绑定、Scheduler Owner 恢复和 Pending Dirty 恢复；任一恢复步骤抛错时会先 handoff 可能已恢复的 Scheduler Owner、再 unbind lifecycle support，并保留下一次初始化重试能力，避免半初始化。Scheduler `handoff()` 同时停止非 owner 页面已挂起的 lease recovery watch，防止回滚后 timer 再次接管。
+- 本地数据变更、导入后后台推送、Navbar/常驻提示/设置页手动同步、启动期 daily/per-load/initial-foreground 请求，以及 Navbar/Title/debug 投影读取均迁移到 façade。
+- 新增 `tests/test-sync-system-facade.js`，从 façade interface 覆盖初始化/释放、本地变更记录、语义化 sync intent 与状态读取，并精确验证初始化顺序、两条恢复异常回滚路径及全部九种 sync intent 的参数映射；Pending Dirty Scheduler 场景补充非 owner handoff 清理 recovery watch 的 production 分支；现有 foreground、lifecycle、startup、Result Phase、Navbar 和 Title 场景测试同步改为穿过 façade。
+- 删除已被 façade 场景替代的生产 scheduler、lifecycle singleton、projection、foreground probe、startup consumer 和 startup-flow 全局 test hooks；内部 module constructor 的专用场景测试继续保留。
+- 独立审查首轮发现两项 P2：初始化恢复失败只解绑 lifecycle、未释放 Scheduler runtime，以及 façade 合约测试未精确覆盖恢复顺序与全部 intent 映射。修复后补齐 handoff → unbind 回滚、失败后重试及九种 intent 参数测试。
+- 同一审查者复审进一步发现非 owner 的 `handoff()` 未停止 owner lease recovery watch；Scheduler module 收紧 handoff 契约并新增 production 分支回归后，终审为 0 findings，未发现新 P0/P1/P2。
+- 自动验证：`node --check S1Plus.js`、Phase 6 façade/Pending Dirty Scheduler 定向测试及全仓 31 个测试文件通过；`git diff --check` 通过。
+- 尚未完成：Phase 1 到 Phase 3 真实多窗口手动点验仍待执行。
+- 下一步：按跨阶段真实场景检查清单执行多窗口点验；不再新增架构阶段。
 
 ## 跨阶段回归矩阵
 
@@ -377,6 +390,7 @@ node tests/test-background-sync-shared-debounce.js
 node tests/test-foreground-trigger-integration.js
 node tests/test-foreground-remote-probe.js
 node tests/test-auto-sync-indicator-linkage.js
+node tests/test-sync-system-facade.js
 ```
 
 涉及标题投影时追加：

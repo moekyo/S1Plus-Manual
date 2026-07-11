@@ -23,6 +23,13 @@ const enabledSettings = {
   syncCheckOnReturnToForeground: true,
 };
 
+const requestForegroundProbe = (hooks, reason, options = {}) =>
+  hooks.s1pSyncSystem.requestSync({
+    kind: "foreground_probe",
+    reason,
+    options,
+  });
+
 const expectMatch = (pattern, message) => {
   assert.match(sourceCode, pattern, message);
 };
@@ -68,7 +75,7 @@ const testUnchangedProbeUpdatesDiagnosticsQuietly = async () => {
 
   const messages = [];
   const now = 1760000010000;
-  const result = await hooks.checkRemoteFreshnessOnForeground("visibilitychange", {
+  const result = await requestForegroundProbe(hooks, "visibilitychange", {
     now,
     settingsSnapshot: enabledSettings,
     showMessage: (message, isSuccess) => {
@@ -119,7 +126,7 @@ const testChangedRemoteBlockedByLocalChangesStaysQuietAndRecordsSoftBlock = asyn
 
   const messages = [];
   const now = 1760000100000;
-  const result = await hooks.checkRemoteFreshnessOnForeground("pageshow", {
+  const result = await requestForegroundProbe(hooks, "pageshow", {
     now,
     settingsSnapshot: enabledSettings,
     showMessage: (message, isSuccess) => {
@@ -171,7 +178,7 @@ const testSharedCooldownRecordsDiagnosticsAndStaysQuietDuringPolling = async () 
   });
 
   const messages = [];
-  const result = await hooks.checkRemoteFreshnessOnForeground(
+  const result = await requestForegroundProbe(hooks,
     "visible_poll_active",
     {
       now,
@@ -208,7 +215,7 @@ const testActiveSyncSkipStaysQuiet = async () => {
   });
 
   const messages = [];
-  const result = await hooks.checkRemoteFreshnessOnForeground("visibilitychange", {
+  const result = await requestForegroundProbe(hooks, "visibilitychange", {
     now: 1760000300000,
     settingsSnapshot: enabledSettings,
     showMessage: (message, isSuccess) => {
@@ -239,7 +246,7 @@ const testProbeExecutionFailureStillRecordsDiagnostics = async () => {
   const { hooks } = createHarness();
   const now = 1760000400000;
 
-  const result = await hooks.checkRemoteFreshnessOnForeground("visibilitychange", {
+  const result = await requestForegroundProbe(hooks, "visibilitychange", {
     now,
     settingsSnapshot: enabledSettings,
     fetchRemoteData: async () => {

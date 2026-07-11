@@ -164,6 +164,13 @@ const enabledSettings = {
   syncCheckOnReturnToForeground: true,
 };
 
+const requestForegroundProbe = (hooks, reason, options = {}) =>
+  hooks.s1pSyncSystem.requestSync({
+    kind: "foreground_probe",
+    reason,
+    options,
+  });
+
 const CLEAN_STATE_COOLDOWN_MS = 5 * 60 * 1000;
 
 const testUnchangedRemoteSkipsFollowUpSync = async () => {
@@ -181,7 +188,7 @@ const testUnchangedRemoteSkipsFollowUpSync = async () => {
   let fetchCount = 0;
   let requestCount = 0;
   const now = 1760000010000;
-  const result = await hooks.checkRemoteFreshnessOnForeground("visibility", {
+  const result = await requestForegroundProbe(hooks, "visibility", {
     now,
     settingsSnapshot: enabledSettings,
     fetchRemoteData: async () => {
@@ -219,7 +226,7 @@ const testChangedRemoteTriggersSafeFollowUpSync = async () => {
   let followUpReason = "";
   let followUpCount = 0;
   const now = 1760000100000;
-  const result = await hooks.checkRemoteFreshnessOnForeground("pageshow", {
+  const result = await requestForegroundProbe(hooks, "pageshow", {
     now,
     settingsSnapshot: enabledSettings,
     fetchRemoteData: async () => ({
@@ -260,7 +267,7 @@ const testForegroundProbeClearsRetryWhenPolicyExecutionDidNotSchedule = async ()
   });
 
   const policyCalls = [];
-  await hooks.checkRemoteFreshnessOnForeground("pageshow", {
+  await requestForegroundProbe(hooks, "pageshow", {
     now: 1760000150000,
     settingsSnapshot: enabledSettings,
     fetchRemoteData: async () => ({
@@ -393,7 +400,7 @@ const testForegroundRetryKeepsInjectedResultPhasePolicy = async () => {
     },
   };
 
-  await hooks.checkRemoteFreshnessOnForeground("pageshow", {
+  await requestForegroundProbe(hooks, "pageshow", {
     now: 1760000155000,
     settingsSnapshot: enabledSettings,
     fetchRemoteData: async () => ({
@@ -438,7 +445,7 @@ const testForegroundConflictPausesAndShowsFeedback = async () => {
   });
   const messages = [];
 
-  const result = await hooks.checkRemoteFreshnessOnForeground("pageshow", {
+  const result = await requestForegroundProbe(hooks, "pageshow", {
     now: 1760000160000,
     settingsSnapshot: enabledSettings,
     fetchRemoteData: async () => ({
@@ -474,7 +481,7 @@ const testSharedCooldownSuppressesRepeatedProbe = async () => {
   });
 
   let fetchCount = 0;
-  const result = await hooks.checkRemoteFreshnessOnForeground("visibility", {
+  const result = await requestForegroundProbe(hooks, "visibility", {
     now,
     settingsSnapshot: enabledSettings,
     fetchRemoteData: async () => {
@@ -504,7 +511,7 @@ const testCleanStateDoesNotSkipForegroundProbeWithinCooldown = async () => {
 
   let fetchCount = 0;
   let followUpCount = 0;
-  const result = await hooks.checkRemoteFreshnessOnForeground("pageshow", {
+  const result = await requestForegroundProbe(hooks, "pageshow", {
     now,
     settingsSnapshot: enabledSettings,
     fetchRemoteData: async () => {
@@ -549,7 +556,7 @@ const testForegroundProbeRunsAfterCooldownOrLocalMutation =
       });
 
       let fetchCount = 0;
-      const result = await hooks.checkRemoteFreshnessOnForeground("visibility", {
+      const result = await requestForegroundProbe(hooks, "visibility", {
         now,
         settingsSnapshot: enabledSettings,
         fetchRemoteData: async () => {
@@ -578,7 +585,7 @@ const testForegroundProbeRunsAfterCooldownOrLocalMutation =
       });
 
       let fetchCount = 0;
-      const result = await hooks.checkRemoteFreshnessOnForeground(
+      const result = await requestForegroundProbe(hooks,
         "visibilitychange",
         {
           now,
@@ -692,7 +699,7 @@ const testGuardConditionsSkipEarly = async () => {
       reason: "startup_conflict",
       timestamp: 1760000300000,
     });
-    const result = await hooks.checkRemoteFreshnessOnForeground("visibility", {
+    const result = await requestForegroundProbe(hooks, "visibility", {
       now: 1760000305000,
       settingsSnapshot: enabledSettings,
       fetchRemoteData: async () => {
@@ -705,7 +712,7 @@ const testGuardConditionsSkipEarly = async () => {
   {
     const { hooks, store } = createHarness();
     store.set("s1p_auto_sync_circuit_open_until", Date.now() + 60 * 1000);
-    const result = await hooks.checkRemoteFreshnessOnForeground("visibility", {
+    const result = await requestForegroundProbe(hooks, "visibility", {
       now: 1760000405000,
       settingsSnapshot: enabledSettings,
       fetchRemoteData: async () => {
@@ -723,7 +730,7 @@ const testGuardConditionsSkipEarly = async () => {
       timestamp: Date.now(),
       ttlMs: 60000,
     });
-    const result = await hooks.checkRemoteFreshnessOnForeground("visibility", {
+    const result = await requestForegroundProbe(hooks, "visibility", {
       now: 1760000500000,
       settingsSnapshot: enabledSettings,
       fetchRemoteData: async () => {
