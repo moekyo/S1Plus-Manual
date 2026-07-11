@@ -5,6 +5,9 @@ const { createHarness } = require("./s1plus-test-helpers");
 
 const { hooks, store } = createHarness();
 
+const requestStartupFlow = (targetHooks, options = {}) =>
+  targetHooks.s1pSyncSystem.requestSync({ kind: "startup_flow", options });
+
 const settings = {
   syncRemoteEnabled: true,
   syncDailyFirstLoad: true,
@@ -71,7 +74,7 @@ const testScheduledDailyReloadShortCircuitsStartupOrchestrator = async () => {
   const startupHarness = createHarness();
   const calls = [];
   let scheduledFlow = null;
-  startupHarness.hooks.runStartupSyncFlowDeferred({
+  requestStartupFlow(startupHarness.hooks, {
     welcomePopupWasShown: false,
     shouldTryNuxRecommendation: true,
     overrides: {

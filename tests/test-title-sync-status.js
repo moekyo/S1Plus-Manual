@@ -29,7 +29,6 @@ const TITLE_SYNC_STATUS_REQUIRED_HOOKS = [
   "maybeRefreshTitleSyncStatusOwnerLease",
   "hasEnabledTitleSyncStatusPath",
   "getTitleSyncStatusRuntimeStateForTest",
-  "readSyncIndicatorStateProjection",
   "getSyncIndicatorStateProjectionTestConstants",
   "runTitleSyncStatusRuntimeSync",
 ];
@@ -56,13 +55,13 @@ const getProjectionSurfaces = (hooks) =>
   requireHook(hooks, "getSyncIndicatorStateProjectionTestConstants")();
 
 const readNavbarProjection = (hooks, state = null) =>
-  requireHook(hooks, "readSyncIndicatorStateProjection")({
+  hooks.s1pSyncSystem.readState({
     surface: getProjectionSurfaces(hooks).SURFACE_NAVBAR,
     state,
   });
 
 const readTitleProjection = (hooks, state = null) =>
-  requireHook(hooks, "readSyncIndicatorStateProjection")({
+  hooks.s1pSyncSystem.readState({
     surface: getProjectionSurfaces(hooks).SURFACE_TITLE,
     state,
   });

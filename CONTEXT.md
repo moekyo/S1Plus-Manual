@@ -40,6 +40,10 @@ _Avoid_: final state, outcome
 The deep module interface `s1pSyncResultPhasePolicy.handle(result, context)`. After Running Sync releases its mode and global Sync Locks, it turns the completed result into refresh, conflict-pause, retry, and notification intents. Background, daily startup, per-load, and foreground follow-up callers share this decision path; source-specific copy, modal content, and refresh adapters remain outside the module. A retry intent describes policy, while `retryResult.status` proves whether its adapter actually scheduled work; foreground consumers preserve retry state only for `scheduled` or `already_scheduled` results, while the background adapter reports explicit `scheduled`, `delegated`, or `blocked` outcomes.
 _Avoid_: result switch, post-sync UI handler
 
+**Sync System Façade**:
+The final page-facing interface `s1pSyncSystem`. Page code uses `initialize()`, `dispose()`, `recordLocalMutation()`, `handleLifecycle()`, `requestSync()`, and `readState()` to express sync intent without coordinating Sync Locks, Scheduler Owner leases, timers, generations, lifecycle support, Result Phase handling, or projection internals. The façade owns startup recovery ordering and routes semantic sync requests to the existing deep modules.
+_Avoid_: sync manager, sync service, global sync helpers
+
 **Ghost Running**:
 A title display of `[同步中...]` that appears when a tab sees a fresh sync lock but no live tab is actually executing sync. Caused by a worker tab closing without releasing its lock. Maximum duration: 45 seconds (lock TTL).
 _Avoid_: phantom sync, false running
@@ -64,6 +68,7 @@ _Avoid_: live-runner heartbeat, runner election
 - The **Scheduler Owner** manages the debounce timer independently from both **Sync Lock** and **Title Owner**
 - **Result Phases** can transfer between tabs; **Running Sync** cannot; **Pending Dirty** can be recovered by a new **Scheduler Owner**
 - The **Result Phase Policy** runs only after **Running Sync** releases its Sync Locks; callers consume its intents instead of switching on result status independently
+- Page callers cross the **Sync System Façade**; Pending Dirty Scheduler, lifecycle adapter, Running Sync, Result Phase Policy, and Sync Indicator State Projection remain internal modules
 - A stale **Running Sync** title does not fall back to an older **Result Phase**; it stays idle until a resolved-state writer commits a new Result Phase or pending recovery produces one
 
 ## Example dialogue

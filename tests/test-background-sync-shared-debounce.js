@@ -160,6 +160,23 @@ const testHandoffAndRecoveryUseBoundClockAndTimerAdapter = () => {
   assert.equal(tabA.scheduler.inspect().state.ownerTabId, "");
 };
 
+const testHandoffStopsNonOwnerRecoveryWatch = () => {
+  const { makeScheduler } = createScenario({ now: 3_500_000 });
+  const tabA = makeScheduler({ tabId: "tab-a" });
+  const tabB = makeScheduler({ tabId: "tab-b" });
+  tabA.scheduler.queue({ source: "general", lastModified: 351 });
+
+  assert.equal(tabB.scheduler.recover().reason, "owner_lease_watch");
+  assert.equal(tabB.scheduler.inspect().runtime.hasOwnerRecoveryTimer, true);
+
+  assert.deepEqual(toPlainObject(tabB.scheduler.handoff()), {
+    status: "skipped",
+    reason: "owner_release_failed",
+  });
+  assert.equal(tabB.scheduler.inspect().runtime.hasOwnerRecoveryTimer, false);
+  assert.equal(tabB.scheduler.inspect().state.ownerTabId, "tab-a");
+};
+
 const testDueConsumesStateBeforeTrigger = () => {
   const { clock, makeScheduler } = createScenario({ now: 4_000_000 });
   const tabA = makeScheduler({ tabId: "tab-a" });
@@ -482,7 +499,7 @@ const testLifecycleAdapterUsesSchedulerAfterFinalizingDirty = async () => {
 
   let hidden;
   try {
-    hidden = await hooks.s1pSyncLifecycleAdapter.handle(
+    hidden = await hooks.s1pSyncSystem.handleLifecycle(
       "visibilitychange",
       null,
       {
@@ -659,6 +676,7 @@ const main = async () => {
   testQueuedMergesDirtyWithoutExposingOwnerMechanics();
   testQueuedReadProgressStopsAtMaxWait();
   testHandoffAndRecoveryUseBoundClockAndTimerAdapter();
+  testHandoffStopsNonOwnerRecoveryWatch();
   testDueConsumesStateBeforeTrigger();
   testDueDefersWhileRunningSyncOwnsLock();
   testCoveredCompletionClearsPendingAndSharedState();

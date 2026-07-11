@@ -20,6 +20,13 @@ const enabledSettings = {
   syncCheckOnReturnToForeground: true,
 };
 
+const requestForegroundProbe = (hooks, reason, options = {}) =>
+  hooks.s1pSyncSystem.requestSync({
+    kind: "foreground_probe",
+    reason,
+    options,
+  });
+
 const expectMatch = (pattern, message) => {
   assert.match(sourceCode, pattern, message);
 };
@@ -162,7 +169,7 @@ const testForegroundProbeResyncsSnapshotBeforeFollowUp = async () => {
     remoteUpdatedAt: "2026-04-18T09:00:00Z",
   });
 
-  const result = await hooks.checkRemoteFreshnessOnForeground("foreground_resume", {
+  const result = await requestForegroundProbe(hooks, "foreground_resume", {
     now: 1760004400000,
     settingsSnapshot: enabledSettings,
     acquireRemoteProbeLock: async () => true,

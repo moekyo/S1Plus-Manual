@@ -18919,6 +18919,7 @@
   const releaseBackgroundSyncDebounceOwner = (options = {}) => {
     const state = getBackgroundSyncDebounceState();
     const tabId = getBackgroundSyncDebounceTabId(options);
+    clearSharedBackgroundSyncDebounceOwnerRecoveryTimer();
     if (!state || state.ownerTabId !== tabId) {
       return {
         status: "skipped",
@@ -20418,6 +20419,10 @@
     ownerTimerDueAt: sharedBackgroundSyncDebounceTimerDueAt,
     ownerTimerGeneration: sharedBackgroundSyncDebounceTimerGeneration,
     ownerHeartbeatActive: Boolean(sharedBackgroundSyncDebounceHeartbeatTimer),
+    hasOwnerRecoveryTimer: Boolean(
+      sharedBackgroundSyncDebounceOwnerRecoveryTimer
+    ),
+    ownerRecoveryTimerDueAt: sharedBackgroundSyncDebounceOwnerRecoveryTimerDueAt,
   });
   const getBackgroundAutoSyncRuntimeStateForTest = () => ({
     hasPendingBackgroundSync,
@@ -20692,7 +20697,7 @@
   };
 
   // 只有在数据实际变动时才更新时间戳；可按需仅更新时间戳而不触发自动同步
-  const updateLastModifiedTimestamp = (
+  const s1pRecordLocalMutation = (
     source = "general",
     { triggerSync = true } = {}
   ) => {
@@ -20745,11 +20750,17 @@
           console.log(
             `S1 Plus: 同步进行中检测到本地变更，但后台自动同步不可用(${readiness.reason})，已停止共享调度。`
           );
-          return;
+          return {
+            status: "recorded",
+            source,
+            lastModified: nextLastModified,
+            syncRequested: false,
+            reason: readiness.reason,
+          };
         }
         syncDirtyNeedsFollowUpSync = true;
         hasPendingBackgroundSync = true;
-        pendingDirtyScheduler.queue(
+        const schedulerResult = pendingDirtyScheduler.queue(
           {
             source,
             lastModified: nextLastModified,
@@ -20761,12 +20772,24 @@
         console.log(
           "S1 Plus: 同步进行中检测到本地变更，已记录为待补同步任务。"
         );
+        return {
+          status: "recorded",
+          source,
+          lastModified: nextLastModified,
+          syncRequested: true,
+          schedulerResult,
+        };
       } else {
         console.log(
           "S1 Plus: 同步进行中检测到仅本地时间戳修正，已记录但不会触发补同步。"
         );
       }
-      return;
+      return {
+        status: "recorded",
+        source,
+        lastModified: nextLastModified,
+        syncRequested: false,
+      };
     }
     GM_setValue(LAST_LOCAL_MODIFIED_KEY, nextLastModified);
     recordReadProgressLastModifiedDebug("written");
@@ -20774,14 +20797,33 @@
       const readiness = isBackgroundSyncDebounceRequestAllowed();
       if (!readiness.allowed) {
         clearAutoSyncRuntimeQueue();
-        return;
+        return {
+          status: "recorded",
+          source,
+          lastModified: nextLastModified,
+          syncRequested: false,
+          reason: readiness.reason,
+        };
       }
-      debouncedTriggerRemoteSyncPush({
+      const schedulerResult = debouncedTriggerRemoteSyncPush({
         source,
         lastModified: nextLastModified,
         threadId: currentThreadIdForDirty,
       });
+      return {
+        status: "recorded",
+        source,
+        lastModified: nextLastModified,
+        syncRequested: true,
+        schedulerResult,
+      };
     }
+    return {
+      status: "recorded",
+      source,
+      lastModified: nextLastModified,
+      syncRequested: false,
+    };
   };
 
   // [NEW] 更新上次同步时间的显示
@@ -21695,7 +21737,7 @@
     setComparableStoredValue("s1p_blocked_threads", normalizedThreads);
     setCoreDataCacheValue(blockedThreadsCache, normalizedThreads);
     if (!suppressSyncTrigger) {
-      updateLastModifiedTimestamp();
+      s1pSyncSystem.recordLocalMutation();
     }
   };
   const getBlockedUsers = () =>
@@ -21713,7 +21755,7 @@
     setComparableStoredValue("s1p_blocked_users", normalizedUsers);
     setCoreDataCacheValue(blockedUsersCache, normalizedUsers);
     if (!suppressSyncTrigger) {
-      updateLastModifiedTimestamp();
+      s1pSyncSystem.recordLocalMutation();
     }
   };
   const saveUserTags = (tags, suppressSyncTrigger = false) => {
@@ -21729,7 +21771,7 @@
     setComparableStoredValue("s1p_user_tags", normalizedTags);
     setCoreDataCacheValue(userTagsCache, normalizedTags);
     if (!suppressSyncTrigger) {
-      updateLastModifiedTimestamp();
+      s1pSyncSystem.recordLocalMutation();
     }
   };
   // [NEW] Bookmarked Replies data functions
@@ -21754,7 +21796,7 @@
     setComparableStoredValue("s1p_bookmarked_replies", normalizedReplies);
     setCoreDataCacheValue(bookmarkedRepliesCache, normalizedReplies);
     if (!suppressSyncTrigger) {
-      updateLastModifiedTimestamp();
+      s1pSyncSystem.recordLocalMutation();
     }
   };
   const normalizeBookmarkTextForPreview = (text) => {
@@ -21912,7 +21954,7 @@
     setComparableStoredValue("s1p_blocked_posts", normalizedPosts);
     setCoreDataCacheValue(blockedPostsCache, normalizedPosts);
     if (!suppressSyncTrigger) {
-      updateLastModifiedTimestamp();
+      s1pSyncSystem.recordLocalMutation();
     }
   };
 
@@ -21974,7 +22016,7 @@
     if (needsMigration) {
       console.log("S1 Plus: 正在将用户标记迁移到新版数据结构...");
       saveUserTags(migratedTags, true);
-      updateLastModifiedTimestamp("general", { triggerSync: false });
+      s1pSyncSystem.recordLocalMutation("general", { triggerSync: false });
       return migratedTags;
     }
 
@@ -22005,7 +22047,7 @@
       }));
       saveTitleFilterRules(newRules, true);
       GM_setValue("s1p_title_keywords", null); // 清理旧数据
-      updateLastModifiedTimestamp("general", { triggerSync: false });
+      s1pSyncSystem.recordLocalMutation("general", { triggerSync: false });
       return newRules;
     }
     setCoreDataCacheValue(titleFilterRulesCache, []);
@@ -22047,7 +22089,7 @@
     setComparableStoredValue("s1p_title_filter_rules", normalizedRules);
     setCoreDataCacheValue(titleFilterRulesCache, normalizedRules);
     if (!suppressSyncTrigger) {
-      updateLastModifiedTimestamp();
+      s1pSyncSystem.recordLocalMutation();
     }
   };
 
@@ -23196,7 +23238,7 @@
     setComparableStoredValue("s1p_read_progress", normalizedProgress);
     setCoreDataCacheValue(readProgressCache, normalizedProgress);
     if (!suppressSyncTrigger) {
-      updateLastModifiedTimestamp("read_progress");
+      s1pSyncSystem.recordLocalMutation("read_progress");
     }
   };
 
@@ -23210,7 +23252,7 @@
     console.log("S1 Plus: 检测到旧版阅读进度类型，正在自动升级格式。");
     saveReadProgress(normalizedProgress, true);
     // 迁移仅修正本地格式，不直接触发自动推送；但需要更新时间戳避免后续被误判为"同时间戳冲突"。
-    updateLastModifiedTimestamp("read_progress", { triggerSync: false });
+    s1pSyncSystem.recordLocalMutation("read_progress", { triggerSync: false });
   };
 
   const shouldAdvanceThreadProgress = (
@@ -28765,7 +28807,7 @@
         : Math.max(normalizedImportedLastUpdated, currentLastModified + 1);
       GM_setValue(LAST_LOCAL_MODIFIED_KEY, safeLastUpdated);
       if (suppressSyncTrigger && hasSuppressedSyncedDataTransform) {
-        updateLastModifiedTimestamp("general", { triggerSync: false });
+        s1pSyncSystem.recordLocalMutation("general", { triggerSync: false });
       }
 
       const importedSettingsSnapshot = getSettings();
@@ -28795,7 +28837,9 @@
 
       // [S1P-FIX-B] 只有在非抑制模式下（例如手动编辑文本框导入）才触发后续同步，修复强制拉取后的冗余操作问题。
       if (!suppressPostSync) {
-        triggerRemoteSyncPush();
+        s1pSyncSystem.requestSync({
+          kind: "background_push",
+        });
       }
 
       const normalizationNotice = hasImportNormalizationAdjustments
@@ -33394,7 +33438,6 @@
       scheduleForegroundRemoteSyncRetry,
       clearForegroundRemoteSyncRetry,
       getForegroundRemoteSyncRetryRemainingMs,
-      checkRemoteFreshnessOnForeground,
       getForegroundProbeGateBlockResult,
       hasEnabledAutoSyncIndicatorPath,
       getAutoSyncIndicatorState,
@@ -33402,7 +33445,6 @@
         SURFACE_NAVBAR: SYNC_INDICATOR_STATE_PROJECTION_SURFACE_NAVBAR,
         SURFACE_TITLE: SYNC_INDICATOR_STATE_PROJECTION_SURFACE_TITLE,
       }),
-      readSyncIndicatorStateProjection,
       resolveTitleSyncIndicatorProjectionPhase,
       getAutoSyncIndicatorLiveRunnerOwnerIdForTitle,
       shouldSuppressAutoSyncIndicatorRunningForTitle,
@@ -33447,15 +33489,11 @@
       seedSyncRuntimeStateForManualOverrideTest,
       getBackgroundAutoSyncRuntimeStateForTest,
       createPendingDirtyScheduler,
-      pendingDirtyScheduler,
       s1pCreateSchedulerOwnerHandoffFence,
       s1pCreateSyncLifecycleAdapter,
-      s1pSyncLifecycleAdapter,
       s1pInitializePendingAutoSyncRecoverySupport,
       registerSyncLifecycleLocalMutationFinalizer,
       runForegroundFollowUpAutoSyncCheck,
-      triggerForegroundRemoteFreshnessProbe,
-      handleInitialForegroundRemoteFreshnessCheck,
       markStartupSyncUserInteraction,
       getStartupSyncFreshnessState,
       getStartupSyncOrchestratorDecision,
@@ -35172,9 +35210,9 @@
     syncVisibleRemoteFreshnessPollingForCurrentState();
     reconcileBackgroundSyncSchedulerForSettings(normalizedSettings);
     if (!suppressSyncTrigger) {
-      updateLastModifiedTimestamp();
+      s1pSyncSystem.recordLocalMutation();
     } else if (markDataChangedWhenSuppressed) {
-      updateLastModifiedTimestamp("general", { triggerSync: false });
+      s1pSyncSystem.recordLocalMutation("general", { triggerSync: false });
     }
   };
 
@@ -36307,7 +36345,7 @@
       };
     }
 
-    const resolvedState = readSyncIndicatorStateProjection({
+    const resolvedState = s1pSyncSystem.readState({
       surface: SYNC_INDICATOR_STATE_PROJECTION_SURFACE_TITLE,
       allowCache: true,
     });
@@ -37287,7 +37325,7 @@
     const resolvedState =
       stateInput && typeof stateInput === "object" && "displayPhase" in stateInput
         ? stateInput
-        : readSyncIndicatorStateProjection({
+        : s1pSyncSystem.readState({
             surface: SYNC_INDICATOR_STATE_PROJECTION_SURFACE_NAVBAR,
             state: stateInput,
           });
@@ -37680,7 +37718,7 @@
     }
     const actualState = getAutoSyncIndicatorState();
     const previewState = autoSyncIndicatorDebugOverrideState;
-    const actualDisplayState = readSyncIndicatorStateProjection({
+    const actualDisplayState = s1pSyncSystem.readState({
       surface: SYNC_INDICATOR_STATE_PROJECTION_SURFACE_NAVBAR,
       state: actualState,
     });
@@ -38652,7 +38690,7 @@
               applyActionButtonState({ busy: true });
               try {
                 clearNavbarPersistentSyncAlertDismissedSignature();
-                await handleManualSync();
+                await s1pSyncSystem.requestSync({ kind: "manual_sync" });
               } catch (error) {
                 console.error("S1 Plus: 常驻同步提示触发手动同步失败:", error);
               } finally {
@@ -38740,7 +38778,7 @@
       : stateInput;
     const resolvedState = isDebugPreviewActive
       ? buildAutoSyncIndicatorDebugDisplayState(effectiveStateInput)
-      : readSyncIndicatorStateProjection({
+      : s1pSyncSystem.readState({
           surface: SYNC_INDICATOR_STATE_PROJECTION_SURFACE_NAVBAR,
           state: effectiveStateInput,
         });
@@ -40636,14 +40674,16 @@
             action: "pull",
             title:
               "用云端备份覆盖您当前的本地数据，本地未同步的修改将丢失！",
-            callback: handleForcePull,
+            callback: () =>
+              s1pSyncSystem.requestSync({ kind: "manual_pull" }),
           },
           {
             label: `${pushIconSVG} <span>推送</span>`,
             allowLabelHtml: true,
             action: "push",
             title: "将您当前的本地数据覆盖到云端备份，此操作不可逆。",
-            callback: handleForcePush,
+            callback: () =>
+              s1pSyncSystem.requestSync({ kind: "manual_push" }),
           },
         ],
         () => {
@@ -42536,8 +42576,13 @@
       suppressInitialMessage = false,
       isInitialSetup = false
     ) =>
-      handleManualSync(suppressInitialMessage, isInitialSetup, {
-        useSettingsSecondaryGlass: true,
+      s1pSyncSystem.requestSync({
+        kind: "manual_sync",
+        options: {
+          suppressInitialMessage,
+          isInitialSetup,
+          runtime: { useSettingsSecondaryGlass: true },
+        },
       });
     if (shouldAutoFitModalWidth && requiredWidth > 600) {
       modalContent.style.width = `${requiredWidth}px`;
@@ -53347,8 +53392,6 @@
     const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
     testHookHost.__S1P_TEST_HOOKS__ = {
       ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
-      handlePerLoadSyncCheck,
-      handleStartupSync,
       s1pNotifyDailyStartupSyncResultPhase,
     };
   }
@@ -53360,12 +53403,17 @@
     overrides = {},
   } = {}) => {
     const handleStartupSyncFn =
-      overrides.handleStartupSync || handleStartupSync;
+      overrides.handleStartupSync ||
+      ((options = {}) =>
+        s1pSyncSystem.requestSync({ kind: "daily_startup", options }));
     const handlePerLoadSyncCheckFn =
-      overrides.handlePerLoadSyncCheck || handlePerLoadSyncCheck;
+      overrides.handlePerLoadSyncCheck ||
+      ((options = {}) =>
+        s1pSyncSystem.requestSync({ kind: "per_load", options }));
     const handleInitialForegroundRemoteFreshnessCheckFn =
       overrides.handleInitialForegroundRemoteFreshnessCheck ||
-      handleInitialForegroundRemoteFreshnessCheck;
+      ((options = {}) =>
+        s1pSyncSystem.requestSync({ kind: "initial_foreground", options }));
     const checkTokenExpiryFn = overrides.checkTokenExpiry || checkTokenExpiry;
     const handleNuxRecommendationFn =
       overrides.handleNuxRecommendation || handleNuxRecommendation;
@@ -53504,11 +53552,134 @@
     scheduleTimeoutFn(runFlowIfFresh, STARTUP_SYNC_DEFER_DELAY_MS);
   };
 
+  const s1pCreateSyncSystemFacade = (adapters = {}) => {
+    const lifecycleAdapter =
+      adapters.lifecycleAdapter || s1pSyncLifecycleAdapter;
+    const scheduler = adapters.pendingDirtyScheduler || pendingDirtyScheduler;
+    const recoverPending =
+      adapters.recoverPendingAutoSync || recoverPendingAutoSyncIfNeeded;
+    const recordLocalMutation =
+      adapters.recordLocalMutation || s1pRecordLocalMutation;
+    const requestBackgroundPush =
+      adapters.requestBackgroundPush || triggerRemoteSyncPush;
+    const requestForegroundProbe =
+      adapters.requestForegroundProbe || checkRemoteFreshnessOnForeground;
+    const requestDailyStartup =
+      adapters.requestDailyStartup || handleStartupSync;
+    const requestPerLoad = adapters.requestPerLoad || handlePerLoadSyncCheck;
+    const requestInitialForeground =
+      adapters.requestInitialForeground ||
+      handleInitialForegroundRemoteFreshnessCheck;
+    const requestManualSync = adapters.requestManualSync || handleManualSync;
+    const requestManualPull = adapters.requestManualPull || handleForcePull;
+    const requestManualPush = adapters.requestManualPush || handleForcePush;
+    const requestStartupFlow =
+      adapters.requestStartupFlow || runStartupSyncFlowDeferred;
+    const readProjection =
+      adapters.readProjection || readSyncIndicatorStateProjection;
+    let initialized = false;
+
+    const rollbackInitialization = () => {
+      try {
+        scheduler.handoff();
+      } catch (rollbackError) {
+        console.error(
+          "S1 Plus: 同步系统初始化回滚时释放后台调度 owner 失败:",
+          rollbackError
+        );
+      }
+      try {
+        lifecycleAdapter.unbind();
+      } catch (rollbackError) {
+        console.error(
+          "S1 Plus: 同步系统初始化回滚时解绑生命周期支持失败:",
+          rollbackError
+        );
+      }
+    };
+
+    const initialize = () => {
+      if (initialized) {
+        return { status: "skipped", reason: "already_initialized" };
+      }
+      const lifecycle = lifecycleAdapter.bind();
+      try {
+        const schedulerRecovery = scheduler.recover();
+        const pendingRecovery = recoverPending();
+        initialized = true;
+        return {
+          status: "initialized",
+          lifecycle,
+          schedulerRecovery,
+          pendingRecovery,
+        };
+      } catch (error) {
+        rollbackInitialization();
+        throw error;
+      }
+    };
+
+    const dispose = () => {
+      if (!initialized) {
+        return { status: "skipped", reason: "already_disposed" };
+      }
+      const lifecycle = lifecycleAdapter.unbind();
+      initialized = false;
+      return { status: "disposed", lifecycle };
+    };
+
+    const requestSync = ({ kind = "", reason = "", options = {} } = {}) => {
+      switch (String(kind || "")) {
+        case "background_push":
+          return requestBackgroundPush(reason || "local_change");
+        case "foreground_probe":
+          return requestForegroundProbe(reason || "foreground_resume", options);
+        case "daily_startup":
+          return requestDailyStartup(options);
+        case "per_load":
+          return requestPerLoad(options);
+        case "initial_foreground":
+          return requestInitialForeground(options);
+        case "manual_sync":
+          return requestManualSync(
+            options.suppressInitialMessage === true,
+            options.isInitialSetup === true,
+            options.runtime || {}
+          );
+        case "manual_pull":
+          return requestManualPull(options);
+        case "manual_push":
+          return requestManualPush(options);
+        case "startup_flow":
+          return requestStartupFlow(options);
+        default:
+          return {
+            status: "skipped",
+            reason: "unsupported_sync_intent",
+            kind: String(kind || ""),
+          };
+      }
+    };
+
+    return Object.freeze({
+      initialize,
+      dispose,
+      recordLocalMutation,
+      handleLifecycle: (eventName, event = null, options = {}) =>
+        lifecycleAdapter.handle(eventName, event, options),
+      requestSync,
+      readState: (options = {}) => readProjection(options),
+    });
+  };
+
+  const s1pSyncSystem = s1pCreateSyncSystemFacade();
+
   if (IS_S1P_TEST_MODE) {
     const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
     testHookHost.__S1P_TEST_HOOKS__ = {
       ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
-      runStartupSyncFlowDeferred,
+      s1pCreateSyncSystemFacade,
+      s1pSyncSystem,
     };
   }
 
@@ -53861,16 +54032,8 @@
           run: () => initializeTitleSyncStatusCrossTabSync(),
         },
         {
-          name: "bind sync lifecycle adapter",
-          run: () => s1pSyncLifecycleAdapter.bind(),
-        },
-        {
-          name: "recover shared background sync debounce owner",
-          run: () => pendingDirtyScheduler.recover(),
-        },
-        {
-          name: "recover pending auto-sync",
-          run: () => recoverPendingAutoSyncIfNeeded(),
+          name: "initialize sync system",
+          run: () => s1pSyncSystem.initialize(),
         },
         {
           name: "initialize generic display popover",
@@ -54490,10 +54653,14 @@
           blocking: false,
           run: (context) => {
             // 初始化完成后再调度启动同步，避免每日首次加载时主流程阻塞。
-            runStartupSyncFlowDeferred({
-              welcomePopupWasShown: context.welcomePopupWasShown,
-              shouldTryNuxRecommendation: context.shouldTryNuxRecommendation,
-              waitForNuxDetection: context.nuxDetectionPromise,
+            s1pSyncSystem.requestSync({
+              kind: "startup_flow",
+              options: {
+                welcomePopupWasShown: context.welcomePopupWasShown,
+                shouldTryNuxRecommendation:
+                  context.shouldTryNuxRecommendation,
+                waitForNuxDetection: context.nuxDetectionPromise,
+              },
             });
           },
         },

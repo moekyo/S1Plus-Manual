@@ -187,7 +187,7 @@ const navbarSyncButtonBlock =
     "同步设置页未按手动同步、自动推送、自动拉取、状态显示、GitHub 连接重排。",
   ],
   [
-    /const openSyncChoiceMenu = \(\) => \{[\s\S]*callback: handleForcePull[\s\S]*callback: handleForcePush[\s\S]*a\.addEventListener\("click", \(e\) => \{[\s\S]*openSyncChoiceMenu\(\);[\s\S]*li\.addEventListener\("mouseenter", openSyncChoiceMenu\);/,
+    /const openSyncChoiceMenu = \(\) => \{[\s\S]*callback:\s*\(\)\s*=>\s*s1pSyncSystem\.requestSync\(\{\s*kind:\s*"manual_pull"\s*\}\)[\s\S]*callback:\s*\(\)\s*=>\s*s1pSyncSystem\.requestSync\(\{\s*kind:\s*"manual_push"\s*\}\)[\s\S]*a\.addEventListener\("click", \(e\) => \{[\s\S]*openSyncChoiceMenu\(\);[\s\S]*li\.addEventListener\("mouseenter", openSyncChoiceMenu\);/,
     "导航栏同步按钮点击和悬停未共用推送/拉取菜单。",
   ],
 ].forEach(([pattern, message]) => {

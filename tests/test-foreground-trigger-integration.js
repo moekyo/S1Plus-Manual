@@ -17,6 +17,12 @@ const enabledSettings = {
   syncCheckOnReturnToForeground: true,
 };
 
+const requestInitialForeground = (hooks, options = {}) =>
+  hooks.s1pSyncSystem.requestSync({
+    kind: "initial_foreground",
+    options,
+  });
+
 const createEventTarget = () => {
   const listeners = new Map();
   return {
@@ -39,7 +45,7 @@ const createEventTarget = () => {
 const testLifecycleAdapterBindsSingleEntryPerEvent = () => {
   const { hooks } = createHarness();
   assert.equal(typeof hooks.s1pCreateSyncLifecycleAdapter, "function");
-  assert.equal(typeof hooks.s1pSyncLifecycleAdapter?.handle, "function");
+  assert.equal(typeof hooks.s1pSyncSystem?.handleLifecycle, "function");
 
   const windowTarget = createEventTarget();
   const documentTarget = createEventTarget();
@@ -395,7 +401,7 @@ const testVisibilityChangeTriggersRecoveryAndProbe = async () => {
   sandbox.document.visibilityState = "visible";
   const calls = [];
 
-  const result = await hooks.s1pSyncLifecycleAdapter.handle(
+  const result = await hooks.s1pSyncSystem.handleLifecycle(
     "visibilitychange",
     null,
     {
@@ -424,7 +430,7 @@ const testHiddenVisibilityChangeDoesNothing = async () => {
   let recoverCount = 0;
   let probeCount = 0;
 
-  const result = await hooks.s1pSyncLifecycleAdapter.handle(
+  const result = await hooks.s1pSyncSystem.handleLifecycle(
     "visibilitychange",
     null,
     {
@@ -449,7 +455,7 @@ const testPersistedPageShowTriggersRecoveryAndProbe = async () => {
   sandbox.document.visibilityState = "visible";
   const calls = [];
 
-  const result = await hooks.s1pSyncLifecycleAdapter.handle(
+  const result = await hooks.s1pSyncSystem.handleLifecycle(
     "pageshow",
     { persisted: true },
     {
@@ -478,7 +484,7 @@ const testNonPersistedPageShowKeepsRecoveryOnly = async () => {
   let recoverCount = 0;
   let probeCount = 0;
 
-  const result = await hooks.s1pSyncLifecycleAdapter.handle(
+  const result = await hooks.s1pSyncSystem.handleLifecycle(
     "pageshow",
     { persisted: false },
     {
@@ -503,7 +509,7 @@ const testVisibilityChangeWaitsForPendingRecovery = async () => {
   sandbox.document.visibilityState = "visible";
   const calls = [];
 
-  const result = await hooks.s1pSyncLifecycleAdapter.handle(
+  const result = await hooks.s1pSyncSystem.handleLifecycle(
     "visibilitychange",
     null,
     {
@@ -532,7 +538,7 @@ const testInitialVisibleProbeTriggersForegroundCheck = async () => {
   sandbox.document.visibilityState = "visible";
   const calls = [];
 
-  const result = await hooks.handleInitialForegroundRemoteFreshnessCheck({
+  const result = await requestInitialForeground(hooks, {
     settingsSnapshot: enabledSettings,
     triggerForegroundRemoteFreshnessProbe: async (reason) => {
       calls.push(reason);
@@ -555,7 +561,7 @@ const testHiddenInitialVisibleProbeStaysIdle = async () => {
   sandbox.document.visibilityState = "hidden";
   let probeCount = 0;
 
-  const result = await hooks.handleInitialForegroundRemoteFreshnessCheck({
+  const result = await requestInitialForeground(hooks, {
     settingsSnapshot: enabledSettings,
     triggerForegroundRemoteFreshnessProbe: async () => {
       probeCount += 1;

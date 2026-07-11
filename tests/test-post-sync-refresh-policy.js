@@ -18,6 +18,12 @@ const createHarness = () => {
   });
 };
 
+const requestPerLoadSync = (hooks, options = {}) =>
+  hooks.s1pSyncSystem.requestSync({ kind: "per_load", options });
+
+const requestDailyStartupSync = (hooks, options = {}) =>
+  hooks.s1pSyncSystem.requestSync({ kind: "daily_startup", options });
+
 const createQueryDocument = ({
   hasThreadList = false,
   hasPostList = false,
@@ -692,7 +698,7 @@ const testProductionStartupConsumersRouteThroughResultPhasePolicy = async () => 
     },
   };
 
-  const perLoadResult = await hooks.handlePerLoadSyncCheck({
+  const perLoadResult = await requestPerLoadSync(hooks, {
     settings: {
       syncPerLoadCheckEnabled: true,
       syncRemoteEnabled: true,
@@ -711,7 +717,7 @@ const testProductionStartupConsumersRouteThroughResultPhasePolicy = async () => 
   assert.equal(calls[0].options.refreshOptions.reason, "per_load_auto_pull");
   assert.equal(entryCalls[0].source, "per_load");
 
-  const dailyResult = await hooks.handleStartupSync({
+  const dailyResult = await requestDailyStartupSync(hooks, {
     settings: {
       syncRemoteEnabled: true,
       syncDailyFirstLoad: true,
@@ -731,7 +737,7 @@ const testProductionStartupConsumersRouteThroughResultPhasePolicy = async () => 
   );
   assert.equal(entryCalls[1].source, "daily_startup");
 
-  const reloadResult = await hooks.handleStartupSync({
+  const reloadResult = await requestDailyStartupSync(hooks, {
     settings: {
       syncRemoteEnabled: true,
       syncDailyFirstLoad: true,

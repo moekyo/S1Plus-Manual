@@ -22,7 +22,7 @@ const readNavbarProjection = (
   state = null,
   { allowCache = false } = {}
 ) =>
-  hooks.readSyncIndicatorStateProjection({
+  hooks.s1pSyncSystem.readState({
     surface: getProjectionSurfaces(hooks).SURFACE_NAVBAR,
     state,
     allowCache,
@@ -33,7 +33,7 @@ const readTitleProjection = (
   state = null,
   { allowCache = false } = {}
 ) =>
-  hooks.readSyncIndicatorStateProjection({
+  hooks.s1pSyncSystem.readState({
     surface: getProjectionSurfaces(hooks).SURFACE_TITLE,
     state,
     allowCache,
@@ -487,7 +487,7 @@ const testSharedSchedulerAndLocksFeedUnifiedDisplayState = () => {
 const testSyncIndicatorStateProjectionSurfaceContract = () => {
   const { hooks, store } = createHarness();
   assert.equal(
-    typeof hooks.readSyncIndicatorStateProjection,
+    typeof hooks.s1pSyncSystem?.readState,
     "function",
     "Phase 4 应暴露统一 Sync Indicator State 投影 interface。"
   );
@@ -515,7 +515,7 @@ const testSyncIndicatorStateProjectionSurfaceContract = () => {
   assert.equal(titleResult.displayPhase, "success");
 
   const defaultSurfaceResult = toPlainObject(
-    hooks.readSyncIndicatorStateProjection({ state: resultState })
+    hooks.s1pSyncSystem.readState({ state: resultState })
   );
   assert.equal(
     defaultSurfaceResult.projectionSurface,
@@ -523,7 +523,7 @@ const testSyncIndicatorStateProjectionSurfaceContract = () => {
   );
   assert.equal(defaultSurfaceResult.displayPhase, navbarResult.displayPhase);
   const malformedInputResult = toPlainObject(
-    hooks.readSyncIndicatorStateProjection({
+    hooks.s1pSyncSystem.readState({
       surface: "unexpected",
       state: "invalid",
     })

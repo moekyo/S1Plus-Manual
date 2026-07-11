@@ -16,7 +16,7 @@ const createHarness = () => {
 };
 
 const readNavbarProjection = (hooks, state = null) =>
-  hooks.readSyncIndicatorStateProjection({ surface: "navbar", state });
+  hooks.s1pSyncSystem.readState({ surface: "navbar", state });
 
 const AUTO_SYNC_INDICATOR_STATE_KEY = "s1p_auto_sync_indicator_state";
 
@@ -26,6 +26,13 @@ const enabledSettings = {
   syncRemotePat: "pat-token",
   syncCheckOnReturnToForeground: true,
 };
+
+const requestForegroundProbe = (hooks, reason, options = {}) =>
+  hooks.s1pSyncSystem.requestSync({
+    kind: "foreground_probe",
+    reason,
+    options,
+  });
 
 const testRetryPendingKeepsExplicitOperationWhenPendingWriteIsDeduped =
   async () => {
@@ -91,7 +98,7 @@ const testProbeGateBlocksChangedRemoteAndRetriesAfterLocalSettles = async () => 
   let retrySyncCalls = 0;
   const messages = [];
 
-  const result = await hooks.checkRemoteFreshnessOnForeground("visible_poll_active", {
+  const result = await requestForegroundProbe(hooks, "visible_poll_active", {
     now: 1760000500000,
     settingsSnapshot: enabledSettings,
     showMessage: (message, isSuccess) => {
@@ -198,7 +205,7 @@ const testRetryPendingSuppressesRepeatedForegroundProbe = async () => {
 
   assert.equal(scheduleResult.status, "scheduled");
 
-  const probeResult = await hooks.checkRemoteFreshnessOnForeground("pageshow", {
+  const probeResult = await requestForegroundProbe(hooks, "pageshow", {
     now: Date.now(),
     settingsSnapshot: enabledSettings,
     fetchRemoteData: async () => {
