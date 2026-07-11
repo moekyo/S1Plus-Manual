@@ -16335,10 +16335,7 @@
       return { status: "cleared", reason: "already_synced" };
     }
 
-    const sharedDebounceCoverage =
-      getPendingAutoSyncSharedDebounceCoverage(pending, Date.now(), {
-        settingsSnapshot: settings,
-      });
+    const sharedDebounceCoverage = pendingDirtyScheduler.recoverPending(pending);
     if (sharedDebounceCoverage.covered) {
       return {
         status: "skipped",
@@ -18850,6 +18847,28 @@
     const pendingMaxLastModified =
       getPendingAutoSyncRequestMaxLastModified(pending);
     if (pendingMaxLastModified <= Number(coveredLastModified || 0)) {
+      const latestPending = getPendingAutoSyncRequest();
+      const latestPendingMaxLastModified =
+        getPendingAutoSyncRequestMaxLastModified(latestPending);
+      if (
+        latestPendingMaxLastModified > Number(coveredLastModified || 0) ||
+        latestPending?.lastDirtyAt !== pending.lastDirtyAt
+      ) {
+        const followUpScheduled = scheduleBackgroundSyncDebounceFollowUp(
+          context.scheduleFollowUp,
+          {
+            debounceGeneration: context.debounceGeneration,
+            pendingMaxLastModified: latestPendingMaxLastModified,
+            coveredLastModified: Number(coveredLastModified || 0),
+          }
+        );
+        return {
+          status: "retained",
+          reason: "concurrent_pending_dirty",
+          pendingMaxLastModified: latestPendingMaxLastModified,
+          followUpScheduled,
+        };
+      }
       clearPendingAutoSyncRequest();
       return {
         status: "cleared",
@@ -18887,6 +18906,29 @@
       state.generation === coveredGeneration &&
       state.maxLastModified <= coveredLocalLastModified
     ) {
+      const latestState = getBackgroundSyncDebounceState();
+      if (
+        !latestState ||
+        latestState.generation !== state.generation ||
+        latestState.maxLastModified !== state.maxLastModified
+      ) {
+        const followUpScheduled = scheduleBackgroundSyncDebounceFollowUp(
+          scheduleFollowUp,
+          {
+            generation: latestState?.generation || 0,
+            coveredGeneration,
+            maxLastModified: latestState?.maxLastModified || 0,
+            coveredLastModified: coveredLocalLastModified,
+          }
+        );
+        return {
+          status: "retained",
+          reason: latestState ? "concurrent_shared_dirty" : "state_changed",
+          generation: latestState?.generation || 0,
+          maxLastModified: latestState?.maxLastModified || 0,
+          followUpScheduled,
+        };
+      }
       clearBackgroundSyncDebounceState();
       return {
         status: "cleared",
@@ -18967,7 +19009,8 @@
   };
   const cleanupBackgroundSchedulerAfterSuccess = (
     result,
-    schedulerContext = {}
+    schedulerContext = {},
+    options = {}
   ) => {
     const coveredLastModified = getCoveredLastModifiedFromSyncResult(result);
     if (coveredLastModified <= 0) {
@@ -18985,10 +19028,14 @@
         return false;
       }
       followUpQueued = true;
-      requestBackgroundSyncRun(
-        followUpContext.reason || "newer_dirty_follow_up",
-        delayMs
-      );
+      if (typeof options.scheduleFollowUp === "function") {
+        options.scheduleFollowUp(delayMs, followUpContext);
+      } else {
+        requestBackgroundSyncRun(
+          followUpContext.reason || "newer_dirty_follow_up",
+          delayMs
+        );
+      }
       return true;
     };
     const pendingCleanup = clearPendingAutoSyncRequestIfCovered(
@@ -19003,6 +19050,40 @@
       coveredLastModified,
       scheduleFollowUp: scheduleFollowUpOnce,
     });
+    const latestLocalModified = normalizePendingAutoSyncTimestamp(
+      GM_getValue(LAST_LOCAL_MODIFIED_KEY, 0)
+    );
+    const durablePendingMax = getPendingAutoSyncRequestMaxLastModified(
+      getPendingAutoSyncRequest()
+    );
+    const durableSharedMax =
+      getBackgroundSyncDebounceState()?.maxLastModified || 0;
+    let concurrentDirtyRecovery = {
+      status: "skipped",
+      reason: "no_lost_concurrent_dirty",
+    };
+    if (
+      latestLocalModified > coveredLastModified &&
+      Math.max(durablePendingMax, durableSharedMax) < latestLocalModified
+    ) {
+      const recoveredPending = markPendingAutoSyncRequest(
+        "general",
+        latestLocalModified
+      );
+      concurrentDirtyRecovery = {
+        status: "recovered",
+        reason: "last_modified_newer_than_cleanup",
+        maxLastModified: recoveredPending.maxLastModified,
+        followUpScheduled: scheduleFollowUpOnce(
+          BACKGROUND_SYNC_DEBOUNCE_FOLLOW_UP_SETTLE_MS,
+          {
+            reason: "concurrent_dirty_recovery",
+            coveredLastModified,
+            maxLastModified: recoveredPending.maxLastModified,
+          }
+        ),
+      };
+    }
 
     return {
       status: "completed",
@@ -19011,6 +19092,7 @@
       intendedMaxLastModified: resolvedContext.intendedMaxLastModified,
       pendingCleanup,
       sharedDebounceCleanup,
+      concurrentDirtyRecovery,
       followUpQueued,
     };
   };
@@ -19181,7 +19263,34 @@
     }
 
     if (!savedState) {
-      savedState = getBackgroundSyncDebounceState();
+      const latestState = getBackgroundSyncDebounceState();
+      if (
+        isBackgroundSyncDebounceStateCoveringRequest(latestState, {
+          source,
+          lastModified: requestLastModified,
+          threadId: request.threadId,
+        })
+      ) {
+        savedState = latestState;
+      }
+    }
+    if (!savedState) {
+      recordSyncTraceEvent("shared_scheduler_skipped", {
+        scope: "shared_background_scheduler",
+        status: "skipped",
+        message: "共享后台调度状态写入竞争失败，改用本地重试兜底",
+        details: {
+          reason: "scheduler_state_write_lost",
+          source,
+          requestLastModified,
+          retryCount,
+        },
+      });
+      return {
+        status: "skipped",
+        reason: "scheduler_state_write_lost",
+        retryCount,
+      };
     }
     setAutoSyncIndicatorPendingPhase(savedState?.reason || dueDecision.reason);
     const isOwner = Boolean(savedState && savedState.ownerTabId === tabId);
@@ -19390,9 +19499,9 @@
     sharedBackgroundSyncDebouncePageUnloading = true;
     clearSharedBackgroundSyncDebounceHiddenFlushTimer();
     const releaseOwner = () => {
-      const released = releaseBackgroundSyncDebounceOwner();
+      const handoffResult = pendingDirtyScheduler.handoff();
       sharedBackgroundSyncDebouncePageUnloading = false;
-      if (released) {
+      if (handoffResult.status === "released") {
         recordSyncTraceEvent("shared_scheduler_owner_released", {
           scope: "shared_background_scheduler",
           status: "skipped",
@@ -19441,8 +19550,8 @@
         reason: state ? "not_owner" : "no_shared_debounce_state",
       };
     }
-    const released = releaseBackgroundSyncDebounceOwner({ tabId, now });
-    if (released) {
+    const handoffResult = pendingDirtyScheduler.handoff({ tabId, now });
+    if (handoffResult.status === "released") {
       recordSyncTraceEvent("sync_lifecycle_owner_handoff", {
         scope: "sync_lifecycle_checkpoint",
         status: "scheduled",
@@ -19457,10 +19566,7 @@
         },
       });
     }
-    return {
-      status: released ? "released" : "skipped",
-      reason: released ? "owner_handoff" : "owner_release_failed",
-    };
+    return handoffResult;
   };
   const runSyncLifecycleCheckpoint = (
     reason = "visibilitychange",
@@ -19488,7 +19594,7 @@
       let handoffResult = { status: "skipped", reason: "handoff_not_needed" };
 
       if (phase === "hidden") {
-        schedulerResult = flushSharedBackgroundSyncDebounceForHiddenPage({
+        schedulerResult = pendingDirtyScheduler.flush({
           ...options,
           now,
           tabId,
@@ -19517,14 +19623,11 @@
             schedulerResult,
           });
       } else if (phase === "visible" || phase === "pageshow") {
-        const recoveryResult = recoverSharedBackgroundSyncDebounceOwnerIfNeeded(
+        const recoveryResult = pendingDirtyScheduler.recover({
+          ...options,
           now,
-          {
-            ...options,
-            now,
-            tabId,
-          }
-        );
+          tabId,
+        });
         schedulerResult = {
           status: recoveryResult.status,
           reason: recoveryResult.reason,
@@ -19649,16 +19752,166 @@
     );
     return getBackgroundAutoSyncRuntimeStateForTest();
   };
-  const getBackgroundSyncDebounceTestConstants = () => ({
-    BACKGROUND_SYNC_DEBOUNCE_STATE_KEY,
-    READ_PROGRESS_SYNC_DEBOUNCE_MS,
-    DEFAULT_SYNC_DEBOUNCE_MS,
-    BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS,
-    BACKGROUND_SYNC_DEBOUNCE_OWNER_HEARTBEAT_MS,
-    BACKGROUND_SYNC_DEBOUNCE_OWNER_RECOVERY_GRACE_MS,
-    BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
-    BACKGROUND_SYNC_DEBOUNCE_FOLLOW_UP_SETTLE_MS,
-    AUTO_SYNC_CLEAN_STATE_COOLDOWN_MS,
+  const createPendingDirtyScheduler = (adapter = {}) => {
+    const readAdapterValue = (value, fallback) =>
+      typeof value === "function" ? value() : value ?? fallback;
+    const resolveContext = (overrides = {}) => ({
+      now:
+        Number(overrides.now) ||
+        Number(readAdapterValue(adapter.clock, 0)) ||
+        Date.now(),
+      tabId:
+        overrides.tabId ||
+        readAdapterValue(adapter.tabId, SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID),
+      settingsSnapshot:
+        overrides.settingsSnapshot ||
+        readAdapterValue(adapter.settings, null) ||
+        getSettings(),
+      scheduleTimer: overrides.scheduleTimer || adapter.scheduleTimer,
+      scheduleRecoveryTimer:
+        overrides.scheduleRecoveryTimer || adapter.scheduleRecoveryTimer,
+      triggerRemoteSyncPush:
+        overrides.triggerRemoteSyncPush || adapter.triggerRemoteSyncPush,
+      scheduleFollowUp:
+        overrides.scheduleFollowUp || adapter.scheduleFollowUp,
+      scheduleFallback:
+        overrides.scheduleFallback || adapter.scheduleFallback,
+      triggerReason: overrides.triggerReason,
+    });
+    const queue = (dirty = {}, overrides = {}) => {
+      const context = resolveContext(overrides);
+      const readiness = isBackgroundSyncDebounceRequestAllowed(context);
+      if (!readiness.allowed) {
+        return requestSharedBackgroundSyncDebounce(dirty, context);
+      }
+      const source = normalizeBackgroundSyncDebounceSource(dirty.source);
+      const lastModified =
+        normalizeBackgroundSyncDebounceTimestamp(dirty.lastModified) ||
+        GM_getValue(LAST_LOCAL_MODIFIED_KEY, 0) ||
+        context.now;
+      const pending = markPendingAutoSyncRequest(source, lastModified, {
+        now: context.now,
+        threadId: dirty.threadId,
+      });
+      if (overrides.defer === true) {
+        return {
+          status: "retained",
+          reason: "running_sync",
+          pending,
+        };
+      }
+      const result = requestSharedBackgroundSyncDebounce(
+        { ...dirty, source, lastModified },
+        context
+      );
+      return { ...result, pending };
+    };
+    return Object.freeze({
+      queue,
+      recover: (overrides = {}) => {
+        const context = resolveContext(overrides);
+        return recoverSharedBackgroundSyncDebounceOwnerIfNeeded(
+          context.now,
+          context
+        );
+      },
+      recoverPending: (pending = getPendingAutoSyncRequest(), overrides = {}) => {
+        const context = resolveContext(overrides);
+        return getPendingAutoSyncSharedDebounceCoverage(
+          pending,
+          context.now,
+          context
+        );
+      },
+      runDue: (overrides = {}) => {
+        const context = resolveContext(overrides);
+        return handleSharedBackgroundSyncDebounceDue({
+          ...context,
+          expectedGeneration:
+            getBackgroundSyncDebounceState()?.generation || 0,
+        });
+      },
+      flush: (overrides = {}) =>
+        flushSharedBackgroundSyncDebounceForHiddenPage(
+          resolveContext(overrides)
+        ),
+      complete: (syncResult, schedulerContext = {}, overrides = {}) =>
+        cleanupBackgroundSchedulerAfterSuccess(
+          syncResult,
+          schedulerContext,
+          resolveContext(overrides)
+        ),
+      handoff: (overrides = {}) => {
+        const released = releaseBackgroundSyncDebounceOwner(
+          resolveContext(overrides)
+        );
+        return {
+          status: released ? "released" : "skipped",
+          reason: released ? "owner_handoff" : "owner_release_failed",
+        };
+      },
+      retry: (
+        { delayMs = 0, reason = "background_retry" } = {},
+        overrides = {}
+      ) => {
+        const context = resolveContext(overrides);
+        const pending = getPendingAutoSyncRequest();
+        const sharedResult = requestSharedBackgroundSyncDebounce(
+          {
+            source: pending?.source || "general",
+            lastModified:
+              pending?.maxLastModified ||
+              pending?.lastModified ||
+              GM_getValue(LAST_LOCAL_MODIFIED_KEY, 0) ||
+              context.now,
+            threadId: Array.isArray(pending?.threadIds)
+              ? pending.threadIds[0] || ""
+              : "",
+          },
+          {
+            ...context,
+            forceDelayMs: Math.max(0, Number(delayMs) || 0),
+            forceReason: reason,
+          }
+        );
+        if (sharedResult?.status === "scheduled") {
+          return { ...sharedResult, strategy: "shared" };
+        }
+        if (
+          sharedResult?.status === "skipped" &&
+          (sharedResult.reason === "sync_not_ready" ||
+            sharedResult.reason === "conflict_paused")
+        ) {
+          return { ...sharedResult, strategy: "blocked" };
+        }
+        if (typeof context.scheduleFallback === "function") {
+          context.scheduleFallback(Math.max(0, Number(delayMs) || 0), reason);
+          return {
+            status: "scheduled",
+            reason,
+            strategy: "local",
+            sharedResult,
+          };
+        }
+        return {
+          status: "skipped",
+          reason: sharedResult?.reason || "local_retry_unavailable",
+          strategy: "none",
+          sharedResult,
+        };
+      },
+      reset: () => clearBackgroundSyncDebounceState(),
+      inspect: () => ({
+        state: getBackgroundSyncDebounceState(),
+        pending: getPendingAutoSyncRequest(),
+        runtime: getBackgroundSyncDebounceRuntimeStateForTest(),
+      }),
+    });
+  };
+  const pendingDirtyScheduler = createPendingDirtyScheduler({
+    clock: () => Date.now(),
+    tabId: () => SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID,
+    settings: () => getSettings(),
   });
   const clearAutoSyncRuntimeQueue = () => {
     hasPendingBackgroundSync = false;
@@ -19667,7 +19920,7 @@
       backgroundSyncRetryTimeout = null;
     }
     clearReadProgressSyncDebounceState();
-    clearBackgroundSyncDebounceState();
+    pendingDirtyScheduler.reset();
   };
   const reconcileBackgroundSyncSchedulerForSettings = (
     settingsSnapshot = null
@@ -19686,7 +19939,7 @@
     lastModified = null,
     threadId = null,
   } = {}) => {
-    return requestSharedBackgroundSyncDebounce({
+    return pendingDirtyScheduler.queue({
       source,
       lastModified:
         typeof lastModified === "number"
@@ -19758,9 +20011,14 @@
         }
         syncDirtyNeedsFollowUpSync = true;
         hasPendingBackgroundSync = true;
-        markPendingAutoSyncRequest(source, nextLastModified, {
-          threadId: currentThreadIdForDirty,
-        });
+        pendingDirtyScheduler.queue(
+          {
+            source,
+            lastModified: nextLastModified,
+            threadId: currentThreadIdForDirty,
+          },
+          { defer: true }
+        );
         setAutoSyncIndicatorPendingPhase(`${source}_dirty_during_sync`);
         console.log(
           "S1 Plus: 同步进行中检测到本地变更，已记录为待补同步任务。"
@@ -19780,9 +20038,6 @@
         clearAutoSyncRuntimeQueue();
         return;
       }
-      markPendingAutoSyncRequest(source, nextLastModified, {
-        threadId: currentThreadIdForDirty,
-      });
       debouncedTriggerRemoteSyncPush({
         source,
         lastModified: nextLastModified,
@@ -29017,35 +29272,6 @@
     return { cancelledRequestCount };
   };
 
-  const queueBackgroundSyncRetryViaSharedScheduler = (
-    delayMs = BACKGROUND_SYNC_LOCK_RETRY_DELAY_MS,
-    reason = "background_retry",
-    options = {}
-  ) => {
-    const pending = getPendingAutoSyncRequest();
-    const now = Date.now();
-    const lastModified =
-      pending?.maxLastModified ||
-      pending?.lastModified ||
-      GM_getValue(LAST_LOCAL_MODIFIED_KEY, 0) ||
-      now;
-    const threadId = Array.isArray(pending?.threadIds)
-      ? pending.threadIds[0] || ""
-      : "";
-    return requestSharedBackgroundSyncDebounce(
-      {
-        source: pending?.source || "general",
-        lastModified,
-        threadId,
-      },
-      {
-        forceDelayMs: Math.max(0, delayMs),
-        forceReason: reason,
-        ...options,
-      }
-    );
-  };
-
   const scheduleBackgroundSyncRetry = (
     delayMs = BACKGROUND_SYNC_LOCK_RETRY_DELAY_MS
   ) => {
@@ -29071,11 +29297,37 @@
       message: "后台同步重试已排队",
       details: { delayMs },
     });
-    const sharedRetryResult = queueBackgroundSyncRetryViaSharedScheduler(
-      delayMs,
-      "background_retry"
+    const retryResult = pendingDirtyScheduler.retry(
+      { delayMs, reason: "background_retry" },
+      {
+        scheduleFallback: (fallbackDelayMs) => {
+          hasPendingBackgroundSync = true;
+          if (backgroundSyncRetryTimeout) {
+            clearTimeout(backgroundSyncRetryTimeout);
+          }
+          backgroundSyncRetryTimeout = setTimeout(() => {
+            backgroundSyncRetryTimeout = null;
+            if (isInitialSyncInProgress || isBackgroundAutoSyncInProgress) {
+              backgroundSyncRetryAttempts += 1;
+              if (
+                backgroundSyncRetryAttempts >=
+                BACKGROUND_SYNC_MAX_RETRY_ATTEMPTS
+              ) {
+                console.warn(
+                  "S1 Plus: 后台同步重试达到上限，已暂停当前重试链，等待下一次同步触发。"
+                );
+                return;
+              }
+              scheduleBackgroundSyncRetry(fallbackDelayMs);
+              return;
+            }
+            backgroundSyncRetryAttempts = 0;
+            triggerRemoteSyncPush("background_retry");
+          }, fallbackDelayMs);
+        },
+      }
     );
-    if (sharedRetryResult?.status === "scheduled") {
+    if (retryResult.strategy === "shared") {
       hasPendingBackgroundSync = false;
       if (backgroundSyncRetryTimeout) {
         clearTimeout(backgroundSyncRetryTimeout);
@@ -29084,33 +29336,10 @@
       return;
     }
     if (
-      sharedRetryResult?.status === "skipped" &&
-      (sharedRetryResult.reason === "sync_not_ready" ||
-        sharedRetryResult.reason === "conflict_paused")
+      retryResult.strategy === "blocked"
     ) {
       clearAutoSyncRuntimeQueue();
-      return;
     }
-    hasPendingBackgroundSync = true;
-    if (backgroundSyncRetryTimeout) {
-      clearTimeout(backgroundSyncRetryTimeout);
-    }
-    backgroundSyncRetryTimeout = setTimeout(() => {
-      backgroundSyncRetryTimeout = null;
-      if (isInitialSyncInProgress || isBackgroundAutoSyncInProgress) {
-        backgroundSyncRetryAttempts += 1;
-        if (backgroundSyncRetryAttempts >= BACKGROUND_SYNC_MAX_RETRY_ATTEMPTS) {
-          console.warn(
-            "S1 Plus: 后台同步重试达到上限，已暂停当前重试链，等待下一次同步触发。"
-          );
-          return;
-        }
-        scheduleBackgroundSyncRetry(delayMs);
-        return;
-      }
-      backgroundSyncRetryAttempts = 0;
-      triggerRemoteSyncPush("background_retry");
-    }, Math.max(0, delayMs));
   };
 
   const handleBackgroundAutoSyncResult = async (result) => {
@@ -29261,11 +29490,10 @@
         if (syncResult && typeof syncResult === "object") {
           syncResult.backgroundSchedulerContext = runSchedulerContext;
           if (syncResult.status === "success") {
-            syncResult.backgroundSchedulerCleanup =
-              cleanupBackgroundSchedulerAfterSuccess(
-                syncResult,
-                runSchedulerContext
-              );
+            syncResult.backgroundSchedulerCleanup = pendingDirtyScheduler.complete(
+              syncResult,
+              runSchedulerContext
+            );
             recordBackgroundSchedulerCleanupDiagnostics({
               schedulerContext: runSchedulerContext,
               cleanupResult: syncResult.backgroundSchedulerCleanup,
@@ -30799,8 +31027,7 @@
           }
         );
         if (syncMode !== AUTO_SYNC_MODE_BACKGROUND) {
-          result.backgroundSchedulerCleanup =
-            cleanupBackgroundSchedulerAfterSuccess(result);
+          result.backgroundSchedulerCleanup = pendingDirtyScheduler.complete(result);
           recordBackgroundSchedulerCleanupDiagnostics({
             cleanupResult: result.backgroundSchedulerCleanup,
           });
@@ -32512,30 +32739,9 @@
       preemptActiveSyncForManualOverride,
       cancelActiveRemoteSyncRequests,
       seedSyncRuntimeStateForManualOverrideTest,
-      normalizeBackgroundSyncDebounceState,
-      getBackgroundSyncDebounceState,
-      setBackgroundSyncDebounceState,
-      clearBackgroundSyncDebounceState,
-      requestSharedBackgroundSyncDebounce,
-      queueBackgroundSyncRetryViaSharedScheduler,
-      scheduleBackgroundSyncRetry,
-      tryAcquireBackgroundSyncDebounceOwner,
-      refreshBackgroundSyncDebounceOwnerLease,
-      releaseBackgroundSyncDebounceOwner,
-      scheduleSharedBackgroundSyncDebounceTimer,
-      clearSharedBackgroundSyncDebounceTimer,
-      scheduleSharedBackgroundSyncDebounceOwnerRecoveryTimer,
-      recoverSharedBackgroundSyncDebounceOwnerIfNeeded,
-      flushSharedBackgroundSyncDebounceForHiddenPage,
-      queueSharedBackgroundSyncDebounceHiddenFlush,
-      handleSharedBackgroundSyncDebounceDue,
-      isBackgroundSyncDebounceStateCoveringPendingRequest,
-      getPendingAutoSyncSharedDebounceCoverage,
-      clearPendingAutoSyncRequestIfCovered,
-      clearSharedBackgroundSyncDebounceIfCovered,
-      getBackgroundSyncDebounceRuntimeStateForTest,
       getBackgroundAutoSyncRuntimeStateForTest,
-      getBackgroundSyncDebounceTestConstants,
+      createPendingDirtyScheduler,
+      pendingDirtyScheduler,
       registerSyncLifecycleLocalMutationFinalizer,
       runSyncLifecycleCheckpoint,
       runForegroundFollowUpAutoSyncCheck,
@@ -52992,7 +53198,7 @@
         },
         {
           name: "recover shared background sync debounce owner",
-          run: () => recoverSharedBackgroundSyncDebounceOwnerIfNeeded(),
+          run: () => pendingDirtyScheduler.recover(),
         },
         {
           name: "bind pending auto-sync recovery hooks",

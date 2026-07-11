@@ -2,10 +2,10 @@
 
 ## 当前状态
 
-- 计划状态：Phase 1 实现、自动验证和独立审查已完成，真实多窗口点验待执行。
+- 计划状态：Phase 1 与 Phase 2 实现、自动验证和独立审查已完成，真实多窗口点验待执行。
 - 总体进度：0/6 个阶段完成。
-- 当前阶段：Phase 1，等待真实多窗口点验。
-- 代码状态：Phase 1 运行代码、测试和架构文档已完成并通过自动复验。
+- 当前阶段：Phase 2，等待真实多窗口点验。
+- 代码状态：Phase 2 运行代码、interface 场景测试和架构文档已完成并通过审查后复验。
 - 架构依据：2026-07-11 完成同步锁遗留问题的实机复现、代码定位和架构复核。
 
 ## 背景
@@ -151,7 +151,7 @@ Running Sync 的 implementation 负责模式锁、全局锁、心跳、远端事
 
 ## Phase 2：深化 Pending Dirty Scheduler
 
-- 状态：未开始。
+- 状态：实现、自动验证和独立审查已完成；真实多窗口点验待执行。
 - 目标：集中 Pending Dirty、shared generation、Scheduler Owner、lease、retry 和 covered cleanup。
 - 实施范围：
   - 让 dirty 合并、owner 获取与续租、due timer、冻结恢复和成功清理归属同一个 module。
@@ -167,6 +167,27 @@ Running Sync 的 implementation 负责模式锁、全局锁、心跳、远端事
   - 同步期间产生的新 dirty 保留并触发后续同步。
   - Sync Lock 有效时，Scheduler 不会启动并发 Running Sync。
 - 主要文件：`S1Plus.js`、`tests/test-background-sync-shared-debounce.js`、`DEVELOPMENT.md`、`docs/agents/repository-guide.md`。
+
+### Phase 2 进度更新
+
+- 已完成：
+  - 建立 `pendingDirtyScheduler` deep module，通过 `createPendingDirtyScheduler()` 在构造时绑定 clock/tab/settings/timer adapter，以语义操作取代页面调用者与测试对 owner、lease、timer、generation、coverage helper 的直接协调。
+  - 将本地 dirty 入口、pending recovery、初始化恢复、生命周期 hidden/visible/handoff、Running Sync covered cleanup 和后台 retry 切到统一 interface。
+  - 保留 generation 与 maxLastModified 的覆盖边界；旧同步只清理已覆盖 dirty，新 generation/更新 dirty 保留并只排一个短 follow-up。
+  - 将 shared scheduler 与本地 retry fallback 的选择收进 module；共享状态连续写入竞争失败时返回 `scheduler_state_write_lost`，再明确选择本地 fallback，不再误报 shared scheduled。
+  - 删除 20 余个 scheduler implementation 测试 hook；将原有逐 helper 测试替换为 queued、retained、covered、handoff、recovered、active Sync Lock、write race、hidden flush 和 lifecycle checkpoint 场景测试。
+  - 生产继续使用 GM storage/真实 clock/timer，测试通过同一 factory 一次性绑定 harness 的内存 GM adapter 与可控 clock/timer adapter；测试不再直接 seed owner/lease/generation 或手动执行 recovery callback。
+- 独立审查：
+  - 按用户要求启用一个 subagent 联合检查 Standards 与 Phase 2 spec，发现 2 个 P2，均已修正。
+  - covered cleanup 增加删除前 identity 复核与删除后 `last_modified` 恢复，覆盖 pending/shared 两种 read-delete 竞争，避免新 dirty 被旧同步删除。
+  - 将浅层 `resume(context.phase/pending)` dispatcher 改为构造时绑定 adapter 的语义 interface，并再次替换测试，使 queued、retained、covered、handoff、recovered 和 Sync Lock 场景不再协调内部状态字段。
+- 自动验证：
+  - `node --check S1Plus.js` 通过。
+  - 16 个 sync / foreground / startup / remote 相关测试文件全部通过。
+  - `git diff --check` 通过。
+- 尚未完成：
+  - Phase 1/Phase 2 真实多窗口手动点验，本轮自动实现环境尚未执行。
+- 下一步：按本文件的多窗口步骤完成 Phase 1/Phase 2 人工验收；通过后依次标记阶段完成，再进入 Phase 3。
 
 ## Phase 3：收拢浏览器生命周期 adapter
 

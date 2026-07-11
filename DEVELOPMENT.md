@@ -393,6 +393,9 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - 四类模式锁共用同一份 mode profile 和锁 implementation；后台、启动、前台补同步通过 `runRunningSync()` 统一执行“取得锁 → 启动心跳 → 运行完整事务 → 停止心跳并释放锁”的生命周期。手动同步只复用锁 implementation，主动抢占流程仍保持独立。
 - `runRunningSync()` 不接受独立 finalizer；`runTransaction` 只有在基线、远端 writer、已覆盖 pending/shared generation 等事务收尾全部完成后才可 resolve。导航栏/标题状态、刷新、提示、冲突弹窗和重试调度属于 Result Phase，必须等模式锁和全局锁释放后执行。
 - 停止心跳和锁后清理属于 best-effort cleanup：它们自身失败时必须记录警告，但不能阻断锁释放或吞掉已经产生的同步结果；锁获取抛出的异常和 lock-unavailable callback 失败仍向调用者传播，普通锁竞争则返回 skipped 结果。
+- Pending Dirty、shared generation、Scheduler Owner/lease、due timer、covered cleanup 和 retry 策略统一由 `pendingDirtyScheduler` module 管理。module 通过 `createPendingDirtyScheduler()` 在构造时绑定 clock、tab、settings 和 timer adapter；调用者只表达 `queue()`、`recover()`、`recoverPending()`、`runDue()`、`flush()`、`complete()`、`handoff()`、`retry()` 或 `reset()` 等语义操作。owner 获取、续租、generation、timer 和 coverage helper 属于 implementation，不再暴露为测试 interface；`inspect()` 仅用于读取场景结果。
+- `pendingDirtyScheduler.retry()` 先尝试 shared scheduler；只有共享状态连续写入后仍不能覆盖当前 dirty 时才选择本地 retry fallback。不能把写入竞争失败误报为 shared scheduled，否则本轮 dirty 可能没有任何实际 owner 或 timer。
+- covered cleanup 删除 pending/shared 状态前必须复核 identity；删除后还要以 `s1p_last_modified` 为恢复事实。如果跨标签新 dirty 在 read-delete 窗口内被覆盖，module 必须重建 Pending Dirty 并只排一个短 follow-up。
 - 自动同步熔断（连续失败 3 次暂停 10 分钟）
 - 冲突暂停门控，防止冲突态继续自动推送
 - 前台探测使用独立的 probe 锁、共享冷却（45s，跨标签）和本地冷却（12s，当前标签），避免多个标签页同时做 metadata-only probe
@@ -434,7 +437,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - 前台 probe 命中远端变化但 follow-up sync 因锁占用等原因未能执行时，会登记补偿重试而不是直接丢弃本轮自动拉取机会。
 - 后台失败重试优先交给 shared scheduler；一旦 shared owner 已登记 retry，本标签页当前 drain loop 必须清掉本地 pending，不得继续下一轮即时同步。只有 shared scheduler 不可用时，才回退到 per-tab retry timer。
 - shared background scheduler 的 owner 标签页被隐藏或冻结时，不能只依赖 owner 页的 `setTimeout` 到期。生命周期事件必须先进入 sync lifecycle checkpoint：先 finalize 本地变更（尤其是阅读进度），再重新读取 pending/shared scheduler 状态，然后隐藏页要么强制补发 pending 推送，要么释放 owner 让其他页面接管。storage 变更导致隐藏页成为/接管 owner 时仍要触发补发；可见的非 owner 页必须在看到有效 owner lease 时设置短期恢复观察，到 lease 过期仍未续租就接管 owner 并重新排 shared timer；若原 `dueAt` 已过期，应立即进入后台推送。关闭/卸载页只做本地 finalize + owner handoff，不假设网络写入能完成，实际补发仍由 pending request、owner lease 和其他 S1 Plus 页面恢复兜底。
-- pending auto-sync request 即使已被 shared debounce 完整覆盖，也仍要确保可见非 owner 页设置 owner lease recovery watcher；“covered”只阻止重复 per-tab 推送，不代表可以放弃接管隐藏/冻结 owner。
+- pending auto-sync request 即使已被 shared debounce 完整覆盖，也仍要通过 `pendingDirtyScheduler.recoverPending()` 确保可见非 owner 页设置 owner lease recovery watcher；“covered”只阻止重复 per-tab 推送，不代表可以放弃接管隐藏/冻结 owner。
 - 自动拉取后需要刷新列表页 / 普通页时，默认延迟 `AUTO_PULL_RELOAD_DELAY_MS`（当前 3.2s）再刷新；刷新提示的 toast 会覆盖完整等待窗口，避免用户还没看清提示就被页面刷新打断。
 - `merged_read_progress` 是例外：它只代表阅读进度分歧已安全自动合并，合并 payload 已通过 `importLocalData()` 导入本地。列表页应只调用阅读进度按钮原地刷新策略 `read_progress_merged_inline`，同会话/同设备场景也要保留这次 inline refresh，但保持静默。
 - 非后台模式（例如每日首次启动同步）完成 `merged_read_progress` 后，也要清理已覆盖的 pending request / shared debounce，避免启动期自动合并成功后又被旧的阅读进度调度重复触发。
