@@ -553,7 +553,8 @@ const testPagehideFinalizesAndHandsOffWithoutTriggeringSync = async () => {
   const lifecycleAdapter = hooks.s1pCreateSyncLifecycleAdapter({
     scheduleMicrotask: (callback) => callback(),
   });
-  lifecycleAdapter.bind();
+  const syncSystem = hooks.s1pCreateSyncSystemFacade({ lifecycleAdapter });
+  syncSystem.initialize();
   assert.equal(valueChangeListeners.length, 1);
   const tabA = makeScheduler({ tabId: "tab-a" });
   tabA.scheduler.queue({ source: "general", lastModified: 1501 });
@@ -571,7 +572,7 @@ const testPagehideFinalizesAndHandsOffWithoutTriggeringSync = async () => {
 
   let result;
   try {
-    result = await lifecycleAdapter.handle(
+    result = await syncSystem.handleLifecycle(
       "pagehide",
       { persisted: false },
       {
@@ -602,6 +603,7 @@ const testPagehideFinalizesAndHandsOffWithoutTriggeringSync = async () => {
   assert.equal(tabA.triggers.length, 0);
   assert.equal(tabA.scheduler.inspect().state?.ownerTabId || "", "");
   assert.equal(tabA.scheduler.inspect().pending.maxLastModified, 1502);
+  assert.equal(syncSystem.dispose().status, "disposed");
 };
 
 const testHandoffFenceOnlySuppressesMatchingGeneration = () => {
@@ -653,8 +655,10 @@ const testCanceledBeforeUnloadRecoversSoleSchedulerOwner = async () => {
     },
     recoverAfterCanceledUnload: () => tabA.scheduler.recover(),
   });
+  const syncSystem = hooks.s1pCreateSyncSystemFacade({ lifecycleAdapter });
+  syncSystem.initialize();
 
-  const result = await lifecycleAdapter.handle(
+  const result = await syncSystem.handleLifecycle(
     "beforeunload",
     { defaultPrevented: true },
     {
@@ -670,6 +674,7 @@ const testCanceledBeforeUnloadRecoversSoleSchedulerOwner = async () => {
   recoveryTask();
   assert.equal(tabA.scheduler.inspect().state.ownerTabId, "tab-a");
   assert.equal(tabA.triggers.length, 0);
+  assert.equal(syncSystem.dispose().status, "disposed");
 };
 
 const main = async () => {
