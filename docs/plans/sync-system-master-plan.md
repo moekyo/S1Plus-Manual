@@ -315,7 +315,7 @@ Running Sync 的 implementation 负责模式锁、全局锁、心跳、远端事
 
 ### Phase 5 实现记录
 
-- 新增 `syncResultPhasePolicy.handle(result, context)`，集中产出并执行 refresh、conflict-pause、retry 与 notification intents。
+- 新增 `s1pSyncResultPhasePolicy.handle(result, context)`，集中产出并执行 refresh、conflict-pause、retry 与 notification intents。
 - 后台、每日启动、每次加载、前台 follow-up 和前台 retry consumer 全部迁移到 policy；调用者只保留来源特有的提示文案、冲突弹窗与刷新 adapter。
 - 自动同步成功后的 conflict pause 清除，以及 conflict / `skipped_push_on_startup` 的 conflict pause 写入，已从 Running Sync 事务移到 Result Phase Policy；生产路径测试在实际写入 pause 时断言后台模式锁和全局锁均已释放。
 - 后台 failure/lock-lost 与前台 retryable soft block/lock result 的 retry 规则由 policy 统一决定，实际 shared scheduler 或前台 timer 仍由来源 adapter 执行。
@@ -326,6 +326,7 @@ Running Sync 的 implementation 负责模式锁、全局锁、心跳、远端事
 - 外部综合复审复核：`skipped_push_on_startup` 弹窗和 `handleStartupSync()` 的 reload-true 返回均为旧行为，不作为行为变更修复；确认 foreground consumer 把 `retryIntent` 误当成已成功调度的真实 P2。
 - 后续审查修复：foreground probe 与 retry timer consumer 仅在 `retryResult.status` 为 `scheduled` / `already_scheduled` 时保留 retry runtime，否则清理旧 timer、dueAt 和尝试计数；补充每日启动 reload 的完整编排短路、foreground policy source/reason/schedule adapter、pause/refresh/notification/retry 多重失败累积、daily/background notification 弹窗与冷却、`success_current` 和 same-machine 排除场景。
 - 后续双轴复审：Standards 发现新增顶层函数未使用 `s1p` 前缀，Spec 变体验证发现 daily `startup_conflict` 冷却和 `pauseConflict` 写入失败仍未被测试杀死；统一顶层函数与 hooks 命名，并补足两条行为场景后，原审查 agent 复核均为 Closed，新 P1/P2 为 0 findings。
+- 最终综合复审修复：前台 probe 的 retry options 继续透传注入的 Result Phase Policy；后台 retry adapter 显式返回 `scheduled` / `delegated` / `blocked`，保留 scheduler 的阻断原因，并在 scheduler 抛错、返回空值或拒绝调度时 fail-closed 清理旧 retry runtime；生产 singleton 与本轮新增测试 hook 统一使用 `s1p` 前缀。新增 circuit-open、`pushed_initial` 排除、failure circuit-open 抑制、未知输入、冲突原因回退，以及前台冲突“写入暂停且显示 feedback”场景。
 - 自动验证：`node --check S1Plus.js`、Result Phase/Running Sync/foreground/startup 定向测试、`git diff --check` 全部通过；审查修复后全仓 30 个测试文件再次全部通过。
 - 尚未完成：Phase 1 到 Phase 3 真实多窗口手动点验仍待执行。
 - 下一步：进入 Phase 6，建立同步系统 façade。

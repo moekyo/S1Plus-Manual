@@ -5,6 +5,7 @@ const assert = require("assert/strict");
 const {
   createHarness: createBaseHarness,
   sourceCode,
+  toPlainObject,
 } = require("./s1plus-test-helpers");
 
 const noop = () => {};
@@ -190,6 +191,138 @@ const testResultPhasePolicyOwnsConflictAndRetryIntents = async () => {
   assert.equal(foregroundBlocked.retryIntent.kind, "foreground");
   assert.equal(foregroundBlocked.retryIntent.delayMs, 2600);
   assert.deepStrictEqual(calls, ["retry:foreground:2600"]);
+};
+
+const testResultPhasePolicyHandlesRetryAndFallbackEdges = async () => {
+  const { hooks } = createHarness();
+  const retryCalls = [];
+  const policy = hooks.s1pCreateSyncResultPhasePolicy({
+    pauseConflict: (reason) => retryCalls.push(`pause:${reason}`),
+  });
+
+  const openCircuitFailure = await policy.handle(
+    {
+      status: "failure",
+      error: "network down",
+      failureState: { open: true },
+    },
+    {
+      source: "background",
+      scheduleRetry: () => retryCalls.push("retry"),
+    }
+  );
+  assert.equal(openCircuitFailure.retryIntent, null);
+  assert.deepStrictEqual(retryCalls, []);
+
+  const missingResult = policy.resolve(null, { source: "unexpected_source" });
+  assert.equal(missingResult.source, "generic");
+  assert.equal(missingResult.status, "unknown");
+  assert.equal(missingResult.retryIntent, null);
+  assert.equal(missingResult.notificationIntent.kind, "none");
+
+  const unexpectedResult = policy.resolve(
+    { status: "unexpected_status" },
+    { source: "background" }
+  );
+  assert.equal(unexpectedResult.status, "unexpected_status");
+  assert.equal(unexpectedResult.retryIntent, null);
+  assert.equal(unexpectedResult.notificationIntent.kind, "none");
+
+  const fallbackConflict = await policy.handle(
+    { status: "conflict" },
+    { source: "background" }
+  );
+  assert.equal(fallbackConflict.conflictPauseIntent.reason, "sync_conflict");
+  assert.deepStrictEqual(retryCalls, ["pause:sync_conflict"]);
+};
+
+const testBackgroundRetryAdapterReturnsExplicitStatuses = () => {
+  const { hooks } = createHarness();
+  const clearedReasons = [];
+  const clearAutoSyncRuntimeQueue = () => {
+    clearedReasons.push("cleared");
+  };
+
+  const scheduled = hooks.s1pScheduleBackgroundSyncRetry(1250, {
+    getActiveAutoSyncConflictPause: () => null,
+    pendingDirtyScheduler: {
+      retry: () => ({ status: "scheduled", strategy: "local" }),
+    },
+  });
+  assert.deepStrictEqual(toPlainObject(scheduled), {
+    status: "scheduled",
+    reason: "background_retry",
+    delayMs: 1250,
+  });
+
+  const delegated = hooks.s1pScheduleBackgroundSyncRetry(1250, {
+    getActiveAutoSyncConflictPause: () => null,
+    pendingDirtyScheduler: {
+      retry: () => ({ status: "scheduled", strategy: "shared" }),
+    },
+  });
+  assert.deepStrictEqual(toPlainObject(delegated), {
+    status: "delegated",
+    reason: "shared_scheduler",
+    delayMs: 1250,
+  });
+
+  const schedulerBlocked = hooks.s1pScheduleBackgroundSyncRetry(1250, {
+    getActiveAutoSyncConflictPause: () => null,
+    clearAutoSyncRuntimeQueue,
+    pendingDirtyScheduler: {
+      retry: () => ({
+        status: "skipped",
+        reason: "sync_not_ready",
+        strategy: "blocked",
+      }),
+    },
+  });
+  assert.deepStrictEqual(toPlainObject(schedulerBlocked), {
+    status: "blocked",
+    reason: "sync_not_ready",
+    delayMs: 1250,
+  });
+  assert.equal(clearedReasons.length, 1);
+
+  const rejected = hooks.s1pScheduleBackgroundSyncRetry(1250, {
+    getActiveAutoSyncConflictPause: () => null,
+    clearAutoSyncRuntimeQueue,
+    pendingDirtyScheduler: { retry: () => null },
+  });
+  assert.deepStrictEqual(toPlainObject(rejected), {
+    status: "blocked",
+    reason: "scheduler_rejected",
+    delayMs: 1250,
+  });
+  assert.equal(clearedReasons.length, 2);
+
+  const failed = hooks.s1pScheduleBackgroundSyncRetry(1250, {
+    getActiveAutoSyncConflictPause: () => null,
+    clearAutoSyncRuntimeQueue,
+    pendingDirtyScheduler: {
+      retry: () => {
+        throw new Error("scheduler failed");
+      },
+    },
+  });
+  assert.deepStrictEqual(toPlainObject(failed), {
+    status: "blocked",
+    reason: "scheduler_error",
+    delayMs: 1250,
+  });
+  assert.equal(clearedReasons.length, 3);
+
+  const conflictBlocked = hooks.s1pScheduleBackgroundSyncRetry(1250, {
+    getActiveAutoSyncConflictPause: () => ({ paused: true }),
+    clearAutoSyncRuntimeQueue,
+  });
+  assert.deepStrictEqual(toPlainObject(conflictBlocked), {
+    status: "blocked",
+    reason: "conflict_paused",
+    delayMs: 1250,
+  });
+  assert.equal(clearedReasons.length, 4);
 };
 
 const testResultPhasePolicyDefersSourceSpecificProductBehavior = async () => {
@@ -489,6 +622,54 @@ const testProductionResultPhaseNotificationAdapters = async () => {
     assert.equal(sameMachine.notificationIntent.kind, "none");
     assert.equal(sameMachine.notificationResult, null);
     assert.equal(notificationCount, 1);
+  }
+
+  {
+    const { hooks } = createHarness();
+    const policy = hooks.s1pCreateSyncResultPhasePolicy();
+    const messages = [];
+    const circuitOpen = await policy.handle(
+      { status: "skipped", reason: "circuit_open" },
+      {
+        source: "daily_startup",
+        notify: (intent, result) =>
+          hooks.s1pNotifyDailyStartupSyncResultPhase(intent, result, {
+            showMessage: (message, isSuccess) => {
+              messages.push({ message, isSuccess });
+            },
+          }),
+      }
+    );
+    assert.equal(circuitOpen.notificationIntent.kind, "circuit_open");
+    assert.equal(circuitOpen.notificationResult, "notified");
+    assert.equal(messages.length, 1);
+  }
+
+  {
+    const { hooks } = createHarness();
+    const policy = hooks.s1pCreateSyncResultPhasePolicy({
+      decideRemoteChange: () => ({
+        shouldApply: false,
+        shouldReload: false,
+        shouldNotify: false,
+        suppressMessage: true,
+        reason: "already_current",
+        action: "pushed_initial",
+        refreshPlan: null,
+      }),
+    });
+    let notificationCount = 0;
+    const pushedInitial = await policy.handle(
+      { status: "success", action: "pushed_initial" },
+      {
+        source: "daily_startup",
+        notify: () => {
+          notificationCount += 1;
+        },
+      }
+    );
+    assert.equal(pushedInitial.notificationIntent.kind, "none");
+    assert.equal(notificationCount, 0);
   }
 };
 
@@ -977,6 +1158,8 @@ const main = async () => {
   testStaticWiring();
   await testResultPhasePolicyOwnsRefreshAndSuppression();
   await testResultPhasePolicyOwnsConflictAndRetryIntents();
+  await testResultPhasePolicyHandlesRetryAndFallbackEdges();
+  testBackgroundRetryAdapterReturnsExplicitStatuses();
   await testResultPhasePolicyDefersSourceSpecificProductBehavior();
   await testResultPhasePolicyIsolatesAdapterFailuresBeforeRetry();
   await testResultPhasePolicyAccumulatesIndependentAdapterFailures();
