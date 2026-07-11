@@ -252,6 +252,114 @@ const testChangedRemoteTriggersSafeFollowUpSync = async () => {
   });
 };
 
+const testForegroundProbeClearsRetryWhenPolicyExecutionDidNotSchedule = async () => {
+  const { hooks } = createHarness();
+  hooks.setSyncBaselineState({
+    contentHash: "baseline-hash",
+    remoteUpdatedAt: "2026-04-11T12:30:00Z",
+  });
+
+  const policyCalls = [];
+  await hooks.checkRemoteFreshnessOnForeground("pageshow", {
+    now: 1760000150000,
+    settingsSnapshot: enabledSettings,
+    fetchRemoteData: async () => ({
+      meta: { updatedAt: "2026-04-11T12:45:00Z" },
+    }),
+    requestForegroundRemoteSyncCheck: async () => ({
+      status: "blocked",
+      blockLevel: "soft",
+      reason: "read_progress_pending_write",
+      retryAfterMs: 1500,
+    }),
+    syncResultPhasePolicy: {
+      handle: async (result, options) => {
+        policyCalls.push({ result, options });
+        const partialRetryResult = options.scheduleRetry({
+          kind: "foreground",
+          delayMs: 60 * 1000,
+        });
+        assert.strictEqual(partialRetryResult.status, "scheduled");
+        return {
+          refreshPlan: null,
+          retryIntent: { kind: "foreground", delayMs: 1500 },
+          retryResult: null,
+        };
+      },
+    },
+  });
+
+  assert.strictEqual(policyCalls.length, 1);
+  assert.strictEqual(policyCalls[0].options.source, "foreground");
+  assert.strictEqual(
+    policyCalls[0].options.refreshOptions.reason,
+    "foreground_probe:pageshow"
+  );
+  assert.strictEqual(typeof policyCalls[0].options.scheduleRetry, "function");
+  assert.strictEqual(
+    (() => {
+      const remainingMs = hooks.getForegroundRemoteSyncRetryRemainingMs();
+      hooks.clearForegroundRemoteSyncRetry();
+      return remainingMs;
+    })(),
+    0,
+    "retry adapter 未真正排队时，foreground probe 不应保留旧 retry 状态。"
+  );
+};
+
+const testForegroundRetryConsumerResetsAfterRetryExecutionFailure = async () => {
+  const { sandbox, hooks } = createHarness();
+  const scheduledCallbacks = [];
+  sandbox.setTimeout = (callback) => {
+    scheduledCallbacks.push(callback);
+    return scheduledCallbacks.length;
+  };
+  sandbox.clearTimeout = () => {};
+  const policyCalls = [];
+
+  const first = hooks.scheduleForegroundRemoteSyncRetry("retry_execution_failure", {
+    preferredDelayMs: 1,
+    requestForegroundRemoteSyncCheck: async () => ({
+      status: "blocked",
+      blockLevel: "soft",
+      reason: "read_progress_pending_write",
+      retryAfterMs: 1500,
+    }),
+    syncResultPhasePolicy: {
+      handle: async (result, options) => {
+        policyCalls.push({ result, options });
+        return {
+          refreshPlan: null,
+          retryIntent: { kind: "foreground", delayMs: 1500 },
+          retryResult: null,
+        };
+      },
+    },
+    maybeShowForegroundProbeFeedback: () => {},
+  });
+  assert.strictEqual(first.attempt, 1);
+  assert.ok(scheduledCallbacks.length >= 1);
+
+  await scheduledCallbacks[scheduledCallbacks.length - 1]();
+  assert.strictEqual(policyCalls.length, 1);
+  assert.strictEqual(policyCalls[0].options.source, "foreground");
+  assert.strictEqual(
+    policyCalls[0].options.refreshOptions.reason,
+    "foreground_retry:retry_execution_failure"
+  );
+  assert.strictEqual(typeof policyCalls[0].options.scheduleRetry, "function");
+
+  const next = hooks.scheduleForegroundRemoteSyncRetry("retry_after_failure", {
+    preferredDelayMs: 1,
+  });
+  assert.strictEqual(
+    next.attempt,
+    1,
+    "retry adapter 未真正排队时，timer consumer 应重置上一轮尝试计数。"
+  );
+  hooks.clearForegroundRemoteSyncRetry();
+};
+
 const testSharedCooldownSuppressesRepeatedProbe = async () => {
   const { hooks } = createHarness();
   const now = 1760000200000;
@@ -525,6 +633,8 @@ const testGuardConditionsSkipEarly = async () => {
 (async () => {
   await testUnchangedRemoteSkipsFollowUpSync();
   await testChangedRemoteTriggersSafeFollowUpSync();
+  await testForegroundProbeClearsRetryWhenPolicyExecutionDidNotSchedule();
+  await testForegroundRetryConsumerResetsAfterRetryExecutionFailure();
   await testSharedCooldownSuppressesRepeatedProbe();
   await testCleanStateDoesNotSkipForegroundProbeWithinCooldown();
   await testForegroundProbeRunsAfterCooldownOrLocalMutation();

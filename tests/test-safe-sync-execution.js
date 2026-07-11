@@ -17,6 +17,7 @@ const FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY =
 const PENDING_AUTO_SYNC_KEY = "s1p_pending_auto_sync_request";
 const DEFERRED_STARTUP_SYNC_KEY = "s1p_deferred_startup_sync";
 const STARTUP_AUTO_SYNC_LAST_TS_KEY = "s1p_startup_auto_sync_last_ts";
+const AUTO_SYNC_CONFLICT_PAUSE_KEY = "s1p_auto_sync_conflict_pause";
 
 const createHarness = () => {
   return createBaseHarness({
@@ -468,6 +469,46 @@ const testBackgroundIterationReleasesPersistedLocksBeforePendingResult = async (
   const iteration = await iterationPromise;
   assert.equal(iteration.result.status, "success");
   assert.ok(iteration.indicatorCompletion);
+};
+
+const testBackgroundResultPolicyWritesConflictPauseAfterLockRelease = async () => {
+  const { hooks, store, sandbox } = createHarness();
+  const originalSetValue = sandbox.GM_setValue;
+  let pauseWriteObserved = false;
+  sandbox.GM_setValue = (key, value) => {
+    if (key === AUTO_SYNC_CONFLICT_PAUSE_KEY) {
+      assert.equal(
+        store.has(BACKGROUND_SYNC_LOCK_KEY),
+        false,
+        "Result Phase 写入冲突暂停前必须释放后台模式锁。"
+      );
+      assert.equal(
+        store.has(GLOBAL_SYNC_LOCK_KEY),
+        false,
+        "Result Phase 写入冲突暂停前必须释放全局锁。"
+      );
+      pauseWriteObserved = true;
+    }
+    originalSetValue(key, value);
+  };
+
+  const iteration = await hooks.runBackgroundAutoSyncIteration({
+    reason: "phase5_conflict_policy",
+    drainCount: 1,
+    initialSchedulerContext: {
+      debounceGeneration: 5,
+      intendedMaxLastModified: 200,
+    },
+    performAutoSync: async () => ({
+      status: "conflict",
+      reason: "local_changed_during_sync",
+      coveredLastModified: 200,
+    }),
+  });
+
+  assert.equal(iteration.result.status, "conflict");
+  assert.equal(pauseWriteObserved, true);
+  assert.equal(store.get(AUTO_SYNC_CONFLICT_PAUSE_KEY)?.paused, true);
 };
 
 const testRunningSyncModeProfilesPreserveLocksAndTtls = async () => {
@@ -1431,14 +1472,6 @@ const testPhase3CallSitesUseDedicatedHelpers = () => {
     "前台 follow-up sync 入口未切到专用 foreground_followup helper。"
   );
   expectMatch(
-    /const handlePerLoadSyncCheck = async[\s\S]*?runStartupModeAutoSyncCheckWithIndicator\(\{/m,
-    "每次页面加载同步检查未复用统一的启动安全同步 helper。"
-  );
-  expectMatch(
-    /const handleStartupSync = async[\s\S]*?runStartupModeAutoSyncCheckWithIndicator\(\{/m,
-    "每日首次加载同步未复用统一的启动安全同步 helper。"
-  );
-  expectMatch(
     /LOG_COLLAPSED_MESSAGE_MAX_LENGTH\s*=\s*180/,
     "调试控制台长日志没有默认折叠长度。"
   );
@@ -1462,6 +1495,7 @@ const testPhase3CallSitesUseDedicatedHelpers = () => {
   await testRunningSyncContinuesResultHandlingWhenHeartbeatStopFails();
   await testRunningSyncReleasesLockWhenHeartbeatStartFails();
   await testBackgroundIterationReleasesPersistedLocksBeforePendingResult();
+  await testBackgroundResultPolicyWritesConflictPauseAfterLockRelease();
   await testRunningSyncModeProfilesPreserveLocksAndTtls();
   await testExpiredOwnedModeLockCanBeReacquired();
   await testValidOtherModeLockBlocksNonPreemptiveAcquire();

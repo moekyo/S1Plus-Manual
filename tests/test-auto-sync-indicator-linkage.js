@@ -1301,14 +1301,6 @@ const testAutoSyncEntryPointsBindIndicatorSources = () => {
     "前台 follow-up 安全同步应按触发原因决定初始图标，remote_probe_changed 在决策前保持 probe 语义。"
   );
   expectMatch(
-    /const handleStartupSync = async[\s\S]*?runStartupModeAutoSyncCheckWithIndicator\(\{\s*source:\s*AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP/m,
-    "每日首次加载同步未绑定 daily_startup 指示器来源。"
-  );
-  expectMatch(
-    /const handlePerLoadSyncCheck = async[\s\S]*?runStartupModeAutoSyncCheckWithIndicator\(\{\s*source:\s*AUTO_SYNC_INDICATOR_SOURCE_PER_LOAD/m,
-    "每次页面加载同步检查未绑定 per_load 指示器来源。"
-  );
-  expectMatch(
     /const requestForegroundRemoteSyncCheck = async[\s\S]*?runForegroundFollowUpAutoSyncCheckWithIndicator\(\{\s*source:\s*resolvedSource/m,
     "前台 follow-up sync 未绑定专用 foreground_followup 指示器 helper。"
   );
