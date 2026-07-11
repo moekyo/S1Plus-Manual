@@ -25,6 +25,13 @@ const createEventTarget = () => {
       handlers.push(handler);
       listeners.set(name, handlers);
     },
+    removeEventListener: (name, handler) => {
+      const handlers = listeners.get(name) || [];
+      listeners.set(
+        name,
+        handlers.filter((candidate) => candidate !== handler)
+      );
+    },
     listenerCount: (name) => (listeners.get(name) || []).length,
   };
 };
@@ -37,14 +44,27 @@ const testLifecycleAdapterBindsSingleEntryPerEvent = () => {
   const windowTarget = createEventTarget();
   const documentTarget = createEventTarget();
   const initializationCalls = [];
+  const cleanupCalls = [];
   const adapter = hooks.s1pCreateSyncLifecycleAdapter({
     windowTarget,
     documentTarget,
     bindSharedStateChange: () => {
       initializationCalls.push("shared_state");
+      return {
+        status: "bound",
+        dispose: () => {
+          cleanupCalls.push("shared_state");
+        },
+      };
     },
     initializeForegroundSupport: () => {
       initializationCalls.push("foreground_support");
+      return {
+        status: "initialized",
+        dispose: () => {
+          cleanupCalls.push("foreground_support");
+        },
+      };
     },
   });
 
@@ -58,6 +78,17 @@ const testLifecycleAdapterBindsSingleEntryPerEvent = () => {
     "foreground_support",
     "shared_state",
   ]);
+  assert.equal(adapter.unbind().status, "unbound");
+  assert.equal(adapter.unbind().reason, "already_unbound");
+  assert.equal(windowTarget.listenerCount("pageshow"), 0);
+  assert.equal(windowTarget.listenerCount("pagehide"), 0);
+  assert.equal(windowTarget.listenerCount("beforeunload"), 0);
+  assert.equal(documentTarget.listenerCount("visibilitychange"), 0);
+  assert.deepEqual(cleanupCalls, ["shared_state", "foreground_support"]);
+
+  assert.equal(adapter.bind().status, "bound");
+  assert.equal(windowTarget.listenerCount("pageshow"), 1);
+  assert.equal(documentTarget.listenerCount("visibilitychange"), 1);
 };
 
 const testLifecycleAdapterBindCanRetryAfterInitializationFailure = () => {
@@ -81,6 +112,78 @@ const testLifecycleAdapterBindCanRetryAfterInitializationFailure = () => {
   assert.equal(adapter.bind().status, "bound");
   assert.equal(windowTarget.listenerCount("pageshow"), 1);
   assert.equal(documentTarget.listenerCount("visibilitychange"), 1);
+};
+
+const testLifecycleAdaptersShareOneGmStateListenerLease = () => {
+  const { sandbox, hooks } = createHarness();
+  let addCount = 0;
+  let removeCount = 0;
+  sandbox.GM_addValueChangeListener = () => {
+    addCount += 1;
+    return `listener-${addCount}`;
+  };
+  sandbox.GM_removeValueChangeListener = () => {
+    removeCount += 1;
+  };
+  const createAdapter = () =>
+    hooks.s1pCreateSyncLifecycleAdapter({
+      windowTarget: createEventTarget(),
+      documentTarget: createEventTarget(),
+      initializeForegroundSupport: () => {},
+    });
+  const first = createAdapter();
+  const second = createAdapter();
+
+  first.bind();
+  second.bind();
+  assert.equal(addCount, 1);
+  first.unbind();
+  assert.equal(removeCount, 0);
+  second.unbind();
+  assert.equal(removeCount, 1);
+
+  const third = createAdapter();
+  third.bind();
+  assert.equal(addCount, 2);
+  third.unbind();
+  assert.equal(removeCount, 2);
+};
+
+const testForegroundRecoverySupportInitializesAndDisposesInIsolation = () => {
+  const { hooks } = createHarness();
+  assert.equal(
+    typeof hooks.s1pInitializePendingAutoSyncRecoverySupport,
+    "function"
+  );
+  const calls = [];
+  const support = hooks.s1pInitializePendingAutoSyncRecoverySupport({
+    bindActivityHooks: () => {
+      calls.push("activity:bind");
+      return {
+        status: "bound",
+        dispose: () => {
+          calls.push("activity:unbind");
+        },
+      };
+    },
+    syncPolling: ({ resetActivity }) => {
+      calls.push(`polling:sync:${resetActivity}`);
+    },
+    stopPolling: () => {
+      calls.push("polling:stop");
+    },
+  });
+
+  assert.equal(support.status, "initialized");
+  assert.deepEqual(calls, ["activity:bind", "polling:sync:true"]);
+  assert.equal(support.dispose().status, "disposed");
+  assert.equal(support.dispose().reason, "already_disposed");
+  assert.deepEqual(calls, [
+    "activity:bind",
+    "polling:sync:true",
+    "polling:stop",
+    "activity:unbind",
+  ]);
 };
 
 const testLifecycleAdapterSequencesEveryBrowserPhase = async () => {
@@ -175,6 +278,116 @@ const testLifecycleAdapterSequencesEveryBrowserPhase = async () => {
         : []),
     ]);
   }
+};
+
+const testLifecycleAdapterUsesDefaultMicrotaskScheduling = async () => {
+  const queuedMicrotasks = [];
+  const firstHarness = createHarness();
+  firstHarness.sandbox.queueMicrotask = (callback) => {
+    queuedMicrotasks.push(callback);
+  };
+  const unloadingStates = [];
+  const firstAdapter = firstHarness.hooks.s1pCreateSyncLifecycleAdapter({
+    setSchedulerPageUnloading: (value) => {
+      unloadingStates.push(value);
+    },
+    runCheckpoint: () => ({ status: "completed" }),
+  });
+
+  const pagehideResult = firstAdapter.handle("pagehide");
+  assert.deepEqual(unloadingStates, [true]);
+  assert.equal(queuedMicrotasks.length, 1);
+  queuedMicrotasks[0]();
+  await pagehideResult;
+  assert.deepEqual(unloadingStates, [true, false]);
+
+  const secondHarness = createHarness();
+  secondHarness.sandbox.queueMicrotask = undefined;
+  const fallbackStates = [];
+  const secondAdapter = secondHarness.hooks.s1pCreateSyncLifecycleAdapter({
+    setSchedulerPageUnloading: (value) => {
+      fallbackStates.push(value);
+    },
+    runCheckpoint: () => ({ status: "completed" }),
+  });
+  await secondAdapter.handle("pagehide");
+  assert.deepEqual(fallbackStates, [true, false]);
+};
+
+const testPostUnloadRecoveryRequiresCurrentVisibleTransition = async () => {
+  const { hooks } = createHarness();
+  let visibilityState = "hidden";
+  let recoveryTask = null;
+  let recoveryCount = 0;
+  const adapter = hooks.s1pCreateSyncLifecycleAdapter({
+    getVisibilityState: () => visibilityState,
+    runCheckpoint: () => ({ status: "completed" }),
+    scheduleMicrotask: (callback) => callback(),
+    schedulePostUnloadRecovery: (callback) => {
+      recoveryTask = callback;
+    },
+    recoverAfterCanceledUnload: () => {
+      recoveryCount += 1;
+      return { status: "scheduled" };
+    },
+    handlePageShowRecovery: async () => ({ status: "unchanged" }),
+  });
+
+  await adapter.handle("beforeunload");
+  recoveryTask();
+  assert.equal(recoveryCount, 0);
+
+  visibilityState = "visible";
+  await adapter.handle("beforeunload");
+  const staleRecoveryTask = recoveryTask;
+  await adapter.handle("pageshow", { persisted: true });
+  staleRecoveryTask();
+  assert.equal(recoveryCount, 0);
+
+  await adapter.handle("beforeunload");
+  recoveryTask();
+  assert.equal(recoveryCount, 1);
+};
+
+const testUnbindInvalidatesPendingUnloadCallbacks = async () => {
+  const { hooks } = createHarness();
+  const microtasks = [];
+  const recoveryTasks = [];
+  const unloadingStates = [];
+  let recoveryCount = 0;
+  const adapter = hooks.s1pCreateSyncLifecycleAdapter({
+    windowTarget: createEventTarget(),
+    documentTarget: createEventTarget(),
+    getVisibilityState: () => "visible",
+    setSchedulerPageUnloading: (value) => {
+      unloadingStates.push(value);
+    },
+    clearHiddenFlush: () => {},
+    runCheckpoint: () => ({ status: "completed" }),
+    scheduleMicrotask: (callback) => {
+      microtasks.push(callback);
+    },
+    schedulePostUnloadRecovery: (callback) => {
+      recoveryTasks.push(callback);
+    },
+    recoverAfterCanceledUnload: () => {
+      recoveryCount += 1;
+    },
+    initializeForegroundSupport: () => {},
+    bindSharedStateChange: () => {},
+  });
+  adapter.bind();
+
+  const beforeUnloadResult = adapter.handle("beforeunload");
+  assert.deepEqual(unloadingStates, [true]);
+  assert.equal(adapter.unbind().status, "unbound");
+  assert.deepEqual(unloadingStates, [true, false]);
+  microtasks.forEach((callback) => callback());
+  recoveryTasks.forEach((callback) => callback());
+  await beforeUnloadResult;
+
+  assert.deepEqual(unloadingStates, [true, false]);
+  assert.equal(recoveryCount, 0);
 };
 
 const testVisibilityChangeTriggersRecoveryAndProbe = async () => {
@@ -363,7 +576,12 @@ const testHiddenInitialVisibleProbeStaysIdle = async () => {
 const main = async () => {
   testLifecycleAdapterBindsSingleEntryPerEvent();
   testLifecycleAdapterBindCanRetryAfterInitializationFailure();
+  testLifecycleAdaptersShareOneGmStateListenerLease();
+  testForegroundRecoverySupportInitializesAndDisposesInIsolation();
   await testLifecycleAdapterSequencesEveryBrowserPhase();
+  await testLifecycleAdapterUsesDefaultMicrotaskScheduling();
+  await testPostUnloadRecoveryRequiresCurrentVisibleTransition();
+  await testUnbindInvalidatesPendingUnloadCallbacks();
   await testVisibilityChangeTriggersRecoveryAndProbe();
   await testHiddenVisibilityChangeDoesNothing();
   await testPersistedPageShowTriggersRecoveryAndProbe();

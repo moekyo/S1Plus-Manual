@@ -150,6 +150,7 @@ const createSandbox = ({
     GM_openInTab: noop,
     GM_download: noop,
     GM_addValueChangeListener: noop,
+    GM_removeValueChangeListener: noop,
   };
 
   if (includeGmListValues) {
