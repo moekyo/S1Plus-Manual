@@ -207,11 +207,7 @@ const expectMatch = (pattern, message) => {
   assert.match(sourceCode, pattern, message);
 };
 
-const testStaticWiring = () => {
-  expectMatch(
-    /bindVisibleRemoteFreshnessPollingActivityHooks\(\);\s*syncVisibleRemoteFreshnessPollingForCurrentState\(\{\s*resetActivity:\s*true,/m,
-    "Phase 5 未在前台恢复钩子绑定时初始化可见页轮询。"
-  );
+const testPollingConfigurationAndActivityWiring = () => {
   expectMatch(
     /const isVisibleRemoteFreshnessPollingEnabled = \(settingsSnapshot\) =>\s*isForegroundRemoteFreshnessCheckEnabled\(settingsSnapshot\) &&\s*settingsSnapshot\.syncVisibleRemotePollingEnabled === true;/m,
     "可见页低频轮询未拆成独立开关。"
@@ -228,6 +224,31 @@ const testStaticWiring = () => {
     /window\.addEventListener\("scroll",\s*handleUserActivity,\s*\{\s*capture:\s*true,\s*passive:\s*true,/m,
     "Phase 5 未绑定滚动活跃度监听。"
   );
+};
+
+const testForegroundSupportInitializesVisiblePolling = () => {
+  const { hooks } = createHarness();
+  const calls = [];
+  const support = hooks.s1pInitializePendingAutoSyncRecoverySupport({
+    bindActivityHooks: () => {
+      calls.push("activity:bind");
+      return { status: "bound" };
+    },
+    syncPolling: ({ resetActivity }) => {
+      calls.push(`polling:sync:${resetActivity}`);
+    },
+    stopPolling: () => {
+      calls.push("polling:stop");
+    },
+  });
+
+  assert.deepStrictEqual(calls, ["activity:bind", "polling:sync:true"]);
+  support.dispose();
+  assert.deepStrictEqual(calls, [
+    "activity:bind",
+    "polling:sync:true",
+    "polling:stop",
+  ]);
 };
 
 const testForegroundCheckAloneDoesNotScheduleVisiblePolling = () => {
@@ -386,7 +407,8 @@ const testNewInteractionRestoresActiveInterval = () => {
 };
 
 const run = async () => {
-  testStaticWiring();
+  testPollingConfigurationAndActivityWiring();
+  testForegroundSupportInitializesVisiblePolling();
   testForegroundCheckAloneDoesNotScheduleVisiblePolling();
   testVisiblePageSchedulesActivePolling();
   testHiddenPageStopsPolling();
