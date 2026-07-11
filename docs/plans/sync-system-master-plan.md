@@ -359,7 +359,9 @@ Running Sync 的 implementation 负责模式锁、全局锁、心跳、远端事
 - 删除已被 façade 场景替代的生产 scheduler、lifecycle singleton、projection、foreground probe、startup consumer 和 startup-flow 全局 test hooks；内部 module constructor 的专用场景测试继续保留。
 - 独立审查首轮发现两项 P2：初始化恢复失败只解绑 lifecycle、未释放 Scheduler runtime，以及 façade 合约测试未精确覆盖恢复顺序与全部 intent 映射。修复后补齐 handoff → unbind 回滚、失败后重试及九种 intent 参数测试。
 - 同一审查者复审进一步发现非 owner 的 `handoff()` 未停止 owner lease recovery watch；Scheduler module 收紧 handoff 契约并新增 production 分支回归后，终审为 0 findings，未发现新 P0/P1/P2。
-- 自动验证：`node --check S1Plus.js`、Phase 6 façade/Pending Dirty Scheduler 定向测试及全仓 31 个测试文件通过；`git diff --check` 通过。
+- commit `249beee` 的整合审查后续问题已修复：`recordLocalMutation()` 六条返回路径全部经 production façade 覆盖；hidden/pagehide/beforeunload 关键生命周期测试穿过 façade；background push 与 manual sync 增加 production singleton 集成覆盖；`dispose()` 即使 unbind 抛错也清除 initialized 状态，并验证 dispose 后重建；恢复 adapter 字段统一命名为 `recoverPendingAutoSyncIfNeeded`。文档明确 dispose 只用于显式 host teardown，普通卸载仍由 lifecycle adapter 处理。
+- 整合审查修复完成后按 Standards/Spec 双轴执行只读提交前审查：两轴均为 0 findings，无 hard violation、未实现要求或 scope creep。
+- 自动验证（commit `249beee` 整合审查修复后）：`node --check S1Plus.js`、Phase 6 façade、Pending Dirty Scheduler、foreground lifecycle、startup、Result Phase、Title、foreground probe 与 safe sync 定向测试通过；全仓 31 个测试文件通过，`git diff --check` 通过。
 - 尚未完成：Phase 1 到 Phase 3 真实多窗口手动点验仍待执行。
 - 下一步：按跨阶段真实场景检查清单执行多窗口点验；不再新增架构阶段。
 

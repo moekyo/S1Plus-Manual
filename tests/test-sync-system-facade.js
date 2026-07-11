@@ -12,6 +12,14 @@ const createHarness = () =>
     hookErrorMessage: "未能从 S1Plus.js 暴露 Phase 6 Sync System façade。",
   });
 
+const readySyncSettings = Object.freeze({
+  syncRemoteEnabled: true,
+  syncAutoEnabled: true,
+  syncRemoteGistId: "gist-id",
+  syncRemotePat: "pat-token",
+  syncDeviceId: "device-a",
+});
+
 const createLifecycleAdapter = (calls = []) => ({
   bind: () => {
     calls.push("lifecycle:bind");
@@ -51,6 +59,39 @@ const testFacadeOwnsInitializationAndLifecycle = async () => {
     status: "skipped",
     reason: "already_disposed",
   });
+
+  assert.equal(facade.initialize().status, "initialized");
+  assert.equal(facade.dispose().status, "disposed");
+};
+
+const testFacadeCanRecoverAfterDisposeUnbindFailure = () => {
+  const { hooks } = createHarness();
+  let shouldFailUnbind = true;
+  const lifecycleAdapter = {
+    bind: () => ({ status: "bound" }),
+    unbind: () => {
+      if (shouldFailUnbind) {
+        throw new Error("unbind failed");
+      }
+      return { status: "unbound" };
+    },
+    handle: async () => ({ status: "completed" }),
+  };
+  const facade = hooks.s1pCreateSyncSystemFacade({
+    lifecycleAdapter,
+    pendingDirtyScheduler: {
+      recover: () => ({ status: "recovered" }),
+      handoff: () => ({ status: "released" }),
+    },
+    recoverPendingAutoSyncIfNeeded: () => ({ status: "recovered" }),
+  });
+
+  assert.equal(facade.initialize().status, "initialized");
+  assert.throws(() => facade.dispose(), /unbind failed/);
+
+  shouldFailUnbind = false;
+  assert.equal(facade.initialize().status, "initialized");
+  assert.equal(facade.dispose().status, "disposed");
 };
 
 const testFacadeRollsBackPartialInitializationAndCanRetry = () => {
@@ -76,7 +117,7 @@ const testFacadeRollsBackPartialInitializationAndCanRetry = () => {
           return { status: "released" };
         },
       },
-      recoverPendingAutoSync: () => {
+      recoverPendingAutoSyncIfNeeded: () => {
         calls.push("pending:recover");
         return { status: "recovered" };
       },
@@ -114,7 +155,7 @@ const testFacadeRollsBackPartialInitializationAndCanRetry = () => {
           return { status: "released" };
         },
       },
-      recoverPendingAutoSync: () => {
+      recoverPendingAutoSyncIfNeeded: () => {
         calls.push("pending:recover");
         throw new Error("pending recovery failed");
       },
@@ -141,6 +182,96 @@ const testFacadeRecordsLocalMutationThroughOneInterface = () => {
   assert.equal(result.source, "general");
   assert.equal(result.syncRequested, false);
   assert.ok(result.lastModified > 0);
+};
+
+const testFacadeQueuesReadyLocalMutation = () => {
+  const { hooks, store } = createHarness();
+  store.set("s1p_settings", readySyncSettings);
+
+  try {
+    const result = toPlainObject(
+      hooks.s1pSyncSystem.recordLocalMutation("general", {
+        triggerSync: true,
+      })
+    );
+    assert.equal(result.status, "recorded");
+    assert.equal(result.syncRequested, true);
+    assert.equal(result.schedulerResult.status, "scheduled");
+  } finally {
+    hooks.preemptActiveSyncForManualOverride("facade_test_cleanup");
+  }
+};
+
+const testFacadeReportsLocalMutationReadinessGuard = () => {
+  const { hooks } = createHarness();
+  const result = toPlainObject(
+    hooks.s1pSyncSystem.recordLocalMutation("general", {
+      triggerSync: true,
+    })
+  );
+
+  assert.equal(result.status, "recorded");
+  assert.equal(result.syncRequested, false);
+  assert.equal(result.reason, "sync_not_ready");
+};
+
+const testFacadeRecordsTimestampOnlyMutationDuringRunningSync = () => {
+  const { hooks } = createHarness();
+  hooks.seedSyncRuntimeStateForManualOverrideTest({
+    isInitialSyncInProgress: true,
+  });
+
+  const result = toPlainObject(
+    hooks.s1pSyncSystem.recordLocalMutation("general", {
+      triggerSync: false,
+    })
+  );
+
+  assert.equal(result.status, "recorded");
+  assert.equal(result.syncRequested, false);
+  assert.equal("reason" in result, false);
+  hooks.preemptActiveSyncForManualOverride("facade_test_cleanup");
+};
+
+const testFacadeDefersReadyMutationDuringRunningSync = () => {
+  const { hooks, store } = createHarness();
+  store.set("s1p_settings", readySyncSettings);
+  hooks.seedSyncRuntimeStateForManualOverrideTest({
+    isInitialSyncInProgress: true,
+  });
+
+  try {
+    const result = toPlainObject(
+      hooks.s1pSyncSystem.recordLocalMutation("read_progress", {
+        triggerSync: true,
+      })
+    );
+    assert.equal(result.status, "recorded");
+    assert.equal(result.source, "read_progress");
+    assert.equal(result.syncRequested, true);
+    assert.equal(result.schedulerResult.status, "retained");
+    assert.equal(result.schedulerResult.reason, "running_sync");
+  } finally {
+    hooks.preemptActiveSyncForManualOverride("facade_test_cleanup");
+  }
+};
+
+const testFacadeReportsRunningSyncMutationReadinessGuard = () => {
+  const { hooks } = createHarness();
+  hooks.seedSyncRuntimeStateForManualOverrideTest({
+    isInitialSyncInProgress: true,
+  });
+
+  const result = toPlainObject(
+    hooks.s1pSyncSystem.recordLocalMutation("general", {
+      triggerSync: true,
+    })
+  );
+
+  assert.equal(result.status, "recorded");
+  assert.equal(result.syncRequested, false);
+  assert.equal(result.reason, "sync_not_ready");
+  hooks.preemptActiveSyncForManualOverride("facade_test_cleanup");
 };
 
 const testFacadeRoutesSyncIntentsAndReadsProjectedState = async () => {
@@ -193,6 +324,38 @@ const testFacadeRoutesSyncIntentsAndReadsProjectedState = async () => {
     })
   );
   assert.equal(projected.displayPhase, "success");
+};
+
+const testProductionFacadeBackgroundPushUsesRuntimeGate = () => {
+  const { hooks } = createHarness();
+  hooks.seedSyncRuntimeStateForManualOverrideTest({
+    hasPendingBackgroundSync: true,
+  });
+
+  hooks.s1pSyncSystem.requestSync({
+    kind: "background_push",
+    reason: "facade_integration",
+  });
+
+  assert.equal(
+    hooks.getBackgroundAutoSyncRuntimeStateForTest().hasPendingBackgroundSync,
+    false
+  );
+};
+
+const testProductionFacadeManualSyncUsesRuntimeGate = async () => {
+  const { hooks } = createHarness();
+  const result = await hooks.s1pSyncSystem.requestSync({
+    kind: "manual_sync",
+    options: { suppressInitialMessage: true },
+  });
+
+  assert.equal(result, false);
+  assert.equal(
+    hooks.getBackgroundAutoSyncRuntimeStateForTest()
+      .manualSyncLockHeartbeatActive,
+    false
+  );
 };
 
 const testFacadePreservesEverySyncIntentContract = async () => {
@@ -276,9 +439,17 @@ const testFacadePreservesEverySyncIntentContract = async () => {
 
 const run = async () => {
   await testFacadeOwnsInitializationAndLifecycle();
+  testFacadeCanRecoverAfterDisposeUnbindFailure();
   testFacadeRollsBackPartialInitializationAndCanRetry();
   testFacadeRecordsLocalMutationThroughOneInterface();
+  testFacadeQueuesReadyLocalMutation();
+  testFacadeReportsLocalMutationReadinessGuard();
+  testFacadeRecordsTimestampOnlyMutationDuringRunningSync();
+  testFacadeDefersReadyMutationDuringRunningSync();
+  testFacadeReportsRunningSyncMutationReadinessGuard();
   await testFacadeRoutesSyncIntentsAndReadsProjectedState();
+  testProductionFacadeBackgroundPushUsesRuntimeGate();
+  await testProductionFacadeManualSyncUsesRuntimeGate();
   await testFacadePreservesEverySyncIntentContract();
   console.log("[sync-system-facade] Phase 6 façade interface verified.");
 };
