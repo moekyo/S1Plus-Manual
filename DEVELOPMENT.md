@@ -411,6 +411,27 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - 前台 follow-up sync 使用独立的短租约模式锁（45s），不要复用 3 分钟启动锁；正常任务靠心跳续租，卡住或冻结的标签页不会长时间阻塞后台阅读进度推送。
 - Running Sync 不可跨标签页即时接管。关闭运行中的标签页时，如果事务尚未 settle，不要在 `pagehide` / `beforeunload` 清理执行锁，也不要让其它标签页直接继承 `[同步中]`；必须等锁按 TTL 失效后，通过 pending dirty / shared scheduler / retry 机制恢复。事务已经 settle 时，Running Sync 必须在进入 Result Phase 前释放锁，避免页面在刷新或弹窗处理中关闭后留下无效执行锁。
 
+#### 六阶段架构收口（2026-07）
+
+[同步系统主计划](docs/plans/sync-system-master-plan.md) 的六个阶段已经完成实现、自动验证和独立审查。各阶段不是六套并行流程，而是从事务执行到页面入口逐层加深同一套同步系统：
+
+| 阶段 | 深化模块 | 对外边界 | 必须保持的核心不变量 |
+| --- | --- | --- | --- |
+| Phase 1 | Running Sync | `runRunningSync()` | 模式锁、全局锁和心跳包住完整事务；Result Phase 只在锁释放后运行 |
+| Phase 2 | Pending Dirty Scheduler | `queue / recover / recoverPending / runDue / flush / complete / handoff / retry / reset` | Pending Dirty、owner lease、generation、timer、coverage 与 retry 选择不泄漏给页面调用者 |
+| Phase 3 | Sync Lifecycle Adapter | `bind / unbind / handle` | 每个 phase 先 finalize 本地变更，再做 Scheduler checkpoint，最后才执行前台恢复 |
+| Phase 4 | Sync Indicator State Projection | `readSyncIndicatorStateProjection({ surface })` | Navbar 与 Title 共用同一事实优先级；Title 额外执行 Live Runner 与 push-only 资格门禁 |
+| Phase 5 | Result Phase Policy | `s1pSyncResultPhasePolicy.handle(result, context)` | refresh、conflict pause、notification、retry 的策略集中，adapter 失败互相隔离且不阻断后续 intent |
+| Phase 6 | Sync System Façade | `initialize / dispose / recordLocalMutation / handleLifecycle / requestSync / readState` | 页面只表达同步意图；初始化失败可完整回滚，显式 teardown 后可重新初始化 |
+
+当前状态与验证边界：
+
+- 实施进度：6/6；独立审查进度：6/6。
+- `test-sync-system-facade.js` 覆盖初始化/释放、失败回滚、本地变更六条返回路径、九种同步意图映射与 production singleton 的 background/manual 请求。
+- 生命周期、Scheduler、Running Sync、Result Phase、Navbar/Title 与 startup/foreground 场景继续由对应专项脚本覆盖；全仓 31 个测试文件已通过。
+- 本轮不修改远端同步协议、持久化 schema、用户同步设置或既有 TTL。
+- 尚未完成的验证只有 Phase 1 到 Phase 3 的真实多窗口手动点验；按主计划“跨阶段真实场景检查清单”执行，不应把自动测试通过误写成实机点验完成。
+
 ### 6.4 手动覆盖：导航栏直接拉取 / 推送
 
 导航栏同步按钮的点击和悬停都会打开同一个“拉取 / 推送”菜单；点击只是键盘、触摸或 hover 不可靠场景的备用入口，不直接执行同步。菜单里选择的“拉取”或“推送”才是显式手动覆盖路径，优先级高于冲突暂停、待同步队列、自动同步运行态和已有同步锁。用户点下方向以后，当前自动体系的状态要先被取消，再按用户指定方向重新开始一次手动操作。
