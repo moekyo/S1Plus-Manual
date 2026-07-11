@@ -2,10 +2,10 @@
 
 ## 当前状态
 
-- 计划状态：Phase 1 与 Phase 2 实现、自动验证和独立审查已完成，真实多窗口点验待执行。
+- 计划状态：Phase 1、Phase 2 与 Phase 3 实现、自动验证和独立审查已完成，真实多窗口点验待执行。
 - 总体进度：0/6 个阶段完成。
-- 当前阶段：Phase 2，等待真实多窗口点验。
-- 代码状态：Phase 2 运行代码、interface 场景测试和架构文档已完成并通过审查后复验。
+- 当前阶段：Phase 3，等待真实多窗口点验。
+- 代码状态：Phase 3 生命周期 adapter、interface 场景测试和架构文档已完成并通过审查后复验。
 - 架构依据：2026-07-11 完成同步锁遗留问题的实机复现、代码定位和架构复核。
 
 ## 背景
@@ -195,7 +195,7 @@ Running Sync 的 implementation 负责模式锁、全局锁、心跳、远端事
 
 ## Phase 3：收拢浏览器生命周期 adapter
 
-- 状态：未开始。
+- 状态：实现、自动验证和独立审查已完成；真实多窗口点验待执行。
 - 目标：集中 `visibilitychange`、`pageshow`、`pagehide` 和 `beforeunload` 的同步处理顺序。
 - 实施范围：
   - 合并 pending recovery 和 shared scheduler 的重复事件绑定。
@@ -209,6 +209,28 @@ Running Sync 的 implementation 负责模式锁、全局锁、心跳、远端事
   - hidden、visible、pagehide、beforeunload 和 pageshow 均有确定的场景测试。
   - pagehide 只 finalize Pending Dirty 并转移 Scheduler Owner，不接管 Running Sync。
 - 主要文件：`S1Plus.js`、`tests/test-background-sync-shared-debounce.js`、`tests/test-foreground-trigger-integration.js`、`DEVELOPMENT.md`。
+
+### Phase 3 进度更新
+
+- 已完成：
+  - 新增 `s1pSyncLifecycleAdapter` deep module，以 `bind()` / `handle()` interface 统一 hidden、visible、pageshow、pagehide 和 beforeunload；重复调用 `bind()` 不会重复注册事件。
+  - 合并 shared scheduler 与 pending recovery 的两套 `pageshow` / `visibilitychange` 监听；shared state change listener 和前台 polling support 由同一次 adapter 绑定初始化。
+  - 固定 phase 顺序：先运行本地 mutation finalizer 与 sync lifecycle checkpoint，再执行 Scheduler flush/recover/handoff；visible/pageshow 最后执行存储快照重读、Pending Dirty recovery、remote probe 和 polling 更新。
+  - 删除 checkpoint 之外的第二次卸载 handoff；pagehide/beforeunload 只 finalize Pending Dirty 并转移 Scheduler Owner，不接管 Running Sync 或删除执行锁。
+  - 将阅读进度 hidden/visible/pageshow/pagehide/beforeunload 处理收进已注册 finalizer，移除其独立生命周期 DOM 监听，避免同一变化重复 flush。
+  - 测试改从生命周期 adapter interface 覆盖单次绑定、五种 phase 顺序、前台恢复，以及 pagehide finalize + owner handoff 且不触发同步。
+- 独立审查：
+  - 按用户要求启用一个 subagent 联合检查 Standards 与 Phase 3 spec，共确认 3 个 P2，均已修正并复审关闭，最终 0 findings。
+  - 卸载 handoff 增加 generation fence，阻止当前页的本地 GM change listener 对刚写出的空 owner 状态立即重新接管。
+  - `bind()` 只在初始化与事件注册全部成功后提交 bound 状态；初始化失败可重试，并复用稳定 handler 引用避免重复 DOM 注册。
+  - `beforeunload` 被取消时，通过下一轮 macrotask 判断页面仍存活且可见后恢复 Scheduler Owner；真正离页时任务随页面上下文销毁，不接管 Running Sync。
+- 自动验证：
+  - `node --check S1Plus.js` 通过。
+  - 16 个 sync / foreground / startup / remote 相关测试文件全部通过。
+  - `git diff --check` 通过。
+- 尚未完成：
+  - Phase 1/Phase 2/Phase 3 真实多窗口手动点验。
+- 下一步：按本文件多窗口步骤做 Phase 1/Phase 2/Phase 3 联合人工验收，追加取消离页与确认离页场景；通过后再进入 Phase 4。
 
 ## Phase 4：深化 Sync Indicator State 投影
 

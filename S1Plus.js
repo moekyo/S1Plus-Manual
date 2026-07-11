@@ -17734,34 +17734,10 @@
     );
   };
 
-  const bindPendingAutoSyncRecoveryHooks = () => {
-    if (window.__s1pPendingAutoSyncRecoveryBound) {
-      return;
-    }
-    window.__s1pPendingAutoSyncRecoveryBound = true;
+  const s1pInitializePendingAutoSyncRecoverySupport = () => {
     bindVisibleRemoteFreshnessPollingActivityHooks();
     syncVisibleRemoteFreshnessPollingForCurrentState({
       resetActivity: true,
-    });
-
-    // 处理浏览器后退缓存（bfcache）恢复场景：页面不会重新执行 main。
-    window.addEventListener("pageshow", (event) => {
-      void handlePendingAutoSyncRecoveryPageShow(event);
-      syncVisibleRemoteFreshnessPollingForCurrentState({
-        resetActivity: Boolean(event && event.persisted),
-      });
-    });
-
-    // 处理标签页从后台恢复到前台的场景。
-    document.addEventListener("visibilitychange", () => {
-      void handlePendingAutoSyncRecoveryVisibilityChange();
-      if (document.visibilityState === "visible") {
-        syncVisibleRemoteFreshnessPollingForCurrentState({
-          resetActivity: true,
-        });
-        return;
-      }
-      stopVisibleRemoteFreshnessPolling();
     });
   };
 
@@ -19350,13 +19326,29 @@
       retryCount,
     };
   };
+  let sharedBackgroundSyncDebouncePageUnloading = false;
+  let sharedBackgroundSyncDebounceHandoffFenceGeneration = 0;
   const handleSharedBackgroundSyncDebounceStateChange = (newValue) => {
     const state = normalizeBackgroundSyncDebounceState(newValue);
     syncReadProgressDebounceStateFromSharedState(state);
     if (!state) {
+      sharedBackgroundSyncDebounceHandoffFenceGeneration = 0;
       clearSharedBackgroundSyncDebounceTimer();
       clearSharedBackgroundSyncDebounceOwnerRecoveryTimer();
       return;
+    }
+    if (
+      sharedBackgroundSyncDebouncePageUnloading ||
+      (!state.ownerTabId &&
+        state.generation ===
+          sharedBackgroundSyncDebounceHandoffFenceGeneration)
+    ) {
+      clearSharedBackgroundSyncDebounceTimer();
+      clearSharedBackgroundSyncDebounceOwnerRecoveryTimer();
+      return;
+    }
+    if (sharedBackgroundSyncDebounceHandoffFenceGeneration) {
+      sharedBackgroundSyncDebounceHandoffFenceGeneration = 0;
     }
     const now = Date.now();
     if (state.ownerTabId === SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID) {
@@ -19380,7 +19372,6 @@
     scheduleSharedBackgroundSyncDebounceOwnerRecoveryTimer(state, { now });
   };
   let sharedBackgroundSyncDebounceHiddenFlushTask = null;
-  let sharedBackgroundSyncDebouncePageUnloading = false;
   const scheduleSharedBackgroundSyncDebounceHiddenFlushTask = (callback) => {
     if (typeof MessageChannel === "function") {
       const channel = new MessageChannel();
@@ -19507,29 +19498,6 @@
     queueSharedBackgroundSyncDebounceHiddenFlush(triggerReason, options);
     return true;
   };
-  const releaseSharedBackgroundSyncDebounceOwnerAfterLifecycleFlush = (
-    triggerReason = "pagehide"
-  ) => {
-    sharedBackgroundSyncDebouncePageUnloading = true;
-    clearSharedBackgroundSyncDebounceHiddenFlushTimer();
-    const releaseOwner = () => {
-      const handoffResult = pendingDirtyScheduler.handoff();
-      sharedBackgroundSyncDebouncePageUnloading = false;
-      if (handoffResult.status === "released") {
-        recordSyncTraceEvent("shared_scheduler_owner_released", {
-          scope: "shared_background_scheduler",
-          status: "skipped",
-          message: "页面卸载前释放共享后台调度 owner",
-          details: { triggerReason },
-        });
-      }
-    };
-    if (typeof queueMicrotask === "function") {
-      queueMicrotask(releaseOwner);
-      return;
-    }
-    Promise.resolve().then(releaseOwner);
-  };
   const shouldHandoffSharedBackgroundSyncDebounceOwnerAfterCheckpoint = (
     schedulerResult = null
   ) => {
@@ -19564,7 +19532,11 @@
         reason: state ? "not_owner" : "no_shared_debounce_state",
       };
     }
+    sharedBackgroundSyncDebounceHandoffFenceGeneration = state.generation;
     const handoffResult = pendingDirtyScheduler.handoff({ tabId, now });
+    if (handoffResult.status !== "released") {
+      sharedBackgroundSyncDebounceHandoffFenceGeneration = 0;
+    }
     if (handoffResult.status === "released") {
       recordSyncTraceEvent("sync_lifecycle_owner_handoff", {
         scope: "sync_lifecycle_checkpoint",
@@ -19664,45 +19636,184 @@
       );
     }
   };
-  const bindSharedBackgroundSyncDebounceLifecycleHooks = () => {
-    if (window.__s1pBackgroundSyncDebounceLifecycleBound) {
-      return;
+  const s1pBindSharedBackgroundSyncDebounceStateChangeHook = () => {
+    if (typeof GM_addValueChangeListener !== "function") {
+      return { status: "skipped", reason: "listener_unavailable" };
     }
-    window.__s1pBackgroundSyncDebounceLifecycleBound = true;
-
-    if (typeof GM_addValueChangeListener === "function") {
-      GM_addValueChangeListener(
-        BACKGROUND_SYNC_DEBOUNCE_STATE_KEY,
-        (_key, _oldValue, newValue) => {
-          handleSharedBackgroundSyncDebounceStateChange(newValue);
-        }
-      );
-    }
-
-    window.addEventListener("pagehide", () => {
-      runSyncLifecycleCheckpoint("pagehide", { phase: "pagehide" });
-      releaseSharedBackgroundSyncDebounceOwnerAfterLifecycleFlush("pagehide");
-    });
-    window.addEventListener("beforeunload", () => {
-      runSyncLifecycleCheckpoint("beforeunload", { phase: "beforeunload" });
-      releaseSharedBackgroundSyncDebounceOwnerAfterLifecycleFlush(
-        "beforeunload"
-      );
-    });
-    window.addEventListener("pageshow", () => {
-      sharedBackgroundSyncDebouncePageUnloading = false;
-      runSyncLifecycleCheckpoint("pageshow", { phase: "pageshow" });
-    });
-    document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState !== "visible") {
-        runSyncLifecycleCheckpoint("visibility_hidden", { phase: "hidden" });
-        return;
+    GM_addValueChangeListener(
+      BACKGROUND_SYNC_DEBOUNCE_STATE_KEY,
+      (_key, _oldValue, newValue) => {
+        handleSharedBackgroundSyncDebounceStateChange(newValue);
       }
-      sharedBackgroundSyncDebouncePageUnloading = false;
-      clearSharedBackgroundSyncDebounceHiddenFlushTimer();
-      runSyncLifecycleCheckpoint("visibility_visible", { phase: "visible" });
+    );
+    return { status: "bound" };
+  };
+  const s1pCreateSyncLifecycleAdapter = (adapter = {}) => {
+    const windowTarget = adapter.windowTarget || window;
+    const documentTarget = adapter.documentTarget || document;
+    const getVisibilityState =
+      adapter.getVisibilityState || (() => document.visibilityState);
+    const setSchedulerPageUnloading =
+      adapter.setSchedulerPageUnloading ||
+      ((value) => {
+        sharedBackgroundSyncDebouncePageUnloading = value === true;
+      });
+    const clearHiddenFlush =
+      adapter.clearHiddenFlush || clearSharedBackgroundSyncDebounceHiddenFlushTimer;
+    const runCheckpoint =
+      adapter.runCheckpoint || runSyncLifecycleCheckpoint;
+    const handleVisibilityRecovery =
+      adapter.handleVisibilityRecovery ||
+      handlePendingAutoSyncRecoveryVisibilityChange;
+    const handlePageShowRecovery =
+      adapter.handlePageShowRecovery || handlePendingAutoSyncRecoveryPageShow;
+    const syncVisiblePolling =
+      adapter.syncVisiblePolling ||
+      syncVisibleRemoteFreshnessPollingForCurrentState;
+    const stopVisiblePolling =
+      adapter.stopVisiblePolling || stopVisibleRemoteFreshnessPolling;
+    const scheduleMicrotask =
+      adapter.scheduleMicrotask ||
+      ((callback) => {
+        if (typeof queueMicrotask === "function") {
+          queueMicrotask(callback);
+          return;
+        }
+        Promise.resolve().then(callback);
+      });
+    const schedulePostUnloadRecovery =
+      adapter.schedulePostUnloadRecovery ||
+      ((callback) => setTimeout(callback, 0));
+    const recoverAfterCanceledUnload =
+      adapter.recoverAfterCanceledUnload ||
+      (() => pendingDirtyScheduler.recover());
+    const bindSharedStateChange =
+      adapter.bindSharedStateChange ||
+      s1pBindSharedBackgroundSyncDebounceStateChangeHook;
+    const initializeForegroundSupport =
+      adapter.initializeForegroundSupport ||
+      s1pInitializePendingAutoSyncRecoverySupport;
+    let bound = false;
+    const handle = (eventName = "", event = null, overrides = {}) => {
+      const normalizedEventName = String(eventName || "").trim();
+      const phase =
+        normalizedEventName === "visibilitychange"
+          ? getVisibilityState() === "visible"
+            ? "visible"
+            : "hidden"
+          : normalizeSyncLifecyclePhase(normalizedEventName);
+      if (!phase) {
+        return Promise.resolve({
+          status: "skipped",
+          reason: "unsupported_lifecycle_event",
+          phase: "",
+          foregroundResult: null,
+        });
+      }
+      const reason =
+        normalizedEventName === "visibilitychange"
+          ? phase === "visible"
+            ? "visibility_visible"
+            : "visibility_hidden"
+          : phase;
+      if (phase === "visible" || phase === "pageshow") {
+        setSchedulerPageUnloading(false);
+        clearHiddenFlush();
+      } else if (phase === "pagehide" || phase === "beforeunload") {
+        setSchedulerPageUnloading(true);
+      }
+      const checkpointResult = runCheckpoint(reason, {
+        ...overrides,
+        phase,
+        event,
+      });
+      const baseResult = {
+        status: "completed",
+        reason,
+        phase,
+        checkpointResult,
+        foregroundResult: null,
+      };
+      if (phase === "hidden") {
+        stopVisiblePolling();
+        return Promise.resolve(baseResult);
+      }
+      if (phase === "visible") {
+        const foregroundResultPromise = Promise.resolve(
+          handleVisibilityRecovery(overrides)
+        );
+        syncVisiblePolling({ resetActivity: true });
+        return foregroundResultPromise.then((foregroundResult) => ({
+          ...baseResult,
+          foregroundResult,
+        }));
+      }
+      if (phase === "pageshow") {
+        const foregroundResultPromise = Promise.resolve(
+          handlePageShowRecovery(event, overrides)
+        );
+        syncVisiblePolling({
+          resetActivity: Boolean(event && event.persisted),
+        });
+        return foregroundResultPromise.then((foregroundResult) => ({
+          ...baseResult,
+          foregroundResult,
+        }));
+      }
+      scheduleMicrotask(() => {
+        setSchedulerPageUnloading(false);
+      });
+      if (phase === "beforeunload") {
+        schedulePostUnloadRecovery(() => {
+          if (getVisibilityState() !== "visible") {
+            return;
+          }
+          const recoveryResult = recoverAfterCanceledUnload();
+          recordSyncTraceEvent("sync_lifecycle_canceled_unload_recovery", {
+            scope: "sync_lifecycle_checkpoint",
+            status: recoveryResult?.status || "completed",
+            message: "页面取消卸载后已恢复共享后台调度",
+            details: {
+              reason: recoveryResult?.reason || "",
+            },
+          });
+        });
+      }
+      return Promise.resolve(baseResult);
+    };
+    const handlePageHide = (event) => {
+      void handle("pagehide", event);
+    };
+    const handleBeforeUnload = (event) => {
+      void handle("beforeunload", event);
+    };
+    const handlePageShow = (event) => {
+      void handle("pageshow", event);
+    };
+    const handleVisibilityChange = (event) => {
+      void handle("visibilitychange", event);
+    };
+    return Object.freeze({
+      handle,
+      bind: () => {
+        if (bound) {
+          return { status: "skipped", reason: "already_bound" };
+        }
+        initializeForegroundSupport();
+        bindSharedStateChange();
+        windowTarget.addEventListener("pagehide", handlePageHide);
+        windowTarget.addEventListener("beforeunload", handleBeforeUnload);
+        windowTarget.addEventListener("pageshow", handlePageShow);
+        documentTarget.addEventListener(
+          "visibilitychange",
+          handleVisibilityChange
+        );
+        bound = true;
+        return { status: "bound" };
+      },
     });
   };
+  const s1pSyncLifecycleAdapter = s1pCreateSyncLifecycleAdapter();
   const getBackgroundSyncDebounceRuntimeStateForTest = () => ({
     hasOwnerTimer: Boolean(sharedBackgroundSyncDebounceTimer),
     ownerTimerDueAt: sharedBackgroundSyncDebounceTimerDueAt,
@@ -32744,16 +32855,15 @@
       getBackgroundAutoSyncRuntimeStateForTest,
       createPendingDirtyScheduler,
       pendingDirtyScheduler,
+      s1pCreateSyncLifecycleAdapter,
+      s1pSyncLifecycleAdapter,
       registerSyncLifecycleLocalMutationFinalizer,
-      runSyncLifecycleCheckpoint,
       runForegroundFollowUpAutoSyncCheck,
       triggerForegroundRemoteFreshnessProbe,
       handleInitialForegroundRemoteFreshnessCheck,
       markStartupSyncUserInteraction,
       getStartupSyncFreshnessState,
       getStartupSyncOrchestratorDecision,
-      handlePendingAutoSyncRecoveryPageShow,
-      handlePendingAutoSyncRecoveryVisibilityChange,
       getForegroundFollowUpSoftBlockState,
       clearForegroundFollowUpSoftBlock,
       setForegroundFollowUpSoftBlock,
@@ -50272,9 +50382,38 @@
   };
   registerSyncLifecycleLocalMutationFinalizer(
     "read_progress",
-    ({ phase = "" } = {}) => {
-      if (!["hidden", "pagehide", "beforeunload"].includes(phase)) {
-        return { status: "skipped", reason: "phase_not_hidden" };
+    ({ phase = "", event = null } = {}) => {
+      const hasTrackingContext = Boolean(readProgressContext || pageObserver);
+      if (phase === "hidden") {
+        if (hasTrackingContext) {
+          handleReadProgressVisibilityChange();
+        } else {
+          flushReadProgressSave({
+            reason: READ_PROGRESS_SAVE_REASON_VISIBILITY_HIDDEN_FLUSH,
+            allowSessionFinalize: true,
+          });
+        }
+        return {
+          status: "completed",
+          reason: READ_PROGRESS_SAVE_REASON_VISIBILITY_HIDDEN_FLUSH,
+        };
+      }
+      if (phase === "visible") {
+        if (!hasTrackingContext) {
+          return { status: "skipped", reason: "no_tracking_context" };
+        }
+        handleReadProgressVisibilityChange();
+        return { status: "completed", reason: "visibility_visible" };
+      }
+      if (phase === "pageshow") {
+        if (!hasTrackingContext) {
+          return { status: "skipped", reason: "no_tracking_context" };
+        }
+        handleReadProgressPageShowForDebug(event);
+        return { status: "completed", reason: "pageshow" };
+      }
+      if (!["pagehide", "beforeunload"].includes(phase)) {
+        return { status: "skipped", reason: "unsupported_phase" };
       }
       const reason =
         phase === "pagehide"
@@ -50419,18 +50558,6 @@
   const handleReadProgressWindowBlur = () => {
     recordReadProgressTrackingDebugEvent("rp_blur");
   };
-  const handleReadProgressBeforeUnload = () => {
-    flushReadProgressSave({
-      reason: READ_PROGRESS_SAVE_REASON_BEFOREUNLOAD_FLUSH,
-      allowSessionFinalize: true,
-    });
-  };
-  const handleReadProgressPageHide = () => {
-    flushReadProgressSave({
-      reason: READ_PROGRESS_SAVE_REASON_PAGEHIDE_FLUSH,
-      allowSessionFinalize: true,
-    });
-  };
   const resetReadProgressObserver = ({
     clearObservedMarkers = false,
     flushPendingProgress = false,
@@ -50454,13 +50581,6 @@
     readProgressFirstPostId = null;
     readProgressContext = null;
     resetReadProgressTrackingState();
-    document.removeEventListener(
-      "visibilitychange",
-      handleReadProgressVisibilityChange
-    );
-    window.removeEventListener("beforeunload", handleReadProgressBeforeUnload);
-    window.removeEventListener("pagehide", handleReadProgressPageHide);
-    window.removeEventListener("pageshow", handleReadProgressPageShowForDebug);
     window.removeEventListener("focus", handleReadProgressWindowFocus);
     window.removeEventListener("blur", handleReadProgressWindowBlur);
     document.removeEventListener("wheel", handleReadProgressWheel);
@@ -50674,25 +50794,11 @@
         { threshold: 0.3 }
       );
 
-      document.removeEventListener(
-        "visibilitychange",
-        handleReadProgressVisibilityChange
-      );
-      window.removeEventListener("beforeunload", handleReadProgressBeforeUnload);
-      window.removeEventListener("pagehide", handleReadProgressPageHide);
-      window.removeEventListener("pageshow", handleReadProgressPageShowForDebug);
       window.removeEventListener("focus", handleReadProgressWindowFocus);
       window.removeEventListener("blur", handleReadProgressWindowBlur);
       document.removeEventListener("wheel", handleReadProgressWheel);
       document.removeEventListener("touchstart", handleReadProgressTouchStart);
       document.removeEventListener("keydown", handleReadProgressKeydown);
-      document.addEventListener(
-        "visibilitychange",
-        handleReadProgressVisibilityChange
-      );
-      window.addEventListener("beforeunload", handleReadProgressBeforeUnload);
-      window.addEventListener("pagehide", handleReadProgressPageHide);
-      window.addEventListener("pageshow", handleReadProgressPageShowForDebug);
       window.addEventListener("focus", handleReadProgressWindowFocus);
       window.addEventListener("blur", handleReadProgressWindowBlur);
       document.addEventListener("wheel", handleReadProgressWheel, { passive: true });
@@ -53195,16 +53301,12 @@
           run: () => initializeTitleSyncStatusCrossTabSync(),
         },
         {
-          name: "bind shared background sync debounce lifecycle",
-          run: () => bindSharedBackgroundSyncDebounceLifecycleHooks(),
+          name: "bind sync lifecycle adapter",
+          run: () => s1pSyncLifecycleAdapter.bind(),
         },
         {
           name: "recover shared background sync debounce owner",
           run: () => pendingDirtyScheduler.recover(),
-        },
-        {
-          name: "bind pending auto-sync recovery hooks",
-          run: () => bindPendingAutoSyncRecoveryHooks(),
         },
         {
           name: "recover pending auto-sync",
