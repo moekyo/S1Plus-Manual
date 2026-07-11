@@ -67,7 +67,25 @@ const darkMediaIndex = sourceCode.indexOf(
   "@media (prefers-color-scheme: dark) {\n      :root {"
 );
 assert.notEqual(darkMediaIndex, -1, "缺少深色模式覆写。");
-const darkMediaBlock = sourceCode.slice(darkMediaIndex, darkMediaIndex + 2600);
+const darkRootStart = sourceCode.indexOf(":root {", darkMediaIndex);
+const darkRootOpenBrace = sourceCode.indexOf("{", darkRootStart);
+let darkRootDepth = 0;
+let darkRootEnd = -1;
+
+for (let index = darkRootOpenBrace; index < sourceCode.length; index += 1) {
+  if (sourceCode[index] === "{") {
+    darkRootDepth += 1;
+  } else if (sourceCode[index] === "}") {
+    darkRootDepth -= 1;
+    if (darkRootDepth === 0) {
+      darkRootEnd = index + 1;
+      break;
+    }
+  }
+}
+
+assert.notEqual(darkRootEnd, -1, "无法解析深色模式根变量块。");
+const darkMediaBlock = sourceCode.slice(darkRootStart, darkRootEnd);
 
 [
   [
@@ -147,18 +165,38 @@ const assertSurfaceUsesMaterialVariables = (
   return block;
 };
 
-const confirmContentBlock = assertSurfaceUsesMaterialVariables(
-  ".s1p-confirm-content",
+assertSurfaceUsesMaterialVariables(
+  ".s1p-first-level-glass",
   {
-    backgroundVariable: "--s1p-floating-surface-bg",
-    shadowVariable: "--s1p-floating-surface-shadow",
-    filterVariable: "--s1p-floating-surface-filter",
+    backgroundVariable: "--s1p-first-level-glass-bg",
+    shadowVariable: "--s1p-first-level-glass-shadow",
+    filterVariable: "--s1p-first-level-glass-filter",
   }
 );
+const confirmPresetBlock = getRuleBlock(".s1p-first-level-glass--confirm");
+assert.match(
+  confirmPresetBlock,
+  /--s1p-first-level-glass-bg:\s*var\(--s1p-first-level-glass-confirm-bg\);[\s\S]*--s1p-first-level-glass-filter:\s*var\(--s1p-first-level-glass-confirm-filter\);[\s\S]*--s1p-first-level-glass-shadow:\s*var\(--s1p-first-level-glass-confirm-shadow\);/,
+  "一级确认弹窗预设应把统一玻璃材质变量映射到 confirm 主题变量。"
+);
+[
+  "--s1p-first-level-glass-confirm-bg: var(--s1p-floating-surface-bg);",
+  "--s1p-first-level-glass-confirm-filter: var(--s1p-floating-surface-filter);",
+  "--s1p-first-level-glass-confirm-shadow: var(--s1p-floating-surface-shadow);",
+].forEach((needle) => {
+  expectIncludes(needle, "一级确认弹窗材质应继续复用 floating surface 主题变量。");
+});
+
+const confirmContentBlock = getRuleBlock(".s1p-confirm-content");
 assert.doesNotMatch(
   confirmContentBlock,
-  /--s1p-dialog-glass-(?:bg|shadow|filter)/,
-  "一级确认弹窗本体应复用 floating surface 材质，不应再引用 dialog glass 背景、阴影或滤镜。"
+  /(?:background|box-shadow|backdrop-filter):/,
+  "确认弹窗语义类只负责结构和文本，材质应由统一 first-level glass 类提供。"
+);
+assert.match(
+  sourceCode,
+  /buildFirstLevelGlassClassName\(\s*S1P_FIRST_LEVEL_GLASS_CONFIRM_PRESET_CLASS,\s*"s1p-confirm-content"\s*\)/,
+  "非 settings-secondary 的确认弹窗应挂载统一 first-level confirm 材质类。"
 );
 assertSurfaceUsesFilterVariable(
   ".s1p-token-config-content",
@@ -173,10 +211,10 @@ assert.ok(
   "统一 glass panel 滤镜应指向弹窗玻璃滤镜变量。"
 );
 assert.ok(
-  sourceCode.includes(
-    'modal.innerHTML = `<div class="s1p-modal-content s1p-glass-panel">'
+  /modal\.innerHTML = `<div class="\$\{buildFirstLevelGlassClassName\(\s*S1P_FIRST_LEVEL_GLASS_SETTINGS_PRESET_CLASS,\s*"s1p-modal-content",\s*"s1p-glass-panel"\s*\)\}">/.test(
+    sourceCode
   ),
-  "设置面板 shell 应复用统一 glass panel 背景和滤镜。"
+  "设置面板 shell 应挂载统一 first-level settings 材质类。"
 );
 assertSurfaceUsesFilterVariable(
   ".s1p-tag-popover",
