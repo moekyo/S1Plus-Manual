@@ -17887,7 +17887,7 @@
     return { resolve, handle };
   };
 
-  const syncResultPhasePolicy = s1pCreateSyncResultPhasePolicy();
+  const s1pSyncResultPhasePolicy = s1pCreateSyncResultPhasePolicy();
 
   const s1pHasScheduledSyncResultPhaseRetry = (retryResult) => {
     const status = String(retryResult?.status || "");
@@ -20493,7 +20493,7 @@
           );
           return;
         }
-        scheduleBackgroundSyncRetry(fallbackDelayMs);
+        s1pScheduleBackgroundSyncRetry(fallbackDelayMs);
         return;
       }
       backgroundSyncRetryAttempts = 0;
@@ -30010,11 +30010,19 @@
     return { cancelledRequestCount };
   };
 
-  const scheduleBackgroundSyncRetry = (
-    delayMs = BACKGROUND_SYNC_LOCK_RETRY_DELAY_MS
+  const s1pScheduleBackgroundSyncRetry = (
+    delayMs = BACKGROUND_SYNC_LOCK_RETRY_DELAY_MS,
+    runtime = {}
   ) => {
-    if (getActiveAutoSyncConflictPause()) {
-      clearAutoSyncRuntimeQueue();
+    const normalizedDelayMs = Math.max(0, Number(delayMs) || 0);
+    const getActiveConflictPauseFn =
+      runtime.getActiveAutoSyncConflictPause || getActiveAutoSyncConflictPause;
+    const clearRuntimeQueueFn =
+      runtime.clearAutoSyncRuntimeQueue || clearAutoSyncRuntimeQueue;
+    const pendingDirtySchedulerAdapter =
+      runtime.pendingDirtyScheduler || pendingDirtyScheduler;
+    if (getActiveConflictPauseFn()) {
+      clearRuntimeQueueFn();
       setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_CONFLICT, {
         source: AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
         reason: "conflict_paused",
@@ -30023,9 +30031,13 @@
         scope: "background_auto_sync",
         status: "skipped",
         message: "后台同步重试被冲突暂停拦截",
-        details: { delayMs },
+        details: { delayMs: normalizedDelayMs },
       });
-      return;
+      return {
+        status: "blocked",
+        reason: "conflict_paused",
+        delayMs: normalizedDelayMs,
+      };
     }
 
     setAutoSyncIndicatorPendingPhase("background_retry");
@@ -30033,25 +30045,56 @@
       scope: "background_auto_sync",
       status: "scheduled",
       message: "后台同步重试已排队",
-      details: { delayMs },
+      details: { delayMs: normalizedDelayMs },
     });
-    const retryResult = pendingDirtyScheduler.retry({
-      delayMs,
-      reason: "background_retry",
-    });
-    if (retryResult.strategy === "shared") {
+    let retryResult = null;
+    try {
+      retryResult = pendingDirtySchedulerAdapter.retry({
+        delayMs: normalizedDelayMs,
+        reason: "background_retry",
+      });
+    } catch (error) {
+      clearRuntimeQueueFn();
+      console.error("S1 Plus: 后台同步重试调度失败，已清理旧重试状态。", error);
+      return {
+        status: "blocked",
+        reason: "scheduler_error",
+        delayMs: normalizedDelayMs,
+      };
+    }
+    if (retryResult?.strategy === "shared") {
       hasPendingBackgroundSync = false;
       if (backgroundSyncRetryTimeout) {
         clearTimeout(backgroundSyncRetryTimeout);
         backgroundSyncRetryTimeout = null;
       }
-      return;
+      return {
+        status: "delegated",
+        reason: "shared_scheduler",
+        delayMs: normalizedDelayMs,
+      };
     }
-    if (
-      retryResult.strategy === "blocked"
-    ) {
-      clearAutoSyncRuntimeQueue();
+    if (retryResult?.strategy === "blocked") {
+      clearRuntimeQueueFn();
+      return {
+        status: "blocked",
+        reason: retryResult.reason || "scheduler_blocked",
+        delayMs: normalizedDelayMs,
+      };
     }
+    if (retryResult?.status !== "scheduled") {
+      clearRuntimeQueueFn();
+      return {
+        status: "blocked",
+        reason: retryResult?.reason || "scheduler_rejected",
+        delayMs: normalizedDelayMs,
+      };
+    }
+    return {
+      status: "scheduled",
+      reason: "background_retry",
+      delayMs: normalizedDelayMs,
+    };
   };
 
   const s1pNotifyBackgroundSyncResultPhase = async (
@@ -30128,7 +30171,7 @@
         error: result?.error || "",
       },
     });
-    return syncResultPhasePolicy.handle(result, {
+    return s1pSyncResultPhasePolicy.handle(result, {
       source: "background",
       refreshOptions: {
         reason:
@@ -30143,7 +30186,7 @@
       },
       notify: s1pNotifyBackgroundSyncResultPhase,
       scheduleRetry: (intent) =>
-        scheduleBackgroundSyncRetry(intent.delayMs),
+        s1pScheduleBackgroundSyncRetry(intent.delayMs),
     });
   };
 
@@ -30723,7 +30766,7 @@
                 },
                 details: { reason, drainCount },
               });
-              scheduleBackgroundSyncRetry();
+              s1pScheduleBackgroundSyncRetry();
             },
           });
           indicatorCycleToken = iteration.indicatorCycleToken;
@@ -30748,7 +30791,7 @@
           hasPendingBackgroundSync &&
           drainCount >= BACKGROUND_SYNC_MAX_DRAIN_LOOPS
         ) {
-          scheduleBackgroundSyncRetry(1500);
+          s1pScheduleBackgroundSyncRetry(1500);
         }
       } finally {
         isBackgroundAutoSyncInProgress = false;
@@ -30757,7 +30800,7 @@
           !isInitialSyncInProgress &&
           !backgroundSyncRetryTimeout
         ) {
-          scheduleBackgroundSyncRetry(300);
+          s1pScheduleBackgroundSyncRetry(300);
         }
 
         const shouldStayQueued =
@@ -32711,7 +32754,7 @@
             ? s1pCreateSyncResultPhasePolicy({
                 applyRefresh: options.applyRefreshPolicyForSyncResult,
               })
-            : syncResultPhasePolicy);
+            : s1pSyncResultPhasePolicy);
         const outcome = await resultPhasePolicy.handle(syncResult, {
           source: "foreground",
           remoteChangeContext: {
@@ -32878,6 +32921,9 @@
     const retryOptions = {
       ...(overrides.foregroundRemoteSyncRetryOptions || {}),
     };
+    if (overrides.syncResultPhasePolicy) {
+      retryOptions.syncResultPhasePolicy = overrides.syncResultPhasePolicy;
+    }
     if (!retryOptions.getForegroundProbeGateBlockResult) {
       retryOptions.getForegroundProbeGateBlockResult =
         getForegroundProbeGateBlockResultFn;
@@ -33200,7 +33246,7 @@
         remoteWriter: matchedRemoteWriter,
       });
       const resultPhasePolicy =
-        overrides.syncResultPhasePolicy || syncResultPhasePolicy;
+        overrides.syncResultPhasePolicy || s1pSyncResultPhasePolicy;
       const outcome = await resultPhasePolicy.handle(syncRequestResult, {
         source: "foreground",
         remoteChangeContext: {
@@ -33339,6 +33385,7 @@
       decideWhatToDoWithRemoteChange,
       applyAutoPullRefreshPolicy,
       s1pCreateSyncResultPhasePolicy,
+      s1pScheduleBackgroundSyncRetry,
       s1pNotifyBackgroundSyncResultPhase,
       getAutoPullRefreshMessagesForSource,
       clearPendingAutoPullReloadTimer,
@@ -53062,7 +53109,7 @@
     });
 
     const resultPhasePolicy =
-      overrides.syncResultPhasePolicy || syncResultPhasePolicy;
+      overrides.syncResultPhasePolicy || s1pSyncResultPhasePolicy;
     const outcome = await resultPhasePolicy.handle(result, {
       source: "per_load",
       refreshOptions: {
@@ -53272,7 +53319,7 @@
       },
     });
     const resultPhasePolicy =
-      overrides.syncResultPhasePolicy || syncResultPhasePolicy;
+      overrides.syncResultPhasePolicy || s1pSyncResultPhasePolicy;
     const outcome = await resultPhasePolicy.handle(result, {
       source: "daily_startup",
       refreshOptions: {

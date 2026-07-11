@@ -310,8 +310,8 @@ const testForegroundProbeClearsRetryWhenPolicyExecutionDidNotSchedule = async ()
 const testForegroundRetryConsumerResetsAfterRetryExecutionFailure = async () => {
   const { sandbox, hooks } = createHarness();
   const scheduledCallbacks = [];
-  sandbox.setTimeout = (callback) => {
-    scheduledCallbacks.push(callback);
+  sandbox.setTimeout = (callback, delayMs) => {
+    scheduledCallbacks.push({ callback, delayMs });
     return scheduledCallbacks.length;
   };
   sandbox.clearTimeout = () => {};
@@ -340,7 +340,9 @@ const testForegroundRetryConsumerResetsAfterRetryExecutionFailure = async () => 
   assert.strictEqual(first.attempt, 1);
   assert.ok(scheduledCallbacks.length >= 1);
 
-  await scheduledCallbacks[scheduledCallbacks.length - 1]();
+  const retryTimer = scheduledCallbacks.find(({ delayMs }) => delayMs === 1200);
+  assert.ok(retryTimer, "应捕获 foreground retry timer。");
+  await retryTimer.callback();
   assert.strictEqual(policyCalls.length, 1);
   assert.strictEqual(policyCalls[0].options.source, "foreground");
   assert.strictEqual(
@@ -358,6 +360,108 @@ const testForegroundRetryConsumerResetsAfterRetryExecutionFailure = async () => 
     "retry adapter 未真正排队时，timer consumer 应重置上一轮尝试计数。"
   );
   hooks.clearForegroundRemoteSyncRetry();
+};
+
+const testForegroundRetryKeepsInjectedResultPhasePolicy = async () => {
+  const { sandbox, hooks } = createHarness();
+  hooks.setSyncBaselineState({
+    contentHash: "baseline-hash",
+    remoteUpdatedAt: "2026-04-11T12:30:00Z",
+  });
+
+  const scheduledCallbacks = [];
+  sandbox.setTimeout = (callback, delayMs) => {
+    scheduledCallbacks.push({ callback, delayMs });
+    return scheduledCallbacks.length;
+  };
+  sandbox.clearTimeout = () => {};
+
+  const policyCalls = [];
+  const injectedPolicy = {
+    handle: async (result, options) => {
+      policyCalls.push({ result, options });
+      if (policyCalls.length === 1) {
+        return {
+          refreshPlan: null,
+          retryResult: options.scheduleRetry({
+            kind: "foreground",
+            delayMs: 1,
+          }),
+        };
+      }
+      return { refreshPlan: null, retryResult: null };
+    },
+  };
+
+  await hooks.checkRemoteFreshnessOnForeground("pageshow", {
+    now: 1760000155000,
+    settingsSnapshot: enabledSettings,
+    fetchRemoteData: async () => ({
+      meta: { updatedAt: "2026-04-11T12:45:00Z" },
+    }),
+    requestForegroundRemoteSyncCheck: async () => ({
+      status: "blocked",
+      blockLevel: "soft",
+      reason: "read_progress_pending_write",
+      retryAfterMs: 1,
+    }),
+    syncResultPhasePolicy: injectedPolicy,
+    foregroundRemoteSyncRetryOptions: {
+      getForegroundProbeGateBlockResult: () => null,
+      requestForegroundRemoteSyncCheck: async () => ({
+        status: "success",
+        action: "no_change",
+      }),
+      maybeShowForegroundProbeFeedback: () => false,
+    },
+  });
+
+  assert.strictEqual(policyCalls.length, 1);
+  assert.ok(scheduledCallbacks.length >= 1);
+  const retryTimer = scheduledCallbacks.find(({ delayMs }) => delayMs === 1200);
+  assert.ok(retryTimer, "应捕获 foreground retry timer。");
+  await retryTimer.callback();
+  assert.strictEqual(
+    policyCalls.length,
+    2,
+    "foreground retry timer 必须继续使用 probe 注入的 Result Phase policy。"
+  );
+  assert.strictEqual(policyCalls[1].options.source, "foreground");
+  hooks.clearForegroundRemoteSyncRetry();
+};
+
+const testForegroundConflictPausesAndShowsFeedback = async () => {
+  const { hooks, store } = createHarness();
+  hooks.setSyncBaselineState({
+    contentHash: "baseline-hash",
+    remoteUpdatedAt: "2026-04-11T12:30:00Z",
+  });
+  const messages = [];
+
+  const result = await hooks.checkRemoteFreshnessOnForeground("pageshow", {
+    now: 1760000160000,
+    settingsSnapshot: enabledSettings,
+    fetchRemoteData: async () => ({
+      meta: { updatedAt: "2026-04-11T12:45:00Z" },
+    }),
+    requestForegroundRemoteSyncCheck: async () => ({
+      status: "conflict",
+      reason: "remote_newer",
+    }),
+    showMessage: (message, isSuccess) => {
+      messages.push({ message, isSuccess });
+    },
+  });
+
+  assert.strictEqual(result.syncRequestResult.status, "conflict");
+  assert.strictEqual(
+    store.get("s1p_auto_sync_conflict_pause")?.paused,
+    true,
+    "foreground conflict 应写入统一冲突暂停。"
+  );
+  assert.strictEqual(messages.length, 1, "foreground conflict 不应静默暂停。");
+  assert.match(messages[0].message, /已暂停自动处理/);
+  assert.strictEqual(messages[0].isSuccess, false);
 };
 
 const testSharedCooldownSuppressesRepeatedProbe = async () => {
@@ -635,6 +739,8 @@ const testGuardConditionsSkipEarly = async () => {
   await testChangedRemoteTriggersSafeFollowUpSync();
   await testForegroundProbeClearsRetryWhenPolicyExecutionDidNotSchedule();
   await testForegroundRetryConsumerResetsAfterRetryExecutionFailure();
+  await testForegroundRetryKeepsInjectedResultPhasePolicy();
+  await testForegroundConflictPausesAndShowsFeedback();
   await testSharedCooldownSuppressesRepeatedProbe();
   await testCleanStateDoesNotSkipForegroundProbeWithinCooldown();
   await testForegroundProbeRunsAfterCooldownOrLocalMutation();

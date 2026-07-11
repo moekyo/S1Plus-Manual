@@ -37,7 +37,7 @@ A completed sync outcome — success, failure, or conflict — that was explicit
 _Avoid_: final state, outcome
 
 **Result Phase Policy**:
-The deep module interface `syncResultPhasePolicy.handle(result, context)`. After Running Sync releases its mode and global Sync Locks, it turns the completed result into refresh, conflict-pause, retry, and notification intents. Background, daily startup, per-load, and foreground follow-up callers share this decision path; source-specific copy, modal content, and refresh adapters remain outside the module. A retry intent describes policy, while `retryResult.status` proves whether its adapter actually scheduled work; foreground consumers preserve retry state only for `scheduled` or `already_scheduled` results.
+The deep module interface `s1pSyncResultPhasePolicy.handle(result, context)`. After Running Sync releases its mode and global Sync Locks, it turns the completed result into refresh, conflict-pause, retry, and notification intents. Background, daily startup, per-load, and foreground follow-up callers share this decision path; source-specific copy, modal content, and refresh adapters remain outside the module. A retry intent describes policy, while `retryResult.status` proves whether its adapter actually scheduled work; foreground consumers preserve retry state only for `scheduled` or `already_scheduled` results, while the background adapter reports explicit `scheduled`, `delegated`, or `blocked` outcomes.
 _Avoid_: result switch, post-sync UI handler
 
 **Ghost Running**:
