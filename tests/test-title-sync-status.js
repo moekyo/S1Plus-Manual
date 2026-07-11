@@ -28,6 +28,7 @@ const TITLE_SYNC_STATUS_REQUIRED_HOOKS = [
   "maybeRefreshTitleSyncStatusOwnerLease",
   "hasEnabledTitleSyncStatusPath",
   "getTitleSyncStatusRuntimeStateForTest",
+  "readSyncIndicatorStateProjection",
 ];
 
 const createHarness = () =>
@@ -47,6 +48,9 @@ const requireHook = (hooks, hookName) => {
   );
   return hooks[hookName];
 };
+
+const readProjection = (hooks, surface, state = null) =>
+  requireHook(hooks, "readSyncIndicatorStateProjection")({ surface, state });
 
 const expectMatch = (pattern, message) => {
   assert.match(sourceCode, pattern, message);
@@ -284,9 +288,7 @@ const testUnifiedStateMappingAndTtl = () => {
   assert.equal(constants.TITLE_SYNC_STATUS_UNIFIED_STATE_DEBOUNCE_MS, 100);
 
   const idleState = toPlainObject(
-    hooks.resolveAutoSyncIndicatorDisplayPhase(createResolvedState("idle", now), {
-      ttlProfile: "title",
-    })
+    readProjection(hooks, "title", createResolvedState("idle", now))
   );
   assert.equal(idleState.displayPhase, "idle");
   assert.equal(getPrefix(idleState.displayPhase), "");
@@ -306,9 +308,7 @@ const testUnifiedStateMappingAndTtl = () => {
     reason: "debounced_read_progress",
   });
   const pendingState = toPlainObject(
-    hooks.resolveAutoSyncIndicatorDisplayPhase(createResolvedState("success", now), {
-      ttlProfile: "title",
-    })
+    readProjection(hooks, "title", createResolvedState("success", now))
   );
   assert.equal(pendingState.displayPhase, "pending");
   assert.equal(
@@ -320,9 +320,7 @@ const testUnifiedStateMappingAndTtl = () => {
 
   setBackgroundSyncLocks(store, constants, constants.BACKGROUND_SYNC_OWNER_ID, now);
   const liveRunnerTitleState = toPlainObject(
-    hooks.resolveAutoSyncIndicatorDisplayPhase(createResolvedState("success", now), {
-      ttlProfile: "title",
-    })
+    readProjection(hooks, "title", createResolvedState("success", now))
   );
   assert.equal(liveRunnerTitleState.displayPhase, "running");
   assert.equal(
@@ -337,9 +335,7 @@ const testUnifiedStateMappingAndTtl = () => {
 
   setBackgroundSyncLocks(store, constants, "closed-runner-tab", now);
   const ghostRunningTitleState = toPlainObject(
-    hooks.resolveAutoSyncIndicatorDisplayPhase(createResolvedState("success", now), {
-      ttlProfile: "title",
-    })
+    readProjection(hooks, "title", createResolvedState("success", now))
   );
   assert.equal(
     ghostRunningTitleState.displayPhase,
@@ -356,16 +352,14 @@ const testUnifiedStateMappingAndTtl = () => {
     operation: "probe",
   };
   const navbarProbeState = toPlainObject(
-    hooks.resolveAutoSyncIndicatorDisplayPhase(foregroundProbeRunningState)
+    readProjection(hooks, "navbar", foregroundProbeRunningState)
   );
   assert.equal(navbarProbeState.displayPhase, "running");
   assert.equal(navbarProbeState.displayOperation, "probe");
   assert.equal(navbarProbeState.displaySessionKind, "cloud_probe_session");
 
   const titleProbeState = toPlainObject(
-    hooks.resolveAutoSyncIndicatorDisplayPhase(foregroundProbeRunningState, {
-      ttlProfile: "title",
-    })
+    readProjection(hooks, "title", foregroundProbeRunningState)
   );
   assert.equal(
     titleProbeState.displayPhase,
@@ -380,18 +374,20 @@ const testUnifiedStateMappingAndTtl = () => {
     ["conflict", constants.TITLE_SYNC_STATUS_CONFLICT_TTL_MS, "[冲突]"],
   ].forEach(([phase, ttlMs, expectedPrefix]) => {
     const activeState = toPlainObject(
-      hooks.resolveAutoSyncIndicatorDisplayPhase(
-        createResolvedState(phase, now - ttlMs + 50),
-        { ttlProfile: "title" }
+      readProjection(
+        hooks,
+        "title",
+        createResolvedState(phase, now - ttlMs + 50)
       )
     );
     assert.equal(activeState.displayPhase, phase);
     assert.equal(getPrefix(activeState.displayPhase), expectedPrefix);
 
     const expiredState = toPlainObject(
-      hooks.resolveAutoSyncIndicatorDisplayPhase(
-        createResolvedState(phase, now - ttlMs - 50),
-        { ttlProfile: "title" }
+      readProjection(
+        hooks,
+        "title",
+        createResolvedState(phase, now - ttlMs - 50)
       )
     );
     assert.equal(
@@ -760,7 +756,9 @@ const testPresenceTtlOwnerLeaseAndForegroundTtlPause = () => {
     "切回前台只暂停标题显示，不应清除或重置统一状态源结果。"
   );
   const expiredSuccessState = toPlainObject(
-    hooks.resolveAutoSyncIndicatorDisplayPhase(
+    readProjection(
+      hooks,
+      "title",
       createResolvedState(
         "success",
         Date.now() - constants.TITLE_SYNC_STATUS_SUCCESS_TTL_MS - 50
@@ -967,7 +965,9 @@ const testResultPhaseHandoffAndRunningLiveRunnerBoundaries = () => {
   );
 
   const staleRunningTitleState = toPlainObject(
-    hooks.resolveAutoSyncIndicatorDisplayPhase(
+    readProjection(
+      hooks,
+      "title",
       {
         ...createResolvedState("running", now - 5000),
         operation: "push",
@@ -975,8 +975,7 @@ const testResultPhaseHandoffAndRunningLiveRunnerBoundaries = () => {
         lastResolvedTimestamp: now - 10_000,
         lastResolvedSource: "background_push",
         lastResolvedReason: "previous_success",
-      },
-      { ttlProfile: "title" }
+      }
     )
   );
   assert.equal(
@@ -1179,6 +1178,8 @@ const testPartitionedPresenceStorage = () => {
 const testDisplayPhaseOnlyAndNoTitleSchedulerRewrite = () => {
   const { hooks, store } = createHarness();
   const decide = requireHook(hooks, "resolveTitleSyncStatusTabDisplayDecision");
+  const projectTitle = (state) =>
+    toPlainObject(readProjection(hooks, "title", state));
   const getConstants = requireHook(hooks, "getTitleSyncStatusTestConstants");
   const constants = getConstants();
   const now = Date.now();
@@ -1270,7 +1271,7 @@ const testDisplayPhaseOnlyAndNoTitleSchedulerRewrite = () => {
     reason: "debounced_local_change",
   });
   const unifiedPendingState = toPlainObject(
-    hooks.resolveAutoSyncIndicatorDisplayPhase(createResolvedState("success", now))
+    projectTitle(createResolvedState("success", now))
   );
   assert.equal(unifiedPendingState.displayPhase, "pending");
   assertDisplayDecision(
@@ -1294,10 +1295,8 @@ const testDisplayPhaseOnlyAndNoTitleSchedulerRewrite = () => {
 
   store.delete(BACKGROUND_SYNC_DEBOUNCE_STATE_KEY);
   setBackgroundSyncLocks(store, constants, "closed-runner-tab", now);
-  const unifiedRunningState = toPlainObject(
-    hooks.resolveAutoSyncIndicatorDisplayPhase(createResolvedState("success", now))
-  );
-  assert.equal(unifiedRunningState.displayPhase, "running");
+  const unifiedRunningState = projectTitle(createResolvedState("success", now));
+  assert.equal(unifiedRunningState.displayPhase, "idle");
   assertDisplayDecision(
     decide({
       currentTabId: "tab-a",
@@ -1309,31 +1308,21 @@ const testDisplayPhaseOnlyAndNoTitleSchedulerRewrite = () => {
     {
       shouldDisplay: false,
       shouldRunAnimationTimer: false,
-      ownerTabId: "",
-      displayPhase: "running",
+      ownerTabId: "tab-a",
+      displayPhase: "idle",
       prefix: "",
       hasForegroundTab: false,
     },
-    "非 title profile 可保留 Running Phase，但标题层缺少 Live Runner 证据时必须 suppress。"
+    "Title 投影应在进入 Title Owner 前抑制缺少 Live Runner 的 Ghost Running。"
   );
 
-  const sourceMismatchPullState = toPlainObject(
-    hooks.resolveAutoSyncIndicatorDisplayPhase({
+  const sourceMismatchPullState = projectTitle({
       ...createResolvedState("running", now),
       source: "foreground_resume",
       reason: "foreground_followup_in_flight",
       operation: "pull",
-    })
-  );
-  assert.equal(sourceMismatchPullState.displayPhase, "running");
-  assert.equal(sourceMismatchPullState.source, "foreground_resume");
-  assert.equal(sourceMismatchPullState.operation, "pull");
-  assert.equal(sourceMismatchPullState.displaySource, "background_push");
-  assert.equal(
-    sourceMismatchPullState.displayOperation,
-    "push",
-    "source mismatch 时统一显示态可能把 background source 默认成 push。"
-  );
+    });
+  assert.equal(sourceMismatchPullState.displayPhase, "idle");
   assertDisplayDecision(
     decide({
       currentTabId: "tab-a",
@@ -1359,10 +1348,10 @@ const testDisplayPhaseOnlyAndNoTitleSchedulerRewrite = () => {
     decide({
       currentTabId: "tab-a",
       tabs: hiddenOwnerTab,
-      state: createUnifiedDisplayState("running", now, {
-        displayOperation: "pull",
-        displaySessionKind: "remote_pull_session",
-        displayDominantDirection: "pull",
+      state: projectTitle({
+        ...createResolvedState("running", now),
+        source: "foreground_resume",
+        operation: "pull",
       }),
       settings,
       now,
@@ -1392,24 +1381,25 @@ const testDisplayPhaseOnlyAndNoTitleSchedulerRewrite = () => {
       now,
     }),
     {
-      shouldDisplay: false,
+      shouldDisplay: true,
       shouldRunAnimationTimer: false,
       ownerTabId: "tab-a",
-      displayPhase: "idle",
-      prefix: "",
+      displayPhase: "success",
+      prefix: "[同步成功]",
       hasForegroundTab: false,
     },
-    "拉取成功的统一状态不应保留标签页标题成功提示。"
+    "Title Owner 只消费投影给出的 displayPhase，不应再按 pull 方向二次解释状态。"
   );
 
   assertDisplayDecision(
     decide({
       currentTabId: "tab-a",
       tabs: hiddenOwnerTab,
-      state: createUnifiedDisplayState("running", now, {
-        displayOperation: "probe",
-        displaySessionKind: "cloud_probe_session",
-        displayDominantDirection: "probe",
+      state: projectTitle({
+        ...createResolvedState("running", now),
+        source: "foreground_resume",
+        reason: "foreground_probe_in_flight",
+        operation: "probe",
       }),
       settings,
       now,
@@ -1429,10 +1419,9 @@ const testDisplayPhaseOnlyAndNoTitleSchedulerRewrite = () => {
     decide({
       currentTabId: "tab-a",
       tabs: hiddenOwnerTab,
-      state: createUnifiedDisplayState("failure", now, {
-        displayOperation: "push",
-        displaySessionKind: "local_push_session",
-        displayDominantDirection: "push",
+      state: projectTitle({
+        ...createResolvedState("failure", now),
+        operation: "push",
       }),
       settings,
       now,
@@ -1452,11 +1441,7 @@ const testDisplayPhaseOnlyAndNoTitleSchedulerRewrite = () => {
     decide({
       currentTabId: "tab-a",
       tabs: hiddenOwnerTab,
-      state: createUnifiedDisplayState("conflict", now, {
-        displayOperation: "",
-        displaySessionKind: "blocked_session",
-        displayDominantDirection: "blocked",
-      }),
+      state: projectTitle(createResolvedState("conflict", now)),
       settings,
       now,
     }),
@@ -1475,10 +1460,10 @@ const testDisplayPhaseOnlyAndNoTitleSchedulerRewrite = () => {
     decide({
       currentTabId: "tab-a",
       tabs: hiddenOwnerTab,
-      state: createUnifiedDisplayState("conflict", now, {
-        displayOperation: "pull",
-        displaySessionKind: "remote_pull_session",
-        displayDominantDirection: "pull",
+      state: projectTitle({
+        ...createResolvedState("conflict", now),
+        source: "foreground_resume",
+        operation: "pull",
       }),
       settings,
       now,
@@ -1498,12 +1483,9 @@ const testDisplayPhaseOnlyAndNoTitleSchedulerRewrite = () => {
     decide({
       currentTabId: "tab-a",
       tabs: hiddenOwnerTab,
-      state: createUnifiedDisplayState("running", now, {
+      state: projectTitle({
+        ...createResolvedState("running", now),
         source: "foreground_resume",
-        displaySource: "background_push",
-        displayOperation: "",
-        displaySessionKind: "",
-        displayDominantDirection: "",
         operation: "",
       }),
       settings,
@@ -1523,8 +1505,8 @@ const testDisplayPhaseOnlyAndNoTitleSchedulerRewrite = () => {
   const titleSource = getTitleSyncStatusSource();
   assert.match(
     titleSource,
-    /const resolvedState = resolveAutoSyncIndicatorDisplayPhase\(null,\s*\{\s*allowCache:\s*true,\s*ttlProfile:\s*"title",\s*\}\s*\);/,
-    "标题运行时应通过统一状态源获取 display phase，并使用标题专属 TTL。"
+    /const resolvedState = readSyncIndicatorStateProjection\(\{\s*surface:\s*SYNC_INDICATOR_STATE_PROJECTION_SURFACE_TITLE,\s*allowCache:\s*true,\s*\}\s*\);/,
+    "标题运行时应通过统一投影 interface 读取 Title surface。"
   );
   assert.match(
     titleSource,
@@ -1551,10 +1533,10 @@ const testDisplayPhaseOnlyAndNoTitleSchedulerRewrite = () => {
     /syncTitleSyncStatusRuntime\(\{\s*reason:\s*"animation_tick"/,
     "running 标题动画 tick 不应重跑完整 runtime。"
   );
-  assert.match(
+  assert.doesNotMatch(
     titleSource,
-    /resolveAutoSyncIndicatorDisplayPhase\(null,\s*\{\s*allowCache:\s*true,\s*ttlProfile:\s*"title",\s*\}\s*\)/,
-    "标题状态 runtime 的统一状态解析应显式使用短缓存，避免影响其它实时读取路径。"
+    /resolveTitleSyncStatusDisplayPhase/,
+    "Title Owner 不应保留独立 phase 解释器。"
   );
   assert.doesNotMatch(
     titleSource,

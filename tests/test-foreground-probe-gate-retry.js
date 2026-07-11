@@ -15,6 +15,9 @@ const createHarness = () => {
   });
 };
 
+const readNavbarProjection = (hooks, state = null) =>
+  hooks.readSyncIndicatorStateProjection({ surface: "navbar", state });
+
 const AUTO_SYNC_INDICATOR_STATE_KEY = "s1p_auto_sync_indicator_state";
 
 const enabledSettings = {
@@ -63,7 +66,7 @@ const testRetryPendingKeepsExplicitOperationWhenPendingWriteIsDeduped =
 
     assert.equal(scheduleResult.status, "scheduled");
     const resolvedState = toPlainObject(
-      hooks.resolveAutoSyncIndicatorDisplayPhase()
+      readNavbarProjection(hooks)
     );
     assert.equal(resolvedState.displayPhase, "pending");
     assert.equal(resolvedState.displaySource, "visible_poll");
@@ -130,7 +133,7 @@ const testProbeGateBlocksChangedRemoteAndRetriesAfterLocalSettles = async () => 
   assert.equal(result.retryPlan?.status, "scheduled");
   assert.equal(messages.length, 0, "probe gate 命中时应保持静默。");
   const pendingIndicatorState = toPlainObject(
-    hooks.resolveAutoSyncIndicatorDisplayPhase()
+    readNavbarProjection(hooks)
   );
   assert.equal(pendingIndicatorState.displayPhase, "pending");
   assert.equal(pendingIndicatorState.displaySource, "visible_poll");
