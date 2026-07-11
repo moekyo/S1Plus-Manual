@@ -472,29 +472,148 @@ const testBlockedQueueClearsSchedulerState = () => {
   assert.equal(disabled.scheduler.inspect().state, null);
 };
 
-const testLifecycleCheckpointUsesSchedulerInterfaceAfterFinalizingDirty = async () => {
+const testLifecycleAdapterUsesSchedulerAfterFinalizingDirty = async () => {
   const { makeScheduler, hooks, sandbox } = createScenario({ now: 14_000_000 });
   const tabA = makeScheduler({ tabId: "tab-a" });
   sandbox.document.visibilityState = "hidden";
-  hooks.registerSyncLifecycleLocalMutationFinalizer("phase2_finalize", () => {
+  const unregisterFinalizer = hooks.registerSyncLifecycleLocalMutationFinalizer("phase2_finalize", () => {
     tabA.scheduler.queue({ source: "read_progress", lastModified: 1401 });
   });
 
-  const hidden = hooks.runSyncLifecycleCheckpoint("visibility_hidden", {
-    phase: "hidden",
-    now: 14_000_000,
-    tabId: "tab-a",
-    settingsSnapshot: readySettings,
-    triggerRemoteSyncPush: (reason, context) => {
-      tabA.triggers.push({ reason, context: toPlainObject(context) });
-    },
-  });
-  assert.equal(hidden.schedulerResult.status, "triggered");
+  let hidden;
+  try {
+    hidden = await hooks.s1pSyncLifecycleAdapter.handle(
+      "visibilitychange",
+      null,
+      {
+        now: 14_000_000,
+        tabId: "tab-a",
+        settingsSnapshot: readySettings,
+        triggerRemoteSyncPush: (reason, context) => {
+          tabA.triggers.push({ reason, context: toPlainObject(context) });
+        },
+      }
+    );
+  } finally {
+    unregisterFinalizer();
+  }
+  assert.equal(hidden.checkpointResult.schedulerResult.status, "triggered");
   assert.equal(tabA.triggers.length, 1);
   assert.equal(tabA.scheduler.inspect().state, null);
 
   await new Promise((resolve) => setTimeout(resolve, 10));
   assert.equal(tabA.triggers.length, 1);
+};
+
+const testPagehideFinalizesAndHandsOffWithoutTriggeringSync = async () => {
+  const now = Date.now();
+  const { makeScheduler, hooks, sandbox, store } = createScenario({
+    now,
+  });
+  const valueChangeListeners = [];
+  const pendingValueChangeNotifications = [];
+  const originalSetValue = sandbox.GM_setValue;
+  sandbox.GM_addValueChangeListener = (key, callback) => {
+    valueChangeListeners.push({ key, callback });
+    return valueChangeListeners.length;
+  };
+  sandbox.GM_setValue = (key, value) => {
+    const oldValue = store.get(key);
+    originalSetValue(key, value);
+    valueChangeListeners
+      .filter((listener) => listener.key === key)
+      .forEach((listener) => {
+        pendingValueChangeNotifications.push(() =>
+          listener.callback(key, oldValue, value, false)
+        );
+      });
+  };
+  const flushValueChangeNotifications = () => {
+    while (pendingValueChangeNotifications.length > 0) {
+      pendingValueChangeNotifications.shift()();
+    }
+  };
+  const lifecycleAdapter = hooks.s1pCreateSyncLifecycleAdapter();
+  lifecycleAdapter.bind();
+  assert.equal(valueChangeListeners.length, 1);
+  const tabA = makeScheduler({ tabId: "tab-a" });
+  tabA.scheduler.queue({ source: "general", lastModified: 1501 });
+  flushValueChangeNotifications();
+  const unregisterFinalizer = hooks.registerSyncLifecycleLocalMutationFinalizer(
+    "phase3_pagehide_finalize",
+    () => {
+      tabA.scheduler.queue({
+        source: "read_progress",
+        lastModified: 1502,
+        threadId: "1502",
+      });
+    }
+  );
+
+  let result;
+  try {
+    result = await lifecycleAdapter.handle(
+      "pagehide",
+      { persisted: false },
+      {
+        now,
+        tabId: "tab-a",
+        settingsSnapshot: readySettings,
+        triggerRemoteSyncPush: (reason, context) => {
+          tabA.triggers.push({ reason, context: toPlainObject(context) });
+        },
+      }
+    );
+  } finally {
+    unregisterFinalizer();
+  }
+  const handedOffState = store.get(DEBOUNCE_STATE_KEY);
+  assert.equal(handedOffState.ownerTabId, "");
+  pendingValueChangeNotifications.length = 0;
+  await Promise.resolve();
+  valueChangeListeners[0].callback(
+    DEBOUNCE_STATE_KEY,
+    null,
+    handedOffState,
+    false
+  );
+
+  assert.equal(result.checkpointResult.schedulerResult.reason, "lifecycle_unload_handoff");
+  assert.equal(result.checkpointResult.handoffResult.status, "released");
+  assert.equal(tabA.triggers.length, 0);
+  assert.equal(tabA.scheduler.inspect().state?.ownerTabId || "", "");
+  assert.equal(tabA.scheduler.inspect().pending.maxLastModified, 1502);
+};
+
+const testCanceledBeforeUnloadRecoversSoleSchedulerOwner = async () => {
+  const now = Date.now();
+  const { makeScheduler, hooks } = createScenario({ now });
+  const tabA = makeScheduler({ tabId: "tab-a" });
+  tabA.scheduler.queue({ source: "general", lastModified: 1601 });
+  let recoveryTask = null;
+  const lifecycleAdapter = hooks.s1pCreateSyncLifecycleAdapter({
+    schedulePostUnloadRecovery: (callback) => {
+      recoveryTask = callback;
+    },
+    recoverAfterCanceledUnload: () => tabA.scheduler.recover(),
+  });
+
+  const result = await lifecycleAdapter.handle(
+    "beforeunload",
+    { defaultPrevented: true },
+    {
+      now,
+      tabId: "tab-a",
+      settingsSnapshot: readySettings,
+    }
+  );
+
+  assert.equal(result.checkpointResult.handoffResult.status, "released");
+  assert.equal(tabA.scheduler.inspect().state.ownerTabId, "");
+  assert.equal(typeof recoveryTask, "function");
+  recoveryTask();
+  assert.equal(tabA.scheduler.inspect().state.ownerTabId, "tab-a");
+  assert.equal(tabA.triggers.length, 0);
 };
 
 const main = async () => {
@@ -514,7 +633,9 @@ const main = async () => {
   testCleanupRecoversDirtyWrittenDuringDeleteRace();
   testCleanupRecoversSharedDirtyWrittenDuringDeleteRace();
   testBlockedQueueClearsSchedulerState();
-  await testLifecycleCheckpointUsesSchedulerInterfaceAfterFinalizingDirty();
+  await testLifecycleAdapterUsesSchedulerAfterFinalizingDirty();
+  await testPagehideFinalizesAndHandsOffWithoutTriggeringSync();
+  await testCanceledBeforeUnloadRecoversSoleSchedulerOwner();
   console.log(
     "[background-sync-shared-debounce] Pending Dirty Scheduler scenarios passed."
   );
