@@ -457,8 +457,8 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 > `Idle` ➞ `Running(probe)` ➞ *(metadata unchanged)* ➞ `Idle`
 > `Idle` ➞ `Running(probe)` ➞ *(metadata changed)* ➞ `Pending(probe)` 或 `Running(sync/pull)` ➞ `Success / Failure / Conflict / Idle`
 
-#### 显示状态解析顺序
-`resolveAutoSyncIndicatorDisplayPhase()` 会把持久化状态、运行时锁、pending 队列和视觉会话合成为导航栏最终显示态。当前优先级如下：
+#### 投影状态解析顺序
+`readSyncIndicatorStateProjection({ surface })` 会把持久化状态、运行时锁、pending 队列和视觉会话合成为指定 surface 的最终状态。Navbar 与 Title 共用以下优先级 implementation；`navbar` 保留外来后台锁与本地 pending 的反馈差异，`title` 额外应用 Live Runner 与 push-only 结果资格。
 
 1. **真实运行态优先**
    - 慢速前台 metadata probe 达到可见阈值后显示 `Running(probe)`。

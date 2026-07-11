@@ -2,10 +2,10 @@
 
 ## 当前状态
 
-- 计划状态：Phase 1、Phase 2 与 Phase 3 实现、自动验证和独立审查已完成；Phase 4 实现与自动验证已完成，独立审查待执行；真实多窗口点验仍待执行。
-- 总体实施进度：4/6 个阶段已完成代码实现，其中 3 个阶段已完成独立审查。
-- 当前阶段：Phase 4，等待独立审查。
-- 代码状态：Phase 4 Sync Indicator State 投影 interface、Navbar/Title consumer 迁移、场景测试和架构文档已完成。
+- 计划状态：Phase 1 到 Phase 4 的实现、自动验证和独立审查已完成；Phase 1 到 Phase 3 真实多窗口点验仍待执行。
+- 总体实施进度：4/6 个阶段已完成代码实现和独立审查。
+- 当前阶段：Phase 4 已完成，下一步评估 Phase 5 进入门槛。
+- 代码状态：Phase 4 Sync Indicator State 投影 interface、Navbar/Title consumer 迁移、场景测试、架构文档和 review fixes 已完成并复验。
 - 架构依据：2026-07-11 完成同步锁遗留问题的实机复现、代码定位和架构复核。
 
 ## 背景
@@ -236,7 +236,7 @@ Running Sync 的 implementation 负责模式锁、全局锁、心跳、远端事
 
 ## Phase 4：深化 Sync Indicator State 投影
 
-- 状态：实现与自动验证已完成，独立审查待执行。
+- 状态：已完成。
 - 目标：集中 Pending Dirty、Sync Lock、Live Runner、Result Phase 和 TTL 到展示状态的投影规则。
 - 实施范围：
   - 让 Navbar 与 Title Owner 使用同一份状态事实。
@@ -265,13 +265,18 @@ Running Sync 的 implementation 负责模式锁、全局锁、心跳、远端事
   - `node tests/test-auto-sync-indicator-linkage.js` 通过。
   - `node tests/test-title-sync-status.js` 通过。
   - `node tests/test-foreground-probe-gate-retry.js` 通过。
+  - 全仓 30 个测试文件全部通过。
   - `git diff --check` 通过。
+- 独立审查：
+  - 使用一个主 subagent 联合审查 Standards 与 Phase 4 spec，确认 2 个 P2、0 个 P1/P3；运行时高风险语义未发现缺陷。
+  - 删除 Title runtime 新增的 wiring regex，让 projection/consumer 边界继续由 interface 行为场景验证。
+  - 修正 `DEVELOPMENT.md` 仍引用已删除 `resolveAutoSyncIndicatorDisplayPhase()` 的旧说明，统一为 `readSyncIndicatorStateProjection({ surface })`。
+  - 修复后重新运行 indicator/title 定向测试、语法检查和 `git diff --check`，全部通过。
 - 保持不变：
   - 未修改视觉样式、动画设计、Result Phase TTL 数值、持久化 schema 或 Title Owner handoff 规则。
 - 尚未完成：
-  - Phase 4 独立审查与审查后复验。
   - Phase 1/Phase 2/Phase 3 真实多窗口手动点验。
-- 下一步：启动一个 subagent 联合审查仓库规范与 Phase 4 spec；修复 findings 并复验后，再评估 Phase 5 进入门槛。
+- 下一步：评估 Phase 5 Result Phase Policy 是否满足进入门槛；若不满足则记录跳过原因并直接进入 Phase 6。
 
 ## Phase 5：有条件地深化 Result Phase Policy
 

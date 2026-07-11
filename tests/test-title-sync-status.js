@@ -1505,11 +1505,6 @@ const testDisplayPhaseOnlyAndNoTitleSchedulerRewrite = () => {
   const titleSource = getTitleSyncStatusSource();
   assert.match(
     titleSource,
-    /const resolvedState = readSyncIndicatorStateProjection\(\{\s*surface:\s*SYNC_INDICATOR_STATE_PROJECTION_SURFACE_TITLE,\s*allowCache:\s*true,\s*\}\s*\);/,
-    "标题运行时应通过统一投影 interface 读取 Title surface。"
-  );
-  assert.match(
-    titleSource,
     /setTimeout\(\s*flushTitleSyncStatusUnifiedStateChange,\s*TITLE_SYNC_STATUS_UNIFIED_STATE_DEBOUNCE_MS\s*\)/,
     "统一状态源通知应通过短 debounce 合并本地刷新和 fallback signal。"
   );
@@ -1532,11 +1527,6 @@ const testDisplayPhaseOnlyAndNoTitleSchedulerRewrite = () => {
     titleSource,
     /syncTitleSyncStatusRuntime\(\{\s*reason:\s*"animation_tick"/,
     "running 标题动画 tick 不应重跑完整 runtime。"
-  );
-  assert.doesNotMatch(
-    titleSource,
-    /resolveTitleSyncStatusDisplayPhase/,
-    "Title Owner 不应保留独立 phase 解释器。"
   );
   assert.doesNotMatch(
     titleSource,
