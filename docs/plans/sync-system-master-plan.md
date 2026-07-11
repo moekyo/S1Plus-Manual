@@ -213,7 +213,7 @@ Running Sync 的 implementation 负责模式锁、全局锁、心跳、远端事
 ### Phase 3 进度更新
 
 - 已完成：
-  - 新增 `s1pSyncLifecycleAdapter` deep module，以 `bind()` / `handle()` interface 统一 hidden、visible、pageshow、pagehide 和 beforeunload；重复调用 `bind()` 不会重复注册事件。
+  - 新增 `s1pSyncLifecycleAdapter` deep module，以 `bind()` / `unbind()` / `handle()` interface 统一 hidden、visible、pageshow、pagehide 和 beforeunload；重复调用 bind/unbind 保持幂等，并可完整释放 DOM、GM listener、activity hooks 与 polling 资源。
   - 合并 shared scheduler 与 pending recovery 的两套 `pageshow` / `visibilitychange` 监听；shared state change listener 和前台 polling support 由同一次 adapter 绑定初始化。
   - 固定 phase 顺序：先运行本地 mutation finalizer 与 sync lifecycle checkpoint，再执行 Scheduler flush/recover/handoff；visible/pageshow 最后执行存储快照重读、Pending Dirty recovery、remote probe 和 polling 更新。
   - 删除 checkpoint 之外的第二次卸载 handoff；pagehide/beforeunload 只 finalize Pending Dirty 并转移 Scheduler Owner，不接管 Running Sync 或删除执行锁。
@@ -224,6 +224,8 @@ Running Sync 的 implementation 负责模式锁、全局锁、心跳、远端事
   - 卸载 handoff 增加 generation fence，阻止当前页的本地 GM change listener 对刚写出的空 owner 状态立即重新接管。
   - `bind()` 只在初始化与事件注册全部成功后提交 bound 状态；初始化失败可重试，并复用稳定 handler 引用避免重复 DOM 注册。
   - `beforeunload` 被取消时，通过下一轮 macrotask 判断页面仍存活且可见后恢复 Scheduler Owner；真正离页时任务随页面上下文销毁，不接管 Running Sync。
+  - 针对 commit `23c36db` 的三方综合复审后续问题已修复：共享 GM/activity listener 改为 lease 管理，避免重复注册或提前移除；生命周期 transition generation 会使 bfcache/pageshow/unbind 之后的旧微任务与恢复任务失效。
+  - 补齐默认 `queueMicrotask`/Promise fallback、post-unload 可见性与 transition 门禁、handoff generation fence 隔离、前台 support 初始化/释放隔离，以及 bind/unbind/rebind 场景测试。
 - 自动验证：
   - `node --check S1Plus.js` 通过。
   - 16 个 sync / foreground / startup / remote 相关测试文件全部通过。

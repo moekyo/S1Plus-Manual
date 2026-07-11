@@ -533,7 +533,9 @@ const testPagehideFinalizesAndHandsOffWithoutTriggeringSync = async () => {
       pendingValueChangeNotifications.shift()();
     }
   };
-  const lifecycleAdapter = hooks.s1pCreateSyncLifecycleAdapter();
+  const lifecycleAdapter = hooks.s1pCreateSyncLifecycleAdapter({
+    scheduleMicrotask: (callback) => callback(),
+  });
   lifecycleAdapter.bind();
   assert.equal(valueChangeListeners.length, 1);
   const tabA = makeScheduler({ tabId: "tab-a" });
@@ -583,6 +585,43 @@ const testPagehideFinalizesAndHandsOffWithoutTriggeringSync = async () => {
   assert.equal(tabA.triggers.length, 0);
   assert.equal(tabA.scheduler.inspect().state?.ownerTabId || "", "");
   assert.equal(tabA.scheduler.inspect().pending.maxLastModified, 1502);
+};
+
+const testHandoffFenceOnlySuppressesMatchingGeneration = () => {
+  const { hooks } = createScenario({ now: 15_500_000 });
+  const fence = hooks.s1pCreateSchedulerOwnerHandoffFence();
+  fence.begin(5);
+
+  assert.equal(
+    fence.shouldIgnore({ generation: 5, ownerTabId: "" }),
+    true
+  );
+  assert.equal(
+    fence.shouldIgnore({ generation: 6, ownerTabId: "" }),
+    false
+  );
+  assert.equal(
+    fence.shouldIgnore({ generation: 5, ownerTabId: "" }),
+    false
+  );
+
+  fence.begin(7);
+  assert.equal(
+    fence.shouldIgnore(
+      { generation: 8, ownerTabId: "tab-b" },
+      { pageUnloading: true }
+    ),
+    true
+  );
+  assert.equal(
+    fence.shouldIgnore({ generation: 7, ownerTabId: "" }),
+    true
+  );
+  fence.cancel();
+  assert.equal(
+    fence.shouldIgnore({ generation: 7, ownerTabId: "" }),
+    false
+  );
 };
 
 const testCanceledBeforeUnloadRecoversSoleSchedulerOwner = async () => {
@@ -635,6 +674,7 @@ const main = async () => {
   testBlockedQueueClearsSchedulerState();
   await testLifecycleAdapterUsesSchedulerAfterFinalizingDirty();
   await testPagehideFinalizesAndHandsOffWithoutTriggeringSync();
+  testHandoffFenceOnlySuppressesMatchingGeneration();
   await testCanceledBeforeUnloadRecoversSoleSchedulerOwner();
   console.log(
     "[background-sync-shared-debounce] Pending Dirty Scheduler scenarios passed."
