@@ -10,6 +10,7 @@ const {
 
 const BACKGROUND_SYNC_DEBOUNCE_STATE_KEY =
   "s1p_background_sync_debounce_state";
+const AUTO_SYNC_INDICATOR_STATE_KEY = "s1p_auto_sync_indicator_state";
 
 const TITLE_SYNC_STATUS_REQUIRED_HOOKS = [
   "getTitleSyncStatusTestConstants",
@@ -29,6 +30,8 @@ const TITLE_SYNC_STATUS_REQUIRED_HOOKS = [
   "hasEnabledTitleSyncStatusPath",
   "getTitleSyncStatusRuntimeStateForTest",
   "readSyncIndicatorStateProjection",
+  "getSyncIndicatorStateProjectionTestConstants",
+  "runTitleSyncStatusRuntimeSync",
 ];
 
 const createHarness = () =>
@@ -49,8 +52,20 @@ const requireHook = (hooks, hookName) => {
   return hooks[hookName];
 };
 
-const readProjection = (hooks, surface, state = null) =>
-  requireHook(hooks, "readSyncIndicatorStateProjection")({ surface, state });
+const getProjectionSurfaces = (hooks) =>
+  requireHook(hooks, "getSyncIndicatorStateProjectionTestConstants")();
+
+const readNavbarProjection = (hooks, state = null) =>
+  requireHook(hooks, "readSyncIndicatorStateProjection")({
+    surface: getProjectionSurfaces(hooks).SURFACE_NAVBAR,
+    state,
+  });
+
+const readTitleProjection = (hooks, state = null) =>
+  requireHook(hooks, "readSyncIndicatorStateProjection")({
+    surface: getProjectionSurfaces(hooks).SURFACE_TITLE,
+    state,
+  });
 
 const expectMatch = (pattern, message) => {
   assert.match(sourceCode, pattern, message);
@@ -288,7 +303,7 @@ const testUnifiedStateMappingAndTtl = () => {
   assert.equal(constants.TITLE_SYNC_STATUS_UNIFIED_STATE_DEBOUNCE_MS, 100);
 
   const idleState = toPlainObject(
-    readProjection(hooks, "title", createResolvedState("idle", now))
+    readTitleProjection(hooks, createResolvedState("idle", now))
   );
   assert.equal(idleState.displayPhase, "idle");
   assert.equal(getPrefix(idleState.displayPhase), "");
@@ -308,7 +323,7 @@ const testUnifiedStateMappingAndTtl = () => {
     reason: "debounced_read_progress",
   });
   const pendingState = toPlainObject(
-    readProjection(hooks, "title", createResolvedState("success", now))
+    readTitleProjection(hooks, createResolvedState("success", now))
   );
   assert.equal(pendingState.displayPhase, "pending");
   assert.equal(
@@ -320,7 +335,7 @@ const testUnifiedStateMappingAndTtl = () => {
 
   setBackgroundSyncLocks(store, constants, constants.BACKGROUND_SYNC_OWNER_ID, now);
   const liveRunnerTitleState = toPlainObject(
-    readProjection(hooks, "title", createResolvedState("success", now))
+    readTitleProjection(hooks, createResolvedState("success", now))
   );
   assert.equal(liveRunnerTitleState.displayPhase, "running");
   assert.equal(
@@ -335,7 +350,7 @@ const testUnifiedStateMappingAndTtl = () => {
 
   setBackgroundSyncLocks(store, constants, "closed-runner-tab", now);
   const ghostRunningTitleState = toPlainObject(
-    readProjection(hooks, "title", createResolvedState("success", now))
+    readTitleProjection(hooks, createResolvedState("success", now))
   );
   assert.equal(
     ghostRunningTitleState.displayPhase,
@@ -352,14 +367,14 @@ const testUnifiedStateMappingAndTtl = () => {
     operation: "probe",
   };
   const navbarProbeState = toPlainObject(
-    readProjection(hooks, "navbar", foregroundProbeRunningState)
+    readNavbarProjection(hooks, foregroundProbeRunningState)
   );
   assert.equal(navbarProbeState.displayPhase, "running");
   assert.equal(navbarProbeState.displayOperation, "probe");
   assert.equal(navbarProbeState.displaySessionKind, "cloud_probe_session");
 
   const titleProbeState = toPlainObject(
-    readProjection(hooks, "title", foregroundProbeRunningState)
+    readTitleProjection(hooks, foregroundProbeRunningState)
   );
   assert.equal(
     titleProbeState.displayPhase,
@@ -374,9 +389,8 @@ const testUnifiedStateMappingAndTtl = () => {
     ["conflict", constants.TITLE_SYNC_STATUS_CONFLICT_TTL_MS, "[冲突]"],
   ].forEach(([phase, ttlMs, expectedPrefix]) => {
     const activeState = toPlainObject(
-      readProjection(
+      readTitleProjection(
         hooks,
-        "title",
         createResolvedState(phase, now - ttlMs + 50)
       )
     );
@@ -384,9 +398,8 @@ const testUnifiedStateMappingAndTtl = () => {
     assert.equal(getPrefix(activeState.displayPhase), expectedPrefix);
 
     const expiredState = toPlainObject(
-      readProjection(
+      readTitleProjection(
         hooks,
-        "title",
         createResolvedState(phase, now - ttlMs - 50)
       )
     );
@@ -756,9 +769,8 @@ const testPresenceTtlOwnerLeaseAndForegroundTtlPause = () => {
     "切回前台只暂停标题显示，不应清除或重置统一状态源结果。"
   );
   const expiredSuccessState = toPlainObject(
-    readProjection(
+    readTitleProjection(
       hooks,
-      "title",
       createResolvedState(
         "success",
         Date.now() - constants.TITLE_SYNC_STATUS_SUCCESS_TTL_MS - 50
@@ -965,18 +977,14 @@ const testResultPhaseHandoffAndRunningLiveRunnerBoundaries = () => {
   );
 
   const staleRunningTitleState = toPlainObject(
-    readProjection(
-      hooks,
-      "title",
-      {
-        ...createResolvedState("running", now - 5000),
-        operation: "push",
-        lastResolvedPhase: "success",
-        lastResolvedTimestamp: now - 10_000,
-        lastResolvedSource: "background_push",
-        lastResolvedReason: "previous_success",
-      }
-    )
+    readTitleProjection(hooks, {
+      ...createResolvedState("running", now - 5000),
+      operation: "push",
+      lastResolvedPhase: "success",
+      lastResolvedTimestamp: now - 10_000,
+      lastResolvedSource: "background_push",
+      lastResolvedReason: "previous_success",
+    })
   );
   assert.equal(
     staleRunningTitleState.displayPhase,
@@ -1179,7 +1187,7 @@ const testDisplayPhaseOnlyAndNoTitleSchedulerRewrite = () => {
   const { hooks, store } = createHarness();
   const decide = requireHook(hooks, "resolveTitleSyncStatusTabDisplayDecision");
   const projectTitle = (state) =>
-    toPlainObject(readProjection(hooks, "title", state));
+    toPlainObject(readTitleProjection(hooks, state));
   const getConstants = requireHook(hooks, "getTitleSyncStatusTestConstants");
   const constants = getConstants();
   const now = Date.now();
@@ -1371,24 +1379,24 @@ const testDisplayPhaseOnlyAndNoTitleSchedulerRewrite = () => {
     decide({
       currentTabId: "tab-a",
       tabs: hiddenOwnerTab,
-      state: createUnifiedDisplayState("success", now, {
-        displayOperation: "pull",
-        displaySessionKind: "remote_pull_session",
-        displayDominantDirection: "pull",
-        displaySubstate: "done",
+      state: projectTitle({
+        ...createResolvedState("success", now),
+        source: "foreground_resume",
+        reason: "pulled",
+        operation: "pull",
       }),
       settings,
       now,
     }),
     {
-      shouldDisplay: true,
+      shouldDisplay: false,
       shouldRunAnimationTimer: false,
       ownerTabId: "tab-a",
-      displayPhase: "success",
-      prefix: "[同步成功]",
+      displayPhase: "idle",
+      prefix: "",
       hasForegroundTab: false,
     },
-    "Title Owner 只消费投影给出的 displayPhase，不应再按 pull 方向二次解释状态。"
+    "拉取成功必须先经过 Title 投影，不能直接把 raw display state 交给 Title Owner。"
   );
 
   assertDisplayDecision(
@@ -1540,6 +1548,33 @@ const testDisplayPhaseOnlyAndNoTitleSchedulerRewrite = () => {
   );
 };
 
+const testTitleRuntimeRoutesThroughProjectionBeforeRefreshingDocumentTitle = () => {
+  const { hooks, store, sandbox } = createHarness();
+  const now = Date.now();
+  store.set("s1p_settings", createReadySettings());
+  store.set(AUTO_SYNC_INDICATOR_STATE_KEY, {
+    ...createResolvedState("success", now),
+    source: "foreground_resume",
+    reason: "pulled",
+    operation: "pull",
+    lastResolvedSource: "foreground_resume",
+    lastResolvedReason: "pulled",
+  });
+  sandbox.document.title = "Stage1st Test Thread";
+
+  const decision = toPlainObject(
+    hooks.runTitleSyncStatusRuntimeSync({
+      reason: "projection_integration",
+      forceOwnerLease: true,
+    })
+  );
+  assert.equal(decision.displayPhase, "idle");
+  assert.equal(decision.prefix, "");
+  assert.equal(decision.shouldDisplay, false);
+  assert.ok(sandbox.document.title.startsWith("Stage1st Test Thread"));
+  assert.doesNotMatch(sandbox.document.title, /\[同步成功\]/);
+};
+
 const testSettingsDefaultsUiAndIndependence = () => {
   const { hooks } = createHarness();
   const hasEnabledTitleSyncStatusPath = requireHook(
@@ -1636,6 +1671,10 @@ const tests = [
   ["partitioned presence storage", testPartitionedPresenceStorage],
   ["owner lease guard prevents cross-tab self trigger", testOwnerLeaseGuardPreventsCrossTabSelfTrigger],
   ["display phase only and no title scheduler rewrite", testDisplayPhaseOnlyAndNoTitleSchedulerRewrite],
+  [
+    "title runtime routes through projection before refresh",
+    testTitleRuntimeRoutesThroughProjectionBeforeRefreshingDocumentTitle,
+  ],
   ["settings defaults, ui, and independence", testSettingsDefaultsUiAndIndependence],
 ];
 

@@ -93,7 +93,7 @@ The effective display phase is derived from:
 
 Relevant code:
 
-- `resolveAutoSyncIndicatorDisplayPhase()`
+- `readSyncIndicatorStateProjection({ surface })`
 - `getAutoSyncRuntimeRunningDisplayState()`
 - `getAutoSyncRuntimePendingDisplayState()`
 - `startAutoSyncIndicatorCycle()`
@@ -242,7 +242,7 @@ Rules:
 ### Phase 1: Title semantics — implemented
 
 - Added a Title Owner lease handoff path for Result Phases when the previous owner closes, disappears from presence, or has an invalid/expired lease.
-- `resolveAutoSyncIndicatorDisplayPhase(..., { ttlProfile: "title" })` now suppresses Running Phase unless the current tab is the Live Runner.
+- `readSyncIndicatorStateProjection({ surface: "title" })` now suppresses Running Phase unless the current tab is the Live Runner.
 - Running Title Owner selection now prefers the Live Runner by matching the title display state's `displayLiveRunnerOwnerId` with each presence record's `syncOwnerId`.
 - Non-runner tabs suppress Running Phase even if ordinary recency or an old owner lease would otherwise select them.
 - Stale running fallback to an older `lastResolvedPhase` is blocked for the title profile unless that result was committed at or after the running cycle started.
@@ -316,7 +316,7 @@ Possible approaches:
 1. **Title handoff for Result Phases** — implemented through explicit owner lease handoff when the previous owner is gone, stale, or no longer present.
 2. **Running title requires Live Runner** — implemented with `shouldSuppressAutoSyncIndicatorRunningForTitle()` and `getAutoSyncIndicatorLiveRunnerOwnerIdForTitle()`.
 3. **Live Runner owner selection** — implemented by storing `syncOwnerId` in title presence and matching it against `displayLiveRunnerOwnerId`.
-4. **Stale running fallback guard** — implemented for `ttlProfile: "title"` when `lastResolvedTimestamp < state.timestamp`.
+4. **Stale running fallback guard** — implemented for the title projection surface when `lastResolvedTimestamp < state.timestamp`.
 5. **Scheduler recovery** — unchanged; existing tests cover it.
 6. **Running sync recovery** — unchanged and conservative; recovery waits for lock expiry except for explicit navbar direct pull/push, which is a user override rather than automatic recovery.
 7. **Remote write fencing** — deferred. Not needed for current scope; risk is low.

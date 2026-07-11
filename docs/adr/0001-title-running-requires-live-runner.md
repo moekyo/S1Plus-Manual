@@ -4,11 +4,11 @@ Title status display for the "running" phase (`[同步中...]`) must verify that
 
 For running title display, the Live Runner takes precedence over the normal recency-based Title Owner election. A non-runner Title Owner must suppress the running prefix rather than inherit it. Result phases keep the normal Title Owner handoff behavior.
 
-This applies only to the title (`ttlProfile: "title"`). The navbar indicator retains the less strict lock-freshness display because the user is actively looking at the page and can interpret a short running display after tab switch as transitional.
+This applies only to the title projection surface (`surface: "title"`). The navbar indicator retains the less strict lock-freshness display because the user is actively looking at the page and can interpret a short running display after tab switch as transitional.
 
 Implementation notes:
 
-- Title Running Phase suppression is enforced in `resolveAutoSyncIndicatorDisplayPhase(..., { ttlProfile: "title" })`.
+- Title Running Phase suppression is enforced by `readSyncIndicatorStateProjection({ surface: "title" })` through the internal `projectSyncIndicatorState()` policy.
 - A verified Live Runner contributes `displayLiveRunnerOwnerId` to the resolved title state.
 - Title presence records include `syncOwnerId`, allowing `resolveTitleSyncStatusTabDisplayDecision()` to choose the Live Runner tab before ordinary recency-based Title Owner selection.
 - Result Phases can still hand off through the Title Owner lease path; this handoff path does not apply to Running Phase.

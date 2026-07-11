@@ -41,7 +41,7 @@
   - `recoverPendingAutoSyncIfNeeded()`
 - [x] 定位现有状态源和诊断：
   - `AUTO_SYNC_INDICATOR_STATE_KEY`
-  - `resolveAutoSyncIndicatorDisplayPhase()`
+  - `readSyncIndicatorStateProjection({ surface })`
   - `hasActivePendingAutoSyncRequest()`
   - `buildSyncDiagnosticsRows()`
 - [x] 确认当前工作树中是否有用户未提交改动，避免误改无关文件。
@@ -51,7 +51,7 @@ Phase 0 定位结果（2026-05-05）：
 - 现有后台推送仍由每个标签页本地的 `remotePushTimeout` / `armRemotePushTimer()` / `debouncedTriggerRemoteSyncPush()` 排 timer；`read_progress` 为 20 秒防抖，普通 `general` 为 5 秒防抖。
 - `updateLastModifiedTimestamp()` 会先写 `s1p_last_modified` 和 `s1p_pending_auto_sync_request`，再进入本地 debounce；初始同步期间会设置 dirty / follow-up 标记。
 - pending 仍是单条覆盖式结构，`markPendingAutoSyncRequest()` 只保存 `source`、`lastModified`、`createdAt`；`recoverPendingAutoSyncIfNeeded()` 负责遗留 pending 的兜底补发。
-- `resolveAutoSyncIndicatorDisplayPhase()` 当前只识别 pending request、后台锁、冲突暂停和 circuit breaker；诊断表尚无 shared scheduler 字段。
+- `readSyncIndicatorStateProjection({ surface })` 当前只识别 pending request、后台锁、冲突暂停和 circuit breaker；诊断表尚无 shared scheduler 字段。
 - `performAutoSync()` 成功路径当前仍通过 `asSuccessResult()` 直接调用 `clearPendingAutoSyncRequest()`；本轮未改裁决语义。
 - 工作树进入本轮前已有未提交状态：`background-sync-scheduler-review-and-optimization.md` 已修改，`background-sync-scheduler-implementation-checklist.md` 未跟踪；本轮未改 review 文档。
 
@@ -224,7 +224,7 @@ Phase D / E / F 实现结果（2026-05-05）：
 推送侧状态：
 
 - [x] `hasActivePendingAutoSyncRequest()` 同时识别 pending request 和 active shared debounce state。
-- [x] `resolveAutoSyncIndicatorDisplayPhase()` 在 shared pending / retry 存在时保持 `pending`。
+- [x] `readSyncIndicatorStateProjection({ surface: "navbar" })` 在 shared pending / retry 存在时保持 `pending`。
 - [x] 有 background/global active lock 时显示 `running`。
 - [x] 无 pending、无 active lock、无 retry 时才显示最终 success / failure / conflict。
 

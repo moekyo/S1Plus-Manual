@@ -83,7 +83,7 @@ Tab A/B/C... 读 presence + owner
 | `S1Plus.js:27104` `resolveTitleSyncStatusTabDisplayDecision()` | owner 由每个 tab 根据本地 presence/owner 视图独立计算，非原子 |
 | `S1Plus.js:27144` owner preferred sorting | 使用 `lastActiveAt` / `createdAt` 排序，presence 视图不一致时不同 tab 可能选出不同 owner |
 | `S1Plus.js:27365` `maybeRefreshTitleSyncStatusOwnerLease()` | owner change 触发的 runtime 也可能续租，导致自激 |
-| `S1Plus.js:27417` `resolveAutoSyncIndicatorDisplayPhase()` | runtime 热路径会读取多项 GM 状态，多 tab storm 下读放大明显 |
+| Sync Indicator 投影热路径（现为 `readSyncIndicatorStateProjection()` / `projectSyncIndicatorState()`） | runtime 热路径会读取多项 GM 状态，多 tab storm 下读放大明显 |
 | `S1Plus.js:27619` owner GM listener | `TITLE_SYNC_STATUS_OWNER_KEY` 每次变化都直接跑完整 runtime，没有 debounce，也没有“owner_change 不续租”保护 |
 
 ## 5. 为什么多个标签会同时显示同步中
@@ -167,7 +167,7 @@ Tab A/B/C... 读 presence + owner
    - `isCrossContextChange`
    - `autoSyncIndicatorWriteInFlightCount`
    - `hasComparableValueChanged`
-3. `resolveAutoSyncIndicatorDisplayPhase()` 增加短 TTL 内存缓存，例如 200-500ms。
+3. Sync Indicator 投影路径增加短 TTL 内存缓存，例如 200-500ms。
 4. `animation_tick` 只推进标题动画帧，不重新读取所有 GM runtime 状态。
 
 ### P1：修 pending recovery 绕过 shared scheduler
@@ -281,7 +281,7 @@ CPU 飙高时录制 10-20 秒 Performance。重点查看调用栈是否集中在
 - `GM_addValueChangeListener` callback
 - `syncTitleSyncStatusRuntime`
 - `runTitleSyncStatusRuntimeSync`
-- `resolveAutoSyncIndicatorDisplayPhase`
+- `readSyncIndicatorStateProjection`
 - `getTitleSyncStatusOwnerState`
 - `writeTitleSyncStatusOwnerLease`
 - `GM_getValue`
@@ -307,7 +307,7 @@ CPU 飙高时录制 10-20 秒 Performance。重点查看调用栈是否集中在
 | 标题 owner lease 自激 | P0 | 已重构修复 | listener 触发的 runtime 默认禁止续租；owner 写前确认有效 lease；写后使用 token/generation verify；有效 owner lease 未过期时保持 owner 稳定 | `test-title-sync-status.js` 已覆盖 owner guard / lease stability，自动化通过 | 浏览器实测 10+ S1 tab，确认同一时间最多一个 tab 显示 `[同步中.]` |
 | 标题 GM listener storm | P1 | 已修复 | owner/presence/state GM listener 合并为 150ms debounce；`AUTO_SYNC_INDICATOR_STATE_KEY` 增加本地写入和无差异变化 guard | `test-title-sync-status.js`、`test-auto-sync-indicator-linkage.js` 通过 | 实测观察 CPU 不再随 tab 数持续升高，标题同步状态不再多 tab 抢显示 |
 | 当前选中的 S1 tab 被误判为后台 | P1 | 已修复 | 标题状态 foreground 判定改为 `visibilityState === "visible"`；`document.hasFocus()` 仅保留作诊断信息 | `test-title-sync-status.js` 已覆盖 visible-but-not-focused 场景，自动化通过 | 实测选中任意 S1 tab 时，后台 tab 不应继续显示 `[同步中.]` |
-| runtime 热路径 GM 读放大 | P1 | 已修复 | 标题 runtime 对 `resolveAutoSyncIndicatorDisplayPhase()` 启用 250ms 短缓存；其它路径默认实时读取 | `test-auto-sync-indicator-linkage.js` 覆盖缓存不影响实时读取，已通过 | 实测观察 `autoSyncIndicator.resolveDisplayPhase` 频率明显下降 |
+| runtime 热路径 GM 读放大 | P1 | 已修复 | 标题 runtime 对 `readSyncIndicatorStateProjection({ surface: "title", allowCache: true })` 启用 250ms 短缓存；其它路径默认实时读取 | `test-auto-sync-indicator-linkage.js` 覆盖缓存不影响实时读取，已通过 | 实测观察 Sync Indicator 投影频率明显下降 |
 | pending recovery 绕过 shared scheduler | P1 | 已修复 | `recoverPendingAutoSyncIfNeeded()` 先检查 shared debounce 是否覆盖 pending；必要时接管 shared owner，不直接排 per-tab recovery | `test-background-sync-shared-debounce.js` 已覆盖 `covered_by_shared_debounce`，通过 | 实测 pending dirty + 多 tab 打开时不应出现多个 `pending_recovery` timer |
 | background retry per-tab timer | P1 | 已重构修复 | `scheduleBackgroundSyncRetry()` 优先进入 shared debounce forced-delay 路径，由 shared owner 排 retry timer | `test-background-sync-shared-debounce.js` 已覆盖 `background_retry` forced dueAt，自动化通过 | 实测 lock collision / failure 后不应出现多个 tab 各自 retry |
 | owner 空删放大器 | P2 | 已修复 | owner 为空时 `releaseTitleSyncStatusOwnerLease()` 直接返回，不再 `GM_deleteValue` | `test-title-sync-status.js` 已覆盖，自动化通过 | 无 |
@@ -367,7 +367,7 @@ CPU 飙高时录制 10-20 秒 Performance。重点查看调用栈是否集中在
 | `AUTO_SYNC_INDICATOR_STATE_KEY` 标题 listener 没有 guard | 同步状态每次写入都会触发标题 runtime，和导航栏 listener 的防重复策略不一致 | 已补本地写入/无差异 guard，并统一走 debounce |
 | running 动画 tick 过重 | 500ms tick 本应只更新 `[同步中.]` 动画帧，却重跑完整 runtime 和 GM 读取 | 已改为只处理 title frame |
 | `recoverPendingAutoSyncIfNeeded()` 仍可能单独触发 retry 风暴 | 多 tab 看到同一个 pending 时，各自排 per-tab recovery timer | 已用 shared debounce 覆盖检查替代直接 per-tab recovery；background retry 也优先走 shared scheduler |
-| auto sync indicator stored phase 可能长期停在 `running` | `resolveAutoSyncIndicatorDisplayPhase()` 会 fallback 到 idle，但 stored state 长期 running 会让判断路径更复杂 | 在 running lock/probe 结束后尽量落盘 resolved phase，减少后续判断成本 |
+| auto sync indicator stored phase 可能长期停在 `running` | `readSyncIndicatorStateProjection({ surface })` 会 fallback 到 idle，但 stored state 长期 running 会让判断路径更复杂 | 在 running lock/probe 结束后尽量落盘 resolved phase，减少后续判断成本 |
 
 当前剩余关注顺序：
 

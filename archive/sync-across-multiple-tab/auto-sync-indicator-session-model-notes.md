@@ -459,7 +459,7 @@ probe -> pull pending -> pull running
 
 实际实现要点：
 
-1. 新增函数 `applyAutoSyncIndicatorDisplaySession()` 在 `resolveAutoSyncIndicatorDisplayPhase()` 的 `finishDisplayState` 处包裹，将内部状态机映射为用户态 `displaySessionKind` / `displayDominantDirection` / `displaySubstate`。
+1. 新增函数 `applyAutoSyncIndicatorDisplaySession()`，现由 `projectSyncIndicatorState()` 的 `finishDisplayState` 调用，将内部状态机映射为用户态 `displaySessionKind` / `displayDominantDirection` / `displaySubstate`；消费者统一通过 `readSyncIndicatorStateProjection({ surface })` 读取。
 2. 运行时记忆 `lastAutoSyncIndicatorDisplaySession`，由 `rememberAutoSyncIndicatorDisplaySessionFromRemoteWrite()` 在每次 push 成功后建立，`contentHash` 由 `performAutoSync` 链路透传。
 3. reason 字符串 `"foreground_probe_verification_retry"` 和 `"foreground_probe_changed_retry"` 提取为常量 `AUTO_SYNC_INDICATOR_REASON_FOREGROUND_PROBE_VERIFICATION_RETRY` / `_CHANGED_RETRY`，生产端（`scheduleForegroundRemoteSyncRetry`）和消费端（`applyAutoSyncIndicatorDisplaySession`、`getAutoSyncIndicatorTitle`）统一引用。
 4. `getAutoSyncRuntimePendingDisplayState` 中 pull retry 短路返回，确保远端 pull 信号不被本地 pending push 掩盖。
