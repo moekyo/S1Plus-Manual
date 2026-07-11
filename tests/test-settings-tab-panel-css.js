@@ -81,8 +81,17 @@ assert.match(
 );
 assert.match(
   sourceCode.slice(modalBodyIndex, modalBodyIndex + 420),
-  /background:\s*color-mix\(in srgb,\s*var\(--s1p-settings-content-bg\) 90%,\s*transparent\);/,
+  /background:\s*var\(--s1p-settings-body-surface-bg\);/,
   "设置面板滚动视口必须持有固定背景，避免滚动时圆角随内容移走。"
+);
+assert.ok(
+  sourceCode.includes(
+    "--s1p-settings-body-surface-bg: color-mix(in srgb, var(--s1p-settings-content-bg) 94%, transparent);"
+  ) &&
+    sourceCode.includes(
+      "--s1p-settings-body-surface-bg: color-mix(in srgb, var(--s1p-settings-content-bg) 98%, transparent);"
+    ),
+  "设置面板滚动视口背景必须分别提供浅色和深色主题值。"
 );
 assert.match(
   sourceCode.slice(modalBodyIndex, modalBodyIndex + 760),
