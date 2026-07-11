@@ -7,43 +7,17 @@ const {
   toPlainObject,
 } = require("./s1plus-test-helpers");
 
-const BACKGROUND_SYNC_DEBOUNCE_STATE_KEY =
-  "s1p_background_sync_debounce_state";
-const PENDING_AUTO_SYNC_KEY = "s1p_pending_auto_sync_request";
-const READ_PROGRESS_SYNC_DEBOUNCE_MS = 20 * 1000;
-const DEFAULT_SYNC_DEBOUNCE_MS = 5 * 1000;
-const AUTO_SYNC_CLEAN_STATE_COOLDOWN_MS = 5 * 60 * 1000;
+const DEBOUNCE_STATE_KEY = "s1p_background_sync_debounce_state";
+const PENDING_KEY = "s1p_pending_auto_sync_request";
+const LAST_MODIFIED_KEY = "s1p_last_modified";
+const GLOBAL_SYNC_LOCK_KEY = "s1p_sync_global_lock";
+const READ_PROGRESS_DELAY_MS = 20 * 1000;
+const GENERAL_DELAY_MS = 5 * 1000;
+const OWNER_LEASE_MS = 30 * 1000;
+const MAX_WAIT_MS = 60 * 1000;
+const FOLLOW_UP_MS = 600;
 
-const REQUIRED_SHARED_DEBOUNCE_HOOKS = [
-  "normalizeBackgroundSyncDebounceState",
-  "getBackgroundSyncDebounceState",
-  "setBackgroundSyncDebounceState",
-  "clearBackgroundSyncDebounceState",
-  "requestSharedBackgroundSyncDebounce",
-  "queueBackgroundSyncRetryViaSharedScheduler",
-  "scheduleBackgroundSyncRetry",
-  "tryAcquireBackgroundSyncDebounceOwner",
-  "refreshBackgroundSyncDebounceOwnerLease",
-  "releaseBackgroundSyncDebounceOwner",
-  "scheduleSharedBackgroundSyncDebounceTimer",
-  "clearSharedBackgroundSyncDebounceTimer",
-  "scheduleSharedBackgroundSyncDebounceOwnerRecoveryTimer",
-  "recoverSharedBackgroundSyncDebounceOwnerIfNeeded",
-  "flushSharedBackgroundSyncDebounceForHiddenPage",
-  "queueSharedBackgroundSyncDebounceHiddenFlush",
-  "handleSharedBackgroundSyncDebounceDue",
-  "isBackgroundSyncDebounceStateCoveringPendingRequest",
-  "getPendingAutoSyncSharedDebounceCoverage",
-  "clearPendingAutoSyncRequestIfCovered",
-  "clearSharedBackgroundSyncDebounceIfCovered",
-  "getBackgroundSyncDebounceRuntimeStateForTest",
-  "getBackgroundAutoSyncRuntimeStateForTest",
-  "getBackgroundSyncDebounceTestConstants",
-  "registerSyncLifecycleLocalMutationFinalizer",
-  "runSyncLifecycleCheckpoint",
-];
-
-const readySyncSettings = Object.freeze({
+const readySettings = Object.freeze({
   syncRemoteEnabled: true,
   syncAutoEnabled: true,
   syncRemoteGistId: "gist-id",
@@ -51,1663 +25,455 @@ const readySyncSettings = Object.freeze({
   syncDeviceId: "device-a",
 });
 
-const createHarness = () =>
-  createBaseHarness({
-    hookErrorMessage:
-      "S1Plus.js did not expose background shared debounce test hooks.",
-  });
-
-const getSharedDebounceApi = () => {
-  const runtime = createHarness();
-  const missingHooks = REQUIRED_SHARED_DEBOUNCE_HOOKS.filter(
-    (hookName) => typeof runtime.hooks[hookName] !== "function"
-  );
-
-  assert.deepEqual(
-    missingHooks,
-    [],
-    [
-      "Shared debounce scheduler hooks are not implemented/exposed yet.",
-      "This is the expected red state for Phase A before Phase B+ implementation.",
-      `Missing hooks: ${missingHooks.join(", ")}`,
-    ].join("\n")
-  );
-
-  const constants = runtime.hooks.getBackgroundSyncDebounceTestConstants();
-  assert.equal(
-    constants.BACKGROUND_SYNC_DEBOUNCE_STATE_KEY,
-    BACKGROUND_SYNC_DEBOUNCE_STATE_KEY
-  );
-  assert.equal(
-    constants.READ_PROGRESS_SYNC_DEBOUNCE_MS,
-    READ_PROGRESS_SYNC_DEBOUNCE_MS
-  );
-  assert.equal(
-    constants.DEFAULT_SYNC_DEBOUNCE_MS,
-    DEFAULT_SYNC_DEBOUNCE_MS
-  );
-  assert.ok(
-    constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS >=
-      READ_PROGRESS_SYNC_DEBOUNCE_MS,
-    "max wait must be at least one read-progress settle window."
-  );
-  assert.ok(
-    constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS > 0,
-    "owner lease must be positive."
-  );
-  assert.ok(
-    constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_RECOVERY_GRACE_MS > 0 &&
-      constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_RECOVERY_GRACE_MS <= 1000,
-    "owner recovery grace should be a short handoff buffer."
-  );
-  assert.ok(
-    constants.BACKGROUND_SYNC_DEBOUNCE_FOLLOW_UP_SETTLE_MS >= 300 &&
-      constants.BACKGROUND_SYNC_DEBOUNCE_FOLLOW_UP_SETTLE_MS <= 1500,
-    "follow-up settle should stay in the short 300ms-1500ms window."
-  );
-  assert.equal(
-    constants.AUTO_SYNC_CLEAN_STATE_COOLDOWN_MS,
-    AUTO_SYNC_CLEAN_STATE_COOLDOWN_MS,
-    "clean-state fence cooldown should stay at the internal 5-minute window."
-  );
-
+const createSpy = () => {
+  const calls = [];
   return {
-    ...runtime,
-    constants,
-    getState: () =>
-      toPlainObject(runtime.hooks.getBackgroundSyncDebounceState()),
-    setState: (state) =>
-      runtime.hooks.setBackgroundSyncDebounceState(state),
-    clearState: () => runtime.hooks.clearBackgroundSyncDebounceState(),
-    request: (request, options = {}) =>
-      runtime.hooks.requestSharedBackgroundSyncDebounce(request, {
-        settingsSnapshot: readySyncSettings,
-        ...options,
-      }),
+    calls,
+    timer: (delayMs, context = {}, callback = null) => {
+      calls.push({ delayMs, context: toPlainObject(context), callback });
+      return `timer-${calls.length}`;
+    },
   };
 };
 
-const createTimerSpy = () => {
-  const calls = [];
-  const scheduleTimer = (delayMs, context = {}) => {
-    calls.push({ delayMs, context: toPlainObject(context) });
-    return `timer-${calls.length}`;
-  };
-  return { calls, scheduleTimer };
-};
-
-const createRecoveryTimerSpy = () => {
-  const calls = [];
-  const scheduleRecoveryTimer = (delayMs, context = {}, callback = null) => {
-    calls.push({ delayMs, context: toPlainObject(context), callback });
-    return `recovery-timer-${calls.length}`;
-  };
-  return { calls, scheduleRecoveryTimer };
-};
-
-const seedSharedState = ({
-  generation = 1,
-  ownerTabId = "tab-a",
-  ownerLeaseUntil,
-  dueAt,
-  maxWaitUntil,
-  firstDirtyAt,
-  lastDirtyAt,
-  maxLastModified = 100,
-  sources = { general: 1 },
-  threadIds = [],
-  reason = "debounced_local_change",
-  dueSource = reason === "debounced_local_change" ? "general" : "read_progress",
-} = {}) => ({
-  version: 1,
-  generation,
-  ownerTabId,
-  ownerLeaseUntil,
-  dueAt,
-  maxWaitUntil,
-  firstDirtyAt,
-  lastDirtyAt,
-  maxLastModified,
-  sources,
-  threadIds,
-  reason,
-  dueSource,
-});
-
-const testReadProgressDirtyMergesIntoSingleSharedState = () => {
-  const { constants, request, getState } = getSharedDebounceApi();
-  const timers = createTimerSpy();
-  const now = 1_000_000;
-
-  request(
-    { source: "read_progress", lastModified: 101, threadId: "123" },
-    { now, tabId: "tab-a", scheduleTimer: timers.scheduleTimer }
-  );
-  request(
-    { source: "read_progress", lastModified: 102, threadId: "456" },
-    {
-      now: now + 5_000,
-      tabId: "tab-a",
-      scheduleTimer: timers.scheduleTimer,
-    }
-  );
-
-  assert.deepEqual(getState(), {
-    version: 1,
-    generation: 2,
-    ownerTabId: "tab-a",
-    ownerLeaseUntil:
-      now + 5_000 + constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS,
-    dueAt: now + 5_000 + READ_PROGRESS_SYNC_DEBOUNCE_MS,
-    maxWaitUntil:
-      now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
-    firstDirtyAt: now,
-    lastDirtyAt: now + 5_000,
-    maxLastModified: 102,
-    sources: { read_progress: 2 },
-    threadIds: ["123", "456"],
-    reason: "debounced_read_progress",
-    dueSource: "read_progress",
+const createScenario = ({ now = 1_000_000 } = {}) => {
+  const runtime = createBaseHarness({
+    hookErrorMessage:
+      "S1Plus.js did not expose the Pending Dirty Scheduler factory.",
   });
-  assert.equal(
-    timers.calls.length,
-    2,
-    "the owner tab should schedule the initial timer and reschedule trailing read-progress debounce."
-  );
-};
-
-const testSourceSpecificSettleWindows = () => {
-  const readProgressHarness = getSharedDebounceApi();
-  const now = 2_000_000;
-  readProgressHarness.request(
-    { source: "read_progress", lastModified: 201, threadId: "123" },
-    { now, tabId: "tab-a", scheduleTimer: createTimerSpy().scheduleTimer }
-  );
-  assert.equal(
-    readProgressHarness.getState().dueAt,
-    now + READ_PROGRESS_SYNC_DEBOUNCE_MS
-  );
-  assert.equal(
-    readProgressHarness.getState().reason,
-    "debounced_read_progress"
-  );
-
-  const generalHarness = getSharedDebounceApi();
-  generalHarness.request(
-    { source: "general", lastModified: 202 },
-    { now, tabId: "tab-a", scheduleTimer: createTimerSpy().scheduleTimer }
-  );
-  assert.equal(generalHarness.getState().dueAt, now + DEFAULT_SYNC_DEBOUNCE_MS);
-  assert.equal(generalHarness.getState().reason, "debounced_local_change");
-};
-
-const testForcedRetryUsesSharedSchedulerDueAt = () => {
-  const { hooks, getState } = getSharedDebounceApi();
-  const timers = createTimerSpy();
-  const now = 2_500_000;
-  const result = hooks.queueBackgroundSyncRetryViaSharedScheduler(
-    1200,
-    "background_retry",
-    {
-      now,
-      tabId: "tab-a",
-      settingsSnapshot: readySyncSettings,
-      scheduleTimer: timers.scheduleTimer,
-    }
-  );
-
-  assert.equal(result.status, "scheduled");
-  assert.equal(result.reason, "background_retry");
-  assert.equal(result.isOwner, true);
-  assert.equal(getState().dueAt, now + 1200);
-  assert.equal(getState().reason, "background_retry");
-  assert.equal(
-    timers.calls[0].delayMs,
-    1200,
-    "background retry 应由 shared debounce owner 排 timer，而不是每个 tab 自己排 retry timer。"
-  );
-};
-
-const testSharedRetryDoesNotKeepLocalDrainPending = () => {
-  const { hooks, getState, sandbox, clearState } = getSharedDebounceApi();
-  sandbox.GM_setValue("s1p_settings", readySyncSettings);
-  sandbox.GM_setValue("s1p_last_modified", 2_600_001);
-
-  hooks.scheduleBackgroundSyncRetry(1200);
-
-  const runtimeState = hooks.getBackgroundAutoSyncRuntimeStateForTest();
-  assert.equal(getState().reason, "background_retry");
-  assert.equal(
-    runtimeState.hasPendingBackgroundSync,
-    false,
-    "shared retry scheduling must not keep the current background drain loop pending."
-  );
-  assert.equal(
-    runtimeState.hasLocalRetryTimer,
-    false,
-    "shared retry scheduling should not also arm a per-tab retry timer."
-  );
-
-  hooks.clearSharedBackgroundSyncDebounceTimer();
-  clearState();
-};
-
-const testCleanStateFenceSkipsCoveredAutoPush = () => {
-  const { hooks, store } = getSharedDebounceApi();
-  const now = 7_000_000;
-  store.set("s1p_last_sync_timestamp", now - 1000);
-  store.set("s1p_last_modified", now - 2000);
-
-  const cleanDecision = hooks.shouldSkipAutoSyncDueToCleanState({
-    direction: "push",
-    triggerSource: "background_push",
-    reason: "background_retry",
-    now,
-  });
-  assert.equal(cleanDecision.skip, true);
-  assert.equal(cleanDecision.result.reason, "clean_state_fence");
-  assert.equal(cleanDecision.result.direction, "push");
-
-  store.set(PENDING_AUTO_SYNC_KEY, {
-    version: 1,
-    source: "general",
-    lastModified: now - 1500,
-    maxLastModified: now - 1500,
-    createdAt: now - 1500,
-    firstDirtyAt: now - 1500,
-    lastDirtyAt: now - 1500,
-    sources: { general: 1 },
-    threadIds: [],
-  });
-  const pendingDecision = hooks.shouldSkipAutoSyncDueToCleanState({
-    direction: "push",
-    triggerSource: "background_push",
-    reason: "pending_recovery",
-    now,
-  });
-  assert.equal(
-    pendingDecision.skip,
-    false,
-    "pending auto-sync request exists 时不应被 clean-state fence 吞掉。"
-  );
-
-  store.delete(PENDING_AUTO_SYNC_KEY);
-  store.set("s1p_last_modified", now + 1);
-  const dirtyDecision = hooks.shouldSkipAutoSyncDueToCleanState({
-    direction: "push",
-    triggerSource: "background_push",
-    reason: "local_change",
-    now,
-  });
-  assert.equal(
-    dirtyDecision.skip,
-    false,
-    "本地 last_modified 晚于上次成功同步时，自动 push 必须放行。"
-  );
-};
-
-const testSharedDebounceDueClearsCoveredCleanState = () => {
-  const { hooks, store, getState } = getSharedDebounceApi();
-  const now = 8_000_000;
-  store.set("s1p_last_sync_timestamp", now - 1000);
-  store.set("s1p_last_modified", now - 2000);
-  hooks.setBackgroundSyncDebounceState(
-    seedSharedState({
-      generation: 22,
-      ownerTabId: "tab-a",
-      ownerLeaseUntil: now + 10_000,
-      dueAt: now - 1,
-      maxWaitUntil: now + 30_000,
-      firstDirtyAt: now - 5000,
-      lastDirtyAt: now - 4000,
-      maxLastModified: now - 2000,
-    })
-  );
-
-  let triggerCount = 0;
-  const result = hooks.handleSharedBackgroundSyncDebounceDue({
-    now,
-    tabId: "tab-a",
-    expectedGeneration: 22,
-    triggerRemoteSyncPush: () => {
-      triggerCount += 1;
-    },
-  });
-
-  assert.equal(result.status, "skipped");
-  assert.equal(result.reason, "clean_state_fence");
-  assert.equal(triggerCount, 0, "covered debounce state 不应继续触发实际 push。");
-  assert.equal(getState(), null, "covered debounce state 命中 fence 后应被清理。");
-};
-
-const testGeneralDueAtIsNotDelayedByReadProgress = () => {
-  const { request, getState } = getSharedDebounceApi();
-  const now = 3_000_000;
-
-  request(
-    { source: "general", lastModified: 301 },
-    { now, tabId: "tab-a", scheduleTimer: createTimerSpy().scheduleTimer }
-  );
-  request(
-    { source: "read_progress", lastModified: 302, threadId: "987" },
-    {
-      now: now + 1_000,
-      tabId: "tab-b",
-      scheduleTimer: createTimerSpy().scheduleTimer,
-    }
-  );
-
-  const state = getState();
-  assert.equal(state.dueAt, now + DEFAULT_SYNC_DEBOUNCE_MS);
-  assert.equal(state.reason, "debounced_local_change");
-  assert.deepEqual(state.sources, { general: 1, read_progress: 1 });
-  assert.deepEqual(state.threadIds, ["987"]);
-};
-
-const testReadProgressTrailingDebounceStopsAtMaxWait = () => {
-  const { constants, request, getState } = getSharedDebounceApi();
-  const now = 4_000_000;
-  const almostMaxWait = now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS - 2_000;
-
-  request(
-    { source: "read_progress", lastModified: 401, threadId: "1" },
-    { now, tabId: "tab-a", scheduleTimer: createTimerSpy().scheduleTimer }
-  );
-  request(
-    { source: "read_progress", lastModified: 402, threadId: "2" },
-    {
-      now: almostMaxWait,
-      tabId: "tab-a",
-      scheduleTimer: createTimerSpy().scheduleTimer,
-    }
-  );
-  request(
-    { source: "read_progress", lastModified: 403, threadId: "3" },
-    {
-      now: now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS + 1_000,
-      tabId: "tab-a",
-      scheduleTimer: createTimerSpy().scheduleTimer,
-    }
-  );
-
-  const state = getState();
-  assert.equal(state.maxWaitUntil, now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS);
-  assert.equal(state.dueAt, state.maxWaitUntil);
-  assert.equal(state.generation, 3);
-  assert.equal(state.maxLastModified, 403);
-};
-
-const testOnlyOwnerSchedulesTimerAndValidLeasePreventsSteal = () => {
-  const { constants, request, getState } = getSharedDebounceApi();
-  const ownerTimers = createTimerSpy();
-  const nonOwnerTimers = createTimerSpy();
-  const now = 5_000_000;
-
-  request(
-    { source: "read_progress", lastModified: 501, threadId: "1" },
-    { now, tabId: "tab-a", scheduleTimer: ownerTimers.scheduleTimer }
-  );
-  request(
-    { source: "read_progress", lastModified: 502, threadId: "2" },
-    {
-      now: now + 1_000,
-      tabId: "tab-b",
-      scheduleTimer: nonOwnerTimers.scheduleTimer,
-    }
-  );
-
-  const state = getState();
-  assert.equal(state.ownerTabId, "tab-a");
-  assert.ok(
-    state.ownerLeaseUntil >= now + constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS
-  );
-  assert.ok(ownerTimers.calls.length >= 1);
-  assert.equal(
-    nonOwnerTimers.calls.length,
-    0,
-    "a non-owner tab may update shared state, but must not start a local timer while the owner lease is valid."
-  );
-};
-
-const testExpiredOwnerLeaseAllowsTakeover = () => {
-  const { constants, hooks, setState, getState } = getSharedDebounceApi();
-  const timers = createTimerSpy();
-  const now = 6_000_000;
-  setState(
-    seedSharedState({
-      generation: 7,
-      ownerTabId: "tab-a",
-      ownerLeaseUntil: now - 1,
-      dueAt: now + 1_000,
-      maxWaitUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
-      firstDirtyAt: now - 10_000,
-      lastDirtyAt: now - 10_000,
-    })
-  );
-
-  const acquired = hooks.tryAcquireBackgroundSyncDebounceOwner(getState(), now, {
-    tabId: "tab-b",
-    settingsSnapshot: readySyncSettings,
-    scheduleTimer: timers.scheduleTimer,
-  });
-
-  assert.equal(acquired, true);
-  assert.equal(getState().ownerTabId, "tab-b");
-  assert.equal(timers.calls.length, 1);
-};
-
-const testVisibleTabWatchesActiveOwnerLeaseForRecovery = () => {
-  const { constants, hooks, setState, getState } = getSharedDebounceApi();
-  const recoveryTimers = createRecoveryTimerSpy();
-  const now = 6_500_000;
-
-  setState(
-    seedSharedState({
-      generation: 8,
-      ownerTabId: "tab-a",
-      ownerLeaseUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS,
-      dueAt: now + READ_PROGRESS_SYNC_DEBOUNCE_MS,
-      maxWaitUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
-      firstDirtyAt: now - 2_000,
-      lastDirtyAt: now - 500,
-      maxLastModified: 6501,
-      sources: { read_progress: 1 },
-      threadIds: ["6501"],
-      reason: "debounced_read_progress",
-      dueSource: "read_progress",
-    })
-  );
-
-  const result = hooks.recoverSharedBackgroundSyncDebounceOwnerIfNeeded(now, {
-    tabId: "tab-b",
-    settingsSnapshot: readySyncSettings,
-    scheduleRecoveryTimer: recoveryTimers.scheduleRecoveryTimer,
-  });
-
-  assert.deepEqual(toPlainObject(result), {
-    status: "scheduled",
-    reason: "owner_lease_watch",
-    currentOwnerTabId: "tab-a",
-  });
-  assert.equal(
-    recoveryTimers.calls.length,
-    1,
-    "visible non-owner tabs should arm a lease-expiry recovery watch."
-  );
-  assert.equal(
-    recoveryTimers.calls[0].delayMs,
-    constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS +
-      constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_RECOVERY_GRACE_MS
-  );
-  assert.equal(
-    getState().ownerTabId,
-    "tab-a",
-    "watching the lease must not steal a still-valid owner immediately."
-  );
-};
-
-const testOwnerLeaseRecoveryCallbackTakesOverAndRunsPastDueTimer = () => {
-  const { constants, hooks, setState, getState } = getSharedDebounceApi();
-  const ownerTimers = createTimerSpy();
-  const recoveryTimers = createRecoveryTimerSpy();
-  const now = 6_800_000;
-
-  setState(
-    seedSharedState({
-      generation: 9,
-      ownerTabId: "tab-a",
-      ownerLeaseUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS,
-      dueAt: now + READ_PROGRESS_SYNC_DEBOUNCE_MS,
-      maxWaitUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
-      firstDirtyAt: now - 2_000,
-      lastDirtyAt: now - 500,
-      maxLastModified: 6801,
-      sources: { read_progress: 1 },
-      threadIds: ["6801"],
-      reason: "debounced_read_progress",
-      dueSource: "read_progress",
-    })
-  );
-
-  hooks.recoverSharedBackgroundSyncDebounceOwnerIfNeeded(now, {
-    tabId: "tab-b",
-    settingsSnapshot: readySyncSettings,
-    scheduleTimer: ownerTimers.scheduleTimer,
-    scheduleRecoveryTimer: recoveryTimers.scheduleRecoveryTimer,
-  });
-
-  assert.equal(typeof recoveryTimers.calls[0].callback, "function");
-  recoveryTimers.calls[0].callback();
-
-  assert.equal(getState().ownerTabId, "tab-b");
-  assert.equal(
-    ownerTimers.calls.length,
-    1,
-    "the recovered owner should schedule the shared debounce timer."
-  );
-  assert.equal(
-    ownerTimers.calls[0].delayMs,
-    0,
-    "a past-due shared debounce should run immediately after owner recovery."
-  );
-};
-
-const testHiddenCurrentOwnerRecoveryQueuesImmediateFlush = async () => {
-  const { constants, hooks, setState, getState, sandbox } = getSharedDebounceApi();
-  const ownerTimers = createTimerSpy();
-  const now = 6_900_000;
-  const dueAt = now + READ_PROGRESS_SYNC_DEBOUNCE_MS;
-  let triggerCount = 0;
-  let triggerReason = "";
-  let schedulerContext = null;
-
-  sandbox.document.visibilityState = "hidden";
-  setState(
-    seedSharedState({
-      generation: 10,
-      ownerTabId: "tab-a",
-      ownerLeaseUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS,
-      dueAt,
-      maxWaitUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
-      firstDirtyAt: now - 2_000,
-      lastDirtyAt: now - 500,
-      maxLastModified: 6901,
-      sources: { read_progress: 1 },
-      threadIds: ["6901"],
-      reason: "debounced_read_progress",
-      dueSource: "read_progress",
-    })
-  );
-
-  const result = hooks.recoverSharedBackgroundSyncDebounceOwnerIfNeeded(now, {
-    tabId: "tab-a",
-    settingsSnapshot: readySyncSettings,
-    scheduleTimer: ownerTimers.scheduleTimer,
-    triggerRemoteSyncPush: (reason, context) => {
-      triggerCount += 1;
-      triggerReason = reason;
-      schedulerContext = toPlainObject(context);
-    },
-  });
-
-  assert.equal(result.status, "scheduled");
-  assert.equal(result.reason, "current_tab_owner_timer_scheduled");
-  assert.equal(ownerTimers.calls.length, 1);
-  assert.equal(
-    triggerCount,
-    0,
-    "hidden owner recovery should defer the flush until the current turn completes."
-  );
-
-  await new Promise((resolve) => setTimeout(resolve, 10));
-
-  assert.equal(triggerCount, 1);
-  assert.equal(triggerReason, "debounced_read_progress");
-  assert.equal(schedulerContext.scheduledDueAt, dueAt);
-  assert.equal(schedulerContext.debounceGeneration, 10);
-  assert.equal(schedulerContext.intendedMaxLastModified, 6901);
-  assert.equal(getState(), null);
-};
-
-const testOwnerDueReReadsStateAndSkipsStaleGeneration = () => {
-  const { constants, hooks, setState } = getSharedDebounceApi();
-  const now = 7_000_000;
-  let triggerCount = 0;
-
-  setState(
-    seedSharedState({
-      generation: 2,
-      ownerTabId: "tab-a",
-      ownerLeaseUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS,
-      dueAt: now,
-      maxWaitUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
-      firstDirtyAt: now - 10_000,
-      lastDirtyAt: now - 1_000,
-      maxLastModified: 702,
-      sources: { read_progress: 2 },
-      reason: "debounced_read_progress",
-    })
-  );
-
-  const result = hooks.handleSharedBackgroundSyncDebounceDue({
-    now,
-    tabId: "tab-a",
-    expectedGeneration: 1,
-    triggerRemoteSyncPush: () => {
-      triggerCount += 1;
-    },
-  });
-
-  assert.equal(triggerCount, 0);
-  assert.deepEqual(toPlainObject(result), {
-    status: "skipped",
-    reason: "stale_generation",
-    currentGeneration: 2,
-    expectedGeneration: 1,
-  });
-};
-
-const testOwnerDueConsumesSharedStateBeforeTrigger = () => {
-  const { constants, hooks, setState, getState } = getSharedDebounceApi();
-  const now = 7_500_000;
-  let triggerCount = 0;
-  let stateVisibleToTrigger = undefined;
-
-  setState(
-    seedSharedState({
-      generation: 2,
-      ownerTabId: "tab-a",
-      ownerLeaseUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS,
-      dueAt: now,
-      maxWaitUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
-      firstDirtyAt: now - 10_000,
-      lastDirtyAt: now - 1_000,
-      maxLastModified: 752,
-      sources: { read_progress: 2 },
-      reason: "debounced_read_progress",
-    })
-  );
-
-  const result = hooks.handleSharedBackgroundSyncDebounceDue({
-    now,
-    tabId: "tab-a",
-    expectedGeneration: 2,
-    triggerRemoteSyncPush: () => {
-      triggerCount += 1;
-      stateVisibleToTrigger = getState();
-    },
-  });
-
-  assert.equal(triggerCount, 1);
-  assert.equal(stateVisibleToTrigger, null);
-  assert.equal(getState(), null);
-  assert.deepEqual(toPlainObject(result), {
-    status: "triggered",
-    reason: "debounced_read_progress",
-    generation: 2,
-    maxLastModified: 752,
-  });
-};
-
-const testCoveredSuccessClearsPendingAndSharedState = () => {
-  const { constants, hooks, store, setState, getState } = getSharedDebounceApi();
-  const now = 8_000_000;
-  const followUps = createTimerSpy();
-
-  setState(
-    seedSharedState({
-      generation: 3,
-      ownerTabId: "tab-a",
-      ownerLeaseUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS,
-      dueAt: now,
-      maxWaitUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
-      firstDirtyAt: now - 1_000,
-      lastDirtyAt: now - 1_000,
-      maxLastModified: 800,
-      sources: { read_progress: 1 },
-      reason: "debounced_read_progress",
-    })
-  );
-  store.set(PENDING_AUTO_SYNC_KEY, {
-    source: "read_progress",
-    lastModified: 800,
-    maxLastModified: 800,
-    createdAt: now - 1_000,
-  });
-
-  hooks.clearPendingAutoSyncRequestIfCovered(800, {
-    debounceGeneration: 3,
-    scheduleFollowUp: followUps.scheduleTimer,
-  });
-  hooks.clearSharedBackgroundSyncDebounceIfCovered({
-    generation: 3,
-    coveredLastModified: 800,
-    scheduleFollowUp: followUps.scheduleTimer,
-  });
-
-  assert.equal(store.has(PENDING_AUTO_SYNC_KEY), false);
-  assert.equal(getState(), null);
-  assert.equal(followUps.calls.length, 0);
-};
-
-const testNewerDirtyRetainsPendingAndSchedulesShortFollowUp = () => {
-  const { constants, hooks, store, setState, getState } = getSharedDebounceApi();
-  const now = 9_000_000;
-  const followUps = createTimerSpy();
-
-  setState(
-    seedSharedState({
-      generation: 4,
-      ownerTabId: "tab-a",
-      ownerLeaseUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS,
-      dueAt: now,
-      maxWaitUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
-      firstDirtyAt: now - 2_000,
-      lastDirtyAt: now - 500,
-      maxLastModified: 901,
-      sources: { read_progress: 2 },
-      reason: "debounced_read_progress",
-    })
-  );
-  store.set(PENDING_AUTO_SYNC_KEY, {
-    source: "read_progress",
-    lastModified: 901,
-    maxLastModified: 901,
-    createdAt: now - 500,
-  });
-
-  hooks.clearPendingAutoSyncRequestIfCovered(900, {
-    debounceGeneration: 3,
-    scheduleFollowUp: followUps.scheduleTimer,
-  });
-  hooks.clearSharedBackgroundSyncDebounceIfCovered({
-    generation: 3,
-    coveredLastModified: 900,
-    scheduleFollowUp: followUps.scheduleTimer,
-  });
-
-  assert.equal(store.has(PENDING_AUTO_SYNC_KEY), true);
-  assert.equal(getState().generation, 4);
-  assert.ok(followUps.calls.length >= 1);
-  assert.ok(
-    followUps.calls.every(
-      ({ delayMs }) => delayMs >= 300 && delayMs <= 1500
-    )
-  );
-};
-
-const testDisabledOrBlockedStatesClearSchedulerState = () => {
-  const cases = [
-    {
-      name: "remote sync disabled",
-      settingsSnapshot: { ...readySyncSettings, syncRemoteEnabled: false },
-    },
-    {
-      name: "auto sync disabled",
-      settingsSnapshot: { ...readySyncSettings, syncAutoEnabled: false },
-    },
-    {
-      name: "missing gist id",
-      settingsSnapshot: { ...readySyncSettings, syncRemoteGistId: "" },
-    },
-    {
-      name: "missing PAT",
-      settingsSnapshot: { ...readySyncSettings, syncRemotePat: "" },
-    },
-    {
-      name: "missing device id",
-      settingsSnapshot: { ...readySyncSettings, syncDeviceId: "" },
-    },
-    {
-      name: "conflict pause",
-      settingsSnapshot: readySyncSettings,
-      conflictPauseState: { reason: "remote_changed_before_push" },
-    },
-  ];
-
-  cases.forEach((testCase, index) => {
-    const { constants, request, setState, getState } = getSharedDebounceApi();
-    const now = 10_000_000 + index * 10_000;
-    setState(
-      seedSharedState({
-        generation: 1,
-        ownerTabId: "tab-a",
-        ownerLeaseUntil:
-          now + constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS,
-        dueAt: now + DEFAULT_SYNC_DEBOUNCE_MS,
-        maxWaitUntil:
-          now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
-        firstDirtyAt: now,
-        lastDirtyAt: now,
-      })
-    );
-
-    const result = request(
-      { source: "general", lastModified: 1_000 + index },
-      {
-        now,
-        tabId: "tab-a",
-        settingsSnapshot: testCase.settingsSnapshot,
-        conflictPauseState: testCase.conflictPauseState || null,
-        scheduleTimer: createTimerSpy().scheduleTimer,
-      }
-    );
-
-    assert.equal(
-      getState(),
-      null,
-      `${testCase.name} should clear the shared debounce scheduler state.`
-    );
-    assert.equal(toPlainObject(result).status, "skipped");
-  });
-};
-
-const testOwnerReleaseLeavesPendingRecoverableAndAllowsTakeover = () => {
-  const { constants, hooks, store, setState, getState } = getSharedDebounceApi();
-  const timers = createTimerSpy();
-  const now = 11_000_000;
-
-  setState(
-    seedSharedState({
-      generation: 5,
-      ownerTabId: "tab-a",
-      ownerLeaseUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS,
-      dueAt: now + 1_000,
-      maxWaitUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
-      firstDirtyAt: now - 2_000,
-      lastDirtyAt: now - 500,
-      maxLastModified: 1101,
-      sources: { read_progress: 1 },
-      threadIds: ["42"],
-      reason: "debounced_read_progress",
-    })
-  );
-  store.set(PENDING_AUTO_SYNC_KEY, {
-    source: "read_progress",
-    lastModified: 1101,
-    maxLastModified: 1101,
-    createdAt: now - 500,
-  });
-
-  hooks.releaseBackgroundSyncDebounceOwner({ tabId: "tab-a", now });
-
-  assert.equal(store.has(PENDING_AUTO_SYNC_KEY), true);
-  assert.equal(getState().ownerTabId, "");
-
-  const acquired = hooks.tryAcquireBackgroundSyncDebounceOwner(
-    getState(),
-    now + 1,
-    {
-      tabId: "tab-b",
-      settingsSnapshot: readySyncSettings,
-      scheduleTimer: timers.scheduleTimer,
-    }
-  );
-
-  assert.equal(acquired, true);
-  assert.equal(getState().ownerTabId, "tab-b");
-  assert.equal(timers.calls.length, 1);
-};
-
-const testRuntimeStateDoesNotExposeLegacyPerTabTimerAsSharedOwner = () => {
-  const { hooks } = getSharedDebounceApi();
-  const runtimeState = toPlainObject(
-    hooks.getBackgroundSyncDebounceRuntimeStateForTest()
-  );
-
-  assert.deepEqual(runtimeState, {
-    hasOwnerTimer: false,
-    ownerTimerDueAt: 0,
-    ownerTimerGeneration: 0,
-    ownerHeartbeatActive: false,
-  });
-};
-
-const testLockActiveReschedulePersistsDueAt = () => {
-  const { constants, hooks, store, setState, getState } = getSharedDebounceApi();
-  const timers = createTimerSpy();
-  const now = 12_000_000;
-
-  setState(
-    seedSharedState({
-      generation: 6,
-      ownerTabId: "tab-a",
-      ownerLeaseUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS,
-      dueAt: now,
-      maxWaitUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
-      firstDirtyAt: now - 3_000,
-      lastDirtyAt: now - 1_000,
-      maxLastModified: 1201,
-      sources: { read_progress: 1 },
-      threadIds: ["1201"],
-      reason: "debounced_read_progress",
-      dueSource: "read_progress",
-    })
-  );
-  store.set("s1p_background_sync_lock", {
-    owner: "other-tab",
-    timestamp: now,
-  });
-
-  const result = hooks.handleSharedBackgroundSyncDebounceDue({
-    now,
-    tabId: "tab-a",
-    expectedGeneration: 6,
-    settingsSnapshot: readySyncSettings,
-    scheduleTimer: timers.scheduleTimer,
-    triggerRemoteSyncPush: () => {
-      throw new Error("sync should be delayed while a lock is active");
-    },
-  });
-
-  assert.deepEqual(toPlainObject(result), {
-    status: "scheduled",
-    reason: "sync_lock_active",
-    delayMs: 1000,
-  });
-  assert.equal(getState().dueAt, now + 1000);
-  assert.equal(
-    getState().ownerLeaseUntil,
-    now + constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS
-  );
-  assert.equal(timers.calls.length, 1);
-  assert.equal(timers.calls[0].delayMs, 1000);
-};
-
-const testLockActiveRescheduleLogIsThrottled = () => {
-  const { constants, hooks, store, setState, getState } = getSharedDebounceApi();
-  const timers = createTimerSpy();
-  const now = 12_500_000;
-
-  setState(
-    seedSharedState({
-      generation: 6,
-      ownerTabId: "tab-a",
-      ownerLeaseUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS,
-      dueAt: now,
-      maxWaitUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
-      firstDirtyAt: now - 3_000,
-      lastDirtyAt: now - 1_000,
-      maxLastModified: 1251,
-      sources: { read_progress: 1 },
-      threadIds: ["1251"],
-      reason: "debounced_read_progress",
-      dueSource: "read_progress",
-    })
-  );
-  store.set("s1p_background_sync_lock", {
-    owner: "other-tab",
-    timestamp: now,
-  });
-  hooks.resetSyncDiagnostics();
-
-  const callDue = (at) =>
-    hooks.handleSharedBackgroundSyncDebounceDue({
-      now: at,
-      tabId: "tab-a",
-      expectedGeneration: 6,
-      forceDue: true,
-      settingsSnapshot: readySyncSettings,
-      scheduleTimer: timers.scheduleTimer,
-      triggerRemoteSyncPush: () => {
-        throw new Error("sync should be delayed while a lock is active");
+  assert.equal(typeof runtime.hooks.createPendingDirtyScheduler, "function");
+  const clock = { now };
+  const makeScheduler = ({
+    tabId,
+    settings = readySettings,
+    ownerTimers = createSpy(),
+    recoveryTimers = createSpy(),
+    triggers = [],
+    followUps = [],
+    fallbacks = [],
+  }) => {
+    const scheduler = runtime.hooks.createPendingDirtyScheduler({
+      clock: () => clock.now,
+      tabId: () => tabId,
+      settings: () => settings,
+      scheduleTimer: ownerTimers.timer,
+      scheduleRecoveryTimer: recoveryTimers.timer,
+      triggerRemoteSyncPush: (reason, context) => {
+        triggers.push({ reason, context: toPlainObject(context) });
+      },
+      scheduleFollowUp: (delayMs, context) => {
+        followUps.push({ delayMs, context: toPlainObject(context) });
+        return true;
+      },
+      scheduleFallback: (delayMs, reason) => {
+        fallbacks.push({ delayMs, reason });
       },
     });
-
-  const countRescheduleLogs = () =>
-    hooks.getSyncDiagnostics().syncTraceEvents.filter((event) =>
-      event.includes("共享调度已延后")
-    ).length;
-
-  assert.equal(callDue(now).reason, "sync_lock_active");
-  assert.equal(countRescheduleLogs(), 1);
-
-  assert.equal(callDue(now + 500).reason, "sync_lock_active");
-  assert.equal(
-    countRescheduleLogs(),
-    1,
-    "同一 generation + reason 在 1 秒内不应重复写共享调度延后日志。"
-  );
-  assert.equal(getState().dueAt, now + 1_500);
-  assert.equal(timers.calls.length, 2);
-
-  assert.equal(callDue(now + 1_001).reason, "sync_lock_active");
-  assert.equal(
-    countRescheduleLogs(),
-    2,
-    "超过 1 秒后，同一 generation + reason 可以再次写共享调度延后日志。"
-  );
-  assert.equal(getState().dueAt, now + 2_001);
-  assert.equal(timers.calls.length, 3);
+    [
+      "queue",
+      "recover",
+      "recoverPending",
+      "runDue",
+      "flush",
+      "complete",
+      "handoff",
+      "retry",
+      "reset",
+      "inspect",
+    ].forEach((method) => assert.equal(typeof scheduler[method], "function"));
+    return {
+      scheduler,
+      ownerTimers,
+      recoveryTimers,
+      triggers,
+      followUps,
+      fallbacks,
+    };
+  };
+  return { ...runtime, clock, makeScheduler };
 };
 
-const testSharedDebounceWriteRetriesWhenVerificationLosesRequest = () => {
-  const { request, getState, sandbox, store } = getSharedDebounceApi();
-  const timers = createTimerSpy();
-  const now = 13_000_000;
-  const originalSetValue = sandbox.GM_setValue;
-  let intercepted = false;
+const testQueuedMergesDirtyWithoutExposingOwnerMechanics = () => {
+  const { clock, makeScheduler } = createScenario();
+  const tabA = makeScheduler({ tabId: "tab-a" });
+  const tabB = makeScheduler({ tabId: "tab-b" });
 
+  tabA.scheduler.queue({
+    source: "read_progress",
+    lastModified: 101,
+    threadId: "101",
+  });
+  clock.now += 1000;
+  tabB.scheduler.queue({ source: "general", lastModified: 102 });
+  clock.now += 1000;
+  tabB.scheduler.queue({
+    source: "read_progress",
+    lastModified: 103,
+    threadId: "103",
+  });
+
+  const snapshot = toPlainObject(tabA.scheduler.inspect());
+  assert.equal(snapshot.state.generation, 3);
+  assert.equal(snapshot.state.ownerTabId, "tab-a");
+  assert.equal(snapshot.state.dueAt, 1_000_000 + 1000 + GENERAL_DELAY_MS);
+  assert.equal(snapshot.state.maxWaitUntil, 1_000_000 + MAX_WAIT_MS);
+  assert.equal(snapshot.state.maxLastModified, 103);
+  assert.deepEqual(snapshot.state.sources, { read_progress: 2, general: 1 });
+  assert.deepEqual(snapshot.state.threadIds, ["101", "103"]);
+  assert.equal(snapshot.pending.maxLastModified, 103);
+  assert.equal(tabA.ownerTimers.calls.length, 1);
+  assert.equal(tabB.ownerTimers.calls.length, 0);
+};
+
+const testQueuedReadProgressStopsAtMaxWait = () => {
+  const { clock, makeScheduler } = createScenario({ now: 2_000_000 });
+  const tabA = makeScheduler({ tabId: "tab-a" });
+  tabA.scheduler.queue({ source: "read_progress", lastModified: 201 });
+  clock.now += MAX_WAIT_MS - 1000;
+  tabA.scheduler.queue({ source: "read_progress", lastModified: 202 });
+
+  const state = tabA.scheduler.inspect().state;
+  assert.equal(state.dueAt, 2_000_000 + MAX_WAIT_MS);
+  assert.equal(state.maxWaitUntil, 2_000_000 + MAX_WAIT_MS);
+};
+
+const testHandoffAndRecoveryUseBoundClockAndTimerAdapter = () => {
+  const { clock, makeScheduler } = createScenario({ now: 3_000_000 });
+  const tabA = makeScheduler({ tabId: "tab-a" });
+  const tabB = makeScheduler({ tabId: "tab-b" });
+  tabA.scheduler.queue({ source: "general", lastModified: 301 });
+
+  const watching = tabB.scheduler.recover();
+  assert.equal(watching.reason, "owner_lease_watch");
+  assert.equal(tabB.recoveryTimers.calls.length, 1);
+
+  clock.now += OWNER_LEASE_MS + 1;
+  const recovered = tabB.scheduler.recover();
+  assert.equal(recovered.reason, "owner_recovered");
+  assert.equal(tabB.scheduler.inspect().state.ownerTabId, "tab-b");
+
+  assert.deepEqual(toPlainObject(tabB.scheduler.handoff()), {
+    status: "released",
+    reason: "owner_handoff",
+  });
+  assert.equal(tabA.scheduler.inspect().state.ownerTabId, "");
+};
+
+const testDueConsumesStateBeforeTrigger = () => {
+  const { clock, makeScheduler } = createScenario({ now: 4_000_000 });
+  const tabA = makeScheduler({ tabId: "tab-a" });
+  tabA.scheduler.queue({ source: "general", lastModified: 401 });
+  clock.now += GENERAL_DELAY_MS;
+  const result = tabA.scheduler.runDue();
+
+  assert.equal(result.status, "triggered");
+  assert.equal(tabA.triggers.length, 1);
+  assert.equal(tabA.scheduler.inspect().state, null);
+  assert.equal(tabA.triggers[0].context.debounceGeneration, 1);
+};
+
+const testDueDefersWhileRunningSyncOwnsLock = () => {
+  const { clock, makeScheduler, store } = createScenario({ now: 5_000_000 });
+  const tabA = makeScheduler({ tabId: "tab-a" });
+  tabA.scheduler.queue({ source: "general", lastModified: 501 });
+  clock.now += GENERAL_DELAY_MS;
+  store.set(GLOBAL_SYNC_LOCK_KEY, {
+    owner: "running-tab",
+    mode: "background",
+    timestamp: clock.now,
+    ttlMs: 45 * 1000,
+  });
+
+  const result = tabA.scheduler.runDue();
+  assert.equal(result.reason, "sync_lock_active");
+  assert.equal(tabA.triggers.length, 0);
+  assert.equal(tabA.scheduler.inspect().state.dueAt, clock.now + 1000);
+};
+
+const testCoveredCompletionClearsPendingAndSharedState = () => {
+  const { makeScheduler } = createScenario({ now: 6_000_000 });
+  const tabA = makeScheduler({ tabId: "tab-a" });
+  tabA.scheduler.queue({
+    source: "read_progress",
+    lastModified: 601,
+    threadId: "601",
+  });
+
+  const result = tabA.scheduler.complete({
+    status: "success",
+    coveredLastModified: 601,
+  });
+  assert.equal(result.pendingCleanup.status, "cleared");
+  assert.equal(result.sharedDebounceCleanup.status, "cleared");
+  assert.equal(tabA.scheduler.inspect().pending, null);
+  assert.equal(tabA.scheduler.inspect().state, null);
+};
+
+const testNewerDirtyIsRetainedWithOneFollowUp = () => {
+  const { clock, makeScheduler } = createScenario({ now: 7_000_000 });
+  const tabA = makeScheduler({ tabId: "tab-a" });
+  tabA.scheduler.queue({ source: "read_progress", lastModified: 701 });
+  clock.now += 1000;
+  tabA.scheduler.queue({ source: "read_progress", lastModified: 702 });
+
+  const result = tabA.scheduler.complete({
+    status: "success",
+    coveredLastModified: 701,
+  });
+  assert.equal(result.pendingCleanup.status, "retained");
+  assert.equal(result.sharedDebounceCleanup.status, "retained");
+  assert.equal(tabA.scheduler.inspect().pending.maxLastModified, 702);
+  assert.equal(tabA.scheduler.inspect().state.maxLastModified, 702);
+  assert.equal(tabA.followUps.length, 1);
+  assert.equal(tabA.followUps[0].delayMs, FOLLOW_UP_MS);
+};
+
+const testPendingRecoveryWatchesExistingSchedulerOwner = () => {
+  const { makeScheduler } = createScenario({ now: 8_000_000 });
+  const tabA = makeScheduler({ tabId: "tab-a" });
+  const tabB = makeScheduler({ tabId: "tab-b" });
+  tabA.scheduler.queue({ source: "read_progress", lastModified: 801 });
+
+  const coverage = tabB.scheduler.recoverPending();
+  assert.equal(coverage.covered, true);
+  assert.equal(coverage.reason, "covered_by_shared_debounce");
+  assert.equal(tabB.recoveryTimers.calls.length, 1);
+};
+
+const testRetrySelectsSharedThenLocalFallbackOnWriteLoss = () => {
+  const { makeScheduler, sandbox, store } = createScenario({ now: 9_000_000 });
+  const tabA = makeScheduler({ tabId: "tab-a" });
+
+  const shared = tabA.scheduler.retry({ delayMs: 1200 });
+  assert.equal(shared.strategy, "shared");
+  assert.equal(tabA.ownerTimers.calls[0].delayMs, 1200);
+
+  tabA.scheduler.reset();
+  const originalSetValue = sandbox.GM_setValue;
   sandbox.GM_setValue = (key, value) => {
     originalSetValue(key, value);
-    if (key !== BACKGROUND_SYNC_DEBOUNCE_STATE_KEY || intercepted) {
-      return;
+    if (key === DEBOUNCE_STATE_KEY) {
+      store.delete(key);
     }
-    intercepted = true;
-    originalSetValue(
-      key,
-      seedSharedState({
-        generation: value.generation,
-        ownerTabId: "tab-b",
-        ownerLeaseUntil: now + 20_000,
-        dueAt: now + DEFAULT_SYNC_DEBOUNCE_MS,
-        maxWaitUntil: now + 60_000,
-        firstDirtyAt: now,
-        lastDirtyAt: now,
-        maxLastModified: 1300,
-        sources: { general: 1 },
-        threadIds: ["other-thread"],
-        reason: "debounced_local_change",
-        dueSource: "general",
-      })
-    );
   };
-
-  let result;
+  let local;
   try {
-    result = request(
-      { source: "read_progress", lastModified: 1301, threadId: "1301" },
-      { now, tabId: "tab-a", scheduleTimer: timers.scheduleTimer }
-    );
+    local = tabA.scheduler.retry({ delayMs: 1500 });
   } finally {
     sandbox.GM_setValue = originalSetValue;
   }
 
-  const state = getState();
-  assert.equal(toPlainObject(result).retryCount, 1);
-  assert.equal(state.generation, 2);
-  assert.equal(state.ownerTabId, "tab-b");
-  assert.equal(state.maxLastModified, 1301);
-  assert.deepEqual(state.sources, { general: 1, read_progress: 1 });
-  assert.deepEqual(state.threadIds, ["other-thread", "1301"]);
-  assert.equal(state.dueAt, now + DEFAULT_SYNC_DEBOUNCE_MS);
-  assert.equal(state.dueSource, "general");
-  assert.equal(timers.calls.length, 0);
-  assert.equal(
-    store.get(BACKGROUND_SYNC_DEBOUNCE_STATE_KEY).threadIds.includes("1301"),
-    true
-  );
+  assert.equal(local.strategy, "local");
+  assert.equal(local.sharedResult.reason, "scheduler_state_write_lost");
+  assert.deepEqual(tabA.fallbacks, [
+    { delayMs: 1500, reason: "background_retry" },
+  ]);
 };
 
-const testPendingRecoveryRecognizesCoveredSharedDebounce = () => {
-  const { constants, hooks, setState } = getSharedDebounceApi();
-  const recoveryTimers = createRecoveryTimerSpy();
-  const now = 14_000_000;
-  const state = seedSharedState({
-    generation: 8,
-    ownerTabId: "tab-a",
-    ownerLeaseUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS,
-    dueAt: now + READ_PROGRESS_SYNC_DEBOUNCE_MS,
-    maxWaitUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
-    firstDirtyAt: now,
-    lastDirtyAt: now,
-    maxLastModified: 1402,
-    sources: { read_progress: 1, general: 1 },
-    threadIds: ["1402"],
-    reason: "debounced_read_progress",
-    dueSource: "read_progress",
-  });
-  const pending = {
-    source: "read_progress",
-    sources: { read_progress: 1, general: 1 },
-    lastModified: 1401,
-    maxLastModified: 1402,
-    createdAt: now,
-    firstDirtyAt: now,
-    lastDirtyAt: now,
-    threadIds: ["1402"],
+const testHiddenFlushDoesNotStealLiveOwnerButRecoversExpiredOwner = () => {
+  const { clock, makeScheduler } = createScenario({ now: 10_000_000 });
+  const tabA = makeScheduler({ tabId: "tab-a" });
+  const tabB = makeScheduler({ tabId: "tab-b" });
+  tabA.scheduler.queue({ source: "read_progress", lastModified: 1001 });
+
+  const blocked = tabB.scheduler.flush();
+  assert.equal(blocked.reason, "owned_by_active_other_tab");
+  clock.now += OWNER_LEASE_MS + 1;
+  const recovered = tabB.scheduler.flush();
+  assert.equal(recovered.status, "triggered");
+  assert.equal(tabB.triggers.length, 1);
+  assert.equal(tabB.scheduler.inspect().state, null);
+};
+
+const testQueueRetriesConcurrentStorageWrite = () => {
+  const { makeScheduler, sandbox } = createScenario({ now: 11_000_000 });
+  const tabA = makeScheduler({ tabId: "tab-a" });
+  const originalSetValue = sandbox.GM_setValue;
+  let intercepted = false;
+  sandbox.GM_setValue = (key, value) => {
+    originalSetValue(key, value);
+    if (key !== DEBOUNCE_STATE_KEY || intercepted) {
+      return;
+    }
+    intercepted = true;
+    originalSetValue(key, {
+      ...value,
+      ownerTabId: "tab-b",
+      sources: { general: 1 },
+      maxLastModified: 1100,
+    });
   };
+  let result;
+  try {
+    result = tabA.scheduler.queue({
+      source: "read_progress",
+      lastModified: 1101,
+      threadId: "1101",
+    });
+  } finally {
+    sandbox.GM_setValue = originalSetValue;
+  }
 
-  setState(state);
-
-  assert.equal(
-    hooks.isBackgroundSyncDebounceStateCoveringPendingRequest(state, pending),
-    true,
-    "shared debounce 覆盖 pending 的所有 source/thread/maxLastModified 时，应阻止 per-tab pending recovery。"
-  );
-  assert.deepEqual(
-    toPlainObject(
-      hooks.getPendingAutoSyncSharedDebounceCoverage(pending, now, {
-        tabId: "tab-b",
-        settingsSnapshot: readySyncSettings,
-        scheduleRecoveryTimer: recoveryTimers.scheduleRecoveryTimer,
-      })
-    ),
-    {
-      covered: true,
-      state,
-      reason: "covered_by_shared_debounce",
-    }
-  );
+  assert.equal(result.retryCount, 1);
+  assert.equal(tabA.scheduler.inspect().state.maxLastModified, 1101);
+  assert.deepEqual(toPlainObject(tabA.scheduler.inspect().state.sources), {
+    general: 1,
+    read_progress: 1,
+  });
 };
 
-const testPendingRecoveryWatchesCoveredActiveSharedOwner = () => {
-  const { constants, hooks, setState } = getSharedDebounceApi();
-  const recoveryTimers = createRecoveryTimerSpy();
-  const now = 14_500_000;
-  const state = seedSharedState({
-    generation: 9,
-    ownerTabId: "hidden-owner",
-    ownerLeaseUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS,
-    dueAt: now + READ_PROGRESS_SYNC_DEBOUNCE_MS,
-    maxWaitUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
-    firstDirtyAt: now,
-    lastDirtyAt: now,
-    maxLastModified: 14502,
-    sources: { read_progress: 1 },
-    threadIds: ["14502"],
-    reason: "debounced_read_progress",
-    dueSource: "read_progress",
+const testCleanupRecoversDirtyWrittenDuringDeleteRace = () => {
+  const { makeScheduler, sandbox, store, clock } = createScenario({
+    now: 12_000_000,
   });
-  const pending = {
-    source: "read_progress",
-    sources: { read_progress: 1 },
-    lastModified: 14502,
-    maxLastModified: 14502,
-    createdAt: now,
-    firstDirtyAt: now,
-    lastDirtyAt: now,
-    threadIds: ["14502"],
+  const tabA = makeScheduler({ tabId: "tab-a" });
+  tabA.scheduler.queue({ source: "general", lastModified: 1201 });
+  const originalDeleteValue = sandbox.GM_deleteValue;
+  let injected = false;
+  sandbox.GM_deleteValue = (key) => {
+    if (key === PENDING_KEY && !injected) {
+      injected = true;
+      clock.now += 1;
+      store.set(LAST_MODIFIED_KEY, 1202);
+      store.set(PENDING_KEY, {
+        version: 1,
+        source: "general",
+        lastModified: 1202,
+        maxLastModified: 1202,
+        createdAt: clock.now,
+        firstDirtyAt: clock.now,
+        lastDirtyAt: clock.now,
+        sources: { general: 1 },
+        threadIds: [],
+      });
+    }
+    originalDeleteValue(key);
   };
+  let result;
+  try {
+    result = tabA.scheduler.complete({
+      status: "success",
+      coveredLastModified: 1201,
+    });
+  } finally {
+    sandbox.GM_deleteValue = originalDeleteValue;
+  }
 
-  setState(state);
+  assert.equal(result.concurrentDirtyRecovery.status, "recovered");
+  assert.equal(tabA.scheduler.inspect().pending.maxLastModified, 1202);
+  assert.equal(tabA.followUps.length, 1);
+};
 
-  assert.deepEqual(
-    toPlainObject(
-      hooks.getPendingAutoSyncSharedDebounceCoverage(pending, now, {
-        tabId: "visible-tab",
-        settingsSnapshot: readySyncSettings,
-        scheduleRecoveryTimer: recoveryTimers.scheduleRecoveryTimer,
-      })
-    ),
-    {
-      covered: true,
-      state,
-      reason: "covered_by_shared_debounce",
+const testCleanupRecoversSharedDirtyWrittenDuringDeleteRace = () => {
+  const { makeScheduler, sandbox, store, clock } = createScenario({
+    now: 12_500_000,
+  });
+  const tabA = makeScheduler({ tabId: "tab-a" });
+  tabA.scheduler.queue({ source: "general", lastModified: 1251 });
+  const originalDeleteValue = sandbox.GM_deleteValue;
+  let injected = false;
+  sandbox.GM_deleteValue = (key) => {
+    if (key === DEBOUNCE_STATE_KEY && !injected) {
+      injected = true;
+      clock.now += 1;
+      store.set(LAST_MODIFIED_KEY, 1252);
+      store.set(DEBOUNCE_STATE_KEY, {
+        version: 1,
+        generation: 2,
+        ownerTabId: "tab-b",
+        ownerLeaseUntil: clock.now + OWNER_LEASE_MS,
+        dueAt: clock.now + GENERAL_DELAY_MS,
+        maxWaitUntil: clock.now + MAX_WAIT_MS,
+        firstDirtyAt: clock.now,
+        lastDirtyAt: clock.now,
+        maxLastModified: 1252,
+        sources: { general: 1 },
+        threadIds: [],
+        reason: "debounced_local_change",
+        dueSource: "general",
+      });
     }
-  );
-  assert.equal(
-    recoveryTimers.calls.length,
-    1,
-    "pending recovery 被 shared debounce 覆盖时，可见非 owner 仍要观察 owner lease，避免隐藏 owner 卡住推送。"
-  );
-  assert.equal(
-    recoveryTimers.calls[0].delayMs,
-    constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS +
-      constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_RECOVERY_GRACE_MS
-  );
+    originalDeleteValue(key);
+  };
+  let result;
+  try {
+    result = tabA.scheduler.complete({
+      status: "success",
+      coveredLastModified: 1251,
+    });
+  } finally {
+    sandbox.GM_deleteValue = originalDeleteValue;
+  }
+
+  assert.equal(result.concurrentDirtyRecovery.status, "recovered");
+  assert.equal(tabA.scheduler.inspect().pending.maxLastModified, 1252);
+  assert.equal(tabA.followUps.length, 1);
 };
 
-const testHiddenOwnerFlushForcesPendingSchedulerBeforeTimerDue = () => {
-  const { constants, hooks, setState, getState } = getSharedDebounceApi();
-  const now = 15_000_000;
-  const dueAt = now + READ_PROGRESS_SYNC_DEBOUNCE_MS;
-  let triggerCount = 0;
-  let triggerReason = "";
-  let schedulerContext = null;
-
-  setState(
-    seedSharedState({
-      generation: 9,
-      ownerTabId: "tab-a",
-      ownerLeaseUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS,
-      dueAt,
-      maxWaitUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
-      firstDirtyAt: now - 1000,
-      lastDirtyAt: now,
-      maxLastModified: 1501,
-      sources: { read_progress: 1 },
-      threadIds: ["1501"],
-      reason: "debounced_read_progress",
-      dueSource: "read_progress",
-    })
-  );
-
-  const result = hooks.flushSharedBackgroundSyncDebounceForHiddenPage({
-    now,
+const testBlockedQueueClearsSchedulerState = () => {
+  const { makeScheduler } = createScenario({ now: 13_000_000 });
+  const tabA = makeScheduler({ tabId: "tab-a" });
+  tabA.scheduler.queue({ source: "general", lastModified: 1301 });
+  const disabled = makeScheduler({
     tabId: "tab-a",
-    settingsSnapshot: readySyncSettings,
-    triggerRemoteSyncPush: (reason, context) => {
-      triggerCount += 1;
-      triggerReason = reason;
-      schedulerContext = toPlainObject(context);
-    },
+    settings: { ...readySettings, syncAutoEnabled: false },
+  });
+  const result = disabled.scheduler.queue({
+    source: "general",
+    lastModified: 1302,
   });
 
-  assert.equal(result.status, "triggered");
-  assert.equal(triggerCount, 1);
-  assert.equal(triggerReason, "debounced_read_progress");
-  assert.equal(schedulerContext.scheduledDueAt, dueAt);
-  assert.equal(schedulerContext.debounceGeneration, 9);
-  assert.equal(schedulerContext.intendedMaxLastModified, 1501);
-  assert.equal(getState(), null);
+  assert.equal(result.reason, "sync_not_ready");
+  assert.equal(disabled.scheduler.inspect().state, null);
 };
 
-const testHiddenPageCanRecoverExpiredOwnerAndFlushImmediately = () => {
-  const { constants, hooks, setState, getState } = getSharedDebounceApi();
-  const timers = createTimerSpy();
-  const now = 16_000_000;
-  let triggerCount = 0;
-
-  setState(
-    seedSharedState({
-      generation: 10,
-      ownerTabId: "closed-tab",
-      ownerLeaseUntil: now - 1,
-      dueAt: now + READ_PROGRESS_SYNC_DEBOUNCE_MS,
-      maxWaitUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
-      firstDirtyAt: now - 1000,
-      lastDirtyAt: now,
-      maxLastModified: 1601,
-      sources: { read_progress: 1 },
-      threadIds: ["1601"],
-      reason: "debounced_read_progress",
-      dueSource: "read_progress",
-    })
-  );
-
-  const result = hooks.flushSharedBackgroundSyncDebounceForHiddenPage({
-    now,
-    tabId: "tab-a",
-    settingsSnapshot: readySyncSettings,
-    scheduleTimer: timers.scheduleTimer,
-    triggerRemoteSyncPush: () => {
-      triggerCount += 1;
-    },
-  });
-
-  assert.equal(result.status, "triggered");
-  assert.equal(triggerCount, 1);
-  assert.equal(
-    timers.calls.length,
-    1,
-    "接管过期 owner 时会先登记本标签页 timer，再由隐藏页补发立即消费。"
-  );
-  assert.equal(getState(), null);
-};
-
-const testHiddenRecoveryOfExpiredOwnerQueuesImmediateFlush = async () => {
-  const { constants, hooks, setState, getState, sandbox } = getSharedDebounceApi();
-  const ownerTimers = createTimerSpy();
-  const now = 16_500_000;
-  const dueAt = now + READ_PROGRESS_SYNC_DEBOUNCE_MS;
-  let triggerCount = 0;
-  let triggerReason = "";
-
+const testLifecycleCheckpointUsesSchedulerInterfaceAfterFinalizingDirty = async () => {
+  const { makeScheduler, hooks, sandbox } = createScenario({ now: 14_000_000 });
+  const tabA = makeScheduler({ tabId: "tab-a" });
   sandbox.document.visibilityState = "hidden";
-  setState(
-    seedSharedState({
-      generation: 11,
-      ownerTabId: "closed-tab",
-      ownerLeaseUntil: now - 1,
-      dueAt,
-      maxWaitUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
-      firstDirtyAt: now - 1000,
-      lastDirtyAt: now,
-      maxLastModified: 16501,
-      sources: { read_progress: 1 },
-      threadIds: ["16501"],
-      reason: "debounced_read_progress",
-      dueSource: "read_progress",
-    })
-  );
-
-  const result = hooks.recoverSharedBackgroundSyncDebounceOwnerIfNeeded(now, {
-    tabId: "tab-a",
-    settingsSnapshot: readySyncSettings,
-    scheduleTimer: ownerTimers.scheduleTimer,
-    triggerRemoteSyncPush: (reason) => {
-      triggerCount += 1;
-      triggerReason = reason;
-    },
+  hooks.registerSyncLifecycleLocalMutationFinalizer("phase2_finalize", () => {
+    tabA.scheduler.queue({ source: "read_progress", lastModified: 1401 });
   });
 
-  assert.equal(result.status, "scheduled");
-  assert.equal(result.reason, "owner_recovered");
-  assert.equal(getState().ownerTabId, "tab-a");
-  assert.equal(ownerTimers.calls.length, 1);
-
-  await new Promise((resolve) => setTimeout(resolve, 10));
-
-  assert.equal(triggerCount, 1);
-  assert.equal(triggerReason, "debounced_read_progress");
-  assert.equal(getState(), null);
-};
-
-const testHiddenFlushDoesNotStealActiveOtherOwner = () => {
-  const { constants, hooks, setState, getState } = getSharedDebounceApi();
-  const now = 17_000_000;
-  let triggerCount = 0;
-  const state = seedSharedState({
-    generation: 11,
-    ownerTabId: "tab-b",
-    ownerLeaseUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS,
-    dueAt: now + READ_PROGRESS_SYNC_DEBOUNCE_MS,
-    maxWaitUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
-    firstDirtyAt: now - 1000,
-    lastDirtyAt: now,
-    maxLastModified: 1701,
-    sources: { read_progress: 1 },
-    threadIds: ["1701"],
-    reason: "debounced_read_progress",
-    dueSource: "read_progress",
-  });
-
-  setState(state);
-
-  const result = hooks.flushSharedBackgroundSyncDebounceForHiddenPage({
-    now,
-    tabId: "tab-a",
-    settingsSnapshot: readySyncSettings,
-    triggerRemoteSyncPush: () => {
-      triggerCount += 1;
-    },
-  });
-
-  assert.deepEqual(toPlainObject(result), {
-    status: "skipped",
-    reason: "owned_by_active_other_tab",
-    currentOwnerTabId: "tab-b",
-  });
-  assert.equal(triggerCount, 0);
-  assert.deepEqual(getState(), state);
-};
-
-const testQueuedHiddenFlushRunsDeferredTask = async () => {
-  const { constants, hooks, setState, getState } = getSharedDebounceApi();
-  const now = 18_000_000;
-  let triggerCount = 0;
-
-  setState(
-    seedSharedState({
-      generation: 12,
-      ownerTabId: "tab-a",
-      ownerLeaseUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS,
-      dueAt: now + READ_PROGRESS_SYNC_DEBOUNCE_MS,
-      maxWaitUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
-      firstDirtyAt: now - 1000,
-      lastDirtyAt: now,
-      maxLastModified: 1801,
-      sources: { read_progress: 1 },
-      threadIds: ["1801"],
-      reason: "debounced_read_progress",
-      dueSource: "read_progress",
-    })
-  );
-
-  hooks.queueSharedBackgroundSyncDebounceHiddenFlush("test_hidden_queue", {
-    now,
-    tabId: "tab-a",
-    settingsSnapshot: readySyncSettings,
-    triggerRemoteSyncPush: () => {
-      triggerCount += 1;
-    },
-  });
-
-  assert.equal(
-    triggerCount,
-    0,
-    "hidden flush queue 应先让当前事件轮次完成，而不是同步执行。"
-  );
-
-  await new Promise((resolve) => setTimeout(resolve, 10));
-
-  assert.equal(triggerCount, 1);
-  assert.equal(getState(), null);
-};
-
-const testHiddenOwnerRequestQueuesImmediateFlushWhileAlreadyHidden = async () => {
-  const { request, getState, sandbox } = getSharedDebounceApi();
-  const now = 18_500_000;
-  const dueAt = now + READ_PROGRESS_SYNC_DEBOUNCE_MS;
-  let triggerCount = 0;
-  let triggerReason = "";
-  let schedulerContext = null;
-
-  sandbox.document.visibilityState = "hidden";
-
-  const result = request(
-    { source: "read_progress", lastModified: 18501, threadId: "18501" },
-    {
-      now,
-      tabId: "tab-a",
-      triggerRemoteSyncPush: (reason, context) => {
-        triggerCount += 1;
-        triggerReason = reason;
-        schedulerContext = toPlainObject(context);
-      },
-    }
-  );
-
-  assert.equal(result.status, "scheduled");
-  assert.equal(result.isOwner, true);
-  assert.equal(
-    triggerCount,
-    0,
-    "hidden owner request should defer the flush until the current turn completes."
-  );
-
-  await new Promise((resolve) => setTimeout(resolve, 10));
-
-  assert.equal(triggerCount, 1);
-  assert.equal(triggerReason, "debounced_read_progress");
-  assert.equal(schedulerContext.scheduledDueAt, dueAt);
-  assert.equal(schedulerContext.debounceGeneration, 1);
-  assert.equal(schedulerContext.intendedMaxLastModified, 18501);
-  assert.equal(getState(), null);
-};
-
-const testLifecycleCheckpointFinalizesLocalDirtyBeforeHiddenFlush = async () => {
-  const { hooks, getState, sandbox } = getSharedDebounceApi();
-  const ownerTimers = createTimerSpy();
-  const now = 18_900_000;
-  let finalizerCalled = false;
-  let triggerCount = 0;
-  let triggerReason = "";
-  let schedulerContext = null;
-
-  sandbox.document.visibilityState = "hidden";
-  hooks.registerSyncLifecycleLocalMutationFinalizer(
-    "test_read_progress_finalize",
-    () => {
-      finalizerCalled = true;
-      hooks.requestSharedBackgroundSyncDebounce(
-        { source: "read_progress", lastModified: 18901, threadId: "18901" },
-        {
-          now,
-          tabId: "tab-a",
-          settingsSnapshot: readySyncSettings,
-          scheduleTimer: ownerTimers.scheduleTimer,
-          triggerRemoteSyncPush: (reason, context) => {
-            triggerCount += 1;
-            triggerReason = reason;
-            schedulerContext = toPlainObject(context);
-          },
-        }
-      );
-    }
-  );
-
-  const result = hooks.runSyncLifecycleCheckpoint("visibility_hidden", {
+  const hidden = hooks.runSyncLifecycleCheckpoint("visibility_hidden", {
     phase: "hidden",
-    now,
+    now: 14_000_000,
     tabId: "tab-a",
-    settingsSnapshot: readySyncSettings,
-    scheduleTimer: ownerTimers.scheduleTimer,
+    settingsSnapshot: readySettings,
     triggerRemoteSyncPush: (reason, context) => {
-      triggerCount += 1;
-      triggerReason = reason;
-      schedulerContext = toPlainObject(context);
+      tabA.triggers.push({ reason, context: toPlainObject(context) });
     },
   });
-
-  assert.equal(finalizerCalled, true);
-  assert.equal(
-    triggerCount,
-    1,
-    "hidden checkpoint must not depend on a queued MessageChannel/setTimeout flush after local dirty is finalized."
-  );
-  assert.equal(triggerReason, "debounced_read_progress");
-  assert.equal(schedulerContext.debounceGeneration, 1);
-  assert.equal(schedulerContext.intendedMaxLastModified, 18901);
-  assert.equal(result.schedulerResult.status, "triggered");
-  assert.equal(getState(), null);
+  assert.equal(hidden.schedulerResult.status, "triggered");
+  assert.equal(tabA.triggers.length, 1);
+  assert.equal(tabA.scheduler.inspect().state, null);
 
   await new Promise((resolve) => setTimeout(resolve, 10));
-  assert.equal(
-    triggerCount,
-    1,
-    "the older queued hidden flush fallback should find no state and must not trigger a second push."
-  );
-};
-
-const testLifecycleCheckpointHandsOffHiddenOwnerWhenFlushCannotRun = () => {
-  const { constants, hooks, setState, getState, sandbox, store } =
-    getSharedDebounceApi();
-  const ownerTimers = createTimerSpy();
-  const now = 19_200_000;
-  let triggerCount = 0;
-
-  sandbox.document.visibilityState = "hidden";
-  store.set("s1p_sync_global_lock", {
-    owner: "other-sync-owner",
-    timestamp: now,
-    mode: "background",
-    ttlMs: 30_000,
-  });
-  setState(
-    seedSharedState({
-      generation: 13,
-      ownerTabId: "tab-a",
-      ownerLeaseUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS,
-      dueAt: now + READ_PROGRESS_SYNC_DEBOUNCE_MS,
-      maxWaitUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
-      firstDirtyAt: now - 1000,
-      lastDirtyAt: now,
-      maxLastModified: 19201,
-      sources: { read_progress: 1 },
-      threadIds: ["19201"],
-      reason: "debounced_read_progress",
-      dueSource: "read_progress",
-    })
-  );
-
-  const result = hooks.runSyncLifecycleCheckpoint("visibility_hidden", {
-    phase: "hidden",
-    now,
-    tabId: "tab-a",
-    settingsSnapshot: readySyncSettings,
-    scheduleTimer: ownerTimers.scheduleTimer,
-    triggerRemoteSyncPush: () => {
-      triggerCount += 1;
-    },
-  });
-
-  assert.equal(triggerCount, 0);
-  assert.equal(result.schedulerResult.status, "scheduled");
-  assert.equal(result.schedulerResult.reason, "sync_lock_active");
-  assert.equal(result.handoffResult.status, "released");
-  assert.equal(result.handoffResult.reason, "owner_handoff");
-  assert.equal(getState().ownerTabId, "");
-};
-
-const testLifecycleCheckpointPagehideFinalizesButDoesNotStartPush = async () => {
-  const { constants, hooks, setState, getState, sandbox } =
-    getSharedDebounceApi();
-  const now = 19_600_000;
-  let finalizerCalled = false;
-  let triggerCount = 0;
-
-  sandbox.document.visibilityState = "hidden";
-  hooks.registerSyncLifecycleLocalMutationFinalizer(
-    "test_pagehide_finalize",
-    () => {
-      finalizerCalled = true;
-      hooks.requestSharedBackgroundSyncDebounce(
-        { source: "read_progress", lastModified: 19602, threadId: "19602" },
-        {
-          now,
-          tabId: "tab-a",
-          settingsSnapshot: readySyncSettings,
-          triggerRemoteSyncPush: () => {
-            triggerCount += 1;
-          },
-        }
-      );
-    }
-  );
-  setState(
-    seedSharedState({
-      generation: 14,
-      ownerTabId: "tab-a",
-      ownerLeaseUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS,
-      dueAt: now,
-      maxWaitUntil: now + constants.BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS,
-      firstDirtyAt: now - 1000,
-      lastDirtyAt: now,
-      maxLastModified: 19601,
-      sources: { read_progress: 1 },
-      threadIds: ["19601"],
-      reason: "debounced_read_progress",
-      dueSource: "read_progress",
-    })
-  );
-
-  const result = hooks.runSyncLifecycleCheckpoint("pagehide", {
-    phase: "pagehide",
-    now,
-    tabId: "tab-a",
-    settingsSnapshot: readySyncSettings,
-    triggerRemoteSyncPush: () => {
-      triggerCount += 1;
-    },
-  });
-
-  assert.equal(finalizerCalled, true);
-  assert.equal(triggerCount, 0);
-  assert.equal(result.schedulerResult.status, "skipped");
-  assert.equal(result.schedulerResult.reason, "lifecycle_unload_handoff");
-  assert.equal(result.handoffResult.status, "released");
-  assert.equal(getState().ownerTabId, "");
-
-  await new Promise((resolve) => setTimeout(resolve, 10));
-  assert.equal(
-    triggerCount,
-    0,
-    "pagehide checkpoint must cancel queued hidden flush fallbacks and leave recovery to durable pending/shared state."
-  );
+  assert.equal(tabA.triggers.length, 1);
 };
 
 const main = async () => {
-  testReadProgressDirtyMergesIntoSingleSharedState();
-  testSourceSpecificSettleWindows();
-  testForcedRetryUsesSharedSchedulerDueAt();
-  testSharedRetryDoesNotKeepLocalDrainPending();
-  testCleanStateFenceSkipsCoveredAutoPush();
-  testSharedDebounceDueClearsCoveredCleanState();
-  testGeneralDueAtIsNotDelayedByReadProgress();
-  testReadProgressTrailingDebounceStopsAtMaxWait();
-  testOnlyOwnerSchedulesTimerAndValidLeasePreventsSteal();
-  testExpiredOwnerLeaseAllowsTakeover();
-  testVisibleTabWatchesActiveOwnerLeaseForRecovery();
-  testOwnerLeaseRecoveryCallbackTakesOverAndRunsPastDueTimer();
-  await testHiddenCurrentOwnerRecoveryQueuesImmediateFlush();
-  testOwnerDueReReadsStateAndSkipsStaleGeneration();
-  testOwnerDueConsumesSharedStateBeforeTrigger();
-  testCoveredSuccessClearsPendingAndSharedState();
-  testNewerDirtyRetainsPendingAndSchedulesShortFollowUp();
-  testDisabledOrBlockedStatesClearSchedulerState();
-  testOwnerReleaseLeavesPendingRecoverableAndAllowsTakeover();
-  testRuntimeStateDoesNotExposeLegacyPerTabTimerAsSharedOwner();
-  testLockActiveReschedulePersistsDueAt();
-  testLockActiveRescheduleLogIsThrottled();
-  testSharedDebounceWriteRetriesWhenVerificationLosesRequest();
-  testPendingRecoveryRecognizesCoveredSharedDebounce();
-  testPendingRecoveryWatchesCoveredActiveSharedOwner();
-  testHiddenOwnerFlushForcesPendingSchedulerBeforeTimerDue();
-  testHiddenPageCanRecoverExpiredOwnerAndFlushImmediately();
-  await testHiddenRecoveryOfExpiredOwnerQueuesImmediateFlush();
-  testHiddenFlushDoesNotStealActiveOtherOwner();
-  await testQueuedHiddenFlushRunsDeferredTask();
-  await testHiddenOwnerRequestQueuesImmediateFlushWhileAlreadyHidden();
-  await testLifecycleCheckpointFinalizesLocalDirtyBeforeHiddenFlush();
-  testLifecycleCheckpointHandsOffHiddenOwnerWhenFlushCannotRun();
-  await testLifecycleCheckpointPagehideFinalizesButDoesNotStartPush();
-
-  console.log("[background-sync-shared-debounce] Shared debounce scheduler checks passed.");
+  testQueuedMergesDirtyWithoutExposingOwnerMechanics();
+  testQueuedReadProgressStopsAtMaxWait();
+  testHandoffAndRecoveryUseBoundClockAndTimerAdapter();
+  testDueConsumesStateBeforeTrigger();
+  testDueDefersWhileRunningSyncOwnsLock();
+  testCoveredCompletionClearsPendingAndSharedState();
+  testNewerDirtyIsRetainedWithOneFollowUp();
+  testPendingRecoveryWatchesExistingSchedulerOwner();
+  testRetrySelectsSharedThenLocalFallbackOnWriteLoss();
+  testHiddenFlushDoesNotStealLiveOwnerButRecoversExpiredOwner();
+  testQueueRetriesConcurrentStorageWrite();
+  testCleanupRecoversDirtyWrittenDuringDeleteRace();
+  testCleanupRecoversSharedDirtyWrittenDuringDeleteRace();
+  testBlockedQueueClearsSchedulerState();
+  await testLifecycleCheckpointUsesSchedulerInterfaceAfterFinalizingDirty();
+  console.log(
+    "[background-sync-shared-debounce] Pending Dirty Scheduler scenarios passed."
+  );
 };
 
 main().catch((error) => {
   console.error(error);
-  process.exit(1);
+  process.exitCode = 1;
 });
