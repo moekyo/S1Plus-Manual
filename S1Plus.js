@@ -28368,6 +28368,60 @@
     });
     return true;
   };
+  const s1pCreateImageViewerInterface = ({
+    readInternalState,
+    applyDefaultTransform,
+    close,
+    finalizeClose,
+  }) => {
+    const readState = () => {
+      const state = readInternalState();
+      const phase = state?.isOpen === true
+        ? "open"
+        : state?.isClosing === true
+          ? "closing"
+          : "closed";
+      return Object.freeze({ phase });
+    };
+    const refreshDefaultTransform = () => {
+      if (readState().phase !== "open") {
+        return false;
+      }
+      applyDefaultTransform();
+      return true;
+    };
+    const closeImmediately = () => {
+      const phase = readState().phase;
+      if (phase === "closed") {
+        return false;
+      }
+      if (phase === "open") {
+        close();
+      }
+      return finalizeClose() === true;
+    };
+
+    return Object.freeze({
+      closeImmediately,
+      readState,
+      refreshDefaultTransform,
+    });
+  };
+  const s1pImageViewer = s1pCreateImageViewerInterface({
+    readInternalState: () => s1pImageViewerState,
+    applyDefaultTransform: applyS1pImageViewerDefaultTransform,
+    close: closeS1pImageViewer,
+    finalizeClose: finalizeS1pImageViewerCloseState,
+  });
+
+  if (IS_S1P_TEST_MODE) {
+    const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
+    testHookHost.__S1P_TEST_HOOKS__ = {
+      ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
+      imageViewer: s1pImageViewer,
+      s1pCreateImageViewerInterface,
+    };
+  }
   const getS1pImageViewerTargetImage = (eventTarget) => {
     if (!(eventTarget instanceof Element)) {
       return null;
@@ -34991,9 +35045,7 @@
         "imageViewerDefaultZoomScalePercent"
       )
     ) {
-      if (s1pImageViewerState.isOpen) {
-        applyS1pImageViewerDefaultTransform();
-      }
+      s1pImageViewer.refreshDefaultTransform();
     }
     if (hasSettingPathInChangedSet(changedPathSet, "openInNewTab")) {
       applyGlobalLinkBehavior();
@@ -39841,18 +39893,7 @@
       viewer.setAttribute("aria-hidden", "true");
     });
 
-    if (
-      typeof closeS1pImageViewer === "function" &&
-      s1pImageViewerState &&
-      (s1pImageViewerState.isOpen || s1pImageViewerState.isClosing)
-    ) {
-      if (s1pImageViewerState.isOpen) {
-        closeS1pImageViewer();
-      }
-      if (typeof finalizeS1pImageViewerCloseState === "function") {
-        finalizeS1pImageViewerCloseState();
-      }
-    }
+    s1pImageViewer.closeImmediately();
   };
 
   const getSectionRendererByKey = (key) => {
@@ -45709,9 +45750,7 @@
           option.classList.add("active");
           moveSlider(imageViewerDefaultModeControl);
           syncImageViewerDefaultZoomScaleVisibility(modeValue === "full");
-          if (s1pImageViewerState.isOpen) {
-            applyS1pImageViewerDefaultTransform();
-          }
+          s1pImageViewer.refreshDefaultTransform();
         });
       }
       if (imageViewerDefaultZoomScaleSlider) {
@@ -45734,11 +45773,8 @@
           );
           saveSettings(currentSettings);
           syncImageViewerDefaultZoomScaleSlider();
-          if (
-            currentSettings.imageViewerDefaultFullDisplay !== true &&
-            s1pImageViewerState.isOpen
-          ) {
-            applyS1pImageViewerDefaultTransform();
+          if (currentSettings.imageViewerDefaultFullDisplay !== true) {
+            s1pImageViewer.refreshDefaultTransform();
           }
         });
       }
@@ -45752,11 +45788,8 @@
               S1P_IMAGE_VIEWER_DEFAULT_ZOOM_SCALE_DEFAULT_PERCENT;
             saveSettings(currentSettings);
             syncImageViewerDefaultZoomScaleSlider();
-            if (
-              currentSettings.imageViewerDefaultFullDisplay !== true &&
-              s1pImageViewerState.isOpen
-            ) {
-              applyS1pImageViewerDefaultTransform();
+            if (currentSettings.imageViewerDefaultFullDisplay !== true) {
+              s1pImageViewer.refreshDefaultTransform();
             }
             showSettingsMessage("铺满宽度比例已恢复默认。", true);
           }
