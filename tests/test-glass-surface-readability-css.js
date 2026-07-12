@@ -15,7 +15,7 @@ const expectIncludes = (needle, message) => {
   ],
   [
     "--s1p-dialog-glass-bg: rgba(255, 255, 255, 0.84);",
-    "浅色 dialog 玻璃背景应更实但仍保留透明度，保证设置面板和 Token 日期配置可读性。",
+    "浅色 dialog 玻璃背景应更实但仍保留透明度，保证设置面板和内部信息块可读性。",
   ],
   [
     "--s1p-dialog-glass-filter: blur(3px) saturate(1.02);",
@@ -187,20 +187,30 @@ assert.match(
   expectIncludes(needle, "一级确认弹窗材质应继续复用 floating surface 主题变量。");
 });
 
-const confirmContentBlock = getRuleBlock(".s1p-confirm-content");
+const dialogContentBlock = getRuleBlock(".s1p-dialog-content");
 assert.doesNotMatch(
-  confirmContentBlock,
+  dialogContentBlock,
   /(?:background|box-shadow|backdrop-filter):/,
-  "确认弹窗语义类只负责结构和文本，材质应由统一 first-level glass 类提供。"
+  "通用弹窗内容壳只负责结构和文本，材质应由一级或二级玻璃类提供。"
 );
 assert.match(
   sourceCode,
-  /buildFirstLevelGlassClassName\(\s*S1P_FIRST_LEVEL_GLASS_CONFIRM_PRESET_CLASS,\s*"s1p-confirm-content"\s*\)/,
-  "非 settings-secondary 的确认弹窗应挂载统一 first-level confirm 材质类。"
+  /const buildS1pDialogContentClassName = \([\s\S]*?surfaceContext\?\.isSettingsSecondaryModal[\s\S]*?buildSettingsSecondaryGlassClassName\([\s\S]*?: buildFirstLevelGlassClassName\(\s*S1P_FIRST_LEVEL_GLASS_CONFIRM_PRESET_CLASS,/,
+  "通用内容壳必须按 surface context 统一选择二级或一级玻璃材质。"
 );
-assertSurfaceUsesFilterVariable(
-  ".s1p-token-config-content",
-  "--s1p-dialog-glass-filter"
+assertSurfaceUsesMaterialVariables(
+  ":is(\n      .s1p-settings-secondary-modal > .s1p-dialog-content.s1p-settings-secondary-glass,\n      .s1p-date-picker.s1p-settings-secondary-glass\n    )",
+  {
+    backgroundVariable: "--s1p-settings-secondary-glass-bg",
+    shadowVariable: "--s1p-settings-secondary-glass-shadow",
+    filterVariable: "--s1p-settings-secondary-glass-filter",
+  }
+);
+assert.ok(
+  !sourceCode.includes("s1p-token-config-content") &&
+    !sourceCode.includes("s1p-reading-progress-content") &&
+    !sourceCode.includes("s1p-confirm-content"),
+  "一级和二级通用弹窗不应保留旧的专属外壳类。"
 );
 assertSurfaceUsesFilterVariable(
   ".s1p-glass-panel",
@@ -251,7 +261,7 @@ assert.doesNotMatch(
 );
 
 assert.match(
-  confirmContentBlock,
+  dialogContentBlock,
   /color:\s*var\(--s1p-dialog-text\)/,
   "确认弹窗正文应使用独立文本 token。"
 );

@@ -63,21 +63,154 @@ assert.ok(
 assert.ok(
   sourceCode.includes(
     'const settingsModalContent = document.querySelector(\n      ".s1p-modal > .s1p-modal-content"\n    );'
-  ) && sourceCode.includes("modalHost.appendChild(modal);"),
+  ) &&
+    sourceCode.includes(
+      'modal.className = buildSettingsSecondaryModalClassName(\n      "s1p-token-config-modal"'
+    ) &&
+    sourceCode.includes("host: modalHost,") &&
+    sourceCode.includes("mountS1pModalSurface(modal, {"),
   "Token 日期配置应优先挂载到设置面板内容容器，由设置面板承载。"
 );
 const tokenConfigModalIndex = sourceCode.indexOf(
-  ".s1p-token-config-modal {"
+  ".s1p-settings-secondary-modal {"
 );
 assert.notEqual(
   tokenConfigModalIndex,
   -1,
-  "Token 日期配置缺少局部弹窗容器样式。"
+  "设置内二级弹窗缺少通用局部容器样式。"
 );
 assert.match(
   sourceCode.slice(tokenConfigModalIndex, tokenConfigModalIndex + 520),
   /position:\s*absolute;[\s\S]*inset:\s*0;[\s\S]*background:\s*color-mix\(in srgb,\s*var\(--s1p-settings-content-bg,\s*var\(--s1p-bg\)\) 18%,\s*transparent\);/,
-  "Token 日期配置应作为设置面板内部覆盖层，而不是全屏蒙版。"
+  "设置内二级弹窗应作为设置面板内部覆盖层，而不是全屏蒙版。"
+);
+assert.ok(
+  sourceCode.includes(
+    'modal.className = buildSettingsSecondaryModalClassName(\n      "s1p-confirm-modal",\n      "s1p-reading-progress-modal"'
+  ),
+  "阅读记录详情应复用通用设置内二级弹窗结构。"
+);
+const secondaryGlassSelector =
+  ":is(\n      .s1p-settings-secondary-modal > .s1p-dialog-content.s1p-settings-secondary-glass,\n      .s1p-date-picker.s1p-settings-secondary-glass\n    ) {";
+const secondaryGlassIndex = sourceCode.indexOf(secondaryGlassSelector);
+assert.notEqual(
+  secondaryGlassIndex,
+  -1,
+  "标准二级玻璃材质必须绑定到二级弹窗的直接内容壳。"
+);
+assert.match(
+  sourceCode.slice(secondaryGlassIndex, secondaryGlassIndex + 650),
+  /background:\s*var\(--s1p-settings-secondary-glass-bg\);[\s\S]*border:\s*1px solid var\(--s1p-settings-secondary-glass-border\);[\s\S]*box-shadow:\s*var\(--s1p-settings-secondary-glass-shadow\);[\s\S]*backdrop-filter:\s*var\(--s1p-settings-secondary-glass-filter\);/,
+  "标准二级玻璃类必须独占完整的背景、边框、阴影和滤镜材质。"
+);
+assert.ok(
+  sourceCode.includes(
+    "picker.classList.add(S1P_SETTINGS_SECONDARY_GLASS_CLASS);"
+  ),
+  "设置二级弹窗触发的日期选择器应显式复用同一材质。"
+);
+assert.ok(
+  sourceCode.includes(
+    'const tokenConfigContentClassName = buildS1pDialogContentClassName(\n      surfaceContext,\n      "compact"\n    );'
+  ),
+  "Token 配置必须使用标准二级内容壳的 compact 尺寸。"
+);
+assert.ok(
+  sourceCode.includes(
+    'content.className = buildS1pDialogContentClassName(\n      surfaceContext,\n      "wide"\n    );'
+  ),
+  "阅读记录详情必须使用标准二级内容壳的 wide 尺寸。"
+);
+assert.ok(
+  !sourceCode.includes("s1p-confirm-content") &&
+    !sourceCode.includes("s1p-token-config-content") &&
+    !sourceCode.includes("s1p-reading-progress-content"),
+  "旧确认、Token 和阅读记录专属外壳类必须完全移除。"
+);
+[
+  ["compact", "400px"],
+  ["default", "480px"],
+  ["wide", "550px"],
+  ["expanded", "580px"],
+].forEach(([size, width]) => {
+  assert.ok(
+    sourceCode.includes(
+      `.s1p-dialog-content--${size} {\n      width: ${width};`
+    ),
+    `标准内容壳缺少 ${size} 尺寸。`
+  );
+});
+assert.match(
+  sourceCode,
+  /\.s1p-dialog-content--compact \{[\s\S]*?max-height:\s*min\(80vh, calc\(100% - 32px\)\);[\s\S]*?\.s1p-dialog-content--default/,
+  "Token 使用的 compact 尺寸必须保留原有高度上限，不能影响其他一级弹窗。"
+);
+assert.match(
+  sourceCode,
+  /\.s1p-dialog-content--wide \{[\s\S]*?max-width:\s*100%;[\s\S]*?\.s1p-dialog-content--expanded/,
+  "阅读记录使用的 wide 尺寸必须保留原有容器宽度上限。"
+);
+assert.ok(
+  sourceCode.includes('contentSize: "expanded"'),
+  "手动同步和同步冲突弹窗必须显式使用 expanded 通用尺寸。"
+);
+assert.ok(
+  sourceCode.includes("host: settingsModalContent,") &&
+    sourceCode.includes("surfaceContext?.isSettingsSecondaryModal"),
+  "阅读记录详情及通用设置弹窗应通过标准 surface context 挂载到设置面板内容容器。"
+);
+assert.ok(
+  !sourceCode.includes("s1p-token-config-modal--detached"),
+  "设置内二级弹窗的 detached 状态不应继续使用 Token 专属结构名。"
+);
+assert.ok(
+  sourceCode.includes("useSettingsSecondaryModal: true") &&
+    !sourceCode.includes("useSettingsSecondaryGlass"),
+  "设置内弹窗应显式选择完整 secondary modal 语义，而不应只选择玻璃材质。"
+);
+assert.ok(
+  sourceCode.includes("const runS1pLayeredModalOpenSequence = (") &&
+    sourceCode.includes("const closeS1pLayeredModalWithSequence = (") &&
+    !sourceCode.includes("runS1pFullscreenModalOpenSequence") &&
+    !sourceCode.includes("closeS1pFullscreenModalWithSequence"),
+  "一级与二级弹窗应共享无全屏语义偏向的 layered modal 动画管线。"
+);
+[
+  ["const createConfirmationModal = (", "const createInputModal = ("],
+  ["const createInputModal = (", "const buildConfirmationMarkup = ("],
+  ["const createAdvancedConfirmationModal = (", "const addBlockButtonsToThreadRows = ("],
+].forEach(([startMarker, endMarker]) => {
+  const start = sourceCode.indexOf(startMarker);
+  const end = sourceCode.indexOf(endMarker, start + startMarker.length);
+  assert.ok(start >= 0 && end > start, `${startMarker} 工厂源码范围缺失。`);
+  const block = sourceCode.slice(start, end);
+  assert.ok(
+    block.includes("useSettingsSecondaryModal") &&
+      block.includes("buildS1pDialogContentClassName(") &&
+      block.includes("buildS1pModalSurfaceClassName(") &&
+      block.includes("mountS1pModalSurface(modal, {") &&
+      block.includes("closeS1pModalSurface(modal, {") &&
+      !block.includes("document.body.appendChild(modal)"),
+    `${startMarker} 必须通过完整 modal surface 契约选择一级或设置内二级结构。`
+  );
+});
+const manualUserBlockStart = sourceCode.indexOf(
+  "const openManualUserBlockModal = ("
+);
+const manualUserBlockEnd = sourceCode.indexOf(
+  "const renderUserTab = () =>",
+  manualUserBlockStart
+);
+const manualUserBlock = sourceCode.slice(
+  manualUserBlockStart,
+  manualUserBlockEnd
+);
+assert.ok(
+  manualUserBlock.includes("resolveS1pModalSurfaceContext(true)") &&
+    manualUserBlock.includes("mountS1pModalSurface(modal, {") &&
+    manualUserBlock.includes("closeS1pModalSurface(modal, {") &&
+    !manualUserBlock.includes("buildS1pFullscreenModalClassName"),
+  "手动屏蔽用户窗口必须完整复用设置内二级弹窗结构。"
 );
 assert.match(
   sourceCode.slice(modalBodyIndex, modalBodyIndex + 420),

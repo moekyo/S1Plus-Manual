@@ -376,7 +376,7 @@ const testFacadePreservesEverySyncIntentContract = async () => {
     requestManualPush: capture("manual_push"),
     requestStartupFlow: capture("startup_flow"),
   });
-  const runtime = { useSettingsSecondaryGlass: true };
+  const runtime = { useSettingsSecondaryModal: true };
 
   assert.equal(
     facade.requestSync({ kind: "background_push", reason: "import" }),
