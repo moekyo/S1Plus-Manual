@@ -96,8 +96,8 @@ assert.match(
 );
 assert.match(
   sourceCode,
-  /imageViewerDefaultZoomScaleSlider\.addEventListener\("change",[\s\S]*?settingKey !== "imageViewerDefaultZoomScalePercent"[\s\S]*?saveSettings\(currentSettings\);[\s\S]*?applyS1pImageViewerDefaultTransform\(\);/,
-  "铺满宽度比例 slider 保存后应在查看器打开时重算默认缩放。"
+  /imageViewerDefaultZoomScaleSlider\.addEventListener\("change",[\s\S]*?settingKey !== "imageViewerDefaultZoomScalePercent"[\s\S]*?saveSettings\(currentSettings\);[\s\S]*?s1pImageViewer\.refreshDefaultTransform\(\);/,
+  "铺满宽度比例 slider 保存后应通过 viewer interface 重算默认缩放。"
 );
 
 console.log(
