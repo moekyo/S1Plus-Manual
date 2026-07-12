@@ -2636,16 +2636,27 @@
   const SVG_ICON_GRID = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="16" height="16" class="s1p-progress-detail-btn-icon"><path d="M3 3H21C21.5523 3 22 3.44772 22 4V20C22 20.5523 21.5523 21 21 21H3C2.44772 21 2 20.5523 2 20V4C2 3.44772 2.44772 3 3 3ZM4 5V19H20V5H4ZM7 7H11V11H7V7ZM7 13H11V17H7V13ZM13 7H17V11H13V7ZM13 13H17V17H13V13Z"></path></svg>`;
   const SVG_ICON_KEBAB = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>`;
   const S1P_FULLSCREEN_MODAL_CLASS = "s1p-fullscreen-modal";
-  const S1P_FULLSCREEN_MODAL_BACKDROP_OPEN_CLASS =
-    "s1p-fullscreen-modal-backdrop-open";
-  const S1P_FULLSCREEN_MODAL_CONTENT_OPEN_CLASS =
-    "s1p-fullscreen-modal-content-open";
-  const S1P_FULLSCREEN_MODAL_OPENING_CLASS = "s1p-modal-opening";
-  const S1P_FULLSCREEN_MODAL_CLOSING_CLASS = "s1p-modal-closing";
-  const S1P_FULLSCREEN_MODAL_BACKDROP_ANIMATION_MS = 160;
-  const S1P_FULLSCREEN_MODAL_CONTENT_ENTER_DELAY_MS = 170;
-  const S1P_FULLSCREEN_MODAL_ANIMATION_FALLBACK_GAP_MS = 60;
+  const S1P_LAYERED_MODAL_BACKDROP_OPEN_CLASS =
+    "s1p-layered-modal-backdrop-open";
+  const S1P_LAYERED_MODAL_CONTENT_OPEN_CLASS =
+    "s1p-layered-modal-content-open";
+  const S1P_LAYERED_MODAL_OPENING_CLASS = "s1p-modal-opening";
+  const S1P_LAYERED_MODAL_CLOSING_CLASS = "s1p-modal-closing";
+  const S1P_LAYERED_MODAL_BACKDROP_ANIMATION_MS = 160;
+  const S1P_LAYERED_MODAL_CONTENT_ENTER_DELAY_MS = 170;
+  const S1P_LAYERED_MODAL_ANIMATION_FALLBACK_GAP_MS = 60;
   const S1P_SETTINGS_SECONDARY_GLASS_CLASS = "s1p-settings-secondary-glass";
+  const S1P_SETTINGS_SECONDARY_MODAL_CLASS = "s1p-settings-secondary-modal";
+  const S1P_SETTINGS_SECONDARY_MODAL_DETACHED_CLASS =
+    "s1p-settings-secondary-modal--detached";
+  const S1P_SETTINGS_SECONDARY_MODAL_BACKDROP_ANIMATION_MS = 200;
+  const S1P_DIALOG_CONTENT_CLASS = "s1p-dialog-content";
+  const S1P_DIALOG_CONTENT_SIZE_CLASS_NAMES = Object.freeze({
+    compact: "s1p-dialog-content--compact",
+    default: "s1p-dialog-content--default",
+    wide: "s1p-dialog-content--wide",
+    expanded: "s1p-dialog-content--expanded",
+  });
   const S1P_FIRST_LEVEL_GLASS_CLASS = "s1p-first-level-glass";
   const S1P_FIRST_LEVEL_GLASS_SETTINGS_PRESET_CLASS =
     "s1p-first-level-glass--settings";
@@ -2659,14 +2670,38 @@
     [S1P_SETTINGS_SECONDARY_GLASS_CLASS, ...classNames]
       .filter(Boolean)
       .join(" ");
+  const buildSettingsSecondaryModalClassName = (...classNames) =>
+    [S1P_SETTINGS_SECONDARY_MODAL_CLASS, ...classNames]
+      .filter(Boolean)
+      .join(" ");
   const buildFirstLevelGlassClassName = (presetClassName, ...classNames) =>
     [...classNames, S1P_FIRST_LEVEL_GLASS_CLASS, presetClassName]
       .filter(Boolean)
       .join(" ");
+  const buildS1pDialogContentClassName = (
+    surfaceContext,
+    size = "default",
+    ...classNames
+  ) => {
+    const sizeClassName =
+      S1P_DIALOG_CONTENT_SIZE_CLASS_NAMES[size] ||
+      S1P_DIALOG_CONTENT_SIZE_CLASS_NAMES.default;
+    const structuralClassNames = [
+      S1P_DIALOG_CONTENT_CLASS,
+      sizeClassName,
+      ...classNames,
+    ];
+    return surfaceContext?.isSettingsSecondaryModal
+      ? buildSettingsSecondaryGlassClassName(...structuralClassNames)
+      : buildFirstLevelGlassClassName(
+        S1P_FIRST_LEVEL_GLASS_CONFIRM_PRESET_CLASS,
+        ...structuralClassNames
+      );
+  };
   const isSettingsSecondaryGlassContext = (anchor = null) =>
     Boolean(
       anchor?.closest?.(
-        ".s1p-modal, .s1p-token-config-modal:not(.s1p-token-config-modal--detached)"
+        `.s1p-modal, .${S1P_SETTINGS_SECONDARY_MODAL_CLASS}:not(.${S1P_SETTINGS_SECONDARY_MODAL_DETACHED_CLASS})`
       )
     );
 
@@ -4457,13 +4492,10 @@
       top: -1px;
     }
     /* --- [新增] 为手动同步弹窗设定更宽的尺寸，并防止小屏截断操作区 --- */
-    .s1p-sync-modal .s1p-confirm-content {
-      width: min(580px, calc(100vw - 24px));
+    .s1p-sync-modal > .s1p-dialog-content {
       max-width: calc(100vw - 24px);
       max-height: calc(100vh - 24px);
       max-height: calc(100dvh - 24px);
-      display: flex;
-      flex-direction: column;
     }
     .s1p-sync-modal .s1p-confirm-body {
       flex: 1 1 auto;
@@ -6053,10 +6085,10 @@
       opacity: 0;
       -webkit-backdrop-filter: blur(var(--s1p-overlay-blur));
       backdrop-filter: blur(var(--s1p-overlay-blur));
-      transition: opacity ${S1P_FULLSCREEN_MODAL_BACKDROP_ANIMATION_MS}ms cubic-bezier(0.22, 1, 0.36, 1) !important;
+      transition: opacity ${S1P_LAYERED_MODAL_BACKDROP_ANIMATION_MS}ms cubic-bezier(0.22, 1, 0.36, 1) !important;
       will-change: opacity;
     }
-    .s1p-fullscreen-modal.${S1P_FULLSCREEN_MODAL_BACKDROP_OPEN_CLASS}::before {
+    .s1p-fullscreen-modal.${S1P_LAYERED_MODAL_BACKDROP_OPEN_CLASS}::before {
       opacity: 1;
     }
     .s1p-fullscreen-modal > * {
@@ -6073,13 +6105,13 @@
       opacity: 0;
       transform: translate3d(0, 10px, 0) scale(0.985);
     }
-    .s1p-modal.${S1P_FULLSCREEN_MODAL_CONTENT_OPEN_CLASS} > .s1p-modal-content {
+    .s1p-modal.${S1P_LAYERED_MODAL_CONTENT_OPEN_CLASS} > .s1p-modal-content {
       opacity: 1;
       transform: translate3d(0, 0, 0) scale(1);
     }
     .s1p-modal.s1p-modal-opening .s1p-modal-content {
       animation: s1p-settings-modal-scale-in 0.28s cubic-bezier(0.22, 1, 0.36, 1)
-        ${S1P_FULLSCREEN_MODAL_CONTENT_ENTER_DELAY_MS}ms both;
+        ${S1P_LAYERED_MODAL_CONTENT_ENTER_DELAY_MS}ms both;
       will-change: transform, opacity;
     }
     .s1p-modal.s1p-modal-closing .s1p-modal-content {
@@ -6226,20 +6258,25 @@
     }
     @media (prefers-reduced-motion: reduce) {
       .s1p-fullscreen-modal::before,
+      .s1p-settings-secondary-modal,
       .s1p-modal > .s1p-modal-content,
-      .s1p-confirm-modal > .s1p-confirm-content {
+      .s1p-confirm-modal > .s1p-dialog-content,
+      .s1p-settings-secondary-modal > .s1p-dialog-content {
         transition: none !important;
         animation: none !important;
       }
       .s1p-modal.s1p-modal-opening > .s1p-modal-content,
-      .s1p-confirm-modal.s1p-modal-opening > .s1p-confirm-content,
-      .s1p-modal.${S1P_FULLSCREEN_MODAL_CONTENT_OPEN_CLASS} > .s1p-modal-content,
-      .s1p-confirm-modal.${S1P_FULLSCREEN_MODAL_CONTENT_OPEN_CLASS} > .s1p-confirm-content {
+      .s1p-confirm-modal.s1p-modal-opening > .s1p-dialog-content,
+      .s1p-settings-secondary-modal.s1p-modal-opening > .s1p-dialog-content,
+      .s1p-modal.${S1P_LAYERED_MODAL_CONTENT_OPEN_CLASS} > .s1p-modal-content,
+      .s1p-confirm-modal.${S1P_LAYERED_MODAL_CONTENT_OPEN_CLASS} > .s1p-dialog-content,
+      .s1p-settings-secondary-modal.${S1P_LAYERED_MODAL_CONTENT_OPEN_CLASS} > .s1p-dialog-content {
         opacity: 1 !important;
         transform: none !important;
       }
       .s1p-modal.s1p-modal-closing > .s1p-modal-content,
-      .s1p-confirm-modal.s1p-modal-closing > .s1p-confirm-content {
+      .s1p-confirm-modal.s1p-modal-closing > .s1p-dialog-content,
+      .s1p-settings-secondary-modal.s1p-modal-closing > .s1p-dialog-content {
         opacity: 0 !important;
       }
       .s1p-modal > .s1p-modal-content > .s1p-modal-body {
@@ -6261,7 +6298,7 @@
       background: transparent;
       border-top-color: transparent;
     }
-    .s1p-token-config-modal {
+    .s1p-settings-secondary-modal {
       position: absolute;
       inset: 0;
       z-index: 20000;
@@ -6272,34 +6309,22 @@
       padding: 16px;
       background: color-mix(in srgb, var(--s1p-settings-content-bg, var(--s1p-bg)) 18%, transparent);
       opacity: 0;
-      transition: opacity 0.2s ease;
+      transition: opacity ${S1P_SETTINGS_SECONDARY_MODAL_BACKDROP_ANIMATION_MS}ms ease;
     }
-    .s1p-token-config-modal--detached {
+    .s1p-settings-secondary-modal.${S1P_LAYERED_MODAL_BACKDROP_OPEN_CLASS} {
+      opacity: 1;
+    }
+    .s1p-settings-secondary-modal--detached {
       position: fixed;
       background: transparent;
     }
-    .s1p-token-config-modal > * {
+    .s1p-settings-secondary-modal > * {
       position: relative;
       z-index: 1;
     }
-    .s1p-token-config-content {
-      background: var(--s1p-dialog-glass-bg);
-      color: var(--s1p-dialog-text);
-      border: none;
-      width: 400px;
-      max-width: 90%;
-      max-height: min(80vh, calc(100% - 32px));
-      border-radius: 12px;
-      box-shadow: var(--s1p-dialog-glass-shadow);
-      -webkit-backdrop-filter: var(--s1p-dialog-glass-filter);
-      backdrop-filter: var(--s1p-dialog-glass-filter);
-      transition: none;
-      backface-visibility: hidden;
-      transform-origin: center;
-    }
     .s1p-token-config-header {
       background: transparent;
-      border-bottom-color: var(--s1p-dialog-glass-divider);
+      border-bottom-color: transparent;
       border-top-left-radius: 12px;
       border-top-right-radius: 12px;
     }
@@ -6339,7 +6364,7 @@
       flex-wrap: wrap;
     }
     .s1p-token-config-footer {
-      border-top-color: var(--s1p-dialog-glass-divider);
+      border-top-color: transparent;
       background: transparent;
       display: flex;
       justify-content: flex-end;
@@ -6862,20 +6887,27 @@
       z-index: 10000;
       transition: none;
     }
-    .s1p-confirm-modal > .s1p-confirm-content {
+    .s1p-settings-secondary-modal.s1p-confirm-modal {
+      z-index: 20000;
+    }
+    .s1p-confirm-modal > .s1p-dialog-content,
+    .s1p-settings-secondary-modal > .s1p-dialog-content {
       opacity: 0;
       transform: scale(0.95);
     }
-    .s1p-confirm-modal.${S1P_FULLSCREEN_MODAL_CONTENT_OPEN_CLASS} > .s1p-confirm-content {
+    .s1p-confirm-modal.${S1P_LAYERED_MODAL_CONTENT_OPEN_CLASS} > .s1p-dialog-content,
+    .s1p-settings-secondary-modal.${S1P_LAYERED_MODAL_CONTENT_OPEN_CLASS} > .s1p-dialog-content {
       opacity: 1;
       transform: scale(1);
     }
-    .s1p-confirm-modal.s1p-modal-opening > .s1p-confirm-content {
+    .s1p-confirm-modal.s1p-modal-opening > .s1p-dialog-content,
+    .s1p-settings-secondary-modal.s1p-modal-opening > .s1p-dialog-content {
       animation: s1p-scale-in 0.25s cubic-bezier(0.22, 1, 0.36, 1)
-        ${S1P_FULLSCREEN_MODAL_CONTENT_ENTER_DELAY_MS}ms both;
+        ${S1P_LAYERED_MODAL_CONTENT_ENTER_DELAY_MS}ms both;
       will-change: transform, opacity;
     }
-    .s1p-confirm-modal.s1p-modal-closing > .s1p-confirm-content {
+    .s1p-confirm-modal.s1p-modal-closing > .s1p-dialog-content,
+    .s1p-settings-secondary-modal.s1p-modal-closing > .s1p-dialog-content {
       animation: s1p-scale-out 0.25s cubic-bezier(0.22, 1, 0.36, 1)
         forwards;
       will-change: transform, opacity;
@@ -6890,17 +6922,33 @@
     .s1p-image-viewer ~ .s1p-fullscreen-modal::before {
       display: none;
     }
-    .s1p-confirm-content {
+    .s1p-dialog-content {
       color: var(--s1p-dialog-text);
       border: none;
       border-radius: 12px;
-      width: 480px;
       max-width: 90%;
       text-align: left;
       overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      position: relative;
       transition: none;
       backface-visibility: hidden;
       transform-origin: center;
+    }
+    .s1p-dialog-content--compact {
+      width: 400px;
+      max-height: min(80vh, calc(100% - 32px));
+    }
+    .s1p-dialog-content--default {
+      width: 480px;
+    }
+    .s1p-dialog-content--wide {
+      width: 550px;
+      max-width: 100%;
+    }
+    .s1p-dialog-content--expanded {
+      width: 580px;
     }
     .s1p-confirm-body {
       padding: 20px 24px;
@@ -6916,7 +6964,10 @@
       font-size: 14px;
       color: var(--s1p-dialog-muted-text);
     }
-    .s1p-settings-secondary-glass {
+    :is(
+      .s1p-settings-secondary-modal > .s1p-dialog-content.s1p-settings-secondary-glass,
+      .s1p-date-picker.s1p-settings-secondary-glass
+    ) {
       --s1p-dialog-text: var(--s1p-settings-secondary-text);
       --s1p-dialog-muted-text: var(--s1p-settings-secondary-muted-text);
       background: var(--s1p-settings-secondary-glass-bg);
@@ -7012,12 +7063,7 @@
     }
 
     /* --- 阅读记录详情弹窗样式 --- */
-    .s1p-reading-progress-content {
-      max-width: 550px;
-      width: 100%;
-      position: relative;
-    }
-    .s1p-reading-progress-content .s1p-close-modal {
+    .s1p-reading-progress-modal .s1p-close-modal {
       position: absolute;
       top: 20px;
       right: 20px;
@@ -7843,6 +7889,9 @@
         max-width: 100%;
         max-height: calc(100vh - 16px);
       }
+      .s1p-settings-secondary-modal > .s1p-dialog-content {
+        max-width: 100%;
+      }
       .s1p-modal-header {
         padding: 12px;
       }
@@ -7982,7 +8031,7 @@
         padding: 8px;
         box-sizing: border-box;
       }
-      .s1p-sync-modal .s1p-confirm-content {
+      .s1p-sync-modal > .s1p-dialog-content {
         width: 100%;
         max-width: 100%;
         max-height: calc(100vh - 16px);
@@ -24401,18 +24450,18 @@
     }
     return Math.max(0, Number(durationMs) || 0);
   };
-  const resolveS1pFullscreenModalAnimationDuration = (durationMs) => {
+  const resolveS1pLayeredModalAnimationDuration = (durationMs) => {
     if (isS1pReducedMotionPreferred()) {
       return 0;
     }
     return Math.max(0, Number(durationMs) || 0);
   };
-  const runS1pFullscreenModalOpenSequence = (
+  const runS1pLayeredModalOpenSequence = (
     modal,
     {
       content = null,
       contentAnimationMs = 250,
-      fallbackGapMs = S1P_FULLSCREEN_MODAL_ANIMATION_FALLBACK_GAP_MS,
+      fallbackGapMs = S1P_LAYERED_MODAL_ANIMATION_FALLBACK_GAP_MS,
       onContentOpened = null,
     } = {}
   ) => {
@@ -24421,8 +24470,8 @@
     }
     const contentEl = content instanceof Element ? content : null;
     const safeContentDuration =
-      resolveS1pFullscreenModalAnimationDuration(
-        S1P_FULLSCREEN_MODAL_CONTENT_ENTER_DELAY_MS + contentAnimationMs
+      resolveS1pLayeredModalAnimationDuration(
+        S1P_LAYERED_MODAL_CONTENT_ENTER_DELAY_MS + contentAnimationMs
       );
     const safeFallbackGap = Math.max(0, Number(fallbackGapMs) || 0);
     let contentAnimationEndHandler = null;
@@ -24447,27 +24496,27 @@
         window.clearTimeout(fallbackTimer);
         fallbackTimer = 0;
       }
-      if (modal.classList.contains(S1P_FULLSCREEN_MODAL_CLOSING_CLASS)) {
+      if (modal.classList.contains(S1P_LAYERED_MODAL_CLOSING_CLASS)) {
         return;
       }
-      modal.classList.remove(S1P_FULLSCREEN_MODAL_OPENING_CLASS);
-      modal.classList.add(S1P_FULLSCREEN_MODAL_CONTENT_OPEN_CLASS);
+      modal.classList.remove(S1P_LAYERED_MODAL_OPENING_CLASS);
+      modal.classList.add(S1P_LAYERED_MODAL_CONTENT_OPEN_CLASS);
       if (typeof onContentOpened === "function") {
         onContentOpened();
       }
     };
 
     modal.classList.remove(
-      S1P_FULLSCREEN_MODAL_CLOSING_CLASS,
-      S1P_FULLSCREEN_MODAL_CONTENT_OPEN_CLASS
+      S1P_LAYERED_MODAL_CLOSING_CLASS,
+      S1P_LAYERED_MODAL_CONTENT_OPEN_CLASS
     );
 
     window.requestAnimationFrame(() => {
       if (!modal.isConnected) {
         return;
       }
-      modal.classList.add(S1P_FULLSCREEN_MODAL_BACKDROP_OPEN_CLASS);
-      modal.classList.add(S1P_FULLSCREEN_MODAL_OPENING_CLASS);
+      modal.classList.add(S1P_LAYERED_MODAL_BACKDROP_OPEN_CLASS);
+      modal.classList.add(S1P_LAYERED_MODAL_OPENING_CLASS);
       if (!contentEl || safeContentDuration <= 0) {
         finalizeContentOpen();
         return;
@@ -24485,14 +24534,14 @@
       );
     });
   };
-  const closeS1pFullscreenModalWithSequence = (
+  const closeS1pLayeredModalWithSequence = (
     modal,
     {
       content = null,
       immediate = false,
       contentAnimationMs = 250,
-      backdropAnimationMs = S1P_FULLSCREEN_MODAL_BACKDROP_ANIMATION_MS,
-      fallbackGapMs = S1P_FULLSCREEN_MODAL_ANIMATION_FALLBACK_GAP_MS,
+      backdropAnimationMs = S1P_LAYERED_MODAL_BACKDROP_ANIMATION_MS,
+      fallbackGapMs = S1P_LAYERED_MODAL_ANIMATION_FALLBACK_GAP_MS,
       onRemove = null,
     } = {}
   ) => {
@@ -24501,9 +24550,9 @@
     }
     const contentEl = content instanceof Element ? content : null;
     const safeContentDuration =
-      resolveS1pFullscreenModalAnimationDuration(contentAnimationMs);
+      resolveS1pLayeredModalAnimationDuration(contentAnimationMs);
     const safeBackdropDuration =
-      resolveS1pFullscreenModalAnimationDuration(backdropAnimationMs);
+      resolveS1pLayeredModalAnimationDuration(backdropAnimationMs);
     const safeFallbackGap = Math.max(0, Number(fallbackGapMs) || 0);
     let contentTimer = 0;
     let backdropTimer = 0;
@@ -24556,7 +24605,7 @@
         contentTimer = 0;
       }
       unbindContentAnimationEnd();
-      modal.classList.remove(S1P_FULLSCREEN_MODAL_BACKDROP_OPEN_CLASS);
+      modal.classList.remove(S1P_LAYERED_MODAL_BACKDROP_OPEN_CLASS);
       if (safeBackdropDuration <= 0) {
         removeModal();
         return;
@@ -24568,10 +24617,10 @@
     };
 
     modal.classList.remove(
-      S1P_FULLSCREEN_MODAL_OPENING_CLASS,
-      S1P_FULLSCREEN_MODAL_CONTENT_OPEN_CLASS
+      S1P_LAYERED_MODAL_OPENING_CLASS,
+      S1P_LAYERED_MODAL_CONTENT_OPEN_CLASS
     );
-    modal.classList.add(S1P_FULLSCREEN_MODAL_CLOSING_CLASS);
+    modal.classList.add(S1P_LAYERED_MODAL_CLOSING_CLASS);
 
     if (!contentEl || safeContentDuration <= 0) {
       closeBackdrop();
@@ -24589,6 +24638,68 @@
       safeContentDuration + safeFallbackGap
     );
   };
+  const resolveS1pModalSurfaceContext = (
+    useSettingsSecondaryModal = false
+  ) => {
+    const settingsSecondaryHost = useSettingsSecondaryModal
+      ? document.querySelector(".s1p-modal > .s1p-modal-content")
+      : null;
+    return {
+      host: settingsSecondaryHost || document.body,
+      isSettingsSecondaryModal: Boolean(settingsSecondaryHost),
+    };
+  };
+  const buildS1pModalSurfaceClassName = (surfaceContext, ...classNames) =>
+    surfaceContext?.isSettingsSecondaryModal
+      ? buildSettingsSecondaryModalClassName(...classNames)
+      : buildS1pFullscreenModalClassName(...classNames);
+  const mountS1pModalSurface = (
+    modal,
+    {
+      content = null,
+      surfaceContext = resolveS1pModalSurfaceContext(false),
+      contentAnimationMs = 250,
+      fallbackGapMs = S1P_LAYERED_MODAL_ANIMATION_FALLBACK_GAP_MS,
+      onContentOpened = null,
+    } = {}
+  ) => {
+    if (
+      !(modal instanceof Element) ||
+      !(surfaceContext?.host instanceof Element)
+    ) {
+      return false;
+    }
+    surfaceContext.host.appendChild(modal);
+    runS1pLayeredModalOpenSequence(modal, {
+      content,
+      contentAnimationMs,
+      fallbackGapMs,
+      onContentOpened,
+    });
+    return true;
+  };
+  const closeS1pModalSurface = (
+    modal,
+    {
+      content = null,
+      surfaceContext = resolveS1pModalSurfaceContext(false),
+      immediate = false,
+      contentAnimationMs = 250,
+      backdropAnimationMs = surfaceContext?.isSettingsSecondaryModal
+        ? S1P_SETTINGS_SECONDARY_MODAL_BACKDROP_ANIMATION_MS
+        : S1P_LAYERED_MODAL_BACKDROP_ANIMATION_MS,
+      fallbackGapMs = S1P_LAYERED_MODAL_ANIMATION_FALLBACK_GAP_MS,
+      onRemove = null,
+    } = {}
+  ) =>
+    closeS1pLayeredModalWithSequence(modal, {
+      content,
+      immediate,
+      contentAnimationMs,
+      backdropAnimationMs,
+      fallbackGapMs,
+      onRemove,
+    });
   const hideS1pGenericDisplayPopoverImmediately = () => {
     const popover = document.getElementById("s1p-generic-display-popover");
     if (popover && popover.s1p_api && typeof popover.s1p_api.hide === "function") {
@@ -24748,10 +24859,10 @@
     state.overlay.classList.remove("is-visible");
     state.overlay.classList.remove("is-panel-open");
     state.overlay.classList.remove("is-overlay-open");
-    state.overlay.classList.remove(S1P_FULLSCREEN_MODAL_BACKDROP_OPEN_CLASS);
-    state.overlay.classList.remove(S1P_FULLSCREEN_MODAL_CONTENT_OPEN_CLASS);
-    state.overlay.classList.remove(S1P_FULLSCREEN_MODAL_OPENING_CLASS);
-    state.overlay.classList.remove(S1P_FULLSCREEN_MODAL_CLOSING_CLASS);
+    state.overlay.classList.remove(S1P_LAYERED_MODAL_BACKDROP_OPEN_CLASS);
+    state.overlay.classList.remove(S1P_LAYERED_MODAL_CONTENT_OPEN_CLASS);
+    state.overlay.classList.remove(S1P_LAYERED_MODAL_OPENING_CLASS);
+    state.overlay.classList.remove(S1P_LAYERED_MODAL_CLOSING_CLASS);
     state.overlay.classList.remove("is-nav-visible");
     state.overlay.classList.remove("has-gallery");
     state.overlay.classList.remove("is-switch-loading");
@@ -25808,7 +25919,7 @@
       if (!canContinueS1pImageViewerClosing()) {
         return;
       }
-      latestState.overlay.classList.remove(S1P_FULLSCREEN_MODAL_BACKDROP_OPEN_CLASS);
+      latestState.overlay.classList.remove(S1P_LAYERED_MODAL_BACKDROP_OPEN_CLASS);
       latestState.overlay.classList.remove("is-overlay-open");
       if (closeAnimationDurationMs <= 0) {
         finalizeS1pImageViewerCloseState();
@@ -27718,7 +27829,7 @@
       if (!latestState.isOpen || !latestState.overlay) {
         return;
       }
-      latestState.overlay.classList.add(S1P_FULLSCREEN_MODAL_BACKDROP_OPEN_CLASS);
+      latestState.overlay.classList.add(S1P_LAYERED_MODAL_BACKDROP_OPEN_CLASS);
       latestState.overlay.classList.add("is-overlay-open");
       if (openPanelDelayMs <= 0) {
         latestState.overlay.classList.add("is-panel-open");
@@ -38701,6 +38812,7 @@
         ],
         {
           modalClassName: "s1p-sync-modal",
+          contentSize: "expanded",
           allowBodyHtml: true,
         }
       );
@@ -39730,7 +39842,7 @@
         "is-visible",
         "is-overlay-open",
         "is-panel-open",
-        S1P_FULLSCREEN_MODAL_BACKDROP_OPEN_CLASS
+        S1P_LAYERED_MODAL_BACKDROP_OPEN_CLASS
       );
       viewer.setAttribute("aria-hidden", "true");
     });
@@ -40150,6 +40262,7 @@
             ],
             {
               modalClassName: "s1p-sync-modal",
+              contentSize: "expanded",
               allowBodyHtml: true,
             }
           );
@@ -41063,23 +41176,21 @@
     const {
       allowSubtitleHtml = false,
       onDismiss = null,
-      useSettingsSecondaryGlass = false,
+      useSettingsSecondaryModal = false,
     } = options;
 
     dismissExistingConfirmModal({ reason: "replaced", immediate: true });
+    const surfaceContext = resolveS1pModalSurfaceContext(
+      useSettingsSecondaryModal
+    );
     const modal = document.createElement("div");
-    modal.className = buildS1pFullscreenModalClassName("s1p-confirm-modal");
+    modal.className = buildS1pModalSurfaceClassName(
+      surfaceContext,
+      "s1p-confirm-modal"
+    );
 
     const content = document.createElement("div");
-    content.className = useSettingsSecondaryGlass
-      ? "s1p-confirm-content"
-      : buildFirstLevelGlassClassName(
-        S1P_FIRST_LEVEL_GLASS_CONFIRM_PRESET_CLASS,
-        "s1p-confirm-content"
-      );
-    if (useSettingsSecondaryGlass) {
-      content.classList.add(S1P_SETTINGS_SECONDARY_GLASS_CLASS);
-    }
+    content.className = buildS1pDialogContentClassName(surfaceContext);
 
     const body = document.createElement("div");
     body.className = "s1p-confirm-body";
@@ -41144,9 +41255,9 @@
         settleDismiss(reason);
       }
       closing = true;
-      const confirmContent = modal.querySelector(".s1p-confirm-content");
-      closeS1pFullscreenModalWithSequence(modal, {
-        content: confirmContent,
+      closeS1pModalSurface(modal, {
+        content,
+        surfaceContext,
         immediate,
         contentAnimationMs: 250,
       });
@@ -41171,9 +41282,9 @@
         closeModal({ reason: "overlay_click" });
       }
     });
-    document.body.appendChild(modal);
-    runS1pFullscreenModalOpenSequence(modal, {
+    mountS1pModalSurface(modal, {
       content,
+      surfaceContext,
       contentAnimationMs: 250,
     });
   };
@@ -41193,23 +41304,21 @@
     const {
       allowSubtitleHtml = false,
       onDismiss = null,
-      useSettingsSecondaryGlass = false,
+      useSettingsSecondaryModal = false,
     } = options;
 
     dismissExistingConfirmModal({ reason: "replaced", immediate: true });
+    const surfaceContext = resolveS1pModalSurfaceContext(
+      useSettingsSecondaryModal
+    );
     const modal = document.createElement("div");
-    modal.className = buildS1pFullscreenModalClassName("s1p-confirm-modal");
+    modal.className = buildS1pModalSurfaceClassName(
+      surfaceContext,
+      "s1p-confirm-modal"
+    );
 
     const content = document.createElement("div");
-    content.className = useSettingsSecondaryGlass
-      ? "s1p-confirm-content"
-      : buildFirstLevelGlassClassName(
-        S1P_FIRST_LEVEL_GLASS_CONFIRM_PRESET_CLASS,
-        "s1p-confirm-content"
-      );
-    if (useSettingsSecondaryGlass) {
-      content.classList.add(S1P_SETTINGS_SECONDARY_GLASS_CLASS);
-    }
+    content.className = buildS1pDialogContentClassName(surfaceContext);
 
     const body = document.createElement("div");
     body.className = "s1p-confirm-body";
@@ -41286,9 +41395,9 @@
         settleDismiss(reason);
       }
       closing = true;
-      const content = modal.querySelector(".s1p-confirm-content");
-      closeS1pFullscreenModalWithSequence(modal, {
+      closeS1pModalSurface(modal, {
         content,
+        surfaceContext,
         immediate,
         contentAnimationMs: 250,
       });
@@ -41338,9 +41447,9 @@
         closeModal({ reason: "overlay_click" });
       }
     });
-    document.body.appendChild(modal);
-    runS1pFullscreenModalOpenSequence(modal, {
+    mountS1pModalSurface(modal, {
       content,
+      surfaceContext,
       contentAnimationMs: 250,
     });
   };
@@ -42089,14 +42198,16 @@
       ".s1p-modal > .s1p-modal-content"
     );
     const modalHost = settingsModalContent || document.body;
+    const surfaceContext = {
+      host: modalHost,
+      isSettingsSecondaryModal: true,
+    };
 
     const modal = document.createElement("div");
-    modal.className = [
+    modal.className = buildSettingsSecondaryModalClassName(
       "s1p-token-config-modal",
-      settingsModalContent ? "" : "s1p-token-config-modal--detached",
-    ]
-      .filter(Boolean)
-      .join(" ");
+      settingsModalContent ? "" : S1P_SETTINGS_SECONDARY_MODAL_DETACHED_CLASS
+    );
 
     // 默认过期日期：优先读取已保存的配置
     let defaultDate;
@@ -42116,12 +42227,10 @@
       const day = String(d.getDate()).padStart(2, '0');
       return `${y}-${m}-${day}`;
     };
-    const tokenConfigContentClassName = settingsModalContent
-      ? buildSettingsSecondaryGlassClassName(
-        "s1p-modal-content",
-        "s1p-token-config-content"
-      )
-      : "s1p-modal-content s1p-token-config-content";
+    const tokenConfigContentClassName = buildS1pDialogContentClassName(
+      surfaceContext,
+      "compact"
+    );
 
     modal.innerHTML = `
         <div class="${tokenConfigContentClassName}">
@@ -42154,15 +42263,16 @@
             </div>
         </div>`;
 
-    modalHost.appendChild(modal);
-    const tokenConfigContent = modal.querySelector(".s1p-token-config-content");
+    const tokenConfigContent = modal.querySelector(
+      `.${S1P_DIALOG_CONTENT_CLASS}`
+    );
     const showTokenConfigMessage = (message, isSuccess) => {
       showMessage(message, isSuccess, { container: tokenConfigContent });
     };
-
-    // 动画显示
-    requestAnimationFrame(() => {
-      modal.style.opacity = "1";
+    mountS1pModalSurface(modal, {
+      content: tokenConfigContent,
+      surfaceContext,
+      contentAnimationMs: 250,
     });
 
     let isClosed = false;
@@ -42177,8 +42287,6 @@
       }
       isClosed = true;
       removeEscapeListener();
-      modal.style.opacity = "0";
-      setTimeout(() => modal.remove(), 200);
       if (dp) {
         dp.destroy();
         dp = null;
@@ -42186,6 +42294,11 @@
       if (triggerCancel && onCancel) {
         onCancel();
       }
+      closeS1pModalSurface(modal, {
+        content: tokenConfigContent,
+        surfaceContext,
+        contentAnimationMs: 250,
+      });
     };
     const closeTokenAsCancel = () =>
       closeTokenConfigModal({ triggerCancel: true });
@@ -42536,9 +42649,9 @@
     const showSettingsMessage = (message, isSuccess, options = {}) => {
       showMessage(message, isSuccess, { ...options, container: modalContent });
     };
-    const withSettingsSecondaryGlassOptions = (options = {}) => ({
+    const withSettingsSecondaryModalOptions = (options = {}) => ({
       ...(options || {}),
-      useSettingsSecondaryGlass: true,
+      useSettingsSecondaryModal: true,
     });
     const createSettingsConfirmationModal = (
       title,
@@ -42552,7 +42665,7 @@
         subtitle,
         onConfirm,
         confirmText,
-        withSettingsSecondaryGlassOptions(options)
+        withSettingsSecondaryModalOptions(options)
       );
     const createSettingsInputModal = (
       title,
@@ -42570,7 +42683,7 @@
         onConfirm,
         confirmText,
         placeholder,
-        withSettingsSecondaryGlassOptions(options)
+        withSettingsSecondaryModalOptions(options)
       );
     const runSettingsManualSync = (
       suppressInitialMessage = false,
@@ -42581,7 +42694,7 @@
         options: {
           suppressInitialMessage,
           isInitialSetup,
-          runtime: { useSettingsSecondaryGlass: true },
+          runtime: { useSettingsSecondaryModal: true },
         },
       });
     if (shouldAutoFitModalWidth && requiredWidth > 600) {
@@ -44101,13 +44214,15 @@
     ) => {
       dismissExistingConfirmModal({ reason: "replaced", immediate: true });
 
+      const surfaceContext = resolveS1pModalSurfaceContext(true);
       const modal = document.createElement("div");
-      modal.className = buildS1pFullscreenModalClassName("s1p-confirm-modal");
+      modal.className = buildS1pModalSurfaceClassName(
+        surfaceContext,
+        "s1p-confirm-modal"
+      );
 
       const content = document.createElement("div");
-      content.className = buildSettingsSecondaryGlassClassName(
-        "s1p-confirm-content"
-      );
+      content.className = buildS1pDialogContentClassName(surfaceContext);
 
       const body = document.createElement("div");
       body.className = "s1p-confirm-body";
@@ -44179,8 +44294,9 @@
       const closeModal = ({ immediate = false } = {}) => {
         if (isClosing) return;
         isClosing = true;
-        closeS1pFullscreenModalWithSequence(modal, {
+        closeS1pModalSurface(modal, {
           content,
+          surfaceContext,
           immediate,
           contentAnimationMs: 250,
         });
@@ -44295,9 +44411,9 @@
         }
       });
 
-      document.body.appendChild(modal);
-      runS1pFullscreenModalOpenSequence(modal, {
+      mountS1pModalSurface(modal, {
         content,
+        surfaceContext,
         contentAnimationMs: 250,
       });
       setTimeout(() => {
@@ -46569,7 +46685,7 @@
         resetToAuto: true,
       });
       modal.style.pointerEvents = "none";
-      closeS1pFullscreenModalWithSequence(modal, {
+      closeS1pLayeredModalWithSequence(modal, {
         content: modalContent,
         contentAnimationMs: SETTINGS_MODAL_CLOSE_ANIMATION_MS,
         fallbackGapMs: SETTINGS_MODAL_ANIMATION_FALLBACK_GAP_MS,
@@ -46779,7 +46895,7 @@
       updateObservedModalBodyTabContent();
     }
 
-    runS1pFullscreenModalOpenSequence(modal, {
+    runS1pLayeredModalOpenSequence(modal, {
       content: modalContent,
       contentAnimationMs: SETTINGS_MODAL_OPEN_ANIMATION_MS,
       fallbackGapMs: SETTINGS_MODAL_ANIMATION_FALLBACK_GAP_MS,
@@ -47768,11 +47884,11 @@
       "当前有其他同步任务正在执行，本次手动同步已跳过，请稍后再试。";
     const MANUAL_SYNC_LOCK_LOST_MESSAGE =
       "手动同步锁已失效，本次任务已中止，请重新发起同步。";
-    const useSettingsSecondaryGlass =
-      options?.useSettingsSecondaryGlass === true;
+    const useSettingsSecondaryModal =
+      options?.useSettingsSecondaryModal === true;
     const withManualSyncModalOptions = (modalOptions = {}) => ({
       ...(modalOptions || {}),
-      ...(useSettingsSecondaryGlass ? { useSettingsSecondaryGlass: true } : {}),
+      ...(useSettingsSecondaryModal ? { useSettingsSecondaryModal: true } : {}),
     });
 
     if (manualSyncInFlightPromise) {
@@ -48185,6 +48301,7 @@
               [pullAction, cancelAction],
               withManualSyncModalOptions({
                 modalClassName: "s1p-sync-modal",
+                contentSize: "expanded",
                 onDismiss: () => {
                   resolveManualSync(null);
                 },
@@ -48270,6 +48387,7 @@
               [pushAction, cancelAction],
               withManualSyncModalOptions({
                 modalClassName: "s1p-sync-modal",
+                contentSize: "expanded",
                 allowBodyHtml: true,
                 onDismiss: () => {
                   resolveManualSync(null);
@@ -48693,6 +48811,7 @@
             [pullAction, pushAction, cancelAction],
             withManualSyncModalOptions({
               modalClassName: "s1p-sync-modal",
+              contentSize: "expanded",
               allowBodyHtml: true,
               onDismiss: () => {
                 resolveManualSync(null);
@@ -48782,6 +48901,7 @@
               [forcePushAction, cancelAction],
               withManualSyncModalOptions({
                 modalClassName: "s1p-sync-modal",
+                contentSize: "expanded",
                 allowBodyHtml: true,
                 onDismiss: () => {
                   resolveManualSync(null);
@@ -48838,7 +48958,8 @@
       allowTitleHtml = false,
       allowBodyHtml = false,
       onDismiss = null,
-      useSettingsSecondaryGlass = false,
+      useSettingsSecondaryModal = false,
+      contentSize = "default",
     } = options;
     const renderedTitle = allowTitleHtml
       ? sanitizeAdvancedModalHtml(title)
@@ -48849,8 +48970,14 @@
 
     // [修改] 新弹窗创建前优雅关闭旧弹窗，避免覆盖导致的流程悬挂。
     dismissExistingConfirmModal({ reason: "replaced", immediate: true });
+    const surfaceContext = resolveS1pModalSurfaceContext(
+      useSettingsSecondaryModal
+    );
     const modal = document.createElement("div");
-    modal.className = buildS1pFullscreenModalClassName("s1p-confirm-modal");
+    modal.className = buildS1pModalSurfaceClassName(
+      surfaceContext,
+      "s1p-confirm-modal"
+    );
 
     // [新增] 如果传入了自定义类名，则添加到 modal 元素上
     if (modalClassName) {
@@ -48858,15 +48985,10 @@
     }
 
     const content = document.createElement("div");
-    content.className = useSettingsSecondaryGlass
-      ? "s1p-confirm-content"
-      : buildFirstLevelGlassClassName(
-        S1P_FIRST_LEVEL_GLASS_CONFIRM_PRESET_CLASS,
-        "s1p-confirm-content"
-      );
-    if (useSettingsSecondaryGlass) {
-      content.classList.add(S1P_SETTINGS_SECONDARY_GLASS_CLASS);
-    }
+    content.className = buildS1pDialogContentClassName(
+      surfaceContext,
+      contentSize
+    );
 
     const body = document.createElement("div");
     body.className = "s1p-confirm-body";
@@ -48941,9 +49063,9 @@
         settleDismiss(reason);
       }
       closing = true;
-      const confirmContent = modal.querySelector(".s1p-confirm-content");
-      closeS1pFullscreenModalWithSequence(modal, {
-        content: confirmContent,
+      closeS1pModalSurface(modal, {
+        content,
+        surfaceContext,
         immediate,
         contentAnimationMs: 250,
       });
@@ -48982,9 +49104,9 @@
       });
     });
 
-    document.body.appendChild(modal);
-    runS1pFullscreenModalOpenSequence(modal, {
+    mountS1pModalSurface(modal, {
       content,
+      surfaceContext,
       contentAnimationMs: 250,
     });
   };
@@ -52906,6 +53028,17 @@
     // 移除已存在的弹窗
     document.querySelector(".s1p-reading-progress-modal")?.remove();
 
+    const settingsModalContent = document.querySelector(
+      ".s1p-modal > .s1p-modal-content"
+    );
+    if (!settingsModalContent) {
+      return;
+    }
+    const surfaceContext = {
+      host: settingsModalContent,
+      isSettingsSecondaryModal: true,
+    };
+
     const progress = getReadProgress();
     const totalCount = Object.keys(progress).length;
 
@@ -52919,15 +53052,15 @@
 
     // 创建弹窗
     const modal = document.createElement("div");
-    modal.className = buildS1pFullscreenModalClassName(
+    modal.className = buildSettingsSecondaryModalClassName(
       "s1p-confirm-modal",
       "s1p-reading-progress-modal"
     );
 
     const content = document.createElement("div");
-    content.className = buildSettingsSecondaryGlassClassName(
-      "s1p-confirm-content",
-      "s1p-reading-progress-content"
+    content.className = buildS1pDialogContentClassName(
+      surfaceContext,
+      "wide"
     );
 
     const closeIcon = createModalCloseButton({
@@ -53029,7 +53162,7 @@
               },
             },
           ],
-          { allowBodyHtml: true, useSettingsSecondaryGlass: true }
+          { allowBodyHtml: true, useSettingsSecondaryModal: true }
         );
       });
       actionCell.appendChild(deleteBtn);
@@ -53050,8 +53183,9 @@
       }
       isClosing = true;
       clearReadingProgressModalEscHandler();
-      closeS1pFullscreenModalWithSequence(modal, {
+      closeS1pModalSurface(modal, {
         content,
+        surfaceContext,
         contentAnimationMs: 250,
       });
     };
@@ -53074,9 +53208,9 @@
       closeBtn.addEventListener("click", closeModal);
     }
 
-    document.body.appendChild(modal);
-    runS1pFullscreenModalOpenSequence(modal, {
+    mountS1pModalSurface(modal, {
       content,
+      surfaceContext,
       contentAnimationMs: 250,
     });
   };
