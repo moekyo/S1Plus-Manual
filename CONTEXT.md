@@ -1,6 +1,6 @@
-# S1 Plus — Sync & Status Display
+# S1 Plus — Sync, Status & Reading Progress
 
-Sync execution and status display for the S1 Plus Tampermonkey userscript. Covers how sync runs, how state is displayed across tabs, and how ownership transfers between tabs on close.
+Sync execution, status display, and confirmed reading progress for the S1 Plus Tampermonkey userscript. Covers how sync runs, how state is displayed across tabs, how ownership transfers between tabs on close, and when a thread visit is allowed to advance reading progress.
 
 ## Language
 
@@ -31,6 +31,14 @@ _Avoid_: timer owner, debounce owner
 **Pending Dirty**:
 Local changes (primarily read progress updates) that have been recorded but not yet pushed to the remote Gist. Stored in `s1p_pending_auto_sync_request` and the shared debounce state.
 _Avoid_: unsaved changes, local delta
+
+**Read Progress**:
+The per-thread record of the furthest page and floor the reader has confirmed. It advances monotonically so an older observation cannot move a thread backward.
+_Avoid_: scroll position, last seen post
+
+**Reading Progress Session**:
+The bounded visit to one thread page in which visible posts and foreground reader activity may confirm an advance to Read Progress. A passively opened or hidden-starting visit remains unconfirmed until it reaches the foreground.
+_Avoid_: tracker state, observer session
 
 **Result Phase**:
 A completed sync outcome — success, failure, or conflict — that was explicitly committed by a resolved-state writer such as `finishAutoSyncIndicatorCycle` or `setAutoSyncIndicatorResolvedPhase`. Result phases are safe to display across tabs because they describe an already-completed action, not an in-progress one.
