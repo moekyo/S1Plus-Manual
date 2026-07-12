@@ -10736,17 +10736,17 @@
     }
     const currentThreadId =
       typeof getCurrentThreadId === "function" ? getCurrentThreadId() : "";
+    const readingProgressContext =
+      s1pReadingProgressSession.readState().context;
     return (
       normalizeNumericId(currentThreadId) ||
-      normalizeNumericId(readProgressContext?.threadId) ||
+      normalizeNumericId(readingProgressContext?.threadId) ||
       ""
     );
   };
 
   const getSyncDiagnosticsReadProgressGuardState = () =>
-    typeof getReadProgressProbeGuardState === "function"
-      ? getReadProgressProbeGuardState()
-      : null;
+    s1pReadingProgressSession.readState().guard;
 
   const mergeSyncDiagnosticsContext = (current, options = {}) => {
     const cleanupInfo = Object.prototype.hasOwnProperty.call(
@@ -15696,14 +15696,19 @@
   };
 
   const getCurrentForegroundFollowUpThreadContext = () => {
+    const readingProgressContext =
+      s1pReadingProgressSession.readState().context;
     const currentThreadId =
       normalizeNumericId(
-        readProgressContext?.threadId ||
+        readingProgressContext?.threadId ||
           (typeof getCurrentThreadId === "function" ? getCurrentThreadId() : "")
       ) || "";
     let currentPage = "";
-    if (readProgressContext && readProgressContext.threadId === currentThreadId) {
-      currentPage = String(readProgressContext.currentPage || "").trim();
+    if (
+      readingProgressContext &&
+      readingProgressContext.threadId === currentThreadId
+    ) {
+      currentPage = String(readingProgressContext.currentPage || "").trim();
     }
     if (!currentPage) {
       const currentHref = String(window.location?.href || "");
@@ -15724,9 +15729,7 @@
   const getForegroundFollowUpSoftBlockBoundary = () => {
     const threadContext = getCurrentForegroundFollowUpThreadContext();
     const readProgressGuard =
-      typeof getReadProgressProbeGuardState === "function"
-        ? getReadProgressProbeGuardState()
-        : null;
+      s1pReadingProgressSession.readState().guard;
     const lastPersistedThreadId =
       normalizeNumericId(readProgressGuard?.lastPersistedProvenance?.threadId) || "";
     const shouldUseThreadScope = Boolean(
@@ -15880,9 +15883,7 @@
     const readProgressGuard = cloneForegroundFollowUpReadProgressGuardState(
       readProgressGuardState && typeof readProgressGuardState === "object"
         ? readProgressGuardState
-        : typeof getReadProgressProbeGuardState === "function"
-          ? getReadProgressProbeGuardState()
-          : null
+        : s1pReadingProgressSession.readState().guard
     );
     if (!readProgressGuard) {
       return null;
@@ -20731,6 +20732,8 @@
     lastModified = null,
     threadId = null,
   } = {}) => {
+    const readingProgressContext =
+      s1pReadingProgressSession.readState().context;
     return pendingDirtyScheduler.queue({
       source,
       lastModified:
@@ -20740,7 +20743,7 @@
       threadId:
         threadId ||
         (typeof getCurrentThreadId === "function" && getCurrentThreadId()) ||
-        readProgressContext?.threadId ||
+        readingProgressContext?.threadId ||
         "",
     });
   };
@@ -20752,6 +20755,8 @@
   ) => {
     const currentLastModified = GM_getValue(LAST_LOCAL_MODIFIED_KEY, 0);
     const nextLastModified = Math.max(Date.now(), currentLastModified + 1);
+    const readingProgressContext =
+      s1pReadingProgressSession.readState().context;
     recordLastLocalDirtyProvenance({
       source,
       lastModified: nextLastModified,
@@ -20759,33 +20764,21 @@
       tabId: SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID,
       threadId:
         (typeof getCurrentThreadId === "function" && getCurrentThreadId()) ||
-        readProgressContext?.threadId ||
+        readingProgressContext?.threadId ||
         "",
     });
     const recordReadProgressLastModifiedDebug = (phase) => {
       if (source !== "read_progress") {
         return;
       }
-      const eventTimestamp = Date.now();
-      recordReadProgressDebugEvent("rp_last_modified", {
-        detail: `phase=${phase}, triggerSync=${triggerSync ? "yes" : "no"}, pendingReason=${triggerSync ? "read_progress" : "timestamp_only"}`,
-        timestamp: eventTimestamp,
-        threadId: readProgressContext?.threadId || "",
-        hadConfirmedVisiblePost:
-          readProgressTrackingState?.hasConfirmedVisiblePost === true,
-        startupSummaryPatch: buildReadProgressStartupSummaryPatch(
-          {
-            lastModifiedTriggered: true,
-            lastModifiedAt: eventTimestamp,
-            updatedAt: eventTimestamp,
-          },
-          { eventType: "rp_last_modified" }
-        ),
+      s1pReadingProgressSession.recordLocalMutation({
+        phase,
+        triggerSync,
       });
     };
     const currentThreadIdForDirty =
       (typeof getCurrentThreadId === "function" && getCurrentThreadId()) ||
-      readProgressContext?.threadId ||
+      readingProgressContext?.threadId ||
       "";
     // 如果初始同步正在进行，不直接丢弃信号，改为记录 dirty 标记并在同步后补跑。
     if (isInitialSyncInProgress) {
@@ -23862,70 +23855,12 @@
     };
   };
 
-  const updateThreadProgress = (
-    threadId,
-    postId,
-    page,
-    lastReadFloor,
-    provenanceOptions = {}
-  ) => {
-    if (!postId || !page || !lastReadFloor) return;
-
-    const nextPageNumber = parseInt(page, 10);
-    const nextFloorNumber = parseInt(lastReadFloor, 10);
-    if (
-      !Number.isFinite(nextPageNumber) ||
-      nextPageNumber <= 0 ||
-      !Number.isFinite(nextFloorNumber) ||
-      nextFloorNumber <= 0
-    ) {
-      return;
-    }
-
-    const pendingProgress = pendingThreadProgressWrites[threadId] || null;
-    const currentProgress = pendingProgress || getReadProgress()[threadId];
-    if (
-      !shouldAdvanceThreadProgress(currentProgress, nextPageNumber, nextFloorNumber)
-    ) {
-      recordReadProgressTrackingDebugEvent(
-        "rp_queue_skipped_not_newer",
-        `page=${nextPageNumber}, floor=${nextFloorNumber}`
-      );
-      return;
-    }
-
-    const createdAt = Date.now();
-    pendingThreadProgressWrites[threadId] = {
-      postId: String(postId),
-      page: String(nextPageNumber),
-      timestamp: createdAt,
-      lastReadFloor: String(nextFloorNumber),
-      provenance: buildReadProgressProvenance(String(threadId), String(nextPageNumber), {
-        ...provenanceOptions,
-        createdAt,
-      }),
-    };
-    recordReadProgressTrackingDebugEvent(
-      "rp_queue_write",
-      `page=${nextPageNumber}, floor=${nextFloorNumber}, reason=${pendingThreadProgressWrites[threadId].provenance?.saveReason || "unknown"}`,
-      {
-        startupSummaryPatch: {
-          queuedWrite: true,
-          queuedWriteAt: createdAt,
-        },
-      }
-    );
-    schedulePendingThreadProgressPersist();
-  };
-
   // 删除单个帖子阅读记录（用于列表页悬停删除入口）
   const deleteThreadReadProgress = async (threadId) => {
     const normalizedThreadId = normalizeNumericId(threadId);
     if (!normalizedThreadId) return false;
 
-    if (Object.prototype.hasOwnProperty.call(pendingThreadProgressWrites, normalizedThreadId)) {
-      delete pendingThreadProgressWrites[normalizedThreadId];
-    }
+    s1pReadingProgressSession.discard(normalizedThreadId);
 
     const progress = getReadProgress();
     if (!Object.prototype.hasOwnProperty.call(progress, normalizedThreadId)) {
@@ -28564,7 +28499,7 @@
       invalidateLocalDataHashCache();
 
       // [S1P-FIX-A] 导入前重置观察器和绑定标记，避免导入后阅读进度跟踪中断。
-      resetReadProgressObserver({ clearObservedMarkers: true });
+      s1pReadingProgressSession.reset({ clearObservedMarkers: true });
       console.log("S1 Plus: 已在导入数据前重置阅读进度观察器。");
 
       const imported = JSON.parse(jsonStr);
@@ -28966,7 +28901,7 @@
     } catch (e) {
       return { success: false, message: `导入失败: ${e.message}` };
     } finally {
-      trackReadProgressInThread();
+      s1pReadingProgressSession.attach();
     }
   };
 
@@ -34886,7 +34821,7 @@
         settings.enableGeneralSettings === true &&
         settings.enableReadProgress === true
       ) {
-        trackReadProgressInThread();
+        s1pReadingProgressSession.attach();
       }
     }
     if (hasSettingPathInChangedSet(changedPathSet, "hideSystemBlockedPosts")) {
@@ -34980,7 +34915,7 @@
       if (isThreadListPage()) {
         scheduleProgressJumpButtonsRefresh();
       } else if (document.querySelector('table[id^="pid"]')) {
-        trackReadProgressInThread();
+        s1pReadingProgressSession.attach();
         if (settings.showReadIndicator) {
           const currentThreadId = getCurrentThreadId();
           if (currentThreadId) {
@@ -47062,11 +46997,11 @@
             renderGeneralSettingsTab();
             if (isChecked) {
               addProgressJumpButtons();
-              trackReadProgressInThread();
+              s1pReadingProgressSession.attach();
             } else {
               removeProgressJumpButtons();
               updateReadIndicatorUI(null);
-              resetReadProgressObserver({
+              s1pReadingProgressSession.reset({
                 clearObservedMarkers: true,
                 flushPendingProgress: true,
               });
@@ -50477,112 +50412,38 @@
 
   let readIndicatorElement = null;
   let currentIndicatorParent = null;
-  let pageObserver = null;
-  let readProgressVisiblePosts = new Map();
-  let readProgressLastVisibleRecord = null;
-  let readProgressFirstPostId = null;
-  let readProgressSaveTimeout = null;
-  let readProgressPersistTimeout = null;
-  let pendingThreadProgressWrites = {};
-  let readProgressContext = null;
-  let readProgressSaveDueAt = 0;
-  const READ_PROGRESS_STAGE_OBSERVER_READY = "observer_initialized";
-  const READ_PROGRESS_STAGE_CANDIDATE_PENDING = "candidate_pending";
-  const READ_PROGRESS_STAGE_READING_CONFIRMED = "reading_confirmed";
-  const READ_PROGRESS_SAVE_REASON_VISIBLE_STABLE = "visible_stable";
-  const READ_PROGRESS_SAVE_REASON_USER_INTERACTION = "user_interaction";
-  const READ_PROGRESS_SAVE_REASON_VISIBILITY_HIDDEN_FLUSH =
-    "visibility_hidden_flush";
-  const READ_PROGRESS_SAVE_REASON_PAGEHIDE_FLUSH = "pagehide_flush";
-  const READ_PROGRESS_SAVE_REASON_BEFOREUNLOAD_FLUSH =
-    "beforeunload_flush";
-  const createReadProgressTrackingState = () => {
-    const now = Date.now();
-    return {
-      stage: READ_PROGRESS_STAGE_OBSERVER_READY,
-      startedAt: now,
-      startupSummarySessionKey: "",
-      visibleSince: document.visibilityState === "visible" ? now : 0,
-      initiatedWhileHidden: document.visibilityState !== "visible",
-      passiveBackgroundOpened: false,
-      backgroundOpenSessionId: "",
-      firstCandidateAt: 0,
-      hasConfirmedVisiblePost: false,
-      hasConfirmedReading: false,
-      confirmationReason: "",
-      confirmedAt: 0,
-      lastInteractionAt: 0,
-      lastInteractionType: "",
-      pendingSaveReason: "",
-      pendingSaveScheduledAt: 0,
-      pendingPersistDueAt: 0,
-      lastPersistedAt: 0,
-      lastPersistedProvenance: null,
-      lastPersistedWasInitializationNoise: false,
-    };
-  };
-  let readProgressTrackingState = createReadProgressTrackingState();
-  const resetReadProgressTrackingState = () => {
-    readProgressTrackingState = createReadProgressTrackingState();
-    readProgressSaveDueAt = 0;
-  };
-  const clearReadProgressSaveTimer = () => {
-    if (readProgressSaveTimeout) {
-      clearTimeout(readProgressSaveTimeout);
-      readProgressSaveTimeout = null;
+
+  let currentLoggedInUid = null; // [新增] 缓存当前登录用户的UID
+  /**
+   * [新增 & 修正] 获取当前登录用户的UID
+   * (根据用户提供的HTML片段修正了选择器和正则表达式)
+   * @returns {string|null} 当前登录用户的UID，如果未找到则返回null
+   */
+  const getCurrentLoggedInUid = () => {
+    if (currentLoggedInUid) {
+      return currentLoggedInUid;
     }
-    readProgressSaveDueAt = 0;
-    if (readProgressTrackingState) {
-      readProgressTrackingState.pendingSaveReason = "";
-      readProgressTrackingState.pendingSaveScheduledAt = 0;
+
+    // 方案 1: 查找 #um strong.vwmy a (来自用户截图)
+    // <strong class="vwmy"><a href="space-uid-425635.html" ...>moekyo</a></strong>
+    let userSpaceLink = document.querySelector(
+      '#um strong.vwmy a[href*="space-uid-"]'
+    );
+    if (userSpaceLink) {
+      const match = userSpaceLink.href.match(/space-uid-(\d+)/);
+      if (match && match[1]) {
+        currentLoggedInUid = match[1];
+        // console.log("S1 Plus: 当前登录用户 UID (vwmy) ->", currentLoggedInUid);
+        return currentLoggedInUid;
+      }
     }
+
+    console.warn(
+      "S1 Plus: 无法确定当前登录用户的 UID。屏蔽/标记按钮可能也会显示在自己的帖子上。"
+    );
+    return null;
   };
-  const clearReadProgressPersistTimer = () => {
-    if (readProgressPersistTimeout) {
-      clearTimeout(readProgressPersistTimeout);
-      readProgressPersistTimeout = null;
-    }
-    if (readProgressTrackingState) {
-      readProgressTrackingState.pendingPersistDueAt = 0;
-    }
-  };
-  const getReadProgressProbeGuardState = () => {
-    const now = Date.now();
-    const pendingWriteCount = Object.keys(pendingThreadProgressWrites).length;
-    return {
-      stage:
-        readProgressTrackingState?.stage || READ_PROGRESS_STAGE_OBSERVER_READY,
-      hasPendingWrite: Boolean(
-        readProgressSaveTimeout ||
-          readProgressPersistTimeout ||
-          pendingWriteCount > 0
-      ),
-      hasPendingSaveTimer: Boolean(readProgressSaveTimeout),
-      pendingSaveDueAt: readProgressSaveDueAt,
-      pendingSaveReason: readProgressTrackingState?.pendingSaveReason || "",
-      pendingSaveScheduledAt:
-        Number(readProgressTrackingState?.pendingSaveScheduledAt) || 0,
-      hasPendingPersist: Boolean(readProgressPersistTimeout || pendingWriteCount > 0),
-      pendingPersistDueAt: Number(readProgressTrackingState?.pendingPersistDueAt) || 0,
-      isInSyncDebounceWindow: readProgressSyncDebounceDueAt > now,
-      syncDebounceDueAt: readProgressSyncDebounceDueAt,
-      syncDebounceReason: readProgressSyncDebounceReason || "",
-      hasConfirmedVisiblePost:
-        readProgressTrackingState?.hasConfirmedVisiblePost === true,
-      hasConfirmedReading: readProgressTrackingState?.hasConfirmedReading === true,
-      initiatedWhileHidden: readProgressTrackingState?.initiatedWhileHidden === true,
-      passiveBackgroundOpened:
-        readProgressTrackingState?.passiveBackgroundOpened === true,
-      lastPersistedAt: Number(readProgressTrackingState?.lastPersistedAt) || 0,
-      lastPersistWasInitializationNoise:
-        readProgressTrackingState?.lastPersistedWasInitializationNoise === true,
-      lastPersistedProvenance: isObjectRecord(
-        readProgressTrackingState?.lastPersistedProvenance
-      )
-        ? { ...readProgressTrackingState.lastPersistedProvenance }
-        : null,
-    };
-  };
+
   const logReadProgressParseDebug = (message, details = null) => {
     if (!READ_PROGRESS_PARSE_DEBUG) return;
     if (details) {
@@ -50591,134 +50452,12 @@
     }
     console.debug(`S1 Plus (ReadProgress): ${message}`);
   };
-  const formatReadProgressDebugCandidateRecord = (record) =>
-    isValidReadProgressRecord(record)
-      ? `${record.postId}@${record.floor}`
-      : "none";
-  const buildReadProgressStartupSummarySessionKey = ({
-    threadId = "",
-    page = "",
-  } = {}) => {
-    const normalizedTabId =
-      normalizeSyncDiagnosticText(SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID, 80) ||
-      "tab";
-    const normalizedThreadId =
-      normalizeNumericId(threadId || readProgressContext?.threadId) || "no_thread";
-    const normalizedPage =
-      normalizeSyncDiagnosticText(page || readProgressContext?.currentPage, 24) ||
-      "no_page";
-    const startedAt = Math.max(
-      0,
-      Math.floor(Number(readProgressTrackingState?.startedAt) || 0)
-    );
-    return startedAt
-      ? `${normalizedTabId}:${normalizedThreadId}:${normalizedPage}:${startedAt}`
-      : "";
-  };
-  const buildReadProgressStartupSummaryPatch = (
-    patch = {},
-    { eventType = "" } = {}
-  ) => {
-    const source = sanitizeRecordObject(patch);
-    const sessionKey =
-      normalizeSyncDiagnosticText(source.sessionKey, 180) ||
-      normalizeSyncDiagnosticText(
-        readProgressTrackingState?.startupSummarySessionKey,
-        180
-      ) ||
-      buildReadProgressStartupSummarySessionKey({
-        threadId: source.threadId,
-        page: source.page,
-      });
-    if (!sessionKey) {
-      return null;
-    }
-    return {
-      ...source,
-      sessionKey,
-      tabId:
-        normalizeSyncDiagnosticText(source.tabId, 80) ||
-        normalizeSyncDiagnosticText(SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID, 80),
-      threadId:
-        normalizeNumericId(source.threadId) ||
-        normalizeNumericId(readProgressContext?.threadId) ||
-        "",
-      page:
-        normalizeSyncDiagnosticText(source.page, 24) ||
-        normalizeSyncDiagnosticText(readProgressContext?.currentPage, 24) ||
-        "",
-      startedAt: Math.max(
-        0,
-        Math.floor(
-          Number(source.startedAt) ||
-            Number(readProgressTrackingState?.startedAt) ||
-            0
-        )
-      ),
-      updatedAt: Math.max(
-        0,
-        Math.floor(Number(source.updatedAt) || Date.now())
-      ),
-      initiatedWhileHidden:
-        source.initiatedWhileHidden === true ||
-        readProgressTrackingState?.initiatedWhileHidden === true,
-      passiveBackgroundOpened:
-        source.passiveBackgroundOpened === true ||
-        readProgressTrackingState?.passiveBackgroundOpened === true,
-      lastEventType:
-        normalizeSyncDiagnosticText(source.lastEventType, 80) ||
-        normalizeSyncDiagnosticText(eventType, 80),
-    };
-  };
-  const recordReadProgressTrackingDebugEvent = (
-    eventType,
-    detail = "",
-    options = {}
-  ) => {
-    const stage = readProgressTrackingState?.stage || READ_PROGRESS_STAGE_OBSERVER_READY;
-    const initHidden = readProgressTrackingState?.initiatedWhileHidden === true
-      ? "yes"
-      : "no";
-    const passiveBackground =
-      readProgressTrackingState?.passiveBackgroundOpened === true ? "yes" : "no";
-    const normalizedDetail = String(detail || "").trim();
-    const detailParts = normalizedDetail ? [normalizedDetail] : [];
-    detailParts.push(`stage=${stage}`);
-    detailParts.push(`initHidden=${initHidden}`);
-    detailParts.push(`passiveBg=${passiveBackground}`);
-    const startupSummaryPatch = Object.prototype.hasOwnProperty.call(
-      options,
-      "startupSummaryPatch"
-    )
-      ? buildReadProgressStartupSummaryPatch(options.startupSummaryPatch, {
-          eventType,
-        })
-      : null;
-    recordReadProgressDebugEvent(eventType, {
-      ...options,
-      threadId: options.threadId || readProgressContext?.threadId || "",
-      startupSummaryPatch,
-      hadConfirmedVisiblePost:
-        Object.prototype.hasOwnProperty.call(
-          options,
-          "hadConfirmedVisiblePost"
-        )
-          ? options.hadConfirmedVisiblePost
-          : readProgressTrackingState?.hasConfirmedVisiblePost === true,
-      detail: detailParts.join(", "),
-    });
-  };
   const getPostIdFromPostTable = (postTable) => {
     if (!(postTable instanceof Element) || !postTable.id) {
       return null;
     }
     const postIdMatch = postTable.id.match(/^pid(\d+)$/);
     return postIdMatch && postIdMatch[1] ? postIdMatch[1] : null;
-  };
-  const refreshReadProgressFirstPostId = () => {
-    const firstPostTable = document.querySelector('#postlist table[id^="pid"]');
-    readProgressFirstPostId = getPostIdFromPostTable(firstPostTable);
-    return readProgressFirstPostId;
   };
   const parsePostFloorFromTable = (
     postTable,
@@ -50755,7 +50494,10 @@
     }
 
     const fallbackFirstPostId =
-      String(firstPostIdHint || "").trim() || refreshReadProgressFirstPostId();
+      String(firstPostIdHint || "").trim() ||
+      getPostIdFromPostTable(
+        document.querySelector('#postlist table[id^="pid"]')
+      );
     if (fallbackFirstPostId && postId && fallbackFirstPostId === postId) {
       logReadProgressParseDebug("主楼楼层解析失败，已兜底为 1 楼。", {
         postId,
@@ -50795,292 +50537,575 @@
         Number.isFinite(record.floor) &&
         record.floor > 0
     );
-  const markReadProgressVisibleRecord = (record) => {
-    if (!isValidReadProgressRecord(record)) {
-      return;
-    }
-    const isFirstCandidate = !readProgressTrackingState.firstCandidateAt;
-    if (isFirstCandidate) {
-      readProgressTrackingState.firstCandidateAt = Date.now();
-    }
-    readProgressTrackingState.hasConfirmedVisiblePost = true;
-    if (!readProgressTrackingState.hasConfirmedReading) {
-      readProgressTrackingState.stage = READ_PROGRESS_STAGE_CANDIDATE_PENDING;
-    }
-    if (isFirstCandidate) {
-      recordReadProgressTrackingDebugEvent(
-        "rp_candidate_visible",
-        `candidate=${formatReadProgressDebugCandidateRecord(record)}`,
-        {
-          startupSummaryPatch: {
-            firstVisibleCandidate: formatReadProgressDebugCandidateRecord(record),
-            firstVisibleCandidateAt:
-              Number(readProgressTrackingState.firstCandidateAt) || Date.now(),
-          },
-        }
-      );
-    }
-  };
-  const resolveReadProgressCandidateRecord = () => {
-    let maxFloor = 0;
-    let finalPostId = null;
-    readProgressVisiblePosts.forEach((floor, postId) => {
-      if (floor > maxFloor) {
-        maxFloor = floor;
-        finalPostId = postId;
-      }
-    });
+  const formatReadProgressDebugCandidateRecord = (record) =>
+    isValidReadProgressRecord(record)
+      ? `${record.postId}@${record.floor}`
+      : "none";
 
-    if (finalPostId && maxFloor > 0) {
-      return { postId: finalPostId, floor: maxFloor };
-    }
-
-    if (isValidReadProgressRecord(readProgressLastVisibleRecord)) {
+  const s1pReadingProgressSession = (() => {
+    let pageObserver = null;
+    let readProgressVisiblePosts = new Map();
+    let readProgressLastVisibleRecord = null;
+    let readProgressFirstPostId = null;
+    let readProgressSaveTimeout = null;
+    let readProgressPersistTimeout = null;
+    let pendingThreadProgressWrites = {};
+    let readProgressContext = null;
+    let readProgressSaveDueAt = 0;
+    const READ_PROGRESS_STAGE_OBSERVER_READY = "observer_initialized";
+    const READ_PROGRESS_STAGE_CANDIDATE_PENDING = "candidate_pending";
+    const READ_PROGRESS_STAGE_READING_CONFIRMED = "reading_confirmed";
+    const READ_PROGRESS_SAVE_REASON_VISIBLE_STABLE = "visible_stable";
+    const READ_PROGRESS_SAVE_REASON_USER_INTERACTION = "user_interaction";
+    const READ_PROGRESS_SAVE_REASON_VISIBILITY_HIDDEN_FLUSH =
+      "visibility_hidden_flush";
+    const READ_PROGRESS_SAVE_REASON_PAGEHIDE_FLUSH = "pagehide_flush";
+    const READ_PROGRESS_SAVE_REASON_BEFOREUNLOAD_FLUSH =
+      "beforeunload_flush";
+    const createReadProgressTrackingState = () => {
+      const now = Date.now();
       return {
-        postId: readProgressLastVisibleRecord.postId,
-        floor: readProgressLastVisibleRecord.floor,
+        stage: READ_PROGRESS_STAGE_OBSERVER_READY,
+        startedAt: now,
+        startupSummarySessionKey: "",
+        visibleSince: document.visibilityState === "visible" ? now : 0,
+        initiatedWhileHidden: document.visibilityState !== "visible",
+        passiveBackgroundOpened: false,
+        backgroundOpenSessionId: "",
+        firstCandidateAt: 0,
+        hasConfirmedVisiblePost: false,
+        hasConfirmedReading: false,
+        confirmationReason: "",
+        confirmedAt: 0,
+        lastInteractionAt: 0,
+        lastInteractionType: "",
+        pendingSaveReason: "",
+        pendingSaveScheduledAt: 0,
+        pendingPersistDueAt: 0,
+        lastPersistedAt: 0,
+        lastPersistedProvenance: null,
+        lastPersistedWasInitializationNoise: false,
       };
-    }
-    return null;
-  };
-  const flushPendingThreadProgressWrites = ({ suppressSyncTrigger = false } = {}) => {
-    clearReadProgressPersistTimer();
-
-    const pendingThreadIds = Object.keys(pendingThreadProgressWrites);
-    if (pendingThreadIds.length === 0) {
-      return false;
-    }
-
-    const progress = { ...getReadProgress() };
-    let hasChanges = false;
-    let appliedWriteCount = 0;
-    let lastPersistedProvenance = null;
-
-    pendingThreadIds.forEach((threadId) => {
-      const pendingRecord = pendingThreadProgressWrites[threadId];
-      if (!pendingRecord) return;
-
-      const pendingPageNumber = parseInt(pendingRecord.page, 10);
-      const pendingFloorNumber = parseInt(pendingRecord.lastReadFloor, 10);
-      if (
-        !Number.isFinite(pendingPageNumber) ||
-        pendingPageNumber <= 0 ||
-        !Number.isFinite(pendingFloorNumber) ||
-        pendingFloorNumber <= 0
-      ) {
-        return;
+    };
+    let readProgressTrackingState = createReadProgressTrackingState();
+    const resetReadProgressTrackingState = () => {
+      readProgressTrackingState = createReadProgressTrackingState();
+      readProgressSaveDueAt = 0;
+    };
+    const clearReadProgressSaveTimer = () => {
+      if (readProgressSaveTimeout) {
+        clearTimeout(readProgressSaveTimeout);
+        readProgressSaveTimeout = null;
       }
-
-      const currentProgress = progress[threadId];
-      if (
-        !shouldAdvanceThreadProgress(
-          currentProgress,
-          pendingPageNumber,
-          pendingFloorNumber
-        )
-      ) {
-        return;
-      }
-
-      progress[threadId] = pendingRecord;
-      hasChanges = true;
-      appliedWriteCount += 1;
-      lastPersistedProvenance = isObjectRecord(pendingRecord.provenance)
-        ? { ...pendingRecord.provenance }
-        : null;
-    });
-
-    pendingThreadProgressWrites = {};
-
-    if (hasChanges) {
-      recordReadProgressTrackingDebugEvent(
-        "rp_persist_flush",
-        `writes=${appliedWriteCount}, suppressSync=${suppressSyncTrigger ? "yes" : "no"}, provenance=${lastPersistedProvenance?.saveReason || "unknown"}`
-      );
-      saveReadProgress(progress, suppressSyncTrigger);
+      readProgressSaveDueAt = 0;
       if (readProgressTrackingState) {
-        readProgressTrackingState.lastPersistedAt = Date.now();
-        readProgressTrackingState.lastPersistedProvenance = lastPersistedProvenance;
-        readProgressTrackingState.lastPersistedWasInitializationNoise =
-          lastPersistedProvenance?.saveKind === "initialization_noise";
+        readProgressTrackingState.pendingSaveReason = "";
+        readProgressTrackingState.pendingSaveScheduledAt = 0;
       }
-      return true;
-    }
-    return false;
-  };
-  const schedulePendingThreadProgressPersist = () => {
-    if (readProgressPersistTimeout) return;
-    if (readProgressTrackingState) {
-      readProgressTrackingState.pendingPersistDueAt =
-        Date.now() + READ_PROGRESS_PERSIST_DEBOUNCE_MS;
-    }
-    recordReadProgressTrackingDebugEvent(
-      "rp_persist_scheduled",
-      `dueIn=${READ_PROGRESS_PERSIST_DEBOUNCE_MS}ms`
-    );
-    readProgressPersistTimeout = setTimeout(() => {
-      readProgressPersistTimeout = null;
+    };
+    const clearReadProgressPersistTimer = () => {
+      if (readProgressPersistTimeout) {
+        clearTimeout(readProgressPersistTimeout);
+        readProgressPersistTimeout = null;
+      }
       if (readProgressTrackingState) {
         readProgressTrackingState.pendingPersistDueAt = 0;
       }
-      flushPendingThreadProgressWrites();
-    }, READ_PROGRESS_PERSIST_DEBOUNCE_MS);
-  };
-  const isReadProgressInteractionTarget = (target) =>
-    target instanceof Element &&
-    Boolean(
-      target.closest(
-        "input, textarea, select, [contenteditable=''], [contenteditable='true']"
+    };
+    const getReadProgressProbeGuardState = () => {
+      const now = Date.now();
+      const pendingWriteCount = Object.keys(pendingThreadProgressWrites).length;
+      return {
+        stage:
+          readProgressTrackingState?.stage || READ_PROGRESS_STAGE_OBSERVER_READY,
+        hasPendingWrite: Boolean(
+          readProgressSaveTimeout ||
+            readProgressPersistTimeout ||
+            pendingWriteCount > 0
+        ),
+        hasPendingSaveTimer: Boolean(readProgressSaveTimeout),
+        pendingSaveDueAt: readProgressSaveDueAt,
+        pendingSaveReason: readProgressTrackingState?.pendingSaveReason || "",
+        pendingSaveScheduledAt:
+          Number(readProgressTrackingState?.pendingSaveScheduledAt) || 0,
+        hasPendingPersist: Boolean(readProgressPersistTimeout || pendingWriteCount > 0),
+        pendingPersistDueAt: Number(readProgressTrackingState?.pendingPersistDueAt) || 0,
+        isInSyncDebounceWindow: readProgressSyncDebounceDueAt > now,
+        syncDebounceDueAt: readProgressSyncDebounceDueAt,
+        syncDebounceReason: readProgressSyncDebounceReason || "",
+        hasConfirmedVisiblePost:
+          readProgressTrackingState?.hasConfirmedVisiblePost === true,
+        hasConfirmedReading: readProgressTrackingState?.hasConfirmedReading === true,
+        initiatedWhileHidden: readProgressTrackingState?.initiatedWhileHidden === true,
+        passiveBackgroundOpened:
+          readProgressTrackingState?.passiveBackgroundOpened === true,
+        lastPersistedAt: Number(readProgressTrackingState?.lastPersistedAt) || 0,
+        lastPersistWasInitializationNoise:
+          readProgressTrackingState?.lastPersistedWasInitializationNoise === true,
+        lastPersistedProvenance: isObjectRecord(
+          readProgressTrackingState?.lastPersistedProvenance
+        )
+          ? { ...readProgressTrackingState.lastPersistedProvenance }
+          : null,
+      };
+    };
+    const buildReadProgressStartupSummarySessionKey = ({
+      threadId = "",
+      page = "",
+    } = {}) => {
+      const normalizedTabId =
+        normalizeSyncDiagnosticText(SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID, 80) ||
+        "tab";
+      const normalizedThreadId =
+        normalizeNumericId(threadId || readProgressContext?.threadId) || "no_thread";
+      const normalizedPage =
+        normalizeSyncDiagnosticText(page || readProgressContext?.currentPage, 24) ||
+        "no_page";
+      const startedAt = Math.max(
+        0,
+        Math.floor(Number(readProgressTrackingState?.startedAt) || 0)
+      );
+      return startedAt
+        ? `${normalizedTabId}:${normalizedThreadId}:${normalizedPage}:${startedAt}`
+        : "";
+    };
+    const buildReadProgressStartupSummaryPatch = (
+      patch = {},
+      { eventType = "" } = {}
+    ) => {
+      const source = sanitizeRecordObject(patch);
+      const sessionKey =
+        normalizeSyncDiagnosticText(source.sessionKey, 180) ||
+        normalizeSyncDiagnosticText(
+          readProgressTrackingState?.startupSummarySessionKey,
+          180
+        ) ||
+        buildReadProgressStartupSummarySessionKey({
+          threadId: source.threadId,
+          page: source.page,
+        });
+      if (!sessionKey) {
+        return null;
+      }
+      return {
+        ...source,
+        sessionKey,
+        tabId:
+          normalizeSyncDiagnosticText(source.tabId, 80) ||
+          normalizeSyncDiagnosticText(SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID, 80),
+        threadId:
+          normalizeNumericId(source.threadId) ||
+          normalizeNumericId(readProgressContext?.threadId) ||
+          "",
+        page:
+          normalizeSyncDiagnosticText(source.page, 24) ||
+          normalizeSyncDiagnosticText(readProgressContext?.currentPage, 24) ||
+          "",
+        startedAt: Math.max(
+          0,
+          Math.floor(
+            Number(source.startedAt) ||
+              Number(readProgressTrackingState?.startedAt) ||
+              0
+          )
+        ),
+        updatedAt: Math.max(
+          0,
+          Math.floor(Number(source.updatedAt) || Date.now())
+        ),
+        initiatedWhileHidden:
+          source.initiatedWhileHidden === true ||
+          readProgressTrackingState?.initiatedWhileHidden === true,
+        passiveBackgroundOpened:
+          source.passiveBackgroundOpened === true ||
+          readProgressTrackingState?.passiveBackgroundOpened === true,
+        lastEventType:
+          normalizeSyncDiagnosticText(source.lastEventType, 80) ||
+          normalizeSyncDiagnosticText(eventType, 80),
+      };
+    };
+    const recordReadProgressTrackingDebugEvent = (
+      eventType,
+      detail = "",
+      options = {}
+    ) => {
+      const stage = readProgressTrackingState?.stage || READ_PROGRESS_STAGE_OBSERVER_READY;
+      const initHidden = readProgressTrackingState?.initiatedWhileHidden === true
+        ? "yes"
+        : "no";
+      const passiveBackground =
+        readProgressTrackingState?.passiveBackgroundOpened === true ? "yes" : "no";
+      const normalizedDetail = String(detail || "").trim();
+      const detailParts = normalizedDetail ? [normalizedDetail] : [];
+      detailParts.push(`stage=${stage}`);
+      detailParts.push(`initHidden=${initHidden}`);
+      detailParts.push(`passiveBg=${passiveBackground}`);
+      const startupSummaryPatch = Object.prototype.hasOwnProperty.call(
+        options,
+        "startupSummaryPatch"
       )
-    );
-  const markReadProgressReadingConfirmed = (reason) => {
-    if (!readProgressTrackingState) {
-      resetReadProgressTrackingState();
-    }
-    if (!readProgressTrackingState.hasConfirmedReading) {
-      readProgressTrackingState.hasConfirmedReading = true;
-      readProgressTrackingState.confirmedAt = Date.now();
-    }
-    readProgressTrackingState.confirmationReason =
-      normalizeReadProgressSaveReason(reason) ||
-      READ_PROGRESS_SAVE_REASON_VISIBLE_STABLE;
-    readProgressTrackingState.stage = READ_PROGRESS_STAGE_READING_CONFIRMED;
-    recordReadProgressTrackingDebugEvent(
-      "rp_reading_confirmed",
-      `reason=${readProgressTrackingState.confirmationReason}`,
-      {
-        confirmationReason: readProgressTrackingState.confirmationReason,
-        confirmationTimestamp: readProgressTrackingState.confirmedAt,
-        startupSummaryPatch: {
-          firstConfirmationReason: readProgressTrackingState.confirmationReason,
-          firstConfirmationAt: readProgressTrackingState.confirmedAt,
-        },
+        ? buildReadProgressStartupSummaryPatch(options.startupSummaryPatch, {
+            eventType,
+          })
+        : null;
+      recordReadProgressDebugEvent(eventType, {
+        ...options,
+        threadId: options.threadId || readProgressContext?.threadId || "",
+        startupSummaryPatch,
+        hadConfirmedVisiblePost:
+          Object.prototype.hasOwnProperty.call(
+            options,
+            "hadConfirmedVisiblePost"
+          )
+            ? options.hadConfirmedVisiblePost
+            : readProgressTrackingState?.hasConfirmedVisiblePost === true,
+        detail: detailParts.join(", "),
+      });
+    };
+    const refreshReadProgressFirstPostId = () => {
+      const firstPostTable = document.querySelector('#postlist table[id^="pid"]');
+      readProgressFirstPostId = getPostIdFromPostTable(firstPostTable);
+      return readProgressFirstPostId;
+    };
+    const markReadProgressVisibleRecord = (record) => {
+      if (!isValidReadProgressRecord(record)) {
+        return;
       }
-    );
-  };
-  const requiresExplicitInteractionForReadProgressConfirmation = () =>
-    Boolean(
-      readProgressTrackingState?.initiatedWhileHidden === true ||
-        readProgressTrackingState?.passiveBackgroundOpened === true
-    );
-  const hasFocusedReadProgressSession = () =>
-    typeof document.hasFocus === "function" ? document.hasFocus() === true : false;
-  const resolveReadProgressConfirmationReason = (preferredReason = "") => {
-    if (!readProgressTrackingState?.hasConfirmedVisiblePost) {
-      return "";
-    }
-    const normalizedPreferredReason =
-      normalizeReadProgressSaveReason(preferredReason);
-    const requiresExplicitInteraction =
-      requiresExplicitInteractionForReadProgressConfirmation();
-    const visibleSince = Number(readProgressTrackingState.visibleSince) || 0;
-    const hasStableVisibleWindow =
-      document.visibilityState === "visible" &&
-      visibleSince > 0 &&
-      Date.now() - visibleSince >= READ_PROGRESS_CONFIRM_VISIBLE_MS;
-    if (requiresExplicitInteraction) {
-      if (
-        (
-          readProgressTrackingState.lastInteractionAt > 0 ||
-          hasFocusedReadProgressSession()
-        ) &&
-        hasStableVisibleWindow
-      ) {
-        return readProgressTrackingState.lastInteractionAt > 0
-          ? READ_PROGRESS_SAVE_REASON_USER_INTERACTION
-          : READ_PROGRESS_SAVE_REASON_VISIBLE_STABLE;
+      const isFirstCandidate = !readProgressTrackingState.firstCandidateAt;
+      if (isFirstCandidate) {
+        readProgressTrackingState.firstCandidateAt = Date.now();
       }
-      return "";
-    }
-    if (
-      normalizedPreferredReason === READ_PROGRESS_SAVE_REASON_USER_INTERACTION &&
-      readProgressTrackingState.lastInteractionAt > 0
-    ) {
-      return normalizedPreferredReason;
-    }
-    if (readProgressTrackingState.lastInteractionAt > 0) {
-      return READ_PROGRESS_SAVE_REASON_USER_INTERACTION;
-    }
-    if (hasStableVisibleWindow) {
-      return READ_PROGRESS_SAVE_REASON_VISIBLE_STABLE;
-    }
-    return "";
-  };
-  const saveCurrentReadProgress = ({ reason = "" } = {}) => {
-    if (!readProgressContext) return;
-
-    const candidateRecord = resolveReadProgressCandidateRecord();
-    if (!candidateRecord) return;
-
-    const { postId: finalPostId, floor: maxFloor } = candidateRecord;
-    readProgressLastVisibleRecord = { postId: finalPostId, floor: maxFloor };
-
-    const normalizedReason = normalizeReadProgressSaveReason(reason);
-    const isFlushReason = normalizedReason.endsWith("_flush");
-    if (!readProgressTrackingState?.hasConfirmedReading) {
-      const confirmationReason =
-        resolveReadProgressConfirmationReason(normalizedReason);
-      if (!confirmationReason) {
-        const visibleSince = Number(readProgressTrackingState?.visibleSince) || 0;
-        const visibleForMs =
-          visibleSince > 0 ? Math.max(0, Date.now() - visibleSince) : 0;
+      readProgressTrackingState.hasConfirmedVisiblePost = true;
+      if (!readProgressTrackingState.hasConfirmedReading) {
+        readProgressTrackingState.stage = READ_PROGRESS_STAGE_CANDIDATE_PENDING;
+      }
+      if (isFirstCandidate) {
         recordReadProgressTrackingDebugEvent(
-          "rp_save_blocked",
-          `requested=${normalizedReason || "none"}, candidate=${formatReadProgressDebugCandidateRecord(candidateRecord)}, visibleFor=${visibleForMs}ms, lastInteraction=${readProgressTrackingState?.lastInteractionType || "none"}, requiresInteraction=${requiresExplicitInteractionForReadProgressConfirmation() ? "yes" : "no"}`
+          "rp_candidate_visible",
+          `candidate=${formatReadProgressDebugCandidateRecord(record)}`,
+          {
+            startupSummaryPatch: {
+              firstVisibleCandidate: formatReadProgressDebugCandidateRecord(record),
+              firstVisibleCandidateAt:
+                Number(readProgressTrackingState.firstCandidateAt) || Date.now(),
+            },
+          }
+        );
+      }
+    };
+    const resolveReadProgressCandidateRecord = () => {
+      let maxFloor = 0;
+      let finalPostId = null;
+      readProgressVisiblePosts.forEach((floor, postId) => {
+        if (floor > maxFloor) {
+          maxFloor = floor;
+          finalPostId = postId;
+        }
+      });
+
+      if (finalPostId && maxFloor > 0) {
+        return { postId: finalPostId, floor: maxFloor };
+      }
+
+      if (isValidReadProgressRecord(readProgressLastVisibleRecord)) {
+        return {
+          postId: readProgressLastVisibleRecord.postId,
+          floor: readProgressLastVisibleRecord.floor,
+        };
+      }
+      return null;
+    };
+    const updateThreadProgress = (
+      threadId,
+      postId,
+      page,
+      lastReadFloor,
+      provenanceOptions = {}
+    ) => {
+      if (!postId || !page || !lastReadFloor) return;
+
+      const nextPageNumber = parseInt(page, 10);
+      const nextFloorNumber = parseInt(lastReadFloor, 10);
+      if (
+        !Number.isFinite(nextPageNumber) ||
+        nextPageNumber <= 0 ||
+        !Number.isFinite(nextFloorNumber) ||
+        nextFloorNumber <= 0
+      ) {
+        return;
+      }
+
+      const pendingProgress = pendingThreadProgressWrites[threadId] || null;
+      const currentProgress = pendingProgress || getReadProgress()[threadId];
+      if (
+        !shouldAdvanceThreadProgress(currentProgress, nextPageNumber, nextFloorNumber)
+      ) {
+        recordReadProgressTrackingDebugEvent(
+          "rp_queue_skipped_not_newer",
+          `page=${nextPageNumber}, floor=${nextFloorNumber}`
         );
         return;
       }
-      markReadProgressReadingConfirmed(confirmationReason);
-    } else if (
-      document.visibilityState !== "visible" &&
-      !isFlushReason
-    ) {
+
+      const createdAt = Date.now();
+      pendingThreadProgressWrites[threadId] = {
+        postId: String(postId),
+        page: String(nextPageNumber),
+        timestamp: createdAt,
+        lastReadFloor: String(nextFloorNumber),
+        provenance: buildReadProgressProvenance(String(threadId), String(nextPageNumber), {
+          ...provenanceOptions,
+          createdAt,
+        }),
+      };
       recordReadProgressTrackingDebugEvent(
-        "rp_save_blocked_hidden",
-        `requested=${normalizedReason || "none"}, candidate=${formatReadProgressDebugCandidateRecord(candidateRecord)}`
+        "rp_queue_write",
+        `page=${nextPageNumber}, floor=${nextFloorNumber}, reason=${pendingThreadProgressWrites[threadId].provenance?.saveReason || "unknown"}`,
+        {
+          startupSummaryPatch: {
+            queuedWrite: true,
+            queuedWriteAt: createdAt,
+          },
+        }
       );
-      return;
-    }
+      schedulePendingThreadProgressPersist();
+    };
+    const flushPendingThreadProgressWrites = ({ suppressSyncTrigger = false } = {}) => {
+      clearReadProgressPersistTimer();
 
-    const effectiveSaveReason = isFlushReason
-      ? normalizedReason
-      : readProgressTrackingState.confirmationReason ||
-        READ_PROGRESS_SAVE_REASON_VISIBLE_STABLE;
-
-    if (
-      document.visibilityState === "visible" &&
-      getSettings().showReadIndicator
-    ) {
-      updateReadIndicatorUI(finalPostId);
-    }
-    updateThreadProgress(
-      readProgressContext.threadId,
-      finalPostId,
-      readProgressContext.currentPage,
-      maxFloor,
-      {
-        saveReason: effectiveSaveReason,
-        documentVisibilityState: document.visibilityState,
-        hadConfirmedVisiblePost:
-          readProgressTrackingState.hasConfirmedVisiblePost === true,
-        initiatedWhileHidden:
-          readProgressTrackingState.initiatedWhileHidden === true,
+      const pendingThreadIds = Object.keys(pendingThreadProgressWrites);
+      if (pendingThreadIds.length === 0) {
+        return false;
       }
-    );
-  };
-  const flushReadProgressSave = ({
-    reason = READ_PROGRESS_SAVE_REASON_VISIBILITY_HIDDEN_FLUSH,
-    allowSessionFinalize = false,
-  } = {}) => {
-    clearReadProgressSaveTimer();
-    if (allowSessionFinalize) {
-      saveCurrentReadProgress({ reason });
-    }
-    flushPendingThreadProgressWrites();
-  };
-  registerSyncLifecycleLocalMutationFinalizer(
-    "read_progress",
-    ({ phase = "", event = null } = {}) => {
+
+      const progress = { ...getReadProgress() };
+      let hasChanges = false;
+      let appliedWriteCount = 0;
+      let lastPersistedProvenance = null;
+
+      pendingThreadIds.forEach((threadId) => {
+        const pendingRecord = pendingThreadProgressWrites[threadId];
+        if (!pendingRecord) return;
+
+        const pendingPageNumber = parseInt(pendingRecord.page, 10);
+        const pendingFloorNumber = parseInt(pendingRecord.lastReadFloor, 10);
+        if (
+          !Number.isFinite(pendingPageNumber) ||
+          pendingPageNumber <= 0 ||
+          !Number.isFinite(pendingFloorNumber) ||
+          pendingFloorNumber <= 0
+        ) {
+          return;
+        }
+
+        const currentProgress = progress[threadId];
+        if (
+          !shouldAdvanceThreadProgress(
+            currentProgress,
+            pendingPageNumber,
+            pendingFloorNumber
+          )
+        ) {
+          return;
+        }
+
+        progress[threadId] = pendingRecord;
+        hasChanges = true;
+        appliedWriteCount += 1;
+        lastPersistedProvenance = isObjectRecord(pendingRecord.provenance)
+          ? { ...pendingRecord.provenance }
+          : null;
+      });
+
+      pendingThreadProgressWrites = {};
+
+      if (hasChanges) {
+        recordReadProgressTrackingDebugEvent(
+          "rp_persist_flush",
+          `writes=${appliedWriteCount}, suppressSync=${suppressSyncTrigger ? "yes" : "no"}, provenance=${lastPersistedProvenance?.saveReason || "unknown"}`
+        );
+        saveReadProgress(progress, suppressSyncTrigger);
+        if (readProgressTrackingState) {
+          readProgressTrackingState.lastPersistedAt = Date.now();
+          readProgressTrackingState.lastPersistedProvenance = lastPersistedProvenance;
+          readProgressTrackingState.lastPersistedWasInitializationNoise =
+            lastPersistedProvenance?.saveKind === "initialization_noise";
+        }
+        return true;
+      }
+      return false;
+    };
+    const schedulePendingThreadProgressPersist = () => {
+      if (readProgressPersistTimeout) return;
+      if (readProgressTrackingState) {
+        readProgressTrackingState.pendingPersistDueAt =
+          Date.now() + READ_PROGRESS_PERSIST_DEBOUNCE_MS;
+      }
+      recordReadProgressTrackingDebugEvent(
+        "rp_persist_scheduled",
+        `dueIn=${READ_PROGRESS_PERSIST_DEBOUNCE_MS}ms`
+      );
+      readProgressPersistTimeout = setTimeout(() => {
+        readProgressPersistTimeout = null;
+        if (readProgressTrackingState) {
+          readProgressTrackingState.pendingPersistDueAt = 0;
+        }
+        flushPendingThreadProgressWrites();
+      }, READ_PROGRESS_PERSIST_DEBOUNCE_MS);
+    };
+    const isReadProgressInteractionTarget = (target) =>
+      target instanceof Element &&
+      Boolean(
+        target.closest(
+          "input, textarea, select, [contenteditable=''], [contenteditable='true']"
+        )
+      );
+    const markReadProgressReadingConfirmed = (reason) => {
+      if (!readProgressTrackingState) {
+        resetReadProgressTrackingState();
+      }
+      if (!readProgressTrackingState.hasConfirmedReading) {
+        readProgressTrackingState.hasConfirmedReading = true;
+        readProgressTrackingState.confirmedAt = Date.now();
+      }
+      readProgressTrackingState.confirmationReason =
+        normalizeReadProgressSaveReason(reason) ||
+        READ_PROGRESS_SAVE_REASON_VISIBLE_STABLE;
+      readProgressTrackingState.stage = READ_PROGRESS_STAGE_READING_CONFIRMED;
+      recordReadProgressTrackingDebugEvent(
+        "rp_reading_confirmed",
+        `reason=${readProgressTrackingState.confirmationReason}`,
+        {
+          confirmationReason: readProgressTrackingState.confirmationReason,
+          confirmationTimestamp: readProgressTrackingState.confirmedAt,
+          startupSummaryPatch: {
+            firstConfirmationReason: readProgressTrackingState.confirmationReason,
+            firstConfirmationAt: readProgressTrackingState.confirmedAt,
+          },
+        }
+      );
+    };
+    const requiresExplicitInteractionForReadProgressConfirmation = () =>
+      Boolean(
+        readProgressTrackingState?.initiatedWhileHidden === true ||
+          readProgressTrackingState?.passiveBackgroundOpened === true
+      );
+    const hasFocusedReadProgressSession = () =>
+      typeof document.hasFocus === "function" ? document.hasFocus() === true : false;
+    const resolveReadProgressConfirmationReason = (preferredReason = "") => {
+      if (!readProgressTrackingState?.hasConfirmedVisiblePost) {
+        return "";
+      }
+      const normalizedPreferredReason =
+        normalizeReadProgressSaveReason(preferredReason);
+      const requiresExplicitInteraction =
+        requiresExplicitInteractionForReadProgressConfirmation();
+      const visibleSince = Number(readProgressTrackingState.visibleSince) || 0;
+      const hasStableVisibleWindow =
+        document.visibilityState === "visible" &&
+        visibleSince > 0 &&
+        Date.now() - visibleSince >= READ_PROGRESS_CONFIRM_VISIBLE_MS;
+      if (requiresExplicitInteraction) {
+        if (
+          (
+            readProgressTrackingState.lastInteractionAt > 0 ||
+            hasFocusedReadProgressSession()
+          ) &&
+          hasStableVisibleWindow
+        ) {
+          return readProgressTrackingState.lastInteractionAt > 0
+            ? READ_PROGRESS_SAVE_REASON_USER_INTERACTION
+            : READ_PROGRESS_SAVE_REASON_VISIBLE_STABLE;
+        }
+        return "";
+      }
+      if (
+        normalizedPreferredReason === READ_PROGRESS_SAVE_REASON_USER_INTERACTION &&
+        readProgressTrackingState.lastInteractionAt > 0
+      ) {
+        return normalizedPreferredReason;
+      }
+      if (readProgressTrackingState.lastInteractionAt > 0) {
+        return READ_PROGRESS_SAVE_REASON_USER_INTERACTION;
+      }
+      if (hasStableVisibleWindow) {
+        return READ_PROGRESS_SAVE_REASON_VISIBLE_STABLE;
+      }
+      return "";
+    };
+    const saveCurrentReadProgress = ({ reason = "" } = {}) => {
+      if (!readProgressContext) return;
+
+      const candidateRecord = resolveReadProgressCandidateRecord();
+      if (!candidateRecord) return;
+
+      const { postId: finalPostId, floor: maxFloor } = candidateRecord;
+      readProgressLastVisibleRecord = { postId: finalPostId, floor: maxFloor };
+
+      const normalizedReason = normalizeReadProgressSaveReason(reason);
+      const isFlushReason = normalizedReason.endsWith("_flush");
+      if (!readProgressTrackingState?.hasConfirmedReading) {
+        const confirmationReason =
+          resolveReadProgressConfirmationReason(normalizedReason);
+        if (!confirmationReason) {
+          const visibleSince = Number(readProgressTrackingState?.visibleSince) || 0;
+          const visibleForMs =
+            visibleSince > 0 ? Math.max(0, Date.now() - visibleSince) : 0;
+          recordReadProgressTrackingDebugEvent(
+            "rp_save_blocked",
+            `requested=${normalizedReason || "none"}, candidate=${formatReadProgressDebugCandidateRecord(candidateRecord)}, visibleFor=${visibleForMs}ms, lastInteraction=${readProgressTrackingState?.lastInteractionType || "none"}, requiresInteraction=${requiresExplicitInteractionForReadProgressConfirmation() ? "yes" : "no"}`
+          );
+          return;
+        }
+        markReadProgressReadingConfirmed(confirmationReason);
+      } else if (
+        document.visibilityState !== "visible" &&
+        !isFlushReason
+      ) {
+        recordReadProgressTrackingDebugEvent(
+          "rp_save_blocked_hidden",
+          `requested=${normalizedReason || "none"}, candidate=${formatReadProgressDebugCandidateRecord(candidateRecord)}`
+        );
+        return;
+      }
+
+      const effectiveSaveReason = isFlushReason
+        ? normalizedReason
+        : readProgressTrackingState.confirmationReason ||
+          READ_PROGRESS_SAVE_REASON_VISIBLE_STABLE;
+
+      if (
+        document.visibilityState === "visible" &&
+        getSettings().showReadIndicator
+      ) {
+        updateReadIndicatorUI(finalPostId);
+      }
+      updateThreadProgress(
+        readProgressContext.threadId,
+        finalPostId,
+        readProgressContext.currentPage,
+        maxFloor,
+        {
+          saveReason: effectiveSaveReason,
+          documentVisibilityState: document.visibilityState,
+          hadConfirmedVisiblePost:
+            readProgressTrackingState.hasConfirmedVisiblePost === true,
+          initiatedWhileHidden:
+            readProgressTrackingState.initiatedWhileHidden === true,
+        }
+      );
+    };
+    const flushReadProgressSave = ({
+      reason = READ_PROGRESS_SAVE_REASON_VISIBILITY_HIDDEN_FLUSH,
+      allowSessionFinalize = false,
+    } = {}) => {
+      clearReadProgressSaveTimer();
+      if (allowSessionFinalize) {
+        saveCurrentReadProgress({ reason });
+      }
+      flushPendingThreadProgressWrites();
+    };
+    const handleLifecycle = ({ phase = "", event = null } = {}) => {
       const hasTrackingContext = Boolean(readProgressContext || pageObserver);
       if (phase === "hidden") {
         if (hasTrackingContext) {
@@ -51124,403 +51149,408 @@
         allowSessionFinalize: true,
       });
       return { status: "completed", reason };
-    }
-  );
-  const scheduleReadProgressSave = (reason = READ_PROGRESS_SAVE_REASON_VISIBLE_STABLE) => {
-    if (!readProgressContext) {
-      return;
-    }
-    const candidateRecord = resolveReadProgressCandidateRecord();
-    if (document.visibilityState !== "visible") {
-      if (candidateRecord) {
-        recordReadProgressTrackingDebugEvent(
-          "rp_save_schedule_skipped_hidden",
-          `requested=${normalizeReadProgressSaveReason(reason) || READ_PROGRESS_SAVE_REASON_VISIBLE_STABLE}, candidate=${formatReadProgressDebugCandidateRecord(candidateRecord)}`
-        );
-      }
-      return;
-    }
-    if (!candidateRecord) {
-      return;
-    }
-    clearReadProgressSaveTimer();
-    const normalizedReason =
-      normalizeReadProgressSaveReason(reason) ||
-      READ_PROGRESS_SAVE_REASON_VISIBLE_STABLE;
-    const dueAt = Date.now() + READ_PROGRESS_CONFIRM_VISIBLE_MS;
-    readProgressSaveDueAt = dueAt;
-    if (readProgressTrackingState) {
-      readProgressTrackingState.pendingSaveReason = normalizedReason;
-      readProgressTrackingState.pendingSaveScheduledAt = Date.now();
-    }
-    recordReadProgressTrackingDebugEvent(
-      "rp_save_scheduled",
-      `reason=${normalizedReason}, candidate=${formatReadProgressDebugCandidateRecord(candidateRecord)}, dueIn=${READ_PROGRESS_CONFIRM_VISIBLE_MS}ms`
-    );
-    readProgressSaveTimeout = setTimeout(() => {
-      readProgressSaveTimeout = null;
-      readProgressSaveDueAt = 0;
-      if (readProgressTrackingState) {
-        readProgressTrackingState.pendingSaveScheduledAt = 0;
-      }
-      saveCurrentReadProgress({ reason: normalizedReason });
-    }, READ_PROGRESS_CONFIRM_VISIBLE_MS);
-  };
-  const handleReadProgressUserInteraction = (interactionType) => {
-    if (!readProgressContext || document.visibilityState !== "visible") {
-      return;
-    }
-    if (!readProgressTrackingState) {
-      resetReadProgressTrackingState();
-    }
-    readProgressTrackingState.lastInteractionAt = Date.now();
-    readProgressTrackingState.lastInteractionType = String(interactionType || "").trim();
-    recordReadProgressTrackingDebugEvent(
-      "rp_interaction",
-      `type=${readProgressTrackingState.lastInteractionType || "unknown"}`
-    );
-    if (resolveReadProgressCandidateRecord()) {
-      scheduleReadProgressSave(READ_PROGRESS_SAVE_REASON_USER_INTERACTION);
-    }
-  };
-  const handleReadProgressWheel = () => {
-    handleReadProgressUserInteraction("wheel");
-  };
-  const handleReadProgressTouchStart = () => {
-    handleReadProgressUserInteraction("touchstart");
-  };
-  const handleReadProgressKeydown = (event) => {
-    if (
-      !event ||
-      event.defaultPrevented ||
-      event.metaKey ||
-      event.ctrlKey ||
-      event.altKey ||
-      isReadProgressInteractionTarget(event.target) ||
-      !READ_PROGRESS_INTERACTION_CONFIRM_KEYS.has(event.key)
-    ) {
-      return;
-    }
-    handleReadProgressUserInteraction("keydown");
-  };
-  const handleReadProgressVisibilityChange = () => {
-    recordReadProgressTrackingDebugEvent(
-      "rp_visibilitychange",
-      `next=${document.visibilityState}`,
-      {
-        startupSummaryPatch: {
-          firstVisibilityChange: document.visibilityState,
-          firstVisibilityChangeAt: Date.now(),
-        },
-      }
-    );
-    if (document.visibilityState === "hidden") {
-      if (readProgressTrackingState) {
-        readProgressTrackingState.visibleSince = 0;
-      }
-      flushReadProgressSave({
-        reason: READ_PROGRESS_SAVE_REASON_VISIBILITY_HIDDEN_FLUSH,
-        allowSessionFinalize: true,
-      });
-      return;
-    }
-    if (!readProgressTrackingState) {
-      resetReadProgressTrackingState();
-    }
-    readProgressTrackingState.visibleSince = Date.now();
-    const candidateRecord = resolveReadProgressCandidateRecord();
-    if (candidateRecord) {
-      markReadProgressVisibleRecord(candidateRecord);
-      scheduleReadProgressSave(READ_PROGRESS_SAVE_REASON_VISIBLE_STABLE);
-    }
-  };
-  const handleReadProgressPageShowForDebug = (event) => {
-    recordReadProgressTrackingDebugEvent(
-      "rp_pageshow",
-      `persisted=${event?.persisted === true ? "yes" : "no"}`,
-      {
-        startupSummaryPatch: {
-          firstPageshowKind: event?.persisted === true ? "persisted" : "normal",
-          firstPageshowAt: Date.now(),
-        },
-      }
-    );
-  };
-  const handleReadProgressWindowFocus = () => {
-    recordReadProgressTrackingDebugEvent("rp_focus", "", {
-      startupSummaryPatch: {
-        firstFocusAt: Date.now(),
-      },
-    });
-  };
-  const handleReadProgressWindowBlur = () => {
-    recordReadProgressTrackingDebugEvent("rp_blur");
-  };
-  const resetReadProgressObserver = ({
-    clearObservedMarkers = false,
-    flushPendingProgress = false,
-  } = {}) => {
-    if (flushPendingProgress) {
-      flushReadProgressSave({
-        reason: READ_PROGRESS_SAVE_REASON_PAGEHIDE_FLUSH,
-        allowSessionFinalize: true,
-      });
-    } else {
-      clearReadProgressSaveTimer();
-      clearReadProgressPersistTimer();
-      pendingThreadProgressWrites = {};
-    }
-    if (pageObserver) {
-      pageObserver.disconnect();
-      pageObserver = null;
-    }
-    readProgressVisiblePosts.clear();
-    readProgressLastVisibleRecord = null;
-    readProgressFirstPostId = null;
-    readProgressContext = null;
-    resetReadProgressTrackingState();
-    window.removeEventListener("focus", handleReadProgressWindowFocus);
-    window.removeEventListener("blur", handleReadProgressWindowBlur);
-    document.removeEventListener("wheel", handleReadProgressWheel);
-    document.removeEventListener("touchstart", handleReadProgressTouchStart);
-    document.removeEventListener("keydown", handleReadProgressKeydown);
-    if (clearObservedMarkers) {
-      document
-        .querySelectorAll('table[id^="pid"][data-s1p-observed]')
-        .forEach((el) => {
-          el.removeAttribute("data-s1p-observed");
-        });
-    }
-  };
-  if (IS_S1P_TEST_MODE) {
-    const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
-    testHookHost.__S1P_TEST_HOOKS__ = {
-      ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
-      resetReadProgressTrackingState,
-      getReadProgress,
-      getReadProgressTrackingState: () =>
-        sanitizeRecordObject(readProgressTrackingState),
-      setReadProgressTrackingStateForTest: (patch = {}, { replace = false } = {}) => {
-        const nextState = replace
-          ? {
-              ...createReadProgressTrackingState(),
-              ...sanitizeRecordObject(patch),
-            }
-          : {
-              ...sanitizeRecordObject(readProgressTrackingState),
-              ...sanitizeRecordObject(patch),
-            };
-        readProgressTrackingState = nextState;
-        return sanitizeRecordObject(readProgressTrackingState);
-      },
-      resolveReadProgressConfirmationReason,
-      requiresExplicitInteractionForReadProgressConfirmation,
     };
-  }
-  let currentLoggedInUid = null; // [新增] 缓存当前登录用户的UID
-  /**
-   * [新增 & 修正] 获取当前登录用户的UID
-   * (根据用户提供的HTML片段修正了选择器和正则表达式)
-   * @returns {string|null} 当前登录用户的UID，如果未找到则返回null
-   */
-  const getCurrentLoggedInUid = () => {
-    if (currentLoggedInUid) {
-      return currentLoggedInUid;
-    }
-
-    // 方案 1: 查找 #um strong.vwmy a (来自用户截图)
-    // <strong class="vwmy"><a href="space-uid-425635.html" ...>moekyo</a></strong>
-    let userSpaceLink = document.querySelector(
-      '#um strong.vwmy a[href*="space-uid-"]'
-    );
-    if (userSpaceLink) {
-      const match = userSpaceLink.href.match(/space-uid-(\d+)/);
-      if (match && match[1]) {
-        currentLoggedInUid = match[1];
-        // console.log("S1 Plus: 当前登录用户 UID (vwmy) ->", currentLoggedInUid);
-        return currentLoggedInUid;
+    const scheduleReadProgressSave = (reason = READ_PROGRESS_SAVE_REASON_VISIBLE_STABLE) => {
+      if (!readProgressContext) {
+        return;
       }
-    }
-
-    console.warn(
-      "S1 Plus: 无法确定当前登录用户的 UID。屏蔽/标记按钮可能也会显示在自己的帖子上。"
-    );
-    return null;
-  };
-
-  const trackReadProgressInThread = (postTables = null) => {
-    const settings = getSettings();
-    const postListElement = document.getElementById("postlist");
-    if (
-      settings.enableGeneralSettings !== true ||
-      settings.enableReadProgress !== true ||
-      !postListElement
-    ) {
+      const candidateRecord = resolveReadProgressCandidateRecord();
+      if (document.visibilityState !== "visible") {
+        if (candidateRecord) {
+          recordReadProgressTrackingDebugEvent(
+            "rp_save_schedule_skipped_hidden",
+            `requested=${normalizeReadProgressSaveReason(reason) || READ_PROGRESS_SAVE_REASON_VISIBLE_STABLE}, candidate=${formatReadProgressDebugCandidateRecord(candidateRecord)}`
+          );
+        }
+        return;
+      }
+      if (!candidateRecord) {
+        return;
+      }
+      clearReadProgressSaveTimer();
+      const normalizedReason =
+        normalizeReadProgressSaveReason(reason) ||
+        READ_PROGRESS_SAVE_REASON_VISIBLE_STABLE;
+      const dueAt = Date.now() + READ_PROGRESS_CONFIRM_VISIBLE_MS;
+      readProgressSaveDueAt = dueAt;
+      if (readProgressTrackingState) {
+        readProgressTrackingState.pendingSaveReason = normalizedReason;
+        readProgressTrackingState.pendingSaveScheduledAt = Date.now();
+      }
+      recordReadProgressTrackingDebugEvent(
+        "rp_save_scheduled",
+        `reason=${normalizedReason}, candidate=${formatReadProgressDebugCandidateRecord(candidateRecord)}, dueIn=${READ_PROGRESS_CONFIRM_VISIBLE_MS}ms`
+      );
+      readProgressSaveTimeout = setTimeout(() => {
+        readProgressSaveTimeout = null;
+        readProgressSaveDueAt = 0;
+        if (readProgressTrackingState) {
+          readProgressTrackingState.pendingSaveScheduledAt = 0;
+        }
+        saveCurrentReadProgress({ reason: normalizedReason });
+      }, READ_PROGRESS_CONFIRM_VISIBLE_MS);
+    };
+    const handleReadProgressUserInteraction = (interactionType) => {
+      if (!readProgressContext || document.visibilityState !== "visible") {
+        return;
+      }
+      if (!readProgressTrackingState) {
+        resetReadProgressTrackingState();
+      }
+      readProgressTrackingState.lastInteractionAt = Date.now();
+      readProgressTrackingState.lastInteractionType = String(interactionType || "").trim();
+      recordReadProgressTrackingDebugEvent(
+        "rp_interaction",
+        `type=${readProgressTrackingState.lastInteractionType || "unknown"}`
+      );
+      if (resolveReadProgressCandidateRecord()) {
+        scheduleReadProgressSave(READ_PROGRESS_SAVE_REASON_USER_INTERACTION);
+      }
+    };
+    const handleReadProgressWheel = () => {
+      handleReadProgressUserInteraction("wheel");
+    };
+    const handleReadProgressTouchStart = () => {
+      handleReadProgressUserInteraction("touchstart");
+    };
+    const handleReadProgressKeydown = (event) => {
       if (
-        pageObserver ||
-        readProgressSaveTimeout ||
-        readProgressPersistTimeout ||
-        readProgressContext ||
-        Object.keys(pendingThreadProgressWrites).length > 0
+        !event ||
+        event.defaultPrevented ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        isReadProgressInteractionTarget(event.target) ||
+        !READ_PROGRESS_INTERACTION_CONFIRM_KEYS.has(event.key)
       ) {
-        resetReadProgressObserver({
-          clearObservedMarkers: true,
-          flushPendingProgress: true,
+        return;
+      }
+      handleReadProgressUserInteraction("keydown");
+    };
+    const handleReadProgressVisibilityChange = () => {
+      recordReadProgressTrackingDebugEvent(
+        "rp_visibilitychange",
+        `next=${document.visibilityState}`,
+        {
+          startupSummaryPatch: {
+            firstVisibilityChange: document.visibilityState,
+            firstVisibilityChangeAt: Date.now(),
+          },
+        }
+      );
+      if (document.visibilityState === "hidden") {
+        if (readProgressTrackingState) {
+          readProgressTrackingState.visibleSince = 0;
+        }
+        flushReadProgressSave({
+          reason: READ_PROGRESS_SAVE_REASON_VISIBILITY_HIDDEN_FLUSH,
+          allowSessionFinalize: true,
         });
+        return;
       }
-      return;
-    }
-
-    let threadId = null;
-    const threadIdMatch = window.location.href.match(/thread-(\d+)-/);
-    if (threadIdMatch) {
-      threadId = threadIdMatch[1];
-    } else {
-      const params = new URLSearchParams(window.location.search);
-      threadId = params.get("tid") || params.get("ptid");
-    }
-    if (!threadId) {
-      const tidInput = document.querySelector('input[name="tid"]#tid');
-      if (tidInput) {
-        threadId = tidInput.value;
+      if (!readProgressTrackingState) {
+        resetReadProgressTrackingState();
       }
-    }
-    if (!threadId) return;
-
-    let currentPage = "1";
-    const threadPageMatch = window.location.href.match(/thread-\d+-(\d+)-/);
-    const params = new URLSearchParams(window.location.search);
-    if (threadPageMatch) {
-      currentPage = threadPageMatch[1];
-    } else if (params.has("page")) {
-      currentPage = params.get("page");
-    } else {
-      const currentPageElement = document.querySelector("div.pg strong");
-      if (currentPageElement && !isNaN(currentPageElement.textContent.trim())) {
-        currentPage = currentPageElement.textContent.trim();
+      readProgressTrackingState.visibleSince = Date.now();
+      const candidateRecord = resolveReadProgressCandidateRecord();
+      if (candidateRecord) {
+        markReadProgressVisibleRecord(candidateRecord);
+        scheduleReadProgressSave(READ_PROGRESS_SAVE_REASON_VISIBLE_STABLE);
       }
-    }
-
-    const hasContextChanged =
-      !readProgressContext ||
-      readProgressContext.threadId !== threadId ||
-      readProgressContext.currentPage !== currentPage;
-    if (hasContextChanged) {
+    };
+    const handleReadProgressPageShowForDebug = (event) => {
+      recordReadProgressTrackingDebugEvent(
+        "rp_pageshow",
+        `persisted=${event?.persisted === true ? "yes" : "no"}`,
+        {
+          startupSummaryPatch: {
+            firstPageshowKind: event?.persisted === true ? "persisted" : "normal",
+            firstPageshowAt: Date.now(),
+          },
+        }
+      );
+    };
+    const handleReadProgressWindowFocus = () => {
+      recordReadProgressTrackingDebugEvent("rp_focus", "", {
+        startupSummaryPatch: {
+          firstFocusAt: Date.now(),
+        },
+      });
+    };
+    const handleReadProgressWindowBlur = () => {
+      recordReadProgressTrackingDebugEvent("rp_blur");
+    };
+    const resetReadProgressObserver = ({
+      clearObservedMarkers = false,
+      flushPendingProgress = false,
+    } = {}) => {
+      if (flushPendingProgress) {
+        flushReadProgressSave({
+          reason: READ_PROGRESS_SAVE_REASON_PAGEHIDE_FLUSH,
+          allowSessionFinalize: true,
+        });
+      } else {
+        clearReadProgressSaveTimer();
+        clearReadProgressPersistTimer();
+        pendingThreadProgressWrites = {};
+      }
+      if (pageObserver) {
+        pageObserver.disconnect();
+        pageObserver = null;
+      }
       readProgressVisiblePosts.clear();
       readProgressLastVisibleRecord = null;
       readProgressFirstPostId = null;
-      clearReadProgressSaveTimer();
+      readProgressContext = null;
       resetReadProgressTrackingState();
-    }
-    readProgressContext = { threadId, currentPage };
-    if (readProgressTrackingState) {
-      readProgressTrackingState.startupSummarySessionKey =
-        buildReadProgressStartupSummarySessionKey({
-          threadId,
-          page: currentPage,
-        });
-    }
-    let backgroundOpenHint = null;
-    if (hasContextChanged) {
-      backgroundOpenHint = consumeBackgroundOpenThreadHint({
-        threadId,
-        page: currentPage,
-      });
-      if (backgroundOpenHint && readProgressTrackingState) {
-        readProgressTrackingState.passiveBackgroundOpened = true;
-        readProgressTrackingState.backgroundOpenSessionId =
-          backgroundOpenHint.sessionId || "";
-      }
-    }
-    refreshReadProgressFirstPostId();
-    const initialVisibility = document.visibilityState;
-    const initialHasFocus =
-      typeof document.hasFocus === "function" ? document.hasFocus() : null;
-    const readProgressContextDebugOptions = hasContextChanged
-      ? {
-          startupSnapshot: `page=${currentPage}, vis=${initialVisibility}, focus=${initialHasFocus === true ? "yes" : initialHasFocus === false ? "no" : "unknown"}`,
-          startupSummaryPatch: {
-            initialVisibility,
-            initialFocus: initialHasFocus,
-            page: currentPage,
-            startedAt: Number(readProgressTrackingState?.startedAt) || Date.now(),
-            passiveBackgroundOpened:
-              readProgressTrackingState?.passiveBackgroundOpened === true,
-          },
-        }
-      : {};
-    recordReadProgressTrackingDebugEvent(
-      hasContextChanged ? "rp_context_init" : "rp_context_refresh",
-      `page=${currentPage}, initVisibility=${initialVisibility}, hasFocus=${initialHasFocus === true ? "yes" : initialHasFocus === false ? "no" : "unknown"}`,
-      readProgressContextDebugOptions
-    );
-
-    // --- [核心修改] 确保 pageObserver 只初始化一次，并能监控后续新增的元素 ---
-    if (!pageObserver) {
-      recordReadProgressTrackingDebugEvent("rp_observer_bound");
-      pageObserver = new IntersectionObserver(
-        (entries) => {
-          entries.forEach((entry) => {
-            const record = getReadProgressRecordFromPostTable(entry.target, {
-              fallbackToFirstPostFloor: true,
-              firstPostIdHint: readProgressFirstPostId,
-            });
-            const postId = record?.postId || getPostIdFromPostTable(entry.target);
-            if (!postId) {
-              return;
-            }
-            if (entry.isIntersecting) {
-              if (record && record.floor > 0) {
-                readProgressVisiblePosts.set(postId, record.floor);
-                // 记录最近一次进入可见范围的楼层，用于可见集合暂时为空时的兜底。
-                readProgressLastVisibleRecord = {
-                  postId: record.postId,
-                  floor: record.floor,
-                };
-                if (document.visibilityState === "visible") {
-                  markReadProgressVisibleRecord(record);
-                }
-              } else {
-                readProgressVisiblePosts.delete(postId);
-              }
-            } else {
-              readProgressVisiblePosts.delete(postId);
-            }
-          });
-          scheduleReadProgressSave(READ_PROGRESS_SAVE_REASON_VISIBLE_STABLE);
-        },
-        { threshold: 0.3 }
-      );
-
       window.removeEventListener("focus", handleReadProgressWindowFocus);
       window.removeEventListener("blur", handleReadProgressWindowBlur);
       document.removeEventListener("wheel", handleReadProgressWheel);
       document.removeEventListener("touchstart", handleReadProgressTouchStart);
       document.removeEventListener("keydown", handleReadProgressKeydown);
-      window.addEventListener("focus", handleReadProgressWindowFocus);
-      window.addEventListener("blur", handleReadProgressWindowBlur);
-      document.addEventListener("wheel", handleReadProgressWheel, { passive: true });
-      document.addEventListener("touchstart", handleReadProgressTouchStart, {
-        passive: true,
-      });
-      document.addEventListener("keydown", handleReadProgressKeydown);
-    }
-
-    const scopedRoots = normalizeScopeRoots(postTables);
-    const targetPostTables =
-      scopedRoots === null
-        ? Array.from(document.querySelectorAll('table[id^="pid"]'))
-        : collectNodesByScope(scopedRoots, 'table[id^="pid"]');
-
-    // [新增] 每次函数运行时（包括页面动态变化后），都检查并添加未被监控的帖子
-    targetPostTables.forEach((el) => {
-      // 使用一个自定义属性来避免重复添加监控
-      if (!el.dataset.s1pObserved) {
-        pageObserver.observe(el);
-        el.dataset.s1pObserved = "true";
+      if (clearObservedMarkers) {
+        document
+          .querySelectorAll('table[id^="pid"][data-s1p-observed]')
+          .forEach((el) => {
+            el.removeAttribute("data-s1p-observed");
+          });
       }
+    };
+    const trackReadProgressInThread = (postTables = null) => {
+      const settings = getSettings();
+      const postListElement = document.getElementById("postlist");
+      if (
+        settings.enableGeneralSettings !== true ||
+        settings.enableReadProgress !== true ||
+        !postListElement
+      ) {
+        if (
+          pageObserver ||
+          readProgressSaveTimeout ||
+          readProgressPersistTimeout ||
+          readProgressContext ||
+          Object.keys(pendingThreadProgressWrites).length > 0
+        ) {
+          resetReadProgressObserver({
+            clearObservedMarkers: true,
+            flushPendingProgress: true,
+          });
+        }
+        return;
+      }
+
+      let threadId = null;
+      const threadIdMatch = window.location.href.match(/thread-(\d+)-/);
+      if (threadIdMatch) {
+        threadId = threadIdMatch[1];
+      } else {
+        const params = new URLSearchParams(window.location.search);
+        threadId = params.get("tid") || params.get("ptid");
+      }
+      if (!threadId) {
+        const tidInput = document.querySelector('input[name="tid"]#tid');
+        if (tidInput) {
+          threadId = tidInput.value;
+        }
+      }
+      if (!threadId) return;
+
+      let currentPage = "1";
+      const threadPageMatch = window.location.href.match(/thread-\d+-(\d+)-/);
+      const params = new URLSearchParams(window.location.search);
+      if (threadPageMatch) {
+        currentPage = threadPageMatch[1];
+      } else if (params.has("page")) {
+        currentPage = params.get("page");
+      } else {
+        const currentPageElement = document.querySelector("div.pg strong");
+        if (currentPageElement && !isNaN(currentPageElement.textContent.trim())) {
+          currentPage = currentPageElement.textContent.trim();
+        }
+      }
+
+      const hasContextChanged =
+        !readProgressContext ||
+        readProgressContext.threadId !== threadId ||
+        readProgressContext.currentPage !== currentPage;
+      if (hasContextChanged) {
+        readProgressVisiblePosts.clear();
+        readProgressLastVisibleRecord = null;
+        readProgressFirstPostId = null;
+        clearReadProgressSaveTimer();
+        resetReadProgressTrackingState();
+      }
+      readProgressContext = { threadId, currentPage };
+      if (readProgressTrackingState) {
+        readProgressTrackingState.startupSummarySessionKey =
+          buildReadProgressStartupSummarySessionKey({
+            threadId,
+            page: currentPage,
+          });
+      }
+      let backgroundOpenHint = null;
+      if (hasContextChanged) {
+        backgroundOpenHint = consumeBackgroundOpenThreadHint({
+          threadId,
+          page: currentPage,
+        });
+        if (backgroundOpenHint && readProgressTrackingState) {
+          readProgressTrackingState.passiveBackgroundOpened = true;
+          readProgressTrackingState.backgroundOpenSessionId =
+            backgroundOpenHint.sessionId || "";
+        }
+      }
+      refreshReadProgressFirstPostId();
+      const initialVisibility = document.visibilityState;
+      const initialHasFocus =
+        typeof document.hasFocus === "function" ? document.hasFocus() : null;
+      const readProgressContextDebugOptions = hasContextChanged
+        ? {
+            startupSnapshot: `page=${currentPage}, vis=${initialVisibility}, focus=${initialHasFocus === true ? "yes" : initialHasFocus === false ? "no" : "unknown"}`,
+            startupSummaryPatch: {
+              initialVisibility,
+              initialFocus: initialHasFocus,
+              page: currentPage,
+              startedAt: Number(readProgressTrackingState?.startedAt) || Date.now(),
+              passiveBackgroundOpened:
+                readProgressTrackingState?.passiveBackgroundOpened === true,
+            },
+          }
+        : {};
+      recordReadProgressTrackingDebugEvent(
+        hasContextChanged ? "rp_context_init" : "rp_context_refresh",
+        `page=${currentPage}, initVisibility=${initialVisibility}, hasFocus=${initialHasFocus === true ? "yes" : initialHasFocus === false ? "no" : "unknown"}`,
+        readProgressContextDebugOptions
+      );
+
+      // --- [核心修改] 确保 pageObserver 只初始化一次，并能监控后续新增的元素 ---
+      if (!pageObserver) {
+        recordReadProgressTrackingDebugEvent("rp_observer_bound");
+        pageObserver = new IntersectionObserver(
+          (entries) => {
+            entries.forEach((entry) => {
+              const record = getReadProgressRecordFromPostTable(entry.target, {
+                fallbackToFirstPostFloor: true,
+                firstPostIdHint: readProgressFirstPostId,
+              });
+              const postId = record?.postId || getPostIdFromPostTable(entry.target);
+              if (!postId) {
+                return;
+              }
+              if (entry.isIntersecting) {
+                if (record && record.floor > 0) {
+                  readProgressVisiblePosts.set(postId, record.floor);
+                  // 记录最近一次进入可见范围的楼层，用于可见集合暂时为空时的兜底。
+                  readProgressLastVisibleRecord = {
+                    postId: record.postId,
+                    floor: record.floor,
+                  };
+                  if (document.visibilityState === "visible") {
+                    markReadProgressVisibleRecord(record);
+                  }
+                } else {
+                  readProgressVisiblePosts.delete(postId);
+                }
+              } else {
+                readProgressVisiblePosts.delete(postId);
+              }
+            });
+            scheduleReadProgressSave(READ_PROGRESS_SAVE_REASON_VISIBLE_STABLE);
+          },
+          { threshold: 0.3 }
+        );
+
+        window.removeEventListener("focus", handleReadProgressWindowFocus);
+        window.removeEventListener("blur", handleReadProgressWindowBlur);
+        document.removeEventListener("wheel", handleReadProgressWheel);
+        document.removeEventListener("touchstart", handleReadProgressTouchStart);
+        document.removeEventListener("keydown", handleReadProgressKeydown);
+        window.addEventListener("focus", handleReadProgressWindowFocus);
+        window.addEventListener("blur", handleReadProgressWindowBlur);
+        document.addEventListener("wheel", handleReadProgressWheel, { passive: true });
+        document.addEventListener("touchstart", handleReadProgressTouchStart, {
+          passive: true,
+        });
+        document.addEventListener("keydown", handleReadProgressKeydown);
+      }
+
+      const scopedRoots = normalizeScopeRoots(postTables);
+      const targetPostTables =
+        scopedRoots === null
+          ? Array.from(document.querySelectorAll('table[id^="pid"]'))
+          : collectNodesByScope(scopedRoots, 'table[id^="pid"]');
+
+      // [新增] 每次函数运行时（包括页面动态变化后），都检查并添加未被监控的帖子
+      targetPostTables.forEach((el) => {
+        // 使用一个自定义属性来避免重复添加监控
+        if (!el.dataset.s1pObserved) {
+          pageObserver.observe(el);
+          el.dataset.s1pObserved = "true";
+        }
+      });
+    };
+
+    const discard = (threadId) => {
+      const normalizedThreadId = normalizeNumericId(threadId);
+      if (
+        !normalizedThreadId ||
+        !Object.prototype.hasOwnProperty.call(
+          pendingThreadProgressWrites,
+          normalizedThreadId
+        )
+      ) {
+        return false;
+      }
+      delete pendingThreadProgressWrites[normalizedThreadId];
+      return true;
+    };
+    const readState = () => ({
+      active: Boolean(readProgressContext || pageObserver),
+      context: readProgressContext ? { ...readProgressContext } : null,
+      guard: getReadProgressProbeGuardState(),
     });
-  };
+    const recordLocalMutation = ({ phase = "", triggerSync = true } = {}) => {
+      const eventTimestamp = Date.now();
+      recordReadProgressDebugEvent("rp_last_modified", {
+        detail: `phase=${phase}, triggerSync=${triggerSync ? "yes" : "no"}, pendingReason=${triggerSync ? "read_progress" : "timestamp_only"}`,
+        timestamp: eventTimestamp,
+        threadId: readProgressContext?.threadId || "",
+        hadConfirmedVisiblePost:
+          readProgressTrackingState?.hasConfirmedVisiblePost === true,
+        startupSummaryPatch: buildReadProgressStartupSummaryPatch(
+          {
+            lastModifiedTriggered: true,
+            lastModifiedAt: eventTimestamp,
+            updatedAt: eventTimestamp,
+          },
+          { eventType: "rp_last_modified" }
+        ),
+      });
+    };
+
+    return Object.freeze({
+      attach: trackReadProgressInThread,
+      discard,
+      handleLifecycle,
+      readState,
+      recordLocalMutation,
+      reset: resetReadProgressObserver,
+    });
+  })();
+
+  registerSyncLifecycleLocalMutationFinalizer(
+    "read_progress",
+    (input) => s1pReadingProgressSession.handleLifecycle(input)
+  );
+
+  if (IS_S1P_TEST_MODE) {
+    const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
+    testHookHost.__S1P_TEST_HOOKS__ = {
+      ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
+      getReadProgress,
+      readingProgressSession: s1pReadingProgressSession,
+    };
+  }
 
   const resetAuthiLayoutState = (authiDiv) => {
     if (!authiDiv) return;
@@ -54624,7 +54654,7 @@
           applyPlainTextUrlAutolinks();
         }
         shouldRefreshGlobalLinkBehavior = true;
-        trackReadProgressInThread(
+        s1pReadingProgressSession.attach(
           canUseScopedPostRefresh ? pendingPostTables : null
         );
       }
@@ -54889,7 +54919,7 @@
       setTimeout(() => ensureNativeBlacklistImportButton(), 700);
     }
     ensureMyThreadsQuickLink();
-    trackReadProgressInThread();
+    s1pReadingProgressSession.attach();
     markSettingsRuntimeAppliedSnapshot(settings);
     try {
       autoSign();
