@@ -9,6 +9,22 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 
+const assertResolvedPathInsideRepository = ({
+  repositoryRootRealPath,
+  resolvedPath,
+  allowRepositoryRoot = false,
+}) => {
+  const relativePath = path.relative(repositoryRootRealPath, resolvedPath);
+  if (
+    (!allowRepositoryRoot && relativePath === "") ||
+    relativePath.startsWith(`..${path.sep}`) ||
+    relativePath === ".." ||
+    path.isAbsolute(relativePath)
+  ) {
+    throw new Error("Resolved output path is outside the repository root.");
+  }
+};
+
 export const assertSafeOutputDirectory = async ({
   repositoryRoot,
   outputDirectory,
@@ -29,15 +45,10 @@ export const assertSafeOutputDirectory = async ({
   }
 
   const outputDirectoryRealPath = await realpath(outputDirectory);
-  const relativeOutputPath = path.relative(rootRealPath, outputDirectoryRealPath);
-  if (
-    relativeOutputPath === "" ||
-    relativeOutputPath.startsWith(`..${path.sep}`) ||
-    relativeOutputPath === ".." ||
-    path.isAbsolute(relativeOutputPath)
-  ) {
-    throw new Error("Resolved dist directory is outside the repository root.");
-  }
+  assertResolvedPathInsideRepository({
+    repositoryRootRealPath: rootRealPath,
+    resolvedPath: outputDirectoryRealPath,
+  });
 };
 
 export const assertTargetIsNotSymlink = async (targetPath) => {
@@ -49,16 +60,48 @@ export const assertTargetIsNotSymlink = async (targetPath) => {
     if (!targetStat.isFile()) {
       throw new Error(`Refusing to replace non-file path: ${targetPath}`);
     }
+    return targetStat;
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
+    return null;
   }
 };
 
-export const atomicWriteFile = async (targetPath, contents) => {
-  await assertTargetIsNotSymlink(targetPath);
+export const assertSafeRepositoryFileTarget = async ({
+  repositoryRoot,
+  targetPath,
+  expectedRelativePath,
+}) => {
+  const repositoryRootRealPath = await realpath(repositoryRoot);
+  const expectedPath = path.resolve(repositoryRoot, expectedRelativePath);
+  const resolvedTargetPath = path.resolve(targetPath);
+  if (resolvedTargetPath !== expectedPath) {
+    throw new Error(
+      `Refusing unexpected repository output target: ${resolvedTargetPath}`
+    );
+  }
+
+  const parentRealPath = await realpath(path.dirname(resolvedTargetPath));
+  assertResolvedPathInsideRepository({
+    repositoryRootRealPath,
+    resolvedPath: parentRealPath,
+    allowRepositoryRoot: true,
+  });
+  await assertTargetIsNotSymlink(resolvedTargetPath);
+};
+
+export const atomicWriteFile = async (
+  targetPath,
+  contents,
+  { defaultMode = 0o600 } = {}
+) => {
+  const existingTarget = await assertTargetIsNotSymlink(targetPath);
+  const mode = existingTarget?.mode
+    ? existingTarget.mode & 0o777
+    : defaultMode;
 
   const temporaryPath = `${targetPath}.tmp-${process.pid}-${randomUUID()}`;
-  const handle = await open(temporaryPath, "wx", 0o600);
+  const handle = await open(temporaryPath, "wx", mode);
   try {
     await handle.writeFile(contents, "utf8");
   } catch (error) {
