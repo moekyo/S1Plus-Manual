@@ -53,7 +53,7 @@ const testSameSessionRemoteWriteStaysQuiet = async () => {
       }),
       syncCoreDataFromStorageSnapshotIfNeeded: () => {
         calls.push("core");
-        return { didSync: true, changedKeys: ["s1p_read_progress"] };
+        return { didSync: true, changedKinds: ["readProgress"] };
       },
       syncSettingsFromStorageSnapshotIfNeeded: () => {
         calls.push("settings");

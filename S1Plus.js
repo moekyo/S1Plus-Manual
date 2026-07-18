@@ -13019,8 +13019,10 @@
           Object.prototype.hasOwnProperty.call(source, "didSync")
             ? `已收敛=${source.didSync === true ? "是" : "否"}`
             : "",
-          Array.isArray(source.changedKeys)
-            ? `变更键=${source.changedKeys.length}`
+          Array.isArray(source.changedKinds)
+            ? `变更类型=${source.changedKinds.length}`
+            : Array.isArray(source.changedKeys)
+              ? `变更键=${source.changedKeys.length}`
             : "",
           source.applyMode
             ? `应用=${getSyncTraceApplyModeLabel(source.applyMode)}`
@@ -21602,85 +21604,6 @@
   };
 
   // --- 数据处理 & 核心功能 ---
-  const createCoreDataCacheState = (normalize = sanitizeRecordObject) => ({
-    value: null,
-    expiresAt: 0,
-    normalize,
-  });
-  const blockedThreadsCache = createCoreDataCacheState();
-  const blockedUsersCache = createCoreDataCacheState();
-  const blockedPostsCache = createCoreDataCacheState();
-  const readProgressCache = createCoreDataCacheState();
-  const userTagsCache = createCoreDataCacheState();
-  const bookmarkedRepliesCache = createCoreDataCacheState();
-  const titleFilterRulesCache = createCoreDataCacheState((value) =>
-    Array.isArray(value) ? value : []
-  );
-  const setCoreDataCacheValue = (cacheState, value) => {
-    const normalize =
-      cacheState && typeof cacheState.normalize === "function"
-        ? cacheState.normalize
-        : sanitizeRecordObject;
-    cacheState.value = normalize(value);
-    cacheState.expiresAt = Date.now() + CORE_DATA_CACHE_TTL_MS;
-  };
-  const getCoreDataFromCache = (cacheState, key, fallbackValue = {}) => {
-    if (cacheState.value && Date.now() < cacheState.expiresAt) {
-      return cacheState.value;
-    }
-    const latestValue = GM_getValue(key, fallbackValue);
-    setCoreDataCacheValue(cacheState, latestValue);
-    return cacheState.value;
-  };
-  const COMPARABLE_RECORD_STORAGE_KEYS = new Set([
-    "s1p_blocked_threads",
-    "s1p_blocked_users",
-    "s1p_user_tags",
-    "s1p_bookmarked_replies",
-    "s1p_blocked_posts",
-    "s1p_read_progress",
-  ]);
-  const comparableStoredValueCache = new Map();
-  const normalizeComparableStoredValueByKey = (key, value) => {
-    if (COMPARABLE_RECORD_STORAGE_KEYS.has(key)) {
-      return sanitizeRecordObject(value);
-    }
-    if (key === "s1p_title_filter_rules") {
-      return Array.isArray(value) ? value : [];
-    }
-    return value;
-  };
-  const buildComparableStoredValueCacheEntry = (key, value) => {
-    const normalizedValue = normalizeComparableStoredValueByKey(key, value);
-    return {
-      value: isComparableObjectValue(normalizedValue)
-        ? deepCloneSyncValue(normalizedValue)
-        : normalizedValue,
-      expiresAt: Date.now() + COMPARABLE_STORED_VALUE_CACHE_TTL_MS,
-    };
-  };
-  const getComparableStoredValue = (key, fallbackValue = {}) => {
-    const cachedEntry = comparableStoredValueCache.get(key);
-    if (
-      cachedEntry &&
-      typeof cachedEntry === "object" &&
-      Date.now() < (Number(cachedEntry.expiresAt) || 0)
-    ) {
-      return cachedEntry.value;
-    }
-    const nextEntry = buildComparableStoredValueCacheEntry(
-      key,
-      GM_getValue(key, fallbackValue)
-    );
-    comparableStoredValueCache.set(key, nextEntry);
-    return nextEntry.value;
-  };
-  const setComparableStoredValue = (key, value) => {
-    comparableStoredValueCache.set(
-      key,
-      buildComparableStoredValueCacheEntry(key, value)
-    );
-  };
   const isComparableObjectValue = (value) =>
     value !== null && typeof value === "object";
   const computeComparableValueShapeSignature = (value) => {
@@ -21761,86 +21684,1041 @@
     }
     return !areComparableValuesEqual(currentValue, nextValue);
   };
-  const getBlockedThreads = () =>
-    getCoreDataFromCache(blockedThreadsCache, "s1p_blocked_threads");
-  const saveBlockedThreads = (threads, suppressSyncTrigger = false) => {
-    const normalizedThreads = sanitizeRecordObject(threads);
-    const currentStoredThreads = getComparableStoredValue(
-      "s1p_blocked_threads",
-      {}
+  // Core Business Data callers use one logical-kind interface; storage and
+  // sync identities remain private in the factory's catalog below.
+  const s1pCreateCoreBusinessDataGmAdapter = () => ({
+    getValue: (key, fallbackValue) => GM_getValue(key, fallbackValue),
+    setValue: (key, value) => GM_setValue(key, value),
+    addValueChangeListener: (key, listener) =>
+      typeof GM_addValueChangeListener === "function"
+        ? GM_addValueChangeListener(key, listener)
+        : null,
+  });
+  const s1pCreateCoreBusinessDataMemoryAdapter = (initialValues = {}) => {
+    const cloneValue = (value) => deepCloneSyncValue(value);
+    const values = new Map(
+      Object.entries(sanitizeRecordObject(initialValues)).map(([key, value]) => [
+        key,
+        cloneValue(value),
+      ])
     );
-    if (!hasComparableValueChanged(currentStoredThreads, normalizedThreads)) {
-      setCoreDataCacheValue(blockedThreadsCache, normalizedThreads);
-      return;
-    }
-    invalidateLocalDataHashCache();
-    GM_setValue("s1p_blocked_threads", normalizedThreads);
-    emitCoreDataCrossTabSignal("s1p_blocked_threads");
-    setComparableStoredValue("s1p_blocked_threads", normalizedThreads);
-    setCoreDataCacheValue(blockedThreadsCache, normalizedThreads);
-    if (!suppressSyncTrigger) {
-      s1pSyncSystem.recordLocalMutation();
-    }
+    const listenersByKey = new Map();
+    let nextListenerId = 1;
+    const notify = (key, oldValue, newValue, isCrossContextChange) => {
+      const listeners = listenersByKey.get(key);
+      if (!listeners) {
+        return;
+      }
+      listeners.forEach((listener) => {
+        listener(key, oldValue, newValue, isCrossContextChange);
+      });
+    };
+    const setStoredValue = (
+      key,
+      value,
+      { isCrossContextChange = false, notifyListeners = true } = {}
+    ) => {
+      const oldValue = values.has(key) ? cloneValue(values.get(key)) : undefined;
+      const storedValue = cloneValue(value);
+      values.set(key, storedValue);
+      if (notifyListeners) {
+        notify(key, oldValue, cloneValue(storedValue), isCrossContextChange);
+      }
+    };
+    return {
+      getValue: (key, fallbackValue) =>
+        cloneValue(values.has(key) ? values.get(key) : fallbackValue),
+      setValue: (key, value) => setStoredValue(key, value),
+      addValueChangeListener: (key, listener) => {
+        const listenerId = nextListenerId++;
+        if (!listenersByKey.has(key)) {
+          listenersByKey.set(key, new Map());
+        }
+        listenersByKey.get(key).set(listenerId, listener);
+        return listenerId;
+      },
+      writeFromOtherContext: (key, value, { notify: shouldNotify = true } = {}) =>
+        setStoredValue(key, value, {
+          isCrossContextChange: true,
+          notifyListeners: shouldNotify,
+        }),
+      snapshot: () =>
+        Object.fromEntries(
+          Array.from(values.entries(), ([key, value]) => [key, cloneValue(value)])
+        ),
+    };
   };
-  const getBlockedUsers = () =>
-    getCoreDataFromCache(blockedUsersCache, "s1p_blocked_users");
-  const saveBlockedUsers = (users, suppressSyncTrigger = false) => {
-    const normalizedUsers = sanitizeRecordObject(users);
-    const currentStoredUsers = getComparableStoredValue("s1p_blocked_users", {});
-    if (!hasComparableValueChanged(currentStoredUsers, normalizedUsers)) {
-      setCoreDataCacheValue(blockedUsersCache, normalizedUsers);
-      return;
+  const s1pCreateCoreBusinessData = ({
+    storageAdapter,
+    now = () => Date.now(),
+    random = () => Math.random(),
+    sourceId = SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID,
+    invalidateLocalDataHash = () => {},
+    recordLocalMutation = () => {},
+    publishRefreshIntents = () => {},
+    publishBridgeRefresh = () => {},
+    recordSnapshotResync: recordSnapshotResyncFn = () => {},
+    bridgeSignalKeys = [],
+    shouldHandleBridgeSignal = (_key, _value, isCrossContextChange) =>
+      Boolean(isCrossContextChange),
+  } = {}) => {
+    if (
+      !storageAdapter ||
+      typeof storageAdapter.getValue !== "function" ||
+      typeof storageAdapter.setValue !== "function"
+    ) {
+      throw new Error("Core Business Data requires a storage adapter.");
     }
-    invalidateLocalDataHashCache();
-    GM_setValue("s1p_blocked_users", normalizedUsers);
-    emitCoreDataCrossTabSignal("s1p_blocked_users");
-    setComparableStoredValue("s1p_blocked_users", normalizedUsers);
-    setCoreDataCacheValue(blockedUsersCache, normalizedUsers);
-    if (!suppressSyncTrigger) {
-      s1pSyncSystem.recordLocalMutation();
-    }
+
+    const normalizeRecordValue = (value) => {
+      const normalizedValue = sanitizeRecordObject(value);
+      return {
+        value: normalizedValue,
+        changed:
+          !isObjectRecord(value) ||
+          hasUnsafeRecordKeys(value) ||
+          hasComparableValueChanged(value, normalizedValue),
+      };
+    };
+    const normalizeArrayValue = (value) => ({
+      value: Array.isArray(value) ? value : [],
+      changed: !Array.isArray(value),
+    });
+    const normalizeBookmarkTextForSyncPreview = (text) => {
+      const rawText = String(text ?? "");
+      if (!rawText) {
+        return "";
+      }
+      const windowedText =
+        rawText.length > BOOKMARK_SYNC_PREVIEW_MAX_LENGTH * 4
+          ? rawText.slice(0, BOOKMARK_SYNC_PREVIEW_MAX_LENGTH * 4)
+          : rawText;
+      return windowedText.trim().replace(/\n{3,}/g, "\n\n");
+    };
+    const buildBookmarkSyncPreview = (text) => {
+      const normalized = normalizeBookmarkTextForSyncPreview(text);
+      if (!normalized) {
+        return "";
+      }
+      if (normalized.length <= BOOKMARK_SYNC_PREVIEW_MAX_LENGTH) {
+        return normalized;
+      }
+      return `${normalized.slice(0, BOOKMARK_SYNC_PREVIEW_MAX_LENGTH)}...`;
+    };
+    const buildBookmarkedRepliesForSync = (bookmarkedReplies = {}) => {
+      const compactReplies = {};
+      Object.keys(bookmarkedReplies).forEach((postId) => {
+        const item = bookmarkedReplies[postId];
+        if (!isObjectRecord(item)) {
+          return;
+        }
+        const compactItem = sanitizeRecordObject(item);
+        const contentPreview =
+          buildBookmarkSyncPreview(compactItem.postContent) ||
+          buildBookmarkSyncPreview(compactItem.contentPreview);
+        delete compactItem.postContent;
+        if (contentPreview) {
+          compactItem.contentPreview = contentPreview;
+        } else {
+          delete compactItem.contentPreview;
+        }
+        compactReplies[postId] = compactItem;
+      });
+      return compactReplies;
+    };
+    const normalizeBlockedPostsPayload = (posts) => {
+      const source = sanitizeRecordObject(posts);
+      const normalizedPosts = {};
+      Object.keys(source).forEach((postId) => {
+        const item = source[postId];
+        if (!isObjectRecord(item)) {
+          return;
+        }
+        const normalizedPostId = normalizeNumericId(item.postId || postId);
+        if (!normalizedPostId) {
+          return;
+        }
+        const normalizedItem = sanitizeRecordObject(item);
+        normalizedItem.postId = normalizedPostId;
+        normalizedItem.threadId =
+          normalizeNumericId(normalizedItem.threadId) || "unknown_thread";
+        normalizedItem.threadTitle = String(normalizedItem.threadTitle || "");
+        normalizedItem.floor = String(normalizedItem.floor || "");
+        normalizedItem.authorId =
+          normalizeNumericId(normalizedItem.authorId) || "";
+        normalizedItem.authorName = String(normalizedItem.authorName || "");
+        normalizedItem.timestamp =
+          Number.isFinite(Number(normalizedItem.timestamp)) &&
+          Number(normalizedItem.timestamp) > 0
+            ? Number(normalizedItem.timestamp)
+            : 0;
+        if (typeof normalizedItem.postContent !== "undefined") {
+          normalizedItem.postContent = String(normalizedItem.postContent || "");
+        }
+        const previewText = buildBookmarkSyncPreview(
+          normalizedItem.contentPreview || normalizedItem.postContent
+        );
+        if (previewText) {
+          normalizedItem.contentPreview = previewText;
+        } else {
+          delete normalizedItem.contentPreview;
+        }
+        normalizedPosts[normalizedPostId] = normalizedItem;
+      });
+      return normalizedPosts;
+    };
+    const normalizeBlockedPostsValue = (value) => {
+      const source = sanitizeRecordObject(value);
+      const normalizedValue = normalizeBlockedPostsPayload(source);
+      return {
+        value: normalizedValue,
+        changed:
+          !isObjectRecord(value) ||
+          hasUnsafeRecordKeys(value) ||
+          hasComparableValueChanged(source, normalizedValue),
+      };
+    };
+    const buildBlockedPostsForSync = (blockedPosts = {}) => {
+      const compactPosts = {};
+      Object.keys(blockedPosts).forEach((postId) => {
+        const item = blockedPosts[postId];
+        if (!isObjectRecord(item)) {
+          return;
+        }
+        const compactItem = sanitizeRecordObject(item);
+        const contentPreview = buildBookmarkSyncPreview(
+          compactItem.contentPreview || compactItem.postContent
+        );
+        delete compactItem.postContent;
+        if (contentPreview) {
+          compactItem.contentPreview = contentPreview;
+        } else {
+          delete compactItem.contentPreview;
+        }
+        compactPosts[postId] = compactItem;
+      });
+      return compactPosts;
+    };
+    const normalizeUserTagsValue = (tags) => {
+      const source = sanitizeRecordObject(tags);
+      const normalizedTags = {};
+      let changed =
+        !isObjectRecord(tags) ||
+        hasUnsafeRecordKeys(tags) ||
+        hasComparableValueChanged(tags, source);
+      Object.keys(source).forEach((id) => {
+        const rawEntry = source[id];
+        const isLegacyString = typeof rawEntry === "string";
+        const isTagObject = isObjectRecord(rawEntry);
+        if (!isLegacyString && !isTagObject) {
+          changed = true;
+          return;
+        }
+        const normalizedTag = String(
+          isLegacyString ? rawEntry : rawEntry.tag || ""
+        ).trim();
+        if (!normalizedTag) {
+          changed = true;
+          return;
+        }
+        const normalizedName =
+          String((isTagObject && rawEntry.name) || `用户 #${id}`).trim() ||
+          `用户 #${id}`;
+        const parsedTimestamp = Number(isTagObject ? rawEntry.timestamp : 0);
+        const normalizedTimestamp =
+          Number.isFinite(parsedTimestamp) && parsedTimestamp > 0
+            ? parsedTimestamp
+            : now();
+        const normalizedColor =
+          isTagObject && typeof rawEntry.color === "string"
+            ? rawEntry.color.trim()
+            : "";
+        const normalizedEntry = {
+          name: normalizedName,
+          tag: normalizedTag,
+          timestamp: normalizedTimestamp,
+        };
+        if (normalizedColor) {
+          normalizedEntry.color = normalizedColor;
+        }
+        if (!isTagObject || hasComparableValueChanged(rawEntry, normalizedEntry)) {
+          changed = true;
+        }
+        normalizedTags[id] = normalizedEntry;
+      });
+      return { value: normalizedTags, changed };
+    };
+    const normalizeStoredReadProgressProvenance = (
+      provenance,
+      fallbackContext = {}
+    ) => {
+      if (!isObjectRecord(provenance)) {
+        return null;
+      }
+      const normalizedSource = sanitizeRecordObject(provenance);
+      const normalizedFallback = isObjectRecord(fallbackContext)
+        ? sanitizeRecordObject(fallbackContext)
+        : {};
+      const pickString = (...values) => {
+        for (const value of values) {
+          const normalizedValue = String(value || "").trim();
+          if (normalizedValue) {
+            return normalizedValue;
+          }
+        }
+        return "";
+      };
+      const pickTimestamp = (...values) => {
+        for (const value of values) {
+          const normalizedValue = Number(value);
+          if (Number.isFinite(normalizedValue) && normalizedValue > 0) {
+            return normalizedValue;
+          }
+        }
+        return 0;
+      };
+      const normalizedSaveReason = pickString(
+        normalizedSource.saveReason,
+        normalizedFallback.saveReason
+      ).slice(0, 80);
+      return {
+        sourceTabId:
+          pickString(
+            normalizedSource.sourceTabId,
+            normalizedFallback.sourceTabId
+          ) || sourceId,
+        threadId: pickString(
+          normalizedSource.threadId,
+          normalizedFallback.threadId
+        ),
+        page: pickString(normalizedSource.page, normalizedFallback.page),
+        saveReason: normalizedSaveReason || "read_progress_update",
+        documentVisibilityState:
+          pickString(
+            normalizedSource.documentVisibilityState,
+            normalizedFallback.documentVisibilityState
+          ) || document.visibilityState,
+        hadConfirmedVisiblePost:
+          normalizedSource.hadConfirmedVisiblePost === true ||
+          normalizedFallback.hadConfirmedVisiblePost === true,
+        createdAt:
+          pickTimestamp(
+            normalizedSource.createdAt,
+            normalizedFallback.createdAt
+          ) || now(),
+        initiatedWhileHidden:
+          normalizedSource.initiatedWhileHidden === true ||
+          normalizedFallback.initiatedWhileHidden === true,
+        saveKind: "real_reading",
+      };
+    };
+    const normalizeReadProgressData = (progress) => {
+      if (!progress || typeof progress !== "object" || Array.isArray(progress)) {
+        return { normalizedProgress: {}, hasLegacyType: Boolean(progress) };
+      }
+      const normalizedProgress = {};
+      let hasLegacyType = false;
+      Object.keys(progress).forEach((threadId) => {
+        const record = progress[threadId];
+        if (!record || typeof record !== "object" || Array.isArray(record)) {
+          hasLegacyType = true;
+          return;
+        }
+        const normalizedRecord = { ...record };
+        if (
+          Object.prototype.hasOwnProperty.call(
+            normalizedRecord,
+            "lastReadFloor"
+          ) &&
+          normalizedRecord.lastReadFloor !== undefined &&
+          normalizedRecord.lastReadFloor !== null
+        ) {
+          const parsedFloor = parseInt(normalizedRecord.lastReadFloor, 10);
+          if (Number.isFinite(parsedFloor) && parsedFloor > 0) {
+            const normalizedFloor = String(parsedFloor);
+            if (normalizedRecord.lastReadFloor !== normalizedFloor) {
+              hasLegacyType = true;
+            }
+            normalizedRecord.lastReadFloor = normalizedFloor;
+          } else {
+            hasLegacyType = true;
+            delete normalizedRecord.lastReadFloor;
+          }
+        }
+        const normalizedProvenance = normalizeStoredReadProgressProvenance(
+          normalizedRecord.provenance,
+          { threadId, page: normalizedRecord.page }
+        );
+        if (normalizedProvenance) {
+          const rawProvenance = isObjectRecord(record.provenance)
+            ? JSON.stringify(record.provenance)
+            : "";
+          if (rawProvenance !== JSON.stringify(normalizedProvenance)) {
+            hasLegacyType = true;
+          }
+          normalizedRecord.provenance = normalizedProvenance;
+        } else if (
+          Object.prototype.hasOwnProperty.call(normalizedRecord, "provenance")
+        ) {
+          hasLegacyType = true;
+          delete normalizedRecord.provenance;
+        }
+        normalizedProgress[threadId] = normalizedRecord;
+      });
+      return { normalizedProgress, hasLegacyType };
+    };
+    const normalizeReadProgressValue = (value) => {
+      const { normalizedProgress, hasLegacyType } =
+        normalizeReadProgressData(value);
+      return { value: normalizedProgress, changed: hasLegacyType };
+    };
+
+    const upgradeImportedRecords = (type, importedData) => {
+      const shouldNormalizeNumericId = type === "users" || type === "threads";
+      if (!isObjectRecord(importedData)) {
+        return { value: {}, transformed: Boolean(importedData) };
+      }
+
+      let transformed = false;
+      const upgradedData = {};
+      Object.keys(importedData).forEach((id) => {
+        if (isUnsafeRecordKey(id)) {
+          transformed = true;
+          return;
+        }
+        const normalizedId = shouldNormalizeNumericId
+          ? normalizeNumericId(id)
+          : id;
+        if (shouldNormalizeNumericId && !normalizedId) {
+          transformed = true;
+          return;
+        }
+        const targetId = normalizedId || id;
+        if (targetId !== id) {
+          transformed = true;
+        }
+        const item = importedData[id];
+        let nextItem = null;
+        if (isObjectRecord(item)) {
+          nextItem = sanitizeRecordObject(item);
+          if (hasUnsafeRecordKeys(item)) {
+            transformed = true;
+          }
+        } else if (typeof item === "string" && item.trim()) {
+          nextItem =
+            type === "users"
+              ? { name: item.trim() }
+              : type === "threads"
+                ? { title: item.trim() }
+                : null;
+          transformed = true;
+        } else {
+          transformed = true;
+          return;
+        }
+        if (!nextItem || typeof nextItem !== "object") {
+          transformed = true;
+          return;
+        }
+
+        const parsedTimestamp = Number(nextItem.timestamp);
+        if (!Number.isFinite(parsedTimestamp) || parsedTimestamp <= 0) {
+          nextItem.timestamp = now();
+          transformed = true;
+        }
+        if (type === "users") {
+          if (typeof nextItem.blockThreads === "undefined") {
+            nextItem.blockThreads = false;
+            transformed = true;
+          }
+          if (!nextItem.name) {
+            nextItem.name = `用户 #${targetId}`;
+            transformed = true;
+          }
+        }
+        if (type === "threads") {
+          if (typeof nextItem.reason === "undefined") {
+            nextItem.reason = "manual";
+            transformed = true;
+          }
+          if (!nextItem.title) {
+            nextItem.title = `帖子 #${targetId}`;
+            transformed = true;
+          }
+        }
+
+        const existingItem = upgradedData[targetId];
+        if (!existingItem) {
+          upgradedData[targetId] = nextItem;
+          return;
+        }
+        if (
+          (Number(nextItem.timestamp) || 0) >=
+          (Number(existingItem.timestamp) || 0)
+        ) {
+          upgradedData[targetId] = nextItem;
+        }
+        transformed = true;
+      });
+      return { value: upgradedData, transformed };
+    };
+    const importRecordValue = (data, syncKey) => {
+      const hasField = Object.prototype.hasOwnProperty.call(data, syncKey);
+      const rawValue = hasField ? data[syncKey] : undefined;
+      const isValidRecord = hasField && isObjectRecord(rawValue);
+      return {
+        value: isValidRecord ? sanitizeRecordObject(rawValue) : {},
+        transformed:
+          !isValidRecord || (isValidRecord && hasUnsafeRecordKeys(rawValue)),
+      };
+    };
+
+    const kindCatalog = Object.freeze({
+      blockedThreads: Object.freeze({
+        storageKey: "s1p_blocked_threads",
+        syncKey: "threads",
+        fallback: () => ({}),
+        normalize: normalizeRecordValue,
+        importValue: (data) =>
+          upgradeImportedRecords("threads", data.threads || {}),
+        mutationSource: "general",
+        refreshIntents: Object.freeze(["blocked_threads"]),
+      }),
+      blockedUsers: Object.freeze({
+        storageKey: "s1p_blocked_users",
+        syncKey: "users",
+        fallback: () => ({}),
+        normalize: normalizeRecordValue,
+        importValue: (data) => upgradeImportedRecords("users", data.users || {}),
+        mutationSource: "general",
+        refreshIntents: Object.freeze(["blocked_users"]),
+      }),
+      blockedPosts: Object.freeze({
+        storageKey: "s1p_blocked_posts",
+        syncKey: "blocked_posts",
+        fallback: () => ({}),
+        normalize: normalizeBlockedPostsValue,
+        importValue: (data) => importRecordValue(data, "blocked_posts"),
+        projectForSync: (value, options) =>
+          options.compactBlockedPostsForSync
+            ? buildBlockedPostsForSync(value)
+            : value,
+        mutationSource: "general",
+        refreshIntents: Object.freeze(["blocked_posts", "thread_actions"]),
+      }),
+      userTags: Object.freeze({
+        storageKey: "s1p_user_tags",
+        syncKey: "user_tags",
+        fallback: () => ({}),
+        normalize: normalizeUserTagsValue,
+        importValue: (data) => importRecordValue(data, "user_tags"),
+        persistNormalizationOnRead: true,
+        normalizationMessage: "S1 Plus: 正在将用户标记迁移到新版数据结构...",
+        mutationSource: "general",
+        refreshIntents: Object.freeze(["thread_actions"]),
+      }),
+      bookmarkedReplies: Object.freeze({
+        storageKey: "s1p_bookmarked_replies",
+        syncKey: "bookmarked_replies",
+        fallback: () => ({}),
+        normalize: normalizeRecordValue,
+        importValue: (data) => importRecordValue(data, "bookmarked_replies"),
+        projectForSync: (value, options) =>
+          options.compactBookmarksForSync
+            ? buildBookmarkedRepliesForSync(value)
+            : value,
+        mutationSource: "general",
+        refreshIntents: Object.freeze(["thread_actions"]),
+      }),
+      titleFilterRules: Object.freeze({
+        storageKey: "s1p_title_filter_rules",
+        syncKey: "title_filter_rules",
+        fallback: () => [],
+        normalize: normalizeArrayValue,
+        legacyStorageKey: "s1p_title_keywords",
+        importValue: (data) => {
+          if (Array.isArray(data.title_filter_rules)) {
+            return { value: data.title_filter_rules, transformed: false };
+          }
+          if (Array.isArray(data.title_keywords)) {
+            return {
+              value: data.title_keywords.map((pattern) => ({
+                pattern,
+                enabled: true,
+                id: `rule_${now()}_${random()}`,
+              })),
+              transformed: true,
+            };
+          }
+          return { value: [], transformed: true };
+        },
+        mutationSource: "general",
+        refreshIntents: Object.freeze(["title_filter_rules"]),
+      }),
+      readProgress: Object.freeze({
+        storageKey: "s1p_read_progress",
+        syncKey: "read_progress",
+        fallback: () => ({}),
+        normalize: normalizeReadProgressValue,
+        importValue: (data) => {
+          const hasField = Object.prototype.hasOwnProperty.call(
+            data,
+            "read_progress"
+          );
+          const normalized = normalizeReadProgressValue(
+            hasField ? data.read_progress : {}
+          );
+          return {
+            value: normalized.value,
+            transformed: normalized.changed || !hasField,
+          };
+        },
+        persistNormalizationOnRead: true,
+        normalizationMessage:
+          "S1 Plus: 检测到旧版阅读进度类型，正在自动升级格式。",
+        mutationSource: "read_progress",
+        refreshIntents: Object.freeze(["read_progress"]),
+      }),
+    });
+    const kindEntries = Object.entries(kindCatalog);
+    const kindByStorageKey = new Map(
+      kindEntries.map(([kind, definition]) => [definition.storageKey, kind])
+    );
+    const valueCache = new Map();
+    const comparableCache = new Map();
+    let crossTabBound = false;
+
+    const getDefinition = (kind) => {
+      const definition = kindCatalog[kind];
+      if (!definition) {
+        throw new Error(`Unknown Core Business Data kind: ${String(kind)}`);
+      }
+      return definition;
+    };
+    const normalizeKindValue = (definition, value) => {
+      const normalized = definition.normalize(value);
+      return normalized && typeof normalized === "object" && "value" in normalized
+        ? normalized
+        : { value: normalized, changed: false };
+    };
+    const setValueCache = (kind, value) => {
+      valueCache.set(kind, {
+        value,
+        expiresAt: now() + CORE_DATA_CACHE_TTL_MS,
+      });
+    };
+    const setComparableCache = (
+      kind,
+      value,
+      { storageNeedsNormalization = false } = {}
+    ) => {
+      comparableCache.set(kind, {
+        value: isComparableObjectValue(value)
+          ? deepCloneSyncValue(value)
+          : value,
+        storageNeedsNormalization,
+        expiresAt: now() + COMPARABLE_STORED_VALUE_CACHE_TTL_MS,
+      });
+    };
+    const readStoredValue = (definition, { allowLegacy = false } = {}) => {
+      const fallbackValue = definition.fallback();
+      if (!allowLegacy || !definition.legacyStorageKey) {
+        return {
+          rawValue: storageAdapter.getValue(definition.storageKey, fallbackValue),
+          usedLegacyValue: false,
+        };
+      }
+      const storedValue = storageAdapter.getValue(definition.storageKey, null);
+      if (storedValue !== null) {
+        return { rawValue: storedValue, usedLegacyValue: false };
+      }
+      const legacyValue = storageAdapter.getValue(
+        definition.legacyStorageKey,
+        null
+      );
+      if (!Array.isArray(legacyValue)) {
+        return { rawValue: fallbackValue, usedLegacyValue: false };
+      }
+      return {
+        rawValue: legacyValue.map((pattern) => ({
+          pattern,
+          enabled: true,
+          id: `rule_${now()}_${random()}`,
+        })),
+        usedLegacyValue: true,
+      };
+    };
+    const getComparableValue = (kind, definition) => {
+      const cachedEntry = comparableCache.get(kind);
+      if (cachedEntry && now() < (Number(cachedEntry.expiresAt) || 0)) {
+        return {
+          value: cachedEntry.value,
+          storageNeedsNormalization:
+            cachedEntry.storageNeedsNormalization === true,
+        };
+      }
+      const { rawValue, usedLegacyValue } = readStoredValue(definition, {
+        allowLegacy: true,
+      });
+      const normalized = normalizeKindValue(definition, rawValue);
+      const storageNeedsNormalization =
+        usedLegacyValue || normalized.changed === true;
+      setComparableCache(kind, normalized.value, {
+        storageNeedsNormalization,
+      });
+      return {
+        value: normalized.value,
+        storageNeedsNormalization,
+      };
+    };
+    const clearLegacyStorageValue = (definition) => {
+      if (!definition.legacyStorageKey) {
+        return false;
+      }
+      const legacyValue = storageAdapter.getValue(
+        definition.legacyStorageKey,
+        null
+      );
+      if (legacyValue === null) {
+        return false;
+      }
+      storageAdapter.setValue(definition.legacyStorageKey, null);
+      return true;
+    };
+    const emitCrossTabSignal = (definition) => {
+      storageAdapter.setValue(CORE_DATA_CROSS_TAB_SIGNAL_KEY, {
+        ts: now(),
+        key: definition.storageKey,
+        sender: sourceId,
+        nonce: random(),
+      });
+    };
+    const commitWrite = (
+      kind,
+      definition,
+      value,
+      { suppressSyncTrigger = false, forceWrite = false } = {}
+    ) => {
+      const normalized = normalizeKindValue(definition, value);
+      const current = getComparableValue(kind, definition);
+      const valueChanged = hasComparableValueChanged(
+        current.value,
+        normalized.value
+      );
+      if (
+        !forceWrite &&
+        !valueChanged &&
+        !current.storageNeedsNormalization
+      ) {
+        clearLegacyStorageValue(definition);
+        setValueCache(kind, normalized.value);
+        return {
+          changed: false,
+          value: normalized.value,
+          normalizationChanged: normalized.changed === true,
+        };
+      }
+
+      invalidateLocalDataHash();
+      storageAdapter.setValue(definition.storageKey, normalized.value);
+      clearLegacyStorageValue(definition);
+      emitCrossTabSignal(definition);
+      setComparableCache(kind, normalized.value);
+      setValueCache(kind, normalized.value);
+      if (!suppressSyncTrigger) {
+        if (definition.mutationSource === "read_progress") {
+          recordLocalMutation("read_progress");
+        } else {
+          recordLocalMutation();
+        }
+      }
+      return {
+        changed: true,
+        value: normalized.value,
+        normalizationChanged: normalized.changed === true,
+      };
+    };
+    const persistReadNormalization = (kind, definition, normalizedValue) => {
+      if (definition.normalizationMessage) {
+        console.log(definition.normalizationMessage);
+      }
+      commitWrite(kind, definition, normalizedValue, {
+        suppressSyncTrigger: true,
+        forceWrite: true,
+      });
+      recordLocalMutation(definition.mutationSource, { triggerSync: false });
+    };
+    const read = (kind, { fresh = false } = {}) => {
+      const definition = getDefinition(kind);
+      if (!fresh) {
+        const cachedEntry = valueCache.get(kind);
+        if (cachedEntry && now() < (Number(cachedEntry.expiresAt) || 0)) {
+          return cachedEntry.value;
+        }
+      }
+
+      const { rawValue, usedLegacyValue } = readStoredValue(definition, {
+        allowLegacy: !fresh,
+      });
+      const normalized = normalizeKindValue(definition, rawValue);
+      if (
+        !fresh &&
+        (usedLegacyValue ||
+          (definition.persistNormalizationOnRead && normalized.changed))
+      ) {
+        persistReadNormalization(kind, definition, normalized.value);
+      } else if (!fresh) {
+        setValueCache(kind, normalized.value);
+        setComparableCache(kind, normalized.value, {
+          storageNeedsNormalization: normalized.changed === true,
+        });
+      }
+      return normalized.value;
+    };
+    const write = (kind, value, { suppressSyncTrigger = false } = {}) => {
+      const definition = getDefinition(kind);
+      return commitWrite(kind, definition, value, { suppressSyncTrigger });
+    };
+    const projectForSync = ({
+      fresh = false,
+      source = null,
+      compactBookmarksForSync = false,
+      compactBlockedPostsForSync = true,
+    } = {}) => {
+      const options = {
+        compactBookmarksForSync,
+        compactBlockedPostsForSync,
+      };
+      const projection = {};
+      const sourceData = isObjectRecord(source) ? source : null;
+      kindEntries.forEach(([kind, definition]) => {
+        const value = sourceData
+          ? normalizeKindValue(
+              definition,
+              definition.importValue(sourceData).value
+            ).value
+          : read(kind, { fresh });
+        projection[definition.syncKey] = definition.projectForSync
+          ? definition.projectForSync(value, options)
+          : value;
+      });
+      return projection;
+    };
+    const importFromSync = (syncData, { suppressSyncTrigger = false } = {}) => {
+      const data = sanitizeRecordObject(syncData);
+      const counts = {};
+      let hasSuppressedSyncedDataTransform = false;
+      let hasImportNormalizationAdjustments = false;
+      kindEntries.forEach(([kind, definition]) => {
+        const imported = definition.importValue(data);
+        const writeResult = write(kind, imported.value, { suppressSyncTrigger });
+        const transformed =
+          imported.transformed === true ||
+          writeResult.normalizationChanged === true;
+        counts[kind] = Array.isArray(writeResult.value)
+          ? writeResult.value.length
+          : Object.keys(sanitizeRecordObject(writeResult.value)).length;
+        if (transformed) {
+          hasImportNormalizationAdjustments = true;
+          if (suppressSyncTrigger) {
+            hasSuppressedSyncedDataTransform = true;
+          }
+        }
+      });
+      return {
+        counts,
+        hasSuppressedSyncedDataTransform,
+        hasImportNormalizationAdjustments,
+      };
+    };
+    const publishDefinitionRefresh = (
+      definitions,
+      { applyImmediately = false } = {}
+    ) => {
+      const intents = [];
+      const seenIntents = new Set();
+      definitions.forEach((definition) => {
+        definition.refreshIntents.forEach((intent) => {
+          if (!seenIntents.has(intent)) {
+            seenIntents.add(intent);
+            intents.push(intent);
+          }
+        });
+      });
+      if (intents.length > 0) {
+        publishRefreshIntents({ intents, applyImmediately });
+      }
+    };
+    const syncFromStorage = ({
+      kinds = null,
+      applyImmediately = false,
+      recordDiagnostics = true,
+    } = {}) => {
+      const requestedKinds = Array.isArray(kinds)
+        ? kinds.filter((kind) => Object.prototype.hasOwnProperty.call(kindCatalog, kind))
+        : kindEntries.map(([kind]) => kind);
+      const changedKinds = [];
+      const changedDefinitions = [];
+      requestedKinds.forEach((kind) => {
+        const definition = getDefinition(kind);
+        const { rawValue, usedLegacyValue } = readStoredValue(definition, {
+          allowLegacy: true,
+        });
+        const normalized = normalizeKindValue(definition, rawValue);
+        const storedValue = normalized.value;
+        const current = getComparableValue(kind, definition);
+        if (hasComparableValueChanged(current.value, storedValue)) {
+          changedKinds.push(kind);
+          changedDefinitions.push(definition);
+        }
+        if (
+          usedLegacyValue ||
+          (definition.persistNormalizationOnRead && normalized.changed)
+        ) {
+          persistReadNormalization(kind, definition, storedValue);
+        } else {
+          setComparableCache(kind, storedValue, {
+            storageNeedsNormalization: normalized.changed === true,
+          });
+          setValueCache(kind, storedValue);
+        }
+      });
+      if (changedKinds.length > 0) {
+        publishDefinitionRefresh(changedDefinitions, { applyImmediately });
+        if (recordDiagnostics) {
+          recordSnapshotResyncFn(
+            changedDefinitions.map((definition) => definition.storageKey)
+          );
+        }
+      }
+      return {
+        didSync: changedKinds.length > 0,
+        changedKinds,
+        applyMode: applyImmediately ? "immediate" : "scheduled",
+      };
+    };
+    const parseSignalPayload = (rawValue) => {
+      if (!isObjectRecord(rawValue)) {
+        return { sender: "", key: "" };
+      }
+      return {
+        sender: typeof rawValue.sender === "string" ? rawValue.sender : "",
+        key: typeof rawValue.key === "string" ? rawValue.key.trim() : "",
+      };
+    };
+    const bindCrossTab = () => {
+      if (
+        crossTabBound ||
+        typeof storageAdapter.addValueChangeListener !== "function"
+      ) {
+        return false;
+      }
+      crossTabBound = true;
+      kindEntries.forEach(([kind, definition]) => {
+        storageAdapter.addValueChangeListener(
+          definition.storageKey,
+          (_key, _oldValue, newValue, isCrossContextChange) => {
+            if (!isCrossContextChange) {
+              return;
+            }
+            const normalized = normalizeKindValue(definition, newValue);
+            if (definition.persistNormalizationOnRead && normalized.changed) {
+              persistReadNormalization(kind, definition, normalized.value);
+            } else {
+              setComparableCache(kind, normalized.value, {
+                storageNeedsNormalization: normalized.changed === true,
+              });
+              setValueCache(kind, normalized.value);
+            }
+            publishDefinitionRefresh([definition]);
+          }
+        );
+      });
+      storageAdapter.addValueChangeListener(
+        CORE_DATA_CROSS_TAB_SIGNAL_KEY,
+        (_key, _oldValue, newValue, isCrossContextChange) => {
+          const signal = parseSignalPayload(newValue);
+          if (signal.sender && signal.sender === sourceId) {
+            return;
+          }
+          if (!signal.key || (!isCrossContextChange && !signal.sender)) {
+            return;
+          }
+          const kind = kindByStorageKey.get(signal.key);
+          if (kind) {
+            syncFromStorage({ kinds: [kind] });
+          }
+        }
+      );
+      bridgeSignalKeys.forEach((key) => {
+        storageAdapter.addValueChangeListener(
+          key,
+          (_key, _oldValue, newValue, isCrossContextChange) => {
+            if (shouldHandleBridgeSignal(key, newValue, isCrossContextChange)) {
+              publishBridgeRefresh(key);
+            }
+          }
+        );
+      });
+      return true;
+    };
+
+    return Object.freeze({
+      read,
+      write,
+      projectForSync,
+      importFromSync,
+      syncFromStorage,
+      bindCrossTab,
+    });
   };
-  const saveUserTags = (tags, suppressSyncTrigger = false) => {
-    const normalizedTags = sanitizeRecordObject(tags);
-    const currentStoredTags = getComparableStoredValue("s1p_user_tags", {});
-    if (!hasComparableValueChanged(currentStoredTags, normalizedTags)) {
-      setCoreDataCacheValue(userTagsCache, normalizedTags);
-      return;
-    }
-    invalidateLocalDataHashCache();
-    GM_setValue("s1p_user_tags", normalizedTags);
-    emitCoreDataCrossTabSignal("s1p_user_tags");
-    setComparableStoredValue("s1p_user_tags", normalizedTags);
-    setCoreDataCacheValue(userTagsCache, normalizedTags);
-    if (!suppressSyncTrigger) {
-      s1pSyncSystem.recordLocalMutation();
-    }
-  };
+  const s1pCoreBusinessData = s1pCreateCoreBusinessData({
+    storageAdapter: s1pCreateCoreBusinessDataGmAdapter(),
+    sourceId: SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID,
+    invalidateLocalDataHash: () => invalidateLocalDataHashCache(),
+    recordLocalMutation: (...args) => s1pSyncSystem.recordLocalMutation(...args),
+    publishRefreshIntents: (payload) =>
+      publishCoreBusinessDataRefreshIntents(payload),
+    publishBridgeRefresh: (key) => scheduleCoreDataCrossTabRefresh(key),
+    recordSnapshotResync: (keys) => recordCoreDataSnapshotResync(keys),
+    bridgeSignalKeys: [SETTINGS_CROSS_TAB_SIGNAL_KEY],
+    shouldHandleBridgeSignal: (_key, newValue, isCrossContextChange) => {
+      const signalPayload = parseSettingsCrossTabSignalPayload(newValue);
+      if (
+        signalPayload.sender &&
+        signalPayload.sender === SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID
+      ) {
+        return false;
+      }
+      return Boolean(isCrossContextChange || signalPayload.sender);
+    },
+  });
+  if (IS_S1P_TEST_MODE) {
+    const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
+    testHookHost.__S1P_TEST_HOOKS__ = {
+      ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
+      s1pCreateCoreBusinessData,
+      s1pCreateCoreBusinessDataMemoryAdapter,
+      s1pCoreBusinessData,
+    };
+  }
+  const getBlockedThreads = () => s1pCoreBusinessData.read("blockedThreads");
+  const saveBlockedThreads = (threads, suppressSyncTrigger = false) =>
+    s1pCoreBusinessData.write("blockedThreads", threads, {
+      suppressSyncTrigger,
+    });
+  const getBlockedUsers = () => s1pCoreBusinessData.read("blockedUsers");
+  const saveBlockedUsers = (users, suppressSyncTrigger = false) =>
+    s1pCoreBusinessData.write("blockedUsers", users, { suppressSyncTrigger });
+  const saveUserTags = (tags, suppressSyncTrigger = false) =>
+    s1pCoreBusinessData.write("userTags", tags, { suppressSyncTrigger });
   // [NEW] Bookmarked Replies data functions
   const getBookmarkedReplies = () =>
-    getCoreDataFromCache(
-      bookmarkedRepliesCache,
-      "s1p_bookmarked_replies"
-    );
-  const saveBookmarkedReplies = (replies, suppressSyncTrigger = false) => {
-    const normalizedReplies = sanitizeRecordObject(replies);
-    const currentStoredReplies = getComparableStoredValue(
-      "s1p_bookmarked_replies",
-      {}
-    );
-    if (!hasComparableValueChanged(currentStoredReplies, normalizedReplies)) {
-      setCoreDataCacheValue(bookmarkedRepliesCache, normalizedReplies);
-      return;
-    }
-    invalidateLocalDataHashCache();
-    GM_setValue("s1p_bookmarked_replies", normalizedReplies);
-    emitCoreDataCrossTabSignal("s1p_bookmarked_replies");
-    setComparableStoredValue("s1p_bookmarked_replies", normalizedReplies);
-    setCoreDataCacheValue(bookmarkedRepliesCache, normalizedReplies);
-    if (!suppressSyncTrigger) {
-      s1pSyncSystem.recordLocalMutation();
-    }
-  };
+    s1pCoreBusinessData.read("bookmarkedReplies");
+  const saveBookmarkedReplies = (replies, suppressSyncTrigger = false) =>
+    s1pCoreBusinessData.write("bookmarkedReplies", replies, {
+      suppressSyncTrigger,
+    });
   const normalizeBookmarkTextForPreview = (text) => {
     const rawText = String(text ?? "");
     if (!rawText) {
@@ -21873,228 +22751,16 @@
       hasPostContent: postContent.length > 0,
     };
   };
-  const buildBookmarkPreviewFromItem = (bookmarkItem) => {
-    const { postContent, contentPreview } = resolveBookmarkContentFields(bookmarkItem);
-    return (
-      buildBookmarkContentPreview(postContent) ||
-      buildBookmarkContentPreview(contentPreview)
-    );
-  };
-  const buildBookmarkedRepliesForSyncFromSource = (bookmarkedReplies = {}) => {
-    const compactReplies = {};
-    Object.keys(bookmarkedReplies).forEach((postId) => {
-      const item = bookmarkedReplies[postId];
-      if (!isObjectRecord(item)) {
-        return;
-      }
-      const compactItem = sanitizeRecordObject(item);
-      const contentPreview = buildBookmarkPreviewFromItem(compactItem);
-      delete compactItem.postContent;
-      if (contentPreview) {
-        compactItem.contentPreview = contentPreview;
-      } else {
-        delete compactItem.contentPreview;
-      }
-      compactReplies[postId] = compactItem;
-    });
-    return compactReplies;
-  };
-  const getBookmarkedRepliesForSync = () =>
-    buildBookmarkedRepliesForSyncFromSource(getBookmarkedReplies());
 
   // [NEW] Blocked Posts data functions
-  const buildBlockedPostContentPreview = (text) =>
-    buildBookmarkContentPreview(text);
-  const normalizeBlockedPostsRecord = (postId, item) => {
-    if (!isObjectRecord(item)) {
-      return null;
-    }
-    const normalizedPostId = normalizeNumericId(item.postId || postId);
-    if (!normalizedPostId) {
-      return null;
-    }
-    const normalizedItem = sanitizeRecordObject(item);
-    normalizedItem.postId = normalizedPostId;
-    normalizedItem.threadId =
-      normalizeNumericId(normalizedItem.threadId) || "unknown_thread";
-    normalizedItem.threadTitle = String(normalizedItem.threadTitle || "");
-    normalizedItem.floor = String(normalizedItem.floor || "");
-    normalizedItem.authorId = normalizeNumericId(normalizedItem.authorId) || "";
-    normalizedItem.authorName = String(normalizedItem.authorName || "");
-    normalizedItem.timestamp =
-      Number.isFinite(Number(normalizedItem.timestamp)) &&
-        Number(normalizedItem.timestamp) > 0
-        ? Number(normalizedItem.timestamp)
-        : 0;
-    if (typeof normalizedItem.postContent !== "undefined") {
-      normalizedItem.postContent = String(normalizedItem.postContent || "");
-    }
-    const previewText = buildBlockedPostContentPreview(
-      normalizedItem.contentPreview || normalizedItem.postContent
-    );
-    if (previewText) {
-      normalizedItem.contentPreview = previewText;
-    } else {
-      delete normalizedItem.contentPreview;
-    }
-    return normalizedItem;
-  };
-  const normalizeBlockedPostsPayload = (posts) => {
-    const source = sanitizeRecordObject(posts);
-    const normalizedPosts = {};
-    Object.keys(source).forEach((postId) => {
-      const normalizedRecord = normalizeBlockedPostsRecord(postId, source[postId]);
-      if (!normalizedRecord) {
-        return;
-      }
-      normalizedPosts[normalizedRecord.postId] = normalizedRecord;
-    });
-    return normalizedPosts;
-  };
-  const buildBlockedPostsForSyncFromSource = (blockedPosts = {}) => {
-    const compactPosts = {};
-    Object.keys(blockedPosts).forEach((postId) => {
-      const item = blockedPosts[postId];
-      if (!isObjectRecord(item)) {
-        return;
-      }
-      const compactItem = sanitizeRecordObject(item);
-      const contentPreview = buildBlockedPostContentPreview(
-        compactItem.contentPreview || compactItem.postContent
-      );
-      delete compactItem.postContent;
-      if (contentPreview) {
-        compactItem.contentPreview = contentPreview;
-      } else {
-        delete compactItem.contentPreview;
-      }
-      compactPosts[postId] = compactItem;
-    });
-    return compactPosts;
-  };
-  const getBlockedPostsForSync = () =>
-    buildBlockedPostsForSyncFromSource(getBlockedPosts());
-  const getBlockedPosts = () => {
-    const blockedPosts = getCoreDataFromCache(blockedPostsCache, "s1p_blocked_posts");
-    const normalizedPosts = normalizeBlockedPostsPayload(blockedPosts);
-    if (hasComparableValueChanged(blockedPosts, normalizedPosts)) {
-      setCoreDataCacheValue(blockedPostsCache, normalizedPosts);
-      setComparableStoredValue("s1p_blocked_posts", normalizedPosts);
-    }
-    return normalizedPosts;
-  };
-  const saveBlockedPosts = (posts, suppressSyncTrigger = false) => {
-    const normalizedPosts = normalizeBlockedPostsPayload(posts);
-    const currentStoredPosts = getComparableStoredValue("s1p_blocked_posts", {});
-    if (!hasComparableValueChanged(currentStoredPosts, normalizedPosts)) {
-      setCoreDataCacheValue(blockedPostsCache, normalizedPosts);
-      return;
-    }
-    invalidateLocalDataHashCache();
-    GM_setValue("s1p_blocked_posts", normalizedPosts);
-    emitCoreDataCrossTabSignal("s1p_blocked_posts");
-    setComparableStoredValue("s1p_blocked_posts", normalizedPosts);
-    setCoreDataCacheValue(blockedPostsCache, normalizedPosts);
-    if (!suppressSyncTrigger) {
-      s1pSyncSystem.recordLocalMutation();
-    }
-  };
+  const getBlockedPosts = () => s1pCoreBusinessData.read("blockedPosts");
+  const saveBlockedPosts = (posts, suppressSyncTrigger = false) =>
+    s1pCoreBusinessData.write("blockedPosts", posts, { suppressSyncTrigger });
 
-  // [MODIFIED] 升级并获取用户标记，自动迁移旧数据
-  const getUserTags = () => {
-    const tags = getCoreDataFromCache(userTagsCache, "s1p_user_tags");
-    let needsMigration = false;
-    const migratedTags = { ...tags };
+  const getUserTags = () => s1pCoreBusinessData.read("userTags");
 
-    Object.keys(migratedTags).forEach((id) => {
-      const rawEntry = migratedTags[id];
-      const isLegacyString = typeof rawEntry === "string";
-      const isTagObject = isObjectRecord(rawEntry);
-
-      if (!isLegacyString && !isTagObject) {
-        needsMigration = true;
-        delete migratedTags[id];
-        return;
-      }
-
-      const normalizedTag = String(
-        isLegacyString ? rawEntry : rawEntry.tag || ""
-      ).trim();
-      if (!normalizedTag) {
-        needsMigration = true;
-        delete migratedTags[id];
-        return;
-      }
-
-      const normalizedName = String(
-        (isTagObject && rawEntry.name) || `用户 #${id}`
-      ).trim() || `用户 #${id}`;
-      const parsedTimestamp = Number(isTagObject ? rawEntry.timestamp : 0);
-      const normalizedTimestamp =
-        Number.isFinite(parsedTimestamp) && parsedTimestamp > 0
-          ? parsedTimestamp
-          : Date.now();
-      const normalizedColor =
-        isTagObject && typeof rawEntry.color === "string"
-          ? rawEntry.color.trim()
-          : "";
-
-      const normalizedEntry = {
-        name: normalizedName,
-        tag: normalizedTag,
-        timestamp: normalizedTimestamp,
-      };
-      if (normalizedColor) {
-        normalizedEntry.color = normalizedColor;
-      }
-
-      if (!isTagObject || hasComparableValueChanged(rawEntry, normalizedEntry)) {
-        needsMigration = true;
-      }
-
-      migratedTags[id] = normalizedEntry;
-    });
-
-    if (needsMigration) {
-      console.log("S1 Plus: 正在将用户标记迁移到新版数据结构...");
-      saveUserTags(migratedTags, true);
-      s1pSyncSystem.recordLocalMutation("general", { triggerSync: false });
-      return migratedTags;
-    }
-
-    return tags;
-  };
-
-  const getTitleFilterRules = () => {
-    if (
-      titleFilterRulesCache.value &&
-      Date.now() < titleFilterRulesCache.expiresAt
-    ) {
-      return titleFilterRulesCache.value;
-    }
-
-    const rules = GM_getValue("s1p_title_filter_rules", null);
-    if (rules !== null) {
-      setCoreDataCacheValue(titleFilterRulesCache, rules);
-      return titleFilterRulesCache.value;
-    }
-
-    // --- 向下兼容：迁移旧的关键字数据 ---
-    const oldKeywords = GM_getValue("s1p_title_keywords", null);
-    if (Array.isArray(oldKeywords)) {
-      const newRules = oldKeywords.map((k) => ({
-        pattern: k,
-        enabled: true,
-        id: `rule_${Date.now()}_${Math.random()}`,
-      }));
-      saveTitleFilterRules(newRules, true);
-      GM_setValue("s1p_title_keywords", null); // 清理旧数据
-      s1pSyncSystem.recordLocalMutation("general", { triggerSync: false });
-      return newRules;
-    }
-    setCoreDataCacheValue(titleFilterRulesCache, []);
-    return titleFilterRulesCache.value;
-  };
+  const getTitleFilterRules = () =>
+    s1pCoreBusinessData.read("titleFilterRules");
 
   /**
    * [NEW] 检测本地“价值数据”是否为空 (屏蔽、标记、收藏等)
@@ -22118,22 +22784,10 @@
       ruleCount === 0
     );
   };
-  const saveTitleFilterRules = (rules, suppressSyncTrigger = false) => {
-    const normalizedRules = Array.isArray(rules) ? rules : [];
-    const currentRules = getComparableStoredValue("s1p_title_filter_rules", []);
-    if (!hasComparableValueChanged(currentRules, normalizedRules)) {
-      setCoreDataCacheValue(titleFilterRulesCache, normalizedRules);
-      return;
-    }
-    invalidateLocalDataHashCache();
-    GM_setValue("s1p_title_filter_rules", normalizedRules);
-    emitCoreDataCrossTabSignal("s1p_title_filter_rules");
-    setComparableStoredValue("s1p_title_filter_rules", normalizedRules);
-    setCoreDataCacheValue(titleFilterRulesCache, normalizedRules);
-    if (!suppressSyncTrigger) {
-      s1pSyncSystem.recordLocalMutation();
-    }
-  };
+  const saveTitleFilterRules = (rules, suppressSyncTrigger = false) =>
+    s1pCoreBusinessData.write("titleFilterRules", rules, {
+      suppressSyncTrigger,
+    });
 
   const blockThread = (id, title, reason = "manual") => {
     const b = getBlockedThreads();
@@ -23005,8 +23659,7 @@
     applyKeywordThreadHidingForRows(null, { rebuildHiddenState: true });
   };
 
-  const getReadProgress = () =>
-    getCoreDataFromCache(readProgressCache, "s1p_read_progress");
+  const getReadProgress = () => s1pCoreBusinessData.read("readProgress");
 
   const normalizeReadProgressSaveReason = (reason) => {
     const normalizedReason = String(reason || "").trim();
@@ -23090,67 +23743,6 @@
     };
   };
 
-  const normalizeReadProgressData = (progress) => {
-    if (!progress || typeof progress !== "object" || Array.isArray(progress)) {
-      return { normalizedProgress: {}, hasLegacyType: Boolean(progress) };
-    }
-
-    const normalizedProgress = {};
-    let hasLegacyType = false;
-
-    Object.keys(progress).forEach((threadId) => {
-      const record = progress[threadId];
-      if (!record || typeof record !== "object" || Array.isArray(record)) {
-        hasLegacyType = true;
-        return;
-      }
-
-      const normalizedRecord = { ...record };
-      if (
-        Object.prototype.hasOwnProperty.call(normalizedRecord, "lastReadFloor") &&
-        normalizedRecord.lastReadFloor !== undefined &&
-        normalizedRecord.lastReadFloor !== null
-      ) {
-        const parsedFloor = parseInt(normalizedRecord.lastReadFloor, 10);
-        if (Number.isFinite(parsedFloor) && parsedFloor > 0) {
-          const normalizedFloor = String(parsedFloor);
-          if (normalizedRecord.lastReadFloor !== normalizedFloor) {
-            hasLegacyType = true;
-          }
-          normalizedRecord.lastReadFloor = normalizedFloor;
-        } else {
-          hasLegacyType = true;
-          delete normalizedRecord.lastReadFloor;
-        }
-      }
-
-      const normalizedProvenance = normalizeReadProgressProvenance(
-        normalizedRecord.provenance,
-        {
-          threadId,
-          page: normalizedRecord.page,
-        }
-      );
-      if (normalizedProvenance) {
-        const rawProvenance = isObjectRecord(record.provenance)
-          ? JSON.stringify(record.provenance)
-          : "";
-        const nextProvenance = JSON.stringify(normalizedProvenance);
-        if (rawProvenance !== nextProvenance) {
-          hasLegacyType = true;
-        }
-        normalizedRecord.provenance = normalizedProvenance;
-      } else if (Object.prototype.hasOwnProperty.call(normalizedRecord, "provenance")) {
-        hasLegacyType = true;
-        delete normalizedRecord.provenance;
-      }
-
-      normalizedProgress[threadId] = normalizedRecord;
-    });
-
-    return { normalizedProgress, hasLegacyType };
-  };
-
   const parseReadProgressOrderNumber = (value) => {
     const parsed = parseInt(value, 10);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
@@ -23175,12 +23767,8 @@
   };
 
   const mergeReadProgressMaps = (localProgress, remoteProgress) => {
-    const { normalizedProgress: localNormalized } = normalizeReadProgressData(
-      localProgress || {}
-    );
-    const { normalizedProgress: remoteNormalized } = normalizeReadProgressData(
-      remoteProgress || {}
-    );
+    const localNormalized = sanitizeRecordObject(localProgress);
+    const remoteNormalized = sanitizeRecordObject(remoteProgress);
     const merged = { ...remoteNormalized };
 
     Object.keys(localNormalized).forEach((threadId) => {
@@ -23202,9 +23790,21 @@
     localDataObject,
     remoteDataObject
   ) => {
+    const projectionOptions = {
+      compactBookmarksForSync: false,
+      compactBlockedPostsForSync: false,
+    };
+    const localCoreData = s1pCoreBusinessData.projectForSync({
+      ...projectionOptions,
+      source: localDataObject?.data,
+    });
+    const remoteCoreData = s1pCoreBusinessData.projectForSync({
+      ...projectionOptions,
+      source: remoteDataObject?.data,
+    });
     const mergedReadProgress = mergeReadProgressMaps(
-      localDataObject?.data?.read_progress,
-      remoteDataObject?.data?.read_progress
+      localCoreData.read_progress,
+      remoteCoreData.read_progress
     );
     const mergedData = {
       ...(isObjectRecord(localDataObject?.data)
@@ -23237,25 +23837,12 @@
     const sourceData = isObjectRecord(dataObject) ? dataObject : {};
     const comparableData = { ...sourceData };
     delete comparableData.read_progress;
-
-    const rawBookmarks = sanitizeRecordObject(comparableData.bookmarked_replies);
-    const normalizedBookmarks = {};
-    Object.keys(rawBookmarks).forEach((postId) => {
-      const item = rawBookmarks[postId];
-      if (!isObjectRecord(item)) {
-        return;
-      }
-      const normalizedItem = sanitizeRecordObject(item);
-      const comparablePreview = buildBookmarkPreviewFromItem(normalizedItem);
-      delete normalizedItem.postContent;
-      if (comparablePreview) {
-        normalizedItem.contentPreview = comparablePreview;
-      } else {
-        delete normalizedItem.contentPreview;
-      }
-      normalizedBookmarks[postId] = normalizedItem;
-    });
-    comparableData.bookmarked_replies = normalizedBookmarks;
+    comparableData.bookmarked_replies =
+      s1pCoreBusinessData.projectForSync({
+        source: sourceData,
+        compactBookmarksForSync: true,
+        compactBlockedPostsForSync: false,
+      }).bookmarked_replies;
     return comparableData;
   };
   const calculateComparableBaseHashWithoutReadProgress = async (dataObject) =>
@@ -23268,34 +23855,13 @@
   };
 
   const saveReadProgress = (progress, suppressSyncTrigger = false) => {
-    const { normalizedProgress } = normalizeReadProgressData(progress);
-    const currentStoredProgress = getComparableStoredValue("s1p_read_progress", {});
-    if (!hasComparableValueChanged(currentStoredProgress, normalizedProgress)) {
-      setCoreDataCacheValue(readProgressCache, normalizedProgress);
-      return;
-    }
-    invalidateLocalDataHashCache();
-    GM_setValue("s1p_read_progress", normalizedProgress);
-    emitCoreDataCrossTabSignal("s1p_read_progress");
-    setComparableStoredValue("s1p_read_progress", normalizedProgress);
-    setCoreDataCacheValue(readProgressCache, normalizedProgress);
-    if (!suppressSyncTrigger) {
-      s1pSyncSystem.recordLocalMutation("read_progress");
-    }
+    return s1pCoreBusinessData.write("readProgress", progress, {
+      suppressSyncTrigger,
+    });
   };
 
-  const migrateLegacyReadProgressData = () => {
-    const progress = getReadProgress();
-    const { normalizedProgress, hasLegacyType } = normalizeReadProgressData(progress);
-    if (!hasLegacyType) {
-      return;
-    }
-
-    console.log("S1 Plus: 检测到旧版阅读进度类型，正在自动升级格式。");
-    saveReadProgress(normalizedProgress, true);
-    // 迁移仅修正本地格式，不直接触发自动推送；但需要更新时间戳避免后续被误判为"同时间戳冲突"。
-    s1pSyncSystem.recordLocalMutation("read_progress", { triggerSync: false });
-  };
+  const migrateLegacyReadProgressData = () =>
+    s1pCoreBusinessData.read("readProgress");
 
   const shouldAdvanceThreadProgress = (
     currentProgress,
@@ -23440,8 +24006,12 @@
   };
 
   const calculateReadProgressDataHash = async (progress) => {
-    const { normalizedProgress } = normalizeReadProgressData(progress || {});
-    return calculateDataHash(normalizedProgress);
+    const projectedData = s1pCoreBusinessData.projectForSync({
+      source: { read_progress: progress },
+      compactBookmarksForSync: false,
+      compactBlockedPostsForSync: false,
+    });
+    return calculateDataHash(projectedData.read_progress);
   };
 
   const buildPendingCleanupInfo = async ({
@@ -28360,35 +28930,6 @@
       getSyncedSettings(nextSettings)
     );
 
-  const getCoreDataSnapshotValueForExport = (key, { useFreshSnapshot = false } = {}) => {
-    if (!useFreshSnapshot) {
-      switch (key) {
-        case "s1p_blocked_threads":
-          return getBlockedThreads();
-        case "s1p_blocked_users":
-          return getBlockedUsers();
-        case "s1p_user_tags":
-          return getUserTags();
-        case "s1p_title_filter_rules":
-          return getTitleFilterRules();
-        case "s1p_read_progress":
-          return getReadProgress();
-        case "s1p_bookmarked_replies":
-          return getBookmarkedReplies();
-        case "s1p_blocked_posts":
-          return getBlockedPosts();
-        default:
-          return {};
-      }
-    }
-
-    const descriptor = getCoreDataStorageSnapshotDescriptors([key])[0];
-    if (!descriptor) {
-      return {};
-    }
-    return pullNormalizedCoreDataStorageSnapshotValue(descriptor);
-  };
-
   const buildExportLocalDataSnapshot = ({
     useFreshSnapshot = false,
     compactBookmarksForSync = null,
@@ -28402,38 +28943,14 @@
       typeof compactBookmarksForSync === "boolean"
         ? compactBookmarksForSync
         : currentSettings.syncBookmarkFullContent !== true;
-    const bookmarkedReplies = getCoreDataSnapshotValueForExport(
-      "s1p_bookmarked_replies",
-      { useFreshSnapshot }
-    );
-    const blockedPosts = getCoreDataSnapshotValueForExport("s1p_blocked_posts", {
-      useFreshSnapshot,
-    });
 
     return {
       settings: syncedSettings,
-      threads: getCoreDataSnapshotValueForExport("s1p_blocked_threads", {
-        useFreshSnapshot,
+      ...s1pCoreBusinessData.projectForSync({
+        fresh: useFreshSnapshot,
+        compactBookmarksForSync: shouldCompactBookmarksForSync,
+        compactBlockedPostsForSync,
       }),
-      users: getCoreDataSnapshotValueForExport("s1p_blocked_users", {
-        useFreshSnapshot,
-      }),
-      user_tags: getCoreDataSnapshotValueForExport("s1p_user_tags", {
-        useFreshSnapshot,
-      }),
-      title_filter_rules: getCoreDataSnapshotValueForExport(
-        "s1p_title_filter_rules",
-        { useFreshSnapshot }
-      ),
-      read_progress: getCoreDataSnapshotValueForExport("s1p_read_progress", {
-        useFreshSnapshot,
-      }),
-      bookmarked_replies: shouldCompactBookmarksForSync
-        ? buildBookmarkedRepliesForSyncFromSource(bookmarkedReplies)
-        : bookmarkedReplies,
-      blocked_posts: compactBlockedPostsForSync
-        ? buildBlockedPostsForSyncFromSource(blockedPosts)
-        : blockedPosts,
     };
   };
 
@@ -28524,101 +29041,6 @@
       let hasSuppressedSyncedDataTransform = false;
       let hasImportNormalizationAdjustments = false;
 
-      const upgradeDataStructure = (type, importedData) => {
-        const shouldNormalizeNumericId = type === "users" || type === "threads";
-        if (!isObjectRecord(importedData)) {
-          return { data: {}, changed: Boolean(importedData) };
-        }
-
-        let changed = false;
-        const upgradedData = {};
-        Object.keys(importedData).forEach((id) => {
-          if (isUnsafeRecordKey(id)) {
-            changed = true;
-            return;
-          }
-          const normalizedId = shouldNormalizeNumericId
-            ? normalizeNumericId(id)
-            : id;
-          if (shouldNormalizeNumericId && !normalizedId) {
-            changed = true;
-            return;
-          }
-          const targetId = normalizedId || id;
-          if (targetId !== id) {
-            changed = true;
-          }
-          const item = importedData[id];
-          let nextItem = null;
-
-          if (isObjectRecord(item)) {
-            nextItem = sanitizeRecordObject(item);
-            if (hasUnsafeRecordKeys(item)) {
-              changed = true;
-            }
-          } else if (typeof item === "string" && item.trim()) {
-            nextItem =
-              type === "users"
-                ? { name: item.trim() }
-                : type === "threads"
-                  ? { title: item.trim() }
-                  : null;
-            changed = true;
-          } else {
-            changed = true;
-            return;
-          }
-
-          if (!nextItem || typeof nextItem !== "object") {
-            changed = true;
-            return;
-          }
-
-          const parsedTimestamp = Number(nextItem.timestamp);
-          if (!Number.isFinite(parsedTimestamp) || parsedTimestamp <= 0) {
-            nextItem.timestamp = Date.now();
-            changed = true;
-          }
-
-          if (type === "users") {
-            if (typeof nextItem.blockThreads === "undefined") {
-              nextItem.blockThreads = false;
-              changed = true;
-            }
-            if (!nextItem.name) {
-              nextItem.name = `用户 #${targetId}`;
-              changed = true;
-            }
-          }
-
-          if (type === "threads") {
-            if (typeof nextItem.reason === "undefined") {
-              nextItem.reason = "manual";
-              changed = true;
-            }
-            if (!nextItem.title) {
-              nextItem.title = `帖子 #${targetId}`;
-              changed = true;
-            }
-          }
-
-          const existingItem = upgradedData[targetId];
-          if (!existingItem) {
-            upgradedData[targetId] = nextItem;
-            return;
-          }
-          // 归一化后若发生 key 冲突，优先保留时间戳较新的记录。
-          const existingTimestamp = Number(existingItem.timestamp) || 0;
-          const nextTimestamp = Number(nextItem.timestamp) || 0;
-          if (nextTimestamp >= existingTimestamp) {
-            upgradedData[targetId] = nextItem;
-          }
-          changed = true;
-        });
-
-        return { data: upgradedData, changed };
-      };
-
       if (dataToImport.settings) {
         const importedSettings = sanitizeRecordObject(dataToImport.settings);
         const hadUnsafeImportedSettingsKeys = hasUnsafeRecordKeys(
@@ -28660,182 +29082,21 @@
         );
       }
 
-      const {
-        data: threadsToSave,
-        changed: threadsTransformedDuringImport,
-      } = upgradeDataStructure(
-        "threads",
-        dataToImport.threads || {}
+      const coreBusinessDataImport = s1pCoreBusinessData.importFromSync(
+        dataToImport,
+        { suppressSyncTrigger }
       );
-      saveBlockedThreads(threadsToSave, suppressSyncTrigger);
-      threadsImported = Object.keys(threadsToSave).length;
-      if (suppressSyncTrigger && threadsTransformedDuringImport) {
+      threadsImported = coreBusinessDataImport.counts.blockedThreads;
+      usersImported = coreBusinessDataImport.counts.blockedUsers;
+      postsImported = coreBusinessDataImport.counts.blockedPosts;
+      tagsImported = coreBusinessDataImport.counts.userTags;
+      bookmarksImported = coreBusinessDataImport.counts.bookmarkedReplies;
+      rulesImported = coreBusinessDataImport.counts.titleFilterRules;
+      progressImported = coreBusinessDataImport.counts.readProgress;
+      if (coreBusinessDataImport.hasSuppressedSyncedDataTransform) {
         hasSuppressedSyncedDataTransform = true;
       }
-      if (threadsTransformedDuringImport) {
-        hasImportNormalizationAdjustments = true;
-      }
-
-      const {
-        data: usersToSave,
-        changed: usersTransformedDuringImport,
-      } = upgradeDataStructure(
-        "users",
-        dataToImport.users || {}
-      );
-      saveBlockedUsers(usersToSave, suppressSyncTrigger);
-      usersImported = Object.keys(usersToSave).length;
-      if (suppressSyncTrigger && usersTransformedDuringImport) {
-        hasSuppressedSyncedDataTransform = true;
-      }
-      if (usersTransformedDuringImport) {
-        hasImportNormalizationAdjustments = true;
-      }
-
-      const hasUserTagsField = Object.prototype.hasOwnProperty.call(
-        dataToImport,
-        "user_tags"
-      );
-      const userTagsIsValidRecord =
-        hasUserTagsField && isObjectRecord(dataToImport.user_tags);
-      const userTagsToSave = userTagsIsValidRecord
-        ? sanitizeRecordObject(dataToImport.user_tags)
-        : {};
-      saveUserTags(userTagsToSave, suppressSyncTrigger);
-      tagsImported = Object.keys(userTagsToSave).length;
-      if (
-        suppressSyncTrigger &&
-        (
-          !userTagsIsValidRecord ||
-          hasUnsafeRecordKeys(dataToImport.user_tags)
-        )
-      ) {
-        hasSuppressedSyncedDataTransform = true;
-      }
-      if (!userTagsIsValidRecord || hasUnsafeRecordKeys(dataToImport.user_tags)) {
-        hasImportNormalizationAdjustments = true;
-      }
-
-      const hasTitleRulesField = Object.prototype.hasOwnProperty.call(
-        dataToImport,
-        "title_filter_rules"
-      );
-      const hasLegacyTitleKeywordsField = Object.prototype.hasOwnProperty.call(
-        dataToImport,
-        "title_keywords"
-      );
-      const hasTitleRulesArray = Array.isArray(dataToImport.title_filter_rules);
-      const hasLegacyTitleKeywordsArray = Array.isArray(
-        dataToImport.title_keywords
-      );
-
-      if (hasTitleRulesArray) {
-        saveTitleFilterRules(
-          dataToImport.title_filter_rules,
-          suppressSyncTrigger
-        );
-        rulesImported = dataToImport.title_filter_rules.length;
-      } else if (hasLegacyTitleKeywordsArray) {
-        const newRules = dataToImport.title_keywords.map((k) => ({
-          pattern: k,
-          enabled: true,
-          id: `rule_${Date.now()}_${Math.random()}`,
-        }));
-        saveTitleFilterRules(newRules, suppressSyncTrigger);
-        rulesImported = newRules.length;
-        if (suppressSyncTrigger) {
-          hasSuppressedSyncedDataTransform = true;
-        }
-        hasImportNormalizationAdjustments = true;
-      } else {
-        saveTitleFilterRules([], suppressSyncTrigger);
-        rulesImported = 0;
-        if (
-          suppressSyncTrigger &&
-          (
-            !hasTitleRulesField ||
-            (hasTitleRulesField && !hasTitleRulesArray) ||
-            (hasLegacyTitleKeywordsField && !hasLegacyTitleKeywordsArray)
-          )
-        ) {
-          hasSuppressedSyncedDataTransform = true;
-        }
-        if (
-          !hasTitleRulesField ||
-          (hasTitleRulesField && !hasTitleRulesArray) ||
-          (hasLegacyTitleKeywordsField && !hasLegacyTitleKeywordsArray)
-        ) {
-          hasImportNormalizationAdjustments = true;
-        }
-      }
-
-      const hasReadProgressField = Object.prototype.hasOwnProperty.call(
-        dataToImport,
-        "read_progress"
-      );
-      const { normalizedProgress, hasLegacyType } = normalizeReadProgressData(
-        hasReadProgressField ? dataToImport.read_progress : {}
-      );
-      saveReadProgress(normalizedProgress, suppressSyncTrigger);
-      progressImported = Object.keys(normalizedProgress).length;
-      if (suppressSyncTrigger && (hasLegacyType || !hasReadProgressField)) {
-        hasSuppressedSyncedDataTransform = true;
-      }
-      if (hasLegacyType || !hasReadProgressField) {
-        hasImportNormalizationAdjustments = true;
-      }
-
-      const hasBookmarksField = Object.prototype.hasOwnProperty.call(
-        dataToImport,
-        "bookmarked_replies"
-      );
-      const bookmarksIsValidRecord =
-        hasBookmarksField && isObjectRecord(dataToImport.bookmarked_replies);
-      const bookmarksToSave = bookmarksIsValidRecord
-        ? sanitizeRecordObject(dataToImport.bookmarked_replies)
-        : {};
-      saveBookmarkedReplies(bookmarksToSave, suppressSyncTrigger);
-      bookmarksImported = Object.keys(bookmarksToSave).length;
-      if (
-        suppressSyncTrigger &&
-        (
-          !bookmarksIsValidRecord ||
-          hasUnsafeRecordKeys(dataToImport.bookmarked_replies)
-        )
-      ) {
-        hasSuppressedSyncedDataTransform = true;
-      }
-      if (
-        !bookmarksIsValidRecord ||
-        hasUnsafeRecordKeys(dataToImport.bookmarked_replies)
-      ) {
-        hasImportNormalizationAdjustments = true;
-      }
-
-      const hasBlockedPostsField = Object.prototype.hasOwnProperty.call(
-        dataToImport,
-        "blocked_posts"
-      );
-      const blockedPostsIsValidRecord =
-        hasBlockedPostsField && isObjectRecord(dataToImport.blocked_posts);
-      const blockedPostsToSave = blockedPostsIsValidRecord
-        ? sanitizeRecordObject(dataToImport.blocked_posts)
-        : {};
-      saveBlockedPosts(blockedPostsToSave, suppressSyncTrigger);
-      postsImported = Object.keys(blockedPostsToSave).length;
-      if (
-        suppressSyncTrigger &&
-        (
-          !blockedPostsIsValidRecord ||
-          hasUnsafeRecordKeys(dataToImport.blocked_posts)
-        )
-      ) {
-        hasSuppressedSyncedDataTransform = true;
-      }
-      if (
-        !blockedPostsIsValidRecord ||
-        hasUnsafeRecordKeys(dataToImport.blocked_posts)
-      ) {
+      if (coreBusinessDataImport.hasImportNormalizationAdjustments) {
         hasImportNormalizationAdjustments = true;
       }
 
@@ -30969,12 +31230,11 @@
       // 从顶层属性中提取数据
       data = {
         settings: remoteGistObject.settings || defaultSettings,
-        threads: remoteGistObject.threads || {},
-        users: remoteGistObject.users || {},
-        user_tags: remoteGistObject.user_tags || {},
-        title_filter_rules: remoteGistObject.title_filter_rules || [],
-        read_progress: remoteGistObject.read_progress || {},
-        bookmarked_replies: remoteGistObject.bookmarked_replies || {},
+        ...s1pCoreBusinessData.projectForSync({
+          source: remoteGistObject,
+          compactBookmarksForSync: false,
+          compactBlockedPostsForSync: false,
+        }),
       };
       // 旧版数据没有哈希，我们计算一个用于后续比较
       contentHash = await calculateDataHash(data);
@@ -34361,67 +34621,6 @@
       ts: Number(rawValue) || 0,
     };
   };
-  const parseCoreDataCrossTabSignalPayload = (rawValue) => {
-    if (
-      rawValue &&
-      typeof rawValue === "object" &&
-      !Array.isArray(rawValue)
-    ) {
-      return {
-        sender:
-          typeof rawValue.sender === "string" ? rawValue.sender : "",
-        ts: Number(rawValue.ts) || 0,
-        key: normalizeSyncDiagnosticText(rawValue.key, 80),
-      };
-    }
-    return {
-      sender: "",
-      ts: 0,
-      key: "",
-    };
-  };
-  const emitCoreDataCrossTabSignal = (key) => {
-    const normalizedKey = normalizeSyncDiagnosticText(key, 80);
-    if (!normalizedKey) {
-      return false;
-    }
-    GM_setValue(CORE_DATA_CROSS_TAB_SIGNAL_KEY, {
-      ts: Date.now(),
-      key: normalizedKey,
-      sender: SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID,
-      nonce: Math.random(),
-    });
-    return true;
-  };
-  const shouldHandleCoreDataCrossTabChange = (
-    key,
-    newValue,
-    isCrossContextChange
-  ) => {
-    if (key === CORE_DATA_CROSS_TAB_SIGNAL_KEY) {
-      const signalPayload = parseCoreDataCrossTabSignalPayload(newValue);
-      if (
-        signalPayload.sender &&
-        signalPayload.sender === SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID
-      ) {
-        return false;
-      }
-      return Boolean(
-        signalPayload.key && (isCrossContextChange || signalPayload.sender)
-      );
-    }
-    if (key !== SETTINGS_CROSS_TAB_SIGNAL_KEY) {
-      return Boolean(isCrossContextChange);
-    }
-    const signalPayload = parseSettingsCrossTabSignalPayload(newValue);
-    if (
-      signalPayload.sender &&
-      signalPayload.sender === SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID
-    ) {
-      return false;
-    }
-    return Boolean(isCrossContextChange || signalPayload.sender);
-  };
   const normalizeSettingChangedPath = (path) =>
     typeof path === "string" ? path.trim() : "";
   const appendSettingChangedPathsToSet = (targetSet, changedPaths = []) => {
@@ -34666,7 +34865,7 @@
     window.addEventListener("pageshow", resyncSettingsOnForeground);
   };
   let coreDataCrossTabRefreshTimer = null;
-  const pendingCoreDataCrossTabRefreshKeys = new Set();
+  const pendingCoreDataRefreshIntents = new Set();
   const runFullSettingsCrossTabRefresh = (changedPathSet) => {
     initializeNavbar();
     applyChanges();
@@ -34836,16 +35035,15 @@
   };
   const runCoreDataCrossTabRefresh = () => {
     coreDataCrossTabRefreshTimer = null;
-    if (pendingCoreDataCrossTabRefreshKeys.size === 0) {
+    if (pendingCoreDataRefreshIntents.size === 0) {
       return;
     }
 
-    const keys = Array.from(pendingCoreDataCrossTabRefreshKeys);
-    pendingCoreDataCrossTabRefreshKeys.clear();
-    const changedKeys = new Set(keys);
+    const refreshIntents = new Set(pendingCoreDataRefreshIntents);
+    pendingCoreDataRefreshIntents.clear();
 
-    if (changedKeys.has(SETTINGS_CROSS_TAB_SIGNAL_KEY)) {
-      changedKeys.delete(SETTINGS_CROSS_TAB_SIGNAL_KEY);
+    if (refreshIntents.has(SETTINGS_CROSS_TAB_SIGNAL_KEY)) {
+      refreshIntents.delete(SETTINGS_CROSS_TAB_SIGNAL_KEY);
       lastSettingsCrossTabSignalReceivedAt = Date.now();
       hasObservedSettingsCrossTabSignal = true;
       const didApplyFromSignal = syncSettingsFromStorageSnapshotIfNeeded({
@@ -34856,24 +35054,24 @@
       if (didApplyFromSignal) {
         pendingSettingsCrossTabRefreshPaths.clear();
         pendingSettingsCrossTabNeedsFullApply = false;
-        changedKeys.delete("s1p_settings_refresh");
-        if (changedKeys.size === 0) {
+        refreshIntents.delete("s1p_settings_refresh");
+        if (refreshIntents.size === 0) {
           return;
         }
       }
     }
 
-    if (changedKeys.has("s1p_settings_refresh")) {
+    if (refreshIntents.has("s1p_settings_refresh")) {
       const didRunFullSettingsApply = runSettingsCrossTabRefresh();
-      changedKeys.delete("s1p_settings_refresh");
-      if (didRunFullSettingsApply && changedKeys.size === 0) {
+      refreshIntents.delete("s1p_settings_refresh");
+      if (didRunFullSettingsApply && refreshIntents.size === 0) {
         return;
       }
     }
 
     const settings = getSettings();
 
-    if (changedKeys.has("s1p_blocked_threads")) {
+    if (refreshIntents.has("blocked_threads")) {
       if (settings.enablePostBlocking) {
         hideBlockedThreads();
         applyUserThreadBlocklist();
@@ -34887,7 +35085,7 @@
       }
     }
 
-    if (changedKeys.has("s1p_blocked_users")) {
+    if (refreshIntents.has("blocked_users")) {
       restoreManagedVisibilityAfterDataImport(settings);
       if (settings.enableUserBlocking) {
         hideBlockedUsersPosts();
@@ -34900,7 +35098,7 @@
       }
     }
 
-    if (changedKeys.has("s1p_blocked_posts")) {
+    if (refreshIntents.has("blocked_posts")) {
       restoreManagedVisibilityAfterDataImport(settings);
       if (settings.enablePostBlocking) {
         hideBlockedPosts();
@@ -34908,7 +35106,7 @@
     }
 
     if (
-      changedKeys.has("s1p_read_progress") &&
+      refreshIntents.has("read_progress") &&
       settings.enableGeneralSettings === true &&
       settings.enableReadProgress === true
     ) {
@@ -34930,7 +35128,7 @@
       }
     }
 
-    if (changedKeys.has("s1p_title_filter_rules")) {
+    if (refreshIntents.has("title_filter_rules")) {
       if (settings.enablePostBlocking) {
         hideThreadsByTitleKeyword();
       } else {
@@ -34942,9 +35140,7 @@
     }
 
     if (
-      (changedKeys.has("s1p_user_tags") ||
-        changedKeys.has("s1p_bookmarked_replies") ||
-        changedKeys.has("s1p_blocked_posts")) &&
+      refreshIntents.has("thread_actions") &&
       (settings.enableUserTagging ||
         settings.enableBookmarkReplies ||
         settings.enablePostBlocking) &&
@@ -34967,180 +35163,43 @@
     if (!key) {
       return;
     }
-    pendingCoreDataCrossTabRefreshKeys.add(key);
+    pendingCoreDataRefreshIntents.add(key);
     ensureCoreDataCrossTabRefreshScheduled();
   };
-  const getCoreDataStorageSnapshotDescriptors = (keys = null) => {
-    const requestedKeys = Array.isArray(keys)
-      ? new Set(
-          keys
-            .map((key) => normalizeSyncDiagnosticText(key, 80))
-            .filter(Boolean)
-        )
-      : null;
-    const descriptors = [
-      {
-        key: "s1p_blocked_threads",
-        cacheState: blockedThreadsCache,
-        fallbackValue: {},
-      },
-      {
-        key: "s1p_blocked_users",
-        cacheState: blockedUsersCache,
-        fallbackValue: {},
-      },
-      {
-        key: "s1p_blocked_posts",
-        cacheState: blockedPostsCache,
-        fallbackValue: {},
-      },
-      {
-        key: "s1p_read_progress",
-        cacheState: readProgressCache,
-        fallbackValue: {},
-      },
-      {
-        key: "s1p_title_filter_rules",
-        cacheState: titleFilterRulesCache,
-        fallbackValue: [],
-      },
-      {
-        key: "s1p_user_tags",
-        cacheState: userTagsCache,
-        fallbackValue: {},
-      },
-      {
-        key: "s1p_bookmarked_replies",
-        cacheState: bookmarkedRepliesCache,
-        fallbackValue: {},
-      },
-    ];
-    return requestedKeys
-      ? descriptors.filter((descriptor) => requestedKeys.has(descriptor.key))
-      : descriptors;
-  };
-  const pullNormalizedCoreDataStorageSnapshotValue = ({
-    key,
-    cacheState,
-    fallbackValue,
-  }) => {
-    const normalize =
-      cacheState && typeof cacheState.normalize === "function"
-        ? cacheState.normalize
-        : sanitizeRecordObject;
-    return normalize(GM_getValue(key, fallbackValue));
-  };
-  const syncCoreDataFromStorageSnapshotIfNeeded = ({
-    keys = null,
+  const publishCoreBusinessDataRefreshIntents = ({
+    intents = [],
     applyImmediately = false,
-    recordDiagnostics = true,
   } = {}) => {
-    const descriptors = getCoreDataStorageSnapshotDescriptors(keys);
-    if (descriptors.length === 0) {
-      return {
-        didSync: false,
-        changedKeys: [],
-      };
-    }
-
-    const changedKeys = [];
-    descriptors.forEach((descriptor) => {
-      const storedValue = pullNormalizedCoreDataStorageSnapshotValue(descriptor);
-      const currentValue = getComparableStoredValue(
-        descriptor.key,
-        descriptor.fallbackValue
-      );
-      if (hasComparableValueChanged(currentValue, storedValue)) {
-        changedKeys.push(descriptor.key);
-      }
-      setComparableStoredValue(descriptor.key, storedValue);
-      if (descriptor.cacheState) {
-        setCoreDataCacheValue(descriptor.cacheState, storedValue);
+    intents.forEach((intent) => {
+      if (intent) {
+        pendingCoreDataRefreshIntents.add(intent);
       }
     });
-
-    if (changedKeys.length > 0) {
-      if (applyImmediately) {
-        changedKeys.forEach((key) => {
-          pendingCoreDataCrossTabRefreshKeys.add(key);
-        });
-        if (coreDataCrossTabRefreshTimer) {
-          clearTimeout(coreDataCrossTabRefreshTimer);
-          coreDataCrossTabRefreshTimer = null;
-        }
-        runCoreDataCrossTabRefresh();
-      } else {
-        changedKeys.forEach((key) => {
-          scheduleCoreDataCrossTabRefresh(key);
-        });
-      }
-      if (recordDiagnostics) {
-        recordCoreDataSnapshotResync(changedKeys);
-      }
+    if (pendingCoreDataRefreshIntents.size === 0) {
+      return;
     }
-
-    return {
-      didSync: changedKeys.length > 0,
-      changedKeys,
-      applyMode: applyImmediately ? "immediate" : "scheduled",
-    };
+    if (!applyImmediately) {
+      ensureCoreDataCrossTabRefreshScheduled();
+      return;
+    }
+    if (coreDataCrossTabRefreshTimer) {
+      clearTimeout(coreDataCrossTabRefreshTimer);
+      coreDataCrossTabRefreshTimer = null;
+    }
+    runCoreDataCrossTabRefresh();
   };
+  const syncCoreDataFromStorageSnapshotIfNeeded = (options = {}) =>
+    s1pCoreBusinessData.syncFromStorage(options);
   const initializeCoreDataCacheSync = () => {
     if (window.__s1pCoreDataCacheSyncBound) {
       return;
     }
     window.__s1pCoreDataCacheSyncBound = true;
-
-    if (typeof GM_addValueChangeListener !== "function") {
-      return;
-    }
-
-    const bindCoreDataCacheSync = (key, cacheState = null) => {
-      GM_addValueChangeListener(
-        key,
-        (_changedKey, _oldValue, newValue, isCrossContextChange) => {
-          if (
-            !shouldHandleCoreDataCrossTabChange(
-              key,
-              newValue,
-              isCrossContextChange
-            )
-          ) {
-            return;
-          }
-          if (key === CORE_DATA_CROSS_TAB_SIGNAL_KEY) {
-            const signalPayload = parseCoreDataCrossTabSignalPayload(newValue);
-            if (!signalPayload.key) {
-              return;
-            }
-            syncCoreDataFromStorageSnapshotIfNeeded({
-              keys: [signalPayload.key],
-              applyImmediately: false,
-            });
-            return;
-          }
-          setComparableStoredValue(key, newValue);
-          if (cacheState) {
-            setCoreDataCacheValue(cacheState, newValue);
-          }
-          scheduleCoreDataCrossTabRefresh(key);
-        }
-      );
-    };
-
-    bindCoreDataCacheSync("s1p_blocked_threads", blockedThreadsCache);
-    bindCoreDataCacheSync("s1p_blocked_users", blockedUsersCache);
-    bindCoreDataCacheSync("s1p_blocked_posts", blockedPostsCache);
-    bindCoreDataCacheSync("s1p_read_progress", readProgressCache);
-    bindCoreDataCacheSync("s1p_title_filter_rules", titleFilterRulesCache);
-    bindCoreDataCacheSync("s1p_user_tags", userTagsCache);
-    bindCoreDataCacheSync("s1p_bookmarked_replies", bookmarkedRepliesCache);
-    bindCoreDataCacheSync(CORE_DATA_CROSS_TAB_SIGNAL_KEY);
-    bindCoreDataCacheSync(SETTINGS_CROSS_TAB_SIGNAL_KEY);
+    s1pCoreBusinessData.bindCrossTab();
     document.addEventListener("visibilitychange", () => {
       if (
         document.visibilityState === "visible" &&
-        pendingCoreDataCrossTabRefreshKeys.size > 0 &&
+        pendingCoreDataRefreshIntents.size > 0 &&
         !coreDataCrossTabRefreshTimer
       ) {
         ensureCoreDataCrossTabRefreshScheduled(0);
@@ -42970,10 +43029,7 @@
       userTags: { label: "全部用户标记", clear: () => saveUserTags({}) },
       titleFilterRules: {
         label: "标题关键字屏蔽规则",
-        clear: () => {
-          saveTitleFilterRules([]);
-          GM_setValue("s1p_title_keywords", null);
-        },
+        clear: () => saveTitleFilterRules([]),
       },
       readProgress: {
         label: "所有帖子阅读进度",

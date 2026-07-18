@@ -407,7 +407,7 @@ const testVisibilityChangeTriggersRecoveryAndProbe = async () => {
     {
       syncCoreDataFromStorageSnapshotIfNeeded: () => {
         calls.push("resync");
-        return { didSync: true, changedKeys: ["s1p_read_progress"] };
+        return { didSync: true, changedKinds: ["readProgress"] };
       },
       recoverPendingAutoSyncIfNeeded: () => {
         calls.push("recover");
@@ -461,7 +461,7 @@ const testPersistedPageShowTriggersRecoveryAndProbe = async () => {
     {
       syncCoreDataFromStorageSnapshotIfNeeded: () => {
         calls.push("resync");
-        return { didSync: true, changedKeys: ["s1p_read_progress"] };
+        return { didSync: true, changedKinds: ["readProgress"] };
       },
       recoverPendingAutoSyncIfNeeded: () => {
         calls.push("recover");
@@ -515,7 +515,7 @@ const testVisibilityChangeWaitsForPendingRecovery = async () => {
     {
       syncCoreDataFromStorageSnapshotIfNeeded: () => {
         calls.push("resync");
-        return { didSync: true, changedKeys: ["s1p_read_progress"] };
+        return { didSync: true, changedKinds: ["readProgress"] };
       },
       recoverPendingAutoSyncIfNeeded: () => {
         calls.push("recover");
