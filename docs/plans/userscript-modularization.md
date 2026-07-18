@@ -4,18 +4,23 @@
 
 - Long-lived integration branch: `codex/s1plus-modularization-foundation`
 - Stable product baseline: `main`
-- Accepted stage: **Phase 0 — bundle foundation complete**
-- Next technical stage: **Phase 0.5 — generated-root cutover**, not started by this status update
-- Current canonical runtime source: repository-root `S1Plus.js`
-- Transitional module entry: `src/main.js`
+- Accepted integration stage: **Phase 0 — bundle foundation complete**
+- Accepted stage branch: **Phase 0.5 — generated-root cutover complete**, pending merge into the integration branch
+- Next technical stage after integration: **Phase 1 — pure shared utilities**, not started
+- Canonical metadata/version source: `userscript.config.mjs`
+- Editable production source: `src/**/*.js`
+- Temporary unmigrated body owner: `src/legacy/main.js`
+- Generated formal artifact: repository-root `S1Plus.js`
 - Generated preview artifact: `dist/S1Plus.user.js`
 - Generated build graph: `dist/S1Plus.meta.json`
-- No production module extraction is permitted until Phase 0.5 is approved and completed.
+- Phase 1 must not begin until Phase 0.5 is merged into `codex/s1plus-modularization-foundation` and the updated integration head is rechecked.
 - Every later phase uses a dedicated stage branch created from the latest integration-branch head and merges back into `codex/s1plus-modularization-foundation` after its gates pass.
 - Intermediate phases do not merge into `main`; the complete integration branch merges into `main` only after the overall modularization program and final gates are complete.
 - GitHub Actions are intentionally not used. Verification is performed locally with locked commands and explicit release checklists.
 
 Branch creation, targeting, sequencing, integration, and the final merge to `main` are governed by [`modularization-branch-workflow.md`](./modularization-branch-workflow.md). That document supersedes any earlier assumption that Phase 0 must merge into `main` before Phase 0.5. This document remains authoritative for technical scope, source ownership, phase gates, rollback, and release architecture.
+
+The accepted Phase 0.5 execution, evidence and integration decision are recorded in [`phase-0.5-generated-root-cutover.md`](./phase-0.5-generated-root-cutover.md).
 
 ## Target model
 
@@ -34,9 +39,9 @@ The production architecture must not depend on runtime `@require` module downloa
 
 ## Source-of-truth contract
 
-### Phase 0: current contract
+### Phase 0: historical foundation contract
 
-| Path | Role | Editable? |
+| Path | Historical role | Editable? |
 |---|---|---:|
 | `S1Plus.js` | Canonical runtime source, metadata owner, formal installable file, VM-test input | Yes |
 | `src/main.js` | Transitional dependency-graph entry importing root `S1Plus.js` | Build-only |
@@ -44,14 +49,14 @@ The production architecture must not depend on runtime `@require` module downloa
 | `dist/S1Plus.meta.json` | Ignored esbuild graph evidence | No |
 | `package.json` / `package-lock.json` | Build command and locked toolchain | Yes |
 
-This role is acceptable only for proving the build path. It cannot support a real module extraction because root `S1Plus.js` is simultaneously source and release artifact.
+This role was acceptable only for proving the build path. It could not support real module extraction because root `S1Plus.js` was simultaneously source and release artifact.
 
-### Phase 0.5: required generated-root cutover
+### Phase 0.5: accepted generated-root contract
 
-Phase 0.5 must happen **before the first production function moves into `src/`**:
+Phase 0.5 completed **before the first production function moved out of the legacy body**:
 
 ```text
-userscript.config.mjs or equivalent canonical metadata source
+userscript.config.mjs
 src/main.js
 src/legacy/main.js
 src/shared/...
@@ -59,22 +64,23 @@ src/shared/...
 S1Plus.js
 ```
 
-After cutover:
+Current ownership:
 
 | Path | Role | Editable? |
 |---|---|---:|
-| canonical metadata config | Sole metadata and version source | Yes |
+| `userscript.config.mjs` | Sole metadata and version source | Yes |
 | `src/**/*.js` | Sole production development source | Yes |
 | `src/legacy/main.js` | Temporary owner of the unmigrated legacy body | Yes |
 | `S1Plus.js` | Committed generated formal release artifact | No |
 | `dist/S1Plus.user.js` | Ignored local preview artifact | No |
+| `dist/S1Plus.meta.json` | Ignored preview graph evidence | No |
 
-The release build must generate metadata `@version` and runtime `SCRIPT_VERSION` from the same canonical value. Before committing or publishing a release, the developer must run the formal release build locally and verify:
+The release build generates metadata `@version` and runtime `SCRIPT_VERSION` from the same canonical value. Before committing or publishing a release, the developer must run the formal release verification locally:
 
 ```bash
 npm ci
 npm run build:release
-git diff --exit-code -- S1Plus.js
+npm run verify:release
 git status --porcelain
 ```
 
@@ -96,11 +102,11 @@ A local release script may automate these commands, but no GitHub-hosted CI work
 12. Generated outputs are not edited manually.
 13. A phase cannot close without its local automated gates and required manual browser evidence.
 
-## Phase 0 foundation implementation
+## Build implementation
 
-`src/main.js` currently imports the root classic script solely as a side-effect module. esbuild emits one IIFE preview while the original legacy IIFE remains synchronous inside it.
+`src/main.js` is the production composition entry and currently imports the intact legacy body from `src/legacy/main.js` solely as a side-effect module. esbuild emits one synchronous IIFE for both preview and formal release targets.
 
-The build is intentionally conservative:
+The build remains intentionally conservative:
 
 - `format: "iife"`
 - `platform: "browser"`
@@ -111,38 +117,51 @@ The build is intentionally conservative:
 - `sourcemap: false`
 - `metafile: true`
 
-The build script:
+The shared build core:
 
-- strictly parses and removes the canonical metadata block only from the exact root source path
-- prepends normalized metadata to the final output
+- reads metadata/version only from `userscript.config.mjs`
+- injects the canonical runtime version token into the legacy body
+- supports in-memory rendering before artifact writes
+- emits byte-identical preview and formal root artifacts
 - rejects symlinked output directories and output files
-- verifies the resolved output directory remains inside the repository
-- writes through an exclusive temporary file and atomic rename
-- emits a build metafile for graph verification
+- restricts the formal output target to exact repository-root `S1Plus.js`
+- verifies resolved output paths remain inside the repository
+- writes through exclusive temporary files and atomic rename
+- emits a preview metafile for graph verification
 
 `npm run verify:bundle` runs:
 
 1. metadata parser boundary tests
-2. output-boundary and symlink safety tests
-3. full preview build
-4. byte-level metadata and build-graph checks
-5. root/bundle VM test-hook parity and behavior probes
-6. one-shot bundle-entry execution check
-7. deterministic rebuild SHA-256 comparison
+2. in-memory legacy override and missing-file-safe render checks
+3. migration conflict/no-overwrite regression tests
+4. output-boundary and symlink safety tests
+5. local loader contract checks
+6. full preview and formal release builds
+7. byte-level metadata, source graph and root/preview parity checks
+8. generated-root/preview VM test-hook and behavior probes
+9. one-shot composition-entry execution checks
+10. deterministic rebuild SHA-256 comparison
 
-The VM harness can execute either root `S1Plus.js` or the final bundle without converting the existing CommonJS test suite to ESM.
+The VM harness executes generated root `S1Plus.js` or the preview bundle without converting the existing CommonJS test suite to ESM.
 
 ## Commands
 
 ```bash
 npm ci
-npm run build
+npm run build:preview
+npm run dev
+npm run build:release
+npm run verify:migration-readiness
 npm run check:metadata-parser
+npm run check:in-memory-render
+npm run check:migration
 npm run check:build-safety
+npm run check:loaders
 npm run check:bundle
 npm run check:bundle-runtime
 npm run check:deterministic
 npm run verify:bundle
+npm run verify:release
 ```
 
 Existing focused CommonJS tests remain valid:
@@ -205,8 +224,8 @@ Factory definition and singleton construction are separate migration decisions. 
 |---|---|---|
 | Source structure | Temporary regex/order/CSS-source assertions | Retire or retarget when ownership moves |
 | Module unit | Directly import an extracted factory | Primary test for pure/module behavior |
-| VM characterization | Execute canonical userscript in test mode | Preserve legacy behavior during migration |
-| Final bundle integration | Execute the built userscript through the same VM harness | Required for every migration step |
+| VM characterization | Execute generated formal userscript in test mode | Preserve legacy behavior during migration |
+| Final bundle integration | Execute the built preview userscript through the same VM harness | Required for every migration step |
 | Manual browser | Real Tampermonkey install, startup, DOM and visual behavior | Required at phase/release gates |
 
 A production test hook can be removed only after direct module tests and final-bundle coverage replace the same contract. Tests must not keep a symbol in the wrong module merely to preserve a source regex.
@@ -238,6 +257,8 @@ Rollback: remove build-only files; root `S1Plus.js` remains installable as the c
 
 ### Phase 0.5 — Generated-root cutover
 
+Status: **accepted on `codex/s1plus-modularization-phase-0.5`; pending merge into `codex/s1plus-modularization-foundation`**.
+
 Scope:
 
 - establish independent canonical metadata/version configuration
@@ -248,19 +269,24 @@ Scope:
 - point local loaders to the continuously rebuilt preview artifact
 - add a local committed-artifact drift check to the release command/checklist
 
-Done criteria:
+Completed criteria:
 
 - `src/` is the only editable production source
 - root and preview builds are generated from the same source/config
 - root formal artifact remains installable at the existing raw/update path
-- GreasyFork/release instructions identify the formal generated artifact
 - Mac and Windows loaders declare metadata permissions from the same contract and load the preview artifact
 - no root/source duplicate implementation exists
-- running the local release verification leaves the committed formal artifact unchanged
+- running local release verification leaves the committed formal artifact unchanged
+- representative CommonJS and browser smoke gates pass
+- no Phase 1 business extraction is included
 
-Rollback: restore the last committed generated root artifact and revert the source cutover as one change; never continue development with two active implementations.
+Integration criterion still pending: merge the accepted stage branch into `codex/s1plus-modularization-foundation`.
+
+Rollback: restore the last Phase 0 root source and revert the source cutover as one stage change; never continue development with two active implementations.
 
 ### Phase 1 — Pure shared utilities
+
+Status: **not started**.
 
 Candidates:
 
@@ -271,7 +297,7 @@ Candidates:
 
 Do not initially move crypto, DOM, window-dependent URL policy, GM storage, timers, initialization, settings singleton, sync, reading progress, image viewer, large CSS, or HTML templates.
 
-Entry criteria: Phase 0.5 complete; ownership and test maps written.
+Entry criteria: Phase 0.5 merged into the integration branch; ownership and test maps written; a dedicated Phase 1 branch created from the updated foundation head.
 
 Done criteria: one implementation, all callers updated, direct module tests added, VM and bundle checks pass, no user-visible behavior change.
 
@@ -321,9 +347,7 @@ Close the migration only after:
 
 ## Local development and loader policy
 
-Phase 0 loaders continue to read root `S1Plus.js` because it remains canonical.
-
-Phase 0.5 must introduce:
+Current local development commands:
 
 ```text
 npm run build:preview   -> dist/S1Plus.user.js
@@ -332,7 +356,9 @@ npm run build:release   -> generate and validate root S1Plus.js
 npm run verify:release  -> local drift and release checks
 ```
 
-Mac and Windows loaders then `@require` the local preview bundle. Their `@grant`, `@connect`, `@match`, and `@run-at` contract must be generated or validated against canonical metadata to prevent drift.
+Mac and Windows loaders `@require` the local preview bundle. Their `@grant`, `@connect`, `@match`, and `@run-at` contracts are validated against canonical metadata to prevent drift.
+
+Root `S1Plus.js` is used for formal installation and release validation, not as an editable development source.
 
 ## Per-extraction checklist
 
@@ -344,7 +370,7 @@ Mac and Windows loaders then `@require` the local preview bundle. Their `@grant`
 6. Add direct module tests where applicable.
 7. Retarget or retire source-structure tests that depended on the old file boundary.
 8. Run focused tests and `npm run verify:bundle` locally.
-9. Confirm root/bundle runtime-hook parity and unchanged metadata/version.
+9. Confirm generated root/preview runtime-hook parity and unchanged metadata/version.
 10. Perform manual browser verification when DOM, startup, permissions, timing, or visual surfaces are involved.
 
 ## Phase 0 acceptance decision
@@ -358,4 +384,19 @@ Recorded evidence:
 - representative CommonJS migration, settings, sync, business-data, image-viewer, and page-projection tests passed
 - Tampermonkey installation and Stage1st list/detail startup smoke completed without observed regression, duplicate initialization, or metadata drift
 
-This acceptance closes Phase 0 only. It does not start Phase 0.5, move production logic, or change source ownership. Phase 0.5 must begin on a dedicated stage branch created from the latest integration-branch head and merge back only after its own gates pass.
+## Phase 0.5 acceptance decision
+
+Phase 0.5 implementation and stage gates are accepted on `codex/s1plus-modularization-phase-0.5`.
+
+Recorded evidence:
+
+- migration readiness, in-memory render, conflict/no-overwrite and output safety checks passed
+- source ownership cutover committed as `e0dbb489a719ca578963df0660f73768fc275bcd`
+- `npm run verify:release` passed after the cutover commit
+- generated root and preview were byte-identical
+- exact two-input source graph and `186` hook parity passed
+- representative settings, sync, business-data, image-viewer and page-projection tests passed
+- deterministic SHA-256 was `cae114e5f1346e8bc5c845d817a402761f9d6a9656e444c2f3aad75f378e4700`
+- formal root and local preview loader browser smoke passed without observed regression
+
+This acceptance does not start Phase 1. Phase 0.5 becomes part of the integration history only after the stage branch merges into `codex/s1plus-modularization-foundation`.
