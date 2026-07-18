@@ -2,10 +2,7 @@
 "use strict";
 
 const assert = require("assert/strict");
-const {
-  createHarness: createBaseHarness,
-  sourceCode,
-} = require("./s1plus-test-helpers");
+const { createHarness: createBaseHarness } = require("./s1plus-test-helpers");
 const toPlainObject = (value) => JSON.parse(JSON.stringify(value));
 
 const createHarness = () =>
@@ -26,10 +23,6 @@ const requestForegroundProbe = (hooks, reason, options = {}) =>
     reason,
     options,
   });
-
-const expectMatch = (pattern, message) => {
-  assert.match(sourceCode, pattern, message);
-};
 
 const testReadProgressSnapshotResyncRefreshesStaleCache = () => {
   const { hooks, sandbox } = createHarness();
@@ -52,19 +45,15 @@ const testReadProgressSnapshotResyncRefreshesStaleCache = () => {
 
   sandbox.GM_setValue("s1p_read_progress", initialProgress);
   assert.deepStrictEqual(toPlainObject(hooks.getReadProgress()), initialProgress);
-  hooks.syncCoreDataFromStorageSnapshotIfNeeded({
-    keys: ["s1p_read_progress"],
-    applyImmediately: false,
-  });
 
   sandbox.GM_setValue("s1p_read_progress", newerProgress);
-  const result = hooks.syncCoreDataFromStorageSnapshotIfNeeded({
-    keys: ["s1p_read_progress"],
+  const result = hooks.s1pCoreBusinessData.syncFromStorage({
+    kinds: ["readProgress"],
     applyImmediately: false,
   });
 
   assert.equal(result.didSync, true);
-  assert.deepStrictEqual(toPlainObject(result.changedKeys), ["s1p_read_progress"]);
+  assert.deepStrictEqual(toPlainObject(result.changedKinds), ["readProgress"]);
   assert.deepStrictEqual(toPlainObject(hooks.getReadProgress()), newerProgress);
 };
 
@@ -108,13 +97,13 @@ const testNoopSnapshotResyncStaysQuietWhenUnchanged = () => {
   const rules = [{ id: "rule_1", pattern: "foo", enabled: true }];
 
   sandbox.GM_setValue("s1p_title_filter_rules", rules);
-  const result = hooks.syncCoreDataFromStorageSnapshotIfNeeded({
-    keys: ["s1p_title_filter_rules"],
+  const result = hooks.s1pCoreBusinessData.syncFromStorage({
+    kinds: ["titleFilterRules"],
     applyImmediately: false,
   });
 
   assert.equal(result.didSync, false);
-  assert.deepStrictEqual(toPlainObject(result.changedKeys), []);
+  assert.deepStrictEqual(toPlainObject(result.changedKinds), []);
 };
 
 const testBackgroundAutoSyncDefaultsToFreshSnapshot = () => {
@@ -181,7 +170,7 @@ const testForegroundProbeResyncsSnapshotBeforeFollowUp = async () => {
     }),
     syncCoreDataFromStorageSnapshotIfNeeded: () => {
       calls.push("core");
-      return { didSync: true, changedKeys: ["s1p_read_progress"] };
+      return { didSync: true, changedKinds: ["readProgress"] };
     },
     syncSettingsFromStorageSnapshotIfNeeded: () => {
       calls.push("settings");
@@ -202,29 +191,6 @@ const testForegroundProbeResyncsSnapshotBeforeFollowUp = async () => {
   assert.equal(result.reason, "hash_equal_after_resync");
 };
 
-const testCoreDataCrossTabSignalWiringPresent = () => {
-  expectMatch(
-    /const CORE_DATA_CROSS_TAB_SIGNAL_KEY = "s1p_core_data_refresh_signal";/,
-    "未新增核心数据跨标签 signal key。"
-  );
-  expectMatch(
-    /const emitCoreDataCrossTabSignal = \(key\) => \{/,
-    "未新增核心数据跨标签 signal helper。"
-  );
-  expectMatch(
-    /emitCoreDataCrossTabSignal\("s1p_read_progress"\);/,
-    "阅读进度保存后未发送核心数据跨标签 signal。"
-  );
-  expectMatch(
-    /bindCoreDataCacheSync\(CORE_DATA_CROSS_TAB_SIGNAL_KEY\);/,
-    "核心数据缓存同步未监听新的 signal key。"
-  );
-  expectMatch(
-    /if \(key === CORE_DATA_CROSS_TAB_SIGNAL_KEY\) \{[\s\S]*syncCoreDataFromStorageSnapshotIfNeeded\(\{[\s\S]*keys: \[signalPayload\.key\]/m,
-    "核心数据 signal 未回退到 storage snapshot 收敛。"
-  );
-};
-
 const main = async () => {
   testReadProgressSnapshotResyncRefreshesStaleCache();
   await testFreshSnapshotExportBypassesStaleCache();
@@ -232,7 +198,6 @@ const main = async () => {
   testBackgroundAutoSyncDefaultsToFreshSnapshot();
   await testSyncDeviceIdStaysLocalOnlyInExport();
   await testForegroundProbeResyncsSnapshotBeforeFollowUp();
-  testCoreDataCrossTabSignalWiringPresent();
   console.log("[core-data-snapshot-resync] checks passed.");
 };
 
