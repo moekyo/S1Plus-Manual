@@ -6,8 +6,8 @@ const vm = require("vm");
 const { webcrypto } = require("crypto");
 
 const repoRoot = path.resolve(__dirname, "..");
-const sourcePath = path.join(repoRoot, "S1Plus.js");
-const sourceCode = fs.readFileSync(sourcePath, "utf8");
+const defaultSourcePath = path.join(repoRoot, "S1Plus.js");
+const sourceCode = fs.readFileSync(defaultSourcePath, "utf8");
 
 const noop = () => {};
 
@@ -179,12 +179,19 @@ const createSandbox = ({
 
 const createHarness = ({
   hookErrorMessage = "未能从 S1Plus.js 暴露测试钩子。",
+  sourcePath = defaultSourcePath,
+  sourceCode: sourceCodeOverride,
+  filename = path.basename(sourcePath),
   ...sandboxOptions
 } = {}) => {
+  const runtimeSourceCode =
+    typeof sourceCodeOverride === "string"
+      ? sourceCodeOverride
+      : fs.readFileSync(sourcePath, "utf8");
   const runtime = createSandbox(sandboxOptions);
   vm.createContext(runtime.sandbox);
-  vm.runInContext(sourceCode, runtime.sandbox, {
-    filename: "S1Plus.js",
+  vm.runInContext(runtimeSourceCode, runtime.sandbox, {
+    filename,
     timeout: 20000,
   });
 
@@ -196,7 +203,8 @@ const createHarness = ({
   return {
     ...runtime,
     hooks,
-    sourceCode,
+    sourceCode: runtimeSourceCode,
+    sourcePath,
   };
 };
 
