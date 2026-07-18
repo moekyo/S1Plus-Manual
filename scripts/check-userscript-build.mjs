@@ -1,67 +1,112 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import vm from "node:vm";
-import { fileURLToPath } from "node:url";
+import {
+  renderUserscriptMetadata,
+  USERSCRIPT_VERSION,
+} from "../userscript.config.mjs";
+import { repositoryRoot, userscriptPaths } from "./userscript-build.mjs";
 import {
   getUserscriptMetadataValue,
   splitUserscriptSource,
+  USERSCRIPT_METADATA_END,
+  USERSCRIPT_METADATA_START,
 } from "./userscript-source.mjs";
 
-const repositoryRoot = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  ".."
-);
-const sourcePath = path.join(repositoryRoot, "S1Plus.js");
-const outputPath = path.join(repositoryRoot, "dist", "S1Plus.user.js");
-const metafilePath = path.join(repositoryRoot, "dist", "S1Plus.meta.json");
+const [releaseBuffer, previewBuffer, metafileSource, legacySource] =
+  await Promise.all([
+    readFile(userscriptPaths.release),
+    readFile(userscriptPaths.preview),
+    readFile(userscriptPaths.previewMetafile, "utf8"),
+    readFile(userscriptPaths.legacySource, "utf8"),
+  ]);
 
-const [canonicalSource, bundle, metafileSource] = await Promise.all([
-  readFile(sourcePath, "utf8"),
-  readFile(outputPath, "utf8"),
-  readFile(metafilePath, "utf8"),
-]);
-
-if (bundle.charCodeAt(0) === 0xfeff || bundle[0] !== "/") {
-  throw new Error("Bundle metadata must start at byte zero without a BOM.");
-}
-if (/\r/.test(bundle)) {
-  throw new Error("Bundle must use LF line endings only.");
+if (!releaseBuffer.equals(previewBuffer)) {
+  throw new Error(
+    "Committed S1Plus.js differs from dist/S1Plus.user.js built from the same source/config."
+  );
 }
 
-const canonicalParts = splitUserscriptSource(canonicalSource, sourcePath);
-const bundleParts = splitUserscriptSource(bundle, outputPath);
-if (canonicalParts.metadata !== bundleParts.metadata) {
-  throw new Error("Bundle metadata differs from canonical S1Plus.js metadata.");
+const releaseSource = releaseBuffer.toString("utf8");
+const previewSource = previewBuffer.toString("utf8");
+for (const [label, source] of [
+  ["release", releaseSource],
+  ["preview", previewSource],
+]) {
+  if (source.charCodeAt(0) === 0xfeff || source[0] !== "/") {
+    throw new Error(`${label} metadata must start at byte zero without a BOM.`);
+  }
+  if (/\r/.test(source)) {
+    throw new Error(`${label} userscript must use LF line endings only.`);
+  }
 }
+
+const configuredMetadata = renderUserscriptMetadata();
+const releaseParts = splitUserscriptSource(releaseSource, userscriptPaths.release);
+const previewParts = splitUserscriptSource(previewSource, userscriptPaths.preview);
+for (const [label, parts] of [
+  ["release", releaseParts],
+  ["preview", previewParts],
+]) {
+  if (parts.metadata !== configuredMetadata) {
+    throw new Error(`${label} metadata differs from userscript.config.mjs.`);
+  }
+  const metadataVersion = getUserscriptMetadataValue(parts, "version");
+  if (metadataVersion !== USERSCRIPT_VERSION) {
+    throw new Error(
+      `${label} @version ${metadataVersion} differs from configured ${USERSCRIPT_VERSION}.`
+    );
+  }
+
+  const runtimeVersionMatches = [
+    ...parts.body.matchAll(
+      /\bconst\s+SCRIPT_VERSION\s*=\s*["']([^"']+)["']/g
+    ),
+  ];
+  if (runtimeVersionMatches.length !== 1) {
+    throw new Error(
+      `${label} must contain one runtime SCRIPT_VERSION; received ${runtimeVersionMatches.length}.`
+    );
+  }
+  if (runtimeVersionMatches[0][1] !== USERSCRIPT_VERSION) {
+    throw new Error(
+      `${label} runtime version ${runtimeVersionMatches[0][1]} differs from configured ${USERSCRIPT_VERSION}.`
+    );
+  }
+
+  try {
+    new vm.Script(parts.body, { filename: label });
+  } catch (error) {
+    throw new Error(
+      `${label} output is not valid classic userscript JavaScript: ${error.message}`
+    );
+  }
+  if (/sourceMappingURL=/.test(parts.body)) {
+    throw new Error(`${label} userscript must not include a source map reference.`);
+  }
+}
+
 if (
-  JSON.stringify(canonicalParts.directives) !==
-  JSON.stringify(bundleParts.directives)
+  legacySource.includes(USERSCRIPT_METADATA_START) ||
+  legacySource.includes(USERSCRIPT_METADATA_END)
 ) {
-  throw new Error("Bundle metadata directives or directive order changed.");
-}
-
-const metadataVersion = getUserscriptMetadataValue(bundleParts, "version");
-const runtimeVersionMatches = [
-  ...bundleParts.body.matchAll(
-    /\bconst\s+SCRIPT_VERSION\s*=\s*["']([^"']+)["']/g
-  ),
-];
-if (runtimeVersionMatches.length !== 1) {
   throw new Error(
-    `Expected one runtime SCRIPT_VERSION, received ${runtimeVersionMatches.length}.`
+    "src/legacy/main.js contains metadata even though userscript.config.mjs is canonical."
   );
 }
-if (runtimeVersionMatches[0][1] !== metadataVersion) {
+if (/\r/.test(legacySource) || legacySource.charCodeAt(0) === 0xfeff) {
+  throw new Error("src/legacy/main.js must be UTF-8 without BOM and use LF only.");
+}
+const sourceVersionTokens =
+  legacySource.match(/\b__S1P_USERSCRIPT_VERSION__\b/g) || [];
+if (sourceVersionTokens.length !== 1) {
   throw new Error(
-    `Runtime version ${runtimeVersionMatches[0][1]} differs from @version ${metadataVersion}.`
+    `src/legacy/main.js must contain one configured version token; received ${sourceVersionTokens.length}.`
   );
 }
-
-try {
-  new vm.Script(bundleParts.body, { filename: outputPath });
-} catch (error) {
+if (/\bconst\s+SCRIPT_VERSION\s*=\s*["']/.test(legacySource)) {
   throw new Error(
-    `Bundle is not valid classic userscript JavaScript: ${error.message}`
+    "src/legacy/main.js must not own a literal runtime version value."
   );
 }
 
@@ -83,44 +128,41 @@ if ((outputInfo.imports || []).length !== 0) {
   throw new Error("Bundle contains runtime imports or external dependencies.");
 }
 
-const expectedInputs = ["S1Plus.js", "src/main.js"];
+const expectedInputs = ["src/legacy/main.js", "src/main.js"];
 const inputPaths = Object.keys(metafile.inputs || {}).sort();
 if (JSON.stringify(inputPaths) !== JSON.stringify(expectedInputs)) {
   throw new Error(
-    `Unexpected Phase 0 build inputs: ${inputPaths.join(", ") || "none"}.`
+    `Unexpected Phase 0.5 build inputs: ${inputPaths.join(", ") || "none"}.`
   );
 }
 
-const canonicalBodyBytes = Buffer.byteLength(canonicalParts.body);
+const legacySourceBytes = Buffer.byteLength(legacySource);
 const legacyBytesInOutput = Number(
-  outputInfo.inputs?.["S1Plus.js"]?.bytesInOutput
+  outputInfo.inputs?.["src/legacy/main.js"]?.bytesInOutput
 );
 if (
   !Number.isFinite(legacyBytesInOutput) ||
-  legacyBytesInOutput < canonicalBodyBytes * 0.75
+  legacyBytesInOutput < legacySourceBytes * 0.75
 ) {
   throw new Error(
-    `Legacy source contributes only ${legacyBytesInOutput || 0} output bytes; expected the current monolith to remain the dominant Phase 0 input.`
+    `Legacy source contributes only ${legacyBytesInOutput || 0} output bytes; expected the intact legacy body to remain the dominant Phase 0.5 input.`
   );
 }
 
-const bundleBodyBytes = Buffer.byteLength(bundleParts.body);
-const minimumBundleBytes = Math.floor(canonicalBodyBytes * 0.85);
+const bundleBodyBytes = Buffer.byteLength(previewParts.body);
+const minimumBundleBytes = Math.floor(legacySourceBytes * 0.85);
 const maximumBundleBytes =
-  canonicalBodyBytes + Math.max(64 * 1024, Math.ceil(canonicalBodyBytes * 0.35));
-const sizeRatio = bundleBodyBytes / Math.max(1, canonicalBodyBytes);
+  legacySourceBytes + Math.max(64 * 1024, Math.ceil(legacySourceBytes * 0.35));
+const sizeRatio = bundleBodyBytes / Math.max(1, legacySourceBytes);
 if (
   bundleBodyBytes < minimumBundleBytes ||
   bundleBodyBytes > maximumBundleBytes
 ) {
   throw new Error(
-    `Bundle body size ${bundleBodyBytes} is outside the Phase 0 guard range ${minimumBundleBytes}-${maximumBundleBytes}.`
+    `Bundle body size ${bundleBodyBytes} is outside the Phase 0.5 guard range ${minimumBundleBytes}-${maximumBundleBytes}.`
   );
-}
-if (/sourceMappingURL=/.test(bundleParts.body)) {
-  throw new Error("Release preview bundle must not include a source map reference.");
 }
 
 console.log(
-  `Verified ${path.relative(repositoryRoot, outputPath)} (${inputPaths.length} inputs, legacy output ${legacyBytesInOutput} bytes, size ratio ${sizeRatio.toFixed(3)}).`
+  `Verified generated root/preview parity (${inputPaths.length} inputs, legacy output ${legacyBytesInOutput} bytes, size ratio ${sizeRatio.toFixed(3)}, version ${USERSCRIPT_VERSION}).`
 );
