@@ -2,14 +2,20 @@
 
 ## Status
 
-- Active branch: `codex/s1plus-modularization-foundation`
-- Current stage: **Phase 0 — bundle foundation remediation**
+- Long-lived integration branch: `codex/s1plus-modularization-foundation`
+- Stable product baseline: `main`
+- Accepted stage: **Phase 0 — bundle foundation complete**
+- Next technical stage: **Phase 0.5 — generated-root cutover**, not started by this status update
 - Current canonical runtime source: repository-root `S1Plus.js`
 - Transitional module entry: `src/main.js`
 - Generated preview artifact: `dist/S1Plus.user.js`
 - Generated build graph: `dist/S1Plus.meta.json`
 - No production module extraction is permitted until Phase 0.5 is approved and completed.
+- Every later phase uses a dedicated stage branch created from the latest integration-branch head and merges back into `codex/s1plus-modularization-foundation` after its gates pass.
+- Intermediate phases do not merge into `main`; the complete integration branch merges into `main` only after the overall modularization program and final gates are complete.
 - GitHub Actions are intentionally not used. Verification is performed locally with locked commands and explicit release checklists.
+
+Branch creation, targeting, sequencing, integration, and the final merge to `main` are governed by [`modularization-branch-workflow.md`](./modularization-branch-workflow.md). That document supersedes any earlier assumption that Phase 0 must merge into `main` before Phase 0.5. This document remains authoritative for technical scope, source ownership, phase gates, rollback, and release architecture.
 
 ## Target model
 
@@ -117,11 +123,12 @@ The build script:
 `npm run verify:bundle` runs:
 
 1. metadata parser boundary tests
-2. full preview build
-3. byte-level metadata and build-graph checks
-4. root/bundle VM test-hook parity
-5. one-shot bundle-entry execution check
-6. deterministic rebuild SHA-256 comparison
+2. output-boundary and symlink safety tests
+3. full preview build
+4. byte-level metadata and build-graph checks
+5. root/bundle VM test-hook parity and behavior probes
+6. one-shot bundle-entry execution check
+7. deterministic rebuild SHA-256 comparison
 
 The VM harness can execute either root `S1Plus.js` or the final bundle without converting the existing CommonJS test suite to ESM.
 
@@ -131,6 +138,7 @@ The VM harness can execute either root `S1Plus.js` or the final bundle without c
 npm ci
 npm run build
 npm run check:metadata-parser
+npm run check:build-safety
 npm run check:bundle
 npm run check:bundle-runtime
 npm run check:deterministic
@@ -207,12 +215,14 @@ A production test hook can be removed only after direct module tests and final-b
 
 ### Phase 0 — Bundle foundation
 
+Status: **complete on `codex/s1plus-modularization-foundation`**.
+
 Scope:
 
 - add locked build tooling
 - preserve all runtime code in root `S1Plus.js`
 - generate and inspect a preview bundle
-- prove metadata, graph, runtime-hook, one-shot entry, and deterministic parity
+- prove metadata, graph, runtime-hook, behavior, one-shot entry, and deterministic parity
 - align repository instructions with the active build foundation
 
 Done criteria:
@@ -224,7 +234,7 @@ Done criteria:
 - `dist/S1Plus.user.js` installs as version `6.10.0`
 - real forum startup smoke shows no duplicate initialization or startup regression
 
-Rollback: remove build-only files; root `S1Plus.js` remains unchanged and installable.
+Rollback: remove build-only files; root `S1Plus.js` remains installable as the canonical Phase 0 source.
 
 ### Phase 0.5 — Generated-root cutover
 
@@ -339,4 +349,13 @@ Mac and Windows loaders then `@require` the local preview bundle. Their `@grant`
 
 ## Phase 0 acceptance decision
 
-Local automated foundation readiness requires all repository commands above. Final Phase 0 approval additionally requires a real Tampermonkey installation and basic Stage1st startup smoke test; connector-only or fixture-only results must not be represented as that browser evidence.
+Phase 0 is accepted and closed on `codex/s1plus-modularization-foundation`.
+
+Recorded evidence:
+
+- clean `npm ci` with pinned `esbuild 0.28.1`
+- complete `npm run verify:bundle` success, including metadata parsing, build safety, bundle structure, runtime hook/behavior parity, and deterministic output
+- representative CommonJS migration, settings, sync, business-data, image-viewer, and page-projection tests passed
+- Tampermonkey installation and Stage1st list/detail startup smoke completed without observed regression, duplicate initialization, or metadata drift
+
+This acceptance closes Phase 0 only. It does not start Phase 0.5, move production logic, or change source ownership. Phase 0.5 must begin on a dedicated stage branch created from the latest integration-branch head and merge back only after its own gates pass.
