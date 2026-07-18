@@ -33871,7 +33871,6 @@
       getManualSyncRootCauseDescriptor,
       createManualSyncPreflightHtml,
       shouldClearDeferredStartupSyncOnResult,
-      getAutoPullRefreshMessagesForSource,
       getNavbarPersistentSyncAlertDescriptor: (...args) =>
         getNavbarPersistentSyncAlertDescriptor(...args),
     };
