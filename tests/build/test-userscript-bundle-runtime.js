@@ -19,28 +19,28 @@ const bundleHarness = createHarness({
 
 const rootHookKeys = Object.keys(rootHarness.hooks).sort();
 const bundleHookKeys = Object.keys(bundleHarness.hooks).sort();
-assert.ok(rootHookKeys.length > 0, "Canonical userscript should expose test hooks.");
+assert.ok(rootHookKeys.length > 0, "Generated root should expose test hooks.");
 assert.deepEqual(
   bundleHookKeys,
   rootHookKeys,
-  "Canonical source and final bundle must expose the same test-hook surface."
+  "Generated root and preview bundle must expose the same test-hook surface."
 );
 
-assert.equal(
-  rootHarness.sandbox.__S1P_BUNDLE_ENTRY_EXECUTIONS__,
-  undefined,
-  "Canonical root execution must not contain the transitional bundle entry."
-);
-assert.equal(
-  bundleHarness.sandbox.__S1P_BUNDLE_ENTRY_EXECUTIONS__,
-  1,
-  "The transitional bundle entry tail must execute exactly once."
-);
-assert.equal(
-  bundleHarness.sandbox.__S1P_TEST_MODE__,
-  true,
-  "Bundle smoke test must execute in test mode."
-);
+for (const [label, harness] of [
+  ["generated root", rootHarness],
+  ["preview bundle", bundleHarness],
+]) {
+  assert.equal(
+    harness.sandbox.__S1P_BUNDLE_ENTRY_EXECUTIONS__,
+    1,
+    `${label} composition-entry tail must execute exactly once.`
+  );
+  assert.equal(
+    harness.sandbox.__S1P_TEST_MODE__,
+    true,
+    `${label} smoke test must execute in test mode.`
+  );
+}
 
 const assertBehaviorParity = (label, invoke) => {
   const rootResult = toPlainObject(invoke(rootHarness.hooks));
@@ -48,7 +48,7 @@ const assertBehaviorParity = (label, invoke) => {
   assert.deepEqual(
     bundleResult,
     rootResult,
-    `${label} must return the same result from root source and final bundle.`
+    `${label} must return the same result from generated root and preview bundle.`
   );
 };
 
@@ -94,5 +94,5 @@ assertBehaviorParity("sync modal projection", ({ s1pSettingsSemantics }) =>
 );
 
 console.log(
-  `[userscript-bundle-runtime] Root/bundle hook surface, behavior probes, and one-shot entry tail verified (${rootHookKeys.length} hooks).`
+  `[userscript-bundle-runtime] Generated root/preview hook surface, behavior probes, and one-shot entry tails verified (${rootHookKeys.length} hooks).`
 );
