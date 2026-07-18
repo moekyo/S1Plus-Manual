@@ -78,6 +78,14 @@ const assertLegacySourceContract = async () => {
   return source;
 };
 
+const getBuildTarget = (target) => {
+  const targetConfig = buildTargets[target];
+  if (!targetConfig) {
+    throw new Error(`Unknown userscript build target: ${target}`);
+  }
+  return targetConfig;
+};
+
 const assertOutputTarget = async (target) => {
   if (target === "preview") {
     await assertSafeOutputDirectory({
@@ -94,19 +102,13 @@ const assertOutputTarget = async (target) => {
   });
 };
 
-export const buildUserscript = async ({ target = "preview" } = {}) => {
-  const targetConfig = buildTargets[target];
-  if (!targetConfig) {
-    throw new Error(`Unknown userscript build target: ${target}`);
-  }
-
+export const renderUserscript = async () => {
   await assertLegacySourceContract();
-  await assertOutputTarget(target);
 
   const result = await build({
     absWorkingDir: repositoryRoot,
     entryPoints: [userscriptPaths.entry],
-    outfile: targetConfig.outputPath,
+    outfile: userscriptPaths.preview,
     bundle: true,
     splitting: false,
     write: false,
@@ -136,26 +138,45 @@ export const buildUserscript = async ({ target = "preview" } = {}) => {
     .replace(/^(?:[\t ]*\n)+/, "");
   const output = `${renderUserscriptMetadata()}\n${GENERATED_USERSCRIPT_BANNER}\n${bundledBody}`;
 
-  await atomicWriteFile(targetConfig.outputPath, output, {
+  return Object.freeze({
+    output,
+    metafile: result.metafile,
+  });
+};
+
+export const writeUserscriptBuildResult = async ({ target, buildResult }) => {
+  const targetConfig = getBuildTarget(target);
+  if (!buildResult || typeof buildResult.output !== "string") {
+    throw new Error("Missing rendered userscript build result.");
+  }
+
+  await assertOutputTarget(target);
+  await atomicWriteFile(targetConfig.outputPath, buildResult.output, {
     defaultMode: target === "release" ? 0o644 : 0o600,
   });
   if (targetConfig.metafilePath) {
     await atomicWriteFile(
       targetConfig.metafilePath,
-      `${JSON.stringify(result.metafile, null, 2)}\n`
+      `${JSON.stringify(buildResult.metafile, null, 2)}\n`
     );
   }
 
   const relativeOutputPath = path.relative(repositoryRoot, targetConfig.outputPath);
   console.log(
-    `Built ${relativeOutputPath} from src/ (${Buffer.byteLength(output)} bytes, version ${USERSCRIPT_VERSION}).`
+    `Built ${relativeOutputPath} from src/ (${Buffer.byteLength(buildResult.output)} bytes, version ${USERSCRIPT_VERSION}).`
   );
 
   return Object.freeze({
     target,
-    output,
-    metafile: result.metafile,
+    output: buildResult.output,
+    metafile: buildResult.metafile,
     outputPath: targetConfig.outputPath,
     metafilePath: targetConfig.metafilePath,
   });
+};
+
+export const buildUserscript = async ({ target = "preview" } = {}) => {
+  getBuildTarget(target);
+  const buildResult = await renderUserscript();
+  return writeUserscriptBuildResult({ target, buildResult });
 };
