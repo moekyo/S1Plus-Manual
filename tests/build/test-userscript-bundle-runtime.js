@@ -24,6 +24,16 @@ assert.deepEqual(
 );
 
 assert.equal(
+  rootHarness.sandbox.__S1P_BUNDLE_ENTRY_EXECUTIONS__,
+  undefined,
+  "Canonical root execution must not contain the transitional bundle entry."
+);
+assert.equal(
+  bundleHarness.sandbox.__S1P_BUNDLE_ENTRY_EXECUTIONS__,
+  1,
+  "The final bundle entry and its side-effect import must execute exactly once."
+);
+assert.equal(
   bundleHarness.sandbox.__S1P_TEST_MODE__,
   true,
   "Bundle smoke test must execute in test mode."
@@ -35,5 +45,5 @@ assert.equal(
 );
 
 console.log(
-  `[userscript-bundle-runtime] Root/bundle hook parity verified (${rootHookKeys.length} hooks).`
+  `[userscript-bundle-runtime] Root/bundle hook parity and one-shot entry verified (${rootHookKeys.length} hooks).`
 );
