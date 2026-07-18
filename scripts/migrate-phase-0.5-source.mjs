@@ -1,14 +1,14 @@
-import {
-  lstat,
-  mkdir,
-  readFile,
-} from "node:fs/promises";
+import { lstat, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import {
   renderUserscriptMetadata,
   USERSCRIPT_VERSION,
 } from "../userscript.config.mjs";
-import { buildUserscript, repositoryRoot, userscriptPaths } from "./userscript-build.mjs";
+import {
+  buildUserscript,
+  repositoryRoot,
+  userscriptPaths,
+} from "./userscript-build.mjs";
 import { atomicWriteFile } from "./userscript-output.mjs";
 import {
   getUserscriptMetadataValue,
@@ -80,7 +80,8 @@ if (rootMetadataVersion !== USERSCRIPT_VERSION) {
   );
 }
 
-const runtimeVersionPattern = /^(\s*)const\s+SCRIPT_VERSION\s*=\s*["']([^"']+)["'];\s*$/gm;
+const runtimeVersionPattern =
+  /^([\t ]*)const[\t ]+SCRIPT_VERSION[\t ]*=[\t ]*["']([^"']+)["'];[\t ]*$/gm;
 const runtimeVersionMatches = [...rootParts.body.matchAll(runtimeVersionPattern)];
 if (runtimeVersionMatches.length !== 1) {
   throw new Error(
