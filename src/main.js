@@ -1,12 +1,11 @@
 /**
- * Transitional userscript entry point.
+ * Phase 0.5 production composition entry.
  *
- * The existing root S1Plus.js remains the canonical runtime source during
- * Phase 0. This entry only proves that the complete classic userscript can be
- * bundled into one synchronous installable file. Real production extraction
- * starts only after the Phase 0.5 generated-root cutover.
+ * The complete legacy userscript body remains intact in src/legacy/main.js.
+ * This stage changes source ownership and the release build path only; it does
+ * not extract or reorganize business functions.
  */
-import "../S1Plus.js";
+import "./legacy/main.js";
 
 if (globalThis.__S1P_TEST_MODE__ === true) {
   globalThis.__S1P_BUNDLE_ENTRY_EXECUTIONS__ =
