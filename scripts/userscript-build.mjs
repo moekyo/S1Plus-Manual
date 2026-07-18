@@ -1,0 +1,158 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { build } from "esbuild";
+import {
+  renderUserscriptMetadata,
+  USERSCRIPT_VERSION,
+} from "../userscript.config.mjs";
+import {
+  assertSafeOutputDirectory,
+  assertSafeRepositoryFileTarget,
+  atomicWriteFile,
+} from "./userscript-output.mjs";
+import {
+  USERSCRIPT_METADATA_END,
+  USERSCRIPT_METADATA_START,
+} from "./userscript-source.mjs";
+
+export const repositoryRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  ".."
+);
+
+export const userscriptPaths = Object.freeze({
+  entry: path.join(repositoryRoot, "src", "main.js"),
+  legacySource: path.join(repositoryRoot, "src", "legacy", "main.js"),
+  preview: path.join(repositoryRoot, "dist", "S1Plus.user.js"),
+  previewMetafile: path.join(repositoryRoot, "dist", "S1Plus.meta.json"),
+  release: path.join(repositoryRoot, "S1Plus.js"),
+});
+
+const buildTargets = Object.freeze({
+  preview: Object.freeze({
+    outputPath: userscriptPaths.preview,
+    metafilePath: userscriptPaths.previewMetafile,
+  }),
+  release: Object.freeze({
+    outputPath: userscriptPaths.release,
+    metafilePath: null,
+  }),
+});
+
+const assertLegacySourceContract = async () => {
+  let source;
+  try {
+    source = await readFile(userscriptPaths.legacySource, "utf8");
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      throw new Error(
+        "Missing src/legacy/main.js. Run npm run migrate:phase-0.5-source once before building."
+      );
+    }
+    throw error;
+  }
+
+  if (
+    source.includes(USERSCRIPT_METADATA_START) ||
+    source.includes(USERSCRIPT_METADATA_END)
+  ) {
+    throw new Error(
+      "src/legacy/main.js must not contain userscript metadata; userscript.config.mjs is canonical."
+    );
+  }
+  if (/\r/.test(source) || source.charCodeAt(0) === 0xfeff) {
+    throw new Error("src/legacy/main.js must be UTF-8 without BOM and use LF only.");
+  }
+
+  const versionTokenMatches = source.match(/\b__S1P_USERSCRIPT_VERSION__\b/g) || [];
+  if (versionTokenMatches.length !== 1) {
+    throw new Error(
+      `src/legacy/main.js must contain exactly one __S1P_USERSCRIPT_VERSION__ token; received ${versionTokenMatches.length}.`
+    );
+  }
+
+  return source;
+};
+
+const assertOutputTarget = async (target) => {
+  if (target === "preview") {
+    await assertSafeOutputDirectory({
+      repositoryRoot,
+      outputDirectory: path.dirname(userscriptPaths.preview),
+    });
+    return;
+  }
+
+  await assertSafeRepositoryFileTarget({
+    repositoryRoot,
+    targetPath: userscriptPaths.release,
+    expectedRelativePath: "S1Plus.js",
+  });
+};
+
+export const buildUserscript = async ({ target = "preview" } = {}) => {
+  const targetConfig = buildTargets[target];
+  if (!targetConfig) {
+    throw new Error(`Unknown userscript build target: ${target}`);
+  }
+
+  await assertLegacySourceContract();
+  await assertOutputTarget(target);
+
+  const result = await build({
+    absWorkingDir: repositoryRoot,
+    entryPoints: [userscriptPaths.entry],
+    outfile: targetConfig.outputPath,
+    bundle: true,
+    splitting: false,
+    write: false,
+    metafile: true,
+    format: "iife",
+    platform: "browser",
+    target: "esnext",
+    charset: "utf8",
+    legalComments: "inline",
+    minify: false,
+    sourcemap: false,
+    treeShaking: false,
+    define: {
+      __S1P_USERSCRIPT_VERSION__: JSON.stringify(USERSCRIPT_VERSION),
+    },
+  });
+
+  if (result.outputFiles.length !== 1) {
+    throw new Error(
+      `Expected one userscript bundle, received ${result.outputFiles.length}.`
+    );
+  }
+
+  const bundledBody = result.outputFiles[0].text
+    .replace(/^\uFEFF/, "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/^(?:[\t ]*\n)+/, "");
+  const output = `${renderUserscriptMetadata()}\n${bundledBody}`;
+
+  await atomicWriteFile(targetConfig.outputPath, output, {
+    defaultMode: target === "release" ? 0o644 : 0o600,
+  });
+  if (targetConfig.metafilePath) {
+    await atomicWriteFile(
+      targetConfig.metafilePath,
+      `${JSON.stringify(result.metafile, null, 2)}\n`
+    );
+  }
+
+  const relativeOutputPath = path.relative(repositoryRoot, targetConfig.outputPath);
+  console.log(
+    `Built ${relativeOutputPath} from src/ (${Buffer.byteLength(output)} bytes, version ${USERSCRIPT_VERSION}).`
+  );
+
+  return Object.freeze({
+    target,
+    output,
+    metafile: result.metafile,
+    outputPath: targetConfig.outputPath,
+    metafilePath: targetConfig.metafilePath,
+  });
+};
