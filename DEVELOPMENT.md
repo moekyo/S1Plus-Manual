@@ -305,7 +305,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - `s1p_title_filter_rules`
 - `s1p_read_progress`
 
-`s1p_settings` 继续由 `defaultSettings`、`buildNormalizedSettings()`、`getSettings()`、`getSettingsForWrite()` 与 `saveSettings()` 管理。重复的每项设置语义集中在冻结的 `s1pSettingsSemantics`：`resolveChangedPaths()` 投影 full/lightweight/passive、运行时 effect intent 与设置面板 tab，`projectSyncModal()` / `buildSyncSettingsPatch()` 负责同步表单映射，`normalizeImageSettings()` 由既有 normalization 层调用。私有 catalog 不对外暴露，定制化 tab 布局和一级 feature toggle 仍保持各自实现；新增设置必须同时补齐默认值、归一化与语义定义。
+`s1p_settings` 继续由 `defaultSettings`、`buildNormalizedSettings()`、`getSettings()`、`getSettingsForWrite()` 与 `saveSettings()` 管理。重复的每项设置语义集中在冻结的 `s1pSettingsSemantics`：`resolveChangedPaths()` 投影 full/lightweight/passive、运行时 effect intent 与设置面板 tab，`projectSyncModal()` / `buildSyncSettingsPatch()` 负责同步表单映射，`normalizeImageSettings()` 由既有 normalization 层调用。私有 catalog 不对外暴露；定制化 tab 布局继续由设置面板实现，一级 feature-toggle 的 DOM effects 统一经 `s1pPageEnhancementProjection` 投影。新增设置必须同时补齐默认值、归一化与语义定义。
 
 除 `s1p_settings` 外，上述七类业务数据统一由 `s1pCoreBusinessData` 的私有 kind catalog 管理。功能与同步调用方只使用逻辑 kind，通过 `read()`、`write()`、`projectForSync()`、`importFromSync()`、`syncFromStorage()`、`bindCrossTab()` 访问；GM key、同步字段名、归一化、TTL cache、legacy key、跨标签 signal 与 refresh intent 不得在调用方重新维护。`s1p_title_keywords` 仅作为 catalog 内部的旧版标题规则身份存在，任意标题规则写入（包括 canonical no-op）都必须由模块内部清理它。
 
@@ -402,6 +402,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - `runRunningSync()` 不接受独立 finalizer；`runTransaction` 只有在基线、远端 writer、已覆盖 pending/shared generation 等事务收尾全部完成后才可 resolve。导航栏/标题状态、刷新、提示、冲突弹窗和重试调度属于 Result Phase，必须等模式锁和全局锁释放后执行。
 - `s1pSyncSystem` 是页面代码唯一的同步系统 façade。页面本地变更调用 `recordLocalMutation()`，生命周期场景调用 `handleLifecycle()`，手动/启动/前台/后台请求调用 `requestSync()`，Navbar 与 Title Owner 调用 `readState()`；初始化只调用一次 `initialize()`，由 façade 依次绑定 lifecycle support、恢复 Scheduler Owner 并恢复 Pending Dirty。任一恢复步骤失败时，façade 必须先 handoff Scheduler Owner、再 unbind lifecycle support，并允许下一次初始化重试。`dispose()` 只用于测试或未来 SPA remount 等显式 host teardown；普通 pagehide/beforeunload 由 `handleLifecycle()` 完成，页面上下文销毁时不额外调用 dispose。即使 unbind 抛错，dispose 也必须清除 façade 的 initialized 状态，使显式重建仍可重试。页面代码不得直接协调内部锁、timer、generation、owner lease、Result Phase Policy 或状态投影。
 - `s1pReadingProgressSession` 是 Reading Progress Session 的唯一页面 interface。帖子页、设置和数据变更调用 `attach()` / `reset()` / `discard()`；同步诊断和本地变更路径只读取 `readState()` 或调用 `recordLocalMutation()`；生命周期 finalizer 委托 `handleLifecycle()`。observer、确认策略、timer、pending write 合并和会话诊断状态都留在 module 内部。测试必须经同一 interface 驱动帖子可见性、交互和生命周期输入，并断言最终 Read Progress，不再写 tracking state。
+- `s1pPageEnhancementProjection.project(event)` 是四条重复论坛 DOM 编排路径的统一 interface：初始/full apply、MutationObserver batch、settings runtime/cross-tab change 和 Core Business Data cross-tab refresh 只提交 `full` / `mutation` / `settings` / `core-data` 语义事件；module 集中拥有这些路径的 feature 顺序、enable/disable、connected scope 校验以及 `fallback-scoped` / `fallback-full` 决策。调用者只保留 observer batching/finally、跨标签 transport/cache、settings modal render/animation 等事件源职责，不得在这四条路径中重建 effect switch。module 复用 `s1pSettingsSemantics` 和 Core Business Data refresh intents，并只通过 `s1pReadingProgressSession`、`s1pImageViewer` 等既有 seam 触发 feature 行为。数据导入、链接设置重置、清空数据等一次性 action-driven convergence 路径仍为当前非目标，保留其显式 refresh sequence。`node tests/test-page-enhancement-projection.js` 覆盖冻结单方法接口、四类事件、顺序和 scope fallback。
 - `s1pSyncResultPhasePolicy.handle(result, context)` 是自动同步 Result Phase 的唯一决策 interface。后台、每日启动、每次加载和前台补同步在 Running Sync 释放模式锁与全局锁后，把结果交给该 module；module 集中决定刷新/静默、冲突暂停或清除、后台/前台重试和通知意图。调用者只保留确实不同的文案、弹窗和刷新 adapter，不再维护各自的 result status switch。各 intent 通过 best-effort 边界独立执行并记录 `intentErrors`；提示、刷新或冲突状态 adapter 失败时仍必须继续执行 retry intent。`retryIntent` 只表示策略决定，前台调用者必须读取 `retryResult.status`，且只有 `scheduled` / `already_scheduled` 才能保留已排队状态；后台 adapter 则显式返回 `scheduled` / `delegated` / `blocked`。adapter 抛错、返回空值或拒绝调度时必须清理旧 retry runtime。
 - 停止心跳和锁后清理属于 best-effort cleanup：它们自身失败时必须记录警告，但不能阻断锁释放或吞掉已经产生的同步结果；锁获取抛出的异常和 lock-unavailable callback 失败仍向调用者传播，普通锁竞争则返回 skipped 结果。
 - Pending Dirty、shared generation、Scheduler Owner/lease、due timer、covered cleanup 和 retry 策略统一由 `pendingDirtyScheduler` module 管理。module 通过 `createPendingDirtyScheduler()` 在构造时绑定 clock、tab、settings 和 timer adapter；调用者只表达 `queue()`、`recover()`、`recoverPending()`、`runDue()`、`flush()`、`complete()`、`handoff()`、`retry()` 或 `reset()` 等语义操作。`handoff()` 同时停止本页的 owner recovery watch；即使当前页不是 owner，也不能留下稍后自动接管的 recovery timer。owner 获取、续租、generation、timer 和 coverage helper 属于 implementation，不再暴露为测试 interface；`inspect()` 仅用于读取场景结果。
@@ -436,7 +437,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 
 - 实施进度：6/6；独立审查进度：6/6。
 - `test-sync-system-facade.js` 覆盖初始化/释放、失败回滚、本地变更六条返回路径、九种同步意图映射与 production singleton 的 background/manual 请求。
-- 生命周期、Scheduler、Running Sync、Result Phase、Navbar/Title 与 startup/foreground 场景继续由对应专项脚本覆盖；全仓 31 个测试文件已通过。
+- 生命周期、Scheduler、Running Sync、Result Phase、Navbar/Title、Page Enhancement Projection 与 startup/foreground 场景继续由对应专项脚本覆盖；全仓 35 个测试文件已通过。
 - 本轮不修改远端同步协议、持久化 schema、用户同步设置或既有 TTL。
 - 尚未完成的验证只有 Phase 1 到 Phase 3 的真实多窗口手动点验；按主计划“跨阶段真实场景检查清单”执行，不应把自动测试通过误写成实机点验完成。
 

@@ -14,6 +14,7 @@ S1 Plus is a single-file Tampermonkey/Greasemonkey userscript that enhances the 
 - Settings semantics test: `node tests/test-settings-semantics-module.js`
 - Core Business Data module test: `node tests/test-core-business-data-module.js`
 - Image Viewer interface test: `node tests/test-image-viewer-interface.js`
+- Page Enhancement Projection test: `node tests/test-page-enhancement-projection.js`
 - Sync tests: run focused `node tests/test-*.js` files from `tests/`.
 - Test helper: `tests/s1plus-test-helpers.js` loads `S1Plus.js` in a `vm` sandbox with browser/GM stubs.
 - Test mode: set `globalThis.__S1P_TEST_MODE__ = true` before loading the script. It disables auto-startup, returns `{}` from `buildNormalizedSettings`, and exposes hooks on `globalThis.__S1P_TEST_HOOKS__`.
@@ -90,7 +91,7 @@ Every settings read and write must go through the normalization layer:
 - `getSettingsForWrite()`: deep clones cached settings and returns a mutable copy.
 - `saveSettings(settings)`: normalizes, writes `s1p_settings`, updates `last_modified`, writes cross-tab signal, and triggers sync.
 
-Repeated per-setting behavior belongs to the frozen `s1pSettingsSemantics` interface. Use `resolveChangedPaths()` for refresh class, runtime intents, and modal tabs; use `projectSyncModal()` / `buildSyncSettingsPatch()` for sync-form mapping; use `normalizeImageSettings()` from `buildNormalizedSettings()`. Keep the private catalog private, and keep bespoke tab markup and primary feature-toggle behavior outside the module.
+Repeated per-setting meaning belongs to the frozen `s1pSettingsSemantics` interface. Use `resolveChangedPaths()` for refresh class, runtime intents, and modal tabs; use `projectSyncModal()` / `buildSyncSettingsPatch()` for sync-form mapping; use `normalizeImageSettings()` from `buildNormalizedSettings()`. Keep the private catalog private. Bespoke tab markup and rerendering stay with the settings modal; primary feature-toggle DOM effects go through `s1pPageEnhancementProjection`.
 
 When adding a setting, update `defaultSettings`, `buildNormalizedSettings`, and its `s1pSettingsSemantics` definition, or the setting can be lost for users with existing data or fall back to a full refresh.
 
@@ -99,6 +100,19 @@ const settings = getSettingsForWrite();
 settings.someSetting = true;
 saveSettings(settings);
 ```
+
+## Page Enhancement Projection
+
+`s1pPageEnhancementProjection` is the frozen shared seam for the four recurring forum-DOM orchestration flows identified by the architecture review. Its only public method is `project(event)`:
+
+- `full` owns the complete feature order and enable/disable convergence.
+- `mutation` validates connected scopes and limits, then owns scoped, `fallback-scoped`, and `fallback-full` dispatch.
+- `settings` consumes `s1pSettingsSemantics` output and preserves modal versus cross-tab effects.
+- `core-data` consumes semantic refresh intents from `s1pCoreBusinessData`; it never interprets GM keys or sync field names.
+
+Those recurring event sources retain event collection and transport only: MutationObserver batching/finally cleanup, settings-modal rendering and animation, and cross-tab signal/cache coordination stay with their callers. Within these four flows, do not recreate feature ordering, enable/disable branches, or scope fallback outside `project(event)`. Feature internals remain behind their existing interfaces, including `s1pReadingProgressSession` and `s1pImageViewer`.
+
+Current non-goals remain explicit action-driven convergence paths, including data import, the link-setting reset action, and clear-data reset. They may deliberately reuse direct feature refresh calls until a separate review proves that broadening the projection seam improves locality.
 
 ## DOM And Events
 
@@ -137,13 +151,13 @@ saveSettings(settings);
 
 Settings cross-tab sync (`initializeSettingsCacheSync`) asks `s1pSettingsSemantics` to classify changes into:
 
-- Full apply: re-runs `applyChanges()`.
-- Lightweight: runs targeted forum-DOM apply functions.
-- Passive: skips broad content reapply; explicitly listed infrastructure intents such as navbar/title refresh may still run.
+- Full apply: submits a full settings event to `s1pPageEnhancementProjection`.
+- Lightweight: submits targeted runtime intents through the same projection seam.
+- Passive: skips broad content reapply; explicitly listed infrastructure intents such as navbar/title refresh still route through that seam.
 
-The same semantic projection supplies targeted runtime effects and open-modal tab refresh. Unknown paths fail safe to Full apply; callers must not recreate path lists or source-regex wiring assertions.
+The same Settings Semantics result supplies targeted runtime effects and open-modal tab refresh. Unknown paths fail safe to Full apply; callers must not recreate path lists or source-regex wiring assertions.
 
-Core data cross-tab sync is owned by `s1pCoreBusinessData.bindCrossTab()` and initialized through `initializeCoreDataCacheSync`. The private catalog binds business data keys and the signal bridge, refreshes module caches, and publishes semantic refresh intents; callers must not interpret storage keys to choose DOM effects.
+Core data cross-tab sync is owned by `s1pCoreBusinessData.bindCrossTab()` and initialized through `initializeCoreDataCacheSync`. The private catalog binds business data keys and the signal bridge, refreshes module caches, and publishes semantic refresh intents; `s1pPageEnhancementProjection` maps those intents to DOM effects, so callers must not interpret storage keys or rebuild effect switches.
 
 Signal mechanism: each tab uses `SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID` to avoid reacting to its own writes. `s1p_settings_refresh_signal` acts as a heartbeat.
 

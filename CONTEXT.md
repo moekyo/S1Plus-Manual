@@ -53,12 +53,20 @@ The frozen interface `s1pImageViewer`. External settings, modal, and debug calle
 _Avoid_: image viewer state object, viewer globals
 
 **Settings Semantics**:
-The per-setting meaning shared by direct settings changes, cross-tab refresh, and an open settings modal: refresh class, runtime effect intents, modal-tab projection, sync-form projection, and focused normalization. Canonical defaults remain in `defaultSettings`, while schema migration remains in `buildNormalizedSettings()`.
+The per-setting meaning shared by recurring schema-backed settings flows: ordinary direct changes, cross-tab refresh, and open-modal refresh. It covers refresh class, runtime effect intents, modal-tab projection, sync-form projection, and focused normalization. Canonical defaults remain in `defaultSettings`, while schema migration remains in `buildNormalizedSettings()`.
 _Avoid_: settings path lists, modal wiring regex
 
 **Settings Semantics Interface**:
-The frozen interface `s1pSettingsSemantics`. Callers use `resolveChangedPaths()`, `projectSyncModal()`, `buildSyncSettingsPatch()`, and `normalizeImageSettings()`; the setting catalog, effect aggregation, and shared token-expiry normalization stay private. The bespoke settings-tab renderer and primary feature-toggle branches remain outside this interface.
+The frozen interface `s1pSettingsSemantics`. Callers use `resolveChangedPaths()`, `projectSyncModal()`, `buildSyncSettingsPatch()`, and `normalizeImageSettings()`; the setting catalog, effect aggregation, and shared token-expiry normalization stay private. Bespoke settings-tab rendering remains outside this interface, while primary feature-toggle effects are projected through the Page Enhancement Projection Interface.
 _Avoid_: generic settings renderer, settings registry
+
+**Page Enhancement Projection**:
+The ordered forum-DOM result shared by four recurring orchestration flows: an initial/full apply, a scoped mutation batch, a settings runtime change, or a Core Business Data cross-tab refresh. It includes feature order, enable/disable behavior, scope validation, and scoped-to-full fallback without owning the event source or feature internals.
+_Avoid_: page refresh switch, DOM dispatcher list
+
+**Page Enhancement Projection Interface**:
+The frozen interface `s1pPageEnhancementProjection.project(event)`. The recurring initial scan, MutationObserver, settings runtime/cross-tab, and Core Business Data cross-tab flows submit semantic events at this one seam; the module consumes Settings Semantics and semantic data intents, then invokes feature interfaces through a private effects adapter. Observer batching, cross-tab transport, modal rendering, storage identity, and mutable feature lifecycle state stay with their owning modules. One-off action workflows such as data import, link-setting reset, and clear-data convergence retain their explicit refresh sequences and are outside this interface's current scope.
+_Avoid_: applyChanges branches, per-caller feature ordering
 
 **Result Phase**:
 A completed sync outcome — success, failure, or conflict — that was explicitly committed by a resolved-state writer such as `finishAutoSyncIndicatorCycle` or `setAutoSyncIndicatorResolvedPhase`. Result phases are safe to display across tabs because they describe an already-completed action, not an in-progress one.
@@ -99,7 +107,9 @@ _Avoid_: live-runner heartbeat, runner election
 - Page callers cross the **Sync System Façade**; Pending Dirty Scheduler, lifecycle adapter, Running Sync, Result Phase Policy, and Sync Indicator State Projection remain internal modules
 - Sync and feature callers cross the **Core Business Data Interface**; only its private catalog maps logical kinds to storage and sync identities
 - Settings and modal callers cross the **Image Viewer Interface**; they do not inspect or mutate viewer lifecycle flags
-- Direct, cross-tab, and modal settings callers share the **Settings Semantics Interface** instead of maintaining path, effect, and form mappings independently
+- Recurring schema-backed direct, cross-tab, and modal settings flows share the **Settings Semantics Interface** instead of maintaining path, effect, and form mappings independently; composite action-driven reset workflows remain explicit Page Enhancement Projection non-goals
+- The recurring initial scan, MutationObserver, settings runtime/cross-tab, and Core Business Data cross-tab flows cross the **Page Enhancement Projection Interface** instead of ordering or gating their forum-DOM feature effects independently
+- The **Page Enhancement Projection** consumes **Settings Semantics** and Core Business Data refresh intents, while Reading Progress Session and Image Viewer lifecycle state remain behind their own interfaces
 - A stale **Running Sync** title does not fall back to an older **Result Phase**; it stays idle until a resolved-state writer commits a new Result Phase or pending recovery produces one
 
 ## Example dialogue
