@@ -1,11 +1,13 @@
 import { readFile } from "node:fs/promises";
-import path from "node:path";
 import vm from "node:vm";
 import {
   renderUserscriptMetadata,
   USERSCRIPT_VERSION,
 } from "../userscript.config.mjs";
-import { repositoryRoot, userscriptPaths } from "./userscript-build.mjs";
+import {
+  GENERATED_USERSCRIPT_BANNER,
+  userscriptPaths,
+} from "./userscript-build.mjs";
 import {
   getUserscriptMetadataValue,
   splitUserscriptSource,
@@ -51,6 +53,10 @@ for (const [label, parts] of [
   if (parts.metadata !== configuredMetadata) {
     throw new Error(`${label} metadata differs from userscript.config.mjs.`);
   }
+  if (!parts.body.startsWith(`${GENERATED_USERSCRIPT_BANNER}\n`)) {
+    throw new Error(`${label} output is missing the generated-file banner.`);
+  }
+
   const metadataVersion = getUserscriptMetadataValue(parts, "version");
   if (metadataVersion !== USERSCRIPT_VERSION) {
     throw new Error(
