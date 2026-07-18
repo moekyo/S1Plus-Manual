@@ -5,16 +5,15 @@
 - Stage branch: `codex/s1plus-modularization-phase-0.5`
 - Integration target: `codex/s1plus-modularization-foundation`
 - Phase 0: accepted on the integration branch
-- Phase 0.5: implementation in progress
-- Phase 1 extraction: prohibited until this stage closes and merges back
+- Phase 0.5 implementation and stage gates: **accepted on the stage branch**
+- Integration state: **pending merge into `codex/s1plus-modularization-foundation`**
+- Phase 1 extraction: not started and prohibited until this stage is merged back
 - GitHub Actions: not used; all gates are local
 
-## Scope
+## Accepted ownership
 
-Phase 0.5 changes source ownership and the build/release path only. It must not
+Phase 0.5 changed source ownership and the build/release path only. It did not
 extract, reorganize, rename, or redesign business functions.
-
-Target ownership:
 
 ```text
 userscript.config.mjs       sole metadata/version source
@@ -26,28 +25,36 @@ dist/S1Plus.user.js         ignored local preview artifact
 dist/S1Plus.meta.json       ignored preview graph evidence
 ```
 
+After integration, production behavior must be edited only under `src/`.
+Root `S1Plus.js` and files under `dist/` remain generated outputs and must not
+be edited manually.
+
 ## One-time source migration
 
-After pulling the stage tooling, run:
+The accepted cutover used:
 
 ```bash
 npm ci
 npm run migrate:phase-0.5-source
 ```
 
-The migration command must:
+The migration command:
 
-1. verify current root metadata exactly matches `userscript.config.mjs`;
-2. verify root metadata and runtime version are both `6.10.0`;
-3. remove only the metadata block from the editable source copy;
-4. replace only the literal runtime version assignment with the build token;
-5. write the remaining body intact to `src/legacy/main.js`;
-6. build byte-identical preview and formal root artifacts;
-7. refuse conflicting pre-existing legacy source or unsafe output paths.
+1. verifies current root metadata exactly matches `userscript.config.mjs`;
+2. verifies root metadata and runtime version are both `6.10.0`;
+3. removes only the metadata block from the editable source copy;
+4. replaces only the literal runtime version assignment with the build token;
+5. writes the remaining body intact to `src/legacy/main.js`;
+6. renders one candidate in memory before artifact writes;
+7. refuses conflicting pre-existing legacy source or generated-root drift;
+8. builds byte-identical preview and formal root artifacts.
 
-Review the migration diff before committing. `src/legacy/main.js` should be the
-former root body with no business reorganization. Root `S1Plus.js` should be a
-generated classic userscript with canonical metadata and a generated-file banner.
+Migration regression tests cover initial migration, safe resume, generated-root
+idempotence, render failure, content conflict, candidate conflict, and no-overwrite
+proof for root and preview.
+
+The migration command is retained for recovery and characterization. Normal
+post-cutover development must not rerun it as an everyday build command.
 
 ## Development commands
 
@@ -57,8 +64,8 @@ npm run dev
 ```
 
 Both commands write only ignored `dist` artifacts. Mac and Windows local loaders
-must load `dist/S1Plus.user.js` and their permission contract must remain aligned
-with canonical metadata.
+load `dist/S1Plus.user.js`, and their permission contracts are validated against
+canonical metadata.
 
 ## Formal artifact commands
 
@@ -85,49 +92,61 @@ npm run verify:release
 `verify:release` additionally requires committed `S1Plus.js` and
 `src/legacy/main.js` to remain clean after rebuilding.
 
-## Representative regression commands
+## Accepted evidence
 
-```bash
-node tests/settings-migration/test-settings-migration.js
-node tests/test-settings-semantics-module.js
-node tests/test-sync-system-facade.js
-node tests/test-core-business-data-module.js
-node tests/test-image-viewer-interface.js
-node tests/test-page-enhancement-projection.js
-```
+The following evidence was completed on the stage branch:
 
-Before stage closure, run the broader relevant CommonJS/source-structure suite and
-retarget only tests that genuinely depended on the old editable-root boundary.
-Do not weaken behavior assertions merely to accommodate generated formatting.
+- clean `npm ci` with no reported vulnerability;
+- `npm run verify:migration-readiness` passed;
+- one-time source migration completed and committed as
+  `e0dbb489a719ca578963df0660f73768fc275bcd`;
+- `npm run verify:release` passed after the migration commit;
+- generated root and preview were byte-identical at `1,982,806` bytes;
+- exact two-input build graph was verified;
+- generated root/preview exposed the same `186` test hooks;
+- stable settings, image and sync behavior probes matched;
+- deterministic generated-root/preview SHA-256 was
+  `cae114e5f1346e8bc5c845d817a402761f9d6a9656e444c2f3aad75f378e4700`;
+- representative settings migration, settings semantics, sync façade,
+  core-business-data, image-viewer and page-projection tests passed;
+- formal generated root browser smoke passed;
+- local preview loader browser smoke passed;
+- Stage1st list/detail startup, single initialization, navigation, settings panel,
+  metadata and console checks showed no observed regression;
+- final `git status --short` and `git diff --check` were clean.
 
 ## Browser gates
 
-Install only one S1 Plus instance at a time and verify both:
+The accepted browser evidence covered both:
 
 1. formal generated root `S1Plus.js`;
 2. local loader using `dist/S1Plus.user.js`.
 
-Confirm metadata `6.10.0`, document-start behavior, single initialization,
-navigation entry, settings panel, list/detail startup, and absence of new uncaught
-errors or unhandled rejections.
+Both paths were tested with only one S1 Plus instance enabled. Metadata `6.10.0`,
+document-start behavior, single initialization, navigation entry, settings panel,
+list/detail startup, watch-preview loading, and console error boundaries passed.
 
-## Done criteria
+## Acceptance decision
 
-Phase 0.5 may close only when:
+**Phase 0.5 stage readiness: Yes.**
 
-- `src/` is the only editable production source;
-- `userscript.config.mjs` solely owns metadata/version;
-- root is a committed generated artifact and is never manually edited;
-- root and preview are reproducibly byte-identical;
-- local loaders use preview and pass metadata-contract checks;
-- automated, representative CommonJS, release-drift, and browser gates pass;
-- no root/source duplicate implementation exists;
-- no Phase 1 business-function extraction is included;
-- the stage branch is reviewed and merged into `codex/s1plus-modularization-foundation`.
+The stage has satisfied its source-ownership, automated, release-drift,
+representative regression and browser requirements. No Phase 1 extraction was
+included.
+
+The stage is not yet part of the integration history until it is merged into:
+
+```text
+codex/s1plus-modularization-foundation
+```
+
+Do not merge this stage into `main`. Do not create or begin the Phase 1 branch
+until the Phase 0.5 merge is complete and the integration branch has been
+updated and rechecked.
 
 ## Rollback
 
 Revert the entire cutover as one stage change: restore the last Phase 0 root source,
-remove the new generated-source ownership files and commands, and restore loaders
+remove the generated-source ownership files and commands, and restore loaders
 to the Phase 0 root path. Never continue with root and `src/legacy/main.js` both
 acting as editable production implementations.
