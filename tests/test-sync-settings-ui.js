@@ -87,28 +87,12 @@ const navbarSyncButtonBlock =
     "检查策略说明未标明可见页低频复查是同组子开关。",
   ],
   [
-    /const resolveSyncAutoCheckModeValue = \(settingsSnapshot = \{\}\) => \{[\s\S]*syncPerLoadCheckEnabled[\s\S]*syncCheckOnReturnToForeground/,
-    "同步设置页缺少检查策略的回填映射 helper。",
-  ],
-  [
     /syncAutoCheckModeControl\.addEventListener\("click",[\s\S]*markSyncSettingsDirty\(\);/,
     "同步设置页切换检查策略时未标记为脏状态。",
   ],
   [
-    /applySyncSettingsToModal\s*=\s*\(settingsSnapshot\)\s*=>\s*\{[\s\S]*setSyncAutoCheckModeControlValue\(\s*resolveSyncAutoCheckModeValue\(settingsSnapshot\)/,
-    "同步设置页未通过统一 helper 回填检查策略控件。",
-  ],
-  [
     /for="s1p-visible-remote-polling-enabled-toggle">持续可见时低频复查/,
     "同步设置页缺少持续可见低频复查子开关。",
-  ],
-  [
-    /syncVisibleRemotePollingEnabled:\s*visibleRemotePollingToggle\?\.checked === true/,
-    "保存设置时未收集持续可见低频复查开关。",
-  ],
-  [
-    /settingsSnapshot\.syncVisibleRemotePollingEnabled === true/,
-    "同步设置页未回填持续可见低频复查开关。",
   ],
   [
     /const updateVisibleRemotePollingToggleState = \(\) => \{[\s\S]*isForegroundMode = getSyncAutoCheckModeControlValue\(\) === "foreground"[\s\S]*"s1p-hidden"[\s\S]*visibleRemotePollingToggle\.disabled = !isEnabled;/,
@@ -147,24 +131,8 @@ const navbarSyncButtonBlock =
     "标题同步状态开关未随远程同步总开关置灰。",
   ],
   [
-    /syncShowTitleSyncStatus:\s*titleSyncStatusToggle\.checked/,
-    "保存设置时未收集标题同步状态开关。",
-  ],
-  [
-    /settingsSnapshot\.syncShowTitleSyncStatus === true/,
-    "同步设置页未回填标题同步状态开关。",
-  ],
-  [
     /syncSettingsControls = \{[\s\S]*syncDeviceIdInput: modal\.querySelector\("#s1p-sync-device-id-input"\)/,
     "同步设备 ID 输入框未接入同步设置控件集合。",
-  ],
-  [
-    /applySyncSettingsToModal\s*=\s*\(settingsSnapshot\)\s*=>\s*\{[\s\S]*syncDeviceIdInput\.value = settingsSnapshot\.syncDeviceId \|\| "";/,
-    "同步设置页未回填同步设备 ID。",
-  ],
-  [
-    /buildSyncSettingsFromModal\s*=\s*\(\)\s*=>\s*\{[\s\S]*syncDeviceId: syncDeviceIdInput\.value\.trim\(\),/,
-    "保存设置时未收集同步设备 ID。",
   ],
   [
     /setTemplateTooltip\(\s*syncAutoCheckModeHelpBtn,\s*SYNC_AUTO_CHECK_MODE_HELP_TOOLTIP_TEXT,\s*SYNC_AUTO_CHECK_MODE_HELP_TOOLTIP_CONFIG\s*\)/,
@@ -177,10 +145,6 @@ const navbarSyncButtonBlock =
   [
     /selectedKeys\.includes\("settings"\)[\s\S]*applySyncSettingsToModal\(defaultSettings\);/,
     "重置设置后未通过统一 helper 恢复同步设置默认值。",
-  ],
-  [
-    /buildSyncSettingsFromModal\s*=\s*\(\)\s*=>\s*\{[\s\S]*const syncAutoCheckMode = getSyncAutoCheckModeControlValue\(\);[\s\S]*applySyncAutoCheckModeToSettings\(nextSettings, syncAutoCheckMode\);/,
-    "保存设置时未从新的检查策略控件收集值。",
   ],
   [
     /id="s1p-manual-sync-section"[\s\S]*id="s1p-auto-push-section"[\s\S]*id="s1p-auto-pull-section"[\s\S]*id="s1p-sync-status-section"[\s\S]*id="s1p-github-connection-section"/,

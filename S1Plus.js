@@ -33950,6 +33950,415 @@
     syncTokenExpiryDate: null,     // [新增] Token 过期时间戳
   };
 
+  const normalizeS1pSyncTokenExpiryDate = (value) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  };
+  const s1pCreateSettingsSemantics = ({ defaults }) => {
+    const freezeDefinition = ({
+      effectClass = "passive",
+      runtimeIntents = [],
+      modalTabs = [],
+    } = {}) =>
+      Object.freeze({
+        effectClass,
+        runtimeIntents: Object.freeze([...runtimeIntents]),
+        modalTabs: Object.freeze([...modalTabs]),
+      });
+    const definitions = Object.freeze({
+      enablePostBlocking: freezeDefinition({
+        effectClass: "full",
+        modalTabs: ["threads"],
+      }),
+      enableGeneralSettings: freezeDefinition({
+        effectClass: "full",
+        modalTabs: ["general-settings"],
+      }),
+      enableUserBlocking: freezeDefinition({
+        effectClass: "full",
+        modalTabs: ["users"],
+      }),
+      enableUserTagging: freezeDefinition({
+        effectClass: "full",
+        modalTabs: ["tags"],
+      }),
+      enableReadProgress: freezeDefinition({
+        effectClass: "full",
+        modalTabs: ["general-settings"],
+      }),
+      enableBookmarkReplies: freezeDefinition({
+        effectClass: "full",
+        modalTabs: ["bookmarks"],
+      }),
+      readingProgressCleanupDays: freezeDefinition({
+        modalTabs: ["general-settings"],
+      }),
+      cleanupMode: freezeDefinition({ modalTabs: ["general-settings"] }),
+      openInNewTab: freezeDefinition({
+        effectClass: "lightweight",
+        runtimeIntents: ["global_link_behavior"],
+        modalTabs: ["general-settings"],
+      }),
+      "openInNewTab.progress": freezeDefinition({
+        effectClass: "lightweight",
+        runtimeIntents: ["progress_buttons"],
+        modalTabs: ["general-settings"],
+      }),
+      "openInNewTab.progressInBackground": freezeDefinition({
+        effectClass: "lightweight",
+        runtimeIntents: ["progress_buttons"],
+        modalTabs: ["general-settings"],
+      }),
+      showReadIndicator: freezeDefinition({
+        effectClass: "lightweight",
+        runtimeIntents: ["read_indicator"],
+        modalTabs: ["general-settings"],
+      }),
+      autoLinkPlainTextUrls: freezeDefinition({
+        effectClass: "lightweight",
+        runtimeIntents: ["plain_text_autolinks"],
+        modalTabs: ["general-settings"],
+      }),
+      hideImagesByDefault: freezeDefinition({
+        effectClass: "lightweight",
+        runtimeIntents: [
+          "image_hiding",
+          "image_toggle_buttons",
+          "image_viewer_behavior",
+        ],
+        modalTabs: ["general-settings"],
+      }),
+      limitImagesBySize: freezeDefinition({
+        effectClass: "lightweight",
+        runtimeIntents: ["image_size_limits", "image_viewer_behavior"],
+        modalTabs: ["general-settings"],
+      }),
+      useS1PlusImageViewer: freezeDefinition({
+        effectClass: "lightweight",
+        runtimeIntents: ["image_viewer_behavior"],
+        modalTabs: ["general-settings"],
+      }),
+      imageViewerDefaultFullDisplay: freezeDefinition({
+        effectClass: "lightweight",
+        runtimeIntents: ["image_viewer_transform"],
+        modalTabs: ["general-settings"],
+      }),
+      imageViewerDefaultZoomScalePercent: freezeDefinition({
+        effectClass: "lightweight",
+        runtimeIntents: ["image_viewer_transform"],
+        modalTabs: ["general-settings"],
+      }),
+      imageViewerWheelMode: freezeDefinition({
+        effectClass: "lightweight",
+        modalTabs: ["general-settings"],
+      }),
+      imageViewerWheelZoomStepPercent: freezeDefinition({
+        effectClass: "lightweight",
+        modalTabs: ["general-settings"],
+      }),
+      imageViewerWheelScrollStepPercent: freezeDefinition({
+        effectClass: "lightweight",
+        modalTabs: ["general-settings"],
+      }),
+      imagePreviewMaxWidth: freezeDefinition({
+        effectClass: "lightweight",
+        runtimeIntents: ["image_size_limits", "image_viewer_behavior"],
+        modalTabs: ["general-settings"],
+      }),
+      imagePreviewMaxHeight: freezeDefinition({
+        effectClass: "lightweight",
+        runtimeIntents: ["image_size_limits", "image_viewer_behavior"],
+        modalTabs: ["general-settings"],
+      }),
+      hideSystemBlockedPosts: freezeDefinition({
+        effectClass: "lightweight",
+        runtimeIntents: ["hide_system_blocked_posts"],
+        modalTabs: ["general-settings"],
+      }),
+      recommendS1Nux: freezeDefinition({ modalTabs: ["general-settings"] }),
+      enhanceFloatingControls: freezeDefinition({
+        effectClass: "lightweight",
+        runtimeIntents: ["floating_controls"],
+        modalTabs: ["general-settings"],
+      }),
+      changeLogoLink: freezeDefinition({
+        effectClass: "lightweight",
+        runtimeIntents: ["interface_customizations"],
+        modalTabs: ["general-settings"],
+      }),
+      hideBlacklistTip: freezeDefinition({
+        effectClass: "lightweight",
+        runtimeIntents: ["interface_customizations"],
+        modalTabs: ["general-settings"],
+      }),
+      customTitleSuffix: freezeDefinition({
+        effectClass: "lightweight",
+        runtimeIntents: ["interface_customizations"],
+        modalTabs: ["general-settings"],
+      }),
+      blockThreadsOnUserBlock: freezeDefinition({ modalTabs: ["threads"] }),
+      syncWithNativeBlacklist: freezeDefinition({
+        modalTabs: ["threads", "users"],
+      }),
+      showBlockedByKeywordList: freezeDefinition({ modalTabs: ["threads"] }),
+      showManuallyBlockedList: freezeDefinition({ modalTabs: ["threads"] }),
+      enableNavCustomization: freezeDefinition({
+        effectClass: "lightweight",
+        runtimeIntents: ["navbar_initialize"],
+        modalTabs: ["nav-settings"],
+      }),
+      customNavLinks: freezeDefinition({
+        effectClass: "lightweight",
+        runtimeIntents: ["navbar_initialize"],
+        modalTabs: ["nav-settings"],
+      }),
+      syncRemoteEnabled: freezeDefinition({
+        effectClass: "lightweight",
+        runtimeIntents: ["navbar_initialize", "title_sync_status"],
+        modalTabs: ["sync"],
+      }),
+      syncRemoteGistId: freezeDefinition({
+        effectClass: "lightweight",
+        runtimeIntents: ["navbar_sync_button"],
+        modalTabs: ["sync"],
+      }),
+      syncRemotePat: freezeDefinition({
+        effectClass: "lightweight",
+        runtimeIntents: ["navbar_sync_button"],
+        modalTabs: ["sync"],
+      }),
+      syncDailyFirstLoad: freezeDefinition({
+        runtimeIntents: ["navbar_initialize"],
+        modalTabs: ["sync"],
+      }),
+      syncPerLoadCheckEnabled: freezeDefinition({
+        runtimeIntents: ["navbar_initialize"],
+        modalTabs: ["sync"],
+      }),
+      syncAutoEnabled: freezeDefinition({
+        runtimeIntents: ["navbar_initialize"],
+        modalTabs: ["sync"],
+      }),
+      syncCheckOnReturnToForeground: freezeDefinition({
+        runtimeIntents: ["navbar_initialize"],
+        modalTabs: ["sync"],
+      }),
+      syncVisibleRemotePollingEnabled: freezeDefinition({ modalTabs: ["sync"] }),
+      syncShowAutoSyncIndicator: freezeDefinition({
+        runtimeIntents: ["navbar_initialize"],
+        modalTabs: ["sync"],
+      }),
+      syncShowTitleSyncStatus: freezeDefinition({
+        runtimeIntents: ["navbar_initialize", "title_sync_status"],
+        modalTabs: ["sync"],
+      }),
+      syncForcePullOnStartup: freezeDefinition({ modalTabs: ["sync"] }),
+      syncBookmarkFullContent: freezeDefinition({ modalTabs: ["sync"] }),
+      syncDeviceId: freezeDefinition({ modalTabs: ["sync"] }),
+      syncTokenExpiryEnabled: freezeDefinition({ modalTabs: ["sync"] }),
+      syncTokenExpiryDate: freezeDefinition({ modalTabs: ["sync"] }),
+    });
+    const effectClassPriority = Object.freeze({
+      passive: 0,
+      lightweight: 1,
+      full: 2,
+    });
+    const isPathMatched = (changedPath, targetPath) =>
+      changedPath === targetPath ||
+      changedPath.startsWith(`${targetPath}.`) ||
+      targetPath.startsWith(`${changedPath}.`);
+    const resolveChangedPaths = (changedPaths = []) => {
+      const normalizedPaths = Array.from(
+        new Set(
+          Array.from(changedPaths || [])
+            .map((path) => String(path || "").trim())
+            .filter(Boolean)
+        )
+      );
+      let effectClass = "passive";
+      const runtimeIntents = [];
+      const modalTabs = [];
+      const appendUnique = (target, values) => {
+        values.forEach((value) => {
+          if (!target.includes(value)) {
+            target.push(value);
+          }
+        });
+      };
+
+      normalizedPaths.forEach((changedPath) => {
+        const matches = Object.entries(definitions).filter(([targetPath]) =>
+          isPathMatched(changedPath, targetPath)
+        );
+        if (matches.length === 0) {
+          effectClass = "full";
+          return;
+        }
+        matches.forEach(([, definition]) => {
+          if (
+            effectClassPriority[definition.effectClass] >
+            effectClassPriority[effectClass]
+          ) {
+            effectClass = definition.effectClass;
+          }
+          appendUnique(runtimeIntents, definition.runtimeIntents);
+          appendUnique(modalTabs, definition.modalTabs);
+        });
+      });
+
+      return Object.freeze({
+        effectClass,
+        runtimeIntents: Object.freeze(runtimeIntents),
+        modalTabs: Object.freeze(modalTabs),
+      });
+    };
+    const projectSyncModal = (settingsSnapshot = {}) => {
+      const settings = { ...defaults, ...sanitizeRecordObject(settingsSnapshot) };
+      const autoCheckMode =
+        settings.syncPerLoadCheckEnabled === true
+          ? "per_load"
+          : settings.syncCheckOnReturnToForeground === true
+            ? "foreground"
+            : "off";
+      return Object.freeze({
+        remoteEnabled: settings.syncRemoteEnabled === true,
+        dailyFirstLoad: settings.syncDailyFirstLoad === true,
+        autoCheckMode,
+        autoEnabled: settings.syncAutoEnabled === true,
+        visibleRemotePollingEnabled:
+          settings.syncVisibleRemotePollingEnabled === true,
+        showAutoSyncIndicator: settings.syncShowAutoSyncIndicator !== false,
+        showTitleSyncStatus: settings.syncShowTitleSyncStatus === true,
+        forcePullOnStartup: settings.syncForcePullOnStartup === true,
+        bookmarkFullContent: settings.syncBookmarkFullContent === true,
+        deviceId: String(settings.syncDeviceId || "").trim(),
+        remoteGistId: String(settings.syncRemoteGistId || "").trim(),
+        remotePat: String(settings.syncRemotePat || "").trim(),
+        tokenExpiryEnabled: settings.syncTokenExpiryEnabled === true,
+        tokenExpiryDate: normalizeS1pSyncTokenExpiryDate(
+          settings.syncTokenExpiryDate
+        ),
+      });
+    };
+    const buildSyncSettingsPatch = (modalValues = {}) => {
+      const values = sanitizeRecordObject(modalValues);
+      const normalizedMode = String(values.autoCheckMode || "").trim();
+      const dailyFirstLoad = values.dailyFirstLoad === true;
+      return Object.freeze({
+        syncRemoteEnabled: values.remoteEnabled === true,
+        syncDailyFirstLoad: dailyFirstLoad,
+        syncPerLoadCheckEnabled: normalizedMode === "per_load",
+        syncCheckOnReturnToForeground: normalizedMode === "foreground",
+        syncAutoEnabled: values.autoEnabled === true,
+        syncVisibleRemotePollingEnabled:
+          values.visibleRemotePollingEnabled === true,
+        syncShowAutoSyncIndicator: values.showAutoSyncIndicator !== false,
+        syncShowTitleSyncStatus: values.showTitleSyncStatus === true,
+        syncForcePullOnStartup:
+          dailyFirstLoad && values.forcePullOnStartup === true,
+        syncBookmarkFullContent: values.bookmarkFullContent === true,
+        syncDeviceId: String(values.deviceId || "").trim(),
+        syncRemoteGistId: String(values.remoteGistId || "").trim(),
+        syncRemotePat: String(values.remotePat || "").trim(),
+        syncTokenExpiryEnabled: values.tokenExpiryEnabled === true,
+        syncTokenExpiryDate: normalizeS1pSyncTokenExpiryDate(
+          values.tokenExpiryDate
+        ),
+      });
+    };
+    const normalizeImageSettings = (settingsSnapshot = {}) => {
+      const settings = { ...defaults, ...sanitizeRecordObject(settingsSnapshot) };
+      const values = {};
+      const migrationReasons = [];
+      const normalize = (key, normalizedValue, migrationReason) => {
+        values[key] = normalizedValue;
+        if (!Object.is(settings[key], normalizedValue)) {
+          migrationReasons.push(migrationReason);
+        }
+      };
+      normalize(
+        "limitImagesBySize",
+        normalizeBooleanWithDefault(settings.limitImagesBySize, true),
+        "limit_images_by_size_normalized"
+      );
+      normalize(
+        "useS1PlusImageViewer",
+        normalizeBooleanWithDefault(settings.useS1PlusImageViewer, true),
+        "use_s1plus_image_viewer_normalized"
+      );
+      normalize(
+        "imageViewerDefaultFullDisplay",
+        normalizeBooleanWithDefault(
+          settings.imageViewerDefaultFullDisplay,
+          defaults.imageViewerDefaultFullDisplay
+        ),
+        "image_viewer_default_full_display_normalized"
+      );
+      normalize(
+        "imageViewerDefaultZoomScalePercent",
+        normalizeS1pImageViewerDefaultZoomScalePercent(
+          settings.imageViewerDefaultZoomScalePercent
+        ),
+        "image_viewer_default_zoom_scale_percent_normalized"
+      );
+      normalize(
+        "imageViewerWheelMode",
+        normalizeS1pImageViewerWheelMode(settings.imageViewerWheelMode),
+        "image_viewer_wheel_mode_normalized"
+      );
+      normalize(
+        "imageViewerWheelZoomStepPercent",
+        normalizeBoundedIntegerValue(
+          settings.imageViewerWheelZoomStepPercent,
+          S1P_IMAGE_VIEWER_WHEEL_ZOOM_STEP_DEFAULT_PERCENT,
+          S1P_IMAGE_VIEWER_WHEEL_ZOOM_STEP_MIN_PERCENT,
+          S1P_IMAGE_VIEWER_WHEEL_ZOOM_STEP_MAX_PERCENT
+        ),
+        "image_viewer_wheel_zoom_step_percent_normalized"
+      );
+      normalize(
+        "imageViewerWheelScrollStepPercent",
+        normalizeBoundedIntegerValue(
+          settings.imageViewerWheelScrollStepPercent,
+          S1P_IMAGE_VIEWER_WHEEL_SCROLL_STEP_DEFAULT_PERCENT,
+          S1P_IMAGE_VIEWER_WHEEL_SCROLL_STEP_MIN_PERCENT,
+          S1P_IMAGE_VIEWER_WHEEL_SCROLL_STEP_MAX_PERCENT
+        ),
+        "image_viewer_wheel_scroll_step_percent_normalized"
+      );
+      normalize(
+        "imagePreviewMaxWidth",
+        normalizeImagePreviewLimitValue(
+          settings.imagePreviewMaxWidth,
+          IMAGE_PREVIEW_DEFAULT_WIDTH
+        ),
+        "image_preview_max_width_normalized"
+      );
+      normalize(
+        "imagePreviewMaxHeight",
+        normalizeImagePreviewLimitValue(
+          settings.imagePreviewMaxHeight,
+          IMAGE_PREVIEW_DEFAULT_HEIGHT
+        ),
+        "image_preview_max_height_normalized"
+      );
+      return Object.freeze({
+        values: Object.freeze(values),
+        migrationReasons: Object.freeze(migrationReasons),
+      });
+    };
+
+    return Object.freeze({
+      resolveChangedPaths,
+      projectSyncModal,
+      buildSyncSettingsPatch,
+      normalizeImageSettings,
+    });
+  };
+  const s1pSettingsSemantics = s1pCreateSettingsSemantics({
+    defaults: defaultSettings,
+  });
+
   const buildNormalizedSettings = (rawSettings = {}) => {
     const saved = sanitizeRecordObject(rawSettings);
     const settings = { ...defaultSettings, ...saved };
@@ -34288,117 +34697,10 @@
     }
     settings.syncDeviceId = normalizedSyncDeviceId;
 
-    const normalizedLimitImagesBySize = normalizeBooleanWithDefault(
-      settings.limitImagesBySize,
-      true
-    );
-    if (settings.limitImagesBySize !== normalizedLimitImagesBySize) {
-      markMigration("limit_images_by_size_normalized");
-    }
-    settings.limitImagesBySize = normalizedLimitImagesBySize;
-
-    const normalizedUseS1PlusImageViewer = normalizeBooleanWithDefault(
-      settings.useS1PlusImageViewer,
-      true
-    );
-    if (
-      settings.useS1PlusImageViewer !== normalizedUseS1PlusImageViewer
-    ) {
-      markMigration("use_s1plus_image_viewer_normalized");
-    }
-    settings.useS1PlusImageViewer = normalizedUseS1PlusImageViewer;
-
-    const normalizedImageViewerDefaultFullDisplay = normalizeBooleanWithDefault(
-      settings.imageViewerDefaultFullDisplay,
-      defaultSettings.imageViewerDefaultFullDisplay
-    );
-    if (
-      settings.imageViewerDefaultFullDisplay !==
-      normalizedImageViewerDefaultFullDisplay
-    ) {
-      markMigration("image_viewer_default_full_display_normalized");
-    }
-    settings.imageViewerDefaultFullDisplay =
-      normalizedImageViewerDefaultFullDisplay;
-
-    const normalizedImageViewerDefaultZoomScalePercent =
-      normalizeS1pImageViewerDefaultZoomScalePercent(
-        settings.imageViewerDefaultZoomScalePercent
-      );
-    if (
-      !Object.is(
-        settings.imageViewerDefaultZoomScalePercent,
-        normalizedImageViewerDefaultZoomScalePercent
-      )
-    ) {
-      markMigration("image_viewer_default_zoom_scale_percent_normalized");
-    }
-    settings.imageViewerDefaultZoomScalePercent =
-      normalizedImageViewerDefaultZoomScalePercent;
-
-    const normalizedImageViewerWheelMode = normalizeS1pImageViewerWheelMode(
-      settings.imageViewerWheelMode
-    );
-    if (settings.imageViewerWheelMode !== normalizedImageViewerWheelMode) {
-      markMigration("image_viewer_wheel_mode_normalized");
-    }
-    settings.imageViewerWheelMode = normalizedImageViewerWheelMode;
-
-    const normalizedImageViewerWheelZoomStepPercent =
-      normalizeBoundedIntegerValue(
-        settings.imageViewerWheelZoomStepPercent,
-        S1P_IMAGE_VIEWER_WHEEL_ZOOM_STEP_DEFAULT_PERCENT,
-        S1P_IMAGE_VIEWER_WHEEL_ZOOM_STEP_MIN_PERCENT,
-        S1P_IMAGE_VIEWER_WHEEL_ZOOM_STEP_MAX_PERCENT
-      );
-    if (
-      !Object.is(
-        settings.imageViewerWheelZoomStepPercent,
-        normalizedImageViewerWheelZoomStepPercent
-      )
-    ) {
-      markMigration("image_viewer_wheel_zoom_step_percent_normalized");
-    }
-    settings.imageViewerWheelZoomStepPercent =
-      normalizedImageViewerWheelZoomStepPercent;
-
-    const normalizedImageViewerWheelScrollStepPercent =
-      normalizeBoundedIntegerValue(
-        settings.imageViewerWheelScrollStepPercent,
-        S1P_IMAGE_VIEWER_WHEEL_SCROLL_STEP_DEFAULT_PERCENT,
-        S1P_IMAGE_VIEWER_WHEEL_SCROLL_STEP_MIN_PERCENT,
-        S1P_IMAGE_VIEWER_WHEEL_SCROLL_STEP_MAX_PERCENT
-      );
-    if (
-      !Object.is(
-        settings.imageViewerWheelScrollStepPercent,
-        normalizedImageViewerWheelScrollStepPercent
-      )
-    ) {
-      markMigration("image_viewer_wheel_scroll_step_percent_normalized");
-    }
-    settings.imageViewerWheelScrollStepPercent =
-      normalizedImageViewerWheelScrollStepPercent;
-
-    const normalizedImagePreviewMaxWidth = normalizeImagePreviewLimitValue(
-      settings.imagePreviewMaxWidth,
-      IMAGE_PREVIEW_DEFAULT_WIDTH
-    );
-    if (!Object.is(settings.imagePreviewMaxWidth, normalizedImagePreviewMaxWidth)) {
-      markMigration("image_preview_max_width_normalized");
-    }
-    settings.imagePreviewMaxWidth = normalizedImagePreviewMaxWidth;
-
-    const normalizedImagePreviewMaxHeight = normalizeImagePreviewLimitValue(
-      settings.imagePreviewMaxHeight,
-      IMAGE_PREVIEW_DEFAULT_HEIGHT
-    );
-    if (
-      !Object.is(settings.imagePreviewMaxHeight, normalizedImagePreviewMaxHeight)
-    ) {
-      markMigration("image_preview_max_height_normalized");
-    }
-    settings.imagePreviewMaxHeight = normalizedImagePreviewMaxHeight;
+    const imageSettingsNormalization =
+      s1pSettingsSemantics.normalizeImageSettings(settings);
+    Object.assign(settings, imageSettingsNormalization.values);
+    imageSettingsNormalization.migrationReasons.forEach(markMigration);
 
     const autoLinkPlainTextUrlsSourceValue =
       typeof saved.autoLinkPlainTextUrls !== "undefined"
@@ -34482,6 +34784,7 @@
       ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
       buildNormalizedSettings,
       defaultSettings,
+      s1pSettingsSemantics,
       getLastRemoteProbeInfo,
       setLastRemoteProbeInfo,
       getRemoteProbeSharedCooldownState,
@@ -34526,82 +34829,10 @@
     settingsCacheValue = null;
     settingsCacheExpiresAt = 0;
   };
-  const SETTINGS_CROSS_TAB_FULL_APPLY_PATHS = [
-    "enablePostBlocking",
-    "enableGeneralSettings",
-    "enableUserBlocking",
-    "enableUserTagging",
-    "enableReadProgress",
-    "enableBookmarkReplies",
-  ];
-  const SETTINGS_CROSS_TAB_LIGHTWEIGHT_PATHS = [
-    "openInNewTab",
-    "hideImagesByDefault",
-    "limitImagesBySize",
-    "useS1PlusImageViewer",
-    "imageViewerDefaultFullDisplay",
-    "imageViewerDefaultZoomScalePercent",
-    "imageViewerWheelMode",
-    "imageViewerWheelZoomStepPercent",
-    "imageViewerWheelScrollStepPercent",
-    "imagePreviewMaxWidth",
-    "imagePreviewMaxHeight",
-    "showReadIndicator",
-    "autoLinkPlainTextUrls",
-    "changeLogoLink",
-    "hideBlacklistTip",
-    "customTitleSuffix",
-    "enableNavCustomization",
-    "customNavLinks",
-    "hideSystemBlockedPosts",
-    "enhanceFloatingControls",
-    "syncRemoteEnabled",
-    "syncRemoteGistId",
-    "syncRemotePat",
-  ];
-  const SETTINGS_CROSS_TAB_PASSIVE_PATHS = [
-    "readingProgressCleanupDays",
-    "cleanupMode",
-    "blockThreadsOnUserBlock",
-    "syncWithNativeBlacklist",
-    "showBlockedByKeywordList",
-    "showManuallyBlockedList",
-    "recommendS1Nux",
-    "syncDailyFirstLoad",
-    "syncPerLoadCheckEnabled",
-    "syncAutoEnabled",
-    "syncCheckOnReturnToForeground",
-    "syncVisibleRemotePollingEnabled",
-    "syncShowAutoSyncIndicator",
-    "syncShowTitleSyncStatus",
-    "syncForcePullOnStartup",
-    "syncBookmarkFullContent",
-    "syncDeviceId",
-    "syncTokenExpiryEnabled",
-    "syncTokenExpiryDate",
-  ];
   const SETTINGS_FALLBACK_SYNC_POLL_MIN_INTERVAL_MS = 1500;
   const SETTINGS_FALLBACK_SYNC_POLL_MAX_INTERVAL_MS = 20 * 1000;
   const SETTINGS_FALLBACK_SYNC_POLL_BACKOFF_STEP_MS = 2500;
   const SETTINGS_FALLBACK_SYNC_SIGNAL_HEALTH_WINDOW_MS = 60 * 1000;
-  const isSettingPathMatched = (changedPath, targetPath) => {
-    if (!changedPath || !targetPath) {
-      return false;
-    }
-    return (
-      changedPath === targetPath ||
-      changedPath.startsWith(`${targetPath}.`) ||
-      targetPath.startsWith(`${changedPath}.`)
-    );
-  };
-  const hasSettingPathInChangedSet = (changedPathSet, targetPath) => {
-    for (const changedPath of changedPathSet) {
-      if (isSettingPathMatched(changedPath, targetPath)) {
-        return true;
-      }
-    }
-    return false;
-  };
   const collectChangedSettingPaths = (
     previousSettings,
     nextSettings
@@ -34934,6 +35165,95 @@
     });
     return true;
   };
+  const runSettingsRuntimeEffectIntents = ({
+    runtimeIntents = [],
+    settings = getSettings(),
+    source = "cross_tab",
+  } = {}) => {
+    const intents = new Set(runtimeIntents);
+    if (intents.has("navbar_initialize")) {
+      initializeNavbar();
+    } else if (intents.has("navbar_sync_button")) {
+      updateNavbarSyncButton();
+    }
+    if (intents.has("interface_customizations")) {
+      applyInterfaceCustomizations();
+    }
+    if (intents.has("title_sync_status")) {
+      refreshTitleSyncStatusPresenceAndDisplay(
+        source === "settings_modal" ? "settings_saved" : "settings_changed"
+      );
+    }
+    if (intents.has("floating_controls")) {
+      manageFloatingControls();
+    }
+    if (intents.has("image_hiding")) {
+      applyImageHiding();
+    }
+    if (intents.has("image_toggle_buttons")) {
+      manageImageToggleAllButtons();
+    }
+    if (intents.has("image_size_limits")) {
+      applyImageSizeLimits();
+    }
+    if (intents.has("image_viewer_behavior")) {
+      applyS1pImageViewerBehavior();
+    }
+    if (intents.has("image_viewer_transform")) {
+      s1pImageViewer.refreshDefaultTransform();
+    }
+    if (intents.has("global_link_behavior")) {
+      applyGlobalLinkBehavior();
+    }
+    if (intents.has("plain_text_autolinks")) {
+      applyPlainTextUrlAutolinks();
+    }
+    if (intents.has("progress_buttons")) {
+      const shouldShowProgressButtons =
+        settings.enableGeneralSettings === true &&
+        settings.enableReadProgress === true;
+      if (source === "settings_modal") {
+        removeProgressJumpButtons();
+        if (shouldShowProgressButtons) {
+          addProgressJumpButtons();
+        }
+      } else if (shouldShowProgressButtons && isThreadListPage()) {
+        scheduleProgressJumpButtonsRefresh();
+      }
+    }
+    if (intents.has("read_indicator")) {
+      if (!settings.showReadIndicator) {
+        updateReadIndicatorUI(null);
+      } else if (
+        settings.enableGeneralSettings === true &&
+        settings.enableReadProgress === true
+      ) {
+        s1pReadingProgressSession.attach();
+      }
+    }
+    if (intents.has("hide_system_blocked_posts")) {
+      hideSystemBlockedPosts();
+    }
+  };
+  const applySettingsRuntimeEffectsForPaths = ({
+    changedPaths = [],
+    settings = getSettings(),
+    source = "cross_tab",
+  } = {}) => {
+    const changeSemantics =
+      s1pSettingsSemantics.resolveChangedPaths(changedPaths);
+    if (changeSemantics.effectClass !== "full") {
+      runSettingsRuntimeEffectIntents({
+        runtimeIntents: changeSemantics.runtimeIntents,
+        settings,
+        source,
+      });
+      if (source === "settings_modal") {
+        markSettingsRuntimeAppliedSnapshot(settings);
+      }
+    }
+    return changeSemantics;
+  };
   const runSettingsCrossTabRefresh = () => {
     const changedPathSet = new Set();
     appendSettingChangedPathsToSet(
@@ -34949,134 +35269,13 @@
       return runFullSettingsCrossTabRefresh(changedPathSet);
     }
 
-    let requiresFullApply = false;
-    for (const changedPath of changedPathSet) {
-      if (
-        SETTINGS_CROSS_TAB_FULL_APPLY_PATHS.some((targetPath) =>
-          isSettingPathMatched(changedPath, targetPath)
-        )
-      ) {
-        requiresFullApply = true;
-        break;
-      }
-      const handledByLightweightPath =
-        SETTINGS_CROSS_TAB_LIGHTWEIGHT_PATHS.some((targetPath) =>
-          isSettingPathMatched(changedPath, targetPath)
-        );
-      if (handledByLightweightPath) {
-        continue;
-      }
-      const handledByPassivePath = SETTINGS_CROSS_TAB_PASSIVE_PATHS.some(
-        (targetPath) => isSettingPathMatched(changedPath, targetPath)
-      );
-      if (!handledByPassivePath) {
-        requiresFullApply = true;
-        break;
-      }
-    }
-
-    if (requiresFullApply) {
-      return runFullSettingsCrossTabRefresh(changedPathSet);
-    }
-
     const settings = getSettings();
-    const shouldReinitializeNavbar =
-      hasSettingPathInChangedSet(changedPathSet, "enableNavCustomization") ||
-      hasSettingPathInChangedSet(changedPathSet, "customNavLinks") ||
-      hasSettingPathInChangedSet(changedPathSet, "syncRemoteEnabled") ||
-      hasSettingPathInChangedSet(changedPathSet, "syncDailyFirstLoad") ||
-      hasSettingPathInChangedSet(changedPathSet, "syncPerLoadCheckEnabled") ||
-      hasSettingPathInChangedSet(changedPathSet, "syncAutoEnabled") ||
-      hasSettingPathInChangedSet(
-        changedPathSet,
-        "syncCheckOnReturnToForeground"
-      ) ||
-      hasSettingPathInChangedSet(changedPathSet, "syncShowAutoSyncIndicator") ||
-      hasSettingPathInChangedSet(changedPathSet, "syncShowTitleSyncStatus");
-    if (shouldReinitializeNavbar) {
-      initializeNavbar();
-    } else if (
-      hasSettingPathInChangedSet(changedPathSet, "syncRemoteGistId") ||
-      hasSettingPathInChangedSet(changedPathSet, "syncRemotePat")
-    ) {
-      updateNavbarSyncButton();
-    }
-    if (
-      hasSettingPathInChangedSet(changedPathSet, "changeLogoLink") ||
-      hasSettingPathInChangedSet(changedPathSet, "hideBlacklistTip") ||
-      hasSettingPathInChangedSet(changedPathSet, "customTitleSuffix")
-    ) {
-      applyInterfaceCustomizations();
-    }
-    if (
-      hasSettingPathInChangedSet(changedPathSet, "syncRemoteEnabled") ||
-      hasSettingPathInChangedSet(changedPathSet, "syncShowTitleSyncStatus")
-    ) {
-      refreshTitleSyncStatusPresenceAndDisplay("settings_changed");
-    }
-    if (hasSettingPathInChangedSet(changedPathSet, "enhanceFloatingControls")) {
-      manageFloatingControls();
-    }
-    if (hasSettingPathInChangedSet(changedPathSet, "hideImagesByDefault")) {
-      applyImageHiding();
-      manageImageToggleAllButtons();
-      applyS1pImageViewerBehavior();
-    }
-    if (
-      hasSettingPathInChangedSet(changedPathSet, "limitImagesBySize") ||
-      hasSettingPathInChangedSet(changedPathSet, "imagePreviewMaxWidth") ||
-      hasSettingPathInChangedSet(changedPathSet, "imagePreviewMaxHeight")
-    ) {
-      applyImageSizeLimits();
-      applyS1pImageViewerBehavior();
-    }
-    if (
-      hasSettingPathInChangedSet(changedPathSet, "useS1PlusImageViewer")
-    ) {
-      applyS1pImageViewerBehavior();
-    }
-    if (
-      hasSettingPathInChangedSet(
-        changedPathSet,
-        "imageViewerDefaultFullDisplay"
-      ) ||
-      hasSettingPathInChangedSet(
-        changedPathSet,
-        "imageViewerDefaultZoomScalePercent"
-      )
-    ) {
-      s1pImageViewer.refreshDefaultTransform();
-    }
-    if (hasSettingPathInChangedSet(changedPathSet, "openInNewTab")) {
-      applyGlobalLinkBehavior();
-    }
-    if (hasSettingPathInChangedSet(changedPathSet, "autoLinkPlainTextUrls")) {
-      applyPlainTextUrlAutolinks();
-    }
-    if (
-      (hasSettingPathInChangedSet(changedPathSet, "openInNewTab.progress") ||
-        hasSettingPathInChangedSet(
-          changedPathSet,
-          "openInNewTab.progressInBackground"
-        )) &&
-      settings.enableGeneralSettings === true &&
-      settings.enableReadProgress === true &&
-      isThreadListPage()
-    ) {
-      scheduleProgressJumpButtonsRefresh();
-    }
-    if (hasSettingPathInChangedSet(changedPathSet, "showReadIndicator")) {
-      if (!settings.showReadIndicator) {
-        updateReadIndicatorUI(null);
-      } else if (
-        settings.enableGeneralSettings === true &&
-        settings.enableReadProgress === true
-      ) {
-        s1pReadingProgressSession.attach();
-      }
-    }
-    if (hasSettingPathInChangedSet(changedPathSet, "hideSystemBlockedPosts")) {
-      hideSystemBlockedPosts();
+    const changeSemantics = applySettingsRuntimeEffectsForPaths({
+      changedPaths: changedPathSet,
+      settings,
+    });
+    if (changeSemantics.effectClass === "full") {
+      return runFullSettingsCrossTabRefresh(changedPathSet);
     }
 
     markSettingsRuntimeAppliedSnapshot(settings);
@@ -43248,22 +43447,6 @@
       control.classList.toggle("is-disabled", disabled);
       return true;
     };
-    const resolveSyncAutoCheckModeValue = (settingsSnapshot = {}) => {
-      if (settingsSnapshot.syncPerLoadCheckEnabled === true) {
-        return "per_load";
-      }
-      if (settingsSnapshot.syncCheckOnReturnToForeground === true) {
-        return "foreground";
-      }
-      return "off";
-    };
-    const applySyncAutoCheckModeToSettings = (settingsForWrite, modeValue) => {
-      const normalizedMode = String(modeValue || "").trim();
-      settingsForWrite.syncPerLoadCheckEnabled =
-        normalizedMode === "per_load";
-      settingsForWrite.syncCheckOnReturnToForeground =
-        normalizedMode === "foreground";
-    };
     const setSyncAutoCheckModeControlValue = (
       modeValue,
       { skipAnimation = false } = {}
@@ -43525,15 +43708,11 @@
     syncDeviceIdInput.addEventListener("input", updateSyncDeviceIdRequirementState);
 
     // [新增] Token 过期提醒逻辑
-    const normalizeTokenExpiryDateValue = (value) => {
-      const parsed = Number(value);
-      return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-    };
-    let pendingTokenExpiryDate = normalizeTokenExpiryDateValue(
+    let pendingTokenExpiryDate = normalizeS1pSyncTokenExpiryDate(
       settings.syncTokenExpiryDate
     );
     const applyPendingTokenExpiryDate = (value, { markDirty = true } = {}) => {
-      const normalizedTimestamp = normalizeTokenExpiryDateValue(value);
+      const normalizedTimestamp = normalizeS1pSyncTokenExpiryDate(value);
       if (normalizedTimestamp === null) {
         return false;
       }
@@ -43597,31 +43776,28 @@
     };
 
     const applySyncSettingsToModal = (settingsSnapshot) => {
-      remoteToggle.checked = settingsSnapshot.syncRemoteEnabled === true;
-      dailySyncToggle.checked = settingsSnapshot.syncDailyFirstLoad === true;
+      const projection =
+        s1pSettingsSemantics.projectSyncModal(settingsSnapshot);
+      remoteToggle.checked = projection.remoteEnabled;
+      dailySyncToggle.checked = projection.dailyFirstLoad;
       setSyncAutoCheckModeControlValue(
-        resolveSyncAutoCheckModeValue(settingsSnapshot),
+        projection.autoCheckMode,
         { skipAnimation: true }
       );
-      autoSyncToggle.checked = settingsSnapshot.syncAutoEnabled === true;
-      autoSyncIndicatorToggle.checked =
-        settingsSnapshot.syncShowAutoSyncIndicator !== false;
-      titleSyncStatusToggle.checked =
-        settingsSnapshot.syncShowTitleSyncStatus === true;
+      autoSyncToggle.checked = projection.autoEnabled;
+      autoSyncIndicatorToggle.checked = projection.showAutoSyncIndicator;
+      titleSyncStatusToggle.checked = projection.showTitleSyncStatus;
       if (visibleRemotePollingToggle) {
         visibleRemotePollingToggle.checked =
-          settingsSnapshot.syncVisibleRemotePollingEnabled === true;
+          projection.visibleRemotePollingEnabled;
       }
-      bookmarkFullContentToggle.checked =
-        settingsSnapshot.syncBookmarkFullContent === true;
-      syncDeviceIdInput.value = settingsSnapshot.syncDeviceId || "";
-      forcePullToggle.checked = settingsSnapshot.syncForcePullOnStartup === true;
-      tokenExpiryToggle.checked = settingsSnapshot.syncTokenExpiryEnabled === true;
-      pendingTokenExpiryDate = normalizeTokenExpiryDateValue(
-        settingsSnapshot.syncTokenExpiryDate
-      );
-      remoteGistIdInput.value = settingsSnapshot.syncRemoteGistId || "";
-      remotePatInput.value = settingsSnapshot.syncRemotePat || "";
+      bookmarkFullContentToggle.checked = projection.bookmarkFullContent;
+      syncDeviceIdInput.value = projection.deviceId;
+      forcePullToggle.checked = projection.forcePullOnStartup;
+      tokenExpiryToggle.checked = projection.tokenExpiryEnabled;
+      pendingTokenExpiryDate = projection.tokenExpiryDate;
+      remoteGistIdInput.value = projection.remoteGistId;
+      remotePatInput.value = projection.remotePat;
 
       updateRemoteSyncInputsState();
       updateForcePullState();
@@ -43631,29 +43807,24 @@
       updateSyncDeviceIdRequirementState();
       updateTokenExpiryInfo();
     };
-    const buildSyncSettingsFromModal = () => {
-      const syncAutoCheckMode = getSyncAutoCheckModeControlValue();
-      const nextSettings = {
-        syncRemoteEnabled: remoteToggle.checked,
-        syncDailyFirstLoad: dailySyncToggle.checked,
-        syncPerLoadCheckEnabled: false,
-        syncCheckOnReturnToForeground: false,
-        syncAutoEnabled: autoSyncToggle.checked,
-        syncVisibleRemotePollingEnabled:
+    const buildSyncSettingsFromModal = () =>
+      s1pSettingsSemantics.buildSyncSettingsPatch({
+        remoteEnabled: remoteToggle.checked,
+        dailyFirstLoad: dailySyncToggle.checked,
+        autoCheckMode: getSyncAutoCheckModeControlValue(),
+        autoEnabled: autoSyncToggle.checked,
+        visibleRemotePollingEnabled:
           visibleRemotePollingToggle?.checked === true,
-        syncShowAutoSyncIndicator: autoSyncIndicatorToggle.checked,
-        syncShowTitleSyncStatus: titleSyncStatusToggle.checked,
-        syncForcePullOnStartup: dailySyncToggle.checked && forcePullToggle.checked,
-        syncBookmarkFullContent: bookmarkFullContentToggle.checked,
-        syncDeviceId: syncDeviceIdInput.value.trim(),
-        syncRemoteGistId: remoteGistIdInput.value.trim(),
-        syncRemotePat: remotePatInput.value.trim(),
-        syncTokenExpiryEnabled: tokenExpiryToggle.checked,
-        syncTokenExpiryDate: pendingTokenExpiryDate,
-      };
-      applySyncAutoCheckModeToSettings(nextSettings, syncAutoCheckMode);
-      return nextSettings;
-    };
+        showAutoSyncIndicator: autoSyncIndicatorToggle.checked,
+        showTitleSyncStatus: titleSyncStatusToggle.checked,
+        forcePullOnStartup: forcePullToggle.checked,
+        bookmarkFullContent: bookmarkFullContentToggle.checked,
+        deviceId: syncDeviceIdInput.value,
+        remoteGistId: remoteGistIdInput.value,
+        remotePat: remotePatInput.value,
+        tokenExpiryEnabled: tokenExpiryToggle.checked,
+        tokenExpiryDate: pendingTokenExpiryDate,
+      });
     const refreshSyncSettingsDirtyStateFromModal = () => {
       const currentSettings = getSettings();
       const modalSettings = buildSyncSettingsFromModal();
@@ -45638,16 +45809,14 @@
           applyOpenModeToSettings(nextSettings, openKey, backgroundKey, mode);
           saveSettings(nextSettings);
           setOpenModeOption(control, mode);
-          applyGlobalLinkBehavior();
-          if (openKey === "progress") {
-            removeProgressJumpButtons();
-            if (
-              nextSettings.enableGeneralSettings === true &&
-              nextSettings.enableReadProgress === true
-            ) {
-              addProgressJumpButtons();
-            }
-          }
+          applySettingsRuntimeEffectsForPaths({
+            changedPaths: [
+              `openInNewTab.${openKey}`,
+              `openInNewTab.${backgroundKey}`,
+            ],
+            settings: getSettings(),
+            source: "settings_modal",
+          });
         });
       };
       OPEN_IN_NEW_TAB_CONTROL_CONFIGS.forEach((config) => {
@@ -45750,7 +45919,11 @@
           option.classList.add("active");
           moveSlider(imageViewerDefaultModeControl);
           syncImageViewerDefaultZoomScaleVisibility(modeValue === "full");
-          s1pImageViewer.refreshDefaultTransform();
+          applySettingsRuntimeEffectsForPaths({
+            changedPaths: ["imageViewerDefaultFullDisplay"],
+            settings: getSettings(),
+            source: "settings_modal",
+          });
         });
       }
       if (imageViewerDefaultZoomScaleSlider) {
@@ -45773,9 +45946,11 @@
           );
           saveSettings(currentSettings);
           syncImageViewerDefaultZoomScaleSlider();
-          if (currentSettings.imageViewerDefaultFullDisplay !== true) {
-            s1pImageViewer.refreshDefaultTransform();
-          }
+          applySettingsRuntimeEffectsForPaths({
+            changedPaths: ["imageViewerDefaultZoomScalePercent"],
+            settings: getSettings(),
+            source: "settings_modal",
+          });
         });
       }
       if (imageViewerDefaultZoomScaleResetBtn) {
@@ -45788,9 +45963,11 @@
               S1P_IMAGE_VIEWER_DEFAULT_ZOOM_SCALE_DEFAULT_PERCENT;
             saveSettings(currentSettings);
             syncImageViewerDefaultZoomScaleSlider();
-            if (currentSettings.imageViewerDefaultFullDisplay !== true) {
-              s1pImageViewer.refreshDefaultTransform();
-            }
+            applySettingsRuntimeEffectsForPaths({
+              changedPaths: ["imageViewerDefaultZoomScalePercent"],
+              settings: getSettings(),
+              source: "settings_modal",
+            });
             showSettingsMessage("铺满宽度比例已恢复默认。", true);
           }
         );
@@ -46731,14 +46908,6 @@
       },
       blurAfterCloseMs: 0,
     });
-    const shouldRefreshModalTabByPaths = (changedPathSet, watchedPaths) => {
-      if (!(changedPathSet instanceof Set) || changedPathSet.size === 0) {
-        return true;
-      }
-      return watchedPaths.some((path) =>
-        hasSettingPathInChangedSet(changedPathSet, path)
-      );
-    };
     const refreshSettingsTabWithLazyPolicy = (tabKey, renderFn) => {
       if (typeof renderFn !== "function") {
         return false;
@@ -46763,78 +46932,20 @@
       if (!modal.isConnected) {
         return;
       }
+      const modalTabs = new Set(
+        s1pSettingsSemantics.resolveChangedPaths(changedPathSet).modalTabs
+      );
       const shouldRefreshGeneralTab =
-        forceFullApply ||
-        shouldRefreshModalTabByPaths(changedPathSet, [
-          "enableGeneralSettings",
-          "enableReadProgress",
-          "readingProgressCleanupDays",
-          "cleanupMode",
-          "openInNewTab",
-          "showReadIndicator",
-          "autoLinkPlainTextUrls",
-          "hideImagesByDefault",
-          "limitImagesBySize",
-          "useS1PlusImageViewer",
-          "imageViewerDefaultFullDisplay",
-          "imageViewerDefaultZoomScalePercent",
-          "imageViewerWheelMode",
-          "imageViewerWheelZoomStepPercent",
-          "imageViewerWheelScrollStepPercent",
-          "imagePreviewMaxWidth",
-          "imagePreviewMaxHeight",
-          "hideSystemBlockedPosts",
-          "recommendS1Nux",
-          "enhanceFloatingControls",
-          "changeLogoLink",
-          "hideBlacklistTip",
-          "customTitleSuffix",
-        ]);
+        forceFullApply || modalTabs.has("general-settings");
       const shouldRefreshThreadTab =
-        forceFullApply ||
-        shouldRefreshModalTabByPaths(changedPathSet, [
-          "enablePostBlocking",
-          "blockThreadsOnUserBlock",
-          "syncWithNativeBlacklist",
-          "showBlockedByKeywordList",
-          "showManuallyBlockedList",
-        ]);
-      const shouldRefreshUserTab =
-        forceFullApply ||
-        shouldRefreshModalTabByPaths(changedPathSet, [
-          "enableUserBlocking",
-          "syncWithNativeBlacklist",
-        ]);
-      const shouldRefreshTagsTab =
-        forceFullApply ||
-        shouldRefreshModalTabByPaths(changedPathSet, ["enableUserTagging"]);
+        forceFullApply || modalTabs.has("threads");
+      const shouldRefreshUserTab = forceFullApply || modalTabs.has("users");
+      const shouldRefreshTagsTab = forceFullApply || modalTabs.has("tags");
       const shouldRefreshBookmarksTab =
-        forceFullApply ||
-        shouldRefreshModalTabByPaths(changedPathSet, ["enableBookmarkReplies"]);
+        forceFullApply || modalTabs.has("bookmarks");
       const shouldRefreshNavTab =
-        forceFullApply ||
-        shouldRefreshModalTabByPaths(changedPathSet, [
-          "enableNavCustomization",
-          "customNavLinks",
-        ]);
-      const shouldRefreshSyncTab =
-        forceFullApply ||
-        shouldRefreshModalTabByPaths(changedPathSet, [
-          "syncRemoteEnabled",
-          "syncDailyFirstLoad",
-          "syncPerLoadCheckEnabled",
-          "syncAutoEnabled",
-          "syncCheckOnReturnToForeground",
-          "syncVisibleRemotePollingEnabled",
-          "syncShowAutoSyncIndicator",
-          "syncShowTitleSyncStatus",
-          "syncForcePullOnStartup",
-          "syncBookmarkFullContent",
-          "syncRemoteGistId",
-          "syncRemotePat",
-          "syncTokenExpiryEnabled",
-          "syncTokenExpiryDate",
-        ]);
+        forceFullApply || modalTabs.has("nav-settings");
+      const shouldRefreshSyncTab = forceFullApply || modalTabs.has("sync");
       const deferredDirtyTabLabels = [];
 
       if (shouldRefreshGeneralTab) {
@@ -46944,27 +47055,17 @@
         // [MODIFIED] 使用新的辅助函数来处理嵌套和非嵌套设置
         setNestedValue(settings, settingKey, value);
         saveSettings(settings);
-
-        if (settingKey === "enhanceFloatingControls") {
-          applyChanges();
-          return;
-        }
-
-        applyInterfaceCustomizations();
-        if (settingKey === "showReadIndicator" && !target.checked) {
-          updateReadIndicatorUI(null);
-        }
-        if (settingKey === "hideImagesByDefault") {
-          applyImageHiding();
-          manageImageToggleAllButtons();
-          applyS1pImageViewerBehavior();
-        }
+        const latestSettings = getSettings();
+        applySettingsRuntimeEffectsForPaths({
+          changedPaths: [settingKey],
+          settings: latestSettings,
+          source: "settings_modal",
+        });
         if (
           settingKey === "limitImagesBySize" ||
           settingKey === "imagePreviewMaxWidth" ||
           settingKey === "imagePreviewMaxHeight"
         ) {
-          const latestSettings = getSettings();
           if (
             settingKey === "imagePreviewMaxWidth" ||
             settingKey === "imagePreviewMaxHeight"
@@ -46978,26 +47079,6 @@
               latestSettings.limitImagesBySize === true
             );
           }
-          applyImageSizeLimits();
-          applyS1pImageViewerBehavior();
-        }
-        // [MODIFIED] 当任何一个新标签页设置改变时，都重新应用全局行为
-        if (settingKey === "useS1PlusImageViewer") {
-          applyS1pImageViewerBehavior();
-        }
-        if (settingKey === "autoLinkPlainTextUrls") {
-          applyPlainTextUrlAutolinks();
-        }
-        if (settingKey.startsWith("openInNewTab.")) {
-          applyGlobalLinkBehavior();
-          // 如果是阅读进度相关的设置改变了，则刷新按钮
-          if (settingKey.includes("progress")) {
-            removeProgressJumpButtons();
-            addProgressJumpButtons();
-          }
-        }
-        if (settingKey === "hideSystemBlockedPosts") {
-          hideSystemBlockedPosts();
         }
       }
 
@@ -47489,6 +47570,7 @@
             suppressSyncTrigger: true,
             markDataChangedWhenSuppressed: shouldMarkSyncedDataChange,
           });
+          const savedSettings = getSettings();
           if (didRemoteTargetChange || didDisableRemoteSync) {
             // 远端目标切换/关闭远程同步后，清理旧会话残留状态，避免新目标沿用旧基线造成误判。
             GM_deleteValue(SYNC_BASELINE_STATE_KEY);
@@ -47499,10 +47581,16 @@
             resetAutoSyncFailureState();
             setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_IDLE);
           }
+          applySettingsRuntimeEffectsForPaths({
+            changedPaths: collectChangedSettingPaths(
+              previousSettings,
+              savedSettings
+            ),
+            settings: savedSettings,
+            source: "settings_modal",
+          });
           setSettingsModalDirtyState(SETTINGS_MODAL_DIRTY_TAB.SYNC_SETTINGS, false);
-          updateNavbarSyncButton();
-          refreshDocumentTitle({ settingsSnapshot: currentSettings });
-          refreshTitleSyncStatusPresenceAndDisplay("settings_saved");
+          refreshDocumentTitle({ settingsSnapshot: savedSettings });
 
           if (
             currentSettings.syncRemoteEnabled &&

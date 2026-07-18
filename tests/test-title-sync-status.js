@@ -1618,6 +1618,30 @@ const testSettingsDefaultsUiAndIndependence = () => {
     false,
     "关闭远程同步时，标题状态开关应整体不可用。"
   );
+  assert.equal(
+    hooks.s1pSettingsSemantics.projectSyncModal({
+      syncShowTitleSyncStatus: true,
+    }).showTitleSyncStatus,
+    true,
+    "同步设置投影应回填标题同步状态。"
+  );
+  assert.equal(
+    hooks.s1pSettingsSemantics.buildSyncSettingsPatch({
+      showTitleSyncStatus: true,
+    }).syncShowTitleSyncStatus,
+    true,
+    "同步设置补丁应收集标题同步状态。"
+  );
+  const titleSettingSemantics = toPlainObject(
+    hooks.s1pSettingsSemantics.resolveChangedPaths([
+      "syncShowTitleSyncStatus",
+    ])
+  );
+  assert.deepStrictEqual(titleSettingSemantics, {
+    effectClass: "passive",
+    runtimeIntents: ["navbar_initialize", "title_sync_status"],
+    modalTabs: ["sync"],
+  });
 
   expectMatch(
     /id="s1p-title-sync-status-subgroup"[\s\S]*for="s1p-show-title-sync-status-toggle">显示标签页标题同步状态/,
@@ -1638,18 +1662,6 @@ const testSettingsDefaultsUiAndIndependence = () => {
   expectMatch(
     /#s1p-title-sync-status-subgroup\.is-disabled[\s\S]*opacity: 0\.5;[\s\S]*pointer-events: none;/,
     "标题同步状态子设置组缺少 disabled 视觉置灰样式。"
-  );
-  expectMatch(
-    /syncShowTitleSyncStatus:\s*titleSyncStatusToggle\.checked/,
-    "保存设置时未收集 syncShowTitleSyncStatus。"
-  );
-  expectMatch(
-    /settingsSnapshot\.syncShowTitleSyncStatus === true/,
-    "同步设置页未回填 syncShowTitleSyncStatus。"
-  );
-  expectMatch(
-    /SETTINGS_CROSS_TAB_PASSIVE_PATHS[\s\S]*"syncShowTitleSyncStatus"/,
-    "syncShowTitleSyncStatus 应参与设置跨标签同步刷新。"
   );
   expectNotMatch(
     /syncShowTitleSyncStatus[\s\S]{0,120}syncShowAutoSyncIndicator !== false|syncShowAutoSyncIndicator[\s\S]{0,120}syncShowTitleSyncStatus !== false/,

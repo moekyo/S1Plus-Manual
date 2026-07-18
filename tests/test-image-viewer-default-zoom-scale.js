@@ -21,7 +21,7 @@ assert.match(
 );
 
 const { hooks } = createHarness();
-const { buildNormalizedSettings } = hooks;
+const { buildNormalizedSettings, s1pSettingsSemantics } = hooks;
 
 assert.equal(
   buildNormalizedSettings({}).settings.imageViewerDefaultZoomScalePercent,
@@ -94,10 +94,14 @@ assert.match(
   /syncImageViewerDefaultZoomScaleVisibility\(modeValue === "full"\);/,
   "默认模式切换应同步铺满宽度比例 slider 显隐。"
 );
-assert.match(
-  sourceCode,
-  /imageViewerDefaultZoomScaleSlider\.addEventListener\("change",[\s\S]*?settingKey !== "imageViewerDefaultZoomScalePercent"[\s\S]*?saveSettings\(currentSettings\);[\s\S]*?s1pImageViewer\.refreshDefaultTransform\(\);/,
-  "铺满宽度比例 slider 保存后应通过 viewer interface 重算默认缩放。"
+assert.deepStrictEqual(
+  Array.from(
+    s1pSettingsSemantics.resolveChangedPaths([
+      "imageViewerDefaultZoomScalePercent",
+    ]).runtimeIntents
+  ),
+  ["image_viewer_transform"],
+  "铺满宽度比例变更应投影为 viewer 默认缩放重算意图。"
 );
 
 console.log(
