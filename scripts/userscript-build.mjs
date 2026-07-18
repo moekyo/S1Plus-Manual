@@ -133,6 +133,16 @@ export const renderUserscript = async ({ legacySourceOverride } = {}) => {
       {
         name: "s1plus-legacy-source-override",
         setup(buildContext) {
+          buildContext.onResolve(
+            { filter: /^\.\/legacy\/main\.js$/ },
+            (args) => {
+              const resolvedImportPath = path.resolve(args.resolveDir, args.path);
+              if (resolvedImportPath !== userscriptPaths.legacySource) {
+                return null;
+              }
+              return { path: userscriptPaths.legacySource };
+            }
+          );
           buildContext.onLoad({ filter: /main\.js$/ }, async (args) => {
             if (path.resolve(args.path) !== userscriptPaths.legacySource) {
               return null;
