@@ -65,6 +65,7 @@
 
 ```bash
 node tests/settings-migration/test-settings-migration.js
+node tests/test-settings-semantics-module.js
 ```
 
 说明：
@@ -303,6 +304,8 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - `s1p_bookmarked_replies`
 - `s1p_title_filter_rules`
 - `s1p_read_progress`
+
+`s1p_settings` 继续由 `defaultSettings`、`buildNormalizedSettings()`、`getSettings()`、`getSettingsForWrite()` 与 `saveSettings()` 管理。重复的每项设置语义集中在冻结的 `s1pSettingsSemantics`：`resolveChangedPaths()` 投影 full/lightweight/passive、运行时 effect intent 与设置面板 tab，`projectSyncModal()` / `buildSyncSettingsPatch()` 负责同步表单映射，`normalizeImageSettings()` 由既有 normalization 层调用。私有 catalog 不对外暴露，定制化 tab 布局和一级 feature toggle 仍保持各自实现；新增设置必须同时补齐默认值、归一化与语义定义。
 
 除 `s1p_settings` 外，上述七类业务数据统一由 `s1pCoreBusinessData` 的私有 kind catalog 管理。功能与同步调用方只使用逻辑 kind，通过 `read()`、`write()`、`projectForSync()`、`importFromSync()`、`syncFromStorage()`、`bindCrossTab()` 访问；GM key、同步字段名、归一化、TTL cache、legacy key、跨标签 signal 与 refresh intent 不得在调用方重新维护。`s1p_title_keywords` 仅作为 catalog 内部的旧版标题规则身份存在，任意标题规则写入（包括 canonical no-op）都必须由模块内部清理它。
 
