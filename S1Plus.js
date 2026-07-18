@@ -34669,11 +34669,9 @@
     }
     settings.syncTokenExpiryEnabled = normalizedTokenExpiryEnabled;
 
-    const parsedTokenExpiryDate = Number(settings.syncTokenExpiryDate);
-    const normalizedTokenExpiryDate =
-      Number.isFinite(parsedTokenExpiryDate) && parsedTokenExpiryDate > 0
-        ? parsedTokenExpiryDate
-        : null;
+    const normalizedTokenExpiryDate = normalizeS1pSyncTokenExpiryDate(
+      settings.syncTokenExpiryDate
+    );
     if (!Object.is(settings.syncTokenExpiryDate, normalizedTokenExpiryDate)) {
       markMigration("sync_token_expiry_date_normalized");
     }
@@ -42811,11 +42809,10 @@
 
     // 默认过期日期：优先读取已保存的配置
     let defaultDate;
-    const savedExpiryTimestamp = Number(currentSettings.syncTokenExpiryDate);
-    if (
-      Number.isFinite(savedExpiryTimestamp) &&
-      savedExpiryTimestamp > 0
-    ) {
+    const savedExpiryTimestamp = normalizeS1pSyncTokenExpiryDate(
+      currentSettings.syncTokenExpiryDate
+    );
+    if (savedExpiryTimestamp !== null) {
       defaultDate = new Date(savedExpiryTimestamp);
     } else {
       defaultDate = new Date();
@@ -44101,8 +44098,7 @@
       infoContainer.textContent = "";
       if (
         tokenExpiryToggle.checked &&
-        Number.isFinite(expiryTimestamp) &&
-        expiryTimestamp > 0
+        expiryTimestamp !== null
       ) {
         const date = new Date(expiryTimestamp);
         const dateStr = date.toLocaleDateString("zh-CN");
@@ -44208,7 +44204,7 @@
       const isChecked = e.target.checked === true;
 
       if (isChecked) {
-        if (!pendingTokenExpiryDate) {
+        if (pendingTokenExpiryDate === null) {
           openTokenExpiryConfigModal((ts) => {
             if (!applyPendingTokenExpiryDate(ts)) {
               e.target.checked = false;
@@ -54410,8 +54406,10 @@
       return false;
     }
 
-    const expiryTimestamp = Number(settings.syncTokenExpiryDate);
-    if (!Number.isFinite(expiryTimestamp) || expiryTimestamp <= 0) {
+    const expiryTimestamp = normalizeS1pSyncTokenExpiryDate(
+      settings.syncTokenExpiryDate
+    );
+    if (expiryTimestamp === null) {
       return false;
     }
 
