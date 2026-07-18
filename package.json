@@ -1,7 +1,7 @@
 {
   "name": "s1plus-userscript",
   "private": true,
-  "packageManager": "npm@12.0.1",
+  "packageManager": "npm@10.9.2",
   "scripts": {
     "build": "node scripts/build-userscript.mjs",
     "check:metadata-parser": "node tests/build/test-userscript-source.mjs",
