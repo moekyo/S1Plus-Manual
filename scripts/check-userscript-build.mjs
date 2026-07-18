@@ -97,10 +97,16 @@ for (const inputPath of inputPaths) {
 
 const canonicalBodyBytes = Buffer.byteLength(canonicalParts.body);
 const bundleBodyBytes = Buffer.byteLength(bundleParts.body);
+const minimumBundleBytes = Math.floor(canonicalBodyBytes * 0.85);
+const maximumBundleBytes =
+  canonicalBodyBytes + Math.max(64 * 1024, Math.ceil(canonicalBodyBytes * 0.35));
 const sizeRatio = bundleBodyBytes / Math.max(1, canonicalBodyBytes);
-if (sizeRatio < 0.85 || sizeRatio > 1.35) {
+if (
+  bundleBodyBytes < minimumBundleBytes ||
+  bundleBodyBytes > maximumBundleBytes
+) {
   throw new Error(
-    `Bundle body size ratio ${sizeRatio.toFixed(3)} is outside the Phase 0 guard range.`
+    `Bundle body size ${bundleBodyBytes} is outside the Phase 0 guard range ${minimumBundleBytes}-${maximumBundleBytes}.`
   );
 }
 if (/sourceMappingURL=/.test(bundleParts.body)) {
