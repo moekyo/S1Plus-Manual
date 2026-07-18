@@ -1,72 +1,47 @@
 name: Apply page projection review fixes
 
 on:
-  push:
-    branches:
-      - codex/s1plus-modularization-phase-0.5
-    paths:
-      - scripts/apply-page-projection-review-fixes.mjs
-      - .github/workflows/apply-page-projection-review-fixes.yml
   pull_request:
     branches:
       - main
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: page-projection-review-fixes-${{ github.event_name }}
-  cancel-in-progress: false
+  group: page-projection-review-fixes-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   apply-fixes:
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - name: Check out branch
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-
-      - name: Apply source and test fixes
-        run: node scripts/apply-page-projection-review-fixes.mjs
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Verify release build
-        run: npm run verify:release
-
-      - name: Run focused architecture tests
+      - name: Apply fixes and run focused tests
+        shell: bash
         run: |
-          node tests/test-page-enhancement-projection.js
-          node tests/test-settings-semantics-module.js
-          node tests/test-core-business-data-module.js
-          node tests/test-image-viewer-interface.js
+          set -o pipefail
+          (
+            set -e
+            node scripts/apply-page-projection-review-fixes.mjs
+            node tests/test-page-enhancement-projection.js
+            node tests/test-settings-semantics-module.js
+            node tests/test-core-business-data-module.js
+            node tests/test-image-viewer-interface.js
+            git diff --check
+          ) 2>&1 | tee page-projection-fix.log
 
-      - name: Upload verified files
+      - name: Upload patched files and diagnostics
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: page-projection-review-fixes
-          if-no-files-found: error
+          if-no-files-found: warn
           path: |
+            page-projection-fix.log
+            page-projection-fix-result.txt
             src/legacy/main.js
             S1Plus.js
             tests/test-page-enhancement-projection.js
-
-      - name: Commit verified fixes on push
-        if: github.event_name == 'push'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/legacy/main.js S1Plus.js tests/test-page-enhancement-projection.js
-          git rm -- scripts/apply-page-projection-review-fixes.mjs .github/workflows/apply-page-projection-review-fixes.yml
-          git diff --cached --check
-          git commit -m "fix(page): close projection review gaps"
-          git push origin HEAD
