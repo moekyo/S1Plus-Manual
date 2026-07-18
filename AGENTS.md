@@ -18,7 +18,8 @@ Do not preload every document below. Pick the smallest relevant source after ins
 - `docs/plans/userscript-modularization.md`: required for build, source ownership, module extraction, local-loader, or release-cutover work.
 - `src/README.md`: required before adding or moving a source module.
 - `docs/agents/repository-guide.md`: use when changing settings, sync, storage, initialization, UI shell/glass, S1 NUX compatibility, or release workflow.
-- `DEVELOPMENT.md`: use for build commands, local loaders, deep sync behavior, GM key catalogs, diagnostics, initialization phase details, or test matrices.
+- `DEVELOPMENT.md`: use for current build commands, local loaders, source ownership, test classification, and release checks.
+- `docs/agents/runtime-development-reference.md`: preserved detailed pre-modularization runtime guide; use for deep sync, UI, diagnostics, initialization, and GM-key details not repeated in the current build-focused guide.
 - `CHANGELOG.md`: use when documenting user-visible changes or preparing a release.
 - `README.md`: use when changing user-facing behavior or public feature descriptions.
 
