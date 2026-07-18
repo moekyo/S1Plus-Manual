@@ -5,10 +5,11 @@
   "scripts": {
     "build": "node scripts/build-userscript.mjs",
     "check:metadata-parser": "node tests/build/test-userscript-source.mjs",
+    "check:build-safety": "node tests/build/test-userscript-build-safety.mjs",
     "check:bundle": "node scripts/check-userscript-build.mjs",
     "check:bundle-runtime": "node tests/build/test-userscript-bundle-runtime.js",
     "check:deterministic": "node scripts/check-userscript-determinism.mjs",
-    "verify:bundle": "npm run check:metadata-parser && npm run build && npm run check:bundle && npm run check:bundle-runtime && npm run check:deterministic"
+    "verify:bundle": "npm run check:metadata-parser && npm run check:build-safety && npm run build && npm run check:bundle && npm run check:bundle-runtime && npm run check:deterministic"
   },
   "engines": {
     "node": ">=20"
