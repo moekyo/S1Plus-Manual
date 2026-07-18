@@ -8,6 +8,8 @@ S1 Plus is released as one classic Tampermonkey/Greasemonkey userscript. During 
 
 Do not move production logic into `src/` until the Phase 0.5 generated-root cutover in `docs/plans/userscript-modularization.md` is approved and complete. After that cutover, `src/` becomes the only editable source and root `S1Plus.js` becomes a committed generated artifact.
 
+GitHub Actions are intentionally not used for this work. Build, drift, release, and browser checks are executed locally with committed scripts and checklists.
+
 ## Development Commands
 
 ```bash
@@ -15,7 +17,7 @@ npm ci
 npm run verify:bundle
 ```
 
-The verification pipeline covers strict metadata parsing, one-output/no-import graph validation, classic-script parsing, root/bundle VM hook parity, and deterministic output. It does not replace a real Tampermonkey startup smoke test.
+The verification pipeline covers strict metadata parsing, one-output/no-import graph validation, classic-script parsing, root/bundle VM hook parity, one-shot entry execution, and deterministic output. It does not replace a real Tampermonkey startup smoke test.
 
 Common focused checks:
 
@@ -37,7 +39,7 @@ node tests/test-sync-system-facade.js
 - A real module extraction cannot begin while root `S1Plus.js` is both source and release artifact.
 - Never keep one implementation in root and another in `src/`.
 - Move factory definitions before singleton construction; normal production singletons are assembled at the composition root.
-- Build changes require `npm ci` and `npm run verify:bundle`.
+- Build changes require `npm ci` and `npm run verify:bundle` locally.
 - The final userscript must remain one synchronous classic script with no runtime imports or chunks.
 
 ## Work Discipline
@@ -135,7 +137,7 @@ Cycles block the extraction. Tests are classified as module unit, VM characteriz
 
 During Phase 0, the existing release workflow still updates root `S1Plus.js`, including metadata `@version`, runtime `SCRIPT_VERSION`, release date, changelog, and welcome copy. The build checker enforces `@version`/`SCRIPT_VERSION` equality.
 
-Phase 0.5 must replace manual dual version ownership with one canonical metadata/version config and generate the committed root artifact. Release CI must use `npm ci`, rebuild the root artifact, verify no diff, and publish the generated formal file. See the modularization plan before changing release or local-loader paths.
+Phase 0.5 must replace manual dual version ownership with one canonical metadata/version config and generate the committed root artifact. Before release, run the documented local procedure: `npm ci`, the formal release build, local drift checks, focused tests, and the required browser smoke tests. Publish only the generated formal file. See the modularization plan before changing release or local-loader paths.
 
 ## Gotchas
 
