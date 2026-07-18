@@ -52,6 +52,14 @@ _Avoid_: storage helper collection, data cache globals
 The frozen interface `s1pImageViewer`. External settings, modal, and debug callers observe only `readState()` and request the semantic actions `refreshDefaultTransform()` or `closeImmediately()`; mutable viewer phase flags and transition cleanup remain private to the viewer implementation.
 _Avoid_: image viewer state object, viewer globals
 
+**Settings Semantics**:
+The per-setting meaning shared by direct settings changes, cross-tab refresh, and an open settings modal: refresh class, runtime effect intents, modal-tab projection, sync-form projection, and focused normalization. Canonical defaults remain in `defaultSettings`, while schema migration remains in `buildNormalizedSettings()`.
+_Avoid_: settings path lists, modal wiring regex
+
+**Settings Semantics Interface**:
+The frozen interface `s1pSettingsSemantics`. Callers use `resolveChangedPaths()`, `projectSyncModal()`, `buildSyncSettingsPatch()`, and `normalizeImageSettings()`; the setting catalog, effect aggregation, and shared token-expiry normalization stay private. The bespoke settings-tab renderer and primary feature-toggle branches remain outside this interface.
+_Avoid_: generic settings renderer, settings registry
+
 **Result Phase**:
 A completed sync outcome — success, failure, or conflict — that was explicitly committed by a resolved-state writer such as `finishAutoSyncIndicatorCycle` or `setAutoSyncIndicatorResolvedPhase`. Result phases are safe to display across tabs because they describe an already-completed action, not an in-progress one.
 _Avoid_: final state, outcome
@@ -91,6 +99,7 @@ _Avoid_: live-runner heartbeat, runner election
 - Page callers cross the **Sync System Façade**; Pending Dirty Scheduler, lifecycle adapter, Running Sync, Result Phase Policy, and Sync Indicator State Projection remain internal modules
 - Sync and feature callers cross the **Core Business Data Interface**; only its private catalog maps logical kinds to storage and sync identities
 - Settings and modal callers cross the **Image Viewer Interface**; they do not inspect or mutate viewer lifecycle flags
+- Direct, cross-tab, and modal settings callers share the **Settings Semantics Interface** instead of maintaining path, effect, and form mappings independently
 - A stale **Running Sync** title does not fall back to an older **Result Phase**; it stays idle until a resolved-state writer commits a new Result Phase or pending recovery produces one
 
 ## Example dialogue
