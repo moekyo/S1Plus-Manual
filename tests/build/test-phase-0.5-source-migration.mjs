@@ -50,6 +50,7 @@ const createFixture = async ({
     previewMetafile: path.join(repositoryRoot, "dist", "S1Plus.meta.json"),
   };
 
+  await mkdir(path.join(repositoryRoot, "src"), { recursive: true });
   await mkdir(path.dirname(paths.preview), { recursive: true });
   await writeFile(paths.release, rootSource, "utf8");
   await writeFile(paths.preview, previewSource, "utf8");
