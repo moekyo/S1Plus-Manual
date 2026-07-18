@@ -6,6 +6,7 @@ import {
   USERSCRIPT_VERSION,
 } from "../userscript.config.mjs";
 import {
+  assertUserscriptBuildTarget,
   GENERATED_USERSCRIPT_BANNER,
   renderUserscript,
   repositoryRoot,
@@ -51,6 +52,7 @@ export const runPhase05SourceMigration = async ({
   readFileImpl = readFile,
   atomicWriteFileImpl = atomicWriteFile,
   renderUserscriptImpl = renderUserscript,
+  assertUserscriptBuildTargetImpl = assertUserscriptBuildTarget,
   writeUserscriptBuildResultImpl = writeUserscriptBuildResult,
   configuredMetadata = renderUserscriptMetadata(),
   userscriptVersion = USERSCRIPT_VERSION,
@@ -73,6 +75,17 @@ export const runPhase05SourceMigration = async ({
     generatedBanner,
   });
 
+  const buildResult = await renderUserscriptImpl({
+    legacySourceOverride: plan.expectedLegacySource,
+  });
+  assertPhase05CandidateMatchesPlan({
+    plan,
+    candidateOutput: buildResult.output,
+  });
+
+  await assertUserscriptBuildTargetImpl("preview");
+  await assertUserscriptBuildTargetImpl("release");
+
   if (plan.state === "initial") {
     await ensureRegularDirectory({
       directoryPath: path.dirname(paths.legacySource),
@@ -83,12 +96,6 @@ export const runPhase05SourceMigration = async ({
       defaultMode: 0o644,
     });
   }
-
-  const buildResult = await renderUserscriptImpl();
-  assertPhase05CandidateMatchesPlan({
-    plan,
-    candidateOutput: buildResult.output,
-  });
 
   const preview = await writeUserscriptBuildResultImpl({
     target: "preview",
@@ -112,7 +119,7 @@ export const runPhase05SourceMigration = async ({
     generated: `Validated generated root against ${relativeLegacyPath}`,
   };
   console.log(
-    `${stateMessages[plan.state]} and wrote matching preview/release artifacts from one in-memory candidate.`
+    `${stateMessages[plan.state]} and wrote matching preview/release artifacts from one validated in-memory candidate.`
   );
 
   return Object.freeze({
