@@ -11,6 +11,8 @@ S1 Plus is a single-file Tampermonkey/Greasemonkey userscript that enhances the 
 - Edit `S1Plus.js` directly.
 - Local dev loader: use `S1Plus-Local-Mac.user.js` or `S1Plus-Local-Windows.user.js` as the Tampermonkey loader that `@require`s local `S1Plus.js`.
 - Settings migration test: `node tests/settings-migration/test-settings-migration.js`
+- Core Business Data module test: `node tests/test-core-business-data-module.js`
+- Image Viewer interface test: `node tests/test-image-viewer-interface.js`
 - Sync tests: run focused `node tests/test-*.js` files from `tests/`.
 - Test helper: `tests/s1plus-test-helpers.js` loads `S1Plus.js` in a `vm` sandbox with browser/GM stubs.
 - Test mode: set `globalThis.__S1P_TEST_MODE__ = true` before loading the script. It disables auto-startup, returns `{}` from `buildNormalizedSettings`, and exposes hooks on `globalThis.__S1P_TEST_HOOKS__`.
@@ -48,9 +50,12 @@ Rules:
 
 The script uses Greasemonkey APIs (`GM_setValue` / `GM_getValue`). All keys use `s1p_` + `snake_case`.
 
-Core business data keys:
+Settings storage key:
 
 - `s1p_settings`
+
+Core Business Data keys (owned by the private `s1pCoreBusinessData` kind catalog):
+
 - `s1p_blocked_threads`
 - `s1p_blocked_users`
 - `s1p_blocked_posts`
@@ -58,6 +63,8 @@ Core business data keys:
 - `s1p_bookmarked_replies`
 - `s1p_title_filter_rules`
 - `s1p_read_progress`
+
+Callers use the six frozen module methods `read`, `write`, `projectForSync`, `importFromSync`, `syncFromStorage`, and `bindCrossTab` with logical kind names. Do not read/write these keys directly, duplicate their sync field names or normalizers, or expose the catalog. The legacy `s1p_title_keywords` identity also stays private to the catalog and is retired by title-rule writes.
 
 Sync and lock keys include:
 
@@ -117,6 +124,7 @@ saveSettings(settings);
 - Keep `--s1p-dialog-glass-*` available for settings/debug glass panels, the image-viewer toolbar divider, and dense inner surfaces such as sync comparison blocks. Token date configuration uses settings secondary glass instead.
 - Settings `.s1p-modal-body` owns the rounded scroll viewport background and clipping; `.s1p-tab-panels` stays transparent.
 - Image viewer previous/next buttons use `--s1p-image-viewer-nav-btn-shadow` for default-state shadow tuning. Do not change hover, background, or blur variables when only adjusting default shadow weight.
+- External image-viewer callers use the frozen `s1pImageViewer` seam: `readState()` for the `open` / `closing` / `closed` projection, `refreshDefaultTransform()` for settings effects, and `closeImmediately()` for host teardown. Keep mutable lifecycle flags and close-finalization sequencing inside the viewer implementation.
 
 ## S1 NUX Theme Conflict
 
@@ -130,7 +138,7 @@ Settings cross-tab sync (`initializeSettingsCacheSync`) classifies changes into:
 - Lightweight: runs targeted apply functions.
 - Passive: updates cache only.
 
-Core data cross-tab sync (`initializeCoreDataCacheSync`) listens to business data keys and a signal key. Other tabs update local caches and schedule debounced DOM refreshes; visible tabs apply pending refreshes immediately.
+Core data cross-tab sync is owned by `s1pCoreBusinessData.bindCrossTab()` and initialized through `initializeCoreDataCacheSync`. The private catalog binds business data keys and the signal bridge, refreshes module caches, and publishes semantic refresh intents; callers must not interpret storage keys to choose DOM effects.
 
 Signal mechanism: each tab uses `SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID` to avoid reacting to its own writes. `s1p_settings_refresh_signal` acts as a heartbeat.
 

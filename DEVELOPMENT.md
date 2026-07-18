@@ -304,6 +304,10 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - `s1p_title_filter_rules`
 - `s1p_read_progress`
 
+除 `s1p_settings` 外，上述七类业务数据统一由 `s1pCoreBusinessData` 的私有 kind catalog 管理。功能与同步调用方只使用逻辑 kind，通过 `read()`、`write()`、`projectForSync()`、`importFromSync()`、`syncFromStorage()`、`bindCrossTab()` 访问；GM key、同步字段名、归一化、TTL cache、legacy key、跨标签 signal 与 refresh intent 不得在调用方重新维护。`s1p_title_keywords` 仅作为 catalog 内部的旧版标题规则身份存在，任意标题规则写入（包括 canonical no-op）都必须由模块内部清理它。
+
+同步投影传入 `source` 时也必须逐 kind 经过 `importValue()` 与归一化，避免旧版 `title_keywords` 等字段在导出、hash 或阅读进度 merge 路径中丢失。修复本地旧存储格式可以强制回写，但不能误记为 incoming payload 被转换；否则干净 pull 会错误推进本地修改时间。
+
 ### 5.2 同步与状态
 
 - `s1p_last_modified`
@@ -636,6 +640,7 @@ sequenceDiagram
 - 收藏展开/搜索/取消收藏
 - 阅读进度记录、跳转、清理（自动/手动）
 - 图片查看器（缩放、拖拽、长按、切图、关闭恢复焦点）
+- 图片查看器外部调用只通过冻结的 `s1pImageViewer` 接口：`readState()` 返回 `open` / `closing` / `closed` 投影，设置变化调用 `refreshDefaultTransform()`，设置 shell 关闭调用 `closeImmediately()`；不得读取或修改内部 lifecycle flags
 - 弹窗/浮层表面：设置面板、确认框、Token 配置、日期选择器、用户标记编辑器、帖子/楼层/用户屏蔽即时确认、标签菜单、文档型帮助浮层、普通短 tooltip、Toast、右侧浮动控制
 - 浅色 / 深色 / S1 NUX 三套主题下的设置面板滚动条、图片查看器和浮层可读性
 - 纯文本链接自动转换与新标签行为
@@ -650,6 +655,8 @@ sequenceDiagram
 - 自动合并阅读进度
 - 弱网重试、锁竞争、跨标签并发
 - 同步诊断显示与复制
+- `node tests/test-core-business-data-module.js` 覆盖七类业务数据、legacy 迁移、同步投影、存储修复与跨标签 adapter seam
+- `node tests/test-image-viewer-interface.js` 覆盖图片查看器状态投影与语义动作，不依赖内部可变状态
 
 ## 9. 发布清单
 
