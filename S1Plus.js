@@ -35149,110 +35149,543 @@
     window.addEventListener("focus", resyncSettingsOnForeground);
     window.addEventListener("pageshow", resyncSettingsOnForeground);
   };
+
+  const s1pCreatePageEnhancementProjection = ({
+    settingsSemantics,
+    effects = {},
+    scopeLimits = {},
+  } = {}) => {
+    const call = (effectName, ...args) => {
+      const effect = effects?.[effectName];
+      if (typeof effect !== "function") {
+        throw new TypeError(
+          `S1 Plus: Page Enhancement effect is unavailable: ${effectName}`
+        );
+      }
+      return effect(...args);
+    };
+    const outcome = (type, mode) => Object.freeze({ type, mode });
+    const isEnabled = (settings, key) => settings?.[key] === true;
+    const shouldEnableReadProgress = (settings) =>
+      isEnabled(settings, "enableGeneralSettings") &&
+      isEnabled(settings, "enableReadProgress");
+    const clearKeywordHiddenThreads = () =>
+      call("clearKeywordHiddenThreads");
+
+    const projectFull = (settings) => {
+      const shouldEnablePostBlocking = isEnabled(
+        settings,
+        "enablePostBlocking"
+      );
+      const shouldEnableUserBlocking = isEnabled(
+        settings,
+        "enableUserBlocking"
+      );
+      let hasRestoredManagedVisibility = false;
+      const ensureManagedVisibilityRestored = () => {
+        if (hasRestoredManagedVisibility) {
+          return;
+        }
+        call("restoreManagedVisibility", settings);
+        hasRestoredManagedVisibility = true;
+      };
+
+      call("manageFloatingControls");
+      if (shouldEnablePostBlocking) {
+        call("hideBlockedThreads");
+        call("hideThreadsByTitleKeyword");
+        call("addBlockButtonsToThreads");
+        call("applyUserThreadBlocklist");
+        call("hideBlockedPosts");
+      } else {
+        ensureManagedVisibilityRestored();
+        call("removeBlockButtonsFromThreads");
+        clearKeywordHiddenThreads();
+      }
+
+      if (shouldEnableUserBlocking) {
+        call("hideBlockedUsersPosts");
+      } else {
+        ensureManagedVisibilityRestored();
+      }
+      call("hideBlockedUserQuotes");
+      call("hideBlockedUserRatings");
+      call("hideBlockedUserNotifications");
+      call("hideSystemBlockedPosts");
+      call("refreshPostActions");
+      if (call("addProfileHeaderBlockButton") !== true) {
+        call("scheduleProfileHeaderBlockButtonRefresh", 900);
+      }
+      call("renameAuthorLinks");
+      if (isEnabled(settings, "enableUserTagging")) {
+        call("initializeTaggingPopover");
+      }
+      if (shouldEnableReadProgress(settings)) {
+        call("addProgressJumpButtons");
+      } else {
+        call("removeProgressJumpButtons");
+        call("clearReadIndicator");
+      }
+      call("applyInterfaceCustomizations");
+      call("applyImageHiding");
+      call("manageImageToggleAllButtons");
+      call("applyImageSizeLimits");
+      call("applyImageViewerBehavior");
+      call("applyNuxDarkTextContrastFix");
+      call("applyPlainTextUrlAutolinks");
+      call("applyGlobalLinkBehavior");
+      if (
+        call("addNativeBlacklistImportButton") !== true &&
+        call("isNativeBlacklistPage") === true
+      ) {
+        call("scheduleNativeBlacklistImportButtonRefresh", 700);
+      }
+      call("ensureMyThreadsQuickLink");
+      call("attachReadingProgress");
+      call("markRuntimeSnapshot", settings);
+      try {
+        call("autoSign");
+      } catch (error) {
+        call("logAutoSignError", error);
+      }
+    };
+
+    const getConnectedScope = (nodes) =>
+      Array.from(nodes || []).filter((node) =>
+        call("isConnectedElement", node)
+      );
+    const canUseScope = (nodes, limit, requiresFull) =>
+      !requiresFull &&
+      nodes.length > 0 &&
+      nodes.length <= Math.max(0, Number(limit) || 0);
+
+    const projectMutation = (event, settings) => {
+      const refresh = event.refresh || {};
+      if (refresh.navbar === true) {
+        call("logNavbarReset");
+        call("initializeNavbar");
+      }
+      if (event.forceFull === true) {
+        projectFull(settings);
+        return outcome("mutation", "full");
+      }
+
+      const scopeSafety = event.scopeSafety || {};
+      const scopes = event.scopes || {};
+      const threadRows = getConnectedScope(scopes.threadRows);
+      const postTables = getConnectedScope(scopes.postTables);
+      const quoteScopes = getConnectedScope(scopes.quoteScopes);
+      const ratingsScopes = getConnectedScope(scopes.ratingsScopes);
+      const notificationScopes = getConnectedScope(scopes.notificationScopes);
+      const canUseThreadScope = canUseScope(
+        threadRows,
+        scopeLimits.threadRows,
+        scopeSafety.threadRequiresFull === true
+      );
+      const canUsePostScope = canUseScope(
+        postTables,
+        scopeLimits.postTables,
+        scopeSafety.postRequiresFull === true
+      );
+      const canUseQuoteScope = canUseScope(
+        quoteScopes,
+        scopeLimits.quoteScopes,
+        scopeSafety.quoteOverflow === true
+      );
+      const canUseRatingsScope = canUseScope(
+        ratingsScopes,
+        scopeLimits.ratingsScopes,
+        scopeSafety.ratingsOverflow === true
+      );
+      const canUseNotificationScope = canUseScope(
+        notificationScopes,
+        scopeLimits.notificationScopes,
+        scopeSafety.notificationOverflow === true
+      );
+      let usedScopedFallback = false;
+      let usedFullFallback = false;
+      let shouldRefreshGlobalLinkBehavior = false;
+
+      if (refresh.threads === true) {
+        if (isEnabled(settings, "enablePostBlocking")) {
+          if (canUseThreadScope) {
+            call("addBlockButtonsToThreadRows", threadRows);
+            call("applyBlockedThreadVisibilityForRows", threadRows);
+            call("applyKeywordThreadHidingForRows", threadRows, {
+              rebuildHiddenState: false,
+            });
+            call("applyUserThreadBlocklistForRows", threadRows);
+          } else {
+            usedFullFallback = true;
+            call("hideBlockedThreads");
+            call("hideThreadsByTitleKeyword");
+            call("addBlockButtonsToThreads");
+            call("applyUserThreadBlocklist");
+          }
+        }
+        if (shouldEnableReadProgress(settings)) {
+          if (canUseThreadScope) {
+            call("addProgressJumpButtonsForRows", threadRows);
+          } else {
+            usedFullFallback = true;
+            call("addProgressJumpButtons");
+          }
+        }
+        shouldRefreshGlobalLinkBehavior = true;
+      }
+
+      if (refresh.posts === true) {
+        if (!canUsePostScope) {
+          usedFullFallback = true;
+        }
+        if (isEnabled(settings, "enableUserBlocking")) {
+          if (canUsePostScope) {
+            call("hideBlockedUsersPostsInTables", postTables);
+          } else {
+            usedFullFallback = true;
+            call("hideBlockedUsersPosts");
+          }
+          if (refresh.quotes === true) {
+            const quoteRoots = canUseQuoteScope
+              ? quoteScopes
+              : canUsePostScope
+                ? postTables
+                : null;
+            if (!canUseQuoteScope) {
+              if (canUsePostScope) {
+                usedScopedFallback = true;
+              } else {
+                usedFullFallback = true;
+              }
+            }
+            call("hideBlockedUserQuotes", quoteRoots);
+          }
+          if (refresh.ratings === true) {
+            const ratingsRoots = canUseRatingsScope
+              ? ratingsScopes
+              : canUsePostScope
+                ? postTables
+                : null;
+            if (!canUseRatingsScope) {
+              if (canUsePostScope) {
+                usedScopedFallback = true;
+              } else {
+                usedFullFallback = true;
+              }
+            }
+            call("hideBlockedUserRatings", ratingsRoots);
+          }
+          if (refresh.notifications === true) {
+            const notificationRoots = canUseNotificationScope
+              ? notificationScopes
+              : null;
+            if (!canUseNotificationScope) {
+              usedFullFallback = true;
+            }
+            call("hideBlockedUserNotifications", notificationRoots);
+          }
+        }
+        if (isEnabled(settings, "enablePostBlocking")) {
+          if (canUsePostScope) {
+            call("hideBlockedPostsInTables", postTables);
+          } else {
+            usedFullFallback = true;
+            call("hideBlockedPosts");
+          }
+        }
+        if (isEnabled(settings, "hideSystemBlockedPosts")) {
+          call("hideSystemBlockedPosts");
+        }
+        if (
+          isEnabled(settings, "enableUserBlocking") ||
+          isEnabled(settings, "enableUserTagging") ||
+          isEnabled(settings, "enableBookmarkReplies") ||
+          isEnabled(settings, "enablePostBlocking")
+        ) {
+          if (canUsePostScope) {
+            postTables.forEach((postTable) =>
+              call("addActionsToSinglePost", postTable)
+            );
+          } else {
+            usedFullFallback = true;
+            call("addActionsToPostFooter");
+          }
+        }
+        call("addProfileHeaderBlockButton");
+        call("renameAuthorLinks", canUsePostScope ? postTables : null);
+        if (isEnabled(settings, "enableUserTagging")) {
+          call("initializeTaggingPopover");
+        }
+        const postScope = canUsePostScope ? postTables : undefined;
+        call("applyImageHiding", postScope);
+        call("manageImageToggleAllButtons", postScope);
+        call("applyImageSizeLimits", postScope);
+        call("applyImageViewerBehavior", postScope);
+        call("applyNuxDarkTextContrastFix", postScope);
+        call("applyPlainTextUrlAutolinks", postScope);
+        shouldRefreshGlobalLinkBehavior = true;
+        call("attachReadingProgress", canUsePostScope ? postTables : null);
+      }
+      if (shouldRefreshGlobalLinkBehavior) {
+        call("applyGlobalLinkBehavior");
+      }
+      call("ensureMyThreadsQuickLink");
+      const mode = usedFullFallback
+        ? "fallback-full"
+        : usedScopedFallback
+          ? "fallback-scoped"
+          : "scoped";
+      return outcome("mutation", mode);
+    };
+
+    const projectSettingsFeature = (changedPaths, settings) => {
+      if (changedPaths.length !== 1) {
+        return false;
+      }
+      const featureKey = changedPaths[0];
+      const enabled = isEnabled(settings, featureKey);
+      switch (featureKey) {
+        case "enableGeneralSettings":
+          call("applyInterfaceCustomizations");
+          call("applyGlobalLinkBehavior");
+          call("applyImageHiding");
+          call("manageImageToggleAllButtons");
+          call("applyImageSizeLimits");
+          call("applyImageViewerBehavior");
+          if (enabled) {
+            call("addProgressJumpButtons");
+          } else {
+            call("removeProgressJumpButtons");
+            call("clearReadIndicator");
+          }
+          return true;
+        case "enablePostBlocking":
+          call(
+            enabled
+              ? "addBlockButtonsToThreads"
+              : "removeBlockButtonsFromThreads"
+          );
+          call("refreshPostActions");
+          call(enabled ? "hideBlockedPosts" : "showBlockedPosts");
+          return true;
+        case "enableUserBlocking":
+          call("refreshPostActions");
+          call(enabled ? "hideBlockedUsersPosts" : "showBlockedUsers");
+          call("hideBlockedUserQuotes");
+          call("hideBlockedUserRatings");
+          call("hideBlockedUserNotifications");
+          return true;
+        case "enableUserTagging":
+        case "enableBookmarkReplies":
+          call("refreshPostActions");
+          return true;
+        case "enableReadProgress":
+          if (enabled) {
+            call("addProgressJumpButtons");
+            call("attachReadingProgress");
+          } else {
+            call("removeProgressJumpButtons");
+            call("clearReadIndicator");
+            call("resetReadingProgress");
+          }
+          return true;
+        case "enableNavCustomization":
+          call("initializeNavbar");
+          return true;
+        default:
+          return false;
+      }
+    };
+
+    const projectSettingsIntents = (runtimeIntents, settings, origin) => {
+      const intents = new Set(runtimeIntents || []);
+      if (intents.has("navbar_initialize")) {
+        call("initializeNavbar");
+      } else if (intents.has("navbar_sync_button")) {
+        call("updateNavbarSyncButton");
+      }
+      if (intents.has("interface_customizations")) {
+        call("applyInterfaceCustomizations");
+      }
+      if (intents.has("title_sync_status")) {
+        call(
+          "refreshTitleSyncStatus",
+          origin === "settings_modal" ? "settings_saved" : "settings_changed"
+        );
+      }
+      if (intents.has("floating_controls")) {
+        call("manageFloatingControls");
+      }
+      if (intents.has("image_hiding")) {
+        call("applyImageHiding");
+      }
+      if (intents.has("image_toggle_buttons")) {
+        call("manageImageToggleAllButtons");
+      }
+      if (intents.has("image_size_limits")) {
+        call("applyImageSizeLimits");
+      }
+      if (intents.has("image_viewer_behavior")) {
+        call("applyImageViewerBehavior");
+      }
+      if (intents.has("image_viewer_transform")) {
+        call("imageViewerDefaultTransform");
+      }
+      if (intents.has("global_link_behavior")) {
+        call("applyGlobalLinkBehavior");
+      }
+      if (intents.has("plain_text_autolinks")) {
+        call("applyPlainTextUrlAutolinks");
+      }
+      if (intents.has("progress_buttons")) {
+        const shouldShowProgressButtons = shouldEnableReadProgress(settings);
+        if (origin === "settings_modal") {
+          call("removeProgressJumpButtons");
+          if (shouldShowProgressButtons) {
+            call("addProgressJumpButtons");
+          }
+        } else if (
+          shouldShowProgressButtons &&
+          call("isThreadListPage") === true
+        ) {
+          call("scheduleProgressJumpButtonsRefresh");
+        }
+      }
+      if (intents.has("read_indicator")) {
+        if (!isEnabled(settings, "showReadIndicator")) {
+          call("clearReadIndicator");
+        } else if (shouldEnableReadProgress(settings)) {
+          call("attachReadingProgress");
+        }
+      }
+      if (intents.has("hide_system_blocked_posts")) {
+        call("hideSystemBlockedPosts");
+      }
+    };
+
+    const projectSettings = (event, settings) => {
+      const changedPaths = Array.from(event.changedPaths || [])
+        .map((path) => String(path || "").trim())
+        .filter(Boolean);
+      const semantics = settingsSemantics.resolveChangedPaths(changedPaths);
+      if (
+        event.origin === "settings_modal" &&
+        semantics.effectClass === "full" &&
+        projectSettingsFeature(changedPaths, settings)
+      ) {
+        call("markRuntimeSnapshot", settings);
+        return outcome("settings", "targeted-feature");
+      }
+      if (
+        event.forceFull === true ||
+        changedPaths.length === 0 ||
+        semantics.effectClass === "full"
+      ) {
+        call("initializeNavbar");
+        projectFull(settings);
+        return outcome("settings", "full");
+      }
+      projectSettingsIntents(semantics.runtimeIntents, settings, event.origin);
+      if (event.origin === "settings_modal") {
+        call("markRuntimeSnapshot", settings);
+      }
+      return outcome("settings", "targeted");
+    };
+
+    const projectCoreData = (event, settings) => {
+      const intents = new Set(Array.from(event.intents || []));
+      if (intents.has("blocked_threads")) {
+        if (isEnabled(settings, "enablePostBlocking")) {
+          call("hideBlockedThreads");
+          call("applyUserThreadBlocklist");
+          call("hideThreadsByTitleKeyword");
+        } else {
+          call("restoreManagedVisibility", settings);
+          clearKeywordHiddenThreads();
+        }
+      }
+      if (intents.has("blocked_users")) {
+        call("restoreManagedVisibility", settings);
+        if (isEnabled(settings, "enableUserBlocking")) {
+          call("hideBlockedUsersPosts");
+        }
+        call("hideBlockedUserQuotes");
+        call("hideBlockedUserRatings");
+        call("hideBlockedUserNotifications");
+        if (isEnabled(settings, "enablePostBlocking")) {
+          call("applyUserThreadBlocklist");
+        }
+      }
+      if (intents.has("blocked_posts")) {
+        call("restoreManagedVisibility", settings);
+        if (isEnabled(settings, "enablePostBlocking")) {
+          call("hideBlockedPosts");
+        }
+      }
+      if (
+        intents.has("read_progress") &&
+        shouldEnableReadProgress(settings)
+      ) {
+        if (call("isThreadListPage") === true) {
+          call("scheduleProgressJumpButtonsRefresh");
+        } else if (call("hasPostTables") === true) {
+          call("attachReadingProgress");
+          if (isEnabled(settings, "showReadIndicator")) {
+            call("refreshReadIndicatorFromProgress");
+          }
+        }
+      }
+      if (intents.has("title_filter_rules")) {
+        if (isEnabled(settings, "enablePostBlocking")) {
+          call("hideThreadsByTitleKeyword");
+        } else {
+          clearKeywordHiddenThreads();
+        }
+      }
+      if (
+        intents.has("thread_actions") &&
+        (isEnabled(settings, "enableUserTagging") ||
+          isEnabled(settings, "enableBookmarkReplies") ||
+          isEnabled(settings, "enablePostBlocking")) &&
+        call("hasPostTables") === true
+      ) {
+        call("refreshPostActions");
+      }
+      return outcome("core-data", "targeted");
+    };
+
+    const project = (event = {}) => {
+      const type = String(event?.type || "full");
+      const settings = event?.settings || {};
+      switch (type) {
+        case "mutation":
+          return projectMutation(event, settings);
+        case "settings":
+          return projectSettings(event, settings);
+        case "core-data":
+          return projectCoreData(event, settings);
+        case "full":
+        default:
+          projectFull(settings);
+          return outcome("full", "full");
+      }
+    };
+
+    return Object.freeze({ project });
+  };
   let coreDataCrossTabRefreshTimer = null;
   const pendingCoreDataRefreshIntents = new Set();
-  const runFullSettingsCrossTabRefresh = (changedPathSet) => {
-    initializeNavbar();
-    applyChanges();
-    syncVisibleRemoteFreshnessPollingForCurrentState();
-    const settings = getSettings();
-    reconcileBackgroundSyncSchedulerForSettings(settings);
-    refreshTitleSyncStatusPresenceAndDisplay("settings_full_apply");
-    markSettingsRuntimeAppliedSnapshot(settings);
-    syncOpenSettingsModalFromCrossTab({
-      changedPathSet,
-      forceFullApply: true,
-    });
-    return true;
-  };
-  const runSettingsRuntimeEffectIntents = ({
-    runtimeIntents = [],
-    settings = getSettings(),
-    source = "cross_tab",
-  } = {}) => {
-    const intents = new Set(runtimeIntents);
-    if (intents.has("navbar_initialize")) {
-      initializeNavbar();
-    } else if (intents.has("navbar_sync_button")) {
-      updateNavbarSyncButton();
-    }
-    if (intents.has("interface_customizations")) {
-      applyInterfaceCustomizations();
-    }
-    if (intents.has("title_sync_status")) {
-      refreshTitleSyncStatusPresenceAndDisplay(
-        source === "settings_modal" ? "settings_saved" : "settings_changed"
-      );
-    }
-    if (intents.has("floating_controls")) {
-      manageFloatingControls();
-    }
-    if (intents.has("image_hiding")) {
-      applyImageHiding();
-    }
-    if (intents.has("image_toggle_buttons")) {
-      manageImageToggleAllButtons();
-    }
-    if (intents.has("image_size_limits")) {
-      applyImageSizeLimits();
-    }
-    if (intents.has("image_viewer_behavior")) {
-      applyS1pImageViewerBehavior();
-    }
-    if (intents.has("image_viewer_transform")) {
-      s1pImageViewer.refreshDefaultTransform();
-    }
-    if (intents.has("global_link_behavior")) {
-      applyGlobalLinkBehavior();
-    }
-    if (intents.has("plain_text_autolinks")) {
-      applyPlainTextUrlAutolinks();
-    }
-    if (intents.has("progress_buttons")) {
-      const shouldShowProgressButtons =
-        settings.enableGeneralSettings === true &&
-        settings.enableReadProgress === true;
-      if (source === "settings_modal") {
-        removeProgressJumpButtons();
-        if (shouldShowProgressButtons) {
-          addProgressJumpButtons();
-        }
-      } else if (shouldShowProgressButtons && isThreadListPage()) {
-        scheduleProgressJumpButtonsRefresh();
-      }
-    }
-    if (intents.has("read_indicator")) {
-      if (!settings.showReadIndicator) {
-        updateReadIndicatorUI(null);
-      } else if (
-        settings.enableGeneralSettings === true &&
-        settings.enableReadProgress === true
-      ) {
-        s1pReadingProgressSession.attach();
-      }
-    }
-    if (intents.has("hide_system_blocked_posts")) {
-      hideSystemBlockedPosts();
-    }
-  };
   const applySettingsRuntimeEffectsForPaths = ({
     changedPaths = [],
     settings = getSettings(),
     source = "cross_tab",
   } = {}) => {
-    const changeSemantics =
-      s1pSettingsSemantics.resolveChangedPaths(changedPaths);
-    if (changeSemantics.effectClass !== "full") {
-      runSettingsRuntimeEffectIntents({
-        runtimeIntents: changeSemantics.runtimeIntents,
-        settings,
-        source,
-      });
-      if (source === "settings_modal") {
-        markSettingsRuntimeAppliedSnapshot(settings);
-      }
-    }
-    return changeSemantics;
+    return s1pPageEnhancementProjection.project({
+      type: "settings",
+      changedPaths,
+      settings,
+      origin: source,
+    });
   };
   const runSettingsCrossTabRefresh = () => {
     const changedPathSet = new Set();
@@ -35265,17 +35698,25 @@
     const forceFullApply = pendingSettingsCrossTabNeedsFullApply;
     pendingSettingsCrossTabNeedsFullApply = false;
 
-    if (forceFullApply || changedPathSet.size === 0) {
-      return runFullSettingsCrossTabRefresh(changedPathSet);
-    }
-
     const settings = getSettings();
-    const changeSemantics = applySettingsRuntimeEffectsForPaths({
+    const projection = s1pPageEnhancementProjection.project({
+      type: "settings",
       changedPaths: changedPathSet,
       settings,
+      origin: "cross_tab",
+      forceFull: forceFullApply || changedPathSet.size === 0,
     });
-    if (changeSemantics.effectClass === "full") {
-      return runFullSettingsCrossTabRefresh(changedPathSet);
+    if (projection.mode === "full") {
+      syncVisibleRemoteFreshnessPollingForCurrentState();
+      const appliedSettings = getSettings();
+      reconcileBackgroundSyncSchedulerForSettings(appliedSettings);
+      refreshTitleSyncStatusPresenceAndDisplay("settings_full_apply");
+      markSettingsRuntimeAppliedSnapshot(appliedSettings);
+      syncOpenSettingsModalFromCrossTab({
+        changedPathSet,
+        forceFullApply: true,
+      });
+      return true;
     }
 
     markSettingsRuntimeAppliedSnapshot(settings);
@@ -35320,86 +35761,11 @@
       }
     }
 
-    const settings = getSettings();
-
-    if (refreshIntents.has("blocked_threads")) {
-      if (settings.enablePostBlocking) {
-        hideBlockedThreads();
-        applyUserThreadBlocklist();
-        hideThreadsByTitleKeyword();
-      } else {
-        restoreManagedVisibilityAfterDataImport(settings);
-        document.querySelectorAll(".s1p-hidden-by-keyword").forEach((row) => {
-          row.classList.remove("s1p-hidden-by-keyword");
-        });
-        dynamicallyHiddenThreads = {};
-      }
-    }
-
-    if (refreshIntents.has("blocked_users")) {
-      restoreManagedVisibilityAfterDataImport(settings);
-      if (settings.enableUserBlocking) {
-        hideBlockedUsersPosts();
-      }
-      hideBlockedUserQuotes();
-      hideBlockedUserRatings();
-      hideBlockedUserNotifications();
-      if (settings.enablePostBlocking) {
-        applyUserThreadBlocklist();
-      }
-    }
-
-    if (refreshIntents.has("blocked_posts")) {
-      restoreManagedVisibilityAfterDataImport(settings);
-      if (settings.enablePostBlocking) {
-        hideBlockedPosts();
-      }
-    }
-
-    if (
-      refreshIntents.has("read_progress") &&
-      settings.enableGeneralSettings === true &&
-      settings.enableReadProgress === true
-    ) {
-      if (isThreadListPage()) {
-        scheduleProgressJumpButtonsRefresh();
-      } else if (document.querySelector('table[id^="pid"]')) {
-        s1pReadingProgressSession.attach();
-        if (settings.showReadIndicator) {
-          const currentThreadId = getCurrentThreadId();
-          if (currentThreadId) {
-            const currentThreadProgress = getReadProgress()[currentThreadId];
-            updateReadIndicatorUI(
-              normalizeNumericId(currentThreadProgress?.postId) || null
-            );
-          } else {
-            updateReadIndicatorUI(null);
-          }
-        }
-      }
-    }
-
-    if (refreshIntents.has("title_filter_rules")) {
-      if (settings.enablePostBlocking) {
-        hideThreadsByTitleKeyword();
-      } else {
-        document.querySelectorAll(".s1p-hidden-by-keyword").forEach((row) => {
-          row.classList.remove("s1p-hidden-by-keyword");
-        });
-        dynamicallyHiddenThreads = {};
-      }
-    }
-
-    if (
-      refreshIntents.has("thread_actions") &&
-      (settings.enableUserTagging ||
-        settings.enableBookmarkReplies ||
-        settings.enablePostBlocking) &&
-      document.querySelector('table[id^="pid"]')
-    ) {
-      refreshAllAuthiActions();
-    }
-
+    s1pPageEnhancementProjection.project({
+      type: "core-data",
+      settings: getSettings(),
+      intents: refreshIntents,
+    });
   };
   const ensureCoreDataCrossTabRefreshScheduled = (delayMs = 120) => {
     if (document.visibilityState === "hidden") {
@@ -47109,7 +47475,12 @@
         const isChecked = target.checked;
         settings[featureKey] = isChecked;
         saveSettings(settings);
-
+        s1pPageEnhancementProjection.project({
+          type: "settings",
+          changedPaths: [featureKey],
+          settings: getSettings(),
+          origin: "settings_modal",
+        });
         if (
           contentWrapper &&
           contentWrapper.classList.contains("s1p-feature-content")
@@ -47121,68 +47492,22 @@
 
         switch (featureKey) {
           case "enableGeneralSettings":
-            applyInterfaceCustomizations();
-            applyGlobalLinkBehavior();
-            applyImageHiding();
-            manageImageToggleAllButtons();
-            applyImageSizeLimits();
-            applyS1pImageViewerBehavior();
-            if (isChecked) {
-              addProgressJumpButtons();
-            } else {
-              removeProgressJumpButtons();
-              updateReadIndicatorUI(null);
-            }
+          case "enableReadProgress":
             renderGeneralSettingsTab();
             break;
           case "enablePostBlocking":
-            isChecked
-              ? addBlockButtonsToThreads()
-              : removeBlockButtonsFromThreads();
-            refreshAllAuthiActions();
-            if (isChecked) {
-              hideBlockedPosts();
-            } else {
-              Object.keys(getBlockedPosts()).forEach(showPost);
-            }
             renderThreadTab();
             break;
           case "enableUserBlocking":
-            refreshAllAuthiActions();
-            if (isChecked) {
-              hideBlockedUsersPosts();
-            } else {
-              Object.keys(getBlockedUsers()).forEach(showUserPosts);
-            }
-            hideBlockedUserQuotes();
-            hideBlockedUserRatings();
-            hideBlockedUserNotifications();
             renderUserTab();
             break;
           case "enableUserTagging":
-            refreshAllAuthiActions();
             renderTagsTab();
             break;
-          case "enableReadProgress":
-            renderGeneralSettingsTab();
-            if (isChecked) {
-              addProgressJumpButtons();
-              s1pReadingProgressSession.attach();
-            } else {
-              removeProgressJumpButtons();
-              updateReadIndicatorUI(null);
-              s1pReadingProgressSession.reset({
-                clearObservedMarkers: true,
-                flushPendingProgress: true,
-              });
-            }
-            break;
           case "enableBookmarkReplies":
-            refreshAllAuthiActions();
             renderBookmarksTab();
             break;
           case "enableNavCustomization":
-            initializeNavbar();
             renderNavSettingsTab(); // 重新渲染以更新其内部的设置状态
             break;
         }
@@ -54687,159 +55012,34 @@
       }
       return false;
     };
-    const applyIncrementalChanges = () => {
-      const settings = getSettings();
-      const shouldEnableReadProgress =
-        settings.enableGeneralSettings === true &&
-        settings.enableReadProgress === true;
-      let shouldRefreshGlobalLinkBehavior = false;
-      const pendingThreadRows = Array.from(observerPendingThreadRows).filter(
-        (row) => row instanceof Element && row.isConnected
-      );
-      const pendingPostTables = Array.from(observerPendingPostTables).filter(
-        (table) => table instanceof Element && table.isConnected
-      );
-      const pendingQuoteScopes = Array.from(observerPendingQuoteScopes).filter(
-        (node) => node instanceof Element && node.isConnected
-      );
-      const pendingRatingsScopes = Array.from(observerPendingRatingsScopes).filter(
-        (node) => node instanceof Element && node.isConnected
-      );
-      const pendingNotificationScopes = Array.from(
-        observerPendingNotificationScopes
-      ).filter((node) => node instanceof Element && node.isConnected);
-      const canUseScopedThreadRefresh =
-        pendingThreadRows.length > 0 &&
-        pendingThreadRows.length <= OBSERVER_INCREMENTAL_THREAD_ROW_LIMIT &&
-        !observerPendingThreadNeedsFullRefresh;
-      const canUseScopedPostRefresh =
-        pendingPostTables.length > 0 &&
-        pendingPostTables.length <= OBSERVER_INCREMENTAL_POST_TABLE_LIMIT &&
-        !observerPendingPostNeedsFullRefresh;
-      const canUseScopedQuoteRefresh =
-        !observerPendingQuoteScopesOverflow &&
-        pendingQuoteScopes.length > 0 &&
-        pendingQuoteScopes.length <= OBSERVER_INCREMENTAL_QUOTE_SCOPE_LIMIT;
-      const canUseScopedRatingsRefresh =
-        !observerPendingRatingsScopesOverflow &&
-        pendingRatingsScopes.length > 0 &&
-        pendingRatingsScopes.length <= OBSERVER_INCREMENTAL_RATINGS_SCOPE_LIMIT;
-      const canUseScopedNotificationRefresh =
-        !observerPendingNotificationScopesOverflow &&
-        pendingNotificationScopes.length > 0 &&
-        pendingNotificationScopes.length <=
-        OBSERVER_INCREMENTAL_NOTIFICATION_SCOPE_LIMIT;
-
-      if (observerPendingThreadRefresh) {
-        if (settings.enablePostBlocking) {
-          if (canUseScopedThreadRefresh) {
-            addBlockButtonsToThreadRows(pendingThreadRows);
-            applyBlockedThreadVisibilityForRows(pendingThreadRows);
-            applyKeywordThreadHidingForRows(pendingThreadRows, {
-              rebuildHiddenState: false,
-            });
-            applyUserThreadBlocklistForRows(pendingThreadRows);
-          } else {
-            hideBlockedThreads();
-            hideThreadsByTitleKeyword();
-            addBlockButtonsToThreads();
-            applyUserThreadBlocklist();
-          }
-        }
-        if (shouldEnableReadProgress) {
-          if (canUseScopedThreadRefresh) {
-            addProgressJumpButtonsForRows(pendingThreadRows);
-          } else {
-            addProgressJumpButtons();
-          }
-        }
-        shouldRefreshGlobalLinkBehavior = true;
-      }
-      if (observerPendingPostRefresh) {
-        if (settings.enableUserBlocking) {
-          if (canUseScopedPostRefresh) {
-            hideBlockedUsersPostsInTables(pendingPostTables);
-          } else {
-            hideBlockedUsersPosts();
-          }
-          if (observerPendingQuoteRefresh) {
-            const quoteScopeRoots =
-              canUseScopedQuoteRefresh
-                ? pendingQuoteScopes
-                : canUseScopedPostRefresh
-                  ? pendingPostTables
-                  : null;
-            hideBlockedUserQuotes(quoteScopeRoots);
-          }
-          if (observerPendingRatingsRefresh) {
-            const ratingsScopeRoots =
-              canUseScopedRatingsRefresh
-                ? pendingRatingsScopes
-                : canUseScopedPostRefresh
-                  ? pendingPostTables
-                  : null;
-            hideBlockedUserRatings(ratingsScopeRoots);
-          }
-          if (observerPendingNotificationRefresh) {
-            const notificationScopeRoots =
-              canUseScopedNotificationRefresh
-                ? pendingNotificationScopes
-                : null;
-            hideBlockedUserNotifications(notificationScopeRoots);
-          }
-        }
-        if (settings.enablePostBlocking) {
-          if (canUseScopedPostRefresh) {
-            hideBlockedPostsInTables(pendingPostTables);
-          } else {
-            hideBlockedPosts();
-          }
-        }
-        if (settings.hideSystemBlockedPosts) {
-          hideSystemBlockedPosts();
-        }
-        if (
-          settings.enableUserBlocking ||
-          settings.enableUserTagging ||
-          settings.enableBookmarkReplies ||
-          settings.enablePostBlocking
-        ) {
-          if (canUseScopedPostRefresh) {
-            pendingPostTables.forEach(addActionsToSinglePost);
-          } else {
-            addActionsToPostFooter();
-          }
-        }
-        addBlockButtonToUserProfileHeader();
-        renameAuthorLinks(canUseScopedPostRefresh ? pendingPostTables : null);
-        if (settings.enableUserTagging) {
-          initializeTaggingPopover();
-        }
-        if (canUseScopedPostRefresh) {
-          applyImageHiding(pendingPostTables);
-          manageImageToggleAllButtons(pendingPostTables);
-          applyImageSizeLimits(pendingPostTables);
-          applyS1pImageViewerBehavior(pendingPostTables);
-          applyNuxDarkTextContrastFix(pendingPostTables);
-          applyPlainTextUrlAutolinks(pendingPostTables);
-        } else {
-          applyImageHiding();
-          manageImageToggleAllButtons();
-          applyImageSizeLimits();
-          applyS1pImageViewerBehavior();
-          applyNuxDarkTextContrastFix();
-          applyPlainTextUrlAutolinks();
-        }
-        shouldRefreshGlobalLinkBehavior = true;
-        s1pReadingProgressSession.attach(
-          canUseScopedPostRefresh ? pendingPostTables : null
-        );
-      }
-      if (shouldRefreshGlobalLinkBehavior) {
-        applyGlobalLinkBehavior();
-      }
-      ensureMyThreadsQuickLink();
-    };
+    const s1pProjectPendingMutationChanges = () =>
+      s1pPageEnhancementProjection.project({
+        type: "mutation",
+        settings: getSettings(),
+        forceFull: observerRequireFullApply,
+        refresh: {
+          navbar: observerPendingNavReinit,
+          threads: observerPendingThreadRefresh,
+          posts: observerPendingPostRefresh,
+          quotes: observerPendingQuoteRefresh,
+          ratings: observerPendingRatingsRefresh,
+          notifications: observerPendingNotificationRefresh,
+        },
+        scopes: {
+          threadRows: observerPendingThreadRows,
+          postTables: observerPendingPostTables,
+          quoteScopes: observerPendingQuoteScopes,
+          ratingsScopes: observerPendingRatingsScopes,
+          notificationScopes: observerPendingNotificationScopes,
+        },
+        scopeSafety: {
+          threadRequiresFull: observerPendingThreadNeedsFullRefresh,
+          postRequiresFull: observerPendingPostNeedsFullRefresh,
+          quoteOverflow: observerPendingQuoteScopesOverflow,
+          ratingsOverflow: observerPendingRatingsScopesOverflow,
+          notificationOverflow: observerPendingNotificationScopesOverflow,
+        },
+      });
 
     const observerCallback = (mutationList = []) => {
       if (observerIsApplying) {
@@ -54932,15 +55132,7 @@
         observerIsApplying = true;
         observer.disconnect();
         try {
-          if (observerPendingNavReinit) {
-            console.log("S1 Plus: 检测到导航栏被重置，正在重新应用自定义设置。");
-            initializeNavbar();
-          }
-          if (observerRequireFullApply) {
-            applyChanges();
-          } else {
-            applyIncrementalChanges();
-          }
+          s1pProjectPendingMutationChanges();
         } finally {
           observerPendingNavReinit = false;
           observerPendingThreadRefresh = false;
@@ -55023,86 +55215,121 @@
     );
   }
 
-  function applyChanges() {
-    const settings = getSettings();
-    const shouldEnablePostBlocking = settings.enablePostBlocking === true;
-    const shouldEnableUserBlocking = settings.enableUserBlocking === true;
-    const shouldEnableReadProgress =
-      settings.enableGeneralSettings === true &&
-      settings.enableReadProgress === true;
-    let hasRestoredManagedVisibility = false;
-    const ensureManagedVisibilityRestored = () => {
-      if (hasRestoredManagedVisibility) {
-        return;
-      }
-      restoreManagedVisibilityAfterDataImport(settings);
-      hasRestoredManagedVisibility = true;
-    };
-
-    manageFloatingControls(); // <-- [核心修改]
-
-    if (shouldEnablePostBlocking) {
-      hideBlockedThreads();
-      hideThreadsByTitleKeyword();
-      addBlockButtonsToThreads();
-      applyUserThreadBlocklist();
-      hideBlockedPosts();
-    } else {
-      ensureManagedVisibilityRestored();
-      removeBlockButtonsFromThreads();
-      document.querySelectorAll(".s1p-hidden-by-keyword").forEach((row) => {
-        row.classList.remove("s1p-hidden-by-keyword");
-      });
-      dynamicallyHiddenThreads = {};
-    }
-
-    if (shouldEnableUserBlocking) {
-      hideBlockedUsersPosts();
-    } else {
-      ensureManagedVisibilityRestored();
-    }
-    hideBlockedUserQuotes();
-    hideBlockedUserRatings();
-    hideBlockedUserNotifications(); // [新增] 调用提醒屏蔽函数
-    hideSystemBlockedPosts();
-
-    refreshAllAuthiActions();
-    const profileHeaderBlockButtonApplied = addBlockButtonToUserProfileHeader();
-    if (!profileHeaderBlockButtonApplied) {
-      scheduleProfileHeaderBlockButtonRefresh(900);
-    }
-    // 将工具栏文字链接转换为图标
-    renameAuthorLinks();
-    if (settings.enableUserTagging) {
-      initializeTaggingPopover();
-    }
-    if (shouldEnableReadProgress) {
-      addProgressJumpButtons();
-    } else {
-      removeProgressJumpButtons();
+  const s1pClearKeywordHiddenThreadsForProjection = () => {
+    document.querySelectorAll(".s1p-hidden-by-keyword").forEach((row) => {
+      row.classList.remove("s1p-hidden-by-keyword");
+    });
+    dynamicallyHiddenThreads = {};
+  };
+  const s1pRefreshReadIndicatorFromProgressForProjection = () => {
+    const currentThreadId = getCurrentThreadId();
+    if (!currentThreadId) {
       updateReadIndicatorUI(null);
+      return;
     }
+    const currentThreadProgress = getReadProgress()[currentThreadId];
+    updateReadIndicatorUI(
+      normalizeNumericId(currentThreadProgress?.postId) || null
+    );
+  };
+  const s1pPageEnhancementProjectionEffects = Object.freeze({
+    manageFloatingControls,
+    hideBlockedThreads,
+    hideThreadsByTitleKeyword,
+    addBlockButtonsToThreads,
+    applyUserThreadBlocklist,
+    hideBlockedPosts,
+    restoreManagedVisibility: restoreManagedVisibilityAfterDataImport,
+    removeBlockButtonsFromThreads,
+    clearKeywordHiddenThreads: s1pClearKeywordHiddenThreadsForProjection,
+    hideBlockedUsersPosts,
+    hideBlockedUserQuotes,
+    hideBlockedUserRatings,
+    hideBlockedUserNotifications,
+    hideSystemBlockedPosts,
+    refreshPostActions: refreshAllAuthiActions,
+    addProfileHeaderBlockButton: addBlockButtonToUserProfileHeader,
+    scheduleProfileHeaderBlockButtonRefresh,
+    renameAuthorLinks,
+    initializeTaggingPopover,
+    addProgressJumpButtons,
+    removeProgressJumpButtons,
+    clearReadIndicator: () => updateReadIndicatorUI(null),
+    applyInterfaceCustomizations,
+    applyImageHiding,
+    manageImageToggleAllButtons,
+    applyImageSizeLimits,
+    applyImageViewerBehavior: applyS1pImageViewerBehavior,
+    applyNuxDarkTextContrastFix,
+    applyPlainTextUrlAutolinks,
+    applyGlobalLinkBehavior,
+    addNativeBlacklistImportButton: ensureNativeBlacklistImportButton,
+    isNativeBlacklistPage,
+    scheduleNativeBlacklistImportButtonRefresh: (delayMs) =>
+      setTimeout(() => ensureNativeBlacklistImportButton(), delayMs),
+    ensureMyThreadsQuickLink,
+    attachReadingProgress: (scopeRoots) =>
+      s1pReadingProgressSession.attach(scopeRoots),
+    resetReadingProgress: () =>
+      s1pReadingProgressSession.reset({
+        clearObservedMarkers: true,
+        flushPendingProgress: true,
+      }),
+    markRuntimeSnapshot: markSettingsRuntimeAppliedSnapshot,
+    autoSign,
+    logAutoSignError: (error) =>
+      console.error("S1 Plus: Error caught while running autoSign():", error),
+    isConnectedElement: (node) =>
+      node instanceof Element && node.isConnected,
+    addBlockButtonsToThreadRows,
+    applyBlockedThreadVisibilityForRows,
+    applyKeywordThreadHidingForRows,
+    applyUserThreadBlocklistForRows,
+    addProgressJumpButtonsForRows,
+    hideBlockedUsersPostsInTables,
+    hideBlockedPostsInTables,
+    addActionsToSinglePost,
+    addActionsToPostFooter,
+    initializeNavbar,
+    logNavbarReset: () =>
+      console.log("S1 Plus: 检测到导航栏被重置，正在重新应用自定义设置。"),
+    updateNavbarSyncButton,
+    refreshTitleSyncStatus: refreshTitleSyncStatusPresenceAndDisplay,
+    imageViewerDefaultTransform: () =>
+      s1pImageViewer.refreshDefaultTransform(),
+    scheduleProgressJumpButtonsRefresh,
+    isThreadListPage,
+    showBlockedPosts: () => Object.keys(getBlockedPosts()).forEach(showPost),
+    showBlockedUsers: () => Object.keys(getBlockedUsers()).forEach(showUserPosts),
+    hasPostTables: () => Boolean(document.querySelector('table[id^="pid"]')),
+    refreshReadIndicatorFromProgress:
+      s1pRefreshReadIndicatorFromProgressForProjection,
+  });
+  const s1pPageEnhancementProjection = s1pCreatePageEnhancementProjection({
+    settingsSemantics: s1pSettingsSemantics,
+    effects: s1pPageEnhancementProjectionEffects,
+    scopeLimits: {
+      threadRows: OBSERVER_INCREMENTAL_THREAD_ROW_LIMIT,
+      postTables: OBSERVER_INCREMENTAL_POST_TABLE_LIMIT,
+      quoteScopes: OBSERVER_INCREMENTAL_QUOTE_SCOPE_LIMIT,
+      ratingsScopes: OBSERVER_INCREMENTAL_RATINGS_SCOPE_LIMIT,
+      notificationScopes: OBSERVER_INCREMENTAL_NOTIFICATION_SCOPE_LIMIT,
+    },
+  });
+  if (IS_S1P_TEST_MODE) {
+    const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
+    testHookHost.__S1P_TEST_HOOKS__ = {
+      ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
+      s1pCreatePageEnhancementProjection,
+      s1pPageEnhancementProjection,
+    };
+  }
 
-    applyInterfaceCustomizations();
-    applyImageHiding();
-    manageImageToggleAllButtons();
-    applyImageSizeLimits();
-    applyS1pImageViewerBehavior();
-    applyNuxDarkTextContrastFix();
-    applyPlainTextUrlAutolinks();
-    applyGlobalLinkBehavior(); // <--- MODIFIED
-    const nativeBlacklistImportButtonApplied = ensureNativeBlacklistImportButton();
-    if (!nativeBlacklistImportButtonApplied && isNativeBlacklistPage()) {
-      setTimeout(() => ensureNativeBlacklistImportButton(), 700);
-    }
-    ensureMyThreadsQuickLink();
-    s1pReadingProgressSession.attach();
-    markSettingsRuntimeAppliedSnapshot(settings);
-    try {
-      autoSign();
-    } catch (e) {
-      console.error("S1 Plus: Error caught while running autoSign():", e);
-    }
+  function applyChanges() {
+    return s1pPageEnhancementProjection.project({
+      type: "full",
+      settings: getSettings(),
+    });
   }
 
   const runS1PlusInitializer = () => {
