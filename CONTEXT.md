@@ -40,6 +40,18 @@ _Avoid_: scroll position, last seen post
 The bounded visit to one thread page in which visible posts and foreground reader activity may confirm an advance to Read Progress. A passively opened or hidden-starting visit remains unconfirmed until it reaches the foreground.
 _Avoid_: tracker state, observer session
 
+**Core Business Data**:
+The seven logical data kinds synchronized as forum business state: Blocked Threads, Blocked Users, Blocked Posts, User Tags, Bookmarked Replies, Title Filter Rules, and Read Progress. Their storage keys, sync identities, normalization, cache state, cross-tab signals, and refresh intents belong to one private kind catalog.
+_Avoid_: GM data map, sync data keys
+
+**Core Business Data Interface**:
+The deep module interface `s1pCoreBusinessData`. Feature and sync callers use `read()`, `write()`, `projectForSync()`, `importFromSync()`, `syncFromStorage()`, and `bindCrossTab()` with logical kinds; they do not interpret storage keys, legacy identities, normalizers, or sync field names. The production GM adapter and in-memory test adapter share this interface.
+_Avoid_: storage helper collection, data cache globals
+
+**Image Viewer Interface**:
+The frozen interface `s1pImageViewer`. External settings, modal, and debug callers observe only `readState()` and request the semantic actions `refreshDefaultTransform()` or `closeImmediately()`; mutable viewer phase flags and transition cleanup remain private to the viewer implementation.
+_Avoid_: image viewer state object, viewer globals
+
 **Result Phase**:
 A completed sync outcome — success, failure, or conflict — that was explicitly committed by a resolved-state writer such as `finishAutoSyncIndicatorCycle` or `setAutoSyncIndicatorResolvedPhase`. Result phases are safe to display across tabs because they describe an already-completed action, not an in-progress one.
 _Avoid_: final state, outcome
@@ -77,6 +89,8 @@ _Avoid_: live-runner heartbeat, runner election
 - **Result Phases** can transfer between tabs; **Running Sync** cannot; **Pending Dirty** can be recovered by a new **Scheduler Owner**
 - The **Result Phase Policy** runs only after **Running Sync** releases its Sync Locks; callers consume its intents instead of switching on result status independently
 - Page callers cross the **Sync System Façade**; Pending Dirty Scheduler, lifecycle adapter, Running Sync, Result Phase Policy, and Sync Indicator State Projection remain internal modules
+- Sync and feature callers cross the **Core Business Data Interface**; only its private catalog maps logical kinds to storage and sync identities
+- Settings and modal callers cross the **Image Viewer Interface**; they do not inspect or mutate viewer lifecycle flags
 - A stale **Running Sync** title does not fall back to an older **Result Phase**; it stays idle until a resolved-state writer commits a new Result Phase or pending recovery produces one
 
 ## Example dialogue
