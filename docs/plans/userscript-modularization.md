@@ -9,6 +9,7 @@
 - Generated preview artifact: `dist/S1Plus.user.js`
 - Generated build graph: `dist/S1Plus.meta.json`
 - No production module extraction is permitted until Phase 0.5 is approved and completed.
+- GitHub Actions are intentionally not used. Verification is performed locally with locked commands and explicit release checklists.
 
 ## Target model
 
@@ -62,7 +63,16 @@ After cutover:
 | `S1Plus.js` | Committed generated formal release artifact | No |
 | `dist/S1Plus.user.js` | Ignored local preview artifact | No |
 
-The release build must generate metadata `@version` and runtime `SCRIPT_VERSION` from the same canonical value. CI must rebuild the formal root artifact and fail if `git diff --exit-code -- S1Plus.js` reports drift.
+The release build must generate metadata `@version` and runtime `SCRIPT_VERSION` from the same canonical value. Before committing or publishing a release, the developer must run the formal release build locally and verify:
+
+```bash
+npm ci
+npm run build:release
+git diff --exit-code -- S1Plus.js
+git status --porcelain
+```
+
+A local release script may automate these commands, but no GitHub-hosted CI workflow is required.
 
 ## Non-negotiable invariants
 
@@ -78,7 +88,7 @@ The release build must generate metadata `@version` and runtime `SCRIPT_VERSION`
 10. A lower dependency layer never imports a higher layer; import cycles are forbidden.
 11. Build and release dependencies are installed with `npm ci` from the committed lockfile.
 12. Generated outputs are not edited manually.
-13. A phase cannot close without its automated gates and required manual browser evidence.
+13. A phase cannot close without its local automated gates and required manual browser evidence.
 
 ## Phase 0 foundation implementation
 
@@ -110,9 +120,10 @@ The build script:
 2. full preview build
 3. byte-level metadata and build-graph checks
 4. root/bundle VM test-hook parity
-5. deterministic rebuild SHA-256 comparison
+5. one-shot bundle-entry execution check
+6. deterministic rebuild SHA-256 comparison
 
-The VM harness can now execute either root `S1Plus.js` or the final bundle without converting the existing CommonJS test suite to ESM.
+The VM harness can execute either root `S1Plus.js` or the final bundle without converting the existing CommonJS test suite to ESM.
 
 ## Commands
 
@@ -164,7 +175,7 @@ Rules:
 
 ## Required ownership map
 
-Before extracting a symbol or cluster, add or update an ownership record containing:
+Before extracting a symbol or cluster, record:
 
 | Field | Required content |
 |---|---|
@@ -201,7 +212,7 @@ Scope:
 - add locked build tooling
 - preserve all runtime code in root `S1Plus.js`
 - generate and inspect a preview bundle
-- prove metadata, graph, runtime-hook, and deterministic parity
+- prove metadata, graph, runtime-hook, one-shot entry, and deterministic parity
 - align repository instructions with the active build foundation
 
 Done criteria:
@@ -225,7 +236,7 @@ Scope:
 - generate and commit root `S1Plus.js`
 - introduce preview/watch and formal release build commands
 - point local loaders to the continuously rebuilt preview artifact
-- add CI drift checks for the committed root artifact
+- add a local committed-artifact drift check to the release command/checklist
 
 Done criteria:
 
@@ -235,7 +246,7 @@ Done criteria:
 - GreasyFork/release instructions identify the formal generated artifact
 - Mac and Windows loaders declare metadata permissions from the same contract and load the preview artifact
 - no root/source duplicate implementation exists
-- rebuild leaves the committed formal artifact unchanged
+- running the local release verification leaves the committed formal artifact unchanged
 
 Rollback: restore the last committed generated root artifact and revert the source cutover as one change; never continue development with two active implementations.
 
@@ -291,7 +302,7 @@ Move UI infrastructure and feature renderers after their data ownership is stabl
 Close the migration only after:
 
 - root `S1Plus.js` is reproducibly generated and committed
-- release CI uses `npm ci` and the formal release build
+- the documented local release procedure uses `npm ci`, the formal release build, and drift checks
 - GitHub raw/update URLs remain valid
 - GitHub Release artifacts and GreasyFork uploads use the generated formal file
 - release builds contain no source map; development maps, if introduced, remain external and ignored
@@ -308,6 +319,7 @@ Phase 0.5 must introduce:
 npm run build:preview   -> dist/S1Plus.user.js
 npm run dev             -> watch src and rebuild the preview
 npm run build:release   -> generate and validate root S1Plus.js
+npm run verify:release  -> local drift and release checks
 ```
 
 Mac and Windows loaders then `@require` the local preview bundle. Their `@grant`, `@connect`, `@match`, and `@run-at` contract must be generated or validated against canonical metadata to prevent drift.
@@ -321,10 +333,10 @@ Mac and Windows loaders then `@require` the local preview bundle. Their `@grant`
 5. Keep environment access behind explicit adapters.
 6. Add direct module tests where applicable.
 7. Retarget or retire source-structure tests that depended on the old file boundary.
-8. Run focused tests and `npm run verify:bundle`.
+8. Run focused tests and `npm run verify:bundle` locally.
 9. Confirm root/bundle runtime-hook parity and unchanged metadata/version.
 10. Perform manual browser verification when DOM, startup, permissions, timing, or visual surfaces are involved.
 
 ## Phase 0 acceptance decision
 
-Automated foundation readiness requires all repository checks above. Final Phase 0 approval additionally requires a real Tampermonkey installation and basic Stage1st startup smoke test; connector-only or fixture-only results must not be represented as that browser evidence.
+Local automated foundation readiness requires all repository commands above. Final Phase 0 approval additionally requires a real Tampermonkey installation and basic Stage1st startup smoke test; connector-only or fixture-only results must not be represented as that browser evidence.
