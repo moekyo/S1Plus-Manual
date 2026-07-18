@@ -43,17 +43,19 @@ const buildTargets = Object.freeze({
   }),
 });
 
-const assertLegacySourceContract = async () => {
-  let source;
-  try {
-    source = await readFile(userscriptPaths.legacySource, "utf8");
-  } catch (error) {
-    if (error?.code === "ENOENT") {
-      throw new Error(
-        "Missing src/legacy/main.js. Run npm run migrate:phase-0.5-source once before building."
-      );
+const assertLegacySourceContract = async ({ legacySourceOverride } = {}) => {
+  let source = legacySourceOverride;
+  if (typeof source !== "string") {
+    try {
+      source = await readFile(userscriptPaths.legacySource, "utf8");
+    } catch (error) {
+      if (error?.code === "ENOENT") {
+        throw new Error(
+          "Missing src/legacy/main.js. Run npm run migrate:phase-0.5-source once before building."
+        );
+      }
+      throw error;
     }
-    throw error;
   }
 
   if (
@@ -86,7 +88,8 @@ const getBuildTarget = (target) => {
   return targetConfig;
 };
 
-const assertOutputTarget = async (target) => {
+export const assertUserscriptBuildTarget = async (target) => {
+  getBuildTarget(target);
   if (target === "preview") {
     await assertSafeOutputDirectory({
       repositoryRoot,
@@ -102,8 +105,10 @@ const assertOutputTarget = async (target) => {
   });
 };
 
-export const renderUserscript = async () => {
-  await assertLegacySourceContract();
+export const renderUserscript = async ({ legacySourceOverride } = {}) => {
+  const legacySource = await assertLegacySourceContract({
+    legacySourceOverride,
+  });
 
   const result = await build({
     absWorkingDir: repositoryRoot,
@@ -124,6 +129,23 @@ export const renderUserscript = async () => {
     define: {
       __S1P_USERSCRIPT_VERSION__: JSON.stringify(USERSCRIPT_VERSION),
     },
+    plugins: [
+      {
+        name: "s1plus-legacy-source-override",
+        setup(buildContext) {
+          buildContext.onLoad({ filter: /main\.js$/ }, async (args) => {
+            if (path.resolve(args.path) !== userscriptPaths.legacySource) {
+              return null;
+            }
+            return {
+              contents: legacySource,
+              loader: "js",
+              resolveDir: path.dirname(userscriptPaths.legacySource),
+            };
+          });
+        },
+      },
+    ],
   });
 
   if (result.outputFiles.length !== 1) {
@@ -150,7 +172,7 @@ export const writeUserscriptBuildResult = async ({ target, buildResult }) => {
     throw new Error("Missing rendered userscript build result.");
   }
 
-  await assertOutputTarget(target);
+  await assertUserscriptBuildTarget(target);
   await atomicWriteFile(targetConfig.outputPath, buildResult.output, {
     defaultMode: target === "release" ? 0o644 : 0o600,
   });
