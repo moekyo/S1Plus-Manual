@@ -11,6 +11,7 @@ S1 Plus is a single-file Tampermonkey/Greasemonkey userscript that enhances the 
 - Edit `S1Plus.js` directly.
 - Local dev loader: use `S1Plus-Local-Mac.user.js` or `S1Plus-Local-Windows.user.js` as the Tampermonkey loader that `@require`s local `S1Plus.js`.
 - Settings migration test: `node tests/settings-migration/test-settings-migration.js`
+- Settings semantics test: `node tests/test-settings-semantics-module.js`
 - Core Business Data module test: `node tests/test-core-business-data-module.js`
 - Image Viewer interface test: `node tests/test-image-viewer-interface.js`
 - Sync tests: run focused `node tests/test-*.js` files from `tests/`.
@@ -89,7 +90,9 @@ Every settings read and write must go through the normalization layer:
 - `getSettingsForWrite()`: deep clones cached settings and returns a mutable copy.
 - `saveSettings(settings)`: normalizes, writes `s1p_settings`, updates `last_modified`, writes cross-tab signal, and triggers sync.
 
-When adding a setting, update both `defaultSettings` and `buildNormalizedSettings`, or the setting can be lost for users with existing data.
+Repeated per-setting behavior belongs to the frozen `s1pSettingsSemantics` interface. Use `resolveChangedPaths()` for refresh class, runtime intents, and modal tabs; use `projectSyncModal()` / `buildSyncSettingsPatch()` for sync-form mapping; use `normalizeImageSettings()` from `buildNormalizedSettings()`. Keep the private catalog private, and keep bespoke tab markup and primary feature-toggle behavior outside the module.
+
+When adding a setting, update `defaultSettings`, `buildNormalizedSettings`, and its `s1pSettingsSemantics` definition, or the setting can be lost for users with existing data or fall back to a full refresh.
 
 ```js
 const settings = getSettingsForWrite();
@@ -132,11 +135,13 @@ saveSettings(settings);
 
 ## Cross-Tab Synchronization
 
-Settings cross-tab sync (`initializeSettingsCacheSync`) classifies changes into:
+Settings cross-tab sync (`initializeSettingsCacheSync`) asks `s1pSettingsSemantics` to classify changes into:
 
 - Full apply: re-runs `applyChanges()`.
-- Lightweight: runs targeted apply functions.
-- Passive: updates cache only.
+- Lightweight: runs targeted forum-DOM apply functions.
+- Passive: skips broad content reapply; explicitly listed infrastructure intents such as navbar/title refresh may still run.
+
+The same semantic projection supplies targeted runtime effects and open-modal tab refresh. Unknown paths fail safe to Full apply; callers must not recreate path lists or source-regex wiring assertions.
 
 Core data cross-tab sync is owned by `s1pCoreBusinessData.bindCrossTab()` and initialized through `initializeCoreDataCacheSync`. The private catalog binds business data keys and the signal bridge, refreshes module caches, and publishes semantic refresh intents; callers must not interpret storage keys to choose DOM effects.
 
