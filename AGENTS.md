@@ -9,6 +9,7 @@ Compact entry guide for AI coding agents in this repository. Default to this fil
 - `src/main.js` is a transitional esbuild entry that imports `S1Plus.js`; `dist/S1Plus.user.js` is an ignored preview artifact.
 - The build foundation exists to prove single-file bundle parity. Do not move production logic into `src/` until the Phase 0.5 generated-root cutover in `docs/plans/userscript-modularization.md` is approved and complete.
 - Root `.js` tests remain CommonJS. ESM semantics are scoped to `src/` and `.mjs` build scripts.
+- GitHub Actions are not used for this migration. Run the committed verification commands locally.
 
 ## On-Demand Docs
 
@@ -17,7 +18,7 @@ Do not preload every document below. Pick the smallest relevant source after ins
 - `docs/plans/userscript-modularization.md`: required for build, source ownership, module extraction, local-loader, or release-cutover work.
 - `src/README.md`: required before adding or moving a source module.
 - `docs/agents/repository-guide.md`: use when changing settings, sync, storage, initialization, UI shell/glass, S1 NUX compatibility, or release workflow.
-- `DEVELOPMENT.md`: use for deep sync behavior, GM key catalogs, diagnostics, initialization phase details, or test matrices. Its legacy “no build step” wording is superseded by this file and the modularization plan while Phase 0 is active.
+- `DEVELOPMENT.md`: use for build commands, local loaders, deep sync behavior, GM key catalogs, diagnostics, initialization phase details, or test matrices.
 - `CHANGELOG.md`: use when documenting user-visible changes or preparing a release.
 - `README.md`: use when changing user-facing behavior or public feature descriptions.
 
@@ -33,7 +34,7 @@ Do not preload every document below. Pick the smallest relevant source after ins
 - In Phase 0, edit runtime behavior only in root `S1Plus.js`; never edit generated files in `dist/`.
 - Do not begin a real module extraction while root `S1Plus.js` is both source and release artifact. Complete Phase 0.5 first.
 - Never keep duplicate production implementations in root and `src/`. A cutover or extraction must move one owner and update all callers in the same step.
-- Build changes require `npm ci` and `npm run verify:bundle`; the bundle must remain one synchronous classic userscript with no runtime imports.
+- Build changes require local `npm ci` and `npm run verify:bundle`; the bundle must remain one synchronous classic userscript with no runtime imports.
 - Use the `s1p` prefix for CSS classes, IDs, storage keys, and functions.
 - Settings reads/writes must go through `getSettings()`, `getSettingsForWrite()`, and `saveSettings()`.
 - When adding a setting, update both `defaultSettings` and `buildNormalizedSettings()`.
