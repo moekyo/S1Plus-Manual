@@ -83,19 +83,27 @@ if ((outputInfo.imports || []).length !== 0) {
   throw new Error("Bundle contains runtime imports or external dependencies.");
 }
 
-const inputPaths = Object.keys(metafile.inputs || {});
-for (const requiredInput of ["src/main.js", "S1Plus.js"]) {
-  if (!inputPaths.includes(requiredInput)) {
-    throw new Error(`Build graph is missing required input: ${requiredInput}.`);
-  }
-}
-for (const inputPath of inputPaths) {
-  if (inputPath !== "S1Plus.js" && !inputPath.startsWith("src/")) {
-    throw new Error(`Unexpected build input outside src/: ${inputPath}.`);
-  }
+const expectedInputs = ["S1Plus.js", "src/main.js"];
+const inputPaths = Object.keys(metafile.inputs || {}).sort();
+if (JSON.stringify(inputPaths) !== JSON.stringify(expectedInputs)) {
+  throw new Error(
+    `Unexpected Phase 0 build inputs: ${inputPaths.join(", ") || "none"}.`
+  );
 }
 
 const canonicalBodyBytes = Buffer.byteLength(canonicalParts.body);
+const legacyBytesInOutput = Number(
+  outputInfo.inputs?.["S1Plus.js"]?.bytesInOutput
+);
+if (
+  !Number.isFinite(legacyBytesInOutput) ||
+  legacyBytesInOutput < canonicalBodyBytes * 0.75
+) {
+  throw new Error(
+    `Legacy source contributes only ${legacyBytesInOutput || 0} output bytes; expected the current monolith to remain the dominant Phase 0 input.`
+  );
+}
+
 const bundleBodyBytes = Buffer.byteLength(bundleParts.body);
 const minimumBundleBytes = Math.floor(canonicalBodyBytes * 0.85);
 const maximumBundleBytes =
@@ -114,5 +122,5 @@ if (/sourceMappingURL=/.test(bundleParts.body)) {
 }
 
 console.log(
-  `Verified ${path.relative(repositoryRoot, outputPath)} (${inputPaths.length} inputs, size ratio ${sizeRatio.toFixed(3)}).`
+  `Verified ${path.relative(repositoryRoot, outputPath)} (${inputPaths.length} inputs, legacy output ${legacyBytesInOutput} bytes, size ratio ${sizeRatio.toFixed(3)}).`
 );
