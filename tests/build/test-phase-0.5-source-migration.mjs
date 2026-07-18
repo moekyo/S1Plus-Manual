@@ -74,6 +74,7 @@ const withFixture = async (options, test) => {
 
 const runFixtureMigration = async (fixture, counters = {}) => {
   counters.renderCalls = counters.renderCalls || 0;
+  counters.preflightTargets = counters.preflightTargets || [];
   counters.writeCalls = counters.writeCalls || [];
 
   return runPhase05SourceMigration({
@@ -82,13 +83,16 @@ const runFixtureMigration = async (fixture, counters = {}) => {
     atomicWriteFileImpl: async (targetPath, contents) => {
       await writeFile(targetPath, contents, "utf8");
     },
-    renderUserscriptImpl: async () => {
+    renderUserscriptImpl: async ({ legacySourceOverride }) => {
       counters.renderCalls += 1;
-      const legacySource = await readFile(fixture.paths.legacySource, "utf8");
+      if (counters.renderError) throw counters.renderError;
       return {
-        output: renderCandidate(legacySource),
+        output: renderCandidate(legacySourceOverride),
         metafile: { inputs: {}, outputs: {} },
       };
+    },
+    assertUserscriptBuildTargetImpl: async (target) => {
+      counters.preflightTargets.push(target);
     },
     writeUserscriptBuildResultImpl: async ({ target, buildResult }) => {
       counters.writeCalls.push(target);
@@ -121,6 +125,7 @@ const assertRejectedWithoutArtifactWrites = async ({
 
   assert.equal(await hashFile(fixture.paths.release), rootHashBefore);
   assert.equal(await hashFile(fixture.paths.preview), previewHashBefore);
+  assert.deepEqual(counters.preflightTargets || [], []);
   assert.deepEqual(counters.writeCalls || [], []);
 };
 
@@ -134,6 +139,25 @@ await withFixture({}, async (fixture) => {
   const expectedCandidate = renderCandidate(expectedLegacySource);
   assert.equal(await readFile(fixture.paths.release, "utf8"), expectedCandidate);
   assert.equal(await readFile(fixture.paths.preview, "utf8"), expectedCandidate);
+});
+
+await withFixture({}, async (fixture) => {
+  const rootHashBefore = await hashFile(fixture.paths.release);
+  const previewHashBefore = await hashFile(fixture.paths.preview);
+  const counters = { renderError: new Error("fixture render failed") };
+
+  await assert.rejects(
+    runFixtureMigration(fixture, counters),
+    /fixture render failed/
+  );
+
+  assert.equal(await hashFile(fixture.paths.release), rootHashBefore);
+  assert.equal(await hashFile(fixture.paths.preview), previewHashBefore);
+  await assert.rejects(readFile(fixture.paths.legacySource, "utf8"), {
+    code: "ENOENT",
+  });
+  assert.deepEqual(counters.preflightTargets, []);
+  assert.deepEqual(counters.writeCalls, []);
 });
 
 await withFixture(
@@ -217,5 +241,5 @@ await withFixture(
 );
 
 console.log(
-  "[phase-0.5-source-migration] Initial, resume, generated-idempotent, and conflict/no-overwrite scenarios verified."
+  "[phase-0.5-source-migration] Initial, render-failure, resume, generated-idempotent, and conflict/no-overwrite scenarios verified."
 );
