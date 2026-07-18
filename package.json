@@ -20,7 +20,8 @@
     "check:bundle-runtime": "node tests/build/test-userscript-bundle-runtime.js",
     "check:deterministic": "node scripts/check-userscript-determinism.mjs",
     "check:release-drift": "node scripts/check-userscript-release-drift.mjs",
-    "verify:bundle": "npm run check:metadata-parser && npm run check:in-memory-render && npm run check:migration && npm run check:build-safety && npm run build:preview && npm run build:release && npm run check:bundle && npm run check:bundle-runtime && npm run check:deterministic && npm run check:loaders",
+    "verify:migration-readiness": "npm run check:metadata-parser && npm run check:in-memory-render && npm run check:migration && npm run check:build-safety && npm run check:loaders",
+    "verify:bundle": "npm run verify:migration-readiness && npm run build:preview && npm run build:release && npm run check:bundle && npm run check:bundle-runtime && npm run check:deterministic",
     "verify:release": "npm run verify:bundle && npm run check:release-drift"
   },
   "engines": {
