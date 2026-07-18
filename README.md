@@ -16,6 +16,26 @@ S1 Plus 是一个面向 Stage1st（S1）的用户脚本，目标是让论坛浏�
 - 存储方式：Greasemonkey API（`GM_getValue` / `GM_setValue`）
 - 远程同步：GitHub Gist（`api.github.com` + `gist.githubusercontent.com`）
 
+## 开发与模块化状态
+
+当前正在进行 **Phase 0：模块化构建基础验证**，但这不改变用户安装形态：最终仍然只有一个 classic userscript 文件。
+
+当前文件角色：
+
+- `S1Plus.js`：canonical runtime source 与正式安装入口
+- `src/main.js`：临时 esbuild 入口，只导入根脚本
+- `dist/S1Plus.user.js`：被忽略的本地构建预览
+- `package-lock.json`：锁定构建依赖
+
+构建验证：
+
+```bash
+npm ci
+npm run verify:bundle
+```
+
+在第一次真实模块抽离前，必须先完成 Phase 0.5 generated-root cutover，使 `src/` 成为唯一可编辑源码、根 `S1Plus.js` 成为提交的生成物。当前禁止在根脚本与 `src/` 同时维护两份实现。完整方案见 [`docs/plans/userscript-modularization.md`](./docs/plans/userscript-modularization.md)。
+
 ## 功能全景（按真实实现梳理）
 
 ### 1. 帖子、用户、楼层三层屏蔽体系
@@ -145,15 +165,17 @@ S1 Plus 是一个面向 Stage1st（S1）的用户脚本，目标是让论坛浏�
 
 ## 脚本架构分析（当前实现）
 
-### 单文件架构
+### 单文件运行架构
 
-- 全部逻辑集中在 `S1Plus.js`
+- 当前 Phase 0 的全部运行时逻辑仍集中在 `S1Plus.js`
+- `src/main.js` 目前只用于验证同一逻辑可以被打包成单个 classic userscript
 - 通过函数分区组织：
   - 安全与清洗
   - 数据存储与缓存
   - 同步引擎
   - 设置面板与交互
   - 页面增强与观察器
+- Phase 0.5 完成后，开发源码才会迁入 `src/`，而用户安装文件仍保持单文件
 
 ### 数据模型（核心持久化）
 
@@ -191,6 +213,7 @@ S1 Plus 是一个面向 Stage1st（S1）的用户脚本，目标是让论坛浏�
 3. 若在本地开发：
    - macOS 可直接使用 `S1Plus-Local-Mac.user.js`
    - Windows 可直接使用 `S1Plus-Local-Windows.user.js`
+   - Phase 0 loader 仍加载根 `S1Plus.js`；Phase 0.5 后才切换至 `dist` 预览 bundle
 
 ### 快速上手
 
@@ -260,6 +283,8 @@ S1 Plus 是一个面向 Stage1st（S1）的用户脚本，目标是让论坛浏�
 
 - 更新日志：[`CHANGELOG.md`](./CHANGELOG.md)
 - 开发文档：[`DEVELOPMENT.md`](./DEVELOPMENT.md)
+- 模块化计划：[`docs/plans/userscript-modularization.md`](./docs/plans/userscript-modularization.md)
+- Source module rules：[`src/README.md`](./src/README.md)
 - 多标签页同步重构总览：[`sync_multitab_review_and_redesign.md`](./archive/sync-across-multiple-tab/sync_multitab_review_and_redesign.md)
 - 覆盖矩阵：[`coverage_matrix.md`](./archive/sync-across-multiple-tab/sync_multitab_redesign/coverage_matrix.md)
 - 标题同步状态与运行中恢复边界：[`sync-title-status-handoff-review.md`](./docs/sync-title-status-handoff-review.md)
