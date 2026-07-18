@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 import {
   countUserscriptMetadataBlocks,
@@ -43,17 +43,11 @@ for (const marker of [
   }
 }
 
-if (/^\s*(?:import|export)\s/m.test(bundleParts.body)) {
-  throw new Error("Bundle still contains ESM import/export syntax.");
-}
-
-const syntaxCheck = spawnSync(process.execPath, ["--check", outputPath], {
-  cwd: repositoryRoot,
-  encoding: "utf8",
-});
-if (syntaxCheck.status !== 0) {
+try {
+  new vm.Script(bundleParts.body, { filename: outputPath });
+} catch (error) {
   throw new Error(
-    syntaxCheck.stderr || syntaxCheck.stdout || "Bundle syntax check failed."
+    `Bundle is not valid classic userscript JavaScript: ${error.message}`
   );
 }
 
