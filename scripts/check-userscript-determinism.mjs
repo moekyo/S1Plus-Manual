@@ -1,32 +1,55 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { repositoryRoot, userscriptPaths } from "./userscript-build.mjs";
 
-const repositoryRoot = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  ".."
-);
-const outputPath = path.join(repositoryRoot, "dist", "S1Plus.user.js");
-const hashFile = async () =>
-  createHash("sha256").update(await readFile(outputPath)).digest("hex");
-const runBuild = () => {
-  const result = spawnSync(process.execPath, ["scripts/build-userscript.mjs"], {
-    cwd: repositoryRoot,
-    encoding: "utf8",
-  });
+const hashFile = async (filePath) =>
+  createHash("sha256").update(await readFile(filePath)).digest("hex");
+
+const runPreviewBuild = () => {
+  const result = spawnSync(
+    process.execPath,
+    ["scripts/build-userscript.mjs", "--target=preview"],
+    {
+      cwd: repositoryRoot,
+      encoding: "utf8",
+    }
+  );
   if (result.status !== 0) {
-    throw new Error(result.stderr || result.stdout || "Determinism build failed.");
+    throw new Error(
+      result.stderr || result.stdout || "Determinism preview build failed."
+    );
   }
 };
 
-const firstHash = await hashFile();
-runBuild();
-const secondHash = await hashFile();
-if (firstHash !== secondHash) {
+const releaseHashBefore = await hashFile(userscriptPaths.release);
+const firstPreviewHash = await hashFile(userscriptPaths.preview);
+if (releaseHashBefore !== firstPreviewHash) {
   throw new Error(
-    `Userscript build is not deterministic: ${firstHash} != ${secondHash}.`
+    `Generated root and preview differ before determinism check: ${releaseHashBefore} != ${firstPreviewHash}.`
   );
 }
-console.log(`Verified deterministic userscript SHA-256 ${secondHash}.`);
+
+runPreviewBuild();
+
+const releaseHashAfter = await hashFile(userscriptPaths.release);
+const secondPreviewHash = await hashFile(userscriptPaths.preview);
+if (firstPreviewHash !== secondPreviewHash) {
+  throw new Error(
+    `Preview build is not deterministic: ${firstPreviewHash} != ${secondPreviewHash}.`
+  );
+}
+if (releaseHashBefore !== releaseHashAfter) {
+  throw new Error(
+    `Preview build modified generated root: ${releaseHashBefore} != ${releaseHashAfter}.`
+  );
+}
+if (releaseHashAfter !== secondPreviewHash) {
+  throw new Error(
+    `Generated root and rebuilt preview differ: ${releaseHashAfter} != ${secondPreviewHash}.`
+  );
+}
+
+console.log(
+  `Verified deterministic generated-root/preview SHA-256 ${secondPreviewHash}.`
+);
