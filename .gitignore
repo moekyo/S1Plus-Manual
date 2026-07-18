@@ -1,2 +1,5 @@
 *.html
 *_files
+node_modules/
+dist/*
+!dist/README.md
