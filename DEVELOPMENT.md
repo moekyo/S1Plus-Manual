@@ -23,6 +23,7 @@
 - 不允许在当前阶段把真实业务函数移动到 `src/`。
 - 不允许同时在根脚本与 `src/` 保留两份 production implementation。
 - 根目录测试继续使用 CommonJS；ESM 仅作用于 `src/` 与 `.mjs` 构建脚本。
+- 当前不使用 GitHub Actions；所有 foundation 和 release 检查均在本地执行。
 
 完整 source-of-truth、Phase 0.5 cutover、阶段门禁与回滚规则见：
 
@@ -48,7 +49,7 @@ dist/S1Plus.user.js       ignored preview artifact
 - `src/` 是唯一可编辑生产源码。
 - 根 `S1Plus.js` 是提交到仓库的生成物，不得手改。
 - metadata `@version` 与 runtime `SCRIPT_VERSION` 来自同一配置。
-- CI 重建根产物并检查没有 diff。
+- 本地 release 命令重建根产物，并通过 `git diff --exit-code` 和 `git status --porcelain` 检查漂移。
 - 本地 loader 改为加载持续构建的 `dist/S1Plus.user.js`。
 
 Phase 0.5 未完成时，不得开始 Phase 1 的纯函数抽离。
@@ -83,7 +84,8 @@ npm run verify:bundle
 2. 完整 userscript 构建
 3. metadata、版本、构建图与体积完整性检查
 4. root/bundle VM test-hook parity
-5. 连续构建 SHA-256 确定性检查
+5. bundle entry 只执行一次的 sentinel 检查
+6. 连续构建 SHA-256 确定性检查
 
 ### 3.2 单独命令
 
@@ -120,6 +122,20 @@ npm run check:deterministic
 - 通过独占临时文件和 atomic rename 写入。
 - 只产生一个同步 classic userscript output。
 - 不产生 external/runtime import、chunk 或 source map。
+
+### 3.4 本地 release 检查
+
+Phase 0.5 引入正式 release build 后，发布前必须在本地执行：
+
+```bash
+npm ci
+npm run build:release
+npm run verify:release
+git diff --exit-code -- S1Plus.js
+git status --porcelain
+```
+
+这些命令可以由本地脚本串联，但不依赖 GitHub Actions 或其他 GitHub 托管 CI。
 
 ## 4. 本地浏览器开发
 
@@ -350,12 +366,12 @@ bundle checker 会检查 metadata 版本与 runtime 版本一致。
 - `npm run build:release` 生成根 `S1Plus.js`。
 - root artifact 提交到 Git，继续维持现有 raw/update/GreasyFork 路径。
 - `dist` 保持 ignored，用于 preview/watch。
-- CI 使用 `npm ci`，重建正式 artifact，并检查工作树无 diff。
+- 本地 `npm run verify:release` 使用 `npm ci`、重建正式 artifact，并检查工作树无 diff。
 - release build 禁止 source map；开发 source map 如有需要只能外置并忽略。
 
 ## 9. Phase 0 完成条件
 
-自动条件：
+本地自动条件：
 
 - `npm ci` 成功且 lockfile 不变化。
 - `npm run verify:bundle` 在完整当前脚本上成功。
@@ -368,7 +384,7 @@ bundle checker 会检查 metadata 版本与 runtime 版本一致。
 - Stage1st 基础启动正常。
 - 没有双初始化、明显功能回归或权限 metadata 漂移。
 
-在真实浏览器证据完成前，只能说明自动 foundation checks 通过，不能宣称 Phase 0 已正式关闭。
+在真实浏览器证据完成前，只能说明本地 foundation checks 通过，不能宣称 Phase 0 已正式关闭。
 
 ## 10. 相关文档
 
