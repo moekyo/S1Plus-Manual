@@ -6,13 +6,20 @@
     "esbuild@0.28.1": true
   },
   "scripts": {
-    "build": "node scripts/build-userscript.mjs",
+    "build": "npm run build:preview",
+    "build:preview": "node scripts/build-userscript.mjs --target=preview",
+    "build:release": "node scripts/build-userscript.mjs --target=release",
+    "dev": "node scripts/watch-userscript.mjs",
+    "migrate:phase-0.5-source": "node scripts/migrate-phase-0.5-source.mjs",
     "check:metadata-parser": "node tests/build/test-userscript-source.mjs",
     "check:build-safety": "node tests/build/test-userscript-build-safety.mjs",
+    "check:loaders": "node scripts/check-userscript-loaders.mjs",
     "check:bundle": "node scripts/check-userscript-build.mjs",
     "check:bundle-runtime": "node tests/build/test-userscript-bundle-runtime.js",
     "check:deterministic": "node scripts/check-userscript-determinism.mjs",
-    "verify:bundle": "npm run check:metadata-parser && npm run check:build-safety && npm run build && npm run check:bundle && npm run check:bundle-runtime && npm run check:deterministic"
+    "check:release-drift": "node scripts/check-userscript-release-drift.mjs",
+    "verify:bundle": "npm run check:metadata-parser && npm run check:build-safety && npm run build:preview && npm run build:release && npm run check:bundle && npm run check:bundle-runtime && npm run check:deterministic && npm run check:loaders",
+    "verify:release": "npm run verify:bundle && npm run check:release-drift"
   },
   "engines": {
     "node": ">=20"
