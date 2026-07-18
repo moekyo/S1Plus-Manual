@@ -57,4 +57,7 @@ jobs:
           node tests/test-sync-system-facade.js
 
       - name: Ensure tracked files stay clean
-        run: git diff --exit-code
+        shell: bash
+        run: |
+          git diff --exit-code
+          test -z "$(git status --porcelain --untracked-files=no)"
