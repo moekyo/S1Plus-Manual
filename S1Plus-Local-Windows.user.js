@@ -2,10 +2,10 @@
 // @name         S1 Plus (Local Windows)
 // @namespace    http://tampermonkey.net/
 // @version      99.9.10
-// @description  本地开发版；Phase 0 直接加载根 S1Plus.js，Phase 0.5 后切换到 dist 预览产物（Windows）
+// @description  本地开发版；加载 Phase 0.5 持续构建的 dist 预览产物（Windows）
 // @author       Antigravity
 // @match        https://stage1st.com/2b/*
-// @require      file:///D:/MyZone/S1Plus-Manual/S1Plus.js
+// @require      file:///D:/MyZone/S1Plus-Manual/dist/S1Plus.user.js
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_addStyle
@@ -22,5 +22,5 @@
 
 (function () {
   "use strict";
-  console.log("[S1 Plus] Windows 本地加载器已启动");
+  console.log("[S1 Plus] Windows 本地预览加载器已启动");
 })();
