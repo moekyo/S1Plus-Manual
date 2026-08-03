@@ -5,7 +5,7 @@
 // @description  本地开发版，直接加载磁盘文件（Windows）
 // @author       Antigravity
 // @match        https://stage1st.com/2b/*
-// @require      file:///D:/MyZone/S1Plus-Manual/S1Plus.js
+// @require      file:///D:/Development/S1Plus-Manual/S1Plus.js
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_addStyle
