@@ -797,6 +797,69 @@ const testManualOverridePreemptsAutoSyncLocks = async () => {
   assert.equal(store.get(GLOBAL_SYNC_LOCK_KEY).mode, "manual");
 };
 
+const testInitialSetupPreemptionPreservesForeignManualLock = async () => {
+  const { hooks, store } = createHarness();
+  const now = Date.now();
+  const foreignManualLock = {
+    owner: "other-manual-tab",
+    timestamp: now,
+  };
+  const foreignGlobalLock = {
+    owner: "other-manual-tab",
+    mode: "manual",
+    timestamp: now,
+    ttlMs: 3 * 60 * 1000,
+  };
+  store.set(MANUAL_SYNC_LOCK_KEY, foreignManualLock);
+  store.set(GLOBAL_SYNC_LOCK_KEY, foreignGlobalLock);
+
+  const acquired = await hooks.acquireManualSyncLock({
+    preemptActiveSync: true,
+    preemptScope: "automatic_only",
+    operation: "initial_setup_manual_sync",
+  });
+
+  assert.equal(acquired, false);
+  assert.deepEqual(store.get(MANUAL_SYNC_LOCK_KEY), foreignManualLock);
+  assert.deepEqual(store.get(GLOBAL_SYNC_LOCK_KEY), foreignGlobalLock);
+};
+
+const testInitialSetupPreemptionReplacesOnlyAutomaticLocks = async () => {
+  const { hooks, store } = createHarness();
+  const now = Date.now();
+  store.set(BACKGROUND_SYNC_LOCK_KEY, {
+    owner: "other-background-tab",
+    timestamp: now,
+  });
+  store.set(STARTUP_SYNC_LOCK_KEY, {
+    owner: "other-startup-tab",
+    timestamp: now,
+  });
+  store.set(FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY, {
+    owner: "other-foreground-tab",
+    timestamp: now,
+  });
+  store.set(GLOBAL_SYNC_LOCK_KEY, {
+    owner: "other-background-tab",
+    mode: "background",
+    timestamp: now,
+    ttlMs: 45 * 1000,
+  });
+
+  const acquired = await hooks.acquireManualSyncLock({
+    preemptActiveSync: true,
+    preemptScope: "automatic_only",
+    operation: "initial_setup_manual_sync",
+  });
+
+  assert.equal(acquired, true);
+  assert.equal(store.has(BACKGROUND_SYNC_LOCK_KEY), false);
+  assert.equal(store.has(STARTUP_SYNC_LOCK_KEY), false);
+  assert.equal(store.has(FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY), false);
+  assert.ok(store.get(MANUAL_SYNC_LOCK_KEY));
+  assert.equal(store.get(GLOBAL_SYNC_LOCK_KEY)?.mode, "manual");
+};
+
 const testManualOverrideCancelsRemoteRetryBackoff = async () => {
   const { hooks, sandbox } = createHarness();
   let requestCount = 0;
@@ -1460,6 +1523,10 @@ const testPhase3CallSitesUseDedicatedHelpers = () => {
     "手动同步未接入统一完成日志。"
   );
   expectMatch(
+    /const handleManualSync = async[\s\S]*?acquireManualSyncLock\(\{[\s\S]*?preemptActiveSync:\s*isInitialSetup[\s\S]*?preemptScope:\s*isInitialSetup\s*\?\s*SYNC_PREEMPT_SCOPE_AUTOMATIC_ONLY/m,
+    "首次设置同步应只抢占自动同步，不能破坏真实手动锁。"
+  );
+  expectMatch(
     /const handleForcePush = async[\s\S]*?scopeLabel: "强制推送"/m,
     "强制推送未接入统一完成日志。"
   );
@@ -1503,6 +1570,8 @@ const testPhase3CallSitesUseDedicatedHelpers = () => {
   await testLockUnavailableCallbackFailurePropagatesWithoutStartingSync();
   await testAcquireFailurePropagatesWithoutStartingSync();
   await testManualOverridePreemptsAutoSyncLocks();
+  await testInitialSetupPreemptionPreservesForeignManualLock();
+  await testInitialSetupPreemptionReplacesOnlyAutomaticLocks();
   await testManualOverrideCancelsRemoteRetryBackoff();
   await testBeforePerformCanShortCircuitSafely();
   await testLockUnavailableSkipsWithoutHeartbeat();
