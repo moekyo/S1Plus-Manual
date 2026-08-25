@@ -653,43 +653,122 @@
     schedulePostHashTargetAlignment();
   };
 
-  const formatLogArgument = (value, seen = new WeakSet()) => {
-    if (value instanceof Error) {
-      return value.stack || value.message || String(value);
+  const readLogFieldSafely = (value, field) => {
+    try {
+      return value[field];
+    } catch (_) {
+      return undefined;
     }
+  };
+
+  const readLogStringFieldSafely = (value, field) => {
+    const fieldValue = readLogFieldSafely(value, field);
+    if (fieldValue === undefined || fieldValue === null) return "";
+    try {
+      return String(fieldValue);
+    } catch (_) {
+      return "";
+    }
+  };
+
+  const readLogObjectBrandSafely = (value) => {
+    if (!value || typeof value !== "object") return "";
+    try {
+      return Object.prototype.toString.call(value);
+    } catch (_) {
+      return "";
+    }
+  };
+
+  const isLogDomLike = (value) => {
+    if (!value || typeof value !== "object") return false;
+    if (readLogStringFieldSafely(value, "outerHTML")) return true;
+    if (readLogStringFieldSafely(value, "nodeName")) return true;
+    const nodeType = readLogFieldSafely(value, "nodeType");
+    return typeof nodeType === "number" && Number.isFinite(nodeType);
+  };
+
+  const isBrandedLogError = (value) => {
+    if (!value || typeof value !== "object") return false;
+    try {
+      if (value instanceof Error) return true;
+    } catch (_) { }
+    const brand = readLogObjectBrandSafely(value);
+    return brand === "[object Error]" || brand === "[object DOMException]";
+  };
+
+  const hasStrongSyntheticLogErrorShape = (value) => {
+    if (!value || typeof value !== "object" || isLogDomLike(value)) {
+      return false;
+    }
+    const message = readLogStringFieldSafely(value, "message").trim();
+    if (!message) return false;
+    const name = readLogStringFieldSafely(value, "name").trim();
+    const stack = readLogStringFieldSafely(value, "stack").trim();
+    return Boolean(stack || name === "Error" || /(?:Error|Exception)$/.test(name));
+  };
+
+  const isLogErrorLike = (value) =>
+    isBrandedLogError(value) || hasStrongSyntheticLogErrorShape(value);
+
+  const formatLogErrorLike = (value) => {
+    const stack = readLogStringFieldSafely(value, "stack");
+    if (stack) return stack;
+    const name = readLogStringFieldSafely(value, "name");
+    const message = readLogStringFieldSafely(value, "message");
+    if (name && message) return `${name}: ${message}`;
+    if (message) return message;
+    if (name) return name;
+    try {
+      return String(value);
+    } catch (_) {
+      return "[Unserializable Error]";
+    }
+  };
+
+  const formatLogArgument = (value, seen = new WeakSet()) => {
     if (typeof value === "string") return value;
     if (value === null) return "null";
     if (value === undefined) return "undefined";
     if (typeof value === "bigint") return String(value) + "n";
     if (typeof value === "symbol") return String(value);
     if (typeof value === "function") {
-      return "[Function " + (value.name || "anonymous") + "]";
+      return (
+        "[Function " +
+        (readLogStringFieldSafely(value, "name") || "anonymous") +
+        "]"
+      );
     }
     if (typeof value !== "object") return String(value);
-    if (typeof Node !== "undefined" && value instanceof Node) {
-      return value.outerHTML || value.nodeName || String(value);
-    }
+    if (isBrandedLogError(value)) return formatLogErrorLike(value);
+    const outerHTML = readLogStringFieldSafely(value, "outerHTML");
+    if (outerHTML) return outerHTML;
+    const nodeName = readLogStringFieldSafely(value, "nodeName");
+    if (nodeName) return nodeName;
+    if (isLogErrorLike(value)) return formatLogErrorLike(value);
     try {
-      return JSON.stringify(value, (key, nestedValue) => {
+      const serialized = JSON.stringify(value, (key, nestedValue) => {
         if (typeof nestedValue === "bigint") return String(nestedValue) + "n";
         if (typeof nestedValue === "function") {
-          return "[Function " + (nestedValue.name || "anonymous") + "]";
+          return (
+            "[Function " +
+            (readLogStringFieldSafely(nestedValue, "name") || "anonymous") +
+            "]"
+          );
         }
-        if (nestedValue instanceof Error) {
-          return nestedValue.stack || nestedValue.message || String(nestedValue);
-        }
+        if (isLogErrorLike(nestedValue)) return formatLogErrorLike(nestedValue);
         if (nestedValue && typeof nestedValue === "object") {
           if (seen.has(nestedValue)) return "[Circular]";
           seen.add(nestedValue);
         }
         return nestedValue;
       });
-    } catch (error) {
-      try {
-        return String(value);
-      } catch (stringifyError) {
-        return "[Unserializable]";
-      }
+      if (serialized !== undefined) return serialized;
+    } catch (_) { }
+    try {
+      return String(value);
+    } catch (_) {
+      return "[Unserializable]";
     }
   };
 
@@ -1659,6 +1738,8 @@
   const SYNC_LOCK_MODE_BACKGROUND = "background";
   const SYNC_LOCK_MODE_STARTUP = "startup";
   const SYNC_LOCK_MODE_FOREGROUND_FOLLOWUP = "foreground_followup";
+  const SYNC_PREEMPT_SCOPE_ALL = "all";
+  const SYNC_PREEMPT_SCOPE_AUTOMATIC_ONLY = "automatic_only";
   const MANUAL_SYNC_LOCK_KEY = "s1p_manual_sync_lock";
   const MANUAL_SYNC_LOCK_TTL_MS = 3 * 60 * 1000;
   const MANUAL_SYNC_LOCK_HEARTBEAT_MS = 10 * 1000;
@@ -2750,9 +2831,16 @@
       --s1p-first-level-glass-settings-bg: var(--s1p-glass-panel-bg);
       --s1p-first-level-glass-settings-filter: var(--s1p-glass-panel-filter);
       --s1p-first-level-glass-settings-shadow: var(--s1p-dialog-glass-shadow);
-      --s1p-first-level-glass-confirm-bg: var(--s1p-floating-surface-bg);
-      --s1p-first-level-glass-confirm-filter: var(--s1p-floating-surface-filter);
-      --s1p-first-level-glass-confirm-shadow: var(--s1p-floating-surface-shadow);
+      --s1p-first-level-glass-confirm-bg: linear-gradient(
+        150deg,
+        rgba(255, 255, 255, 0.8),
+        rgba(241, 244, 241, 0.7)
+      );
+      --s1p-first-level-glass-confirm-filter: blur(14px) saturate(1.04);
+      --s1p-first-level-glass-confirm-shadow:
+        0 22px 54px rgba(16, 35, 79, 0.22),
+        inset 0 1px 0 rgba(255, 255, 255, 0.86);
+      --s1p-first-level-glass-confirm-overlay: rgba(16, 35, 79, 0.14);
       --s1p-inline-action-surface-bg: rgba(255, 255, 255, 0.34);
       --s1p-inline-action-surface-shadow: 0 5px 14px rgba(0, 0, 0, 0.08);
       --s1p-inline-action-hover-bg: rgba(255, 255, 255, 0.32);
@@ -4497,6 +4585,9 @@
       max-height: calc(100vh - 24px);
       max-height: calc(100dvh - 24px);
     }
+    .s1p-settings-secondary-modal.s1p-sync-modal > .s1p-dialog-content {
+      max-height: 100%;
+    }
     .s1p-sync-modal .s1p-confirm-body {
       flex: 1 1 auto;
       min-height: 0;
@@ -6091,6 +6182,9 @@
     .s1p-fullscreen-modal.${S1P_LAYERED_MODAL_BACKDROP_OPEN_CLASS}::before {
       opacity: 1;
     }
+    .s1p-fullscreen-modal.s1p-confirm-modal::before {
+      background: var(--s1p-first-level-glass-confirm-overlay);
+    }
     .s1p-fullscreen-modal > * {
       position: relative;
       z-index: 1;
@@ -6936,6 +7030,10 @@
       backface-visibility: hidden;
       transform-origin: center;
     }
+    .s1p-confirm-modal > .s1p-dialog-content {
+      max-height: calc(100vh - 32px);
+      max-height: calc(100dvh - 32px);
+    }
     .s1p-dialog-content--compact {
       width: 400px;
       max-height: min(80vh, calc(100% - 32px));
@@ -6949,6 +7047,21 @@
     }
     .s1p-dialog-content--expanded {
       width: 580px;
+    }
+    .s1p-settings-secondary-modal > .s1p-dialog-content {
+      max-height: 100%;
+    }
+    .s1p-dialog-content > .s1p-confirm-body,
+    .s1p-dialog-content > .s1p-modal-body {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+    .s1p-dialog-content > .s1p-modal-header,
+    .s1p-dialog-content > .s1p-confirm-footer,
+    .s1p-dialog-content > .s1p-modal-footer {
+      flex: 0 0 auto;
     }
     .s1p-confirm-body {
       padding: 20px 24px;
@@ -7368,6 +7481,7 @@
       --s1p-first-level-glass-bg: var(--s1p-first-level-glass-confirm-bg);
       --s1p-first-level-glass-filter: var(--s1p-first-level-glass-confirm-filter);
       --s1p-first-level-glass-shadow: var(--s1p-first-level-glass-confirm-shadow);
+      border: none;
     }
     .s1p-first-level-glass {
       background: var(--s1p-first-level-glass-bg);
@@ -9141,6 +9255,16 @@
         --s1p-floating-surface-bg: rgba(17, 24, 39, 0.82);
         --s1p-floating-surface-filter: blur(3px) saturate(1.02);
         --s1p-floating-surface-shadow: 0 12px 26px rgba(0, 0, 0, 0.28);
+        --s1p-first-level-glass-confirm-bg: linear-gradient(
+          150deg,
+          rgba(30, 41, 59, 0.74),
+          rgba(15, 23, 42, 0.64)
+        );
+        --s1p-first-level-glass-confirm-filter: blur(14px) saturate(1.03);
+        --s1p-first-level-glass-confirm-shadow:
+          0 24px 60px rgba(0, 0, 0, 0.52),
+          inset 0 1px 0 rgba(255, 255, 255, 0.06);
+        --s1p-first-level-glass-confirm-overlay: rgba(2, 6, 23, 0.44);
         --s1p-inline-action-surface-bg: rgba(17, 24, 39, 0.74);
         --s1p-inline-action-surface-shadow: 0 10px 22px rgba(0, 0, 0, 0.24);
         --s1p-inline-action-hover-bg: rgba(148, 163, 184, 0.16);
@@ -13833,6 +13957,7 @@
       return {
         isActive: true,
         source: getAutoSyncIndicatorSourceForActiveLock(now, fallbackSource),
+        timestamp: Number(globalLock.timestamp) || 0,
       };
     }
     const backgroundLock = getBackgroundSyncLockValue();
@@ -13843,6 +13968,7 @@
       return {
         isActive: true,
         source: AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+        timestamp: Number(backgroundLock.timestamp) || 0,
       };
     }
     const manualLock = getManualSyncLockValue();
@@ -13853,6 +13979,7 @@
       return {
         isActive: true,
         source: AUTO_SYNC_INDICATOR_SOURCE_MANUAL_SYNC,
+        timestamp: Number(manualLock.timestamp) || 0,
       };
     }
     const foregroundFollowUpLock = getForegroundFollowUpSyncLockValue();
@@ -13867,6 +13994,7 @@
       return {
         isActive: true,
         source: AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME,
+        timestamp: Number(foregroundFollowUpLock.timestamp) || 0,
       };
     }
     const startupLock = getStartupSyncLockValue();
@@ -13880,6 +14008,7 @@
         source: isStartupModeAutoSyncIndicatorSource(fallback)
           ? fallback
           : AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP,
+        timestamp: Number(startupLock.timestamp) || 0,
       };
     }
     return { isActive: false, source: "" };
@@ -14104,7 +14233,21 @@
       now,
       state.source
     );
-    if (activeLockDisplayState.isActive) {
+    const stateIsResolved = !isAutoSyncIndicatorActivePhase(state.phase);
+    const lastStateIsResolved = !isAutoSyncIndicatorActivePhase(
+      state.lastResolvedPhase
+    );
+    const resolvedIndicatorTimestamp = Math.max(
+      stateIsResolved ? Number(state.timestamp) || 0 : 0,
+      lastStateIsResolved ? Number(state.lastResolvedTimestamp) || 0 : 0
+    );
+    const activeLockIsOlderThanResolvedIndicator =
+      resolvedIndicatorTimestamp >
+      (Number(activeLockDisplayState.timestamp) || 0);
+    if (
+      activeLockDisplayState.isActive &&
+      !activeLockIsOlderThanResolvedIndicator
+    ) {
       const activeLockSource = activeLockDisplayState.source;
       if (
         options.suppressForeignBackgroundLockWhenPending === true &&
@@ -30138,7 +30281,27 @@
     }
     const shouldPreemptActiveSync =
       mode === SYNC_LOCK_MODE_MANUAL && options?.preemptActiveSync === true;
-    if (shouldPreemptActiveSync) {
+    const preemptScope =
+      options?.preemptScope === SYNC_PREEMPT_SCOPE_AUTOMATIC_ONLY
+        ? SYNC_PREEMPT_SCOPE_AUTOMATIC_ONLY
+        : SYNC_PREEMPT_SCOPE_ALL;
+    const bypassSyncExclusion =
+      shouldPreemptActiveSync && preemptScope === SYNC_PREEMPT_SCOPE_ALL;
+    if (
+      shouldPreemptActiveSync &&
+      preemptScope === SYNC_PREEMPT_SCOPE_AUTOMATIC_ONLY
+    ) {
+      if (hasValidManualSyncExclusion()) {
+        return false;
+      }
+      preemptActiveSyncForManualOverride(
+        options.operation || "manual_override",
+        { preemptScope: SYNC_PREEMPT_SCOPE_AUTOMATIC_ONLY }
+      );
+      if (hasValidManualSyncExclusion()) {
+        return false;
+      }
+    } else if (shouldPreemptActiveSync) {
       preemptActiveSyncForManualOverride(options.operation || "manual_override");
     }
 
@@ -30149,17 +30312,17 @@
     const globalLockIsValid = isGlobalSyncLockValid(globalLock, now);
 
     if (
-      !shouldPreemptActiveSync &&
+      !bypassSyncExclusion &&
       lockIsValid &&
       currentLock.owner !== BACKGROUND_SYNC_OWNER_ID
     ) {
       return false;
     }
-    if (!shouldPreemptActiveSync && hasActiveOtherModeSyncLock(mode, now)) {
+    if (!bypassSyncExclusion && hasActiveOtherModeSyncLock(mode, now)) {
       return false;
     }
     if (
-      !shouldPreemptActiveSync &&
+      !bypassSyncExclusion &&
       globalLockIsValid &&
       (globalLock.owner !== BACKGROUND_SYNC_OWNER_ID ||
         globalLock.mode !== mode)
@@ -30365,18 +30528,42 @@
     return result;
   };
 
-  const forceReleaseSyncLocksForManualOverride = () => {
+  const hasValidManualSyncExclusion = (now = Date.now()) => {
+    const manualLock = getManualSyncLockValue();
+    if (isModeSyncLockValid(manualLock, MANUAL_SYNC_LOCK_TTL_MS, now)) {
+      return true;
+    }
+    const globalLock = getGlobalSyncLockValue();
+    return Boolean(
+      isGlobalSyncLockValid(globalLock, now) &&
+        globalLock.mode === SYNC_LOCK_MODE_MANUAL
+    );
+  };
+
+  const forceReleaseSyncLocksForManualOverride = (
+    { preserveManual = false } = {}
+  ) => {
     invalidateAutoSyncIndicatorDisplayPhaseCache();
-    GM_deleteValue(MANUAL_SYNC_LOCK_KEY);
+    if (!preserveManual) {
+      GM_deleteValue(MANUAL_SYNC_LOCK_KEY);
+    }
     GM_deleteValue(BACKGROUND_SYNC_LOCK_KEY);
     GM_deleteValue(FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY);
     GM_deleteValue(STARTUP_SYNC_LOCK_KEY);
-    GM_deleteValue(GLOBAL_SYNC_LOCK_KEY);
+    const globalLock = getGlobalSyncLockValue();
+    if (!preserveManual || globalLock?.mode !== SYNC_LOCK_MODE_MANUAL) {
+      GM_deleteValue(GLOBAL_SYNC_LOCK_KEY);
+    }
   };
 
-  const preemptActiveSyncForManualOverride = (operation = "manual_override") => {
+  const preemptActiveSyncForManualOverride = (
+    operation = "manual_override",
+    { preemptScope = SYNC_PREEMPT_SCOPE_ALL } = {}
+  ) => {
     const normalizedOperation =
       normalizeSyncDiagnosticText(operation, 80) || "manual_override";
+    const automaticOnly =
+      preemptScope === SYNC_PREEMPT_SCOPE_AUTOMATIC_ONLY;
     const cancelledRequestCount =
       cancelActiveRemoteSyncRequests(normalizedOperation);
 
@@ -30387,11 +30574,18 @@
     clearAutoSyncRuntimeQueue();
     clearAutoSyncConflictPause();
 
-    stopManualSyncLockHeartbeat();
-    stopBackgroundSyncLockHeartbeat();
-    stopForegroundFollowUpSyncLockHeartbeat();
-    stopStartupSyncLockHeartbeat();
-    forceReleaseSyncLocksForManualOverride();
+    if (automaticOnly) {
+      stopBackgroundSyncLockHeartbeat();
+      stopForegroundFollowUpSyncLockHeartbeat();
+      stopStartupSyncLockHeartbeat();
+      forceReleaseSyncLocksForManualOverride({ preserveManual: true });
+    } else {
+      stopManualSyncLockHeartbeat();
+      stopBackgroundSyncLockHeartbeat();
+      stopForegroundFollowUpSyncLockHeartbeat();
+      stopStartupSyncLockHeartbeat();
+      forceReleaseSyncLocksForManualOverride();
+    }
 
     hasPendingBackgroundSync = false;
     isBackgroundAutoSyncInProgress = false;
@@ -30404,9 +30598,14 @@
     recordSyncTraceEvent("manual_override_preempted_sync", {
       scope: "manual_override",
       status: "skipped",
-      message: "用户直接拉取/推送已取消当前同步队列和同步锁",
+      message: automaticOnly
+        ? "首次设置同步已抢占当前自动同步"
+        : "用户直接拉取/推送已取消当前同步队列和同步锁",
       details: {
         operation: normalizedOperation,
+        preemptScope: automaticOnly
+          ? SYNC_PREEMPT_SCOPE_AUTOMATIC_ONLY
+          : SYNC_PREEMPT_SCOPE_ALL,
         cancelledRequestCount,
       },
     });
@@ -48349,7 +48548,15 @@
       return false;
     }
 
-    if (!(await acquireManualSyncLock())) {
+    if (
+      !(await acquireManualSyncLock({
+        preemptActiveSync: isInitialSetup,
+        preemptScope: isInitialSetup
+          ? SYNC_PREEMPT_SCOPE_AUTOMATIC_ONLY
+          : SYNC_PREEMPT_SCOPE_ALL,
+        operation: "initial_setup_manual_sync",
+      }))
+    ) {
       showMessage(MANUAL_SYNC_LOCK_BUSY_MESSAGE, false);
       emitSyncCompletionLog({
         scope: "manual_sync",
@@ -54490,6 +54697,120 @@
     return false;
   };
 
+  const S1P_INITIALIZATION_ERROR_LABEL_FIELD =
+    "__s1pInitializationErrorLabel";
+  const reportedInitializationFailures = new WeakSet();
+
+  const defineInitializationErrorField = (target, key, value) => {
+    try {
+      Object.defineProperty(target, key, {
+        configurable: true,
+        enumerable: false,
+        value,
+        writable: true,
+      });
+      return true;
+    } catch (_) {
+      return false;
+    }
+  };
+
+  const describeInitializationThrownValue = (value) => {
+    if (value === null) return "null";
+    if (value === undefined) return "undefined";
+    if (typeof value === "string") return value;
+    if (typeof value === "symbol") return String(value);
+    if (isLogErrorLike(value)) return formatLogErrorLike(value);
+    return formatLogArgument(value);
+  };
+
+  const createLocalInitializationError = (error, label) => {
+    const message = readLogStringFieldSafely(error, "message");
+    const name = readLogStringFieldSafely(error, "name");
+    const stack = readLogStringFieldSafely(error, "stack");
+    const wrapped = new Error(message || (!stack ? name || "Branded error" : ""));
+    if (name) {
+      try {
+        wrapped.name = name;
+      } catch (_) { }
+    }
+    if (stack) {
+      try {
+        wrapped.stack = stack;
+      } catch (_) { }
+    }
+    defineInitializationErrorField(wrapped, "originalThrownValue", error);
+    defineInitializationErrorField(wrapped, "cause", error);
+    defineInitializationErrorField(
+      wrapped,
+      S1P_INITIALIZATION_ERROR_LABEL_FIELD,
+      label
+    );
+    return wrapped;
+  };
+
+  const normalizeInitializationError = (error, errorLabel) => {
+    const label =
+      readLogStringFieldSafely(
+        error,
+        S1P_INITIALIZATION_ERROR_LABEL_FIELD
+      ) || String(errorLabel || "application startup");
+    let isNativeError = false;
+    try {
+      isNativeError =
+        error instanceof Error &&
+        readLogObjectBrandSafely(error) !== "[object DOMException]";
+    } catch (_) { }
+    if (isNativeError) {
+      let canCarryLabel = false;
+      try {
+        canCarryLabel =
+          Object.isExtensible(error) === true &&
+          defineInitializationErrorField(
+            error,
+            S1P_INITIALIZATION_ERROR_LABEL_FIELD,
+            label
+          );
+      } catch (_) { }
+      return canCarryLabel ? error : createLocalInitializationError(error, label);
+    }
+    if (isLogErrorLike(error)) {
+      return createLocalInitializationError(error, label);
+    }
+    const normalized = new Error(
+      `S1 Plus initialization failed: ${describeInitializationThrownValue(error)}`
+    );
+    defineInitializationErrorField(normalized, "originalThrownValue", error);
+    defineInitializationErrorField(normalized, "cause", error);
+    defineInitializationErrorField(
+      normalized,
+      S1P_INITIALIZATION_ERROR_LABEL_FIELD,
+      label
+    );
+    return normalized;
+  };
+
+  const reportInitializationFailureOnce = (
+    error,
+    fallbackLabel = "application startup",
+    messagePrefix = "S1 Plus: 初始化失败"
+  ) => {
+    const normalizedError = normalizeInitializationError(error, fallbackLabel);
+    try {
+      if (reportedInitializationFailures.has(normalizedError)) {
+        return false;
+      }
+      reportedInitializationFailures.add(normalizedError);
+    } catch (_) { }
+    const label =
+      readLogStringFieldSafely(
+        normalizedError,
+        S1P_INITIALIZATION_ERROR_LABEL_FIELD
+      ) || fallbackLabel;
+    console.error(`${messagePrefix} (${label}):`, normalizedError);
+    return true;
+  };
+
   const S1P_INIT_PHASES = Object.freeze({
     DOCUMENT_START: "document-start",
     BODY_READY: "body-ready",
@@ -54561,10 +54882,13 @@
         lastError = error;
         if (task.retryOnError !== true) {
           const taskLabel = getInitializationTaskLabel(phaseName, task);
-          console.error(`S1 Plus: 初始化任务失败 (${taskLabel}):`, error);
           if (!task.optional) {
-            throw error;
+            throw normalizeInitializationError(error, taskLabel);
           }
+          console.error(
+            `S1 Plus: 初始化任务失败 (${taskLabel}):`,
+            normalizeInitializationError(error, taskLabel)
+          );
           return undefined;
         }
       }
@@ -54580,10 +54904,13 @@
         }
         if (lastError) {
           const taskLabel = getInitializationTaskLabel(phaseName, task);
-          console.error(`S1 Plus: 初始化任务重试后仍失败 (${taskLabel}):`, lastError);
           if (!task.optional) {
-            throw lastError;
+            throw normalizeInitializationError(lastError, taskLabel);
           }
+          console.error(
+            `S1 Plus: 初始化任务重试后仍失败 (${taskLabel}):`,
+            normalizeInitializationError(lastError, taskLabel)
+          );
         }
         return lastResult;
       }
@@ -54597,7 +54924,11 @@
     const taskPromise = runInitializationTaskWithRetry(phaseName, task, context);
     if (task.blocking === false) {
       const guardedTaskPromise = taskPromise.catch((error) => {
-        console.error(`S1 Plus: 后台初始化任务失败 (${taskLabel}):`, error);
+        reportInitializationFailureOnce(
+          error,
+          taskLabel,
+          "S1 Plus: 后台初始化任务失败"
+        );
       });
       if (task.contextKey) {
         context[task.contextKey] = guardedTaskPromise;
@@ -54627,6 +54958,15 @@
       durationMs: Date.now() - phaseStartedAt,
     };
   };
+
+  if (IS_S1P_TEST_MODE) {
+    const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
+    testHookHost.__S1P_TEST_HOOKS__ = {
+      ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
+      runInitializationTaskWithRetryForTest: runInitializationTaskWithRetry,
+      reportInitializationFailureOnceForTest: reportInitializationFailureOnce,
+    };
+  }
 
   async function main(initializationContext = createS1PlusInitializationContext()) {
     await runInitializationPhase(
@@ -55359,7 +55699,7 @@
       .then(() => documentStartPhasePromise)
       .then(() => main(initializationContext))
       .catch((error) => {
-        console.error("S1 Plus: 初始化失败:", error);
+        reportInitializationFailureOnce(error);
       });
   };
 

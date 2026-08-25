@@ -45,6 +45,8 @@ const BACKGROUND_SYNC_LOCK_KEY = "s1p_background_sync_lock";
 const AUTO_SYNC_INDICATOR_STATE_KEY = "s1p_auto_sync_indicator_state";
 const PENDING_AUTO_SYNC_KEY = "s1p_pending_auto_sync_request";
 const STARTUP_SYNC_LOCK_KEY = "s1p_startup_sync_lock";
+const FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY =
+  "s1p_foreground_followup_sync_lock";
 const GLOBAL_SYNC_LOCK_KEY = "s1p_sync_global_lock";
 
 const expectMatch = (pattern, message) => {
@@ -826,14 +828,14 @@ const testForegroundFollowupLockDisplayDoesNotUseFullLockTtl = () => {
   );
 
   setForegroundState();
-  setStartupLocks(now - 5000);
+  setStartupLocks(now - 1000);
   resolvedState = toPlainObject(readNavbarProjection(hooks));
   assert.equal(resolvedState.displayPhase, "running");
   assert.equal(resolvedState.displaySource, "foreground_resume");
   assert.equal(
     hooks.getAutoSyncIndicatorTitle(resolvedState),
     "自动同步：回到前台检查中",
-    "新鲜 startup 锁仍应能展示正在运行，避免真实同步中没有反馈。"
+    "晚于上一终态的新鲜 startup 锁仍应展示正在运行，避免真实同步中没有反馈。"
   );
 
   setForegroundState({
@@ -857,6 +859,78 @@ const testForegroundFollowupLockDisplayDoesNotUseFullLockTtl = () => {
   assert.equal(
     hooks.getAutoSyncIndicatorTitle(resolvedState),
     "自动同步：正在检查云端更新"
+  );
+};
+
+const testNewerTerminalAuthoritySupersedesOlderForegroundLock = () => {
+  const { hooks, store } = createHarness();
+  const terminalTimestamp = Date.now();
+  const staleLockTimestamp = terminalTimestamp - 1000;
+  const terminalState = {
+    phase: "success",
+    timestamp: terminalTimestamp,
+    token: "terminal-pull",
+    source: "foreground_resume",
+    reason: "remote_changed_since_baseline",
+    operation: "pull",
+    lastResolvedPhase: "success",
+    lastResolvedTimestamp: terminalTimestamp,
+    lastResolvedSource: "foreground_resume",
+    lastResolvedReason: "remote_changed_since_baseline",
+  };
+  store.set(AUTO_SYNC_INDICATOR_STATE_KEY, terminalState);
+  store.set(GLOBAL_SYNC_LOCK_KEY, {
+    owner: "other-tab",
+    mode: "foreground_followup",
+    timestamp: staleLockTimestamp,
+    ttlMs: 45 * 1000,
+  });
+  store.set(FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY, {
+    owner: "other-tab",
+    timestamp: staleLockTimestamp,
+  });
+
+  let resolvedState = toPlainObject(readNavbarProjection(hooks));
+  assert.equal(
+    resolvedState.displayPhase,
+    "success",
+    "较旧但仍有效的 foreground 锁不能覆盖更新的终态结果。"
+  );
+  assert.notEqual(
+    hooks.getAutoSyncIndicatorDisplayKind(resolvedState),
+    "probe",
+    "旧锁不能让已完成的拉取重新显示成 probe。"
+  );
+
+  const activeProbeTimestamp = terminalTimestamp + 1000;
+  store.set(GLOBAL_SYNC_LOCK_KEY, {
+    owner: "other-tab",
+    mode: "foreground_followup",
+    timestamp: activeProbeTimestamp,
+    ttlMs: 45 * 1000,
+  });
+  store.set(FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY, {
+    owner: "other-tab",
+    timestamp: activeProbeTimestamp,
+  });
+  store.set(AUTO_SYNC_INDICATOR_STATE_KEY, {
+    ...terminalState,
+    phase: "running",
+    timestamp: activeProbeTimestamp,
+    source: "foreground_resume",
+    reason: "foreground_probe_in_flight",
+    operation: "probe",
+  });
+  resolvedState = toPlainObject(readNavbarProjection(hooks));
+  assert.equal(
+    resolvedState.displayPhase,
+    "running",
+    "更新的合法 foreground 锁仍必须显示真实运行态。"
+  );
+  assert.equal(
+    hooks.getAutoSyncIndicatorDisplayKind(resolvedState),
+    "probe",
+    "更新的合法 probe 不能被终态保护误隐藏。"
   );
 };
 
@@ -1273,7 +1347,7 @@ const testBackgroundPushRunningRequiresCurrentLiveRunner = () => {
     "自动同步：阅读进度待推送"
   );
 
-  setBackgroundLocks(constants.BACKGROUND_SYNC_OWNER_ID);
+  setBackgroundLocks(constants.BACKGROUND_SYNC_OWNER_ID, now - 1000);
   resolvedState = toPlainObject(readNavbarProjection(hooks));
   assert.equal(
     resolvedState.displayPhase,
@@ -1512,6 +1586,7 @@ const testAutoSyncEntryPointsBindIndicatorSources = () => {
   testSyncIndicatorStateProjectionSurfaceContract();
   testTitleProjectionPhasePolicyBranches();
   testForegroundFollowupLockDisplayDoesNotUseFullLockTtl();
+  testNewerTerminalAuthoritySupersedesOlderForegroundLock();
   testDisplaySessionCoalescesPushVerification();
   testPullRetryKeepsCloudDirectionOverLocalPending();
   testSuccessDisplayKeepsDirectionalCompletion();
