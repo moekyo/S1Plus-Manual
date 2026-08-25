@@ -1758,6 +1758,7 @@
   const REMOTE_SYNC_RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
   const REMOTE_VERSION_CONFLICT_CODE = "REMOTE_VERSION_CHANGED";
   const REMOTE_SYNC_CANCELLED_CODE = "REMOTE_SYNC_CANCELLED";
+  const REMOTE_SYNC_AUTH_REJECTED_CODE = "REMOTE_SYNC_AUTH_REJECTED";
   const READ_PROGRESS_SYNC_DEBOUNCE_MS = 20 * 1000;
   const DEFAULT_SYNC_DEBOUNCE_MS = 5 * 1000;
   const BACKGROUND_SYNC_DEBOUNCE_STATE_KEY =
@@ -29418,6 +29419,17 @@
     return error;
   };
 
+  const createRemoteSyncAuthRejectedError = (sourceError = {}, operation = "") => {
+    const error = new Error(
+      "GitHub Token 已失效或已过期，请在“设置同步”中更新 Token 后重新保存。"
+    );
+    error.code = REMOTE_SYNC_AUTH_REJECTED_CODE;
+    error.status = Number(sourceError?.status) || 401;
+    error.response = sourceError?.response;
+    error.operation = operation;
+    return error;
+  };
+
   const assertRemoteSyncNotCancelled = (generation) => {
     if (remoteSyncCancelGeneration !== generation) {
       throw createRemoteSyncCancelledError(remoteSyncCancelReason);
@@ -30877,14 +30889,18 @@
   };
 
   const fetchRemoteData = async (options = {}) => {
-    const { metadataOnly = false } = options;
+    const { metadataOnly = false, settingsSnapshot = null } = options;
     recordSyncTraceEvent("remote_fetch_start", {
       scope: metadataOnly ? "remote_probe" : "remote_fetch",
       status: "running",
       message: metadataOnly ? "开始读取云端元数据" : "开始读取云端同步文件",
       details: { metadataOnly },
     });
-    const { syncRemoteGistId, syncRemotePat } = getSettings();
+    const syncSettings =
+      settingsSnapshot && typeof settingsSnapshot === "object"
+        ? settingsSnapshot
+        : getSettings();
+    const { syncRemoteGistId, syncRemotePat } = syncSettings;
     if (!syncRemoteGistId || !syncRemotePat) {
       recordSyncTraceEvent("remote_fetch_error", {
         scope: metadataOnly ? "remote_probe" : "remote_fetch",
@@ -30942,7 +30958,15 @@
           details: { metadataOnly, status: error.status },
           level: "error",
         });
-        throw new Error(`GitHub API请求失败，状态码: ${error.status}`);
+        if (error.status === 401) {
+          throw createRemoteSyncAuthRejectedError(error, metadataOnly ? "remote_probe" : "remote_fetch");
+        }
+        const requestError = new Error(
+          `GitHub API请求失败，状态码: ${error.status}`
+        );
+        requestError.status = error.status;
+        requestError.response = error.response;
+        throw requestError;
       }
       recordSyncTraceEvent("remote_fetch_error", {
         scope: metadataOnly ? "remote_probe" : "remote_fetch",
@@ -31199,6 +31223,13 @@
         throw error;
       }
 
+      if (
+        error?.code === REMOTE_SYNC_AUTH_REJECTED_CODE ||
+        error?.status === 401
+      ) {
+        throw createRemoteSyncAuthRejectedError(error, "remote_push");
+      }
+
       if (isRemotePushFailureOutcomeUncertain(error)) {
         const confirmedPush = await confirmRemotePushAfterUncertainFailure({
           payloadDataObject,
@@ -31233,7 +31264,10 @@
         },
         level: "error",
       });
-      throw new Error(errorMessage);
+      const pushError = new Error(errorMessage);
+      pushError.status = error.status;
+      pushError.response = error.response;
+      throw pushError;
     }
   };
 
@@ -34153,6 +34187,26 @@
     const parsed = Number(value);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
   };
+  const S1P_TOKEN_EXPIRY_DAY_MS = 24 * 60 * 60 * 1000;
+  const getS1pLocalCalendarDayNumber = (timestamp) => {
+    const date = new Date(timestamp);
+    return (
+      Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) /
+      S1P_TOKEN_EXPIRY_DAY_MS
+    );
+  };
+  const getS1pTokenExpiryDaysLeft = (expiryTimestamp, now = Date.now()) => {
+    const normalizedExpiryTimestamp = normalizeS1pSyncTokenExpiryDate(
+      expiryTimestamp
+    );
+    if (normalizedExpiryTimestamp === null) {
+      return null;
+    }
+    return (
+      getS1pLocalCalendarDayNumber(normalizedExpiryTimestamp) -
+      getS1pLocalCalendarDayNumber(now)
+    );
+  };
   const s1pCreateSettingsSemantics = ({ defaults }) => {
     const freezeDefinition = ({
       effectClass = "passive",
@@ -34998,6 +35052,8 @@
       resolveRecentRemoteWriteMatch,
       getRemoteWriteMatchKind,
       getForegroundRemoteChangeKind,
+      getS1pTokenExpiryDaysLeft,
+      createRemoteSyncAuthRejectedError,
       exportLocalDataObject,
     };
   }
@@ -43361,7 +43417,7 @@
             <div class="s1p-notice-icon"></div>
             <div class="s1p-notice-content">
               <a href="https://silver-s1plus.netlify.app/" target="_blank" rel="noopener noreferrer">点击此处查看设置教程</a>
-              <p>Token只会保存在你的浏览器本地，不会上传到任何地方。</p>
+              <p>Token 只保存在浏览器本地，不会写入 Gist 同步数据；脚本仅在访问 GitHub API 时将其作为鉴权凭据发送。</p>
             </div>
           </div>
           <p class="s1p-setting-desc s1p-setting-desc-save-hint">以上同步配置修改后，需点击“保存设置”才会生效。</p>
@@ -44301,7 +44357,7 @@
       ) {
         const date = new Date(expiryTimestamp);
         const dateStr = date.toLocaleDateString("zh-CN");
-        const daysLeft = Math.ceil((expiryTimestamp - Date.now()) / (1000 * 60 * 60 * 24));
+        const daysLeft = getS1pTokenExpiryDaysLeft(expiryTimestamp);
         const color = daysLeft <= 3 ? "var(--s1p-red)" : "var(--s1p-success-text)";
 
         infoContainer.appendChild(document.createTextNode("过期时间："));
@@ -48081,6 +48137,58 @@
           const didPatChange =
             String(previousSettings.syncRemotePat || "").trim() !==
             currentSettings.syncRemotePat;
+          const didTokenExpiryChange =
+            previousSettings.syncTokenExpiryEnabled !==
+              currentSettings.syncTokenExpiryEnabled ||
+            !Object.is(
+              normalizeS1pSyncTokenExpiryDate(
+                previousSettings.syncTokenExpiryDate
+              ),
+              normalizeS1pSyncTokenExpiryDate(currentSettings.syncTokenExpiryDate)
+            );
+
+          if (
+            didPatChange &&
+            currentSettings.syncRemoteEnabled &&
+            currentSettings.syncRemoteGistId &&
+            currentSettings.syncRemotePat
+          ) {
+            showMessage("正在验证新的 Token 凭据，验证成功后才会保存...", null);
+            try {
+              await fetchRemoteData({
+                metadataOnly: true,
+                settingsSnapshot: currentSettings,
+              });
+              // 候选 Token 已验证成功；保留原有的失败熔断恢复语义，但仍要等到下面真正保存后才应用设置。
+              resetAutoSyncFailureState();
+              if (!getActiveAutoSyncConflictPause()) {
+                setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_IDLE);
+              }
+            } catch (probeError) {
+              const probeErrorMessage = String(probeError?.message || "");
+              if (
+                probeError?.code === REMOTE_SYNC_AUTH_REJECTED_CODE ||
+                probeError?.status === 401
+              ) {
+                showMessage(
+                  "新 Token 验证失败：Token 已失效或已过期，未保存。请检查 Token 有效期、权限和 Gist 访问范围。",
+                  false
+                );
+              } else if (probeError?.status === 403) {
+                showMessage(
+                  "新 Token 验证失败：GitHub 拒绝了请求（403），可能是权限不足或请求受限；未保存。",
+                  false
+                );
+              } else {
+                showMessage(
+                  `Token 验证未完成（${probeErrorMessage || "网络异常"
+                  }），未保存。请确认网络正常后重试。`,
+                  false
+                );
+              }
+              return;
+            }
+          }
 
           const shouldMarkSyncedDataChange = hasSyncedSettingsChanged(
             previousSettings,
@@ -48090,6 +48198,9 @@
             suppressSyncTrigger: true,
             markDataChangedWhenSuppressed: shouldMarkSyncedDataChange,
           });
+          if (didPatChange || didTokenExpiryChange) {
+            GM_deleteValue("s1p_last_token_check_date");
+          }
           const savedSettings = getSettings();
           if (didRemoteTargetChange || didDisableRemoteSync) {
             // 远端目标切换/关闭远程同步后，清理旧会话残留状态，避免新目标沿用旧基线造成误判。
@@ -48117,37 +48228,6 @@
             currentSettings.syncRemoteGistId &&
             currentSettings.syncRemotePat
           ) {
-          if (didPatChange) {
-              showMessage("设置已保存，正在验证新的 Token 凭据...", null);
-              try {
-                await fetchRemoteData({ metadataOnly: true });
-                // PAT 验证成功后，仅重置失败熔断状态，不影响 baseline。
-                resetAutoSyncFailureState();
-                if (!getActiveAutoSyncConflictPause()) {
-                  setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_IDLE);
-                }
-              } catch (probeError) {
-                const probeErrorMessage = String(probeError?.message || "");
-                const isAuthRejected =
-                  /(?:状态码|HTTP)\s*[: ]?\s*(401|403)\b/i.test(
-                    probeErrorMessage
-                  ) || /bad credentials|requires authentication/i.test(
-                    probeErrorMessage
-                  );
-                if (isAuthRejected) {
-                  showMessage(
-                    "新 Token 验证失败：认证被拒绝（401/403）。请检查 Token 权限、有效期和 Gist 访问范围。",
-                    false
-                  );
-                  return;
-                }
-                showMessage(
-                  `Token 验证未完成（${probeErrorMessage || "网络异常"
-                  }），将继续尝试首次同步检查...`,
-                  false
-                );
-              }
-            }
             showMessage("设置已保存，正在启动首次同步检查...", null);
             await runSettingsManualSync(false, true); // 标记为首次设置
           } else {
@@ -54625,7 +54705,7 @@
 
     if (today === lastCheckDate) return false;
 
-    const daysLeft = Math.ceil((expiryTimestamp - Date.now()) / (1000 * 60 * 60 * 24));
+    const daysLeft = getS1pTokenExpiryDaysLeft(expiryTimestamp);
 
     // Expired or within 3 days
     if (daysLeft <= 3) {
@@ -54652,14 +54732,14 @@
             action: () => { } // Do nothing, date already updated
           },
           {
-            text: "前往生成",
+            text: "生成新 Token",
             className: "s1p-btn",
             action: () => {
               GM_openInTab("https://github.com/settings/tokens", true);
             }
           },
           {
-            text: "已更新",
+            text: "打开同步设置",
             className: "s1p-confirm",
             action: () => {
               const existingSettingsModal = document.querySelector(".s1p-modal");
@@ -54678,8 +54758,8 @@
                   .querySelector("#s1p-token-expiry-info-container")
                   ?.scrollIntoView({ block: "center", behavior: "smooth" });
                 showMessage(
-                  "请在“设置同步”中更新 Token 有效期，并点击“保存设置”后生效。",
-                  true
+                  "请在“设置同步”中更新 Token 和有效期，并点击“保存设置”验证后生效。",
+                  null
                 );
               };
               if (existingSettingsModal) {
