@@ -180,6 +180,25 @@ const testResultPhasePolicyOwnsConflictAndRetryIntents = async () => {
   assert.deepStrictEqual(calls, ["notify:failure", "retry:background:1200"]);
 
   calls.length = 0;
+  const foregroundFailure = await policy.handle(
+    {
+      status: "failure",
+      error: "temporary timeout",
+      failureState: { open: false },
+    },
+    {
+      source: "foreground",
+      scheduleRetry: (intent) => {
+        calls.push(`retry:${intent.kind}:${intent.delayMs}`);
+        return { status: "scheduled" };
+      },
+    }
+  );
+  assert.equal(foregroundFailure.retryIntent.kind, "foreground");
+  assert.equal(foregroundFailure.retryIntent.delayMs, 1200);
+  assert.deepStrictEqual(calls, ["retry:foreground:1200"]);
+
+  calls.length = 0;
   const foregroundBlocked = await policy.handle(
     {
       status: "blocked",
