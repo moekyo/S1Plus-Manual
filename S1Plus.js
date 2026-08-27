@@ -785,10 +785,30 @@
     return "[" + ts + "] [" + String(entry.level || "").toUpperCase() + "] " + message;
   };
 
+  const enrichS1pLogMessageWithRuntimeContext = (message) => {
+    const normalizedMessage = String(message || "");
+    if (
+      !/^S1 Plus(?:\s|:|$)/.test(normalizedMessage) ||
+      normalizedMessage.includes("context=")
+    ) {
+      return normalizedMessage;
+    }
+    try {
+      return `${normalizedMessage} [${getSyncRuntimeContextSummary()}]`;
+    } catch (_) {
+      return normalizedMessage;
+    }
+  };
+
   const pushLog = (entry) => {
     if (!logCollectorStarted) return;
     if (logBuffer.length >= LOG_BUFFER_MAX) logBuffer.shift();
-    logBuffer.push({ id: nextLogEntryId++, ts: Date.now(), ...entry });
+    logBuffer.push({
+      id: nextLogEntryId++,
+      ts: Date.now(),
+      ...entry,
+      message: enrichS1pLogMessageWithRuntimeContext(entry?.message),
+    });
     logDirty = true;
     scheduleLogRender();
     scheduleLogPersistence();
@@ -1031,6 +1051,7 @@
       getPostAnchorScrollOffsetForTest: getPostAnchorScrollOffsetPx,
       getPostHashAnchorScrollTopForTest: getPostHashAnchorScrollTop,
       getDebugLogCollectorStateForTest,
+      enrichS1pLogMessageWithRuntimeContext,
       setDebugLogCollectorStateForTest,
       resetDebugLogCollectorStateForTest,
     };
@@ -1646,6 +1667,9 @@
   let foregroundRemoteSyncRetryReason = "";
   let foregroundRemoteSyncRetryIndicatorReason = "";
   let foregroundRemoteSyncRetryIndicatorOperation = "";
+  let foregroundRemoteSyncRecoveryTimer = null;
+  let foregroundRemoteSyncRecoveryDueAt = 0;
+  let foregroundRemoteSyncRecoveryRequestId = "";
   let foregroundFollowUpSoftBlockState = null;
   let lastAutoSyncIndicatorDisplaySession = null;
   let autoSyncIndicatorDisplaySessionHiddenAt = 0;
@@ -1784,6 +1808,8 @@
   const AUTO_SYNC_CONFLICT_PAUSE_KEY = "s1p_auto_sync_conflict_pause";
   const PENDING_CLEANUP_INFO_KEY = "s1p_pending_cleanup_info";
   const PENDING_AUTO_SYNC_KEY = "s1p_pending_auto_sync_request";
+  const PENDING_FOREGROUND_REMOTE_SYNC_KEY =
+    "s1p_pending_foreground_remote_sync_request";
   const LAST_LOCAL_DIRTY_PROVENANCE_KEY = "s1p_last_local_dirty_provenance";
   const LAST_LOCAL_MODIFIED_KEY = "s1p_last_modified";
   const LAST_SYNC_TIMESTAMP_KEY = "s1p_last_sync_timestamp";
@@ -1803,6 +1829,8 @@
   const AUTO_SYNC_CLEAN_STATE_LOG_THROTTLE_MS = 30 * 1000;
   const FOREGROUND_FOLLOWUP_SOFT_BLOCK_SCOPE_TAB = "tab";
   const FOREGROUND_FOLLOWUP_SOFT_BLOCK_SCOPE_THREAD = "thread";
+  const FOREGROUND_REMOTE_SYNC_RECOVERY_DELAY_MS = 600;
+  const FOREGROUND_REMOTE_SYNC_RECOVERY_LOCK_BUFFER_MS = 100;
   const LEGACY_AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND = "background";
   const LEGACY_AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_FOLLOWUP =
     "foreground_followup";
@@ -2134,10 +2162,17 @@
     "s1p_nav_sync_alert_session_dismissed_signature";
   const SETTINGS_CROSS_TAB_SIGNAL_KEY = "s1p_settings_refresh_signal";
   const CORE_DATA_CROSS_TAB_SIGNAL_KEY = "s1p_core_data_refresh_signal";
+  const SYNC_RUNTIME_CONTEXT_ID = `s1p_context_${Date.now()}_${Math.random()
+    .toString(36)
+    .slice(2)}`;
   const SYNC_RUNTIME_SESSION_ID = `s1p_session_${Date.now()}_${Math.random()
     .toString(36)
     .slice(2)}`;
   const SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID = `s1p_tab_${Date.now()}_${Math.random()
+    .toString(36)
+    .slice(2)}`;
+  const SYNC_RUNTIME_TAB_LINEAGE_KEY = "s1p_sync_runtime_tab_lineage_id";
+  const SYNC_RUNTIME_FALLBACK_TAB_LINEAGE_ID = `s1p_tab_lineage_${Date.now()}_${Math.random()
     .toString(36)
     .slice(2)}`;
   const BACKGROUND_OPEN_THREAD_HINTS_KEY = "s1p_background_open_thread_hints";
@@ -13390,6 +13425,109 @@
     return entries.join(", ");
   };
 
+  const getSyncRuntimeContextPath = () => {
+    try {
+      const runtimeLocation =
+        typeof window !== "undefined" && window.location
+          ? window.location
+          : typeof location !== "undefined"
+            ? location
+            : null;
+      const pathname = normalizeSyncDiagnosticText(runtimeLocation?.pathname, 180);
+      if (pathname) {
+        return pathname;
+      }
+      const href = normalizeSyncDiagnosticText(runtimeLocation?.href, 500);
+      if (!href) {
+        return "";
+      }
+      return normalizeSyncDiagnosticText(new URL(href).pathname, 180);
+    } catch (_) {
+      return "";
+    }
+  };
+
+  const getSyncRuntimeFrameKind = () => {
+    try {
+      const runtimeWindow = typeof window !== "undefined" ? window : null;
+      if (!runtimeWindow) {
+        return "unknown";
+      }
+      const topWindow = runtimeWindow.top || runtimeWindow;
+      const selfWindow = runtimeWindow.self || runtimeWindow;
+      return topWindow === selfWindow ? "top" : "frame";
+    } catch (_) {
+      return "unknown";
+    }
+  };
+
+  const getSyncRuntimeNavigationType = () => {
+    try {
+      const entries =
+        typeof performance !== "undefined" &&
+        typeof performance.getEntriesByType === "function"
+          ? performance.getEntriesByType("navigation")
+          : [];
+      return normalizeSyncDiagnosticText(entries?.[0]?.type, 40) || "unknown";
+    } catch (_) {
+      return "unknown";
+    }
+  };
+
+  const getSyncRuntimeTabLineageId = () => {
+    try {
+      const storage =
+        typeof window !== "undefined" ? window.sessionStorage : null;
+      if (!storage) {
+        return SYNC_RUNTIME_FALLBACK_TAB_LINEAGE_ID;
+      }
+      const storedId = normalizeSyncDiagnosticText(
+        storage.getItem(SYNC_RUNTIME_TAB_LINEAGE_KEY),
+        120
+      );
+      if (storedId) {
+        return storedId;
+      }
+      storage.setItem(
+        SYNC_RUNTIME_TAB_LINEAGE_KEY,
+        SYNC_RUNTIME_FALLBACK_TAB_LINEAGE_ID
+      );
+      return SYNC_RUNTIME_FALLBACK_TAB_LINEAGE_ID;
+    } catch (_) {
+      return SYNC_RUNTIME_FALLBACK_TAB_LINEAGE_ID;
+    }
+  };
+
+  const getSyncRuntimeContextInfo = () => ({
+    contextId: SYNC_RUNTIME_CONTEXT_ID,
+    sessionId: SYNC_RUNTIME_SESSION_ID,
+    tabId: getSyncRuntimeTabLineageId(),
+    runtimeId: SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID,
+    path: getSyncRuntimeContextPath(),
+    visibilityState:
+      normalizeSyncDiagnosticText(
+        typeof document !== "undefined" ? document.visibilityState : "",
+        40
+      ) || "unknown",
+    frame: getSyncRuntimeFrameKind(),
+    navigationType: getSyncRuntimeNavigationType(),
+  });
+
+  const getSyncRuntimeContextSummary = () => {
+    const context = getSyncRuntimeContextInfo();
+    return [
+      `context=${context.contextId}`,
+      `tab=${context.tabId}`,
+      `runtime=${context.runtimeId}`,
+      context.path ? `path=${context.path}` : "",
+      `visibility=${context.visibilityState}`,
+      `frame=${context.frame}`,
+      `navigation=${context.navigationType}`,
+    ]
+      .filter(Boolean)
+      .join(", ");
+  };
+
   const recordSyncTraceEvent = (phase = "", options = {}) => {
     const now = Number(options.timestamp) || Date.now();
     const scope = normalizeSyncDiagnosticText(options.scope, 80) || "sync";
@@ -13401,6 +13539,7 @@
     const detailSummary = buildSyncTraceDetailsSummary(details);
     const summaryParts = [
       formatSyncTime(now),
+      getSyncRuntimeContextSummary(),
       getSyncTraceScopeLabel(scope),
       getSyncTracePhaseLabel(normalizedPhase),
       status ? `状态=${getSyncTraceStatusLabel(status) || status}` : "",
@@ -13435,10 +13574,12 @@
       normalizeSyncDiagnosticText(options.consoleMessage, 500) ||
       `S1 Plus (SyncTrace): ${summary}`;
     const consoleMessage =
-      detailSummary &&
-      options.consoleMessage &&
-      options.omitDetailsInConsole !== true
-        ? `${baseConsoleMessage} 详情：${detailSummary}`
+      options.consoleMessage
+        ? `${baseConsoleMessage} [${getSyncRuntimeContextSummary()}]${
+            detailSummary && options.omitDetailsInConsole !== true
+              ? ` 详情：${detailSummary}`
+              : ""
+          }`
         : baseConsoleMessage;
     console[level](consoleMessage);
     return summary;
@@ -14150,6 +14291,20 @@
       AUTO_SYNC_INDICATOR_OPERATION_PULL
     ) {
       return foregroundRetryPendingState;
+    }
+
+    const foregroundPending =
+      typeof getPendingForegroundRemoteSyncRequest === "function"
+        ? getPendingForegroundRemoteSyncRequest()
+        : null;
+    if (foregroundPending) {
+      return {
+        hasPending: true,
+        source: AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME,
+        reason: "foreground_remote_update_pending",
+        operation: AUTO_SYNC_INDICATOR_OPERATION_PULL,
+        sources: {},
+      };
     }
 
     const sharedState =
@@ -16337,6 +16492,537 @@
     GM_deleteValue(PENDING_AUTO_SYNC_KEY);
   };
 
+  const createPendingForegroundRemoteSyncRequestId = (timestamp) =>
+    `${SYNC_RUNTIME_CONTEXT_ID}_${timestamp}_${Math.random()
+      .toString(36)
+      .slice(2, 8)}`;
+
+  const normalizePendingForegroundRemoteSyncRequest = (value) => {
+    if (!isObjectRecord(value)) {
+      return null;
+    }
+    const remoteUpdatedAt = normalizeRemoteProbeUpdatedAt(value.remoteUpdatedAt);
+    if (!remoteUpdatedAt) {
+      return null;
+    }
+    const createdAt =
+      normalizePendingAutoSyncTimestamp(value.createdAt) || Date.now();
+    return {
+      version: 1,
+      requestId:
+        normalizeSyncDiagnosticText(value.requestId, 160) ||
+        `legacy_${createdAt}_${normalizeSyncDiagnosticText(remoteUpdatedAt, 120)}`,
+      reason:
+        normalizeRemoteProbeText(value.reason, 120) ||
+        "remote_probe_changed",
+      triggerSource:
+        normalizeSyncTriggerSource(value.triggerSource) ||
+        SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME,
+      remoteUpdatedAt,
+      createdAt,
+      lastSeenAt:
+        normalizePendingAutoSyncTimestamp(value.lastSeenAt) || createdAt,
+      lastAttemptAt: normalizePendingAutoSyncTimestamp(value.lastAttemptAt),
+      lastResultStatus: normalizeSyncDiagnosticText(value.lastResultStatus, 80),
+      sourceContextId: normalizeSyncDiagnosticText(value.sourceContextId, 160),
+      sourceTabId: normalizeSyncDiagnosticText(value.sourceTabId, 120),
+    };
+  };
+
+  const getPendingForegroundRemoteSyncRequest = () =>
+    normalizePendingForegroundRemoteSyncRequest(
+      GM_getValue(PENDING_FOREGROUND_REMOTE_SYNC_KEY, null)
+    );
+
+  const markPendingForegroundRemoteSyncRequest = ({
+    reason = "remote_probe_changed",
+    triggerSource = SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME,
+    remoteUpdatedAt = null,
+    now = Date.now(),
+  } = {}) => {
+    const normalizedRemoteUpdatedAt =
+      normalizeRemoteProbeUpdatedAt(remoteUpdatedAt);
+    if (!normalizedRemoteUpdatedAt) {
+      return null;
+    }
+    const normalizedNow = normalizeRemoteProbeTimestamp(now) || Date.now();
+    const existing = getPendingForegroundRemoteSyncRequest();
+    const keepsExistingRequest =
+      existing?.remoteUpdatedAt === normalizedRemoteUpdatedAt;
+    const nextRequest = {
+      version: 1,
+      requestId: keepsExistingRequest
+        ? existing.requestId
+        : createPendingForegroundRemoteSyncRequestId(normalizedNow),
+      reason:
+        normalizeRemoteProbeText(reason, 120) ||
+        existing?.reason ||
+        "remote_probe_changed",
+      triggerSource:
+        normalizeSyncTriggerSource(triggerSource) ||
+        existing?.triggerSource ||
+        SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME,
+      remoteUpdatedAt: normalizedRemoteUpdatedAt,
+      createdAt: keepsExistingRequest ? existing.createdAt : normalizedNow,
+      lastSeenAt: normalizedNow,
+      lastAttemptAt: keepsExistingRequest ? existing.lastAttemptAt : 0,
+      lastResultStatus: keepsExistingRequest ? existing.lastResultStatus : "",
+      sourceContextId: SYNC_RUNTIME_CONTEXT_ID,
+      sourceTabId: getSyncRuntimeTabLineageId(),
+    };
+    GM_setValue(PENDING_FOREGROUND_REMOTE_SYNC_KEY, nextRequest);
+    setAutoSyncIndicatorPendingState(
+      AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME,
+      "foreground_remote_update_pending",
+      { operation: AUTO_SYNC_INDICATOR_OPERATION_PULL }
+    );
+    return nextRequest;
+  };
+
+  const clearPendingForegroundRemoteSyncRequest = (
+    expectedRequest = null,
+    reason = "completed"
+  ) => {
+    const current = getPendingForegroundRemoteSyncRequest();
+    if (!current) {
+      return { status: "skipped", reason: "no_pending_foreground_remote_sync" };
+    }
+    const expected = normalizePendingForegroundRemoteSyncRequest(expectedRequest);
+    if (
+      expected &&
+      ((expected.requestId && expected.requestId !== current.requestId) ||
+        (expected.remoteUpdatedAt &&
+          expected.remoteUpdatedAt !== current.remoteUpdatedAt))
+    ) {
+      return {
+        status: "retained",
+        reason: "newer_pending_foreground_remote_sync",
+        requestId: current.requestId,
+      };
+    }
+    GM_deleteValue(PENDING_FOREGROUND_REMOTE_SYNC_KEY);
+
+    const pendingAfterDelete = getPendingForegroundRemoteSyncRequest();
+    if (pendingAfterDelete) {
+      recordSyncTraceEvent("foreground_pending_clear_race_retained", {
+        scope: "foreground_probe",
+        status: "retained",
+        message: "清理旧前台待拉取时检测到并发写入，已保留较新请求",
+        details: {
+          requestId: current.requestId,
+          remoteUpdatedAt: current.remoteUpdatedAt,
+          retainedRequestId: pendingAfterDelete.requestId,
+          retainedRemoteUpdatedAt: pendingAfterDelete.remoteUpdatedAt,
+          sourceContextId: pendingAfterDelete.sourceContextId,
+          sourceTabId: pendingAfterDelete.sourceTabId,
+        },
+      });
+      return {
+        status: "retained",
+        reason: "concurrent_pending_foreground_remote_sync",
+        requestId: pendingAfterDelete.requestId,
+        remoteUpdatedAt: pendingAfterDelete.remoteUpdatedAt,
+      };
+    }
+
+    let recoveredPending = null;
+    if (expected) {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const latestProbeInfo = getLastRemoteProbeInfo();
+        const latestRemoteUpdatedAt = normalizeRemoteProbeUpdatedAt(
+          latestProbeInfo.lastObservedRemoteUpdatedAt
+        );
+        const latestObservedAt = normalizeRemoteProbeTimestamp(
+          latestProbeInfo.lastObservedAt
+        );
+        if (
+          !latestRemoteUpdatedAt ||
+          latestRemoteUpdatedAt === current.remoteUpdatedAt ||
+          latestObservedAt < current.lastSeenAt ||
+          recoveredPending?.remoteUpdatedAt === latestRemoteUpdatedAt
+        ) {
+          break;
+        }
+        const recoveryCandidate = {
+          remoteUpdatedAt: latestRemoteUpdatedAt,
+          createdAt: latestObservedAt,
+          lastSeenAt: latestObservedAt,
+        };
+        if (isPendingForegroundRemoteSyncCovered(recoveryCandidate)) {
+          break;
+        }
+        recoveredPending = markPendingForegroundRemoteSyncRequest({
+          reason: "concurrent_remote_probe_recovery",
+          triggerSource: current.triggerSource,
+          remoteUpdatedAt: latestRemoteUpdatedAt,
+          now: latestObservedAt,
+        });
+      }
+    }
+    if (recoveredPending) {
+      recordSyncTraceEvent("foreground_pending_clear_race_recovered", {
+        scope: "foreground_probe",
+        status: "retained",
+        message: "清理旧前台待拉取时发现更新的远端观测，已重建待拉取请求",
+        details: {
+          requestId: current.requestId,
+          remoteUpdatedAt: current.remoteUpdatedAt,
+          recoveredRequestId: recoveredPending.requestId,
+          recoveredRemoteUpdatedAt: recoveredPending.remoteUpdatedAt,
+          recoveredObservedAt: recoveredPending.lastSeenAt,
+        },
+      });
+      return {
+        status: "retained",
+        reason: "concurrent_remote_probe_recovered",
+        requestId: recoveredPending.requestId,
+        remoteUpdatedAt: recoveredPending.remoteUpdatedAt,
+      };
+    }
+
+    clearForegroundRemoteSyncRecovery();
+    refreshAutoSyncIndicatorRuntimeDisplay(
+      "foreground_remote_sync_pending_cleared"
+    );
+    return {
+      status: "cleared",
+      reason: normalizeRemoteProbeText(reason, 120) || "completed",
+      requestId: current.requestId,
+      remoteUpdatedAt: current.remoteUpdatedAt,
+    };
+  };
+
+  const shouldRetainPendingForegroundRemoteSyncResult = (result) =>
+    !isObjectRecord(result) || result.status !== "success";
+
+  const settlePendingForegroundRemoteSyncRequest = (
+    expectedRequest = null,
+    result = null
+  ) => {
+    const current = getPendingForegroundRemoteSyncRequest();
+    if (!current) {
+      return { status: "skipped", reason: "no_pending_foreground_remote_sync" };
+    }
+    if (shouldRetainPendingForegroundRemoteSyncResult(result)) {
+      return {
+        status: "retained",
+        reason: "foreground_remote_sync_retryable",
+        requestId: current.requestId,
+        remoteUpdatedAt: current.remoteUpdatedAt,
+      };
+    }
+    return clearPendingForegroundRemoteSyncRequest(
+      expectedRequest || current,
+      result?.reason || result?.status || "completed"
+    );
+  };
+
+  const isPendingForegroundRemoteSyncCovered = (pendingInput = null) => {
+    const pending = normalizePendingForegroundRemoteSyncRequest(pendingInput);
+    if (!pending) {
+      return false;
+    }
+    const baseline = getSyncBaselineState();
+    const probeInfo = getLastRemoteProbeInfo();
+    return [
+      normalizeRemoteProbeUpdatedAt(baseline?.remoteUpdatedAt),
+      normalizeRemoteProbeUpdatedAt(probeInfo.lastSyncedRemoteUpdatedAt),
+    ].some((coveredRemoteUpdatedAt) =>
+      coveredRemoteUpdatedAt === pending.remoteUpdatedAt
+    );
+  };
+
+  const clearForegroundRemoteSyncRecovery = () => {
+    if (foregroundRemoteSyncRecoveryTimer) {
+      clearTimeout(foregroundRemoteSyncRecoveryTimer);
+      foregroundRemoteSyncRecoveryTimer = null;
+    }
+    foregroundRemoteSyncRecoveryDueAt = 0;
+    foregroundRemoteSyncRecoveryRequestId = "";
+  };
+
+  const getForegroundRemoteSyncRecoveryRemainingMs = (
+    now = Date.now()
+  ) => {
+    if (!foregroundRemoteSyncRecoveryDueAt) {
+      return 0;
+    }
+    return Math.max(
+      0,
+      foregroundRemoteSyncRecoveryDueAt -
+        (normalizeRemoteProbeTimestamp(now) || Date.now())
+    );
+  };
+
+  const scheduleForegroundRemoteSyncRecovery = (
+    pendingInput = null,
+    options = {}
+  ) => {
+    const pending =
+      normalizePendingForegroundRemoteSyncRequest(pendingInput) ||
+      getPendingForegroundRemoteSyncRequest();
+    if (!pending) {
+      return { status: "skipped", reason: "no_pending_foreground_remote_sync" };
+    }
+    if (document.visibilityState !== "visible") {
+      return { status: "suppressed", reason: "document_hidden" };
+    }
+
+    const now = normalizeRemoteProbeTimestamp(options.now) || Date.now();
+    const activeLock = getActiveSyncLockSnapshot(now);
+    const preferredDelayMs = Math.max(
+      0,
+      Math.floor(Number(options.preferredDelayMs) || 0)
+    );
+    const lockDelayMs = activeLock
+      ? activeLock.remainingMs + FOREGROUND_REMOTE_SYNC_RECOVERY_LOCK_BUFFER_MS
+      : 0;
+    const delayMs = Math.max(
+      lockDelayMs,
+      preferredDelayMs || FOREGROUND_REMOTE_SYNC_RECOVERY_DELAY_MS
+    );
+
+    if (
+      foregroundRemoteSyncRecoveryTimer &&
+      foregroundRemoteSyncRecoveryRequestId === pending.requestId
+    ) {
+      return {
+        status: "already_scheduled",
+        reason: "pending_foreground_remote_sync_recovery",
+        retryAfterMs: getForegroundRemoteSyncRecoveryRemainingMs(now),
+        requestId: pending.requestId,
+      };
+    }
+
+    clearForegroundRemoteSyncRecovery();
+    foregroundRemoteSyncRecoveryRequestId = pending.requestId;
+    foregroundRemoteSyncRecoveryDueAt = now + delayMs;
+    setAutoSyncIndicatorPendingState(
+      AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME,
+      "foreground_remote_update_pending",
+      { operation: AUTO_SYNC_INDICATOR_OPERATION_PULL }
+    );
+    foregroundRemoteSyncRecoveryTimer = setTimeout(async () => {
+      foregroundRemoteSyncRecoveryTimer = null;
+      foregroundRemoteSyncRecoveryDueAt = 0;
+      foregroundRemoteSyncRecoveryRequestId = "";
+
+      const latestPending = getPendingForegroundRemoteSyncRequest();
+      if (!latestPending || latestPending.requestId !== pending.requestId) {
+        return;
+      }
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+      if (isPendingForegroundRemoteSyncCovered(latestPending)) {
+        clearPendingForegroundRemoteSyncRequest(
+          latestPending,
+          "already_synced_before_recovery"
+        );
+        return;
+      }
+
+      const currentLock = getActiveSyncLockSnapshot(Date.now());
+      if (currentLock) {
+        scheduleForegroundRemoteSyncRecovery(latestPending, {
+          ...options,
+          now: Date.now(),
+          preferredDelayMs: currentLock.remainingMs +
+            FOREGROUND_REMOTE_SYNC_RECOVERY_LOCK_BUFFER_MS,
+        });
+        return;
+      }
+
+      const requestForegroundRemoteSyncCheckFn =
+        options.requestForegroundRemoteSyncCheck ||
+        requestForegroundRemoteSyncCheck;
+      let result;
+      try {
+        result = await requestForegroundRemoteSyncCheckFn(
+          `pending_foreground_remote_sync:${latestPending.reason}`,
+          options.requestForegroundRemoteSyncCheckOverrides || {}
+        );
+      } catch (error) {
+        const retryResult = scheduleForegroundRemoteSyncRetry(
+          `pending_foreground_remote_sync:${latestPending.reason}`,
+          {
+            ...options,
+            preferredDelayMs: FOREGROUND_REMOTE_SYNC_RETRY_BASE_DELAY_MS,
+          }
+        );
+        recordSyncTraceEvent("foreground_pending_recovery_failed", {
+          scope: "foreground_probe",
+          status: "failure",
+          message: "跨上下文前台待拉取恢复执行失败",
+          details: {
+            reason: latestPending.reason,
+            remoteUpdatedAt: latestPending.remoteUpdatedAt,
+            error: error?.message || String(error),
+            retryStatus: retryResult?.status || "",
+            retryAfterMs: retryResult?.retryAfterMs || 0,
+          },
+        });
+        return;
+      }
+
+      const settled = settlePendingForegroundRemoteSyncRequest(
+        latestPending,
+        result
+      );
+      recordSyncTraceEvent("foreground_pending_recovery_result", {
+        scope: "foreground_probe",
+        status: settled.status,
+        message: "跨上下文前台待拉取恢复执行完成",
+        details: {
+          reason: latestPending.reason,
+          remoteUpdatedAt: latestPending.remoteUpdatedAt,
+          recoveryStatus: result?.status || "unknown",
+          recoveryReason: result?.reason || "",
+        },
+      });
+
+      const remoteChangeKind = getForegroundRemoteChangeKind({
+        syncRequestResult: result,
+        sameSessionRemoteWrite: result?.sameSessionRemoteWrite === true,
+        sameDeviceRemoteWrite: result?.sameDeviceRemoteWrite === true,
+        remoteWriter: result?.remoteWriter || null,
+      });
+      const resultPhasePolicy =
+        options.syncResultPhasePolicy || s1pSyncResultPhasePolicy;
+      const outcome = await resultPhasePolicy.handle(result, {
+        source: "foreground",
+        remoteChangeContext: {
+          remoteChangeKind,
+          sameSessionRemoteWrite: result?.sameSessionRemoteWrite === true,
+          sameDeviceRemoteWrite: result?.sameDeviceRemoteWrite === true,
+          remoteWriter: result?.remoteWriter || null,
+          showMessage: options.showMessage,
+          locationObject: options.locationObject,
+          setTimeoutFn: options.setTimeoutFn,
+        },
+        refreshOptions: {
+          reason: `foreground_recovery:${latestPending.reason}`,
+          showMessage: options.showMessage,
+          messages: getAutoPullRefreshMessagesForSource(
+            "foreground",
+            result?.action,
+            getSameDeviceRefreshMessageOptions(result)
+          ),
+          locationObject: options.locationObject,
+          setTimeoutFn: options.setTimeoutFn,
+        },
+        scheduleRetry: (intent) =>
+          scheduleForegroundRemoteSyncRetry(
+            `pending_foreground_remote_sync:${latestPending.reason}`,
+            {
+              ...options,
+              preferredDelayMs: intent.delayMs,
+            }
+          ),
+      });
+      if (
+        settled.status === "retained" &&
+        !s1pHasScheduledSyncResultPhaseRetry(outcome.retryResult) &&
+        (result?.status === "success" ||
+          result?.status === "blocked" ||
+          result?.reason === "foreground_followup_lock_unavailable" ||
+          result?.reason === "sync_lock_active")
+      ) {
+        scheduleForegroundRemoteSyncRecovery(
+          getPendingForegroundRemoteSyncRequest(),
+          {
+            ...options,
+            now: Date.now(),
+          }
+        );
+      }
+    }, delayMs);
+
+    return {
+      status: "scheduled",
+      reason: "pending_foreground_remote_sync_recovery",
+      retryAfterMs: delayMs,
+      requestId: pending.requestId,
+      lock: activeLock,
+    };
+  };
+
+  const recoverPendingForegroundRemoteSyncIfNeeded = (options = {}) => {
+    const pending = getPendingForegroundRemoteSyncRequest();
+    if (!pending) {
+      return { status: "skipped", reason: "no_pending_foreground_remote_sync" };
+    }
+
+    const settings = options.settingsSnapshot || getSettings();
+    if (
+      !settings.syncRemoteEnabled ||
+      !settings.syncRemoteGistId ||
+      !settings.syncRemotePat
+    ) {
+      return { status: "skipped", reason: "sync_not_ready" };
+    }
+    if (settings.syncCheckOnReturnToForeground !== true) {
+      return { status: "skipped", reason: "foreground_check_disabled" };
+    }
+    if (getActiveAutoSyncConflictPause()) {
+      return { status: "skipped", reason: "conflict_paused" };
+    }
+    if (document.visibilityState !== "visible") {
+      return { status: "skipped", reason: "document_hidden" };
+    }
+    if (isPendingForegroundRemoteSyncCovered(pending)) {
+      return clearPendingForegroundRemoteSyncRequest(
+        pending,
+        "already_synced_before_recovery"
+      );
+    }
+    const isForegroundSyncInFlight = Boolean(
+      foregroundProbeInFlightPromise || foregroundRemoteSyncCheckInFlightPromise
+    );
+
+    const activeLock = getActiveSyncLockSnapshot(
+      normalizeRemoteProbeTimestamp(options.now) || Date.now()
+    );
+    const scheduled = scheduleForegroundRemoteSyncRecovery(pending, {
+      ...options,
+      preferredDelayMs: activeLock
+        ? activeLock.remainingMs + FOREGROUND_REMOTE_SYNC_RECOVERY_LOCK_BUFFER_MS
+        : isForegroundSyncInFlight
+          ? FOREGROUND_REMOTE_SYNC_RECOVERY_DELAY_MS
+          : options.preferredDelayMs,
+    });
+    if (scheduled.status !== "scheduled" && scheduled.status !== "already_scheduled") {
+      return scheduled;
+    }
+    recordSyncTraceEvent("foreground_pending_recovery_scheduled", {
+      scope: "foreground_probe",
+      status: "scheduled",
+      message: activeLock
+        ? "检测到跨上下文遗留前台待拉取，等待现有同步锁释放"
+        : isForegroundSyncInFlight
+          ? "检测到跨上下文遗留前台待拉取，等待当前同步完成"
+          : "检测到跨上下文遗留前台待拉取，已安排恢复",
+      details: {
+        reason: pending.reason,
+        triggerSource: pending.triggerSource,
+        remoteUpdatedAt: pending.remoteUpdatedAt,
+        requestId: pending.requestId,
+        lockMode: activeLock?.mode || "",
+        lockOwner: activeLock?.owner || "",
+        lockRemainingMs: activeLock?.remainingMs || 0,
+        retryAfterMs: scheduled.retryAfterMs || 0,
+      },
+    });
+    return {
+      ...scheduled,
+      reason: activeLock
+        ? "foreground_recovery_waiting_for_lock"
+        : isForegroundSyncInFlight
+          ? "foreground_recovery_waiting_for_in_flight"
+          : "foreground_recovery_scheduled",
+    };
+  };
+
   const getCurrentDailySyncDateKey = () => new Date().toLocaleDateString("sv");
 
   const normalizeDeferredStartupSyncRequest = (value) => {
@@ -16606,7 +17292,7 @@
     return { covered: true, state, reason: "covered_by_shared_debounce" };
   };
 
-  const recoverPendingAutoSyncIfNeeded = () => {
+  const recoverPendingBackgroundAutoSyncIfNeeded = () => {
     const pending = getPendingAutoSyncRequest();
     if (!pending) {
       return { status: "skipped", reason: "no_pending_auto_sync" };
@@ -16685,6 +17371,30 @@
       status: "scheduled",
       reason: "pending_recovery",
       delayMs: 600,
+    };
+  };
+
+  const recoverPendingAutoSyncIfNeeded = (options = {}) => {
+    const foregroundRecovery = recoverPendingForegroundRemoteSyncIfNeeded(
+      options
+    );
+    const backgroundRecovery = recoverPendingBackgroundAutoSyncIfNeeded();
+    const hasForegroundRecovery = !(
+      foregroundRecovery?.status === "skipped" &&
+      foregroundRecovery?.reason === "no_pending_foreground_remote_sync"
+    );
+    if (!hasForegroundRecovery) {
+      return backgroundRecovery;
+    }
+    if (
+      backgroundRecovery?.status === "skipped" &&
+      backgroundRecovery?.reason === "no_pending_auto_sync"
+    ) {
+      return foregroundRecovery;
+    }
+    return {
+      ...backgroundRecovery,
+      foregroundRecovery,
     };
   };
 
@@ -17877,6 +18587,9 @@
     if (normalizedSource !== "foreground") {
       return null;
     }
+    const isRetryableFailure = Boolean(
+      result?.status === "failure" && !result.failureState?.open
+    );
     const isRetryableSkip = Boolean(
       result?.status === "skipped" &&
         (result.reason === "foreground_followup_lock_unavailable" ||
@@ -17888,13 +18601,17 @@
         result.blockLevel === "soft" &&
         isForegroundProbeRetryableSoftBlockReason(result.reason)
     );
-    if (!isRetryableSkip && !isRetryableSoftBlock) {
+    if (!isRetryableFailure && !isRetryableSkip && !isRetryableSoftBlock) {
       return null;
     }
     return {
       kind: "foreground",
-      reason: normalizeRemoteProbeText(result.reason, 120) || "retryable",
-      delayMs: Math.max(0, Number(result.retryAfterMs) || 0),
+      reason:
+        normalizeRemoteProbeText(result.reason, 120) ||
+        (isRetryableFailure ? "failure" : "retryable"),
+      delayMs: isRetryableFailure
+        ? FOREGROUND_REMOTE_SYNC_RETRY_BASE_DELAY_MS
+        : Math.max(0, Number(result.retryAfterMs) || 0),
     };
   };
 
@@ -18288,6 +19005,10 @@
 
   const getPendingAutoSyncRecoveryFn = (overrides = {}) =>
     overrides.recoverPendingAutoSyncIfNeeded || recoverPendingAutoSyncIfNeeded;
+  const hasScheduledPendingAutoSyncRecovery = (result = null) =>
+    [result?.status, result?.foregroundRecovery?.status].some(
+      (status) => status === "scheduled" || status === "already_scheduled"
+    );
 
   const resyncForegroundStateFromStorageSnapshot = (
     overrides = {},
@@ -18326,14 +19047,14 @@
       console.log("S1 Plus: 检测到页面从 bfcache 恢复，检查待同步任务...");
       resyncForegroundStateFromStorageSnapshot(overrides);
     }
-    const recoveryResult = getPendingAutoSyncRecoveryFn(overrides)();
+    const recoveryResult = getPendingAutoSyncRecoveryFn(overrides)(overrides);
 
     if (!(event && event.persisted)) {
       return Promise.resolve(
         createForegroundTriggerSkippedResult("pageshow_not_persisted")
       );
     }
-    if (recoveryResult?.status === "scheduled") {
+    if (hasScheduledPendingAutoSyncRecovery(recoveryResult)) {
       return Promise.resolve({
         status: "skipped",
         reason: FOREGROUND_PROBE_SKIP_REASON_PENDING_RECOVERY_SETTLE,
@@ -18354,8 +19075,8 @@
 
     const { coreDataSnapshotResyncResult } =
       resyncForegroundStateFromStorageSnapshot(overrides);
-    const recoveryResult = getPendingAutoSyncRecoveryFn(overrides)();
-    if (recoveryResult?.status === "scheduled") {
+    const recoveryResult = getPendingAutoSyncRecoveryFn(overrides)(overrides);
+    if (hasScheduledPendingAutoSyncRecovery(recoveryResult)) {
       return Promise.resolve({
         status: "skipped",
         reason: FOREGROUND_PROBE_SKIP_REASON_PENDING_RECOVERY_SETTLE,
@@ -18372,6 +19093,9 @@
   const s1pInitializePendingAutoSyncRecoverySupport = (adapter = {}) => {
     const bindActivityHooks =
       adapter.bindActivityHooks || bindVisibleRemoteFreshnessPollingActivityHooks;
+    const bindForegroundPendingChange =
+      adapter.bindForegroundPendingChange ||
+      s1pBindForegroundRemoteSyncPendingChangeHook;
     const syncPolling =
       adapter.syncPolling || syncVisibleRemoteFreshnessPollingForCurrentState;
     const stopPolling = adapter.stopPolling || stopVisibleRemoteFreshnessPolling;
@@ -18382,9 +19106,19 @@
         : typeof activityBinding?.dispose === "function"
           ? activityBinding.dispose
           : null;
+    let disposeForegroundPendingChange = null;
     try {
+      const foregroundPendingChangeBinding = bindForegroundPendingChange();
+      disposeForegroundPendingChange =
+        typeof foregroundPendingChangeBinding === "function"
+          ? foregroundPendingChangeBinding
+          : typeof foregroundPendingChangeBinding?.dispose === "function"
+            ? foregroundPendingChangeBinding.dispose
+            : null;
       syncPolling({ resetActivity: true });
     } catch (error) {
+      clearForegroundRemoteSyncRecovery();
+      disposeForegroundPendingChange?.();
       disposeActivityHooks?.();
       throw error;
     }
@@ -18397,6 +19131,8 @@
         }
         disposed = true;
         stopPolling();
+        clearForegroundRemoteSyncRecovery();
+        disposeForegroundPendingChange?.();
         disposeActivityHooks?.();
         return { status: "disposed" };
       },
@@ -20323,6 +21059,7 @@
     }
   };
   let sharedBackgroundSyncDebounceStateChangeBinding = null;
+  let foregroundRemoteSyncPendingChangeBinding = null;
   const s1pBindSharedBackgroundSyncDebounceStateChangeHook = () => {
     if (typeof GM_addValueChangeListener !== "function") {
       return { status: "skipped", reason: "listener_unavailable" };
@@ -20377,6 +21114,95 @@
       return { status: "unbound" };
     };
     sharedBackgroundSyncDebounceStateChangeBinding = nextBinding;
+    let released = false;
+    return {
+      status: "bound",
+      dispose: () => {
+        if (released) {
+          return { status: "skipped", reason: "lease_already_released" };
+        }
+        released = true;
+        return nextBinding.release();
+      },
+    };
+  };
+  const s1pBindForegroundRemoteSyncPendingChangeHook = () => {
+    if (typeof GM_addValueChangeListener !== "function") {
+      return { status: "skipped", reason: "listener_unavailable" };
+    }
+    const binding = foregroundRemoteSyncPendingChangeBinding;
+    if (binding?.active) {
+      binding.leaseCount += 1;
+      let released = false;
+      return {
+        status: "shared",
+        reason: "listener_already_bound",
+        dispose: () => {
+          if (released) {
+            return { status: "skipped", reason: "lease_already_released" };
+          }
+          released = true;
+          return binding.release();
+        },
+      };
+    }
+    const nextBinding = {
+      active: true,
+      leaseCount: 1,
+      listenerId: null,
+      release: null,
+    };
+    nextBinding.listenerId = GM_addValueChangeListener(
+      PENDING_FOREGROUND_REMOTE_SYNC_KEY,
+      (_key, _oldValue, newValue, isCrossContextChange) => {
+        if (!nextBinding.active || !isCrossContextChange) {
+          return;
+        }
+        const pending = normalizePendingForegroundRemoteSyncRequest(newValue);
+        if (!pending) {
+          clearForegroundRemoteSyncRecovery();
+          recordSyncTraceEvent("foreground_pending_cross_context_signal", {
+            scope: "foreground_probe",
+            status: "cleared",
+            message: "跨上下文前台待拉取已完成或清理",
+          });
+          return;
+        }
+        const recoveryResult = recoverPendingForegroundRemoteSyncIfNeeded();
+        recordSyncTraceEvent("foreground_pending_cross_context_signal", {
+          scope: "foreground_probe",
+          status: recoveryResult?.status || "unknown",
+          message: "收到跨上下文前台待拉取通知",
+          details: {
+            requestId: pending.requestId,
+            remoteUpdatedAt: pending.remoteUpdatedAt,
+            sourceContextId: pending.sourceContextId,
+            sourceTabId: pending.sourceTabId,
+            recoveryStatus: recoveryResult?.status || "unknown",
+            recoveryReason: recoveryResult?.reason || "",
+          },
+        });
+      }
+    );
+    nextBinding.release = () => {
+      nextBinding.leaseCount = Math.max(0, nextBinding.leaseCount - 1);
+      if (nextBinding.leaseCount > 0) {
+        return { status: "retained", reason: "listener_still_leased" };
+      }
+      nextBinding.active = false;
+      if (
+        typeof GM_removeValueChangeListener === "function" &&
+        nextBinding.listenerId !== null &&
+        nextBinding.listenerId !== undefined
+      ) {
+        GM_removeValueChangeListener(nextBinding.listenerId);
+      }
+      if (foregroundRemoteSyncPendingChangeBinding === nextBinding) {
+        foregroundRemoteSyncPendingChangeBinding = null;
+      }
+      return { status: "unbound" };
+    };
+    foregroundRemoteSyncPendingChangeBinding = nextBinding;
     let released = false;
     return {
       status: "bound",
@@ -20486,6 +21312,18 @@
             ? "visibility_visible"
             : "visibility_hidden"
           : phase;
+      recordSyncTraceEvent("sync_lifecycle_enter", {
+        scope: "sync_lifecycle_checkpoint",
+        status: "running",
+        message: "同步生命周期事件进入处理",
+        details: {
+          event: normalizedEventName,
+          phase,
+          visibilityState: getVisibilityState(),
+          eventPersisted: event?.persisted === true,
+          transitionGeneration,
+        },
+      });
       if (phase === "visible" || phase === "pageshow") {
         setSchedulerPageUnloading(false);
         clearHiddenFlush();
@@ -30157,6 +30995,54 @@
     return isGlobalSyncLockValid(getGlobalSyncLockValue(), now);
   };
 
+  const getActiveSyncLockSnapshot = (now = Date.now()) => {
+    const normalizedNow = normalizeRemoteProbeTimestamp(now) || Date.now();
+    const globalLock = getGlobalSyncLockValue();
+    if (isGlobalSyncLockValid(globalLock, normalizedNow)) {
+      return {
+        mode: globalLock.mode,
+        owner: globalLock.owner,
+        timestamp: globalLock.timestamp,
+        ttlMs: globalLock.ttlMs,
+        expiresAt: globalLock.timestamp + globalLock.ttlMs,
+        remainingMs: Math.max(
+          0,
+          globalLock.timestamp + globalLock.ttlMs - normalizedNow
+        ),
+        source: "global",
+      };
+    }
+
+    const activeModeLock = [
+      SYNC_LOCK_MODE_MANUAL,
+      SYNC_LOCK_MODE_BACKGROUND,
+      SYNC_LOCK_MODE_FOREGROUND_FOLLOWUP,
+      SYNC_LOCK_MODE_STARTUP,
+    ]
+      .map((mode) => {
+        const profile = getSyncLockModeProfile(mode);
+        const lock = getModeSyncLockValue(mode);
+        return profile && isModeSyncLockValid(lock, profile.ttlMs, normalizedNow)
+          ? {
+              mode,
+              owner: lock.owner,
+              timestamp: lock.timestamp,
+              ttlMs: profile.ttlMs,
+              expiresAt: lock.timestamp + profile.ttlMs,
+              remainingMs: Math.max(
+                0,
+                lock.timestamp + profile.ttlMs - normalizedNow
+              ),
+              source: "mode",
+            }
+          : null;
+      })
+      .filter(Boolean)
+      .sort((left, right) => right.expiresAt - left.expiresAt)[0];
+
+    return activeModeLock || null;
+  };
+
   const setGlobalSyncLock = (mode, timestamp, ttlMs) => {
     invalidateAutoSyncIndicatorDisplayPhaseCache();
     GM_setValue(GLOBAL_SYNC_LOCK_KEY, {
@@ -30581,8 +31467,10 @@
 
     clearPendingAutoPullReloadTimer();
     clearForegroundRemoteSyncRetry();
+    clearForegroundRemoteSyncRecovery();
     clearForegroundFollowUpSoftBlock();
     clearPendingAutoSyncRequest();
+    clearPendingForegroundRemoteSyncRequest();
     clearAutoSyncRuntimeQueue();
     clearAutoSyncConflictPause();
 
@@ -33054,6 +33942,18 @@
         if (typeof onLockUnavailable === "function") {
           await onLockUnavailable();
         }
+        const activeSyncLock = getActiveSyncLockSnapshot();
+        recordSyncTraceEvent("foreground_followup_lock_unavailable", {
+          scope: "foreground_followup_sync",
+          status: "skipped",
+          message: "前台补同步未取得同步锁，等待其他上下文完成或过期",
+          details: {
+            triggerSource,
+            lockMode: activeSyncLock?.mode || "",
+            lockOwner: activeSyncLock?.owner || "",
+            lockRemainingMs: activeSyncLock?.remainingMs || 0,
+          },
+        });
         emitSyncCompletionLog({
           scope: "foreground_followup_sync",
           scopeLabel: "前台补同步",
@@ -33239,6 +34139,11 @@
           overrides.releaseForegroundFollowUpSyncLock ||
           overrides.releaseStartupSyncLock,
         performAutoSync: overrides.performAutoSync,
+        lockUnavailableResult: {
+          status: "skipped",
+          reason: "foreground_followup_lock_unavailable",
+          activeSyncLock: getActiveSyncLockSnapshot(),
+        },
         onLockUnavailable: () => {
           console.log(
             `S1 Plus: 前台远端检查(${normalizedReason})发现已有同步任务在执行，已跳过本轮 follow-up sync。`
@@ -33372,6 +34277,7 @@
           return;
         }
 
+        const pendingBeforeSync = getPendingForegroundRemoteSyncRequest();
         const syncResult = await (
           options.requestForegroundRemoteSyncCheck ||
           requestForegroundRemoteSyncCheck
@@ -33379,6 +34285,15 @@
           normalizedReason,
           options.requestForegroundRemoteSyncCheckOverrides || {}
         );
+        const pendingSettlement = pendingBeforeSync
+          ? settlePendingForegroundRemoteSyncRequest(
+              pendingBeforeSync,
+              syncResult
+            )
+          : {
+              status: "skipped",
+              reason: "no_pending_foreground_remote_sync_before_retry",
+            };
         const remoteChangeKind = getForegroundRemoteChangeKind({
           syncRequestResult: syncResult,
           sameSessionRemoteWrite: syncResult?.sameSessionRemoteWrite === true,
@@ -33418,6 +34333,20 @@
         });
         if (s1pHasScheduledSyncResultPhaseRetry(outcome.retryResult)) {
           return;
+        }
+        if (
+          pendingSettlement.status === "retained" &&
+          (syncResult?.status === "success" ||
+            syncResult?.reason === "foreground_followup_lock_unavailable" ||
+            syncResult?.reason === "sync_lock_active")
+        ) {
+          scheduleForegroundRemoteSyncRecovery(
+            getPendingForegroundRemoteSyncRequest(),
+            {
+              ...options,
+              now: Date.now(),
+            }
+          );
         }
         clearForegroundRemoteSyncRetry();
         (
@@ -33482,6 +34411,9 @@
               finalized.syncRequestResult?.status ||
               finalized.syncRequestResult?.action ||
               "",
+            lockMode: finalized.activeSyncLock?.mode || "",
+            lockOwner: finalized.activeSyncLock?.owner || "",
+            lockRemainingMs: finalized.activeSyncLock?.remainingMs || 0,
           },
         });
       }
@@ -33518,7 +34450,19 @@
       });
     }
     if (hasAnyActiveSyncLock(now)) {
-      return finalizeResult({ status: "skipped", reason: "sync_lock_active" });
+      const activeSyncLock = getActiveSyncLockSnapshot(now);
+      return finalizeResult(
+        {
+          status: "skipped",
+          reason: "sync_lock_active",
+          activeSyncLock,
+        },
+        {
+          lockMode: activeSyncLock?.mode || "",
+          lockOwner: activeSyncLock?.owner || "",
+          lockRemainingMs: activeSyncLock?.remainingMs || 0,
+        }
+      );
     }
     if (isForegroundProbeLocalCooldownActive(now)) {
       return finalizeResult({
@@ -33778,6 +34722,13 @@
         triggerReason: normalizedReason,
         now,
       });
+      const pendingForegroundRemoteSyncRequest =
+        markPendingForegroundRemoteSyncRequest({
+          reason: normalizedReason,
+          triggerSource: probeTriggerSource,
+          remoteUpdatedAt,
+          now,
+        });
       if (gateBlockResult) {
         const retryPlan = scheduleForegroundRemoteSyncRetry(
           `remote_probe_changed:${normalizedReason}`,
@@ -33798,6 +34749,7 @@
             remoteUpdatedAt,
             blockReason: gateBlockResult.reason || "",
             retryAfterMs: gateBlockResult.retryAfterMs || 0,
+            requestId: pendingForegroundRemoteSyncRequest?.requestId || "",
           },
         });
         return finalizeResult(
@@ -33836,11 +34788,16 @@
           remoteUpdatedAt,
           lastSyncedRemoteUpdatedAt,
           writerMatchKind: preSyncWriterMatchKind,
+          requestId: pendingForegroundRemoteSyncRequest?.requestId || "",
         },
       });
       const syncRequestResult = await requestForegroundRemoteSyncCheckFn(
         `remote_probe_changed:${normalizedReason}`,
         overrides.requestForegroundRemoteSyncCheckOverrides || {}
+      );
+      const pendingSettlement = settlePendingForegroundRemoteSyncRequest(
+        pendingForegroundRemoteSyncRequest,
+        syncRequestResult
       );
       recordSyncTraceEvent("foreground_probe_followup_result", {
         scope: "foreground_probe",
@@ -33852,6 +34809,8 @@
           followupStatus: syncRequestResult?.status || "",
           followupAction: syncRequestResult?.action || "",
           followupReason: syncRequestResult?.reason || "",
+          requestId: pendingForegroundRemoteSyncRequest?.requestId || "",
+          pendingSettlement: pendingSettlement.status,
         },
       });
       const hasAuthoritativeSyncAttribution = (syncResult) =>
@@ -33919,8 +34878,32 @@
           ),
       });
       refreshPlan = outcome.refreshPlan;
-      if (!s1pHasScheduledSyncResultPhaseRetry(outcome.retryResult)) {
+      const hasScheduledRetry = s1pHasScheduledSyncResultPhaseRetry(
+        outcome.retryResult
+      );
+      if (!hasScheduledRetry) {
         clearForegroundRemoteSyncRetry();
+      }
+      if (
+        pendingSettlement.status === "retained" &&
+        !hasScheduledRetry &&
+        (syncRequestResult?.status === "success" ||
+          syncRequestResult?.reason === "foreground_followup_lock_unavailable" ||
+          syncRequestResult?.reason === "sync_lock_active")
+      ) {
+        scheduleForegroundRemoteSyncRecovery(
+          getPendingForegroundRemoteSyncRequest(),
+          {
+            now: Date.now(),
+            requestForegroundRemoteSyncCheck: requestForegroundRemoteSyncCheckFn,
+            requestForegroundRemoteSyncCheckOverrides:
+              overrides.requestForegroundRemoteSyncCheckOverrides || {},
+            syncResultPhasePolicy: overrides.syncResultPhasePolicy,
+            showMessage: overrides.showMessage,
+            locationObject: overrides.locationObject,
+            setTimeoutFn: overrides.setTimeoutFn,
+          }
+        );
       }
       const isHashEqualAfterResync =
         remoteChangeKind === "hash_equal_after_resync";
@@ -34031,6 +35014,14 @@
       scheduleForegroundRemoteSyncRetry,
       clearForegroundRemoteSyncRetry,
       getForegroundRemoteSyncRetryRemainingMs,
+      markPendingForegroundRemoteSyncRequest,
+      getPendingForegroundRemoteSyncRequest,
+      clearPendingForegroundRemoteSyncRequest,
+      recoverPendingForegroundRemoteSyncIfNeeded,
+      scheduleForegroundRemoteSyncRecovery,
+      clearForegroundRemoteSyncRecovery,
+      getForegroundRemoteSyncRecoveryRemainingMs,
+      getActiveSyncLockSnapshot,
       getForegroundProbeGateBlockResult,
       hasEnabledAutoSyncIndicatorPath,
       getAutoSyncIndicatorState,
@@ -34058,6 +35049,8 @@
       resolveAutoSyncIndicatorDrainCompletion,
       formatAutoSyncCompletionLogMessage,
       recordSyncTraceEvent,
+      getSyncRuntimeContextInfo,
+      getSyncRuntimeContextSummary,
       emitSyncCompletionLog,
       getAutoSyncIndicatorTitle: (...args) => getAutoSyncIndicatorTitle(...args),
       getAutoSyncIndicatorDisplayKind: (...args) =>
@@ -34084,6 +35077,7 @@
       createPendingDirtyScheduler,
       s1pCreateSchedulerOwnerHandoffFence,
       s1pCreateSyncLifecycleAdapter,
+      s1pBindForegroundRemoteSyncPendingChangeHook,
       s1pInitializePendingAutoSyncRecoverySupport,
       registerSyncLifecycleLocalMutationFinalizer,
       runForegroundFollowUpAutoSyncCheck,
@@ -54553,6 +55547,18 @@
       }
       const lifecycle = lifecycleAdapter.bind();
       try {
+        const runtimeContext = getSyncRuntimeContextInfo();
+        recordSyncTraceEvent("sync_runtime_context_started", {
+          scope: "sync_runtime",
+          status: "running",
+          message: "同步运行上下文已启动",
+          details: {
+            path: runtimeContext.path,
+            visibilityState: runtimeContext.visibilityState,
+            frame: runtimeContext.frame,
+            navigationType: runtimeContext.navigationType,
+          },
+        });
         const schedulerRecovery = scheduler.recover();
         const pendingRecovery = recoverPending();
         initialized = true;

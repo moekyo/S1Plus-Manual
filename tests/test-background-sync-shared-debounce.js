@@ -8,6 +8,7 @@ const {
 } = require("./s1plus-test-helpers");
 
 const DEBOUNCE_STATE_KEY = "s1p_background_sync_debounce_state";
+const FOREGROUND_PENDING_KEY = "s1p_pending_foreground_remote_sync_request";
 const PENDING_KEY = "s1p_pending_auto_sync_request";
 const LAST_MODIFIED_KEY = "s1p_last_modified";
 const LAST_DIRTY_PROVENANCE_KEY = "s1p_last_local_dirty_provenance";
@@ -555,7 +556,14 @@ const testPagehideFinalizesAndHandsOffWithoutTriggeringSync = async () => {
   });
   const syncSystem = hooks.s1pCreateSyncSystemFacade({ lifecycleAdapter });
   syncSystem.initialize();
-  assert.equal(valueChangeListeners.length, 1);
+  assert.equal(valueChangeListeners.length, 2);
+  assert.deepEqual(
+    valueChangeListeners.map((listener) => listener.key).sort(),
+    [
+      DEBOUNCE_STATE_KEY,
+      FOREGROUND_PENDING_KEY,
+    ].sort()
+  );
   const tabA = makeScheduler({ tabId: "tab-a" });
   tabA.scheduler.queue({ source: "general", lastModified: 1501 });
   flushValueChangeNotifications();
@@ -591,7 +599,9 @@ const testPagehideFinalizesAndHandsOffWithoutTriggeringSync = async () => {
   assert.equal(handedOffState.ownerTabId, "");
   pendingValueChangeNotifications.length = 0;
   await Promise.resolve();
-  valueChangeListeners[0].callback(
+  valueChangeListeners
+    .find((listener) => listener.key === DEBOUNCE_STATE_KEY)
+    .callback(
     DEBOUNCE_STATE_KEY,
     null,
     handedOffState,
