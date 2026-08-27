@@ -15,6 +15,8 @@ const STARTUP_SYNC_LOCK_KEY = "s1p_startup_sync_lock";
 const FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY =
   "s1p_foreground_followup_sync_lock";
 const PENDING_AUTO_SYNC_KEY = "s1p_pending_auto_sync_request";
+const PENDING_FOREGROUND_REMOTE_SYNC_KEY =
+  "s1p_pending_foreground_remote_sync_request";
 const DEFERRED_STARTUP_SYNC_KEY = "s1p_deferred_startup_sync";
 const STARTUP_AUTO_SYNC_LAST_TS_KEY = "s1p_startup_auto_sync_last_ts";
 const AUTO_SYNC_CONFLICT_PAUSE_KEY = "s1p_auto_sync_conflict_pause";
@@ -757,6 +759,15 @@ const testManualOverridePreemptsAutoSyncLocks = async () => {
     sources: { read_progress: 1 },
     threadIds: ["123"],
   });
+  store.set(PENDING_FOREGROUND_REMOTE_SYNC_KEY, {
+    version: 1,
+    requestId: "foreground-request",
+    reason: "pageshow",
+    triggerSource: "foreground_resume",
+    remoteUpdatedAt: "2026-08-27T05:25:29Z",
+    createdAt: now,
+    lastSeenAt: now,
+  });
   hooks.seedSyncRuntimeStateForManualOverrideTest({
     hasPendingBackgroundSync: true,
     hasLocalRetryTimer: true,
@@ -777,6 +788,7 @@ const testManualOverridePreemptsAutoSyncLocks = async () => {
   assert.equal(store.has(FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY), false);
   assert.equal(store.has(GLOBAL_SYNC_LOCK_KEY), false);
   assert.equal(store.has(PENDING_AUTO_SYNC_KEY), false);
+  assert.equal(store.has(PENDING_FOREGROUND_REMOTE_SYNC_KEY), false);
   const runtimeState = hooks.getBackgroundAutoSyncRuntimeStateForTest();
   assert.equal(runtimeState.hasPendingBackgroundSync, false);
   assert.equal(runtimeState.hasLocalRetryTimer, false);
