@@ -1207,6 +1207,488 @@
     }, []);
   };
 
+  const S1P_NAV_CUSTOMIZED_HEADER_CLASS = "s1p-nav-customized-header";
+  const S1P_NAV_CUSTOMIZED_ROOT_CLASS = "s1p-nav-customized-root";
+  const S1P_NAV_CUSTOM_ITEM_CLASS = "s1p-nav-custom-item";
+  const S1P_NAV_OVERFLOW_ID = "s1p-nav-overflow";
+  const S1P_NAV_OVERFLOW_MENU_CLASS = "s1p-nav-overflow-menu";
+  const S1P_NAV_OVERFLOW_MENU_VISIBLE_CLASS =
+    "s1p-nav-overflow-menu-visible";
+  const S1P_NAV_OVERFLOW_HIDDEN_ITEM_CLASS = "s1p-nav-overflow-hidden";
+  const S1P_NAV_SEARCH_TOGGLE_ID = "s1p-nav-search-toggle";
+  const S1P_NAV_SEARCH_POPOVER_ID = "s1p-nav-search-popover";
+  const S1P_NAV_SEARCH_POPOVER_CLASS = "s1p-nav-search-popover";
+  const S1P_NAV_SEARCH_POPOVER_VISIBLE_CLASS =
+    "s1p-nav-search-popover-visible";
+  const S1P_NAV_SEARCH_TOGGLE_VISIBLE_CLASS =
+    "s1p-nav-search-toggle-visible";
+  const S1P_NAV_SEARCH_COMPACT_MIN_WIDTH_PX = 132;
+  let navbarCustomOverflowCleanup = null;
+
+  const teardownNavbarCustomOverflow = () => {
+    if (typeof navbarCustomOverflowCleanup === "function") {
+      const cleanup = navbarCustomOverflowCleanup;
+      navbarCustomOverflowCleanup = null;
+      cleanup();
+    }
+
+    document.getElementById(S1P_NAV_OVERFLOW_ID)?.remove();
+    document
+      .querySelectorAll(`#nv > ul > li.${S1P_NAV_CUSTOM_ITEM_CLASS}`)
+      .forEach((item) => {
+        item.hidden = false;
+        item.classList.remove(S1P_NAV_OVERFLOW_HIDDEN_ITEM_CLASS);
+        item.removeAttribute("aria-hidden");
+      });
+    document
+      .querySelectorAll(`#nv.${S1P_NAV_CUSTOMIZED_ROOT_CLASS}`)
+      .forEach((navRoot) =>
+        navRoot.classList.remove(S1P_NAV_CUSTOMIZED_ROOT_CLASS)
+      );
+    document
+      .querySelectorAll(`.${S1P_NAV_CUSTOMIZED_HEADER_CLASS}`)
+      .forEach((headerRoot) =>
+        headerRoot.classList.remove(S1P_NAV_CUSTOMIZED_HEADER_CLASS)
+      );
+  };
+
+  const setupNavbarCustomOverflow = ({
+    navUl,
+    navRoot,
+    headerRoot,
+    customNavItems,
+    customNavLinks,
+    managerLink,
+    searchBar,
+  }) => {
+    if (
+      !(navUl instanceof HTMLUListElement) ||
+      !Array.isArray(customNavItems) ||
+      customNavItems.length === 0 ||
+      !Array.isArray(customNavLinks)
+    ) {
+      return;
+    }
+
+    navRoot?.classList.add(S1P_NAV_CUSTOMIZED_ROOT_CLASS);
+    headerRoot?.classList.add(S1P_NAV_CUSTOMIZED_HEADER_CLASS);
+
+    const hasSearchBar =
+      searchBar instanceof Element && searchBar.parentNode instanceof Element;
+    const searchBarParent = hasSearchBar ? searchBar.parentNode : null;
+    const searchPlaceholder = hasSearchBar
+      ? document.createElement("span")
+      : null;
+    const searchToggle = hasSearchBar
+      ? document.createElement("a")
+      : null;
+    const searchPopover = hasSearchBar
+      ? document.createElement("div")
+      : null;
+    let isSearchCollapsed = false;
+    let isSearchOpen = false;
+
+    if (hasSearchBar && searchBarParent && searchPlaceholder && searchToggle) {
+      searchPlaceholder.className = "s1p-nav-search-placeholder";
+      searchPlaceholder.hidden = true;
+      searchToggle.id = S1P_NAV_SEARCH_TOGGLE_ID;
+      searchToggle.className = "s1p-nav-search-toggle";
+      searchToggle.href = "javascript:void(0);";
+      searchToggle.setAttribute("role", "button");
+      searchToggle.setAttribute("aria-label", "展开搜索");
+      searchToggle.setAttribute("aria-controls", S1P_NAV_SEARCH_POPOVER_ID);
+      searchToggle.setAttribute("aria-expanded", "false");
+      searchToggle.setAttribute("hidefocus", "true");
+      searchToggle.textContent = "搜索";
+      searchBarParent.insertBefore(searchToggle, searchBar);
+      searchBarParent.insertBefore(searchPlaceholder, searchBar);
+    }
+
+    if (hasSearchBar && searchPopover) {
+      searchPopover.id = S1P_NAV_SEARCH_POPOVER_ID;
+      searchPopover.className = S1P_NAV_SEARCH_POPOVER_CLASS;
+      searchPopover.setAttribute("role", "search");
+      searchPopover.setAttribute("aria-label", "搜索");
+      searchPopover.hidden = true;
+      document.body.appendChild(searchPopover);
+    }
+
+    const overflowLi = document.createElement("li");
+    overflowLi.id = S1P_NAV_OVERFLOW_ID;
+    overflowLi.className = "s1p-nav-overflow";
+    overflowLi.hidden = true;
+
+    const overflowToggle = document.createElement("a");
+    overflowToggle.href = "javascript:void(0);";
+    overflowToggle.textContent = "更多";
+    overflowToggle.setAttribute("hidefocus", "true");
+    overflowToggle.setAttribute("role", "button");
+    overflowToggle.setAttribute("aria-haspopup", "menu");
+    overflowToggle.setAttribute("aria-expanded", "false");
+    overflowLi.appendChild(overflowToggle);
+
+    const overflowMenu = document.createElement("div");
+    overflowMenu.className = S1P_NAV_OVERFLOW_MENU_CLASS;
+    overflowMenu.setAttribute("role", "menu");
+    overflowMenu.hidden = true;
+
+    const overflowMenuLinks = customNavLinks.map((link) => {
+      const menuLink = document.createElement("a");
+      menuLink.href = link.href;
+      menuLink.textContent = link.name;
+      menuLink.setAttribute("role", "menuitem");
+      menuLink.setAttribute("hidefocus", "true");
+      menuLink.hidden = true;
+      overflowMenu.appendChild(menuLink);
+      return menuLink;
+    });
+
+    document.body.appendChild(overflowMenu);
+    if (managerLink instanceof HTMLLIElement) {
+      navUl.insertBefore(overflowLi, managerLink);
+    } else {
+      navUl.appendChild(overflowLi);
+    }
+
+    let reconcileFrame = null;
+    let isMenuOpen = false;
+    let resizeObserver = null;
+
+    const setMenuOpen = (nextOpen) => {
+      const shouldOpen =
+        nextOpen === true &&
+        !overflowLi.hidden &&
+        overflowMenuLinks.some((link) => !link.hidden);
+      isMenuOpen = shouldOpen;
+      overflowMenu.hidden = !shouldOpen;
+      overflowMenu.classList.toggle(
+        S1P_NAV_OVERFLOW_MENU_VISIBLE_CLASS,
+        shouldOpen
+      );
+      overflowToggle.setAttribute(
+        "aria-expanded",
+        shouldOpen ? "true" : "false"
+      );
+      if (shouldOpen) {
+        requestAnimationFrame(positionMenu);
+      }
+    };
+
+    const closeMenu = () => {
+      setMenuOpen(false);
+    };
+
+    overflowMenuLinks.forEach((menuLink) => {
+      menuLink.addEventListener("click", closeMenu);
+    });
+
+    const positionMenu = () => {
+      if (!isMenuOpen) {
+        return;
+      }
+
+      const toggleRect = overflowToggle.getBoundingClientRect();
+      const menuRect = overflowMenu.getBoundingClientRect();
+      const layoutWidth = getS1pLayoutViewportWidth();
+      const viewportHeight = Number(window.innerHeight) || 0;
+      const viewportPadding = 8;
+      const maxLeft = Math.max(
+        viewportPadding,
+        layoutWidth - menuRect.width - viewportPadding
+      );
+      const left = Math.min(
+        Math.max(viewportPadding, toggleRect.left),
+        maxLeft
+      );
+      let top = toggleRect.bottom + 4;
+      if (
+        viewportHeight > 0 &&
+        top + menuRect.height > viewportHeight - viewportPadding &&
+        toggleRect.top - menuRect.height - 4 >= viewportPadding
+      ) {
+        top = toggleRect.top - menuRect.height - 4;
+      }
+
+      overflowMenu.style.left = `${left}px`;
+      overflowMenu.style.top = `${Math.max(viewportPadding, top)}px`;
+    };
+
+    const positionSearchPopover = () => {
+      if (!isSearchOpen || !searchToggle || !searchPopover) {
+        return;
+      }
+
+      const toggleRect = searchToggle.getBoundingClientRect();
+      const popoverRect = searchPopover.getBoundingClientRect();
+      const layoutWidth = getS1pLayoutViewportWidth();
+      const viewportHeight = Number(window.innerHeight) || 0;
+      const viewportPadding = 8;
+      const maxLeft = Math.max(
+        viewportPadding,
+        layoutWidth - popoverRect.width - viewportPadding
+      );
+      const left = Math.min(
+        Math.max(viewportPadding, toggleRect.left),
+        maxLeft
+      );
+      let top = toggleRect.bottom + 4;
+      if (
+        viewportHeight > 0 &&
+        top + popoverRect.height > viewportHeight - viewportPadding &&
+        toggleRect.top - popoverRect.height - 4 >= viewportPadding
+      ) {
+        top = toggleRect.top - popoverRect.height - 4;
+      }
+
+      searchPopover.style.left = `${left}px`;
+      searchPopover.style.top = `${Math.max(viewportPadding, top)}px`;
+    };
+
+    const setSearchPopoverOpen = (nextOpen) => {
+      const shouldOpen =
+        nextOpen === true &&
+        isSearchCollapsed &&
+        searchToggle &&
+        searchPopover;
+      isSearchOpen = Boolean(shouldOpen);
+      if (!searchToggle || !searchPopover) {
+        return;
+      }
+
+      searchPopover.hidden = !isSearchOpen;
+      searchPopover.classList.toggle(
+        S1P_NAV_SEARCH_POPOVER_VISIBLE_CLASS,
+        isSearchOpen
+      );
+      searchToggle.setAttribute(
+        "aria-expanded",
+        isSearchOpen ? "true" : "false"
+      );
+      if (isSearchOpen) {
+        requestAnimationFrame(() => {
+          if (!isSearchOpen) {
+            return;
+          }
+          positionSearchPopover();
+          searchBar?.querySelector("#scbar_txt")?.focus?.();
+        });
+      }
+    };
+
+    const closeSearchPopover = () => {
+      setSearchPopoverOpen(false);
+    };
+
+    const setSearchCollapsed = (nextCollapsed) => {
+      if (
+        !hasSearchBar ||
+        !searchBarParent ||
+        !searchPlaceholder ||
+        !searchToggle ||
+        !searchPopover
+      ) {
+        return;
+      }
+
+      const shouldCollapse = nextCollapsed === true;
+      if (shouldCollapse === isSearchCollapsed) {
+        return;
+      }
+
+      if (shouldCollapse) {
+        closeSearchPopover();
+        if (searchBar.parentNode === searchBarParent) {
+          searchBarParent.replaceChild(searchPlaceholder, searchBar);
+        }
+        searchPopover.appendChild(searchBar);
+        searchToggle.hidden = false;
+        searchToggle.classList.add(S1P_NAV_SEARCH_TOGGLE_VISIBLE_CLASS);
+        isSearchCollapsed = true;
+        return;
+      }
+
+      closeSearchPopover();
+      if (searchPlaceholder.parentNode) {
+        searchPlaceholder.parentNode.replaceChild(searchBar, searchPlaceholder);
+      } else {
+        searchBarParent.appendChild(searchBar);
+      }
+      searchToggle.hidden = true;
+      searchToggle.classList.remove(S1P_NAV_SEARCH_TOGGLE_VISIBLE_CLASS);
+      isSearchCollapsed = false;
+    };
+
+    const shouldCompactSearchBar = () => {
+      if (!hasSearchBar || !searchBar.isConnected) {
+        return false;
+      }
+      const searchBarRect = searchBar.getBoundingClientRect();
+      const searchBarWidth = Number(searchBarRect?.width) || 0;
+      const searchBarHeight = Number(searchBarRect?.height) || 0;
+      return (
+        searchBarHeight > 0 &&
+        searchBarWidth < S1P_NAV_SEARCH_COMPACT_MIN_WIDTH_PX
+      );
+    };
+
+    const setCustomNavItemVisibility = (item, isVisible) => {
+      item.hidden = !isVisible;
+      item.classList.toggle(
+        S1P_NAV_OVERFLOW_HIDDEN_ITEM_CLASS,
+        !isVisible
+      );
+      if (isVisible) {
+        item.removeAttribute("aria-hidden");
+      } else {
+        item.setAttribute("aria-hidden", "true");
+      }
+    };
+
+    const isNuxCompactNavbar = () =>
+      isS1NuxEnabled &&
+      getS1pLayoutViewportWidth() > 0 &&
+      getS1pLayoutViewportWidth() <= NARROW_SCREEN_MAX_WIDTH_PX;
+
+    const hasNavbarContentOverflow = () =>
+      navUl.scrollWidth > navUl.clientWidth + 1;
+
+    const reconcile = () => {
+      reconcileFrame = null;
+      if (!navUl.isConnected) {
+        return;
+      }
+
+      if (isSearchCollapsed) {
+        setSearchCollapsed(false);
+      }
+      customNavItems.forEach((item, index) => {
+        setCustomNavItemVisibility(item, true);
+        if (overflowMenuLinks[index]) {
+          overflowMenuLinks[index].hidden = true;
+        }
+      });
+      overflowLi.hidden = true;
+      closeMenu();
+
+      // NUX 在 909px 以下有自己的悬浮快捷入口。此处只让它接管全部自定义链接，
+      // 避免第二套“更多”入口与 NUX 的窄屏交互叠加。
+      if (isNuxCompactNavbar() || navUl.clientWidth <= 0) {
+        setSearchCollapsed(shouldCompactSearchBar());
+        return;
+      }
+
+      if (hasNavbarContentOverflow()) {
+        overflowLi.hidden = false;
+        for (let index = customNavItems.length - 1; index >= 0; index -= 1) {
+          if (!hasNavbarContentOverflow()) {
+            break;
+          }
+          setCustomNavItemVisibility(customNavItems[index], false);
+          if (overflowMenuLinks[index]) {
+            overflowMenuLinks[index].hidden = false;
+          }
+        }
+
+        if (!overflowMenuLinks.some((link) => !link.hidden)) {
+          overflowLi.hidden = true;
+        }
+      }
+
+      setSearchCollapsed(shouldCompactSearchBar());
+    };
+
+    const scheduleReconcile = () => {
+      if (reconcileFrame !== null) {
+        return;
+      }
+      reconcileFrame = requestAnimationFrame(reconcile);
+    };
+
+    const handleDocumentClick = (event) => {
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        (overflowLi.contains(target) ||
+          overflowMenu.contains(target) ||
+          searchToggle?.contains(target) ||
+          searchPopover?.contains(target))
+      ) {
+        return;
+      }
+      closeMenu();
+      closeSearchPopover();
+    };
+
+    const handleDocumentKeydown = (event) => {
+      if (event.key === "Escape") {
+        closeMenu();
+        closeSearchPopover();
+      }
+    };
+
+    const handleSearchToggleClick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setSearchPopoverOpen(!isSearchOpen);
+    };
+
+    const handleSearchToggleKeydown = (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        setSearchPopoverOpen(true);
+      }
+    };
+
+    overflowToggle.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setMenuOpen(!isMenuOpen);
+    });
+    overflowToggle.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        setMenuOpen(true);
+      }
+    });
+    searchToggle?.addEventListener("click", handleSearchToggleClick);
+    searchToggle?.addEventListener("keydown", handleSearchToggleKeydown);
+    window.addEventListener("resize", scheduleReconcile);
+    document.addEventListener("click", handleDocumentClick);
+    document.addEventListener("keydown", handleDocumentKeydown);
+
+    if (typeof ResizeObserver === "function") {
+      resizeObserver = new ResizeObserver(scheduleReconcile);
+      resizeObserver.observe(navUl);
+      if (headerRoot instanceof Element) {
+        resizeObserver.observe(headerRoot);
+      }
+    }
+
+    navbarCustomOverflowCleanup = () => {
+      if (reconcileFrame !== null) {
+        cancelAnimationFrame(reconcileFrame);
+        reconcileFrame = null;
+      }
+      resizeObserver?.disconnect();
+      resizeObserver = null;
+      window.removeEventListener("resize", scheduleReconcile);
+      document.removeEventListener("click", handleDocumentClick);
+      document.removeEventListener("keydown", handleDocumentKeydown);
+      searchToggle?.removeEventListener("click", handleSearchToggleClick);
+      searchToggle?.removeEventListener("keydown", handleSearchToggleKeydown);
+      setSearchCollapsed(false);
+      searchPlaceholder?.remove();
+      searchToggle?.remove();
+      searchPopover?.remove();
+      overflowMenu.remove();
+      overflowLi.remove();
+      navRoot?.classList.remove(S1P_NAV_CUSTOMIZED_ROOT_CLASS);
+      headerRoot?.classList.remove(S1P_NAV_CUSTOMIZED_HEADER_CLASS);
+    };
+
+    scheduleReconcile();
+  };
+
   const normalizeNavHrefMatchKey = (hrefValue) => {
     const safeHref = getSafeUrlAttributeValue(hrefValue, { allowEmpty: false });
     if (!safeHref) {
@@ -1317,7 +1799,8 @@
     'a.s1p-autolink-url[data-s1p-autolink="url"], a.s1p-autolink-bilibili[data-s1p-autolink="bilibili"]';
   const OPEN_IN_NEW_TAB_THREAD_LIST_SCOPE_SELECTOR = "#threadlist";
   const OPEN_IN_NEW_TAB_NOTIFICATION_SCOPE_SELECTOR = ".xld.xlda";
-  const OPEN_IN_NEW_TAB_NAV_SCOPE_SELECTOR = "#nv, #mu, #um, #hd";
+  const OPEN_IN_NEW_TAB_NAV_SCOPE_SELECTOR =
+    "#nv, #mu, #um, #hd, .s1p-nav-overflow-menu, .s1p-nav-search-popover";
   const OPEN_IN_NEW_TAB_THREAD_DETAIL_SCOPE_SELECTOR =
     '#postlist table[id^="pid"]';
   const OPEN_IN_NEW_TAB_CONTROL_CONFIGS = [
@@ -3081,6 +3564,210 @@
       #nv > ul {
         display: flex !important;
         align-items: center !important;
+      }
+    }
+
+    /* --- 自定义导航与原生登录区的窄宽度协作 --- */
+    .s1p-nav-customized-header #nv,
+    .s1p-nav-customized-root {
+      min-width: 0 !important;
+    }
+    .s1p-nav-customized-header #nv > ul {
+      min-width: 0 !important;
+    }
+    .s1p-nav-customized-header #scbar {
+      min-width: 0 !important;
+      flex: 1 1 0 !important;
+    }
+    .s1p-nav-customized-header #scbar_form,
+    .s1p-nav-customized-header #scbar_form > table,
+    .s1p-nav-customized-header #scbar_form > table > tbody,
+    .s1p-nav-customized-header #scbar_form > table > tbody > tr {
+      min-width: 0 !important;
+      max-width: 100%;
+    }
+    .s1p-nav-customized-header #scbar_txt {
+      min-width: 0;
+    }
+    .s1p-nav-customized-header .hdc.cl {
+      flex-shrink: 0 !important;
+      overflow: visible !important;
+    }
+    .s1p-nav-customized-header #um,
+    .s1p-nav-customized-header #um > p {
+      flex-shrink: 0 !important;
+      min-width: max-content;
+    }
+    .s1p-nav-customized-header .fastlg button.pn {
+      width: auto !important;
+      min-width: 46px;
+      white-space: nowrap !important;
+    }
+    .s1p-nav-search-toggle {
+      display: none;
+      flex: 0 0 auto;
+      align-items: center;
+      justify-content: center;
+      align-self: center;
+      box-sizing: border-box;
+      width: auto;
+      min-width: 46px;
+      height: 32px;
+      margin: 0 2px;
+      padding: 0 8px;
+      color: var(--s1p-t) !important;
+      background: transparent !important;
+      font: inherit;
+      line-height: 35px;
+      text-align: center;
+      white-space: nowrap;
+      transition: background-color 0.15s ease, transform 0.1s ease;
+    }
+    .s1p-nav-search-toggle-visible {
+      display: flex !important;
+    }
+    .s1p-nav-search-toggle:hover,
+    .s1p-nav-search-toggle:focus-visible {
+      background: var(--s1p-hover-overlay) !important;
+      outline: none;
+    }
+    .s1p-nav-search-toggle:active {
+      transform: translateY(1px);
+    }
+    .s1p-nav-search-popover {
+      position: fixed;
+      z-index: 10004;
+      display: flex;
+      width: min(300px, calc(100vw - 16px));
+      padding: 6px;
+      box-sizing: border-box;
+      border: 0;
+      border-radius: 8px;
+      background: var(--s1p-inline-action-surface-bg);
+      box-shadow: var(--s1p-inline-action-surface-shadow);
+      -webkit-backdrop-filter: var(--s1p-floating-surface-filter);
+      backdrop-filter: var(--s1p-floating-surface-filter);
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transform: translateY(-4px) scale(0.98);
+      transition: opacity 0.15s ease-out, transform 0.15s ease-out,
+        visibility 0.15s;
+    }
+    .s1p-nav-search-popover-visible {
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+      transform: translateY(0) scale(1);
+    }
+    .s1p-nav-search-popover[hidden] {
+      display: none !important;
+    }
+    .s1p-nav-search-popover #scbar {
+      display: block !important;
+      width: 100% !important;
+      min-width: 0 !important;
+      height: auto !important;
+      padding: 0 !important;
+      flex: none !important;
+    }
+    .s1p-nav-search-popover #scbar_form,
+    .s1p-nav-search-popover #scbar_form > table,
+    .s1p-nav-search-popover #scbar_form > table > tbody,
+    .s1p-nav-search-popover #scbar_form > table > tbody > tr {
+      display: flex;
+      width: 100%;
+      min-width: 0 !important;
+    }
+    .s1p-nav-search-popover #scbar_form > table > tbody > tr {
+      margin: 0 !important;
+    }
+    .s1p-nav-search-popover .scbar_type_td,
+    .s1p-nav-search-popover .scbar_btn_td {
+      flex: 0 0 auto;
+    }
+    .s1p-nav-search-popover .scbar_txt_td {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    .s1p-nav-search-popover #scbar_txt {
+      width: 100%;
+      max-width: none;
+      min-width: 0;
+    }
+    .s1p-nav-overflow {
+      flex: 0 0 auto;
+    }
+    .s1p-nav-overflow[hidden],
+    .s1p-nav-overflow-hidden {
+      display: none !important;
+    }
+    .s1p-nav-overflow-menu {
+      position: fixed;
+      z-index: 10004;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 120px;
+      max-width: min(280px, calc(100vw - 16px));
+      padding: 4px;
+      box-sizing: border-box;
+      border: 0;
+      border-radius: 8px;
+      background: var(--s1p-inline-action-surface-bg);
+      box-shadow: var(--s1p-inline-action-surface-shadow);
+      -webkit-backdrop-filter: var(--s1p-floating-surface-filter);
+      backdrop-filter: var(--s1p-floating-surface-filter);
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transform: translateY(-4px) scale(0.98);
+      transition: opacity 0.15s ease-out, transform 0.15s ease-out,
+        visibility 0.15s;
+    }
+    .s1p-nav-overflow-menu-visible {
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+      transform: translateY(0) scale(1);
+    }
+    .s1p-nav-overflow-menu[hidden] {
+      display: none !important;
+    }
+    .s1p-nav-overflow-menu a {
+      display: block;
+      padding: 6px 10px;
+      border-radius: 5px;
+      color: var(--s1p-t) !important;
+      font-size: 13px;
+      line-height: 1.3;
+      text-align: left;
+      white-space: nowrap;
+    }
+    .s1p-nav-overflow-menu a:hover,
+    .s1p-nav-overflow-menu a:focus-visible {
+      background: var(--s1p-inline-action-hover-bg);
+      color: var(--s1p-t) !important;
+      outline: none;
+    }
+    .s1p-nav-overflow-menu [hidden] {
+      display: none !important;
+    }
+    @media (min-width: ${NARROW_SCREEN_MAX_WIDTH_PX + 1}px) {
+      .s1p-nav-customized-header #nv > ul {
+        flex: 1 1 auto !important;
+        max-width: 100%;
+        overflow: hidden;
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .s1p-nav-overflow-menu,
+      .s1p-nav-search-popover {
+        transition: none;
+        transform: none;
+      }
+      .s1p-nav-search-toggle {
+        transition: none;
       }
     }
 
@@ -42868,8 +43555,12 @@
   const initializeNavbar = () => {
     const settings = getSettings();
     const navUl = document.querySelector("#nv > ul");
+    teardownNavbarCustomOverflow();
     if (!navUl) return;
     captureNativeNavLiTemplates(navUl);
+    const navRoot = navUl.closest("#nv");
+    const headerRoot =
+      document.querySelector("#hd > .wp") || navUl.closest("#hd .wp");
 
     const createManagerLink = () => {
       const li = document.createElement("li");
@@ -42890,9 +43581,15 @@
     if (settings.enableNavCustomization) {
       navUl.textContent = "";
       const usedTemplateIds = new Set();
-      normalizeCustomNavLinks(settings.customNavLinks).forEach((link) => {
+      const normalizedCustomNavLinks = normalizeCustomNavLinks(
+        settings.customNavLinks
+      );
+      const customNavItems = [];
+      normalizedCustomNavLinks.forEach((link) => {
         const linkName = String(link?.name ?? "").trim();
-        const linkHref = getSafeUrlAttributeValue(link?.href, { allowEmpty: false });
+        const linkHref = getSafeUrlAttributeValue(link?.href, {
+          allowEmpty: false,
+        });
         if (!linkName || !linkHref) return;
 
         const nativeTemplate = resolveNativeNavLiTemplateByHref(linkHref);
@@ -42920,12 +43617,26 @@
           li.appendChild(a);
         }
 
+        li.classList.add(S1P_NAV_CUSTOM_ITEM_CLASS);
         a.href = linkHref;
         a.textContent = linkName;
         a.setAttribute("hidefocus", "true");
         li.classList.toggle("a", window.location.href.includes(linkHref));
         navUl.appendChild(li);
+        customNavItems.push(li);
       });
+      navUl.appendChild(createManagerLink());
+      updateNavbarSyncButton();
+      setupNavbarCustomOverflow({
+        navUl,
+        navRoot,
+        headerRoot,
+        customNavItems,
+        customNavLinks: normalizedCustomNavLinks,
+        managerLink: document.getElementById("s1p-nav-link"),
+        searchBar: document.getElementById("scbar"),
+      });
+      return;
     }
     navUl.appendChild(createManagerLink());
     updateNavbarSyncButton();
