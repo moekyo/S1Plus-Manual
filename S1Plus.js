@@ -16741,6 +16741,43 @@
     foregroundRemoteSyncRecoveryRequestId = "";
   };
 
+  const s1pCancelPendingForegroundRemoteSyncForDisabledSetting = (
+    reason = "sync_disabled"
+  ) => {
+    const normalizedReason =
+      normalizeRemoteProbeText(reason, 120) || "sync_disabled";
+    clearForegroundRemoteSyncRecovery();
+    clearForegroundRemoteSyncRetry();
+    const pending = getPendingForegroundRemoteSyncRequest();
+    if (!pending) {
+      refreshAutoSyncIndicatorRuntimeDisplay(
+        "foreground_remote_sync_disabled"
+      );
+      return {
+        status: "skipped",
+        reason: "no_pending_foreground_remote_sync",
+      };
+    }
+
+    const result = clearPendingForegroundRemoteSyncRequest(
+      null,
+      normalizedReason
+    );
+    clearForegroundRemoteSyncRecovery();
+    refreshAutoSyncIndicatorRuntimeDisplay("foreground_remote_sync_disabled");
+    recordSyncTraceEvent("foreground_pending_cancelled_by_settings", {
+      scope: "foreground_probe",
+      status: result.status,
+      message: "同步设置已关闭，已取消前台待拉取意图",
+      details: {
+        reason: normalizedReason,
+        requestId: pending.requestId,
+        remoteUpdatedAt: pending.remoteUpdatedAt,
+      },
+    });
+    return result;
+  };
+
   const getForegroundRemoteSyncRecoveryRemainingMs = (
     now = Date.now()
   ) => {
@@ -16954,15 +16991,18 @@
     }
 
     const settings = options.settingsSnapshot || getSettings();
-    if (
-      !settings.syncRemoteEnabled ||
-      !settings.syncRemoteGistId ||
-      !settings.syncRemotePat
-    ) {
+    if (settings.syncRemoteEnabled !== true) {
+      return s1pCancelPendingForegroundRemoteSyncForDisabledSetting(
+        "remote_sync_disabled"
+      );
+    }
+    if (!settings.syncRemoteGistId || !settings.syncRemotePat) {
       return { status: "skipped", reason: "sync_not_ready" };
     }
     if (settings.syncCheckOnReturnToForeground !== true) {
-      return { status: "skipped", reason: "foreground_check_disabled" };
+      return s1pCancelPendingForegroundRemoteSyncForDisabledSetting(
+        "foreground_check_disabled"
+      );
     }
     if (getActiveAutoSyncConflictPause()) {
       return { status: "skipped", reason: "conflict_paused" };
@@ -18568,7 +18608,11 @@
   ) => {
     const normalizedSource = s1pNormalizeSyncResultPhaseSource(source);
     if (normalizedSource === "background") {
-      if (result?.status === "failure" && !result.failureState?.open) {
+      if (
+        result?.status === "failure" &&
+        result.retryable !== false &&
+        !result.failureState?.open
+      ) {
         return {
           kind: "background",
           reason: "failure",
@@ -18588,7 +18632,9 @@
       return null;
     }
     const isRetryableFailure = Boolean(
-      result?.status === "failure" && !result.failureState?.open
+      result?.status === "failure" &&
+        result.retryable !== false &&
+        !result.failureState?.open
     );
     const isRetryableSkip = Boolean(
       result?.status === "skipped" &&
@@ -30268,6 +30314,16 @@
     return error;
   };
 
+  const s1pIsRemoteSyncCredentialRejectionError = (error = {}) => {
+    const status = Number(error?.status);
+    return (
+      error?.code === REMOTE_SYNC_AUTH_REJECTED_CODE ||
+      error?.credentialRejected === true ||
+      status === 401 ||
+      (status === 403 && error?.retryable !== true)
+    );
+  };
+
   const assertRemoteSyncNotCancelled = (generation) => {
     if (remoteSyncCancelGeneration !== generation) {
       throw createRemoteSyncCancelledError(remoteSyncCancelReason);
@@ -30398,6 +30454,9 @@
         httpError.retryable =
           REMOTE_SYNC_RETRYABLE_STATUS.has(response.status) ||
           isRetryableGitHubRateLimit403;
+        httpError.credentialRejected =
+          response.status === 401 ||
+          (response.status === 403 && !isRetryableGitHubRateLimit403);
         throw httpError;
       } catch (error) {
         if (error?.code === REMOTE_SYNC_CANCELLED_CODE) {
@@ -31846,7 +31905,10 @@
           details: { metadataOnly, status: error.status },
           level: "error",
         });
-        if (error.status === 401) {
+        if (
+          error?.code === REMOTE_SYNC_AUTH_REJECTED_CODE ||
+          error?.status === 401
+        ) {
           throw createRemoteSyncAuthRejectedError(error, metadataOnly ? "remote_probe" : "remote_fetch");
         }
         const requestError = new Error(
@@ -31854,6 +31916,8 @@
         );
         requestError.status = error.status;
         requestError.response = error.response;
+        requestError.retryable = error.retryable === true;
+        requestError.credentialRejected = error.credentialRejected === true;
         throw requestError;
       }
       recordSyncTraceEvent("remote_fetch_error", {
@@ -32155,6 +32219,8 @@
       const pushError = new Error(errorMessage);
       pushError.status = error.status;
       pushError.response = error.response;
+      pushError.retryable = error.retryable === true;
+      pushError.credentialRejected = error.credentialRejected === true;
       throw pushError;
     }
   };
@@ -33655,11 +33721,15 @@
       recordSyncFailure(error.message, syncMode, syncDiagnosticsContext);
       const failureState = registerAutoSyncFailure(syncMode);
       updateLastSyncTimeDisplay();
-      return rememberSyncCompletionResult({
+      const failureResult = {
         status: "failure",
         error: error.message,
         failureState,
-      });
+      };
+      if (s1pIsRemoteSyncCredentialRejectionError(error)) {
+        failureResult.retryable = false;
+      }
+      return rememberSyncCompletionResult(failureResult);
     } finally {
       isInitialSyncInProgress = false;
       if (syncOutcome === "conflict") {
@@ -37176,6 +37246,19 @@
       );
     }
     console.log("S1 Plus: Settings saved.");
+    const disabledForegroundRemoteSyncReason =
+      currentSettings.syncRemoteEnabled === true &&
+      normalizedSettings.syncRemoteEnabled !== true
+        ? "remote_sync_disabled"
+        : currentSettings.syncCheckOnReturnToForeground === true &&
+            normalizedSettings.syncCheckOnReturnToForeground !== true
+          ? "foreground_check_disabled"
+          : "";
+    if (disabledForegroundRemoteSyncReason) {
+      s1pCancelPendingForegroundRemoteSyncForDisabledSetting(
+        disabledForegroundRemoteSyncReason
+      );
+    }
     syncVisibleRemoteFreshnessPollingForCurrentState();
     reconcileBackgroundSyncSchedulerForSettings(normalizedSettings);
     if (!suppressSyncTrigger) {
