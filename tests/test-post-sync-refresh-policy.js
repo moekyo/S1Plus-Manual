@@ -1225,12 +1225,72 @@ const testCredentialRejectionDoesNotScheduleForegroundRetry = async () => {
   }
 };
 
+const testRateLimited403RemainsRetryableForForegroundPolicy = async () => {
+  const { hooks, sandbox } = createHarness();
+  let requestCount = 0;
+  let sleepCount = 0;
+  sandbox.GM_xmlhttpRequest = ({ onload }) => {
+    requestCount += 1;
+    onload({
+      status: 403,
+      responseText: JSON.stringify({ message: "API rate limit exceeded" }),
+    });
+    return { abort: noop };
+  };
+  const immediateSetTimeout = (callback) => {
+    sleepCount += 1;
+    callback();
+    return 1;
+  };
+  sandbox.setTimeout = immediateSetTimeout;
+  sandbox.window.setTimeout = immediateSetTimeout;
+
+  let normalizedError;
+  try {
+    await hooks.fetchRemoteData({
+      metadataOnly: true,
+      settingsSnapshot: {
+        syncRemoteGistId: "gist-id",
+        syncRemotePat: "pat-token",
+      },
+    });
+  } catch (error) {
+    normalizedError = error;
+  }
+
+  assert.ok(normalizedError, "rate-limited 403 必须从 production wrapper 返回错误。");
+  assert.equal(requestCount, 3, "rate-limited 403 应按 retry policy 重试到上限。");
+  assert.equal(normalizedError.status, 403);
+  assert.equal(normalizedError.response.status, 403);
+  assert.equal(normalizedError.retryable, true);
+  assert.equal(normalizedError.credentialRejected, false);
+
+  let retryCalls = 0;
+  const policy = hooks.s1pCreateSyncResultPhasePolicy();
+  const foregroundResult = {
+    status: "failure",
+    error: normalizedError.message,
+    retryable: normalizedError.retryable,
+  };
+  const outcome = await policy.handle(foregroundResult, {
+    source: "foreground",
+    scheduleRetry: () => {
+      retryCalls += 1;
+      return { status: "scheduled" };
+    },
+  });
+  assert.equal(outcome.retryIntent.kind, "foreground");
+  assert.equal(retryCalls, 1);
+  assert.equal(sleepCount, 2, "rate-limited 403 应执行两次 retry backoff。");
+};
+
 const main = async () => {
   testStaticWiring();
   await testResultPhasePolicyOwnsRefreshAndSuppression();
   await testResultPhasePolicyOwnsConflictAndRetryIntents();
   await testResultPhasePolicyHandlesRetryAndFallbackEdges();
   await testCredentialRejectionDoesNotScheduleForegroundRetry();
+  await testRateLimited403RemainsRetryableForForegroundPolicy();
   testBackgroundRetryAdapterReturnsExplicitStatuses();
   await testResultPhasePolicyDefersSourceSpecificProductBehavior();
   await testResultPhasePolicyIsolatesAdapterFailuresBeforeRetry();
