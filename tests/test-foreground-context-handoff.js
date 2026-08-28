@@ -656,6 +656,195 @@ const testInFlightForegroundFailureCannotResurrectAfterRemoteSyncDisable = async
   });
 };
 
+const runForegroundEntrySingleFlightOwnerCase = async (oldRequestResult) => {
+  const { hooks, sandbox, store } = createHarness();
+  const settings = {
+    ...hooks.getSettings(),
+    ...enabledSettings,
+    syncAutoEnabled: false,
+    syncPerLoadCheckEnabled: false,
+    syncDeviceId: "device-a",
+  };
+  hooks.saveSettings(settings, {
+    suppressSyncTrigger: true,
+    forceWrite: true,
+  });
+  hooks.setSyncBaselineState({
+    contentHash: "baseline-hash",
+    remoteUpdatedAt: "2026-08-27T05:20:00Z",
+  });
+
+  const timers = [];
+  const clearedTimerIds = [];
+  const fakeSetTimeout = (callback, delayMs) => {
+    const timerId = timers.length + 1;
+    timers.push({ callback, delayMs, timerId });
+    return timerId;
+  };
+  sandbox.setTimeout = fakeSetTimeout;
+  sandbox.window.setTimeout = fakeSetTimeout;
+  sandbox.clearTimeout = (timerId) => {
+    clearedTimerIds.push(timerId);
+  };
+  sandbox.window.clearTimeout = sandbox.clearTimeout;
+
+  let resolveOldRequest;
+  let foregroundRequestCount = 0;
+  let oldProbeStartedResolve;
+  const oldProbeStarted = new Promise((resolve) => {
+    oldProbeStartedResolve = resolve;
+  });
+  const oldRequest = new Promise((resolve) => {
+    resolveOldRequest = resolve;
+  });
+  let oldPolicyCalls = 0;
+  const oldProbePromise = hooks.s1pSyncSystem.requestSync({
+    kind: "foreground_probe",
+    reason: "pageshow",
+    options: {
+      now: 1760001100000,
+      settingsSnapshot: settings,
+      acquireRemoteProbeLock: async () => true,
+      releaseRemoteProbeLockValue: () => {},
+      fetchRemoteData: async () => ({
+        meta: { updatedAt: "2026-08-27T05:25:29Z" },
+      }),
+      syncResultPhasePolicy: {
+        handle: async () => {
+          oldPolicyCalls += 1;
+          return { refreshPlan: null, retryResult: null };
+        },
+      },
+      requestForegroundRemoteSyncCheckOverrides: {
+        acquireForegroundFollowUpSyncLock: async () => true,
+        startForegroundFollowUpSyncLockHeartbeat: () => {},
+        stopForegroundFollowUpSyncLockHeartbeat: () => {},
+        releaseForegroundFollowUpSyncLock: () => {},
+        performAutoSync: async () => {
+          foregroundRequestCount += 1;
+          oldProbeStartedResolve();
+          return oldRequest;
+        },
+      },
+    },
+  });
+
+  await Promise.race([oldProbeStarted, wait(100)]);
+  assert.equal(foregroundRequestCount, 1);
+  const oldPending = hooks.getPendingForegroundRemoteSyncRequest();
+  assert.ok(oldPending);
+  const oldRequestId = oldPending.requestId;
+
+  hooks.scheduleForegroundRemoteSyncRecovery(oldPending, {
+    now: 1760001100000,
+  });
+  hooks.scheduleForegroundRemoteSyncRetry("owner_replacement_probe", {
+    preferredDelayMs: 1800,
+  });
+
+  hooks.saveSettings(
+    {
+      ...hooks.getSettings(),
+      syncCheckOnReturnToForeground: false,
+    },
+    { suppressSyncTrigger: true, forceWrite: true }
+  );
+  assert.equal(store.has(PENDING_FOREGROUND_REMOTE_SYNC_KEY), false);
+  assert.equal(hooks.getPendingForegroundRemoteSyncRequest(), null);
+  assert.equal(hooks.getForegroundRemoteSyncRecoveryRemainingMs(), 0);
+  assert.equal(hooks.getForegroundRemoteSyncRetryRemainingMs(), 0);
+  assert.ok(clearedTimerIds.length >= 2);
+
+  hooks.saveSettings(
+    {
+      ...hooks.getSettings(),
+      syncCheckOnReturnToForeground: true,
+    },
+    { suppressSyncTrigger: true, forceWrite: true }
+  );
+
+  let newMetadataRequestCount = 0;
+  let newFollowUpRequestCount = 0;
+  let newPolicyCalls = 0;
+  const newProbePromise = hooks.s1pSyncSystem.requestSync({
+    kind: "foreground_probe",
+    reason: "pageshow",
+    options: {
+      now: 1760001105000,
+      settingsSnapshot: hooks.getSettings(),
+      acquireRemoteProbeLock: async () => true,
+      releaseRemoteProbeLockValue: () => {},
+      fetchRemoteData: async () => {
+        newMetadataRequestCount += 1;
+        return { meta: { updatedAt: "2026-08-27T05:26:29Z" } };
+      },
+      syncResultPhasePolicy: {
+        handle: async () => {
+          newPolicyCalls += 1;
+          return { refreshPlan: null, retryResult: null };
+        },
+      },
+      requestForegroundRemoteSyncCheckOverrides: {
+        acquireForegroundFollowUpSyncLock: async () => true,
+        startForegroundFollowUpSyncLockHeartbeat: () => {},
+        stopForegroundFollowUpSyncLockHeartbeat: () => {},
+        releaseForegroundFollowUpSyncLock: () => {},
+        performAutoSync: async () => {
+          newFollowUpRequestCount += 1;
+          return { status: "success", action: "pulled" };
+        },
+      },
+    },
+  });
+  const newProbeResult = await newProbePromise;
+
+  assert.deepEqual(toPlainObject(newProbeResult), {
+    status: "skipped",
+    reason: "probe_in_flight",
+  });
+  assert.equal(newMetadataRequestCount, 0);
+  assert.equal(newFollowUpRequestCount, 0);
+  assert.equal(newPolicyCalls, 0);
+  assert.equal(foregroundRequestCount, 1);
+  assert.equal(hooks.getPendingForegroundRemoteSyncRequest(), null);
+  assert.equal(hooks.getForegroundRemoteSyncRecoveryRemainingMs(), 0);
+  assert.equal(hooks.getForegroundRemoteSyncRetryRemainingMs(), 0);
+  assert.equal(
+    hooks.getAutoSyncRuntimePendingDisplayState().hasPending,
+    false
+  );
+
+  resolveOldRequest(oldRequestResult);
+  const oldProbeResult = await oldProbePromise;
+  assert.equal(oldProbeResult.reason, "foreground_sync_request_cancelled");
+  assert.equal(oldPolicyCalls, 0);
+  assert.equal(foregroundRequestCount, 1);
+  assert.equal(hooks.getPendingForegroundRemoteSyncRequest(), null);
+  assert.equal(hooks.getForegroundRemoteSyncRecoveryRemainingMs(), 0);
+  assert.equal(hooks.getForegroundRemoteSyncRetryRemainingMs(), 0);
+  assert.equal(
+    hooks.getAutoSyncRuntimePendingDisplayState().hasPending,
+    false
+  );
+  assert.equal(
+    oldRequestId,
+    oldPending.requestId,
+    "旧请求 owner 必须在 disable 前被明确记录。"
+  );
+};
+
+const testForegroundEntryCannotReplaceCancelledInFlightOwner = async () => {
+  await runForegroundEntrySingleFlightOwnerCase({
+    status: "success",
+    action: "pulled",
+  });
+  await runForegroundEntrySingleFlightOwnerCase({
+    status: "failure",
+    retryable: true,
+    error: "transient timeout",
+  });
+};
+
 const testRecoveryConsumesForegroundResultPhase = async () => {
   const { hooks, sandbox } = createHarness();
   const pending = hooks.markPendingForegroundRemoteSyncRequest({
@@ -829,6 +1018,7 @@ const testCollectedS1pLogsIncludeRuntimeContext = () => {
   await testInFlightForegroundCompletionCannotCrossReenabledEpoch();
   await testRejectedInFlightForegroundRequestCannotResurrectAfterDisable();
   await testInFlightForegroundFailureCannotResurrectAfterRemoteSyncDisable();
+  await testForegroundEntryCannotReplaceCancelledInFlightOwner();
   await testRecoveryConsumesForegroundResultPhase();
   await testRecoveryInFlightResultKeepsADeferredAttempt();
   testRecoverySupportDisposeCancelsRecoveryTimer();
