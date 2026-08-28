@@ -352,6 +352,130 @@ const testDurableForegroundIntentDoesNotAgeIntoIdle = () => {
   );
 };
 
+const runDisabledForegroundPendingCancellationCase = (settingKey) => {
+  const { hooks, sandbox, store } = createHarness();
+  hooks.saveSettings(
+    {
+      ...hooks.getSettings(),
+      ...enabledSettings,
+      syncAutoEnabled: false,
+      syncDeviceId: "device-a",
+    },
+    { suppressSyncTrigger: true, forceWrite: true }
+  );
+
+  const timers = [];
+  const clearedTimerIds = [];
+  const fakeSetTimeout = (callback, delayMs) => {
+    const timerId = timers.length + 1;
+    timers.push({ callback, delayMs, timerId });
+    return timerId;
+  };
+  sandbox.setTimeout = fakeSetTimeout;
+  sandbox.window.setTimeout = fakeSetTimeout;
+  sandbox.clearTimeout = (timerId) => {
+    clearedTimerIds.push(timerId);
+  };
+  sandbox.window.clearTimeout = sandbox.clearTimeout;
+
+  const pending = hooks.markPendingForegroundRemoteSyncRequest({
+    reason: "pageshow",
+    triggerSource: "foreground_resume",
+    remoteUpdatedAt: "2026-08-27T05:25:29Z",
+    now: 1760001000000,
+  });
+  hooks.scheduleForegroundRemoteSyncRecovery(pending, {
+    now: 1760001000000,
+    requestForegroundRemoteSyncCheck: async () => {
+      throw new Error("disabled foreground recovery must not run");
+    },
+  });
+
+  assert.deepEqual(
+    toPlainObject(
+      hooks.getAutoSyncRuntimePendingDisplayState(1760001000000)
+    ),
+    {
+      hasPending: true,
+      source: "foreground_resume",
+      reason: "foreground_remote_update_pending",
+      operation: "pull",
+      sources: {},
+    }
+  );
+
+  hooks.saveSettings(
+    {
+      ...hooks.getSettings(),
+      [settingKey]: false,
+    },
+    { suppressSyncTrigger: true, forceWrite: true }
+  );
+
+  assert.equal(
+    store.has(PENDING_FOREGROUND_REMOTE_SYNC_KEY),
+    false,
+    `${settingKey}=false 时必须删除 durable foreground pending intent。`
+  );
+  assert.equal(
+    hooks.getForegroundRemoteSyncRecoveryRemainingMs(),
+    0,
+    `${settingKey}=false 时必须取消 foreground recovery timer。`
+  );
+  assert.equal(clearedTimerIds.length, 1);
+  const displayAfterCancellation = toPlainObject(
+    hooks.getAutoSyncRuntimePendingDisplayState()
+  );
+  assert.equal(displayAfterCancellation.hasPending, false);
+  assert.notEqual(displayAfterCancellation.source, "foreground_resume");
+  assert.notEqual(displayAfterCancellation.operation, "pull");
+
+  hooks.markPendingForegroundRemoteSyncRequest({
+    reason: "stale_context_after_setting_change",
+    triggerSource: "foreground_resume",
+    remoteUpdatedAt: "2026-08-27T05:26:29Z",
+    now: 1760001060000,
+  });
+  let recoveryRequestCount = 0;
+  const recoveryResult = hooks.recoverPendingForegroundRemoteSyncIfNeeded({
+    requestForegroundRemoteSyncCheck: async () => {
+      recoveryRequestCount += 1;
+      return { status: "success", action: "pulled" };
+    },
+  });
+  assert.equal(recoveryResult.status, "cleared");
+  assert.equal(store.has(PENDING_FOREGROUND_REMOTE_SYNC_KEY), false);
+  assert.equal(hooks.getForegroundRemoteSyncRecoveryRemainingMs(), 0);
+  assert.equal(recoveryRequestCount, 0);
+
+  hooks.saveSettings(
+    {
+      ...hooks.getSettings(),
+      [settingKey]: true,
+    },
+    { suppressSyncTrigger: true, forceWrite: true }
+  );
+  assert.equal(
+    hooks.getPendingForegroundRemoteSyncRequest(),
+    null,
+    `${settingKey} 重新启用时不得 resurrect 关闭前的旧 intent。`
+  );
+  assert.equal(
+    hooks.recoverPendingForegroundRemoteSyncIfNeeded().reason,
+    "no_pending_foreground_remote_sync"
+  );
+};
+
+const testDisablingForegroundCheckCancelsDurablePendingIntent = () => {
+  runDisabledForegroundPendingCancellationCase(
+    "syncCheckOnReturnToForeground"
+  );
+};
+
+const testDisablingRemoteSyncCancelsDurablePendingIntent = () => {
+  runDisabledForegroundPendingCancellationCase("syncRemoteEnabled");
+};
+
 const testRecoveryConsumesForegroundResultPhase = async () => {
   const { hooks, sandbox } = createHarness();
   const pending = hooks.markPendingForegroundRemoteSyncRequest({
@@ -519,6 +643,8 @@ const testCollectedS1pLogsIncludeRuntimeContext = () => {
   await testForegroundRetryCannotClearIntentCreatedDuringItsRun();
   await testForegroundFailureRetainsDurableIntent();
   testDurableForegroundIntentDoesNotAgeIntoIdle();
+  testDisablingForegroundCheckCancelsDurablePendingIntent();
+  testDisablingRemoteSyncCancelsDurablePendingIntent();
   await testRecoveryConsumesForegroundResultPhase();
   await testRecoveryInFlightResultKeepsADeferredAttempt();
   testRecoverySupportDisposeCancelsRecoveryTimer();

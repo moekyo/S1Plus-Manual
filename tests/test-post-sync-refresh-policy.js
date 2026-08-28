@@ -1179,11 +1179,58 @@ const testForegroundSameMachineNoChangeKeepsSpecificReason = () => {
   );
 };
 
+const testCredentialRejectionDoesNotScheduleForegroundRetry = async () => {
+  for (const status of [401, 403]) {
+    const { hooks, sandbox } = createHarness();
+    hooks.saveSettings(
+      {
+        ...hooks.getSettings(),
+        syncRemoteEnabled: true,
+        syncRemoteGistId: "gist-id",
+        syncRemotePat: "pat-token",
+        syncAutoEnabled: false,
+      },
+      { suppressSyncTrigger: true, forceWrite: true }
+    );
+    sandbox.GM_xmlhttpRequest = ({ onload }) => {
+      onload({
+        status,
+        responseText: JSON.stringify({ message: "credential rejected" }),
+      });
+      return { abort: noop };
+    };
+
+    const result = await hooks.performAutoSync({
+      mode: "foreground_followup",
+      triggerSource: "foreground_resume",
+    });
+    assert.equal(result.status, "failure");
+    assert.equal(
+      result.retryable,
+      false,
+      `${status} credential rejection must be explicitly non-retryable.`
+    );
+
+    let retryCalls = 0;
+    const policy = hooks.s1pCreateSyncResultPhasePolicy();
+    const outcome = await policy.handle(result, {
+      source: "foreground",
+      scheduleRetry: () => {
+        retryCalls += 1;
+        return { status: "scheduled" };
+      },
+    });
+    assert.equal(outcome.retryIntent, null);
+    assert.equal(retryCalls, 0);
+  }
+};
+
 const main = async () => {
   testStaticWiring();
   await testResultPhasePolicyOwnsRefreshAndSuppression();
   await testResultPhasePolicyOwnsConflictAndRetryIntents();
   await testResultPhasePolicyHandlesRetryAndFallbackEdges();
+  await testCredentialRejectionDoesNotScheduleForegroundRetry();
   testBackgroundRetryAdapterReturnsExplicitStatuses();
   await testResultPhasePolicyDefersSourceSpecificProductBehavior();
   await testResultPhasePolicyIsolatesAdapterFailuresBeforeRetry();
