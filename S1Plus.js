@@ -14292,11 +14292,17 @@
     ) {
       return foregroundRetryPendingState;
     }
-
     const foregroundPending =
       typeof getPendingForegroundRemoteSyncRequest === "function"
         ? getPendingForegroundRemoteSyncRequest()
         : null;
+    if (
+      foregroundPending &&
+      foregroundRetryPendingState?.operation ===
+        AUTO_SYNC_INDICATOR_OPERATION_SYNC
+    ) {
+      return foregroundRetryPendingState;
+    }
     if (foregroundPending) {
       return {
         hasPending: true,
@@ -15640,25 +15646,32 @@
     }
 
     const now = Date.now();
+    const resolvedSource =
+      normalizeAutoSyncIndicatorSource(source) ||
+      AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND;
+    const normalizedReason = normalizeAutoSyncIndicatorReason(reason);
+    const normalizedOperation = normalizeAutoSyncIndicatorOperation(
+      options.operation
+    );
     // 对高频 pending 触发做短时去重，避免跨标签 GM 写入风暴。
     if (
       current.phase === AUTO_SYNC_INDICATOR_PHASE_PENDING &&
-      now - (Number(current.timestamp) || 0) < 1000
+      now - (Number(current.timestamp) || 0) < 1000 &&
+      current.source === resolvedSource &&
+      current.reason === normalizedReason &&
+      current.operation === normalizedOperation
     ) {
       return false;
     }
     const lastResolvedSnapshot = buildAutoSyncIndicatorLastResolvedSnapshot(current);
-    const resolvedSource =
-      normalizeAutoSyncIndicatorSource(source) ||
-      AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND;
     clearAutoSyncIndicatorDeferredResolve();
     persistAutoSyncIndicatorState({
       phase: AUTO_SYNC_INDICATOR_PHASE_PENDING,
       timestamp: now,
       token: current.token || "",
       source: resolvedSource,
-      reason: normalizeAutoSyncIndicatorReason(reason),
-      operation: normalizeAutoSyncIndicatorOperation(options.operation),
+      reason: normalizedReason,
+      operation: normalizedOperation,
       ...lastResolvedSnapshot,
     });
     return true;
@@ -16717,6 +16730,16 @@
     );
   };
 
+  const isForegroundRemoteSyncCompletionCancelled = (
+    pendingBeforeSync = null,
+    pendingSettlement = null
+  ) =>
+    Boolean(
+      pendingBeforeSync &&
+        pendingSettlement?.status === "skipped" &&
+        pendingSettlement.reason === "no_pending_foreground_remote_sync"
+    );
+
   const isPendingForegroundRemoteSyncCovered = (pendingInput = null) => {
     const pending = normalizePendingForegroundRemoteSyncRequest(pendingInput);
     if (!pending) {
@@ -16880,6 +16903,9 @@
           options.requestForegroundRemoteSyncCheckOverrides || {}
         );
       } catch (error) {
+        if (!getPendingForegroundRemoteSyncRequest()) {
+          return;
+        }
         const retryResult = scheduleForegroundRemoteSyncRetry(
           `pending_foreground_remote_sync:${latestPending.reason}`,
           {
@@ -16917,6 +16943,15 @@
           recoveryReason: result?.reason || "",
         },
       });
+
+      if (
+        isForegroundRemoteSyncCompletionCancelled(
+          latestPending,
+          settled
+        )
+      ) {
+        return;
+      }
 
       const remoteChangeKind = getForegroundRemoteChangeKind({
         syncRequestResult: result,
@@ -34330,6 +34365,7 @@
         return;
       }
 
+      const pendingBeforeSync = getPendingForegroundRemoteSyncRequest();
       try {
         const gateBlockResult = (
           options.getForegroundProbeGateBlockResult ||
@@ -34347,7 +34383,6 @@
           return;
         }
 
-        const pendingBeforeSync = getPendingForegroundRemoteSyncRequest();
         const syncResult = await (
           options.requestForegroundRemoteSyncCheck ||
           requestForegroundRemoteSyncCheck
@@ -34364,6 +34399,14 @@
               status: "skipped",
               reason: "no_pending_foreground_remote_sync_before_retry",
             };
+        if (
+          isForegroundRemoteSyncCompletionCancelled(
+            pendingBeforeSync,
+            pendingSettlement
+          )
+        ) {
+          return;
+        }
         const remoteChangeKind = getForegroundRemoteChangeKind({
           syncRequestResult: syncResult,
           sameSessionRemoteWrite: syncResult?.sameSessionRemoteWrite === true,
@@ -34429,6 +34472,12 @@
           }
         );
       } catch (error) {
+        if (
+          pendingBeforeSync &&
+          !getPendingForegroundRemoteSyncRequest()
+        ) {
+          return;
+        }
         console.error(
           `S1 Plus: 前台远端检查补偿重试失败(${normalizedReason}):`,
           error
@@ -34883,6 +34932,27 @@
           pendingSettlement: pendingSettlement.status,
         },
       });
+      if (
+        isForegroundRemoteSyncCompletionCancelled(
+          pendingForegroundRemoteSyncRequest,
+          pendingSettlement
+        )
+      ) {
+        return finalizeResult(
+          {
+            status: "skipped",
+            reason: "foreground_sync_request_cancelled",
+            remoteUpdatedAt,
+            lastSyncedRemoteUpdatedAt,
+            lastObservedRemoteUpdatedAt,
+          },
+          {
+            remoteUpdatedAt,
+            triggeredSync: false,
+            lastSyncedRemoteUpdatedAt,
+          }
+        );
+      }
       const hasAuthoritativeSyncAttribution = (syncResult) =>
         syncResult &&
         typeof syncResult === "object" &&

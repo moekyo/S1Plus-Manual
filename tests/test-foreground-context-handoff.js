@@ -7,6 +7,8 @@ const {
   toPlainObject,
 } = require("./s1plus-test-helpers");
 
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 const createHarness = (options = {}) =>
   createBaseHarness({
     ...options,
@@ -476,6 +478,184 @@ const testDisablingRemoteSyncCancelsDurablePendingIntent = () => {
   runDisabledForegroundPendingCancellationCase("syncRemoteEnabled");
 };
 
+const runInFlightForegroundCancellationCase = async ({
+  disabledSettingKey = "syncCheckOnReturnToForeground",
+  reenableBeforeCompletion = false,
+  shouldRejectOldRequest = false,
+} = {}) => {
+  const { hooks, sandbox, store } = createHarness();
+  const settings = {
+    ...hooks.getSettings(),
+    ...enabledSettings,
+    syncAutoEnabled: false,
+    syncPerLoadCheckEnabled: false,
+    syncDeviceId: "device-a",
+  };
+  hooks.saveSettings(settings, {
+    suppressSyncTrigger: true,
+    forceWrite: true,
+  });
+  assert.equal(hooks.getSettings().syncCheckOnReturnToForeground, true);
+  hooks.setSyncBaselineState({
+    contentHash: "baseline-hash",
+    remoteUpdatedAt: "2026-08-27T05:20:00Z",
+  });
+
+  const timers = [];
+  const clearedTimerIds = [];
+  const fakeSetTimeout = (callback, delayMs) => {
+    const timerId = timers.length + 1;
+    timers.push({ callback, delayMs, timerId });
+    return timerId;
+  };
+  sandbox.setTimeout = fakeSetTimeout;
+  sandbox.window.setTimeout = fakeSetTimeout;
+  sandbox.clearTimeout = (timerId) => {
+    clearedTimerIds.push(timerId);
+  };
+  sandbox.window.clearTimeout = sandbox.clearTimeout;
+
+  let resolveOldRequest;
+  let rejectOldRequest;
+  let foregroundRequestStartedResolve;
+  const foregroundRequestStarted = new Promise((resolve) => {
+    foregroundRequestStartedResolve = resolve;
+  });
+  let foregroundRequestCount = 0;
+  const oldRequest = new Promise((resolve, reject) => {
+    resolveOldRequest = resolve;
+    rejectOldRequest = reject;
+  });
+  const oldProbePromise = hooks.s1pSyncSystem.requestSync({
+    kind: "foreground_probe",
+    reason: "pageshow",
+    options: {
+      now: 1760001100000,
+      settingsSnapshot: settings,
+      acquireRemoteProbeLock: async () => true,
+      releaseRemoteProbeLockValue: () => {},
+      fetchRemoteData: async () => ({
+        meta: { updatedAt: "2026-08-27T05:25:29Z" },
+      }),
+      requestForegroundRemoteSyncCheckOverrides: {
+        acquireForegroundFollowUpSyncLock: async () => true,
+        startForegroundFollowUpSyncLockHeartbeat: () => {},
+        stopForegroundFollowUpSyncLockHeartbeat: () => {},
+        releaseForegroundFollowUpSyncLock: () => {},
+        performAutoSync: async () => {
+          foregroundRequestCount += 1;
+          foregroundRequestStartedResolve();
+          return oldRequest;
+        },
+      },
+    },
+  });
+
+  await Promise.race([foregroundRequestStarted, wait(100)]);
+  assert.equal(foregroundRequestCount, 1, "旧 foreground request 必须保持 in-flight。");
+
+  const pending = hooks.getPendingForegroundRemoteSyncRequest();
+  assert.ok(pending, "in-flight foreground request 必须先拥有 durable pending intent。");
+  assert.deepEqual(
+    toPlainObject(hooks.getAutoSyncRuntimePendingDisplayState()),
+    {
+      hasPending: true,
+      source: "foreground_resume",
+      reason: "foreground_remote_update_pending",
+      operation: "pull",
+      sources: {},
+    }
+  );
+  const recovery = hooks.scheduleForegroundRemoteSyncRecovery(pending, {
+    now: 1760001100000,
+  });
+  assert.equal(recovery.status, "scheduled");
+  const retry = hooks.scheduleForegroundRemoteSyncRetry("in_flight_foreground_retry", {
+    preferredDelayMs: 1800,
+  });
+  assert.equal(retry.status, "scheduled");
+
+  hooks.saveSettings(
+    {
+      ...hooks.getSettings(),
+      [disabledSettingKey]: false,
+    },
+    { suppressSyncTrigger: true, forceWrite: true }
+  );
+
+  assert.equal(
+    store.has(PENDING_FOREGROUND_REMOTE_SYNC_KEY),
+    false,
+    "禁用 foreground check 时，in-flight request 的 durable pending 必须立即删除。"
+  );
+  assert.equal(hooks.getPendingForegroundRemoteSyncRequest(), null);
+  assert.equal(hooks.getForegroundRemoteSyncRecoveryRemainingMs(), 0);
+  assert.equal(hooks.getForegroundRemoteSyncRetryRemainingMs(), 0);
+  assert.ok(
+    clearedTimerIds.length >= 2,
+    "禁用 foreground check 时必须清理 recovery 与 retry timer。"
+  );
+  assert.equal(
+    hooks.getAutoSyncRuntimePendingDisplayState().hasPending,
+    false,
+    "禁用 foreground check 后 indicator 不能继续显示 pending。"
+  );
+
+  if (reenableBeforeCompletion) {
+    hooks.saveSettings(
+      {
+        ...hooks.getSettings(),
+        [disabledSettingKey]: true,
+        syncPerLoadCheckEnabled: false,
+      },
+      { suppressSyncTrigger: true, forceWrite: true }
+    );
+  }
+
+  if (shouldRejectOldRequest) {
+    rejectOldRequest(new Error("old foreground request rejected"));
+  } else {
+    resolveOldRequest({
+      status: "failure",
+      error: "old foreground request failed after setting cancellation",
+    });
+  }
+  await oldProbePromise;
+
+  assert.equal(hooks.getPendingForegroundRemoteSyncRequest(), null);
+  assert.equal(hooks.getForegroundRemoteSyncRecoveryRemainingMs(), 0);
+  assert.equal(hooks.getForegroundRemoteSyncRetryRemainingMs(), 0);
+  assert.equal(foregroundRequestCount, 1);
+  assert.equal(
+    hooks.getAutoSyncRuntimePendingDisplayState().hasPending,
+    false,
+    "旧 completion 不得把 indicator 恢复到 pending/retrying。"
+  );
+};
+
+const testInFlightForegroundFailureCannotResurrectAfterDisable = async () => {
+  await runInFlightForegroundCancellationCase();
+};
+
+const testInFlightForegroundCompletionCannotCrossReenabledEpoch = async () => {
+  await runInFlightForegroundCancellationCase({
+    reenableBeforeCompletion: true,
+  });
+};
+
+const testRejectedInFlightForegroundRequestCannotResurrectAfterDisable = async () => {
+  await runInFlightForegroundCancellationCase({
+    shouldRejectOldRequest: true,
+  });
+};
+
+const testInFlightForegroundFailureCannotResurrectAfterRemoteSyncDisable = async () => {
+  await runInFlightForegroundCancellationCase({
+    disabledSettingKey: "syncRemoteEnabled",
+    reenableBeforeCompletion: true,
+  });
+};
+
 const testRecoveryConsumesForegroundResultPhase = async () => {
   const { hooks, sandbox } = createHarness();
   const pending = hooks.markPendingForegroundRemoteSyncRequest({
@@ -645,6 +825,10 @@ const testCollectedS1pLogsIncludeRuntimeContext = () => {
   testDurableForegroundIntentDoesNotAgeIntoIdle();
   testDisablingForegroundCheckCancelsDurablePendingIntent();
   testDisablingRemoteSyncCancelsDurablePendingIntent();
+  await testInFlightForegroundFailureCannotResurrectAfterDisable();
+  await testInFlightForegroundCompletionCannotCrossReenabledEpoch();
+  await testRejectedInFlightForegroundRequestCannotResurrectAfterDisable();
+  await testInFlightForegroundFailureCannotResurrectAfterRemoteSyncDisable();
   await testRecoveryConsumesForegroundResultPhase();
   await testRecoveryInFlightResultKeepsADeferredAttempt();
   testRecoverySupportDisposeCancelsRecoveryTimer();
