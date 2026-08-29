@@ -146,6 +146,7 @@ class FakeElement extends FakeEventTarget {
     this.hidden = false;
     this.value = "";
     this.focused = false;
+    this.scrollIntoViewCalls = [];
     this._textContent = "";
     this._href = "";
     this._rectWidth = this.tagName === "LI" ? 40 : 0;
@@ -200,6 +201,11 @@ class FakeElement extends FakeEventTarget {
   }
 
   set textContent(value) {
+    const activeElement = this.ownerDocument?.activeElement;
+    if (activeElement && this.contains(activeElement)) {
+      activeElement.focused = false;
+      this.ownerDocument.activeElement = this.ownerDocument.body;
+    }
     this.children.forEach((child) => {
       child.parentNode = null;
     });
@@ -208,14 +214,26 @@ class FakeElement extends FakeEventTarget {
   }
 
   appendChild(child) {
-    if (child.parentNode) child.parentNode.removeChild(child);
+    if (child.parentNode) {
+      const currentIndex = child.parentNode.children.indexOf(child);
+      if (currentIndex !== -1) {
+        child.parentNode.children.splice(currentIndex, 1);
+      }
+      child.parentNode = null;
+    }
     this.children.push(child);
     child.parentNode = this;
     return child;
   }
 
   insertBefore(child, referenceChild) {
-    if (child.parentNode) child.parentNode.removeChild(child);
+    if (child.parentNode) {
+      const currentIndex = child.parentNode.children.indexOf(child);
+      if (currentIndex !== -1) {
+        child.parentNode.children.splice(currentIndex, 1);
+      }
+      child.parentNode = null;
+    }
     const referenceIndex = this.children.indexOf(referenceChild);
     if (referenceIndex === -1) return this.appendChild(child);
     this.children.splice(referenceIndex, 0, child);
@@ -236,6 +254,11 @@ class FakeElement extends FakeEventTarget {
   removeChild(child) {
     const index = this.children.indexOf(child);
     if (index !== -1) {
+      const activeElement = this.ownerDocument?.activeElement;
+      if (activeElement && child.contains(activeElement)) {
+        activeElement.focused = false;
+        this.ownerDocument.activeElement = this.ownerDocument.body;
+      }
       this.children.splice(index, 1);
       child.parentNode = null;
     }
@@ -271,7 +294,25 @@ class FakeElement extends FakeEventTarget {
   }
 
   focus() {
+    const currentActiveElement = this.ownerDocument?.activeElement;
+    if (currentActiveElement instanceof FakeElement && currentActiveElement !== this) {
+      currentActiveElement.focused = false;
+    }
     this.focused = true;
+    if (this.ownerDocument) {
+      this.ownerDocument.activeElement = this;
+    }
+  }
+
+  blur() {
+    this.focused = false;
+    if (this.ownerDocument?.activeElement === this) {
+      this.ownerDocument.activeElement = this.ownerDocument.body;
+    }
+  }
+
+  scrollIntoView(options) {
+    this.scrollIntoViewCalls.push(options);
   }
 
   getBoundingClientRect() {
@@ -349,6 +390,7 @@ class FakeDocument extends FakeEventTarget {
     super();
     this.body = new FakeElement("body", this);
     this.documentElement = new FakeElement("html", this);
+    this.activeElement = this.body;
     this.title = "";
     this.visibilityState = "visible";
   }
@@ -404,14 +446,18 @@ class FakeResizeObserver {
   }
 }
 
-const createEvent = (type, target) => ({
+const createEvent = (type, target, fields = {}) => ({
   type,
   target,
-  key: type === "keydown" ? "Escape" : undefined,
+  key: fields.key,
+  shiftKey: Boolean(fields.shiftKey),
+  ...fields,
   preventDefault() {
     this.defaultPrevented = true;
   },
-  stopPropagation() {},
+  stopPropagation() {
+    this.propagationStopped = true;
+  },
 });
 
 const installForumDom = (runtime) => {
@@ -494,6 +540,7 @@ const installForumDom = (runtime) => {
       pendingFrames.forEach(([, callback]) => callback(Date.now()));
     }
   };
+  const pendingAnimationFrameCount = () => animationFrames.size;
   runtime.sandbox.requestAnimationFrame = requestAnimationFrame;
   runtime.sandbox.cancelAnimationFrame = cancelAnimationFrame;
   eventWindow.requestAnimationFrame = requestAnimationFrame;
@@ -516,6 +563,7 @@ const installForumDom = (runtime) => {
     searchBar,
     searchInput,
     flushAnimationFrames,
+    pendingAnimationFrameCount,
   };
 };
 
@@ -532,6 +580,31 @@ const visibleMenuLinkRecords = (document) =>
   Array.from(getOverflowMenuLinks(document))
     .filter((link) => !link.hidden)
     .map((link) => ({ name: link.textContent, href: link.getAttribute("href") }));
+
+const primaryLinkRecords = (navUl) =>
+  navUl.children
+    .filter((item) => item.classList.contains("s1p-nav-custom-item"))
+    .map((item) => {
+      const link = item.querySelector(":scope > a");
+      return {
+        item,
+        name: link?.textContent,
+        href: link?.getAttribute("href"),
+      };
+    });
+
+const getOverflowControls = (document) => {
+  const owner = document.querySelector("#s1p-nav-overflow");
+  return {
+    owner,
+    toggle: owner?.querySelector(":scope > a"),
+    menu: document.querySelector("#s1p-nav-overflow-menu"),
+  };
+};
+
+const dispatchKey = (target, key, fields = {}) => {
+  target.dispatchEvent(createEvent("keydown", target, { key, ...fields }));
+};
 
 const setSettings = (runtime, hooks, settings) => {
   runtime.store.set("s1p_settings", settings);
@@ -568,41 +641,51 @@ const run = () => {
     ["B valid", "C valid"],
     "rejected links must never enter the primary navbar"
   );
+  assert.deepStrictEqual(
+    primaryLinkRecords(forum.navUl).map(({ name, href }) => ({ name, href })),
+    [
+      { name: "B valid", href: "forum.php?fid=2" },
+      { name: "C valid", href: "/forum-6-1.html" },
+    ],
+    "production initializeNavbar must retain only canonical safe primary records"
+  );
   assert.equal(
     visibleMenuLinkRecords(forum.document).length,
     0,
     "wide layout must keep the overflow menu items hidden"
   );
-  hooks.teardownNavbarCustomOverflow();
-  hooks.setupNavbarCustomOverflow({
-    navUl: forum.navUl,
-    navRoot: forum.navRoot,
-    headerRoot: forum.headerRoot,
-    customNavRecords: [
-      { item: customItems[0], name: "B valid", href: "forum.php?fid=2" },
-      { item: customItems[1], name: "C valid", href: "/forum-6-1.html" },
-    ],
-    managerLink: forum.navUl.children.find((item) => item.id === "s1p-nav-link"),
-    searchBar: forum.searchBar,
-  });
-  forum.document.querySelector("#s1p-nav-overflow")._rectWidth = 30;
-  forum.navUl.children.find((item) => item.id === "s1p-nav-link")._rectWidth = 55;
-  forum.flushAnimationFrames();
-  assert.ok(
-    forum.document.querySelector("#s1p-nav-overflow"),
-    "the responsive owner must consume canonical link records"
-  );
-  assert.equal(
-    forum.document.querySelector("#s1p-nav-overflow").hidden,
-    true,
-    "wide layout must hide the More owner"
-  );
   assert.deepStrictEqual(menuLinkRecords(forum.document), [
     { name: "B valid", href: "forum.php?fid=2" },
     { name: "C valid", href: "/forum-6-1.html" },
-  ], "rejected A must not be present in the overflow owner");
+  ], "the production overflow owner must contain only canonical safe records");
+  assert.equal(
+    forum.document.querySelectorAll("#s1p-nav-overflow").length,
+    1,
+    "initializeNavbar must create one responsive overflow owner"
+  );
 
-  forum.layout.navWidth = 130;
+  const initialPrimaryRecords = primaryLinkRecords(forum.navUl);
+  const initialOverflowRecords = Array.from(getOverflowMenuLinks(forum.document)).map(
+    (link) => ({ name: link.textContent, href: link.getAttribute("href") })
+  );
+  assert.deepStrictEqual(
+    initialOverflowRecords,
+    initialPrimaryRecords.map(({ name, href }) => ({ name, href })),
+    "primary and overflow records must preserve one-to-one identity"
+  );
+  Array.from(getOverflowMenuLinks(forum.document)).forEach((menuLink, index) => {
+    assert.equal(menuLink.getAttribute("role"), "menuitem");
+    assert.equal(menuLink.getAttribute("tabindex"), "-1");
+    assert.equal(
+      menuLink.getAttribute("href"),
+      initialPrimaryRecords[index].href,
+      "overflow href must reuse the matching canonical primary href"
+    );
+  });
+
+  forum.navUl.children.find((item) => item.id === "s1p-nav-link")._rectWidth = 20;
+  forum.document.querySelector("#s1p-nav-overflow")._rectWidth = 20;
+  forum.layout.navWidth = 80;
   forum.eventWindow.dispatchEvent(createEvent("resize", forum.eventWindow));
   forum.flushAnimationFrames();
   assert.equal(customItems[0].hidden, false, "B must remain in primary at medium width");
@@ -611,7 +694,7 @@ const run = () => {
     { name: "C valid", href: "/forum-6-1.html" },
   ]);
 
-  forum.layout.navWidth = 80;
+  forum.layout.navWidth = 40;
   forum.eventWindow.dispatchEvent(createEvent("resize", forum.eventWindow));
   forum.flushAnimationFrames();
   assert.equal(customItems.every((item) => item.hidden), true);
@@ -620,14 +703,118 @@ const run = () => {
     { name: "C valid", href: "/forum-6-1.html" },
   ], "overflow links must preserve canonical primary identity and href");
 
-  const overflowOwner = forum.document.querySelector("#s1p-nav-overflow");
-  const overflowToggle = overflowOwner.children[0];
+  const { owner: overflowOwner, toggle: overflowToggle, menu: overflowMenu } =
+    getOverflowControls(forum.document);
+  assert.equal(overflowOwner.id, "s1p-nav-overflow");
+  assert.equal(overflowToggle.id, "s1p-nav-overflow-toggle");
+  assert.equal(overflowMenu.id, "s1p-nav-overflow-menu");
+  assert.equal(overflowToggle.getAttribute("role"), "button");
+  assert.equal(overflowToggle.getAttribute("aria-haspopup"), "menu");
+  assert.equal(overflowToggle.getAttribute("aria-controls"), overflowMenu.id);
+
+  const openMenuWithKey = (key) => {
+    overflowToggle.focus();
+    dispatchKey(overflowToggle, key);
+    forum.flushAnimationFrames();
+    assert.equal(overflowMenu.hidden, false, `${key} must open the More menu`);
+  };
+  const visibleMenuLinks = () =>
+    Array.from(getOverflowMenuLinks(forum.document)).filter((link) => !link.hidden);
+  const dispatchMenuKey = (key, fields = {}) => {
+    const event = createEvent("keydown", overflowMenu, { key, ...fields });
+    overflowMenu.dispatchEvent(event);
+    forum.flushAnimationFrames();
+  };
+
+  openMenuWithKey("Enter");
+  assert.equal(forum.document.activeElement, visibleMenuLinks()[0]);
+  assert.equal(overflowToggle.getAttribute("aria-expanded"), "true");
+  assert.ok(visibleMenuLinks()[0].scrollIntoViewCalls.length > 0);
+  dispatchMenuKey("Escape");
+  assert.equal(overflowMenu.hidden, true);
+  assert.equal(overflowToggle.getAttribute("aria-expanded"), "false");
+  assert.equal(forum.document.activeElement, overflowToggle);
+
+  openMenuWithKey(" ");
+  assert.equal(forum.document.activeElement, visibleMenuLinks()[0]);
+  dispatchMenuKey("Escape");
+  openMenuWithKey("ArrowDown");
+  assert.equal(forum.document.activeElement, visibleMenuLinks()[0]);
+  dispatchMenuKey("Escape");
+  openMenuWithKey("ArrowUp");
+  assert.equal(
+    forum.document.activeElement,
+    visibleMenuLinks()[visibleMenuLinks().length - 1]
+  );
+
+  dispatchMenuKey("ArrowDown");
+  assert.equal(forum.document.activeElement, visibleMenuLinks()[0]);
+  dispatchMenuKey("ArrowDown");
+  assert.equal(forum.document.activeElement, visibleMenuLinks()[1]);
+  dispatchMenuKey("ArrowDown");
+  assert.equal(forum.document.activeElement, visibleMenuLinks()[0]);
+  dispatchMenuKey("ArrowUp");
+  assert.equal(forum.document.activeElement, visibleMenuLinks()[1]);
+  dispatchMenuKey("Home");
+  assert.equal(forum.document.activeElement, visibleMenuLinks()[0]);
+  dispatchMenuKey("End");
+  assert.equal(
+    forum.document.activeElement,
+    visibleMenuLinks()[visibleMenuLinks().length - 1]
+  );
+  dispatchMenuKey("Escape");
+  assert.equal(forum.document.activeElement, overflowToggle);
+
+  overflowToggle.focus();
   overflowToggle.dispatchEvent(createEvent("click", overflowToggle));
   forum.flushAnimationFrames();
-  const overflowMenu = forum.document.querySelector(".s1p-nav-overflow-menu");
-  assert.equal(overflowMenu.hidden, false, "More must open its single menu owner");
-  forum.document.dispatchEvent(createEvent("click", forum.document.body));
+  assert.equal(overflowMenu.hidden, false);
+  assert.equal(
+    forum.document.activeElement,
+    overflowToggle,
+    "pointer opening must keep focus on the More trigger"
+  );
+  overflowToggle.dispatchEvent(createEvent("click", overflowToggle));
+  assert.equal(overflowMenu.hidden, true);
+
+  openMenuWithKey("Enter");
+  dispatchMenuKey("Tab");
+  assert.equal(overflowMenu.hidden, true);
+  assert.equal(forum.document.activeElement, overflowToggle);
+  openMenuWithKey("Enter");
+  dispatchMenuKey("Tab", { shiftKey: true });
+  assert.equal(overflowMenu.hidden, true);
+  assert.equal(forum.document.activeElement, overflowToggle);
+
+  openMenuWithKey("Enter");
+  const outsideControl = forum.document.createElement("button");
+  forum.document.body.appendChild(outsideControl);
+  outsideControl.focus();
+  forum.document.dispatchEvent(createEvent("click", outsideControl));
   assert.equal(overflowMenu.hidden, true, "outside click must close More");
+  assert.equal(
+    forum.document.activeElement,
+    outsideControl,
+    "outside pointer close must not steal the new control focus"
+  );
+
+  openMenuWithKey("Enter");
+  const focusedMenuLinkBeforeReconcile = forum.document.activeElement;
+  forum.layout.navWidth = 400;
+  forum.eventWindow.dispatchEvent(createEvent("resize", forum.eventWindow));
+  forum.flushAnimationFrames();
+  assert.equal(overflowMenu.hidden, true);
+  assert.equal(overflowOwner.hidden, true);
+  assert.notEqual(
+    forum.document.activeElement,
+    focusedMenuLinkBeforeReconcile,
+    "responsive reconcile must not leave focus on a hidden menuitem"
+  );
+  assert.equal(
+    focusedMenuLinkBeforeReconcile.hidden,
+    true,
+    "reconciled menuitem should be hidden with its overflow owner"
+  );
 
   forum.layout.searchWidth = 100;
   forum.searchBar._rectWidth = forum.layout.searchWidth;
@@ -639,13 +826,30 @@ const run = () => {
   assert.equal(forum.searchBar.querySelector("#scbar_txt"), forum.searchInput);
   assert.equal(forum.searchInput.value, "query survives");
   assert.equal(searchToggle.hidden, false);
-  searchToggle.dispatchEvent(createEvent("click", searchToggle));
+  searchToggle.focus();
+  dispatchKey(searchToggle, "Enter");
   forum.flushAnimationFrames();
   assert.equal(searchPopover.hidden, false);
   assert.equal(forum.searchBar.querySelector("#scbar_txt"), forum.searchInput);
   assert.equal(forum.searchInput.focused, true, "opening search must retain and focus the original input");
-  forum.document.dispatchEvent(createEvent("keydown", forum.document));
+  assert.equal(forum.document.activeElement, forum.searchInput);
+  forum.document.dispatchEvent(
+    createEvent("keydown", forum.document, { key: "Escape" })
+  );
   assert.equal(searchPopover.hidden, true, "Escape must close the search popover");
+  assert.equal(forum.document.activeElement, searchToggle);
+
+  dispatchKey(searchToggle, " ");
+  forum.flushAnimationFrames();
+  assert.equal(forum.document.activeElement, forum.searchInput);
+  outsideControl.focus();
+  forum.document.dispatchEvent(createEvent("click", outsideControl));
+  assert.equal(searchPopover.hidden, true);
+  assert.equal(
+    forum.document.activeElement,
+    outsideControl,
+    "search outside pointer close must not steal the new control focus"
+  );
 
   forum.layout.navWidth = 400;
   forum.layout.searchWidth = 300;
@@ -662,8 +866,19 @@ const run = () => {
     "wide reconciliation must restore primary custom item visibility and aria state"
   );
 
+  const focusedPrimaryBeforeReinitialize = customItems[0].querySelector(":scope > a");
+  focusedPrimaryBeforeReinitialize.focus();
   hooks.initializeNavbar();
   forum.flushAnimationFrames();
+  customItems = forum.navUl.children.filter((item) =>
+    item.classList.contains("s1p-nav-custom-item")
+  );
+  assert.equal(focusedPrimaryBeforeReinitialize.isConnected, false);
+  assert.notEqual(
+    forum.document.activeElement,
+    focusedPrimaryBeforeReinitialize,
+    "re-initialize must not leave focus on a deleted primary link"
+  );
   assert.equal(forum.document.querySelectorAll("#s1p-nav-overflow").length, 1);
   assert.equal(forum.document.querySelectorAll("#s1p-nav-search-toggle").length, 1);
   assert.equal(forum.document.querySelectorAll("#s1p-nav-search-popover").length, 1);
@@ -672,6 +887,68 @@ const run = () => {
   assert.equal(forum.eventWindow.listenerCount("resize"), 1);
   assert.equal(forum.document.listenerCount("click"), 1);
   assert.equal(forum.document.listenerCount("keydown"), 1);
+
+  forum.layout.navWidth = 40;
+  forum.eventWindow.dispatchEvent(createEvent("resize", forum.eventWindow));
+  forum.flushAnimationFrames();
+  const repeatedOwner = getOverflowControls(forum.document);
+  repeatedOwner.toggle.focus();
+  dispatchKey(repeatedOwner.toggle, "Enter");
+  assert.ok(
+    forum.pendingAnimationFrameCount() > 0,
+    "opening More must register a cancellable focus frame"
+  );
+  const focusedOldMenuLink = Array.from(getOverflowMenuLinks(forum.document)).find(
+    (link) => !link.hidden
+  );
+  assert.equal(focusedOldMenuLink.getAttribute("role"), "menuitem");
+  hooks.teardownNavbarCustomOverflow();
+  assert.equal(
+    forum.pendingAnimationFrameCount(),
+    0,
+    "teardown must cancel pending menu focus callbacks"
+  );
+  forum.flushAnimationFrames();
+  assert.equal(focusedOldMenuLink.isConnected, false);
+  assert.notEqual(
+    forum.document.activeElement,
+    focusedOldMenuLink,
+    "teardown must not leave focus on a deleted menuitem"
+  );
+  assert.equal(forum.document.querySelectorAll("#s1p-nav-overflow").length, 0);
+  assert.equal(forum.document.querySelectorAll("#s1p-nav-search-toggle").length, 0);
+  assert.equal(forum.document.querySelectorAll("#s1p-nav-search-popover").length, 0);
+  assert.equal(FakeResizeObserver.activeCount(), 0);
+  assert.equal(forum.eventWindow.listenerCount("resize"), 0);
+  assert.equal(forum.document.listenerCount("click"), 0);
+  assert.equal(forum.document.listenerCount("keydown"), 0);
+  assert.equal(forum.searchBar.parentNode, forum.searchParent);
+  assert.equal(
+    customItems.every(
+      (item) => !item.hidden && item.getAttribute("aria-hidden") === null
+    ),
+    true,
+    "teardown must restore custom primary item visibility"
+  );
+
+  forum.searchBar._rectWidth = 100;
+  hooks.initializeNavbar();
+  forum.flushAnimationFrames();
+  const pendingSearchToggle = forum.document.querySelector("#s1p-nav-search-toggle");
+  pendingSearchToggle.focus();
+  dispatchKey(pendingSearchToggle, "Enter");
+  assert.ok(
+    forum.pendingAnimationFrameCount() > 0,
+    "opening search must register a cancellable focus frame"
+  );
+  hooks.teardownNavbarCustomOverflow();
+  assert.equal(
+    forum.pendingAnimationFrameCount(),
+    0,
+    "teardown must cancel pending search focus callbacks"
+  );
+  forum.flushAnimationFrames();
+  assert.equal(forum.searchBar.parentNode, forum.searchParent);
 
   setSettings(runtime, hooks, createSettings([unsafeLink, validLinkB, validLinkC], false));
   hooks.initializeNavbar();
@@ -703,6 +980,11 @@ const run = () => {
     forum.navUl.children.some((item) => item.classList.contains("s1p-nav-custom-item")),
     false,
     "all rejected links must leave no primary custom item"
+  );
+  assert.equal(
+    forum.navUl.children.some((item) => item.id === "s1p-nav-link"),
+    true,
+    "all rejected links must retain the normal manager owner"
   );
   assert.equal(forum.document.querySelectorAll(".s1p-nav-overflow-menu").length, 0);
   assert.equal(forum.document.querySelectorAll("#s1p-nav-overflow").length, 0);
