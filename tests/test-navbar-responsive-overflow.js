@@ -28,6 +28,56 @@ assert.match(
   "空间不足时应提供可访问的“更多”入口。"
 );
 assert.match(
+  sourceCode,
+  /const S1P_NAV_OVERFLOW_TOGGLE_ID\s*=\s*"s1p-nav-overflow-toggle"/,
+  "overflow toggle must have a stable unique id."
+);
+assert.match(
+  sourceCode,
+  /const S1P_NAV_OVERFLOW_MENU_ID\s*=\s*"s1p-nav-overflow-menu"/,
+  "overflow menu must have a stable unique id."
+);
+assert.match(
+  overflowBlock,
+  /overflowToggle\.id\s*=\s*S1P_NAV_OVERFLOW_TOGGLE_ID/,
+  "overflow toggle must own its stable id."
+);
+assert.match(
+  overflowBlock,
+  /overflowMenu\.id\s*=\s*S1P_NAV_OVERFLOW_MENU_ID/,
+  "overflow menu must own its stable id."
+);
+assert.match(
+  overflowBlock,
+  /overflowToggle\.setAttribute\("aria-controls",\s*S1P_NAV_OVERFLOW_MENU_ID\)/,
+  "overflow toggle must bind aria-controls to its menu owner."
+);
+assert.match(
+  overflowBlock,
+  /menuLink\.setAttribute\("tabindex",\s*"-1"\)/,
+  "overflow menuitems must be explicitly managed by the menu owner."
+);
+assert.match(
+  overflowBlock,
+  /const focusOverflowMenuLink\s*=\s*\(menuLink\)\s*=>/,
+  "overflow keyboard focus must use an explicit owner helper."
+);
+assert.match(
+  overflowBlock,
+  /menuLink\.scrollIntoView\?\.\(\{ block:\s*"nearest" \}\)/,
+  "focused overflow menuitems must be scrolled into the visible menu viewport."
+);
+assert.match(
+  overflowBlock,
+  /overflowMenu\.addEventListener\("keydown",\s*handleOverflowMenuKeydown\)/,
+  "overflow menu must own directional keyboard navigation."
+);
+assert.match(
+  overflowBlock,
+  /case "Home"[\s\S]*?case "End"[\s\S]*?case "Escape"[\s\S]*?case "Tab"/,
+  "overflow menu must implement Home, End, Escape, and Tab behavior."
+);
+assert.match(
   overflowBlock,
   /for \(let index = customNavItems\.length - 1; index >= 0; index -= 1\)/,
   "自定义导航应从右侧低优先级链接开始收进菜单。"
@@ -141,6 +191,11 @@ assert.match(
 );
 assert.match(
   navbarStyleBlock,
+  /\.s1p-nav-overflow-menu[\s\S]*?max-height:\s*calc\(100vh - 16px\)[\s\S]*?overflow-y:\s*auto[\s\S]*?overscroll-behavior:\s*contain/,
+  "短视口下的“更多”浮层应在自身内部滚动并限制过度滚动。"
+);
+assert.match(
+  navbarStyleBlock,
   /\.s1p-nav-search-toggle[\s\S]*?display:\s*none/,
   "搜索入口默认应隐藏，只有搜索栏进入紧凑状态时才显示。"
 );
@@ -148,6 +203,11 @@ assert.match(
   navbarStyleBlock,
   /\.s1p-nav-search-toggle[\s\S]*?align-self:\s*center[\s\S]*?font:\s*inherit[\s\S]*?line-height:\s*35px/,
   "搜索文字入口应继承顶栏字体并与 NUX 导航项保持对齐。"
+);
+assert.match(
+  navbarStyleBlock,
+  /\.s1p-nav-overflow > a:focus-visible[\s\S]*?background:\s*var\(--s1p-hover-overlay\) !important/,
+  "“更多”入口应保留清晰的 focus-visible 状态。"
 );
 assert.match(
   navbarStyleBlock,
