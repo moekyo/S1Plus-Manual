@@ -1211,6 +1211,8 @@
   const S1P_NAV_CUSTOMIZED_ROOT_CLASS = "s1p-nav-customized-root";
   const S1P_NAV_CUSTOM_ITEM_CLASS = "s1p-nav-custom-item";
   const S1P_NAV_OVERFLOW_ID = "s1p-nav-overflow";
+  const S1P_NAV_OVERFLOW_TOGGLE_ID = "s1p-nav-overflow-toggle";
+  const S1P_NAV_OVERFLOW_MENU_ID = "s1p-nav-overflow-menu";
   const S1P_NAV_OVERFLOW_MENU_CLASS = "s1p-nav-overflow-menu";
   const S1P_NAV_OVERFLOW_MENU_VISIBLE_CLASS =
     "s1p-nav-overflow-menu-visible";
@@ -1287,6 +1289,7 @@
       : null;
     let isSearchCollapsed = false;
     let isSearchOpen = false;
+    let searchFrame = null;
 
     if (hasSearchBar && searchBarParent && searchPlaceholder && searchToggle) {
       searchPlaceholder.className = "s1p-nav-search-placeholder";
@@ -1319,15 +1322,18 @@
     overflowLi.hidden = true;
 
     const overflowToggle = document.createElement("a");
+    overflowToggle.id = S1P_NAV_OVERFLOW_TOGGLE_ID;
     overflowToggle.href = "javascript:void(0);";
     overflowToggle.textContent = "更多";
     overflowToggle.setAttribute("hidefocus", "true");
     overflowToggle.setAttribute("role", "button");
     overflowToggle.setAttribute("aria-haspopup", "menu");
+    overflowToggle.setAttribute("aria-controls", S1P_NAV_OVERFLOW_MENU_ID);
     overflowToggle.setAttribute("aria-expanded", "false");
     overflowLi.appendChild(overflowToggle);
 
     const overflowMenu = document.createElement("div");
+    overflowMenu.id = S1P_NAV_OVERFLOW_MENU_ID;
     overflowMenu.className = S1P_NAV_OVERFLOW_MENU_CLASS;
     overflowMenu.setAttribute("role", "menu");
     overflowMenu.hidden = true;
@@ -1337,6 +1343,7 @@
       menuLink.href = record.href;
       menuLink.textContent = record.name;
       menuLink.setAttribute("role", "menuitem");
+      menuLink.setAttribute("tabindex", "-1");
       menuLink.setAttribute("hidefocus", "true");
       menuLink.hidden = true;
       overflowMenu.appendChild(menuLink);
@@ -1352,13 +1359,79 @@
 
     let reconcileFrame = null;
     let isMenuOpen = false;
+    let menuFrame = null;
     let resizeObserver = null;
 
-    const setMenuOpen = (nextOpen) => {
+    const isElementVisibleInTree = (element) => {
+      if (!(element instanceof Element) || !element.isConnected) {
+        return false;
+      }
+      let current = element;
+      while (current instanceof Element) {
+        if (current.hidden) {
+          return false;
+        }
+        current = current.parentElement;
+      }
+      return true;
+    };
+
+    const focusSafeNavigationTarget = () => {
+      const candidates = [
+        searchToggle,
+        managerLink?.querySelector(":scope > a"),
+        ...customNavItems.map((item) => item.querySelector(":scope > a")),
+      ];
+      const target = candidates.find((candidate) =>
+        isElementVisibleInTree(candidate)
+      );
+      if (target) {
+        target.focus();
+        return;
+      }
+      document.activeElement?.blur?.();
+    };
+
+    const getVisibleOverflowMenuLinks = () =>
+      overflowMenuLinks.filter((link) => !link.hidden);
+
+    const focusOverflowMenuLink = (menuLink) => {
+      if (
+        !menuLink ||
+        menuLink.hidden ||
+        !isElementVisibleInTree(menuLink)
+      ) {
+        return;
+      }
+      menuLink.focus();
+      menuLink.scrollIntoView?.({ block: "nearest" });
+    };
+
+    const moveOverflowMenuFocus = (direction) => {
+      const visibleMenuLinks = getVisibleOverflowMenuLinks();
+      if (visibleMenuLinks.length === 0) {
+        return;
+      }
+      const currentIndex = visibleMenuLinks.indexOf(document.activeElement);
+      const nextIndex =
+        currentIndex === -1
+          ? direction > 0
+            ? 0
+            : visibleMenuLinks.length - 1
+          : (currentIndex + direction + visibleMenuLinks.length) %
+            visibleMenuLinks.length;
+      focusOverflowMenuLink(visibleMenuLinks[nextIndex]);
+    };
+
+    const setMenuOpen = (nextOpen, focusTarget = null) => {
+      if (menuFrame !== null) {
+        cancelAnimationFrame(menuFrame);
+        menuFrame = null;
+      }
       const shouldOpen =
         nextOpen === true &&
         !overflowLi.hidden &&
-        overflowMenuLinks.some((link) => !link.hidden);
+        getVisibleOverflowMenuLinks().length > 0;
       isMenuOpen = shouldOpen;
       overflowMenu.hidden = !shouldOpen;
       overflowMenu.classList.toggle(
@@ -1370,12 +1443,26 @@
         shouldOpen ? "true" : "false"
       );
       if (shouldOpen) {
-        requestAnimationFrame(positionMenu);
+        menuFrame = requestAnimationFrame(() => {
+          menuFrame = null;
+          if (!isMenuOpen) {
+            return;
+          }
+          positionMenu();
+          focusOverflowMenuLink(focusTarget);
+        });
       }
     };
 
-    const closeMenu = () => {
+    const closeMenu = ({ restoreFocus = false } = {}) => {
       setMenuOpen(false);
+      if (restoreFocus) {
+        if (isElementVisibleInTree(overflowToggle)) {
+          overflowToggle.focus();
+        } else {
+          focusSafeNavigationTarget();
+        }
+      }
     };
 
     overflowMenuLinks.forEach((menuLink) => {
@@ -1413,6 +1500,49 @@
       overflowMenu.style.top = `${Math.max(viewportPadding, top)}px`;
     };
 
+    const handleOverflowMenuKeydown = (event) => {
+      if (!isMenuOpen) {
+        return;
+      }
+      const visibleMenuLinks = getVisibleOverflowMenuLinks();
+      switch (event.key) {
+        case "ArrowDown":
+          event.preventDefault();
+          event.stopPropagation();
+          moveOverflowMenuFocus(1);
+          break;
+        case "ArrowUp":
+          event.preventDefault();
+          event.stopPropagation();
+          moveOverflowMenuFocus(-1);
+          break;
+        case "Home":
+          event.preventDefault();
+          event.stopPropagation();
+          focusOverflowMenuLink(visibleMenuLinks[0]);
+          break;
+        case "End":
+          event.preventDefault();
+          event.stopPropagation();
+          focusOverflowMenuLink(visibleMenuLinks[visibleMenuLinks.length - 1]);
+          break;
+        case "Escape":
+          event.preventDefault();
+          event.stopPropagation();
+          closeMenu({ restoreFocus: true });
+          break;
+        case "Tab":
+          event.preventDefault();
+          event.stopPropagation();
+          closeMenu({ restoreFocus: true });
+          break;
+        default:
+          break;
+      }
+    };
+
+    overflowMenu.addEventListener("keydown", handleOverflowMenuKeydown);
+
     const positionSearchPopover = () => {
       if (!isSearchOpen || !searchToggle || !searchPopover) {
         return;
@@ -1445,6 +1575,10 @@
     };
 
     const setSearchPopoverOpen = (nextOpen) => {
+      if (searchFrame !== null) {
+        cancelAnimationFrame(searchFrame);
+        searchFrame = null;
+      }
       const shouldOpen =
         nextOpen === true &&
         isSearchCollapsed &&
@@ -1465,7 +1599,8 @@
         isSearchOpen ? "true" : "false"
       );
       if (isSearchOpen) {
-        requestAnimationFrame(() => {
+        searchFrame = requestAnimationFrame(() => {
+          searchFrame = null;
           if (!isSearchOpen) {
             return;
           }
@@ -1475,8 +1610,15 @@
       }
     };
 
-    const closeSearchPopover = () => {
+    const closeSearchPopover = ({ restoreFocus = false } = {}) => {
       setSearchPopoverOpen(false);
+      if (restoreFocus) {
+        if (isElementVisibleInTree(searchToggle)) {
+          searchToggle.focus();
+        } else {
+          focusSafeNavigationTarget();
+        }
+      }
     };
 
     const setSearchCollapsed = (nextCollapsed) => {
@@ -1552,11 +1694,40 @@
     const hasNavbarContentOverflow = () =>
       navUl.scrollWidth > navUl.clientWidth + 1;
 
+    const repairFocusAfterReconcile = ({
+      activeElement,
+      wasOverflowFocused,
+      wasSearchFocused,
+    }) => {
+      if (
+        !activeElement ||
+        isElementVisibleInTree(document.activeElement)
+      ) {
+        return;
+      }
+      if (wasSearchFocused && isElementVisibleInTree(searchToggle)) {
+        searchToggle.focus();
+        return;
+      }
+      if (wasOverflowFocused && isElementVisibleInTree(overflowToggle)) {
+        overflowToggle.focus();
+        return;
+      }
+      focusSafeNavigationTarget();
+    };
+
     const reconcile = () => {
       reconcileFrame = null;
       if (!navUl.isConnected) {
         return;
       }
+
+      const activeElement = document.activeElement;
+      const wasOverflowFocused =
+        overflowLi.contains(activeElement) || overflowMenu.contains(activeElement);
+      const wasSearchFocused =
+        searchToggle?.contains(activeElement) ||
+        searchPopover?.contains(activeElement);
 
       if (isSearchCollapsed) {
         setSearchCollapsed(false);
@@ -1574,6 +1745,11 @@
       // 避免第二套“更多”入口与 NUX 的窄屏交互叠加。
       if (isNuxCompactNavbar() || navUl.clientWidth <= 0) {
         setSearchCollapsed(shouldCompactSearchBar());
+        repairFocusAfterReconcile({
+          activeElement,
+          wasOverflowFocused,
+          wasSearchFocused,
+        });
         return;
       }
 
@@ -1595,6 +1771,11 @@
       }
 
       setSearchCollapsed(shouldCompactSearchBar());
+      repairFocusAfterReconcile({
+        activeElement,
+        wasOverflowFocused,
+        wasSearchFocused,
+      });
     };
 
     const scheduleReconcile = () => {
@@ -1621,8 +1802,12 @@
 
     const handleDocumentKeydown = (event) => {
       if (event.key === "Escape") {
-        closeMenu();
-        closeSearchPopover();
+        closeMenu({
+          restoreFocus: overflowMenu.contains(document.activeElement),
+        });
+        closeSearchPopover({
+          restoreFocus: searchPopover?.contains(document.activeElement),
+        });
       }
     };
 
@@ -1645,9 +1830,17 @@
       setMenuOpen(!isMenuOpen);
     });
     overflowToggle.addEventListener("keydown", (event) => {
-      if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
+      if (
+        event.key === "ArrowDown" ||
+        event.key === "Enter" ||
+        event.key === " "
+      ) {
         event.preventDefault();
-        setMenuOpen(true);
+        setMenuOpen(true, getVisibleOverflowMenuLinks()[0]);
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        const visibleMenuLinks = getVisibleOverflowMenuLinks();
+        setMenuOpen(true, visibleMenuLinks[visibleMenuLinks.length - 1]);
       }
     });
     searchToggle?.addEventListener("click", handleSearchToggleClick);
@@ -1665,9 +1858,22 @@
     }
 
     navbarCustomOverflowCleanup = () => {
+      const activeElement = document.activeElement;
+      const activeElementOwnedByCleanup =
+        overflowLi.contains(activeElement) ||
+        overflowMenu.contains(activeElement) ||
+        searchToggle?.contains(activeElement);
       if (reconcileFrame !== null) {
         cancelAnimationFrame(reconcileFrame);
         reconcileFrame = null;
+      }
+      if (menuFrame !== null) {
+        cancelAnimationFrame(menuFrame);
+        menuFrame = null;
+      }
+      if (searchFrame !== null) {
+        cancelAnimationFrame(searchFrame);
+        searchFrame = null;
       }
       resizeObserver?.disconnect();
       resizeObserver = null;
@@ -1676,12 +1882,19 @@
       document.removeEventListener("keydown", handleDocumentKeydown);
       searchToggle?.removeEventListener("click", handleSearchToggleClick);
       searchToggle?.removeEventListener("keydown", handleSearchToggleKeydown);
+      overflowMenu.removeEventListener("keydown", handleOverflowMenuKeydown);
       setSearchCollapsed(false);
       searchPlaceholder?.remove();
       searchToggle?.remove();
       searchPopover?.remove();
       overflowMenu.remove();
       overflowLi.remove();
+      if (
+        activeElementOwnedByCleanup &&
+        !isElementVisibleInTree(document.activeElement)
+      ) {
+        focusSafeNavigationTarget();
+      }
       navRoot?.classList.remove(S1P_NAV_CUSTOMIZED_ROOT_CLASS);
       headerRoot?.classList.remove(S1P_NAV_CUSTOMIZED_HEADER_CLASS);
     };
@@ -3698,6 +3911,11 @@
     .s1p-nav-overflow {
       flex: 0 0 auto;
     }
+    .s1p-nav-overflow > a:hover,
+    .s1p-nav-overflow > a:focus-visible {
+      background: var(--s1p-hover-overlay) !important;
+      outline: none;
+    }
     .s1p-nav-overflow[hidden],
     .s1p-nav-overflow-hidden {
       display: none !important;
@@ -3710,6 +3928,9 @@
       gap: 2px;
       min-width: 120px;
       max-width: min(280px, calc(100vw - 16px));
+      max-height: calc(100vh - 16px);
+      overflow-y: auto;
+      overscroll-behavior: contain;
       padding: 4px;
       box-sizing: border-box;
       border: 0;
