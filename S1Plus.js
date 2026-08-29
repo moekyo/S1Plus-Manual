@@ -1256,19 +1256,19 @@
     navUl,
     navRoot,
     headerRoot,
-    customNavItems,
-    customNavLinks,
+    customNavRecords,
     managerLink,
     searchBar,
   }) => {
     if (
       !(navUl instanceof HTMLUListElement) ||
-      !Array.isArray(customNavItems) ||
-      customNavItems.length === 0 ||
-      !Array.isArray(customNavLinks)
+      !Array.isArray(customNavRecords) ||
+      customNavRecords.length === 0
     ) {
       return;
     }
+
+    const customNavItems = customNavRecords.map((record) => record.item);
 
     navRoot?.classList.add(S1P_NAV_CUSTOMIZED_ROOT_CLASS);
     headerRoot?.classList.add(S1P_NAV_CUSTOMIZED_HEADER_CLASS);
@@ -1332,10 +1332,10 @@
     overflowMenu.setAttribute("role", "menu");
     overflowMenu.hidden = true;
 
-    const overflowMenuLinks = customNavLinks.map((link) => {
+    const overflowMenuLinks = customNavRecords.map((record) => {
       const menuLink = document.createElement("a");
-      menuLink.href = link.href;
-      menuLink.textContent = link.name;
+      menuLink.href = record.href;
+      menuLink.textContent = record.name;
       menuLink.setAttribute("role", "menuitem");
       menuLink.setAttribute("hidefocus", "true");
       menuLink.hidden = true;
@@ -43584,7 +43584,7 @@
       const normalizedCustomNavLinks = normalizeCustomNavLinks(
         settings.customNavLinks
       );
-      const customNavItems = [];
+      const canonicalCustomNavRecords = [];
       normalizedCustomNavLinks.forEach((link) => {
         const linkName = String(link?.name ?? "").trim();
         const linkHref = getSafeUrlAttributeValue(link?.href, {
@@ -43623,19 +43623,24 @@
         a.setAttribute("hidefocus", "true");
         li.classList.toggle("a", window.location.href.includes(linkHref));
         navUl.appendChild(li);
-        customNavItems.push(li);
+        canonicalCustomNavRecords.push({
+          item: li,
+          name: linkName,
+          href: linkHref,
+        });
       });
       navUl.appendChild(createManagerLink());
       updateNavbarSyncButton();
-      setupNavbarCustomOverflow({
-        navUl,
-        navRoot,
-        headerRoot,
-        customNavItems,
-        customNavLinks: normalizedCustomNavLinks,
-        managerLink: document.getElementById("s1p-nav-link"),
-        searchBar: document.getElementById("scbar"),
-      });
+      if (canonicalCustomNavRecords.length > 0) {
+        setupNavbarCustomOverflow({
+          navUl,
+          navRoot,
+          headerRoot,
+          customNavRecords: canonicalCustomNavRecords,
+          managerLink: document.getElementById("s1p-nav-link"),
+          searchBar: document.getElementById("scbar"),
+        });
+      }
       return;
     }
     navUl.appendChild(createManagerLink());
@@ -57610,6 +57615,10 @@
       ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
       s1pCreatePageEnhancementProjection,
       s1pPageEnhancementProjection,
+      initializeNavbar,
+      setupNavbarCustomOverflow,
+      teardownNavbarCustomOverflow,
+      invalidateSettingsCache,
     };
   }
 

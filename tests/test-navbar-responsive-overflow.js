@@ -34,6 +34,26 @@ assert.match(
 );
 assert.match(
   overflowBlock,
+  /const customNavItems = customNavRecords\.map\(\(record\) => record\.item\)/,
+  "响应式 owner 应从 canonical link records 投影 primary item。"
+);
+assert.match(
+  overflowBlock,
+  /const overflowMenuLinks = customNavRecords\.map\(\(record\) =>[\s\S]*?menuLink\.href = record\.href[\s\S]*?menuLink\.textContent = record\.name/,
+  "overflow menu 必须复用 canonical safe href 和显示名。"
+);
+assert.doesNotMatch(
+  overflowBlock,
+  /customNavLinks\.map\(/,
+  "overflow owner 不应从未经最终渲染绑定的链接数组重建 identity。"
+);
+assert.doesNotMatch(
+  overflowBlock,
+  /menuLink\.href\s*=\s*link\.href/,
+  "overflow anchor 不应绕过 canonical safe href。"
+);
+assert.match(
+  overflowBlock,
   /if \(isNuxCompactNavbar\(\) \|\| navUl\.clientWidth <= 0\)[\s\S]*?return;/s,
   "NUX 窄屏快捷入口接管时，不应再叠加第二套“更多”入口。"
 );
@@ -76,6 +96,16 @@ assert.match(
   sourceCode,
   /setupNavbarCustomOverflow\([\s\S]*?searchBar:\s*document\.getElementById\("scbar"\)/,
   "自定义导航初始化时应把原生搜索栏交给响应式折叠逻辑。"
+);
+assert.match(
+  sourceCode,
+  /canonicalCustomNavRecords\.push\(\{[\s\S]*?item:\s*li,[\s\S]*?name:\s*linkName,[\s\S]*?href:\s*linkHref/s,
+  "primary rendering must create canonical records from final safe link values."
+);
+assert.match(
+  sourceCode,
+  /if \(canonicalCustomNavRecords\.length > 0\) \{[\s\S]*?setupNavbarCustomOverflow/s,
+  "all rejected custom links must not create an overflow fallback owner."
 );
 
 const navbarStyleStart = sourceCode.indexOf(
