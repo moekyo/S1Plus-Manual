@@ -102,7 +102,7 @@ node tests/test-settings-semantics-module.js
 - cleanup provenance 与手动同步分支
 - Gist PATCH 结果不确定、metadata-only 诊断日志、后台 shared retry
 - 导航栏直接拉取 / 推送的手动覆盖路径
-  - `test-safe-sync-execution.js` 覆盖 manual override 清理手动、后台、启动、前台补同步与全局锁，清理 pending auto sync，并重置运行时 pending、retry、heartbeat 状态
+  - `test-safe-sync-execution.js` 覆盖 manual request 遵守统一执行锁互斥，保留其它执行者的手动、后台、启动、前台补同步与全局锁，并只接管当前标签页尚未执行的调度
   - 同脚本覆盖远端请求重试退避期间被手动覆盖取消后不会再发起下一次 HTTP 请求
 - 设置迁移与同步设置 UI
 - 标签页标题同步状态、Title Owner handoff、Running Phase / Live Runner 语义
@@ -220,7 +220,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - `performAutoSync`（自动同步决策与执行）
 - `handleManualSync`（手动同步流程）
 - `handleForcePull` / `handleForcePush`（导航栏直接拉取 / 推送）
-- `preemptActiveSyncForManualOverride`（显式手动覆盖时抢占当前同步状态）
+- `preemptActiveSyncForManualOverride`（兼容入口；仅接管当前标签页尚未执行的自动调度，不删除执行锁或持久 pending）
 - `decideSyncActionByVersion`（基线 + 哈希 + 时间戳判定）
 
 ### 4.4 UI 主干
@@ -398,7 +398,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - 四类模式锁（手动/后台/启动/前台补同步）
 - 全局锁防互撞
 - 锁心跳续租，失锁即中止
-- 四类模式锁共用同一份 mode profile 和锁 implementation；后台、启动、前台补同步通过 `runRunningSync()` 统一执行“取得锁 → 启动心跳 → 运行完整事务 → 停止心跳并释放锁”的生命周期。手动同步只复用锁 implementation，主动抢占流程仍保持独立。
+- 四类模式锁共用同一份 mode profile、全局互斥和锁 implementation；后台、启动、前台补同步通过 `runRunningSync()` 统一执行“取得锁 → 启动心跳 → 运行完整事务 → 停止心跳并释放锁”的生命周期。手动同步也必须先通过同一执行互斥，不能以“用户优先”为由删除其它执行者的有效锁；取得排他权后只接管当前标签页尚未执行的自动调度。
 - `runRunningSync()` 不接受独立 finalizer；`runTransaction` 只有在基线、远端 writer、已覆盖 pending/shared generation 等事务收尾全部完成后才可 resolve。导航栏/标题状态、刷新、提示、冲突弹窗和重试调度属于 Result Phase，必须等模式锁和全局锁释放后执行。
 - `s1pSyncSystem` 是页面代码唯一的同步系统 façade。页面本地变更调用 `recordLocalMutation()`，生命周期场景调用 `handleLifecycle()`，手动/启动/前台/后台请求调用 `requestSync()`，Navbar 与 Title Owner 调用 `readState()`；初始化只调用一次 `initialize()`，由 façade 依次绑定 lifecycle support、恢复 Scheduler Owner 并恢复 Pending Dirty。任一恢复步骤失败时，façade 必须先 handoff Scheduler Owner、再 unbind lifecycle support，并允许下一次初始化重试。`dispose()` 只用于测试或未来 SPA remount 等显式 host teardown；普通 pagehide/beforeunload 由 `handleLifecycle()` 完成，页面上下文销毁时不额外调用 dispose。即使 unbind 抛错，dispose 也必须清除 façade 的 initialized 状态，使显式重建仍可重试。页面代码不得直接协调内部锁、timer、generation、owner lease、Result Phase Policy 或状态投影。
 - `s1pReadingProgressSession` 是 Reading Progress Session 的唯一页面 interface。帖子页、设置和数据变更调用 `attach()` / `reset()` / `discard()`；同步诊断和本地变更路径只读取 `readState()` 或调用 `recordLocalMutation()`；生命周期 finalizer 委托 `handleLifecycle()`。observer、确认策略、timer、pending write 合并和会话诊断状态都留在 module 内部。测试必须经同一 interface 驱动帖子可见性、交互和生命周期输入，并断言最终 Read Progress，不再写 tracking state。
@@ -443,26 +443,26 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 
 ### 6.4 手动覆盖：导航栏直接拉取 / 推送
 
-导航栏同步按钮的点击和悬停都会打开同一个“拉取 / 推送”菜单；点击只是键盘、触摸或 hover 不可靠场景的备用入口，不直接执行同步。菜单里选择的“拉取”或“推送”才是显式手动覆盖路径，优先级高于冲突暂停、待同步队列、自动同步运行态和已有同步锁。用户点下方向以后，当前自动体系的状态要先被取消，再按用户指定方向重新开始一次手动操作。
+导航栏同步按钮的点击和悬停都会打开同一个“拉取 / 推送”菜单；点击只是键盘、触摸或 hover 不可靠场景的备用入口，不直接执行同步。菜单里选择的“拉取”或“推送”是显式手动请求，但不会越过执行安全边界。有效模式锁或全局锁存在时，本次请求返回 busy 并保留原执行者的锁、心跳和持久意图；只有证明执行互斥空闲以后，当前标签页才接管尚未执行的本地自动调度，再按用户指定方向开始手动操作。
 
 入口顺序：
 
 1. `handleForcePull()` / `handleForcePush()`
 2. `acquireManualSyncLock({ preemptActiveSync: true, operation })`
-3. `preemptActiveSyncForManualOverride(operation)`
-4. 重新获取手动锁与全局锁后执行实际拉取或推送
+3. 先检查统一模式锁 / 全局锁互斥；若忙则原样退出
+4. `preemptActiveSyncForManualOverride(operation)` 仅接管本标签页尚未执行的调度
+5. 再次检查互斥，取得手动锁与全局锁后执行实际拉取或推送
 
-`preemptActiveSyncForManualOverride()` 的职责边界：
+`preemptActiveSyncForManualOverride()` 保留旧名称作为兼容入口，其职责边界是：
 
-- 取消当前标签页正在执行的远端 `GM_xmlhttpRequest`，并递增取消代次，使 `runRemoteRequestWithRetry()` 在请求前、响应后和重试退避结束后都能识别旧操作已失效。
-- 清理 pending auto sync、shared/background runtime queue、前台补同步 retry、soft block、自动拉取 reload 定时器与冲突暂停状态。
-- 停止手动、后台、启动、前台补同步的心跳，并删除 `s1p_manual_sync_lock`、`s1p_background_sync_lock`、`s1p_startup_sync_lock`、`s1p_foreground_followup_sync_lock`、`s1p_sync_global_lock`。
-- 重置当前标签页的自动同步运行时标志，例如 `hasPendingBackgroundSync`、`isBackgroundAutoSyncInProgress`、`isInitialSyncInProgress`、后台 retry 计数与 pending dirty 标记。
-- 刷新导航栏同步指示器和常驻提示，避免 UI 继续显示旧的 pending、running 或 conflict。
+- 递增远端请求取消代次，使尚未发出的旧 retry 在下一次请求前失效；已发出的请求不强制 abort，必须由原执行者完成结果确认和锁内收尾。
+- 清理当前标签页的后台 retry timer、阅读进度 debounce、hidden flush、自动拉取 reload timer 与 foreground soft block，并 handoff 当前标签页拥有的 Scheduler Owner。
+- 不删除 Pending Dirty、shared debounce、前台 durable intent、冲突暂停、任何模式锁或全局锁，也不停止其它执行者的心跳或伪造其运行态结束。
+- 刷新导航栏同步指示器和常驻提示，使 UI 从共享事实重新投影。
 
-取消远端请求是 best effort：当前标签页还没完成的 `GM_xmlhttpRequest` 会被 abort；其它标签页或浏览器已经发出的网络写入不能被物理撤回。因此这个路径只用于用户主动点击的覆盖操作，不用于自动恢复。旧 worker 后续必须被锁检查、取消代次和 retry 检查拦住；新的强制推送不带旧的 `expectedUpdatedAt`，新的强制拉取会重新读取云端快照。
+前台远端变化使用 durable intent generation：每次观测都生成新的 `requestId`，即使 `remoteUpdatedAt` 相同也不能复用旧代次；retry 必须绑定其创建时的 `requestId + remoteUpdatedAt`，代次消失或变化后不得进入门禁或网络请求。手动拉取或普通手动同步成功后，只有其开始时捕获的 exact generation 仍是当前请求，且已经落盘的 baseline 覆盖该 generation，才可结算 pending。监听器依据 payload 的 `sourceContextId` 判断来源，不信任 userscript manager 对跨上下文布尔标记的一致性；显式 teardown 必须同时取消 recovery 与 retry timer。
 
-不要把这条手动覆盖路径复用到 `pagehide` / `beforeunload` 或跨标签自动接管。自动恢复仍然保持上一节的保守策略：等待锁按 TTL 失效，再通过 pending dirty / shared scheduler / retry 从新快照重跑。
+不要把这条手动请求路径复用到 `pagehide` / `beforeunload` 或跨标签自动接管。自动恢复仍然保持上一节的保守策略：等待锁按 TTL 失效，再通过 pending dirty / shared scheduler / durable foreground intent 从新快照重跑。
 
 ### 6.5 跨页面补偿
 
