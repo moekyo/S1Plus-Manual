@@ -722,7 +722,7 @@ const testAcquireFailurePropagatesWithoutStartingSync = async () => {
   assert.deepStrictEqual(calls, ["lock:acquire"]);
 };
 
-const testManualOverridePreemptsAutoSyncLocks = async () => {
+const testManualOverridePreservesActiveSyncLocksAndDurableIntent = async () => {
   const { hooks, store } = createHarness();
   const now = Date.now();
 
@@ -780,33 +780,30 @@ const testManualOverridePreemptsAutoSyncLocks = async () => {
     foregroundFollowUpSyncLockHeartbeatActive: true,
   });
 
-  hooks.preemptActiveSyncForManualOverride("force_pull");
-
-  assert.equal(store.has(MANUAL_SYNC_LOCK_KEY), false);
-  assert.equal(store.has(BACKGROUND_SYNC_LOCK_KEY), false);
-  assert.equal(store.has(STARTUP_SYNC_LOCK_KEY), false);
-  assert.equal(store.has(FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY), false);
-  assert.equal(store.has(GLOBAL_SYNC_LOCK_KEY), false);
-  assert.equal(store.has(PENDING_AUTO_SYNC_KEY), false);
-  assert.equal(store.has(PENDING_FOREGROUND_REMOTE_SYNC_KEY), false);
-  const runtimeState = hooks.getBackgroundAutoSyncRuntimeStateForTest();
-  assert.equal(runtimeState.hasPendingBackgroundSync, false);
-  assert.equal(runtimeState.hasLocalRetryTimer, false);
-  assert.equal(runtimeState.isBackgroundAutoSyncInProgress, false);
-  assert.equal(runtimeState.isInitialSyncInProgress, false);
-  assert.equal(runtimeState.backgroundSyncRetryAttempts, 0);
-  assert.equal(runtimeState.manualSyncLockHeartbeatActive, false);
-  assert.equal(runtimeState.backgroundSyncLockHeartbeatActive, false);
-  assert.equal(runtimeState.startupSyncLockHeartbeatActive, false);
-  assert.equal(runtimeState.foregroundFollowUpSyncLockHeartbeatActive, false);
-
   const acquired = await hooks.acquireManualSyncLock({
     preemptActiveSync: true,
-    operation: "force_push",
+    operation: "force_pull",
   });
-  assert.equal(acquired, true);
-  assert.ok(store.get(MANUAL_SYNC_LOCK_KEY));
-  assert.equal(store.get(GLOBAL_SYNC_LOCK_KEY).mode, "manual");
+
+  assert.equal(acquired, false);
+  assert.equal(store.has(MANUAL_SYNC_LOCK_KEY), true);
+  assert.equal(store.has(BACKGROUND_SYNC_LOCK_KEY), true);
+  assert.equal(store.has(STARTUP_SYNC_LOCK_KEY), true);
+  assert.equal(store.has(FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY), true);
+  assert.equal(store.has(GLOBAL_SYNC_LOCK_KEY), true);
+  assert.equal(store.has(PENDING_AUTO_SYNC_KEY), true);
+  assert.equal(store.has(PENDING_FOREGROUND_REMOTE_SYNC_KEY), true);
+  const runtimeState = hooks.getBackgroundAutoSyncRuntimeStateForTest();
+  assert.equal(runtimeState.hasPendingBackgroundSync, true);
+  assert.equal(runtimeState.hasLocalRetryTimer, true);
+  assert.equal(runtimeState.isBackgroundAutoSyncInProgress, true);
+  assert.equal(runtimeState.isInitialSyncInProgress, true);
+  assert.equal(runtimeState.backgroundSyncRetryAttempts, 7);
+  assert.equal(runtimeState.manualSyncLockHeartbeatActive, true);
+  assert.equal(runtimeState.backgroundSyncLockHeartbeatActive, true);
+  assert.equal(runtimeState.startupSyncLockHeartbeatActive, true);
+  assert.equal(runtimeState.foregroundFollowUpSyncLockHeartbeatActive, true);
+  hooks.seedSyncRuntimeStateForManualOverrideTest({});
 };
 
 const testInitialSetupPreemptionPreservesForeignManualLock = async () => {
@@ -836,7 +833,7 @@ const testInitialSetupPreemptionPreservesForeignManualLock = async () => {
   assert.deepEqual(store.get(GLOBAL_SYNC_LOCK_KEY), foreignGlobalLock);
 };
 
-const testInitialSetupPreemptionReplacesOnlyAutomaticLocks = async () => {
+const testInitialSetupPreservesForeignAutomaticLocks = async () => {
   const { hooks, store } = createHarness();
   const now = Date.now();
   store.set(BACKGROUND_SYNC_LOCK_KEY, {
@@ -864,12 +861,15 @@ const testInitialSetupPreemptionReplacesOnlyAutomaticLocks = async () => {
     operation: "initial_setup_manual_sync",
   });
 
-  assert.equal(acquired, true);
-  assert.equal(store.has(BACKGROUND_SYNC_LOCK_KEY), false);
-  assert.equal(store.has(STARTUP_SYNC_LOCK_KEY), false);
-  assert.equal(store.has(FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY), false);
-  assert.ok(store.get(MANUAL_SYNC_LOCK_KEY));
-  assert.equal(store.get(GLOBAL_SYNC_LOCK_KEY)?.mode, "manual");
+  assert.equal(acquired, false);
+  assert.equal(store.get(BACKGROUND_SYNC_LOCK_KEY)?.owner, "other-background-tab");
+  assert.equal(store.get(STARTUP_SYNC_LOCK_KEY)?.owner, "other-startup-tab");
+  assert.equal(
+    store.get(FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY)?.owner,
+    "other-foreground-tab"
+  );
+  assert.equal(store.get(GLOBAL_SYNC_LOCK_KEY)?.owner, "other-background-tab");
+  assert.equal(store.has(MANUAL_SYNC_LOCK_KEY), false);
 };
 
 const testManualOverrideCancelsRemoteRetryBackoff = async () => {
@@ -1536,7 +1536,11 @@ const testPhase3CallSitesUseDedicatedHelpers = () => {
   );
   expectMatch(
     /const handleManualSync = async[\s\S]*?acquireManualSyncLock\(\{[\s\S]*?preemptActiveSync:\s*isInitialSetup[\s\S]*?preemptScope:\s*isInitialSetup\s*\?\s*SYNC_PREEMPT_SCOPE_AUTOMATIC_ONLY/m,
-    "首次设置同步应只抢占自动同步，不能破坏真实手动锁。"
+    "首次设置同步应声明 automatic-only intent，但仍必须服从执行锁互斥。"
+  );
+  expectMatch(
+    /const noteManualSuccess = \([\s\S]*?settlePendingForegroundRemoteSyncRequestIfCovered\([\s\S]*?pendingForegroundRemoteSyncAtStart/m,
+    "普通手动同步成功后必须按启动时捕获的 foreground intent generation 结算。"
   );
   expectMatch(
     /const handleForcePush = async[\s\S]*?scopeLabel: "强制推送"/m,
@@ -1581,9 +1585,9 @@ const testPhase3CallSitesUseDedicatedHelpers = () => {
   await testOwnershipVerificationFailureRollsBackOwnedModeLock();
   await testLockUnavailableCallbackFailurePropagatesWithoutStartingSync();
   await testAcquireFailurePropagatesWithoutStartingSync();
-  await testManualOverridePreemptsAutoSyncLocks();
+  await testManualOverridePreservesActiveSyncLocksAndDurableIntent();
   await testInitialSetupPreemptionPreservesForeignManualLock();
-  await testInitialSetupPreemptionReplacesOnlyAutomaticLocks();
+  await testInitialSetupPreservesForeignAutomaticLocks();
   await testManualOverrideCancelsRemoteRetryBackoff();
   await testBeforePerformCanShortCircuitSafely();
   await testLockUnavailableSkipsWithoutHeartbeat();
