@@ -711,6 +711,11 @@ const run = () => {
   assert.equal(overflowToggle.getAttribute("role"), "button");
   assert.equal(overflowToggle.getAttribute("aria-haspopup"), "menu");
   assert.equal(overflowToggle.getAttribute("aria-controls"), overflowMenu.id);
+  assert.equal(
+    overflowMenu.getAttribute("aria-labelledby"),
+    overflowToggle.id,
+    "overflow menu must be named by its controlling trigger"
+  );
 
   const openMenuWithKey = (key) => {
     overflowToggle.focus();
@@ -724,6 +729,7 @@ const run = () => {
     const event = createEvent("keydown", overflowMenu, { key, ...fields });
     overflowMenu.dispatchEvent(event);
     forum.flushAnimationFrames();
+    return event;
   };
 
   openMenuWithKey("Enter");
@@ -778,13 +784,23 @@ const run = () => {
   assert.equal(overflowMenu.hidden, true);
 
   openMenuWithKey("Enter");
-  dispatchMenuKey("Tab");
+  const forwardTabEvent = dispatchMenuKey("Tab");
   assert.equal(overflowMenu.hidden, true);
-  assert.equal(forum.document.activeElement, overflowToggle);
+  assert.equal(
+    Boolean(forwardTabEvent.defaultPrevented),
+    false,
+    "Tab traversal must remain owned by the browser"
+  );
+  assert.notEqual(forum.document.activeElement, overflowToggle);
   openMenuWithKey("Enter");
-  dispatchMenuKey("Tab", { shiftKey: true });
+  const backwardTabEvent = dispatchMenuKey("Tab", { shiftKey: true });
   assert.equal(overflowMenu.hidden, true);
-  assert.equal(forum.document.activeElement, overflowToggle);
+  assert.equal(
+    Boolean(backwardTabEvent.defaultPrevented),
+    false,
+    "Shift+Tab traversal must remain owned by the browser"
+  );
+  assert.notEqual(forum.document.activeElement, overflowToggle);
 
   openMenuWithKey("Enter");
   const outsideControl = forum.document.createElement("button");
@@ -838,6 +854,33 @@ const run = () => {
   );
   assert.equal(searchPopover.hidden, true, "Escape must close the search popover");
   assert.equal(forum.document.activeElement, searchToggle);
+
+  forum.layout.navWidth = 40;
+  forum.eventWindow.dispatchEvent(createEvent("resize", forum.eventWindow));
+  forum.flushAnimationFrames();
+  assert.equal(overflowOwner.hidden, false);
+
+  overflowToggle.focus();
+  overflowToggle.dispatchEvent(createEvent("click", overflowToggle));
+  forum.flushAnimationFrames();
+  assert.equal(overflowMenu.hidden, false);
+  searchToggle.focus();
+  searchToggle.dispatchEvent(createEvent("click", searchToggle));
+  forum.flushAnimationFrames();
+  assert.equal(searchPopover.hidden, false);
+  assert.equal(searchToggle.getAttribute("aria-expanded"), "true");
+  assert.equal(overflowMenu.hidden, true, "opening Search must close More");
+  assert.equal(overflowToggle.getAttribute("aria-expanded"), "false");
+
+  overflowToggle.focus();
+  overflowToggle.dispatchEvent(createEvent("click", overflowToggle));
+  forum.flushAnimationFrames();
+  assert.equal(overflowMenu.hidden, false);
+  assert.equal(overflowToggle.getAttribute("aria-expanded"), "true");
+  assert.equal(searchPopover.hidden, true, "opening More must close Search");
+  assert.equal(searchToggle.getAttribute("aria-expanded"), "false");
+  overflowToggle.dispatchEvent(createEvent("click", overflowToggle));
+  assert.equal(overflowMenu.hidden, true);
 
   dispatchKey(searchToggle, " ");
   forum.flushAnimationFrames();

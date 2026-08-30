@@ -172,14 +172,14 @@ const testCrossContextPendingSignalWakesExistingPage = () => {
     PENDING_FOREGROUND_REMOTE_SYNC_KEY,
     null,
     pendingFromOldContext,
-    true
+    false
   );
 
   assert.equal(timers.at(-1).delayMs, 600);
   assert.equal(
     hooks.getPendingForegroundRemoteSyncRequest().requestId,
     pending.requestId,
-    "现存页面收到跨上下文通知后，应保留并接管待拉取意图。"
+    "即使 userscript manager 误报 cross-context 标志，现存页面也应接管外部待拉取意图。"
   );
 
   binding.dispose();
@@ -213,7 +213,39 @@ const testOlderContextCannotClearNewerRemoteIntent = () => {
   );
 };
 
-const testConcurrentClearRecoversLatestObservedRemoteIntent = () => {
+const testSameTimestampObservationCreatesANewIntentGeneration = () => {
+  const { hooks } = createHarness();
+  const remoteUpdatedAt = "2026-08-27T05:25:29Z";
+  const oldRequest = hooks.markPendingForegroundRemoteSyncRequest({
+    reason: "pageshow",
+    triggerSource: "foreground_resume",
+    remoteUpdatedAt,
+    now: 1760001000000,
+  });
+  const newRequest = hooks.markPendingForegroundRemoteSyncRequest({
+    reason: "visibility_visible",
+    triggerSource: "foreground_resume",
+    remoteUpdatedAt,
+    now: 1760001001000,
+  });
+
+  assert.notEqual(
+    newRequest.requestId,
+    oldRequest.requestId,
+    "每次远端观测都必须有独立 intent generation，不能把时间戳当作版本身份。"
+  );
+  const clearResult = hooks.clearPendingForegroundRemoteSyncRequest(
+    oldRequest,
+    "old_context_finished"
+  );
+  assert.equal(clearResult.status, "retained");
+  assert.equal(
+    hooks.getPendingForegroundRemoteSyncRequest().requestId,
+    newRequest.requestId
+  );
+};
+
+const testConcurrentClearRecoversSameTimestampIntentGeneration = () => {
   const { hooks, sandbox, store } = createHarness();
   const oldRequest = hooks.markPendingForegroundRemoteSyncRequest({
     reason: "pageshow",
@@ -224,7 +256,6 @@ const testConcurrentClearRecoversLatestObservedRemoteIntent = () => {
   const newerRequest = {
     ...oldRequest,
     requestId: "new-context-request",
-    remoteUpdatedAt: "2026-08-27T05:26:20Z",
     lastSeenAt: 1760001060000,
     sourceContextId: "new-context",
   };
@@ -247,10 +278,12 @@ const testConcurrentClearRecoversLatestObservedRemoteIntent = () => {
     "old_context_finished"
   );
   assert.equal(clearResult.status, "retained");
-  assert.equal(
-    hooks.getPendingForegroundRemoteSyncRequest().remoteUpdatedAt,
-    newerRequest.remoteUpdatedAt,
-    "旧上下文的 read-delete 窗口不得吞掉刚观测到的新版云端意图。"
+  const recoveredRequest = hooks.getPendingForegroundRemoteSyncRequest();
+  assert.equal(recoveredRequest.remoteUpdatedAt, newerRequest.remoteUpdatedAt);
+  assert.notEqual(
+    recoveredRequest.requestId,
+    oldRequest.requestId,
+    "旧上下文的 read-delete 窗口不得吞掉同一 updated_at 的新版观测代次。"
   );
 };
 
@@ -269,6 +302,7 @@ const testForegroundRetryCannotClearIntentCreatedDuringItsRun = async () => {
   let newerRequest = null;
 
   hooks.scheduleForegroundRemoteSyncRetry("remote_probe_changed:pageshow", {
+    expectedPendingRequest: oldRequest,
     requestForegroundRemoteSyncCheck: async () => {
       newerRequest = hooks.markPendingForegroundRemoteSyncRequest({
         reason: "visibility_visible",
@@ -294,6 +328,117 @@ const testForegroundRetryCannotClearIntentCreatedDuringItsRun = async () => {
   );
   assert.ok(hooks.getForegroundRemoteSyncRecoveryRemainingMs() > 0);
   hooks.clearForegroundRemoteSyncRecovery();
+};
+
+const testChangedIntentRetryStopsWhenItsPendingGenerationIsGone = async () => {
+  const { hooks, sandbox } = createHarness();
+  const pending = hooks.markPendingForegroundRemoteSyncRequest({
+    reason: "pageshow",
+    remoteUpdatedAt: "2026-08-27T05:25:29Z",
+    now: 1760001000000,
+  });
+  const timers = [];
+  sandbox.setTimeout = (callback, delayMs) => {
+    timers.push({ callback, delayMs });
+    return timers.length;
+  };
+  let requestCount = 0;
+
+  hooks.scheduleForegroundRemoteSyncRetry("remote_probe_changed:pageshow", {
+    expectedPendingRequest: pending,
+    requestForegroundRemoteSyncCheck: async () => {
+      requestCount += 1;
+      return { status: "success", action: "pulled" };
+    },
+    syncResultPhasePolicy: {
+      handle: async () => ({ refreshPlan: null, retryResult: null }),
+    },
+    maybeShowForegroundProbeFeedback: () => {},
+  });
+  const retryTimer = timers.find(({ delayMs }) => delayMs === 1200);
+  assert.ok(retryTimer);
+  hooks.clearPendingForegroundRemoteSyncRequest(pending, "other_owner_finished");
+  await retryTimer.callback();
+
+  assert.equal(
+    requestCount,
+    0,
+    "changed-intent retry 只能消费它捕获的 pending generation。"
+  );
+};
+
+const testTimestampEqualityAloneDoesNotCoverADurableIntent = () => {
+  const { hooks, sandbox } = createHarness();
+  const now = 1760001000000;
+  const remoteUpdatedAt = "2026-08-27T05:25:29Z";
+  const pending = hooks.markPendingForegroundRemoteSyncRequest({
+    reason: "pageshow",
+    remoteUpdatedAt,
+    now,
+  });
+  hooks.setSyncBaselineState({
+    contentHash: "baseline-hash",
+    remoteUpdatedAt,
+  });
+  const timers = [];
+  sandbox.setTimeout = (callback, delayMs) => {
+    timers.push({ callback, delayMs });
+    return timers.length;
+  };
+
+  const recovery = hooks.recoverPendingForegroundRemoteSyncIfNeeded({
+    now: now + 1,
+    settingsSnapshot: enabledSettings,
+  });
+
+  assert.equal(recovery.status, "scheduled");
+  assert.equal(
+    hooks.getPendingForegroundRemoteSyncRequest().requestId,
+    pending.requestId,
+    "相同 updated_at 不能证明 baseline 覆盖了这次具体观测。"
+  );
+  assert.ok(timers.some(({ delayMs }) => delayMs === 600));
+  hooks.clearForegroundRemoteSyncRecovery();
+};
+
+const testBaselineSettlementIsBoundToTheCapturedIntent = () => {
+  const { hooks } = createHarness();
+  const remoteUpdatedAt = "2026-08-27T05:25:29Z";
+  const captured = hooks.markPendingForegroundRemoteSyncRequest({
+    reason: "pageshow",
+    remoteUpdatedAt,
+    now: 1760001000000,
+  });
+  hooks.setSyncBaselineState({
+    contentHash: "baseline-hash",
+    remoteUpdatedAt,
+  });
+  const cleared = hooks.settlePendingForegroundRemoteSyncRequestIfCovered(
+    captured,
+    "manual_sync_success"
+  );
+  assert.equal(cleared.status, "cleared");
+  assert.equal(hooks.getPendingForegroundRemoteSyncRequest(), null);
+
+  const older = hooks.markPendingForegroundRemoteSyncRequest({
+    reason: "pageshow",
+    remoteUpdatedAt,
+    now: 1760001001000,
+  });
+  const newer = hooks.markPendingForegroundRemoteSyncRequest({
+    reason: "visibility_visible",
+    remoteUpdatedAt,
+    now: 1760001002000,
+  });
+  const retained = hooks.settlePendingForegroundRemoteSyncRequestIfCovered(
+    older,
+    "manual_sync_success"
+  );
+  assert.equal(retained.status, "retained");
+  assert.equal(
+    hooks.getPendingForegroundRemoteSyncRequest().requestId,
+    newer.requestId
+  );
 };
 
 const testForegroundFailureRetainsDurableIntent = async () => {
@@ -932,10 +1077,17 @@ const testRecoverySupportDisposeCancelsRecoveryTimer = () => {
     now,
   });
   hooks.scheduleForegroundRemoteSyncRecovery(pending, { now });
+  hooks.scheduleForegroundRemoteSyncRetry("remote_probe_changed:pageshow", {
+    expectedPendingRequest: pending,
+  });
+
+  assert.ok(hooks.getForegroundRemoteSyncRecoveryRemainingMs(now) > 0);
+  assert.ok(hooks.getForegroundRemoteSyncRetryRemainingMs(now) > 0);
 
   support.dispose();
 
   assert.equal(hooks.getForegroundRemoteSyncRecoveryRemainingMs(now), 0);
+  assert.equal(hooks.getForegroundRemoteSyncRetryRemainingMs(now), 0);
 };
 
 const testRuntimeContextKeepsStableTabLineageAcrossReload = () => {
@@ -1008,8 +1160,12 @@ const testCollectedS1pLogsIncludeRuntimeContext = () => {
   await testForegroundProbePersistsAndSettlesIntent();
   testCrossContextPendingSignalWakesExistingPage();
   testOlderContextCannotClearNewerRemoteIntent();
-  testConcurrentClearRecoversLatestObservedRemoteIntent();
+  testSameTimestampObservationCreatesANewIntentGeneration();
+  testConcurrentClearRecoversSameTimestampIntentGeneration();
   await testForegroundRetryCannotClearIntentCreatedDuringItsRun();
+  await testChangedIntentRetryStopsWhenItsPendingGenerationIsGone();
+  testTimestampEqualityAloneDoesNotCoverADurableIntent();
+  testBaselineSettlementIsBoundToTheCapturedIntent();
   await testForegroundFailureRetainsDurableIntent();
   testDurableForegroundIntentDoesNotAgeIntoIdle();
   testDisablingForegroundCheckCancelsDurablePendingIntent();
