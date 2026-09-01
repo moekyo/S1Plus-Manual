@@ -74,14 +74,14 @@ const testPendingForegroundIntentSurvivesActiveLock = async () => {
       hasPending: true,
       source: "foreground_resume",
       reason: "foreground_remote_update_pending",
-      operation: "pull",
+      operation: "sync",
       sources: {},
     }
   );
   assert.equal(
     hooks.getPendingForegroundRemoteSyncRequest().requestId,
     pending.requestId,
-    "旧上下文持锁时，待拉取意图不能被新页面吞掉。"
+    "旧上下文持锁时，前台远端待处理意图不能被新页面吞掉。"
   );
 
   store.delete("s1p_sync_global_lock");
@@ -124,7 +124,7 @@ const testForegroundProbePersistsAndSettlesIntent = async () => {
   assert.equal(
     hooks.getPendingForegroundRemoteSyncRequest(),
     null,
-    "follow-up 成功完成后，待拉取意图应被原子清理。"
+    "follow-up 成功完成后，前台远端待处理意图应被原子清理。"
   );
 };
 
@@ -179,7 +179,15 @@ const testCrossContextPendingSignalWakesExistingPage = () => {
   assert.equal(
     hooks.getPendingForegroundRemoteSyncRequest().requestId,
     pending.requestId,
-    "即使 userscript manager 误报 cross-context 标志，现存页面也应接管外部待拉取意图。"
+    "即使 userscript manager 误报 cross-context 标志，现存页面也应接管外部前台远端待处理意图。"
+  );
+  const projectedState = toPlainObject(
+    hooks.s1pSyncSystem.readState({ surface: "navbar" })
+  );
+  assert.equal(
+    hooks.getAutoSyncIndicatorDisplayKind(projectedState),
+    "sync",
+    "跨上下文 remote awareness 在 canonical full-sync decision 前必须保持中性。"
   );
 
   binding.dispose();
@@ -492,7 +500,7 @@ const testDurableForegroundIntentDoesNotAgeIntoIdle = () => {
       hasPending: true,
       source: "foreground_resume",
       reason: "foreground_remote_update_pending",
-      operation: "pull",
+      operation: "sync",
       sources: {},
     },
     "未完成的持久化远端更新不能仅因时间流逝而显示为待机。"
@@ -546,7 +554,7 @@ const runDisabledForegroundPendingCancellationCase = (settingKey) => {
       hasPending: true,
       source: "foreground_resume",
       reason: "foreground_remote_update_pending",
-      operation: "pull",
+      operation: "sync",
       sources: {},
     }
   );
@@ -707,7 +715,7 @@ const runInFlightForegroundCancellationCase = async ({
       hasPending: true,
       source: "foreground_resume",
       reason: "foreground_remote_update_pending",
-      operation: "pull",
+      operation: "sync",
       sources: {},
     }
   );

@@ -14794,7 +14794,7 @@
       case AUTO_SYNC_INDICATOR_SOURCE_PAGE_LOAD_VISIBLE:
       case AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME:
       case AUTO_SYNC_INDICATOR_SOURCE_VISIBLE_POLL:
-        return AUTO_SYNC_INDICATOR_OPERATION_PULL;
+        return AUTO_SYNC_INDICATOR_OPERATION_SYNC;
       default:
         return AUTO_SYNC_INDICATOR_OPERATION_SYNC;
     }
@@ -15211,23 +15211,6 @@
       typeof getPendingForegroundRemoteSyncRequest === "function"
         ? getPendingForegroundRemoteSyncRequest()
         : null;
-    if (
-      foregroundPending &&
-      foregroundRetryPendingState?.operation ===
-        AUTO_SYNC_INDICATOR_OPERATION_SYNC
-    ) {
-      return foregroundRetryPendingState;
-    }
-    if (foregroundPending) {
-      return {
-        hasPending: true,
-        source: AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME,
-        reason: "foreground_remote_update_pending",
-        operation: AUTO_SYNC_INDICATOR_OPERATION_PULL,
-        sources: {},
-      };
-    }
-
     const sharedState =
       typeof getBackgroundSyncDebounceState === "function"
         ? getBackgroundSyncDebounceState()
@@ -15284,6 +15267,16 @@
 
     if (foregroundRetryPendingState) {
       return foregroundRetryPendingState;
+    }
+
+    if (foregroundPending) {
+      return {
+        hasPending: true,
+        source: AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME,
+        reason: "foreground_remote_update_pending",
+        operation: AUTO_SYNC_INDICATOR_OPERATION_SYNC,
+        sources: {},
+      };
     }
 
     return { hasPending: false, source: "", reason: "", sources: {} };
@@ -17532,7 +17525,7 @@
     setAutoSyncIndicatorPendingState(
       AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME,
       "foreground_remote_update_pending",
-      { operation: AUTO_SYNC_INDICATOR_OPERATION_PULL }
+      { operation: AUTO_SYNC_INDICATOR_OPERATION_SYNC }
     );
     return nextRequest;
   };
@@ -17565,7 +17558,7 @@
       recordSyncTraceEvent("foreground_pending_clear_race_retained", {
         scope: "foreground_probe",
         status: "retained",
-        message: "清理旧前台待拉取时检测到并发写入，已保留较新请求",
+        message: "清理旧前台远端待处理时检测到并发写入，已保留较新请求",
         details: {
           requestId: current.requestId,
           remoteUpdatedAt: current.remoteUpdatedAt,
@@ -17613,7 +17606,7 @@
       recordSyncTraceEvent("foreground_pending_clear_race_recovered", {
         scope: "foreground_probe",
         status: "retained",
-        message: "清理旧前台待拉取时发现更新的远端观测，已重建待拉取请求",
+        message: "清理旧前台远端待处理时发现更新的远端观测，已重建待处理请求",
         details: {
           requestId: current.requestId,
           remoteUpdatedAt: current.remoteUpdatedAt,
@@ -17772,7 +17765,7 @@
     recordSyncTraceEvent("foreground_pending_cancelled_by_settings", {
       scope: "foreground_probe",
       status: result.status,
-      message: "同步设置已关闭，已取消前台待拉取意图",
+      message: "同步设置已关闭，已取消前台远端待处理意图",
       details: {
         reason: normalizedReason,
         requestId: pending.requestId,
@@ -17841,7 +17834,7 @@
     setAutoSyncIndicatorPendingState(
       AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME,
       "foreground_remote_update_pending",
-      { operation: AUTO_SYNC_INDICATOR_OPERATION_PULL }
+      { operation: AUTO_SYNC_INDICATOR_OPERATION_SYNC }
     );
     foregroundRemoteSyncRecoveryTimer = setTimeout(async () => {
       foregroundRemoteSyncRecoveryTimer = null;
@@ -17890,7 +17883,7 @@
         recordSyncTraceEvent("foreground_pending_recovery_failed", {
           scope: "foreground_probe",
           status: "failure",
-          message: "跨上下文前台待拉取恢复执行失败",
+          message: "跨上下文前台远端待处理恢复执行失败",
           details: {
             reason: latestPending.reason,
             remoteUpdatedAt: latestPending.remoteUpdatedAt,
@@ -17909,7 +17902,7 @@
       recordSyncTraceEvent("foreground_pending_recovery_result", {
         scope: "foreground_probe",
         status: settled.status,
-        message: "跨上下文前台待拉取恢复执行完成",
+        message: "跨上下文前台远端待处理恢复执行完成",
         details: {
           reason: latestPending.reason,
           remoteUpdatedAt: latestPending.remoteUpdatedAt,
@@ -18042,10 +18035,10 @@
       scope: "foreground_probe",
       status: "scheduled",
       message: activeLock
-        ? "检测到跨上下文遗留前台待拉取，等待现有同步锁释放"
+        ? "检测到跨上下文遗留前台远端待处理，等待现有同步锁释放"
         : isForegroundSyncInFlight
-          ? "检测到跨上下文遗留前台待拉取，等待当前同步完成"
-          : "检测到跨上下文遗留前台待拉取，已安排恢复",
+          ? "检测到跨上下文遗留前台远端待处理，等待当前同步完成"
+          : "检测到跨上下文遗留前台远端待处理，已安排恢复",
       details: {
         reason: pending.reason,
         triggerSource: pending.triggerSource,
@@ -22222,7 +22215,7 @@
           recordSyncTraceEvent("foreground_pending_cross_context_signal", {
             scope: "foreground_probe",
             status: "cleared",
-            message: "跨上下文前台待拉取已完成或清理",
+            message: "跨上下文前台远端待处理已完成或清理",
           });
           return;
         }
@@ -22238,7 +22231,7 @@
         recordSyncTraceEvent("foreground_pending_cross_context_signal", {
           scope: "foreground_probe",
           status: recoveryResult?.status || "unknown",
-          message: "收到跨上下文前台待拉取通知",
+          message: "收到跨上下文前台远端待处理通知",
           details: {
             requestId: pending.requestId,
             remoteUpdatedAt: pending.remoteUpdatedAt,
@@ -35257,7 +35250,7 @@
       "foreground_followup_retry";
     const indicatorOperation =
       normalizeAutoSyncIndicatorOperation(options.indicatorOperation) ||
-      AUTO_SYNC_INDICATOR_OPERATION_PULL;
+      AUTO_SYNC_INDICATOR_OPERATION_SYNC;
     const expectedPendingRequest =
       normalizePendingForegroundRemoteSyncRequest(
         options.expectedPendingRequest
@@ -56644,7 +56637,7 @@
             AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP,
             "daily_startup_deferred",
             {
-              operation: AUTO_SYNC_INDICATOR_OPERATION_PULL,
+              operation: AUTO_SYNC_INDICATOR_OPERATION_SYNC,
             }
           );
           console.log(
