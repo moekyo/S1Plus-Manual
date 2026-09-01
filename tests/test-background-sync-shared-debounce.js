@@ -228,6 +228,30 @@ const testCoveredCompletionClearsPendingAndSharedState = () => {
   assert.equal(tabA.scheduler.inspect().state, null);
 };
 
+const testHashEqualCompletionSettlesWithoutFollowUp = () => {
+  const { makeScheduler } = createScenario({ now: 6_500_000 });
+  const tabA = makeScheduler({ tabId: "tab-a" });
+  tabA.scheduler.queue({
+    source: "read_progress",
+    lastModified: 651,
+    threadId: "651",
+  });
+
+  const result = tabA.scheduler.complete({
+    status: "success",
+    action: "no_change",
+    reason: "hash_equal",
+    coveredLastModified: 651,
+    coveredLocalLastUpdated: 651,
+  });
+
+  assert.equal(result.pendingCleanup.status, "cleared");
+  assert.equal(result.sharedDebounceCleanup.status, "cleared");
+  assert.equal(tabA.followUps.length, 0);
+  assert.equal(tabA.scheduler.inspect().pending, null);
+  assert.equal(tabA.scheduler.inspect().state, null);
+};
+
 const testNewerDirtyIsRetainedWithOneFollowUp = () => {
   const { clock, makeScheduler } = createScenario({ now: 7_000_000 });
   const tabA = makeScheduler({ tabId: "tab-a" });
@@ -237,7 +261,10 @@ const testNewerDirtyIsRetainedWithOneFollowUp = () => {
 
   const result = tabA.scheduler.complete({
     status: "success",
+    action: "no_change",
+    reason: "hash_equal",
     coveredLastModified: 701,
+    coveredLocalLastUpdated: 701,
   });
   assert.equal(result.pendingCleanup.status, "retained");
   assert.equal(result.sharedDebounceCleanup.status, "retained");
@@ -695,6 +722,7 @@ const main = async () => {
   testDueConsumesStateBeforeTrigger();
   testDueDefersWhileRunningSyncOwnsLock();
   testCoveredCompletionClearsPendingAndSharedState();
+  testHashEqualCompletionSettlesWithoutFollowUp();
   testNewerDirtyIsRetainedWithOneFollowUp();
   testPendingRecoveryWatchesExistingSchedulerOwner();
   testRetrySelectsSharedThenLocalFallbackOnWriteLoss();

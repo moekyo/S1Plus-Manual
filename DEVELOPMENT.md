@@ -500,7 +500,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
    - 持久化 `running` 状态未达到 `AUTO_SYNC_INDICATOR_RUNNING_MIN_VISIBLE_MS`（当前 650ms）或写入仍在进行时，会继续显示 running，避免刚开始就硬切走。
 2. **可见 pending**
    - 后台 shared debounce、后台 retry、pending auto-sync request 显示为 `Pending(push)`，并按来源归纳为“阅读进度 / 清理结果 / 本地变更待推送”。
-   - 前台发现云端 `updated_at` 变新、但本地 pending write / debounce 门禁要求稍后复查时，显示 `Pending(probe)`，文案为“云端有变化，等待本地状态稳定后复查”。这表示可能有云端更新待处理，必须保留，但视觉上仍是放大镜复查态，不提前表达为拉取或同步三点。
+   - 前台 metadata-only probe 或跨上下文通知发现云端 `updated_at` 变新、但完整同步尚未完成裁决时，显示中性的 `Pending(sync)`；若已进入明确的 changed/equal probe retry reason，则解析为 `Pending(probe)`，文案为“云端有变化，等待本地状态稳定后复查”。这表示可能有云端更新待处理，必须保留，但视觉上不提前表达为拉取。
    - 前台 follow-up 已确认需要拉取但暂时重试时，显示 `Pending(pull)`，优先级高于本地 push pending，避免远端更新被本地队列盖住。
    - 云端 `updated_at` 与本地已同步版本相同的 `remote_probe_equal_ambiguous:*` 只安排内部二次校验，不再单独点亮导航栏 pending；只有刚刚同标签页完成自动推送且仍在视觉归并窗口内时，才合并显示为 `Pending(probe)` 收尾态“推送完成，正在确认云端状态”。
 3. **结果态 TTL**
@@ -527,7 +527,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - 标题 Title Owner 选择在 `Running Phase` 下必须优先 Live Runner：presence 记录里的 `syncOwnerId` 用于匹配 `displayLiveRunnerOwnerId`。普通“最近活动 tab”规则只适用于 Result Phase。
 - Result Phase（success / failure / conflict）可以跨标签页 handoff：旧 Title Owner 关闭、presence 失效或 owner lease 失效时，剩余后台 S1 标签页可以显式刷新/取得 Title Owner lease 并继续显示结果 TTL。这个 handoff 不得用于 Running Phase。
 - stale running 不得回退旧结果：如果最新 Sync Indicator State 是 running，但标题层无法验证 Live Runner，且 `lastResolvedTimestamp < state.timestamp`，标题保持 idle，等待 resolved-state writer（如 `finishAutoSyncIndicatorCycle()` / `setAutoSyncIndicatorResolvedPhase()`）写入新的 Result Phase。
-- 前台 retry pending 的运行时 `source` 必须从 `remote_probe_*:<triggerSource>` 原因中还原，不能统一写成 `foreground_resume`；否则 `displayOperation` 会被来源不一致保护丢弃，重新默认成待拉取箭头。
+- 前台 retry pending 的运行时 `source` 必须从 `remote_probe_*:<triggerSource>` 原因中还原，不能统一写成 `foreground_resume`；否则 `displayOperation` 会被来源不一致保护丢弃，退回中性默认态并丢失 probe 语义。
 - 前台 retry pending 的 `foreground_probe_verification_retry` / `foreground_probe_changed_retry` 必须解析成 `operation: probe` 的显示态；它们分别代表云端确认或等待复查，不应该复用中性三点，也不应该回退成 push/pull 箭头。
 - 只有真正进入 follow-up safe sync、后台自动同步、手动同步锁，或达到可见阈值的 probe，才切换到 `running`。
 - 当前实现已经为不同来源保留 `source` 字段，后续扩展时优先沿用现有来源枚举，而不是新增自由文本。

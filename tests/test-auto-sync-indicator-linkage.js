@@ -44,6 +44,8 @@ const BACKGROUND_SYNC_DEBOUNCE_STATE_KEY =
 const BACKGROUND_SYNC_LOCK_KEY = "s1p_background_sync_lock";
 const AUTO_SYNC_INDICATOR_STATE_KEY = "s1p_auto_sync_indicator_state";
 const PENDING_AUTO_SYNC_KEY = "s1p_pending_auto_sync_request";
+const PENDING_FOREGROUND_REMOTE_SYNC_KEY =
+  "s1p_pending_foreground_remote_sync_request";
 const STARTUP_SYNC_LOCK_KEY = "s1p_startup_sync_lock";
 const FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY =
   "s1p_foreground_followup_sync_lock";
@@ -122,14 +124,14 @@ const testSourceAwareTitlesAndMappings = () => {
       displayPhase: "running",
       displaySource: "daily_startup",
     }),
-    "自动同步：云端更新拉取中"
+    "自动同步：每日首次同步中"
   );
   assert.strictEqual(
     hooks.getAutoSyncIndicatorTitle({
       displayPhase: "running",
       displaySource: "foreground_followup",
     }),
-    "自动同步：云端更新拉取中"
+    "自动同步：回到前台检查中"
   );
   assert.strictEqual(
     hooks.getAutoSyncIndicatorDisplayKind({
@@ -1115,6 +1117,119 @@ const testPullRetryKeepsCloudDirectionOverLocalPending = () => {
   store.delete(BACKGROUND_SYNC_DEBOUNCE_STATE_KEY);
 };
 
+const testUndecidedForegroundRemotePendingIsNeutral = () => {
+  const { hooks, store } = createHarness();
+  const now = Date.now();
+  const pending = hooks.markPendingForegroundRemoteSyncRequest({
+    reason: "pageshow",
+    triggerSource: "foreground_resume",
+    remoteUpdatedAt: "2026-09-01T20:05:44Z",
+    now,
+  });
+
+  assert.ok(pending);
+  assert.equal(store.has(PENDING_FOREGROUND_REMOTE_SYNC_KEY), true);
+
+  const pendingState = toPlainObject(
+    hooks.getAutoSyncRuntimePendingDisplayState(now)
+  );
+  assert.deepEqual(
+    pendingState,
+    {
+      hasPending: true,
+      source: "foreground_resume",
+      reason: "foreground_remote_update_pending",
+      operation: "sync",
+      sources: {},
+    },
+    "full sync 尚未裁决前，durable foreground remote awareness 必须保持中性。"
+  );
+
+  const resolvedState = toPlainObject(readNavbarProjection(hooks));
+  assert.equal(resolvedState.displayPhase, "pending");
+  assert.equal(
+    hooks.getAutoSyncIndicatorDisplayKind(resolvedState),
+    "sync",
+    "metadata probe/cross-context pending 不能提前显示 pull 箭头。"
+  );
+  assert.equal(
+    hooks.getAutoSyncIndicatorTitle(resolvedState),
+    "自动同步：回到前台检查待处理"
+  );
+
+  hooks.clearPendingForegroundRemoteSyncRequest(pending, "test_cleanup");
+
+  {
+    const { hooks, store } = createHarness();
+    const localDirtyAt = Date.now();
+    const localPending = hooks.markPendingForegroundRemoteSyncRequest({
+      reason: "pageshow",
+      triggerSource: "foreground_resume",
+      remoteUpdatedAt: "2026-09-01T20:05:44Z",
+      now: localDirtyAt,
+    });
+    store.set(BACKGROUND_SYNC_DEBOUNCE_STATE_KEY, {
+      version: 1,
+      generation: 1,
+      ownerTabId: "tab-a",
+      ownerLeaseUntil: localDirtyAt + 30000,
+      dueAt: localDirtyAt + 20000,
+      maxWaitUntil: localDirtyAt + 60000,
+      firstDirtyAt: localDirtyAt,
+      lastDirtyAt: localDirtyAt,
+      maxLastModified: localDirtyAt,
+      sources: { read_progress: 1 },
+      threadIds: ["2268704"],
+      reason: "debounced_read_progress",
+    });
+
+    const resolvedState = toPlainObject(readNavbarProjection(hooks));
+    assert.equal(resolvedState.displayPhase, "pending");
+    assert.equal(
+      hooks.getAutoSyncIndicatorDisplayKind(resolvedState),
+      "push",
+      "本地阅读进度进入 scheduler 后，中性 remote awareness 不能盖掉 push pending。"
+    );
+    assert.equal(
+      hooks.getAutoSyncIndicatorTitle(resolvedState),
+      "自动同步：阅读进度待推送"
+    );
+
+    hooks.clearPendingForegroundRemoteSyncRequest(localPending, "test_cleanup");
+    store.delete(BACKGROUND_SYNC_DEBOUNCE_STATE_KEY);
+  }
+
+  {
+    const { hooks } = createHarness();
+    const stalePending = hooks.markPendingForegroundRemoteSyncRequest({
+      reason: "pageshow",
+      triggerSource: "foreground_resume",
+      remoteUpdatedAt: "2026-09-01T20:05:44Z",
+      now: Date.now(),
+    });
+    hooks.setSyncBaselineState({
+      contentHash: "already-synced",
+      remoteUpdatedAt: "2026-09-01T20:05:45Z",
+    });
+    store.set(AUTO_SYNC_INDICATOR_STATE_KEY, {
+      ...toPlainObject(hooks.getAutoSyncIndicatorState()),
+      operation: "pull",
+    });
+
+    const resolvedState = toPlainObject(readNavbarProjection(hooks));
+    assert.equal(
+      hooks.getAutoSyncIndicatorDisplayKind(resolvedState),
+      "sync",
+      "已同步版本覆盖 pending observed version 时，遗留 remote awareness 只能保持中性。"
+    );
+    assert.ok(
+      hooks.getPendingForegroundRemoteSyncRequest(),
+      "版本覆盖只应降级展示，不能绕过 request generation 直接删除 durable recovery intent。"
+    );
+    hooks.clearPendingForegroundRemoteSyncRequest(stalePending, "test_cleanup");
+  }
+};
+
 const testSuccessDisplayKeepsDirectionalCompletion = () => {
   {
     const { hooks, store } = createHarness();
@@ -1411,8 +1526,8 @@ const testAutoSyncEntryPointsBindIndicatorSources = () => {
     "导航栏不能用完整同步锁 TTL 保持 running；锁展示应有更短的 stale 窗口。"
   );
   expectMatch(
-    /const indicatorOperation[\s\S]*?normalizeAutoSyncIndicatorOperation\(options\.indicatorOperation\)[\s\S]*?AUTO_SYNC_INDICATOR_OPERATION_PULL/,
-    "真正远端变化的前台补偿重试仍应默认按 pull 待拉取展示。"
+    /const indicatorOperation[\s\S]*?normalizeAutoSyncIndicatorOperation\(options\.indicatorOperation\)[\s\S]*?AUTO_SYNC_INDICATOR_OPERATION_SYNC/,
+    "尚未得到 canonical full-sync action 的前台补偿重试应默认保持中性 sync。"
   );
   expectMatch(
     /isEqualUpdatedAtProbeVerificationReason[\s\S]*?云端版本时间相同，正在执行前台二次确认同步检查/,
@@ -1589,6 +1704,7 @@ const testAutoSyncEntryPointsBindIndicatorSources = () => {
   testNewerTerminalAuthoritySupersedesOlderForegroundLock();
   testDisplaySessionCoalescesPushVerification();
   testPullRetryKeepsCloudDirectionOverLocalPending();
+  testUndecidedForegroundRemotePendingIsNeutral();
   testSuccessDisplayKeepsDirectionalCompletion();
   testBackgroundDrainKeepsSuccessAfterPushVerification();
   testStalePendingAutoSyncRequestDoesNotDisplay();
