@@ -408,6 +408,30 @@ const testProductionFacadeQueuesManualDirectionBehindForeignExecution = async ()
   );
 };
 
+const testUninitializedFacadeDisposeClearsPageLocalManualIntent = async () => {
+  const { hooks, store } = createHarness();
+  store.set("s1p_settings", readySyncSettings);
+  store.set("s1p_sync_global_lock", {
+    owner: "foreign-tab",
+    mode: "background",
+    timestamp: Date.now(),
+    ttlMs: 45 * 1000,
+  });
+
+  const result = await hooks.s1pSyncSystem.requestSync({
+    kind: "manual_pull",
+  });
+  const coordinator = hooks.getDefaultManualSyncIntentCoordinator();
+
+  assert.equal(result.status, "queued");
+  assert.equal(coordinator.readIntent().direction, "pull");
+  assert.deepEqual(toPlainObject(hooks.s1pSyncSystem.dispose()), {
+    status: "skipped",
+    reason: "already_disposed",
+  });
+  assert.equal(coordinator.readIntent(), null);
+};
+
 const testFacadePreservesEverySyncIntentContract = async () => {
   const { hooks } = createHarness();
   const calls = [];
@@ -501,6 +525,7 @@ const run = async () => {
   testProductionFacadeBackgroundPushUsesRuntimeGate();
   await testProductionFacadeManualSyncUsesRuntimeGate();
   await testProductionFacadeQueuesManualDirectionBehindForeignExecution();
+  await testUninitializedFacadeDisposeClearsPageLocalManualIntent();
   await testFacadePreservesEverySyncIntentContract();
   console.log("[sync-system-facade] Phase 6 façade interface verified.");
 };
