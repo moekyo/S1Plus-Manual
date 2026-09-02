@@ -69,9 +69,11 @@ const createSandbox = ({
   visibilityState = "visible",
   includeSessionStorage = false,
   sessionStorageEntries = [],
+  gmEntries = [],
+  sharedStore = null,
   includeGmListValues = true,
 } = {}) => {
-  const store = new Map();
+  const store = sharedStore || new Map(gmEntries);
   const { sessionStore, sessionStorage } =
     createSessionStorageStub(sessionStorageEntries);
   const documentElement = {

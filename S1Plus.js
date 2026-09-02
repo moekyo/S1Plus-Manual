@@ -2501,16 +2501,11 @@
   const BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS = 60 * 1000;
   const BACKGROUND_SYNC_DEBOUNCE_FOLLOW_UP_SETTLE_MS = 600;
   const BACKGROUND_SYNC_DEBOUNCE_THREAD_ID_LIMIT = 20;
-  const MANUAL_SYNC_INTENT_DECISION_LOCK_NAME =
-    "s1p_manual_sync_intent_decision";
   const MANUAL_SYNC_INTENT_PHASE_QUEUED =
-    "queued_waiting_for_execution_boundary";
+    "waiting_for_execution_boundary";
   const MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION =
     "awaiting_confirmation";
-  const MANUAL_SYNC_INTENT_PHASE_EXECUTING = "executing";
   const MANUAL_SYNC_INTENT_STALE_MS = 30 * 60 * 1000;
-  const MANUAL_SYNC_CONFIRMATION_OWNER_LEASE_MS =
-    BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS;
   const SHARED_BACKGROUND_SYNC_RESCHEDULE_LOG_THROTTLE_MS = 1000;
   const SYNC_CONFLICT_MODAL_COOLDOWN_MS = 2 * 60 * 1000;
   const SYNC_CONFLICT_MODAL_COOLDOWN_GROUP_MAP = Object.freeze({
@@ -2528,8 +2523,11 @@
   const PENDING_AUTO_SYNC_KEY = "s1p_pending_auto_sync_request";
   const PENDING_FOREGROUND_REMOTE_SYNC_KEY =
     "s1p_pending_foreground_remote_sync_request";
-  const PENDING_MANUAL_SYNC_INTENT_KEY = "s1p_pending_manual_sync_intent";
-  const PENDING_MANUAL_SYNC_INTENT_RECORD_KEY_PREFIX =
+  const SESSION_PENDING_MANUAL_SYNC_INTENT_KEY =
+    "s1p_pending_manual_sync_intent_session";
+  const LEGACY_PENDING_MANUAL_SYNC_INTENT_KEY =
+    "s1p_pending_manual_sync_intent";
+  const LEGACY_PENDING_MANUAL_SYNC_INTENT_RECORD_KEY_PREFIX =
     "s1p_pending_manual_sync_intent:";
   const LAST_LOCAL_DIRTY_PROVENANCE_KEY = "s1p_last_local_dirty_provenance";
   const LAST_LOCAL_MODIFIED_KEY = "s1p_last_modified";
@@ -14884,782 +14882,217 @@
   };
 
   const normalizeManualSyncIntent = (rawValue = null) => {
-    const raw = sanitizeRecordObject(rawValue);
-    const requestId = normalizeSyncDiagnosticText(raw.requestId, 120);
-    const generation = Math.max(0, Math.floor(Number(raw.generation) || 0));
+    const raw =
+      typeof rawValue === "string"
+        ? (() => {
+            try {
+              return JSON.parse(rawValue);
+            } catch (_) {
+              return null;
+            }
+          })()
+        : rawValue;
+    const value = sanitizeRecordObject(raw);
     const direction =
-      raw.direction === AUTO_SYNC_INDICATOR_OPERATION_PUSH
+      value.direction === AUTO_SYNC_INDICATOR_OPERATION_PUSH
         ? AUTO_SYNC_INDICATOR_OPERATION_PUSH
-        : raw.direction === AUTO_SYNC_INDICATOR_OPERATION_PULL
+        : value.direction === AUTO_SYNC_INDICATOR_OPERATION_PULL
           ? AUTO_SYNC_INDICATOR_OPERATION_PULL
           : "";
-    const phase = [
-      MANUAL_SYNC_INTENT_PHASE_QUEUED,
-      MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION,
-      MANUAL_SYNC_INTENT_PHASE_EXECUTING,
-    ].includes(String(raw.phase || "").trim())
-      ? String(raw.phase || "").trim()
-      : "";
-    const requestedAt = Number(raw.requestedAt) || 0;
-    if (
-      !requestId ||
-      generation <= 0 ||
-      !direction ||
-      !phase ||
-      requestedAt <= 0
-    ) {
+    const phase =
+      value.phase === MANUAL_SYNC_INTENT_PHASE_QUEUED
+        ? MANUAL_SYNC_INTENT_PHASE_QUEUED
+        : value.phase === MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION
+          ? MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION
+          : "";
+    const createdAt = Number(value.createdAt || value.requestedAt) || 0;
+    if (!direction || !phase || createdAt <= 0) {
       return null;
     }
-    const sourceContextId = normalizeSyncDiagnosticText(
-      raw.sourceContextId,
-      120
-    );
     return {
       version: 1,
-      requestId,
-      generation,
       direction,
+      createdAt,
       phase,
-      requestedAt,
-      sourceContextId,
-      sourceTabId: normalizeSyncDiagnosticText(raw.sourceTabId, 120),
-      confirmationOwnerId: normalizeSyncDiagnosticText(
-        raw.confirmationOwnerId,
-        120
-      ),
-      confirmationOwnerExpiresAt: Number(raw.confirmationOwnerExpiresAt) || 0,
-      confirmationOwnerToken: normalizeSyncDiagnosticText(
-        raw.confirmationOwnerToken,
-        160
-      ),
-      confirmationOwnerClaimedAt:
-        Number(raw.confirmationOwnerClaimedAt) || 0,
-      executionOwnerId: normalizeSyncDiagnosticText(raw.executionOwnerId, 120),
-      executionStartedAt: Number(raw.executionStartedAt) || 0,
-      executionExpiresAt: Number(raw.executionExpiresAt) || 0,
-      authorityRequestedAt:
-        Number(raw.authorityRequestedAt) || requestedAt,
-      authoritySourceContextId:
-        normalizeSyncDiagnosticText(raw.authoritySourceContextId, 120) ||
-        sourceContextId,
-      authorityRequestSequence: Math.max(
-        0,
-        Math.floor(
-          Number(raw.authorityRequestSequence) || generation
-        )
-      ),
-      authorityRequestId:
-        normalizeSyncDiagnosticText(raw.authorityRequestId, 120) || requestId,
     };
   };
 
-  const getManualSyncIntentAuthorityOrder = (intent = null) => {
-    const normalized = normalizeManualSyncIntent(intent);
-    if (!normalized) {
-      return null;
-    }
-    return {
-      requestedAt:
-        Number(normalized.authorityRequestedAt) || normalized.requestedAt,
-      sourceContextId:
-        normalized.authoritySourceContextId || normalized.sourceContextId || "",
-      requestSequence:
-        Number(normalized.authorityRequestSequence) || normalized.generation,
-      requestId: normalized.authorityRequestId || normalized.requestId,
-    };
-  };
+  let sessionPendingManualSyncIntentFallback = null;
 
-  const compareManualSyncIntentText = (left = "", right = "") => {
-    const leftText = String(left || "");
-    const rightText = String(right || "");
-    return leftText === rightText ? 0 : leftText < rightText ? -1 : 1;
-  };
-
-  const compareManualSyncIntentAuthority = (left, right) => {
-    const leftOrder = getManualSyncIntentAuthorityOrder(left);
-    const rightOrder = getManualSyncIntentAuthorityOrder(right);
-    if (!leftOrder || !rightOrder) {
-      return leftOrder ? 1 : rightOrder ? -1 : 0;
+  const getDefaultManualSyncSessionStorage = () => {
+    try {
+      if (typeof window !== "undefined" && window?.sessionStorage) {
+        return window.sessionStorage;
+      }
+    } catch (_) {
+      // Private browsing/security settings can deny sessionStorage access.
     }
-    if (leftOrder.requestSequence !== rightOrder.requestSequence) {
-      return leftOrder.requestSequence - rightOrder.requestSequence;
-    }
-    if (leftOrder.requestedAt !== rightOrder.requestedAt) {
-      return leftOrder.requestedAt - rightOrder.requestedAt;
-    }
-    const sourceContextOrder = compareManualSyncIntentText(
-      leftOrder.sourceContextId,
-      rightOrder.sourceContextId
-    );
-    if (sourceContextOrder !== 0) {
-      return sourceContextOrder;
-    }
-    return compareManualSyncIntentText(leftOrder.requestId, rightOrder.requestId);
-  };
-
-  const getManualSyncIntentRecordKey = (eventId = "") => {
-    const normalizedEventId = normalizeSyncDiagnosticText(eventId, 240);
-    return normalizedEventId
-      ? `${PENDING_MANUAL_SYNC_INTENT_RECORD_KEY_PREFIX}${encodeURIComponent(
-          normalizedEventId
-        )}`
-      : "";
-  };
-
-  const isManualSyncIntentRecordKey = (key = "") =>
-    String(key || "").startsWith(PENDING_MANUAL_SYNC_INTENT_RECORD_KEY_PREFIX);
-
-  const normalizeManualSyncIntentRecord = (
-    rawValue = null,
-    { key = "", legacy = false } = {}
-  ) => {
-    const raw = sanitizeRecordObject(rawValue);
-    const intent = normalizeManualSyncIntent(raw);
-    if (!intent) {
-      return null;
-    }
-    const recordType = legacy
-      ? "legacy_request"
-      : ["request", "transition"].includes(String(raw.recordType || ""))
-        ? String(raw.recordType)
-        : "";
-    if (!recordType) {
-      return null;
-    }
-    let eventId = normalizeSyncDiagnosticText(raw.eventId, 240);
-    if (!eventId && legacy) {
-      eventId = `legacy:${intent.requestId}:${intent.generation}`;
-    }
-    if (
-      !eventId &&
-      String(key || "").startsWith(PENDING_MANUAL_SYNC_INTENT_RECORD_KEY_PREFIX)
-    ) {
-      try {
-        eventId = decodeURIComponent(
-          String(key).slice(
-            PENDING_MANUAL_SYNC_INTENT_RECORD_KEY_PREFIX.length
-          )
-        );
-      } catch (_) {
-        eventId = "";
+    try {
+      if (typeof sessionStorage !== "undefined" && sessionStorage) {
+        return sessionStorage;
       }
-    }
-    if (!eventId) {
-      return null;
-    }
-    return {
-      ...intent,
-      key: String(key || ""),
-      recordType,
-      eventId,
-      parentEventId: normalizeSyncDiagnosticText(raw.parentEventId, 240),
-      expectedHeadEventId: normalizeSyncDiagnosticText(
-        raw.expectedHeadEventId,
-        240
-      ),
-      hasExpectedConfirmationOwnerToken: Object.prototype.hasOwnProperty.call(
-        raw,
-        "expectedConfirmationOwnerToken"
-      ),
-      expectedConfirmationOwnerToken: normalizeSyncDiagnosticText(
-        raw.expectedConfirmationOwnerToken,
-        160
-      ),
-      hasExpectedExecutionOwnerId: Object.prototype.hasOwnProperty.call(
-        raw,
-        "expectedExecutionOwnerId"
-      ),
-      expectedExecutionOwnerId: normalizeSyncDiagnosticText(
-        raw.expectedExecutionOwnerId,
-        120
-      ),
-      expectedExecutionAuthorityToken: normalizeSyncDiagnosticText(
-        raw.expectedExecutionAuthorityToken,
-        160
-      ),
-      decisionCommitKind: normalizeSyncDiagnosticText(
-        raw.decisionCommitKind,
-        80
-      ),
-      decisionCommitToken: normalizeSyncDiagnosticText(
-        raw.decisionCommitToken,
-        160
-      ),
-      transitionAuthorityToken: normalizeSyncDiagnosticText(
-        raw.transitionAuthorityToken,
-        160
-      ),
-      executionAuthorityToken: normalizeSyncDiagnosticText(
-        raw.executionAuthorityToken,
-        160
-      ),
-      sequence: Math.max(0, Math.floor(Number(raw.sequence) || 0)),
-      terminal: raw.terminal === true,
-      transitionKind: normalizeSyncDiagnosticText(raw.transitionKind, 80),
-      transitionSourceContextId: normalizeSyncDiagnosticText(
-        raw.transitionSourceContextId,
-        120
-      ),
-      transitionAt: Number(raw.transitionAt) || intent.requestedAt,
-    };
-  };
-
-  const createManualSyncIntentStorage = (adapters = {}) => {
-    const hasLegacyAdapter =
-      typeof adapters.readIntent === "function" ||
-      typeof adapters.writeIntent === "function" ||
-      typeof adapters.deleteIntent === "function";
-    const hasCustomList = typeof adapters.listIntentRecordKeys === "function";
-    const canEnumerateJournal =
-      hasCustomList || typeof GM_listValues === "function";
-    const listKeys = () => {
-      if (hasCustomList) {
-        try {
-          return Array.from(adapters.listIntentRecordKeys() || []).map((key) =>
-            String(key || "")
-          );
-        } catch (_) {
-          return [];
-        }
-      }
-      if (typeof GM_listValues === "function") {
-        try {
-          return GM_listValues().map((key) => String(key || ""));
-        } catch (_) {
-          return [];
-        }
-      }
-      return hasLegacyAdapter ? [PENDING_MANUAL_SYNC_INTENT_KEY] : [];
-    };
-    const readValue = (key, fallbackValue = null) => {
-      if (typeof adapters.readIntentRecord === "function") {
-        return adapters.readIntentRecord(key, fallbackValue);
-      }
-      if (key === PENDING_MANUAL_SYNC_INTENT_KEY && hasLegacyAdapter) {
-        return adapters.readIntent();
-      }
-      return GM_getValue(key, fallbackValue);
-    };
-    const writeValue = (key, value) => {
-      if (typeof adapters.writeIntentRecord === "function") {
-        return adapters.writeIntentRecord(key, value);
-      }
-      if (key === PENDING_MANUAL_SYNC_INTENT_KEY && hasLegacyAdapter) {
-        return adapters.writeIntent(value);
-      }
-      return GM_setValue(key, value);
-    };
-    const deleteValue = (key) => {
-      if (typeof adapters.deleteIntentRecord === "function") {
-        return adapters.deleteIntentRecord(key);
-      }
-      if (key === PENDING_MANUAL_SYNC_INTENT_KEY && hasLegacyAdapter) {
-        return adapters.deleteIntent();
-      }
-      return GM_deleteValue(key);
-    };
-    return {
-      canEnumerateJournal,
-      listKeys,
-      readValue,
-      writeValue,
-      deleteValue,
-    };
-  };
-
-  const readManualSyncIntentState = (
-    storage = createManualSyncIntentStorage(),
-    now = Date.now()
-  ) => {
-    const records = [];
-    const seenKeys = new Set();
-    storage.listKeys().forEach((key) => {
-      if (
-        key !== PENDING_MANUAL_SYNC_INTENT_KEY &&
-        !isManualSyncIntentRecordKey(key)
-      ) {
-        return;
-      }
-      seenKeys.add(key);
-      const record = normalizeManualSyncIntentRecord(
-        storage.readValue(key, null),
-        {
-          key,
-          legacy: key === PENDING_MANUAL_SYNC_INTENT_KEY,
-        }
-      );
-      if (record) {
-        records.push(record);
-      }
-    });
-    if (!seenKeys.has(PENDING_MANUAL_SYNC_INTENT_KEY)) {
-      const legacyRecord = normalizeManualSyncIntentRecord(
-        storage.readValue(PENDING_MANUAL_SYNC_INTENT_KEY, null),
-        { key: PENDING_MANUAL_SYNC_INTENT_KEY, legacy: true }
-      );
-      if (legacyRecord) {
-        records.push(legacyRecord);
-      }
-    }
-    const requestRecords = records.filter((record) =>
-      ["request", "legacy_request"].includes(record.recordType)
-    );
-    const winnerRequest = requestRecords.reduce((winner, candidate) => {
-      if (!winner) {
-        return candidate;
-      }
-      const authorityOrder = compareManualSyncIntentAuthority(
-        candidate,
-        winner
-      );
-      if (authorityOrder !== 0) {
-        return authorityOrder > 0 ? candidate : winner;
-      }
-      const candidateRank = candidate.recordType === "request" ? 2 : 1;
-      const winnerRank = winner.recordType === "request" ? 2 : 1;
-      if (candidateRank !== winnerRank) {
-        return candidateRank > winnerRank ? candidate : winner;
-      }
-      return compareManualSyncIntentText(candidate.eventId, winner.eventId) > 0
-        ? candidate
-        : winner;
-    }, null);
-    if (!winnerRequest) {
-      return {
-        intent: null,
-        winnerRequest: null,
-        head: null,
-        records,
-        now,
-        canEnumerateJournal: storage.canEnumerateJournal,
-      };
-    }
-    const winnerIdentity = getManualSyncIntentIdentity(winnerRequest);
-    const transitions = records.filter(
-      (record) =>
-        record.recordType === "transition" &&
-        getManualSyncIntentIdentity(record) === winnerIdentity
-    );
-    const branchAuthorityMemo = new Map();
-    let head = winnerRequest;
-    const visited = new Set([head.eventId]);
-    while (head && !head.terminal) {
-      const nextCandidates = transitions
-        .filter(
-          (record) =>
-            record.parentEventId === head.eventId &&
-            record.sequence === head.sequence + 1 &&
-            !visited.has(record.eventId) &&
-            isManualSyncIntentTransitionValid(head, record)
-        )
-        .map((candidate) => ({
-          candidate,
-          authorityRecord: getManualSyncIntentBranchAuthority(
-            candidate,
-            transitions,
-            branchAuthorityMemo
-          ),
-        }))
-        .sort(compareManualSyncIntentBranchAuthority);
-      if (nextCandidates.length === 0) {
-        break;
-      }
-      const strongestCandidate = nextCandidates[nextCandidates.length - 1];
-      const tiedCandidates = nextCandidates.filter(
-        (candidate) =>
-          compareManualSyncIntentBranchAuthority(
-            candidate,
-            strongestCandidate
-          ) === 0
-      );
-      if (
-        tiedCandidates.length > 1 &&
-        tiedCandidates.filter((candidate) =>
-          getManualSyncIntentIrreversibleDecision(candidate.authorityRecord)
-            ?.committed
-        ).length > 1
-      ) {
-        return {
-          intent: null,
-          winnerRequest,
-          head: null,
-          records,
-          now,
-          canEnumerateJournal: storage.canEnumerateJournal,
-          ambiguousIrreversibleDecision: true,
-        };
-      }
-      head = nextCandidates[nextCandidates.length - 1].candidate;
-      visited.add(head.eventId);
-    }
-    return {
-      intent: head?.terminal ? null : normalizeManualSyncIntent(head),
-      winnerRequest,
-      head,
-      records,
-      now,
-      canEnumerateJournal: storage.canEnumerateJournal,
-    };
-  };
-
-  const getManualSyncIntentIrreversibleDecision = (record = null) => {
-    if (!record) {
-      return null;
-    }
-    if (record.terminal || record.transitionKind === "settle") {
-      const kind =
-        record.decisionCommitKind === "completion"
-          ? "completion"
-          : "terminal";
-      return {
-        kind,
-        committed:
-          (kind === "completion" || kind === "terminal") &&
-          Boolean(record.decisionCommitToken),
-      };
-    }
-    if (
-      record.transitionKind === "executing" ||
-      record.phase === MANUAL_SYNC_INTENT_PHASE_EXECUTING
-    ) {
-      return {
-        kind: "executing",
-        committed:
-          record.decisionCommitKind === "executing" &&
-          Boolean(record.decisionCommitToken),
-      };
+    } catch (_) {
+      // Fall through to the page-local memory fallback.
     }
     return null;
   };
 
-  const getManualSyncIntentTransitionAuthorityRank = (record = null) => {
-    if (!record) {
-      return -1;
-    }
-    if (record.terminal || record.transitionKind === "settle") {
-      return 4;
-    }
-    if (
-      record.transitionKind === "executing" ||
-      record.phase === MANUAL_SYNC_INTENT_PHASE_EXECUTING
-    ) {
-      return 3;
-    }
-    if (record.transitionKind === "queued") {
-      return 2;
-    }
-    return 1;
-  };
+  const createSessionPendingManualSyncIntentStorage = (adapters = {}) => {
+    const customStorage =
+      adapters.sessionStorage || adapters.pendingIntentStorage || null;
+    const readCustom =
+      typeof adapters.readSessionPendingIntent === "function"
+        ? adapters.readSessionPendingIntent
+        : null;
+    const writeCustom =
+      typeof adapters.writeSessionPendingIntent === "function"
+        ? adapters.writeSessionPendingIntent
+        : null;
+    const deleteCustom =
+      typeof adapters.deleteSessionPendingIntent === "function"
+        ? adapters.deleteSessionPendingIntent
+        : null;
+    const storage =
+      customStorage && typeof customStorage.getItem === "function"
+        ? customStorage
+        : readCustom || writeCustom || deleteCustom
+          ? null
+          : getDefaultManualSyncSessionStorage();
+    let memoryValue = null;
 
-  // Sibling transitions are resolved as state-machine actions, not as a
-  // naive latest-write-wins stream. Terminal and executing authority must
-  // dominate stale recovery/owner-maintenance siblings. Irreversible sibling
-  // decisions are ordered by the decision authority, not by wall-clock time,
-  // source context, event id, or this display rank.
-  const isManualSyncIntentTransitionValid = (parent, candidate) => {
-    if (
-      !parent ||
-      !candidate ||
-      parent.terminal ||
-      candidate.recordType !== "transition" ||
-      candidate.parentEventId !== parent.eventId ||
-      candidate.sequence !== parent.sequence + 1 ||
-      (candidate.expectedHeadEventId &&
-        candidate.expectedHeadEventId !== parent.eventId)
-    ) {
-      return false;
-    }
-    const parentOwnerToken = parent.confirmationOwnerToken || "";
-    const candidateOwnerToken = candidate.confirmationOwnerToken || "";
-    const candidateAt = Number(candidate.transitionAt) || candidate.requestedAt;
-    const expectedOwnerToken = candidate.expectedConfirmationOwnerToken;
-    const expectedExecutionOwnerId = candidate.expectedExecutionOwnerId;
-    const isExpectedOwnerToken =
-      !candidate.hasExpectedConfirmationOwnerToken ||
-      expectedOwnerToken === parentOwnerToken;
-    const isExpectedExecutionOwner =
-      !candidate.hasExpectedExecutionOwnerId ||
-      expectedExecutionOwnerId === (parent.executionOwnerId || "");
-
-    if (candidate.terminal || candidate.transitionKind === "settle") {
-      if (!candidate.terminal) {
-        return false;
-      }
-      if (
-        parent.phase === MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION &&
-        parent.confirmationOwnerId &&
-        !isExpectedOwnerToken
-      ) {
-        return false;
-      }
-      if (
-        parent.phase === MANUAL_SYNC_INTENT_PHASE_EXECUTING &&
-        parent.executionOwnerId &&
-        !isExpectedExecutionOwner
-      ) {
-        return false;
-      }
-      return [
-        MANUAL_SYNC_INTENT_PHASE_QUEUED,
-        MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION,
-        MANUAL_SYNC_INTENT_PHASE_EXECUTING,
-      ].includes(parent.phase);
-    }
-
-    switch (candidate.transitionKind) {
-      case "confirmation_owner_claim":
-        return (
-          [
-            MANUAL_SYNC_INTENT_PHASE_QUEUED,
-            MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION,
-          ].includes(parent.phase) &&
-          candidate.phase === MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION &&
-          Boolean(candidate.confirmationOwnerId) &&
-          Boolean(candidateOwnerToken) &&
-          (!parent.confirmationOwnerId ||
-            parent.confirmationOwnerExpiresAt <= candidateAt) &&
-          isExpectedOwnerToken
-        );
-      case "confirmation_owner_renewal":
-        return (
-          parent.phase === MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION &&
-          candidate.phase === MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION &&
-          Boolean(parent.confirmationOwnerId) &&
-          Boolean(parentOwnerToken) &&
-          candidate.confirmationOwnerId === parent.confirmationOwnerId &&
-          candidateOwnerToken === parentOwnerToken &&
-          parent.confirmationOwnerExpiresAt > candidateAt &&
-          isExpectedOwnerToken
-        );
-      case "confirmation_owner_release":
-        return (
-          parent.phase === MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION &&
-          candidate.phase === MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION &&
-          Boolean(parent.confirmationOwnerId) &&
-          Boolean(parentOwnerToken) &&
-          !candidate.confirmationOwnerId &&
-          !candidateOwnerToken &&
-          isExpectedOwnerToken
-        );
-      case "executing":
-        return (
-          parent.phase === MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION &&
-          candidate.phase === MANUAL_SYNC_INTENT_PHASE_EXECUTING &&
-          Boolean(parent.confirmationOwnerId) &&
-          Boolean(parentOwnerToken) &&
-          !candidate.confirmationOwnerId &&
-          !candidateOwnerToken &&
-          candidate.executionOwnerId === parent.confirmationOwnerId &&
-          parent.confirmationOwnerExpiresAt > candidateAt &&
-          isExpectedOwnerToken
-        );
-      case "queued":
-        if (
-          candidate.phase !== MANUAL_SYNC_INTENT_PHASE_QUEUED ||
-          candidate.confirmationOwnerId ||
-          candidate.confirmationOwnerToken ||
-          candidate.executionOwnerId
-        ) {
-          return false;
+    const read = () => {
+      let rawValue = null;
+      let readFailed = false;
+      try {
+        if (readCustom) {
+          rawValue = readCustom();
+        } else if (storage) {
+          rawValue = storage.getItem(
+            SESSION_PENDING_MANUAL_SYNC_INTENT_KEY
+          );
         }
-        if (parent.phase === MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION) {
-          return isExpectedOwnerToken;
-        }
-        if (parent.phase === MANUAL_SYNC_INTENT_PHASE_EXECUTING) {
-          return isExpectedExecutionOwner;
-        }
-        return false;
-      default:
-        return false;
-    }
-  };
-
-  const compareManualSyncIntentTransitionAuthority = (left, right) => {
-    const rankOrder =
-      getManualSyncIntentTransitionAuthorityRank(left) -
-      getManualSyncIntentTransitionAuthorityRank(right);
-    if (rankOrder !== 0) {
-      return rankOrder;
-    }
-    const leftAt = Number(left?.transitionAt) || left?.requestedAt || 0;
-    const rightAt = Number(right?.transitionAt) || right?.requestedAt || 0;
-    if (leftAt !== rightAt) {
-      return leftAt - rightAt;
-    }
-    const leftSource =
-      left?.transitionSourceContextId || left?.sourceContextId || "";
-    const rightSource =
-      right?.transitionSourceContextId || right?.sourceContextId || "";
-    const sourceOrder = compareManualSyncIntentText(leftSource, rightSource);
-    if (sourceOrder !== 0) {
-      return sourceOrder;
-    }
-    return compareManualSyncIntentText(left?.eventId, right?.eventId);
-  };
-
-  // A direct sibling can have a stronger descendant than its own transition
-  // kind suggests. Resolve that reachable authority before comparing sibling
-  // branches so a late ancestor maintenance event cannot dethrone a branch
-  // that has already committed executing or terminal authority.
-  const getManualSyncIntentBranchAuthority = (
-    record,
-    transitions,
-    memo = new Map(),
-    visiting = new Set()
-  ) => {
-    if (!record) {
+      } catch (_) {
+        readFailed = true;
+      }
+      const normalized = normalizeManualSyncIntent(rawValue);
+      if (normalized) {
+        return normalized;
+      }
+      if (readFailed) {
+        return customStorage || readCustom
+          ? memoryValue
+          : sessionPendingManualSyncIntentFallback;
+      }
+      if (!storage && !readCustom) {
+        return sessionPendingManualSyncIntentFallback;
+      }
       return null;
-    }
-    const eventId = String(record.eventId || "");
-    if (eventId && memo.has(eventId)) {
-      return memo.get(eventId);
-    }
-    if (eventId && visiting.has(eventId)) {
-      return record;
-    }
-    const nextVisiting = new Set(visiting);
-    if (eventId) {
-      nextVisiting.add(eventId);
-    }
-    let strongest = record;
-    if (!record.terminal) {
-      transitions.forEach((candidate) => {
-        if (
-          candidate.parentEventId !== record.eventId ||
-          candidate.sequence !== record.sequence + 1 ||
-          !isManualSyncIntentTransitionValid(record, candidate)
-        ) {
-          return;
-        }
-        const descendantAuthority = getManualSyncIntentBranchAuthority(
-          candidate,
-          transitions,
-          memo,
-          nextVisiting
-        );
-        if (
-          compareManualSyncIntentTransitionAuthority(
-            descendantAuthority,
-            strongest
-          ) > 0
-        ) {
-          strongest = descendantAuthority;
-        }
-      });
-    }
-    if (eventId) {
-      memo.set(eventId, strongest);
-    }
-    return strongest;
-  };
+    };
 
-  const compareManualSyncIntentBranchAuthority = (left, right) => {
-    const leftDecision = getManualSyncIntentIrreversibleDecision(
-      left?.authorityRecord
-    );
-    const rightDecision = getManualSyncIntentIrreversibleDecision(
-      right?.authorityRecord
-    );
-    if (leftDecision && rightDecision) {
-      if (leftDecision.committed !== rightDecision.committed) {
-        return leftDecision.committed ? 1 : -1;
-      }
-      if (leftDecision.committed && rightDecision.committed) {
-        // Two committed irreversible sibling decisions should be impossible
-        // when every writer uses the decision authority. Treat that state as
-        // ambiguous instead of inventing an order from timestamps or ids.
-        return 0;
-      }
-      // Uncommitted legacy/injected records do not establish irreversible
-      // authority. Preserve the existing deterministic fallback for those
-      // records; only committed decisions require the decision authority.
-    }
-    const branchAuthorityOrder = compareManualSyncIntentTransitionAuthority(
-      left?.authorityRecord,
-      right?.authorityRecord
-    );
-    if (branchAuthorityOrder !== 0) {
-      return branchAuthorityOrder;
-    }
-    return compareManualSyncIntentTransitionAuthority(
-      left?.candidate,
-      right?.candidate
-    );
-  };
-
-  const pruneManualSyncIntentRecords = (
-    storage = createManualSyncIntentStorage(),
-    now = Date.now()
-  ) => {
-    if (!storage.canEnumerateJournal) {
-      return 0;
-    }
-    const candidates = [];
-    const activityByIdentity = new Map();
-    storage.listKeys().forEach((key) => {
-      if (
-        key !== PENDING_MANUAL_SYNC_INTENT_KEY &&
-        !isManualSyncIntentRecordKey(key)
-      ) {
-        return;
-      }
-      const record = normalizeManualSyncIntentRecord(
-        storage.readValue(key, null),
-        { key, legacy: key === PENDING_MANUAL_SYNC_INTENT_KEY }
-      );
-      if (!record) {
-        return;
-      }
-      const lastActivity = Math.max(
-        Number(record.requestedAt) || 0,
-        Number(record.transitionAt) || 0
-      );
-      const identity = getManualSyncIntentIdentity(record);
-      candidates.push({ key, record, identity, lastActivity });
-      if (identity) {
-        activityByIdentity.set(
-          identity,
-          Math.max(activityByIdentity.get(identity) || 0, lastActivity)
-        );
-      }
-    });
-    const staleIdentities = new Set(
-      Array.from(activityByIdentity.entries())
-        .filter(
-          ([, lastActivity]) =>
-            lastActivity > 0 && now - lastActivity > MANUAL_SYNC_INTENT_STALE_MS
-        )
-        .map(([identity]) => identity)
-    );
-    let deletedCount = 0;
-    candidates.forEach(({ key, identity, lastActivity }) => {
-      const shouldDelete = identity
-        ? staleIdentities.has(identity)
-        : lastActivity > 0 && now - lastActivity > MANUAL_SYNC_INTENT_STALE_MS;
-      if (
-        !shouldDelete
-      ) {
-        return;
+    const write = (intent) => {
+      const normalized = normalizeManualSyncIntent(intent);
+      if (!normalized) {
+        return false;
       }
       try {
-        storage.deleteValue(key);
-        deletedCount += 1;
+        if (writeCustom) {
+          writeCustom(normalized);
+        } else if (storage) {
+          storage.setItem(
+            SESSION_PENDING_MANUAL_SYNC_INTENT_KEY,
+            JSON.stringify(normalized)
+          );
+        } else {
+          memoryValue = normalized;
+          if (!customStorage && !readCustom) {
+            sessionPendingManualSyncIntentFallback = normalized;
+          }
+          return true;
+        }
+        memoryValue = normalized;
+        return true;
       } catch (_) {
-        // Per-record cleanup is best effort; it never controls authority.
+        memoryValue = normalized;
+        if (!customStorage && !readCustom) {
+          sessionPendingManualSyncIntentFallback = normalized;
+        }
+        return true;
+      }
+    };
+
+    const remove = () => {
+      try {
+        if (deleteCustom) {
+          deleteCustom();
+        } else if (storage) {
+          storage.removeItem(SESSION_PENDING_MANUAL_SYNC_INTENT_KEY);
+        }
+      } catch (_) {
+        // Removing the page-local fallback below is still safe.
+      }
+      memoryValue = null;
+      if (!customStorage && !readCustom) {
+        sessionPendingManualSyncIntentFallback = null;
+      }
+      return true;
+    };
+
+    return Object.freeze({ read, write, remove });
+  };
+
+  let defaultSessionPendingManualSyncIntentStorage = null;
+  const getDefaultSessionPendingManualSyncIntentStorage = () => {
+    if (!defaultSessionPendingManualSyncIntentStorage) {
+      defaultSessionPendingManualSyncIntentStorage =
+        createSessionPendingManualSyncIntentStorage();
+    }
+    return defaultSessionPendingManualSyncIntentStorage;
+  };
+
+  const cleanupLegacyManualSyncIntentState = () => {
+    const keys = new Set([LEGACY_PENDING_MANUAL_SYNC_INTENT_KEY]);
+    if (typeof GM_listValues === "function") {
+      try {
+        GM_listValues().forEach((key) => {
+          const normalizedKey = String(key || "");
+          if (
+            normalizedKey === LEGACY_PENDING_MANUAL_SYNC_INTENT_KEY ||
+            normalizedKey.startsWith(
+              LEGACY_PENDING_MANUAL_SYNC_INTENT_RECORD_KEY_PREFIX
+            )
+          ) {
+            keys.add(normalizedKey);
+          }
+        });
+      } catch (_) {
+        // The known legacy mirror is still cleaned below.
+      }
+    }
+    let deletedCount = 0;
+    keys.forEach((key) => {
+      try {
+        if (typeof GM_deleteValue === "function") {
+          GM_deleteValue(key);
+          deletedCount += 1;
+        }
+      } catch (_) {
+        // Legacy cleanup is best effort and never touches active sync state.
       }
     });
     return deletedCount;
   };
 
+  cleanupLegacyManualSyncIntentState();
+
   const readPendingManualSyncIntent = () =>
-    readManualSyncIntentState().intent;
+    getDefaultSessionPendingManualSyncIntentStorage().read();
 
   const getPendingManualSyncIntentForDisplay = (now = Date.now()) => {
     const intent = readPendingManualSyncIntent();
-    if (!intent || now - intent.requestedAt > MANUAL_SYNC_INTENT_STALE_MS) {
-      return null;
-    }
-    if (intent.phase === MANUAL_SYNC_INTENT_PHASE_EXECUTING) {
+    if (
+      !intent ||
+      now - intent.createdAt > MANUAL_SYNC_INTENT_STALE_MS
+    ) {
       return null;
     }
     return intent;
@@ -15991,12 +15424,10 @@
         reason:
           manualIntent.phase === MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION
             ? "manual_override_awaiting_confirmation"
-            : "manual_override_waiting_execution",
+          : "manual_override_waiting_execution",
         operation: manualIntent.direction,
         sources: {},
         isManualOverride: true,
-        requestId: manualIntent.requestId,
-        generation: manualIntent.generation,
       };
     }
     const foregroundRetryRemainingMs =
@@ -33464,7 +32895,7 @@
           });
         } catch (error) {
           console.warn(
-            "S1 Plus: 手动同步意图在 Running Sync 边界收敛失败，保留 durable intent 等待后续恢复。",
+            "S1 Plus: 手动同步意图在 Running Sync 边界收敛失败，保留本标签页 session pending 等待后续恢复。",
             error
           );
         }
@@ -41036,16 +40467,9 @@
    * [NEW] 强制推送处理器，用于手动将本地数据覆盖到云端。
    */
   const handleForcePush = async (options = {}) => {
-    const preAcquiredManualExecutionAuthority =
-      options.manualExecutionAuthority || null;
     const icon = document.querySelector("#s1p-nav-sync-btn svg");
     if (icon) icon.classList.add("s1p-syncing");
     if (manualSyncInFlightPromise || forceSyncInFlight) {
-      if (preAcquiredManualExecutionAuthority) {
-        releaseManualSyncExecutionAuthority(
-          preAcquiredManualExecutionAuthority
-        );
-      }
       if (options.suppressBusyMessage !== true) {
         showMessage("手动同步正在进行，请稍候...", null);
       }
@@ -41061,25 +40485,14 @@
       return { status: "skipped", reason: "force_sync_busy" };
     }
     forceSyncInFlight = true;
-    const ownsPreAcquiredAuthority = Boolean(
-      preAcquiredManualExecutionAuthority
-    );
-    const hasManualExecutionAuthority = ownsPreAcquiredAuthority
-      ? isSyncLockOwned(
-          SYNC_LOCK_MODE_MANUAL,
-          Date.now(),
-          preAcquiredManualExecutionAuthority.token
-        )
-      : await acquireManualSyncLock({
-          preemptActiveSync: true,
-          operation: "force_push",
-        });
-    if (!hasManualExecutionAuthority) {
-      if (ownsPreAcquiredAuthority) {
-        releaseManualSyncExecutionAuthority(
-          preAcquiredManualExecutionAuthority
-        );
-      }
+    const manualExecutionAuthority =
+      await acquireManualSyncExecutionAuthority({
+        // A queued confirmation already crossed the execution boundary. A
+        // competing run must win this race without being preempted.
+        preemptActiveSync: false,
+        operation: "force_push",
+      });
+    if (!manualExecutionAuthority) {
       if (options.suppressBusyMessage !== true) {
         showMessage("无法取得手动同步锁，请稍后重试。", false);
       }
@@ -41095,20 +40508,15 @@
       });
       return { status: "skipped", reason: "manual_sync_busy" };
     }
-    if (!ownsPreAcquiredAuthority) {
-      startManualSyncLockHeartbeat();
-    }
     startAutoSyncIndicatorCycle(AUTO_SYNC_INDICATOR_SOURCE_MANUAL_SYNC, {
       operation: AUTO_SYNC_INDICATOR_OPERATION_PUSH,
-      reason: options.manualIntentRequestId
-        ? "manual_override_running"
-        : "force_push",
+      reason: "force_push",
     });
     const assertManualSyncLockOwned = (stage) => {
       assertSyncLockOwned(
         SYNC_LOCK_MODE_MANUAL,
         `force_push:${stage}`,
-        preAcquiredManualExecutionAuthority?.token || ""
+        manualExecutionAuthority.token
       );
     };
     recordSyncAttempt("manual", "force_push");
@@ -41205,14 +40613,7 @@
         result: completionResult,
       });
       forceSyncInFlight = false;
-      if (ownsPreAcquiredAuthority) {
-        releaseManualSyncExecutionAuthority(
-          preAcquiredManualExecutionAuthority
-        );
-      } else {
-        stopManualSyncLockHeartbeat();
-        releaseManualSyncLock();
-      }
+      releaseManualSyncExecutionAuthority(manualExecutionAuthority);
       refreshAutoSyncIndicatorAfterManualLockRelease();
       if (icon) {
         icon.classList.remove("s1p-syncing");
@@ -41223,16 +40624,9 @@
   };
 
   const handleForcePull = async (options = {}) => {
-    const preAcquiredManualExecutionAuthority =
-      options.manualExecutionAuthority || null;
     const icon = document.querySelector("#s1p-nav-sync-btn svg");
     if (icon) icon.classList.add("s1p-syncing");
     if (manualSyncInFlightPromise || forceSyncInFlight) {
-      if (preAcquiredManualExecutionAuthority) {
-        releaseManualSyncExecutionAuthority(
-          preAcquiredManualExecutionAuthority
-        );
-      }
       if (options.suppressBusyMessage !== true) {
         showMessage("手动同步正在进行，请稍候...", null);
       }
@@ -41248,25 +40642,13 @@
       return { status: "skipped", reason: "force_sync_busy" };
     }
     forceSyncInFlight = true;
-    const ownsPreAcquiredAuthority = Boolean(
-      preAcquiredManualExecutionAuthority
-    );
-    const hasManualExecutionAuthority = ownsPreAcquiredAuthority
-      ? isSyncLockOwned(
-          SYNC_LOCK_MODE_MANUAL,
-          Date.now(),
-          preAcquiredManualExecutionAuthority.token
-        )
-      : await acquireManualSyncLock({
-          preemptActiveSync: true,
-          operation: "force_pull",
-        });
-    if (!hasManualExecutionAuthority) {
-      if (ownsPreAcquiredAuthority) {
-        releaseManualSyncExecutionAuthority(
-          preAcquiredManualExecutionAuthority
-        );
-      }
+    const manualExecutionAuthority =
+      await acquireManualSyncExecutionAuthority({
+        // Do not preempt a run that started while confirmation was open.
+        preemptActiveSync: false,
+        operation: "force_pull",
+      });
+    if (!manualExecutionAuthority) {
       if (options.suppressBusyMessage !== true) {
         showMessage("无法取得手动同步锁，请稍后重试。", false);
       }
@@ -41282,14 +40664,9 @@
       });
       return { status: "skipped", reason: "manual_sync_busy" };
     }
-    if (!ownsPreAcquiredAuthority) {
-      startManualSyncLockHeartbeat();
-    }
     startAutoSyncIndicatorCycle(AUTO_SYNC_INDICATOR_SOURCE_MANUAL_SYNC, {
       operation: AUTO_SYNC_INDICATOR_OPERATION_PULL,
-      reason: options.manualIntentRequestId
-        ? "manual_override_running"
-        : "force_pull",
+      reason: "force_pull",
     });
     const pendingForegroundRemoteSyncAtStart =
       getPendingForegroundRemoteSyncRequest();
@@ -41297,7 +40674,7 @@
       assertSyncLockOwned(
         SYNC_LOCK_MODE_MANUAL,
         `force_pull:${stage}`,
-        preAcquiredManualExecutionAuthority?.token || ""
+        manualExecutionAuthority.token
       );
     };
     recordSyncAttempt("manual", "force_pull");
@@ -41393,14 +40770,7 @@
         result: completionResult,
       });
       forceSyncInFlight = false;
-      if (ownsPreAcquiredAuthority) {
-        releaseManualSyncExecutionAuthority(
-          preAcquiredManualExecutionAuthority
-        );
-      } else {
-        stopManualSyncLockHeartbeat();
-        releaseManualSyncLock();
-      }
+      releaseManualSyncExecutionAuthority(manualExecutionAuthority);
       refreshAutoSyncIndicatorAfterManualLockRelease();
       if (icon) {
         icon.classList.remove("s1p-syncing");
@@ -45407,69 +44777,20 @@
     });
   };
 
-  const getManualSyncIntentIdentity = (intent = null) => {
-    const normalized = normalizeManualSyncIntent(intent);
-    return normalized ? `${normalized.requestId}:${normalized.generation}` : "";
-  };
-
-  const isSameManualSyncIntent = (left, right) => {
-    const leftIdentity = getManualSyncIntentIdentity(left);
-    const rightIdentity = getManualSyncIntentIdentity(right);
-    return Boolean(leftIdentity && leftIdentity === rightIdentity);
-  };
-
-  const getManualSyncIntentConfirmationOwnerToken = (intent = null) =>
-    normalizeManualSyncIntent(intent)?.confirmationOwnerToken || "";
-
   const s1pCreateManualSyncIntentCoordinator = (adapters = {}) => {
-    const ownerId =
-      normalizeSyncDiagnosticText(adapters.ownerId, 120) ||
-      `${SYNC_RUNTIME_CONTEXT_ID}:manual_confirmation`;
-    const sourceContextId =
-      normalizeSyncDiagnosticText(adapters.sourceContextId, 120) ||
-      SYNC_RUNTIME_CONTEXT_ID;
-    const sourceTabId =
-      normalizeSyncDiagnosticText(adapters.sourceTabId, 120) ||
-      SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID;
     const getNow = () => {
       const value =
         typeof adapters.now === "function" ? adapters.now() : adapters.now;
       return Number(value) || Date.now();
     };
-    const intentStorage = createManualSyncIntentStorage(adapters);
-    const readIntentState = () =>
-      readManualSyncIntentState(intentStorage, getNow());
-    const readIntent = () => readIntentState().intent;
-    const getIntentFence = (state = null) => ({
-      expectedRequestId: state?.intent?.requestId || "",
-      expectedGeneration: state?.intent?.generation || 0,
-      expectedHeadEventId: state?.head?.eventId || "",
-      expectedSequence:
-        state?.head && Number.isFinite(Number(state.head.sequence))
-          ? Number(state.head.sequence)
-          : -1,
-    });
-    const attachCanonicalHead = (intent, headEventId = "") => {
+    const intentStorage = createSessionPendingManualSyncIntentStorage(adapters);
+    const readIntent = () => intentStorage.read();
+    const writeIntent = (intent) => {
       const normalized = normalizeManualSyncIntent(intent);
-      const canonicalHeadEventId = normalizeSyncDiagnosticText(
-        headEventId,
-        240
-      );
-      return normalized && canonicalHeadEventId
-        ? { ...normalized, canonicalHeadEventId }
-        : normalized;
+      return normalized && intentStorage.write(normalized) ? normalized : null;
     };
-    const hasObservedCanonicalHead = (intent, state) => {
-      const observedHeadEventId = normalizeSyncDiagnosticText(
-        intent?.canonicalHeadEventId,
-        240
-      );
-      return (
-        !observedHeadEventId ||
-        observedHeadEventId === state?.head?.eventId
-      );
-    };
-    let nextManualIntentGeneration = 0;
+    const deleteIntent = () => intentStorage.remove();
+
     const isSyncEnabled = () => {
       if (typeof adapters.isSyncEnabled === "function") {
         return adapters.isSyncEnabled() === true;
@@ -45505,7 +44826,9 @@
       }
       return refreshAutoSyncIndicatorRuntimeDisplay(reason);
     };
-    const resumeAutomaticScheduling = (reason = "manual_sync_intent_settled") => {
+    const resumeAutomaticScheduling = (
+      reason = "manual_sync_intent_settled"
+    ) => {
       if (typeof adapters.resumeAutomaticScheduling === "function") {
         return adapters.resumeAutomaticScheduling(reason);
       }
@@ -45513,7 +44836,9 @@
     };
     const showMessageForDelayedIntent = (direction) => {
       const showMessageFn =
-        typeof adapters.showMessage === "function" ? adapters.showMessage : showMessage;
+        typeof adapters.showMessage === "function"
+          ? adapters.showMessage
+          : showMessage;
       showMessageFn(
         direction === AUTO_SYNC_INDICATOR_OPERATION_PUSH
           ? "当前同步正在完成，已登记手动推送；完成后将再次确认。"
@@ -45521,37 +44846,27 @@
         null
       );
     };
-    const onQueued = (intent) => {
+    const onQueued = () => {
       if (typeof adapters.onQueued === "function") {
-        return adapters.onQueued(intent);
+        return adapters.onQueued();
       }
-      // 只接管本标签页尚未取得 execution authority 的自动调度。
-      // 不调用 preemptActiveSyncForManualOverride，避免改变正在运行事务的
-      // remote cancel generation 或清除其它 context 的 durable intent。
+      // 只接管本标签页尚未启动的自动调度，不改变其它 context 的
+      // execution lock、heartbeat、Pending Dirty 或 foreground intent。
       return clearLocalAutoSyncSchedulingForManualOverride();
     };
     const executeDirection =
       typeof adapters.execute === "function"
         ? adapters.execute
-        : (direction, intent, options = {}) => {
+        : (direction, _intent, options = {}) => {
             const executionOptions = {
               ...options,
-              manualIntentRequestId: intent?.requestId || "",
-              manualIntentGeneration: intent?.generation || 0,
               suppressBusyMessage: true,
             };
             return direction === AUTO_SYNC_INDICATOR_OPERATION_PULL
               ? handleForcePull(executionOptions)
               : handleForcePush(executionOptions);
           };
-    const acquireExecutionAuthority =
-      typeof adapters.acquireExecutionAuthority === "function"
-        ? adapters.acquireExecutionAuthority
-        : (options = {}) => acquireManualSyncExecutionAuthority(options);
-    const releaseExecutionAuthority =
-      typeof adapters.releaseExecutionAuthority === "function"
-        ? adapters.releaseExecutionAuthority
-        : (authority) => releaseManualSyncExecutionAuthority(authority);
+
     const showConfirmation =
       typeof adapters.showConfirmation === "function"
         ? adapters.showConfirmation
@@ -45583,37 +44898,23 @@
             );
           };
 
+    const getIntentKey = (intent) =>
+      intent ? String(intent.direction) + ":" + String(intent.createdAt) : "";
+    const isSameIntent = (left, right) =>
+      Boolean(left && right && getIntentKey(left) === getIntentKey(right));
+    const isExecutionBoundaryRaceResult = (result) =>
+      result?.reason === "force_sync_busy" ||
+      result?.reason === "manual_sync_busy" ||
+      result?.reason === "sync_lock_unavailable";
+
     let bound = false;
     let operationPromise = null;
-    let executingIdentity = "";
-    let executingPromise = null;
-    let activeConfirmationIdentity = "";
-    let activeConfirmationOwnerToken = "";
+    let activeConfirmationKey = "";
     let activeConfirmationModal = null;
-    let confirmationOwnerRecoveryTimer = null;
-    let confirmationOwnerRecoveryDueAt = 0;
+    let confirmationEpoch = 0;
+    let suppressModalDismiss = false;
     const listenerIds = [];
     const domListeners = [];
-
-    const cancelConfirmationOwnerRecoveryTimer = (timer) => {
-      if (!timer) {
-        return;
-      }
-      if (typeof adapters.cancelOwnerRecovery === "function") {
-        adapters.cancelOwnerRecovery(timer);
-        return;
-      }
-      if (typeof timer.cancel === "function") {
-        timer.cancel();
-        return;
-      }
-      clearTimeout(timer);
-    };
-    const clearConfirmationOwnerRecoveryTimer = () => {
-      cancelConfirmationOwnerRecoveryTimer(confirmationOwnerRecoveryTimer);
-      confirmationOwnerRecoveryTimer = null;
-      confirmationOwnerRecoveryDueAt = 0;
-    };
 
     const enqueue = (task) => {
       const previous = operationPromise || Promise.resolve();
@@ -45627,1269 +44928,269 @@
       return settled;
     };
 
-    let manualIntentEventCounter = 0;
-    const createManualIntentEventId = (kind = "event") => {
-      manualIntentEventCounter += 1;
-      return `${kind}:${sourceContextId}:${getNow()}:${manualIntentEventCounter}:${Math.random()
-        .toString(36)
-        .slice(2, 10)}`;
-    };
-    const runWithManualSyncIntentDecisionAuthority = async (
-      operation,
-      intent,
-      callback
-    ) => {
-      if (typeof callback !== "function") {
-        return {
-          status: "failure",
-          reason: "manual_decision_callback_missing",
-        };
-      }
-      if (typeof adapters.beforeDecisionAuthority === "function") {
-        try {
-          await adapters.beforeDecisionAuthority({
-            operation,
-            intent: normalizeManualSyncIntent(intent),
-          });
-        } catch (error) {
-          return {
-            status: "failure",
-            reason: "manual_decision_authority_precheck_failed",
-            error: error?.message || String(error),
-          };
-        }
-      }
-      const invoke = (authority = {}) => {
-        const token =
-          normalizeSyncDiagnosticText(authority?.token, 160) ||
-          createManualIntentEventId("decision");
-        return callback(
-          Object.freeze({
-            operation,
-            token,
-            sourceContextId,
-          })
-        );
-      };
-      if (typeof adapters.withDecisionAuthority === "function") {
-        try {
-          return await adapters.withDecisionAuthority(
-            (authority) => invoke(authority),
-            { operation, intent: normalizeManualSyncIntent(intent) }
-          );
-        } catch (error) {
-          return {
-            status: "failure",
-            reason: "manual_decision_authority_error",
-            error: error?.message || String(error),
-          };
-        }
-      }
-      const lockManager =
-        typeof navigator !== "undefined" && navigator?.locks
-          ? navigator.locks
-          : typeof window !== "undefined" && window?.navigator?.locks
-            ? window.navigator.locks
-            : null;
-      if (!lockManager || typeof lockManager.request !== "function") {
-        return {
-          status: "skipped",
-          reason: "manual_decision_authority_unavailable",
-        };
-      }
-      try {
-        return await lockManager.request(
-          MANUAL_SYNC_INTENT_DECISION_LOCK_NAME,
-          { mode: "exclusive" },
-          () => invoke()
-        );
-      } catch (error) {
-        return {
-          status: "failure",
-          reason: "manual_decision_authority_error",
-          error: error?.message || String(error),
-        };
-      }
-    };
-    const writeIntentSignal = (intent) => {
-      try {
-        intentStorage.writeValue(PENDING_MANUAL_SYNC_INTENT_KEY, {
-          ...normalizeManualSyncIntent(intent),
-          version: 1,
-        });
-        return true;
-      } catch (error) {
-        return false;
-      }
-    };
-    const appendIntentRecord = (
-      intent,
-      {
-        parentEventId = "",
-        sequence = 0,
-        transitionKind = "state",
-        terminal = false,
-        expectedHeadEventId = "",
-        expectedConfirmationOwnerToken,
-        expectedExecutionOwnerId,
-        expectedExecutionAuthorityToken,
-        decisionCommitKind = "",
-        decisionCommitToken = "",
-        transitionAuthorityToken = "",
-        executionAuthorityToken = "",
-      } = {}
-    ) => {
-      const normalized = normalizeManualSyncIntent(intent);
-      if (!normalized || !intentStorage.canEnumerateJournal) {
-        return null;
-      }
-      const eventId = createManualIntentEventId(
-        parentEventId ? "transition" : "request"
-      );
-      const eventAt = getNow();
-      const record = {
-        ...normalized,
-        version: 2,
-        recordType: parentEventId ? "transition" : "request",
-        eventId,
-        parentEventId,
-        expectedHeadEventId: parentEventId
-          ? expectedHeadEventId || parentEventId
-          : "",
-        sequence: Math.max(0, Math.floor(Number(sequence) || 0)),
-        terminal: terminal === true,
-        transitionKind,
-        transitionSourceContextId: sourceContextId,
-        transitionAt: eventAt,
-      };
-      if (parentEventId && expectedConfirmationOwnerToken !== undefined) {
-        record.expectedConfirmationOwnerToken = normalizeSyncDiagnosticText(
-          expectedConfirmationOwnerToken,
-          160
-        );
-      }
-      if (parentEventId && expectedExecutionOwnerId !== undefined) {
-        record.expectedExecutionOwnerId = normalizeSyncDiagnosticText(
-          expectedExecutionOwnerId,
-          120
-        );
-      }
-      if (parentEventId && expectedExecutionAuthorityToken !== undefined) {
-        record.expectedExecutionAuthorityToken = normalizeSyncDiagnosticText(
-          expectedExecutionAuthorityToken,
-          160
-        );
-      }
-      if (decisionCommitKind) {
-        record.decisionCommitKind = normalizeSyncDiagnosticText(
-          decisionCommitKind,
-          80
-        );
-      }
-      if (decisionCommitToken) {
-        record.decisionCommitToken = normalizeSyncDiagnosticText(
-          decisionCommitToken,
-          160
-        );
-      }
-      if (transitionAuthorityToken) {
-        record.transitionAuthorityToken = normalizeSyncDiagnosticText(
-          transitionAuthorityToken,
-          160
-        );
-      }
-      if (executionAuthorityToken) {
-        record.executionAuthorityToken = normalizeSyncDiagnosticText(
-          executionAuthorityToken,
-          160
-        );
-      }
-      try {
-        intentStorage.writeValue(getManualSyncIntentRecordKey(eventId), record);
-      } catch (error) {
-        return null;
-      }
-      return record;
-    };
-
-    // GM storage has no compare-and-swap. A transition therefore never
-    // reuses a freshly discovered head: the caller's exact fence determines
-    // its parent, and the resolver decides whether the appended event won.
-    const persistExact = (
-      intent,
-      {
-        allowSupersede = false,
-        transitionKind = "state",
-        expectedRequestId = "",
-        expectedGeneration = 0,
-        expectedHeadEventId = "",
-        expectedSequence = -1,
-        expectedConfirmationOwnerToken,
-        expectedExecutionOwnerId,
-        expectedExecutionAuthorityToken,
-        decisionCommitKind = "",
-        decisionCommitToken = "",
-        transitionAuthorityToken = "",
-        executionAuthorityToken = "",
-      } = {}
-    ) => {
-      const normalized = normalizeManualSyncIntent(intent);
-      if (!normalized) {
-        return null;
-      }
-      if (!intentStorage.canEnumerateJournal) {
-        return null;
-      }
-      const currentState = readIntentState();
-      const current = currentState.intent;
-      const isTransition = Boolean(expectedHeadEventId);
-      if (isTransition) {
-        if (
-          !expectedRequestId ||
-          Number(expectedGeneration) <= 0 ||
-          !current ||
-          !currentState.head ||
-          current.requestId !== expectedRequestId ||
-          current.generation !== Number(expectedGeneration) ||
-          currentState.head.eventId !== expectedHeadEventId ||
-          currentState.head.sequence !== Number(expectedSequence) ||
-          normalized.requestId !== expectedRequestId ||
-          normalized.generation !== Number(expectedGeneration) ||
-          (expectedConfirmationOwnerToken !== undefined &&
-            current.confirmationOwnerToken !==
-              normalizeSyncDiagnosticText(expectedConfirmationOwnerToken, 160)) ||
-          (expectedExecutionOwnerId !== undefined &&
-            current.executionOwnerId !==
-              normalizeSyncDiagnosticText(expectedExecutionOwnerId, 120)) ||
-          (expectedExecutionAuthorityToken !== undefined &&
-            currentState.head.executionAuthorityToken !==
-              normalizeSyncDiagnosticText(expectedExecutionAuthorityToken, 160))
-        ) {
-          return null;
-        }
-      } else if (!allowSupersede) {
-        return null;
-      }
-      const record = appendIntentRecord(normalized, {
-        parentEventId: isTransition ? expectedHeadEventId : "",
-        sequence: isTransition ? Number(expectedSequence) + 1 : 0,
-        transitionKind: isTransition ? transitionKind : "request",
-        expectedHeadEventId,
-        expectedConfirmationOwnerToken,
-        expectedExecutionOwnerId,
-        expectedExecutionAuthorityToken,
-        decisionCommitKind,
-        decisionCommitToken,
-        transitionAuthorityToken,
-        executionAuthorityToken,
-      });
-      if (!record) {
-        return null;
-      }
-      writeIntentSignal(normalized);
-      pruneManualSyncIntentRecords(intentStorage, getNow());
-      const verifiedState = readIntentState();
-      if (
-        verifiedState.head?.eventId !== record.eventId ||
-        !isSameManualSyncIntent(verifiedState.intent, normalized)
-      ) {
-        return null;
-      }
-      return attachCanonicalHead(verifiedState.intent, record.eventId);
-    };
-
-    const appendTerminalExact = (
-      intent,
-      {
-        expectedRequestId = "",
-        expectedGeneration = 0,
-        expectedHeadEventId = "",
-        expectedSequence = -1,
-        expectedConfirmationOwnerToken,
-        expectedExecutionOwnerId,
-        expectedExecutionAuthorityToken,
-        decisionCommitToken = "",
-      } = {}
-    ) => {
-      if (!decisionCommitToken) {
-        return false;
-      }
-      const currentState = readIntentState();
-      const current = currentState.intent;
-      const effectiveRequestId = expectedRequestId || current?.requestId || "";
-      const effectiveGeneration =
-        Number(expectedGeneration) || current?.generation || 0;
-      const effectiveHeadEventId =
-        expectedHeadEventId || currentState.head?.eventId || "";
-      const effectiveSequence =
-        expectedSequence >= 0
-          ? Number(expectedSequence)
-          : Number(currentState.head?.sequence);
-      if (
-        !isSameManualSyncIntent(current, intent) ||
-        !currentState.head ||
-        current.requestId !== effectiveRequestId ||
-        current.generation !== effectiveGeneration ||
-        currentState.head.eventId !== effectiveHeadEventId ||
-        currentState.head.sequence !== effectiveSequence ||
-        (expectedConfirmationOwnerToken !== undefined &&
-          current.confirmationOwnerToken !==
-            normalizeSyncDiagnosticText(expectedConfirmationOwnerToken, 160)) ||
-        (expectedExecutionOwnerId !== undefined &&
-          current.executionOwnerId !==
-            normalizeSyncDiagnosticText(expectedExecutionOwnerId, 120)) ||
-        (expectedExecutionAuthorityToken !== undefined &&
-          currentState.head?.executionAuthorityToken !==
-            normalizeSyncDiagnosticText(expectedExecutionAuthorityToken, 160))
-      ) {
-        return false;
-      }
-      let terminalEventId = "";
-      try {
-        const terminal = appendIntentRecord(current, {
-          parentEventId: effectiveHeadEventId,
-          sequence: effectiveSequence + 1,
-          transitionKind: "settle",
-          terminal: true,
-          expectedHeadEventId: effectiveHeadEventId,
-          expectedConfirmationOwnerToken,
-          expectedExecutionOwnerId,
-          expectedExecutionAuthorityToken,
-          decisionCommitKind:
-            current.phase === MANUAL_SYNC_INTENT_PHASE_EXECUTING
-              ? "completion"
-              : "terminal",
-          decisionCommitToken,
-        });
-        if (!terminal) {
-          return false;
-        }
-        terminalEventId = terminal.eventId;
-        writeIntentSignal(current);
-        // This key is only a compatibility/change-notification mirror. The
-        // immutable journal records above are the authority, so deleting the
-        // mirror can never delete a newer request.
-        intentStorage.deleteValue(PENDING_MANUAL_SYNC_INTENT_KEY);
-      } catch (error) {
-        return false;
-      }
-      pruneManualSyncIntentRecords(intentStorage, getNow());
-      const afterState = readIntentState();
-      return Boolean(
-        afterState.head?.eventId === terminalEventId &&
-          !afterState.intent &&
-          isSameManualSyncIntent(afterState.winnerRequest, intent)
-      );
-    };
-
     const closeActiveConfirmation = ({
       dismiss = true,
       reason = "replaced",
     } = {}) => {
-      clearConfirmationOwnerRecoveryTimer();
       const modal = activeConfirmationModal;
       activeConfirmationModal = null;
-      activeConfirmationIdentity = "";
-      activeConfirmationOwnerToken = "";
+      activeConfirmationKey = "";
+      confirmationEpoch += 1;
       if (
         dismiss &&
         modal?.s1p_api &&
         typeof modal.s1p_api.dismiss === "function"
       ) {
-        modal.s1p_api.dismiss({
-          reason,
-          immediate: true,
-          invokeDismiss: false,
-        });
+        suppressModalDismiss = true;
+        try {
+          modal.s1p_api.dismiss({
+            reason,
+            immediate: true,
+            invokeDismiss: false,
+          });
+        } catch (error) {
+          console.warn("S1 Plus: 关闭手动同步确认框失败。", error);
+        } finally {
+          suppressModalDismiss = false;
+        }
       }
     };
 
-    const scheduleConfirmationOwnerRecovery = (intent, observedState = null) => {
-      clearConfirmationOwnerRecoveryTimer();
-      const state = observedState || readIntentState();
-      const current = normalizeManualSyncIntent(state.intent || intent);
-      const now = getNow();
-      if (
-        !current ||
-        !state.head ||
-        current.phase !== MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION ||
-        !current.confirmationOwnerId ||
-        current.confirmationOwnerExpiresAt <= now
-      ) {
+    const persistWaitingIntent = (direction, createdAt = getNow()) =>
+      writeIntent({
+        version: 1,
+        direction,
+        createdAt,
+        phase: MANUAL_SYNC_INTENT_PHASE_QUEUED,
+      });
+
+    const setWaitingForExecutionBoundary = (intent) => {
+      const normalized = normalizeManualSyncIntent(intent);
+      if (!normalized) {
+        return null;
+      }
+      const waiting =
+        normalized.phase === MANUAL_SYNC_INTENT_PHASE_QUEUED
+          ? normalized
+          : writeIntent({
+              ...normalized,
+              phase: MANUAL_SYNC_INTENT_PHASE_QUEUED,
+            });
+      if (!waiting) {
+        return null;
+      }
+      setIndicatorPending(waiting);
+      refreshDisplay("manual_sync_intent_waiting_for_execution_boundary");
+      return waiting;
+    };
+
+    const settleIntent = (intent, reason = "manual_sync_intent_settled") => {
+      const current = readIntent();
+      if (!isSameIntent(current, intent)) {
         return false;
       }
-      const ownerToken = current.confirmationOwnerToken;
-      const ownsConfirmation = current.confirmationOwnerId === ownerId;
-      const dueAt = ownsConfirmation
-        ? now +
-          Math.max(
-            1000,
-            Math.floor(MANUAL_SYNC_CONFIRMATION_OWNER_LEASE_MS / 2)
-          )
-        : current.confirmationOwnerExpiresAt +
-          BACKGROUND_SYNC_DEBOUNCE_OWNER_RECOVERY_GRACE_MS;
-      const delayMs = Math.max(0, dueAt - now);
-      confirmationOwnerRecoveryDueAt = dueAt;
-      const recover = () => {
-        confirmationOwnerRecoveryTimer = null;
-        confirmationOwnerRecoveryDueAt = 0;
-        const latestState = readIntentState();
-        const latest = latestState.intent;
-        const latestNow = getNow();
-        if (
-          ownsConfirmation &&
-          isSameManualSyncIntent(latest, current) &&
-          latestState.head?.eventId === state.head.eventId &&
-          latest?.phase === MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION &&
-          latest.confirmationOwnerId === ownerId &&
-          latest.confirmationOwnerToken === ownerToken &&
-          latest.confirmationOwnerExpiresAt > latestNow
-        ) {
-          void runWithManualSyncIntentDecisionAuthority(
-            "confirmation_owner_renewal",
-            latest,
-            (decisionAuthority) => {
-              const freshState = readIntentState();
-              const fresh = freshState.intent;
-              const freshNow = getNow();
-              if (
-                !isSameManualSyncIntent(fresh, latest) ||
-                freshState.head?.eventId !== latestState.head?.eventId ||
-                fresh?.phase !==
-                  MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION ||
-                fresh.confirmationOwnerId !== ownerId ||
-                fresh.confirmationOwnerToken !== ownerToken ||
-                fresh.confirmationOwnerExpiresAt <= freshNow
-              ) {
-                return null;
-              }
-              return persistExact({
-                ...fresh,
-                confirmationOwnerExpiresAt:
-                  freshNow + MANUAL_SYNC_CONFIRMATION_OWNER_LEASE_MS,
-              }, {
-                transitionKind: "confirmation_owner_renewal",
-                ...getIntentFence(freshState),
-                expectedConfirmationOwnerToken: ownerToken,
-                transitionAuthorityToken: decisionAuthority?.token || "",
-              });
-            }
-          ).then((renewed) => {
-            if (renewed?.requestId) {
-              scheduleConfirmationOwnerRecovery(renewed);
-              return;
-            }
-            void reconcile("manual_sync_confirmation_owner_recovery");
-          });
-          return;
-        }
-        void reconcile("manual_sync_confirmation_owner_recovery");
-      };
-      if (typeof adapters.scheduleOwnerRecovery === "function") {
-        confirmationOwnerRecoveryTimer = adapters.scheduleOwnerRecovery(
-          delayMs,
-          recover,
-          {
-            dueAt,
-            requestId: current.requestId,
-            generation: current.generation,
-            headEventId: state.head.eventId,
-            ownerId: current.confirmationOwnerId,
-          }
-        );
-      } else {
-        confirmationOwnerRecoveryTimer = setTimeout(recover, delayMs);
-        confirmationOwnerRecoveryTimer?.unref?.();
+      deleteIntent();
+      if (
+        !activeConfirmationKey ||
+        activeConfirmationKey === getIntentKey(intent)
+      ) {
+        closeActiveConfirmation({ reason });
+      }
+      refreshDisplay(reason);
+      try {
+        resumeAutomaticScheduling(reason);
+      } catch (error) {
+        // Unrelated automatic recovery can retry from its own lifecycle hooks.
       }
       return true;
     };
 
-    const releaseConfirmationOwnerExact = (
-      intent,
-      observedState = null,
-      { authority = null } = {}
-    ) => {
-      const releaseWithinAuthority = (decisionAuthority) => {
-        const state = readIntentState();
-        const current = state.intent;
-        if (
-          !isSameManualSyncIntent(current, intent) ||
-          !hasObservedCanonicalHead(intent, state) ||
-          current.confirmationOwnerId !== ownerId ||
-          current.confirmationOwnerToken !==
-            getManualSyncIntentConfirmationOwnerToken(intent)
-        ) {
-          return false;
-        }
-        clearConfirmationOwnerRecoveryTimer();
-        return Boolean(
-          persistExact({
-            ...current,
-            confirmationOwnerId: "",
-            confirmationOwnerExpiresAt: 0,
-            confirmationOwnerToken: "",
-            confirmationOwnerClaimedAt: 0,
-          }, {
-            transitionKind: "confirmation_owner_release",
-            ...getIntentFence(state),
-            expectedConfirmationOwnerToken: current.confirmationOwnerToken,
-            transitionAuthorityToken: decisionAuthority?.token || "",
-          })
-        );
-      };
-      const result = authority
-        ? Promise.resolve(releaseWithinAuthority(authority))
-        : runWithManualSyncIntentDecisionAuthority(
-            "confirmation_owner_release",
-            intent,
-            releaseWithinAuthority
-          );
-      return Promise.resolve(result).then((released) => released === true);
-    };
+    const summarizeIntent = (intent, status = "queued", reason = "") => ({
+      status,
+      phase: intent?.phase || "",
+      direction: intent?.direction || "",
+      ...(reason ? { reason } : {}),
+    });
 
-    const transitionToQueuedExact = (
-      intent,
-      reason = "execution_boundary_busy",
-      observedState = null,
-      { authority = null } = {}
-    ) => {
-      const transitionWithinAuthority = (decisionAuthority) => {
-        const state = readIntentState();
-        const current = state.intent;
-        if (
-          !isSameManualSyncIntent(current, intent) ||
-          !hasObservedCanonicalHead(intent, state)
-        ) {
-          return null;
-        }
-        clearConfirmationOwnerRecoveryTimer();
-        return persistExact({
-          ...current,
-          phase: MANUAL_SYNC_INTENT_PHASE_QUEUED,
-          confirmationOwnerId: "",
-          confirmationOwnerExpiresAt: 0,
-          confirmationOwnerToken: "",
-          confirmationOwnerClaimedAt: 0,
-          executionOwnerId: "",
-          executionStartedAt: 0,
-          executionExpiresAt: 0,
-        }, {
-          transitionKind: "queued",
-          ...getIntentFence(state),
-          ...(current.phase === MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION
-            ? { expectedConfirmationOwnerToken: current.confirmationOwnerToken }
-            : { expectedExecutionOwnerId: current.executionOwnerId }),
-          transitionAuthorityToken: decisionAuthority?.token || "",
-        });
-      };
-      const result = authority
-        ? Promise.resolve(transitionWithinAuthority(authority))
-        : runWithManualSyncIntentDecisionAuthority(
-            "queued",
-            intent,
-            transitionWithinAuthority
-          );
-      return Promise.resolve(result).then((queued) => {
-        if (!queued || !queued.requestId) {
-          return null;
-        }
-        setIndicatorPending(queued);
-        refreshDisplay(`manual_sync_intent_${reason}`);
-        return queued;
-      });
-    };
-
-    const settleExact = (
-      intent,
-      reason = "manual_sync_intent_settled",
-      observedState = null,
-      { authority = null } = {}
-    ) => {
-      const settleWithinAuthority = (decisionAuthority) => {
-        const state = readIntentState();
-        const current = state.intent;
-        if (!current || !isSameManualSyncIntent(current, intent)) {
-          return false;
-        }
-        const fence = getIntentFence(state);
-        const settled = appendTerminalExact(current, {
-          ...fence,
-          ...(current.phase === MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION
-            ? { expectedConfirmationOwnerToken: current.confirmationOwnerToken }
-            : current.phase === MANUAL_SYNC_INTENT_PHASE_EXECUTING
-              ? {
-                  expectedExecutionOwnerId: current.executionOwnerId,
-                  expectedExecutionAuthorityToken:
-                    state.head?.executionAuthorityToken,
-                }
-              : {}),
-          decisionCommitToken: decisionAuthority?.token || "",
-        });
-        return settled;
-      };
-      const result = authority
-        ? Promise.resolve(settleWithinAuthority(authority))
-        : runWithManualSyncIntentDecisionAuthority(
-            "terminal",
-            intent,
-            settleWithinAuthority
-          );
-      return Promise.resolve(result).then((settled) => {
-        if (settled !== true) {
-          return false;
-        }
-        const identity = getManualSyncIntentIdentity(intent);
-        if (
-          !activeConfirmationIdentity ||
-          activeConfirmationIdentity === identity
-        ) {
-          closeActiveConfirmation({ reason });
-        }
-        refreshDisplay(reason);
-        try {
-          resumeAutomaticScheduling(reason);
-        } catch (error) {
-          // Manual intent settlement must not be undone by an automatic
-          // scheduler recovery failure; the next lifecycle/storage event can
-          // retry the unrelated pending work.
-        }
-        return true;
-      });
-    };
-
-    const isExecutionBoundaryRaceResult = (result) =>
-      result?.reason === "force_sync_busy" ||
-      result?.reason === "manual_sync_busy" ||
-      result?.reason === "sync_lock_unavailable";
-
-    const confirmExact = (requestedIntent) =>
+    const cancelPending = (requestedIntent = null, requestedEpoch = null) =>
       enqueue(async () => {
-        const decision = await runWithManualSyncIntentDecisionAuthority(
-          "executing",
-          requestedIntent,
-          async (authority) => {
-            const currentState = readIntentState();
-            const current = currentState.intent;
-            if (
-              !isSameManualSyncIntent(current, requestedIntent) ||
-              !hasObservedCanonicalHead(requestedIntent, currentState) ||
-              current.phase !==
-                MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION ||
-              current.confirmationOwnerId !== ownerId ||
-              current.confirmationOwnerToken !==
-                getManualSyncIntentConfirmationOwnerToken(requestedIntent)
-            ) {
-              return { status: "skipped", reason: "stale_manual_intent" };
-            }
-            if (!isSyncEnabled()) {
-              await settleExact(
-                current,
-                "manual_sync_disabled",
-                currentState,
-                { authority }
-              );
-              return { status: "skipped", reason: "sync_disabled" };
-            }
-            if (hasActiveExecution()) {
-              const queued = await transitionToQueuedExact(
-                current,
-                "execution_boundary_busy",
-                currentState,
-                { authority }
-              );
-              closeActiveConfirmation({ reason: "execution_boundary_busy" });
-              return queued
-                ? {
-                    status: "queued",
-                    phase: queued.phase,
-                    direction: queued.direction,
-                    requestId: queued.requestId,
-                    generation: queued.generation,
-                  }
-                : { status: "skipped", reason: "stale_manual_intent" };
-            }
+        if (
+          requestedEpoch !== null &&
+          requestedEpoch !== confirmationEpoch
+        ) {
+          return { status: "skipped", reason: "stale_manual_intent" };
+        }
+        const current = readIntent();
+        const target = requestedIntent || current;
+        if (!isSameIntent(current, target)) {
+          return { status: "skipped", reason: "stale_manual_intent" };
+        }
+        const cancelled = settleIntent(current, "manual_sync_intent_cancelled");
+        return cancelled
+          ? { status: "cancelled", direction: current.direction }
+          : { status: "skipped", reason: "stale_manual_intent" };
+      });
 
-            const executionAuthority = await acquireExecutionAuthority({
-              // The confirmation path has already crossed one execution
-              // boundary. If another run wins the gap before this irreversible
-              // commit, requeue without preempting that run or committing E.
-              preemptActiveSync: false,
-              operation: `manual_${current.direction}`,
-              manualIntentRequestId: current.requestId,
-              manualIntentGeneration: current.generation,
-            });
-            if (!executionAuthority) {
-              const latestState = readIntentState();
-              const latest = latestState.intent;
-              if (
-                !isSameManualSyncIntent(latest, current) ||
-                latestState.head?.eventId !== currentState.head?.eventId
-              ) {
-                return { status: "skipped", reason: "stale_manual_intent" };
-              }
-              const queued = await transitionToQueuedExact(
-                latest,
-                "execution_boundary_busy",
-                latestState,
-                { authority }
-              );
-              closeActiveConfirmation({ reason: "execution_boundary_busy" });
-              return queued
-                ? {
-                    status: "queued",
-                    phase: queued.phase,
-                    direction: queued.direction,
-                    requestId: queued.requestId,
-                    generation: queued.generation,
-                    reason: "execution_boundary_busy",
-                  }
-                : { status: "skipped", reason: "stale_manual_intent" };
-            }
-
-            const now = getNow();
-            const executing = persistExact({
-              ...current,
-              phase: MANUAL_SYNC_INTENT_PHASE_EXECUTING,
-              confirmationOwnerId: "",
-              confirmationOwnerExpiresAt: 0,
-              confirmationOwnerToken: "",
-              confirmationOwnerClaimedAt: 0,
-              executionOwnerId: ownerId,
-              executionStartedAt: now,
-              executionExpiresAt: now + MANUAL_SYNC_LOCK_TTL_MS,
-            }, {
-              transitionKind: "executing",
-              ...getIntentFence(currentState),
-              expectedConfirmationOwnerToken: current.confirmationOwnerToken,
-              decisionCommitKind: "executing",
-              decisionCommitToken: authority.token,
-              executionAuthorityToken: executionAuthority.token,
-            });
-            if (!executing) {
-              await releaseExecutionAuthority(executionAuthority);
-              return { status: "skipped", reason: "stale_manual_intent" };
-            }
-            return {
-              status: "committed",
-              intent: executing,
-              executionAuthority,
-            };
-          }
-        );
-        if (decision?.status !== "committed") {
-          return decision;
+    const confirmPending = (requestedIntent, requestedEpoch) =>
+      enqueue(async () => {
+        if (
+          requestedEpoch !== confirmationEpoch ||
+          !activeConfirmationKey ||
+          activeConfirmationKey !== getIntentKey(requestedIntent)
+        ) {
+          return { status: "skipped", reason: "stale_manual_intent" };
+        }
+        const current = readIntent();
+        if (
+          !isSameIntent(current, requestedIntent) ||
+          current.phase !== MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION
+        ) {
+          return { status: "skipped", reason: "stale_manual_intent" };
+        }
+        if (!isSyncEnabled()) {
+          settleIntent(current, "manual_sync_disabled");
+          return { status: "skipped", reason: "sync_disabled" };
+        }
+        if (hasActiveExecution()) {
+          const waiting = setWaitingForExecutionBoundary(current);
+          closeActiveConfirmation({ reason: "execution_boundary_busy" });
+          return waiting
+            ? summarizeIntent(waiting, "queued", "execution_boundary_busy")
+            : { status: "failure", reason: "manual_intent_storage_failed" };
         }
 
-        const executing = decision.intent;
-        const executionAuthority = decision.executionAuthority;
-        closeActiveConfirmation({ dismiss: false });
-        const identity = getManualSyncIntentIdentity(executing);
-        executingIdentity = identity;
-        const executionPromiseForIntent = Promise.resolve().then(async () => {
-          const latestBeforeExecutionState = readIntentState();
-          const latestBeforeExecution = latestBeforeExecutionState.intent;
-          if (
-            !isSameManualSyncIntent(latestBeforeExecution, executing) ||
-            latestBeforeExecutionState.head?.eventId !==
-              executing.canonicalHeadEventId ||
-            latestBeforeExecution.phase !==
-              MANUAL_SYNC_INTENT_PHASE_EXECUTING ||
-            latestBeforeExecution.executionOwnerId !== ownerId
-          ) {
-            await releaseExecutionAuthority(executionAuthority);
-            return { status: "skipped", reason: "stale_manual_intent" };
-          }
-          return executeDirection(executing.direction, executing, {
-            manualExecutionAuthority: executionAuthority,
-          });
-        });
-        executingPromise = executionPromiseForIntent;
-        let result = null;
+        closeActiveConfirmation({ dismiss: false, reason: "confirmed" });
+        let result;
         try {
-          result = await executionPromiseForIntent;
+          result = await executeDirection(current.direction, current, {});
         } catch (error) {
           result = {
             status: "failure",
             reason: "manual_execution_error",
             error: error?.message || String(error),
           };
-        } finally {
-          if (executingPromise === executionPromiseForIntent) {
-            executingPromise = null;
-          }
-          if (executingIdentity === identity) {
-            executingIdentity = "";
-          }
-          await releaseExecutionAuthority(executionAuthority);
-          const latestState = readIntentState();
-          const latest = latestState.intent;
-          if (
-            isSameManualSyncIntent(latest, executing) &&
-            latestState.head?.eventId === executing.canonicalHeadEventId
-          ) {
-            if (isExecutionBoundaryRaceResult(result)) {
-              await transitionToQueuedExact(
-                executing,
-                result.reason,
-                latestState
-              );
-            } else {
-              await settleExact(
-                executing,
-                "manual_sync_intent_settled",
-                latestState
-              );
-            }
-          }
         }
+
+        const latest = readIntent();
+        if (!isSameIntent(latest, current)) {
+          return result;
+        }
+        if (isExecutionBoundaryRaceResult(result)) {
+          const waiting = setWaitingForExecutionBoundary(latest);
+          showMessageForDelayedIntent(current.direction);
+          return waiting
+            ? summarizeIntent(waiting, "queued", "execution_boundary_busy")
+            : result;
+        }
+        settleIntent(current, "manual_sync_intent_settled");
         return result;
       });
 
-    const cancelExact = (requestedIntent) =>
-      enqueue(async () => {
-        const decision = await runWithManualSyncIntentDecisionAuthority(
-          "terminal",
-          requestedIntent,
-          async (authority) => {
-            const currentState = readIntentState();
-            const current = currentState.intent;
-            if (
-              !isSameManualSyncIntent(current, requestedIntent) ||
-              !hasObservedCanonicalHead(requestedIntent, currentState) ||
-              current.confirmationOwnerToken !==
-                getManualSyncIntentConfirmationOwnerToken(requestedIntent)
-            ) {
-              return { status: "skipped", reason: "stale_manual_intent" };
-            }
-            if (
-              current.phase === MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION &&
-              current.confirmationOwnerId !== ownerId
-            ) {
-              return { status: "skipped", reason: "stale_manual_intent" };
-            }
-            if (current.phase === MANUAL_SYNC_INTENT_PHASE_EXECUTING) {
-              return { status: "skipped", reason: "manual_execution_in_flight" };
-            }
-            const cancelled = await settleExact(
-              current,
-              "manual_sync_intent_cancelled",
-              currentState,
-              { authority }
-            );
-            return cancelled
-              ? { status: "cancelled", requestId: current.requestId }
-              : { status: "skipped", reason: "stale_manual_intent" };
-          }
-        );
-        return decision;
-      });
-
     const presentConfirmation = (intent) => {
-      const currentState = readIntentState();
-      const current = attachCanonicalHead(
-        currentState.intent,
-        currentState.head?.eventId
-      );
+      const current = readIntent();
       if (
-        !isSameManualSyncIntent(current, intent) ||
-        !hasObservedCanonicalHead(intent, currentState) ||
-        !currentState.head ||
-        current.phase !== MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION ||
-        current.confirmationOwnerId !== ownerId ||
-        current.confirmationOwnerToken !==
-          getManualSyncIntentConfirmationOwnerToken(intent)
+        !isSameIntent(current, intent) ||
+        current.phase !== MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION
       ) {
         return { status: "skipped", reason: "stale_manual_intent" };
       }
-      const identity = getManualSyncIntentIdentity(current);
-      const ownerToken = getManualSyncIntentConfirmationOwnerToken(current);
-      if (
-        activeConfirmationIdentity === identity &&
-        activeConfirmationOwnerToken === ownerToken
-      ) {
-        scheduleConfirmationOwnerRecovery(current);
-        return {
-          status: "awaiting_confirmation",
-          phase: current.phase,
-          direction: current.direction,
-          requestId: current.requestId,
-          generation: current.generation,
-        };
+      const key = getIntentKey(current);
+      if (activeConfirmationKey === key && activeConfirmationModal) {
+        return summarizeIntent(current, "awaiting_confirmation");
       }
+
       closeActiveConfirmation({ reason: "replaced" });
-      activeConfirmationIdentity = identity;
-      activeConfirmationOwnerToken = ownerToken;
+      const epoch = confirmationEpoch;
+      activeConfirmationKey = key;
       try {
         activeConfirmationModal = showConfirmation(current, {
-          onConfirm: () => confirmExact(current),
-          onCancel: () => cancelExact(current),
-          onDismiss: () => cancelExact(current),
+          onConfirm: () => confirmPending(current, epoch),
+          onCancel: () => cancelPending(current, epoch),
+          onDismiss: () => {
+            if (suppressModalDismiss) {
+              return { status: "skipped", reason: "internal_dismiss" };
+            }
+            return cancelPending(current, epoch);
+          },
         });
       } catch (error) {
-        void releaseConfirmationOwnerExact(current);
-        activeConfirmationIdentity = "";
-        activeConfirmationOwnerToken = "";
         activeConfirmationModal = null;
+        activeConfirmationKey = "";
+        const waiting = writeIntent({
+          ...current,
+          phase: MANUAL_SYNC_INTENT_PHASE_QUEUED,
+        });
+        if (waiting) {
+          setIndicatorPending(waiting);
+        }
+        refreshDisplay("manual_sync_intent_confirmation_unavailable");
         return { status: "failure", reason: "confirmation_unavailable" };
       }
       if (!activeConfirmationModal) {
-        void releaseConfirmationOwnerExact(current);
-        activeConfirmationIdentity = "";
-        activeConfirmationOwnerToken = "";
+        activeConfirmationKey = "";
+        const waiting = writeIntent({
+          ...current,
+          phase: MANUAL_SYNC_INTENT_PHASE_QUEUED,
+        });
+        if (waiting) {
+          setIndicatorPending(waiting);
+        }
+        refreshDisplay("manual_sync_intent_confirmation_unavailable");
         return { status: "failure", reason: "confirmation_unavailable" };
       }
-      const verifiedAfterMountState = readIntentState();
-      const verifiedAfterMount = verifiedAfterMountState.intent;
-      if (
-        !isSameManualSyncIntent(verifiedAfterMount, current) ||
-        verifiedAfterMountState.head?.eventId !== current.canonicalHeadEventId ||
-        verifiedAfterMount?.confirmationOwnerId !== ownerId ||
-        verifiedAfterMount?.confirmationOwnerToken !==
-          ownerToken
-      ) {
-        closeActiveConfirmation({ reason: "confirmation_owner_changed" });
-        if (verifiedAfterMount) {
-          scheduleConfirmationOwnerRecovery(
-            verifiedAfterMount,
-            verifiedAfterMountState
-          );
-        }
-        return { status: "skipped", reason: "stale_manual_intent" };
-      }
-      scheduleConfirmationOwnerRecovery(current, verifiedAfterMountState);
-      return {
-        status: "awaiting_confirmation",
-        phase: current.phase,
-        direction: current.direction,
-        requestId: current.requestId,
-        generation: current.generation,
-      };
+      return summarizeIntent(current, "awaiting_confirmation");
     };
 
-    const buildAwaitingConfirmationResult = (intent) => ({
-      status: "awaiting_confirmation",
-      phase: intent.phase,
-      direction: intent.direction,
-      requestId: intent.requestId,
-      generation: intent.generation,
-    });
-
-    const acquireConfirmationOwner = async (
-      intent,
-      observedState = null
+    const reconcileOnce = async (
+      reason = "manual_sync_intent_reconcile"
     ) => {
-      const initialState = observedState || readIntentState();
-      const initial = attachCanonicalHead(
-        initialState.intent,
-        initialState.head?.eventId
-      );
-      if (
-        !isSameManualSyncIntent(initial, intent) ||
-        !hasObservedCanonicalHead(intent, initialState)
-      ) {
-        return { status: "skipped", reason: "stale_manual_intent" };
-      }
-      const initialNow = getNow();
-      const hasLiveInitialOwner =
-        initial.confirmationOwnerId &&
-        initial.confirmationOwnerExpiresAt > initialNow;
-      if (
-        hasLiveInitialOwner &&
-        initial.confirmationOwnerId !== ownerId
-      ) {
-        closeActiveConfirmation({ reason: "confirmation_owner_changed" });
-        scheduleConfirmationOwnerRecovery(initial, initialState);
-        return buildAwaitingConfirmationResult(initial);
-      }
-      if (hasLiveInitialOwner && initial.confirmationOwnerId === ownerId) {
-        return presentConfirmation(initial);
-      }
-
-      const decision = await runWithManualSyncIntentDecisionAuthority(
-        "confirmation_owner_claim",
-        initial,
-        async (authority) => {
-          const currentState = readIntentState();
-          const current = attachCanonicalHead(
-            currentState.intent,
-            currentState.head?.eventId
-          );
-          if (
-            !isSameManualSyncIntent(current, initial) ||
-            !hasObservedCanonicalHead(initial, currentState)
-          ) {
-            return { status: "skipped", reason: "stale_manual_intent" };
-          }
-          const now = getNow();
-          const hasLiveOwner =
-            current.confirmationOwnerId &&
-            current.confirmationOwnerExpiresAt > now;
-          if (hasLiveOwner) {
-            return {
-              status: "owner_already_claimed",
-              intent: current,
-              state: currentState,
-            };
-          }
-          const confirmationOwnerToken = createManualIntentEventId("owner");
-          const claimed = persistExact({
-            ...current,
-            phase: MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION,
-            confirmationOwnerId: ownerId,
-            confirmationOwnerExpiresAt:
-              now + MANUAL_SYNC_CONFIRMATION_OWNER_LEASE_MS,
-            confirmationOwnerToken,
-            confirmationOwnerClaimedAt: now,
-          }, {
-            transitionKind: "confirmation_owner_claim",
-            ...getIntentFence(currentState),
-            expectedConfirmationOwnerToken: current.confirmationOwnerToken,
-            transitionAuthorityToken: authority.token,
-          });
-          if (!claimed || claimed.confirmationOwnerId !== ownerId) {
-            return { status: "owner_claim_lost" };
-          }
-          const verifiedState = readIntentState();
-          const verified = verifiedState.intent;
-          if (
-            !isSameManualSyncIntent(verified, claimed) ||
-            verifiedState.head?.eventId !== claimed.canonicalHeadEventId ||
-            verified?.confirmationOwnerId !== ownerId ||
-            verified?.confirmationOwnerToken !== confirmationOwnerToken
-          ) {
-            return {
-              status: "owner_claim_lost",
-              intent: verified,
-              state: verifiedState,
-            };
-          }
-          return {
-            status: "owner_claimed",
-            intent: claimed,
-            state: verifiedState,
-          };
-        }
-      );
-      if (
-        decision?.status === "owner_claimed" &&
-        decision.intent
-      ) {
-        // The journal re-read fences this owner token before mounting UI. A
-        // competing claim can remain in storage, but only the elected token
-        // can keep a live modal or execute its callbacks.
-        return presentConfirmation(decision.intent);
-      }
-      if (decision?.status === "owner_already_claimed" && decision.intent) {
-        if (decision.intent.confirmationOwnerId === ownerId) {
-          return presentConfirmation(decision.intent);
-        }
-        closeActiveConfirmation({ reason: "confirmation_owner_changed" });
-        scheduleConfirmationOwnerRecovery(decision.intent, decision.state);
-        return buildAwaitingConfirmationResult(decision.intent);
-      }
-      if (decision?.status === "owner_claim_lost") {
-        const latestState = readIntentState();
-        const latest = latestState.intent;
-        if (latest) {
-          if (!isSameManualSyncIntent(latest, initial)) {
-            closeActiveConfirmation({ reason: "confirmation_owner_changed" });
-            return { status: "skipped", reason: "stale_manual_intent" };
-          }
-          closeActiveConfirmation({ reason: "confirmation_owner_changed" });
-          scheduleConfirmationOwnerRecovery(latest, latestState);
-          return buildAwaitingConfirmationResult(latest);
-        }
-      }
-      return decision || { status: "skipped", reason: "stale_manual_intent" };
-    };
-
-    const reconcileOnce = async (reason = "manual_sync_intent_reconcile") => {
       if (syncExecutionSettlementDepth > 0) {
         manualSyncIntentBoundaryDeferred = true;
         return { status: "deferred", reason: "running_sync_settlement" };
       }
-      let intentState = readIntentState();
-      if (intentState.ambiguousIrreversibleDecision) {
-        closeActiveConfirmation({ reason: "manual_intent_ambiguous" });
-        return { status: "blocked", reason: "manual_intent_ambiguous" };
-      }
-      let intent = attachCanonicalHead(
-        intentState.intent,
-        intentState.head?.eventId
-      );
+      let intent = readIntent();
       if (!intent) {
         closeActiveConfirmation({ reason: "intent_missing" });
         return { status: "idle", reason: "no_manual_intent" };
       }
-      const now = getNow();
       if (!isSyncEnabled()) {
-        if (intent.phase === MANUAL_SYNC_INTENT_PHASE_EXECUTING) {
-          return { status: "executing", requestId: intent.requestId };
-        }
-        await settleExact(intent, "manual_sync_disabled", intentState);
+        settleIntent(intent, "manual_sync_disabled");
         return { status: "cancelled", reason: "sync_disabled" };
       }
-      if (now - intent.requestedAt > MANUAL_SYNC_INTENT_STALE_MS) {
-        if (intent.phase === MANUAL_SYNC_INTENT_PHASE_EXECUTING) {
-          return { status: "executing", requestId: intent.requestId };
-        }
-        await settleExact(intent, "manual_sync_intent_stale", intentState);
+      if (getNow() - intent.createdAt > MANUAL_SYNC_INTENT_STALE_MS) {
+        settleIntent(intent, "manual_sync_intent_stale");
         return { status: "cancelled", reason: "stale_manual_intent" };
       }
 
-      const identity = getManualSyncIntentIdentity(intent);
-      if (activeConfirmationIdentity && activeConfirmationIdentity !== identity) {
-        closeActiveConfirmation({ reason: "superseded" });
-      }
-      if (intent.phase === MANUAL_SYNC_INTENT_PHASE_EXECUTING) {
-        if (executingIdentity === identity || executingPromise || hasActiveExecution()) {
-          return { status: "executing", requestId: intent.requestId };
-        }
-        if (intent.executionExpiresAt > now) {
-          return { status: "executing", requestId: intent.requestId };
-        }
-        intent = await transitionToQueuedExact(
-          intent,
-          "execution_recovery",
-          intentState
-        );
-        if (!intent) {
-          return { status: "skipped", reason: "stale_manual_intent" };
-        }
-        intentState = readIntentState();
-      }
-
       if (hasActiveExecution()) {
-        if (intent.phase === MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION) {
-          closeActiveConfirmation({ reason: "execution_boundary_busy" });
-          intent = await transitionToQueuedExact(
-            intent,
-            "execution_boundary_busy",
-            intentState
-          );
+        if (intent.phase !== MANUAL_SYNC_INTENT_PHASE_QUEUED) {
+          intent = setWaitingForExecutionBoundary(intent);
         }
-        if (intent) {
-          setIndicatorPending(intent);
-          refreshDisplay(`manual_sync_intent_${reason}`);
-          return {
-            status: "queued",
-            phase: intent.phase,
-            direction: intent.direction,
-            requestId: intent.requestId,
-            generation: intent.generation,
-          };
-        }
+        closeActiveConfirmation({ reason: "execution_boundary_busy" });
         if (!intent) {
-          return { status: "skipped", reason: "stale_manual_intent" };
+          return { status: "failure", reason: "manual_intent_storage_failed" };
         }
+        return summarizeIntent(intent, "queued");
       }
 
       if (intent.phase === MANUAL_SYNC_INTENT_PHASE_QUEUED) {
-        return acquireConfirmationOwner(intent, intentState);
+        intent = writeIntent({
+          ...intent,
+          phase: MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION,
+        });
+        if (!intent) {
+          return { status: "failure", reason: "manual_intent_storage_failed" };
+        }
+        refreshDisplay("manual_sync_intent_" + reason);
       }
       if (intent.phase === MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION) {
-        return acquireConfirmationOwner(intent, intentState);
+        return presentConfirmation(intent);
       }
       return { status: "skipped", reason: "unsupported_manual_intent_phase" };
     };
 
     const reconcile = (reason = "manual_sync_intent_reconcile") =>
       enqueue(() => reconcileOnce(reason));
-
-    const summarizeIntentReconciliation = (reconciled, persisted) => ({
-      status:
-        reconciled?.status === "awaiting_confirmation"
-          ? "awaiting_confirmation"
-          : "queued",
-      phase: reconciled?.phase || persisted.phase,
-      direction: persisted.direction,
-      requestId: persisted.requestId,
-      generation: persisted.generation,
-    });
-
-    const createAndPersistIntent = async (
-      direction,
-      { phase, notifyDelayed = false, reason = "manual_sync_intent_requested" } = {}
-    ) => {
-      const result = await runWithManualSyncIntentDecisionAuthority(
-        "request",
-        null,
-        async (authority) => {
-          const now = getNow();
-          const currentState = readIntentState();
-          const current = attachCanonicalHead(
-            currentState.intent,
-            currentState.head?.eventId
-          );
-          if (current && now - current.requestedAt > MANUAL_SYNC_INTENT_STALE_MS) {
-            await settleExact(
-              current,
-              "manual_sync_intent_stale",
-              currentState,
-              { authority }
-            );
-          }
-          const rootSequences = (currentState.records || [])
-            .filter((record) =>
-              ["request", "legacy_request"].includes(record.recordType)
-            )
-            .map((record) =>
-              Math.max(
-                Number(record.authorityRequestSequence) || 0,
-                Number(record.generation) || 0
-              )
-            );
-          const nextAuthoritySequence =
-            Math.max(nextManualIntentGeneration, ...rootSequences, 0) + 1;
-          nextManualIntentGeneration = nextAuthoritySequence;
-          const nextIntent = {
-            version: 1,
-            requestId: `${sourceContextId}_${now}_${nextAuthoritySequence}_${Math.random()
-              .toString(36)
-              .slice(2, 10)}`,
-            generation: nextAuthoritySequence,
-            direction,
-            phase,
-            requestedAt: now,
-            sourceContextId,
-            sourceTabId,
-            authorityRequestedAt: now,
-            authoritySourceContextId: sourceContextId,
-            authorityRequestSequence: nextAuthoritySequence,
-            confirmationOwnerId: "",
-            confirmationOwnerExpiresAt: 0,
-            confirmationOwnerToken: "",
-            confirmationOwnerClaimedAt: 0,
-            executionOwnerId: "",
-            executionStartedAt: 0,
-            executionExpiresAt: 0,
-          };
-          const persisted = persistExact(nextIntent, {
-            allowSupersede: true,
-            transitionKind: "request",
-            transitionAuthorityToken: authority.token,
-          });
-          if (!persisted) {
-            return null;
-          }
-          if (notifyDelayed) {
-            try {
-              onQueued(persisted);
-            } catch (error) {
-              // The durable user intent remains authoritative even if local timer
-              // cleanup fails; the next boundary can still reconcile it.
-            }
-            setIndicatorPending(persisted);
-            refreshDisplay("manual_sync_intent_queued");
-            showMessageForDelayedIntent(direction);
-          } else {
-            refreshDisplay(reason);
-          }
-          return persisted;
-        }
-      );
-      return result?.requestId ? result : null;
-    };
 
     const request = async (direction, options = {}) => {
       const normalizedDirection =
@@ -46905,101 +45206,93 @@
         };
       }
       if (!isSyncEnabled()) {
-        const currentState = readIntentState();
-        const current = attachCanonicalHead(
-          currentState.intent,
-          currentState.head?.eventId
-        );
-        if (current && current.phase !== MANUAL_SYNC_INTENT_PHASE_EXECUTING) {
-          await settleExact(current, "manual_sync_disabled", currentState);
+        const current = readIntent();
+        if (current) {
+          settleIntent(current, "manual_sync_disabled");
         }
         return { status: "skipped", reason: "sync_disabled" };
       }
 
-      const currentState = readIntentState();
-      if (currentState.ambiguousIrreversibleDecision) {
-        return {
-          status: "failure",
-          reason: "manual_intent_ambiguous",
-        };
-      }
-      let current = attachCanonicalHead(
-        currentState.intent,
-        currentState.head?.eventId
-      );
-      const now = getNow();
-      if (current && now - current.requestedAt > MANUAL_SYNC_INTENT_STALE_MS) {
-        await settleExact(current, "manual_sync_intent_stale", currentState);
-        const latestState = readIntentState();
-        current = attachCanonicalHead(
-          latestState.intent,
-          latestState.head?.eventId
-        );
-      }
-      const active = hasActiveExecution();
-      const hasDelayedIntent = Boolean(
+      let current = readIntent();
+      if (
         current &&
-          getNow() - current.requestedAt <= MANUAL_SYNC_INTENT_STALE_MS
-      );
-      if (!active && !hasDelayedIntent) {
-        const result = await executeDirection(
-          normalizedDirection,
-          null,
-          options
-        );
+        getNow() - current.createdAt > MANUAL_SYNC_INTENT_STALE_MS
+      ) {
+        settleIntent(current, "manual_sync_intent_stale");
+        current = null;
+      }
+
+      if (!hasActiveExecution() && !current) {
+        const result = await executeDirection(normalizedDirection, null, options);
         if (!isExecutionBoundaryRaceResult(result)) {
           return result;
         }
-        const racedIntent = await createAndPersistIntent(normalizedDirection, {
-          phase: MANUAL_SYNC_INTENT_PHASE_QUEUED,
-          notifyDelayed: true,
-          reason: "manual_sync_intent_execution_race",
+        return enqueue(async () => {
+          const pending = persistWaitingIntent(normalizedDirection);
+          if (!pending) {
+            return result;
+          }
+          try {
+            onQueued();
+          } catch (error) {
+            // Local scheduler cleanup is best effort.
+          }
+          setIndicatorPending(pending);
+          refreshDisplay("manual_sync_intent_execution_race");
+          showMessageForDelayedIntent(normalizedDirection);
+          const reconciled = await reconcileOnce(
+            "manual_sync_intent_execution_race"
+          );
+          return reconciled.status === "awaiting_confirmation"
+            ? summarizeIntent(reconciled, "awaiting_confirmation")
+            : summarizeIntent(pending, "queued", "execution_boundary_busy");
         });
-        if (!racedIntent) {
-          return result;
-        }
-        const reconciled = await reconcile("manual_sync_intent_execution_race");
-        return summarizeIntentReconciliation(reconciled, racedIntent);
       }
 
-      const persisted = await createAndPersistIntent(normalizedDirection, {
-        phase: active
-          ? MANUAL_SYNC_INTENT_PHASE_QUEUED
-          : MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION,
-        notifyDelayed: active,
-        reason: active
-          ? "manual_sync_intent_queued"
-          : "manual_sync_intent_replaced",
+      return enqueue(async () => {
+        const pending = persistWaitingIntent(normalizedDirection);
+        if (!pending) {
+          return {
+            status: "failure",
+            reason: "manual_intent_storage_failed",
+          };
+        }
+        const active = hasActiveExecution();
+        if (active) {
+          try {
+            onQueued();
+          } catch (error) {
+            // Local scheduler cleanup is best effort.
+          }
+          setIndicatorPending(pending);
+          refreshDisplay("manual_sync_intent_queued");
+          showMessageForDelayedIntent(normalizedDirection);
+        } else {
+          refreshDisplay("manual_sync_intent_replaced");
+        }
+        const reconciled = await reconcileOnce(
+          active
+            ? "manual_sync_intent_queued"
+            : "manual_sync_intent_replaced"
+        );
+        return reconciled.status === "awaiting_confirmation"
+          ? summarizeIntent(reconciled, "awaiting_confirmation")
+          : summarizeIntent(pending, "queued");
       });
-      if (!persisted) {
-        return {
-          status: "failure",
-          reason: "manual_intent_persist_failed",
-        };
-      }
-      const reconciled = await reconcile("manual_sync_intent_requested");
-      return summarizeIntentReconciliation(reconciled, persisted);
     };
 
     const handleLifecycle = (eventName = "") => {
       const phase = String(eventName || "").trim();
       if (phase === "pagehide" || phase === "beforeunload") {
-        const currentState = readIntentState();
-        const current = attachCanonicalHead(
-          currentState.intent,
-          currentState.head?.eventId
-        );
-        const release = current
-          ? releaseConfirmationOwnerExact(current, currentState)
-          : Promise.resolve(false);
-        closeActiveConfirmation({ dismiss: false, reason: phase });
-        return Promise.resolve(release).then(() => ({
-          status: "released",
-          reason: phase,
-        }));
+        closeActiveConfirmation({ reason: phase });
+        return {
+          status: "preserved",
+          reason: "session_pending_intent",
+          event: phase,
+        };
       }
       if (phase === "visible" || phase === "pageshow" || phase === "focus") {
-        return reconcile(`manual_sync_intent_${phase}`);
+        return reconcile("manual_sync_intent_" + phase);
       }
       return { status: "skipped", reason: "unsupported_lifecycle_event" };
     };
@@ -47008,7 +45301,7 @@
       if (!bound) {
         return;
       }
-      return reconcile(`manual_sync_intent_storage:${key}`);
+      return reconcile("manual_sync_execution_boundary:" + key);
     };
 
     const bind = () => {
@@ -47018,7 +45311,6 @@
       bound = true;
       if (typeof GM_addValueChangeListener === "function") {
         [
-          PENDING_MANUAL_SYNC_INTENT_KEY,
           GLOBAL_SYNC_LOCK_KEY,
           MANUAL_SYNC_LOCK_KEY,
           BACKGROUND_SYNC_LOCK_KEY,
@@ -47032,8 +45324,7 @@
             });
             listenerIds.push(listenerId);
           } catch (error) {
-            // A missing listener channel is recoverable through the next
-            // visible/focus lifecycle event.
+            // The next focus/visibility checkpoint can recover a missed event.
           }
         });
       }
@@ -47059,7 +45350,9 @@
       }
       if (typeof document?.addEventListener === "function") {
         document.addEventListener("visibilitychange", handleVisibilityChange);
-        domListeners.push(["document", "visibilitychange", handleVisibilityChange]);
+        domListeners.push(
+          ["document", "visibilitychange", handleVisibilityChange]
+        );
       }
       void reconcile("manual_sync_intent_bind");
       return { status: "bound" };
@@ -47070,15 +45363,7 @@
         return { status: "skipped", reason: "already_unbound" };
       }
       bound = false;
-      const currentState = readIntentState();
-      const current = attachCanonicalHead(
-        currentState.intent,
-        currentState.head?.eventId
-      );
-      if (current) {
-        void releaseConfirmationOwnerExact(current, currentState);
-      }
-      closeActiveConfirmation({ dismiss: false, reason: "unbind" });
+      closeActiveConfirmation({ reason: "unbind" });
       if (typeof GM_removeValueChangeListener === "function") {
         listenerIds.splice(0).forEach((listenerId) => {
           if (listenerId !== null && listenerId !== undefined) {
@@ -47096,19 +45381,14 @@
     };
 
     const isPriorityGateActive = () => {
-      const state = readIntentState();
-      if (state.ambiguousIrreversibleDecision && isSyncEnabled()) {
-        return true;
-      }
-      const intent = state.intent;
+      const intent = readIntent();
       return Boolean(
         intent &&
           isSyncEnabled() &&
-          getNow() - intent.requestedAt <= MANUAL_SYNC_INTENT_STALE_MS &&
+          getNow() - intent.createdAt <= MANUAL_SYNC_INTENT_STALE_MS &&
           [
             MANUAL_SYNC_INTENT_PHASE_QUEUED,
             MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION,
-            MANUAL_SYNC_INTENT_PHASE_EXECUTING,
           ].includes(intent.phase)
       );
     };
@@ -47119,7 +45399,7 @@
       request,
       reconcile,
       handleLifecycle,
-      cancel: cancelExact,
+      cancel: cancelPending,
       readIntent,
       isPriorityGateActive,
     });
@@ -59702,8 +57982,7 @@
     testHookHost.__S1P_TEST_HOOKS__ = {
       ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
       s1pCreateManualSyncIntentCoordinator,
-      pruneManualSyncIntentRecordsForTest: (now = Date.now()) =>
-        pruneManualSyncIntentRecords(undefined, now),
+      cleanupLegacyManualSyncIntentState,
       s1pCreateSyncSystemFacade,
       s1pSyncSystem,
     };

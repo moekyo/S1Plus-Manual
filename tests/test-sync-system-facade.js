@@ -7,9 +7,10 @@ const {
   toPlainObject,
 } = require("./s1plus-test-helpers");
 
-const createHarness = () =>
+const createHarness = (options = {}) =>
   createBaseHarness({
     hookErrorMessage: "未能从 S1Plus.js 暴露 Phase 6 Sync System façade。",
+    ...options,
   });
 
 const readySyncSettings = Object.freeze({
@@ -359,11 +360,9 @@ const testProductionFacadeManualSyncUsesRuntimeGate = async () => {
 };
 
 const testProductionFacadeQueuesManualDirectionBehindForeignExecution = async () => {
-  const { hooks, sandbox, store } = createHarness();
-  sandbox.navigator.locks = {
-    request: (_name, _options, callback) => callback(),
-  };
-  sandbox.window.navigator.locks = sandbox.navigator.locks;
+  const { hooks, store, sessionStorage } = createHarness({
+    includeSessionStorage: true,
+  });
   store.set("s1p_settings", readySyncSettings);
   store.set("s1p_sync_global_lock", {
     owner: "foreign-tab",
@@ -375,14 +374,17 @@ const testProductionFacadeQueuesManualDirectionBehindForeignExecution = async ()
   const result = await hooks.s1pSyncSystem.requestSync({
     kind: "manual_push",
   });
-  const intent = toPlainObject(store.get("s1p_pending_manual_sync_intent"));
+  const intent = JSON.parse(
+    sessionStorage.getItem("s1p_pending_manual_sync_intent_session")
+  );
   const projected = toPlainObject(
     hooks.s1pSyncSystem.readState({ surface: "navbar" })
   );
 
   assert.equal(result.status, "queued");
-  assert.equal(result.phase, "queued_waiting_for_execution_boundary");
+  assert.equal(result.phase, "waiting_for_execution_boundary");
   assert.equal(intent.direction, "push");
+  assert.equal(store.has("s1p_pending_manual_sync_intent"), false);
   assert.equal(projected.displayPhase, "pending");
   assert.equal(projected.displayOperation, "push");
   assert.equal(projected.displaySource, "manual_sync");

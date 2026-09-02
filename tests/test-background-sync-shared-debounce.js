@@ -13,7 +13,6 @@ const PENDING_KEY = "s1p_pending_auto_sync_request";
 const LAST_MODIFIED_KEY = "s1p_last_modified";
 const LAST_DIRTY_PROVENANCE_KEY = "s1p_last_local_dirty_provenance";
 const GLOBAL_SYNC_LOCK_KEY = "s1p_sync_global_lock";
-const MANUAL_SYNC_INTENT_KEY = "s1p_pending_manual_sync_intent";
 const MANUAL_SYNC_LOCK_KEY = "s1p_manual_sync_lock";
 const BACKGROUND_SYNC_LOCK_KEY = "s1p_background_sync_lock";
 const STARTUP_SYNC_LOCK_KEY = "s1p_startup_sync_lock";
@@ -656,13 +655,12 @@ const testPagehideFinalizesAndHandsOffWithoutTriggeringSync = async () => {
   });
   const syncSystem = hooks.s1pCreateSyncSystemFacade({ lifecycleAdapter });
   syncSystem.initialize();
-  assert.equal(valueChangeListeners.length, 9);
+  assert.equal(valueChangeListeners.length, 8);
   assert.deepEqual(
     valueChangeListeners.map((listener) => listener.key).sort(),
     [
       DEBOUNCE_STATE_KEY,
       FOREGROUND_PENDING_KEY,
-      MANUAL_SYNC_INTENT_KEY,
       GLOBAL_SYNC_LOCK_KEY,
       MANUAL_SYNC_LOCK_KEY,
       BACKGROUND_SYNC_LOCK_KEY,
