@@ -57786,6 +57786,7 @@
 
     const dispose = () => {
       if (!initialized) {
+        manualIntentCoordinator?.unbind?.();
         return { status: "skipped", reason: "already_disposed" };
       }
       let lifecycle;
