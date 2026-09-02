@@ -15217,6 +15217,7 @@
         record.recordType === "transition" &&
         getManualSyncIntentIdentity(record) === winnerIdentity
     );
+    const branchAuthorityMemo = new Map();
     let head = winnerRequest;
     const visited = new Set([head.eventId]);
     while (head && !head.terminal) {
@@ -15228,11 +15229,19 @@
             !visited.has(record.eventId) &&
             isManualSyncIntentTransitionValid(head, record)
         )
-        .sort(compareManualSyncIntentTransitionAuthority);
+        .map((candidate) => ({
+          candidate,
+          authorityRecord: getManualSyncIntentBranchAuthority(
+            candidate,
+            transitions,
+            branchAuthorityMemo
+          ),
+        }))
+        .sort(compareManualSyncIntentBranchAuthority);
       if (nextCandidates.length === 0) {
         break;
       }
-      head = nextCandidates[nextCandidates.length - 1];
+      head = nextCandidates[nextCandidates.length - 1].candidate;
       visited.add(head.eventId);
     }
     return {
@@ -15408,6 +15417,76 @@
     return compareManualSyncIntentText(left?.eventId, right?.eventId);
   };
 
+  // A direct sibling can have a stronger descendant than its own transition
+  // kind suggests. Resolve that reachable authority before comparing sibling
+  // branches so a late ancestor maintenance event cannot dethrone a branch
+  // that has already committed executing or terminal authority.
+  const getManualSyncIntentBranchAuthority = (
+    record,
+    transitions,
+    memo = new Map(),
+    visiting = new Set()
+  ) => {
+    if (!record) {
+      return null;
+    }
+    const eventId = String(record.eventId || "");
+    if (eventId && memo.has(eventId)) {
+      return memo.get(eventId);
+    }
+    if (eventId && visiting.has(eventId)) {
+      return record;
+    }
+    const nextVisiting = new Set(visiting);
+    if (eventId) {
+      nextVisiting.add(eventId);
+    }
+    let strongest = record;
+    if (!record.terminal) {
+      transitions.forEach((candidate) => {
+        if (
+          candidate.parentEventId !== record.eventId ||
+          candidate.sequence !== record.sequence + 1 ||
+          !isManualSyncIntentTransitionValid(record, candidate)
+        ) {
+          return;
+        }
+        const descendantAuthority = getManualSyncIntentBranchAuthority(
+          candidate,
+          transitions,
+          memo,
+          nextVisiting
+        );
+        if (
+          compareManualSyncIntentTransitionAuthority(
+            descendantAuthority,
+            strongest
+          ) > 0
+        ) {
+          strongest = descendantAuthority;
+        }
+      });
+    }
+    if (eventId) {
+      memo.set(eventId, strongest);
+    }
+    return strongest;
+  };
+
+  const compareManualSyncIntentBranchAuthority = (left, right) => {
+    const branchAuthorityOrder = compareManualSyncIntentTransitionAuthority(
+      left?.authorityRecord,
+      right?.authorityRecord
+    );
+    if (branchAuthorityOrder !== 0) {
+      return branchAuthorityOrder;
+    }
+    return compareManualSyncIntentTransitionAuthority(
+      left?.candidate,
+      right?.candidate
+    );
+  };
+
   const pruneManualSyncIntentRecords = (
     storage = createManualSyncIntentStorage(),
     now = Date.now()
@@ -15415,7 +15494,8 @@
     if (!storage.canEnumerateJournal) {
       return 0;
     }
-    let deletedCount = 0;
+    const candidates = [];
+    const activityByIdentity = new Map();
     storage.listKeys().forEach((key) => {
       if (
         key !== PENDING_MANUAL_SYNC_INTENT_KEY &&
@@ -15427,20 +15507,45 @@
         storage.readValue(key, null),
         { key, legacy: key === PENDING_MANUAL_SYNC_INTENT_KEY }
       );
+      if (!record) {
+        return;
+      }
       const lastActivity = Math.max(
-        Number(record?.requestedAt) || 0,
-        Number(record?.transitionAt) || 0
+        Number(record.requestedAt) || 0,
+        Number(record.transitionAt) || 0
       );
+      const identity = getManualSyncIntentIdentity(record);
+      candidates.push({ key, record, identity, lastActivity });
+      if (identity) {
+        activityByIdentity.set(
+          identity,
+          Math.max(activityByIdentity.get(identity) || 0, lastActivity)
+        );
+      }
+    });
+    const staleIdentities = new Set(
+      Array.from(activityByIdentity.entries())
+        .filter(
+          ([, lastActivity]) =>
+            lastActivity > 0 && now - lastActivity > MANUAL_SYNC_INTENT_STALE_MS
+        )
+        .map(([identity]) => identity)
+    );
+    let deletedCount = 0;
+    candidates.forEach(({ key, identity, lastActivity }) => {
+      const shouldDelete = identity
+        ? staleIdentities.has(identity)
+        : lastActivity > 0 && now - lastActivity > MANUAL_SYNC_INTENT_STALE_MS;
       if (
-        lastActivity > 0 &&
-        now - lastActivity > MANUAL_SYNC_INTENT_STALE_MS
+        !shouldDelete
       ) {
-        try {
-          storage.deleteValue(key);
-          deletedCount += 1;
-        } catch (_) {
-          // Per-record cleanup is best effort; it never controls authority.
-        }
+        return;
+      }
+      try {
+        storage.deleteValue(key);
+        deletedCount += 1;
+      } catch (_) {
+        // Per-record cleanup is best effort; it never controls authority.
       }
     });
     return deletedCount;
@@ -58917,6 +59022,8 @@
     testHookHost.__S1P_TEST_HOOKS__ = {
       ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
       s1pCreateManualSyncIntentCoordinator,
+      pruneManualSyncIntentRecordsForTest: (now = Date.now()) =>
+        pruneManualSyncIntentRecords(undefined, now),
       s1pCreateSyncSystemFacade,
       s1pSyncSystem,
     };
