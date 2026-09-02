@@ -28,8 +28,11 @@ const createCoordinator = (hooks, options = {}) => {
   const indicatorUpdates = [];
   const dismissCalls = [];
   const ownerRecoveryTasks = [];
+  const executionAuthorityReleases = [];
+  let decisionAuthorityCounter = 0;
+  let executionAuthorityCounter = 0;
 
-  const coordinator = hooks.s1pCreateManualSyncIntentCoordinator({
+  const coordinatorOptions = {
     ownerId: options.ownerId || "tab-a",
     sourceContextId: options.sourceContextId || options.ownerId || "context-a",
     now: () => now,
@@ -53,14 +56,52 @@ const createCoordinator = (hooks, options = {}) => {
         },
       };
     },
-    execute: async (direction, intent) => {
+    beforeDecisionAuthority: options.beforeDecisionAuthority,
+    withDecisionAuthority:
+      options.withDecisionAuthority ||
+      options.decisionAuthority ||
+      ((run) =>
+        run({
+          token: `test-decision:${
+            options.ownerId || "tab-a"
+          }:${++decisionAuthorityCounter}`,
+        })),
+    acquireExecutionAuthority:
+      options.acquireExecutionAuthority ||
+      (async () => ({
+        mode: "manual",
+        ownerId: options.ownerId || "tab-a",
+        token: `test-execution:${
+          options.ownerId || "tab-a"
+        }:${++executionAuthorityCounter}`,
+        timestamp: now,
+        ttlMs: 180_000,
+      })),
+    releaseExecutionAuthority:
+      options.releaseExecutionAuthority ||
+      (async (authority) => {
+        executionAuthorityReleases.push(toPlainObject(authority));
+      }),
+    execute: async (direction, intent, executeOptions = {}) => {
       if (typeof options.beforeExecute === "function") {
-        options.beforeExecute({
+        await options.beforeExecute({
           direction,
           intent: toPlainObject(intent),
+          executionAuthority: toPlainObject(
+            executeOptions.manualExecutionAuthority || null
+          ),
         });
       }
-      executions.push({ direction, intent: toPlainObject(intent) });
+      if (options.executeGate) {
+        await options.executeGate;
+      }
+      executions.push({
+        direction,
+        intent: toPlainObject(intent),
+        executionAuthority: toPlainObject(
+          executeOptions.manualExecutionAuthority || null
+        ),
+      });
       return { status: "success", action: `manual_${direction}` };
     },
     showConfirmation: (intent, actions) => {
@@ -76,7 +117,13 @@ const createCoordinator = (hooks, options = {}) => {
         },
       };
     },
-  });
+  };
+  if (options.useProductionDecisionAuthority === true) {
+    delete coordinatorOptions.withDecisionAuthority;
+  }
+  const coordinator = hooks.s1pCreateManualSyncIntentCoordinator(
+    coordinatorOptions
+  );
 
   return {
     coordinator,
@@ -85,6 +132,7 @@ const createCoordinator = (hooks, options = {}) => {
     indicatorUpdates,
     dismissCalls,
     ownerRecoveryTasks,
+    executionAuthorityReleases,
     setActiveExecution: (value) => {
       activeExecution = value === true;
     },
@@ -93,6 +141,48 @@ const createCoordinator = (hooks, options = {}) => {
     },
     setNow: (value) => {
       now = value;
+    },
+  };
+};
+
+const createDeferred = () => {
+  let resolve;
+  const promise = new Promise((fulfill) => {
+    resolve = fulfill;
+  });
+  return { promise, resolve };
+};
+
+const createSerializedDecisionAuthority = () => {
+  let tail = Promise.resolve();
+  let commitSequence = 0;
+  return (run) => {
+    const next = tail
+      .catch(() => {})
+      .then(() =>
+        run({ token: `test-serialized-decision:${++commitSequence}` })
+      );
+    tail = next.catch(() => {});
+    return next;
+  };
+};
+
+const createFakeWebLocks = () => {
+  let tail = Promise.resolve();
+  let requestCount = 0;
+  return {
+    get requestCount() {
+      return requestCount;
+    },
+    request(name, options, callback) {
+      assert.equal(name, "s1p_manual_sync_intent_decision");
+      assert.equal(options.mode, "exclusive");
+      requestCount += 1;
+      const next = tail
+        .catch(() => {})
+        .then(() => callback());
+      tail = next.catch(() => {});
+      return next;
     },
   };
 };
@@ -112,6 +202,8 @@ const createTransitionRecord = (parent, overrides = {}) => {
   const transitionAt =
     Number(overrides.transitionAt) || Number(parent.transitionAt) || 1;
   const eventId = overrides.eventId || `test-transition:${transitionAt}`;
+  const transitionKind = overrides.transitionKind || "state";
+  const terminal = overrides.terminal === true;
   return {
     ...parent,
     ...overrides,
@@ -121,8 +213,8 @@ const createTransitionRecord = (parent, overrides = {}) => {
     parentEventId: parent.eventId,
     expectedHeadEventId: parent.eventId,
     sequence: parent.sequence + 1,
-    terminal: overrides.terminal === true,
-    transitionKind: overrides.transitionKind || "state",
+    terminal,
+    transitionKind,
     transitionSourceContextId:
       overrides.transitionSourceContextId || "context-test",
     transitionAt,
@@ -611,7 +703,7 @@ const testOldOwnerTeardownCannotMutateNewerDirection = async () => {
   };
 
   try {
-    first.coordinator.handleLifecycle("pagehide");
+    await first.coordinator.handleLifecycle("pagehide");
     await injectedRequest;
   } finally {
     sandbox.GM_setValue = originalSetValue;
@@ -726,7 +818,7 @@ const testStaleOwnerReleaseCannotRebaseOntoNewerHead = async () => {
   };
 
   try {
-    runtime.coordinator.handleLifecycle("pagehide");
+    await runtime.coordinator.handleLifecycle("pagehide");
   } finally {
     sandbox.GM_listValues = originalListValues;
   }
@@ -1029,6 +1121,425 @@ const testCanonicalUserConfirmBeatsValidLateOwnerTakeoverSibling = async () => {
   assert.equal(runtime.executions.length, 1);
   assert.equal(runtime.executions[0].direction, "push");
   assert.equal(runtime.coordinator.readIntent(), null);
+};
+
+const testExecutingDecisionCannotBeOverriddenByLateTerminalSibling = async () => {
+  const { hooks, sandbox, store } = createHarness();
+  const originalSetValue = sandbox.GM_setValue;
+  let injected = false;
+  const runtime = createCoordinator(hooks, {
+    activeExecution: true,
+    ownerId: "tab-a",
+    sourceContextId: "context-a",
+    now: 1_000_000,
+    beforeExecute: () => {
+      if (injected) {
+        return;
+      }
+      injected = true;
+      const executing = findJournalRecord(
+        store,
+        (record) => record.transitionKind === "executing"
+      );
+      assert.ok(executing);
+      const parent = findJournalRecord(
+        store,
+        (record) => record.eventId === executing.parentEventId
+      );
+      assert.ok(parent);
+      writeTransitionRecord(
+        originalSetValue,
+        createTransitionRecord(parent, {
+          eventId: "transition:context-b:late-terminal-after-executing",
+          phase: parent.phase,
+          confirmationOwnerId: parent.confirmationOwnerId,
+          confirmationOwnerToken: parent.confirmationOwnerToken,
+          confirmationOwnerExpiresAt: parent.confirmationOwnerExpiresAt,
+          confirmationOwnerClaimedAt: parent.confirmationOwnerClaimedAt,
+          terminal: true,
+          transitionKind: "settle",
+          transitionSourceContextId: "context-b",
+          transitionAt: Number(executing.transitionAt) + 1,
+          expectedConfirmationOwnerToken: parent.confirmationOwnerToken,
+          decisionCommitKind: "",
+          decisionCommitToken: "",
+        })
+      );
+      const canonicalBeforeSideEffect = runtime.coordinator.readIntent();
+      assert.equal(canonicalBeforeSideEffect.phase, "executing");
+    },
+  });
+
+  await runtime.coordinator.request("push");
+  runtime.setActiveExecution(false);
+  await runtime.coordinator.reconcile("lock_released");
+  const result = await runtime.confirmations[0].actions.onConfirm();
+
+  sandbox.GM_setValue = originalSetValue;
+  assert.equal(injected, true);
+  assert.equal(result.status, "success");
+  assert.equal(runtime.executions.length, 1);
+  assert.equal(runtime.executions[0].direction, "push");
+};
+
+const testExecutingFirstStaleCancelCannotOverrideCommittedExecution = async () => {
+  const { hooks, store } = createHarness();
+  const authority = createSerializedDecisionAuthority();
+  const cancelReady = createDeferred();
+  const cancelRelease = createDeferred();
+  const executionStarted = createDeferred();
+  const executionRelease = createDeferred();
+  let pauseCancel = true;
+  const first = createCoordinator(hooks, {
+    activeExecution: true,
+    ownerId: "tab-a",
+    sourceContextId: "context-a",
+    withDecisionAuthority: authority,
+    executeGate: executionRelease.promise,
+    beforeExecute: () => executionStarted.resolve(),
+  });
+  const second = createCoordinator(hooks, {
+    activeExecution: false,
+    ownerId: "tab-a",
+    sourceContextId: "context-b",
+    withDecisionAuthority: authority,
+    beforeDecisionAuthority: ({ operation }) => {
+      if (operation === "terminal" && pauseCancel) {
+        pauseCancel = false;
+        cancelReady.resolve();
+        return cancelRelease.promise;
+      }
+      return undefined;
+    },
+  });
+
+  await first.coordinator.request("push");
+  first.setActiveExecution(false);
+  await first.coordinator.reconcile("lock_released");
+  const oldConfirmation = first.confirmations[0];
+  const staleCancel = second.coordinator.cancel(oldConfirmation.intent);
+  await cancelReady.promise;
+
+  const confirmPromise = oldConfirmation.actions.onConfirm();
+  await executionStarted.promise;
+  cancelRelease.resolve();
+  const cancelResult = await staleCancel;
+
+  assert.equal(cancelResult.reason, "stale_manual_intent");
+  assert.equal(runtimeStatePhase(store), "executing");
+  assert.equal(first.executions.length, 0);
+
+  executionRelease.resolve();
+  const confirmResult = await confirmPromise;
+  assert.equal(confirmResult.status, "success");
+  assert.equal(first.executions.length, 1);
+  assert.equal(first.executions[0].executionAuthority.token.startsWith("test-execution:"), true);
+  assert.equal(first.coordinator.readIntent(), null);
+};
+
+const testTerminalFirstStaleConfirmCannotOverrideCommittedTerminal = async () => {
+  const { hooks, store } = createHarness();
+  const authority = createSerializedDecisionAuthority();
+  const confirmReady = createDeferred();
+  const confirmRelease = createDeferred();
+  let pauseConfirm = true;
+  const first = createCoordinator(hooks, {
+    activeExecution: true,
+    ownerId: "tab-a",
+    sourceContextId: "context-a",
+    withDecisionAuthority: authority,
+    beforeDecisionAuthority: ({ operation }) => {
+      if (operation === "executing" && pauseConfirm) {
+        pauseConfirm = false;
+        confirmReady.resolve();
+        return confirmRelease.promise;
+      }
+      return undefined;
+    },
+  });
+  const second = createCoordinator(hooks, {
+    activeExecution: false,
+    ownerId: "tab-a",
+    sourceContextId: "context-b",
+    withDecisionAuthority: authority,
+  });
+
+  await first.coordinator.request("push");
+  first.setActiveExecution(false);
+  await first.coordinator.reconcile("lock_released");
+  const oldConfirmation = first.confirmations[0];
+  const staleConfirm = oldConfirmation.actions.onConfirm();
+  await confirmReady.promise;
+
+  const cancelResult = await second.coordinator.cancel(oldConfirmation.intent);
+  assert.equal(cancelResult.status, "cancelled");
+  confirmRelease.resolve();
+  const confirmResult = await staleConfirm;
+
+  assert.equal(confirmResult.reason, "stale_manual_intent");
+  assert.equal(first.executions.length, 0);
+  assert.equal(store.has(MANUAL_SYNC_INTENT_KEY), false);
+  assert.equal(first.coordinator.readIntent(), null);
+};
+
+const testBusyBeforeIrreversibleExecutionCommitRequeuesWithoutSideEffect = async () => {
+  const { hooks, store } = createHarness();
+  const runtime = createCoordinator(hooks, {
+    activeExecution: true,
+    acquireExecutionAuthority: async () => null,
+  });
+
+  await runtime.coordinator.request("push");
+  runtime.setActiveExecution(false);
+  await runtime.coordinator.reconcile("lock_released");
+  const result = await runtime.confirmations[0].actions.onConfirm();
+
+  assert.equal(result.status, "queued");
+  assert.equal(result.reason, "execution_boundary_busy");
+  assert.equal(runtime.executions.length, 0);
+  assert.equal(runtime.coordinator.readIntent().phase, "queued_waiting_for_execution_boundary");
+  assert.equal(
+    getJournalRecords(store).some((record) => record.transitionKind === "executing"),
+    false
+  );
+};
+
+const testSettingsDisableDuringCommittedExecutionDoesNotCancelIt = async () => {
+  const { hooks, store } = createHarness();
+  const executionStarted = createDeferred();
+  const executionRelease = createDeferred();
+  const runtime = createCoordinator(hooks, {
+    activeExecution: true,
+    executeGate: executionRelease.promise,
+    beforeExecute: () => executionStarted.resolve(),
+  });
+  const observer = createCoordinator(hooks, {
+    activeExecution: false,
+    ownerId: "tab-b",
+    sourceContextId: "context-b",
+    syncEnabled: false,
+  });
+
+  await runtime.coordinator.request("push");
+  runtime.setActiveExecution(false);
+  await runtime.coordinator.reconcile("lock_released");
+  const confirmPromise = runtime.confirmations[0].actions.onConfirm();
+  await executionStarted.promise;
+
+  const disabledResult = await observer.coordinator.reconcile("settings_disabled");
+  assert.equal(disabledResult.status, "executing");
+  assert.equal(runtime.coordinator.readIntent().phase, "executing");
+  assert.equal(
+    getJournalRecords(store).some(
+      (record) => record.terminal && record.decisionCommitKind === "terminal"
+    ),
+    false
+  );
+
+  executionRelease.resolve();
+  const result = await confirmPromise;
+  assert.equal(result.status, "success");
+  assert.equal(runtime.coordinator.readIntent(), null);
+};
+
+const testConfirmationOwnerClaimIsSerializedAcrossContexts = async () => {
+  const { hooks, store } = createHarness();
+  const authority = createSerializedDecisionAuthority();
+  const firstClaimReady = createDeferred();
+  const firstClaimRelease = createDeferred();
+  let pauseFirstClaim = true;
+  const first = createCoordinator(hooks, {
+    activeExecution: true,
+    ownerId: "tab-a",
+    sourceContextId: "context-a",
+    withDecisionAuthority: authority,
+    beforeDecisionAuthority: ({ operation }) => {
+      if (operation === "confirmation_owner_claim" && pauseFirstClaim) {
+        pauseFirstClaim = false;
+        firstClaimReady.resolve();
+        return firstClaimRelease.promise;
+      }
+      return undefined;
+    },
+  });
+  const second = createCoordinator(hooks, {
+    activeExecution: false,
+    ownerId: "tab-b",
+    sourceContextId: "context-b",
+    withDecisionAuthority: authority,
+  });
+
+  await first.coordinator.request("pull");
+  first.setActiveExecution(false);
+  second.setActiveExecution(false);
+  const firstReconcile = first.coordinator.reconcile("lock_released");
+  await firstClaimReady.promise;
+  const secondReconcile = second.coordinator.reconcile("cross_context_claim");
+  await secondReconcile;
+  firstClaimRelease.resolve();
+  await firstReconcile;
+
+  assert.equal(first.confirmations.length, 0);
+  assert.equal(second.confirmations.length, 1);
+  assert.equal(readIntent(store).confirmationOwnerId, "tab-b");
+  assert.equal(first.coordinator.readIntent().confirmationOwnerId, "tab-b");
+};
+
+const testSimultaneousExplicitRequestsUseSerializedAuthoritySequence = async () => {
+  const { hooks, store } = createHarness();
+  const authority = createSerializedDecisionAuthority();
+  const firstRequestReady = createDeferred();
+  const firstRequestRelease = createDeferred();
+  let pauseFirstRequest = true;
+  const first = createCoordinator(hooks, {
+    activeExecution: true,
+    ownerId: "tab-a",
+    sourceContextId: "context-a",
+    now: 1_000_000,
+    withDecisionAuthority: authority,
+    beforeDecisionAuthority: ({ operation }) => {
+      if (operation === "request" && pauseFirstRequest) {
+        pauseFirstRequest = false;
+        firstRequestReady.resolve();
+        return firstRequestRelease.promise;
+      }
+      return undefined;
+    },
+  });
+  const second = createCoordinator(hooks, {
+    activeExecution: true,
+    ownerId: "tab-b",
+    sourceContextId: "context-b",
+    now: 1_000_000,
+    withDecisionAuthority: authority,
+  });
+
+  const firstRequest = first.coordinator.request("push");
+  await firstRequestReady.promise;
+  const secondRequest = await second.coordinator.request("pull");
+  firstRequestRelease.resolve();
+  await firstRequest;
+
+  const latest = first.coordinator.readIntent();
+  assert.equal(secondRequest.status, "queued");
+  assert.equal(latest.direction, "push");
+  assert.equal(latest.generation, 2);
+  assert.equal(latest.requestId.startsWith("context-a_"), true);
+  assert.equal(
+    getJournalRecords(store).filter((record) => record.recordType === "request").length,
+    2
+  );
+};
+
+const testProductionDecisionAuthorityUsesWebLocks = async () => {
+  const { hooks, sandbox, store } = createHarness();
+  const locks = createFakeWebLocks();
+  sandbox.navigator.locks = locks;
+  sandbox.window.navigator.locks = locks;
+  const runtime = createCoordinator(hooks, {
+    activeExecution: true,
+    useProductionDecisionAuthority: true,
+  });
+
+  const result = await runtime.coordinator.request("push");
+  runtime.setActiveExecution(false);
+  await runtime.coordinator.reconcile("lock_released");
+
+  assert.equal(result.status, "queued");
+  assert.equal(runtime.confirmations.length, 1);
+  assert.equal(locks.requestCount >= 2, true);
+  assert.equal(store.has(MANUAL_SYNC_INTENT_KEY), true);
+};
+
+const testProductionDecisionAuthorityFailsClosedWithoutWebLocks = async () => {
+  const { hooks, store } = createHarness();
+  const runtime = createCoordinator(hooks, {
+    activeExecution: true,
+    useProductionDecisionAuthority: true,
+  });
+
+  const result = await runtime.coordinator.request("push");
+
+  assert.equal(result.status, "failure");
+  assert.equal(result.reason, "manual_intent_persist_failed");
+  assert.equal(runtime.coordinator.readIntent(), null);
+  assert.equal(
+    getJournalRecords(store).some((record) => record.recordType === "request"),
+    false
+  );
+};
+
+const testAmbiguousIrreversibleDecisionBlocksRecoveryAndScheduling = async () => {
+  const { hooks, sandbox, store } = createHarness();
+  const runtime = createCoordinator(hooks, {
+    activeExecution: true,
+    now: 1_000_000,
+  });
+
+  await runtime.coordinator.request("push");
+  runtime.setActiveExecution(false);
+  await runtime.coordinator.reconcile("lock_released");
+
+  const parent = findJournalRecord(
+    store,
+    (record) =>
+      record.transitionKind === "confirmation_owner_claim" &&
+      record.confirmationOwnerId === "tab-a"
+  );
+  assert.ok(parent);
+  const originalSetValue = sandbox.GM_setValue;
+  writeTransitionRecord(
+    originalSetValue,
+    createTransitionRecord(parent, {
+      eventId: "transition:context-a:committed-executing",
+      phase: "executing",
+      confirmationOwnerId: "",
+      confirmationOwnerToken: "",
+      confirmationOwnerExpiresAt: 0,
+      confirmationOwnerClaimedAt: 0,
+      executionOwnerId: "tab-a",
+      executionStartedAt: 1_000_001,
+      executionExpiresAt: 1_180_001,
+      transitionKind: "executing",
+      transitionSourceContextId: "context-a",
+      expectedConfirmationOwnerToken: parent.confirmationOwnerToken,
+      decisionCommitKind: "executing",
+      decisionCommitToken: "decision-a",
+      executionAuthorityToken: "execution-a",
+    })
+  );
+  writeTransitionRecord(
+    originalSetValue,
+    createTransitionRecord(parent, {
+      eventId: "transition:context-b:committed-terminal",
+      phase: "awaiting_confirmation",
+      terminal: true,
+      transitionKind: "settle",
+      transitionSourceContextId: "context-b",
+      expectedConfirmationOwnerToken: parent.confirmationOwnerToken,
+      decisionCommitKind: "terminal",
+      decisionCommitToken: "decision-b",
+    })
+  );
+
+  assert.equal(runtime.coordinator.readIntent(), null);
+  assert.equal(runtime.coordinator.isPriorityGateActive(), true);
+  const reconcileResult = await runtime.coordinator.reconcile(
+    "ambiguous_irreversible_decision"
+  );
+  assert.equal(reconcileResult.status, "blocked");
+  assert.equal(reconcileResult.reason, "manual_intent_ambiguous");
+  const requestResult = await runtime.coordinator.request("pull");
+  assert.equal(requestResult.status, "failure");
+  assert.equal(requestResult.reason, "manual_intent_ambiguous");
+  assert.equal(runtime.executions.length, 0);
+};
+
+const runtimeStatePhase = (store) => {
+  const state = getJournalRecords(store)
+    .filter((record) => record.transitionKind === "executing")
+    .sort((left, right) => right.sequence - left.sequence)[0];
+  return state?.phase || "";
 };
 
 const testLateAncestorSiblingCannotDethroneExecutingBranch = async () => {
@@ -1430,7 +1941,7 @@ const testJournalPruneRetainsRootWhileDescendantIsActive = async () => {
   assert.equal(store.has(MANUAL_SYNC_INTENT_KEY), false);
 };
 
-const testExplicitRequestOrderingDoesNotFollowInvocationOrder = async () => {
+const testExplicitRequestOrderingUsesSerializedCommitOrder = async () => {
   const { hooks } = createHarness();
   const first = createCoordinator(hooks, {
     activeExecution: true,
@@ -1445,15 +1956,16 @@ const testExplicitRequestOrderingDoesNotFollowInvocationOrder = async () => {
     now: 1_000_000,
   });
 
-  // context-b wins the exact timestamp tie by the documented source-context
-  // tie-breaker, even though the older-order request is invoked second.
+  // context-a commits after context-b under the shared decision authority;
+  // the monotonic authority sequence, rather than source or wall-clock time,
+  // makes the later committed request authoritative.
   await second.coordinator.request("pull");
   const laterInvocation = await first.coordinator.request("push");
   const latest = first.coordinator.readIntent();
 
-  assert.equal(latest.direction, "pull");
-  assert.equal(latest.requestId.startsWith("context-b_"), true);
-  assert.equal(laterInvocation.reason, "manual_intent_persist_failed");
+  assert.equal(latest.direction, "push");
+  assert.equal(latest.requestId.startsWith("context-a_"), true);
+  assert.notEqual(laterInvocation.reason, "manual_intent_persist_failed");
 };
 
 const run = async () => {
@@ -1479,13 +1991,23 @@ const run = async () => {
   await testStaleOwnerClaimCannotRegressExecutingHead();
   await testStaleRequeueCannotResurrectTerminalHead();
   await testCanonicalUserConfirmBeatsValidLateOwnerTakeoverSibling();
+  await testExecutingDecisionCannotBeOverriddenByLateTerminalSibling();
+  await testExecutingFirstStaleCancelCannotOverrideCommittedExecution();
+  await testTerminalFirstStaleConfirmCannotOverrideCommittedTerminal();
+  await testBusyBeforeIrreversibleExecutionCommitRequeuesWithoutSideEffect();
+  await testSettingsDisableDuringCommittedExecutionDoesNotCancelIt();
+  await testConfirmationOwnerClaimIsSerializedAcrossContexts();
+  await testSimultaneousExplicitRequestsUseSerializedAuthoritySequence();
+  await testProductionDecisionAuthorityUsesWebLocks();
+  await testProductionDecisionAuthorityFailsClosedWithoutWebLocks();
+  await testAmbiguousIrreversibleDecisionBlocksRecoveryAndScheduling();
   await testLateAncestorSiblingCannotDethroneExecutingBranch();
   await testLateAncestorSiblingCannotResurrectTerminalBranch();
   await testExecutingDescendantBeatsQueuedAncestorSibling();
   await testTerminalDescendantBeatsExecutingSiblingBranch();
   await testInvalidFutureDescendantCannotElevateBranchAuthority();
   await testJournalPruneRetainsRootWhileDescendantIsActive();
-  await testExplicitRequestOrderingDoesNotFollowInvocationOrder();
+  await testExplicitRequestOrderingUsesSerializedCommitOrder();
   console.log("[manual-sync-intent-priority] manual priority lifecycle verified.");
 };
 
