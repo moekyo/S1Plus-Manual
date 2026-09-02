@@ -7,32 +7,15 @@ const {
   toPlainObject,
 } = require("./s1plus-test-helpers");
 
-const SESSION_KEY = "s1p_pending_manual_sync_intent_session";
 const LEGACY_KEY = "s1p_pending_manual_sync_intent";
 const LEGACY_RECORD_PREFIX = LEGACY_KEY + ":";
 const PENDING_DIRTY_KEY = "s1p_pending_auto_sync_request";
 
 const createHarness = (options = {}) =>
   createBaseHarness({
-    includeSessionStorage: true,
     hookErrorMessage: "未能从 S1Plus.js 暴露手动同步意图测试钩子。",
     ...options,
   });
-
-const createSessionStorage = () => {
-  const values = new Map();
-  return {
-    values,
-    getItem: (key) => (values.has(key) ? values.get(key) : null),
-    setItem: (key, value) => values.set(key, String(value)),
-    removeItem: (key) => values.delete(key),
-  };
-};
-
-const readSessionIntent = (sessionStorage) => {
-  const raw = sessionStorage.getItem(SESSION_KEY);
-  return raw ? JSON.parse(raw) : null;
-};
 
 const getLatestPendingProjection = (runtime) =>
   [...runtime.indicatorUpdates]
@@ -49,13 +32,11 @@ const createCoordinator = (hooks, options = {}) => {
   const dismissCalls = [];
   const messages = [];
   const schedulerResumptions = [];
-  const sessionStorage = options.sessionStorage || null;
 
   const coordinator = hooks.s1pCreateManualSyncIntentCoordinator({
     now: () => now,
     isSyncEnabled: () => syncEnabled,
     hasActiveExecution: () => activeExecution,
-    ...(sessionStorage ? { sessionStorage } : {}),
     onQueued: () => indicatorUpdates.push({ type: "queued" }),
     setIndicatorPending: (intent) =>
       indicatorUpdates.push({
@@ -105,7 +86,6 @@ const createCoordinator = (hooks, options = {}) => {
     dismissCalls,
     messages,
     schedulerResumptions,
-    sessionStorage,
     setActiveExecution: (value) => {
       activeExecution = value === true;
     },
@@ -123,7 +103,7 @@ const readProjectedNavbarState = (hooks) =>
 
 const testImmediateManualPushAndPullDoNotConfirm = async () => {
   for (const direction of ["push", "pull"]) {
-    const { hooks, sessionStore } = createHarness();
+    const { hooks, store } = createHarness();
     const runtime = createCoordinator(hooks, { activeExecution: false });
 
     const result = await runtime.coordinator.request(direction);
@@ -132,24 +112,21 @@ const testImmediateManualPushAndPullDoNotConfirm = async () => {
     assert.equal(runtime.confirmations.length, 0);
     assert.equal(runtime.executions.length, 1);
     assert.equal(runtime.executions[0].direction, direction);
-    assert.equal(sessionStore.has(SESSION_KEY), false);
+    assert.equal(store.has(LEGACY_KEY), false);
   }
 };
 
-const testBusyManualPushProjectsLocalSessionPending = async () => {
-  const { hooks, sessionStore, sessionStorage } = createHarness();
-  const runtime = createCoordinator(hooks, {
-    activeExecution: true,
-    sessionStorage,
-  });
+const testBusyManualPushProjectsPageLocalPending = async () => {
+  const { hooks, store } = createHarness();
+  const runtime = createCoordinator(hooks, { activeExecution: true });
 
   const result = await runtime.coordinator.request("push");
-  const intent = readSessionIntent(sessionStorage);
+  const intent = runtime.coordinator.readIntent();
   const projected = getLatestPendingProjection(runtime);
 
   assert.equal(result.status, "queued");
   assert.equal(result.phase, "waiting_for_execution_boundary");
-  assert.deepEqual(intent, {
+  assert.deepEqual(toPlainObject(intent), {
     version: 1,
     direction: "push",
     createdAt: 1_000_000,
@@ -158,21 +135,18 @@ const testBusyManualPushProjectsLocalSessionPending = async () => {
   assert.equal(projected.direction, "push");
   assert.equal(projected.phase, "waiting_for_execution_boundary");
   assert.equal(runtime.confirmations.length, 0);
-  assert.equal(sessionStore.has(LEGACY_KEY), false);
+  assert.equal(store.has(LEGACY_KEY), false);
   assert.equal(
-    Array.from(sessionStore.keys()).some((key) =>
+    Array.from(store.keys()).some((key) =>
       String(key).startsWith(LEGACY_RECORD_PREFIX)
     ),
     false
   );
 };
 
-const testBusyManualPullProjectsLocalSessionPending = async () => {
-  const { hooks, sessionStorage } = createHarness();
-  const runtime = createCoordinator(hooks, {
-    activeExecution: true,
-    sessionStorage,
-  });
+const testBusyManualPullProjectsPageLocalPending = async () => {
+  const { hooks } = createHarness();
+  const runtime = createCoordinator(hooks, { activeExecution: true });
 
   const result = await runtime.coordinator.request("pull");
   const projected = getLatestPendingProjection(runtime);
@@ -185,53 +159,45 @@ const testBusyManualPullProjectsLocalSessionPending = async () => {
 };
 
 const testExecutionBoundaryShowsConfirmationWithoutExecutionLock = async () => {
-  const { hooks, sessionStorage } = createHarness();
-  const runtime = createCoordinator(hooks, {
-    activeExecution: true,
-    sessionStorage,
-  });
+  const { hooks } = createHarness();
+  const runtime = createCoordinator(hooks, { activeExecution: true });
 
   await runtime.coordinator.request("push");
   runtime.setActiveExecution(false);
   const boundaryResult = await runtime.coordinator.reconcile("lock_released");
-  const intent = readSessionIntent(sessionStorage);
+  const intent = runtime.coordinator.readIntent();
 
   assert.equal(boundaryResult.status, "awaiting_confirmation");
   assert.equal(boundaryResult.phase, "awaiting_confirmation");
   assert.equal(intent.phase, "awaiting_confirmation");
   assert.equal(runtime.confirmations.length, 1);
-  assert.equal(sessionStorage.getItem("s1p_sync_global_lock"), null);
-  assert.equal(sessionStorage.getItem("s1p_manual_sync_lock"), null);
+  assert.equal(runtime.coordinator.isPriorityGateActive(), true);
 };
 
 const testConfirmationCallsExistingForceDirectionAndSettles = async () => {
-  const { hooks, sessionStorage } = createHarness();
-  const runtime = createCoordinator(hooks, {
-    activeExecution: true,
-    sessionStorage,
-  });
+  for (const direction of ["push", "pull"]) {
+    const { hooks } = createHarness();
+    const runtime = createCoordinator(hooks, { activeExecution: true });
 
-  await runtime.coordinator.request("pull");
-  runtime.setActiveExecution(false);
-  await runtime.coordinator.reconcile("lock_released");
+    await runtime.coordinator.request(direction);
+    runtime.setActiveExecution(false);
+    await runtime.coordinator.reconcile("lock_released");
 
-  const confirmation = runtime.confirmations[0];
-  const result = await confirmation.actions.onConfirm();
+    const result = await runtime.confirmations[0].actions.onConfirm();
 
-  assert.equal(result.status, "success");
-  assert.equal(runtime.executions.length, 1);
-  assert.equal(runtime.executions[0].direction, "pull");
-  assert.equal(runtime.executions[0].intent.direction, "pull");
-  assert.equal(runtime.coordinator.readIntent(), null);
-  assert.ok(runtime.schedulerResumptions.length >= 1);
+    assert.equal(result.status, "success");
+    assert.equal(runtime.executions.length, 1);
+    assert.equal(runtime.executions[0].direction, direction);
+    assert.equal(runtime.executions[0].intent.direction, direction);
+    assert.equal(runtime.coordinator.readIntent(), null);
+    assert.equal(runtime.coordinator.isPriorityGateActive(), false);
+    assert.ok(runtime.schedulerResumptions.length >= 1);
+  }
 };
 
 const testCancelClearsOnlyLocalPending = async () => {
-  const { hooks, store, sessionStorage } = createHarness();
-  const runtime = createCoordinator(hooks, {
-    activeExecution: true,
-    sessionStorage,
-  });
+  const { hooks, store } = createHarness();
+  const runtime = createCoordinator(hooks, { activeExecution: true });
   store.set(PENDING_DIRTY_KEY, {
     version: 1,
     source: "read_progress",
@@ -246,18 +212,14 @@ const testCancelClearsOnlyLocalPending = async () => {
 
   assert.equal(result.status, "cancelled");
   assert.equal(runtime.coordinator.readIntent(), null);
-  assert.equal(sessionStorage.getItem(SESSION_KEY), null);
   assert.equal(store.has(LEGACY_KEY), false);
   assert.equal(store.has(PENDING_DIRTY_KEY), true);
   assert.equal(runtime.executions.length, 0);
 };
 
 const testConfirmationBoundaryRaceRequeuesUntilNextBoundary = async () => {
-  const { hooks, sessionStorage } = createHarness();
-  const runtime = createCoordinator(hooks, {
-    activeExecution: true,
-    sessionStorage,
-  });
+  const { hooks } = createHarness();
+  const runtime = createCoordinator(hooks, { activeExecution: true });
 
   await runtime.coordinator.request("push");
   runtime.setActiveExecution(false);
@@ -282,11 +244,10 @@ const testConfirmationBoundaryRaceRequeuesUntilNextBoundary = async () => {
 };
 
 const testExecutionResultBoundaryRaceRequeuesWithoutPreemption = async () => {
-  const { hooks, sessionStorage } = createHarness();
+  const { hooks } = createHarness();
   let executeCount = 0;
   const runtime = createCoordinator(hooks, {
     activeExecution: true,
-    sessionStorage,
     execute: async () => {
       executeCount += 1;
       return executeCount === 1
@@ -314,11 +275,10 @@ const testExecutionResultBoundaryRaceRequeuesWithoutPreemption = async () => {
   assert.equal(runtime.coordinator.readIntent(), null);
 };
 
-const testLatestDirectionWinsWithinOneTabAndOldModalIsStale = async () => {
-  const { hooks, sessionStorage } = createHarness();
+const testLatestDirectionWinsWithinOnePageAndOldModalIsStale = async () => {
+  const { hooks } = createHarness();
   const runtime = createCoordinator(hooks, {
     activeExecution: true,
-    sessionStorage,
     now: 2_000_000,
   });
 
@@ -347,85 +307,57 @@ const testLatestDirectionWinsWithinOneTabAndOldModalIsStale = async () => {
   assert.equal(result.action, "manual_pull");
 };
 
-const testReloadRestoresSessionPendingAndRemountsConfirmation = async () => {
+const testReloadDoesNotRestorePageLocalPending = async () => {
   const first = createHarness();
-  const firstRuntime = createCoordinator(first.hooks, {
-    activeExecution: true,
-    sessionStorage: first.sessionStorage,
-  });
-
-  await firstRuntime.coordinator.request("push");
-  firstRuntime.setActiveExecution(false);
-  await firstRuntime.coordinator.reconcile("lock_released");
-  assert.equal(
-    readSessionIntent(first.sessionStorage).phase,
-    "awaiting_confirmation"
-  );
-  firstRuntime.coordinator.handleLifecycle("pagehide");
-
-  const second = createCoordinator(first.hooks, {
-    activeExecution: false,
-    sessionStorage: first.sessionStorage,
-  });
-  const restored = await second.coordinator.reconcile("reload");
-
-  assert.equal(restored.status, "awaiting_confirmation");
-  assert.equal(second.confirmations.length, 1);
-  assert.equal(second.confirmations[0].intent.direction, "push");
-};
-
-const testPageCloseDoesNotTransferPendingToAnotherTab = async () => {
-  const first = createHarness();
-  const second = createHarness();
   const firstRuntime = createCoordinator(first.hooks, { activeExecution: true });
-  const secondRuntime = createCoordinator(second.hooks, { activeExecution: true });
 
   await firstRuntime.coordinator.request("push");
-  await secondRuntime.coordinator.request("pull");
+  assert.equal(firstRuntime.coordinator.readIntent().direction, "push");
   firstRuntime.coordinator.handleLifecycle("pagehide");
 
-  assert.equal(firstRuntime.coordinator.readIntent().direction, "push");
-  assert.equal(secondRuntime.coordinator.readIntent().direction, "pull");
-  assert.equal(secondRuntime.coordinator.isPriorityGateActive(), true);
-
-  await secondRuntime.coordinator.cancel(secondRuntime.coordinator.readIntent());
-  assert.equal(firstRuntime.coordinator.readIntent().direction, "push");
-
-  first.sessionStorage.removeItem(SESSION_KEY);
-  assert.equal(firstRuntime.coordinator.readIntent(), null);
-};
-
-const testSessionStorageFailureFallsBackToPageLocalMemory = async () => {
-  const { hooks, store } = createHarness();
-  const failingStorage = {
-    getItem: () => {
-      throw new Error("session unavailable");
-    },
-    setItem: () => {
-      throw new Error("session unavailable");
-    },
-    removeItem: () => {
-      throw new Error("session unavailable");
-    },
-  };
-  const runtime = createCoordinator(hooks, {
-    activeExecution: true,
-    sessionStorage: failingStorage,
+  const second = createHarness();
+  const secondRuntime = createCoordinator(second.hooks, {
+    activeExecution: false,
   });
 
+  assert.equal(secondRuntime.coordinator.readIntent(), null);
+  assert.equal(secondRuntime.confirmations.length, 0);
+  assert.equal(secondRuntime.coordinator.isPriorityGateActive(), false);
+};
+
+const testIndependentCoordinatorsDoNotSharePageLocalPending = async () => {
+  const { hooks } = createHarness();
+  const first = createCoordinator(hooks, { activeExecution: true });
+  const second = createCoordinator(hooks, { activeExecution: true });
+
+  await first.coordinator.request("push");
+  assert.equal(first.coordinator.readIntent().direction, "push");
+  assert.equal(second.coordinator.readIntent(), null);
+  assert.equal(second.coordinator.isPriorityGateActive(), false);
+
+  await second.coordinator.request("pull");
+  assert.equal(first.coordinator.readIntent().direction, "push");
+  assert.equal(second.coordinator.readIntent().direction, "pull");
+
+  await first.coordinator.cancel(first.coordinator.readIntent());
+  assert.equal(first.coordinator.readIntent(), null);
+  assert.equal(second.coordinator.readIntent().direction, "pull");
+};
+
+const testNoSessionStorageDependency = async () => {
+  const { hooks, sandbox, store } = createHarness();
+  const runtime = createCoordinator(hooks, { activeExecution: true });
+
+  assert.equal(sandbox.window.sessionStorage, undefined);
   await runtime.coordinator.request("push");
 
   assert.equal(runtime.coordinator.readIntent().direction, "push");
-  assert.equal(store.has(SESSION_KEY), false);
   assert.equal(store.has(LEGACY_KEY), false);
 };
 
 const testNoManualJournalOrDecisionLockIsNeeded = async () => {
-  const { hooks, store, sandbox, sessionStorage } = createHarness();
-  const runtime = createCoordinator(hooks, {
-    activeExecution: true,
-    sessionStorage,
-  });
+  const { hooks, store, sandbox } = createHarness();
+  const runtime = createCoordinator(hooks, { activeExecution: true });
 
   await runtime.coordinator.request("pull");
 
@@ -466,11 +398,8 @@ const testLegacyManualJournalIsObsoletedWithoutTouchingOtherSyncState = () => {
 };
 
 const testSettingsDisableClearsOnlyLocalIntent = async () => {
-  const { hooks, store, sessionStorage } = createHarness();
-  const runtime = createCoordinator(hooks, {
-    activeExecution: true,
-    sessionStorage,
-  });
+  const { hooks, store } = createHarness();
+  const runtime = createCoordinator(hooks, { activeExecution: true });
   store.set(PENDING_DIRTY_KEY, { lastModified: 10 });
 
   await runtime.coordinator.request("push");
@@ -484,15 +413,37 @@ const testSettingsDisableClearsOnlyLocalIntent = async () => {
 };
 
 const testLocalPriorityGateOnlyBlocksThisCoordinator = async () => {
-  const first = createHarness();
-  const second = createHarness();
-  const firstRuntime = createCoordinator(first.hooks, { activeExecution: true });
-  const secondRuntime = createCoordinator(second.hooks, { activeExecution: false });
+  const { hooks } = createHarness();
+  const first = createCoordinator(hooks, { activeExecution: true });
+  const second = createCoordinator(hooks, { activeExecution: false });
 
-  await firstRuntime.coordinator.request("push");
+  await first.coordinator.request("push");
 
-  assert.equal(firstRuntime.coordinator.isPriorityGateActive(), true);
-  assert.equal(secondRuntime.coordinator.isPriorityGateActive(), false);
+  assert.equal(first.coordinator.isPriorityGateActive(), true);
+  assert.equal(second.coordinator.isPriorityGateActive(), false);
+};
+
+const testExplicitUnbindClearsPageLocalIntent = async () => {
+  const { hooks } = createHarness();
+  const runtime = createCoordinator(hooks, { activeExecution: true });
+
+  runtime.coordinator.bind();
+  await runtime.coordinator.request("push");
+  assert.equal(runtime.coordinator.isPriorityGateActive(), true);
+
+  runtime.coordinator.unbind();
+  assert.equal(runtime.coordinator.readIntent(), null);
+  assert.equal(runtime.coordinator.isPriorityGateActive(), false);
+};
+
+const testUnbindClearsPageLocalIntentEvenWhenNotBound = async () => {
+  const { hooks } = createHarness();
+  const runtime = createCoordinator(hooks, { activeExecution: true });
+
+  await runtime.coordinator.request("pull");
+  assert.equal(runtime.coordinator.unbind().reason, "already_unbound");
+  assert.equal(runtime.coordinator.readIntent(), null);
+  assert.equal(runtime.coordinator.isPriorityGateActive(), false);
 };
 
 const testCrossTabExecutionLockStillRemainsShared = async () => {
@@ -513,6 +464,22 @@ const testCrossTabExecutionLockStillRemainsShared = async () => {
   assert.equal(secondLock, false);
   sharedStore.delete("s1p_manual_sync_lock");
   sharedStore.delete("s1p_sync_global_lock");
+};
+
+const testLocalStaleTimeoutClearsPendingWithoutTimer = async () => {
+  const { hooks } = createHarness();
+  const runtime = createCoordinator(hooks, {
+    activeExecution: true,
+    now: 1_000_000,
+  });
+
+  await runtime.coordinator.request("push");
+  runtime.setNow(1_000_000 + 30 * 60 * 1000 + 1);
+  const result = await runtime.coordinator.reconcile("stale_check");
+
+  assert.equal(result.status, "cancelled");
+  assert.equal(result.reason, "stale_manual_intent");
+  assert.equal(runtime.coordinator.readIntent(), null);
 };
 
 const testNeutralForegroundProbeRemainsNeutral = () => {
@@ -538,24 +505,27 @@ const testNeutralForegroundProbeRemainsNeutral = () => {
 
 const run = async () => {
   await testImmediateManualPushAndPullDoNotConfirm();
-  await testBusyManualPushProjectsLocalSessionPending();
-  await testBusyManualPullProjectsLocalSessionPending();
+  await testBusyManualPushProjectsPageLocalPending();
+  await testBusyManualPullProjectsPageLocalPending();
   await testExecutionBoundaryShowsConfirmationWithoutExecutionLock();
   await testConfirmationCallsExistingForceDirectionAndSettles();
   await testCancelClearsOnlyLocalPending();
   await testConfirmationBoundaryRaceRequeuesUntilNextBoundary();
   await testExecutionResultBoundaryRaceRequeuesWithoutPreemption();
-  await testLatestDirectionWinsWithinOneTabAndOldModalIsStale();
-  await testReloadRestoresSessionPendingAndRemountsConfirmation();
-  await testPageCloseDoesNotTransferPendingToAnotherTab();
-  await testSessionStorageFailureFallsBackToPageLocalMemory();
+  await testLatestDirectionWinsWithinOnePageAndOldModalIsStale();
+  await testReloadDoesNotRestorePageLocalPending();
+  await testIndependentCoordinatorsDoNotSharePageLocalPending();
+  await testNoSessionStorageDependency();
   await testNoManualJournalOrDecisionLockIsNeeded();
   testLegacyManualJournalIsObsoletedWithoutTouchingOtherSyncState();
   await testSettingsDisableClearsOnlyLocalIntent();
   await testLocalPriorityGateOnlyBlocksThisCoordinator();
+  await testExplicitUnbindClearsPageLocalIntent();
+  await testUnbindClearsPageLocalIntentEvenWhenNotBound();
   await testCrossTabExecutionLockStillRemainsShared();
+  await testLocalStaleTimeoutClearsPendingWithoutTimer();
   testNeutralForegroundProbeRemainsNeutral();
-  console.log("[manual-sync-intent-priority] session-scoped manual priority verified.");
+  console.log("[manual-sync-intent-priority] page-local manual priority verified.");
 };
 
 run().catch((error) => {
