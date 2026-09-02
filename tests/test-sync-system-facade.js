@@ -359,7 +359,11 @@ const testProductionFacadeManualSyncUsesRuntimeGate = async () => {
 };
 
 const testProductionFacadeQueuesManualDirectionBehindForeignExecution = async () => {
-  const { hooks, store } = createHarness();
+  const { hooks, sandbox, store } = createHarness();
+  sandbox.navigator.locks = {
+    request: (_name, _options, callback) => callback(),
+  };
+  sandbox.window.navigator.locks = sandbox.navigator.locks;
   store.set("s1p_settings", readySyncSettings);
   store.set("s1p_sync_global_lock", {
     owner: "foreign-tab",
