@@ -2376,6 +2376,10 @@
   let foregroundFollowUpSoftBlockState = null;
   let lastAutoSyncIndicatorDisplaySession = null;
   let autoSyncIndicatorDisplaySessionHiddenAt = 0;
+  let manualSyncIntentBoundaryHandler = null;
+  let manualSyncPriorityGateEvaluator = () => false;
+  let syncExecutionSettlementDepth = 0;
+  let manualSyncIntentBoundaryDeferred = false;
   const activeRemoteSyncRequestHandles = new Set();
   let remoteSyncCancelGeneration = 0;
   let remoteSyncCancelReason = "manual_override";
@@ -2496,6 +2500,14 @@
   const BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS = 60 * 1000;
   const BACKGROUND_SYNC_DEBOUNCE_FOLLOW_UP_SETTLE_MS = 600;
   const BACKGROUND_SYNC_DEBOUNCE_THREAD_ID_LIMIT = 20;
+  const MANUAL_SYNC_INTENT_PHASE_QUEUED =
+    "queued_waiting_for_execution_boundary";
+  const MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION =
+    "awaiting_confirmation";
+  const MANUAL_SYNC_INTENT_PHASE_EXECUTING = "executing";
+  const MANUAL_SYNC_INTENT_STALE_MS = 30 * 60 * 1000;
+  const MANUAL_SYNC_CONFIRMATION_OWNER_LEASE_MS =
+    BACKGROUND_SYNC_DEBOUNCE_OWNER_LEASE_MS;
   const SHARED_BACKGROUND_SYNC_RESCHEDULE_LOG_THROTTLE_MS = 1000;
   const SYNC_CONFLICT_MODAL_COOLDOWN_MS = 2 * 60 * 1000;
   const SYNC_CONFLICT_MODAL_COOLDOWN_GROUP_MAP = Object.freeze({
@@ -2513,6 +2525,7 @@
   const PENDING_AUTO_SYNC_KEY = "s1p_pending_auto_sync_request";
   const PENDING_FOREGROUND_REMOTE_SYNC_KEY =
     "s1p_pending_foreground_remote_sync_request";
+  const PENDING_MANUAL_SYNC_INTENT_KEY = "s1p_pending_manual_sync_intent";
   const LAST_LOCAL_DIRTY_PROVENANCE_KEY = "s1p_last_local_dirty_provenance";
   const LAST_LOCAL_MODIFIED_KEY = "s1p_last_modified";
   const LAST_SYNC_TIMESTAMP_KEY = "s1p_last_sync_timestamp";
@@ -14865,6 +14878,61 @@
     return normalized ? normalized.slice(0, 160) : "";
   };
 
+  const normalizeManualSyncIntent = (rawValue = null) => {
+    const raw = sanitizeRecordObject(rawValue);
+    const requestId = normalizeSyncDiagnosticText(raw.requestId, 120);
+    const generation = Math.max(0, Math.floor(Number(raw.generation) || 0));
+    const direction =
+      raw.direction === AUTO_SYNC_INDICATOR_OPERATION_PUSH
+        ? AUTO_SYNC_INDICATOR_OPERATION_PUSH
+        : raw.direction === AUTO_SYNC_INDICATOR_OPERATION_PULL
+          ? AUTO_SYNC_INDICATOR_OPERATION_PULL
+          : "";
+    const phase = [
+      MANUAL_SYNC_INTENT_PHASE_QUEUED,
+      MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION,
+      MANUAL_SYNC_INTENT_PHASE_EXECUTING,
+    ].includes(String(raw.phase || "").trim())
+      ? String(raw.phase || "").trim()
+      : "";
+    const requestedAt = Number(raw.requestedAt) || 0;
+    if (!requestId || generation <= 0 || !direction || !phase || requestedAt <= 0) {
+      return null;
+    }
+    return {
+      version: 1,
+      requestId,
+      generation,
+      direction,
+      phase,
+      requestedAt,
+      sourceContextId: normalizeSyncDiagnosticText(raw.sourceContextId, 120),
+      sourceTabId: normalizeSyncDiagnosticText(raw.sourceTabId, 120),
+      confirmationOwnerId: normalizeSyncDiagnosticText(
+        raw.confirmationOwnerId,
+        120
+      ),
+      confirmationOwnerExpiresAt: Number(raw.confirmationOwnerExpiresAt) || 0,
+      executionOwnerId: normalizeSyncDiagnosticText(raw.executionOwnerId, 120),
+      executionStartedAt: Number(raw.executionStartedAt) || 0,
+      executionExpiresAt: Number(raw.executionExpiresAt) || 0,
+    };
+  };
+
+  const readPendingManualSyncIntent = () =>
+    normalizeManualSyncIntent(GM_getValue(PENDING_MANUAL_SYNC_INTENT_KEY, null));
+
+  const getPendingManualSyncIntentForDisplay = (now = Date.now()) => {
+    const intent = readPendingManualSyncIntent();
+    if (!intent || now - intent.requestedAt > MANUAL_SYNC_INTENT_STALE_MS) {
+      return null;
+    }
+    if (intent.phase === MANUAL_SYNC_INTENT_PHASE_EXECUTING) {
+      return null;
+    }
+    return intent;
+  };
+
   const normalizeAutoSyncIndicatorState = (rawValue = null) => {
     const raw =
       rawValue && typeof rawValue === "object" && !Array.isArray(rawValue)
@@ -15183,6 +15251,22 @@
   };
 
   const getAutoSyncRuntimePendingDisplayState = (now = Date.now()) => {
+    const manualIntent = getPendingManualSyncIntentForDisplay(now);
+    if (manualIntent) {
+      return {
+        hasPending: true,
+        source: AUTO_SYNC_INDICATOR_SOURCE_MANUAL_SYNC,
+        reason:
+          manualIntent.phase === MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION
+            ? "manual_override_awaiting_confirmation"
+            : "manual_override_waiting_execution",
+        operation: manualIntent.direction,
+        sources: {},
+        isManualOverride: true,
+        requestId: manualIntent.requestId,
+        generation: manualIntent.generation,
+      };
+    }
     const foregroundRetryRemainingMs =
       typeof getForegroundRemoteSyncRetryRemainingMs === "function"
         ? getForegroundRemoteSyncRetryRemainingMs(now)
@@ -15704,10 +15788,12 @@
             ? "blocked"
             : operation || AUTO_SYNC_INDICATOR_OPERATION_SYNC,
         substate:
-          phase === AUTO_SYNC_INDICATOR_PHASE_FAILURE ||
-          phase === AUTO_SYNC_INDICATOR_PHASE_CONFLICT
+            phase === AUTO_SYNC_INDICATOR_PHASE_FAILURE ||
+            phase === AUTO_SYNC_INDICATOR_PHASE_CONFLICT
             ? "blocked"
-            : "running",
+            : phase === AUTO_SYNC_INDICATOR_PHASE_PENDING
+              ? "pending"
+              : "running",
       });
     }
 
@@ -16190,6 +16276,18 @@
       }
       return visibleDisplayState;
     };
+
+    if (pendingState.isManualOverride === true) {
+      return finishDisplayState(
+        buildDisplayState(
+          AUTO_SYNC_INDICATOR_PHASE_PENDING,
+          AUTO_SYNC_INDICATOR_SOURCE_MANUAL_SYNC,
+          pendingState.reason,
+          pendingState.operation
+        ),
+        "manual_override_pending"
+      );
+    }
 
     if (runningState.isRunning) {
       return finishDisplayState(
@@ -17114,6 +17212,20 @@
         ? readProgressGuardState
         : s1pReadingProgressSession.readState().guard
     );
+    if (manualSyncPriorityGateEvaluator()) {
+      return {
+        status: "blocked",
+        blockLevel: "priority",
+        blockScope: FOREGROUND_FOLLOWUP_SOFT_BLOCK_SCOPE_TAB,
+        reason: "manual_sync_intent_pending",
+        action: "probe_gate_blocked",
+        retryAfterMs: FOREGROUND_REMOTE_SYNC_RETRY_BASE_DELAY_MS,
+        retryWaitUntil:
+          normalizedNow + FOREGROUND_REMOTE_SYNC_RETRY_BASE_DELAY_MS,
+        readProgressGuard,
+        softBlockState: null,
+      };
+    }
     if (!readProgressGuard) {
       return null;
     }
@@ -21276,10 +21388,7 @@
       const latestPending = getPendingAutoSyncRequest();
       const latestPendingMaxLastModified =
         getPendingAutoSyncRequestMaxLastModified(latestPending);
-      if (
-        latestPendingMaxLastModified > Number(coveredLastModified || 0) ||
-        latestPending?.lastDirtyAt !== pending.lastDirtyAt
-      ) {
+      if (latestPendingMaxLastModified > Number(coveredLastModified || 0)) {
         const followUpScheduled = scheduleBackgroundSyncDebounceFollowUp(
           context.scheduleFollowUp,
           {
@@ -21333,11 +21442,7 @@
       state.maxLastModified <= coveredLocalLastModified
     ) {
       const latestState = getBackgroundSyncDebounceState();
-      if (
-        !latestState ||
-        latestState.generation !== state.generation ||
-        latestState.maxLastModified !== state.maxLastModified
-      ) {
+      if (latestState && latestState.maxLastModified > coveredLocalLastModified) {
         const followUpScheduled = scheduleBackgroundSyncDebounceFollowUp(
           scheduleFollowUp,
           {
@@ -21349,7 +21454,7 @@
         );
         return {
           status: "retained",
-          reason: latestState ? "concurrent_shared_dirty" : "state_changed",
+          reason: "concurrent_shared_dirty",
           generation: latestState?.generation || 0,
           maxLastModified: latestState?.maxLastModified || 0,
           followUpScheduled,
@@ -32266,6 +32371,12 @@
       options?.preemptScope === SYNC_PREEMPT_SCOPE_AUTOMATIC_ONLY
         ? SYNC_PREEMPT_SCOPE_AUTOMATIC_ONLY
         : SYNC_PREEMPT_SCOPE_ALL;
+    if (
+      mode !== SYNC_LOCK_MODE_MANUAL &&
+      manualSyncPriorityGateEvaluator()
+    ) {
+      return false;
+    }
     const isExecutionExcluded = (now = Date.now()) => {
       const currentLock = getModeSyncLockValue(mode);
       const lockIsValid = isModeSyncLockValid(currentLock, profile.ttlMs, now);
@@ -32454,6 +32565,7 @@
       return lockUnavailableResult;
     }
 
+    syncExecutionSettlementDepth += 1;
     let heartbeatStarted = false;
     let result;
     try {
@@ -32462,33 +32574,57 @@
       result = await runTransaction();
     } finally {
       try {
-        if (heartbeatStarted) {
+        try {
+          if (heartbeatStarted) {
+            try {
+              lockAdapter.stopHeartbeat();
+            } catch (error) {
+              console.warn(
+                "S1 Plus: Running Sync 停止锁心跳失败，已继续释放同步锁。",
+                error
+              );
+            }
+          }
+        } finally {
+          lockAdapter.release();
+        }
+        if (typeof afterRelease === "function") {
           try {
-            lockAdapter.stopHeartbeat();
+            await afterRelease();
           } catch (error) {
             console.warn(
-              "S1 Plus: Running Sync 停止锁心跳失败，已继续释放同步锁。",
+              "S1 Plus: Running Sync 锁后清理失败，已继续处理同步结果。",
               error
             );
           }
         }
       } finally {
-        lockAdapter.release();
+        syncExecutionSettlementDepth = Math.max(
+          0,
+          syncExecutionSettlementDepth - 1
+        );
       }
-      if (typeof afterRelease === "function") {
+    }
+
+    try {
+      if (typeof handleResult === "function") {
+        await handleResult(result);
+      }
+    } finally {
+      if (typeof manualSyncIntentBoundaryHandler === "function") {
         try {
-          await afterRelease();
+          await manualSyncIntentBoundaryHandler({
+            reason: "running_sync_settled",
+            mode,
+            result,
+          });
         } catch (error) {
           console.warn(
-            "S1 Plus: Running Sync 锁后清理失败，已继续处理同步结果。",
+            "S1 Plus: 手动同步意图在 Running Sync 边界收敛失败，保留 durable intent 等待后续恢复。",
             error
           );
         }
       }
-    }
-
-    if (typeof handleResult === "function") {
-      await handleResult(result);
     }
     return result;
   };
@@ -35156,6 +35292,12 @@
         reason: "foreground_sync_in_flight",
       };
     }
+    if (manualSyncPriorityGateEvaluator()) {
+      return {
+        status: "skipped",
+        reason: "manual_sync_intent_pending",
+      };
+    }
 
     const normalizedReason =
       normalizeRemoteProbeText(reason, 120) || "remote_probe_changed";
@@ -35525,6 +35667,12 @@
       return finalizeResult({
         status: "skipped",
         reason: "foreground_sync_in_flight",
+      });
+    }
+    if (manualSyncPriorityGateEvaluator()) {
+      return finalizeResult({
+        status: "skipped",
+        reason: "manual_sync_intent_pending",
       });
     }
     const foregroundRetryRemainingMs =
@@ -36164,6 +36312,8 @@
       getSyncRuntimeContextSummary,
       emitSyncCompletionLog,
       getAutoSyncIndicatorTitle: (...args) => getAutoSyncIndicatorTitle(...args),
+      getAutoSyncIndicatorTooltip: (...args) =>
+        getAutoSyncIndicatorTooltip(...args),
       getAutoSyncIndicatorDisplayKind: (...args) =>
         getAutoSyncIndicatorDisplayKind(...args),
       getAutoSyncCleanStateSnapshot,
@@ -40041,11 +40191,13 @@
   /**
    * [NEW] 强制推送处理器，用于手动将本地数据覆盖到云端。
    */
-  const handleForcePush = async () => {
+  const handleForcePush = async (options = {}) => {
     const icon = document.querySelector("#s1p-nav-sync-btn svg");
     if (icon) icon.classList.add("s1p-syncing");
     if (manualSyncInFlightPromise || forceSyncInFlight) {
-      showMessage("手动同步正在进行，请稍候...", null);
+      if (options.suppressBusyMessage !== true) {
+        showMessage("手动同步正在进行，请稍候...", null);
+      }
       if (icon) {
         icon.classList.remove("s1p-syncing");
       }
@@ -40055,7 +40207,7 @@
         outcome: "skipped",
         result: { status: "skipped", reason: "force_sync_busy" },
       });
-      return;
+      return { status: "skipped", reason: "force_sync_busy" };
     }
     forceSyncInFlight = true;
     if (
@@ -40064,7 +40216,9 @@
         operation: "force_push",
       }))
     ) {
-      showMessage("无法取得手动同步锁，请稍后重试。", false);
+      if (options.suppressBusyMessage !== true) {
+        showMessage("无法取得手动同步锁，请稍后重试。", false);
+      }
       forceSyncInFlight = false;
       if (icon) {
         icon.classList.remove("s1p-syncing");
@@ -40075,9 +40229,15 @@
         outcome: "skipped",
         result: { status: "skipped", reason: "manual_sync_busy" },
       });
-      return;
+      return { status: "skipped", reason: "manual_sync_busy" };
     }
     startManualSyncLockHeartbeat();
+    startAutoSyncIndicatorCycle(AUTO_SYNC_INDICATOR_SOURCE_MANUAL_SYNC, {
+      operation: AUTO_SYNC_INDICATOR_OPERATION_PUSH,
+      reason: options.manualIntentRequestId
+        ? "manual_override_running"
+        : "force_push",
+    });
     const assertManualSyncLockOwned = (stage) => {
       assertSyncLockOwned(SYNC_LOCK_MODE_MANUAL, `force_push:${stage}`);
     };
@@ -40150,7 +40310,7 @@
           reason: "lock_lost",
           stage: e?.syncLockStage || "unknown",
         };
-        return;
+        return completionResult;
       }
       if (e?.code === REMOTE_SYNC_CANCELLED_CODE) {
         completionResult = {
@@ -40158,7 +40318,7 @@
           reason: "manual_override_cancelled",
         };
         showMessage("本次推送已被新的直接同步操作接管。", null);
-        return;
+        return completionResult;
       }
       setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_FAILURE);
       recordSyncFailure(e.message, "manual", {
@@ -40183,13 +40343,16 @@
         setTimeout(() => (icon.style.transform = ""), 1200); // 重置 transform
       }
     }
+    return completionResult;
   };
 
-  const handleForcePull = async () => {
+  const handleForcePull = async (options = {}) => {
     const icon = document.querySelector("#s1p-nav-sync-btn svg");
     if (icon) icon.classList.add("s1p-syncing");
     if (manualSyncInFlightPromise || forceSyncInFlight) {
-      showMessage("手动同步正在进行，请稍候...", null);
+      if (options.suppressBusyMessage !== true) {
+        showMessage("手动同步正在进行，请稍候...", null);
+      }
       if (icon) {
         icon.classList.remove("s1p-syncing");
       }
@@ -40199,7 +40362,7 @@
         outcome: "skipped",
         result: { status: "skipped", reason: "force_sync_busy" },
       });
-      return;
+      return { status: "skipped", reason: "force_sync_busy" };
     }
     forceSyncInFlight = true;
     if (
@@ -40208,7 +40371,9 @@
         operation: "force_pull",
       }))
     ) {
-      showMessage("无法取得手动同步锁，请稍后重试。", false);
+      if (options.suppressBusyMessage !== true) {
+        showMessage("无法取得手动同步锁，请稍后重试。", false);
+      }
       forceSyncInFlight = false;
       if (icon) {
         icon.classList.remove("s1p-syncing");
@@ -40219,9 +40384,15 @@
         outcome: "skipped",
         result: { status: "skipped", reason: "manual_sync_busy" },
       });
-      return;
+      return { status: "skipped", reason: "manual_sync_busy" };
     }
     startManualSyncLockHeartbeat();
+    startAutoSyncIndicatorCycle(AUTO_SYNC_INDICATOR_SOURCE_MANUAL_SYNC, {
+      operation: AUTO_SYNC_INDICATOR_OPERATION_PULL,
+      reason: options.manualIntentRequestId
+        ? "manual_override_running"
+        : "force_pull",
+    });
     const pendingForegroundRemoteSyncAtStart =
       getPendingForegroundRemoteSyncRequest();
     const assertManualSyncLockOwned = (stage) => {
@@ -40295,7 +40466,7 @@
           reason: "lock_lost",
           stage: e?.syncLockStage || "unknown",
         };
-        return;
+        return completionResult;
       }
       if (e?.code === REMOTE_SYNC_CANCELLED_CODE) {
         completionResult = {
@@ -40303,7 +40474,7 @@
           reason: "manual_override_cancelled",
         };
         showMessage("本次拉取已被新的直接同步操作接管。", null);
-        return;
+        return completionResult;
       }
       setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_FAILURE);
       recordSyncFailure(e.message, "manual", {
@@ -40328,6 +40499,7 @@
         setTimeout(() => (icon.style.transform = ""), 1200); // 重置 transform
       }
     }
+    return completionResult;
   };
 
   const getAutoSyncIndicatorSourceLabel = (source) => {
@@ -40450,6 +40622,17 @@
     switch (phase) {
       case AUTO_SYNC_INDICATOR_PHASE_PENDING:
         if (
+          reason === "manual_override_waiting_execution" ||
+          reason === "manual_override_awaiting_confirmation"
+        ) {
+          if (displayOperation === AUTO_SYNC_INDICATOR_OPERATION_PUSH) {
+            return "自动同步：推送待执行";
+          }
+          if (displayOperation === AUTO_SYNC_INDICATOR_OPERATION_PULL) {
+            return "自动同步：拉取待执行";
+          }
+        }
+        if (
           displaySessionKind === "local_push_session" &&
           displaySubstate === "settling"
         ) {
@@ -40524,6 +40707,27 @@
       default:
         return "自动同步：待命";
     }
+  };
+
+  const getAutoSyncIndicatorTooltip = (stateInput = null) => {
+    const resolvedState =
+      stateInput && typeof stateInput === "object" && "displayPhase" in stateInput
+        ? stateInput
+        : s1pSyncSystem.readState({
+            surface: SYNC_INDICATOR_STATE_PROJECTION_SURFACE_NAVBAR,
+            state: stateInput,
+          });
+    const title = getAutoSyncIndicatorTitle(resolvedState);
+    const reason = normalizeAutoSyncIndicatorReason(
+      resolvedState?.displayReason || resolvedState?.reason
+    );
+    if (
+      reason === "manual_override_waiting_execution" ||
+      reason === "manual_override_awaiting_confirmation"
+    ) {
+      return `${title}；当前同步完成后将再次确认`;
+    }
+    return title;
   };
 
   const getAutoSyncIndicatorDisplayKind = (stateInput = null) => {
@@ -41944,7 +42148,7 @@
       normalizeAutoSyncIndicatorSource(resolvedState.displaySource) || "";
     indicatorLi.dataset.syncSession = resolvedState.displaySessionKind || "";
     indicatorLi.dataset.syncSubstate = resolvedState.displaySubstate || "";
-    setCustomTooltip(indicatorLi, getAutoSyncIndicatorTitle(resolvedState));
+    setCustomTooltip(indicatorLi, getAutoSyncIndicatorTooltip(resolvedState));
     if (isDebugPreviewActive) {
       stopNavbarAutoSyncIndicatorExpiryTimer();
     } else {
@@ -43792,7 +43996,7 @@
     li.addEventListener("mouseenter", openSyncChoiceMenu);
     setCustomTooltip(
       a,
-      "点击或悬停选择全局拉取或全局推送；直接操作会优先中断正在进行的自动同步。"
+      "点击或悬停选择全局拉取或全局推送；已有同步进行时会登记请求，并在完成后再次确认。"
     );
 
     managerLink.insertAdjacentElement("afterend", li);
@@ -44295,6 +44499,933 @@
     });
   };
 
+  const getManualSyncIntentIdentity = (intent = null) => {
+    const normalized = normalizeManualSyncIntent(intent);
+    return normalized ? `${normalized.requestId}:${normalized.generation}` : "";
+  };
+
+  const isSameManualSyncIntent = (left, right) => {
+    const leftIdentity = getManualSyncIntentIdentity(left);
+    const rightIdentity = getManualSyncIntentIdentity(right);
+    return Boolean(leftIdentity && leftIdentity === rightIdentity);
+  };
+
+  const s1pCreateManualSyncIntentCoordinator = (adapters = {}) => {
+    const ownerId =
+      normalizeSyncDiagnosticText(adapters.ownerId, 120) ||
+      `${SYNC_RUNTIME_CONTEXT_ID}:manual_confirmation`;
+    const sourceContextId =
+      normalizeSyncDiagnosticText(adapters.sourceContextId, 120) ||
+      SYNC_RUNTIME_CONTEXT_ID;
+    const sourceTabId =
+      normalizeSyncDiagnosticText(adapters.sourceTabId, 120) ||
+      SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID;
+    const getNow = () => {
+      const value =
+        typeof adapters.now === "function" ? adapters.now() : adapters.now;
+      return Number(value) || Date.now();
+    };
+    const readIntent = () =>
+      normalizeManualSyncIntent(
+        typeof adapters.readIntent === "function"
+          ? adapters.readIntent()
+          : GM_getValue(PENDING_MANUAL_SYNC_INTENT_KEY, null)
+      );
+    const writeIntent = (intent) => {
+      const normalized = normalizeManualSyncIntent(intent);
+      if (!normalized) {
+        return null;
+      }
+      if (typeof adapters.writeIntent === "function") {
+        adapters.writeIntent(normalized);
+      } else {
+        GM_setValue(PENDING_MANUAL_SYNC_INTENT_KEY, normalized);
+      }
+      return normalized;
+    };
+    const deleteIntent = () => {
+      if (typeof adapters.deleteIntent === "function") {
+        adapters.deleteIntent();
+      } else {
+        GM_deleteValue(PENDING_MANUAL_SYNC_INTENT_KEY);
+      }
+    };
+    const isSyncEnabled = () => {
+      if (typeof adapters.isSyncEnabled === "function") {
+        return adapters.isSyncEnabled() === true;
+      }
+      const settings = getSettings();
+      return Boolean(
+        settings.syncRemoteEnabled === true &&
+          settings.syncRemoteGistId &&
+          settings.syncRemotePat
+      );
+    };
+    const hasActiveExecution = () =>
+      typeof adapters.hasActiveExecution === "function"
+        ? adapters.hasActiveExecution() === true
+        : Boolean(
+            syncExecutionSettlementDepth > 0 ||
+              isManualSyncActionBusy() ||
+              hasAnyActiveSyncLock()
+          );
+    const setIndicatorPending = (intent) => {
+      if (typeof adapters.setIndicatorPending === "function") {
+        return adapters.setIndicatorPending(intent);
+      }
+      return setAutoSyncIndicatorPendingState(
+        AUTO_SYNC_INDICATOR_SOURCE_MANUAL_SYNC,
+        "manual_override_waiting_execution",
+        { operation: intent.direction }
+      );
+    };
+    const refreshDisplay = (reason = "manual_sync_intent_changed") => {
+      if (typeof adapters.refreshDisplay === "function") {
+        return adapters.refreshDisplay(reason);
+      }
+      return refreshAutoSyncIndicatorRuntimeDisplay(reason);
+    };
+    const resumeAutomaticScheduling = (reason = "manual_sync_intent_settled") => {
+      if (typeof adapters.resumeAutomaticScheduling === "function") {
+        return adapters.resumeAutomaticScheduling(reason);
+      }
+      return recoverPendingAutoSyncIfNeeded();
+    };
+    const showMessageForDelayedIntent = (direction) => {
+      const showMessageFn =
+        typeof adapters.showMessage === "function" ? adapters.showMessage : showMessage;
+      showMessageFn(
+        direction === AUTO_SYNC_INDICATOR_OPERATION_PUSH
+          ? "当前同步正在完成，已登记手动推送；完成后将再次确认。"
+          : "当前同步正在完成，已登记手动拉取；完成后将再次确认。",
+        null
+      );
+    };
+    const onQueued = (intent) => {
+      if (typeof adapters.onQueued === "function") {
+        return adapters.onQueued(intent);
+      }
+      // 只接管本标签页尚未取得 execution authority 的自动调度。
+      // 不调用 preemptActiveSyncForManualOverride，避免改变正在运行事务的
+      // remote cancel generation 或清除其它 context 的 durable intent。
+      return clearLocalAutoSyncSchedulingForManualOverride();
+    };
+    const executeDirection =
+      typeof adapters.execute === "function"
+        ? adapters.execute
+        : (direction, intent, options = {}) => {
+            const executionOptions = {
+              ...options,
+              manualIntentRequestId: intent?.requestId || "",
+              manualIntentGeneration: intent?.generation || 0,
+              suppressBusyMessage: true,
+            };
+            return direction === AUTO_SYNC_INDICATOR_OPERATION_PULL
+              ? handleForcePull(executionOptions)
+              : handleForcePush(executionOptions);
+          };
+    const showConfirmation =
+      typeof adapters.showConfirmation === "function"
+        ? adapters.showConfirmation
+        : (intent, actions) => {
+            const isPush =
+              intent.direction === AUTO_SYNC_INDICATOR_OPERATION_PUSH;
+            const directionLabel = isPush ? "推送" : "拉取";
+            return createAdvancedConfirmationModal(
+              isPush ? "推送本地数据？" : "拉取云端数据？",
+              isPush
+                ? "当前同步已完成。是否将此刻的本地数据推送到云端？"
+                : "当前同步已完成。是否现在拉取最新云端数据？",
+              [
+                {
+                  text: "取消",
+                  className: "s1p-cancel",
+                  action: actions.onCancel,
+                },
+                {
+                  text: directionLabel,
+                  className: "s1p-confirm",
+                  action: actions.onConfirm,
+                },
+              ],
+              {
+                modalClassName: "s1p-sync-modal",
+                onDismiss: actions.onDismiss,
+              }
+            );
+          };
+
+    let bound = false;
+    let operationPromise = null;
+    let executingIdentity = "";
+    let executingPromise = null;
+    let activeConfirmationIdentity = "";
+    let activeConfirmationModal = null;
+    let confirmationOwnerRecoveryTimer = null;
+    let confirmationOwnerRecoveryDueAt = 0;
+    const listenerIds = [];
+    const domListeners = [];
+
+    const cancelConfirmationOwnerRecoveryTimer = (timer) => {
+      if (!timer) {
+        return;
+      }
+      if (typeof adapters.cancelOwnerRecovery === "function") {
+        adapters.cancelOwnerRecovery(timer);
+        return;
+      }
+      if (typeof timer.cancel === "function") {
+        timer.cancel();
+        return;
+      }
+      clearTimeout(timer);
+    };
+    const clearConfirmationOwnerRecoveryTimer = () => {
+      cancelConfirmationOwnerRecoveryTimer(confirmationOwnerRecoveryTimer);
+      confirmationOwnerRecoveryTimer = null;
+      confirmationOwnerRecoveryDueAt = 0;
+    };
+
+    const enqueue = (task) => {
+      const previous = operationPromise || Promise.resolve();
+      const next = previous.catch(() => {}).then(task);
+      const settled = next.finally(() => {
+        if (operationPromise === settled) {
+          operationPromise = null;
+        }
+      });
+      operationPromise = settled;
+      return settled;
+    };
+
+    const persistExact = (intent) => {
+      const normalized = normalizeManualSyncIntent(intent);
+      if (!normalized) {
+        return null;
+      }
+      try {
+        writeIntent(normalized);
+      } catch (error) {
+        return null;
+      }
+      const verified = readIntent();
+      return isSameManualSyncIntent(verified, normalized) ? verified : null;
+    };
+
+    const removeExact = (intent) => {
+      const current = readIntent();
+      if (!isSameManualSyncIntent(current, intent)) {
+        return false;
+      }
+      try {
+        deleteIntent();
+      } catch (error) {
+        return false;
+      }
+      const afterDelete = readIntent();
+      return !afterDelete || !isSameManualSyncIntent(afterDelete, intent);
+    };
+
+    const closeActiveConfirmation = ({
+      dismiss = true,
+      reason = "replaced",
+    } = {}) => {
+      clearConfirmationOwnerRecoveryTimer();
+      const modal = activeConfirmationModal;
+      activeConfirmationModal = null;
+      activeConfirmationIdentity = "";
+      if (
+        dismiss &&
+        modal?.s1p_api &&
+        typeof modal.s1p_api.dismiss === "function"
+      ) {
+        modal.s1p_api.dismiss({
+          reason,
+          immediate: true,
+          invokeDismiss: false,
+        });
+      }
+    };
+
+    const scheduleConfirmationOwnerRecovery = (intent) => {
+      clearConfirmationOwnerRecoveryTimer();
+      const current = normalizeManualSyncIntent(intent);
+      const now = getNow();
+      if (
+        !current ||
+        current.phase !== MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION ||
+        !current.confirmationOwnerId ||
+        current.confirmationOwnerExpiresAt <= now
+      ) {
+        return false;
+      }
+      const ownsConfirmation = current.confirmationOwnerId === ownerId;
+      const dueAt = ownsConfirmation
+        ? now +
+          Math.max(
+            1000,
+            Math.floor(MANUAL_SYNC_CONFIRMATION_OWNER_LEASE_MS / 2)
+          )
+        : current.confirmationOwnerExpiresAt +
+          BACKGROUND_SYNC_DEBOUNCE_OWNER_RECOVERY_GRACE_MS;
+      const delayMs = Math.max(0, dueAt - now);
+      confirmationOwnerRecoveryDueAt = dueAt;
+      const recover = () => {
+        confirmationOwnerRecoveryTimer = null;
+        confirmationOwnerRecoveryDueAt = 0;
+        const latest = readIntent();
+        const latestNow = getNow();
+        if (
+          ownsConfirmation &&
+          isSameManualSyncIntent(latest, current) &&
+          latest?.phase === MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION &&
+          latest.confirmationOwnerId === ownerId &&
+          latest.confirmationOwnerExpiresAt > latestNow
+        ) {
+          const renewed = persistExact({
+            ...latest,
+            confirmationOwnerExpiresAt:
+              latestNow + MANUAL_SYNC_CONFIRMATION_OWNER_LEASE_MS,
+          });
+          if (renewed) {
+            scheduleConfirmationOwnerRecovery(renewed);
+            return;
+          }
+        }
+        void reconcile("manual_sync_confirmation_owner_recovery");
+      };
+      if (typeof adapters.scheduleOwnerRecovery === "function") {
+        confirmationOwnerRecoveryTimer = adapters.scheduleOwnerRecovery(
+          delayMs,
+          recover,
+          {
+            dueAt,
+            requestId: current.requestId,
+            generation: current.generation,
+            ownerId: current.confirmationOwnerId,
+          }
+        );
+      } else {
+        confirmationOwnerRecoveryTimer = setTimeout(recover, delayMs);
+        confirmationOwnerRecoveryTimer?.unref?.();
+      }
+      return true;
+    };
+
+    const releaseConfirmationOwnerExact = (intent) => {
+      const current = readIntent();
+      if (
+        !isSameManualSyncIntent(current, intent) ||
+        current.confirmationOwnerId !== ownerId
+      ) {
+        return false;
+      }
+      clearConfirmationOwnerRecoveryTimer();
+      return Boolean(
+        persistExact({
+          ...current,
+          confirmationOwnerId: "",
+          confirmationOwnerExpiresAt: 0,
+        })
+      );
+    };
+
+    const transitionToQueuedExact = (
+      intent,
+      reason = "execution_boundary_busy"
+    ) => {
+      const current = readIntent();
+      if (!isSameManualSyncIntent(current, intent)) {
+        return null;
+      }
+      clearConfirmationOwnerRecoveryTimer();
+      const queued = persistExact({
+        ...current,
+        phase: MANUAL_SYNC_INTENT_PHASE_QUEUED,
+        confirmationOwnerId: "",
+        confirmationOwnerExpiresAt: 0,
+        executionOwnerId: "",
+        executionStartedAt: 0,
+        executionExpiresAt: 0,
+      });
+      if (queued) {
+        setIndicatorPending(queued);
+        refreshDisplay(`manual_sync_intent_${reason}`);
+      }
+      return queued;
+    };
+
+    const settleExact = (intent, reason = "manual_sync_intent_settled") => {
+      if (!removeExact(intent)) {
+        return false;
+      }
+      closeActiveConfirmation({ reason });
+      refreshDisplay(reason);
+      try {
+        resumeAutomaticScheduling(reason);
+      } catch (error) {
+        // Manual intent settlement must not be undone by an automatic
+        // scheduler recovery failure; the next lifecycle/storage event can
+        // retry the unrelated pending work.
+      }
+      return true;
+    };
+
+    const isExecutionBoundaryRaceResult = (result) =>
+      result?.reason === "force_sync_busy" ||
+      result?.reason === "manual_sync_busy" ||
+      result?.reason === "sync_lock_unavailable";
+
+    const confirmExact = (requestedIntent) =>
+      enqueue(async () => {
+        const current = readIntent();
+        if (
+          !isSameManualSyncIntent(current, requestedIntent) ||
+          current.phase !== MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION ||
+          current.confirmationOwnerId !== ownerId
+        ) {
+          return { status: "skipped", reason: "stale_manual_intent" };
+        }
+        if (!isSyncEnabled()) {
+          settleExact(current, "manual_sync_disabled");
+          return { status: "skipped", reason: "sync_disabled" };
+        }
+        if (hasActiveExecution()) {
+          const queued = transitionToQueuedExact(current, "execution_boundary_busy");
+          closeActiveConfirmation({ reason: "execution_boundary_busy" });
+          return queued
+            ? {
+                status: "queued",
+                phase: queued.phase,
+                direction: queued.direction,
+                requestId: queued.requestId,
+                generation: queued.generation,
+              }
+            : { status: "skipped", reason: "stale_manual_intent" };
+        }
+
+        const now = getNow();
+        const executing = persistExact({
+          ...current,
+          phase: MANUAL_SYNC_INTENT_PHASE_EXECUTING,
+          confirmationOwnerId: "",
+          confirmationOwnerExpiresAt: 0,
+          executionOwnerId: ownerId,
+          executionStartedAt: now,
+          executionExpiresAt: now + MANUAL_SYNC_LOCK_TTL_MS,
+        });
+        if (!executing) {
+          return { status: "skipped", reason: "stale_manual_intent" };
+        }
+        closeActiveConfirmation({ dismiss: false });
+        const identity = getManualSyncIntentIdentity(executing);
+        executingIdentity = identity;
+        const executionPromiseForIntent = Promise.resolve().then(() =>
+          executeDirection(executing.direction, executing, {})
+        );
+        executingPromise = executionPromiseForIntent;
+        let result = null;
+        try {
+          result = await executionPromiseForIntent;
+        } catch (error) {
+          result = {
+            status: "failure",
+            reason: "manual_execution_error",
+            error: error?.message || String(error),
+          };
+        } finally {
+          if (executingPromise === executionPromiseForIntent) {
+            executingPromise = null;
+          }
+          if (executingIdentity === identity) {
+            executingIdentity = "";
+          }
+          const latest = readIntent();
+          if (isSameManualSyncIntent(latest, executing)) {
+            if (isExecutionBoundaryRaceResult(result)) {
+              transitionToQueuedExact(executing, result.reason);
+            } else {
+              settleExact(executing, "manual_sync_intent_settled");
+            }
+          }
+        }
+        return result;
+      });
+
+    const cancelExact = (requestedIntent) =>
+      enqueue(async () => {
+        const current = readIntent();
+        if (!isSameManualSyncIntent(current, requestedIntent)) {
+          return { status: "skipped", reason: "stale_manual_intent" };
+        }
+        if (current.phase === MANUAL_SYNC_INTENT_PHASE_EXECUTING) {
+          return { status: "skipped", reason: "manual_execution_in_flight" };
+        }
+        const cancelled = settleExact(current, "manual_sync_intent_cancelled");
+        return cancelled
+          ? { status: "cancelled", requestId: current.requestId }
+          : { status: "skipped", reason: "stale_manual_intent" };
+      });
+
+    const presentConfirmation = (intent) => {
+      const current = readIntent();
+      if (
+        !isSameManualSyncIntent(current, intent) ||
+        current.phase !== MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION ||
+        current.confirmationOwnerId !== ownerId
+      ) {
+        return { status: "skipped", reason: "stale_manual_intent" };
+      }
+      const identity = getManualSyncIntentIdentity(current);
+      if (activeConfirmationIdentity === identity) {
+        scheduleConfirmationOwnerRecovery(current);
+        return {
+          status: "awaiting_confirmation",
+          phase: current.phase,
+          direction: current.direction,
+          requestId: current.requestId,
+          generation: current.generation,
+        };
+      }
+      closeActiveConfirmation({ reason: "replaced" });
+      activeConfirmationIdentity = identity;
+      try {
+        activeConfirmationModal = showConfirmation(current, {
+          onConfirm: () => confirmExact(current),
+          onCancel: () => cancelExact(current),
+          onDismiss: () => cancelExact(current),
+        });
+      } catch (error) {
+        releaseConfirmationOwnerExact(current);
+        activeConfirmationIdentity = "";
+        activeConfirmationModal = null;
+        return { status: "failure", reason: "confirmation_unavailable" };
+      }
+      if (!activeConfirmationModal) {
+        releaseConfirmationOwnerExact(current);
+        activeConfirmationIdentity = "";
+        return { status: "failure", reason: "confirmation_unavailable" };
+      }
+      scheduleConfirmationOwnerRecovery(current);
+      return {
+        status: "awaiting_confirmation",
+        phase: current.phase,
+        direction: current.direction,
+        requestId: current.requestId,
+        generation: current.generation,
+      };
+    };
+
+    const acquireConfirmationOwner = (intent) => {
+      const now = getNow();
+      const current = readIntent();
+      if (!isSameManualSyncIntent(current, intent)) {
+        return { status: "skipped", reason: "stale_manual_intent" };
+      }
+      const hasLiveOwner =
+        current.confirmationOwnerId &&
+        current.confirmationOwnerExpiresAt > now;
+      if (hasLiveOwner && current.confirmationOwnerId !== ownerId) {
+        closeActiveConfirmation({ reason: "confirmation_owner_changed" });
+        scheduleConfirmationOwnerRecovery(current);
+        return {
+          status: "awaiting_confirmation",
+          phase: current.phase,
+          direction: current.direction,
+          requestId: current.requestId,
+          generation: current.generation,
+        };
+      }
+      if (hasLiveOwner && current.confirmationOwnerId === ownerId) {
+        return presentConfirmation(current);
+      }
+      const claimed = persistExact({
+        ...current,
+        phase: MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION,
+        confirmationOwnerId: ownerId,
+        confirmationOwnerExpiresAt: now + MANUAL_SYNC_CONFIRMATION_OWNER_LEASE_MS,
+      });
+      if (!claimed || claimed.confirmationOwnerId !== ownerId) {
+        if (claimed) {
+          scheduleConfirmationOwnerRecovery(claimed);
+        }
+        return {
+          status: "awaiting_confirmation",
+          phase: current.phase,
+          direction: current.direction,
+          requestId: current.requestId,
+          generation: current.generation,
+        };
+      }
+      // GM value writes have no compare-and-swap. Re-read the exact generation
+      // before mounting UI so a newer cross-context direction wins first.
+      const verified = readIntent();
+      if (
+        !isSameManualSyncIntent(verified, claimed) ||
+        verified?.confirmationOwnerId !== ownerId
+      ) {
+        closeActiveConfirmation({ reason: "confirmation_owner_changed" });
+        if (verified) {
+          scheduleConfirmationOwnerRecovery(verified);
+        }
+        return {
+          status: "awaiting_confirmation",
+          phase: current.phase,
+          direction: current.direction,
+          requestId: current.requestId,
+          generation: current.generation,
+        };
+      }
+      return presentConfirmation(verified);
+    };
+
+    const reconcileOnce = async (reason = "manual_sync_intent_reconcile") => {
+      if (syncExecutionSettlementDepth > 0) {
+        manualSyncIntentBoundaryDeferred = true;
+        return { status: "deferred", reason: "running_sync_settlement" };
+      }
+      let intent = readIntent();
+      if (!intent) {
+        closeActiveConfirmation({ reason: "intent_missing" });
+        return { status: "idle", reason: "no_manual_intent" };
+      }
+      const now = getNow();
+      if (!isSyncEnabled()) {
+        settleExact(intent, "manual_sync_disabled");
+        return { status: "cancelled", reason: "sync_disabled" };
+      }
+      if (now - intent.requestedAt > MANUAL_SYNC_INTENT_STALE_MS) {
+        settleExact(intent, "manual_sync_intent_stale");
+        return { status: "cancelled", reason: "stale_manual_intent" };
+      }
+
+      const identity = getManualSyncIntentIdentity(intent);
+      if (activeConfirmationIdentity && activeConfirmationIdentity !== identity) {
+        closeActiveConfirmation({ reason: "superseded" });
+      }
+      if (intent.phase === MANUAL_SYNC_INTENT_PHASE_EXECUTING) {
+        if (executingIdentity === identity || executingPromise || hasActiveExecution()) {
+          return { status: "executing", requestId: intent.requestId };
+        }
+        if (intent.executionExpiresAt > now) {
+          return { status: "executing", requestId: intent.requestId };
+        }
+        intent = transitionToQueuedExact(intent, "execution_recovery");
+        if (!intent) {
+          return { status: "skipped", reason: "stale_manual_intent" };
+        }
+      }
+
+      if (hasActiveExecution()) {
+        if (intent.phase === MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION) {
+          closeActiveConfirmation({ reason: "execution_boundary_busy" });
+          intent = transitionToQueuedExact(intent, "execution_boundary_busy");
+        }
+        if (intent) {
+          setIndicatorPending(intent);
+          refreshDisplay(`manual_sync_intent_${reason}`);
+          return {
+            status: "queued",
+            phase: intent.phase,
+            direction: intent.direction,
+            requestId: intent.requestId,
+            generation: intent.generation,
+          };
+        }
+      }
+
+      if (intent.phase === MANUAL_SYNC_INTENT_PHASE_QUEUED) {
+        return acquireConfirmationOwner(intent);
+      }
+      if (intent.phase === MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION) {
+        return acquireConfirmationOwner(intent);
+      }
+      return { status: "skipped", reason: "unsupported_manual_intent_phase" };
+    };
+
+    const reconcile = (reason = "manual_sync_intent_reconcile") =>
+      enqueue(() => reconcileOnce(reason));
+
+    const summarizeIntentReconciliation = (reconciled, persisted) => ({
+      status:
+        reconciled?.status === "awaiting_confirmation"
+          ? "awaiting_confirmation"
+          : "queued",
+      phase: reconciled?.phase || persisted.phase,
+      direction: persisted.direction,
+      requestId: persisted.requestId,
+      generation: persisted.generation,
+    });
+
+    const createAndPersistIntent = (
+      direction,
+      { phase, notifyDelayed = false, reason = "manual_sync_intent_requested" } = {}
+    ) => {
+      const now = getNow();
+      let current = readIntent();
+      if (current && now - current.requestedAt > MANUAL_SYNC_INTENT_STALE_MS) {
+        settleExact(current, "manual_sync_intent_stale");
+        current = null;
+      }
+      const nextIntent = {
+        version: 1,
+        requestId: `${sourceContextId}_${now}_${Math.random()
+          .toString(36)
+          .slice(2, 10)}`,
+        generation: (current?.generation || 0) + 1,
+        direction,
+        phase,
+        requestedAt: now,
+        sourceContextId,
+        sourceTabId,
+        confirmationOwnerId: "",
+        confirmationOwnerExpiresAt: 0,
+        executionOwnerId: "",
+        executionStartedAt: 0,
+        executionExpiresAt: 0,
+      };
+      const persisted = persistExact(nextIntent);
+      if (!persisted) {
+        return null;
+      }
+      if (notifyDelayed) {
+        try {
+          onQueued(persisted);
+        } catch (error) {
+          // The durable user intent remains authoritative even if local timer
+          // cleanup fails; the next boundary can still reconcile it.
+        }
+        setIndicatorPending(persisted);
+        refreshDisplay("manual_sync_intent_queued");
+        showMessageForDelayedIntent(direction);
+      } else {
+        refreshDisplay(reason);
+      }
+      return persisted;
+    };
+
+    const request = (direction, options = {}) => {
+      const normalizedDirection =
+        direction === AUTO_SYNC_INDICATOR_OPERATION_PULL
+          ? AUTO_SYNC_INDICATOR_OPERATION_PULL
+          : direction === AUTO_SYNC_INDICATOR_OPERATION_PUSH
+            ? AUTO_SYNC_INDICATOR_OPERATION_PUSH
+            : "";
+      if (!normalizedDirection) {
+        return Promise.resolve({
+          status: "skipped",
+          reason: "unsupported_manual_direction",
+        });
+      }
+      if (!isSyncEnabled()) {
+        const current = readIntent();
+        if (current) {
+          settleExact(current, "manual_sync_disabled");
+        }
+        return Promise.resolve({ status: "skipped", reason: "sync_disabled" });
+      }
+
+      let current = readIntent();
+      const now = getNow();
+      if (current && now - current.requestedAt > MANUAL_SYNC_INTENT_STALE_MS) {
+        settleExact(current, "manual_sync_intent_stale");
+        current = null;
+      }
+      const active = hasActiveExecution();
+      const hasDelayedIntent = Boolean(current);
+      if (!active && !hasDelayedIntent) {
+        return Promise.resolve(
+          executeDirection(normalizedDirection, null, options)
+        ).then((result) => {
+          if (!isExecutionBoundaryRaceResult(result)) {
+            return result;
+          }
+          const racedIntent = createAndPersistIntent(normalizedDirection, {
+            phase: MANUAL_SYNC_INTENT_PHASE_QUEUED,
+            notifyDelayed: true,
+            reason: "manual_sync_intent_execution_race",
+          });
+          if (!racedIntent) {
+            return result;
+          }
+          return reconcile("manual_sync_intent_execution_race").then(
+            (reconciled) =>
+              summarizeIntentReconciliation(reconciled, racedIntent)
+          );
+        });
+      }
+
+      const persisted = createAndPersistIntent(normalizedDirection, {
+        phase: active
+          ? MANUAL_SYNC_INTENT_PHASE_QUEUED
+          : MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION,
+        notifyDelayed: active,
+        reason: active
+          ? "manual_sync_intent_queued"
+          : "manual_sync_intent_replaced",
+      });
+      if (!persisted) {
+        return Promise.resolve({
+          status: "failure",
+          reason: "manual_intent_persist_failed",
+        });
+      }
+      return reconcile("manual_sync_intent_requested").then((reconciled) =>
+        summarizeIntentReconciliation(reconciled, persisted)
+      );
+    };
+
+    const handleLifecycle = (eventName = "") => {
+      const phase = String(eventName || "").trim();
+      if (phase === "pagehide" || phase === "beforeunload") {
+        const current = readIntent();
+        if (current) {
+          releaseConfirmationOwnerExact(current);
+        }
+        closeActiveConfirmation({ dismiss: false, reason: phase });
+        return { status: "released", reason: phase };
+      }
+      if (phase === "visible" || phase === "pageshow" || phase === "focus") {
+        return reconcile(`manual_sync_intent_${phase}`);
+      }
+      return { status: "skipped", reason: "unsupported_lifecycle_event" };
+    };
+
+    const handleStorageChange = (key) => {
+      if (!bound) {
+        return;
+      }
+      return reconcile(`manual_sync_intent_storage:${key}`);
+    };
+
+    const bind = () => {
+      if (bound) {
+        return { status: "skipped", reason: "already_bound" };
+      }
+      bound = true;
+      if (typeof GM_addValueChangeListener === "function") {
+        [
+          PENDING_MANUAL_SYNC_INTENT_KEY,
+          GLOBAL_SYNC_LOCK_KEY,
+          MANUAL_SYNC_LOCK_KEY,
+          BACKGROUND_SYNC_LOCK_KEY,
+          STARTUP_SYNC_LOCK_KEY,
+          FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY,
+          "s1p_settings",
+        ].forEach((key) => {
+          try {
+            const listenerId = GM_addValueChangeListener(key, () => {
+              void handleStorageChange(key);
+            });
+            listenerIds.push(listenerId);
+          } catch (error) {
+            // A missing listener channel is recoverable through the next
+            // visible/focus lifecycle event.
+          }
+        });
+      }
+      const handlePageHide = () => handleLifecycle("pagehide");
+      const handleBeforeUnload = () => handleLifecycle("beforeunload");
+      const handlePageShow = () => void handleLifecycle("pageshow");
+      const handleFocus = () => void handleLifecycle("focus");
+      const handleVisibilityChange = () =>
+        void handleLifecycle(
+          document.visibilityState === "visible" ? "visible" : "hidden"
+        );
+      if (typeof window?.addEventListener === "function") {
+        window.addEventListener("pagehide", handlePageHide);
+        window.addEventListener("beforeunload", handleBeforeUnload);
+        window.addEventListener("pageshow", handlePageShow);
+        window.addEventListener("focus", handleFocus);
+        domListeners.push(
+          ["window", "pagehide", handlePageHide],
+          ["window", "beforeunload", handleBeforeUnload],
+          ["window", "pageshow", handlePageShow],
+          ["window", "focus", handleFocus]
+        );
+      }
+      if (typeof document?.addEventListener === "function") {
+        document.addEventListener("visibilitychange", handleVisibilityChange);
+        domListeners.push(["document", "visibilitychange", handleVisibilityChange]);
+      }
+      void reconcile("manual_sync_intent_bind");
+      return { status: "bound" };
+    };
+
+    const unbind = () => {
+      if (!bound) {
+        return { status: "skipped", reason: "already_unbound" };
+      }
+      bound = false;
+      const current = readIntent();
+      if (current) {
+        releaseConfirmationOwnerExact(current);
+      }
+      closeActiveConfirmation({ dismiss: false, reason: "unbind" });
+      if (typeof GM_removeValueChangeListener === "function") {
+        listenerIds.splice(0).forEach((listenerId) => {
+          if (listenerId !== null && listenerId !== undefined) {
+            GM_removeValueChangeListener(listenerId);
+          }
+        });
+      } else {
+        listenerIds.length = 0;
+      }
+      domListeners.splice(0).forEach(([target, eventName, listener]) => {
+        const targetObject = target === "document" ? document : window;
+        targetObject?.removeEventListener?.(eventName, listener);
+      });
+      return { status: "unbound" };
+    };
+
+    const isPriorityGateActive = () => {
+      const intent = readIntent();
+      return Boolean(
+        intent &&
+          isSyncEnabled() &&
+          getNow() - intent.requestedAt <= MANUAL_SYNC_INTENT_STALE_MS &&
+          [
+            MANUAL_SYNC_INTENT_PHASE_QUEUED,
+            MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION,
+            MANUAL_SYNC_INTENT_PHASE_EXECUTING,
+          ].includes(intent.phase)
+      );
+    };
+
+    return Object.freeze({
+      bind,
+      unbind,
+      request,
+      reconcile,
+      handleLifecycle,
+      cancel: cancelExact,
+      readIntent,
+      isPriorityGateActive,
+    });
+  };
+
+  let defaultManualSyncIntentCoordinator = null;
+  const getDefaultManualSyncIntentCoordinator = () => {
+    if (!defaultManualSyncIntentCoordinator) {
+      defaultManualSyncIntentCoordinator = s1pCreateManualSyncIntentCoordinator({
+        showMessage,
+      });
+      manualSyncPriorityGateEvaluator = () =>
+        defaultManualSyncIntentCoordinator.isPriorityGateActive();
+      manualSyncIntentBoundaryHandler = ({ reason = "" } = {}) => {
+        const wasDeferred = manualSyncIntentBoundaryDeferred;
+        manualSyncIntentBoundaryDeferred = false;
+        return defaultManualSyncIntentCoordinator.reconcile(
+          reason ||
+            (wasDeferred
+              ? "manual_sync_intent_deferred_boundary"
+              : "manual_sync_intent_boundary")
+        );
+      };
+    }
+    return defaultManualSyncIntentCoordinator;
+  };
+
   /**
    * [新增] 创建一个带输入的模态框
    */
@@ -44409,8 +45540,11 @@
       });
     };
     modal.s1p_api = {
-      dismiss: ({ reason = "dismissed", immediate = false } = {}) =>
-        closeModal({ reason, immediate, invokeDismiss: true }),
+      dismiss: ({
+        reason = "dismissed",
+        immediate = false,
+        invokeDismiss = true,
+      } = {}) => closeModal({ reason, immediate, invokeDismiss }),
     };
 
     // Auto focus and select slightly delayed to ensure DOM is ready and transition doesn't interfere
@@ -51995,6 +53129,7 @@
       surfaceContext,
       contentAnimationMs: 250,
     });
+    return modal;
   };
 
   const addBlockButtonsToThreadRows = (rows = []) => {
@@ -56686,8 +57821,32 @@
       adapters.requestInitialForeground ||
       handleInitialForegroundRemoteFreshnessCheck;
     const requestManualSync = adapters.requestManualSync || handleManualSync;
-    const requestManualPull = adapters.requestManualPull || handleForcePull;
-    const requestManualPush = adapters.requestManualPush || handleForcePush;
+    const hasCustomManualDirectionExecutor =
+      typeof adapters.requestManualPull === "function" ||
+      typeof adapters.requestManualPush === "function";
+    const manualIntentCoordinator =
+      adapters.manualIntentCoordinator ||
+      (!hasCustomManualDirectionExecutor
+        ? getDefaultManualSyncIntentCoordinator()
+        : null);
+    const requestManualPull =
+      adapters.requestManualPull ||
+      (manualIntentCoordinator
+        ? (options = {}) =>
+            manualIntentCoordinator.request(
+              AUTO_SYNC_INDICATOR_OPERATION_PULL,
+              options
+            )
+        : handleForcePull);
+    const requestManualPush =
+      adapters.requestManualPush ||
+      (manualIntentCoordinator
+        ? (options = {}) =>
+            manualIntentCoordinator.request(
+              AUTO_SYNC_INDICATOR_OPERATION_PUSH,
+              options
+            )
+        : handleForcePush);
     const requestStartupFlow =
       adapters.requestStartupFlow || runStartupSyncFlowDeferred;
     const readProjection =
@@ -56700,6 +57859,14 @@
       } catch (rollbackError) {
         console.error(
           "S1 Plus: 同步系统初始化回滚时释放后台调度 owner 失败:",
+          rollbackError
+        );
+      }
+      try {
+        manualIntentCoordinator?.unbind?.();
+      } catch (rollbackError) {
+        console.error(
+          "S1 Plus: 同步系统初始化回滚时解绑手动同步意图支持失败:",
           rollbackError
         );
       }
@@ -56719,6 +57886,7 @@
       }
       const lifecycle = lifecycleAdapter.bind();
       try {
+        const manualIntent = manualIntentCoordinator?.bind?.() || null;
         const runtimeContext = getSyncRuntimeContextInfo();
         recordSyncTraceEvent("sync_runtime_context_started", {
           scope: "sync_runtime",
@@ -56737,6 +57905,7 @@
         return {
           status: "initialized",
           lifecycle,
+          manualIntent,
           schedulerRecovery,
           pendingRecovery,
         };
@@ -56751,12 +57920,14 @@
         return { status: "skipped", reason: "already_disposed" };
       }
       let lifecycle;
+      let manualIntent;
       try {
+        manualIntent = manualIntentCoordinator?.unbind?.() || null;
         lifecycle = lifecycleAdapter.unbind();
       } finally {
         initialized = false;
       }
-      return { status: "disposed", lifecycle };
+      return { status: "disposed", lifecycle, manualIntent };
     };
 
     const requestSync = ({ kind = "", reason = "", options = {} } = {}) => {
@@ -56809,6 +57980,7 @@
     const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
     testHookHost.__S1P_TEST_HOOKS__ = {
       ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
+      s1pCreateManualSyncIntentCoordinator,
       s1pCreateSyncSystemFacade,
       s1pSyncSystem,
     };
