@@ -2376,6 +2376,7 @@
   let foregroundFollowUpSoftBlockState = null;
   let lastAutoSyncIndicatorDisplaySession = null;
   let autoSyncIndicatorDisplaySessionHiddenAt = 0;
+  let defaultManualSyncIntentCoordinator = null;
   let manualSyncIntentBoundaryHandler = null;
   let manualSyncPriorityGateEvaluator = () => false;
   let syncExecutionSettlementDepth = 0;
@@ -2523,8 +2524,6 @@
   const PENDING_AUTO_SYNC_KEY = "s1p_pending_auto_sync_request";
   const PENDING_FOREGROUND_REMOTE_SYNC_KEY =
     "s1p_pending_foreground_remote_sync_request";
-  const SESSION_PENDING_MANUAL_SYNC_INTENT_KEY =
-    "s1p_pending_manual_sync_intent_session";
   const LEGACY_PENDING_MANUAL_SYNC_INTENT_KEY =
     "s1p_pending_manual_sync_intent";
   const LEGACY_PENDING_MANUAL_SYNC_INTENT_RECORD_KEY_PREFIX =
@@ -14882,17 +14881,7 @@
   };
 
   const normalizeManualSyncIntent = (rawValue = null) => {
-    const raw =
-      typeof rawValue === "string"
-        ? (() => {
-            try {
-              return JSON.parse(rawValue);
-            } catch (_) {
-              return null;
-            }
-          })()
-        : rawValue;
-    const value = sanitizeRecordObject(raw);
+    const value = sanitizeRecordObject(rawValue);
     const direction =
       value.direction === AUTO_SYNC_INDICATOR_OPERATION_PUSH
         ? AUTO_SYNC_INDICATOR_OPERATION_PUSH
@@ -14905,7 +14894,7 @@
         : value.phase === MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION
           ? MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION
           : "";
-    const createdAt = Number(value.createdAt || value.requestedAt) || 0;
+    const createdAt = Number(value.createdAt) || 0;
     if (!direction || !phase || createdAt <= 0) {
       return null;
     }
@@ -14915,138 +14904,6 @@
       createdAt,
       phase,
     };
-  };
-
-  let sessionPendingManualSyncIntentFallback = null;
-
-  const getDefaultManualSyncSessionStorage = () => {
-    try {
-      if (typeof window !== "undefined" && window?.sessionStorage) {
-        return window.sessionStorage;
-      }
-    } catch (_) {
-      // Private browsing/security settings can deny sessionStorage access.
-    }
-    try {
-      if (typeof sessionStorage !== "undefined" && sessionStorage) {
-        return sessionStorage;
-      }
-    } catch (_) {
-      // Fall through to the page-local memory fallback.
-    }
-    return null;
-  };
-
-  const createSessionPendingManualSyncIntentStorage = (adapters = {}) => {
-    const customStorage =
-      adapters.sessionStorage || adapters.pendingIntentStorage || null;
-    const readCustom =
-      typeof adapters.readSessionPendingIntent === "function"
-        ? adapters.readSessionPendingIntent
-        : null;
-    const writeCustom =
-      typeof adapters.writeSessionPendingIntent === "function"
-        ? adapters.writeSessionPendingIntent
-        : null;
-    const deleteCustom =
-      typeof adapters.deleteSessionPendingIntent === "function"
-        ? adapters.deleteSessionPendingIntent
-        : null;
-    const storage =
-      customStorage && typeof customStorage.getItem === "function"
-        ? customStorage
-        : readCustom || writeCustom || deleteCustom
-          ? null
-          : getDefaultManualSyncSessionStorage();
-    let memoryValue = null;
-
-    const read = () => {
-      let rawValue = null;
-      let readFailed = false;
-      try {
-        if (readCustom) {
-          rawValue = readCustom();
-        } else if (storage) {
-          rawValue = storage.getItem(
-            SESSION_PENDING_MANUAL_SYNC_INTENT_KEY
-          );
-        }
-      } catch (_) {
-        readFailed = true;
-      }
-      const normalized = normalizeManualSyncIntent(rawValue);
-      if (normalized) {
-        return normalized;
-      }
-      if (readFailed) {
-        return customStorage || readCustom
-          ? memoryValue
-          : sessionPendingManualSyncIntentFallback;
-      }
-      if (!storage && !readCustom) {
-        return sessionPendingManualSyncIntentFallback;
-      }
-      return null;
-    };
-
-    const write = (intent) => {
-      const normalized = normalizeManualSyncIntent(intent);
-      if (!normalized) {
-        return false;
-      }
-      try {
-        if (writeCustom) {
-          writeCustom(normalized);
-        } else if (storage) {
-          storage.setItem(
-            SESSION_PENDING_MANUAL_SYNC_INTENT_KEY,
-            JSON.stringify(normalized)
-          );
-        } else {
-          memoryValue = normalized;
-          if (!customStorage && !readCustom) {
-            sessionPendingManualSyncIntentFallback = normalized;
-          }
-          return true;
-        }
-        memoryValue = normalized;
-        return true;
-      } catch (_) {
-        memoryValue = normalized;
-        if (!customStorage && !readCustom) {
-          sessionPendingManualSyncIntentFallback = normalized;
-        }
-        return true;
-      }
-    };
-
-    const remove = () => {
-      try {
-        if (deleteCustom) {
-          deleteCustom();
-        } else if (storage) {
-          storage.removeItem(SESSION_PENDING_MANUAL_SYNC_INTENT_KEY);
-        }
-      } catch (_) {
-        // Removing the page-local fallback below is still safe.
-      }
-      memoryValue = null;
-      if (!customStorage && !readCustom) {
-        sessionPendingManualSyncIntentFallback = null;
-      }
-      return true;
-    };
-
-    return Object.freeze({ read, write, remove });
-  };
-
-  let defaultSessionPendingManualSyncIntentStorage = null;
-  const getDefaultSessionPendingManualSyncIntentStorage = () => {
-    if (!defaultSessionPendingManualSyncIntentStorage) {
-      defaultSessionPendingManualSyncIntentStorage =
-        createSessionPendingManualSyncIntentStorage();
-    }
-    return defaultSessionPendingManualSyncIntentStorage;
   };
 
   const cleanupLegacyManualSyncIntentState = () => {
@@ -15084,11 +14941,8 @@
 
   cleanupLegacyManualSyncIntentState();
 
-  const readPendingManualSyncIntent = () =>
-    getDefaultSessionPendingManualSyncIntentStorage().read();
-
   const getPendingManualSyncIntentForDisplay = (now = Date.now()) => {
-    const intent = readPendingManualSyncIntent();
+    const intent = defaultManualSyncIntentCoordinator?.readIntent?.() || null;
     if (
       !intent ||
       now - intent.createdAt > MANUAL_SYNC_INTENT_STALE_MS
@@ -32895,7 +32749,7 @@
           });
         } catch (error) {
           console.warn(
-            "S1 Plus: 手动同步意图在 Running Sync 边界收敛失败，保留本标签页 session pending 等待后续恢复。",
+            "S1 Plus: 手动同步意图在 Running Sync 边界收敛失败，保留本页面内存 pending 等待后续恢复。",
             error
           );
         }
@@ -44783,13 +44637,20 @@
         typeof adapters.now === "function" ? adapters.now() : adapters.now;
       return Number(value) || Date.now();
     };
-    const intentStorage = createSessionPendingManualSyncIntentStorage(adapters);
-    const readIntent = () => intentStorage.read();
+    let pendingManualSyncIntent = null;
+    const readIntent = () => pendingManualSyncIntent;
     const writeIntent = (intent) => {
       const normalized = normalizeManualSyncIntent(intent);
-      return normalized && intentStorage.write(normalized) ? normalized : null;
+      if (!normalized) {
+        return null;
+      }
+      pendingManualSyncIntent = normalized;
+      return pendingManualSyncIntent;
     };
-    const deleteIntent = () => intentStorage.remove();
+    const deleteIntent = () => {
+      pendingManualSyncIntent = null;
+      return true;
+    };
 
     const isSyncEnabled = () => {
       if (typeof adapters.isSyncEnabled === "function") {
@@ -45287,7 +45148,7 @@
         closeActiveConfirmation({ reason: phase });
         return {
           status: "preserved",
-          reason: "session_pending_intent",
+          reason: "page_local_pending_intent",
           event: phase,
         };
       }
@@ -45359,11 +45220,19 @@
     };
 
     const unbind = () => {
-      if (!bound) {
-        return { status: "skipped", reason: "already_unbound" };
-      }
+      const wasBound = bound;
+      const hadLocalState = Boolean(
+        pendingManualSyncIntent || activeConfirmationKey || activeConfirmationModal
+      );
       bound = false;
       closeActiveConfirmation({ reason: "unbind" });
+      deleteIntent();
+      if (wasBound || hadLocalState) {
+        refreshDisplay("manual_sync_intent_unbound");
+      }
+      if (!wasBound) {
+        return { status: "skipped", reason: "already_unbound" };
+      }
       if (typeof GM_removeValueChangeListener === "function") {
         listenerIds.splice(0).forEach((listenerId) => {
           if (listenerId !== null && listenerId !== undefined) {
@@ -45405,7 +45274,6 @@
     });
   };
 
-  let defaultManualSyncIntentCoordinator = null;
   const getDefaultManualSyncIntentCoordinator = () => {
     if (!defaultManualSyncIntentCoordinator) {
       defaultManualSyncIntentCoordinator = s1pCreateManualSyncIntentCoordinator({
@@ -57982,6 +57850,7 @@
     testHookHost.__S1P_TEST_HOOKS__ = {
       ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
       s1pCreateManualSyncIntentCoordinator,
+      getDefaultManualSyncIntentCoordinator,
       cleanupLegacyManualSyncIntentState,
       s1pCreateSyncSystemFacade,
       s1pSyncSystem,

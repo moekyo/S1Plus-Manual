@@ -360,9 +360,7 @@ const testProductionFacadeManualSyncUsesRuntimeGate = async () => {
 };
 
 const testProductionFacadeQueuesManualDirectionBehindForeignExecution = async () => {
-  const { hooks, store, sessionStorage } = createHarness({
-    includeSessionStorage: true,
-  });
+  const { hooks, store } = createHarness();
   store.set("s1p_settings", readySyncSettings);
   store.set("s1p_sync_global_lock", {
     owner: "foreign-tab",
@@ -374,9 +372,8 @@ const testProductionFacadeQueuesManualDirectionBehindForeignExecution = async ()
   const result = await hooks.s1pSyncSystem.requestSync({
     kind: "manual_push",
   });
-  const intent = JSON.parse(
-    sessionStorage.getItem("s1p_pending_manual_sync_intent_session")
-  );
+  const coordinator = hooks.getDefaultManualSyncIntentCoordinator();
+  const intent = toPlainObject(coordinator.readIntent());
   const projected = toPlainObject(
     hooks.s1pSyncSystem.readState({ surface: "navbar" })
   );
@@ -384,7 +381,14 @@ const testProductionFacadeQueuesManualDirectionBehindForeignExecution = async ()
   assert.equal(result.status, "queued");
   assert.equal(result.phase, "waiting_for_execution_boundary");
   assert.equal(intent.direction, "push");
+  assert.equal(intent.version, 1);
   assert.equal(store.has("s1p_pending_manual_sync_intent"), false);
+  assert.equal(
+    Array.from(store.keys()).some((key) =>
+      String(key).startsWith("s1p_pending_manual_sync_intent:")
+    ),
+    false
+  );
   assert.equal(projected.displayPhase, "pending");
   assert.equal(projected.displayOperation, "push");
   assert.equal(projected.displaySource, "manual_sync");
@@ -394,6 +398,14 @@ const testProductionFacadeQueuesManualDirectionBehindForeignExecution = async ()
     timestamp: store.get("s1p_sync_global_lock").timestamp,
     ttlMs: 45 * 1000,
   });
+
+  assert.equal((await coordinator.cancel(coordinator.readIntent())).status, "cancelled");
+  assert.equal(coordinator.readIntent(), null);
+  assert.notEqual(
+    toPlainObject(hooks.s1pSyncSystem.readState({ surface: "navbar" }))
+      .displaySource,
+    "manual_sync"
+  );
 };
 
 const testFacadePreservesEverySyncIntentContract = async () => {
