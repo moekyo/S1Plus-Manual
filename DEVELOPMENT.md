@@ -45,6 +45,7 @@
 // @grant        GM_openInTab
 // @grant        GM_download
 // @grant        GM_addValueChangeListener
+// @grant        GM_listValues
 // @connect      *
 // ==/UserScript==
 
@@ -400,7 +401,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - 四类模式锁（手动/后台/启动/前台补同步）
 - 全局锁防互撞
 - 锁心跳续租，失锁即中止
-- 四类模式锁共用同一份 mode profile、全局互斥和锁 implementation；后台、启动、前台补同步通过 `runRunningSync()` 统一执行“取得锁 → 启动心跳 → 运行完整事务 → 停止心跳并释放锁”的生命周期。导航栏手动请求的优先级首先体现在 intent/display 层：有效执行锁存在时，`s1pCreateManualSyncIntentCoordinator()` 持久化方向和 generation、只清理本标签页尚未执行的自动调度，并显示 `Pending(push|pull)`；它不删除其它执行者的有效锁、心跳或 durable intent。锁释放后进入 `awaiting_confirmation`，确认框不持有 execution lock，确认时再读取最新快照并调用既有 manual force handler。没有活动执行时仍保持立即执行，不增加确认。
+- 四类模式锁共用同一份 mode profile、全局互斥和锁 implementation；后台、启动、前台补同步通过 `runRunningSync()` 统一执行“取得锁 → 启动心跳 → 运行完整事务 → 停止心跳并释放锁”的生命周期。导航栏手动请求的优先级首先体现在 intent/display 层：有效执行锁存在时，`s1pCreateManualSyncIntentCoordinator()` 持久化方向和 generation、只清理本标签页尚未执行的自动调度，并显示 `Pending(push|pull)`；它不删除其它执行者的有效锁、心跳或 durable intent。锁释放后进入 `awaiting_confirmation`，确认框不持有 execution lock，确认时再读取最新快照并调用既有 manual force handler。没有活动执行时仍保持立即执行，不增加确认。手动 intent 的 canonical authority 是通过 `GM_listValues` 枚举的不可变 request/transition records；旧共享 key 只作兼容通知镜像，不能作为 read-modify-write authority。
 - `runRunningSync()` 不接受独立 finalizer；`runTransaction` 只有在基线、远端 writer、已覆盖 pending/shared generation 等事务收尾全部完成后才可 resolve。导航栏/标题状态、刷新、提示、冲突弹窗和重试调度属于 Result Phase，必须等模式锁和全局锁释放后执行。
 - `s1pSyncSystem` 是页面代码唯一的同步系统 façade。页面本地变更调用 `recordLocalMutation()`，生命周期场景调用 `handleLifecycle()`，手动/启动/前台/后台请求调用 `requestSync()`，Navbar 与 Title Owner 调用 `readState()`；初始化只调用一次 `initialize()`，由 façade 依次绑定 lifecycle support、恢复 Scheduler Owner 并恢复 Pending Dirty。任一恢复步骤失败时，façade 必须先 handoff Scheduler Owner、再 unbind lifecycle support，并允许下一次初始化重试。`dispose()` 只用于测试或未来 SPA remount 等显式 host teardown；普通 pagehide/beforeunload 由 `handleLifecycle()` 完成，页面上下文销毁时不额外调用 dispose。即使 unbind 抛错，dispose 也必须清除 façade 的 initialized 状态，使显式重建仍可重试。页面代码不得直接协调内部锁、timer、generation、owner lease、Result Phase Policy 或状态投影。
 - `s1pReadingProgressSession` 是 Reading Progress Session 的唯一页面 interface。帖子页、设置和数据变更调用 `attach()` / `reset()` / `discard()`；同步诊断和本地变更路径只读取 `readState()` 或调用 `recordLocalMutation()`；生命周期 finalizer 委托 `handleLifecycle()`。observer、确认策略、timer、pending write 合并和会话诊断状态都留在 module 内部。测试必须经同一 interface 驱动帖子可见性、交互和生命周期输入，并断言最终 Read Progress，不再写 tracking state。
@@ -445,9 +446,9 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 
 ### 6.4 手动覆盖：导航栏直接拉取 / 推送
 
-导航栏同步按钮的点击和悬停都会打开同一个“拉取 / 推送”菜单；点击只是键盘、触摸或 hover 不可靠场景的备用入口，不直接执行同步。菜单里选择的“拉取”或“推送”是显式手动请求。没有活动执行时，协调器直接调用既有 `handleForcePull()` / `handleForcePush()`，不增加确认步骤；已有有效模式锁或全局锁时，手动请求不会返回 busy 丢失，而是登记一个带精确 `requestId + generation` 的 durable intent，导航栏显示用户所选方向的 `Pending`，并提示“当前同步完成后将再次确认”。
+导航栏同步按钮的点击和悬停都会打开同一个“拉取 / 推送”菜单；点击只是键盘、触摸或 hover 不可靠场景的备用入口，不直接执行同步。菜单里选择的“拉取”或“推送”是显式手动请求。没有活动执行时，协调器直接调用既有 `handleForcePull()` / `handleForcePush()`，不增加确认步骤；已有有效模式锁或全局锁时，手动请求不会返回 busy 丢失，而是登记一个带精确 `requestId + generation` 的 durable intent，导航栏显示用户所选方向的 `Pending`，并提示“当前同步完成后将再次确认”。canonical state 由每个 request/transition 的独立 GM record 组成；最新显式请求按 `authorityRequestedAt → authoritySourceContextId → authorityRequestSequence → authorityRequestId` 做确定性排序，`generation` 只参与精确 identity，不再假定为跨 context 全局序号。
 
-锁释放后，协调器才把 intent 推进为 `awaiting_confirmation`，由一个跨上下文 confirmation-owner lease 持有者显示确认框。确认框不取得 execution lock，也不会自动执行；用户确认后先重新读取当前 intent、设置和活动锁，再进入 `executing` 并调用原有 force handler。若执行边界在确认期间重新被占用，则精确地回到 queued；若用户取消或确认框所属页面 teardown，只释放该 intent 的确认 owner，不删除其它 Pending Dirty、前台 remote intent 或调度状态。最新一次显式拉取/推送会替换旧方向，旧确认通过 `requestId + generation` 自动失效。
+锁释放后，协调器才把 intent 推进为 `awaiting_confirmation`，由一个跨上下文、带 `confirmationOwnerToken` fencing 的 owner 持有者显示确认框。确认框不取得 execution lock，也不会自动执行；用户确认后先重新读取当前 intent、设置和活动锁，再进入 `executing` 并调用原有 force handler。若执行边界在确认期间重新被占用，则精确地回到 queued；若用户取消或确认框所属页面 teardown，只释放该 intent 的确认 owner，不删除其它 Pending Dirty、前台 remote intent 或调度状态。最新一次显式拉取/推送会替换旧方向，旧确认通过 `requestId + generation + confirmationOwnerToken` 自动失效；迟到的 owner release、dismiss、renew 和 confirm 都只能追加自己已观察 head 的 transition，不能覆盖或删除 newer request。
 
 `preemptActiveSyncForManualOverride()` 保留旧名称作为兼容入口，其职责边界是：
 

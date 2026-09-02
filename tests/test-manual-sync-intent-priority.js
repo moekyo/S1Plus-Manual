@@ -8,6 +8,11 @@ const {
 } = require("./s1plus-test-helpers");
 
 const MANUAL_SYNC_INTENT_KEY = "s1p_pending_manual_sync_intent";
+const MANUAL_SYNC_INTENT_RECORD_KEY_PREFIX =
+  `${MANUAL_SYNC_INTENT_KEY}:`;
+
+const getIntentRecordKey = (eventId) =>
+  `${MANUAL_SYNC_INTENT_RECORD_KEY_PREFIX}${encodeURIComponent(eventId)}`;
 
 const createHarness = () =>
   createBaseHarness({
@@ -282,6 +287,78 @@ const testConfirmationOwnerTeardownAndLeaseRecovery = async () => {
   assert.equal(first.dismissCalls[0].invokeDismiss, false);
 };
 
+const testOldOwnerCallbacksCannotActAfterSameGenerationTakeover = async () => {
+  const { hooks, store } = createHarness();
+  const first = createCoordinator(hooks, {
+    activeExecution: true,
+    ownerId: "tab-a",
+    sourceContextId: "context-a",
+    now: 1_000_000,
+  });
+  const second = createCoordinator(hooks, {
+    activeExecution: true,
+    ownerId: "tab-b",
+    sourceContextId: "context-b",
+    now: 1_000_000,
+  });
+
+  await first.coordinator.request("push");
+  first.setActiveExecution(false);
+  second.setActiveExecution(false);
+  await first.coordinator.reconcile("lock_released");
+  const oldConfirmation = first.confirmations[0];
+  const ownerExpiresAt = readIntent(store).confirmationOwnerExpiresAt;
+
+  second.setNow(ownerExpiresAt + 51);
+  await second.coordinator.reconcile("owner_expired");
+
+  const takenOver = readIntent(store);
+  assert.equal(second.confirmations.length, 1);
+  assert.equal(takenOver.requestId, oldConfirmation.intent.requestId);
+  assert.equal(takenOver.confirmationOwnerId, "tab-b");
+  assert.notEqual(
+    takenOver.confirmationOwnerToken,
+    oldConfirmation.intent.confirmationOwnerToken
+  );
+
+  const cancelResult = await oldConfirmation.actions.onCancel();
+  const confirmResult = await oldConfirmation.actions.onConfirm();
+  assert.equal(cancelResult.reason, "stale_manual_intent");
+  assert.equal(confirmResult.reason, "stale_manual_intent");
+  assert.equal(readIntent(store).requestId, oldConfirmation.intent.requestId);
+  assert.equal(first.executions.length, 0);
+};
+
+const testOwnerTokenTakeoverRemountsTheConfirmation = async () => {
+  const { hooks, store } = createHarness();
+  const runtime = createCoordinator(hooks, {
+    activeExecution: true,
+    ownerId: "tab-a",
+    sourceContextId: "context-a",
+    now: 1_000_000,
+  });
+
+  await runtime.coordinator.request("push");
+  runtime.setActiveExecution(false);
+  await runtime.coordinator.reconcile("lock_released");
+  const oldConfirmation = runtime.confirmations[0];
+  const ownerExpiresAt = readIntent(store).confirmationOwnerExpiresAt;
+
+  runtime.setNow(ownerExpiresAt + 51);
+  await runtime.coordinator.reconcile("owner_expired");
+
+  const latest = readIntent(store);
+  assert.equal(runtime.confirmations.length, 2);
+  assert.equal(runtime.dismissCalls[0].invokeDismiss, false);
+  assert.notEqual(
+    latest.confirmationOwnerToken,
+    oldConfirmation.intent.confirmationOwnerToken
+  );
+  const staleResult = await oldConfirmation.actions.onCancel();
+  assert.equal(staleResult.reason, "stale_manual_intent");
+  assert.equal(readIntent(store).requestId, oldConfirmation.intent.requestId);
+};
+
 const testSettingsDisableCancelsPriorityGate = async () => {
   const { hooks, store } = createHarness();
   const runtime = createCoordinator(hooks, { activeExecution: true });
@@ -294,6 +371,296 @@ const testSettingsDisableCancelsPriorityGate = async () => {
   assert.equal(runtime.coordinator.isPriorityGateActive(), false);
 };
 
+const testStaleDeleteCannotRemoveNewerIntent = async () => {
+  const { hooks, sandbox } = createHarness();
+  const first = createCoordinator(hooks, {
+    activeExecution: true,
+    ownerId: "tab-a",
+    sourceContextId: "context-a",
+    now: 1_000_000,
+  });
+  const second = createCoordinator(hooks, {
+    activeExecution: true,
+    ownerId: "tab-b",
+    sourceContextId: "context-b",
+    now: 1_000_000,
+  });
+
+  await first.coordinator.request("push");
+  const firstIntent = first.coordinator.readIntent();
+  const originalDeleteValue = sandbox.GM_deleteValue;
+  let injected = false;
+  let injectedRequest = null;
+  sandbox.GM_deleteValue = (key) => {
+    if (key === MANUAL_SYNC_INTENT_KEY && !injected) {
+      injected = true;
+      injectedRequest = second.coordinator.request("pull");
+    }
+    return originalDeleteValue(key);
+  };
+
+  let result;
+  try {
+    result = await first.coordinator.cancel(firstIntent);
+    await injectedRequest;
+  } finally {
+    sandbox.GM_deleteValue = originalDeleteValue;
+  }
+
+  const latest = first.coordinator.readIntent();
+  assert.equal(injected, true);
+  assert.equal(result.reason, "stale_manual_intent");
+  assert.equal(latest.direction, "pull");
+  assert.notEqual(latest.requestId, firstIntent.requestId);
+};
+
+const testStalePersistCannotOverwriteNewerIntent = async () => {
+  const { hooks, sandbox } = createHarness();
+  const first = createCoordinator(hooks, {
+    activeExecution: true,
+    ownerId: "tab-a",
+    sourceContextId: "context-a",
+    now: 1_000_000,
+  });
+  const second = createCoordinator(hooks, {
+    activeExecution: true,
+    ownerId: "tab-b",
+    sourceContextId: "context-b",
+    now: 1_000_000,
+  });
+
+  await first.coordinator.request("push");
+  first.setActiveExecution(false);
+  second.setActiveExecution(true);
+  const originalSetValue = sandbox.GM_setValue;
+  let injected = false;
+  let injectedRequest = null;
+  sandbox.GM_setValue = (key, value) => {
+    if (
+      (key === MANUAL_SYNC_INTENT_KEY ||
+        String(key).startsWith(`${MANUAL_SYNC_INTENT_KEY}:`)) &&
+      !injected
+    ) {
+      injected = true;
+      injectedRequest = second.coordinator.request("pull");
+    }
+    return originalSetValue(key, value);
+  };
+
+  let result;
+  try {
+    result = await first.coordinator.reconcile("lock_released");
+    await injectedRequest;
+  } finally {
+    sandbox.GM_setValue = originalSetValue;
+  }
+
+  const latest = first.coordinator.readIntent();
+  assert.equal(injected, true);
+  assert.equal(result.reason, "stale_manual_intent");
+  assert.equal(latest.direction, "pull");
+  assert.equal(latest.requestId.startsWith("context-b_"), true);
+};
+
+const testConfirmationOwnerClaimUsesOneDeterministicWinner = async () => {
+  const { hooks, sandbox } = createHarness();
+  const first = createCoordinator(hooks, {
+    activeExecution: true,
+    ownerId: "tab-a",
+    sourceContextId: "context-a",
+    now: 1_000_000,
+  });
+  const second = createCoordinator(hooks, {
+    activeExecution: true,
+    ownerId: "tab-b",
+    sourceContextId: "context-b",
+    now: 1_000_000,
+  });
+
+  await first.coordinator.request("push");
+  first.setActiveExecution(false);
+  second.setActiveExecution(false);
+
+  const originalSetValue = sandbox.GM_setValue;
+  let injected = false;
+  sandbox.GM_setValue = (key, value) => {
+    if (
+      !injected &&
+      (key === MANUAL_SYNC_INTENT_KEY ||
+        String(key).startsWith(MANUAL_SYNC_INTENT_RECORD_KEY_PREFIX)) &&
+      value?.phase === "awaiting_confirmation"
+    ) {
+      injected = true;
+      const competingOwner = {
+        ...value,
+        recordType: value.recordType || undefined,
+        eventId: "transition:context-b:1000000:1:owner-b",
+        confirmationOwnerId: "tab-b",
+        confirmationOwnerToken: "owner-token-b",
+        confirmationOwnerClaimedAt: 1_000_000,
+        transitionKind: "confirmation_owner_claim",
+        transitionSourceContextId: "context-b",
+        transitionAt: 1_000_000,
+      };
+      if (String(key).startsWith(MANUAL_SYNC_INTENT_RECORD_KEY_PREFIX)) {
+        originalSetValue(
+          getIntentRecordKey(competingOwner.eventId),
+          {
+            ...competingOwner,
+            recordType: "transition",
+            parentEventId: value.parentEventId,
+            sequence: value.sequence,
+          }
+        );
+      } else {
+        originalSetValue(key, competingOwner);
+      }
+    }
+    return originalSetValue(key, value);
+  };
+
+  try {
+    await first.coordinator.reconcile("lock_released");
+  } finally {
+    sandbox.GM_setValue = originalSetValue;
+  }
+  await second.coordinator.reconcile("competing_owner_claim");
+
+  const latest = first.coordinator.readIntent();
+  assert.equal(injected, true);
+  assert.equal(first.confirmations.length, 0);
+  assert.equal(second.confirmations.length, 1);
+  assert.equal(latest.confirmationOwnerId, "tab-b");
+  assert.equal(latest.confirmationOwnerToken, "owner-token-b");
+};
+
+const testOldOwnerTeardownCannotMutateNewerDirection = async () => {
+  const { hooks, sandbox } = createHarness();
+  const first = createCoordinator(hooks, {
+    activeExecution: true,
+    ownerId: "tab-a",
+    sourceContextId: "context-a",
+    now: 1_000_000,
+  });
+  const second = createCoordinator(hooks, {
+    activeExecution: true,
+    ownerId: "tab-b",
+    sourceContextId: "context-b",
+    now: 1_000_000,
+  });
+
+  await first.coordinator.request("push");
+  first.setActiveExecution(false);
+  second.setActiveExecution(true);
+  await first.coordinator.reconcile("lock_released");
+
+  const originalSetValue = sandbox.GM_setValue;
+  let injected = false;
+  let injectedRequest = null;
+  sandbox.GM_setValue = (key, value) => {
+    if (
+      !injected &&
+      (key === MANUAL_SYNC_INTENT_KEY ||
+        String(key).startsWith(MANUAL_SYNC_INTENT_RECORD_KEY_PREFIX))
+    ) {
+      injected = true;
+      injectedRequest = second.coordinator.request("pull");
+    }
+    return originalSetValue(key, value);
+  };
+
+  try {
+    first.coordinator.handleLifecycle("pagehide");
+    await injectedRequest;
+  } finally {
+    sandbox.GM_setValue = originalSetValue;
+  }
+
+  const latest = first.coordinator.readIntent();
+  assert.equal(injected, true);
+  assert.equal(latest.direction, "pull");
+  assert.equal(latest.requestId.startsWith("context-b_"), true);
+  await first.confirmations[0].actions.onCancel();
+  assert.equal(first.coordinator.readIntent().requestId, latest.requestId);
+};
+
+const testOldConfirmationCannotExecuteAfterNewDirection = async () => {
+  const { hooks, sandbox } = createHarness();
+  const first = createCoordinator(hooks, {
+    activeExecution: true,
+    ownerId: "tab-a",
+    sourceContextId: "context-a",
+    now: 1_000_000,
+  });
+  const second = createCoordinator(hooks, {
+    activeExecution: true,
+    ownerId: "tab-b",
+    sourceContextId: "context-b",
+    now: 1_000_000,
+  });
+
+  await first.coordinator.request("push");
+  first.setActiveExecution(false);
+  await first.coordinator.reconcile("lock_released");
+  second.setActiveExecution(true);
+
+  const originalSetValue = sandbox.GM_setValue;
+  let injected = false;
+  let injectedRequest = null;
+  sandbox.GM_setValue = (key, value) => {
+    if (
+      !injected &&
+      (key === MANUAL_SYNC_INTENT_KEY ||
+        String(key).startsWith(MANUAL_SYNC_INTENT_RECORD_KEY_PREFIX)) &&
+      value?.phase === "executing"
+    ) {
+      injected = true;
+      injectedRequest = second.coordinator.request("pull");
+    }
+    return originalSetValue(key, value);
+  };
+
+  let result;
+  try {
+    result = await first.confirmations[0].actions.onConfirm();
+    await injectedRequest;
+  } finally {
+    sandbox.GM_setValue = originalSetValue;
+  }
+
+  const latest = first.coordinator.readIntent();
+  assert.equal(injected, true);
+  assert.equal(result.reason, "stale_manual_intent");
+  assert.equal(first.executions.length, 0);
+  assert.equal(latest.direction, "pull");
+};
+
+const testExplicitRequestOrderingDoesNotFollowInvocationOrder = async () => {
+  const { hooks } = createHarness();
+  const first = createCoordinator(hooks, {
+    activeExecution: true,
+    ownerId: "tab-a",
+    sourceContextId: "context-a",
+    now: 1_000_000,
+  });
+  const second = createCoordinator(hooks, {
+    activeExecution: true,
+    ownerId: "tab-b",
+    sourceContextId: "context-b",
+    now: 1_000_000,
+  });
+
+  // context-b wins the exact timestamp tie by the documented source-context
+  // tie-breaker, even though the older-order request is invoked second.
+  await second.coordinator.request("pull");
+  const laterInvocation = await first.coordinator.request("push");
+  const latest = first.coordinator.readIntent();
+
+  assert.equal(latest.direction, "pull");
+  assert.equal(latest.requestId.startsWith("context-b_"), true);
+  assert.equal(laterInvocation.reason, "manual_intent_persist_failed");
+};
+
 const run = async () => {
   await testImmediateManualOperationDoesNotConfirm();
   await testBusyManualOperationIsDurableAndProjectsDirection();
@@ -304,7 +671,15 @@ const run = async () => {
   await testLatestDirectionSupersedesOlderGeneration();
   await testOneConfirmationOwnerAcrossContexts();
   await testConfirmationOwnerTeardownAndLeaseRecovery();
+  await testOldOwnerCallbacksCannotActAfterSameGenerationTakeover();
+  await testOwnerTokenTakeoverRemountsTheConfirmation();
   await testSettingsDisableCancelsPriorityGate();
+  await testStaleDeleteCannotRemoveNewerIntent();
+  await testStalePersistCannotOverwriteNewerIntent();
+  await testConfirmationOwnerClaimUsesOneDeterministicWinner();
+  await testOldOwnerTeardownCannotMutateNewerDirection();
+  await testOldConfirmationCannotExecuteAfterNewDirection();
+  await testExplicitRequestOrderingDoesNotFollowInvocationOrder();
   console.log("[manual-sync-intent-priority] manual priority lifecycle verified.");
 };
 
