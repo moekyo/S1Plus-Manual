@@ -54,6 +54,12 @@ const createCoordinator = (hooks, options = {}) => {
       };
     },
     execute: async (direction, intent) => {
+      if (typeof options.beforeExecute === "function") {
+        options.beforeExecute({
+          direction,
+          intent: toPlainObject(intent),
+        });
+      }
       executions.push({ direction, intent: toPlainObject(intent) });
       return { status: "success", action: `manual_${direction}` };
     },
@@ -99,27 +105,8 @@ const getJournalRecords = (store) =>
     .map(([, value]) => value)
     .filter((value) => value && typeof value === "object");
 
-const getCurrentHeadRecord = (store) => {
-  const records = getJournalRecords(store);
-  let head = records.find((record) => record.recordType === "request") || null;
-  while (head && !head.terminal) {
-    const next = records
-      .filter(
-        (record) =>
-          record.recordType === "transition" &&
-          record.parentEventId === head.eventId &&
-          record.sequence === head.sequence + 1
-      )
-      .sort((left, right) =>
-        String(left.eventId || "").localeCompare(String(right.eventId || ""))
-      );
-    if (next.length === 0) {
-      break;
-    }
-    head = next[next.length - 1];
-  }
-  return head;
-};
+const findJournalRecord = (store, predicate) =>
+  getJournalRecords(store).find(predicate) || null;
 
 const createTransitionRecord = (parent, overrides = {}) => {
   const transitionAt =
@@ -703,7 +690,13 @@ const testStaleOwnerReleaseCannotRebaseOntoNewerHead = async () => {
   await runtime.coordinator.reconcile("lock_released");
 
   const initial = readIntent(store);
-  const head = getCurrentHeadRecord(store);
+  const head = findJournalRecord(
+    store,
+    (record) =>
+      record.recordType === "transition" &&
+      record.transitionKind === "confirmation_owner_claim" &&
+      record.confirmationOwnerId === "tab-a"
+  );
   const ownerExpiresAt = initial.confirmationOwnerExpiresAt;
   const originalListValues = sandbox.GM_listValues;
   const originalSetValue = sandbox.GM_setValue;
@@ -765,7 +758,13 @@ const testStaleConfirmCannotRebaseExecutingTransitionOntoNewerHead = async () =>
   await runtime.coordinator.reconcile("lock_released");
 
   const initial = readIntent(store);
-  const head = getCurrentHeadRecord(store);
+  const head = findJournalRecord(
+    store,
+    (record) =>
+      record.recordType === "transition" &&
+      record.transitionKind === "confirmation_owner_claim" &&
+      record.confirmationOwnerId === "tab-a"
+  );
   const ownerExpiresAt = initial.confirmationOwnerExpiresAt;
   const originalListValues = sandbox.GM_listValues;
   const originalSetValue = sandbox.GM_setValue;
@@ -833,7 +832,10 @@ const testStaleOwnerClaimCannotRegressExecutingHead = async () => {
   });
 
   await first.coordinator.request("push");
-  const initialHead = getCurrentHeadRecord(store);
+  const initialHead = findJournalRecord(
+    store,
+    (record) => record.recordType === "request"
+  );
   const originalListValues = sandbox.GM_listValues;
   const originalSetValue = sandbox.GM_setValue;
   let listCalls = 0;
@@ -914,7 +916,13 @@ const testStaleRequeueCannotResurrectTerminalHead = async () => {
   first.setActiveExecution(false);
   await first.coordinator.reconcile("lock_released");
   const initial = readIntent(store);
-  const head = getCurrentHeadRecord(store);
+  const head = findJournalRecord(
+    store,
+    (record) =>
+      record.recordType === "transition" &&
+      record.transitionKind === "confirmation_owner_claim" &&
+      record.confirmationOwnerId === "tab-a"
+  );
   const originalSetValue = sandbox.GM_setValue;
   let injected = false;
   sandbox.GM_setValue = (key, value) => {
@@ -973,7 +981,13 @@ const testCanonicalUserConfirmBeatsValidLateOwnerTakeoverSibling = async () => {
   await runtime.coordinator.reconcile("lock_released");
 
   const initial = readIntent(store);
-  const head = getCurrentHeadRecord(store);
+  const head = findJournalRecord(
+    store,
+    (record) =>
+      record.recordType === "transition" &&
+      record.transitionKind === "confirmation_owner_claim" &&
+      record.confirmationOwnerId === "tab-a"
+  );
   const ownerExpiresAt = initial.confirmationOwnerExpiresAt;
   const originalSetValue = sandbox.GM_setValue;
   let injected = false;
@@ -1015,6 +1029,405 @@ const testCanonicalUserConfirmBeatsValidLateOwnerTakeoverSibling = async () => {
   assert.equal(runtime.executions.length, 1);
   assert.equal(runtime.executions[0].direction, "push");
   assert.equal(runtime.coordinator.readIntent(), null);
+};
+
+const testLateAncestorSiblingCannotDethroneExecutingBranch = async () => {
+  const { hooks, sandbox, store } = createHarness();
+  const originalSetValue = sandbox.GM_setValue;
+  let injected = false;
+  const runtime = createCoordinator(hooks, {
+    activeExecution: true,
+    ownerId: "tab-a",
+    sourceContextId: "context-a",
+    now: 1_000_000,
+    beforeExecute: () => {
+      if (injected) {
+        return;
+      }
+      injected = true;
+      const root = findJournalRecord(
+        store,
+        (record) => record.recordType === "request"
+      );
+      writeTransitionRecord(
+        originalSetValue,
+        createTransitionRecord(root, {
+          eventId: "transition:context-b:late-ancestor-owner-claim",
+          phase: "awaiting_confirmation",
+          confirmationOwnerId: "tab-b",
+          confirmationOwnerToken: "owner-token-b",
+          confirmationOwnerExpiresAt: 3_000_000,
+          confirmationOwnerClaimedAt: 2_000_000,
+          transitionKind: "confirmation_owner_claim",
+          transitionSourceContextId: "context-b",
+          transitionAt: 2_000_000,
+          expectedConfirmationOwnerToken: "",
+        })
+      );
+      const canonicalBeforeSideEffect = runtime.coordinator.readIntent();
+      assert.equal(canonicalBeforeSideEffect.phase, "executing");
+      assert.equal(canonicalBeforeSideEffect.executionOwnerId, "tab-a");
+    },
+  });
+
+  await runtime.coordinator.request("push");
+  runtime.setActiveExecution(false);
+  await runtime.coordinator.reconcile("lock_released");
+  assert.equal(runtime.confirmations.length, 1);
+
+  const result = await runtime.confirmations[0].actions.onConfirm();
+
+  assert.equal(injected, true);
+  assert.equal(result.status, "success");
+  assert.equal(runtime.executions.length, 1);
+  assert.equal(runtime.executions[0].direction, "push");
+  assert.equal(runtime.confirmations.length, 1);
+  assert.equal(runtime.coordinator.readIntent(), null);
+  assert.equal(runtime.coordinator.isPriorityGateActive(), false);
+};
+
+const testLateAncestorSiblingCannotResurrectTerminalBranch = async () => {
+  const { hooks, sandbox, store } = createHarness();
+  const first = createCoordinator(hooks, {
+    activeExecution: true,
+    ownerId: "tab-a",
+    sourceContextId: "context-a",
+    now: 1_000_000,
+  });
+  const second = createCoordinator(hooks, {
+    activeExecution: false,
+    ownerId: "tab-b",
+    sourceContextId: "context-b",
+    now: 4_000_000,
+  });
+
+  await first.coordinator.request("push");
+  first.setActiveExecution(false);
+  await first.coordinator.reconcile("lock_released");
+  const root = findJournalRecord(
+    store,
+    (record) => record.recordType === "request"
+  );
+  await first.confirmations[0].actions.onCancel();
+  assert.equal(first.coordinator.readIntent(), null);
+
+  const originalSetValue = sandbox.GM_setValue;
+  writeTransitionRecord(
+    originalSetValue,
+    createTransitionRecord(root, {
+      eventId: "transition:context-b:late-ancestor-after-terminal",
+      phase: "awaiting_confirmation",
+      confirmationOwnerId: "tab-b",
+      confirmationOwnerToken: "owner-token-b",
+      confirmationOwnerExpiresAt: 3_000_000,
+      confirmationOwnerClaimedAt: 2_000_000,
+      transitionKind: "confirmation_owner_claim",
+      transitionSourceContextId: "context-b",
+      transitionAt: 2_000_000,
+      expectedConfirmationOwnerToken: "",
+    })
+  );
+
+  const result = await second.coordinator.reconcile(
+    "late_ancestor_after_terminal"
+  );
+
+  assert.equal(result.status, "idle");
+  assert.equal(second.confirmations.length, 0);
+  assert.equal(second.coordinator.readIntent(), null);
+  assert.equal(second.coordinator.isPriorityGateActive(), false);
+  assert.equal(
+    getJournalRecords(store).some(
+      (record) => record.terminal && record.transitionKind === "settle"
+    ),
+    true
+  );
+};
+
+const testExecutingDescendantBeatsQueuedAncestorSibling = async () => {
+  const { hooks, sandbox, store } = createHarness();
+  const runtime = createCoordinator(hooks, {
+    activeExecution: true,
+    ownerId: "tab-a",
+    sourceContextId: "context-a",
+    now: 1_000_000,
+  });
+
+  await runtime.coordinator.request("push");
+  const root = findJournalRecord(
+    store,
+    (record) => record.recordType === "request"
+  );
+  const originalSetValue = sandbox.GM_setValue;
+  const ownerA = writeTransitionRecord(
+    originalSetValue,
+    createTransitionRecord(root, {
+      eventId: "transition:context-a:owner-a-for-executing-branch",
+      phase: "awaiting_confirmation",
+      confirmationOwnerId: "tab-a",
+      confirmationOwnerToken: "owner-token-a",
+      confirmationOwnerExpiresAt: 2_000_000,
+      confirmationOwnerClaimedAt: 1_000_010,
+      transitionKind: "confirmation_owner_claim",
+      transitionSourceContextId: "context-a",
+      transitionAt: 1_000_010,
+      expectedConfirmationOwnerToken: "",
+    })
+  );
+  const ownerB = writeTransitionRecord(
+    originalSetValue,
+    createTransitionRecord(root, {
+      eventId: "transition:context-b:owner-b-for-queued-branch",
+      phase: "awaiting_confirmation",
+      confirmationOwnerId: "tab-b",
+      confirmationOwnerToken: "owner-token-b",
+      confirmationOwnerExpiresAt: 2_000_000,
+      confirmationOwnerClaimedAt: 1_000_020,
+      transitionKind: "confirmation_owner_claim",
+      transitionSourceContextId: "context-b",
+      transitionAt: 1_000_020,
+      expectedConfirmationOwnerToken: "",
+    })
+  );
+  writeTransitionRecord(
+    originalSetValue,
+    createTransitionRecord(ownerA, {
+      eventId: "transition:context-a:executing-descendant",
+      phase: "executing",
+      confirmationOwnerId: "",
+      confirmationOwnerToken: "",
+      confirmationOwnerExpiresAt: 0,
+      confirmationOwnerClaimedAt: 0,
+      executionOwnerId: "tab-a",
+      executionStartedAt: 1_000_030,
+      executionExpiresAt: 3_000_030,
+      transitionKind: "executing",
+      transitionSourceContextId: "context-a",
+      transitionAt: 1_000_030,
+      expectedConfirmationOwnerToken: "owner-token-a",
+    })
+  );
+  writeTransitionRecord(
+    originalSetValue,
+    createTransitionRecord(ownerB, {
+      eventId: "transition:context-b:queued-descendant",
+      phase: "queued",
+      confirmationOwnerId: "",
+      confirmationOwnerToken: "",
+      confirmationOwnerExpiresAt: 0,
+      confirmationOwnerClaimedAt: 0,
+      executionOwnerId: "",
+      executionStartedAt: 0,
+      executionExpiresAt: 0,
+      transitionKind: "queued",
+      transitionSourceContextId: "context-b",
+      transitionAt: 1_000_040,
+      expectedConfirmationOwnerToken: "owner-token-b",
+    })
+  );
+
+  const latest = runtime.coordinator.readIntent();
+
+  assert.equal(latest.phase, "executing");
+  assert.equal(latest.executionOwnerId, "tab-a");
+};
+
+const testTerminalDescendantBeatsExecutingSiblingBranch = async () => {
+  const { hooks, sandbox, store } = createHarness();
+  const runtime = createCoordinator(hooks, {
+    activeExecution: true,
+    ownerId: "tab-a",
+    sourceContextId: "context-a",
+    now: 1_000_000,
+  });
+
+  await runtime.coordinator.request("push");
+  const root = findJournalRecord(
+    store,
+    (record) => record.recordType === "request"
+  );
+  const originalSetValue = sandbox.GM_setValue;
+  const ownerA = writeTransitionRecord(
+    originalSetValue,
+    createTransitionRecord(root, {
+      eventId: "transition:context-a:owner-a-for-terminal-branch",
+      phase: "awaiting_confirmation",
+      confirmationOwnerId: "tab-a",
+      confirmationOwnerToken: "owner-token-a",
+      confirmationOwnerExpiresAt: 2_000_000,
+      confirmationOwnerClaimedAt: 1_000_010,
+      transitionKind: "confirmation_owner_claim",
+      transitionSourceContextId: "context-a",
+      transitionAt: 1_000_010,
+      expectedConfirmationOwnerToken: "",
+    })
+  );
+  const ownerB = writeTransitionRecord(
+    originalSetValue,
+    createTransitionRecord(root, {
+      eventId: "transition:context-b:owner-b-for-executing-branch",
+      phase: "awaiting_confirmation",
+      confirmationOwnerId: "tab-b",
+      confirmationOwnerToken: "owner-token-b",
+      confirmationOwnerExpiresAt: 2_000_000,
+      confirmationOwnerClaimedAt: 1_000_020,
+      transitionKind: "confirmation_owner_claim",
+      transitionSourceContextId: "context-b",
+      transitionAt: 1_000_020,
+      expectedConfirmationOwnerToken: "",
+    })
+  );
+  writeTransitionRecord(
+    originalSetValue,
+    createTransitionRecord(ownerA, {
+      eventId: "transition:context-a:terminal-descendant",
+      phase: "awaiting_confirmation",
+      confirmationOwnerId: "tab-a",
+      confirmationOwnerToken: "owner-token-a",
+      terminal: true,
+      transitionKind: "settle",
+      transitionSourceContextId: "context-a",
+      transitionAt: 1_000_030,
+      expectedConfirmationOwnerToken: "owner-token-a",
+    })
+  );
+  writeTransitionRecord(
+    originalSetValue,
+    createTransitionRecord(ownerB, {
+      eventId: "transition:context-b:executing-descendant",
+      phase: "executing",
+      confirmationOwnerId: "",
+      confirmationOwnerToken: "",
+      confirmationOwnerExpiresAt: 0,
+      confirmationOwnerClaimedAt: 0,
+      executionOwnerId: "tab-b",
+      executionStartedAt: 1_000_040,
+      executionExpiresAt: 3_000_040,
+      transitionKind: "executing",
+      transitionSourceContextId: "context-b",
+      transitionAt: 1_000_040,
+      expectedConfirmationOwnerToken: "owner-token-b",
+    })
+  );
+
+  const latest = runtime.coordinator.readIntent();
+
+  assert.equal(latest, null);
+  assert.equal(runtime.coordinator.isPriorityGateActive(), false);
+  assert.equal(runtime.confirmations.length, 0);
+};
+
+const testInvalidFutureDescendantCannotElevateBranchAuthority = async () => {
+  const { hooks, sandbox, store } = createHarness();
+  const runtime = createCoordinator(hooks, {
+    activeExecution: true,
+    ownerId: "tab-a",
+    sourceContextId: "context-a",
+    now: 1_000_000,
+  });
+
+  await runtime.coordinator.request("push");
+  const root = findJournalRecord(
+    store,
+    (record) => record.recordType === "request"
+  );
+  const originalSetValue = sandbox.GM_setValue;
+  const ownerA = writeTransitionRecord(
+    originalSetValue,
+    createTransitionRecord(root, {
+      eventId: "transition:context-a:expired-owner-branch",
+      phase: "awaiting_confirmation",
+      confirmationOwnerId: "tab-a",
+      confirmationOwnerToken: "owner-token-a",
+      confirmationOwnerExpiresAt: 1_000_015,
+      confirmationOwnerClaimedAt: 1_000_010,
+      transitionKind: "confirmation_owner_claim",
+      transitionSourceContextId: "context-a",
+      transitionAt: 1_000_010,
+      expectedConfirmationOwnerToken: "",
+    })
+  );
+  writeTransitionRecord(
+    originalSetValue,
+    createTransitionRecord(root, {
+      eventId: "transition:context-b:valid-owner-branch",
+      phase: "awaiting_confirmation",
+      confirmationOwnerId: "tab-b",
+      confirmationOwnerToken: "owner-token-b",
+      confirmationOwnerExpiresAt: 2_000_000,
+      confirmationOwnerClaimedAt: 1_000_020,
+      transitionKind: "confirmation_owner_claim",
+      transitionSourceContextId: "context-b",
+      transitionAt: 1_000_020,
+      expectedConfirmationOwnerToken: "",
+    })
+  );
+  writeTransitionRecord(
+    originalSetValue,
+    createTransitionRecord(ownerA, {
+      eventId: "transition:context-a:invalid-expired-executing",
+      phase: "executing",
+      confirmationOwnerId: "",
+      confirmationOwnerToken: "",
+      confirmationOwnerExpiresAt: 0,
+      confirmationOwnerClaimedAt: 0,
+      executionOwnerId: "tab-a",
+      executionStartedAt: 2_000_000,
+      executionExpiresAt: 3_000_000,
+      transitionKind: "executing",
+      transitionSourceContextId: "context-a",
+      transitionAt: 2_000_000,
+      expectedConfirmationOwnerToken: "owner-token-a",
+    })
+  );
+
+  const latest = runtime.coordinator.readIntent();
+
+  assert.equal(latest.phase, "awaiting_confirmation");
+  assert.equal(latest.confirmationOwnerId, "tab-b");
+  assert.equal(latest.confirmationOwnerToken, "owner-token-b");
+};
+
+const testJournalPruneRetainsRootWhileDescendantIsActive = async () => {
+  const { hooks, sandbox, store } = createHarness();
+  const runtime = createCoordinator(hooks, {
+    activeExecution: true,
+    ownerId: "tab-a",
+    sourceContextId: "context-a",
+    now: 1_000_000,
+  });
+
+  await runtime.coordinator.request("push");
+  const root = findJournalRecord(
+    store,
+    (record) => record.recordType === "request"
+  );
+  const child = createTransitionRecord(root, {
+    eventId: "transition:context-a:recent-descendant-for-prune",
+    phase: "awaiting_confirmation",
+    confirmationOwnerId: "tab-a",
+    confirmationOwnerToken: "owner-token-a",
+    confirmationOwnerExpiresAt: 2_500_000,
+    confirmationOwnerClaimedAt: 1_999_000,
+    transitionKind: "confirmation_owner_claim",
+    transitionSourceContextId: "context-a",
+    transitionAt: 1_999_000,
+    expectedConfirmationOwnerToken: "",
+  });
+  const rootKey = getIntentRecordKey(root.eventId);
+  const childKey = getIntentRecordKey(child.eventId);
+  sandbox.GM_setValue(childKey, child);
+  const retainedCount = hooks.pruneManualSyncIntentRecordsForTest(2_000_000);
+  assert.equal(retainedCount, 0);
+  assert.equal(store.has(rootKey), true);
+  assert.equal(store.has(childKey), true);
+  assert.equal(store.has(MANUAL_SYNC_INTENT_KEY), true);
+
+  const prunedCount = hooks.pruneManualSyncIntentRecordsForTest(4_000_000);
+  assert.equal(prunedCount, 3);
+  assert.equal(store.has(rootKey), false);
+  assert.equal(store.has(childKey), false);
+  assert.equal(store.has(MANUAL_SYNC_INTENT_KEY), false);
 };
 
 const testExplicitRequestOrderingDoesNotFollowInvocationOrder = async () => {
@@ -1066,6 +1479,12 @@ const run = async () => {
   await testStaleOwnerClaimCannotRegressExecutingHead();
   await testStaleRequeueCannotResurrectTerminalHead();
   await testCanonicalUserConfirmBeatsValidLateOwnerTakeoverSibling();
+  await testLateAncestorSiblingCannotDethroneExecutingBranch();
+  await testLateAncestorSiblingCannotResurrectTerminalBranch();
+  await testExecutingDescendantBeatsQueuedAncestorSibling();
+  await testTerminalDescendantBeatsExecutingSiblingBranch();
+  await testInvalidFutureDescendantCannotElevateBranchAuthority();
+  await testJournalPruneRetainsRootWhileDescendantIsActive();
   await testExplicitRequestOrderingDoesNotFollowInvocationOrder();
   console.log("[manual-sync-intent-priority] manual priority lifecycle verified.");
 };

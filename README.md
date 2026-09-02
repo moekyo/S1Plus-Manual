@@ -119,7 +119,7 @@ S1 Plus 是一个面向 Stage1st（S1）的用户脚本，目标是让论坛浏�
   - 手动/后台/启动/前台补同步四类锁
   - 全局同步锁统一互斥
   - 锁心跳与失锁中止
-  - 导航栏直接拉取 / 推送是用户显式覆盖操作：没有活动同步时立即执行；如果已有同步占用执行锁，则登记精确的 durable 手动意图并在导航栏保留用户选择的方向，当前执行完成后再请求确认，不删除正在运行任务的锁或心跳。跨标签页 authority 使用不可变的 per-request/per-transition GM records；旧代次不能覆盖或删除较新的显式方向，confirmation owner 通过 fencing token 收敛为单一有效 owner；canonical transition 还受调用者观察到的 `expectedHeadEventId` 约束，失去 head authority 的旧 callback 不会 rebase 或执行
+  - 导航栏直接拉取 / 推送是用户显式覆盖操作：没有活动同步时立即执行；如果已有同步占用执行锁，则登记精确的 durable 手动意图并在导航栏保留用户选择的方向，当前执行完成后再请求确认，不删除正在运行任务的锁或心跳。跨标签页 authority 使用不可变的 per-request/per-transition GM records；旧代次不能覆盖或删除较新的显式方向，confirmation owner 通过 fencing token 收敛为单一有效 owner；canonical transition 还受调用者观察到的 `expectedHeadEventId` 约束，失去 head authority 的旧 callback 不会 rebase 或执行；resolver 只沿合法 transition path 计算 branch-level monotonic authority，executing/terminal descendant 不会被 ancestor late maintenance branch 推翻
 - 稳定性机制：
   - 请求超时 + 重试
   - 自动同步熔断（连续失败暂停）
