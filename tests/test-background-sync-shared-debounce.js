@@ -13,6 +13,11 @@ const PENDING_KEY = "s1p_pending_auto_sync_request";
 const LAST_MODIFIED_KEY = "s1p_last_modified";
 const LAST_DIRTY_PROVENANCE_KEY = "s1p_last_local_dirty_provenance";
 const GLOBAL_SYNC_LOCK_KEY = "s1p_sync_global_lock";
+const MANUAL_SYNC_INTENT_KEY = "s1p_pending_manual_sync_intent";
+const MANUAL_SYNC_LOCK_KEY = "s1p_manual_sync_lock";
+const BACKGROUND_SYNC_LOCK_KEY = "s1p_background_sync_lock";
+const STARTUP_SYNC_LOCK_KEY = "s1p_startup_sync_lock";
+const FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY = "s1p_foreground_followup_sync_lock";
 const READ_PROGRESS_DELAY_MS = 20 * 1000;
 const GENERAL_DELAY_MS = 5 * 1000;
 const OWNER_LEASE_MS = 30 * 1000;
@@ -246,6 +251,74 @@ const testHashEqualCompletionSettlesWithoutFollowUp = () => {
   });
 
   assert.equal(result.pendingCleanup.status, "cleared");
+  assert.equal(result.sharedDebounceCleanup.status, "cleared");
+  assert.equal(tabA.followUps.length, 0);
+  assert.equal(tabA.scheduler.inspect().pending, null);
+  assert.equal(tabA.scheduler.inspect().state, null);
+};
+
+const testConcurrentPendingCleanupDoesNotCreateFalseFollowUp = () => {
+  const { makeScheduler, sandbox, store } = createScenario({ now: 6_700_000 });
+  const tabA = makeScheduler({ tabId: "tab-a" });
+  tabA.scheduler.queue({ source: "read_progress", lastModified: 671 });
+
+  const originalGetValue = sandbox.GM_getValue;
+  let pendingReads = 0;
+  sandbox.GM_getValue = (key, defaultValue) => {
+    const value = originalGetValue(key, defaultValue);
+    if (key === PENDING_KEY && value && ++pendingReads === 3) {
+      store.delete(PENDING_KEY);
+      return defaultValue;
+    }
+    return value;
+  };
+  let result;
+  try {
+    result = tabA.scheduler.complete({
+      status: "success",
+      action: "no_change",
+      reason: "hash_equal",
+      coveredLastModified: 671,
+      coveredLocalLastUpdated: 671,
+    });
+  } finally {
+    sandbox.GM_getValue = originalGetValue;
+  }
+
+  assert.equal(result.pendingCleanup.status, "cleared");
+  assert.equal(tabA.followUps.length, 0);
+  assert.equal(tabA.scheduler.inspect().pending, null);
+  assert.equal(tabA.scheduler.inspect().state, null);
+};
+
+const testConcurrentSharedCleanupDoesNotCreateFalseFollowUp = () => {
+  const { makeScheduler, sandbox, store } = createScenario({ now: 6_800_000 });
+  const tabA = makeScheduler({ tabId: "tab-a" });
+  tabA.scheduler.queue({ source: "read_progress", lastModified: 681 });
+
+  const originalGetValue = sandbox.GM_getValue;
+  let stateReads = 0;
+  sandbox.GM_getValue = (key, defaultValue) => {
+    const value = originalGetValue(key, defaultValue);
+    if (key === DEBOUNCE_STATE_KEY && value && ++stateReads === 3) {
+      store.delete(DEBOUNCE_STATE_KEY);
+      return defaultValue;
+    }
+    return value;
+  };
+  let result;
+  try {
+    result = tabA.scheduler.complete({
+      status: "success",
+      action: "no_change",
+      reason: "hash_equal",
+      coveredLastModified: 681,
+      coveredLocalLastUpdated: 681,
+    });
+  } finally {
+    sandbox.GM_getValue = originalGetValue;
+  }
+
   assert.equal(result.sharedDebounceCleanup.status, "cleared");
   assert.equal(tabA.followUps.length, 0);
   assert.equal(tabA.scheduler.inspect().pending, null);
@@ -583,12 +656,19 @@ const testPagehideFinalizesAndHandsOffWithoutTriggeringSync = async () => {
   });
   const syncSystem = hooks.s1pCreateSyncSystemFacade({ lifecycleAdapter });
   syncSystem.initialize();
-  assert.equal(valueChangeListeners.length, 2);
+  assert.equal(valueChangeListeners.length, 9);
   assert.deepEqual(
     valueChangeListeners.map((listener) => listener.key).sort(),
     [
       DEBOUNCE_STATE_KEY,
       FOREGROUND_PENDING_KEY,
+      MANUAL_SYNC_INTENT_KEY,
+      GLOBAL_SYNC_LOCK_KEY,
+      MANUAL_SYNC_LOCK_KEY,
+      BACKGROUND_SYNC_LOCK_KEY,
+      STARTUP_SYNC_LOCK_KEY,
+      FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY,
+      "s1p_settings",
     ].sort()
   );
   const tabA = makeScheduler({ tabId: "tab-a" });
@@ -723,6 +803,8 @@ const main = async () => {
   testDueDefersWhileRunningSyncOwnsLock();
   testCoveredCompletionClearsPendingAndSharedState();
   testHashEqualCompletionSettlesWithoutFollowUp();
+  testConcurrentPendingCleanupDoesNotCreateFalseFollowUp();
+  testConcurrentSharedCleanupDoesNotCreateFalseFollowUp();
   testNewerDirtyIsRetainedWithOneFollowUp();
   testPendingRecoveryWatchesExistingSchedulerOwner();
   testRetrySelectsSharedThenLocalFallbackOnWriteLoss();

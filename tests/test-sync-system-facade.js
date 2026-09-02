@@ -358,6 +358,38 @@ const testProductionFacadeManualSyncUsesRuntimeGate = async () => {
   );
 };
 
+const testProductionFacadeQueuesManualDirectionBehindForeignExecution = async () => {
+  const { hooks, store } = createHarness();
+  store.set("s1p_settings", readySyncSettings);
+  store.set("s1p_sync_global_lock", {
+    owner: "foreign-tab",
+    mode: "background",
+    timestamp: Date.now(),
+    ttlMs: 45 * 1000,
+  });
+
+  const result = await hooks.s1pSyncSystem.requestSync({
+    kind: "manual_push",
+  });
+  const intent = toPlainObject(store.get("s1p_pending_manual_sync_intent"));
+  const projected = toPlainObject(
+    hooks.s1pSyncSystem.readState({ surface: "navbar" })
+  );
+
+  assert.equal(result.status, "queued");
+  assert.equal(result.phase, "queued_waiting_for_execution_boundary");
+  assert.equal(intent.direction, "push");
+  assert.equal(projected.displayPhase, "pending");
+  assert.equal(projected.displayOperation, "push");
+  assert.equal(projected.displaySource, "manual_sync");
+  assert.deepEqual(store.get("s1p_sync_global_lock"), {
+    owner: "foreign-tab",
+    mode: "background",
+    timestamp: store.get("s1p_sync_global_lock").timestamp,
+    ttlMs: 45 * 1000,
+  });
+};
+
 const testFacadePreservesEverySyncIntentContract = async () => {
   const { hooks } = createHarness();
   const calls = [];
@@ -450,6 +482,7 @@ const run = async () => {
   await testFacadeRoutesSyncIntentsAndReadsProjectedState();
   testProductionFacadeBackgroundPushUsesRuntimeGate();
   await testProductionFacadeManualSyncUsesRuntimeGate();
+  await testProductionFacadeQueuesManualDirectionBehindForeignExecution();
   await testFacadePreservesEverySyncIntentContract();
   console.log("[sync-system-facade] Phase 6 façade interface verified.");
 };
