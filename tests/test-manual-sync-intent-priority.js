@@ -93,6 +93,60 @@ const createCoordinator = (hooks, options = {}) => {
 
 const readIntent = (store) => toPlainObject(store.get(MANUAL_SYNC_INTENT_KEY));
 
+const getJournalRecords = (store) =>
+  Array.from(store.entries())
+    .filter(([key]) => String(key).startsWith(MANUAL_SYNC_INTENT_RECORD_KEY_PREFIX))
+    .map(([, value]) => value)
+    .filter((value) => value && typeof value === "object");
+
+const getCurrentHeadRecord = (store) => {
+  const records = getJournalRecords(store);
+  let head = records.find((record) => record.recordType === "request") || null;
+  while (head && !head.terminal) {
+    const next = records
+      .filter(
+        (record) =>
+          record.recordType === "transition" &&
+          record.parentEventId === head.eventId &&
+          record.sequence === head.sequence + 1
+      )
+      .sort((left, right) =>
+        String(left.eventId || "").localeCompare(String(right.eventId || ""))
+      );
+    if (next.length === 0) {
+      break;
+    }
+    head = next[next.length - 1];
+  }
+  return head;
+};
+
+const createTransitionRecord = (parent, overrides = {}) => {
+  const transitionAt =
+    Number(overrides.transitionAt) || Number(parent.transitionAt) || 1;
+  const eventId = overrides.eventId || `test-transition:${transitionAt}`;
+  return {
+    ...parent,
+    ...overrides,
+    version: 2,
+    recordType: "transition",
+    eventId,
+    parentEventId: parent.eventId,
+    expectedHeadEventId: parent.eventId,
+    sequence: parent.sequence + 1,
+    terminal: overrides.terminal === true,
+    transitionKind: overrides.transitionKind || "state",
+    transitionSourceContextId:
+      overrides.transitionSourceContextId || "context-test",
+    transitionAt,
+  };
+};
+
+const writeTransitionRecord = (setValue, record) => {
+  setValue(getIntentRecordKey(record.eventId), record);
+  return record;
+};
+
 const testImmediateManualOperationDoesNotConfirm = async () => {
   const { hooks, store } = createHarness();
   const runtime = createCoordinator(hooks, { activeExecution: false });
@@ -635,6 +689,334 @@ const testOldConfirmationCannotExecuteAfterNewDirection = async () => {
   assert.equal(latest.direction, "pull");
 };
 
+const testStaleOwnerReleaseCannotRebaseOntoNewerHead = async () => {
+  const { hooks, sandbox, store } = createHarness();
+  const runtime = createCoordinator(hooks, {
+    activeExecution: true,
+    ownerId: "tab-a",
+    sourceContextId: "context-a",
+    now: 1_000_000,
+  });
+
+  await runtime.coordinator.request("push");
+  runtime.setActiveExecution(false);
+  await runtime.coordinator.reconcile("lock_released");
+
+  const initial = readIntent(store);
+  const head = getCurrentHeadRecord(store);
+  const ownerExpiresAt = initial.confirmationOwnerExpiresAt;
+  const originalListValues = sandbox.GM_listValues;
+  const originalSetValue = sandbox.GM_setValue;
+  let listCalls = 0;
+  let injected = false;
+  sandbox.GM_listValues = () => {
+    listCalls += 1;
+    if (listCalls === 2 && !injected) {
+      injected = true;
+      writeTransitionRecord(
+        originalSetValue,
+        createTransitionRecord(head, {
+          eventId: "transition:context-b:takeover-after-release-read",
+          phase: "awaiting_confirmation",
+          confirmationOwnerId: "tab-b",
+          confirmationOwnerToken: "owner-token-b",
+          confirmationOwnerExpiresAt: ownerExpiresAt + 10_000,
+          confirmationOwnerClaimedAt: ownerExpiresAt + 1,
+          transitionKind: "confirmation_owner_claim",
+          transitionSourceContextId: "context-b",
+          transitionAt: ownerExpiresAt + 1,
+          expectedConfirmationOwnerToken: initial.confirmationOwnerToken,
+        })
+      );
+    }
+    return originalListValues();
+  };
+
+  try {
+    runtime.coordinator.handleLifecycle("pagehide");
+  } finally {
+    sandbox.GM_listValues = originalListValues;
+  }
+
+  const latest = runtime.coordinator.readIntent();
+  assert.equal(injected, true);
+  assert.equal(latest.direction, "push");
+  assert.equal(latest.confirmationOwnerId, "tab-b");
+  assert.equal(latest.confirmationOwnerToken, "owner-token-b");
+  assert.equal(
+    getJournalRecords(store).some(
+      (record) => record.transitionKind === "confirmation_owner_release"
+    ),
+    false
+  );
+};
+
+const testStaleConfirmCannotRebaseExecutingTransitionOntoNewerHead = async () => {
+  const { hooks, sandbox, store } = createHarness();
+  const runtime = createCoordinator(hooks, {
+    activeExecution: true,
+    ownerId: "tab-a",
+    sourceContextId: "context-a",
+    now: 1_000_000,
+  });
+
+  await runtime.coordinator.request("push");
+  runtime.setActiveExecution(false);
+  await runtime.coordinator.reconcile("lock_released");
+
+  const initial = readIntent(store);
+  const head = getCurrentHeadRecord(store);
+  const ownerExpiresAt = initial.confirmationOwnerExpiresAt;
+  const originalListValues = sandbox.GM_listValues;
+  const originalSetValue = sandbox.GM_setValue;
+  let listCalls = 0;
+  let injected = false;
+  sandbox.GM_listValues = () => {
+    listCalls += 1;
+    if (listCalls === 2 && !injected) {
+      injected = true;
+      writeTransitionRecord(
+        originalSetValue,
+        createTransitionRecord(head, {
+          eventId: "transition:context-b:takeover-before-confirm-append",
+          phase: "awaiting_confirmation",
+          confirmationOwnerId: "tab-b",
+          confirmationOwnerToken: "owner-token-b",
+          confirmationOwnerExpiresAt: ownerExpiresAt + 10_000,
+          confirmationOwnerClaimedAt: ownerExpiresAt + 1,
+          transitionKind: "confirmation_owner_claim",
+          transitionSourceContextId: "context-b",
+          transitionAt: ownerExpiresAt + 1,
+          expectedConfirmationOwnerToken: initial.confirmationOwnerToken,
+        })
+      );
+    }
+    return originalListValues();
+  };
+
+  let result;
+  try {
+    result = await runtime.confirmations[0].actions.onConfirm();
+  } finally {
+    sandbox.GM_listValues = originalListValues;
+  }
+
+  const latest = runtime.coordinator.readIntent();
+  assert.equal(injected, true);
+  assert.equal(result.reason, "stale_manual_intent");
+  assert.equal(runtime.executions.length, 0);
+  assert.equal(latest.direction, "push");
+  assert.equal(latest.phase, "awaiting_confirmation");
+  assert.equal(latest.confirmationOwnerId, "tab-b");
+  assert.equal(latest.confirmationOwnerToken, "owner-token-b");
+  assert.equal(
+    getJournalRecords(store).some(
+      (record) => record.transitionKind === "executing"
+    ),
+    false
+  );
+};
+
+const testStaleOwnerClaimCannotRegressExecutingHead = async () => {
+  const { hooks, sandbox, store } = createHarness();
+  const first = createCoordinator(hooks, {
+    activeExecution: true,
+    ownerId: "tab-a",
+    sourceContextId: "context-a",
+    now: 1_000_000,
+  });
+  const second = createCoordinator(hooks, {
+    activeExecution: false,
+    ownerId: "tab-b",
+    sourceContextId: "context-b",
+    now: 1_000_000,
+  });
+
+  await first.coordinator.request("push");
+  const initialHead = getCurrentHeadRecord(store);
+  const originalListValues = sandbox.GM_listValues;
+  const originalSetValue = sandbox.GM_setValue;
+  let listCalls = 0;
+  let injected = false;
+  sandbox.GM_listValues = () => {
+    listCalls += 1;
+    if (listCalls === 2 && !injected) {
+      injected = true;
+      const ownerTokenA = "owner-token-a";
+      const ownerClaim = writeTransitionRecord(
+        originalSetValue,
+        createTransitionRecord(initialHead, {
+          eventId: "transition:context-a:claim-before-stale-recovery",
+          phase: "awaiting_confirmation",
+          confirmationOwnerId: "tab-a",
+          confirmationOwnerToken: ownerTokenA,
+          confirmationOwnerExpiresAt: 1_020_000,
+          confirmationOwnerClaimedAt: 1_000_000,
+          transitionKind: "confirmation_owner_claim",
+          transitionSourceContextId: "context-a",
+          transitionAt: 1_000_000,
+          expectedConfirmationOwnerToken: "",
+        })
+      );
+      writeTransitionRecord(
+        originalSetValue,
+        createTransitionRecord(ownerClaim, {
+          eventId: "transition:context-a:executing-before-stale-recovery",
+          phase: "executing",
+          confirmationOwnerId: "",
+          confirmationOwnerToken: "",
+          confirmationOwnerExpiresAt: 0,
+          confirmationOwnerClaimedAt: 0,
+          executionOwnerId: "tab-a",
+          executionStartedAt: 1_000_001,
+          executionExpiresAt: 1_030_001,
+          transitionKind: "executing",
+          transitionSourceContextId: "context-a",
+          transitionAt: 1_000_001,
+          expectedConfirmationOwnerToken: ownerTokenA,
+        })
+      );
+    }
+    return originalListValues();
+  };
+
+  let result;
+  try {
+    result = await second.coordinator.reconcile("stale_owner_claim");
+  } finally {
+    sandbox.GM_listValues = originalListValues;
+  }
+
+  const latest = first.coordinator.readIntent();
+  assert.equal(injected, true);
+  assert.equal(result.reason, "stale_manual_intent");
+  assert.equal(latest.phase, "executing");
+  assert.equal(latest.executionOwnerId, "tab-a");
+  assert.equal(second.confirmations.length, 0);
+};
+
+const testStaleRequeueCannotResurrectTerminalHead = async () => {
+  const { hooks, sandbox, store } = createHarness();
+  const first = createCoordinator(hooks, {
+    activeExecution: true,
+    ownerId: "tab-a",
+    sourceContextId: "context-a",
+    now: 1_000_000,
+  });
+  const second = createCoordinator(hooks, {
+    activeExecution: true,
+    ownerId: "tab-b",
+    sourceContextId: "context-b",
+    now: 1_000_000,
+  });
+
+  await first.coordinator.request("push");
+  first.setActiveExecution(false);
+  await first.coordinator.reconcile("lock_released");
+  const initial = readIntent(store);
+  const head = getCurrentHeadRecord(store);
+  const originalSetValue = sandbox.GM_setValue;
+  let injected = false;
+  sandbox.GM_setValue = (key, value) => {
+    if (
+      !injected &&
+      String(key).startsWith(MANUAL_SYNC_INTENT_RECORD_KEY_PREFIX) &&
+      value?.transitionKind === "queued"
+    ) {
+      injected = true;
+      writeTransitionRecord(
+        originalSetValue,
+        createTransitionRecord(head, {
+          eventId: "transition:context-a:terminal-before-stale-requeue",
+          phase: "awaiting_confirmation",
+          confirmationOwnerId: initial.confirmationOwnerId,
+          confirmationOwnerToken: initial.confirmationOwnerToken,
+          confirmationOwnerExpiresAt: initial.confirmationOwnerExpiresAt,
+          confirmationOwnerClaimedAt: initial.confirmationOwnerClaimedAt,
+          terminal: true,
+          transitionKind: "settle",
+          transitionSourceContextId: "context-a",
+          transitionAt: Number(value.transitionAt) - 1,
+          expectedConfirmationOwnerToken: initial.confirmationOwnerToken,
+        })
+      );
+    }
+    return originalSetValue(key, value);
+  };
+
+  let result;
+  try {
+    result = await second.coordinator.reconcile("execution_boundary_busy");
+  } finally {
+    sandbox.GM_setValue = originalSetValue;
+  }
+
+  const latest = first.coordinator.readIntent();
+  assert.equal(injected, true);
+  assert.equal(result.reason, "stale_manual_intent");
+  assert.equal(latest, null);
+  assert.equal(second.confirmations.length, 0);
+  assert.equal(second.executions.length, 0);
+};
+
+const testCanonicalUserConfirmBeatsValidLateOwnerTakeoverSibling = async () => {
+  const { hooks, sandbox, store } = createHarness();
+  const runtime = createCoordinator(hooks, {
+    activeExecution: true,
+    ownerId: "tab-a",
+    sourceContextId: "context-a",
+    now: 1_000_000,
+  });
+
+  await runtime.coordinator.request("push");
+  runtime.setActiveExecution(false);
+  await runtime.coordinator.reconcile("lock_released");
+
+  const initial = readIntent(store);
+  const head = getCurrentHeadRecord(store);
+  const ownerExpiresAt = initial.confirmationOwnerExpiresAt;
+  const originalSetValue = sandbox.GM_setValue;
+  let injected = false;
+  sandbox.GM_setValue = (key, value) => {
+    if (
+      !injected &&
+      String(key).startsWith(MANUAL_SYNC_INTENT_RECORD_KEY_PREFIX) &&
+      value?.transitionKind === "executing"
+    ) {
+      injected = true;
+      writeTransitionRecord(
+        originalSetValue,
+        createTransitionRecord(head, {
+          eventId: "transition:context-b:late-valid-owner-takeover",
+          phase: "awaiting_confirmation",
+          confirmationOwnerId: "tab-b",
+          confirmationOwnerToken: "owner-token-b",
+          confirmationOwnerExpiresAt: ownerExpiresAt + 10_000,
+          confirmationOwnerClaimedAt: ownerExpiresAt + 1,
+          transitionKind: "confirmation_owner_claim",
+          transitionSourceContextId: "context-b",
+          transitionAt: ownerExpiresAt + 1,
+          expectedConfirmationOwnerToken: initial.confirmationOwnerToken,
+        })
+      );
+    }
+    return originalSetValue(key, value);
+  };
+
+  let result;
+  try {
+    result = await runtime.confirmations[0].actions.onConfirm();
+  } finally {
+    sandbox.GM_setValue = originalSetValue;
+  }
+
+  assert.equal(injected, true);
+  assert.equal(result.status, "success");
+  assert.equal(runtime.executions.length, 1);
+  assert.equal(runtime.executions[0].direction, "push");
+  assert.equal(runtime.coordinator.readIntent(), null);
+};
+
 const testExplicitRequestOrderingDoesNotFollowInvocationOrder = async () => {
   const { hooks } = createHarness();
   const first = createCoordinator(hooks, {
@@ -679,6 +1061,11 @@ const run = async () => {
   await testConfirmationOwnerClaimUsesOneDeterministicWinner();
   await testOldOwnerTeardownCannotMutateNewerDirection();
   await testOldConfirmationCannotExecuteAfterNewDirection();
+  await testStaleOwnerReleaseCannotRebaseOntoNewerHead();
+  await testStaleConfirmCannotRebaseExecutingTransitionOntoNewerHead();
+  await testStaleOwnerClaimCannotRegressExecutingHead();
+  await testStaleRequeueCannotResurrectTerminalHead();
+  await testCanonicalUserConfirmBeatsValidLateOwnerTakeoverSibling();
   await testExplicitRequestOrderingDoesNotFollowInvocationOrder();
   console.log("[manual-sync-intent-priority] manual priority lifecycle verified.");
 };
