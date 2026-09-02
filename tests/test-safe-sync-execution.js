@@ -722,7 +722,7 @@ const testAcquireFailurePropagatesWithoutStartingSync = async () => {
   assert.deepStrictEqual(calls, ["lock:acquire"]);
 };
 
-const testManualOverridePreservesActiveSyncLocksAndDurableIntent = async () => {
+const testManualOverridePreservesActiveSyncLocksAndPendingWork = async () => {
   const { hooks, store } = createHarness();
   const now = Date.now();
 
@@ -1585,7 +1585,7 @@ const testPhase3CallSitesUseDedicatedHelpers = () => {
   await testOwnershipVerificationFailureRollsBackOwnedModeLock();
   await testLockUnavailableCallbackFailurePropagatesWithoutStartingSync();
   await testAcquireFailurePropagatesWithoutStartingSync();
-  await testManualOverridePreservesActiveSyncLocksAndDurableIntent();
+  await testManualOverridePreservesActiveSyncLocksAndPendingWork();
   await testInitialSetupPreemptionPreservesForeignManualLock();
   await testInitialSetupPreservesForeignAutomaticLocks();
   await testManualOverrideCancelsRemoteRetryBackoff();
