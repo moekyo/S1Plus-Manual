@@ -145,7 +145,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 
 | Tab | 内容 | 说明 |
 |-----|------|------|
-| 日志 | 调试控制台 | 捕获 console 输出、JS 错误、unhandledrejection；支持按级别筛选、关键词搜索、复制/清空/展开；可拖拽 resize，尺寸持久化到 `s1p_debug_console_size`；日志缓冲区最多保留 1000 条，通过 `sessionStorage` 在同标签页刷新后自动恢复，关闭标签页后销毁 |
+| 日志 | 调试控制台 | 常驻关键结构化事件，面板打开时额外捕获 console；支持级别/模块/操作/关键词筛选、操作摘要、复制/清空/展开、导出/合并和临时详细诊断；最多 1000 条及约 1 MiB，通过 sessionStorage 在同标签页刷新后恢复 |
 | 诊断信息 | 同步诊断 | 展示 `buildSyncDiagnosticsRows()` 的诊断行（最近动作/触发源/结果/阻断/哈希/探测等）；[刷新][复制诊断][重置诊断] 按钮 |
 | 指示器调试 | 同步指示器调试 | 手动切换指示器 phase、选择 source/operation、播放固定转场 Demo（含 pending push/pull → running、probe → pull）；只覆盖导航栏指示器预览，不改真实同步状态 |
 | UI 组件 | 组件展示与弹窗预览 | 按类别展示按钮、开关、输入、列表、确认栏、tooltip 等组件；弹窗预览覆盖确认/输入/高级确认、版本欢迎、S1 NUX 推荐、手动同步选择、启动同步冲突、Token 过期提醒、Token 日期配置、阅读记录详情、图片查看器等场景 |
@@ -174,10 +174,24 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - 面板中“实际 phase/source/operation”和“实际显示”仍读取真实状态，可用于对照预览覆盖；“预览显示”展示经显示层解析后的 `phase / operation`，用于确认调试覆盖是否真的命中目标图标类型
 - `running` 等状态的调试预览会跳过真实同步锁门控，仅用于人工观察 UI
 - 统一面板的显示状态持久化到 `s1p_debug_console_visible`（GM 存储，跨标签一致）；尺寸持久化到 `s1p_debug_console_size`（GM 存储）
-- 日志收集器生命周期：仅在调试面板可见时启动（`document-start` 阶段检查 `s1p_debug_console_visible`）；面板隐藏时调用 `stopLogCollector()` 恢复原始 console 方法并移除事件监听器
-- 日志持久化：通过 `sessionStorage` 键 `s1p_log_buffer` 实现，每条日志 300ms 防抖写入；刷新页面后 `restoreLogBufferFromSession()` 自动恢复（包括展开状态）；清空日志时同步清除 sessionStorage
+- 关键事件由 `s1pRecordDiagnosticEvent()` 常驻采集；console wrapper 仍只在面板开启时运行，隐藏时恢复原始 console。`s1pInitializeDiagnostics()` 在初始化入口绑定异常和 pagehide 收尾，和可选收集器避免重复记录同一异常
+- 日志持久化：`s1p_log_buffer` 含 schemaVersion/entries/loss/展开状态；300ms 固定批次写入，持续事件不会无限推迟落盘；同步兼容摘要另以 1s 批次刷新，`getSyncDiagnostics()` 合并内存中的待刷摘要。pagehide 刷新两者，失败仅增加诊断损失计数，不影响同步结果
 - 日志收集器可在同页面会话内多次启停（通过 `startLogCollector` / `stopLogCollector`），每次启动捕获当前 console 引用，并在停止时只恢复 S1 Plus 自己安装的 wrapper，避免多轮 bind 嵌套或覆盖其他脚本后续安装的 console patch
 - 这套面板框架应优先作为通用调试容器复用，而非为每个功能再单独写一套浮动面板
+
+### 诊断事件与排查约定
+
+- `s1pRecordDiagnosticEvent(event, options)` 是结构化入口，字段含 `module / operationId / parentOperationId / status / reason / message / details / context`。事件代码保持稳定，中文文案用于显示。存储的是脱敏快照，不保留业务对象或 DOM 引用；旧 console 入口继续兼容
+- 操作 ID 含页面随机标识，避免不同标签页在同毫秒生成相同 ID。网络请求使用独立子操作 ID，关联当前页面活动事务；执行锁另有 `executionId`，便于将其他页面的观察与持有者日志合并。导出时间顺序不等于跨设备因果顺序
+- 锁事件：`lock.acquired / lock.renewed / lock.renewal_failed / lock.released / lock.release_not_owned` 来自执行者；`lock.owner_observed / lock.renewal_observed / lock.removal_observed / lock.expired_observed` 来自观察者。记录移除不能单独证明正常完成，过期不能写成释放；旧锁缺少 acquiredAt/stage 时明确保留 unknown/null
+- 续租每 30 秒输出一次摘要，携带 heldMs、stage、stageForMs、renewals；pagehide 留下持有者离开回执但不删除执行锁。后台拒绝原因明确区分 `manual_priority_pending / active_execution_lock / active_execution_after_preempt_check / ownership_verification_failed / unknown_lock_mode`
+- 同类等待在 30 秒窗口内合并，保留次数、首末时间、首末详情；持有者、原因、状态或页面上下文变化不得合并。普通控制台噪声先淘汰，随后淘汰非失败操作记录；最近最多 20 个失败操作（含父操作）的已有前文优先保留，但仍受总容量硬上限约束
+- 详情限制：递归最多 7 层、每个对象最多 60 个字段、字符串最多 4096 字符、一次净化的字符串预算 16000 字符。超限标记 `[TRUNCATED]`；凭据、请求/响应正文、DOM 和 URL 查询参数等不进入导出。损失计数在 JSON 的 `coverage.loss` 中，sessionStorage 不可用也会明确标注
+- “导出诊断”不受面板筛选影响，含当前标签页保留的刷新历史、环境、设置开关摘要、当前锁/执行/待处理状态、共享回执及全部保留事件；“复制”输出筛选后的记录。多份导出合并仅在本地执行，按上下文/行 ID/时间去重，最多 8 份且每份 4 MB
+- 手动推送/拉取的 page-local intent 使用 TTL 感知的检查定时器（等待时至多间隔 5 秒），覆盖自然过期和丢失通知；每次重读有效锁，续租不能抢占。确认期间只保留 30 分钟过期检查；取消、unbind、pagehide 清理定时器，pageshow 恢复。不会恢复刷新前的手动意图
+- 聚合高频流程应提供稳定 repeatKey；逐楼解析和 mutation 投影等细节使用临时详细诊断，不通过修改用户设置启用。新增日志必须经过故障隔离，不能使业务成功变失败或阻止释放锁
+
+验证入口：`node tests/test-manual-sync-intent-priority.js`、`node tests/test-structured-diagnostics.js`、`node tests/test-debug-log-collector.js`，并运行同步相关回归。人工检查面板筛选/展开/导出、375px 宽度、自然 TTL 到期自动确认及确认后执行；真实脚本管理器的跨页冻结/丢失通知仍需实际论坛环境验证。
 
 ## 3. 多机协作流程（Git）
 
@@ -320,6 +334,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - `s1p_last_sync_timestamp`
 - `s1p_sync_baseline_state`
 - `s1p_sync_diagnostics`
+- `s1p_sync_lock_receipt:*`：每条脱敏回执使用独立不可变 GM key，避免跨标签页并发读改写覆盖；写入时清理至最多 256 条、7 天，导出统一读取。仅用于排查，不参与锁判断，不进入云端业务数据。`s1p_sync_lock_history` 保留旧记录读取及缺少 GM_listValues 时的 80 条兼容回退；导出 sharedReceiptStorage 明示机制。浏览器突然终止、存储失败及保留期外仍可能缺少证据；不存在回执不等于正常释放。
 - `s1p_pending_auto_sync_request`
 - `s1p_auto_sync_indicator_state`
 - `s1p_auto_sync_failure_count`

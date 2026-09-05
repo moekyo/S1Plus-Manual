@@ -175,7 +175,9 @@ const testCrossContextPendingSignalWakesExistingPage = () => {
     false
   );
 
-  assert.equal(timers.at(-1).delayMs, 600);
+  const recoveryTimers = timers.filter(({ callback }) =>
+    !["s1pFlushSyncTrace", "s1pPersistLogs"].includes(callback.name));
+  assert.equal(recoveryTimers.at(-1).delayMs, 600);
   assert.equal(
     hooks.getPendingForegroundRemoteSyncRequest().requestId,
     pending.requestId,

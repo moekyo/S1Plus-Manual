@@ -84,6 +84,25 @@
   const _originalConsole = {};
   const _consoleWrappers = {};
   const _consoleMethods = ["log", "warn", "error", "debug"];
+  const S1P_LOG_MAX_BYTES = 1024 * 1024;
+  const S1P_LOG_REPEAT_WINDOW_MS = 30000;
+  let s1pLogRestored = false;
+  let s1pDiagnosticConsoleWrite = false;
+  let s1pLogModuleFilter = "";
+  let s1pLogOperationFilter = "";
+  let s1pVerboseUntil = 0;
+  let s1pVerboseTimer = null;
+  let s1pDiagnosticsInitialized = false;
+  let s1pDiagnosticSequence = 0;
+  const S1P_DIAGNOSTIC_PAGE_NONCE = Math.random().toString(36).slice(2, 10);
+  let s1pLogLoss = { evicted: 0, truncated: 0, persistenceFailures: 0, collectionFailures: 0 };
+  const s1pFailedOperationIds = new Set();
+  const s1pSyncOperations = new Map();
+  const s1pLockRefusals = new Map();
+  const s1pObservedLocks = new Map();
+  const s1pLogEntrySizes = new Map();
+  let s1pPendingSyncTrace = null;
+  let s1pSyncTraceFlushTimer = null;
 
   const normalizeDebugConsoleState = (state) => {
     if (state === true) {
@@ -776,7 +795,229 @@
     return Array.from(args || []).map((arg) => formatLogArgument(arg)).join(" ");
   };
 
+  // Diagnostics never retain live objects, credentials or forum content.
+  const s1pSanitizeLogValue = (input) => {
+    const seen = new WeakSet();
+    let budget = 16000;
+    let nodeBudget = 1000;
+    const cleanText = (value) => String(value)
+      .replace(/\b(?:github_pat_[\w]+|gh[pousr]_[\w]+)\b/g, "[REDACTED]")
+      .replace(/\b(Bearer|token)\s+[A-Za-z0-9._~+\/-]{8,}/gi, "$1 [REDACTED]")
+      .replace(/((?:authorization|password|secret|access_token|syncRemotePat|cookie)\s*[=:]\s*)[^\s,;]+/gi, "$1[REDACTED]")
+      .replace(/https?:\/\/[^\s"<>]+/g, (url) => {
+        try { const parsed = new URL(url); return parsed.origin + parsed.pathname; }
+        catch (_) { return "[URL]"; }
+      });
+    const visit = (value, depth = 0, key = "") => {
+      if (["__proto__", "constructor", "prototype"].includes(key)) return "[OMITTED]";
+      if (/^(?:.*(?:password|secret|authorization|cookie)|pat|syncRemotePat|access_?token|refresh_?token|token|headers|body|responseText|response|html|outerHTML|textContent|content|postText|title|raw|syncData|localData|remoteData)$/i.test(key)) return "[REDACTED]";
+      if (budget <= 0 || depth > 7 || --nodeBudget < 0) return "[TRUNCATED]";
+      if (value === null || typeof value === "boolean" || typeof value === "number") return value;
+      if (typeof value !== "object") {
+        const text = cleanText(value === undefined ? "undefined" : value);
+        const limit = Math.min(4096, budget);
+        budget -= Math.min(text.length, limit);
+        return text.length > limit ? text.slice(0, limit) + "[TRUNCATED]" : text;
+      }
+      if (seen.has(value)) return "[Circular]";
+      seen.add(value);
+      if (isLogErrorLike(value)) return visit(formatLogErrorLike(value), depth + 1);
+      if (isLogDomLike(value)) return "[DOM omitted]";
+      const result = Array.isArray(value) ? [] : Object.create(null);
+      const keys = Object.keys(value);
+      for (const child of keys.slice(0, 60)) {
+        if (["__proto__", "constructor", "prototype"].includes(child)) continue;
+        const descriptor = Object.getOwnPropertyDescriptor(value, child);
+        const safeValue = descriptor && "value" in descriptor ? descriptor.value : "[Getter omitted]";
+        const cleaned = visit(safeValue, depth + 1, child);
+        if (Array.isArray(result)) result.push(cleaned);
+        else result[child] = cleaned;
+        if (nodeBudget <= 0) {
+          if (Array.isArray(result)) result.push("[TRUNCATED]");
+          else result.s1pTruncated = "[TRUNCATED]";
+          break;
+        }
+      }
+      if (keys.length > 60) {
+        if (Array.isArray(result)) result.push("[TRUNCATED]");
+        else result.s1pTruncated = "[TRUNCATED]";
+      }
+      return result;
+    };
+    try { return visit(input); } catch (_) { return "[Unserializable]"; }
+  };
+
+  const s1pNewDiagnosticOperation = (module) =>
+    `s1p_${module}_${Date.now()}_${S1P_DIAGNOSTIC_PAGE_NONCE}_${++s1pDiagnosticSequence}`;
+
+  const s1pLogContext = () => {
+    try { return getSyncRuntimeContextInfo(); } catch (_) { return {}; }
+  };
+
+  const s1pTrimLogBuffer = () => {
+    let bytes = logBuffer.reduce((sum, entry) => {
+      if (!s1pLogEntrySizes.has(entry.id)) s1pLogEntrySizes.set(entry.id, JSON.stringify(entry).length * 2 + 2);
+      return sum + s1pLogEntrySizes.get(entry.id);
+    }, 4);
+    while (logBuffer.length > LOG_BUFFER_MAX || bytes > S1P_LOG_MAX_BYTES) {
+      let index = logBuffer.findIndex((entry) =>
+        !entry.event && entry.level !== "error" && entry.level !== "warn");
+      if (index < 0) index = logBuffer.findIndex((entry) =>
+        entry.level !== "error" && entry.level !== "warn" &&
+        !s1pFailedOperationIds.has(entry.operationId));
+      if (index < 0) index = 0;
+      const [removed] = logBuffer.splice(index, 1);
+      if (!removed) break;
+      bytes -= s1pLogEntrySizes.get(removed.id) || 0;
+      s1pLogEntrySizes.delete(removed.id);
+      expandedLogEntryIds.delete(removed.id);
+      s1pLogLoss.evicted += 1;
+    }
+  };
+
+  const s1pRecordDiagnosticEvent = (event, options = {}) => {
+    try {
+      if (options.verbose && Date.now() >= s1pVerboseUntil) return null;
+      if (!s1pLogRestored) restoreLogBufferFromSession();
+      const context = s1pLogContext();
+      const entry = s1pSanitizeLogValue({
+        event, module: options.module || "runtime", level: options.level || "log",
+        ts: options.timestamp || Date.now(), context,
+        operationId: options.operationId || "", parentOperationId: options.parentOperationId || "",
+        status: options.status || "", reason: options.reason || "",
+        message: options.message || event, details: options.details || {},
+        repeatKey: options.repeatKey || "",
+      });
+      if (!entry || typeof entry !== "object") return null;
+      if (entry.level === "error" || entry.status === "failure") {
+        if (entry.operationId) s1pFailedOperationIds.add(entry.operationId);
+        if (entry.parentOperationId) s1pFailedOperationIds.add(entry.parentOperationId);
+        while (s1pFailedOperationIds.size > 20) s1pFailedOperationIds.delete(s1pFailedOperationIds.values().next().value);
+      }
+      return pushLog(entry);
+    } catch (_) {
+      s1pLogLoss.collectionFailures += 1;
+      return null;
+    }
+  };
+
+  const s1pGetDiagnosticOperationSummaries = (entries = logBuffer) => {
+    const groups = new Map();
+    for (const entry of [...entries].sort((a, b) => (a.lastTs || a.ts) - (b.lastTs || b.ts))) {
+      if (!entry.operationId) continue;
+      const previous = groups.get(entry.operationId);
+      groups.set(entry.operationId, {
+        operationId: entry.operationId, parentOperationId: entry.parentOperationId || previous?.parentOperationId || "",
+        module: entry.module, startedAt: Math.min(previous?.startedAt ?? entry.ts, entry.ts),
+        lastAt: entry.lastTs || entry.ts, status: entry.status || previous?.status || "",
+        message: entry.message, reason: entry.reason, entries: (previous?.entries || 0) + (entry.repeatCount || 1),
+      });
+    }
+    return [...groups.values()].sort((a, b) => a.lastAt - b.lastAt).map((group) => ({ ...group, elapsedMs: group.lastAt - group.startedAt }));
+  };
+
+  const s1pBuildDiagnosticExport = () => {
+    const state = {};
+    const capture = (key, read) => {
+      try { state[key] = read(); } catch (_) { state[key] = "[Unavailable]"; }
+    };
+    capture("settings", () => {
+      const settings = getSettings();
+      return Object.fromEntries(Object.entries(settings).filter(([key, value]) =>
+        /^(?:sync|enable|readingProgress)/.test(key) && (typeof value === "boolean" || typeof value === "number")));
+    });
+    capture("locks", () => s1pReadSyncLockEvidence());
+    capture("manualIntent", () => defaultManualSyncIntentCoordinator?.readIntent() || null);
+    capture("execution", () => ({ settlementDepth: syncExecutionSettlementDepth, manualBusy: isManualSyncActionBusy(),
+      backgroundBusy: isBackgroundAutoSyncInProgress, startupBusy: isInitialSyncInProgress }));
+    capture("pendingDirty", () => GM_getValue("s1p_pending_auto_sync_request", null));
+    capture("sessionStorageAvailable", () => Boolean(window.sessionStorage));
+    capture("sharedLockHistory", () => {
+      return s1pReadSharedLockReceipts();
+    });
+    const contexts = [...new Map(logBuffer.map((entry) => [entry.context?.contextId || "legacy", entry.context || {}])).values()];
+    return {
+      schemaVersion: 1, exportedAt: new Date().toISOString(), scriptVersion: SCRIPT_VERSION,
+      environment: s1pSanitizeLogValue({ userAgent: navigator.userAgent,
+        scriptManager: typeof GM_info !== "undefined" ? GM_info.scriptHandler : "unavailable",
+        scriptManagerVersion: typeof GM_info !== "undefined" ? GM_info.version : "unavailable" }),
+      coverage: { scope: "current_tab_including_retained_reload_history", otherTabs: "not_collected; merge owner export by executionId",
+        sharedReceiptStorage: typeof GM_listValues === "function" ? "immutable_event_keys" : "legacy_shared_ring",
+        consoleCapture: logCollectorStarted, verboseUntil: s1pVerboseUntil, essentials: true,
+        sharedLockHistory: "immutable receipts when GM_listValues is available; legacy fallback may lose concurrent writes; bounded to 256 events / 7 days; abrupt termination or storage failure may omit events; absence is not proof of release",
+        sessionStorageAvailable: state.sessionStorageAvailable,
+        retainedFrom: logBuffer.length ? Math.min(...logBuffer.map((entry) => entry.ts)) : null,
+        retainedThrough: logBuffer.length ? Math.max(...logBuffer.map((entry) => entry.lastTs || entry.ts)) : null,
+        loss: { ...s1pLogLoss }, limits: { entries: LOG_BUFFER_MAX, bytes: S1P_LOG_MAX_BYTES },
+        redaction: "credentials, bodies, DOM and URL queries omitted; truncated fields marked" },
+      contexts, state: Object.fromEntries(Object.entries(state).map(([key, value]) =>
+        [key, key === "sharedLockHistory" && Array.isArray(value) ? value.map(s1pSanitizeLogValue) : s1pSanitizeLogValue(value)])),
+      operations: s1pGetDiagnosticOperationSummaries(),
+      events: logBuffer.map((entry) => ({ ...entry })),
+    };
+  };
+
+  const s1pInitializeDiagnostics = () => {
+    if (s1pDiagnosticsInitialized) return;
+    s1pDiagnosticsInitialized = true;
+    if (!s1pLogRestored) restoreLogBufferFromSession();
+    s1pRecordDiagnosticEvent("runtime.started", { module: "initialization", message: "页面诊断采集已启动",
+      details: { scriptVersion: SCRIPT_VERSION, essentialCollection: true } });
+    window.addEventListener("pagehide", () => {
+      for (const lock of s1pReadSyncLockEvidence().filter((item) => item.key === GLOBAL_SYNC_LOCK_KEY && item.owner === BACKGROUND_SYNC_OWNER_ID)) {
+        s1pRecordLockEvidence("lock.owner_pagehide", lock, { message: "持有者页面离开，未强行释放执行锁", reason: "pagehide", receipt: true });
+      }
+      s1pRecordDiagnosticEvent("runtime.pagehide", { message: "页面离开，未结束的执行锁保留至 TTL",
+        details: { locks: s1pReadSyncLockEvidence() } });
+      s1pFlushSyncTrace();
+      persistLogBuffer();
+    });
+    window.addEventListener("error", (event) => {
+      s1pRecordDiagnosticEvent("runtime.error", { level: "error", status: "failure", message: "页面未捕获异常",
+        details: { error: event.error || event.message, filename: event.filename, line: event.lineno } });
+    });
+    window.addEventListener("unhandledrejection", (event) => {
+      s1pRecordDiagnosticEvent("runtime.unhandled_rejection", { level: "error", status: "failure",
+        message: "页面未处理的 Promise 异常", details: { error: event.reason } });
+    });
+  };
+
+  const s1pMergeDiagnosticExports = (bundles) => {
+    if (!Array.isArray(bundles) || bundles.length < 1 || bundles.length > 8) throw new Error("请选择 1–8 份诊断");
+    const events = new Map();
+    const sources = [];
+    for (const bundle of bundles) {
+      if (bundle?.schemaVersion !== 1 || !Array.isArray(bundle.events) || bundle.events.length > LOG_BUFFER_MAX) throw new Error("不支持的诊断格式或记录数量");
+      sources.push(s1pSanitizeLogValue({ scriptVersion: bundle.scriptVersion, exportedAt: bundle.exportedAt,
+        coverage: bundle.coverage, environment: bundle.environment }));
+      for (const raw of bundle.events) {
+        const entry = normalizeRestoredLogEntry(raw);
+        if (!entry) continue;
+        const key = `${entry.context?.contextId || bundle.exportedAt}:${entry.id}:${entry.ts}`;
+        const previous = events.get(key);
+        if (!previous || (entry.repeatCount || 1) >= (previous.repeatCount || 1)) events.set(key, entry);
+      }
+    }
+    const merged = [...events.values()].sort((a, b) => a.ts - b.ts);
+    return { schemaVersion: 1, kind: "merged_diagnostics", exportedAt: new Date().toISOString(), sources,
+      operations: s1pGetDiagnosticOperationSummaries(merged), events: merged,
+      sharedLockHistory: bundles.flatMap((bundle) => Array.isArray(bundle.state?.sharedLockHistory) ? bundle.state.sharedLockHistory.slice(-256).map(s1pSanitizeLogValue) : []),
+      coverage: { scope: "selected_exports", ordering: "wall_clock; compare executionId and context for causality; device clocks may differ" } };
+  };
+
+  const s1pDownloadDiagnosticExport = (bundle) => {
+    const url = URL.createObjectURL(new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `S1Plus-diagnostics-${Date.now()}.json`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
   const formatLogEntryForCopy = (entry) => {
+    if (entry.event) {
+      return `[${new Date(entry.ts).toISOString()}] [${entry.level.toUpperCase()}] ${entry.message}\n${JSON.stringify(entry)}`;
+    }
     let message = String(entry.message || "");
     message = message.replace(/\d{4}\/\d{1,2}\/\d{1,2}\s+\d{1,2}:\d{2}:\d{2}\s*\|\s*/, "");
     const d = new Date(entry.ts);
@@ -801,17 +1042,41 @@
   };
 
   const pushLog = (entry) => {
-    if (!logCollectorStarted) return;
-    if (logBuffer.length >= LOG_BUFFER_MAX) logBuffer.shift();
-    logBuffer.push({
+    if (!logCollectorStarted && !entry.event) return;
+    const safeEntry = s1pSanitizeLogValue(entry);
+    if (safeEntry.repeatKey) {
+      const repeated = [...logBuffer].reverse().find((item) =>
+        item.repeatKey === safeEntry.repeatKey && item.module === safeEntry.module &&
+        item.context?.contextId === safeEntry.context?.contextId &&
+        item.operationId === safeEntry.operationId && item.event === safeEntry.event &&
+        item.reason === safeEntry.reason && item.status === safeEntry.status &&
+        safeEntry.ts >= item.ts && safeEntry.ts - item.ts < S1P_LOG_REPEAT_WINDOW_MS);
+      if (repeated) {
+        repeated.firstDetails ||= repeated.details;
+        repeated.details = safeEntry.details;
+        repeated.lastTs = safeEntry.ts;
+        repeated.repeatCount = (repeated.repeatCount || 1) + 1;
+        s1pLogEntrySizes.delete(repeated.id);
+        s1pTrimLogBuffer();
+        logDirty = true;
+        scheduleLogRender();
+        scheduleLogPersistence();
+        return { entry: repeated, repeated: true };
+      }
+    }
+    const stored = {
       id: nextLogEntryId++,
       ts: Date.now(),
-      ...entry,
-      message: enrichS1pLogMessageWithRuntimeContext(entry?.message),
-    });
+      ...safeEntry,
+      message: safeEntry.event ? safeEntry.message : enrichS1pLogMessageWithRuntimeContext(safeEntry?.message),
+    };
+    if (JSON.stringify(stored).includes("[TRUNCATED]")) s1pLogLoss.truncated += 1;
+    logBuffer.push(stored);
+    s1pTrimLogBuffer();
     logDirty = true;
     scheduleLogRender();
     scheduleLogPersistence();
+    return { entry: stored, repeated: false };
   };
 
   const shouldRemovePersistedLogBuffer = () =>
@@ -828,6 +1093,8 @@
         return;
       }
       const payload = {
+        schemaVersion: 1,
+        loss: s1pLogLoss,
         entries: logBuffer,
         nextId: nextLogEntryId,
         expandedIds: [...expandedLogEntryIds],
@@ -835,16 +1102,18 @@
       };
       window.sessionStorage.setItem(LOG_SESSION_STORAGE_KEY, JSON.stringify(payload));
     } catch (_) {
-      // sessionStorage 不可用或配额已满时静默忽略
+      s1pLogLoss.persistenceFailures += 1;
     }
   };
 
+  const s1pPersistLogs = () => {
+    logPersistTimeoutId = null;
+    persistLogBuffer();
+  };
   const scheduleLogPersistence = () => {
-    if (logPersistTimeoutId) clearTimeout(logPersistTimeoutId);
-    logPersistTimeoutId = setTimeout(() => {
-      logPersistTimeoutId = null;
-      persistLogBuffer();
-    }, LOG_PERSIST_DEBOUNCE_MS);
+    if (logPersistTimeoutId) return;
+    logPersistTimeoutId = setTimeout(s1pPersistLogs, LOG_PERSIST_DEBOUNCE_MS);
+    logPersistTimeoutId?.unref?.();
   };
 
   const normalizeRestoredLogEntryId = (value) => {
@@ -870,15 +1139,17 @@
       return null;
     }
     return {
+      ...s1pSanitizeLogValue(entry.event ? entry : {}),
       id,
       ts,
       level,
-      message: String(entry.message ?? ""),
+      message: s1pSanitizeLogValue(String(entry.message ?? "")),
       args: [],
     };
   };
 
   const restoreLogBufferFromSession = () => {
+    s1pLogRestored = true;
     try {
       if (!window.sessionStorage) return;
       const raw = window.sessionStorage.getItem(LOG_SESSION_STORAGE_KEY);
@@ -889,6 +1160,19 @@
         .map((entry) => normalizeRestoredLogEntry(entry))
         .filter(Boolean)
         .slice(-LOG_BUFFER_MAX);
+      s1pLogEntrySizes.clear();
+      s1pFailedOperationIds.clear();
+      for (const entry of logBuffer) {
+        if (entry.status === "failure" || entry.level === "error") {
+          if (entry.operationId) s1pFailedOperationIds.add(entry.operationId);
+          if (entry.parentOperationId) s1pFailedOperationIds.add(entry.parentOperationId);
+        }
+      }
+      while (s1pFailedOperationIds.size > 20) s1pFailedOperationIds.delete(s1pFailedOperationIds.values().next().value);
+      if (payload.loss && typeof payload.loss === "object") {
+        for (const key of Object.keys(s1pLogLoss)) s1pLogLoss[key] = Math.max(0, Number(payload.loss[key]) || 0);
+      }
+      s1pTrimLogBuffer();
       if (logBuffer.length === 0) {
         nextLogEntryId = 1;
         expandedLogEntryIds = new Set();
@@ -910,13 +1194,13 @@
       logExpandAll = payload.expandAll === true;
       logDirty = true;
     } catch (_) {
-      // 数据损坏时静默忽略，保留空 buffer
+      s1pLogLoss.collectionFailures += 1;
     }
   };
 
   const startLogCollector = () => {
     if (logCollectorStarted) return;
-    restoreLogBufferFromSession();
+    if (!s1pLogRestored) restoreLogBufferFromSession();
     logCollectorStarted = true;
     if (!_originalConsoleCaptured) {
       _consoleMethods.forEach((method) => {
@@ -932,18 +1216,22 @@
       const originalConsoleTarget = console;
       const wrapper = (...args) => {
         originalConsoleMethod.apply(originalConsoleTarget, args);
-        if (_consoleWrappers[method] === wrapper && console[method] === wrapper) {
-          pushLog({ level: method, message: formatLogArguments(args), args: [] });
+        if (!s1pDiagnosticConsoleWrite && _consoleWrappers[method] === wrapper && console[method] === wrapper) {
+          try {
+            pushLog({ level: method, message: formatLogArguments(s1pSanitizeLogValue(args)), args: [] });
+          } catch (_) { s1pLogLoss.collectionFailures += 1; }
         }
       };
       _consoleWrappers[method] = wrapper;
       console[method] = wrapper;
     });
     _logOnError = (e) => {
+      if (s1pDiagnosticsInitialized) return;
       pushLog({ level: "error", message: "[onerror] " + e.message + " at " + e.filename + ":" + e.lineno, args: [] });
     };
     window.addEventListener("error", _logOnError);
     _logOnUnhandledRejection = (e) => {
+      if (s1pDiagnosticsInitialized) return;
       pushLog({ level: "error", message: "[unhandledrejection] " + formatLogArgument(e.reason), args: [] });
     };
     window.addEventListener("unhandledrejection", _logOnUnhandledRejection);
@@ -1030,6 +1318,10 @@
       nextLogEntryId = 1;
       logDirty = false;
       logCollectorStarted = false;
+      s1pLogRestored = false;
+      s1pLogLoss = { evicted: 0, truncated: 0, persistenceFailures: 0, collectionFailures: 0 };
+      s1pFailedOperationIds.clear();
+      s1pLogEntrySizes.clear();
       _originalConsoleCaptured = false;
       _consoleMethods.forEach((method) => {
         _consoleWrappers[method] = null;
@@ -1054,6 +1346,14 @@
       enrichS1pLogMessageWithRuntimeContext,
       setDebugLogCollectorStateForTest,
       resetDebugLogCollectorStateForTest,
+      s1pSanitizeLogValue,
+      s1pRecordDiagnosticEvent,
+      s1pBuildDiagnosticExport,
+      s1pGetDiagnosticOperationSummaries,
+      s1pWriteSharedLockReceipt: (...args) => s1pWriteSharedLockReceipt(...args),
+      s1pReadSharedLockReceipts: (...args) => s1pReadSharedLockReceipts(...args),
+      s1pMergeDiagnosticExports,
+      formatLogEntryForCopy,
     };
   }
 
@@ -5049,6 +5349,17 @@
       overflow: hidden;
       text-overflow: ellipsis;
     }
+    .s1p-debug-console-log-line.s1p-structured-log {
+      grid-template-columns: auto 1fr auto auto;
+    }
+    .s1p-structured-log .s1p-debug-console-log-msg {
+      grid-column: 1 / -1;
+      grid-row: 2;
+    }
+    .s1p-structured-log .s1p-debug-console-log-msg.is-collapsed {
+      white-space: pre-wrap;
+      text-overflow: clip;
+    }
     .s1p-debug-console-expand-line,
     .s1p-debug-console-copy-line {
       display: inline-flex;
@@ -5075,7 +5386,7 @@
       display: flex;
       align-items: center;
       gap: 8px;
-      flex-wrap: nowrap;
+      flex-wrap: wrap;
       position: relative;
       flex: 1 1 260px;
       min-width: 0;
@@ -5109,13 +5420,18 @@
     #s1p-debug-unified-panel .s1p-debug-console-level-btn:hover {
       opacity: 1;
     }
-    .s1p-debug-console-filter-bar input {
-      flex: 1;
+    .s1p-debug-console-filter-bar input,
+    .s1p-debug-console-filter-bar select {
+      flex: 1 1 160px;
       min-width: 0;
       box-sizing: border-box;
       height: 32px;
       min-height: 32px;
       line-height: 32px;
+    }
+    .s1p-debug-console-filter-bar select {
+      flex: 1 1 160px;
+      max-width: 100%;
     }
     #s1p-debug-unified-panel .s1p-input {
       font-size: 12px;
@@ -11373,7 +11689,7 @@
   };
   const getSyncDiagnostics = () => {
     return normalizeSyncDiagnostics(
-      GM_getValue(SYNC_DIAGNOSTICS_KEY, SYNC_DIAGNOSTICS_DEFAULT)
+      { ...GM_getValue(SYNC_DIAGNOSTICS_KEY, SYNC_DIAGNOSTICS_DEFAULT), ...(s1pPendingSyncTrace || {}) }
     );
   };
 
@@ -11395,7 +11711,18 @@
   };
 
   const resetSyncDiagnostics = () => {
+    s1pPendingSyncTrace = null;
     GM_setValue(SYNC_DIAGNOSTICS_KEY, { ...SYNC_DIAGNOSTICS_DEFAULT });
+  };
+
+  const s1pFlushSyncTrace = () => {
+    if (s1pSyncTraceFlushTimer) clearTimeout(s1pSyncTraceFlushTimer);
+    s1pSyncTraceFlushTimer = null;
+    if (!s1pPendingSyncTrace) return;
+    try {
+      saveSyncDiagnostics({ ...GM_getValue(SYNC_DIAGNOSTICS_KEY, SYNC_DIAGNOSTICS_DEFAULT), ...s1pPendingSyncTrace });
+      s1pPendingSyncTrace = null;
+    } catch (_) { s1pLogLoss.persistenceFailures += 1; }
   };
 
   const normalizeSyncDiagnosticText = (value, maxLength = 120) =>
@@ -11754,6 +12081,11 @@
     return parts.join(" | ");
   };
   const recordReadProgressDebugEvent = (eventType = "", options = {}) => {
+    s1pRecordDiagnosticEvent(`reading.${eventType}`, { module: "reading",
+      operationId: `s1p_reading_${s1pLogContext().contextId || "page"}_${options.threadId || ""}`,
+      message: options.detail || eventType, reason: options.confirmationReason || eventType,
+      repeatKey: eventType, details: options,
+    });
     const {
       detail = "",
       timestamp = Date.now(),
@@ -11810,7 +12142,7 @@
       eventSummary,
     ].slice(-READ_PROGRESS_DEBUG_EVENT_LIMIT);
     saveSyncDiagnostics(nextDiagnostics);
-    if (READ_PROGRESS_PARSE_DEBUG) {
+    if (READ_PROGRESS_PARSE_DEBUG || Date.now() < s1pVerboseUntil) {
       if (consoleDetails) {
         console.debug("S1 Plus (ReadProgressDebug):", eventSummary, consoleDetails);
       } else {
@@ -14459,60 +14791,90 @@
   };
 
   const recordSyncTraceEvent = (phase = "", options = {}) => {
-    const now = Number(options.timestamp) || Date.now();
-    const scope = normalizeSyncDiagnosticText(options.scope, 80) || "sync";
-    const normalizedPhase =
-      normalizeSyncDiagnosticText(phase || options.phase, 80) || "event";
-    const status = normalizeSyncDiagnosticText(options.status, 80);
-    const message = normalizeSyncDiagnosticText(options.message, 260);
-    const details = sanitizeRecordObject(options.details);
-    const detailSummary = buildSyncTraceDetailsSummary(details);
-    const summaryParts = [
-      formatSyncTime(now),
-      getSyncRuntimeContextSummary(),
-      getSyncTraceScopeLabel(scope),
-      getSyncTracePhaseLabel(normalizedPhase),
-      status ? `状态=${getSyncTraceStatusLabel(status) || status}` : "",
-      message,
-      detailSummary,
-    ].filter(Boolean);
-    const summary = normalizeSyncDiagnosticText(summaryParts.join(" | "), 500);
-    const current = getSyncDiagnostics();
-    const nextEvents = [
-      ...(Array.isArray(current.syncTraceEvents)
-        ? current.syncTraceEvents
-        : []),
-      summary,
-    ].slice(-SYNC_TRACE_EVENT_LIMIT);
-    saveSyncDiagnostics({
-      ...current,
-      lastSyncTraceTimestamp: now,
-      lastSyncTraceScope: scope,
-      lastSyncTracePhase: normalizedPhase,
-      lastSyncTraceStatus: status,
-      lastSyncTraceSummary: summary,
-      syncTraceEvents: nextEvents,
-    });
+    try {
+      const now = Number(options.timestamp) || Date.now();
+      const scope = normalizeSyncDiagnosticText(options.scope, 80) || "sync";
+      const normalizedPhase =
+        normalizeSyncDiagnosticText(phase || options.phase, 80) || "event";
+      const status = normalizeSyncDiagnosticText(options.status, 80);
+      const message = normalizeSyncDiagnosticText(options.message, 260);
+      const details = sanitizeRecordObject(options.details);
+      const scopedMode = /manual|force/.test(scope) ? SYNC_LOCK_MODE_MANUAL
+        : /background|scheduler/.test(scope) ? SYNC_LOCK_MODE_BACKGROUND
+        : /startup|initial/.test(scope) ? SYNC_LOCK_MODE_STARTUP
+        : /foreground_followup/.test(scope) ? SYNC_LOCK_MODE_FOREGROUND_FOLLOWUP : "";
+      const candidateOperation = scopedMode ? s1pSyncOperations.get(scopedMode)
+        : /^(remote_fetch|remote_push|auto_sync)$/.test(scope)
+          ? [...s1pSyncOperations.values()].find((item) => item.active) : null;
+      const operation = candidateOperation && (candidateOperation.active ||
+        /complete|release|result/.test(normalizedPhase) && now - (candidateOperation.releasedAt || 0) < 5000)
+        ? candidateOperation : null;
+      s1pSetSyncDiagnosticStage(operation, normalizedPhase);
+      if (operation?.active && ["success", "failure", "conflict"].includes(status)) operation.lastOutcome = status;
+      const repeatable = /scheduled|rescheduled|waiting|retry|skipped/.test(normalizedPhase) || status === "skipped";
+      const structured = s1pRecordDiagnosticEvent(`sync.${normalizedPhase}`, {
+        module: "sync", operationId: options.operationId || operation?.operationId || "",
+        timestamp: now, status, reason: details.reason || "", level: options.level || "log", message: options.message || message,
+        details: { scope, phase: normalizedPhase, ...details },
+        repeatKey: repeatable ? `${scope}:${normalizedPhase}:${details.reason || ""}:${details.lockReason || ""}:${details.owner || ""}:${details.generation || ""}` : "",
+      });
+      if (structured?.repeated) return structured.entry.message;
+      const detailSummary = buildSyncTraceDetailsSummary(details);
+      const summaryParts = [
+        formatSyncTime(now),
+        getSyncRuntimeContextSummary(),
+        getSyncTraceScopeLabel(scope),
+        getSyncTracePhaseLabel(normalizedPhase),
+        status ? `状态=${getSyncTraceStatusLabel(status) || status}` : "",
+        message,
+        detailSummary,
+      ].filter(Boolean);
+      const summary = normalizeSyncDiagnosticText(summaryParts.join(" | "), 500);
+      const current = getSyncDiagnostics();
+      const nextEvents = [
+        ...(Array.isArray(current.syncTraceEvents)
+          ? current.syncTraceEvents
+          : []),
+        summary,
+      ].slice(-SYNC_TRACE_EVENT_LIMIT);
+      s1pPendingSyncTrace = {
+        lastSyncTraceTimestamp: now,
+        lastSyncTraceScope: scope,
+        lastSyncTracePhase: normalizedPhase,
+        lastSyncTraceStatus: status,
+        lastSyncTraceSummary: summary,
+        syncTraceEvents: nextEvents,
+      };
+      if (!s1pSyncTraceFlushTimer) {
+        s1pSyncTraceFlushTimer = setTimeout(s1pFlushSyncTrace, 1000);
+        s1pSyncTraceFlushTimer?.unref?.();
+      }
 
-    if (options.logToConsole === false) {
+      if (options.logToConsole === false) {
+        return summary;
+      }
+      const level = ["debug", "log", "warn", "error"].includes(options.level)
+        ? options.level
+        : "log";
+      const baseConsoleMessage =
+        normalizeSyncDiagnosticText(options.consoleMessage, 500) ||
+        `S1 Plus (SyncTrace): ${summary}`;
+      const consoleMessage =
+        options.consoleMessage
+          ? `${baseConsoleMessage} [${getSyncRuntimeContextSummary()}]${
+              detailSummary && options.omitDetailsInConsole !== true
+                ? ` 详情：${detailSummary}`
+                : ""
+            }`
+          : baseConsoleMessage;
+      s1pDiagnosticConsoleWrite = true;
+      try { console[level](s1pSanitizeLogValue(consoleMessage)); }
+      finally { s1pDiagnosticConsoleWrite = false; }
       return summary;
+    } catch (_) {
+      s1pLogLoss.collectionFailures += 1;
+      return "";
     }
-    const level = ["debug", "log", "warn", "error"].includes(options.level)
-      ? options.level
-      : "log";
-    const baseConsoleMessage =
-      normalizeSyncDiagnosticText(options.consoleMessage, 500) ||
-      `S1 Plus (SyncTrace): ${summary}`;
-    const consoleMessage =
-      options.consoleMessage
-        ? `${baseConsoleMessage} [${getSyncRuntimeContextSummary()}]${
-            detailSummary && options.omitDetailsInConsole !== true
-              ? ` 详情：${detailSummary}`
-              : ""
-          }`
-        : baseConsoleMessage;
-    console[level](consoleMessage);
-    return summary;
   };
 
   const recordCoreDataSnapshotResync = (
@@ -24640,7 +25002,18 @@
     };
     const write = (kind, value, { suppressSyncTrigger = false } = {}) => {
       const definition = getDefinition(kind);
-      return commitWrite(kind, definition, value, { suppressSyncTrigger });
+      const operationId = kind === "readProgress" ? `s1p_storage_reading_${s1pLogContext().contextId || "page"}` : s1pNewDiagnosticOperation("storage");
+      try {
+        const result = commitWrite(kind, definition, value, { suppressSyncTrigger });
+        s1pRecordDiagnosticEvent("storage.write", { module: "storage", operationId,
+          status: result.changed ? "success" : "unchanged", message: result.changed ? "业务数据已保存" : "业务数据无变化，跳过写入",
+          repeatKey: kind, details: { kind, changed: result.changed, normalizationChanged: result.normalizationChanged, suppressSyncTrigger } });
+        return result;
+      } catch (error) {
+        s1pRecordDiagnosticEvent("storage.write_failed", { module: "storage", operationId, status: "failure",
+          level: "error", message: "业务数据保存失败", details: { kind, error } });
+        throw error;
+      }
     };
     const projectForSync = ({
       fresh = false,
@@ -31227,6 +31600,9 @@
 
   // [MODIFIED] 导入数据，兼容新旧两种数据结构，并增加控制选项
   const importLocalData = (jsonStr, options = {}) => {
+    const s1pImportOperationId = s1pNewDiagnosticOperation("import");
+    s1pRecordDiagnosticEvent("import.started", { module: "import", operationId: s1pImportOperationId,
+      status: "running", message: "开始导入数据", details: { inputLength: typeof jsonStr === "string" ? jsonStr.length : null } });
     const { suppressPostSync = false, suppressSyncTrigger = suppressPostSync } =
       options;
     try {
@@ -31372,11 +31748,16 @@
       const autoSyncNotice = !suppressPostSync
         ? " 已按当前配置请求后台自动同步（若远程同步已开启）。"
         : "";
+      s1pRecordDiagnosticEvent("import.completed", { module: "import", operationId: s1pImportOperationId,
+        status: "success", message: "数据导入完成", details: { threadsImported, usersImported, tagsImported,
+          bookmarksImported, postsImported, rulesImported, progressImported, hasImportNormalizationAdjustments, suppressPostSync } });
       return {
         success: true,
         message: `成功导入 ${threadsImported} 条帖子、${usersImported} 条用户、${tagsImported} 条标记、${bookmarksImported} 条收藏、${postsImported} 条楼层屏蔽、${rulesImported} 条标题规则、${progressImported} 条阅读进度及相关设置。${normalizationNotice}${autoSyncNotice}`,
       };
     } catch (e) {
+      s1pRecordDiagnosticEvent("import.failed", { module: "import", operationId: s1pImportOperationId,
+        status: "failure", level: "error", message: "数据导入失败", details: { error: e } });
       return { success: false, message: `导入失败: ${e.message}` };
     } finally {
       s1pReadingProgressSession.attach();
@@ -31565,6 +31946,19 @@
     });
 
   const runRemoteRequestWithRetry = async (requestOptions, options = {}) => {
+    const s1pOwnerOperation = [...s1pSyncOperations.values()].find((item) => item.active);
+    const s1pRequestOperationId = s1pNewDiagnosticOperation("network");
+    const s1pRequestStartedAt = Date.now();
+    const s1pTraceRequest = (event, status, details = {}) => {
+      s1pSetSyncDiagnosticStage(s1pOwnerOperation, `network.${event}`);
+      s1pRecordDiagnosticEvent(`network.${event}`, { module: "network", operationId: s1pRequestOperationId,
+        parentOperationId: s1pOwnerOperation?.operationId || "", status,
+        level: status === "failure" ? "error" : "log", message: {
+          attempt: "发起远端请求", completed: "远端请求成功", retry: "远端请求失败，等待重试", failed: "远端请求失败", cancelled: "远端请求已取消",
+        }[event] || event,
+        details: { method: requestOptions.method || "GET", url: requestOptions.url,
+          elapsedMs: Date.now() - s1pRequestStartedAt, ...details } });
+    };
     const startingCancelGeneration = remoteSyncCancelGeneration;
     const sleepFn =
       typeof options.sleep === "function" ? options.sleep : sleep;
@@ -31582,9 +31976,11 @@
     while (attempt <= REMOTE_SYNC_MAX_RETRIES) {
       assertRemoteSyncNotCancelled(startingCancelGeneration);
       try {
+        s1pTraceRequest("attempt", "running", { attempt, timeoutMs: requestOptions.timeout || REMOTE_SYNC_REQUEST_TIMEOUT_MS });
         const response = await gmRequestWithTimeout(requestOptions);
         assertRemoteSyncNotCancelled(startingCancelGeneration);
         if (response.status >= 200 && response.status < 300) {
+          s1pTraceRequest("completed", "success", { attempt, httpStatus: response.status });
           return response;
         }
 
@@ -31606,6 +32002,7 @@
         throw httpError;
       } catch (error) {
         if (error?.code === REMOTE_SYNC_CANCELLED_CODE) {
+          s1pTraceRequest("cancelled", "cancelled", { attempt, code: error.code });
           throw error;
         }
         const canRetry =
@@ -31613,12 +32010,14 @@
           (error.retryable || REMOTE_SYNC_RETRYABLE_STATUS.has(error.status));
 
         if (!canRetry) {
+          s1pTraceRequest("failed", "failure", { attempt, error, httpStatus: error.status, code: error.code });
           throw error;
         }
 
         const backoffMs =
           retryBaseDelayMs * Math.pow(2, attempt) +
           Math.floor(Math.random() * retryJitterMs);
+        s1pTraceRequest("retry", "retrying", { attempt, backoffMs, httpStatus: error.status, code: error.code });
         await sleepFn(backoffMs);
         assertRemoteSyncNotCancelled(startingCancelGeneration);
         attempt += 1;
@@ -32203,6 +32602,10 @@
         mode: lock.mode,
         ttlMs,
         token: normalizeSyncDiagnosticText(lock.token, 160),
+        operationId: normalizeSyncDiagnosticText(lock.operationId, 160),
+        acquiredAt: Number(lock.acquiredAt) || 0,
+        stage: normalizeSyncDiagnosticText(lock.stage, 120),
+        contextId: normalizeSyncDiagnosticText(lock.contextId, 160),
       };
     }
     return null;
@@ -32237,7 +32640,125 @@
     return isGlobalSyncLockValid(getGlobalSyncLockValue(), now);
   };
 
+  const s1pReadSyncLockEvidence = (now = Date.now()) => {
+    const modes = [SYNC_LOCK_MODE_MANUAL, SYNC_LOCK_MODE_BACKGROUND, SYNC_LOCK_MODE_STARTUP, SYNC_LOCK_MODE_FOREGROUND_FOLLOWUP];
+    const rows = modes.map((mode) => {
+      const profile = getSyncLockModeProfile(mode);
+      return { key: profile.lockKey, lock: getModeSyncLockValue(mode), ttlMs: profile.ttlMs, mode };
+    });
+    const globalLock = getGlobalSyncLockValue();
+    rows.push({ key: GLOBAL_SYNC_LOCK_KEY, lock: globalLock, ttlMs: globalLock?.ttlMs, mode: globalLock?.mode });
+    return rows.filter(({ lock }) => lock).map(({ key, lock, ttlMs, mode }) => ({
+      key, mode, owner: lock.owner, executionId: lock.token || "legacy_without_execution_id",
+      operationId: lock.operationId || "", contextId: lock.contextId || "",
+      acquiredAt: lock.acquiredAt || null, renewedAt: lock.timestamp,
+      expiresAt: lock.timestamp + ttlMs, remainingMs: Math.max(0, lock.timestamp + ttlMs - now),
+      heldMs: lock.acquiredAt ? Math.max(0, now - lock.acquiredAt) : null,
+      stage: lock.stage || "unknown", active: isModeSyncLockValid(lock, ttlMs, now),
+    }));
+  };
+
+  const S1P_LOCK_RECEIPT_PREFIX = "s1p_sync_lock_receipt:";
+  const s1pReadSharedLockReceipts = () => {
+    const legacy = GM_getValue("s1p_sync_lock_history", []);
+    const receipts = Array.isArray(legacy) ? legacy.slice(-80) : [];
+    if (typeof GM_listValues === "function") {
+      const keys = GM_listValues().filter((key) => key.startsWith(S1P_LOCK_RECEIPT_PREFIX)).sort();
+      for (const key of keys.slice(-256)) {
+        const receipt = GM_getValue(key, null);
+        if (receipt && Number(receipt.at) >= Date.now() - 7 * 86400000) receipts.push(receipt);
+      }
+    }
+    return receipts.sort((a, b) => Number(a.at) - Number(b.at)).slice(-256).map(s1pSanitizeLogValue);
+  };
+
+  const s1pWriteSharedLockReceipt = (receipt) => {
+    if (typeof GM_listValues !== "function") {
+      const history = GM_getValue("s1p_sync_lock_history", []);
+      GM_setValue("s1p_sync_lock_history", [...(Array.isArray(history) ? history.slice(-79) : []), receipt]);
+      return;
+    }
+    // Each immutable event has its own key: concurrent writers never replace one another.
+    const key = `${S1P_LOCK_RECEIPT_PREFIX}${Date.now()}:${s1pNewDiagnosticOperation("receipt")}`;
+    GM_setValue(key, receipt);
+    const keys = GM_listValues().filter((item) => item.startsWith(S1P_LOCK_RECEIPT_PREFIX)).sort();
+    const cutoff = Date.now() - 7 * 86400000;
+    keys.forEach((item, index) => {
+      const timestamp = Number(item.slice(S1P_LOCK_RECEIPT_PREFIX.length).split(":")[0]);
+      if (index < keys.length - 256 || timestamp < cutoff) GM_deleteValue(item);
+    });
+  };
+
+  const s1pRecordLockEvidence = (event, evidence, options = {}) => {
+    try {
+      const recorded = s1pRecordDiagnosticEvent(event, {
+        module: "sync.lock", operationId: evidence.operationId || "", ...options,
+        details: { ...evidence, ...(options.details || {}) },
+      });
+      // Small, best-effort cross-tab receipts, never used for sync decisions.
+      if (options.receipt && !recorded?.repeated) {
+        const receipt = s1pSanitizeLogValue({ event, at: Date.now(), ...evidence, reason: options.reason || "" });
+        s1pWriteSharedLockReceipt(receipt);
+      }
+    } catch (_) { s1pLogLoss.collectionFailures += 1; }
+  };
+
+  const s1pObserveSyncLocks = (now = Date.now()) => {
+    try {
+      const rows = s1pReadSyncLockEvidence(now);
+      for (const row of rows) {
+        const previous = s1pObservedLocks.get(row.key);
+        const changed = !previous || previous.executionId !== row.executionId || previous.owner !== row.owner;
+        if (!row.active && (changed || previous.active)) {
+          s1pRecordLockEvidence("lock.expired_observed", row, { message: "观察到同步锁 TTL 已过期", reason: "ttl_elapsed", receipt: true });
+        } else if (row.active && changed) {
+          s1pRecordLockEvidence("lock.owner_observed", row, { message: "观察到同步锁持有者", reason: "owner_changed" });
+        } else if (row.active && previous.renewedAt !== row.renewedAt && now - (previous.reportedAt || 0) >= 30000) {
+          s1pRecordLockEvidence("lock.renewal_observed", row, { message: "观察到持有者仍在续租", reason: "lease_renewed" });
+        } else {
+          s1pObservedLocks.set(row.key, { ...row, reportedAt: previous?.reportedAt || now });
+          continue;
+        }
+        s1pObservedLocks.set(row.key, { ...row, reportedAt: now });
+      }
+      for (const [key, previous] of s1pObservedLocks) {
+        if (!rows.some((row) => row.key === key)) {
+          s1pRecordLockEvidence("lock.removal_observed", previous, {
+            message: "观察到锁记录被移除；是否正常释放以持有者回执为准", reason: "record_removed" });
+          s1pObservedLocks.delete(key);
+        }
+      }
+    } catch (_) { s1pLogLoss.collectionFailures += 1; }
+  };
+
+  const s1pSyncDiagnosticMetadata = (mode) => {
+    const operation = s1pSyncOperations.get(mode);
+    return operation ? { operationId: operation.operationId, acquiredAt: operation.acquiredAt,
+      stage: operation.stage, contextId: s1pLogContext().contextId || "" } : {};
+  };
+
+  const s1pSetSyncDiagnosticStage = (operation, stage) => {
+    if (!operation?.active) return;
+    if (operation.stage !== stage) operation.stageChangedAt = Date.now();
+    operation.stage = stage;
+  };
+
+  const s1pRejectSyncLock = (mode, reason) => {
+    try {
+      s1pObserveSyncLocks();
+      const locks = s1pReadSyncLockEvidence();
+      const refusal = { reason, locks, at: Date.now() };
+      s1pLockRefusals.set(mode, refusal);
+      s1pRecordDiagnosticEvent("lock.acquire_refused", { module: "sync.lock", status: "blocked", reason,
+        message: reason === "manual_priority_pending" ? "自动同步未执行：本页面有优先手动请求" : "同步未执行：未取得执行锁",
+        repeatKey: `${mode}:${reason}:${locks.filter((lock) => lock.active).map((lock) => lock.executionId).join(",")}`,
+        details: { requestedMode: mode, locks, localManualPriority: manualSyncPriorityGateEvaluator() } });
+    } catch (_) { s1pLogLoss.collectionFailures += 1; }
+    return false;
+  };
+
   const getActiveSyncLockSnapshot = (now = Date.now()) => {
+    s1pObserveSyncLocks(now);
     const normalizedNow = normalizeRemoteProbeTimestamp(now) || Date.now();
     const globalLock = getGlobalSyncLockValue();
     if (isGlobalSyncLockValid(globalLock, normalizedNow)) {
@@ -32292,6 +32813,7 @@
       mode,
       timestamp,
       ttlMs,
+      ...s1pSyncDiagnosticMetadata(mode),
       ...(token ? { token } : {}),
     });
   };
@@ -32430,7 +32952,7 @@
   const acquireModeSyncLock = async (mode, options = {}) => {
     const profile = getSyncLockModeProfile(mode);
     if (!profile) {
-      return false;
+      return s1pRejectSyncLock(mode, "unknown_lock_mode");
     }
     const shouldPreemptActiveSync =
       mode === SYNC_LOCK_MODE_MANUAL && options?.preemptActiveSync === true;
@@ -32442,7 +32964,7 @@
       mode !== SYNC_LOCK_MODE_MANUAL &&
       manualSyncPriorityGateEvaluator()
     ) {
-      return false;
+      return s1pRejectSyncLock(mode, "manual_priority_pending");
     }
     const isExecutionExcluded = (now = Date.now()) => {
       const currentLock = getModeSyncLockValue(mode);
@@ -32459,7 +32981,7 @@
     };
 
     if (isExecutionExcluded()) {
-      return false;
+      return s1pRejectSyncLock(mode, "active_execution_lock");
     }
     if (shouldPreemptActiveSync) {
       preemptActiveSyncForManualOverride(
@@ -32467,7 +32989,7 @@
         { preemptScope }
       );
       if (isExecutionExcluded()) {
-        return false;
+        return s1pRejectSyncLock(mode, "active_execution_after_preempt_check");
       }
     }
 
@@ -32476,10 +32998,16 @@
       .toString(36)
       .slice(2, 10)}`;
 
+    s1pObserveSyncLocks(now);
+    const operation = { operationId: options.operationId || s1pNewDiagnosticOperation("sync"),
+      executionId: lockToken, acquiredAt: now, stage: "acquiring", active: true, renewals: 0, lastReportedAt: now };
+    s1pSyncOperations.set(mode, operation);
+
     GM_setValue(profile.lockKey, {
       owner: BACKGROUND_SYNC_OWNER_ID,
       timestamp: now,
       token: lockToken,
+      ...s1pSyncDiagnosticMetadata(mode),
     });
     setGlobalSyncLock(mode, now, profile.ttlMs, lockToken);
 
@@ -32497,7 +33025,13 @@
       );
     });
     if (!acquired) {
-      releaseModeSyncLock(mode, lockToken);
+      s1pRejectSyncLock(mode, "ownership_verification_failed");
+      releaseModeSyncLock(mode, lockToken, "ownership_verification_failed");
+    } else {
+      s1pLockRefusals.delete(mode);
+      s1pSetSyncDiagnosticStage(operation, "transaction_start");
+      s1pRecordLockEvidence("lock.acquired", { ...operation, mode, owner: BACKGROUND_SYNC_OWNER_ID, ttlMs: profile.ttlMs },
+        { message: "已取得模式锁和全局锁", status: "running", receipt: true });
     }
     return options.returnAuthority === true
       ? acquired
@@ -32529,19 +33063,34 @@
       return false;
     }
     GM_setValue(profile.lockKey, {
+      ...currentLock,
       owner: BACKGROUND_SYNC_OWNER_ID,
       timestamp: Date.now(),
+      ...s1pSyncDiagnosticMetadata(mode),
       ...(currentLock.token ? { token: currentLock.token } : {}),
     });
+    const operation = s1pSyncOperations.get(mode);
+    if (operation) {
+      operation.renewals += 1;
+      if (Date.now() - operation.lastReportedAt >= 30000) {
+        operation.lastReportedAt = Date.now();
+        s1pRecordLockEvidence("lock.renewed", { ...operation, mode, owner: BACKGROUND_SYNC_OWNER_ID,
+          heldMs: Date.now() - operation.acquiredAt, stageForMs: Date.now() - (operation.stageChangedAt || operation.acquiredAt), expiresAt: Date.now() + profile.ttlMs },
+          { message: "同步仍在执行，锁已续租", receipt: true });
+      }
+    }
     return true;
   };
 
-  const releaseModeSyncLock = (mode, expectedToken = "") => {
+  const releaseModeSyncLock = (mode, expectedToken = "", reason = "execution_settled") => {
     const profile = getSyncLockModeProfile(mode);
     if (!profile) {
       return;
     }
     const currentLock = getModeSyncLockValue(mode);
+    const operation = s1pSyncOperations.get(mode);
+    const owned = currentLock && currentLock.owner === BACKGROUND_SYNC_OWNER_ID &&
+      (!expectedToken || currentLock.token === expectedToken);
     if (
       currentLock &&
       currentLock.owner === BACKGROUND_SYNC_OWNER_ID &&
@@ -32550,6 +33099,14 @@
       GM_deleteValue(profile.lockKey);
     }
     releaseGlobalSyncLock(mode, expectedToken);
+    if (operation && (!expectedToken || operation.executionId === expectedToken)) {
+      operation.active = false;
+      operation.releasedAt = Date.now();
+      s1pRecordLockEvidence(owned ? "lock.released" : "lock.release_not_owned", {
+        ...operation, mode, owner: BACKGROUND_SYNC_OWNER_ID, heldMs: Date.now() - operation.acquiredAt,
+      }, { message: owned ? "执行结束，已释放同步锁" : "清理时已不持有模式锁",
+        reason: reason === "execution_settled" && operation.lastOutcome ? `execution_${operation.lastOutcome}` : reason, receipt: true });
+    }
   };
 
   const stopModeSyncLockHeartbeat = (mode, expectedToken = "") => {
@@ -32580,6 +33137,9 @@
     profile.setHeartbeatTimer(
       setInterval(() => {
         if (!refreshModeSyncLock(mode, expectedToken)) {
+          const operation = s1pSyncOperations.get(mode);
+          s1pRecordLockEvidence("lock.renewal_failed", { ...operation, mode, locks: s1pReadSyncLockEvidence() },
+            { message: "锁续租失败", level: "warn", reason: "ownership_lost", receipt: true });
           stopModeSyncLockHeartbeat(mode, expectedToken);
           console.warn(
             `S1 Plus: ${profile.displayName}锁续租失败，当前任务将中止。`
@@ -32701,6 +33261,15 @@
       lockAdapter.startHeartbeat();
       heartbeatStarted = true;
       result = await runTransaction();
+      const operation = s1pSyncOperations.get(mode);
+      if (operation) operation.lastOutcome = result?.status || "settled";
+    } catch (error) {
+      const operation = s1pSyncOperations.get(mode);
+      if (operation) operation.lastOutcome = "failure";
+      s1pRecordDiagnosticEvent("sync.transaction_failed", { module: "sync", operationId: operation?.operationId,
+        level: "error", status: "failure", reason: "transaction_threw", message: "同步事务异常退出",
+        details: { stage: operation?.stage, error } });
+      throw error;
     } finally {
       try {
         try {
@@ -33586,9 +34155,6 @@
             },
             onLockUnavailable: () => {
               hasPendingBackgroundSync = true;
-              console.log(
-                "S1 Plus: 检测到其他同步任务正在执行，稍后将重试。"
-              );
               emitSyncCompletionLog({
                 scope: "background_auto_sync",
                 scopeLabel: "后台自动同步",
@@ -33596,8 +34162,9 @@
                 result: {
                   status: "skipped",
                   reason: "background_lock_unavailable",
+                  lockReason: s1pLockRefusals.get(SYNC_LOCK_MODE_BACKGROUND)?.reason || "unknown",
                 },
-                details: { reason, drainCount },
+                details: { reason, drainCount, lockReason: s1pLockRefusals.get(SYNC_LOCK_MODE_BACKGROUND)?.reason || "unknown" },
               });
               s1pScheduleBackgroundSyncRetry();
             },
@@ -34053,6 +34620,12 @@
     }
 
     if (status === "skipped") {
+      if (reason === "background_lock_unavailable" || reason === "sync_lock_unavailable") {
+        const detail = normalizedResult.lockReason === "manual_priority_pending"
+          ? "本页面有优先手动请求，等待确认或执行"
+          : "未取得同步锁，等待后续重试";
+        return `S1 Plus (Sync): ${scopeLabel}未执行：${detail}。`;
+      }
       if (reason === "lock_lost") {
         const stage = getSyncTraceStageLabel(normalizedResult.stage);
         return `${completionPrefix}：已中止（同步锁失效${stage ? `，阶段：${stage}` : ""}）。`;
@@ -36437,6 +37010,13 @@
       resolveAutoSyncIndicatorDrainCompletion,
       formatAutoSyncCompletionLogMessage,
       recordSyncTraceEvent,
+      s1pFlushSyncTrace,
+      s1pReadSyncLockEvidence,
+      s1pObserveSyncLocks,
+      acquireModeSyncLock,
+      refreshModeSyncLock,
+      releaseModeSyncLock,
+      s1pSetManualPriorityGateForTest: (evaluator) => { manualSyncPriorityGateEvaluator = evaluator; },
       getSyncRuntimeContextInfo,
       getSyncRuntimeContextSummary,
       emitSyncCompletionLog,
@@ -38308,7 +38888,21 @@
       }
     };
 
-    return Object.freeze({ project });
+    return Object.freeze({ project: (event = {}) => {
+      const operationId = s1pNewDiagnosticOperation("projection");
+      const startedAt = Date.now();
+      try {
+        const result = project(event);
+        s1pRecordDiagnosticEvent("projection.completed", { module: "page", operationId,
+          status: "success", message: "页面功能投影已完成", verbose: event.type === "mutation",
+          details: { type: event.type || "full", result, durationMs: Date.now() - startedAt } });
+        return result;
+      } catch (error) {
+        s1pRecordDiagnosticEvent("projection.failed", { module: "page", operationId, level: "error",
+          status: "failure", message: "页面功能投影失败", details: { type: event.type || "full", error } });
+        throw error;
+      }
+    } });
   };
   let coreDataCrossTabRefreshTimer = null;
   const pendingCoreDataRefreshIntents = new Set();
@@ -38542,11 +39136,16 @@
       );
     const normalizedSettings = buildNormalizedSettings(settings).settings;
     const currentSettings = getSettings();
+    const s1pSettingsOperationId = s1pNewDiagnosticOperation("settings");
+    const s1pChangedSettingKeys = Object.keys(normalizedSettings).filter((key) =>
+      hasComparableValueChanged(currentSettings[key], normalizedSettings[key]));
     if (
       !forceWrite &&
       !hasComparableValueChanged(currentSettings, normalizedSettings)
     ) {
       setSettingsCache(normalizedSettings);
+      s1pRecordDiagnosticEvent("settings.unchanged", { module: "settings", status: "unchanged",
+        message: "设置无变化，跳过写入", repeatKey: "settings_unchanged" });
       return;
     }
     invalidateLocalDataHashCache();
@@ -38559,6 +39158,10 @@
         nonce: Math.random(),
       });
       setSettingsCache(normalizedSettings);
+    } catch (error) {
+      s1pRecordDiagnosticEvent("settings.save_failed", { module: "settings", operationId: s1pSettingsOperationId,
+        status: "failure", level: "error", message: "设置保存失败", details: { error, changedKeys: s1pChangedSettingKeys } });
+      throw error;
     } finally {
       localSettingsWriteInFlightCount = Math.max(
         0,
@@ -38566,6 +39169,8 @@
       );
     }
     console.log("S1 Plus: Settings saved.");
+    s1pRecordDiagnosticEvent("settings.saved", { module: "settings", operationId: s1pSettingsOperationId,
+      status: "success", message: "设置已保存", details: { changedKeys: s1pChangedSettingKeys, suppressSyncTrigger, forceWrite } });
     const disabledForegroundRemoteSyncReason =
       currentSettings.syncRemoteEnabled === true &&
       normalizedSettings.syncRemoteEnabled !== true
@@ -40345,6 +40950,7 @@
         // competing run must win this race without being preempted.
         preemptActiveSync: false,
         operation: "force_push",
+        operationId: options.operationId,
       });
     if (!manualExecutionAuthority) {
       if (options.suppressBusyMessage !== true) {
@@ -40501,6 +41107,7 @@
         // Do not preempt a run that started while confirmation was open.
         preemptActiveSync: false,
         operation: "force_pull",
+        operationId: options.operationId,
       });
     if (!manualExecutionAuthority) {
       if (options.suppressBusyMessage !== true) {
@@ -42388,7 +42995,9 @@
   };
 
   const getDebugConsoleLogMessageForDisplay = (entry, expanded) => {
-    let message = String(entry?.message || "");
+    let message = entry.event
+      ? `[${entry.module}] ${entry.message}${entry.repeatCount > 1 ? `（重复 ${entry.repeatCount} 次，跨度 ${Math.round((entry.lastTs - entry.ts) / 1000)} 秒）` : ""}${expanded ? "\n" + JSON.stringify(entry, null, 2) : ""}`
+      : String(entry?.message || "");
     message = message.replace(/\d{4}\/\d{1,2}\/\d{1,2}\s+\d{1,2}:\d{2}:\d{2}\s*\|\s*/, "");
     if (expanded || message.length <= LOG_COLLAPSED_MESSAGE_MAX_LENGTH) {
       return message;
@@ -42411,8 +43020,9 @@
   const buildLogLineDOM = (entry) => {
     const line = document.createElement("div");
     line.className = "s1p-debug-console-log-line";
+    line.classList.toggle("s1p-structured-log", Boolean(entry.event));
     const fullMessage = String(entry.message || "");
-    const isExpandable = fullMessage.length > LOG_COLLAPSED_MESSAGE_MAX_LENGTH;
+    const isExpandable = Boolean(entry.event) || fullMessage.length > LOG_COLLAPSED_MESSAGE_MAX_LENGTH;
     const isExpanded = isExpandable && isDebugConsoleLogEntryExpanded(entry);
     line.classList.toggle("is-expanded", isExpanded);
 
@@ -42474,7 +43084,9 @@
   const applyLogFilters = (logs) => {
     return logs.filter((entry) => {
       if (!logFilters[entry.level]) return false;
-      if (logSearchKeyword && !String(entry.message || "").toLowerCase().includes(logSearchKeyword.toLowerCase())) return false;
+      if (s1pLogModuleFilter && entry.module !== s1pLogModuleFilter) return false;
+      if (s1pLogOperationFilter && entry.operationId !== s1pLogOperationFilter && entry.parentOperationId !== s1pLogOperationFilter) return false;
+      if (logSearchKeyword && !JSON.stringify(entry).toLowerCase().includes(logSearchKeyword.toLowerCase())) return false;
       return true;
     });
   };
@@ -42657,6 +43269,32 @@
     if (!logArea || !statusBar) return;
 
     const filtered = applyLogFilters(logBuffer);
+    const moduleSelect = panel.querySelector("[data-s1p-log-module]");
+    const operationSelect = panel.querySelector("[data-s1p-log-operation]");
+    const updateSelect = (select, values, selected, label) => {
+      if (!select) return;
+      const signature = JSON.stringify(values);
+      if (select.dataset.s1pOptions === signature) return;
+      select.dataset.s1pOptions = signature;
+      select.replaceChildren();
+      for (const [value, text] of [["", label], ...values]) {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = text;
+        select.appendChild(option);
+      }
+      select.value = selected;
+    };
+    updateSelect(moduleSelect, [...new Set(logBuffer.map((entry) => entry.module).filter(Boolean))].sort().map((value) => [value, value]), s1pLogModuleFilter, "全部模块");
+    const operations = s1pGetDiagnosticOperationSummaries();
+    updateSelect(operationSelect, operations.slice(-80).reverse().map((item) => [item.operationId, `${new Date(item.startedAt).toLocaleTimeString()} · ${item.message}`]), s1pLogOperationFilter, "全部操作");
+    const summary = panel.querySelector("[data-s1p-log-summary]");
+    const latestOperation = s1pLogOperationFilter ? operations.find((item) => item.operationId === s1pLogOperationFilter)
+      : operations.filter((item) => !s1pLogModuleFilter || item.module === s1pLogModuleFilter).at(-1);
+    const statusLabel = { queued: "等待中", requested: "已请求", awaiting_confirmation: "等待确认", settled: "已结束", retrying: "等待重试", cancelled: "已取消" }[latestOperation?.status];
+    if (summary) summary.textContent = latestOperation
+      ? `${latestOperation.message} · ${statusLabel || getSyncTraceStatusLabel(latestOperation.status) || latestOperation.status} · 已记录 ${Math.round(latestOperation.elapsedMs / 1000)} 秒`
+      : "关键事件自动保留；打开面板时额外采集控制台输出。";
     const renderLogs = filtered.slice(-LOG_RENDER_MAX);
     const wasAtBottom = logArea.scrollTop + logArea.clientHeight >= logArea.scrollHeight - 10;
 
@@ -42676,7 +43314,8 @@
       filtered.length +
       " 条，渲染 " +
       renderLogs.length +
-      " 条）";
+      " 条）" + (s1pLogLoss.evicted ? ` · 已淘汰 ${s1pLogLoss.evicted} 条` : "") +
+      (s1pLogLoss.persistenceFailures ? " · 本地保存失败，导出包含当前内存记录" : "");
     updateDebugConsoleExpandAllButton(panel);
   };
 
@@ -43713,6 +44352,18 @@
     });
     filterBar.appendChild(searchInput);
 
+    for (const [attribute, label, update] of [
+      ["data-s1p-log-module", "筛选日志模块", (value) => { s1pLogModuleFilter = value; }],
+      ["data-s1p-log-operation", "筛选操作", (value) => { s1pLogOperationFilter = value; }],
+    ]) {
+      const select = document.createElement("select");
+      select.className = "s1p-input";
+      select.setAttribute(attribute, "");
+      select.setAttribute("aria-label", label);
+      select.addEventListener("change", () => { update(select.value); logDirty = true; renderLogPanel(); });
+      filterBar.appendChild(select);
+    }
+
     const btnGroup = document.createElement("div");
     btnGroup.className = "s1p-debug-console-head-actions";
     btnGroup.appendChild(
@@ -43737,8 +44388,17 @@
       })
     );
     toolbar.appendChild(btnGroup);
+    for (const [label, action] of [["导出诊断", "export-diagnostic-log"], ["合并诊断", "merge-diagnostic-logs"], ["详细诊断 10 分钟", "toggle-verbose-diagnostics"]]) {
+      btnGroup.appendChild(createS1pDebugButton({ label, action, kind: "utility" }));
+    }
     toolbar.appendChild(filterBar);
     panel.appendChild(toolbar);
+
+    const summary = document.createElement("div");
+    summary.className = "s1p-debug-panel-note";
+    summary.setAttribute("data-s1p-log-summary", "");
+    summary.setAttribute("aria-live", "polite");
+    panel.appendChild(summary);
 
     const logArea = document.createElement("div");
     logArea.className = "s1p-debug-console-log-area s1p-debug-section";
@@ -43839,6 +44499,10 @@
       expandedLogEntryIds = new Set();
       logExpandAll = false;
       nextLogEntryId = 1;
+      s1pLogEntrySizes.clear();
+      s1pFailedOperationIds.clear();
+      s1pLogLoss = { evicted: 0, truncated: 0, persistenceFailures: 0, collectionFailures: 0 };
+      s1pLogOperationFilter = "";
       logDirty = true;
       try {
         if (window.sessionStorage) {
@@ -43862,11 +44526,51 @@
     }
     if (action === "copy-logs") {
       const filtered = applyLogFilters(logBuffer);
-      const text = filtered
+      const text = `S1 Plus ${SCRIPT_VERSION} · 当前标签页筛选日志 · ${new Date().toISOString()}\n采集损失：${JSON.stringify(s1pLogLoss)}\n` + filtered
         .map((entry) => formatLogEntryForCopy(entry))
         .join("\n");
       copyDebugConsoleText(text);
       showDebugConsoleButtonFeedback(button, `已复制 ${filtered.length} 条`);
+      return;
+    }
+    if (action === "export-diagnostic-log") {
+      s1pDownloadDiagnosticExport(s1pBuildDiagnosticExport());
+      showDebugConsoleButtonFeedback(button, "已导出");
+      return;
+    }
+    if (action === "merge-diagnostic-logs") {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = ".json,application/json";
+      input.multiple = true;
+      input.addEventListener("change", async () => {
+        try {
+          const files = [...input.files];
+          if (!files.length) return;
+          if (files.length > 8 || files.some((file) => file.size > 4 * 1024 * 1024)) throw new Error("每次最多 8 份诊断，每份不超过 4 MB");
+          const bundles = await Promise.all(files.map(async (file) => JSON.parse(await file.text())));
+          s1pDownloadDiagnosticExport(s1pMergeDiagnosticExports(bundles));
+          showDebugConsoleButtonFeedback(button, "已合并导出");
+        } catch (error) { showMessage(`诊断合并失败：${error.message}`, false); }
+      }, { once: true });
+      input.click();
+      return;
+    }
+    if (action === "toggle-verbose-diagnostics") {
+      if (s1pVerboseTimer) clearTimeout(s1pVerboseTimer);
+      s1pVerboseUntil = Date.now() < s1pVerboseUntil ? 0 : Date.now() + 10 * 60 * 1000;
+      button.textContent = s1pVerboseUntil ? "停止详细诊断" : "详细诊断 10 分钟";
+      s1pRecordDiagnosticEvent("diagnostics.capture_changed", { message: s1pVerboseUntil ? "已开启详细诊断，10 分钟后自动停止" : "已停止详细诊断", details: { verboseUntil: s1pVerboseUntil } });
+      if (s1pVerboseUntil) {
+        s1pVerboseTimer = setTimeout(() => {
+          s1pVerboseTimer = null;
+          s1pVerboseUntil = 0;
+          const currentButton = document.querySelector('[data-s1p-debug-action="toggle-verbose-diagnostics"]');
+          if (currentButton) currentButton.textContent = "详细诊断 10 分钟";
+          s1pRecordDiagnosticEvent("diagnostics.capture_expired", { message: "详细诊断时间已到，已恢复关键事件采集" });
+        }, 10 * 60 * 1000);
+        s1pVerboseTimer?.unref?.();
+      }
       return;
     }
     if (action === "refresh-diagnostics") {
@@ -44632,6 +45336,18 @@
   };
 
   const s1pCreateManualSyncIntentCoordinator = (adapters = {}) => {
+    let s1pManualOperationId = "";
+    const s1pTraceManualIntent = (event, status, reason = "", details = {}) => {
+      s1pRecordDiagnosticEvent(`manual.${event}`, { module: "sync.manual", operationId: s1pManualOperationId,
+        status, reason, message: {
+          requested: "用户请求手动同步", queued: "手动请求已排队，等待执行边界",
+          waiting: "手动请求仍在等待", confirmation: "手动请求已就绪，等待用户确认",
+          confirmed: "用户确认执行手动同步", settled: "手动请求结束", suspended: "手动请求随页面离开暂停",
+        }[event] || event,
+        repeatKey: event === "waiting" ? `waiting:${details.locks?.map((lock) => lock.executionId).join(",")}` : "",
+        details: { intent: readIntent(), waitedMs: readIntent() ? Math.max(0, getNow() - readIntent().createdAt) : 0, ...details },
+      });
+    };
     const getNow = () => {
       const value =
         typeof adapters.now === "function" ? adapters.now() : adapters.now;
@@ -44645,10 +45361,12 @@
         return null;
       }
       pendingManualSyncIntent = normalized;
+      s1pScheduleIntentWakeup();
       return pendingManualSyncIntent;
     };
     const deleteIntent = () => {
       pendingManualSyncIntent = null;
+      s1pClearIntentWakeup();
       return true;
     };
 
@@ -44721,6 +45439,7 @@
         : (direction, _intent, options = {}) => {
             const executionOptions = {
               ...options,
+              operationId: s1pManualOperationId,
               suppressBusyMessage: true,
             };
             return direction === AUTO_SYNC_INDICATOR_OPERATION_PULL
@@ -44738,8 +45457,8 @@
             return createAdvancedConfirmationModal(
               isPush ? "推送本地数据？" : "拉取云端数据？",
               isPush
-                ? "当前同步已完成。是否将此刻的本地数据推送到云端？"
-                : "当前同步已完成。是否现在拉取最新云端数据？",
+                ? "是否将此刻的本地数据推送到云端？"
+                : "是否现在拉取最新云端数据？",
               [
                 {
                   text: "取消",
@@ -44776,6 +45495,37 @@
     let suppressModalDismiss = false;
     const listenerIds = [];
     const domListeners = [];
+
+    let s1pIntentWakeupTimer = null;
+    let s1pIntentSuspended = false;
+    const s1pClearIntentWakeup = () => {
+      if (s1pIntentWakeupTimer !== null) {
+        (adapters.clearTimeout || clearTimeout)(s1pIntentWakeupTimer);
+        s1pIntentWakeupTimer = null;
+      }
+    };
+    const s1pScheduleIntentWakeup = () => {
+      s1pClearIntentWakeup();
+      const intent = readIntent();
+      if (!intent || s1pIntentSuspended) return;
+      const now = getNow();
+      const staleIn = intent.createdAt + MANUAL_SYNC_INTENT_STALE_MS - now + 1;
+      const lock = typeof adapters.getActiveLock === "function"
+        ? adapters.getActiveLock(now)
+        : getActiveSyncLockSnapshot(now);
+      // TTL expiry does not mutate GM storage. A bounded checkpoint also
+      // recovers missed release notifications and page-local execution flags.
+      const delay = intent.phase === MANUAL_SYNC_INTENT_PHASE_QUEUED
+        ? Math.min(staleIn, lock ? Math.max(50, lock.expiresAt - now + 1) : 1000, 5000)
+        : staleIn;
+      s1pIntentWakeupTimer = (adapters.setTimeout || setTimeout)(() => {
+        s1pIntentWakeupTimer = null;
+        return reconcile("manual_sync_intent_deadline").catch(() => {
+          s1pScheduleIntentWakeup();
+        });
+      }, Math.max(50, delay));
+      s1pIntentWakeupTimer?.unref?.();
+    };
 
     const enqueue = (task) => {
       const previous = operationPromise || Promise.resolve();
@@ -44845,12 +45595,14 @@
       return waiting;
     };
 
-    const settleIntent = (intent, reason = "manual_sync_intent_settled") => {
+    const settleIntent = (intent, reason = "manual_sync_intent_settled", result = null) => {
       const current = readIntent();
       if (!isSameIntent(current, intent)) {
         return false;
       }
       deleteIntent();
+      s1pTraceManualIntent("settled", result?.status || (/cancel|stale|disabled/.test(reason) ? "cancelled" : "settled"), reason,
+        { waitedMs: getNow() - intent.createdAt });
       if (
         !activeConfirmationKey ||
         activeConfirmationKey === getIntentKey(intent)
@@ -44921,6 +45673,7 @@
         }
 
         closeActiveConfirmation({ dismiss: false, reason: "confirmed" });
+        s1pTraceManualIntent("confirmed", "running");
         let result;
         try {
           result = await executeDirection(current.direction, current, {});
@@ -44943,7 +45696,7 @@
             ? summarizeIntent(waiting, "queued", "execution_boundary_busy")
             : result;
         }
-        settleIntent(current, "manual_sync_intent_settled");
+        settleIntent(current, "manual_sync_intent_settled", result);
         return result;
       });
 
@@ -44963,6 +45716,7 @@
       closeActiveConfirmation({ reason: "replaced" });
       const epoch = confirmationEpoch;
       activeConfirmationKey = key;
+      s1pTraceManualIntent("confirmation", "awaiting_confirmation");
       try {
         activeConfirmationModal = showConfirmation(current, {
           onConfirm: () => confirmPending(current, epoch),
@@ -45005,6 +45759,9 @@
     const reconcileOnce = async (
       reason = "manual_sync_intent_reconcile"
     ) => {
+      if (s1pIntentSuspended) {
+        return { status: "deferred", reason: "page_hidden_by_navigation" };
+      }
       if (syncExecutionSettlementDepth > 0) {
         manualSyncIntentBoundaryDeferred = true;
         return { status: "deferred", reason: "running_sync_settlement" };
@@ -45024,6 +45781,11 @@
       }
 
       if (hasActiveExecution()) {
+        s1pObserveSyncLocks(getNow());
+        s1pTraceManualIntent("waiting", "queued", "execution_boundary_busy", {
+          locks: s1pReadSyncLockEvidence(getNow()), settlementDepth: syncExecutionSettlementDepth,
+          manualBusy: isManualSyncActionBusy(),
+        });
         if (intent.phase !== MANUAL_SYNC_INTENT_PHASE_QUEUED) {
           intent = setWaitingForExecutionBoundary(intent);
         }
@@ -45051,7 +45813,7 @@
     };
 
     const reconcile = (reason = "manual_sync_intent_reconcile") =>
-      enqueue(() => reconcileOnce(reason));
+      enqueue(() => reconcileOnce(reason)).finally(s1pScheduleIntentWakeup);
 
     const request = async (direction, options = {}) => {
       const normalizedDirection =
@@ -45066,6 +45828,9 @@
           reason: "unsupported_manual_direction",
         };
       }
+      if (readIntent()) s1pTraceManualIntent("replaced", "superseded", "new_manual_request", { nextDirection: normalizedDirection });
+      s1pManualOperationId = s1pNewDiagnosticOperation("manual");
+      s1pTraceManualIntent("requested", "requested", "navbar_or_manual_action", { direction: normalizedDirection });
       if (!isSyncEnabled()) {
         const current = readIntent();
         if (current) {
@@ -45099,6 +45864,7 @@
             // Local scheduler cleanup is best effort.
           }
           setIndicatorPending(pending);
+          s1pTraceManualIntent("queued", "queued", "execution_race");
           refreshDisplay("manual_sync_intent_execution_race");
           showMessageForDelayedIntent(normalizedDirection);
           const reconciled = await reconcileOnce(
@@ -45120,6 +45886,7 @@
         }
         const active = hasActiveExecution();
         if (active) {
+          s1pTraceManualIntent("queued", "queued", "execution_boundary_busy");
           try {
             onQueued();
           } catch (error) {
@@ -45145,6 +45912,11 @@
     const handleLifecycle = (eventName = "") => {
       const phase = String(eventName || "").trim();
       if (phase === "pagehide" || phase === "beforeunload") {
+        if (readIntent()) s1pTraceManualIntent("suspended", "queued", phase);
+        if (phase === "pagehide") {
+          s1pIntentSuspended = true;
+          s1pClearIntentWakeup();
+        }
         closeActiveConfirmation({ reason: phase });
         return {
           status: "preserved",
@@ -45153,6 +45925,7 @@
         };
       }
       if (phase === "visible" || phase === "pageshow" || phase === "focus") {
+        s1pIntentSuspended = false;
         return reconcile("manual_sync_intent_" + phase);
       }
       return { status: "skipped", reason: "unsupported_lifecycle_event" };
@@ -45170,6 +45943,7 @@
         return { status: "skipped", reason: "already_bound" };
       }
       bound = true;
+      s1pIntentSuspended = false;
       if (typeof GM_addValueChangeListener === "function") {
         [
           GLOBAL_SYNC_LOCK_KEY,
@@ -54400,7 +55174,9 @@
   };
 
   const logReadProgressParseDebug = (message, details = null) => {
-    if (!READ_PROGRESS_PARSE_DEBUG) return;
+    if (!READ_PROGRESS_PARSE_DEBUG && Date.now() >= s1pVerboseUntil) return;
+    s1pRecordDiagnosticEvent("reading.parse", { module: "reading", level: "debug",
+      message, details: details || {}, verbose: !READ_PROGRESS_PARSE_DEBUG });
     if (details) {
       console.debug(`S1 Plus (ReadProgress): ${message}`, details);
       return;
@@ -58110,6 +58886,8 @@
         S1P_INITIALIZATION_ERROR_LABEL_FIELD
       ) || fallbackLabel;
     console.error(`${messagePrefix} (${label}):`, normalizedError);
+    s1pRecordDiagnosticEvent("initialization.failed", { module: "initialization", status: "failure", level: "error",
+      message: "初始化任务失败", details: { label, error: normalizedError } });
     return true;
   };
 
@@ -58182,6 +58960,9 @@
         }
       } catch (error) {
         lastError = error;
+        s1pRecordDiagnosticEvent("initialization.task_error", { module: "initialization", level: "warn",
+          status: task.retryOnError ? "retrying" : "failure", message: "初始化任务发生异常",
+          details: { phaseName, taskName: task.name, attempt, optional: task.optional === true, error } });
         if (task.retryOnError !== true) {
           const taskLabel = getInitializationTaskLabel(phaseName, task);
           if (!task.optional) {
@@ -58249,16 +59030,27 @@
 
   const runInitializationPhase = async (phaseName, tasks, context) => {
     const phaseStartedAt = Date.now();
-    for (const task of tasks) {
-      if (!task || typeof task.run !== "function") {
-        continue;
+    const operationId = s1pNewDiagnosticOperation("initialization");
+    s1pRecordDiagnosticEvent("initialization.phase_started", { module: "initialization", operationId,
+      status: "running", message: `初始化阶段：${phaseName}`, details: { phaseName } });
+    try {
+      for (const task of tasks) {
+        if (!task || typeof task.run !== "function") {
+          continue;
+        }
+        await runInitializationTask(phaseName, task, context);
       }
-      await runInitializationTask(phaseName, task, context);
+      context.phaseResults[phaseName] = {
+        completedAt: Date.now(),
+        durationMs: Date.now() - phaseStartedAt,
+      };
+      s1pRecordDiagnosticEvent("initialization.phase_completed", { module: "initialization", operationId,
+        status: "success", message: `初始化阶段已完成：${phaseName}`, details: { durationMs: Date.now() - phaseStartedAt } });
+    } catch (error) {
+      s1pRecordDiagnosticEvent("initialization.phase_failed", { module: "initialization", operationId,
+        status: "failure", level: "error", message: `初始化阶段失败：${phaseName}`, details: { error, durationMs: Date.now() - phaseStartedAt } });
+      throw error;
     }
-    context.phaseResults[phaseName] = {
-      completedAt: Date.now(),
-      durationMs: Date.now() - phaseStartedAt,
-    };
   };
 
   if (IS_S1P_TEST_MODE) {
@@ -58977,6 +59769,7 @@
   }
 
   const runS1PlusInitializer = () => {
+    s1pInitializeDiagnostics();
     initializeReloadScrollRestorationGuard();
     initializePostHashAnchorAlignment();
     const initializationContext = createS1PlusInitializationContext();
