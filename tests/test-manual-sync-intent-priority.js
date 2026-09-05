@@ -34,6 +34,7 @@ const createCoordinator = (hooks, options = {}) => {
   const schedulerResumptions = [];
 
   const coordinator = hooks.s1pCreateManualSyncIntentCoordinator({
+    ...options.timerAdapters,
     now: () => now,
     isSyncEnabled: () => syncEnabled,
     hasActiveExecution: () => activeExecution,
@@ -504,6 +505,7 @@ const testNeutralForegroundProbeRemainsNeutral = () => {
 };
 
 const run = async () => {
+  await testSilentExpiryWakesManualIntent();
   await testImmediateManualPushAndPullDoNotConfirm();
   await testBusyManualPushProjectsPageLocalPending();
   await testBusyManualPullProjectsPageLocalPending();
@@ -526,6 +528,63 @@ const run = async () => {
   await testLocalStaleTimeoutClearsPendingWithoutTimer();
   testNeutralForegroundProbeRemainsNeutral();
   console.log("[manual-sync-intent-priority] page-local manual priority verified.");
+};
+
+const testSilentExpiryWakesManualIntent = async () => {
+  for (const direction of ["push", "pull"]) {
+    const { hooks } = createHarness();
+    let now = 1_000_000;
+    let expiresAt = now + 4300;
+    let nextId = 0;
+    const timers = new Map();
+    const runtime = createCoordinator(hooks, {
+      activeExecution: true,
+      timerAdapters: {
+        getActiveLock: () => expiresAt > now ? { expiresAt } : null,
+        setTimeout: (callback, delay) => {
+          const id = ++nextId;
+          timers.set(id, { callback, at: now + delay });
+          return id;
+        },
+        clearTimeout: (id) => timers.delete(id),
+      },
+    });
+    const advance = async (target) => {
+      now = target;
+      runtime.setNow(now);
+      runtime.setActiveExecution(expiresAt > now);
+      for (const [id, timer] of [...timers]) {
+        if (timer.at <= now) {
+          timers.delete(id);
+          await timer.callback();
+        }
+      }
+    };
+    await runtime.coordinator.request(direction);
+    assert.equal(timers.size, 1, "排队必须有独立唤醒，锁自然过期不会触发 GM 通知");
+    // Owner renews without delivering a storage notification.
+    expiresAt += 5000;
+    await advance(1_004_400);
+    assert.equal(runtime.confirmations.length, 0, "续租不能被强行抢占");
+    assert.equal(timers.size, 1);
+    await advance(1_009_400);
+    assert.equal(runtime.confirmations.length, 1, "无点击/焦点/storage 事件也应弹出确认");
+    assert.equal(runtime.executions.length, 0);
+    await runtime.coordinator.reconcile("duplicate_checkpoint");
+    assert.equal(runtime.confirmations.length, 1);
+    await runtime.confirmations[0].actions.onCancel();
+    assert.equal(timers.size, 0);
+    runtime.setActiveExecution(true);
+    expiresAt = now + 1000;
+    await runtime.coordinator.request(direction);
+    runtime.coordinator.handleLifecycle("pagehide");
+    assert.equal(timers.size, 0, "离开页面必须取消计时器");
+    await advance(now + 2000);
+    await runtime.coordinator.handleLifecycle("pageshow");
+    assert.equal(runtime.confirmations.length, 2, "BFCache 返回后恢复检查");
+    runtime.coordinator.unbind();
+    assert.equal(timers.size, 0);
+  }
 };
 
 run().catch((error) => {

@@ -1238,7 +1238,7 @@ const testRateLimited403RemainsRetryableForForegroundPolicy = async () => {
     return { abort: noop };
   };
   const immediateSetTimeout = (callback) => {
-    sleepCount += 1;
+    if (!["s1pFlushSyncTrace", "s1pPersistLogs"].includes(callback.name)) sleepCount += 1;
     callback();
     return 1;
   };
