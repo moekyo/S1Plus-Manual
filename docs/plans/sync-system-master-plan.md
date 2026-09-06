@@ -2,9 +2,9 @@
 
 ## 当前状态
 
-- 计划状态：Phase 1 到 Phase 6 已完成实现、自动验证和独立审查；Phase 1 到 Phase 3 真实多窗口点验仍待执行。
+- 计划状态：Phase 1 到 Phase 6 已完成实现、自动验证和独立审查；后续前台 durable soft-block 循环修复已完成；Phase 1 到 Phase 3 真实多窗口点验仍待执行。
 - 总体实施进度：6/6 个阶段已完成代码实现，6/6 个阶段已完成独立审查。
-- 当前阶段：六个架构阶段全部完成；后续仅剩 Phase 1 到 Phase 3 的真实多窗口点验。
+- 当前阶段：六个架构阶段和前台 soft-block 补充修复已完成；后续仅剩 Phase 1 到 Phase 3 的真实多窗口点验。
 - 代码状态：`s1pSyncSystem` façade、页面调用者迁移、可回滚初始化恢复编排、系统 interface 测试和被替代 test hook 清理已完成，通过全仓自动测试与独立终审。
 - 架构依据：2026-07-11 完成同步锁遗留问题的实机复现、代码定位和架构复核。
 
@@ -377,6 +377,7 @@ Running Sync 的 implementation 负责模式锁、全局锁、心跳、远端事
 | 所有页面隐藏或冻结 | 不承诺后台准时执行；恢复后从持久化状态接管 |
 | Result Phase 处理失败 | 不重新持有执行锁，pending 和 retry 仍可恢复 |
 | 前台补同步遇到局部 dirty | 保持 soft block，不升级为错误的全局冲突 |
+| 前台 follow-up 返回不可重试 soft block | 持久化 exact intent，停止 recovery/reprobe 循环，等待新本地或远端事实 |
 | 手动拉取或推送 | 保持主动抢占、取消旧请求和重新读取快照 |
 | 标题 Running Phase | 只有 Live Runner 可以显示，外来 Sync Lock 不足以证明 Running Sync |
 | Result Phase 标题 handoff | Result Phase 可转移，Running Sync 不可转移 |
@@ -429,6 +430,26 @@ Phase 1、Phase 2 和 Phase 3 完成后需要做真实多窗口点验：
 - 每个阶段单独提交，回滚时只需要回退该阶段代码和对应测试、文档。
 - 不通过数据迁移删除旧状态。过期锁、pending 和 owner lease 继续依赖既有 TTL 与归一化逻辑恢复。
 - 如果某阶段无法保持现有行为，停止进入下一阶段，先回退该阶段并记录失败场景。
+
+## 2026-09 卸载竞态与诊断补充
+
+后续复盘发现，`pagehide` 可能发生在 Running Sync 已写入模式/全局锁、但 50ms ownership verification 尚未完成的窗口内。该窗口的锁尚未允许事务开始，因此生命周期代次现在会取消并安全清理这类 provisional acquisition；已进入事务的锁仍遵守原有 TTL，不做跨标签页接管。
+
+锁诊断新增 acquisition start/cancel/failure 事件，操作汇总提供 `terminalEvent`、`terminalReason`、`observedExpiryAt` 和 `terminalEvidence`，并分别保留锁终态、事务终态、收尾终态和最多 32 项终态事件链；失败证据优先于后续成功释放或完成事件，避免事务/收尾失败被覆盖。跨标签页导出仍只能通过当前页事件与共享锁收据拼接，缺少持有者回执时保持证据缺口，不把锁记录消失或 TTL 过期误写成正常释放；持有者在释放阶段发现 TTL 已过期时记录 `lock.expired_cleanup`，锁状态存储读写失败时记录 `lock.release_failed`。
+
+后续边界审查修正了生命周期栅栏的复位时机：调度器可以在卸载微任务中恢复自己的 handoff 标记，但 Running Sync 栅栏必须持续到 `pageshow`、确认取消卸载的恢复 task 或显式解绑，避免卸载中的 50ms ownership verification 窗口重新开放。共享锁回执读取会按稳定身份去重并跳过损坏记录，合并导出也会去重回执，降低重复信息对终态判断的干扰。
+
+共享调度因执行锁占用而重复 reschedule 时，诊断去重键不再包含递增 generation；记录按原因、锁身份和锁阶段聚合，同时保留占锁 operation、执行 ID、取得时间、过期时间和剩余 TTL，避免高频重试淹没锁卡住的关键证据。
+
+验证补充：`test-safe-sync-execution.js` 覆盖拿锁后 pagehide 不进入事务、锁释放调用异常仍继续处理结果并留下结构化收尾证据，`test-background-sync-shared-debounce.js` 覆盖 ownership verification 窗口取消临时锁，`test-structured-diagnostics.js` 覆盖锁存储失败终态、释放/过期证据区分、共享回执去重和事务完成后保留锁证据。
+
+## 2026-09 前台待处理 soft-block 循环修复
+
+最新日志显示，metadata-only probe 本身请求成功；同一 `remoteUpdatedAt` 下，前台 follow-up 连续返回 `blocked + soft`（`local_changed_with_remote_timestamp_drift`），旧逻辑却把所有 `blocked` 结果重新排入 600ms recovery，形成“放大镜探测 / 同步波浪”循环。每一轮的锁都正常取得并释放，问题是 pending recovery 的重试资格判断过宽。
+
+现在前台 durable intent 保存 `lastAttemptAt`、`lastResultStatus`、`lastResultReason`、`lastResultAction`、`lastResultBlockLevel` 和 `lastResultAt`，并按 `requestId + remoteUpdatedAt` 绑定。不可重试的 soft block 会清理 recovery/retry timer、隐藏待处理指示器并写入 suppression 证据；同一远端版本的再次 probe 只记录抑制，不再启动 follow-up。`read_progress_pending_write`、同步防抖和初始化噪声仍走有界重试。新的本地 mutation 会清除该 marker，更新的远端版本或成功的显式同步会创建/结算新的 intent。
+
+新增 `testNonRetryableForegroundSoftBlockStopsRecoveryLoop` 覆盖恢复回调、重复 probe、指示器和本地 mutation 解锁；`foreground_pending_attempt_started`、`foreground_pending_recovery_result`、`foreground_pending_recovery_suppressed`、`foreground_probe_soft_block_suppressed`、`foreground_pending_soft_block_cleared` 作为高价值事件保留，并带出请求身份、阻断级别、原因、动作和时间。
 
 ## 预计修改范围
 

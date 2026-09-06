@@ -128,6 +128,124 @@ const testForegroundProbePersistsAndSettlesIntent = async () => {
   );
 };
 
+const testNonRetryableForegroundSoftBlockStopsRecoveryLoop = async () => {
+  const { hooks, sandbox } = createHarness();
+  const now = 1760001200000;
+  const pending = hooks.markPendingForegroundRemoteSyncRequest({
+    reason: "pageshow",
+    triggerSource: "foreground_resume",
+    remoteUpdatedAt: "2026-08-27T05:25:29Z",
+    now,
+  });
+  const timers = [];
+  const fakeSetTimeout = (callback, delayMs) => {
+    timers.push({ callback, delayMs });
+    return timers.length;
+  };
+  sandbox.setTimeout = fakeSetTimeout;
+  sandbox.window.setTimeout = fakeSetTimeout;
+  let requestCount = 0;
+
+  const recovery = hooks.scheduleForegroundRemoteSyncRecovery(pending, {
+    now,
+    requestForegroundRemoteSyncCheck: async () => {
+      requestCount += 1;
+      return {
+        status: "blocked",
+        blockLevel: "soft",
+        blockScope: "tab",
+        reason: "local_changed_with_remote_timestamp_drift",
+        action: "skip_push_on_foreground_followup",
+      };
+    },
+    syncResultPhasePolicy: {
+      handle: async () => ({ refreshPlan: null, retryResult: null }),
+    },
+  });
+  assert.equal(recovery.status, "scheduled");
+  const recoveryTimer = timers.find(({ delayMs }) => delayMs === 600);
+  assert.ok(recoveryTimer, "前台待处理应先安排一次恢复执行。");
+
+  await recoveryTimer.callback();
+
+  const blockedPending = hooks.getPendingForegroundRemoteSyncRequest();
+  assert.equal(requestCount, 1);
+  assert.equal(blockedPending.lastResultStatus, "blocked");
+  assert.equal(
+    blockedPending.lastResultReason,
+    "local_changed_with_remote_timestamp_drift"
+  );
+  assert.equal(blockedPending.lastResultBlockLevel, "soft");
+  assert.equal(
+    hooks.getForegroundRemoteSyncRecoveryRemainingMs(),
+    0,
+    "不可重试的 soft block 完成后不得再次安排 600ms 恢复循环。"
+  );
+  assert.equal(
+    hooks.getAutoSyncRuntimePendingDisplayState().hasPending,
+    false,
+    "已进入等待新事实的 soft block 不应继续显示待处理波浪。"
+  );
+
+  const timerCountAfterBlock = timers.length;
+  const suppressedRecovery = hooks.recoverPendingForegroundRemoteSyncIfNeeded({
+    now: now + 1000,
+    settingsSnapshot: enabledSettings,
+    requestForegroundRemoteSyncCheck: async () => {
+      requestCount += 1;
+      return { status: "success", action: "pulled" };
+    },
+  });
+  assert.equal(suppressedRecovery.status, "blocked");
+  assert.equal(
+    suppressedRecovery.reason,
+    "foreground_soft_block_waiting_for_change"
+  );
+  assert.equal(requestCount, 1, "重复恢复不得再次执行 follow-up 请求。");
+  assert.equal(
+    timers.length,
+    timerCountAfterBlock,
+    "重复恢复不得重新创建后台计时器。"
+  );
+
+  const repeatedProbe = await hooks.s1pSyncSystem.requestSync({
+    kind: "foreground_probe",
+    reason: "pageshow",
+    options: {
+      now: now + 2000,
+      settingsSnapshot: enabledSettings,
+      acquireRemoteProbeLock: async () => true,
+      releaseRemoteProbeLockValue: () => {},
+      fetchRemoteData: async () => ({
+        meta: { updatedAt: "2026-08-27T05:25:29Z" },
+      }),
+      requestForegroundRemoteSyncCheck: async () => {
+        requestCount += 1;
+        return { status: "success", action: "pulled" };
+      },
+    },
+  });
+  assert.equal(repeatedProbe.status, "blocked");
+  assert.equal(repeatedProbe.reason, "foreground_soft_block_waiting_for_change");
+  assert.equal(
+    repeatedProbe.syncRequestResult.action,
+    "probe_soft_block_suppressed",
+    "同一云端版本的重复探测应复用现有 soft block。"
+  );
+  assert.equal(requestCount, 1, "重复探测不得再次启动完整 follow-up。");
+
+  hooks.s1pSyncSystem.recordLocalMutation("read_progress", {
+    triggerSync: false,
+  });
+  const reopenedPending = hooks.getPendingForegroundRemoteSyncRequest();
+  assert.equal(
+    reopenedPending.lastResultStatus,
+    "",
+    "新本地事实应解除 durable soft block。"
+  );
+  assert.equal(reopenedPending.lastResultReason, "");
+};
+
 const testCrossContextPendingSignalWakesExistingPage = () => {
   const { hooks, sandbox, store } = createHarness();
   hooks.saveSettings(
@@ -1168,6 +1286,7 @@ const testCollectedS1pLogsIncludeRuntimeContext = () => {
 (async () => {
   await testPendingForegroundIntentSurvivesActiveLock();
   await testForegroundProbePersistsAndSettlesIntent();
+  await testNonRetryableForegroundSoftBlockStopsRecoveryLoop();
   testCrossContextPendingSignalWakesExistingPage();
   testOlderContextCannotClearNewerRemoteIntent();
   testSameTimestampObservationCreatesANewIntentGeneration();

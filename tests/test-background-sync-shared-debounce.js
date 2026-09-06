@@ -213,6 +213,39 @@ const testDueDefersWhileRunningSyncOwnsLock = () => {
   assert.equal(tabA.scheduler.inspect().state.dueAt, clock.now + 1000);
 };
 
+const testLockBlockedReschedulesAggregateWithOwnerEvidence = () => {
+  const { clock, makeScheduler, hooks, store } = createScenario({
+    now: 5_500_000,
+  });
+  const tabA = makeScheduler({ tabId: "tab-a" });
+  tabA.scheduler.queue({ source: "general", lastModified: 551 });
+  clock.now += GENERAL_DELAY_MS;
+
+  for (let attempt = 0; attempt < 7; attempt += 1) {
+    store.set(GLOBAL_SYNC_LOCK_KEY, {
+      owner: "running-tab",
+      mode: "background",
+      timestamp: clock.now,
+      ttlMs: 45 * 1000,
+      token: "running-token",
+      operationId: "running-operation",
+      acquiredAt: clock.now - 12_000,
+      stage: "remote_fetch",
+    });
+    tabA.scheduler.runDue();
+    clock.now += 1000;
+  }
+
+  const reschedules = hooks
+    .s1pBuildDiagnosticExport()
+    .events.filter((entry) => entry.event === "sync.shared_scheduler_rescheduled");
+  assert.equal(reschedules.length, 1, "持续占锁重试应聚合为一条诊断记录");
+  assert.ok(reschedules[0].repeatCount >= 2);
+  assert.equal(reschedules[0].details.lockOperationId, "running-operation");
+  assert.equal(reschedules[0].details.lockStage, "remote_fetch");
+  assert.ok(reschedules[0].details.lockRemainingMs > 0);
+};
+
 const testCoveredCompletionClearsPendingAndSharedState = () => {
   const { makeScheduler } = createScenario({ now: 6_000_000 });
   const tabA = makeScheduler({ tabId: "tab-a" });
@@ -721,6 +754,90 @@ const testPagehideFinalizesAndHandsOffWithoutTriggeringSync = async () => {
   assert.equal(syncSystem.dispose().status, "disposed");
 };
 
+const testPagehideCancelsUnverifiedRunningSyncLock = async () => {
+  const { hooks, store } = createScenario({ now: Date.now() });
+  const lifecycleAdapter = hooks.s1pCreateSyncLifecycleAdapter({
+    runCheckpoint: () => ({ status: "completed" }),
+    scheduleMicrotask: () => {},
+    schedulePostUnloadRecovery: () => {},
+  });
+
+  const acquirePromise = hooks.acquireModeSyncLock("background", {
+    operationId: "s1p_sync_test_pagehide_acquire",
+    returnAuthority: true,
+  });
+  await Promise.resolve();
+  assert.ok(
+    store.get(BACKGROUND_SYNC_LOCK_KEY),
+    "测试必须在锁归属校验窗口内观察到已写入的后台锁。"
+  );
+
+  await lifecycleAdapter.handle("pagehide", { persisted: false });
+  const authority = await acquirePromise;
+
+  assert.equal(
+    authority,
+    null,
+    "页面卸载时尚未完成归属校验的后台锁不能继续进入 Running Sync。"
+  );
+  assert.equal(store.has(BACKGROUND_SYNC_LOCK_KEY), false);
+  assert.equal(store.has(GLOBAL_SYNC_LOCK_KEY), false);
+  const diagnosticExport = hooks.s1pBuildDiagnosticExport();
+  const lockEvents = diagnosticExport.events.filter(
+    (entry) => entry.operationId === "s1p_sync_test_pagehide_acquire"
+  );
+  assert.ok(
+    lockEvents.some((entry) => entry.event === "lock.acquisition_started"),
+    "临时锁获取必须留下可追踪的开始证据。"
+  );
+  assert.ok(
+    lockEvents.some((entry) => entry.event === "lock.acquisition_canceled"),
+    "页面离开时必须留下临时锁取消证据。"
+  );
+  assert.ok(
+    lockEvents.some((entry) => entry.event === "lock.released"),
+    "临时锁取消后必须留下实际释放证据。"
+  );
+  const operationSummary = diagnosticExport.operations.find(
+    (operation) => operation.operationId === "s1p_sync_test_pagehide_acquire"
+  );
+  assert.equal(operationSummary.terminalEvent, "lock.released");
+  assert.equal(
+    operationSummary.terminalReason,
+    "lifecycle_unload_before_transaction"
+  );
+  assert.equal(operationSummary.terminalEvidence, "explicit_owner_release");
+};
+
+const testPagehideCancelsVerifiedLockBeforeTransactionStarts = async () => {
+  const { hooks, store } = createScenario({ now: Date.now() });
+  const authority = await hooks.acquireModeSyncLock("background", {
+    operationId: "s1p_sync_test_pagehide_before_transaction",
+    returnAuthority: true,
+  });
+  assert.ok(authority);
+  assert.ok(store.get(BACKGROUND_SYNC_LOCK_KEY));
+  const lifecycleAdapter = hooks.s1pCreateSyncLifecycleAdapter({
+    runCheckpoint: () => ({ status: "completed" }),
+    scheduleMicrotask: () => {},
+    schedulePostUnloadRecovery: () => {},
+  });
+  await lifecycleAdapter.handle("pagehide", { persisted: false });
+  assert.equal(store.has(BACKGROUND_SYNC_LOCK_KEY), false);
+  assert.equal(store.has(GLOBAL_SYNC_LOCK_KEY), false);
+  const diagnosticExport = hooks.s1pBuildDiagnosticExport();
+  const lockEvents = diagnosticExport.events.filter(
+    (entry) => entry.operationId === "s1p_sync_test_pagehide_before_transaction"
+  );
+  assert.ok(
+    lockEvents.some(
+      (entry) =>
+        entry.event === "lock.acquisition_canceled" &&
+        entry.reason === "lifecycle_unload_before_transaction"
+    )
+  );
+};
+
 const testHandoffFenceOnlySuppressesMatchingGeneration = () => {
   const { hooks } = createScenario({ now: 15_500_000 });
   const fence = hooks.s1pCreateSchedulerOwnerHandoffFence();
@@ -799,6 +916,7 @@ const main = async () => {
   testHandoffStopsNonOwnerRecoveryWatch();
   testDueConsumesStateBeforeTrigger();
   testDueDefersWhileRunningSyncOwnsLock();
+  testLockBlockedReschedulesAggregateWithOwnerEvidence();
   testCoveredCompletionClearsPendingAndSharedState();
   testHashEqualCompletionSettlesWithoutFollowUp();
   testConcurrentPendingCleanupDoesNotCreateFalseFollowUp();
@@ -815,6 +933,8 @@ const main = async () => {
   testBlockedQueueClearsSchedulerState();
   await testLifecycleAdapterUsesSchedulerAfterFinalizingDirty();
   await testPagehideFinalizesAndHandsOffWithoutTriggeringSync();
+  await testPagehideCancelsUnverifiedRunningSyncLock();
+  await testPagehideCancelsVerifiedLockBeforeTransactionStarts();
   testHandoffFenceOnlySuppressesMatchingGeneration();
   await testCanceledBeforeUnloadRecoversSoleSchedulerOwner();
   console.log(

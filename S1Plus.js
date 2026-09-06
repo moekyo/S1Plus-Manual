@@ -103,6 +103,51 @@
   const s1pLogEntrySizes = new Map();
   let s1pPendingSyncTrace = null;
   let s1pSyncTraceFlushTimer = null;
+  // A page lifecycle transition must fence the short lock-acquisition window.
+  // Running transactions keep their lease until their normal settlement/TTL.
+  let s1pSyncPageLifecycleUnloading = false;
+  let s1pSyncPageLifecycleGeneration = 0;
+  let s1pCancelPendingSyncLockAcquisitions = () => ({
+    status: "skipped",
+    reason: "lock_cancellation_not_ready",
+  });
+  const s1pIsSyncPageLifecycleUnloading = () =>
+    s1pSyncPageLifecycleUnloading === true;
+  const s1pSetSyncPageLifecycleUnloading = (
+    value,
+    reason = "",
+    { forceGeneration = false } = {}
+  ) => {
+    const unloading = value === true;
+    const stateChanged = s1pSyncPageLifecycleUnloading !== unloading;
+    s1pSyncPageLifecycleUnloading = unloading;
+    const generation =
+      stateChanged || forceGeneration
+        ? ++s1pSyncPageLifecycleGeneration
+        : s1pSyncPageLifecycleGeneration;
+    if (!unloading) {
+      return { status: "ready", reason: reason || "lifecycle_recovered", generation };
+    }
+    let cancellation = { status: "skipped", reason: "no_provisional_acquisition" };
+    try {
+      cancellation = s1pCancelPendingSyncLockAcquisitions({ reason, generation });
+    } catch (error) {
+      cancellation = { status: "failure", reason: "lock_cancellation_failed" };
+      try {
+        s1pRecordDiagnosticEvent("lock.acquisition_cancellation_failed", {
+          module: "sync.lock",
+          level: "error",
+          status: "failure",
+          reason: "lock_cancellation_failed",
+          message: "页面生命周期切换时取消临时锁失败",
+          details: { lifecycleReason: reason, lifecycleGeneration: generation, error },
+        });
+      } catch (_) {
+        // Diagnostics must never prevent the lifecycle fence from being set.
+      }
+    }
+    return { status: "unloading", reason: reason || "lifecycle_unload", generation, cancellation };
+  };
 
   const normalizeDebugConsoleState = (state) => {
     if (state === true) {
@@ -854,6 +899,11 @@
     try { return getSyncRuntimeContextInfo(); } catch (_) { return {}; }
   };
 
+  const isHighValueDiagnosticEvent = (entry) => {
+    const event = String(entry?.event || "");
+    return /^(?:lock\.(?:acquisition_started|acquisition_canceled|acquisition_failed|acquisition_cancellation_failed|acquired|released|release_not_owned|expired_cleanup|release_failed|expired_observed)|sync\.(?:transaction_failed|complete|cleanup_failed|foreground_pending_attempt_started|foreground_pending_recovery_result|foreground_pending_recovery_failed|foreground_pending_recovery_suppressed|foreground_probe_followup_result|foreground_probe_followup_blocked|foreground_probe_soft_block_suppressed|foreground_pending_soft_block_cleared)|runtime\.(?:pagehide|beforeunload|lifecycle_snapshot_failed))$/.test(event);
+  };
+
   const s1pTrimLogBuffer = () => {
     let bytes = logBuffer.reduce((sum, entry) => {
       if (!s1pLogEntrySizes.has(entry.id)) s1pLogEntrySizes.set(entry.id, JSON.stringify(entry).length * 2 + 2);
@@ -864,6 +914,7 @@
         !entry.event && entry.level !== "error" && entry.level !== "warn");
       if (index < 0) index = logBuffer.findIndex((entry) =>
         entry.level !== "error" && entry.level !== "warn" &&
+        !isHighValueDiagnosticEvent(entry) &&
         !s1pFailedOperationIds.has(entry.operationId));
       if (index < 0) index = 0;
       const [removed] = logBuffer.splice(index, 1);
@@ -901,19 +952,309 @@
     }
   };
 
-  const s1pGetDiagnosticOperationSummaries = (entries = logBuffer) => {
+  const s1pNormalizeSharedLockReceiptRecord = (receipt) => {
+    try {
+      if (!receipt || typeof receipt !== "object" || Array.isArray(receipt)) {
+        return null;
+      }
+      const event = String(receipt.event || "").trim().slice(0, 120);
+      const at = Number(receipt.at);
+      if (!event || !Number.isFinite(at) || at <= 0) {
+        return null;
+      }
+      return s1pSanitizeLogValue({ ...receipt, event, at });
+    } catch (_) {
+      s1pLogLoss.collectionFailures += 1;
+      return null;
+    }
+  };
+
+  const s1pGetSharedLockReceiptIdentity = (receipt) => {
+    if (!receipt || typeof receipt !== "object") return "";
+    return [
+      receipt.event,
+      receipt.operationId,
+      receipt.executionId || receipt.token,
+      receipt.at,
+      receipt.reason,
+      receipt.owner,
+      receipt.sequence || receipt.id,
+    ].map((value) => String(value || "")).join("|");
+  };
+
+  const s1pNormalizeSharedReceiptForOperation = (receipt) => {
+    const normalizedReceipt = s1pNormalizeSharedLockReceiptRecord(receipt);
+    if (!normalizedReceipt || !normalizedReceipt.operationId) {
+      return null;
+    }
+    const timestamp = Number(normalizedReceipt.at) || 0;
+    if (!timestamp) {
+      return null;
+    }
+    return {
+      event: normalizedReceipt.event || "",
+      module: "sync.lock",
+      ts: timestamp,
+      lastTs: timestamp,
+      operationId: normalizedReceipt.operationId,
+      parentOperationId: normalizedReceipt.parentOperationId || "",
+      status: [
+        "lock.released",
+        "lock.expired_cleanup",
+        "lock.acquisition_canceled",
+        "lock.release_not_owned",
+        "lock.release_failed",
+        "lock.acquisition_failed",
+        "lock.acquisition_cancellation_failed",
+      ].includes(normalizedReceipt.event)
+        ? s1pGetDiagnosticTerminalStatus(normalizedReceipt.event)
+        : "",
+      message: `跨标签页锁收据：${normalizedReceipt.event || "unknown"}`,
+      reason: normalizedReceipt.reason || "",
+      details: { ...normalizedReceipt },
+      repeatCount: 1,
+      _sharedReceipt: true,
+    };
+  };
+
+  const s1pGetDiagnosticTerminalStatus = (eventName, status = "") => {
+    if (status) return status;
+    switch (eventName) {
+      case "lock.released":
+        return "released";
+      case "lock.expired_cleanup":
+        return "expired";
+      case "lock.acquisition_canceled":
+        return "skipped";
+      case "lock.release_not_owned":
+        return "not_owned";
+      default:
+        return "failure";
+    }
+  };
+
+  const s1pGetDiagnosticTerminalEvidence = (group) => {
+    switch (group.terminalEvent) {
+      case "lock.released":
+        return "explicit_owner_release";
+      case "lock.acquisition_canceled":
+        return "explicit_acquisition_cancellation";
+      case "lock.acquisition_failed":
+        return "explicit_acquisition_failure";
+      case "lock.acquisition_cancellation_failed":
+        return "explicit_acquisition_cancellation_failure";
+      case "lock.release_not_owned":
+        return "cleanup_without_current_ownership";
+      case "lock.expired_cleanup":
+        return "ttl_expiry_cleanup";
+      case "lock.release_failed":
+        return "explicit_lock_release_failure";
+      case "sync.transaction_failed":
+        return "explicit_transaction_failure";
+      case "sync.complete":
+        return group.terminalStatus === "failure"
+          ? "explicit_transaction_failure"
+          : "explicit_transaction_completion";
+      case "sync.cleanup_failed":
+        return "explicit_cleanup_failure";
+      default:
+        return group.observedExpiryAt
+          ? "ttl_expiry_observed_without_owner_release_receipt"
+          : "no_terminal_evidence";
+    }
+  };
+
+  const s1pGetDiagnosticOperationSummaries = (entries = logBuffer, sharedReceipts = []) => {
+    const localEntries = Array.isArray(entries) ? entries : [];
     const groups = new Map();
-    for (const entry of [...entries].sort((a, b) => (a.lastTs || a.ts) - (b.lastTs || b.ts))) {
-      if (!entry.operationId) continue;
+    const explicitTerminalEvents = new Set([
+      "lock.released",
+      "lock.release_not_owned",
+      "lock.expired_cleanup",
+      "lock.release_failed",
+      "lock.acquisition_canceled",
+      "lock.acquisition_failed",
+      "lock.acquisition_cancellation_failed",
+      "sync.transaction_failed",
+      "sync.complete",
+      "sync.cleanup_failed",
+    ]);
+    const lockTerminalEvents = new Set([
+      "lock.released",
+      "lock.release_not_owned",
+      "lock.expired_cleanup",
+      "lock.release_failed",
+      "lock.acquisition_canceled",
+      "lock.acquisition_failed",
+      "lock.acquisition_cancellation_failed",
+    ]);
+    const transactionTerminalEvents = new Set([
+      "sync.transaction_failed",
+      "sync.complete",
+    ]);
+    const cleanupTerminalEvents = new Set(["sync.cleanup_failed"]);
+    const localEvidenceKeys = new Set(
+      localEntries
+        .filter((entry) => entry?.event && entry?.operationId)
+        .map((entry) => `${entry.event}|${entry.operationId}|${entry.details?.executionId || ""}`)
+    );
+    const normalizedSharedReceipts = [];
+    const sharedEvidenceKeys = new Set();
+    for (const receipt of Array.isArray(sharedReceipts) ? sharedReceipts : []) {
+      const entry = s1pNormalizeSharedReceiptForOperation(receipt);
+      if (!entry) continue;
+      const localEvidenceKey =
+        `${entry.event}|${entry.operationId}|${entry.details?.executionId || ""}`;
+      if (localEvidenceKeys.has(localEvidenceKey)) continue;
+      const sharedEvidenceKey = s1pGetSharedLockReceiptIdentity(entry.details);
+      if (sharedEvidenceKey && sharedEvidenceKeys.has(sharedEvidenceKey)) continue;
+      if (sharedEvidenceKey) sharedEvidenceKeys.add(sharedEvidenceKey);
+      normalizedSharedReceipts.push(entry);
+    }
+    for (const entry of [...localEntries, ...normalizedSharedReceipts].sort((a, b) =>
+      (a?.lastTs || a?.ts || 0) - (b?.lastTs || b?.ts || 0)
+    )) {
+      if (!entry || !entry.operationId) continue;
       const previous = groups.get(entry.operationId);
+      const eventName = String(entry.event || "");
+      const terminalEvent = explicitTerminalEvents.has(eventName) ? eventName : "";
+      const details = entry.details && typeof entry.details === "object" ? entry.details : {};
+      const observedExpiryAt = eventName === "lock.expired_observed"
+        ? entry.lastTs || entry.ts
+        : previous?.observedExpiryAt || null;
+      const terminalAt = terminalEvent ? entry.lastTs || entry.ts : previous?.terminalAt || null;
+      const terminalReason = terminalEvent
+        ? entry.reason || details.reason || ""
+        : previous?.terminalReason || "";
+      const terminalStatus = terminalEvent
+        ? s1pGetDiagnosticTerminalStatus(eventName, entry.status)
+        : previous?.terminalStatus || "";
+      const terminalEvents = previous?.terminalEvents
+        ? previous.terminalEvents.slice()
+        : [];
+      if (terminalEvent) {
+        terminalEvents.push({
+          event: terminalEvent,
+          status: terminalStatus,
+          reason: terminalReason,
+          at: terminalAt,
+          source: entry._sharedReceipt ? "shared_receipt" : "local_log",
+        });
+        if (terminalEvents.length > 32) terminalEvents.splice(0, terminalEvents.length - 32);
+      }
+      const lockTerminalEvent = lockTerminalEvents.has(eventName)
+        ? eventName
+        : previous?.lockTerminalEvent || "";
+      const lockTerminalStatus = lockTerminalEvents.has(eventName)
+        ? terminalStatus
+        : previous?.lockTerminalStatus || "";
+      const lockTerminalReason = lockTerminalEvents.has(eventName)
+        ? terminalReason
+        : previous?.lockTerminalReason || "";
+      const lockTerminalAt = lockTerminalEvents.has(eventName)
+        ? terminalAt
+        : previous?.lockTerminalAt || null;
+      const transactionTerminalEvent = transactionTerminalEvents.has(eventName)
+        ? eventName
+        : previous?.transactionTerminalEvent || "";
+      const transactionTerminalStatus = transactionTerminalEvents.has(eventName)
+        ? terminalStatus
+        : previous?.transactionTerminalStatus || "";
+      const transactionTerminalReason = transactionTerminalEvents.has(eventName)
+        ? terminalReason
+        : previous?.transactionTerminalReason || "";
+      const transactionTerminalAt = transactionTerminalEvents.has(eventName)
+        ? terminalAt
+        : previous?.transactionTerminalAt || null;
+      const cleanupTerminalEvent = cleanupTerminalEvents.has(eventName)
+        ? eventName
+        : previous?.cleanupTerminalEvent || "";
+      const cleanupTerminalStatus = cleanupTerminalEvents.has(eventName)
+        ? terminalStatus
+        : previous?.cleanupTerminalStatus || "";
+      const cleanupTerminalReason = cleanupTerminalEvents.has(eventName)
+        ? terminalReason
+        : previous?.cleanupTerminalReason || "";
+      const cleanupTerminalAt = cleanupTerminalEvents.has(eventName)
+        ? terminalAt
+        : previous?.cleanupTerminalAt || null;
       groups.set(entry.operationId, {
         operationId: entry.operationId, parentOperationId: entry.parentOperationId || previous?.parentOperationId || "",
         module: entry.module, startedAt: Math.min(previous?.startedAt ?? entry.ts, entry.ts),
         lastAt: entry.lastTs || entry.ts, status: entry.status || previous?.status || "",
-        message: entry.message, reason: entry.reason, entries: (previous?.entries || 0) + (entry.repeatCount || 1),
+        message: entry._sharedReceipt && previous?.message ? previous.message : entry.message,
+        reason: entry.reason || previous?.reason || "", entries: (previous?.entries || 0) + (entry.repeatCount || 1),
+        lastStage: details.stage || previous?.lastStage || "",
+        lastOutcome: details.lastOutcome || previous?.lastOutcome || "",
+        terminalEvent: terminalEvent || previous?.terminalEvent || "",
+        terminalStatus,
+        terminalReason,
+        terminalAt,
+        observedExpiryAt,
+        terminalEvents,
+        lockTerminalEvent,
+        lockTerminalStatus,
+        lockTerminalReason,
+        lockTerminalAt,
+        transactionTerminalEvent,
+        transactionTerminalStatus,
+        transactionTerminalReason,
+        transactionTerminalAt,
+        cleanupTerminalEvent,
+        cleanupTerminalStatus,
+        cleanupTerminalReason,
+        cleanupTerminalAt,
+        evidenceSources: [...new Set([
+          ...(previous?.evidenceSources || []),
+          entry._sharedReceipt ? "shared_receipt" : "local_log",
+        ])],
+        sharedReceiptCount: (previous?.sharedReceiptCount || 0) + (entry._sharedReceipt ? 1 : 0),
       });
     }
-    return [...groups.values()].sort((a, b) => a.lastAt - b.lastAt).map((group) => ({ ...group, elapsedMs: group.lastAt - group.startedAt }));
+    return [...groups.values()].sort((a, b) => a.lastAt - b.lastAt).map((group) => {
+      const lockTerminalEvidence = group.lockTerminalEvent
+        ? s1pGetDiagnosticTerminalEvidence({
+            ...group,
+            terminalEvent: group.lockTerminalEvent,
+            terminalStatus: group.lockTerminalStatus,
+            terminalReason: group.lockTerminalReason,
+          })
+        : "";
+      const transactionTerminalEvidence = group.transactionTerminalEvent
+        ? s1pGetDiagnosticTerminalEvidence({
+            ...group,
+            terminalEvent: group.transactionTerminalEvent,
+            terminalStatus: group.transactionTerminalStatus,
+            terminalReason: group.transactionTerminalReason,
+          })
+        : "";
+      const cleanupTerminalEvidence = group.cleanupTerminalEvent
+        ? s1pGetDiagnosticTerminalEvidence({
+            ...group,
+            terminalEvent: group.cleanupTerminalEvent,
+            terminalStatus: group.cleanupTerminalStatus,
+            terminalReason: group.cleanupTerminalReason,
+          })
+        : "";
+      const failureEvidence = [
+        group.cleanupTerminalStatus === "failure" ? cleanupTerminalEvidence : "",
+        group.transactionTerminalStatus === "failure" ? transactionTerminalEvidence : "",
+        group.lockTerminalStatus === "failure" ? lockTerminalEvidence : "",
+      ].find(Boolean) || "";
+      return {
+        ...group,
+        elapsedMs: group.lastAt - group.startedAt,
+        terminalEvidence:
+          failureEvidence ||
+          lockTerminalEvidence ||
+          transactionTerminalEvidence ||
+          cleanupTerminalEvidence ||
+          s1pGetDiagnosticTerminalEvidence(group),
+        lockTerminalEvidence,
+        transactionTerminalEvidence,
+        cleanupTerminalEvidence,
+      };
+    });
   };
 
   const s1pBuildDiagnosticExport = () => {
@@ -952,7 +1293,10 @@
         redaction: "credentials, bodies, DOM and URL queries omitted; truncated fields marked" },
       contexts, state: Object.fromEntries(Object.entries(state).map(([key, value]) =>
         [key, key === "sharedLockHistory" && Array.isArray(value) ? value.map(s1pSanitizeLogValue) : s1pSanitizeLogValue(value)])),
-      operations: s1pGetDiagnosticOperationSummaries(),
+      operations: s1pGetDiagnosticOperationSummaries(
+        logBuffer,
+        Array.isArray(state.sharedLockHistory) ? state.sharedLockHistory : []
+      ),
       events: logBuffer.map((entry) => ({ ...entry })),
     };
   };
@@ -963,14 +1307,95 @@
     if (!s1pLogRestored) restoreLogBufferFromSession();
     s1pRecordDiagnosticEvent("runtime.started", { module: "initialization", message: "页面诊断采集已启动",
       details: { scriptVersion: SCRIPT_VERSION, essentialCollection: true } });
-    window.addEventListener("pagehide", () => {
-      for (const lock of s1pReadSyncLockEvidence().filter((item) => item.key === GLOBAL_SYNC_LOCK_KEY && item.owner === BACKGROUND_SYNC_OWNER_ID)) {
-        s1pRecordLockEvidence("lock.owner_pagehide", lock, { message: "持有者页面离开，未强行释放执行锁", reason: "pagehide", receipt: true });
+    const recordRuntimeUnload = (phase) => {
+      let locksBefore = [];
+      try {
+        locksBefore = s1pReadSyncLockEvidence();
+      } catch (error) {
+        s1pLogLoss.collectionFailures += 1;
+        s1pRecordDiagnosticEvent("runtime.lifecycle_snapshot_failed", {
+          module: "initialization",
+          level: "error",
+          status: "failure",
+          reason: "lock_snapshot_read_failed",
+          message: "页面离开时读取同步锁快照失败",
+          details: { phase, error },
+        });
       }
-      s1pRecordDiagnosticEvent("runtime.pagehide", { message: "页面离开，未结束的执行锁保留至 TTL",
-        details: { locks: s1pReadSyncLockEvidence() } });
-      s1pFlushSyncTrace();
-      persistLogBuffer();
+      const ownedGlobalLocks = locksBefore.filter((item) =>
+        item.key === GLOBAL_SYNC_LOCK_KEY && item.owner === BACKGROUND_SYNC_OWNER_ID
+      );
+      let hasProvisionalOwner = false;
+      for (const lock of ownedGlobalLocks) {
+        const relatedOperation = [...s1pSyncOperations.values()].find(
+          (operation) => operation?.executionId === lock.executionId
+        );
+        const provisional =
+          lock.stage === "acquiring" ||
+          (relatedOperation?.active === true &&
+            relatedOperation.transactionStarted !== true &&
+            lock.stage === "transaction_start");
+        hasProvisionalOwner ||= provisional;
+        s1pRecordLockEvidence(`lock.owner_${phase}`, lock, {
+          message: provisional
+            ? "持有者页面离开，事务尚未开始，将取消临时锁获取"
+            : "持有者页面离开，已进入事务的执行锁保留至收敛或 TTL",
+          reason: provisional
+            ? "lifecycle_unload_before_transaction"
+            : "lifecycle_unload_running_lock_retained",
+          receipt: true,
+          repeatKey: `owner_lifecycle:${lock.executionId}:${lock.stage}`,
+          details: {
+            unloadDisposition: provisional
+              ? "cancel_before_transaction"
+              : "retain_running_lock",
+          },
+        });
+      }
+      const lifecycleResult = s1pSetSyncPageLifecycleUnloading(
+        true,
+        `runtime_${phase}`
+      );
+      let locksAfter = [];
+      try {
+        locksAfter = s1pReadSyncLockEvidence();
+      } catch (error) {
+        s1pLogLoss.collectionFailures += 1;
+        s1pRecordDiagnosticEvent("runtime.lifecycle_snapshot_failed", {
+          module: "initialization",
+          level: "error",
+          status: "failure",
+          reason: "lock_snapshot_read_failed_after_fence",
+          message: "页面离开后读取同步锁快照失败",
+          details: { phase, error },
+        });
+      }
+      s1pRecordDiagnosticEvent(`runtime.${phase}`, {
+        message: hasProvisionalOwner
+          ? "页面离开，临时锁获取已进入取消流程"
+          : "页面离开，未结束的执行锁保留至收敛或 TTL",
+        details: {
+          locksBefore,
+          locksAfter,
+          lifecycleResult,
+          lifecycleUnloading: true,
+        },
+      });
+      try {
+        s1pFlushSyncTrace();
+      } catch (_) {
+        s1pLogLoss.persistenceFailures += 1;
+      }
+      try {
+        persistLogBuffer();
+      } catch (_) {
+        s1pLogLoss.persistenceFailures += 1;
+      }
+    };
+    window.addEventListener("pagehide", () => recordRuntimeUnload("pagehide"));
+    window.addEventListener("beforeunload", () => recordRuntimeUnload("beforeunload"));
+    window.addEventListener("pageshow", () => {
+      s1pSetSyncPageLifecycleUnloading(false, "runtime_pageshow");
     });
     window.addEventListener("error", (event) => {
       s1pRecordDiagnosticEvent("runtime.error", { level: "error", status: "failure", message: "页面未捕获异常",
@@ -999,9 +1424,26 @@
       }
     }
     const merged = [...events.values()].sort((a, b) => a.ts - b.ts);
+    const sharedLockHistory = [];
+    const sharedReceiptKeys = new Set();
+    for (const bundle of bundles) {
+      const history = Array.isArray(bundle.state?.sharedLockHistory)
+        ? bundle.state.sharedLockHistory.slice(-256)
+        : [];
+      for (const rawReceipt of history) {
+        const receipt = s1pNormalizeSharedLockReceiptRecord(rawReceipt);
+        if (!receipt) continue;
+        const identity = s1pGetSharedLockReceiptIdentity(receipt);
+        if (identity && sharedReceiptKeys.has(identity)) continue;
+        if (identity) sharedReceiptKeys.add(identity);
+        sharedLockHistory.push(receipt);
+      }
+    }
+    sharedLockHistory.sort((a, b) => Number(a.at) - Number(b.at));
+    sharedLockHistory.splice(0, Math.max(0, sharedLockHistory.length - 256));
     return { schemaVersion: 1, kind: "merged_diagnostics", exportedAt: new Date().toISOString(), sources,
-      operations: s1pGetDiagnosticOperationSummaries(merged), events: merged,
-      sharedLockHistory: bundles.flatMap((bundle) => Array.isArray(bundle.state?.sharedLockHistory) ? bundle.state.sharedLockHistory.slice(-256).map(s1pSanitizeLogValue) : []),
+      operations: s1pGetDiagnosticOperationSummaries(merged, sharedLockHistory), events: merged,
+      sharedLockHistory,
       coverage: { scope: "selected_exports", ordering: "wall_clock; compare executionId and context for causality; device clocks may differ" } };
   };
 
@@ -2697,6 +3139,10 @@
   let startupSyncLockHeartbeatTimer = null;
   let foregroundFollowUpSyncLockHeartbeatTimer = null;
   const syncLockHeartbeatAuthorityTokens = new Map();
+  // Keep the token that belongs to the latest local acquisition so convenience
+  // wrappers cannot release or renew a newer lock with an empty token.
+  const syncLockExecutionAuthorityTokens = new Map();
+  const syncLockRenewalFailureReasons = new Map();
   let isAutoSignInFlight = false;
   let readingProgressModalEscHandler = null;
   let settingsModalEscKeydownHandler = null;
@@ -2807,7 +3253,7 @@
   const MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION =
     "awaiting_confirmation";
   const MANUAL_SYNC_INTENT_STALE_MS = 30 * 60 * 1000;
-  const SHARED_BACKGROUND_SYNC_RESCHEDULE_LOG_THROTTLE_MS = 1000;
+  const SHARED_BACKGROUND_SYNC_RESCHEDULE_LOG_THROTTLE_MS = 5000;
   const SYNC_CONFLICT_MODAL_COOLDOWN_MS = 2 * 60 * 1000;
   const SYNC_CONFLICT_MODAL_COOLDOWN_GROUP_MAP = Object.freeze({
     background_conflict: "sync_conflict",
@@ -2847,6 +3293,8 @@
   const AUTO_SYNC_CLEAN_STATE_LOG_THROTTLE_MS = 30 * 1000;
   const FOREGROUND_FOLLOWUP_SOFT_BLOCK_SCOPE_TAB = "tab";
   const FOREGROUND_FOLLOWUP_SOFT_BLOCK_SCOPE_THREAD = "thread";
+  const FOREGROUND_PENDING_SOFT_BLOCK_WAIT_REASON =
+    "foreground_soft_block_waiting_for_change";
   const FOREGROUND_REMOTE_SYNC_RECOVERY_DELAY_MS = 600;
   const FOREGROUND_REMOTE_SYNC_RECOVERY_LOCK_BUFFER_MS = 100;
   const LEGACY_AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND = "background";
@@ -13272,12 +13720,18 @@
     return normalized;
   };
 
-  const releaseRemoteProbeLockValue = (owner = BACKGROUND_SYNC_OWNER_ID) => {
+  const releaseRemoteProbeLockValue = (
+    owner = BACKGROUND_SYNC_OWNER_ID,
+    expectedTimestamp = 0
+  ) => {
     const currentLock = getRemoteProbeLockValue();
     if (!currentLock) {
       return false;
     }
     if (owner && currentLock.owner !== owner) {
+      return false;
+    }
+    if (expectedTimestamp && currentLock.timestamp !== expectedTimestamp) {
       return false;
     }
     GM_deleteValue(REMOTE_PROBE_LOCK_KEY);
@@ -13894,6 +14348,14 @@
         return "前台补同步返回";
       case "foreground_probe_followup_blocked":
         return "前台补同步暂缓";
+      case "foreground_pending_attempt_started":
+        return "前台待处理尝试开始";
+      case "foreground_pending_recovery_suppressed":
+        return "前台待处理已抑制";
+      case "foreground_probe_soft_block_suppressed":
+        return "重复前台补同步已抑制";
+      case "foreground_pending_soft_block_cleared":
+        return "前台暂缓已解除";
       case "remote_fetch_start":
         return "云端读取开始";
       case "remote_fetch_done":
@@ -13983,6 +14445,35 @@
         return "手动动作失败";
       case "manual_sync_action_conflict":
         return "手动动作冲突";
+      case "lock.acquisition_started":
+        return "同步锁获取开始";
+      case "lock.acquired":
+        return "同步锁已取得";
+      case "lock.acquisition_canceled":
+        return "临时锁获取已取消";
+      case "lock.acquisition_cancellation_failed":
+        return "临时锁取消失败";
+      case "lock.acquisition_failed":
+        return "同步锁获取失败";
+      case "lock.released":
+        return "同步锁已释放";
+      case "lock.release_not_owned":
+        return "同步锁清理时已不持有";
+      case "lock.expired_cleanup":
+        return "同步锁过期后已清理";
+      case "lock.release_failed":
+        return "同步锁释放失败";
+      case "sync.transaction_failed":
+      case "transaction_failed":
+        return "同步事务失败";
+      case "sync.transaction_skipped":
+      case "transaction_skipped":
+        return "同步事务跳过";
+      case "sync.cleanup_failed":
+      case "cleanup_failed":
+        return "同步收尾失败";
+      case "lock.expired_observed":
+        return "观察到同步锁过期";
       case "force_push_start":
         return "强制推送开始";
       case "force_push_export_done":
@@ -14026,6 +14517,12 @@
         return "发现变化";
       case "released":
         return "已释放";
+      case "expired":
+        return "已过期";
+      case "acquiring":
+        return "归属校验中";
+      case "not_owned":
+        return "清理时已不持有";
       case "unknown":
         return "未知";
       default:
@@ -14046,6 +14543,12 @@
         return "后续原因";
       case "blockReason":
         return "阻断原因";
+      case "blockAction":
+        return "阻断动作";
+      case "blockLevel":
+        return "阻断级别";
+      case "blockAt":
+        return "阻断时间";
       case "beforePerformReason":
         return "前置跳过原因";
       case "conflictReason":
@@ -14157,6 +14660,85 @@
       case "currentGeneration":
       case "expectedGeneration":
         return "调度代次";
+      case "lifecycleGeneration":
+      case "lifecycleGenerationAtAcquire":
+        return "生命周期代次";
+      case "unloadDisposition":
+        return "页面离开处置";
+      case "lifecycleReason":
+        return "生命周期原因";
+      case "cancellationReason":
+        return "取消原因";
+      case "terminalEvent":
+        return "终态事件";
+      case "terminalReason":
+        return "终态原因";
+      case "terminalEvidence":
+        return "终态证据";
+      case "terminalEvents":
+        return "终态事件链";
+      case "lockTerminalEvent":
+        return "锁终态事件";
+      case "lockTerminalStatus":
+        return "锁终态状态";
+      case "lockTerminalReason":
+        return "锁终态原因";
+      case "lockTerminalAt":
+        return "锁终态时间";
+      case "lockTerminalEvidence":
+        return "锁终态证据";
+      case "transactionTerminalEvent":
+        return "事务终态事件";
+      case "transactionTerminalStatus":
+        return "事务终态状态";
+      case "transactionTerminalReason":
+        return "事务终态原因";
+      case "transactionTerminalAt":
+        return "事务终态时间";
+      case "transactionTerminalEvidence":
+        return "事务终态证据";
+      case "cleanupTerminalEvent":
+        return "收尾终态事件";
+      case "cleanupTerminalStatus":
+        return "收尾终态状态";
+      case "cleanupTerminalReason":
+        return "收尾终态原因";
+      case "cleanupTerminalAt":
+        return "收尾终态时间";
+      case "cleanupTerminalEvidence":
+        return "收尾终态证据";
+      case "observedExpiryAt":
+        return "观察到过期时间";
+      case "evidenceSources":
+        return "证据来源";
+      case "sharedReceiptCount":
+        return "共享回执数";
+      case "modeLockValidAtRelease":
+        return "释放时模式锁有效";
+      case "globalLockValidAtRelease":
+        return "释放时全局锁有效";
+      case "lockReadFailed":
+        return "锁状态读取失败";
+      case "modeReleaseFailed":
+        return "模式锁删除失败";
+      case "globalReleaseFailed":
+        return "全局锁删除失败";
+      case "lockMode":
+        return "占用锁模式";
+      case "lockOwner":
+        return "占用锁持有者";
+      case "lockExecutionId":
+        return "占用锁执行 ID";
+      case "lockOperationId":
+        return "占用锁操作 ID";
+      case "lockStage":
+        return "占用锁阶段";
+      case "lockAcquiredAt":
+        return "占用锁取得时间";
+      case "lockExpiresAt":
+        return "占用锁过期时间";
+      case "lockRemainingMs":
+        return "占用锁剩余时间";
       case "isOwner":
         return "本页负责执行";
       case "ownerTabId":
@@ -14200,6 +14782,16 @@
         return "远端写入";
       case "threadId":
         return "帖子 ID";
+      case "requestId":
+        return "请求 ID";
+      case "lastAttemptAt":
+        return "最近尝试时间";
+      case "lastSeenAt":
+        return "最近观测时间";
+      case "previousBlockReason":
+        return "之前阻断原因";
+      case "previousBlockAt":
+        return "之前阻断时间";
       case "error":
         return "错误";
       case "stage":
@@ -14236,6 +14828,8 @@
         return "合并阅读进度并回写云端";
       case "skip_push_on_foreground_followup":
         return "前台检查暂缓推送";
+      case "probe_soft_block_suppressed":
+        return "沿用现有暂缓，跳过重复补同步";
       case "no_change":
         return "无变化";
       case "probe_gate_blocked":
@@ -14335,6 +14929,9 @@
       before: "执行前",
       after: "执行后",
       unknown: "未知阶段",
+      acquiring: "等待锁归属校验",
+      transaction_start: "事务开始前",
+      page_unloading_before_transaction: "页面离开，事务未开始",
       fetch_remote_data: "读取云端数据",
       export_local_data_initial_push: "导出本地数据用于初始化推送",
       push_initial_data: "初始化推送",
@@ -14482,6 +15079,7 @@
     switch (String(key || "").trim()) {
       case "action":
       case "followupAction":
+      case "blockAction":
         return getSyncTraceActionValueLabel(value);
       case "reason":
       case "triggerReason":
@@ -14489,6 +15087,9 @@
       case "blockReason":
       case "beforePerformReason":
       case "conflictReason":
+      case "lifecycleReason":
+      case "cancellationReason":
+      case "terminalReason":
         return getSyncTraceReasonValueLabel(value);
       case "status":
       case "followupStatus":
@@ -14557,6 +15158,59 @@
         return getSyncTraceApplyModeLabel(value);
       case "stage":
         return getSyncTraceStageLabel(value);
+      case "terminalEvidence":
+        switch (value) {
+          case "explicit_owner_release":
+            return "有持有者释放回执";
+          case "explicit_acquisition_cancellation":
+            return "有临时锁取消回执";
+          case "explicit_acquisition_failure":
+            return "有锁获取失败回执";
+          case "explicit_acquisition_cancellation_failure":
+            return "有临时锁取消失败回执";
+          case "cleanup_without_current_ownership":
+            return "清理时已不持有锁";
+          case "ttl_expiry_cleanup":
+            return "确认 TTL 过期后清理残留锁";
+          case "explicit_lock_release_failure":
+            return "有锁释放存储失败回执";
+          case "explicit_transaction_failure":
+            return "有事务失败回执";
+          case "explicit_transaction_completion":
+            return "有事务完成回执";
+          case "explicit_cleanup_failure":
+            return "有同步收尾失败回执";
+          case "ttl_expiry_observed_without_owner_release_receipt":
+            return "只观察到 TTL 过期，缺少持有者释放回执";
+          case "no_terminal_evidence":
+            return "没有终态证据";
+          default:
+            return value;
+        }
+      case "lockTerminalStatus":
+      case "transactionTerminalStatus":
+      case "cleanupTerminalStatus":
+        return getSyncTraceStatusLabel(value);
+      case "lockTerminalReason":
+      case "transactionTerminalReason":
+      case "cleanupTerminalReason":
+        return getSyncTraceReasonValueLabel(value);
+      case "lockTerminalEvent":
+      case "transactionTerminalEvent":
+      case "cleanupTerminalEvent":
+        return getSyncTracePhaseLabel(value.replace(/^sync\./, "")) || value;
+      case "lockTerminalEvidence":
+      case "transactionTerminalEvidence":
+      case "cleanupTerminalEvidence":
+        return getSyncTraceDetailValueLabel("terminalEvidence", value);
+      case "unloadDisposition":
+        return value === "cancel_provisional_acquisition"
+          ? "取消临时锁获取"
+          : value === "retain_running_lock"
+            ? "保留运行中执行锁"
+            : normalizeSyncDiagnosticText(value, 160);
+      case "terminalEvent":
+        return getSyncTracePhaseLabel(value.replace(/^sync\./, "")) || value;
       default:
         return normalizeSyncDiagnosticText(value, 160);
     }
@@ -14803,20 +15457,32 @@
         : /background|scheduler/.test(scope) ? SYNC_LOCK_MODE_BACKGROUND
         : /startup|initial/.test(scope) ? SYNC_LOCK_MODE_STARTUP
         : /foreground_followup/.test(scope) ? SYNC_LOCK_MODE_FOREGROUND_FOLLOWUP : "";
+      const operationModeHint = details.mode || details.syncMode || "";
+      const recentSettledOperation = [...s1pSyncOperations.values()]
+        .filter((item) =>
+          !item?.active &&
+          item?.releasedAt &&
+          now - item.releasedAt < 5000 &&
+          (!operationModeHint || item.mode === operationModeHint)
+        )
+        .sort((left, right) => (right.releasedAt || 0) - (left.releasedAt || 0))[0];
       const candidateOperation = scopedMode ? s1pSyncOperations.get(scopedMode)
         : /^(remote_fetch|remote_push|auto_sync)$/.test(scope)
-          ? [...s1pSyncOperations.values()].find((item) => item.active) : null;
+          ? [...s1pSyncOperations.values()].find((item) => item.active) || recentSettledOperation : null;
       const operation = candidateOperation && (candidateOperation.active ||
         /complete|release|result/.test(normalizedPhase) && now - (candidateOperation.releasedAt || 0) < 5000)
         ? candidateOperation : null;
       s1pSetSyncDiagnosticStage(operation, normalizedPhase);
       if (operation?.active && ["success", "failure", "conflict"].includes(status)) operation.lastOutcome = status;
       const repeatable = /scheduled|rescheduled|waiting|retry|skipped/.test(normalizedPhase) || status === "skipped";
+      const repeatKey = options.repeatKey || (repeatable
+        ? `${scope}:${normalizedPhase}:${details.reason || ""}:${details.lockReason || ""}:${details.owner || ""}:${details.generation || ""}`
+        : "");
       const structured = s1pRecordDiagnosticEvent(`sync.${normalizedPhase}`, {
         module: "sync", operationId: options.operationId || operation?.operationId || "",
         timestamp: now, status, reason: details.reason || "", level: options.level || "log", message: options.message || message,
         details: { scope, phase: normalizedPhase, ...details },
-        repeatKey: repeatable ? `${scope}:${normalizedPhase}:${details.reason || ""}:${details.lockReason || ""}:${details.owner || ""}:${details.generation || ""}` : "",
+        repeatKey,
       });
       if (structured?.repeated) return structured.entry.message;
       const detailSummary = buildSyncTraceDetailsSummary(details);
@@ -15732,7 +16398,7 @@
       return foregroundRetryPendingState;
     }
 
-    if (foregroundPending) {
+    if (foregroundPending && !isTerminalForegroundRemoteSyncSoftBlock(foregroundPending)) {
       return {
         hasPending: true,
         source: AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME,
@@ -17943,6 +18609,13 @@
         normalizePendingAutoSyncTimestamp(value.lastSeenAt) || createdAt,
       lastAttemptAt: normalizePendingAutoSyncTimestamp(value.lastAttemptAt),
       lastResultStatus: normalizeSyncDiagnosticText(value.lastResultStatus, 80),
+      lastResultReason: normalizeRemoteProbeText(value.lastResultReason, 160),
+      lastResultAction: normalizeSyncDiagnosticText(value.lastResultAction, 100),
+      lastResultBlockLevel: normalizeSyncDiagnosticText(
+        value.lastResultBlockLevel,
+        60
+      ),
+      lastResultAt: normalizePendingAutoSyncTimestamp(value.lastResultAt),
       sourceContextId: normalizeSyncDiagnosticText(value.sourceContextId, 160),
       sourceTabId: normalizeSyncDiagnosticText(value.sourceTabId, 120),
     };
@@ -17979,6 +18652,149 @@
       GM_getValue(PENDING_FOREGROUND_REMOTE_SYNC_KEY, null)
     );
 
+  const isTerminalForegroundRemoteSyncSoftBlock = (pendingInput = null) => {
+    const pending = normalizePendingForegroundRemoteSyncRequest(pendingInput);
+    return Boolean(
+      pending &&
+        pending.lastResultStatus === "blocked" &&
+        pending.lastResultBlockLevel === "soft" &&
+        pending.lastResultReason &&
+        !isForegroundProbeRetryableSoftBlockReason(pending.lastResultReason)
+    );
+  };
+
+  const clearPendingForegroundRemoteSyncSoftBlock = (
+    reason = "local_state_changed"
+  ) => {
+    const current = getPendingForegroundRemoteSyncRequest();
+    if (!isTerminalForegroundRemoteSyncSoftBlock(current)) {
+      return { status: "skipped", reason: "no_foreground_soft_block" };
+    }
+    clearForegroundFollowUpSoftBlock();
+    clearForegroundRemoteSyncRetryIfBoundTo(current);
+    clearForegroundRemoteSyncRecovery();
+    const next = {
+      ...current,
+      lastResultStatus: "",
+      lastResultReason: "",
+      lastResultAction: "",
+      lastResultBlockLevel: "",
+      lastResultAt: 0,
+      lastAttemptAt: 0,
+      lastSeenAt: Date.now(),
+    };
+    GM_setValue(PENDING_FOREGROUND_REMOTE_SYNC_KEY, next);
+    recordSyncTraceEvent("foreground_pending_soft_block_cleared", {
+      scope: "foreground_probe",
+      status: "cleared",
+      message: "前台远端待处理的 soft block 已因新本地事实解除",
+      details: {
+        reason: normalizeRemoteProbeText(reason, 120) || "local_state_changed",
+        requestId: current.requestId,
+        remoteUpdatedAt: current.remoteUpdatedAt,
+        previousBlockReason: current.lastResultReason,
+        previousBlockAt: current.lastResultAt || 0,
+      },
+    });
+    return {
+      status: "cleared",
+      reason: normalizeRemoteProbeText(reason, 120) || "local_state_changed",
+      requestId: current.requestId,
+      remoteUpdatedAt: current.remoteUpdatedAt,
+    };
+  };
+
+  const markPendingForegroundRemoteSyncAttempt = (expectedInput = null) => {
+    const current = getPendingForegroundRemoteSyncRequest();
+    const expected = normalizePendingForegroundRemoteSyncRequest(expectedInput);
+    if (
+      !current ||
+      (expected && !isSamePendingForegroundRemoteSyncRequest(current, expected))
+    ) {
+      return {
+        status: "retained",
+        reason: "newer_pending_foreground_remote_sync",
+        requestId: current?.requestId || "",
+        remoteUpdatedAt: current?.remoteUpdatedAt || "",
+      };
+    }
+    const attemptAt = Date.now();
+    const next = {
+      ...current,
+      lastAttemptAt: attemptAt,
+      lastResultStatus: "running",
+      lastResultReason: "",
+      lastResultAction: "",
+      lastResultBlockLevel: "",
+      lastResultAt: 0,
+    };
+    GM_setValue(PENDING_FOREGROUND_REMOTE_SYNC_KEY, next);
+    recordSyncTraceEvent("foreground_pending_attempt_started", {
+      scope: "foreground_probe",
+      status: "running",
+      message: "前台远端待处理开始一次执行尝试",
+      details: {
+        requestId: current.requestId,
+        remoteUpdatedAt: current.remoteUpdatedAt,
+        reason: current.reason,
+        triggerSource: current.triggerSource,
+        lastAttemptAt: attemptAt,
+      },
+      timestamp: attemptAt,
+      repeatKey: [
+        "foreground_pending_attempt_started",
+        current.requestId,
+        current.remoteUpdatedAt,
+      ].join(":"),
+    });
+    return {
+      status: "marked",
+      reason: "foreground_remote_sync_attempt_started",
+      requestId: current.requestId,
+      remoteUpdatedAt: current.remoteUpdatedAt,
+    };
+  };
+
+  const recordForegroundPendingSoftBlockSuppressed = (
+    pendingInput = null,
+    {
+      source = "foreground_recovery",
+      triggerSource = "",
+      now = Date.now(),
+    } = {}
+  ) => {
+    const pending = normalizePendingForegroundRemoteSyncRequest(pendingInput);
+    if (!isTerminalForegroundRemoteSyncSoftBlock(pending)) {
+      return false;
+    }
+    recordSyncTraceEvent("foreground_pending_recovery_suppressed", {
+      scope: "foreground_probe",
+      status: "blocked",
+      message: "前台远端待处理已 soft block，等待本地或云端出现新事实",
+      details: {
+        reason: FOREGROUND_PENDING_SOFT_BLOCK_WAIT_REASON,
+        source: normalizeSyncDiagnosticText(source, 80),
+        triggerSource: normalizeSyncTriggerSource(triggerSource) || "",
+        requestId: pending.requestId,
+        remoteUpdatedAt: pending.remoteUpdatedAt,
+        blockReason: pending.lastResultReason,
+        blockAction: pending.lastResultAction,
+        blockLevel: pending.lastResultBlockLevel,
+        blockAt: pending.lastResultAt || 0,
+        lastAttemptAt: pending.lastAttemptAt || 0,
+        lastSeenAt: pending.lastSeenAt || 0,
+      },
+      timestamp: normalizeRemoteProbeTimestamp(now) || Date.now(),
+      repeatKey: [
+        "foreground_pending_recovery_suppressed",
+        pending.requestId,
+        pending.remoteUpdatedAt,
+        pending.lastResultReason,
+      ].join(":"),
+    });
+    return true;
+  };
+
   const markPendingForegroundRemoteSyncRequest = ({
     reason = "remote_probe_changed",
     triggerSource = SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME,
@@ -17992,6 +18808,13 @@
     }
     const normalizedNow = normalizeRemoteProbeTimestamp(now) || Date.now();
     const existing = getPendingForegroundRemoteSyncRequest();
+    if (
+      existing &&
+      existing.remoteUpdatedAt === normalizedRemoteUpdatedAt &&
+      isTerminalForegroundRemoteSyncSoftBlock(existing)
+    ) {
+      return existing;
+    }
     clearForegroundRemoteSyncRetryIfBoundTo(existing);
     const nextRequest = {
       version: 1,
@@ -18009,6 +18832,10 @@
       lastSeenAt: normalizedNow,
       lastAttemptAt: 0,
       lastResultStatus: "",
+      lastResultReason: "",
+      lastResultAction: "",
+      lastResultBlockLevel: "",
+      lastResultAt: 0,
       sourceContextId: SYNC_RUNTIME_CONTEXT_ID,
       sourceTabId: getSyncRuntimeTabLineageId(),
     };
@@ -18138,10 +18965,55 @@
     if (!current) {
       return { status: "skipped", reason: "no_pending_foreground_remote_sync" };
     }
-    if (shouldRetainPendingForegroundRemoteSyncResult(result)) {
+    const expected = normalizePendingForegroundRemoteSyncRequest(expectedRequest);
+    if (
+      expected &&
+      !isSamePendingForegroundRemoteSyncRequest(current, expected)
+    ) {
       return {
         status: "retained",
-        reason: "foreground_remote_sync_retryable",
+        reason: "newer_pending_foreground_remote_sync",
+        requestId: current.requestId,
+        remoteUpdatedAt: current.remoteUpdatedAt,
+      };
+    }
+    if (shouldRetainPendingForegroundRemoteSyncResult(result)) {
+      const normalizedStatus =
+        normalizeSyncDiagnosticText(result?.status, 80) || "unknown";
+      const normalizedReason = normalizeRemoteProbeText(
+        result?.reason,
+        160
+      );
+      const normalizedAction = normalizeSyncDiagnosticText(
+        result?.action,
+        100
+      );
+      const normalizedBlockLevel = normalizeSyncDiagnosticText(
+        result?.blockLevel,
+        60
+      );
+      const resultAt = Date.now();
+      const next = {
+        ...current,
+        lastAttemptAt: resultAt,
+        lastResultStatus: normalizedStatus,
+        lastResultReason: normalizedReason,
+        lastResultAction: normalizedAction,
+        lastResultBlockLevel: normalizedBlockLevel,
+        lastResultAt: resultAt,
+      };
+      GM_setValue(PENDING_FOREGROUND_REMOTE_SYNC_KEY, next);
+      if (isTerminalForegroundRemoteSyncSoftBlock(next)) {
+        recordForegroundPendingSoftBlockSuppressed(next, {
+          source: "followup_result",
+          triggerSource: current.triggerSource,
+        });
+      }
+      return {
+        status: "retained",
+        reason: isTerminalForegroundRemoteSyncSoftBlock(next)
+          ? FOREGROUND_PENDING_SOFT_BLOCK_WAIT_REASON
+          : "foreground_remote_sync_retryable",
         requestId: current.requestId,
         remoteUpdatedAt: current.remoteUpdatedAt,
       };
@@ -18292,6 +19164,26 @@
     if (document.visibilityState !== "visible") {
       return { status: "suppressed", reason: "document_hidden" };
     }
+    if (isTerminalForegroundRemoteSyncSoftBlock(pending)) {
+      clearForegroundRemoteSyncRecovery();
+      recordForegroundPendingSoftBlockSuppressed(pending, {
+        source: "recovery_schedule",
+        triggerSource: pending.triggerSource,
+        now: options.now,
+      });
+      refreshAutoSyncIndicatorRuntimeDisplay(
+        "foreground_soft_block_waiting_for_change"
+      );
+      return {
+        status: "blocked",
+        reason: FOREGROUND_PENDING_SOFT_BLOCK_WAIT_REASON,
+        requestId: pending.requestId,
+        remoteUpdatedAt: pending.remoteUpdatedAt,
+        blockReason: pending.lastResultReason,
+        blockAction: pending.lastResultAction,
+        blockAt: pending.lastResultAt || 0,
+      };
+    }
 
     const now = normalizeRemoteProbeTimestamp(options.now) || Date.now();
     const activeLock = getActiveSyncLockSnapshot(now);
@@ -18339,6 +19231,18 @@
       if (document.visibilityState !== "visible") {
         return;
       }
+      if (isTerminalForegroundRemoteSyncSoftBlock(latestPending)) {
+        clearForegroundRemoteSyncRecovery();
+        recordForegroundPendingSoftBlockSuppressed(latestPending, {
+          source: "recovery_timer",
+          triggerSource: latestPending.triggerSource,
+          now: Date.now(),
+        });
+        refreshAutoSyncIndicatorRuntimeDisplay(
+          "foreground_soft_block_waiting_for_change"
+        );
+        return;
+      }
       const currentLock = getActiveSyncLockSnapshot(Date.now());
       if (currentLock) {
         scheduleForegroundRemoteSyncRecovery(latestPending, {
@@ -18353,6 +19257,13 @@
       const requestForegroundRemoteSyncCheckFn =
         options.requestForegroundRemoteSyncCheck ||
         requestForegroundRemoteSyncCheck;
+      const attempt = markPendingForegroundRemoteSyncAttempt(latestPending);
+      if (attempt.status !== "marked") {
+        refreshAutoSyncIndicatorRuntimeDisplay(
+          "foreground_pending_attempt_generation_changed"
+        );
+        return;
+      }
       let result;
       try {
         result = await requestForegroundRemoteSyncCheckFn(
@@ -18390,6 +19301,7 @@
         latestPending,
         result
       );
+      const pendingAfterSettlement = getPendingForegroundRemoteSyncRequest();
       recordSyncTraceEvent("foreground_pending_recovery_result", {
         scope: "foreground_probe",
         status: settled.status,
@@ -18399,6 +19311,12 @@
           remoteUpdatedAt: latestPending.remoteUpdatedAt,
           recoveryStatus: result?.status || "unknown",
           recoveryReason: result?.reason || "",
+          settlementStatus: settled.status,
+          settlementReason: settled.reason || "",
+          blockLevel: result?.blockLevel || "",
+          action: result?.action || "",
+          attemptAt: pendingAfterSettlement?.lastAttemptAt || 0,
+          resultAt: pendingAfterSettlement?.lastResultAt || 0,
         },
       });
 
@@ -18455,7 +19373,9 @@
         settled.status === "retained" &&
         !s1pHasScheduledSyncResultPhaseRetry(outcome.retryResult) &&
         (result?.status === "success" ||
-          result?.status === "blocked" ||
+          (result?.status === "blocked" &&
+            result.blockLevel === "soft" &&
+            isForegroundProbeRetryableSoftBlockReason(result.reason)) ||
           result?.reason === "foreground_followup_lock_unavailable" ||
           result?.reason === "sync_lock_active")
       ) {
@@ -20850,18 +21770,14 @@
     normalizeSyncDiagnosticText(options.tabId, 120) ||
     SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID;
   const shouldLogSharedBackgroundSyncReschedule = ({
-    generation = 0,
     reason = "",
+    lockIdentity = "",
     now = Date.now(),
   } = {}) => {
-    const normalizedGeneration = Math.max(
-      0,
-      Math.floor(Number(generation) || 0)
-    );
     const normalizedReason =
       normalizeSyncDiagnosticText(reason, 80) || "unknown";
     const normalizedNow = Number(now) || Date.now();
-    const key = `${normalizedGeneration}:${normalizedReason}`;
+    const key = `${normalizedReason}:${normalizeSyncDiagnosticText(lockIdentity, 240)}`;
     if (
       key === lastSharedBackgroundSyncRescheduleLogKey &&
       normalizedNow - lastSharedBackgroundSyncRescheduleLogAt <
@@ -21648,6 +22564,7 @@
       };
     }
     if (hasAnyActiveSyncLock(now)) {
+      const activeSyncLock = getActiveSyncLockSnapshot(now);
       const retryDelayMs = 1000;
       const retryState = setBackgroundSyncDebounceState({
         ...state,
@@ -21661,8 +22578,13 @@
       });
       if (
         shouldLogSharedBackgroundSyncReschedule({
-          generation: state.generation,
           reason: "sync_lock_active",
+          lockIdentity: [
+            activeSyncLock?.mode || "",
+            activeSyncLock?.owner || "",
+            activeSyncLock?.executionId || activeSyncLock?.operationId || "",
+            activeSyncLock?.stage || "",
+          ].join(":"),
           now,
         })
       ) {
@@ -21674,7 +22596,23 @@
             reason: "sync_lock_active",
             generation: state.generation,
             delayMs: retryDelayMs,
+            lockMode: activeSyncLock?.mode || "",
+            lockOwner: activeSyncLock?.owner || "",
+            lockExecutionId: activeSyncLock?.executionId || "",
+            lockOperationId: activeSyncLock?.operationId || "",
+            lockStage: activeSyncLock?.stage || "",
+            lockAcquiredAt: activeSyncLock?.acquiredAt || 0,
+            lockExpiresAt: activeSyncLock?.expiresAt || 0,
+            lockRemainingMs: activeSyncLock?.remainingMs || 0,
           },
+          repeatKey: [
+            "shared_scheduler_rescheduled",
+            "sync_lock_active",
+            activeSyncLock?.mode || "",
+            activeSyncLock?.owner || "",
+            activeSyncLock?.operationId || activeSyncLock?.executionId || "",
+            activeSyncLock?.stage || "",
+          ].join(":"),
         });
       }
       return {
@@ -22768,6 +23706,8 @@
       ((value) => {
         sharedBackgroundSyncDebouncePageUnloading = value === true;
       });
+    const setSyncPageLifecycleUnloading =
+      adapter.setSyncPageLifecycleUnloading || s1pSetSyncPageLifecycleUnloading;
     const clearHiddenFlush =
       adapter.clearHiddenFlush || clearSharedBackgroundSyncDebounceHiddenFlushTimer;
     const runCheckpoint =
@@ -22868,9 +23808,11 @@
         },
       });
       if (phase === "visible" || phase === "pageshow") {
+        setSyncPageLifecycleUnloading(false, reason);
         setSchedulerPageUnloading(false);
         clearHiddenFlush();
       } else if (phase === "pagehide" || phase === "beforeunload") {
+        setSyncPageLifecycleUnloading(true, reason);
         setSchedulerPageUnloading(true);
       }
       const checkpointResult = runCheckpoint(reason, {
@@ -22915,6 +23857,10 @@
         if (transitionGeneration !== lifecycleTransitionGeneration) {
           return;
         }
+        // Scheduler recovery may be safe in the next microtask, but the sync
+        // lifecycle fence must stay closed until pageshow or a proven canceled
+        // unload. Otherwise the 50ms ownership-verification window can reopen
+        // while the page is already leaving.
         setSchedulerPageUnloading(false);
       });
       if (phase === "beforeunload") {
@@ -22925,6 +23871,7 @@
           ) {
             return;
           }
+          setSyncPageLifecycleUnloading(false, "unload_canceled_recovery");
           const recoveryResult = recoverAfterCanceledUnload();
           recordSyncTraceEvent("sync_lifecycle_canceled_unload_recovery", {
             scope: "sync_lifecycle_checkpoint",
@@ -22981,6 +23928,9 @@
           return { status: "skipped", reason: "already_unbound" };
         }
         lifecycleTransitionGeneration += 1;
+        setSyncPageLifecycleUnloading(false, "lifecycle_unbind", {
+          forceGeneration: true,
+        });
         setSchedulerPageUnloading(false);
         clearHiddenFlush();
         removeLifecycleEventListeners();
@@ -23282,6 +24232,7 @@
   ) => {
     const currentLastModified = GM_getValue(LAST_LOCAL_MODIFIED_KEY, 0);
     const nextLastModified = Math.max(Date.now(), currentLastModified + 1);
+    clearPendingForegroundRemoteSyncSoftBlock("local_mutation");
     const readingProgressContext =
       s1pReadingProgressSession.readState().context;
     recordLastLocalDirtyProvenance({
@@ -32660,33 +33611,83 @@
 
   const S1P_LOCK_RECEIPT_PREFIX = "s1p_sync_lock_receipt:";
   const s1pReadSharedLockReceipts = () => {
-    const legacy = GM_getValue("s1p_sync_lock_history", []);
-    const receipts = Array.isArray(legacy) ? legacy.slice(-80) : [];
+    const cutoff = Date.now() - 7 * 86400000;
+    const receipts = [];
+    const identities = new Set();
+    const append = (receipt) => {
+      const normalized = s1pNormalizeSharedLockReceiptRecord(receipt);
+      if (!normalized || Number(normalized.at) < cutoff) return;
+      const identity = s1pGetSharedLockReceiptIdentity(normalized);
+      if (identity && identities.has(identity)) return;
+      if (identity) identities.add(identity);
+      receipts.push(normalized);
+    };
+    try {
+      const legacy = GM_getValue("s1p_sync_lock_history", []);
+      if (Array.isArray(legacy)) legacy.slice(-80).forEach(append);
+    } catch (_) {
+      s1pLogLoss.collectionFailures += 1;
+    }
     if (typeof GM_listValues === "function") {
-      const keys = GM_listValues().filter((key) => key.startsWith(S1P_LOCK_RECEIPT_PREFIX)).sort();
+      let keys = [];
+      try {
+        keys = GM_listValues()
+          .filter((key) => typeof key === "string" && key.startsWith(S1P_LOCK_RECEIPT_PREFIX))
+          .sort();
+      } catch (_) {
+        s1pLogLoss.collectionFailures += 1;
+      }
       for (const key of keys.slice(-256)) {
-        const receipt = GM_getValue(key, null);
-        if (receipt && Number(receipt.at) >= Date.now() - 7 * 86400000) receipts.push(receipt);
+        try {
+          append(GM_getValue(key, null));
+        } catch (_) {
+          s1pLogLoss.collectionFailures += 1;
+        }
       }
     }
-    return receipts.sort((a, b) => Number(a.at) - Number(b.at)).slice(-256).map(s1pSanitizeLogValue);
+    return receipts.sort((a, b) => Number(a.at) - Number(b.at)).slice(-256);
   };
 
   const s1pWriteSharedLockReceipt = (receipt) => {
-    if (typeof GM_listValues !== "function") {
-      const history = GM_getValue("s1p_sync_lock_history", []);
-      GM_setValue("s1p_sync_lock_history", [...(Array.isArray(history) ? history.slice(-79) : []), receipt]);
-      return;
+    const normalized = s1pNormalizeSharedLockReceiptRecord(receipt);
+    if (!normalized) return false;
+    try {
+      if (typeof GM_listValues !== "function") {
+        const history = GM_getValue("s1p_sync_lock_history", []);
+        GM_setValue("s1p_sync_lock_history", [
+          ...(Array.isArray(history) ? history.slice(-79) : []),
+          normalized,
+        ]);
+        return true;
+      }
+      // Each immutable event has its own key: concurrent writers never replace one another.
+      const key = `${S1P_LOCK_RECEIPT_PREFIX}${Date.now()}:${s1pNewDiagnosticOperation("receipt")}`;
+      GM_setValue(key, normalized);
+      let keys = [];
+      try {
+        keys = GM_listValues()
+          .filter((item) => typeof item === "string" && item.startsWith(S1P_LOCK_RECEIPT_PREFIX))
+          .sort();
+      } catch (_) {
+        s1pLogLoss.collectionFailures += 1;
+        return true;
+      }
+      const cutoff = Date.now() - 7 * 86400000;
+      keys.forEach((item, index) => {
+        const timestamp = Number(item.slice(S1P_LOCK_RECEIPT_PREFIX.length).split(":")[0]);
+        if (index < keys.length - 256 || !Number.isFinite(timestamp) || timestamp < cutoff) {
+          try {
+            GM_deleteValue(item);
+          } catch (_) {
+            s1pLogLoss.collectionFailures += 1;
+          }
+        }
+      });
+      return true;
+    } catch (_) {
+      s1pLogLoss.persistenceFailures += 1;
+      return false;
     }
-    // Each immutable event has its own key: concurrent writers never replace one another.
-    const key = `${S1P_LOCK_RECEIPT_PREFIX}${Date.now()}:${s1pNewDiagnosticOperation("receipt")}`;
-    GM_setValue(key, receipt);
-    const keys = GM_listValues().filter((item) => item.startsWith(S1P_LOCK_RECEIPT_PREFIX)).sort();
-    const cutoff = Date.now() - 7 * 86400000;
-    keys.forEach((item, index) => {
-      const timestamp = Number(item.slice(S1P_LOCK_RECEIPT_PREFIX.length).split(":")[0]);
-      if (index < keys.length - 256 || timestamp < cutoff) GM_deleteValue(item);
-    });
   };
 
   const s1pRecordLockEvidence = (event, evidence, options = {}) => {
@@ -32697,7 +33698,8 @@
       });
       // Small, best-effort cross-tab receipts, never used for sync decisions.
       if (options.receipt && !recorded?.repeated) {
-        const receipt = s1pSanitizeLogValue({ event, at: Date.now(), ...evidence, reason: options.reason || "" });
+        const receipt = s1pSanitizeLogValue({ event, at: Date.now(), ...evidence,
+          reason: options.reason || "", details: options.details || {} });
         s1pWriteSharedLockReceipt(receipt);
       }
     } catch (_) { s1pLogLoss.collectionFailures += 1; }
@@ -32710,6 +33712,13 @@
         const previous = s1pObservedLocks.get(row.key);
         const changed = !previous || previous.executionId !== row.executionId || previous.owner !== row.owner;
         if (!row.active && (changed || previous.active)) {
+          const relatedOperation = [...s1pSyncOperations.values()].find((operation) =>
+            operation?.active && operation.executionId === row.executionId
+          );
+          if (relatedOperation) {
+            relatedOperation.lastOutcome = "expired_observed";
+            relatedOperation.expiredObservedAt = now;
+          }
           s1pRecordLockEvidence("lock.expired_observed", row, { message: "观察到同步锁 TTL 已过期", reason: "ttl_elapsed", receipt: true });
         } else if (row.active && changed) {
           s1pRecordLockEvidence("lock.owner_observed", row, { message: "观察到同步锁持有者", reason: "owner_changed" });
@@ -32773,6 +33782,10 @@
           globalLock.timestamp + globalLock.ttlMs - normalizedNow
         ),
         source: "global",
+        operationId: globalLock.operationId || "",
+        executionId: globalLock.token || "",
+        acquiredAt: globalLock.acquiredAt || 0,
+        stage: globalLock.stage || "unknown",
       };
     }
 
@@ -32797,6 +33810,10 @@
                 lock.timestamp + profile.ttlMs - normalizedNow
               ),
               source: "mode",
+              operationId: lock.operationId || "",
+              executionId: lock.token || "",
+              acquiredAt: lock.acquiredAt || 0,
+              stage: lock.stage || "unknown",
             }
           : null;
       })
@@ -32845,6 +33862,9 @@
     }
   };
 
+  const getSyncExecutionAuthorityToken = (mode, expectedToken = "") =>
+    expectedToken || syncLockExecutionAuthorityTokens.get(mode) || "";
+
   const verifySyncLockOwnership = async (verifyFn) => {
     await sleep(SYNC_LOCK_VERIFY_DELAY_MS);
     return Boolean(typeof verifyFn === "function" && verifyFn());
@@ -32854,7 +33874,11 @@
     owner = BACKGROUND_SYNC_OWNER_ID,
     reason = "",
   } = {}) => {
+    if (s1pIsSyncPageLifecycleUnloading()) {
+      return false;
+    }
     const now = Date.now();
+    const lifecycleGeneration = s1pSyncPageLifecycleGeneration;
     const currentLock = getRemoteProbeLockValue();
     if (isRemoteProbeLockValid(currentLock, now) && currentLock.owner !== owner) {
       return false;
@@ -32870,6 +33894,12 @@
     }
 
     const acquired = await verifySyncLockOwnership(() => {
+      if (
+        s1pIsSyncPageLifecycleUnloading() ||
+        s1pSyncPageLifecycleGeneration !== lifecycleGeneration
+      ) {
+        return false;
+      }
       const verifiedLock = getRemoteProbeLockValue();
       return (
         verifiedLock &&
@@ -32878,7 +33908,7 @@
       );
     });
     if (!acquired) {
-      releaseRemoteProbeLockValue(owner);
+      releaseRemoteProbeLockValue(owner, nextLock.timestamp);
     }
     return acquired;
   };
@@ -32954,6 +33984,10 @@
     if (!profile) {
       return s1pRejectSyncLock(mode, "unknown_lock_mode");
     }
+    if (s1pIsSyncPageLifecycleUnloading()) {
+      s1pRejectSyncLock(mode, "page_unloading");
+      return options.returnAuthority === true ? null : false;
+    }
     const shouldPreemptActiveSync =
       mode === SYNC_LOCK_MODE_MANUAL && options?.preemptActiveSync === true;
     const preemptScope =
@@ -32972,9 +34006,9 @@
       const globalLock = getGlobalSyncLockValue();
       const globalLockIsValid = isGlobalSyncLockValid(globalLock, now);
       return Boolean(
-        (lockIsValid && currentLock.owner !== BACKGROUND_SYNC_OWNER_ID) ||
-          hasActiveOtherModeSyncLock(mode, now) ||
-          (globalLockIsValid &&
+        lockIsValid ||
+        hasActiveOtherModeSyncLock(mode, now) ||
+        (globalLockIsValid &&
             (globalLock.owner !== BACKGROUND_SYNC_OWNER_ID ||
               globalLock.mode !== mode))
       );
@@ -32997,21 +34031,81 @@
     const lockToken = `${BACKGROUND_SYNC_OWNER_ID}:${mode}:${now}:${Math.random()
       .toString(36)
       .slice(2, 10)}`;
+    const lifecycleGeneration = s1pSyncPageLifecycleGeneration;
 
     s1pObserveSyncLocks(now);
     const operation = { operationId: options.operationId || s1pNewDiagnosticOperation("sync"),
-      executionId: lockToken, acquiredAt: now, stage: "acquiring", active: true, renewals: 0, lastReportedAt: now };
+      mode,
+      executionId: lockToken, acquiredAt: now, stage: "acquiring", stageChangedAt: now,
+      lifecycleGeneration, transactionStarted: false, active: true, renewals: 0, lastReportedAt: now };
     s1pSyncOperations.set(mode, operation);
 
-    GM_setValue(profile.lockKey, {
+    s1pRecordLockEvidence("lock.acquisition_started", {
+      ...operation,
+      mode,
       owner: BACKGROUND_SYNC_OWNER_ID,
-      timestamp: now,
-      token: lockToken,
-      ...s1pSyncDiagnosticMetadata(mode),
+      ttlMs: profile.ttlMs,
+    }, {
+      message: "开始取得同步锁，正在等待归属校验",
+      status: "running",
+      reason: "awaiting_ownership_verification",
+      receipt: true,
     });
-    setGlobalSyncLock(mode, now, profile.ttlMs, lockToken);
+
+    try {
+      GM_setValue(profile.lockKey, {
+        owner: BACKGROUND_SYNC_OWNER_ID,
+        timestamp: now,
+        token: lockToken,
+        ...s1pSyncDiagnosticMetadata(mode),
+      });
+      setGlobalSyncLock(mode, now, profile.ttlMs, lockToken);
+    } catch (error) {
+      try {
+        const modeLockAfterFailure = getModeSyncLockValue(mode);
+        if (
+          modeLockAfterFailure?.owner === BACKGROUND_SYNC_OWNER_ID &&
+          modeLockAfterFailure.token === lockToken
+        ) {
+          GM_deleteValue(profile.lockKey);
+        }
+      } catch (_) {
+        s1pLogLoss.collectionFailures += 1;
+      }
+      try {
+        releaseGlobalSyncLock(mode, lockToken);
+      } catch (_) {
+        s1pLogLoss.collectionFailures += 1;
+      }
+      operation.active = false;
+      operation.lastOutcome = "failure";
+      operation.terminalEvent = "lock.acquisition_failed";
+      operation.terminalStatus = "failure";
+      operation.terminalReason = "lock_storage_write_failed";
+      operation.failedAt = Date.now();
+      s1pRecordLockEvidence("lock.acquisition_failed", {
+        ...operation,
+        mode,
+        owner: BACKGROUND_SYNC_OWNER_ID,
+        ttlMs: profile.ttlMs,
+      }, {
+        message: "写入同步锁失败，已清理可能留下的临时记录",
+        level: "error",
+        status: "failure",
+        reason: "lock_storage_write_failed",
+        receipt: true,
+        details: { error },
+      });
+      throw error;
+    }
 
     const acquired = await verifySyncLockOwnership(() => {
+      if (
+        s1pIsSyncPageLifecycleUnloading() ||
+        s1pSyncPageLifecycleGeneration !== lifecycleGeneration
+      ) {
+        return false;
+      }
       const verifiedModeLock = getModeSyncLockValue(mode);
       const verifiedGlobalLock = getGlobalSyncLockValue();
       return (
@@ -33024,12 +34118,87 @@
         verifiedGlobalLock.token === lockToken
       );
     });
+    const lifecycleAborted =
+      s1pIsSyncPageLifecycleUnloading() ||
+      s1pSyncPageLifecycleGeneration !== lifecycleGeneration;
     if (!acquired) {
-      s1pRejectSyncLock(mode, "ownership_verification_failed");
-      releaseModeSyncLock(mode, lockToken, "ownership_verification_failed");
+      const failureReason = lifecycleAborted
+        ? "lifecycle_unload_before_lock_verified"
+        : "ownership_verification_failed";
+      if (!lifecycleAborted) {
+        s1pRejectSyncLock(mode, failureReason);
+      }
+      if (operation.active) {
+        if (lifecycleAborted) {
+          operation.lastOutcome = "canceled";
+          operation.cancellationReason = failureReason;
+          operation.canceledAt = Date.now();
+          s1pRecordLockEvidence("lock.acquisition_canceled", {
+            ...operation,
+            mode,
+            owner: BACKGROUND_SYNC_OWNER_ID,
+            ttlMs: profile.ttlMs,
+          }, {
+            message: "锁归属校验期间页面离开，已取消临时锁获取",
+            status: "skipped",
+            reason: failureReason,
+            receipt: true,
+          });
+        }
+        releaseModeSyncLock(mode, lockToken, failureReason);
+      }
     } else {
       s1pLockRefusals.delete(mode);
       s1pSetSyncDiagnosticStage(operation, "transaction_start");
+      syncLockExecutionAuthorityTokens.set(mode, lockToken);
+      try {
+        const verifiedModeLock = getModeSyncLockValue(mode);
+        if (
+          verifiedModeLock &&
+          verifiedModeLock.owner === BACKGROUND_SYNC_OWNER_ID &&
+          verifiedModeLock.token === lockToken
+        ) {
+          GM_setValue(profile.lockKey, {
+            ...verifiedModeLock,
+            ...s1pSyncDiagnosticMetadata(mode),
+            token: lockToken,
+          });
+        }
+        const verifiedGlobalLock = getGlobalSyncLockValue();
+        if (
+          verifiedGlobalLock &&
+          verifiedGlobalLock.owner === BACKGROUND_SYNC_OWNER_ID &&
+          verifiedGlobalLock.mode === mode &&
+          verifiedGlobalLock.token === lockToken
+        ) {
+          GM_setValue(GLOBAL_SYNC_LOCK_KEY, {
+            ...verifiedGlobalLock,
+            ...s1pSyncDiagnosticMetadata(mode),
+            token: lockToken,
+          });
+        }
+      } catch (error) {
+        releaseModeSyncLock(mode, lockToken, "lock_stage_persist_failed");
+        operation.lastOutcome = "failure";
+        operation.terminalEvent = "lock.acquisition_failed";
+        operation.terminalStatus = "failure";
+        operation.terminalReason = "lock_stage_persist_failed";
+        operation.failedAt = Date.now();
+        s1pRecordLockEvidence("lock.acquisition_failed", {
+          ...operation,
+          mode,
+          owner: BACKGROUND_SYNC_OWNER_ID,
+          ttlMs: profile.ttlMs,
+        }, {
+          message: "写入同步锁阶段失败，已清理执行锁",
+          level: "error",
+          status: "failure",
+          reason: "lock_stage_persist_failed",
+          receipt: true,
+          details: { error },
+        });
+        throw error;
+      }
       s1pRecordLockEvidence("lock.acquired", { ...operation, mode, owner: BACKGROUND_SYNC_OWNER_ID, ttlMs: profile.ttlMs },
         { message: "已取得模式锁和全局锁", status: "running", receipt: true });
     }
@@ -33051,35 +34220,58 @@
     if (!profile) {
       return false;
     }
-    const currentLock = getModeSyncLockValue(mode);
-    if (
-      !currentLock ||
-      currentLock.owner !== BACKGROUND_SYNC_OWNER_ID ||
-      (expectedToken && currentLock.token !== expectedToken)
-    ) {
-      return false;
-    }
-    if (!refreshGlobalSyncLock(mode, profile.ttlMs, expectedToken)) {
-      return false;
-    }
-    GM_setValue(profile.lockKey, {
-      ...currentLock,
-      owner: BACKGROUND_SYNC_OWNER_ID,
-      timestamp: Date.now(),
-      ...s1pSyncDiagnosticMetadata(mode),
-      ...(currentLock.token ? { token: currentLock.token } : {}),
-    });
-    const operation = s1pSyncOperations.get(mode);
-    if (operation) {
-      operation.renewals += 1;
-      if (Date.now() - operation.lastReportedAt >= 30000) {
-        operation.lastReportedAt = Date.now();
-        s1pRecordLockEvidence("lock.renewed", { ...operation, mode, owner: BACKGROUND_SYNC_OWNER_ID,
-          heldMs: Date.now() - operation.acquiredAt, stageForMs: Date.now() - (operation.stageChangedAt || operation.acquiredAt), expiresAt: Date.now() + profile.ttlMs },
-          { message: "同步仍在执行，锁已续租", receipt: true });
+    syncLockRenewalFailureReasons.delete(mode);
+    try {
+      const authorityToken = getSyncExecutionAuthorityToken(mode, expectedToken);
+      const currentLock = getModeSyncLockValue(mode);
+      if (
+        !currentLock ||
+        currentLock.owner !== BACKGROUND_SYNC_OWNER_ID ||
+        (authorityToken && currentLock.token !== authorityToken)
+      ) {
+        return false;
       }
+      if (!refreshGlobalSyncLock(mode, profile.ttlMs, authorityToken)) {
+        return false;
+      }
+      const renewedAt = Date.now();
+      GM_setValue(profile.lockKey, {
+        ...currentLock,
+        owner: BACKGROUND_SYNC_OWNER_ID,
+        timestamp: renewedAt,
+        ...s1pSyncDiagnosticMetadata(mode),
+        ...(currentLock.token ? { token: currentLock.token } : {}),
+      });
+      const operation = s1pSyncOperations.get(mode);
+      if (operation) {
+        operation.renewals += 1;
+        if (renewedAt - operation.lastReportedAt >= 30000) {
+          operation.lastReportedAt = renewedAt;
+          s1pRecordLockEvidence("lock.renewed", { ...operation, mode, owner: BACKGROUND_SYNC_OWNER_ID,
+            heldMs: renewedAt - operation.acquiredAt, stageForMs: renewedAt - (operation.stageChangedAt || operation.acquiredAt), expiresAt: renewedAt + profile.ttlMs },
+            { message: "同步仍在执行，锁已续租", receipt: true });
+        }
+      }
+      return true;
+    } catch (error) {
+      const reason = "lock_storage_write_failed";
+      syncLockRenewalFailureReasons.set(mode, { reason, error });
+      const operation = s1pSyncOperations.get(mode);
+      s1pRecordLockEvidence("lock.renewal_failed", {
+        ...operation,
+        mode,
+        owner: BACKGROUND_SYNC_OWNER_ID,
+        stage: operation?.stage || "unknown",
+      }, {
+        message: "续租同步锁时存储读写失败",
+        level: "error",
+        status: "failure",
+        reason,
+        receipt: true,
+        details: { error },
+      });
+      return false;
     }
-    return true;
   };
 
   const releaseModeSyncLock = (mode, expectedToken = "", reason = "execution_settled") => {
@@ -33087,34 +34279,219 @@
     if (!profile) {
       return;
     }
-    const currentLock = getModeSyncLockValue(mode);
+    const authorityToken = getSyncExecutionAuthorityToken(mode, expectedToken);
+    let currentLock = null;
+    let currentGlobalLock = null;
+    let lockReadFailed = false;
+    try {
+      currentLock = getModeSyncLockValue(mode);
+    } catch (_) {
+      lockReadFailed = true;
+    }
+    try {
+      currentGlobalLock = getGlobalSyncLockValue();
+    } catch (_) {
+      lockReadFailed = true;
+    }
+    const releaseTimestamp = Date.now();
     const operation = s1pSyncOperations.get(mode);
-    const owned = currentLock && currentLock.owner === BACKGROUND_SYNC_OWNER_ID &&
-      (!expectedToken || currentLock.token === expectedToken);
+    const modeOwnershipMatches = Boolean(
+      !lockReadFailed &&
+        currentLock &&
+        currentLock.owner === BACKGROUND_SYNC_OWNER_ID &&
+        (!authorityToken || currentLock.token === authorityToken)
+    );
+    const globalOwnershipMatches = Boolean(
+      !lockReadFailed &&
+        currentGlobalLock &&
+        currentGlobalLock.owner === BACKGROUND_SYNC_OWNER_ID &&
+        currentGlobalLock.mode === mode &&
+        (!authorityToken || currentGlobalLock.token === authorityToken)
+    );
+    const modeLockValid = modeOwnershipMatches &&
+      isModeSyncLockValid(currentLock, profile.ttlMs, releaseTimestamp);
+    const globalLockValid = globalOwnershipMatches &&
+      isGlobalSyncLockValid(currentGlobalLock, releaseTimestamp);
+    const owned = modeLockValid && globalLockValid;
+    const expiredOwnerRecord = modeOwnershipMatches && globalOwnershipMatches && !owned;
+    let modeReleaseFailed = false;
+    let globalReleaseFailed = false;
+    if (!lockReadFailed && modeOwnershipMatches) {
+      try {
+        GM_deleteValue(profile.lockKey);
+      } catch (_) {
+        modeReleaseFailed = true;
+      }
+    }
+    if (!lockReadFailed) {
+      try {
+        releaseGlobalSyncLock(mode, authorityToken);
+      } catch (_) {
+        globalReleaseFailed = true;
+      }
+    }
+    const releaseStorageFailed =
+      lockReadFailed || modeReleaseFailed || globalReleaseFailed;
     if (
-      currentLock &&
-      currentLock.owner === BACKGROUND_SYNC_OWNER_ID &&
-      (!expectedToken || currentLock.token === expectedToken)
+      operation &&
+      operation.active &&
+      (!authorityToken || operation.executionId === authorityToken)
     ) {
-      GM_deleteValue(profile.lockKey);
-    }
-    releaseGlobalSyncLock(mode, expectedToken);
-    if (operation && (!expectedToken || operation.executionId === expectedToken)) {
+      const releaseReason =
+        lockReadFailed
+          ? "lock_storage_read_failed"
+          : modeReleaseFailed || globalReleaseFailed
+            ? "lock_storage_delete_failed"
+            : expiredOwnerRecord
+              ? "ttl_expired_before_release"
+              : reason === "execution_settled" && operation.lastOutcome
+                ? `execution_${operation.lastOutcome}`
+              : reason;
+      const releaseEvent =
+        releaseStorageFailed
+          ? "lock.release_failed"
+          : expiredOwnerRecord
+            ? "lock.expired_cleanup"
+            : owned
+              ? "lock.released"
+              : "lock.release_not_owned";
+      const releaseStatus =
+        releaseStorageFailed
+          ? "failure"
+          : expiredOwnerRecord
+            ? "expired"
+            : owned
+              ? "released"
+              : "not_owned";
       operation.active = false;
-      operation.releasedAt = Date.now();
-      s1pRecordLockEvidence(owned ? "lock.released" : "lock.release_not_owned", {
-        ...operation, mode, owner: BACKGROUND_SYNC_OWNER_ID, heldMs: Date.now() - operation.acquiredAt,
-      }, { message: owned ? "执行结束，已释放同步锁" : "清理时已不持有模式锁",
-        reason: reason === "execution_settled" && operation.lastOutcome ? `execution_${operation.lastOutcome}` : reason, receipt: true });
+      operation.releasedAt = releaseTimestamp;
+      operation.terminalEvent = releaseEvent;
+      operation.terminalStatus = releaseStatus;
+      operation.terminalReason = releaseReason;
+      operation.modeLockValidAtRelease = modeLockValid;
+      operation.globalLockValidAtRelease = globalLockValid;
+      if (
+        !authorityToken ||
+        syncLockExecutionAuthorityTokens.get(mode) === authorityToken
+      ) {
+        syncLockExecutionAuthorityTokens.delete(mode);
+      }
+      s1pRecordLockEvidence(releaseEvent, {
+        ...operation, mode, owner: BACKGROUND_SYNC_OWNER_ID, heldMs: releaseTimestamp - operation.acquiredAt,
+      }, {
+        message: lockReadFailed
+          ? "读取同步锁状态失败，未能确认释放结果"
+          : modeReleaseFailed || globalReleaseFailed
+            ? "释放同步锁时存储删除失败"
+          : expiredOwnerRecord
+            ? "同步锁 TTL 已过期，已清理残留锁记录"
+            : owned
+              ? "执行结束，已释放同步锁"
+              : "清理时已不持有模式锁",
+        level: releaseStorageFailed ? "error" : "log",
+        status: releaseStatus,
+        reason: releaseReason,
+        receipt: true,
+        details: {
+          modeLockValidAtRelease: modeLockValid,
+          globalLockValidAtRelease: globalLockValid,
+          lockReadFailed,
+          modeReleaseFailed,
+          globalReleaseFailed,
+        },
+      });
     }
+  };
+
+  s1pCancelPendingSyncLockAcquisitions = ({
+    reason = "lifecycle_unload",
+    generation = s1pSyncPageLifecycleGeneration,
+  } = {}) => {
+    let canceledCount = 0;
+    const canceledOperations = [];
+    for (const [mode, operation] of s1pSyncOperations) {
+      const beforeTransaction =
+        operation?.stage === "acquiring" ||
+        (operation?.stage === "transaction_start" &&
+          operation.transactionStarted !== true);
+      if (!operation?.active || !beforeTransaction) {
+        continue;
+      }
+      try {
+        const profile = getSyncLockModeProfile(mode);
+        const modeLock = profile ? getModeSyncLockValue(mode) : null;
+        const globalLock = getGlobalSyncLockValue();
+        const ownsProvisionalLocks = Boolean(
+          modeLock &&
+            modeLock.owner === BACKGROUND_SYNC_OWNER_ID &&
+            modeLock.token === operation.executionId &&
+            globalLock &&
+            globalLock.owner === BACKGROUND_SYNC_OWNER_ID &&
+            globalLock.mode === mode &&
+            globalLock.token === operation.executionId
+        );
+        if (!ownsProvisionalLocks) {
+          continue;
+        }
+        operation.lastOutcome = "canceled";
+        operation.cancellationReason = operation.stage === "acquiring"
+          ? "lifecycle_unload_before_lock_verified"
+          : "lifecycle_unload_before_transaction";
+        operation.canceledAt = Date.now();
+        s1pRecordLockEvidence("lock.acquisition_canceled", {
+          ...operation,
+          mode,
+          owner: BACKGROUND_SYNC_OWNER_ID,
+          ttlMs: profile.ttlMs,
+          lifecycleGeneration: generation,
+        }, {
+          message: "页面生命周期切换，已取消尚未确认归属的临时锁",
+          status: "skipped",
+          reason: operation.cancellationReason,
+          receipt: true,
+          details: { lifecycleReason: reason },
+        });
+        releaseModeSyncLock(
+          mode,
+          operation.executionId,
+          "lifecycle_unload_before_transaction"
+        );
+        canceledCount += 1;
+        canceledOperations.push(operation.operationId);
+      } catch (error) {
+        s1pLogLoss.collectionFailures += 1;
+        s1pRecordLockEvidence("lock.acquisition_cancellation_failed", {
+          ...operation,
+          mode,
+          owner: BACKGROUND_SYNC_OWNER_ID,
+          lifecycleGeneration: generation,
+        }, {
+          message: "页面生命周期切换时取消临时锁失败",
+          level: "error",
+          status: "failure",
+          reason: "lock_cancellation_failed",
+          receipt: true,
+          details: { lifecycleReason: reason, error },
+        });
+      }
+    }
+    return {
+      status: canceledCount ? "canceled" : "skipped",
+      reason: canceledCount
+        ? "lifecycle_unload_before_transaction"
+        : "no_provisional_acquisition",
+      count: canceledCount,
+      operationIds: canceledOperations,
+    };
   };
 
   const stopModeSyncLockHeartbeat = (mode, expectedToken = "") => {
     const profile = getSyncLockModeProfile(mode);
+    const authorityToken = getSyncExecutionAuthorityToken(mode, expectedToken);
     if (
       !profile ||
-      (expectedToken &&
-        profile.getHeartbeatAuthorityToken() !== expectedToken)
+      (authorityToken &&
+        profile.getHeartbeatAuthorityToken() !== authorityToken)
     ) {
       return false;
     }
@@ -33132,15 +34509,23 @@
     if (!profile) {
       return;
     }
-    stopModeSyncLockHeartbeat(mode);
-    profile.setHeartbeatAuthorityToken(expectedToken);
+    const authorityToken = getSyncExecutionAuthorityToken(mode, expectedToken);
+    const activeHeartbeatToken = profile.getHeartbeatAuthorityToken();
+    stopModeSyncLockHeartbeat(mode, activeHeartbeatToken);
+    profile.setHeartbeatAuthorityToken(authorityToken);
     profile.setHeartbeatTimer(
       setInterval(() => {
-        if (!refreshModeSyncLock(mode, expectedToken)) {
+        if (!refreshModeSyncLock(mode, authorityToken)) {
+          const refreshFailure = syncLockRenewalFailureReasons.get(mode);
+          syncLockRenewalFailureReasons.delete(mode);
           const operation = s1pSyncOperations.get(mode);
-          s1pRecordLockEvidence("lock.renewal_failed", { ...operation, mode, locks: s1pReadSyncLockEvidence() },
-            { message: "锁续租失败", level: "warn", reason: "ownership_lost", receipt: true });
-          stopModeSyncLockHeartbeat(mode, expectedToken);
+          if (!refreshFailure) {
+            let locks = [];
+            try { locks = s1pReadSyncLockEvidence(); } catch (_) { }
+            s1pRecordLockEvidence("lock.renewal_failed", { ...operation, mode, locks },
+              { message: "锁续租失败", level: "warn", reason: "ownership_lost", receipt: true });
+          }
+          stopModeSyncLockHeartbeat(mode, authorityToken);
           console.warn(
             `S1 Plus: ${profile.displayName}锁续租失败，当前任务将中止。`
           );
@@ -33220,15 +34605,60 @@
   const stopStartupSyncLockHeartbeat = () =>
     stopModeSyncLockHeartbeat(SYNC_LOCK_MODE_STARTUP);
 
-  const getRunningSyncLockAdapter = (mode) =>
-    getSyncLockModeProfile(mode)
-      ? {
-        acquire: () => acquireModeSyncLock(mode),
-        startHeartbeat: () => startModeSyncLockHeartbeat(mode),
-        stopHeartbeat: () => stopModeSyncLockHeartbeat(mode),
-        release: () => releaseModeSyncLock(mode),
-      }
-      : null;
+  const getRunningSyncLockAdapter = (mode) => {
+    if (!getSyncLockModeProfile(mode)) {
+      return null;
+    }
+    let authorityToken = "";
+    return {
+      acquire: async () => {
+        const authority = await acquireModeSyncLock(mode, {
+          returnAuthority: true,
+        });
+        authorityToken = authority?.token || "";
+        return authority;
+      },
+      startHeartbeat: () => startModeSyncLockHeartbeat(mode, authorityToken),
+      stopHeartbeat: () => stopModeSyncLockHeartbeat(mode, authorityToken),
+      release: (reason = "execution_settled") => {
+        const expectedToken = authorityToken;
+        authorityToken = "";
+        return releaseModeSyncLock(mode, expectedToken, reason);
+      },
+    };
+  };
+
+  const recordRunningSyncCleanupFailure = ({
+    mode = "",
+    operationId = "",
+    phase = "",
+    reason = "cleanup_failed",
+    error,
+  } = {}) => {
+    const operation = mode ? s1pSyncOperations.get(mode) : null;
+    const resolvedOperationId = operationId || operation?.operationId || "";
+    const isLockRelease = phase === "lock_release";
+    s1pRecordDiagnosticEvent(isLockRelease ? "lock.release_failed" : "sync.cleanup_failed", {
+      module: isLockRelease ? "sync.lock" : "sync",
+      operationId: resolvedOperationId,
+      level: "error",
+      status: "failure",
+      reason,
+      message: {
+        heartbeat_stop: "停止同步锁心跳失败",
+        lock_release: "释放同步锁调用失败，结果未知",
+        after_release: "同步锁后清理失败",
+        result_handling: "同步结果处理失败",
+        manual_intent_boundary: "手动同步边界收敛失败",
+      }[phase] || "同步收尾步骤失败",
+      details: {
+        mode,
+        phase,
+        stage: operation?.stage || "",
+        error,
+      },
+    });
+  };
 
   const runRunningSync = async (options = {}) => {
     const {
@@ -33244,14 +34674,84 @@
       handleResult,
     } = options;
 
-    if (!lockAdapter || typeof runTransaction !== "function") {
+    if (
+      !lockAdapter ||
+      typeof lockAdapter.acquire !== "function" ||
+      typeof lockAdapter.startHeartbeat !== "function" ||
+      typeof lockAdapter.stopHeartbeat !== "function" ||
+      typeof lockAdapter.release !== "function" ||
+      typeof runTransaction !== "function"
+    ) {
       throw new Error("Running Sync 缺少有效的锁 adapter 或事务 implementation。");
     }
-    if (!(await lockAdapter.acquire())) {
+    if (s1pIsSyncPageLifecycleUnloading()) {
+      s1pRecordDiagnosticEvent("sync.transaction_skipped", {
+        module: "sync",
+        status: "skipped",
+        reason: "page_unloading",
+        message: "页面正在离开，未尝试启动同步事务",
+        details: {
+          mode,
+          lifecycleGeneration: s1pSyncPageLifecycleGeneration,
+        },
+      });
+      return { status: "skipped", reason: "page_unloading" };
+    }
+    const lifecycleGenerationAtAcquire = s1pSyncPageLifecycleGeneration;
+    const acquired = await lockAdapter.acquire();
+    if (!acquired) {
       if (typeof onLockUnavailable === "function") {
         await onLockUnavailable();
       }
       return lockUnavailableResult;
+    }
+
+    const lifecycleAbort =
+      s1pIsSyncPageLifecycleUnloading() ||
+      s1pSyncPageLifecycleGeneration !== lifecycleGenerationAtAcquire;
+    if (lifecycleAbort) {
+      const operation = s1pSyncOperations.get(mode);
+      if (operation) {
+        operation.lastOutcome = "canceled";
+        operation.cancellationReason = "page_unloading_before_transaction";
+      }
+      s1pRecordDiagnosticEvent("sync.transaction_skipped", {
+        module: "sync",
+        operationId: operation?.operationId || "",
+        status: "skipped",
+        reason: "page_unloading_before_transaction",
+        message: "页面生命周期切换，未开始同步事务",
+        details: {
+          mode,
+          stage: operation?.stage || "acquired",
+          lifecycleGenerationAtAcquire,
+          lifecycleGeneration: s1pSyncPageLifecycleGeneration,
+          lifecycleUnloading: s1pIsSyncPageLifecycleUnloading(),
+        },
+      });
+      try {
+        lockAdapter.release("page_unloading_before_transaction");
+      } catch (error) {
+        if (operation) {
+          operation.active = false;
+          operation.terminalEvent = "lock.release_failed";
+          operation.terminalStatus = "failure";
+          operation.terminalReason = "lock_release_exception";
+          operation.releasedAt = Date.now();
+        }
+        syncLockExecutionAuthorityTokens.delete(mode);
+        recordRunningSyncCleanupFailure({
+          mode,
+          operationId: operation?.operationId || "",
+          phase: "lock_release",
+          reason: "lock_release_exception",
+          error,
+        });
+      }
+      return {
+        status: "skipped",
+        reason: "page_unloading_before_transaction",
+      };
     }
 
     syncExecutionSettlementDepth += 1;
@@ -33260,8 +34760,9 @@
     try {
       lockAdapter.startHeartbeat();
       heartbeatStarted = true;
-      result = await runTransaction();
       const operation = s1pSyncOperations.get(mode);
+      if (operation) operation.transactionStarted = true;
+      result = await runTransaction();
       if (operation) operation.lastOutcome = result?.status || "settled";
     } catch (error) {
       const operation = s1pSyncOperations.get(mode);
@@ -33277,6 +34778,12 @@
             try {
               lockAdapter.stopHeartbeat();
             } catch (error) {
+              recordRunningSyncCleanupFailure({
+                mode,
+                phase: "heartbeat_stop",
+                reason: "heartbeat_stop_failed",
+                error,
+              });
               console.warn(
                 "S1 Plus: Running Sync 停止锁心跳失败，已继续释放同步锁。",
                 error
@@ -33284,12 +34791,40 @@
             }
           }
         } finally {
-          lockAdapter.release();
+          try {
+            lockAdapter.release();
+          } catch (error) {
+            const operation = s1pSyncOperations.get(mode);
+            if (operation) {
+              operation.active = false;
+              operation.terminalEvent = "lock.release_failed";
+              operation.terminalStatus = "failure";
+              operation.terminalReason = "lock_release_exception";
+              operation.releasedAt = Date.now();
+            }
+            syncLockExecutionAuthorityTokens.delete(mode);
+            recordRunningSyncCleanupFailure({
+              mode,
+              phase: "lock_release",
+              reason: "lock_release_exception",
+              error,
+            });
+            console.warn(
+              "S1 Plus: Running Sync 释放同步锁调用失败，结果未知。",
+              error
+            );
+          }
         }
         if (typeof afterRelease === "function") {
           try {
             await afterRelease();
           } catch (error) {
+            recordRunningSyncCleanupFailure({
+              mode,
+              phase: "after_release",
+              reason: "after_release_failed",
+              error,
+            });
             console.warn(
               "S1 Plus: Running Sync 锁后清理失败，已继续处理同步结果。",
               error
@@ -33308,6 +34843,14 @@
       if (typeof handleResult === "function") {
         await handleResult(result);
       }
+    } catch (error) {
+      recordRunningSyncCleanupFailure({
+        mode,
+        phase: "result_handling",
+        reason: "result_handling_failed",
+        error,
+      });
+      throw error;
     } finally {
       if (typeof manualSyncIntentBoundaryHandler === "function") {
         try {
@@ -33317,6 +34860,12 @@
             result,
           });
         } catch (error) {
+          recordRunningSyncCleanupFailure({
+            mode,
+            phase: "manual_intent_boundary",
+            reason: "manual_intent_boundary_failed",
+            error,
+          });
           console.warn(
             "S1 Plus: 手动同步意图在 Running Sync 边界收敛失败，保留本页面内存 pending 等待后续恢复。",
             error
@@ -34448,6 +35997,46 @@
         return "前台补同步锁被其他任务占用";
       case "background_lock_unavailable":
         return "后台同步锁被其他任务占用";
+      case "page_unloading":
+        return "页面正在离开，未开始新的同步事务";
+      case "page_unloading_before_transaction":
+        return "页面离开时尚未开始同步事务";
+      case "lifecycle_unload_before_lock_verified":
+        return "页面离开时锁归属尚未确认，临时锁已取消";
+      case "lifecycle_unload_before_transaction":
+        return "页面离开时事务尚未开始，临时锁已释放";
+      case "lifecycle_unload_running_lock_retained":
+        return "页面离开时事务已开始，执行锁保留至收敛或 TTL";
+      case "ttl_expired_before_release":
+        return "释放时已确认同步锁 TTL 过期";
+      case "lock_storage_write_failed":
+        return "锁续租存储写入失败";
+      case "lock_stage_persist_failed":
+        return "同步锁阶段信息写入失败，已清理执行锁";
+      case "lock_release_exception":
+        return "同步锁释放调用抛出异常，结果未知";
+      case "lock_storage_delete_failed":
+        return "锁释放存储删除失败";
+      case "lock_storage_read_failed":
+        return "锁状态读取失败，无法确认是否仍持有";
+      case "lock_snapshot_read_failed":
+        return "生命周期收尾时读取锁快照失败";
+      case "lock_snapshot_read_failed_after_fence":
+        return "生命周期栅栏后读取锁快照失败";
+      case "lock_cancellation_failed":
+        return "生命周期收尾时取消临时锁失败";
+      case "awaiting_ownership_verification":
+        return "等待锁归属校验完成";
+      case "ownership_verification_failed":
+        return "锁归属校验失败";
+      case "heartbeat_stop_failed":
+        return "停止同步锁心跳失败";
+      case "after_release_failed":
+        return "同步锁后清理失败";
+      case "result_handling_failed":
+        return "同步结果处理失败";
+      case "manual_intent_boundary_failed":
+        return "手动同步边界收敛失败";
       case "foreground_check_disabled":
         return "前台自动拉取检查未启用";
       case "probe_in_flight":
@@ -34456,6 +36045,8 @@
         return "前台补同步正在执行";
       case "followup_retry_pending":
         return "前台补同步正在等待重试窗口";
+      case "foreground_soft_block_waiting_for_change":
+        return "前台检查已暂缓，等待本地或云端出现新事实";
       case "sync_lock_active":
         return "已有同步锁处于活动状态";
       case "local_cooldown":
@@ -36178,6 +37769,18 @@
         );
         return;
       }
+      if (pendingBeforeSync && isTerminalForegroundRemoteSyncSoftBlock(pendingBeforeSync)) {
+        clearForegroundRemoteSyncRetry();
+        recordForegroundPendingSoftBlockSuppressed(pendingBeforeSync, {
+          source: "retry_timer",
+          triggerSource: pendingBeforeSync.triggerSource,
+          now: Date.now(),
+        });
+        refreshAutoSyncIndicatorRuntimeDisplay(
+          "foreground_soft_block_waiting_for_change"
+        );
+        return;
+      }
       try {
         const gateBlockResult = (
           options.getForegroundProbeGateBlockResult ||
@@ -36192,6 +37795,17 @@
             ...options,
             preferredDelayMs: gateBlockResult.retryAfterMs,
           });
+          return;
+        }
+
+        const attempt = pendingBeforeSync
+          ? markPendingForegroundRemoteSyncAttempt(pendingBeforeSync)
+          : { status: "skipped", reason: "no_pending_foreground_remote_sync" };
+        if (attempt.status !== "marked" && pendingBeforeSync) {
+          clearForegroundRemoteSyncRetry();
+          refreshAutoSyncIndicatorRuntimeDisplay(
+            "foreground_pending_attempt_generation_changed"
+          );
           return;
         }
 
@@ -36556,6 +38170,69 @@
         );
       }
 
+      const blockedPendingForegroundRemoteSync =
+        getPendingForegroundRemoteSyncRequest();
+      if (
+        blockedPendingForegroundRemoteSync &&
+        blockedPendingForegroundRemoteSync.remoteUpdatedAt === remoteUpdatedAt &&
+        isTerminalForegroundRemoteSyncSoftBlock(
+          blockedPendingForegroundRemoteSync
+        )
+      ) {
+        const suppressedSyncResult = {
+          status: "blocked",
+          blockLevel: "soft",
+          blockScope: "tab",
+          reason: FOREGROUND_PENDING_SOFT_BLOCK_WAIT_REASON,
+          action: "probe_soft_block_suppressed",
+        };
+        recordSyncTraceEvent("foreground_probe_soft_block_suppressed", {
+          scope: "foreground_probe",
+          status: "blocked",
+          message: "远端版本未变化，沿用现有 soft block，跳过重复前台补同步",
+          details: {
+            reason: FOREGROUND_PENDING_SOFT_BLOCK_WAIT_REASON,
+            triggerSource: probeTriggerSource,
+            remoteUpdatedAt,
+            lastSyncedRemoteUpdatedAt,
+            requestId: blockedPendingForegroundRemoteSync.requestId,
+            blockReason: blockedPendingForegroundRemoteSync.lastResultReason,
+            blockAction: blockedPendingForegroundRemoteSync.lastResultAction,
+            blockAt: blockedPendingForegroundRemoteSync.lastResultAt || 0,
+            lastAttemptAt:
+              blockedPendingForegroundRemoteSync.lastAttemptAt || 0,
+          },
+          timestamp: now,
+          repeatKey: [
+            "foreground_probe_soft_block_suppressed",
+            blockedPendingForegroundRemoteSync.requestId,
+            remoteUpdatedAt,
+            blockedPendingForegroundRemoteSync.lastResultReason,
+          ].join(":"),
+        });
+        return finalizeResult(
+          {
+            status: "blocked",
+            blockLevel: "soft",
+            blockScope: "tab",
+            reason: FOREGROUND_PENDING_SOFT_BLOCK_WAIT_REASON,
+            remoteUpdatedAt,
+            lastSyncedRemoteUpdatedAt,
+            lastObservedRemoteUpdatedAt,
+            syncRequestResult: suppressedSyncResult,
+          },
+          {
+            remoteUpdatedAt,
+            triggeredSync: false,
+            triggeredSyncResult:
+              formatForegroundProbeSyncResultForDiagnostics(
+                suppressedSyncResult
+              ),
+            lastSyncedRemoteUpdatedAt,
+          }
+        );
+      }
+
       if (
         lastSyncedRemoteUpdatedAt &&
         remoteUpdatedAt === lastSyncedRemoteUpdatedAt
@@ -36729,6 +38406,7 @@
           requestId: pendingForegroundRemoteSyncRequest?.requestId || "",
         },
       });
+      markPendingForegroundRemoteSyncAttempt(pendingForegroundRemoteSyncRequest);
       const syncRequestResult = await requestForegroundRemoteSyncCheckFn(
         `remote_probe_changed:${normalizedReason}`,
         overrides.requestForegroundRemoteSyncCheckOverrides || {}
@@ -36976,6 +38654,9 @@
       getForegroundRemoteSyncRetryRemainingMs,
       markPendingForegroundRemoteSyncRequest,
       getPendingForegroundRemoteSyncRequest,
+      isTerminalForegroundRemoteSyncSoftBlock,
+      clearPendingForegroundRemoteSyncSoftBlock,
+      markPendingForegroundRemoteSyncAttempt,
       clearPendingForegroundRemoteSyncRequest,
       settlePendingForegroundRemoteSyncRequestIfCovered,
       recoverPendingForegroundRemoteSyncIfNeeded,
@@ -43292,8 +44973,36 @@
     const latestOperation = s1pLogOperationFilter ? operations.find((item) => item.operationId === s1pLogOperationFilter)
       : operations.filter((item) => !s1pLogModuleFilter || item.module === s1pLogModuleFilter).at(-1);
     const statusLabel = { queued: "等待中", requested: "已请求", awaiting_confirmation: "等待确认", settled: "已结束", retrying: "等待重试", cancelled: "已取消" }[latestOperation?.status];
+    const terminalParts = [];
+    if (latestOperation?.lockTerminalEvent) {
+      terminalParts.push(
+        `锁终态=${getSyncTracePhaseLabel(latestOperation.lockTerminalEvent.replace(/^sync\./, ""))}${latestOperation.lockTerminalReason ? `（${getSyncTraceReasonValueLabel(latestOperation.lockTerminalReason)}）` : ""}`
+      );
+    }
+    if (
+      latestOperation?.terminalEvidence ===
+      "ttl_expiry_observed_without_owner_release_receipt"
+    ) {
+      terminalParts.push("仅观察到 TTL 过期，缺少持有者释放回执");
+    }
+    if (latestOperation?.transactionTerminalEvent) {
+      terminalParts.push(
+        `事务终态=${getSyncTracePhaseLabel(latestOperation.transactionTerminalEvent.replace(/^sync\./, ""))}${latestOperation.transactionTerminalReason ? `（${getSyncTraceReasonValueLabel(latestOperation.transactionTerminalReason)}）` : ""}`
+      );
+    }
+    if (latestOperation?.cleanupTerminalEvent) {
+      terminalParts.push(
+        `收尾终态=${getSyncTracePhaseLabel(latestOperation.cleanupTerminalEvent.replace(/^sync\./, ""))}${latestOperation.cleanupTerminalReason ? `（${getSyncTraceReasonValueLabel(latestOperation.cleanupTerminalReason)}）` : ""}`
+      );
+    }
+    if (!terminalParts.length && latestOperation?.terminalEvent) {
+      terminalParts.push(
+        `终态=${getSyncTracePhaseLabel(latestOperation.terminalEvent.replace(/^sync\./, ""))}${latestOperation.terminalReason ? `（${getSyncTraceReasonValueLabel(latestOperation.terminalReason)}）` : ""}`
+      );
+    }
+    const terminalSummary = terminalParts.join(" · ");
     if (summary) summary.textContent = latestOperation
-      ? `${latestOperation.message} · ${statusLabel || getSyncTraceStatusLabel(latestOperation.status) || latestOperation.status} · 已记录 ${Math.round(latestOperation.elapsedMs / 1000)} 秒`
+      ? `${latestOperation.message} · ${statusLabel || getSyncTraceStatusLabel(latestOperation.status) || latestOperation.status}${terminalSummary ? ` · ${terminalSummary}` : ""} · 已记录 ${Math.round(latestOperation.elapsedMs / 1000)} 秒`
       : "关键事件自动保留；打开面板时额外采集控制台输出。";
     const renderLogs = filtered.slice(-LOG_RENDER_MAX);
     const wasAtBottom = logArea.scrollTop + logArea.clientHeight >= logArea.scrollHeight - 10;
