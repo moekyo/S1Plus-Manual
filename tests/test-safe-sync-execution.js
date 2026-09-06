@@ -242,6 +242,80 @@ const testRunningSyncReleasesBeforeResultHandling = async () => {
   });
 };
 
+const testRunningSyncSkipsTransactionWhenPageStartsUnloading = async () => {
+  const { hooks } = createHarness();
+  const calls = [];
+  const lifecycleAdapter = hooks.s1pCreateSyncLifecycleAdapter({
+    runCheckpoint: () => ({ status: "completed" }),
+    // The scheduler may settle its own flag in this microtask; the Running
+    // Sync lifecycle fence must remain closed until pageshow/recovery.
+    scheduleMicrotask: (callback) => callback(),
+    schedulePostUnloadRecovery: () => {},
+  });
+
+  const result = await hooks.runRunningSync({
+    mode: "background",
+    lockAdapter: {
+      acquire: async () => {
+        calls.push("lock:acquire");
+        lifecycleAdapter.handle("pagehide", { persisted: false });
+        return true;
+      },
+      startHeartbeat: () => calls.push("heartbeat:start"),
+      stopHeartbeat: () => calls.push("heartbeat:stop"),
+      release: (reason) => calls.push(`lock:release:${reason}`),
+    },
+    runTransaction: async () => {
+      calls.push("transaction:run");
+      return { status: "success", action: "pushed" };
+    },
+    handleResult: async () => calls.push("result:handle"),
+  });
+
+  assert.deepStrictEqual(toPlainObject(result), {
+    status: "skipped",
+    reason: "page_unloading_before_transaction",
+  });
+  assert.deepStrictEqual(calls, [
+    "lock:acquire",
+    "lock:release:page_unloading_before_transaction",
+  ]);
+};
+
+const testRunningSyncDoesNotAttemptAcquireWhilePageIsUnloading = async () => {
+  const { hooks } = createHarness();
+  const calls = [];
+  const lifecycleAdapter = hooks.s1pCreateSyncLifecycleAdapter({
+    runCheckpoint: () => ({ status: "completed" }),
+    scheduleMicrotask: () => {},
+    schedulePostUnloadRecovery: () => {},
+  });
+  await lifecycleAdapter.handle("pagehide", { persisted: false });
+
+  const result = await hooks.runRunningSync({
+    mode: "background",
+    lockAdapter: {
+      acquire: async () => {
+        calls.push("lock:acquire");
+        return true;
+      },
+      startHeartbeat: () => calls.push("heartbeat:start"),
+      stopHeartbeat: () => calls.push("heartbeat:stop"),
+      release: () => calls.push("lock:release"),
+    },
+    runTransaction: async () => {
+      calls.push("transaction:run");
+      return { status: "success" };
+    },
+  });
+
+  assert.deepStrictEqual(toPlainObject(result), {
+    status: "skipped",
+    reason: "page_unloading",
+  });
+  assert.deepStrictEqual(calls, []);
+};
+
 const testRunningSyncKeepsLockReleasedWhenResultHandlingFails = async () => {
   const { hooks } = createHarness();
   let lockHeld = false;
@@ -270,6 +344,14 @@ const testRunningSyncKeepsLockReleasedWhenResultHandlingFails = async () => {
   );
 
   assert.equal(lockHeld, false);
+  assert.ok(
+    hooks.s1pBuildDiagnosticExport().events.some(
+      (entry) =>
+        entry.event === "sync.cleanup_failed" &&
+        entry.reason === "result_handling_failed"
+    ),
+    "结果处理异常必须进入结构化诊断。"
+  );
 };
 
 const testRunningSyncContinuesResultHandlingWhenAfterReleaseFails = async () => {
@@ -320,6 +402,14 @@ const testRunningSyncContinuesResultHandlingWhenAfterReleaseFails = async () => 
     status: "success",
     action: "pushed",
   });
+  assert.ok(
+    hooks.s1pBuildDiagnosticExport().events.some(
+      (entry) =>
+        entry.event === "sync.cleanup_failed" &&
+        entry.reason === "after_release_failed"
+    ),
+    "锁后清理异常必须进入结构化诊断。"
+  );
 };
 
 const testRunningSyncContinuesResultHandlingWhenHeartbeatStopFails = async () => {
@@ -372,6 +462,62 @@ const testRunningSyncContinuesResultHandlingWhenHeartbeatStopFails = async () =>
     status: "success",
     action: "no_change",
   });
+  assert.ok(
+    hooks.s1pBuildDiagnosticExport().events.some(
+      (entry) =>
+        entry.event === "sync.cleanup_failed" &&
+        entry.reason === "heartbeat_stop_failed"
+    ),
+    "停止心跳异常必须进入结构化诊断。"
+  );
+};
+
+const testRunningSyncContinuesResultHandlingWhenLockReleaseThrows = async () => {
+  const { hooks } = createHarness();
+  const calls = [];
+  const result = await hooks.runRunningSync({
+    mode: "background",
+    lockAdapter: {
+      acquire: async () => {
+        calls.push("lock:acquire");
+        return true;
+      },
+      startHeartbeat: () => calls.push("heartbeat:start"),
+      stopHeartbeat: () => calls.push("heartbeat:stop"),
+      release: () => {
+        calls.push("lock:release");
+        throw new Error("lock release call failed");
+      },
+    },
+    runTransaction: async () => {
+      calls.push("transaction:run");
+      return { status: "success", action: "pushed" };
+    },
+    afterRelease: async () => calls.push("afterRelease"),
+    handleResult: async () => calls.push("result:handle"),
+  });
+
+  assert.deepStrictEqual(calls, [
+    "lock:acquire",
+    "heartbeat:start",
+    "transaction:run",
+    "heartbeat:stop",
+    "lock:release",
+    "afterRelease",
+    "result:handle",
+  ]);
+  assert.deepStrictEqual(toPlainObject(result), {
+    status: "success",
+    action: "pushed",
+  });
+  assert.ok(
+    hooks.s1pBuildDiagnosticExport().events.some(
+      (entry) =>
+        entry.event === "lock.release_failed" &&
+        entry.reason === "lock_release_exception"
+    ),
+    "释放调用异常必须保留锁终态不确定性的证据。"
+  );
 };
 
 const testRunningSyncReleasesLockWhenHeartbeatStartFails = async () => {
@@ -1573,9 +1719,12 @@ const testPhase3CallSitesUseDedicatedHelpers = () => {
   await testForegroundFollowUpUsesDedicatedExecutionMode();
   await testForegroundFollowUpUsesShortDedicatedLock();
   await testRunningSyncReleasesBeforeResultHandling();
+  await testRunningSyncSkipsTransactionWhenPageStartsUnloading();
+  await testRunningSyncDoesNotAttemptAcquireWhilePageIsUnloading();
   await testRunningSyncKeepsLockReleasedWhenResultHandlingFails();
   await testRunningSyncContinuesResultHandlingWhenAfterReleaseFails();
   await testRunningSyncContinuesResultHandlingWhenHeartbeatStopFails();
+  await testRunningSyncContinuesResultHandlingWhenLockReleaseThrows();
   await testRunningSyncReleasesLockWhenHeartbeatStartFails();
   await testBackgroundIterationReleasesPersistedLocksBeforePendingResult();
   await testBackgroundResultPolicyWritesConflictPauseAfterLockRelease();
