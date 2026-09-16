@@ -28670,6 +28670,37 @@
     });
     return true;
   };
+  // 记录手势起点，避免内容区拖选结束在全屏表面时被误判为蒙版点击。
+  const createS1pModalBackdropClickGuard = (modal) => {
+    let pointerDownTarget = null;
+    const resetPointerDownState = () => {
+      pointerDownTarget = null;
+    };
+
+    modal.addEventListener(
+      "pointerdown",
+      (event) => {
+        pointerDownTarget = event.target;
+      },
+      true
+    );
+    modal.addEventListener("pointercancel", resetPointerDownState, true);
+
+    return (event) => {
+      const shouldClose =
+        event.target === modal &&
+        (pointerDownTarget === null || pointerDownTarget === modal);
+      resetPointerDownState();
+      return shouldClose;
+    };
+  };
+  if (IS_S1P_TEST_MODE) {
+    const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
+    testHookHost.__S1P_TEST_HOOKS__ = {
+      ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
+      s1pCreateModalBackdropClickGuard: createS1pModalBackdropClickGuard,
+    };
+  }
   const closeS1pModalSurface = (
     modal,
     {
@@ -47021,6 +47052,7 @@
       dismiss: ({ reason = "dismissed", immediate = false } = {}) =>
         closeModal({ reason, immediate, invokeDismiss: true }),
     };
+    const shouldCloseOnBackdropClick = createS1pModalBackdropClickGuard(modal);
     confirmBtn.addEventListener("click", () => {
       settled = true;
       try {
@@ -47033,7 +47065,7 @@
     });
     cancelBtn.addEventListener("click", () => closeModal({ reason: "cancel" }));
     modal.addEventListener("click", (e) => {
-      if (e.target === modal) {
+      if (shouldCloseOnBackdropClick(e)) {
         closeModal({ reason: "overlay_click" });
       }
     });
@@ -47934,8 +47966,9 @@
       }
     });
     cancelBtn.addEventListener("click", () => closeModal({ reason: "cancel" }));
+    const shouldCloseOnBackdropClick = createS1pModalBackdropClickGuard(modal);
     modal.addEventListener("click", (e) => {
-      if (e.target === modal) {
+      if (shouldCloseOnBackdropClick(e)) {
         closeModal({ reason: "overlay_click" });
       }
     });
@@ -48805,8 +48838,9 @@
     modal
       .querySelector(".s1p-cancel-btn")
       .addEventListener("click", closeTokenAsCancel);
+    const shouldCloseOnBackdropClick = createS1pModalBackdropClickGuard(modal);
     modal.addEventListener("click", (e) => {
-      if (e.target === modal) {
+      if (shouldCloseOnBackdropClick(e)) {
         closeTokenAsCancel();
       }
     });
@@ -49137,6 +49171,7 @@
         </div>`;
 
     const modalContent = modal.querySelector(".s1p-modal-content");
+    const shouldCloseOnBackdropClick = createS1pModalBackdropClickGuard(modal);
     const showSettingsMessage = (message, isSuccess, options = {}) => {
       showMessage(message, isSuccess, { ...options, container: modalContent });
     };
@@ -50864,8 +50899,9 @@
         }
       });
 
+      const shouldCloseOnBackdropClick = createS1pModalBackdropClickGuard(modal);
       modal.addEventListener("click", (e) => {
-        if (e.target === modal && !isSubmitting) {
+        if (shouldCloseOnBackdropClick(e) && !isSubmitting) {
           closeModal();
         }
       });
@@ -53430,7 +53466,7 @@
     modal.addEventListener("click", async (e) => {
       const target = e.target;
       if (
-        target.matches(".s1p-modal") ||
+        shouldCloseOnBackdropClick(e) ||
         target.closest(".s1p-settings-close-btn")
       ) {
         closeManagementModal();
@@ -55448,8 +55484,9 @@
         closeModal({ reason, immediate, invokeDismiss: true }),
     };
 
+    const shouldCloseOnBackdropClick = createS1pModalBackdropClickGuard(modal);
     modal.addEventListener("click", (e) => {
-      if (e.target === modal) {
+      if (shouldCloseOnBackdropClick(e)) {
         const cancelButton = modal.querySelector(".s1p-confirm-btn.s1p-cancel");
         if (cancelButton) {
           cancelButton.click();
@@ -59666,8 +59703,9 @@
     });
 
     // 点击遮罩层关闭
+    const shouldCloseOnBackdropClick = createS1pModalBackdropClickGuard(modal);
     modal.addEventListener("click", (e) => {
-      if (e.target === modal) {
+      if (shouldCloseOnBackdropClick(e)) {
         closeModal();
       }
     });
