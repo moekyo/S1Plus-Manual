@@ -630,7 +630,26 @@ const run = () => {
     hooks,
     createSettings([unsafeLink, validLinkB, validLinkC])
   );
+  forum.layout.navWidth = 80;
   hooks.initializeNavbar();
+
+  const firstPaintCustomItems = forum.navUl.children.filter((item) =>
+    item.classList.contains("s1p-nav-custom-item")
+  );
+  const firstPaintOverflowOwner = forum.document.querySelector(
+    "#s1p-nav-overflow"
+  );
+  assert.equal(
+    firstPaintOverflowOwner.hidden,
+    false,
+    "initial navbar layout must publish overflow ownership before the first paint"
+  );
+  assert.equal(
+    firstPaintCustomItems.every((item) => item.hidden),
+    true,
+    "initial navbar layout must not leave all custom links widening the search gap"
+  );
+  forum.layout.navWidth = 400;
   forum.flushAnimationFrames();
 
   let customItems = forum.navUl.children.filter((item) =>
