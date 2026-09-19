@@ -519,7 +519,15 @@ const testVisibilityChangeWaitsForPendingRecovery = async () => {
       },
       recoverPendingAutoSyncIfNeeded: () => {
         calls.push("recover");
-        return { status: "scheduled", reason: "pending_recovery", delayMs: 600 };
+        return {
+          status: "skipped",
+          reason: "background_sync_busy",
+          foregroundRecovery: {
+            status: "scheduled",
+            reason: "foreground_recovery_scheduled",
+            delayMs: 600,
+          },
+        };
       },
       checkRemoteFreshnessOnForeground: async () => {
         calls.push("probe");

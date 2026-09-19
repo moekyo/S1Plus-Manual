@@ -7,9 +7,10 @@ const {
   toPlainObject,
 } = require("./s1plus-test-helpers");
 
-const createHarness = () =>
+const createHarness = (options = {}) =>
   createBaseHarness({
     hookErrorMessage: "未能从 S1Plus.js 暴露 Phase 6 Sync System façade。",
+    ...options,
   });
 
 const readySyncSettings = Object.freeze({
@@ -19,6 +20,14 @@ const readySyncSettings = Object.freeze({
   syncRemotePat: "pat-token",
   syncDeviceId: "device-a",
 });
+
+const createDeferred = () => {
+  let resolve;
+  const promise = new Promise((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+};
 
 const createLifecycleAdapter = (calls = []) => ({
   bind: () => {
@@ -358,6 +367,126 @@ const testProductionFacadeManualSyncUsesRuntimeGate = async () => {
   );
 };
 
+const testProductionFacadeQueuesManualDirectionBehindForeignExecution = async () => {
+  const { hooks, store } = createHarness();
+  store.set("s1p_settings", readySyncSettings);
+  store.set("s1p_sync_global_lock", {
+    owner: "foreign-tab",
+    mode: "background",
+    timestamp: Date.now(),
+    ttlMs: 45 * 1000,
+  });
+
+  const result = await hooks.s1pSyncSystem.requestSync({
+    kind: "manual_push",
+  });
+  const coordinator = hooks.getDefaultManualSyncIntentCoordinator();
+  const intent = toPlainObject(coordinator.readIntent());
+  const projected = toPlainObject(
+    hooks.s1pSyncSystem.readState({ surface: "navbar" })
+  );
+
+  assert.equal(result.status, "queued");
+  assert.equal(result.phase, "waiting_for_execution_boundary");
+  assert.equal(intent.direction, "push");
+  assert.equal(intent.version, 1);
+  assert.equal(store.has("s1p_pending_manual_sync_intent"), false);
+  assert.equal(
+    Array.from(store.keys()).some((key) =>
+      String(key).startsWith("s1p_pending_manual_sync_intent:")
+    ),
+    false
+  );
+  assert.equal(projected.displayPhase, "pending");
+  assert.equal(projected.displayOperation, "push");
+  assert.equal(projected.displaySource, "manual_sync");
+  assert.deepEqual(store.get("s1p_sync_global_lock"), {
+    owner: "foreign-tab",
+    mode: "background",
+    timestamp: store.get("s1p_sync_global_lock").timestamp,
+    ttlMs: 45 * 1000,
+  });
+
+  assert.equal((await coordinator.cancel(coordinator.readIntent())).status, "cancelled");
+  assert.equal(coordinator.readIntent(), null);
+  assert.notEqual(
+    toPlainObject(hooks.s1pSyncSystem.readState({ surface: "navbar" }))
+      .displaySource,
+    "manual_sync"
+  );
+};
+
+const testUninitializedFacadeDisposeClearsPageLocalManualIntent = async () => {
+  const { hooks, store } = createHarness();
+  store.set("s1p_settings", readySyncSettings);
+  store.set("s1p_sync_global_lock", {
+    owner: "foreign-tab",
+    mode: "background",
+    timestamp: Date.now(),
+    ttlMs: 45 * 1000,
+  });
+
+  const result = await hooks.s1pSyncSystem.requestSync({
+    kind: "manual_pull",
+  });
+  const coordinator = hooks.getDefaultManualSyncIntentCoordinator();
+
+  assert.equal(result.status, "queued");
+  assert.equal(coordinator.readIntent().direction, "pull");
+  assert.deepEqual(toPlainObject(hooks.s1pSyncSystem.dispose()), {
+    status: "skipped",
+    reason: "already_disposed",
+  });
+  assert.equal(coordinator.readIntent(), null);
+};
+
+const testFacadeDisposeInvalidatesOldManualContinuation = async () => {
+  const { hooks } = createHarness();
+  const deferred = createDeferred();
+  const timers = new Map();
+  let nextTimerId = 0;
+  let coordinator;
+  coordinator = hooks.s1pCreateManualSyncIntentCoordinator({
+    now: () => 2_000_000,
+    isSyncEnabled: () => true,
+    hasActiveExecution: () => false,
+    setTimeout: (callback, delayMs) => {
+      const id = ++nextTimerId;
+      timers.set(id, { callback, delayMs });
+      return id;
+    },
+    clearTimeout: (id) => timers.delete(id),
+    execute: async () => deferred.promise,
+    showConfirmation: () => {
+      throw new Error("confirmation must not be recreated after dispose");
+    },
+  });
+  const facade = hooks.s1pCreateSyncSystemFacade({
+    manualIntentCoordinator: coordinator,
+    lifecycleAdapter: {
+      bind: () => ({ status: "bound" }),
+      unbind: () => ({ status: "unbound" }),
+      handle: async () => ({ status: "completed" }),
+    },
+    pendingDirtyScheduler: {
+      recover: () => ({ status: "recovered" }),
+      handoff: () => ({ status: "released" }),
+    },
+    recoverPendingAutoSyncIfNeeded: () => ({ status: "recovered" }),
+  });
+
+  facade.initialize();
+  const request = facade.requestSync({ kind: "manual_push" });
+  facade.dispose();
+  deferred.resolve({ status: "skipped", reason: "manual_sync_busy" });
+  await request;
+  await Promise.resolve();
+
+  assert.equal(coordinator.readIntent(), null);
+  assert.equal(coordinator.isPriorityGateActive(), false);
+  assert.equal(timers.size, 0);
+};
+
 const testFacadePreservesEverySyncIntentContract = async () => {
   const { hooks } = createHarness();
   const calls = [];
@@ -450,6 +579,9 @@ const run = async () => {
   await testFacadeRoutesSyncIntentsAndReadsProjectedState();
   testProductionFacadeBackgroundPushUsesRuntimeGate();
   await testProductionFacadeManualSyncUsesRuntimeGate();
+  await testProductionFacadeQueuesManualDirectionBehindForeignExecution();
+  await testUninitializedFacadeDisposeClearsPageLocalManualIntent();
+  await testFacadeDisposeInvalidatesOldManualContinuation();
   await testFacadePreservesEverySyncIntentContract();
   console.log("[sync-system-facade] Phase 6 façade interface verified.");
 };

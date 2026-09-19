@@ -36,8 +36,8 @@ const createElementStub = () => ({
   value: "",
 });
 
-const createSessionStorageStub = () => {
-  const sessionStore = new Map();
+const createSessionStorageStub = (initialEntries = []) => {
+  const sessionStore = new Map(initialEntries);
   const sessionStorage = {
     getItem: (key) => (sessionStore.has(key) ? sessionStore.get(key) : null),
     setItem: (key, value) => {
@@ -68,10 +68,14 @@ const createSandbox = ({
   search = "",
   visibilityState = "visible",
   includeSessionStorage = false,
+  sessionStorageEntries = [],
+  gmEntries = [],
+  sharedStore = null,
   includeGmListValues = true,
 } = {}) => {
-  const store = new Map();
-  const { sessionStore, sessionStorage } = createSessionStorageStub();
+  const store = sharedStore || new Map(gmEntries);
+  const { sessionStore, sessionStorage } =
+    createSessionStorageStub(sessionStorageEntries);
   const documentElement = {
     style: {
       setProperty: noop,
