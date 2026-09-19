@@ -23,8 +23,12 @@ const enabledSettings = {
 };
 const PENDING_FOREGROUND_REMOTE_SYNC_KEY =
   "s1p_pending_foreground_remote_sync_request";
+const PENDING_FOREGROUND_REMOTE_SYNC_CURRENT_KEY =
+  PENDING_FOREGROUND_REMOTE_SYNC_KEY + ":current";
 const PENDING_FOREGROUND_REMOTE_SYNC_RECORD_KEY_PREFIX =
   PENDING_FOREGROUND_REMOTE_SYNC_KEY + ":record:";
+const PENDING_FOREGROUND_REMOTE_SYNC_TERMINAL_KEY_PREFIX =
+  PENDING_FOREGROUND_REMOTE_SYNC_KEY + ":terminal:";
 const SYNC_RUNTIME_TAB_LINEAGE_KEY = "s1p_sync_runtime_tab_lineage_id";
 
 const testPendingForegroundIntentSurvivesActiveLock = async () => {
@@ -551,6 +555,375 @@ const testLateRegistrationCannotRewindCurrentObservation = () => {
   }
 };
 
+const testSameRegistrationClockCannotBeReorderedByLateSettlement = async () => {
+  for (const { r1RemoteUpdatedAt, r2RemoteUpdatedAt } of [
+    {
+      r1RemoteUpdatedAt: "2026-08-27T05:25:29Z",
+      r2RemoteUpdatedAt: "2026-08-27T05:26:20Z",
+    },
+    {
+      r1RemoteUpdatedAt: "2026-08-27T05:25:29Z",
+      r2RemoteUpdatedAt: "2026-08-27T05:25:29Z",
+    },
+  ]) {
+    const sharedStore = new Map();
+    const first = createHarness({ sharedStore });
+    const second = createHarness({ sharedStore });
+    const deferredR2Writes = [];
+    const isR2RegistrationKey = (key) =>
+      key === PENDING_FOREGROUND_REMOTE_SYNC_KEY ||
+      key === PENDING_FOREGROUND_REMOTE_SYNC_CURRENT_KEY ||
+      String(key).startsWith(PENDING_FOREGROUND_REMOTE_SYNC_RECORD_KEY_PREFIX);
+    const secondOriginalSetValue = second.sandbox.GM_setValue;
+    second.sandbox.GM_setValue = (key, value) => {
+      if (isR2RegistrationKey(key)) {
+        deferredR2Writes.push({ key, value });
+        return;
+      }
+      secondOriginalSetValue(key, value);
+    };
+
+    const r2 = second.hooks.markPendingForegroundRemoteSyncRequest({
+      reason: "visibility_visible",
+      triggerSource: "foreground_resume",
+      remoteUpdatedAt: r2RemoteUpdatedAt,
+      now: 1760001001000,
+    });
+    second.sandbox.GM_setValue = secondOriginalSetValue;
+    const deferredR2RecordWrite = deferredR2Writes.find(({ key }) =>
+      String(key).startsWith(PENDING_FOREGROUND_REMOTE_SYNC_RECORD_KEY_PREFIX)
+    );
+    assert.ok(deferredR2RecordWrite, "R2 必须停在首次 record 发布之前。");
+    assert.equal(deferredR2RecordWrite.value.registrationClock, 1);
+
+    const r1 = first.hooks.markPendingForegroundRemoteSyncRequest({
+      reason: "pageshow",
+      triggerSource: "foreground_resume",
+      remoteUpdatedAt: r1RemoteUpdatedAt,
+      now: 1760001000000,
+    });
+    const r1RecordKey =
+      PENDING_FOREGROUND_REMOTE_SYNC_RECORD_KEY_PREFIX +
+      encodeURIComponent(r1.requestId);
+    const r1RecordBeforeSettlement = sharedStore.get(r1RecordKey);
+    assert.equal(r1RecordBeforeSettlement.registrationClock, 1);
+    assert.equal(
+      deferredR2RecordWrite.value.registrationClock,
+      r1RecordBeforeSettlement.registrationClock,
+      "两个 VM 必须实际分配到相同 registrationClock。"
+    );
+
+    let publishedR2 = false;
+    const firstOriginalSetValue = first.sandbox.GM_setValue;
+    first.sandbox.GM_setValue = (key, value) => {
+      if (
+        !publishedR2 &&
+        String(key).startsWith(PENDING_FOREGROUND_REMOTE_SYNC_RECORD_KEY_PREFIX) &&
+        value?.requestId === r1.requestId &&
+        value?.lastResultStatus === "blocked"
+      ) {
+        publishedR2 = true;
+        deferredR2Writes.forEach(({ key: deferredKey, value: deferredValue }) => {
+          secondOriginalSetValue(deferredKey, deferredValue);
+        });
+      }
+      firstOriginalSetValue(key, value);
+    };
+
+    const settlement = first.hooks.settlePendingForegroundRemoteSyncRequest(r1, {
+      status: "blocked",
+      blockLevel: "soft",
+      reason: "local_changed_with_remote_timestamp_drift",
+      action: "skip_push_on_foreground_followup",
+    });
+
+    assert.equal(publishedR2, true, "必须命中 R1 结算写回前发布 R2 的窗口。");
+    const records = Array.from(sharedStore.entries())
+      .filter(([key]) => key.startsWith(PENDING_FOREGROUND_REMOTE_SYNC_RECORD_KEY_PREFIX))
+      .map(([, value]) => value)
+      .filter((value) => value?.requestId === r1.requestId || value?.requestId === r2.requestId);
+    assert.equal(records.length, 2);
+    assert.deepEqual(
+      records.map((record) => record.registrationClock).sort((left, right) => left - right),
+      [1, 1],
+      "R1/R2 的 record 必须保留实际相同的 registrationClock。"
+    );
+
+    const current = first.hooks.getPendingForegroundRemoteSyncRequest();
+    assert.equal(current.requestId, r2.requestId);
+    assert.equal(
+      settlement.status,
+      "ignored",
+      "R1 的迟到结算不能在 R2 已发布后继续结算自己。"
+    );
+    assert.equal(
+      first.hooks.isTerminalForegroundRemoteSyncSoftBlock(current),
+      false,
+      "旧 R1 的 soft block 不能成为 R2 的恢复阻断依据。"
+    );
+
+    const reordered = createHarness({ sharedStore });
+    reordered.sandbox.GM_listValues = () => Array.from(sharedStore.keys()).reverse();
+    assert.equal(
+      reordered.hooks.getPendingForegroundRemoteSyncRequest().requestId,
+      r2.requestId,
+      "GM_listValues 枚举顺序不能改变权威注册选择。"
+    );
+
+    const timers = [];
+    first.sandbox.setTimeout = (callback, delayMs) => {
+      timers.push({ callback, delayMs });
+      return timers.length;
+    };
+    first.sandbox.window.setTimeout = first.sandbox.setTimeout;
+    let recoveryRequestCount = 0;
+    const recovery = first.hooks.recoverPendingForegroundRemoteSyncIfNeeded({
+      now: 1760001002000,
+      settingsSnapshot: enabledSettings,
+      requestForegroundRemoteSyncCheck: async () => {
+        recoveryRequestCount += 1;
+        return { status: "success", action: "pulled" };
+      },
+    });
+    assert.equal(recovery.status, "scheduled");
+    const recoveryTimer = timers.find(({ delayMs }) => delayMs === 600);
+    assert.ok(recoveryTimer, "实际 recovery 入口必须继续处理 R2。");
+    await recoveryTimer.callback();
+    assert.equal(recoveryRequestCount, 1);
+    assert.equal(first.hooks.getPendingForegroundRemoteSyncRequest(), null);
+  }
+};
+
+const testSameRegistrationClockCannotBeReorderedBySoftBlockClear = () => {
+  const sharedStore = new Map();
+  const first = createHarness({ sharedStore });
+  const second = createHarness({ sharedStore });
+  const deferredR2Writes = [];
+  const isR2RegistrationKey = (key) =>
+    key === PENDING_FOREGROUND_REMOTE_SYNC_KEY ||
+    key === PENDING_FOREGROUND_REMOTE_SYNC_CURRENT_KEY ||
+    String(key).startsWith(PENDING_FOREGROUND_REMOTE_SYNC_RECORD_KEY_PREFIX);
+  const secondOriginalSetValue = second.sandbox.GM_setValue;
+  second.sandbox.GM_setValue = (key, value) => {
+    if (isR2RegistrationKey(key)) {
+      deferredR2Writes.push({ key, value });
+      return;
+    }
+    secondOriginalSetValue(key, value);
+  };
+  const r2 = second.hooks.markPendingForegroundRemoteSyncRequest({
+    reason: "visibility_visible",
+    triggerSource: "foreground_resume",
+    remoteUpdatedAt: "2026-08-27T05:26:20Z",
+    now: 1760001001000,
+  });
+  second.sandbox.GM_setValue = secondOriginalSetValue;
+  const deferredR2RecordWrite = deferredR2Writes.find(({ key }) =>
+    String(key).startsWith(PENDING_FOREGROUND_REMOTE_SYNC_RECORD_KEY_PREFIX)
+  );
+  assert.ok(deferredR2RecordWrite);
+
+  const r1 = first.hooks.markPendingForegroundRemoteSyncRequest({
+    reason: "pageshow",
+    triggerSource: "foreground_resume",
+    remoteUpdatedAt: "2026-08-27T05:25:29Z",
+    now: 1760001000000,
+  });
+  first.hooks.settlePendingForegroundRemoteSyncRequest(r1, {
+    status: "blocked",
+    blockLevel: "soft",
+    reason: "local_changed_with_remote_timestamp_drift",
+    action: "skip_push_on_foreground_followup",
+  });
+
+  let publishedR2 = false;
+  const originalSetValue = first.sandbox.GM_setValue;
+  first.sandbox.GM_setValue = (key, value) => {
+    if (
+      !publishedR2 &&
+      String(key).startsWith(PENDING_FOREGROUND_REMOTE_SYNC_RECORD_KEY_PREFIX) &&
+      value?.requestId === r1.requestId &&
+      value?.lastResultStatus === ""
+    ) {
+      publishedR2 = true;
+      deferredR2Writes.forEach(({ key: deferredKey, value: deferredValue }) => {
+        secondOriginalSetValue(deferredKey, deferredValue);
+      });
+    }
+    originalSetValue(key, value);
+  };
+
+  const clearResult = first.hooks.clearPendingForegroundRemoteSyncSoftBlock(
+    "local_mutation"
+  );
+  assert.equal(publishedR2, true, "必须命中 soft-block clear 写回前发布 R2 的窗口。");
+  assert.equal(
+    deferredR2RecordWrite.value.registrationClock,
+    sharedStore.get(
+      PENDING_FOREGROUND_REMOTE_SYNC_RECORD_KEY_PREFIX +
+        encodeURIComponent(r1.requestId)
+    ).registrationClock,
+    "soft-block clear 交错中的两个 record 必须实际共享同一 registrationClock。"
+  );
+  assert.equal(clearResult.status, "ignored");
+  assert.equal(first.hooks.getPendingForegroundRemoteSyncRequest().requestId, r2.requestId);
+  assert.equal(
+    first.hooks.isTerminalForegroundRemoteSyncSoftBlock(
+      first.hooks.getPendingForegroundRemoteSyncRequest()
+    ),
+    false,
+    "旧 R1 的 lastSeenAt 更新不能把 R1 soft block 重新选为权威请求。"
+  );
+};
+
+const testSameMillisecondRegistrationUsesDeterministicTieBreak = () => {
+  const sharedStore = new Map();
+  const first = createHarness({ sharedStore });
+  const second = createHarness({ sharedStore });
+  const deferredR2Writes = [];
+  const secondOriginalSetValue = second.sandbox.GM_setValue;
+  second.sandbox.GM_setValue = (key, value) => {
+    if (
+      key === PENDING_FOREGROUND_REMOTE_SYNC_KEY ||
+      key === PENDING_FOREGROUND_REMOTE_SYNC_CURRENT_KEY ||
+      String(key).startsWith(PENDING_FOREGROUND_REMOTE_SYNC_RECORD_KEY_PREFIX)
+    ) {
+      deferredR2Writes.push({ key, value });
+      return;
+    }
+    secondOriginalSetValue(key, value);
+  };
+
+  const sameMillisecond = 1760001000000;
+  const r2 = second.hooks.markPendingForegroundRemoteSyncRequest({
+    reason: "visibility_visible",
+    triggerSource: "foreground_resume",
+    remoteUpdatedAt: "2026-08-27T05:26:20Z",
+    now: sameMillisecond,
+  });
+  second.sandbox.GM_setValue = secondOriginalSetValue;
+  const deferredR2RecordWrite = deferredR2Writes.find(({ key }) =>
+    String(key).startsWith(PENDING_FOREGROUND_REMOTE_SYNC_RECORD_KEY_PREFIX)
+  );
+  assert.ok(deferredR2RecordWrite);
+
+  const r1 = first.hooks.markPendingForegroundRemoteSyncRequest({
+    reason: "pageshow",
+    triggerSource: "foreground_resume",
+    remoteUpdatedAt: "2026-08-27T05:25:29Z",
+    now: sameMillisecond,
+  });
+  deferredR2Writes.forEach(({ key, value }) => {
+    secondOriginalSetValue(key, value);
+  });
+
+  const r1RecordKey =
+    PENDING_FOREGROUND_REMOTE_SYNC_RECORD_KEY_PREFIX +
+    encodeURIComponent(r1.requestId);
+  const r2RecordKey =
+    PENDING_FOREGROUND_REMOTE_SYNC_RECORD_KEY_PREFIX +
+    encodeURIComponent(r2.requestId);
+  assert.equal(sharedStore.get(r1RecordKey).registrationClock, 1);
+  assert.equal(sharedStore.get(r2RecordKey).registrationClock, 1);
+  assert.equal(
+    sharedStore.get(r1RecordKey).registrationCreatedAt,
+    sharedStore.get(r2RecordKey).registrationCreatedAt
+  );
+
+  const expectedWinner = r1.requestId > r2.requestId ? r1 : r2;
+  const expectedLoser = expectedWinner.requestId === r1.requestId ? r2 : r1;
+  assert.equal(
+    first.hooks.getPendingForegroundRemoteSyncRequest().requestId,
+    expectedWinner.requestId,
+    "同毫秒、同 registrationClock 必须按固定 requestId 规则选择。"
+  );
+
+  const winnerAttempt = first.hooks.markPendingForegroundRemoteSyncAttempt(
+    expectedWinner
+  );
+  assert.equal(winnerAttempt.status, "marked");
+  const loserKey =
+    PENDING_FOREGROUND_REMOTE_SYNC_RECORD_KEY_PREFIX +
+    encodeURIComponent(expectedLoser.requestId);
+  const lateLoserRecord = sharedStore.get(loserKey);
+  first.sandbox.GM_setValue(loserKey, {
+    ...lateLoserRecord,
+    lastSeenAt: sameMillisecond + 60 * 60 * 1000,
+    lastResultAt: sameMillisecond + 60 * 60 * 1000,
+    lastResultStatus: "blocked",
+    lastResultReason: "late_old_result",
+    lastResultBlockLevel: "soft",
+  });
+  assert.equal(
+    first.hooks.getPendingForegroundRemoteSyncRequest().requestId,
+    expectedWinner.requestId,
+    "同毫秒 tie-break 不得被任一 mutable activity 时间改写。"
+  );
+
+  const reversed = createHarness({ sharedStore });
+  reversed.sandbox.GM_listValues = () => Array.from(sharedStore.keys()).reverse();
+  assert.equal(
+    reversed.hooks.getPendingForegroundRemoteSyncRequest().requestId,
+    expectedWinner.requestId,
+    "同毫秒 tie-break 也不能依赖 GM_listValues 枚举顺序。"
+  );
+};
+
+const testTerminalWatermarkAndLateMutableRecordStayBounded = () => {
+  const sharedStore = new Map();
+  const first = createHarness({ sharedStore });
+  const mark = (remoteUpdatedAt, now) =>
+    first.hooks.markPendingForegroundRemoteSyncRequest({
+      reason: "pageshow",
+      triggerSource: "foreground_resume",
+      remoteUpdatedAt,
+      now,
+    });
+  const terminalKey = (requestId) =>
+    PENDING_FOREGROUND_REMOTE_SYNC_TERMINAL_KEY_PREFIX +
+    encodeURIComponent(requestId);
+  const recordKey = (requestId) =>
+    PENDING_FOREGROUND_REMOTE_SYNC_RECORD_KEY_PREFIX +
+    encodeURIComponent(requestId);
+
+  const r1 = mark("2026-08-27T05:25:29Z", 1760001000000);
+  assert.equal(first.hooks.clearPendingForegroundRemoteSyncRequest(r1).status, "cleared");
+  const r2 = mark("2026-08-27T05:26:20Z", 1760001001000);
+  assert.equal(first.hooks.clearPendingForegroundRemoteSyncRequest(r2).status, "cleared");
+  const r3 = mark("2026-08-27T05:27:20Z", 1760001002000);
+
+  assert.equal(sharedStore.has(terminalKey(r1.requestId)), false);
+  assert.equal(sharedStore.has(terminalKey(r2.requestId)), true);
+  assert.equal(sharedStore.has(recordKey(r3.requestId)), true);
+  const freshWithMutableAndTerminal = createHarness({ sharedStore });
+  assert.equal(
+    freshWithMutableAndTerminal.hooks.getPendingForegroundRemoteSyncRequest().requestId,
+    r3.requestId,
+    "terminal 与更高注册序号的 mutable record 同时存在时，应选择新 record。"
+  );
+
+  assert.equal(first.hooks.clearPendingForegroundRemoteSyncRequest(r3).status, "cleared");
+  const r4 = mark("2026-08-27T05:28:20Z", 1760001003000);
+  assert.equal(sharedStore.has(terminalKey(r2.requestId)), false);
+  assert.equal(sharedStore.has(terminalKey(r3.requestId)), true);
+  assert.equal(sharedStore.has(recordKey(r4.requestId)), true);
+  assert.equal(first.hooks.clearPendingForegroundRemoteSyncRequest(r4).status, "cleared");
+
+  sharedStore.set(recordKey(r1.requestId), {
+    storageVersion: 3,
+    ...r1,
+    lastResultStatus: "failure",
+    lastResultReason: "late_old_result",
+    lastResultAt: Date.now(),
+  });
+  const freshAfterWatermarkCompaction = createHarness({ sharedStore });
+  assert.equal(
+    freshAfterWatermarkCompaction.hooks.getPendingForegroundRemoteSyncRequest(),
+    null,
+    "terminal watermark 压缩后，新 VM 也不能被已取消 R1 的迟到 mutable record 复活。"
+  );
+};
+
 const prepareForegroundCancellationSettings = (hooks) => {
   hooks.saveSettings(
     {
@@ -582,6 +955,290 @@ const cancelForegroundPendingThroughSettings = (hooks, settingKey) => {
     },
     { suppressSyncTrigger: true, forceWrite: true }
   );
+};
+
+const testCancelledForegroundRecoverySkipsDefaultResultPhase = async () => {
+  for (const settingKey of [
+    "syncCheckOnReturnToForeground",
+    "syncRemoteEnabled",
+  ]) {
+    const sharedStore = new Map();
+    const first = createHarness({ sharedStore });
+    const second = createHarness({ sharedStore });
+    prepareForegroundCancellationSettings(second.hooks);
+    const pending = first.hooks.markPendingForegroundRemoteSyncRequest({
+      reason: "pageshow",
+      triggerSource: "foreground_resume",
+      remoteUpdatedAt: "2026-08-27T05:25:29Z",
+      now: 1760001000000,
+    });
+    const timers = [];
+    first.sandbox.setTimeout = (callback, delayMs) => {
+      const timerId = timers.length + 1;
+      timers.push({ callback, delayMs, timerId });
+      return timerId;
+    };
+    first.sandbox.window.setTimeout = first.sandbox.setTimeout;
+    let injected = false;
+    const originalSetValue = first.sandbox.GM_setValue;
+    first.sandbox.GM_setValue = (key, value) => {
+      if (
+        !injected &&
+        String(key).startsWith(PENDING_FOREGROUND_REMOTE_SYNC_RECORD_KEY_PREFIX) &&
+        value?.requestId === pending.requestId &&
+        value?.lastResultStatus === "failure"
+      ) {
+        injected = true;
+        cancelForegroundPendingThroughSettings(second.hooks, settingKey);
+      }
+      originalSetValue(key, value);
+    };
+
+    const scheduled = first.hooks.scheduleForegroundRemoteSyncRecovery(pending, {
+      now: 1760001000000,
+      requestForegroundRemoteSyncCheck: async () => ({
+        status: "failure",
+        retryable: true,
+        error: "transient timeout",
+      }),
+    });
+    assert.equal(scheduled.status, "scheduled");
+    const recoveryTimer = timers.find(({ delayMs }) => delayMs === 600);
+    assert.ok(recoveryTimer);
+    await recoveryTimer.callback();
+
+    assert.equal(injected, true, `${settingKey} 必须命中旧结算写回前的取消窗口。`);
+    assert.equal(first.hooks.getPendingForegroundRemoteSyncRequest(), null);
+    assert.equal(
+      first.hooks.getForegroundRemoteSyncRetryRemainingMs(),
+      0,
+      "cancelled settlement 不得进入默认 Result Phase 的旧 retry。"
+    );
+    assert.equal(
+      first.hooks.getAutoSyncRuntimePendingDisplayState().hasPending,
+      false,
+      "旧 cancelled 结果不得重新点亮 foreground pending。"
+    );
+  }
+};
+
+const testCancelledForegroundRetrySkipsDefaultResultPhase = async () => {
+  const sharedStore = new Map();
+  const first = createHarness({ sharedStore });
+  const second = createHarness({ sharedStore });
+  prepareForegroundCancellationSettings(second.hooks);
+  const pending = first.hooks.markPendingForegroundRemoteSyncRequest({
+    reason: "pageshow",
+    triggerSource: "foreground_resume",
+    remoteUpdatedAt: "2026-08-27T05:25:29Z",
+    now: 1760001000000,
+  });
+  const timers = [];
+  first.sandbox.setTimeout = (callback, delayMs) => {
+    const timerId = timers.length + 1;
+    timers.push({ callback, delayMs, timerId });
+    return timerId;
+  };
+  first.sandbox.window.setTimeout = first.sandbox.setTimeout;
+  let injected = false;
+  const originalSetValue = first.sandbox.GM_setValue;
+  first.sandbox.GM_setValue = (key, value) => {
+    if (
+      !injected &&
+      String(key).startsWith(PENDING_FOREGROUND_REMOTE_SYNC_RECORD_KEY_PREFIX) &&
+      value?.requestId === pending.requestId &&
+      value?.lastResultStatus === "failure"
+    ) {
+      injected = true;
+      cancelForegroundPendingThroughSettings(
+        second.hooks,
+        "syncCheckOnReturnToForeground"
+      );
+    }
+    originalSetValue(key, value);
+  };
+
+  const scheduled = first.hooks.scheduleForegroundRemoteSyncRetry(
+    "remote_probe_changed:pageshow",
+    {
+      expectedPendingRequest: pending,
+      preferredDelayMs: 1200,
+      requestForegroundRemoteSyncCheck: async () => ({
+        status: "failure",
+        retryable: true,
+        error: "transient timeout",
+      }),
+    }
+  );
+  assert.equal(scheduled.status, "scheduled");
+  const retryTimer = timers.find(({ delayMs }) => delayMs === 1200);
+  assert.ok(retryTimer);
+  await retryTimer.callback();
+
+  assert.equal(injected, true, "retry 必须命中旧结算写回前的取消窗口。");
+  assert.equal(first.hooks.getPendingForegroundRemoteSyncRequest(), null);
+  assert.equal(first.hooks.getForegroundRemoteSyncRetryRemainingMs(), 0);
+  assert.equal(
+    first.hooks.getAutoSyncRuntimePendingDisplayState().hasPending,
+    false,
+    "retry 的旧 cancelled 结果不得重新点亮 foreground pending。"
+  );
+};
+
+const testCancelledDirectForegroundFollowupSkipsDefaultResultPhase = async () => {
+  const sharedStore = new Map();
+  const first = createHarness({ sharedStore });
+  const second = createHarness({ sharedStore });
+  prepareForegroundCancellationSettings(second.hooks);
+  first.hooks.setSyncBaselineState({
+    contentHash: "baseline-hash",
+    remoteUpdatedAt: "2026-08-27T05:20:00Z",
+  });
+  const timers = [];
+  first.sandbox.setTimeout = (callback, delayMs) => {
+    const timerId = timers.length + 1;
+    timers.push({ callback, delayMs, timerId });
+    return timerId;
+  };
+  first.sandbox.window.setTimeout = first.sandbox.setTimeout;
+  let injected = false;
+  let pendingRequestId = "";
+  const originalSetValue = first.sandbox.GM_setValue;
+  first.sandbox.GM_setValue = (key, value) => {
+    if (
+      !injected &&
+      String(key).startsWith(PENDING_FOREGROUND_REMOTE_SYNC_RECORD_KEY_PREFIX) &&
+      value?.requestId === pendingRequestId &&
+      value?.lastResultStatus === "failure"
+    ) {
+      injected = true;
+      cancelForegroundPendingThroughSettings(
+        second.hooks,
+        "syncRemoteEnabled"
+      );
+    }
+    originalSetValue(key, value);
+  };
+
+  const result = await first.hooks.s1pSyncSystem.requestSync({
+    kind: "foreground_probe",
+    reason: "pageshow",
+    options: {
+      now: 1760001100000,
+      settingsSnapshot: enabledSettings,
+      acquireRemoteProbeLock: async () => true,
+      releaseRemoteProbeLockValue: () => {},
+      fetchRemoteData: async () => ({
+        meta: { updatedAt: "2026-08-27T05:25:29Z" },
+      }),
+      requestForegroundRemoteSyncCheck: async () => {
+        pendingRequestId =
+          first.hooks.getPendingForegroundRemoteSyncRequest()?.requestId || "";
+        return {
+          status: "failure",
+          retryable: true,
+          error: "transient timeout",
+        };
+      },
+    },
+  });
+
+  assert.equal(injected, true, "direct foreground follow-up 必须命中取消交错窗口。");
+  assert.equal(result.reason, "foreground_sync_request_cancelled");
+  assert.equal(first.hooks.getPendingForegroundRemoteSyncRequest(), null);
+  assert.equal(first.hooks.getForegroundRemoteSyncRetryRemainingMs(), 0);
+  assert.equal(
+    first.hooks.getAutoSyncRuntimePendingDisplayState().hasPending,
+    false,
+    "direct follow-up 的旧 cancelled 结果不得进入默认 retry。"
+  );
+};
+
+const testCancelledOldRecoveryCannotReplaceNewerRetry = async () => {
+  const sharedStore = new Map();
+  const first = createHarness({ sharedStore });
+  const second = createHarness({ sharedStore });
+  prepareForegroundCancellationSettings(second.hooks);
+  const oldPending = first.hooks.markPendingForegroundRemoteSyncRequest({
+    reason: "pageshow",
+    triggerSource: "foreground_resume",
+    remoteUpdatedAt: "2026-08-27T05:25:29Z",
+    now: 1760001000000,
+  });
+  const timers = [];
+  const clearedTimerIds = [];
+  first.sandbox.setTimeout = (callback, delayMs) => {
+    const timerId = timers.length + 1;
+    timers.push({ callback, delayMs, timerId });
+    return timerId;
+  };
+  first.sandbox.window.setTimeout = first.sandbox.setTimeout;
+  first.sandbox.clearTimeout = (timerId) => {
+    clearedTimerIds.push(timerId);
+  };
+  first.sandbox.window.clearTimeout = first.sandbox.clearTimeout;
+  let injected = false;
+  let newerPending = null;
+  let newerRetryTimer = null;
+  let newerRequestCount = 0;
+  const originalSetValue = first.sandbox.GM_setValue;
+  first.sandbox.GM_setValue = (key, value) => {
+    if (
+      !injected &&
+      String(key).startsWith(PENDING_FOREGROUND_REMOTE_SYNC_RECORD_KEY_PREFIX) &&
+      value?.requestId === oldPending.requestId &&
+      value?.lastResultStatus === "failure"
+    ) {
+      injected = true;
+      cancelForegroundPendingThroughSettings(second.hooks, "syncRemoteEnabled");
+      newerPending = first.hooks.markPendingForegroundRemoteSyncRequest({
+        reason: "visibility_visible",
+        triggerSource: "foreground_resume",
+        remoteUpdatedAt: "2026-08-27T05:26:20Z",
+        now: 1760001001000,
+      });
+      first.hooks.scheduleForegroundRemoteSyncRetry("newer_r2_retry", {
+        expectedPendingRequest: newerPending,
+        preferredDelayMs: 1200,
+        requestForegroundRemoteSyncCheck: async () => {
+          newerRequestCount += 1;
+          return { status: "success", action: "pulled" };
+        },
+      });
+      newerRetryTimer = timers.at(-1);
+    }
+    originalSetValue(key, value);
+  };
+
+  first.hooks.scheduleForegroundRemoteSyncRecovery(oldPending, {
+    now: 1760001000000,
+    requestForegroundRemoteSyncCheck: async () => ({
+      status: "failure",
+      retryable: true,
+      error: "transient timeout",
+    }),
+  });
+  const recoveryTimer = timers.find(({ delayMs }) => delayMs === 600);
+  assert.ok(recoveryTimer);
+  await recoveryTimer.callback();
+
+  assert.equal(injected, true);
+  assert.ok(newerPending);
+  assert.ok(newerRetryTimer);
+  assert.equal(
+    first.hooks.getPendingForegroundRemoteSyncRequest().requestId,
+    newerPending.requestId
+  );
+  assert.equal(
+    clearedTimerIds.includes(newerRetryTimer.timerId),
+    false,
+    "旧 R1 结果不得清除 R2 已安排的 retry timer。"
+  );
+  assert.equal(newerRequestCount, 0);
+
+  await newerRetryTimer.callback();
+  assert.equal(newerRequestCount, 1, "R2 的有效 retry 必须真正执行一次。");
+  assert.equal(first.hooks.getPendingForegroundRemoteSyncRequest(), null);
 };
 
 const testCancelledForegroundRequestCannotBeResurrectedByLateWrites = () => {
@@ -1814,6 +2471,14 @@ const testCollectedS1pLogsIncludeRuntimeContext = () => {
   testConcurrentClearRecoversSameTimestampIntentGeneration();
   testForegroundSettlementCannotOverwriteRequestRegisteredDuringWrite();
   testLateRegistrationCannotRewindCurrentObservation();
+  await testSameRegistrationClockCannotBeReorderedByLateSettlement();
+  testSameRegistrationClockCannotBeReorderedBySoftBlockClear();
+  testSameMillisecondRegistrationUsesDeterministicTieBreak();
+  testTerminalWatermarkAndLateMutableRecordStayBounded();
+  await testCancelledForegroundRecoverySkipsDefaultResultPhase();
+  await testCancelledForegroundRetrySkipsDefaultResultPhase();
+  await testCancelledDirectForegroundFollowupSkipsDefaultResultPhase();
+  await testCancelledOldRecoveryCannotReplaceNewerRetry();
   testCancelledForegroundRequestCannotBeResurrectedByLateWrites();
   testCancelledForegroundRequestKeepsConcurrentNewRegistration();
   testCompletedForegroundRequestCannotBeResurrectedByLateSettlement();
