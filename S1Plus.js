@@ -3117,6 +3117,8 @@
   let foregroundRemoteSyncRetryExpectedRequestId = "";
   let foregroundRemoteSyncRetryExpectedRemoteUpdatedAt = "";
   let foregroundRemoteSyncRetryGeneration = 0;
+  let foregroundRemoteSyncRetryOwnerToken = null;
+  let foregroundRemoteSyncRetryOwnerSequence = 0;
   let foregroundRemoteSyncRecoveryTimer = null;
   let foregroundRemoteSyncRecoveryDueAt = 0;
   let foregroundRemoteSyncRecoveryRequestId = "";
@@ -18400,7 +18402,7 @@
   };
 
   const setAutoSyncConflictPause = (reason = "generic") => {
-    clearForegroundRemoteSyncRetry();
+    clearForegroundRemoteSyncRetryForCurrentOwner();
     clearForegroundFollowUpSoftBlock();
     clearAutoSyncRuntimeQueue();
     GM_setValue(AUTO_SYNC_CONFLICT_PAUSE_KEY, {
@@ -18680,6 +18682,35 @@
       String(requestId || "")
     )}`;
 
+  const getPendingForegroundRemoteSyncTerminalCandidateKey = (
+    requestId,
+    candidateId
+  ) =>
+    `${PENDING_FOREGROUND_REMOTE_SYNC_TERMINAL_KEY_PREFIX}${encodeURIComponent(
+      String(requestId || "")
+    )}:candidate:${encodeURIComponent(String(candidateId || ""))}`;
+
+  let pendingForegroundRemoteSyncTerminalCandidateSequence = 0;
+
+  const createPendingForegroundRemoteSyncTerminalCandidateId = () =>
+    `${SYNC_RUNTIME_CONTEXT_ID}_${Date.now()}_${
+      ++pendingForegroundRemoteSyncTerminalCandidateSequence
+    }_${Math.random().toString(36).slice(2, 8)}`;
+
+  const getPendingForegroundRemoteSyncTerminalKindPriority = (terminalKind) => {
+    const normalizedKind = normalizeSyncDiagnosticText(terminalKind, 80);
+    if (normalizedKind === "completed") {
+      return 3;
+    }
+    if (normalizedKind === "cancelled") {
+      return 2;
+    }
+    if (normalizedKind) {
+      return 1;
+    }
+    return 0;
+  };
+
   let pendingForegroundRemoteSyncRegistrationClock = 0;
 
   const normalizePendingForegroundRemoteSyncRegistrationClock = (value) => {
@@ -18729,6 +18760,146 @@
     };
   };
 
+  const decodePendingForegroundRemoteSyncStoredId = (key, prefix) => {
+    try {
+      return decodeURIComponent(key.slice(prefix.length));
+    } catch (_) {
+      return "";
+    }
+  };
+
+  const readPendingForegroundRemoteSyncTerminalEnvelope = (key) => {
+    const rawTerminal = GM_getValue(key, null);
+    const encodedSuffix = key.slice(
+      PENDING_FOREGROUND_REMOTE_SYNC_TERMINAL_KEY_PREFIX.length
+    );
+    const candidateSeparator = encodedSuffix.indexOf(":candidate:");
+    const encodedRequestId =
+      candidateSeparator >= 0
+        ? encodedSuffix.slice(0, candidateSeparator)
+        : encodedSuffix;
+    const pending = normalizePendingForegroundRemoteSyncRequest(rawTerminal);
+    const requestId = normalizeSyncDiagnosticText(
+      rawTerminal?.requestId ||
+        decodePendingForegroundRemoteSyncStoredId(
+          `${PENDING_FOREGROUND_REMOTE_SYNC_TERMINAL_KEY_PREFIX}${encodedRequestId}`,
+          PENDING_FOREGROUND_REMOTE_SYNC_TERMINAL_KEY_PREFIX
+        ),
+      160
+    );
+    if (!pending || !requestId || pending.requestId !== requestId) {
+      return null;
+    }
+    return {
+      key,
+      pending,
+      hasRegistrationClock:
+        hasValidPendingForegroundRemoteSyncRegistrationClock(
+          rawTerminal.registrationClock
+        ),
+      registrationClock:
+        normalizePendingForegroundRemoteSyncRegistrationClock(
+          rawTerminal.registrationClock
+        ),
+      registrationCreatedAt:
+        normalizePendingAutoSyncTimestamp(pending.registrationCreatedAt),
+      terminalAt: normalizePendingAutoSyncTimestamp(rawTerminal.terminalAt),
+      terminalKind:
+        normalizeSyncDiagnosticText(rawTerminal.terminalKind, 80) ||
+        "completed",
+      terminalReason:
+        normalizeRemoteProbeText(rawTerminal.terminalReason, 160) || "",
+      terminalCandidateId:
+        normalizeSyncDiagnosticText(rawTerminal.terminalCandidateId, 160) ||
+        (candidateSeparator >= 0
+          ? decodePendingForegroundRemoteSyncStoredId(
+              encodedSuffix.slice(candidateSeparator + ":candidate:".length),
+              ""
+            )
+          : "canonical"),
+    };
+  };
+
+  const comparePendingForegroundRemoteSyncTerminalCandidates = (
+    left,
+    right
+  ) => {
+    const leftClock = normalizePendingForegroundRemoteSyncRegistrationClock(
+      left.registrationClock
+    );
+    const rightClock = normalizePendingForegroundRemoteSyncRegistrationClock(
+      right.registrationClock
+    );
+    if (leftClock !== rightClock) {
+      return rightClock - leftClock;
+    }
+    if (left.hasRegistrationClock !== right.hasRegistrationClock) {
+      return left.hasRegistrationClock ? -1 : 1;
+    }
+    const leftRegistrationAt = normalizePendingAutoSyncTimestamp(
+      left.registrationCreatedAt
+    );
+    const rightRegistrationAt = normalizePendingAutoSyncTimestamp(
+      right.registrationCreatedAt
+    );
+    if (leftRegistrationAt !== rightRegistrationAt) {
+      return rightRegistrationAt - leftRegistrationAt;
+    }
+    const leftPriority = getPendingForegroundRemoteSyncTerminalKindPriority(
+      left.terminalKind
+    );
+    const rightPriority = getPendingForegroundRemoteSyncTerminalKindPriority(
+      right.terminalKind
+    );
+    if (leftPriority !== rightPriority) {
+      return rightPriority - leftPriority;
+    }
+    const leftIsCanonical =
+      left.key === getPendingForegroundRemoteSyncTerminalKey(
+        left.pending.requestId
+      );
+    const rightIsCanonical =
+      right.key === getPendingForegroundRemoteSyncTerminalKey(
+        right.pending.requestId
+      );
+    if (leftIsCanonical !== rightIsCanonical) {
+      // The canonical key is only a compatibility mirror. Prefer the
+      // immutable candidate evidence when both values describe the same
+      // terminal write, so compaction cannot erase the fence that rejects a
+      // late mirror write.
+      return leftIsCanonical ? 1 : -1;
+    }
+    const leftDescriptor = [
+      left.terminalKind,
+      left.terminalReason,
+      left.terminalCandidateId,
+      left.key,
+    ].join("\u0000");
+    const rightDescriptor = [
+      right.terminalKind,
+      right.terminalReason,
+      right.terminalCandidateId,
+      right.key,
+    ].join("\u0000");
+    if (leftDescriptor === rightDescriptor) {
+      return 0;
+    }
+    return leftDescriptor < rightDescriptor ? -1 : 1;
+  };
+
+  const mergePendingForegroundRemoteSyncTerminalCandidates = (candidates) => {
+    if (!Array.isArray(candidates) || candidates.length === 0) {
+      return null;
+    }
+    const winner = [...candidates].sort(
+      comparePendingForegroundRemoteSyncTerminalCandidates
+    )[0];
+    return {
+      ...winner,
+      keys: candidates.map((candidate) => candidate.key),
+    };
+  };
+
   const readPendingForegroundRemoteSyncRecordStore = () => {
     if (typeof GM_listValues !== "function") {
       return null;
@@ -18752,50 +18923,28 @@
         typeof key === "string" &&
         key.startsWith(PENDING_FOREGROUND_REMOTE_SYNC_TERMINAL_KEY_PREFIX)
     );
-    const decodeStoredRequestId = (key, prefix) => {
-      try {
-        return decodeURIComponent(key.slice(prefix.length));
-      } catch (_) {
-        return "";
-      }
-    };
     const records = recordKeys
-      .map((key) => readPendingForegroundRemoteSyncRecordEnvelope(
-        decodeStoredRequestId(key, PENDING_FOREGROUND_REMOTE_SYNC_RECORD_KEY_PREFIX)
-      ))
+      .map((key) =>
+        readPendingForegroundRemoteSyncRecordEnvelope(
+          decodePendingForegroundRemoteSyncStoredId(
+            key,
+            PENDING_FOREGROUND_REMOTE_SYNC_RECORD_KEY_PREFIX
+          )
+        )
+      )
       .filter(Boolean);
-    const terminals = terminalKeys
-      .map((key) => {
-        const rawTerminal = GM_getValue(key, null);
-        const pending = normalizePendingForegroundRemoteSyncRequest(rawTerminal);
-        const requestId = normalizeSyncDiagnosticText(
-          rawTerminal?.requestId ||
-            decodeStoredRequestId(
-              key,
-              PENDING_FOREGROUND_REMOTE_SYNC_TERMINAL_KEY_PREFIX
-            ),
-          160
-        );
-        if (!pending || !requestId || pending.requestId !== requestId) {
-          return null;
-        }
-        return {
-          key,
-          pending,
-          hasRegistrationClock:
-            hasValidPendingForegroundRemoteSyncRegistrationClock(
-              rawTerminal.registrationClock
-            ),
-          registrationClock:
-            normalizePendingForegroundRemoteSyncRegistrationClock(
-              rawTerminal.registrationClock
-            ),
-          terminalAt: normalizePendingAutoSyncTimestamp(rawTerminal.terminalAt),
-          terminalKind:
-            normalizeSyncDiagnosticText(rawTerminal.terminalKind, 80) ||
-            "completed",
-        };
-      })
+    const terminalGroups = new Map();
+    terminalKeys.forEach((key) => {
+      const terminal = readPendingForegroundRemoteSyncTerminalEnvelope(key);
+      if (!terminal) {
+        return;
+      }
+      const group = terminalGroups.get(terminal.pending.requestId) || [];
+      group.push(terminal);
+      terminalGroups.set(terminal.pending.requestId, group);
+    });
+    const terminals = Array.from(terminalGroups.values())
+      .map(mergePendingForegroundRemoteSyncTerminalCandidates)
       .filter(Boolean);
     return { records, terminals };
   };
@@ -18805,19 +18954,26 @@
     if (!normalizedRequestId) {
       return null;
     }
-    const rawTerminal = GM_getValue(
-      getPendingForegroundRemoteSyncTerminalKey(normalizedRequestId),
-      null
+    const canonicalKey = getPendingForegroundRemoteSyncTerminalKey(
+      normalizedRequestId
     );
-    const pending = normalizePendingForegroundRemoteSyncRequest(rawTerminal);
-    if (!pending || pending.requestId !== normalizedRequestId) {
+    const rawCanonicalTerminal = GM_getValue(canonicalKey, null);
+    const store = readPendingForegroundRemoteSyncRecordStore();
+    if (store) {
+      return (
+        store.terminals.find(
+          (terminal) => terminal.pending.requestId === normalizedRequestId
+        ) || null
+      );
+    }
+    const terminal = readPendingForegroundRemoteSyncTerminalEnvelope(canonicalKey);
+    if (!terminal || terminal.pending.requestId !== normalizedRequestId) {
       return null;
     }
     return {
-      key: getPendingForegroundRemoteSyncTerminalKey(normalizedRequestId),
-      pending,
-      terminalKind:
-        normalizeSyncDiagnosticText(rawTerminal.terminalKind, 80) || "completed",
+      ...terminal,
+      rawTerminal: rawCanonicalTerminal,
+      keys: [terminal.key],
     };
   };
 
@@ -19027,8 +19183,19 @@
     if (hasRegistrationClock) {
       terminalRecord.registrationClock = registrationClock;
     }
-    // The key is never written by mutable record updates. If two contexts
-    // race here, either terminal outcome is a terminal fence for this request.
+    const terminalCandidateId =
+      createPendingForegroundRemoteSyncTerminalCandidateId();
+    terminalRecord.terminalCandidateId = terminalCandidateId;
+    // Keep the exact v2/v3 terminal key as a compatibility mirror, but make
+    // the candidate key immutable. Readers merge every candidate, so a late
+    // weaker mirror write cannot erase a stronger terminal outcome.
+    GM_setValue(
+      getPendingForegroundRemoteSyncTerminalCandidateKey(
+        pending.requestId,
+        terminalCandidateId
+      ),
+      terminalRecord
+    );
     GM_setValue(
       getPendingForegroundRemoteSyncTerminalKey(pending.requestId),
       terminalRecord
@@ -19179,25 +19346,38 @@
     const terminalWinner = [...candidatesState.terminals].sort(
       comparePendingForegroundRemoteSyncCandidates
     )[0];
+    const protectedTerminalKeys = new Set(
+      terminalWinner
+        ? [
+            terminalWinner.key,
+            getPendingForegroundRemoteSyncTerminalKey(
+              terminalWinner.pending.requestId
+            ),
+          ]
+        : []
+    );
     candidatesState.store.terminals.forEach((terminal) => {
-      if (!terminalWinner || terminal.key !== terminalWinner.key) {
-        GM_deleteValue(terminal.key);
-      }
+      (terminal.keys || [terminal.key]).forEach((key) => {
+        if (!protectedTerminalKeys.has(key)) {
+          GM_deleteValue(key);
+        }
+      });
     });
   };
 
   const clearForegroundRemoteSyncRetryIfBoundTo = (pendingInput = null) => {
     const pending = normalizePendingForegroundRemoteSyncRequest(pendingInput);
+    const ownerToken = foregroundRemoteSyncRetryOwnerToken;
     if (
       !pending ||
-      !foregroundRemoteSyncRetryExpectedRequestId ||
-      pending.requestId !== foregroundRemoteSyncRetryExpectedRequestId ||
-      pending.remoteUpdatedAt !==
-        foregroundRemoteSyncRetryExpectedRemoteUpdatedAt
+      !ownerToken ||
+      !ownerToken.requestId ||
+      pending.requestId !== ownerToken.requestId ||
+      pending.remoteUpdatedAt !== ownerToken.remoteUpdatedAt
     ) {
       return false;
     }
-    clearForegroundRemoteSyncRetry();
+    clearForegroundRemoteSyncRetry(ownerToken);
     return true;
   };
 
@@ -19931,7 +20111,7 @@
     const normalizedReason =
       normalizeRemoteProbeText(reason, 120) || "sync_disabled";
     clearForegroundRemoteSyncRecovery();
-    clearForegroundRemoteSyncRetry();
+    clearForegroundRemoteSyncRetryForCurrentOwner();
     const pending = getPendingForegroundRemoteSyncRequest();
     if (!pending) {
       refreshAutoSyncIndicatorRuntimeDisplay(
@@ -22419,7 +22599,7 @@
             : null;
       syncPolling({ resetActivity: true });
     } catch (error) {
-      clearForegroundRemoteSyncRetry();
+      clearForegroundRemoteSyncRetryForCurrentOwner();
       clearForegroundRemoteSyncRecovery();
       disposeForegroundPendingChange?.();
       disposeActivityHooks?.();
@@ -22434,7 +22614,7 @@
         }
         disposed = true;
         stopPolling();
-        clearForegroundRemoteSyncRetry();
+        clearForegroundRemoteSyncRetryForCurrentOwner();
         clearForegroundRemoteSyncRecovery();
         disposeForegroundPendingChange?.();
         disposeActivityHooks?.();
@@ -24482,8 +24662,8 @@
           return;
         }
         if (!pending) {
-          if (foregroundRemoteSyncRetryExpectedRequestId) {
-            clearForegroundRemoteSyncRetry();
+          if (foregroundRemoteSyncRetryOwnerToken) {
+            clearForegroundRemoteSyncRetryForCurrentOwner();
           }
           clearForegroundRemoteSyncRecovery();
           recordSyncTraceEvent("foreground_pending_cross_context_signal", {
@@ -24494,12 +24674,12 @@
           return;
         }
         if (
-          foregroundRemoteSyncRetryExpectedRequestId &&
-          (pending.requestId !== foregroundRemoteSyncRetryExpectedRequestId ||
+          foregroundRemoteSyncRetryOwnerToken?.requestId &&
+          (pending.requestId !== foregroundRemoteSyncRetryOwnerToken.requestId ||
             pending.remoteUpdatedAt !==
-              foregroundRemoteSyncRetryExpectedRemoteUpdatedAt)
+              foregroundRemoteSyncRetryOwnerToken.remoteUpdatedAt)
         ) {
-          clearForegroundRemoteSyncRetry();
+          clearForegroundRemoteSyncRetryForCurrentOwner();
         }
         const recoveryResult = recoverPendingForegroundRemoteSyncIfNeeded();
         recordSyncTraceEvent("foreground_pending_cross_context_signal", {
@@ -38527,11 +38707,28 @@
     }
   };
 
-  const clearForegroundRemoteSyncRetry = (expectedGeneration = null) => {
+  const clearForegroundRemoteSyncRetry = (ownerToken = null) => {
     if (
-      expectedGeneration !== null &&
-      expectedGeneration !== foregroundRemoteSyncRetryGeneration
+      !ownerToken ||
+      foregroundRemoteSyncRetryOwnerToken !== ownerToken
     ) {
+      if (ownerToken) {
+        recordSyncTraceEvent("foreground_retry_cleanup_ignored", {
+          scope: "foreground_probe",
+          status: "ignored",
+          message: "旧前台 retry continuation 没有当前 timer 的 owner 权限",
+          details: {
+            requestId: ownerToken.requestId || "",
+            remoteUpdatedAt: ownerToken.remoteUpdatedAt || "",
+            retryGeneration: ownerToken.retryGeneration || 0,
+            timerIdentity: ownerToken.timerIdentity || "",
+            retainedRequestId:
+              foregroundRemoteSyncRetryOwnerToken?.requestId || "",
+            retainedRemoteUpdatedAt:
+              foregroundRemoteSyncRetryOwnerToken?.remoteUpdatedAt || "",
+          },
+        });
+      }
       return false;
     }
     if (foregroundRemoteSyncRetryTimer) {
@@ -38545,9 +38742,13 @@
     foregroundRemoteSyncRetryIndicatorOperation = "";
     foregroundRemoteSyncRetryExpectedRequestId = "";
     foregroundRemoteSyncRetryExpectedRemoteUpdatedAt = "";
+    foregroundRemoteSyncRetryOwnerToken = null;
     foregroundRemoteSyncRetryGeneration += 1;
     return true;
   };
+
+  const clearForegroundRemoteSyncRetryForCurrentOwner = () =>
+    clearForegroundRemoteSyncRetry(foregroundRemoteSyncRetryOwnerToken);
 
   const getForegroundRemoteSyncRetryRemainingMs = (now = Date.now()) => {
     const normalizedNow = normalizeRemoteProbeTimestamp(now) || Date.now();
@@ -38614,7 +38815,7 @@
       }
     }
     if (document.visibilityState !== "visible") {
-      clearForegroundRemoteSyncRetry();
+      clearForegroundRemoteSyncRetryForCurrentOwner();
       GM_deleteValue(EQUAL_UPDATED_AT_PROBE_VERIFY_STATE_KEY);
       return { status: "suppressed", reason: "document_hidden" };
     }
@@ -38634,10 +38835,11 @@
         attempt: foregroundRemoteSyncRetryAttempts,
         retryAfterMs: getForegroundRemoteSyncRetryRemainingMs(),
         reason: normalizedReason,
+        ownerToken: foregroundRemoteSyncRetryOwnerToken,
       };
     }
     if (getActiveAutoSyncConflictPause()) {
-      clearForegroundRemoteSyncRetry();
+      clearForegroundRemoteSyncRetryForCurrentOwner();
       GM_deleteValue(EQUAL_UPDATED_AT_PROBE_VERIFY_STATE_KEY);
       return { status: "suppressed", reason: "conflict_paused" };
     }
@@ -38645,7 +38847,7 @@
       console.warn(
         "S1 Plus: 前台远端检查补偿重试达到上限，将等待下一次前台探测触发。"
       );
-      clearForegroundRemoteSyncRetry();
+      clearForegroundRemoteSyncRetryForCurrentOwner();
       GM_deleteValue(EQUAL_UPDATED_AT_PROBE_VERIFY_STATE_KEY);
       return { status: "dropped", reason: "retry_limit_reached" };
     }
@@ -38671,18 +38873,31 @@
     if (foregroundRemoteSyncRetryTimer) {
       clearTimeout(foregroundRemoteSyncRetryTimer);
       foregroundRemoteSyncRetryTimer = null;
+      foregroundRemoteSyncRetryOwnerToken = null;
       foregroundRemoteSyncRetryGeneration += 1;
     }
     const retryGeneration = foregroundRemoteSyncRetryGeneration + 1;
     foregroundRemoteSyncRetryGeneration = retryGeneration;
+    const retryOwnerToken = Object.freeze({
+      requestId: expectedRequestId,
+      remoteUpdatedAt: expectedRemoteUpdatedAt,
+      retryGeneration,
+      timerIdentity: `${SYNC_RUNTIME_CONTEXT_ID}:${
+        ++foregroundRemoteSyncRetryOwnerSequence
+      }`,
+    });
+    foregroundRemoteSyncRetryOwnerToken = retryOwnerToken;
     foregroundRemoteSyncRetryTimer = setTimeout(async () => {
-      if (foregroundRemoteSyncRetryGeneration !== retryGeneration) {
+      if (
+        foregroundRemoteSyncRetryGeneration !== retryGeneration ||
+        foregroundRemoteSyncRetryOwnerToken !== retryOwnerToken
+      ) {
         return;
       }
       foregroundRemoteSyncRetryTimer = null;
       foregroundRemoteSyncRetryDueAt = 0;
       const clearOwnedRetry = () => {
-        const cleared = clearForegroundRemoteSyncRetry(retryGeneration);
+        const cleared = clearForegroundRemoteSyncRetry(retryOwnerToken);
         if (cleared) {
           GM_deleteValue(EQUAL_UPDATED_AT_PROBE_VERIFY_STATE_KEY);
         }
@@ -38862,6 +39077,7 @@
       retryAfterMs: retryDelayMs,
       attempt: foregroundRemoteSyncRetryAttempts,
       reason: normalizedReason,
+      ownerToken: retryOwnerToken,
     };
   };
 
@@ -39437,9 +39653,24 @@
       });
       const resultPhasePolicy =
         overrides.syncResultPhasePolicy || s1pSyncResultPhasePolicy;
-      const retryGenerationBeforeResultPhase =
-        foregroundRemoteSyncRetryGeneration;
-      let resultPhaseScheduledRetryGeneration = null;
+      const retryOwnerBeforeResultPhase =
+        foregroundRemoteSyncRetryOwnerToken &&
+        pendingForegroundRemoteSyncRequest &&
+        foregroundRemoteSyncRetryOwnerToken.requestId ===
+          pendingForegroundRemoteSyncRequest.requestId &&
+        foregroundRemoteSyncRetryOwnerToken.remoteUpdatedAt ===
+          pendingForegroundRemoteSyncRequest.remoteUpdatedAt
+          ? foregroundRemoteSyncRetryOwnerToken
+          : null;
+      const resultPhaseOwner = Object.freeze({
+        requestId: pendingForegroundRemoteSyncRequest?.requestId || "",
+        remoteUpdatedAt:
+          pendingForegroundRemoteSyncRequest?.remoteUpdatedAt || "",
+        retryGeneration: retryOwnerBeforeResultPhase?.retryGeneration || null,
+        retryTimerIdentity: retryOwnerBeforeResultPhase?.timerIdentity || "",
+        retryOwner: retryOwnerBeforeResultPhase,
+      });
+      let resultPhaseScheduledRetryOwner = null;
       const outcome = await resultPhasePolicy.handle(syncRequestResult, {
         source: "foreground",
         remoteChangeContext: {
@@ -39475,8 +39706,7 @@
             }
           );
           if (s1pHasScheduledSyncResultPhaseRetry(retryResult)) {
-            resultPhaseScheduledRetryGeneration =
-              foregroundRemoteSyncRetryGeneration;
+            resultPhaseScheduledRetryOwner = retryResult.ownerToken || null;
           }
           return retryResult;
         },
@@ -39486,21 +39716,10 @@
         outcome.retryResult
       );
       if (!hasScheduledRetry) {
-        const retryStillBelongsToResultRequest = pendingForegroundRemoteSyncRequest
-          ? foregroundRemoteSyncRetryExpectedRequestId ===
-              pendingForegroundRemoteSyncRequest.requestId &&
-            foregroundRemoteSyncRetryExpectedRemoteUpdatedAt ===
-              pendingForegroundRemoteSyncRequest.remoteUpdatedAt
-          : !foregroundRemoteSyncRetryExpectedRequestId &&
-            !foregroundRemoteSyncRetryExpectedRemoteUpdatedAt;
-        const retryGenerationStillOwned =
-          foregroundRemoteSyncRetryGeneration ===
-            retryGenerationBeforeResultPhase ||
-          (resultPhaseScheduledRetryGeneration !== null &&
-            foregroundRemoteSyncRetryGeneration ===
-              resultPhaseScheduledRetryGeneration);
-        if (retryStillBelongsToResultRequest && retryGenerationStillOwned) {
-          clearForegroundRemoteSyncRetry(foregroundRemoteSyncRetryGeneration);
+        const retryOwnerToClear =
+          resultPhaseScheduledRetryOwner || resultPhaseOwner.retryOwner;
+        if (retryOwnerToClear) {
+          clearForegroundRemoteSyncRetry(retryOwnerToClear);
         }
       }
       if (
@@ -39632,9 +39851,13 @@
       requestForegroundRemoteSyncCheck,
       scheduleForegroundRemoteSyncRetry,
       clearForegroundRemoteSyncRetry,
+      getForegroundRemoteSyncRetryOwnerToken: () =>
+        foregroundRemoteSyncRetryOwnerToken,
       getForegroundRemoteSyncRetryRemainingMs,
       markPendingForegroundRemoteSyncRequest,
       getPendingForegroundRemoteSyncRequest,
+      getPendingForegroundRemoteSyncTerminalRecord:
+        readPendingForegroundRemoteSyncTerminalRecord,
       isTerminalForegroundRemoteSyncSoftBlock,
       clearPendingForegroundRemoteSyncSoftBlock,
       markPendingForegroundRemoteSyncAttempt,

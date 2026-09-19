@@ -1434,7 +1434,7 @@ const testDirectFollowupDoesNotClearNewerRetryAfterResultPhase = async () => {
       r2Pending = first.hooks.markPendingForegroundRemoteSyncRequest({
         reason: "visibility_visible",
         triggerSource: "foreground_resume",
-        remoteUpdatedAt: "2026-08-27T05:26:20Z",
+        remoteUpdatedAt: "2026-08-27T05:25:29Z",
         now: 1760001001000,
       });
       first.hooks.setLastRemoteProbeInfo({
@@ -1487,6 +1487,83 @@ const testDirectFollowupDoesNotClearNewerRetryAfterResultPhase = async () => {
   await r2Timer.callback();
   assert.equal(r2Calls, 1, "Result Phase 后 R2 retry 必须实际执行一次。");
   assert.equal(first.hooks.getPendingForegroundRemoteSyncRequest(), null);
+};
+
+const testForegroundRetryOwnerTokenProtectsReplacement = async () => {
+  const { hooks, sandbox } = createHarness();
+  const timers = [];
+  const clearedTimerIds = [];
+  sandbox.setTimeout = (callback, delayMs) => {
+    const timerId = timers.length + 1;
+    timers.push({ callback, delayMs, timerId });
+    return timerId;
+  };
+  sandbox.window.setTimeout = sandbox.setTimeout;
+  sandbox.clearTimeout = (timerId) => {
+    clearedTimerIds.push(timerId);
+  };
+  sandbox.window.clearTimeout = sandbox.clearTimeout;
+
+  const remoteUpdatedAt = "2026-08-27T05:25:29Z";
+  const r1 = hooks.markPendingForegroundRemoteSyncRequest({
+    reason: "pageshow",
+    triggerSource: "foreground_resume",
+    remoteUpdatedAt,
+    now: 1760001000000,
+  });
+  const r1Schedule = hooks.scheduleForegroundRemoteSyncRetry("r1_retry", {
+    expectedPendingRequest: r1,
+    preferredDelayMs: 600,
+  });
+  assert.equal(r1Schedule.status, "scheduled");
+  assert.ok(
+    r1Schedule.ownerToken,
+    "scheduled retry must return an immutable owner token for later cleanup"
+  );
+  assert.equal(Object.isFrozen(r1Schedule.ownerToken), true);
+  assert.equal(
+    hooks.clearForegroundRemoteSyncRetry(r1Schedule.ownerToken),
+    true,
+    "the current Result Phase owner may clear its own retry"
+  );
+
+  const r1ReplacementSchedule = hooks.scheduleForegroundRemoteSyncRetry(
+    "r1_retry_replacement",
+    {
+      expectedPendingRequest: r1,
+      preferredDelayMs: 600,
+    }
+  );
+  assert.equal(r1ReplacementSchedule.status, "scheduled");
+
+  const r2 = hooks.markPendingForegroundRemoteSyncRequest({
+    reason: "visibility_visible",
+    triggerSource: "foreground_resume",
+    remoteUpdatedAt,
+    now: 1760001001000,
+  });
+  const r2Schedule = hooks.scheduleForegroundRemoteSyncRetry("r2_retry", {
+    expectedPendingRequest: r2,
+    preferredDelayMs: 1200,
+    requestForegroundRemoteSyncCheck: async () => ({
+      status: "success",
+      action: "pulled",
+    }),
+  });
+  assert.equal(r2Schedule.status, "scheduled");
+  const r2Timer = timers.at(-1);
+  assert.ok(r2Timer);
+
+  assert.equal(
+    hooks.clearForegroundRemoteSyncRetry(r1ReplacementSchedule.ownerToken),
+    false,
+    "an older Result Phase owner must not clear the replacement retry"
+  );
+  assert.equal(clearedTimerIds.includes(r2Timer.timerId), false);
+  assert.ok(hooks.getForegroundRemoteSyncRetryRemainingMs() > 0);
+
+  await r2Timer.callback();
+  assert.equal(hooks.getPendingForegroundRemoteSyncRequest(), null);
 };
 
 const testDirectFollowupDoesNotClearNewerGenerationForSameRequest = async () => {
@@ -1764,6 +1841,130 @@ const testTerminalWriterRetainsRegistrationIdentityAcrossConcurrentClears = () =
       Array.from(sharedStore.keys()).reverse();
     assert.equal(freshAfterCompression.hooks.getPendingForegroundRemoteSyncRequest(), null);
   }
+};
+
+const testConcurrentTerminalKindsUseDeterministicMerge = () => {
+  const sharedStore = new Map();
+  const first = createHarness({ sharedStore });
+  const second = createHarness({ sharedStore });
+  const fresh = createHarness({ sharedStore });
+  const pending = first.hooks.markPendingForegroundRemoteSyncRequest({
+    reason: "pageshow",
+    triggerSource: "foreground_resume",
+    remoteUpdatedAt: "2026-08-27T05:25:29Z",
+    now: 1760001000000,
+  });
+  const recordKey =
+    PENDING_FOREGROUND_REMOTE_SYNC_RECORD_KEY_PREFIX +
+    encodeURIComponent(pending.requestId);
+
+  const originalGetValues = [
+    first.sandbox.GM_getValue,
+    second.sandbox.GM_getValue,
+  ];
+  const originalDeleteValues = [
+    first.sandbox.GM_deleteValue,
+    second.sandbox.GM_deleteValue,
+  ];
+  const sandboxes = [first, second];
+  sandboxes.forEach(({ sandbox }, index) => {
+    sandbox.GM_getValue = (key, defaultValue) => {
+      if (
+        String(key).startsWith(PENDING_FOREGROUND_REMOTE_SYNC_TERMINAL_KEY_PREFIX)
+      ) {
+        return defaultValue;
+      }
+      return originalGetValues[index](key, defaultValue);
+    };
+    sandbox.GM_deleteValue = (key) => {
+      if (key === recordKey) {
+        return;
+      }
+      originalDeleteValues[index](key);
+    };
+  });
+
+  const firstClear = first.hooks.clearPendingForegroundRemoteSyncRequest(
+    pending,
+    "first_context_completed",
+    { terminalKind: "completed" }
+  );
+  const secondClear = second.hooks.clearPendingForegroundRemoteSyncRequest(
+    pending,
+    "second_context_cancelled",
+    { terminalKind: "cancelled" }
+  );
+
+  sandboxes.forEach(({ sandbox }, index) => {
+    sandbox.GM_getValue = originalGetValues[index];
+    sandbox.GM_deleteValue = originalDeleteValues[index];
+  });
+  first.sandbox.GM_deleteValue(recordKey);
+
+  assert.equal(firstClear.status, "retained");
+  assert.equal(secondClear.status, "retained");
+  const terminal = fresh.hooks.getPendingForegroundRemoteSyncTerminalRecord(
+    pending.requestId
+  );
+  assert.ok(terminal, "the merged terminal fence must remain readable");
+  assert.equal(
+    terminal.terminalKind,
+    "completed",
+    "completed must deterministically outrank a concurrent cancelled terminal"
+  );
+  assert.equal(terminal.pending.registrationClock, 1);
+  assert.equal(fresh.hooks.getPendingForegroundRemoteSyncRequest(), null);
+
+  const terminalKeys = Array.from(sharedStore.keys()).filter((key) =>
+    String(key).startsWith(PENDING_FOREGROUND_REMOTE_SYNC_TERMINAL_KEY_PREFIX)
+  );
+  assert.ok(terminalKeys.length >= 2, "both concurrent terminal candidates must be retained");
+  terminalKeys.forEach((key, index) => {
+    const value = sharedStore.get(key);
+    sharedStore.set(key, {
+      ...value,
+      terminalAt: index === 0 ? 1 : 9999999999999,
+    });
+  });
+  fresh.sandbox.GM_listValues = () =>
+    Array.from(sharedStore.keys()).reverse();
+  const reversedTerminal = fresh.hooks.getPendingForegroundRemoteSyncTerminalRecord(
+    pending.requestId
+  );
+  assert.equal(reversedTerminal.terminalKind, "completed");
+  assert.equal(reversedTerminal.pending.registrationClock, 1);
+
+  fresh.hooks.markPendingForegroundRemoteSyncRequest({
+    reason: "new_observation_after_terminal_compaction",
+    triggerSource: "foreground_resume",
+    remoteUpdatedAt: "2026-08-27T05:26:29Z",
+    now: 1760001002000,
+  });
+  const candidateKeysAfterPrune = Array.from(sharedStore.keys()).filter(
+    (key) =>
+      String(key).startsWith(PENDING_FOREGROUND_REMOTE_SYNC_TERMINAL_KEY_PREFIX) &&
+      String(key).includes(":candidate:")
+  );
+  assert.ok(
+    candidateKeysAfterPrune.length >= 1,
+    "terminal compaction must retain immutable winner evidence"
+  );
+  const winnerEvidence = sharedStore.get(candidateKeysAfterPrune[0]);
+  const canonicalKey =
+    PENDING_FOREGROUND_REMOTE_SYNC_TERMINAL_KEY_PREFIX +
+    encodeURIComponent(pending.requestId);
+  fresh.sandbox.GM_setValue(canonicalKey, {
+    ...winnerEvidence,
+    terminalKind: "cancelled",
+    terminalReason: "late_weaker_mirror",
+    terminalAt: 1,
+  });
+  assert.equal(
+    fresh.hooks.getPendingForegroundRemoteSyncTerminalRecord(pending.requestId)
+      .terminalKind,
+    "completed",
+    "a late weaker canonical write must not erase retained terminal evidence"
+  );
 };
 
 const testCancelledForegroundRequestCannotBeResurrectedByLateWrites = () => {
@@ -3010,9 +3211,11 @@ const testCollectedS1pLogsIncludeRuntimeContext = () => {
   await testCancelledOldRecoveryCannotReplaceNewerRetry();
   await testRetainedSupersededResultCannotReplaceNewerRetry();
   await testDirectFollowupDoesNotClearNewerRetryAfterResultPhase();
+  await testForegroundRetryOwnerTokenProtectsReplacement();
   await testDirectFollowupDoesNotClearNewerGenerationForSameRequest();
   testMissingV3RegistrationIdentityFailsClosedButLegacyV2StillSettles();
   testTerminalWriterRetainsRegistrationIdentityAcrossConcurrentClears();
+  testConcurrentTerminalKindsUseDeterministicMerge();
   testCancelledForegroundRequestCannotBeResurrectedByLateWrites();
   testCancelledForegroundRequestKeepsConcurrentNewRegistration();
   testCompletedForegroundRequestCannotBeResurrectedByLateSettlement();

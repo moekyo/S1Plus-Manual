@@ -1027,7 +1027,9 @@ const testDisplaySessionCoalescesPushVerification = () => {
   );
 
   store.delete(BACKGROUND_SYNC_DEBOUNCE_STATE_KEY);
-  hooks.clearForegroundRemoteSyncRetry();
+  hooks.clearForegroundRemoteSyncRetry(
+    hooks.getForegroundRemoteSyncRetryOwnerToken()
+  );
   hooks.setLastAutoSyncIndicatorDisplaySession({
     direction: "push",
     source: "background_push",
@@ -1062,7 +1064,9 @@ const testDisplaySessionCoalescesPushVerification = () => {
     "自动同步：待命",
     "静默等值二次确认不应继续显示旧的等待确认文案。"
   );
-  hooks.clearForegroundRemoteSyncRetry();
+  hooks.clearForegroundRemoteSyncRetry(
+    hooks.getForegroundRemoteSyncRetryOwnerToken()
+  );
   hooks.clearLastAutoSyncIndicatorDisplaySession();
 };
 
@@ -1113,7 +1117,9 @@ const testPullRetryKeepsCloudDirectionOverLocalPending = () => {
     "自动同步：云端更新待拉取"
   );
 
-  hooks.clearForegroundRemoteSyncRetry();
+  hooks.clearForegroundRemoteSyncRetry(
+    hooks.getForegroundRemoteSyncRetryOwnerToken()
+  );
   store.delete(BACKGROUND_SYNC_DEBOUNCE_STATE_KEY);
 };
 
