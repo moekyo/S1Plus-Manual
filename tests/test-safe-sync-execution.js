@@ -15,6 +15,8 @@ const STARTUP_SYNC_LOCK_KEY = "s1p_startup_sync_lock";
 const FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY =
   "s1p_foreground_followup_sync_lock";
 const PENDING_AUTO_SYNC_KEY = "s1p_pending_auto_sync_request";
+const PENDING_FOREGROUND_REMOTE_SYNC_KEY =
+  "s1p_pending_foreground_remote_sync_request";
 const DEFERRED_STARTUP_SYNC_KEY = "s1p_deferred_startup_sync";
 const STARTUP_AUTO_SYNC_LAST_TS_KEY = "s1p_startup_auto_sync_last_ts";
 const AUTO_SYNC_CONFLICT_PAUSE_KEY = "s1p_auto_sync_conflict_pause";
@@ -240,6 +242,80 @@ const testRunningSyncReleasesBeforeResultHandling = async () => {
   });
 };
 
+const testRunningSyncSkipsTransactionWhenPageStartsUnloading = async () => {
+  const { hooks } = createHarness();
+  const calls = [];
+  const lifecycleAdapter = hooks.s1pCreateSyncLifecycleAdapter({
+    runCheckpoint: () => ({ status: "completed" }),
+    // The scheduler may settle its own flag in this microtask; the Running
+    // Sync lifecycle fence must remain closed until pageshow/recovery.
+    scheduleMicrotask: (callback) => callback(),
+    schedulePostUnloadRecovery: () => {},
+  });
+
+  const result = await hooks.runRunningSync({
+    mode: "background",
+    lockAdapter: {
+      acquire: async () => {
+        calls.push("lock:acquire");
+        lifecycleAdapter.handle("pagehide", { persisted: false });
+        return true;
+      },
+      startHeartbeat: () => calls.push("heartbeat:start"),
+      stopHeartbeat: () => calls.push("heartbeat:stop"),
+      release: (reason) => calls.push(`lock:release:${reason}`),
+    },
+    runTransaction: async () => {
+      calls.push("transaction:run");
+      return { status: "success", action: "pushed" };
+    },
+    handleResult: async () => calls.push("result:handle"),
+  });
+
+  assert.deepStrictEqual(toPlainObject(result), {
+    status: "skipped",
+    reason: "page_unloading_before_transaction",
+  });
+  assert.deepStrictEqual(calls, [
+    "lock:acquire",
+    "lock:release:page_unloading_before_transaction",
+  ]);
+};
+
+const testRunningSyncDoesNotAttemptAcquireWhilePageIsUnloading = async () => {
+  const { hooks } = createHarness();
+  const calls = [];
+  const lifecycleAdapter = hooks.s1pCreateSyncLifecycleAdapter({
+    runCheckpoint: () => ({ status: "completed" }),
+    scheduleMicrotask: () => {},
+    schedulePostUnloadRecovery: () => {},
+  });
+  await lifecycleAdapter.handle("pagehide", { persisted: false });
+
+  const result = await hooks.runRunningSync({
+    mode: "background",
+    lockAdapter: {
+      acquire: async () => {
+        calls.push("lock:acquire");
+        return true;
+      },
+      startHeartbeat: () => calls.push("heartbeat:start"),
+      stopHeartbeat: () => calls.push("heartbeat:stop"),
+      release: () => calls.push("lock:release"),
+    },
+    runTransaction: async () => {
+      calls.push("transaction:run");
+      return { status: "success" };
+    },
+  });
+
+  assert.deepStrictEqual(toPlainObject(result), {
+    status: "skipped",
+    reason: "page_unloading",
+  });
+  assert.deepStrictEqual(calls, []);
+};
+
 const testRunningSyncKeepsLockReleasedWhenResultHandlingFails = async () => {
   const { hooks } = createHarness();
   let lockHeld = false;
@@ -268,6 +344,14 @@ const testRunningSyncKeepsLockReleasedWhenResultHandlingFails = async () => {
   );
 
   assert.equal(lockHeld, false);
+  assert.ok(
+    hooks.s1pBuildDiagnosticExport().events.some(
+      (entry) =>
+        entry.event === "sync.cleanup_failed" &&
+        entry.reason === "result_handling_failed"
+    ),
+    "结果处理异常必须进入结构化诊断。"
+  );
 };
 
 const testRunningSyncContinuesResultHandlingWhenAfterReleaseFails = async () => {
@@ -318,6 +402,14 @@ const testRunningSyncContinuesResultHandlingWhenAfterReleaseFails = async () => 
     status: "success",
     action: "pushed",
   });
+  assert.ok(
+    hooks.s1pBuildDiagnosticExport().events.some(
+      (entry) =>
+        entry.event === "sync.cleanup_failed" &&
+        entry.reason === "after_release_failed"
+    ),
+    "锁后清理异常必须进入结构化诊断。"
+  );
 };
 
 const testRunningSyncContinuesResultHandlingWhenHeartbeatStopFails = async () => {
@@ -370,6 +462,62 @@ const testRunningSyncContinuesResultHandlingWhenHeartbeatStopFails = async () =>
     status: "success",
     action: "no_change",
   });
+  assert.ok(
+    hooks.s1pBuildDiagnosticExport().events.some(
+      (entry) =>
+        entry.event === "sync.cleanup_failed" &&
+        entry.reason === "heartbeat_stop_failed"
+    ),
+    "停止心跳异常必须进入结构化诊断。"
+  );
+};
+
+const testRunningSyncContinuesResultHandlingWhenLockReleaseThrows = async () => {
+  const { hooks } = createHarness();
+  const calls = [];
+  const result = await hooks.runRunningSync({
+    mode: "background",
+    lockAdapter: {
+      acquire: async () => {
+        calls.push("lock:acquire");
+        return true;
+      },
+      startHeartbeat: () => calls.push("heartbeat:start"),
+      stopHeartbeat: () => calls.push("heartbeat:stop"),
+      release: () => {
+        calls.push("lock:release");
+        throw new Error("lock release call failed");
+      },
+    },
+    runTransaction: async () => {
+      calls.push("transaction:run");
+      return { status: "success", action: "pushed" };
+    },
+    afterRelease: async () => calls.push("afterRelease"),
+    handleResult: async () => calls.push("result:handle"),
+  });
+
+  assert.deepStrictEqual(calls, [
+    "lock:acquire",
+    "heartbeat:start",
+    "transaction:run",
+    "heartbeat:stop",
+    "lock:release",
+    "afterRelease",
+    "result:handle",
+  ]);
+  assert.deepStrictEqual(toPlainObject(result), {
+    status: "success",
+    action: "pushed",
+  });
+  assert.ok(
+    hooks.s1pBuildDiagnosticExport().events.some(
+      (entry) =>
+        entry.event === "lock.release_failed" &&
+        entry.reason === "lock_release_exception"
+    ),
+    "释放调用异常必须保留锁终态不确定性的证据。"
+  );
 };
 
 const testRunningSyncReleasesLockWhenHeartbeatStartFails = async () => {
@@ -720,7 +868,7 @@ const testAcquireFailurePropagatesWithoutStartingSync = async () => {
   assert.deepStrictEqual(calls, ["lock:acquire"]);
 };
 
-const testManualOverridePreemptsAutoSyncLocks = async () => {
+const testManualOverridePreservesActiveSyncLocksAndPendingWork = async () => {
   const { hooks, store } = createHarness();
   const now = Date.now();
 
@@ -757,6 +905,15 @@ const testManualOverridePreemptsAutoSyncLocks = async () => {
     sources: { read_progress: 1 },
     threadIds: ["123"],
   });
+  store.set(PENDING_FOREGROUND_REMOTE_SYNC_KEY, {
+    version: 1,
+    requestId: "foreground-request",
+    reason: "pageshow",
+    triggerSource: "foreground_resume",
+    remoteUpdatedAt: "2026-08-27T05:25:29Z",
+    createdAt: now,
+    lastSeenAt: now,
+  });
   hooks.seedSyncRuntimeStateForManualOverrideTest({
     hasPendingBackgroundSync: true,
     hasLocalRetryTimer: true,
@@ -769,32 +926,96 @@ const testManualOverridePreemptsAutoSyncLocks = async () => {
     foregroundFollowUpSyncLockHeartbeatActive: true,
   });
 
-  hooks.preemptActiveSyncForManualOverride("force_pull");
+  const acquired = await hooks.acquireManualSyncLock({
+    preemptActiveSync: true,
+    operation: "force_pull",
+  });
 
-  assert.equal(store.has(MANUAL_SYNC_LOCK_KEY), false);
-  assert.equal(store.has(BACKGROUND_SYNC_LOCK_KEY), false);
-  assert.equal(store.has(STARTUP_SYNC_LOCK_KEY), false);
-  assert.equal(store.has(FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY), false);
-  assert.equal(store.has(GLOBAL_SYNC_LOCK_KEY), false);
-  assert.equal(store.has(PENDING_AUTO_SYNC_KEY), false);
+  assert.equal(acquired, false);
+  assert.equal(store.has(MANUAL_SYNC_LOCK_KEY), true);
+  assert.equal(store.has(BACKGROUND_SYNC_LOCK_KEY), true);
+  assert.equal(store.has(STARTUP_SYNC_LOCK_KEY), true);
+  assert.equal(store.has(FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY), true);
+  assert.equal(store.has(GLOBAL_SYNC_LOCK_KEY), true);
+  assert.equal(store.has(PENDING_AUTO_SYNC_KEY), true);
+  assert.equal(store.has(PENDING_FOREGROUND_REMOTE_SYNC_KEY), true);
   const runtimeState = hooks.getBackgroundAutoSyncRuntimeStateForTest();
-  assert.equal(runtimeState.hasPendingBackgroundSync, false);
-  assert.equal(runtimeState.hasLocalRetryTimer, false);
-  assert.equal(runtimeState.isBackgroundAutoSyncInProgress, false);
-  assert.equal(runtimeState.isInitialSyncInProgress, false);
-  assert.equal(runtimeState.backgroundSyncRetryAttempts, 0);
-  assert.equal(runtimeState.manualSyncLockHeartbeatActive, false);
-  assert.equal(runtimeState.backgroundSyncLockHeartbeatActive, false);
-  assert.equal(runtimeState.startupSyncLockHeartbeatActive, false);
-  assert.equal(runtimeState.foregroundFollowUpSyncLockHeartbeatActive, false);
+  assert.equal(runtimeState.hasPendingBackgroundSync, true);
+  assert.equal(runtimeState.hasLocalRetryTimer, true);
+  assert.equal(runtimeState.isBackgroundAutoSyncInProgress, true);
+  assert.equal(runtimeState.isInitialSyncInProgress, true);
+  assert.equal(runtimeState.backgroundSyncRetryAttempts, 7);
+  assert.equal(runtimeState.manualSyncLockHeartbeatActive, true);
+  assert.equal(runtimeState.backgroundSyncLockHeartbeatActive, true);
+  assert.equal(runtimeState.startupSyncLockHeartbeatActive, true);
+  assert.equal(runtimeState.foregroundFollowUpSyncLockHeartbeatActive, true);
+  hooks.seedSyncRuntimeStateForManualOverrideTest({});
+};
+
+const testInitialSetupPreemptionPreservesForeignManualLock = async () => {
+  const { hooks, store } = createHarness();
+  const now = Date.now();
+  const foreignManualLock = {
+    owner: "other-manual-tab",
+    timestamp: now,
+  };
+  const foreignGlobalLock = {
+    owner: "other-manual-tab",
+    mode: "manual",
+    timestamp: now,
+    ttlMs: 3 * 60 * 1000,
+  };
+  store.set(MANUAL_SYNC_LOCK_KEY, foreignManualLock);
+  store.set(GLOBAL_SYNC_LOCK_KEY, foreignGlobalLock);
 
   const acquired = await hooks.acquireManualSyncLock({
     preemptActiveSync: true,
-    operation: "force_push",
+    preemptScope: "automatic_only",
+    operation: "initial_setup_manual_sync",
   });
-  assert.equal(acquired, true);
-  assert.ok(store.get(MANUAL_SYNC_LOCK_KEY));
-  assert.equal(store.get(GLOBAL_SYNC_LOCK_KEY).mode, "manual");
+
+  assert.equal(acquired, false);
+  assert.deepEqual(store.get(MANUAL_SYNC_LOCK_KEY), foreignManualLock);
+  assert.deepEqual(store.get(GLOBAL_SYNC_LOCK_KEY), foreignGlobalLock);
+};
+
+const testInitialSetupPreservesForeignAutomaticLocks = async () => {
+  const { hooks, store } = createHarness();
+  const now = Date.now();
+  store.set(BACKGROUND_SYNC_LOCK_KEY, {
+    owner: "other-background-tab",
+    timestamp: now,
+  });
+  store.set(STARTUP_SYNC_LOCK_KEY, {
+    owner: "other-startup-tab",
+    timestamp: now,
+  });
+  store.set(FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY, {
+    owner: "other-foreground-tab",
+    timestamp: now,
+  });
+  store.set(GLOBAL_SYNC_LOCK_KEY, {
+    owner: "other-background-tab",
+    mode: "background",
+    timestamp: now,
+    ttlMs: 45 * 1000,
+  });
+
+  const acquired = await hooks.acquireManualSyncLock({
+    preemptActiveSync: true,
+    preemptScope: "automatic_only",
+    operation: "initial_setup_manual_sync",
+  });
+
+  assert.equal(acquired, false);
+  assert.equal(store.get(BACKGROUND_SYNC_LOCK_KEY)?.owner, "other-background-tab");
+  assert.equal(store.get(STARTUP_SYNC_LOCK_KEY)?.owner, "other-startup-tab");
+  assert.equal(
+    store.get(FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY)?.owner,
+    "other-foreground-tab"
+  );
+  assert.equal(store.get(GLOBAL_SYNC_LOCK_KEY)?.owner, "other-background-tab");
+  assert.equal(store.has(MANUAL_SYNC_LOCK_KEY), false);
 };
 
 const testManualOverrideCancelsRemoteRetryBackoff = async () => {
@@ -1460,6 +1681,14 @@ const testPhase3CallSitesUseDedicatedHelpers = () => {
     "手动同步未接入统一完成日志。"
   );
   expectMatch(
+    /const handleManualSync = async[\s\S]*?acquireManualSyncLock\(\{[\s\S]*?preemptActiveSync:\s*isInitialSetup[\s\S]*?preemptScope:\s*isInitialSetup\s*\?\s*SYNC_PREEMPT_SCOPE_AUTOMATIC_ONLY/m,
+    "首次设置同步应声明 automatic-only intent，但仍必须服从执行锁互斥。"
+  );
+  expectMatch(
+    /const noteManualSuccess = \([\s\S]*?settlePendingForegroundRemoteSyncRequestIfCovered\([\s\S]*?pendingForegroundRemoteSyncAtStart/m,
+    "普通手动同步成功后必须按启动时捕获的 foreground intent generation 结算。"
+  );
+  expectMatch(
     /const handleForcePush = async[\s\S]*?scopeLabel: "强制推送"/m,
     "强制推送未接入统一完成日志。"
   );
@@ -1490,9 +1719,12 @@ const testPhase3CallSitesUseDedicatedHelpers = () => {
   await testForegroundFollowUpUsesDedicatedExecutionMode();
   await testForegroundFollowUpUsesShortDedicatedLock();
   await testRunningSyncReleasesBeforeResultHandling();
+  await testRunningSyncSkipsTransactionWhenPageStartsUnloading();
+  await testRunningSyncDoesNotAttemptAcquireWhilePageIsUnloading();
   await testRunningSyncKeepsLockReleasedWhenResultHandlingFails();
   await testRunningSyncContinuesResultHandlingWhenAfterReleaseFails();
   await testRunningSyncContinuesResultHandlingWhenHeartbeatStopFails();
+  await testRunningSyncContinuesResultHandlingWhenLockReleaseThrows();
   await testRunningSyncReleasesLockWhenHeartbeatStartFails();
   await testBackgroundIterationReleasesPersistedLocksBeforePendingResult();
   await testBackgroundResultPolicyWritesConflictPauseAfterLockRelease();
@@ -1502,7 +1734,9 @@ const testPhase3CallSitesUseDedicatedHelpers = () => {
   await testOwnershipVerificationFailureRollsBackOwnedModeLock();
   await testLockUnavailableCallbackFailurePropagatesWithoutStartingSync();
   await testAcquireFailurePropagatesWithoutStartingSync();
-  await testManualOverridePreemptsAutoSyncLocks();
+  await testManualOverridePreservesActiveSyncLocksAndPendingWork();
+  await testInitialSetupPreemptionPreservesForeignManualLock();
+  await testInitialSetupPreservesForeignAutomaticLocks();
   await testManualOverrideCancelsRemoteRetryBackoff();
   await testBeforePerformCanShortCircuitSafely();
   await testLockUnavailableSkipsWithoutHeartbeat();

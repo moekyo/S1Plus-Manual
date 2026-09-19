@@ -124,6 +124,50 @@ const darkMediaBlock = sourceCode.slice(darkRootStart, darkRootEnd);
   assert.ok(darkMediaBlock.includes(needle), message);
 });
 
+[
+  [
+    "--s1p-first-level-glass-confirm-bg: linear-gradient(",
+    "浅色一级确认弹窗应使用独立的 prompt 渐变材质。",
+  ],
+  [
+    "--s1p-first-level-glass-confirm-filter: blur(14px) saturate(1.04);",
+    "浅色一级确认弹窗应使用独立的 prompt 磨砂滤镜。",
+  ],
+  [
+    "--s1p-first-level-glass-confirm-overlay: rgba(16, 35, 79, 0.14);",
+    "浅色一级确认弹窗应使用独立的 prompt backdrop。",
+  ],
+  [
+    "0 22px 54px rgba(16, 35, 79, 0.22)",
+    "浅色一级确认弹窗应使用独立的 prompt 深度阴影。",
+  ],
+  [
+    "inset 0 1px 0 rgba(255, 255, 255, 0.86)",
+    "浅色一级确认弹窗应保留 prompt 玻璃高光。",
+  ],
+].forEach(([needle, message]) => expectIncludes(needle, message));
+
+[
+  [
+    "--s1p-first-level-glass-confirm-bg: linear-gradient(",
+    "深色一级确认弹窗应使用独立校准的 prompt 渐变材质。",
+  ],
+  [
+    "--s1p-first-level-glass-confirm-filter: blur(14px) saturate(1.03);",
+    "深色一级确认弹窗应使用独立校准的 prompt 磨砂滤镜。",
+  ],
+  [
+    "--s1p-first-level-glass-confirm-overlay: rgba(2, 6, 23, 0.44);",
+    "深色一级确认弹窗应使用独立校准的 prompt backdrop。",
+  ],
+  [
+    "0 24px 60px rgba(0, 0, 0, 0.52)",
+    "深色一级确认弹窗应使用独立校准的 prompt 深度阴影。",
+  ],
+].forEach(([needle, message]) => {
+  assert.ok(darkMediaBlock.includes(needle), message);
+});
+
 const getRuleBlock = (selector) => {
   const marker = `\n    ${selector} {`;
   const start = sourceCode.indexOf(marker);
@@ -179,13 +223,35 @@ assert.match(
   /--s1p-first-level-glass-bg:\s*var\(--s1p-first-level-glass-confirm-bg\);[\s\S]*--s1p-first-level-glass-filter:\s*var\(--s1p-first-level-glass-confirm-filter\);[\s\S]*--s1p-first-level-glass-shadow:\s*var\(--s1p-first-level-glass-confirm-shadow\);/,
   "一级确认弹窗预设应把统一玻璃材质变量映射到 confirm 主题变量。"
 );
-[
+assert.match(
+  confirmPresetBlock,
+  /border:\s*none;/,
+  "一级确认弹窗 prompt material 必须保持无边框。"
+);
+assert.doesNotMatch(
+  sourceCode,
+  /--s1p-first-level-glass-confirm-border:/,
+  "一级确认弹窗不得引入独立 border token。"
+);
+for (const needle of [
   "--s1p-first-level-glass-confirm-bg: var(--s1p-floating-surface-bg);",
   "--s1p-first-level-glass-confirm-filter: var(--s1p-floating-surface-filter);",
   "--s1p-first-level-glass-confirm-shadow: var(--s1p-floating-surface-shadow);",
-].forEach((needle) => {
-  expectIncludes(needle, "一级确认弹窗材质应继续复用 floating surface 主题变量。");
-});
+]) {
+  assert.equal(
+    sourceCode.includes(needle),
+    false,
+    "一级确认弹窗必须使用独立 prompt material，不能重新 alias generic floating surface。"
+  );
+}
+const confirmOverlayBlock = getRuleBlock(
+  ".s1p-fullscreen-modal.s1p-confirm-modal::before"
+);
+assert.match(
+  confirmOverlayBlock,
+  /background:\s*var\(--s1p-first-level-glass-confirm-overlay\);/,
+  "一级确认弹窗 backdrop 应消费 dedicated prompt overlay token。"
+);
 
 const dialogContentBlock = getRuleBlock(".s1p-dialog-content");
 assert.doesNotMatch(

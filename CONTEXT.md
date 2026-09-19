@@ -17,7 +17,7 @@ A mutual-exclusion guard stored in GM storage that prevents multiple tabs from e
 _Avoid_: mutex, semaphore
 
 **Running Sync**:
-An active sync worker — a Promise executing in a specific tab's JS context. Running sync is NOT transferable between tabs. If the worker's tab closes, the Promise is lost.
+An active sync worker — a Promise executing in a specific tab's JS context. Running sync is NOT transferable between tabs. If the worker's tab closes, the Promise is lost. A lock still waiting for ownership verification is a provisional acquisition and may be canceled safely by the lifecycle fence before any transaction starts.
 _Avoid_: in-flight sync, active sync (ambiguous with lock state)
 
 **Title Owner**:
@@ -76,12 +76,16 @@ _Avoid_: final state, outcome
 The deep module interface `s1pSyncResultPhasePolicy.handle(result, context)`. After Running Sync releases its mode and global Sync Locks, it turns the completed result into refresh, conflict-pause, retry, and notification intents. Background, daily startup, per-load, and foreground follow-up callers share this decision path; source-specific copy, modal content, and refresh adapters remain outside the module. A retry intent describes policy, while `retryResult.status` proves whether its adapter actually scheduled work; foreground consumers preserve retry state only for `scheduled` or `already_scheduled` results, while the background adapter reports explicit `scheduled`, `delegated`, or `blocked` outcomes.
 _Avoid_: result switch, post-sync UI handler
 
+**Foreground Pending Soft Block**:
+A durable foreground remote intent whose exact `requestId` and `remoteUpdatedAt` have produced a non-retryable `blocked + soft` result. It remains as an auditable fact, while recovery and repeated metadata probes are suppressed until a new local mutation, a newer remote version, or a successful explicit sync supplies new evidence. Retryable read-progress pending-write, debounce, and initialization-noise reasons remain separate and may continue their bounded retry.
+_Avoid_: stuck sync, global pause
+
 **Sync System Façade**:
 The final page-facing interface `s1pSyncSystem`. Page code uses `initialize()`, `recordLocalMutation()`, `handleLifecycle()`, `requestSync()`, and `readState()` to express sync intent without coordinating Sync Locks, Scheduler Owner leases, timers, generations, lifecycle support, Result Phase handling, or projection internals. `dispose()` is reserved for explicit host teardown such as tests or a future SPA remount; ordinary `pagehide` / `beforeunload` cleanup stays inside `handleLifecycle()` because the browser destroys the page context. The façade owns startup recovery ordering and routes semantic sync requests to the existing deep modules.
 _Avoid_: sync manager, sync service, global sync helpers
 
 **Ghost Running**:
-A title display of `[同步中...]` that appears when a tab sees a fresh sync lock but no live tab is actually executing sync. Caused by a worker tab closing without releasing its lock. Maximum duration: 45 seconds (lock TTL).
+A title display of `[同步中...]` that appears when a tab sees a fresh sync lock but no live tab is actually executing sync. It can still occur when a running worker disappears after its transaction starts; a worker that disappears during provisional lock acquisition is canceled and released by the lifecycle fence. Maximum duration: 45 seconds (lock TTL).
 _Avoid_: phantom sync, false running
 
 **Live Runner**:
@@ -104,6 +108,7 @@ _Avoid_: live-runner heartbeat, runner election
 - The **Scheduler Owner** manages the debounce timer independently from both **Sync Lock** and **Title Owner**
 - **Result Phases** can transfer between tabs; **Running Sync** cannot; **Pending Dirty** can be recovered by a new **Scheduler Owner**
 - The **Result Phase Policy** runs only after **Running Sync** releases its Sync Locks; callers consume its intents instead of switching on result status independently
+- A **Foreground Pending Soft Block** retains exact remote intent identity for diagnosis while suppressing non-retryable recovery loops; it is cleared only by new evidence or a successful explicit sync
 - Page callers cross the **Sync System Façade**; Pending Dirty Scheduler, lifecycle adapter, Running Sync, Result Phase Policy, and Sync Indicator State Projection remain internal modules
 - Sync and feature callers cross the **Core Business Data Interface**; only its private catalog maps logical kinds to storage and sync identities
 - Settings and modal callers cross the **Image Viewer Interface**; they do not inspect or mutate viewer lifecycle flags

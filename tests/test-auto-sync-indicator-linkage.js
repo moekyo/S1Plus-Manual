@@ -44,7 +44,11 @@ const BACKGROUND_SYNC_DEBOUNCE_STATE_KEY =
 const BACKGROUND_SYNC_LOCK_KEY = "s1p_background_sync_lock";
 const AUTO_SYNC_INDICATOR_STATE_KEY = "s1p_auto_sync_indicator_state";
 const PENDING_AUTO_SYNC_KEY = "s1p_pending_auto_sync_request";
+const PENDING_FOREGROUND_REMOTE_SYNC_KEY =
+  "s1p_pending_foreground_remote_sync_request";
 const STARTUP_SYNC_LOCK_KEY = "s1p_startup_sync_lock";
+const FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY =
+  "s1p_foreground_followup_sync_lock";
 const GLOBAL_SYNC_LOCK_KEY = "s1p_sync_global_lock";
 
 const expectMatch = (pattern, message) => {
@@ -120,14 +124,14 @@ const testSourceAwareTitlesAndMappings = () => {
       displayPhase: "running",
       displaySource: "daily_startup",
     }),
-    "自动同步：云端更新拉取中"
+    "自动同步：每日首次同步中"
   );
   assert.strictEqual(
     hooks.getAutoSyncIndicatorTitle({
       displayPhase: "running",
       displaySource: "foreground_followup",
     }),
-    "自动同步：云端更新拉取中"
+    "自动同步：回到前台检查中"
   );
   assert.strictEqual(
     hooks.getAutoSyncIndicatorDisplayKind({
@@ -826,14 +830,14 @@ const testForegroundFollowupLockDisplayDoesNotUseFullLockTtl = () => {
   );
 
   setForegroundState();
-  setStartupLocks(now - 5000);
+  setStartupLocks(now - 1000);
   resolvedState = toPlainObject(readNavbarProjection(hooks));
   assert.equal(resolvedState.displayPhase, "running");
   assert.equal(resolvedState.displaySource, "foreground_resume");
   assert.equal(
     hooks.getAutoSyncIndicatorTitle(resolvedState),
     "自动同步：回到前台检查中",
-    "新鲜 startup 锁仍应能展示正在运行，避免真实同步中没有反馈。"
+    "晚于上一终态的新鲜 startup 锁仍应展示正在运行，避免真实同步中没有反馈。"
   );
 
   setForegroundState({
@@ -857,6 +861,78 @@ const testForegroundFollowupLockDisplayDoesNotUseFullLockTtl = () => {
   assert.equal(
     hooks.getAutoSyncIndicatorTitle(resolvedState),
     "自动同步：正在检查云端更新"
+  );
+};
+
+const testNewerTerminalAuthoritySupersedesOlderForegroundLock = () => {
+  const { hooks, store } = createHarness();
+  const terminalTimestamp = Date.now();
+  const staleLockTimestamp = terminalTimestamp - 1000;
+  const terminalState = {
+    phase: "success",
+    timestamp: terminalTimestamp,
+    token: "terminal-pull",
+    source: "foreground_resume",
+    reason: "remote_changed_since_baseline",
+    operation: "pull",
+    lastResolvedPhase: "success",
+    lastResolvedTimestamp: terminalTimestamp,
+    lastResolvedSource: "foreground_resume",
+    lastResolvedReason: "remote_changed_since_baseline",
+  };
+  store.set(AUTO_SYNC_INDICATOR_STATE_KEY, terminalState);
+  store.set(GLOBAL_SYNC_LOCK_KEY, {
+    owner: "other-tab",
+    mode: "foreground_followup",
+    timestamp: staleLockTimestamp,
+    ttlMs: 45 * 1000,
+  });
+  store.set(FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY, {
+    owner: "other-tab",
+    timestamp: staleLockTimestamp,
+  });
+
+  let resolvedState = toPlainObject(readNavbarProjection(hooks));
+  assert.equal(
+    resolvedState.displayPhase,
+    "success",
+    "较旧但仍有效的 foreground 锁不能覆盖更新的终态结果。"
+  );
+  assert.notEqual(
+    hooks.getAutoSyncIndicatorDisplayKind(resolvedState),
+    "probe",
+    "旧锁不能让已完成的拉取重新显示成 probe。"
+  );
+
+  const activeProbeTimestamp = terminalTimestamp + 1000;
+  store.set(GLOBAL_SYNC_LOCK_KEY, {
+    owner: "other-tab",
+    mode: "foreground_followup",
+    timestamp: activeProbeTimestamp,
+    ttlMs: 45 * 1000,
+  });
+  store.set(FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY, {
+    owner: "other-tab",
+    timestamp: activeProbeTimestamp,
+  });
+  store.set(AUTO_SYNC_INDICATOR_STATE_KEY, {
+    ...terminalState,
+    phase: "running",
+    timestamp: activeProbeTimestamp,
+    source: "foreground_resume",
+    reason: "foreground_probe_in_flight",
+    operation: "probe",
+  });
+  resolvedState = toPlainObject(readNavbarProjection(hooks));
+  assert.equal(
+    resolvedState.displayPhase,
+    "running",
+    "更新的合法 foreground 锁仍必须显示真实运行态。"
+  );
+  assert.equal(
+    hooks.getAutoSyncIndicatorDisplayKind(resolvedState),
+    "probe",
+    "更新的合法 probe 不能被终态保护误隐藏。"
   );
 };
 
@@ -951,7 +1027,9 @@ const testDisplaySessionCoalescesPushVerification = () => {
   );
 
   store.delete(BACKGROUND_SYNC_DEBOUNCE_STATE_KEY);
-  hooks.clearForegroundRemoteSyncRetry();
+  hooks.clearForegroundRemoteSyncRetry(
+    hooks.getForegroundRemoteSyncRetryOwnerToken()
+  );
   hooks.setLastAutoSyncIndicatorDisplaySession({
     direction: "push",
     source: "background_push",
@@ -986,7 +1064,9 @@ const testDisplaySessionCoalescesPushVerification = () => {
     "自动同步：待命",
     "静默等值二次确认不应继续显示旧的等待确认文案。"
   );
-  hooks.clearForegroundRemoteSyncRetry();
+  hooks.clearForegroundRemoteSyncRetry(
+    hooks.getForegroundRemoteSyncRetryOwnerToken()
+  );
   hooks.clearLastAutoSyncIndicatorDisplaySession();
 };
 
@@ -1037,8 +1117,123 @@ const testPullRetryKeepsCloudDirectionOverLocalPending = () => {
     "自动同步：云端更新待拉取"
   );
 
-  hooks.clearForegroundRemoteSyncRetry();
+  hooks.clearForegroundRemoteSyncRetry(
+    hooks.getForegroundRemoteSyncRetryOwnerToken()
+  );
   store.delete(BACKGROUND_SYNC_DEBOUNCE_STATE_KEY);
+};
+
+const testUndecidedForegroundRemotePendingIsNeutral = () => {
+  const { hooks, store } = createHarness();
+  const now = Date.now();
+  const pending = hooks.markPendingForegroundRemoteSyncRequest({
+    reason: "pageshow",
+    triggerSource: "foreground_resume",
+    remoteUpdatedAt: "2026-09-01T20:05:44Z",
+    now,
+  });
+
+  assert.ok(pending);
+  assert.equal(store.has(PENDING_FOREGROUND_REMOTE_SYNC_KEY), true);
+
+  const pendingState = toPlainObject(
+    hooks.getAutoSyncRuntimePendingDisplayState(now)
+  );
+  assert.deepEqual(
+    pendingState,
+    {
+      hasPending: true,
+      source: "foreground_resume",
+      reason: "foreground_remote_update_pending",
+      operation: "sync",
+      sources: {},
+    },
+    "full sync 尚未裁决前，durable foreground remote awareness 必须保持中性。"
+  );
+
+  const resolvedState = toPlainObject(readNavbarProjection(hooks));
+  assert.equal(resolvedState.displayPhase, "pending");
+  assert.equal(
+    hooks.getAutoSyncIndicatorDisplayKind(resolvedState),
+    "sync",
+    "metadata probe/cross-context pending 不能提前显示 pull 箭头。"
+  );
+  assert.equal(
+    hooks.getAutoSyncIndicatorTitle(resolvedState),
+    "自动同步：回到前台检查待处理"
+  );
+
+  hooks.clearPendingForegroundRemoteSyncRequest(pending, "test_cleanup");
+
+  {
+    const { hooks, store } = createHarness();
+    const localDirtyAt = Date.now();
+    const localPending = hooks.markPendingForegroundRemoteSyncRequest({
+      reason: "pageshow",
+      triggerSource: "foreground_resume",
+      remoteUpdatedAt: "2026-09-01T20:05:44Z",
+      now: localDirtyAt,
+    });
+    store.set(BACKGROUND_SYNC_DEBOUNCE_STATE_KEY, {
+      version: 1,
+      generation: 1,
+      ownerTabId: "tab-a",
+      ownerLeaseUntil: localDirtyAt + 30000,
+      dueAt: localDirtyAt + 20000,
+      maxWaitUntil: localDirtyAt + 60000,
+      firstDirtyAt: localDirtyAt,
+      lastDirtyAt: localDirtyAt,
+      maxLastModified: localDirtyAt,
+      sources: { read_progress: 1 },
+      threadIds: ["2268704"],
+      reason: "debounced_read_progress",
+    });
+
+    const resolvedState = toPlainObject(readNavbarProjection(hooks));
+    assert.equal(resolvedState.displayPhase, "pending");
+    assert.equal(
+      hooks.getAutoSyncIndicatorDisplayKind(resolvedState),
+      "push",
+      "本地阅读进度进入 scheduler 后，中性 remote awareness 不能盖掉 push pending。"
+    );
+    assert.equal(
+      hooks.getAutoSyncIndicatorTitle(resolvedState),
+      "自动同步：阅读进度待推送"
+    );
+
+    hooks.clearPendingForegroundRemoteSyncRequest(localPending, "test_cleanup");
+    store.delete(BACKGROUND_SYNC_DEBOUNCE_STATE_KEY);
+  }
+
+  {
+    const { hooks } = createHarness();
+    const stalePending = hooks.markPendingForegroundRemoteSyncRequest({
+      reason: "pageshow",
+      triggerSource: "foreground_resume",
+      remoteUpdatedAt: "2026-09-01T20:05:44Z",
+      now: Date.now(),
+    });
+    hooks.setSyncBaselineState({
+      contentHash: "already-synced",
+      remoteUpdatedAt: "2026-09-01T20:05:45Z",
+    });
+    store.set(AUTO_SYNC_INDICATOR_STATE_KEY, {
+      ...toPlainObject(hooks.getAutoSyncIndicatorState()),
+      operation: "pull",
+    });
+
+    const resolvedState = toPlainObject(readNavbarProjection(hooks));
+    assert.equal(
+      hooks.getAutoSyncIndicatorDisplayKind(resolvedState),
+      "sync",
+      "已同步版本覆盖 pending observed version 时，遗留 remote awareness 只能保持中性。"
+    );
+    assert.ok(
+      hooks.getPendingForegroundRemoteSyncRequest(),
+      "版本覆盖只应降级展示，不能绕过 request generation 直接删除 durable recovery intent。"
+    );
+    hooks.clearPendingForegroundRemoteSyncRequest(stalePending, "test_cleanup");
+  }
 };
 
 const testSuccessDisplayKeepsDirectionalCompletion = () => {
@@ -1273,7 +1468,7 @@ const testBackgroundPushRunningRequiresCurrentLiveRunner = () => {
     "自动同步：阅读进度待推送"
   );
 
-  setBackgroundLocks(constants.BACKGROUND_SYNC_OWNER_ID);
+  setBackgroundLocks(constants.BACKGROUND_SYNC_OWNER_ID, now - 1000);
   resolvedState = toPlainObject(readNavbarProjection(hooks));
   assert.equal(
     resolvedState.displayPhase,
@@ -1337,8 +1532,8 @@ const testAutoSyncEntryPointsBindIndicatorSources = () => {
     "导航栏不能用完整同步锁 TTL 保持 running；锁展示应有更短的 stale 窗口。"
   );
   expectMatch(
-    /const indicatorOperation[\s\S]*?normalizeAutoSyncIndicatorOperation\(options\.indicatorOperation\)[\s\S]*?AUTO_SYNC_INDICATOR_OPERATION_PULL/,
-    "真正远端变化的前台补偿重试仍应默认按 pull 待拉取展示。"
+    /const indicatorOperation[\s\S]*?normalizeAutoSyncIndicatorOperation\(options\.indicatorOperation\)[\s\S]*?AUTO_SYNC_INDICATOR_OPERATION_SYNC/,
+    "尚未得到 canonical full-sync action 的前台补偿重试应默认保持中性 sync。"
   );
   expectMatch(
     /isEqualUpdatedAtProbeVerificationReason[\s\S]*?云端版本时间相同，正在执行前台二次确认同步检查/,
@@ -1512,8 +1707,10 @@ const testAutoSyncEntryPointsBindIndicatorSources = () => {
   testSyncIndicatorStateProjectionSurfaceContract();
   testTitleProjectionPhasePolicyBranches();
   testForegroundFollowupLockDisplayDoesNotUseFullLockTtl();
+  testNewerTerminalAuthoritySupersedesOlderForegroundLock();
   testDisplaySessionCoalescesPushVerification();
   testPullRetryKeepsCloudDirectionOverLocalPending();
+  testUndecidedForegroundRemotePendingIsNeutral();
   testSuccessDisplayKeepsDirectionalCompletion();
   testBackgroundDrainKeepsSuccessAfterPushVerification();
   testStalePendingAutoSyncRequestDoesNotDisplay();

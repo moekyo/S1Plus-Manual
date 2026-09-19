@@ -2,6 +2,7 @@
 "use strict";
 
 const assert = require("assert/strict");
+const vm = require("node:vm");
 const {
   createHarness: createBaseHarness,
 } = require("./s1plus-test-helpers");
@@ -137,10 +138,47 @@ const testExpandAllPersistsAndEmptyBufferRemovesSessionKey = () => {
   assert.equal(sessionStore.has(LOG_SESSION_STORAGE_KEY), false);
 };
 
+const testCollectorPreservesCrossRealmAndNestedErrors = () => {
+  const { hooks, sandbox } = createHarness();
+  installFakeConsole(sandbox);
+  hooks.startLogCollector();
+
+  const crossRealmError = vm.runInNewContext(
+    'Object.assign(new Error("cross-realm failure"), { name: "RemoteError" })'
+  );
+  sandbox.console.error("direct", crossRealmError);
+  sandbox.console.error("nested", { cause: crossRealmError });
+
+  const messages = hooks
+    .getDebugLogCollectorStateForTest()
+    .logBuffer.map((entry) => entry.message);
+  assert.match(
+    messages[0],
+    /direct RemoteError: cross-realm failure/,
+    "跨 realm Error 不应在 Debug 日志中退化成空对象。"
+  );
+  assert.match(
+    messages[1],
+    /nested .*RemoteError: cross-realm failure/,
+    "结构化参数内的跨 realm Error 也应保留错误详情。"
+  );
+
+  const hostile = {};
+  Object.defineProperty(hostile, "message", {
+    enumerable: true,
+    get() {
+      throw new Error("getter must not escape");
+    },
+  });
+  assert.doesNotThrow(() => sandbox.console.error("hostile", hostile));
+  hooks.stopLogCollector();
+};
+
 (async () => {
   testSessionRestoreSanitizesPayload();
   testStopDoesNotOverwriteExternalConsolePatch();
   testExpandAllPersistsAndEmptyBufferRemovesSessionKey();
+  testCollectorPreservesCrossRealmAndNestedErrors();
 
   console.log("[debug-log-collector] Debug log collector lifecycle verified.");
 })().catch((error) => {

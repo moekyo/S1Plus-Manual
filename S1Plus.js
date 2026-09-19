@@ -84,6 +84,70 @@
   const _originalConsole = {};
   const _consoleWrappers = {};
   const _consoleMethods = ["log", "warn", "error", "debug"];
+  const S1P_LOG_MAX_BYTES = 1024 * 1024;
+  const S1P_LOG_REPEAT_WINDOW_MS = 30000;
+  let s1pLogRestored = false;
+  let s1pDiagnosticConsoleWrite = false;
+  let s1pLogModuleFilter = "";
+  let s1pLogOperationFilter = "";
+  let s1pVerboseUntil = 0;
+  let s1pVerboseTimer = null;
+  let s1pDiagnosticsInitialized = false;
+  let s1pDiagnosticSequence = 0;
+  const S1P_DIAGNOSTIC_PAGE_NONCE = Math.random().toString(36).slice(2, 10);
+  let s1pLogLoss = { evicted: 0, truncated: 0, persistenceFailures: 0, collectionFailures: 0 };
+  const s1pFailedOperationIds = new Set();
+  const s1pSyncOperations = new Map();
+  const s1pLockRefusals = new Map();
+  const s1pObservedLocks = new Map();
+  const s1pLogEntrySizes = new Map();
+  let s1pPendingSyncTrace = null;
+  let s1pSyncTraceFlushTimer = null;
+  // A page lifecycle transition must fence the short lock-acquisition window.
+  // Running transactions keep their lease until their normal settlement/TTL.
+  let s1pSyncPageLifecycleUnloading = false;
+  let s1pSyncPageLifecycleGeneration = 0;
+  let s1pCancelPendingSyncLockAcquisitions = () => ({
+    status: "skipped",
+    reason: "lock_cancellation_not_ready",
+  });
+  const s1pIsSyncPageLifecycleUnloading = () =>
+    s1pSyncPageLifecycleUnloading === true;
+  const s1pSetSyncPageLifecycleUnloading = (
+    value,
+    reason = "",
+    { forceGeneration = false } = {}
+  ) => {
+    const unloading = value === true;
+    const stateChanged = s1pSyncPageLifecycleUnloading !== unloading;
+    s1pSyncPageLifecycleUnloading = unloading;
+    const generation =
+      stateChanged || forceGeneration
+        ? ++s1pSyncPageLifecycleGeneration
+        : s1pSyncPageLifecycleGeneration;
+    if (!unloading) {
+      return { status: "ready", reason: reason || "lifecycle_recovered", generation };
+    }
+    let cancellation = { status: "skipped", reason: "no_provisional_acquisition" };
+    try {
+      cancellation = s1pCancelPendingSyncLockAcquisitions({ reason, generation });
+    } catch (error) {
+      cancellation = { status: "failure", reason: "lock_cancellation_failed" };
+      try {
+        s1pRecordDiagnosticEvent("lock.acquisition_cancellation_failed", {
+          module: "sync.lock",
+          level: "error",
+          status: "failure",
+          reason: "lock_cancellation_failed",
+          message: "页面生命周期切换时取消临时锁失败",
+          details: { lifecycleReason: reason, lifecycleGeneration: generation, error },
+        });
+      } catch (_) {
+        // Diagnostics must never prevent the lifecycle fence from being set.
+      }
+    }
+    return { status: "unloading", reason: reason || "lifecycle_unload", generation, cancellation };
+  };
 
   const normalizeDebugConsoleState = (state) => {
     if (state === true) {
@@ -653,43 +717,122 @@
     schedulePostHashTargetAlignment();
   };
 
-  const formatLogArgument = (value, seen = new WeakSet()) => {
-    if (value instanceof Error) {
-      return value.stack || value.message || String(value);
+  const readLogFieldSafely = (value, field) => {
+    try {
+      return value[field];
+    } catch (_) {
+      return undefined;
     }
+  };
+
+  const readLogStringFieldSafely = (value, field) => {
+    const fieldValue = readLogFieldSafely(value, field);
+    if (fieldValue === undefined || fieldValue === null) return "";
+    try {
+      return String(fieldValue);
+    } catch (_) {
+      return "";
+    }
+  };
+
+  const readLogObjectBrandSafely = (value) => {
+    if (!value || typeof value !== "object") return "";
+    try {
+      return Object.prototype.toString.call(value);
+    } catch (_) {
+      return "";
+    }
+  };
+
+  const isLogDomLike = (value) => {
+    if (!value || typeof value !== "object") return false;
+    if (readLogStringFieldSafely(value, "outerHTML")) return true;
+    if (readLogStringFieldSafely(value, "nodeName")) return true;
+    const nodeType = readLogFieldSafely(value, "nodeType");
+    return typeof nodeType === "number" && Number.isFinite(nodeType);
+  };
+
+  const isBrandedLogError = (value) => {
+    if (!value || typeof value !== "object") return false;
+    try {
+      if (value instanceof Error) return true;
+    } catch (_) { }
+    const brand = readLogObjectBrandSafely(value);
+    return brand === "[object Error]" || brand === "[object DOMException]";
+  };
+
+  const hasStrongSyntheticLogErrorShape = (value) => {
+    if (!value || typeof value !== "object" || isLogDomLike(value)) {
+      return false;
+    }
+    const message = readLogStringFieldSafely(value, "message").trim();
+    if (!message) return false;
+    const name = readLogStringFieldSafely(value, "name").trim();
+    const stack = readLogStringFieldSafely(value, "stack").trim();
+    return Boolean(stack || name === "Error" || /(?:Error|Exception)$/.test(name));
+  };
+
+  const isLogErrorLike = (value) =>
+    isBrandedLogError(value) || hasStrongSyntheticLogErrorShape(value);
+
+  const formatLogErrorLike = (value) => {
+    const stack = readLogStringFieldSafely(value, "stack");
+    if (stack) return stack;
+    const name = readLogStringFieldSafely(value, "name");
+    const message = readLogStringFieldSafely(value, "message");
+    if (name && message) return `${name}: ${message}`;
+    if (message) return message;
+    if (name) return name;
+    try {
+      return String(value);
+    } catch (_) {
+      return "[Unserializable Error]";
+    }
+  };
+
+  const formatLogArgument = (value, seen = new WeakSet()) => {
     if (typeof value === "string") return value;
     if (value === null) return "null";
     if (value === undefined) return "undefined";
     if (typeof value === "bigint") return String(value) + "n";
     if (typeof value === "symbol") return String(value);
     if (typeof value === "function") {
-      return "[Function " + (value.name || "anonymous") + "]";
+      return (
+        "[Function " +
+        (readLogStringFieldSafely(value, "name") || "anonymous") +
+        "]"
+      );
     }
     if (typeof value !== "object") return String(value);
-    if (typeof Node !== "undefined" && value instanceof Node) {
-      return value.outerHTML || value.nodeName || String(value);
-    }
+    if (isBrandedLogError(value)) return formatLogErrorLike(value);
+    const outerHTML = readLogStringFieldSafely(value, "outerHTML");
+    if (outerHTML) return outerHTML;
+    const nodeName = readLogStringFieldSafely(value, "nodeName");
+    if (nodeName) return nodeName;
+    if (isLogErrorLike(value)) return formatLogErrorLike(value);
     try {
-      return JSON.stringify(value, (key, nestedValue) => {
+      const serialized = JSON.stringify(value, (key, nestedValue) => {
         if (typeof nestedValue === "bigint") return String(nestedValue) + "n";
         if (typeof nestedValue === "function") {
-          return "[Function " + (nestedValue.name || "anonymous") + "]";
+          return (
+            "[Function " +
+            (readLogStringFieldSafely(nestedValue, "name") || "anonymous") +
+            "]"
+          );
         }
-        if (nestedValue instanceof Error) {
-          return nestedValue.stack || nestedValue.message || String(nestedValue);
-        }
+        if (isLogErrorLike(nestedValue)) return formatLogErrorLike(nestedValue);
         if (nestedValue && typeof nestedValue === "object") {
           if (seen.has(nestedValue)) return "[Circular]";
           seen.add(nestedValue);
         }
         return nestedValue;
       });
-    } catch (error) {
-      try {
-        return String(value);
-      } catch (stringifyError) {
-        return "[Unserializable]";
-      }
+      if (serialized !== undefined) return serialized;
+    } catch (_) { }
+    try {
+      return String(value);
+    } catch (_) {
+      return "[Unserializable]";
     }
   };
 
@@ -697,7 +840,626 @@
     return Array.from(args || []).map((arg) => formatLogArgument(arg)).join(" ");
   };
 
+  // Diagnostics never retain live objects, credentials or forum content.
+  const s1pSanitizeLogValue = (input) => {
+    const seen = new WeakSet();
+    let budget = 16000;
+    let nodeBudget = 1000;
+    const cleanText = (value) => String(value)
+      .replace(/\b(?:github_pat_[\w]+|gh[pousr]_[\w]+)\b/g, "[REDACTED]")
+      .replace(/\b(Bearer|token)\s+[A-Za-z0-9._~+\/-]{8,}/gi, "$1 [REDACTED]")
+      .replace(/((?:authorization|password|secret|access_token|syncRemotePat|cookie)\s*[=:]\s*)[^\s,;]+/gi, "$1[REDACTED]")
+      .replace(/https?:\/\/[^\s"<>]+/g, (url) => {
+        try { const parsed = new URL(url); return parsed.origin + parsed.pathname; }
+        catch (_) { return "[URL]"; }
+      });
+    const visit = (value, depth = 0, key = "") => {
+      if (["__proto__", "constructor", "prototype"].includes(key)) return "[OMITTED]";
+      if (/^(?:.*(?:password|secret|authorization|cookie)|pat|syncRemotePat|access_?token|refresh_?token|token|headers|body|responseText|response|html|outerHTML|textContent|content|postText|title|raw|syncData|localData|remoteData)$/i.test(key)) return "[REDACTED]";
+      if (budget <= 0 || depth > 7 || --nodeBudget < 0) return "[TRUNCATED]";
+      if (value === null || typeof value === "boolean" || typeof value === "number") return value;
+      if (typeof value !== "object") {
+        const text = cleanText(value === undefined ? "undefined" : value);
+        const limit = Math.min(4096, budget);
+        budget -= Math.min(text.length, limit);
+        return text.length > limit ? text.slice(0, limit) + "[TRUNCATED]" : text;
+      }
+      if (seen.has(value)) return "[Circular]";
+      seen.add(value);
+      if (isLogErrorLike(value)) return visit(formatLogErrorLike(value), depth + 1);
+      if (isLogDomLike(value)) return "[DOM omitted]";
+      const result = Array.isArray(value) ? [] : Object.create(null);
+      const keys = Object.keys(value);
+      for (const child of keys.slice(0, 60)) {
+        if (["__proto__", "constructor", "prototype"].includes(child)) continue;
+        const descriptor = Object.getOwnPropertyDescriptor(value, child);
+        const safeValue = descriptor && "value" in descriptor ? descriptor.value : "[Getter omitted]";
+        const cleaned = visit(safeValue, depth + 1, child);
+        if (Array.isArray(result)) result.push(cleaned);
+        else result[child] = cleaned;
+        if (nodeBudget <= 0) {
+          if (Array.isArray(result)) result.push("[TRUNCATED]");
+          else result.s1pTruncated = "[TRUNCATED]";
+          break;
+        }
+      }
+      if (keys.length > 60) {
+        if (Array.isArray(result)) result.push("[TRUNCATED]");
+        else result.s1pTruncated = "[TRUNCATED]";
+      }
+      return result;
+    };
+    try { return visit(input); } catch (_) { return "[Unserializable]"; }
+  };
+
+  const s1pNewDiagnosticOperation = (module) =>
+    `s1p_${module}_${Date.now()}_${S1P_DIAGNOSTIC_PAGE_NONCE}_${++s1pDiagnosticSequence}`;
+
+  const s1pLogContext = () => {
+    try { return getSyncRuntimeContextInfo(); } catch (_) { return {}; }
+  };
+
+  const isHighValueDiagnosticEvent = (entry) => {
+    const event = String(entry?.event || "");
+    return /^(?:lock\.(?:acquisition_started|acquisition_canceled|acquisition_failed|acquisition_cancellation_failed|acquired|released|release_not_owned|expired_cleanup|release_failed|expired_observed)|sync\.(?:transaction_failed|complete|cleanup_failed|foreground_pending_attempt_started|foreground_pending_attempt_ignored|foreground_pending_recovery_result|foreground_pending_recovery_failed|foreground_pending_recovery_suppressed|foreground_probe_followup_result|foreground_probe_followup_blocked|foreground_probe_soft_block_suppressed|foreground_pending_soft_block_cleared|foreground_pending_soft_block_clear_ignored|foreground_pending_result_ignored)|runtime\.(?:pagehide|beforeunload|lifecycle_snapshot_failed))$/.test(event);
+  };
+
+  const s1pTrimLogBuffer = () => {
+    let bytes = logBuffer.reduce((sum, entry) => {
+      if (!s1pLogEntrySizes.has(entry.id)) s1pLogEntrySizes.set(entry.id, JSON.stringify(entry).length * 2 + 2);
+      return sum + s1pLogEntrySizes.get(entry.id);
+    }, 4);
+    while (logBuffer.length > LOG_BUFFER_MAX || bytes > S1P_LOG_MAX_BYTES) {
+      let index = logBuffer.findIndex((entry) =>
+        !entry.event && entry.level !== "error" && entry.level !== "warn");
+      if (index < 0) index = logBuffer.findIndex((entry) =>
+        entry.level !== "error" && entry.level !== "warn" &&
+        !isHighValueDiagnosticEvent(entry) &&
+        !s1pFailedOperationIds.has(entry.operationId));
+      if (index < 0) index = 0;
+      const [removed] = logBuffer.splice(index, 1);
+      if (!removed) break;
+      bytes -= s1pLogEntrySizes.get(removed.id) || 0;
+      s1pLogEntrySizes.delete(removed.id);
+      expandedLogEntryIds.delete(removed.id);
+      s1pLogLoss.evicted += 1;
+    }
+  };
+
+  const s1pRecordDiagnosticEvent = (event, options = {}) => {
+    try {
+      if (options.verbose && Date.now() >= s1pVerboseUntil) return null;
+      if (!s1pLogRestored) restoreLogBufferFromSession();
+      const context = s1pLogContext();
+      const entry = s1pSanitizeLogValue({
+        event, module: options.module || "runtime", level: options.level || "log",
+        ts: options.timestamp || Date.now(), context,
+        operationId: options.operationId || "", parentOperationId: options.parentOperationId || "",
+        status: options.status || "", reason: options.reason || "",
+        message: options.message || event, details: options.details || {},
+        repeatKey: options.repeatKey || "",
+      });
+      if (!entry || typeof entry !== "object") return null;
+      if (entry.level === "error" || entry.status === "failure") {
+        if (entry.operationId) s1pFailedOperationIds.add(entry.operationId);
+        if (entry.parentOperationId) s1pFailedOperationIds.add(entry.parentOperationId);
+        while (s1pFailedOperationIds.size > 20) s1pFailedOperationIds.delete(s1pFailedOperationIds.values().next().value);
+      }
+      return pushLog(entry);
+    } catch (_) {
+      s1pLogLoss.collectionFailures += 1;
+      return null;
+    }
+  };
+
+  const s1pNormalizeSharedLockReceiptRecord = (receipt) => {
+    try {
+      if (!receipt || typeof receipt !== "object" || Array.isArray(receipt)) {
+        return null;
+      }
+      const event = String(receipt.event || "").trim().slice(0, 120);
+      const at = Number(receipt.at);
+      if (!event || !Number.isFinite(at) || at <= 0) {
+        return null;
+      }
+      return s1pSanitizeLogValue({ ...receipt, event, at });
+    } catch (_) {
+      s1pLogLoss.collectionFailures += 1;
+      return null;
+    }
+  };
+
+  const s1pGetSharedLockReceiptIdentity = (receipt) => {
+    if (!receipt || typeof receipt !== "object") return "";
+    return [
+      receipt.event,
+      receipt.operationId,
+      receipt.executionId || receipt.token,
+      receipt.at,
+      receipt.reason,
+      receipt.owner,
+      receipt.sequence || receipt.id,
+    ].map((value) => String(value || "")).join("|");
+  };
+
+  const s1pNormalizeSharedReceiptForOperation = (receipt) => {
+    const normalizedReceipt = s1pNormalizeSharedLockReceiptRecord(receipt);
+    if (!normalizedReceipt || !normalizedReceipt.operationId) {
+      return null;
+    }
+    const timestamp = Number(normalizedReceipt.at) || 0;
+    if (!timestamp) {
+      return null;
+    }
+    return {
+      event: normalizedReceipt.event || "",
+      module: "sync.lock",
+      ts: timestamp,
+      lastTs: timestamp,
+      operationId: normalizedReceipt.operationId,
+      parentOperationId: normalizedReceipt.parentOperationId || "",
+      status: [
+        "lock.released",
+        "lock.expired_cleanup",
+        "lock.acquisition_canceled",
+        "lock.release_not_owned",
+        "lock.release_failed",
+        "lock.acquisition_failed",
+        "lock.acquisition_cancellation_failed",
+      ].includes(normalizedReceipt.event)
+        ? s1pGetDiagnosticTerminalStatus(normalizedReceipt.event)
+        : "",
+      message: `跨标签页锁收据：${normalizedReceipt.event || "unknown"}`,
+      reason: normalizedReceipt.reason || "",
+      details: { ...normalizedReceipt },
+      repeatCount: 1,
+      _sharedReceipt: true,
+    };
+  };
+
+  const s1pGetDiagnosticTerminalStatus = (eventName, status = "") => {
+    if (status) return status;
+    switch (eventName) {
+      case "lock.released":
+        return "released";
+      case "lock.expired_cleanup":
+        return "expired";
+      case "lock.acquisition_canceled":
+        return "skipped";
+      case "lock.release_not_owned":
+        return "not_owned";
+      default:
+        return "failure";
+    }
+  };
+
+  const s1pGetDiagnosticTerminalEvidence = (group) => {
+    switch (group.terminalEvent) {
+      case "lock.released":
+        return "explicit_owner_release";
+      case "lock.acquisition_canceled":
+        return "explicit_acquisition_cancellation";
+      case "lock.acquisition_failed":
+        return "explicit_acquisition_failure";
+      case "lock.acquisition_cancellation_failed":
+        return "explicit_acquisition_cancellation_failure";
+      case "lock.release_not_owned":
+        return "cleanup_without_current_ownership";
+      case "lock.expired_cleanup":
+        return "ttl_expiry_cleanup";
+      case "lock.release_failed":
+        return "explicit_lock_release_failure";
+      case "sync.transaction_failed":
+        return "explicit_transaction_failure";
+      case "sync.complete":
+        return group.terminalStatus === "failure"
+          ? "explicit_transaction_failure"
+          : "explicit_transaction_completion";
+      case "sync.cleanup_failed":
+        return "explicit_cleanup_failure";
+      default:
+        return group.observedExpiryAt
+          ? "ttl_expiry_observed_without_owner_release_receipt"
+          : "no_terminal_evidence";
+    }
+  };
+
+  const s1pGetDiagnosticOperationSummaries = (entries = logBuffer, sharedReceipts = []) => {
+    const localEntries = Array.isArray(entries) ? entries : [];
+    const groups = new Map();
+    const explicitTerminalEvents = new Set([
+      "lock.released",
+      "lock.release_not_owned",
+      "lock.expired_cleanup",
+      "lock.release_failed",
+      "lock.acquisition_canceled",
+      "lock.acquisition_failed",
+      "lock.acquisition_cancellation_failed",
+      "sync.transaction_failed",
+      "sync.complete",
+      "sync.cleanup_failed",
+    ]);
+    const lockTerminalEvents = new Set([
+      "lock.released",
+      "lock.release_not_owned",
+      "lock.expired_cleanup",
+      "lock.release_failed",
+      "lock.acquisition_canceled",
+      "lock.acquisition_failed",
+      "lock.acquisition_cancellation_failed",
+    ]);
+    const transactionTerminalEvents = new Set([
+      "sync.transaction_failed",
+      "sync.complete",
+    ]);
+    const cleanupTerminalEvents = new Set(["sync.cleanup_failed"]);
+    const localEvidenceKeys = new Set(
+      localEntries
+        .filter((entry) => entry?.event && entry?.operationId)
+        .map((entry) => `${entry.event}|${entry.operationId}|${entry.details?.executionId || ""}`)
+    );
+    const normalizedSharedReceipts = [];
+    const sharedEvidenceKeys = new Set();
+    for (const receipt of Array.isArray(sharedReceipts) ? sharedReceipts : []) {
+      const entry = s1pNormalizeSharedReceiptForOperation(receipt);
+      if (!entry) continue;
+      const localEvidenceKey =
+        `${entry.event}|${entry.operationId}|${entry.details?.executionId || ""}`;
+      if (localEvidenceKeys.has(localEvidenceKey)) continue;
+      const sharedEvidenceKey = s1pGetSharedLockReceiptIdentity(entry.details);
+      if (sharedEvidenceKey && sharedEvidenceKeys.has(sharedEvidenceKey)) continue;
+      if (sharedEvidenceKey) sharedEvidenceKeys.add(sharedEvidenceKey);
+      normalizedSharedReceipts.push(entry);
+    }
+    for (const entry of [...localEntries, ...normalizedSharedReceipts].sort((a, b) =>
+      (a?.lastTs || a?.ts || 0) - (b?.lastTs || b?.ts || 0)
+    )) {
+      if (!entry || !entry.operationId) continue;
+      const previous = groups.get(entry.operationId);
+      const eventName = String(entry.event || "");
+      const terminalEvent = explicitTerminalEvents.has(eventName) ? eventName : "";
+      const details = entry.details && typeof entry.details === "object" ? entry.details : {};
+      const observedExpiryAt = eventName === "lock.expired_observed"
+        ? entry.lastTs || entry.ts
+        : previous?.observedExpiryAt || null;
+      const terminalAt = terminalEvent ? entry.lastTs || entry.ts : previous?.terminalAt || null;
+      const terminalReason = terminalEvent
+        ? entry.reason || details.reason || ""
+        : previous?.terminalReason || "";
+      const terminalStatus = terminalEvent
+        ? s1pGetDiagnosticTerminalStatus(eventName, entry.status)
+        : previous?.terminalStatus || "";
+      const terminalEvents = previous?.terminalEvents
+        ? previous.terminalEvents.slice()
+        : [];
+      if (terminalEvent) {
+        terminalEvents.push({
+          event: terminalEvent,
+          status: terminalStatus,
+          reason: terminalReason,
+          at: terminalAt,
+          source: entry._sharedReceipt ? "shared_receipt" : "local_log",
+        });
+        if (terminalEvents.length > 32) terminalEvents.splice(0, terminalEvents.length - 32);
+      }
+      const lockTerminalEvent = lockTerminalEvents.has(eventName)
+        ? eventName
+        : previous?.lockTerminalEvent || "";
+      const lockTerminalStatus = lockTerminalEvents.has(eventName)
+        ? terminalStatus
+        : previous?.lockTerminalStatus || "";
+      const lockTerminalReason = lockTerminalEvents.has(eventName)
+        ? terminalReason
+        : previous?.lockTerminalReason || "";
+      const lockTerminalAt = lockTerminalEvents.has(eventName)
+        ? terminalAt
+        : previous?.lockTerminalAt || null;
+      const transactionTerminalEvent = transactionTerminalEvents.has(eventName)
+        ? eventName
+        : previous?.transactionTerminalEvent || "";
+      const transactionTerminalStatus = transactionTerminalEvents.has(eventName)
+        ? terminalStatus
+        : previous?.transactionTerminalStatus || "";
+      const transactionTerminalReason = transactionTerminalEvents.has(eventName)
+        ? terminalReason
+        : previous?.transactionTerminalReason || "";
+      const transactionTerminalAt = transactionTerminalEvents.has(eventName)
+        ? terminalAt
+        : previous?.transactionTerminalAt || null;
+      const cleanupTerminalEvent = cleanupTerminalEvents.has(eventName)
+        ? eventName
+        : previous?.cleanupTerminalEvent || "";
+      const cleanupTerminalStatus = cleanupTerminalEvents.has(eventName)
+        ? terminalStatus
+        : previous?.cleanupTerminalStatus || "";
+      const cleanupTerminalReason = cleanupTerminalEvents.has(eventName)
+        ? terminalReason
+        : previous?.cleanupTerminalReason || "";
+      const cleanupTerminalAt = cleanupTerminalEvents.has(eventName)
+        ? terminalAt
+        : previous?.cleanupTerminalAt || null;
+      groups.set(entry.operationId, {
+        operationId: entry.operationId, parentOperationId: entry.parentOperationId || previous?.parentOperationId || "",
+        module: entry.module, startedAt: Math.min(previous?.startedAt ?? entry.ts, entry.ts),
+        lastAt: entry.lastTs || entry.ts, status: entry.status || previous?.status || "",
+        message: entry._sharedReceipt && previous?.message ? previous.message : entry.message,
+        reason: entry.reason || previous?.reason || "", entries: (previous?.entries || 0) + (entry.repeatCount || 1),
+        lastStage: details.stage || previous?.lastStage || "",
+        lastOutcome: details.lastOutcome || previous?.lastOutcome || "",
+        terminalEvent: terminalEvent || previous?.terminalEvent || "",
+        terminalStatus,
+        terminalReason,
+        terminalAt,
+        observedExpiryAt,
+        terminalEvents,
+        lockTerminalEvent,
+        lockTerminalStatus,
+        lockTerminalReason,
+        lockTerminalAt,
+        transactionTerminalEvent,
+        transactionTerminalStatus,
+        transactionTerminalReason,
+        transactionTerminalAt,
+        cleanupTerminalEvent,
+        cleanupTerminalStatus,
+        cleanupTerminalReason,
+        cleanupTerminalAt,
+        evidenceSources: [...new Set([
+          ...(previous?.evidenceSources || []),
+          entry._sharedReceipt ? "shared_receipt" : "local_log",
+        ])],
+        sharedReceiptCount: (previous?.sharedReceiptCount || 0) + (entry._sharedReceipt ? 1 : 0),
+      });
+    }
+    return [...groups.values()].sort((a, b) => a.lastAt - b.lastAt).map((group) => {
+      const lockTerminalEvidence = group.lockTerminalEvent
+        ? s1pGetDiagnosticTerminalEvidence({
+            ...group,
+            terminalEvent: group.lockTerminalEvent,
+            terminalStatus: group.lockTerminalStatus,
+            terminalReason: group.lockTerminalReason,
+          })
+        : "";
+      const transactionTerminalEvidence = group.transactionTerminalEvent
+        ? s1pGetDiagnosticTerminalEvidence({
+            ...group,
+            terminalEvent: group.transactionTerminalEvent,
+            terminalStatus: group.transactionTerminalStatus,
+            terminalReason: group.transactionTerminalReason,
+          })
+        : "";
+      const cleanupTerminalEvidence = group.cleanupTerminalEvent
+        ? s1pGetDiagnosticTerminalEvidence({
+            ...group,
+            terminalEvent: group.cleanupTerminalEvent,
+            terminalStatus: group.cleanupTerminalStatus,
+            terminalReason: group.cleanupTerminalReason,
+          })
+        : "";
+      const failureEvidence = [
+        group.cleanupTerminalStatus === "failure" ? cleanupTerminalEvidence : "",
+        group.transactionTerminalStatus === "failure" ? transactionTerminalEvidence : "",
+        group.lockTerminalStatus === "failure" ? lockTerminalEvidence : "",
+      ].find(Boolean) || "";
+      return {
+        ...group,
+        elapsedMs: group.lastAt - group.startedAt,
+        terminalEvidence:
+          failureEvidence ||
+          lockTerminalEvidence ||
+          transactionTerminalEvidence ||
+          cleanupTerminalEvidence ||
+          s1pGetDiagnosticTerminalEvidence(group),
+        lockTerminalEvidence,
+        transactionTerminalEvidence,
+        cleanupTerminalEvidence,
+      };
+    });
+  };
+
+  const s1pBuildDiagnosticExport = () => {
+    const state = {};
+    const capture = (key, read) => {
+      try { state[key] = read(); } catch (_) { state[key] = "[Unavailable]"; }
+    };
+    capture("settings", () => {
+      const settings = getSettings();
+      return Object.fromEntries(Object.entries(settings).filter(([key, value]) =>
+        /^(?:sync|enable|readingProgress)/.test(key) && (typeof value === "boolean" || typeof value === "number")));
+    });
+    capture("locks", () => s1pReadSyncLockEvidence());
+    capture("manualIntent", () => defaultManualSyncIntentCoordinator?.readIntent() || null);
+    capture("execution", () => ({ settlementDepth: syncExecutionSettlementDepth, manualBusy: isManualSyncActionBusy(),
+      backgroundBusy: isBackgroundAutoSyncInProgress, startupBusy: isInitialSyncInProgress }));
+    capture("pendingDirty", () => GM_getValue("s1p_pending_auto_sync_request", null));
+    capture("sessionStorageAvailable", () => Boolean(window.sessionStorage));
+    capture("sharedLockHistory", () => {
+      return s1pReadSharedLockReceipts();
+    });
+    const contexts = [...new Map(logBuffer.map((entry) => [entry.context?.contextId || "legacy", entry.context || {}])).values()];
+    return {
+      schemaVersion: 1, exportedAt: new Date().toISOString(), scriptVersion: SCRIPT_VERSION,
+      environment: s1pSanitizeLogValue({ userAgent: navigator.userAgent,
+        scriptManager: typeof GM_info !== "undefined" ? GM_info.scriptHandler : "unavailable",
+        scriptManagerVersion: typeof GM_info !== "undefined" ? GM_info.version : "unavailable" }),
+      coverage: { scope: "current_tab_including_retained_reload_history", otherTabs: "not_collected; merge owner export by executionId",
+        sharedReceiptStorage: typeof GM_listValues === "function" ? "immutable_event_keys" : "legacy_shared_ring",
+        consoleCapture: logCollectorStarted, verboseUntil: s1pVerboseUntil, essentials: true,
+        sharedLockHistory: "immutable receipts when GM_listValues is available; legacy fallback may lose concurrent writes; bounded to 256 events / 7 days; abrupt termination or storage failure may omit events; absence is not proof of release",
+        sessionStorageAvailable: state.sessionStorageAvailable,
+        retainedFrom: logBuffer.length ? Math.min(...logBuffer.map((entry) => entry.ts)) : null,
+        retainedThrough: logBuffer.length ? Math.max(...logBuffer.map((entry) => entry.lastTs || entry.ts)) : null,
+        loss: { ...s1pLogLoss }, limits: { entries: LOG_BUFFER_MAX, bytes: S1P_LOG_MAX_BYTES },
+        redaction: "credentials, bodies, DOM and URL queries omitted; truncated fields marked" },
+      contexts, state: Object.fromEntries(Object.entries(state).map(([key, value]) =>
+        [key, key === "sharedLockHistory" && Array.isArray(value) ? value.map(s1pSanitizeLogValue) : s1pSanitizeLogValue(value)])),
+      operations: s1pGetDiagnosticOperationSummaries(
+        logBuffer,
+        Array.isArray(state.sharedLockHistory) ? state.sharedLockHistory : []
+      ),
+      events: logBuffer.map((entry) => ({ ...entry })),
+    };
+  };
+
+  const s1pInitializeDiagnostics = () => {
+    if (s1pDiagnosticsInitialized) return;
+    s1pDiagnosticsInitialized = true;
+    if (!s1pLogRestored) restoreLogBufferFromSession();
+    s1pRecordDiagnosticEvent("runtime.started", { module: "initialization", message: "页面诊断采集已启动",
+      details: { scriptVersion: SCRIPT_VERSION, essentialCollection: true } });
+    const recordRuntimeUnload = (phase) => {
+      let locksBefore = [];
+      try {
+        locksBefore = s1pReadSyncLockEvidence();
+      } catch (error) {
+        s1pLogLoss.collectionFailures += 1;
+        s1pRecordDiagnosticEvent("runtime.lifecycle_snapshot_failed", {
+          module: "initialization",
+          level: "error",
+          status: "failure",
+          reason: "lock_snapshot_read_failed",
+          message: "页面离开时读取同步锁快照失败",
+          details: { phase, error },
+        });
+      }
+      const ownedGlobalLocks = locksBefore.filter((item) =>
+        item.key === GLOBAL_SYNC_LOCK_KEY && item.owner === BACKGROUND_SYNC_OWNER_ID
+      );
+      let hasProvisionalOwner = false;
+      for (const lock of ownedGlobalLocks) {
+        const relatedOperation = [...s1pSyncOperations.values()].find(
+          (operation) => operation?.executionId === lock.executionId
+        );
+        const provisional =
+          lock.stage === "acquiring" ||
+          (relatedOperation?.active === true &&
+            relatedOperation.transactionStarted !== true &&
+            lock.stage === "transaction_start");
+        hasProvisionalOwner ||= provisional;
+        s1pRecordLockEvidence(`lock.owner_${phase}`, lock, {
+          message: provisional
+            ? "持有者页面离开，事务尚未开始，将取消临时锁获取"
+            : "持有者页面离开，已进入事务的执行锁保留至收敛或 TTL",
+          reason: provisional
+            ? "lifecycle_unload_before_transaction"
+            : "lifecycle_unload_running_lock_retained",
+          receipt: true,
+          repeatKey: `owner_lifecycle:${lock.executionId}:${lock.stage}`,
+          details: {
+            unloadDisposition: provisional
+              ? "cancel_before_transaction"
+              : "retain_running_lock",
+          },
+        });
+      }
+      const lifecycleResult = s1pSetSyncPageLifecycleUnloading(
+        true,
+        `runtime_${phase}`
+      );
+      let locksAfter = [];
+      try {
+        locksAfter = s1pReadSyncLockEvidence();
+      } catch (error) {
+        s1pLogLoss.collectionFailures += 1;
+        s1pRecordDiagnosticEvent("runtime.lifecycle_snapshot_failed", {
+          module: "initialization",
+          level: "error",
+          status: "failure",
+          reason: "lock_snapshot_read_failed_after_fence",
+          message: "页面离开后读取同步锁快照失败",
+          details: { phase, error },
+        });
+      }
+      s1pRecordDiagnosticEvent(`runtime.${phase}`, {
+        message: hasProvisionalOwner
+          ? "页面离开，临时锁获取已进入取消流程"
+          : "页面离开，未结束的执行锁保留至收敛或 TTL",
+        details: {
+          locksBefore,
+          locksAfter,
+          lifecycleResult,
+          lifecycleUnloading: true,
+        },
+      });
+      try {
+        s1pFlushSyncTrace();
+      } catch (_) {
+        s1pLogLoss.persistenceFailures += 1;
+      }
+      try {
+        persistLogBuffer();
+      } catch (_) {
+        s1pLogLoss.persistenceFailures += 1;
+      }
+    };
+    window.addEventListener("pagehide", () => recordRuntimeUnload("pagehide"));
+    window.addEventListener("beforeunload", () => recordRuntimeUnload("beforeunload"));
+    window.addEventListener("pageshow", () => {
+      s1pSetSyncPageLifecycleUnloading(false, "runtime_pageshow");
+    });
+    window.addEventListener("error", (event) => {
+      s1pRecordDiagnosticEvent("runtime.error", { level: "error", status: "failure", message: "页面未捕获异常",
+        details: { error: event.error || event.message, filename: event.filename, line: event.lineno } });
+    });
+    window.addEventListener("unhandledrejection", (event) => {
+      s1pRecordDiagnosticEvent("runtime.unhandled_rejection", { level: "error", status: "failure",
+        message: "页面未处理的 Promise 异常", details: { error: event.reason } });
+    });
+  };
+
+  const s1pMergeDiagnosticExports = (bundles) => {
+    if (!Array.isArray(bundles) || bundles.length < 1 || bundles.length > 8) throw new Error("请选择 1–8 份诊断");
+    const events = new Map();
+    const sources = [];
+    for (const bundle of bundles) {
+      if (bundle?.schemaVersion !== 1 || !Array.isArray(bundle.events) || bundle.events.length > LOG_BUFFER_MAX) throw new Error("不支持的诊断格式或记录数量");
+      sources.push(s1pSanitizeLogValue({ scriptVersion: bundle.scriptVersion, exportedAt: bundle.exportedAt,
+        coverage: bundle.coverage, environment: bundle.environment }));
+      for (const raw of bundle.events) {
+        const entry = normalizeRestoredLogEntry(raw);
+        if (!entry) continue;
+        const key = `${entry.context?.contextId || bundle.exportedAt}:${entry.id}:${entry.ts}`;
+        const previous = events.get(key);
+        if (!previous || (entry.repeatCount || 1) >= (previous.repeatCount || 1)) events.set(key, entry);
+      }
+    }
+    const merged = [...events.values()].sort((a, b) => a.ts - b.ts);
+    const sharedLockHistory = [];
+    const sharedReceiptKeys = new Set();
+    for (const bundle of bundles) {
+      const history = Array.isArray(bundle.state?.sharedLockHistory)
+        ? bundle.state.sharedLockHistory.slice(-256)
+        : [];
+      for (const rawReceipt of history) {
+        const receipt = s1pNormalizeSharedLockReceiptRecord(rawReceipt);
+        if (!receipt) continue;
+        const identity = s1pGetSharedLockReceiptIdentity(receipt);
+        if (identity && sharedReceiptKeys.has(identity)) continue;
+        if (identity) sharedReceiptKeys.add(identity);
+        sharedLockHistory.push(receipt);
+      }
+    }
+    sharedLockHistory.sort((a, b) => Number(a.at) - Number(b.at));
+    sharedLockHistory.splice(0, Math.max(0, sharedLockHistory.length - 256));
+    return { schemaVersion: 1, kind: "merged_diagnostics", exportedAt: new Date().toISOString(), sources,
+      operations: s1pGetDiagnosticOperationSummaries(merged, sharedLockHistory), events: merged,
+      sharedLockHistory,
+      coverage: { scope: "selected_exports", ordering: "wall_clock; compare executionId and context for causality; device clocks may differ" } };
+  };
+
+  const s1pDownloadDiagnosticExport = (bundle) => {
+    const url = URL.createObjectURL(new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `S1Plus-diagnostics-${Date.now()}.json`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
   const formatLogEntryForCopy = (entry) => {
+    if (entry.event) {
+      return `[${new Date(entry.ts).toISOString()}] [${entry.level.toUpperCase()}] ${entry.message}\n${JSON.stringify(entry)}`;
+    }
     let message = String(entry.message || "");
     message = message.replace(/\d{4}\/\d{1,2}\/\d{1,2}\s+\d{1,2}:\d{2}:\d{2}\s*\|\s*/, "");
     const d = new Date(entry.ts);
@@ -706,13 +1468,57 @@
     return "[" + ts + "] [" + String(entry.level || "").toUpperCase() + "] " + message;
   };
 
+  const enrichS1pLogMessageWithRuntimeContext = (message) => {
+    const normalizedMessage = String(message || "");
+    if (
+      !/^S1 Plus(?:\s|:|$)/.test(normalizedMessage) ||
+      normalizedMessage.includes("context=")
+    ) {
+      return normalizedMessage;
+    }
+    try {
+      return `${normalizedMessage} [${getSyncRuntimeContextSummary()}]`;
+    } catch (_) {
+      return normalizedMessage;
+    }
+  };
+
   const pushLog = (entry) => {
-    if (!logCollectorStarted) return;
-    if (logBuffer.length >= LOG_BUFFER_MAX) logBuffer.shift();
-    logBuffer.push({ id: nextLogEntryId++, ts: Date.now(), ...entry });
+    if (!logCollectorStarted && !entry.event) return;
+    const safeEntry = s1pSanitizeLogValue(entry);
+    if (safeEntry.repeatKey) {
+      const repeated = [...logBuffer].reverse().find((item) =>
+        item.repeatKey === safeEntry.repeatKey && item.module === safeEntry.module &&
+        item.context?.contextId === safeEntry.context?.contextId &&
+        item.operationId === safeEntry.operationId && item.event === safeEntry.event &&
+        item.reason === safeEntry.reason && item.status === safeEntry.status &&
+        safeEntry.ts >= item.ts && safeEntry.ts - item.ts < S1P_LOG_REPEAT_WINDOW_MS);
+      if (repeated) {
+        repeated.firstDetails ||= repeated.details;
+        repeated.details = safeEntry.details;
+        repeated.lastTs = safeEntry.ts;
+        repeated.repeatCount = (repeated.repeatCount || 1) + 1;
+        s1pLogEntrySizes.delete(repeated.id);
+        s1pTrimLogBuffer();
+        logDirty = true;
+        scheduleLogRender();
+        scheduleLogPersistence();
+        return { entry: repeated, repeated: true };
+      }
+    }
+    const stored = {
+      id: nextLogEntryId++,
+      ts: Date.now(),
+      ...safeEntry,
+      message: safeEntry.event ? safeEntry.message : enrichS1pLogMessageWithRuntimeContext(safeEntry?.message),
+    };
+    if (JSON.stringify(stored).includes("[TRUNCATED]")) s1pLogLoss.truncated += 1;
+    logBuffer.push(stored);
+    s1pTrimLogBuffer();
     logDirty = true;
     scheduleLogRender();
     scheduleLogPersistence();
+    return { entry: stored, repeated: false };
   };
 
   const shouldRemovePersistedLogBuffer = () =>
@@ -729,6 +1535,8 @@
         return;
       }
       const payload = {
+        schemaVersion: 1,
+        loss: s1pLogLoss,
         entries: logBuffer,
         nextId: nextLogEntryId,
         expandedIds: [...expandedLogEntryIds],
@@ -736,16 +1544,18 @@
       };
       window.sessionStorage.setItem(LOG_SESSION_STORAGE_KEY, JSON.stringify(payload));
     } catch (_) {
-      // sessionStorage 不可用或配额已满时静默忽略
+      s1pLogLoss.persistenceFailures += 1;
     }
   };
 
+  const s1pPersistLogs = () => {
+    logPersistTimeoutId = null;
+    persistLogBuffer();
+  };
   const scheduleLogPersistence = () => {
-    if (logPersistTimeoutId) clearTimeout(logPersistTimeoutId);
-    logPersistTimeoutId = setTimeout(() => {
-      logPersistTimeoutId = null;
-      persistLogBuffer();
-    }, LOG_PERSIST_DEBOUNCE_MS);
+    if (logPersistTimeoutId) return;
+    logPersistTimeoutId = setTimeout(s1pPersistLogs, LOG_PERSIST_DEBOUNCE_MS);
+    logPersistTimeoutId?.unref?.();
   };
 
   const normalizeRestoredLogEntryId = (value) => {
@@ -771,15 +1581,17 @@
       return null;
     }
     return {
+      ...s1pSanitizeLogValue(entry.event ? entry : {}),
       id,
       ts,
       level,
-      message: String(entry.message ?? ""),
+      message: s1pSanitizeLogValue(String(entry.message ?? "")),
       args: [],
     };
   };
 
   const restoreLogBufferFromSession = () => {
+    s1pLogRestored = true;
     try {
       if (!window.sessionStorage) return;
       const raw = window.sessionStorage.getItem(LOG_SESSION_STORAGE_KEY);
@@ -790,6 +1602,19 @@
         .map((entry) => normalizeRestoredLogEntry(entry))
         .filter(Boolean)
         .slice(-LOG_BUFFER_MAX);
+      s1pLogEntrySizes.clear();
+      s1pFailedOperationIds.clear();
+      for (const entry of logBuffer) {
+        if (entry.status === "failure" || entry.level === "error") {
+          if (entry.operationId) s1pFailedOperationIds.add(entry.operationId);
+          if (entry.parentOperationId) s1pFailedOperationIds.add(entry.parentOperationId);
+        }
+      }
+      while (s1pFailedOperationIds.size > 20) s1pFailedOperationIds.delete(s1pFailedOperationIds.values().next().value);
+      if (payload.loss && typeof payload.loss === "object") {
+        for (const key of Object.keys(s1pLogLoss)) s1pLogLoss[key] = Math.max(0, Number(payload.loss[key]) || 0);
+      }
+      s1pTrimLogBuffer();
       if (logBuffer.length === 0) {
         nextLogEntryId = 1;
         expandedLogEntryIds = new Set();
@@ -811,13 +1636,13 @@
       logExpandAll = payload.expandAll === true;
       logDirty = true;
     } catch (_) {
-      // 数据损坏时静默忽略，保留空 buffer
+      s1pLogLoss.collectionFailures += 1;
     }
   };
 
   const startLogCollector = () => {
     if (logCollectorStarted) return;
-    restoreLogBufferFromSession();
+    if (!s1pLogRestored) restoreLogBufferFromSession();
     logCollectorStarted = true;
     if (!_originalConsoleCaptured) {
       _consoleMethods.forEach((method) => {
@@ -833,18 +1658,22 @@
       const originalConsoleTarget = console;
       const wrapper = (...args) => {
         originalConsoleMethod.apply(originalConsoleTarget, args);
-        if (_consoleWrappers[method] === wrapper && console[method] === wrapper) {
-          pushLog({ level: method, message: formatLogArguments(args), args: [] });
+        if (!s1pDiagnosticConsoleWrite && _consoleWrappers[method] === wrapper && console[method] === wrapper) {
+          try {
+            pushLog({ level: method, message: formatLogArguments(s1pSanitizeLogValue(args)), args: [] });
+          } catch (_) { s1pLogLoss.collectionFailures += 1; }
         }
       };
       _consoleWrappers[method] = wrapper;
       console[method] = wrapper;
     });
     _logOnError = (e) => {
+      if (s1pDiagnosticsInitialized) return;
       pushLog({ level: "error", message: "[onerror] " + e.message + " at " + e.filename + ":" + e.lineno, args: [] });
     };
     window.addEventListener("error", _logOnError);
     _logOnUnhandledRejection = (e) => {
+      if (s1pDiagnosticsInitialized) return;
       pushLog({ level: "error", message: "[unhandledrejection] " + formatLogArgument(e.reason), args: [] });
     };
     window.addEventListener("unhandledrejection", _logOnUnhandledRejection);
@@ -931,6 +1760,10 @@
       nextLogEntryId = 1;
       logDirty = false;
       logCollectorStarted = false;
+      s1pLogRestored = false;
+      s1pLogLoss = { evicted: 0, truncated: 0, persistenceFailures: 0, collectionFailures: 0 };
+      s1pFailedOperationIds.clear();
+      s1pLogEntrySizes.clear();
       _originalConsoleCaptured = false;
       _consoleMethods.forEach((method) => {
         _consoleWrappers[method] = null;
@@ -952,8 +1785,17 @@
       getPostAnchorScrollOffsetForTest: getPostAnchorScrollOffsetPx,
       getPostHashAnchorScrollTopForTest: getPostHashAnchorScrollTop,
       getDebugLogCollectorStateForTest,
+      enrichS1pLogMessageWithRuntimeContext,
       setDebugLogCollectorStateForTest,
       resetDebugLogCollectorStateForTest,
+      s1pSanitizeLogValue,
+      s1pRecordDiagnosticEvent,
+      s1pBuildDiagnosticExport,
+      s1pGetDiagnosticOperationSummaries,
+      s1pWriteSharedLockReceipt: (...args) => s1pWriteSharedLockReceipt(...args),
+      s1pReadSharedLockReceipts: (...args) => s1pReadSharedLockReceipts(...args),
+      s1pMergeDiagnosticExports,
+      formatLogEntryForCopy,
     };
   }
 
@@ -1107,6 +1949,710 @@
     }, []);
   };
 
+  const S1P_NAV_CUSTOMIZED_HEADER_CLASS = "s1p-nav-customized-header";
+  const S1P_NAV_CUSTOMIZED_ROOT_CLASS = "s1p-nav-customized-root";
+  const S1P_NAV_CUSTOM_ITEM_CLASS = "s1p-nav-custom-item";
+  const S1P_NAV_OVERFLOW_ID = "s1p-nav-overflow";
+  const S1P_NAV_OVERFLOW_TOGGLE_ID = "s1p-nav-overflow-toggle";
+  const S1P_NAV_OVERFLOW_MENU_ID = "s1p-nav-overflow-menu";
+  const S1P_NAV_OVERFLOW_MENU_CLASS = "s1p-nav-overflow-menu";
+  const S1P_NAV_OVERFLOW_MENU_VISIBLE_CLASS =
+    "s1p-nav-overflow-menu-visible";
+  const S1P_NAV_OVERFLOW_HIDDEN_ITEM_CLASS = "s1p-nav-overflow-hidden";
+  const S1P_NAV_SEARCH_TOGGLE_ID = "s1p-nav-search-toggle";
+  const S1P_NAV_SEARCH_POPOVER_ID = "s1p-nav-search-popover";
+  const S1P_NAV_SEARCH_POPOVER_CLASS = "s1p-nav-search-popover";
+  const S1P_NAV_SEARCH_POPOVER_VISIBLE_CLASS =
+    "s1p-nav-search-popover-visible";
+  const S1P_NAV_SEARCH_TOGGLE_VISIBLE_CLASS =
+    "s1p-nav-search-toggle-visible";
+  const S1P_NAV_SEARCH_COMPACT_MIN_WIDTH_PX = 132;
+  let navbarCustomOverflowCleanup = null;
+
+  const teardownNavbarCustomOverflow = () => {
+    if (typeof navbarCustomOverflowCleanup === "function") {
+      const cleanup = navbarCustomOverflowCleanup;
+      navbarCustomOverflowCleanup = null;
+      cleanup();
+    }
+
+    document.getElementById(S1P_NAV_OVERFLOW_ID)?.remove();
+    document
+      .querySelectorAll(`#nv > ul > li.${S1P_NAV_CUSTOM_ITEM_CLASS}`)
+      .forEach((item) => {
+        item.hidden = false;
+        item.classList.remove(S1P_NAV_OVERFLOW_HIDDEN_ITEM_CLASS);
+        item.removeAttribute("aria-hidden");
+      });
+    document
+      .querySelectorAll(`#nv.${S1P_NAV_CUSTOMIZED_ROOT_CLASS}`)
+      .forEach((navRoot) =>
+        navRoot.classList.remove(S1P_NAV_CUSTOMIZED_ROOT_CLASS)
+      );
+    document
+      .querySelectorAll(`.${S1P_NAV_CUSTOMIZED_HEADER_CLASS}`)
+      .forEach((headerRoot) =>
+        headerRoot.classList.remove(S1P_NAV_CUSTOMIZED_HEADER_CLASS)
+      );
+  };
+
+  const setupNavbarCustomOverflow = ({
+    navUl,
+    navRoot,
+    headerRoot,
+    customNavRecords,
+    managerLink,
+    searchBar,
+  }) => {
+    if (
+      !(navUl instanceof HTMLUListElement) ||
+      !Array.isArray(customNavRecords) ||
+      customNavRecords.length === 0
+    ) {
+      return;
+    }
+
+    const customNavItems = customNavRecords.map((record) => record.item);
+
+    navRoot?.classList.add(S1P_NAV_CUSTOMIZED_ROOT_CLASS);
+    headerRoot?.classList.add(S1P_NAV_CUSTOMIZED_HEADER_CLASS);
+
+    const hasSearchBar =
+      searchBar instanceof Element && searchBar.parentNode instanceof Element;
+    const searchBarParent = hasSearchBar ? searchBar.parentNode : null;
+    const searchPlaceholder = hasSearchBar
+      ? document.createElement("span")
+      : null;
+    const searchToggle = hasSearchBar
+      ? document.createElement("a")
+      : null;
+    const searchPopover = hasSearchBar
+      ? document.createElement("div")
+      : null;
+    let isSearchCollapsed = false;
+    let isSearchOpen = false;
+    let searchFrame = null;
+
+    if (hasSearchBar && searchBarParent && searchPlaceholder && searchToggle) {
+      searchPlaceholder.className = "s1p-nav-search-placeholder";
+      searchPlaceholder.hidden = true;
+      searchToggle.id = S1P_NAV_SEARCH_TOGGLE_ID;
+      searchToggle.className = "s1p-nav-search-toggle";
+      searchToggle.href = "javascript:void(0);";
+      searchToggle.setAttribute("role", "button");
+      searchToggle.setAttribute("aria-label", "展开搜索");
+      searchToggle.setAttribute("aria-controls", S1P_NAV_SEARCH_POPOVER_ID);
+      searchToggle.setAttribute("aria-expanded", "false");
+      searchToggle.setAttribute("hidefocus", "true");
+      searchToggle.textContent = "搜索";
+      searchBarParent.insertBefore(searchToggle, searchBar);
+      searchBarParent.insertBefore(searchPlaceholder, searchBar);
+    }
+
+    if (hasSearchBar && searchPopover) {
+      searchPopover.id = S1P_NAV_SEARCH_POPOVER_ID;
+      searchPopover.className = S1P_NAV_SEARCH_POPOVER_CLASS;
+      searchPopover.setAttribute("role", "search");
+      searchPopover.setAttribute("aria-label", "搜索");
+      searchPopover.hidden = true;
+      document.body.appendChild(searchPopover);
+    }
+
+    const overflowLi = document.createElement("li");
+    overflowLi.id = S1P_NAV_OVERFLOW_ID;
+    overflowLi.className = "s1p-nav-overflow";
+    overflowLi.hidden = true;
+
+    const overflowToggle = document.createElement("a");
+    overflowToggle.id = S1P_NAV_OVERFLOW_TOGGLE_ID;
+    overflowToggle.href = "javascript:void(0);";
+    overflowToggle.textContent = "更多";
+    overflowToggle.setAttribute("hidefocus", "true");
+    overflowToggle.setAttribute("role", "button");
+    overflowToggle.setAttribute("aria-haspopup", "menu");
+    overflowToggle.setAttribute("aria-controls", S1P_NAV_OVERFLOW_MENU_ID);
+    overflowToggle.setAttribute("aria-expanded", "false");
+    overflowLi.appendChild(overflowToggle);
+
+    const overflowMenu = document.createElement("div");
+    overflowMenu.id = S1P_NAV_OVERFLOW_MENU_ID;
+    overflowMenu.className = S1P_NAV_OVERFLOW_MENU_CLASS;
+    overflowMenu.setAttribute("role", "menu");
+    overflowMenu.setAttribute("aria-labelledby", S1P_NAV_OVERFLOW_TOGGLE_ID);
+    overflowMenu.hidden = true;
+
+    const overflowMenuLinks = customNavRecords.map((record) => {
+      const menuLink = document.createElement("a");
+      menuLink.href = record.href;
+      menuLink.textContent = record.name;
+      menuLink.setAttribute("role", "menuitem");
+      menuLink.setAttribute("tabindex", "-1");
+      menuLink.setAttribute("hidefocus", "true");
+      menuLink.hidden = true;
+      overflowMenu.appendChild(menuLink);
+      return menuLink;
+    });
+
+    document.body.appendChild(overflowMenu);
+    if (managerLink instanceof HTMLLIElement) {
+      navUl.insertBefore(overflowLi, managerLink);
+    } else {
+      navUl.appendChild(overflowLi);
+    }
+
+    let reconcileFrame = null;
+    let isMenuOpen = false;
+    let menuFrame = null;
+    let resizeObserver = null;
+
+    const isElementVisibleInTree = (element) => {
+      if (!(element instanceof Element) || !element.isConnected) {
+        return false;
+      }
+      let current = element;
+      while (current instanceof Element) {
+        if (current.hidden) {
+          return false;
+        }
+        current = current.parentElement;
+      }
+      return true;
+    };
+
+    const focusSafeNavigationTarget = () => {
+      const candidates = [
+        searchToggle,
+        managerLink?.querySelector(":scope > a"),
+        ...customNavItems.map((item) => item.querySelector(":scope > a")),
+      ];
+      const target = candidates.find((candidate) =>
+        isElementVisibleInTree(candidate)
+      );
+      if (target) {
+        target.focus();
+        return;
+      }
+      document.activeElement?.blur?.();
+    };
+
+    const getVisibleOverflowMenuLinks = () =>
+      overflowMenuLinks.filter((link) => !link.hidden);
+
+    const focusOverflowMenuLink = (menuLink) => {
+      if (
+        !menuLink ||
+        menuLink.hidden ||
+        !isElementVisibleInTree(menuLink)
+      ) {
+        return;
+      }
+      menuLink.focus();
+      menuLink.scrollIntoView?.({ block: "nearest" });
+    };
+
+    const moveOverflowMenuFocus = (direction) => {
+      const visibleMenuLinks = getVisibleOverflowMenuLinks();
+      if (visibleMenuLinks.length === 0) {
+        return;
+      }
+      const currentIndex = visibleMenuLinks.indexOf(document.activeElement);
+      const nextIndex =
+        currentIndex === -1
+          ? direction > 0
+            ? 0
+            : visibleMenuLinks.length - 1
+          : (currentIndex + direction + visibleMenuLinks.length) %
+            visibleMenuLinks.length;
+      focusOverflowMenuLink(visibleMenuLinks[nextIndex]);
+    };
+
+    const setMenuOpen = (nextOpen, focusTarget = null) => {
+      if (nextOpen === true && isSearchOpen) {
+        setSearchPopoverOpen(false);
+      }
+      if (menuFrame !== null) {
+        cancelAnimationFrame(menuFrame);
+        menuFrame = null;
+      }
+      const shouldOpen =
+        nextOpen === true &&
+        !overflowLi.hidden &&
+        getVisibleOverflowMenuLinks().length > 0;
+      isMenuOpen = shouldOpen;
+      overflowMenu.hidden = !shouldOpen;
+      overflowMenu.classList.toggle(
+        S1P_NAV_OVERFLOW_MENU_VISIBLE_CLASS,
+        shouldOpen
+      );
+      overflowToggle.setAttribute(
+        "aria-expanded",
+        shouldOpen ? "true" : "false"
+      );
+      if (shouldOpen) {
+        menuFrame = requestAnimationFrame(() => {
+          menuFrame = null;
+          if (!isMenuOpen) {
+            return;
+          }
+          positionMenu();
+          focusOverflowMenuLink(focusTarget);
+        });
+      }
+    };
+
+    const closeMenu = ({ restoreFocus = false } = {}) => {
+      setMenuOpen(false);
+      if (restoreFocus) {
+        if (isElementVisibleInTree(overflowToggle)) {
+          overflowToggle.focus();
+        } else {
+          focusSafeNavigationTarget();
+        }
+      }
+    };
+
+    overflowMenuLinks.forEach((menuLink) => {
+      menuLink.addEventListener("click", closeMenu);
+    });
+
+    const positionMenu = () => {
+      if (!isMenuOpen) {
+        return;
+      }
+
+      const toggleRect = overflowToggle.getBoundingClientRect();
+      const menuRect = overflowMenu.getBoundingClientRect();
+      const layoutWidth = getS1pLayoutViewportWidth();
+      const viewportHeight = Number(window.innerHeight) || 0;
+      const viewportPadding = 8;
+      const maxLeft = Math.max(
+        viewportPadding,
+        layoutWidth - menuRect.width - viewportPadding
+      );
+      const left = Math.min(
+        Math.max(viewportPadding, toggleRect.left),
+        maxLeft
+      );
+      let top = toggleRect.bottom + 4;
+      if (
+        viewportHeight > 0 &&
+        top + menuRect.height > viewportHeight - viewportPadding &&
+        toggleRect.top - menuRect.height - 4 >= viewportPadding
+      ) {
+        top = toggleRect.top - menuRect.height - 4;
+      }
+
+      overflowMenu.style.left = `${left}px`;
+      overflowMenu.style.top = `${Math.max(viewportPadding, top)}px`;
+    };
+
+    const handleOverflowMenuKeydown = (event) => {
+      if (!isMenuOpen) {
+        return;
+      }
+      const visibleMenuLinks = getVisibleOverflowMenuLinks();
+      switch (event.key) {
+        case "ArrowDown":
+          event.preventDefault();
+          event.stopPropagation();
+          moveOverflowMenuFocus(1);
+          break;
+        case "ArrowUp":
+          event.preventDefault();
+          event.stopPropagation();
+          moveOverflowMenuFocus(-1);
+          break;
+        case "Home":
+          event.preventDefault();
+          event.stopPropagation();
+          focusOverflowMenuLink(visibleMenuLinks[0]);
+          break;
+        case "End":
+          event.preventDefault();
+          event.stopPropagation();
+          focusOverflowMenuLink(visibleMenuLinks[visibleMenuLinks.length - 1]);
+          break;
+        case "Escape":
+          event.preventDefault();
+          event.stopPropagation();
+          closeMenu({ restoreFocus: true });
+          break;
+        case "Tab":
+          closeMenu();
+          break;
+        default:
+          break;
+      }
+    };
+
+    overflowMenu.addEventListener("keydown", handleOverflowMenuKeydown);
+
+    const positionSearchPopover = () => {
+      if (!isSearchOpen || !searchToggle || !searchPopover) {
+        return;
+      }
+
+      const toggleRect = searchToggle.getBoundingClientRect();
+      const popoverRect = searchPopover.getBoundingClientRect();
+      const layoutWidth = getS1pLayoutViewportWidth();
+      const viewportHeight = Number(window.innerHeight) || 0;
+      const viewportPadding = 8;
+      const maxLeft = Math.max(
+        viewportPadding,
+        layoutWidth - popoverRect.width - viewportPadding
+      );
+      const left = Math.min(
+        Math.max(viewportPadding, toggleRect.left),
+        maxLeft
+      );
+      let top = toggleRect.bottom + 4;
+      if (
+        viewportHeight > 0 &&
+        top + popoverRect.height > viewportHeight - viewportPadding &&
+        toggleRect.top - popoverRect.height - 4 >= viewportPadding
+      ) {
+        top = toggleRect.top - popoverRect.height - 4;
+      }
+
+      searchPopover.style.left = `${left}px`;
+      searchPopover.style.top = `${Math.max(viewportPadding, top)}px`;
+    };
+
+    const setSearchPopoverOpen = (nextOpen) => {
+      if (nextOpen === true && isMenuOpen) {
+        setMenuOpen(false);
+      }
+      if (searchFrame !== null) {
+        cancelAnimationFrame(searchFrame);
+        searchFrame = null;
+      }
+      const shouldOpen =
+        nextOpen === true &&
+        isSearchCollapsed &&
+        searchToggle &&
+        searchPopover;
+      isSearchOpen = Boolean(shouldOpen);
+      if (!searchToggle || !searchPopover) {
+        return;
+      }
+
+      searchPopover.hidden = !isSearchOpen;
+      searchPopover.classList.toggle(
+        S1P_NAV_SEARCH_POPOVER_VISIBLE_CLASS,
+        isSearchOpen
+      );
+      searchToggle.setAttribute(
+        "aria-expanded",
+        isSearchOpen ? "true" : "false"
+      );
+      if (isSearchOpen) {
+        searchFrame = requestAnimationFrame(() => {
+          searchFrame = null;
+          if (!isSearchOpen) {
+            return;
+          }
+          positionSearchPopover();
+          searchBar?.querySelector("#scbar_txt")?.focus?.();
+        });
+      }
+    };
+
+    const closeSearchPopover = ({ restoreFocus = false } = {}) => {
+      setSearchPopoverOpen(false);
+      if (restoreFocus) {
+        if (isElementVisibleInTree(searchToggle)) {
+          searchToggle.focus();
+        } else {
+          focusSafeNavigationTarget();
+        }
+      }
+    };
+
+    const setSearchCollapsed = (nextCollapsed) => {
+      if (
+        !hasSearchBar ||
+        !searchBarParent ||
+        !searchPlaceholder ||
+        !searchToggle ||
+        !searchPopover
+      ) {
+        return;
+      }
+
+      const shouldCollapse = nextCollapsed === true;
+      if (shouldCollapse === isSearchCollapsed) {
+        return;
+      }
+
+      if (shouldCollapse) {
+        closeSearchPopover();
+        if (searchBar.parentNode === searchBarParent) {
+          searchBarParent.replaceChild(searchPlaceholder, searchBar);
+        }
+        searchPopover.appendChild(searchBar);
+        searchToggle.hidden = false;
+        searchToggle.classList.add(S1P_NAV_SEARCH_TOGGLE_VISIBLE_CLASS);
+        isSearchCollapsed = true;
+        return;
+      }
+
+      closeSearchPopover();
+      if (searchPlaceholder.parentNode) {
+        searchPlaceholder.parentNode.replaceChild(searchBar, searchPlaceholder);
+      } else {
+        searchBarParent.appendChild(searchBar);
+      }
+      searchToggle.hidden = true;
+      searchToggle.classList.remove(S1P_NAV_SEARCH_TOGGLE_VISIBLE_CLASS);
+      isSearchCollapsed = false;
+    };
+
+    const shouldCompactSearchBar = () => {
+      if (!hasSearchBar || !searchBar.isConnected) {
+        return false;
+      }
+      const searchBarRect = searchBar.getBoundingClientRect();
+      const searchBarWidth = Number(searchBarRect?.width) || 0;
+      const searchBarHeight = Number(searchBarRect?.height) || 0;
+      return (
+        searchBarHeight > 0 &&
+        searchBarWidth < S1P_NAV_SEARCH_COMPACT_MIN_WIDTH_PX
+      );
+    };
+
+    const setCustomNavItemVisibility = (item, isVisible) => {
+      item.hidden = !isVisible;
+      item.classList.toggle(
+        S1P_NAV_OVERFLOW_HIDDEN_ITEM_CLASS,
+        !isVisible
+      );
+      if (isVisible) {
+        item.removeAttribute("aria-hidden");
+      } else {
+        item.setAttribute("aria-hidden", "true");
+      }
+    };
+
+    const isNuxCompactNavbar = () =>
+      isS1NuxEnabled &&
+      getS1pLayoutViewportWidth() > 0 &&
+      getS1pLayoutViewportWidth() <= NARROW_SCREEN_MAX_WIDTH_PX;
+
+    const hasNavbarContentOverflow = () =>
+      navUl.scrollWidth > navUl.clientWidth + 1;
+
+    const repairFocusAfterReconcile = ({
+      activeElement,
+      wasOverflowFocused,
+      wasSearchFocused,
+    }) => {
+      if (
+        !activeElement ||
+        isElementVisibleInTree(document.activeElement)
+      ) {
+        return;
+      }
+      if (wasSearchFocused && isElementVisibleInTree(searchToggle)) {
+        searchToggle.focus();
+        return;
+      }
+      if (wasOverflowFocused && isElementVisibleInTree(overflowToggle)) {
+        overflowToggle.focus();
+        return;
+      }
+      focusSafeNavigationTarget();
+    };
+
+    const reconcile = () => {
+      reconcileFrame = null;
+      if (!navUl.isConnected) {
+        return;
+      }
+
+      const activeElement = document.activeElement;
+      const wasOverflowFocused =
+        overflowLi.contains(activeElement) || overflowMenu.contains(activeElement);
+      const wasSearchFocused =
+        searchToggle?.contains(activeElement) ||
+        searchPopover?.contains(activeElement);
+
+      if (isSearchCollapsed) {
+        setSearchCollapsed(false);
+      }
+      customNavItems.forEach((item, index) => {
+        setCustomNavItemVisibility(item, true);
+        if (overflowMenuLinks[index]) {
+          overflowMenuLinks[index].hidden = true;
+        }
+      });
+      overflowLi.hidden = true;
+      closeMenu();
+
+      // NUX 在 909px 以下有自己的悬浮快捷入口。此处只让它接管全部自定义链接，
+      // 避免第二套“更多”入口与 NUX 的窄屏交互叠加。
+      if (isNuxCompactNavbar() || navUl.clientWidth <= 0) {
+        setSearchCollapsed(shouldCompactSearchBar());
+        repairFocusAfterReconcile({
+          activeElement,
+          wasOverflowFocused,
+          wasSearchFocused,
+        });
+        return;
+      }
+
+      if (hasNavbarContentOverflow()) {
+        overflowLi.hidden = false;
+        for (let index = customNavItems.length - 1; index >= 0; index -= 1) {
+          if (!hasNavbarContentOverflow()) {
+            break;
+          }
+          setCustomNavItemVisibility(customNavItems[index], false);
+          if (overflowMenuLinks[index]) {
+            overflowMenuLinks[index].hidden = false;
+          }
+        }
+
+        if (!overflowMenuLinks.some((link) => !link.hidden)) {
+          overflowLi.hidden = true;
+        }
+      }
+
+      setSearchCollapsed(shouldCompactSearchBar());
+      repairFocusAfterReconcile({
+        activeElement,
+        wasOverflowFocused,
+        wasSearchFocused,
+      });
+    };
+
+    const scheduleReconcile = () => {
+      if (reconcileFrame !== null) {
+        return;
+      }
+      reconcileFrame = requestAnimationFrame(reconcile);
+    };
+
+    const handleDocumentClick = (event) => {
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        (overflowLi.contains(target) ||
+          overflowMenu.contains(target) ||
+          searchToggle?.contains(target) ||
+          searchPopover?.contains(target))
+      ) {
+        return;
+      }
+      closeMenu();
+      closeSearchPopover();
+    };
+
+    const handleDocumentKeydown = (event) => {
+      if (event.key === "Escape") {
+        closeMenu({
+          restoreFocus: overflowMenu.contains(document.activeElement),
+        });
+        closeSearchPopover({
+          restoreFocus: searchPopover?.contains(document.activeElement),
+        });
+      }
+    };
+
+    const handleSearchToggleClick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setSearchPopoverOpen(!isSearchOpen);
+    };
+
+    const handleSearchToggleKeydown = (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        setSearchPopoverOpen(true);
+      }
+    };
+
+    overflowToggle.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setMenuOpen(!isMenuOpen);
+    });
+    overflowToggle.addEventListener("keydown", (event) => {
+      if (
+        event.key === "ArrowDown" ||
+        event.key === "Enter" ||
+        event.key === " "
+      ) {
+        event.preventDefault();
+        setMenuOpen(true, getVisibleOverflowMenuLinks()[0]);
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        const visibleMenuLinks = getVisibleOverflowMenuLinks();
+        setMenuOpen(true, visibleMenuLinks[visibleMenuLinks.length - 1]);
+      }
+    });
+    searchToggle?.addEventListener("click", handleSearchToggleClick);
+    searchToggle?.addEventListener("keydown", handleSearchToggleKeydown);
+    window.addEventListener("resize", scheduleReconcile);
+    document.addEventListener("click", handleDocumentClick);
+    document.addEventListener("keydown", handleDocumentKeydown);
+
+    if (typeof ResizeObserver === "function") {
+      resizeObserver = new ResizeObserver(scheduleReconcile);
+      resizeObserver.observe(navUl);
+      if (headerRoot instanceof Element) {
+        resizeObserver.observe(headerRoot);
+      }
+    }
+
+    navbarCustomOverflowCleanup = () => {
+      const activeElement = document.activeElement;
+      const activeElementOwnedByCleanup =
+        overflowLi.contains(activeElement) ||
+        overflowMenu.contains(activeElement) ||
+        searchToggle?.contains(activeElement);
+      if (reconcileFrame !== null) {
+        cancelAnimationFrame(reconcileFrame);
+        reconcileFrame = null;
+      }
+      if (menuFrame !== null) {
+        cancelAnimationFrame(menuFrame);
+        menuFrame = null;
+      }
+      if (searchFrame !== null) {
+        cancelAnimationFrame(searchFrame);
+        searchFrame = null;
+      }
+      resizeObserver?.disconnect();
+      resizeObserver = null;
+      window.removeEventListener("resize", scheduleReconcile);
+      document.removeEventListener("click", handleDocumentClick);
+      document.removeEventListener("keydown", handleDocumentKeydown);
+      searchToggle?.removeEventListener("click", handleSearchToggleClick);
+      searchToggle?.removeEventListener("keydown", handleSearchToggleKeydown);
+      overflowMenu.removeEventListener("keydown", handleOverflowMenuKeydown);
+      setSearchCollapsed(false);
+      searchPlaceholder?.remove();
+      searchToggle?.remove();
+      searchPopover?.remove();
+      overflowMenu.remove();
+      overflowLi.remove();
+      if (
+        activeElementOwnedByCleanup &&
+        !isElementVisibleInTree(document.activeElement)
+      ) {
+        focusSafeNavigationTarget();
+      }
+      navRoot?.classList.remove(S1P_NAV_CUSTOMIZED_ROOT_CLASS);
+      headerRoot?.classList.remove(S1P_NAV_CUSTOMIZED_HEADER_CLASS);
+    };
+
+    // Publish the first overflow decision synchronously so the pre-paint
+    // layout cannot let every custom link push the search bar away. Keep the
+    // animation-frame pass for fonts and late stylesheet/layout changes.
+    reconcile();
+    scheduleReconcile();
+  };
+
   const normalizeNavHrefMatchKey = (hrefValue) => {
     const safeHref = getSafeUrlAttributeValue(hrefValue, { allowEmpty: false });
     if (!safeHref) {
@@ -1217,7 +2763,8 @@
     'a.s1p-autolink-url[data-s1p-autolink="url"], a.s1p-autolink-bilibili[data-s1p-autolink="bilibili"]';
   const OPEN_IN_NEW_TAB_THREAD_LIST_SCOPE_SELECTOR = "#threadlist";
   const OPEN_IN_NEW_TAB_NOTIFICATION_SCOPE_SELECTOR = ".xld.xlda";
-  const OPEN_IN_NEW_TAB_NAV_SCOPE_SELECTOR = "#nv, #mu, #um, #hd";
+  const OPEN_IN_NEW_TAB_NAV_SCOPE_SELECTOR =
+    "#nv, #mu, #um, #hd, .s1p-nav-overflow-menu, .s1p-nav-search-popover";
   const OPEN_IN_NEW_TAB_THREAD_DETAIL_SCOPE_SELECTOR =
     '#postlist table[id^="pid"]';
   const OPEN_IN_NEW_TAB_CONTROL_CONFIGS = [
@@ -1567,9 +3114,22 @@
   let foregroundRemoteSyncRetryReason = "";
   let foregroundRemoteSyncRetryIndicatorReason = "";
   let foregroundRemoteSyncRetryIndicatorOperation = "";
+  let foregroundRemoteSyncRetryExpectedRequestId = "";
+  let foregroundRemoteSyncRetryExpectedRemoteUpdatedAt = "";
+  let foregroundRemoteSyncRetryGeneration = 0;
+  let foregroundRemoteSyncRetryOwnerToken = null;
+  let foregroundRemoteSyncRetryOwnerSequence = 0;
+  let foregroundRemoteSyncRecoveryTimer = null;
+  let foregroundRemoteSyncRecoveryDueAt = 0;
+  let foregroundRemoteSyncRecoveryRequestId = "";
   let foregroundFollowUpSoftBlockState = null;
   let lastAutoSyncIndicatorDisplaySession = null;
   let autoSyncIndicatorDisplaySessionHiddenAt = 0;
+  let defaultManualSyncIntentCoordinator = null;
+  let manualSyncIntentBoundaryHandler = null;
+  let manualSyncPriorityGateEvaluator = () => false;
+  let syncExecutionSettlementDepth = 0;
+  let manualSyncIntentBoundaryDeferred = false;
   const activeRemoteSyncRequestHandles = new Set();
   let remoteSyncCancelGeneration = 0;
   let remoteSyncCancelReason = "manual_override";
@@ -1585,6 +3145,11 @@
   let manualSyncLockHeartbeatTimer = null;
   let startupSyncLockHeartbeatTimer = null;
   let foregroundFollowUpSyncLockHeartbeatTimer = null;
+  const syncLockHeartbeatAuthorityTokens = new Map();
+  // Keep the token that belongs to the latest local acquisition so convenience
+  // wrappers cannot release or renew a newer lock with an empty token.
+  const syncLockExecutionAuthorityTokens = new Map();
+  const syncLockRenewalFailureReasons = new Map();
   let isAutoSignInFlight = false;
   let readingProgressModalEscHandler = null;
   let settingsModalEscKeydownHandler = null;
@@ -1659,6 +3224,8 @@
   const SYNC_LOCK_MODE_BACKGROUND = "background";
   const SYNC_LOCK_MODE_STARTUP = "startup";
   const SYNC_LOCK_MODE_FOREGROUND_FOLLOWUP = "foreground_followup";
+  const SYNC_PREEMPT_SCOPE_ALL = "all";
+  const SYNC_PREEMPT_SCOPE_AUTOMATIC_ONLY = "automatic_only";
   const MANUAL_SYNC_LOCK_KEY = "s1p_manual_sync_lock";
   const MANUAL_SYNC_LOCK_TTL_MS = 3 * 60 * 1000;
   const MANUAL_SYNC_LOCK_HEARTBEAT_MS = 10 * 1000;
@@ -1677,6 +3244,7 @@
   const REMOTE_SYNC_RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
   const REMOTE_VERSION_CONFLICT_CODE = "REMOTE_VERSION_CHANGED";
   const REMOTE_SYNC_CANCELLED_CODE = "REMOTE_SYNC_CANCELLED";
+  const REMOTE_SYNC_AUTH_REJECTED_CODE = "REMOTE_SYNC_AUTH_REJECTED";
   const READ_PROGRESS_SYNC_DEBOUNCE_MS = 20 * 1000;
   const DEFAULT_SYNC_DEBOUNCE_MS = 5 * 1000;
   const BACKGROUND_SYNC_DEBOUNCE_STATE_KEY =
@@ -1687,7 +3255,12 @@
   const BACKGROUND_SYNC_DEBOUNCE_MAX_WAIT_MS = 60 * 1000;
   const BACKGROUND_SYNC_DEBOUNCE_FOLLOW_UP_SETTLE_MS = 600;
   const BACKGROUND_SYNC_DEBOUNCE_THREAD_ID_LIMIT = 20;
-  const SHARED_BACKGROUND_SYNC_RESCHEDULE_LOG_THROTTLE_MS = 1000;
+  const MANUAL_SYNC_INTENT_PHASE_QUEUED =
+    "waiting_for_execution_boundary";
+  const MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION =
+    "awaiting_confirmation";
+  const MANUAL_SYNC_INTENT_STALE_MS = 30 * 60 * 1000;
+  const SHARED_BACKGROUND_SYNC_RESCHEDULE_LOG_THROTTLE_MS = 5000;
   const SYNC_CONFLICT_MODAL_COOLDOWN_MS = 2 * 60 * 1000;
   const SYNC_CONFLICT_MODAL_COOLDOWN_GROUP_MAP = Object.freeze({
     background_conflict: "sync_conflict",
@@ -1702,6 +3275,20 @@
   const AUTO_SYNC_CONFLICT_PAUSE_KEY = "s1p_auto_sync_conflict_pause";
   const PENDING_CLEANUP_INFO_KEY = "s1p_pending_cleanup_info";
   const PENDING_AUTO_SYNC_KEY = "s1p_pending_auto_sync_request";
+  const PENDING_FOREGROUND_REMOTE_SYNC_KEY =
+    "s1p_pending_foreground_remote_sync_request";
+  const PENDING_FOREGROUND_REMOTE_SYNC_CURRENT_KEY =
+    `${PENDING_FOREGROUND_REMOTE_SYNC_KEY}:current`;
+  const PENDING_FOREGROUND_REMOTE_SYNC_RECORD_KEY_PREFIX =
+    `${PENDING_FOREGROUND_REMOTE_SYNC_KEY}:record:`;
+  const PENDING_FOREGROUND_REMOTE_SYNC_TERMINAL_KEY_PREFIX =
+    `${PENDING_FOREGROUND_REMOTE_SYNC_KEY}:terminal:`;
+  const PENDING_FOREGROUND_REMOTE_SYNC_RECORD_RETENTION_MS =
+    7 * 24 * 60 * 60 * 1000;
+  const LEGACY_PENDING_MANUAL_SYNC_INTENT_KEY =
+    "s1p_pending_manual_sync_intent";
+  const LEGACY_PENDING_MANUAL_SYNC_INTENT_RECORD_KEY_PREFIX =
+    "s1p_pending_manual_sync_intent:";
   const LAST_LOCAL_DIRTY_PROVENANCE_KEY = "s1p_last_local_dirty_provenance";
   const LAST_LOCAL_MODIFIED_KEY = "s1p_last_modified";
   const LAST_SYNC_TIMESTAMP_KEY = "s1p_last_sync_timestamp";
@@ -1721,6 +3308,10 @@
   const AUTO_SYNC_CLEAN_STATE_LOG_THROTTLE_MS = 30 * 1000;
   const FOREGROUND_FOLLOWUP_SOFT_BLOCK_SCOPE_TAB = "tab";
   const FOREGROUND_FOLLOWUP_SOFT_BLOCK_SCOPE_THREAD = "thread";
+  const FOREGROUND_PENDING_SOFT_BLOCK_WAIT_REASON =
+    "foreground_soft_block_waiting_for_change";
+  const FOREGROUND_REMOTE_SYNC_RECOVERY_DELAY_MS = 600;
+  const FOREGROUND_REMOTE_SYNC_RECOVERY_LOCK_BUFFER_MS = 100;
   const LEGACY_AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND = "background";
   const LEGACY_AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_FOLLOWUP =
     "foreground_followup";
@@ -2052,10 +3643,17 @@
     "s1p_nav_sync_alert_session_dismissed_signature";
   const SETTINGS_CROSS_TAB_SIGNAL_KEY = "s1p_settings_refresh_signal";
   const CORE_DATA_CROSS_TAB_SIGNAL_KEY = "s1p_core_data_refresh_signal";
+  const SYNC_RUNTIME_CONTEXT_ID = `s1p_context_${Date.now()}_${Math.random()
+    .toString(36)
+    .slice(2)}`;
   const SYNC_RUNTIME_SESSION_ID = `s1p_session_${Date.now()}_${Math.random()
     .toString(36)
     .slice(2)}`;
   const SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID = `s1p_tab_${Date.now()}_${Math.random()
+    .toString(36)
+    .slice(2)}`;
+  const SYNC_RUNTIME_TAB_LINEAGE_KEY = "s1p_sync_runtime_tab_lineage_id";
+  const SYNC_RUNTIME_FALLBACK_TAB_LINEAGE_ID = `s1p_tab_lineage_${Date.now()}_${Math.random()
     .toString(36)
     .slice(2)}`;
   const BACKGROUND_OPEN_THREAD_HINTS_KEY = "s1p_background_open_thread_hints";
@@ -2750,9 +4348,16 @@
       --s1p-first-level-glass-settings-bg: var(--s1p-glass-panel-bg);
       --s1p-first-level-glass-settings-filter: var(--s1p-glass-panel-filter);
       --s1p-first-level-glass-settings-shadow: var(--s1p-dialog-glass-shadow);
-      --s1p-first-level-glass-confirm-bg: var(--s1p-floating-surface-bg);
-      --s1p-first-level-glass-confirm-filter: var(--s1p-floating-surface-filter);
-      --s1p-first-level-glass-confirm-shadow: var(--s1p-floating-surface-shadow);
+      --s1p-first-level-glass-confirm-bg: linear-gradient(
+        150deg,
+        rgba(255, 255, 255, 0.8),
+        rgba(241, 244, 241, 0.7)
+      );
+      --s1p-first-level-glass-confirm-filter: blur(14px) saturate(1.04);
+      --s1p-first-level-glass-confirm-shadow:
+        0 22px 54px rgba(16, 35, 79, 0.22),
+        inset 0 1px 0 rgba(255, 255, 255, 0.86);
+      --s1p-first-level-glass-confirm-overlay: rgba(16, 35, 79, 0.14);
       --s1p-inline-action-surface-bg: rgba(255, 255, 255, 0.34);
       --s1p-inline-action-surface-shadow: 0 5px 14px rgba(0, 0, 0, 0.08);
       --s1p-inline-action-hover-bg: rgba(255, 255, 255, 0.32);
@@ -2957,6 +4562,218 @@
       #nv > ul {
         display: flex !important;
         align-items: center !important;
+      }
+    }
+
+    /* --- 自定义导航与原生登录区的窄宽度协作 --- */
+    .s1p-nav-customized-header #nv,
+    .s1p-nav-customized-root {
+      min-width: 0 !important;
+    }
+    .s1p-nav-customized-header #nv > ul {
+      min-width: 0 !important;
+    }
+    .s1p-nav-customized-header #scbar {
+      min-width: 0 !important;
+      flex: 1 1 0 !important;
+    }
+    .s1p-nav-customized-header #scbar_form,
+    .s1p-nav-customized-header #scbar_form > table,
+    .s1p-nav-customized-header #scbar_form > table > tbody,
+    .s1p-nav-customized-header #scbar_form > table > tbody > tr {
+      min-width: 0 !important;
+      max-width: 100%;
+    }
+    .s1p-nav-customized-header #scbar_txt {
+      min-width: 0;
+    }
+    .s1p-nav-customized-header .hdc.cl {
+      flex-shrink: 0 !important;
+      overflow: visible !important;
+    }
+    .s1p-nav-customized-header #um,
+    .s1p-nav-customized-header #um > p {
+      flex-shrink: 0 !important;
+      min-width: max-content;
+    }
+    .s1p-nav-customized-header .fastlg button.pn {
+      width: auto !important;
+      min-width: 46px;
+      white-space: nowrap !important;
+    }
+    .s1p-nav-search-toggle {
+      display: none;
+      flex: 0 0 auto;
+      align-items: center;
+      justify-content: center;
+      align-self: center;
+      box-sizing: border-box;
+      width: auto;
+      min-width: 46px;
+      height: 32px;
+      margin: 0 2px;
+      padding: 0 8px;
+      color: var(--s1p-t) !important;
+      background: transparent !important;
+      font: inherit;
+      line-height: 35px;
+      text-align: center;
+      white-space: nowrap;
+      transition: background-color 0.15s ease, transform 0.1s ease;
+    }
+    .s1p-nav-search-toggle-visible {
+      display: flex !important;
+    }
+    .s1p-nav-search-toggle:hover,
+    .s1p-nav-search-toggle:focus-visible {
+      background: var(--s1p-hover-overlay) !important;
+      outline: none;
+    }
+    .s1p-nav-search-toggle:active {
+      transform: translateY(1px);
+    }
+    .s1p-nav-search-popover {
+      position: fixed;
+      z-index: 10004;
+      display: flex;
+      width: min(300px, calc(100vw - 16px));
+      padding: 6px;
+      box-sizing: border-box;
+      border: 0;
+      border-radius: 8px;
+      background: var(--s1p-inline-action-surface-bg);
+      box-shadow: var(--s1p-inline-action-surface-shadow);
+      -webkit-backdrop-filter: var(--s1p-floating-surface-filter);
+      backdrop-filter: var(--s1p-floating-surface-filter);
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transform: translateY(-4px) scale(0.98);
+      transition: opacity 0.15s ease-out, transform 0.15s ease-out,
+        visibility 0.15s;
+    }
+    .s1p-nav-search-popover-visible {
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+      transform: translateY(0) scale(1);
+    }
+    .s1p-nav-search-popover[hidden] {
+      display: none !important;
+    }
+    .s1p-nav-search-popover #scbar {
+      display: block !important;
+      width: 100% !important;
+      min-width: 0 !important;
+      height: auto !important;
+      padding: 0 !important;
+      flex: none !important;
+    }
+    .s1p-nav-search-popover #scbar_form,
+    .s1p-nav-search-popover #scbar_form > table,
+    .s1p-nav-search-popover #scbar_form > table > tbody,
+    .s1p-nav-search-popover #scbar_form > table > tbody > tr {
+      display: flex;
+      width: 100%;
+      min-width: 0 !important;
+    }
+    .s1p-nav-search-popover #scbar_form > table > tbody > tr {
+      margin: 0 !important;
+    }
+    .s1p-nav-search-popover .scbar_type_td,
+    .s1p-nav-search-popover .scbar_btn_td {
+      flex: 0 0 auto;
+    }
+    .s1p-nav-search-popover .scbar_txt_td {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    .s1p-nav-search-popover #scbar_txt {
+      width: 100%;
+      max-width: none;
+      min-width: 0;
+    }
+    .s1p-nav-overflow {
+      flex: 0 0 auto;
+    }
+    .s1p-nav-overflow > a:hover,
+    .s1p-nav-overflow > a:focus-visible {
+      background: var(--s1p-hover-overlay) !important;
+      outline: none;
+    }
+    .s1p-nav-overflow[hidden],
+    .s1p-nav-overflow-hidden {
+      display: none !important;
+    }
+    .s1p-nav-overflow-menu {
+      position: fixed;
+      z-index: 10004;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 120px;
+      max-width: min(280px, calc(100vw - 16px));
+      max-height: calc(100vh - 16px);
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      padding: 4px;
+      box-sizing: border-box;
+      border: 0;
+      border-radius: 8px;
+      background: var(--s1p-inline-action-surface-bg);
+      box-shadow: var(--s1p-inline-action-surface-shadow);
+      -webkit-backdrop-filter: var(--s1p-floating-surface-filter);
+      backdrop-filter: var(--s1p-floating-surface-filter);
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transform: translateY(-4px) scale(0.98);
+      transition: opacity 0.15s ease-out, transform 0.15s ease-out,
+        visibility 0.15s;
+    }
+    .s1p-nav-overflow-menu-visible {
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+      transform: translateY(0) scale(1);
+    }
+    .s1p-nav-overflow-menu[hidden] {
+      display: none !important;
+    }
+    .s1p-nav-overflow-menu a {
+      display: block;
+      padding: 6px 10px;
+      border-radius: 5px;
+      color: var(--s1p-t) !important;
+      font-size: 13px;
+      line-height: 1.3;
+      text-align: left;
+      white-space: nowrap;
+    }
+    .s1p-nav-overflow-menu a:hover,
+    .s1p-nav-overflow-menu a:focus-visible {
+      background: var(--s1p-inline-action-hover-bg);
+      color: var(--s1p-t) !important;
+      outline: none;
+    }
+    .s1p-nav-overflow-menu [hidden] {
+      display: none !important;
+    }
+    @media (min-width: ${NARROW_SCREEN_MAX_WIDTH_PX + 1}px) {
+      .s1p-nav-customized-header #nv > ul {
+        flex: 1 1 auto !important;
+        max-width: 100%;
+        overflow: hidden;
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .s1p-nav-overflow-menu,
+      .s1p-nav-search-popover {
+        transition: none;
+        transform: none;
+      }
+      .s1p-nav-search-toggle {
+        transition: none;
       }
     }
 
@@ -3995,6 +5812,17 @@
       overflow: hidden;
       text-overflow: ellipsis;
     }
+    .s1p-debug-console-log-line.s1p-structured-log {
+      grid-template-columns: auto 1fr auto auto;
+    }
+    .s1p-structured-log .s1p-debug-console-log-msg {
+      grid-column: 1 / -1;
+      grid-row: 2;
+    }
+    .s1p-structured-log .s1p-debug-console-log-msg.is-collapsed {
+      white-space: pre-wrap;
+      text-overflow: clip;
+    }
     .s1p-debug-console-expand-line,
     .s1p-debug-console-copy-line {
       display: inline-flex;
@@ -4021,7 +5849,7 @@
       display: flex;
       align-items: center;
       gap: 8px;
-      flex-wrap: nowrap;
+      flex-wrap: wrap;
       position: relative;
       flex: 1 1 260px;
       min-width: 0;
@@ -4055,13 +5883,18 @@
     #s1p-debug-unified-panel .s1p-debug-console-level-btn:hover {
       opacity: 1;
     }
-    .s1p-debug-console-filter-bar input {
-      flex: 1;
+    .s1p-debug-console-filter-bar input,
+    .s1p-debug-console-filter-bar select {
+      flex: 1 1 160px;
       min-width: 0;
       box-sizing: border-box;
       height: 32px;
       min-height: 32px;
       line-height: 32px;
+    }
+    .s1p-debug-console-filter-bar select {
+      flex: 1 1 160px;
+      max-width: 100%;
     }
     #s1p-debug-unified-panel .s1p-input {
       font-size: 12px;
@@ -4496,6 +6329,9 @@
       max-width: calc(100vw - 24px);
       max-height: calc(100vh - 24px);
       max-height: calc(100dvh - 24px);
+    }
+    .s1p-settings-secondary-modal.s1p-sync-modal > .s1p-dialog-content {
+      max-height: 100%;
     }
     .s1p-sync-modal .s1p-confirm-body {
       flex: 1 1 auto;
@@ -6091,6 +7927,9 @@
     .s1p-fullscreen-modal.${S1P_LAYERED_MODAL_BACKDROP_OPEN_CLASS}::before {
       opacity: 1;
     }
+    .s1p-fullscreen-modal.s1p-confirm-modal::before {
+      background: var(--s1p-first-level-glass-confirm-overlay);
+    }
     .s1p-fullscreen-modal > * {
       position: relative;
       z-index: 1;
@@ -6936,6 +8775,10 @@
       backface-visibility: hidden;
       transform-origin: center;
     }
+    .s1p-confirm-modal > .s1p-dialog-content {
+      max-height: calc(100vh - 32px);
+      max-height: calc(100dvh - 32px);
+    }
     .s1p-dialog-content--compact {
       width: 400px;
       max-height: min(80vh, calc(100% - 32px));
@@ -6949,6 +8792,21 @@
     }
     .s1p-dialog-content--expanded {
       width: 580px;
+    }
+    .s1p-settings-secondary-modal > .s1p-dialog-content {
+      max-height: 100%;
+    }
+    .s1p-dialog-content > .s1p-confirm-body,
+    .s1p-dialog-content > .s1p-modal-body {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+    .s1p-dialog-content > .s1p-modal-header,
+    .s1p-dialog-content > .s1p-confirm-footer,
+    .s1p-dialog-content > .s1p-modal-footer {
+      flex: 0 0 auto;
     }
     .s1p-confirm-body {
       padding: 20px 24px;
@@ -7368,6 +9226,7 @@
       --s1p-first-level-glass-bg: var(--s1p-first-level-glass-confirm-bg);
       --s1p-first-level-glass-filter: var(--s1p-first-level-glass-confirm-filter);
       --s1p-first-level-glass-shadow: var(--s1p-first-level-glass-confirm-shadow);
+      border: none;
     }
     .s1p-first-level-glass {
       background: var(--s1p-first-level-glass-bg);
@@ -9141,6 +11000,16 @@
         --s1p-floating-surface-bg: rgba(17, 24, 39, 0.82);
         --s1p-floating-surface-filter: blur(3px) saturate(1.02);
         --s1p-floating-surface-shadow: 0 12px 26px rgba(0, 0, 0, 0.28);
+        --s1p-first-level-glass-confirm-bg: linear-gradient(
+          150deg,
+          rgba(30, 41, 59, 0.74),
+          rgba(15, 23, 42, 0.64)
+        );
+        --s1p-first-level-glass-confirm-filter: blur(14px) saturate(1.03);
+        --s1p-first-level-glass-confirm-shadow:
+          0 24px 60px rgba(0, 0, 0, 0.52),
+          inset 0 1px 0 rgba(255, 255, 255, 0.06);
+        --s1p-first-level-glass-confirm-overlay: rgba(2, 6, 23, 0.44);
         --s1p-inline-action-surface-bg: rgba(17, 24, 39, 0.74);
         --s1p-inline-action-surface-shadow: 0 10px 22px rgba(0, 0, 0, 0.24);
         --s1p-inline-action-hover-bg: rgba(148, 163, 184, 0.16);
@@ -10283,7 +12152,7 @@
   };
   const getSyncDiagnostics = () => {
     return normalizeSyncDiagnostics(
-      GM_getValue(SYNC_DIAGNOSTICS_KEY, SYNC_DIAGNOSTICS_DEFAULT)
+      { ...GM_getValue(SYNC_DIAGNOSTICS_KEY, SYNC_DIAGNOSTICS_DEFAULT), ...(s1pPendingSyncTrace || {}) }
     );
   };
 
@@ -10305,7 +12174,18 @@
   };
 
   const resetSyncDiagnostics = () => {
+    s1pPendingSyncTrace = null;
     GM_setValue(SYNC_DIAGNOSTICS_KEY, { ...SYNC_DIAGNOSTICS_DEFAULT });
+  };
+
+  const s1pFlushSyncTrace = () => {
+    if (s1pSyncTraceFlushTimer) clearTimeout(s1pSyncTraceFlushTimer);
+    s1pSyncTraceFlushTimer = null;
+    if (!s1pPendingSyncTrace) return;
+    try {
+      saveSyncDiagnostics({ ...GM_getValue(SYNC_DIAGNOSTICS_KEY, SYNC_DIAGNOSTICS_DEFAULT), ...s1pPendingSyncTrace });
+      s1pPendingSyncTrace = null;
+    } catch (_) { s1pLogLoss.persistenceFailures += 1; }
   };
 
   const normalizeSyncDiagnosticText = (value, maxLength = 120) =>
@@ -10664,6 +12544,11 @@
     return parts.join(" | ");
   };
   const recordReadProgressDebugEvent = (eventType = "", options = {}) => {
+    s1pRecordDiagnosticEvent(`reading.${eventType}`, { module: "reading",
+      operationId: `s1p_reading_${s1pLogContext().contextId || "page"}_${options.threadId || ""}`,
+      message: options.detail || eventType, reason: options.confirmationReason || eventType,
+      repeatKey: eventType, details: options,
+    });
     const {
       detail = "",
       timestamp = Date.now(),
@@ -10720,7 +12605,7 @@
       eventSummary,
     ].slice(-READ_PROGRESS_DEBUG_EVENT_LIMIT);
     saveSyncDiagnostics(nextDiagnostics);
-    if (READ_PROGRESS_PARSE_DEBUG) {
+    if (READ_PROGRESS_PARSE_DEBUG || Date.now() < s1pVerboseUntil) {
       if (consoleDetails) {
         console.debug("S1 Plus (ReadProgressDebug):", eventSummary, consoleDetails);
       } else {
@@ -11850,12 +13735,18 @@
     return normalized;
   };
 
-  const releaseRemoteProbeLockValue = (owner = BACKGROUND_SYNC_OWNER_ID) => {
+  const releaseRemoteProbeLockValue = (
+    owner = BACKGROUND_SYNC_OWNER_ID,
+    expectedTimestamp = 0
+  ) => {
     const currentLock = getRemoteProbeLockValue();
     if (!currentLock) {
       return false;
     }
     if (owner && currentLock.owner !== owner) {
+      return false;
+    }
+    if (expectedTimestamp && currentLock.timestamp !== expectedTimestamp) {
       return false;
     }
     GM_deleteValue(REMOTE_PROBE_LOCK_KEY);
@@ -12472,6 +14363,20 @@
         return "前台补同步返回";
       case "foreground_probe_followup_blocked":
         return "前台补同步暂缓";
+      case "foreground_pending_attempt_started":
+        return "前台待处理尝试开始";
+      case "foreground_pending_attempt_ignored":
+        return "旧前台待处理尝试已忽略";
+      case "foreground_pending_result_ignored":
+        return "旧前台待处理结果已忽略";
+      case "foreground_pending_recovery_suppressed":
+        return "前台待处理已抑制";
+      case "foreground_probe_soft_block_suppressed":
+        return "重复前台补同步已抑制";
+      case "foreground_pending_soft_block_cleared":
+        return "前台暂缓已解除";
+      case "foreground_pending_soft_block_clear_ignored":
+        return "旧前台暂缓解除已忽略";
       case "remote_fetch_start":
         return "云端读取开始";
       case "remote_fetch_done":
@@ -12561,6 +14466,35 @@
         return "手动动作失败";
       case "manual_sync_action_conflict":
         return "手动动作冲突";
+      case "lock.acquisition_started":
+        return "同步锁获取开始";
+      case "lock.acquired":
+        return "同步锁已取得";
+      case "lock.acquisition_canceled":
+        return "临时锁获取已取消";
+      case "lock.acquisition_cancellation_failed":
+        return "临时锁取消失败";
+      case "lock.acquisition_failed":
+        return "同步锁获取失败";
+      case "lock.released":
+        return "同步锁已释放";
+      case "lock.release_not_owned":
+        return "同步锁清理时已不持有";
+      case "lock.expired_cleanup":
+        return "同步锁过期后已清理";
+      case "lock.release_failed":
+        return "同步锁释放失败";
+      case "sync.transaction_failed":
+      case "transaction_failed":
+        return "同步事务失败";
+      case "sync.transaction_skipped":
+      case "transaction_skipped":
+        return "同步事务跳过";
+      case "sync.cleanup_failed":
+      case "cleanup_failed":
+        return "同步收尾失败";
+      case "lock.expired_observed":
+        return "观察到同步锁过期";
       case "force_push_start":
         return "强制推送开始";
       case "force_push_export_done":
@@ -12604,6 +14538,12 @@
         return "发现变化";
       case "released":
         return "已释放";
+      case "expired":
+        return "已过期";
+      case "acquiring":
+        return "归属校验中";
+      case "not_owned":
+        return "清理时已不持有";
       case "unknown":
         return "未知";
       default:
@@ -12624,6 +14564,12 @@
         return "后续原因";
       case "blockReason":
         return "阻断原因";
+      case "blockAction":
+        return "阻断动作";
+      case "blockLevel":
+        return "阻断级别";
+      case "blockAt":
+        return "阻断时间";
       case "beforePerformReason":
         return "前置跳过原因";
       case "conflictReason":
@@ -12735,6 +14681,85 @@
       case "currentGeneration":
       case "expectedGeneration":
         return "调度代次";
+      case "lifecycleGeneration":
+      case "lifecycleGenerationAtAcquire":
+        return "生命周期代次";
+      case "unloadDisposition":
+        return "页面离开处置";
+      case "lifecycleReason":
+        return "生命周期原因";
+      case "cancellationReason":
+        return "取消原因";
+      case "terminalEvent":
+        return "终态事件";
+      case "terminalReason":
+        return "终态原因";
+      case "terminalEvidence":
+        return "终态证据";
+      case "terminalEvents":
+        return "终态事件链";
+      case "lockTerminalEvent":
+        return "锁终态事件";
+      case "lockTerminalStatus":
+        return "锁终态状态";
+      case "lockTerminalReason":
+        return "锁终态原因";
+      case "lockTerminalAt":
+        return "锁终态时间";
+      case "lockTerminalEvidence":
+        return "锁终态证据";
+      case "transactionTerminalEvent":
+        return "事务终态事件";
+      case "transactionTerminalStatus":
+        return "事务终态状态";
+      case "transactionTerminalReason":
+        return "事务终态原因";
+      case "transactionTerminalAt":
+        return "事务终态时间";
+      case "transactionTerminalEvidence":
+        return "事务终态证据";
+      case "cleanupTerminalEvent":
+        return "收尾终态事件";
+      case "cleanupTerminalStatus":
+        return "收尾终态状态";
+      case "cleanupTerminalReason":
+        return "收尾终态原因";
+      case "cleanupTerminalAt":
+        return "收尾终态时间";
+      case "cleanupTerminalEvidence":
+        return "收尾终态证据";
+      case "observedExpiryAt":
+        return "观察到过期时间";
+      case "evidenceSources":
+        return "证据来源";
+      case "sharedReceiptCount":
+        return "共享回执数";
+      case "modeLockValidAtRelease":
+        return "释放时模式锁有效";
+      case "globalLockValidAtRelease":
+        return "释放时全局锁有效";
+      case "lockReadFailed":
+        return "锁状态读取失败";
+      case "modeReleaseFailed":
+        return "模式锁删除失败";
+      case "globalReleaseFailed":
+        return "全局锁删除失败";
+      case "lockMode":
+        return "占用锁模式";
+      case "lockOwner":
+        return "占用锁持有者";
+      case "lockExecutionId":
+        return "占用锁执行 ID";
+      case "lockOperationId":
+        return "占用锁操作 ID";
+      case "lockStage":
+        return "占用锁阶段";
+      case "lockAcquiredAt":
+        return "占用锁取得时间";
+      case "lockExpiresAt":
+        return "占用锁过期时间";
+      case "lockRemainingMs":
+        return "占用锁剩余时间";
       case "isOwner":
         return "本页负责执行";
       case "ownerTabId":
@@ -12778,6 +14803,16 @@
         return "远端写入";
       case "threadId":
         return "帖子 ID";
+      case "requestId":
+        return "请求 ID";
+      case "lastAttemptAt":
+        return "最近尝试时间";
+      case "lastSeenAt":
+        return "最近观测时间";
+      case "previousBlockReason":
+        return "之前阻断原因";
+      case "previousBlockAt":
+        return "之前阻断时间";
       case "error":
         return "错误";
       case "stage":
@@ -12814,6 +14849,8 @@
         return "合并阅读进度并回写云端";
       case "skip_push_on_foreground_followup":
         return "前台检查暂缓推送";
+      case "probe_soft_block_suppressed":
+        return "沿用现有暂缓，跳过重复补同步";
       case "no_change":
         return "无变化";
       case "probe_gate_blocked":
@@ -12913,6 +14950,9 @@
       before: "执行前",
       after: "执行后",
       unknown: "未知阶段",
+      acquiring: "等待锁归属校验",
+      transaction_start: "事务开始前",
+      page_unloading_before_transaction: "页面离开，事务未开始",
       fetch_remote_data: "读取云端数据",
       export_local_data_initial_push: "导出本地数据用于初始化推送",
       push_initial_data: "初始化推送",
@@ -13060,6 +15100,7 @@
     switch (String(key || "").trim()) {
       case "action":
       case "followupAction":
+      case "blockAction":
         return getSyncTraceActionValueLabel(value);
       case "reason":
       case "triggerReason":
@@ -13067,6 +15108,9 @@
       case "blockReason":
       case "beforePerformReason":
       case "conflictReason":
+      case "lifecycleReason":
+      case "cancellationReason":
+      case "terminalReason":
         return getSyncTraceReasonValueLabel(value);
       case "status":
       case "followupStatus":
@@ -13135,6 +15179,59 @@
         return getSyncTraceApplyModeLabel(value);
       case "stage":
         return getSyncTraceStageLabel(value);
+      case "terminalEvidence":
+        switch (value) {
+          case "explicit_owner_release":
+            return "有持有者释放回执";
+          case "explicit_acquisition_cancellation":
+            return "有临时锁取消回执";
+          case "explicit_acquisition_failure":
+            return "有锁获取失败回执";
+          case "explicit_acquisition_cancellation_failure":
+            return "有临时锁取消失败回执";
+          case "cleanup_without_current_ownership":
+            return "清理时已不持有锁";
+          case "ttl_expiry_cleanup":
+            return "确认 TTL 过期后清理残留锁";
+          case "explicit_lock_release_failure":
+            return "有锁释放存储失败回执";
+          case "explicit_transaction_failure":
+            return "有事务失败回执";
+          case "explicit_transaction_completion":
+            return "有事务完成回执";
+          case "explicit_cleanup_failure":
+            return "有同步收尾失败回执";
+          case "ttl_expiry_observed_without_owner_release_receipt":
+            return "只观察到 TTL 过期，缺少持有者释放回执";
+          case "no_terminal_evidence":
+            return "没有终态证据";
+          default:
+            return value;
+        }
+      case "lockTerminalStatus":
+      case "transactionTerminalStatus":
+      case "cleanupTerminalStatus":
+        return getSyncTraceStatusLabel(value);
+      case "lockTerminalReason":
+      case "transactionTerminalReason":
+      case "cleanupTerminalReason":
+        return getSyncTraceReasonValueLabel(value);
+      case "lockTerminalEvent":
+      case "transactionTerminalEvent":
+      case "cleanupTerminalEvent":
+        return getSyncTracePhaseLabel(value.replace(/^sync\./, "")) || value;
+      case "lockTerminalEvidence":
+      case "transactionTerminalEvidence":
+      case "cleanupTerminalEvidence":
+        return getSyncTraceDetailValueLabel("terminalEvidence", value);
+      case "unloadDisposition":
+        return value === "cancel_provisional_acquisition"
+          ? "取消临时锁获取"
+          : value === "retain_running_lock"
+            ? "保留运行中执行锁"
+            : normalizeSyncDiagnosticText(value, 160);
+      case "terminalEvent":
+        return getSyncTracePhaseLabel(value.replace(/^sync\./, "")) || value;
       default:
         return normalizeSyncDiagnosticText(value, 160);
     }
@@ -13265,58 +15362,206 @@
     return entries.join(", ");
   };
 
-  const recordSyncTraceEvent = (phase = "", options = {}) => {
-    const now = Number(options.timestamp) || Date.now();
-    const scope = normalizeSyncDiagnosticText(options.scope, 80) || "sync";
-    const normalizedPhase =
-      normalizeSyncDiagnosticText(phase || options.phase, 80) || "event";
-    const status = normalizeSyncDiagnosticText(options.status, 80);
-    const message = normalizeSyncDiagnosticText(options.message, 260);
-    const details = sanitizeRecordObject(options.details);
-    const detailSummary = buildSyncTraceDetailsSummary(details);
-    const summaryParts = [
-      formatSyncTime(now),
-      getSyncTraceScopeLabel(scope),
-      getSyncTracePhaseLabel(normalizedPhase),
-      status ? `状态=${getSyncTraceStatusLabel(status) || status}` : "",
-      message,
-      detailSummary,
-    ].filter(Boolean);
-    const summary = normalizeSyncDiagnosticText(summaryParts.join(" | "), 500);
-    const current = getSyncDiagnostics();
-    const nextEvents = [
-      ...(Array.isArray(current.syncTraceEvents)
-        ? current.syncTraceEvents
-        : []),
-      summary,
-    ].slice(-SYNC_TRACE_EVENT_LIMIT);
-    saveSyncDiagnostics({
-      ...current,
-      lastSyncTraceTimestamp: now,
-      lastSyncTraceScope: scope,
-      lastSyncTracePhase: normalizedPhase,
-      lastSyncTraceStatus: status,
-      lastSyncTraceSummary: summary,
-      syncTraceEvents: nextEvents,
-    });
-
-    if (options.logToConsole === false) {
-      return summary;
+  const getSyncRuntimeContextPath = () => {
+    try {
+      const runtimeLocation =
+        typeof window !== "undefined" && window.location
+          ? window.location
+          : typeof location !== "undefined"
+            ? location
+            : null;
+      const pathname = normalizeSyncDiagnosticText(runtimeLocation?.pathname, 180);
+      if (pathname) {
+        return pathname;
+      }
+      const href = normalizeSyncDiagnosticText(runtimeLocation?.href, 500);
+      if (!href) {
+        return "";
+      }
+      return normalizeSyncDiagnosticText(new URL(href).pathname, 180);
+    } catch (_) {
+      return "";
     }
-    const level = ["debug", "log", "warn", "error"].includes(options.level)
-      ? options.level
-      : "log";
-    const baseConsoleMessage =
-      normalizeSyncDiagnosticText(options.consoleMessage, 500) ||
-      `S1 Plus (SyncTrace): ${summary}`;
-    const consoleMessage =
-      detailSummary &&
-      options.consoleMessage &&
-      options.omitDetailsInConsole !== true
-        ? `${baseConsoleMessage} 详情：${detailSummary}`
-        : baseConsoleMessage;
-    console[level](consoleMessage);
-    return summary;
+  };
+
+  const getSyncRuntimeFrameKind = () => {
+    try {
+      const runtimeWindow = typeof window !== "undefined" ? window : null;
+      if (!runtimeWindow) {
+        return "unknown";
+      }
+      const topWindow = runtimeWindow.top || runtimeWindow;
+      const selfWindow = runtimeWindow.self || runtimeWindow;
+      return topWindow === selfWindow ? "top" : "frame";
+    } catch (_) {
+      return "unknown";
+    }
+  };
+
+  const getSyncRuntimeNavigationType = () => {
+    try {
+      const entries =
+        typeof performance !== "undefined" &&
+        typeof performance.getEntriesByType === "function"
+          ? performance.getEntriesByType("navigation")
+          : [];
+      return normalizeSyncDiagnosticText(entries?.[0]?.type, 40) || "unknown";
+    } catch (_) {
+      return "unknown";
+    }
+  };
+
+  const getSyncRuntimeTabLineageId = () => {
+    try {
+      const storage =
+        typeof window !== "undefined" ? window.sessionStorage : null;
+      if (!storage) {
+        return SYNC_RUNTIME_FALLBACK_TAB_LINEAGE_ID;
+      }
+      const storedId = normalizeSyncDiagnosticText(
+        storage.getItem(SYNC_RUNTIME_TAB_LINEAGE_KEY),
+        120
+      );
+      if (storedId) {
+        return storedId;
+      }
+      storage.setItem(
+        SYNC_RUNTIME_TAB_LINEAGE_KEY,
+        SYNC_RUNTIME_FALLBACK_TAB_LINEAGE_ID
+      );
+      return SYNC_RUNTIME_FALLBACK_TAB_LINEAGE_ID;
+    } catch (_) {
+      return SYNC_RUNTIME_FALLBACK_TAB_LINEAGE_ID;
+    }
+  };
+
+  const getSyncRuntimeContextInfo = () => ({
+    contextId: SYNC_RUNTIME_CONTEXT_ID,
+    sessionId: SYNC_RUNTIME_SESSION_ID,
+    tabId: getSyncRuntimeTabLineageId(),
+    runtimeId: SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID,
+    path: getSyncRuntimeContextPath(),
+    visibilityState:
+      normalizeSyncDiagnosticText(
+        typeof document !== "undefined" ? document.visibilityState : "",
+        40
+      ) || "unknown",
+    frame: getSyncRuntimeFrameKind(),
+    navigationType: getSyncRuntimeNavigationType(),
+  });
+
+  const getSyncRuntimeContextSummary = () => {
+    const context = getSyncRuntimeContextInfo();
+    return [
+      `context=${context.contextId}`,
+      `tab=${context.tabId}`,
+      `runtime=${context.runtimeId}`,
+      context.path ? `path=${context.path}` : "",
+      `visibility=${context.visibilityState}`,
+      `frame=${context.frame}`,
+      `navigation=${context.navigationType}`,
+    ]
+      .filter(Boolean)
+      .join(", ");
+  };
+
+  const recordSyncTraceEvent = (phase = "", options = {}) => {
+    try {
+      const now = Number(options.timestamp) || Date.now();
+      const scope = normalizeSyncDiagnosticText(options.scope, 80) || "sync";
+      const normalizedPhase =
+        normalizeSyncDiagnosticText(phase || options.phase, 80) || "event";
+      const status = normalizeSyncDiagnosticText(options.status, 80);
+      const message = normalizeSyncDiagnosticText(options.message, 260);
+      const details = sanitizeRecordObject(options.details);
+      const scopedMode = /manual|force/.test(scope) ? SYNC_LOCK_MODE_MANUAL
+        : /background|scheduler/.test(scope) ? SYNC_LOCK_MODE_BACKGROUND
+        : /startup|initial/.test(scope) ? SYNC_LOCK_MODE_STARTUP
+        : /foreground_followup/.test(scope) ? SYNC_LOCK_MODE_FOREGROUND_FOLLOWUP : "";
+      const operationModeHint = details.mode || details.syncMode || "";
+      const recentSettledOperation = [...s1pSyncOperations.values()]
+        .filter((item) =>
+          !item?.active &&
+          item?.releasedAt &&
+          now - item.releasedAt < 5000 &&
+          (!operationModeHint || item.mode === operationModeHint)
+        )
+        .sort((left, right) => (right.releasedAt || 0) - (left.releasedAt || 0))[0];
+      const candidateOperation = scopedMode ? s1pSyncOperations.get(scopedMode)
+        : /^(remote_fetch|remote_push|auto_sync)$/.test(scope)
+          ? [...s1pSyncOperations.values()].find((item) => item.active) || recentSettledOperation : null;
+      const operation = candidateOperation && (candidateOperation.active ||
+        /complete|release|result/.test(normalizedPhase) && now - (candidateOperation.releasedAt || 0) < 5000)
+        ? candidateOperation : null;
+      s1pSetSyncDiagnosticStage(operation, normalizedPhase);
+      if (operation?.active && ["success", "failure", "conflict"].includes(status)) operation.lastOutcome = status;
+      const repeatable = /scheduled|rescheduled|waiting|retry|skipped/.test(normalizedPhase) || status === "skipped";
+      const repeatKey = options.repeatKey || (repeatable
+        ? `${scope}:${normalizedPhase}:${details.reason || ""}:${details.lockReason || ""}:${details.owner || ""}:${details.generation || ""}`
+        : "");
+      const structured = s1pRecordDiagnosticEvent(`sync.${normalizedPhase}`, {
+        module: "sync", operationId: options.operationId || operation?.operationId || "",
+        timestamp: now, status, reason: details.reason || "", level: options.level || "log", message: options.message || message,
+        details: { scope, phase: normalizedPhase, ...details },
+        repeatKey,
+      });
+      if (structured?.repeated) return structured.entry.message;
+      const detailSummary = buildSyncTraceDetailsSummary(details);
+      const summaryParts = [
+        formatSyncTime(now),
+        getSyncRuntimeContextSummary(),
+        getSyncTraceScopeLabel(scope),
+        getSyncTracePhaseLabel(normalizedPhase),
+        status ? `状态=${getSyncTraceStatusLabel(status) || status}` : "",
+        message,
+        detailSummary,
+      ].filter(Boolean);
+      const summary = normalizeSyncDiagnosticText(summaryParts.join(" | "), 500);
+      const current = getSyncDiagnostics();
+      const nextEvents = [
+        ...(Array.isArray(current.syncTraceEvents)
+          ? current.syncTraceEvents
+          : []),
+        summary,
+      ].slice(-SYNC_TRACE_EVENT_LIMIT);
+      s1pPendingSyncTrace = {
+        lastSyncTraceTimestamp: now,
+        lastSyncTraceScope: scope,
+        lastSyncTracePhase: normalizedPhase,
+        lastSyncTraceStatus: status,
+        lastSyncTraceSummary: summary,
+        syncTraceEvents: nextEvents,
+      };
+      if (!s1pSyncTraceFlushTimer) {
+        s1pSyncTraceFlushTimer = setTimeout(s1pFlushSyncTrace, 1000);
+        s1pSyncTraceFlushTimer?.unref?.();
+      }
+
+      if (options.logToConsole === false) {
+        return summary;
+      }
+      const level = ["debug", "log", "warn", "error"].includes(options.level)
+        ? options.level
+        : "log";
+      const baseConsoleMessage =
+        normalizeSyncDiagnosticText(options.consoleMessage, 500) ||
+        `S1 Plus (SyncTrace): ${summary}`;
+      const consoleMessage =
+        options.consoleMessage
+          ? `${baseConsoleMessage} [${getSyncRuntimeContextSummary()}]${
+              detailSummary && options.omitDetailsInConsole !== true
+                ? ` 详情：${detailSummary}`
+                : ""
+            }`
+          : baseConsoleMessage;
+      s1pDiagnosticConsoleWrite = true;
+      try { console[level](s1pSanitizeLogValue(consoleMessage)); }
+      finally { s1pDiagnosticConsoleWrite = false; }
+      return summary;
+    } catch (_) {
+      s1pLogLoss.collectionFailures += 1;
+      return "";
+    }
   };
 
   const recordCoreDataSnapshotResync = (
@@ -13613,7 +15858,7 @@
       case AUTO_SYNC_INDICATOR_SOURCE_PAGE_LOAD_VISIBLE:
       case AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME:
       case AUTO_SYNC_INDICATOR_SOURCE_VISIBLE_POLL:
-        return AUTO_SYNC_INDICATOR_OPERATION_PULL;
+        return AUTO_SYNC_INDICATOR_OPERATION_SYNC;
       default:
         return AUTO_SYNC_INDICATOR_OPERATION_SYNC;
     }
@@ -13682,6 +15927,78 @@
   const normalizeAutoSyncIndicatorReason = (reason) => {
     const normalized = String(reason || "").trim();
     return normalized ? normalized.slice(0, 160) : "";
+  };
+
+  const normalizeManualSyncIntent = (rawValue = null) => {
+    const value = sanitizeRecordObject(rawValue);
+    const direction =
+      value.direction === AUTO_SYNC_INDICATOR_OPERATION_PUSH
+        ? AUTO_SYNC_INDICATOR_OPERATION_PUSH
+        : value.direction === AUTO_SYNC_INDICATOR_OPERATION_PULL
+          ? AUTO_SYNC_INDICATOR_OPERATION_PULL
+          : "";
+    const phase =
+      value.phase === MANUAL_SYNC_INTENT_PHASE_QUEUED
+        ? MANUAL_SYNC_INTENT_PHASE_QUEUED
+        : value.phase === MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION
+          ? MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION
+          : "";
+    const createdAt = Number(value.createdAt) || 0;
+    if (!direction || !phase || createdAt <= 0) {
+      return null;
+    }
+    return {
+      version: 1,
+      direction,
+      createdAt,
+      phase,
+    };
+  };
+
+  const cleanupLegacyManualSyncIntentState = () => {
+    const keys = new Set([LEGACY_PENDING_MANUAL_SYNC_INTENT_KEY]);
+    if (typeof GM_listValues === "function") {
+      try {
+        GM_listValues().forEach((key) => {
+          const normalizedKey = String(key || "");
+          if (
+            normalizedKey === LEGACY_PENDING_MANUAL_SYNC_INTENT_KEY ||
+            normalizedKey.startsWith(
+              LEGACY_PENDING_MANUAL_SYNC_INTENT_RECORD_KEY_PREFIX
+            )
+          ) {
+            keys.add(normalizedKey);
+          }
+        });
+      } catch (_) {
+        // The known legacy mirror is still cleaned below.
+      }
+    }
+    let deletedCount = 0;
+    keys.forEach((key) => {
+      try {
+        if (typeof GM_deleteValue === "function") {
+          GM_deleteValue(key);
+          deletedCount += 1;
+        }
+      } catch (_) {
+        // Legacy cleanup is best effort and never touches active sync state.
+      }
+    });
+    return deletedCount;
+  };
+
+  cleanupLegacyManualSyncIntentState();
+
+  const getPendingManualSyncIntentForDisplay = (now = Date.now()) => {
+    const intent = defaultManualSyncIntentCoordinator?.readIntent?.() || null;
+    if (
+      !intent ||
+      now - intent.createdAt > MANUAL_SYNC_INTENT_STALE_MS
+    ) {
+      return null;
+    }
+    return intent;
   };
 
   const normalizeAutoSyncIndicatorState = (rawValue = null) => {
@@ -13833,6 +16150,7 @@
       return {
         isActive: true,
         source: getAutoSyncIndicatorSourceForActiveLock(now, fallbackSource),
+        timestamp: Number(globalLock.timestamp) || 0,
       };
     }
     const backgroundLock = getBackgroundSyncLockValue();
@@ -13843,6 +16161,7 @@
       return {
         isActive: true,
         source: AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+        timestamp: Number(backgroundLock.timestamp) || 0,
       };
     }
     const manualLock = getManualSyncLockValue();
@@ -13853,6 +16172,7 @@
       return {
         isActive: true,
         source: AUTO_SYNC_INDICATOR_SOURCE_MANUAL_SYNC,
+        timestamp: Number(manualLock.timestamp) || 0,
       };
     }
     const foregroundFollowUpLock = getForegroundFollowUpSyncLockValue();
@@ -13867,6 +16187,7 @@
       return {
         isActive: true,
         source: AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME,
+        timestamp: Number(foregroundFollowUpLock.timestamp) || 0,
       };
     }
     const startupLock = getStartupSyncLockValue();
@@ -13880,6 +16201,7 @@
         source: isStartupModeAutoSyncIndicatorSource(fallback)
           ? fallback
           : AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP,
+        timestamp: Number(startupLock.timestamp) || 0,
       };
     }
     return { isActive: false, source: "" };
@@ -13997,6 +16319,20 @@
   };
 
   const getAutoSyncRuntimePendingDisplayState = (now = Date.now()) => {
+    const manualIntent = getPendingManualSyncIntentForDisplay(now);
+    if (manualIntent) {
+      return {
+        hasPending: true,
+        source: AUTO_SYNC_INDICATOR_SOURCE_MANUAL_SYNC,
+        reason:
+          manualIntent.phase === MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION
+            ? "manual_override_awaiting_confirmation"
+          : "manual_override_waiting_execution",
+        operation: manualIntent.direction,
+        sources: {},
+        isManualOverride: true,
+      };
+    }
     const foregroundRetryRemainingMs =
       typeof getForegroundRemoteSyncRetryRemainingMs === "function"
         ? getForegroundRemoteSyncRetryRemainingMs(now)
@@ -14021,7 +16357,10 @@
     ) {
       return foregroundRetryPendingState;
     }
-
+    const foregroundPending =
+      typeof getPendingForegroundRemoteSyncRequest === "function"
+        ? getPendingForegroundRemoteSyncRequest()
+        : null;
     const sharedState =
       typeof getBackgroundSyncDebounceState === "function"
         ? getBackgroundSyncDebounceState()
@@ -14080,6 +16419,16 @@
       return foregroundRetryPendingState;
     }
 
+    if (foregroundPending && !isTerminalForegroundRemoteSyncSoftBlock(foregroundPending)) {
+      return {
+        hasPending: true,
+        source: AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME,
+        reason: "foreground_remote_update_pending",
+        operation: AUTO_SYNC_INDICATOR_OPERATION_SYNC,
+        sources: {},
+      };
+    }
+
     return { hasPending: false, source: "", reason: "", sources: {} };
   };
 
@@ -14104,7 +16453,21 @@
       now,
       state.source
     );
-    if (activeLockDisplayState.isActive) {
+    const stateIsResolved = !isAutoSyncIndicatorActivePhase(state.phase);
+    const lastStateIsResolved = !isAutoSyncIndicatorActivePhase(
+      state.lastResolvedPhase
+    );
+    const resolvedIndicatorTimestamp = Math.max(
+      stateIsResolved ? Number(state.timestamp) || 0 : 0,
+      lastStateIsResolved ? Number(state.lastResolvedTimestamp) || 0 : 0
+    );
+    const activeLockIsOlderThanResolvedIndicator =
+      resolvedIndicatorTimestamp >
+      (Number(activeLockDisplayState.timestamp) || 0);
+    if (
+      activeLockDisplayState.isActive &&
+      !activeLockIsOlderThanResolvedIndicator
+    ) {
       const activeLockSource = activeLockDisplayState.source;
       if (
         options.suppressForeignBackgroundLockWhenPending === true &&
@@ -14491,10 +16854,12 @@
             ? "blocked"
             : operation || AUTO_SYNC_INDICATOR_OPERATION_SYNC,
         substate:
-          phase === AUTO_SYNC_INDICATOR_PHASE_FAILURE ||
-          phase === AUTO_SYNC_INDICATOR_PHASE_CONFLICT
+            phase === AUTO_SYNC_INDICATOR_PHASE_FAILURE ||
+            phase === AUTO_SYNC_INDICATOR_PHASE_CONFLICT
             ? "blocked"
-            : "running",
+            : phase === AUTO_SYNC_INDICATOR_PHASE_PENDING
+              ? "pending"
+              : "running",
       });
     }
 
@@ -14978,6 +17343,18 @@
       return visibleDisplayState;
     };
 
+    if (pendingState.isManualOverride === true) {
+      return finishDisplayState(
+        buildDisplayState(
+          AUTO_SYNC_INDICATOR_PHASE_PENDING,
+          AUTO_SYNC_INDICATOR_SOURCE_MANUAL_SYNC,
+          pendingState.reason,
+          pendingState.operation
+        ),
+        "manual_override_pending"
+      );
+    }
+
     if (runningState.isRunning) {
       return finishDisplayState(
         buildDisplayState(
@@ -15341,25 +17718,32 @@
     }
 
     const now = Date.now();
+    const resolvedSource =
+      normalizeAutoSyncIndicatorSource(source) ||
+      AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND;
+    const normalizedReason = normalizeAutoSyncIndicatorReason(reason);
+    const normalizedOperation = normalizeAutoSyncIndicatorOperation(
+      options.operation
+    );
     // 对高频 pending 触发做短时去重，避免跨标签 GM 写入风暴。
     if (
       current.phase === AUTO_SYNC_INDICATOR_PHASE_PENDING &&
-      now - (Number(current.timestamp) || 0) < 1000
+      now - (Number(current.timestamp) || 0) < 1000 &&
+      current.source === resolvedSource &&
+      current.reason === normalizedReason &&
+      current.operation === normalizedOperation
     ) {
       return false;
     }
     const lastResolvedSnapshot = buildAutoSyncIndicatorLastResolvedSnapshot(current);
-    const resolvedSource =
-      normalizeAutoSyncIndicatorSource(source) ||
-      AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND;
     clearAutoSyncIndicatorDeferredResolve();
     persistAutoSyncIndicatorState({
       phase: AUTO_SYNC_INDICATOR_PHASE_PENDING,
       timestamp: now,
       token: current.token || "",
       source: resolvedSource,
-      reason: normalizeAutoSyncIndicatorReason(reason),
-      operation: normalizeAutoSyncIndicatorOperation(options.operation),
+      reason: normalizedReason,
+      operation: normalizedOperation,
       ...lastResolvedSnapshot,
     });
     return true;
@@ -15509,8 +17893,15 @@
     notifyTitleSyncStatusUnifiedStateChanged(reason);
   };
 
-  const refreshAutoSyncIndicatorAfterManualLockRelease = () =>
+  const refreshAutoSyncIndicatorAfterManualLockRelease = () => {
     refreshAutoSyncIndicatorRuntimeDisplay("manual_sync_lock_released");
+    if (
+      document.visibilityState === "visible" &&
+      typeof recoverPendingForegroundRemoteSyncIfNeeded === "function"
+    ) {
+      recoverPendingForegroundRemoteSyncIfNeeded();
+    }
+  };
 
   const setAutoSyncIndicatorActiveOperation = (operation, options = {}) => {
     const normalizedOperation = normalizeAutoSyncIndicatorOperation(operation);
@@ -15887,6 +18278,20 @@
         ? readProgressGuardState
         : s1pReadingProgressSession.readState().guard
     );
+    if (manualSyncPriorityGateEvaluator()) {
+      return {
+        status: "blocked",
+        blockLevel: "priority",
+        blockScope: FOREGROUND_FOLLOWUP_SOFT_BLOCK_SCOPE_TAB,
+        reason: "manual_sync_intent_pending",
+        action: "probe_gate_blocked",
+        retryAfterMs: FOREGROUND_REMOTE_SYNC_RETRY_BASE_DELAY_MS,
+        retryWaitUntil:
+          normalizedNow + FOREGROUND_REMOTE_SYNC_RETRY_BASE_DELAY_MS,
+        readProgressGuard,
+        softBlockState: null,
+      };
+    }
     if (!readProgressGuard) {
       return null;
     }
@@ -15997,7 +18402,7 @@
   };
 
   const setAutoSyncConflictPause = (reason = "generic") => {
-    clearForegroundRemoteSyncRetry();
+    clearForegroundRemoteSyncRetryForCurrentOwner();
     clearForegroundFollowUpSoftBlock();
     clearAutoSyncRuntimeQueue();
     GM_setValue(AUTO_SYNC_CONFLICT_PAUSE_KEY, {
@@ -16191,6 +18596,1907 @@
 
   const clearPendingAutoSyncRequest = () => {
     GM_deleteValue(PENDING_AUTO_SYNC_KEY);
+  };
+
+  const createPendingForegroundRemoteSyncRequestId = (timestamp) =>
+    `${SYNC_RUNTIME_CONTEXT_ID}_${timestamp}_${Math.random()
+      .toString(36)
+      .slice(2, 8)}`;
+
+  const normalizePendingForegroundRemoteSyncRequest = (value) => {
+    if (!isObjectRecord(value)) {
+      return null;
+    }
+    const remoteUpdatedAt = normalizeRemoteProbeUpdatedAt(value.remoteUpdatedAt);
+    if (!remoteUpdatedAt) {
+      return null;
+    }
+    const createdAt =
+      normalizePendingAutoSyncTimestamp(value.createdAt) || Date.now();
+    const registrationCreatedAt =
+      normalizePendingAutoSyncTimestamp(value.registrationCreatedAt) || createdAt;
+    const normalized = {
+      version: 1,
+      requestId:
+        normalizeSyncDiagnosticText(value.requestId, 160) ||
+        `legacy_${createdAt}_${normalizeSyncDiagnosticText(remoteUpdatedAt, 120)}`,
+      reason:
+        normalizeRemoteProbeText(value.reason, 120) ||
+        "remote_probe_changed",
+      triggerSource:
+        normalizeSyncTriggerSource(value.triggerSource) ||
+        SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME,
+      remoteUpdatedAt,
+      createdAt,
+      registrationCreatedAt,
+      lastSeenAt:
+        normalizePendingAutoSyncTimestamp(value.lastSeenAt) || createdAt,
+      lastAttemptAt: normalizePendingAutoSyncTimestamp(value.lastAttemptAt),
+      lastResultStatus: normalizeSyncDiagnosticText(value.lastResultStatus, 80),
+      lastResultReason: normalizeRemoteProbeText(value.lastResultReason, 160),
+      lastResultAction: normalizeSyncDiagnosticText(value.lastResultAction, 100),
+      lastResultBlockLevel: normalizeSyncDiagnosticText(
+        value.lastResultBlockLevel,
+        60
+      ),
+      lastResultAt: normalizePendingAutoSyncTimestamp(value.lastResultAt),
+      sourceContextId: normalizeSyncDiagnosticText(value.sourceContextId, 160),
+      sourceTabId: normalizeSyncDiagnosticText(value.sourceTabId, 120),
+    };
+    const storageVersion = Number(value.storageVersion);
+    if (Number.isSafeInteger(storageVersion) && storageVersion > 0) {
+      normalized.storageVersion = storageVersion;
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(value, "registrationClock") &&
+      hasValidPendingForegroundRemoteSyncRegistrationClock(
+        value.registrationClock
+      )
+    ) {
+      normalized.registrationClock =
+        normalizePendingForegroundRemoteSyncRegistrationClock(
+          value.registrationClock
+        );
+    }
+    return normalized;
+  };
+
+  const isSamePendingForegroundRemoteSyncRequest = (leftInput, rightInput) => {
+    const left = normalizePendingForegroundRemoteSyncRequest(leftInput);
+    const right = normalizePendingForegroundRemoteSyncRequest(rightInput);
+    return Boolean(
+      left &&
+        right &&
+        left.requestId === right.requestId &&
+        left.remoteUpdatedAt === right.remoteUpdatedAt
+    );
+  };
+
+  const getPendingForegroundRemoteSyncRecordKey = (requestId) =>
+    `${PENDING_FOREGROUND_REMOTE_SYNC_RECORD_KEY_PREFIX}${encodeURIComponent(
+      String(requestId || "")
+    )}`;
+
+  const getPendingForegroundRemoteSyncTerminalKey = (requestId) =>
+    `${PENDING_FOREGROUND_REMOTE_SYNC_TERMINAL_KEY_PREFIX}${encodeURIComponent(
+      String(requestId || "")
+    )}`;
+
+  const getPendingForegroundRemoteSyncTerminalCandidateKey = (
+    requestId,
+    candidateId
+  ) =>
+    `${PENDING_FOREGROUND_REMOTE_SYNC_TERMINAL_KEY_PREFIX}${encodeURIComponent(
+      String(requestId || "")
+    )}:candidate:${encodeURIComponent(String(candidateId || ""))}`;
+
+  let pendingForegroundRemoteSyncTerminalCandidateSequence = 0;
+
+  const createPendingForegroundRemoteSyncTerminalCandidateId = () =>
+    `${SYNC_RUNTIME_CONTEXT_ID}_${Date.now()}_${
+      ++pendingForegroundRemoteSyncTerminalCandidateSequence
+    }_${Math.random().toString(36).slice(2, 8)}`;
+
+  const getPendingForegroundRemoteSyncTerminalKindPriority = (terminalKind) => {
+    const normalizedKind = normalizeSyncDiagnosticText(terminalKind, 80);
+    if (normalizedKind === "completed") {
+      return 3;
+    }
+    if (normalizedKind === "cancelled") {
+      return 2;
+    }
+    if (normalizedKind) {
+      return 1;
+    }
+    return 0;
+  };
+
+  let pendingForegroundRemoteSyncRegistrationClock = 0;
+
+  const normalizePendingForegroundRemoteSyncRegistrationClock = (value) => {
+    const normalized = Number(value);
+    return Number.isSafeInteger(normalized) && normalized >= 0
+      ? normalized
+      : 0;
+  };
+
+  const hasValidPendingForegroundRemoteSyncRegistrationClock = (value) => {
+    if (
+      typeof value !== "number" &&
+      !(typeof value === "string" && value.trim())
+    ) {
+      return false;
+    }
+    const normalized = Number(value);
+    return Number.isSafeInteger(normalized) && normalized >= 0;
+  };
+
+  const readPendingForegroundRemoteSyncRecordEnvelope = (requestId) => {
+    const normalizedRequestId = normalizeSyncDiagnosticText(requestId, 160);
+    if (!normalizedRequestId) {
+      return null;
+    }
+    const rawRecord = GM_getValue(
+      getPendingForegroundRemoteSyncRecordKey(normalizedRequestId),
+      null
+    );
+    const pending = normalizePendingForegroundRemoteSyncRequest(rawRecord);
+    if (!pending || pending.requestId !== normalizedRequestId) {
+      return null;
+    }
+    return {
+      key: getPendingForegroundRemoteSyncRecordKey(normalizedRequestId),
+      pending,
+      hasRegistrationClock:
+        hasValidPendingForegroundRemoteSyncRegistrationClock(
+          rawRecord.registrationClock
+        ),
+      storageVersion: Number.isSafeInteger(Number(rawRecord.storageVersion))
+        ? Number(rawRecord.storageVersion)
+        : 0,
+      registrationClock: normalizePendingForegroundRemoteSyncRegistrationClock(
+        rawRecord.registrationClock
+      ),
+    };
+  };
+
+  const decodePendingForegroundRemoteSyncStoredId = (key, prefix) => {
+    try {
+      return decodeURIComponent(key.slice(prefix.length));
+    } catch (_) {
+      return "";
+    }
+  };
+
+  const readPendingForegroundRemoteSyncTerminalEnvelope = (key) => {
+    const rawTerminal = GM_getValue(key, null);
+    const encodedSuffix = key.slice(
+      PENDING_FOREGROUND_REMOTE_SYNC_TERMINAL_KEY_PREFIX.length
+    );
+    const candidateSeparator = encodedSuffix.indexOf(":candidate:");
+    const encodedRequestId =
+      candidateSeparator >= 0
+        ? encodedSuffix.slice(0, candidateSeparator)
+        : encodedSuffix;
+    const pending = normalizePendingForegroundRemoteSyncRequest(rawTerminal);
+    const requestId = normalizeSyncDiagnosticText(
+      rawTerminal?.requestId ||
+        decodePendingForegroundRemoteSyncStoredId(
+          `${PENDING_FOREGROUND_REMOTE_SYNC_TERMINAL_KEY_PREFIX}${encodedRequestId}`,
+          PENDING_FOREGROUND_REMOTE_SYNC_TERMINAL_KEY_PREFIX
+        ),
+      160
+    );
+    if (!pending || !requestId || pending.requestId !== requestId) {
+      return null;
+    }
+    return {
+      key,
+      pending,
+      hasRegistrationClock:
+        hasValidPendingForegroundRemoteSyncRegistrationClock(
+          rawTerminal.registrationClock
+        ),
+      registrationClock:
+        normalizePendingForegroundRemoteSyncRegistrationClock(
+          rawTerminal.registrationClock
+        ),
+      registrationCreatedAt:
+        normalizePendingAutoSyncTimestamp(pending.registrationCreatedAt),
+      terminalAt: normalizePendingAutoSyncTimestamp(rawTerminal.terminalAt),
+      terminalKind:
+        normalizeSyncDiagnosticText(rawTerminal.terminalKind, 80) ||
+        "completed",
+      terminalReason:
+        normalizeRemoteProbeText(rawTerminal.terminalReason, 160) || "",
+      terminalCandidateId:
+        normalizeSyncDiagnosticText(rawTerminal.terminalCandidateId, 160) ||
+        (candidateSeparator >= 0
+          ? decodePendingForegroundRemoteSyncStoredId(
+              encodedSuffix.slice(candidateSeparator + ":candidate:".length),
+              ""
+            )
+          : "canonical"),
+    };
+  };
+
+  const comparePendingForegroundRemoteSyncTerminalCandidates = (
+    left,
+    right
+  ) => {
+    const leftClock = normalizePendingForegroundRemoteSyncRegistrationClock(
+      left.registrationClock
+    );
+    const rightClock = normalizePendingForegroundRemoteSyncRegistrationClock(
+      right.registrationClock
+    );
+    if (leftClock !== rightClock) {
+      return rightClock - leftClock;
+    }
+    if (left.hasRegistrationClock !== right.hasRegistrationClock) {
+      return left.hasRegistrationClock ? -1 : 1;
+    }
+    const leftRegistrationAt = normalizePendingAutoSyncTimestamp(
+      left.registrationCreatedAt
+    );
+    const rightRegistrationAt = normalizePendingAutoSyncTimestamp(
+      right.registrationCreatedAt
+    );
+    if (leftRegistrationAt !== rightRegistrationAt) {
+      return rightRegistrationAt - leftRegistrationAt;
+    }
+    const leftPriority = getPendingForegroundRemoteSyncTerminalKindPriority(
+      left.terminalKind
+    );
+    const rightPriority = getPendingForegroundRemoteSyncTerminalKindPriority(
+      right.terminalKind
+    );
+    if (leftPriority !== rightPriority) {
+      return rightPriority - leftPriority;
+    }
+    const leftIsCanonical =
+      left.key === getPendingForegroundRemoteSyncTerminalKey(
+        left.pending.requestId
+      );
+    const rightIsCanonical =
+      right.key === getPendingForegroundRemoteSyncTerminalKey(
+        right.pending.requestId
+      );
+    if (leftIsCanonical !== rightIsCanonical) {
+      // The canonical key is only a compatibility mirror. Prefer the
+      // immutable candidate evidence when both values describe the same
+      // terminal write, so compaction cannot erase the fence that rejects a
+      // late mirror write.
+      return leftIsCanonical ? 1 : -1;
+    }
+    const leftDescriptor = [
+      left.terminalKind,
+      left.terminalReason,
+      left.terminalCandidateId,
+      left.key,
+    ].join("\u0000");
+    const rightDescriptor = [
+      right.terminalKind,
+      right.terminalReason,
+      right.terminalCandidateId,
+      right.key,
+    ].join("\u0000");
+    if (leftDescriptor === rightDescriptor) {
+      return 0;
+    }
+    return leftDescriptor < rightDescriptor ? -1 : 1;
+  };
+
+  const mergePendingForegroundRemoteSyncTerminalCandidates = (candidates) => {
+    if (!Array.isArray(candidates) || candidates.length === 0) {
+      return null;
+    }
+    const winner = [...candidates].sort(
+      comparePendingForegroundRemoteSyncTerminalCandidates
+    )[0];
+    return {
+      ...winner,
+      keys: candidates.map((candidate) => candidate.key),
+    };
+  };
+
+  const readPendingForegroundRemoteSyncRecordStore = () => {
+    if (typeof GM_listValues !== "function") {
+      return null;
+    }
+    let keys = [];
+    try {
+      keys = GM_listValues();
+    } catch (_) {
+      return null;
+    }
+    if (!Array.isArray(keys)) {
+      return null;
+    }
+    const recordKeys = keys.filter(
+      (key) =>
+        typeof key === "string" &&
+        key.startsWith(PENDING_FOREGROUND_REMOTE_SYNC_RECORD_KEY_PREFIX)
+    );
+    const terminalKeys = keys.filter(
+      (key) =>
+        typeof key === "string" &&
+        key.startsWith(PENDING_FOREGROUND_REMOTE_SYNC_TERMINAL_KEY_PREFIX)
+    );
+    const records = recordKeys
+      .map((key) =>
+        readPendingForegroundRemoteSyncRecordEnvelope(
+          decodePendingForegroundRemoteSyncStoredId(
+            key,
+            PENDING_FOREGROUND_REMOTE_SYNC_RECORD_KEY_PREFIX
+          )
+        )
+      )
+      .filter(Boolean);
+    const terminalGroups = new Map();
+    terminalKeys.forEach((key) => {
+      const terminal = readPendingForegroundRemoteSyncTerminalEnvelope(key);
+      if (!terminal) {
+        return;
+      }
+      const group = terminalGroups.get(terminal.pending.requestId) || [];
+      group.push(terminal);
+      terminalGroups.set(terminal.pending.requestId, group);
+    });
+    const terminals = Array.from(terminalGroups.values())
+      .map(mergePendingForegroundRemoteSyncTerminalCandidates)
+      .filter(Boolean);
+    return { records, terminals };
+  };
+
+  const readPendingForegroundRemoteSyncTerminalRecord = (requestId) => {
+    const normalizedRequestId = normalizeSyncDiagnosticText(requestId, 160);
+    if (!normalizedRequestId) {
+      return null;
+    }
+    const canonicalKey = getPendingForegroundRemoteSyncTerminalKey(
+      normalizedRequestId
+    );
+    const rawCanonicalTerminal = GM_getValue(canonicalKey, null);
+    const store = readPendingForegroundRemoteSyncRecordStore();
+    if (store) {
+      return (
+        store.terminals.find(
+          (terminal) => terminal.pending.requestId === normalizedRequestId
+        ) || null
+      );
+    }
+    const terminal = readPendingForegroundRemoteSyncTerminalEnvelope(canonicalKey);
+    if (!terminal || terminal.pending.requestId !== normalizedRequestId) {
+      return null;
+    }
+    return {
+      ...terminal,
+      rawTerminal: rawCanonicalTerminal,
+      keys: [terminal.key],
+    };
+  };
+
+  const getPendingForegroundRemoteSyncCurrentMarker = () => {
+    const marker = GM_getValue(
+      PENDING_FOREGROUND_REMOTE_SYNC_CURRENT_KEY,
+      null
+    );
+    if (!isObjectRecord(marker) || marker.kind !== "current") {
+      return null;
+    }
+    return {
+      requestId: normalizeSyncDiagnosticText(marker.requestId, 160),
+      remoteUpdatedAt: normalizeRemoteProbeUpdatedAt(marker.remoteUpdatedAt),
+      registeredAt: normalizeRemoteProbeTimestamp(marker.registeredAt),
+      hasRegistrationClock:
+        hasValidPendingForegroundRemoteSyncRegistrationClock(
+          marker.registrationClock
+        ),
+      registrationClock:
+        normalizePendingForegroundRemoteSyncRegistrationClock(
+          marker.registrationClock
+        ),
+      registrationCreatedAt:
+        normalizePendingAutoSyncTimestamp(marker.registrationCreatedAt) ||
+        normalizeRemoteProbeTimestamp(marker.registeredAt),
+    };
+  };
+
+  const comparePendingForegroundRemoteSyncRequestIds = (left, right) => {
+    if (left === right) {
+      return 0;
+    }
+    return left > right ? -1 : 1;
+  };
+
+  const comparePendingForegroundRemoteSyncCandidates = (left, right) => {
+    const leftClock = normalizePendingForegroundRemoteSyncRegistrationClock(
+      left.registrationClock
+    );
+    const rightClock = normalizePendingForegroundRemoteSyncRegistrationClock(
+      right.registrationClock
+    );
+    if (left.pending.requestId === right.pending.requestId) {
+      const leftIsTerminal = left.kind === "terminal";
+      const rightIsTerminal = right.kind === "terminal";
+      if (leftIsTerminal !== rightIsTerminal) {
+        return leftIsTerminal ? -1 : 1;
+      }
+    }
+    if (leftClock !== rightClock) {
+      return rightClock - leftClock;
+    }
+    if (left.hasRegistrationClock !== right.hasRegistrationClock) {
+      return left.hasRegistrationClock ? -1 : 1;
+    }
+    const leftRegistrationAt =
+      normalizePendingAutoSyncTimestamp(
+        left.pending.registrationCreatedAt
+      ) || normalizePendingAutoSyncTimestamp(left.pending.createdAt);
+    const rightRegistrationAt =
+      normalizePendingAutoSyncTimestamp(
+        right.pending.registrationCreatedAt
+      ) || normalizePendingAutoSyncTimestamp(right.pending.createdAt);
+    return (
+      rightRegistrationAt - leftRegistrationAt ||
+      comparePendingForegroundRemoteSyncRequestIds(
+        left.pending.requestId,
+        right.pending.requestId
+      )
+    );
+  };
+
+  const readPendingForegroundRemoteSyncCandidates = () => {
+    const store = readPendingForegroundRemoteSyncRecordStore();
+    if (!store) {
+      return null;
+    }
+    const records = store.records.map((record) => ({
+      ...record,
+      kind: "record",
+    }));
+    const terminals = store.terminals.map((terminal) => ({
+      ...terminal,
+      kind: "terminal",
+    }));
+    return {
+      store,
+      records,
+      terminals,
+      candidates: [...records, ...terminals],
+    };
+  };
+
+  const publishPendingForegroundRemoteSyncSignal = (
+    eventType,
+    pendingInput = null
+  ) => {
+    const pending = normalizePendingForegroundRemoteSyncRequest(pendingInput);
+    if (!pending) {
+      return false;
+    }
+    GM_setValue(PENDING_FOREGROUND_REMOTE_SYNC_KEY, {
+      storageVersion: 2,
+      eventType: normalizeSyncDiagnosticText(eventType, 40) || "updated",
+      requestId: pending.requestId,
+      remoteUpdatedAt: pending.remoteUpdatedAt,
+      sourceContextId: pending.sourceContextId,
+      sourceTabId: pending.sourceTabId,
+      timestamp: Date.now(),
+    });
+    return true;
+  };
+
+  const getNextPendingForegroundRemoteSyncRegistrationClock = () => {
+    const candidatesState = readPendingForegroundRemoteSyncCandidates();
+    if (!candidatesState) {
+      return null;
+    }
+    const currentMarker = getPendingForegroundRemoteSyncCurrentMarker();
+    const maximumClock = candidatesState.candidates.reduce(
+      (maximum, candidate) =>
+        Math.max(
+          maximum,
+          normalizePendingForegroundRemoteSyncRegistrationClock(
+            candidate.registrationClock
+          )
+        ),
+      Math.max(
+        pendingForegroundRemoteSyncRegistrationClock,
+        normalizePendingForegroundRemoteSyncRegistrationClock(
+          currentMarker?.registrationClock
+        )
+      )
+    );
+    const nextClock = maximumClock + 1;
+    pendingForegroundRemoteSyncRegistrationClock = nextClock;
+    return nextClock;
+  };
+
+  const writePendingForegroundRemoteSyncTerminalRecord = (
+    pendingInput,
+    { terminalKind = "completed", reason = "completed" } = {}
+  ) => {
+    const pending = normalizePendingForegroundRemoteSyncRequest(pendingInput);
+    if (!pending || typeof GM_listValues !== "function") {
+      return null;
+    }
+    const existingTerminal = readPendingForegroundRemoteSyncTerminalRecord(
+      pending.requestId
+    );
+    if (existingTerminal) {
+      return existingTerminal.pending;
+    }
+    const existingRecord = readPendingForegroundRemoteSyncRecordEnvelope(
+      pending.requestId
+    );
+    const pendingRegistrationClock = Object.prototype.hasOwnProperty.call(
+      pending,
+      "registrationClock"
+    )
+      ? normalizePendingForegroundRemoteSyncRegistrationClock(
+          pending.registrationClock
+        )
+      : 0;
+    const existingRecordRegistrationClock = existingRecord?.hasRegistrationClock
+      ? existingRecord.registrationClock
+      : 0;
+    const hasRegistrationClock =
+      Object.prototype.hasOwnProperty.call(pending, "registrationClock") ||
+      Boolean(existingRecord?.hasRegistrationClock);
+    const isV3WithoutRegistrationIdentity =
+      !hasRegistrationClock &&
+      ((pending.storageVersion || 0) >= 3 ||
+        (existingRecord?.storageVersion || 0) >= 3);
+    if (isV3WithoutRegistrationIdentity) {
+      recordSyncTraceEvent("foreground_pending_terminal_identity_missing", {
+        scope: "foreground_probe",
+        status: "failure",
+        message: "v3 前台远端请求缺少不可变 registrationClock，拒绝写入不安全终态",
+        details: {
+          requestId: pending.requestId,
+          remoteUpdatedAt: pending.remoteUpdatedAt,
+          storageVersion: pending.storageVersion || existingRecord?.storageVersion || 0,
+          terminalKind:
+            normalizeSyncDiagnosticText(terminalKind, 80) || "completed",
+        },
+      });
+      return null;
+    }
+    const registrationClock = Math.max(
+      pendingRegistrationClock,
+      existingRecordRegistrationClock
+    );
+    const terminalRecord = {
+      kind: "terminal",
+      ...pending,
+      storageVersion: 3,
+      registrationCreatedAt:
+        existingRecord?.pending.registrationCreatedAt ||
+        pending.registrationCreatedAt,
+      terminalKind:
+        normalizeSyncDiagnosticText(terminalKind, 80) || "completed",
+      terminalReason: normalizeRemoteProbeText(reason, 160) || "completed",
+      terminalAt: Date.now(),
+    };
+    if (hasRegistrationClock) {
+      terminalRecord.registrationClock = registrationClock;
+    }
+    const terminalCandidateId =
+      createPendingForegroundRemoteSyncTerminalCandidateId();
+    terminalRecord.terminalCandidateId = terminalCandidateId;
+    // Keep the exact v2/v3 terminal key as a compatibility mirror, but make
+    // the candidate key immutable. Readers merge every candidate, so a late
+    // weaker mirror write cannot erase a stronger terminal outcome.
+    GM_setValue(
+      getPendingForegroundRemoteSyncTerminalCandidateKey(
+        pending.requestId,
+        terminalCandidateId
+      ),
+      terminalRecord
+    );
+    GM_setValue(
+      getPendingForegroundRemoteSyncTerminalKey(pending.requestId),
+      terminalRecord
+    );
+    publishPendingForegroundRemoteSyncSignal(
+      terminalRecord.terminalKind,
+      pending
+    );
+    return pending;
+  };
+
+  const writePendingForegroundRemoteSyncRecord = (
+    pendingInput,
+    { registerCurrent = false, eventType = "updated" } = {}
+  ) => {
+    const pending = normalizePendingForegroundRemoteSyncRequest(pendingInput);
+    if (!pending) {
+      return null;
+    }
+    if (typeof GM_listValues !== "function") {
+      recordSyncTraceEvent("foreground_pending_storage_unsupported", {
+        scope: "foreground_probe",
+        status: "failure",
+        message: "缺少 GM_listValues，拒绝使用不安全的前台远端共享读改写",
+        details: {
+          requestId: pending.requestId,
+          remoteUpdatedAt: pending.remoteUpdatedAt,
+          registerCurrent,
+        },
+      });
+      return null;
+    }
+    if (readPendingForegroundRemoteSyncTerminalRecord(pending.requestId)) {
+      recordSyncTraceEvent("foreground_pending_write_ignored_terminal", {
+        scope: "foreground_probe",
+        status: "ignored",
+        message: "已完成或取消的前台远端请求拒绝迟到写入",
+        details: {
+          requestId: pending.requestId,
+          remoteUpdatedAt: pending.remoteUpdatedAt,
+          eventType,
+        },
+      });
+      return null;
+    }
+    const existingRecord = readPendingForegroundRemoteSyncRecordEnvelope(
+      pending.requestId
+    );
+    const pendingRegistrationClock = Object.prototype.hasOwnProperty.call(
+      pending,
+      "registrationClock"
+    )
+      ? normalizePendingForegroundRemoteSyncRegistrationClock(
+          pending.registrationClock
+        )
+      : 0;
+    const existingRecordRegistrationClock = existingRecord?.hasRegistrationClock
+      ? existingRecord.registrationClock
+      : 0;
+    const hasPendingRegistrationClock = Object.prototype.hasOwnProperty.call(
+      pending,
+      "registrationClock"
+    );
+    if (
+      !registerCurrent &&
+      !hasPendingRegistrationClock &&
+      !existingRecord?.hasRegistrationClock &&
+      ((pending.storageVersion || 0) >= 3 ||
+        (existingRecord?.storageVersion || 0) >= 3)
+    ) {
+      recordSyncTraceEvent("foreground_pending_record_identity_missing", {
+        scope: "foreground_probe",
+        status: "failure",
+        message: "v3 前台远端请求缺少不可变 registrationClock，拒绝写入不安全 mutable record",
+        details: {
+          requestId: pending.requestId,
+          remoteUpdatedAt: pending.remoteUpdatedAt,
+          storageVersion: pending.storageVersion || existingRecord?.storageVersion || 0,
+          eventType,
+        },
+      });
+      return null;
+    }
+    const registrationClock = registerCurrent
+      ? getNextPendingForegroundRemoteSyncRegistrationClock()
+      : Math.max(pendingRegistrationClock, existingRecordRegistrationClock);
+    if (registrationClock === null) {
+      return null;
+    }
+    const storedRecord = {
+      ...pending,
+      storageVersion: 3,
+      registrationCreatedAt:
+        registerCurrent
+          ? pending.registrationCreatedAt
+          : existingRecord?.pending.registrationCreatedAt ||
+            pending.registrationCreatedAt,
+    };
+    if (
+      registerCurrent ||
+      hasPendingRegistrationClock ||
+      Boolean(existingRecord?.hasRegistrationClock)
+    ) {
+      storedRecord.registrationClock = registrationClock;
+    }
+    GM_setValue(
+      getPendingForegroundRemoteSyncRecordKey(pending.requestId),
+      storedRecord
+    );
+    if (registerCurrent) {
+      GM_setValue(PENDING_FOREGROUND_REMOTE_SYNC_CURRENT_KEY, {
+        storageVersion: 3,
+        version: 1,
+        kind: "current",
+        requestId: pending.requestId,
+        remoteUpdatedAt: pending.remoteUpdatedAt,
+        registeredAt: pending.createdAt,
+        registrationCreatedAt: pending.registrationCreatedAt,
+        registrationClock,
+      });
+    }
+    publishPendingForegroundRemoteSyncSignal(eventType, pending);
+    return normalizePendingForegroundRemoteSyncRequest(storedRecord);
+  };
+
+  const prunePendingForegroundRemoteSyncRecords = (now = Date.now()) => {
+    const candidatesState = readPendingForegroundRemoteSyncCandidates();
+    if (!candidatesState) {
+      return;
+    }
+    const cutoff = (normalizeRemoteProbeTimestamp(now) || Date.now()) -
+      PENDING_FOREGROUND_REMOTE_SYNC_RECORD_RETENTION_MS;
+    const selectedPending = getPendingForegroundRemoteSyncRequest();
+    candidatesState.store.records.forEach((record) => {
+      if (record.pending.requestId === selectedPending?.requestId) {
+        return;
+      }
+      const lastActivityAt = Math.max(
+        record.pending.createdAt || 0,
+        record.pending.lastSeenAt || 0,
+        record.pending.lastAttemptAt || 0,
+        record.pending.lastResultAt || 0
+      );
+      if (lastActivityAt > 0 && lastActivityAt < cutoff) {
+        GM_deleteValue(record.key);
+      }
+    });
+    const terminalWinner = [...candidatesState.terminals].sort(
+      comparePendingForegroundRemoteSyncCandidates
+    )[0];
+    const protectedTerminalKeys = new Set(
+      terminalWinner
+        ? [
+            terminalWinner.key,
+            getPendingForegroundRemoteSyncTerminalKey(
+              terminalWinner.pending.requestId
+            ),
+          ]
+        : []
+    );
+    candidatesState.store.terminals.forEach((terminal) => {
+      (terminal.keys || [terminal.key]).forEach((key) => {
+        if (!protectedTerminalKeys.has(key)) {
+          GM_deleteValue(key);
+        }
+      });
+    });
+  };
+
+  const clearForegroundRemoteSyncRetryIfBoundTo = (pendingInput = null) => {
+    const pending = normalizePendingForegroundRemoteSyncRequest(pendingInput);
+    const ownerToken = foregroundRemoteSyncRetryOwnerToken;
+    if (
+      !pending ||
+      !ownerToken ||
+      !ownerToken.requestId ||
+      pending.requestId !== ownerToken.requestId ||
+      pending.remoteUpdatedAt !== ownerToken.remoteUpdatedAt
+    ) {
+      return false;
+    }
+    clearForegroundRemoteSyncRetry(ownerToken);
+    return true;
+  };
+
+  const getPendingForegroundRemoteSyncRequest = () => {
+    const candidatesState = readPendingForegroundRemoteSyncCandidates();
+    const currentMarker = getPendingForegroundRemoteSyncCurrentMarker();
+    if (candidatesState) {
+      const { candidates } = candidatesState;
+      if (candidates.length > 0) {
+        const hasRegistrationMetadata = candidates.some(
+          (candidate) => candidate.hasRegistrationClock
+        );
+        const selected = candidates
+          .filter((candidate) =>
+            !hasRegistrationMetadata && currentMarker?.requestId
+              ? candidate.pending.requestId === currentMarker.requestId
+              : true
+          )
+          .sort(comparePendingForegroundRemoteSyncCandidates)[0] ||
+          candidates.sort(comparePendingForegroundRemoteSyncCandidates)[0];
+        if (selected?.kind === "terminal") {
+          return null;
+        }
+        return selected?.pending || null;
+      }
+      if (currentMarker?.requestId) {
+        return null;
+      }
+      const legacyMirror = GM_getValue(PENDING_FOREGROUND_REMOTE_SYNC_KEY, null);
+      if (legacyMirror?.storageVersion === 2) {
+        return null;
+      }
+      return normalizePendingForegroundRemoteSyncRequest(legacyMirror);
+    }
+
+    // GM_listValues is required for the v2/v3 multi-record authority. A
+    // missing capability must fail closed instead of silently returning a
+    // possibly stale marker as if it were a compare-and-swap result.
+    if (currentMarker?.requestId) {
+      return null;
+    }
+    const legacyMirror = GM_getValue(PENDING_FOREGROUND_REMOTE_SYNC_KEY, null);
+    if (legacyMirror?.storageVersion === 2) {
+      return null;
+    }
+    return normalizePendingForegroundRemoteSyncRequest(legacyMirror);
+  };
+
+  const isTerminalForegroundRemoteSyncSoftBlock = (pendingInput = null) => {
+    const pending = normalizePendingForegroundRemoteSyncRequest(pendingInput);
+    return Boolean(
+      pending &&
+        pending.lastResultStatus === "blocked" &&
+        pending.lastResultBlockLevel === "soft" &&
+        pending.lastResultReason &&
+        !isForegroundProbeRetryableSoftBlockReason(pending.lastResultReason)
+    );
+  };
+
+  const getForegroundRemoteSyncMutationIgnore = (current, latest) => {
+    const terminal = current?.requestId
+      ? readPendingForegroundRemoteSyncTerminalRecord(current.requestId)
+      : null;
+    return {
+      reason: terminal
+        ? "cancelled_foreground_remote_sync"
+        : "newer_pending_foreground_remote_sync",
+      message: terminal
+        ? "旧前台远端结果已被取消或完成终态拒绝，新请求仍按权威状态处理"
+        : "旧前台远端结果已忽略，新请求仍保留",
+      terminalKind: terminal?.terminalKind || "",
+      requestId: latest?.requestId || "",
+      remoteUpdatedAt: latest?.remoteUpdatedAt || "",
+    };
+  };
+
+  const clearPendingForegroundRemoteSyncSoftBlock = (
+    reason = "local_state_changed"
+  ) => {
+    const current = getPendingForegroundRemoteSyncRequest();
+    if (!isTerminalForegroundRemoteSyncSoftBlock(current)) {
+      return { status: "skipped", reason: "no_foreground_soft_block" };
+    }
+    const next = {
+      ...current,
+      lastResultStatus: "",
+      lastResultReason: "",
+      lastResultAction: "",
+      lastResultBlockLevel: "",
+      lastResultAt: 0,
+      lastAttemptAt: 0,
+      lastSeenAt: Date.now(),
+    };
+    writePendingForegroundRemoteSyncRecord(next, {
+      eventType: "soft_block_cleared",
+    });
+    const latest = getPendingForegroundRemoteSyncRequest();
+    if (!isSamePendingForegroundRemoteSyncRequest(latest, current)) {
+      const ignored = getForegroundRemoteSyncMutationIgnore(current, latest);
+      recordSyncTraceEvent("foreground_pending_soft_block_clear_ignored", {
+        scope: "foreground_probe",
+        status: "retained",
+        message: ignored.message,
+        details: {
+          requestId: current.requestId,
+          remoteUpdatedAt: current.remoteUpdatedAt,
+          retainedRequestId: ignored.requestId,
+          retainedRemoteUpdatedAt: ignored.remoteUpdatedAt,
+          terminalKind: ignored.terminalKind,
+          reason: normalizeRemoteProbeText(reason, 120) || "local_state_changed",
+        },
+      });
+      return {
+        status: "ignored",
+        reason: ignored.reason,
+        requestId: ignored.requestId,
+        remoteUpdatedAt: ignored.remoteUpdatedAt,
+      };
+    }
+    clearForegroundFollowUpSoftBlock();
+    clearForegroundRemoteSyncRetryIfBoundTo(current);
+    if (
+      !foregroundRemoteSyncRecoveryRequestId ||
+      foregroundRemoteSyncRecoveryRequestId === current.requestId
+    ) {
+      clearForegroundRemoteSyncRecovery();
+    }
+    recordSyncTraceEvent("foreground_pending_soft_block_cleared", {
+      scope: "foreground_probe",
+      status: "cleared",
+      message: "前台远端待处理的 soft block 已因新本地事实解除",
+      details: {
+        reason: normalizeRemoteProbeText(reason, 120) || "local_state_changed",
+        requestId: current.requestId,
+        remoteUpdatedAt: current.remoteUpdatedAt,
+        previousBlockReason: current.lastResultReason,
+        previousBlockAt: current.lastResultAt || 0,
+      },
+    });
+    return {
+      status: "cleared",
+      reason: normalizeRemoteProbeText(reason, 120) || "local_state_changed",
+      requestId: current.requestId,
+      remoteUpdatedAt: current.remoteUpdatedAt,
+    };
+  };
+
+  const markPendingForegroundRemoteSyncAttempt = (expectedInput = null) => {
+    const current = getPendingForegroundRemoteSyncRequest();
+    const expected = normalizePendingForegroundRemoteSyncRequest(expectedInput);
+    if (
+      !current ||
+      (expected && !isSamePendingForegroundRemoteSyncRequest(current, expected))
+    ) {
+      return {
+        status: "retained",
+        reason: "newer_pending_foreground_remote_sync",
+        requestId: current?.requestId || "",
+        remoteUpdatedAt: current?.remoteUpdatedAt || "",
+      };
+    }
+    const attemptAt = Date.now();
+    const next = {
+      ...current,
+      lastAttemptAt: attemptAt,
+      lastResultStatus: "running",
+      lastResultReason: "",
+      lastResultAction: "",
+      lastResultBlockLevel: "",
+      lastResultAt: 0,
+    };
+    writePendingForegroundRemoteSyncRecord(next, {
+      eventType: "attempt_started",
+    });
+    const latest = getPendingForegroundRemoteSyncRequest();
+    if (!isSamePendingForegroundRemoteSyncRequest(latest, current)) {
+      const ignored = getForegroundRemoteSyncMutationIgnore(current, latest);
+      recordSyncTraceEvent("foreground_pending_attempt_ignored", {
+        scope: "foreground_probe",
+        status: "retained",
+        message: ignored.message,
+        details: {
+          requestId: current.requestId,
+          remoteUpdatedAt: current.remoteUpdatedAt,
+          retainedRequestId: ignored.requestId,
+          retainedRemoteUpdatedAt: ignored.remoteUpdatedAt,
+          terminalKind: ignored.terminalKind,
+        },
+      });
+      return {
+        status: "ignored",
+        reason: ignored.reason,
+        requestId: ignored.requestId,
+        remoteUpdatedAt: ignored.remoteUpdatedAt,
+      };
+    }
+    recordSyncTraceEvent("foreground_pending_attempt_started", {
+      scope: "foreground_probe",
+      status: "running",
+      message: "前台远端待处理开始一次执行尝试",
+      details: {
+        requestId: current.requestId,
+        remoteUpdatedAt: current.remoteUpdatedAt,
+        reason: current.reason,
+        triggerSource: current.triggerSource,
+        lastAttemptAt: attemptAt,
+      },
+      timestamp: attemptAt,
+      repeatKey: [
+        "foreground_pending_attempt_started",
+        current.requestId,
+        current.remoteUpdatedAt,
+      ].join(":"),
+    });
+    return {
+      status: "marked",
+      reason: "foreground_remote_sync_attempt_started",
+      requestId: current.requestId,
+      remoteUpdatedAt: current.remoteUpdatedAt,
+    };
+  };
+
+  const recordForegroundPendingSoftBlockSuppressed = (
+    pendingInput = null,
+    {
+      source = "foreground_recovery",
+      triggerSource = "",
+      now = Date.now(),
+    } = {}
+  ) => {
+    const pending = normalizePendingForegroundRemoteSyncRequest(pendingInput);
+    if (!isTerminalForegroundRemoteSyncSoftBlock(pending)) {
+      return false;
+    }
+    recordSyncTraceEvent("foreground_pending_recovery_suppressed", {
+      scope: "foreground_probe",
+      status: "blocked",
+      message: "前台远端待处理已 soft block，等待本地或云端出现新事实",
+      details: {
+        reason: FOREGROUND_PENDING_SOFT_BLOCK_WAIT_REASON,
+        source: normalizeSyncDiagnosticText(source, 80),
+        triggerSource: normalizeSyncTriggerSource(triggerSource) || "",
+        requestId: pending.requestId,
+        remoteUpdatedAt: pending.remoteUpdatedAt,
+        blockReason: pending.lastResultReason,
+        blockAction: pending.lastResultAction,
+        blockLevel: pending.lastResultBlockLevel,
+        blockAt: pending.lastResultAt || 0,
+        lastAttemptAt: pending.lastAttemptAt || 0,
+        lastSeenAt: pending.lastSeenAt || 0,
+      },
+      timestamp: normalizeRemoteProbeTimestamp(now) || Date.now(),
+      repeatKey: [
+        "foreground_pending_recovery_suppressed",
+        pending.requestId,
+        pending.remoteUpdatedAt,
+        pending.lastResultReason,
+      ].join(":"),
+    });
+    return true;
+  };
+
+  const markPendingForegroundRemoteSyncRequest = ({
+    reason = "remote_probe_changed",
+    triggerSource = SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME,
+    remoteUpdatedAt = null,
+    now = Date.now(),
+  } = {}) => {
+    const normalizedRemoteUpdatedAt =
+      normalizeRemoteProbeUpdatedAt(remoteUpdatedAt);
+    if (!normalizedRemoteUpdatedAt) {
+      return null;
+    }
+    const normalizedNow = normalizeRemoteProbeTimestamp(now) || Date.now();
+    const existing = getPendingForegroundRemoteSyncRequest();
+    clearForegroundRemoteSyncRetryIfBoundTo(existing);
+    const nextRequest = {
+      version: 1,
+      requestId: createPendingForegroundRemoteSyncRequestId(normalizedNow),
+      reason:
+        normalizeRemoteProbeText(reason, 120) ||
+        existing?.reason ||
+        "remote_probe_changed",
+      triggerSource:
+        normalizeSyncTriggerSource(triggerSource) ||
+        existing?.triggerSource ||
+        SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME,
+      remoteUpdatedAt: normalizedRemoteUpdatedAt,
+      createdAt: normalizedNow,
+      registrationCreatedAt: normalizedNow,
+      lastSeenAt: normalizedNow,
+      lastAttemptAt: 0,
+      lastResultStatus: "",
+      lastResultReason: "",
+      lastResultAction: "",
+      lastResultBlockLevel: "",
+      lastResultAt: 0,
+      sourceContextId: SYNC_RUNTIME_CONTEXT_ID,
+      sourceTabId: getSyncRuntimeTabLineageId(),
+    };
+    const storedRequest = writePendingForegroundRemoteSyncRecord(nextRequest, {
+      registerCurrent: true,
+      eventType: "registered",
+    });
+    if (!storedRequest) {
+      recordSyncTraceEvent("foreground_pending_registration_failed", {
+        scope: "foreground_probe",
+        status: "failure",
+        message: "前台远端待处理注册因共享存储能力不足而停止",
+        details: {
+          requestId: nextRequest.requestId,
+          remoteUpdatedAt: nextRequest.remoteUpdatedAt,
+        },
+      });
+      return null;
+    }
+    prunePendingForegroundRemoteSyncRecords(normalizedNow);
+    const authoritative = getPendingForegroundRemoteSyncRequest();
+    if (!isSamePendingForegroundRemoteSyncRequest(authoritative, nextRequest)) {
+      recordSyncTraceEvent("foreground_pending_registration_ignored", {
+        scope: "foreground_probe",
+        status: "retained",
+        message: "迟到的前台远端旧注册已忽略，新请求仍保留",
+        details: {
+          requestId: nextRequest.requestId,
+          remoteUpdatedAt: nextRequest.remoteUpdatedAt,
+          retainedRequestId: authoritative?.requestId || "",
+          retainedRemoteUpdatedAt: authoritative?.remoteUpdatedAt || "",
+        },
+      });
+    } else {
+      setAutoSyncIndicatorPendingState(
+        AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME,
+        "foreground_remote_update_pending",
+        { operation: AUTO_SYNC_INDICATOR_OPERATION_SYNC }
+      );
+    }
+    return storedRequest;
+  };
+
+  const clearPendingForegroundRemoteSyncRequest = (
+    expectedRequest = null,
+    reason = "completed",
+    { terminalKind = "completed" } = {}
+  ) => {
+    const current = getPendingForegroundRemoteSyncRequest();
+    if (!current) {
+      return { status: "skipped", reason: "no_pending_foreground_remote_sync" };
+    }
+    const expected = normalizePendingForegroundRemoteSyncRequest(expectedRequest);
+    if (
+      expected &&
+      ((expected.requestId && expected.requestId !== current.requestId) ||
+        (expected.remoteUpdatedAt &&
+          expected.remoteUpdatedAt !== current.remoteUpdatedAt))
+    ) {
+      return {
+        status: "retained",
+        reason: "newer_pending_foreground_remote_sync",
+        requestId: current.requestId,
+      };
+    }
+    const terminal = writePendingForegroundRemoteSyncTerminalRecord(current, {
+      terminalKind,
+      reason,
+    });
+    if (!terminal) {
+      recordSyncTraceEvent("foreground_pending_terminal_write_failed", {
+        scope: "foreground_probe",
+        status: "failure",
+        message: "前台远端待处理无法写入取消或完成终态，保留原请求",
+        details: {
+          requestId: current.requestId,
+          remoteUpdatedAt: current.remoteUpdatedAt,
+          terminalKind,
+          reason: normalizeRemoteProbeText(reason, 120) || "completed",
+        },
+      });
+      return {
+        status: "failure",
+        reason: "foreground_pending_terminal_write_failed",
+        requestId: current.requestId,
+        remoteUpdatedAt: current.remoteUpdatedAt,
+      };
+    }
+    GM_deleteValue(
+      getPendingForegroundRemoteSyncRecordKey(current.requestId)
+    );
+    GM_deleteValue(PENDING_FOREGROUND_REMOTE_SYNC_KEY);
+
+    const pendingAfterDelete = getPendingForegroundRemoteSyncRequest();
+    if (pendingAfterDelete) {
+      recordSyncTraceEvent("foreground_pending_clear_race_retained", {
+        scope: "foreground_probe",
+        status: "retained",
+        message: "清理旧前台远端待处理时检测到并发写入，已保留较新请求",
+        details: {
+          requestId: current.requestId,
+          remoteUpdatedAt: current.remoteUpdatedAt,
+          retainedRequestId: pendingAfterDelete.requestId,
+          retainedRemoteUpdatedAt: pendingAfterDelete.remoteUpdatedAt,
+          sourceContextId: pendingAfterDelete.sourceContextId,
+          sourceTabId: pendingAfterDelete.sourceTabId,
+        },
+      });
+      return {
+        status: "retained",
+        reason: "concurrent_pending_foreground_remote_sync",
+        requestId: pendingAfterDelete.requestId,
+        remoteUpdatedAt: pendingAfterDelete.remoteUpdatedAt,
+      };
+    }
+
+    let recoveredPending = null;
+    if (expected) {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const latestProbeInfo = getLastRemoteProbeInfo();
+        const latestRemoteUpdatedAt = normalizeRemoteProbeUpdatedAt(
+          latestProbeInfo.lastObservedRemoteUpdatedAt
+        );
+        const latestObservedAt = normalizeRemoteProbeTimestamp(
+          latestProbeInfo.lastObservedAt
+        );
+        if (
+          !latestRemoteUpdatedAt ||
+          latestObservedAt <= current.lastSeenAt ||
+          (recoveredPending?.remoteUpdatedAt === latestRemoteUpdatedAt &&
+            recoveredPending?.lastSeenAt === latestObservedAt)
+        ) {
+          break;
+        }
+        recoveredPending = markPendingForegroundRemoteSyncRequest({
+          reason: "concurrent_remote_probe_recovery",
+          triggerSource: current.triggerSource,
+          remoteUpdatedAt: latestRemoteUpdatedAt,
+          now: latestObservedAt,
+        });
+      }
+    }
+    if (recoveredPending) {
+      recordSyncTraceEvent("foreground_pending_clear_race_recovered", {
+        scope: "foreground_probe",
+        status: "retained",
+        message: "清理旧前台远端待处理时发现更新的远端观测，已重建待处理请求",
+        details: {
+          requestId: current.requestId,
+          remoteUpdatedAt: current.remoteUpdatedAt,
+          recoveredRequestId: recoveredPending.requestId,
+          recoveredRemoteUpdatedAt: recoveredPending.remoteUpdatedAt,
+          recoveredObservedAt: recoveredPending.lastSeenAt,
+        },
+      });
+      return {
+        status: "retained",
+        reason: "concurrent_remote_probe_recovered",
+        requestId: recoveredPending.requestId,
+        remoteUpdatedAt: recoveredPending.remoteUpdatedAt,
+      };
+    }
+
+    clearForegroundRemoteSyncRetryIfBoundTo(current);
+    clearForegroundRemoteSyncRecovery();
+    refreshAutoSyncIndicatorRuntimeDisplay(
+      "foreground_remote_sync_pending_cleared"
+    );
+    return {
+      status: "cleared",
+      reason: normalizeRemoteProbeText(reason, 120) || "completed",
+      requestId: current.requestId,
+      remoteUpdatedAt: current.remoteUpdatedAt,
+    };
+  };
+
+  const shouldRetainPendingForegroundRemoteSyncResult = (result) =>
+    !isObjectRecord(result) || result.status !== "success";
+
+  const settlePendingForegroundRemoteSyncRequest = (
+    expectedRequest = null,
+    result = null
+  ) => {
+    const current = getPendingForegroundRemoteSyncRequest();
+    if (!current) {
+      return { status: "skipped", reason: "no_pending_foreground_remote_sync" };
+    }
+    const expected = normalizePendingForegroundRemoteSyncRequest(expectedRequest);
+    if (
+      expected &&
+      !isSamePendingForegroundRemoteSyncRequest(current, expected)
+    ) {
+      return {
+        status: "retained",
+        reason: "newer_pending_foreground_remote_sync",
+        requestId: current.requestId,
+        remoteUpdatedAt: current.remoteUpdatedAt,
+      };
+    }
+    if (shouldRetainPendingForegroundRemoteSyncResult(result)) {
+      const normalizedStatus =
+        normalizeSyncDiagnosticText(result?.status, 80) || "unknown";
+      const normalizedReason = normalizeRemoteProbeText(
+        result?.reason,
+        160
+      );
+      const normalizedAction = normalizeSyncDiagnosticText(
+        result?.action,
+        100
+      );
+      const normalizedBlockLevel = normalizeSyncDiagnosticText(
+        result?.blockLevel,
+        60
+      );
+      const resultAt = Date.now();
+      const next = {
+        ...current,
+        lastAttemptAt: resultAt,
+        lastResultStatus: normalizedStatus,
+        lastResultReason: normalizedReason,
+        lastResultAction: normalizedAction,
+        lastResultBlockLevel: normalizedBlockLevel,
+        lastResultAt: resultAt,
+      };
+      writePendingForegroundRemoteSyncRecord(next, {
+        eventType: "settled",
+      });
+      const latest = getPendingForegroundRemoteSyncRequest();
+      if (!isSamePendingForegroundRemoteSyncRequest(latest, current)) {
+        const ignored = getForegroundRemoteSyncMutationIgnore(current, latest);
+        recordSyncTraceEvent("foreground_pending_result_ignored", {
+          scope: "foreground_probe",
+          status: "retained",
+          message: ignored.message,
+          details: {
+            requestId: current.requestId,
+            remoteUpdatedAt: current.remoteUpdatedAt,
+            resultStatus: normalizedStatus,
+            resultReason: normalizedReason,
+            retainedRequestId: ignored.requestId,
+            retainedRemoteUpdatedAt: ignored.remoteUpdatedAt,
+            terminalKind: ignored.terminalKind,
+          },
+        });
+        return {
+          status: "ignored",
+          reason: ignored.reason,
+          requestId: ignored.requestId,
+          remoteUpdatedAt: ignored.remoteUpdatedAt,
+        };
+      }
+      if (isTerminalForegroundRemoteSyncSoftBlock(next)) {
+        recordForegroundPendingSoftBlockSuppressed(next, {
+          source: "followup_result",
+          triggerSource: current.triggerSource,
+        });
+      }
+      return {
+        status: "retained",
+        reason: isTerminalForegroundRemoteSyncSoftBlock(next)
+          ? FOREGROUND_PENDING_SOFT_BLOCK_WAIT_REASON
+          : "foreground_remote_sync_retryable",
+        requestId: current.requestId,
+        remoteUpdatedAt: current.remoteUpdatedAt,
+      };
+    }
+    return clearPendingForegroundRemoteSyncRequest(
+      expectedRequest || current,
+      result?.reason || result?.status || "completed"
+    );
+  };
+
+  const getForegroundRemoteSyncCompletionDisposition = (
+    pendingBeforeSync = null,
+    pendingSettlement = null
+  ) => {
+    if (!pendingBeforeSync) {
+      return "unbound";
+    }
+    if (
+      pendingSettlement?.status === "skipped" &&
+      pendingSettlement.reason === "no_pending_foreground_remote_sync"
+    ) {
+      return "cancelled";
+    }
+    if (
+      pendingSettlement?.status === "ignored" &&
+      pendingSettlement.reason === "cancelled_foreground_remote_sync"
+    ) {
+      return "cancelled";
+    }
+    if (
+      ["ignored", "retained"].includes(pendingSettlement?.status) &&
+      [
+        "newer_pending_foreground_remote_sync",
+        "concurrent_pending_foreground_remote_sync",
+        "concurrent_remote_probe_recovered",
+      ].includes(pendingSettlement.reason)
+    ) {
+      return "superseded";
+    }
+    return "current";
+  };
+
+  const isForegroundRemoteSyncCompletionCancelled = (
+    pendingBeforeSync = null,
+    pendingSettlement = null
+  ) =>
+    getForegroundRemoteSyncCompletionDisposition(
+      pendingBeforeSync,
+      pendingSettlement
+    ) === "cancelled";
+
+  const isForegroundRemoteSyncCompletionStale = (
+    pendingBeforeSync = null,
+    pendingSettlement = null
+  ) => {
+    if (
+      isForegroundRemoteSyncCompletionCancelled(
+        pendingBeforeSync,
+        pendingSettlement
+      )
+    ) {
+      return true;
+    }
+    return (
+      getForegroundRemoteSyncCompletionDisposition(
+        pendingBeforeSync,
+        pendingSettlement
+      ) === "superseded"
+    );
+  };
+
+  const recordForegroundRemoteSyncResultPhaseSkipped = ({
+    source,
+    pendingBeforeSync,
+    pendingSettlement,
+  }) => {
+    const disposition = getForegroundRemoteSyncCompletionDisposition(
+      pendingBeforeSync,
+      pendingSettlement
+    );
+    recordSyncTraceEvent("foreground_result_phase_skipped", {
+      scope: "foreground_probe",
+      status: "ignored",
+      message:
+        disposition === "cancelled"
+          ? "已取消或完成终态的旧前台结果不再进入 Result Phase"
+          : "已被新请求取代的旧前台结果不再进入 Result Phase",
+      details: {
+        source: normalizeSyncDiagnosticText(source, 80) || "foreground",
+        disposition,
+        requestId: pendingBeforeSync?.requestId || "",
+        remoteUpdatedAt: pendingBeforeSync?.remoteUpdatedAt || "",
+        settlementStatus: pendingSettlement?.status || "",
+        settlementReason: pendingSettlement?.reason || "",
+        retainedRequestId: pendingSettlement?.requestId || "",
+        retainedRemoteUpdatedAt: pendingSettlement?.remoteUpdatedAt || "",
+      },
+    });
+    return disposition;
+  };
+
+  const isPendingForegroundRemoteSyncCovered = (
+    pendingInput = null,
+    expectedRequestInput = null
+  ) => {
+    const pending = normalizePendingForegroundRemoteSyncRequest(pendingInput);
+    const expectedRequest = normalizePendingForegroundRemoteSyncRequest(
+      expectedRequestInput
+    );
+    if (
+      !pending ||
+      !expectedRequest ||
+      !isSamePendingForegroundRemoteSyncRequest(pending, expectedRequest)
+    ) {
+      return false;
+    }
+    const baseline = getSyncBaselineState();
+    const probeInfo = getLastRemoteProbeInfo();
+    return [
+      normalizeRemoteProbeUpdatedAt(baseline?.remoteUpdatedAt),
+      normalizeRemoteProbeUpdatedAt(probeInfo.lastSyncedRemoteUpdatedAt),
+    ].some((coveredRemoteUpdatedAt) =>
+      coveredRemoteUpdatedAt === pending.remoteUpdatedAt
+    );
+  };
+
+  const settlePendingForegroundRemoteSyncRequestIfCovered = (
+    expectedRequestInput = null,
+    reason = "baseline_covered"
+  ) => {
+    const expectedRequest = normalizePendingForegroundRemoteSyncRequest(
+      expectedRequestInput
+    );
+    const current = getPendingForegroundRemoteSyncRequest();
+    if (!current) {
+      return { status: "skipped", reason: "no_pending_foreground_remote_sync" };
+    }
+    if (
+      !expectedRequest ||
+      !isSamePendingForegroundRemoteSyncRequest(current, expectedRequest)
+    ) {
+      return {
+        status: "retained",
+        reason: "newer_pending_foreground_remote_sync",
+        requestId: current.requestId,
+        remoteUpdatedAt: current.remoteUpdatedAt,
+      };
+    }
+    if (!isPendingForegroundRemoteSyncCovered(current, expectedRequest)) {
+      return {
+        status: "retained",
+        reason: "baseline_does_not_cover_foreground_remote_sync",
+        requestId: current.requestId,
+        remoteUpdatedAt: current.remoteUpdatedAt,
+      };
+    }
+    return clearPendingForegroundRemoteSyncRequest(expectedRequest, reason);
+  };
+
+  const clearForegroundRemoteSyncRecovery = () => {
+    if (foregroundRemoteSyncRecoveryTimer) {
+      clearTimeout(foregroundRemoteSyncRecoveryTimer);
+      foregroundRemoteSyncRecoveryTimer = null;
+    }
+    foregroundRemoteSyncRecoveryDueAt = 0;
+    foregroundRemoteSyncRecoveryRequestId = "";
+  };
+
+  const s1pCancelPendingForegroundRemoteSyncForDisabledSetting = (
+    reason = "sync_disabled"
+  ) => {
+    const normalizedReason =
+      normalizeRemoteProbeText(reason, 120) || "sync_disabled";
+    clearForegroundRemoteSyncRecovery();
+    clearForegroundRemoteSyncRetryForCurrentOwner();
+    const pending = getPendingForegroundRemoteSyncRequest();
+    if (!pending) {
+      refreshAutoSyncIndicatorRuntimeDisplay(
+        "foreground_remote_sync_disabled"
+      );
+      return {
+        status: "skipped",
+        reason: "no_pending_foreground_remote_sync",
+      };
+    }
+
+    const result = clearPendingForegroundRemoteSyncRequest(
+      null,
+      normalizedReason,
+      { terminalKind: "cancelled" }
+    );
+    clearForegroundRemoteSyncRecovery();
+    refreshAutoSyncIndicatorRuntimeDisplay("foreground_remote_sync_disabled");
+    recordSyncTraceEvent("foreground_pending_cancelled_by_settings", {
+      scope: "foreground_probe",
+      status: result.status,
+      message: "同步设置已关闭，已取消前台远端待处理意图",
+      details: {
+        reason: normalizedReason,
+        requestId: pending.requestId,
+        remoteUpdatedAt: pending.remoteUpdatedAt,
+      },
+    });
+    return result;
+  };
+
+  const getForegroundRemoteSyncRecoveryRemainingMs = (
+    now = Date.now()
+  ) => {
+    if (!foregroundRemoteSyncRecoveryDueAt) {
+      return 0;
+    }
+    return Math.max(
+      0,
+      foregroundRemoteSyncRecoveryDueAt -
+        (normalizeRemoteProbeTimestamp(now) || Date.now())
+    );
+  };
+
+  const scheduleForegroundRemoteSyncRecovery = (
+    pendingInput = null,
+    options = {}
+  ) => {
+    const pending =
+      normalizePendingForegroundRemoteSyncRequest(pendingInput) ||
+      getPendingForegroundRemoteSyncRequest();
+    if (!pending) {
+      return { status: "skipped", reason: "no_pending_foreground_remote_sync" };
+    }
+    if (document.visibilityState !== "visible") {
+      return { status: "suppressed", reason: "document_hidden" };
+    }
+    if (isTerminalForegroundRemoteSyncSoftBlock(pending)) {
+      clearForegroundRemoteSyncRecovery();
+      recordForegroundPendingSoftBlockSuppressed(pending, {
+        source: "recovery_schedule",
+        triggerSource: pending.triggerSource,
+        now: options.now,
+      });
+      refreshAutoSyncIndicatorRuntimeDisplay(
+        "foreground_soft_block_waiting_for_change"
+      );
+      return {
+        status: "blocked",
+        reason: FOREGROUND_PENDING_SOFT_BLOCK_WAIT_REASON,
+        requestId: pending.requestId,
+        remoteUpdatedAt: pending.remoteUpdatedAt,
+        blockReason: pending.lastResultReason,
+        blockAction: pending.lastResultAction,
+        blockAt: pending.lastResultAt || 0,
+      };
+    }
+
+    const now = normalizeRemoteProbeTimestamp(options.now) || Date.now();
+    const activeLock = getActiveSyncLockSnapshot(now);
+    const preferredDelayMs = Math.max(
+      0,
+      Math.floor(Number(options.preferredDelayMs) || 0)
+    );
+    const lockDelayMs = activeLock
+      ? activeLock.remainingMs + FOREGROUND_REMOTE_SYNC_RECOVERY_LOCK_BUFFER_MS
+      : 0;
+    const delayMs = Math.max(
+      lockDelayMs,
+      preferredDelayMs || FOREGROUND_REMOTE_SYNC_RECOVERY_DELAY_MS
+    );
+
+    if (
+      foregroundRemoteSyncRecoveryTimer &&
+      foregroundRemoteSyncRecoveryRequestId === pending.requestId
+    ) {
+      return {
+        status: "already_scheduled",
+        reason: "pending_foreground_remote_sync_recovery",
+        retryAfterMs: getForegroundRemoteSyncRecoveryRemainingMs(now),
+        requestId: pending.requestId,
+      };
+    }
+
+    clearForegroundRemoteSyncRecovery();
+    foregroundRemoteSyncRecoveryRequestId = pending.requestId;
+    foregroundRemoteSyncRecoveryDueAt = now + delayMs;
+    setAutoSyncIndicatorPendingState(
+      AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME,
+      "foreground_remote_update_pending",
+      { operation: AUTO_SYNC_INDICATOR_OPERATION_SYNC }
+    );
+    foregroundRemoteSyncRecoveryTimer = setTimeout(async () => {
+      foregroundRemoteSyncRecoveryTimer = null;
+      foregroundRemoteSyncRecoveryDueAt = 0;
+      foregroundRemoteSyncRecoveryRequestId = "";
+
+      const latestPending = getPendingForegroundRemoteSyncRequest();
+      if (!latestPending || latestPending.requestId !== pending.requestId) {
+        return;
+      }
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+      if (isTerminalForegroundRemoteSyncSoftBlock(latestPending)) {
+        clearForegroundRemoteSyncRecovery();
+        recordForegroundPendingSoftBlockSuppressed(latestPending, {
+          source: "recovery_timer",
+          triggerSource: latestPending.triggerSource,
+          now: Date.now(),
+        });
+        refreshAutoSyncIndicatorRuntimeDisplay(
+          "foreground_soft_block_waiting_for_change"
+        );
+        return;
+      }
+      const currentLock = getActiveSyncLockSnapshot(Date.now());
+      if (currentLock) {
+        scheduleForegroundRemoteSyncRecovery(latestPending, {
+          ...options,
+          now: Date.now(),
+          preferredDelayMs: currentLock.remainingMs +
+            FOREGROUND_REMOTE_SYNC_RECOVERY_LOCK_BUFFER_MS,
+        });
+        return;
+      }
+
+      const requestForegroundRemoteSyncCheckFn =
+        options.requestForegroundRemoteSyncCheck ||
+        requestForegroundRemoteSyncCheck;
+      const attempt = markPendingForegroundRemoteSyncAttempt(latestPending);
+      if (attempt.status !== "marked") {
+        refreshAutoSyncIndicatorRuntimeDisplay(
+          "foreground_pending_attempt_generation_changed"
+        );
+        return;
+      }
+      let result;
+      try {
+        result = await requestForegroundRemoteSyncCheckFn(
+          `pending_foreground_remote_sync:${latestPending.reason}`,
+          options.requestForegroundRemoteSyncCheckOverrides || {}
+        );
+      } catch (error) {
+        const pendingAfterError = getPendingForegroundRemoteSyncRequest();
+        if (
+          !isSamePendingForegroundRemoteSyncRequest(
+            pendingAfterError,
+            latestPending
+          )
+        ) {
+          recordForegroundRemoteSyncResultPhaseSkipped({
+            source: "recovery_error",
+            pendingBeforeSync: latestPending,
+            pendingSettlement: {
+              status: "ignored",
+              reason: pendingAfterError
+                ? "newer_pending_foreground_remote_sync"
+                : "cancelled_foreground_remote_sync",
+              requestId: pendingAfterError?.requestId || "",
+              remoteUpdatedAt: pendingAfterError?.remoteUpdatedAt || "",
+            },
+          });
+          return;
+        }
+        const retryResult = scheduleForegroundRemoteSyncRetry(
+          `pending_foreground_remote_sync:${latestPending.reason}`,
+          {
+            ...options,
+            expectedPendingRequest: latestPending,
+            preferredDelayMs: FOREGROUND_REMOTE_SYNC_RETRY_BASE_DELAY_MS,
+          }
+        );
+        recordSyncTraceEvent("foreground_pending_recovery_failed", {
+          scope: "foreground_probe",
+          status: "failure",
+          message: "跨上下文前台远端待处理恢复执行失败",
+          details: {
+            reason: latestPending.reason,
+            remoteUpdatedAt: latestPending.remoteUpdatedAt,
+            error: error?.message || String(error),
+            retryStatus: retryResult?.status || "",
+            retryAfterMs: retryResult?.retryAfterMs || 0,
+          },
+        });
+        return;
+      }
+
+      const settled = settlePendingForegroundRemoteSyncRequest(
+        latestPending,
+        result
+      );
+      const pendingAfterSettlement = getPendingForegroundRemoteSyncRequest();
+      recordSyncTraceEvent("foreground_pending_recovery_result", {
+        scope: "foreground_probe",
+        status: settled.status,
+        message: "跨上下文前台远端待处理恢复执行完成",
+        details: {
+          reason: latestPending.reason,
+          remoteUpdatedAt: latestPending.remoteUpdatedAt,
+          recoveryStatus: result?.status || "unknown",
+          recoveryReason: result?.reason || "",
+          settlementStatus: settled.status,
+          settlementReason: settled.reason || "",
+          blockLevel: result?.blockLevel || "",
+          action: result?.action || "",
+          attemptAt: pendingAfterSettlement?.lastAttemptAt || 0,
+          resultAt: pendingAfterSettlement?.lastResultAt || 0,
+        },
+      });
+
+      if (
+        isForegroundRemoteSyncCompletionStale(
+          latestPending,
+          settled
+        )
+      ) {
+        recordForegroundRemoteSyncResultPhaseSkipped({
+          source: "recovery",
+          pendingBeforeSync: latestPending,
+          pendingSettlement: settled,
+        });
+        return;
+      }
+
+      const remoteChangeKind = getForegroundRemoteChangeKind({
+        syncRequestResult: result,
+        sameSessionRemoteWrite: result?.sameSessionRemoteWrite === true,
+        sameDeviceRemoteWrite: result?.sameDeviceRemoteWrite === true,
+        remoteWriter: result?.remoteWriter || null,
+      });
+      const resultPhasePolicy =
+        options.syncResultPhasePolicy || s1pSyncResultPhasePolicy;
+      const outcome = await resultPhasePolicy.handle(result, {
+        source: "foreground",
+        remoteChangeContext: {
+          remoteChangeKind,
+          sameSessionRemoteWrite: result?.sameSessionRemoteWrite === true,
+          sameDeviceRemoteWrite: result?.sameDeviceRemoteWrite === true,
+          remoteWriter: result?.remoteWriter || null,
+          showMessage: options.showMessage,
+          locationObject: options.locationObject,
+          setTimeoutFn: options.setTimeoutFn,
+        },
+        refreshOptions: {
+          reason: `foreground_recovery:${latestPending.reason}`,
+          showMessage: options.showMessage,
+          messages: getAutoPullRefreshMessagesForSource(
+            "foreground",
+            result?.action,
+            getSameDeviceRefreshMessageOptions(result)
+          ),
+          locationObject: options.locationObject,
+          setTimeoutFn: options.setTimeoutFn,
+        },
+        scheduleRetry: (intent) =>
+          scheduleForegroundRemoteSyncRetry(
+            `pending_foreground_remote_sync:${latestPending.reason}`,
+            {
+              ...options,
+              expectedPendingRequest: latestPending,
+              preferredDelayMs: intent.delayMs,
+            }
+          ),
+      });
+      if (
+        settled.status === "retained" &&
+        !s1pHasScheduledSyncResultPhaseRetry(outcome.retryResult) &&
+        (result?.status === "success" ||
+          (result?.status === "blocked" &&
+            result.blockLevel === "soft" &&
+            isForegroundProbeRetryableSoftBlockReason(result.reason)) ||
+          result?.reason === "foreground_followup_lock_unavailable" ||
+          result?.reason === "sync_lock_active")
+      ) {
+        scheduleForegroundRemoteSyncRecovery(
+          getPendingForegroundRemoteSyncRequest(),
+          {
+            ...options,
+            now: Date.now(),
+          }
+        );
+      }
+    }, delayMs);
+
+    return {
+      status: "scheduled",
+      reason: "pending_foreground_remote_sync_recovery",
+      retryAfterMs: delayMs,
+      requestId: pending.requestId,
+      lock: activeLock,
+    };
+  };
+
+  const recoverPendingForegroundRemoteSyncIfNeeded = (options = {}) => {
+    const pending = getPendingForegroundRemoteSyncRequest();
+    if (!pending) {
+      return { status: "skipped", reason: "no_pending_foreground_remote_sync" };
+    }
+
+    const settings = options.settingsSnapshot || getSettings();
+    if (settings.syncRemoteEnabled !== true) {
+      return s1pCancelPendingForegroundRemoteSyncForDisabledSetting(
+        "remote_sync_disabled"
+      );
+    }
+    if (!settings.syncRemoteGistId || !settings.syncRemotePat) {
+      return { status: "skipped", reason: "sync_not_ready" };
+    }
+    if (settings.syncCheckOnReturnToForeground !== true) {
+      return s1pCancelPendingForegroundRemoteSyncForDisabledSetting(
+        "foreground_check_disabled"
+      );
+    }
+    if (getActiveAutoSyncConflictPause()) {
+      return { status: "skipped", reason: "conflict_paused" };
+    }
+    if (document.visibilityState !== "visible") {
+      return { status: "skipped", reason: "document_hidden" };
+    }
+    const isForegroundSyncInFlight = Boolean(
+      foregroundProbeInFlightPromise || foregroundRemoteSyncCheckInFlightPromise
+    );
+
+    const activeLock = getActiveSyncLockSnapshot(
+      normalizeRemoteProbeTimestamp(options.now) || Date.now()
+    );
+    const scheduled = scheduleForegroundRemoteSyncRecovery(pending, {
+      ...options,
+      preferredDelayMs: activeLock
+        ? activeLock.remainingMs + FOREGROUND_REMOTE_SYNC_RECOVERY_LOCK_BUFFER_MS
+        : isForegroundSyncInFlight
+          ? FOREGROUND_REMOTE_SYNC_RECOVERY_DELAY_MS
+          : options.preferredDelayMs,
+    });
+    if (scheduled.status !== "scheduled" && scheduled.status !== "already_scheduled") {
+      return scheduled;
+    }
+    recordSyncTraceEvent("foreground_pending_recovery_scheduled", {
+      scope: "foreground_probe",
+      status: "scheduled",
+      message: activeLock
+        ? "检测到跨上下文遗留前台远端待处理，等待现有同步锁释放"
+        : isForegroundSyncInFlight
+          ? "检测到跨上下文遗留前台远端待处理，等待当前同步完成"
+          : "检测到跨上下文遗留前台远端待处理，已安排恢复",
+      details: {
+        reason: pending.reason,
+        triggerSource: pending.triggerSource,
+        remoteUpdatedAt: pending.remoteUpdatedAt,
+        requestId: pending.requestId,
+        lockMode: activeLock?.mode || "",
+        lockOwner: activeLock?.owner || "",
+        lockRemainingMs: activeLock?.remainingMs || 0,
+        retryAfterMs: scheduled.retryAfterMs || 0,
+      },
+    });
+    return {
+      ...scheduled,
+      reason: activeLock
+        ? "foreground_recovery_waiting_for_lock"
+        : isForegroundSyncInFlight
+          ? "foreground_recovery_waiting_for_in_flight"
+          : "foreground_recovery_scheduled",
+    };
   };
 
   const getCurrentDailySyncDateKey = () => new Date().toLocaleDateString("sv");
@@ -16462,7 +20768,7 @@
     return { covered: true, state, reason: "covered_by_shared_debounce" };
   };
 
-  const recoverPendingAutoSyncIfNeeded = () => {
+  const recoverPendingBackgroundAutoSyncIfNeeded = () => {
     const pending = getPendingAutoSyncRequest();
     if (!pending) {
       return { status: "skipped", reason: "no_pending_auto_sync" };
@@ -16541,6 +20847,30 @@
       status: "scheduled",
       reason: "pending_recovery",
       delayMs: 600,
+    };
+  };
+
+  const recoverPendingAutoSyncIfNeeded = (options = {}) => {
+    const foregroundRecovery = recoverPendingForegroundRemoteSyncIfNeeded(
+      options
+    );
+    const backgroundRecovery = recoverPendingBackgroundAutoSyncIfNeeded();
+    const hasForegroundRecovery = !(
+      foregroundRecovery?.status === "skipped" &&
+      foregroundRecovery?.reason === "no_pending_foreground_remote_sync"
+    );
+    if (!hasForegroundRecovery) {
+      return backgroundRecovery;
+    }
+    if (
+      backgroundRecovery?.status === "skipped" &&
+      backgroundRecovery?.reason === "no_pending_auto_sync"
+    ) {
+      return foregroundRecovery;
+    }
+    return {
+      ...backgroundRecovery,
+      foregroundRecovery,
     };
   };
 
@@ -17714,7 +22044,11 @@
   ) => {
     const normalizedSource = s1pNormalizeSyncResultPhaseSource(source);
     if (normalizedSource === "background") {
-      if (result?.status === "failure" && !result.failureState?.open) {
+      if (
+        result?.status === "failure" &&
+        result.retryable !== false &&
+        !result.failureState?.open
+      ) {
         return {
           kind: "background",
           reason: "failure",
@@ -17733,6 +22067,11 @@
     if (normalizedSource !== "foreground") {
       return null;
     }
+    const isRetryableFailure = Boolean(
+      result?.status === "failure" &&
+        result.retryable !== false &&
+        !result.failureState?.open
+    );
     const isRetryableSkip = Boolean(
       result?.status === "skipped" &&
         (result.reason === "foreground_followup_lock_unavailable" ||
@@ -17744,13 +22083,17 @@
         result.blockLevel === "soft" &&
         isForegroundProbeRetryableSoftBlockReason(result.reason)
     );
-    if (!isRetryableSkip && !isRetryableSoftBlock) {
+    if (!isRetryableFailure && !isRetryableSkip && !isRetryableSoftBlock) {
       return null;
     }
     return {
       kind: "foreground",
-      reason: normalizeRemoteProbeText(result.reason, 120) || "retryable",
-      delayMs: Math.max(0, Number(result.retryAfterMs) || 0),
+      reason:
+        normalizeRemoteProbeText(result.reason, 120) ||
+        (isRetryableFailure ? "failure" : "retryable"),
+      delayMs: isRetryableFailure
+        ? FOREGROUND_REMOTE_SYNC_RETRY_BASE_DELAY_MS
+        : Math.max(0, Number(result.retryAfterMs) || 0),
     };
   };
 
@@ -18144,6 +22487,10 @@
 
   const getPendingAutoSyncRecoveryFn = (overrides = {}) =>
     overrides.recoverPendingAutoSyncIfNeeded || recoverPendingAutoSyncIfNeeded;
+  const hasScheduledPendingAutoSyncRecovery = (result = null) =>
+    [result?.status, result?.foregroundRecovery?.status].some(
+      (status) => status === "scheduled" || status === "already_scheduled"
+    );
 
   const resyncForegroundStateFromStorageSnapshot = (
     overrides = {},
@@ -18182,14 +22529,14 @@
       console.log("S1 Plus: 检测到页面从 bfcache 恢复，检查待同步任务...");
       resyncForegroundStateFromStorageSnapshot(overrides);
     }
-    const recoveryResult = getPendingAutoSyncRecoveryFn(overrides)();
+    const recoveryResult = getPendingAutoSyncRecoveryFn(overrides)(overrides);
 
     if (!(event && event.persisted)) {
       return Promise.resolve(
         createForegroundTriggerSkippedResult("pageshow_not_persisted")
       );
     }
-    if (recoveryResult?.status === "scheduled") {
+    if (hasScheduledPendingAutoSyncRecovery(recoveryResult)) {
       return Promise.resolve({
         status: "skipped",
         reason: FOREGROUND_PROBE_SKIP_REASON_PENDING_RECOVERY_SETTLE,
@@ -18210,8 +22557,8 @@
 
     const { coreDataSnapshotResyncResult } =
       resyncForegroundStateFromStorageSnapshot(overrides);
-    const recoveryResult = getPendingAutoSyncRecoveryFn(overrides)();
-    if (recoveryResult?.status === "scheduled") {
+    const recoveryResult = getPendingAutoSyncRecoveryFn(overrides)(overrides);
+    if (hasScheduledPendingAutoSyncRecovery(recoveryResult)) {
       return Promise.resolve({
         status: "skipped",
         reason: FOREGROUND_PROBE_SKIP_REASON_PENDING_RECOVERY_SETTLE,
@@ -18228,6 +22575,9 @@
   const s1pInitializePendingAutoSyncRecoverySupport = (adapter = {}) => {
     const bindActivityHooks =
       adapter.bindActivityHooks || bindVisibleRemoteFreshnessPollingActivityHooks;
+    const bindForegroundPendingChange =
+      adapter.bindForegroundPendingChange ||
+      s1pBindForegroundRemoteSyncPendingChangeHook;
     const syncPolling =
       adapter.syncPolling || syncVisibleRemoteFreshnessPollingForCurrentState;
     const stopPolling = adapter.stopPolling || stopVisibleRemoteFreshnessPolling;
@@ -18238,9 +22588,20 @@
         : typeof activityBinding?.dispose === "function"
           ? activityBinding.dispose
           : null;
+    let disposeForegroundPendingChange = null;
     try {
+      const foregroundPendingChangeBinding = bindForegroundPendingChange();
+      disposeForegroundPendingChange =
+        typeof foregroundPendingChangeBinding === "function"
+          ? foregroundPendingChangeBinding
+          : typeof foregroundPendingChangeBinding?.dispose === "function"
+            ? foregroundPendingChangeBinding.dispose
+            : null;
       syncPolling({ resetActivity: true });
     } catch (error) {
+      clearForegroundRemoteSyncRetryForCurrentOwner();
+      clearForegroundRemoteSyncRecovery();
+      disposeForegroundPendingChange?.();
       disposeActivityHooks?.();
       throw error;
     }
@@ -18253,6 +22614,9 @@
         }
         disposed = true;
         stopPolling();
+        clearForegroundRemoteSyncRetryForCurrentOwner();
+        clearForegroundRemoteSyncRecovery();
+        disposeForegroundPendingChange?.();
         disposeActivityHooks?.();
         return { status: "disposed" };
       },
@@ -18434,18 +22798,14 @@
     normalizeSyncDiagnosticText(options.tabId, 120) ||
     SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID;
   const shouldLogSharedBackgroundSyncReschedule = ({
-    generation = 0,
     reason = "",
+    lockIdentity = "",
     now = Date.now(),
   } = {}) => {
-    const normalizedGeneration = Math.max(
-      0,
-      Math.floor(Number(generation) || 0)
-    );
     const normalizedReason =
       normalizeSyncDiagnosticText(reason, 80) || "unknown";
     const normalizedNow = Number(now) || Date.now();
-    const key = `${normalizedGeneration}:${normalizedReason}`;
+    const key = `${normalizedReason}:${normalizeSyncDiagnosticText(lockIdentity, 240)}`;
     if (
       key === lastSharedBackgroundSyncRescheduleLogKey &&
       normalizedNow - lastSharedBackgroundSyncRescheduleLogAt <
@@ -19232,6 +23592,7 @@
       };
     }
     if (hasAnyActiveSyncLock(now)) {
+      const activeSyncLock = getActiveSyncLockSnapshot(now);
       const retryDelayMs = 1000;
       const retryState = setBackgroundSyncDebounceState({
         ...state,
@@ -19245,8 +23606,13 @@
       });
       if (
         shouldLogSharedBackgroundSyncReschedule({
-          generation: state.generation,
           reason: "sync_lock_active",
+          lockIdentity: [
+            activeSyncLock?.mode || "",
+            activeSyncLock?.owner || "",
+            activeSyncLock?.executionId || activeSyncLock?.operationId || "",
+            activeSyncLock?.stage || "",
+          ].join(":"),
           now,
         })
       ) {
@@ -19258,7 +23624,23 @@
             reason: "sync_lock_active",
             generation: state.generation,
             delayMs: retryDelayMs,
+            lockMode: activeSyncLock?.mode || "",
+            lockOwner: activeSyncLock?.owner || "",
+            lockExecutionId: activeSyncLock?.executionId || "",
+            lockOperationId: activeSyncLock?.operationId || "",
+            lockStage: activeSyncLock?.stage || "",
+            lockAcquiredAt: activeSyncLock?.acquiredAt || 0,
+            lockExpiresAt: activeSyncLock?.expiresAt || 0,
+            lockRemainingMs: activeSyncLock?.remainingMs || 0,
           },
+          repeatKey: [
+            "shared_scheduler_rescheduled",
+            "sync_lock_active",
+            activeSyncLock?.mode || "",
+            activeSyncLock?.owner || "",
+            activeSyncLock?.operationId || activeSyncLock?.executionId || "",
+            activeSyncLock?.stage || "",
+          ].join(":"),
         });
       }
       return {
@@ -19351,10 +23733,7 @@
       const latestPending = getPendingAutoSyncRequest();
       const latestPendingMaxLastModified =
         getPendingAutoSyncRequestMaxLastModified(latestPending);
-      if (
-        latestPendingMaxLastModified > Number(coveredLastModified || 0) ||
-        latestPending?.lastDirtyAt !== pending.lastDirtyAt
-      ) {
+      if (latestPendingMaxLastModified > Number(coveredLastModified || 0)) {
         const followUpScheduled = scheduleBackgroundSyncDebounceFollowUp(
           context.scheduleFollowUp,
           {
@@ -19408,11 +23787,7 @@
       state.maxLastModified <= coveredLocalLastModified
     ) {
       const latestState = getBackgroundSyncDebounceState();
-      if (
-        !latestState ||
-        latestState.generation !== state.generation ||
-        latestState.maxLastModified !== state.maxLastModified
-      ) {
+      if (latestState && latestState.maxLastModified > coveredLocalLastModified) {
         const followUpScheduled = scheduleBackgroundSyncDebounceFollowUp(
           scheduleFollowUp,
           {
@@ -19424,7 +23799,7 @@
         );
         return {
           status: "retained",
-          reason: latestState ? "concurrent_shared_dirty" : "state_changed",
+          reason: "concurrent_shared_dirty",
           generation: latestState?.generation || 0,
           maxLastModified: latestState?.maxLastModified || 0,
           followUpScheduled,
@@ -20179,6 +24554,7 @@
     }
   };
   let sharedBackgroundSyncDebounceStateChangeBinding = null;
+  let foregroundRemoteSyncPendingChangeBinding = null;
   const s1pBindSharedBackgroundSyncDebounceStateChangeHook = () => {
     if (typeof GM_addValueChangeListener !== "function") {
       return { status: "skipped", reason: "listener_unavailable" };
@@ -20245,6 +24621,113 @@
       },
     };
   };
+  const s1pBindForegroundRemoteSyncPendingChangeHook = () => {
+    if (typeof GM_addValueChangeListener !== "function") {
+      return { status: "skipped", reason: "listener_unavailable" };
+    }
+    const binding = foregroundRemoteSyncPendingChangeBinding;
+    if (binding?.active) {
+      binding.leaseCount += 1;
+      let released = false;
+      return {
+        status: "shared",
+        reason: "listener_already_bound",
+        dispose: () => {
+          if (released) {
+            return { status: "skipped", reason: "lease_already_released" };
+          }
+          released = true;
+          return binding.release();
+        },
+      };
+    }
+    const nextBinding = {
+      active: true,
+      leaseCount: 1,
+      listenerId: null,
+      release: null,
+    };
+    nextBinding.listenerId = GM_addValueChangeListener(
+      PENDING_FOREGROUND_REMOTE_SYNC_KEY,
+      (_key, _oldValue, newValue, _isCrossContextChange) => {
+        if (!nextBinding.active) {
+          return;
+        }
+        const signal = normalizePendingForegroundRemoteSyncRequest(newValue);
+        const pending = getPendingForegroundRemoteSyncRequest();
+        if (
+          signal?.sourceContextId === SYNC_RUNTIME_CONTEXT_ID &&
+          signal.requestId === pending?.requestId
+        ) {
+          return;
+        }
+        if (!pending) {
+          if (foregroundRemoteSyncRetryOwnerToken) {
+            clearForegroundRemoteSyncRetryForCurrentOwner();
+          }
+          clearForegroundRemoteSyncRecovery();
+          recordSyncTraceEvent("foreground_pending_cross_context_signal", {
+            scope: "foreground_probe",
+            status: "cleared",
+            message: "跨上下文前台远端待处理已完成或清理",
+          });
+          return;
+        }
+        if (
+          foregroundRemoteSyncRetryOwnerToken?.requestId &&
+          (pending.requestId !== foregroundRemoteSyncRetryOwnerToken.requestId ||
+            pending.remoteUpdatedAt !==
+              foregroundRemoteSyncRetryOwnerToken.remoteUpdatedAt)
+        ) {
+          clearForegroundRemoteSyncRetryForCurrentOwner();
+        }
+        const recoveryResult = recoverPendingForegroundRemoteSyncIfNeeded();
+        recordSyncTraceEvent("foreground_pending_cross_context_signal", {
+          scope: "foreground_probe",
+          status: recoveryResult?.status || "unknown",
+          message: "收到跨上下文前台远端待处理通知",
+          details: {
+            requestId: pending.requestId,
+            remoteUpdatedAt: pending.remoteUpdatedAt,
+            sourceContextId: pending.sourceContextId,
+            sourceTabId: pending.sourceTabId,
+            recoveryStatus: recoveryResult?.status || "unknown",
+            recoveryReason: recoveryResult?.reason || "",
+          },
+        });
+      }
+    );
+    nextBinding.release = () => {
+      nextBinding.leaseCount = Math.max(0, nextBinding.leaseCount - 1);
+      if (nextBinding.leaseCount > 0) {
+        return { status: "retained", reason: "listener_still_leased" };
+      }
+      nextBinding.active = false;
+      if (
+        typeof GM_removeValueChangeListener === "function" &&
+        nextBinding.listenerId !== null &&
+        nextBinding.listenerId !== undefined
+      ) {
+        GM_removeValueChangeListener(nextBinding.listenerId);
+      }
+      if (foregroundRemoteSyncPendingChangeBinding === nextBinding) {
+        foregroundRemoteSyncPendingChangeBinding = null;
+      }
+      return { status: "unbound" };
+    };
+    foregroundRemoteSyncPendingChangeBinding = nextBinding;
+    let released = false;
+    return {
+      status: "bound",
+      dispose: () => {
+        if (released) {
+          return { status: "skipped", reason: "lease_already_released" };
+        }
+        released = true;
+        return nextBinding.release();
+      },
+    };
+  };
   const s1pCreateSyncLifecycleAdapter = (adapter = {}) => {
     const windowTarget = adapter.windowTarget || window;
     const documentTarget = adapter.documentTarget || document;
@@ -20255,6 +24738,8 @@
       ((value) => {
         sharedBackgroundSyncDebouncePageUnloading = value === true;
       });
+    const setSyncPageLifecycleUnloading =
+      adapter.setSyncPageLifecycleUnloading || s1pSetSyncPageLifecycleUnloading;
     const clearHiddenFlush =
       adapter.clearHiddenFlush || clearSharedBackgroundSyncDebounceHiddenFlushTimer;
     const runCheckpoint =
@@ -20342,10 +24827,24 @@
             ? "visibility_visible"
             : "visibility_hidden"
           : phase;
+      recordSyncTraceEvent("sync_lifecycle_enter", {
+        scope: "sync_lifecycle_checkpoint",
+        status: "running",
+        message: "同步生命周期事件进入处理",
+        details: {
+          event: normalizedEventName,
+          phase,
+          visibilityState: getVisibilityState(),
+          eventPersisted: event?.persisted === true,
+          transitionGeneration,
+        },
+      });
       if (phase === "visible" || phase === "pageshow") {
+        setSyncPageLifecycleUnloading(false, reason);
         setSchedulerPageUnloading(false);
         clearHiddenFlush();
       } else if (phase === "pagehide" || phase === "beforeunload") {
+        setSyncPageLifecycleUnloading(true, reason);
         setSchedulerPageUnloading(true);
       }
       const checkpointResult = runCheckpoint(reason, {
@@ -20390,6 +24889,10 @@
         if (transitionGeneration !== lifecycleTransitionGeneration) {
           return;
         }
+        // Scheduler recovery may be safe in the next microtask, but the sync
+        // lifecycle fence must stay closed until pageshow or a proven canceled
+        // unload. Otherwise the 50ms ownership-verification window can reopen
+        // while the page is already leaving.
         setSchedulerPageUnloading(false);
       });
       if (phase === "beforeunload") {
@@ -20400,6 +24903,7 @@
           ) {
             return;
           }
+          setSyncPageLifecycleUnloading(false, "unload_canceled_recovery");
           const recoveryResult = recoverAfterCanceledUnload();
           recordSyncTraceEvent("sync_lifecycle_canceled_unload_recovery", {
             scope: "sync_lifecycle_checkpoint",
@@ -20456,6 +24960,9 @@
           return { status: "skipped", reason: "already_unbound" };
         }
         lifecycleTransitionGeneration += 1;
+        setSyncPageLifecycleUnloading(false, "lifecycle_unbind", {
+          forceGeneration: true,
+        });
         setSchedulerPageUnloading(false);
         clearHiddenFlush();
         removeLifecycleEventListeners();
@@ -20757,6 +25264,7 @@
   ) => {
     const currentLastModified = GM_getValue(LAST_LOCAL_MODIFIED_KEY, 0);
     const nextLastModified = Math.max(Date.now(), currentLastModified + 1);
+    clearPendingForegroundRemoteSyncSoftBlock("local_mutation");
     const readingProgressContext =
       s1pReadingProgressSession.readState().context;
     recordLastLocalDirtyProvenance({
@@ -22477,7 +26985,18 @@
     };
     const write = (kind, value, { suppressSyncTrigger = false } = {}) => {
       const definition = getDefinition(kind);
-      return commitWrite(kind, definition, value, { suppressSyncTrigger });
+      const operationId = kind === "readProgress" ? `s1p_storage_reading_${s1pLogContext().contextId || "page"}` : s1pNewDiagnosticOperation("storage");
+      try {
+        const result = commitWrite(kind, definition, value, { suppressSyncTrigger });
+        s1pRecordDiagnosticEvent("storage.write", { module: "storage", operationId,
+          status: result.changed ? "success" : "unchanged", message: result.changed ? "业务数据已保存" : "业务数据无变化，跳过写入",
+          repeatKey: kind, details: { kind, changed: result.changed, normalizationChanged: result.normalizationChanged, suppressSyncTrigger } });
+        return result;
+      } catch (error) {
+        s1pRecordDiagnosticEvent("storage.write_failed", { module: "storage", operationId, status: "failure",
+          level: "error", message: "业务数据保存失败", details: { kind, error } });
+        throw error;
+      }
     };
     const projectForSync = ({
       fresh = false,
@@ -25183,6 +29702,37 @@
     });
     return true;
   };
+  // 记录手势起点，避免内容区拖选结束在全屏表面时被误判为蒙版点击。
+  const createS1pModalBackdropClickGuard = (modal) => {
+    let pointerDownTarget = null;
+    const resetPointerDownState = () => {
+      pointerDownTarget = null;
+    };
+
+    modal.addEventListener(
+      "pointerdown",
+      (event) => {
+        pointerDownTarget = event.target;
+      },
+      true
+    );
+    modal.addEventListener("pointercancel", resetPointerDownState, true);
+
+    return (event) => {
+      const shouldClose =
+        event.target === modal &&
+        (pointerDownTarget === null || pointerDownTarget === modal);
+      resetPointerDownState();
+      return shouldClose;
+    };
+  };
+  if (IS_S1P_TEST_MODE) {
+    const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
+    testHookHost.__S1P_TEST_HOOKS__ = {
+      ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
+      s1pCreateModalBackdropClickGuard: createS1pModalBackdropClickGuard,
+    };
+  }
   const closeS1pModalSurface = (
     modal,
     {
@@ -29064,6 +33614,9 @@
 
   // [MODIFIED] 导入数据，兼容新旧两种数据结构，并增加控制选项
   const importLocalData = (jsonStr, options = {}) => {
+    const s1pImportOperationId = s1pNewDiagnosticOperation("import");
+    s1pRecordDiagnosticEvent("import.started", { module: "import", operationId: s1pImportOperationId,
+      status: "running", message: "开始导入数据", details: { inputLength: typeof jsonStr === "string" ? jsonStr.length : null } });
     const { suppressPostSync = false, suppressSyncTrigger = suppressPostSync } =
       options;
     try {
@@ -29209,11 +33762,16 @@
       const autoSyncNotice = !suppressPostSync
         ? " 已按当前配置请求后台自动同步（若远程同步已开启）。"
         : "";
+      s1pRecordDiagnosticEvent("import.completed", { module: "import", operationId: s1pImportOperationId,
+        status: "success", message: "数据导入完成", details: { threadsImported, usersImported, tagsImported,
+          bookmarksImported, postsImported, rulesImported, progressImported, hasImportNormalizationAdjustments, suppressPostSync } });
       return {
         success: true,
         message: `成功导入 ${threadsImported} 条帖子、${usersImported} 条用户、${tagsImported} 条标记、${bookmarksImported} 条收藏、${postsImported} 条楼层屏蔽、${rulesImported} 条标题规则、${progressImported} 条阅读进度及相关设置。${normalizationNotice}${autoSyncNotice}`,
       };
     } catch (e) {
+      s1pRecordDiagnosticEvent("import.failed", { module: "import", operationId: s1pImportOperationId,
+        status: "failure", level: "error", message: "数据导入失败", details: { error: e } });
       return { success: false, message: `导入失败: ${e.message}` };
     } finally {
       s1pReadingProgressSession.attach();
@@ -29275,34 +33833,66 @@
     return error;
   };
 
+  const createRemoteSyncAuthRejectedError = (sourceError = {}, operation = "") => {
+    const error = new Error(
+      "GitHub Token 已失效或已过期，请在“设置同步”中更新 Token 后重新保存。"
+    );
+    error.code = REMOTE_SYNC_AUTH_REJECTED_CODE;
+    error.status = Number(sourceError?.status) || 401;
+    error.response = sourceError?.response;
+    error.operation = operation;
+    return error;
+  };
+
+  const s1pIsRemoteSyncCredentialRejectionError = (error = {}) => {
+    const status = Number(error?.status);
+    return (
+      error?.code === REMOTE_SYNC_AUTH_REJECTED_CODE ||
+      error?.credentialRejected === true ||
+      status === 401 ||
+      (status === 403 && error?.retryable !== true)
+    );
+  };
+
   const assertRemoteSyncNotCancelled = (generation) => {
     if (remoteSyncCancelGeneration !== generation) {
       throw createRemoteSyncCancelledError(remoteSyncCancelReason);
     }
   };
 
-  const cancelActiveRemoteSyncRequests = (reason = "manual_override") => {
+  const cancelActiveRemoteSyncRequests = (
+    reason = "manual_override",
+    { abortActive = true } = {}
+  ) => {
     remoteSyncCancelReason =
       normalizeSyncDiagnosticText(reason, 80) || "manual_override";
     remoteSyncCancelGeneration += 1;
     let cancelledCount = 0;
-    activeRemoteSyncRequestHandles.forEach((requestHandle) => {
-      if (!requestHandle || typeof requestHandle.abort !== "function") {
-        return;
-      }
-      cancelledCount += 1;
-      try {
-        requestHandle.abort();
-      } catch (error) {
-        console.warn("S1 Plus: 取消同步请求失败。", error);
-      }
-    });
-    activeRemoteSyncRequestHandles.clear();
+    if (abortActive) {
+      activeRemoteSyncRequestHandles.forEach((requestHandle) => {
+        if (!requestHandle || typeof requestHandle.abort !== "function") {
+          return;
+        }
+        cancelledCount += 1;
+        try {
+          requestHandle.abort();
+        } catch (error) {
+          console.warn("S1 Plus: 取消同步请求失败。", error);
+        }
+      });
+      activeRemoteSyncRequestHandles.clear();
+    }
     recordSyncTraceEvent("remote_requests_cancelled", {
       scope: "manual_override",
       status: "skipped",
-      message: "用户直接拉取/推送已取消仍在等待的远端请求",
-      details: { reason: remoteSyncCancelReason, cancelledCount },
+      message: abortActive
+        ? "用户直接拉取/推送已取消仍在等待的远端请求"
+        : "用户直接拉取/推送已取消尚未发出的远端重试",
+      details: {
+        reason: remoteSyncCancelReason,
+        cancelledCount,
+        abortActive,
+      },
     });
     return cancelledCount;
   };
@@ -29370,6 +33960,19 @@
     });
 
   const runRemoteRequestWithRetry = async (requestOptions, options = {}) => {
+    const s1pOwnerOperation = [...s1pSyncOperations.values()].find((item) => item.active);
+    const s1pRequestOperationId = s1pNewDiagnosticOperation("network");
+    const s1pRequestStartedAt = Date.now();
+    const s1pTraceRequest = (event, status, details = {}) => {
+      s1pSetSyncDiagnosticStage(s1pOwnerOperation, `network.${event}`);
+      s1pRecordDiagnosticEvent(`network.${event}`, { module: "network", operationId: s1pRequestOperationId,
+        parentOperationId: s1pOwnerOperation?.operationId || "", status,
+        level: status === "failure" ? "error" : "log", message: {
+          attempt: "发起远端请求", completed: "远端请求成功", retry: "远端请求失败，等待重试", failed: "远端请求失败", cancelled: "远端请求已取消",
+        }[event] || event,
+        details: { method: requestOptions.method || "GET", url: requestOptions.url,
+          elapsedMs: Date.now() - s1pRequestStartedAt, ...details } });
+    };
     const startingCancelGeneration = remoteSyncCancelGeneration;
     const sleepFn =
       typeof options.sleep === "function" ? options.sleep : sleep;
@@ -29387,9 +33990,11 @@
     while (attempt <= REMOTE_SYNC_MAX_RETRIES) {
       assertRemoteSyncNotCancelled(startingCancelGeneration);
       try {
+        s1pTraceRequest("attempt", "running", { attempt, timeoutMs: requestOptions.timeout || REMOTE_SYNC_REQUEST_TIMEOUT_MS });
         const response = await gmRequestWithTimeout(requestOptions);
         assertRemoteSyncNotCancelled(startingCancelGeneration);
         if (response.status >= 200 && response.status < 300) {
+          s1pTraceRequest("completed", "success", { attempt, httpStatus: response.status });
           return response;
         }
 
@@ -29405,9 +34010,13 @@
         httpError.retryable =
           REMOTE_SYNC_RETRYABLE_STATUS.has(response.status) ||
           isRetryableGitHubRateLimit403;
+        httpError.credentialRejected =
+          response.status === 401 ||
+          (response.status === 403 && !isRetryableGitHubRateLimit403);
         throw httpError;
       } catch (error) {
         if (error?.code === REMOTE_SYNC_CANCELLED_CODE) {
+          s1pTraceRequest("cancelled", "cancelled", { attempt, code: error.code });
           throw error;
         }
         const canRetry =
@@ -29415,12 +34024,14 @@
           (error.retryable || REMOTE_SYNC_RETRYABLE_STATUS.has(error.status));
 
         if (!canRetry) {
+          s1pTraceRequest("failed", "failure", { attempt, error, httpStatus: error.status, code: error.code });
           throw error;
         }
 
         const backoffMs =
           retryBaseDelayMs * Math.pow(2, attempt) +
           Math.floor(Math.random() * retryJitterMs);
+        s1pTraceRequest("retry", "retrying", { attempt, backoffMs, httpStatus: error.status, code: error.code });
         await sleepFn(backoffMs);
         assertRemoteSyncNotCancelled(startingCancelGeneration);
         attempt += 1;
@@ -29887,6 +34498,15 @@
           setHeartbeatTimer: (timer) => {
             manualSyncLockHeartbeatTimer = timer;
           },
+          getHeartbeatAuthorityToken: () =>
+            syncLockHeartbeatAuthorityTokens.get(mode) || "",
+          setHeartbeatAuthorityToken: (token) => {
+            if (token) {
+              syncLockHeartbeatAuthorityTokens.set(mode, token);
+            } else {
+              syncLockHeartbeatAuthorityTokens.delete(mode);
+            }
+          },
         };
       case SYNC_LOCK_MODE_BACKGROUND:
         return {
@@ -29897,6 +34517,15 @@
           getHeartbeatTimer: () => backgroundSyncLockHeartbeatTimer,
           setHeartbeatTimer: (timer) => {
             backgroundSyncLockHeartbeatTimer = timer;
+          },
+          getHeartbeatAuthorityToken: () =>
+            syncLockHeartbeatAuthorityTokens.get(mode) || "",
+          setHeartbeatAuthorityToken: (token) => {
+            if (token) {
+              syncLockHeartbeatAuthorityTokens.set(mode, token);
+            } else {
+              syncLockHeartbeatAuthorityTokens.delete(mode);
+            }
           },
         };
       case SYNC_LOCK_MODE_FOREGROUND_FOLLOWUP:
@@ -29909,6 +34538,15 @@
           setHeartbeatTimer: (timer) => {
             foregroundFollowUpSyncLockHeartbeatTimer = timer;
           },
+          getHeartbeatAuthorityToken: () =>
+            syncLockHeartbeatAuthorityTokens.get(mode) || "",
+          setHeartbeatAuthorityToken: (token) => {
+            if (token) {
+              syncLockHeartbeatAuthorityTokens.set(mode, token);
+            } else {
+              syncLockHeartbeatAuthorityTokens.delete(mode);
+            }
+          },
         };
       case SYNC_LOCK_MODE_STARTUP:
         return {
@@ -29919,6 +34557,15 @@
           getHeartbeatTimer: () => startupSyncLockHeartbeatTimer,
           setHeartbeatTimer: (timer) => {
             startupSyncLockHeartbeatTimer = timer;
+          },
+          getHeartbeatAuthorityToken: () =>
+            syncLockHeartbeatAuthorityTokens.get(mode) || "",
+          setHeartbeatAuthorityToken: (token) => {
+            if (token) {
+              syncLockHeartbeatAuthorityTokens.set(mode, token);
+            } else {
+              syncLockHeartbeatAuthorityTokens.delete(mode);
+            }
           },
         };
       default:
@@ -29968,6 +34615,11 @@
         timestamp: lock.timestamp,
         mode: lock.mode,
         ttlMs,
+        token: normalizeSyncDiagnosticText(lock.token, 160),
+        operationId: normalizeSyncDiagnosticText(lock.operationId, 160),
+        acquiredAt: Number(lock.acquiredAt) || 0,
+        stage: normalizeSyncDiagnosticText(lock.stage, 120),
+        contextId: normalizeSyncDiagnosticText(lock.contextId, 160),
       };
     }
     return null;
@@ -30002,40 +34654,279 @@
     return isGlobalSyncLockValid(getGlobalSyncLockValue(), now);
   };
 
-  const setGlobalSyncLock = (mode, timestamp, ttlMs) => {
+  const s1pReadSyncLockEvidence = (now = Date.now()) => {
+    const modes = [SYNC_LOCK_MODE_MANUAL, SYNC_LOCK_MODE_BACKGROUND, SYNC_LOCK_MODE_STARTUP, SYNC_LOCK_MODE_FOREGROUND_FOLLOWUP];
+    const rows = modes.map((mode) => {
+      const profile = getSyncLockModeProfile(mode);
+      return { key: profile.lockKey, lock: getModeSyncLockValue(mode), ttlMs: profile.ttlMs, mode };
+    });
+    const globalLock = getGlobalSyncLockValue();
+    rows.push({ key: GLOBAL_SYNC_LOCK_KEY, lock: globalLock, ttlMs: globalLock?.ttlMs, mode: globalLock?.mode });
+    return rows.filter(({ lock }) => lock).map(({ key, lock, ttlMs, mode }) => ({
+      key, mode, owner: lock.owner, executionId: lock.token || "legacy_without_execution_id",
+      operationId: lock.operationId || "", contextId: lock.contextId || "",
+      acquiredAt: lock.acquiredAt || null, renewedAt: lock.timestamp,
+      expiresAt: lock.timestamp + ttlMs, remainingMs: Math.max(0, lock.timestamp + ttlMs - now),
+      heldMs: lock.acquiredAt ? Math.max(0, now - lock.acquiredAt) : null,
+      stage: lock.stage || "unknown", active: isModeSyncLockValid(lock, ttlMs, now),
+    }));
+  };
+
+  const S1P_LOCK_RECEIPT_PREFIX = "s1p_sync_lock_receipt:";
+  const s1pReadSharedLockReceipts = () => {
+    const cutoff = Date.now() - 7 * 86400000;
+    const receipts = [];
+    const identities = new Set();
+    const append = (receipt) => {
+      const normalized = s1pNormalizeSharedLockReceiptRecord(receipt);
+      if (!normalized || Number(normalized.at) < cutoff) return;
+      const identity = s1pGetSharedLockReceiptIdentity(normalized);
+      if (identity && identities.has(identity)) return;
+      if (identity) identities.add(identity);
+      receipts.push(normalized);
+    };
+    try {
+      const legacy = GM_getValue("s1p_sync_lock_history", []);
+      if (Array.isArray(legacy)) legacy.slice(-80).forEach(append);
+    } catch (_) {
+      s1pLogLoss.collectionFailures += 1;
+    }
+    if (typeof GM_listValues === "function") {
+      let keys = [];
+      try {
+        keys = GM_listValues()
+          .filter((key) => typeof key === "string" && key.startsWith(S1P_LOCK_RECEIPT_PREFIX))
+          .sort();
+      } catch (_) {
+        s1pLogLoss.collectionFailures += 1;
+      }
+      for (const key of keys.slice(-256)) {
+        try {
+          append(GM_getValue(key, null));
+        } catch (_) {
+          s1pLogLoss.collectionFailures += 1;
+        }
+      }
+    }
+    return receipts.sort((a, b) => Number(a.at) - Number(b.at)).slice(-256);
+  };
+
+  const s1pWriteSharedLockReceipt = (receipt) => {
+    const normalized = s1pNormalizeSharedLockReceiptRecord(receipt);
+    if (!normalized) return false;
+    try {
+      if (typeof GM_listValues !== "function") {
+        const history = GM_getValue("s1p_sync_lock_history", []);
+        GM_setValue("s1p_sync_lock_history", [
+          ...(Array.isArray(history) ? history.slice(-79) : []),
+          normalized,
+        ]);
+        return true;
+      }
+      // Each immutable event has its own key: concurrent writers never replace one another.
+      const key = `${S1P_LOCK_RECEIPT_PREFIX}${Date.now()}:${s1pNewDiagnosticOperation("receipt")}`;
+      GM_setValue(key, normalized);
+      let keys = [];
+      try {
+        keys = GM_listValues()
+          .filter((item) => typeof item === "string" && item.startsWith(S1P_LOCK_RECEIPT_PREFIX))
+          .sort();
+      } catch (_) {
+        s1pLogLoss.collectionFailures += 1;
+        return true;
+      }
+      const cutoff = Date.now() - 7 * 86400000;
+      keys.forEach((item, index) => {
+        const timestamp = Number(item.slice(S1P_LOCK_RECEIPT_PREFIX.length).split(":")[0]);
+        if (index < keys.length - 256 || !Number.isFinite(timestamp) || timestamp < cutoff) {
+          try {
+            GM_deleteValue(item);
+          } catch (_) {
+            s1pLogLoss.collectionFailures += 1;
+          }
+        }
+      });
+      return true;
+    } catch (_) {
+      s1pLogLoss.persistenceFailures += 1;
+      return false;
+    }
+  };
+
+  const s1pRecordLockEvidence = (event, evidence, options = {}) => {
+    try {
+      const recorded = s1pRecordDiagnosticEvent(event, {
+        module: "sync.lock", operationId: evidence.operationId || "", ...options,
+        details: { ...evidence, ...(options.details || {}) },
+      });
+      // Small, best-effort cross-tab receipts, never used for sync decisions.
+      if (options.receipt && !recorded?.repeated) {
+        const receipt = s1pSanitizeLogValue({ event, at: Date.now(), ...evidence,
+          reason: options.reason || "", details: options.details || {} });
+        s1pWriteSharedLockReceipt(receipt);
+      }
+    } catch (_) { s1pLogLoss.collectionFailures += 1; }
+  };
+
+  const s1pObserveSyncLocks = (now = Date.now()) => {
+    try {
+      const rows = s1pReadSyncLockEvidence(now);
+      for (const row of rows) {
+        const previous = s1pObservedLocks.get(row.key);
+        const changed = !previous || previous.executionId !== row.executionId || previous.owner !== row.owner;
+        if (!row.active && (changed || previous.active)) {
+          const relatedOperation = [...s1pSyncOperations.values()].find((operation) =>
+            operation?.active && operation.executionId === row.executionId
+          );
+          if (relatedOperation) {
+            relatedOperation.lastOutcome = "expired_observed";
+            relatedOperation.expiredObservedAt = now;
+          }
+          s1pRecordLockEvidence("lock.expired_observed", row, { message: "观察到同步锁 TTL 已过期", reason: "ttl_elapsed", receipt: true });
+        } else if (row.active && changed) {
+          s1pRecordLockEvidence("lock.owner_observed", row, { message: "观察到同步锁持有者", reason: "owner_changed" });
+        } else if (row.active && previous.renewedAt !== row.renewedAt && now - (previous.reportedAt || 0) >= 30000) {
+          s1pRecordLockEvidence("lock.renewal_observed", row, { message: "观察到持有者仍在续租", reason: "lease_renewed" });
+        } else {
+          s1pObservedLocks.set(row.key, { ...row, reportedAt: previous?.reportedAt || now });
+          continue;
+        }
+        s1pObservedLocks.set(row.key, { ...row, reportedAt: now });
+      }
+      for (const [key, previous] of s1pObservedLocks) {
+        if (!rows.some((row) => row.key === key)) {
+          s1pRecordLockEvidence("lock.removal_observed", previous, {
+            message: "观察到锁记录被移除；是否正常释放以持有者回执为准", reason: "record_removed" });
+          s1pObservedLocks.delete(key);
+        }
+      }
+    } catch (_) { s1pLogLoss.collectionFailures += 1; }
+  };
+
+  const s1pSyncDiagnosticMetadata = (mode) => {
+    const operation = s1pSyncOperations.get(mode);
+    return operation ? { operationId: operation.operationId, acquiredAt: operation.acquiredAt,
+      stage: operation.stage, contextId: s1pLogContext().contextId || "" } : {};
+  };
+
+  const s1pSetSyncDiagnosticStage = (operation, stage) => {
+    if (!operation?.active) return;
+    if (operation.stage !== stage) operation.stageChangedAt = Date.now();
+    operation.stage = stage;
+  };
+
+  const s1pRejectSyncLock = (mode, reason) => {
+    try {
+      s1pObserveSyncLocks();
+      const locks = s1pReadSyncLockEvidence();
+      const refusal = { reason, locks, at: Date.now() };
+      s1pLockRefusals.set(mode, refusal);
+      s1pRecordDiagnosticEvent("lock.acquire_refused", { module: "sync.lock", status: "blocked", reason,
+        message: reason === "manual_priority_pending" ? "自动同步未执行：本页面有优先手动请求" : "同步未执行：未取得执行锁",
+        repeatKey: `${mode}:${reason}:${locks.filter((lock) => lock.active).map((lock) => lock.executionId).join(",")}`,
+        details: { requestedMode: mode, locks, localManualPriority: manualSyncPriorityGateEvaluator() } });
+    } catch (_) { s1pLogLoss.collectionFailures += 1; }
+    return false;
+  };
+
+  const getActiveSyncLockSnapshot = (now = Date.now()) => {
+    s1pObserveSyncLocks(now);
+    const normalizedNow = normalizeRemoteProbeTimestamp(now) || Date.now();
+    const globalLock = getGlobalSyncLockValue();
+    if (isGlobalSyncLockValid(globalLock, normalizedNow)) {
+      return {
+        mode: globalLock.mode,
+        owner: globalLock.owner,
+        timestamp: globalLock.timestamp,
+        ttlMs: globalLock.ttlMs,
+        expiresAt: globalLock.timestamp + globalLock.ttlMs,
+        remainingMs: Math.max(
+          0,
+          globalLock.timestamp + globalLock.ttlMs - normalizedNow
+        ),
+        source: "global",
+        operationId: globalLock.operationId || "",
+        executionId: globalLock.token || "",
+        acquiredAt: globalLock.acquiredAt || 0,
+        stage: globalLock.stage || "unknown",
+      };
+    }
+
+    const activeModeLock = [
+      SYNC_LOCK_MODE_MANUAL,
+      SYNC_LOCK_MODE_BACKGROUND,
+      SYNC_LOCK_MODE_FOREGROUND_FOLLOWUP,
+      SYNC_LOCK_MODE_STARTUP,
+    ]
+      .map((mode) => {
+        const profile = getSyncLockModeProfile(mode);
+        const lock = getModeSyncLockValue(mode);
+        return profile && isModeSyncLockValid(lock, profile.ttlMs, normalizedNow)
+          ? {
+              mode,
+              owner: lock.owner,
+              timestamp: lock.timestamp,
+              ttlMs: profile.ttlMs,
+              expiresAt: lock.timestamp + profile.ttlMs,
+              remainingMs: Math.max(
+                0,
+                lock.timestamp + profile.ttlMs - normalizedNow
+              ),
+              source: "mode",
+              operationId: lock.operationId || "",
+              executionId: lock.token || "",
+              acquiredAt: lock.acquiredAt || 0,
+              stage: lock.stage || "unknown",
+            }
+          : null;
+      })
+      .filter(Boolean)
+      .sort((left, right) => right.expiresAt - left.expiresAt)[0];
+
+    return activeModeLock || null;
+  };
+
+  const setGlobalSyncLock = (mode, timestamp, ttlMs, token = "") => {
     invalidateAutoSyncIndicatorDisplayPhaseCache();
     GM_setValue(GLOBAL_SYNC_LOCK_KEY, {
       owner: BACKGROUND_SYNC_OWNER_ID,
       mode,
       timestamp,
       ttlMs,
+      ...s1pSyncDiagnosticMetadata(mode),
+      ...(token ? { token } : {}),
     });
   };
 
-  const refreshGlobalSyncLock = (mode, ttlMs) => {
+  const refreshGlobalSyncLock = (mode, ttlMs, expectedToken = "") => {
     const currentLock = getGlobalSyncLockValue();
     if (
       !currentLock ||
       currentLock.owner !== BACKGROUND_SYNC_OWNER_ID ||
-      currentLock.mode !== mode
+      currentLock.mode !== mode ||
+      (expectedToken && currentLock.token !== expectedToken)
     ) {
       return false;
     }
-    setGlobalSyncLock(mode, Date.now(), ttlMs);
+    setGlobalSyncLock(mode, Date.now(), ttlMs, currentLock.token);
     return true;
   };
 
-  const releaseGlobalSyncLock = (mode) => {
+  const releaseGlobalSyncLock = (mode, expectedToken = "") => {
     const currentLock = getGlobalSyncLockValue();
     if (
       currentLock &&
       currentLock.owner === BACKGROUND_SYNC_OWNER_ID &&
-      currentLock.mode === mode
+      currentLock.mode === mode &&
+      (!expectedToken || currentLock.token === expectedToken)
     ) {
       invalidateAutoSyncIndicatorDisplayPhaseCache();
       GM_deleteValue(GLOBAL_SYNC_LOCK_KEY);
     }
   };
+
+  const getSyncExecutionAuthorityToken = (mode, expectedToken = "") =>
+    expectedToken || syncLockExecutionAuthorityTokens.get(mode) || "";
 
   const verifySyncLockOwnership = async (verifyFn) => {
     await sleep(SYNC_LOCK_VERIFY_DELAY_MS);
@@ -30046,7 +34937,11 @@
     owner = BACKGROUND_SYNC_OWNER_ID,
     reason = "",
   } = {}) => {
+    if (s1pIsSyncPageLifecycleUnloading()) {
+      return false;
+    }
     const now = Date.now();
+    const lifecycleGeneration = s1pSyncPageLifecycleGeneration;
     const currentLock = getRemoteProbeLockValue();
     if (isRemoteProbeLockValid(currentLock, now) && currentLock.owner !== owner) {
       return false;
@@ -30062,6 +34957,12 @@
     }
 
     const acquired = await verifySyncLockOwnership(() => {
+      if (
+        s1pIsSyncPageLifecycleUnloading() ||
+        s1pSyncPageLifecycleGeneration !== lifecycleGeneration
+      ) {
+        return false;
+      }
       const verifiedLock = getRemoteProbeLockValue();
       return (
         verifiedLock &&
@@ -30070,7 +34971,7 @@
       );
     });
     if (!acquired) {
-      releaseRemoteProbeLockValue(owner);
+      releaseRemoteProbeLockValue(owner, nextLock.timestamp);
     }
     return acquired;
   };
@@ -30085,7 +34986,11 @@
       : null;
   };
 
-  const isSyncLockOwned = (mode, now = Date.now()) => {
+  const isSyncLockOwned = (
+    mode,
+    now = Date.now(),
+    expectedToken = ""
+  ) => {
     const state = getSyncLockStateByMode(mode);
     if (!state) {
       return false;
@@ -30095,6 +35000,7 @@
     if (
       !modeLock ||
       modeLock.owner !== BACKGROUND_SYNC_OWNER_ID ||
+      (expectedToken && modeLock.token !== expectedToken) ||
       !isModeSyncLockValid(modeLock, state.ttlMs, now)
     ) {
       return false;
@@ -30105,6 +35011,7 @@
       globalLock &&
       globalLock.owner === BACKGROUND_SYNC_OWNER_ID &&
       globalLock.mode === mode &&
+      (!expectedToken || globalLock.token === expectedToken) &&
       isGlobalSyncLockValid(globalLock, now)
     );
   };
@@ -30122,11 +35029,15 @@
     return error;
   };
 
-  const assertSyncLockOwned = (mode, stage = "unknown") => {
+  const assertSyncLockOwned = (
+    mode,
+    stage = "unknown",
+    expectedToken = ""
+  ) => {
     if (!mode) {
       return;
     }
-    if (!isSyncLockOwned(mode)) {
+    if (!isSyncLockOwned(mode, Date.now(), expectedToken)) {
       throw createSyncLockLostError(mode, stage);
     }
   };
@@ -30134,112 +35045,550 @@
   const acquireModeSyncLock = async (mode, options = {}) => {
     const profile = getSyncLockModeProfile(mode);
     if (!profile) {
-      return false;
+      return s1pRejectSyncLock(mode, "unknown_lock_mode");
+    }
+    if (s1pIsSyncPageLifecycleUnloading()) {
+      s1pRejectSyncLock(mode, "page_unloading");
+      return options.returnAuthority === true ? null : false;
     }
     const shouldPreemptActiveSync =
       mode === SYNC_LOCK_MODE_MANUAL && options?.preemptActiveSync === true;
+    const preemptScope =
+      options?.preemptScope === SYNC_PREEMPT_SCOPE_AUTOMATIC_ONLY
+        ? SYNC_PREEMPT_SCOPE_AUTOMATIC_ONLY
+        : SYNC_PREEMPT_SCOPE_ALL;
+    if (
+      mode !== SYNC_LOCK_MODE_MANUAL &&
+      manualSyncPriorityGateEvaluator()
+    ) {
+      return s1pRejectSyncLock(mode, "manual_priority_pending");
+    }
+    const isExecutionExcluded = (now = Date.now()) => {
+      const currentLock = getModeSyncLockValue(mode);
+      const lockIsValid = isModeSyncLockValid(currentLock, profile.ttlMs, now);
+      const globalLock = getGlobalSyncLockValue();
+      const globalLockIsValid = isGlobalSyncLockValid(globalLock, now);
+      return Boolean(
+        lockIsValid ||
+        hasActiveOtherModeSyncLock(mode, now) ||
+        (globalLockIsValid &&
+            (globalLock.owner !== BACKGROUND_SYNC_OWNER_ID ||
+              globalLock.mode !== mode))
+      );
+    };
+
+    if (isExecutionExcluded()) {
+      return s1pRejectSyncLock(mode, "active_execution_lock");
+    }
     if (shouldPreemptActiveSync) {
-      preemptActiveSyncForManualOverride(options.operation || "manual_override");
+      preemptActiveSyncForManualOverride(
+        options.operation || "manual_override",
+        { preemptScope }
+      );
+      if (isExecutionExcluded()) {
+        return s1pRejectSyncLock(mode, "active_execution_after_preempt_check");
+      }
     }
 
     const now = Date.now();
-    const currentLock = getModeSyncLockValue(mode);
-    const lockIsValid = isModeSyncLockValid(currentLock, profile.ttlMs, now);
-    const globalLock = getGlobalSyncLockValue();
-    const globalLockIsValid = isGlobalSyncLockValid(globalLock, now);
+    const lockToken = `${BACKGROUND_SYNC_OWNER_ID}:${mode}:${now}:${Math.random()
+      .toString(36)
+      .slice(2, 10)}`;
+    const lifecycleGeneration = s1pSyncPageLifecycleGeneration;
 
-    if (
-      !shouldPreemptActiveSync &&
-      lockIsValid &&
-      currentLock.owner !== BACKGROUND_SYNC_OWNER_ID
-    ) {
-      return false;
-    }
-    if (!shouldPreemptActiveSync && hasActiveOtherModeSyncLock(mode, now)) {
-      return false;
-    }
-    if (
-      !shouldPreemptActiveSync &&
-      globalLockIsValid &&
-      (globalLock.owner !== BACKGROUND_SYNC_OWNER_ID ||
-        globalLock.mode !== mode)
-    ) {
-      return false;
-    }
+    s1pObserveSyncLocks(now);
+    const operation = { operationId: options.operationId || s1pNewDiagnosticOperation("sync"),
+      mode,
+      executionId: lockToken, acquiredAt: now, stage: "acquiring", stageChangedAt: now,
+      lifecycleGeneration, transactionStarted: false, active: true, renewals: 0, lastReportedAt: now };
+    s1pSyncOperations.set(mode, operation);
 
-    GM_setValue(profile.lockKey, {
+    s1pRecordLockEvidence("lock.acquisition_started", {
+      ...operation,
+      mode,
       owner: BACKGROUND_SYNC_OWNER_ID,
-      timestamp: now,
+      ttlMs: profile.ttlMs,
+    }, {
+      message: "开始取得同步锁，正在等待归属校验",
+      status: "running",
+      reason: "awaiting_ownership_verification",
+      receipt: true,
     });
-    setGlobalSyncLock(mode, now, profile.ttlMs);
+
+    try {
+      GM_setValue(profile.lockKey, {
+        owner: BACKGROUND_SYNC_OWNER_ID,
+        timestamp: now,
+        token: lockToken,
+        ...s1pSyncDiagnosticMetadata(mode),
+      });
+      setGlobalSyncLock(mode, now, profile.ttlMs, lockToken);
+    } catch (error) {
+      try {
+        const modeLockAfterFailure = getModeSyncLockValue(mode);
+        if (
+          modeLockAfterFailure?.owner === BACKGROUND_SYNC_OWNER_ID &&
+          modeLockAfterFailure.token === lockToken
+        ) {
+          GM_deleteValue(profile.lockKey);
+        }
+      } catch (_) {
+        s1pLogLoss.collectionFailures += 1;
+      }
+      try {
+        releaseGlobalSyncLock(mode, lockToken);
+      } catch (_) {
+        s1pLogLoss.collectionFailures += 1;
+      }
+      operation.active = false;
+      operation.lastOutcome = "failure";
+      operation.terminalEvent = "lock.acquisition_failed";
+      operation.terminalStatus = "failure";
+      operation.terminalReason = "lock_storage_write_failed";
+      operation.failedAt = Date.now();
+      s1pRecordLockEvidence("lock.acquisition_failed", {
+        ...operation,
+        mode,
+        owner: BACKGROUND_SYNC_OWNER_ID,
+        ttlMs: profile.ttlMs,
+      }, {
+        message: "写入同步锁失败，已清理可能留下的临时记录",
+        level: "error",
+        status: "failure",
+        reason: "lock_storage_write_failed",
+        receipt: true,
+        details: { error },
+      });
+      throw error;
+    }
 
     const acquired = await verifySyncLockOwnership(() => {
+      if (
+        s1pIsSyncPageLifecycleUnloading() ||
+        s1pSyncPageLifecycleGeneration !== lifecycleGeneration
+      ) {
+        return false;
+      }
       const verifiedModeLock = getModeSyncLockValue(mode);
       const verifiedGlobalLock = getGlobalSyncLockValue();
       return (
         verifiedModeLock &&
         verifiedModeLock.owner === BACKGROUND_SYNC_OWNER_ID &&
+        verifiedModeLock.token === lockToken &&
         verifiedGlobalLock &&
         verifiedGlobalLock.owner === BACKGROUND_SYNC_OWNER_ID &&
-        verifiedGlobalLock.mode === mode
+        verifiedGlobalLock.mode === mode &&
+        verifiedGlobalLock.token === lockToken
       );
     });
+    const lifecycleAborted =
+      s1pIsSyncPageLifecycleUnloading() ||
+      s1pSyncPageLifecycleGeneration !== lifecycleGeneration;
     if (!acquired) {
-      releaseModeSyncLock(mode);
+      const failureReason = lifecycleAborted
+        ? "lifecycle_unload_before_lock_verified"
+        : "ownership_verification_failed";
+      if (!lifecycleAborted) {
+        s1pRejectSyncLock(mode, failureReason);
+      }
+      if (operation.active) {
+        if (lifecycleAborted) {
+          operation.lastOutcome = "canceled";
+          operation.cancellationReason = failureReason;
+          operation.canceledAt = Date.now();
+          s1pRecordLockEvidence("lock.acquisition_canceled", {
+            ...operation,
+            mode,
+            owner: BACKGROUND_SYNC_OWNER_ID,
+            ttlMs: profile.ttlMs,
+          }, {
+            message: "锁归属校验期间页面离开，已取消临时锁获取",
+            status: "skipped",
+            reason: failureReason,
+            receipt: true,
+          });
+        }
+        releaseModeSyncLock(mode, lockToken, failureReason);
+      }
+    } else {
+      s1pLockRefusals.delete(mode);
+      s1pSetSyncDiagnosticStage(operation, "transaction_start");
+      syncLockExecutionAuthorityTokens.set(mode, lockToken);
+      try {
+        const verifiedModeLock = getModeSyncLockValue(mode);
+        if (
+          verifiedModeLock &&
+          verifiedModeLock.owner === BACKGROUND_SYNC_OWNER_ID &&
+          verifiedModeLock.token === lockToken
+        ) {
+          GM_setValue(profile.lockKey, {
+            ...verifiedModeLock,
+            ...s1pSyncDiagnosticMetadata(mode),
+            token: lockToken,
+          });
+        }
+        const verifiedGlobalLock = getGlobalSyncLockValue();
+        if (
+          verifiedGlobalLock &&
+          verifiedGlobalLock.owner === BACKGROUND_SYNC_OWNER_ID &&
+          verifiedGlobalLock.mode === mode &&
+          verifiedGlobalLock.token === lockToken
+        ) {
+          GM_setValue(GLOBAL_SYNC_LOCK_KEY, {
+            ...verifiedGlobalLock,
+            ...s1pSyncDiagnosticMetadata(mode),
+            token: lockToken,
+          });
+        }
+      } catch (error) {
+        releaseModeSyncLock(mode, lockToken, "lock_stage_persist_failed");
+        operation.lastOutcome = "failure";
+        operation.terminalEvent = "lock.acquisition_failed";
+        operation.terminalStatus = "failure";
+        operation.terminalReason = "lock_stage_persist_failed";
+        operation.failedAt = Date.now();
+        s1pRecordLockEvidence("lock.acquisition_failed", {
+          ...operation,
+          mode,
+          owner: BACKGROUND_SYNC_OWNER_ID,
+          ttlMs: profile.ttlMs,
+        }, {
+          message: "写入同步锁阶段失败，已清理执行锁",
+          level: "error",
+          status: "failure",
+          reason: "lock_stage_persist_failed",
+          receipt: true,
+          details: { error },
+        });
+        throw error;
+      }
+      s1pRecordLockEvidence("lock.acquired", { ...operation, mode, owner: BACKGROUND_SYNC_OWNER_ID, ttlMs: profile.ttlMs },
+        { message: "已取得模式锁和全局锁", status: "running", receipt: true });
     }
-    return acquired;
+    return options.returnAuthority === true
+      ? acquired
+        ? Object.freeze({
+            mode,
+            ownerId: BACKGROUND_SYNC_OWNER_ID,
+            token: lockToken,
+            timestamp: now,
+            ttlMs: profile.ttlMs,
+          })
+        : null
+      : acquired;
   };
 
-  const refreshModeSyncLock = (mode) => {
+  const refreshModeSyncLock = (mode, expectedToken = "") => {
     const profile = getSyncLockModeProfile(mode);
     if (!profile) {
       return false;
     }
-    const currentLock = getModeSyncLockValue(mode);
-    if (!currentLock || currentLock.owner !== BACKGROUND_SYNC_OWNER_ID) {
+    syncLockRenewalFailureReasons.delete(mode);
+    try {
+      const authorityToken = getSyncExecutionAuthorityToken(mode, expectedToken);
+      const currentLock = getModeSyncLockValue(mode);
+      if (
+        !currentLock ||
+        currentLock.owner !== BACKGROUND_SYNC_OWNER_ID ||
+        (authorityToken && currentLock.token !== authorityToken)
+      ) {
+        return false;
+      }
+      if (!refreshGlobalSyncLock(mode, profile.ttlMs, authorityToken)) {
+        return false;
+      }
+      const renewedAt = Date.now();
+      GM_setValue(profile.lockKey, {
+        ...currentLock,
+        owner: BACKGROUND_SYNC_OWNER_ID,
+        timestamp: renewedAt,
+        ...s1pSyncDiagnosticMetadata(mode),
+        ...(currentLock.token ? { token: currentLock.token } : {}),
+      });
+      const operation = s1pSyncOperations.get(mode);
+      if (operation) {
+        operation.renewals += 1;
+        if (renewedAt - operation.lastReportedAt >= 30000) {
+          operation.lastReportedAt = renewedAt;
+          s1pRecordLockEvidence("lock.renewed", { ...operation, mode, owner: BACKGROUND_SYNC_OWNER_ID,
+            heldMs: renewedAt - operation.acquiredAt, stageForMs: renewedAt - (operation.stageChangedAt || operation.acquiredAt), expiresAt: renewedAt + profile.ttlMs },
+            { message: "同步仍在执行，锁已续租", receipt: true });
+        }
+      }
+      return true;
+    } catch (error) {
+      const reason = "lock_storage_write_failed";
+      syncLockRenewalFailureReasons.set(mode, { reason, error });
+      const operation = s1pSyncOperations.get(mode);
+      s1pRecordLockEvidence("lock.renewal_failed", {
+        ...operation,
+        mode,
+        owner: BACKGROUND_SYNC_OWNER_ID,
+        stage: operation?.stage || "unknown",
+      }, {
+        message: "续租同步锁时存储读写失败",
+        level: "error",
+        status: "failure",
+        reason,
+        receipt: true,
+        details: { error },
+      });
       return false;
     }
-    if (!refreshGlobalSyncLock(mode, profile.ttlMs)) {
-      return false;
-    }
-    GM_setValue(profile.lockKey, {
-      owner: BACKGROUND_SYNC_OWNER_ID,
-      timestamp: Date.now(),
-    });
-    return true;
   };
 
-  const releaseModeSyncLock = (mode) => {
+  const releaseModeSyncLock = (mode, expectedToken = "", reason = "execution_settled") => {
     const profile = getSyncLockModeProfile(mode);
     if (!profile) {
       return;
     }
-    const currentLock = getModeSyncLockValue(mode);
-    if (currentLock && currentLock.owner === BACKGROUND_SYNC_OWNER_ID) {
-      GM_deleteValue(profile.lockKey);
+    const authorityToken = getSyncExecutionAuthorityToken(mode, expectedToken);
+    let currentLock = null;
+    let currentGlobalLock = null;
+    let lockReadFailed = false;
+    try {
+      currentLock = getModeSyncLockValue(mode);
+    } catch (_) {
+      lockReadFailed = true;
     }
-    releaseGlobalSyncLock(mode);
+    try {
+      currentGlobalLock = getGlobalSyncLockValue();
+    } catch (_) {
+      lockReadFailed = true;
+    }
+    const releaseTimestamp = Date.now();
+    const operation = s1pSyncOperations.get(mode);
+    const modeOwnershipMatches = Boolean(
+      !lockReadFailed &&
+        currentLock &&
+        currentLock.owner === BACKGROUND_SYNC_OWNER_ID &&
+        (!authorityToken || currentLock.token === authorityToken)
+    );
+    const globalOwnershipMatches = Boolean(
+      !lockReadFailed &&
+        currentGlobalLock &&
+        currentGlobalLock.owner === BACKGROUND_SYNC_OWNER_ID &&
+        currentGlobalLock.mode === mode &&
+        (!authorityToken || currentGlobalLock.token === authorityToken)
+    );
+    const modeLockValid = modeOwnershipMatches &&
+      isModeSyncLockValid(currentLock, profile.ttlMs, releaseTimestamp);
+    const globalLockValid = globalOwnershipMatches &&
+      isGlobalSyncLockValid(currentGlobalLock, releaseTimestamp);
+    const owned = modeLockValid && globalLockValid;
+    const expiredOwnerRecord = modeOwnershipMatches && globalOwnershipMatches && !owned;
+    let modeReleaseFailed = false;
+    let globalReleaseFailed = false;
+    if (!lockReadFailed && modeOwnershipMatches) {
+      try {
+        GM_deleteValue(profile.lockKey);
+      } catch (_) {
+        modeReleaseFailed = true;
+      }
+    }
+    if (!lockReadFailed) {
+      try {
+        releaseGlobalSyncLock(mode, authorityToken);
+      } catch (_) {
+        globalReleaseFailed = true;
+      }
+    }
+    const releaseStorageFailed =
+      lockReadFailed || modeReleaseFailed || globalReleaseFailed;
+    if (
+      operation &&
+      operation.active &&
+      (!authorityToken || operation.executionId === authorityToken)
+    ) {
+      const releaseReason =
+        lockReadFailed
+          ? "lock_storage_read_failed"
+          : modeReleaseFailed || globalReleaseFailed
+            ? "lock_storage_delete_failed"
+            : expiredOwnerRecord
+              ? "ttl_expired_before_release"
+              : reason === "execution_settled" && operation.lastOutcome
+                ? `execution_${operation.lastOutcome}`
+              : reason;
+      const releaseEvent =
+        releaseStorageFailed
+          ? "lock.release_failed"
+          : expiredOwnerRecord
+            ? "lock.expired_cleanup"
+            : owned
+              ? "lock.released"
+              : "lock.release_not_owned";
+      const releaseStatus =
+        releaseStorageFailed
+          ? "failure"
+          : expiredOwnerRecord
+            ? "expired"
+            : owned
+              ? "released"
+              : "not_owned";
+      operation.active = false;
+      operation.releasedAt = releaseTimestamp;
+      operation.terminalEvent = releaseEvent;
+      operation.terminalStatus = releaseStatus;
+      operation.terminalReason = releaseReason;
+      operation.modeLockValidAtRelease = modeLockValid;
+      operation.globalLockValidAtRelease = globalLockValid;
+      if (
+        !authorityToken ||
+        syncLockExecutionAuthorityTokens.get(mode) === authorityToken
+      ) {
+        syncLockExecutionAuthorityTokens.delete(mode);
+      }
+      s1pRecordLockEvidence(releaseEvent, {
+        ...operation, mode, owner: BACKGROUND_SYNC_OWNER_ID, heldMs: releaseTimestamp - operation.acquiredAt,
+      }, {
+        message: lockReadFailed
+          ? "读取同步锁状态失败，未能确认释放结果"
+          : modeReleaseFailed || globalReleaseFailed
+            ? "释放同步锁时存储删除失败"
+          : expiredOwnerRecord
+            ? "同步锁 TTL 已过期，已清理残留锁记录"
+            : owned
+              ? "执行结束，已释放同步锁"
+              : "清理时已不持有模式锁",
+        level: releaseStorageFailed ? "error" : "log",
+        status: releaseStatus,
+        reason: releaseReason,
+        receipt: true,
+        details: {
+          modeLockValidAtRelease: modeLockValid,
+          globalLockValidAtRelease: globalLockValid,
+          lockReadFailed,
+          modeReleaseFailed,
+          globalReleaseFailed,
+        },
+      });
+    }
   };
 
-  const stopModeSyncLockHeartbeat = (mode) => {
+  s1pCancelPendingSyncLockAcquisitions = ({
+    reason = "lifecycle_unload",
+    generation = s1pSyncPageLifecycleGeneration,
+  } = {}) => {
+    let canceledCount = 0;
+    const canceledOperations = [];
+    for (const [mode, operation] of s1pSyncOperations) {
+      const beforeTransaction =
+        operation?.stage === "acquiring" ||
+        (operation?.stage === "transaction_start" &&
+          operation.transactionStarted !== true);
+      if (!operation?.active || !beforeTransaction) {
+        continue;
+      }
+      try {
+        const profile = getSyncLockModeProfile(mode);
+        const modeLock = profile ? getModeSyncLockValue(mode) : null;
+        const globalLock = getGlobalSyncLockValue();
+        const ownsProvisionalLocks = Boolean(
+          modeLock &&
+            modeLock.owner === BACKGROUND_SYNC_OWNER_ID &&
+            modeLock.token === operation.executionId &&
+            globalLock &&
+            globalLock.owner === BACKGROUND_SYNC_OWNER_ID &&
+            globalLock.mode === mode &&
+            globalLock.token === operation.executionId
+        );
+        if (!ownsProvisionalLocks) {
+          continue;
+        }
+        operation.lastOutcome = "canceled";
+        operation.cancellationReason = operation.stage === "acquiring"
+          ? "lifecycle_unload_before_lock_verified"
+          : "lifecycle_unload_before_transaction";
+        operation.canceledAt = Date.now();
+        s1pRecordLockEvidence("lock.acquisition_canceled", {
+          ...operation,
+          mode,
+          owner: BACKGROUND_SYNC_OWNER_ID,
+          ttlMs: profile.ttlMs,
+          lifecycleGeneration: generation,
+        }, {
+          message: "页面生命周期切换，已取消尚未确认归属的临时锁",
+          status: "skipped",
+          reason: operation.cancellationReason,
+          receipt: true,
+          details: { lifecycleReason: reason },
+        });
+        releaseModeSyncLock(
+          mode,
+          operation.executionId,
+          "lifecycle_unload_before_transaction"
+        );
+        canceledCount += 1;
+        canceledOperations.push(operation.operationId);
+      } catch (error) {
+        s1pLogLoss.collectionFailures += 1;
+        s1pRecordLockEvidence("lock.acquisition_cancellation_failed", {
+          ...operation,
+          mode,
+          owner: BACKGROUND_SYNC_OWNER_ID,
+          lifecycleGeneration: generation,
+        }, {
+          message: "页面生命周期切换时取消临时锁失败",
+          level: "error",
+          status: "failure",
+          reason: "lock_cancellation_failed",
+          receipt: true,
+          details: { lifecycleReason: reason, error },
+        });
+      }
+    }
+    return {
+      status: canceledCount ? "canceled" : "skipped",
+      reason: canceledCount
+        ? "lifecycle_unload_before_transaction"
+        : "no_provisional_acquisition",
+      count: canceledCount,
+      operationIds: canceledOperations,
+    };
+  };
+
+  const stopModeSyncLockHeartbeat = (mode, expectedToken = "") => {
     const profile = getSyncLockModeProfile(mode);
+    const authorityToken = getSyncExecutionAuthorityToken(mode, expectedToken);
+    if (
+      !profile ||
+      (authorityToken &&
+        profile.getHeartbeatAuthorityToken() !== authorityToken)
+    ) {
+      return false;
+    }
     const timer = profile?.getHeartbeatTimer();
     if (timer) {
       clearInterval(timer);
       profile.setHeartbeatTimer(null);
     }
+    profile.setHeartbeatAuthorityToken("");
+    return true;
   };
 
-  const startModeSyncLockHeartbeat = (mode) => {
+  const startModeSyncLockHeartbeat = (mode, expectedToken = "") => {
     const profile = getSyncLockModeProfile(mode);
     if (!profile) {
       return;
     }
-    stopModeSyncLockHeartbeat(mode);
+    const authorityToken = getSyncExecutionAuthorityToken(mode, expectedToken);
+    const activeHeartbeatToken = profile.getHeartbeatAuthorityToken();
+    stopModeSyncLockHeartbeat(mode, activeHeartbeatToken);
+    profile.setHeartbeatAuthorityToken(authorityToken);
     profile.setHeartbeatTimer(
       setInterval(() => {
-        if (!refreshModeSyncLock(mode)) {
-          stopModeSyncLockHeartbeat(mode);
+        if (!refreshModeSyncLock(mode, authorityToken)) {
+          const refreshFailure = syncLockRenewalFailureReasons.get(mode);
+          syncLockRenewalFailureReasons.delete(mode);
+          const operation = s1pSyncOperations.get(mode);
+          if (!refreshFailure) {
+            let locks = [];
+            try { locks = s1pReadSyncLockEvidence(); } catch (_) { }
+            s1pRecordLockEvidence("lock.renewal_failed", { ...operation, mode, locks },
+              { message: "锁续租失败", level: "warn", reason: "ownership_lost", receipt: true });
+          }
+          stopModeSyncLockHeartbeat(mode, authorityToken);
           console.warn(
             `S1 Plus: ${profile.displayName}锁续租失败，当前任务将中止。`
           );
@@ -30250,14 +35599,41 @@
 
   const acquireManualSyncLock = (options = {}) =>
     acquireModeSyncLock(SYNC_LOCK_MODE_MANUAL, options);
-  const refreshManualSyncLock = () =>
-    refreshModeSyncLock(SYNC_LOCK_MODE_MANUAL);
-  const releaseManualSyncLock = () =>
-    releaseModeSyncLock(SYNC_LOCK_MODE_MANUAL);
-  const startManualSyncLockHeartbeat = () =>
-    startModeSyncLockHeartbeat(SYNC_LOCK_MODE_MANUAL);
-  const stopManualSyncLockHeartbeat = () =>
-    stopModeSyncLockHeartbeat(SYNC_LOCK_MODE_MANUAL);
+  const refreshManualSyncLock = (expectedToken = "") =>
+    refreshModeSyncLock(SYNC_LOCK_MODE_MANUAL, expectedToken);
+  const releaseManualSyncLock = (authorityOrToken = "") =>
+    releaseModeSyncLock(
+      SYNC_LOCK_MODE_MANUAL,
+      typeof authorityOrToken === "string"
+        ? authorityOrToken
+        : authorityOrToken?.token || ""
+    );
+  const startManualSyncLockHeartbeat = (expectedToken = "") =>
+    startModeSyncLockHeartbeat(SYNC_LOCK_MODE_MANUAL, expectedToken);
+  const stopManualSyncLockHeartbeat = (expectedToken = "") =>
+    stopModeSyncLockHeartbeat(SYNC_LOCK_MODE_MANUAL, expectedToken);
+
+  const acquireManualSyncExecutionAuthority = async (options = {}) => {
+    const authority = await acquireModeSyncLock(SYNC_LOCK_MODE_MANUAL, {
+      ...options,
+      returnAuthority: true,
+    });
+    if (!authority) {
+      return null;
+    }
+    startManualSyncLockHeartbeat(authority.token);
+    return authority;
+  };
+
+  const releaseManualSyncExecutionAuthority = (authority) => {
+    const token = authority?.token || "";
+    if (!token) {
+      return false;
+    }
+    stopManualSyncLockHeartbeat(token);
+    releaseManualSyncLock(authority);
+    return true;
+  };
 
   const acquireBackgroundSyncLock = () =>
     acquireModeSyncLock(SYNC_LOCK_MODE_BACKGROUND);
@@ -30292,15 +35668,60 @@
   const stopStartupSyncLockHeartbeat = () =>
     stopModeSyncLockHeartbeat(SYNC_LOCK_MODE_STARTUP);
 
-  const getRunningSyncLockAdapter = (mode) =>
-    getSyncLockModeProfile(mode)
-      ? {
-        acquire: () => acquireModeSyncLock(mode),
-        startHeartbeat: () => startModeSyncLockHeartbeat(mode),
-        stopHeartbeat: () => stopModeSyncLockHeartbeat(mode),
-        release: () => releaseModeSyncLock(mode),
-      }
-      : null;
+  const getRunningSyncLockAdapter = (mode) => {
+    if (!getSyncLockModeProfile(mode)) {
+      return null;
+    }
+    let authorityToken = "";
+    return {
+      acquire: async () => {
+        const authority = await acquireModeSyncLock(mode, {
+          returnAuthority: true,
+        });
+        authorityToken = authority?.token || "";
+        return authority;
+      },
+      startHeartbeat: () => startModeSyncLockHeartbeat(mode, authorityToken),
+      stopHeartbeat: () => stopModeSyncLockHeartbeat(mode, authorityToken),
+      release: (reason = "execution_settled") => {
+        const expectedToken = authorityToken;
+        authorityToken = "";
+        return releaseModeSyncLock(mode, expectedToken, reason);
+      },
+    };
+  };
+
+  const recordRunningSyncCleanupFailure = ({
+    mode = "",
+    operationId = "",
+    phase = "",
+    reason = "cleanup_failed",
+    error,
+  } = {}) => {
+    const operation = mode ? s1pSyncOperations.get(mode) : null;
+    const resolvedOperationId = operationId || operation?.operationId || "";
+    const isLockRelease = phase === "lock_release";
+    s1pRecordDiagnosticEvent(isLockRelease ? "lock.release_failed" : "sync.cleanup_failed", {
+      module: isLockRelease ? "sync.lock" : "sync",
+      operationId: resolvedOperationId,
+      level: "error",
+      status: "failure",
+      reason,
+      message: {
+        heartbeat_stop: "停止同步锁心跳失败",
+        lock_release: "释放同步锁调用失败，结果未知",
+        after_release: "同步锁后清理失败",
+        result_handling: "同步结果处理失败",
+        manual_intent_boundary: "手动同步边界收敛失败",
+      }[phase] || "同步收尾步骤失败",
+      details: {
+        mode,
+        phase,
+        stage: operation?.stage || "",
+        error,
+      },
+    });
+  };
 
   const runRunningSync = async (options = {}) => {
     const {
@@ -30316,86 +35737,238 @@
       handleResult,
     } = options;
 
-    if (!lockAdapter || typeof runTransaction !== "function") {
+    if (
+      !lockAdapter ||
+      typeof lockAdapter.acquire !== "function" ||
+      typeof lockAdapter.startHeartbeat !== "function" ||
+      typeof lockAdapter.stopHeartbeat !== "function" ||
+      typeof lockAdapter.release !== "function" ||
+      typeof runTransaction !== "function"
+    ) {
       throw new Error("Running Sync 缺少有效的锁 adapter 或事务 implementation。");
     }
-    if (!(await lockAdapter.acquire())) {
+    if (s1pIsSyncPageLifecycleUnloading()) {
+      s1pRecordDiagnosticEvent("sync.transaction_skipped", {
+        module: "sync",
+        status: "skipped",
+        reason: "page_unloading",
+        message: "页面正在离开，未尝试启动同步事务",
+        details: {
+          mode,
+          lifecycleGeneration: s1pSyncPageLifecycleGeneration,
+        },
+      });
+      return { status: "skipped", reason: "page_unloading" };
+    }
+    const lifecycleGenerationAtAcquire = s1pSyncPageLifecycleGeneration;
+    const acquired = await lockAdapter.acquire();
+    if (!acquired) {
       if (typeof onLockUnavailable === "function") {
         await onLockUnavailable();
       }
       return lockUnavailableResult;
     }
 
+    const lifecycleAbort =
+      s1pIsSyncPageLifecycleUnloading() ||
+      s1pSyncPageLifecycleGeneration !== lifecycleGenerationAtAcquire;
+    if (lifecycleAbort) {
+      const operation = s1pSyncOperations.get(mode);
+      if (operation) {
+        operation.lastOutcome = "canceled";
+        operation.cancellationReason = "page_unloading_before_transaction";
+      }
+      s1pRecordDiagnosticEvent("sync.transaction_skipped", {
+        module: "sync",
+        operationId: operation?.operationId || "",
+        status: "skipped",
+        reason: "page_unloading_before_transaction",
+        message: "页面生命周期切换，未开始同步事务",
+        details: {
+          mode,
+          stage: operation?.stage || "acquired",
+          lifecycleGenerationAtAcquire,
+          lifecycleGeneration: s1pSyncPageLifecycleGeneration,
+          lifecycleUnloading: s1pIsSyncPageLifecycleUnloading(),
+        },
+      });
+      try {
+        lockAdapter.release("page_unloading_before_transaction");
+      } catch (error) {
+        if (operation) {
+          operation.active = false;
+          operation.terminalEvent = "lock.release_failed";
+          operation.terminalStatus = "failure";
+          operation.terminalReason = "lock_release_exception";
+          operation.releasedAt = Date.now();
+        }
+        syncLockExecutionAuthorityTokens.delete(mode);
+        recordRunningSyncCleanupFailure({
+          mode,
+          operationId: operation?.operationId || "",
+          phase: "lock_release",
+          reason: "lock_release_exception",
+          error,
+        });
+      }
+      return {
+        status: "skipped",
+        reason: "page_unloading_before_transaction",
+      };
+    }
+
+    syncExecutionSettlementDepth += 1;
     let heartbeatStarted = false;
     let result;
     try {
       lockAdapter.startHeartbeat();
       heartbeatStarted = true;
+      const operation = s1pSyncOperations.get(mode);
+      if (operation) operation.transactionStarted = true;
       result = await runTransaction();
+      if (operation) operation.lastOutcome = result?.status || "settled";
+    } catch (error) {
+      const operation = s1pSyncOperations.get(mode);
+      if (operation) operation.lastOutcome = "failure";
+      s1pRecordDiagnosticEvent("sync.transaction_failed", { module: "sync", operationId: operation?.operationId,
+        level: "error", status: "failure", reason: "transaction_threw", message: "同步事务异常退出",
+        details: { stage: operation?.stage, error } });
+      throw error;
     } finally {
       try {
-        if (heartbeatStarted) {
+        try {
+          if (heartbeatStarted) {
+            try {
+              lockAdapter.stopHeartbeat();
+            } catch (error) {
+              recordRunningSyncCleanupFailure({
+                mode,
+                phase: "heartbeat_stop",
+                reason: "heartbeat_stop_failed",
+                error,
+              });
+              console.warn(
+                "S1 Plus: Running Sync 停止锁心跳失败，已继续释放同步锁。",
+                error
+              );
+            }
+          }
+        } finally {
           try {
-            lockAdapter.stopHeartbeat();
+            lockAdapter.release();
           } catch (error) {
+            const operation = s1pSyncOperations.get(mode);
+            if (operation) {
+              operation.active = false;
+              operation.terminalEvent = "lock.release_failed";
+              operation.terminalStatus = "failure";
+              operation.terminalReason = "lock_release_exception";
+              operation.releasedAt = Date.now();
+            }
+            syncLockExecutionAuthorityTokens.delete(mode);
+            recordRunningSyncCleanupFailure({
+              mode,
+              phase: "lock_release",
+              reason: "lock_release_exception",
+              error,
+            });
             console.warn(
-              "S1 Plus: Running Sync 停止锁心跳失败，已继续释放同步锁。",
+              "S1 Plus: Running Sync 释放同步锁调用失败，结果未知。",
+              error
+            );
+          }
+        }
+        if (typeof afterRelease === "function") {
+          try {
+            await afterRelease();
+          } catch (error) {
+            recordRunningSyncCleanupFailure({
+              mode,
+              phase: "after_release",
+              reason: "after_release_failed",
+              error,
+            });
+            console.warn(
+              "S1 Plus: Running Sync 锁后清理失败，已继续处理同步结果。",
               error
             );
           }
         }
       } finally {
-        lockAdapter.release();
+        syncExecutionSettlementDepth = Math.max(
+          0,
+          syncExecutionSettlementDepth - 1
+        );
       }
-      if (typeof afterRelease === "function") {
+    }
+
+    try {
+      if (typeof handleResult === "function") {
+        await handleResult(result);
+      }
+    } catch (error) {
+      recordRunningSyncCleanupFailure({
+        mode,
+        phase: "result_handling",
+        reason: "result_handling_failed",
+        error,
+      });
+      throw error;
+    } finally {
+      if (typeof manualSyncIntentBoundaryHandler === "function") {
         try {
-          await afterRelease();
+          await manualSyncIntentBoundaryHandler({
+            reason: "running_sync_settled",
+            mode,
+            result,
+          });
         } catch (error) {
+          recordRunningSyncCleanupFailure({
+            mode,
+            phase: "manual_intent_boundary",
+            reason: "manual_intent_boundary_failed",
+            error,
+          });
           console.warn(
-            "S1 Plus: Running Sync 锁后清理失败，已继续处理同步结果。",
+            "S1 Plus: 手动同步意图在 Running Sync 边界收敛失败，保留本页面内存 pending 等待后续恢复。",
             error
           );
         }
       }
     }
-
-    if (typeof handleResult === "function") {
-      await handleResult(result);
-    }
     return result;
   };
 
-  const forceReleaseSyncLocksForManualOverride = () => {
-    invalidateAutoSyncIndicatorDisplayPhaseCache();
-    GM_deleteValue(MANUAL_SYNC_LOCK_KEY);
-    GM_deleteValue(BACKGROUND_SYNC_LOCK_KEY);
-    GM_deleteValue(FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY);
-    GM_deleteValue(STARTUP_SYNC_LOCK_KEY);
-    GM_deleteValue(GLOBAL_SYNC_LOCK_KEY);
+  const clearLocalAutoSyncSchedulingForManualOverride = () => {
+    hasPendingBackgroundSync = false;
+    if (backgroundSyncRetryTimeout) {
+      clearTimeout(backgroundSyncRetryTimeout);
+      backgroundSyncRetryTimeout = null;
+    }
+    clearReadProgressSyncDebounceState();
+    clearSharedBackgroundSyncDebounceHiddenFlushTimer();
+    return pendingDirtyScheduler.handoff({
+      tabId: SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID,
+      now: Date.now(),
+    });
   };
 
-  const preemptActiveSyncForManualOverride = (operation = "manual_override") => {
+  const preemptActiveSyncForManualOverride = (
+    operation = "manual_override",
+    { preemptScope = SYNC_PREEMPT_SCOPE_ALL } = {}
+  ) => {
     const normalizedOperation =
       normalizeSyncDiagnosticText(operation, 80) || "manual_override";
+    const automaticOnly =
+      preemptScope === SYNC_PREEMPT_SCOPE_AUTOMATIC_ONLY;
     const cancelledRequestCount =
-      cancelActiveRemoteSyncRequests(normalizedOperation);
+      cancelActiveRemoteSyncRequests(normalizedOperation, {
+        abortActive: false,
+      });
 
     clearPendingAutoPullReloadTimer();
-    clearForegroundRemoteSyncRetry();
     clearForegroundFollowUpSoftBlock();
-    clearPendingAutoSyncRequest();
-    clearAutoSyncRuntimeQueue();
-    clearAutoSyncConflictPause();
-
-    stopManualSyncLockHeartbeat();
-    stopBackgroundSyncLockHeartbeat();
-    stopForegroundFollowUpSyncLockHeartbeat();
-    stopStartupSyncLockHeartbeat();
-    forceReleaseSyncLocksForManualOverride();
-
-    hasPendingBackgroundSync = false;
-    isBackgroundAutoSyncInProgress = false;
-    isInitialSyncInProgress = false;
+    const schedulerHandoff = clearLocalAutoSyncSchedulingForManualOverride();
     syncDirtyDuringSync = false;
     syncDirtyNeedsFollowUpSync = false;
     syncDirtyTimestamp = 0;
@@ -30404,15 +35977,22 @@
     recordSyncTraceEvent("manual_override_preempted_sync", {
       scope: "manual_override",
       status: "skipped",
-      message: "用户直接拉取/推送已取消当前同步队列和同步锁",
+      message: automaticOnly
+        ? "首次设置同步已接管本标签页尚未执行的自动调度"
+        : "用户直接拉取/推送已接管本标签页尚未执行的自动调度",
       details: {
         operation: normalizedOperation,
+        preemptScope: automaticOnly
+          ? SYNC_PREEMPT_SCOPE_AUTOMATIC_ONLY
+          : SYNC_PREEMPT_SCOPE_ALL,
         cancelledRequestCount,
+        schedulerHandoffStatus: schedulerHandoff?.status || "",
+        schedulerHandoffReason: schedulerHandoff?.reason || "",
       },
     });
     refreshAutoSyncIndicatorRuntimeDisplay("manual_override_preempted_sync");
     renderNavbarPersistentSyncAlert();
-    return { cancelledRequestCount };
+    return { cancelledRequestCount, schedulerHandoff };
   };
 
   const s1pScheduleBackgroundSyncRetry = (
@@ -30678,14 +36258,18 @@
   };
 
   const fetchRemoteData = async (options = {}) => {
-    const { metadataOnly = false } = options;
+    const { metadataOnly = false, settingsSnapshot = null } = options;
     recordSyncTraceEvent("remote_fetch_start", {
       scope: metadataOnly ? "remote_probe" : "remote_fetch",
       status: "running",
       message: metadataOnly ? "开始读取云端元数据" : "开始读取云端同步文件",
       details: { metadataOnly },
     });
-    const { syncRemoteGistId, syncRemotePat } = getSettings();
+    const syncSettings =
+      settingsSnapshot && typeof settingsSnapshot === "object"
+        ? settingsSnapshot
+        : getSettings();
+    const { syncRemoteGistId, syncRemotePat } = syncSettings;
     if (!syncRemoteGistId || !syncRemotePat) {
       recordSyncTraceEvent("remote_fetch_error", {
         scope: metadataOnly ? "remote_probe" : "remote_fetch",
@@ -30743,7 +36327,20 @@
           details: { metadataOnly, status: error.status },
           level: "error",
         });
-        throw new Error(`GitHub API请求失败，状态码: ${error.status}`);
+        if (
+          error?.code === REMOTE_SYNC_AUTH_REJECTED_CODE ||
+          error?.status === 401
+        ) {
+          throw createRemoteSyncAuthRejectedError(error, metadataOnly ? "remote_probe" : "remote_fetch");
+        }
+        const requestError = new Error(
+          `GitHub API请求失败，状态码: ${error.status}`
+        );
+        requestError.status = error.status;
+        requestError.response = error.response;
+        requestError.retryable = error.retryable === true;
+        requestError.credentialRejected = error.credentialRejected === true;
+        throw requestError;
       }
       recordSyncTraceEvent("remote_fetch_error", {
         scope: metadataOnly ? "remote_probe" : "remote_fetch",
@@ -31000,6 +36597,13 @@
         throw error;
       }
 
+      if (
+        error?.code === REMOTE_SYNC_AUTH_REJECTED_CODE ||
+        error?.status === 401
+      ) {
+        throw createRemoteSyncAuthRejectedError(error, "remote_push");
+      }
+
       if (isRemotePushFailureOutcomeUncertain(error)) {
         const confirmedPush = await confirmRemotePushAfterUncertainFailure({
           payloadDataObject,
@@ -31034,7 +36638,12 @@
         },
         level: "error",
       });
-      throw new Error(errorMessage);
+      const pushError = new Error(errorMessage);
+      pushError.status = error.status;
+      pushError.response = error.response;
+      pushError.retryable = error.retryable === true;
+      pushError.credentialRejected = error.credentialRejected === true;
+      throw pushError;
     }
   };
 
@@ -31158,9 +36767,6 @@
             },
             onLockUnavailable: () => {
               hasPendingBackgroundSync = true;
-              console.log(
-                "S1 Plus: 检测到其他同步任务正在执行，稍后将重试。"
-              );
               emitSyncCompletionLog({
                 scope: "background_auto_sync",
                 scopeLabel: "后台自动同步",
@@ -31168,8 +36774,9 @@
                 result: {
                   status: "skipped",
                   reason: "background_lock_unavailable",
+                  lockReason: s1pLockRefusals.get(SYNC_LOCK_MODE_BACKGROUND)?.reason || "unknown",
                 },
-                details: { reason, drainCount },
+                details: { reason, drainCount, lockReason: s1pLockRefusals.get(SYNC_LOCK_MODE_BACKGROUND)?.reason || "unknown" },
               });
               s1pScheduleBackgroundSyncRetry();
             },
@@ -31453,6 +37060,46 @@
         return "前台补同步锁被其他任务占用";
       case "background_lock_unavailable":
         return "后台同步锁被其他任务占用";
+      case "page_unloading":
+        return "页面正在离开，未开始新的同步事务";
+      case "page_unloading_before_transaction":
+        return "页面离开时尚未开始同步事务";
+      case "lifecycle_unload_before_lock_verified":
+        return "页面离开时锁归属尚未确认，临时锁已取消";
+      case "lifecycle_unload_before_transaction":
+        return "页面离开时事务尚未开始，临时锁已释放";
+      case "lifecycle_unload_running_lock_retained":
+        return "页面离开时事务已开始，执行锁保留至收敛或 TTL";
+      case "ttl_expired_before_release":
+        return "释放时已确认同步锁 TTL 过期";
+      case "lock_storage_write_failed":
+        return "锁续租存储写入失败";
+      case "lock_stage_persist_failed":
+        return "同步锁阶段信息写入失败，已清理执行锁";
+      case "lock_release_exception":
+        return "同步锁释放调用抛出异常，结果未知";
+      case "lock_storage_delete_failed":
+        return "锁释放存储删除失败";
+      case "lock_storage_read_failed":
+        return "锁状态读取失败，无法确认是否仍持有";
+      case "lock_snapshot_read_failed":
+        return "生命周期收尾时读取锁快照失败";
+      case "lock_snapshot_read_failed_after_fence":
+        return "生命周期栅栏后读取锁快照失败";
+      case "lock_cancellation_failed":
+        return "生命周期收尾时取消临时锁失败";
+      case "awaiting_ownership_verification":
+        return "等待锁归属校验完成";
+      case "ownership_verification_failed":
+        return "锁归属校验失败";
+      case "heartbeat_stop_failed":
+        return "停止同步锁心跳失败";
+      case "after_release_failed":
+        return "同步锁后清理失败";
+      case "result_handling_failed":
+        return "同步结果处理失败";
+      case "manual_intent_boundary_failed":
+        return "手动同步边界收敛失败";
       case "foreground_check_disabled":
         return "前台自动拉取检查未启用";
       case "probe_in_flight":
@@ -31461,6 +37108,8 @@
         return "前台补同步正在执行";
       case "followup_retry_pending":
         return "前台补同步正在等待重试窗口";
+      case "foreground_soft_block_waiting_for_change":
+        return "前台检查已暂缓，等待本地或云端出现新事实";
       case "sync_lock_active":
         return "已有同步锁处于活动状态";
       case "local_cooldown":
@@ -31625,6 +37274,12 @@
     }
 
     if (status === "skipped") {
+      if (reason === "background_lock_unavailable" || reason === "sync_lock_unavailable") {
+        const detail = normalizedResult.lockReason === "manual_priority_pending"
+          ? "本页面有优先手动请求，等待确认或执行"
+          : "未取得同步锁，等待后续重试";
+        return `S1 Plus (Sync): ${scopeLabel}未执行：${detail}。`;
+      }
       if (reason === "lock_lost") {
         const stage = getSyncTraceStageLabel(normalizedResult.stage);
         return `${completionPrefix}：已中止（同步锁失效${stage ? `，阶段：${stage}` : ""}）。`;
@@ -32534,11 +38189,15 @@
       recordSyncFailure(error.message, syncMode, syncDiagnosticsContext);
       const failureState = registerAutoSyncFailure(syncMode);
       updateLastSyncTimeDisplay();
-      return rememberSyncCompletionResult({
+      const failureResult = {
         status: "failure",
         error: error.message,
         failureState,
-      });
+      };
+      if (s1pIsRemoteSyncCredentialRejectionError(error)) {
+        failureResult.retryable = false;
+      }
+      return rememberSyncCompletionResult(failureResult);
     } finally {
       isInitialSyncInProgress = false;
       if (syncOutcome === "conflict") {
@@ -32821,6 +38480,18 @@
         if (typeof onLockUnavailable === "function") {
           await onLockUnavailable();
         }
+        const activeSyncLock = getActiveSyncLockSnapshot();
+        recordSyncTraceEvent("foreground_followup_lock_unavailable", {
+          scope: "foreground_followup_sync",
+          status: "skipped",
+          message: "前台补同步未取得同步锁，等待其他上下文完成或过期",
+          details: {
+            triggerSource,
+            lockMode: activeSyncLock?.mode || "",
+            lockOwner: activeSyncLock?.owner || "",
+            lockRemainingMs: activeSyncLock?.remainingMs || 0,
+          },
+        });
         emitSyncCompletionLog({
           scope: "foreground_followup_sync",
           scopeLabel: "前台补同步",
@@ -32977,6 +38648,12 @@
         reason: "foreground_sync_in_flight",
       };
     }
+    if (manualSyncPriorityGateEvaluator()) {
+      return {
+        status: "skipped",
+        reason: "manual_sync_intent_pending",
+      };
+    }
 
     const normalizedReason =
       normalizeRemoteProbeText(reason, 120) || "remote_probe_changed";
@@ -33006,6 +38683,11 @@
           overrides.releaseForegroundFollowUpSyncLock ||
           overrides.releaseStartupSyncLock,
         performAutoSync: overrides.performAutoSync,
+        lockUnavailableResult: {
+          status: "skipped",
+          reason: "foreground_followup_lock_unavailable",
+          activeSyncLock: getActiveSyncLockSnapshot(),
+        },
         onLockUnavailable: () => {
           console.log(
             `S1 Plus: 前台远端检查(${normalizedReason})发现已有同步任务在执行，已跳过本轮 follow-up sync。`
@@ -33025,7 +38707,30 @@
     }
   };
 
-  const clearForegroundRemoteSyncRetry = () => {
+  const clearForegroundRemoteSyncRetry = (ownerToken = null) => {
+    if (
+      !ownerToken ||
+      foregroundRemoteSyncRetryOwnerToken !== ownerToken
+    ) {
+      if (ownerToken) {
+        recordSyncTraceEvent("foreground_retry_cleanup_ignored", {
+          scope: "foreground_probe",
+          status: "ignored",
+          message: "旧前台 retry continuation 没有当前 timer 的 owner 权限",
+          details: {
+            requestId: ownerToken.requestId || "",
+            remoteUpdatedAt: ownerToken.remoteUpdatedAt || "",
+            retryGeneration: ownerToken.retryGeneration || 0,
+            timerIdentity: ownerToken.timerIdentity || "",
+            retainedRequestId:
+              foregroundRemoteSyncRetryOwnerToken?.requestId || "",
+            retainedRemoteUpdatedAt:
+              foregroundRemoteSyncRetryOwnerToken?.remoteUpdatedAt || "",
+          },
+        });
+      }
+      return false;
+    }
     if (foregroundRemoteSyncRetryTimer) {
       clearTimeout(foregroundRemoteSyncRetryTimer);
       foregroundRemoteSyncRetryTimer = null;
@@ -33035,7 +38740,15 @@
     foregroundRemoteSyncRetryReason = "";
     foregroundRemoteSyncRetryIndicatorReason = "";
     foregroundRemoteSyncRetryIndicatorOperation = "";
+    foregroundRemoteSyncRetryExpectedRequestId = "";
+    foregroundRemoteSyncRetryExpectedRemoteUpdatedAt = "";
+    foregroundRemoteSyncRetryOwnerToken = null;
+    foregroundRemoteSyncRetryGeneration += 1;
+    return true;
   };
+
+  const clearForegroundRemoteSyncRetryForCurrentOwner = () =>
+    clearForegroundRemoteSyncRetry(foregroundRemoteSyncRetryOwnerToken);
 
   const getForegroundRemoteSyncRetryRemainingMs = (now = Date.now()) => {
     const normalizedNow = normalizeRemoteProbeTimestamp(now) || Date.now();
@@ -33049,11 +38762,6 @@
     reason = "remote_probe_retry",
     options = {}
   ) => {
-    if (document.visibilityState !== "visible") {
-      clearForegroundRemoteSyncRetry();
-      GM_deleteValue(EQUAL_UPDATED_AT_PROBE_VERIFY_STATE_KEY);
-      return { status: "suppressed", reason: "document_hidden" };
-    }
     const normalizedReason =
       normalizeRemoteProbeText(reason, 120) || "remote_probe_retry";
     const resolvedSource =
@@ -33064,24 +38772,74 @@
       "foreground_followup_retry";
     const indicatorOperation =
       normalizeAutoSyncIndicatorOperation(options.indicatorOperation) ||
-      AUTO_SYNC_INDICATOR_OPERATION_PULL;
+      AUTO_SYNC_INDICATOR_OPERATION_SYNC;
+    const expectedPendingRequest =
+      normalizePendingForegroundRemoteSyncRequest(
+        options.expectedPendingRequest
+      );
+    const expectedRequestId = expectedPendingRequest?.requestId || "";
+    const expectedRemoteUpdatedAt =
+      expectedPendingRequest?.remoteUpdatedAt || "";
+    if (expectedPendingRequest) {
+      const currentPending = getPendingForegroundRemoteSyncRequest();
+      if (
+        !currentPending ||
+        !isSamePendingForegroundRemoteSyncRequest(
+          currentPending,
+          expectedPendingRequest
+        )
+      ) {
+        const reason = currentPending
+          ? "newer_pending_foreground_remote_sync"
+          : "cancelled_foreground_remote_sync";
+        recordSyncTraceEvent("foreground_pending_retry_ignored", {
+          scope: "foreground_probe",
+          status: "ignored",
+          message: currentPending
+            ? "旧前台远端结果不能替换新请求已安排的 retry"
+            : "已取消或完成的旧前台远端结果不能重新安排 retry",
+          details: {
+            requestId: expectedPendingRequest.requestId,
+            remoteUpdatedAt: expectedPendingRequest.remoteUpdatedAt,
+            reason,
+            retainedRequestId: currentPending?.requestId || "",
+            retainedRemoteUpdatedAt: currentPending?.remoteUpdatedAt || "",
+          },
+        });
+        return {
+          status: "ignored",
+          reason,
+          requestId: currentPending?.requestId || "",
+          remoteUpdatedAt: currentPending?.remoteUpdatedAt || "",
+        };
+      }
+    }
+    if (document.visibilityState !== "visible") {
+      clearForegroundRemoteSyncRetryForCurrentOwner();
+      GM_deleteValue(EQUAL_UPDATED_AT_PROBE_VERIFY_STATE_KEY);
+      return { status: "suppressed", reason: "document_hidden" };
+    }
     const preferredDelayMs = Math.max(
       0,
       Math.floor(Number(options.preferredDelayMs) || 0)
     );
     if (
       foregroundRemoteSyncRetryTimer &&
-      foregroundRemoteSyncRetryReason === normalizedReason
+      foregroundRemoteSyncRetryReason === normalizedReason &&
+      foregroundRemoteSyncRetryExpectedRequestId === expectedRequestId &&
+      foregroundRemoteSyncRetryExpectedRemoteUpdatedAt ===
+        expectedRemoteUpdatedAt
     ) {
       return {
         status: "already_scheduled",
         attempt: foregroundRemoteSyncRetryAttempts,
         retryAfterMs: getForegroundRemoteSyncRetryRemainingMs(),
         reason: normalizedReason,
+        ownerToken: foregroundRemoteSyncRetryOwnerToken,
       };
     }
     if (getActiveAutoSyncConflictPause()) {
-      clearForegroundRemoteSyncRetry();
+      clearForegroundRemoteSyncRetryForCurrentOwner();
       GM_deleteValue(EQUAL_UPDATED_AT_PROBE_VERIFY_STATE_KEY);
       return { status: "suppressed", reason: "conflict_paused" };
     }
@@ -33089,7 +38847,7 @@
       console.warn(
         "S1 Plus: 前台远端检查补偿重试达到上限，将等待下一次前台探测触发。"
       );
-      clearForegroundRemoteSyncRetry();
+      clearForegroundRemoteSyncRetryForCurrentOwner();
       GM_deleteValue(EQUAL_UPDATED_AT_PROBE_VERIFY_STATE_KEY);
       return { status: "dropped", reason: "retry_limit_reached" };
     }
@@ -33101,6 +38859,8 @@
     foregroundRemoteSyncRetryReason = normalizedReason;
     foregroundRemoteSyncRetryIndicatorReason = indicatorReason;
     foregroundRemoteSyncRetryIndicatorOperation = indicatorOperation;
+    foregroundRemoteSyncRetryExpectedRequestId = expectedRequestId;
+    foregroundRemoteSyncRetryExpectedRemoteUpdatedAt = expectedRemoteUpdatedAt;
     foregroundRemoteSyncRetryDueAt = Date.now() + retryDelayMs;
     setAutoSyncIndicatorPendingState(
       resolvedSource,
@@ -33112,16 +38872,68 @@
 
     if (foregroundRemoteSyncRetryTimer) {
       clearTimeout(foregroundRemoteSyncRetryTimer);
+      foregroundRemoteSyncRetryTimer = null;
+      foregroundRemoteSyncRetryOwnerToken = null;
+      foregroundRemoteSyncRetryGeneration += 1;
     }
+    const retryGeneration = foregroundRemoteSyncRetryGeneration + 1;
+    foregroundRemoteSyncRetryGeneration = retryGeneration;
+    const retryOwnerToken = Object.freeze({
+      requestId: expectedRequestId,
+      remoteUpdatedAt: expectedRemoteUpdatedAt,
+      retryGeneration,
+      timerIdentity: `${SYNC_RUNTIME_CONTEXT_ID}:${
+        ++foregroundRemoteSyncRetryOwnerSequence
+      }`,
+    });
+    foregroundRemoteSyncRetryOwnerToken = retryOwnerToken;
     foregroundRemoteSyncRetryTimer = setTimeout(async () => {
+      if (
+        foregroundRemoteSyncRetryGeneration !== retryGeneration ||
+        foregroundRemoteSyncRetryOwnerToken !== retryOwnerToken
+      ) {
+        return;
+      }
       foregroundRemoteSyncRetryTimer = null;
       foregroundRemoteSyncRetryDueAt = 0;
+      const clearOwnedRetry = () => {
+        const cleared = clearForegroundRemoteSyncRetry(retryOwnerToken);
+        if (cleared) {
+          GM_deleteValue(EQUAL_UPDATED_AT_PROBE_VERIFY_STATE_KEY);
+        }
+        return cleared;
+      };
       if (document.visibilityState !== "visible") {
-        clearForegroundRemoteSyncRetry();
-        GM_deleteValue(EQUAL_UPDATED_AT_PROBE_VERIFY_STATE_KEY);
+        clearOwnedRetry();
         return;
       }
 
+      const pendingBeforeSync = getPendingForegroundRemoteSyncRequest();
+      if (
+        expectedPendingRequest &&
+        !isSamePendingForegroundRemoteSyncRequest(
+          pendingBeforeSync,
+          expectedPendingRequest
+        )
+      ) {
+        clearOwnedRetry();
+        refreshAutoSyncIndicatorRuntimeDisplay(
+          "foreground_retry_pending_generation_changed"
+        );
+        return;
+      }
+      if (pendingBeforeSync && isTerminalForegroundRemoteSyncSoftBlock(pendingBeforeSync)) {
+        clearOwnedRetry();
+        recordForegroundPendingSoftBlockSuppressed(pendingBeforeSync, {
+          source: "retry_timer",
+          triggerSource: pendingBeforeSync.triggerSource,
+          now: Date.now(),
+        });
+        refreshAutoSyncIndicatorRuntimeDisplay(
+          "foreground_soft_block_waiting_for_change"
+        );
+        return;
+      }
       try {
         const gateBlockResult = (
           options.getForegroundProbeGateBlockResult ||
@@ -33139,6 +38951,17 @@
           return;
         }
 
+        const attempt = pendingBeforeSync
+          ? markPendingForegroundRemoteSyncAttempt(pendingBeforeSync)
+          : { status: "skipped", reason: "no_pending_foreground_remote_sync" };
+        if (attempt.status !== "marked" && pendingBeforeSync) {
+          clearOwnedRetry();
+          refreshAutoSyncIndicatorRuntimeDisplay(
+            "foreground_pending_attempt_generation_changed"
+          );
+          return;
+        }
+
         const syncResult = await (
           options.requestForegroundRemoteSyncCheck ||
           requestForegroundRemoteSyncCheck
@@ -33146,6 +38969,29 @@
           normalizedReason,
           options.requestForegroundRemoteSyncCheckOverrides || {}
         );
+        const pendingSettlement = pendingBeforeSync
+          ? settlePendingForegroundRemoteSyncRequest(
+              pendingBeforeSync,
+              syncResult
+            )
+          : {
+              status: "skipped",
+              reason: "no_pending_foreground_remote_sync_before_retry",
+            };
+        if (
+          isForegroundRemoteSyncCompletionStale(
+            pendingBeforeSync,
+            pendingSettlement
+          )
+        ) {
+          recordForegroundRemoteSyncResultPhaseSkipped({
+            source: "retry",
+            pendingBeforeSync,
+            pendingSettlement,
+          });
+          clearOwnedRetry();
+          return;
+        }
         const remoteChangeKind = getForegroundRemoteChangeKind({
           syncRequestResult: syncResult,
           sameSessionRemoteWrite: syncResult?.sameSessionRemoteWrite === true,
@@ -33186,7 +39032,21 @@
         if (s1pHasScheduledSyncResultPhaseRetry(outcome.retryResult)) {
           return;
         }
-        clearForegroundRemoteSyncRetry();
+        if (
+          pendingSettlement.status === "retained" &&
+          (syncResult?.status === "success" ||
+            syncResult?.reason === "foreground_followup_lock_unavailable" ||
+            syncResult?.reason === "sync_lock_active")
+        ) {
+          scheduleForegroundRemoteSyncRecovery(
+            getPendingForegroundRemoteSyncRequest(),
+            {
+              ...options,
+              now: Date.now(),
+            }
+          );
+        }
+        clearOwnedRetry();
         (
           options.maybeShowForegroundProbeFeedback ||
           maybeShowForegroundProbeFeedback
@@ -33197,12 +39057,18 @@
           }
         );
       } catch (error) {
+        if (
+          pendingBeforeSync &&
+          !getPendingForegroundRemoteSyncRequest()
+        ) {
+          clearOwnedRetry();
+          return;
+        }
         console.error(
           `S1 Plus: 前台远端检查补偿重试失败(${normalizedReason}):`,
           error
         );
-        clearForegroundRemoteSyncRetry();
-        GM_deleteValue(EQUAL_UPDATED_AT_PROBE_VERIFY_STATE_KEY);
+        clearOwnedRetry();
       }
     }, retryDelayMs);
 
@@ -33211,6 +39077,7 @@
       retryAfterMs: retryDelayMs,
       attempt: foregroundRemoteSyncRetryAttempts,
       reason: normalizedReason,
+      ownerToken: retryOwnerToken,
     };
   };
 
@@ -33249,6 +39116,9 @@
               finalized.syncRequestResult?.status ||
               finalized.syncRequestResult?.action ||
               "",
+            lockMode: finalized.activeSyncLock?.mode || "",
+            lockOwner: finalized.activeSyncLock?.owner || "",
+            lockRemainingMs: finalized.activeSyncLock?.remainingMs || 0,
           },
         });
       }
@@ -33275,6 +39145,12 @@
         reason: "foreground_sync_in_flight",
       });
     }
+    if (manualSyncPriorityGateEvaluator()) {
+      return finalizeResult({
+        status: "skipped",
+        reason: "manual_sync_intent_pending",
+      });
+    }
     const foregroundRetryRemainingMs =
       getForegroundRemoteSyncRetryRemainingMs(now);
     if (foregroundRetryRemainingMs > 0) {
@@ -33285,7 +39161,19 @@
       });
     }
     if (hasAnyActiveSyncLock(now)) {
-      return finalizeResult({ status: "skipped", reason: "sync_lock_active" });
+      const activeSyncLock = getActiveSyncLockSnapshot(now);
+      return finalizeResult(
+        {
+          status: "skipped",
+          reason: "sync_lock_active",
+          activeSyncLock,
+        },
+        {
+          lockMode: activeSyncLock?.mode || "",
+          lockOwner: activeSyncLock?.owner || "",
+          lockRemainingMs: activeSyncLock?.remainingMs || 0,
+        }
+      );
     }
     if (isForegroundProbeLocalCooldownActive(now)) {
       return finalizeResult({
@@ -33442,6 +39330,69 @@
         );
       }
 
+      const blockedPendingForegroundRemoteSync =
+        getPendingForegroundRemoteSyncRequest();
+      if (
+        blockedPendingForegroundRemoteSync &&
+        blockedPendingForegroundRemoteSync.remoteUpdatedAt === remoteUpdatedAt &&
+        isTerminalForegroundRemoteSyncSoftBlock(
+          blockedPendingForegroundRemoteSync
+        )
+      ) {
+        const suppressedSyncResult = {
+          status: "blocked",
+          blockLevel: "soft",
+          blockScope: "tab",
+          reason: FOREGROUND_PENDING_SOFT_BLOCK_WAIT_REASON,
+          action: "probe_soft_block_suppressed",
+        };
+        recordSyncTraceEvent("foreground_probe_soft_block_suppressed", {
+          scope: "foreground_probe",
+          status: "blocked",
+          message: "远端版本未变化，沿用现有 soft block，跳过重复前台补同步",
+          details: {
+            reason: FOREGROUND_PENDING_SOFT_BLOCK_WAIT_REASON,
+            triggerSource: probeTriggerSource,
+            remoteUpdatedAt,
+            lastSyncedRemoteUpdatedAt,
+            requestId: blockedPendingForegroundRemoteSync.requestId,
+            blockReason: blockedPendingForegroundRemoteSync.lastResultReason,
+            blockAction: blockedPendingForegroundRemoteSync.lastResultAction,
+            blockAt: blockedPendingForegroundRemoteSync.lastResultAt || 0,
+            lastAttemptAt:
+              blockedPendingForegroundRemoteSync.lastAttemptAt || 0,
+          },
+          timestamp: now,
+          repeatKey: [
+            "foreground_probe_soft_block_suppressed",
+            blockedPendingForegroundRemoteSync.requestId,
+            remoteUpdatedAt,
+            blockedPendingForegroundRemoteSync.lastResultReason,
+          ].join(":"),
+        });
+        return finalizeResult(
+          {
+            status: "blocked",
+            blockLevel: "soft",
+            blockScope: "tab",
+            reason: FOREGROUND_PENDING_SOFT_BLOCK_WAIT_REASON,
+            remoteUpdatedAt,
+            lastSyncedRemoteUpdatedAt,
+            lastObservedRemoteUpdatedAt,
+            syncRequestResult: suppressedSyncResult,
+          },
+          {
+            remoteUpdatedAt,
+            triggeredSync: false,
+            triggeredSyncResult:
+              formatForegroundProbeSyncResultForDiagnostics(
+                suppressedSyncResult
+              ),
+            lastSyncedRemoteUpdatedAt,
+          }
+        );
+      }
+
       if (
         lastSyncedRemoteUpdatedAt &&
         remoteUpdatedAt === lastSyncedRemoteUpdatedAt
@@ -33545,11 +39496,19 @@
         triggerReason: normalizedReason,
         now,
       });
+      const pendingForegroundRemoteSyncRequest =
+        markPendingForegroundRemoteSyncRequest({
+          reason: normalizedReason,
+          triggerSource: probeTriggerSource,
+          remoteUpdatedAt,
+          now,
+        });
       if (gateBlockResult) {
         const retryPlan = scheduleForegroundRemoteSyncRetry(
           `remote_probe_changed:${normalizedReason}`,
           {
             ...retryOptions,
+            expectedPendingRequest: pendingForegroundRemoteSyncRequest,
             preferredDelayMs: gateBlockResult.retryAfterMs,
             indicatorReason:
               AUTO_SYNC_INDICATOR_REASON_FOREGROUND_PROBE_CHANGED_RETRY,
@@ -33565,6 +39524,7 @@
             remoteUpdatedAt,
             blockReason: gateBlockResult.reason || "",
             retryAfterMs: gateBlockResult.retryAfterMs || 0,
+            requestId: pendingForegroundRemoteSyncRequest?.requestId || "",
           },
         });
         return finalizeResult(
@@ -33603,11 +39563,17 @@
           remoteUpdatedAt,
           lastSyncedRemoteUpdatedAt,
           writerMatchKind: preSyncWriterMatchKind,
+          requestId: pendingForegroundRemoteSyncRequest?.requestId || "",
         },
       });
+      markPendingForegroundRemoteSyncAttempt(pendingForegroundRemoteSyncRequest);
       const syncRequestResult = await requestForegroundRemoteSyncCheckFn(
         `remote_probe_changed:${normalizedReason}`,
         overrides.requestForegroundRemoteSyncCheckOverrides || {}
+      );
+      const pendingSettlement = settlePendingForegroundRemoteSyncRequest(
+        pendingForegroundRemoteSyncRequest,
+        syncRequestResult
       );
       recordSyncTraceEvent("foreground_probe_followup_result", {
         scope: "foreground_probe",
@@ -33619,8 +39585,44 @@
           followupStatus: syncRequestResult?.status || "",
           followupAction: syncRequestResult?.action || "",
           followupReason: syncRequestResult?.reason || "",
+          requestId: pendingForegroundRemoteSyncRequest?.requestId || "",
+          pendingSettlement: pendingSettlement.status,
         },
       });
+      if (
+        isForegroundRemoteSyncCompletionStale(
+          pendingForegroundRemoteSyncRequest,
+          pendingSettlement
+        )
+      ) {
+        const completionDisposition =
+          getForegroundRemoteSyncCompletionDisposition(
+            pendingForegroundRemoteSyncRequest,
+            pendingSettlement
+          );
+        recordForegroundRemoteSyncResultPhaseSkipped({
+          source: "direct_followup",
+          pendingBeforeSync: pendingForegroundRemoteSyncRequest,
+          pendingSettlement,
+        });
+        return finalizeResult(
+          {
+            status: "skipped",
+            reason:
+              completionDisposition === "cancelled"
+                ? "foreground_sync_request_cancelled"
+                : "foreground_sync_request_superseded",
+            remoteUpdatedAt,
+            lastSyncedRemoteUpdatedAt,
+            lastObservedRemoteUpdatedAt,
+          },
+          {
+            remoteUpdatedAt,
+            triggeredSync: false,
+            lastSyncedRemoteUpdatedAt,
+          }
+        );
+      }
       const hasAuthoritativeSyncAttribution = (syncResult) =>
         syncResult &&
         typeof syncResult === "object" &&
@@ -33651,6 +39653,24 @@
       });
       const resultPhasePolicy =
         overrides.syncResultPhasePolicy || s1pSyncResultPhasePolicy;
+      const retryOwnerBeforeResultPhase =
+        foregroundRemoteSyncRetryOwnerToken &&
+        pendingForegroundRemoteSyncRequest &&
+        foregroundRemoteSyncRetryOwnerToken.requestId ===
+          pendingForegroundRemoteSyncRequest.requestId &&
+        foregroundRemoteSyncRetryOwnerToken.remoteUpdatedAt ===
+          pendingForegroundRemoteSyncRequest.remoteUpdatedAt
+          ? foregroundRemoteSyncRetryOwnerToken
+          : null;
+      const resultPhaseOwner = Object.freeze({
+        requestId: pendingForegroundRemoteSyncRequest?.requestId || "",
+        remoteUpdatedAt:
+          pendingForegroundRemoteSyncRequest?.remoteUpdatedAt || "",
+        retryGeneration: retryOwnerBeforeResultPhase?.retryGeneration || null,
+        retryTimerIdentity: retryOwnerBeforeResultPhase?.timerIdentity || "",
+        retryOwner: retryOwnerBeforeResultPhase,
+      });
+      let resultPhaseScheduledRetryOwner = null;
       const outcome = await resultPhasePolicy.handle(syncRequestResult, {
         source: "foreground",
         remoteChangeContext: {
@@ -33673,21 +39693,55 @@
           locationObject: overrides.locationObject,
           setTimeoutFn: overrides.setTimeoutFn,
         },
-        scheduleRetry: (intent) =>
-          scheduleForegroundRemoteSyncRetry(
+        scheduleRetry: (intent) => {
+          const retryResult = scheduleForegroundRemoteSyncRetry(
             `remote_probe_changed:${normalizedReason}`,
             {
               ...retryOptions,
+              expectedPendingRequest: pendingForegroundRemoteSyncRequest,
               preferredDelayMs: intent.delayMs,
               indicatorReason:
                 AUTO_SYNC_INDICATOR_REASON_FOREGROUND_PROBE_CHANGED_RETRY,
               indicatorOperation: AUTO_SYNC_INDICATOR_OPERATION_SYNC,
             }
-          ),
+          );
+          if (s1pHasScheduledSyncResultPhaseRetry(retryResult)) {
+            resultPhaseScheduledRetryOwner = retryResult.ownerToken || null;
+          }
+          return retryResult;
+        },
       });
       refreshPlan = outcome.refreshPlan;
-      if (!s1pHasScheduledSyncResultPhaseRetry(outcome.retryResult)) {
-        clearForegroundRemoteSyncRetry();
+      const hasScheduledRetry = s1pHasScheduledSyncResultPhaseRetry(
+        outcome.retryResult
+      );
+      if (!hasScheduledRetry) {
+        const retryOwnerToClear =
+          resultPhaseScheduledRetryOwner || resultPhaseOwner.retryOwner;
+        if (retryOwnerToClear) {
+          clearForegroundRemoteSyncRetry(retryOwnerToClear);
+        }
+      }
+      if (
+        pendingSettlement.status === "retained" &&
+        !hasScheduledRetry &&
+        (syncRequestResult?.status === "success" ||
+          syncRequestResult?.reason === "foreground_followup_lock_unavailable" ||
+          syncRequestResult?.reason === "sync_lock_active")
+      ) {
+        scheduleForegroundRemoteSyncRecovery(
+          getPendingForegroundRemoteSyncRequest(),
+          {
+            now: Date.now(),
+            requestForegroundRemoteSyncCheck: requestForegroundRemoteSyncCheckFn,
+            requestForegroundRemoteSyncCheckOverrides:
+              overrides.requestForegroundRemoteSyncCheckOverrides || {},
+            syncResultPhasePolicy: overrides.syncResultPhasePolicy,
+            showMessage: overrides.showMessage,
+            locationObject: overrides.locationObject,
+            setTimeoutFn: overrides.setTimeoutFn,
+          }
+        );
       }
       const isHashEqualAfterResync =
         remoteChangeKind === "hash_equal_after_resync";
@@ -33797,7 +39851,24 @@
       requestForegroundRemoteSyncCheck,
       scheduleForegroundRemoteSyncRetry,
       clearForegroundRemoteSyncRetry,
+      getForegroundRemoteSyncRetryOwnerToken: () =>
+        foregroundRemoteSyncRetryOwnerToken,
       getForegroundRemoteSyncRetryRemainingMs,
+      markPendingForegroundRemoteSyncRequest,
+      getPendingForegroundRemoteSyncRequest,
+      getPendingForegroundRemoteSyncTerminalRecord:
+        readPendingForegroundRemoteSyncTerminalRecord,
+      isTerminalForegroundRemoteSyncSoftBlock,
+      clearPendingForegroundRemoteSyncSoftBlock,
+      markPendingForegroundRemoteSyncAttempt,
+      clearPendingForegroundRemoteSyncRequest,
+      settlePendingForegroundRemoteSyncRequest,
+      settlePendingForegroundRemoteSyncRequestIfCovered,
+      recoverPendingForegroundRemoteSyncIfNeeded,
+      scheduleForegroundRemoteSyncRecovery,
+      clearForegroundRemoteSyncRecovery,
+      getForegroundRemoteSyncRecoveryRemainingMs,
+      getActiveSyncLockSnapshot,
       getForegroundProbeGateBlockResult,
       hasEnabledAutoSyncIndicatorPath,
       getAutoSyncIndicatorState,
@@ -33825,8 +39896,19 @@
       resolveAutoSyncIndicatorDrainCompletion,
       formatAutoSyncCompletionLogMessage,
       recordSyncTraceEvent,
+      s1pFlushSyncTrace,
+      s1pReadSyncLockEvidence,
+      s1pObserveSyncLocks,
+      acquireModeSyncLock,
+      refreshModeSyncLock,
+      releaseModeSyncLock,
+      s1pSetManualPriorityGateForTest: (evaluator) => { manualSyncPriorityGateEvaluator = evaluator; },
+      getSyncRuntimeContextInfo,
+      getSyncRuntimeContextSummary,
       emitSyncCompletionLog,
       getAutoSyncIndicatorTitle: (...args) => getAutoSyncIndicatorTitle(...args),
+      getAutoSyncIndicatorTooltip: (...args) =>
+        getAutoSyncIndicatorTooltip(...args),
       getAutoSyncIndicatorDisplayKind: (...args) =>
         getAutoSyncIndicatorDisplayKind(...args),
       getAutoSyncCleanStateSnapshot,
@@ -33851,6 +39933,7 @@
       createPendingDirtyScheduler,
       s1pCreateSchedulerOwnerHandoffFence,
       s1pCreateSyncLifecycleAdapter,
+      s1pBindForegroundRemoteSyncPendingChangeHook,
       s1pInitializePendingAutoSyncRecoverySupport,
       registerSyncLifecycleLocalMutationFinalizer,
       runForegroundFollowUpAutoSyncCheck,
@@ -33953,6 +40036,26 @@
   const normalizeS1pSyncTokenExpiryDate = (value) => {
     const parsed = Number(value);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  };
+  const S1P_TOKEN_EXPIRY_DAY_MS = 24 * 60 * 60 * 1000;
+  const getS1pLocalCalendarDayNumber = (timestamp) => {
+    const date = new Date(timestamp);
+    return (
+      Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) /
+      S1P_TOKEN_EXPIRY_DAY_MS
+    );
+  };
+  const getS1pTokenExpiryDaysLeft = (expiryTimestamp, now = Date.now()) => {
+    const normalizedExpiryTimestamp = normalizeS1pSyncTokenExpiryDate(
+      expiryTimestamp
+    );
+    if (normalizedExpiryTimestamp === null) {
+      return null;
+    }
+    return (
+      getS1pLocalCalendarDayNumber(normalizedExpiryTimestamp) -
+      getS1pLocalCalendarDayNumber(now)
+    );
   };
   const s1pCreateSettingsSemantics = ({ defaults }) => {
     const freezeDefinition = ({
@@ -34799,6 +40902,8 @@
       resolveRecentRemoteWriteMatch,
       getRemoteWriteMatchKind,
       getForegroundRemoteChangeKind,
+      getS1pTokenExpiryDaysLeft,
+      createRemoteSyncAuthRejectedError,
       exportLocalDataObject,
     };
   }
@@ -35669,7 +41774,21 @@
       }
     };
 
-    return Object.freeze({ project });
+    return Object.freeze({ project: (event = {}) => {
+      const operationId = s1pNewDiagnosticOperation("projection");
+      const startedAt = Date.now();
+      try {
+        const result = project(event);
+        s1pRecordDiagnosticEvent("projection.completed", { module: "page", operationId,
+          status: "success", message: "页面功能投影已完成", verbose: event.type === "mutation",
+          details: { type: event.type || "full", result, durationMs: Date.now() - startedAt } });
+        return result;
+      } catch (error) {
+        s1pRecordDiagnosticEvent("projection.failed", { module: "page", operationId, level: "error",
+          status: "failure", message: "页面功能投影失败", details: { type: event.type || "full", error } });
+        throw error;
+      }
+    } });
   };
   let coreDataCrossTabRefreshTimer = null;
   const pendingCoreDataRefreshIntents = new Set();
@@ -35903,11 +42022,16 @@
       );
     const normalizedSettings = buildNormalizedSettings(settings).settings;
     const currentSettings = getSettings();
+    const s1pSettingsOperationId = s1pNewDiagnosticOperation("settings");
+    const s1pChangedSettingKeys = Object.keys(normalizedSettings).filter((key) =>
+      hasComparableValueChanged(currentSettings[key], normalizedSettings[key]));
     if (
       !forceWrite &&
       !hasComparableValueChanged(currentSettings, normalizedSettings)
     ) {
       setSettingsCache(normalizedSettings);
+      s1pRecordDiagnosticEvent("settings.unchanged", { module: "settings", status: "unchanged",
+        message: "设置无变化，跳过写入", repeatKey: "settings_unchanged" });
       return;
     }
     invalidateLocalDataHashCache();
@@ -35920,6 +42044,10 @@
         nonce: Math.random(),
       });
       setSettingsCache(normalizedSettings);
+    } catch (error) {
+      s1pRecordDiagnosticEvent("settings.save_failed", { module: "settings", operationId: s1pSettingsOperationId,
+        status: "failure", level: "error", message: "设置保存失败", details: { error, changedKeys: s1pChangedSettingKeys } });
+      throw error;
     } finally {
       localSettingsWriteInFlightCount = Math.max(
         0,
@@ -35927,6 +42055,21 @@
       );
     }
     console.log("S1 Plus: Settings saved.");
+    s1pRecordDiagnosticEvent("settings.saved", { module: "settings", operationId: s1pSettingsOperationId,
+      status: "success", message: "设置已保存", details: { changedKeys: s1pChangedSettingKeys, suppressSyncTrigger, forceWrite } });
+    const disabledForegroundRemoteSyncReason =
+      currentSettings.syncRemoteEnabled === true &&
+      normalizedSettings.syncRemoteEnabled !== true
+        ? "remote_sync_disabled"
+        : currentSettings.syncCheckOnReturnToForeground === true &&
+            normalizedSettings.syncCheckOnReturnToForeground !== true
+          ? "foreground_check_disabled"
+          : "";
+    if (disabledForegroundRemoteSyncReason) {
+      s1pCancelPendingForegroundRemoteSyncForDisabledSetting(
+        disabledForegroundRemoteSyncReason
+      );
+    }
     syncVisibleRemoteFreshnessPollingForCurrentState();
     reconcileBackgroundSyncSchedulerForSettings(normalizedSettings);
     if (!suppressSyncTrigger) {
@@ -37668,11 +43811,13 @@
   /**
    * [NEW] 强制推送处理器，用于手动将本地数据覆盖到云端。
    */
-  const handleForcePush = async () => {
+  const handleForcePush = async (options = {}) => {
     const icon = document.querySelector("#s1p-nav-sync-btn svg");
     if (icon) icon.classList.add("s1p-syncing");
     if (manualSyncInFlightPromise || forceSyncInFlight) {
-      showMessage("手动同步正在进行，请稍候...", null);
+      if (options.suppressBusyMessage !== true) {
+        showMessage("手动同步正在进行，请稍候...", null);
+      }
       if (icon) {
         icon.classList.remove("s1p-syncing");
       }
@@ -37682,16 +43827,21 @@
         outcome: "skipped",
         result: { status: "skipped", reason: "force_sync_busy" },
       });
-      return;
+      return { status: "skipped", reason: "force_sync_busy" };
     }
     forceSyncInFlight = true;
-    if (
-      !(await acquireManualSyncLock({
-        preemptActiveSync: true,
+    const manualExecutionAuthority =
+      await acquireManualSyncExecutionAuthority({
+        // A queued confirmation already crossed the execution boundary. A
+        // competing run must win this race without being preempted.
+        preemptActiveSync: false,
         operation: "force_push",
-      }))
-    ) {
-      showMessage("无法取得手动同步锁，请稍后重试。", false);
+        operationId: options.operationId,
+      });
+    if (!manualExecutionAuthority) {
+      if (options.suppressBusyMessage !== true) {
+        showMessage("无法取得手动同步锁，请稍后重试。", false);
+      }
       forceSyncInFlight = false;
       if (icon) {
         icon.classList.remove("s1p-syncing");
@@ -37702,11 +43852,18 @@
         outcome: "skipped",
         result: { status: "skipped", reason: "manual_sync_busy" },
       });
-      return;
+      return { status: "skipped", reason: "manual_sync_busy" };
     }
-    startManualSyncLockHeartbeat();
+    startAutoSyncIndicatorCycle(AUTO_SYNC_INDICATOR_SOURCE_MANUAL_SYNC, {
+      operation: AUTO_SYNC_INDICATOR_OPERATION_PUSH,
+      reason: "force_push",
+    });
     const assertManualSyncLockOwned = (stage) => {
-      assertSyncLockOwned(SYNC_LOCK_MODE_MANUAL, `force_push:${stage}`);
+      assertSyncLockOwned(
+        SYNC_LOCK_MODE_MANUAL,
+        `force_push:${stage}`,
+        manualExecutionAuthority.token
+      );
     };
     recordSyncAttempt("manual", "force_push");
     let completionResult = null;
@@ -37777,7 +43934,7 @@
           reason: "lock_lost",
           stage: e?.syncLockStage || "unknown",
         };
-        return;
+        return completionResult;
       }
       if (e?.code === REMOTE_SYNC_CANCELLED_CODE) {
         completionResult = {
@@ -37785,7 +43942,7 @@
           reason: "manual_override_cancelled",
         };
         showMessage("本次推送已被新的直接同步操作接管。", null);
-        return;
+        return completionResult;
       }
       setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_FAILURE);
       recordSyncFailure(e.message, "manual", {
@@ -37802,21 +43959,23 @@
         result: completionResult,
       });
       forceSyncInFlight = false;
-      stopManualSyncLockHeartbeat();
-      releaseManualSyncLock();
+      releaseManualSyncExecutionAuthority(manualExecutionAuthority);
       refreshAutoSyncIndicatorAfterManualLockRelease();
       if (icon) {
         icon.classList.remove("s1p-syncing");
         setTimeout(() => (icon.style.transform = ""), 1200); // 重置 transform
       }
     }
+    return completionResult;
   };
 
-  const handleForcePull = async () => {
+  const handleForcePull = async (options = {}) => {
     const icon = document.querySelector("#s1p-nav-sync-btn svg");
     if (icon) icon.classList.add("s1p-syncing");
     if (manualSyncInFlightPromise || forceSyncInFlight) {
-      showMessage("手动同步正在进行，请稍候...", null);
+      if (options.suppressBusyMessage !== true) {
+        showMessage("手动同步正在进行，请稍候...", null);
+      }
       if (icon) {
         icon.classList.remove("s1p-syncing");
       }
@@ -37826,16 +43985,20 @@
         outcome: "skipped",
         result: { status: "skipped", reason: "force_sync_busy" },
       });
-      return;
+      return { status: "skipped", reason: "force_sync_busy" };
     }
     forceSyncInFlight = true;
-    if (
-      !(await acquireManualSyncLock({
-        preemptActiveSync: true,
+    const manualExecutionAuthority =
+      await acquireManualSyncExecutionAuthority({
+        // Do not preempt a run that started while confirmation was open.
+        preemptActiveSync: false,
         operation: "force_pull",
-      }))
-    ) {
-      showMessage("无法取得手动同步锁，请稍后重试。", false);
+        operationId: options.operationId,
+      });
+    if (!manualExecutionAuthority) {
+      if (options.suppressBusyMessage !== true) {
+        showMessage("无法取得手动同步锁，请稍后重试。", false);
+      }
       forceSyncInFlight = false;
       if (icon) {
         icon.classList.remove("s1p-syncing");
@@ -37846,11 +44009,20 @@
         outcome: "skipped",
         result: { status: "skipped", reason: "manual_sync_busy" },
       });
-      return;
+      return { status: "skipped", reason: "manual_sync_busy" };
     }
-    startManualSyncLockHeartbeat();
+    startAutoSyncIndicatorCycle(AUTO_SYNC_INDICATOR_SOURCE_MANUAL_SYNC, {
+      operation: AUTO_SYNC_INDICATOR_OPERATION_PULL,
+      reason: "force_pull",
+    });
+    const pendingForegroundRemoteSyncAtStart =
+      getPendingForegroundRemoteSyncRequest();
     const assertManualSyncLockOwned = (stage) => {
-      assertSyncLockOwned(SYNC_LOCK_MODE_MANUAL, `force_pull:${stage}`);
+      assertSyncLockOwned(
+        SYNC_LOCK_MODE_MANUAL,
+        `force_pull:${stage}`,
+        manualExecutionAuthority.token
+      );
     };
     recordSyncAttempt("manual", "force_pull");
     let completionResult = null;
@@ -37887,6 +44059,10 @@
         clearAutoSyncConflictPause();
         GM_setValue("s1p_last_sync_timestamp", Date.now());
         setSyncBaselineState(syncBaseline);
+        settlePendingForegroundRemoteSyncRequestIfCovered(
+          pendingForegroundRemoteSyncAtStart,
+          "force_pull_success"
+        );
         setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_SUCCESS, {
           source: AUTO_SYNC_INDICATOR_SOURCE_MANUAL_SYNC,
           reason: "force_pull",
@@ -37916,7 +44092,7 @@
           reason: "lock_lost",
           stage: e?.syncLockStage || "unknown",
         };
-        return;
+        return completionResult;
       }
       if (e?.code === REMOTE_SYNC_CANCELLED_CODE) {
         completionResult = {
@@ -37924,7 +44100,7 @@
           reason: "manual_override_cancelled",
         };
         showMessage("本次拉取已被新的直接同步操作接管。", null);
-        return;
+        return completionResult;
       }
       setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_FAILURE);
       recordSyncFailure(e.message, "manual", {
@@ -37941,14 +44117,14 @@
         result: completionResult,
       });
       forceSyncInFlight = false;
-      stopManualSyncLockHeartbeat();
-      releaseManualSyncLock();
+      releaseManualSyncExecutionAuthority(manualExecutionAuthority);
       refreshAutoSyncIndicatorAfterManualLockRelease();
       if (icon) {
         icon.classList.remove("s1p-syncing");
         setTimeout(() => (icon.style.transform = ""), 1200); // 重置 transform
       }
     }
+    return completionResult;
   };
 
   const getAutoSyncIndicatorSourceLabel = (source) => {
@@ -38071,6 +44247,17 @@
     switch (phase) {
       case AUTO_SYNC_INDICATOR_PHASE_PENDING:
         if (
+          reason === "manual_override_waiting_execution" ||
+          reason === "manual_override_awaiting_confirmation"
+        ) {
+          if (displayOperation === AUTO_SYNC_INDICATOR_OPERATION_PUSH) {
+            return "自动同步：推送待执行";
+          }
+          if (displayOperation === AUTO_SYNC_INDICATOR_OPERATION_PULL) {
+            return "自动同步：拉取待执行";
+          }
+        }
+        if (
           displaySessionKind === "local_push_session" &&
           displaySubstate === "settling"
         ) {
@@ -38145,6 +44332,27 @@
       default:
         return "自动同步：待命";
     }
+  };
+
+  const getAutoSyncIndicatorTooltip = (stateInput = null) => {
+    const resolvedState =
+      stateInput && typeof stateInput === "object" && "displayPhase" in stateInput
+        ? stateInput
+        : s1pSyncSystem.readState({
+            surface: SYNC_INDICATOR_STATE_PROJECTION_SURFACE_NAVBAR,
+            state: stateInput,
+          });
+    const title = getAutoSyncIndicatorTitle(resolvedState);
+    const reason = normalizeAutoSyncIndicatorReason(
+      resolvedState?.displayReason || resolvedState?.reason
+    );
+    if (
+      reason === "manual_override_waiting_execution" ||
+      reason === "manual_override_awaiting_confirmation"
+    ) {
+      return `${title}；当前同步完成后将再次确认`;
+    }
+    return title;
   };
 
   const getAutoSyncIndicatorDisplayKind = (stateInput = null) => {
@@ -39565,7 +45773,7 @@
       normalizeAutoSyncIndicatorSource(resolvedState.displaySource) || "";
     indicatorLi.dataset.syncSession = resolvedState.displaySessionKind || "";
     indicatorLi.dataset.syncSubstate = resolvedState.displaySubstate || "";
-    setCustomTooltip(indicatorLi, getAutoSyncIndicatorTitle(resolvedState));
+    setCustomTooltip(indicatorLi, getAutoSyncIndicatorTooltip(resolvedState));
     if (isDebugPreviewActive) {
       stopNavbarAutoSyncIndicatorExpiryTimer();
     } else {
@@ -39673,7 +45881,9 @@
   };
 
   const getDebugConsoleLogMessageForDisplay = (entry, expanded) => {
-    let message = String(entry?.message || "");
+    let message = entry.event
+      ? `[${entry.module}] ${entry.message}${entry.repeatCount > 1 ? `（重复 ${entry.repeatCount} 次，跨度 ${Math.round((entry.lastTs - entry.ts) / 1000)} 秒）` : ""}${expanded ? "\n" + JSON.stringify(entry, null, 2) : ""}`
+      : String(entry?.message || "");
     message = message.replace(/\d{4}\/\d{1,2}\/\d{1,2}\s+\d{1,2}:\d{2}:\d{2}\s*\|\s*/, "");
     if (expanded || message.length <= LOG_COLLAPSED_MESSAGE_MAX_LENGTH) {
       return message;
@@ -39696,8 +45906,9 @@
   const buildLogLineDOM = (entry) => {
     const line = document.createElement("div");
     line.className = "s1p-debug-console-log-line";
+    line.classList.toggle("s1p-structured-log", Boolean(entry.event));
     const fullMessage = String(entry.message || "");
-    const isExpandable = fullMessage.length > LOG_COLLAPSED_MESSAGE_MAX_LENGTH;
+    const isExpandable = Boolean(entry.event) || fullMessage.length > LOG_COLLAPSED_MESSAGE_MAX_LENGTH;
     const isExpanded = isExpandable && isDebugConsoleLogEntryExpanded(entry);
     line.classList.toggle("is-expanded", isExpanded);
 
@@ -39759,7 +45970,9 @@
   const applyLogFilters = (logs) => {
     return logs.filter((entry) => {
       if (!logFilters[entry.level]) return false;
-      if (logSearchKeyword && !String(entry.message || "").toLowerCase().includes(logSearchKeyword.toLowerCase())) return false;
+      if (s1pLogModuleFilter && entry.module !== s1pLogModuleFilter) return false;
+      if (s1pLogOperationFilter && entry.operationId !== s1pLogOperationFilter && entry.parentOperationId !== s1pLogOperationFilter) return false;
+      if (logSearchKeyword && !JSON.stringify(entry).toLowerCase().includes(logSearchKeyword.toLowerCase())) return false;
       return true;
     });
   };
@@ -39942,6 +46155,60 @@
     if (!logArea || !statusBar) return;
 
     const filtered = applyLogFilters(logBuffer);
+    const moduleSelect = panel.querySelector("[data-s1p-log-module]");
+    const operationSelect = panel.querySelector("[data-s1p-log-operation]");
+    const updateSelect = (select, values, selected, label) => {
+      if (!select) return;
+      const signature = JSON.stringify(values);
+      if (select.dataset.s1pOptions === signature) return;
+      select.dataset.s1pOptions = signature;
+      select.replaceChildren();
+      for (const [value, text] of [["", label], ...values]) {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = text;
+        select.appendChild(option);
+      }
+      select.value = selected;
+    };
+    updateSelect(moduleSelect, [...new Set(logBuffer.map((entry) => entry.module).filter(Boolean))].sort().map((value) => [value, value]), s1pLogModuleFilter, "全部模块");
+    const operations = s1pGetDiagnosticOperationSummaries();
+    updateSelect(operationSelect, operations.slice(-80).reverse().map((item) => [item.operationId, `${new Date(item.startedAt).toLocaleTimeString()} · ${item.message}`]), s1pLogOperationFilter, "全部操作");
+    const summary = panel.querySelector("[data-s1p-log-summary]");
+    const latestOperation = s1pLogOperationFilter ? operations.find((item) => item.operationId === s1pLogOperationFilter)
+      : operations.filter((item) => !s1pLogModuleFilter || item.module === s1pLogModuleFilter).at(-1);
+    const statusLabel = { queued: "等待中", requested: "已请求", awaiting_confirmation: "等待确认", settled: "已结束", retrying: "等待重试", cancelled: "已取消" }[latestOperation?.status];
+    const terminalParts = [];
+    if (latestOperation?.lockTerminalEvent) {
+      terminalParts.push(
+        `锁终态=${getSyncTracePhaseLabel(latestOperation.lockTerminalEvent.replace(/^sync\./, ""))}${latestOperation.lockTerminalReason ? `（${getSyncTraceReasonValueLabel(latestOperation.lockTerminalReason)}）` : ""}`
+      );
+    }
+    if (
+      latestOperation?.terminalEvidence ===
+      "ttl_expiry_observed_without_owner_release_receipt"
+    ) {
+      terminalParts.push("仅观察到 TTL 过期，缺少持有者释放回执");
+    }
+    if (latestOperation?.transactionTerminalEvent) {
+      terminalParts.push(
+        `事务终态=${getSyncTracePhaseLabel(latestOperation.transactionTerminalEvent.replace(/^sync\./, ""))}${latestOperation.transactionTerminalReason ? `（${getSyncTraceReasonValueLabel(latestOperation.transactionTerminalReason)}）` : ""}`
+      );
+    }
+    if (latestOperation?.cleanupTerminalEvent) {
+      terminalParts.push(
+        `收尾终态=${getSyncTracePhaseLabel(latestOperation.cleanupTerminalEvent.replace(/^sync\./, ""))}${latestOperation.cleanupTerminalReason ? `（${getSyncTraceReasonValueLabel(latestOperation.cleanupTerminalReason)}）` : ""}`
+      );
+    }
+    if (!terminalParts.length && latestOperation?.terminalEvent) {
+      terminalParts.push(
+        `终态=${getSyncTracePhaseLabel(latestOperation.terminalEvent.replace(/^sync\./, ""))}${latestOperation.terminalReason ? `（${getSyncTraceReasonValueLabel(latestOperation.terminalReason)}）` : ""}`
+      );
+    }
+    const terminalSummary = terminalParts.join(" · ");
+    if (summary) summary.textContent = latestOperation
+      ? `${latestOperation.message} · ${statusLabel || getSyncTraceStatusLabel(latestOperation.status) || latestOperation.status}${terminalSummary ? ` · ${terminalSummary}` : ""} · 已记录 ${Math.round(latestOperation.elapsedMs / 1000)} 秒`
+      : "关键事件自动保留；打开面板时额外采集控制台输出。";
     const renderLogs = filtered.slice(-LOG_RENDER_MAX);
     const wasAtBottom = logArea.scrollTop + logArea.clientHeight >= logArea.scrollHeight - 10;
 
@@ -39961,7 +46228,8 @@
       filtered.length +
       " 条，渲染 " +
       renderLogs.length +
-      " 条）";
+      " 条）" + (s1pLogLoss.evicted ? ` · 已淘汰 ${s1pLogLoss.evicted} 条` : "") +
+      (s1pLogLoss.persistenceFailures ? " · 本地保存失败，导出包含当前内存记录" : "");
     updateDebugConsoleExpandAllButton(panel);
   };
 
@@ -40998,6 +47266,18 @@
     });
     filterBar.appendChild(searchInput);
 
+    for (const [attribute, label, update] of [
+      ["data-s1p-log-module", "筛选日志模块", (value) => { s1pLogModuleFilter = value; }],
+      ["data-s1p-log-operation", "筛选操作", (value) => { s1pLogOperationFilter = value; }],
+    ]) {
+      const select = document.createElement("select");
+      select.className = "s1p-input";
+      select.setAttribute(attribute, "");
+      select.setAttribute("aria-label", label);
+      select.addEventListener("change", () => { update(select.value); logDirty = true; renderLogPanel(); });
+      filterBar.appendChild(select);
+    }
+
     const btnGroup = document.createElement("div");
     btnGroup.className = "s1p-debug-console-head-actions";
     btnGroup.appendChild(
@@ -41022,8 +47302,17 @@
       })
     );
     toolbar.appendChild(btnGroup);
+    for (const [label, action] of [["导出诊断", "export-diagnostic-log"], ["合并诊断", "merge-diagnostic-logs"], ["详细诊断 10 分钟", "toggle-verbose-diagnostics"]]) {
+      btnGroup.appendChild(createS1pDebugButton({ label, action, kind: "utility" }));
+    }
     toolbar.appendChild(filterBar);
     panel.appendChild(toolbar);
+
+    const summary = document.createElement("div");
+    summary.className = "s1p-debug-panel-note";
+    summary.setAttribute("data-s1p-log-summary", "");
+    summary.setAttribute("aria-live", "polite");
+    panel.appendChild(summary);
 
     const logArea = document.createElement("div");
     logArea.className = "s1p-debug-console-log-area s1p-debug-section";
@@ -41124,6 +47413,10 @@
       expandedLogEntryIds = new Set();
       logExpandAll = false;
       nextLogEntryId = 1;
+      s1pLogEntrySizes.clear();
+      s1pFailedOperationIds.clear();
+      s1pLogLoss = { evicted: 0, truncated: 0, persistenceFailures: 0, collectionFailures: 0 };
+      s1pLogOperationFilter = "";
       logDirty = true;
       try {
         if (window.sessionStorage) {
@@ -41147,11 +47440,51 @@
     }
     if (action === "copy-logs") {
       const filtered = applyLogFilters(logBuffer);
-      const text = filtered
+      const text = `S1 Plus ${SCRIPT_VERSION} · 当前标签页筛选日志 · ${new Date().toISOString()}\n采集损失：${JSON.stringify(s1pLogLoss)}\n` + filtered
         .map((entry) => formatLogEntryForCopy(entry))
         .join("\n");
       copyDebugConsoleText(text);
       showDebugConsoleButtonFeedback(button, `已复制 ${filtered.length} 条`);
+      return;
+    }
+    if (action === "export-diagnostic-log") {
+      s1pDownloadDiagnosticExport(s1pBuildDiagnosticExport());
+      showDebugConsoleButtonFeedback(button, "已导出");
+      return;
+    }
+    if (action === "merge-diagnostic-logs") {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = ".json,application/json";
+      input.multiple = true;
+      input.addEventListener("change", async () => {
+        try {
+          const files = [...input.files];
+          if (!files.length) return;
+          if (files.length > 8 || files.some((file) => file.size > 4 * 1024 * 1024)) throw new Error("每次最多 8 份诊断，每份不超过 4 MB");
+          const bundles = await Promise.all(files.map(async (file) => JSON.parse(await file.text())));
+          s1pDownloadDiagnosticExport(s1pMergeDiagnosticExports(bundles));
+          showDebugConsoleButtonFeedback(button, "已合并导出");
+        } catch (error) { showMessage(`诊断合并失败：${error.message}`, false); }
+      }, { once: true });
+      input.click();
+      return;
+    }
+    if (action === "toggle-verbose-diagnostics") {
+      if (s1pVerboseTimer) clearTimeout(s1pVerboseTimer);
+      s1pVerboseUntil = Date.now() < s1pVerboseUntil ? 0 : Date.now() + 10 * 60 * 1000;
+      button.textContent = s1pVerboseUntil ? "停止详细诊断" : "详细诊断 10 分钟";
+      s1pRecordDiagnosticEvent("diagnostics.capture_changed", { message: s1pVerboseUntil ? "已开启详细诊断，10 分钟后自动停止" : "已停止详细诊断", details: { verboseUntil: s1pVerboseUntil } });
+      if (s1pVerboseUntil) {
+        s1pVerboseTimer = setTimeout(() => {
+          s1pVerboseTimer = null;
+          s1pVerboseUntil = 0;
+          const currentButton = document.querySelector('[data-s1p-debug-action="toggle-verbose-diagnostics"]');
+          if (currentButton) currentButton.textContent = "详细诊断 10 分钟";
+          s1pRecordDiagnosticEvent("diagnostics.capture_expired", { message: "详细诊断时间已到，已恢复关键事件采集" });
+        }, 10 * 60 * 1000);
+        s1pVerboseTimer?.unref?.();
+      }
       return;
     }
     if (action === "refresh-diagnostics") {
@@ -41413,7 +47746,7 @@
     li.addEventListener("mouseenter", openSyncChoiceMenu);
     setCustomTooltip(
       a,
-      "点击或悬停选择全局拉取或全局推送；直接操作会优先中断正在进行的自动同步。"
+      "点击或悬停选择全局拉取或全局推送；已有同步进行时会登记请求，并在完成后再次确认。"
     );
 
     managerLink.insertAdjacentElement("afterend", li);
@@ -41466,8 +47799,12 @@
   const initializeNavbar = () => {
     const settings = getSettings();
     const navUl = document.querySelector("#nv > ul");
+    teardownNavbarCustomOverflow();
     if (!navUl) return;
     captureNativeNavLiTemplates(navUl);
+    const navRoot = navUl.closest("#nv");
+    const headerRoot =
+      document.querySelector("#hd > .wp") || navUl.closest("#hd .wp");
 
     const createManagerLink = () => {
       const li = document.createElement("li");
@@ -41488,9 +47825,15 @@
     if (settings.enableNavCustomization) {
       navUl.textContent = "";
       const usedTemplateIds = new Set();
-      normalizeCustomNavLinks(settings.customNavLinks).forEach((link) => {
+      const normalizedCustomNavLinks = normalizeCustomNavLinks(
+        settings.customNavLinks
+      );
+      const canonicalCustomNavRecords = [];
+      normalizedCustomNavLinks.forEach((link) => {
         const linkName = String(link?.name ?? "").trim();
-        const linkHref = getSafeUrlAttributeValue(link?.href, { allowEmpty: false });
+        const linkHref = getSafeUrlAttributeValue(link?.href, {
+          allowEmpty: false,
+        });
         if (!linkName || !linkHref) return;
 
         const nativeTemplate = resolveNativeNavLiTemplateByHref(linkHref);
@@ -41518,12 +47861,31 @@
           li.appendChild(a);
         }
 
+        li.classList.add(S1P_NAV_CUSTOM_ITEM_CLASS);
         a.href = linkHref;
         a.textContent = linkName;
         a.setAttribute("hidefocus", "true");
         li.classList.toggle("a", window.location.href.includes(linkHref));
         navUl.appendChild(li);
+        canonicalCustomNavRecords.push({
+          item: li,
+          name: linkName,
+          href: linkHref,
+        });
       });
+      navUl.appendChild(createManagerLink());
+      updateNavbarSyncButton();
+      if (canonicalCustomNavRecords.length > 0) {
+        setupNavbarCustomOverflow({
+          navUl,
+          navRoot,
+          headerRoot,
+          customNavRecords: canonicalCustomNavRecords,
+          managerLink: document.getElementById("s1p-nav-link"),
+          searchBar: document.getElementById("scbar"),
+        });
+      }
+      return;
     }
     navUl.appendChild(createManagerLink());
     updateNavbarSyncButton();
@@ -41864,6 +48226,7 @@
       dismiss: ({ reason = "dismissed", immediate = false } = {}) =>
         closeModal({ reason, immediate, invokeDismiss: true }),
     };
+    const shouldCloseOnBackdropClick = createS1pModalBackdropClickGuard(modal);
     confirmBtn.addEventListener("click", () => {
       settled = true;
       try {
@@ -41876,7 +48239,7 @@
     });
     cancelBtn.addEventListener("click", () => closeModal({ reason: "cancel" }));
     modal.addEventListener("click", (e) => {
-      if (e.target === modal) {
+      if (shouldCloseOnBackdropClick(e)) {
         closeModal({ reason: "overlay_click" });
       }
     });
@@ -41885,6 +48248,1076 @@
       surfaceContext,
       contentAnimationMs: 250,
     });
+  };
+
+  const s1pCreateManualSyncIntentCoordinator = (adapters = {}) => {
+    let s1pManualOperationId = "";
+    const s1pTraceManualIntent = (
+      event,
+      status,
+      reason = "",
+      details = {},
+      operationId = s1pManualOperationId
+    ) => {
+      s1pRecordDiagnosticEvent(`manual.${event}`, { module: "sync.manual", operationId: operationId || s1pManualOperationId,
+        status, reason, message: {
+          requested: "用户请求手动同步", queued: "手动请求已排队，等待执行边界",
+          waiting: "手动请求仍在等待", confirmation: "手动请求已就绪，等待用户确认",
+          confirmed: "用户确认执行手动同步", settled: "手动请求结束", suspended: "手动请求随页面离开暂停",
+        }[event] || event,
+        repeatKey: event === "waiting" ? `waiting:${details.locks?.map((lock) => lock.executionId).join(",")}` : "",
+        details: { intent: readIntent(), waitedMs: readIntent() ? Math.max(0, getNow() - readIntent().createdAt) : 0, ...details },
+      });
+    };
+    const getNow = () => {
+      const value =
+        typeof adapters.now === "function" ? adapters.now() : adapters.now;
+      return Number(value) || Date.now();
+    };
+    let pendingManualSyncIntent = null;
+    let pendingManualSyncIntentRequestSequence = 0;
+    let manualRequestSequence = 0;
+    let latestManualRequestSequence = 0;
+    let lifecycleGeneration = 0;
+    let hasBoundLifecycle = false;
+    const readIntent = () => pendingManualSyncIntent;
+    const writeIntent = (intent, requestSequence = null) => {
+      const normalized = normalizeManualSyncIntent(intent);
+      if (!normalized) {
+        return null;
+      }
+      pendingManualSyncIntent = normalized;
+      if (requestSequence !== null) {
+        pendingManualSyncIntentRequestSequence = requestSequence;
+      }
+      s1pScheduleIntentWakeup();
+      return pendingManualSyncIntent;
+    };
+    const deleteIntent = () => {
+      pendingManualSyncIntent = null;
+      pendingManualSyncIntentRequestSequence = 0;
+      s1pClearIntentWakeup();
+      return true;
+    };
+
+    const isCurrentLifecycle = (expectedGeneration) =>
+      expectedGeneration === lifecycleGeneration;
+    const isCurrentManualRequest = (requestSequence, expectedGeneration) =>
+      isCurrentLifecycle(expectedGeneration) &&
+      requestSequence === latestManualRequestSequence;
+
+    const isSyncEnabled = () => {
+      if (typeof adapters.isSyncEnabled === "function") {
+        return adapters.isSyncEnabled() === true;
+      }
+      const settings = getSettings();
+      return Boolean(
+        settings.syncRemoteEnabled === true &&
+          settings.syncRemoteGistId &&
+          settings.syncRemotePat
+      );
+    };
+    const hasActiveExecution = () =>
+      typeof adapters.hasActiveExecution === "function"
+        ? adapters.hasActiveExecution() === true
+        : Boolean(
+            syncExecutionSettlementDepth > 0 ||
+              isManualSyncActionBusy() ||
+              hasAnyActiveSyncLock()
+          );
+    const setIndicatorPending = (intent) => {
+      if (typeof adapters.setIndicatorPending === "function") {
+        return adapters.setIndicatorPending(intent);
+      }
+      return setAutoSyncIndicatorPendingState(
+        AUTO_SYNC_INDICATOR_SOURCE_MANUAL_SYNC,
+        "manual_override_waiting_execution",
+        { operation: intent.direction }
+      );
+    };
+    const refreshDisplay = (reason = "manual_sync_intent_changed") => {
+      if (typeof adapters.refreshDisplay === "function") {
+        return adapters.refreshDisplay(reason);
+      }
+      return refreshAutoSyncIndicatorRuntimeDisplay(reason);
+    };
+    const resumeAutomaticScheduling = (
+      reason = "manual_sync_intent_settled"
+    ) => {
+      if (typeof adapters.resumeAutomaticScheduling === "function") {
+        return adapters.resumeAutomaticScheduling(reason);
+      }
+      return recoverPendingAutoSyncIfNeeded();
+    };
+    const showMessageForDelayedIntent = (direction) => {
+      const showMessageFn =
+        typeof adapters.showMessage === "function"
+          ? adapters.showMessage
+          : showMessage;
+      showMessageFn(
+        direction === AUTO_SYNC_INDICATOR_OPERATION_PUSH
+          ? "当前同步正在完成，已登记手动推送；完成后将再次确认。"
+          : "当前同步正在完成，已登记手动拉取；完成后将再次确认。",
+        null
+      );
+    };
+    const onQueued = () => {
+      if (typeof adapters.onQueued === "function") {
+        return adapters.onQueued();
+      }
+      // 只接管本标签页尚未启动的自动调度，不改变其它 context 的
+      // execution lock、heartbeat、Pending Dirty 或 foreground intent。
+      return clearLocalAutoSyncSchedulingForManualOverride();
+    };
+    const executeDirection =
+      typeof adapters.execute === "function"
+        ? adapters.execute
+        : (direction, _intent, options = {}) => {
+            const executionOptions = {
+              ...options,
+              operationId: options.operationId || s1pManualOperationId,
+              suppressBusyMessage: true,
+            };
+            return direction === AUTO_SYNC_INDICATOR_OPERATION_PULL
+              ? handleForcePull(executionOptions)
+              : handleForcePush(executionOptions);
+          };
+
+    const showConfirmation =
+      typeof adapters.showConfirmation === "function"
+        ? adapters.showConfirmation
+        : (intent, actions) => {
+            const isPush =
+              intent.direction === AUTO_SYNC_INDICATOR_OPERATION_PUSH;
+            const directionLabel = isPush ? "推送" : "拉取";
+            return createAdvancedConfirmationModal(
+              isPush ? "推送本地数据？" : "拉取云端数据？",
+              isPush
+                ? "是否将此刻的本地数据推送到云端？"
+                : "是否现在拉取最新云端数据？",
+              [
+                {
+                  text: "取消",
+                  className: "s1p-cancel",
+                  action: actions.onCancel,
+                },
+                {
+                  text: directionLabel,
+                  className: "s1p-confirm",
+                  action: actions.onConfirm,
+                },
+              ],
+              {
+                modalClassName: "s1p-sync-modal",
+                onDismiss: actions.onDismiss,
+              }
+            );
+          };
+
+    const getIntentKey = (intent) =>
+      intent ? String(intent.direction) + ":" + String(intent.createdAt) : "";
+    const isSameIntent = (left, right) =>
+      Boolean(left && right && getIntentKey(left) === getIntentKey(right));
+    const isCurrentIntentAuthority = (intent, requestSequence = null) => {
+      const current = readIntent();
+      return (
+        isSameIntent(current, intent) &&
+        (requestSequence === null ||
+          requestSequence === pendingManualSyncIntentRequestSequence)
+      );
+    };
+    const isExecutionBoundaryRaceResult = (result) =>
+      result?.reason === "force_sync_busy" ||
+      result?.reason === "manual_sync_busy" ||
+      result?.reason === "sync_lock_unavailable";
+
+    let bound = false;
+    let operationPromise = null;
+    let activeConfirmationKey = "";
+    let activeConfirmationRequestSequence = 0;
+    let activeConfirmationModal = null;
+    let confirmationEpoch = 0;
+    let suppressModalDismiss = false;
+    const listenerIds = [];
+    const domListeners = [];
+
+    let s1pIntentWakeupTimer = null;
+    let s1pIntentSuspended = false;
+    const s1pClearIntentWakeup = () => {
+      if (s1pIntentWakeupTimer !== null) {
+        (adapters.clearTimeout || clearTimeout)(s1pIntentWakeupTimer);
+        s1pIntentWakeupTimer = null;
+      }
+    };
+    const s1pScheduleIntentWakeup = () => {
+      s1pClearIntentWakeup();
+      const intent = readIntent();
+      if (!intent || s1pIntentSuspended) return;
+      const scheduledLifecycleGeneration = lifecycleGeneration;
+      const now = getNow();
+      const staleIn = intent.createdAt + MANUAL_SYNC_INTENT_STALE_MS - now + 1;
+      const lock = typeof adapters.getActiveLock === "function"
+        ? adapters.getActiveLock(now)
+        : getActiveSyncLockSnapshot(now);
+      // TTL expiry does not mutate GM storage. A bounded checkpoint also
+      // recovers missed release notifications and page-local execution flags.
+      const delay = intent.phase === MANUAL_SYNC_INTENT_PHASE_QUEUED
+        ? Math.min(staleIn, lock ? Math.max(50, lock.expiresAt - now + 1) : 1000, 5000)
+        : staleIn;
+      s1pIntentWakeupTimer = (adapters.setTimeout || setTimeout)(() => {
+        s1pIntentWakeupTimer = null;
+        if (!isCurrentLifecycle(scheduledLifecycleGeneration)) {
+          return;
+        }
+        return reconcile(
+          "manual_sync_intent_deadline",
+          scheduledLifecycleGeneration
+        ).catch(() => {
+          if (isCurrentLifecycle(scheduledLifecycleGeneration)) {
+            s1pScheduleIntentWakeup();
+          }
+        });
+      }, Math.max(50, delay));
+      s1pIntentWakeupTimer?.unref?.();
+    };
+
+    const enqueue = (task) => {
+      const previous = operationPromise || Promise.resolve();
+      const next = previous.catch(() => {}).then(task);
+      const settled = next.finally(() => {
+        if (operationPromise === settled) {
+          operationPromise = null;
+        }
+      });
+      operationPromise = settled;
+      return settled;
+    };
+
+    const closeActiveConfirmation = ({
+      dismiss = true,
+      reason = "replaced",
+    } = {}) => {
+      const modal = activeConfirmationModal;
+      activeConfirmationModal = null;
+      activeConfirmationKey = "";
+      activeConfirmationRequestSequence = 0;
+      confirmationEpoch += 1;
+      if (
+        dismiss &&
+        modal?.s1p_api &&
+        typeof modal.s1p_api.dismiss === "function"
+      ) {
+        suppressModalDismiss = true;
+        try {
+          modal.s1p_api.dismiss({
+            reason,
+            immediate: true,
+            invokeDismiss: false,
+          });
+        } catch (error) {
+          console.warn("S1 Plus: 关闭手动同步确认框失败。", error);
+        } finally {
+          suppressModalDismiss = false;
+        }
+      }
+    };
+
+    const persistWaitingIntent = (
+      direction,
+      createdAt = getNow(),
+      requestSequence = null
+    ) =>
+      writeIntent({
+        version: 1,
+        direction,
+        createdAt,
+        phase: MANUAL_SYNC_INTENT_PHASE_QUEUED,
+      }, requestSequence);
+
+    const setWaitingForExecutionBoundary = (
+      intent,
+      requestSequence = pendingManualSyncIntentRequestSequence
+    ) => {
+      const normalized = normalizeManualSyncIntent(intent);
+      if (!normalized) {
+        return null;
+      }
+      if (
+        requestSequence !== null &&
+        requestSequence !== pendingManualSyncIntentRequestSequence
+      ) {
+        return null;
+      }
+      const waiting =
+        normalized.phase === MANUAL_SYNC_INTENT_PHASE_QUEUED
+          ? normalized
+          : writeIntent({
+              ...normalized,
+              phase: MANUAL_SYNC_INTENT_PHASE_QUEUED,
+            }, requestSequence);
+      if (!waiting) {
+        return null;
+      }
+      setIndicatorPending(waiting);
+      refreshDisplay("manual_sync_intent_waiting_for_execution_boundary");
+      return waiting;
+    };
+
+    const settleIntent = (
+      intent,
+      reason = "manual_sync_intent_settled",
+      result = null,
+      requestSequence = null,
+      operationId = s1pManualOperationId
+    ) => {
+      const current = readIntent();
+      if (!isCurrentIntentAuthority(current, requestSequence)) {
+        return false;
+      }
+      deleteIntent();
+      s1pTraceManualIntent("settled", result?.status || (/cancel|stale|disabled/.test(reason) ? "cancelled" : "settled"), reason,
+        { waitedMs: getNow() - intent.createdAt }, operationId);
+      if (
+        !activeConfirmationKey ||
+        (activeConfirmationKey === getIntentKey(intent) &&
+          (requestSequence === null ||
+            activeConfirmationRequestSequence === requestSequence))
+      ) {
+        closeActiveConfirmation({ reason });
+      }
+      refreshDisplay(reason);
+      try {
+        resumeAutomaticScheduling(reason);
+      } catch (error) {
+        // Unrelated automatic recovery can retry from its own lifecycle hooks.
+      }
+      return true;
+    };
+
+    const summarizeIntent = (intent, status = "queued", reason = "") => ({
+      status,
+      phase: intent?.phase || "",
+      direction: intent?.direction || "",
+      ...(reason ? { reason } : {}),
+    });
+
+    const cancelPending = (
+      requestedIntent = null,
+      requestedEpoch = null,
+      requestedLifecycleGeneration = lifecycleGeneration,
+      requestedRequestSequence = null
+    ) =>
+      enqueue(async () => {
+        if (
+          requestedLifecycleGeneration !== lifecycleGeneration ||
+          requestedEpoch !== null &&
+          requestedEpoch !== confirmationEpoch ||
+          requestedRequestSequence !== null &&
+          requestedRequestSequence !== latestManualRequestSequence
+        ) {
+          return { status: "skipped", reason: "stale_manual_intent" };
+        }
+        const current = readIntent();
+        const target = requestedIntent || current;
+        if (!isCurrentIntentAuthority(current, requestedRequestSequence) ||
+            !isSameIntent(current, target)) {
+          return { status: "skipped", reason: "stale_manual_intent" };
+        }
+        const cancelled = settleIntent(
+          current,
+          "manual_sync_intent_cancelled",
+          null,
+          requestedRequestSequence
+        );
+        return cancelled
+          ? { status: "cancelled", direction: current.direction }
+          : { status: "skipped", reason: "stale_manual_intent" };
+      });
+
+    const confirmPending = (
+      requestedIntent,
+      requestedEpoch,
+      requestedLifecycleGeneration = lifecycleGeneration,
+      requestedRequestSequence = null,
+      requestedOperationId = ""
+    ) => {
+      const preparation = enqueue(async () => {
+        if (
+          requestedLifecycleGeneration !== lifecycleGeneration ||
+          requestedEpoch !== confirmationEpoch ||
+          requestedRequestSequence !== null &&
+          requestedRequestSequence !== latestManualRequestSequence ||
+          !activeConfirmationKey ||
+          activeConfirmationKey !== getIntentKey(requestedIntent) ||
+          requestedRequestSequence !== null &&
+          activeConfirmationRequestSequence !== requestedRequestSequence
+        ) {
+          return {
+            kind: "result",
+            result: { status: "skipped", reason: "stale_manual_intent" },
+          };
+        }
+        const current = readIntent();
+        if (
+          !isCurrentIntentAuthority(current, requestedRequestSequence) ||
+          !isSameIntent(current, requestedIntent) ||
+          current.phase !== MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION
+        ) {
+          return {
+            kind: "result",
+            result: { status: "skipped", reason: "stale_manual_intent" },
+          };
+        }
+        if (!isSyncEnabled()) {
+          settleIntent(
+            current,
+            "manual_sync_disabled",
+            null,
+            requestedRequestSequence
+          );
+          return {
+            kind: "result",
+            result: { status: "skipped", reason: "sync_disabled" },
+          };
+        }
+        if (hasActiveExecution()) {
+          const waiting = setWaitingForExecutionBoundary(
+            current,
+            requestedRequestSequence
+          );
+          closeActiveConfirmation({ reason: "execution_boundary_busy" });
+          return {
+            kind: "result",
+            result: waiting
+              ? summarizeIntent(waiting, "queued", "execution_boundary_busy")
+              : { status: "failure", reason: "manual_intent_storage_failed" },
+          };
+        }
+
+        closeActiveConfirmation({ dismiss: false, reason: "confirmed" });
+        s1pTraceManualIntent(
+          "confirmed",
+          "running",
+          "",
+          {},
+          requestedOperationId || s1pManualOperationId
+        );
+        return {
+          kind: "execute",
+          intent: current,
+          lifecycleGeneration: requestedLifecycleGeneration,
+          requestSequence: requestedRequestSequence,
+          confirmationIdentity: {
+            epoch: requestedEpoch,
+            postCloseEpoch: confirmationEpoch,
+            key: getIntentKey(current),
+            requestSequence: requestedRequestSequence,
+          },
+          operationId: requestedOperationId || s1pManualOperationId,
+        };
+      });
+
+      return preparation.then(async (prepared) => {
+        if (prepared?.kind !== "execute") {
+          return prepared?.result || {
+            status: "skipped",
+            reason: "stale_manual_intent",
+          };
+        }
+
+        const latestBeforeExecute = readIntent();
+        const executionStillAuthorized = Boolean(
+          prepared.lifecycleGeneration === lifecycleGeneration &&
+            prepared.requestSequence !== null &&
+            prepared.requestSequence === latestManualRequestSequence &&
+            prepared.requestSequence === pendingManualSyncIntentRequestSequence &&
+            confirmationEpoch ===
+              prepared.confirmationIdentity?.postCloseEpoch &&
+            prepared.confirmationIdentity?.key === getIntentKey(prepared.intent) &&
+            prepared.confirmationIdentity?.requestSequence ===
+              prepared.requestSequence &&
+            isSameIntent(latestBeforeExecute, prepared.intent)
+        );
+        if (!executionStillAuthorized) {
+          s1pRecordDiagnosticEvent("manual.confirmation_execution_ignored", {
+            module: "sync.manual",
+            operationId: prepared.operationId,
+            status: "ignored",
+            reason: "stale_manual_intent",
+            message: "执行前发现手动请求或生命周期已过期，未调用同步执行器",
+            details: {
+              requestSequence: prepared.requestSequence,
+              retainedRequestSequence: latestManualRequestSequence,
+              retainedDirection: latestBeforeExecute?.direction || "",
+              confirmationEpoch: prepared.confirmationIdentity?.epoch || 0,
+            },
+          });
+          return { status: "skipped", reason: "stale_manual_intent" };
+        }
+
+        let result;
+        try {
+          result = await executeDirection(
+            prepared.intent.direction,
+            prepared.intent,
+            { operationId: prepared.operationId }
+          );
+        } catch (error) {
+          result = {
+            status: "failure",
+            reason: "manual_execution_error",
+            error: error?.message || String(error),
+          };
+        }
+
+        return enqueue(async () => {
+          const latest = readIntent();
+          if (
+            prepared.lifecycleGeneration !== lifecycleGeneration ||
+            prepared.requestSequence !== null &&
+            (prepared.requestSequence !== latestManualRequestSequence ||
+              prepared.requestSequence !==
+                pendingManualSyncIntentRequestSequence) ||
+            !isSameIntent(latest, prepared.intent)
+          ) {
+            s1pRecordDiagnosticEvent("manual.confirmation_result_ignored", {
+              module: "sync.manual",
+              operationId: prepared.operationId,
+              status: "ignored",
+              reason: "stale_manual_intent",
+              message: "旧手动同步结果已忽略，新请求或新生命周期仍保留",
+              details: {
+                requestSequence: prepared.requestSequence,
+                retainedRequestSequence: latestManualRequestSequence,
+                retainedDirection: latest?.direction || "",
+                resultStatus: result?.status || "",
+                resultReason: result?.reason || "",
+              },
+            });
+            return result;
+          }
+          if (isExecutionBoundaryRaceResult(result)) {
+            const waiting = setWaitingForExecutionBoundary(
+              latest,
+              prepared.requestSequence
+            );
+            if (waiting) {
+              showMessageForDelayedIntent(prepared.intent.direction);
+            }
+            return waiting
+              ? summarizeIntent(waiting, "queued", "execution_boundary_busy")
+              : result;
+          }
+          settleIntent(
+            prepared.intent,
+            "manual_sync_intent_settled",
+            result,
+            prepared.requestSequence,
+            prepared.operationId
+          );
+          return result;
+        });
+      });
+    };
+
+    const presentConfirmation = (
+      intent,
+      expectedLifecycleGeneration = lifecycleGeneration,
+      expectedRequestSequence = null,
+      expectedOperationId = s1pManualOperationId
+    ) => {
+      if (expectedLifecycleGeneration !== lifecycleGeneration) {
+        return { status: "skipped", reason: "stale_manual_intent" };
+      }
+      const current = readIntent();
+      if (
+        !isCurrentIntentAuthority(current, expectedRequestSequence) ||
+        !isSameIntent(current, intent) ||
+        current.phase !== MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION
+      ) {
+        return { status: "skipped", reason: "stale_manual_intent" };
+      }
+      const key = getIntentKey(current);
+      const requestSequence = pendingManualSyncIntentRequestSequence;
+      if (
+        activeConfirmationKey === key &&
+        activeConfirmationRequestSequence === requestSequence &&
+        activeConfirmationModal
+      ) {
+        return summarizeIntent(current, "awaiting_confirmation");
+      }
+
+      closeActiveConfirmation({ reason: "replaced" });
+      const epoch = confirmationEpoch;
+      const operationId = expectedOperationId || s1pManualOperationId;
+      activeConfirmationKey = key;
+      activeConfirmationRequestSequence = requestSequence;
+      s1pTraceManualIntent(
+        "confirmation",
+        "awaiting_confirmation",
+        "",
+        {},
+        operationId
+      );
+      try {
+        activeConfirmationModal = showConfirmation(current, {
+          onConfirm: () =>
+            confirmPending(
+              current,
+              epoch,
+              expectedLifecycleGeneration,
+              requestSequence,
+              operationId
+            ),
+          onCancel: () =>
+            cancelPending(
+              current,
+              epoch,
+              expectedLifecycleGeneration,
+              requestSequence
+            ),
+          onDismiss: () => {
+            if (suppressModalDismiss) {
+              return { status: "skipped", reason: "internal_dismiss" };
+            }
+            return cancelPending(
+              current,
+              epoch,
+              expectedLifecycleGeneration,
+              requestSequence
+            );
+          },
+        });
+      } catch (error) {
+        activeConfirmationModal = null;
+        activeConfirmationKey = "";
+        activeConfirmationRequestSequence = 0;
+        const waiting = writeIntent({
+          ...current,
+          phase: MANUAL_SYNC_INTENT_PHASE_QUEUED,
+        });
+        if (waiting) {
+          setIndicatorPending(waiting);
+        }
+        refreshDisplay("manual_sync_intent_confirmation_unavailable");
+        return { status: "failure", reason: "confirmation_unavailable" };
+      }
+      if (!activeConfirmationModal) {
+        activeConfirmationKey = "";
+        activeConfirmationRequestSequence = 0;
+        const waiting = writeIntent({
+          ...current,
+          phase: MANUAL_SYNC_INTENT_PHASE_QUEUED,
+        });
+        if (waiting) {
+          setIndicatorPending(waiting);
+        }
+        refreshDisplay("manual_sync_intent_confirmation_unavailable");
+        return { status: "failure", reason: "confirmation_unavailable" };
+      }
+      return summarizeIntent(current, "awaiting_confirmation");
+    };
+
+    const reconcileOnce = async (
+      reason = "manual_sync_intent_reconcile",
+      expectedLifecycleGeneration = lifecycleGeneration,
+      expectedRequestSequence = null
+    ) => {
+      if (
+        expectedLifecycleGeneration !== lifecycleGeneration ||
+        expectedRequestSequence !== null &&
+        expectedRequestSequence !== latestManualRequestSequence
+      ) {
+        return { status: "skipped", reason: "stale_manual_intent" };
+      }
+      if (s1pIntentSuspended) {
+        return { status: "deferred", reason: "page_hidden_by_navigation" };
+      }
+      if (syncExecutionSettlementDepth > 0) {
+        manualSyncIntentBoundaryDeferred = true;
+        return { status: "deferred", reason: "running_sync_settlement" };
+      }
+      let intent = readIntent();
+      if (!intent) {
+        closeActiveConfirmation({ reason: "intent_missing" });
+        return { status: "idle", reason: "no_manual_intent" };
+      }
+      if (!isSyncEnabled()) {
+        settleIntent(intent, "manual_sync_disabled", null, expectedRequestSequence);
+        return { status: "cancelled", reason: "sync_disabled" };
+      }
+      if (getNow() - intent.createdAt > MANUAL_SYNC_INTENT_STALE_MS) {
+        settleIntent(
+          intent,
+          "manual_sync_intent_stale",
+          null,
+          expectedRequestSequence
+        );
+        return { status: "cancelled", reason: "stale_manual_intent" };
+      }
+
+      if (hasActiveExecution()) {
+        s1pObserveSyncLocks(getNow());
+        s1pTraceManualIntent("waiting", "queued", "execution_boundary_busy", {
+          locks: s1pReadSyncLockEvidence(getNow()), settlementDepth: syncExecutionSettlementDepth,
+          manualBusy: isManualSyncActionBusy(),
+        });
+        if (intent.phase !== MANUAL_SYNC_INTENT_PHASE_QUEUED) {
+          intent = setWaitingForExecutionBoundary(intent, expectedRequestSequence);
+        }
+        closeActiveConfirmation({ reason: "execution_boundary_busy" });
+        if (!intent) {
+          return { status: "failure", reason: "manual_intent_storage_failed" };
+        }
+        return summarizeIntent(intent, "queued");
+      }
+
+      if (intent.phase === MANUAL_SYNC_INTENT_PHASE_QUEUED) {
+        intent = writeIntent({
+          ...intent,
+          phase: MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION,
+        });
+        if (!intent) {
+          return { status: "failure", reason: "manual_intent_storage_failed" };
+        }
+        refreshDisplay("manual_sync_intent_" + reason);
+      }
+      if (intent.phase === MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION) {
+        return presentConfirmation(
+          intent,
+          expectedLifecycleGeneration,
+          expectedRequestSequence
+        );
+      }
+      return { status: "skipped", reason: "unsupported_manual_intent_phase" };
+    };
+
+    const reconcile = (
+      reason = "manual_sync_intent_reconcile",
+      expectedLifecycleGeneration = lifecycleGeneration,
+      expectedRequestSequence = null
+    ) => {
+      const generation = expectedLifecycleGeneration;
+      const next = enqueue(() => {
+        if (
+          generation !== lifecycleGeneration ||
+          expectedRequestSequence !== null &&
+          expectedRequestSequence !== latestManualRequestSequence
+        ) {
+          return { status: "skipped", reason: "stale_manual_intent" };
+        }
+        return reconcileOnce(
+          reason,
+          generation,
+          expectedRequestSequence
+        );
+      });
+      return next.finally(() => {
+        if (isCurrentLifecycle(generation)) {
+          s1pScheduleIntentWakeup();
+        }
+      });
+    };
+
+    const request = async (direction, options = {}) => {
+      const normalizedDirection =
+        direction === AUTO_SYNC_INDICATOR_OPERATION_PULL
+          ? AUTO_SYNC_INDICATOR_OPERATION_PULL
+          : direction === AUTO_SYNC_INDICATOR_OPERATION_PUSH
+            ? AUTO_SYNC_INDICATOR_OPERATION_PUSH
+            : "";
+      if (!normalizedDirection) {
+        return {
+          status: "skipped",
+          reason: "unsupported_manual_direction",
+        };
+      }
+      const requestSequence = ++manualRequestSequence;
+      latestManualRequestSequence = requestSequence;
+      const requestLifecycleGeneration = lifecycleGeneration;
+      const isCurrentRequest = () =>
+        isCurrentManualRequest(requestSequence, requestLifecycleGeneration);
+      const requestOperationId = s1pNewDiagnosticOperation("manual");
+      s1pManualOperationId = requestOperationId;
+      if (readIntent()) s1pTraceManualIntent("replaced", "superseded", "new_manual_request", { nextDirection: normalizedDirection }, requestOperationId);
+      s1pTraceManualIntent("requested", "requested", "navbar_or_manual_action", { direction: normalizedDirection }, requestOperationId);
+      if (!isSyncEnabled()) {
+        const current = readIntent();
+        if (current) {
+          settleIntent(current, "manual_sync_disabled", null, null, requestOperationId);
+        }
+        return { status: "skipped", reason: "sync_disabled" };
+      }
+
+      let current = readIntent();
+      if (
+        current &&
+        getNow() - current.createdAt > MANUAL_SYNC_INTENT_STALE_MS
+      ) {
+        settleIntent(current, "manual_sync_intent_stale", null, null, requestOperationId);
+        current = null;
+      }
+
+      if (!hasActiveExecution() && !current) {
+        const result = await executeDirection(normalizedDirection, null, {
+          ...options,
+          operationId: requestOperationId,
+        });
+        if (!isCurrentRequest()) {
+          return result;
+        }
+        if (!isExecutionBoundaryRaceResult(result)) {
+          return result;
+        }
+        return enqueue(async () => {
+          if (!isCurrentRequest()) {
+            return { status: "skipped", reason: "stale_manual_intent" };
+          }
+          const pending = persistWaitingIntent(
+            normalizedDirection,
+            getNow(),
+            requestSequence
+          );
+          if (!pending) {
+            return result;
+          }
+          try {
+            onQueued();
+          } catch (error) {
+            // Local scheduler cleanup is best effort.
+          }
+          setIndicatorPending(pending);
+          s1pTraceManualIntent(
+            "queued",
+            "queued",
+            "execution_race",
+            {},
+            requestOperationId
+          );
+          refreshDisplay("manual_sync_intent_execution_race");
+          showMessageForDelayedIntent(normalizedDirection);
+          const reconciled = await reconcileOnce(
+            "manual_sync_intent_execution_race",
+            requestLifecycleGeneration,
+            requestSequence
+          );
+          return reconciled.status === "awaiting_confirmation"
+            ? summarizeIntent(reconciled, "awaiting_confirmation")
+            : summarizeIntent(pending, "queued", "execution_boundary_busy");
+        });
+      }
+
+      return enqueue(async () => {
+        if (!isCurrentRequest()) {
+          return { status: "skipped", reason: "stale_manual_intent" };
+        }
+        const pending = persistWaitingIntent(
+          normalizedDirection,
+          getNow(),
+          requestSequence
+        );
+        if (!pending) {
+          return {
+            status: "failure",
+            reason: "manual_intent_storage_failed",
+          };
+        }
+        const active = hasActiveExecution();
+        if (active) {
+          s1pTraceManualIntent(
+            "queued",
+            "queued",
+            "execution_boundary_busy",
+            {},
+            requestOperationId
+          );
+          try {
+            onQueued();
+          } catch (error) {
+            // Local scheduler cleanup is best effort.
+          }
+          setIndicatorPending(pending);
+          refreshDisplay("manual_sync_intent_queued");
+          showMessageForDelayedIntent(normalizedDirection);
+        } else {
+          refreshDisplay("manual_sync_intent_replaced");
+        }
+        const reconciled = await reconcileOnce(
+          active
+            ? "manual_sync_intent_queued"
+            : "manual_sync_intent_replaced",
+          requestLifecycleGeneration,
+          requestSequence
+        );
+        return reconciled.status === "awaiting_confirmation"
+          ? summarizeIntent(reconciled, "awaiting_confirmation")
+          : summarizeIntent(pending, "queued");
+      });
+    };
+
+    const handleLifecycle = (eventName = "") => {
+      const phase = String(eventName || "").trim();
+      if (phase === "pagehide" || phase === "beforeunload") {
+        if (readIntent()) s1pTraceManualIntent("suspended", "queued", phase);
+        if (phase === "pagehide") {
+          s1pIntentSuspended = true;
+          s1pClearIntentWakeup();
+        }
+        closeActiveConfirmation({ reason: phase });
+        return {
+          status: "preserved",
+          reason: "page_local_pending_intent",
+          event: phase,
+        };
+      }
+      if (phase === "visible" || phase === "pageshow" || phase === "focus") {
+        s1pIntentSuspended = false;
+        return reconcile("manual_sync_intent_" + phase);
+      }
+      return { status: "skipped", reason: "unsupported_lifecycle_event" };
+    };
+
+    const handleStorageChange = (key) => {
+      if (!bound) {
+        return;
+      }
+      return reconcile("manual_sync_execution_boundary:" + key);
+    };
+
+    const bind = () => {
+      if (bound) {
+        return { status: "skipped", reason: "already_bound" };
+      }
+      if (hasBoundLifecycle) {
+        lifecycleGeneration += 1;
+      }
+      hasBoundLifecycle = true;
+      bound = true;
+      s1pIntentSuspended = false;
+      if (typeof GM_addValueChangeListener === "function") {
+        [
+          GLOBAL_SYNC_LOCK_KEY,
+          MANUAL_SYNC_LOCK_KEY,
+          BACKGROUND_SYNC_LOCK_KEY,
+          STARTUP_SYNC_LOCK_KEY,
+          FOREGROUND_FOLLOWUP_SYNC_LOCK_KEY,
+          "s1p_settings",
+        ].forEach((key) => {
+          try {
+            const listenerId = GM_addValueChangeListener(key, () => {
+              void handleStorageChange(key);
+            });
+            listenerIds.push(listenerId);
+          } catch (error) {
+            // The next focus/visibility checkpoint can recover a missed event.
+          }
+        });
+      }
+      const handlePageHide = () => handleLifecycle("pagehide");
+      const handleBeforeUnload = () => handleLifecycle("beforeunload");
+      const handlePageShow = () => void handleLifecycle("pageshow");
+      const handleFocus = () => void handleLifecycle("focus");
+      const handleVisibilityChange = () =>
+        void handleLifecycle(
+          document.visibilityState === "visible" ? "visible" : "hidden"
+        );
+      if (typeof window?.addEventListener === "function") {
+        window.addEventListener("pagehide", handlePageHide);
+        window.addEventListener("beforeunload", handleBeforeUnload);
+        window.addEventListener("pageshow", handlePageShow);
+        window.addEventListener("focus", handleFocus);
+        domListeners.push(
+          ["window", "pagehide", handlePageHide],
+          ["window", "beforeunload", handleBeforeUnload],
+          ["window", "pageshow", handlePageShow],
+          ["window", "focus", handleFocus]
+        );
+      }
+      if (typeof document?.addEventListener === "function") {
+        document.addEventListener("visibilitychange", handleVisibilityChange);
+        domListeners.push(
+          ["document", "visibilitychange", handleVisibilityChange]
+        );
+      }
+      void reconcile("manual_sync_intent_bind");
+      return { status: "bound" };
+    };
+
+    const unbind = () => {
+      const wasBound = bound;
+      const hadLocalState = Boolean(
+        pendingManualSyncIntent || activeConfirmationKey || activeConfirmationModal
+      );
+      lifecycleGeneration += 1;
+      bound = false;
+      closeActiveConfirmation({ reason: "unbind" });
+      deleteIntent();
+      if (wasBound || hadLocalState) {
+        refreshDisplay("manual_sync_intent_unbound");
+      }
+      if (!wasBound) {
+        return { status: "skipped", reason: "already_unbound" };
+      }
+      if (typeof GM_removeValueChangeListener === "function") {
+        listenerIds.splice(0).forEach((listenerId) => {
+          if (listenerId !== null && listenerId !== undefined) {
+            GM_removeValueChangeListener(listenerId);
+          }
+        });
+      } else {
+        listenerIds.length = 0;
+      }
+      domListeners.splice(0).forEach(([target, eventName, listener]) => {
+        const targetObject = target === "document" ? document : window;
+        targetObject?.removeEventListener?.(eventName, listener);
+      });
+      return { status: "unbound" };
+    };
+
+    const isPriorityGateActive = () => {
+      const intent = readIntent();
+      return Boolean(
+        intent &&
+          isSyncEnabled() &&
+          getNow() - intent.createdAt <= MANUAL_SYNC_INTENT_STALE_MS &&
+          [
+            MANUAL_SYNC_INTENT_PHASE_QUEUED,
+            MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION,
+          ].includes(intent.phase)
+      );
+    };
+
+    return Object.freeze({
+      bind,
+      unbind,
+      request,
+      reconcile,
+      handleLifecycle,
+      cancel: cancelPending,
+      readIntent,
+      isPriorityGateActive,
+    });
+  };
+
+  const getDefaultManualSyncIntentCoordinator = () => {
+    if (!defaultManualSyncIntentCoordinator) {
+      defaultManualSyncIntentCoordinator = s1pCreateManualSyncIntentCoordinator({
+        showMessage,
+      });
+      manualSyncPriorityGateEvaluator = () =>
+        defaultManualSyncIntentCoordinator.isPriorityGateActive();
+      manualSyncIntentBoundaryHandler = ({ reason = "" } = {}) => {
+        const wasDeferred = manualSyncIntentBoundaryDeferred;
+        manualSyncIntentBoundaryDeferred = false;
+        return defaultManualSyncIntentCoordinator.reconcile(
+          reason ||
+            (wasDeferred
+              ? "manual_sync_intent_deferred_boundary"
+              : "manual_sync_intent_boundary")
+        );
+      };
+    }
+    return defaultManualSyncIntentCoordinator;
   };
 
   /**
@@ -42001,8 +49434,11 @@
       });
     };
     modal.s1p_api = {
-      dismiss: ({ reason = "dismissed", immediate = false } = {}) =>
-        closeModal({ reason, immediate, invokeDismiss: true }),
+      dismiss: ({
+        reason = "dismissed",
+        immediate = false,
+        invokeDismiss = true,
+      } = {}) => closeModal({ reason, immediate, invokeDismiss }),
     };
 
     // Auto focus and select slightly delayed to ensure DOM is ready and transition doesn't interfere
@@ -42040,8 +49476,9 @@
       }
     });
     cancelBtn.addEventListener("click", () => closeModal({ reason: "cancel" }));
+    const shouldCloseOnBackdropClick = createS1pModalBackdropClickGuard(modal);
     modal.addEventListener("click", (e) => {
-      if (e.target === modal) {
+      if (shouldCloseOnBackdropClick(e)) {
         closeModal({ reason: "overlay_click" });
       }
     });
@@ -42911,8 +50348,9 @@
     modal
       .querySelector(".s1p-cancel-btn")
       .addEventListener("click", closeTokenAsCancel);
+    const shouldCloseOnBackdropClick = createS1pModalBackdropClickGuard(modal);
     modal.addEventListener("click", (e) => {
-      if (e.target === modal) {
+      if (shouldCloseOnBackdropClick(e)) {
         closeTokenAsCancel();
       }
     });
@@ -43162,7 +50600,7 @@
             <div class="s1p-notice-icon"></div>
             <div class="s1p-notice-content">
               <a href="https://silver-s1plus.netlify.app/" target="_blank" rel="noopener noreferrer">点击此处查看设置教程</a>
-              <p>Token只会保存在你的浏览器本地，不会上传到任何地方。</p>
+              <p>Token 只保存在浏览器本地，不会写入 Gist 同步数据；脚本仅在访问 GitHub API 时将其作为鉴权凭据发送。</p>
             </div>
           </div>
           <p class="s1p-setting-desc s1p-setting-desc-save-hint">以上同步配置修改后，需点击“保存设置”才会生效。</p>
@@ -43243,6 +50681,7 @@
         </div>`;
 
     const modalContent = modal.querySelector(".s1p-modal-content");
+    const shouldCloseOnBackdropClick = createS1pModalBackdropClickGuard(modal);
     const showSettingsMessage = (message, isSuccess, options = {}) => {
       showMessage(message, isSuccess, { ...options, container: modalContent });
     };
@@ -44102,7 +51541,7 @@
       ) {
         const date = new Date(expiryTimestamp);
         const dateStr = date.toLocaleDateString("zh-CN");
-        const daysLeft = Math.ceil((expiryTimestamp - Date.now()) / (1000 * 60 * 60 * 24));
+        const daysLeft = getS1pTokenExpiryDaysLeft(expiryTimestamp);
         const color = daysLeft <= 3 ? "var(--s1p-red)" : "var(--s1p-success-text)";
 
         infoContainer.appendChild(document.createTextNode("过期时间："));
@@ -44970,8 +52409,9 @@
         }
       });
 
+      const shouldCloseOnBackdropClick = createS1pModalBackdropClickGuard(modal);
       modal.addEventListener("click", (e) => {
-        if (e.target === modal && !isSubmitting) {
+        if (shouldCloseOnBackdropClick(e) && !isSubmitting) {
           closeModal();
         }
       });
@@ -47536,7 +54976,7 @@
     modal.addEventListener("click", async (e) => {
       const target = e.target;
       if (
-        target.matches(".s1p-modal") ||
+        shouldCloseOnBackdropClick(e) ||
         target.closest(".s1p-settings-close-btn")
       ) {
         closeManagementModal();
@@ -47882,6 +55322,58 @@
           const didPatChange =
             String(previousSettings.syncRemotePat || "").trim() !==
             currentSettings.syncRemotePat;
+          const didTokenExpiryChange =
+            previousSettings.syncTokenExpiryEnabled !==
+              currentSettings.syncTokenExpiryEnabled ||
+            !Object.is(
+              normalizeS1pSyncTokenExpiryDate(
+                previousSettings.syncTokenExpiryDate
+              ),
+              normalizeS1pSyncTokenExpiryDate(currentSettings.syncTokenExpiryDate)
+            );
+
+          if (
+            didPatChange &&
+            currentSettings.syncRemoteEnabled &&
+            currentSettings.syncRemoteGistId &&
+            currentSettings.syncRemotePat
+          ) {
+            showMessage("正在验证新的 Token 凭据，验证成功后才会保存...", null);
+            try {
+              await fetchRemoteData({
+                metadataOnly: true,
+                settingsSnapshot: currentSettings,
+              });
+              // 候选 Token 已验证成功；保留原有的失败熔断恢复语义，但仍要等到下面真正保存后才应用设置。
+              resetAutoSyncFailureState();
+              if (!getActiveAutoSyncConflictPause()) {
+                setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_IDLE);
+              }
+            } catch (probeError) {
+              const probeErrorMessage = String(probeError?.message || "");
+              if (
+                probeError?.code === REMOTE_SYNC_AUTH_REJECTED_CODE ||
+                probeError?.status === 401
+              ) {
+                showMessage(
+                  "新 Token 验证失败：Token 已失效或已过期，未保存。请检查 Token 有效期、权限和 Gist 访问范围。",
+                  false
+                );
+              } else if (probeError?.status === 403) {
+                showMessage(
+                  "新 Token 验证失败：GitHub 拒绝了请求（403），可能是权限不足或请求受限；未保存。",
+                  false
+                );
+              } else {
+                showMessage(
+                  `Token 验证未完成（${probeErrorMessage || "网络异常"
+                  }），未保存。请确认网络正常后重试。`,
+                  false
+                );
+              }
+              return;
+            }
+          }
 
           const shouldMarkSyncedDataChange = hasSyncedSettingsChanged(
             previousSettings,
@@ -47891,6 +55383,9 @@
             suppressSyncTrigger: true,
             markDataChangedWhenSuppressed: shouldMarkSyncedDataChange,
           });
+          if (didPatChange || didTokenExpiryChange) {
+            GM_deleteValue("s1p_last_token_check_date");
+          }
           const savedSettings = getSettings();
           if (didRemoteTargetChange || didDisableRemoteSync) {
             // 远端目标切换/关闭远程同步后，清理旧会话残留状态，避免新目标沿用旧基线造成误判。
@@ -47918,37 +55413,6 @@
             currentSettings.syncRemoteGistId &&
             currentSettings.syncRemotePat
           ) {
-          if (didPatChange) {
-              showMessage("设置已保存，正在验证新的 Token 凭据...", null);
-              try {
-                await fetchRemoteData({ metadataOnly: true });
-                // PAT 验证成功后，仅重置失败熔断状态，不影响 baseline。
-                resetAutoSyncFailureState();
-                if (!getActiveAutoSyncConflictPause()) {
-                  setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_IDLE);
-                }
-              } catch (probeError) {
-                const probeErrorMessage = String(probeError?.message || "");
-                const isAuthRejected =
-                  /(?:状态码|HTTP)\s*[: ]?\s*(401|403)\b/i.test(
-                    probeErrorMessage
-                  ) || /bad credentials|requires authentication/i.test(
-                    probeErrorMessage
-                  );
-                if (isAuthRejected) {
-                  showMessage(
-                    "新 Token 验证失败：认证被拒绝（401/403）。请检查 Token 权限、有效期和 Gist 访问范围。",
-                    false
-                  );
-                  return;
-                }
-                showMessage(
-                  `Token 验证未完成（${probeErrorMessage || "网络异常"
-                  }），将继续尝试首次同步检查...`,
-                  false
-                );
-              }
-            }
             showMessage("设置已保存，正在启动首次同步检查...", null);
             await runSettingsManualSync(false, true); // 标记为首次设置
           } else {
@@ -48349,7 +55813,15 @@
       return false;
     }
 
-    if (!(await acquireManualSyncLock())) {
+    if (
+      !(await acquireManualSyncLock({
+        preemptActiveSync: isInitialSetup,
+        preemptScope: isInitialSetup
+          ? SYNC_PREEMPT_SCOPE_AUTOMATIC_ONLY
+          : SYNC_PREEMPT_SCOPE_ALL,
+        operation: "initial_setup_manual_sync",
+      }))
+    ) {
       showMessage(MANUAL_SYNC_LOCK_BUSY_MESSAGE, false);
       emitSyncCompletionLog({
         scope: "manual_sync",
@@ -48359,7 +55831,9 @@
       });
       return false;
     }
-    clearAutoSyncRuntimeQueue();
+    const pendingForegroundRemoteSyncAtStart =
+      getPendingForegroundRemoteSyncRequest();
+    clearLocalAutoSyncSchedulingForManualOverride();
     startManualSyncLockHeartbeat();
     let manualSyncLockHeldByThisRun = true;
     recordSyncTraceEvent("manual_sync_lock_acquired", {
@@ -48490,15 +55964,24 @@
           clearPendingAutoSyncRequest();
           clearAutoSyncRuntimeQueue();
           clearAutoSyncConflictPause();
+          let foregroundPendingSettlement = {
+            status: "skipped",
+            reason: "missing_sync_baseline",
+          };
+          if (syncBaseline) {
+            setSyncBaselineState(syncBaseline);
+            foregroundPendingSettlement =
+              settlePendingForegroundRemoteSyncRequestIfCovered(
+                pendingForegroundRemoteSyncAtStart,
+                "manual_sync_success"
+              );
+          }
           // 手动同步成功后，立即覆盖后台指示器的旧失败/冲突态，避免残留样式持续到 TTL 结束。
           setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_SUCCESS, {
             source: AUTO_SYNC_INDICATOR_SOURCE_MANUAL_SYNC,
             reason: action,
             operation: getAutoSyncIndicatorOperationFromSyncAction(action),
           });
-          if (syncBaseline) {
-            setSyncBaselineState(syncBaseline);
-          }
           recordSuccessfulRemoteWriteIfNeeded({
             action,
             remoteUpdatedAt: syncBaseline?.remoteUpdatedAt || null,
@@ -48525,6 +56008,8 @@
               action,
               remoteUpdatedAt: syncBaseline?.remoteUpdatedAt || "",
               contentHash: shortHashForLog(syncBaseline?.contentHash),
+              foregroundPendingSettlement:
+                foregroundPendingSettlement.status || "",
             },
           });
           updateLastSyncTimeDisplay();
@@ -49509,8 +56994,9 @@
         closeModal({ reason, immediate, invokeDismiss: true }),
     };
 
+    const shouldCloseOnBackdropClick = createS1pModalBackdropClickGuard(modal);
     modal.addEventListener("click", (e) => {
-      if (e.target === modal) {
+      if (shouldCloseOnBackdropClick(e)) {
         const cancelButton = modal.querySelector(".s1p-confirm-btn.s1p-cancel");
         if (cancelButton) {
           cancelButton.click();
@@ -49542,6 +57028,7 @@
       surfaceContext,
       contentAnimationMs: 250,
     });
+    return modal;
   };
 
   const addBlockButtonsToThreadRows = (rows = []) => {
@@ -50943,7 +58430,9 @@
   };
 
   const logReadProgressParseDebug = (message, details = null) => {
-    if (!READ_PROGRESS_PARSE_DEBUG) return;
+    if (!READ_PROGRESS_PARSE_DEBUG && Date.now() >= s1pVerboseUntil) return;
+    s1pRecordDiagnosticEvent("reading.parse", { module: "reading", level: "debug",
+      message, details: details || {}, verbose: !READ_PROGRESS_PARSE_DEBUG });
     if (details) {
       console.debug(`S1 Plus (ReadProgress): ${message}`, details);
       return;
@@ -53724,8 +61213,9 @@
     });
 
     // 点击遮罩层关闭
+    const shouldCloseOnBackdropClick = createS1pModalBackdropClickGuard(modal);
     modal.addEventListener("click", (e) => {
-      if (e.target === modal) {
+      if (shouldCloseOnBackdropClick(e)) {
         closeModal();
       }
     });
@@ -54184,7 +61674,7 @@
             AUTO_SYNC_INDICATOR_SOURCE_DAILY_STARTUP,
             "daily_startup_deferred",
             {
-              operation: AUTO_SYNC_INDICATOR_OPERATION_PULL,
+              operation: AUTO_SYNC_INDICATOR_OPERATION_SYNC,
             }
           );
           console.log(
@@ -54233,8 +61723,32 @@
       adapters.requestInitialForeground ||
       handleInitialForegroundRemoteFreshnessCheck;
     const requestManualSync = adapters.requestManualSync || handleManualSync;
-    const requestManualPull = adapters.requestManualPull || handleForcePull;
-    const requestManualPush = adapters.requestManualPush || handleForcePush;
+    const hasCustomManualDirectionExecutor =
+      typeof adapters.requestManualPull === "function" ||
+      typeof adapters.requestManualPush === "function";
+    const manualIntentCoordinator =
+      adapters.manualIntentCoordinator ||
+      (!hasCustomManualDirectionExecutor
+        ? getDefaultManualSyncIntentCoordinator()
+        : null);
+    const requestManualPull =
+      adapters.requestManualPull ||
+      (manualIntentCoordinator
+        ? (options = {}) =>
+            manualIntentCoordinator.request(
+              AUTO_SYNC_INDICATOR_OPERATION_PULL,
+              options
+            )
+        : handleForcePull);
+    const requestManualPush =
+      adapters.requestManualPush ||
+      (manualIntentCoordinator
+        ? (options = {}) =>
+            manualIntentCoordinator.request(
+              AUTO_SYNC_INDICATOR_OPERATION_PUSH,
+              options
+            )
+        : handleForcePush);
     const requestStartupFlow =
       adapters.requestStartupFlow || runStartupSyncFlowDeferred;
     const readProjection =
@@ -54247,6 +61761,14 @@
       } catch (rollbackError) {
         console.error(
           "S1 Plus: 同步系统初始化回滚时释放后台调度 owner 失败:",
+          rollbackError
+        );
+      }
+      try {
+        manualIntentCoordinator?.unbind?.();
+      } catch (rollbackError) {
+        console.error(
+          "S1 Plus: 同步系统初始化回滚时解绑手动同步意图支持失败:",
           rollbackError
         );
       }
@@ -54266,12 +61788,26 @@
       }
       const lifecycle = lifecycleAdapter.bind();
       try {
+        const manualIntent = manualIntentCoordinator?.bind?.() || null;
+        const runtimeContext = getSyncRuntimeContextInfo();
+        recordSyncTraceEvent("sync_runtime_context_started", {
+          scope: "sync_runtime",
+          status: "running",
+          message: "同步运行上下文已启动",
+          details: {
+            path: runtimeContext.path,
+            visibilityState: runtimeContext.visibilityState,
+            frame: runtimeContext.frame,
+            navigationType: runtimeContext.navigationType,
+          },
+        });
         const schedulerRecovery = scheduler.recover();
         const pendingRecovery = recoverPending();
         initialized = true;
         return {
           status: "initialized",
           lifecycle,
+          manualIntent,
           schedulerRecovery,
           pendingRecovery,
         };
@@ -54283,15 +61819,18 @@
 
     const dispose = () => {
       if (!initialized) {
+        manualIntentCoordinator?.unbind?.();
         return { status: "skipped", reason: "already_disposed" };
       }
       let lifecycle;
+      let manualIntent;
       try {
+        manualIntent = manualIntentCoordinator?.unbind?.() || null;
         lifecycle = lifecycleAdapter.unbind();
       } finally {
         initialized = false;
       }
-      return { status: "disposed", lifecycle };
+      return { status: "disposed", lifecycle, manualIntent };
     };
 
     const requestSync = ({ kind = "", reason = "", options = {} } = {}) => {
@@ -54344,6 +61883,9 @@
     const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
     testHookHost.__S1P_TEST_HOOKS__ = {
       ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
+      s1pCreateManualSyncIntentCoordinator,
+      getDefaultManualSyncIntentCoordinator,
+      cleanupLegacyManualSyncIntentState,
       s1pCreateSyncSystemFacade,
       s1pSyncSystem,
     };
@@ -54418,7 +61960,7 @@
 
     if (today === lastCheckDate) return false;
 
-    const daysLeft = Math.ceil((expiryTimestamp - Date.now()) / (1000 * 60 * 60 * 24));
+    const daysLeft = getS1pTokenExpiryDaysLeft(expiryTimestamp);
 
     // Expired or within 3 days
     if (daysLeft <= 3) {
@@ -54445,14 +61987,14 @@
             action: () => { } // Do nothing, date already updated
           },
           {
-            text: "前往生成",
+            text: "生成新 Token",
             className: "s1p-btn",
             action: () => {
               GM_openInTab("https://github.com/settings/tokens", true);
             }
           },
           {
-            text: "已更新",
+            text: "打开同步设置",
             className: "s1p-confirm",
             action: () => {
               const existingSettingsModal = document.querySelector(".s1p-modal");
@@ -54471,8 +62013,8 @@
                   .querySelector("#s1p-token-expiry-info-container")
                   ?.scrollIntoView({ block: "center", behavior: "smooth" });
                 showMessage(
-                  "请在“设置同步”中更新 Token 有效期，并点击“保存设置”后生效。",
-                  true
+                  "请在“设置同步”中更新 Token 和有效期，并点击“保存设置”验证后生效。",
+                  null
                 );
               };
               if (existingSettingsModal) {
@@ -54488,6 +62030,122 @@
       return true; // Shown
     }
     return false;
+  };
+
+  const S1P_INITIALIZATION_ERROR_LABEL_FIELD =
+    "__s1pInitializationErrorLabel";
+  const reportedInitializationFailures = new WeakSet();
+
+  const defineInitializationErrorField = (target, key, value) => {
+    try {
+      Object.defineProperty(target, key, {
+        configurable: true,
+        enumerable: false,
+        value,
+        writable: true,
+      });
+      return true;
+    } catch (_) {
+      return false;
+    }
+  };
+
+  const describeInitializationThrownValue = (value) => {
+    if (value === null) return "null";
+    if (value === undefined) return "undefined";
+    if (typeof value === "string") return value;
+    if (typeof value === "symbol") return String(value);
+    if (isLogErrorLike(value)) return formatLogErrorLike(value);
+    return formatLogArgument(value);
+  };
+
+  const createLocalInitializationError = (error, label) => {
+    const message = readLogStringFieldSafely(error, "message");
+    const name = readLogStringFieldSafely(error, "name");
+    const stack = readLogStringFieldSafely(error, "stack");
+    const wrapped = new Error(message || (!stack ? name || "Branded error" : ""));
+    if (name) {
+      try {
+        wrapped.name = name;
+      } catch (_) { }
+    }
+    if (stack) {
+      try {
+        wrapped.stack = stack;
+      } catch (_) { }
+    }
+    defineInitializationErrorField(wrapped, "originalThrownValue", error);
+    defineInitializationErrorField(wrapped, "cause", error);
+    defineInitializationErrorField(
+      wrapped,
+      S1P_INITIALIZATION_ERROR_LABEL_FIELD,
+      label
+    );
+    return wrapped;
+  };
+
+  const normalizeInitializationError = (error, errorLabel) => {
+    const label =
+      readLogStringFieldSafely(
+        error,
+        S1P_INITIALIZATION_ERROR_LABEL_FIELD
+      ) || String(errorLabel || "application startup");
+    let isNativeError = false;
+    try {
+      isNativeError =
+        error instanceof Error &&
+        readLogObjectBrandSafely(error) !== "[object DOMException]";
+    } catch (_) { }
+    if (isNativeError) {
+      let canCarryLabel = false;
+      try {
+        canCarryLabel =
+          Object.isExtensible(error) === true &&
+          defineInitializationErrorField(
+            error,
+            S1P_INITIALIZATION_ERROR_LABEL_FIELD,
+            label
+          );
+      } catch (_) { }
+      return canCarryLabel ? error : createLocalInitializationError(error, label);
+    }
+    if (isLogErrorLike(error)) {
+      return createLocalInitializationError(error, label);
+    }
+    const normalized = new Error(
+      `S1 Plus initialization failed: ${describeInitializationThrownValue(error)}`
+    );
+    defineInitializationErrorField(normalized, "originalThrownValue", error);
+    defineInitializationErrorField(normalized, "cause", error);
+    defineInitializationErrorField(
+      normalized,
+      S1P_INITIALIZATION_ERROR_LABEL_FIELD,
+      label
+    );
+    return normalized;
+  };
+
+  const reportInitializationFailureOnce = (
+    error,
+    fallbackLabel = "application startup",
+    messagePrefix = "S1 Plus: 初始化失败"
+  ) => {
+    const normalizedError = normalizeInitializationError(error, fallbackLabel);
+    try {
+      if (reportedInitializationFailures.has(normalizedError)) {
+        return false;
+      }
+      reportedInitializationFailures.add(normalizedError);
+    } catch (_) { }
+    const label =
+      readLogStringFieldSafely(
+        normalizedError,
+        S1P_INITIALIZATION_ERROR_LABEL_FIELD
+      ) || fallbackLabel;
+    console.error(`${messagePrefix} (${label}):`, normalizedError);
+    s1pRecordDiagnosticEvent("initialization.failed", { module: "initialization", status: "failure", level: "error",
+      message: "初始化任务失败", details: { label, error: normalizedError } });
+    return true;
   };
 
   const S1P_INIT_PHASES = Object.freeze({
@@ -54559,12 +62217,18 @@
         }
       } catch (error) {
         lastError = error;
+        s1pRecordDiagnosticEvent("initialization.task_error", { module: "initialization", level: "warn",
+          status: task.retryOnError ? "retrying" : "failure", message: "初始化任务发生异常",
+          details: { phaseName, taskName: task.name, attempt, optional: task.optional === true, error } });
         if (task.retryOnError !== true) {
           const taskLabel = getInitializationTaskLabel(phaseName, task);
-          console.error(`S1 Plus: 初始化任务失败 (${taskLabel}):`, error);
           if (!task.optional) {
-            throw error;
+            throw normalizeInitializationError(error, taskLabel);
           }
+          console.error(
+            `S1 Plus: 初始化任务失败 (${taskLabel}):`,
+            normalizeInitializationError(error, taskLabel)
+          );
           return undefined;
         }
       }
@@ -54580,10 +62244,13 @@
         }
         if (lastError) {
           const taskLabel = getInitializationTaskLabel(phaseName, task);
-          console.error(`S1 Plus: 初始化任务重试后仍失败 (${taskLabel}):`, lastError);
           if (!task.optional) {
-            throw lastError;
+            throw normalizeInitializationError(lastError, taskLabel);
           }
+          console.error(
+            `S1 Plus: 初始化任务重试后仍失败 (${taskLabel}):`,
+            normalizeInitializationError(lastError, taskLabel)
+          );
         }
         return lastResult;
       }
@@ -54597,7 +62264,11 @@
     const taskPromise = runInitializationTaskWithRetry(phaseName, task, context);
     if (task.blocking === false) {
       const guardedTaskPromise = taskPromise.catch((error) => {
-        console.error(`S1 Plus: 后台初始化任务失败 (${taskLabel}):`, error);
+        reportInitializationFailureOnce(
+          error,
+          taskLabel,
+          "S1 Plus: 后台初始化任务失败"
+        );
       });
       if (task.contextKey) {
         context[task.contextKey] = guardedTaskPromise;
@@ -54616,17 +62287,37 @@
 
   const runInitializationPhase = async (phaseName, tasks, context) => {
     const phaseStartedAt = Date.now();
-    for (const task of tasks) {
-      if (!task || typeof task.run !== "function") {
-        continue;
+    const operationId = s1pNewDiagnosticOperation("initialization");
+    s1pRecordDiagnosticEvent("initialization.phase_started", { module: "initialization", operationId,
+      status: "running", message: `初始化阶段：${phaseName}`, details: { phaseName } });
+    try {
+      for (const task of tasks) {
+        if (!task || typeof task.run !== "function") {
+          continue;
+        }
+        await runInitializationTask(phaseName, task, context);
       }
-      await runInitializationTask(phaseName, task, context);
+      context.phaseResults[phaseName] = {
+        completedAt: Date.now(),
+        durationMs: Date.now() - phaseStartedAt,
+      };
+      s1pRecordDiagnosticEvent("initialization.phase_completed", { module: "initialization", operationId,
+        status: "success", message: `初始化阶段已完成：${phaseName}`, details: { durationMs: Date.now() - phaseStartedAt } });
+    } catch (error) {
+      s1pRecordDiagnosticEvent("initialization.phase_failed", { module: "initialization", operationId,
+        status: "failure", level: "error", message: `初始化阶段失败：${phaseName}`, details: { error, durationMs: Date.now() - phaseStartedAt } });
+      throw error;
     }
-    context.phaseResults[phaseName] = {
-      completedAt: Date.now(),
-      durationMs: Date.now() - phaseStartedAt,
-    };
   };
+
+  if (IS_S1P_TEST_MODE) {
+    const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
+    testHookHost.__S1P_TEST_HOOKS__ = {
+      ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
+      runInitializationTaskWithRetryForTest: runInitializationTaskWithRetry,
+      reportInitializationFailureOnceForTest: reportInitializationFailureOnce,
+    };
+  }
 
   async function main(initializationContext = createS1PlusInitializationContext()) {
     await runInitializationPhase(
@@ -55320,6 +63011,10 @@
       ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
       s1pCreatePageEnhancementProjection,
       s1pPageEnhancementProjection,
+      initializeNavbar,
+      setupNavbarCustomOverflow,
+      teardownNavbarCustomOverflow,
+      invalidateSettingsCache,
     };
   }
 
@@ -55331,6 +63026,7 @@
   }
 
   const runS1PlusInitializer = () => {
+    s1pInitializeDiagnostics();
     initializeReloadScrollRestorationGuard();
     initializePostHashAnchorAlignment();
     const initializationContext = createS1PlusInitializationContext();
@@ -55359,7 +63055,7 @@
       .then(() => documentStartPhasePromise)
       .then(() => main(initializationContext))
       .catch((error) => {
-        console.error("S1 Plus: 初始化失败:", error);
+        reportInitializationFailureOnce(error);
       });
   };
 
