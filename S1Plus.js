@@ -18613,7 +18613,7 @@
       normalizePendingAutoSyncTimestamp(value.createdAt) || Date.now();
     const registrationCreatedAt =
       normalizePendingAutoSyncTimestamp(value.registrationCreatedAt) || createdAt;
-    return {
+    const normalized = {
       version: 1,
       requestId:
         normalizeSyncDiagnosticText(value.requestId, 160) ||
@@ -18641,6 +18641,22 @@
       sourceContextId: normalizeSyncDiagnosticText(value.sourceContextId, 160),
       sourceTabId: normalizeSyncDiagnosticText(value.sourceTabId, 120),
     };
+    const storageVersion = Number(value.storageVersion);
+    if (Number.isSafeInteger(storageVersion) && storageVersion > 0) {
+      normalized.storageVersion = storageVersion;
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(value, "registrationClock") &&
+      hasValidPendingForegroundRemoteSyncRegistrationClock(
+        value.registrationClock
+      )
+    ) {
+      normalized.registrationClock =
+        normalizePendingForegroundRemoteSyncRegistrationClock(
+          value.registrationClock
+        );
+    }
+    return normalized;
   };
 
   const isSamePendingForegroundRemoteSyncRequest = (leftInput, rightInput) => {
@@ -18673,6 +18689,17 @@
       : 0;
   };
 
+  const hasValidPendingForegroundRemoteSyncRegistrationClock = (value) => {
+    if (
+      typeof value !== "number" &&
+      !(typeof value === "string" && value.trim())
+    ) {
+      return false;
+    }
+    const normalized = Number(value);
+    return Number.isSafeInteger(normalized) && normalized >= 0;
+  };
+
   const readPendingForegroundRemoteSyncRecordEnvelope = (requestId) => {
     const normalizedRequestId = normalizeSyncDiagnosticText(requestId, 160);
     if (!normalizedRequestId) {
@@ -18689,10 +18716,13 @@
     return {
       key: getPendingForegroundRemoteSyncRecordKey(normalizedRequestId),
       pending,
-      hasRegistrationClock: Object.prototype.hasOwnProperty.call(
-        rawRecord,
-        "registrationClock"
-      ),
+      hasRegistrationClock:
+        hasValidPendingForegroundRemoteSyncRegistrationClock(
+          rawRecord.registrationClock
+        ),
+      storageVersion: Number.isSafeInteger(Number(rawRecord.storageVersion))
+        ? Number(rawRecord.storageVersion)
+        : 0,
       registrationClock: normalizePendingForegroundRemoteSyncRegistrationClock(
         rawRecord.registrationClock
       ),
@@ -18752,10 +18782,10 @@
         return {
           key,
           pending,
-          hasRegistrationClock: Object.prototype.hasOwnProperty.call(
-            rawTerminal,
-            "registrationClock"
-          ),
+          hasRegistrationClock:
+            hasValidPendingForegroundRemoteSyncRegistrationClock(
+              rawTerminal.registrationClock
+            ),
           registrationClock:
             normalizePendingForegroundRemoteSyncRegistrationClock(
               rawTerminal.registrationClock
@@ -18803,10 +18833,10 @@
       requestId: normalizeSyncDiagnosticText(marker.requestId, 160),
       remoteUpdatedAt: normalizeRemoteProbeUpdatedAt(marker.remoteUpdatedAt),
       registeredAt: normalizeRemoteProbeTimestamp(marker.registeredAt),
-      hasRegistrationClock: Object.prototype.hasOwnProperty.call(
-        marker,
-        "registrationClock"
-      ),
+      hasRegistrationClock:
+        hasValidPendingForegroundRemoteSyncRegistrationClock(
+          marker.registrationClock
+        ),
       registrationClock:
         normalizePendingForegroundRemoteSyncRegistrationClock(
           marker.registrationClock
@@ -18945,23 +18975,58 @@
     const existingRecord = readPendingForegroundRemoteSyncRecordEnvelope(
       pending.requestId
     );
-    const currentMarker = getPendingForegroundRemoteSyncCurrentMarker();
+    const pendingRegistrationClock = Object.prototype.hasOwnProperty.call(
+      pending,
+      "registrationClock"
+    )
+      ? normalizePendingForegroundRemoteSyncRegistrationClock(
+          pending.registrationClock
+        )
+      : 0;
+    const existingRecordRegistrationClock = existingRecord?.hasRegistrationClock
+      ? existingRecord.registrationClock
+      : 0;
+    const hasRegistrationClock =
+      Object.prototype.hasOwnProperty.call(pending, "registrationClock") ||
+      Boolean(existingRecord?.hasRegistrationClock);
+    const isV3WithoutRegistrationIdentity =
+      !hasRegistrationClock &&
+      ((pending.storageVersion || 0) >= 3 ||
+        (existingRecord?.storageVersion || 0) >= 3);
+    if (isV3WithoutRegistrationIdentity) {
+      recordSyncTraceEvent("foreground_pending_terminal_identity_missing", {
+        scope: "foreground_probe",
+        status: "failure",
+        message: "v3 前台远端请求缺少不可变 registrationClock，拒绝写入不安全终态",
+        details: {
+          requestId: pending.requestId,
+          remoteUpdatedAt: pending.remoteUpdatedAt,
+          storageVersion: pending.storageVersion || existingRecord?.storageVersion || 0,
+          terminalKind:
+            normalizeSyncDiagnosticText(terminalKind, 80) || "completed",
+        },
+      });
+      return null;
+    }
     const registrationClock = Math.max(
-      existingRecord?.registrationClock || 0,
-      currentMarker?.requestId === pending.requestId
-        ? currentMarker.registrationClock
-        : 0
+      pendingRegistrationClock,
+      existingRecordRegistrationClock
     );
     const terminalRecord = {
-      storageVersion: 3,
       kind: "terminal",
       ...pending,
-      registrationClock,
+      storageVersion: 3,
+      registrationCreatedAt:
+        existingRecord?.pending.registrationCreatedAt ||
+        pending.registrationCreatedAt,
       terminalKind:
         normalizeSyncDiagnosticText(terminalKind, 80) || "completed",
       terminalReason: normalizeRemoteProbeText(reason, 160) || "completed",
       terminalAt: Date.now(),
     };
+    if (hasRegistrationClock) {
+      terminalRecord.registrationClock = registrationClock;
+    }
     // The key is never written by mutable record updates. If two contexts
     // race here, either terminal outcome is a terminal fence for this request.
     GM_setValue(
@@ -19012,17 +19077,63 @@
     const existingRecord = readPendingForegroundRemoteSyncRecordEnvelope(
       pending.requestId
     );
+    const pendingRegistrationClock = Object.prototype.hasOwnProperty.call(
+      pending,
+      "registrationClock"
+    )
+      ? normalizePendingForegroundRemoteSyncRegistrationClock(
+          pending.registrationClock
+        )
+      : 0;
+    const existingRecordRegistrationClock = existingRecord?.hasRegistrationClock
+      ? existingRecord.registrationClock
+      : 0;
+    const hasPendingRegistrationClock = Object.prototype.hasOwnProperty.call(
+      pending,
+      "registrationClock"
+    );
+    if (
+      !registerCurrent &&
+      !hasPendingRegistrationClock &&
+      !existingRecord?.hasRegistrationClock &&
+      ((pending.storageVersion || 0) >= 3 ||
+        (existingRecord?.storageVersion || 0) >= 3)
+    ) {
+      recordSyncTraceEvent("foreground_pending_record_identity_missing", {
+        scope: "foreground_probe",
+        status: "failure",
+        message: "v3 前台远端请求缺少不可变 registrationClock，拒绝写入不安全 mutable record",
+        details: {
+          requestId: pending.requestId,
+          remoteUpdatedAt: pending.remoteUpdatedAt,
+          storageVersion: pending.storageVersion || existingRecord?.storageVersion || 0,
+          eventType,
+        },
+      });
+      return null;
+    }
     const registrationClock = registerCurrent
       ? getNextPendingForegroundRemoteSyncRegistrationClock()
-      : existingRecord?.registrationClock || 0;
+      : Math.max(pendingRegistrationClock, existingRecordRegistrationClock);
     if (registrationClock === null) {
       return null;
     }
     const storedRecord = {
-      storageVersion: 3,
       ...pending,
-      registrationClock,
+      storageVersion: 3,
+      registrationCreatedAt:
+        registerCurrent
+          ? pending.registrationCreatedAt
+          : existingRecord?.pending.registrationCreatedAt ||
+            pending.registrationCreatedAt,
     };
+    if (
+      registerCurrent ||
+      hasPendingRegistrationClock ||
+      Boolean(existingRecord?.hasRegistrationClock)
+    ) {
+      storedRecord.registrationClock = registrationClock;
+    }
     GM_setValue(
       getPendingForegroundRemoteSyncRecordKey(pending.requestId),
       storedRecord
@@ -19040,7 +19151,7 @@
       });
     }
     publishPendingForegroundRemoteSyncSignal(eventType, pending);
-    return pending;
+    return normalizePendingForegroundRemoteSyncRequest(storedRecord);
   };
 
   const prunePendingForegroundRemoteSyncRecords = (now = Date.now()) => {
@@ -19424,7 +19535,7 @@
         { operation: AUTO_SYNC_INDICATOR_OPERATION_SYNC }
       );
     }
-    return nextRequest;
+    return storedRequest;
   };
 
   const clearPendingForegroundRemoteSyncRequest = (
@@ -19676,8 +19787,12 @@
       return "cancelled";
     }
     if (
-      pendingSettlement?.status === "ignored" &&
-      pendingSettlement.reason === "newer_pending_foreground_remote_sync"
+      ["ignored", "retained"].includes(pendingSettlement?.status) &&
+      [
+        "newer_pending_foreground_remote_sync",
+        "concurrent_pending_foreground_remote_sync",
+        "concurrent_remote_probe_recovered",
+      ].includes(pendingSettlement.reason)
     ) {
       return "superseded";
     }
@@ -38446,11 +38561,6 @@
     reason = "remote_probe_retry",
     options = {}
   ) => {
-    if (document.visibilityState !== "visible") {
-      clearForegroundRemoteSyncRetry();
-      GM_deleteValue(EQUAL_UPDATED_AT_PROBE_VERIFY_STATE_KEY);
-      return { status: "suppressed", reason: "document_hidden" };
-    }
     const normalizedReason =
       normalizeRemoteProbeText(reason, 120) || "remote_probe_retry";
     const resolvedSource =
@@ -38469,6 +38579,45 @@
     const expectedRequestId = expectedPendingRequest?.requestId || "";
     const expectedRemoteUpdatedAt =
       expectedPendingRequest?.remoteUpdatedAt || "";
+    if (expectedPendingRequest) {
+      const currentPending = getPendingForegroundRemoteSyncRequest();
+      if (
+        !currentPending ||
+        !isSamePendingForegroundRemoteSyncRequest(
+          currentPending,
+          expectedPendingRequest
+        )
+      ) {
+        const reason = currentPending
+          ? "newer_pending_foreground_remote_sync"
+          : "cancelled_foreground_remote_sync";
+        recordSyncTraceEvent("foreground_pending_retry_ignored", {
+          scope: "foreground_probe",
+          status: "ignored",
+          message: currentPending
+            ? "旧前台远端结果不能替换新请求已安排的 retry"
+            : "已取消或完成的旧前台远端结果不能重新安排 retry",
+          details: {
+            requestId: expectedPendingRequest.requestId,
+            remoteUpdatedAt: expectedPendingRequest.remoteUpdatedAt,
+            reason,
+            retainedRequestId: currentPending?.requestId || "",
+            retainedRemoteUpdatedAt: currentPending?.remoteUpdatedAt || "",
+          },
+        });
+        return {
+          status: "ignored",
+          reason,
+          requestId: currentPending?.requestId || "",
+          remoteUpdatedAt: currentPending?.remoteUpdatedAt || "",
+        };
+      }
+    }
+    if (document.visibilityState !== "visible") {
+      clearForegroundRemoteSyncRetry();
+      GM_deleteValue(EQUAL_UPDATED_AT_PROBE_VERIFY_STATE_KEY);
+      return { status: "suppressed", reason: "document_hidden" };
+    }
     const preferredDelayMs = Math.max(
       0,
       Math.floor(Number(options.preferredDelayMs) || 0)
@@ -39288,6 +39437,9 @@
       });
       const resultPhasePolicy =
         overrides.syncResultPhasePolicy || s1pSyncResultPhasePolicy;
+      const retryGenerationBeforeResultPhase =
+        foregroundRemoteSyncRetryGeneration;
+      let resultPhaseScheduledRetryGeneration = null;
       const outcome = await resultPhasePolicy.handle(syncRequestResult, {
         source: "foreground",
         remoteChangeContext: {
@@ -39310,8 +39462,8 @@
           locationObject: overrides.locationObject,
           setTimeoutFn: overrides.setTimeoutFn,
         },
-        scheduleRetry: (intent) =>
-          scheduleForegroundRemoteSyncRetry(
+        scheduleRetry: (intent) => {
+          const retryResult = scheduleForegroundRemoteSyncRetry(
             `remote_probe_changed:${normalizedReason}`,
             {
               ...retryOptions,
@@ -39321,14 +39473,35 @@
                 AUTO_SYNC_INDICATOR_REASON_FOREGROUND_PROBE_CHANGED_RETRY,
               indicatorOperation: AUTO_SYNC_INDICATOR_OPERATION_SYNC,
             }
-          ),
+          );
+          if (s1pHasScheduledSyncResultPhaseRetry(retryResult)) {
+            resultPhaseScheduledRetryGeneration =
+              foregroundRemoteSyncRetryGeneration;
+          }
+          return retryResult;
+        },
       });
       refreshPlan = outcome.refreshPlan;
       const hasScheduledRetry = s1pHasScheduledSyncResultPhaseRetry(
         outcome.retryResult
       );
       if (!hasScheduledRetry) {
-        clearForegroundRemoteSyncRetry();
+        const retryStillBelongsToResultRequest = pendingForegroundRemoteSyncRequest
+          ? foregroundRemoteSyncRetryExpectedRequestId ===
+              pendingForegroundRemoteSyncRequest.requestId &&
+            foregroundRemoteSyncRetryExpectedRemoteUpdatedAt ===
+              pendingForegroundRemoteSyncRequest.remoteUpdatedAt
+          : !foregroundRemoteSyncRetryExpectedRequestId &&
+            !foregroundRemoteSyncRetryExpectedRemoteUpdatedAt;
+        const retryGenerationStillOwned =
+          foregroundRemoteSyncRetryGeneration ===
+            retryGenerationBeforeResultPhase ||
+          (resultPhaseScheduledRetryGeneration !== null &&
+            foregroundRemoteSyncRetryGeneration ===
+              resultPhaseScheduledRetryGeneration);
+        if (retryStillBelongsToResultRequest && retryGenerationStillOwned) {
+          clearForegroundRemoteSyncRetry(foregroundRemoteSyncRetryGeneration);
+        }
       }
       if (
         pendingSettlement.status === "retained" &&
