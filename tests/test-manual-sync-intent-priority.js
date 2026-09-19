@@ -438,6 +438,230 @@ const testLatestDirectionWinsWithinOnePageAndOldModalIsStale = async () => {
   assert.equal(result.action, "manual_pull");
 };
 
+const flushMicrotasks = async (count = 8) => {
+  for (let index = 0; index < count; index += 1) {
+    await Promise.resolve();
+  }
+};
+
+const testQueuedConfirmationChecksLatestRequestBeforeExecuting = async () => {
+  for (const [olderDirection, newerDirection] of [
+    ["push", "pull"],
+    ["pull", "push"],
+    ["push", "push"],
+  ]) {
+    const { hooks } = createHarness();
+    const runtime = createCoordinator(hooks, {
+      activeExecution: true,
+      now: 3_000_000,
+    });
+
+    await runtime.coordinator.request(olderDirection);
+    runtime.setActiveExecution(false);
+    await runtime.coordinator.reconcile("lock_released");
+    const oldConfirmation = runtime.confirmations[0];
+
+    const oldConfirmationPromise = oldConfirmation.actions.onConfirm();
+    const newerRequestPromise = runtime.coordinator.request(newerDirection);
+    const [oldResult, newerResult] = await Promise.all([
+      oldConfirmationPromise,
+      newerRequestPromise,
+    ]);
+
+    assert.deepEqual(toPlainObject(oldResult), {
+      status: "skipped",
+      reason: "stale_manual_intent",
+    });
+    assert.equal(newerResult.status, "awaiting_confirmation");
+    assert.equal(
+      runtime.executions.length,
+      0,
+      "新请求进入后，尚未开始的旧确认任务不得调用 executor。"
+    );
+    assert.equal(runtime.coordinator.readIntent().direction, newerDirection);
+  }
+};
+
+const testStaleConfirmationCancelCannotClearNewerIntent = async () => {
+  for (const callbackName of ["onCancel", "onDismiss"]) {
+    const { hooks } = createHarness();
+    const runtime = createCoordinator(hooks, {
+      activeExecution: true,
+      now: 3_000_000,
+    });
+
+    await runtime.coordinator.request("push");
+    runtime.setActiveExecution(false);
+    await runtime.coordinator.reconcile("lock_released");
+    const oldConfirmation = runtime.confirmations[0];
+    const oldCallbackPromise = oldConfirmation.actions[callbackName]();
+    const newerRequestPromise = runtime.coordinator.request("pull");
+    const [oldResult, newerResult] = await Promise.all([
+      oldCallbackPromise,
+      newerRequestPromise,
+    ]);
+
+    assert.deepEqual(toPlainObject(oldResult), {
+      status: "skipped",
+      reason: "stale_manual_intent",
+    });
+    assert.equal(newerResult.status, "awaiting_confirmation");
+    assert.equal(runtime.coordinator.readIntent().direction, "pull");
+    assert.equal(runtime.coordinator.isPriorityGateActive(), true);
+  }
+};
+
+const testConfirmedExecutionDoesNotBlockNewIntentRegistration = async () => {
+  const outcomes = [
+    { status: "success", action: "manual_push" },
+    { status: "failure", reason: "remote_timeout" },
+    { status: "skipped", reason: "manual_sync_busy" },
+    new Error("manual execution failed"),
+  ];
+  for (const [olderDirection, newerDirection] of [
+    ["push", "pull"],
+    ["pull", "push"],
+    ["push", "push"],
+  ]) {
+    for (const outcome of outcomes) {
+      const { hooks } = createHarness();
+      const deferred = createDeferred();
+      let runtime;
+      let oldExecutionStarted = false;
+      let resolveStarted;
+      const started = new Promise((resolve) => {
+        resolveStarted = resolve;
+      });
+      runtime = createCoordinator(hooks, {
+        activeExecution: true,
+        now: 4_000_000,
+        execute: async () => {
+          if (!oldExecutionStarted) {
+            oldExecutionStarted = true;
+            runtime.setActiveExecution(true);
+            resolveStarted();
+            return deferred.promise;
+          }
+          runtime.setActiveExecution(false);
+          return { status: "success", action: "manual_" + newerDirection };
+        },
+      });
+
+      await runtime.coordinator.request(olderDirection);
+      runtime.setActiveExecution(false);
+      await runtime.coordinator.reconcile("lock_released");
+      const oldConfirmationPromise = runtime.confirmations[0].actions.onConfirm();
+      await started;
+
+      let newerRequestSettled = false;
+      const newerRequestPromise = runtime.coordinator
+        .request(newerDirection)
+        .then((result) => {
+          newerRequestSettled = true;
+          return result;
+        });
+      await flushMicrotasks();
+
+      assert.equal(
+        newerRequestSettled,
+        true,
+        "网络执行未结束时，新方向也必须先完成 page-local intent 登记。"
+      );
+      const pending = runtime.coordinator.readIntent();
+      assert.equal(pending.direction, newerDirection);
+      assert.equal(
+        getLatestPendingProjection(runtime).direction,
+        newerDirection,
+        "指示器必须立即反映后来登记的方向。"
+      );
+      assert.equal(runtime.executions.length, 1);
+
+      runtime.setActiveExecution(false);
+      if (outcome instanceof Error) {
+        deferred.reject(outcome);
+      } else {
+        deferred.resolve(outcome);
+      }
+      await oldConfirmationPromise;
+      await newerRequestPromise;
+
+      assert.equal(
+        runtime.coordinator.readIntent().direction,
+        newerDirection,
+        "旧网络结果不得清除或覆盖后来 pending。"
+      );
+
+      const boundary = await runtime.coordinator.reconcile("next_boundary");
+      assert.equal(boundary.status, "awaiting_confirmation");
+      const newerResult = await runtime.confirmations.at(-1).actions.onConfirm();
+      assert.equal(newerResult.status, "success");
+      assert.equal(runtime.executions.length, 2);
+      assert.equal(runtime.coordinator.readIntent(), null);
+    }
+  }
+};
+
+const testUnbindDuringConfirmedExecutionReleasesNewLifecycleQueue = async () => {
+  const { hooks } = createHarness();
+  const deferred = createDeferred();
+  let runtime;
+  let resolveStarted;
+  const started = new Promise((resolve) => {
+    resolveStarted = resolve;
+  });
+  let oldExecutionStarted = false;
+  runtime = createCoordinator(hooks, {
+    activeExecution: true,
+    now: 5_000_000,
+    execute: async () => {
+      if (!oldExecutionStarted) {
+        oldExecutionStarted = true;
+        runtime.setActiveExecution(true);
+        resolveStarted();
+        return deferred.promise;
+      }
+      return { status: "success", action: "manual_pull" };
+    },
+  });
+
+  runtime.coordinator.bind();
+  await runtime.coordinator.request("push");
+  runtime.setActiveExecution(false);
+  await runtime.coordinator.reconcile("lock_released");
+  const oldConfirmationPromise = runtime.confirmations[0].actions.onConfirm();
+  await started;
+
+  runtime.coordinator.unbind();
+  runtime.coordinator.bind();
+  let newerRequestSettled = false;
+  const newerRequestPromise = runtime.coordinator
+    .request("pull")
+    .then((result) => {
+      newerRequestSettled = true;
+      return result;
+    });
+  await flushMicrotasks(32);
+
+  assert.equal(
+    newerRequestSettled,
+    true,
+    "旧生命周期的网络 Promise 不得占住重新 bind 后的意图队列。"
+  );
+  assert.equal(runtime.coordinator.readIntent().direction, "pull");
+
+  runtime.setActiveExecution(false);
+  deferred.resolve({ status: "success", action: "manual_push" });
+  await oldConfirmationPromise;
+  await newerRequestPromise;
+  assert.equal(runtime.coordinator.readIntent().direction, "pull");
+
+  await runtime.coordinator.reconcile("new_lifecycle_boundary");
+  const result = await runtime.confirmations.at(-1).actions.onConfirm();
+  assert.equal(result.status, "success");
+  assert.equal(runtime.executions.length, 2);
+  assert.equal(runtime.coordinator.readIntent(), null);
+};
+
 const testReloadDoesNotRestorePageLocalPending = async () => {
   const first = createHarness();
   const firstRuntime = createCoordinator(first.hooks, { activeExecution: true });
@@ -750,6 +974,10 @@ const run = async () => {
   await testSameMillisecondRequestsUseSequenceForBusyContinuation();
   await testOlderSuccessFailureAndThrowDoNotTouchNewerPending();
   await testLatestDirectionWinsWithinOnePageAndOldModalIsStale();
+  await testQueuedConfirmationChecksLatestRequestBeforeExecuting();
+  await testStaleConfirmationCancelCannotClearNewerIntent();
+  await testConfirmedExecutionDoesNotBlockNewIntentRegistration();
+  await testUnbindDuringConfirmedExecutionReleasesNewLifecycleQueue();
   await testReloadDoesNotRestorePageLocalPending();
   await testIndependentCoordinatorsDoNotSharePageLocalPending();
   await testNoSessionStorageDependency();

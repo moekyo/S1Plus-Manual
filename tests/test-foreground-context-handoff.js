@@ -467,6 +467,286 @@ const testForegroundSettlementCannotOverwriteRequestRegisteredDuringWrite = () =
   );
 };
 
+const testLateRegistrationCannotRewindCurrentObservation = () => {
+  for (const remoteUpdatedAt of [
+    "2026-08-27T05:25:29Z",
+    "2026-08-27T05:26:20Z",
+  ]) {
+    const sharedStore = new Map();
+    const first = createHarness({ sharedStore });
+    const second = createHarness({ sharedStore });
+    const originalSetValue = first.sandbox.GM_setValue;
+    let injected = false;
+    let newerRequest = null;
+    first.sandbox.GM_setValue = (key, value) => {
+      if (
+        !injected &&
+        String(key).startsWith(PENDING_FOREGROUND_REMOTE_SYNC_RECORD_KEY_PREFIX) &&
+        value?.lastResultStatus === ""
+      ) {
+        originalSetValue(key, value);
+        injected = true;
+        newerRequest = second.hooks.markPendingForegroundRemoteSyncRequest({
+          reason: "visibility_visible",
+          triggerSource: "foreground_resume",
+          remoteUpdatedAt,
+          now: 1760001000000,
+        });
+        return;
+      }
+      originalSetValue(key, value);
+    };
+
+    const olderRequest = first.hooks.markPendingForegroundRemoteSyncRequest({
+      reason: "pageshow",
+      triggerSource: "foreground_resume",
+      remoteUpdatedAt,
+      now: 1760001000000,
+    });
+
+    assert.equal(injected, true, "必须命中 record 已写入、marker 尚未写入的窗口。");
+    assert.ok(newerRequest);
+    assert.notEqual(newerRequest.requestId, olderRequest.requestId);
+
+    const currentBeforeSettlement = first.hooks.getPendingForegroundRemoteSyncRequest();
+    assert.equal(
+      currentBeforeSettlement.requestId,
+      newerRequest.requestId,
+      "迟到的旧 registration 不能把 current 退回 R1。"
+    );
+    assert.equal(currentBeforeSettlement.remoteUpdatedAt, remoteUpdatedAt);
+
+    const timers = [];
+    first.sandbox.setTimeout = (callback, delayMs) => {
+      timers.push({ callback, delayMs });
+      return timers.length;
+    };
+    first.sandbox.window.setTimeout = first.sandbox.setTimeout;
+    first.hooks.settlePendingForegroundRemoteSyncRequest(olderRequest, {
+      status: "blocked",
+      blockLevel: "soft",
+      reason: "local_changed_with_remote_timestamp_drift",
+      action: "skip_push_on_foreground_followup",
+    });
+
+    const currentAfterSettlement = first.hooks.getPendingForegroundRemoteSyncRequest();
+    assert.equal(currentAfterSettlement.requestId, newerRequest.requestId);
+    assert.equal(
+      first.hooks.isTerminalForegroundRemoteSyncSoftBlock(currentAfterSettlement),
+      false,
+      "R1 的 soft block 不能成为 R2 的恢复阻断依据。"
+    );
+    const recovery = first.hooks.recoverPendingForegroundRemoteSyncIfNeeded({
+      now: 1760001000001,
+      settingsSnapshot: enabledSettings,
+      requestForegroundRemoteSyncCheck: async () => ({
+        status: "success",
+        action: "pulled",
+      }),
+    });
+    assert.equal(recovery.status, "scheduled");
+    assert.equal(recovery.requestId, newerRequest.requestId);
+    first.hooks.clearForegroundRemoteSyncRecovery();
+    assert.equal(timers.length > 0, true);
+  }
+};
+
+const prepareForegroundCancellationSettings = (hooks) => {
+  hooks.saveSettings(
+    {
+      ...hooks.getSettings(),
+      ...enabledSettings,
+      syncAutoEnabled: false,
+      syncDeviceId: "device-a",
+    },
+    { suppressSyncTrigger: true, forceWrite: true }
+  );
+};
+
+const cancelForegroundPendingThroughSettings = (hooks, settingKey) => {
+  hooks.saveSettings(
+    {
+      ...hooks.getSettings(),
+      [settingKey]: false,
+    },
+    { suppressSyncTrigger: true, forceWrite: true }
+  );
+  hooks.saveSettings(
+    {
+      ...hooks.getSettings(),
+      [settingKey]: true,
+      syncRemoteEnabled: true,
+      syncCheckOnReturnToForeground: true,
+      syncRemoteGistId: "gist-id",
+      syncRemotePat: "pat-token",
+    },
+    { suppressSyncTrigger: true, forceWrite: true }
+  );
+};
+
+const testCancelledForegroundRequestCannotBeResurrectedByLateWrites = () => {
+  for (const settingKey of [
+    "syncCheckOnReturnToForeground",
+    "syncRemoteEnabled",
+  ]) {
+    for (const operation of ["attempt", "settlement", "soft_block_clear"]) {
+      const sharedStore = new Map();
+      const first = createHarness({ sharedStore });
+      const second = createHarness({ sharedStore });
+      const fresh = createHarness({ sharedStore });
+      prepareForegroundCancellationSettings(second.hooks);
+      const olderRequest = first.hooks.markPendingForegroundRemoteSyncRequest({
+        reason: "pageshow",
+        triggerSource: "foreground_resume",
+        remoteUpdatedAt: "2026-08-27T05:25:29Z",
+        now: 1760001000000,
+      });
+      if (operation === "soft_block_clear") {
+        first.hooks.settlePendingForegroundRemoteSyncRequest(olderRequest, {
+          status: "blocked",
+          blockLevel: "soft",
+          reason: "local_changed_with_remote_timestamp_drift",
+          action: "skip_push_on_foreground_followup",
+        });
+      }
+
+      let injected = false;
+      const originalSetValue = first.sandbox.GM_setValue;
+      first.sandbox.GM_setValue = (key, value) => {
+        const matchesLateWrite =
+          String(key).startsWith(PENDING_FOREGROUND_REMOTE_SYNC_RECORD_KEY_PREFIX) &&
+          value?.requestId === olderRequest.requestId &&
+          (operation === "attempt"
+            ? value?.lastResultStatus === "running"
+            : operation === "settlement"
+              ? value?.lastResultStatus === "blocked"
+              : value?.lastResultStatus === "");
+        if (!injected && matchesLateWrite) {
+          injected = true;
+          cancelForegroundPendingThroughSettings(second.hooks, settingKey);
+        }
+        originalSetValue(key, value);
+      };
+
+      if (operation === "attempt") {
+        first.hooks.markPendingForegroundRemoteSyncAttempt(olderRequest);
+      } else if (operation === "settlement") {
+        first.hooks.settlePendingForegroundRemoteSyncRequest(olderRequest, {
+          status: "blocked",
+          blockLevel: "soft",
+          reason: "local_changed_with_remote_timestamp_drift",
+          action: "skip_push_on_foreground_followup",
+        });
+      } else {
+        first.hooks.clearPendingForegroundRemoteSyncSoftBlock("local_mutation");
+      }
+
+      assert.equal(injected, true, "必须命中取消完成后、旧 continuation 写回前的窗口。");
+      assert.equal(
+        fresh.hooks.getPendingForegroundRemoteSyncRequest(),
+        null,
+        `${settingKey}/${operation} 的迟到写入不能复活已取消的 R1。`
+      );
+      const recovery = fresh.hooks.recoverPendingForegroundRemoteSyncIfNeeded({
+        settingsSnapshot: enabledSettings,
+        requestForegroundRemoteSyncCheck: async () => ({
+          status: "success",
+          action: "pulled",
+        }),
+      });
+      assert.equal(recovery.reason, "no_pending_foreground_remote_sync");
+    }
+  }
+};
+
+const testCancelledForegroundRequestKeepsConcurrentNewRegistration = () => {
+  const sharedStore = new Map();
+  const first = createHarness({ sharedStore });
+  const second = createHarness({ sharedStore });
+  prepareForegroundCancellationSettings(second.hooks);
+  const olderRequest = first.hooks.markPendingForegroundRemoteSyncRequest({
+    remoteUpdatedAt: "2026-08-27T05:25:29Z",
+    now: 1760001000000,
+  });
+  let newerRequest = null;
+  let injected = false;
+  const originalSetValue = first.sandbox.GM_setValue;
+  first.sandbox.GM_setValue = (key, value) => {
+    if (
+      !injected &&
+      String(key).startsWith(PENDING_FOREGROUND_REMOTE_SYNC_RECORD_KEY_PREFIX) &&
+      value?.requestId === olderRequest.requestId &&
+      value?.lastResultStatus === "blocked"
+    ) {
+      injected = true;
+      cancelForegroundPendingThroughSettings(
+        second.hooks,
+        "syncRemoteEnabled"
+      );
+      newerRequest = second.hooks.markPendingForegroundRemoteSyncRequest({
+        remoteUpdatedAt: "2026-08-27T05:26:20Z",
+        now: 1760001000000,
+      });
+    }
+    originalSetValue(key, value);
+  };
+
+  first.hooks.settlePendingForegroundRemoteSyncRequest(olderRequest, {
+    status: "blocked",
+    blockLevel: "soft",
+    reason: "local_changed_with_remote_timestamp_drift",
+    action: "skip_push_on_foreground_followup",
+  });
+
+  assert.equal(injected, true);
+  assert.ok(newerRequest);
+  const current = first.hooks.getPendingForegroundRemoteSyncRequest();
+  assert.equal(current.requestId, newerRequest.requestId);
+  assert.equal(current.remoteUpdatedAt, newerRequest.remoteUpdatedAt);
+};
+
+const testCompletedForegroundRequestCannotBeResurrectedByLateSettlement = () => {
+  const sharedStore = new Map();
+  const first = createHarness({ sharedStore });
+  const second = createHarness({ sharedStore });
+  const fresh = createHarness({ sharedStore });
+  const completedRequest = first.hooks.markPendingForegroundRemoteSyncRequest({
+    remoteUpdatedAt: "2026-08-27T05:25:29Z",
+    now: 1760001000000,
+  });
+  let injected = false;
+  const originalSetValue = first.sandbox.GM_setValue;
+  first.sandbox.GM_setValue = (key, value) => {
+    if (
+      !injected &&
+      String(key).startsWith(PENDING_FOREGROUND_REMOTE_SYNC_RECORD_KEY_PREFIX) &&
+      value?.requestId === completedRequest.requestId &&
+      value?.lastResultStatus === "blocked"
+    ) {
+      injected = true;
+      second.hooks.clearPendingForegroundRemoteSyncRequest(
+        completedRequest,
+        "completed"
+      );
+    }
+    originalSetValue(key, value);
+  };
+
+  first.hooks.settlePendingForegroundRemoteSyncRequest(completedRequest, {
+    status: "blocked",
+    blockLevel: "soft",
+    reason: "local_changed_with_remote_timestamp_drift",
+    action: "skip_push_on_foreground_followup",
+  });
+
+  assert.equal(injected, true);
+  assert.equal(
+    fresh.hooks.getPendingForegroundRemoteSyncRequest(),
+    null,
+    "正常完成终态也必须拒绝迟到的同请求失败结果。"
+  );
+};
+
 const testSameRemoteUpdatedAtAfterSoftBlockCreatesANewRequest = () => {
   const { hooks } = createHarness();
   const remoteUpdatedAt = "2026-08-27T05:25:29Z";
@@ -1533,6 +1813,10 @@ const testCollectedS1pLogsIncludeRuntimeContext = () => {
   testSameTimestampObservationCreatesANewIntentGeneration();
   testConcurrentClearRecoversSameTimestampIntentGeneration();
   testForegroundSettlementCannotOverwriteRequestRegisteredDuringWrite();
+  testLateRegistrationCannotRewindCurrentObservation();
+  testCancelledForegroundRequestCannotBeResurrectedByLateWrites();
+  testCancelledForegroundRequestKeepsConcurrentNewRegistration();
+  testCompletedForegroundRequestCannotBeResurrectedByLateSettlement();
   testSameRemoteUpdatedAtAfterSoftBlockCreatesANewRequest();
   testForegroundRecordRetentionAndClearDoNotResurrectHistory();
   testForegroundAttemptCannotOverwriteRequestRegisteredDuringWrite();

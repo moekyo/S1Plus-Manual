@@ -2646,6 +2646,10 @@
       headerRoot?.classList.remove(S1P_NAV_CUSTOMIZED_HEADER_CLASS);
     };
 
+    // Publish the first overflow decision synchronously so the pre-paint
+    // layout cannot let every custom link push the search bar away. Keep the
+    // animation-frame pass for fonts and late stylesheet/layout changes.
+    reconcile();
     scheduleReconcile();
   };
 
@@ -3274,6 +3278,8 @@
     `${PENDING_FOREGROUND_REMOTE_SYNC_KEY}:current`;
   const PENDING_FOREGROUND_REMOTE_SYNC_RECORD_KEY_PREFIX =
     `${PENDING_FOREGROUND_REMOTE_SYNC_KEY}:record:`;
+  const PENDING_FOREGROUND_REMOTE_SYNC_TERMINAL_KEY_PREFIX =
+    `${PENDING_FOREGROUND_REMOTE_SYNC_KEY}:terminal:`;
   const PENDING_FOREGROUND_REMOTE_SYNC_RECORD_RETENTION_MS =
     7 * 24 * 60 * 60 * 1000;
   const LEGACY_PENDING_MANUAL_SYNC_INTENT_KEY =
@@ -18649,42 +18655,136 @@
       String(requestId || "")
     )}`;
 
-  const readPendingForegroundRemoteSyncRecord = (requestId) => {
+  const getPendingForegroundRemoteSyncTerminalKey = (requestId) =>
+    `${PENDING_FOREGROUND_REMOTE_SYNC_TERMINAL_KEY_PREFIX}${encodeURIComponent(
+      String(requestId || "")
+    )}`;
+
+  let pendingForegroundRemoteSyncRegistrationClock = 0;
+
+  const normalizePendingForegroundRemoteSyncRegistrationClock = (value) => {
+    const normalized = Number(value);
+    return Number.isSafeInteger(normalized) && normalized >= 0
+      ? normalized
+      : 0;
+  };
+
+  const readPendingForegroundRemoteSyncRecordEnvelope = (requestId) => {
     const normalizedRequestId = normalizeSyncDiagnosticText(requestId, 160);
     if (!normalizedRequestId) {
       return null;
     }
-    const record = normalizePendingForegroundRemoteSyncRequest(
-      GM_getValue(
-        getPendingForegroundRemoteSyncRecordKey(normalizedRequestId),
-        null
-      )
+    const rawRecord = GM_getValue(
+      getPendingForegroundRemoteSyncRecordKey(normalizedRequestId),
+      null
     );
-    return record?.requestId === normalizedRequestId ? record : null;
+    const pending = normalizePendingForegroundRemoteSyncRequest(rawRecord);
+    if (!pending || pending.requestId !== normalizedRequestId) {
+      return null;
+    }
+    return {
+      key: getPendingForegroundRemoteSyncRecordKey(normalizedRequestId),
+      pending,
+      hasRegistrationClock: Object.prototype.hasOwnProperty.call(
+        rawRecord,
+        "registrationClock"
+      ),
+      registrationClock: normalizePendingForegroundRemoteSyncRegistrationClock(
+        rawRecord.registrationClock
+      ),
+    };
   };
 
-  const readPendingForegroundRemoteSyncRecords = () => {
+  const readPendingForegroundRemoteSyncRecordStore = () => {
     if (typeof GM_listValues !== "function") {
-      return [];
+      return null;
     }
     let keys = [];
     try {
-      keys = GM_listValues().filter(
-        (key) =>
-          typeof key === "string" &&
-          key.startsWith(PENDING_FOREGROUND_REMOTE_SYNC_RECORD_KEY_PREFIX)
-      );
+      keys = GM_listValues();
     } catch (_) {
-      return [];
+      return null;
     }
-    return keys
+    if (!Array.isArray(keys)) {
+      return null;
+    }
+    const recordKeys = keys.filter(
+      (key) =>
+        typeof key === "string" &&
+        key.startsWith(PENDING_FOREGROUND_REMOTE_SYNC_RECORD_KEY_PREFIX)
+    );
+    const terminalKeys = keys.filter(
+      (key) =>
+        typeof key === "string" &&
+        key.startsWith(PENDING_FOREGROUND_REMOTE_SYNC_TERMINAL_KEY_PREFIX)
+    );
+    const decodeStoredRequestId = (key, prefix) => {
+      try {
+        return decodeURIComponent(key.slice(prefix.length));
+      } catch (_) {
+        return "";
+      }
+    };
+    const records = recordKeys
+      .map((key) => readPendingForegroundRemoteSyncRecordEnvelope(
+        decodeStoredRequestId(key, PENDING_FOREGROUND_REMOTE_SYNC_RECORD_KEY_PREFIX)
+      ))
+      .filter(Boolean);
+    const terminals = terminalKeys
       .map((key) => {
-        const record = normalizePendingForegroundRemoteSyncRequest(
-          GM_getValue(key, null)
+        const rawTerminal = GM_getValue(key, null);
+        const pending = normalizePendingForegroundRemoteSyncRequest(rawTerminal);
+        const requestId = normalizeSyncDiagnosticText(
+          rawTerminal?.requestId ||
+            decodeStoredRequestId(
+              key,
+              PENDING_FOREGROUND_REMOTE_SYNC_TERMINAL_KEY_PREFIX
+            ),
+          160
         );
-        return record?.requestId ? record : null;
+        if (!pending || !requestId || pending.requestId !== requestId) {
+          return null;
+        }
+        return {
+          key,
+          pending,
+          hasRegistrationClock: Object.prototype.hasOwnProperty.call(
+            rawTerminal,
+            "registrationClock"
+          ),
+          registrationClock:
+            normalizePendingForegroundRemoteSyncRegistrationClock(
+              rawTerminal.registrationClock
+            ),
+          terminalAt: normalizePendingAutoSyncTimestamp(rawTerminal.terminalAt),
+          terminalKind:
+            normalizeSyncDiagnosticText(rawTerminal.terminalKind, 80) ||
+            "completed",
+        };
       })
       .filter(Boolean);
+    return { records, terminals };
+  };
+
+  const readPendingForegroundRemoteSyncTerminalRecord = (requestId) => {
+    const normalizedRequestId = normalizeSyncDiagnosticText(requestId, 160);
+    if (!normalizedRequestId) {
+      return null;
+    }
+    const rawTerminal = GM_getValue(
+      getPendingForegroundRemoteSyncTerminalKey(normalizedRequestId),
+      null
+    );
+    const pending = normalizePendingForegroundRemoteSyncRequest(rawTerminal);
+    if (!pending || pending.requestId !== normalizedRequestId) {
+      return null;
+    }
+    return {
+      key: getPendingForegroundRemoteSyncTerminalKey(normalizedRequestId),
+      pending,
+      terminalKind:
+        normalizeSyncDiagnosticText(rawTerminal.terminalKind, 80) || "completed",
+    };
   };
 
   const getPendingForegroundRemoteSyncCurrentMarker = () => {
@@ -18697,7 +18797,73 @@
     }
     return {
       requestId: normalizeSyncDiagnosticText(marker.requestId, 160),
+      remoteUpdatedAt: normalizeRemoteProbeUpdatedAt(marker.remoteUpdatedAt),
       registeredAt: normalizeRemoteProbeTimestamp(marker.registeredAt),
+      hasRegistrationClock: Object.prototype.hasOwnProperty.call(
+        marker,
+        "registrationClock"
+      ),
+      registrationClock:
+        normalizePendingForegroundRemoteSyncRegistrationClock(
+          marker.registrationClock
+        ),
+    };
+  };
+
+  const comparePendingForegroundRemoteSyncCandidates = (left, right) => {
+    const leftClock = normalizePendingForegroundRemoteSyncRegistrationClock(
+      left.registrationClock
+    );
+    const rightClock = normalizePendingForegroundRemoteSyncRegistrationClock(
+      right.registrationClock
+    );
+    if (leftClock !== rightClock) {
+      return rightClock - leftClock;
+    }
+    if (left.hasRegistrationClock !== right.hasRegistrationClock) {
+      return left.hasRegistrationClock ? -1 : 1;
+    }
+    if (left.pending.requestId === right.pending.requestId) {
+      const leftIsTerminal = left.kind === "terminal";
+      const rightIsTerminal = right.kind === "terminal";
+      if (leftIsTerminal !== rightIsTerminal) {
+        return leftIsTerminal ? -1 : 1;
+      }
+    }
+    const leftActivityAt = Math.max(
+      left.pending.createdAt || 0,
+      left.pending.lastSeenAt || 0,
+      left.pending.lastResultAt || 0
+    );
+    const rightActivityAt = Math.max(
+      right.pending.createdAt || 0,
+      right.pending.lastSeenAt || 0,
+      right.pending.lastResultAt || 0
+    );
+    return (
+      rightActivityAt - leftActivityAt ||
+      right.pending.requestId.localeCompare(left.pending.requestId)
+    );
+  };
+
+  const readPendingForegroundRemoteSyncCandidates = () => {
+    const store = readPendingForegroundRemoteSyncRecordStore();
+    if (!store) {
+      return null;
+    }
+    const records = store.records.map((record) => ({
+      ...record,
+      kind: "record",
+    }));
+    const terminals = store.terminals.map((terminal) => ({
+      ...terminal,
+      kind: "terminal",
+    }));
+    return {
+      store,
+      records,
+      terminals,
+      candidates: [...records, ...terminals],
     };
   };
 
@@ -18721,6 +18887,79 @@
     return true;
   };
 
+  const getNextPendingForegroundRemoteSyncRegistrationClock = () => {
+    const candidatesState = readPendingForegroundRemoteSyncCandidates();
+    if (!candidatesState) {
+      return null;
+    }
+    const currentMarker = getPendingForegroundRemoteSyncCurrentMarker();
+    const maximumClock = candidatesState.candidates.reduce(
+      (maximum, candidate) =>
+        Math.max(
+          maximum,
+          normalizePendingForegroundRemoteSyncRegistrationClock(
+            candidate.registrationClock
+          )
+        ),
+      Math.max(
+        pendingForegroundRemoteSyncRegistrationClock,
+        normalizePendingForegroundRemoteSyncRegistrationClock(
+          currentMarker?.registrationClock
+        )
+      )
+    );
+    const nextClock = maximumClock + 1;
+    pendingForegroundRemoteSyncRegistrationClock = nextClock;
+    return nextClock;
+  };
+
+  const writePendingForegroundRemoteSyncTerminalRecord = (
+    pendingInput,
+    { terminalKind = "completed", reason = "completed" } = {}
+  ) => {
+    const pending = normalizePendingForegroundRemoteSyncRequest(pendingInput);
+    if (!pending || typeof GM_listValues !== "function") {
+      return null;
+    }
+    const existingTerminal = readPendingForegroundRemoteSyncTerminalRecord(
+      pending.requestId
+    );
+    if (existingTerminal) {
+      return existingTerminal.pending;
+    }
+    const existingRecord = readPendingForegroundRemoteSyncRecordEnvelope(
+      pending.requestId
+    );
+    const currentMarker = getPendingForegroundRemoteSyncCurrentMarker();
+    const registrationClock = Math.max(
+      existingRecord?.registrationClock || 0,
+      currentMarker?.requestId === pending.requestId
+        ? currentMarker.registrationClock
+        : 0
+    );
+    const terminalRecord = {
+      storageVersion: 3,
+      kind: "terminal",
+      ...pending,
+      registrationClock,
+      terminalKind:
+        normalizeSyncDiagnosticText(terminalKind, 80) || "completed",
+      terminalReason: normalizeRemoteProbeText(reason, 160) || "completed",
+      terminalAt: Date.now(),
+    };
+    // The key is never written by mutable record updates. If two contexts
+    // race here, either terminal outcome is a terminal fence for this request.
+    GM_setValue(
+      getPendingForegroundRemoteSyncTerminalKey(pending.requestId),
+      terminalRecord
+    );
+    publishPendingForegroundRemoteSyncSignal(
+      terminalRecord.terminalKind,
+      pending
+    );
+    return pending;
+  };
+
   const writePendingForegroundRemoteSyncRecord = (
     pendingInput,
     { registerCurrent = false, eventType = "updated" } = {}
@@ -18729,17 +18968,59 @@
     if (!pending) {
       return null;
     }
+    if (typeof GM_listValues !== "function") {
+      recordSyncTraceEvent("foreground_pending_storage_unsupported", {
+        scope: "foreground_probe",
+        status: "failure",
+        message: "缺少 GM_listValues，拒绝使用不安全的前台远端共享读改写",
+        details: {
+          requestId: pending.requestId,
+          remoteUpdatedAt: pending.remoteUpdatedAt,
+          registerCurrent,
+        },
+      });
+      return null;
+    }
+    if (readPendingForegroundRemoteSyncTerminalRecord(pending.requestId)) {
+      recordSyncTraceEvent("foreground_pending_write_ignored_terminal", {
+        scope: "foreground_probe",
+        status: "ignored",
+        message: "已完成或取消的前台远端请求拒绝迟到写入",
+        details: {
+          requestId: pending.requestId,
+          remoteUpdatedAt: pending.remoteUpdatedAt,
+          eventType,
+        },
+      });
+      return null;
+    }
+    const existingRecord = readPendingForegroundRemoteSyncRecordEnvelope(
+      pending.requestId
+    );
+    const registrationClock = registerCurrent
+      ? getNextPendingForegroundRemoteSyncRegistrationClock()
+      : existingRecord?.registrationClock || 0;
+    if (registrationClock === null) {
+      return null;
+    }
+    const storedRecord = {
+      storageVersion: 3,
+      ...pending,
+      registrationClock,
+    };
     GM_setValue(
       getPendingForegroundRemoteSyncRecordKey(pending.requestId),
-      pending
+      storedRecord
     );
     if (registerCurrent) {
       GM_setValue(PENDING_FOREGROUND_REMOTE_SYNC_CURRENT_KEY, {
+        storageVersion: 3,
         version: 1,
         kind: "current",
         requestId: pending.requestId,
         remoteUpdatedAt: pending.remoteUpdatedAt,
         registeredAt: pending.createdAt,
+        registrationClock,
       });
     }
     publishPendingForegroundRemoteSyncSignal(eventType, pending);
@@ -18747,24 +19028,33 @@
   };
 
   const prunePendingForegroundRemoteSyncRecords = (now = Date.now()) => {
-    if (typeof GM_listValues !== "function") {
+    const candidatesState = readPendingForegroundRemoteSyncCandidates();
+    if (!candidatesState) {
       return;
     }
-    const currentMarker = getPendingForegroundRemoteSyncCurrentMarker();
     const cutoff = (normalizeRemoteProbeTimestamp(now) || Date.now()) -
       PENDING_FOREGROUND_REMOTE_SYNC_RECORD_RETENTION_MS;
-    readPendingForegroundRemoteSyncRecords().forEach((record) => {
-      if (record.requestId === currentMarker?.requestId) {
+    const selectedPending = getPendingForegroundRemoteSyncRequest();
+    candidatesState.store.records.forEach((record) => {
+      if (record.pending.requestId === selectedPending?.requestId) {
         return;
       }
       const lastActivityAt = Math.max(
-        record.createdAt || 0,
-        record.lastSeenAt || 0,
-        record.lastAttemptAt || 0,
-        record.lastResultAt || 0
+        record.pending.createdAt || 0,
+        record.pending.lastSeenAt || 0,
+        record.pending.lastAttemptAt || 0,
+        record.pending.lastResultAt || 0
       );
       if (lastActivityAt > 0 && lastActivityAt < cutoff) {
-        GM_deleteValue(getPendingForegroundRemoteSyncRecordKey(record.requestId));
+        GM_deleteValue(record.key);
+      }
+    });
+    const terminalWinner = [...candidatesState.terminals].sort(
+      comparePendingForegroundRemoteSyncCandidates
+    )[0];
+    candidatesState.store.terminals.forEach((terminal) => {
+      if (!terminalWinner || terminal.key !== terminalWinner.key) {
+        GM_deleteValue(terminal.key);
       }
     });
   };
@@ -18785,22 +19075,43 @@
   };
 
   const getPendingForegroundRemoteSyncRequest = () => {
+    const candidatesState = readPendingForegroundRemoteSyncCandidates();
     const currentMarker = getPendingForegroundRemoteSyncCurrentMarker();
+    if (candidatesState) {
+      const { candidates } = candidatesState;
+      if (candidates.length > 0) {
+        const hasRegistrationMetadata = candidates.some(
+          (candidate) => candidate.hasRegistrationClock
+        );
+        const selected = candidates
+          .filter((candidate) =>
+            !hasRegistrationMetadata && currentMarker?.requestId
+              ? candidate.pending.requestId === currentMarker.requestId
+              : true
+          )
+          .sort(comparePendingForegroundRemoteSyncCandidates)[0] ||
+          candidates.sort(comparePendingForegroundRemoteSyncCandidates)[0];
+        if (selected?.kind === "terminal") {
+          return null;
+        }
+        return selected?.pending || null;
+      }
+      if (currentMarker?.requestId) {
+        return null;
+      }
+      const legacyMirror = GM_getValue(PENDING_FOREGROUND_REMOTE_SYNC_KEY, null);
+      if (legacyMirror?.storageVersion === 2) {
+        return null;
+      }
+      return normalizePendingForegroundRemoteSyncRequest(legacyMirror);
+    }
+
+    // GM_listValues is required for the v2/v3 multi-record authority. A
+    // missing capability must fail closed instead of silently returning a
+    // possibly stale marker as if it were a compare-and-swap result.
     if (currentMarker?.requestId) {
-      return readPendingForegroundRemoteSyncRecord(
-        currentMarker.requestId
-      );
+      return null;
     }
-
-    const records = readPendingForegroundRemoteSyncRecords();
-    if (records.length > 0) {
-      return records.sort((left, right) => {
-        const leftAt = Math.max(left.createdAt || 0, left.lastSeenAt || 0);
-        const rightAt = Math.max(right.createdAt || 0, right.lastSeenAt || 0);
-        return rightAt - leftAt || right.requestId.localeCompare(left.requestId);
-      })[0];
-    }
-
     const legacyMirror = GM_getValue(PENDING_FOREGROUND_REMOTE_SYNC_KEY, null);
     if (legacyMirror?.storageVersion === 2) {
       return null;
@@ -18817,6 +19128,23 @@
         pending.lastResultReason &&
         !isForegroundProbeRetryableSoftBlockReason(pending.lastResultReason)
     );
+  };
+
+  const getForegroundRemoteSyncMutationIgnore = (current, latest) => {
+    const terminal = current?.requestId
+      ? readPendingForegroundRemoteSyncTerminalRecord(current.requestId)
+      : null;
+    return {
+      reason: terminal
+        ? "cancelled_foreground_remote_sync"
+        : "newer_pending_foreground_remote_sync",
+      message: terminal
+        ? "旧前台远端结果已被取消或完成终态拒绝，新请求仍按权威状态处理"
+        : "旧前台远端结果已忽略，新请求仍保留",
+      terminalKind: terminal?.terminalKind || "",
+      requestId: latest?.requestId || "",
+      remoteUpdatedAt: latest?.remoteUpdatedAt || "",
+    };
   };
 
   const clearPendingForegroundRemoteSyncSoftBlock = (
@@ -18841,23 +19169,25 @@
     });
     const latest = getPendingForegroundRemoteSyncRequest();
     if (!isSamePendingForegroundRemoteSyncRequest(latest, current)) {
+      const ignored = getForegroundRemoteSyncMutationIgnore(current, latest);
       recordSyncTraceEvent("foreground_pending_soft_block_clear_ignored", {
         scope: "foreground_probe",
         status: "retained",
-        message: "旧前台远端 soft block 清除结果已忽略，新请求仍保留",
+        message: ignored.message,
         details: {
           requestId: current.requestId,
           remoteUpdatedAt: current.remoteUpdatedAt,
-          retainedRequestId: latest?.requestId || "",
-          retainedRemoteUpdatedAt: latest?.remoteUpdatedAt || "",
+          retainedRequestId: ignored.requestId,
+          retainedRemoteUpdatedAt: ignored.remoteUpdatedAt,
+          terminalKind: ignored.terminalKind,
           reason: normalizeRemoteProbeText(reason, 120) || "local_state_changed",
         },
       });
       return {
         status: "ignored",
-        reason: "newer_pending_foreground_remote_sync",
-        requestId: latest?.requestId || "",
-        remoteUpdatedAt: latest?.remoteUpdatedAt || "",
+        reason: ignored.reason,
+        requestId: ignored.requestId,
+        remoteUpdatedAt: ignored.remoteUpdatedAt,
       };
     }
     clearForegroundFollowUpSoftBlock();
@@ -18917,22 +19247,24 @@
     });
     const latest = getPendingForegroundRemoteSyncRequest();
     if (!isSamePendingForegroundRemoteSyncRequest(latest, current)) {
+      const ignored = getForegroundRemoteSyncMutationIgnore(current, latest);
       recordSyncTraceEvent("foreground_pending_attempt_ignored", {
         scope: "foreground_probe",
         status: "retained",
-        message: "旧前台远端 attempt 结果已忽略，新请求仍保留",
+        message: ignored.message,
         details: {
           requestId: current.requestId,
           remoteUpdatedAt: current.remoteUpdatedAt,
-          retainedRequestId: latest?.requestId || "",
-          retainedRemoteUpdatedAt: latest?.remoteUpdatedAt || "",
+          retainedRequestId: ignored.requestId,
+          retainedRemoteUpdatedAt: ignored.remoteUpdatedAt,
+          terminalKind: ignored.terminalKind,
         },
       });
       return {
         status: "ignored",
-        reason: "newer_pending_foreground_remote_sync",
-        requestId: latest?.requestId || "",
-        remoteUpdatedAt: latest?.remoteUpdatedAt || "",
+        reason: ignored.reason,
+        requestId: ignored.requestId,
+        remoteUpdatedAt: ignored.remoteUpdatedAt,
       };
     }
     recordSyncTraceEvent("foreground_pending_attempt_started", {
@@ -19038,22 +19370,50 @@
       sourceContextId: SYNC_RUNTIME_CONTEXT_ID,
       sourceTabId: getSyncRuntimeTabLineageId(),
     };
-    writePendingForegroundRemoteSyncRecord(nextRequest, {
+    const storedRequest = writePendingForegroundRemoteSyncRecord(nextRequest, {
       registerCurrent: true,
       eventType: "registered",
     });
+    if (!storedRequest) {
+      recordSyncTraceEvent("foreground_pending_registration_failed", {
+        scope: "foreground_probe",
+        status: "failure",
+        message: "前台远端待处理注册因共享存储能力不足而停止",
+        details: {
+          requestId: nextRequest.requestId,
+          remoteUpdatedAt: nextRequest.remoteUpdatedAt,
+        },
+      });
+      return null;
+    }
     prunePendingForegroundRemoteSyncRecords(normalizedNow);
-    setAutoSyncIndicatorPendingState(
-      AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME,
-      "foreground_remote_update_pending",
-      { operation: AUTO_SYNC_INDICATOR_OPERATION_SYNC }
-    );
+    const authoritative = getPendingForegroundRemoteSyncRequest();
+    if (!isSamePendingForegroundRemoteSyncRequest(authoritative, nextRequest)) {
+      recordSyncTraceEvent("foreground_pending_registration_ignored", {
+        scope: "foreground_probe",
+        status: "retained",
+        message: "迟到的前台远端旧注册已忽略，新请求仍保留",
+        details: {
+          requestId: nextRequest.requestId,
+          remoteUpdatedAt: nextRequest.remoteUpdatedAt,
+          retainedRequestId: authoritative?.requestId || "",
+          retainedRemoteUpdatedAt: authoritative?.remoteUpdatedAt || "",
+        },
+      });
+    } else {
+      setAutoSyncIndicatorPendingState(
+        AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME,
+        "foreground_remote_update_pending",
+        { operation: AUTO_SYNC_INDICATOR_OPERATION_SYNC }
+      );
+    }
     return nextRequest;
   };
 
   const clearPendingForegroundRemoteSyncRequest = (
     expectedRequest = null,
-    reason = "completed"
+    reason = "completed",
+    { terminalKind = "completed" } = {}
   ) => {
     const current = getPendingForegroundRemoteSyncRequest();
     if (!current) {
@@ -19070,6 +19430,29 @@
         status: "retained",
         reason: "newer_pending_foreground_remote_sync",
         requestId: current.requestId,
+      };
+    }
+    const terminal = writePendingForegroundRemoteSyncTerminalRecord(current, {
+      terminalKind,
+      reason,
+    });
+    if (!terminal) {
+      recordSyncTraceEvent("foreground_pending_terminal_write_failed", {
+        scope: "foreground_probe",
+        status: "failure",
+        message: "前台远端待处理无法写入取消或完成终态，保留原请求",
+        details: {
+          requestId: current.requestId,
+          remoteUpdatedAt: current.remoteUpdatedAt,
+          terminalKind,
+          reason: normalizeRemoteProbeText(reason, 120) || "completed",
+        },
+      });
+      return {
+        status: "failure",
+        reason: "foreground_pending_terminal_write_failed",
+        requestId: current.requestId,
+        remoteUpdatedAt: current.remoteUpdatedAt,
       };
     }
     GM_deleteValue(
@@ -19213,24 +19596,26 @@
       });
       const latest = getPendingForegroundRemoteSyncRequest();
       if (!isSamePendingForegroundRemoteSyncRequest(latest, current)) {
+        const ignored = getForegroundRemoteSyncMutationIgnore(current, latest);
         recordSyncTraceEvent("foreground_pending_result_ignored", {
           scope: "foreground_probe",
           status: "retained",
-          message: "旧前台远端结果已忽略，新请求仍保留",
+          message: ignored.message,
           details: {
             requestId: current.requestId,
             remoteUpdatedAt: current.remoteUpdatedAt,
             resultStatus: normalizedStatus,
             resultReason: normalizedReason,
-            retainedRequestId: latest?.requestId || "",
-            retainedRemoteUpdatedAt: latest?.remoteUpdatedAt || "",
+            retainedRequestId: ignored.requestId,
+            retainedRemoteUpdatedAt: ignored.remoteUpdatedAt,
+            terminalKind: ignored.terminalKind,
           },
         });
         return {
           status: "ignored",
-          reason: "newer_pending_foreground_remote_sync",
-          requestId: latest?.requestId || "",
-          remoteUpdatedAt: latest?.remoteUpdatedAt || "",
+          reason: ignored.reason,
+          requestId: ignored.requestId,
+          remoteUpdatedAt: ignored.remoteUpdatedAt,
         };
       }
       if (isTerminalForegroundRemoteSyncSoftBlock(next)) {
@@ -19351,7 +19736,8 @@
 
     const result = clearPendingForegroundRemoteSyncRequest(
       null,
-      normalizedReason
+      normalizedReason,
+      { terminalKind: "cancelled" }
     );
     clearForegroundRemoteSyncRecovery();
     refreshAutoSyncIndicatorRuntimeDisplay("foreground_remote_sync_disabled");
@@ -47313,8 +47699,14 @@
 
   const s1pCreateManualSyncIntentCoordinator = (adapters = {}) => {
     let s1pManualOperationId = "";
-    const s1pTraceManualIntent = (event, status, reason = "", details = {}) => {
-      s1pRecordDiagnosticEvent(`manual.${event}`, { module: "sync.manual", operationId: s1pManualOperationId,
+    const s1pTraceManualIntent = (
+      event,
+      status,
+      reason = "",
+      details = {},
+      operationId = s1pManualOperationId
+    ) => {
+      s1pRecordDiagnosticEvent(`manual.${event}`, { module: "sync.manual", operationId: operationId || s1pManualOperationId,
         status, reason, message: {
           requested: "用户请求手动同步", queued: "手动请求已排队，等待执行边界",
           waiting: "手动请求仍在等待", confirmation: "手动请求已就绪，等待用户确认",
@@ -47430,7 +47822,7 @@
         : (direction, _intent, options = {}) => {
             const executionOptions = {
               ...options,
-              operationId: s1pManualOperationId,
+              operationId: options.operationId || s1pManualOperationId,
               suppressBusyMessage: true,
             };
             return direction === AUTO_SYNC_INDICATOR_OPERATION_PULL
@@ -47622,7 +48014,8 @@
       intent,
       reason = "manual_sync_intent_settled",
       result = null,
-      requestSequence = null
+      requestSequence = null,
+      operationId = s1pManualOperationId
     ) => {
       const current = readIntent();
       if (!isCurrentIntentAuthority(current, requestSequence)) {
@@ -47630,7 +48023,7 @@
       }
       deleteIntent();
       s1pTraceManualIntent("settled", result?.status || (/cancel|stale|disabled/.test(reason) ? "cancelled" : "settled"), reason,
-        { waitedMs: getNow() - intent.createdAt });
+        { waitedMs: getNow() - intent.createdAt }, operationId);
       if (
         !activeConfirmationKey ||
         (activeConfirmationKey === getIntentKey(intent) &&
@@ -47665,7 +48058,9 @@
         if (
           requestedLifecycleGeneration !== lifecycleGeneration ||
           requestedEpoch !== null &&
-          requestedEpoch !== confirmationEpoch
+          requestedEpoch !== confirmationEpoch ||
+          requestedRequestSequence !== null &&
+          requestedRequestSequence !== latestManualRequestSequence
         ) {
           return { status: "skipped", reason: "stale_manual_intent" };
         }
@@ -47690,18 +48085,24 @@
       requestedIntent,
       requestedEpoch,
       requestedLifecycleGeneration = lifecycleGeneration,
-      requestedRequestSequence = null
-    ) =>
-      enqueue(async () => {
+      requestedRequestSequence = null,
+      requestedOperationId = ""
+    ) => {
+      const preparation = enqueue(async () => {
         if (
           requestedLifecycleGeneration !== lifecycleGeneration ||
           requestedEpoch !== confirmationEpoch ||
+          requestedRequestSequence !== null &&
+          requestedRequestSequence !== latestManualRequestSequence ||
           !activeConfirmationKey ||
           activeConfirmationKey !== getIntentKey(requestedIntent) ||
           requestedRequestSequence !== null &&
           activeConfirmationRequestSequence !== requestedRequestSequence
         ) {
-          return { status: "skipped", reason: "stale_manual_intent" };
+          return {
+            kind: "result",
+            result: { status: "skipped", reason: "stale_manual_intent" },
+          };
         }
         const current = readIntent();
         if (
@@ -47709,7 +48110,10 @@
           !isSameIntent(current, requestedIntent) ||
           current.phase !== MANUAL_SYNC_INTENT_PHASE_AWAITING_CONFIRMATION
         ) {
-          return { status: "skipped", reason: "stale_manual_intent" };
+          return {
+            kind: "result",
+            result: { status: "skipped", reason: "stale_manual_intent" },
+          };
         }
         if (!isSyncEnabled()) {
           settleIntent(
@@ -47718,7 +48122,10 @@
             null,
             requestedRequestSequence
           );
-          return { status: "skipped", reason: "sync_disabled" };
+          return {
+            kind: "result",
+            result: { status: "skipped", reason: "sync_disabled" },
+          };
         }
         if (hasActiveExecution()) {
           const waiting = setWaitingForExecutionBoundary(
@@ -47726,16 +48133,82 @@
             requestedRequestSequence
           );
           closeActiveConfirmation({ reason: "execution_boundary_busy" });
-          return waiting
-            ? summarizeIntent(waiting, "queued", "execution_boundary_busy")
-            : { status: "failure", reason: "manual_intent_storage_failed" };
+          return {
+            kind: "result",
+            result: waiting
+              ? summarizeIntent(waiting, "queued", "execution_boundary_busy")
+              : { status: "failure", reason: "manual_intent_storage_failed" },
+          };
         }
 
         closeActiveConfirmation({ dismiss: false, reason: "confirmed" });
-        s1pTraceManualIntent("confirmed", "running");
+        s1pTraceManualIntent(
+          "confirmed",
+          "running",
+          "",
+          {},
+          requestedOperationId || s1pManualOperationId
+        );
+        return {
+          kind: "execute",
+          intent: current,
+          lifecycleGeneration: requestedLifecycleGeneration,
+          requestSequence: requestedRequestSequence,
+          confirmationIdentity: {
+            epoch: requestedEpoch,
+            postCloseEpoch: confirmationEpoch,
+            key: getIntentKey(current),
+            requestSequence: requestedRequestSequence,
+          },
+          operationId: requestedOperationId || s1pManualOperationId,
+        };
+      });
+
+      return preparation.then(async (prepared) => {
+        if (prepared?.kind !== "execute") {
+          return prepared?.result || {
+            status: "skipped",
+            reason: "stale_manual_intent",
+          };
+        }
+
+        const latestBeforeExecute = readIntent();
+        const executionStillAuthorized = Boolean(
+          prepared.lifecycleGeneration === lifecycleGeneration &&
+            prepared.requestSequence !== null &&
+            prepared.requestSequence === latestManualRequestSequence &&
+            prepared.requestSequence === pendingManualSyncIntentRequestSequence &&
+            confirmationEpoch ===
+              prepared.confirmationIdentity?.postCloseEpoch &&
+            prepared.confirmationIdentity?.key === getIntentKey(prepared.intent) &&
+            prepared.confirmationIdentity?.requestSequence ===
+              prepared.requestSequence &&
+            isSameIntent(latestBeforeExecute, prepared.intent)
+        );
+        if (!executionStillAuthorized) {
+          s1pRecordDiagnosticEvent("manual.confirmation_execution_ignored", {
+            module: "sync.manual",
+            operationId: prepared.operationId,
+            status: "ignored",
+            reason: "stale_manual_intent",
+            message: "执行前发现手动请求或生命周期已过期，未调用同步执行器",
+            details: {
+              requestSequence: prepared.requestSequence,
+              retainedRequestSequence: latestManualRequestSequence,
+              retainedDirection: latestBeforeExecute?.direction || "",
+              confirmationEpoch: prepared.confirmationIdentity?.epoch || 0,
+            },
+          });
+          return { status: "skipped", reason: "stale_manual_intent" };
+        }
+
         let result;
         try {
-          result = await executeDirection(current.direction, current, {});
+          result = await executeDirection(
+            prepared.intent.direction,
+            prepared.intent,
+            { operationId: prepared.operationId }
+          );
         } catch (error) {
           result = {
             status: "failure",
@@ -47744,42 +48217,61 @@
           };
         }
 
-        const latest = readIntent();
-        if (
-          requestedLifecycleGeneration !== lifecycleGeneration ||
-          requestedRequestSequence !== null &&
-          (requestedRequestSequence !== latestManualRequestSequence ||
-            requestedRequestSequence !==
-              pendingManualSyncIntentRequestSequence) ||
-          !isSameIntent(latest, current)
-        ) {
-          return result;
-        }
-        if (isExecutionBoundaryRaceResult(result)) {
-          const waiting = setWaitingForExecutionBoundary(
-            latest,
-            requestedRequestSequence
-          );
-          if (waiting) {
-            showMessageForDelayedIntent(current.direction);
+        return enqueue(async () => {
+          const latest = readIntent();
+          if (
+            prepared.lifecycleGeneration !== lifecycleGeneration ||
+            prepared.requestSequence !== null &&
+            (prepared.requestSequence !== latestManualRequestSequence ||
+              prepared.requestSequence !==
+                pendingManualSyncIntentRequestSequence) ||
+            !isSameIntent(latest, prepared.intent)
+          ) {
+            s1pRecordDiagnosticEvent("manual.confirmation_result_ignored", {
+              module: "sync.manual",
+              operationId: prepared.operationId,
+              status: "ignored",
+              reason: "stale_manual_intent",
+              message: "旧手动同步结果已忽略，新请求或新生命周期仍保留",
+              details: {
+                requestSequence: prepared.requestSequence,
+                retainedRequestSequence: latestManualRequestSequence,
+                retainedDirection: latest?.direction || "",
+                resultStatus: result?.status || "",
+                resultReason: result?.reason || "",
+              },
+            });
+            return result;
           }
-          return waiting
-            ? summarizeIntent(waiting, "queued", "execution_boundary_busy")
-            : result;
-        }
-        settleIntent(
-          current,
-          "manual_sync_intent_settled",
-          result,
-          requestedRequestSequence
-        );
-        return result;
+          if (isExecutionBoundaryRaceResult(result)) {
+            const waiting = setWaitingForExecutionBoundary(
+              latest,
+              prepared.requestSequence
+            );
+            if (waiting) {
+              showMessageForDelayedIntent(prepared.intent.direction);
+            }
+            return waiting
+              ? summarizeIntent(waiting, "queued", "execution_boundary_busy")
+              : result;
+          }
+          settleIntent(
+            prepared.intent,
+            "manual_sync_intent_settled",
+            result,
+            prepared.requestSequence,
+            prepared.operationId
+          );
+          return result;
+        });
       });
+    };
 
     const presentConfirmation = (
       intent,
       expectedLifecycleGeneration = lifecycleGeneration,
-      expectedRequestSequence = null
+      expectedRequestSequence = null,
+      expectedOperationId = s1pManualOperationId
     ) => {
       if (expectedLifecycleGeneration !== lifecycleGeneration) {
         return { status: "skipped", reason: "stale_manual_intent" };
@@ -47804,9 +48296,16 @@
 
       closeActiveConfirmation({ reason: "replaced" });
       const epoch = confirmationEpoch;
+      const operationId = expectedOperationId || s1pManualOperationId;
       activeConfirmationKey = key;
       activeConfirmationRequestSequence = requestSequence;
-      s1pTraceManualIntent("confirmation", "awaiting_confirmation");
+      s1pTraceManualIntent(
+        "confirmation",
+        "awaiting_confirmation",
+        "",
+        {},
+        operationId
+      );
       try {
         activeConfirmationModal = showConfirmation(current, {
           onConfirm: () =>
@@ -47814,7 +48313,8 @@
               current,
               epoch,
               expectedLifecycleGeneration,
-              requestSequence
+              requestSequence,
+              operationId
             ),
           onCancel: () =>
             cancelPending(
@@ -47984,13 +48484,14 @@
       const requestLifecycleGeneration = lifecycleGeneration;
       const isCurrentRequest = () =>
         isCurrentManualRequest(requestSequence, requestLifecycleGeneration);
-      if (readIntent()) s1pTraceManualIntent("replaced", "superseded", "new_manual_request", { nextDirection: normalizedDirection });
-      s1pManualOperationId = s1pNewDiagnosticOperation("manual");
-      s1pTraceManualIntent("requested", "requested", "navbar_or_manual_action", { direction: normalizedDirection });
+      const requestOperationId = s1pNewDiagnosticOperation("manual");
+      s1pManualOperationId = requestOperationId;
+      if (readIntent()) s1pTraceManualIntent("replaced", "superseded", "new_manual_request", { nextDirection: normalizedDirection }, requestOperationId);
+      s1pTraceManualIntent("requested", "requested", "navbar_or_manual_action", { direction: normalizedDirection }, requestOperationId);
       if (!isSyncEnabled()) {
         const current = readIntent();
         if (current) {
-          settleIntent(current, "manual_sync_disabled");
+          settleIntent(current, "manual_sync_disabled", null, null, requestOperationId);
         }
         return { status: "skipped", reason: "sync_disabled" };
       }
@@ -48000,12 +48501,15 @@
         current &&
         getNow() - current.createdAt > MANUAL_SYNC_INTENT_STALE_MS
       ) {
-        settleIntent(current, "manual_sync_intent_stale");
+        settleIntent(current, "manual_sync_intent_stale", null, null, requestOperationId);
         current = null;
       }
 
       if (!hasActiveExecution() && !current) {
-        const result = await executeDirection(normalizedDirection, null, options);
+        const result = await executeDirection(normalizedDirection, null, {
+          ...options,
+          operationId: requestOperationId,
+        });
         if (!isCurrentRequest()) {
           return result;
         }
@@ -48030,7 +48534,13 @@
             // Local scheduler cleanup is best effort.
           }
           setIndicatorPending(pending);
-          s1pTraceManualIntent("queued", "queued", "execution_race");
+          s1pTraceManualIntent(
+            "queued",
+            "queued",
+            "execution_race",
+            {},
+            requestOperationId
+          );
           refreshDisplay("manual_sync_intent_execution_race");
           showMessageForDelayedIntent(normalizedDirection);
           const reconciled = await reconcileOnce(
@@ -48061,7 +48571,13 @@
         }
         const active = hasActiveExecution();
         if (active) {
-          s1pTraceManualIntent("queued", "queued", "execution_boundary_busy");
+          s1pTraceManualIntent(
+            "queued",
+            "queued",
+            "execution_boundary_busy",
+            {},
+            requestOperationId
+          );
           try {
             onQueued();
           } catch (error) {
