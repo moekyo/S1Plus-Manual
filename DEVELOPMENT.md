@@ -433,7 +433,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - 自动同步熔断（连续失败 3 次暂停 10 分钟）
 - 冲突暂停门控，防止冲突态继续自动推送
 - 前台探测使用独立的 probe 锁、共享冷却（45s，跨标签）和本地冷却（12s，当前标签），避免多个标签页同时做 metadata-only probe
-- 前台 follow-up 返回不可重试的 `blocked + soft`（例如 `local_changed_with_remote_timestamp_drift`）时，必须把 `requestId + remoteUpdatedAt + lastResult*` 写入 durable foreground intent，停止 600ms recovery/reprobe 循环并隐藏待处理指示器；只有新本地变更、更新的远端版本或明确手动同步才重新打开该 intent。`read_progress_pending_write`、同步防抖和初始化噪声仍按 retryable soft block 继续重试。对应的 `foreground_pending_attempt_started`、`foreground_pending_recovery_result`、`foreground_pending_recovery_suppressed`、`foreground_probe_soft_block_suppressed` 和 `foreground_pending_soft_block_cleared` 事件必须保留请求身份、阻断原因、动作、级别和时间，方便区分“正在重试”和“等待新事实”。
+- 前台 follow-up 返回不可重试的 `blocked + soft`（例如 `local_changed_with_remote_timestamp_drift`）时，必须把 `requestId + remoteUpdatedAt + lastResult*` 写入 durable foreground intent，停止 600ms recovery/reprobe 循环并隐藏待处理指示器；只有新本地变更、更新的远端版本或明确手动同步才重新打开该 intent。`read_progress_pending_write`、同步防抖和初始化噪声仍按 retryable soft block 继续重试。对应的 `foreground_pending_attempt_started`、`foreground_pending_recovery_result`、`foreground_pending_recovery_suppressed`、`foreground_probe_soft_block_suppressed` 和 `foreground_pending_soft_block_cleared` 事件必须保留请求身份、阻断原因、动作、级别和时间，方便区分“正在重试”和“等待新事实”。前台 durable intent 使用每个 `requestId` 独立的 GM record；current marker 只选择当前代次，旧代次的 attempt、结算、soft-block 清除和删除只能写/删自己的 record，并在复读 current marker 后忽略过期结果。旧版主 key 仅作为兼容 mirror/通知，不再作为 v2 权威状态；record 会按 bounded retention 清理。
 - `pushRemoteData()` 在 PATCH 超时或网络错误这类“写入结果不确定”的失败后，必须完整读取一次云端同步文件；若云端 `contentHash` 已等于刚才的 payload，则本次推送视为成功并使用复查得到的 `updated_at` 更新后续基线，避免“实际已写入但误报失败”引发重复重试和假冲突。
 - metadata-only 读取只用于判断 Gist `updated_at` / 文件存在性，不解析同步文件内容；诊断日志不得输出 `remoteEmpty`，否则会把“未读取内容”误写成“云端为空”。
 - `clean-state fence` 只用于本地自动 push 去重：本地干净不能证明另一台设备没有更新 Gist，因此页面首次可见 / 回到前台 / 可见页轮询的 metadata-only probe 不得用它跳过远端 `updated_at` 检查。
@@ -466,7 +466,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 
 导航栏同步按钮的点击和悬停都会打开同一个“拉取 / 推送”菜单；点击只是键盘、触摸或 hover 不可靠场景的备用入口，不直接执行同步。菜单里选择的“拉取”或“推送”是显式手动请求。没有活动执行时，协调器直接调用既有 `handleForcePull()` / `handleForcePush()`，不增加确认步骤；已有有效模式锁或全局锁时，手动请求只在当前页面的 coordinator 闭包内保留一个最新方向的 pending intent，导航栏显示对应的 `Pending(push|pull)`，并提示“当前同步完成后将再次确认”。pending payload 只包含版本、方向、创建时间和 `waiting_for_execution_boundary` / `awaiting_confirmation` phase；同一页面再次点击会覆盖方向，不同标签页各自拥有独立状态。刷新、关闭或上下文销毁不会恢复这条 pending；旧版 GM manual-intent mirror/records 只在启动时 best-effort 清理，不会迁移执行。
 
-锁释放后，当前页面才把 intent 推进为 `awaiting_confirmation` 并显示现有 S1Plus 自定义确认框；确认框不取得 execution lock，也不会自动执行。用户确认后调用原有 force handler，handler 自己重新取得 tokenized manual execution authority；如果确认期间执行边界重新繁忙，则关闭确认框、保留页面内存 pending 并回到 `waiting_for_execution_boundary`，等下一次现有的 sync settlement、生命周期或锁变化检查。用户取消只删除当前页面的内存 pending，不删除 Pending Dirty、foreground intent、调度状态或其它锁。旧 modal callback 由当前 JS context 的 confirmation epoch 判 stale；不存在跨上下文 confirmation owner、generation、journal 或 Web Locks decision authority。显式 `unbind` / `dispose` 会清理本页面的 pending；`pagehide` / `beforeunload` 只关闭当前确认框并使旧 callback 失效，不做 durable transfer 或跨页面恢复。
+锁释放后，当前页面才把 intent 推进为 `awaiting_confirmation` 并显示现有 S1Plus 自定义确认框；确认框不取得 execution lock，也不会自动执行。用户确认后调用原有 force handler，handler 自己重新取得 tokenized manual execution authority；如果确认期间执行边界重新繁忙，则关闭确认框、保留页面内存 pending 并回到 `waiting_for_execution_boundary`，等下一次现有的 sync settlement、生命周期或锁变化检查。用户取消只删除当前页面的内存 pending，不删除 Pending Dirty、foreground intent、调度状态或其它锁。每次 request 在入口分配 page-local request sequence，所有 await 后的回退、pending 写入、清理和 modal callback 都必须持有该 sequence；显式 `unbind` / `dispose` 另增 coordinator lifecycle generation，使旧 continuation、reconcile finally、唤醒 timer 和确认 callback 永久失效，即使随后重新 bind 也不能恢复权限。confirmation epoch 仍只负责 modal 替换；不存在跨上下文 confirmation owner、generation、journal 或 Web Locks decision authority。`pagehide` / `beforeunload` 只关闭当前确认框并保持现有页面恢复契约，不做 durable transfer 或跨页面恢复。
 
 `preemptActiveSyncForManualOverride()` 保留旧名称作为兼容入口，其职责边界是：
 
@@ -475,7 +475,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - 不删除 Pending Dirty、shared debounce、前台 durable intent、冲突暂停、任何模式锁或全局锁，也不停止其它执行者的心跳或伪造其运行态结束。
 - 刷新导航栏同步指示器和常驻提示，使 UI 从共享事实重新投影。
 
-前台远端变化仍使用自己的 durable intent generation：每次观测都生成新的 `requestId`，即使 `remoteUpdatedAt` 相同也不能复用旧代次；retry 必须绑定其创建时的 `requestId + remoteUpdatedAt`，代次消失或变化后不得进入门禁或网络请求。这里的 generation 不属于导航栏 manual pending intent。手动拉取或普通手动同步成功后，只有其开始时捕获的 exact generation 仍是当前请求，且已经落盘的 baseline 覆盖该 generation，才可结算 foreground pending。监听器依据 payload 的 `sourceContextId` 判断来源，不信任 userscript manager 对跨上下文布尔标记的一致性；显式 teardown 必须同时取消 recovery 与 retry timer。
+前台远端变化仍使用自己的 durable intent generation：每次观测都生成新的 `requestId`，即使 `remoteUpdatedAt` 相同也不能复用旧代次；retry 必须绑定其创建时的 `requestId + remoteUpdatedAt`，代次消失或变化后不得进入门禁或网络请求。这里的 generation 不属于导航栏 manual pending intent。手动拉取或普通手动同步成功后，只有其开始时捕获的 exact generation 仍是当前请求，且已经落盘的 baseline 覆盖该 generation，才可结算 foreground pending。监听器只把旧主 key 当作 v2 signal，随后从 record/current marker 读取权威状态；因此旧 context 的结果不会通过共享 key 的 read-modify-write 覆盖新 `requestId`。显式 teardown 必须同时取消 recovery 与 retry timer。
 
 不要把这条手动请求路径复用到 `pagehide` / `beforeunload` 或跨标签自动接管。自动恢复仍然保持上一节的保守策略：等待锁按 TTL 失效，再通过 pending dirty / shared scheduler / durable foreground intent 从新快照重跑。
 

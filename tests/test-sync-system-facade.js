@@ -21,6 +21,14 @@ const readySyncSettings = Object.freeze({
   syncDeviceId: "device-a",
 });
 
+const createDeferred = () => {
+  let resolve;
+  const promise = new Promise((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+};
+
 const createLifecycleAdapter = (calls = []) => ({
   bind: () => {
     calls.push("lifecycle:bind");
@@ -432,6 +440,53 @@ const testUninitializedFacadeDisposeClearsPageLocalManualIntent = async () => {
   assert.equal(coordinator.readIntent(), null);
 };
 
+const testFacadeDisposeInvalidatesOldManualContinuation = async () => {
+  const { hooks } = createHarness();
+  const deferred = createDeferred();
+  const timers = new Map();
+  let nextTimerId = 0;
+  let coordinator;
+  coordinator = hooks.s1pCreateManualSyncIntentCoordinator({
+    now: () => 2_000_000,
+    isSyncEnabled: () => true,
+    hasActiveExecution: () => false,
+    setTimeout: (callback, delayMs) => {
+      const id = ++nextTimerId;
+      timers.set(id, { callback, delayMs });
+      return id;
+    },
+    clearTimeout: (id) => timers.delete(id),
+    execute: async () => deferred.promise,
+    showConfirmation: () => {
+      throw new Error("confirmation must not be recreated after dispose");
+    },
+  });
+  const facade = hooks.s1pCreateSyncSystemFacade({
+    manualIntentCoordinator: coordinator,
+    lifecycleAdapter: {
+      bind: () => ({ status: "bound" }),
+      unbind: () => ({ status: "unbound" }),
+      handle: async () => ({ status: "completed" }),
+    },
+    pendingDirtyScheduler: {
+      recover: () => ({ status: "recovered" }),
+      handoff: () => ({ status: "released" }),
+    },
+    recoverPendingAutoSyncIfNeeded: () => ({ status: "recovered" }),
+  });
+
+  facade.initialize();
+  const request = facade.requestSync({ kind: "manual_push" });
+  facade.dispose();
+  deferred.resolve({ status: "skipped", reason: "manual_sync_busy" });
+  await request;
+  await Promise.resolve();
+
+  assert.equal(coordinator.readIntent(), null);
+  assert.equal(coordinator.isPriorityGateActive(), false);
+  assert.equal(timers.size, 0);
+};
+
 const testFacadePreservesEverySyncIntentContract = async () => {
   const { hooks } = createHarness();
   const calls = [];
@@ -526,6 +581,7 @@ const run = async () => {
   await testProductionFacadeManualSyncUsesRuntimeGate();
   await testProductionFacadeQueuesManualDirectionBehindForeignExecution();
   await testUninitializedFacadeDisposeClearsPageLocalManualIntent();
+  await testFacadeDisposeInvalidatesOldManualContinuation();
   await testFacadePreservesEverySyncIntentContract();
   console.log("[sync-system-facade] Phase 6 façade interface verified.");
 };
