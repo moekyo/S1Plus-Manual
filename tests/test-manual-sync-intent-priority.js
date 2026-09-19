@@ -17,6 +17,32 @@ const createHarness = (options = {}) =>
     ...options,
   });
 
+const createDeferred = () => {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+};
+
+const createManualTimerAdapters = () => {
+  let nextId = 0;
+  const timers = new Map();
+  return {
+    timers,
+    setTimeout: (callback, delayMs) => {
+      const id = ++nextId;
+      timers.set(id, { callback, delayMs });
+      return id;
+    },
+    clearTimeout: (id) => {
+      timers.delete(id);
+    },
+  };
+};
+
 const getLatestPendingProjection = (runtime) =>
   [...runtime.indicatorUpdates]
     .reverse()
@@ -276,6 +302,110 @@ const testExecutionResultBoundaryRaceRequeuesWithoutPreemption = async () => {
   assert.equal(runtime.coordinator.readIntent(), null);
 };
 
+const testBusyContinuationCannotRestoreAnEarlierDirection = async () => {
+  for (const [olderDirection, newerDirection] of [
+    ["push", "pull"],
+    ["pull", "push"],
+  ]) {
+    const { hooks } = createHarness();
+    const deferred = createDeferred();
+    let runtime;
+    runtime = createCoordinator(hooks, {
+      activeExecution: false,
+      execute: async (direction) => {
+        if (direction === olderDirection) {
+          runtime.setActiveExecution(true);
+          return deferred.promise;
+        }
+        return { status: "success", action: "manual_" + direction };
+      },
+    });
+
+    const olderRequest = runtime.coordinator.request(olderDirection);
+    const newerRequest = runtime.coordinator.request(newerDirection);
+    await newerRequest;
+    assert.equal(
+      runtime.coordinator.readIntent().direction,
+      newerDirection,
+      "较新的请求必须在旧执行返回前取得 page-local intent 所有权。"
+    );
+
+    deferred.resolve({ status: "skipped", reason: "manual_sync_busy" });
+    await olderRequest;
+
+    assert.equal(
+      runtime.coordinator.readIntent().direction,
+      newerDirection,
+      `${olderDirection} 的 busy 回退不得覆盖后来的 ${newerDirection}。`
+    );
+    runtime.setActiveExecution(false);
+    const reconciled = await runtime.coordinator.reconcile("lock_released");
+    assert.equal(reconciled.status, "awaiting_confirmation");
+    assert.equal(
+      runtime.confirmations.at(-1).intent.direction,
+      newerDirection
+    );
+  }
+};
+
+const testSameMillisecondRequestsUseSequenceForBusyContinuation = async () => {
+  const { hooks } = createHarness();
+  const deferred = createDeferred();
+  let runtime;
+  runtime = createCoordinator(hooks, {
+    activeExecution: false,
+    now: 2_000_000,
+    execute: async () => {
+      runtime.setActiveExecution(true);
+      return deferred.promise;
+    },
+  });
+
+  const olderRequest = runtime.coordinator.request("push");
+  const newerRequest = runtime.coordinator.request("push");
+  await newerRequest;
+  deferred.resolve({ status: "skipped", reason: "manual_sync_busy" });
+  await olderRequest;
+
+  assert.equal(runtime.coordinator.readIntent().direction, "push");
+  assert.equal(
+    runtime.messages.length,
+    1,
+    "同毫秒同方向请求也必须让旧 continuation 失去副作用权限。"
+  );
+};
+
+const testOlderSuccessFailureAndThrowDoNotTouchNewerPending = async () => {
+  for (const outcome of [
+    { status: "success", action: "manual_push" },
+    { status: "failure", reason: "remote_timeout" },
+    new Error("manual execution failed"),
+  ]) {
+    const { hooks } = createHarness();
+    const deferred = createDeferred();
+    let runtime;
+    runtime = createCoordinator(hooks, {
+      activeExecution: false,
+      execute: async () => {
+        runtime.setActiveExecution(true);
+        return deferred.promise;
+      },
+    });
+
+    const olderRequest = runtime.coordinator.request("push");
+    const newerRequest = runtime.coordinator.request("pull");
+    await newerRequest;
+    if (outcome instanceof Error) {
+      deferred.reject(outcome);
+      await assert.rejects(olderRequest, /manual execution failed/);
+    } else {
+      deferred.resolve(outcome);
+      await olderRequest;
+    }
+    assert.equal(runtime.coordinator.readIntent().direction, "pull");
+  }
+};
+
 const testLatestDirectionWinsWithinOnePageAndOldModalIsStale = async () => {
   const { hooks } = createHarness();
   const runtime = createCoordinator(hooks, {
@@ -447,6 +577,108 @@ const testUnbindClearsPageLocalIntentEvenWhenNotBound = async () => {
   assert.equal(runtime.coordinator.isPriorityGateActive(), false);
 };
 
+const testUnbindInvalidatesInFlightContinuationAndTimerFinally = async () => {
+  const { hooks } = createHarness();
+  const deferred = createDeferred();
+  const timerAdapters = createManualTimerAdapters();
+  let runtime;
+  runtime = createCoordinator(hooks, {
+    activeExecution: false,
+    timerAdapters,
+    execute: async () => {
+      runtime.setActiveExecution(true);
+      return deferred.promise;
+    },
+  });
+  runtime.coordinator.bind();
+  const request = runtime.coordinator.request("push");
+
+  runtime.coordinator.unbind();
+  assert.equal(runtime.coordinator.readIntent(), null);
+  assert.equal(runtime.coordinator.isPriorityGateActive(), false);
+  assert.equal(timerAdapters.timers.size, 0);
+
+  deferred.resolve({ status: "skipped", reason: "manual_sync_busy" });
+  await request;
+  await Promise.resolve();
+
+  assert.equal(runtime.coordinator.readIntent(), null);
+  assert.equal(runtime.confirmations.length, 0);
+  assert.equal(runtime.coordinator.isPriorityGateActive(), false);
+  assert.equal(
+    timerAdapters.timers.size,
+    0,
+    "旧 reconcile/finally 不得在 unbind 后重新安排唤醒 timer。"
+  );
+};
+
+const testQueuedTaskCannotRecreateStateAfterUnbind = async () => {
+  const { hooks } = createHarness();
+  const timerAdapters = createManualTimerAdapters();
+  const runtime = createCoordinator(hooks, {
+    activeExecution: true,
+    timerAdapters,
+  });
+
+  const request = runtime.coordinator.request("push");
+  runtime.coordinator.unbind();
+  await request;
+
+  assert.equal(runtime.coordinator.readIntent(), null);
+  assert.equal(runtime.confirmations.length, 0);
+  assert.equal(runtime.coordinator.isPriorityGateActive(), false);
+  assert.equal(timerAdapters.timers.size, 0);
+};
+
+const testRebindCannotAdmitOldContinuation = async () => {
+  const { hooks } = createHarness();
+  const deferred = createDeferred();
+  const timerAdapters = createManualTimerAdapters();
+  let runtime;
+  runtime = createCoordinator(hooks, {
+    activeExecution: false,
+    timerAdapters,
+    execute: async () => {
+      runtime.setActiveExecution(true);
+      return deferred.promise;
+    },
+  });
+  runtime.coordinator.bind();
+  const request = runtime.coordinator.request("push");
+  runtime.coordinator.unbind();
+  runtime.coordinator.bind();
+
+  deferred.resolve({ status: "skipped", reason: "manual_sync_busy" });
+  await request;
+  await Promise.resolve();
+
+  assert.equal(runtime.coordinator.readIntent(), null);
+  assert.equal(runtime.confirmations.length, 0);
+  assert.equal(runtime.coordinator.isPriorityGateActive(), false);
+  assert.equal(timerAdapters.timers.size, 0);
+};
+
+const testConfirmationCallbackCannotRunAfterUnbind = async () => {
+  const { hooks } = createHarness();
+  const runtime = createCoordinator(hooks, { activeExecution: true });
+  runtime.coordinator.bind();
+  await runtime.coordinator.request("push");
+  runtime.setActiveExecution(false);
+  await runtime.coordinator.reconcile("lock_released");
+  const confirmation = runtime.confirmations[0];
+
+  runtime.coordinator.unbind();
+  const result = await confirmation.actions.onConfirm();
+
+  assert.deepEqual(toPlainObject(result), {
+    status: "skipped",
+    reason: "stale_manual_intent",
+  });
+  assert.equal(runtime.executions.length, 0);
+  assert.equal(runtime.coordinator.readIntent(), null);
+  assert.equal(runtime.coordinator.isPriorityGateActive(), false);
+};
+
 const testCrossTabExecutionLockStillRemainsShared = async () => {
   const sharedStore = new Map();
   const first = createHarness({ sharedStore });
@@ -514,6 +746,9 @@ const run = async () => {
   await testCancelClearsOnlyLocalPending();
   await testConfirmationBoundaryRaceRequeuesUntilNextBoundary();
   await testExecutionResultBoundaryRaceRequeuesWithoutPreemption();
+  await testBusyContinuationCannotRestoreAnEarlierDirection();
+  await testSameMillisecondRequestsUseSequenceForBusyContinuation();
+  await testOlderSuccessFailureAndThrowDoNotTouchNewerPending();
   await testLatestDirectionWinsWithinOnePageAndOldModalIsStale();
   await testReloadDoesNotRestorePageLocalPending();
   await testIndependentCoordinatorsDoNotSharePageLocalPending();
@@ -524,6 +759,10 @@ const run = async () => {
   await testLocalPriorityGateOnlyBlocksThisCoordinator();
   await testExplicitUnbindClearsPageLocalIntent();
   await testUnbindClearsPageLocalIntentEvenWhenNotBound();
+  await testUnbindInvalidatesInFlightContinuationAndTimerFinally();
+  await testQueuedTaskCannotRecreateStateAfterUnbind();
+  await testRebindCannotAdmitOldContinuation();
+  await testConfirmationCallbackCannotRunAfterUnbind();
   await testCrossTabExecutionLockStillRemainsShared();
   await testLocalStaleTimeoutClearsPendingWithoutTimer();
   testNeutralForegroundProbeRemainsNeutral();
