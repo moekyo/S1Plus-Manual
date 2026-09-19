@@ -3116,6 +3116,7 @@
   let foregroundRemoteSyncRetryIndicatorOperation = "";
   let foregroundRemoteSyncRetryExpectedRequestId = "";
   let foregroundRemoteSyncRetryExpectedRemoteUpdatedAt = "";
+  let foregroundRemoteSyncRetryGeneration = 0;
   let foregroundRemoteSyncRecoveryTimer = null;
   let foregroundRemoteSyncRecoveryDueAt = 0;
   let foregroundRemoteSyncRecoveryRequestId = "";
@@ -18610,6 +18611,8 @@
     }
     const createdAt =
       normalizePendingAutoSyncTimestamp(value.createdAt) || Date.now();
+    const registrationCreatedAt =
+      normalizePendingAutoSyncTimestamp(value.registrationCreatedAt) || createdAt;
     return {
       version: 1,
       requestId:
@@ -18623,6 +18626,7 @@
         SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME,
       remoteUpdatedAt,
       createdAt,
+      registrationCreatedAt,
       lastSeenAt:
         normalizePendingAutoSyncTimestamp(value.lastSeenAt) || createdAt,
       lastAttemptAt: normalizePendingAutoSyncTimestamp(value.lastAttemptAt),
@@ -18807,7 +18811,17 @@
         normalizePendingForegroundRemoteSyncRegistrationClock(
           marker.registrationClock
         ),
+      registrationCreatedAt:
+        normalizePendingAutoSyncTimestamp(marker.registrationCreatedAt) ||
+        normalizeRemoteProbeTimestamp(marker.registeredAt),
     };
+  };
+
+  const comparePendingForegroundRemoteSyncRequestIds = (left, right) => {
+    if (left === right) {
+      return 0;
+    }
+    return left > right ? -1 : 1;
   };
 
   const comparePendingForegroundRemoteSyncCandidates = (left, right) => {
@@ -18817,12 +18831,6 @@
     const rightClock = normalizePendingForegroundRemoteSyncRegistrationClock(
       right.registrationClock
     );
-    if (leftClock !== rightClock) {
-      return rightClock - leftClock;
-    }
-    if (left.hasRegistrationClock !== right.hasRegistrationClock) {
-      return left.hasRegistrationClock ? -1 : 1;
-    }
     if (left.pending.requestId === right.pending.requestId) {
       const leftIsTerminal = left.kind === "terminal";
       const rightIsTerminal = right.kind === "terminal";
@@ -18830,19 +18838,26 @@
         return leftIsTerminal ? -1 : 1;
       }
     }
-    const leftActivityAt = Math.max(
-      left.pending.createdAt || 0,
-      left.pending.lastSeenAt || 0,
-      left.pending.lastResultAt || 0
-    );
-    const rightActivityAt = Math.max(
-      right.pending.createdAt || 0,
-      right.pending.lastSeenAt || 0,
-      right.pending.lastResultAt || 0
-    );
+    if (leftClock !== rightClock) {
+      return rightClock - leftClock;
+    }
+    if (left.hasRegistrationClock !== right.hasRegistrationClock) {
+      return left.hasRegistrationClock ? -1 : 1;
+    }
+    const leftRegistrationAt =
+      normalizePendingAutoSyncTimestamp(
+        left.pending.registrationCreatedAt
+      ) || normalizePendingAutoSyncTimestamp(left.pending.createdAt);
+    const rightRegistrationAt =
+      normalizePendingAutoSyncTimestamp(
+        right.pending.registrationCreatedAt
+      ) || normalizePendingAutoSyncTimestamp(right.pending.createdAt);
     return (
-      rightActivityAt - leftActivityAt ||
-      right.pending.requestId.localeCompare(left.pending.requestId)
+      rightRegistrationAt - leftRegistrationAt ||
+      comparePendingForegroundRemoteSyncRequestIds(
+        left.pending.requestId,
+        right.pending.requestId
+      )
     );
   };
 
@@ -19020,6 +19035,7 @@
         requestId: pending.requestId,
         remoteUpdatedAt: pending.remoteUpdatedAt,
         registeredAt: pending.createdAt,
+        registrationCreatedAt: pending.registrationCreatedAt,
         registrationClock,
       });
     }
@@ -19360,6 +19376,7 @@
         SYNC_TRIGGER_SOURCE_FOREGROUND_RESUME,
       remoteUpdatedAt: normalizedRemoteUpdatedAt,
       createdAt: normalizedNow,
+      registrationCreatedAt: normalizedNow,
       lastSeenAt: normalizedNow,
       lastAttemptAt: 0,
       lastResultStatus: "",
@@ -19639,15 +19656,92 @@
     );
   };
 
+  const getForegroundRemoteSyncCompletionDisposition = (
+    pendingBeforeSync = null,
+    pendingSettlement = null
+  ) => {
+    if (!pendingBeforeSync) {
+      return "unbound";
+    }
+    if (
+      pendingSettlement?.status === "skipped" &&
+      pendingSettlement.reason === "no_pending_foreground_remote_sync"
+    ) {
+      return "cancelled";
+    }
+    if (
+      pendingSettlement?.status === "ignored" &&
+      pendingSettlement.reason === "cancelled_foreground_remote_sync"
+    ) {
+      return "cancelled";
+    }
+    if (
+      pendingSettlement?.status === "ignored" &&
+      pendingSettlement.reason === "newer_pending_foreground_remote_sync"
+    ) {
+      return "superseded";
+    }
+    return "current";
+  };
+
   const isForegroundRemoteSyncCompletionCancelled = (
     pendingBeforeSync = null,
     pendingSettlement = null
   ) =>
-    Boolean(
-      pendingBeforeSync &&
-        pendingSettlement?.status === "skipped" &&
-        pendingSettlement.reason === "no_pending_foreground_remote_sync"
+    getForegroundRemoteSyncCompletionDisposition(
+      pendingBeforeSync,
+      pendingSettlement
+    ) === "cancelled";
+
+  const isForegroundRemoteSyncCompletionStale = (
+    pendingBeforeSync = null,
+    pendingSettlement = null
+  ) => {
+    if (
+      isForegroundRemoteSyncCompletionCancelled(
+        pendingBeforeSync,
+        pendingSettlement
+      )
+    ) {
+      return true;
+    }
+    return (
+      getForegroundRemoteSyncCompletionDisposition(
+        pendingBeforeSync,
+        pendingSettlement
+      ) === "superseded"
     );
+  };
+
+  const recordForegroundRemoteSyncResultPhaseSkipped = ({
+    source,
+    pendingBeforeSync,
+    pendingSettlement,
+  }) => {
+    const disposition = getForegroundRemoteSyncCompletionDisposition(
+      pendingBeforeSync,
+      pendingSettlement
+    );
+    recordSyncTraceEvent("foreground_result_phase_skipped", {
+      scope: "foreground_probe",
+      status: "ignored",
+      message:
+        disposition === "cancelled"
+          ? "已取消或完成终态的旧前台结果不再进入 Result Phase"
+          : "已被新请求取代的旧前台结果不再进入 Result Phase",
+      details: {
+        source: normalizeSyncDiagnosticText(source, 80) || "foreground",
+        disposition,
+        requestId: pendingBeforeSync?.requestId || "",
+        remoteUpdatedAt: pendingBeforeSync?.remoteUpdatedAt || "",
+        settlementStatus: pendingSettlement?.status || "",
+        settlementReason: pendingSettlement?.reason || "",
+        retainedRequestId: pendingSettlement?.requestId || "",
+        retainedRemoteUpdatedAt: pendingSettlement?.remoteUpdatedAt || "",
+      },
+    });
+    return disposition;
+  };
 
   const isPendingForegroundRemoteSyncCovered = (
     pendingInput = null,
@@ -19887,7 +19981,25 @@
           options.requestForegroundRemoteSyncCheckOverrides || {}
         );
       } catch (error) {
-        if (!getPendingForegroundRemoteSyncRequest()) {
+        const pendingAfterError = getPendingForegroundRemoteSyncRequest();
+        if (
+          !isSamePendingForegroundRemoteSyncRequest(
+            pendingAfterError,
+            latestPending
+          )
+        ) {
+          recordForegroundRemoteSyncResultPhaseSkipped({
+            source: "recovery_error",
+            pendingBeforeSync: latestPending,
+            pendingSettlement: {
+              status: "ignored",
+              reason: pendingAfterError
+                ? "newer_pending_foreground_remote_sync"
+                : "cancelled_foreground_remote_sync",
+              requestId: pendingAfterError?.requestId || "",
+              remoteUpdatedAt: pendingAfterError?.remoteUpdatedAt || "",
+            },
+          });
           return;
         }
         const retryResult = scheduleForegroundRemoteSyncRetry(
@@ -19937,11 +20049,16 @@
       });
 
       if (
-        isForegroundRemoteSyncCompletionCancelled(
+        isForegroundRemoteSyncCompletionStale(
           latestPending,
           settled
         )
       ) {
+        recordForegroundRemoteSyncResultPhaseSkipped({
+          source: "recovery",
+          pendingBeforeSync: latestPending,
+          pendingSettlement: settled,
+        });
         return;
       }
 
@@ -38295,7 +38412,13 @@
     }
   };
 
-  const clearForegroundRemoteSyncRetry = () => {
+  const clearForegroundRemoteSyncRetry = (expectedGeneration = null) => {
+    if (
+      expectedGeneration !== null &&
+      expectedGeneration !== foregroundRemoteSyncRetryGeneration
+    ) {
+      return false;
+    }
     if (foregroundRemoteSyncRetryTimer) {
       clearTimeout(foregroundRemoteSyncRetryTimer);
       foregroundRemoteSyncRetryTimer = null;
@@ -38307,6 +38430,8 @@
     foregroundRemoteSyncRetryIndicatorOperation = "";
     foregroundRemoteSyncRetryExpectedRequestId = "";
     foregroundRemoteSyncRetryExpectedRemoteUpdatedAt = "";
+    foregroundRemoteSyncRetryGeneration += 1;
+    return true;
   };
 
   const getForegroundRemoteSyncRetryRemainingMs = (now = Date.now()) => {
@@ -38396,13 +38521,26 @@
 
     if (foregroundRemoteSyncRetryTimer) {
       clearTimeout(foregroundRemoteSyncRetryTimer);
+      foregroundRemoteSyncRetryTimer = null;
+      foregroundRemoteSyncRetryGeneration += 1;
     }
+    const retryGeneration = foregroundRemoteSyncRetryGeneration + 1;
+    foregroundRemoteSyncRetryGeneration = retryGeneration;
     foregroundRemoteSyncRetryTimer = setTimeout(async () => {
+      if (foregroundRemoteSyncRetryGeneration !== retryGeneration) {
+        return;
+      }
       foregroundRemoteSyncRetryTimer = null;
       foregroundRemoteSyncRetryDueAt = 0;
+      const clearOwnedRetry = () => {
+        const cleared = clearForegroundRemoteSyncRetry(retryGeneration);
+        if (cleared) {
+          GM_deleteValue(EQUAL_UPDATED_AT_PROBE_VERIFY_STATE_KEY);
+        }
+        return cleared;
+      };
       if (document.visibilityState !== "visible") {
-        clearForegroundRemoteSyncRetry();
-        GM_deleteValue(EQUAL_UPDATED_AT_PROBE_VERIFY_STATE_KEY);
+        clearOwnedRetry();
         return;
       }
 
@@ -38414,14 +38552,14 @@
           expectedPendingRequest
         )
       ) {
-        clearForegroundRemoteSyncRetry();
+        clearOwnedRetry();
         refreshAutoSyncIndicatorRuntimeDisplay(
           "foreground_retry_pending_generation_changed"
         );
         return;
       }
       if (pendingBeforeSync && isTerminalForegroundRemoteSyncSoftBlock(pendingBeforeSync)) {
-        clearForegroundRemoteSyncRetry();
+        clearOwnedRetry();
         recordForegroundPendingSoftBlockSuppressed(pendingBeforeSync, {
           source: "retry_timer",
           triggerSource: pendingBeforeSync.triggerSource,
@@ -38453,7 +38591,7 @@
           ? markPendingForegroundRemoteSyncAttempt(pendingBeforeSync)
           : { status: "skipped", reason: "no_pending_foreground_remote_sync" };
         if (attempt.status !== "marked" && pendingBeforeSync) {
-          clearForegroundRemoteSyncRetry();
+          clearOwnedRetry();
           refreshAutoSyncIndicatorRuntimeDisplay(
             "foreground_pending_attempt_generation_changed"
           );
@@ -38477,11 +38615,17 @@
               reason: "no_pending_foreground_remote_sync_before_retry",
             };
         if (
-          isForegroundRemoteSyncCompletionCancelled(
+          isForegroundRemoteSyncCompletionStale(
             pendingBeforeSync,
             pendingSettlement
           )
         ) {
+          recordForegroundRemoteSyncResultPhaseSkipped({
+            source: "retry",
+            pendingBeforeSync,
+            pendingSettlement,
+          });
+          clearOwnedRetry();
           return;
         }
         const remoteChangeKind = getForegroundRemoteChangeKind({
@@ -38538,7 +38682,7 @@
             }
           );
         }
-        clearForegroundRemoteSyncRetry();
+        clearOwnedRetry();
         (
           options.maybeShowForegroundProbeFeedback ||
           maybeShowForegroundProbeFeedback
@@ -38553,14 +38697,14 @@
           pendingBeforeSync &&
           !getPendingForegroundRemoteSyncRequest()
         ) {
+          clearOwnedRetry();
           return;
         }
         console.error(
           `S1 Plus: 前台远端检查补偿重试失败(${normalizedReason}):`,
           error
         );
-        clearForegroundRemoteSyncRetry();
-        GM_deleteValue(EQUAL_UPDATED_AT_PROBE_VERIFY_STATE_KEY);
+        clearOwnedRetry();
       }
     }, retryDelayMs);
 
@@ -39081,15 +39225,28 @@
         },
       });
       if (
-        isForegroundRemoteSyncCompletionCancelled(
+        isForegroundRemoteSyncCompletionStale(
           pendingForegroundRemoteSyncRequest,
           pendingSettlement
         )
       ) {
+        const completionDisposition =
+          getForegroundRemoteSyncCompletionDisposition(
+            pendingForegroundRemoteSyncRequest,
+            pendingSettlement
+          );
+        recordForegroundRemoteSyncResultPhaseSkipped({
+          source: "direct_followup",
+          pendingBeforeSync: pendingForegroundRemoteSyncRequest,
+          pendingSettlement,
+        });
         return finalizeResult(
           {
             status: "skipped",
-            reason: "foreground_sync_request_cancelled",
+            reason:
+              completionDisposition === "cancelled"
+                ? "foreground_sync_request_cancelled"
+                : "foreground_sync_request_superseded",
             remoteUpdatedAt,
             lastSyncedRemoteUpdatedAt,
             lastObservedRemoteUpdatedAt,
