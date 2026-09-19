@@ -306,7 +306,9 @@ const testForegroundProbeClearsRetryWhenPolicyExecutionDidNotSchedule = async ()
   assert.strictEqual(
     (() => {
       const remainingMs = hooks.getForegroundRemoteSyncRetryRemainingMs();
-      hooks.clearForegroundRemoteSyncRetry();
+      hooks.clearForegroundRemoteSyncRetry(
+        hooks.getForegroundRemoteSyncRetryOwnerToken()
+      );
       return remainingMs;
     })(),
     0,
@@ -366,7 +368,9 @@ const testForegroundRetryConsumerResetsAfterRetryExecutionFailure = async () => 
     1,
     "retry adapter 未真正排队时，timer consumer 应重置上一轮尝试计数。"
   );
-  hooks.clearForegroundRemoteSyncRetry();
+  hooks.clearForegroundRemoteSyncRetry(
+    hooks.getForegroundRemoteSyncRetryOwnerToken()
+  );
 };
 
 const testForegroundRetryKeepsInjectedResultPhasePolicy = async () => {
@@ -434,7 +438,9 @@ const testForegroundRetryKeepsInjectedResultPhasePolicy = async () => {
     "foreground retry timer 必须继续使用 probe 注入的 Result Phase policy。"
   );
   assert.strictEqual(policyCalls[1].options.source, "foreground");
-  hooks.clearForegroundRemoteSyncRetry();
+  hooks.clearForegroundRemoteSyncRetry(
+    hooks.getForegroundRemoteSyncRetryOwnerToken()
+  );
 };
 
 const testForegroundConflictPausesAndShowsFeedback = async () => {
