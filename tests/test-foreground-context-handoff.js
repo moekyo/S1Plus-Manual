@@ -1685,7 +1685,11 @@ const testMissingV3RegistrationIdentityFailsClosedButLegacyV2StillSettles = () =
   );
   assert.equal(rejected.status, "failure");
   assert.equal(rejected.reason, "foreground_pending_terminal_write_failed");
-  assert.equal(sharedStore.has(recordKey), true);
+  // Fail-closed still refuses to invent a terminal for an identity-less record,
+  // but the intent must not be retained forever: retaining it makes every
+  // foreground resume replay a full follow-up sync (see
+  // testUnsettleableLegacyRecordIsAbandonedInsteadOfRetainedForever).
+  assert.equal(sharedStore.has(recordKey), false);
   assert.equal(
     Array.from(sharedStore.keys()).some((key) =>
       String(key).startsWith(PENDING_FOREGROUND_REMOTE_SYNC_TERMINAL_KEY_PREFIX)
@@ -1720,6 +1724,136 @@ const testMissingV3RegistrationIdentityFailsClosedButLegacyV2StillSettles = () =
     "cleared"
   );
   assert.equal(legacy.hooks.getPendingForegroundRemoteSyncRequest(), null);
+};
+
+const testLegacyV2PromotionAssignsRegistrationIdentity = () => {
+  const sharedStore = new Map();
+  const source = createHarness({ sharedStore });
+  const pending = source.hooks.markPendingForegroundRemoteSyncRequest({
+    reason: "pageshow",
+    triggerSource: "foreground_resume",
+    remoteUpdatedAt: "2026-09-20T14:59:26Z",
+    now: 1760001000000,
+  });
+  const recordKey =
+    PENDING_FOREGROUND_REMOTE_SYNC_RECORD_KEY_PREFIX +
+    encodeURIComponent(pending.requestId);
+  const { registrationClock, ...legacyFields } = sharedStore.get(recordKey);
+  assert.equal(registrationClock, 1);
+  sharedStore.set(recordKey, { ...legacyFields, storageVersion: 2 });
+  sharedStore.delete(PENDING_FOREGROUND_REMOTE_SYNC_CURRENT_KEY);
+
+  const { hooks } = createHarness({ sharedStore });
+  const legacy = hooks.getPendingForegroundRemoteSyncRequest();
+  assert.equal(legacy.storageVersion, 2);
+
+  // The first ordinary mutable write after an upgrade.
+  assert.equal(
+    hooks.markPendingForegroundRemoteSyncAttempt(legacy).status,
+    "marked"
+  );
+
+  const stored = sharedStore.get(recordKey);
+  assert.equal(stored.storageVersion, 3);
+  assert.ok(
+    Object.prototype.hasOwnProperty.call(stored, "registrationClock"),
+    "把 legacy record 升为 storageVersion 3 时必须同时分配 registrationClock，否则此后每次写入与终态都会被 fail-closed 守卫拒绝，记录将永久无法结算。"
+  );
+
+  assert.equal(
+    hooks.clearPendingForegroundRemoteSyncRequest(
+      hooks.getPendingForegroundRemoteSyncRequest(),
+      "completed"
+    ).status,
+    "cleared",
+    "升级后的记录必须仍可结算。"
+  );
+  assert.equal(hooks.getPendingForegroundRemoteSyncRequest(), null);
+};
+
+const testUnsettleableLegacyRecordIsAbandonedInsteadOfRetainedForever = () => {
+  const sharedStore = new Map();
+  const source = createHarness({ sharedStore });
+  const pending = source.hooks.markPendingForegroundRemoteSyncRequest({
+    reason: "pageshow",
+    triggerSource: "foreground_resume",
+    remoteUpdatedAt: "2026-09-20T14:59:26Z",
+    now: 1760001000000,
+  });
+  const recordKey =
+    PENDING_FOREGROUND_REMOTE_SYNC_RECORD_KEY_PREFIX +
+    encodeURIComponent(pending.requestId);
+  const { registrationClock, ...strandedFields } = sharedStore.get(recordKey);
+  sharedStore.set(recordKey, { ...strandedFields, storageVersion: 3 });
+  sharedStore.delete(PENDING_FOREGROUND_REMOTE_SYNC_CURRENT_KEY);
+
+  const { hooks } = createHarness({ sharedStore });
+  const stranded = hooks.getPendingForegroundRemoteSyncRequest();
+  assert.equal(stranded.storageVersion, 3);
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(stranded, "registrationClock"),
+    false
+  );
+
+  const terminalAttempt = hooks.clearPendingForegroundRemoteSyncRequest(
+    stranded,
+    "completed"
+  );
+  assert.equal(terminalAttempt.status, "failure");
+  assert.equal(terminalAttempt.reason, "foreground_pending_terminal_write_failed");
+  assert.equal(
+    Array.from(sharedStore.keys()).some((key) =>
+      String(key).startsWith(PENDING_FOREGROUND_REMOTE_SYNC_TERMINAL_KEY_PREFIX)
+    ),
+    false,
+    "身份未知的记录仍不得写入终态。"
+  );
+
+  assert.equal(
+    sharedStore.has(recordKey),
+    false,
+    "永远无法结算的遗留意图必须被放弃，而不是永久保留并在每次回到前台时重跑一次完整同步。"
+  );
+  assert.equal(hooks.getPendingForegroundRemoteSyncRequest(), null);
+  assert.equal(hooks.getForegroundRemoteSyncRecoveryRemainingMs(), 0);
+
+  const abandonment = hooks
+    .s1pBuildDiagnosticExport()
+    .events.filter(
+      (entry) => entry.event === "sync.foreground_pending_identity_abandoned"
+    );
+  assert.equal(
+    abandonment.length,
+    1,
+    "放弃无法结算的意图时必须留下可诊断的事件"
+  );
+  assert.equal(abandonment[0].details.storageVersion, 3);
+  assert.equal(
+    abandonment[0].details.rawRecordKeys.includes("registrationClock"),
+    false,
+    "事件必须记录原始记录里确实没有时钟键，而不只是归一化后看不到"
+  );
+  assert.equal(abandonment[0].details.rawHasRegistrationClockKey, false);
+  assert.equal(abandonment[0].details.rawRegistrationClockType, "undefined");
+
+  let followUpRequests = 0;
+  const repeat = hooks.recoverPendingForegroundRemoteSyncIfNeeded({
+    requestForegroundRemoteSyncCheck: async () => {
+      followUpRequests += 1;
+      return { status: "success", action: "no_change", reason: "hash_equal" };
+    },
+  });
+  assert.equal(repeat.reason, "no_pending_foreground_remote_sync");
+  assert.equal(
+    followUpRequests,
+    0,
+    "遗留意图被放弃后不得再次发起 follow-up 同步。"
+  );
+  assert.equal(
+    toPlainObject(hooks.getAutoSyncRuntimePendingDisplayState()).hasPending,
+    false,
+    "遗留意图被放弃后不得继续显示待处理。"
+  );
 };
 
 const testTerminalWriterRetainsRegistrationIdentityAcrossConcurrentClears = () => {
@@ -3214,6 +3348,8 @@ const testCollectedS1pLogsIncludeRuntimeContext = () => {
   await testForegroundRetryOwnerTokenProtectsReplacement();
   await testDirectFollowupDoesNotClearNewerGenerationForSameRequest();
   testMissingV3RegistrationIdentityFailsClosedButLegacyV2StillSettles();
+  testLegacyV2PromotionAssignsRegistrationIdentity();
+  testUnsettleableLegacyRecordIsAbandonedInsteadOfRetainedForever();
   testTerminalWriterRetainsRegistrationIdentityAcrossConcurrentClears();
   testConcurrentTerminalKindsUseDeterministicMerge();
   testCancelledForegroundRequestCannotBeResurrectedByLateWrites();
