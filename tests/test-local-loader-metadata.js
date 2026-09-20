@@ -4,28 +4,30 @@ const path = require("path");
 
 const repoRoot = path.resolve(__dirname, "..");
 
-const readMetadata = (source) => {
-  const metadata = new Map();
-  for (const line of source.split("\n")) {
-    const match = line.match(/^\/\/ @(\S+)\s+(.+)$/);
-    if (!match) continue;
-    const [, key, value] = match;
-    const values = metadata.get(key) || [];
-    values.push(value.trim());
-    metadata.set(key, values);
-  }
-  return metadata;
-};
-
-const readGeneratedLoader = async (platform) => {
-  const { buildLocalLoader } = await import("../scripts/generate-local-loader.mjs");
-  return buildLocalLoader({ platform, projectRoot: repoRoot });
-};
+const loadGenerator = () => import("../scripts/generate-local-loader.mjs");
 
 (async () => {
+  // Shared with the generator so the two cannot drift into disagreeing parsers.
+  // A duplicated copy here previously parsed nothing at all on Windows.
+  const { buildLocalLoader, readMetadata } = await loadGenerator();
+
   const mainSource = fs.readFileSync(path.join(repoRoot, "S1Plus.js"), "utf8");
   const mainMetadata = readMetadata(mainSource);
   const requiredGrants = mainMetadata.get("grant") || [];
+
+  // Regression guard: Windows checkouts produce CRLF sources, and a line-anchored
+  // metadata regex silently matched nothing there.
+  const crlfMetadata = readMetadata(mainSource.replace(/\r?\n/g, "\r\n"));
+  assert.deepEqual(
+    crlfMetadata.get("resource"),
+    mainMetadata.get("resource"),
+    "metadata parsing must be independent of CRLF line endings"
+  );
+  assert.equal(
+    (crlfMetadata.get("grant") || []).length,
+    requiredGrants.length,
+    "every @grant must survive a CRLF source"
+  );
 
   const expectedLoaders = [
     { platform: "darwin", fileName: "S1Plus-Local-Mac.user.js" },
@@ -33,7 +35,10 @@ const readGeneratedLoader = async (platform) => {
   ];
 
   for (const { platform, fileName } of expectedLoaders) {
-    const { fileName: generatedFileName, content } = await readGeneratedLoader(platform);
+    const { fileName: generatedFileName, content } = buildLocalLoader({
+      platform,
+      projectRoot: repoRoot,
+    });
     assert.equal(generatedFileName, fileName);
 
     const metadata = readMetadata(content);
