@@ -2,7 +2,7 @@
 "use strict";
 
 const assert = require("assert/strict");
-const { sourceCode } = require("./s1plus-test-helpers");
+const { sourceCodeWithCss: sourceCode } = require("./s1plus-test-helpers");
 
 const hiddenSelector =
   ".s1p-modal > .s1p-modal-content > .s1p-modal-body > .s1p-tab-panels > .s1p-tab-content";

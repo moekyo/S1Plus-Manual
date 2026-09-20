@@ -4,7 +4,7 @@
 const assert = require("assert/strict");
 const fs = require("fs");
 const path = require("path");
-const { sourceCode } = require("./s1plus-test-helpers");
+const { sourceCodeWithCss: sourceCode } = require("./s1plus-test-helpers");
 
 const nuxCss = fs.readFileSync(
   path.join(__dirname, "..", "S1 NUX.css"),

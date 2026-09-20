@@ -4,7 +4,7 @@
 const assert = require("assert/strict");
 const {
   createHarness: createBaseHarness,
-  sourceCode,
+  sourceCodeWithCss: sourceCode,
   toPlainObject,
 } = require("./s1plus-test-helpers");
 

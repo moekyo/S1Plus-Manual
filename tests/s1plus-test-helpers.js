@@ -7,7 +7,10 @@ const { webcrypto } = require("crypto");
 
 const repoRoot = path.resolve(__dirname, "..");
 const sourcePath = path.join(repoRoot, "S1Plus.js");
+const cssResourcePath = path.join(repoRoot, "S1Plus.css");
 const sourceCode = fs.readFileSync(sourcePath, "utf8");
+const cssSource = fs.readFileSync(cssResourcePath, "utf8");
+const sourceCodeWithCss = `${sourceCode}\n${cssSource}`;
 
 const noop = () => {};
 
@@ -72,6 +75,8 @@ const createSandbox = ({
   gmEntries = [],
   sharedStore = null,
   includeGmListValues = true,
+  resourceTexts = {},
+  addedStyles = null,
 } = {}) => {
   const store = sharedStore || new Map(gmEntries);
   const { sessionStore, sessionStorage } =
@@ -146,7 +151,12 @@ const createSandbox = ({
     GM_setValue: (key, value) => {
       store.set(key, value);
     },
-    GM_addStyle: noop,
+    GM_getResourceText: (name) => resourceTexts[name] || "",
+    GM_addStyle: (cssText) => {
+      if (Array.isArray(addedStyles)) {
+        addedStyles.push(String(cssText));
+      }
+    },
     GM_deleteValue: (key) => {
       store.delete(key);
     },
@@ -208,6 +218,8 @@ const toPlainObject = (value) => JSON.parse(JSON.stringify(value));
 
 module.exports = {
   sourceCode,
+  cssSource,
+  sourceCodeWithCss,
   createHarness,
   toPlainObject,
 };
