@@ -27,9 +27,9 @@ const PLATFORM_CONFIG = {
   },
 };
 
-const readMetadata = (source) => {
+export const readMetadata = (source) => {
   const metadata = new Map();
-  for (const line of source.split("\n")) {
+  for (const line of source.split(/\r?\n/)) {
     const match = line.match(/^\/\/ @(\S+)\s+(.+)$/);
     if (!match) continue;
     const [, key, value] = match;

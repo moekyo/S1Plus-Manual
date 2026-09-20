@@ -1,0 +1,14 @@
+# Normalize all text files to LF in the repository and in every checkout.
+# Windows checkouts used to get CRLF, which silently broke line-anchored
+# metadata parsing in scripts/generate-local-loader.mjs.
+* text=auto eol=lf
+
+# Binary assets: never apply line-ending conversion.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.ico  binary
+*.woff binary
+*.woff2 binary
