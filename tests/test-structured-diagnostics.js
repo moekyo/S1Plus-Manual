@@ -488,6 +488,55 @@ const testSettledOperationReceivesLateCompletionCorrelation = async () => {
   assert.equal(operation.transactionTerminalEvidence, "explicit_transaction_completion");
 };
 
+const testExportExposesForegroundPendingIntent = () => {
+  const { hooks, store } = quiet();
+  const pending = hooks.markPendingForegroundRemoteSyncRequest({
+    reason: "pageshow",
+    triggerSource: "foreground_resume",
+    remoteUpdatedAt: "2026-09-20T14:59:26Z",
+    now: 1760001000000,
+  });
+  const recordKey =
+    "s1p_pending_foreground_remote_sync_request:record:" +
+    encodeURIComponent(pending.requestId);
+
+  const healthy = hooks.s1pBuildDiagnosticExport().state.pendingForegroundRemoteSync;
+  assert.equal(healthy.request.requestId, pending.requestId);
+  assert.equal(healthy.request.storageVersion, 3);
+  assert.equal(healthy.rawHasRegistrationClockKey, true);
+  assert.equal(healthy.rawRegistrationClockType, "number");
+  assert.equal(healthy.terminal, null);
+
+  // The stuck shape observed in the field: storageVersion 3 with no clock.
+  assert.ok(store.has(recordKey));
+  const { registrationClock, ...strandedFields } = store.get(recordKey);
+  assert.equal(registrationClock, 1);
+  store.set(recordKey, { ...strandedFields, storageVersion: 3 });
+  store.delete("s1p_pending_foreground_remote_sync_request:current");
+
+  const stuck = hooks.s1pBuildDiagnosticExport().state.pendingForegroundRemoteSync;
+  assert.equal(stuck.request.requestId, pending.requestId, "a stuck intent must still be visible in the export");
+  assert.equal(stuck.request.storageVersion, 3);
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(stuck.request, "registrationClock"),
+    false,
+    "the normalized view must show that the immutable identity is missing"
+  );
+  assert.equal(stuck.rawHasRegistrationClockKey, false);
+  assert.equal(
+    stuck.rawRegistrationClockType,
+    "undefined",
+    "the raw record must expose the clock value type alongside key presence, so a missing key is distinguishable from a present-but-invalid value"
+  );
+  assert.ok(
+    stuck.rawRecordKeys.includes("registrationClock") === false,
+    "the raw record proves the clock key itself is absent, not merely normalized away"
+  );
+  assert.ok(stuck.rawRecordKeys.includes("storageVersion"));
+  assert.equal(stuck.isTerminalSoftBlock, false);
+  assert.doesNotThrow(() => JSON.stringify(stuck));
+};
+
 (async () => {
   testStructuredExportAndPrivacy();
   testConcurrentSharedReceipts();
@@ -501,6 +550,7 @@ const testSettledOperationReceivesLateCompletionCorrelation = async () => {
   await testExpiredReleaseIsNotReportedAsOwnerRelease();
   await testLockRenewalAndReleaseStorageFailuresAreDiagnosed();
   testSharedReceiptAppearsInOperationSummary();
+  testExportExposesForegroundPendingIntent();
   testOperationSummaryKeepsLockEvidenceAfterTransactionCompletion();
   testOperationSummaryKeepsTransactionAndCleanupFailuresAfterLockRelease();
   await testSettledOperationReceivesLateCompletionCorrelation();

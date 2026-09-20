@@ -1308,6 +1308,46 @@
     capture("execution", () => ({ settlementDepth: syncExecutionSettlementDepth, manualBusy: isManualSyncActionBusy(),
       backgroundBusy: isBackgroundAutoSyncInProgress, startupBusy: isInitialSyncInProgress }));
     capture("pendingDirty", () => GM_getValue("s1p_pending_auto_sync_request", null));
+    // The foreground pending intent is otherwise invisible in an export, which
+    // makes a stuck intent (for example a v3 record that lost its
+    // registrationClock and can therefore never settle) undiagnosable. Capture
+    // the normalized request plus the raw stored record, because the normalized
+    // view cannot distinguish a missing clock key from an invalid clock value.
+    capture("pendingForegroundRemoteSync", () => {
+      const request = getPendingForegroundRemoteSyncRequest();
+      const requestId = request?.requestId || "";
+      const rawRecord = requestId
+        ? GM_getValue(getPendingForegroundRemoteSyncRecordKey(requestId), null)
+        : null;
+      const terminal = requestId
+        ? readPendingForegroundRemoteSyncTerminalRecord(requestId)
+        : null;
+      const isPlainRecord = Boolean(rawRecord) && typeof rawRecord === "object";
+      return {
+        request: request || null,
+        rawRecord,
+        rawRecordKeys: isPlainRecord ? Object.keys(rawRecord) : [],
+        rawHasRegistrationClockKey: isPlainRecord
+          ? Object.prototype.hasOwnProperty.call(rawRecord, "registrationClock")
+          : false,
+        rawRegistrationClockType: isPlainRecord
+          ? typeof rawRecord.registrationClock
+          : "missing",
+        currentMarker: getPendingForegroundRemoteSyncCurrentMarker(),
+        terminal: terminal
+          ? {
+              terminalKind: terminal.terminalKind,
+              terminalReason: terminal.terminalReason,
+              terminalAt: terminal.terminalAt,
+            }
+          : null,
+        isTerminalSoftBlock: request
+          ? isTerminalForegroundRemoteSyncSoftBlock(request)
+          : false,
+        recoveryRemainingMs: getForegroundRemoteSyncRecoveryRemainingMs(),
+        recoveryRequestId: foregroundRemoteSyncRecoveryRequestId,
+      };
+    });
     capture("sessionStorageAvailable", () => Boolean(window.sessionStorage));
     capture("sharedLockHistory", () => {
       return s1pReadSharedLockReceipts();
@@ -1323,6 +1363,7 @@
         consoleCapture: logCollectorStarted, verboseUntil: s1pVerboseUntil, essentials: true,
         sharedLockHistory: "immutable receipts when GM_listValues is available; legacy fallback may lose concurrent writes; bounded to 256 events / 7 days; abrupt termination or storage failure may omit events; absence is not proof of release",
         sessionStorageAvailable: state.sessionStorageAvailable,
+        pendingForegroundRemoteSync: "selected intent plus its raw stored record from this tab's view; other tabs' candidate records are not enumerated",
         retainedFrom: logBuffer.length ? Math.min(...logBuffer.map((entry) => entry.ts)) : null,
         retainedThrough: logBuffer.length ? Math.max(...logBuffer.map((entry) => entry.lastTs || entry.ts)) : null,
         loss: { ...s1pLogLoss }, limits: { entries: LOG_BUFFER_MAX, bytes: S1P_LOG_MAX_BYTES },
@@ -12283,6 +12324,62 @@
     return nextClock;
   };
 
+  // A pending intent that can never be settled must be abandoned instead of
+  // retained. A v3 record without an immutable registrationClock refuses every
+  // later write, including its own terminal, so keeping it makes each foreground
+  // resume replay a full follow-up sync and re-arm the pending indicator forever.
+  const abandonUnsettleablePendingForegroundRemoteSyncRequest = (
+    pendingInput
+  ) => {
+    const pending = normalizePendingForegroundRemoteSyncRequest(pendingInput);
+    if (!pending?.requestId) {
+      return false;
+    }
+    const recordKey = getPendingForegroundRemoteSyncRecordKey(
+      pending.requestId
+    );
+    // Record the raw stored shape before deleting it: once the record is gone
+    // this is the only way to tell a missing clock key from a present-but-invalid
+    // clock value, and both normalize to "no identity".
+    const rawRecord = GM_getValue(recordKey, null);
+    const isPlainRecord = Boolean(rawRecord) && typeof rawRecord === "object";
+    GM_deleteValue(recordKey);
+    const currentMarker = getPendingForegroundRemoteSyncCurrentMarker();
+    if (currentMarker?.requestId === pending.requestId) {
+      GM_deleteValue(PENDING_FOREGROUND_REMOTE_SYNC_CURRENT_KEY);
+    }
+    recordSyncTraceEvent("foreground_pending_identity_abandoned", {
+      scope: "foreground_probe",
+      status: "ignored",
+      message:
+        "无法结算的前台远端待处理缺少不可变身份，已放弃该意图以避免无限重跑",
+      details: {
+        requestId: pending.requestId,
+        remoteUpdatedAt: pending.remoteUpdatedAt,
+        storageVersion: pending.storageVersion || 0,
+        rawRecordKeys: isPlainRecord ? Object.keys(rawRecord) : [],
+        rawHasRegistrationClockKey: isPlainRecord
+          ? Object.prototype.hasOwnProperty.call(
+              rawRecord,
+              "registrationClock"
+            )
+          : false,
+        rawRegistrationClockType: isPlainRecord
+          ? typeof rawRecord.registrationClock
+          : "missing",
+        rawRegistrationClockValue: isPlainRecord
+          ? rawRecord.registrationClock
+          : null,
+        registrationCreatedAt: pending.registrationCreatedAt,
+        createdAt: pending.createdAt,
+        lastSeenAt: pending.lastSeenAt,
+        triggerSource: pending.triggerSource,
+        sourceContextId: pending.sourceContextId,
+      },
+    });
+    return true;
+  };
+
   const writePendingForegroundRemoteSyncTerminalRecord = (
     pendingInput,
     { terminalKind = "completed", reason = "completed" } = {}
@@ -12331,6 +12428,7 @@
             normalizeSyncDiagnosticText(terminalKind, 80) || "completed",
         },
       });
+      abandonUnsettleablePendingForegroundRemoteSyncRequest(pending);
       return null;
     }
     const registrationClock = Math.max(
@@ -12446,30 +12544,35 @@
           eventType,
         },
       });
+      abandonUnsettleablePendingForegroundRemoteSyncRequest(pending);
       return null;
     }
-    const registrationClock = registerCurrent
-      ? getNextPendingForegroundRemoteSyncRegistrationClock()
-      : Math.max(pendingRegistrationClock, existingRecordRegistrationClock);
+    const hasRegistrationClock =
+      registerCurrent ||
+      hasPendingRegistrationClock ||
+      Boolean(existingRecord?.hasRegistrationClock);
+    // A record promoted from a pre-v3 shape must receive an immutable identity in
+    // the same write. Stamping storageVersion 3 without a registrationClock made
+    // the record permanently unsettleable, because the guards above refuse every
+    // later mutable write and every terminal for it.
+    const registrationClock = hasRegistrationClock
+      ? registerCurrent
+        ? getNextPendingForegroundRemoteSyncRegistrationClock()
+        : Math.max(pendingRegistrationClock, existingRecordRegistrationClock)
+      : getNextPendingForegroundRemoteSyncRegistrationClock();
     if (registrationClock === null) {
       return null;
     }
     const storedRecord = {
       ...pending,
       storageVersion: 3,
+      registrationClock,
       registrationCreatedAt:
         registerCurrent
           ? pending.registrationCreatedAt
           : existingRecord?.pending.registrationCreatedAt ||
             pending.registrationCreatedAt,
     };
-    if (
-      registerCurrent ||
-      hasPendingRegistrationClock ||
-      Boolean(existingRecord?.hasRegistrationClock)
-    ) {
-      storedRecord.registrationClock = registrationClock;
-    }
     GM_setValue(
       getPendingForegroundRemoteSyncRecordKey(pending.requestId),
       storedRecord
