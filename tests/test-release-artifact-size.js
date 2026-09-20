@@ -4,13 +4,15 @@
 const assert = require("assert/strict");
 const fs = require("fs");
 const path = require("path");
-const { createHarness } = require("./s1plus-test-helpers");
+const { createHarness, staticDataSource } = require("./s1plus-test-helpers");
 
 const repoRoot = path.resolve(__dirname, "..");
 const sourcePath = path.join(repoRoot, "S1Plus.js");
 const cssPath = path.join(repoRoot, "S1Plus.css");
+const staticDataPath = path.join(repoRoot, "S1Plus-static-data.json");
 const source = fs.readFileSync(sourcePath, "utf8");
 const css = fs.readFileSync(cssPath, "utf8");
+const staticData = JSON.parse(fs.readFileSync(staticDataPath, "utf8"));
 const countCodePoints = (value) => Array.from(value).length;
 
 const maxCharacters = 2 * 1024 * 1024;
@@ -24,11 +26,18 @@ assert.match(
   source,
   /@resource\s+s1p-base-css\s+https:\/\/raw\.githubusercontent\.com\/moekyo\/S1Plus-Manual\/930d334d0d91bf8e760db42687cf64ae285953ed\/S1Plus\.css/
 );
+assert.match(
+  source,
+  /@resource\s+s1p-static-data\s+https:\/\/raw\.githubusercontent\.com\/moekyo\/S1Plus-Manual\/22597e6442c08c3a69f4ce248b506b87729fac5c\/S1Plus-static-data\.json/
+);
 assert.match(source, /@grant\s+GM_getResourceText/);
 assert.equal((source.match(/sourceMappingURL|sourceURL/g) || []).length, 0);
 assert.equal((source.match(/@require\s+/g) || []).length, 0);
 assert.equal((source.match(/base64/gi) || []).length, 0);
 assert.equal((source.match(/@font-face/gi) || []).length, 0);
+assert.ok(Array.isArray(staticData.uiShowcase.categories));
+assert.ok(Object.keys(staticData.uiShowcase.sections).length >= 17);
+assert.equal((staticDataSource.match(/<script|javascript:/gi) || []).length, 0);
 assert.ok(css.includes("__S1P_NARROW_SCREEN_MAX_WIDTH_PX__"));
 assert.ok(css.includes("__S1P_SVG_ICON_ARROW_MASK__"));
 assert.equal((css.match(/<script|javascript:/gi) || []).length, 0);

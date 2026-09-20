@@ -6,6 +6,7 @@
 // @author       moekyo
 // @match        https://stage1st.com/2b/*
 // @resource     s1p-base-css https://raw.githubusercontent.com/moekyo/S1Plus-Manual/930d334d0d91bf8e760db42687cf64ae285953ed/S1Plus.css
+// @resource     s1p-static-data https://raw.githubusercontent.com/moekyo/S1Plus-Manual/22597e6442c08c3a69f4ce248b506b87729fac5c/S1Plus-static-data.json
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_getResourceText
@@ -30,6 +31,39 @@
   const SCRIPT_VERSION = "7.0.0";
   const SCRIPT_RELEASE_DATE = "2026-09-20";
 
+  const S1P_STATIC_DATA_RESOURCE_NAME = "s1p-static-data";
+  const loadS1pStaticData = () => {
+    if (typeof GM_getResourceText !== "function") {
+      return {};
+    }
+    try {
+      const parsed = JSON.parse(
+        GM_getResourceText(S1P_STATIC_DATA_RESOURCE_NAME)
+      );
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch (error) {
+      return {};
+    }
+  };
+  const S1P_STATIC_DATA = loadS1pStaticData();
+  const S1P_STATIC_ICONS =
+    S1P_STATIC_DATA.icons && typeof S1P_STATIC_DATA.icons === "object"
+      ? S1P_STATIC_DATA.icons
+      : {};
+  const S1P_NAMED_STATIC_ICONS =
+    S1P_STATIC_ICONS.named && typeof S1P_STATIC_ICONS.named === "object"
+      ? S1P_STATIC_ICONS.named
+      : {};
+  const S1P_UI_SHOWCASE_DATA =
+    S1P_STATIC_DATA.uiShowcase &&
+    typeof S1P_STATIC_DATA.uiShowcase === "object"
+      ? S1P_STATIC_DATA.uiShowcase
+      : {};
+  const getS1pStaticIcon = (name) =>
+    typeof S1P_NAMED_STATIC_ICONS[name] === "string"
+      ? S1P_NAMED_STATIC_ICONS[name]
+      : "";
+
   // --- 全局调试控制台 ---
   const DEBUG_MODE = false;
   const DEBUG_UNIFIED_PANEL_ID = "s1p-debug-unified-panel";
@@ -43,10 +77,10 @@
   const DEBUG_CONSOLE_STATE_CLOSED = "closed";
   const DEBUG_HOVER_REVEAL_MS = 2000;
   const DEBUG_PANEL_TRANSITION_MS = 300;
-  const DEBUG_COLLAPSE_ICON_SVG =
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M12 15.6315L20.9679 10.8838L20.0321 9.11619L12 13.3685L3.9679 9.11619L3.03212 10.8838L12 15.6315Z"/></svg>`;
-  const DEBUG_FAB_ICON_SVG =
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M13 19.9C15.2822 19.4367 17 17.419 17 15V12C17 11.299 16.8564 10.6219 16.5846 10H7.41538C7.14358 10.6219 7 11.299 7 12V15C7 17.419 8.71776 19.4367 11 19.9V14H13V19.9ZM5.5358 17.6907C5.19061 16.8623 5 15.9534 5 15H2V13H5V12C5 11.3573 5.08661 10.7348 5.2488 10.1436L3.0359 8.86602L4.0359 7.13397L6.05636 8.30049C6.11995 8.19854 6.18609 8.09835 6.25469 8H17.7453C17.8139 8.09835 17.88 8.19854 17.9436 8.30049L19.9641 7.13397L20.9641 8.86602L18.7512 10.1436C18.9134 10.7348 19 11.3573 19 12V13H22V15H19C19 15.9534 18.8094 16.8623 18.4642 17.6907L20.9641 19.134L19.9641 20.866L17.4383 19.4077C16.1549 20.9893 14.1955 22 12 22C9.80453 22 7.84512 20.9893 6.56171 19.4077L4.0359 20.866L3.0359 19.134L5.5358 17.6907ZM8 6C8 3.79086 9.79086 2 12 2C14.2091 2 16 3.79086 16 6H8Z"/></svg>`;
+  const DEBUG_COLLAPSE_ICON_SVG = getS1pStaticIcon(
+    "DEBUG_COLLAPSE_ICON_SVG"
+  );
+  const DEBUG_FAB_ICON_SVG = getS1pStaticIcon("DEBUG_FAB_ICON_SVG");
   const LOG_BUFFER_MAX = 1000;
   const LOG_RENDER_MAX = 200;
   const LOG_COLLAPSED_MESSAGE_MAX_LENGTH = 180;
@@ -3966,8 +4000,7 @@
   };
   const MODAL_CLOSE_BUTTON_BASE_CLASS =
     "s1p-btn s1p-settings-close-btn s1p-has-tooltip";
-  const MODAL_CLOSE_BUTTON_ICON_SVG =
-    `<svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 5L15 15"></path><path d="M15 5L5 15"></path></svg>`;
+  const MODAL_CLOSE_BUTTON_ICON_SVG = getS1pStaticIcon("MODAL_CLOSE_BUTTON_ICON_SVG");
   const createModalCloseButton = ({
     ariaLabel = "关闭窗口",
     tooltipText = ariaLabel,
@@ -3994,7 +4027,7 @@
   const NATIVE_BLACKLIST_IMPORT_BUTTON_ID = "s1p-native-blacklist-import-btn";
   const NATIVE_BLACKLIST_IMPORT_HINT_ID = "s1p-native-blacklist-import-hint";
   const NATIVE_BLACKLIST_IMPORTED_BADGE_CLASS = "s1p-native-imported-badge";
-  const NATIVE_BLACKLIST_IMPORTED_BADGE_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M5 2H19C19.5523 2 20 2.44772 20 3V22.1433C20 22.4194 19.7761 22.6434 19.5 22.6434C19.4061 22.6434 19.314 22.6168 19.2344 22.5669L12 18.0313L4.76559 22.5669C4.53163 22.7136 4.22306 22.6429 4.07637 22.4089C4.02647 22.3293 4 22.2373 4 22.1433V3C4 2.44772 4.44772 2 5 2ZM18 4H6V19.4324L12 15.6707L18 19.4324V4Z"></path></svg>`;
+  const NATIVE_BLACKLIST_IMPORTED_BADGE_ICON = getS1pStaticIcon("NATIVE_BLACKLIST_IMPORTED_BADGE_ICON");
   const NATIVE_BLACKLIST_IMPORTED_BADGE_TITLE = "已在 S1 Plus 屏蔽列表";
   // 阅读位置标识的正文留白与右侧安全间距。
   const READ_INDICATOR_CONTENT_GAP_PX = 8;
@@ -4183,58 +4216,41 @@
     });
     return cloned;
   };
-  const SVG_ICON_DELETE_DEFAULT = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='1.5' stroke='%23374151'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0' /%3E%3C/svg%3E`;
-  const SVG_ICON_DELETE_HOVER = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='1.5' stroke='white'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0' /%3E%3C/svg%3E`;
-  const SVG_ICON_ARROW_MASK = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 16'%3E%3Cpath d='M2 2L8 8L2 14' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E`;
-  const SVG_ICON_HELP_CIRCLE = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M12 22C6.47715 22 2 17.5228 2 12C2 6.47715 6.47715 2 12 2C17.5228 2 22 6.47715 22 12C22 17.5228 17.5228 22 12 22ZM12 20C16.4183 20 20 16.4183 20 12C20 7.58172 16.4183 4 12 4C7.58172 4 4 7.58172 4 12C4 16.4183 7.58172 20 12 20ZM11 15H13V17H11V15ZM13 13.3551V14H11V12.5C11 11.9477 11.4477 11.5 12 11.5C12.8284 11.5 13.5 10.8284 13.5 10C13.5 9.17157 12.8284 8.5 12 8.5C11.2723 8.5 10.6656 9.01823 10.5288 9.70577L8.56731 9.31346C8.88637 7.70919 10.302 6.5 12 6.5C13.933 6.5 15.5 8.067 15.5 10C15.5 11.5855 14.4457 12.9248 13 13.3551Z"></path></svg>`;
-  const SVG_ICON_EYE = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>`;
-  const SVG_ICON_EYE_SLASH = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>`;
-  const SVG_ICON_EXTERNAL_LINK = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" /></svg>`;
+  const SVG_ICON_DELETE_DEFAULT = getS1pStaticIcon("SVG_ICON_DELETE_DEFAULT");
+  const SVG_ICON_DELETE_HOVER = getS1pStaticIcon("SVG_ICON_DELETE_HOVER");
+  const SVG_ICON_ARROW_MASK = getS1pStaticIcon("SVG_ICON_ARROW_MASK");
+  const SVG_ICON_HELP_CIRCLE = getS1pStaticIcon("SVG_ICON_HELP_CIRCLE");
+  const SVG_ICON_EYE = getS1pStaticIcon("SVG_ICON_EYE");
+  const SVG_ICON_EYE_SLASH = getS1pStaticIcon("SVG_ICON_EYE_SLASH");
+  const SVG_ICON_EXTERNAL_LINK = getS1pStaticIcon("SVG_ICON_EXTERNAL_LINK");
 
   // --- 帖子楼层工具栏图标 ---
-  const TOOLBAR_ICONS = {
-    // 只看该用户 - 眼睛图标 (Thickened 0.5)
-    viewAuthor: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="0.5"><path d="M12 3C17.3917 3 21.8778 6.87976 22.8194 12C21.8778 17.1202 17.3917 21 12 21C6.60828 21 2.12226 17.1202 1.18055 12C2.12226 6.87976 6.60828 3 12 3ZM12 19C16.2355 19 19.8602 16.0521 20.7773 12C19.8602 7.94792 16.2355 5 12 5C7.76454 5 4.13984 7.94792 3.22266 12C4.13984 16.0521 7.76454 19 12 19ZM12 16.5C9.51468 16.5 7.49997 14.4853 7.49997 12C7.49997 9.51472 9.51468 7.5 12 7.5C14.4852 7.5 16.5 9.51472 16.5 12C16.5 14.4853 14.4852 16.5 12 16.5ZM12 14.5C13.3807 14.5 14.5 13.3807 14.5 12C14.5 10.6193 13.3807 9.5 12 9.5C10.6193 9.5 9.49997 10.6193 9.49997 12C9.49997 13.3807 10.6193 14.5 12 14.5Z"></path></svg>`,
-    // 收藏回复 - 书签图标 (Thickened 0.5)
-    bookmark: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="0.5"><path d="M5 2H19C19.5523 2 20 2.44772 20 3V21.1433C20 21.4194 19.7761 21.6434 19.5 21.6434C19.4061 21.6434 19.314 21.6168 19.2344 21.5669L12 16.8968L4.76559 21.5669C4.53163 21.7136 4.22306 21.6429 4.07637 21.4089C4.02647 21.3293 4 21.2373 4 21.1433V3C4 2.44772 4.44772 2 5 2ZM18 4H6V18.4324L12 14.6577L18 18.4324V4Z"></path></svg>`,
-    // 收藏回复（已收藏）- 实心书签图标 (Thickened 0.5)
-    bookmarked: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="0.5"><path d="M5 2H19C19.5523 2 20 2.44772 20 3V21.1433C20 21.4194 19.7761 21.6434 19.5 21.6434C19.4061 21.6434 19.314 21.6168 19.2344 21.5669L12 16.8968L4.76559 21.5669C4.53163 21.7136 4.22306 21.6429 4.07637 21.4089C4.02647 21.3293 4 21.2373 4 21.1433V3C4 2.44772 4.44772 2 5 2Z"></path></svg>`,
-    // 屏蔽用户 - 用户禁止图标 (Thickened 0.5)
-    blockUser: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="0.5"><path d="M8 7C8 4.79086 9.79086 3 12 3C14.2091 3 16 4.79086 16 7C16 9.20914 14.2091 11 12 11C9.79086 11 8 9.20914 8 7ZM12 1C8.68629 1 6 3.68629 6 7C6 10.3137 8.68629 13 12 13C15.3137 13 18 10.3137 18 7C18 3.68629 15.3137 1 12 1ZM15 18C15 16.3431 16.3431 15 18 15C18.4631 15 18.9018 15.105 19.2934 15.2924L15.2924 19.2934C15.105 18.9018 15 18.4631 15 18ZM16.7066 20.7076L20.7076 16.7066C20.895 17.0982 21 17.5369 21 18C21 19.6569 19.6569 21 18 21C17.5369 21 17.0982 20.895 16.7066 20.7076ZM18 13C15.2386 13 13 15.2386 13 18C13 20.7614 15.2386 23 18 23C20.7614 23 23 20.7614 23 18C23 15.2386 20.7614 13 18 13ZM12 14C12.0843 14 12.1683 14.0013 12.252 14.0039C11.8236 14.6189 11.4914 15.3059 11.2772 16.0431C8.30431 16.4 6 18.9309 6 22H4C4 17.5817 7.58172 14 12 14Z"></path></svg>`,
-    // 屏蔽楼层 - 评论关闭图标 (Thickened 0.5)
-    blockPost: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="0.5"><path d="M2.80777 1.3934L22.6068 21.1924L21.1925 22.6066L17.5846 18.9994L6.45516 19L2.00016 22.5V4C2.00016 3.8307 2.04223 3.67123 2.11649 3.53146L1.39355 2.80762L2.80777 1.3934ZM3.99955 5.4134L4.00016 18.3853L5.76349 17L15.5846 16.9994L3.99955 5.4134ZM21.0002 3C21.5524 3 22.0002 3.44772 22.0002 4V17.785L20.0002 15.785V5L9.21316 4.999L7.21416 3H21.0002Z"></path></svg>`,
-    // 标记用户 - 标签图标 (Thickened 0.5)
-    tagUser: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="0.5"><path d="M10.9042 2.10025L20.8037 3.51446L22.2179 13.414L13.0255 22.6063C12.635 22.9969 12.0019 22.9969 11.6113 22.6063L1.71184 12.7069C1.32131 12.3163 1.32131 11.6832 1.71184 11.2926L10.9042 2.10025ZM11.6113 4.22157L3.83316 11.9997L12.3184 20.485L20.0966 12.7069L19.036 5.28223L11.6113 4.22157ZM13.7327 10.5855C12.9516 9.80448 12.9516 8.53815 13.7327 7.7571C14.5137 6.97606 15.78 6.97606 16.5611 7.7571C17.3421 8.53815 17.3421 9.80448 16.5611 10.5855C15.78 11.3666 14.5137 11.3666 13.7327 10.5855Z"></path></svg>`,
-    // 编辑回复 - 铅笔图标 (Thickened 0.5)
-    editPost: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="0.5"><path d="M16.7574 2.99678L14.7574 4.99678H5V18.9968H19V9.23943L21 7.23943V19.9968C21 20.5491 20.5523 20.9968 20 20.9968H4C3.44772 20.9968 3 20.5491 3 19.9968V3.99678C3 3.4445 3.44772 2.99678 4 2.99678H16.7574ZM20.4853 2.09729L21.8995 3.5115L12.7071 12.7039L11.2954 12.7064L11.2929 11.2897L20.4853 2.09729Z"></path></svg>`,
-    // 显示全部楼层 - 列表图标 (Thickened 0.5)
-    showAll: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="0.5"><path d="M8 4H21V6H8V4ZM3 3.5H6V6.5H3V3.5ZM3 10.5H6V13.5H3V10.5ZM3 17.5H6V20.5H3V17.5ZM8 11H21V13H8V11ZM8 18H21V20H8V18Z"></path></svg>`,
-    // 正序看帖 - 箭头向下 (Thickened 0.5)
-    sortAsc: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="2 2 20 20" fill="currentColor" stroke="currentColor" stroke-width="0.5"><path d="M13 5V16.17L17.59 11.58L19 13L12 20L5 13L6.41 11.59L11 16.17V5H13Z"></path></svg>`,
-    // 倒序看帖 - 箭头向上 (Thickened 0.5)
-    sortDesc: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="2 2 20 20" fill="currentColor" stroke="currentColor" stroke-width="0.5"><path d="M13 19V7.83L17.59 12.42L19 11L12 4L5 11L6.41 12.41L11 7.83V19H13Z"></path></svg>`,
-  };
+  const TOOLBAR_ICONS =
+    S1P_STATIC_ICONS.toolbar && typeof S1P_STATIC_ICONS.toolbar === "object"
+      ? S1P_STATIC_ICONS.toolbar
+      : {};
 
   // --- 图片查看器图标 ---
-  const SVG_ICON_ZOOM_OUT = `<svg class="s1p-image-viewer__zoom-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M18.031 16.6168L22.3137 20.8995L20.8995 22.3137L16.6168 18.031C15.0769 19.263 13.124 20 11 20C6.032 20 2 15.968 2 11C2 6.032 6.032 2 11 2C15.968 2 20 6.032 20 11C20 13.124 19.263 15.0769 18.031 16.6168ZM16.0247 15.8748C17.2475 14.6146 18 12.8956 18 11C18 7.1325 14.8675 4 11 4C7.1325 4 4 7.1325 4 11C4 14.8675 7.1325 18 11 18C12.8956 18 14.6146 17.2475 15.8748 16.0247L16.0247 15.8748ZM7 10H15V12H7V10Z"></path></svg>`;
-  const SVG_ICON_ZOOM_IN = `<svg class="s1p-image-viewer__zoom-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M18.031 16.6168L22.3137 20.8995L20.8995 22.3137L16.6168 18.031C15.0769 19.263 13.124 20 11 20C6.032 20 2 15.968 2 11C2 6.032 6.032 2 11 2C15.968 2 20 6.032 20 11C20 13.124 19.263 15.0769 18.031 16.6168ZM16.0247 15.8748C17.2475 14.6146 18 12.8956 18 11C18 7.1325 14.8675 4 11 4C7.1325 4 4 7.1325 4 11C4 14.8675 7.1325 18 11 18C12.8956 18 14.6146 17.2475 15.8748 16.0247L16.0247 15.8748ZM10 10V7H12V10H15V12H12V15H10V12H7V10H10Z"></path></svg>`;
-  const SVG_ICON_CHEVRON_UP = `<svg class="s1p-image-viewer__zoom-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M7.41 14.59 12 10l4.59 4.59L18 13.17l-6-6-6 6z"></path></svg>`;
-  const SVG_ICON_CHEVRON_DOWN = `<svg class="s1p-image-viewer__zoom-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="m7.41 8.59 4.59 4.58 4.59-4.58L18 10l-6 6-6-6z"></path></svg>`;
-  const SVG_ICON_CHEVRON_LEFT = `<svg class="s1p-image-viewer__nav-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M12.5 4.5L7 10l5.5 5.5"></path></svg>`;
-  const SVG_ICON_CHEVRON_RIGHT = `<svg class="s1p-image-viewer__nav-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M7.5 4.5L13 10l-5.5 5.5"></path></svg>`;
+  const SVG_ICON_ZOOM_OUT = getS1pStaticIcon("SVG_ICON_ZOOM_OUT");
+  const SVG_ICON_ZOOM_IN = getS1pStaticIcon("SVG_ICON_ZOOM_IN");
+  const SVG_ICON_CHEVRON_UP = getS1pStaticIcon("SVG_ICON_CHEVRON_UP");
+  const SVG_ICON_CHEVRON_DOWN = getS1pStaticIcon("SVG_ICON_CHEVRON_DOWN");
+  const SVG_ICON_CHEVRON_LEFT = getS1pStaticIcon("SVG_ICON_CHEVRON_LEFT");
+  const SVG_ICON_CHEVRON_RIGHT = getS1pStaticIcon("SVG_ICON_CHEVRON_RIGHT");
 
   // --- 同步状态图标 ---
-  const SVG_ICON_SYNC_SUCCESS = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="1 1 22 22" fill="currentColor"><path d="M4 12C4 7.58172 7.58172 4 12 4C16.4183 4 20 7.58172 20 12C20 16.4183 16.4183 20 12 20C7.58172 20 4 16.4183 4 12ZM12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2ZM17.4571 9.45711L16.0429 8.04289L11 13.0858L8.20711 10.2929L6.79289 11.7071L11 15.9142L17.4571 9.45711Z"></path></svg>`;
-  const SVG_ICON_SYNC_FAILURE = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="1 1 22 22" fill="currentColor"><path d="M12 22C6.47715 22 2 17.5228 2 12C2 6.47715 6.47715 2 12 2C17.5228 2 22 6.47715 22 12C22 17.5228 17.5228 22 12 22ZM12 20C16.4183 20 20 16.4183 20 12C20 7.58172 16.4183 4 12 4C7.58172 4 4 7.58172 4 12C4 16.4183 7.58172 20 12 20ZM7 11H17V13H7V11Z"></path></svg>`;
-  const SVG_ICON_SYNC_IDLE = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="8" r="2.25"></circle></svg>`;
-  const SVG_ICON_SYNC_REFRESH = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4C14.7486 4 17.1749 5.38626 18.6156 7.5H16V9.5H22V3.5H20V5.99936C18.1762 3.57166 15.2724 2 12 2C6.47715 2 2 6.47715 2 12H4C4 7.58172 7.58172 4 12 4ZM20 12C20 16.4183 16.4183 20 12 20C9.25144 20 6.82508 18.6137 5.38443 16.5H8V14.5H2V20.5H4V18.0006C5.82381 20.4283 8.72764 22 12 22C17.5228 22 22 17.5228 22 12H20Z"></path></svg>`;
+  const SVG_ICON_SYNC_SUCCESS = getS1pStaticIcon("SVG_ICON_SYNC_SUCCESS");
+  const SVG_ICON_SYNC_FAILURE = getS1pStaticIcon("SVG_ICON_SYNC_FAILURE");
+  const SVG_ICON_SYNC_IDLE = getS1pStaticIcon("SVG_ICON_SYNC_IDLE");
+  const SVG_ICON_SYNC_REFRESH = getS1pStaticIcon("SVG_ICON_SYNC_REFRESH");
 
   // --- 通用 UI 图标 ---
-  const SVG_ICON_RESIZE_DIAGONAL = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M7 8.41421V12L5 12L5 5L12 5V7L8.41421 7L17 15.5858V12L19 12L19 19H12V17H15.5858L7 8.41421Z"></path></svg>`;
-  const SVG_ICON_SEARCH = `<svg class="s1p-search-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" /></svg>`;
-  const SVG_ICON_X_CIRCLE = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" /></svg>`;
-  const SVG_ICON_GRID = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="16" height="16" class="s1p-progress-detail-btn-icon"><path d="M3 3H21C21.5523 3 22 3.44772 22 4V20C22 20.5523 21.5523 21 21 21H3C2.44772 21 2 20.5523 2 20V4C2 3.44772 2.44772 3 3 3ZM4 5V19H20V5H4ZM7 7H11V11H7V7ZM7 13H11V17H7V13ZM13 7H17V11H13V7ZM13 13H17V17H13V13Z"></path></svg>`;
-  const SVG_ICON_KEBAB = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>`;
+  const SVG_ICON_RESIZE_DIAGONAL = getS1pStaticIcon("SVG_ICON_RESIZE_DIAGONAL");
+  const SVG_ICON_SEARCH = getS1pStaticIcon("SVG_ICON_SEARCH");
+  const SVG_ICON_X_CIRCLE = getS1pStaticIcon("SVG_ICON_X_CIRCLE");
+  const SVG_ICON_GRID = getS1pStaticIcon("SVG_ICON_GRID");
+  const SVG_ICON_KEBAB = getS1pStaticIcon("SVG_ICON_KEBAB");
+  const SVG_ICON_CHECK = getS1pStaticIcon("SVG_ICON_CHECK");
   const S1P_FULLSCREEN_MODAL_CLASS = "s1p-fullscreen-modal";
   const S1P_LAYERED_MODAL_BACKDROP_OPEN_CLASS =
     "s1p-layered-modal-backdrop-open";
@@ -37532,14 +37548,20 @@
   const getAutoSyncIndicatorIconHtmlByPhase = (phase, displayKind = "") => {
     const normalizedDisplayKind =
       normalizeAutoSyncIndicatorOperation(displayKind) || displayKind;
-    const syncDotsSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 16" fill="currentColor"><circle class="s1p-dot s1p-pending-dot" cx="4" cy="8" r="1.75"></circle><circle class="s1p-dot s1p-pending-dot" cx="10" cy="8" r="1.75"></circle><circle class="s1p-dot s1p-pending-dot" cx="16" cy="8" r="1.75"></circle></svg>`;
+    const syncDotsSvg =
+      typeof S1P_STATIC_ICONS.sync?.pendingDots === "string"
+        ? S1P_STATIC_ICONS.sync.pendingDots
+        : "";
     const pushArrowPath = "M11.9999 10.8284L7.0502 15.7782L5.63599 14.364L11.9999 8L18.3639 14.364L16.9497 15.7782L11.9999 10.8284Z";
     const pullArrowPath = "M11.9999 13.1714L16.9497 8.22168L18.3639 9.63589L11.9999 15.9999L5.63599 9.63589L7.0502 8.22168L11.9999 13.1714Z";
     const buildArrowQueueSvg = (arrowPath) =>
       `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path class="s1p-sync-flow-arrow" d="${arrowPath}"></path><path class="s1p-sync-flow-arrow" d="${arrowPath}"></path><path class="s1p-sync-flow-arrow" d="${arrowPath}"></path></svg>`;
     const pushArrowQueueSvg = buildArrowQueueSvg(pushArrowPath);
     const pullArrowQueueSvg = buildArrowQueueSvg(pullArrowPath);
-    const probeSearchSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M11 2C15.968 2 20 6.032 20 11C20 15.968 15.968 20 11 20C6.032 20 2 15.968 2 11C2 6.032 6.032 2 11 2ZM11 18C14.8675 18 18 14.8675 18 11C18 7.1325 14.8675 4 11 4C7.1325 4 4 7.1325 4 11C4 14.8675 7.1325 18 11 18ZM19.4853 18.0711L22.3137 20.8995L20.8995 22.3137L18.0711 19.4853L19.4853 18.0711Z"></path></svg>`;
+    const probeSearchSvg =
+      typeof S1P_STATIC_ICONS.sync?.probeSearch === "string"
+        ? S1P_STATIC_ICONS.sync.probeSearch
+        : "";
     const getOperationSvg = () => {
       switch (normalizedDisplayKind) {
         case AUTO_SYNC_INDICATOR_OPERATION_PUSH:
@@ -39386,418 +39408,45 @@
     updateDebugConsoleExpandAllButton(panel);
   };
 
-  const UI_COMPONENT_CATEGORIES = [
-    { key: "buttons", label: "按钮" },
-    { key: "toggles", label: "开关" },
-    { key: "segmented", label: "分段控制器" },
-    { key: "inputs", label: "输入框" },
-    { key: "ranges", label: "范围滑块" },
-    { key: "datepicker", label: "日期选择器" },
-    { key: "colorpicker", label: "颜色选择器" },
-    { key: "toasts", label: "提示通知" },
-    { key: "badges", label: "徽章标签" },
-    { key: "cards", label: "卡片分组" },
-    { key: "lists", label: "列表条目" },
-    { key: "confirmbars", label: "确认栏" },
-    { key: "accordion", label: "可折叠" },
-    { key: "tooltips", label: "工具提示" },
-    { key: "inlineedit", label: "内联编辑" },
-    { key: "spinners", label: "加载指示器" },
-    { key: "previews", label: "弹窗预览" },
-  ];
+  const UI_COMPONENT_CATEGORIES = Array.isArray(
+    S1P_UI_SHOWCASE_DATA.categories
+  )
+    ? S1P_UI_SHOWCASE_DATA.categories
+    : [];
+
+  const getUiShowcaseActionHtml = (key) =>
+    typeof S1P_UI_SHOWCASE_DATA.actionBodies?.[key] === "string"
+      ? S1P_UI_SHOWCASE_DATA.actionBodies[key]
+      : "";
+
+  const createUiShowcaseSyncPreviewHtml = () =>
+    typeof S1P_UI_SHOWCASE_DATA.syncPreviewHtml === "string"
+      ? S1P_UI_SHOWCASE_DATA.syncPreviewHtml
+      : "";
+
+  const createUiShowcaseReadingProgressHtml = () =>
+    typeof S1P_UI_SHOWCASE_DATA.readingProgressHtml === "string"
+      ? S1P_UI_SHOWCASE_DATA.readingProgressHtml
+      : "";
 
   const switchUIComponentCategory = (panel, categoryKey) => {
     panel.querySelectorAll(".s1p-ui-showcase-cat-btn").forEach((btn) => {
       btn.classList.toggle("active", btn.dataset.s1pUiCat === categoryKey);
     });
     panel.querySelectorAll(".s1p-ui-showcase-section").forEach((section) => {
-      section.classList.toggle("is-active", section.dataset.s1pUiSection === categoryKey);
-      section.classList.toggle("s1p-hidden", section.dataset.s1pUiSection !== categoryKey);
+      section.classList.toggle(
+        "is-active",
+        section.dataset.s1pUiSection === categoryKey
+      );
+      section.classList.toggle(
+        "s1p-hidden",
+        section.dataset.s1pUiSection !== categoryKey
+      );
     });
   };
 
-  const createShowcaseSectionHeader = (title, desc) =>
-    `<div class="s1p-ui-showcase-section-header"><span class="s1p-ui-showcase-section-title">${title}</span><span class="s1p-ui-showcase-section-desc">${desc}</span></div>`;
-
-  const createShowcaseVariantLabel = (label) =>
-    `<span class="s1p-ui-showcase-variant-label">${label}</span>`;
-
-  const createShowcaseVariantRow = (label, html, extraClass = "") =>
-    `<div class="s1p-ui-showcase-variant${extraClass ? " " + extraClass : ""}">${createShowcaseVariantLabel(label)}<div class="s1p-ui-showcase-variant-render">${html}</div></div>`;
-
-  const buildButtonShowcase = () => {
-    const variants = [
-      { label: "默认", cls: "s1p-btn", text: "按钮" },
-      { label: "悬停态", cls: "s1p-btn s1p-ui-force-hover", text: "按钮" },
-      { label: "禁用态", cls: "s1p-btn", text: "按钮", disabled: true },
-      { label: "主按钮", cls: "s1p-btn s1p-primary", text: "按钮" },
-      { label: "主按钮-悬停", cls: "s1p-btn s1p-primary s1p-ui-force-hover", text: "按钮" },
-      { label: "小按钮", cls: "s1p-btn s1p-btn-sm", text: "小" },
-      { label: "小-悬停", cls: "s1p-btn s1p-btn-sm s1p-ui-force-hover", text: "小" },
-      { label: "小-禁用", cls: "s1p-btn s1p-btn-sm", text: "小", disabled: true },
-      { label: "危险(悬停)", cls: "s1p-btn s1p-danger s1p-ui-force-hover", text: "危险" },
-      { label: "红色(悬停)", cls: "s1p-btn s1p-red-btn s1p-ui-force-hover", text: "红色" },
-      { label: "确认栏按钮", cls: "s1p-confirm-btn", text: "确认" },
-      { label: "确认悬停", cls: "s1p-confirm-btn s1p-ui-force-hover", text: "确认" },
-      { label: "内联切换", cls: "s1p-inline-toggle-btn", text: "显示" },
-      { label: "内联-悬停", cls: "s1p-inline-toggle-btn s1p-ui-force-hover", text: "显示" },
-    ];
-    return (
-      createShowcaseSectionHeader("按钮", "s1p-btn / s1p-primary / s1p-danger / s1p-red-btn / s1p-btn-sm") +
-      '<div class="s1p-ui-showcase-grid">' +
-      variants
-        .map((v) =>
-          createShowcaseVariantRow(
-            v.label,
-            `<button class="${v.cls}" type="button"${v.disabled ? " disabled" : ""}>${v.text}</button>`
-          )
-        )
-        .join("") +
-      "</div>"
-    );
-  };
-
-  const buildToggleShowcase = () => {
-    const variants = [
-      { label: "开启", html: '<label class="s1p-switch"><input type="checkbox" checked><span class="s1p-slider"></span></label>' },
-      { label: "关闭", html: '<label class="s1p-switch"><input type="checkbox"><span class="s1p-slider"></span></label>' },
-      { label: "开启-禁用", html: '<label class="s1p-switch"><input type="checkbox" checked disabled><span class="s1p-slider"></span></label>' },
-      { label: "关闭-禁用", html: '<label class="s1p-switch"><input type="checkbox" disabled><span class="s1p-slider"></span></label>' },
-      { label: "条目小开关-开", html: '<label class="s1p-switch s1p-item-toggle"><input type="checkbox" checked><span class="s1p-slider"></span></label>' },
-      { label: "条目小开关-关", html: '<label class="s1p-switch s1p-item-toggle"><input type="checkbox"><span class="s1p-slider"></span></label>' },
-      { label: "功能大开关", html: '<div class="s1p-settings-group"><div class="s1p-settings-item s1p-feature-toggle-item"><label class="s1p-settings-label s1p-settings-section-title-label">示例功能</label><label class="s1p-switch"><input type="checkbox" checked><span class="s1p-slider"></span></label></div></div>' },
-    ];
-    return (
-      createShowcaseSectionHeader("开关", "s1p-switch / s1p-slider / s1p-item-toggle") +
-      '<div class="s1p-ui-showcase-grid">' +
-      variants.map((v) => createShowcaseVariantRow(v.label, v.html)).join("") +
-      "</div>"
-    );
-  };
-
-  const buildSegmentedShowcase = () => {
-    const html =
-      '<div class="s1p-segmented-control"><div class="s1p-segmented-control-slider" style="width:52px;"></div><div class="s1p-segmented-control-option active">选项A</div><div class="s1p-segmented-control-option">选项B</div><div class="s1p-segmented-control-option">选项C</div></div>';
-    return createShowcaseSectionHeader("分段控制器", "s1p-segmented-control") + '<div class="s1p-ui-showcase-grid">' + createShowcaseVariantRow("三选项", html) + "</div>";
-  };
-
-  const buildInputShowcase = () => {
-    const variants = [
-      { label: "默认", html: '<input class="s1p-input" type="text" placeholder="请输入内容...">' },
-      { label: "聚焦态", html: '<input class="s1p-input s1p-ui-force-focus" type="text" value="已输入的文字">' },
-      { label: "错误态", html: '<input class="s1p-input s1p-input-error" type="text" value="错误输入">' },
-      { label: "禁用态", html: '<input class="s1p-input" type="text" value="禁用状态" disabled>' },
-      { label: "带右侧图标", html: '<div style="position:relative;display:inline-block;"><input class="s1p-input s1p-input-with-right-icon" type="password" value="password123" style="padding-right:36px;"><span class="s1p-icon-btn-overlay" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);cursor:pointer;opacity:0.5;">👁</span></div>' },
-      { label: "搜索框", html: '<div class="s1p-search-input-wrapper"><span class="s1p-search-icon">🔍</span><input class="s1p-input" type="text" placeholder="搜索..." style="padding-left:32px;"><button class="s1p-search-clear-btn" type="button">✕</button></div>' },
-      { label: "全宽输入", html: '<input class="s1p-input s1p-input-full" type="text" value="全宽输入框" style="width:100%;">' },
-      { label: "文本域", html: '<textarea class="s1p-input s1p-textarea" placeholder="请输入文本...">文本区域内容</textarea>' },
-      { label: "搜索图标+输入", html: '<div style="display:flex;align-items:center;gap:4px;background:var(--s1p-bg);border:1px solid var(--s1p-pri);border-radius:6px;padding:4px 8px;"><span style="opacity:0.4;">🔍</span><input style="border:none;outline:none;background:transparent;flex:1;font-size:14px;color:var(--s1p-t);" type="text" placeholder="搜索..." value="关键词"></div>' },
-    ];
-    return (
-      createShowcaseSectionHeader("输入框", "s1p-input / s1p-input-full / s1p-input-error / s1p-textarea") +
-      '<div class="s1p-ui-showcase-grid">' +
-      variants.map((v) => createShowcaseVariantRow(v.label, v.html)).join("") +
-      "</div>"
-    );
-  };
-
-  const buildRangeShowcase = () => {
-    const rangeHtml =
-      '<div class="s1p-range-control">' +
-      '<div class="s1p-range-control-head">' +
-      '<label class="s1p-range-label" for="s1p-ui-showcase-range">滚轮缩放幅度</label>' +
-      '<output class="s1p-range-value" for="s1p-ui-showcase-range">6%</output>' +
-      "</div>" +
-      '<input id="s1p-ui-showcase-range" class="s1p-range-input" type="range" min="1" max="18" step="1" value="6">' +
-      '<p class="s1p-range-desc">缩放幅度约 6%，并会按鼠标或触控板信号自动折算。</p>' +
-      "</div>";
-    return (
-      createShowcaseSectionHeader("范围滑块", "s1p-range-control / s1p-range-input") +
-      '<div class="s1p-ui-showcase-grid">' +
-      createShowcaseVariantRow("默认", rangeHtml, "s1p-ui-showcase-variant-block") +
-      "</div>"
-    );
-  };
-
-  const buildDatePickerShowcase = () => {
-    return (
-      createShowcaseSectionHeader("日期选择器", "createDatePicker()") +
-      '<div class="s1p-ui-showcase-grid">' +
-      createShowcaseVariantRow(
-        "日期输入",
-        '<div style="display:flex;align-items:center;gap:4px;"><input class="s1p-input" type="text" value="2026-05-19" readonly style="width:140px;"><button class="s1p-btn s1p-btn-sm" type="button" data-s1p-ui-action="open-datepicker">📅 选择日期</button></div>'
-      ) +
-      "</div>"
-    );
-  };
-
-  const buildColorPickerShowcase = () => {
-    const colors = ["red", "orange", "yellow", "green", "blue", "purple"];
-    const colorLabels = { red: "红", orange: "橙", yellow: "黄", green: "绿", blue: "蓝", purple: "紫" };
-    const swatches = colors
-      .map(
-        (c) =>
-          `<div class="s1p-color-option" style="background-color:var(--s1p-tag-${c});width:28px;height:28px;border-radius:6px;display:inline-block;cursor:pointer;margin:2px;" title="${colorLabels[c]}"></div>`
-      )
-      .join("");
-    const tagPills = colors
-      .map((c) => {
-        const containerCls = c === "yellow" ? "" : " color-is-light";
-        return `<span class="s1p-user-tag-display" style="background-color:var(--s1p-tag-${c});color:var(--s1p-tag-${c}-text);display:inline-block;padding:2px 8px;border-radius:4px;font-size:12px;margin:2px;">标签${colorLabels[c]}</span>`;
-      })
-      .join("");
-    const historyItems = colors
-      .slice(0, 3)
-      .map(
-        (c) =>
-          `<span class="s1p-history-tag-item" style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:12px;margin:2px;background-color:var(--s1p-tag-${c});color:var(--s1p-tag-${c}-text);">历史${colorLabels[c]}</span>`
-      )
-      .join("");
-    return (
-      createShowcaseSectionHeader("颜色选择器", "s1p-color-option / s1p-user-tag-display") +
-      '<div class="s1p-ui-showcase-grid">' +
-      createShowcaseVariantRow("色块选择", `<div class="s1p-color-picker" style="display:flex;gap:4px;">${swatches}</div>`) +
-      createShowcaseVariantRow("标签药丸", `<div style="display:flex;flex-wrap:wrap;gap:4px;">${tagPills}</div>`) +
-      createShowcaseVariantRow("历史标签", `<div class="s1p-history-tags-list" style="display:flex;flex-wrap:wrap;gap:4px;">${historyItems}</div>`) +
-      "</div>"
-    );
-  };
-
-  const buildToastShowcase = () => {
-    return (
-      createShowcaseSectionHeader("提示通知", "showMessage() — s1p-toast-notification") +
-      '<div class="s1p-ui-showcase-grid">' +
-      createShowcaseVariantRow(
-        "中性提示",
-        '<button class="s1p-btn s1p-btn-sm" type="button" data-s1p-ui-action="toast-neutral">触发中性提示</button>'
-      ) +
-      createShowcaseVariantRow(
-        "成功提示",
-        '<button class="s1p-btn s1p-btn-sm" type="button" data-s1p-ui-action="toast-success">触发成功提示</button>'
-      ) +
-      createShowcaseVariantRow(
-        "错误提示",
-        '<button class="s1p-btn s1p-btn-sm" type="button" data-s1p-ui-action="toast-error">触发错误提示</button>'
-      ) +
-      "</div>"
-    );
-  };
-
-  const buildBadgeShowcase = () => {
-    const colors = ["red", "orange", "yellow", "green", "blue", "purple"];
-    const colorLabels = { red: "红", orange: "橙", yellow: "黄", green: "绿", blue: "蓝", purple: "紫" };
-    const tagPills = colors
-      .map(
-        (c) =>
-          `<div class="s1p-user-tag-container s1p-tag-color-${c}" style="display:inline-flex;align-items:center;border-radius:4px;overflow:hidden;margin:2px;"><span class="s1p-user-tag-display">用户标签${colorLabels[c]}</span></div>`
-      )
-      .join("");
-    const remarkHtml = '<span class="s1p-user-remark-display" style="font-size:12px;color:var(--s1p-desc-t);margin:2px;">备注文字示例</span>';
-    const updateBadge = '<span class="s1p-progress-update-badge" style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:11px;font-weight:600;background-color:var(--s1p-tag-orange);color:var(--s1p-white);margin:2px;">内容更新</span>';
-    const replyBadge = '<span class="s1p-new-replies-badge" style="display:inline-block;padding:1px 6px;border-radius:10px;font-size:11px;font-weight:600;background-color:#3b82f6;color:var(--s1p-white);margin:2px;">+12</span>';
-    const codeBadge = '<span class="s1p-inline-code-badge" style="font-family:monospace;font-size:12px;background:var(--s1p-sub);padding:1px 4px;border-radius:3px;margin:2px;">Ctrl+S</span>';
-    const bookmarkHint = '<span class="s1p-bookmark-preview-only-hint" style="font-size:11px;color:var(--s1p-desc-t);margin:2px;">(仅预览)</span>';
-    return (
-      createShowcaseSectionHeader("徽章标签", "s1p-user-tag-display / s1p-progress-update-badge / s1p-new-replies-badge") +
-      '<div class="s1p-ui-showcase-grid">' +
-      createShowcaseVariantRow("标签药丸(全色)", `<div style="display:flex;flex-wrap:wrap;gap:4px;">${tagPills}</div>`) +
-      createShowcaseVariantRow("用户备注", `<div style="display:flex;align-items:center;gap:4px;">${remarkHtml}</div>`) +
-      createShowcaseVariantRow("内容更新徽章", `<div style="display:flex;align-items:center;gap:4px;">${updateBadge}</div>`) +
-      createShowcaseVariantRow("新回复徽章", `<div style="display:flex;align-items:center;gap:4px;">${replyBadge}</div>`) +
-      createShowcaseVariantRow("内联代码", `<div style="display:flex;align-items:center;gap:4px;">${codeBadge}</div>`) +
-      createShowcaseVariantRow("仅预览提示", `<div style="display:flex;align-items:center;gap:4px;">${bookmarkHint}</div>`) +
-      "</div>"
-    );
-  };
-
-  const buildCardShowcase = () => {
-    const settingsGroup = `<div class="s1p-settings-group"><div class="s1p-settings-group-title s1p-settings-section-title-label">设置分组标题</div><div class="s1p-settings-item"><label class="s1p-settings-label">设置项 A</label><label class="s1p-switch"><input type="checkbox" checked><span class="s1p-slider"></span></label></div><div class="s1p-settings-item"><label class="s1p-settings-label">设置项 B (带描述)</label><input class="s1p-input" type="text" value="示例值"></div></div>`;
-    return (
-      createShowcaseSectionHeader("卡片分组", "s1p-settings-group / s1p-settings-item") +
-      '<div class="s1p-ui-showcase-grid">' +
-      createShowcaseVariantRow("设置分组", settingsGroup) +
-      "</div>"
-    );
-  };
-
-  const buildListShowcase = () => {
-    const blockedUser = `<div class="s1p-item"><div class="s1p-item-info"><div class="s1p-item-title">被屏蔽用户</div><div class="s1p-item-meta">UID: 12345</div></div><label class="s1p-switch s1p-item-toggle"><input type="checkbox" checked><span class="s1p-slider"></span></label></div>`;
-    const blockedThread = `<div class="s1p-item"><div class="s1p-item-info"><div class="s1p-item-title">被屏蔽主题标题</div><div class="s1p-item-meta">TID: 1111111</div></div><button class="s1p-btn s1p-btn-sm s1p-danger" type="button">取消屏蔽</button></div>`;
-    const emptyState = `<div class="s1p-empty">暂无数据</div>`;
-    const pagination = `<div class="s1p-list-pagination"><button class="s1p-btn s1p-list-pagination-btn" type="button" disabled>上一页</button><span class="s1p-list-pagination-info">第 1/3 页</span><button class="s1p-btn s1p-list-pagination-btn" type="button">下一页</button></div>`;
-    return (
-      createShowcaseSectionHeader("列表条目", "s1p-list / s1p-item / s1p-list-pagination / s1p-empty") +
-      '<div class="s1p-ui-showcase-grid">' +
-      createShowcaseVariantRow("屏蔽用户项", blockedUser) +
-      createShowcaseVariantRow("屏蔽主题项", blockedThread) +
-      createShowcaseVariantRow("空状态", emptyState) +
-      createShowcaseVariantRow("分页", pagination) +
-      "</div>"
-    );
-  };
-
-  const buildConfirmBarShowcase = () => {
-    const simple = `<div class="s1p-confirm-container"><div class="s1p-confirm-bar"><span class="s1p-confirm-text">确认执行此操作？</span><span class="s1p-confirm-separator"></span><button class="s1p-confirm-action-btn s1p-confirm" type="button" title="确认"></button><button class="s1p-confirm-action-btn s1p-cancel" type="button" title="取消"></button></div></div>`;
-    const withRemark = `<div class="s1p-confirm-container"><div class="s1p-confirm-bar s1p-has-expander"><span class="s1p-confirm-text">屏蔽该用户？</span><span class="s1p-confirm-separator"></span><button class="s1p-confirm-action-btn s1p-confirm" type="button" title="确认"></button><button class="s1p-confirm-action-btn s1p-cancel" type="button" title="取消"></button></div><div class="s1p-confirm-remark-area"><textarea class="s1p-confirm-input s1p-input" placeholder="备注（可选）">屏蔽原因...</textarea></div></div>`;
-    return (
-      createShowcaseSectionHeader("确认栏", "s1p-confirm-bar / buildConfirmationMarkup()") +
-      '<div class="s1p-ui-showcase-grid">' +
-      createShowcaseVariantRow("纯文本确认栏", simple) +
-      createShowcaseVariantRow("带备注确认栏", withRemark) +
-      "</div>"
-    );
-  };
-
-  const buildAccordionShowcase = () => {
-    const html = `<div class="s1p-collapsible-header" style="display:flex;align-items:center;gap:6px;padding:8px 12px;border:1px solid var(--s1p-pri);border-radius:6px;cursor:pointer;background:var(--s1p-bg);" data-s1p-ui-action="toggle-accordion-demo"><span class="s1p-expander-arrow s1p-ui-accordion-arrow" style="transition:transform 0.2s;display:inline-block;">▶</span><span style="font-weight:600;">点击展开内容</span></div><div class="s1p-collapsible-content s1p-ui-accordion-body s1p-hidden" style="padding:8px 12px;border:1px solid var(--s1p-pri);border-top:none;border-radius:0 0 6px 6px;">折叠区域的内容，可以包含任意富文本或组件。这里是一段示例文字。</div>`;
-    return (
-      createShowcaseSectionHeader("可折叠", "s1p-collapsible-header / s1p-collapsible-content") +
-      '<div class="s1p-ui-showcase-grid">' +
-      createShowcaseVariantRow("可折叠区域", html) +
-      "</div>"
-    );
-  };
-
-  const buildTooltipShowcase = () => {
-    return (
-      createShowcaseSectionHeader("工具提示", "setCustomTooltip() / s1p-has-tooltip") +
-      '<div class="s1p-ui-showcase-grid">' +
-      createShowcaseVariantRow(
-        "纯文本提示",
-        '<button class="s1p-btn s1p-btn-sm s1p-has-tooltip" type="button" title="这是一个纯文本提示">悬浮查看</button>'
-      ) +
-      createShowcaseVariantRow(
-        "图标提示",
-        '<span class="s1p-has-tooltip" style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:var(--s1p-sub);cursor:help;font-size:14px;" title="帮助信息">?</span>'
-      ) +
-      createShowcaseVariantRow(
-        "长文本提示",
-        '<span class="s1p-has-tooltip" style="cursor:help;border-bottom:1px dashed var(--s1p-sec);" title="这是一段很长的提示文本，用于展示 tooltip 在长文本场景下的显示效果">鼠标悬停在此处查看长文本提示</span>'
-      ) +
-      "</div>"
-    );
-  };
-
-  const buildInlineEditShowcase = () => {
-    const editMode = `<div class="s1p-edit-mode-header" style="display:flex;align-items:center;gap:6px;padding:4px 0;"><span style="font-weight:600;font-size:13px;">编辑标签</span></div><div style="display:flex;align-items:center;gap:6px;"><input class="s1p-input" type="text" value="示例标签" style="width:140px;"><div class="s1p-color-option" style="background-color:var(--s1p-tag-blue);width:24px;height:24px;border-radius:4px;display:inline-block;"></div></div><div class="s1p-edit-mode-actions" style="display:flex;gap:6px;margin-top:6px;"><button class="s1p-btn s1p-btn-sm" type="button">保存</button><button class="s1p-btn s1p-btn-sm s1p-danger" type="button">取消</button></div>`;
-    const remarkEdit = `<div style="display:flex;align-items:center;gap:6px;"><input class="s1p-input" type="text" value="备注内容" style="width:160px;"><button class="s1p-btn s1p-btn-sm" type="button">保存</button><button class="s1p-btn s1p-btn-sm s1p-danger" type="button">取消</button></div>`;
-    return (
-      createShowcaseSectionHeader("内联编辑", "s1p-edit-mode-header / s1p-item-editor") +
-      '<div class="s1p-ui-showcase-grid">' +
-      createShowcaseVariantRow("标签编辑模式", `<div style="display:flex;flex-direction:column;gap:4px;">${editMode}</div>`) +
-      createShowcaseVariantRow("备注编辑", remarkEdit) +
-      "</div>"
-    );
-  };
-
-  const buildSpinnerShowcase = () => {
-    const switchingSpinner = `<div class="s1p-image-viewer__switch-loading" style="display:flex;align-items:center;gap:8px;padding:12px 16px;border-radius:8px;background:var(--s1p-sub);"><div class="s1p-image-viewer__switch-loading-spinner" style="width:24px;height:24px;border:3px solid var(--s1p-pri);border-top-color:var(--s1p-sec);border-radius:50%;animation:s1p-spin 0.8s linear infinite;"></div><span class="s1p-image-viewer__switch-loading-text" style="font-size:13px;">加载中...</span></div>`;
-    const simpleSpinner = `<div style="width:28px;height:28px;border:3px solid var(--s1p-pri);border-top-color:var(--s1p-sec);border-radius:50%;animation:s1p-spin 0.8s linear infinite;"></div>`;
-    return (
-      createShowcaseSectionHeader("加载指示器", "s1p-image-viewer__switch-loading-spinner") +
-      '<div class="s1p-ui-showcase-grid">' +
-      createShowcaseVariantRow("小型旋转器", simpleSpinner) +
-      createShowcaseVariantRow("带文字加载", switchingSpinner) +
-      "</div>"
-    );
-  };
-
-  const buildPreviewShowcase = () => {
-    const items = [
-      { label: "确认模态框", action: "open-confirm-modal" },
-      { label: "输入模态框", action: "open-input-modal" },
-      { label: "高级确认模态框", action: "open-advanced-confirm" },
-      { label: "版本欢迎弹窗", action: "open-version-welcome-popup" },
-      { label: "S1 NUX 推荐弹窗", action: "open-nux-recommend-popup" },
-      { label: "手动同步选择", action: "open-sync-choice-modal" },
-      { label: "启动同步冲突", action: "open-sync-conflict-modal" },
-      { label: "Token 过期提醒", action: "open-token-expiry-modal" },
-      { label: "Token 日期配置", action: "open-token-config-modal" },
-      { label: "阅读记录详情", action: "open-reading-progress-modal" },
-      { label: "图片查看器(示例URL)", action: "open-image-viewer" },
-    ];
-    return (
-      createShowcaseSectionHeader("弹窗预览", "点击按钮打开真实弹窗查看效果") +
-      '<div class="s1p-ui-showcase-grid">' +
-      items
-        .map(
-          (item) =>
-            createShowcaseVariantRow(
-              item.label,
-              `<button class="s1p-btn" type="button" data-s1p-ui-action="${item.action}">打开 ${item.label}</button>`
-            )
-        )
-        .join("") +
-      "</div>"
-    );
-  };
-
-  const createUiShowcaseSyncPreviewHtml = () => `
-    <div>
-      <h2 class="s1p-sync-conflict-title">检测到同步冲突！</h2>
-      <p>无法安全自动判定新旧，请仔细选择要保留的版本。</p>
-      <div class="s1p-sync-last-action">这台电脑上次手动操作: 于 2026/5/22 21:30:12 <strong>推送</strong>了数据</div>
-      <div class="s1p-sync-choice-info">
-        <div class="s1p-sync-choice-info-row">
-          <span class="s1p-sync-choice-info-label">本地数据</span>
-          <span class="s1p-sync-choice-info-time">2026/5/22 22:04:19 <span class="s1p-sync-choice-newer">(较新)</span></span>
-        </div>
-        <div class="s1p-sync-choice-info-row">
-          <span class="s1p-sync-choice-info-label">云端备份</span>
-          <span class="s1p-sync-choice-info-time">2026/5/22 21:58:03</span>
-        </div>
-      </div>
-      <div class="s1p-sync-comparison-table">
-        <div class="s1p-sync-comparison-row s1p-sync-comparison-header">
-          <div>数据项</div>
-          <div>本地</div>
-          <div>云端</div>
-        </div>
-        <div class="s1p-sync-comparison-row">
-          <div class="s1p-sync-comparison-label">屏蔽用户</div>
-          <div class="s1p-sync-comparison-value">24</div>
-          <div class="s1p-sync-comparison-value">22</div>
-        </div>
-        <div class="s1p-sync-comparison-row">
-          <div class="s1p-sync-comparison-label">回复收藏</div>
-          <div class="s1p-sync-comparison-value">38 <span class="s1p-newer-badge">(较新)</span></div>
-          <div class="s1p-sync-comparison-value">37</div>
-        </div>
-        <div class="s1p-sync-comparison-row">
-          <div class="s1p-sync-comparison-label">阅读进度</div>
-          <div class="s1p-sync-comparison-value">413 <span class="s1p-progress-update-badge">(内容更新)</span></div>
-          <div class="s1p-sync-comparison-value">413</div>
-        </div>
-      </div>
-    </div>
-  `;
-
-  const createUiShowcaseReadingProgressHtml = () => `
-    <div class="s1p-sync-comparison-table">
-      <div class="s1p-sync-comparison-row s1p-sync-comparison-header">
-        <div class="s1p-sync-comparison-label">时间范围</div>
-        <div class="s1p-sync-comparison-value">记录数</div>
-        <div class="s1p-sync-comparison-value">操作</div>
-      </div>
-      <div class="s1p-sync-comparison-row">
-        <div class="s1p-sync-comparison-label">今天<span class="s1p-progress-group-period">2026年5月22日</span></div>
-        <div class="s1p-sync-comparison-value">7 条</div>
-        <div class="s1p-sync-comparison-value"><span class="s1p-btn s1p-red-btn">删除</span></div>
-      </div>
-      <div class="s1p-sync-comparison-row">
-        <div class="s1p-sync-comparison-label">本周<span class="s1p-progress-group-period">2026年5月15日 - 2026年5月21日</span></div>
-        <div class="s1p-sync-comparison-value">54 条</div>
-        <div class="s1p-sync-comparison-value"><span class="s1p-btn s1p-red-btn">删除</span></div>
-      </div>
-      <div class="s1p-sync-comparison-row">
-        <div class="s1p-sync-comparison-label">本月<span class="s1p-progress-group-period">2026年4月 - 2026年5月</span></div>
-        <div class="s1p-sync-comparison-value">155 条</div>
-        <div class="s1p-sync-comparison-value"><span class="s1p-btn s1p-red-btn">删除</span></div>
-      </div>
-    </div>
-  `;
-
-  const UI_SHOWCASE_PREVIEW_BACKDROP_ID = "s1p-ui-showcase-preview-backdrop";
+  const UI_SHOWCASE_PREVIEW_BACKDROP_ID =
+    "s1p-ui-showcase-preview-backdrop";
   let uiShowcasePreviewBackdropCleanupTimer = 0;
 
   const removeUiShowcasePreviewBackdrop = () => {
@@ -39806,7 +39455,7 @@
       uiShowcasePreviewBackdropCleanupTimer = 0;
     }
     document
-      .querySelectorAll(`#${UI_SHOWCASE_PREVIEW_BACKDROP_ID}`)
+      .querySelectorAll("#" + UI_SHOWCASE_PREVIEW_BACKDROP_ID)
       .forEach((node) => node.remove());
   };
 
@@ -39836,16 +39485,7 @@
     const backdrop = document.createElement("div");
     backdrop.id = UI_SHOWCASE_PREVIEW_BACKDROP_ID;
     backdrop.setAttribute("aria-hidden", "true");
-    backdrop.innerHTML = `
-      <div class="s1p-ui-showcase-preview-backdrop-inner">
-        <div class="s1p-ui-showcase-preview-backdrop-title">S1 Plus 玻璃效果可读性测试背景</div>
-        <div class="s1p-ui-showcase-preview-backdrop-grid">
-          <span>同步冲突提示文字</span><span>2026/05/22 22:04:19</span><span>本地数据较新</span>
-          <span>阅读记录详情列表</span><span>413 条记录</span><span>删除按钮区域</span>
-          <span>S1 NUX 推荐说明</span><span>Token 即将过期</span><span>欢迎弹窗内容</span>
-          <span>ABCDEFGHIJKLMNOPQRSTUVWXYZ</span><span>0123456789</span><span>http://example.com/thread-123</span>
-        </div>
-      </div>`;
+    backdrop.innerHTML = S1P_UI_SHOWCASE_DATA.previewBackdropHtml || "";
     document.body.appendChild(backdrop);
     scheduleUiShowcasePreviewBackdropCleanup();
   };
@@ -39880,27 +39520,9 @@
     s1pImageViewer.closeImmediately();
   };
 
-  const getSectionRendererByKey = (key) => {
-    switch (key) {
-      case "buttons": return buildButtonShowcase;
-      case "toggles": return buildToggleShowcase;
-      case "segmented": return buildSegmentedShowcase;
-      case "inputs": return buildInputShowcase;
-      case "ranges": return buildRangeShowcase;
-      case "datepicker": return buildDatePickerShowcase;
-      case "colorpicker": return buildColorPickerShowcase;
-      case "toasts": return buildToastShowcase;
-      case "badges": return buildBadgeShowcase;
-      case "cards": return buildCardShowcase;
-      case "lists": return buildListShowcase;
-      case "confirmbars": return buildConfirmBarShowcase;
-      case "accordion": return buildAccordionShowcase;
-      case "tooltips": return buildTooltipShowcase;
-      case "inlineedit": return buildInlineEditShowcase;
-      case "spinners": return buildSpinnerShowcase;
-      case "previews": return buildPreviewShowcase;
-      default: return () => "";
-    }
+  const getSectionRendererByKey = (key) => () => {
+    const html = S1P_UI_SHOWCASE_DATA.sections?.[key];
+    return typeof html === "string" ? html : "";
   };
 
   const createDebugUIComponentsTabContent = () => {
@@ -39909,258 +39531,10 @@
     panel.dataset.s1pDebugTabPane = "ui-components";
 
     const style = document.createElement("style");
-    style.textContent = `
-      .s1p-ui-showcase-panel {
-        padding: 0 !important;
-        overflow: hidden !important;
-      }
-      .s1p-ui-showcase-layout {
-        display: flex;
-        height: 100%;
-        min-height: 0;
-        box-sizing: border-box;
-      }
-      .s1p-ui-showcase-sidebar {
-        width: 130px;
-        flex-shrink: 0;
-        overflow-y: auto;
-        overflow-x: hidden;
-        padding: 10px 0;
-        border-radius: 10px;
-        background: color-mix(in srgb, var(--s1p-debug-console-surface-soft) 40%, transparent);
-        -webkit-backdrop-filter: blur(12px);
-        backdrop-filter: blur(12px);
-      }
-      .s1p-ui-showcase-divider {
-        width: 1px;
-        margin: 10px 4px;
-        flex-shrink: 0;
-        background: color-mix(in srgb, var(--s1p-pri) 50%, transparent);
-        border-radius: 1px;
-      }
-      .s1p-ui-showcase-cat-btn {
-        display: block;
-        width: calc(100% - 12px);
-        margin: 2px 6px;
-        padding: 7px 12px;
-        font-size: 11px;
-        font-weight: 600;
-        color: var(--s1p-desc-t);
-        background: transparent;
-        border: none;
-        border-radius: 8px;
-        cursor: pointer;
-        text-align: left;
-        transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
-        white-space: nowrap;
-      }
-      .s1p-ui-showcase-cat-btn:hover {
-        background: color-mix(in srgb, var(--s1p-pri) 15%, transparent);
-        color: var(--s1p-t);
-      }
-      .s1p-ui-showcase-cat-btn.active {
-        background: var(--s1p-sec);
-        color: var(--s1p-sub-h-t);
-        font-weight: 600;
-        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
-      }
-      .s1p-ui-showcase-content {
-        flex: 1;
-        overflow-y: auto;
-        overflow-x: hidden;
-        padding: 8px 12px;
-        min-width: 0;
-      }
-      .s1p-ui-showcase-section {
-        display: none;
-      }
-      .s1p-ui-showcase-section.is-active {
-        display: block;
-      }
-      .s1p-ui-showcase-section-header {
-        margin-bottom: 10px;
-        padding-bottom: 6px;
-        border-bottom: 1px solid color-mix(in srgb, var(--s1p-pri) 20%, transparent);
-      }
-      .s1p-ui-showcase-section-title {
-        font-size: 13px;
-        font-weight: 700;
-        color: var(--s1p-t);
-      }
-      .s1p-ui-showcase-section-desc {
-        display: block;
-        font-size: 11px;
-        color: var(--s1p-desc-t);
-        margin-top: 2px;
-        font-family: monospace;
-      }
-      .s1p-ui-showcase-grid {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-      }
-      .s1p-ui-showcase-variant {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        padding: 6px 10px;
-        border: none;
-        border-radius: 6px;
-        min-width: 0;
-        background: color-mix(in srgb, var(--s1p-debug-console-surface-soft) 90%, transparent);
-      }
-      .s1p-ui-showcase-variant-label {
-        width: 85px;
-        flex-shrink: 0;
-        font-size: 11px;
-        color: var(--s1p-desc-t);
-        font-family: monospace;
-        text-align: right;
-      }
-      .s1p-ui-showcase-variant-render {
-        flex: 1;
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        flex-wrap: wrap;
-        min-width: 0;
-      }
-      .s1p-ui-showcase-variant-block {
-        flex-direction: column;
-        align-items: flex-start;
-      }
-      .s1p-ui-showcase-variant-block .s1p-ui-showcase-variant-label {
-        width: auto;
-        text-align: left;
-      }
-      .s1p-ui-showcase-variant-block .s1p-ui-showcase-variant-render {
-        width: 100%;
-      }
-      .s1p-ui-showcase-panel .s1p-btn.s1p-primary {
-        background-color: #3b82f6;
-        color: var(--s1p-white);
-      }
-      .s1p-ui-showcase-panel .s1p-btn.s1p-primary.s1p-ui-force-hover {
-        background-color: #2563eb;
-      }
-      .s1p-ui-showcase-panel .s1p-settings-group {
-        width: 100%;
-        box-sizing: border-box;
-      }
-      .s1p-ui-showcase-panel .s1p-settings-item .s1p-input {
-        min-width: 0;
-        width: 140px;
-      }
-      .s1p-ui-showcase-panel .s1p-list-pagination {
-        justify-content: center;
-        margin-top: 0;
-      }
-      .s1p-ui-showcase-panel .s1p-empty {
-        width: 100%;
-        text-align: center;
-        padding: 22px 8px;
-        color: var(--s1p-desc-t);
-        font-size: 13px;
-      }
-      .s1p-ui-showcase-panel .s1p-confirm-bar {
-        width: 100%;
-      }
-      .s1p-ui-showcase-panel .s1p-confirm-remark-area {
-        margin-top: 4px;
-        padding: 8px;
-        border: 1px dashed var(--s1p-pri);
-        border-radius: 4px;
-      }
-      .s1p-ui-showcase-panel .s1p-confirm-input {
-        width: 100%;
-        min-height: 44px;
-        box-sizing: border-box;
-      }
-      .s1p-ui-force-hover {
-        background-color: var(--s1p-sub-h) !important;
-        color: var(--s1p-sub-h-t) !important;
-        transform: translateY(-3px) !important;
-        box-shadow: 0 3px 6px rgba(var(--s1p-shadow-color-rgb), 0.18) !important;
-      }
-      .s1p-btn.s1p-red-btn.s1p-ui-force-hover,
-      .s1p-btn.s1p-danger.s1p-ui-force-hover {
-        background-color: var(--s1p-red-h) !important;
-        border-color: transparent !important;
-        color: var(--s1p-white) !important;
-      }
-      .s1p-confirm-btn.s1p-ui-force-hover {
-        background-color: var(--s1p-red-h) !important;
-        border-color: transparent !important;
-        color: var(--s1p-white) !important;
-      }
-      .s1p-ui-force-focus {
-        border-color: var(--s1p-sec) !important;
-        background-color: var(--s1p-white) !important;
-        outline: none !important;
-      }
-      @keyframes s1p-spin {
-        0% { transform: rotate(0deg); }
-        100% { transform: rotate(360deg); }
-      }
-      .s1p-ui-showcase-section-header + .s1p-ui-showcase-grid {
-        margin-top: 4px;
-      }
-      #s1p-ui-showcase-preview-backdrop {
-        position: fixed;
-        inset: 0;
-        z-index: 9999;
-        pointer-events: none;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        padding: 32px;
-        box-sizing: border-box;
-        background:
-          repeating-linear-gradient(
-            0deg,
-            rgba(2, 44, 128, 0.075) 0,
-            rgba(2, 44, 128, 0.075) 1px,
-            transparent 1px,
-            transparent 34px
-          ),
-          repeating-linear-gradient(
-            90deg,
-            rgba(37, 99, 235, 0.06) 0,
-            rgba(37, 99, 235, 0.06) 1px,
-            transparent 1px,
-            transparent 56px
-          ),
-          color-mix(in srgb, var(--s1p-bg) 72%, transparent);
-      }
-      .s1p-ui-showcase-preview-backdrop-inner {
-        width: min(960px, calc(100vw - 64px));
-        border-radius: 10px;
-        padding: 20px;
-        color: var(--s1p-t);
-        background: rgba(255, 255, 255, 0.36);
-        box-shadow: 0 18px 52px rgba(0, 0, 0, 0.18);
-      }
-      .s1p-ui-showcase-preview-backdrop-title {
-        font-size: 22px;
-        font-weight: 700;
-        margin-bottom: 14px;
-      }
-      .s1p-ui-showcase-preview-backdrop-grid {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 10px;
-        font-size: 16px;
-        font-weight: 600;
-        line-height: 1.5;
-      }
-      .s1p-ui-showcase-preview-backdrop-grid span {
-        min-width: 0;
-        padding: 10px 12px;
-        border-radius: 6px;
-        background: rgba(255, 255, 255, 0.5);
-        overflow-wrap: anywhere;
-      }
-    `;
+    style.textContent =
+      typeof S1P_UI_SHOWCASE_DATA.css === "string"
+        ? S1P_UI_SHOWCASE_DATA.css
+        : "";
     panel.appendChild(style);
 
     const layout = document.createElement("div");
@@ -40234,7 +39608,7 @@
         if (typeof createAdvancedConfirmationModal === "function") {
           createAdvancedConfirmationModal(
             "高级确认弹窗",
-            "<div><p>这是高级确认弹窗的 <strong>HTML 内容</strong>。</p><p>可以放入任意组件。</p></div>",
+            getUiShowcaseActionHtml("advancedConfirm"),
             [
               { text: "取消", className: "s1p-btn s1p-danger", action: () => {} },
               { text: "确认", className: "s1p-btn", action: () => { if (typeof showMessage === "function") showMessage("已确认", true); } },
@@ -40246,7 +39620,7 @@
         if (typeof createAdvancedConfirmationModal === "function") {
           createAdvancedConfirmationModal(
             `S1 Plus v${SCRIPT_VERSION} 更新亮点`,
-            "<p>已更新至当前版本。这里展示版本升级欢迎弹窗的真实壳和内容排版。</p><p>链接跳转更稳定了，旧设置升级也更平滑。</p>",
+            getUiShowcaseActionHtml("welcome"),
             [{ text: "我明白了", className: "s1p-confirm", action: () => {} }],
             {
               modalClassName: "s1p-welcome-modal",
@@ -40258,7 +39632,7 @@
         if (typeof createAdvancedConfirmationModal === "function") {
           createAdvancedConfirmationModal(
             "S1 Plus 体验升级推荐",
-            '<p>检测到您尚未安装 <strong>S1 NUX</strong> 论坛美化扩展。</p><p>S1 Plus 与 S1 NUX 搭配使用可获得更好的论坛浏览体验。</p><div class="s1p-notice s1p-notice-top16 s1p-notice-gap8"><div class="s1p-notice-icon"></div><div class="s1p-notice-content"><a href="https://stage1st.com/2b/thread-1826103-1-2.html" target="_blank" rel="noopener noreferrer">点击此处，了解 S1 NUX 详情</a><p>这里是安全预览，不会修改推荐设置。</p></div></div>',
+            getUiShowcaseActionHtml("nuxRecommend"),
             [
               { text: "不再提示", className: "s1p-cancel", action: () => {} },
               { text: "前往安装", className: "s1p-confirm", action: () => {} },
@@ -40290,7 +39664,7 @@
         if (typeof createAdvancedConfirmationModal === "function") {
           createAdvancedConfirmationModal(
             "检测到同步冲突",
-            "<p>S1 Plus 在启动同步时发现，本地数据和云端备份可能都已更改。</p><p>为防止数据丢失，自动同步已暂停。接下来如继续，将进入一次全局手动同步。</p>",
+            getUiShowcaseActionHtml("syncConflict"),
             [
               { text: "稍后处理", className: "s1p-cancel", action: () => {} },
               { text: "发起全局同步", className: "s1p-confirm", action: () => {} },
@@ -40302,7 +39676,7 @@
         if (typeof createAdvancedConfirmationModal === "function") {
           createAdvancedConfirmationModal(
             "Sync Token 即将过期",
-            "<p>您的 GitHub Personal Access Token 将于 <strong>3</strong> 天后过期。</p><p>请及时更新 Token 以免影响同步功能。</p>",
+            getUiShowcaseActionHtml("tokenExpiry"),
             [
               { text: "知道了", className: "s1p-btn", action: () => {} },
               { text: "前往生成", className: "s1p-btn", action: () => {} },
@@ -40854,8 +40228,14 @@
     li.appendChild(a);
 
     let activeMenu = null;
-    const pullIconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M1 14.5C1 12.1716 2.22429 10.1291 4.06426 8.9812C4.56469 5.044 7.92686 2 12 2C16.0731 2 19.4353 5.044 19.9357 8.9812C21.7757 10.1291 23 12.1716 23 14.5C23 17.9216 20.3562 20.7257 17 20.9811L7 21C3.64378 20.7257 1 17.9216 1 14.5ZM16.8483 18.9868C19.1817 18.8093 21 16.8561 21 14.5C21 12.927 20.1884 11.4962 18.8771 10.6781L18.0714 10.1754L17.9517 9.23338C17.5735 6.25803 15.0288 4 12 4C8.97116 4 6.42647 6.25803 6.0483 9.23338L5.92856 10.1754L5.12288 10.6781C3.81156 11.4962 3 12.927 3 14.5C3 16.8561 4.81833 18.8093 7.1517 18.9868L7.325 19H16.675L16.8483 18.9868ZM13 12H16L12 17L8 12H11V8H13V12Z"></path></svg>`;
-    const pushIconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M1 14.5C1 12.1716 2.22429 10.1291 4.06426 8.9812C4.56469 5.044 7.92686 2 12 2C16.0731 2 19.4353 5.044 19.9357 8.9812C21.7757 10.1291 23 12.1716 23 14.5C23 17.9216 20.3562 20.7257 17 20.9811L7 21C3.64378 20.7257 1 17.9216 1 14.5ZM16.8483 18.9868C19.1817 18.8093 21 16.8561 21 14.5C21 12.927 20.1884 11.4962 18.8771 10.6781L18.0714 10.1754L17.9517 9.23338C17.5735 6.25803 15.0288 4 12 4C8.97116 4 6.42647 6.25803 6.0483 9.23338L5.92856 10.1754L5.12288 10.6781C3.81156 11.4962 3 12.927 3 14.5C3 16.8561 4.81833 18.8093 7.1517 18.9868L7.325 19H16.675L16.8483 18.9868ZM13 13V17H11V13H8L12 8L16 13H13Z"></path></svg>`;
+    const pullIconSVG =
+      typeof S1P_STATIC_ICONS.sync?.pull === "string"
+        ? S1P_STATIC_ICONS.sync.pull
+        : "";
+    const pushIconSVG =
+      typeof S1P_STATIC_ICONS.sync?.push === "string"
+        ? S1P_STATIC_ICONS.sync.push
+        : "";
     const openSyncChoiceMenu = () => {
       const existingMenu = document.querySelector(".s1p-inline-action-menu");
       if (existingMenu && existingMenu === activeMenu) {
@@ -44900,7 +44280,7 @@
           const listEl = document.createElement("div");
           listEl.className = "s1p-list";
           const colors = ["", "red", "orange", "yellow", "green", "blue", "purple"];
-          const checkSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+          const checkSvg = SVG_ICON_CHECK;
 
           visibleTagItems.forEach(([id, data]) => {
             const item = document.createElement("div");
@@ -50435,7 +49815,7 @@
 
     const renderEditMode = (userName, userId, currentTag = "", currentColor = "") => {
       const colors = ["", "red", "orange", "yellow", "green", "blue", "purple"];
-      const checkSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+      const checkSvg = SVG_ICON_CHECK;
 
       // 生成历史标记列表（显示所有不同用户的标记，不去重）
       const allTags = getUserTags();
@@ -53947,12 +53327,11 @@
     }
 
     // 3. 定义SVG图标
-    const svgs = {
-      scrollTop: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 13.9142L16.7929 18.7071L18.2071 17.2929L12 11.0858L5.79289 17.2929L7.20711 18.7071L12 13.9142ZM6 7L18 7V9L6 9L6 7Z"></path></svg>`,
-      scrollBottom: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 10.0858L7.20711 5.29291L5.79289 6.70712L12 12.9142L18.2071 6.70712L16.7929 5.29291L12 10.0858ZM18 17L6 17L6 15L18 15V17Z"></path></svg>`,
-      reply: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M14 22.5L11.2 19H6C5.44772 19 5 18.5523 5 18V7.10256C5 6.55028 5.44772 6.10256 6 6.10256H22C22.5523 6.10256 23 6.55028 23 7.10256V18C23 18.5523 22.5523 19 22 19H16.8L14 22.5ZM15.8387 17H21V8.10256H7V17H11.2H12.1613L14 19.2984L15.8387 17ZM2 2H19V4H3V15H1V3C1 2.44772 1.44772 2 2 2Z"></path></svg>`,
-      board: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M2 4C2 3.44772 2.44772 3 3 3H21C21.5523 3 22 3.44772 22 4V20C22 20.5523 21.5523 21 21 21H3C2.44772 21 2 20.5523 2 20V4ZM4 5V19H20V5H4ZM6 7H8V9H6V7ZM8 11H6V13H8V11ZM6 15H8V17H6V15ZM18 7H10V9H18V7ZM10 15H18V17H10V15ZM18 11H10V13H18V11Z"></path></svg>`,
-    };
+    const svgs =
+      S1P_STATIC_ICONS.floatingControls &&
+      typeof S1P_STATIC_ICONS.floatingControls === "object"
+        ? S1P_STATIC_ICONS.floatingControls
+        : {};
 
     // 4. 创建DOM结构
     const wrapper = document.createElement("div");

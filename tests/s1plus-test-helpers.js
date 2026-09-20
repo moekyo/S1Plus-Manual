@@ -8,8 +8,10 @@ const { webcrypto } = require("crypto");
 const repoRoot = path.resolve(__dirname, "..");
 const sourcePath = path.join(repoRoot, "S1Plus.js");
 const cssResourcePath = path.join(repoRoot, "S1Plus.css");
+const staticDataPath = path.join(repoRoot, "S1Plus-static-data.json");
 const sourceCode = fs.readFileSync(sourcePath, "utf8");
 const cssSource = fs.readFileSync(cssResourcePath, "utf8");
+const staticDataSource = fs.readFileSync(staticDataPath, "utf8");
 const sourceCodeWithCss = `${sourceCode}\n${cssSource}`;
 
 const noop = () => {};
@@ -79,6 +81,10 @@ const createSandbox = ({
   addedStyles = null,
 } = {}) => {
   const store = sharedStore || new Map(gmEntries);
+  const effectiveResourceTexts = {
+    "s1p-static-data": staticDataSource,
+    ...resourceTexts,
+  };
   const { sessionStore, sessionStorage } =
     createSessionStorageStub(sessionStorageEntries);
   const documentElement = {
@@ -151,7 +157,7 @@ const createSandbox = ({
     GM_setValue: (key, value) => {
       store.set(key, value);
     },
-    GM_getResourceText: (name) => resourceTexts[name] || "",
+    GM_getResourceText: (name) => effectiveResourceTexts[name] || "",
     GM_addStyle: (cssText) => {
       if (Array.isArray(addedStyles)) {
         addedStyles.push(String(cssText));
@@ -219,6 +225,7 @@ const toPlainObject = (value) => JSON.parse(JSON.stringify(value));
 module.exports = {
   sourceCode,
   cssSource,
+  staticDataSource,
   sourceCodeWithCss,
   createHarness,
   toPlainObject,
