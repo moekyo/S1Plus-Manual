@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      6.10.0
+// @version      7.0.0
 // @description  为Stage1st论坛提供帖子/用户/楼层屏蔽、导航栏自定义、自动签到、阅读进度跟踪、回复收藏、远程同步等多种功能，全方位优化你的论坛体验。
 // @author       moekyo
 // @match        https://stage1st.com/2b/*
@@ -25,8 +25,8 @@
   const IS_S1P_TEST_MODE =
     typeof globalThis !== "undefined" && globalThis.__S1P_TEST_MODE__ === true;
 
-  const SCRIPT_VERSION = "6.10.0";
-  const SCRIPT_RELEASE_DATE = "2026-03-28";
+  const SCRIPT_VERSION = "7.0.0";
+  const SCRIPT_RELEASE_DATE = "2026-09-20";
 
   // --- 全局调试控制台 ---
   const DEBUG_MODE = false;
@@ -61909,9 +61909,11 @@
 
     // [OPTIMIZED] 优化HTML结构以改善文本布局和换行
     const bodyHtml = `
-    <p>已更新至 v${SCRIPT_VERSION}！这次更新主要是把链接打开体验做得更顺手。</p>
-    <p>链接跳转更稳定了，误跳转和打断阅读的情况更少。</p>
-    <p>旧设置升级也更平滑，开关状态会更容易保持一致。</p>
+    <p>已更新至 v${SCRIPT_VERSION}！这次更新让同步更可靠，跨标签页使用也更顺畅。</p>
+    <p>手动同步遇到等待或锁占用时会自动恢复排队，同步过程中的状态提示也更加清晰。</p>
+    <p>图片查看器新增滚轮模式、操作幅度和默认放大宽度设置；阅读进度跳转也会自动避开顶部固定菜单，定位更准确。</p>
+    <p>跨标签页自动同步进一步减少重复请求与误报，前台检查、自动推送/拉取和失败重试的异常恢复更稳定。</p>
+    <p>设置、确认和同步相关弹窗统一为更清晰的玻璃分层界面。</p>
   `;
 
     const buttons = [
