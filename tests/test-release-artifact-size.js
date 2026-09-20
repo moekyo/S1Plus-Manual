@@ -22,7 +22,7 @@ assert.ok(
 );
 assert.match(
   source,
-  /@resource\s+s1p-base-css\s+https:\/\/gist\.githubusercontent\.com\/moekyo\/242dcbe1c1ac1b3a863e852fdd37fa15\/raw\/S1Plus\.css/
+  /@resource\s+s1p-base-css\s+https:\/\/gist\.githubusercontent\.com\/moekyo\/242dcbe1c1ac1b3a863e852fdd37fa15\/raw\/65dcce6610fd6cb5196f7493246ae50dc357800e\/S1Plus\.css/
 );
 assert.match(source, /@grant\s+GM_getResourceText/);
 assert.equal((source.match(/sourceMappingURL|sourceURL/g) || []).length, 0);
