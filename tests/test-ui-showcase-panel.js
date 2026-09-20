@@ -4,10 +4,18 @@
 const assert = require("assert/strict");
 const fs = require("fs");
 const path = require("path");
-const { sourceCodeWithCss: sourceCode } = require("./s1plus-test-helpers");
+const { sourceCode } = require("./s1plus-test-helpers");
 
-const uiShowcaseStart = sourceCode.indexOf("const UI_COMPONENT_CATEGORIES = [");
-const uiShowcaseEnd = sourceCode.indexOf("const createDebugConsoleLogTabContent = () => {");
+const staticDataPath = path.resolve(__dirname, "../S1Plus-static-data.json");
+const staticData = JSON.parse(fs.readFileSync(staticDataPath, "utf8"));
+const uiShowcaseData = staticData.uiShowcase;
+const uiRuntimeStart = sourceCode.indexOf(
+  "const createDebugUIComponentsTabContent = () => {"
+);
+const uiRuntimeEnd = sourceCode.indexOf(
+  "const createDebugConsoleLogTabContent = () => {",
+  uiRuntimeStart
+);
 const designDocPath = path.resolve(
   __dirname,
   "../docs/design/ui-showcase-panel.md"
@@ -16,10 +24,17 @@ const designDoc = fs.existsSync(designDocPath)
   ? fs.readFileSync(designDocPath, "utf8")
   : "";
 
-assert.notEqual(uiShowcaseStart, -1, "缺少 UI 组件展示面板分类定义。");
-assert.notEqual(uiShowcaseEnd, -1, "无法定位 UI 组件展示面板代码边界。");
+assert.ok(Array.isArray(uiShowcaseData.categories), "缺少 UI 组件展示面板分类定义。");
+assert.ok(uiShowcaseData.sections && typeof uiShowcaseData.sections === "object");
 
-const uiShowcaseCode = sourceCode.slice(uiShowcaseStart, uiShowcaseEnd);
+const uiShowcaseCode = [
+  sourceCode.slice(uiRuntimeStart, uiRuntimeEnd),
+  uiShowcaseData.css,
+  ...Object.values(uiShowcaseData.sections),
+  uiShowcaseData.syncPreviewHtml,
+  uiShowcaseData.readingProgressHtml,
+  ...Object.values(uiShowcaseData.actionBodies),
+].join("\n");
 const getUiShowcaseRule = (selector) => {
   const marker = `${selector} {`;
   const start = uiShowcaseCode.indexOf(marker);
@@ -71,18 +86,19 @@ assert.doesNotMatch(
 );
 
 assert.match(
-  uiShowcaseCode,
-  /label:\s*"主按钮"[\s\S]*?cls:\s*"s1p-btn s1p-primary"/,
+  uiShowcaseData.sections.buttons,
+  /class="s1p-btn s1p-primary"/,
   "按钮展示必须包含真实的 s1p-primary 变体。"
 );
-assert.match(
-  uiShowcaseCode,
-  /\{\s*key:\s*"ranges",\s*label:\s*"范围滑块"\s*\}/,
+assert.ok(
+  uiShowcaseData.categories.some(
+    ({ key, label }) => key === "ranges" && label === "范围滑块"
+  ),
   "UI 组件展示面板必须包含范围滑块分类。"
 );
 assert.match(
-  uiShowcaseCode,
-  /const buildRangeShowcase = \(\) => \{[\s\S]*?s1p-range-control[\s\S]*?s1p-range-input/,
+  uiShowcaseData.sections.ranges,
+  /s1p-range-control[\s\S]*?s1p-range-input/,
   "范围滑块展示必须复用真实的 s1p-range-control / s1p-range-input 结构。"
 );
 assert.match(
@@ -118,22 +134,22 @@ assert.match(
   "UI 展示项应使用调试面板半透明 surface，避免和其他调试标签页风格割裂。"
 );
 assert.match(
-  uiShowcaseCode,
+  uiShowcaseData.sections.confirmbars,
   /class="s1p-confirm-action-btn s1p-confirm"[\s\S]*?class="s1p-confirm-action-btn s1p-cancel"/,
   "确认栏展示必须使用真实的圆形图标按钮结构。"
 );
 assert.doesNotMatch(
-  uiShowcaseCode,
+  uiShowcaseData.sections.confirmbars,
   /s1p-confirm-action-btn s1p-btn/,
   "确认栏 action 按钮不能混入 s1p-btn/s1p-btn-sm 文本按钮样式。"
 );
 assert.match(
-  uiShowcaseCode,
+  uiShowcaseData.sections.toggles,
   /class="s1p-settings-group"[\s\S]*?class="s1p-settings-item s1p-feature-toggle-item"[\s\S]*?class="s1p-settings-label s1p-settings-section-title-label"/,
   "功能大开关展示应复用真实设置分组和 feature toggle 层级。"
 );
 assert.doesNotMatch(
-  uiShowcaseCode,
+  uiShowcaseData.sections.cards,
   /class="s1p-settings-group" style="border:1px solid var\(--s1p-pri\)/,
   "卡片分组展示不能给 s1p-settings-group 额外加内联边框。"
 );

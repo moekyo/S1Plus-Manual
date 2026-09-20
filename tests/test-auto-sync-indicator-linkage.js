@@ -5,6 +5,7 @@ const assert = require("assert/strict");
 const {
   createHarness: createBaseHarness,
   sourceCodeWithCss: sourceCode,
+  staticDataSource,
   toPlainObject,
 } = require("./s1plus-test-helpers");
 
@@ -57,6 +58,10 @@ const expectMatch = (pattern, message) => {
 
 const expectNoMatch = (pattern, message) => {
   assert.doesNotMatch(sourceCode, pattern, message);
+};
+
+const expectStaticMatch = (pattern, message) => {
+  assert.match(staticDataSource, pattern, message);
 };
 
 const testIndicatorVisibilityCoversAllAutoPaths = () => {
@@ -1639,8 +1644,8 @@ const testAutoSyncEntryPointsBindIndicatorSources = () => {
     /#s1p-nav-auto-sync-indicator\[data-sync-kind="(?:probe|pull|push)"\] svg \{[\s\S]*?color:/,
     "推送/拉取/probe 指示器不应使用独立状态色覆盖主题色。"
   );
-  expectMatch(
-    /const probeSearchSvg = `<svg[\s\S]*?M11 2C15\.968 2 20 6\.032 20 11[\s\S]*?19\.4853 18\.0711/,
+  expectStaticMatch(
+    /"probeSearch":[\s\S]*?M11 2C15\.968 2 20 6\.032 20 11[\s\S]*?19\.4853 18\.0711/,
     "前台 probe 图标未使用新版放大镜 SVG。"
   );
   expectMatch(
