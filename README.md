@@ -202,10 +202,10 @@ S1 Plus 是一个面向 Stage1st（S1）的用户脚本，目标是让论坛浏�
    - 推荐：[GreasyFork 安装页](https://greasyfork.org/en/scripts/543685-s1-plus-stage1st-%E4%BD%93%E9%AA%8C%E5%A2%9E%E5%BC%BA%E5%A5%97%E4%BB%B6)
    - 或手动导入 `S1Plus.js`，样式和静态数据会按脚本元数据自动加载，不需要单独导入
 3. 若在本地开发：
-   - macOS 可直接使用 `S1Plus-Local-Mac.user.js`
-   - Windows 可直接使用 `S1Plus-Local-Windows.user.js`
+   - 在仓库根目录运行 `node scripts/generate-local-loader.mjs`，脚本会自动识别当前设备和仓库位置
+   - macOS 会生成 `S1Plus-Local-Mac.user.js`，Windows 会生成 `S1Plus-Local-Windows.user.js`；生成文件已被 Git 忽略，不会把本机路径推送到公开仓库
    - 本地 Loader 会通过 `@require` 加载 `S1Plus.js`，并通过 `@resource` 加载本地的 `S1Plus.css` 和 `S1Plus-static-data.json`
-   - 需要在脚本管理器中开启“允许访问文件网址”；修改 Loader 的元数据后，需要重新安装一次 Loader，让脚本管理器重新读取资源路径
+   - 需要在脚本管理器中开启“允许访问文件网址”；主脚本的元数据或资源发生变化后，重新运行生成命令并重新安装生成的 Loader
 
 ### 快速上手
 
@@ -270,9 +270,9 @@ S1 Plus 是一个面向 Stage1st（S1）的用户脚本，目标是让论坛浏�
 ### 本地开发版和 Greasy Fork 版不一致怎么办？
 
 - 不要同时启用本地 Loader 和 Greasy Fork 版本，两个脚本实例可能重复处理同一个页面
-- 确认本地 Loader 的 `@require` 指向当前仓库的 `S1Plus.js`
-- 确认本地 Loader 同时声明了 `S1Plus.css` 和 `S1Plus-static-data.json` 两个 `@resource`
-- 修改 `@require` 或 `@resource` 后重新安装本地 Loader，再刷新论坛页面
+- 在仓库根目录重新运行 `node scripts/generate-local-loader.mjs`，再安装新生成的本地 Loader
+- 生成器会从当前 `S1Plus.js` 同步 `@match`、`@grant`、`@connect` 和 `@run-at`，并重新计算 `@require` / `@resource` 的本机路径
+- 重新安装本地 Loader 后再刷新论坛页面；生成文件不会进入 Git，因此不同设备只需各自运行一次生成命令
 
 ### 同步异常怎么排查？
 

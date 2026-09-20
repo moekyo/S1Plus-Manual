@@ -21,46 +21,20 @@
 
 ### 2.2 推荐 Loader（本地文件热加载）
 
-仓库里已经提供了两份可直接使用的本地加载器：
+在仓库根目录运行下面的命令生成当前设备专用的 Loader：
 
-- `S1Plus-Local-Mac.user.js`
-- `S1Plus-Local-Windows.user.js`
-
-如果要手动新建，也可以参考下面这个模板：
-
-```javascript
-// ==UserScript==
-// @name         S1 Plus (Local)
-// @namespace    http://tampermonkey.net/
-// @version      99.9.10
-// @description  本地开发加载器
-// @author       Antigravity
-// @match        https://stage1st.com/2b/*
-// @require      file:///[YOUR_LOCAL_PATH]/S1Plus.js
-// @grant        GM_setValue
-// @grant        GM_getValue
-// @grant        GM_addStyle
-// @grant        GM_deleteValue
-// @grant        GM_xmlhttpRequest
-// @grant        GM_openInTab
-// @grant        GM_download
-// @grant        GM_addValueChangeListener
-// @grant        GM_listValues
-// @connect      *
-// ==/UserScript==
-
-(function () {
-    "use strict";
-    console.log("[S1 Plus] Local loader active");
-})();
+```bash
+node scripts/generate-local-loader.mjs
 ```
+
+生成器会自动识别 macOS 或 Windows，并根据生成器所在仓库的位置计算 `S1Plus.js`、`S1Plus.css` 和 `S1Plus-static-data.json` 的 `file:` URL。生成的 `S1Plus-Local-Mac.user.js` 或 `S1Plus-Local-Windows.user.js` 已加入 `.gitignore`，不会把用户名和本机路径提交到公开仓库。
 
 注意事项：
 
 - 关闭线上正式脚本，避免双实例冲突
-- `@require` 必须是绝对路径
-- Windows 路径示例：`file:///C:/Users/Name/S1Plus-Manual/S1Plus.js`
-- 本地 Loader 的 `@grant` / `@connect` 需要与主脚本保持一致；当前主脚本使用 `@connect *`
+- 在 Chrome/Edge 的扩展详情中开启“允许访问文件网址（Allow access to file URLs）”
+- 生成器会从主脚本同步 `@match`、`@grant`、`@connect` 和 `@run-at`，并固定映射两个本地 `@resource`
+- 主脚本元数据或外部资源发生变化后，重新运行生成命令，并在脚本管理器中重新安装生成的 Loader
 
 ### 2.3 迁移回归校验（建议每次改设置迁移后执行）
 
@@ -198,8 +172,8 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 ### 3.1 首次在新设备
 
 1. `git clone` 仓库
-2. 按上节配置本地 Loader
-3. 校验 `@require` 路径
+2. 按上节运行 `node scripts/generate-local-loader.mjs`
+3. 安装生成的本地 Loader
 
 ### 3.2 日常
 
