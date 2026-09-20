@@ -7,6 +7,7 @@ const { webcrypto } = require("crypto");
 const {
   createHarness,
   sourceCode,
+  sourceCodeWithCss,
 } = require("./s1plus-test-helpers");
 
 const DEBUG_CONSOLE_VISIBLE_KEY = "s1p_debug_console_visible";
@@ -457,32 +458,32 @@ const testExpandedCollapseCloseAndToggleBehavior = () => {
 
 const testDebugPanelCollapseCssSurface = () => {
   assert.match(
-    sourceCode,
+    sourceCodeWithCss,
     /DEBUG_HOVER_REVEAL_MS\s*=\s*2000/,
     "FAB 悬停关闭延迟应为 2 秒。"
   );
   assert.match(
-    sourceCode,
+    sourceCodeWithCss,
     /\.s1p-debug-collapse-btn/,
     "调试面板 header 缺少收起按钮样式。"
   );
   assert.match(
-    sourceCode,
+    sourceCodeWithCss,
     /#s1p-debug-fab\s*\{/,
     "调试面板缺少 FAB 容器样式。"
   );
   assert.match(
-    sourceCode,
+    sourceCodeWithCss,
     /#s1p-debug-fab\.s1p-fab-hidden/,
     "FAB 缺少隐藏状态样式。"
   );
   assert.match(
-    sourceCode,
+    sourceCodeWithCss,
     /\.s1p-debug-panel\.s1p-collapsing[\s\S]*?transform-origin:\s*100%\s*100%/,
     "调试面板 collapse 动画应以右下角为 transform-origin。"
   );
   assert.match(
-    sourceCode,
+    sourceCodeWithCss,
     /#s1p-debug-unified-panel\.s1p-collapsed/,
     "调试面板缺少 collapsed 状态样式。"
   );

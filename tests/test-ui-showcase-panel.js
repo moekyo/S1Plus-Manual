@@ -4,7 +4,7 @@
 const assert = require("assert/strict");
 const fs = require("fs");
 const path = require("path");
-const { sourceCode } = require("./s1plus-test-helpers");
+const { sourceCodeWithCss: sourceCode } = require("./s1plus-test-helpers");
 
 const uiShowcaseStart = sourceCode.indexOf("const UI_COMPONENT_CATEGORIES = [");
 const uiShowcaseEnd = sourceCode.indexOf("const createDebugConsoleLogTabContent = () => {");

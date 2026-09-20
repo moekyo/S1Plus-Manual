@@ -1,7 +1,10 @@
 "use strict";
 
 const assert = require("assert");
-const { createHarness, sourceCode } = require("./s1plus-test-helpers");
+const {
+  createHarness,
+  sourceCodeWithCss: sourceCode,
+} = require("./s1plus-test-helpers");
 
 const { hooks } = createHarness({
   hookErrorMessage: "未能从 S1Plus.js 暴露帖子锚点对齐测试钩子。",
