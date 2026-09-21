@@ -3228,6 +3228,7 @@
   const syncLockExecutionAuthorityTokens = new Map();
   const syncLockRenewalFailureReasons = new Map();
   let isAutoSignInFlight = false;
+  let s1pAutoSignRetryTimer = null;
   let readingProgressModalEscHandler = null;
   let settingsModalEscKeydownHandler = null;
   const blurCurrentFocusSoon = (delayMs = 0) => {
@@ -51040,9 +51041,12 @@
    * (根据用户提供的HTML片段修正了选择器和正则表达式)
    * @returns {string|null} 当前登录用户的UID，如果未找到则返回null
    */
-  const getCurrentLoggedInUid = () => {
-    if (currentLoggedInUid) {
+  const getCurrentLoggedInUid = (forceRefresh = false) => {
+    if (!forceRefresh && currentLoggedInUid) {
       return currentLoggedInUid;
+    }
+    if (forceRefresh) {
+      currentLoggedInUid = null;
     }
 
     // 方案 1: 查找 #um strong.vwmy a (来自用户截图)
@@ -53106,6 +53110,136 @@
     return true;
   };
 
+  const S1P_FORUM_TIMEZONE_OFFSET_MINUTES = 8 * 60;
+  const getS1pForumDateKey = (timestamp = Date.now()) => {
+    const forumNow = new Date(
+      timestamp + S1P_FORUM_TIMEZONE_OFFSET_MINUTES * 60 * 1000
+    );
+    return forumNow.getUTCFullYear() + "-" + (forumNow.getUTCMonth() + 1) + "-" + forumNow.getUTCDate();
+  };
+
+  const normalizeS1pSignAttemptState = (rawAttemptState) =>
+    rawAttemptState && typeof rawAttemptState === "object"
+      ? rawAttemptState
+      : typeof rawAttemptState === "string"
+        ? { date: rawAttemptState, nextRetryAt: 0, failCount: 1 }
+        : null;
+
+  const getS1pAutoSignResponseText = (response) => {
+    if (!response) return "";
+    if (typeof response.responseText === "string") {
+      return response.responseText;
+    }
+    if (typeof response.response === "string") {
+      return response.response;
+    }
+    return "";
+  };
+
+  const isS1pAutoSignSuccessResponse = (response) => {
+    const status = Number(response && response.status);
+    if (!(status >= 200 && status < 300)) {
+      return false;
+    }
+    const responseText = getS1pAutoSignResponseText(response).replace(
+      /\s+/g,
+      ""
+    );
+    if (!responseText) {
+      return false;
+    }
+    if (
+      /请先登录|請先登錄|需要登录|需要登錄|未登录|未登錄|抱歉|失败|失敗|错误|錯誤|非法|禁止/.test(
+        responseText
+      )
+    ) {
+      return false;
+    }
+    return /签到成功|簽到成功|已签到|已簽到|已經簽到|已经签到|今日已签|今天已签|今日簽到|今天簽到/.test(
+      responseText
+    );
+  };
+
+  const getS1pFormhash = () => {
+    const formhashInput = document.querySelector('input[name="formhash"]');
+    if (
+      formhashInput instanceof HTMLInputElement &&
+      formhashInput.value
+    ) {
+      return formhashInput.value;
+    }
+    const formhashLink = document.querySelector('a[href*="formhash="]');
+    if (formhashLink instanceof HTMLAnchorElement) {
+      try {
+        const formhash = new URL(formhashLink.href).searchParams.get(
+          "formhash"
+        );
+        if (formhash) {
+          return formhash;
+        }
+      } catch (error) {
+        // Ignore malformed links and fall through to the current URL.
+      }
+    }
+    try {
+      const formhash = new URL(window.location.href).searchParams.get(
+        "formhash"
+      );
+      if (formhash) {
+        return formhash;
+      }
+    } catch (error) {
+      // Ignore malformed current URLs.
+    }
+    return "";
+  };
+
+  const getS1pAutoSignUrl = (checkinLink) => {
+    let url = null;
+    try {
+      url = new URL(
+        checkinLink
+          ? checkinLink.href
+          : "study_daily_attendance-daily_attendance.html",
+        window.location.href
+      );
+    } catch (error) {
+      return checkinLink ? checkinLink.href : "";
+    }
+    if (!url.searchParams.get("formhash")) {
+      const formhash = getS1pFormhash();
+      if (formhash) {
+        url.searchParams.set("formhash", formhash);
+      }
+    }
+    if (!checkinLink && !url.searchParams.get("formhash")) {
+      return "";
+    }
+    if (url.searchParams.get("formhash") && !url.searchParams.get("inajax")) {
+      url.searchParams.set("inajax", "1");
+    }
+    return url.href;
+  };
+
+  const clearS1pAutoSignRetryTimer = () => {
+    if (s1pAutoSignRetryTimer !== null) {
+      window.clearTimeout(s1pAutoSignRetryTimer);
+      s1pAutoSignRetryTimer = null;
+    }
+  };
+
+  const scheduleS1pAutoSignRetry = (delayMs = 0) => {
+    clearS1pAutoSignRetryTimer();
+    const safeDelayMs = Math.max(0, Number(delayMs) || 0);
+    if (safeDelayMs <= 0) {
+      return;
+    }
+    s1pAutoSignRetryTimer = window.setTimeout(() => {
+      s1pAutoSignRetryTimer = null;
+      autoSign();
+    }, safeDelayMs + 250);
+  };
+
   /**
    * [修改] 自动签到 (V2 - 支持多账号)
    * 修正了多账号切换时，签到记录互相干扰的问题。
@@ -53118,10 +53252,15 @@
     const checkinLink = document.querySelector(
       'a[href*="study_daily_attendance-daily_attendance.html"]'
     );
-    if (!checkinLink) return;
+    const hasLoginLink = Boolean(
+      document.querySelector('#um strong.vwmy a[href*="space-uid-"]')
+    );
+    if (!checkinLink && !hasLoginLink) {
+      return;
+    }
 
     // --- [新增] 获取当前用户UID ---
-    const uid = getCurrentLoggedInUid();
+    const uid = getCurrentLoggedInUid(true);
     if (!uid) {
       // 如果没有UID（未登录），则不执行签到
       return;
@@ -53130,21 +53269,16 @@
     const signAttemptDateKey = `signedAttemptDate_${uid}`;
     // ----------------------------
 
-    const now = new Date();
     const nowTs = Date.now();
-    const date =
-      now.getFullYear() + "-" + (now.getMonth() + 1) + "-" + now.getDate();
+    const date = getS1pForumDateKey(nowTs);
     const signedDate = GM_getValue(signedDateKey); // <-- [修改]
     const rawAttemptState = GM_getValue(signAttemptDateKey, null);
-    const attemptState =
-      rawAttemptState && typeof rawAttemptState === "object"
-        ? rawAttemptState
-        : typeof rawAttemptState === "string"
-          ? { date: rawAttemptState, nextRetryAt: 0, failCount: 1 }
-          : null;
+    const attemptState = normalizeS1pSignAttemptState(rawAttemptState);
 
     if (signedDate === date) {
-      checkinLink.style.display = "none";
+      if (checkinLink) {
+        checkinLink.style.display = "none";
+      }
       return;
     }
 
@@ -53155,7 +53289,16 @@
       }
     }
 
-    if (now.getHours() < 6) return;
+    const signUrl = getS1pAutoSignUrl(checkinLink);
+    if (!signUrl) {
+      return;
+    }
+
+    const hideCheckinLink = () => {
+      if (checkinLink) {
+        checkinLink.style.display = "none";
+      }
+    };
 
     const setAttemptState = (failCount = 0, delayMs = 0) => {
       const safeFailCount = Math.max(0, Number(failCount) || 0);
@@ -53166,14 +53309,11 @@
         nextRetryAt: Math.max(0, nowForRetry + Math.max(0, delayMs)),
       });
     };
+
     const scheduleRetryAfterFailure = () => {
-      const latestStateRaw = GM_getValue(signAttemptDateKey, null);
-      const latestState =
-        latestStateRaw && typeof latestStateRaw === "object"
-          ? latestStateRaw
-          : typeof latestStateRaw === "string"
-            ? { date: latestStateRaw, nextRetryAt: 0, failCount: 1 }
-            : null;
+      const latestState = normalizeS1pSignAttemptState(
+        GM_getValue(signAttemptDateKey, null)
+      );
       const previousFailCount =
         latestState && latestState.date === date
           ? Number(latestState.failCount) || 0
@@ -53186,53 +53326,146 @@
         baseDelay * Math.pow(2, Math.max(0, nextFailCount - 1))
       );
       setAttemptState(nextFailCount, delayMs);
+      scheduleS1pAutoSignRetry(delayMs);
+    };
+
+    const requestAutoSign = (done) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        if (typeof done === "function") {
+          done();
+        }
+      };
+
+      const latestSignedDate = GM_getValue(signedDateKey);
+      if (latestSignedDate === date) {
+        hideCheckinLink();
+        finish();
+        return;
+      }
+
+      const latestAttemptState = normalizeS1pSignAttemptState(
+        GM_getValue(signAttemptDateKey, null)
+      );
+      if (latestAttemptState && latestAttemptState.date === date) {
+        const latestNextRetryAt =
+          Number(latestAttemptState.nextRetryAt) || 0;
+        if (latestNextRetryAt > Date.now()) {
+          finish();
+          return;
+        }
+      }
+
+      clearS1pAutoSignRetryTimer();
+      const previousFailCount =
+        latestAttemptState && latestAttemptState.date === date
+          ? Number(latestAttemptState.failCount) || 0
+          : 0;
+      setAttemptState(previousFailCount, 2 * 60 * 1000);
+
+      try {
+        GM_xmlhttpRequest({
+          method: "GET",
+          url: signUrl,
+          timeout: REMOTE_SYNC_REQUEST_TIMEOUT_MS,
+          onload: function (response) {
+            if (isS1pAutoSignSuccessResponse(response)) {
+              GM_setValue(signedDateKey, date);
+              GM_deleteValue(signAttemptDateKey);
+              hideCheckinLink();
+              clearS1pAutoSignRetryTimer();
+              console.log(
+                `S1 Plus: Auto check-in for UID ${uid} confirmed. Status:`,
+                response.status
+              );
+              finish();
+              return;
+            }
+            const responseText = getS1pAutoSignResponseText(response);
+            console.warn(
+              `S1 Plus: Auto check-in for UID ${uid} returned unconfirmed response. Status:`,
+              response.status,
+              responseText ? responseText.slice(0, 160) : ""
+            );
+            scheduleRetryAfterFailure();
+            finish();
+          },
+          onerror: function (response) {
+            console.error(
+              `S1 Plus: Auto check-in for UID ${uid} failed.`,
+              response
+            );
+            scheduleRetryAfterFailure();
+            finish();
+          },
+          ontimeout: function () {
+            console.error(
+              `S1 Plus: Auto check-in for UID ${uid} timed out.`
+            );
+            scheduleRetryAfterFailure();
+            finish();
+          },
+        });
+      } catch (error) {
+        console.error(
+          `S1 Plus: Auto check-in for UID ${uid} could not be started.`,
+          error
+        );
+        scheduleRetryAfterFailure();
+        finish();
+      }
     };
 
     isAutoSignInFlight = true;
-    // 请求发出后先短暂锁定，避免页面内/多标签重复触发；失败后会改写为退避重试时间。
-    setAttemptState(
-      attemptState && attemptState.date === date
-        ? Number(attemptState.failCount) || 0
-        : 0,
-      2 * 60 * 1000
-    );
+    const releaseAutoSignFlight = () => {
+      isAutoSignInFlight = false;
+    };
 
-    GM_xmlhttpRequest({
-      method: "GET",
-      url: checkinLink.href,
-      timeout: REMOTE_SYNC_REQUEST_TIMEOUT_MS,
-      onload: function (response) {
-        isAutoSignInFlight = false;
-        if (response.status >= 200 && response.status < 300) {
-          GM_setValue(signedDateKey, date); // <-- [修改]
-          GM_deleteValue(signAttemptDateKey);
-          checkinLink.style.display = "none";
-          console.log(
-            `S1 Plus: Auto check-in for UID ${uid} sent. Status:`,
-            response.status
-          );
-          return;
-        }
-        console.warn(
-          `S1 Plus: Auto check-in for UID ${uid} returned non-2xx status:`,
-          response.status
-        );
-        scheduleRetryAfterFailure();
-      },
-      onerror: function (response) {
-        isAutoSignInFlight = false;
+    if (
+      typeof navigator !== "undefined" &&
+      navigator.locks &&
+      typeof navigator.locks.request === "function"
+    ) {
+      try {
+        navigator.locks
+          .request(
+            `s1p_auto_sign_${uid}`,
+            { ifAvailable: true },
+            (lock) => {
+              if (!lock) {
+                releaseAutoSignFlight();
+                return undefined;
+              }
+              return new Promise((resolve) => {
+                requestAutoSign(() => {
+                  releaseAutoSignFlight();
+                  resolve();
+                });
+              });
+            }
+          )
+          .catch((error) => {
+            console.error(
+              `S1 Plus: Auto check-in for UID ${uid} lock failed, falling back to direct request.`,
+              error
+            );
+            requestAutoSign(releaseAutoSignFlight);
+          });
+      } catch (error) {
         console.error(
-          `S1 Plus: Auto check-in for UID ${uid} failed.`,
-          response
+          `S1 Plus: Auto check-in for UID ${uid} lock failed, falling back to direct request.`,
+          error
         );
-        scheduleRetryAfterFailure();
-      },
-      ontimeout: function () {
-        isAutoSignInFlight = false;
-        console.error(`S1 Plus: Auto check-in for UID ${uid} timed out.`);
-        scheduleRetryAfterFailure();
-      },
-    });
+        requestAutoSign(releaseAutoSignFlight);
+      }
+      return;
+    }
+
+    requestAutoSign(releaseAutoSignFlight);
   }
   // [修改] 将设置项重命名为 enhanceFloatingControls
   const FLOATING_CONTROLS_OPEN_CLASS = "s1p-floating-controls-open";
