@@ -53467,6 +53467,19 @@
 
     requestAutoSign(releaseAutoSignFlight);
   }
+
+  if (IS_S1P_TEST_MODE) {
+    const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
+    testHookHost.__S1P_TEST_HOOKS__ = {
+      ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
+      autoSign,
+      getS1pForumDateKey,
+      normalizeS1pSignAttemptState,
+      isS1pAutoSignSuccessResponse,
+      getS1pAutoSignUrl,
+    };
+  }
+
   // [修改] 将设置项重命名为 enhanceFloatingControls
   const FLOATING_CONTROLS_OPEN_CLASS = "s1p-floating-controls-open";
   const floatingControlsInteractionCleanupMap = new WeakMap();

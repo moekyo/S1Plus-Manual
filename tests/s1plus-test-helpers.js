@@ -144,6 +144,7 @@ const createSandbox = ({
     },
     Element: function Element() {},
     HTMLAnchorElement: function HTMLAnchorElement() {},
+    HTMLInputElement: function HTMLInputElement() {},
     HTMLImageElement: function HTMLImageElement() {},
     MutationObserver: class MutationObserver {
       observe() {}
