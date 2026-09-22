@@ -158,6 +158,15 @@ assert.match(
   /requestNavbarLayoutReconcile\(\)/,
   "同步状态条的就地变更必须请求重算。"
 );
+const myThreadsBlock = sourceCode.slice(
+  sourceCode.indexOf("const ensureMyThreadsQuickLink = () => {"),
+  sourceCode.indexOf("const initializeNavbar = () => {")
+);
+assert.match(
+  myThreadsBlock,
+  /requestNavbarLayoutReconcile\(\)/,
+  "#um（固定保留区域）的就地变更必须请求重算。"
+);
 
 // --- 测量契约 --------------------------------------------------------------
 assert.match(

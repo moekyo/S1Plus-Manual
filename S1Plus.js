@@ -40849,13 +40849,21 @@
       userMenuRoot.querySelector("strong.vwmy a")
     );
     if (!isLoggedIn) {
-      userMenuRoot.querySelector("#s1p-my-threads-link")?.remove();
+      const staleLink = userMenuRoot.querySelector("#s1p-my-threads-link");
+      staleLink?.remove();
+      // #um 是导航行测量里的固定保留区域，宽度变化后必须请求重新测量。
+      if (staleLink) {
+        requestNavbarLayoutReconcile();
+      }
       return;
     }
 
     const threadListUrl = "https://stage1st.com/2b/home.php?mod=space&do=thread&view=me";
     const baseContainer = userMenuRoot.querySelector("p") || userMenuRoot;
     const existingLink = userMenuRoot.querySelector("#s1p-my-threads-link");
+    const wasAttachedToBaseContainer =
+      existingLink instanceof HTMLAnchorElement &&
+      existingLink.parentElement === baseContainer;
 
     const threadLink = existingLink || document.createElement("a");
     if (!existingLink) {
@@ -40873,10 +40881,12 @@
     );
     if (preferredAnchor && preferredAnchor !== threadLink) {
       baseContainer.insertBefore(threadLink, preferredAnchor);
-      return;
-    }
-    if (threadLink.parentElement !== baseContainer) {
+    } else if (threadLink.parentElement !== baseContainer) {
       baseContainer.appendChild(threadLink);
+    }
+
+    if (!wasAttachedToBaseContainer) {
+      requestNavbarLayoutReconcile();
     }
   };
 
@@ -56351,6 +56361,7 @@
       getNavbarLayoutSnapshot: () => navbarLayoutDebugSnapshot,
       requestNavbarLayoutReconcile,
       navbarLayoutEpsilonPx: S1P_NAV_LAYOUT_EPSILON_PX,
+      ensureMyThreadsQuickLink,
       invalidateSettingsCache,
     };
   }
