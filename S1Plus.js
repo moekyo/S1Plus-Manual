@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      7.0.0
+// @version      7.0.1
 // @description  为Stage1st论坛提供帖子/用户/楼层屏蔽、导航栏自定义、自动签到、阅读进度跟踪、回复收藏、远程同步等多种功能，全方位优化你的论坛体验。
 // @author       moekyo
 // @match        https://stage1st.com/2b/*
-// @resource     s1p-base-css https://raw.githubusercontent.com/moekyo/S1Plus-Manual/930d334d0d91bf8e760db42687cf64ae285953ed/S1Plus.css
+// @resource     s1p-base-css https://raw.githubusercontent.com/moekyo/S1Plus-Manual/9cb45119104a0b86a6b2b4223e0390337bf9c79e/S1Plus.css
 // @resource     s1p-static-data https://raw.githubusercontent.com/moekyo/S1Plus-Manual/22597e6442c08c3a69f4ce248b506b87729fac5c/S1Plus-static-data.json
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -28,8 +28,8 @@
   const IS_S1P_TEST_MODE =
     typeof globalThis !== "undefined" && globalThis.__S1P_TEST_MODE__ === true;
 
-  const SCRIPT_VERSION = "7.0.0";
-  const SCRIPT_RELEASE_DATE = "2026-09-20";
+  const SCRIPT_VERSION = "7.0.1";
+  const SCRIPT_RELEASE_DATE = "2026-09-22";
 
   const S1P_STATIC_DATA_RESOURCE_NAME = "s1p-static-data";
   const loadS1pStaticData = () => {
@@ -55247,11 +55247,9 @@
 
     // [OPTIMIZED] 优化HTML结构以改善文本布局和换行
     const bodyHtml = `
-    <p>已更新至 v${SCRIPT_VERSION}！这次更新让同步更可靠，跨标签页使用也更顺畅。</p>
-    <p>手动同步遇到等待或锁占用时会自动恢复排队，同步过程中的状态提示也更加清晰。</p>
-    <p>图片查看器新增滚轮模式、操作幅度和默认放大宽度设置；阅读进度跳转也会自动避开顶部固定菜单，定位更准确。</p>
-    <p>跨标签页自动同步进一步减少重复请求与误报，前台检查、自动推送/拉取和失败重试的异常恢复更稳定。</p>
-    <p>设置、确认和同步相关弹窗统一为更清晰的玻璃分层界面。</p>
+    <p>已更新至 v${SCRIPT_VERSION}！本次以修复为主。</p>
+    <p>导航栏在刷新页面或缩放窗口后分区结果保持一致，链接不再莫名进入「更多」。</p>
+    <p>自动签到改为全天候尝试、失败自动重试，多标签页不会重复提交；同步也不再因遗留的待处理记录反复重跑。</p>
   `;
 
     const buttons = [
