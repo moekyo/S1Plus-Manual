@@ -143,6 +143,7 @@ class FakeElement extends FakeEventTarget {
     this.style = {};
     this.classList = new FakeClassList();
     this.attributes = new Map();
+    this.dataset = {};
     this.hidden = false;
     this.value = "";
     this.focused = false;
@@ -1152,6 +1153,7 @@ const run = () => {
   runNonFlexContainerFallbackScenario();
   runMeasurementIsolationScenario();
   runSchedulerNotificationScenario();
+  runUserAreaMutationScenario();
 
   console.log(
     "[navbar-responsive-overflow-runtime] canonical link ownership, DOM lifecycle, layout-authority stability and measurement contract verified."
@@ -1524,6 +1526,68 @@ const runSchedulerNotificationScenario = () => {
     0,
     "teardown 之后通知入口不得再调度布局"
   );
+  assert.equal(FakeResizeObserver.activeCount(), 0);
+};
+
+/**
+ * #um（用户区）是导航行测量里的固定保留区域：
+ * 它的内容变化必须请求重新测量，但重复调用且 DOM 未变时不得反复重算。
+ */
+const runUserAreaMutationScenario = () => {
+  const runtime = createHarness();
+  const { hooks } = runtime;
+  const forum = installForumDom(runtime);
+  const geometry = {
+    logo: 96,
+    quickMenu: 95.99,
+    navRow: 401.36,
+    search: 334.47,
+    user: 153.78,
+    gap: 0,
+  };
+  installRealisticHeaderRegions(forum, geometry);
+  forum.headerRoot._computed = { display: "flex" };
+  forum.layout.searchWidth = geometry.search;
+  forum.searchBar._rectWidth = geometry.search;
+  forum.layout.navWidth = geometry.navRow;
+
+  const userArea = forum.document.querySelector("#um");
+  const loginMarker = forum.document.createElement("strong");
+  loginMarker.className = "vwmy";
+  const markerLink = forum.document.createElement("a");
+  markerLink.href = "home.php?mod=space&uid=1";
+  loginMarker.appendChild(markerLink);
+  userArea.appendChild(loginMarker);
+
+  setSettings(
+    runtime,
+    hooks,
+    createSettings([{ name: "A", href: "forum-100-1.html" }])
+  );
+  hooks.initializeNavbar();
+  forum.flushAnimationFrames();
+  assert.equal(forum.pendingAnimationFrameCount(), 0);
+
+  hooks.ensureMyThreadsQuickLink();
+  assert.ok(
+    forum.document.querySelector("#s1p-my-threads-link"),
+    "登录态下必须插入「帖子」快捷入口"
+  );
+  assert.equal(
+    forum.pendingAnimationFrameCount(),
+    1,
+    "改动 #um（固定保留区域）必须请求重新测量"
+  );
+  forum.flushAnimationFrames();
+
+  hooks.ensureMyThreadsQuickLink();
+  assert.equal(
+    forum.pendingAnimationFrameCount(),
+    0,
+    "重复调用且 DOM 未变化时不得反复请求重算"
+  );
+
+  hooks.teardownNavbarCustomOverflow();
   assert.equal(FakeResizeObserver.activeCount(), 0);
 };
 
