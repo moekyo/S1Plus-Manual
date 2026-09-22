@@ -78,9 +78,44 @@ assert.match(
   "overflow menu must implement Home, End, Escape, and Tab behavior."
 );
 assert.match(
+  sourceCode,
+  /const computeS1pNavbarLayoutProjection = \(metrics = \{\}\) => \{[\s\S]*?while \(primaryCount > 0 && !fits\(demandFor\(primaryCount, true\)\)\)[\s\S]*?primaryCount -= 1;/,
+  "响应式决策必须是从右侧低优先级链接开始收缩的纯函数。"
+);
+assert.match(
   overflowBlock,
-  /for \(let index = customNavItems\.length - 1; index >= 0; index -= 1\)/,
-  "自定义导航应从右侧低优先级链接开始收进菜单。"
+  /resetNavbarProjectionToCanonical\(\);[\s\S]*?const metrics = measureNavbarLayout\(\);[\s\S]*?projectNavbarLayout\(projection\);/s,
+  "reconcile 必须固定走 canonical 归一化 -> 测量 -> 决策 -> 投影 的单向数据流。"
+);
+assert.match(
+  sourceCode,
+  /const measureS1pAvailableInlineWidth = \(\{ element, container \}\) => \{/,
+  "可用宽度必须独立测量 container 与固定保留区域，而不是读取折叠后的导航宽度。"
+);
+assert.match(
+  sourceCode,
+  /classList\.add\(S1P_NAV_MEASURING_CLASS\)/,
+  "需求宽度必须在测量态下读取，避免 flex 收缩把需求宽度压成当前分配宽度。"
+);
+assert.doesNotMatch(
+  overflowBlock,
+  /scrollWidth|clientWidth/,
+  "响应式判断不得再读取折叠后的 DOM 尺寸（scrollWidth / clientWidth）。"
+);
+assert.doesNotMatch(
+  overflowBlock,
+  /setTimeout/,
+  "布局稳定不得用固定超时掩盖，必须由 rAF / ResizeObserver / 字体完成事件驱动。"
+);
+assert.match(
+  overflowBlock,
+  /document\.fonts\.addEventListener\("loadingdone", handleFontsLoadingDone\)/,
+  "字体加载完成必须重新测量，而不是依赖固定等待。"
+);
+assert.match(
+  sourceCode,
+  /const measureNavbarLayout = \(\) => \{/,
+  "测量必须收敛到单一入口 measureNavbarLayout。"
 );
 assert.match(
   overflowBlock,
@@ -104,8 +139,18 @@ assert.doesNotMatch(
 );
 assert.match(
   overflowBlock,
-  /if \(isNuxCompactNavbar\(\) \|\| navUl\.clientWidth <= 0\)[\s\S]*?return;/s,
+  /const mode = resolveS1pNavbarLayoutMode\(\{[\s\S]*?nuxCompact: isNuxCompactNavbar\(\)[\s\S]*?measurable: metrics\.measurable/s,
+  "响应式策略必须由纯函数 resolveS1pNavbarLayoutMode 选择。"
+);
+assert.match(
+  overflowBlock,
+  /if \(mode === "nux-compact"\) \{[\s\S]*?primaryCount: customNavItems\.length/s,
   "NUX 窄屏快捷入口接管时，不应再叠加第二套“更多”入口。"
+);
+assert.match(
+  overflowBlock,
+  /else if \(mode === "unmeasured"\) \{[\s\S]*?primaryCount: 0/s,
+  "布局尚未稳定时必须给出保守投影，而不是让未稳定的测量成为最终 overflow 依据。"
 );
 assert.match(
   overflowBlock,
