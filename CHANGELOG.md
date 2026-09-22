@@ -5,7 +5,9 @@
 - **建立单向布局数据流**：自定义导航栏改为 `canonical records → measurement → responsive decision → DOM projection`，DOM 只展示最终结果，不再作为下一轮判断的输入。
 - **不再依赖折叠后的 DOM 测量**：移除 `scrollWidth > clientWidth` 的迭代式判断，改为在 canonical 投影下独立测量「导航项理论需求宽度」「导航行可用宽度」「固定保留区域宽度」，再由纯函数计算 primary / overflow。
 - **reconcile 幂等**：同一布局输入重复执行结果完全一致，修复首次加载、刷新、resize 后“部分或全部链接进入更多”，以及打开/关闭 DevTools 后结果变化的问题。
-- **单一调度入口**：初始化、resize、ResizeObserver、字体加载完成统一进入同一个调度器，不再由多个回调各自改写导航 DOM 状态。
+- **单一调度入口**：初始化、resize、ResizeObserver、字体加载完成统一进入同一个调度器；同步按钮与同步状态条的就地变更也改为通过通知入口请求重算，不再由多个回调各自改写导航 DOM 状态。
+- **测量契约与分区模型边界**：测量结果新增「容器宽度 / 固定区域宽度 / 可用宽度 / 真实渲染宽度」诊断契约；header 行不是 flex/grid 容器时退回真实渲染宽度；真实宽度小于分区预算时以真实几何为准，避免主题引入未建模的 `gap` / `margin` 导致裁剪。
+- **测量态特异性**：`.s1p-nav-measuring` 选择器提高特异性，避免主题的 `!important` ID 规则让「需求宽度」退化成上一轮 flex 分配结果。
 - **首帧保守投影 + 稳定后终判**：首次同步投影避免未稳定的布局把搜索栏挤出可视区域，布局稳定后（rAF / ResizeObserver / `document.fonts.ready`）给出最终结果，不使用固定超时。
 - **保留既有行为**：S1 NUX 窄屏接管、909px 断点、更多菜单键盘可访问性、搜索 compact 模式与 teardown 生命周期保持不变。
 

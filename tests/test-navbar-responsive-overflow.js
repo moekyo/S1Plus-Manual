@@ -117,6 +117,69 @@ assert.match(
   /const measureNavbarLayout = \(\) => \{/,
   "测量必须收敛到单一入口 measureNavbarLayout。"
 );
+
+// --- 单一 layout scheduling authority -------------------------------------
+const reconcileCallSites = overflowBlock.match(/reconcile\(\)/g) || [];
+assert.equal(
+  reconcileCallSites.length,
+  1,
+  "setup 内部只允许首帧同步调用一次 reconcile()，其余入口必须走 scheduler。"
+);
+assert.match(
+  overflowBlock,
+  /const scheduleReconcile = \(\) => \{[\s\S]*?layoutFrame = requestAnimationFrame\(reconcile\);/,
+  "scheduler 必须是唯一的 rAF 入口。"
+);
+assert.match(
+  overflowBlock,
+  /navbarLayoutReconcileRequest = scheduleReconcile;/,
+  "就地修改导航 DOM 的代码必须通过通知入口接入同一个 scheduler。"
+);
+assert.match(
+  sourceCode,
+  /const requestNavbarLayoutReconcile = \(\) => \{[\s\S]*?navbarLayoutReconcileRequest\(\)/,
+  "通知入口必须只转发到已注册的 scheduler。"
+);
+const updateNavbarSyncButtonBlock = sourceCode.slice(
+  sourceCode.indexOf("const updateNavbarSyncButton = () => {"),
+  sourceCode.indexOf("const ensureMyThreadsQuickLink = () => {")
+);
+assert.match(
+  updateNavbarSyncButtonBlock,
+  /requestNavbarLayoutReconcile\(\)/,
+  "同步按钮的就地变更必须请求重算，而不是自己改写投影。"
+);
+const persistentAlertBlock = sourceCode.slice(
+  sourceCode.indexOf("const renderNavbarPersistentSyncAlert = () => {"),
+  sourceCode.indexOf("const ensureNavbarAutoSyncIndicatorElement = () => {")
+);
+assert.match(
+  persistentAlertBlock,
+  /requestNavbarLayoutReconcile\(\)/,
+  "同步状态条的就地变更必须请求重算。"
+);
+
+// --- 测量契约 --------------------------------------------------------------
+assert.match(
+  sourceCode,
+  /containerWidth:\s*containerBox\.contentWidth,[\s\S]*?fixedRegionWidth,[\s\S]*?availableWidth:\s*Math\.max\(0,\s*available\)/,
+  "可用宽度必须给出「容器宽度 / 固定区域宽度 / 可用宽度」契约。"
+);
+assert.match(
+  sourceCode,
+  /containerWidth,\s*fixedRegionWidth,\s*renderedNavbarWidth,\s*partitionApplies,/,
+  "测量契约必须包含真实渲染宽度与分区模型是否适用。"
+);
+assert.match(
+  sourceCode,
+  /const S1P_NAV_LAYOUT_EPSILON_PX = 2;/,
+  "epsilon 必须保持既定的布局量化单位（2 CSS px）。"
+);
+assert.match(
+  sourceCode,
+  /#nv\.s1p-nav-measuring > ul > li,[\s\S]*?\.s1p-nav-measuring > ul > li \{/,
+  "测量态选择器必须具备足够特异性，避免被主题的 !important ID 规则覆盖。"
+);
 assert.match(
   overflowBlock,
   /const customNavItems = customNavRecords\.map\(\(record\) => record\.item\)/,
