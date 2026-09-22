@@ -538,10 +538,24 @@ const assertProjectionShape = (projection, metrics, label) => {
   container.appendChild(absoluteSibling);
   container.appendChild(collapsedSibling);
 
+  const firstPartition = measureNavbarAvailableWidth({
+    element: navRow,
+    container,
+  });
   assert.equal(
-    measureNavbarAvailableWidth({ element: navRow, container }),
+    firstPartition.availableWidth,
     480,
     "可用宽度 = 容器内容宽 − 固定兄弟盒子（跳过 hidden / 绝对定位 / 无高度）"
+  );
+  assert.equal(
+    firstPartition.containerWidth,
+    980,
+    "契约必须暴露容器内容宽度（1000 − 左右各 10 padding）"
+  );
+  assert.equal(
+    firstPartition.fixedRegionWidth,
+    500,
+    "契约必须暴露固定保留区域宽度（仅统计真正参与布局的兄弟）"
   );
 
   const outer = new UnitBox({ width: 800, height: 40 });
@@ -551,10 +565,19 @@ const assertProjectionShape = (projection, metrics, label) => {
   outer.appendChild(mid);
   outer.appendChild(outerSibling);
   mid.appendChild(nestedRow);
+  const nestedPartition = measureNavbarAvailableWidth({
+    element: nestedRow,
+    container: outer,
+  });
   assert.equal(
-    measureNavbarAvailableWidth({ element: nestedRow, container: outer }),
+    nestedPartition.availableWidth,
     800 - 16 - 100,
     "沿途祖先的内边距必须从可用宽度中扣除"
+  );
+  assert.equal(
+    nestedPartition.fixedRegionWidth,
+    116,
+    "契约中的固定区域必须包含祖先内边距"
   );
 
   const stranger = new UnitBox({ width: 0, height: 40 });
@@ -570,13 +593,107 @@ const assertProjectionShape = (projection, metrics, label) => {
   tiny.appendChild(tinyRow);
   tiny.appendChild(hugeSibling);
   assert.equal(
-    measureNavbarAvailableWidth({ element: tinyRow, container: tiny }),
+    measureNavbarAvailableWidth({ element: tinyRow, container: tiny })
+      .availableWidth,
     0,
     "过度占用时可用宽度必须夹到 0"
   );
 
   // 恢复沙箱 Element，避免影响后续断言。
   runtime.sandbox.Element = function Element() {};
+}
+
+// --- 12. epsilon 边界：只吸收 rounding noise，不隐藏真实缺口 -----------------
+{
+  const { navbarLayoutEpsilonPx } = runtime.hooks;
+  assert.equal(
+    navbarLayoutEpsilonPx,
+    2,
+    "epsilon 是固定的布局量化单位，不得被悄悄放大"
+  );
+
+  const baseMetrics = {
+    itemWidths: [100],
+    chromeWidth: 0,
+    overflowToggleWidth: 0,
+    searchWidth: 200,
+    searchToggleWidth: 46,
+  };
+  const cases = [
+    { deficit: 0, expectOverflow: false },
+    { deficit: 0.5, expectOverflow: false },
+    { deficit: 1, expectOverflow: false },
+    { deficit: 2, expectOverflow: false },
+    { deficit: 2.1, expectOverflow: true },
+    { deficit: 3, expectOverflow: true },
+    { deficit: 5, expectOverflow: true },
+  ];
+  for (const { deficit, expectOverflow } of cases) {
+    const projection = computeProjection({
+      ...baseMetrics,
+      availableWidth: 100 - deficit,
+    });
+    assert.equal(
+      projection.showOverflow,
+      expectOverflow,
+      `required - available = ${deficit} 时 showOverflow 必须为 ${expectOverflow}`
+    );
+    assert.equal(
+      projection.primaryCount,
+      expectOverflow ? 0 : 1,
+      `required - available = ${deficit} 时 primaryCount 必须为 ${expectOverflow ? 0 : 1}`
+    );
+  }
+}
+
+// --- 13. 单次 decision 同时决定 search compact 与 overflow -------------------
+{
+  const collapsedInput = {
+    itemWidths: [40, 40],
+    chromeWidth: 20,
+    overflowToggleWidth: 20,
+    availableWidth: 40,
+    searchWidth: 100,
+    searchToggleWidth: 46,
+  };
+  const collapsedOnce = computeProjection(collapsedInput);
+  assert.equal(collapsedOnce.searchCollapsed, true);
+  assert.equal(
+    collapsedOnce.primaryCount,
+    1,
+    "折叠搜索释放的宽度必须在同一次 projection 内就参与 overflow 计算"
+  );
+
+  const expandedInput = { ...collapsedInput, searchWidth: 300 };
+  const expanded = computeProjection(expandedInput);
+  assert.equal(expanded.searchCollapsed, false);
+  assert.equal(
+    expanded.primaryCount,
+    0,
+    "搜索重新展开后必须在同一次 projection 内重新收缩导航"
+  );
+
+  // 交替输入不得产生振荡记忆：结果只取决于当前 metrics，与执行历史无关。
+  for (let index = 0; index < 20; index += 1) {
+    const searchWidth = index % 2 === 0 ? 100 : 300;
+    const projection = computeProjection({ ...collapsedInput, searchWidth });
+    assert.deepStrictEqual(
+      projection,
+      searchWidth === 100 ? collapsedOnce : expanded,
+      `第 ${index} 轮交替输入必须与同输入首次计算完全一致`
+    );
+  }
+
+  // 反向顺序同样必须一致（先展开再折叠）。
+  for (let index = 0; index < 20; index += 1) {
+    const searchWidth = index % 2 === 0 ? 300 : 100;
+    const projection = computeProjection({ ...collapsedInput, searchWidth });
+    assert.deepStrictEqual(
+      projection,
+      searchWidth === 100 ? collapsedOnce : expanded,
+      `反向第 ${index} 轮交替输入必须与同输入首次计算完全一致`
+    );
+  }
 }
 
 console.log(

@@ -536,6 +536,11 @@ const installForumDom = (runtime) => {
   runtime.sandbox.HTMLLIElement = FakeHTMLLIElement;
   runtime.sandbox.HTMLAnchorElement = FakeHTMLAnchorElement;
   runtime.sandbox.ResizeObserver = FakeResizeObserver;
+  // 与浏览器一致：允许 fixture 为元素提供 computed style（默认空对象，
+  // 未声明的 margin / padding / border / position 一律按 0 / static 处理）。
+  document.defaultView = {
+    getComputedStyle: (element) => (element && element._computed) || {},
+  };
 
   let nextAnimationFrameId = 1;
   const animationFrames = new Map();
@@ -581,9 +586,82 @@ const installForumDom = (runtime) => {
   };
 };
 
+/**
+ * 把基础 fixture 扩展成真实的顶栏结构：
+ *
+ *   header(.wp)
+ *    ├ .hdc       (logo)
+ *    ├ #nv        (qmenu + ul)        ← 可选包一层 #nv_ph
+ *    ├ .hdc       (搜索区)
+ *    └ #um        (用户区)
+ *
+ * geometry 同时决定每个固定区域的宽度与 header 的容器宽度，因此测试可以
+ * 独立算出“导航行应得的预算”，再与 production measurement 对照。
+ */
+const installRealisticHeaderRegions = (forum, geometry, options = {}) => {
+  const { document, headerRoot, navRoot, navUl, searchParent } = forum;
+  const nested = options.nested === true;
+  const wrapperPadding = nested ? Number(options.wrapperPadding) || 0 : 0;
+
+  const logo = document.createElement("div");
+  logo.className = "hdc cl";
+  Object.defineProperty(logo, "_rectWidth", {
+    configurable: true,
+    get: () => geometry.logo,
+  });
+  const userArea = document.createElement("div");
+  userArea.id = "um";
+  Object.defineProperty(userArea, "_rectWidth", {
+    configurable: true,
+    get: () => geometry.user,
+  });
+  const quickMenu = document.createElement("a");
+  quickMenu.id = "qmenu";
+  Object.defineProperty(quickMenu, "_rectWidth", {
+    configurable: true,
+    get: () => geometry.quickMenu,
+  });
+
+  let wrapper = null;
+  if (nested) {
+    wrapper = document.createElement("div");
+    wrapper.id = "nv_ph";
+    wrapper._computed = {
+      display: "flex",
+      paddingLeft: `${wrapperPadding}px`,
+      paddingRight: `${wrapperPadding}px`,
+    };
+    Object.defineProperty(wrapper, "_rectWidth", {
+      configurable: true,
+      get: () =>
+        geometry.quickMenu + geometry.navRow + wrapperPadding * 2,
+    });
+    headerRoot.insertBefore(wrapper, navRoot);
+    wrapper.appendChild(navRoot);
+  }
+
+  headerRoot.insertBefore(logo, nested ? wrapper : navRoot);
+  headerRoot.appendChild(userArea);
+  navRoot.insertBefore(quickMenu, navUl);
+
+  const gapCount = 3;
+  Object.defineProperty(headerRoot, "_rectWidth", {
+    configurable: true,
+    get: () =>
+      geometry.logo +
+      geometry.quickMenu +
+      geometry.navRow +
+      geometry.search +
+      geometry.user +
+      (Number(geometry.gap) || 0) * gapCount +
+      wrapperPadding * 2,
+  });
+
+  return { logo, userArea, quickMenu, wrapper };
+};
+
 const getOverflowMenuLinks = (document) =>
   document.querySelector(".s1p-nav-overflow-menu")?.children || [];
-
 const menuLinkRecords = (document) =>
   Array.from(getOverflowMenuLinks(document)).map((link) => ({
     name: link.textContent,
@@ -1069,10 +1147,384 @@ const run = () => {
   runUnmeasuredFallbackScenario();
   runSearchCompactReleaseScenario();
   runFontsLifecycleScenario();
+  runRealGeometryFixtureScenario();
+  runNestedGeometryFixtureScenario();
+  runNonFlexContainerFallbackScenario();
+  runMeasurementIsolationScenario();
+  runSchedulerNotificationScenario();
 
   console.log(
-    "[navbar-responsive-overflow-runtime] canonical link ownership, DOM lifecycle and layout-authority stability verified."
+    "[navbar-responsive-overflow-runtime] canonical link ownership, DOM lifecycle, layout-authority stability and measurement contract verified."
   );
+};
+
+const REPORTED_ITEM_WIDTHS = [45, 45, 45, 45, 63.63, 59];
+const REPORTED_MANAGER_WIDTH = 99.73;
+const REPORTED_OVERFLOW_TOGGLE_WIDTH = 46;
+
+/**
+ * 真实顶栏结构下的 measurement 契约：
+ * 容器宽度 − 固定区域宽度 = 分区预算；真实渲染宽度是预算的上界；
+ * measurement 与 computeS1pNavbarLayoutProjection() 必须给出同一结果。
+ */
+const runRealGeometryFixtureScenario = () => {
+  const runtime = createHarness();
+  const { hooks } = runtime;
+  const forum = installForumDom(runtime);
+  const geometry = {
+    logo: 96,
+    quickMenu: 95.99,
+    navRow: 401.36,
+    search: 334.47,
+    user: 153.78,
+    // 主题若引入未建模的 gap，分区预算会偏高，必须由真实渲染宽度钳制。
+    gap: 12,
+  };
+  installRealisticHeaderRegions(forum, geometry);
+  forum.headerRoot._computed = { display: "flex" };
+  forum.layout.searchWidth = geometry.search;
+  forum.searchBar._rectWidth = geometry.search;
+  forum.layout.navWidth = geometry.navRow;
+
+  setSettings(
+    runtime,
+    hooks,
+    createSettings(
+      REPORTED_ITEM_WIDTHS.map((_, index) => ({
+        name: `L${index}`,
+        href: `forum-${index + 100}-1.html`,
+      }))
+    )
+  );
+  hooks.initializeNavbar();
+  forum.flushAnimationFrames();
+
+  const customItems = () =>
+    forum.navUl.children.filter((item) =>
+      item.classList.contains("s1p-nav-custom-item")
+    );
+  const applyReportedWidths = () => {
+    customItems().forEach((item, index) => {
+      item._rectWidth = REPORTED_ITEM_WIDTHS[index];
+    });
+    forum.document.querySelector("#s1p-nav-link")._rectWidth = REPORTED_MANAGER_WIDTH;
+    forum.document.querySelector("#s1p-nav-overflow")._rectWidth =
+      REPORTED_OVERFLOW_TOGGLE_WIDTH;
+  };
+  const reconcileNow = () => {
+    forum.eventWindow.dispatchEvent(createEvent("resize", forum.eventWindow));
+    forum.flushAnimationFrames();
+  };
+
+  applyReportedWidths();
+  reconcileNow();
+
+  const snapshot = hooks.getNavbarLayoutSnapshot();
+  assert.ok(snapshot, "测量必须发布诊断契约快照");
+  const expectedContainer =
+    geometry.logo +
+    geometry.quickMenu +
+    geometry.navRow +
+    geometry.search +
+    geometry.user +
+    geometry.gap * 3;
+  assert.equal(
+    snapshot.containerWidth,
+    expectedContainer,
+    "契约中的容器宽度必须是 header 行的真实内容宽度"
+  );
+  assert.equal(
+    snapshot.renderedNavbarWidth,
+    geometry.navRow,
+    "契约必须暴露导航行真实渲染宽度"
+  );
+  assert.equal(
+    snapshot.availableWidth,
+    geometry.navRow,
+    "存在未建模 gap 时，可用宽度必须以真实渲染宽度为准"
+  );
+  assert.ok(
+    snapshot.containerWidth - snapshot.fixedRegionWidth >
+      snapshot.availableWidth,
+    "分区预算与真实宽度的差异必须在契约里可见，而不是被静默吞掉"
+  );
+  assert.deepStrictEqual(
+    Array.from(snapshot.itemWidths),
+    REPORTED_ITEM_WIDTHS,
+    "需求宽度必须在测量态下读到 intrinsic 宽度"
+  );
+
+  // measurement 与纯函数决策必须完全一致。
+  const expected = hooks.computeNavbarLayoutProjection(snapshot);
+  assert.equal(
+    customItems().filter((item) => item.hidden).length,
+    REPORTED_ITEM_WIDTHS.length - expected.primaryCount,
+    "DOM 投影必须与 computeS1pNavbarLayoutProjection(measurement) 一致"
+  );
+  assert.equal(
+    forum.document.querySelector("#s1p-nav-overflow").hidden,
+    !expected.showOverflow
+  );
+  assert.equal(expected.showOverflow, false, "现场数据不得把链接推进“更多”");
+
+  // 真实空间不足时必须进入“更多”，且数量与纯函数一致。
+  geometry.navRow = 300;
+  forum.layout.navWidth = geometry.navRow;
+  reconcileNow();
+  const narrowSnapshot = hooks.getNavbarLayoutSnapshot();
+  const narrowExpected = hooks.computeNavbarLayoutProjection(narrowSnapshot);
+  assert.ok(narrowExpected.showOverflow, "真实空间不足时必须进入“更多”");
+  assert.equal(
+    customItems().filter((item) => item.hidden).length,
+    REPORTED_ITEM_WIDTHS.length - narrowExpected.primaryCount
+  );
+  assert.ok(
+    narrowSnapshot.availableWidth <= 300 + 1e-9,
+    "可用宽度必须跟随真实渲染宽度收紧"
+  );
+
+  hooks.teardownNavbarCustomOverflow();
+  assert.equal(FakeResizeObserver.activeCount(), 0);
+};
+
+/**
+ * 导航被包在中间层（例如固定顶栏的 #nv_ph）时：
+ * 祖先内边距必须被扣除，且 additivity 与真实渲染宽度精确一致（无需钳制）。
+ */
+const runNestedGeometryFixtureScenario = () => {
+  const runtime = createHarness();
+  const { hooks } = runtime;
+  const forum = installForumDom(runtime);
+  const wrapperPadding = 6;
+  const geometry = {
+    logo: 96,
+    quickMenu: 95.99,
+    navRow: 512.4,
+    search: 334.47,
+    user: 153.78,
+    gap: 0,
+  };
+  installRealisticHeaderRegions(forum, geometry, {
+    nested: true,
+    wrapperPadding,
+  });
+  forum.headerRoot._computed = { display: "flex" };
+  forum.layout.searchWidth = geometry.search;
+  forum.searchBar._rectWidth = geometry.search;
+  forum.layout.navWidth = geometry.navRow;
+
+  setSettings(
+    runtime,
+    hooks,
+    createSettings([
+      { name: "A", href: "forum-100-1.html" },
+      { name: "B", href: "forum-101-1.html" },
+    ])
+  );
+  hooks.initializeNavbar();
+  forum.flushAnimationFrames();
+
+  const customItems = () =>
+    forum.navUl.children.filter((item) =>
+      item.classList.contains("s1p-nav-custom-item")
+    );
+  customItems().forEach((item) => {
+    item._rectWidth = 45;
+  });
+  forum.document.querySelector("#s1p-nav-link")._rectWidth = 99.73;
+  forum.document.querySelector("#s1p-nav-overflow")._rectWidth = 46;
+
+  forum.eventWindow.dispatchEvent(createEvent("resize", forum.eventWindow));
+  forum.flushAnimationFrames();
+
+  const snapshot = hooks.getNavbarLayoutSnapshot();
+  assert.equal(
+    snapshot.availableWidth,
+    geometry.navRow,
+    "嵌套包裹层的场景下可用宽度必须等于真实渲染宽度"
+  );
+  assert.ok(
+    Math.abs(
+      snapshot.containerWidth - snapshot.fixedRegionWidth - geometry.navRow
+    ) < 1e-6,
+    "祖先内边距必须被显式扣除，而不是靠钳制掩盖"
+  );
+  assert.equal(snapshot.renderedNavbarWidth, geometry.navRow);
+  const expected = hooks.computeNavbarLayoutProjection(snapshot);
+  assert.equal(
+    customItems().filter((item) => item.hidden).length,
+    2 - expected.primaryCount
+  );
+
+  hooks.teardownNavbarCustomOverflow();
+};
+
+/**
+ * header 行不是 flex / grid 容器时，兄弟盒子不共享同一行内预算：
+ * 必须退回真实渲染宽度，而不是硬套分区模型。
+ */
+const runNonFlexContainerFallbackScenario = () => {
+  const runtime = createHarness();
+  const { hooks } = runtime;
+  const forum = installForumDom(runtime);
+  const geometry = {
+    logo: 96,
+    quickMenu: 95.99,
+    navRow: 401.36,
+    search: 334.47,
+    user: 153.78,
+    gap: 12,
+  };
+  installRealisticHeaderRegions(forum, geometry);
+  forum.headerRoot._computed = { display: "block" };
+  forum.layout.searchWidth = geometry.search;
+  forum.searchBar._rectWidth = geometry.search;
+  forum.layout.navWidth = geometry.navRow;
+
+  setSettings(
+    runtime,
+    hooks,
+    createSettings([{ name: "A", href: "forum-100-1.html" }])
+  );
+  hooks.initializeNavbar();
+  forum.flushAnimationFrames();
+  forum.eventWindow.dispatchEvent(createEvent("resize", forum.eventWindow));
+  forum.flushAnimationFrames();
+
+  const snapshot = hooks.getNavbarLayoutSnapshot();
+  assert.equal(
+    snapshot.partitionApplies,
+    false,
+    "非 flex 容器必须标记分区模型不适用"
+  );
+  assert.equal(
+    snapshot.availableWidth,
+    geometry.navRow,
+    "非 flex 容器必须退回真实渲染宽度"
+  );
+
+  hooks.teardownNavbarCustomOverflow();
+};
+
+/**
+ * 测量态必须真正隔离 intrinsic 宽度：即使导航项在当前 flex 分配下被压缩，
+ * 读到的也必须是自身内容宽度，而不是上一轮的分配结果。
+ */
+const runMeasurementIsolationScenario = () => {
+  const runtime = createHarness();
+  const { hooks } = runtime;
+  const forum = installForumDom(runtime);
+  setSettings(
+    runtime,
+    hooks,
+    createSettings([
+      { name: "A", href: "forum-100-1.html" },
+      { name: "B", href: "forum-101-1.html" },
+      { name: "C", href: "forum-102-1.html" },
+    ])
+  );
+  forum.layout.navWidth = 100;
+  forum.layout.searchWidth = 300;
+  forum.searchBar._rectWidth = 300;
+  hooks.initializeNavbar();
+  forum.flushAnimationFrames();
+
+  const customItems = () =>
+    forum.navUl.children.filter((item) =>
+      item.classList.contains("s1p-nav-custom-item")
+    );
+  const intrinsicWidths = [60, 60, 60];
+  // 模拟 flex 压缩：不在测量态时导航项只能拿到被压缩后的宽度。
+  customItems().forEach((item, index) => {
+    Object.defineProperty(item, "_rectWidth", {
+      configurable: true,
+      get: () => {
+        const isMeasuring = forum.navRoot.classList.contains(
+          "s1p-nav-measuring"
+        );
+        return isMeasuring ? intrinsicWidths[index] : intrinsicWidths[index] / 2;
+      },
+    });
+  });
+  forum.document.querySelector("#s1p-nav-link")._rectWidth = 0;
+  forum.document.querySelector("#s1p-nav-overflow")._rectWidth = 0;
+
+  forum.eventWindow.dispatchEvent(createEvent("resize", forum.eventWindow));
+  forum.flushAnimationFrames();
+
+  const snapshot = hooks.getNavbarLayoutSnapshot();
+  assert.deepStrictEqual(
+    Array.from(snapshot.itemWidths),
+    intrinsicWidths,
+    "测量必须读到 intrinsic 宽度，而不是被 flex 压缩后的分配宽度"
+  );
+  assert.equal(snapshot.renderedNavbarWidth, 100);
+  assert.equal(snapshot.availableWidth, 100);
+  assert.equal(
+    customItems().filter((item) => item.hidden).length,
+    2,
+    "按 intrinsic 需求判断时只有第一个链接放得下"
+  );
+  assert.equal(
+    forum.document.querySelector("#s1p-nav-overflow").hidden,
+    false
+  );
+
+  hooks.teardownNavbarCustomOverflow();
+};
+
+/**
+ * 布局调度必须只有一个对外入口：就地改动导航 DOM 的代码通过它请求重算。
+ */
+const runSchedulerNotificationScenario = () => {
+  const runtime = createHarness();
+  const { hooks } = runtime;
+  const forum = installForumDom(runtime);
+  setSettings(
+    runtime,
+    hooks,
+    createSettings([{ name: "A", href: "forum-100-1.html" }])
+  );
+  forum.layout.navWidth = 600;
+  hooks.initializeNavbar();
+  forum.flushAnimationFrames();
+
+  assert.ok(
+    hooks.getNavbarLayoutSnapshot(),
+    "setup 之后必须存在可验证的测量契约快照"
+  );
+  assert.equal(forum.pendingAnimationFrameCount(), 0);
+
+  hooks.requestNavbarLayoutReconcile();
+  assert.equal(
+    forum.pendingAnimationFrameCount(),
+    1,
+    "通知入口必须汇聚到同一个调度器"
+  );
+  forum.flushAnimationFrames();
+
+  hooks.requestNavbarLayoutReconcile();
+  hooks.requestNavbarLayoutReconcile();
+  assert.equal(
+    forum.pendingAnimationFrameCount(),
+    1,
+    "同一帧内的多次通知必须合并成一次重算"
+  );
+  forum.flushAnimationFrames();
+
+  hooks.teardownNavbarCustomOverflow();
+  assert.equal(
+    hooks.getNavbarLayoutSnapshot(),
+    null,
+    "teardown 必须清理诊断契约快照"
+  );
+  hooks.requestNavbarLayoutReconcile();
+  assert.equal(
+    forum.pendingAnimationFrameCount(),
+    0,
+    "teardown 之后通知入口不得再调度布局"
+  );
+  assert.equal(FakeResizeObserver.activeCount(), 0);
 };
 
 /**

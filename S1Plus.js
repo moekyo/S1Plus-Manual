@@ -2055,6 +2055,34 @@
   // 这是统一的布局量化单位，不是针对某个系统 / DPI / 浏览器缩放的补丁。
   const S1P_NAV_LAYOUT_EPSILON_PX = 2;
   let navbarCustomOverflowCleanup = null;
+  // 布局诊断契约：最近一次 canonical 测量的「容器宽度 / 固定区域宽度 /
+  // 可用宽度 / 实际渲染的导航宽度」。只用于验证 measurement 不存在系统性偏差，
+  // 不参与任何判断。
+  let navbarLayoutDebugSnapshot = null;
+  // 就地修改导航 DOM 的代码（同步按钮 / 同步指示器）通过这个通知入口请求重算，
+  // 统一汇入同一个 scheduler，而不是自己调用 reconcile 或直接改写投影。
+  let navbarLayoutReconcileRequest = null;
+  const requestNavbarLayoutReconcile = () => {
+    if (typeof navbarLayoutReconcileRequest === "function") {
+      navbarLayoutReconcileRequest();
+    }
+  };
+
+  /**
+   * 读取元素当前的 computed style，取不到时返回 null（调用方必须按“未知”处理）。
+   * @param {Element} element
+   * @returns {CSSStyleDeclaration | null}
+   */
+  const readS1pNavbarComputedStyle = (element) => {
+    if (!(element instanceof Element)) {
+      return null;
+    }
+    const view = element.ownerDocument?.defaultView;
+    if (!view || typeof view.getComputedStyle !== "function") {
+      return null;
+    }
+    return view.getComputedStyle(element) || null;
+  };
 
   /**
    * 读取元素的外框 / 内容框宽度。返回 null 表示该盒子当前没有可用的布局几何，
@@ -2116,8 +2144,10 @@
    * 在不依赖目标元素自身 flex 分配结果的前提下，计算它在 container 内联方向上
    * 实际可用的宽度：container 内容宽度减去沿途祖先的内边距 / 边框，再减去同一
    * 行内所有仍在文档流中的兄弟盒子。
+   *
+   * 返回诊断契约，便于验证「容器宽度 − 固定区域宽度 = 可用宽度 = 真实渲染宽度」：
    * @param {{ element: Element, container: Element }} params
-   * @returns {null | number}
+   * @returns {null | { containerWidth: number, fixedRegionWidth: number, availableWidth: number }}
    */
   const measureS1pAvailableInlineWidth = ({ element, container }) => {
     if (!(element instanceof Element) || !(container instanceof Element)) {
@@ -2132,6 +2162,7 @@
     }
 
     let available = containerBox.contentWidth;
+    let fixedRegionWidth = 0;
     let node = element;
     let guard = 0;
     while (node instanceof Element && node !== container) {
@@ -2145,7 +2176,9 @@
       if (parent !== container) {
         const parentBox = readS1pNavbarBoxWidth(parent);
         if (parentBox) {
-          available -= parentBox.paddingInline + parentBox.borderInline;
+          const chromeWidth = parentBox.paddingInline + parentBox.borderInline;
+          available -= chromeWidth;
+          fixedRegionWidth += chromeWidth;
         }
       }
       for (const sibling of Array.from(parent.children || [])) {
@@ -2155,12 +2188,17 @@
         const siblingBox = readS1pNavbarBoxWidth(sibling, { inFlow: true });
         if (siblingBox) {
           available -= siblingBox.inlineWidth;
+          fixedRegionWidth += siblingBox.inlineWidth;
         }
       }
       node = parent;
     }
 
-    return Math.max(0, available);
+    return {
+      containerWidth: containerBox.contentWidth,
+      fixedRegionWidth,
+      availableWidth: Math.max(0, available),
+    };
   };
 
   /**
@@ -2752,19 +2790,43 @@
         headerRoot instanceof Element
           ? headerRoot
           : navRoot?.parentElement || null;
-      const containerBudget = measureS1pAvailableInlineWidth({
+      const partition = measureS1pAvailableInlineWidth({
         element: navUl,
         container,
       });
-      // 容器与导航行不同源（例如导航被复制到固定顶栏）时，退回导航行自身在
-      // canonical 状态下实际分到的宽度；两者在标准结构下数值一致。
+      // 导航行在 canonical 状态下真实渲染出来的内容宽度，只作为契约校验与
+      // 上限钳制，不作为主预算来源。
       const navRowBox = readS1pNavbarBoxWidth(navUl);
-      const availableWidth =
-        Number.isFinite(containerBudget) && containerBudget > 0
-          ? containerBudget
-          : navRowBox
-            ? navRowBox.contentWidth
-            : 0;
+      const renderedNavbarWidth = navRowBox
+        ? Math.max(0, navRowBox.contentWidth)
+        : 0;
+      const containerWidth = partition
+        ? partition.containerWidth
+        : renderedNavbarWidth;
+      const fixedRegionWidth = partition ? partition.fixedRegionWidth : 0;
+
+      // 分区模型只在 header 行真的是 flex / grid 容器时成立：否则兄弟盒子
+      // 并不共享同一行内预算，退回真实渲染宽度。
+      const containerDisplay = readS1pNavbarComputedStyle(container)?.display || "";
+      const partitionApplies =
+        Boolean(partition) &&
+        partition.availableWidth > 0 &&
+        (containerDisplay === "" || /flex|grid/.test(containerDisplay));
+
+      let availableWidth;
+      if (!partitionApplies) {
+        availableWidth = renderedNavbarWidth;
+      } else {
+        availableWidth = partition.availableWidth;
+        // 契约钳制：真实渲染宽度比分区预算更小时（主题引入了未建模的 gap /
+        // margin / max-width 等），以真实几何为准，避免高估预算导致裁剪。
+        if (renderedNavbarWidth > 0 && renderedNavbarWidth < availableWidth) {
+          availableWidth = renderedNavbarWidth;
+        }
+      }
+      if (!Number.isFinite(availableWidth) || availableWidth < 0) {
+        availableWidth = 0;
+      }
 
       const searchWidth = hasSearchBar ? measureNavbarSearchWidth() : 0;
 
@@ -2805,23 +2867,26 @@
           ? measureNavbarSearchToggleWidth()
           : 0;
       const measurable =
-        Number.isFinite(availableWidth) &&
-        Number(availableWidth) > 0 &&
-        itemWidths.some((width) => width > 0);
+        availableWidth > 0 && itemWidths.some((width) => width > 0);
 
-      return {
+      const metrics = {
         measurable,
-        availableWidth:
-          Number.isFinite(availableWidth) && availableWidth > 0
-            ? availableWidth
-            : 0,
+        availableWidth,
         itemWidths,
         chromeWidth,
         overflowToggleWidth,
         searchWidth,
         searchToggleWidth,
+        // 诊断契约（不参与判断）
+        containerWidth,
+        fixedRegionWidth,
+        renderedNavbarWidth,
+        partitionApplies,
       };
+      navbarLayoutDebugSnapshot = { ...metrics };
+      return metrics;
     };
+
     // --- 投影 ---------------------------------------------------------------
     // DOM 只是最终结果的展示层：这里是唯一写入导航项 hidden / class 的地方。
     // 进入下一轮判断前会先归一化回 canonical 投影，所以写入结果不会成为输入。
@@ -2947,6 +3012,10 @@
       layoutFrame = requestAnimationFrame(reconcile);
     };
 
+    // 注册统一通知入口：就地修改导航 DOM 的代码只需请求重算，
+    // 不需要、也不允许自己调用 reconcile / projectNavbarLayout。
+    navbarLayoutReconcileRequest = scheduleReconcile;
+
     // 字体加载完成会改变文本的固有宽度，必须重新测量，而不是等一个固定超时。
     const handleFontsLoadingDone = () => scheduleReconcile();
     if (
@@ -3059,6 +3128,10 @@
       }
       resizeObserver?.disconnect();
       resizeObserver = null;
+      if (navbarLayoutReconcileRequest === scheduleReconcile) {
+        navbarLayoutReconcileRequest = null;
+      }
+      navbarLayoutDebugSnapshot = null;
       if (
         document.fonts &&
         typeof document.fonts.removeEventListener === "function"
@@ -39185,6 +39258,7 @@
     if (!descriptor) {
       clearNavbarPersistentSyncAlertDismissedSignature();
       document.getElementById("s1p-nav-sync-sticky-alert")?.remove();
+      requestNavbarLayoutReconcile();
       return;
     }
     const descriptorSignature = String(descriptor.signature || "");
@@ -39201,6 +39275,7 @@
       dismissedSignature === descriptorSignature
     ) {
       document.getElementById("s1p-nav-sync-sticky-alert")?.remove();
+      requestNavbarLayoutReconcile();
       return;
     }
 
@@ -39289,9 +39364,11 @@
       }
       setNavbarPersistentSyncAlertDismissedSignature(descriptorSignature);
       document.getElementById("s1p-nav-sync-sticky-alert")?.remove();
+      requestNavbarLayoutReconcile();
     };
 
     setCustomTooltip(alertLi, descriptor.title || descriptor.text);
+    requestNavbarLayoutReconcile();
   };
 
   const ensureNavbarAutoSyncIndicatorElement = () => {
@@ -40678,12 +40755,14 @@
       if (existingBtnLi) existingBtnLi.remove();
       document.getElementById("s1p-nav-auto-sync-indicator")?.remove();
       document.getElementById("s1p-nav-sync-sticky-alert")?.remove();
+      requestNavbarLayoutReconcile();
       return;
     }
 
     if (existingBtnLi || !managerLink) {
       renderNavbarAutoSyncIndicator();
       renderNavbarPersistentSyncAlert();
+      requestNavbarLayoutReconcile();
       return;
     }
 
@@ -40756,6 +40835,7 @@
     managerLink.insertAdjacentElement("afterend", li);
     renderNavbarAutoSyncIndicator();
     renderNavbarPersistentSyncAlert();
+    requestNavbarLayoutReconcile();
   };
 
   const ensureMyThreadsQuickLink = () => {
@@ -56268,6 +56348,9 @@
       resolveNavbarLayoutMode: resolveS1pNavbarLayoutMode,
       readNavbarBoxWidth: readS1pNavbarBoxWidth,
       measureNavbarAvailableWidth: measureS1pAvailableInlineWidth,
+      getNavbarLayoutSnapshot: () => navbarLayoutDebugSnapshot,
+      requestNavbarLayoutReconcile,
+      navbarLayoutEpsilonPx: S1P_NAV_LAYOUT_EPSILON_PX,
       invalidateSettingsCache,
     };
   }
