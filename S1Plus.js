@@ -2044,7 +2044,228 @@
   const S1P_NAV_SEARCH_TOGGLE_VISIBLE_CLASS =
     "s1p-nav-search-toggle-visible";
   const S1P_NAV_SEARCH_COMPACT_MIN_WIDTH_PX = 132;
+  // 测量态 class：只在读取“每个导航项自身需要多宽”时短暂挂载。
+  // 该状态下禁止 flex 把导航项收缩成当前分配宽度，否则测量结果会退化成
+  // “上一轮布局分配了多少”，布局判断就会自我证实。
+  const S1P_NAV_MEASURING_CLASS = "s1p-nav-measuring";
+  // 布局量化容差：需求宽度和可用宽度都由多个独立盒子累加而来，每个盒子在
+  // 亚像素取整后都可能带来不足一个 CSS 像素的偏差；两个 CSS 像素是该累积偏差
+  // 的保守上界（最大缩放下的设备像素量化）。落在这个区间内的缺口由导航行自身
+  // 的溢出裁剪吸收（最多裁掉最后一个链接的右侧内边距），不触发“更多”重排。
+  // 这是统一的布局量化单位，不是针对某个系统 / DPI / 浏览器缩放的补丁。
+  const S1P_NAV_LAYOUT_EPSILON_PX = 2;
   let navbarCustomOverflowCleanup = null;
+
+  /**
+   * 读取元素的外框 / 内容框宽度。返回 null 表示该盒子当前没有可用的布局几何，
+   * 调用方必须把 null 当作“未知”，而不是 0。
+   * @param {Element} element
+   * @param {{ inFlow?: boolean }} [options] inFlow 为真时忽略绝对/固定定位元素。
+   * @returns {null | { width: number, height: number, inlineWidth: number, contentWidth: number, paddingInline: number, borderInline: number }}
+   */
+  const readS1pNavbarBoxWidth = (element, options = {}) => {
+    if (!(element instanceof Element) || !element.isConnected) {
+      return null;
+    }
+    const rect = element.getBoundingClientRect?.();
+    const width = Number(rect?.width);
+    const height = Number(rect?.height);
+    if (!Number.isFinite(width) || !Number.isFinite(height)) {
+      return null;
+    }
+    if (width <= 0 || height <= 0) {
+      return null;
+    }
+
+    const parse = (value) => {
+      const parsed = Number.parseFloat(value);
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+    let marginInline = 0;
+    let paddingInline = 0;
+    let borderInline = 0;
+    let isPositioned = false;
+    const view = element.ownerDocument?.defaultView;
+    if (view && typeof view.getComputedStyle === "function") {
+      const style = view.getComputedStyle(element);
+      if (style) {
+        marginInline = parse(style.marginLeft) + parse(style.marginRight);
+        paddingInline = parse(style.paddingLeft) + parse(style.paddingRight);
+        borderInline =
+          parse(style.borderLeftWidth) + parse(style.borderRightWidth);
+        isPositioned =
+          style.position === "absolute" || style.position === "fixed";
+      }
+    }
+
+    if (options.inFlow === true && isPositioned) {
+      return null;
+    }
+
+    return {
+      width,
+      height,
+      inlineWidth: width + marginInline,
+      contentWidth: Math.max(0, width - paddingInline - borderInline),
+      paddingInline,
+      borderInline,
+    };
+  };
+
+  /**
+   * 在不依赖目标元素自身 flex 分配结果的前提下，计算它在 container 内联方向上
+   * 实际可用的宽度：container 内容宽度减去沿途祖先的内边距 / 边框，再减去同一
+   * 行内所有仍在文档流中的兄弟盒子。
+   * @param {{ element: Element, container: Element }} params
+   * @returns {null | number}
+   */
+  const measureS1pAvailableInlineWidth = ({ element, container }) => {
+    if (!(element instanceof Element) || !(container instanceof Element)) {
+      return null;
+    }
+    if (!element.isConnected || !container.isConnected) {
+      return null;
+    }
+    const containerBox = readS1pNavbarBoxWidth(container);
+    if (!containerBox) {
+      return null;
+    }
+
+    let available = containerBox.contentWidth;
+    let node = element;
+    let guard = 0;
+    while (node instanceof Element && node !== container) {
+      if (guard++ > 32) {
+        return null;
+      }
+      const parent = node.parentElement;
+      if (!(parent instanceof Element)) {
+        return null;
+      }
+      if (parent !== container) {
+        const parentBox = readS1pNavbarBoxWidth(parent);
+        if (parentBox) {
+          available -= parentBox.paddingInline + parentBox.borderInline;
+        }
+      }
+      for (const sibling of Array.from(parent.children || [])) {
+        if (sibling === node || sibling.hidden) {
+          continue;
+        }
+        const siblingBox = readS1pNavbarBoxWidth(sibling, { inFlow: true });
+        if (siblingBox) {
+          available -= siblingBox.inlineWidth;
+        }
+      }
+      node = parent;
+    }
+
+    return Math.max(0, available);
+  };
+
+  /**
+   * 选择本轮响应式布局策略（纯函数）。
+   * NUX 窄屏接管优先于一切：此时既不做“更多”溢出，也不用未稳定测量做判断。
+   *
+   * @param {{ nuxCompact?: boolean, measurable?: boolean }} params
+   * @returns {"nux-compact" | "unmeasured" | "responsive"}
+   */
+  const resolveS1pNavbarLayoutMode = ({ nuxCompact, measurable } = {}) => {
+    if (nuxCompact === true) {
+      return "nux-compact";
+    }
+    if (measurable !== true) {
+      return "unmeasured";
+    }
+    return "responsive";
+  };
+
+  /**
+   * 导航栏响应式布局决策（纯函数）。
+   * 输入只来自 canonical 测量：导航项理论需求宽度、导航行可用宽度、固定保留区域。
+   * 输出只是投影描述，不读取也不写入 DOM，因此同样的输入必然得到同样的结果。
+   *
+   * @param {{
+   *   itemWidths?: number[],
+   *   chromeWidth?: number,
+   *   overflowToggleWidth?: number,
+   *   availableWidth?: number,
+   *   searchWidth?: number,
+   *   searchToggleWidth?: number,
+   *   searchCompactMinWidth?: number,
+   *   epsilon?: number,
+   * }} metrics
+   * @returns {{
+   *   mode: string, primaryCount: number, showOverflow: boolean,
+   *   searchCollapsed: boolean, demandWidth: number, rowBudget: number,
+   *   slackWidth: number, totalCount: number,
+   * }}
+   */
+  const computeS1pNavbarLayoutProjection = (metrics = {}) => {
+    const widths = Array.from(metrics.itemWidths || [], (value) =>
+      Math.max(0, Number(value) || 0)
+    );
+    const totalCount = widths.length;
+    const cumulative = [0];
+    for (const width of widths) {
+      cumulative.push(cumulative[cumulative.length - 1] + width);
+    }
+
+    const chromeWidth = Math.max(0, Number(metrics.chromeWidth) || 0);
+    const overflowToggleWidth = Math.max(
+      0,
+      Number(metrics.overflowToggleWidth) || 0
+    );
+    const searchWidth = Math.max(0, Number(metrics.searchWidth) || 0);
+    const rawSearchToggleWidth = Number(metrics.searchToggleWidth);
+    const searchToggleWidth =
+      Number.isFinite(rawSearchToggleWidth) && rawSearchToggleWidth > 0
+        ? rawSearchToggleWidth
+        : searchWidth;
+    const compactMin = Math.max(
+      0,
+      Number(metrics.searchCompactMinWidth ?? S1P_NAV_SEARCH_COMPACT_MIN_WIDTH_PX) ||
+        0
+    );
+    const tolerance = Math.max(0, Number(metrics.epsilon ?? S1P_NAV_LAYOUT_EPSILON_PX) || 0);
+
+    // 搜索栏只有在自身可用宽度低于“仍可用的搜索”下限时才收缩成文字入口。
+    // 收缩会把原搜索栏占用的宽度还给导航行，因此这份返还宽度进入同一预算，
+    // 避免“先收起搜索、再把本可放下的链接塞进更多”。
+    const searchCollapsed = searchWidth > 0 && searchWidth < compactMin;
+    const releasedWidth = searchCollapsed
+      ? Math.max(0, searchWidth - searchToggleWidth)
+      : 0;
+    const rowBudget = Math.max(0, Number(metrics.availableWidth) || 0) + releasedWidth;
+
+    const demandFor = (count, withOverflowToggle) =>
+      cumulative[count] + chromeWidth + (withOverflowToggle ? overflowToggleWidth : 0);
+    const fits = (demand) => demand <= rowBudget + tolerance;
+
+    let primaryCount = totalCount;
+    if (!fits(demandFor(totalCount, false))) {
+      // 从右侧最低优先级的链接开始收进“更多”，直到整行容纳得下。
+      while (primaryCount > 0 && !fits(demandFor(primaryCount, true))) {
+        primaryCount -= 1;
+      }
+    }
+
+    const showOverflow = primaryCount < totalCount;
+    const demandWidth = showOverflow
+      ? demandFor(primaryCount, true)
+      : demandFor(totalCount, false);
+
+    return {
+      mode: "responsive",
+      primaryCount,
+      showOverflow,
+      searchCollapsed,
+      demandWidth,
+      rowBudget,
+      slackWidth: rowBudget - demandWidth,
+      totalCount,
+    };
+  };
 
   const teardownNavbarCustomOverflow = () => {
     if (typeof navbarCustomOverflowCleanup === "function") {
@@ -2177,7 +2398,8 @@
       navUl.appendChild(overflowLi);
     }
 
-    let reconcileFrame = null;
+    let layoutFrame = null;
+    let disposed = false;
     let isMenuOpen = false;
     let menuFrame = null;
     let resizeObserver = null;
@@ -2484,19 +2706,6 @@
       isSearchCollapsed = false;
     };
 
-    const shouldCompactSearchBar = () => {
-      if (!hasSearchBar || !searchBar.isConnected) {
-        return false;
-      }
-      const searchBarRect = searchBar.getBoundingClientRect();
-      const searchBarWidth = Number(searchBarRect?.width) || 0;
-      const searchBarHeight = Number(searchBarRect?.height) || 0;
-      return (
-        searchBarHeight > 0 &&
-        searchBarWidth < S1P_NAV_SEARCH_COMPACT_MIN_WIDTH_PX
-      );
-    };
-
     const setCustomNavItemVisibility = (item, isVisible) => {
       item.hidden = !isVisible;
       item.classList.toggle(
@@ -2515,8 +2724,134 @@
       getS1pLayoutViewportWidth() > 0 &&
       getS1pLayoutViewportWidth() <= NARROW_SCREEN_MAX_WIDTH_PX;
 
-    const hasNavbarContentOverflow = () =>
-      navUl.scrollWidth > navUl.clientWidth + 1;
+    // --- 测量 ---------------------------------------------------------------
+    // 所有测量都在 canonical 投影（全部链接展开、搜索栏展开）下进行，
+    // 不读取任何由本模块写入的 hidden / class / style，
+    // 因此同一环境下多次 reconcile 必然得到同一组输入。
+
+    const measureNavbarSearchWidth = () => {
+      const box = readS1pNavbarBoxWidth(searchBar);
+      return box ? box.inlineWidth : 0;
+    };
+
+    // 搜索文字入口只在搜索栏折叠时参与布局，这里短暂投影一次取得它的真实宽度，
+    // 用于把“折叠搜索后释放的宽度”计入同一份预算。
+    // 返回 null 表示无法取得入口宽度——此时不假设任何释放宽度。
+    const measureNavbarSearchToggleWidth = () => {
+      if (!hasSearchBar || !searchToggle) {
+        return null;
+      }
+      setSearchCollapsed(true);
+      const box = readS1pNavbarBoxWidth(searchToggle);
+      setSearchCollapsed(false);
+      return box ? box.inlineWidth : null;
+    };
+
+    const measureNavbarLayout = () => {
+      const container =
+        headerRoot instanceof Element
+          ? headerRoot
+          : navRoot?.parentElement || null;
+      const containerBudget = measureS1pAvailableInlineWidth({
+        element: navUl,
+        container,
+      });
+      // 容器与导航行不同源（例如导航被复制到固定顶栏）时，退回导航行自身在
+      // canonical 状态下实际分到的宽度；两者在标准结构下数值一致。
+      const navRowBox = readS1pNavbarBoxWidth(navUl);
+      const availableWidth =
+        Number.isFinite(containerBudget) && containerBudget > 0
+          ? containerBudget
+          : navRowBox
+            ? navRowBox.contentWidth
+            : 0;
+
+      const searchWidth = hasSearchBar ? measureNavbarSearchWidth() : 0;
+
+      // 测量态：把导航项按自身内容宽度参与布局，避免 flex 收缩把
+      // “需求宽度”压成当前分配宽度。
+      const measuringTarget = navRoot instanceof Element ? navRoot : container;
+      measuringTarget?.classList.add(S1P_NAV_MEASURING_CLASS);
+      const previousOverflowHidden = overflowLi.hidden;
+      overflowLi.hidden = false;
+
+      const itemWidths = customNavItems.map((item) => {
+        const box = readS1pNavbarBoxWidth(item);
+        return box ? box.inlineWidth : 0;
+      });
+
+      let chromeWidth = 0;
+      let overflowToggleWidth = 0;
+      for (const child of Array.from(navUl.children || [])) {
+        if (child === overflowLi) {
+          const box = readS1pNavbarBoxWidth(child);
+          overflowToggleWidth = box ? box.inlineWidth : 0;
+          continue;
+        }
+        if (customNavItems.includes(child) || child.hidden) {
+          continue;
+        }
+        const box = readS1pNavbarBoxWidth(child);
+        if (box) {
+          chromeWidth += box.inlineWidth;
+        }
+      }
+
+      overflowLi.hidden = previousOverflowHidden;
+      measuringTarget?.classList.remove(S1P_NAV_MEASURING_CLASS);
+
+      const searchToggleWidth =
+        searchWidth > 0 && searchWidth < S1P_NAV_SEARCH_COMPACT_MIN_WIDTH_PX
+          ? measureNavbarSearchToggleWidth()
+          : 0;
+      const measurable =
+        Number.isFinite(availableWidth) &&
+        Number(availableWidth) > 0 &&
+        itemWidths.some((width) => width > 0);
+
+      return {
+        measurable,
+        availableWidth:
+          Number.isFinite(availableWidth) && availableWidth > 0
+            ? availableWidth
+            : 0,
+        itemWidths,
+        chromeWidth,
+        overflowToggleWidth,
+        searchWidth,
+        searchToggleWidth,
+      };
+    };
+    // --- 投影 ---------------------------------------------------------------
+    // DOM 只是最终结果的展示层：这里是唯一写入导航项 hidden / class 的地方。
+    // 进入下一轮判断前会先归一化回 canonical 投影，所以写入结果不会成为输入。
+
+    const resetNavbarProjectionToCanonical = () => {
+      customNavItems.forEach((item, index) => {
+        setCustomNavItemVisibility(item, true);
+        if (overflowMenuLinks[index]) {
+          overflowMenuLinks[index].hidden = true;
+        }
+      });
+      overflowLi.hidden = true;
+      setSearchCollapsed(false);
+      closeMenu();
+    };
+
+    const projectNavbarLayout = (projection) => {
+      customNavItems.forEach((item, index) => {
+        const isPrimary = index < projection.primaryCount;
+        setCustomNavItemVisibility(item, isPrimary);
+        if (overflowMenuLinks[index]) {
+          overflowMenuLinks[index].hidden = isPrimary;
+        }
+      });
+      overflowLi.hidden = projection.showOverflow !== true;
+      setSearchCollapsed(projection.searchCollapsed === true);
+      if (overflowLi.hidden) {
+        closeMenu();
+      }
+    };
 
     const repairFocusAfterReconcile = ({
       activeElement,
@@ -2540,9 +2875,13 @@
       focusSafeNavigationTarget();
     };
 
+    // --- 单一调度入口 -------------------------------------------------------
+    // 初始化 / resize / ResizeObserver / 字体完成 / 设置变化 全部汇聚到这里，
+    // 不存在第二个直接改写导航 DOM 状态的入口。
+
     const reconcile = () => {
-      reconcileFrame = null;
-      if (!navUl.isConnected) {
+      layoutFrame = null;
+      if (disposed || !navUl.isConnected) {
         return;
       }
 
@@ -2553,61 +2892,79 @@
         searchToggle?.contains(activeElement) ||
         searchPopover?.contains(activeElement);
 
-      if (isSearchCollapsed) {
-        setSearchCollapsed(false);
-      }
-      customNavItems.forEach((item, index) => {
-        setCustomNavItemVisibility(item, true);
-        if (overflowMenuLinks[index]) {
-          overflowMenuLinks[index].hidden = true;
-        }
+      // 1) canonical 归一化：DOM 只反映上一轮决策，绝不作为本轮输入。
+      resetNavbarProjectionToCanonical();
+
+      // 2) canonical 测量：需求宽度、可用宽度、固定保留区域。
+      const metrics = measureNavbarLayout();
+
+      // 3) 响应式决策。
+      const mode = resolveS1pNavbarLayoutMode({
+        nuxCompact: isNuxCompactNavbar(),
+        measurable: metrics.measurable,
       });
-      overflowLi.hidden = true;
-      closeMenu();
-
-      // NUX 在 909px 以下有自己的悬浮快捷入口。此处只让它接管全部自定义链接，
-      // 避免第二套“更多”入口与 NUX 的窄屏交互叠加。
-      if (isNuxCompactNavbar() || navUl.clientWidth <= 0) {
-        setSearchCollapsed(shouldCompactSearchBar());
-        repairFocusAfterReconcile({
-          activeElement,
-          wasOverflowFocused,
-          wasSearchFocused,
-        });
-        return;
+      let projection;
+      if (mode === "nux-compact") {
+        // NUX 在 909px 以下有自己的悬浮快捷入口。此处只让它接管全部自定义链接，
+        // 避免第二套“更多”入口与 NUX 的窄屏交互叠加。
+        projection = {
+          mode,
+          primaryCount: customNavItems.length,
+          showOverflow: false,
+          searchCollapsed:
+            metrics.searchWidth > 0 &&
+            metrics.searchWidth < S1P_NAV_SEARCH_COMPACT_MIN_WIDTH_PX,
+          totalCount: customNavItems.length,
+        };
+      } else if (mode === "unmeasured") {
+        // 布局尚未稳定（首帧 / 未附加 / 无几何信息）：先给出保守投影，
+        // 不让未展开的链接把搜索栏挤出可视区域；稳定后的调度会给出最终结果。
+        projection = {
+          mode,
+          primaryCount: 0,
+          showOverflow: customNavItems.length > 0,
+          searchCollapsed: false,
+          totalCount: customNavItems.length,
+        };
+      } else {
+        projection = { ...computeS1pNavbarLayoutProjection(metrics), mode };
       }
 
-      if (hasNavbarContentOverflow()) {
-        overflowLi.hidden = false;
-        for (let index = customNavItems.length - 1; index >= 0; index -= 1) {
-          if (!hasNavbarContentOverflow()) {
-            break;
-          }
-          setCustomNavItemVisibility(customNavItems[index], false);
-          if (overflowMenuLinks[index]) {
-            overflowMenuLinks[index].hidden = false;
-          }
-        }
-
-        if (!overflowMenuLinks.some((link) => !link.hidden)) {
-          overflowLi.hidden = true;
-        }
-      }
-
-      setSearchCollapsed(shouldCompactSearchBar());
+      // 4) 投影到 DOM。
+      projectNavbarLayout(projection);
       repairFocusAfterReconcile({
         activeElement,
         wasOverflowFocused,
         wasSearchFocused,
       });
+      return projection;
     };
 
     const scheduleReconcile = () => {
-      if (reconcileFrame !== null) {
+      if (disposed || layoutFrame !== null) {
         return;
       }
-      reconcileFrame = requestAnimationFrame(reconcile);
+      layoutFrame = requestAnimationFrame(reconcile);
     };
+
+    // 字体加载完成会改变文本的固有宽度，必须重新测量，而不是等一个固定超时。
+    const handleFontsLoadingDone = () => scheduleReconcile();
+    if (
+      document.fonts &&
+      typeof document.fonts.addEventListener === "function"
+    ) {
+      document.fonts.addEventListener("loadingdone", handleFontsLoadingDone);
+    }
+    const fontsReadyPromise =
+      document.fonts && typeof document.fonts.ready?.then === "function"
+        ? document.fonts.ready
+        : null;
+    if (fontsReadyPromise) {
+      fontsReadyPromise.then(
+        () => scheduleReconcile(),
+        () => scheduleReconcile()
+      );
+    }
 
     const handleDocumentClick = (event) => {
       const target = event.target;
@@ -2682,14 +3039,15 @@
     }
 
     navbarCustomOverflowCleanup = () => {
+      disposed = true;
       const activeElement = document.activeElement;
       const activeElementOwnedByCleanup =
         overflowLi.contains(activeElement) ||
         overflowMenu.contains(activeElement) ||
         searchToggle?.contains(activeElement);
-      if (reconcileFrame !== null) {
-        cancelAnimationFrame(reconcileFrame);
-        reconcileFrame = null;
+      if (layoutFrame !== null) {
+        cancelAnimationFrame(layoutFrame);
+        layoutFrame = null;
       }
       if (menuFrame !== null) {
         cancelAnimationFrame(menuFrame);
@@ -2701,6 +3059,15 @@
       }
       resizeObserver?.disconnect();
       resizeObserver = null;
+      if (
+        document.fonts &&
+        typeof document.fonts.removeEventListener === "function"
+      ) {
+        document.fonts.removeEventListener(
+          "loadingdone",
+          handleFontsLoadingDone
+        );
+      }
       window.removeEventListener("resize", scheduleReconcile);
       document.removeEventListener("click", handleDocumentClick);
       document.removeEventListener("keydown", handleDocumentKeydown);
@@ -2723,9 +3090,9 @@
       headerRoot?.classList.remove(S1P_NAV_CUSTOMIZED_HEADER_CLASS);
     };
 
-    // Publish the first overflow decision synchronously so the pre-paint
-    // layout cannot let every custom link push the search bar away. Keep the
-    // animation-frame pass for fonts and late stylesheet/layout changes.
+    // 首帧同步投影：在浏览器绘制前给出保守结果，避免所有自定义链接把搜索栏
+    // 挤出可视区域。随后由同一个调度入口接收 rAF / ResizeObserver / 字体完成
+    // 信号，在布局稳定后给出最终协调结果。
     reconcile();
     scheduleReconcile();
   };
@@ -55897,6 +56264,10 @@
       initializeNavbar,
       setupNavbarCustomOverflow,
       teardownNavbarCustomOverflow,
+      computeNavbarLayoutProjection: computeS1pNavbarLayoutProjection,
+      resolveNavbarLayoutMode: resolveS1pNavbarLayoutMode,
+      readNavbarBoxWidth: readS1pNavbarBoxWidth,
+      measureNavbarAvailableWidth: measureS1pAvailableInlineWidth,
       invalidateSettingsCache,
     };
   }

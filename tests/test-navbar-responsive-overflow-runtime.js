@@ -149,8 +149,8 @@ class FakeElement extends FakeEventTarget {
     this.scrollIntoViewCalls = [];
     this._textContent = "";
     this._href = "";
-    this._rectWidth = this.tagName === "LI" ? 40 : 0;
-    this._rectHeight = this.tagName === "DIV" ? 24 : 0;
+    this._rectWidth = this.tagName === "LI" ? 40 : this.tagName === "A" ? 46 : 0;
+    this._rectHeight = ["DIV", "LI", "A", "UL"].includes(this.tagName) ? 24 : 0;
   }
 
   get id() {
@@ -476,9 +476,19 @@ const installForumDom = (runtime) => {
   header.id = "hd";
   const headerRoot = document.createElement("div");
   headerRoot.className = "wp";
+  // The header row is the flex container: its content width is the sum of the
+  // nav row and the fixed siblings that are not part of the nav row.
+  Object.defineProperty(headerRoot, "_rectWidth", {
+    configurable: true,
+    get: () => layout.navWidth + layout.searchWidth,
+  });
   const navRoot = document.createElement("div");
   navRoot.id = "nv";
   const navUl = document.createElement("ul");
+  Object.defineProperty(navUl, "_rectWidth", {
+    configurable: true,
+    get: () => layout.navWidth,
+  });
   Object.defineProperty(navUl, "clientWidth", {
     configurable: true,
     get: () => layout.navWidth,
@@ -494,6 +504,10 @@ const installForumDom = (runtime) => {
 
   const searchParent = document.createElement("div");
   searchParent.className = "hdc";
+  Object.defineProperty(searchParent, "_rectWidth", {
+    configurable: true,
+    get: () => layout.searchWidth,
+  });
   const searchBar = document.createElement("div");
   searchBar.id = "scbar";
   searchBar._rectWidth = layout.searchWidth;
@@ -1051,9 +1065,363 @@ const run = () => {
   assert.equal(forum.document.querySelectorAll(".s1p-nav-overflow-menu").length, 0);
   assert.equal(forum.document.querySelectorAll("#s1p-nav-overflow").length, 0);
 
+  runStabilityScenarios();
+  runUnmeasuredFallbackScenario();
+  runSearchCompactReleaseScenario();
+  runFontsLifecycleScenario();
+
   console.log(
-    "[navbar-responsive-overflow-runtime] canonical link ownership and DOM lifecycle verified."
+    "[navbar-responsive-overflow-runtime] canonical link ownership, DOM lifecycle and layout-authority stability verified."
   );
 };
+
+/**
+ * 稳定性场景：同一组布局输入必须得到同一份投影。
+ * 覆盖 report 中的现场数据（dpr 1.875 / zoom 150% / viewport 985）、
+ * resize、DevTools 打开关闭、字体延迟、亚像素临界值。
+ */
+const runStabilityScenarios = () => {
+  const runtime = createHarness();
+  const { hooks } = runtime;
+  const forum = installForumDom(runtime);
+  const links = ["论坛", "归墟", "游戏", "影视", "PC数码", "黑名单"].map(
+    (name, index) => ({ name, href: `forum-${index + 100}-1.html` })
+  );
+  // 报告现场的 CSS 像素宽度。
+  const intrinsicWidths = [45, 45, 45, 45, 63.63, 59];
+  const managerWidth = 99.73;
+  const overflowWidth = 46;
+
+  setSettings(runtime, hooks, createSettings(links));
+  forum.layout.navWidth = 401.36;
+  forum.layout.searchWidth = 334.47;
+  forum.searchBar._rectWidth = forum.layout.searchWidth;
+  hooks.initializeNavbar();
+  forum.flushAnimationFrames();
+
+  const customItems = () =>
+    forum.navUl.children.filter((item) =>
+      item.classList.contains("s1p-nav-custom-item")
+    );
+  const setIntrinsicWidths = (scale = 1) => {
+    customItems().forEach((item, index) => {
+      item._rectWidth = intrinsicWidths[index] * scale;
+    });
+    const manager = forum.document.querySelector("#s1p-nav-link");
+    if (manager) manager._rectWidth = managerWidth;
+    const overflow = forum.document.querySelector("#s1p-nav-overflow");
+    if (overflow) overflow._rectWidth = overflowWidth;
+  };
+  const snapshot = () => ({
+    hidden: customItems().map((item) => item.hidden),
+    overflowHidden: Boolean(
+      forum.document.querySelector("#s1p-nav-overflow")?.hidden
+    ),
+  });
+  const resizeTo = (navWidth) => {
+    forum.layout.navWidth = navWidth;
+    forum.eventWindow.dispatchEvent(createEvent("resize", forum.eventWindow));
+    forum.flushAnimationFrames();
+  };
+
+  setIntrinsicWidths(1);
+
+  // 记录测量态 class 的进出，确认测量态真的被使用而不是事后恰好缺失。
+  const measuringClass = "s1p-nav-measuring";
+  const classMutations = [];
+  const navClassList = forum.navRoot.classList;
+  const originalAdd = navClassList.add.bind(navClassList);
+  const originalRemove = navClassList.remove.bind(navClassList);
+  navClassList.add = (...tokens) => {
+    tokens.forEach((token) => classMutations.push(`+${token}`));
+    return originalAdd(...tokens);
+  };
+  navClassList.remove = (...tokens) => {
+    tokens.forEach((token) => classMutations.push(`-${token}`));
+    return originalRemove(...tokens);
+  };
+
+  // 1) 现场数据：1px 级别的布局量化缺口不得把链接推进“更多”。
+  resizeTo(401.36);
+  assert.ok(
+    classMutations.includes(`+${measuringClass}`),
+    "需求宽度测量必须进入测量态"
+  );
+  assert.ok(
+    classMutations.includes(`-${measuringClass}`),
+    "测量结束后必须退出测量态"
+  );
+  assert.equal(
+    forum.navRoot.classList.contains(measuringClass),
+    false,
+    "测量态不得泄漏到 reconcile 之后"
+  );
+  const reported = snapshot();
+  assert.deepStrictEqual(
+    reported.hidden,
+    [false, false, false, false, false, false],
+    "现场数据下所有链接必须留在 primary"
+  );
+  assert.equal(reported.overflowHidden, true);
+
+  // 2) 幂等：同一布局重复 reconcile 结果完全一致。
+  resizeTo(401.36);
+  resizeTo(401.36);
+  assert.deepStrictEqual(snapshot(), reported, "重复 reconcile 必须幂等");
+
+  // 3) DevTools 打开 / 关闭：可用宽度变化再恢复，结果必须回到原投影。
+  resizeTo(320);
+  assert.ok(
+    snapshot().hidden.some((hidden) => hidden),
+    "可用宽度变窄后必须有链接进入“更多”"
+  );
+  resizeTo(401.36);
+  assert.deepStrictEqual(
+    snapshot(),
+    reported,
+    "可用宽度恢复后必须回到与最初一致的投影（DevTools 往返无滞后）"
+  );
+
+  // 4) 字体延迟加载：宽度变化触发重新决策，字体恢复后回到原投影。
+  setIntrinsicWidths(1.12);
+  resizeTo(401.36);
+  assert.ok(
+    snapshot().hidden.some((hidden) => hidden),
+    "字体回退导致宽度明显变大时必须重新决策"
+  );
+  setIntrinsicWidths(1);
+  resizeTo(401.36);
+  assert.deepStrictEqual(
+    snapshot(),
+    reported,
+    "字体加载完成后必须回到与初始一致的投影"
+  );
+
+  // 5) 亚像素临界：2px 以内由布局量化容差吸收，超出才进入“更多”。
+  resizeTo(400.36);
+  assert.deepStrictEqual(
+    snapshot().hidden,
+    [false, false, false, false, false, false],
+    "2px 量化缺口必须被容差吸收"
+  );
+  resizeTo(399);
+  const shortSnapshot = snapshot();
+  assert.equal(
+    shortSnapshot.hidden.filter((hidden) => hidden).length,
+    1,
+    "超过量化容差时只收进最少必要链接"
+  );
+  assert.equal(shortSnapshot.hidden[shortSnapshot.hidden.length - 1], true);
+  assert.equal(shortSnapshot.overflowHidden, false);
+
+  // 6) 真正空间不足：进入“更多”，并且投影稳定。
+  resizeTo(200);
+  const narrow = snapshot();
+  assert.ok(narrow.hidden.some((hidden) => hidden));
+  resizeTo(200);
+  assert.deepStrictEqual(snapshot(), narrow, "窄屏下的投影同样必须幂等");
+
+  hooks.teardownNavbarCustomOverflow();
+  assert.equal(FakeResizeObserver.activeCount(), 0);
+};
+
+/**
+ * 布局未稳定（首帧 / 无几何信息）时必须给出保守投影，
+ * 稳定后必须回到与常规测量完全一致的最终投影。
+ */
+const runUnmeasuredFallbackScenario = () => {
+  const runtime = createHarness();
+  const { hooks } = runtime;
+  const forum = installForumDom(runtime);
+  setSettings(
+    runtime,
+    hooks,
+    createSettings([
+      { name: "A", href: "forum-100-1.html" },
+      { name: "B", href: "forum-101-1.html" },
+    ])
+  );
+  forum.layout.navWidth = 600;
+  forum.layout.searchWidth = 300;
+  forum.searchBar._rectWidth = 300;
+  hooks.initializeNavbar();
+  forum.flushAnimationFrames();
+
+  const customItems = () =>
+    forum.navUl.children.filter((item) =>
+      item.classList.contains("s1p-nav-custom-item")
+    );
+  const overflowOwner = () =>
+    forum.document.querySelector("#s1p-nav-overflow");
+  const searchToggle = () =>
+    forum.document.querySelector("#s1p-nav-search-toggle");
+  const assertMeasuredStateClean = (label) =>
+    assert.equal(
+      forum.navRoot.classList.contains("s1p-nav-measuring"),
+      false,
+      `${label}: reconcile 结束后不得残留测量态 class`
+    );
+
+  assert.deepStrictEqual(
+    customItems().map((item) => item.hidden),
+    [false, false],
+    "正常布局下链接应留在 primary"
+  );
+  assert.equal(overflowOwner().hidden, true);
+  assertMeasuredStateClean("measured");
+
+  // 首帧 / 未附加：容器与导航行都没有可用几何信息。
+  forum.headerRoot._rectHeight = 0;
+  forum.navUl._rectHeight = 0;
+  forum.eventWindow.dispatchEvent(createEvent("resize", forum.eventWindow));
+  forum.flushAnimationFrames();
+  assert.deepStrictEqual(
+    customItems().map((item) => item.hidden),
+    [true, true],
+    "布局未稳定时不得让未展开的链接把搜索栏挤出可视区域"
+  );
+  assert.equal(
+    overflowOwner().hidden,
+    false,
+    "布局未稳定时必须给出保守的“更多”入口"
+  );
+  assert.equal(
+    searchToggle().classList.contains("s1p-nav-search-toggle-visible"),
+    false,
+    "布局未稳定时不得据此折叠搜索栏"
+  );
+  assert.equal(
+    forum.searchBar.parentNode,
+    forum.searchParent,
+    "布局未稳定时搜索栏必须留在原位"
+  );
+  assertMeasuredStateClean("unmeasured");
+
+  // 几何恢复后必须回到确定性结果，而不是停留在保守态。
+  forum.headerRoot._rectHeight = 24;
+  forum.navUl._rectHeight = 24;
+  forum.eventWindow.dispatchEvent(createEvent("resize", forum.eventWindow));
+  forum.flushAnimationFrames();
+  assert.deepStrictEqual(
+    customItems().map((item) => item.hidden),
+    [false, false],
+    "布局稳定后必须回到最终投影"
+  );
+  assert.equal(overflowOwner().hidden, true);
+  assertMeasuredStateClean("recovered");
+
+  hooks.teardownNavbarCustomOverflow();
+};
+
+/**
+ * 搜索折叠释放的宽度必须计入同一预算：否则会把本可放下的链接错误收进“更多”。
+ */
+const runSearchCompactReleaseScenario = () => {
+  const runtime = createHarness();
+  const { hooks } = runtime;
+  const forum = installForumDom(runtime);
+  setSettings(
+    runtime,
+    hooks,
+    createSettings([
+      { name: "A", href: "forum-100-1.html" },
+      { name: "B", href: "forum-101-1.html" },
+    ])
+  );
+  forum.layout.navWidth = 40;
+  forum.layout.searchWidth = 100;
+  forum.searchBar._rectWidth = 100;
+  hooks.initializeNavbar();
+  forum.flushAnimationFrames();
+
+  const customItems = () =>
+    forum.navUl.children.filter((item) =>
+      item.classList.contains("s1p-nav-custom-item")
+    );
+  customItems().forEach((item) => {
+    item._rectWidth = 40;
+  });
+  forum.document.querySelector("#s1p-nav-link")._rectWidth = 20;
+  forum.document.querySelector("#s1p-nav-overflow")._rectWidth = 20;
+
+  forum.eventWindow.dispatchEvent(createEvent("resize", forum.eventWindow));
+  forum.flushAnimationFrames();
+
+  assert.equal(
+    forum.document.querySelector("#s1p-nav-search-toggle").hidden,
+    false,
+    "搜索栏低于下限时必须收缩为文字入口"
+  );
+  const hidden = customItems().map((item) => item.hidden);
+  assert.equal(
+    hidden.filter(Boolean).length,
+    1,
+    "折叠搜索释放的宽度必须计入预算，只收进最少必要链接"
+  );
+  assert.deepStrictEqual(hidden, [false, true]);
+
+  hooks.teardownNavbarCustomOverflow();
+};
+
+/**
+ * 字体加载必须接入同一个调度入口，并且在 teardown 时注销。
+ */
+const runFontsLifecycleScenario = () => {
+  const runtime = createHarness();
+  const { hooks } = runtime;
+  const forum = installForumDom(runtime);
+  const fonts = new FakeEventTarget();
+  let fontsReadyInvocations = 0;
+  fonts.ready = {
+    then: (onFulfilled, onRejected) => {
+      fontsReadyInvocations += 1;
+      (onFulfilled || onRejected)();
+    },
+  };
+  forum.document.fonts = fonts;
+
+  setSettings(
+    runtime,
+    hooks,
+    createSettings([{ name: "A", href: "forum-100-1.html" }])
+  );
+  forum.layout.navWidth = 600;
+  hooks.initializeNavbar();
+  forum.flushAnimationFrames();
+
+  assert.equal(
+    fontsReadyInvocations,
+    1,
+    "document.fonts.ready 必须接入同一个布局调度入口"
+  );
+  assert.equal(
+    fonts.listenerCount("loadingdone"),
+    1,
+    "字体加载完成必须注册重新测量监听"
+  );
+  assert.equal(forum.navRoot.classList.contains("s1p-nav-measuring"), false);
+
+  fonts.dispatchEvent(createEvent("loadingdone", fonts));
+  assert.ok(
+    forum.pendingAnimationFrameCount() > 0,
+    "字体加载完成必须调度重新测量，而不是依赖固定等待"
+  );
+  forum.flushAnimationFrames();
+
+  hooks.teardownNavbarCustomOverflow();
+  assert.equal(
+    fonts.listenerCount("loadingdone"),
+    0,
+    "teardown 必须注销字体监听"
+  );
+  fonts.dispatchEvent(createEvent("loadingdone", fonts));
+  assert.equal(
+    forum.pendingAnimationFrameCount(),
+    0,
+    "teardown 之后字体事件不得再调度布局"
+  );
+  assert.equal(FakeResizeObserver.activeCount(), 0);
+};
+
 
 run();
