@@ -104,7 +104,8 @@ The script uses `GM_addValueChangeListener` to detect data changes from other ta
 2. Update `SCRIPT_VERSION` and `SCRIPT_RELEASE_DATE` constants (lines 27-28)
 3. Update `CHANGELOG.md`
 4. Update welcome popup text in `showFirstTimeWelcomeIfNeeded`
-5. Use the `s1plus-release` skill for the standardized release process
+5. Use the `s1plus-release` skill for the release metadata steps
+6. Use the `userscript-release` skill to publish: it fast-forwards `release` to the new tag, which triggers the Greasy Fork webhook. Pushing `main` never publishes.
 
 ## Key Gotchas
 

@@ -188,12 +188,14 @@ Fallback polling (`initializeSettingsFallbackSync`) polls settings if `GM_addVal
 
 ## Release Workflow
 
-Use the `s1plus-release` skill for releases. The standard workflow updates:
+Use the `s1plus-release` skill for the metadata steps:
 
 1. `@version` metadata in `S1Plus.js`
 2. `SCRIPT_VERSION` and `SCRIPT_RELEASE_DATE`
 3. `CHANGELOG.md`
 4. Welcome popup text in `showFirstTimeWelcomeIfNeeded`
+
+Use the `userscript-release` skill to publish. It guards the release-artifact invariants (Greasy Fork's 2 MiB code ceiling, `@resource` pin freshness), then fast-forwards `release` to the new tag with `git push origin vX.Y.Z:release`, which triggers the Greasy Fork webhook. Pushing `main` never publishes.
 
 ## Gotchas
 

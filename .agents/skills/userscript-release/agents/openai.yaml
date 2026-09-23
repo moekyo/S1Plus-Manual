@@ -1,0 +1,7 @@
+interface:
+  display_name: "Userscript Release"
+  short_description: "Publish S1Plus via the release branch and Greasy Fork webhook"
+  default_prompt: "Use $userscript-release to publish S1Plus as version 7.0.2."
+
+policy:
+  allow_implicit_invocation: true

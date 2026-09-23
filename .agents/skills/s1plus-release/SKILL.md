@@ -1,6 +1,6 @@
 ---
 name: s1plus-release
-description: Execute the standardized S1Plus userscript release workflow. Use when asked to release/发布/发版 a new S1Plus version, synchronize release metadata and docs, refresh the first-run welcome update popup, create a release commit, or create a release tag. Handles version/date updates in `S1Plus.js`, changelog rollout from `## [Unreleased]`, and a required preview-and-approval checkpoint for the first-run welcome popup before continuing release commit/tag creation.
+description: Prepare an S1Plus version for release — preflight, first-run welcome popup approval gate, version/date bump in `S1Plus.js`, changelog rollout from `## [Unreleased]`, README calibration, release commit and tag. Use when preparing or editing S1Plus release metadata, refreshing the first-run update popup, or rolling the changelog. Publishing is owned by the `userscript-release` skill.
 ---
 
 # S1Plus Release
