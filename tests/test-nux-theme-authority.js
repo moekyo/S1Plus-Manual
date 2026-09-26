@@ -92,6 +92,16 @@ const assertProjectedTheme = (
     "unknown",
     "模糊低对比 palette 必须保守返回 unknown。"
   );
+  assert.deepEqual(
+    toPlainObject(
+      resolveNuxRenderedThemeEvidence({
+        backgroundRaw: "rgba(0, 0, 0, 0.2)",
+        textRaw: "#ffffff",
+      })
+    ),
+    { theme: "unknown", evidence: "translucent-background" },
+    "半透明 custom background 不能按未合成 RGB 亮度强行判断深浅。"
+  );
 
   assert.equal(
     toPlainObject(
@@ -401,6 +411,18 @@ const assertProjectedTheme = (
   );
   residueHooks.disposeS1pThemeSynchronization();
 
+  assert.ok(
+    sourceCode.includes(
+      "const S1P_NUX_MARKER_SELECTOR = '#flk a[href=\"archiver/\"]';"
+    ),
+    "NUX availability 必须绑定 S1 NUX 实际输出 marker，而不是泛化 archiver 链接。"
+  );
+  assert.ok(
+    sourceCode.includes(
+      "const S1P_NUX_MARKER_NODE_SELECTOR = 'a[href=\"archiver/\"]';"
+    ),
+    "theme change trigger 可识别已脱离 #flk 的 removed marker，但它不能成为 availability authority。"
+  );
   assert.equal(
     cssSource.includes("@media (prefers-color-scheme: dark)"),
     false,
