@@ -32,7 +32,7 @@ Do this once; later releases only verify it in step 1.
 
 2. Register the sync URL **before** the first publish push — Greasy Fork → script → Source Syncing → `sync_identifier` = `https://raw.githubusercontent.com/moekyo/S1Plus-Manual/release/S1Plus.js`, type `Manual`, save. Order matters: an unmatched push is discarded, and re-pushing the same commit emits no event. If a release went out before this was configured, recover with that page's "Update and sync".
 
-3. Add the webhook — Greasy Fork `/users/webhook-info` → generate the secret; GitHub → repo Settings → Webhooks → payload `https://api.greasyfork.org/users/<user_id>/webhook` (GitHub authenticates with the HMAC header, so the secret goes in the **Secret** field, not in the URL), content type `application/json`, event **push**.
+3. Add the webhook — Greasy Fork `/users/webhook-info` → generate the secret; GitHub → repo Settings → Webhooks → payload `https://api.greasyfork.org/users/<user_id>/webhook` (GitHub authenticates with the HMAC header, so the secret goes in the **Secret** field, not in the URL), content type `application/json`, event **push**. This secret is per Greasy Fork account, so regenerating it later invalidates every repository hook that reuses it.
 
 ## Workflow
 
@@ -75,15 +75,17 @@ Do this once; later releases only verify it in step 1.
    Then confirm the delivery succeeded: GitHub → Settings → Webhooks → the hook → Recent Deliveries, whose push delivery returns `{"updated_scripts":[...]}`.
 
    ```bash
-   gh api repos/moekyo/S1Plus-Manual/hooks --jq '.[] | {id, events, url: .config.url, active}'
+   gh api repos/moekyo/S1Plus-Manual/hooks --jq '.[] | {id, events, active, urlHasSecret: (.config.url | test("secret="))}'
    gh api repos/moekyo/S1Plus-Manual/hooks/<hook_id>/deliveries --jq '.[0] | {event, status_code, delivered_at}'
    ```
+
+   Never print `.config.url` while inspecting a hook: a hook created from Greasy Fork's Bitbucket snippet carries the secret in its query string, so echoing it leaks the secret into the transcript.
 
    Read the response body in the delivery's Response tab. Report commit, tag, published `@version`, and delivery result.
 
 ## Diagnosing a publish that did not land
 
-- **403**: GitHub's secret and Greasy Fork's `webhook_secret` differ — regenerate on `/users/webhook-info` and update both.
+- **403**: GitHub's secret and Greasy Fork's `webhook_secret` differ — regenerate on `/users/webhook-info` and update the hook. GitHub replaces `config` wholesale on PATCH, so send `config[url]`, `config[content_type]=json`, and `config[secret]` in the **same** request: omitting `content_type` silently reverts the hook to form encoding (Greasy Fork then finds no commits and publishes nothing), and omitting `secret` clears it. Any hook edit ends with a ping delivery — GitHub reports 200 only when the HMAC matches.
 - **No delivery**: hook inactive, wrong event, or the push left `S1Plus.js` unmodified.
 - **`No scripts found`**: the pushed ref does not match `sync_identifier`. A tag push (`refs/tags/...`) never matches; publish by pushing the branch.
 - **`updated_failed`**: the delivery response message carries the validation errors.
