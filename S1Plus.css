@@ -1216,8 +1216,8 @@
       position: relative;
       padding: 18px 22px 16px;
     }
-    @media (prefers-color-scheme: dark) {
-      #s1p-debug-panel-host {
+    
+      html.s1p-theme-dark #s1p-debug-panel-host {
         --s1p-debug-console-surface: #172033;
         --s1p-debug-console-surface-soft: #202b3d;
         --s1p-debug-console-surface-raised: #243248;
@@ -1227,7 +1227,7 @@
         --s1p-debug-indicator-muted: #b9c8e0;
         --s1p-debug-panel-shadow: 0 30px 90px rgba(0, 0, 0, 0.28);
       }
-    }
+    
     #s1p-debug-unified-panel.s1p-debug-panel {
       border: none;
       box-shadow: var(--s1p-debug-panel-shadow);
@@ -3700,14 +3700,14 @@
       border: none;
       border-radius: 12px;
     }
-    @media (prefers-color-scheme: dark) {
-      .s1p-modal > .s1p-modal-content {
+    
+      html.s1p-theme-dark .s1p-modal > .s1p-modal-content {
         --s1p-settings-content-bg: #172033;
         --s1p-settings-body-surface-bg: color-mix(in srgb, var(--s1p-settings-content-bg) 98%, transparent);
         --s1p-settings-scrollbar-thumb: rgba(148, 163, 184, 0.46);
         --s1p-settings-scrollbar-thumb-hover: rgba(148, 163, 184, 0.64);
       }
-    }
+    
     .s1p-modal-header {
       background: var(--s1p-pri);
       padding: 16px;
@@ -5384,11 +5384,11 @@
       color: var(--s1p-t);
     }
 
-    @media (prefers-color-scheme: dark) {
-      .s1p-search-clear-btn:hover {
+    
+      html.s1p-theme-dark .s1p-search-clear-btn:hover {
         background-color: rgba(255, 255, 255, 0.12);
       }
-    }
+    
 
     /* --- 搜索关键词高亮 --- */
     mark.s1p-highlight {
@@ -6348,11 +6348,11 @@
       --s1p-floating-control-glass-filter: var(--s1p-glass-panel-filter);
       --s1p-floating-control-glass-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
     }
-    @media (prefers-color-scheme: dark) {
-      #s1p-floating-controls-wrapper {
+    
+      html.s1p-theme-dark #s1p-floating-controls-wrapper {
         --s1p-floating-control-glass-shadow: 0 30px 90px rgba(0, 0, 0, 0.28);
       }
-    }
+    
     #s1p-controls-handle {
       position: absolute;
       top: 50%;
@@ -6650,8 +6650,8 @@
     }
 
     /* --- [新增] 深色模式样式覆写 --- */
-    @media (prefers-color-scheme: dark) {
-      :root {
+    
+      html.s1p-theme-dark {
         /* 将阅读进度条背景改为更柔和的橄榄绿 */
         --s1p-readprogress-bg: #99a17a;
         /* [移除] --s1p-list-item-status-bg 的覆写：该变量在系统深色模式但 NUX 禁用时会导致标识背景过深 */
@@ -6783,76 +6783,76 @@
       /* [移除] 删除按钮白色图标覆写：在系统深色模式但 NUX 禁用时会导致图标不可见 */
 
       /* --- [新增] 深色模式阴影适配 --- */
-      .s1p-segmented-control-slider {
+      html.s1p-theme-dark .s1p-segmented-control-slider {
         box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
       }
-      .s1p-segmented-control:hover .s1p-segmented-control-slider {
+      html.s1p-theme-dark .s1p-segmented-control:hover .s1p-segmented-control-slider {
         box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
       }
-      .s1p-btn,
-      .s1p-confirm-btn,
-      .s1p-inline-toggle-btn {
+      html.s1p-theme-dark .s1p-btn,
+      html.s1p-theme-dark .s1p-confirm-btn,
+      html.s1p-theme-dark .s1p-inline-toggle-btn {
         box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3),
           inset 0 1px 0 rgba(255, 255, 255, 0.05);
       }
-      .s1p-btn:hover,
-      .s1p-confirm-btn:hover,
-      .s1p-inline-toggle-btn:hover {
+      html.s1p-theme-dark .s1p-btn:hover,
+      html.s1p-theme-dark .s1p-confirm-btn:hover,
+      html.s1p-theme-dark .s1p-inline-toggle-btn:hover {
         box-shadow: 0 2px 5px rgba(0, 0, 0, 0.4),
           inset 0 1px 0 rgba(255, 255, 255, 0.07);
       }
-      .s1p-options-menu:not(.s1p-confirm-wrapper) {
+      html.s1p-theme-dark .s1p-options-menu:not(.s1p-confirm-wrapper) {
         box-shadow: var(--s1p-popover-solid-shadow);
       }
-      .s1p-modal-content {
+      html.s1p-theme-dark .s1p-modal-content {
         box-shadow: 0 5px 20px rgba(0, 0, 0, 0.3);
       }
-      .s1p-tab-slider {
+      html.s1p-theme-dark .s1p-tab-slider {
         background-color: #2f3a46;
         box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
       }
-      .s1p-tab-btn.active {
+      html.s1p-theme-dark .s1p-tab-btn.active {
         color: #e5edf6;
       }
-      .s1p-toast-notification {
+      html.s1p-theme-dark .s1p-toast-notification {
         box-shadow: var(--s1p-toast-glass-shadow);
       }
-      .s1p-slider:before {
+      html.s1p-theme-dark .s1p-slider:before {
         box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
       }
-      .s1p-read-indicator {
+      html.s1p-theme-dark .s1p-read-indicator {
         box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
       }
-      #s1p-controls-handle {
+      html.s1p-theme-dark #s1p-controls-handle {
         box-shadow: var(--s1p-floating-control-glass-shadow);
       }
-      #s1p-floating-controls a,
-      #s1p-floating-controls button {
+      html.s1p-theme-dark #s1p-floating-controls a,
+      html.s1p-theme-dark #s1p-floating-controls button {
         box-shadow: var(--s1p-floating-control-glass-shadow);
       }
 
 
-      .s1p-toast-notification {
+      html.s1p-theme-dark .s1p-toast-notification {
         background: var(--s1p-toast-glass-bg);
       }
-      .s1p-toast-notification.success {
+      html.s1p-theme-dark .s1p-toast-notification.success {
         background: var(--s1p-toast-success-bg);
       }
-      .s1p-toast-notification.error {
+      html.s1p-theme-dark .s1p-toast-notification.error {
         background: var(--s1p-toast-error-bg);
       }
 
-      .s1p-authi-actions-wrapper > a.s1p-toolbar-icon-btn:hover,
-      .authi a.s1p-toolbar-icon-btn:hover {
+      html.s1p-theme-dark .s1p-authi-actions-wrapper > a.s1p-toolbar-icon-btn:hover,
+      html.s1p-theme-dark .authi a.s1p-toolbar-icon-btn:hover {
         background-color: var(--s1p-hover-overlay);
       }
 
       /* --- [新增] 深色模式下更柔和的警告文本颜色 --- */
-      .s1p-warning-text {
+      html.s1p-theme-dark .s1p-warning-text {
         color: #f87171; /* A softer, less jarring red for dark backgrounds */
       }
       /* [移除] 输入框深色聚焦背景覆写：在系统深色模式但 NUX 禁用时会导致输入框背景过深 */
-    }
+    
 
     /* --- [新增] NUX 深色主题下的帖子黑字可读性修复 --- */
     .s1p-nux-dark-text-fixed {
@@ -6866,36 +6866,36 @@
       background-color: transparent !important;
       background-image: none !important;
     }
-    @media (prefers-color-scheme: dark) {
-      td.t_f [style*="background-color:white" i],
-      td.t_f [style*="background-color: white" i],
-      td.t_f [style*="background:white" i],
-      td.t_f [style*="background: white" i],
-      td.t_f [style*="background-color:#fff;" i],
-      td.t_f [style*="background-color: #fff;" i],
-      td.t_f [style$="background-color:#fff" i],
-      td.t_f [style$="background-color: #fff" i],
-      td.t_f [style*="background-color:#ffffff" i],
-      td.t_f [style*="background-color: #ffffff" i],
-      td.t_f [style*="background:#fff;" i],
-      td.t_f [style*="background: #fff;" i],
-      td.t_f [style$="background:#fff" i],
-      td.t_f [style$="background: #fff" i],
-      td.t_f [style*="background:#ffffff" i],
-      td.t_f [style*="background: #ffffff" i],
-      td.t_f [style*="background-color:rgb(249,249,249)" i],
-      td.t_f [style*="background-color: rgb(249,249,249)" i],
-      td.t_f [style*="background-color:rgb(249, 249, 249)" i],
-      td.t_f [style*="background-color: rgb(249, 249, 249)" i],
-      td.t_f [bgcolor="white" i],
-      td.t_f [bgcolor="#fff" i],
-      td.t_f [bgcolor="#ffffff" i],
-      td.t_f [bgcolor="fff" i],
-      td.t_f [bgcolor="ffffff" i] {
+    
+      html.s1p-theme-dark td.t_f [style*="background-color:white" i],
+      html.s1p-theme-dark td.t_f [style*="background-color: white" i],
+      html.s1p-theme-dark td.t_f [style*="background:white" i],
+      html.s1p-theme-dark td.t_f [style*="background: white" i],
+      html.s1p-theme-dark td.t_f [style*="background-color:#fff;" i],
+      html.s1p-theme-dark td.t_f [style*="background-color: #fff;" i],
+      html.s1p-theme-dark td.t_f [style$="background-color:#fff" i],
+      html.s1p-theme-dark td.t_f [style$="background-color: #fff" i],
+      html.s1p-theme-dark td.t_f [style*="background-color:#ffffff" i],
+      html.s1p-theme-dark td.t_f [style*="background-color: #ffffff" i],
+      html.s1p-theme-dark td.t_f [style*="background:#fff;" i],
+      html.s1p-theme-dark td.t_f [style*="background: #fff;" i],
+      html.s1p-theme-dark td.t_f [style$="background:#fff" i],
+      html.s1p-theme-dark td.t_f [style$="background: #fff" i],
+      html.s1p-theme-dark td.t_f [style*="background:#ffffff" i],
+      html.s1p-theme-dark td.t_f [style*="background: #ffffff" i],
+      html.s1p-theme-dark td.t_f [style*="background-color:rgb(249,249,249)" i],
+      html.s1p-theme-dark td.t_f [style*="background-color: rgb(249,249,249)" i],
+      html.s1p-theme-dark td.t_f [style*="background-color:rgb(249, 249, 249)" i],
+      html.s1p-theme-dark td.t_f [style*="background-color: rgb(249, 249, 249)" i],
+      html.s1p-theme-dark td.t_f [bgcolor="white" i],
+      html.s1p-theme-dark td.t_f [bgcolor="#fff" i],
+      html.s1p-theme-dark td.t_f [bgcolor="#ffffff" i],
+      html.s1p-theme-dark td.t_f [bgcolor="fff" i],
+      html.s1p-theme-dark td.t_f [bgcolor="ffffff" i] {
         background-color: transparent !important;
         background-image: none !important;
       }
-    }
+    
 
     #hiddenpoststip {
       display: none !important;
