@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      7.0.1
+// @version      7.0.2
 // @description  为Stage1st论坛提供帖子/用户/楼层屏蔽、导航栏自定义、自动签到、阅读进度跟踪、回复收藏、远程同步等多种功能，全方位优化你的论坛体验。
 // @author       moekyo
 // @match        https://stage1st.com/2b/*
@@ -28,8 +28,8 @@
   const IS_S1P_TEST_MODE =
     typeof globalThis !== "undefined" && globalThis.__S1P_TEST_MODE__ === true;
 
-  const SCRIPT_VERSION = "7.0.1";
-  const SCRIPT_RELEASE_DATE = "2026-09-22";
+  const SCRIPT_VERSION = "7.0.2";
+  const SCRIPT_RELEASE_DATE = "2026-09-26";
 
   const S1P_STATIC_DATA_RESOURCE_NAME = "s1p-static-data";
   const loadS1pStaticData = () => {
@@ -55644,9 +55644,9 @@
 
     // [OPTIMIZED] 优化HTML结构以改善文本布局和换行
     const bodyHtml = `
-    <p>已更新至 v${SCRIPT_VERSION}！本次以修复为主。</p>
-    <p>导航栏在刷新页面或缩放窗口后分区结果保持一致，链接不再莫名进入「更多」。</p>
-    <p>自动签到改为全天候尝试、失败自动重试，多标签页不会重复提交；同步也不再因遗留的待处理记录反复重跑。</p>
+    <p>已更新至 v${SCRIPT_VERSION}！这次主要修主题配色。</p>
+    <p>S1 Plus 现在只认一份主题状态：开着 S1 NUX 就跟着 NUX 实际显示的深色/浅色走，不再被系统主题带偏；开关 NUX 后也会立刻跟上。</p>
+    <p>NUX 自定义主题同样能正确识别，判断不了时按浅色处理；设置面板、调试面板、搜索框等自有界面的配色都会跟论坛主题保持一致。</p>
   `;
 
     const buttons = [
