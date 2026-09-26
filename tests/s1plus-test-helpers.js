@@ -174,10 +174,7 @@ const createSandbox = ({
     removeEventListener() {}
     matches(selector) {
       const normalized = String(selector || "");
-      if (
-        normalized.includes('a[href*="archiver"]') &&
-        this.tagName === "A"
-      ) {
+      if (normalized.includes("archiver") && this.tagName === "A") {
         return true;
       }
       return false;
@@ -326,9 +323,7 @@ const createSandbox = ({
       removeEventListener: noop,
       querySelector: (selector) => {
         if (!themeRuntimeEnabled) return null;
-        if (
-          String(selector).includes('a[href*="archiver"]')
-        ) {
+        if (String(selector).includes("archiver")) {
           return nuxMarkerPresent ? markerElement : null;
         }
         if (selector === ".s1p-modal") {

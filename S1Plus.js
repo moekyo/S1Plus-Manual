@@ -4924,10 +4924,12 @@
   const S1P_THEME_DARK_CLASS = "s1p-theme-dark";
   const S1P_THEME_LIGHT_CLASS = "s1p-theme-light";
   const S1P_THEME_SOURCE_ATTR = "data-s1p-theme-source";
-  const S1P_NUX_MARKER_SELECTOR = 'a[href*="archiver"]';
+  const S1P_NUX_MARKER_SELECTOR = '#flk a[href="archiver/"]';
+  const S1P_NUX_MARKER_NODE_SELECTOR = 'a[href="archiver/"]';
   const S1P_NUX_RENDERED_DARK_BG_MAX_LUMINANCE = 0.28;
   const S1P_NUX_RENDERED_LIGHT_BG_MIN_LUMINANCE = 0.62;
   const S1P_NUX_RENDERED_DIRECTIONAL_CONTRAST_MIN_RATIO = 4.5;
+  const S1P_NUX_RENDERED_OPAQUE_COLOR_MIN_ALPHA = 0.9;
   const S1P_NUX_PALETTE_PROPERTIES = Object.freeze([
     "--darktheme",
     "--bg",
@@ -5060,6 +5062,10 @@
       return { theme: "unknown", evidence: "missing-background" };
     }
 
+    if (backgroundColor.a < S1P_NUX_RENDERED_OPAQUE_COLOR_MIN_ALPHA) {
+      return { theme: "unknown", evidence: "translucent-background" };
+    }
+
     const backgroundLuminance = getRelativeLuminance(backgroundColor);
     if (backgroundLuminance <= S1P_NUX_RENDERED_DARK_BG_MAX_LUMINANCE) {
       return {
@@ -5081,6 +5087,13 @@
       return {
         theme: "unknown",
         evidence: "ambiguous-background",
+        backgroundLuminance,
+      };
+    }
+    if (textColor.a < S1P_NUX_RENDERED_OPAQUE_COLOR_MIN_ALPHA) {
+      return {
+        theme: "unknown",
+        evidence: "translucent-foreground",
         backgroundLuminance,
       };
     }
@@ -5744,12 +5757,15 @@
       return true;
     }
     try {
-      if (node.matches?.(S1P_NUX_MARKER_SELECTOR)) {
+      if (
+        node.matches?.(S1P_NUX_MARKER_SELECTOR) ||
+        node.matches?.(S1P_NUX_MARKER_NODE_SELECTOR)
+      ) {
         return true;
       }
       return Boolean(
         node.querySelector?.(
-          `style, link[rel~="stylesheet"], #flk ${S1P_NUX_MARKER_SELECTOR}`
+          `style, link[rel~="stylesheet"], ${S1P_NUX_MARKER_SELECTOR}`
         )
       );
     } catch (_) {
