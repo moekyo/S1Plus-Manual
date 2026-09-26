@@ -4921,6 +4921,9 @@
   ];
   const NUX_VINE_SEC_SIGNATURE = { r: 54, g: 255, b: 114 };
   const NUX_THEME_SEC_SIGNATURE_TOLERANCE = 3;
+  const S1P_THEME_DARK_CLASS = "s1p-theme-dark";
+  const S1P_THEME_LIGHT_CLASS = "s1p-theme-light";
+  const S1P_THEME_SOURCE_ATTR = "data-s1p-theme-source";
   let isNuxDarkModeChangeListenerBound = false;
   let isNuxCompatibilityStyleInjected = false;
   const NUX_DETECTION_RETRY_DELAYS = [80, 240, 700, 1500, 3000];
@@ -5021,18 +5024,59 @@
     };
   };
 
-  const isNuxDarkThemeActive = () => {
-    if (!isS1NuxEnabled) {
-      return false;
+  const resolveS1pThemeState = ({
+    nuxEnabled = false,
+    nuxDarkThemeRaw = "",
+    systemPrefersDark = false,
+  } = {}) => {
+    if (!nuxEnabled) {
+      return { isDark: false, source: "default-light" };
     }
-    const rootStyle = window.getComputedStyle(document.documentElement);
-    const darkThemeRaw = rootStyle.getPropertyValue("--darktheme").trim();
-    const darkThemeFlag = Number.parseInt(darkThemeRaw, 10);
-    if (Number.isFinite(darkThemeFlag)) {
-      return darkThemeFlag === 1;
+    const normalizedNuxDarkTheme = String(nuxDarkThemeRaw ?? "").trim();
+    if (normalizedNuxDarkTheme === "0" || normalizedNuxDarkTheme === "1") {
+      return {
+        isDark: normalizedNuxDarkTheme === "1",
+        source: "nux-darktheme",
+      };
     }
-    return window.matchMedia("(prefers-color-scheme: dark)").matches;
+    return {
+      isDark: systemPrefersDark === true,
+      source: "nux-system-fallback",
+    };
   };
+
+  const readS1pThemeState = () => {
+    const rootElement = document.documentElement;
+    const rootStyle =
+      rootElement && typeof window.getComputedStyle === "function"
+        ? window.getComputedStyle(rootElement)
+        : null;
+    const nuxDarkThemeRaw = isS1NuxEnabled
+      ? rootStyle?.getPropertyValue("--darktheme") || ""
+      : "";
+    const systemPrefersDark =
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-color-scheme: dark)").matches;
+    return resolveS1pThemeState({
+      nuxEnabled: isS1NuxEnabled,
+      nuxDarkThemeRaw,
+      systemPrefersDark,
+    });
+  };
+
+  const syncS1pThemeProjection = () => {
+    const themeState = readS1pThemeState();
+    const rootElement = document.documentElement;
+    if (!rootElement?.classList) {
+      return themeState;
+    }
+    rootElement.classList.toggle(S1P_THEME_DARK_CLASS, themeState.isDark);
+    rootElement.classList.toggle(S1P_THEME_LIGHT_CLASS, !themeState.isDark);
+    rootElement.setAttribute?.(S1P_THEME_SOURCE_ATTR, themeState.source);
+    return themeState;
+  };
+
+  const isNuxDarkThemeActive = () => readS1pThemeState().isDark;
 
   const isColorClose = (colorA, colorB, tolerance = 0) =>
     Math.abs(colorA.r - colorB.r) <= tolerance &&
@@ -5416,6 +5460,7 @@
       if (!isS1NuxEnabled) {
         return;
       }
+      syncS1pThemeProjection();
       applyNuxDarkTextContrastFix();
       applyNuxTransitionIsolationFix();
       applyNuxSettingsScrollbarThemeFix();
@@ -5438,28 +5483,24 @@
     }
     isNuxCompatibilityStyleInjected = true;
 
-    // 仅当 NUX 启用时才注入深色模式专用样式，避免影响 NUX 禁用时的浅色模式
+    // 深色专用兼容样式只服从 S1 Plus 的统一主题投影；系统配色不再直接作为 UI authority。
     GM_addStyle(`
-      @media (prefers-color-scheme: dark) {
-        /* 输入框焦点：使用深灰色背景 */
-        .s1p-input:focus {
-          background-color: #3e3d3d;
-          border-color: var(--s1p-sec-h);
-        }
-        /* 删除按钮：使用白色图标 */
-        .s1p-editor-btn.s1p-delete-button {
-          background-image: url("${SVG_ICON_DELETE_HOVER}") !important;
-        }
-        /* 状态标识：使用深色背景和浅色文字 */
-        :root {
-          --s1p-list-item-status-bg: #3e3d3d;
-          --s1p-list-item-status-text: #d1d5db;
-        }
+      html.${S1P_THEME_DARK_CLASS} {
+        --s1p-list-item-status-bg: #3e3d3d;
+        --s1p-list-item-status-text: #d1d5db;
+      }
+      html.${S1P_THEME_DARK_CLASS} .s1p-input:focus {
+        background-color: #3e3d3d;
+        border-color: var(--s1p-sec-h);
+      }
+      html.${S1P_THEME_DARK_CLASS} .s1p-editor-btn.s1p-delete-button {
+        background-image: url("${SVG_ICON_DELETE_HOVER}") !important;
       }
     `);
   };
 
   const applyNuxCompatibilityFixes = () => {
+    syncS1pThemeProjection();
     injectNuxCompatibilityStyles();
     bindNuxDarkModeChangeListener();
     applyNuxDarkTextContrastFix();
@@ -5486,6 +5527,7 @@
       }
     }
 
+    syncS1pThemeProjection();
     if (logWhenMissing) {
       console.log("S1 Plus: S1 NUX is not enabled");
     }
@@ -34598,6 +34640,7 @@
       ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
       buildNormalizedSettings,
       defaultSettings,
+      resolveS1pThemeState,
       s1pSettingsSemantics,
       getLastRemoteProbeInfo,
       setLastRemoteProbeInfo,
@@ -43836,6 +43879,7 @@
       if (!modal.isConnected) {
         return;
       }
+      syncS1pThemeProjection();
       applyNuxTransitionIsolationFix(modal);
       applyNuxSettingsScrollbarThemeFix(modal);
       applyNuxSegmentedContrastFix(modal);

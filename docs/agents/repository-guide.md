@@ -149,6 +149,8 @@ Current non-goals remain explicit action-driven convergence paths, including dat
 
 `S1 NUX.css` has a global rule like `*:not(.v-binder-follower-content) { transition-duration: .15s }`, which can override S1 Plus animation durations. Test with both standard and NUX themes. Critical transitions may need higher specificity or `!important`.
 
+Theme authority is singular: when S1 NUX is enabled, S1 Plus reads NUX's computed `--darktheme` value and projects the result onto `html.s1p-theme-light` / `html.s1p-theme-dark`. S1 Plus CSS must consume those projection classes instead of using `prefers-color-scheme` directly. The system media query is only a fallback when NUX is detected but does not expose `--darktheme`; when NUX is absent, S1 Plus stays on its default light theme. This prevents system-dark + NUX-light and system-light + NUX-dark from producing mixed settings surfaces.
+
 ## Cross-Tab Synchronization
 
 Settings cross-tab sync (`initializeSettingsCacheSync`) asks `s1pSettingsSemantics` to classify changes into:

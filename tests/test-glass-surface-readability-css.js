@@ -2,7 +2,10 @@
 "use strict";
 
 const assert = require("assert/strict");
-const { sourceCodeWithCss: sourceCode } = require("./s1plus-test-helpers");
+const {
+  sourceCodeWithCss: sourceCode,
+  cssSource,
+} = require("./s1plus-test-helpers");
 
 const expectIncludes = (needle, message) => {
   assert.ok(sourceCode.includes(needle), message);
@@ -63,19 +66,20 @@ const expectIncludes = (needle, message) => {
   ],
 ].forEach(([needle, message]) => expectIncludes(needle, message));
 
-const darkMediaIndex = sourceCode.indexOf(
-  "@media (prefers-color-scheme: dark) {\n      :root {"
+const darkRootStart = cssSource.indexOf("html.s1p-theme-dark {");
+assert.notEqual(
+  darkRootStart,
+  -1,
+  "缺少由统一 S1 Plus 主题投影驱动的深色变量覆写。"
 );
-assert.notEqual(darkMediaIndex, -1, "缺少深色模式覆写。");
-const darkRootStart = sourceCode.indexOf(":root {", darkMediaIndex);
-const darkRootOpenBrace = sourceCode.indexOf("{", darkRootStart);
+const darkRootOpenBrace = cssSource.indexOf("{", darkRootStart);
 let darkRootDepth = 0;
 let darkRootEnd = -1;
 
-for (let index = darkRootOpenBrace; index < sourceCode.length; index += 1) {
-  if (sourceCode[index] === "{") {
+for (let index = darkRootOpenBrace; index < cssSource.length; index += 1) {
+  if (cssSource[index] === "{") {
     darkRootDepth += 1;
-  } else if (sourceCode[index] === "}") {
+  } else if (cssSource[index] === "}") {
     darkRootDepth -= 1;
     if (darkRootDepth === 0) {
       darkRootEnd = index + 1;
@@ -85,7 +89,7 @@ for (let index = darkRootOpenBrace; index < sourceCode.length; index += 1) {
 }
 
 assert.notEqual(darkRootEnd, -1, "无法解析深色模式根变量块。");
-const darkMediaBlock = sourceCode.slice(darkRootStart, darkRootEnd);
+const darkMediaBlock = cssSource.slice(darkRootStart, darkRootEnd);
 
 [
   [
