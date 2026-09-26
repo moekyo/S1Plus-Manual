@@ -24,7 +24,7 @@ assert.ok(
 );
 assert.match(
   source,
-  /@resource\s+s1p-base-css\s+https:\/\/raw\.githubusercontent\.com\/moekyo\/S1Plus-Manual\/9cb45119104a0b86a6b2b4223e0390337bf9c79e\/S1Plus\.css/
+  /@resource\s+s1p-base-css\s+https:\/\/raw\.githubusercontent\.com\/moekyo\/S1Plus-Manual\/a1165e575333eaa9a2c7332f47442844b24aa22b\/S1Plus\.css/
 );
 assert.match(
   source,

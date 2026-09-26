@@ -4924,8 +4924,35 @@
   const S1P_THEME_DARK_CLASS = "s1p-theme-dark";
   const S1P_THEME_LIGHT_CLASS = "s1p-theme-light";
   const S1P_THEME_SOURCE_ATTR = "data-s1p-theme-source";
-  let isNuxDarkModeChangeListenerBound = false;
+  const S1P_NUX_MARKER_SELECTOR = 'a[href*="archiver"]';
+  const S1P_NUX_RENDERED_DARK_BG_MAX_LUMINANCE = 0.28;
+  const S1P_NUX_RENDERED_LIGHT_BG_MIN_LUMINANCE = 0.62;
+  const S1P_NUX_RENDERED_DIRECTIONAL_CONTRAST_MIN_RATIO = 4.5;
+  const S1P_NUX_PALETTE_PROPERTIES = Object.freeze([
+    "--darktheme",
+    "--bg",
+    "--pri",
+    "--prid",
+    "--pridb",
+    "--sec",
+    "--t",
+    "--icl",
+  ]);
   let isNuxCompatibilityStyleInjected = false;
+  let currentS1pThemeState = Object.freeze({
+    isDark: false,
+    source: "default-light",
+    nuxEnabled: false,
+    renderedTheme: "unknown",
+    renderedThemeEvidence: "none",
+    paletteSignature: "",
+  });
+  let s1pThemeSynchronizationInitialized = false;
+  let s1pThemeMutationObserver = null;
+  let s1pSystemDarkMediaQuery = null;
+  let s1pThemeMediaChangeHandler = null;
+  let s1pThemeReconcileScheduled = false;
+  let s1pThemeCompatibilityReconcileCount = 0;
   const NUX_DETECTION_RETRY_DELAYS = [80, 240, 700, 1500, 3000];
 
   const parseRgbaColor = (colorText) => {
@@ -5024,59 +5051,247 @@
     };
   };
 
+  const resolveNuxRenderedThemeEvidence = ({
+    backgroundRaw = "",
+    textRaw = "",
+  } = {}) => {
+    const backgroundColor = parseRgbaColor(backgroundRaw);
+    if (!backgroundColor || backgroundColor.a <= 0.08) {
+      return { theme: "unknown", evidence: "missing-background" };
+    }
+
+    const backgroundLuminance = getRelativeLuminance(backgroundColor);
+    if (backgroundLuminance <= S1P_NUX_RENDERED_DARK_BG_MAX_LUMINANCE) {
+      return {
+        theme: "dark",
+        evidence: "background-luminance",
+        backgroundLuminance,
+      };
+    }
+    if (backgroundLuminance >= S1P_NUX_RENDERED_LIGHT_BG_MIN_LUMINANCE) {
+      return {
+        theme: "light",
+        evidence: "background-luminance",
+        backgroundLuminance,
+      };
+    }
+
+    const textColor = parseRgbaColor(textRaw);
+    if (!textColor || textColor.a <= 0.08) {
+      return {
+        theme: "unknown",
+        evidence: "ambiguous-background",
+        backgroundLuminance,
+      };
+    }
+    const textLuminance = getRelativeLuminance(textColor);
+    const contrastRatio = getContrastRatio(backgroundColor, textColor);
+    if (
+      contrastRatio >= S1P_NUX_RENDERED_DIRECTIONAL_CONTRAST_MIN_RATIO &&
+      textLuminance > backgroundLuminance &&
+      backgroundLuminance < 0.5
+    ) {
+      return {
+        theme: "dark",
+        evidence: "foreground-background-contrast",
+        backgroundLuminance,
+        textLuminance,
+        contrastRatio,
+      };
+    }
+    if (
+      contrastRatio >= S1P_NUX_RENDERED_DIRECTIONAL_CONTRAST_MIN_RATIO &&
+      textLuminance < backgroundLuminance &&
+      backgroundLuminance > 0.5
+    ) {
+      return {
+        theme: "light",
+        evidence: "foreground-background-contrast",
+        backgroundLuminance,
+        textLuminance,
+        contrastRatio,
+      };
+    }
+    return {
+      theme: "unknown",
+      evidence: "ambiguous-rendered-palette",
+      backgroundLuminance,
+      textLuminance,
+      contrastRatio,
+    };
+  };
+
   const resolveS1pThemeState = ({
     nuxEnabled = false,
     nuxDarkThemeRaw = "",
+    nuxRenderedTheme = "unknown",
+    nuxRenderedThemeEvidence = "none",
+    paletteSignature = "",
     systemPrefersDark = false,
+    allowSystemFallback = false,
   } = {}) => {
     if (!nuxEnabled) {
-      return { isDark: false, source: "default-light" };
+      return {
+        isDark: false,
+        source: "default-light",
+        nuxEnabled: false,
+        renderedTheme: "unknown",
+        renderedThemeEvidence: "none",
+        paletteSignature: "",
+      };
     }
+
     const normalizedNuxDarkTheme = String(nuxDarkThemeRaw ?? "").trim();
     if (normalizedNuxDarkTheme === "0" || normalizedNuxDarkTheme === "1") {
       return {
         isDark: normalizedNuxDarkTheme === "1",
         source: "nux-darktheme",
+        nuxEnabled: true,
+        renderedTheme:
+          normalizedNuxDarkTheme === "1" ? "dark" : "light",
+        renderedThemeEvidence: "darktheme-token",
+        paletteSignature,
       };
     }
+
+    const normalizedRenderedTheme =
+      nuxRenderedTheme === "dark" || nuxRenderedTheme === "light"
+        ? nuxRenderedTheme
+        : "unknown";
+    if (normalizedRenderedTheme !== "unknown") {
+      return {
+        isDark: normalizedRenderedTheme === "dark",
+        source: "nux-rendered-theme",
+        nuxEnabled: true,
+        renderedTheme: normalizedRenderedTheme,
+        renderedThemeEvidence:
+          String(nuxRenderedThemeEvidence || "").trim() || "rendered-palette",
+        paletteSignature,
+      };
+    }
+
+    if (allowSystemFallback === true) {
+      return {
+        isDark: systemPrefersDark === true,
+        source: "nux-system-fallback",
+        nuxEnabled: true,
+        renderedTheme: "unknown",
+        renderedThemeEvidence:
+          String(nuxRenderedThemeEvidence || "").trim() || "unknown",
+        paletteSignature,
+      };
+    }
+
     return {
-      isDark: systemPrefersDark === true,
-      source: "nux-system-fallback",
+      isDark: false,
+      source: "nux-rendered-unknown",
+      nuxEnabled: true,
+      renderedTheme: "unknown",
+      renderedThemeEvidence:
+        String(nuxRenderedThemeEvidence || "").trim() || "unknown",
+      paletteSignature,
     };
   };
 
+  const readS1NuxAvailability = () => {
+    const marker = document.querySelector(S1P_NUX_MARKER_SELECTOR);
+    if (!marker || typeof window.getComputedStyle !== "function") {
+      return false;
+    }
+    try {
+      const markerStyle = window.getComputedStyle(marker, "::before");
+      return String(markerStyle?.content || "").includes("NUXISENABLED");
+    } catch (_) {
+      return false;
+    }
+  };
+
+  const getS1pSystemDarkMediaQuery = () => {
+    if (
+      !s1pSystemDarkMediaQuery &&
+      typeof window.matchMedia === "function"
+    ) {
+      s1pSystemDarkMediaQuery = window.matchMedia(
+        "(prefers-color-scheme: dark)"
+      );
+    }
+    return s1pSystemDarkMediaQuery;
+  };
+
   const readS1pThemeState = () => {
+    const nuxEnabled = readS1NuxAvailability();
     const rootElement = document.documentElement;
     const rootStyle =
-      rootElement && typeof window.getComputedStyle === "function"
+      nuxEnabled &&
+      rootElement &&
+      typeof window.getComputedStyle === "function"
         ? window.getComputedStyle(rootElement)
         : null;
-    const nuxDarkThemeRaw = isS1NuxEnabled
-      ? rootStyle?.getPropertyValue("--darktheme") || ""
+    const readRootProperty = (propertyName) =>
+      String(rootStyle?.getPropertyValue(propertyName) || "").trim();
+    const nuxDarkThemeRaw = readRootProperty("--darktheme");
+    const renderedThemeEvidence = resolveNuxRenderedThemeEvidence({
+      backgroundRaw: readRootProperty("--bg"),
+      textRaw: readRootProperty("--t"),
+    });
+    const paletteSignature = nuxEnabled
+      ? S1P_NUX_PALETTE_PROPERTIES.map(
+          (propertyName) => `${propertyName}=${readRootProperty(propertyName)}`
+        ).join(";")
       : "";
     const systemPrefersDark =
-      typeof window.matchMedia === "function" &&
-      window.matchMedia("(prefers-color-scheme: dark)").matches;
+      getS1pSystemDarkMediaQuery()?.matches === true;
+
+    // S1 NUX does not expose whether @autotheme is enabled. Without that
+    // independent evidence, system media is a change trigger only, never
+    // the fallback authority for an ambiguous rendered palette.
     return resolveS1pThemeState({
-      nuxEnabled: isS1NuxEnabled,
+      nuxEnabled,
       nuxDarkThemeRaw,
+      nuxRenderedTheme: renderedThemeEvidence.theme,
+      nuxRenderedThemeEvidence: renderedThemeEvidence.evidence,
+      paletteSignature,
       systemPrefersDark,
+      allowSystemFallback: false,
     });
   };
 
-  const syncS1pThemeProjection = () => {
-    const themeState = readS1pThemeState();
+  const areS1pThemeStatesEquivalent = (left, right) =>
+    Boolean(
+      left &&
+        right &&
+        left.isDark === right.isDark &&
+        left.source === right.source &&
+        left.nuxEnabled === right.nuxEnabled &&
+        left.renderedTheme === right.renderedTheme &&
+        left.renderedThemeEvidence === right.renderedThemeEvidence &&
+        left.paletteSignature === right.paletteSignature
+    );
+
+  const syncS1pThemeProjection = (
+    themeState = currentS1pThemeState
+  ) => {
     const rootElement = document.documentElement;
     if (!rootElement?.classList) {
       return themeState;
     }
-    rootElement.classList.toggle(S1P_THEME_DARK_CLASS, themeState.isDark);
-    rootElement.classList.toggle(S1P_THEME_LIGHT_CLASS, !themeState.isDark);
+    rootElement.classList.toggle(
+      S1P_THEME_DARK_CLASS,
+      themeState.isDark === true
+    );
+    rootElement.classList.toggle(
+      S1P_THEME_LIGHT_CLASS,
+      themeState.isDark !== true
+    );
     rootElement.setAttribute?.(S1P_THEME_SOURCE_ATTR, themeState.source);
     return themeState;
   };
 
-  const isNuxDarkThemeActive = () => readS1pThemeState().isDark;
+  const getCurrentS1pThemeState = () => currentS1pThemeState;
+
+  const isNuxDarkThemeActive = () =>
+    currentS1pThemeState.nuxEnabled === true &&
+    currentS1pThemeState.isDark === true;
 
   const isColorClose = (colorA, colorB, tolerance = 0) =>
     Math.abs(colorA.r - colorB.r) <= tolerance &&
@@ -5124,6 +5339,7 @@
     }
     const secColor = resolveNuxSecColor();
     const isVineBySecColor =
+      isNuxDarkThemeActive() &&
       !!secColor &&
       secColor.a > 0.08 &&
       isColorClose(
@@ -5138,7 +5354,10 @@
     if (!(targetModal instanceof HTMLElement)) {
       return;
     }
-    targetModal.classList.toggle(NUX_TRANSITION_ISOLATION_CLASS, isS1NuxEnabled);
+    targetModal.classList.toggle(
+      NUX_TRANSITION_ISOLATION_CLASS,
+      currentS1pThemeState.nuxEnabled === true
+    );
   };
 
   const applyNuxSettingsScrollbarThemeFix = (settingsModal = null) => {
@@ -5150,7 +5369,7 @@
     if (!(modalContent instanceof HTMLElement)) {
       return;
     }
-    if (isS1NuxEnabled) {
+    if (currentS1pThemeState.nuxEnabled === true) {
       modalContent.style.setProperty(
         NUX_SETTINGS_SCROLLBAR_THUMB_VAR,
         "var(--prid, rgba(37, 71, 122, 0.42))"
@@ -5451,32 +5670,6 @@
     });
   };
 
-  const bindNuxDarkModeChangeListener = () => {
-    if (isNuxDarkModeChangeListenerBound || typeof window.matchMedia !== "function") {
-      return;
-    }
-    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-    const handleNuxDarkModeChange = () => {
-      if (!isS1NuxEnabled) {
-        return;
-      }
-      syncS1pThemeProjection();
-      applyNuxDarkTextContrastFix();
-      applyNuxTransitionIsolationFix();
-      applyNuxSettingsScrollbarThemeFix();
-      applyNuxSegmentedContrastFix();
-      applyNuxVineTabToneFix();
-    };
-    if (typeof mediaQuery.addEventListener === "function") {
-      mediaQuery.addEventListener("change", handleNuxDarkModeChange);
-    } else if (typeof mediaQuery.addListener === "function") {
-      mediaQuery.addListener(handleNuxDarkModeChange);
-    } else {
-      return;
-    }
-    isNuxDarkModeChangeListenerBound = true;
-  };
-
   const injectNuxCompatibilityStyles = () => {
     if (isNuxCompatibilityStyleInjected) {
       return;
@@ -5499,10 +5692,8 @@
     `);
   };
 
-  const applyNuxCompatibilityFixes = () => {
-    syncS1pThemeProjection();
-    injectNuxCompatibilityStyles();
-    bindNuxDarkModeChangeListener();
+  const reconcileS1pThemeCompatibility = () => {
+    s1pThemeCompatibilityReconcileCount += 1;
     applyNuxDarkTextContrastFix();
     applyNuxTransitionIsolationFix();
     applyNuxSettingsScrollbarThemeFix();
@@ -5510,28 +5701,172 @@
     applyNuxVineTabToneFix();
   };
 
-  const detectS1Nux = ({ logWhenMissing = true } = {}) => {
-    if (isS1NuxEnabled) {
-      applyNuxCompatibilityFixes();
+  const reconcileS1pThemeState = ({
+    force = false,
+    reconcileCompatibility = true,
+  } = {}) => {
+    const nextThemeState = Object.freeze(readS1pThemeState());
+    const changed = !areS1pThemeStatesEquivalent(
+      currentS1pThemeState,
+      nextThemeState
+    );
+
+    // Keep the legacy availability flag as a compatibility mirror, not an
+    // authority. It must converge in both directions.
+    isS1NuxEnabled = nextThemeState.nuxEnabled === true;
+
+    if (!changed && !force) {
+      return {
+        changed: false,
+        compatibilityReconciled: false,
+        state: currentS1pThemeState,
+      };
+    }
+
+    currentS1pThemeState = nextThemeState;
+    syncS1pThemeProjection(nextThemeState);
+    if (reconcileCompatibility) {
+      reconcileS1pThemeCompatibility();
+    }
+    return {
+      changed,
+      compatibilityReconciled: reconcileCompatibility,
+      state: currentS1pThemeState,
+    };
+  };
+
+  const isS1pThemeInfrastructureNode = (node) => {
+    if (!node || typeof node !== "object") {
+      return false;
+    }
+    const tagName = String(node.tagName || "").toUpperCase();
+    if (tagName === "STYLE" || tagName === "LINK") {
       return true;
     }
-
-    const archiverLink = document.querySelector('a[href*="archiver"]');
-    if (archiverLink) {
-      const style = window.getComputedStyle(archiverLink, "::before");
-      if (style && style.content.includes("NUXISENABLED")) {
-        console.log("S1 Plus: S1 NUX is enabled");
-        isS1NuxEnabled = true;
-        applyNuxCompatibilityFixes();
+    try {
+      if (node.matches?.(S1P_NUX_MARKER_SELECTOR)) {
         return true;
       }
+      return Boolean(
+        node.querySelector?.(
+          `style, link[rel~="stylesheet"], #flk ${S1P_NUX_MARKER_SELECTOR}`
+        )
+      );
+    } catch (_) {
+      return false;
+    }
+  };
+
+  const isS1pThemeRelevantMutation = (record) => {
+    if (!record || typeof record !== "object") {
+      return false;
+    }
+    if (record.type === "characterData") {
+      return (
+        String(record.target?.parentElement?.tagName || "").toUpperCase() ===
+        "STYLE"
+      );
+    }
+    if (record.type === "attributes") {
+      return isS1pThemeInfrastructureNode(record.target);
+    }
+    if (record.type !== "childList") {
+      return false;
+    }
+    const targetTagName = String(
+      record.target?.tagName || ""
+    ).toUpperCase();
+    if (targetTagName === "STYLE") {
+      return true;
+    }
+    return [...(record.addedNodes || []), ...(record.removedNodes || [])].some(
+      (node) => isS1pThemeInfrastructureNode(node)
+    );
+  };
+
+  const scheduleS1pThemeReconcile = () => {
+    if (s1pThemeReconcileScheduled) {
+      return;
+    }
+    s1pThemeReconcileScheduled = true;
+    Promise.resolve().then(() => {
+      s1pThemeReconcileScheduled = false;
+      if (!s1pThemeSynchronizationInitialized) {
+        return;
+      }
+      reconcileS1pThemeState();
+    });
+  };
+
+  const initializeS1pThemeSynchronization = () => {
+    if (s1pThemeSynchronizationInitialized) {
+      return reconcileS1pThemeState();
+    }
+    s1pThemeSynchronizationInitialized = true;
+    injectNuxCompatibilityStyles();
+
+    const mediaQuery = getS1pSystemDarkMediaQuery();
+    s1pThemeMediaChangeHandler = () => scheduleS1pThemeReconcile();
+    if (typeof mediaQuery?.addEventListener === "function") {
+      mediaQuery.addEventListener("change", s1pThemeMediaChangeHandler);
+    } else if (typeof mediaQuery?.addListener === "function") {
+      mediaQuery.addListener(s1pThemeMediaChangeHandler);
     }
 
-    syncS1pThemeProjection();
-    if (logWhenMissing) {
+    if (
+      typeof MutationObserver === "function" &&
+      document.documentElement
+    ) {
+      s1pThemeMutationObserver = new MutationObserver((records) => {
+        if (
+          Array.isArray(records) &&
+          records.some((record) => isS1pThemeRelevantMutation(record))
+        ) {
+          scheduleS1pThemeReconcile();
+        }
+      });
+      s1pThemeMutationObserver.observe(document.documentElement, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+        attributes: true,
+        attributeFilter: ["href", "media", "disabled"],
+      });
+    }
+
+    return reconcileS1pThemeState({ force: true });
+  };
+
+  const disposeS1pThemeSynchronization = () => {
+    s1pThemeSynchronizationInitialized = false;
+    s1pThemeReconcileScheduled = false;
+    s1pThemeMutationObserver?.disconnect?.();
+    s1pThemeMutationObserver = null;
+    const mediaQuery = s1pSystemDarkMediaQuery;
+    if (s1pThemeMediaChangeHandler) {
+      if (typeof mediaQuery?.removeEventListener === "function") {
+        mediaQuery.removeEventListener(
+          "change",
+          s1pThemeMediaChangeHandler
+        );
+      } else if (typeof mediaQuery?.removeListener === "function") {
+        mediaQuery.removeListener(s1pThemeMediaChangeHandler);
+      }
+    }
+    s1pThemeMediaChangeHandler = null;
+    s1pSystemDarkMediaQuery = null;
+  };
+
+  const detectS1Nux = ({ logWhenMissing = true } = {}) => {
+    const wasEnabled = currentS1pThemeState.nuxEnabled === true;
+    const result = reconcileS1pThemeState();
+    const isEnabled = result.state.nuxEnabled === true;
+    if (isEnabled && !wasEnabled) {
+      console.log("S1 Plus: S1 NUX is enabled");
+    } else if (!isEnabled && logWhenMissing) {
       console.log("S1 Plus: S1 NUX is not enabled");
     }
-    return false;
+    return isEnabled;
   };
 
   let dynamicallyHiddenThreads = {};
@@ -34640,7 +34975,15 @@
       ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
       buildNormalizedSettings,
       defaultSettings,
+      resolveNuxRenderedThemeEvidence,
       resolveS1pThemeState,
+      readS1pThemeState,
+      reconcileS1pThemeState,
+      initializeS1pThemeSynchronization,
+      disposeS1pThemeSynchronization,
+      getCurrentS1pThemeState,
+      getS1pThemeCompatibilityReconcileCountForTest: () =>
+        s1pThemeCompatibilityReconcileCount,
       s1pSettingsSemantics,
       getLastRemoteProbeInfo,
       setLastRemoteProbeInfo,
@@ -43879,14 +44222,12 @@
       if (!modal.isConnected) {
         return;
       }
-      syncS1pThemeProjection();
       applyNuxTransitionIsolationFix(modal);
       applyNuxSettingsScrollbarThemeFix(modal);
       applyNuxSegmentedContrastFix(modal);
       applyNuxVineTabToneFix(modal);
     };
     syncNuxThemeModalStyles();
-    let modalThemeSyncTimer = window.setInterval(syncNuxThemeModalStyles, 350);
 
     const tabs = settingsModalTabDefinitions.reduce((acc, { key }) => {
       acc[key] = modal.querySelector(`#${getSettingsModalTabPanelId(key)}`);
@@ -47814,10 +48155,6 @@
       if (modalBodyContentResizeObserver) {
         modalBodyContentResizeObserver.disconnect();
         observedModalBodyTabContent = null;
-      }
-      if (modalThemeSyncTimer) {
-        window.clearInterval(modalThemeSyncTimer);
-        modalThemeSyncTimer = 0;
       }
       cancelSettingsModalNeighborPrewarm();
       clearSettingsModalBookmarkSearchTimer();
@@ -55739,6 +56076,10 @@
     await runInitializationPhase(
       S1P_INIT_PHASES.FORUM_READY,
       [
+        {
+          name: "initialize S1 theme synchronization",
+          run: () => initializeS1pThemeSynchronization(),
+        },
         {
           name: "detect S1 NUX",
           blocking: false,
