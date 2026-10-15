@@ -15,8 +15,40 @@ const navbarSyncButtonBlock =
 
 [
   [
-    /<div class="s1p-sync-settings-section-title">手动同步<\/div>[\s\S]*导航栏同步按钮可点击或悬停打开“拉取 \/ 推送”菜单/,
-    "同步设置页缺少手动同步分组或导航栏菜单说明。",
+    /<div class="s1p-sync-settings-section-title">手动同步<\/div>[\s\S]*导航栏同步按钮可点击或悬停打开“拉取 \/ 推送”菜单：两个方向都会先比较云端与本地[\s\S]*不会直接覆盖任何一端/,
+    "同步设置页缺少手动同步分组或导航栏菜单的安全比较说明。",
+  ],
+  [
+    /id="s1p-sync-override-block"[\s\S]*覆盖式操作（危险）[\s\S]*不比较、不合并[\s\S]*id="s1p-force-push-btn"[^>]*>强制推送（覆盖云端）<\/button>[\s\S]*id="s1p-force-pull-btn"[^>]*>强制拉取（覆盖本地）<\/button>/,
+    "覆盖式强制推送/拉取未移动到设置页并标注危险语义。",
+  ],
+  [
+    /e\.target\.id === "s1p-force-push-btn" \|\|[\s\S]*e\.target\.id === "s1p-force-pull-btn"/,
+    "设置页覆盖式操作按钮未绑定处理器。",
+  ],
+  [
+    /覆盖云端备份？[\s\S]*会把当前本地数据整体覆盖到云端，不比较、不合并；云端独有的阅读进度等数据将直接丢失，且不可撤销。[\s\S]*强制推送，覆盖云端/,
+    "设置页强制推送确认弹窗未写清不比较、不合并与数据丢失。",
+  ],
+  [
+    /强制拉取到本地？[\s\S]*会用云端备份整体覆盖本地数据，不比较、不合并；本地独有的阅读进度等数据将直接丢失，且不可撤销。[\s\S]*强制拉取，覆盖本地/,
+    "设置页强制拉取确认弹窗未写清不比较、不合并与数据丢失。",
+  ],
+  [
+    /会把此刻的本地数据整体覆盖到云端，不比较、不合并；云端独有的阅读进度等数据将丢失，且不可撤销。[\s\S]*会用云端备份整体覆盖本地数据，不比较、不合并；本地独有的阅读进度等数据将丢失，且不可撤销。/,
+    "排队中的覆盖式请求确认弹窗未写清不比较、不合并与数据丢失。",
+  ],
+  [
+    /confirmationActions\.onSwitchToGlobalSync[\s\S]*requestGlobalManualSync\(\)/,
+    "排队中的覆盖式请求确认弹窗缺少改用全局同步的出口。",
+  ],
+  [
+    /text: "改用全局同步"[\s\S]*void runSettingsManualSync\(\);/,
+    "覆盖式操作确认弹窗缺少改用全局同步的出口。",
+  ],
+  [
+    /void \(isForcePush \? handleForcePush\(\) : handleForcePull\(\)\);/,
+    "设置页覆盖式操作未调用强制推送/强制拉取处理器。",
   ],
   [
     /id="s1p-manual-sync-section"[\s\S]*for="s1p-sync-bookmark-full-content-toggle">收藏回复同步完整正文/,
@@ -151,8 +183,8 @@ const navbarSyncButtonBlock =
     "同步设置页未按手动同步、自动推送、自动拉取、状态显示、GitHub 连接重排。",
   ],
   [
-    /const openSyncChoiceMenu = \(\) => \{[\s\S]*callback:\s*\(\)\s*=>\s*s1pSyncSystem\.requestSync\(\{\s*kind:\s*"manual_pull"\s*\}\)[\s\S]*callback:\s*\(\)\s*=>\s*s1pSyncSystem\.requestSync\(\{\s*kind:\s*"manual_push"\s*\}\)[\s\S]*a\.addEventListener\("click", \(e\) => \{[\s\S]*openSyncChoiceMenu\(\);[\s\S]*li\.addEventListener\("mouseenter", openSyncChoiceMenu\);/,
-    "导航栏同步按钮点击和悬停未共用推送/拉取菜单。",
+    /const openSyncChoiceMenu = \(\) => \{[\s\S]*kind:\s*"manual_sync",\s*options:\s*\{ preferredDirection: "pull" \},[\s\S]*kind:\s*"manual_sync",\s*options:\s*\{ preferredDirection: "push" \},[\s\S]*a\.addEventListener\("click", \(e\) => \{[\s\S]*openSyncChoiceMenu\(\);[\s\S]*li\.addEventListener\("mouseenter", openSyncChoiceMenu\);/,
+    "导航栏同步按钮点击和悬停未共用安全比较菜单。",
   ],
 ].forEach(([pattern, message]) => {
   expectMatch(pattern, message);
@@ -162,10 +194,15 @@ assert.ok(
   navbarSyncButtonBlock,
   "未能定位导航栏同步按钮渲染代码块。"
 );
+assert.match(
+  navbarSyncButtonBlock,
+  /kind:\s*"manual_sync"/,
+  "导航栏同步按钮必须走安全比较流程。"
+);
 assert.doesNotMatch(
   navbarSyncButtonBlock,
-  /handleManualSync/,
-  "导航栏同步按钮点击路径不应再调用手动安全仲裁。"
+  /kind:\s*"manual_(pull|push)"/,
+  "导航栏同步按钮不得再直接触发覆盖式强制拉取/推送。"
 );
 
 [

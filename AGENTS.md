@@ -46,4 +46,5 @@ node tests/test-foreground-remote-probe.js
 node tests/test-foreground-trigger-integration.js
 node tests/test-background-sync-shared-debounce.js
 node tests/test-safe-sync-execution.js
+node tests/test-departed-sync-lock-retention.js
 ```
