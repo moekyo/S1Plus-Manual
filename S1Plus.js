@@ -1384,7 +1384,10 @@
     if (!s1pLogRestored) restoreLogBufferFromSession();
     s1pRecordDiagnosticEvent("runtime.started", { module: "initialization", message: "页面诊断采集已启动",
       details: { scriptVersion: SCRIPT_VERSION, essentialCollection: true } });
-    const recordRuntimeUnload = (phase) => {
+    const recordRuntimeUnload = (phase, options = {}) => {
+      // bfcache 会原样恢复这个文档，它的执行锁仍可能被续租，不能提前压缩。
+      const isDepartedPageHide =
+        phase === "pagehide" && options.persisted !== true;
       let locksBefore = [];
       try {
         locksBefore = s1pReadSyncLockEvidence();
@@ -1402,6 +1405,22 @@
       const ownedGlobalLocks = locksBefore.filter((item) =>
         item.key === GLOBAL_SYNC_LOCK_KEY && item.owner === BACKGROUND_SYNC_OWNER_ID
       );
+      // 压缩只针对已进入事务的锁；事务前临时锁走下面的取消路径，因此可以先
+      // 压缩再记录离场回执，让回执里的 disposition 与实际锁记录一致。
+      let departedRetention = { status: "skipped", reason: "not_departing", count: 0 };
+      if (isDepartedPageHide) {
+        try {
+          departedRetention = s1pRetainDepartedSyncLocksUntil();
+        } catch (error) {
+          s1pLogLoss.persistenceFailures += 1;
+          departedRetention = {
+            status: "failure",
+            reason: "departed_lock_retention_threw",
+            count: 0,
+            error,
+          };
+        }
+      }
       let hasProvisionalOwner = false;
       for (const lock of ownedGlobalLocks) {
         const relatedOperation = [...s1pSyncOperations.values()].find(
@@ -1412,20 +1431,29 @@
           (relatedOperation?.active === true &&
             relatedOperation.transactionStarted !== true &&
             lock.stage === "transaction_start");
+        const retainShortened = Boolean(
+          Number(GM_getValue(GLOBAL_SYNC_LOCK_KEY, null)?.retainUntil) || 0
+        );
         hasProvisionalOwner ||= provisional;
         s1pRecordLockEvidence(`lock.owner_${phase}`, lock, {
           message: provisional
             ? "持有者页面离开，事务尚未开始，将取消临时锁获取"
-            : "持有者页面离开，已进入事务的执行锁保留至收敛或 TTL",
+            : retainShortened
+              ? "持有者页面离开，已进入事务的执行锁保留窗口已压缩至在途请求时长"
+              : "持有者页面离开，已进入事务的执行锁保留至收敛或 TTL",
           reason: provisional
             ? "lifecycle_unload_before_transaction"
-            : "lifecycle_unload_running_lock_retained",
+            : retainShortened
+              ? "lifecycle_unload_retain_window_shortened"
+              : "lifecycle_unload_running_lock_retained",
           receipt: true,
           repeatKey: `owner_lifecycle:${lock.executionId}:${lock.stage}`,
           details: {
             unloadDisposition: provisional
               ? "cancel_before_transaction"
-              : "retain_running_lock",
+              : retainShortened
+                ? "retain_running_lock_shortened"
+                : "retain_running_lock",
           },
         });
       }
@@ -1450,11 +1478,14 @@
       s1pRecordDiagnosticEvent(`runtime.${phase}`, {
         message: hasProvisionalOwner
           ? "页面离开，临时锁获取已进入取消流程"
-          : "页面离开，未结束的执行锁保留至收敛或 TTL",
+          : departedRetention.count > 0
+            ? "页面离开，未结束的执行锁保留窗口已压缩至在途请求时长"
+            : "页面离开，未结束的执行锁保留至收敛或 TTL",
         details: {
           locksBefore,
           locksAfter,
           lifecycleResult,
+          departedRetention,
           lifecycleUnloading: true,
         },
       });
@@ -1469,7 +1500,9 @@
         s1pLogLoss.persistenceFailures += 1;
       }
     };
-    window.addEventListener("pagehide", () => recordRuntimeUnload("pagehide"));
+    window.addEventListener("pagehide", (event) =>
+      recordRuntimeUnload("pagehide", { persisted: event?.persisted === true })
+    );
     window.addEventListener("beforeunload", () => recordRuntimeUnload("beforeunload"));
     window.addEventListener("pageshow", () => {
       s1pSetSyncPageLifecycleUnloading(false, "runtime_pageshow");
@@ -3755,6 +3788,10 @@
   const FOREGROUND_FOLLOWUP_SYNC_LOCK_TTL_MS = 45 * 1000;
   const FOREGROUND_FOLLOWUP_SYNC_LOCK_HEARTBEAT_MS = 10 * 1000;
   const SYNC_LOCK_VERIFY_DELAY_MS = 50;
+  // 持有者页面真正离开后，执行锁不再有任何续租来源。保留整段模式 TTL
+  // 只会让其他标签页（以及已登记的手动请求）空等三分钟，因此离场时把锁
+  // 的失效时间压缩到这个窗口：它只需覆盖已发出请求可能落地的最大时长。
+  const DEPARTED_SYNC_LOCK_RETAIN_TTL_MS = 45 * 1000;
 
   const REMOTE_SYNC_REQUEST_TIMEOUT_MS = 12 * 1000;
   const REMOTE_SYNC_MAX_RETRIES = 2;
@@ -28721,6 +28758,7 @@
         timestamp: lock.timestamp,
         mode: lock.mode,
         ttlMs,
+        retainUntil: Number(lock.retainUntil) || 0,
         token: normalizeSyncDiagnosticText(lock.token, 160),
         operationId: normalizeSyncDiagnosticText(lock.operationId, 160),
         acquiredAt: Number(lock.acquiredAt) || 0,
@@ -28731,11 +28769,21 @@
     return null;
   };
 
+  // 锁的自然失效时间由「最近一次续租 + 模式 TTL」决定；离场的持有者会写入
+  // retainUntil 把上限压缩到在途请求窗口，所有有效性判断都必须尊重它。
+  const getSyncLockEffectiveExpiresAt = (lock, ttlMs) => {
+    const baseExpiresAt = (Number(lock?.timestamp) || 0) + (Number(ttlMs) || 0);
+    const retainUntil = Number(lock?.retainUntil) || 0;
+    return retainUntil > 0
+      ? Math.min(baseExpiresAt, retainUntil)
+      : baseExpiresAt;
+  };
+
   const isModeSyncLockValid = (lock, ttlMs, now = Date.now()) =>
-    Boolean(lock && now - lock.timestamp < ttlMs);
+    Boolean(lock && now < getSyncLockEffectiveExpiresAt(lock, ttlMs));
 
   const isGlobalSyncLockValid = (lock, now = Date.now()) =>
-    Boolean(lock && now - lock.timestamp < lock.ttlMs);
+    Boolean(lock && now < getSyncLockEffectiveExpiresAt(lock, lock.ttlMs));
 
   const hasActiveOtherModeSyncLock = (currentMode, now = Date.now()) => {
     return [
@@ -28772,7 +28820,9 @@
       key, mode, owner: lock.owner, executionId: lock.token || "legacy_without_execution_id",
       operationId: lock.operationId || "", contextId: lock.contextId || "",
       acquiredAt: lock.acquiredAt || null, renewedAt: lock.timestamp,
-      expiresAt: lock.timestamp + ttlMs, remainingMs: Math.max(0, lock.timestamp + ttlMs - now),
+      expiresAt: getSyncLockEffectiveExpiresAt(lock, ttlMs),
+      remainingMs: Math.max(0, getSyncLockEffectiveExpiresAt(lock, ttlMs) - now),
+      retainUntil: Number(lock.retainUntil) || null,
       heldMs: lock.acquiredAt ? Math.max(0, now - lock.acquiredAt) : null,
       stage: lock.stage || "unknown", active: isModeSyncLockValid(lock, ttlMs, now),
     }));
@@ -28940,16 +28990,18 @@
     const normalizedNow = normalizeRemoteProbeTimestamp(now) || Date.now();
     const globalLock = getGlobalSyncLockValue();
     if (isGlobalSyncLockValid(globalLock, normalizedNow)) {
+      const globalExpiresAt = getSyncLockEffectiveExpiresAt(
+        globalLock,
+        globalLock.ttlMs
+      );
       return {
         mode: globalLock.mode,
         owner: globalLock.owner,
         timestamp: globalLock.timestamp,
         ttlMs: globalLock.ttlMs,
-        expiresAt: globalLock.timestamp + globalLock.ttlMs,
-        remainingMs: Math.max(
-          0,
-          globalLock.timestamp + globalLock.ttlMs - normalizedNow
-        ),
+        retainUntil: globalLock.retainUntil || 0,
+        expiresAt: globalExpiresAt,
+        remainingMs: Math.max(0, globalExpiresAt - normalizedNow),
         source: "global",
         operationId: globalLock.operationId || "",
         executionId: globalLock.token || "",
@@ -28967,24 +29019,24 @@
       .map((mode) => {
         const profile = getSyncLockModeProfile(mode);
         const lock = getModeSyncLockValue(mode);
-        return profile && isModeSyncLockValid(lock, profile.ttlMs, normalizedNow)
-          ? {
-              mode,
-              owner: lock.owner,
-              timestamp: lock.timestamp,
-              ttlMs: profile.ttlMs,
-              expiresAt: lock.timestamp + profile.ttlMs,
-              remainingMs: Math.max(
-                0,
-                lock.timestamp + profile.ttlMs - normalizedNow
-              ),
-              source: "mode",
-              operationId: lock.operationId || "",
-              executionId: lock.token || "",
-              acquiredAt: lock.acquiredAt || 0,
-              stage: lock.stage || "unknown",
-            }
-          : null;
+        if (!profile || !isModeSyncLockValid(lock, profile.ttlMs, normalizedNow)) {
+          return null;
+        }
+        const modeExpiresAt = getSyncLockEffectiveExpiresAt(lock, profile.ttlMs);
+        return {
+          mode,
+          owner: lock.owner,
+          timestamp: lock.timestamp,
+          ttlMs: profile.ttlMs,
+          retainUntil: Number(lock.retainUntil) || 0,
+          expiresAt: modeExpiresAt,
+          remainingMs: Math.max(0, modeExpiresAt - normalizedNow),
+          source: "mode",
+          operationId: lock.operationId || "",
+          executionId: lock.token || "",
+          acquiredAt: lock.acquiredAt || 0,
+          stage: lock.stage || "unknown",
+        };
       })
       .filter(Boolean)
       .sort((left, right) => right.expiresAt - left.expiresAt)[0];
@@ -29404,8 +29456,11 @@
         return false;
       }
       const renewedAt = Date.now();
+      // 续租即证明持有者仍然存活：必须清除离场时写入的保留窗口上限，
+      // 否则从 bfcache/会话历史恢复的页面会被当成已过期而被其它页面接管。
+      const { retainUntil: _departedRetainUntil, ...liveLockRecord } = currentLock;
       GM_setValue(profile.lockKey, {
-        ...currentLock,
+        ...liveLockRecord,
         owner: BACKGROUND_SYNC_OWNER_ID,
         timestamp: renewedAt,
         ...s1pSyncDiagnosticMetadata(mode),
@@ -29651,6 +29706,107 @@
         : "no_provisional_acquisition",
       count: canceledCount,
       operationIds: canceledOperations,
+    };
+  };
+
+  // 页面真正离开时，已进入事务的执行锁不能立刻释放（在途请求可能已经写进
+  // 云端），但也再没有续租来源。这里由持有者自己把锁的失效时间压缩到
+  // DEPARTED_SYNC_LOCK_RETAIN_TTL_MS，避免其它标签页空等整段模式 TTL。
+  // 只改写本页自己持有的记录，写入前按 owner + executionId 做 CAS。
+  const s1pRetainDepartedSyncLocksUntil = (
+    now = Date.now(),
+    { retainTtlMs = DEPARTED_SYNC_LOCK_RETAIN_TTL_MS } = {}
+  ) => {
+    const retainUntil = now + (Number(retainTtlMs) || 0);
+    if (!(retainUntil > now)) {
+      return { status: "skipped", reason: "invalid_retain_window", count: 0 };
+    }
+    const retired = [];
+    for (const [mode, operation] of s1pSyncOperations) {
+      const provisional =
+        operation?.stage === "acquiring" ||
+        (operation?.stage === "transaction_start" &&
+          operation.transactionStarted !== true);
+      if (!operation?.active || provisional) {
+        continue;
+      }
+      const profile = getSyncLockModeProfile(mode);
+      if (!profile) {
+        continue;
+      }
+      try {
+        const modeLock = getModeSyncLockValue(mode);
+        if (
+          modeLock &&
+          modeLock.owner === BACKGROUND_SYNC_OWNER_ID &&
+          modeLock.token === operation.executionId
+        ) {
+          GM_setValue(profile.lockKey, {
+            ...modeLock,
+            retainUntil: Math.min(
+              Number(modeLock.retainUntil) || Number.POSITIVE_INFINITY,
+              retainUntil
+            ),
+          });
+        }
+        const globalLock = GM_getValue(GLOBAL_SYNC_LOCK_KEY, null);
+        if (
+          globalLock &&
+          typeof globalLock === "object" &&
+          globalLock.owner === BACKGROUND_SYNC_OWNER_ID &&
+          globalLock.mode === mode &&
+          globalLock.token === operation.executionId
+        ) {
+          GM_setValue(GLOBAL_SYNC_LOCK_KEY, {
+            ...globalLock,
+            retainUntil: Math.min(
+              Number(globalLock.retainUntil) || Number.POSITIVE_INFINITY,
+              retainUntil
+            ),
+          });
+        }
+      } catch (error) {
+        s1pLogLoss.persistenceFailures += 1;
+        s1pRecordLockEvidence("lock.departed_retention_failed", {
+          ...operation,
+          mode,
+          owner: BACKGROUND_SYNC_OWNER_ID,
+          ttlMs: profile.ttlMs,
+        }, {
+          message: "页面离开时压缩执行锁保留窗口失败",
+          level: "error",
+          status: "failure",
+          reason: "departed_lock_retention_failed",
+          receipt: true,
+          details: { retainUntil, error },
+        });
+        continue;
+      }
+      operation.retainUntil = retainUntil;
+      retired.push({ mode, operationId: operation.operationId });
+      s1pRecordLockEvidence("lock.departed_retention", {
+        ...operation,
+        mode,
+        owner: BACKGROUND_SYNC_OWNER_ID,
+        ttlMs: profile.ttlMs,
+      }, {
+        message: "持有者页面离开，执行锁保留窗口已压缩至在途请求时长",
+        status: "retained",
+        reason: "lifecycle_unload_retain_window_shortened",
+        receipt: true,
+        details: {
+          retainUntil,
+          retainTtlMs: retainUntil - now,
+          unloadDisposition: "retain_running_lock_shortened",
+        },
+      });
+    }
+    return {
+      status: retired.length ? "retained" : "skipped",
+      reason: retired.length ? "departed_owner_retention_shortened" : "no_running_lock",
+      count: retired.length,
+      retainUntil,
+      modes: retired.map((item) => item.mode),
     };
   };
 
@@ -34005,6 +34161,8 @@
       s1pFlushSyncTrace,
       s1pReadSyncLockEvidence,
       s1pObserveSyncLocks,
+      s1pRetainDepartedSyncLocksUntil,
+      getSyncLockEffectiveExpiresAt,
       acquireModeSyncLock,
       refreshModeSyncLock,
       releaseModeSyncLock,
@@ -41202,17 +41360,24 @@
             allowLabelHtml: true,
             action: "pull",
             title:
-              "用云端备份覆盖您当前的本地数据，本地未同步的修改将丢失！",
+              "先比较云端与本地：云端更新就安全拉取，仅阅读进度分歧会自动合并，核心数据冲突会先让你选择；不会直接覆盖本地。",
             callback: () =>
-              s1pSyncSystem.requestSync({ kind: "manual_pull" }),
+              s1pSyncSystem.requestSync({
+                kind: "manual_sync",
+                options: { preferredDirection: "pull" },
+              }),
           },
           {
             label: `${pushIconSVG} <span>推送</span>`,
             allowLabelHtml: true,
             action: "push",
-            title: "将您当前的本地数据覆盖到云端备份，此操作不可逆。",
+            title:
+              "先比较云端与本地：本地较新就推送，仅阅读进度分歧会自动合并，核心数据冲突会先让你选择；不会直接覆盖云端。",
             callback: () =>
-              s1pSyncSystem.requestSync({ kind: "manual_push" }),
+              s1pSyncSystem.requestSync({
+                kind: "manual_sync",
+                options: { preferredDirection: "push" },
+              }),
           },
         ],
         () => {
@@ -41231,7 +41396,7 @@
     li.addEventListener("mouseenter", openSyncChoiceMenu);
     setCustomTooltip(
       a,
-      "点击或悬停选择全局拉取或全局推送；已有同步进行时会登记请求，并在完成后再次确认。"
+      "点击或悬停选择全局比较后拉取或推送；两种方向都会先比较云端与本地，只有覆盖式操作保留在设置里。"
     );
 
     managerLink.insertAdjacentElement("afterend", li);
@@ -41879,6 +42044,13 @@
               : handleForcePush(executionOptions);
           };
 
+    // 覆盖式操作只保留在设置里；若这里的手动请求最终需要用户确认，仍然给出
+    // 一条改走安全比较流程的出口。
+    const requestGlobalManualSync =
+      typeof adapters.requestGlobalManualSync === "function"
+        ? adapters.requestGlobalManualSync
+        : null;
+
     const showConfirmation =
       typeof adapters.showConfirmation === "function"
         ? adapters.showConfirmation
@@ -41886,26 +42058,38 @@
             const isPush =
               intent.direction === AUTO_SYNC_INDICATOR_OPERATION_PUSH;
             const directionLabel = isPush ? "推送" : "拉取";
+            const buttons = [
+              {
+                text: "取消",
+                className: "s1p-cancel",
+                action: actions.onCancel,
+              },
+            ];
+            if (typeof actions.onSwitchToGlobalSync === "function") {
+              buttons.push({
+                text: "改用全局同步",
+                className: "s1p-cancel",
+                action: actions.onSwitchToGlobalSync,
+              });
+            }
+            buttons.push({
+              text: directionLabel,
+              className: "s1p-confirm",
+              action: actions.onConfirm,
+            });
             return createAdvancedConfirmationModal(
-              isPush ? "推送本地数据？" : "拉取云端数据？",
+              isPush ? "覆盖云端备份？" : "覆盖本地数据？",
               isPush
-                ? "是否将此刻的本地数据推送到云端？"
-                : "是否现在拉取最新云端数据？",
-              [
-                {
-                  text: "取消",
-                  className: "s1p-cancel",
-                  action: actions.onCancel,
-                },
-                {
-                  text: directionLabel,
-                  className: "s1p-confirm",
-                  action: actions.onConfirm,
-                },
-              ],
+                ? "会把此刻的本地数据整体覆盖到云端，不比较、不合并；云端独有的阅读进度等数据将丢失，且不可撤销。"
+                : "会用云端备份整体覆盖本地数据，不比较、不合并；本地独有的阅读进度等数据将丢失，且不可撤销。",
+              buttons,
               {
                 modalClassName: "s1p-sync-modal",
                 onDismiss: actions.onDismiss,
+                ...(typeof document !== "undefined" &&
+                document.querySelector(".s1p-modal > .s1p-modal-content")
+                  ? { useSettingsSecondaryModal: true }
+                  : {}),
               }
             );
           };
@@ -42356,7 +42540,7 @@
         operationId
       );
       try {
-        activeConfirmationModal = showConfirmation(current, {
+        const confirmationActions = {
           onConfirm: () =>
             confirmPending(
               current,
@@ -42383,7 +42567,19 @@
               requestSequence
             );
           },
-        });
+        };
+        if (typeof requestGlobalManualSync === "function") {
+          confirmationActions.onSwitchToGlobalSync = () => {
+            cancelPending(
+              current,
+              epoch,
+              expectedLifecycleGeneration,
+              requestSequence
+            );
+            return requestGlobalManualSync();
+          };
+        }
+        activeConfirmationModal = showConfirmation(current, confirmationActions);
       } catch (error) {
         activeConfirmationModal = null;
         activeConfirmationKey = "";
@@ -42799,6 +42995,8 @@
     if (!defaultManualSyncIntentCoordinator) {
       defaultManualSyncIntentCoordinator = s1pCreateManualSyncIntentCoordinator({
         showMessage,
+        requestGlobalManualSync: () =>
+          s1pSyncSystem.requestSync({ kind: "manual_sync" }),
       });
       manualSyncPriorityGateEvaluator = () =>
         defaultManualSyncIntentCoordinator.isPriorityGateActive();
@@ -43965,7 +44163,7 @@
         <div id="s1p-remote-sync-controls-wrapper">
           <div class="s1p-sync-settings-section" id="s1p-manual-sync-section">
             <div class="s1p-sync-settings-section-title">手动同步</div>
-            <p class="s1p-setting-desc s1p-sync-settings-section-desc">导航栏同步按钮可点击或悬停打开“拉取 / 推送”菜单；这两个直接操作会优先中断正在进行的自动同步，并按你选择的方向执行。</p>
+            <p class="s1p-setting-desc s1p-sync-settings-section-desc">导航栏同步按钮可点击或悬停打开“拉取 / 推送”菜单：两个方向都会先比较云端与本地，仅阅读进度分歧会自动合并，核心数据冲突会先弹出对比让你选择，不会直接覆盖任何一端。</p>
             <div class="s1p-settings-item">
               <label class="s1p-settings-label" for="s1p-sync-bookmark-full-content-toggle">收藏回复同步完整正文</label>
               <label class="s1p-switch">
@@ -43974,6 +44172,14 @@
               </label>
             </div>
             <p class="s1p-setting-desc">影响所有远程导出的收藏回复内容，包括自动推送；关闭时仅同步 280 字预览（更快更省流量），开启后跨设备可查看全文但体积更大。</p>
+            <div class="s1p-settings-item s1p-settings-item-column" id="s1p-sync-override-block">
+              <label class="s1p-settings-label">覆盖式操作（危险）</label>
+              <p class="s1p-setting-desc">下面两个按钮不比较、不合并，直接把一端数据整体覆盖到另一端，云端或本地独有的阅读进度等数据会丢失且不可撤销。需要合并时请用下面的“手动同步”按钮或导航栏的同步菜单。</p>
+              <div class="s1p-local-sync-buttons">
+                <button id="s1p-force-push-btn" class="s1p-btn s1p-danger" data-s1p-sync-control>强制推送（覆盖云端）</button>
+                <button id="s1p-force-pull-btn" class="s1p-btn s1p-danger" data-s1p-sync-control>强制拉取（覆盖本地）</button>
+              </div>
+            </div>
           </div>
 
           <div class="s1p-sync-settings-section" id="s1p-auto-push-section">
@@ -48945,6 +49151,61 @@
         }
       }
 
+      if (
+        e.target.id === "s1p-force-push-btn" ||
+        e.target.id === "s1p-force-pull-btn"
+      ) {
+        const isForcePush = e.target.id === "s1p-force-push-btn";
+        if (e.target.disabled) {
+          return;
+        }
+        const overrideCopy = isForcePush
+          ? {
+              title: "强制推送到云端？",
+              body:
+                `<p class="s1p-sync-danger-text">会把当前本地数据整体覆盖到云端，不比较、不合并；云端独有的阅读进度等数据将直接丢失，且不可撤销。</p>` +
+                `<p>只想安全同步请改用“全局同步”：它先比较云端与本地，仅阅读进度分歧会自动合并，核心数据冲突时会让你选择。</p>`,
+              confirmText: "强制推送，覆盖云端",
+            }
+          : {
+              title: "强制拉取到本地？",
+              body:
+                `<p class="s1p-sync-danger-text">会用云端备份整体覆盖本地数据，不比较、不合并；本地独有的阅读进度等数据将直接丢失，且不可撤销。</p>` +
+                `<p>只想安全同步请改用“全局同步”：它先比较云端与本地，仅阅读进度分歧会自动合并，核心数据冲突时会让你选择。</p>`,
+              confirmText: "强制拉取，覆盖本地",
+            };
+        createAdvancedConfirmationModal(
+          overrideCopy.title,
+          overrideCopy.body,
+          [
+            {
+              text: "取消",
+              className: "s1p-cancel",
+              action: () => {},
+            },
+            {
+              text: "改用全局同步",
+              className: "s1p-cancel",
+              action: () => {
+                void runSettingsManualSync();
+              },
+            },
+            {
+              text: overrideCopy.confirmText,
+              className: "s1p-confirm",
+              action: () => {
+                void (isForcePush ? handleForcePush() : handleForcePull());
+              },
+            },
+          ],
+          withSettingsSecondaryModalOptions({
+            modalClassName: "s1p-sync-modal",
+            allowBodyHtml: true,
+          })
+        );
+        return;
+      }
+
       if (e.target.id === "s1p-open-gist-page-btn") {
         const gistId = modal
           .querySelector("#s1p-remote-gist-id-input")
@@ -49261,6 +49522,16 @@
       return tidInput.value;
     }
     return null;
+  };
+
+  // 导航栏的“拉取 / 推送”只是安全比较流程的方向偏好：方向只决定对比弹窗里
+  // 先推荐哪一侧，不会让任何一侧被静默覆盖。
+  const normalizeManualSyncPreferredDirection = (value) => {
+    const normalized = String(value || "").trim();
+    return normalized === AUTO_SYNC_INDICATOR_OPERATION_PUSH ||
+      normalized === AUTO_SYNC_INDICATOR_OPERATION_PULL
+      ? normalized
+      : "";
   };
 
   const handleManualSync = async (
@@ -50204,6 +50475,9 @@
             },
           };
           releaseManualSyncLockForDecision();
+          const preferredDirection = normalizeManualSyncPreferredDirection(
+            options?.preferredDirection
+          );
           recordSyncTraceEvent("manual_sync_waiting_user_choice", {
             scope: "manual_sync",
             status: "waiting",
@@ -50212,12 +50486,19 @@
               action: versionDecision.action || "",
               reason: versionDecision.reason || "",
               isConflict,
+              preferredDirection,
             },
           });
           createAdvancedConfirmationModal(
-            "手动同步选择",
+            preferredDirection === AUTO_SYNC_INDICATOR_OPERATION_PUSH
+              ? "手动同步选择（推送优先）"
+              : preferredDirection === AUTO_SYNC_INDICATOR_OPERATION_PULL
+                ? "手动同步选择（拉取优先）"
+                : "手动同步选择",
             bodyHtml,
-            [pullAction, pushAction, cancelAction],
+            preferredDirection === AUTO_SYNC_INDICATOR_OPERATION_PUSH
+              ? [pushAction, pullAction, cancelAction]
+              : [pullAction, pushAction, cancelAction],
             withManualSyncModalOptions({
               modalClassName: "s1p-sync-modal",
               contentSize: "expanded",
@@ -55580,12 +55861,23 @@
           return requestPerLoad(options);
         case "initial_foreground":
           return requestInitialForeground(options);
-        case "manual_sync":
+        case "manual_sync": {
+          const preferredDirection = normalizeManualSyncPreferredDirection(
+            options.preferredDirection
+          );
           return requestManualSync(
             options.suppressInitialMessage === true,
             options.isInitialSetup === true,
-            options.runtime || {}
+            preferredDirection
+              ? {
+                  ...(options.runtime && typeof options.runtime === "object"
+                    ? options.runtime
+                    : {}),
+                  preferredDirection,
+                }
+              : options.runtime || {}
           );
+        }
         case "manual_pull":
           return requestManualPull(options);
         case "manual_push":

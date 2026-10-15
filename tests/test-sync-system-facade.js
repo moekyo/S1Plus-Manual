@@ -548,6 +548,13 @@ const testFacadePreservesEverySyncIntentContract = async () => {
   assert.equal(await facade.requestSync({ kind: "manual_pull" }), "manual_pull");
   assert.equal(await facade.requestSync({ kind: "manual_push" }), "manual_push");
   assert.equal(
+    await facade.requestSync({
+      kind: "manual_sync",
+      options: { preferredDirection: "push" },
+    }),
+    "manual_sync"
+  );
+  assert.equal(
     facade.requestSync({ kind: "startup_flow", options: { welcome: true } }),
     "startup_flow"
   );
@@ -562,6 +569,7 @@ const testFacadePreservesEverySyncIntentContract = async () => {
     { kind: "manual_sync", args: [true, true, runtime] },
     { kind: "manual_pull", args: [{}] },
     { kind: "manual_push", args: [{}] },
+    { kind: "manual_sync", args: [false, false, { preferredDirection: "push" }] },
     { kind: "startup_flow", args: [{ welcome: true }] },
   ]);
 };
