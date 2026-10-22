@@ -51908,16 +51908,17 @@
     }
 
     jumpBtn.href = `forum.php?mod=redirect&goto=findpost&ptid=${threadId}&pid=${postId}`;
-    jumpBtn.style.color = fcolor;
+    // 保持按钮自有字色，避免被 NUX 的全局链接 !important 规则覆盖。
+    jumpBtn.style.setProperty("color", fcolor, "important");
     jumpBtn.style.borderColor = fcolor;
 
     jumpBtn.addEventListener("mouseover", () => {
       jumpBtn.style.backgroundColor = fcolor;
-      jumpBtn.style.color = "var(--s1p-white)";
+      jumpBtn.style.setProperty("color", "var(--s1p-white)", "important");
     });
     jumpBtn.addEventListener("mouseout", () => {
       jumpBtn.style.backgroundColor = "transparent";
-      jumpBtn.style.color = fcolor;
+      jumpBtn.style.setProperty("color", fcolor, "important");
     });
     jumpBtn.addEventListener("mouseenter", () => {
       if (progressContainer.__s1pDeleteRevealTimer) {
