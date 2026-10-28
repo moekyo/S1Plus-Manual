@@ -35,7 +35,7 @@ assert.match(
 );
 assert.match(
   source,
-  /@resource\s+s1p-static-data\s+https:\/\/raw\.githubusercontent\.com\/moekyo\/S1Plus-Manual\/22597e6442c08c3a69f4ce248b506b87729fac5c\/S1Plus-static-data\.json/
+  /@resource\s+s1p-static-data\s+https:\/\/raw\.githubusercontent\.com\/moekyo\/S1Plus-Manual\/3eeacec2007c7a4c64345e37659f63a7f8fe2521\/S1Plus-static-data\.json/
 );
 assert.match(source, /@grant\s+GM_getResourceText/);
 assert.equal((source.match(/sourceMappingURL|sourceURL/g) || []).length, 0);

@@ -6,7 +6,7 @@
 // @author       moekyo
 // @match        https://stage1st.com/2b/*
 // @resource     s1p-base-css https://raw.githubusercontent.com/moekyo/S1Plus-Manual/a1165e575333eaa9a2c7332f47442844b24aa22b/S1Plus.css
-// @resource     s1p-static-data https://raw.githubusercontent.com/moekyo/S1Plus-Manual/22597e6442c08c3a69f4ce248b506b87729fac5c/S1Plus-static-data.json
+// @resource     s1p-static-data https://raw.githubusercontent.com/moekyo/S1Plus-Manual/3eeacec2007c7a4c64345e37659f63a7f8fe2521/S1Plus-static-data.json
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_getResourceText
