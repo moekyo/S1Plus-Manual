@@ -6,6 +6,7 @@ const path = require("path");
 const vm = require("vm");
 const assert = require("assert/strict");
 const { webcrypto } = require("crypto");
+const { injectTestHooks } = require("./s1plus-test-hooks");
 
 const repoRoot = path.resolve(__dirname, "..");
 const sourcePath = path.join(repoRoot, "S1Plus.js");
@@ -142,7 +143,7 @@ const sandbox = createSandbox();
 const toPlainObject = (value) => JSON.parse(JSON.stringify(value));
 
 vm.createContext(sandbox);
-vm.runInContext(sourceCode, sandbox, {
+vm.runInContext(injectTestHooks(sourceCode), sandbox, {
   filename: "S1Plus.js",
   timeout: 20000,
 });

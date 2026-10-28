@@ -6,6 +6,7 @@ const path = require("path");
 const vm = require("vm");
 const assert = require("assert/strict");
 const { webcrypto } = require("crypto");
+const { injectTestHooks } = require("../s1plus-test-hooks");
 
 const repoRoot = path.resolve(__dirname, "..", "..");
 const sourcePath = path.join(repoRoot, "S1Plus.js");
@@ -184,7 +185,7 @@ const fixtures = JSON.parse(fs.readFileSync(fixturePath, "utf8"));
 const sandbox = createSandbox();
 
 vm.createContext(sandbox);
-vm.runInContext(sourceCode, sandbox, {
+vm.runInContext(injectTestHooks(sourceCode), sandbox, {
   filename: "S1Plus.js",
   timeout: 20000,
 });
@@ -268,7 +269,7 @@ console.log(
     s1p_settings: legacySettings,
   });
   vm.createContext(migrationSandbox);
-  vm.runInContext(sourceCode, migrationSandbox, {
+  vm.runInContext(injectTestHooks(sourceCode), migrationSandbox, {
     filename: "S1Plus.js",
     timeout: 20000,
   });

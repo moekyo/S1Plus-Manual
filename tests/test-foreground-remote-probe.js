@@ -6,6 +6,7 @@ const path = require("path");
 const vm = require("vm");
 const assert = require("assert/strict");
 const { webcrypto } = require("crypto");
+const { injectTestHooks } = require("./s1plus-test-hooks");
 
 const repoRoot = path.resolve(__dirname, "..");
 const sourcePath = path.join(repoRoot, "S1Plus.js");
@@ -144,7 +145,7 @@ const toPlainObject = (value) => JSON.parse(JSON.stringify(value));
 const createHarness = () => {
   const { sandbox, store } = createSandbox();
   vm.createContext(sandbox);
-  vm.runInContext(sourceCode, sandbox, {
+  vm.runInContext(injectTestHooks(sourceCode), sandbox, {
     filename: "S1Plus.js",
     timeout: 20000,
   });
@@ -654,7 +655,7 @@ const testCleanStateFenceCodeGuards = () => {
     "const checkRemoteFreshnessOnForeground = async"
   );
   const foregroundProbeEnd = sourceCode.indexOf(
-    "if (IS_S1P_TEST_MODE)",
+    "/*__S1P_TEST_HOOK_",
     foregroundProbeStart
   );
   const foregroundProbeSource = sourceCode.slice(

@@ -63,6 +63,22 @@
     typeof S1P_NAMED_STATIC_ICONS[name] === "string"
       ? S1P_NAMED_STATIC_ICONS[name]
       : "";
+  const S1P_UI_TEMPLATES =
+    S1P_STATIC_DATA.templates &&
+    typeof S1P_STATIC_DATA.templates === "object"
+      ? S1P_STATIC_DATA.templates
+      : {};
+  const getS1pUiTemplate = (name, replacements = {}) => {
+    let template =
+      typeof S1P_UI_TEMPLATES[name] === "string" ? S1P_UI_TEMPLATES[name] : "";
+    if (!template) {
+      return '<div class="s1p-settings-group">设置模板资源未加载，请更新 S1 Plus。</div>';
+    }
+    for (const [key, value] of Object.entries(replacements)) {
+      template = template.replaceAll(`{{${key}}}`, () => String(value));
+    }
+    return template;
+  };
 
   // --- 全局调试控制台 ---
   const DEBUG_MODE = false;
@@ -1826,88 +1842,7 @@
     _originalConsoleCaptured = false;
   };
 
-  if (IS_S1P_TEST_MODE) {
-    const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
-    const getDebugLogCollectorStateForTest = () => ({
-      logBuffer: logBuffer.map((entry) => ({ ...entry })),
-      nextLogEntryId,
-      expandedLogEntryIds: [...expandedLogEntryIds],
-      logExpandAll,
-      logCollectorStarted,
-    });
-    const setDebugLogCollectorStateForTest = ({
-      entries = [],
-      nextId = 1,
-      expandedIds = [],
-      expandAll = false,
-    } = {}) => {
-      logBuffer = Array.isArray(entries)
-        ? entries.map((entry) => normalizeRestoredLogEntry(entry)).filter(Boolean)
-        : [];
-      const maxRestoredId = logBuffer.reduce((max, entry) => Math.max(max, entry.id), 0);
-      const normalizedNextId = normalizeRestoredLogEntryId(nextId);
-      nextLogEntryId = Math.max(normalizedNextId || 1, maxRestoredId + 1);
-      const restoredEntryIds = new Set(logBuffer.map((entry) => entry.id));
-      expandedLogEntryIds = Array.isArray(expandedIds)
-        ? new Set(
-          expandedIds
-            .map((id) => normalizeRestoredLogEntryId(id))
-            .filter((id) => id !== null && restoredEntryIds.has(id))
-        )
-        : new Set();
-      logExpandAll = expandAll === true;
-      logDirty = true;
-    };
-    const resetDebugLogCollectorStateForTest = () => {
-      stopLogCollector();
-      if (logPersistTimeoutId) {
-        clearTimeout(logPersistTimeoutId);
-        logPersistTimeoutId = null;
-      }
-      logBuffer = [];
-      expandedLogEntryIds = new Set();
-      logExpandAll = false;
-      nextLogEntryId = 1;
-      logDirty = false;
-      logCollectorStarted = false;
-      s1pLogRestored = false;
-      s1pLogLoss = { evicted: 0, truncated: 0, persistenceFailures: 0, collectionFailures: 0 };
-      s1pFailedOperationIds.clear();
-      s1pLogEntrySizes.clear();
-      _originalConsoleCaptured = false;
-      _consoleMethods.forEach((method) => {
-        _consoleWrappers[method] = null;
-      });
-    };
-    testHookHost.__S1P_TEST_HOOKS__ = {
-      ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
-      getDebugConsoleStateForTest: getDebugConsoleState,
-      setDebugConsoleStateForTest: setDebugConsoleState,
-      isDebugConsolePersistentlyVisibleForTest:
-        isDebugConsolePersistentlyVisible,
-      setDebugConsolePersistentlyVisibleForTest:
-        setDebugConsolePersistentlyVisible,
-      startLogCollector,
-      stopLogCollector,
-      persistLogBuffer,
-      restoreLogBufferFromSession,
-      getPostHashTargetCandidateIdsForTest: getPostHashTargetCandidateIds,
-      getPostAnchorScrollOffsetForTest: getPostAnchorScrollOffsetPx,
-      getPostHashAnchorScrollTopForTest: getPostHashAnchorScrollTop,
-      getDebugLogCollectorStateForTest,
-      enrichS1pLogMessageWithRuntimeContext,
-      setDebugLogCollectorStateForTest,
-      resetDebugLogCollectorStateForTest,
-      s1pSanitizeLogValue,
-      s1pRecordDiagnosticEvent,
-      s1pBuildDiagnosticExport,
-      s1pGetDiagnosticOperationSummaries,
-      s1pWriteSharedLockReceipt: (...args) => s1pWriteSharedLockReceipt(...args),
-      s1pReadSharedLockReceipts: (...args) => s1pReadSharedLockReceipts(...args),
-      s1pMergeDiagnosticExports,
-      formatLogEntryForCopy,
-    };
-  }
+  /*__S1P_TEST_HOOK_0__*/
 
   // --- [新增] SHA-256 哈希计算库 (基于 Web Crypto API) ---
   /**
@@ -6958,16 +6893,6 @@
     lastObservedAt: 0,
     lastSyncedRemoteUpdatedAt: null,
   });
-  const REMOTE_SYNC_LAST_WRITER_DEFAULT = Object.freeze({
-    deviceId: "",
-    sessionId: "",
-    sourceTabId: "",
-    threadId: "",
-    action: "",
-    syncMode: "",
-    remoteUpdatedAt: null,
-    createdAt: 0,
-  });
   const LOCAL_SESSION_REMOTE_WRITE_DEFAULT = Object.freeze({
     deviceId: "",
     sessionId: "",
@@ -10147,19 +10072,6 @@
         settingsSnapshot.syncCheckOnReturnToForeground === true ||
         settingsSnapshot.syncAutoEnabled === true)
     );
-
-  const hasActiveBackgroundSyncLock = (now = Date.now()) => {
-    const backgroundLock = getBackgroundSyncLockValue();
-    const globalLock = getGlobalSyncLockValue();
-    return (
-      isModeSyncLockValid(backgroundLock, BACKGROUND_SYNC_LOCK_TTL_MS, now) ||
-      Boolean(
-        globalLock &&
-        globalLock.mode === SYNC_LOCK_MODE_BACKGROUND &&
-        isGlobalSyncLockValid(globalLock, now)
-      )
-    );
-  };
 
   const getAutoSyncIndicatorSourceForActiveLock = (
     now = Date.now(),
@@ -21355,15 +21267,7 @@
       return Boolean(isCrossContextChange || signalPayload.sender);
     },
   });
-  if (IS_S1P_TEST_MODE) {
-    const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
-    testHookHost.__S1P_TEST_HOOKS__ = {
-      ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
-      s1pCreateCoreBusinessData,
-      s1pCreateCoreBusinessDataMemoryAdapter,
-      s1pCoreBusinessData,
-    };
-  }
+  /*__S1P_TEST_HOOK_1__*/
   const getBlockedThreads = () => s1pCoreBusinessData.read("blockedThreads");
   const saveBlockedThreads = (threads, suppressSyncTrigger = false) =>
     s1pCoreBusinessData.write("blockedThreads", threads, {
@@ -23869,13 +23773,7 @@
       return shouldClose;
     };
   };
-  if (IS_S1P_TEST_MODE) {
-    const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
-    testHookHost.__S1P_TEST_HOOKS__ = {
-      ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
-      s1pCreateModalBackdropClickGuard: createS1pModalBackdropClickGuard,
-    };
-  }
+  /*__S1P_TEST_HOOK_2__*/
   const closeS1pModalSurface = (
     modal,
     {
@@ -24262,29 +24160,6 @@
     if (!keepGhost) {
       clearS1pImageViewerSwitchGhost();
     }
-  };
-  const prepareS1pImageViewerSwitchGhost = () => {
-    const state = s1pImageViewerState;
-    if (
-      !state.overlay ||
-      !(state.image instanceof HTMLImageElement) ||
-      !(state.ghostImage instanceof HTMLImageElement)
-    ) {
-      return false;
-    }
-    const currentSourceUrl = normalizeS1pImageViewerSourceUrl(
-      state.sourceUrl || state.image.currentSrc || state.image.src
-    );
-    if (!currentSourceUrl) {
-      clearS1pImageViewerSwitchGhost();
-      return false;
-    }
-    state.ghostImage.src = currentSourceUrl;
-    state.ghostImage.style.transform =
-      state.image.style.transform ||
-      `translate3d(${state.translateX}px, ${state.translateY}px, 0) scale(${state.scale})`;
-    state.overlay.classList.add("has-switch-ghost");
-    return true;
   };
   const playS1pImageViewerSwitchAnimation = (direction) => {
     const state = s1pImageViewerState;
@@ -27107,14 +26982,7 @@
     finalizeClose: finalizeS1pImageViewerCloseState,
   });
 
-  if (IS_S1P_TEST_MODE) {
-    const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
-    testHookHost.__S1P_TEST_HOOKS__ = {
-      ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
-      imageViewer: s1pImageViewer,
-      s1pCreateImageViewerInterface,
-    };
-  }
+  /*__S1P_TEST_HOOK_3__*/
   const getS1pImageViewerTargetImage = (eventTarget) => {
     if (!(eventTarget instanceof Element)) {
       return null;
@@ -29861,8 +29729,6 @@
 
   const acquireManualSyncLock = (options = {}) =>
     acquireModeSyncLock(SYNC_LOCK_MODE_MANUAL, options);
-  const refreshManualSyncLock = (expectedToken = "") =>
-    refreshModeSyncLock(SYNC_LOCK_MODE_MANUAL, expectedToken);
   const releaseManualSyncLock = (authorityOrToken = "") =>
     releaseModeSyncLock(
       SYNC_LOCK_MODE_MANUAL,
@@ -29897,21 +29763,8 @@
     return true;
   };
 
-  const acquireBackgroundSyncLock = () =>
-    acquireModeSyncLock(SYNC_LOCK_MODE_BACKGROUND);
-  const refreshBackgroundSyncLock = () =>
-    refreshModeSyncLock(SYNC_LOCK_MODE_BACKGROUND);
-  const releaseBackgroundSyncLock = () =>
-    releaseModeSyncLock(SYNC_LOCK_MODE_BACKGROUND);
-  const startBackgroundSyncLockHeartbeat = () =>
-    startModeSyncLockHeartbeat(SYNC_LOCK_MODE_BACKGROUND);
-  const stopBackgroundSyncLockHeartbeat = () =>
-    stopModeSyncLockHeartbeat(SYNC_LOCK_MODE_BACKGROUND);
-
   const acquireForegroundFollowUpSyncLock = () =>
     acquireModeSyncLock(SYNC_LOCK_MODE_FOREGROUND_FOLLOWUP);
-  const refreshForegroundFollowUpSyncLock = () =>
-    refreshModeSyncLock(SYNC_LOCK_MODE_FOREGROUND_FOLLOWUP);
   const releaseForegroundFollowUpSyncLock = () =>
     releaseModeSyncLock(SYNC_LOCK_MODE_FOREGROUND_FOLLOWUP);
   const startForegroundFollowUpSyncLockHeartbeat = () =>
@@ -29921,8 +29774,6 @@
 
   const acquireStartupSyncLock = () =>
     acquireModeSyncLock(SYNC_LOCK_MODE_STARTUP);
-  const refreshStartupSyncLock = () =>
-    refreshModeSyncLock(SYNC_LOCK_MODE_STARTUP);
   const releaseStartupSyncLock = () =>
     releaseModeSyncLock(SYNC_LOCK_MODE_STARTUP);
   const startStartupSyncLockHeartbeat = () =>
@@ -34068,161 +33919,7 @@
     }
   };
 
-  if (IS_S1P_TEST_MODE) {
-    const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
-    testHookHost.__S1P_TEST_HOOKS__ = {
-      ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
-      getRemoteProbeSharedCooldownRemainingMs,
-      isRemoteProbeSharedCooldownActive,
-      getForegroundProbeLocalCooldownRemainingMs,
-      isForegroundProbeLocalCooldownActive,
-      recordRemoteProbeObservation,
-      getLastLocalSessionRemoteWrite,
-      setLastLocalSessionRemoteWrite,
-      recordLocalSessionRemoteWrite,
-	      getMatchingLocalSessionRemoteWrite,
-	      getLastLocalDirtyProvenance,
-	      getSyncDiagnostics,
-	      resetSyncDiagnostics,
-      buildSyncDiagnosticsSummary,
-      acquireRemoteProbeLock,
-      hasAnyActiveSyncLock,
-      markVisibleRemoteFreshnessUserActivity,
-      getVisibleRemoteFreshnessPollingIntervalMs,
-      stopVisibleRemoteFreshnessPolling,
-      scheduleVisibleRemoteFreshnessPolling,
-      syncVisibleRemoteFreshnessPollingForCurrentState,
-      handleVisibleRemoteFreshnessUserActivity,
-      getVisibleRemoteFreshnessPollingRuntimeState,
-      hasDirtySettingsModalEdits,
-      isThreadDetailPageForAutoPullRefresh,
-      isLightweightListPageForAutoPullRefresh,
-      parseThreadPageSignatureFromLocation,
-      getBackgroundOpenThreadHints,
-      registerBackgroundOpenThreadHintForUrl,
-      consumeBackgroundOpenThreadHint,
-      getAutoPullRefreshPlan,
-      decideWhatToDoWithRemoteChange,
-      applyAutoPullRefreshPolicy,
-      s1pCreateSyncResultPhasePolicy,
-      s1pScheduleBackgroundSyncRetry,
-      s1pNotifyBackgroundSyncResultPhase,
-      getAutoPullRefreshMessagesForSource,
-      clearPendingAutoPullReloadTimer,
-      runStartupModeAutoSyncCheck,
-      requestForegroundRemoteSyncCheck,
-      scheduleForegroundRemoteSyncRetry,
-      clearForegroundRemoteSyncRetry,
-      getForegroundRemoteSyncRetryOwnerToken: () =>
-        foregroundRemoteSyncRetryOwnerToken,
-      getForegroundRemoteSyncRetryRemainingMs,
-      markPendingForegroundRemoteSyncRequest,
-      getPendingForegroundRemoteSyncRequest,
-      getPendingForegroundRemoteSyncTerminalRecord:
-        readPendingForegroundRemoteSyncTerminalRecord,
-      isTerminalForegroundRemoteSyncSoftBlock,
-      clearPendingForegroundRemoteSyncSoftBlock,
-      markPendingForegroundRemoteSyncAttempt,
-      clearPendingForegroundRemoteSyncRequest,
-      settlePendingForegroundRemoteSyncRequest,
-      settlePendingForegroundRemoteSyncRequestIfCovered,
-      recoverPendingForegroundRemoteSyncIfNeeded,
-      scheduleForegroundRemoteSyncRecovery,
-      clearForegroundRemoteSyncRecovery,
-      getForegroundRemoteSyncRecoveryRemainingMs,
-      getActiveSyncLockSnapshot,
-      getForegroundProbeGateBlockResult,
-      hasEnabledAutoSyncIndicatorPath,
-      getAutoSyncIndicatorState,
-      getSyncIndicatorStateProjectionTestConstants: () => ({
-        SURFACE_NAVBAR: SYNC_INDICATOR_STATE_PROJECTION_SURFACE_NAVBAR,
-        SURFACE_TITLE: SYNC_INDICATOR_STATE_PROJECTION_SURFACE_TITLE,
-      }),
-      resolveTitleSyncIndicatorProjectionPhase,
-      getAutoSyncIndicatorLiveRunnerOwnerIdForTitle,
-      shouldSuppressAutoSyncIndicatorRunningForTitle,
-      hasActivePendingAutoSyncRequest,
-      getAutoSyncRuntimePendingDisplayState,
-      getAutoSyncRuntimeRunningDisplayState,
-      getLastAutoSyncIndicatorDisplaySession,
-      setLastAutoSyncIndicatorDisplaySession,
-      clearLastAutoSyncIndicatorDisplaySession,
-      rememberAutoSyncIndicatorDisplaySessionFromRemoteWrite,
-      setAutoSyncIndicatorResolvedPhase,
-      setAutoSyncIndicatorActiveOperation,
-      startAutoSyncIndicatorCycle,
-      finishAutoSyncIndicatorCycle,
-      getAutoSyncIndicatorOperationFromSyncAction,
-      getAutoSyncIndicatorPhaseFromResult,
-      getAutoSyncIndicatorReasonFromResult,
-      resolveAutoSyncIndicatorDrainCompletion,
-      formatAutoSyncCompletionLogMessage,
-      recordSyncTraceEvent,
-      s1pFlushSyncTrace,
-      s1pReadSyncLockEvidence,
-      s1pObserveSyncLocks,
-      s1pRetainDepartedSyncLocksUntil,
-      getSyncLockEffectiveExpiresAt,
-      acquireModeSyncLock,
-      refreshModeSyncLock,
-      releaseModeSyncLock,
-      s1pSetManualPriorityGateForTest: (evaluator) => { manualSyncPriorityGateEvaluator = evaluator; },
-      getSyncRuntimeContextInfo,
-      getSyncRuntimeContextSummary,
-      emitSyncCompletionLog,
-      getAutoSyncIndicatorTitle: (...args) => getAutoSyncIndicatorTitle(...args),
-      getAutoSyncIndicatorTooltip: (...args) =>
-        getAutoSyncIndicatorTooltip(...args),
-      getAutoSyncIndicatorDisplayKind: (...args) =>
-        getAutoSyncIndicatorDisplayKind(...args),
-      getAutoSyncCleanStateSnapshot,
-      shouldSkipAutoSyncDueToCleanState,
-      buildSyncBaselineStateForDataPair,
-      decideSyncActionByVersion,
-      classifyLocalSyncDelta,
-      getLocalSyncDeltaTraceDetails,
-      getForegroundRemoteChangeKind,
-      getSyncResultRemoteWriteMatchKind,
-      fetchRemoteData,
-      pushRemoteData,
-      runRemoteRequestWithRetry,
-      performAutoSync,
-      runRunningSync,
-      runBackgroundAutoSyncIteration,
-      acquireManualSyncLock,
-      preemptActiveSyncForManualOverride,
-      cancelActiveRemoteSyncRequests,
-      seedSyncRuntimeStateForManualOverrideTest,
-      getBackgroundAutoSyncRuntimeStateForTest,
-      createPendingDirtyScheduler,
-      s1pCreateSchedulerOwnerHandoffFence,
-      s1pCreateSyncLifecycleAdapter,
-      s1pBindForegroundRemoteSyncPendingChangeHook,
-      s1pInitializePendingAutoSyncRecoverySupport,
-      registerSyncLifecycleLocalMutationFinalizer,
-      runForegroundFollowUpAutoSyncCheck,
-      markStartupSyncUserInteraction,
-      getStartupSyncFreshnessState,
-      getStartupSyncOrchestratorDecision,
-      getForegroundFollowUpSoftBlockState,
-      clearForegroundFollowUpSoftBlock,
-      setForegroundFollowUpSoftBlock,
-      getPendingCleanupInfo,
-      setPendingCleanupInfo,
-      clearPendingCleanupInfo,
-      buildPendingCleanupInfo,
-      evaluateCleanupSyncShortcut,
-      calculateReadProgressDataHash,
-      getCleanupSyncMessageBundle,
-      getCleanupNoticeDescriptor,
-      getManualSyncRootCauseDescriptor,
-      createManualSyncPreflightHtml,
-      shouldClearDeferredStartupSyncOnResult,
-      getAutoPullRefreshMessagesForSource,
-      getNavbarPersistentSyncAlertDescriptor: (...args) =>
-        getNavbarPersistentSyncAlertDescriptor(...args),
-    };
-  }
+  /*__S1P_TEST_HOOK_4__*/
 
   const defaultSettings = {
     enablePostBlocking: true,
@@ -35143,43 +34840,7 @@
     return { settings, migrationApplied, migrationReasons };
   };
 
-  if (IS_S1P_TEST_MODE) {
-    const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
-    testHookHost.__S1P_TEST_HOOKS__ = {
-      ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
-      buildNormalizedSettings,
-      defaultSettings,
-      resolveNuxRenderedThemeEvidence,
-      resolveS1pThemeState,
-      readS1pThemeState,
-      reconcileS1pThemeState,
-      initializeS1pThemeSynchronization,
-      disposeS1pThemeSynchronization,
-      getCurrentS1pThemeState,
-      getS1pThemeCompatibilityReconcileCountForTest: () =>
-        s1pThemeCompatibilityReconcileCount,
-      s1pSettingsSemantics,
-      getLastRemoteProbeInfo,
-      setLastRemoteProbeInfo,
-      getRemoteProbeSharedCooldownState,
-      setRemoteProbeSharedCooldownState,
-      getRemoteProbeLockValue,
-      isRemoteProbeLockValid,
-      setRemoteProbeLockValue,
-      releaseRemoteProbeLockValue,
-      clearRemoteProbeState,
-      setSyncBaselineState,
-      resolveAutoSyncExecutionOptions,
-      buildRemoteSyncWriterMetadata,
-      getRemoteSyncLastWriter,
-      resolveRecentRemoteWriteMatch,
-      getRemoteWriteMatchKind,
-      getForegroundRemoteChangeKind,
-      getS1pTokenExpiryDaysLeft,
-      createRemoteSyncAuthRejectedError,
-      exportLocalDataObject,
-    };
-  }
+  /*__S1P_TEST_HOOK_5__*/
 
   let settingsCacheValue = null;
   let settingsCacheExpiresAt = 0;
@@ -36213,13 +35874,7 @@
       }
     });
   };
-  if (IS_S1P_TEST_MODE) {
-    const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
-    testHookHost.__S1P_TEST_HOOKS__ = {
-      ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
-      syncCoreDataFromStorageSnapshotIfNeeded,
-    };
-  }
+  /*__S1P_TEST_HOOK_6__*/
   const getSettings = () => {
     if (settingsCacheValue && Date.now() < settingsCacheExpiresAt) {
       return settingsCacheValue;
@@ -36374,15 +36029,7 @@
     return true;
   };
 
-  if (IS_S1P_TEST_MODE) {
-    const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
-    testHookHost.__S1P_TEST_HOOKS__ = {
-      ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
-      getSettings,
-      saveSettings,
-      migrateLegacySettingsIfNeeded,
-    };
-  }
+  /*__S1P_TEST_HOOK_7__*/
 
   let interfaceTitleBaseCache = null;
   let lastAppliedCustomTitleSuffix = "";
@@ -37799,31 +37446,7 @@
     });
   };
 
-  if (IS_S1P_TEST_MODE) {
-    const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
-    testHookHost.__S1P_TEST_HOOKS__ = {
-      ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
-      getTitleSyncStatusTestConstants,
-      composeDocumentTitle,
-      stripLastAppliedTitleSyncStatusPrefix,
-      getTitleSyncStatusPrefixForPhase,
-      isTitleSyncStatusForegroundTab,
-      isTitleSyncStatusLeaseWorthyPhase,
-      getTitleSyncStatusTabPresenceKey,
-      getTitleSyncStatusPresenceState,
-      shouldWriteCurrentTitleSyncStatusPresence,
-      writeCurrentTitleSyncStatusPresence,
-      resolveTitleSyncStatusTabDisplayDecision,
-      writeTitleSyncStatusOwnerLease,
-      releaseTitleSyncStatusOwnerLease,
-      maybeRefreshTitleSyncStatusOwnerLease,
-      hasEnabledTitleSyncStatusPath,
-      getTitleSyncStatusRuntimeStateForTest,
-      runTitleSyncStatusRuntimeSync,
-      refreshDocumentTitle,
-      getCurrentTitleSyncStatusPrefix,
-    };
-  }
+  /*__S1P_TEST_HOOK_8__*/
 
   // --- 界面定制功能 ---
   const applyInterfaceCustomizations = () => {
@@ -41245,17 +40868,7 @@
     }
   };
 
-  if (IS_S1P_TEST_MODE) {
-    const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
-    testHookHost.__S1P_TEST_HOOKS__ = {
-      ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
-      initializeDebugUnifiedPanelForTest: initializeDebugUnifiedPanel,
-      hideDebugUnifiedPanelForTest: hideDebugUnifiedPanel,
-      toggleDebugUnifiedPanelForTest: toggleDebugUnifiedPanel,
-      collapseDebugPanelForTest: collapseDebugPanel,
-      expandDebugPanelForTest: expandDebugPanel,
-    };
-  }
+  /*__S1P_TEST_HOOK_9__*/
 
   const initializeAutoSyncIndicatorCrossTabSync = () => {
     if (window.__s1pAutoSyncIndicatorCrossTabSyncBound) {
@@ -44137,199 +43750,7 @@
     settingsModalCrossTabSyncController = null;
     clearSettingsModalEscKeydownHandler();
     document.querySelector(".s1p-modal")?.remove();
-    const buildSyncSettingsTabHtml = () => `
-      <div class="s1p-settings-group">
-        <div class="s1p-settings-group-title s1p-settings-section-title-label">本地备份与恢复</div>
-        <div class="s1p-local-sync-desc">通过手动复制/粘贴数据，在不同浏览器或设备间迁移或备份你的所有S1 Plus配置，包括屏蔽列表、导航栏、阅读进度和各项开关设置。</div>
-        <div class="s1p-local-sync-buttons">
-          <button id="s1p-local-export-btn" class="s1p-btn">导出数据</button>
-          <button id="s1p-local-import-btn" class="s1p-btn">导入数据</button>
-        </div>
-        <textarea id="s1p-local-sync-textarea" class="s1p-input s1p-textarea s1p-sync-textarea" placeholder="在此粘贴导入数据或从此处复制导出数据" autocomplete="off"></textarea>
-      </div>
-
-      <div class="s1p-settings-group">
-        <div class="s1p-settings-group-title s1p-settings-section-title-label">远程同步 (通过GitHub Gist)</div>
-        <div id="s1p-last-sync-time-container" class="s1p-setting-desc s1p-sync-last-sync-time"></div>
-        <div class="s1p-settings-item">
-          <label class="s1p-settings-label" for="s1p-remote-enabled-toggle">启用远程同步</label>
-          <label class="s1p-switch">
-            <input type="checkbox" id="s1p-remote-enabled-toggle" class="s1p-settings-checkbox">
-            <span class="s1p-slider"></span>
-          </label>
-        </div>
-        <p class="s1p-setting-desc">启用后，你可以在导航栏直接选择推送或拉取，也可以配置自动推送、自动拉取和状态显示。</p>
-
-        <div id="s1p-remote-sync-controls-wrapper">
-          <div class="s1p-sync-settings-section" id="s1p-manual-sync-section">
-            <div class="s1p-sync-settings-section-title">手动同步</div>
-            <p class="s1p-setting-desc s1p-sync-settings-section-desc">导航栏同步按钮可点击或悬停打开“拉取 / 推送”菜单：两个方向都会先比较云端与本地，仅阅读进度分歧会自动合并，核心数据冲突会先弹出对比让你选择，不会直接覆盖任何一端。</p>
-            <div class="s1p-settings-item">
-              <label class="s1p-settings-label" for="s1p-sync-bookmark-full-content-toggle">收藏回复同步完整正文</label>
-              <label class="s1p-switch">
-                <input type="checkbox" id="s1p-sync-bookmark-full-content-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
-                <span class="s1p-slider"></span>
-              </label>
-            </div>
-            <p class="s1p-setting-desc">影响所有远程导出的收藏回复内容，包括自动推送；关闭时仅同步 280 字预览（更快更省流量），开启后跨设备可查看全文但体积更大。</p>
-            <div class="s1p-settings-item s1p-settings-item-column" id="s1p-sync-override-block">
-              <label class="s1p-settings-label">覆盖式操作（危险）</label>
-              <p class="s1p-setting-desc">下面两个按钮不比较、不合并，直接把一端数据整体覆盖到另一端，云端或本地独有的阅读进度等数据会丢失且不可撤销。需要合并时请用下面的“手动同步”按钮或导航栏的同步菜单。</p>
-              <div class="s1p-local-sync-buttons">
-                <button id="s1p-force-push-btn" class="s1p-btn s1p-danger" data-s1p-sync-control>强制推送（覆盖云端）</button>
-                <button id="s1p-force-pull-btn" class="s1p-btn s1p-danger" data-s1p-sync-control>强制拉取（覆盖本地）</button>
-              </div>
-            </div>
-          </div>
-
-          <div class="s1p-sync-settings-section" id="s1p-auto-push-section">
-            <div class="s1p-sync-settings-section-title">自动推送</div>
-            <div class="s1p-settings-item">
-              <label class="s1p-settings-label" for="s1p-auto-sync-enabled-toggle">本地变更后自动后台同步</label>
-              <label class="s1p-switch">
-                <input type="checkbox" id="s1p-auto-sync-enabled-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
-                <span class="s1p-slider"></span>
-              </label>
-            </div>
-            <p class="s1p-setting-desc">启用后，屏蔽、标记、阅读进度等本地数据变化会在停止操作后自动推送或合并；关闭后仍可手动推送/拉取，也不影响自动拉取。</p>
-            <div class="s1p-settings-item s1p-settings-item-column">
-              <label class="s1p-settings-label" for="s1p-sync-device-id-input">同步设备 ID（自动推送必填）</label>
-              <input type="text" id="s1p-sync-device-id-input" class="s1p-input s1p-input-full" placeholder="例如：MacBook-Pro-主力机" maxlength="80" autocomplete="off" data-s1p-sync-control>
-            </div>
-            <p class="s1p-setting-desc">开启自动推送时必填，用于标记这台设备写入的云端记录，方便其他页面或同设备环境识别“这是本机刚同步的变更”。留空则忽略，不会同步到其他设备，也不参与冲突裁决；填写后只写入云端记录元信息，不会作为设置同步到其他设备。</p>
-          </div>
-
-          <div class="s1p-sync-settings-section" id="s1p-auto-pull-section">
-            <div class="s1p-sync-settings-section-title">自动拉取</div>
-            <p class="s1p-setting-desc s1p-sync-settings-section-desc">决定何时主动查看云端是否有新数据；发现变化后仍会进入安全同步判断，不会直接覆盖本地。</p>
-
-            <div class="s1p-settings-item">
-              <label class="s1p-settings-label" for="s1p-daily-first-load-sync-enabled-toggle">每日首次打开时同步</label>
-              <label class="s1p-switch">
-                <input type="checkbox" id="s1p-daily-first-load-sync-enabled-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
-                <span class="s1p-slider"></span>
-              </label>
-            </div>
-            <p class="s1p-setting-desc">每天第一次打开论坛时执行一次安全同步检查；关闭后不会再隐式切换为“每次加载”。</p>
-
-            <div id="s1p-force-pull-subgroup" class="s1p-settings-sub-group">
-              <div class="s1p-settings-item">
-                <label class="s1p-settings-label" for="s1p-force-pull-on-startup-toggle">启动时强制拉取</label>
-                <label class="s1p-switch">
-                  <input type="checkbox" id="s1p-force-pull-on-startup-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
-                  <span class="s1p-slider"></span>
-                </label>
-              </div>
-              <p class="s1p-setting-desc s1p-warning-text">仅作用于每日首次打开时同步；若云端与本地不一致，将直接用云端覆盖本地。请谨慎开启。</p>
-            </div>
-
-            <div class="s1p-settings-item s1p-sync-auto-check-item">
-              <div class="s1p-settings-label-with-help">
-                <label class="s1p-settings-label" for="s1p-sync-auto-check-mode-control">检查策略</label>
-                <button id="s1p-sync-auto-check-mode-help-btn" type="button" class="s1p-help-icon-btn" aria-label="查看检查策略说明">${SVG_ICON_HELP_CIRCLE}</button>
-              </div>
-              <div id="s1p-sync-auto-check-mode-control" class="s1p-segmented-control s1p-sync-auto-check-control" data-s1p-sync-control>
-                <div class="s1p-segmented-control-slider"></div>
-                <div class="s1p-segmented-control-option active" data-value="off">关闭</div>
-                <div class="s1p-segmented-control-option" data-value="per_load">每次加载</div>
-                <div class="s1p-segmented-control-option" data-value="foreground">回到前台</div>
-              </div>
-            </div>
-            <p class="s1p-setting-desc s1p-sync-auto-check-desc">这是每日首次同步之外的额外自动拉取检查：可完全关闭，也可选择每次页面加载检查，或仅在页面首次可见、回到前台、后退缓存恢复时轻量探测。</p>
-
-            <div id="s1p-visible-remote-polling-subgroup" class="s1p-settings-sub-group s1p-settings-sub-group-flat">
-              <div class="s1p-settings-item">
-                <label class="s1p-settings-label" for="s1p-visible-remote-polling-enabled-toggle">持续可见时低频复查</label>
-                <label class="s1p-switch">
-                  <input type="checkbox" id="s1p-visible-remote-polling-enabled-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
-                  <span class="s1p-slider"></span>
-                </label>
-              </div>
-              <p class="s1p-setting-desc">仅在“回到前台”策略下生效；页面一直保持可见时，活跃约 4 分钟、空闲约 12 分钟轻量探测一次云端。</p>
-            </div>
-          </div>
-
-          <div class="s1p-sync-settings-section" id="s1p-sync-status-section">
-            <div class="s1p-sync-settings-section-title">状态显示</div>
-            <div id="s1p-auto-sync-indicator-subgroup" class="s1p-settings-sub-group s1p-settings-sub-group-flat">
-              <div class="s1p-settings-item">
-                <label class="s1p-settings-label" for="s1p-show-auto-sync-indicator-toggle">显示导航栏同步状态</label>
-                <label class="s1p-switch">
-                  <input type="checkbox" id="s1p-show-auto-sync-indicator-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
-                  <span class="s1p-slider"></span>
-                </label>
-              </div>
-              <p class="s1p-setting-desc">只影响导航栏状态提示，不改变同步行为；会覆盖每日首次、每次加载、前台复查、可见页复查、后台同步和手动同步。</p>
-            </div>
-            <div id="s1p-title-sync-status-subgroup" class="s1p-settings-sub-group s1p-settings-sub-group-flat">
-              <div class="s1p-settings-item">
-                <label class="s1p-settings-label" for="s1p-show-title-sync-status-toggle">显示标签页标题同步状态</label>
-                <label class="s1p-switch">
-                  <input type="checkbox" id="s1p-show-title-sync-status-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
-                  <span class="s1p-slider"></span>
-                </label>
-              </div>
-              <p class="s1p-setting-desc">开启后，仅当所有 S1 标签页都不在前台时，最近离开的 S1 标签页标题会在本地推送或同步冲突时显示状态提示（同步中/成功/失败/冲突）。</p>
-            </div>
-          </div>
-
-          <div class="s1p-sync-settings-section" id="s1p-github-connection-section">
-            <div class="s1p-sync-settings-section-title">GitHub 连接</div>
-            <div class="s1p-settings-item s1p-settings-item-column">
-              <label class="s1p-settings-label" for="s1p-remote-gist-id-input">Gist ID</label>
-              <input type="text" id="s1p-remote-gist-id-input" class="s1p-input s1p-input-full" placeholder="从 Gist 网址中复制的那一长串 ID" autocomplete="off" data-s1p-sync-control>
-            </div>
-            <div class="s1p-settings-item s1p-settings-item-column s1p-settings-item-top12">
-              <label class="s1p-settings-label" for="s1p-remote-pat-input">GitHub Personal Access Token (PAT)</label>
-              <div class="s1p-relative-full">
-                <input type="password" id="s1p-remote-pat-input" class="s1p-input s1p-input-with-right-icon" placeholder="ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" autocomplete="new-password" data-s1p-sync-control>
-                <button id="s1p-toggle-pat-visibility" type="button" class="s1p-icon-btn-overlay">
-                  ${SVG_ICON_EYE}
-                </button>
-              </div>
-            </div>
-            <div class="s1p-settings-item s1p-settings-item-top12">
-              <label class="s1p-settings-label" for="s1p-token-expiry-reminder-toggle">Token 过期提醒</label>
-              <label class="s1p-switch">
-                <input type="checkbox" id="s1p-token-expiry-reminder-toggle" class="s1p-settings-checkbox" data-s1p-sync-control>
-                <span class="s1p-slider"></span>
-              </label>
-            </div>
-            <p class="s1p-setting-desc">开启后会在 Token 到期前三天弹窗提醒。</p>
-            <div id="s1p-token-expiry-info-container" class="s1p-setting-desc s1p-sync-token-expiry-info"></div>
-          </div>
-          <div class="s1p-notice">
-            <div class="s1p-notice-icon"></div>
-            <div class="s1p-notice-content">
-              <a href="https://silver-s1plus.netlify.app/" target="_blank" rel="noopener noreferrer">点击此处查看设置教程</a>
-              <p>Token 只保存在浏览器本地，不会写入 Gist 同步数据；脚本仅在访问 GitHub API 时将其作为鉴权凭据发送。</p>
-            </div>
-          </div>
-          <p class="s1p-setting-desc s1p-setting-desc-save-hint">以上同步配置修改后，需点击“保存设置”才会生效。</p>
-          <div class="s1p-editor-footer s1p-sync-footer-actions">
-            <button id="s1p-remote-save-btn" class="s1p-btn" data-s1p-sync-control>保存设置</button>
-            <button id="s1p-remote-manual-sync-btn" class="s1p-btn" data-s1p-sync-control>手动同步</button>
-            <button id="s1p-open-gist-page-btn" class="s1p-btn" data-s1p-sync-control>打开 Gist 页面</button>
-          </div>
-        </div>
-      </div>
-
-      <div class="s1p-settings-group">
-        <div class="s1p-settings-group-title s1p-settings-section-title-label">危险操作</div>
-        <div class="s1p-local-sync-desc">以下操作会立即清空脚本在<b>当前浏览器</b>中的所选数据，且无法撤销。请在操作前务必通过“导出数据”功能进行备份。</div>
-        <div id="s1p-clear-data-options" class="s1p-clear-data-options"></div>
-        <div class="s1p-clear-data-footer">
-          <div class="s1p-clear-data-select-all">
-            <label class="s1p-settings-label" for="s1p-clear-select-all">全选</label>
-            <label class="s1p-switch">
-              <input type="checkbox" id="s1p-clear-select-all">
-              <span class="s1p-slider"></span>
-            </label>
-          </div>
-          <button id="s1p-clear-selected-btn" class="s1p-btn s1p-red-btn">清除选中数据</button>
-        </div>
-      </div>
-    `;
+    const buildSyncSettingsTabHtml = () => getS1pUiTemplate("syncSettings", { SVG_ICON_HELP_CIRCLE, SVG_ICON_EYE });
     const buildSettingsModalTabsHtml = () => {
       const tabButtonsHtml = settingsModalTabDefinitions
         .map(({ key, label }, index) => {
@@ -49495,13 +48916,7 @@
     `;
   };
 
-  if (IS_S1P_TEST_MODE) {
-    const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
-    testHookHost.__S1P_TEST_HOOKS__ = {
-      ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
-      createSyncComparisonHtml,
-    };
-  }
+  /*__S1P_TEST_HOOK_10__*/
 
   /**
    * [NEW] 获取当前页面的帖子ID
@@ -53306,14 +52721,7 @@
     (input) => s1pReadingProgressSession.handleLifecycle(input)
   );
 
-  if (IS_S1P_TEST_MODE) {
-    const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
-    testHookHost.__S1P_TEST_HOOKS__ = {
-      ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
-      getReadProgress,
-      readingProgressSession: s1pReadingProgressSession,
-    };
-  }
+  /*__S1P_TEST_HOOK_11__*/
 
   const resetAuthiLayoutState = (authiDiv) => {
     if (!authiDiv) return;
@@ -54604,17 +54012,7 @@
     requestAutoSign(releaseAutoSignFlight);
   }
 
-  if (IS_S1P_TEST_MODE) {
-    const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
-    testHookHost.__S1P_TEST_HOOKS__ = {
-      ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
-      autoSign,
-      getS1pForumDateKey,
-      normalizeS1pSignAttemptState,
-      isS1pAutoSignSuccessResponse,
-      getS1pAutoSignUrl,
-    };
-  }
+  /*__S1P_TEST_HOOK_12__*/
 
   // [修改] 将设置项重命名为 enhanceFloatingControls
   const FLOATING_CONTROLS_OPEN_CLASS = "s1p-floating-controls-open";
@@ -55557,13 +54955,7 @@
     return hasScheduledAutoPullReload(outcome.refreshPlan);
   };
 
-  if (IS_S1P_TEST_MODE) {
-    const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
-    testHookHost.__S1P_TEST_HOOKS__ = {
-      ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
-      s1pNotifyDailyStartupSyncResultPhase,
-    };
-  }
+  /*__S1P_TEST_HOOK_13__*/
 
   const runStartupSyncFlowDeferred = ({
     welcomePopupWasShown = false,
@@ -55907,17 +55299,7 @@
 
   const s1pSyncSystem = s1pCreateSyncSystemFacade();
 
-  if (IS_S1P_TEST_MODE) {
-    const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
-    testHookHost.__S1P_TEST_HOOKS__ = {
-      ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
-      s1pCreateManualSyncIntentCoordinator,
-      getDefaultManualSyncIntentCoordinator,
-      cleanupLegacyManualSyncIntentState,
-      s1pCreateSyncSystemFacade,
-      s1pSyncSystem,
-    };
-  }
+  /*__S1P_TEST_HOOK_14__*/
 
   /**
    * [MODIFIED] 首次加载此版本时，显示更新亮点弹窗，并返回是否显示了弹窗。
@@ -56176,6 +55558,1013 @@
     return true;
   };
 
+  // --- 回复弹窗剪贴板图片上传兼容补丁 ---
+  // 论坛快速回复上传器把 paste 绑定在 document.body 上，并固定把附件代码写进
+  // #fastpostmessage；浮动回复弹窗（#fwin_content_reply）的 #postmessage 没有自己的上传器。
+  // 这里只在“弹窗内粘贴图片”时接管：复用论坛上传接口与页面内的 uid/hash，
+  // 上传成功后把附件代码插入弹窗光标处，并把 attachnew 字段补进弹窗表单。
+  const S1P_REPLY_IMAGE_PASTE_POPUP_ID = "fwin_content_reply";
+  const S1P_REPLY_IMAGE_PASTE_TEXTAREA_ID = "postmessage";
+  const S1P_REPLY_IMAGE_PASTE_FORM_ID = "postform";
+  const S1P_REPLY_IMAGE_PASTE_UPLOAD_TIMEOUT_MS = 30000;
+  const S1P_REPLY_IMAGE_PASTE_MAX_QUEUE = 8;
+  const S1P_REPLY_IMAGE_PASTE_ATTACH_FIELD_KEYS = Object.freeze(["description", "readperm", "price"]);
+  const S1P_REPLY_IMAGE_PASTE_MIME_EXTENSIONS = Object.freeze({"image/png": "png", "image/jpeg": "jpg", "image/jpg": "jpg", "image/gif": "gif", "image/webp": "webp", "image/bmp": "bmp"});
+  const S1P_REPLY_IMAGE_PASTE_UPLOAD_STATUS_MESSAGES = Object.freeze({1: "不支持此类扩展名", 2: "服务器限制无法上传那么大的附件", 3: "用户组限制无法上传那么大的附件", 4: "不支持此类扩展名", 5: "文件类型限制无法上传那么大的附件", 6: "今日您已无法上传更多的附件", 7: "请选择图片文件", 8: "附件文件无法保存", 9: "没有合法的文件被上传", 10: "非法操作", 11: "今日您已无法上传那么大的附件", 12: "因文件名包含敏感词而无法提交", 13: "服务器限制无法上传分辨率过高的附件"});
+
+  let s1pReplyImagePasteInitialized = false;
+  let s1pReplyImagePasteUploadConfigCache = null;
+
+  const parseS1pReplyImagePasteUploadConfig = (scriptText) => {
+    const text = typeof scriptText === "string" ? scriptText : "";
+    const urlMatch = text.match(/upload_url\s*:\s*["']([^"']+)["']/);
+    const uidMatch = text.match(/["']uid["']\s*:\s*["']?(\d+)["']?/);
+    const hashMatch = text.match(
+      /["']hash["']\s*:\s*["']([0-9a-fA-F]{16,64})["']/
+    );
+    if (!urlMatch || !uidMatch || !hashMatch) {
+      return null;
+    }
+    const maxSizeMatch = text.match(/file_size_limit\s*:\s*["']?(\d+)/);
+    return {
+      uploadUrl: urlMatch[1],
+      uid: uidMatch[1],
+      hash: hashMatch[1],
+      maxSizeKb: maxSizeMatch ? Number(maxSizeMatch[1]) : 0,
+      isFastpost: /uploadFrom\s*:\s*["']fastpost["']/.test(text),
+    };
+  };
+
+  const resolveS1pReplyImagePasteUploadUrl = (rawUrl, baseHref) => {
+    try {
+      const base =
+        typeof baseHref === "string" && baseHref
+          ? new URL(baseHref)
+          : new URL(location.href);
+      const url = new URL(String(rawUrl || ""), base.href);
+      if (url.origin !== base.origin) {
+        return "";
+      }
+      if (!url.pathname.endsWith("/misc.php")) {
+        return "";
+      }
+      if (!/[?&]mod=swfupload(?:&|$)/.test(url.search)) {
+        return "";
+      }
+      return url.href;
+    } catch (_) {
+      return "";
+    }
+  };
+
+  const readS1pReplyImagePasteUploadConfig = () => {
+    if (s1pReplyImagePasteUploadConfigCache) {
+      return s1pReplyImagePasteUploadConfigCache;
+    }
+    let fallbackConfig = null;
+    try {
+      const scripts = document.scripts || [];
+      for (const script of scripts) {
+        const text =
+          typeof script?.textContent === "string" ? script.textContent : "";
+        if (!text) continue;
+        const parsed = parseS1pReplyImagePasteUploadConfig(text);
+        if (!parsed) continue;
+        const uploadUrl = resolveS1pReplyImagePasteUploadUrl(
+          parsed.uploadUrl,
+          location.href
+        );
+        if (!uploadUrl) continue;
+        const config = {
+          uploadUrl,
+          uid: parsed.uid,
+          hash: parsed.hash,
+          maxSizeKb: parsed.maxSizeKb,
+        };
+        if (parsed.isFastpost) {
+          s1pReplyImagePasteUploadConfigCache = config;
+          return config;
+        }
+        fallbackConfig ||= config;
+      }
+    } catch (_) { }
+    s1pReplyImagePasteUploadConfigCache = fallbackConfig;
+    return fallbackConfig;
+  };
+
+  const deriveS1pReplyImagePasteExtension = (file) => {
+    const mime = String(file?.type || "").toLowerCase();
+    if (S1P_REPLY_IMAGE_PASTE_MIME_EXTENSIONS[mime]) {
+      return S1P_REPLY_IMAGE_PASTE_MIME_EXTENSIONS[mime];
+    }
+    const name = String(file?.name || "");
+    const match = name.match(/\.([a-z0-9]+)$/i);
+    if (!match) return "";
+    const extension = match[1].toLowerCase();
+    return Object.values(S1P_REPLY_IMAGE_PASTE_MIME_EXTENSIONS).includes(
+      extension
+    )
+      ? extension
+      : "";
+  };
+
+  const collectS1pReplyImagePasteFiles = (clipboardData) => {
+    const files = [];
+    try {
+      for (const item of clipboardData?.items || []) {
+        if (!item || item.kind !== "file") continue;
+        const file =
+          typeof item.getAsFile === "function" ? item.getAsFile() : null;
+        if (!file) continue;
+        const mime = String(file.type || "").toLowerCase();
+        const extension = deriveS1pReplyImagePasteExtension(file);
+        if (!mime.startsWith("image/") && !extension) continue;
+        files.push({ file, extension });
+      }
+    } catch (_) { }
+    return files;
+  };
+
+  const findS1pReplyImagePasteTextarea = (target) => {
+    try {
+      const popup = document.getElementById(S1P_REPLY_IMAGE_PASTE_POPUP_ID);
+      if (!popup || !target || typeof target.closest !== "function") {
+        return null;
+      }
+      if (!popup.contains(target)) return null;
+      const textarea = target.closest("textarea");
+      if (!textarea || textarea.id !== S1P_REPLY_IMAGE_PASTE_TEXTAREA_ID) {
+        return null;
+      }
+      return popup.contains(textarea) ? textarea : null;
+    } catch (_) {
+      return null;
+    }
+  };
+
+  const isS1pReplyImagePasteTargetAlive = (textarea) => {
+    try {
+      if (!textarea || textarea.isConnected !== true) return false;
+      if (
+        typeof textarea.getClientRects === "function" &&
+        textarea.getClientRects().length === 0
+      ) {
+        return false;
+      }
+      const popup = document.getElementById(S1P_REPLY_IMAGE_PASTE_POPUP_ID);
+      if (!popup || !popup.contains(textarea)) return false;
+      const form =
+        textarea.form || document.getElementById(S1P_REPLY_IMAGE_PASTE_FORM_ID);
+      if (!form || !form.contains(textarea)) return false;
+      if (
+        typeof form.getClientRects === "function" &&
+        form.getClientRects().length === 0
+      ) {
+        return false;
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  };
+
+  const insertS1pReplyImagePasteTag = (textarea, aid, range) => {
+    const tag = `[attachimg]${aid}[/attachimg]`;
+    if (!textarea || typeof textarea.value !== "string") {
+      return "";
+    }
+    const value = textarea.value;
+    const fallbackStart = Number.isFinite(textarea.selectionStart)
+      ? textarea.selectionStart
+      : value.length;
+    const fallbackEnd = Number.isFinite(textarea.selectionEnd)
+      ? textarea.selectionEnd
+      : fallbackStart;
+    let start = Number.isFinite(range?.start) ? range.start : fallbackStart;
+    let end = Number.isFinite(range?.end) ? range.end : fallbackEnd;
+    start = Math.max(0, Math.min(start, value.length));
+    end = Math.max(start, Math.min(end, value.length));
+    if (typeof textarea.setRangeText === "function") {
+      textarea.setRangeText(tag, start, end, "end");
+    } else {
+      textarea.value = value.slice(0, start) + tag + value.slice(end);
+      const nextPosition = start + tag.length;
+      try {
+        textarea.setSelectionRange?.(nextPosition, nextPosition);
+      } catch (_) { }
+    }
+    try {
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    } catch (_) { }
+    return tag;
+  };
+
+  const ensureS1pReplyImagePasteAttachFields = (form, aid, doc = document) => {
+    if (!form || !(aid > 0)) return false;
+    let changed = false;
+    for (const key of S1P_REPLY_IMAGE_PASTE_ATTACH_FIELD_KEYS) {
+      const name = `attachnew[${aid}][${key}]`;
+      let existing = null;
+      try {
+        existing = form.querySelector(`input[name="${name}"]`);
+      } catch (_) { }
+      if (existing) continue;
+      const input = doc.createElement("input");
+      input.type = "hidden";
+      input.name = name;
+      input.value = "";
+      input.setAttribute("data-s1p-reply-paste-attachnew", String(aid));
+      try {
+        form.appendChild(input);
+        changed = true;
+      } catch (_) { }
+    }
+    return changed;
+  };
+
+  const buildS1pReplyImagePasteUploadFields = (config, extension) => ({
+    uid: config.uid,
+    hash: config.hash,
+    // 与快速回复附件上传器保持一致：不传 type=image，让附件按“附件”归档
+    // （isimage=-1），这样编辑页的附件列表与附件管理行为才和普通附件一致。
+    filetype: extension,
+  });
+
+  const describeS1pReplyImagePasteUploadFailure = (statusText, httpStatus) => {
+    const code = Number.parseInt(String(statusText || "").trim(), 10);
+    if (Number.isFinite(code) && code < 0) {
+      if (code === -1) return "内部服务器错误";
+      const statusCode = Math.abs(code);
+      return (
+        S1P_REPLY_IMAGE_PASTE_UPLOAD_STATUS_MESSAGES[statusCode] ||
+        `上传失败（错误码 ${statusCode}）`
+      );
+    }
+    if (httpStatus && httpStatus !== 200) {
+      return `上传请求失败（HTTP ${httpStatus}）`;
+    }
+    return "图片上传失败，请稍后重试";
+  };
+
+  const showS1pReplyImagePasteMessage = (message, isSuccess) => {
+    try {
+      if (typeof showMessage === "function") {
+        showMessage(message, isSuccess);
+      }
+    } catch (_) { }
+  };
+
+  const S1P_REPLY_IMAGE_PASTE_DEFAULT_MAX_SIZE_KB = 2048;
+  const S1P_REPLY_IMAGE_PASTE_MAX_IMAGE_WIDTH = 2600;
+  const S1P_REPLY_IMAGE_PASTE_MAX_IMAGE_HEIGHT = 8000;
+
+  const getS1pReplyImagePasteMaxSizeBytes = (config) =>
+    (config?.maxSizeKb > 0
+      ? config.maxSizeKb
+      : S1P_REPLY_IMAGE_PASTE_DEFAULT_MAX_SIZE_KB) * 1024;
+
+  const needsS1pReplyImagePasteCompression = (file, config) =>
+    Boolean(file && file.size > getS1pReplyImagePasteMaxSizeBytes(config));
+
+  const compressS1pReplyImagePasteFile = async (file, maxBytes) => {
+    try {
+      if (typeof createImageBitmap !== "function") return null;
+      const bitmap = await createImageBitmap(file);
+      const scale = Math.min(
+        1,
+        S1P_REPLY_IMAGE_PASTE_MAX_IMAGE_WIDTH / bitmap.width,
+        S1P_REPLY_IMAGE_PASTE_MAX_IMAGE_HEIGHT / bitmap.height
+      );
+      const width = Math.max(1, Math.round(bitmap.width * scale));
+      const height = Math.max(1, Math.round(bitmap.height * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext("2d");
+      if (!context) {
+        bitmap.close?.();
+        return null;
+      }
+      context.drawImage(bitmap, 0, 0, width, height);
+      bitmap.close?.();
+      for (const quality of [0.85, 0.7, 0.55, 0.4]) {
+        const blob = await new Promise((resolve) => {
+          canvas.toBlob(resolve, "image/jpeg", quality);
+        });
+        if (blob && blob.size <= maxBytes) {
+          return new File(
+            [blob],
+            `s1p-paste-${Date.now()}.jpg`,
+            { type: "image/jpeg" }
+          );
+        }
+      }
+    } catch (_) { }
+    return null;
+  };
+
+  const prepareS1pReplyImagePasteUpload = async (file, extension, config) => {
+    if (!needsS1pReplyImagePasteCompression(file, config)) {
+      return { file, extension };
+    }
+    const compressed = await compressS1pReplyImagePasteFile(
+      file,
+      getS1pReplyImagePasteMaxSizeBytes(config)
+    );
+    return compressed ? { file: compressed, extension: "jpg" } : null;
+  };
+
+  const uploadS1pReplyImagePasteFile = async (config, file, extension) => {
+    const controller =
+      typeof AbortController === "function" ? new AbortController() : null;
+    const timer = controller
+      ? window.setTimeout(
+        () => controller.abort(),
+        S1P_REPLY_IMAGE_PASTE_UPLOAD_TIMEOUT_MS
+      )
+      : 0;
+    try {
+      const formData = new FormData();
+      const fields = buildS1pReplyImagePasteUploadFields(config, extension);
+      Object.entries(fields).forEach(([name, value]) => {
+        formData.append(name, value);
+      });
+      formData.append(
+        "Filedata",
+        file,
+        `s1p-paste-${Date.now()}.${extension}`
+      );
+      const response = await fetch(config.uploadUrl, {
+        method: "POST",
+        body: formData,
+        credentials: "same-origin",
+        signal: controller?.signal,
+      });
+      const text = (await response.text()).trim();
+      const aid = /^\d+$/.test(text) ? Number.parseInt(text, 10) : NaN;
+      if (response.ok && Number.isFinite(aid) && aid > 0) {
+        return aid;
+      }
+      const error = new Error(
+        describeS1pReplyImagePasteUploadFailure(text, response.status)
+      );
+      error.s1pUploadStatusText = text.slice(0, 200);
+      error.s1pUploadHttpStatus = response.status;
+      throw error;
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        throw new Error("图片上传超时，请检查网络后重试");
+      }
+      throw error;
+    } finally {
+      if (timer) {
+        window.clearTimeout(timer);
+      }
+    }
+  };
+
+  const insertS1pReplyImagePasteJob = async (job, aid) => {
+    if (!isS1pReplyImagePasteTargetAlive(job.textarea)) return false;
+    const activeRange =
+      document.activeElement === job.textarea
+        ? {
+          start: job.textarea.selectionStart,
+          end: job.textarea.selectionEnd,
+        }
+        : job.caret;
+    insertS1pReplyImagePasteTag(job.textarea, aid, activeRange);
+    if (job.caret && Number.isFinite(job.textarea.selectionStart)) {
+      job.caret.start = job.caret.end = job.textarea.selectionStart;
+    }
+    ensureS1pReplyImagePasteAttachFields(job.textarea.form, aid);
+    return true;
+  };
+
+  const runS1pImagePasteUploadJob = async (
+    job,
+    { module, isAlive, insert }
+  ) => {
+    try {
+      if (!isAlive(job)) {
+        s1pRecordDiagnosticEvent(`${module}.discarded`, {
+          module: "reply-image-paste",
+          status: "skipped",
+          message: "图片粘贴目标已关闭，丢弃上传结果",
+        });
+        return;
+      }
+      const uploadConfig = readS1pReplyImagePasteUploadConfig();
+      if (!uploadConfig) return;
+      if (!job.extension) {
+        showS1pReplyImagePasteMessage("不支持的图片格式，无法上传", false);
+        return;
+      }
+      const prepared = await prepareS1pReplyImagePasteUpload(
+        job.file,
+        job.extension,
+        uploadConfig
+      );
+      if (!prepared) {
+        showS1pReplyImagePasteMessage(
+          `图片超过 ${Math.round(getS1pReplyImagePasteMaxSizeBytes(uploadConfig) / 1024)} KB，压缩失败，请先压缩图片`,
+          false
+        );
+        return;
+      }
+      const aid = await uploadS1pReplyImagePasteFile(
+        uploadConfig,
+        prepared.file,
+        prepared.extension
+      );
+      if (!(await insert(job, aid))) {
+        s1pRecordDiagnosticEvent(`${module}.discarded`, {
+          module: "reply-image-paste",
+          status: "skipped",
+          message: "图片粘贴目标已关闭，丢弃上传结果",
+          details: { aid },
+        });
+        return;
+      }
+      s1pRecordDiagnosticEvent(`${module}.inserted`, {
+        module: "reply-image-paste",
+        status: "success",
+        message: "图片已上传并插入附件代码",
+        details: { aid },
+      });
+    } catch (error) {
+      s1pRecordDiagnosticEvent(`${module}.upload_failed`, {
+        module: "reply-image-paste",
+        level: "warn",
+        status: "failure",
+        message: "图片上传失败",
+        details: {
+          error,
+          uploadStatus: error?.s1pUploadStatusText,
+          httpStatus: error?.s1pUploadHttpStatus,
+        },
+      });
+      if (isAlive(job)) {
+        showS1pReplyImagePasteMessage(
+          `图片上传失败：${error?.message || "请稍后重试"}`,
+          false
+        );
+      }
+    }
+  };
+
+  const createS1pImagePasteQueue = (options) => {
+    let uploading = false;
+    const jobs = [];
+    const process = async () => {
+      if (uploading) return;
+      const job = jobs.shift();
+      if (!job) return;
+      uploading = true;
+      try {
+        await runS1pImagePasteUploadJob(job, options);
+      } finally {
+        uploading = false;
+        if (jobs.length > 0) void process();
+      }
+    };
+    return Object.freeze({
+      enqueue(job) {
+        jobs.push(job);
+        void process();
+      },
+      hasPending: () => uploading || jobs.length > 0,
+      size: () => jobs.length,
+    });
+  };
+
+  const s1pReplyImagePasteUploadQueue = createS1pImagePasteQueue({
+    module: "reply_image_paste",
+    isAlive: (item) => isS1pReplyImagePasteTargetAlive(item.textarea),
+    insert: insertS1pReplyImagePasteJob,
+  });
+
+
+  const collectS1pReplyImagePasteReferencedAidsFromText = (value) => {
+    const referenced = new Set();
+    for (const match of String(value || "").matchAll(
+      /\[attachimg\](\d+)\[\/attachimg\]/g
+    )) {
+      referenced.add(match[1]);
+    }
+    return referenced;
+  };
+
+  const reconcileS1pMarkedAttachFields = (form, referencedAids) => {
+    try {
+      if (!form || !referencedAids) return;
+      form
+        .querySelectorAll("input[data-s1p-reply-paste-attachnew]")
+        .forEach((input) => {
+          const aid = input.getAttribute("data-s1p-reply-paste-attachnew");
+          if (aid && !referencedAids.has(aid)) {
+            input.remove();
+          }
+        });
+    } catch (_) { }
+  };
+
+  const reconcileS1pReplyPopupAttachFields = () => {
+    const form = document.querySelector("#fwin_content_reply #postform");
+    const textarea = document.querySelector(
+      "#fwin_content_reply #postmessage"
+    );
+    if (!form || !textarea) return;
+    reconcileS1pMarkedAttachFields(
+      form,
+      collectS1pReplyImagePasteReferencedAidsFromText(textarea.value)
+    );
+  };
+
+  const hasS1pImagePasteUploadsInFlight = () =>
+    s1pReplyImagePasteUploadQueue.hasPending() ||
+    s1pAdvancedEditorPasteUploadQueue.hasPending();
+
+  const handleS1pReplyPopupSubmitEvent = (event) => {
+    const isClick = event.type === "click";
+    if (isClick && !event.target?.closest?.("#postsubmit")) return;
+    const form = isClick ? event.target?.closest?.("form") : event.target;
+    if (!form || form.id !== S1P_REPLY_IMAGE_PASTE_FORM_ID) return;
+    if (hasS1pImagePasteUploadsInFlight()) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      showS1pReplyImagePasteMessage("图片上传中，请稍候…", null);
+      return;
+    }
+    reconcileS1pReplyPopupAttachFields();
+  };
+
+  const handleS1pReplyImagePasteEvent = (event) => {
+    try {
+      if (!event || event.defaultPrevented) return;
+      const textarea = findS1pReplyImagePasteTextarea(event.target);
+      if (!textarea) return;
+      const files = collectS1pReplyImagePasteFiles(event.clipboardData);
+      if (files.length === 0) return;
+      if (!readS1pReplyImagePasteUploadConfig()) return;
+      const caret = {
+        start: textarea.selectionStart,
+        end: textarea.selectionEnd,
+      };
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      for (const entry of files) {
+        if (s1pReplyImagePasteUploadQueue.size() >= S1P_REPLY_IMAGE_PASTE_MAX_QUEUE) {
+          showS1pReplyImagePasteMessage("图片上传排队已满，请稍后再试", false);
+          break;
+        }
+        s1pReplyImagePasteUploadQueue.enqueue({
+          file: entry.file,
+          extension: entry.extension,
+          textarea,
+          caret,
+        });
+      }
+    } catch (error) {
+      s1pRecordDiagnosticEvent("reply_image_paste.event_failed", {
+        module: "reply-image-paste",
+        level: "warn",
+        status: "failure",
+        message: "处理回复弹窗粘贴事件失败",
+        details: { error },
+      });
+    }
+  };
+
+  const initializeReplyPopupImagePaste = () => {
+    if (s1pReplyImagePasteInitialized) {
+      return false;
+    }
+    try {
+      document.addEventListener("paste", handleS1pReplyImagePasteEvent, {
+        capture: true,
+        passive: false,
+      });
+      document.addEventListener(
+        "click",
+        handleS1pReplyPopupSubmitEvent,
+        true
+      );
+      document.addEventListener(
+        "submit",
+        handleS1pReplyPopupSubmitEvent,
+        true
+      );
+      document.addEventListener("keydown", (event) => {
+        if (
+          (event.ctrlKey && event.key === "Enter") ||
+          (event.altKey && String(event.key).toLowerCase() === "s")
+        ) {
+          reconcileS1pReplyPopupAttachFields();
+        }
+      }, true);
+      s1pReplyImagePasteInitialized = true;
+      s1pRecordDiagnosticEvent("reply_image_paste.initialized", {
+        module: "reply-image-paste",
+        status: "success",
+        message: "回复弹窗图片粘贴兼容补丁已启用",
+      });
+      return true;
+    } catch (error) {
+      s1pRecordDiagnosticEvent("reply_image_paste.init_failed", {
+        module: "reply-image-paste",
+        level: "warn",
+        status: "failure",
+        message: "启用回复弹窗图片粘贴兼容补丁失败",
+        details: { error },
+      });
+      return false;
+    }
+  };
+
+  /*__S1P_TEST_HOOK_15__*/
+
+  // --- 高级编辑器剪贴板图片上传兼容补丁 ---
+  // 高级模式（post.htm）默认没有图片上传控件，浏览器会把截图直接以 data:image
+  // 插入 WYSIWYG iframe；这里改为走论坛附件上传，并把内联图片写入编辑器。
+  const S1P_ADVANCED_EDITOR_FORM_ID = "postform";
+  const S1P_ADVANCED_EDITOR_IFRAME_ID = "e_iframe";
+  const S1P_ADVANCED_EDITOR_TEXTAREA_ID = "e_textarea";
+  const S1P_ADVANCED_EDITOR_BIND_RETRY_DELAYS = Object.freeze([0, 300, 1000, 2500]);
+
+  let s1pAdvancedEditorPasteInitialized = false;
+  let s1pAdvancedEditorPasteInitTimer = 0;
+  let s1pAdvancedEditorPasteInitAttempts = 0;
+  const s1pAdvancedEditorPasteBoundDocuments = new WeakSet();
+  const s1pAdvancedEditorBlobUrls = new Set();
+
+  const getS1pAdvancedEditorForm = () =>
+    document.getElementById(S1P_ADVANCED_EDITOR_FORM_ID);
+
+  const getS1pAdvancedEditorIframe = () =>
+    document.getElementById(S1P_ADVANCED_EDITOR_IFRAME_ID);
+
+  const findS1pAdvancedEditorPasteTarget = (target) => {
+    const form = getS1pAdvancedEditorForm();
+    if (!form || !target) return null;
+    if (target.ownerDocument === document) {
+      const textarea = target.closest?.("textarea");
+      return textarea &&
+        textarea.id === S1P_ADVANCED_EDITOR_TEXTAREA_ID &&
+        form.contains(textarea)
+        ? form
+        : null;
+    }
+    const iframe = getS1pAdvancedEditorIframe();
+    return iframe &&
+      iframe.contentDocument &&
+      target.ownerDocument === iframe.contentDocument
+      ? form
+      : null;
+  };
+
+  const isS1pAdvancedEditorFormAlive = () => {
+    try {
+      const form = getS1pAdvancedEditorForm();
+      return Boolean(form && form.isConnected === true);
+    } catch (_) {
+      return false;
+    }
+  };
+
+  const isS1pAdvancedEditorTextMode = () => {
+    try {
+      const textarea = document.getElementById(S1P_ADVANCED_EDITOR_TEXTAREA_ID);
+      return Boolean(textarea) && getComputedStyle(textarea).display !== "none";
+    } catch (_) {
+      return false;
+    }
+  };
+
+  const getS1pAdvancedEditorFid = (form) => {
+    try {
+      const hidden = form?.querySelector?.('input[name="fid"]');
+      if (hidden?.value) return hidden.value;
+      return new URL(location.href).searchParams.get("fid") || "";
+    } catch (_) {
+      return "";
+    }
+  };
+
+  const extractS1pAdvancedEditorPreviewSrc = (html, aid) => {
+    const text = String(html || "");
+    const patterns = [
+      new RegExp(`src="([^"]+)"[^>]*id="image_${aid}"`, "i"),
+      new RegExp(`id="image_${aid}"[^>]*src="([^"]+)"`, "i"),
+    ];
+    for (const pattern of patterns) {
+      const match = text.match(pattern);
+      if (match?.[1]) {
+        return match[1].replace(/&amp;/g, "&");
+      }
+    }
+    return "";
+  };
+
+  const resolveS1pAdvancedEditorPreviewSrc = async (aid, form) => {
+    try {
+      const fid = getS1pAdvancedEditorFid(form);
+      const url =
+        `forum.php?mod=ajax&action=attachlist&aids=${aid}` +
+        (fid ? `&fid=${encodeURIComponent(fid)}` : "");
+      const response = await fetch(url, { credentials: "same-origin" });
+      const html = await response.text();
+      const src = extractS1pAdvancedEditorPreviewSrc(html, aid);
+      return src ? new URL(src, location.href).href : "";
+    } catch (_) {
+      return "";
+    }
+  };
+
+  const resolveS1pAdvancedEditorImageSrc = async (aid, file, form) => {
+    let src = await resolveS1pAdvancedEditorPreviewSrc(aid, form);
+    if (!src) {
+      try {
+        src = URL.createObjectURL(file);
+        s1pAdvancedEditorBlobUrls.add(src);
+      } catch (_) {
+        src = "";
+      }
+    }
+    return src;
+  };
+
+  const ensureS1pAdvancedEditorImagePreviewElement = (form, aid, src) => {
+    try {
+      if (!form || !(aid > 0)) return;
+      if (document.getElementById(`image_${aid}`)) return;
+      let store = document.getElementById("s1p-advanced-image-store");
+      if (!store) {
+        store = document.createElement("div");
+        store.id = "s1p-advanced-image-store";
+        store.style.display = "none";
+        form.appendChild(store);
+      }
+      const preview = document.createElement("img");
+      preview.id = `image_${aid}`;
+      if (src) preview.setAttribute("src", src);
+      preview.setAttribute("cwidth", "300");
+      store.appendChild(preview);
+    } catch (_) { }
+  };
+
+  const insertS1pAdvancedEditorIframeImage = (targetInfo, aid, src) => {
+    const iframe = targetInfo.iframe;
+    const doc = iframe?.contentDocument;
+    if (!doc?.body) return false;
+    const image = doc.createElement("img");
+    if (src) image.setAttribute("src", src);
+    image.setAttribute("border", "0");
+    image.setAttribute("aid", `attachimg_${aid}`);
+    image.setAttribute("alt", "");
+    image.style.maxWidth = "100%";
+    try {
+      doc.body.focus();
+    } catch (_) { }
+    const selection = doc.getSelection?.();
+    let range =
+      selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+    if (!range || !doc.body.contains(range.commonAncestorContainer)) {
+      range = doc.createRange();
+      range.selectNodeContents(doc.body);
+      range.collapse(false);
+    }
+    range.deleteContents();
+    range.insertNode(image);
+    const lineBreak = doc.createElement("br");
+    image.parentNode?.insertBefore(lineBreak, image.nextSibling);
+    range.setStartAfter(lineBreak);
+    range.collapse(true);
+    selection?.removeAllRanges?.();
+    selection?.addRange?.(range);
+    try {
+      const view = doc.defaultView;
+      doc.body.dispatchEvent(new view.Event("input", { bubbles: true }));
+    } catch (_) { }
+    return true;
+  };
+
+  const insertS1pAdvancedEditorPasteResult = async (job, aid) => {
+    if (!isS1pAdvancedEditorFormAlive()) return false;
+    const form = getS1pAdvancedEditorForm();
+    const src = await resolveS1pAdvancedEditorImageSrc(aid, job.file, form);
+    ensureS1pAdvancedEditorImagePreviewElement(form, aid, src);
+    if (isS1pAdvancedEditorTextMode()) {
+      const textarea = document.getElementById(
+        S1P_ADVANCED_EDITOR_TEXTAREA_ID
+      );
+      if (!textarea || !form.contains(textarea)) return false;
+      insertS1pReplyImagePasteTag(textarea, aid, job.caret);
+      if (job.caret && Number.isFinite(textarea.selectionStart)) {
+        job.caret.start = job.caret.end = textarea.selectionStart;
+      }
+    } else {
+      const iframe = getS1pAdvancedEditorIframe();
+      if (!iframe?.contentDocument?.body) return false;
+      if (!insertS1pAdvancedEditorIframeImage({ iframe, form }, aid, src)) {
+        return false;
+      }
+    }
+    ensureS1pReplyImagePasteAttachFields(form, aid);
+    return true;
+  };
+
+  const s1pAdvancedEditorPasteUploadQueue = createS1pImagePasteQueue({
+    module: "advanced_editor_image_paste",
+    isAlive: () => isS1pAdvancedEditorFormAlive(),
+    insert: insertS1pAdvancedEditorPasteResult,
+  });
+
+
+  const handleS1pAdvancedEditorPasteEvent = (event) => {
+    try {
+      if (!event || event.defaultPrevented) return;
+      if (!findS1pAdvancedEditorPasteTarget(event.target)) return;
+      const files = collectS1pReplyImagePasteFiles(event.clipboardData);
+      if (files.length === 0) return;
+      if (!readS1pReplyImagePasteUploadConfig()) return;
+      const caret = isS1pAdvancedEditorTextMode()
+        ? {
+          start: document.getElementById(S1P_ADVANCED_EDITOR_TEXTAREA_ID)
+            ?.selectionStart,
+          end: document.getElementById(S1P_ADVANCED_EDITOR_TEXTAREA_ID)
+            ?.selectionEnd,
+        }
+        : null;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      for (const entry of files) {
+        if (
+          s1pAdvancedEditorPasteUploadQueue.size() >=
+          S1P_REPLY_IMAGE_PASTE_MAX_QUEUE
+        ) {
+          showS1pReplyImagePasteMessage("图片上传排队已满，请稍后再试", false);
+          break;
+        }
+        s1pAdvancedEditorPasteUploadQueue.enqueue({
+          file: entry.file,
+          extension: entry.extension,
+          caret,
+        });
+      }
+    } catch (error) {
+      s1pRecordDiagnosticEvent("advanced_editor_image_paste.event_failed", {
+        module: "reply-image-paste",
+        level: "warn",
+        status: "failure",
+        message: "处理高级编辑器粘贴事件失败",
+        details: { error },
+      });
+    }
+  };
+
+  const collectS1pAdvancedEditorReferencedAids = () => {
+    const textarea = document.getElementById(S1P_ADVANCED_EDITOR_TEXTAREA_ID);
+    if (isS1pAdvancedEditorTextMode()) {
+      return collectS1pReplyImagePasteReferencedAidsFromText(textarea?.value);
+    }
+    const referenced = new Set();
+    const doc = getS1pAdvancedEditorIframe()?.contentDocument;
+    if (doc) {
+      doc.querySelectorAll('img[aid^="attachimg_"]').forEach((image) => {
+        const match = /attachimg_(\d+)/.exec(
+          image.getAttribute("aid") || ""
+        );
+        if (match) referenced.add(match[1]);
+      });
+    }
+    return referenced;
+  };
+
+  const reconcileS1pAdvancedEditorAttachFields = () => {
+    try {
+      const form = getS1pAdvancedEditorForm();
+      if (!form) return;
+      const referenced = collectS1pAdvancedEditorReferencedAids();
+      reconcileS1pMarkedAttachFields(form, referenced);
+      const store = document.getElementById("s1p-advanced-image-store");
+      if (!store) return;
+      store.querySelectorAll('img[id^="image_"]').forEach((image) => {
+        const aid = image.id.slice("image_".length);
+        if (referenced.has(aid)) return;
+        const src = image.getAttribute("src") || "";
+        if (src.startsWith("blob:")) {
+          try {
+            URL.revokeObjectURL(src);
+            s1pAdvancedEditorBlobUrls.delete(src);
+          } catch (_) { }
+        }
+        image.remove();
+      });
+    } catch (_) { }
+  };
+
+  const bindS1pAdvancedEditorPasteDocument = (doc) => {
+    if (!doc || typeof doc.addEventListener !== "function") return false;
+    if (s1pAdvancedEditorPasteBoundDocuments.has(doc)) return false;
+    s1pAdvancedEditorPasteBoundDocuments.add(doc);
+    doc.addEventListener("paste", handleS1pAdvancedEditorPasteEvent, {
+      capture: true,
+      passive: false,
+    });
+    return true;
+  };
+
+  const handleS1pAdvancedEditorSubmitEvent = (event) => {
+    const form = getS1pAdvancedEditorForm();
+    if (!form) return;
+    if (event.type === "keydown") {
+      const shortcut =
+        (event.ctrlKey && event.key === "Enter") ||
+        (event.altKey && String(event.key).toLowerCase() === "s");
+      if (!shortcut || !form.contains(event.target)) return;
+    } else if (event.type === "click") {
+      if (
+        !event.target?.closest?.("#postsubmit") ||
+        !form.contains(event.target)
+      ) {
+        return;
+      }
+    } else if (event.target !== form) {
+      return;
+    }
+    reconcileS1pAdvancedEditorAttachFields();
+  };
+
+  const initializeAdvancedEditorImagePaste = () => {
+    if (s1pAdvancedEditorPasteInitialized) return false;
+    const form = getS1pAdvancedEditorForm();
+    const iframe = getS1pAdvancedEditorIframe();
+    const textarea = document.getElementById(S1P_ADVANCED_EDITOR_TEXTAREA_ID);
+    if (!form || (!iframe && !textarea)) {
+      if (IS_S1P_TEST_MODE) return false;
+      if (!/(?:[?&])mod=post(?:&|$)/.test(location.search)) return false;
+      if (
+        s1pAdvancedEditorPasteInitTimer ||
+        s1pAdvancedEditorPasteInitAttempts >= 20
+      ) {
+        return false;
+      }
+      s1pAdvancedEditorPasteInitAttempts += 1;
+      s1pAdvancedEditorPasteInitTimer = window.setTimeout(() => {
+        s1pAdvancedEditorPasteInitTimer = 0;
+        initializeAdvancedEditorImagePaste();
+      }, 250);
+      return false;
+    }
+    if (s1pAdvancedEditorPasteInitTimer) {
+      window.clearTimeout(s1pAdvancedEditorPasteInitTimer);
+      s1pAdvancedEditorPasteInitTimer = 0;
+    }
+    s1pAdvancedEditorPasteInitialized = true;
+    document.addEventListener("paste", handleS1pAdvancedEditorPasteEvent, {
+      capture: true,
+      passive: false,
+    });
+    const bindIframe = () => {
+      const currentIframe = getS1pAdvancedEditorIframe();
+      if (currentIframe) {
+        bindS1pAdvancedEditorPasteDocument(currentIframe.contentDocument);
+      }
+    };
+    bindIframe();
+    window.addEventListener("pagehide", () => {
+      for (const src of s1pAdvancedEditorBlobUrls) {
+        try {
+          URL.revokeObjectURL(src);
+        } catch (_) { }
+      }
+      s1pAdvancedEditorBlobUrls.clear();
+    });
+    document.addEventListener("load", (event) => {
+      if (event.target?.id === S1P_ADVANCED_EDITOR_IFRAME_ID) {
+        bindIframe();
+      }
+    }, true);
+    ["click", "submit", "keydown"].forEach((type) => {
+      document.addEventListener(
+        type,
+        handleS1pAdvancedEditorSubmitEvent,
+        true
+      );
+    });
+    S1P_ADVANCED_EDITOR_BIND_RETRY_DELAYS.forEach((delayMs) => {
+      window.setTimeout(bindIframe, delayMs);
+    });
+    s1pRecordDiagnosticEvent("advanced_editor_image_paste.initialized", {
+      module: "reply-image-paste",
+      status: "success",
+      message: "高级编辑器图片粘贴兼容补丁已启用",
+    });
+    return true;
+  };
+
+  /*__S1P_TEST_HOOK_16__*/
+
   const S1P_INIT_PHASES = Object.freeze({
     DOCUMENT_START: "document-start",
     BODY_READY: "body-ready",
@@ -56338,14 +56727,7 @@
     }
   };
 
-  if (IS_S1P_TEST_MODE) {
-    const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
-    testHookHost.__S1P_TEST_HOOKS__ = {
-      ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
-      runInitializationTaskWithRetryForTest: runInitializationTaskWithRetry,
-      reportInitializationFailureOnceForTest: reportInitializationFailureOnce,
-    };
-  }
+  /*__S1P_TEST_HOOK_17__*/
 
   async function main(initializationContext = createS1PlusInitializationContext()) {
     await runInitializationPhase(
@@ -56893,6 +57275,16 @@
           run: () => applyChanges(),
         },
         {
+          name: "initialize reply-popup image paste compatibility",
+          optional: true,
+          run: () => initializeReplyPopupImagePaste(),
+        },
+        {
+          name: "initialize advanced editor image paste compatibility",
+          optional: true,
+          run: () => initializeAdvancedEditorImagePaste(),
+        },
+        {
           name: "observe forum DOM changes",
           run: () => {
             const watchTarget = resolveObserverWatchTarget();
@@ -57037,26 +57429,7 @@
       notificationScopes: OBSERVER_INCREMENTAL_NOTIFICATION_SCOPE_LIMIT,
     },
   });
-  if (IS_S1P_TEST_MODE) {
-    const testHookHost = typeof globalThis !== "undefined" ? globalThis : {};
-    testHookHost.__S1P_TEST_HOOKS__ = {
-      ...(testHookHost.__S1P_TEST_HOOKS__ || {}),
-      s1pCreatePageEnhancementProjection,
-      s1pPageEnhancementProjection,
-      initializeNavbar,
-      setupNavbarCustomOverflow,
-      teardownNavbarCustomOverflow,
-      computeNavbarLayoutProjection: computeS1pNavbarLayoutProjection,
-      resolveNavbarLayoutMode: resolveS1pNavbarLayoutMode,
-      readNavbarBoxWidth: readS1pNavbarBoxWidth,
-      measureNavbarAvailableWidth: measureS1pAvailableInlineWidth,
-      getNavbarLayoutSnapshot: () => navbarLayoutDebugSnapshot,
-      requestNavbarLayoutReconcile,
-      navbarLayoutEpsilonPx: S1P_NAV_LAYOUT_EPSILON_PX,
-      ensureMyThreadsQuickLink,
-      invalidateSettingsCache,
-    };
-  }
+  /*__S1P_TEST_HOOK_18__*/
 
   function applyChanges() {
     return s1pPageEnhancementProjection.project({

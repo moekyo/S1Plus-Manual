@@ -9,6 +9,7 @@ const {
   sourceCode,
   sourceCodeWithCss,
 } = require("./s1plus-test-helpers");
+const { injectTestHooks } = require("./s1plus-test-hooks");
 
 const DEBUG_CONSOLE_VISIBLE_KEY = "s1p_debug_console_visible";
 const DEBUG_UNIFIED_PANEL_ID = "s1p-debug-unified-panel";
@@ -359,7 +360,7 @@ const createDomHarness = () => {
   sandbox.unsafeWindow = sandbox.window;
 
   vm.createContext(sandbox);
-  vm.runInContext(sourceCode, sandbox, {
+  vm.runInContext(injectTestHooks(sourceCode), sandbox, {
     filename: "S1Plus.js",
     timeout: 20000,
   });
