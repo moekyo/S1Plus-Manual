@@ -2,7 +2,7 @@
 "use strict";
 
 const assert = require("assert/strict");
-const { sourceCode } = require("./s1plus-test-helpers");
+const { sourceCodeWithResources: sourceCode } = require("./s1plus-test-helpers");
 
 const expectMatch = (pattern, message) => {
   assert.match(sourceCode, pattern, message);

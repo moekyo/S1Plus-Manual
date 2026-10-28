@@ -4,6 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 const { webcrypto } = require("crypto");
+const { injectTestHooks } = require("./s1plus-test-hooks");
 
 const repoRoot = path.resolve(__dirname, "..");
 const sourcePath = path.join(repoRoot, "S1Plus.js");
@@ -12,7 +13,10 @@ const staticDataPath = path.join(repoRoot, "S1Plus-static-data.json");
 const sourceCode = fs.readFileSync(sourcePath, "utf8");
 const cssSource = fs.readFileSync(cssResourcePath, "utf8");
 const staticDataSource = fs.readFileSync(staticDataPath, "utf8");
+const staticData = JSON.parse(staticDataSource);
+const staticDataTemplates = Object.values(staticData.templates || {}).join("\n");
 const sourceCodeWithCss = `${sourceCode}\n${cssSource}`;
+const sourceCodeWithResources = `${sourceCode}\n${cssSource}\n${staticDataSource}\n${staticDataTemplates}`;
 
 const noop = () => {};
 
@@ -569,7 +573,7 @@ const createHarness = ({
 } = {}) => {
   const runtime = createSandbox(sandboxOptions);
   vm.createContext(runtime.sandbox);
-  vm.runInContext(sourceCode, runtime.sandbox, {
+  vm.runInContext(injectTestHooks(sourceCode), runtime.sandbox, {
     filename: "S1Plus.js",
     timeout: 20000,
   });
@@ -593,6 +597,7 @@ module.exports = {
   cssSource,
   staticDataSource,
   sourceCodeWithCss,
+  sourceCodeWithResources,
   createHarness,
   toPlainObject,
 };

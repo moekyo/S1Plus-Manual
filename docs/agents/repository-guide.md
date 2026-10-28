@@ -14,9 +14,10 @@ S1 Plus is a single-file Tampermonkey/Greasemonkey userscript that enhances the 
 - Settings semantics test: `node tests/test-settings-semantics-module.js`
 - Core Business Data module test: `node tests/test-core-business-data-module.js`
 - Image Viewer interface test: `node tests/test-image-viewer-interface.js`
+- Reply popup image paste test: `node tests/test-reply-image-paste.js`
 - Page Enhancement Projection test: `node tests/test-page-enhancement-projection.js`
 - Sync tests: run focused `node tests/test-*.js` files from `tests/`.
-- Test helper: `tests/s1plus-test-helpers.js` loads `S1Plus.js` in a `vm` sandbox with browser/GM stubs.
+- Test helper: `tests/s1plus-test-helpers.js` loads `S1Plus.js` in a `vm` sandbox with browser/GM stubs; test-only hook blocks live in `tests/s1plus-test-hooks.js` and are injected in memory so the published artifact stays hook-free.
 - Test mode: set `globalThis.__S1P_TEST_MODE__ = true` before loading the script. It disables auto-startup, returns `{}` from `buildNormalizedSettings`, and exposes hooks on `globalThis.__S1P_TEST_HOOKS__`.
 - Non-sync features are usually verified manually in-browser.
 
@@ -198,6 +199,14 @@ Use the `s1plus-release` skill for the metadata steps:
 4. Welcome popup text in `showFirstTimeWelcomeIfNeeded`
 
 Use the `userscript-release` skill to publish. It guards the release-artifact invariants (Greasy Fork's 2 MiB code ceiling, `@resource` pin freshness), then fast-forwards `release` to the new tag with `git push origin vX.Y.Z:release`, which triggers the Greasy Fork webhook. Pushing `main` never publishes.
+
+When `S1Plus-static-data.json` changes, the `@resource s1p-static-data` commit pin is intentionally left for the release commit: re-pin it in the same commit that updates `tests/test-release-artifact-size.js`. The local dev loader reads the working-tree resource directly, so development is unaffected.
+
+`node scripts/build-release-artifact.js` optionally produces a minified
+`dist/S1Plus.user.js` (metadata preserved, `dist/` git-ignored) for manual
+Greasy Fork upload or a dedicated `release-min` branch; see
+`docs/release-artifact-minification.md`. The standard webhook flow still
+publishes readable `S1Plus.js` from `release`.
 
 ## Gotchas
 

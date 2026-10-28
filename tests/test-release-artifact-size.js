@@ -16,11 +16,18 @@ const staticData = JSON.parse(fs.readFileSync(staticDataPath, "utf8"));
 const countCodePoints = (value) => Array.from(value).length;
 
 const maxCharacters = 2 * 1024 * 1024;
+const maxBytes = 2 * 1024 * 1024;
 const sourceCharacters = countCodePoints(source);
+const sourceBytes = Buffer.byteLength(source);
+const sourceByteHeadroom = maxBytes - sourceBytes;
 
 assert.ok(
   sourceCharacters <= maxCharacters,
   `S1Plus.js 超过 Greasy Fork 限制：${sourceCharacters} > ${maxCharacters}`
+);
+assert.ok(
+  sourceBytes <= maxBytes,
+  `S1Plus.js 字节数超过 Greasy Fork 限制：${sourceBytes} > ${maxBytes}`
 );
 assert.match(
   source,
@@ -56,5 +63,5 @@ assert.ok(injectedCss.includes("animation: s1p-auto-sync-indicator-exit 260ms"))
 assert.ok(injectedCss.includes("__S1P_") === false);
 
 console.log(
-  `[release-artifact-size] S1Plus.js ${Buffer.byteLength(source)} bytes / ${sourceCharacters} characters; CSS resource ${Buffer.byteLength(css)} bytes / ${countCodePoints(css)} characters; limit ${maxCharacters}.`
+  `[release-artifact-size] S1Plus.js ${sourceBytes} bytes / ${sourceCharacters} characters (+${sourceByteHeadroom} bytes headroom); CSS resource ${Buffer.byteLength(css)} bytes / ${countCodePoints(css)} characters; limit ${maxBytes}.`
 );
