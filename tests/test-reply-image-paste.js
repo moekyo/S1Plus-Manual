@@ -330,4 +330,151 @@ api.reconcileMarkedAttachFields(
 assert.equal(keptInput._removed, false, "被引用 aid 的字段应保留。");
 assert.equal(removedInput._removed, true, "未引用 aid 的字段应删除。");
 
-console.log("test-reply-image-paste: ok");
+const recycleApi = hooks.s1pPasteAttachRecycleTest;
+assert.ok(recycleApi, "缺少粘贴附件回收测试 seam。");
+
+assert.equal(
+  recycleApi.stripTagFromText(
+    "A[attachimg]11[/attachimg]B[attachimg]11[/attachimg]C",
+    "11"
+  ),
+  "ABC",
+  "应删除文本中所有指向同一 aid 的附件标记。"
+);
+assert.equal(
+  recycleApi.stripTagFromText("[attachimg]22[/attachimg]", "11"),
+  "[attachimg]22[/attachimg]",
+  "不应影响其他 aid 的标记。"
+);
+
+assert.equal(
+  recycleApi.buildDeleteUrl("123", "45", "678"),
+  "forum.php?mod=ajax&action=deleteattach&inajax=yes&tid=45&pid=678&aids[]=123"
+);
+assert.equal(
+  recycleApi.buildDeleteUrl(7, "x", undefined),
+  "forum.php?mod=ajax&action=deleteattach&inajax=yes&tid=0&pid=0&aids[]=7",
+  "非法 tid/pid 应回退到 0，aid 应归一化为数字。"
+);
+
+assert.equal(
+  recycleApi.parseDeleteCount(
+    '<?xml version="1.0" encoding="utf-8"?>\n<root><![CDATA[1]]></root>'
+  ),
+  1,
+  "应能从 ajax 包裹里解析删除数量。"
+);
+assert.equal(recycleApi.parseDeleteCount("0"), 0);
+assert.ok(
+  Number.isNaN(recycleApi.parseDeleteCount("<root><![CDATA[]]></root>")),
+  "非数字响应应返回 NaN 而不是 0。"
+);
+
+assert.equal(recycleApi.markOwnedAid(0), false, "非法 aid 不应登记。");
+assert.equal(recycleApi.markOwnedAid("abc"), false);
+assert.equal(recycleApi.markOwnedAid(42), true);
+assert.deepEqual(toPlainObject(recycleApi.getOwnedAids()), ["42"]);
+recycleApi.settle();
+assert.deepEqual(
+  toPlainObject(recycleApi.getOwnedAids()),
+  [],
+  "提交后应清空待回收集合。"
+);
+assert.deepEqual(
+  toPlainObject(recycleApi.getSettledAids()),
+  ["42"],
+  "提交后应转入已结算集合。"
+);
+assert.equal(
+  recycleApi.markOwnedAid(42),
+  false,
+  "已结算的 aid 不应重新进入待回收集合。"
+);
+
+assert.equal(
+  recycleApi.initialize(),
+  false,
+  "回复弹窗补丁已注册回收监听，重复初始化不应再注册。"
+);
+assert.equal(recycleApi.initialize(), false, "重复初始化应保持幂等。");
+assert.equal(recycleApi.getRecycleDelayMs(), 1200);
+recycleApi.reconcile("reply-popup");
+recycleApi.reconcile("advanced-editor");
+
+// 回收链路的集成校验：只用一个假的弹窗 DOM + 假 fetch，验证解绑、确认两轮与请求形态。
+const { sandbox } = createHarness();
+const liveApi = sandbox.__S1P_TEST_HOOKS__.s1pPasteAttachRecycleTest;
+const fetchCalls = [];
+const removedFieldAids = [];
+const liveTextarea = { value: "", selectionStart: 0, selectionEnd: 0 };
+const liveForm = {
+  querySelector(selector) {
+    if (selector === 'input[name="tid"]') return { value: "45" };
+    if (selector === 'input[name="pid"]') return { value: "" };
+    return null;
+  },
+  querySelectorAll() {
+    return removedFieldAids.map((aid) => ({
+      getAttribute: () => String(aid),
+      remove: () => {},
+    }));
+  },
+};
+liveTextarea.form = liveForm;
+const livePopup = {
+  contains: (node) => node === liveTextarea,
+  querySelector: (selector) =>
+    selector === "#postmessage" || selector === "#postform" ? liveTextarea : null,
+};
+sandbox.document.getElementById = (id) =>
+  id === "fwin_content_reply" ? livePopup : null;
+sandbox.fetch = async (url) => {
+  fetchCalls.push(String(url));
+  return {
+    ok: true,
+    status: 200,
+    text: async () => '<?xml version="1.0" encoding="utf-8"?>\n<root><![CDATA[1]]></root>',
+  };
+};
+
+(async () => {
+  removedFieldAids.push("555");
+  liveApi.markOwnedAid(555);
+  liveApi.reconcile("reply-popup");
+  assert.equal(
+    fetchCalls.length,
+    0,
+    "第一轮只记录未引用状态，不应立即删除附件。"
+  );
+
+  liveApi.reconcile("reply-popup", { confirmed: true });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(fetchCalls.length, 1, "确认轮应发出一次删除请求。");
+  assert.equal(
+    fetchCalls[0],
+    "forum.php?mod=ajax&action=deleteattach&inajax=yes&tid=45&pid=0&aids[]=555",
+    "删除请求应带上表单 tid/pid 与 aid。"
+  );
+  assert.deepEqual(toPlainObject(liveApi.getDeletedAids()), ["555"]);
+  assert.deepEqual(toPlainObject(liveApi.getOwnedAids()), []);
+
+  liveTextarea.value = "A[attachimg]555[/attachimg]B";
+  liveApi.reconcile("reply-popup");
+  assert.equal(
+    liveTextarea.value,
+    "AB",
+    "已删除附件若重新出现在文本里，应清掉失效标记。"
+  );
+
+  liveApi.markOwnedAid(666);
+  liveTextarea.value = "[attachimg]666[/attachimg]";
+  liveApi.reconcile("reply-popup", { confirmed: true });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(fetchCalls.length, 1, "仍被引用的附件不应被删除。");
+
+  liveApi.settle();
+  console.log("test-reply-image-paste: ok");
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
