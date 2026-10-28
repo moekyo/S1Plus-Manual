@@ -9,6 +9,8 @@
 - **高级模式同样走附件上传**：高级编辑器（WYSIWYG iframe / 纯文本模式）粘贴截图时不再让浏览器写入 `data:image` Base64，而是上传为论坛附件，并在富文本中插入带 `attachimg_<aid>` 标记的内联图片、在纯文本模式插入 `[attachimg]` 代码。
 - **模式切换与附件收敛**：高级编辑器等待编辑 DOM 就绪后再初始化；富文本/纯文本来回切换时通过隐藏的 `image_<aid>` 预览元素保留图片；提交（含 Ctrl+Enter/Alt+S）前按消息中实际引用的 aid 清理 `attachnew` 字段，避免切换过程中丢失内容或把历史粘贴的附件连带提交。
 - **弹窗提交同样收敛附件**：弹窗回复提交前也会按 `#postmessage` 中实际引用的 aid 清理 S1Plus 自己添加的 `attachnew` 字段。
+- **删图即删附件**：在弹窗里删掉 `[attachimg]` 代码、或在高级编辑器里删掉内联图后，S1Plus 在 1.2 秒防抖窗口结束后解绑该附件，并调用论坛 `forum.php?mod=ajax&action=deleteattach` 真正删除本次粘贴上传的附件；撤销粘贴或图文模式来回切换不会误删。
+- **保守回收范围**：只回收本次页面会话里由 S1Plus 上传的 aid；提交（含 Ctrl+Enter/Alt+S）后、论坛拒绝删除或请求失败时不再重复请求，对应诊断事件为 `attach_deleted` / `attach_delete_refused` / `attach_delete_failed`。
 - **大小预检与压缩**：上传前读取论坛 `file_size_limit`；超过限制时用 Canvas 压缩为 JPEG 再上传，压缩失败才提示用户先手动压缩。
 - **资源回收**：预览兜底产生的 blob URL 在字段收敛或离开页面时回收。
 - **异步安全**：多图按顺序上传并逐张插入；弹窗/编辑器关闭后丢弃在途结果；上传失败或超时只提示错误，不写入无效附件代码。

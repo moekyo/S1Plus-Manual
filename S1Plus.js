@@ -55937,6 +55937,7 @@
       job.caret.start = job.caret.end = job.textarea.selectionStart;
     }
     ensureS1pReplyImagePasteAttachFields(job.textarea.form, aid);
+    markS1pPasteAttachOwnedAid(aid);
     return true;
   };
 
@@ -56096,6 +56097,7 @@
       return;
     }
     reconcileS1pReplyPopupAttachFields();
+    settleS1pPasteAttachments();
   };
 
   const handleS1pReplyImagePasteEvent = (event) => {
@@ -56139,6 +56141,7 @@
     if (s1pReplyImagePasteInitialized) {
       return false;
     }
+    initializeS1pPasteAttachRecycle();
     try {
       document.addEventListener("paste", handleS1pReplyImagePasteEvent, {
         capture: true,
@@ -56156,11 +56159,15 @@
       );
       document.addEventListener("keydown", (event) => {
         if (
-          (event.ctrlKey && event.key === "Enter") ||
-          (event.altKey && String(event.key).toLowerCase() === "s")
+          !(event.ctrlKey && event.key === "Enter") &&
+          !(event.altKey && String(event.key).toLowerCase() === "s")
         ) {
-          reconcileS1pReplyPopupAttachFields();
+          return;
         }
+        // 只在弹窗输入区内视为“发帖快捷键”，避免其他输入框的快捷键误结算附件。
+        if (!findS1pReplyImagePasteTextarea(event.target)) return;
+        reconcileS1pReplyPopupAttachFields();
+        settleS1pPasteAttachments();
       }, true);
       s1pReplyImagePasteInitialized = true;
       s1pRecordDiagnosticEvent("reply_image_paste.initialized", {
@@ -56370,6 +56377,7 @@
       }
     }
     ensureS1pReplyImagePasteAttachFields(form, aid);
+    markS1pPasteAttachOwnedAid(aid);
     return true;
   };
 
@@ -56471,6 +56479,7 @@
       capture: true,
       passive: false,
     });
+    observeS1pPasteAttachEditorDocument(doc);
     return true;
   };
 
@@ -56493,6 +56502,7 @@
       return;
     }
     reconcileS1pAdvancedEditorAttachFields();
+    settleS1pPasteAttachments();
   };
 
   const initializeAdvancedEditorImagePaste = () => {
@@ -56521,6 +56531,7 @@
       s1pAdvancedEditorPasteInitTimer = 0;
     }
     s1pAdvancedEditorPasteInitialized = true;
+    initializeS1pPasteAttachRecycle();
     document.addEventListener("paste", handleS1pAdvancedEditorPasteEvent, {
       capture: true,
       passive: false,
@@ -56563,7 +56574,365 @@
     return true;
   };
 
+  // --- 粘贴附件回收 ---
+  // 论坛（Discuz X3.5）提供 forum.php?mod=ajax&action=deleteattach：属于当前用户的
+  // 未绑定附件（pid=0）可以在提交前直接删除。这里只回收 S1Plus 自己上传的 aid，
+  // 并且只在消息里不再引用它、且延迟窗口内没有重新引用时才发删除请求；
+  // 提交（含快捷键）一旦发生就把已上传的 aid 转为“已结算”，不再自动删除。
+  const S1P_PASTE_ATTACH_RECYCLE_DELAY_MS = 1200;
+  const S1P_PASTE_ATTACH_DELETE_TIMEOUT_MS = 15000;
+  const S1P_PASTE_ATTACH_SCOPE_REPLY_POPUP = "reply-popup";
+  const S1P_PASTE_ATTACH_SCOPE_ADVANCED_EDITOR = "advanced-editor";
+
+  const s1pPasteAttachOwnedAids = new Set();
+  const s1pPasteAttachDeletedAids = new Set();
+  const s1pPasteAttachSettledAids = new Set();
+  const s1pPasteAttachAbandonedAids = new Set();
+  const s1pPasteAttachDeleteInFlight = new Set();
+  const s1pPasteAttachRecycleTimers = new Map();
+  const s1pPasteAttachConfirmTimers = new Map();
+  const s1pPasteAttachObservers = new WeakMap();
+  let s1pPasteAttachRecycleInitialized = false;
+
+  const normalizeS1pPasteAttachAid = (aid) => {
+    const parsed = Number.parseInt(String(aid ?? ""), 10);
+    return Number.isFinite(parsed) && parsed > 0 ? String(parsed) : "";
+  };
+
+  const markS1pPasteAttachOwnedAid = (aid) => {
+    const normalized = normalizeS1pPasteAttachAid(aid);
+    if (!normalized) return false;
+    if (
+      s1pPasteAttachSettledAids.has(normalized) ||
+      s1pPasteAttachAbandonedAids.has(normalized)
+    ) {
+      return false;
+    }
+    s1pPasteAttachOwnedAids.add(normalized);
+    return true;
+  };
+
+  const stripS1pPasteAttachTagFromText = (value, aid) => {
+    const tag = `[attachimg]${aid}[/attachimg]`;
+    return String(value ?? "").split(tag).join("");
+  };
+
+  const readS1pPasteAttachFormValue = (form, name) => {
+    try {
+      const input = form?.querySelector?.(`input[name="${name}"]`);
+      const value = typeof input?.value === "string" ? input.value.trim() : "";
+      return /^\d+$/.test(value) ? value : "0";
+    } catch (_) {
+      return "0";
+    }
+  };
+
+  const buildS1pPasteAttachDeleteUrl = (aid, tid, pid) =>
+    "forum.php?mod=ajax&action=deleteattach&inajax=yes" +
+    `&tid=${/^\d+$/.test(String(tid)) ? tid : "0"}` +
+    `&pid=${/^\d+$/.test(String(pid)) ? pid : "0"}` +
+    `&aids[]=${normalizeS1pPasteAttachAid(aid)}`;
+
+  // 论坛 deleteattach 返回 CDATA 包裹的实际删除数量。
+  const parseS1pPasteAttachDeleteCount = (text) => {
+    const source = String(text ?? "");
+    const cdata = /\[CDATA\[(\d+)\]\]/.exec(source);
+    if (cdata) return Number.parseInt(cdata[1], 10);
+    const trimmed = source.trim();
+    return /^\d+$/.test(trimmed) ? Number.parseInt(trimmed, 10) : NaN;
+  };
+
+  const settleS1pPasteAttachments = () => {
+    s1pPasteAttachRecycleTimers.forEach((timer) => window.clearTimeout(timer));
+    s1pPasteAttachRecycleTimers.clear();
+    s1pPasteAttachConfirmTimers.forEach((timer) => window.clearTimeout(timer));
+    s1pPasteAttachConfirmTimers.clear();
+    s1pPasteAttachOwnedAids.forEach((aid) =>
+      s1pPasteAttachSettledAids.add(aid)
+    );
+    s1pPasteAttachOwnedAids.clear();
+  };
+
+  const deleteS1pPasteAttachment = async (aid, form) => {
+    const normalized = normalizeS1pPasteAttachAid(aid);
+    if (!normalized) return false;
+    if (s1pPasteAttachDeletedAids.has(normalized)) return true;
+    if (!s1pPasteAttachOwnedAids.has(normalized)) return false;
+    if (
+      s1pPasteAttachSettledAids.has(normalized) ||
+      s1pPasteAttachAbandonedAids.has(normalized)
+    ) {
+      return false;
+    }
+    if (s1pPasteAttachDeleteInFlight.has(normalized)) return false;
+    s1pPasteAttachDeleteInFlight.add(normalized);
+    const controller =
+      typeof AbortController === "function" ? new AbortController() : null;
+    const timer = controller
+      ? window.setTimeout(
+        () => controller.abort(),
+        S1P_PASTE_ATTACH_DELETE_TIMEOUT_MS
+      )
+      : 0;
+    try {
+      const url = buildS1pPasteAttachDeleteUrl(
+        normalized,
+        readS1pPasteAttachFormValue(form, "tid"),
+        readS1pPasteAttachFormValue(form, "pid")
+      );
+      const response = await fetch(url, {
+        method: "GET",
+        credentials: "same-origin",
+        signal: controller?.signal,
+      });
+      const text = await response.text();
+      const count = parseS1pPasteAttachDeleteCount(text);
+      if (response.ok && Number.isFinite(count) && count > 0) {
+        s1pPasteAttachDeletedAids.add(normalized);
+        s1pPasteAttachOwnedAids.delete(normalized);
+        s1pRecordDiagnosticEvent("reply_image_paste.attach_deleted", {
+          module: "reply-image-paste",
+          status: "success",
+          message: "已删除不再引用的粘贴附件",
+          details: { aid: normalized },
+        });
+        return true;
+      }
+      // 论坛拒绝了删除（已绑定、非本人、接口不存在等）：不再重复请求。
+      s1pPasteAttachAbandonedAids.add(normalized);
+      s1pRecordDiagnosticEvent("reply_image_paste.attach_delete_refused", {
+        module: "reply-image-paste",
+        status: "skipped",
+        message: "论坛未删除粘贴附件",
+        details: {
+          aid: normalized,
+          httpStatus: response?.status,
+          responseText: String(text ?? "").slice(0, 200),
+        },
+      });
+      return false;
+    } catch (error) {
+      s1pPasteAttachAbandonedAids.add(normalized);
+      s1pRecordDiagnosticEvent("reply_image_paste.attach_delete_failed", {
+        module: "reply-image-paste",
+        level: "warn",
+        status: "failure",
+        message: "删除粘贴附件失败",
+        details: { aid: normalized, error },
+      });
+      return false;
+    } finally {
+      if (timer) {
+        window.clearTimeout(timer);
+      }
+      s1pPasteAttachDeleteInFlight.delete(normalized);
+    }
+  };
+
+  const readS1pPasteAttachScope = (scope) => {
+    try {
+      if (scope === S1P_PASTE_ATTACH_SCOPE_REPLY_POPUP) {
+        const popup = document.getElementById(S1P_REPLY_IMAGE_PASTE_POPUP_ID);
+        const textarea = popup?.querySelector?.(
+          `#${S1P_REPLY_IMAGE_PASTE_TEXTAREA_ID}`
+        );
+        if (!popup || !textarea) return null;
+        return {
+          form:
+            textarea.form ||
+            popup.querySelector(`#${S1P_REPLY_IMAGE_PASTE_FORM_ID}`),
+          textarea,
+          editableBody: null,
+          referenced: collectS1pReplyImagePasteReferencedAidsFromText(
+            textarea.value
+          ),
+        };
+      }
+      const form = getS1pAdvancedEditorForm();
+      if (!form) return null;
+      const textMode = isS1pAdvancedEditorTextMode();
+      const textarea = textMode
+        ? document.getElementById(S1P_ADVANCED_EDITOR_TEXTAREA_ID)
+        : null;
+      const editableBody =
+        textMode || !isS1pAdvancedEditorFormAlive()
+          ? null
+          : getS1pAdvancedEditorIframe()?.contentDocument?.body || null;
+      return {
+        form,
+        textarea,
+        editableBody,
+        referenced: collectS1pAdvancedEditorReferencedAids(),
+      };
+    } catch (_) {
+      return null;
+    }
+  };
+
+  const stripS1pPasteAttachReference = (snapshot, aid) => {
+    let stripped = false;
+    const textarea = snapshot?.textarea;
+    if (textarea && typeof textarea.value === "string") {
+      const value = textarea.value;
+      const nextValue = stripS1pPasteAttachTagFromText(value, aid);
+      if (nextValue !== value) {
+        const caret = Number.isFinite(textarea.selectionStart)
+          ? textarea.selectionStart
+          : value.length;
+        const nextCaret = Math.max(
+          0,
+          Math.min(caret - (value.length - nextValue.length), nextValue.length)
+        );
+        textarea.value = nextValue;
+        try {
+          textarea.setSelectionRange?.(nextCaret, nextCaret);
+        } catch (_) { }
+        try {
+          textarea.dispatchEvent?.(new Event("input", { bubbles: true }));
+        } catch (_) { }
+        stripped = true;
+      }
+    }
+    const body = snapshot?.editableBody;
+    if (body) {
+      body
+        .querySelectorAll?.(`img[aid="attachimg_${aid}"]`)
+        ?.forEach?.((image) => {
+          try {
+            image.remove();
+            stripped = true;
+          } catch (_) { }
+        });
+    }
+    return stripped;
+  };
+
+  const reconcileS1pPasteAttachments = (scope, options = {}) => {
+    let snapshot = readS1pPasteAttachScope(scope);
+    if (!snapshot) return;
+    const staleAids = [...snapshot.referenced].filter((aid) =>
+      s1pPasteAttachDeletedAids.has(aid)
+    );
+    if (staleAids.length > 0) {
+      staleAids.forEach((aid) => stripS1pPasteAttachReference(snapshot, aid));
+      showS1pReplyImagePasteMessage(
+        "该图片附件已删除，请重新粘贴图片",
+        false
+      );
+      snapshot = readS1pPasteAttachScope(scope);
+      if (!snapshot) return;
+    }
+    if (scope === S1P_PASTE_ATTACH_SCOPE_ADVANCED_EDITOR) {
+      reconcileS1pAdvancedEditorAttachFields();
+    } else {
+      reconcileS1pMarkedAttachFields(snapshot.form, snapshot.referenced);
+    }
+    if (options.submitted === true) return;
+    const unreferenced = [...s1pPasteAttachOwnedAids].filter(
+      (aid) => !snapshot.referenced.has(aid)
+    );
+    if (unreferenced.length === 0) {
+      clearS1pPasteAttachConfirm(scope);
+      return;
+    }
+    // 删除不可撤销：需要连续两轮（跨一个延迟窗口）都没被引用才真正发删除请求，
+    // 这样图文模式切换、撤销粘贴这类瞬时状态不会误删附件。
+    if (options.confirmed !== true) {
+      scheduleS1pPasteAttachConfirm(scope);
+      return;
+    }
+    for (const aid of unreferenced) {
+      void deleteS1pPasteAttachment(aid, snapshot.form);
+    }
+  };
+
+  const clearS1pPasteAttachConfirm = (scope) => {
+    const pending = s1pPasteAttachConfirmTimers.get(scope);
+    if (!pending) return false;
+    window.clearTimeout(pending);
+    s1pPasteAttachConfirmTimers.delete(scope);
+    return true;
+  };
+
+  const scheduleS1pPasteAttachConfirm = (scope) => {
+    if (!scope || s1pPasteAttachConfirmTimers.has(scope)) return;
+    s1pPasteAttachConfirmTimers.set(
+      scope,
+      window.setTimeout(() => {
+        s1pPasteAttachConfirmTimers.delete(scope);
+        reconcileS1pPasteAttachments(scope, { confirmed: true });
+      }, S1P_PASTE_ATTACH_RECYCLE_DELAY_MS)
+    );
+  };
+
+  // 只在延迟窗口结束后才真正删除：撤销粘贴、改写标记这类瞬时状态不会误删附件。
+  const scheduleS1pPasteAttachReconcile = (scope) => {
+    if (!scope) return;
+    const pending = s1pPasteAttachRecycleTimers.get(scope);
+    if (pending) {
+      window.clearTimeout(pending);
+    }
+    s1pPasteAttachRecycleTimers.set(
+      scope,
+      window.setTimeout(() => {
+        s1pPasteAttachRecycleTimers.delete(scope);
+        reconcileS1pPasteAttachments(scope);
+      }, S1P_PASTE_ATTACH_RECYCLE_DELAY_MS)
+    );
+  };
+
+  const handleS1pPasteAttachInputEvent = (event) => {
+    const target = event?.target;
+    if (!target || typeof target.closest !== "function") return;
+    const textarea = target.closest("textarea");
+    if (!textarea) return;
+    const popup = document.getElementById(S1P_REPLY_IMAGE_PASTE_POPUP_ID);
+    if (
+      popup &&
+      popup.contains(textarea) &&
+      textarea.id === S1P_REPLY_IMAGE_PASTE_TEXTAREA_ID
+    ) {
+      scheduleS1pPasteAttachReconcile(S1P_PASTE_ATTACH_SCOPE_REPLY_POPUP);
+      return;
+    }
+    if (textarea.id === S1P_ADVANCED_EDITOR_TEXTAREA_ID) {
+      scheduleS1pPasteAttachReconcile(S1P_PASTE_ATTACH_SCOPE_ADVANCED_EDITOR);
+    }
+  };
+
+  const observeS1pPasteAttachEditorDocument = (doc) => {
+    try {
+      if (!doc?.body) return false;
+      if (typeof MutationObserver !== "function") return false;
+      if (s1pPasteAttachObservers.has(doc)) return false;
+      const observer = new MutationObserver(() => {
+        if (!isS1pAdvancedEditorFormAlive()) return;
+        scheduleS1pPasteAttachReconcile(
+          S1P_PASTE_ATTACH_SCOPE_ADVANCED_EDITOR
+        );
+      });
+      observer.observe(doc.body, { childList: true, subtree: true });
+      s1pPasteAttachObservers.set(doc, observer);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  };
+
+  const initializeS1pPasteAttachRecycle = () => {
+    if (s1pPasteAttachRecycleInitialized) return false;
+    try {
+      document.addEventListener("input", handleS1pPasteAttachInputEvent, true);
+      s1pPasteAttachRecycleInitialized = true;
+      return true;
+    } catch (_) {
+      return false;
+    }
+  };
+
   /*__S1P_TEST_HOOK_16__*/
+
+  /*__S1P_TEST_HOOK_19__*/
 
   const S1P_INIT_PHASES = Object.freeze({
     DOCUMENT_START: "document-start",
