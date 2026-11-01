@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      7.0.2
+// @version      7.1.0
 // @description  为Stage1st论坛提供帖子/用户/楼层屏蔽、导航栏自定义、自动签到、阅读进度跟踪、回复收藏、远程同步等多种功能，全方位优化你的论坛体验。
 // @author       moekyo
 // @match        https://stage1st.com/2b/*
@@ -28,8 +28,8 @@
   const IS_S1P_TEST_MODE =
     typeof globalThis !== "undefined" && globalThis.__S1P_TEST_MODE__ === true;
 
-  const SCRIPT_VERSION = "7.0.2";
-  const SCRIPT_RELEASE_DATE = "2026-09-26";
+  const SCRIPT_VERSION = "7.1.0";
+  const SCRIPT_RELEASE_DATE = "2026-11-01";
 
   const S1P_STATIC_DATA_RESOURCE_NAME = "s1p-static-data";
   const loadS1pStaticData = () => {
@@ -55319,9 +55319,10 @@
 
     // [OPTIMIZED] 优化HTML结构以改善文本布局和换行
     const bodyHtml = `
-    <p>已更新至 v${SCRIPT_VERSION}！这次主要修主题配色。</p>
-    <p>S1 Plus 现在只认一份主题状态：开着 S1 NUX 就跟着 NUX 实际显示的深色/浅色走，不再被系统主题带偏；开关 NUX 后也会立刻跟上。</p>
-    <p>NUX 自定义主题同样能正确识别，判断不了时按浅色处理；设置面板、调试面板、搜索框等自有界面的配色都会跟论坛主题保持一致。</p>
+    <p>已更新至 v${SCRIPT_VERSION}！现在贴图回复更省事了。</p>
+    <p>在帖子回复弹窗或高级编辑器里，截图后直接粘贴，图片会自动上传到论坛并插入当前光标位置，不需要先保存文件、再手动点附件上传。</p>
+    <p>连续粘贴多张、在富文本和纯文本之间切换都没问题；删掉图片后，对应的论坛附件也会一起清理。</p>
+    <p>手动同步也做了安全优化：拉取和推送前会先比较数据，减少误覆盖；页面关闭后，其他标签页的等待时间也缩短了。</p>
   `;
 
     const buttons = [
