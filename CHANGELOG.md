@@ -1,5 +1,12 @@
 ## [Unreleased]
 
+### ⚡ 启动时机改为 document-idle（修复 Firefox 暗色模式进入帖子闪白）
+
+- **根因**：脚本约 2MB，`@run-at document-start` 会让浏览器在首帧前注入并编译执行。Firefox 160 + Tampermonkey 5.5.0 实测首屏内容绘制被推迟 161ms（308 → 469ms）、DOMContentLoaded 推迟 378ms、load 推迟 528ms；暗色模式下这段窗口是浏览器默认白底，表现为进入帖子闪一下白屏。S1 Plus 自己的六个初始化阶段合计仅 37ms，优化初始化无法解决，唯一有效杠杆是不在首帧前执行脚本。
+- **调整**：`@run-at` 改为 `document-idle`，页面首帧画完后再初始化；FCP / DCL / load 回到接近基线，Firefox 不再闪白。
+- **代价**：首帧前不再注入样式表，静态防闪规则（`#hiddenpoststip` 黄条、`#p_pop`、`#atarget`、`#separatorline.emptb`、`#nv > ul` 布局等）会在首帧后约 100–200ms 内落定，暗色模式下可能看到一次轻微样式变化；内容级屏蔽与导航栏改动本来就在首帧后执行，不受影响。
+- **顺带修复**：`document-start` 阶段原先可能在 `document.documentElement` 尚未创建时执行，导致“系统屏蔽楼层隐藏”任务抛错并被 optional 逻辑吞掉；改用 `document-idle` 后该阶段始终拿到完整 DOM。
+
 ## [v7.1.0] - 2026-11-01
 
 ### 🖼 回复弹窗与高级编辑器截图粘贴兼容
