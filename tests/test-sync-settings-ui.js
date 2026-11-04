@@ -250,4 +250,138 @@ assert.doesNotMatch(
   assert.doesNotMatch(sourceCode, pattern, message);
 });
 
+// --- 局域网同步（LAN Hub）设置页 UI -----------------------------------------
+[
+  [
+    /id="s1p-github-connection-section"[\s\S]*id="s1p-lan-sync-section"[\s\S]*<div class="s1p-notice">/,
+    "局域网同步分组未位于 GitHub 连接之后、通知区之前。",
+  ],
+  [
+    /<div class="s1p-sync-settings-section" id="s1p-lan-sync-section">[\s\S]*<div class="s1p-sync-settings-section-title">局域网同步（LAN Hub）<\/div>/,
+    "同步设置页缺少局域网同步分组标题。",
+  ],
+  [
+    /for="s1p-lan-sync-enabled-toggle">启用局域网同步[\s\S]*id="s1p-lan-sync-enabled-toggle" class="s1p-settings-checkbox" data-s1p-sync-control/,
+    "局域网同步总开关未接入同步控件门控。",
+  ],
+  [
+    /for="s1p-lan-sync-url-input">Hub 地址[\s\S]*id="s1p-lan-sync-url-input" class="s1p-input s1p-input-full" placeholder="http:\/\/NAS_IP:5180"[^>]*data-s1p-sync-control/,
+    "Hub 地址输入框缺失或未接入同步控件门控。",
+  ],
+  [
+    /for="s1p-lan-sync-token-input">Hub 令牌 \(HUB_TOKEN\)[\s\S]*id="s1p-lan-sync-token-input" class="s1p-input s1p-input-with-right-icon"[^>]*data-s1p-sync-control[\s\S]*id="s1p-toggle-lan-token-visibility" type="button" class="s1p-icon-btn-overlay"[\s\S]*\{\{SVG_ICON_EYE\}\}/,
+    "Hub 令牌密码框或眼睛显示切换按钮缺失。",
+  ],
+  [
+    /id="s1p-lan-sync-test-btn"[^>]*data-s1p-sync-control>测试连接<\/button>[\s\S]*id="s1p-lan-sync-status"[^>]*role="status" aria-live="polite"/,
+    "测试连接按钮或状态输出区域缺失。",
+  ],
+  [
+    /开启后自动同步会优先走局域网 Hub，比 GitHub Gist 更快；GitHub Gist 保留为手动备份与跨网兜底，关闭后完全回到 Gist/,
+    "局域网同步说明未表达 Hub 优先、Gist 兜底与关闭后回到 Gist。",
+  ],
+  [
+    /Hub 地址与令牌只保存在本浏览器，不会写入同步数据/,
+    "局域网同步说明未表达地址与令牌仅保存在本浏览器。",
+  ],
+  [
+    /测试连接会依次请求 \/health 与 \/snapshot，校验地址与令牌/,
+    "测试连接说明未表达 /health 与 /snapshot 校验。",
+  ],
+  [
+    /lanSyncEnabledToggle: modal\.querySelector\("#s1p-lan-sync-enabled-toggle"\)[\s\S]*lanSyncUrlInput: modal\.querySelector\("#s1p-lan-sync-url-input"\)[\s\S]*lanSyncTokenInput: modal\.querySelector\("#s1p-lan-sync-token-input"\)[\s\S]*lanTokenVisibilityBtn: modal\.querySelector\(\s*"#s1p-toggle-lan-token-visibility"\s*\)[\s\S]*lanSyncTestBtn: modal\.querySelector\("#s1p-lan-sync-test-btn"\)[\s\S]*lanSyncStatus: modal\.querySelector\("#s1p-lan-sync-status"\)/,
+    "局域网同步控件未完整接入 syncSettingsControls。",
+  ],
+  [
+    /const applySyncSettingsToModal = \(settingsSnapshot\) => \{[\s\S]*projectLanSyncSettings\(settingsSnapshot\)[\s\S]*lanSyncEnabledToggle\.checked = lanProjection\.enabled[\s\S]*lanSyncUrlInput\.value = lanProjection\.url[\s\S]*lanSyncTokenInput\.value = lanProjection\.token/,
+    "打开设置或跨标签刷新时未回填局域网同步设置。",
+  ],
+  [
+    /const buildSyncSettingsFromModal = \(\) =>[\s\S]*syncLanEnabled:[\s\S]*syncLanUrl:[\s\S]*syncLanToken:/,
+    "保存同步设置时未收集局域网同步三个设置项。",
+  ],
+  [
+    /const validateLanSyncSettingsForSave = \(settingsSnapshot\) => \{[\s\S]*settingsSnapshot\.syncLanEnabled !== true[\s\S]*test\(normalizedUrl\)[\s\S]*Hub 令牌（HUB_TOKEN）[\s\S]*return false;/,
+    "局域网同步保存校验未在开启时校验 URL scheme 与令牌。",
+  ],
+  [
+    /e\.target\.id === "s1p-remote-save-btn"[\s\S]*validateLanSyncSettingsForSave\(currentSettings\)[\s\S]*saveSettings\(currentSettings/,
+    "保存按钮未在写入前校验局域网同步配置。",
+  ],
+  [
+    /bindDirtyListenerForTextInput\(lanSyncUrlInput\);[\s\S]*bindDirtyListenerForTextInput\(lanSyncTokenInput\);/,
+    "局域网同步 URL/令牌输入未绑定脏状态监听。",
+  ],
+  [
+    /lanSyncEnabledToggle,\s*\]\.forEach\(\(toggleControl\) =>[\s\S]*markSyncSettingsDirty/,
+    "局域网同步开关未绑定脏状态监听。",
+  ],
+  [
+    /if \(lanSyncTestBtn\) \{[\s\S]*lanSyncTestBtn\.addEventListener\("click", \(\) => \{[\s\S]*void testLanSyncConnection\(\);/,
+    "测试连接按钮未绑定处理器。",
+  ],
+  [
+    /e\.target\.closest\("#s1p-toggle-lan-token-visibility"\)[\s\S]*input\.type = "text"[\s\S]*setSanitizedIconHtml\(lanTokenVisibilityBtn, SVG_ICON_EYE_SLASH\)[\s\S]*input\.type = "password"[\s\S]*setSanitizedIconHtml\(lanTokenVisibilityBtn, SVG_ICON_EYE\)/,
+    "Hub 令牌显示切换未复用 PAT 的密码框/图标切换行为。",
+  ],
+  [
+    /const LAN_TEST_CONNECTION_TIMEOUT_MS = 8000;/,
+    "测试连接未使用 8 秒超时。",
+  ],
+].forEach(([pattern, message]) => {
+  expectMatch(pattern, message);
+});
+
+const lanTestConnectionBlock =
+  sourceCode.match(
+    /const testLanSyncConnection = async \(\) => \{[\s\S]*?\n    \};\n\n    const updateForcePullState/
+  )?.[0] || "";
+assert.ok(lanTestConnectionBlock, "未能定位局域网同步测试连接实现。");
+assert.match(
+  lanTestConnectionBlock,
+  /url: `\$\{baseUrl\}\/health`/,
+  "测试连接未请求 /health。"
+);
+assert.match(
+  lanTestConnectionBlock,
+  /url: `\$\{baseUrl\}\/snapshot`/,
+  "测试连接未请求 /snapshot。"
+);
+assert.match(
+  lanTestConnectionBlock,
+  /Authorization: `Bearer \$\{token\}`/,
+  "测试连接请求 /snapshot 时未携带 Bearer 令牌。"
+);
+assert.equal(
+  (lanTestConnectionBlock.match(/timeout: LAN_TEST_CONNECTION_TIMEOUT_MS/g) || [])
+    .length,
+  2,
+  "测试连接的 /health 与 /snapshot 请求应各使用 8 秒超时。"
+);
+assert.match(
+  lanTestConnectionBlock,
+  /连接成功：Hub 版本 v\$\{hubVersion\}，快照大小约 \$\{snapshotSizeKb\} KB/,
+  "测试连接成功提示未包含 Hub 版本与快照大小。"
+);
+assert.match(
+  lanTestConnectionBlock,
+  /令牌无效，请检查 HUB_TOKEN/,
+  "测试连接未区分 401 令牌无效。"
+);
+assert.match(
+  lanTestConnectionBlock,
+  /连接失败：\$\{describeLanTestRequestError\(error\)\}/,
+  "测试连接未给出网络/超时失败原因。"
+);
+assert.match(
+  lanTestConnectionBlock,
+  /lanSyncTestBtn\.textContent = "测试中…"/,
+  "测试连接期间未显示测试中状态。"
+);
+assert.doesNotMatch(
+  lanTestConnectionBlock,
+  /console\./,
+  "测试连接实现不得在控制台输出令牌或请求详情。"
+);
+
 console.log("[sync-settings-ui] Sync settings restructure verified.");
