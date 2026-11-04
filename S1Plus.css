@@ -4278,6 +4278,53 @@
     .s1p-sync-settings-section .s1p-settings-sub-group {
       margin-bottom: 4px;
     }
+    .s1p-sync-collapsible-section > .s1p-sync-section-toggle {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      width: 100%;
+      margin: 0 0 4px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+    .s1p-sync-collapsible-section
+      > .s1p-sync-section-toggle
+      .s1p-sync-settings-section-title {
+      margin-bottom: 0;
+    }
+    .s1p-sync-collapsible-section
+      > .s1p-sync-section-toggle:hover
+      .s1p-sync-settings-section-title,
+    .s1p-sync-collapsible-section
+      > .s1p-sync-section-toggle:focus-visible
+      .s1p-sync-settings-section-title {
+      color: var(--s1p-pri);
+    }
+    .s1p-sync-section-chevron {
+      flex: 0 0 auto;
+      width: 8px;
+      height: 8px;
+      margin-right: 2px;
+      border-right: 2px solid currentColor;
+      border-bottom: 2px solid currentColor;
+      transform: rotate(45deg);
+      transition: transform 0.18s ease;
+      opacity: 0.72;
+    }
+    .s1p-sync-collapsible-section
+      > .s1p-sync-section-toggle[aria-expanded="false"]
+      .s1p-sync-section-chevron {
+      transform: rotate(-45deg);
+    }
+    .s1p-sync-section-body[hidden] {
+      display: none;
+    }
     .s1p-sync-auto-check-desc {
       margin-bottom: 10px;
     }

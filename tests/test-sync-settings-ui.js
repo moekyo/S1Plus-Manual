@@ -257,7 +257,7 @@ assert.doesNotMatch(
     "局域网同步分组未位于 GitHub 连接之后、通知区之前。",
   ],
   [
-    /<div class="s1p-sync-settings-section" id="s1p-lan-sync-section">[\s\S]*<div class="s1p-sync-settings-section-title">局域网同步（LAN Hub）<\/div>/,
+    /<div class="s1p-sync-settings-section(?: [^"]*)?" id="s1p-lan-sync-section">[\s\S]*<div class="s1p-sync-settings-section-title">局域网同步（LAN Hub）<\/div>/,
     "同步设置页缺少局域网同步分组标题。",
   ],
   [
@@ -327,6 +327,26 @@ assert.doesNotMatch(
   [
     /const LAN_TEST_CONNECTION_TIMEOUT_MS = 8000;/,
     "测试连接未使用 8 秒超时。",
+  ],
+  [
+    /id="s1p-github-connection-section">[\s\S]*data-s1p-sync-section-toggle="github" aria-expanded="true"[\s\S]*data-s1p-sync-section-body="github"/,
+    "GitHub 连接分组未实现默认展开的折叠结构。",
+  ],
+  [
+    /id="s1p-lan-sync-section">[\s\S]*data-s1p-sync-section-toggle="lan" aria-expanded="false"[\s\S]*data-s1p-sync-section-body="lan" hidden/,
+    "局域网同步分组未默认折叠。",
+  ],
+  [
+    /const setSyncSettingsSectionExpanded = \(sectionName, expanded\) => \{[\s\S]*aria-expanded[\s\S]*body\.hidden = !nextExpanded/,
+    "折叠分组的展开/收起逻辑缺失。",
+  ],
+  [
+    /const updateLanSyncSectionInputsState = \(\) => \{[\s\S]*lanSyncUrlInput\.disabled = !enabled[\s\S]*lanSyncTokenInput\.disabled = !enabled/,
+    "局域网关闭时未禁用 Hub 地址与令牌输入框。",
+  ],
+  [
+    /lanSyncEnabledToggle\.addEventListener\("change",[\s\S]*setSyncSettingsSectionExpanded\(\s*"lan",\s*lanSyncEnabledToggle\.checked === true\s*\)/,
+    "局域网开关切换时未联动展开/收起。",
   ],
 ].forEach(([pattern, message]) => {
   expectMatch(pattern, message);

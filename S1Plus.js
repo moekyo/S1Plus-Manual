@@ -45151,6 +45151,7 @@
           }
           el.disabled = shouldKeepEnabled ? false : !isMasterEnabled;
         });
+      updateLanSyncSectionInputsState();
     };
 
     const markSyncSettingsDirty = () =>
@@ -45180,6 +45181,38 @@
         input.setAttribute("aria-invalid", "true");
       } else {
         input.removeAttribute("aria-invalid");
+      }
+    };
+
+    const setSyncSettingsSectionExpanded = (sectionName, expanded) => {
+      const toggle = modal.querySelector(
+        `[data-s1p-sync-section-toggle="${sectionName}"]`
+      );
+      const body = modal.querySelector(
+        `[data-s1p-sync-section-body="${sectionName}"]`
+      );
+      if (!toggle || !body) {
+        return;
+      }
+      const nextExpanded = expanded === true;
+      toggle.setAttribute("aria-expanded", nextExpanded ? "true" : "false");
+      body.hidden = !nextExpanded;
+    };
+
+    const isLanSyncSectionEnabled = () =>
+      remoteToggle.checked === true && lanSyncEnabledToggle?.checked === true;
+
+    const updateLanSyncSectionInputsState = () => {
+      const enabled = isLanSyncSectionEnabled();
+      if (lanSyncUrlInput) {
+        lanSyncUrlInput.disabled = !enabled;
+      }
+      if (lanSyncTokenInput) {
+        lanSyncTokenInput.disabled = !enabled;
+      }
+      if (lanSyncTestBtn) {
+        lanSyncTestBtn.disabled =
+          !enabled || lanSyncTestBtn.dataset.s1pBusy === "true";
       }
     };
 
@@ -45275,6 +45308,7 @@
       }
 
       const originalText = lanSyncTestBtn.textContent;
+      lanSyncTestBtn.dataset.s1pBusy = "true";
       lanSyncTestBtn.disabled = true;
       lanSyncTestBtn.textContent = "测试中…";
       setLanSyncStatus("正在测试连接…");
@@ -45373,8 +45407,8 @@
           "success"
         );
       } finally {
+        delete lanSyncTestBtn.dataset.s1pBusy;
         lanSyncTestBtn.textContent = originalText;
-        lanSyncTestBtn.disabled = false;
         updateRemoteSyncInputsState();
       }
     };
@@ -45614,6 +45648,26 @@
         void testLanSyncConnection();
       });
     }
+    modal
+      .querySelectorAll("[data-s1p-sync-section-toggle]")
+      .forEach((sectionToggleButton) => {
+        sectionToggleButton.addEventListener("click", () => {
+          const sectionName =
+            sectionToggleButton.getAttribute("data-s1p-sync-section-toggle");
+          const expanded =
+            sectionToggleButton.getAttribute("aria-expanded") === "true";
+          setSyncSettingsSectionExpanded(sectionName, !expanded);
+        });
+      });
+    if (lanSyncEnabledToggle) {
+      lanSyncEnabledToggle.addEventListener("change", () => {
+        updateLanSyncSectionInputsState();
+        setSyncSettingsSectionExpanded(
+          "lan",
+          lanSyncEnabledToggle.checked === true
+        );
+      });
+    }
 
     // [新增] Token 过期提醒逻辑
     let pendingTokenExpiryDate = normalizeS1pSyncTokenExpiryDate(
@@ -45710,6 +45764,8 @@
       lanSyncUrlInput.value = lanProjection.url;
       lanSyncTokenInput.value = lanProjection.token;
       setLanSyncStatus("");
+      setSyncSettingsSectionExpanded("github", true);
+      setSyncSettingsSectionExpanded("lan", isLanSyncSectionEnabled());
 
       updateRemoteSyncInputsState();
       updateForcePullState();
