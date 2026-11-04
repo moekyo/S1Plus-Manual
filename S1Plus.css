@@ -256,9 +256,11 @@
 
     /* --- [FIX] 导航栏垂直居中对齐修正 ---
     * 仅在宽屏启用，避免干扰 S1 NUX 窄屏下的悬浮导航交互逻辑。
+    * 挂到 .s1p-nav-enhanced（由 initializeNavbar 在重建导航栏的同一个任务内添加），
+    * 避免 S1P 样式注入时先改一次原生导航栏布局、重建后再改一次。
     */
     @media (min-width: __S1P_NARROW_SCREEN_MAX_WIDTH_PX_PLUS_1__px) {
-      #nv > ul {
+      #nv.s1p-nav-enhanced > ul {
         display: flex !important;
         align-items: center !important;
       }
