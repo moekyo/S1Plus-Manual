@@ -900,14 +900,14 @@
     const cleanText = (value) => String(value)
       .replace(/\b(?:github_pat_[\w]+|gh[pousr]_[\w]+)\b/g, "[REDACTED]")
       .replace(/\b(Bearer|token)\s+[A-Za-z0-9._~+\/-]{8,}/gi, "$1 [REDACTED]")
-      .replace(/((?:authorization|password|secret|access_token|syncRemotePat|cookie)\s*[=:]\s*)[^\s,;]+/gi, "$1[REDACTED]")
+      .replace(/((?:authorization|password|secret|access_token|syncRemotePat|syncLanToken|cookie)\s*[=:]\s*)[^\s,;]+/gi, "$1[REDACTED]")
       .replace(/https?:\/\/[^\s"<>]+/g, (url) => {
         try { const parsed = new URL(url); return parsed.origin + parsed.pathname; }
         catch (_) { return "[URL]"; }
       });
     const visit = (value, depth = 0, key = "") => {
       if (["__proto__", "constructor", "prototype"].includes(key)) return "[OMITTED]";
-      if (/^(?:.*(?:password|secret|authorization|cookie)|pat|syncRemotePat|access_?token|refresh_?token|token|headers|body|responseText|response|html|outerHTML|textContent|content|postText|title|raw|syncData|localData|remoteData)$/i.test(key)) return "[REDACTED]";
+      if (/^(?:.*(?:password|secret|authorization|cookie)|pat|syncRemotePat|syncLanToken|access_?token|refresh_?token|token|headers|body|responseText|response|html|outerHTML|textContent|content|postText|title|raw|syncData|localData|remoteData)$/i.test(key)) return "[REDACTED]";
       if (budget <= 0 || depth > 7 || --nodeBudget < 0) return "[TRUNCATED]";
       if (value === null || typeof value === "boolean" || typeof value === "number") return value;
       if (typeof value !== "object") {
@@ -3740,6 +3740,7 @@
   const REMOTE_SYNC_CANCELLED_CODE = "REMOTE_SYNC_CANCELLED";
   const REMOTE_SYNC_AUTH_REJECTED_CODE = "REMOTE_SYNC_AUTH_REJECTED";
   const READ_PROGRESS_SYNC_DEBOUNCE_MS = 20 * 1000;
+  const READ_PROGRESS_SYNC_DEBOUNCE_LAN_MS = 1000;
   const DEFAULT_SYNC_DEBOUNCE_MS = 5 * 1000;
   const BACKGROUND_SYNC_DEBOUNCE_STATE_KEY =
     "s1p_background_sync_debounce_state";
@@ -4240,6 +4241,7 @@
   const READ_PROGRESS_CONFIRM_VISIBLE_MS = 1500;
   // 帖子页阅读进度持久化防抖：以内存批量累积为主，隐藏/卸载前仅提交已确认阅读会话的待写入。
   const READ_PROGRESS_PERSIST_DEBOUNCE_MS = 5 * 1000;
+  const READ_PROGRESS_PERSIST_DEBOUNCE_LAN_MS = 1000;
   const READ_PROGRESS_STARTUP_SUMMARY_LIMIT = 8;
   // 同步诊断里保留最近几条阅读进度调试事件，便于复盘后台开帖页的生命周期。
   const READ_PROGRESS_DEBUG_EVENT_LIMIT = 12;
@@ -16845,10 +16847,14 @@
     normalizeBackgroundSyncDebounceSource(source) === "read_progress"
       ? "debounced_read_progress"
       : "debounced_local_change";
-  const getBackgroundSyncDebounceSettleMs = (source = "general") =>
-    normalizeBackgroundSyncDebounceSource(source) === "read_progress"
-      ? READ_PROGRESS_SYNC_DEBOUNCE_MS
-      : DEFAULT_SYNC_DEBOUNCE_MS;
+  const getBackgroundSyncDebounceSettleMs = (source = "general") => {
+    if (normalizeBackgroundSyncDebounceSource(source) !== "read_progress") {
+      return DEFAULT_SYNC_DEBOUNCE_MS;
+    }
+    return isLanSyncTransportActive()
+      ? READ_PROGRESS_SYNC_DEBOUNCE_LAN_MS
+      : READ_PROGRESS_SYNC_DEBOUNCE_MS;
+  };
   const normalizeBackgroundSyncDebounceTimestamp = (value) => {
     const normalized = Number(value);
     return Number.isFinite(normalized) && normalized > 0 ? normalized : 0;
@@ -27538,8 +27544,15 @@
 
   const getSyncedSettings = (settings = null) => {
     const sourceSettings = settings || getSettings();
-    const { syncRemoteGistId, syncRemotePat, syncDeviceId, ...syncedSettings } =
-      sourceSettings;
+    const {
+      syncRemoteGistId,
+      syncRemotePat,
+      syncDeviceId,
+      syncLanEnabled,
+      syncLanUrl,
+      syncLanToken,
+      ...syncedSettings
+    } = sourceSettings;
     return syncedSettings;
   };
 
@@ -27671,6 +27684,9 @@
         delete importedSettings.syncRemoteGistId;
         delete importedSettings.syncRemotePat;
         delete importedSettings.syncDeviceId;
+        delete importedSettings.syncLanEnabled;
+        delete importedSettings.syncLanUrl;
+        delete importedSettings.syncLanToken;
         const {
           settings: mergedSettingsForImport,
           migrationApplied: settingsTransformedDuringImport,
@@ -30374,8 +30390,680 @@
     };
   };
 
+  // ---------------------------------------------------------------------------
+  // LAN 同步传输层（Stage 1，默认关闭）
+  //
+  // LAN hub 只负责快照存储、版本号与事件通知；合并/决策仍由 performAutoSync
+  // 复用现有逻辑。这里只在远端读写边界分流，并额外维护事件循环与版本状态。
+  // ---------------------------------------------------------------------------
+
+  const S1P_LAN_REMOTE_STATE_KEY = "s1p_lan_remote_state";
+  const S1P_LAN_VERSION_CONFLICT_CODE = "LAN_SYNC_VERSION_CONFLICT";
+  const S1P_LAN_WAIT_TIMEOUT_MS = 25000;
+  const S1P_LAN_WAIT_REQUEST_TIMEOUT_MS = 35000;
+  const S1P_LAN_WAIT_RETRY_BASE_MS = 1500;
+  const S1P_LAN_WAIT_RETRY_MAX_MS = 30000;
+
+  const s1pGetLanSyncBaseUrl = (settingsSnapshot = null) => {
+    const settings =
+      settingsSnapshot && typeof settingsSnapshot === "object"
+        ? settingsSnapshot
+        : getSettings();
+    return String(settings.syncLanUrl || "")
+      .trim()
+      .replace(/\/+$/, "");
+  };
+
+  const isLanSyncTransportActive = (settingsSnapshot = null) => {
+    const settings =
+      settingsSnapshot && typeof settingsSnapshot === "object"
+        ? settingsSnapshot
+        : getSettings();
+    const baseUrl = s1pGetLanSyncBaseUrl(settings);
+    return (
+      settings.syncLanEnabled === true &&
+      /^https?:\/\//i.test(baseUrl) &&
+      Boolean(String(settings.syncLanToken || "").trim())
+    );
+  };
+
+  const s1pNormalizeLanRemoteVersion = (value) => {
+    const version = Number(value);
+    return Number.isInteger(version) && version >= 0 ? version : 0;
+  };
+
+  const s1pNormalizeLanRemoteUpdatedAt = (value) => {
+    if (typeof value === "number") {
+      return Number.isFinite(value) && value > 0
+        ? new Date(value).toISOString()
+        : "";
+    }
+    const text = String(value || "").trim();
+    if (!text) {
+      return "";
+    }
+    if (/^\d+$/.test(text)) {
+      const numeric = Number(text);
+      return numeric > 0 ? new Date(numeric).toISOString() : "";
+    }
+    const parsed = Date.parse(text);
+    return Number.isFinite(parsed) ? new Date(parsed).toISOString() : text;
+  };
+
+  const s1pReadLanRemoteState = () => {
+    const saved = GM_getValue(S1P_LAN_REMOTE_STATE_KEY, null);
+    if (!saved || typeof saved !== "object" || Array.isArray(saved)) {
+      return null;
+    }
+    return {
+      version: s1pNormalizeLanRemoteVersion(saved.version),
+      contentHash:
+        typeof saved.contentHash === "string" ? saved.contentHash : "",
+      updatedAt: s1pNormalizeLanRemoteUpdatedAt(saved.updatedAt),
+    };
+  };
+
+  const s1pGetLanRemoteState = () =>
+    s1pReadLanRemoteState() || {
+      version: 0,
+      contentHash: "",
+      updatedAt: "",
+    };
+
+  const s1pSetLanRemoteState = (nextState = {}) => {
+    const current = s1pGetLanRemoteState();
+    const source =
+      nextState && typeof nextState === "object" ? nextState : {};
+    const version =
+      typeof source.version === "undefined"
+        ? current.version
+        : s1pNormalizeLanRemoteVersion(source.version);
+    const updatedAt =
+      typeof source.updatedAt === "undefined"
+        ? current.updatedAt
+        : s1pNormalizeLanRemoteUpdatedAt(source.updatedAt);
+    const contentHash =
+      typeof source.contentHash === "string"
+        ? source.contentHash
+        : version !== current.version
+          ? ""
+          : current.contentHash;
+    const nextStateValue = { version, contentHash, updatedAt };
+    if (JSON.stringify(nextStateValue) !== JSON.stringify(current)) {
+      GM_setValue(S1P_LAN_REMOTE_STATE_KEY, nextStateValue);
+    }
+    return nextStateValue;
+  };
+
+  const createS1pLanSyncError = (
+    message,
+    { status = 0, response = null, retryable = false, code = "" } = {}
+  ) => {
+    const error = new Error(message);
+    if (status) {
+      error.status = status;
+    }
+    if (response) {
+      error.response = response;
+    }
+    error.retryable = retryable === true;
+    if (code) {
+      error.code = code;
+    }
+    return error;
+  };
+
+  const createS1pLanSyncAuthRejectedError = (response = null) => {
+    const error = new Error(
+      "LAN 同步令牌无效或已过期，请更新 LAN 同步令牌后刷新页面。"
+    );
+    error.code = REMOTE_SYNC_AUTH_REJECTED_CODE;
+    error.status = 401;
+    error.response = response;
+    error.operation = "lan_sync";
+    return error;
+  };
+
+  const s1pLanRequest = async ({
+    method = "GET",
+    path = "/",
+    body,
+    timeoutMs = 12000,
+  } = {}) => {
+    const settings = getSettings();
+    const baseUrl = s1pGetLanSyncBaseUrl(settings);
+    const token = String(settings.syncLanToken || "").trim();
+    if (!baseUrl || !token) {
+      throw createS1pLanSyncError("LAN 同步配置不完整。", {
+        retryable: false,
+        code: "LAN_CONFIG_INCOMPLETE",
+      });
+    }
+    const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+    let response;
+    try {
+      response = await gmRequestWithTimeout({
+        method,
+        url: `${baseUrl}${normalizedPath}`,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+          ...(typeof body === "undefined"
+            ? {}
+            : { "Content-Type": "application/json" }),
+        },
+        data: typeof body === "undefined" ? undefined : JSON.stringify(body),
+        timeout: Math.max(1000, Number(timeoutMs) || 12000),
+      });
+    } catch (error) {
+      if (error?.code === REMOTE_SYNC_CANCELLED_CODE) {
+        throw error;
+      }
+      throw createS1pLanSyncError(
+        `LAN 同步请求失败：${error?.message || "网络错误"}`,
+        {
+          status: error?.status,
+          response: error?.response,
+          retryable: true,
+          code: error?.code || "LAN_REQUEST_FAILED",
+        }
+      );
+    }
+    let json = null;
+    const responseText = String(response?.responseText || "");
+    if (responseText.trim()) {
+      try {
+        json = JSON.parse(responseText);
+      } catch (_) {
+        throw createS1pLanSyncError("解析 LAN 同步响应失败。", {
+          status: response?.status,
+          response,
+          retryable: true,
+          code: "LAN_RESPONSE_PARSE_FAILED",
+        });
+      }
+    }
+    if (response?.status === 401) {
+      throw createS1pLanSyncAuthRejectedError(response);
+    }
+    return { status: response?.status, json, response };
+  };
+
+  const s1pFetchLanHealth = async () => {
+    const response = await s1pLanRequest({
+      method: "GET",
+      path: "/health",
+      timeoutMs: 12000,
+    });
+    if (
+      response.status !== 200 ||
+      !response.json ||
+      typeof response.json !== "object"
+    ) {
+      throw createS1pLanSyncError(
+        `LAN Hub 健康检查失败 (状态码: ${response.status})。`,
+        {
+          status: response.status,
+          response: response.response,
+          retryable: REMOTE_SYNC_RETRYABLE_STATUS.has(response.status),
+          code: "LAN_HEALTH_FAILED",
+        }
+      );
+    }
+    return s1pSetLanRemoteState({
+      version: response.json.version,
+      updatedAt: response.json.updatedAt,
+    });
+  };
+
+  // 记录本标签页最近一次“全量读取”得到的 hub 版本。push 必须用它做
+  // baseVersion：事件循环/前台探测会在同步合并期间推进 GM 里的 version，
+  // 若 push 临时读取最新 version，就会把基于旧 payload 的合并结果写到新版本上。
+  let s1pLanPayloadVersion = null;
+
+  const fetchRemoteDataViaLan = async ({ metadataOnly = false } = {}) => {
+    const scope = metadataOnly ? "remote_probe" : "remote_fetch";
+    recordSyncTraceEvent("remote_fetch_start", {
+      scope,
+      status: "running",
+      message: metadataOnly
+        ? "开始读取 LAN Hub 元数据"
+        : "开始读取 LAN Hub 同步快照",
+      details: { metadataOnly, transport: "lan" },
+    });
+    try {
+      let result;
+      if (metadataOnly) {
+        const health = await s1pFetchLanHealth();
+        result = {
+          data: {},
+          meta: { updatedAt: health.updatedAt || undefined, fileTruncated: false },
+        };
+      } else {
+        // 不带 since：事件循环/健康检查会先推进本地 version，但那不代表本地
+        // 已持有该版本 payload。带 since 会把“远端已变”误判为 unchanged，
+        // 让自动同步把远端当成空数据而覆盖它。全量读取始终由 hub 返回 payload。
+        const response = await s1pLanRequest({
+          method: "GET",
+          path: "/snapshot",
+          timeoutMs: 20000,
+        });
+        if (
+          response.status !== 200 ||
+          !response.json ||
+          typeof response.json !== "object"
+        ) {
+          throw createS1pLanSyncError(
+            `LAN Hub 读取失败 (状态码: ${response.status})。`,
+            {
+              status: response.status,
+              response: response.response,
+              retryable: REMOTE_SYNC_RETRYABLE_STATUS.has(response.status),
+              code: "LAN_SNAPSHOT_FETCH_FAILED",
+            }
+          );
+        }
+        const updatedAt = s1pNormalizeLanRemoteUpdatedAt(
+          response.json.updatedAt
+        );
+        s1pSetLanRemoteState({
+          version: response.json.version,
+          contentHash: response.json.contentHash,
+          updatedAt: response.json.updatedAt,
+        });
+        s1pLanPayloadVersion = s1pNormalizeLanRemoteVersion(
+          response.json.version
+        );
+        const payload = response.json.payload;
+        const data =
+          response.json.unchanged === true
+            ? {}
+            : payload && typeof payload === "object" && !Array.isArray(payload)
+              ? payload
+              : {};
+        result = {
+          data,
+          meta: { updatedAt: updatedAt || undefined, fileTruncated: false },
+        };
+      }
+      recordSyncTraceEvent("remote_fetch_done", {
+        scope,
+        status: "success",
+        message: metadataOnly
+          ? "LAN Hub 元数据读取完成"
+          : "LAN Hub 同步快照读取完成",
+        details: {
+          metadataOnly,
+          transport: "lan",
+          remoteEmpty: metadataOnly
+            ? undefined
+            : Object.keys(result.data).length === 0,
+          updatedAt: result.meta.updatedAt || "",
+        },
+      });
+      return result;
+    } catch (error) {
+      recordSyncTraceEvent("remote_fetch_error", {
+        scope,
+        status: "failure",
+        message: "LAN Hub 读取失败",
+        details: {
+          metadataOnly,
+          transport: "lan",
+          status: error?.status || "",
+          error: error?.message || String(error),
+        },
+        level: "error",
+      });
+      throw error;
+    }
+  };
+
+  let s1pLanConflictRetryTimer = null;
+  const s1pScheduleLanConflictRetry = (writerContext = null) => {
+    const syncMode = String(writerContext?.syncMode || "");
+    if (
+      syncMode === AUTO_SYNC_MODE_BACKGROUND ||
+      syncMode === AUTO_SYNC_MODE_FOREGROUND_FOLLOWUP
+    ) {
+      // 后台/前台同步的失败结果阶段已经会调度重试，这里不再重复入队。
+      return;
+    }
+    if (s1pLanConflictRetryTimer) {
+      return;
+    }
+    s1pLanConflictRetryTimer = setTimeout(() => {
+      s1pLanConflictRetryTimer = null;
+      requestBackgroundSyncRun("lan_version_conflict", 0);
+    }, 0);
+  };
+
+  const pushRemoteDataViaLan = async (dataObject, options = {}) => {
+    const { writerContext = null, settingsSnapshot = null } = options;
+    const settings =
+      settingsSnapshot && typeof settingsSnapshot === "object"
+        ? settingsSnapshot
+        : getSettings();
+    const writerMetadata = buildRemoteSyncWriterMetadata(
+      writerContext || {},
+      settings
+    );
+    const payloadDataObject = attachRemoteSyncMetaToDataObject(
+      dataObject,
+      writerMetadata
+    );
+    recordSyncTraceEvent("remote_push_start", {
+      scope: "remote_push",
+      status: "running",
+      message: "开始推送同步快照到 LAN Hub",
+      details: {
+        action: writerContext?.action || "",
+        syncMode: writerContext?.syncMode || "",
+        threadId: writerContext?.threadId || "",
+        contentHash: shortHashForLog(dataObject?.contentHash),
+        lastUpdated: dataObject?.lastUpdated || 0,
+        transport: "lan",
+      },
+    });
+    try {
+      let baseVersion = s1pLanPayloadVersion;
+      if (baseVersion === null) {
+        let state = s1pReadLanRemoteState();
+        if (!state) {
+          state = await s1pFetchLanHealth();
+        }
+        baseVersion = state.version;
+      }
+      const response = await s1pLanRequest({
+        method: "POST",
+        path: "/snapshot",
+        body: {
+          baseVersion,
+          deviceId: getLocalSyncDeviceId(settings),
+          payload: payloadDataObject,
+        },
+        timeoutMs: 20000,
+      });
+      if (response.status === 200) {
+        const nextState = s1pSetLanRemoteState({
+          version: response.json?.version,
+          contentHash: response.json?.contentHash,
+          updatedAt: response.json?.updatedAt,
+        });
+        s1pLanPayloadVersion = nextState.version;
+        recordSyncTraceEvent("remote_push_done", {
+          scope: "remote_push",
+          status: "success",
+          message: "同步快照已推送到 LAN Hub",
+          details: {
+            action: writerContext?.action || "",
+            syncMode: writerContext?.syncMode || "",
+            updatedAt: nextState.updatedAt || "",
+            contentHash: shortHashForLog(payloadDataObject?.contentHash),
+            transport: "lan",
+          },
+        });
+        return {
+          success: true,
+          message: "数据已成功推送到 LAN Hub。",
+          updatedAt: nextState.updatedAt || null,
+          writerMetadata,
+        };
+      }
+      if (response.status === 409) {
+        const conflictState = s1pSetLanRemoteState({
+          version: response.json?.version,
+          contentHash: response.json?.contentHash,
+          updatedAt: response.json?.updatedAt,
+        });
+        s1pLanPayloadVersion = null;
+        recordSyncTraceEvent("remote_push_conflict", {
+          scope: "remote_push",
+          status: "conflict",
+          message: "LAN Hub 版本已变化，已安排重新拉取并合并",
+          details: {
+            action: writerContext?.action || "",
+            expectedBaseVersion: baseVersion,
+            actualVersion: conflictState.version,
+          },
+          level: "warn",
+        });
+        s1pScheduleLanConflictRetry(writerContext);
+        const conflictError = createS1pLanSyncError(
+          "LAN Hub 版本已变化，正在重新拉取并合并。",
+          {
+            status: 409,
+            response: response.response,
+            retryable: true,
+            code: S1P_LAN_VERSION_CONFLICT_CODE,
+          }
+        );
+        conflictError.remoteVersion = conflictState.version;
+        throw conflictError;
+      }
+      throw createS1pLanSyncError(
+        `LAN Hub 更新失败 (状态码: ${response.status})。`,
+        {
+          status: response.status,
+          response: response.response,
+          retryable: REMOTE_SYNC_RETRYABLE_STATUS.has(response.status),
+          code: "LAN_SNAPSHOT_PUSH_FAILED",
+        }
+      );
+    } catch (error) {
+      if (error?.code !== S1P_LAN_VERSION_CONFLICT_CODE) {
+        recordSyncTraceEvent("remote_push_error", {
+          scope: "remote_push",
+          status: "failure",
+          message: "推送同步快照到 LAN Hub 失败",
+          details: {
+            action: writerContext?.action || "",
+            status: error?.status || "",
+            error: error?.message || String(error),
+            transport: "lan",
+          },
+          level: "error",
+        });
+      }
+      throw error;
+    }
+  };
+
+  let s1pLanWaitLoopStarted = false;
+  let s1pLanWaitLoopGeneration = 0;
+  let s1pLanWaitLoopTimer = null;
+  let s1pLanWaitLoopBackoffMs = 0;
+  let s1pLanWaitLoopVisibilityBound = false;
+
+  const s1pLanClearWaitLoopTimer = () => {
+    if (s1pLanWaitLoopTimer) {
+      clearTimeout(s1pLanWaitLoopTimer);
+      s1pLanWaitLoopTimer = null;
+    }
+  };
+
+  const s1pLanHandleVisibilityChange = () => {
+    if (!s1pLanWaitLoopStarted || document.visibilityState !== "visible") {
+      return;
+    }
+    const generation = s1pLanWaitLoopGeneration;
+    const previousVersion = s1pGetLanRemoteState().version;
+    void (async () => {
+      try {
+        const health = await s1pFetchLanHealth();
+        if (
+          !s1pLanWaitLoopStarted ||
+          generation !== s1pLanWaitLoopGeneration
+        ) {
+          return;
+        }
+        if (health.version > previousVersion) {
+          requestBackgroundSyncRun("lan_visibility_update", 0);
+        }
+      } catch (error) {
+        if (error?.code === REMOTE_SYNC_AUTH_REJECTED_CODE) {
+          console.warn(
+            "S1 Plus (LAN Sync): 前台校验发现 LAN 令牌无效，事件循环已停止。"
+          );
+          s1pLanStopWaitLoop();
+        }
+      }
+    })();
+  };
+
+  const s1pLanScheduleWaitLoop = (delayMs = 0) => {
+    if (!s1pLanWaitLoopStarted) {
+      return;
+    }
+    s1pLanClearWaitLoopTimer();
+    s1pLanWaitLoopTimer = setTimeout(() => {
+      s1pLanWaitLoopTimer = null;
+      void s1pLanRunWaitLoopIteration();
+    }, Math.max(0, Number(delayMs) || 0));
+  };
+
+  const s1pLanRunWaitLoopIteration = async () => {
+    if (!s1pLanWaitLoopStarted) {
+      return;
+    }
+    const generation = s1pLanWaitLoopGeneration;
+    if (!isLanSyncTransportActive()) {
+      s1pLanStopWaitLoop();
+      return;
+    }
+    try {
+      const state = s1pGetLanRemoteState();
+      const response = await s1pLanRequest({
+        method: "GET",
+        path: `/wait?since=${encodeURIComponent(
+          state.version
+        )}&timeout=${S1P_LAN_WAIT_TIMEOUT_MS}`,
+        timeoutMs: S1P_LAN_WAIT_REQUEST_TIMEOUT_MS,
+      });
+      if (
+        !s1pLanWaitLoopStarted ||
+        generation !== s1pLanWaitLoopGeneration
+      ) {
+        return;
+      }
+      if (
+        response.status !== 200 ||
+        !response.json ||
+        typeof response.json !== "object"
+      ) {
+        throw createS1pLanSyncError(
+          `LAN 事件循环请求失败 (状态码: ${response.status})。`,
+          {
+            status: response.status,
+            response: response.response,
+            retryable: REMOTE_SYNC_RETRYABLE_STATUS.has(response.status),
+            code: "LAN_WAIT_FAILED",
+          }
+        );
+      }
+      const remoteVersion = s1pNormalizeLanRemoteVersion(
+        response.json.version
+      );
+      const previousVersion = state.version;
+      s1pLanWaitLoopBackoffMs = 0;
+      if (response.json.timeout !== true && remoteVersion > previousVersion) {
+        s1pSetLanRemoteState({
+          version: remoteVersion,
+          contentHash: response.json.contentHash,
+          updatedAt: response.json.updatedAt,
+        });
+        requestBackgroundSyncRun("lan_remote_update", 0);
+      }
+      s1pLanScheduleWaitLoop(0);
+    } catch (error) {
+      if (
+        !s1pLanWaitLoopStarted ||
+        generation !== s1pLanWaitLoopGeneration
+      ) {
+        return;
+      }
+      if (error?.code === REMOTE_SYNC_AUTH_REJECTED_CODE) {
+        console.warn(
+          "S1 Plus (LAN Sync): LAN 令牌无效或已过期，事件循环已停止。"
+        );
+        s1pLanStopWaitLoop();
+        return;
+      }
+      if (error?.code === REMOTE_SYNC_CANCELLED_CODE) {
+        s1pLanScheduleWaitLoop(S1P_LAN_WAIT_RETRY_BASE_MS);
+        return;
+      }
+      if (s1pLanWaitLoopBackoffMs === 0) {
+        console.warn(
+          "S1 Plus (LAN Sync): 事件循环连接失败，将指数退避重试。",
+          error?.message || String(error)
+        );
+      }
+      s1pLanWaitLoopBackoffMs =
+        s1pLanWaitLoopBackoffMs > 0
+          ? Math.min(S1P_LAN_WAIT_RETRY_MAX_MS, s1pLanWaitLoopBackoffMs * 2)
+          : S1P_LAN_WAIT_RETRY_BASE_MS;
+      s1pLanScheduleWaitLoop(s1pLanWaitLoopBackoffMs);
+    }
+  };
+
+  const s1pLanStartWaitLoop = () => {
+    if (!isLanSyncTransportActive()) {
+      return { status: "skipped", reason: "lan_disabled" };
+    }
+    if (s1pLanWaitLoopStarted) {
+      return { status: "skipped", reason: "already_started" };
+    }
+    if (typeof document === "undefined") {
+      return { status: "skipped", reason: "no_document" };
+    }
+    s1pLanWaitLoopStarted = true;
+    s1pLanWaitLoopGeneration += 1;
+    s1pLanWaitLoopBackoffMs = 0;
+    if (!s1pLanWaitLoopVisibilityBound) {
+      document.addEventListener(
+        "visibilitychange",
+        s1pLanHandleVisibilityChange
+      );
+      s1pLanWaitLoopVisibilityBound = true;
+    }
+    s1pLanScheduleWaitLoop(0);
+    return { status: "started" };
+  };
+
+  const s1pLanStopWaitLoop = () => {
+    if (!s1pLanWaitLoopStarted && !s1pLanWaitLoopVisibilityBound) {
+      return { status: "skipped", reason: "not_started" };
+    }
+    s1pLanWaitLoopStarted = false;
+    s1pLanWaitLoopGeneration += 1;
+    s1pLanClearWaitLoopTimer();
+    if (s1pLanWaitLoopVisibilityBound) {
+      document.removeEventListener(
+        "visibilitychange",
+        s1pLanHandleVisibilityChange
+      );
+      s1pLanWaitLoopVisibilityBound = false;
+    }
+    if (s1pLanConflictRetryTimer) {
+      clearTimeout(s1pLanConflictRetryTimer);
+      s1pLanConflictRetryTimer = null;
+    }
+    return { status: "stopped" };
+  };
+
   const fetchRemoteData = async (options = {}) => {
-    const { metadataOnly = false, settingsSnapshot = null } = options;
+    const {
+      metadataOnly = false,
+      settingsSnapshot = null,
+      transport = "",
+    } = options;
+    if (
+      transport !== "gist" &&
+      isLanSyncTransportActive(settingsSnapshot)
+    ) {
+      return fetchRemoteDataViaLan({ metadataOnly });
+    }
     recordSyncTraceEvent("remote_fetch_start", {
       scope: metadataOnly ? "remote_probe" : "remote_fetch",
       status: "running",
@@ -30546,7 +31234,9 @@
       return null;
     }
     try {
-      const { data: rawRemoteData, meta } = await fetchRemoteData();
+      const { data: rawRemoteData, meta } = await fetchRemoteData({
+        transport: "gist",
+      });
       if (!rawRemoteData || Object.keys(rawRemoteData).length === 0) {
         return null;
       }
@@ -30578,8 +31268,18 @@
   };
 
   const pushRemoteData = async (dataObject, options = {}) => {
-    const { expectedRemoteUpdatedAt, writerContext = null, settingsSnapshot = null } =
-      options;
+    const {
+      expectedRemoteUpdatedAt,
+      writerContext = null,
+      settingsSnapshot = null,
+      transport = "",
+    } = options;
+    if (transport !== "gist" && isLanSyncTransportActive(settingsSnapshot)) {
+      return pushRemoteDataViaLan(dataObject, {
+        writerContext,
+        settingsSnapshot,
+      });
+    }
     recordSyncTraceEvent("remote_push_start", {
       scope: "remote_push",
       status: "running",
@@ -30619,6 +31319,8 @@
     if (typeof expectedRemoteUpdatedAt !== "undefined") {
       const { meta } = await fetchRemoteData({
         metadataOnly: true,
+        transport,
+        settingsSnapshot,
       });
       if (meta.updatedAt !== expectedRemoteUpdatedAt) {
         recordSyncTraceEvent("remote_push_conflict", {
@@ -33997,6 +34699,9 @@
     syncDeviceId: "",
     syncRemoteGistId: "",
     syncRemotePat: "",
+    syncLanEnabled: false,
+    syncLanUrl: "",
+    syncLanToken: "",
     syncTokenExpiryEnabled: false, // [新增] Token 过期提醒
     syncTokenExpiryDate: null,     // [新增] Token 过期时间戳
   };
@@ -34198,6 +34903,9 @@
         runtimeIntents: ["navbar_sync_button"],
         modalTabs: ["sync"],
       }),
+      syncLanEnabled: freezeDefinition({ modalTabs: ["sync"] }),
+      syncLanUrl: freezeDefinition({ modalTabs: ["sync"] }),
+      syncLanToken: freezeDefinition({ modalTabs: ["sync"] }),
       syncDailyFirstLoad: freezeDefinition({
         runtimeIntents: ["navbar_initialize"],
         modalTabs: ["sync"],
@@ -34765,6 +35473,27 @@
       markMigration("sync_device_id_normalized");
     }
     settings.syncDeviceId = normalizedSyncDeviceId;
+
+    applyNormalizedBooleanSetting(
+      "syncLanEnabled",
+      settings.syncLanEnabled === true,
+      "sync_lan_enabled_normalized"
+    );
+    const normalizedSyncLanUrl = normalizeRemoteProbeText(
+      settings.syncLanUrl,
+      2048
+    );
+    if (settings.syncLanUrl !== normalizedSyncLanUrl) {
+      markMigration("sync_lan_url_normalized");
+    }
+    settings.syncLanUrl = normalizedSyncLanUrl;
+    const normalizedSyncLanToken = String(settings.syncLanToken || "")
+      .trim()
+      .slice(0, 512);
+    if (settings.syncLanToken !== normalizedSyncLanToken) {
+      markMigration("sync_lan_token_normalized");
+    }
+    settings.syncLanToken = normalizedSyncLanToken;
 
     const imageSettingsNormalization =
       s1pSettingsSemantics.normalizeImageSettings(settings);
@@ -37791,6 +38520,7 @@
       });
       assertManualSyncLockOwned("before_push_remote_data");
       const forcePushResult = await pushRemoteData(localData, {
+        transport: "gist",
         writerContext: {
           action: "force_push",
           syncMode: "manual",
@@ -37938,7 +38668,8 @@
     showMessage("正在从云端拉取数据...", null);
     try {
       assertManualSyncLockOwned("before_fetch_remote_data");
-      const { data: remoteData, meta: remoteMeta = {} } = await fetchRemoteData();
+      const { data: remoteData, meta: remoteMeta = {} } =
+        await fetchRemoteData({ transport: "gist" });
       assertManualSyncLockOwned("after_fetch_remote_data");
       if (Object.keys(remoteData).length === 0) {
         throw new Error("云端没有数据，无法拉取。");
@@ -44291,6 +45022,14 @@
       tokenExpiryToggle: modal.querySelector(
         "#s1p-token-expiry-reminder-toggle"
       ),
+      lanSyncEnabledToggle: modal.querySelector("#s1p-lan-sync-enabled-toggle"),
+      lanSyncUrlInput: modal.querySelector("#s1p-lan-sync-url-input"),
+      lanSyncTokenInput: modal.querySelector("#s1p-lan-sync-token-input"),
+      lanTokenVisibilityBtn: modal.querySelector(
+        "#s1p-toggle-lan-token-visibility"
+      ),
+      lanSyncTestBtn: modal.querySelector("#s1p-lan-sync-test-btn"),
+      lanSyncStatus: modal.querySelector("#s1p-lan-sync-status"),
     };
     const {
       remoteToggle,
@@ -44312,6 +45051,12 @@
       forcePullWrapper,
       forcePullToggle,
       tokenExpiryToggle,
+      lanSyncEnabledToggle,
+      lanSyncUrlInput,
+      lanSyncTokenInput,
+      lanTokenVisibilityBtn,
+      lanSyncTestBtn,
+      lanSyncStatus,
     } = syncSettingsControls;
     const moveSegmentedControlSlider = (control, skipAnimation = false) => {
       if (!control) {
@@ -44410,6 +45155,229 @@
 
     const markSyncSettingsDirty = () =>
       setSettingsModalDirtyState(SETTINGS_MODAL_DIRTY_TAB.SYNC_SETTINGS, true);
+
+    const LAN_TEST_CONNECTION_TIMEOUT_MS = 8000;
+
+    const setLanSyncStatus = (message, tone = "") => {
+      if (!lanSyncStatus) {
+        return;
+      }
+      lanSyncStatus.textContent = message;
+      lanSyncStatus.style.color =
+        tone === "success"
+          ? "var(--s1p-success-text)"
+          : tone === "error"
+            ? "var(--s1p-red)"
+            : "";
+    };
+
+    const setLanSyncInputError = (input, hasError) => {
+      if (!input) {
+        return;
+      }
+      input.classList.toggle("s1p-input-error", hasError === true);
+      if (hasError === true) {
+        input.setAttribute("aria-invalid", "true");
+      } else {
+        input.removeAttribute("aria-invalid");
+      }
+    };
+
+    const normalizeLanSyncUrlForSave = (value) =>
+      String(value || "")
+        .trim()
+        .replace(/\/+$/, "");
+
+    const projectLanSyncSettings = (settingsSnapshot) => {
+      const source =
+        settingsSnapshot && typeof settingsSnapshot === "object"
+          ? settingsSnapshot
+          : {};
+      return {
+        enabled: source.syncLanEnabled === true,
+        url: normalizeLanSyncUrlForSave(source.syncLanUrl),
+        token: String(source.syncLanToken || "").trim(),
+      };
+    };
+
+    const validateLanSyncSettingsForSave = (settingsSnapshot) => {
+      if (!settingsSnapshot || settingsSnapshot.syncLanEnabled !== true) {
+        setLanSyncInputError(lanSyncUrlInput, false);
+        setLanSyncInputError(lanSyncTokenInput, false);
+        return true;
+      }
+      const normalizedUrl = normalizeLanSyncUrlForSave(
+        settingsSnapshot.syncLanUrl
+      );
+      const normalizedToken = String(settingsSnapshot.syncLanToken || "").trim();
+      if (!/^https?:\/\//i.test(normalizedUrl)) {
+        setLanSyncInputError(lanSyncUrlInput, true);
+        setLanSyncInputError(lanSyncTokenInput, false);
+        lanSyncUrlInput?.focus({ preventScroll: false });
+        showSettingsMessage(
+          "开启局域网同步时，请填写以 http:// 或 https:// 开头的 Hub 地址。",
+          false
+        );
+        return false;
+      }
+      if (!normalizedToken) {
+        setLanSyncInputError(lanSyncUrlInput, false);
+        setLanSyncInputError(lanSyncTokenInput, true);
+        lanSyncTokenInput?.focus({ preventScroll: false });
+        showSettingsMessage(
+          "开启局域网同步时，请填写 Hub 令牌（HUB_TOKEN）。",
+          false
+        );
+        return false;
+      }
+      setLanSyncInputError(lanSyncUrlInput, false);
+      setLanSyncInputError(lanSyncTokenInput, false);
+      return true;
+    };
+
+    const parseLanTestResponseJson = (response) => {
+      const text = String(response?.responseText || "");
+      if (!text.trim()) {
+        return null;
+      }
+      try {
+        return JSON.parse(text);
+      } catch (_) {
+        return null;
+      }
+    };
+
+    const describeLanTestRequestError = (error) =>
+      String(error?.message || "").trim() || "网络请求失败。";
+
+    const testLanSyncConnection = async () => {
+      if (!lanSyncTestBtn || lanSyncTestBtn.disabled) {
+        return;
+      }
+      const baseUrl = normalizeLanSyncUrlForSave(lanSyncUrlInput?.value);
+      const token = String(lanSyncTokenInput?.value || "").trim();
+      setLanSyncInputError(lanSyncUrlInput, false);
+      setLanSyncInputError(lanSyncTokenInput, false);
+      if (!/^https?:\/\//i.test(baseUrl)) {
+        setLanSyncInputError(lanSyncUrlInput, true);
+        lanSyncUrlInput?.focus({ preventScroll: false });
+        setLanSyncStatus(
+          "连接失败：Hub 地址必须以 http:// 或 https:// 开头",
+          "error"
+        );
+        return;
+      }
+      if (!token) {
+        setLanSyncInputError(lanSyncTokenInput, true);
+        lanSyncTokenInput?.focus({ preventScroll: false });
+        setLanSyncStatus("连接失败：请先填写 Hub 令牌（HUB_TOKEN）", "error");
+        return;
+      }
+
+      const originalText = lanSyncTestBtn.textContent;
+      lanSyncTestBtn.disabled = true;
+      lanSyncTestBtn.textContent = "测试中…";
+      setLanSyncStatus("正在测试连接…");
+      try {
+        let healthResponse;
+        try {
+          healthResponse = await gmRequestWithTimeout({
+            method: "GET",
+            url: `${baseUrl}/health`,
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Accept: "application/json",
+            },
+            timeout: LAN_TEST_CONNECTION_TIMEOUT_MS,
+          });
+        } catch (error) {
+          setLanSyncStatus(
+            `连接失败：${describeLanTestRequestError(error)}`,
+            "error"
+          );
+          return;
+        }
+        if (healthResponse?.status === 401) {
+          setLanSyncStatus("令牌无效，请检查 HUB_TOKEN", "error");
+          return;
+        }
+        if (healthResponse?.status !== 200) {
+          setLanSyncStatus(
+            `连接失败：Hub /health 返回 HTTP ${healthResponse?.status ?? 0}`,
+            "error"
+          );
+          return;
+        }
+        const healthJson = parseLanTestResponseJson(healthResponse);
+        if (!healthJson || typeof healthJson !== "object") {
+          setLanSyncStatus(
+            "连接失败：Hub /health 返回内容不是有效 JSON",
+            "error"
+          );
+          return;
+        }
+
+        let snapshotResponse;
+        try {
+          snapshotResponse = await gmRequestWithTimeout({
+            method: "GET",
+            url: `${baseUrl}/snapshot`,
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Accept: "application/json",
+            },
+            timeout: LAN_TEST_CONNECTION_TIMEOUT_MS,
+          });
+        } catch (error) {
+          setLanSyncStatus(
+            `连接失败：${describeLanTestRequestError(error)}`,
+            "error"
+          );
+          return;
+        }
+        if (snapshotResponse?.status === 401) {
+          setLanSyncStatus("令牌无效，请检查 HUB_TOKEN", "error");
+          return;
+        }
+        if (snapshotResponse?.status !== 200) {
+          setLanSyncStatus(
+            `连接失败：Hub /snapshot 返回 HTTP ${snapshotResponse?.status ?? 0}`,
+            "error"
+          );
+          return;
+        }
+        const snapshotJson = parseLanTestResponseJson(snapshotResponse);
+        if (!snapshotJson || typeof snapshotJson !== "object") {
+          setLanSyncStatus(
+            "连接失败：Hub /snapshot 返回内容不是有效 JSON",
+            "error"
+          );
+          return;
+        }
+        const parsedVersion = Number.parseInt(healthJson.version, 10);
+        const hubVersion =
+          Number.isFinite(parsedVersion) && parsedVersion >= 0
+            ? parsedVersion
+            : 0;
+        const snapshotText = String(snapshotResponse.responseText || "");
+        const snapshotBytes =
+          typeof TextEncoder === "function"
+            ? new TextEncoder().encode(snapshotText).length
+            : snapshotText.length;
+        const snapshotSizeKb = Math.max(
+          0,
+          Math.round((snapshotBytes / 1024) * 10) / 10
+        );
+        setLanSyncStatus(
+          `连接成功：Hub 版本 v${hubVersion}，快照大小约 ${snapshotSizeKb} KB`,
+          "success"
+        );
+      } finally {
+        lanSyncTestBtn.textContent = originalText;
+        lanSyncTestBtn.disabled = false;
+        updateRemoteSyncInputsState();
+      }
+    };
 
     const updateForcePullState = () => {
       const isEnabled =
@@ -44631,13 +45599,21 @@
       visibleRemotePollingToggle,
       forcePullToggle,
       bookmarkFullContentToggle,
+      lanSyncEnabledToggle,
     ].forEach((toggleControl) =>
       toggleControl?.addEventListener("change", markSyncSettingsDirty)
     );
     bindDirtyListenerForTextInput(remoteGistIdInput);
     bindDirtyListenerForTextInput(remotePatInput);
     bindDirtyListenerForTextInput(syncDeviceIdInput);
+    bindDirtyListenerForTextInput(lanSyncUrlInput);
+    bindDirtyListenerForTextInput(lanSyncTokenInput);
     syncDeviceIdInput.addEventListener("input", updateSyncDeviceIdRequirementState);
+    if (lanSyncTestBtn) {
+      lanSyncTestBtn.addEventListener("click", () => {
+        void testLanSyncConnection();
+      });
+    }
 
     // [新增] Token 过期提醒逻辑
     let pendingTokenExpiryDate = normalizeS1pSyncTokenExpiryDate(
@@ -44729,6 +45705,11 @@
       pendingTokenExpiryDate = projection.tokenExpiryDate;
       remoteGistIdInput.value = projection.remoteGistId;
       remotePatInput.value = projection.remotePat;
+      const lanProjection = projectLanSyncSettings(settingsSnapshot);
+      lanSyncEnabledToggle.checked = lanProjection.enabled;
+      lanSyncUrlInput.value = lanProjection.url;
+      lanSyncTokenInput.value = lanProjection.token;
+      setLanSyncStatus("");
 
       updateRemoteSyncInputsState();
       updateForcePullState();
@@ -44739,22 +45720,27 @@
       updateTokenExpiryInfo();
     };
     const buildSyncSettingsFromModal = () =>
-      s1pSettingsSemantics.buildSyncSettingsPatch({
-        remoteEnabled: remoteToggle.checked,
-        dailyFirstLoad: dailySyncToggle.checked,
-        autoCheckMode: getSyncAutoCheckModeControlValue(),
-        autoEnabled: autoSyncToggle.checked,
-        visibleRemotePollingEnabled:
-          visibleRemotePollingToggle?.checked === true,
-        showAutoSyncIndicator: autoSyncIndicatorToggle.checked,
-        showTitleSyncStatus: titleSyncStatusToggle.checked,
-        forcePullOnStartup: forcePullToggle.checked,
-        bookmarkFullContent: bookmarkFullContentToggle.checked,
-        deviceId: syncDeviceIdInput.value,
-        remoteGistId: remoteGistIdInput.value,
-        remotePat: remotePatInput.value,
-        tokenExpiryEnabled: tokenExpiryToggle.checked,
-        tokenExpiryDate: pendingTokenExpiryDate,
+      Object.freeze({
+        ...s1pSettingsSemantics.buildSyncSettingsPatch({
+          remoteEnabled: remoteToggle.checked,
+          dailyFirstLoad: dailySyncToggle.checked,
+          autoCheckMode: getSyncAutoCheckModeControlValue(),
+          autoEnabled: autoSyncToggle.checked,
+          visibleRemotePollingEnabled:
+            visibleRemotePollingToggle?.checked === true,
+          showAutoSyncIndicator: autoSyncIndicatorToggle.checked,
+          showTitleSyncStatus: titleSyncStatusToggle.checked,
+          forcePullOnStartup: forcePullToggle.checked,
+          bookmarkFullContent: bookmarkFullContentToggle.checked,
+          deviceId: syncDeviceIdInput.value,
+          remoteGistId: remoteGistIdInput.value,
+          remotePat: remotePatInput.value,
+          tokenExpiryEnabled: tokenExpiryToggle.checked,
+          tokenExpiryDate: pendingTokenExpiryDate,
+        }),
+        syncLanEnabled: lanSyncEnabledToggle?.checked === true,
+        syncLanUrl: normalizeLanSyncUrlForSave(lanSyncUrlInput?.value),
+        syncLanToken: String(lanSyncTokenInput?.value || "").trim(),
       });
     const refreshSyncSettingsDirtyStateFromModal = () => {
       const currentSettings = getSettings();
@@ -48421,6 +49407,17 @@
         }
       }
 
+      if (e.target.closest("#s1p-toggle-lan-token-visibility")) {
+        const input = modal.querySelector("#s1p-lan-sync-token-input");
+        if (input.type === "password") {
+          input.type = "text";
+          setSanitizedIconHtml(lanTokenVisibilityBtn, SVG_ICON_EYE_SLASH);
+        } else {
+          input.type = "password";
+          setSanitizedIconHtml(lanTokenVisibilityBtn, SVG_ICON_EYE);
+        }
+      }
+
       if (e.target.id === "s1p-remote-save-btn") {
         const button = e.target;
         const manualSyncButton = modal.querySelector("#s1p-remote-manual-sync-btn");
@@ -48437,6 +49434,9 @@
             ...buildSyncSettingsFromModal(),
           };
           if (!validateSyncDeviceIdRequirement(currentSettings)) {
+            return;
+          }
+          if (!validateLanSyncSettingsForSave(currentSettings)) {
             return;
           }
           const didRemoteTargetChange =
@@ -48469,6 +49469,7 @@
               await fetchRemoteData({
                 metadataOnly: true,
                 settingsSnapshot: currentSettings,
+                transport: "gist",
               });
               // 候选 Token 已验证成功；保留原有的失败熔断恢复语义，但仍要等到下面真正保存后才应用设置。
               resetAutoSyncFailureState();
@@ -48513,6 +49514,14 @@
             GM_deleteValue("s1p_last_token_check_date");
           }
           const savedSettings = getSettings();
+          // 局域网同步配置可能刚变化：重启事件循环，让新地址/令牌/开关立即生效。
+          if (
+            typeof s1pLanStopWaitLoop === "function" &&
+            typeof s1pLanStartWaitLoop === "function"
+          ) {
+            s1pLanStopWaitLoop();
+            s1pLanStartWaitLoop();
+          }
           if (didRemoteTargetChange || didDisableRemoteSync) {
             // 远端目标切换/关闭远程同步后，清理旧会话残留状态，避免新目标沿用旧基线造成误判。
             GM_deleteValue(SYNC_BASELINE_STATE_KEY);
@@ -48966,6 +49975,9 @@
       "当前有其他同步任务正在执行，本次手动同步已跳过，请稍后再试。";
     const MANUAL_SYNC_LOCK_LOST_MESSAGE =
       "手动同步锁已失效，本次任务已中止，请重新发起同步。";
+    // 首次设置后的首次同步检查走当前实际传输（LAN 开启时走 LAN，立即灌入 Hub）；
+    // 用户主动点“手动同步”仍走 Gist，作为备份。
+    const manualSyncTransport = isInitialSetup ? "" : "gist";
     const useSettingsSecondaryModal =
       options?.useSettingsSecondaryModal === true;
     const withManualSyncModalOptions = (modalOptions = {}) => ({
@@ -49280,7 +50292,7 @@
           const { data: latestRawRemoteData, meta: latestMeta } =
             await runWithManualSyncLockGuard(
               `fetch_remote_data_${stageSuffix}`,
-              () => fetchRemoteData()
+              () => fetchRemoteData({ transport: manualSyncTransport })
             );
           if (Object.keys(latestRawRemoteData).length === 0) {
             throw new Error(emptyDataErrorMessage);
@@ -49305,7 +50317,7 @@
         try {
           const { data: rawRemoteData, meta } = await runWithManualSyncLockGuard(
             "fetch_remote_data",
-            () => fetchRemoteData()
+            () => fetchRemoteData({ transport: manualSyncTransport })
           );
           remoteMetaUpdatedAt =
             typeof meta?.updatedAt === "string" ? meta.updatedAt : undefined;
@@ -49432,6 +50444,7 @@
                     () =>
                       pushRemoteData(localData, {
                         expectedRemoteUpdatedAt: remoteMetaUpdatedAt,
+                        transport: manualSyncTransport,
                         writerContext: {
                           action: "initial_push_seed",
                           syncMode: "manual",
@@ -49600,6 +50613,7 @@
                 () =>
                   pushRemoteData(localDataObject, {
                     expectedRemoteUpdatedAt: remoteMetaUpdatedAt,
+                    transport: manualSyncTransport,
                     writerContext: {
                       action: "cleanup_shortcut_push",
                       syncMode: "manual",
@@ -49663,6 +50677,7 @@
                   () =>
                     pushRemoteData(localDataObject, {
                       expectedRemoteUpdatedAt: remoteMetaUpdatedAt,
+                      transport: manualSyncTransport,
                       writerContext: {
                         action: "smart_progress_push",
                         syncMode: "manual",
@@ -49713,6 +50728,7 @@
                 () =>
                   pushRemoteData(mergedPayload, {
                     expectedRemoteUpdatedAt: remoteMetaUpdatedAt,
+                    transport: manualSyncTransport,
                     writerContext: {
                       action: "smart_merge_pull",
                       syncMode: "manual",
@@ -49843,6 +50859,7 @@
                   () =>
                     pushRemoteData(localDataObject, {
                       expectedRemoteUpdatedAt: remoteMetaUpdatedAt,
+                      transport: manualSyncTransport,
                       writerContext: {
                         action: "manual_push",
                         syncMode: "manual",
@@ -49956,6 +50973,7 @@
                     () =>
                       pushRemoteData(localDataObjectForPush, {
                         expectedRemoteUpdatedAt: remoteMetaUpdatedAt,
+                        transport: manualSyncTransport,
                         writerContext: {
                           action: "manual_force_push_repair",
                           syncMode: "manual",
@@ -52123,13 +53141,18 @@
     };
     const schedulePendingThreadProgressPersist = () => {
       if (readProgressPersistTimeout) return;
+      // LAN 传输下没有 GitHub 频率压力，落盘去抖降到 1s，让进度更快进入推送链路；
+      // 关闭 LAN 时保持原有 5s，行为不变。
+      const persistDebounceMs = isLanSyncTransportActive()
+        ? READ_PROGRESS_PERSIST_DEBOUNCE_LAN_MS
+        : READ_PROGRESS_PERSIST_DEBOUNCE_MS;
       if (readProgressTrackingState) {
         readProgressTrackingState.pendingPersistDueAt =
-          Date.now() + READ_PROGRESS_PERSIST_DEBOUNCE_MS;
+          Date.now() + persistDebounceMs;
       }
       recordReadProgressTrackingDebugEvent(
         "rp_persist_scheduled",
-        `dueIn=${READ_PROGRESS_PERSIST_DEBOUNCE_MS}ms`
+        `dueIn=${persistDebounceMs}ms`
       );
       readProgressPersistTimeout = setTimeout(() => {
         readProgressPersistTimeout = null;
@@ -52137,7 +53160,7 @@
           readProgressTrackingState.pendingPersistDueAt = 0;
         }
         flushPendingThreadProgressWrites();
-      }, READ_PROGRESS_PERSIST_DEBOUNCE_MS);
+      }, persistDebounceMs);
     };
     const isReadProgressInteractionTarget = (target) =>
       target instanceof Element &&
@@ -55220,6 +56243,15 @@
         });
         const schedulerRecovery = scheduler.recover();
         const pendingRecovery = recoverPending();
+        let lanWaitLoop = null;
+        try {
+          lanWaitLoop = s1pLanStartWaitLoop();
+        } catch (lanError) {
+          console.warn(
+            "S1 Plus (LAN Sync): 事件循环启动失败，已保持 Gist 同步路径。",
+            lanError
+          );
+        }
         initialized = true;
         return {
           status: "initialized",
@@ -55227,6 +56259,7 @@
           manualIntent,
           schedulerRecovery,
           pendingRecovery,
+          lanWaitLoop,
         };
       } catch (error) {
         rollbackInitialization();
@@ -55235,6 +56268,7 @@
     };
 
     const dispose = () => {
+      s1pLanStopWaitLoop();
       if (!initialized) {
         manualIntentCoordinator?.unbind?.();
         return { status: "skipped", reason: "already_disposed" };
