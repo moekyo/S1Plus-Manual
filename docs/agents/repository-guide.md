@@ -33,7 +33,7 @@ Use these project-specific adaptations of the Karpathy-style coding guidelines:
 
 ## Initialization
 
-The script runs at `document-start`. Initialization proceeds through `S1P_INIT_PHASES`:
+The main script runs at `document-idle`, so the browser has painted the page before S1 Plus initializes. Initialization proceeds through `S1P_INIT_PHASES`:
 
 - `document-start`
 - `body-ready`
@@ -44,7 +44,8 @@ The script runs at `document-start`. Initialization proceeds through `S1P_INIT_P
 
 Rules:
 
-- `document-start` is for low-dependency anti-flicker work only.
+- `document-start` is the historical name of the first phase and now runs after the first paint; keep it low-dependency.
+- The script intentionally no longer injects its stylesheet before the first paint: static anti-flicker rules may settle ~100–200ms after paint. Do not switch back to `document-start` to recover it without re-evaluating the release-artifact split (see CHANGELOG for the Firefox measurements).
 - Forum-structure-dependent logic belongs in `forum-ready`.
 - First DOM scan and MutationObserver mount belong in `content-ready`.
 - Startup sync, recommendation popups, and other non-first-paint work belong in `deferred`.

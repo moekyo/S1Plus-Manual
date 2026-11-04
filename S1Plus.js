@@ -20,7 +20,7 @@
 // @grant        GM_listValues
 // @connect      *
 // @license      MIT
-// @run-at       document-start
+// @run-at       document-idle
 // ==/UserScript==
 
 (function () {

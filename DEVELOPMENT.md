@@ -225,7 +225,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 
 ### 4.5 页面增强主入口
 
-- `runS1PlusInitializer`：脚本实际入口，先运行 `document-start` 阶段，再等待 `document.body`。
+- `runS1PlusInitializer`：脚本实际入口（主脚本以 `@run-at document-idle` 执行，首帧已在脚本运行前画完），先运行首个 `document-start` 阶段，再等待 `document.body`。
 - `S1P_INIT_PHASES` / `runInitializationPhase`：分阶段初始化框架，当前阶段为 `document-start`、`body-ready`、`forum-ready`、`services-ready`、`content-ready`、`deferred`。
 - `main`：body ready 后的初始化总控，按阶段调度迁移、论坛 DOM 依赖任务、服务注册、内容扫描与延后同步。
 - `applyChanges`：全量应用
@@ -233,7 +233,8 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 
 实现约束（维护时请保持）：
 
-- `document-start` 阶段只放低依赖、防闪烁类任务；不要依赖完整论坛 DOM。
+- 主脚本在 `document-idle` 执行，首帧之后才运行；`document-start` 是首阶段的沿革命名，不要指望它抢在首帧前生效，也不要依赖完整论坛 DOM。
+- 首帧前防闪已放弃（原因见 CHANGELOG 的 Firefox 实测数据）：完整样式表在首帧后注入，黄条 `#hiddenpoststip`、导航 `#nv > ul` 布局、列表隐藏项等静态规则可能晚约 100–200ms 落定；内容级屏蔽与导航栏改动本来就在首帧后执行。若将来要恢复首帧前防闪，需要单独评估产物方案，不要直接把 `@run-at` 改回 `document-start`。
 - 依赖论坛结构或 NUX 标记的逻辑应放在 `forum-ready`，并通过框架的 `retryDelays` / `shouldRetry` 表达等待条件。
 - 首次 DOM 扫描和 MutationObserver 挂载属于 `content-ready`；启动同步、推荐弹窗等非首屏任务属于 `deferred`。
 - 后台任务如果会影响后续判断，应通过 `contextKey` 暴露 promise，例如 NUX 推荐会等待 `nuxDetectionPromise`，避免检测未结束时误判。

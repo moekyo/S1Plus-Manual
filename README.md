@@ -169,7 +169,7 @@ S1 Plus 是一个面向 Stage1st（S1）的用户脚本，目标是让论坛浏�
 ### 初始化与运行时边界
 
 - 初始化分为 `document-start`、`body-ready`、`forum-ready`、`services-ready`、`content-ready` 和 `deferred` 六个阶段。
-- `document-start` 只承担低依赖的反闪烁和安全保护；论坛结构相关逻辑、首轮 DOM 扫描与观察器挂载在后续阶段执行；启动同步、欢迎弹窗和其他非首屏任务放在 `deferred` 阶段。
+- 主脚本以 `@run-at document-idle` 执行：页面首帧画完后再初始化，避免 2MB 脚本在首帧前编译执行；`document-start` 是首阶段的沿革命名。论坛结构相关逻辑、首轮 DOM 扫描与观察器挂载在后续阶段执行；启动同步、欢迎弹窗和其他非首屏任务放在 `deferred` 阶段。
 - 页面侧同步统一通过 `s1pSyncSystem` façade 表达本地变更、生命周期事件、同步意图和状态读取；运行锁、共享待同步调度、生命周期收尾和结果处理由同步系统内部统一协调。
 
 ### 数据模型（核心持久化）
