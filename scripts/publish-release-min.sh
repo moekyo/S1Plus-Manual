@@ -39,8 +39,8 @@ if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
   exit 1
 fi
 
-SOURCE_VERSION="$(sed -n 's|^// @version[[:space:]]\+\([0-9][0-9.]*\)$|\1|p' S1Plus.js | head -1)"
-ARTIFACT_VERSION="$(sed -n 's|^// @version[[:space:]]\+\([0-9][0-9.]*\)$|\1|p' "$ARTIFACT" | head -1)"
+SOURCE_VERSION="$(sed -E -n 's|^// @version[[:space:]]+([0-9][0-9.]*)$|\1|p' S1Plus.js | head -1)"
+ARTIFACT_VERSION="$(sed -E -n 's|^// @version[[:space:]]+([0-9][0-9.]*)$|\1|p' "$ARTIFACT" | head -1)"
 if [ -z "$SOURCE_VERSION" ] || [ "$SOURCE_VERSION" != "$ARTIFACT_VERSION" ]; then
   echo "artifact @version ($ARTIFACT_VERSION) does not match source ($SOURCE_VERSION); rebuild first" >&2
   exit 1
