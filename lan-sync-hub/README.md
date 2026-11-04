@@ -121,7 +121,7 @@ docker run -d --name s1plus-lan-sync --restart unless-stopped \
 1. 设置项：`syncLanEnabled` / `syncLanUrl` / `syncLanToken`（设备标识复用现有 `syncDeviceId`）；**token 不进入同步设置导出**，与 `syncRemotePat` 同级处理；
 2. 启动/可见时：`GET /snapshot`，与本地 `contentHash` 对比；不同则按现有 `importLocalData` + `mergeReadProgressMaps` 合并；
 3. 本地变更：LAN 模式下把阅读进度同步去抖从 20s 降到 ~0.5–1s，`POST /snapshot`；收到 409 时先拉取合并再重试；
-4. 监听：`GM_xmlhttpRequest` 长轮询 `/wait?since=N&timeout=25s`（请求超时设 35s），事件到达后拉取并**原地刷新列表徽标**（`scheduleProgressJumpButtonsRefresh`），不再整页 reload；
+4. 监听：`GM_xmlhttpRequest` 短轮询 `/health`（3s），版本变化后拉取并**原地刷新列表徽标**（`scheduleProgressJumpButtonsRefresh`），不再整页 reload；不要用 `/wait` 长轮询：长连接会占住 GM 请求通道，拉取/推送会被排在后面等满一个周期；
 5. presence：读取 `/presence`，导航栏指示器可以显示「另一台已同步到 vN」；
 6. 回退：LAN 连续失败 N 次后回到现有 Gist 逻辑；Gist 仍可作为备份（例如 LAN 不可用或跨网时）；
 7. 测试：新增 transport/mocks 单测（409 重试、断线回退、去抖），跑现有同步回归（`test-background-sync-shared-debounce.js` 等）。
