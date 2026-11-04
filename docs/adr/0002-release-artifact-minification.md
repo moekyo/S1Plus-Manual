@@ -109,3 +109,22 @@ unchanged and no minified artifact has been published.
 2. Add the artifact build command to the release checklist and verify the
    published `@version` with the normal Greasy Fork delivery check.
 3. Record the chosen branch/upload policy in the release skill/guide.
+
+## Adoption — v7.1.1 (2026-11-05)
+
+**Status: accepted.** Option **B** (dedicated `release-min` branch + webhook)
+is now the publishing flow.
+
+- `main`/`release` keep the readable source; `release-min` is a generated,
+  force-pushed branch containing only the minified `S1Plus.js`.
+- Greasy Fork `sync_identifier` points at
+  `https://raw.githubusercontent.com/moekyo/S1Plus-Manual/release-min/S1Plus.js`.
+- Per release: build the artifact, run `scripts/check-release-artifact.js`,
+  then `scripts/publish-release-min.sh` creates the one-commit branch and
+  force-pushes it. The webhook publishes as before.
+- The readable source is no longer limited by Greasy Fork's 2 MiB ceiling;
+  the built artifact is the only thing that must fit.
+- `tests/test-release-artifact-size.js` now validates the artifact (when
+  built) instead of the source.
+
+Supersedes the "Until then, keep the readable-source webhook flow" line above.
