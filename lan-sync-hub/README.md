@@ -78,6 +78,7 @@ docker run -d --name s1plus-lan-sync --restart unless-stopped \
 | `HUB_HISTORY` | `10` | 保留历史版本数，`0` 关闭 |
 | `HUB_MAX_BODY_BYTES` | `8388608` | 请求体上限 |
 | `HUB_LONG_POLL_TIMEOUT_MS` | `25000` | 长轮询默认挂起时长 |
+| `HUB_LONG_POLL_MAX_TIMEOUT_MS` | `5000` | 单个 `/wait` 实际挂起上限；旧版 userscript 的长连接会占住请求通道，上限越小阻塞越短 |
 | `HUB_SSE_TIMEOUT_MS` | `300000` | SSE 单连接最长时长 |
 | `HUB_CORS_ORIGIN` | 空（关闭） | 需要跨域访问时填写允许的来源，例如 `http://192.168.1.10:8080` |
 
@@ -96,6 +97,10 @@ docker run -d --name s1plus-lan-sync --restart unless-stopped \
 | `GET` | `/presence` | 读取在线设备（10 分钟过期） |
 
 快照 payload 由客户端定义，中枢不解析；建议客户端把它当作 S1 Plus 导出的同步 JSON 整体存储。
+
+快照 JSON 较大（常见 200KB+）。客户端带 `Accept-Encoding: gzip` 时，超过 4KB 的 JSON 响应会用 gzip 压缩（实测 240KB → 约 25KB），浏览器会透明解压；这能显著减少 Wi-Fi 丢包带来的 TCP 重传停顿。
+
+`/wait` 的实际挂起时长受 `HUB_LONG_POLL_MAX_TIMEOUT_MS`（默认 5s）限制。S1 Plus 新版已改用 `/health` 短轮询，只有旧版缓存或测试页还会用 `/wait`。
 
 ## 验证延迟（两台设备）
 

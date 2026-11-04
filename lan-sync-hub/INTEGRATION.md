@@ -76,6 +76,8 @@ const pushRemoteDataViaLan = async (dataObject, options) => {
   - 断线 → 1.5s 起指数退避重试（上限 30s）；401 → 停止事件循环并提示令牌失效；
   - 不用 `/wait` 长轮询：GM_xmlhttpRequest 的长连接会占住请求通道，同步拉取/推送排在其后，实测要等满一个长轮询周期（25s）才发得出去；`/wait` 仍保留给测试页/其它客户端；
 - `visibilitychange → visible` 时立即补一次 `GET /health`，版本落后则触发一次同步；
+- 快照读取：`GET /snapshot` 首次超时 8s，超时/网络错误换新连接重试一次（上限 20s）；hub 对 >4KB 的 JSON 响应按 `Accept-Encoding` 返回 gzip（240KB → 约 25KB），减少 Wi-Fi 丢包导致的 TCP 重传停顿；
+- 锁离场：持有者页面 `pagehide` 时把 LAN 执行锁的保留窗口压缩到 1.5s（Gist 仍保留 45s），避免关页/跳转后其他标签页和手动推送被锁住几十秒；
 - 本地变更：沿用现有 read progress / 数据写入触发器（`saveReadProgress` 的 `triggerSync`、core data 写入等），无需新钩子；LAN 模式下把阅读进度同步去抖从 20s 降到 1s（见下）。
 
 ## 去抖与设置

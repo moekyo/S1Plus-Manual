@@ -28,6 +28,7 @@ const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const zlib = require("node:zlib");
 
 const clamp = (value, min, max) =>
   Math.min(max, Math.max(min, Number.isFinite(value) ? value : min));
@@ -41,6 +42,14 @@ const CONFIG = {
   maxBodyBytes: Math.max(1024, Number(process.env.HUB_MAX_BODY_BYTES || 8 * 1024 * 1024)),
   longPollTimeoutMs: clamp(
     Number(process.env.HUB_LONG_POLL_TIMEOUT_MS || 25000),
+    1000,
+    120000
+  ),
+  // 旧版 userscript 用 GM_xmlhttpRequest 长轮询 /wait；长连接会占住请求通道，
+  // 把同浏览器的拉取/推送排在后面。这里给旧客户端一个很短的挂起上限，
+  // 最坏阻塞窗口从 25s 降到 5s（新客户端已改用 /health 短轮询）。
+  longPollMaxTimeoutMs: clamp(
+    Number(process.env.HUB_LONG_POLL_MAX_TIMEOUT_MS || 5000),
     1000,
     120000
   ),
@@ -257,13 +266,36 @@ const CORS_HEADERS = (() => {
   };
 })();
 
+const GZIP_MIN_BYTES = 4096;
+
+// 快照 JSON 动辄 200KB+，在 Wi-Fi / 多跳链路上丢一个包就会带来十几秒的
+// TCP 重传等待。gzip 后通常只有原来的 1/8，包数大幅减少，浏览器会透明解压。
 const sendJson = (res, status, body) => {
+  const req = res.req || null;
   const text = JSON.stringify(body);
+  const rawLength = Buffer.byteLength(text);
+  const acceptsGzip =
+    rawLength >= GZIP_MIN_BYTES &&
+    /\bgzip\b/i.test(String(req?.headers?.["accept-encoding"] || ""));
+  if (acceptsGzip) {
+    const compressed = zlib.gzipSync(text);
+    res.writeHead(status, {
+      ...CORS_HEADERS,
+      "Content-Type": "application/json; charset=utf-8",
+      "Content-Encoding": "gzip",
+      "Content-Length": compressed.length,
+      "Cache-Control": "no-store",
+      Vary: "Accept-Encoding",
+    });
+    res.end(compressed);
+    return;
+  }
   res.writeHead(status, {
     ...CORS_HEADERS,
     "Content-Type": "application/json; charset=utf-8",
-    "Content-Length": Buffer.byteLength(text),
+    "Content-Length": rawLength,
     "Cache-Control": "no-store",
+    ...(rawLength >= GZIP_MIN_BYTES ? { Vary: "Accept-Encoding" } : {}),
   });
   res.end(text);
 };
@@ -409,7 +441,7 @@ const handleWait = (req, res, url) => {
   const timeoutMs = clamp(
     Number(url.searchParams.get("timeout") || CONFIG.longPollTimeoutMs),
     1000,
-    120000
+    Math.min(CONFIG.longPollTimeoutMs, CONFIG.longPollMaxTimeoutMs)
   );
   if (state.version > since) {
     return sendJson(res, 200, { ...currentMeta(), timeout: false });

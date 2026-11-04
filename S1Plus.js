@@ -3731,6 +3731,10 @@
   // 只会让其他标签页（以及已登记的手动请求）空等三分钟，因此离场时把锁
   // 的失效时间压缩到这个窗口：它只需覆盖已发出请求可能落地的最大时长。
   const DEPARTED_SYNC_LOCK_RETAIN_TTL_MS = 45 * 1000;
+  // LAN 传输的 push 由 hub 做 baseVersion CAS，旧请求晚到只会 409 重试，
+  // 不存在覆盖风险；因此离场后只需留一个很短的收尾窗口，让别的标签页
+  // （以及用户手动推送）立刻接管，而不是干等 45 秒。
+  const DEPARTED_LAN_SYNC_LOCK_RETAIN_TTL_MS = 1500;
 
   const REMOTE_SYNC_REQUEST_TIMEOUT_MS = 12 * 1000;
   const REMOTE_SYNC_MAX_RETRIES = 2;
@@ -29599,11 +29603,15 @@
 
   // 页面真正离开时，已进入事务的执行锁不能立刻释放（在途请求可能已经写进
   // 云端），但也再没有续租来源。这里由持有者自己把锁的失效时间压缩到
-  // DEPARTED_SYNC_LOCK_RETAIN_TTL_MS，避免其它标签页空等整段模式 TTL。
+  // DEPARTED_SYNC_LOCK_RETAIN_TTL_MS（LAN 更短），避免其它标签页空等整段模式 TTL。
   // 只改写本页自己持有的记录，写入前按 owner + executionId 做 CAS。
   const s1pRetainDepartedSyncLocksUntil = (
     now = Date.now(),
-    { retainTtlMs = DEPARTED_SYNC_LOCK_RETAIN_TTL_MS } = {}
+    {
+      retainTtlMs = isLanSyncTransportActive()
+        ? DEPARTED_LAN_SYNC_LOCK_RETAIN_TTL_MS
+        : DEPARTED_SYNC_LOCK_RETAIN_TTL_MS,
+    } = {}
   ) => {
     const retainUntil = now + (Number(retainTtlMs) || 0);
     if (!(retainUntil > now)) {
@@ -30400,6 +30408,10 @@
   const S1P_LAN_REMOTE_STATE_KEY = "s1p_lan_remote_state";
   const S1P_LAN_VERSION_CONFLICT_CODE = "LAN_SYNC_VERSION_CONFLICT";
   const S1P_LAN_POLL_INTERVAL_MS = 3000;
+  // 全量快照可能被一条坏掉的 keep-alive 连接卡住十几秒（TCP 重传等待）。
+  // 先用短超时试一次，失败就换一条新连接重试；GET 是幂等的，重试安全。
+  const S1P_LAN_SNAPSHOT_FIRST_TIMEOUT_MS = 8000;
+  const S1P_LAN_SNAPSHOT_RETRY_TIMEOUT_MS = 20000;
   const S1P_LAN_WAIT_RETRY_BASE_MS = 1500;
   const S1P_LAN_WAIT_RETRY_MAX_MS = 30000;
 
@@ -30620,8 +30632,43 @@
   // 若 push 临时读取最新 version，就会把基于旧 payload 的合并结果写到新版本上。
   let s1pLanPayloadVersion = null;
 
+  const s1pLanFetchSnapshot = async () => {
+    try {
+      return await s1pLanRequest({
+        method: "GET",
+        path: "/snapshot",
+        timeoutMs: S1P_LAN_SNAPSHOT_FIRST_TIMEOUT_MS,
+      });
+    } catch (error) {
+      const status = Number(error?.status);
+      if (
+        error?.code === REMOTE_SYNC_CANCELLED_CODE ||
+        error?.code === REMOTE_SYNC_AUTH_REJECTED_CODE ||
+        (status >= 400 && error?.retryable !== true)
+      ) {
+        throw error;
+      }
+      recordSyncTraceEvent("remote_fetch_retry", {
+        scope: "remote_fetch",
+        status: "retry",
+        message: "LAN 快照读取超时或连接异常，换新连接重试",
+        details: {
+          transport: "lan",
+          error: error?.message || String(error),
+          firstTimeoutMs: S1P_LAN_SNAPSHOT_FIRST_TIMEOUT_MS,
+        },
+      });
+      return await s1pLanRequest({
+        method: "GET",
+        path: "/snapshot",
+        timeoutMs: S1P_LAN_SNAPSHOT_RETRY_TIMEOUT_MS,
+      });
+    }
+  };
+
   const fetchRemoteDataViaLan = async ({ metadataOnly = false } = {}) => {
     const scope = metadataOnly ? "remote_probe" : "remote_fetch";
+    const startedAt = Date.now();
     recordSyncTraceEvent("remote_fetch_start", {
       scope,
       status: "running",
@@ -30642,11 +30689,7 @@
         // 不带 since：事件循环/健康检查会先推进本地 version，但那不代表本地
         // 已持有该版本 payload。带 since 会把“远端已变”误判为 unchanged，
         // 让自动同步把远端当成空数据而覆盖它。全量读取始终由 hub 返回 payload。
-        const response = await s1pLanRequest({
-          method: "GET",
-          path: "/snapshot",
-          timeoutMs: 20000,
-        });
+        const response = await s1pLanFetchSnapshot();
         if (
           response.status !== 200 ||
           !response.json ||
@@ -30694,6 +30737,7 @@
         details: {
           metadataOnly,
           transport: "lan",
+          elapsedMs: Math.max(0, Date.now() - startedAt),
           remoteEmpty: metadataOnly
             ? undefined
             : Object.keys(result.data).length === 0,
@@ -30709,6 +30753,7 @@
         details: {
           metadataOnly,
           transport: "lan",
+          elapsedMs: Math.max(0, Date.now() - startedAt),
           status: error?.status || "",
           error: error?.message || String(error),
         },
