@@ -30646,7 +30646,10 @@
     const payload = {
       files: {
         "s1plus_sync.json": {
-          content: JSON.stringify(payloadDataObject, null, 2),
+          // 紧凑序列化：两空格缩进会把 payload 撑大 ~31%，越过 GitHub Gist
+          // 单文件 1MB 上限后 API 会返回 truncated，读取端还得再下载一次
+          // raw_url，在慢链路上直接拖过单请求超时。
+          content: JSON.stringify(payloadDataObject),
         },
       },
     };
