@@ -134,6 +134,34 @@ test("过期 baseVersion 返回 409 与当前版本", async () => {
   assert.equal(result.body.version, 1);
 });
 
+test("大快照按 Accept-Encoding 返回 gzip", async () => {
+  const current = await getSnapshot();
+  const readProgress = {};
+  for (let i = 0; i < 400; i += 1) {
+    readProgress[`thread_${i}`] = {
+      page: "1",
+      lastReadFloor: String(i),
+      title: "标题".repeat(8),
+    };
+  }
+  const payload = { data: { read_progress: readProgress } };
+  const push = await pushSnapshot({ baseVersion: current.version, payload });
+  assert.equal(push.status, 200);
+
+  const compressed = await fetch(`${hub.base}/snapshot`, {
+    headers: { ...auth(), "Accept-Encoding": "gzip" },
+  });
+  assert.equal(compressed.status, 200);
+  assert.equal(compressed.headers.get("content-encoding"), "gzip");
+  assert.deepEqual((await compressed.json()).payload, payload);
+
+  const plain = await fetch(`${hub.base}/snapshot`, {
+    headers: { ...auth(), "Accept-Encoding": "identity" },
+  });
+  assert.equal(plain.headers.get("content-encoding"), null);
+  assert.deepEqual((await plain.json()).payload, payload);
+});
+
 test("长轮询在版本变化时被唤醒", async () => {
   const current = await getSnapshot();
   const waitPromise = fetch(`${hub.base}/wait?since=${current.version}&timeout=5000`, {
