@@ -161,10 +161,14 @@ Verify these hold before the first release that uses this flow:
   push (`refs/tags/...`) never matches; publish by pushing `release-min`.
 - **`updated_failed`**: the delivery response message carries the validation
   errors, often a stale `@version` or an artifact over Greasy Fork's ceiling.
-- **`No commits found in this push`**: the pushed `release-min` commit is not a
-  descendant of the previous tip (orphan commit or force-pushed/rewritten
-  history). Greasy Fork diffs `before..after`; keep `release-min` linear and
-  let `publish-release-min.sh` parent each commit on the fetched remote tip.
+- **`No commits found in this push`**: Greasy Fork saw no changed files in the
+  push. Two causes: (a) the commit is an orphan / force-pushed history, or
+  (b) the new artifact is byte-identical to the previous `release-min` commit
+  (an empty commit). Keep `release-min` linear and rebuild after the version
+  bump; `publish-release-min.sh` refuses empty commits. A newly created
+  `release-min` branch also reports this because branch-creation pushes list
+  the file under `added`, and Greasy Fork only inspects `modified`; publish
+  again with a changed artifact after the branch exists.
 - **Manual fallback**: Greasy Fork → Source Syncing → "Update and sync", or the
   form's file-upload field, using `dist/S1Plus.user.js`. Prefer the file field
   over pasting: the web editor's optional syntax highlighting (Ace plus a JS
