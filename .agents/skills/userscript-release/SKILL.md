@@ -1,6 +1,6 @@
 ---
 name: userscript-release
-description: Publish an S1Plus release by building the minified artifact and force-pushing the generated `release-min` branch, which triggers the Greasy Fork webhook. Use when asked to release/发布/发版 S1Plus, when guarding release-artifact invariants before publishing (Greasy Fork's 2 MiB artifact ceiling, metadata/header equality, `@resource` pin freshness), or when a published release never reached Greasy Fork. Metadata steps live in the `s1plus-release` skill.
+description: Publish an S1Plus release by building the minified artifact and appending a linear commit to the generated `release-min` branch, which triggers the Greasy Fork webhook. Use when asked to release/发布/发版 S1Plus, when guarding release-artifact invariants before publishing (Greasy Fork's 2 MiB artifact ceiling, metadata/header equality, `@resource` pin freshness), or when a published release never reached Greasy Fork. Metadata steps live in the `s1plus-release` skill.
 ---
 
 # S1Plus Release — `release-min` artifact + webhook
@@ -13,7 +13,7 @@ scripts/publish-release-min.sh --version X.Y.Z
 ```
 
 It builds a one-commit generated branch whose tree contains only the minified
-artifact at `S1Plus.js`, force-pushes `release-min`, and GitHub notifies
+artifact at `S1Plus.js`, fast-forwards `release-min`, and GitHub notifies
 Greasy Fork. No browser step is needed. `main` and `release` never contain the
 minified artifact.
 
@@ -29,7 +29,7 @@ v7.1.1.
   (`.../release-min/S1Plus.js`). A `main` push cannot publish; a tag push never
   matches.
 - Only `modified` files are processed; a push that leaves `S1Plus.js` untouched
-  publishes nothing. `release-min` is force-pushed from a fresh generated
+  publishes nothing. `release-min` gets one new commit per release whose parent is the previous tip
   commit each release, so `S1Plus.js` always differs.
 - `@version` must increase every release. The webhook saves with
   `do_lenient_saving`, which bypasses Greasy Fork's version guard: nothing warns
@@ -105,7 +105,7 @@ Verify these hold before the first release that uses this flow:
    then `git push origin vX.Y.Z`. Neither publishes.
 
 7. Publish, after the user confirms — build from the tagged source and
-   force-push the generated branch:
+   append the new commit to the generated branch:
 
    ```bash
    node scripts/build-release-artifact.js
@@ -115,7 +115,7 @@ Verify these hold before the first release that uses this flow:
 
    `publish-release-min.sh` requires a clean tree and `dist/S1Plus.user.js`
    matching the source `@version`; it prints the generated commit, updates the
-   local `release-min` branch, and force-pushes
+   local `release-min` branch, and fast-forwards
    `origin release-min`. A dry run is available with `--dry-run`.
 
 8. Verify published. Fetch the published copy and read its `@version` — the
@@ -161,6 +161,10 @@ Verify these hold before the first release that uses this flow:
   push (`refs/tags/...`) never matches; publish by pushing `release-min`.
 - **`updated_failed`**: the delivery response message carries the validation
   errors, often a stale `@version` or an artifact over Greasy Fork's ceiling.
+- **`No commits found in this push`**: the pushed `release-min` commit is not a
+  descendant of the previous tip (orphan commit or force-pushed/rewritten
+  history). Greasy Fork diffs `before..after`; keep `release-min` linear and
+  let `publish-release-min.sh` parent each commit on the fetched remote tip.
 - **Manual fallback**: Greasy Fork → Source Syncing → "Update and sync", or the
   form's file-upload field, using `dist/S1Plus.user.js`. Prefer the file field
   over pasting: the web editor's optional syntax highlighting (Ace plus a JS
