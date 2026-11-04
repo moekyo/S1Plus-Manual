@@ -1996,6 +1996,10 @@
 
   const S1P_NAV_CUSTOMIZED_HEADER_CLASS = "s1p-nav-customized-header";
   const S1P_NAV_CUSTOMIZED_ROOT_CLASS = "s1p-nav-customized-root";
+  // 导航栏增强标记：由 initializeNavbar 在重建/追加 S1P 导航项的同一个任务内挂到
+  // #nv 上，让 #nv > ul 的 flex 规则只在该任务之后生效，避免样式注入时先改一次
+  // 原生导航栏、重建后再改一次。
+  const S1P_NAV_ENHANCED_CLASS = "s1p-nav-enhanced";
   const S1P_NAV_CUSTOM_ITEM_CLASS = "s1p-nav-custom-item";
   const S1P_NAV_OVERFLOW_ID = "s1p-nav-overflow";
   const S1P_NAV_OVERFLOW_TOGGLE_ID = "s1p-nav-overflow-toggle";
@@ -41077,6 +41081,7 @@
     if (!navUl) return;
     captureNativeNavLiTemplates(navUl);
     const navRoot = navUl.closest("#nv");
+    navRoot?.classList.add(S1P_NAV_ENHANCED_CLASS);
     const headerRoot =
       document.querySelector("#hd > .wp") || navUl.closest("#hd .wp");
 

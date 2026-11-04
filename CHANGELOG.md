@@ -6,6 +6,7 @@
 - **调整**：`@run-at` 改为 `document-idle`，页面首帧画完后再初始化；FCP / DCL / load 回到接近基线，Firefox 不再闪白。
 - **代价**：首帧前不再注入样式表，静态防闪规则（`#hiddenpoststip` 黄条、`#p_pop`、`#atarget`、`#separatorline.emptb`、`#nv > ul` 布局等）会在首帧后约 100–200ms 内落定，暗色模式下可能看到一次轻微样式变化；内容级屏蔽与导航栏改动本来就在首帧后执行，不受影响。
 - **顺带修复**：`document-start` 阶段原先可能在 `document.documentElement` 尚未创建时执行，导致“系统屏蔽楼层隐藏”任务抛错并被 optional 逻辑吞掉；改用 `document-idle` 后该阶段始终拿到完整 DOM。
+- **导航栏变化合并为一次**：`#nv > ul` 的 flex 对齐规则改为挂到 `#nv.s1p-nav-enhanced`，由 `initializeNavbar` 在重建/追加导航项的同一个任务内添加。这样 S1P 样式注入时不会再先改一次原生导航栏布局，之后重建时再改一次；导航栏从原生状态到最终状态只发生一次变化。
 
 ## [v7.1.0] - 2026-11-01
 
