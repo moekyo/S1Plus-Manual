@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+## [v7.1.1] - 2026-11-05
+
+### 📦 发布产物改为压缩版
+
+- **Greasy Fork 发布改为压缩产物**：发布分支改为生成的 `release-min`，内容是用 terser 压缩、保留完整 userscript 元数据头的 `S1Plus.js`；安装/自动更新体积从约 2.0MB 降到约 1.4MB，Tampermonkey 更新更快。`main` / `release` 仍保留可读源码，测试、审查和调试不受影响。
+- **发布守卫**：发布前由 `scripts/check-release-artifact.js` 校验产物 header 与源码逐字节一致、`@version` 一致、体积在 Greasy Fork 2 MiB 上限内、`@resource` pin 为不可变 commit，并通过 `node --check`；源码本身不再受 2 MiB 限制。
+- **回归修复**：把 CSS 的 `@resource` pin 从旧 commit 更新到当前内容，避免发布后加载旧样式。
+
 ### ⚡ 启动时机改为 document-idle（修复 Firefox 暗色模式进入帖子闪白）
 
 - **根因**：脚本约 2MB，`@run-at document-start` 会让浏览器在首帧前注入并编译执行。Firefox 160 + Tampermonkey 5.5.0 实测首屏内容绘制被推迟 161ms（308 → 469ms）、DOMContentLoaded 推迟 378ms、load 推迟 528ms；暗色模式下这段窗口是浏览器默认白底，表现为进入帖子闪一下白屏。S1 Plus 自己的六个初始化阶段合计仅 37ms，优化初始化无法解决，唯一有效杠杆是不在首帧前执行脚本。
@@ -7,6 +15,8 @@
 - **代价**：首帧前不再注入样式表，静态防闪规则（`#hiddenpoststip` 黄条、`#p_pop`、`#atarget`、`#separatorline.emptb`、`#nv > ul` 布局等）会在首帧后约 100–200ms 内落定，暗色模式下可能看到一次轻微样式变化；内容级屏蔽与导航栏改动本来就在首帧后执行，不受影响。
 - **顺带修复**：`document-start` 阶段原先可能在 `document.documentElement` 尚未创建时执行，导致“系统屏蔽楼层隐藏”任务抛错并被 optional 逻辑吞掉；改用 `document-idle` 后该阶段始终拿到完整 DOM。
 - **导航栏变化合并为一次**：`#nv > ul` 的 flex 对齐规则改为挂到 `#nv.s1p-nav-enhanced`，由 `initializeNavbar` 在重建/追加导航项的同一个任务内添加。这样 S1P 样式注入时不会再先改一次原生导航栏布局，之后重建时再改一次；导航栏从原生状态到最终状态只发生一次变化。
+
+---
 
 ## [v7.1.0] - 2026-11-01
 

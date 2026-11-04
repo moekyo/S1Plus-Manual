@@ -10,28 +10,23 @@ const repoRoot = path.resolve(__dirname, "..");
 const sourcePath = path.join(repoRoot, "S1Plus.js");
 const cssPath = path.join(repoRoot, "S1Plus.css");
 const staticDataPath = path.join(repoRoot, "S1Plus-static-data.json");
+const artifactPath = path.join(repoRoot, "dist", "S1Plus.user.js");
 const source = fs.readFileSync(sourcePath, "utf8");
 const css = fs.readFileSync(cssPath, "utf8");
 const staticData = JSON.parse(fs.readFileSync(staticDataPath, "utf8"));
 const countCodePoints = (value) => Array.from(value).length;
 
+// Greasy Fork 的 2 MiB 上限约束的是**发布产物**，不是可读源码。
+// 源码是构建输入，可以超过上限；发布流程会先构建 dist/S1Plus.user.js
+// 再用 scripts/check-release-artifact.js 校验（此处做同样的尺寸断言）。
 const maxCharacters = 2 * 1024 * 1024;
 const maxBytes = 2 * 1024 * 1024;
 const sourceCharacters = countCodePoints(source);
 const sourceBytes = Buffer.byteLength(source);
-const sourceByteHeadroom = maxBytes - sourceBytes;
 
-assert.ok(
-  sourceCharacters <= maxCharacters,
-  `S1Plus.js 超过 Greasy Fork 限制：${sourceCharacters} > ${maxCharacters}`
-);
-assert.ok(
-  sourceBytes <= maxBytes,
-  `S1Plus.js 字节数超过 Greasy Fork 限制：${sourceBytes} > ${maxBytes}`
-);
 assert.match(
   source,
-  /@resource\s+s1p-base-css\s+https:\/\/raw\.githubusercontent\.com\/moekyo\/S1Plus-Manual\/a1165e575333eaa9a2c7332f47442844b24aa22b\/S1Plus\.css/
+  /@resource\s+s1p-base-css\s+https:\/\/raw\.githubusercontent\.com\/moekyo\/S1Plus-Manual\/c60337a0537cb9e8dd60b81d7533ee929252d7c0\/S1Plus\.css/
 );
 assert.match(
   source,
@@ -62,6 +57,26 @@ assert.ok(injectedCss.includes("animation: s1p-auto-sync-indicator-enter 320ms")
 assert.ok(injectedCss.includes("animation: s1p-auto-sync-indicator-exit 260ms"));
 assert.ok(injectedCss.includes("__S1P_") === false);
 
+// dist/ 是构建产物，干净检出时可能不存在；发布流程会先构建再跑同一个断言。
+let artifactSummary = "artifact not built (run scripts/build-release-artifact.js before releasing)";
+if (fs.existsSync(artifactPath)) {
+  const artifact = fs.readFileSync(artifactPath, "utf8");
+  const artifactBytes = Buffer.byteLength(artifact);
+  const artifactCharacters = countCodePoints(artifact);
+  assert.ok(
+    artifactBytes <= maxBytes,
+    `发布产物超过 Greasy Fork 字节上限：${artifactBytes} > ${maxBytes}`
+  );
+  assert.ok(
+    artifactCharacters <= maxCharacters,
+    `发布产物超过 Greasy Fork 字符上限：${artifactCharacters} > ${maxCharacters}`
+  );
+  const sourceVersion = source.match(/^\/\/ @version\s+(.+)$/m)?.[1]?.trim();
+  const artifactVersion = artifact.match(/^\/\/ @version\s+(.+)$/m)?.[1]?.trim();
+  assert.equal(artifactVersion, sourceVersion, "产物 @version 必须与源码一致");
+  artifactSummary = `artifact ${artifactBytes} bytes / ${artifactCharacters} characters (@version ${artifactVersion})`;
+}
+
 console.log(
-  `[release-artifact-size] S1Plus.js ${sourceBytes} bytes / ${sourceCharacters} characters (+${sourceByteHeadroom} bytes headroom); CSS resource ${Buffer.byteLength(css)} bytes / ${countCodePoints(css)} characters; limit ${maxBytes}.`
+  `[release-artifact-size] ${artifactSummary}; readable source ${sourceBytes} bytes / ${sourceCharacters} characters (not limited); CSS resource ${Buffer.byteLength(css)} bytes / ${countCodePoints(css)} characters; limit ${maxBytes}.`
 );
