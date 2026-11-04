@@ -3,8 +3,13 @@
 #
 # Greasy Fork's sync_identifier points at:
 #   https://raw.githubusercontent.com/moekyo/S1Plus-Manual/release-min/S1Plus.js
-# so the publish action is a force-push of a one-commit generated branch that
+# The publish action appends one linear commit to `release-min` whose tree
 # contains only the built artifact at S1Plus.js. main/release stay readable.
+#
+# The commit MUST have the previous release-min tip as its parent. Greasy Fork
+# computes "commits in this push" from before..after; an orphan commit (or a
+# force-push that rewrites history) yields `{"message":"No commits found in
+# this push."}` and nothing is published.
 #
 # Usage:
 #   scripts/publish-release-min.sh [--version X.Y.Z] [--message "release: vX.Y.Z"] [--dry-run]
@@ -56,21 +61,31 @@ if [ -z "$MESSAGE" ]; then
   MESSAGE="release: v$VERSION"
 fi
 
+PARENT=""
+if git fetch --quiet origin refs/heads/release-min 2>/dev/null; then
+  PARENT="$(git rev-parse FETCH_HEAD)"
+fi
+
 BLOB="$(git hash-object -w "$ARTIFACT")"
 INDEX_FILE="$(mktemp)"
 trap 'rm -f "$INDEX_FILE"' EXIT
 GIT_INDEX_FILE="$INDEX_FILE" git read-tree --empty
 GIT_INDEX_FILE="$INDEX_FILE" git update-index --add --cacheinfo "100644,$BLOB,S1Plus.js"
 TREE="$(GIT_INDEX_FILE="$INDEX_FILE" git write-tree)"
-COMMIT="$(git commit-tree "$TREE" -m "$MESSAGE")"
+if [ -n "$PARENT" ]; then
+  COMMIT="$(git commit-tree "$TREE" -p "$PARENT" -m "$MESSAGE")"
+else
+  COMMIT="$(git commit-tree "$TREE" -m "$MESSAGE")"
+fi
 
 echo "release-min commit: $COMMIT (v$VERSION, $(wc -c < "$ARTIFACT" | tr -d ' ') bytes artifact)"
+echo "parent: ${PARENT:-<root commit; first publish>}"
 
 if [ "$DRY_RUN" = "1" ]; then
-  echo "dry run; not pushing. Would run: git branch -f release-min $COMMIT && git push --force origin $COMMIT:refs/heads/release-min"
+  echo "dry run; not pushing. Would run: git branch -f release-min $COMMIT && git push origin $COMMIT:refs/heads/release-min"
   exit 0
 fi
 
 git branch -f release-min "$COMMIT"
-git push --force origin "$COMMIT:refs/heads/release-min"
+git push origin "$COMMIT:refs/heads/release-min"
 echo "pushed release-min; Greasy Fork webhook should now publish v$VERSION"

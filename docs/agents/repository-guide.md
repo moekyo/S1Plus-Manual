@@ -199,14 +199,14 @@ Use the `s1plus-release` skill for the metadata steps:
 3. `CHANGELOG.md`
 4. Welcome popup text in `showFirstTimeWelcomeIfNeeded`
 
-Use the `userscript-release` skill to publish. It builds and checks the minified artifact (Greasy Fork's 2 MiB ceiling applies to the artifact, not the readable source; `@resource` pin freshness still applies), then force-pushes the generated `release-min` branch, which triggers the Greasy Fork webhook. Pushing `main` never publishes.
+Use the `userscript-release` skill to publish. It builds and checks the minified artifact (Greasy Fork's 2 MiB ceiling applies to the artifact, not the readable source; `@resource` pin freshness still applies), then appends a linear commit to the generated `release-min` branch, which triggers the Greasy Fork webhook. Pushing `main` never publishes.
 
 When `S1Plus-static-data.json` changes, the `@resource s1p-static-data` commit pin is intentionally left for the release commit: re-pin it in the same commit that updates `tests/test-release-artifact-size.js`. The local dev loader reads the working-tree resource directly, so development is unaffected.
 
 `node scripts/build-release-artifact.js` produces the minified published
 artifact `dist/S1Plus.user.js` (metadata preserved, `dist/` git-ignored);
 `node scripts/check-release-artifact.js` validates it. `scripts/publish-release-min.sh`
-creates the generated `release-min` branch and force-pushes it so the Greasy
+appends a commit to the generated `release-min` branch and pushes it so the Greasy
 Fork webhook publishes the minified file. `main`/`release` stay readable; see
 `docs/release-artifact-minification.md`.
 

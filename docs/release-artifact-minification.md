@@ -39,8 +39,9 @@ in, both `@resource` pins are immutable commit URLs, and `node --check` passes.
 ## Publishing (adopted: dedicated artifact branch + webhook)
 
 `main` and `release` stay readable. `release-min` is a generated branch that is
-force-pushed for every release and contains only `S1Plus.js` (the minified
-artifact). Greasy Fork's `sync_identifier` is:
+advanced by one linear commit per release and contains only `S1Plus.js` (the
+minified artifact). Each new commit's parent is the previous tip, so GitHub and
+Greasy Fork see a normal fast-forward push. Greasy Fork's `sync_identifier` is:
 
 ```
 https://raw.githubusercontent.com/moekyo/S1Plus-Manual/release-min/S1Plus.js
@@ -56,10 +57,12 @@ scripts/publish-release-min.sh --version X.Y.Z
 
 The script creates a one-commit branch whose tree contains only the built
 artifact at `S1Plus.js`, updates the local `release-min` branch, and
-force-pushes it. The Greasy Fork webhook then publishes that push.
+fast-forwards it. The Greasy Fork webhook then publishes that push.
 
 Do not push release tags to `release-min`; the branch is generated and the tag
-stays on `main`. Never force-push `main` or `release`.
+stays on `main`. Keep `release-min` linear: a force-push that rewrites its
+history makes Greasy Fork report `No commits found in this push`. Never
+force-push `main` or `release`.
 
 ### One-time Greasy Fork change
 
