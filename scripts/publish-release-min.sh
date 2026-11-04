@@ -34,7 +34,7 @@ if [ ! -f "$ARTIFACT" ]; then
   echo "missing $ARTIFACT; run node scripts/build-release-artifact.js first" >&2
   exit 1
 fi
-if [ -n "$(git status --porcelain)" ]; then
+if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
   echo "working tree is not clean; commit or stash changes before publishing" >&2
   exit 1
 fi
