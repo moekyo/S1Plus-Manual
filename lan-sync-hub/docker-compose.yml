@@ -1,0 +1,29 @@
+services:
+  lan-sync-hub:
+    image: node:20-alpine
+    container_name: s1plus-lan-sync
+    restart: unless-stopped
+    working_dir: /app
+    command: ["node", "server.js"]
+    environment:
+      HUB_TOKEN: "${HUB_TOKEN:?请在 .env 中设置 HUB_TOKEN}"
+      HUB_PORT: "5180"
+      HUB_DATA_DIR: "/data"
+      HUB_HISTORY: "10"
+    volumes:
+      - ./server.js:/app/server.js:ro
+      - ./test-client.html:/app/test-client.html:ro
+      - ./data:/data
+    ports:
+      - "5180:5180"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:5180/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
