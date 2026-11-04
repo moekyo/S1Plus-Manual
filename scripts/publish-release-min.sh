@@ -73,6 +73,12 @@ GIT_INDEX_FILE="$INDEX_FILE" git read-tree --empty
 GIT_INDEX_FILE="$INDEX_FILE" git update-index --add --cacheinfo "100644,$BLOB,S1Plus.js"
 TREE="$(GIT_INDEX_FILE="$INDEX_FILE" git write-tree)"
 if [ -n "$PARENT" ]; then
+  PARENT_TREE="$(git rev-parse "$PARENT^{tree}")"
+  if [ "$TREE" = "$PARENT_TREE" ]; then
+    echo "artifact content is identical to the current release-min tip; refusing to create an empty commit." >&2
+    echo "Greasy Fork reports 'No commits found in this push' for commits with no changed files." >&2
+    exit 1
+  fi
   COMMIT="$(git commit-tree "$TREE" -p "$PARENT" -m "$MESSAGE")"
 else
   COMMIT="$(git commit-tree "$TREE" -m "$MESSAGE")"
