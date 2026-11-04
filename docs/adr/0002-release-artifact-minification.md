@@ -52,9 +52,10 @@ Rebuild a generated branch for each release and point the Greasy Fork
 `https://raw.githubusercontent.com/moekyo/S1Plus-Manual/release-min/S1Plus.js`
 
 Per release, after the readable source tag exists, copy the built artifact over
-`S1Plus.js` on that branch, commit, and force-push `release-min`. This keeps
+`S1Plus.js` on that branch, commit it on top of the previous `release-min`
+tip, and push (fast-forward). This keeps
 `main`/`release` readable and preserves webhook automation, at the cost of a
-force-pushed generated branch and a one-time Greasy Fork sync-identifier
+generated branch and a one-time Greasy Fork sync-identifier
 change. Never force-push `main` or `release`.
 
 ## Consequences
@@ -109,3 +110,25 @@ unchanged and no minified artifact has been published.
 2. Add the artifact build command to the release checklist and verify the
    published `@version` with the normal Greasy Fork delivery check.
 3. Record the chosen branch/upload policy in the release skill/guide.
+
+## Adoption — v7.1.1 (2026-11-05)
+
+**Status: accepted.** Option **B** (dedicated `release-min` branch + webhook)
+is now the publishing flow.
+
+- `main`/`release` keep the readable source; `release-min` is a generated,
+  generated branch containing only the minified `S1Plus.js`, advanced linearly
+  once per release.
+- Greasy Fork `sync_identifier` points at
+  `https://raw.githubusercontent.com/moekyo/S1Plus-Manual/release-min/S1Plus.js`.
+- Per release: build the artifact, run `scripts/check-release-artifact.js`,
+  then `scripts/publish-release-min.sh` creates the one-commit branch and
+  appends the release commit on top of the previous tip and fast-forwards
+  `release-min`. A rewritten (orphan/force-pushed) history makes Greasy Fork
+  return `No commits found in this push`, so keep the branch linear.
+- The readable source is no longer limited by Greasy Fork's 2 MiB ceiling;
+  the built artifact is the only thing that must fit.
+- `tests/test-release-artifact-size.js` now validates the artifact (when
+  built) instead of the source.
+
+Supersedes the "Until then, keep the readable-source webhook flow" line above.

@@ -1,6 +1,6 @@
 # S1 Plus - Stage1st 体验增强套件
 
-> 当前文档基于当前 `main` 分支的 `S1Plus.js` 源码整理。脚本元数据版本为 `v7.1.0`（发布日期 `2026-11-01`）。
+> 当前文档基于当前 `main` 分支的 `S1Plus.js` 源码整理。脚本元数据版本为 `v7.1.1`（发布日期 `2026-11-05`）。
 
 ## 项目简介
 
@@ -8,15 +8,15 @@ S1 Plus 是一个面向 Stage1st（S1）的用户脚本，目标是让论坛浏�
 
 ## 当前版本速览
 
-- 代码基线：`v7.1.0`
-- 脚本版本字段：`7.1.0`
-- 最近发布日期：`2026-11-01`
+- 代码基线：`v7.1.1`
+- 脚本版本字段：`7.1.1`
+- 最近发布日期：`2026-11-05`
 - 脚本入口：`S1Plus.js`
 - 元数据匹配：`https://stage1st.com/2b/*`
 - 存储方式：Greasemonkey API（`GM_getValue` / `GM_setValue`）
 - 远程同步：GitHub Gist（`api.github.com` + `gist.githubusercontent.com`）
 - 发行资源：`S1Plus.css`（样式）和 `S1Plus-static-data.json`（静态图标、设置模板与 UI Showcase 数据）
-- Greasy Fork 产物：`S1Plus.js` 保持可读、未压缩，约 `2,075,645` bytes / `2,012,056` characters
+- Greasy Fork 产物：由 `release-min` 分支发布压缩版（约 `1.4MB`）；仓库中的 `S1Plus.js` 保持可读，约 `2,075,765` bytes / `2,012,248` characters
 
 ## 功能全景（按真实实现梳理）
 
@@ -169,7 +169,7 @@ S1 Plus 是一个面向 Stage1st（S1）的用户脚本，目标是让论坛浏�
 ### 初始化与运行时边界
 
 - 初始化分为 `document-start`、`body-ready`、`forum-ready`、`services-ready`、`content-ready` 和 `deferred` 六个阶段。
-- 主脚本以 `@run-at document-idle` 执行：页面首帧画完后再初始化，避免 2MB 脚本在首帧前编译执行；`document-start` 是首阶段的沿革命名。论坛结构相关逻辑、首轮 DOM 扫描与观察器挂载在后续阶段执行；启动同步、欢迎弹窗和其他非首屏任务放在 `deferred` 阶段。
+- 主脚本以 `@run-at document-idle` 执行：页面首帧画完后再初始化，避免约 2MB 的可读源码在首帧前编译执行（发布产物为约 1.4MB 的压缩版）；`document-start` 是首阶段的沿革命名。论坛结构相关逻辑、首轮 DOM 扫描与观察器挂载在后续阶段执行；启动同步、欢迎弹窗和其他非首屏任务放在 `deferred` 阶段。
 - 页面侧同步统一通过 `s1pSyncSystem` façade 表达本地变更、生命周期事件、同步意图和状态读取；运行锁、共享待同步调度、生命周期收尾和结果处理由同步系统内部统一协调。
 
 ### 数据模型（核心持久化）
