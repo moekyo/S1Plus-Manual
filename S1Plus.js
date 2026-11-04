@@ -30399,8 +30399,7 @@
 
   const S1P_LAN_REMOTE_STATE_KEY = "s1p_lan_remote_state";
   const S1P_LAN_VERSION_CONFLICT_CODE = "LAN_SYNC_VERSION_CONFLICT";
-  const S1P_LAN_WAIT_TIMEOUT_MS = 25000;
-  const S1P_LAN_WAIT_REQUEST_TIMEOUT_MS = 35000;
+  const S1P_LAN_POLL_INTERVAL_MS = 3000;
   const S1P_LAN_WAIT_RETRY_BASE_MS = 1500;
   const S1P_LAN_WAIT_RETRY_MAX_MS = 30000;
 
@@ -30931,50 +30930,20 @@
       s1pLanStopWaitLoop();
       return;
     }
+    const previousVersion = s1pGetLanRemoteState().version;
     try {
-      const state = s1pGetLanRemoteState();
-      const response = await s1pLanRequest({
-        method: "GET",
-        path: `/wait?since=${encodeURIComponent(
-          state.version
-        )}&timeout=${S1P_LAN_WAIT_TIMEOUT_MS}`,
-        timeoutMs: S1P_LAN_WAIT_REQUEST_TIMEOUT_MS,
-      });
-      if (
-        !s1pLanWaitLoopStarted ||
-        generation !== s1pLanWaitLoopGeneration
-      ) {
+      // 用短轮询 /health 而不是 /wait 长连接：GM_xmlhttpRequest 的长连接会
+      // 占住请求通道，同步拉取/推送排在它后面，实测要等满一个长轮询周期
+      // （25s）才发得出去。/health 只要几毫秒，轮询不会阻塞其它 LAN 请求。
+      const health = await s1pFetchLanHealth();
+      if (!s1pLanWaitLoopStarted || generation !== s1pLanWaitLoopGeneration) {
         return;
       }
-      if (
-        response.status !== 200 ||
-        !response.json ||
-        typeof response.json !== "object"
-      ) {
-        throw createS1pLanSyncError(
-          `LAN 事件循环请求失败 (状态码: ${response.status})。`,
-          {
-            status: response.status,
-            response: response.response,
-            retryable: REMOTE_SYNC_RETRYABLE_STATUS.has(response.status),
-            code: "LAN_WAIT_FAILED",
-          }
-        );
-      }
-      const remoteVersion = s1pNormalizeLanRemoteVersion(
-        response.json.version
-      );
-      const previousVersion = state.version;
       s1pLanWaitLoopBackoffMs = 0;
-      if (response.json.timeout !== true && remoteVersion > previousVersion) {
-        s1pSetLanRemoteState({
-          version: remoteVersion,
-          contentHash: response.json.contentHash,
-          updatedAt: response.json.updatedAt,
-        });
+      if (health.version !== previousVersion) {
         requestBackgroundSyncRun("lan_remote_update", 0);
       }
-      s1pLanScheduleWaitLoop(0);
+      s1pLanScheduleWaitLoop(S1P_LAN_POLL_INTERVAL_MS);
     } catch (error) {
       if (
         !s1pLanWaitLoopStarted ||

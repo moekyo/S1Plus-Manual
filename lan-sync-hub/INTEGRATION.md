@@ -70,10 +70,11 @@ const pushRemoteDataViaLan = async (dataObject, options) => {
 
 ## LAN 事件循环
 
-- 页面初始化（services-ready 后）且 `syncLanEnabled`：启动 `lanWaitLoop()`；
-- `GET /wait?since=<knownVersion>&timeout=25000`（GM_xmlhttpRequest 超时 35s）：
-  - 返回新版本 → 更新 GM state → `requestBackgroundSyncRun("lan_remote_update", 0)`，让现有后台调度器拉取/合并；
-  - 超时/断线 → 1.5–3s 退避重试；连续失败 N 次 → 标记 LAN 降级（回退 Gist 自动同步）；
+- 页面初始化（services-ready 后）且 `syncLanEnabled`：启动 LAN 事件循环；
+- `GET /health` 短轮询（3s 一次）：
+  - 版本变化 → 更新 GM state → `requestBackgroundSyncRun("lan_remote_update", 0)`，让现有后台调度器拉取/合并；
+  - 断线 → 1.5s 起指数退避重试（上限 30s）；401 → 停止事件循环并提示令牌失效；
+  - 不用 `/wait` 长轮询：GM_xmlhttpRequest 的长连接会占住请求通道，同步拉取/推送排在其后，实测要等满一个长轮询周期（25s）才发得出去；`/wait` 仍保留给测试页/其它客户端；
 - `visibilitychange → visible` 时立即补一次 `GET /health`，版本落后则触发一次同步；
 - 本地变更：沿用现有 read progress / 数据写入触发器（`saveReadProgress` 的 `triggerSync`、core data 写入等），无需新钩子；LAN 模式下把阅读进度同步去抖从 20s 降到 1s（见下）。
 
@@ -117,7 +118,7 @@ const pushRemoteDataViaLan = async (dataObject, options) => {
 - 新增设置：`syncLanEnabled=false` / `syncLanUrl=""` / `syncLanToken=""`；token 与 URL 不进同步导出/导入，诊断脱敏已覆盖 token；
 - `fetchRemoteData` / `pushRemoteData` 顶部按传输分流，Gist 请求代码未改；
 - LAN 适配：`/health` 元数据、`/snapshot` 全量拉取、`POST /snapshot` 推送；`baseVersion` 来自最近一次全量读取；409 时推进版本并抛可重试错误，由现有结果阶段重跑「拉取 → 合并 → 推送」；
-- `/wait` 长轮询事件循环（`s1pSyncSystem.initialize` 启动、`dispose` 停止）；事件到达触发后台同步；断线 1.5s 起指数退避；
+- `/health` 短轮询事件循环（3s，`s1pSyncSystem.initialize` 启动、`dispose` 停止）；版本变化触发后台同步；断线 1.5s 起指数退避（不用 `/wait` 长轮询，避免占住 GM 请求通道）；
 - LAN 模式去抖：阅读进度同步 1s（Gist 20s）、阅读进度落盘 1s（Gist 5s）；
 - 手动同步 / 强制推送 / 强制拉取 / 设置页 Token 校验显式 `transport: "gist"`，保留 Gist 备份语义；
 - 默认关闭时所有新增路径不执行，Gist 用户行为不变。
