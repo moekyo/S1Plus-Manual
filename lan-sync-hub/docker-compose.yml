@@ -7,6 +7,8 @@ services:
     command: ["node", "server.js"]
     environment:
       HUB_TOKEN: "${HUB_TOKEN:?请在 .env 中设置 HUB_TOKEN}"
+      HUB_GIST_MIRROR_GIST_ID: "${HUB_GIST_MIRROR_GIST_ID:-}"
+      HUB_GIST_MIRROR_TOKEN: "${HUB_GIST_MIRROR_TOKEN:-}"
       HUB_PORT: "5180"
       HUB_DATA_DIR: "/data"
       HUB_HISTORY: "10"
