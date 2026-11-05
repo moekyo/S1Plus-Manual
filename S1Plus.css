@@ -2172,92 +2172,24 @@
       color: var(--s1p-t);
     }
 
-    /* --- 自定义时间选择器（磨砂玻璃弹层，跟随浅色/深色主题变量） --- */
-    .s1p-settings-item .s1p-time-picker-btn {
-      width: auto;
-      min-width: 120px;
+    /* --- 自定义时间输入（时 / 分 两段输入，跟随主题变量） --- */
+    .s1p-time-part-group {
       display: inline-flex;
       align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      cursor: pointer;
-      font-variant-numeric: tabular-nums;
-      text-align: left;
-    }
-    .s1p-time-picker-btn:hover {
-      border-color: var(--s1p-sec);
-    }
-    .s1p-time-picker-btn[aria-expanded="true"] {
-      border-color: var(--s1p-sec);
-      background-color: var(--s1p-white);
-    }
-    .s1p-time-picker-caret {
-      width: 0;
-      height: 0;
-      border-left: 4px solid transparent;
-      border-right: 4px solid transparent;
-      border-top: 5px solid var(--s1p-desc-t);
-      opacity: 0.8;
-      flex: 0 0 auto;
-    }
-    .s1p-time-picker-popover {
-      position: fixed;
-      z-index: 100130;
-      display: flex;
       gap: 6px;
-      padding: 8px;
-      border-radius: 10px;
-      border: 1px solid var(--s1p-border);
-      background: var(--s1p-popover-glass-bg);
-      -webkit-backdrop-filter: var(--s1p-popover-glass-filter);
-      backdrop-filter: var(--s1p-popover-glass-filter);
-      box-shadow: var(--s1p-popover-glass-shadow);
     }
-    .s1p-time-picker-column {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-      min-width: 58px;
-      max-height: 220px;
-      overflow-y: auto;
-      scrollbar-width: thin;
-    }
-    .s1p-time-picker-column-label {
-      position: sticky;
-      top: 0;
-      padding: 2px 8px 4px;
-      font-size: 11px;
-      color: var(--s1p-desc-t);
-      background: var(--s1p-popover-glass-bg);
-      -webkit-backdrop-filter: var(--s1p-popover-glass-filter);
-      backdrop-filter: var(--s1p-popover-glass-filter);
-    }
-    .s1p-time-picker-option {
-      border: 0;
-      background: transparent;
-      color: var(--s1p-t);
-      font-size: 13px;
-      line-height: 1.4;
-      padding: 6px 8px;
-      border-radius: 6px;
-      cursor: pointer;
+    .s1p-settings-item .s1p-time-part-input {
+      width: 64px;
+      min-width: 0;
+      padding: 8px 10px;
       text-align: center;
       font-variant-numeric: tabular-nums;
     }
-    .s1p-time-picker-option:hover {
-      background: var(--s1p-sub);
-      color: var(--s1p-t);
+    .s1p-time-part-label {
+      color: var(--s1p-desc-t);
+      font-size: 13px;
     }
-    .s1p-time-picker-option.active {
-      background: var(--s1p-sec);
-      color: var(--s1p-white);
-      font-weight: 500;
-    }
-    .s1p-gist-mirror-schedule-control.is-disabled {
-      opacity: 0.55;
-      pointer-events: none;
-    }
-    .s1p-time-picker-btn:disabled {
+    .s1p-time-part-input:disabled {
       opacity: 0.55;
       cursor: not-allowed;
     }
