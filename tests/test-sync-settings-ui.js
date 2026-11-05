@@ -368,8 +368,24 @@ assert.ok(
 // --- Gist 镜像（由 NAS 执行，脚本只做配置与状态展示） ----------------------
 [
   [
-    /id="s1p-gist-mirror-enabled-toggle"[\s\S]*id="s1p-gist-mirror-schedule-select"[\s\S]*value="hourly"[\s\S]*value="every6h"[\s\S]*value="daily"[\s\S]*?<\/select>[\s\S]*id="s1p-gist-mirror-daily-time-input"/,
-    "Gist 镜像缺少启用开关、频率选择或每天时间输入。",
+    /id="s1p-gist-mirror-enabled-toggle"[\s\S]*id="s1p-gist-mirror-schedule-control" class="s1p-segmented-control[^"]*"[\s\S]*data-value="hourly"[\s\S]*data-value="every6h"[\s\S]*data-value="daily"[\s\S]*id="s1p-gist-mirror-daily-time-picker"[\s\S]*id="s1p-gist-mirror-daily-time-value"/,
+    "Gist 镜像缺少启用开关、滑块式频率选择或自定义时间选择按钮。",
+  ],
+  [
+    /\.s1p-time-picker-popover \{[\s\S]*?backdrop-filter: var\(--s1p-popover-glass-filter\)[\.\s\S]*?\.s1p-time-picker-option\.active \{[^}]*background: var\(--s1p-sec\)/,
+    "自定义时间选择弹层未复用磨砂玻璃与主题变量。",
+  ],
+  [
+    /html\.s1p-theme-dark \{[\s\S]*?--s1p-popover-glass-bg: rgba\(17, 24, 39/,
+    "时间选择弹层的深色主题变量缺失。",
+  ],
+  [
+    /const openGistMirrorTimePicker = \(\) => \{[\s\S]*createGistMirrorTimeColumn\([\s\S]*document\.body\.appendChild\(popover\)/,
+    "自定义时间选择器未实现弹层与小时/分钟列。",
+  ],
+  [
+    /const getGistMirrorScheduleValue = \(\) =>[\s\S]*getSegmentedControlValue\(gistMirrorScheduleControl/,
+    "镜像频率未接入滑块式分段控件。",
   ],
   [
     /id="s1p-gist-mirror-save-btn"[\s\S]*id="s1p-gist-mirror-now-btn"[\s\S]*id="s1p-gist-mirror-status"[^>]*role="status" aria-live="polite"/,
@@ -415,6 +431,11 @@ assert.doesNotMatch(
   sourceCode,
   /syncGistMirrorMode|s1pRunGistMirrorOnce|s1pScheduleGistMirror/,
   "Gist 镜像调度与合并逻辑应放在 NAS Hub，脚本里只保留配置与状态展示。"
+);
+assert.doesNotMatch(
+  sourceCode,
+  /id="s1p-gist-mirror-daily-time-input"/,
+  "每天镜像时间应使用自定义选择器，不再使用原生 time 输入框。"
 );
 
 const lanTestConnectionBlock =
