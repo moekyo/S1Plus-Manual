@@ -2178,10 +2178,12 @@
       align-items: center;
       gap: 6px;
     }
-    .s1p-settings-item .s1p-time-part-input {
-      width: 64px;
-      min-width: 0;
-      padding: 8px 10px;
+    .s1p-settings-item .s1p-time-part-group .s1p-time-part-input {
+      width: 56px;
+      min-width: 56px;
+      max-width: 56px;
+      flex: 0 0 56px;
+      padding: 8px 6px;
       text-align: center;
       font-variant-numeric: tabular-nums;
     }

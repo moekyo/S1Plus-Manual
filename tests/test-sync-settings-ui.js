@@ -372,7 +372,7 @@ assert.ok(
     "Gist 镜像缺少启用开关、滑块式频率选择或时/分输入框。",
   ],
   [
-    /\.s1p-time-part-group \{[\s\S]*?\.s1p-settings-item \.s1p-time-part-input \{[^}]*width: 64px[^}]*text-align: center/,
+    /\.s1p-time-part-group \{[\s\S]*?\.s1p-settings-item \.s1p-time-part-group \.s1p-time-part-input \{[^}]*width: 56px[^}]*text-align: center/,
     "时/分输入框未使用统一的窄输入样式。",
   ],
   [
