@@ -365,6 +365,72 @@ assert.ok(
   "局域网同步总开关必须位于折叠体内部，收起分组时随其他控件一起隐藏。"
 );
 
+// --- Gist 镜像（局域网数据备份到 Gist） ------------------------------------
+[
+  [
+    /syncGistMirrorMode: "off"[\s\S]*syncGistMirrorInterval: "hourly"[\s\S]*syncGistMirrorDailyTime: "04:00"/,
+    "缺少 Gist 镜像默认设置（关闭 / 每小时 / 04:00）。",
+  ],
+  [
+    /id="s1p-gist-mirror-mode-select"[\s\S]*value="after_lan_sync"[\s\S]*value="scheduled"[\s\S]*value="manual"/,
+    "Gist 镜像缺少时机选择（每次局域网同步后 / 定时 / 仅手动）。",
+  ],
+  [
+    /id="s1p-gist-mirror-interval-select"[\s\S]*value="hourly"[\s\S]*value="every6h"[\s\S]*value="daily"[\s\S]*id="s1p-gist-mirror-daily-time-input"/,
+    "Gist 镜像缺少定时间隔与可编辑的每天同步时间。",
+  ],
+  [
+    /id="s1p-gist-mirror-now-btn"[\s\S]*id="s1p-gist-mirror-status"[^>]*role="status" aria-live="polite"/,
+    "Gist 镜像缺少手动同步按钮或状态输出区域。",
+  ],
+  [
+    /data-s1p-sync-section-body="lan" hidden[\s\S]*id="s1p-gist-mirror-mode-select"/,
+    "Gist 镜像控件应位于局域网折叠体内。",
+  ],
+  [
+    /const renderGistMirrorStatus = \(state = null\) => \{[\s\S]*上次镜像：[\s\S]*s1pSetGistMirrorStatusHandler\(renderGistMirrorStatus\)/,
+    "Gist 镜像状态未接入设置面板。",
+  ],
+  [
+    /applyGistMirrorSettingsToModal\(settingsSnapshot\)/,
+    "打开设置时未回填 Gist 镜像配置。",
+  ],
+  [
+    /syncGistMirrorMode:[\s\S]*syncGistMirrorInterval:[\s\S]*syncGistMirrorDailyTime:/,
+    "保存设置时未收集 Gist 镜像配置。",
+  ],
+  [
+    /const validateGistMirrorSettingsForSave = \(settingsSnapshot\) => \{[\s\S]*Gist ID 与 GitHub Token/,
+    "开启 Gist 镜像时未校验 Gist ID 与 Token。",
+  ],
+  [
+    /const s1pMaybeScheduleGistMirrorAfterLanSync = \(\) => \{[\s\S]*after_lan_sync[\s\S]*S1P_GIST_MIRROR_AFTER_SYNC_DELAY_MS/,
+    "缺少“每次局域网同步后”触发 Gist 镜像的实现。",
+  ],
+  [
+    /const s1pRunGistMirrorOnce = async[\s\S]*hasAnyActiveSyncLock\(\)[\s\S]*s1pAcquireGistMirrorLock\(\)/,
+    "Gist 镜像缺少同步锁/跨标签页互斥。",
+  ],
+  [
+    /const s1pComputeGistMirrorNextDueAt = \([\s\S]*dailyTime\.split\(":"\)/,
+    "缺少可编辑的每天同步时间调度计算。",
+  ],
+  [
+    /s1pInitializeGistMirrorScheduler\(\)/,
+    "未初始化 Gist 镜像定时器。",
+  ],
+  [
+    /s1pScheduleGistMirror\("settings_saved"\)/,
+    "保存设置后未刷新 Gist 镜像定时器。",
+  ],
+  [
+    /s1pMaybeScheduleGistMirrorAfterLanSync\(\);/,
+    "局域网推送成功后未触发 Gist 镜像调度。",
+  ],
+].forEach(([pattern, message]) => {
+  expectMatch(pattern, message);
+});
+
 const lanTestConnectionBlock =
   sourceCode.match(
     /const testLanSyncConnection = async \(\) => \{[\s\S]*?\n    \};\n\n    const updateForcePullState/

@@ -27555,6 +27555,9 @@
       syncLanEnabled,
       syncLanUrl,
       syncLanToken,
+      syncGistMirrorMode,
+      syncGistMirrorInterval,
+      syncGistMirrorDailyTime,
       ...syncedSettings
     } = sourceSettings;
     return syncedSettings;
@@ -27691,6 +27694,9 @@
         delete importedSettings.syncLanEnabled;
         delete importedSettings.syncLanUrl;
         delete importedSettings.syncLanToken;
+        delete importedSettings.syncGistMirrorMode;
+        delete importedSettings.syncGistMirrorInterval;
+        delete importedSettings.syncGistMirrorDailyTime;
         const {
           settings: mergedSettingsForImport,
           migrationApplied: settingsTransformedDuringImport,
@@ -30847,6 +30853,7 @@
             transport: "lan",
           },
         });
+        s1pMaybeScheduleGistMirrorAfterLanSync();
         return {
           success: true,
           message: "数据已成功推送到 LAN Hub。",
@@ -30910,6 +30917,472 @@
         });
       }
       throw error;
+    }
+  };
+
+
+  // ---------------------------------------------------------------------------
+  // Gist 镜像：把局域网模式下的数据安全合并到 Gist，供未开局域网的设备拉取。
+  // 只在“阅读进度”存在差异时自动合并；核心数据有差异则跳过并提示，绝不覆盖。
+  // 镜像写 Gist 不参与同步基线；下一次局域网自动同步会把合并结果回写 Hub。
+  // ---------------------------------------------------------------------------
+  const S1P_GIST_MIRROR_STATE_KEY = "s1p_gist_mirror_state";
+  const S1P_GIST_MIRROR_LOCK_KEY = "s1p_gist_mirror_lock";
+  const S1P_GIST_MIRROR_LOCK_TTL_MS = 2 * 60 * 1000;
+  const S1P_GIST_MIRROR_AFTER_SYNC_DELAY_MS = 5000;
+  const S1P_GIST_MIRROR_RECHECK_MS = 60 * 1000;
+  const S1P_GIST_MIRROR_INTERVAL_MS = Object.freeze({
+    hourly: 60 * 60 * 1000,
+    every6h: 6 * 60 * 60 * 1000,
+  });
+  const S1P_GIST_MIRROR_MODES = Object.freeze([
+    "off",
+    "after_lan_sync",
+    "scheduled",
+    "manual",
+  ]);
+  const S1P_GIST_MIRROR_INTERVALS = Object.freeze(["hourly", "every6h", "daily"]);
+
+  let s1pGistMirrorInFlight = null;
+  let s1pGistMirrorTimer = null;
+  let s1pGistMirrorDebounceTimer = null;
+  let s1pGistMirrorVisibilityBound = false;
+  let s1pGistMirrorStatusHandler = null;
+
+  const s1pNormalizeGistMirrorDailyTimeValue = (value) => {
+    const raw = String(value || "").trim();
+    return /^([01]?\d|2[0-3]):[0-5]\d$/.test(raw) ? raw.padStart(5, "0") : "04:00";
+  };
+
+  const s1pGetGistMirrorConfig = (settingsSnapshot = null) => {
+    const settings = settingsSnapshot || getSettings();
+    return {
+      mode: S1P_GIST_MIRROR_MODES.includes(settings.syncGistMirrorMode)
+        ? settings.syncGistMirrorMode
+        : "off",
+      interval: S1P_GIST_MIRROR_INTERVALS.includes(settings.syncGistMirrorInterval)
+        ? settings.syncGistMirrorInterval
+        : "hourly",
+      dailyTime: s1pNormalizeGistMirrorDailyTimeValue(
+        settings.syncGistMirrorDailyTime
+      ),
+    };
+  };
+
+  const s1pGetGistMirrorState = () => {
+    const raw = GM_getValue(S1P_GIST_MIRROR_STATE_KEY, null);
+    const source = raw && typeof raw === "object" ? raw : {};
+    return {
+      lastAt: Number(source.lastAt) || 0,
+      lastStatus: String(source.lastStatus || ""),
+      lastMessage: String(source.lastMessage || ""),
+      lastReason: String(source.lastReason || ""),
+      lastHash: String(source.lastHash || ""),
+    };
+  };
+
+  const s1pSetGistMirrorStatusHandler = (handler) => {
+    s1pGistMirrorStatusHandler =
+      typeof handler === "function" ? handler : null;
+  };
+
+  const s1pPatchGistMirrorState = (patch = {}) => {
+    const next = {
+      ...s1pGetGistMirrorState(),
+      ...(patch && typeof patch === "object" ? patch : {}),
+    };
+    GM_setValue(S1P_GIST_MIRROR_STATE_KEY, next);
+    if (s1pGistMirrorStatusHandler) {
+      try {
+        s1pGistMirrorStatusHandler(next);
+      } catch (_) {
+        /* status handler is best-effort */
+      }
+    }
+    return next;
+  };
+
+  const s1pIsGistMirrorConfigured = (settings) =>
+    Boolean(settings) &&
+    settings.syncRemoteEnabled === true &&
+    Boolean(String(settings.syncRemoteGistId || "").trim()) &&
+    Boolean(String(settings.syncRemotePat || "").trim());
+
+  const s1pAcquireGistMirrorLock = () => {
+    const now = Date.now();
+    const current = GM_getValue(S1P_GIST_MIRROR_LOCK_KEY, null);
+    if (
+      current &&
+      typeof current === "object" &&
+      Number(current.expiresAt) > now &&
+      current.owner !== SYNC_RUNTIME_SESSION_ID
+    ) {
+      return "";
+    }
+    const token = `${SYNC_RUNTIME_SESSION_ID}_${now}_${Math.random()
+      .toString(36)
+      .slice(2, 7)}`;
+    GM_setValue(S1P_GIST_MIRROR_LOCK_KEY, {
+      owner: SYNC_RUNTIME_SESSION_ID,
+      token,
+      startedAt: now,
+      expiresAt: now + S1P_GIST_MIRROR_LOCK_TTL_MS,
+    });
+    const saved = GM_getValue(S1P_GIST_MIRROR_LOCK_KEY, null);
+    return saved && saved.token === token ? token : "";
+  };
+
+  const s1pReleaseGistMirrorLock = (token) => {
+    const current = GM_getValue(S1P_GIST_MIRROR_LOCK_KEY, null);
+    if (current && current.token === token) {
+      GM_deleteValue(S1P_GIST_MIRROR_LOCK_KEY);
+    }
+  };
+
+  const s1pComputeGistMirrorNextDueAt = (
+    settingsSnapshot = null,
+    now = Date.now()
+  ) => {
+    const config = s1pGetGistMirrorConfig(settingsSnapshot);
+    if (config.mode !== "scheduled") {
+      return 0;
+    }
+    const state = s1pGetGistMirrorState();
+    const lastAt = state.lastAt || 0;
+    if (config.interval === "daily") {
+      const [hours, minutes] = config.dailyTime.split(":").map(Number);
+      const candidate = new Date(now);
+      candidate.setHours(hours, minutes, 0, 0);
+      const todayStart = new Date(now);
+      todayStart.setHours(0, 0, 0, 0);
+      if (lastAt >= todayStart.getTime()) {
+        return candidate.getTime() + 24 * 60 * 60 * 1000;
+      }
+      return now >= candidate.getTime() ? now : candidate.getTime();
+    }
+    const intervalMs =
+      S1P_GIST_MIRROR_INTERVAL_MS[config.interval] ||
+      S1P_GIST_MIRROR_INTERVAL_MS.hourly;
+    return lastAt ? lastAt + intervalMs : now + S1P_GIST_MIRROR_RECHECK_MS;
+  };
+
+  const s1pClearGistMirrorTimer = () => {
+    if (s1pGistMirrorTimer) {
+      clearTimeout(s1pGistMirrorTimer);
+      s1pGistMirrorTimer = null;
+    }
+    if (s1pGistMirrorDebounceTimer) {
+      clearTimeout(s1pGistMirrorDebounceTimer);
+      s1pGistMirrorDebounceTimer = null;
+    }
+  };
+
+  const s1pRunScheduledGistMirrorAndReschedule = async (reason = "scheduled") => {
+    const result = await s1pRunGistMirrorOnce(reason);
+    const shouldRetrySoon =
+      result?.status === "skipped" &&
+      ["sync_lock_active", "other_tab", "in_flight", "page_unloading"].includes(
+        result?.reason
+      );
+    if (shouldRetrySoon) {
+      s1pGistMirrorTimer = setTimeout(() => {
+        s1pGistMirrorTimer = null;
+        void s1pRunScheduledGistMirrorAndReschedule(reason);
+      }, S1P_GIST_MIRROR_RECHECK_MS);
+      return;
+    }
+    s1pScheduleGistMirror("reschedule");
+  };
+
+  const s1pScheduleGistMirror = (reason = "schedule") => {
+    if (s1pGistMirrorTimer) {
+      clearTimeout(s1pGistMirrorTimer);
+      s1pGistMirrorTimer = null;
+    }
+    const settings = getSettings();
+    const config = s1pGetGistMirrorConfig(settings);
+    if (config.mode !== "scheduled" || !s1pIsGistMirrorConfigured(settings)) {
+      return { status: "skipped", reason: "not_scheduled" };
+    }
+    const now = Date.now();
+    const dueAt = s1pComputeGistMirrorNextDueAt(settings, now);
+    const delayMs = Math.max(1000, dueAt - now);
+    s1pGistMirrorTimer = setTimeout(() => {
+      s1pGistMirrorTimer = null;
+      void s1pRunScheduledGistMirrorAndReschedule("scheduled");
+    }, delayMs);
+    recordSyncTraceEvent("gist_mirror_scheduled", {
+      scope: "gist_mirror",
+      status: "scheduled",
+      message: "已安排下一次 Gist 镜像",
+      details: { reason, dueAt, delayMs, interval: config.interval, dailyTime: config.dailyTime },
+    });
+    return { status: "scheduled", dueAt, delayMs };
+  };
+
+  const s1pInitializeGistMirrorScheduler = () => {
+    if (typeof document === "undefined") {
+      return { status: "skipped", reason: "no_document" };
+    }
+    if (!s1pGistMirrorVisibilityBound) {
+      s1pGistMirrorVisibilityBound = true;
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState !== "visible") {
+          return;
+        }
+        const dueAt = s1pComputeGistMirrorNextDueAt();
+        if (dueAt && Date.now() >= dueAt) {
+          void s1pRunScheduledGistMirrorAndReschedule("scheduled");
+          return;
+        }
+        s1pScheduleGistMirror("visibility");
+      });
+      window.addEventListener("pageshow", () => {
+        s1pScheduleGistMirror("pageshow");
+      });
+    }
+    return s1pScheduleGistMirror("initialize");
+  };
+
+  const s1pTeardownGistMirrorScheduler = () => {
+    s1pClearGistMirrorTimer();
+  };
+
+  const s1pMaybeScheduleGistMirrorAfterLanSync = () => {
+    const settings = getSettings();
+    const config = s1pGetGistMirrorConfig(settings);
+    if (config.mode !== "after_lan_sync" || !s1pIsGistMirrorConfigured(settings)) {
+      return false;
+    }
+    const state = s1pGetGistMirrorState();
+    if (Date.now() - (state.lastAt || 0) < 15000) {
+      return false;
+    }
+    if (s1pGistMirrorDebounceTimer) {
+      clearTimeout(s1pGistMirrorDebounceTimer);
+      s1pGistMirrorDebounceTimer = null;
+    }
+    s1pGistMirrorDebounceTimer = setTimeout(() => {
+      s1pGistMirrorDebounceTimer = null;
+      void s1pRunGistMirrorOnce("after_lan_sync");
+    }, S1P_GIST_MIRROR_AFTER_SYNC_DELAY_MS);
+    return true;
+  };
+
+  const s1pExecuteGistMirror = async (settings, reason) => {
+    const startedAt = Date.now();
+    recordSyncTraceEvent("gist_mirror_start", {
+      scope: "gist_mirror",
+      status: "running",
+      message: "开始执行 Gist 镜像",
+      details: { reason },
+    });
+    try {
+      const localData = await exportLocalDataObject({ useFreshSnapshot: true });
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const gistFetch = await fetchRemoteData({ transport: "gist" });
+        const gistMeta = gistFetch.meta || {};
+        const rawGist = gistFetch.data;
+        const hasGistData =
+          rawGist && typeof rawGist === "object" && Object.keys(rawGist).length > 0;
+        if (!hasGistData) {
+          await pushRemoteData(localData, {
+            transport: "gist",
+            writerContext: {
+              action: "gist_mirror_seed",
+              syncMode: "background",
+              threadId: "",
+            },
+            settingsSnapshot: settings,
+          });
+          const message = "已把本地数据初始化到 Gist";
+          s1pPatchGistMirrorState({
+            lastAt: Date.now(),
+            lastStatus: "success",
+            lastMessage: message,
+            lastReason: reason,
+            lastHash: localData.contentHash || "",
+          });
+          recordSyncTraceEvent("gist_mirror_done", {
+            scope: "gist_mirror",
+            status: "success",
+            message,
+            details: { reason, action: "seed", elapsedMs: Date.now() - startedAt },
+          });
+          if (reason === "manual") {
+            showMessage(`Gist 镜像完成：${message}`, true);
+          }
+          return { status: "success", action: "seed", message };
+        }
+
+        const gistData = await migrateAndValidateRemoteData(rawGist);
+        if (localData.contentHash === gistData.contentHash) {
+          const message = "Gist 与本地一致，无需镜像";
+          s1pPatchGistMirrorState({
+            lastAt: Date.now(),
+            lastStatus: "no_change",
+            lastMessage: message,
+            lastReason: reason,
+            lastHash: gistData.contentHash || "",
+          });
+          recordSyncTraceEvent("gist_mirror_done", {
+            scope: "gist_mirror",
+            status: "success",
+            message,
+            details: { reason, action: "no_change" },
+          });
+          if (reason === "manual") {
+            showMessage(`Gist 镜像完成：${message}`, true);
+          }
+          return { status: "success", action: "no_change", message };
+        }
+
+        const localComparable =
+          await calculateComparableBaseHashWithoutReadProgress(localData.data);
+        const gistComparable =
+          await calculateComparableBaseHashWithoutReadProgress(gistData.data);
+        if (localComparable !== gistComparable) {
+          const message =
+            "Gist 与本地存在核心数据差异；镜像已跳过，请先手动同步处理";
+          s1pPatchGistMirrorState({
+            lastAt: Date.now(),
+            lastStatus: "conflict",
+            lastMessage: message,
+            lastReason: reason,
+            lastHash: gistData.contentHash || "",
+          });
+          recordSyncTraceEvent("gist_mirror_conflict", {
+            scope: "gist_mirror",
+            status: "conflict",
+            message,
+            details: { reason, transport: "gist" },
+            level: "warn",
+          });
+          if (reason === "manual") {
+            showMessage(message, false);
+          }
+          return { status: "conflict", reason: "core_data_differs", message };
+        }
+
+        const merged = await buildMergedReadProgressPayload(localData, gistData);
+        if (merged.contentHash !== gistData.contentHash) {
+          try {
+            await pushRemoteData(merged.payload, {
+              transport: "gist",
+              expectedRemoteUpdatedAt: gistMeta.updatedAt,
+              writerContext: {
+                action: "gist_mirror",
+                syncMode: "background",
+                threadId: "",
+              },
+              settingsSnapshot: settings,
+            });
+          } catch (pushError) {
+            if (
+              pushError?.code === REMOTE_VERSION_CONFLICT_CODE &&
+              attempt === 0
+            ) {
+              continue;
+            }
+            throw pushError;
+          }
+        }
+        importLocalData(JSON.stringify(merged.payload), {
+          suppressPostSync: true,
+        });
+        if (isLanSyncTransportActive(settings)) {
+          requestBackgroundSyncRun("gist_mirror_convergence", 1500);
+        }
+        const message =
+          merged.contentHash === gistData.contentHash
+            ? "Gist 已是最新，本地已对齐"
+            : "已把本地与 Gist 的阅读进度合并并写回 Gist";
+        s1pPatchGistMirrorState({
+          lastAt: Date.now(),
+          lastStatus: "success",
+          lastMessage: message,
+          lastReason: reason,
+          lastHash: merged.contentHash || "",
+        });
+        recordSyncTraceEvent("gist_mirror_done", {
+          scope: "gist_mirror",
+          status: "success",
+          message,
+          details: {
+            reason,
+            action: "merged",
+            elapsedMs: Date.now() - startedAt,
+            transport: "gist",
+          },
+        });
+        if (reason === "manual") {
+          showMessage(`Gist 镜像完成：${message}`, true);
+        }
+        return { status: "success", action: "merged", message };
+      }
+      throw new Error("Gist 镜像在版本冲突重试后仍未完成");
+    } catch (error) {
+      const message = String(error?.message || error || "Gist 镜像失败");
+      s1pPatchGistMirrorState({
+        lastAt: Date.now(),
+        lastStatus: "failure",
+        lastMessage: message,
+        lastReason: reason,
+        lastHash: "",
+      });
+      recordSyncTraceEvent("gist_mirror_error", {
+        scope: "gist_mirror",
+        status: "failure",
+        message: "Gist 镜像失败",
+        details: { reason, error: message },
+        level: "error",
+      });
+      if (reason === "manual") {
+        showMessage(`Gist 镜像失败：${message}`, false);
+      }
+      return { status: "failure", message };
+    }
+  };
+
+  const s1pRunGistMirrorOnce = async (reason = "manual") => {
+    if (s1pGistMirrorInFlight) {
+      return { status: "skipped", reason: "in_flight" };
+    }
+    const settings = getSettings();
+    if (!s1pIsGistMirrorConfigured(settings)) {
+      if (reason === "manual") {
+        showMessage("远程同步未启用，或 Gist ID / Token 未填写。", false);
+      }
+      return { status: "skipped", reason: "sync_not_ready" };
+    }
+    if (s1pIsSyncPageLifecycleUnloading()) {
+      return { status: "skipped", reason: "page_unloading" };
+    }
+    if (hasAnyActiveSyncLock()) {
+      if (reason === "manual") {
+        showMessage("其他同步任务正在执行，请稍后再试。", false);
+      }
+      return { status: "skipped", reason: "sync_lock_active" };
+    }
+    const lockToken = s1pAcquireGistMirrorLock();
+    if (!lockToken) {
+      if (reason === "manual") {
+        showMessage("另一个标签页正在执行 Gist 镜像，请稍后再试。", false);
+      }
+      return { status: "skipped", reason: "other_tab" };
+    }
+    const task = (async () => {
+      try {
+        return await s1pExecuteGistMirror(settings, reason);
+      } finally {
+        s1pReleaseGistMirrorLock(lockToken);
+      }
+    })();
+    s1pGistMirrorInFlight = task;
+    try {
+      return await task;
+    } finally {
+      s1pGistMirrorInFlight = null;
     }
   };
 
@@ -34716,6 +35189,11 @@
     syncLanEnabled: false,
     syncLanUrl: "",
     syncLanToken: "",
+    // Gist 镜像：把局域网模式下的数据安全合并到 Gist，供未开局域网的设备拉取。
+    // 与 syncLan* 一样属于设备本地设置，不参与同步导出/导入。
+    syncGistMirrorMode: "off",
+    syncGistMirrorInterval: "hourly",
+    syncGistMirrorDailyTime: "04:00",
     syncTokenExpiryEnabled: false, // [新增] Token 过期提醒
     syncTokenExpiryDate: null,     // [新增] Token 过期时间戳
   };
@@ -34920,6 +35398,9 @@
       syncLanEnabled: freezeDefinition({ modalTabs: ["sync"] }),
       syncLanUrl: freezeDefinition({ modalTabs: ["sync"] }),
       syncLanToken: freezeDefinition({ modalTabs: ["sync"] }),
+      syncGistMirrorMode: freezeDefinition({ modalTabs: ["sync"] }),
+      syncGistMirrorInterval: freezeDefinition({ modalTabs: ["sync"] }),
+      syncGistMirrorDailyTime: freezeDefinition({ modalTabs: ["sync"] }),
       syncDailyFirstLoad: freezeDefinition({
         runtimeIntents: ["navbar_initialize"],
         modalTabs: ["sync"],
@@ -35508,6 +35989,37 @@
       markMigration("sync_lan_token_normalized");
     }
     settings.syncLanToken = normalizedSyncLanToken;
+
+    const normalizedGistMirrorMode = [
+      "off",
+      "after_lan_sync",
+      "scheduled",
+      "manual",
+    ].includes(settings.syncGistMirrorMode)
+      ? settings.syncGistMirrorMode
+      : "off";
+    if (settings.syncGistMirrorMode !== normalizedGistMirrorMode) {
+      markMigration("sync_gist_mirror_mode_normalized");
+    }
+    settings.syncGistMirrorMode = normalizedGistMirrorMode;
+    const normalizedGistMirrorInterval = ["hourly", "every6h", "daily"].includes(
+      settings.syncGistMirrorInterval
+    )
+      ? settings.syncGistMirrorInterval
+      : "hourly";
+    if (settings.syncGistMirrorInterval !== normalizedGistMirrorInterval) {
+      markMigration("sync_gist_mirror_interval_normalized");
+    }
+    settings.syncGistMirrorInterval = normalizedGistMirrorInterval;
+    const normalizedGistMirrorDailyTime = /^([01]?\d|2[0-3]):[0-5]\d$/.test(
+      String(settings.syncGistMirrorDailyTime || "").trim()
+    )
+      ? String(settings.syncGistMirrorDailyTime).trim().padStart(5, "0")
+      : "04:00";
+    if (settings.syncGistMirrorDailyTime !== normalizedGistMirrorDailyTime) {
+      markMigration("sync_gist_mirror_daily_time_normalized");
+    }
+    settings.syncGistMirrorDailyTime = normalizedGistMirrorDailyTime;
 
     const imageSettingsNormalization =
       s1pSettingsSemantics.normalizeImageSettings(settings);
@@ -45044,6 +45556,19 @@
       ),
       lanSyncTestBtn: modal.querySelector("#s1p-lan-sync-test-btn"),
       lanSyncStatus: modal.querySelector("#s1p-lan-sync-status"),
+      gistMirrorModeSelect: modal.querySelector("#s1p-gist-mirror-mode-select"),
+      gistMirrorIntervalSelect: modal.querySelector(
+        "#s1p-gist-mirror-interval-select"
+      ),
+      gistMirrorDailyTimeInput: modal.querySelector(
+        "#s1p-gist-mirror-daily-time-input"
+      ),
+      gistMirrorScheduleRow: modal.querySelector("#s1p-gist-mirror-schedule-row"),
+      gistMirrorDailyTimeRow: modal.querySelector(
+        "#s1p-gist-mirror-daily-time-row"
+      ),
+      gistMirrorNowBtn: modal.querySelector("#s1p-gist-mirror-now-btn"),
+      gistMirrorStatus: modal.querySelector("#s1p-gist-mirror-status"),
     };
     const {
       remoteToggle,
@@ -45071,6 +45596,13 @@
       lanTokenVisibilityBtn,
       lanSyncTestBtn,
       lanSyncStatus,
+      gistMirrorModeSelect,
+      gistMirrorIntervalSelect,
+      gistMirrorDailyTimeInput,
+      gistMirrorScheduleRow,
+      gistMirrorDailyTimeRow,
+      gistMirrorNowBtn,
+      gistMirrorStatus,
     } = syncSettingsControls;
     const moveSegmentedControlSlider = (control, skipAnimation = false) => {
       if (!control) {
@@ -45228,6 +45760,75 @@
         lanSyncTestBtn.disabled =
           !enabled || lanSyncTestBtn.dataset.s1pBusy === "true";
       }
+    };
+
+    const renderGistMirrorStatus = (state = null) => {
+      if (!gistMirrorStatus) {
+        return;
+      }
+      const snapshot = state || s1pGetGistMirrorState();
+      if (!snapshot.lastAt) {
+        gistMirrorStatus.textContent = "尚未执行过 Gist 镜像。";
+        gistMirrorStatus.style.color = "";
+        return;
+      }
+      const timeText = new Date(snapshot.lastAt).toLocaleString("zh-CN", {
+        hour12: false,
+      });
+      gistMirrorStatus.textContent = `上次镜像：${timeText} · ${
+        snapshot.lastMessage || snapshot.lastStatus || ""
+      }`;
+      gistMirrorStatus.style.color =
+        snapshot.lastStatus === "success" || snapshot.lastStatus === "no_change"
+          ? "var(--s1p-success-text)"
+          : snapshot.lastStatus === "conflict" ||
+              snapshot.lastStatus === "failure"
+            ? "var(--s1p-red)"
+            : "";
+    };
+
+    const updateGistMirrorScheduleVisibility = () => {
+      const mode = String(gistMirrorModeSelect?.value || "off");
+      const interval = String(gistMirrorIntervalSelect?.value || "hourly");
+      if (gistMirrorScheduleRow) {
+        gistMirrorScheduleRow.hidden = mode !== "scheduled";
+      }
+      if (gistMirrorDailyTimeRow) {
+        gistMirrorDailyTimeRow.hidden = interval !== "daily";
+      }
+    };
+
+    const applyGistMirrorSettingsToModal = (settingsSnapshot) => {
+      const config = s1pGetGistMirrorConfig(settingsSnapshot);
+      if (gistMirrorModeSelect) {
+        gistMirrorModeSelect.value = config.mode;
+      }
+      if (gistMirrorIntervalSelect) {
+        gistMirrorIntervalSelect.value = config.interval;
+      }
+      if (gistMirrorDailyTimeInput) {
+        gistMirrorDailyTimeInput.value = config.dailyTime;
+      }
+      updateGistMirrorScheduleVisibility();
+      renderGistMirrorStatus();
+    };
+
+    const validateGistMirrorSettingsForSave = (settingsSnapshot) => {
+      const mode = String(settingsSnapshot?.syncGistMirrorMode || "off");
+      if (mode === "off") {
+        return true;
+      }
+      if (
+        !String(settingsSnapshot?.syncRemoteGistId || "").trim() ||
+        !String(settingsSnapshot?.syncRemotePat || "").trim()
+      ) {
+        showSettingsMessage(
+          "开启 Gist 镜像前，请先填写 Gist ID 与 GitHub Token。",
+          false
+        );
+        return false;
+      }
+      return true;
     };
 
     const normalizeLanSyncUrlForSave = (value) =>
@@ -45683,6 +46284,27 @@
         }
       });
     }
+    if (gistMirrorModeSelect) {
+      gistMirrorModeSelect.addEventListener("change", () => {
+        updateGistMirrorScheduleVisibility();
+        markSyncSettingsDirty();
+      });
+    }
+    if (gistMirrorIntervalSelect) {
+      gistMirrorIntervalSelect.addEventListener("change", () => {
+        updateGistMirrorScheduleVisibility();
+        markSyncSettingsDirty();
+      });
+    }
+    if (gistMirrorDailyTimeInput) {
+      gistMirrorDailyTimeInput.addEventListener("input", markSyncSettingsDirty);
+    }
+    if (gistMirrorNowBtn) {
+      gistMirrorNowBtn.addEventListener("click", () => {
+        void s1pRunGistMirrorOnce("manual");
+      });
+    }
+    s1pSetGistMirrorStatusHandler(renderGistMirrorStatus);
 
     // [新增] Token 过期提醒逻辑
     let pendingTokenExpiryDate = normalizeS1pSyncTokenExpiryDate(
@@ -45781,6 +46403,7 @@
       setLanSyncStatus("");
       setSyncSettingsSectionExpanded("github", true);
       setSyncSettingsSectionExpanded("lan", isLanSyncSectionEnabled());
+      applyGistMirrorSettingsToModal(settingsSnapshot);
 
       updateRemoteSyncInputsState();
       updateForcePullState();
@@ -45812,6 +46435,19 @@
         syncLanEnabled: lanSyncEnabledToggle?.checked === true,
         syncLanUrl: normalizeLanSyncUrlForSave(lanSyncUrlInput?.value),
         syncLanToken: String(lanSyncTokenInput?.value || "").trim(),
+        syncGistMirrorMode: S1P_GIST_MIRROR_MODES.includes(
+          gistMirrorModeSelect?.value
+        )
+          ? gistMirrorModeSelect.value
+          : "off",
+        syncGistMirrorInterval: S1P_GIST_MIRROR_INTERVALS.includes(
+          gistMirrorIntervalSelect?.value
+        )
+          ? gistMirrorIntervalSelect.value
+          : "hourly",
+        syncGistMirrorDailyTime: s1pNormalizeGistMirrorDailyTimeValue(
+          gistMirrorDailyTimeInput?.value
+        ),
       });
     const refreshSyncSettingsDirtyStateFromModal = () => {
       const currentSettings = getSettings();
@@ -49510,6 +50146,9 @@
           if (!validateLanSyncSettingsForSave(currentSettings)) {
             return;
           }
+          if (!validateGistMirrorSettingsForSave(currentSettings)) {
+            return;
+          }
           const didRemoteTargetChange =
             String(previousSettings.syncRemoteGistId || "").trim() !==
             currentSettings.syncRemoteGistId;
@@ -49592,6 +50231,9 @@
           ) {
             s1pLanStopWaitLoop();
             s1pLanStartWaitLoop();
+          }
+          if (typeof s1pScheduleGistMirror === "function") {
+            s1pScheduleGistMirror("settings_saved");
           }
           if (didRemoteTargetChange || didDisableRemoteSync) {
             // 远端目标切换/关闭远程同步后，清理旧会话残留状态，避免新目标沿用旧基线造成误判。
@@ -56323,6 +56965,11 @@
             lanError
           );
         }
+        try {
+          s1pInitializeGistMirrorScheduler();
+        } catch (mirrorError) {
+          console.warn("S1 Plus (Gist Mirror): 定时器初始化失败。", mirrorError);
+        }
         initialized = true;
         return {
           status: "initialized",
@@ -56340,6 +56987,7 @@
 
     const dispose = () => {
       s1pLanStopWaitLoop();
+      s1pTeardownGistMirrorScheduler();
       if (!initialized) {
         manualIntentCoordinator?.unbind?.();
         return { status: "skipped", reason: "already_disposed" };
