@@ -80,16 +80,6 @@ const pushRemoteDataViaLan = async (dataObject, options) => {
 - 锁离场：持有者页面 `pagehide` 时把 LAN 执行锁的保留窗口压缩到 1.5s（Gist 仍保留 45s），避免关页/跳转后其他标签页和手动推送被锁住几十秒；
 - 本地变更：沿用现有 read progress / 数据写入触发器（`saveReadProgress` 的 `triggerSync`、core data 写入等），无需新钩子；LAN 模式下把阅读进度同步去抖从 20s 降到 1s（见下）。
 
-## Gist 镜像（局域网 → Gist 兜底）
-
-局域网模式下自动同步只写 Hub，未开局域网的设备仍然读 Gist，因此会落后。可选开启 Gist 镜像：
-
-- 触发时机：`每次局域网同步后` / `定时`（每小时、每 6 小时、每天 `HH:mm` 自定义）/ `仅手动`；设置键 `syncGistMirrorMode`、`syncGistMirrorInterval`、`syncGistMirrorDailyTime`，与 `syncLan*` 一样是设备本地设置，不参与同步导出/导入；
-- 实现：读取 Gist 快照 → 校验 hash → 与本地比较；只有阅读进度差异时用 `buildMergedReadProgressPayload` 合并并写回 Gist，核心数据有差异则跳过并记录 `gist_mirror_conflict`，绝不覆盖；
-- 镜像写入不修改同步基线；成功后把合并结果导入本地，并安排一次后台同步把结果回写 Hub，两个数据面最终收敛；
-- 互斥：`s1p_gist_mirror_lock` 跨标签页互斥，且遇到活动同步锁时跳过，定时模式 60 秒后重试；
-- 镜像状态记录在 `s1p_gist_mirror_state`（lastAt / lastStatus / lastMessage），设置页显示上次镜像时间与结果。
-
 ## 去抖与设置
 
 - 阅读进度同步去抖：`READ_PROGRESS_SYNC_DEBOUNCE_MS`（[L3742](S1Plus.js#L3742)）在 LAN 模式下改用约 1s（新增常量 `READ_PROGRESS_SYNC_DEBOUNCE_LAN_MS = 1000`，在读取该值的位置按传输选择）；
