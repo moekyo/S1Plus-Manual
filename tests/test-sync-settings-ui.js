@@ -368,20 +368,20 @@ assert.ok(
 // --- Gist 镜像（由 NAS 执行，脚本只做配置与状态展示） ----------------------
 [
   [
-    /id="s1p-gist-mirror-enabled-toggle"[\s\S]*id="s1p-gist-mirror-schedule-control" class="s1p-segmented-control[^"]*"[\s\S]*data-value="hourly"[\s\S]*data-value="every6h"[\s\S]*data-value="daily"[\s\S]*id="s1p-gist-mirror-daily-time-picker"[\s\S]*id="s1p-gist-mirror-daily-time-value"/,
-    "Gist 镜像缺少启用开关、滑块式频率选择或自定义时间选择按钮。",
+    /id="s1p-gist-mirror-enabled-toggle"[\s\S]*id="s1p-gist-mirror-schedule-control" class="s1p-segmented-control[^"]*"[\s\S]*data-value="hourly"[\s\S]*data-value="every6h"[\s\S]*data-value="daily"[\s\S]*id="s1p-gist-mirror-hour-input"[\s\S]*>时<[\s\S]*id="s1p-gist-mirror-minute-input"[\s\S]*>分</,
+    "Gist 镜像缺少启用开关、滑块式频率选择或时/分输入框。",
   ],
   [
-    /\.s1p-time-picker-popover \{[\s\S]*?backdrop-filter: var\(--s1p-popover-glass-filter\)[\.\s\S]*?\.s1p-time-picker-option\.active \{[^}]*background: var\(--s1p-sec\)/,
-    "自定义时间选择弹层未复用磨砂玻璃与主题变量。",
+    /\.s1p-time-part-group \{[\s\S]*?\.s1p-settings-item \.s1p-time-part-input \{[^}]*width: 64px[^}]*text-align: center/,
+    "时/分输入框未使用统一的窄输入样式。",
   ],
   [
-    /html\.s1p-theme-dark \{[\s\S]*?--s1p-popover-glass-bg: rgba\(17, 24, 39/,
-    "时间选择弹层的深色主题变量缺失。",
+    /const sanitizeGistMirrorTimePartInput = \(input, max\) => \{[\s\S]*replace\(\/\\D\/g, ""\)[\s\S]*Number\(digits\) > max/,
+    "镜像时间输入未限制为数字并做上限收敛。",
   ],
   [
-    /const openGistMirrorTimePicker = \(\) => \{[\s\S]*createGistMirrorTimeColumn\([\s\S]*document\.body\.appendChild\(popover\)/,
-    "自定义时间选择器未实现弹层与小时/分钟列。",
+    /const validateGistMirrorTimeInputs = \(\) => \{[\s\S]*小时必须填写 0-23[\s\S]*分钟必须填写 0-59[\s\S]*小时必须在 0-23 之间[\s\S]*分钟必须在 0-59 之间/,
+    "镜像时间输入缺少 0-23 / 0-59 区间校验。",
   ],
   [
     /const getGistMirrorScheduleValue = \(\) =>[\s\S]*getSegmentedControlValue\(gistMirrorScheduleControl/,
@@ -435,7 +435,12 @@ assert.doesNotMatch(
 assert.doesNotMatch(
   sourceCode,
   /id="s1p-gist-mirror-daily-time-input"/,
-  "每天镜像时间应使用自定义选择器，不再使用原生 time 输入框。"
+  "每天镜像时间应使用时/分输入框，不再使用原生 time 输入框。"
+);
+assert.doesNotMatch(
+  sourceCode,
+  /s1p-time-picker-popover|openGistMirrorTimePicker/,
+  "每天镜像时间不应再使用弹层选择器。"
 );
 
 const lanTestConnectionBlock =

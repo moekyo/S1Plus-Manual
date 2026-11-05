@@ -45117,12 +45117,8 @@
       gistMirrorDailyTimeRow: modal.querySelector(
         "#s1p-gist-mirror-daily-time-row"
       ),
-      gistMirrorDailyTimePicker: modal.querySelector(
-        "#s1p-gist-mirror-daily-time-picker"
-      ),
-      gistMirrorDailyTimeValueEl: modal.querySelector(
-        "#s1p-gist-mirror-daily-time-value"
-      ),
+      gistMirrorHourInput: modal.querySelector("#s1p-gist-mirror-hour-input"),
+      gistMirrorMinuteInput: modal.querySelector("#s1p-gist-mirror-minute-input"),
       gistMirrorSaveBtn: modal.querySelector("#s1p-gist-mirror-save-btn"),
       gistMirrorNowBtn: modal.querySelector("#s1p-gist-mirror-now-btn"),
       gistMirrorStatus: modal.querySelector("#s1p-gist-mirror-status"),
@@ -45156,8 +45152,8 @@
       gistMirrorEnabledToggle,
       gistMirrorScheduleControl,
       gistMirrorDailyTimeRow,
-      gistMirrorDailyTimePicker,
-      gistMirrorDailyTimeValueEl,
+      gistMirrorHourInput,
+      gistMirrorMinuteInput,
       gistMirrorSaveBtn,
       gistMirrorNowBtn,
       gistMirrorStatus,
@@ -45322,8 +45318,6 @@
 
     const GIST_MIRROR_SCHEDULES = Object.freeze(["hourly", "every6h", "daily"]);
     let gistMirrorDailyTimeValue = "04:00";
-    let gistMirrorTimePickerPopover = null;
-    let gistMirrorTimePickerCleanup = null;
 
     const normalizeGistMirrorTimeText = (value) => {
       const raw = String(value || "").trim();
@@ -45332,149 +45326,81 @@
         : "04:00";
     };
 
-    const renderGistMirrorDailyTime = () => {
-      if (gistMirrorDailyTimeValueEl) {
-        gistMirrorDailyTimeValueEl.textContent = gistMirrorDailyTimeValue;
+    const splitGistMirrorTimeText = (value) =>
+      normalizeGistMirrorTimeText(value).split(":");
+
+    const renderGistMirrorDailyTimeInputs = () => {
+      const [hours, minutes] = splitGistMirrorTimeText(gistMirrorDailyTimeValue);
+      if (gistMirrorHourInput) {
+        gistMirrorHourInput.value = hours;
+      }
+      if (gistMirrorMinuteInput) {
+        gistMirrorMinuteInput.value = minutes;
       }
     };
 
     const setGistMirrorDailyTime = (value) => {
       gistMirrorDailyTimeValue = normalizeGistMirrorTimeText(value);
-      renderGistMirrorDailyTime();
+      renderGistMirrorDailyTimeInputs();
     };
 
-    const closeGistMirrorTimePicker = () => {
-      if (gistMirrorTimePickerCleanup) {
-        gistMirrorTimePickerCleanup();
-        gistMirrorTimePickerCleanup = null;
-      }
-      if (gistMirrorTimePickerPopover) {
-        gistMirrorTimePickerPopover.remove();
-        gistMirrorTimePickerPopover = null;
-      }
-      if (gistMirrorDailyTimePicker) {
-        gistMirrorDailyTimePicker.setAttribute("aria-expanded", "false");
-      }
-    };
-
-    const createGistMirrorTimeColumn = (labelText, values, selectedValue, onSelect) => {
-      const column = document.createElement("div");
-      column.className = "s1p-time-picker-column";
-      const label = document.createElement("div");
-      label.className = "s1p-time-picker-column-label";
-      label.textContent = labelText;
-      column.appendChild(label);
-      values.forEach((value) => {
-        const option = document.createElement("button");
-        option.type = "button";
-        option.className = "s1p-time-picker-option";
-        option.dataset.value = value;
-        option.textContent = value;
-        if (value === selectedValue) {
-          option.classList.add("active");
-        }
-        option.addEventListener("click", () => {
-          column
-            .querySelectorAll(".s1p-time-picker-option")
-            .forEach((item) => item.classList.toggle("active", item === option));
-          onSelect(value);
-        });
-        column.appendChild(option);
-      });
-      requestAnimationFrame(() => {
-        const active = column.querySelector(".s1p-time-picker-option.active");
-        if (active) {
-          column.scrollTop = Math.max(
-            0,
-            active.offsetTop - column.clientHeight / 2 + active.offsetHeight / 2
-          );
-        }
-      });
-      return column;
-    };
-
-    const openGistMirrorTimePicker = () => {
-      if (!gistMirrorDailyTimePicker || gistMirrorDailyTimePicker.disabled) {
+    const sanitizeGistMirrorTimePartInput = (input, max) => {
+      if (!input) {
         return;
       }
-      closeGistMirrorTimePicker();
-      const [hoursText, minutesText] = gistMirrorDailyTimeValue.split(":");
-      const selectedHour = String(Number(hoursText) || 0).padStart(2, "0");
-      const selectedMinute = String(Number(minutesText) || 0).padStart(2, "0");
-      const popover = document.createElement("div");
-      popover.className = "s1p-time-picker-popover";
-      popover.setAttribute("role", "dialog");
-      popover.setAttribute("aria-label", "每天镜像时间");
-      const hours = Array.from({ length: 24 }, (_, index) =>
-        String(index).padStart(2, "0")
-      );
-      const minutes = Array.from({ length: 60 }, (_, index) =>
-        String(index).padStart(2, "0")
-      );
-      popover.appendChild(
-        createGistMirrorTimeColumn("时", hours, selectedHour, (value) => {
-          setGistMirrorDailyTime(`${value}:${gistMirrorDailyTimeValue.split(":")[1] || "00"}`);
-        })
-      );
-      popover.appendChild(
-        createGistMirrorTimeColumn("分", minutes, selectedMinute, (value) => {
-          setGistMirrorDailyTime(`${gistMirrorDailyTimeValue.split(":")[0] || "00"}:${value}`);
-          closeGistMirrorTimePicker();
-        })
-      );
-      document.body.appendChild(popover);
-      popover.style.visibility = "hidden";
-      popover.style.left = "0px";
-      popover.style.top = "0px";
-      const anchorRect = gistMirrorDailyTimePicker.getBoundingClientRect();
-      const popoverRect = popover.getBoundingClientRect();
-      const margin = 8;
-      let left = Math.min(
-        anchorRect.left,
-        Math.max(margin, window.innerWidth - popoverRect.width - margin)
-      );
-      left = Math.max(margin, left);
-      let top = anchorRect.bottom + 6;
-      if (top + popoverRect.height > window.innerHeight - margin) {
-        top = Math.max(margin, anchorRect.top - popoverRect.height - 6);
+      const digits = String(input.value || "")
+        .replace(/\D/g, "")
+        .slice(0, 2);
+      input.value = digits;
+      if (digits.length === 2 && Number(digits) > max) {
+        input.value = String(max).padStart(2, "0");
       }
-      popover.style.left = `${left}px`;
-      popover.style.top = `${top}px`;
-      popover.style.visibility = "";
-      gistMirrorTimePickerPopover = popover;
-      gistMirrorDailyTimePicker.setAttribute("aria-expanded", "true");
+    };
 
-      const onPointerDown = (event) => {
-        if (
-          popover.contains(event.target) ||
-          gistMirrorDailyTimePicker?.contains(event.target)
-        ) {
-          return;
-        }
-        closeGistMirrorTimePicker();
+    const finalizeGistMirrorTimePartInput = (input, max) => {
+      if (!input) {
+        return;
+      }
+      const digits = String(input.value || "").replace(/\D/g, "");
+      const numeric = digits ? Number(digits) : 0;
+      input.value = String(
+        Math.min(max, Math.max(0, Number.isFinite(numeric) ? numeric : 0))
+      ).padStart(2, "0");
+    };
+
+    const validateGistMirrorTimeInputs = () => {
+      const hourText = String(gistMirrorHourInput?.value || "").trim();
+      const minuteText = String(gistMirrorMinuteInput?.value || "").trim();
+      if (!/^\d{1,2}$/.test(hourText)) {
+        gistMirrorHourInput?.focus();
+        return { ok: false, message: "镜像时间的小时必须填写 0-23 的数字。" };
+      }
+      if (!/^\d{1,2}$/.test(minuteText)) {
+        gistMirrorMinuteInput?.focus();
+        return { ok: false, message: "镜像时间的分钟必须填写 0-59 的数字。" };
+      }
+      const hours = Number(hourText);
+      const minutes = Number(minuteText);
+      if (hours < 0 || hours > 23) {
+        gistMirrorHourInput?.focus();
+        return { ok: false, message: "镜像时间的小时必须在 0-23 之间。" };
+      }
+      if (minutes < 0 || minutes > 59) {
+        gistMirrorMinuteInput?.focus();
+        return { ok: false, message: "镜像时间的分钟必须在 0-59 之间。" };
+      }
+      return {
+        ok: true,
+        value: `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`,
       };
-      const onKeyDown = (event) => {
-        if (event.key === "Escape") {
-          closeGistMirrorTimePicker();
-          gistMirrorDailyTimePicker?.focus();
-        }
-      };
-      const onViewportChange = (event) => {
-        if (event?.target && popover.contains(event.target)) {
-          return;
-        }
-        closeGistMirrorTimePicker();
-      };
-      document.addEventListener("pointerdown", onPointerDown, true);
-      document.addEventListener("keydown", onKeyDown, true);
-      window.addEventListener("resize", onViewportChange);
-      window.addEventListener("scroll", onViewportChange, true);
-      gistMirrorTimePickerCleanup = () => {
-        document.removeEventListener("pointerdown", onPointerDown, true);
-        document.removeEventListener("keydown", onKeyDown, true);
-        window.removeEventListener("resize", onViewportChange);
-        window.removeEventListener("scroll", onViewportChange, true);
-      };
+    };
+
+    const readGistMirrorTimeValueFromInputs = () => {
+      const validation = validateGistMirrorTimeInputs();
+      if (validation.ok) {
+        gistMirrorDailyTimeValue = validation.value;
+      }
+      return gistMirrorDailyTimeValue;
     };
 
     const getGistMirrorScheduleValue = () =>
@@ -45484,11 +45410,7 @@
       if (!gistMirrorDailyTimeRow) {
         return;
       }
-      const isDaily = getGistMirrorScheduleValue() === "daily";
-      gistMirrorDailyTimeRow.hidden = !isDaily;
-      if (!isDaily) {
-        closeGistMirrorTimePicker();
-      }
+      gistMirrorDailyTimeRow.hidden = getGistMirrorScheduleValue() !== "daily";
     };
 
     const setGistMirrorScheduleValue = (value) => {
@@ -45504,7 +45426,8 @@
       const isDisabled = disabled === true;
       [
         gistMirrorEnabledToggle,
-        gistMirrorDailyTimePicker,
+        gistMirrorHourInput,
+        gistMirrorMinuteInput,
         gistMirrorSaveBtn,
         gistMirrorNowBtn,
       ].forEach((control) => {
@@ -45515,9 +45438,6 @@
       if (gistMirrorScheduleControl) {
         gistMirrorScheduleControl.classList.toggle("is-disabled", isDisabled);
         setSegmentedControlDisabledState(gistMirrorScheduleControl, isDisabled);
-      }
-      if (isDisabled) {
-        closeGistMirrorTimePicker();
       }
     };
 
@@ -45610,6 +45530,13 @@
       if (!gistMirrorSaveBtn || gistMirrorSaveBtn.disabled) {
         return;
       }
+      const timeValidation = validateGistMirrorTimeInputs();
+      if (!timeValidation.ok) {
+        showSettingsMessage(timeValidation.message, false);
+        return;
+      }
+      gistMirrorDailyTimeValue = timeValidation.value;
+      renderGistMirrorDailyTimeInputs();
       const originalText = gistMirrorSaveBtn.textContent;
       gistMirrorSaveBtn.dataset.s1pBusy = "true";
       gistMirrorSaveBtn.disabled = true;
@@ -46134,15 +46061,28 @@
         setGistMirrorScheduleValue(option.dataset.value);
       });
     }
-    if (gistMirrorDailyTimePicker) {
-      gistMirrorDailyTimePicker.addEventListener("click", () => {
-        if (gistMirrorTimePickerPopover) {
-          closeGistMirrorTimePicker();
-        } else {
-          openGistMirrorTimePicker();
+    [
+      [gistMirrorHourInput, 23],
+      [gistMirrorMinuteInput, 59],
+    ].forEach(([timeInput, max]) => {
+      if (!timeInput) {
+        return;
+      }
+      timeInput.addEventListener("input", () => {
+        sanitizeGistMirrorTimePartInput(timeInput, max);
+      });
+      timeInput.addEventListener("blur", () => {
+        finalizeGistMirrorTimePartInput(timeInput, max);
+        readGistMirrorTimeValueFromInputs();
+        renderGistMirrorDailyTimeInputs();
+      });
+      timeInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          timeInput.blur();
         }
       });
-    }
+    });
     if (gistMirrorSaveBtn) {
       gistMirrorSaveBtn.addEventListener("click", () => {
         void saveGistMirrorConfigFromControls();
