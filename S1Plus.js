@@ -30763,6 +30763,70 @@
     }
   };
 
+  const s1pFetchGistMirrorStatus = async () => {
+    const response = await s1pLanRequest({
+      method: "GET",
+      path: "/mirror",
+      timeoutMs: 8000,
+    });
+    if (response.status === 404) {
+      return { supported: false, status: null };
+    }
+    if (
+      response.status !== 200 ||
+      !response.json ||
+      typeof response.json.gistMirror !== "object"
+    ) {
+      throw createS1pLanSyncError("读取 NAS Gist 镜像状态失败。", {
+        status: response.status,
+        retryable: REMOTE_SYNC_RETRYABLE_STATUS.has(response.status),
+        code: "LAN_MIRROR_STATUS_FAILED",
+      });
+    }
+    return { supported: true, status: response.json.gistMirror };
+  };
+
+  const s1pSaveGistMirrorConfig = async (patch = {}) => {
+    const response = await s1pLanRequest({
+      method: "PUT",
+      path: "/mirror/config",
+      body: patch,
+      timeoutMs: 8000,
+    });
+    if (
+      response.status !== 200 ||
+      !response.json ||
+      typeof response.json.gistMirror !== "object"
+    ) {
+      throw createS1pLanSyncError("保存 NAS Gist 镜像配置失败。", {
+        status: response.status,
+        retryable: REMOTE_SYNC_RETRYABLE_STATUS.has(response.status),
+        code: "LAN_MIRROR_CONFIG_FAILED",
+      });
+    }
+    return response.json.gistMirror;
+  };
+
+  const s1pRunGistMirrorOnHub = async () => {
+    const response = await s1pLanRequest({
+      method: "POST",
+      path: "/mirror/run",
+      timeoutMs: 30000,
+    });
+    const result = response.json?.result || null;
+    if (response.status >= 400 || response.json?.ok === false) {
+      throw createS1pLanSyncError(
+        String(result?.message || "NAS Gist 镜像执行失败。"),
+        {
+          status: response.status,
+          retryable: false,
+          code: "LAN_MIRROR_RUN_FAILED",
+        }
+      );
+    }
+    return response.json?.gistMirror || null;
+  };
+
   let s1pLanConflictRetryTimer = null;
   const s1pScheduleLanConflictRetry = (writerContext = null) => {
     const syncMode = String(writerContext?.syncMode || "");
@@ -45044,6 +45108,21 @@
       ),
       lanSyncTestBtn: modal.querySelector("#s1p-lan-sync-test-btn"),
       lanSyncStatus: modal.querySelector("#s1p-lan-sync-status"),
+      gistMirrorEnabledToggle: modal.querySelector(
+        "#s1p-gist-mirror-enabled-toggle"
+      ),
+      gistMirrorScheduleSelect: modal.querySelector(
+        "#s1p-gist-mirror-schedule-select"
+      ),
+      gistMirrorDailyTimeRow: modal.querySelector(
+        "#s1p-gist-mirror-daily-time-row"
+      ),
+      gistMirrorDailyTimeInput: modal.querySelector(
+        "#s1p-gist-mirror-daily-time-input"
+      ),
+      gistMirrorSaveBtn: modal.querySelector("#s1p-gist-mirror-save-btn"),
+      gistMirrorNowBtn: modal.querySelector("#s1p-gist-mirror-now-btn"),
+      gistMirrorStatus: modal.querySelector("#s1p-gist-mirror-status"),
     };
     const {
       remoteToggle,
@@ -45071,6 +45150,13 @@
       lanTokenVisibilityBtn,
       lanSyncTestBtn,
       lanSyncStatus,
+      gistMirrorEnabledToggle,
+      gistMirrorScheduleSelect,
+      gistMirrorDailyTimeRow,
+      gistMirrorDailyTimeInput,
+      gistMirrorSaveBtn,
+      gistMirrorNowBtn,
+      gistMirrorStatus,
     } = syncSettingsControls;
     const moveSegmentedControlSlider = (control, skipAnimation = false) => {
       if (!control) {
@@ -45227,6 +45313,188 @@
       if (lanSyncTestBtn) {
         lanSyncTestBtn.disabled =
           !enabled || lanSyncTestBtn.dataset.s1pBusy === "true";
+      }
+    };
+
+    const GIST_MIRROR_SCHEDULES = Object.freeze(["hourly", "every6h", "daily"]);
+
+    const updateGistMirrorDailyTimeVisibility = () => {
+      if (!gistMirrorDailyTimeRow) {
+        return;
+      }
+      gistMirrorDailyTimeRow.hidden =
+        String(gistMirrorScheduleSelect?.value || "hourly") !== "daily";
+    };
+
+    const setGistMirrorControlsDisabled = (disabled) => {
+      const isDisabled = disabled === true;
+      [
+        gistMirrorEnabledToggle,
+        gistMirrorScheduleSelect,
+        gistMirrorDailyTimeInput,
+        gistMirrorSaveBtn,
+        gistMirrorNowBtn,
+      ].forEach((control) => {
+        if (control) {
+          control.disabled = isDisabled;
+        }
+      });
+    };
+
+    const renderGistMirrorStatus = (status, options = {}) => {
+      if (!gistMirrorStatus) {
+        return;
+      }
+      if (options.supported === false) {
+        gistMirrorStatus.textContent =
+          "NAS Hub 未提供 Gist 镜像接口（请更新 NAS 上的 server.js）";
+        gistMirrorStatus.style.color = "var(--s1p-red)";
+        return;
+      }
+      if (!status) {
+        gistMirrorStatus.textContent = "正在读取 NAS 镜像状态…";
+        gistMirrorStatus.style.color = "";
+        return;
+      }
+      if (status.configured !== true) {
+        gistMirrorStatus.textContent =
+          "NAS 未配置 Gist 凭证（HUB_GIST_MIRROR_GIST_ID / HUB_GIST_MIRROR_TOKEN）";
+        gistMirrorStatus.style.color = "var(--s1p-red)";
+        return;
+      }
+      if (!status.lastAt) {
+        gistMirrorStatus.textContent = "NAS 尚未执行过 Gist 镜像。";
+        gistMirrorStatus.style.color = "";
+        return;
+      }
+      const timeText = new Date(status.lastAt).toLocaleString("zh-CN", {
+        hour12: false,
+      });
+      gistMirrorStatus.textContent = `NAS 上次镜像：${timeText} · ${
+        status.lastMessage || status.lastStatus || ""
+      }`;
+      gistMirrorStatus.style.color =
+        status.lastStatus === "success" || status.lastStatus === "no_change"
+          ? "var(--s1p-success-text)"
+          : status.lastStatus === "conflict" || status.lastStatus === "failure"
+            ? "var(--s1p-red)"
+            : "";
+    };
+
+    const applyGistMirrorStatusToControls = (status) => {
+      if (gistMirrorEnabledToggle) {
+        gistMirrorEnabledToggle.checked = status?.enabled === true;
+      }
+      if (gistMirrorScheduleSelect) {
+        gistMirrorScheduleSelect.value = GIST_MIRROR_SCHEDULES.includes(
+          status?.schedule
+        )
+          ? status.schedule
+          : "hourly";
+      }
+      if (gistMirrorDailyTimeInput) {
+        gistMirrorDailyTimeInput.value = /^([01]?\d|2[0-3]):[0-5]\d$/.test(
+          String(status?.dailyTime || "")
+        )
+          ? String(status.dailyTime).padStart(5, "0")
+          : "04:00";
+      }
+      updateGistMirrorDailyTimeVisibility();
+    };
+
+    const refreshGistMirrorPanel = async () => {
+      if (!gistMirrorStatus) {
+        return;
+      }
+      if (!isLanSyncTransportActive()) {
+        setGistMirrorControlsDisabled(true);
+        renderGistMirrorStatus(null, { supported: null });
+        gistMirrorStatus.textContent = "局域网同步未启用，NAS 镜像不可用。";
+        gistMirrorStatus.style.color = "";
+        return;
+      }
+      renderGistMirrorStatus(null);
+      setGistMirrorControlsDisabled(true);
+      try {
+        const { supported, status } = await s1pFetchGistMirrorStatus();
+        if (!supported) {
+          renderGistMirrorStatus(null, { supported: false });
+          return;
+        }
+        applyGistMirrorStatusToControls(status);
+        renderGistMirrorStatus(status);
+        const canEdit = status?.configured === true;
+        setGistMirrorControlsDisabled(!canEdit);
+      } catch (error) {
+        setGistMirrorControlsDisabled(true);
+        renderGistMirrorStatus(null, { supported: false });
+        gistMirrorStatus.textContent = `读取 NAS 镜像状态失败：${
+          error?.message || "网络错误"
+        }`;
+        gistMirrorStatus.style.color = "var(--s1p-red)";
+      }
+    };
+
+    const saveGistMirrorConfigFromControls = async () => {
+      if (!gistMirrorSaveBtn || gistMirrorSaveBtn.disabled) {
+        return;
+      }
+      const originalText = gistMirrorSaveBtn.textContent;
+      gistMirrorSaveBtn.dataset.s1pBusy = "true";
+      gistMirrorSaveBtn.disabled = true;
+      gistMirrorSaveBtn.textContent = "保存中…";
+      try {
+        const status = await s1pSaveGistMirrorConfig({
+          enabled: gistMirrorEnabledToggle?.checked === true,
+          schedule: GIST_MIRROR_SCHEDULES.includes(gistMirrorScheduleSelect?.value)
+            ? gistMirrorScheduleSelect.value
+            : "hourly",
+          dailyTime: String(gistMirrorDailyTimeInput?.value || "04:00"),
+        });
+        applyGistMirrorStatusToControls(status);
+        renderGistMirrorStatus(status);
+        showSettingsMessage("NAS Gist 镜像设置已保存。", true);
+      } catch (error) {
+        showSettingsMessage(
+          `保存 NAS 镜像设置失败：${error?.message || "网络错误"}`,
+          false
+        );
+      } finally {
+        gistMirrorSaveBtn.dataset.s1pBusy = "false";
+        gistMirrorSaveBtn.disabled = false;
+        gistMirrorSaveBtn.textContent = originalText;
+      }
+    };
+
+    const runGistMirrorOnHubFromControls = async () => {
+      if (!gistMirrorNowBtn || gistMirrorNowBtn.disabled) {
+        return;
+      }
+      const originalText = gistMirrorNowBtn.textContent;
+      gistMirrorNowBtn.dataset.s1pBusy = "true";
+      gistMirrorNowBtn.disabled = true;
+      gistMirrorNowBtn.textContent = "镜像中…";
+      try {
+        const status = await s1pRunGistMirrorOnHub();
+        if (status) {
+          applyGistMirrorStatusToControls(status);
+          renderGistMirrorStatus(status);
+        }
+        showSettingsMessage(
+          `NAS 镜像完成：${
+            status?.lastMessage || status?.lastStatus || "已执行"
+          }`,
+          status?.lastStatus !== "failure" && status?.lastStatus !== "conflict"
+        );
+      } catch (error) {
+        showSettingsMessage(
+          `NAS 镜像失败：${error?.message || "网络错误"}`,
+          false
+        );
+      } finally {
+        gistMirrorNowBtn.dataset.s1pBusy = "false";
+        gistMirrorNowBtn.disabled = false;
+        gistMirrorNowBtn.textContent = originalText;
       }
     };
 
@@ -45681,6 +45949,23 @@
         if (lanSyncEnabledToggle.checked === true) {
           setSyncSettingsSectionExpanded("lan", true);
         }
+        void refreshGistMirrorPanel();
+      });
+    }
+    if (gistMirrorScheduleSelect) {
+      gistMirrorScheduleSelect.addEventListener(
+        "change",
+        updateGistMirrorDailyTimeVisibility
+      );
+    }
+    if (gistMirrorSaveBtn) {
+      gistMirrorSaveBtn.addEventListener("click", () => {
+        void saveGistMirrorConfigFromControls();
+      });
+    }
+    if (gistMirrorNowBtn) {
+      gistMirrorNowBtn.addEventListener("click", () => {
+        void runGistMirrorOnHubFromControls();
       });
     }
 
@@ -45781,6 +46066,7 @@
       setLanSyncStatus("");
       setSyncSettingsSectionExpanded("github", true);
       setSyncSettingsSectionExpanded("lan", isLanSyncSectionEnabled());
+      void refreshGistMirrorPanel();
 
       updateRemoteSyncInputsState();
       updateForcePullState();

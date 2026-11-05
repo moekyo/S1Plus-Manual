@@ -80,6 +80,17 @@ const pushRemoteDataViaLan = async (dataObject, options) => {
 - 锁离场：持有者页面 `pagehide` 时把 LAN 执行锁的保留窗口压缩到 1.5s（Gist 仍保留 45s），避免关页/跳转后其他标签页和手动推送被锁住几十秒；
 - 本地变更：沿用现有 read progress / 数据写入触发器（`saveReadProgress` 的 `triggerSync`、core data 写入等），无需新钩子；LAN 模式下把阅读进度同步去抖从 20s 降到 1s（见下）。
 
+## Gist 镜像（NAS 端执行）
+
+局域网模式下自动同步只写 Hub，未开局域网的设备仍然读 Gist，因此会落后。镜像由 NAS Hub 执行，不依赖浏览器标签页：
+
+- 凭证：`HUB_GIST_MIRROR_GIST_ID` / `HUB_GIST_MIRROR_TOKEN` 只放 NAS `.env`（Token 需要 `gist` 权限），不会下发给浏览器，也不写日志；
+- 调度：设置页通过 `PUT /mirror/config` 保存 `{enabled, schedule: hourly|every6h|daily, dailyTime}`；Hub 进程内定时器执行，全部标签页关闭也照常运行；
+- 合并：读取 Hub 快照与 Gist `s1plus_sync.json` 并校验 hash；只有阅读进度差异时按“页 / 楼层 / 时间”逐条合并，写回 Gist 后把合并结果写回 Hub（版本 +1 并广播）；核心数据有差异则记录 `gist_mirror_conflict` 并跳过，绝不覆盖；
+- 手动：`POST /mirror/run` 立即执行一次；设置页“立即镜像到 Gist”调用该接口；
+- 状态：`GET /health` 的 `gistMirror` 字段（不含 token）与 `GET /mirror` 提供上次时间 / 结果，设置页直接展示；
+- 边界：Hub 在镜像期间收到新写入时，本轮只写 Gist，Hub 留到下一轮收敛；Gist 为旧版格式时提示先用浏览器同步一次。
+
 ## 去抖与设置
 
 - 阅读进度同步去抖：`READ_PROGRESS_SYNC_DEBOUNCE_MS`（[L3742](S1Plus.js#L3742)）在 LAN 模式下改用约 1s（新增常量 `READ_PROGRESS_SYNC_DEBOUNCE_LAN_MS = 1000`，在读取该值的位置按传输选择）；

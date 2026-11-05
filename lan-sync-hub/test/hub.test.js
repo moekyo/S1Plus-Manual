@@ -3,7 +3,9 @@
 const { test, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 const { spawn } = require("node:child_process");
+const crypto = require("node:crypto");
 const fs = require("node:fs/promises");
+const http = require("node:http");
 const os = require("node:os");
 const path = require("node:path");
 
@@ -43,7 +45,7 @@ const pushSnapshot = async ({ baseVersion, payload, deviceId = "test-device" }) 
   return { status: response.status, body };
 };
 
-async function startHub() {
+async function startHub(extraEnv = {}) {
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "s1p-hub-"));
   const port = 20000 + Math.floor(Math.random() * 20000);
   const child = spawn(process.execPath, [SERVER], {
@@ -54,6 +56,7 @@ async function startHub() {
       HUB_TOKEN: TOKEN,
       HUB_DATA_DIR: dataDir,
       HUB_HISTORY: "5",
+      ...extraEnv,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -220,4 +223,209 @@ test("SSE 连接收到 snapshot 事件", async () => {
   }
   controller.abort();
   assert.match(buffer, /event: snapshot/);
+});
+
+// ---------------------------------------------------------------------------
+// NAS 端 Gist 镜像
+// ---------------------------------------------------------------------------
+
+const stableStringifyMirror = (value) => {
+  const sort = (item) => {
+    if (typeof item !== "object" || item === null) return item;
+    if (Array.isArray(item)) return item.map(sort);
+    const out = {};
+    Object.keys(item).sort().forEach((key) => {
+      out[key] = sort(item[key]);
+    });
+    return out;
+  };
+  return JSON.stringify(sort(value));
+};
+
+const hashMirrorData = (data) =>
+  crypto
+    .createHash("sha256")
+    .update(stableStringifyMirror(data))
+    .digest("hex");
+
+const buildSyncPayload = (data) => ({
+  version: 5.0,
+  lastUpdated: Date.now(),
+  data,
+  contentHash: hashMirrorData(data),
+  baseContentHash: null,
+});
+
+async function startFakeGist() {
+  let fileContent = null;
+  let updatedAt = "2026-01-01T00:00:00.000Z";
+  let lastAuth = "";
+  const server = http.createServer((req, res) => {
+    const url = new URL(req.url || "/", "http://fake");
+    if (!url.pathname.startsWith("/gists/")) {
+      res.writeHead(404);
+      res.end();
+      return;
+    }
+    lastAuth = req.headers.authorization || "";
+    if (req.method === "GET") {
+      const files = fileContent
+        ? {
+            "s1plus_sync.json": {
+              content: fileContent,
+              truncated: false,
+              raw_url: "",
+            },
+          }
+        : {};
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ files, updated_at: updatedAt }));
+      return;
+    }
+    if (req.method === "PATCH") {
+      let body = "";
+      req.on("data", (chunk) => {
+        body += chunk;
+      });
+      req.on("end", () => {
+        const parsed = JSON.parse(body);
+        fileContent = parsed.files["s1plus_sync.json"].content;
+        updatedAt = new Date().toISOString();
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ updated_at: updatedAt }));
+      });
+      return;
+    }
+    res.writeHead(405);
+    res.end();
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  return {
+    base: `http://127.0.0.1:${port}`,
+    getContent: () => (fileContent ? JSON.parse(fileContent) : null),
+    setContent: (payload) => {
+      fileContent = payload ? JSON.stringify(payload) : null;
+    },
+    getAuth: () => lastAuth,
+    close: () => new Promise((resolve) => server.close(resolve)),
+  };
+}
+
+test("Gist 镜像：NAS 定时配置、种子写入、合并与冲突保护", async (t) => {
+  const fakeGist = await startFakeGist();
+  const mirrorHub = await startHub({
+    HUB_GIST_MIRROR_GIST_ID: "gist-123",
+    HUB_GIST_MIRROR_TOKEN: "mirror-token",
+    HUB_GIST_API_BASE: fakeGist.base,
+    HUB_GIST_MIRROR_ENABLED: "0",
+  });
+  t.after(async () => {
+    mirrorHub.child.kill("SIGTERM");
+    await fs.rm(mirrorHub.dataDir, { recursive: true, force: true });
+    await fakeGist.close();
+  });
+
+  const base = mirrorHub.base;
+  const headers = auth();
+  const data = {
+    settings: {},
+    blockedUsers: { u1: 1 },
+    read_progress: {
+      t1: { page: "2", lastReadFloor: "10", timestamp: 1000 },
+    },
+  };
+  const payload = buildSyncPayload(data);
+  const push = await fetch(`${base}/snapshot`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ baseVersion: 0, payload, deviceId: "lan-device" }),
+  });
+  assert.equal(push.status, 200);
+
+  const health = await (await fetch(`${base}/health`)).json();
+  assert.equal(health.gistMirror.configured, true);
+  assert.equal(health.gistMirror.enabled, false);
+  assert.ok(
+    !JSON.stringify(health).includes("mirror-token"),
+    "health 不能泄露 Gist token"
+  );
+
+  const unauthorized = await fetch(`${base}/mirror`);
+  assert.equal(unauthorized.status, 401);
+
+  const configResponse = await fetch(`${base}/mirror/config`, {
+    method: "PUT",
+    headers,
+    body: JSON.stringify({ enabled: true, schedule: "daily", dailyTime: "3:05" }),
+  });
+  assert.equal(configResponse.status, 200);
+  const configBody = await configResponse.json();
+  assert.equal(configBody.gistMirror.enabled, true);
+  assert.equal(configBody.gistMirror.schedule, "daily");
+  assert.equal(configBody.gistMirror.dailyTime, "03:05");
+
+  const seed = await fetch(`${base}/mirror`, { method: "POST", headers });
+  assert.equal(seed.status, 200);
+  const seedBody = await seed.json();
+  assert.equal(seedBody.result.status, "success");
+  assert.equal(seedBody.result.action, "seed");
+  assert.equal(fakeGist.getAuth(), "Bearer mirror-token");
+  assert.deepEqual(fakeGist.getContent().data, data);
+
+  // 模拟第三台设备往 Gist 写入了更新的阅读进度（核心数据相同）。
+  const updatedData = {
+    ...data,
+    read_progress: {
+      t1: { page: "6", lastReadFloor: "120", timestamp: 2000 },
+      t2: { page: "1", lastReadFloor: "3", timestamp: 1500 },
+    },
+  };
+  fakeGist.setContent(buildSyncPayload(updatedData));
+  const mergeResponse = await fetch(`${base}/mirror`, {
+    method: "POST",
+    headers,
+  });
+  assert.equal(mergeResponse.status, 200);
+  const mergeBody = await mergeResponse.json();
+  assert.equal(mergeBody.result.status, "success");
+  assert.equal(mergeBody.result.action, "merged");
+  const mergedGistData = fakeGist.getContent().data;
+  assert.equal(mergedGistData.read_progress.t1.page, "6");
+  assert.equal(mergedGistData.read_progress.t2.page, "1");
+  assert.equal(mergedGistData.blockedUsers.u1, 1);
+
+  const hubSnapshot = await (await fetch(`${base}/snapshot`, { headers })).json();
+  assert.equal(hubSnapshot.payload.data.read_progress.t1.page, "6");
+  assert.equal(hubSnapshot.payload.data.read_progress.t2.page, "1");
+  assert.ok(hubSnapshot.version >= 2, "合并后 Hub 版本应推进");
+
+  // 核心数据冲突：只提示、不覆盖 Gist / Hub。
+  const conflictData = {
+    ...data,
+    extraCoreMarker: "different",
+    read_progress: {},
+  };
+  const conflictPayload = buildSyncPayload(conflictData);
+  fakeGist.setContent(conflictPayload);
+  const conflictResponse = await fetch(`${base}/mirror`, {
+    method: "POST",
+    headers,
+  });
+  assert.equal(conflictResponse.status, 200);
+  const conflictBody = await conflictResponse.json();
+  assert.equal(conflictBody.result.status, "conflict");
+  assert.deepEqual(fakeGist.getContent().data, conflictData);
+  const statusAfterConflict = await (await fetch(`${base}/mirror`, { headers })).json();
+  assert.equal(statusAfterConflict.gistMirror.lastStatus, "conflict");
+
+  const normalizedConfig = await fetch(`${base}/mirror/config`, {
+    method: "PUT",
+    headers,
+    body: JSON.stringify({ schedule: "every6h", dailyTime: "23:59" }),
+  });
+  const normalizedBody = await normalizedConfig.json();
+  assert.equal(normalizedBody.gistMirror.schedule, "every6h");
+  assert.equal(normalizedBody.gistMirror.dailyTime, "23:59");
+  assert.equal(normalizedBody.gistMirror.enabled, true);
 });

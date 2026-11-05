@@ -77,6 +77,10 @@ docker run -d --name s1plus-lan-sync --restart unless-stopped \
 | `HUB_DATA_DIR` | `/data` | 数据目录 |
 | `HUB_HISTORY` | `10` | 保留历史版本数，`0` 关闭 |
 | `HUB_MAX_BODY_BYTES` | `8388608` | 请求体上限 |
+| `HUB_GIST_MIRROR_GIST_ID` | 空（未配置） | NAS 端 Gist 镜像的目标 Gist ID |
+| `HUB_GIST_MIRROR_TOKEN` | 空（未配置） | 带 `gist` 权限的 GitHub Token；只存 NAS，不会下发到浏览器 |
+| `HUB_GIST_MIRROR_ENABLED` | `0` | 首次部署时是否默认启用镜像；之后以设置页保存的配置为准 |
+| `HUB_GIST_API_BASE` | `https://api.github.com` | 测试用 GitHub API 基址 |
 | `HUB_LONG_POLL_TIMEOUT_MS` | `25000` | 长轮询默认挂起时长 |
 | `HUB_LONG_POLL_MAX_TIMEOUT_MS` | `5000` | 单个 `/wait` 实际挂起上限；旧版 userscript 的长连接会占住请求通道，上限越小阻塞越短 |
 | `HUB_SSE_TIMEOUT_MS` | `300000` | SSE 单连接最长时长 |
@@ -95,6 +99,9 @@ docker run -d --name s1plus-lan-sync --restart unless-stopped \
 | `GET` | `/events?since=N` | SSE 流，事件名 `snapshot`，20s 心跳（EventSource 无法带 header，token 用 query） |
 | `POST` | `/presence` | 上报 `{deviceId, version}` |
 | `GET` | `/presence` | 读取在线设备（10 分钟过期） |
+| `GET` | `/mirror` | 读取 NAS 端 Gist 镜像状态（不含 token） |
+| `PUT` | `/mirror/config` | 保存镜像配置 `{enabled, schedule, dailyTime}`，`schedule` 为 `hourly/every6h/daily` |
+| `POST` | `/mirror/run` | 立即执行一次镜像（手动触发） |
 
 快照 payload 由客户端定义，中枢不解析；建议客户端把它当作 S1 Plus 导出的同步 JSON 整体存储。
 

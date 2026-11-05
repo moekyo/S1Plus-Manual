@@ -365,6 +365,58 @@ assert.ok(
   "局域网同步总开关必须位于折叠体内部，收起分组时随其他控件一起隐藏。"
 );
 
+// --- Gist 镜像（由 NAS 执行，脚本只做配置与状态展示） ----------------------
+[
+  [
+    /id="s1p-gist-mirror-enabled-toggle"[\s\S]*id="s1p-gist-mirror-schedule-select"[\s\S]*value="hourly"[\s\S]*value="every6h"[\s\S]*value="daily"[\s\S]*?<\/select>[\s\S]*id="s1p-gist-mirror-daily-time-input"/,
+    "Gist 镜像缺少启用开关、频率选择或每天时间输入。",
+  ],
+  [
+    /id="s1p-gist-mirror-save-btn"[\s\S]*id="s1p-gist-mirror-now-btn"[\s\S]*id="s1p-gist-mirror-status"[^>]*role="status" aria-live="polite"/,
+    "Gist 镜像缺少保存、立即镜像按钮或状态区域。",
+  ],
+  [
+    /data-s1p-sync-section-body="lan" hidden[\s\S]*id="s1p-gist-mirror-enabled-toggle"/,
+    "Gist 镜像控件应位于局域网折叠体内。",
+  ],
+  [
+    /const s1pFetchGistMirrorStatus = async \(\) => \{[\s\S]*path: "\/mirror"/,
+    "脚本未从 NAS Hub 读取 Gist 镜像状态。",
+  ],
+  [
+    /const s1pSaveGistMirrorConfig = async \(patch = \{\}\) => \{[\s\S]*path: "\/mirror\/config"/,
+    "脚本未把镜像配置保存到 NAS Hub。",
+  ],
+  [
+    /const s1pRunGistMirrorOnHub = async \(\) => \{[\s\S]*path: "\/mirror\/run"/,
+    "脚本未调用 NAS Hub 的手动镜像接口。",
+  ],
+  [
+    /const refreshGistMirrorPanel = async \(\) => \{[\s\S]*s1pFetchGistMirrorStatus\(\)[\s\S]*setGistMirrorControlsDisabled/,
+    "设置页未加载或未禁用 NAS 镜像控件。",
+  ],
+  [
+    /gistMirrorSaveBtn\.addEventListener\(\"click\"[\s\S]*saveGistMirrorConfigFromControls/,
+    "保存镜像设置按钮未绑定处理器。",
+  ],
+  [
+    /gistMirrorNowBtn\.addEventListener\(\"click\"[\s\S]*runGistMirrorOnHubFromControls/,
+    "立即镜像按钮未绑定处理器。",
+  ],
+  [
+    /setSyncSettingsSectionExpanded\("lan", isLanSyncSectionEnabled\(\)\);\s*\n\s*void refreshGistMirrorPanel\(\);/,
+    "打开设置时未刷新 NAS 镜像状态。",
+  ],
+].forEach(([pattern, message]) => {
+  expectMatch(pattern, message);
+});
+
+assert.doesNotMatch(
+  sourceCode,
+  /syncGistMirrorMode|s1pRunGistMirrorOnce|s1pScheduleGistMirror/,
+  "Gist 镜像调度与合并逻辑应放在 NAS Hub，脚本里只保留配置与状态展示。"
+);
+
 const lanTestConnectionBlock =
   sourceCode.match(
     /const testLanSyncConnection = async \(\) => \{[\s\S]*?\n    \};\n\n    const updateForcePullState/
