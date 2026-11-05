@@ -45676,10 +45676,11 @@
     if (lanSyncEnabledToggle) {
       lanSyncEnabledToggle.addEventListener("change", () => {
         updateLanSyncSectionInputsState();
-        setSyncSettingsSectionExpanded(
-          "lan",
-          lanSyncEnabledToggle.checked === true
-        );
+        // 总开关现在位于折叠体内：只在开启时自动展开；关闭时保持展开，
+        // 否则刚切换完开关就会连同开关一起消失。
+        if (lanSyncEnabledToggle.checked === true) {
+          setSyncSettingsSectionExpanded("lan", true);
+        }
       });
     }
 

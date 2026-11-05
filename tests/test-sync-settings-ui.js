@@ -337,6 +337,10 @@ assert.doesNotMatch(
     "局域网同步分组未默认折叠。",
   ],
   [
+    /data-s1p-sync-section-body="lan" hidden[\s\S]*id="s1p-lan-sync-enabled-toggle"/,
+    "局域网同步总开关未被放进折叠体，收起分组时仍会露在外面。",
+  ],
+  [
     /const setSyncSettingsSectionExpanded = \(sectionName, expanded\) => \{[\s\S]*aria-expanded[\s\S]*body\.hidden = !nextExpanded/,
     "折叠分组的展开/收起逻辑缺失。",
   ],
@@ -345,12 +349,21 @@ assert.doesNotMatch(
     "局域网关闭时未禁用 Hub 地址与令牌输入框。",
   ],
   [
-    /lanSyncEnabledToggle\.addEventListener\("change",[\s\S]*setSyncSettingsSectionExpanded\(\s*"lan",\s*lanSyncEnabledToggle\.checked === true\s*\)/,
-    "局域网开关切换时未联动展开/收起。",
+    /lanSyncEnabledToggle\.addEventListener\("change",[\s\S]*lanSyncEnabledToggle\.checked === true[\s\S]*setSyncSettingsSectionExpanded\(\s*"lan",\s*true\s*\)/,
+    "局域网开关开启时未自动展开分组。",
   ],
 ].forEach(([pattern, message]) => {
   expectMatch(pattern, message);
 });
+
+const lanSectionStart = sourceCode.indexOf('id="s1p-lan-sync-section"');
+const lanSectionEnd = sourceCode.indexOf('<div class="s1p-notice">', lanSectionStart);
+const lanSectionHtml = sourceCode.slice(lanSectionStart, lanSectionEnd);
+assert.ok(
+  lanSectionHtml.indexOf('data-s1p-sync-section-body="lan"') <
+    lanSectionHtml.indexOf('id="s1p-lan-sync-enabled-toggle"'),
+  "局域网同步总开关必须位于折叠体内部，收起分组时随其他控件一起隐藏。"
+);
 
 const lanTestConnectionBlock =
   sourceCode.match(
