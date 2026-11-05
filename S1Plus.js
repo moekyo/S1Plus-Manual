@@ -30815,14 +30815,16 @@
     });
     const result = response.json?.result || null;
     if (response.status >= 400 || response.json?.ok === false) {
-      throw createS1pLanSyncError(
-        String(result?.message || "NAS Gist 镜像执行失败。"),
-        {
-          status: response.status,
-          retryable: false,
-          code: "LAN_MIRROR_RUN_FAILED",
-        }
-      );
+      const serverMessage = String(result?.message || "").trim();
+      const fallbackMessage =
+        response.status === 404
+          ? "NAS Hub 未提供镜像执行接口（请更新 NAS 上的 server.js）。"
+          : `NAS Gist 镜像执行失败（HTTP ${response.status}）。`;
+      throw createS1pLanSyncError(serverMessage || fallbackMessage, {
+        status: response.status,
+        retryable: false,
+        code: "LAN_MIRROR_RUN_FAILED",
+      });
     }
     return response.json?.gistMirror || null;
   };
