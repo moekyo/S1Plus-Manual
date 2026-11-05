@@ -621,6 +621,14 @@ const mirrorWithoutReadProgress = (data) => {
   return copy;
 };
 
+// 只比较业务核心数据：settings 属于各设备/各平面的独立配置，
+// 镜像只同步阅读进度，不能因为设置不同就判定为冲突并永久阻塞。
+const mirrorComparableCoreData = (data) => {
+  const copy = mirrorWithoutReadProgress(data);
+  delete copy.settings;
+  return copy;
+};
+
 const parseMirrorOrderNumber = (value) => {
   const parsed = parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
@@ -837,41 +845,69 @@ const runGistMirror = async (reason = "scheduled") => {
       return { status: "success", action: "no_change" };
     }
 
-    const localCore = stableStringifyMirror(
-      mirrorWithoutReadProgress(localData)
-    );
-    const gistCore = stableStringifyMirror(
-      mirrorWithoutReadProgress(validated.data)
-    );
+    const localCoreData = mirrorComparableCoreData(localData);
+    const gistCoreData = mirrorComparableCoreData(validated.data);
+    const localCore = stableStringifyMirror(localCoreData);
+    const gistCore = stableStringifyMirror(gistCoreData);
     if (localCore !== gistCore) {
+      const differingKeys = Object.keys({ ...localCoreData, ...gistCoreData })
+        .filter(
+          (key) =>
+            stableStringifyMirror(localCoreData[key]) !==
+            stableStringifyMirror(gistCoreData[key])
+        )
+        .slice(0, 6);
+      const message = `Gist 与 Hub 存在核心数据差异（差异字段：${
+        differingKeys.join(", ") || "未知"
+      }），镜像已跳过；请在浏览器里手动同步处理`;
       await setGistMirrorState({
         lastAt: Date.now(),
         lastStatus: "conflict",
-        lastMessage:
-          "Gist 与 Hub 存在核心数据差异，镜像已跳过；请在浏览器里手动同步处理",
+        lastMessage: message,
         lastHubVersion: localVersion,
       });
-      log("warn", "gist_mirror_conflict", { reason });
-      return { status: "conflict", reason: "core_data_differs" };
+      log("warn", "gist_mirror_conflict", { reason, differingKeys });
+      return {
+        status: "conflict",
+        reason: "core_data_differs",
+        differingKeys,
+      };
     }
 
-    const mergedData = {
-      ...localData,
-      read_progress: mergeMirrorReadProgress(
-        localData.read_progress,
-        validated.data.read_progress
-      ),
-    };
-    const mergedHash = hashMirrorData(mergedData);
-    if (mergedHash !== validated.hash) {
-      await writeGistMirrorPayload(buildMirrorPayload(localPayload, mergedData));
+    const mergedProgress = mergeMirrorReadProgress(
+      localData.read_progress,
+      validated.data.read_progress
+    );
+    if (
+      stableStringifyMirror(mergedProgress) ===
+        stableStringifyMirror(localData.read_progress) &&
+      stableStringifyMirror(mergedProgress) ===
+        stableStringifyMirror(validated.data.read_progress)
+    ) {
+      await setGistMirrorState({
+        lastAt: Date.now(),
+        lastStatus: "no_change",
+        lastMessage: "阅读进度已一致（settings 差异不参与镜像）",
+        lastHubVersion: localVersion,
+      });
+      return { status: "success", action: "no_change" };
     }
 
+    // 写 Gist 时保留 Gist 自己的 settings，只替换合并后的阅读进度；
+    // 写 Hub 时保留 Hub 自己的 settings，避免镜像顺手覆盖任一端的设置。
+    const gistMergedData = { ...validated.data, read_progress: mergedProgress };
+    const gistMergedPayload = buildMirrorPayload(gist.payload, gistMergedData);
+    const gistMergedHash = hashMirrorData(gistMergedData);
+    if (gistMergedHash !== validated.hash) {
+      await writeGistMirrorPayload(gistMergedPayload);
+    }
+
+    const hubMergedData = { ...localData, read_progress: mergedProgress };
     const hubApply = await withMutation(async () => {
       if (state.version !== localVersion) {
         return { applied: false, reason: "hub_changed" };
       }
-      const nextPayload = buildMirrorPayload(localPayload, mergedData);
+      const nextPayload = buildMirrorPayload(localPayload, hubMergedData);
       const nextState = {
         version: state.version + 1,
         updatedAt: Date.now(),
@@ -890,21 +926,19 @@ const runGistMirror = async (reason = "scheduled") => {
       broadcast();
     }
     const message = hubApply.applied
-      ? mergedHash === validated.hash
-        ? "Gist 已是最新，Hub 已对齐"
-        : "已合并阅读进度并写回 Gist / Hub"
+      ? "已合并阅读进度并写回 Gist / Hub（各自保留自己的 settings）"
       : "Gist 已更新；Hub 在镜像期间有新写入，下一轮再收敛";
     await setGistMirrorState({
       lastAt: Date.now(),
       lastStatus: "success",
       lastMessage: message,
-      lastGistHash: mergedHash,
+      lastGistHash: gistMergedHash,
       lastHubVersion: hubApply.applied ? state.version : localVersion,
     });
     log("info", "gist_mirror_done", {
       reason,
       action: hubApply.applied ? "merged" : "gist_only",
-      gistChanged: mergedHash !== validated.hash,
+      gistChanged: gistMergedHash !== validated.hash,
       hubApplied: hubApply.applied,
       ms: Date.now() - startedAt,
     });
@@ -1161,7 +1195,11 @@ const route = async (req, res) => {
       return sendJson(res, 405, { error: "method_not_allowed" });
     }
 
-    if (pathname === "/mirror" || pathname === "/mirror/config") {
+    if (
+      pathname === "/mirror" ||
+      pathname === "/mirror/config" ||
+      pathname === "/mirror/run"
+    ) {
       if (req.method === "GET" && pathname === "/mirror") {
         return sendJson(res, 200, {
           ok: true,

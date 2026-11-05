@@ -365,7 +365,7 @@ test("Gist 镜像：NAS 定时配置、种子写入、合并与冲突保护", as
   assert.equal(configBody.gistMirror.schedule, "daily");
   assert.equal(configBody.gistMirror.dailyTime, "03:05");
 
-  const seed = await fetch(`${base}/mirror`, { method: "POST", headers });
+  const seed = await fetch(`${base}/mirror/run`, { method: "POST", headers });
   assert.equal(seed.status, 200);
   const seedBody = await seed.json();
   assert.equal(seedBody.result.status, "success");
@@ -382,7 +382,7 @@ test("Gist 镜像：NAS 定时配置、种子写入、合并与冲突保护", as
     },
   };
   fakeGist.setContent(buildSyncPayload(updatedData));
-  const mergeResponse = await fetch(`${base}/mirror`, {
+  const mergeResponse = await fetch(`${base}/mirror/run`, {
     method: "POST",
     headers,
   });
@@ -400,6 +400,36 @@ test("Gist 镜像：NAS 定时配置、种子写入、合并与冲突保护", as
   assert.equal(hubSnapshot.payload.data.read_progress.t2.page, "1");
   assert.ok(hubSnapshot.version >= 2, "合并后 Hub 版本应推进");
 
+  // settings 差异不应阻塞镜像：各自保留自己的 settings，只合并阅读进度。
+  const settingsOnlyData = {
+    ...mergedGistData,
+    settings: { theme: "gist" },
+    read_progress: {
+      ...mergedGistData.read_progress,
+      t3: { page: "1", lastReadFloor: "2", timestamp: 2500 },
+    },
+  };
+  fakeGist.setContent(buildSyncPayload(settingsOnlyData));
+  const settingsOnlyResponse = await fetch(`${base}/mirror/run`, {
+    method: "POST",
+    headers,
+  });
+  assert.equal(settingsOnlyResponse.status, 200);
+  const settingsOnlyBody = await settingsOnlyResponse.json();
+  assert.equal(settingsOnlyBody.result.status, "success");
+  assert.equal(settingsOnlyBody.result.action, "merged");
+  assert.equal(fakeGist.getContent().data.settings.theme, "gist");
+  assert.equal(fakeGist.getContent().data.read_progress.t3.page, "1");
+  const hubAfterSettingsMerge = await (
+    await fetch(`${base}/snapshot`, { headers })
+  ).json();
+  assert.equal(
+    hubAfterSettingsMerge.payload.data.settings.theme,
+    undefined,
+    "Hub 的 settings 不应被 Gist 的 settings 覆盖"
+  );
+  assert.equal(hubAfterSettingsMerge.payload.data.read_progress.t3.page, "1");
+
   // 核心数据冲突：只提示、不覆盖 Gist / Hub。
   const conflictData = {
     ...data,
@@ -408,7 +438,7 @@ test("Gist 镜像：NAS 定时配置、种子写入、合并与冲突保护", as
   };
   const conflictPayload = buildSyncPayload(conflictData);
   fakeGist.setContent(conflictPayload);
-  const conflictResponse = await fetch(`${base}/mirror`, {
+  const conflictResponse = await fetch(`${base}/mirror/run`, {
     method: "POST",
     headers,
   });
