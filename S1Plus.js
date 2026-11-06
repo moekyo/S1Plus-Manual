@@ -41186,8 +41186,7 @@
   };
 
   const DEBUG_UNIFIED_TABS = Object.freeze([
-    { key: "log", label: "日志" },
-    { key: "diagnostics", label: "诊断信息" },
+    { key: "log", label: "日志与诊断" },
     { key: "indicator", label: "指示器调试" },
     { key: "ui-components", label: "UI 组件" },
   ]);
@@ -41214,7 +41213,6 @@
     if (activeTab === "log") {
       logDirty = true;
       renderLogPanel();
-    } else if (activeTab === "diagnostics") {
       updateSyncDiagnosticsPanel();
     } else if (activeTab === "indicator") {
       updateAutoSyncIndicatorDebugPanelState();
@@ -42694,6 +42692,8 @@
     panel.className = "s1p-debug-tab-pane s1p-hidden";
     panel.dataset.s1pDebugTabPane = "log";
 
+    panel.appendChild(createDebugSyncDiagnosticsEmbed());
+
     const toolbar = document.createElement("div");
     toolbar.className = "s1p-debug-console-toolbar";
 
@@ -42750,15 +42750,22 @@
     btnGroup.className = "s1p-debug-console-head-actions";
     btnGroup.appendChild(
       createS1pDebugButton({
-        label: "清空",
-        action: "clear-logs",
+        label: "复制全部",
+        action: "copy-all",
         kind: "utility",
       })
     );
     btnGroup.appendChild(
       createS1pDebugButton({
-        label: "复制",
+        label: "复制日志",
         action: "copy-logs",
+        kind: "utility",
+      })
+    );
+    btnGroup.appendChild(
+      createS1pDebugButton({
+        label: "清空",
+        action: "clear-logs",
         kind: "utility",
       })
     );
@@ -42800,10 +42807,41 @@
     return panel;
   };
 
-  const createDebugSyncDiagnosticsTabContent = () => {
-    const panel = document.createElement("div");
-    panel.className = "s1p-debug-tab-pane s1p-hidden";
-    panel.dataset.s1pDebugTabPane = "diagnostics";
+  const setDebugDiagnosticsEmbedCollapsed = (embed, collapsed) => {
+    if (!embed) return;
+    const isCollapsed = collapsed === true;
+    embed.classList.toggle("is-collapsed", isCollapsed);
+    const head = embed.querySelector(".s1p-debug-diagnostics-embed-head");
+    if (head) {
+      head.setAttribute("aria-expanded", isCollapsed ? "false" : "true");
+    }
+  };
+
+  const createDebugSyncDiagnosticsEmbed = () => {
+    const embed = document.createElement("section");
+    embed.className = "s1p-debug-section s1p-debug-diagnostics-embed";
+    embed.dataset.s1pDebugDiagnosticsEmbed = "1";
+
+    const head = document.createElement("button");
+    head.type = "button";
+    head.className = "s1p-debug-diagnostics-embed-head";
+    head.dataset.s1pDebugAction = "toggle-debug-diagnostics-embed";
+    head.setAttribute("aria-expanded", "true");
+    const title = document.createElement("span");
+    title.className = "s1p-debug-diagnostics-embed-title";
+    title.textContent = "同步状态快照";
+    const meta = document.createElement("span");
+    meta.className = "s1p-debug-diagnostics-embed-meta";
+    meta.textContent = "最近一次同步状态，不是历史记录";
+    const chevron = document.createElement("span");
+    chevron.className = "s1p-debug-diagnostics-embed-chevron";
+    chevron.setAttribute("aria-hidden", "true");
+    chevron.textContent = "▾";
+    head.append(title, meta, chevron);
+    embed.appendChild(head);
+
+    const body = document.createElement("div");
+    body.className = "s1p-debug-diagnostics-embed-body";
 
     const toolbar = document.createElement("div");
     toolbar.className = "s1p-debug-diagnostics-toolbar";
@@ -42816,7 +42854,7 @@
     );
     toolbar.appendChild(
       createS1pDebugButton({
-        label: "复制诊断",
+        label: "复制快照",
         action: "copy-diagnostics",
         kind: "utility",
       })
@@ -42828,7 +42866,7 @@
         kind: "utility",
       })
     );
-    panel.appendChild(toolbar);
+    body.appendChild(toolbar);
 
     const confirmRow = document.createElement("div");
     confirmRow.className = "s1p-debug-confirm-inline s1p-hidden";
@@ -42852,14 +42890,16 @@
       })
     );
     confirmRow.append(confirmText, confirmActions);
-    panel.appendChild(confirmRow);
+    body.appendChild(confirmRow);
 
     const diagnosticsPanel = document.createElement("div");
     diagnosticsPanel.id = DEBUG_SYNC_DIAGNOSTICS_PANEL_ID;
-    diagnosticsPanel.className =
-      "s1p-debug-section s1p-debug-diagnostics-panel";
-    panel.appendChild(diagnosticsPanel);
-    return panel;
+    diagnosticsPanel.className = "s1p-debug-diagnostics-panel";
+    body.appendChild(diagnosticsPanel);
+
+    embed.appendChild(body);
+    setDebugDiagnosticsEmbedCollapsed(embed, true);
+    return embed;
   };
 
   const setDebugDiagnosticsResetConfirmationVisible = (visible) => {
@@ -42871,9 +42911,42 @@
     }
   };
 
+  const getFilteredLogCopyLines = () => {
+    const filtered = applyLogFilters(logBuffer);
+    return {
+      count: filtered.length,
+      lines: filtered.map((entry) => formatLogEntryForCopy(entry)),
+    };
+  };
+
+  const buildDebugCombinedCopyText = () => {
+    const { count, lines } = getFilteredLogCopyLines();
+    return [
+      `S1 Plus ${SCRIPT_VERSION} · 调试报告 · ${new Date().toISOString()}`,
+      `采集损失：${JSON.stringify(s1pLogLoss)}`,
+      "",
+      "===== 同步状态快照 =====",
+      buildSyncDiagnosticsSummary(),
+      "",
+      `===== 当前标签页筛选日志 · ${count} 条 =====`,
+      ...(lines.length ? lines : ["（当前筛选下没有日志）"]),
+    ].join("\n");
+  };
+
   const handleDebugUnifiedPanelAction = (action, button) => {
     if (action.startsWith("switch-tab:")) {
       switchDebugUnifiedPanelTab(action.slice("switch-tab:".length));
+      return;
+    }
+    if (action === "toggle-debug-diagnostics-embed") {
+      const embed = button?.closest?.("[data-s1p-debug-diagnostics-embed]");
+      if (embed) {
+        const nextCollapsed = !embed.classList.contains("is-collapsed");
+        setDebugDiagnosticsEmbedCollapsed(embed, nextCollapsed);
+        if (!nextCollapsed) {
+          updateSyncDiagnosticsPanel();
+        }
+      }
       return;
     }
     if (action === "clear-logs") {
@@ -42906,13 +42979,16 @@
       renderLogPanel();
       return;
     }
+    if (action === "copy-all") {
+      copyDebugConsoleText(buildDebugCombinedCopyText());
+      showDebugConsoleButtonFeedback(button, "已复制报告");
+      return;
+    }
     if (action === "copy-logs") {
-      const filtered = applyLogFilters(logBuffer);
-      const text = `S1 Plus ${SCRIPT_VERSION} · 当前标签页筛选日志 · ${new Date().toISOString()}\n采集损失：${JSON.stringify(s1pLogLoss)}\n` + filtered
-        .map((entry) => formatLogEntryForCopy(entry))
-        .join("\n");
+      const { count, lines } = getFilteredLogCopyLines();
+      const text = `S1 Plus ${SCRIPT_VERSION} · 当前标签页筛选日志 · ${new Date().toISOString()}\n采集损失：${JSON.stringify(s1pLogLoss)}\n` + lines.join("\n");
       copyDebugConsoleText(text);
-      showDebugConsoleButtonFeedback(button, `已复制 ${filtered.length} 条`);
+      showDebugConsoleButtonFeedback(button, `已复制 ${count} 条`);
       return;
     }
     if (action === "export-diagnostic-log") {
@@ -42962,7 +43038,7 @@
     }
     if (action === "copy-diagnostics") {
       copyDebugConsoleText(buildSyncDiagnosticsSummary());
-      showDebugConsoleButtonFeedback(button, "已复制");
+      showDebugConsoleButtonFeedback(button, "已复制快照");
       return;
     }
     if (action === "request-reset-diagnostics") {
@@ -43044,7 +43120,6 @@
     const content = document.createElement("div");
     content.className = "s1p-debug-tab-content";
     content.appendChild(createDebugConsoleLogTabContent());
-    content.appendChild(createDebugSyncDiagnosticsTabContent());
     content.appendChild(createAutoSyncIndicatorDebugTabContent());
     content.appendChild(createDebugUIComponentsTabContent());
     panel.appendChild(content);
