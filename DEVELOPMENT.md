@@ -524,8 +524,12 @@ node tests/test-category-c-and-image-viewer-glass-css.js
   等动作的基线描述导入后的内容，必须用写入时刻的代数；否则每次成功拉取后都会立刻判脏
   （多跑一次同步）。清单见 `SYNC_IMPORT_BASED_ACTIONS`。
 - **生产基线写入只有一个入口** `commitSyncedBaseline({syncBaseline, coveredContentGeneration, reason})`：
-  覆盖代数必填，缺省/非法/小于 1 直接抛错；`setSyncBaselineState` 退为内部原语，
-  生产代码全文件只有一处调用（在其内部）。旧基线（无代数）读取时仍按“缺失”处理。
+  覆盖代数必填，缺省/非法/小于 1 直接抛错。基线写入原语被封装在独立闭包
+  `syncBaselineBoundary` 内：它不是模块级标识符，**闭包外引用会直接 ReferenceError**，
+  因此别名/间接调用在语法上不可能（这是物理隔离，不是文本约定）。
+  测试模式通过 `setSyncBaselineStateForTest` 暴露内部原语。旧基线（无代数）读取时按“缺失”处理。
+- **导入原语不再挂在公开门面上**：`s1pCoreBusinessData` 是冻结的、已剥离
+  `importFromSync` 的门面；原语只被 `importLocalData` 通过捕获引用使用。
 - **代数递增是单调且有回读校验的**：`max(已读+1, now)` 让跨毫秒并发不会算出同值，
   写入后回读，被覆盖则继续递增。**注意**：同一毫秒内两个标签页仍可能算出相同的值，
   回读无法区分——这是 GM 缺少原子 CAS 的固有残余，见 `PENDING_INVARIANTS`。
