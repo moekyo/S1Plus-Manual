@@ -519,8 +519,14 @@ node tests/test-category-c-and-image-viewer-glass-css.js
   false-dirty 只是浪费一次同步，false-clean 会真的丢推送，所以方向必须偏保守。
 - 合并式拉取写入基线后必须调用一次 `bumpLocalContentGeneration()`：
   此时“本地(合并结果) ≠ 基线(云端内容)”是事实，否则收敛推送会被门禁判成干净。
-- 旧基线（缺代数）在调度层直接判脏，因此迁移窗口内不会 false-clean；
-  显示层仍有水印回退，但它只影响视觉，不影响推送正确性。
+- 旧基线（缺代数）在调度层直接判脏，因此迁移窗口内不会 false-clean。
+- **覆盖清理也按代数**：待同步请求登记时记录 `dirtyGeneration`，共享调度登记时记录
+  `contentGeneration`；同步完成后的清理用“登记代数 <= 本次覆盖代数”判断是否真正被覆盖，
+  时间戳只用于旧记录迁移且一律保守（无法证明被覆盖就保留）。
+- **显示层内容判定是三值**：`resolveContentDirtyForDisplay()` 依次尝试
+  指纹 → 内容代数 → 显式 `content_truth_unavailable`。只有第三态（内容事实不可得，
+  例如来自旧版本的基线）才允许使用“已登记同步事件”的存活兜底；兜底自带新鲜度，
+  过期的旧记录不会长期显示待推送。
 
 这些约束由 `tests/check-sync-architectural-invariants.js` 的 INV-1 静态检查锁定
 （含“禁止回到时间戳权威”的反向断言），并由 `tests/test-sync-scheduling-authority.js` 覆盖。

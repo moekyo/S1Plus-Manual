@@ -73,18 +73,39 @@ const checkInv1DerivedNeedAuthority = () => {
     /deriveSyncNeed\(\{ now \}\)/,
     "INV-1：待推送显示必须消费派生需求。"
   );
+  // 三值内容判定：指纹优先 → 内容代数 → 只有“内容事实不可得”才允许存活兜底。
   assert.match(
     pendingDisplayBlock,
-    /syncNeed\.available === true/,
-    "INV-1：派生不可用（旧基线）时才能回退水印，必须由 available 守卫。"
+    /const resolveContentDirtyForDisplay = \(\) => \{/,
+    "INV-1：显示层必须有唯一的内容判定解析器。"
   );
-  const derivedIndex = pendingDisplayBlock.indexOf("deriveSyncNeed(");
+  assert.match(
+    pendingDisplayBlock,
+    /syncNeed\.available === true[\s\S]{0,400}authority: "fingerprint"/,
+    "INV-1：指纹可用时必须用指纹作为内容权威。"
+  );
+  assert.match(
+    pendingDisplayBlock,
+    /if \(generationDirtyState\.known === true\) \{[\s\S]{0,600}?authority: "generation"/,
+    "INV-1：指纹不可用但有代数时必须用代数作为内容权威（含 known 守卫）。"
+  );
+  assert.match(
+    pendingDisplayBlock,
+    /dirty: null,[\s\S]{0,200}content_truth_unavailable/,
+    "INV-1：内容事实不可得必须是显式的第三态，而不是默认退回时间戳。"
+  );
+  assert.match(
+    pendingDisplayBlock,
+    /contentDirtyState\.dirty === true[\s\S]{0,600}contentDirtyState\.dirty === false/,
+    "INV-1：三值判定必须先处理 true/false，剩余才是迁移兜底。"
+  );
+  const derivedIndex = pendingDisplayBlock.indexOf("resolveContentDirtyForDisplay");
   const watermarkIndex = pendingDisplayBlock.indexOf(
     "isAutoSyncIndicatorPendingTimestampFresh("
   );
   assert.ok(
     watermarkIndex === -1 || derivedIndex < watermarkIndex,
-    "INV-1：派生判定必须在水印兜底之前。"
+    "INV-1：内容判定必须在存活兜底之前。"
   );
 
   // 引擎与显示共用同一份派生，消除第二套权威。
@@ -197,6 +218,48 @@ const checkInv1DerivedNeedAuthority = () => {
     "INV-1：待同步回收不得用时间戳比较直接清除待同步请求（会静默丢推送）。"
   );
 
+  // 覆盖清理：待同步请求的覆盖判定必须按内容代数，时间戳仅作旧记录迁移。
+  const coveredCleanupBlock = sliceBetween(
+    "const isPendingRequestCoveredBySync = (",
+    "const clearSharedBackgroundSyncDebounceIfCovered = ({"
+  );
+  assert.match(
+    coveredCleanupBlock,
+    /pending\?\.dirtyGeneration !== null &&\s*[\s\S]{0,80}?pending\?\.dirtyGeneration !== undefined/,
+    "INV-1：待同步请求的覆盖判定必须显式守卫“代数存在”，" +
+      "缺失时不能假装有代数（0 是合法代数）。"
+  );
+  assert.match(
+    coveredCleanupBlock,
+    /coveredContentGeneration/,
+    "INV-1：覆盖判定必须使用本次同步覆盖的内容代数。"
+  );
+  const sharedCoveredBlock = sliceBetween(
+    "const isSharedDebounceStateCoveredBySync = (",
+    "const clearSharedBackgroundSyncDebounceIfCovered = ({"
+  );
+  assert.match(
+    sharedCoveredBlock,
+    /state\.contentGeneration !== null &&\s*[\s\S]{0,80}?state\.contentGeneration !== undefined/,
+    "INV-1：共享调度的覆盖判定必须显式守卫“代数存在”，缺失时退回时间戳。"
+  );
+  assert.match(
+    sliceBetween(
+      "const markPendingAutoSyncRequest = (",
+      "const clearPendingAutoSyncRequest = () => {"
+    ),
+    /getLocalContentGeneration\(\)/,
+    "INV-1：登记待同步请求时必须记录内容代数。"
+  );
+  assert.match(
+    sliceBetween(
+      "const requestSharedBackgroundSyncDebounce = (",
+      "const setBackgroundSyncDebounceState = ("
+    ),
+    /contentGeneration:[\s\S]{0,300}getLocalContentGeneration\(\)/,
+    "INV-1：登记共享调度时必须记录内容代数。"
+  );
+
   // 合并式拉取：基线写入后必须推进代数，否则收敛推送会被门禁判干净。
   const mergePullBlock = sliceBetween(
     "if (pullApplyResult.mergedReadProgressChanged) {",
@@ -211,8 +274,8 @@ const checkInv1DerivedNeedAuthority = () => {
   assert.ok(LEGACY_FALLBACK.removalCriterion.length > 0);
   assert.match(
     pendingDisplayBlock,
-    /hasRegisteredSyncEvent[\s\S]{0,600}syncNeed\.available === true/,
-    "INV-1：水印回退必须处于“派生不可用”分支之后，旧基线迁移路径不得成为主判定。"
+    /hasRegisteredSyncEvent[\s\S]{0,900}contentDirtyState\.dirty === true/,
+    "INV-1：内容判定必须与“已登记同步事件”合取。"
   );
 };
 
