@@ -88,13 +88,21 @@ const seedPending = (harness, lastModified) => {
 const testGenerationLifecycle = () => {
   const harness = createHarness();
   writeProgress(harness, 10);
-  assert.equal(readGeneration(harness), 1, "内容写入必须推进代数");
+  // 代数是单调递增标记（含时间下限），只断言“推进过”，不假设具体数值。
+  const firstGeneration = readGeneration(harness);
+  assert.ok(firstGeneration >= 1, "内容写入必须推进代数");
+  writeProgress(harness, 11);
+  assert.ok(
+    readGeneration(harness) > firstGeneration,
+    "再次写入必须单调推进代数"
+  );
+  writeProgress(harness, 10);
 
   harness.store.set(LAST_MODIFIED_KEY, 5000);
   const baseline = writeBaseline(harness, "h1");
   assert.equal(
     baseline.localContentGeneration,
-    1,
+    readGeneration(harness),
     "基线必须记录写入时刻的代数"
   );
   assert.equal(
@@ -511,6 +519,61 @@ const testCoveredCleanupRetainsWhenGenerationMissing = () => {
   assert.equal(harness.store.has(PENDING_AUTO_SYNC_KEY), true);
 };
 
+// ------------------------------------------------------- 结构性强制（生产唯一入口）
+
+const testCommitSyncedBaselineRequiresGeneration = () => {
+  const harness = createHarness();
+  const baseline = {
+    contentHash: "h",
+    localContentHash: "h",
+    remoteContentHash: "h",
+    remoteUpdatedAt: "2026-01-01T00:00:00Z",
+  };
+  assert.throws(
+    () => harness.hooks.commitSyncedBaseline({ syncBaseline: baseline }),
+    /缺少覆盖内容代数/,
+    "缺省覆盖代数必须抛错（不得默默用此刻代数认证当前内容）"
+  );
+  assert.throws(
+    () =>
+      harness.hooks.commitSyncedBaseline({
+        syncBaseline: baseline,
+        coveredContentGeneration: 0,
+      }),
+    /覆盖内容代数无效/,
+    "代数域为 [1, ∞)，0 必须被拒绝"
+  );
+  assert.throws(
+    () => harness.hooks.commitSyncedBaseline({ coveredContentGeneration: 3 }),
+    /需要基线对象/,
+    "缺基线对象必须抛错"
+  );
+
+  const written = harness.hooks.commitSyncedBaseline({
+    syncBaseline: baseline,
+    coveredContentGeneration: 7,
+    reason: "unit_test",
+  });
+  assert.equal(written.localContentGeneration, 7);
+  assert.equal(harness.hooks.getSyncBaselineState().localContentGeneration, 7);
+};
+
+const testGenerationStaysMonotonicAcrossWriters = () => {
+  const first = createHarness();
+  const second = createHarness({ sharedStore: first.store });
+  const seen = [];
+  for (let index = 0; index < 5; index += 1) {
+    writeProgress(index % 2 === 0 ? first : second, 10 + index);
+    seen.push(readGeneration(first));
+  }
+  for (let index = 1; index < seen.length; index += 1) {
+    assert.ok(
+      seen[index] > seen[index - 1],
+      `共享存储上的连续写入必须严格递增（第 ${index} 次: ${seen[index - 1]} -> ${seen[index]}）`
+    );
+  }
+};
+
 // ------------------------------------------------------- 覆盖判定的保守性
 
 const testCoverageSyncSideWithoutGenerationRetainsPending = () => {
@@ -576,7 +639,7 @@ const testDisplayUsesGenerationWhenFingerprintUnavailable = () => {
     remoteContentHash: "g",
     remoteUpdatedAt: "2025-01-01T00:00:00Z",
     savedAt: 2,
-    localContentGeneration: readGeneration(harness),
+    localContentGeneration: harness.hooks.getLocalContentGeneration(),
   });
   seedPending(harness, now);
   assert.equal(
@@ -643,6 +706,8 @@ const run = () => {
   testCoveredGenerationIsCapturedBeforeSnapshotExport();
   testCoveredCleanupUsesContentGeneration();
   testCoveredCleanupRetainsWhenGenerationMissing();
+  testCommitSyncedBaselineRequiresGeneration();
+  testGenerationStaysMonotonicAcrossWriters();
   testCoverageSyncSideWithoutGenerationRetainsPending();
   testCoverageSyncSideWithoutGenerationRetainsSharedDebounce();
   testDisplayUsesGenerationWhenFingerprintUnavailable();

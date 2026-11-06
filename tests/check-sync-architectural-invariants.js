@@ -43,23 +43,11 @@ const MANIFEST = Object.freeze({
 // 尚未落地/无法用文本契约真正强制的不变量：显式记录，避免过度声称。
 const PENDING_INVARIANTS = Object.freeze([
   {
-    id: "INV-1-atomicity",
+    id: "INV-1-atomicity-residual",
     reason:
-      "内容代数是 GM 非原子读-改-写，且无跨标签页刷新：极端并发下可能丢一次递增（自愈）。",
-    removalCriterion: "改用带原子递增/多标签页同步的存储原语后移除。",
-  },
-  {
-    id: "INV-1-baseline-required-generation",
-    reason:
-      "setSyncBaselineState 在调用方未提供覆盖代数时会以当前代数兜底，新增调用方仍可“认证当前内容”。",
-    removalCriterion:
-      "把覆盖代数改为必填参数（无默认值）并为所有调用方接线后移除。",
-  },
-  {
-    id: "INV-3-import-from-sync",
-    reason:
-      "core 模块仍暴露 importFromSync，可绕过 applyRemoteSnapshotToLocal 的 brand 边界。",
-    removalCriterion: "把 importFromSync 收为边界私有后移除。",
+      "GM 没有原子 compare-and-set：代数递增已改为 max(已读+1, now) + 回读重试，" +
+      "但两个标签页在同一毫秒并发写入仍可能碰撞（后果是少一次递增，下次写入自愈）。",
+    removalCriterion: "改用具备原子递增语义的存储（或引入跨标签页写锁）后移除。",
   },
 ]);
 
@@ -303,8 +291,8 @@ const checkInv1DerivedNeedAuthority = () => {
       "const handleForcePush = async (",
       "const handleForcePull = async ("
     ),
-    /setSyncBaselineState\([\s\S]{0,400}?bindBaselineContentGeneration\(/,
-    "INV-1：强制推送成功后必须写绑定覆盖代数的基线。"
+    /commitSyncedBaseline\(\{[\s\S]{0,400}?coveredContentGeneration/,
+    "INV-1：强制推送成功后必须经 commitSyncedBaseline 写覆盖代数。"
   );
   assert.match(
     sliceBetween(
@@ -323,101 +311,88 @@ const checkInv1DerivedNeedAuthority = () => {
     "INV-1：登记共享调度时必须记录内容代数。"
   );
 
-  // 基线必须绑定“被同步内容所属代数”，不能在写基线时现取当前代数。
-  const bindBlock = sliceBetween(
-    "const bindBaselineContentGeneration = (",
-    "const setSyncBaselineState = ({"
+  // [ARCH-INV-1] 生产环境只有一条基线写入路径：commitSyncedBaseline（覆盖代数必填）。
+  // 全文件只允许两处：定义处 1 次 + commitSyncedBaseline 内部 1 次。
+  // 任何新增的直写都会让计数变成 3+，从而被拦下。
+  // 只允许一处：commitSyncedBaseline 内部（定义写作 `const setSyncBaselineState = (`，
+  // 不含 `setSyncBaselineState(` 子串）。新增直写会让计数变成 2+。
+  assert.equal(
+    countOccurrences("setSyncBaselineState("),
+    1,
+    "INV-1：生产代码不得直接调用 setSyncBaselineState，" +
+      "必须经 commitSyncedBaseline（覆盖代数必填）。"
+  );
+  const commitBlock = sliceBetween(
+    "const commitSyncedBaseline = ({",
+    "const isLocalContentDirtySinceBaseline = () => {"
   );
   assert.match(
-    bindBlock,
-    /const bindBaselineContentGeneration = \(\s*syncBaseline,\s*coveredContentGeneration\s*\) => \{/,
-    "INV-1：必须存在“基线绑定被同步内容代数”的唯一纯函数。"
+    commitBlock,
+    /coveredContentGeneration === null \|\|\s*coveredContentGeneration === undefined[\s\S]{0,200}?throw new TypeError/,
+    "INV-1：commitSyncedBaseline 必须拒绝缺省覆盖代数（缺省即抛错）。"
   );
   assert.match(
-    bindBlock,
-    /return \{ \.\.\.syncBaseline, localContentGeneration: normalizedCovered \};/,
-    "INV-1：绑定函数必须真的写入覆盖代数（不得被掏空）。"
+    commitBlock,
+    /Math\.floor\(parsedGeneration\)/,
+    "INV-1：commitSyncedBaseline 必须把覆盖代数写进基线。"
   );
   assert.match(
-    bindBlock,
-    /!isObjectRecord\(syncBaseline\) \|\| normalizedCovered <= 0[\s\S]{0,80}?return syncBaseline;/,
-    "INV-1：未捕获覆盖代数时必须原样返回，不得猜一个代数。"
+    commitBlock,
+    /parsedGeneration < 1/,
+    "INV-1：代数域为 [1, ∞)，commitSyncedBaseline 必须拒绝 <1 的值。"
   );
-  const asSuccessBlock = sliceBetween(
-    "const asSuccessResult = (action, syncBaseline = null, extraResult = null) => {",
-    "const asSoftBlockedResult = (reason, extraResult = null) => {"
-  );
-  assert.match(
-    asSuccessBlock,
-    /effectiveCoveredContentGeneration[\s\S]{0,1200}?bindBaselineContentGeneration\(\s*syncBaseline,\s*effectiveCoveredContentGeneration\s*\)/,
-    "INV-1：写基线前必须先把覆盖代数确定下来并绑定，" +
-      "否则同步期间的写入会被误记为已覆盖（false-clean）。"
-  );
-  assert.match(
-    asSuccessBlock,
-    /const effectiveCoveredContentGeneration = \(\(\) => \{/,
-    "INV-1：覆盖代数必须在 setSyncBaselineState 之前计算。"
-  );
-  // 覆盖代数必须真的取自“读取快照时捕获的值”，不能被静默归零。
-  assert.match(
-    asSuccessBlock,
-    /Math\.max\(0, Math\.floor\(Number\(coveredLocalContentGeneration\) \|\| 0\)\)/,
-    "INV-1：覆盖代数必须取自 captureCoveredContentGeneration 的捕获值。"
-  );
-  // 导入类动作（拉取/合并）不得绑定导出前代数，否则每次拉取后立刻判脏。
-  assert.match(
-    asSuccessBlock,
-    /!isImportBasedSyncAction\(action\)/,
-    "INV-1：导入类动作必须排除在“绑定导出代数”之外。"
+  // asSuccessResult / 强制推送 / 强制拉取 / 手动同步 都必须走强制入口。
+  const commitCallSites = countOccurrences("commitSyncedBaseline({");
+  assert.ok(
+    commitCallSites >= 4,
+    `INV-1：至少 4 处生产基线写入必须经 commitSyncedBaseline，实际 ${commitCallSites} 处。`
   );
   assert.match(
     sliceBetween(
-      "const SYNC_IMPORT_BASED_ACTIONS = Object.freeze([",
-      "const isImportBasedSyncAction = (action = \"\") =>"
+      "const asSuccessResult = (action, syncBaseline = null, extraResult = null) => {",
+      "const asSoftBlockedResult = (reason, extraResult = null) => {"
     ),
-    /"pulled",[\s\S]{0,200}?"force_pulled",[\s\S]{0,200}?"merged_read_progress"/,
-    "INV-1：导入类动作清单必须覆盖 pulled / force_pulled / merged_read_progress。"
+    /commitSyncedBaseline\(\{[\s\S]{0,300}?coveredContentGeneration/,
+    "INV-1：asSuccessResult 写基线必须经 commitSyncedBaseline 并提供覆盖代数。"
   );
 
-  // 覆盖代数必须在“读取快照之前”捕获（exportLocalDataObject 内部有 await）。
-  // 逐处检查：每个 capture 之后必须在很近的位置紧跟一次导出。
-  const assertCapturePrecedesExport = (marker, exportMarker, minCount, label) => {
-    let from = 0;
-    let checked = 0;
-    while (true) {
-      const captureIndex = source.indexOf(marker, from);
-      if (captureIndex < 0) break;
-      const exportAfter = source.indexOf(exportMarker, captureIndex);
-      const exportBefore = source.lastIndexOf(exportMarker, captureIndex);
-      assert.ok(exportAfter > captureIndex, `${label}：抓取后必须紧跟导出调用`);
-      assert.ok(
-        exportAfter - captureIndex < 400,
-        `${label}：必须在导出快照之前抓取，` +
-          "否则导出 await 期间的写入会被误记为已覆盖。"
-      );
-      assert.ok(
-        captureIndex - exportBefore >= 400,
-        `${label}：不得在导出之后才抓取（那是被修复掉的 false-clean）。`
-      );
-      checked += 1;
-      from = captureIndex + marker.length;
-    }
-    assert.ok(
-      checked >= minCount,
-      `${label}：抓取点数量不足（期望 >= ${minCount}，实际 ${checked}）`
-    );
-  };
-  assertCapturePrecedesExport(
-    "captureCoveredContentGeneration();",
-    "exportLocalDataObject(",
-    2,
-    "自动同步"
+  // 代数递增：单调下限 + 回读校验（GM 无原子 CAS 的兜底）。
+  const bumpBlock = sliceBetween(
+    "const bumpLocalContentGeneration = () => {",
+    "const invalidateLocalDataHashCache = () => {"
   );
-  assertCapturePrecedesExport(
-    "captureManualCoveredContentGeneration();",
-    "exportLocalDataObject()",
-    3,
-    "手动同步"
+  assert.match(
+    bumpBlock,
+    /Math\.max\(lastSeen \+ 1, Date\.now\(\)\)/,
+    "INV-1：代数递增必须取单调下限 max(已读+1, now)，避免并发下算出同一个值。"
+  );
+  assert.match(
+    bumpBlock,
+    /GM_getValue\(LOCAL_CONTENT_GENERATION_KEY[\s\S]{0,200}?readBack >= nextGeneration/,
+    "INV-1：代数递增必须回读校验，被并发覆盖时继续递增。"
+  );
+
+  // 导入来源：同步数据入口必须声明来源（缺省/未知一律抛错）。
+  assert.match(
+    sliceBetween(
+      "const SYNC_IMPORT_ORIGINS = Object.freeze({",
+      "const importFromSync = ("
+    ),
+    /VALIDATED_REMOTE_SNAPSHOT[\s\S]{0,200}?MERGED_PAYLOAD[\s\S]{0,200}?USER_JSON_IMPORT/,
+    "INV-3：importFromSync 必须声明三种合法来源枚举。"
+  );
+  assert.match(
+    sliceBetween("const importFromSync = (", "const importFromSyncResult"),
+    /if \(!isKnownSyncImportOrigin\(origin\)\) \{[\s\S]{0,200}?throw new TypeError/,
+    "INV-3：importFromSync 必须拒绝缺省/未知来源。"
+  );
+  assert.match(
+    sliceBetween(
+      "const importLocalData = (jsonStr, options = {}) => {",
+      "const buildSyncBaselineStateForDataPair"
+    ),
+    /if \(!isKnownLocalImportOrigin\(origin\)\) \{[\s\S]{0,200}?throw new TypeError/,
+    "INV-3：importLocalData 必须拒绝缺省/未知来源。"
   );
 
   // 合并式拉取：基线写入后必须推进代数，否则收敛推送会被门禁判干净。
@@ -551,8 +526,8 @@ const checkInv3SingleApplyBoundary = () => {
   );
   assert.match(
     source,
-    /importLocalData\(jsonStr\)/,
-    "INV-3：第二个调用点必须是已声明的手动文本恢复入口。"
+    /importLocalData\(jsonStr, \{[\s\S]{0,120}?LOCAL_IMPORT_ORIGIN_USER_JSON/,
+    "INV-3：第二个调用点必须是已声明来源的手动文本恢复入口。"
   );
   assert.match(
     source,

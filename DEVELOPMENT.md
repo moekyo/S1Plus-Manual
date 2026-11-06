@@ -523,6 +523,15 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - **导入类动作不绑定导出代数**：`pulled` / `force_pulled` / `merged_read_progress`
   等动作的基线描述导入后的内容，必须用写入时刻的代数；否则每次成功拉取后都会立刻判脏
   （多跑一次同步）。清单见 `SYNC_IMPORT_BASED_ACTIONS`。
+- **生产基线写入只有一个入口** `commitSyncedBaseline({syncBaseline, coveredContentGeneration, reason})`：
+  覆盖代数必填，缺省/非法/小于 1 直接抛错；`setSyncBaselineState` 退为内部原语，
+  生产代码全文件只有一处调用（在其内部）。旧基线（无代数）读取时仍按“缺失”处理。
+- **代数递增是单调且有回读校验的**：`max(已读+1, now)` 保证并发下不会算出同一个值，
+  写入后回读，被覆盖则继续递增（GM 无原子 CAS，这是逼近手段；残余风险见
+  `PENDING_INVARIANTS`）。
+- **导入必须声明来源**：`importFromSync` / `importLocalData` 都要求显式 `origin`
+  （`validated_remote_snapshot` / `merged_payload` / `user_json_import`），
+  缺省或未知一律抛错，新增导入点无法“悄悄”绕过来源声明。
 - **基线绑定被同步内容的代数**：`asSuccessResult` 在写基线前先确定
   `effectiveCoveredContentGeneration`（读取内容快照时抓取），再经
   `bindBaselineContentGeneration()` 写入基线。若基线默认取“写基线那一刻”的代数，
