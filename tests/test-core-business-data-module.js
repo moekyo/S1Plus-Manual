@@ -133,11 +133,30 @@ const testEveryKindUsesOneReadWriteProjectionInterface = () => {
   assert.equal(stored.s1p_core_data_refresh_signal.sender, "test-tab");
 };
 
+const testImportFromSyncRequiresDeclaredOrigin = () => {
+  const { coreBusinessData } = createModuleHarness();
+  assert.throws(
+    () => coreBusinessData.importFromSync(expectedSyncProjection, {}),
+    /必须声明合法来源/,
+    "未声明来源的导入必须被拒绝"
+  );
+  assert.throws(
+    () =>
+      coreBusinessData.importFromSync(expectedSyncProjection, {
+        origin: "made_up_origin",
+      }),
+    /必须声明合法来源/,
+    "未知来源的导入必须被拒绝"
+  );
+};
+
 const testEverySyncIdentityImportsThroughTheSameInterface = () => {
   const { coreBusinessData } = createModuleHarness();
 
+  // [ARCH-INV-3] 同步数据导入必须声明来源。
   const result = coreBusinessData.importFromSync(expectedSyncProjection, {
     suppressSyncTrigger: true,
+    origin: "user_json_import",
   });
 
   assert.deepStrictEqual(toPlainObject(result.counts), {
@@ -396,7 +415,7 @@ const testCanonicalImportPersistsEquivalentLegacyStorageShapes = () => {
       ...expectedSyncProjection,
       user_tags: canonicalUserTags,
     },
-    { suppressSyncTrigger: true }
+    { suppressSyncTrigger: true, origin: "user_json_import" }
   );
   const stored = toPlainObject(storageAdapter.snapshot());
 
@@ -483,6 +502,7 @@ const testSettingsSignalBridgeRemainsBoundThroughTheModule = () => {
 
 const main = () => {
   testEveryKindUsesOneReadWriteProjectionInterface();
+  testImportFromSyncRequiresDeclaredOrigin();
   testEverySyncIdentityImportsThroughTheSameInterface();
   testCacheSnapshotAndCrossTabBehaviorStayBehindTheInterface();
   testKindNormalizationAndNoopWritesAreOwnedByTheModule();
