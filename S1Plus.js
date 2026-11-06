@@ -11385,27 +11385,38 @@
 
   // [ARCH-INV-2] 同步是双通道：投影必须同时暴露 pull / push 两个独立槽位。
   // 单值 displayPhase 只是兼容视图（由方向槽位与结果态共同派生），不再承担“哪个方向”的权威。
+  // [ARCH-INV-2] 同步是双通道：投影必须同时暴露 pull / push 两个独立槽位。
+  // 槽位从“选择结果 + 运行时事实”派生，不读取 displayState（避免循环依赖）；
+  // 结果槽位来自“已结算的方向”，因此拉取成功与推送待办可同时成立。
   const buildSyncIndicatorDirectionalState = ({
     state = null,
-    displayState = null,
+    selection = null,
     pendingState = null,
     runningState = null,
     canShowPending = false,
     now = Date.now(),
   } = {}) => {
-    const displayPhase = normalizeAutoSyncIndicatorPhase(
-      displayState?.displayPhase,
-      { allowRunning: true }
-    ) || AUTO_SYNC_INDICATOR_PHASE_IDLE;
-    const displayOperation = normalizeAutoSyncIndicatorOperation(
-      displayState?.displayOperation
+    const selectionPhase =
+      normalizeAutoSyncIndicatorPhase(selection?.phase, { allowRunning: true }) ||
+      AUTO_SYNC_INDICATOR_PHASE_IDLE;
+    const selectionOperation = normalizeAutoSyncIndicatorOperation(
+      selection?.operation
     );
-    const displayDirection = normalizeAutoSyncIndicatorOperation(
-      displayState?.displayDominantDirection
-    );
+    const selectionIsRunning =
+      selectionPhase === AUTO_SYNC_INDICATOR_PHASE_RUNNING;
+    const selectionIsPending =
+      selectionPhase === AUTO_SYNC_INDICATOR_PHASE_PENDING;
+    const selectionIsResult = isAutoSyncIndicatorResultPhase(selectionPhase);
     const pendingSources = normalizeAutoSyncIndicatorLocalChangeSources(
       pendingState?.sources
     );
+    const pendingOperation =
+      normalizeAutoSyncIndicatorOperation(pendingState?.operation) ||
+      AUTO_SYNC_INDICATOR_OPERATION_PUSH;
+    const runningSource = runningState?.source || state?.source || "";
+    const runningReason = runningState?.reason || state?.reason || "";
+    const pendingSource = pendingState?.source || state?.source || "";
+    const pendingReason = pendingState?.reason || state?.reason || "";
     const resolveResultForDirection = (direction) => {
       const currentPhase = normalizeAutoSyncIndicatorPhase(state?.phase, {
         allowRunning: true,
@@ -11443,11 +11454,6 @@
       }
       return null;
     };
-    // 只有真正的“结果相位”才是结算结果；idle 不是结算结果，
-    // 否则空状态会被误判成“有结果”，让方向槽位永远 active。
-    const displayResultPhase = isAutoSyncIndicatorResultPhase(displayPhase)
-      ? displayPhase
-      : "";
     const buildSlot = ({
       active = false,
       state = AUTO_SYNC_INDICATOR_PHASE_IDLE,
@@ -11469,46 +11475,37 @@
         since: Number(since) || 0,
       });
 
-    const pushRunning =
-      runningState?.isRunning === true &&
-      runningState.operation !== AUTO_SYNC_INDICATOR_OPERATION_PULL;
     const pullRunning =
-      runningState?.isRunning === true &&
-      runningState.operation === AUTO_SYNC_INDICATOR_OPERATION_PULL;
-    const pushPending =
-      canShowPending === true &&
-      !pushRunning &&
-      displayOperation !== AUTO_SYNC_INDICATOR_OPERATION_PULL;
+      selectionIsRunning &&
+      selectionOperation === AUTO_SYNC_INDICATOR_OPERATION_PULL;
+    const pushRunning =
+      selectionIsRunning &&
+      selectionOperation !== AUTO_SYNC_INDICATOR_OPERATION_PULL;
     const pullPending =
+      selectionIsPending &&
       canShowPending === true &&
-      !pullRunning &&
-      displayOperation === AUTO_SYNC_INDICATOR_OPERATION_PULL;
-
-    // 结果槽位来自“已结算的方向”，而不是展示优先级：因此拉取成功与推送待办可同时存在。
+      pendingOperation === AUTO_SYNC_INDICATOR_OPERATION_PULL;
+    const pushPending =
+      selectionIsPending &&
+      canShowPending === true &&
+      pendingOperation !== AUTO_SYNC_INDICATOR_OPERATION_PULL;
+    const selectionResult = selectionIsResult
+      ? {
+          phase: selectionPhase,
+          source: selection?.source || "",
+          reason: selection?.reason || "",
+          since: Number(state?.timestamp) || now,
+        }
+      : null;
     const pushResult =
       resolveResultForDirection(AUTO_SYNC_INDICATOR_OPERATION_PUSH) ||
-      (displayResultPhase &&
-      (displayDirection === AUTO_SYNC_INDICATOR_OPERATION_PUSH ||
-        displayOperation === AUTO_SYNC_INDICATOR_OPERATION_PUSH ||
-        (!displayDirection && !displayOperation))
-        ? {
-            phase: displayResultPhase,
-            source: displayState?.displaySource || "",
-            reason: displayState?.displayReason || "",
-            since: Number(displayState?.timestamp) || now,
-          }
+      (selectionOperation !== AUTO_SYNC_INDICATOR_OPERATION_PULL
+        ? selectionResult
         : null);
     const pullResult =
       resolveResultForDirection(AUTO_SYNC_INDICATOR_OPERATION_PULL) ||
-      (displayResultPhase &&
-      (displayDirection === AUTO_SYNC_INDICATOR_OPERATION_PULL ||
-        displayOperation === AUTO_SYNC_INDICATOR_OPERATION_PULL)
-        ? {
-            phase: displayResultPhase,
-            source: displayState?.displaySource || "",
-            reason: displayState?.displayReason || "",
-            since: Number(displayState?.timestamp) || now,
-          }
+      (selectionOperation === AUTO_SYNC_INDICATOR_OPERATION_PULL
+        ? selectionResult
         : null);
 
     return Object.freeze({
@@ -11521,20 +11518,24 @@
             : pullResult
               ? pullResult.phase
               : AUTO_SYNC_INDICATOR_PHASE_IDLE,
-        source: pullRunning || pullPending
-          ? runningState?.source || pendingState?.source || ""
-          : pullResult
-            ? pullResult.source
-            : "",
-        reason: pullRunning || pullPending
-          ? runningState?.reason || pendingState?.reason || ""
-          : pullResult
-            ? pullResult.reason
-            : "",
+        source: pullRunning
+          ? runningSource
+          : pullPending
+            ? pendingSource
+            : pullResult
+              ? pullResult.source
+              : "",
+        reason: pullRunning
+          ? runningReason
+          : pullPending
+            ? pendingReason
+            : pullResult
+              ? pullResult.reason
+              : "",
         operation: AUTO_SYNC_INDICATOR_OPERATION_PULL,
         sources: pullPending ? pendingSources : null,
         since:
-          Number(pullResult?.since) || Number(displayState?.timestamp) || now,
+          Number(pullResult?.since) || Number(selection?.since) || now,
       }),
       push: buildSlot({
         active: pushRunning || pushPending || Boolean(pushResult),
@@ -11545,23 +11546,28 @@
             : pushResult
               ? pushResult.phase
               : AUTO_SYNC_INDICATOR_PHASE_IDLE,
-        source: pushRunning || pushPending
-          ? runningState?.source || pendingState?.source || ""
-          : pushResult
-            ? pushResult.source
-            : "",
-        reason: pushRunning || pushPending
-          ? runningState?.reason || pendingState?.reason || ""
-          : pushResult
-            ? pushResult.reason
-            : "",
+        source: pushRunning
+          ? runningSource
+          : pushPending
+            ? pendingSource
+            : pushResult
+              ? pushResult.source
+              : "",
+        reason: pushRunning
+          ? runningReason
+          : pushPending
+            ? pendingReason
+            : pushResult
+              ? pushResult.reason
+              : "",
         operation: AUTO_SYNC_INDICATOR_OPERATION_PUSH,
         sources: pushPending ? pendingSources : null,
         since:
-          Number(pushResult?.since) || Number(displayState?.timestamp) || now,
+          Number(pushResult?.since) || Number(selection?.since) || now,
       }),
     });
   };
+
 
   const projectSyncIndicatorState = (
     stateInput = null,
@@ -11632,87 +11638,9 @@
         displayOperation,
       };
     };
-    const finishDisplayState = (resolvedState, branch = "") => {
-      let displayState = applyAutoSyncIndicatorDisplaySession(resolvedState, {
-        now,
-        pendingState,
-        runningState,
-        canShowPending,
-      });
-      if (
-        ttlProfile === "title" &&
-        displayState.displayPhase === AUTO_SYNC_INDICATOR_PHASE_RUNNING
-      ) {
-        const liveRunnerOwnerId = getAutoSyncIndicatorLiveRunnerOwnerIdForTitle(
-          now
-        );
-        if (liveRunnerOwnerId) {
-          displayState = {
-            ...displayState,
-            displayLiveRunnerOwnerId: liveRunnerOwnerId,
-          };
-        }
-      }
-      const shouldSuppressDisplay =
-        shouldSuppressAutoSyncIndicatorEqualVerificationDisplay(displayState) ||
-        shouldSuppressAutoSyncIndicatorProbeDisplayForTitle(displayState, {
-          ttlProfile,
-        }) ||
-        shouldSuppressAutoSyncIndicatorRunningForTitle(displayState, {
-          ttlProfile,
-          now,
-        });
-      const visibleDisplayState = shouldSuppressDisplay
-        ? buildSilentAutoSyncIndicatorIdleDisplayState(displayState)
-        : displayState;
-      // [ARCH-INV-2] 双向槽位是投影的必填字段：拉取成功与推送待办可以同时成立。
-      const directionalState = buildSyncIndicatorDirectionalState({
-        state,
-        displayState: visibleDisplayState,
-        pendingState,
-        runningState,
-        canShowPending,
-        now,
-      });
-      const finalDisplayState = Object.freeze({
-        ...visibleDisplayState,
-        directional: directionalState,
-      });
-      if (canUseCache) {
-        autoSyncIndicatorDisplayPhaseCache = {
-          expiresAt:
-            Date.now() + AUTO_SYNC_INDICATOR_DISPLAY_PHASE_CACHE_TTL_MS,
-          ttlProfile,
-          state: { ...finalDisplayState },
-        };
-      }
-      return finalDisplayState;
-    };
-
-    if (pendingState.isManualOverride === true) {
-      return finishDisplayState(
-        buildDisplayState(
-          AUTO_SYNC_INDICATOR_PHASE_PENDING,
-          AUTO_SYNC_INDICATOR_SOURCE_MANUAL_SYNC,
-          pendingState.reason,
-          pendingState.operation
-        ),
-        "manual_override_pending"
-      );
-    }
-
-    if (runningState.isRunning) {
-      return finishDisplayState(
-        buildDisplayState(
-          AUTO_SYNC_INDICATOR_PHASE_RUNNING,
-          runningState.source,
-          runningState.reason || state.reason,
-          runningState.operation
-        ),
-        "running_lock"
-      );
-    }
-
+    // [ARCH-INV-2] 单值 displayPhase 只保留为兼容视图：它的选择政策收敛到唯一解析器，
+    // 不再散落在多个 return 分支里；方向槽位从同一份选择 + 运行时事实派生，
+    // 因此不再依赖 displayState（解除“槽位依赖展示决策”的循环依赖）。
     const resolveWithTtl = (phase, timestamp, source, reason) => {
       const normalizedPhase = normalizeAutoSyncIndicatorPhase(phase, {
         allowRunning: false,
@@ -11759,137 +11687,189 @@
       };
     };
 
-    if (state.phase === AUTO_SYNC_INDICATOR_PHASE_RUNNING) {
-      const runningStartedAt = Number(state.timestamp) || 0;
-      const runningVisibleMs = runningStartedAt
-        ? now - runningStartedAt
-        : AUTO_SYNC_INDICATOR_RUNNING_MIN_VISIBLE_MS;
-      if (runningVisibleMs < AUTO_SYNC_INDICATOR_RUNNING_MIN_VISIBLE_MS) {
-        return finishDisplayState(
-          buildDisplayState(
-            AUTO_SYNC_INDICATOR_PHASE_RUNNING,
-            state.source,
-            state.reason
-          ),
-          "running_min_visible"
-        );
+    const resolveSyncIndicatorDisplaySelection = () => {
+      if (pendingState.isManualOverride === true) {
+        return {
+          branch: "manual_override_pending",
+          phase: AUTO_SYNC_INDICATOR_PHASE_PENDING,
+          source: AUTO_SYNC_INDICATOR_SOURCE_MANUAL_SYNC,
+          reason: pendingState.reason,
+          operation: pendingState.operation,
+        };
       }
-      if (autoSyncIndicatorWriteInFlightCount > 0) {
-        return finishDisplayState(
-          buildDisplayState(
-            AUTO_SYNC_INDICATOR_PHASE_RUNNING,
-            state.source,
-            state.reason
-          ),
-          "running_write_in_flight"
-        );
+      if (runningState.isRunning) {
+        return {
+          branch: "running_lock",
+          phase: AUTO_SYNC_INDICATOR_PHASE_RUNNING,
+          source: runningState.source,
+          reason: runningState.reason || state.reason,
+          operation: runningState.operation,
+        };
       }
-      const canUseLastResolvedFallback = !(
-        ttlProfile === "title" &&
-        Number(state.lastResolvedTimestamp) < Number(state.timestamp)
-      );
-      const fallbackState = canUseLastResolvedFallback
-        ? resolveWithTtl(
-            state.lastResolvedPhase,
-            state.lastResolvedTimestamp,
-            state.lastResolvedSource,
-            state.lastResolvedReason
-          )
-        : {
-            phase: AUTO_SYNC_INDICATOR_PHASE_IDLE,
-            source: "",
-            reason: "",
+      const buildPendingSelection = (branch) => ({
+        branch,
+        phase: AUTO_SYNC_INDICATOR_PHASE_PENDING,
+        source:
+          pendingState.source ||
+          state.source ||
+          AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+        reason: pendingState.reason || state.reason,
+        operation: pendingState.operation,
+      });
+      const buildResultSelection = (fallbackState, branch) => ({
+        branch,
+        phase: fallbackState.phase,
+        source: fallbackState.source,
+        reason: fallbackState.reason,
+        operation: "",
+      });
+      if (state.phase === AUTO_SYNC_INDICATOR_PHASE_RUNNING) {
+        const runningStartedAt = Number(state.timestamp) || 0;
+        const runningVisibleMs = runningStartedAt
+          ? now - runningStartedAt
+          : AUTO_SYNC_INDICATOR_RUNNING_MIN_VISIBLE_MS;
+        if (runningVisibleMs < AUTO_SYNC_INDICATOR_RUNNING_MIN_VISIBLE_MS) {
+          return {
+            branch: "running_min_visible",
+            phase: AUTO_SYNC_INDICATOR_PHASE_RUNNING,
+            source: state.source,
+            reason: state.reason,
+            operation: "",
           };
-      if (fallbackState.phase === AUTO_SYNC_INDICATOR_PHASE_IDLE && canShowPending) {
-        return finishDisplayState(
-          buildDisplayState(
-            AUTO_SYNC_INDICATOR_PHASE_PENDING,
-            pendingState.source || AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
-            pendingState.reason || state.reason,
-            pendingState.operation
-          ),
-          "running_fallback_pending"
+        }
+        if (autoSyncIndicatorWriteInFlightCount > 0) {
+          return {
+            branch: "running_write_in_flight",
+            phase: AUTO_SYNC_INDICATOR_PHASE_RUNNING,
+            source: state.source,
+            reason: state.reason,
+            operation: "",
+          };
+        }
+        const canUseLastResolvedFallback = !(
+          ttlProfile === "title" &&
+          Number(state.lastResolvedTimestamp) < Number(state.timestamp)
         );
+        const fallbackState = canUseLastResolvedFallback
+          ? resolveWithTtl(
+              state.lastResolvedPhase,
+              state.lastResolvedTimestamp,
+              state.lastResolvedSource,
+              state.lastResolvedReason
+            )
+          : {
+              phase: AUTO_SYNC_INDICATOR_PHASE_IDLE,
+              source: "",
+              reason: "",
+            };
+        if (
+          fallbackState.phase === AUTO_SYNC_INDICATOR_PHASE_IDLE &&
+          canShowPending
+        ) {
+          return buildPendingSelection("running_fallback_pending");
+        }
+        return buildResultSelection(fallbackState, "running_fallback_ttl");
       }
-      return finishDisplayState(
-        buildDisplayState(
-          fallbackState.phase,
-          fallbackState.source,
-          fallbackState.reason
-        ),
-        "running_fallback_ttl"
-      );
-    }
-
-    if (state.phase === AUTO_SYNC_INDICATOR_PHASE_PENDING) {
-      const shouldKeepPending = canShowPending;
-      if (shouldKeepPending) {
-        return finishDisplayState(
-          buildDisplayState(
-            AUTO_SYNC_INDICATOR_PHASE_PENDING,
-            pendingState.source ||
-              state.source ||
-              AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
-            pendingState.reason || state.reason,
-            pendingState.operation
-          ),
-          "pending_keep"
+      if (state.phase === AUTO_SYNC_INDICATOR_PHASE_PENDING) {
+        if (canShowPending) {
+          return buildPendingSelection("pending_keep");
+        }
+        const fallbackState = resolveWithTtl(
+          state.lastResolvedPhase,
+          state.lastResolvedTimestamp,
+          state.lastResolvedSource,
+          state.lastResolvedReason
         );
+        return buildResultSelection(fallbackState, "pending_fallback_ttl");
       }
-      const fallbackState = resolveWithTtl(
-        state.lastResolvedPhase,
-        state.lastResolvedTimestamp,
-        state.lastResolvedSource,
-        state.lastResolvedReason
+      if (canShowPending) {
+        return buildPendingSelection("pending_runtime");
+      }
+      const resolvedState = resolveWithTtl(
+        state.phase,
+        state.timestamp,
+        state.source,
+        state.reason
       );
-      return finishDisplayState(
-        buildDisplayState(
-          fallbackState.phase,
-          fallbackState.source,
-          fallbackState.reason
-        ),
-        "pending_fallback_ttl"
-      );
-    }
+      return buildResultSelection(resolvedState, "resolved_ttl");
+    };
 
-    if (canShowPending) {
-      return finishDisplayState(
-        buildDisplayState(
-          AUTO_SYNC_INDICATOR_PHASE_PENDING,
-          pendingState.source || AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
-          pendingState.reason || state.reason,
-          pendingState.operation
-        ),
-        "pending_runtime"
-      );
-    }
+    const buildIdleDirectionalSelection = () => ({
+      branch: "suppressed_idle",
+      phase: AUTO_SYNC_INDICATOR_PHASE_IDLE,
+      source: "",
+      reason: "",
+      operation: "",
+    });
 
-    const resolvedState = resolveWithTtl(
-      state.phase,
-      state.timestamp,
-      state.source,
-      state.reason
-    );
-    if (resolvedState.phase === AUTO_SYNC_INDICATOR_PHASE_IDLE && canShowPending) {
-      return finishDisplayState(
-        buildDisplayState(
-          AUTO_SYNC_INDICATOR_PHASE_PENDING,
-          pendingState.source || AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
-          pendingState.reason || state.reason,
-          pendingState.operation
-        ),
-        "resolved_idle_pending"
+    const finishDisplayState = (selection) => {
+      const resolvedState = buildDisplayState(
+        selection.phase,
+        selection.source,
+        selection.reason,
+        selection.operation
       );
-    }
-    return finishDisplayState(
-      buildDisplayState(
-        resolvedState.phase,
-        resolvedState.source,
-        resolvedState.reason
-      ),
-      "resolved_ttl"
-    );
+      let displayState = applyAutoSyncIndicatorDisplaySession(resolvedState, {
+        now,
+        pendingState,
+        runningState,
+        canShowPending,
+      });
+      if (
+        ttlProfile === "title" &&
+        displayState.displayPhase === AUTO_SYNC_INDICATOR_PHASE_RUNNING
+      ) {
+        const liveRunnerOwnerId = getAutoSyncIndicatorLiveRunnerOwnerIdForTitle(
+          now
+        );
+        if (liveRunnerOwnerId) {
+          displayState = {
+            ...displayState,
+            displayLiveRunnerOwnerId: liveRunnerOwnerId,
+          };
+        }
+      }
+      const shouldSuppressDisplay =
+        shouldSuppressAutoSyncIndicatorEqualVerificationDisplay(displayState) ||
+        shouldSuppressAutoSyncIndicatorProbeDisplayForTitle(displayState, {
+          ttlProfile,
+        }) ||
+        shouldSuppressAutoSyncIndicatorRunningForTitle(displayState, {
+          ttlProfile,
+          now,
+        });
+      const visibleDisplayState = shouldSuppressDisplay
+        ? buildSilentAutoSyncIndicatorIdleDisplayState(displayState)
+        : displayState;
+      // [ARCH-INV-2] 双向槽位是投影的必填字段：拉取成功与推送待办可以同时成立。
+      const directionalState = buildSyncIndicatorDirectionalState({
+        state,
+        selection: shouldSuppressDisplay
+          ? buildIdleDirectionalSelection()
+          : selection,
+        pendingState,
+        runningState,
+        canShowPending,
+        now,
+      });
+      const finalDisplayState = Object.freeze({
+        ...visibleDisplayState,
+        directional: directionalState,
+      });
+      if (canUseCache) {
+        autoSyncIndicatorDisplayPhaseCache = {
+          expiresAt:
+            Date.now() + AUTO_SYNC_INDICATOR_DISPLAY_PHASE_CACHE_TTL_MS,
+          ttlProfile,
+          state: { ...finalDisplayState },
+        };
+      }
+      return finalDisplayState;
+    };
+
+    return finishDisplayState(resolveSyncIndicatorDisplaySelection());
   };
+
 
   const resolveTitleSyncIndicatorProjectionPhase = (projectedState = null) => {
     const state =
