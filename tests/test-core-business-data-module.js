@@ -133,6 +133,31 @@ const testEveryKindUsesOneReadWriteProjectionInterface = () => {
   assert.equal(stored.s1p_core_data_refresh_signal.sender, "test-tab");
 };
 
+const testSyncImportPrimitiveIsNotReachableFromTheFacade = () => {
+  const { createHarness: createBaseHarness } = require("./s1plus-test-helpers");
+  const harness = createBaseHarness({ hookErrorMessage: "h" });
+  const facade = harness.hooks.s1pCoreBusinessData;
+  assert.equal(
+    Object.isFrozen(facade),
+    true,
+    "公开门面必须冻结"
+  );
+  assert.equal(
+    "importFromSync" in facade,
+    false,
+    "公开门面不得包含 importFromSync"
+  );
+  assert.equal(facade.importFromSync, undefined);
+  // 工厂在隔离闭包内创建；原语一次性注入后不可再取。
+  const boundary = harness.hooks.s1pSyncImportBoundary;
+  assert.equal(Object.isFrozen(boundary), true, "边界对象必须冻结");
+  assert.equal(
+    boundary.takeImportPayload(),
+    null,
+    "初始化之后不得再取得导入原语"
+  );
+};
+
 const testImportFromSyncRequiresDeclaredOrigin = () => {
   const { coreBusinessData } = createModuleHarness();
   assert.throws(
@@ -502,6 +527,7 @@ const testSettingsSignalBridgeRemainsBoundThroughTheModule = () => {
 
 const main = () => {
   testEveryKindUsesOneReadWriteProjectionInterface();
+  testSyncImportPrimitiveIsNotReachableFromTheFacade();
   testImportFromSyncRequiresDeclaredOrigin();
   testEverySyncIdentityImportsThroughTheSameInterface();
   testCacheSnapshotAndCrossTabBehaviorStayBehindTheInterface();

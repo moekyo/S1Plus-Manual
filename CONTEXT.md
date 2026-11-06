@@ -45,7 +45,7 @@ The seven logical data kinds synchronized as forum business state: Blocked Threa
 _Avoid_: GM data map, sync data keys
 
 **Core Business Data Interface**:
-The deep module interface `s1pCoreBusinessData`. Feature and sync callers use `read()`, `write()`, `projectForSync()`, `importFromSync()`, `syncFromStorage()`, and `bindCrossTab()` with logical kinds; they do not interpret storage keys, legacy identities, normalizers, or sync field names. The production GM adapter and in-memory test adapter share this interface.
+The deep module interface `s1pCoreBusinessData`. Feature and sync callers use `read()`, `write()`, `projectForSync()`, `syncFromStorage()`, and `bindCrossTab()` with logical kinds. The sync-import primitive `importFromSync()` is not part of the public facade: the factory runs inside a closed scope and the primitive is injected once into `importLocalData`, so new code cannot obtain it. Callers do not interpret storage keys, legacy identities, normalizers, or sync field names. The production GM adapter and in-memory test adapter share this interface.
 _Avoid_: storage helper collection, data cache globals
 
 **Image Viewer Interface**:

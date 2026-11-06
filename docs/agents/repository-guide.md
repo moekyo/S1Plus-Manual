@@ -68,7 +68,7 @@ Core Business Data keys (owned by the private `s1pCoreBusinessData` kind catalog
 - `s1p_title_filter_rules`
 - `s1p_read_progress`
 
-Callers use the six frozen module methods `read`, `write`, `projectForSync`, `importFromSync`, `syncFromStorage`, and `bindCrossTab` with logical kind names. Do not read/write these keys directly, duplicate their sync field names or normalizers, or expose the catalog. The legacy `s1p_title_keywords` identity also stays private to the catalog and is retired by title-rule writes.
+Callers use the five frozen module methods `read`, `write`, `projectForSync`, `syncFromStorage`, and `bindCrossTab` with logical kind names. `importFromSync` is deliberately absent from the facade: the factory is created inside a closed scope and the primitive is injected once into `importLocalData`, so new code cannot reach it. Do not read/write these keys directly, duplicate their sync field names or normalizers, or expose the catalog. The legacy `s1p_title_keywords` identity also stays private to the catalog and is retired by title-rule writes.
 
 Sync and lock keys include:
 

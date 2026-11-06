@@ -50,10 +50,10 @@ const PENDING_INVARIANTS = Object.freeze([
     removalCriterion: "改用具备原子递增语义的存储或跨标签页写锁后移除。",
   },
   {
-    id: "INV-3-import-entry-reachable",
+    id: "INV-3-importLocalData-entry-reachable",
     reason:
-      "导入原语已从公开门面剥离（门面冻结且不再含 importFromSync），" +
-      "但 importLocalData 仍是模块级入口；单文件单作用域下无法让它物理不可达。",
+      "导入原语本身已不可再取（工厂在闭包内创建、原语一次性注入），但 importLocalData " +
+      "仍是模块级入口；单文件单作用域下无法让它物理不可达。",
     removalCriterion:
       "把 importLocalData 及其调用者移入独立闭包/模块，使只有边界可达后移除。",
   },
@@ -66,9 +66,9 @@ const PENDING_INVARIANTS = Object.freeze([
       "把导入原语改为只能接收品牌化快照（或跨作用域不可伪造的令牌）后移除。",
   },
   {
-    id: "INV-1-force-push-provenance-uncovered",
+    id: "INV-1-force-push-provenance-behavioral",
     reason:
-      "force_push 的“覆盖代数取导出时值”只有静态断言，没有像 asSuccessResult 那样的" +
+      "force_push 的“先抓代数再导出”已有静态顺序断言，但没有像 asSuccessResult 那样的" +
       "performAutoSync 行为测试（该入口未暴露为测试钩子）。",
     removalCriterion: "为 handleForcePush 提供可注入的传输层并补行为测试后移除。",
   },
@@ -325,14 +325,27 @@ const checkInv1DerivedNeedAuthority = () => {
   );
 
   // 强制推送成功后必须写基线（否则“成功同步 ⇒ 干净”不成立）。
+  const forcePushBlock = sliceBetween(
+    "const handleForcePush = async (",
+    "const handleForcePull = async ("
+  );
   assert.match(
-    sliceBetween(
-      "const handleForcePush = async (",
-      "const handleForcePull = async ("
-    ),
+    forcePushBlock,
     /commitSyncedBaseline\(\{[\s\S]{0,400}?coveredContentGeneration/,
     "INV-1：强制推送成功后必须经 commitSyncedBaseline 写覆盖代数。"
   );
+  // 抓取代数必须早于导出（导出内部有 await；晚抓会把导出期间的写入吸收成已同步）。
+  {
+    const captureAt = forcePushBlock.indexOf(
+      "const forcePushCoveredContentGeneration = getLocalContentGeneration();"
+    );
+    const exportAt = forcePushBlock.indexOf("await exportLocalDataObject()");
+    assert.ok(
+      captureAt >= 0 && exportAt >= 0 && captureAt < exportAt,
+      "INV-1：force_push 必须在导出快照之前抓取覆盖代数" +
+        `（capture@${captureAt}, export@${exportAt}）。`
+    );
+  }
   assert.match(
     sliceBetween(
       "const markPendingAutoSyncRequest = (",
@@ -430,33 +443,48 @@ const checkInv1DerivedNeedAuthority = () => {
   );
   assert.match(
     sliceBetween(
-      "const importLocalData = (jsonStr, options = {}) => {",
+      "const importLocalData = ((importPayloadPrivate) => (jsonStr, options = {}) => {",
       "const buildSyncBaselineStateForDataPair"
     ),
     /if \(!isKnownLocalImportOrigin\(origin\)\) \{[\s\S]{0,200}?throw new TypeError/,
     "INV-3：importLocalData 必须拒绝缺省/未知来源。"
   );
-  // 公开门面必须剥离导入原语：只保留捕获引用，新的调用点无法从门面取得它。
-  assert.match(
-    source,
-    /importFromSync: importFromSyncPrivate[\s\S]{0,200}?\} =\s*\n?\s*s1pCoreBusinessDataFacade/,
-    "INV-3：必须从公开门面剥离 importFromSync（保留捕获引用）。"
+  // 导入原语：工厂在闭包内创建，原语一次性注入 importLocalData，之后不可再取。
+  const importBoundaryBlock = sliceBetween(
+    "const s1pSyncImportBoundary = (() => {",
+    "const s1pCoreBusinessData = s1pSyncImportBoundary.publicFacade;"
   );
   assert.match(
-    source,
-    /publicFacade: Object\.freeze\(publicFacade\)/,
-    "INV-3：剥离后的公开门面必须冻结。"
+    importBoundaryBlock,
+    /const facade = s1pCreateCoreBusinessData\(/,
+    "INV-3：core 工厂必须在隔离闭包内创建（原始门面不得成为模块级绑定）。"
   );
   assert.match(
+    importBoundaryBlock,
+    /const \{\s*importFromSync: importPayload,\s*\.\.\.publicFacade\s*\} = facade;/,
+    "INV-3：必须用剩余属性剥离 importFromSync（而不是整体展开）。"
+  );
+  assert.match(
+    importBoundaryBlock,
+    /takeImportPayload: \(\) => \{[\s\S]{0,200}?remainingImportPayload = null;/,
+    "INV-3：导入原语必须一次性取用（取用后置空）。"
+  );
+  assert.doesNotMatch(
     source,
-    /s1pSyncImportBoundary\.importPayload\(/,
-    "INV-3：导入必须使用捕获的私有引用。"
+    /importPayload:\s*importPayload/,
+    "INV-3：不得把导入原语作为闭包返回对象的属性长期暴露。"
+  );
+  assert.equal(
+    countOccurrences("importPayloadPrivate("),
+    1,
+    "INV-3：注入的私有原语只允许在 importLocalData 内调用一次。"
   );
   assert.equal(
     countOccurrences("s1pCoreBusinessData.importFromSync"),
     0,
-    "INV-3：生产代码不得再通过公开门面调用导入原语。"
+    "INV-3：生产代码不得通过公开门面调用导入原语。"
   );
+
 
   // 合并式拉取：基线写入后必须推进代数，否则收敛推送会被门禁判干净。
   const mergePullBlock = sliceBetween(
@@ -738,13 +766,18 @@ const checkInv5RunningStateNotPersisted = () => {
 const checkNoDeadBranchIdioms = () => {
   assert.doesNotMatch(
     source,
-    /\bif\s*\(\s*false\b/,
-    "INV-6：源码中不允许出现 `if (false ...)` 死分支（会让静态断言失效）。"
+    /\bif\s*\(\s*(?:false|0|null|undefined|!1)\b/,
+    "INV-6：源码中不允许出现 `if (false/0/null/undefined/!1 ...)` 死分支（会让静态断言失效）。"
   );
   assert.doesNotMatch(
     source,
     /&&\s*false\s*\)/,
     "INV-6：源码中不允许出现 `&& false` 死条件。"
+  );
+  assert.doesNotMatch(
+    source,
+    /\bwhile\s*\(\s*(?:false|0)\b/,
+    "INV-6：源码中不允许出现永远不执行的 while 死循环守卫。"
   );
   assert.doesNotMatch(
     source,
@@ -757,27 +790,65 @@ const checkNoDeadBranchIdioms = () => {
     "const syncBaselineBoundary = (() => {",
     "const commitSyncedBaseline = syncBaselineBoundary.commitSyncedBaseline;"
   );
-  const sourceOutsideBoundary = source.replace(baselineBoundaryBlock, "");
+  // 用“全文件总数 == 闭包内数”判断外部出现次数，避免切片尾部包含模块作用域。
+  const totalPrimitiveRefs = countOccurrences("setSyncBaselineState");
+  const boundaryPrimitiveRefs = countOccurrencesIn(
+    baselineBoundaryBlock,
+    "setSyncBaselineState"
+  );
+  assert.ok(
+    boundaryPrimitiveRefs >= 2,
+    "INV-1：闭包内必须至少有“定义 + 测试模式导出”两处原语引用。"
+  );
   assert.equal(
-    countOccurrencesIn(sourceOutsideBoundary, "setSyncBaselineState"),
-    0,
-    "INV-1：setSyncBaselineState 只能存在于 syncBaselineBoundary 闭包内；" +
-      "出现在外部即说明闭包隔离被破坏。"
+    totalPrimitiveRefs,
+    boundaryPrimitiveRefs,
+    `INV-1：原语引用不得出现在闭包外（全文件 ${totalPrimitiveRefs} 处，` +
+      `闭包内 ${boundaryPrimitiveRefs} 处）。`
   );
   assert.match(
     baselineBoundaryBlock,
     /const setSyncBaselineState = \(\{/,
     "INV-1：原语必须定义在闭包内部（不是模块级）。"
   );
-  assert.match(
-    baselineBoundaryBlock,
-    /return Object\.freeze\(\{\s*commitSyncedBaseline,/,
-    "INV-1：闭包只能导出 commitSyncedBaseline（冻结）。"
+  // 闭包返回对象只允许两个键：commitSyncedBaseline（必选）+ 测试模式的 ForTest。
+  const boundaryReturnBlock = sliceBetween(
+    "return Object.freeze({\n      commitSyncedBaseline",
+    "  const commitSyncedBaseline = syncBaselineBoundary.commitSyncedBaseline;"
   );
-  assert.match(
-    baselineBoundaryBlock,
-    /IS_S1P_TEST_MODE[\s\S]{0,160}?setSyncBaselineStateForTest:\s*setSyncBaselineState/,
-    "INV-1：内部原语只在测试模式下以 *_ForTest 名义暴露。"
+  const normalizedBoundaryReturn = boundaryReturnBlock
+    .replace(/\/\/[^\n]*/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  assert.ok(
+    normalizedBoundaryReturn.includes(
+      "return Object.freeze({ commitSyncedBaseline, ...(IS_S1P_TEST_MODE ? { setSyncBaselineStateForTest: setSyncBaselineState } : {}), });"
+    ),
+    "INV-1：闭包返回对象必须是“commitSyncedBaseline + 仅测试模式的 " +
+      "setSyncBaselineStateForTest”这一精确形状（多出任何键都可能是原语泄漏）：" +
+      normalizedBoundaryReturn.slice(0, 200)
+  );
+  // 归一化后除该测试键外不应再出现任何属性定义（防止额外导出）。
+  const boundaryPropDefs = (
+    normalizedBoundaryReturn.match(/[A-Za-z_$][\w$]*\s*:/g) || []
+  )
+    .map((item) => item.replace(/\s*:$/, "").trim())
+    .filter((name) => name !== "setSyncBaselineStateForTest");
+  assert.deepEqual(
+    boundaryPropDefs,
+    [],
+    `INV-1：闭包返回对象出现了额外属性：${boundaryPropDefs.join(", ")}`
+  );
+  // 基线键只能被写一次，且必须发生在闭包内。
+  assert.equal(
+    countOccurrences("GM_setValue(SYNC_BASELINE_STATE_KEY"),
+    1,
+    "INV-1：基线键只允许在闭包内写一次；新增直写会在检查器之外引入无代数基线。"
+  );
+  assert.equal(
+    countOccurrencesIn(baselineBoundaryBlock, "GM_setValue(SYNC_BASELINE_STATE_KEY"),
+    1,
+    "INV-1：唯一基线写入点必须在隔离闭包内部。"
   );
   // 声明 1 + 内容写入检查点 1 + 合并式拉取收敛 1 = 3；新增调用必须在这里显式声明。
   assert.equal(
