@@ -28884,6 +28884,22 @@
     };
   };
 
+  // [ARCH-INV-1] 基线必须描述“真正被同步出去的内容”，而不是写基线那一刻的实时内容。
+  // 同步期间的写入会把当前代数推进，若基线默认取当前代数，那些写入会被误记为已覆盖。
+  const bindBaselineContentGeneration = (
+    syncBaseline,
+    coveredContentGeneration
+  ) => {
+    const normalizedCovered = Math.max(
+      0,
+      Math.floor(Number(coveredContentGeneration) || 0)
+    );
+    if (!isObjectRecord(syncBaseline) || normalizedCovered <= 0) {
+      return syncBaseline;
+    }
+    return { ...syncBaseline, localContentGeneration: normalizedCovered };
+  };
+
   const setSyncBaselineState = ({
     contentHash = null,
     localContentHash = null,
@@ -33429,8 +33445,22 @@
           clearPendingAutoSyncRequest();
         }
       }
+      // [ARCH-INV-1] 覆盖代数必须在写基线之前确定，并且取“被同步内容所属的代数”。
+      // 若默认用写入此刻的代数，同步期间发生的写入会被基线误记为“已覆盖”→ false-clean。
+      const effectiveCoveredContentGeneration = (() => {
+        const explicit = Number(extraResult?.coveredLocalContentGeneration);
+        if (Number.isFinite(explicit) && explicit > 0) {
+          return Math.max(0, Math.floor(explicit));
+        }
+        return Math.max(0, Math.floor(Number(coveredLocalContentGeneration) || 0));
+      })();
       if (syncBaseline) {
-        setSyncBaselineState(syncBaseline);
+        setSyncBaselineState(
+          bindBaselineContentGeneration(
+            syncBaseline,
+            effectiveCoveredContentGeneration
+          )
+        );
       }
       recordSuccessfulRemoteWriteIfNeeded({
         action,
@@ -33469,13 +33499,8 @@
         baseResult.coveredLastModified = coveredLocalLastUpdated;
       }
       // 覆盖代数由本次同步统一写入，避免每个 action 各自漏传。
-      const coveredContentGeneration = Number.isFinite(
-        Number(extraResult?.coveredLocalContentGeneration)
-      )
-        ? Math.max(0, Math.floor(Number(extraResult.coveredLocalContentGeneration)))
-        : coveredLocalContentGeneration;
-      if (coveredContentGeneration > 0) {
-        baseResult.coveredLocalContentGeneration = coveredContentGeneration;
+      if (effectiveCoveredContentGeneration > 0) {
+        baseResult.coveredLocalContentGeneration = effectiveCoveredContentGeneration;
       }
       if (
         extraResult &&

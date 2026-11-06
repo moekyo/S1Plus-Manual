@@ -517,6 +517,10 @@ node tests/test-category-c-and-image-viewer-glass-css.js
   “本地改动时间 vs 上次同步时间”这类两次独立时间比较。
 - 这是**保守过近似**：写后又改回原值会多跑一次同步（随后算出 `no_change` 并 rebase）。
   false-dirty 只是浪费一次同步，false-clean 会真的丢推送，所以方向必须偏保守。
+- **基线绑定被同步内容的代数**：`asSuccessResult` 在写基线前先确定
+  `effectiveCoveredContentGeneration`（读取内容快照时抓取），再经
+  `bindBaselineContentGeneration()` 写入基线。若基线默认取“写基线那一刻”的代数，
+  同步期间发生的写入会被误记为已覆盖，形成 false-clean。
 - 合并式拉取写入基线后必须调用一次 `bumpLocalContentGeneration()`：
   此时“本地(合并结果) ≠ 基线(云端内容)”是事实，否则收敛推送会被门禁判成干净。
 - 旧基线分两种：

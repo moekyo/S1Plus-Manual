@@ -267,6 +267,42 @@ const checkInv1DerivedNeedAuthority = () => {
     "INV-1：登记共享调度时必须记录内容代数。"
   );
 
+  // 基线必须绑定“被同步内容所属代数”，不能在写基线时现取当前代数。
+  const bindBlock = sliceBetween(
+    "const bindBaselineContentGeneration = (",
+    "const setSyncBaselineState = ({"
+  );
+  assert.match(
+    bindBlock,
+    /const bindBaselineContentGeneration = \(\s*syncBaseline,\s*coveredContentGeneration\s*\) => \{/,
+    "INV-1：必须存在“基线绑定被同步内容代数”的唯一纯函数。"
+  );
+  assert.match(
+    bindBlock,
+    /return \{ \.\.\.syncBaseline, localContentGeneration: normalizedCovered \};/,
+    "INV-1：绑定函数必须真的写入覆盖代数（不得被掏空）。"
+  );
+  assert.match(
+    bindBlock,
+    /!isObjectRecord\(syncBaseline\) \|\| normalizedCovered <= 0[\s\S]{0,80}?return syncBaseline;/,
+    "INV-1：未捕获覆盖代数时必须原样返回，不得猜一个代数。"
+  );
+  const asSuccessBlock = sliceBetween(
+    "const asSuccessResult = (action, syncBaseline = null, extraResult = null) => {",
+    "const asSoftBlockedResult = (reason, extraResult = null) => {"
+  );
+  assert.match(
+    asSuccessBlock,
+    /effectiveCoveredContentGeneration[\s\S]{0,1200}?bindBaselineContentGeneration\(\s*syncBaseline,\s*effectiveCoveredContentGeneration\s*\)/,
+    "INV-1：写基线前必须先把覆盖代数确定下来并绑定，" +
+      "否则同步期间的写入会被误记为已覆盖（false-clean）。"
+  );
+  assert.match(
+    asSuccessBlock,
+    /const effectiveCoveredContentGeneration = \(\(\) => \{/,
+    "INV-1：覆盖代数必须在 setSyncBaselineState 之前计算。"
+  );
+
   // 合并式拉取：基线写入后必须推进代数，否则收敛推送会被门禁判干净。
   const mergePullBlock = sliceBetween(
     "if (pullApplyResult.mergedReadProgressChanged) {",
