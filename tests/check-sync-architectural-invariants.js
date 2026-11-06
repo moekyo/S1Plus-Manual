@@ -29,18 +29,24 @@ const MANIFEST = Object.freeze({
   runningPhaseMarkers: 11,
   // 待推送水印/pending 键的读取点总数（新增即声明）。
   pendingKeyReferences: 6,
+  // 本地内容代数的唯一递增点（invalidateLocalDataHashCache 内部）。
+  contentGenerationBumpSites: 1,
 });
 
 // 尚未落地的不变量：显式记录，不允许静默通过。
 const PENDING_INVARIANTS = Object.freeze([]);
 
-// 迁移期兼容：旧基线没有业务指纹时，显示层会回退到水印判断。
-// 这是有明确移除条件的临时路径，不是长期权威。
+// 迁移期兼容：旧基线没有业务指纹时，仅“显示层”回退到水印判断。
+// 调度层（清洁门禁 / 待同步回收）已改为对缺失代数保守判脏，
+// 因此这条回退只剩视觉影响，不会再造成 false-clean 丢推送。
 const LEGACY_FALLBACK = Object.freeze({
   id: "INV-1-legacy-fallback",
-  appliesWhen: "基线缺少 localBaseFingerprint/localProgressFingerprint（旧版本写入）",
-  removalCriterion: "所有被支持的旧版本至少完成一次同步后删除水印回退分支；" +
-    "可由发布说明中的迁移窗口到期触发。",
+  scope: "display_only",
+  appliesWhen:
+    "基线缺少 localBaseFingerprint/localProgressFingerprint 或缺少 localContentGeneration（旧版本写入）",
+  removalCriterion:
+    "所有被支持的旧版本至少完成一次同步后删除显示层水印回退分支；" +
+    "调度层不依赖该分支，删除它不影响推送正确性。",
 });
 
 const countOccurrences = (needle) => source.split(needle).length - 1;
@@ -119,6 +125,87 @@ const checkInv1DerivedNeedAuthority = () => {
     countOccurrences("PENDING_AUTO_SYNC_KEY"),
     MANIFEST.pendingKeyReferences,
     "INV-1：PENDING_AUTO_SYNC_KEY 出现次数变化，必须在 MANIFEST.pendingKeyReferences 中显式声明。"
+  );
+
+  // 调度层：本地内容代数是“是否需要同步”的唯一权威。
+  const generationAccessorBlock = sliceBetween(
+    "const getLocalContentGeneration = () =>",
+    "const invalidateLocalDataHashCache = () => {"
+  );
+  assert.match(
+    generationAccessorBlock,
+    /LOCAL_CONTENT_GENERATION_KEY/,
+    "INV-1：必须存在本地内容代数的读取出口。"
+  );
+  assert.equal(
+    countOccurrences("bumpLocalContentGeneration()"),
+    2,
+    "INV-1：代数递增只允许“定义处 1 次 + 唯一写入检查点 1 次”两处；" +
+      "新增递增点会破坏单调性语义，必须在 MANIFEST 中显式声明。"
+  );
+  assert.match(
+    sliceBetween(
+      "const invalidateLocalDataHashCache = () => {",
+      "const SYNC_DIAGNOSTICS_DEFAULT = Object.freeze({"
+    ),
+    /bumpLocalContentGeneration\(\)/,
+    "INV-1：内容/设置写入必须经过唯一检查点推进代数（不依赖调用方打点）。"
+  );
+  assert.equal(
+    countOccurrences("bumpLocalContentGeneration()"),
+    MANIFEST.contentGenerationBumpSites + 1,
+    "INV-1：代数递增点数量变化，必须更新 MANIFEST.contentGenerationBumpSites。"
+  );
+  assert.match(
+    sliceBetween(
+      "const isLocalContentDirtySinceBaseline = () => {",
+      "const getSyncDeltaSourceNames = (sources = {}) =>"
+    ),
+    /baseline_generation_missing[\s\S]{0,200}dirty: true|dirty: true,[\s\S]{0,200}baseline_generation_missing/,
+    "INV-1：旧基线缺代数时必须保守判脏（禁止 false-clean）。"
+  );
+
+  // 清洁门禁：不得再用“两次独立时间比较”作为权威。
+  const cleanFenceBlock = sliceBetween(
+    "const shouldSkipAutoSyncDueToCleanState = ({",
+    "const mergeBackgroundSyncDebounceSources = (state, source) =>"
+  );
+  assert.match(
+    cleanFenceBlock,
+    /isLocalContentDirtySinceBaseline\(\)/,
+    "INV-1：清洁门禁必须消费内容代数额判定。"
+  );
+  assert.doesNotMatch(
+    cleanFenceBlock,
+    /lastLocalMutationTs\s*>\s*lastSuccessfulSyncTs/,
+    "INV-1：清洁门禁不得回到“本地改动时间 > 上次同步时间”的水印权威。"
+  );
+
+  // 待同步回收：不得用时间戳比较直接丢弃请求。
+  const recoveryBlock = sliceBetween(
+    "const recoverPendingBackgroundAutoSyncIfNeeded = () => {",
+    "const recoverPendingAutoSyncIfNeeded = (options = {}) =>"
+  );
+  assert.match(
+    recoveryBlock,
+    /isLocalContentDirtySinceBaseline\(\)/,
+    "INV-1：待同步回收必须消费内容代数额判定。"
+  );
+  assert.doesNotMatch(
+    recoveryBlock,
+    /effectiveLastModified\s*<=\s*lastSyncTs\s*\)\s*\{\s*clearPendingAutoSyncRequest/,
+    "INV-1：待同步回收不得用时间戳比较直接清除待同步请求（会静默丢推送）。"
+  );
+
+  // 合并式拉取：基线写入后必须推进代数，否则收敛推送会被门禁判干净。
+  const mergePullBlock = sliceBetween(
+    "if (pullApplyResult.mergedReadProgressChanged) {",
+    "return pullResult;"
+  );
+  assert.match(
+    mergePullBlock,
+    /bumpLocalContentGeneration\(\)/,
+    "INV-4：合并式拉取写入基线后必须推进代数，保持“本地领先云端”为脏。"
   );
   assert.equal(typeof LEGACY_FALLBACK.removalCriterion, "string");
   assert.ok(LEGACY_FALLBACK.removalCriterion.length > 0);
