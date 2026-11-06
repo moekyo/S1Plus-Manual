@@ -511,6 +511,59 @@ const testCoveredCleanupRetainsWhenGenerationMissing = () => {
   assert.equal(harness.store.has(PENDING_AUTO_SYNC_KEY), true);
 };
 
+// ------------------------------------------------------- 覆盖判定的保守性
+
+const testCoverageSyncSideWithoutGenerationRetainsPending = () => {
+  // MAJOR-2：待同步请求带代数，但本次同步没有代数证据 → 无法证明被覆盖，
+  // 必须保留（不得退回时间戳断言“已覆盖”）。
+  const harness = createHarness();
+  writeProgress(harness, 10);
+  const dirtyGeneration = readGeneration(harness);
+  seedPendingWithGeneration(harness, 100, dirtyGeneration);
+  const retained = harness.hooks.clearPendingAutoSyncRequestIfCovered(9999, {
+    coveredContentGeneration: 0,
+  });
+  assert.equal(
+    retained.status,
+    "retained",
+    "同步侧缺代数时必须保守保留待同步请求"
+  );
+  assert.equal(harness.store.has(PENDING_AUTO_SYNC_KEY), true);
+};
+
+const testCoverageSyncSideWithoutGenerationRetainsSharedDebounce = () => {
+  const harness = createHarness();
+  const now = Date.now();
+  writeProgress(harness, 10);
+  const stateGeneration = readGeneration(harness);
+  harness.store.set("s1p_background_sync_debounce_state", {
+    version: 1,
+    generation: 7,
+    contentGeneration: stateGeneration,
+    ownerTabId: "tab-a",
+    ownerLeaseUntil: now + 30000,
+    dueAt: now + 1000,
+    maxWaitUntil: now + 60000,
+    firstDirtyAt: now,
+    lastDirtyAt: now,
+    maxLastModified: 100,
+    sources: { read_progress: 1 },
+    threadIds: ["123456"],
+    reason: "debounced_read_progress",
+  });
+  const retained = harness.hooks.clearSharedBackgroundSyncDebounceIfCovered({
+    generation: 7,
+    coveredLastModified: 9999,
+    coveredContentGeneration: 0,
+  });
+  assert.equal(
+    retained.status,
+    "retained",
+    "同步侧缺代数时不得凭时间戳清掉共享调度状态"
+  );
+  assert.equal(harness.store.has("s1p_background_sync_debounce_state"), true);
+};
+
 // ------------------------------------------------------- 显示层三值内容判定
 
 const testDisplayUsesGenerationWhenFingerprintUnavailable = () => {
@@ -590,6 +643,8 @@ const run = () => {
   testCoveredGenerationIsCapturedBeforeSnapshotExport();
   testCoveredCleanupUsesContentGeneration();
   testCoveredCleanupRetainsWhenGenerationMissing();
+  testCoverageSyncSideWithoutGenerationRetainsPending();
+  testCoverageSyncSideWithoutGenerationRetainsSharedDebounce();
   testDisplayUsesGenerationWhenFingerprintUnavailable();
   testDisplayFallsBackOnlyWhenContentTruthUnavailable();
   console.log(
