@@ -21876,7 +21876,10 @@
       bindCrossTab,
     });
   };
-  const s1pCoreBusinessDataFacade = s1pCreateCoreBusinessData({
+  // [ARCH-INV-3] core 业务数据工厂只在这个闭包里创建：原始门面不会成为模块级绑定；
+  // 导入原语一次性取走后即不可再取，闭包外的代码无法再获得它。
+  const s1pSyncImportBoundary = (() => {
+    const facade = s1pCreateCoreBusinessData({
     storageAdapter: s1pCreateCoreBusinessDataGmAdapter(),
     sourceId: SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID,
     invalidateLocalDataHash: () => invalidateLocalDataHashCache(),
@@ -21897,23 +21900,21 @@
       return Boolean(isCrossContextChange || signalPayload.sender);
     },
   });
-
-  // [ARCH-INV-3] 同步数据导入原语不再挂在公开门面上：
-  // 新的调用点无法再从公开门面取得导入原语，只能走 applyRemoteSnapshotToLocal 或
-  // 声明了 origin 的用户备份导入。
-  // 残余：`importLocalData` 仍是模块级入口（单文件单作用域下无法真正私有），
-  // 但它强制要求声明 origin。真正的能力隔离需要拆模块（见 PENDING_INVARIANTS）。
-  const s1pSyncImportBoundary = (() => {
-    const { importFromSync: importFromSyncPrivate, ...publicFacade } =
-      s1pCoreBusinessDataFacade;
-    if (typeof importFromSyncPrivate !== "function") {
+    const { importFromSync: importPayload, ...publicFacade } = facade;
+    if (typeof importPayload !== "function") {
       throw new TypeError(
         "S1 Plus (Sync): core business data 未提供 importFromSync 原语。"
       );
     }
+    let remainingImportPayload = importPayload;
     return Object.freeze({
       publicFacade: Object.freeze(publicFacade),
-      importPayload: importFromSyncPrivate,
+      // 一次性取得：第二次调用只会返回 null，因此初始化之后无人能再拿到原语。
+      takeImportPayload: () => {
+        const nextPayload = remainingImportPayload;
+        remainingImportPayload = null;
+        return nextPayload;
+      },
     });
   })();
   const s1pCoreBusinessData = s1pSyncImportBoundary.publicFacade;
@@ -28309,7 +28310,10 @@
       LOCAL_IMPORT_ORIGIN_USER_JSON,
     ].includes(String(origin || ""));
 
-  const importLocalData = (jsonStr, options = {}) => {
+  // [ARCH-INV-3] 导入实现被包在闭包里，原语通过一次性取用参数注入：
+  // 初始化之后 `takeImportPayload()` 只会返回 null，模块作用域内没有任何可达路径
+  // 能再次取得导入原语。
+  const importLocalData = ((importPayloadPrivate) => (jsonStr, options = {}) => {
     const s1pImportOperationId = s1pNewDiagnosticOperation("import");
     s1pRecordDiagnosticEvent("import.started", { module: "import", operationId: s1pImportOperationId,
       status: "running", message: "开始导入数据", details: { inputLength: typeof jsonStr === "string" ? jsonStr.length : null } });
@@ -28399,7 +28403,8 @@
       }
 
       // [ARCH-INV-3] 导入原语只能从这里取得（公开门面已不再暴露它）。
-      const coreBusinessDataImport = s1pSyncImportBoundary.importPayload(
+      // [ARCH-INV-3] 使用闭包注入的私有原语（模块作用域已无法取得）。
+      const coreBusinessDataImport = importPayloadPrivate(
         dataToImport,
         { suppressSyncTrigger, origin }
       );
@@ -28486,7 +28491,7 @@
     } finally {
       s1pReadingProgressSession.attach();
     }
-  };
+  })(s1pSyncImportBoundary.takeImportPayload());
 
   // [ARCH-INV-1] 同步需求是“本地业务快照 vs 基线业务快照”的派生结果，不是可存储的
   // 状态、也不是由时间水印推导。指纹只覆盖业务字段（阅读进度只取 page/floor/postId），

@@ -302,7 +302,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 
 `s1p_settings` 继续由 `defaultSettings`、`buildNormalizedSettings()`、`getSettings()`、`getSettingsForWrite()` 与 `saveSettings()` 管理。重复的每项设置语义集中在冻结的 `s1pSettingsSemantics`：`resolveChangedPaths()` 投影 full/lightweight/passive、运行时 effect intent 与设置面板 tab，`projectSyncModal()` / `buildSyncSettingsPatch()` 负责同步表单映射，`normalizeImageSettings()` 由既有 normalization 层调用。私有 catalog 不对外暴露；定制化 tab 布局继续由设置面板实现，一级 feature-toggle 的 DOM effects 统一经 `s1pPageEnhancementProjection` 投影。新增设置必须同时补齐默认值、归一化与语义定义。
 
-除 `s1p_settings` 外，上述七类业务数据统一由 `s1pCoreBusinessData` 的私有 kind catalog 管理。功能与同步调用方只使用逻辑 kind，通过 `read()`、`write()`、`projectForSync()`、`importFromSync()`、`syncFromStorage()`、`bindCrossTab()` 访问；GM key、同步字段名、归一化、TTL cache、legacy key、跨标签 signal 与 refresh intent 不得在调用方重新维护。`s1p_title_keywords` 仅作为 catalog 内部的旧版标题规则身份存在，任意标题规则写入（包括 canonical no-op）都必须由模块内部清理它。
+除 `s1p_settings` 外，上述七类业务数据统一由 `s1pCoreBusinessData` 的私有 kind catalog 管理。功能与同步调用方只使用逻辑 kind，通过 `read()`、`write()`、`projectForSync()`、`syncFromStorage()`、`bindCrossTab()` 访问（导入原语 `importFromSync()` 不在公开门面上：工厂在闭包内创建，原语一次性注入 `importLocalData`，新代码无法取得）；GM key、同步字段名、归一化、TTL cache、legacy key、跨标签 signal 与 refresh intent 不得在调用方重新维护。`s1p_title_keywords` 仅作为 catalog 内部的旧版标题规则身份存在，任意标题规则写入（包括 canonical no-op）都必须由模块内部清理它。
 
 同步投影传入 `source` 时也必须逐 kind 经过 `importValue()` 与归一化，避免旧版 `title_keywords` 等字段在导出、hash 或阅读进度 merge 路径中丢失。修复本地旧存储格式可以强制回写，但不能误记为 incoming payload 被转换；否则干净 pull 会错误推进本地修改时间。
 
@@ -528,8 +528,9 @@ node tests/test-category-c-and-image-viewer-glass-css.js
   `syncBaselineBoundary` 内：它不是模块级标识符，**闭包外引用会直接 ReferenceError**，
   因此别名/间接调用在语法上不可能（这是物理隔离，不是文本约定）。
   测试模式通过 `setSyncBaselineStateForTest` 暴露内部原语。旧基线（无代数）读取时按“缺失”处理。
-- **导入原语不再挂在公开门面上**：`s1pCoreBusinessData` 是冻结的、已剥离
-  `importFromSync` 的门面；原语只被 `importLocalData` 通过捕获引用使用。
+- **导入原语不在公开门面上，且不可再取**：`s1pCreateCoreBusinessData()` 在隔离闭包内
+  创建，门面剥离 `importFromSync` 后冻结；原语通过一次性 `takeImportPayload()` 注入
+  `importLocalData`，取用后置空——初始化完成后模块作用域内没有任何路径能再取得它。
 - **代数递增是单调且有回读校验的**：`max(已读+1, now)` 让跨毫秒并发不会算出同值，
   写入后回读，被覆盖则继续递增。**注意**：同一毫秒内两个标签页仍可能算出相同的值，
   回读无法区分——这是 GM 缺少原子 CAS 的固有残余，见 `PENDING_INVARIANTS`。
