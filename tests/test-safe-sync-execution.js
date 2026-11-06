@@ -1492,6 +1492,14 @@ const testPulledNormalizedBaselineComparesLocalAndRemoteSides = () => {
       ...importedLocalDataObject,
       contentHash: "local-edited-after-pull",
       baseContentHash: "local-edited-base",
+      // 内容权威：仅改 contentHash 不再算本地变更，必须业务内容真的变了。
+      data: {
+        ...importedLocalDataObject.data,
+        settings: {
+          ...importedLocalDataObject.data.settings,
+          localEditAfterPull: true,
+        },
+      },
     },
     remoteDataObject: unchangedRemoteDataObject,
     remoteUpdatedAt: "2026-06-27T13:24:01Z",

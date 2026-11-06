@@ -62,7 +62,7 @@ const testStaticWiring = () => {
     "Phase 7 未将设置弹窗脏状态暴露为可被同步逻辑检测的 DOM 标记。"
   );
   expectMatch(
-    /const mergeReadProgressAndPush = async[\s\S]*?const result = asSuccessResult\(\s*"merged_read_progress",\s*\{\s*contentHash:\s*mergedContentHash,\s*remoteUpdatedAt:\s*pushResult\?\.updatedAt \|\| null,\s*\},\s*\{[\s\S]*?reason:\s*mergeReason[\s\S]*?\.\.\.recentRemoteWriteResultContext[\s\S]*?appliedRemoteWriter:\s*pushResult\?\.writerMetadata \|\| null[\s\S]*?\}\s*\)/m,
+    /const mergeReadProgressAndPush = async[\s\S]*?const result = asSuccessResult\(\s*"merged_read_progress",\s*buildSyncBaselineStateForDataPair\(\{\s*localDataObject:\s*mergedPayload,\s*remoteUpdatedAt:\s*pushResult\?\.updatedAt \|\| null,\s*\}\),\s*\{[\s\S]*?reason:\s*mergeReason[\s\S]*?\.\.\.recentRemoteWriteResultContext[\s\S]*?appliedRemoteWriter:\s*pushResult\?\.writerMetadata \|\| null[\s\S]*?\}\s*\)/m,
     "merged_read_progress 结果必须把 same-session / same-device 写入上下文放到 extraResult，提示层才能读取。"
   );
   expectMatch(
