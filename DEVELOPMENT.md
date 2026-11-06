@@ -509,7 +509,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
   而它又是 `commitWrite`（业务数据写入）、`saveSettings`（设置写入）、`importLocalData`（导入）
   的共同检查点——因此“写入即推进代数”由结构保证，不依赖调用方记得打点。
 - 基线（`s1p_sync_baseline_state.localContentGeneration`）记录“已同步内容所在的代数”；
-  缺失（旧版基线）用 `null` 表示，**0 是合法代数**，不能用 0 当哨兵。
+  缺失（旧版基线）用 `null` 表示；**代数域是 [1, ∞)，0 不是合法代数而是“缺失”哨兵**。
 - 判定出口 `isLocalContentDirtySinceBaseline()`：`当前代数 === 基线代数` 即干净；
   基线或代数缺失时**保守判脏**。O(1)，实测约 0.002ms（业务指纹约 160ms/3000 条）。
 - 消费方：清洁门禁 `shouldSkipAutoSyncDueToCleanState`、待同步回收
@@ -526,16 +526,18 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - **生产基线写入只有一个入口** `commitSyncedBaseline({syncBaseline, coveredContentGeneration, reason})`：
   覆盖代数必填，缺省/非法/小于 1 直接抛错；`setSyncBaselineState` 退为内部原语，
   生产代码全文件只有一处调用（在其内部）。旧基线（无代数）读取时仍按“缺失”处理。
-- **代数递增是单调且有回读校验的**：`max(已读+1, now)` 保证并发下不会算出同一个值，
-  写入后回读，被覆盖则继续递增（GM 无原子 CAS，这是逼近手段；残余风险见
-  `PENDING_INVARIANTS`）。
+- **代数递增是单调且有回读校验的**：`max(已读+1, now)` 让跨毫秒并发不会算出同值，
+  写入后回读，被覆盖则继续递增。**注意**：同一毫秒内两个标签页仍可能算出相同的值，
+  回读无法区分——这是 GM 缺少原子 CAS 的固有残余，见 `PENDING_INVARIANTS`。
 - **导入必须声明来源**：`importFromSync` / `importLocalData` 都要求显式 `origin`
   （`validated_remote_snapshot` / `merged_payload` / `user_json_import`），
-  缺省或未知一律抛错，新增导入点无法“悄悄”绕过来源声明。
+  缺省或未知一律抛错。注意：`origin` 目前是**声明式**的（用于显式化意图与拦截缺省），
+  不是能力凭证；真正的远端数据校验边界仍是 `applyRemoteSnapshotToLocal` 的 brand 检查。
 - **基线绑定被同步内容的代数**：`asSuccessResult` 在写基线前先确定
   `effectiveCoveredContentGeneration`（读取内容快照时抓取），再经
-  `bindBaselineContentGeneration()` 写入基线。若基线默认取“写基线那一刻”的代数，
-  同步期间发生的写入会被误记为已覆盖，形成 false-clean。
+  `commitSyncedBaseline()` 写入。若基线取“写基线那一刻”的代数，同步期间的写入
+  会被误记为已覆盖，形成 false-clean。该路径由 `tests/test-sync-baseline-provenance.js`
+  真实驱动 `performAutoSync`（PATCH 期间写入）来验证。
 - 合并式拉取写入基线后必须调用一次 `bumpLocalContentGeneration()`：
   此时“本地(合并结果) ≠ 基线(云端内容)”是事实，否则收敛推送会被门禁判成干净。
 - 旧基线分两种：

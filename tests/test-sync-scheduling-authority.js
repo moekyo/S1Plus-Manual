@@ -348,53 +348,6 @@ const testIntermediateBaselineUsesFingerprintInsteadOfConservativeDirty = () => 
   );
 };
 
-const testBaselineBindsToSyncedSnapshotGeneration = () => {
-  // 同步期间发生写入时：基线必须绑定“被同步内容”的代数，而不是写基线时的实时代数。
-  const harness = createHarness();
-  const baseline = {
-    contentHash: "h",
-    localContentHash: "h",
-    remoteContentHash: "h",
-    remoteUpdatedAt: "2026-01-01T00:00:00Z",
-  };
-  const bound = harness.hooks.bindBaselineContentGeneration(baseline, 3);
-  assert.equal(
-    bound.localContentGeneration,
-    3,
-    "基线必须记录被同步内容所属代数"
-  );
-  assert.equal(
-    baseline.localContentGeneration,
-    undefined,
-    "不得就地修改调用方对象"
-  );
-
-  // 未捕获覆盖代数时保持原样（由调用方决定，不在此处猜）
-  assert.equal(
-    harness.hooks.bindBaselineContentGeneration(baseline, 0),
-    baseline
-  );
-
-  // 端到端语义：绑定到旧代数后，同步期间的新内容仍判脏
-  writeProgress(harness, 10);
-  const syncedGeneration = readGeneration(harness);
-  harness.hooks.setSyncBaselineState(
-    harness.hooks.bindBaselineContentGeneration(baseline, syncedGeneration)
-  );
-  assert.equal(
-    harness.hooks.isLocalContentDirtySinceBaseline().dirty,
-    false,
-    "刚同步完应判干净"
-  );
-
-  writeProgress(harness, 12);
-  assert.equal(
-    harness.hooks.isLocalContentDirtySinceBaseline().dirty,
-    true,
-    "同步期间的新写入必须判脏（不得被基线误记为已覆盖）"
-  );
-};
-
 const testImportBasedActionsDoNotBindExportGeneration = () => {
   // 拉取/合并类动作的基线描述“导入后的内容”，不能绑定导出前的代数，
   // 否则每次成功拉取后都会立刻判脏。
@@ -701,7 +654,6 @@ const run = () => {
   testRecoveryClearsPendingWhenContentMatchesBaseline();
   testRecoveryKeepsPendingForLegacyBaseline();
   testIntermediateBaselineUsesFingerprintInsteadOfConservativeDirty();
-  testBaselineBindsToSyncedSnapshotGeneration();
   testImportBasedActionsDoNotBindExportGeneration();
   testCoveredGenerationIsCapturedBeforeSnapshotExport();
   testCoveredCleanupUsesContentGeneration();

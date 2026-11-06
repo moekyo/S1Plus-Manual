@@ -45,9 +45,32 @@ const PENDING_INVARIANTS = Object.freeze([
   {
     id: "INV-1-atomicity-residual",
     reason:
-      "GM 没有原子 compare-and-set：代数递增已改为 max(已读+1, now) + 回读重试，" +
-      "但两个标签页在同一毫秒并发写入仍可能碰撞（后果是少一次递增，下次写入自愈）。",
-    removalCriterion: "改用具备原子递增语义的存储（或引入跨标签页写锁）后移除。",
+      "GM 无原子 CAS：代数递增用 max(已读+1, now)+回读重试逼近，但同一毫秒内两个标签页" +
+      "仍可能算出相同的值，回读无法区分（后果是两份不同内容共享一个代数）。",
+    removalCriterion: "改用具备原子递增语义的存储或跨标签页写锁后移除。",
+  },
+  {
+    id: "INV-1-single-writer-by-alias",
+    reason:
+      "“生产只有一个基线写入入口”目前由标识符计数 + 别名禁令守住；" +
+      "把写入逻辑复制/内联到别处仍可绕过（文本契约无法阻止复制）。",
+    removalCriterion:
+      "把基线写入下沉到不可复制的边界（独立模块/构造器私有状态）后移除。",
+  },
+  {
+    id: "INV-3-origin-declarative",
+    reason:
+      "importFromSync / importLocalData 的 origin 是声明式参数，用于拦截缺省与显式化意图；" +
+      "它不是能力凭证，真正的远端校验边界是 applyRemoteSnapshotToLocal 的 brand 检查。",
+    removalCriterion:
+      "把导入原语改为只能接收品牌化快照（或独立模块私有）后移除本项。",
+  },
+  {
+    id: "INV-1-force-push-provenance-uncovered",
+    reason:
+      "force_push 的“覆盖代数取导出时值”只有静态断言，没有像 asSuccessResult 那样的" +
+      "performAutoSync 行为测试（该入口未暴露为测试钩子）。",
+    removalCriterion: "为 handleForcePush 提供可注入的传输层并补行为测试后移除。",
   },
 ]);
 
@@ -68,11 +91,26 @@ const LEGACY_FALLBACK = Object.freeze({
 
 const countOccurrences = (needle) => source.split(needle).length - 1;
 
+// 严格切片：**两端锚点都必须存在**，且结束锚点必须在开始锚点之后。
+// 早期版本在找不到结束锚点时静默返回“文件剩余全部”，
+// 会让断言在 97 万字符的窗口里随便命中，等于失效。
 const sliceBetween = (startNeedle, endNeedle) => {
   const start = source.indexOf(startNeedle);
-  assert.notEqual(start, -1, `未找到结构锚点：${startNeedle}`);
-  const end = endNeedle ? source.indexOf(endNeedle, start) : -1;
-  return end === -1 ? source.slice(start) : source.slice(start, end);
+  assert.notEqual(start, -1, `未找到结构锚点（开始）：${startNeedle}`);
+  if (!endNeedle) {
+    return source.slice(start);
+  }
+  const end = source.indexOf(endNeedle, start + startNeedle.length);
+  assert.notEqual(
+    end,
+    -1,
+    `未找到结构锚点（结束）：${endNeedle}（开始锚点：${startNeedle}）`
+  );
+  assert.ok(
+    end > start,
+    `结束锚点必须位于开始锚点之后：${endNeedle} @ ${end} vs ${startNeedle} @ ${start}`
+  );
+  return source.slice(start, end);
 };
 
 const checkInv1DerivedNeedAuthority = () => {
@@ -247,7 +285,7 @@ const checkInv1DerivedNeedAuthority = () => {
     coveredCleanupBlock,
     /pending\?\.dirtyGeneration !== null &&\s*[\s\S]{0,80}?pending\?\.dirtyGeneration !== undefined/,
     "INV-1：待同步请求的覆盖判定必须显式守卫“代数存在”，" +
-      "缺失时不能假装有代数（0 是合法代数）。"
+      "缺失时不能假装有代数（代数域为 [1, ∞)，0 表示缺失）。"
   );
   // 待同步请求带代数、同步侧没有代数证据时必须保守保留，不得退回时间戳断言已覆盖。
   assert.match(
@@ -305,7 +343,7 @@ const checkInv1DerivedNeedAuthority = () => {
   assert.match(
     sliceBetween(
       "const requestSharedBackgroundSyncDebounce = (",
-      "const setBackgroundSyncDebounceState = ("
+      "const handleSharedBackgroundSyncDebounceStateChange = ("
     ),
     /contentGeneration:[\s\S]{0,300}getLocalContentGeneration\(\)/,
     "INV-1：登记共享调度时必须记录内容代数。"
@@ -350,7 +388,7 @@ const checkInv1DerivedNeedAuthority = () => {
   assert.match(
     sliceBetween(
       "const asSuccessResult = (action, syncBaseline = null, extraResult = null) => {",
-      "const asSoftBlockedResult = (reason, extraResult = null) => {"
+      "const asConflictResult = (reason, extraDiagnosticsContext = {}) => {"
     ),
     /commitSyncedBaseline\(\{[\s\S]{0,300}?coveredContentGeneration/,
     "INV-1：asSuccessResult 写基线必须经 commitSyncedBaseline 并提供覆盖代数。"
@@ -382,7 +420,10 @@ const checkInv1DerivedNeedAuthority = () => {
     "INV-3：importFromSync 必须声明三种合法来源枚举。"
   );
   assert.match(
-    sliceBetween("const importFromSync = (", "const importFromSyncResult"),
+    sliceBetween(
+      "const importFromSync = (",
+      "const publishDefinitionRefresh = ("
+    ),
     /if \(!isKnownSyncImportOrigin\(origin\)\) \{[\s\S]{0,200}?throw new TypeError/,
     "INV-3：importFromSync 必须拒绝缺省/未知来源。"
   );
@@ -668,8 +709,44 @@ const checkInv5RunningStateNotPersisted = () => {
   });
 };
 
+// [ARCH-INV-6] 全局反绕过绊线（不是语义证明，但显著提高绕过成本）：
+// 1) 源码中不得出现“死分支惯用法”——静态断言只能看文本，
+//    而 `if (false)` / `&& false` 能把任意被检查的文本变成死代码；
+// 2) 关键函数不得被别名/间接调用窃取——标识符出现次数必须等于声明+合法调用。
+const checkNoDeadBranchIdioms = () => {
+  assert.doesNotMatch(
+    source,
+    /\bif\s*\(\s*false\b/,
+    "INV-6：源码中不允许出现 `if (false ...)` 死分支（会让静态断言失效）。"
+  );
+  assert.doesNotMatch(
+    source,
+    /&&\s*false\s*\)/,
+    "INV-6：源码中不允许出现 `&& false` 死条件。"
+  );
+  assert.doesNotMatch(
+    source,
+    /\b(?:const|let|var)\s+\w+Alias\s*=\s*(?:setSyncBaselineState|bumpLocalContentGeneration|importFromSync|commitSyncedBaseline)/,
+    "INV-6：关键写入函数不得被赋值给别名（绕过标识符计数）。"
+  );
+  // 内部原语：只允许“声明 + commitSyncedBaseline 内部调用”两处标识符。
+  assert.equal(
+    countOccurrences("setSyncBaselineState"),
+    2,
+    "INV-6：setSyncBaselineState 只能出现两次（声明 + 强制入口内部调用），" +
+      "任何别名/间接调用都会让计数变化。"
+  );
+  // 声明 1 + 内容写入检查点 1 + 合并式拉取收敛 1 = 3；新增调用必须在这里显式声明。
+  assert.equal(
+    countOccurrences("bumpLocalContentGeneration"),
+    3,
+    "INV-6：bumpLocalContentGeneration 只允许三处（声明 + 写入检查点 + 合并拉取）。"
+  );
+};
+
 const run = () => {
   const checks = [
+    ["INV-6 反绕过绊线（死分支/别名/标识符计数）", checkNoDeadBranchIdioms],
     ["INV-1 派生需求权威（显示 + 引擎）", checkInv1DerivedNeedAuthority],
     ["INV-2 双方向冻结结构", checkInv2FrozenDirectionalStructure],
     ["INV-3 唯一远端应用边界 + brand 唯一写入点", checkInv3SingleApplyBoundary],
