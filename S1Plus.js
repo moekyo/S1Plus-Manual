@@ -10511,18 +10511,43 @@
       }
       return null;
     };
-    if (hasRegisteredSyncEvent) {
+    // [ARCH-INV-1] 显示层的内容判定同样是三值，而不是“指纹不可用就退回时间戳推断内容”：
+    //   true  = 内容确实异于基线 → 显示待推送（精确指纹优先，其次内容代数）
+    //   false = 内容等于基线     → 本地推送方向不成立
+    //   null  = 内容事实不可得   → 只保留“已登记同步事件”的存活兜底（迁移期，见 LEGACY_FALLBACK）
+    const resolveContentDirtyForDisplay = () => {
       const syncNeed =
         typeof deriveSyncNeed === "function" ? deriveSyncNeed({ now }) : null;
       if (syncNeed && syncNeed.available === true) {
-        if (syncNeed.push.needed === true) {
-          return {
-            hasPending: true,
-            source: AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
-            reason: syncNeed.push.reason || "local_content_changed",
-            sources: syncNeed.push.sources,
-          };
-        }
+        return {
+          dirty: syncNeed.push.needed === true,
+          reason: syncNeed.push.reason || "local_content_changed",
+          sources: syncNeed.push.sources,
+          authority: "fingerprint",
+        };
+      }
+      const generationDirtyState = isLocalContentDirtySinceBaseline();
+      if (generationDirtyState.known === true) {
+        return {
+          dirty: generationDirtyState.dirty === true,
+          reason: generationDirtyState.reason,
+          sources: buildAutoSyncIndicatorSingleSourceMap("general"),
+          authority: "generation",
+        };
+      }
+      return { dirty: null, reason: "content_truth_unavailable", sources: {}, authority: "unknown" };
+    };
+    if (hasRegisteredSyncEvent) {
+      const contentDirtyState = resolveContentDirtyForDisplay();
+      if (contentDirtyState.dirty === true) {
+        return {
+          hasPending: true,
+          source: AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+          reason: contentDirtyState.reason || "local_content_changed",
+          sources: contentDirtyState.sources,
+        };
+      }
+      if (contentDirtyState.dirty === false) {
         // 内容已回到基线：本地推送方向不成立，但前台/云端方向的待处理事实仍然保留。
         return (
           resolveForegroundPendingState() || {
@@ -12905,6 +12930,15 @@
     if (Object.keys(sources).length === 0) {
       sources[source] = 1;
     }
+    // [ARCH-INV-1] 待同步请求记录“登记时的内容代数”，供覆盖清理按内容判定；
+    // 旧记录缺失时为 null，调用方必须保守地视为“未被覆盖”。
+    const rawDirtyGeneration = Number(value.dirtyGeneration);
+    const dirtyGeneration =
+      value.dirtyGeneration === null || value.dirtyGeneration === undefined
+        ? null
+        : Number.isFinite(rawDirtyGeneration)
+          ? Math.max(0, Math.floor(rawDirtyGeneration))
+          : null;
     return {
       version: 1,
       source,
@@ -12915,6 +12949,7 @@
       lastDirtyAt,
       sources,
       threadIds: normalizePendingAutoSyncThreadIds(value.threadIds),
+      dirtyGeneration,
     };
   };
 
@@ -12948,6 +12983,13 @@
       threadIds: mergePendingAutoSyncThreadIds(
         existingPending,
         options.threadId
+      ),
+      // 同一请求可能被多次登记：取较高代数，保证“覆盖”判据单调不倒退。
+      dirtyGeneration: Math.max(
+        Number.isFinite(Number(existingPending?.dirtyGeneration))
+          ? Number(existingPending.dirtyGeneration)
+          : 0,
+        getLocalContentGeneration()
       ),
     };
     GM_setValue(PENDING_AUTO_SYNC_KEY, nextPending);
@@ -17325,9 +17367,18 @@
     } else if (reason === "debounced_local_change") {
       dueSource = "general";
     }
+    // [ARCH-INV-1] 登记时的内容代数：覆盖清理按内容判定，缺失为 null（保守视为未覆盖）。
+    const rawContentGeneration = Number(value.contentGeneration);
+    const contentGeneration =
+      value.contentGeneration === null || value.contentGeneration === undefined
+        ? null
+        : Number.isFinite(rawContentGeneration)
+          ? Math.max(0, Math.floor(rawContentGeneration))
+          : null;
     return {
       version: 1,
       generation,
+      contentGeneration,
       ownerTabId: normalizeSyncDiagnosticText(value.ownerTabId, 120),
       ownerLeaseUntil: normalizeBackgroundSyncDebounceTimestamp(
         value.ownerLeaseUntil
@@ -18164,6 +18215,30 @@
     }
     return normalizedPending.maxLastModified || normalizedPending.lastModified || 0;
   };
+  // [ARCH-INV-1] 覆盖判定优先用“内容代数”：待同步请求登记时的代数 <= 本次同步覆盖的代数
+  // 才算真正被覆盖。旧记录没有代数时退回时间戳比较（迁移期），并且一律保守：
+  // 无法证明被覆盖就保留请求。
+  const isPendingRequestCoveredBySync = (
+    pending,
+    { coveredLastModified = 0, coveredContentGeneration = 0 } = {}
+  ) => {
+    const pendingGeneration = Number(pending?.dirtyGeneration);
+    const coveredGeneration = Number(coveredContentGeneration);
+    const hasGenerationInfo =
+      pending?.dirtyGeneration !== null &&
+      pending?.dirtyGeneration !== undefined &&
+      Number.isFinite(pendingGeneration) &&
+      Number.isFinite(coveredGeneration) &&
+      coveredGeneration > 0;
+    if (hasGenerationInfo) {
+      return pendingGeneration <= coveredGeneration;
+    }
+    return (
+      getPendingAutoSyncRequestMaxLastModified(pending) <=
+      Number(coveredLastModified || 0)
+    );
+  };
+
   const clearPendingAutoSyncRequestIfCovered = (
     coveredLastModified,
     context = {}
@@ -18172,13 +18247,37 @@
     if (!pending) {
       return { status: "skipped", reason: "no_pending_auto_sync" };
     }
+    const coveredContentGeneration = Math.max(
+      0,
+      Math.floor(Number(context.coveredContentGeneration) || 0)
+    );
     const pendingMaxLastModified =
       getPendingAutoSyncRequestMaxLastModified(pending);
-    if (pendingMaxLastModified <= Number(coveredLastModified || 0)) {
+    const isCovered = isPendingRequestCoveredBySync(pending, {
+      coveredLastModified,
+      coveredContentGeneration,
+    });
+    const coverageEvidence = {
+      coveredLastModified: Number(coveredLastModified || 0),
+      coveredContentGeneration,
+      pendingDirtyGeneration: Number.isFinite(
+        Number(pending.dirtyGeneration)
+      )
+        ? Number(pending.dirtyGeneration)
+        : null,
+      pendingMaxLastModified,
+    };
+    if (isCovered) {
       const latestPending = getPendingAutoSyncRequest();
-      const latestPendingMaxLastModified =
-        getPendingAutoSyncRequestMaxLastModified(latestPending);
-      if (latestPendingMaxLastModified > Number(coveredLastModified || 0)) {
+      if (
+        latestPending &&
+        !isPendingRequestCoveredBySync(latestPending, {
+          coveredLastModified,
+          coveredContentGeneration,
+        })
+      ) {
+        const latestPendingMaxLastModified =
+          getPendingAutoSyncRequestMaxLastModified(latestPending);
         const followUpScheduled = scheduleBackgroundSyncDebounceFollowUp(
           context.scheduleFollowUp,
           {
@@ -18192,6 +18291,7 @@
           reason: "concurrent_pending_dirty",
           pendingMaxLastModified: latestPendingMaxLastModified,
           followUpScheduled,
+          coverageEvidence,
         };
       }
       clearPendingAutoSyncRequest();
@@ -18199,6 +18299,7 @@
         status: "cleared",
         reason: "covered",
         pendingMaxLastModified,
+        coverageEvidence,
       };
     }
     const followUpScheduled = scheduleBackgroundSyncDebounceFollowUp(
@@ -18214,11 +18315,34 @@
       reason: "newer_pending",
       pendingMaxLastModified,
       followUpScheduled,
+      coverageEvidence,
     };
   };
+  const isSharedDebounceStateCoveredBySync = (
+    state,
+    { coveredGeneration = 0, coveredLastModified = 0, coveredContentGeneration = 0 } = {}
+  ) => {
+    if (!state || state.generation !== coveredGeneration) {
+      return false;
+    }
+    const stateGeneration = Number(state.contentGeneration);
+    const syncGeneration = Number(coveredContentGeneration);
+    const hasGenerationInfo =
+      state.contentGeneration !== null &&
+      state.contentGeneration !== undefined &&
+      Number.isFinite(stateGeneration) &&
+      Number.isFinite(syncGeneration) &&
+      syncGeneration > 0;
+    if (hasGenerationInfo) {
+      return stateGeneration <= syncGeneration;
+    }
+    return state.maxLastModified <= coveredLastModified;
+  };
+
   const clearSharedBackgroundSyncDebounceIfCovered = ({
     generation = 0,
     coveredLastModified = 0,
+    coveredContentGeneration = 0,
     scheduleFollowUp = null,
   } = {}) => {
     const state = getBackgroundSyncDebounceState();
@@ -18227,12 +18351,20 @@
     }
     const coveredGeneration = Math.max(0, Math.floor(Number(generation) || 0));
     const coveredLocalLastModified = Number(coveredLastModified || 0);
-    if (
-      state.generation === coveredGeneration &&
-      state.maxLastModified <= coveredLocalLastModified
-    ) {
+    const coverageOptions = {
+      coveredGeneration,
+      coveredLastModified: coveredLocalLastModified,
+      coveredContentGeneration: Math.max(
+        0,
+        Math.floor(Number(coveredContentGeneration) || 0)
+      ),
+    };
+    if (isSharedDebounceStateCoveredBySync(state, coverageOptions)) {
       const latestState = getBackgroundSyncDebounceState();
-      if (latestState && latestState.maxLastModified > coveredLocalLastModified) {
+      if (
+        latestState &&
+        !isSharedDebounceStateCoveredBySync(latestState, coverageOptions)
+      ) {
         const followUpScheduled = scheduleBackgroundSyncDebounceFollowUp(
           scheduleFollowUp,
           {
@@ -18328,12 +18460,23 @@
       normalizeBackgroundSyncDebounceTimestamp(result.coveredLocalLastUpdated)
     );
   };
+  const getCoveredContentGenerationFromSyncResult = (result = null) => {
+    if (!isObjectRecord(result)) {
+      return 0;
+    }
+    return Math.max(
+      0,
+      Math.floor(Number(result.coveredLocalContentGeneration) || 0)
+    );
+  };
   const cleanupBackgroundSchedulerAfterSuccess = (
     result,
     schedulerContext = {},
     options = {}
   ) => {
     const coveredLastModified = getCoveredLastModifiedFromSyncResult(result);
+    const coveredContentGeneration =
+      getCoveredContentGenerationFromSyncResult(result);
     if (coveredLastModified <= 0) {
       return {
         status: "skipped",
@@ -18363,12 +18506,14 @@
       coveredLastModified,
       {
         debounceGeneration: resolvedContext.debounceGeneration,
+        coveredContentGeneration,
         scheduleFollowUp: scheduleFollowUpOnce,
       }
     );
     const sharedDebounceCleanup = clearSharedBackgroundSyncDebounceIfCovered({
       generation: resolvedContext.debounceGeneration,
       coveredLastModified,
+      coveredContentGeneration,
       scheduleFollowUp: scheduleFollowUpOnce,
     });
     const latestLocalModified = normalizePendingAutoSyncTimestamp(
@@ -18383,9 +18528,20 @@
       status: "skipped",
       reason: "no_lost_concurrent_dirty",
     };
+    // [ARCH-INV-1] “同步期间又有新内容”以内容代数为权威；时间戳只作旧数据兜底。
+    const latestContentGeneration = getLocalContentGeneration();
+    const hasConcurrentGenerationDirty =
+      coveredContentGeneration > 0 &&
+      latestContentGeneration > coveredContentGeneration;
+    const hasConcurrentTimestampDirty =
+      coveredContentGeneration <= 0 &&
+      latestLocalModified > coveredLastModified;
     if (
-      latestLocalModified > coveredLastModified &&
-      Math.max(durablePendingMax, durableSharedMax) < latestLocalModified
+      (hasConcurrentGenerationDirty || hasConcurrentTimestampDirty) &&
+      (hasConcurrentGenerationDirty ||
+        Math.max(durablePendingMax, durableSharedMax) < latestLocalModified) &&
+      !getPendingAutoSyncRequest() &&
+      !getBackgroundSyncDebounceState()
     ) {
       const latestDirtyProvenance = getLastLocalDirtyProvenance();
       const hasMatchingProvenance =
@@ -18417,6 +18573,8 @@
     return {
       status: "completed",
       coveredLastModified,
+      coveredContentGeneration,
+      latestContentGeneration,
       debounceGeneration: resolvedContext.debounceGeneration,
       intendedMaxLastModified: resolvedContext.intendedMaxLastModified,
       pendingCleanup,
@@ -18554,6 +18712,13 @@
         currentState.ownerLeaseUntil > now;
       const nextState = {
         version: 1,
+        // 取较高代数：同一批 dirty 的覆盖判据只能单调前进。
+        contentGeneration: Math.max(
+          Number.isFinite(Number(currentState?.contentGeneration))
+            ? Number(currentState.contentGeneration)
+            : 0,
+          getLocalContentGeneration()
+        ),
         generation: (currentState?.generation || 0) + 1,
         ownerTabId: currentOwnerIsReusable
           ? currentState.ownerTabId
@@ -33162,6 +33327,13 @@
       ? { useFreshSnapshot: true }
       : {};
     const localSyncDeviceId = getLocalSyncDeviceId(settings);
+    // [ARCH-INV-1] 本次同步“覆盖到的内容代数”：在读取待推送内容快照的那一刻抓取。
+    // 之后任何写入都会推进代数，从而被判为“未被覆盖”并触发后续同步。
+    let coveredLocalContentGeneration = 0;
+    const captureCoveredContentGeneration = () => {
+      coveredLocalContentGeneration = getLocalContentGeneration();
+      return coveredLocalContentGeneration;
+    };
     let syncDiagnosticsContext = {
       triggerSource: resolvedTriggerSource,
       localSyncDeviceId,
@@ -33276,6 +33448,15 @@
         baseResult.coveredLocalLastUpdated = coveredLocalLastUpdated;
         baseResult.coveredLastModified = coveredLocalLastUpdated;
       }
+      // 覆盖代数由本次同步统一写入，避免每个 action 各自漏传。
+      const coveredContentGeneration = Number.isFinite(
+        Number(extraResult?.coveredLocalContentGeneration)
+      )
+        ? Math.max(0, Math.floor(Number(extraResult.coveredLocalContentGeneration)))
+        : coveredLocalContentGeneration;
+      if (coveredContentGeneration > 0) {
+        baseResult.coveredLocalContentGeneration = coveredContentGeneration;
+      }
       if (
         extraResult &&
         typeof extraResult === "object" &&
@@ -33363,6 +33544,7 @@
           "export_local_data_initial_push",
           () => exportLocalDataObject(exportLocalDataOptions)
         );
+        captureCoveredContentGeneration();
         updateSyncDiagnosticsContext({
           localHash: shortHashForLog(localData.contentHash),
           baselineHash: shortHashForLog(getSyncBaselineState()?.contentHash),
@@ -33403,6 +33585,7 @@
         "export_local_data",
         () => exportLocalDataObject(exportLocalDataOptions)
       );
+      captureCoveredContentGeneration();
       const localDeltaClassification = classifyLocalSyncDelta({
         localDataObject,
         remoteDataObject: remote,

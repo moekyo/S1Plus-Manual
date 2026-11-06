@@ -307,6 +307,135 @@ const testRecoveryKeepsPendingForLegacyBaseline = () => {
   );
 };
 
+// ------------------------------------------------------- 覆盖清理按内容代数
+
+const readPending = (harness) =>
+  harness.hooks.getAutoSyncRuntimePendingDisplayState && harness.store.get(PENDING_AUTO_SYNC_KEY);
+
+const seedPendingWithGeneration = (harness, lastModified, dirtyGeneration) => {
+  harness.store.set(PENDING_AUTO_SYNC_KEY, {
+    version: 1,
+    source: "read_progress",
+    lastModified,
+    maxLastModified: lastModified,
+    createdAt: lastModified,
+    firstDirtyAt: lastModified,
+    lastDirtyAt: lastModified,
+    sources: { read_progress: 1 },
+    threadIds: ["123456"],
+    dirtyGeneration,
+  });
+};
+
+const testCoveredCleanupUsesContentGeneration = () => {
+  const harness = createHarness();
+  writeProgress(harness, 10);
+  writeProgress(harness, 12);
+  const dirtyGeneration = readGeneration(harness);
+  seedPendingWithGeneration(harness, 5000, dirtyGeneration);
+  assert.ok(harness.store.get(PENDING_AUTO_SYNC_KEY), "前置：待同步请求存在");
+
+  // 覆盖代数不足（同步只覆盖到更早的内容）→ 必须保留
+  const retained = harness.hooks.clearPendingAutoSyncRequestIfCovered(9999, {
+    coveredContentGeneration: dirtyGeneration - 1,
+  });
+  assert.equal(
+    retained.status,
+    "retained",
+    "同步覆盖的内容代数不足时必须保留待同步请求"
+  );
+  assert.equal(harness.store.has(PENDING_AUTO_SYNC_KEY), true);
+
+  // 覆盖代数充足 → 清除
+  const cleared = harness.hooks.clearPendingAutoSyncRequestIfCovered(1, {
+    coveredContentGeneration: dirtyGeneration,
+  });
+  assert.equal(cleared.status, "cleared");
+  assert.equal(cleared.reason, "covered");
+  assert.equal(harness.store.has(PENDING_AUTO_SYNC_KEY), false);
+};
+
+const testCoveredCleanupRetainsWhenGenerationMissing = () => {
+  const harness = createHarness();
+  // 旧版待同步记录：没有 dirtyGeneration 字段
+  seedPending(harness, 5000);
+  const legacyPending = { ...harness.store.get(PENDING_AUTO_SYNC_KEY) };
+  delete legacyPending.dirtyGeneration;
+  harness.store.set(PENDING_AUTO_SYNC_KEY, legacyPending);
+  const retained = harness.hooks.clearPendingAutoSyncRequestIfCovered(1, {
+    coveredContentGeneration: 10,
+  });
+  assert.equal(
+    retained.status,
+    "retained",
+    "旧记录缺代数时不得凭时间戳断言已被覆盖"
+  );
+  assert.equal(harness.store.has(PENDING_AUTO_SYNC_KEY), true);
+};
+
+// ------------------------------------------------------- 显示层三值内容判定
+
+const testDisplayUsesGenerationWhenFingerprintUnavailable = () => {
+  const harness = createHarness();
+  const now = Date.now();
+  // 基线有代数、无业务指纹（例如指纹计算失败的降级场景）
+  harness.store.set("s1p_sync_baseline_state", {
+    contentHash: "g",
+    localContentHash: "g",
+    remoteContentHash: "g",
+    remoteUpdatedAt: "2025-01-01T00:00:00Z",
+    savedAt: 2,
+    localContentGeneration: readGeneration(harness),
+  });
+  seedPending(harness, now);
+  assert.equal(
+    harness.hooks.getAutoSyncRuntimePendingDisplayState().hasPending,
+    false,
+    "内容代数等于基线时不得显示待推送（内容权威优先于存活兜底）"
+  );
+
+  writeProgress(harness, 20);
+  seedPending(harness, now);
+  assert.equal(
+    harness.hooks.getAutoSyncRuntimePendingDisplayState().hasPending,
+    true,
+    "内容代数偏离基线时必须显示待推送"
+  );
+};
+
+const testDisplayFallsBackOnlyWhenContentTruthUnavailable = () => {
+  const harness = createHarness();
+  const now = Date.now();
+  harness.store.set("s1p_sync_baseline_state", {
+    contentHash: "legacy",
+    localContentHash: "legacy",
+    remoteContentHash: "legacy",
+    remoteUpdatedAt: "2025-01-01T00:00:00Z",
+    savedAt: 1,
+  });
+  seedPending(harness, now);
+  assert.equal(
+    harness.hooks.getAutoSyncRuntimePendingDisplayState().hasPending,
+    true,
+    "内容事实不可得时只保留存活兜底（迁移期）"
+  );
+
+  // 过期记录仍不应显示（存活兜底自带新鲜度）
+  harness.store.set(PENDING_AUTO_SYNC_KEY, {
+    ...harness.store.get(PENDING_AUTO_SYNC_KEY),
+    lastModified: now - 120000,
+    maxLastModified: now - 120000,
+    createdAt: now - 120000,
+    firstDirtyAt: now - 120000,
+    lastDirtyAt: now - 120000,
+  });
+  assert.equal(
+    harness.hooks.getAutoSyncRuntimePendingDisplayState().hasPending,
+    false,
+    "过期记录不得因兜底而长期显示待推送"
+  );
+};
+
 const run = () => {
   testGenerationLifecycle();
   testBaselineHonorsExplicitGeneration();
@@ -317,6 +446,10 @@ const run = () => {
   testRecoveryKeepsPendingWhenContentDirty();
   testRecoveryClearsPendingWhenContentMatchesBaseline();
   testRecoveryKeepsPendingForLegacyBaseline();
+  testCoveredCleanupUsesContentGeneration();
+  testCoveredCleanupRetainsWhenGenerationMissing();
+  testDisplayUsesGenerationWhenFingerprintUnavailable();
+  testDisplayFallsBackOnlyWhenContentTruthUnavailable();
   console.log(
     "[sync-scheduling-authority] INV-1 scheduling authority verified (gate + recovery + legacy)."
   );
