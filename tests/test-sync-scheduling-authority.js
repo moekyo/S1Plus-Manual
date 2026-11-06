@@ -387,6 +387,64 @@ const testBaselineBindsToSyncedSnapshotGeneration = () => {
   );
 };
 
+const testImportBasedActionsDoNotBindExportGeneration = () => {
+  // 拉取/合并类动作的基线描述“导入后的内容”，不能绑定导出前的代数，
+  // 否则每次成功拉取后都会立刻判脏。
+  const harness = createHarness();
+  const excluded = ["pulled", "force_pulled", "merged_read_progress"];
+  excluded.forEach((action) => {
+    assert.equal(
+      harness.hooks.isImportBasedSyncAction(action),
+      true,
+      `${action} 必须被识别为导入类动作`
+    );
+  });
+  ["pushed", "pushed_initial", "no_change"].forEach((action) => {
+    assert.equal(
+      harness.hooks.isImportBasedSyncAction(action),
+      false,
+      `${action} 不属于导入类动作`
+    );
+  });
+};
+
+const testCoveredGenerationIsCapturedBeforeSnapshotExport = () => {
+  // exportLocalDataObject 内部有 await（哈希）：等它返回再抓代数会让
+  // “覆盖代数”比被推送的内容更新，形成 false-clean。必须先抓后导出。
+  const fs = require("fs");
+  const path = require("path");
+  const source = fs.readFileSync(
+    path.join(__dirname, "..", "S1Plus.js"),
+    "utf8"
+  );
+  const captureIndex = source.indexOf("captureCoveredContentGeneration();");
+  const exportIndex = source.indexOf('"export_local_data",');
+  assert.ok(captureIndex > 0 && exportIndex > 0);
+  assert.ok(
+    captureIndex < exportIndex,
+    "自动同步必须在导出快照之前抓取覆盖代数"
+  );
+
+  // 手动同步：每处抓取都必须紧邻其后的 exportLocalDataObject 之前。
+  const manualMarker = "captureManualCoveredContentGeneration();";
+  const exportMarker = "exportLocalDataObject()";
+  let from = 0;
+  let checked = 0;
+  while (true) {
+    const captureIndex = source.indexOf(manualMarker, from);
+    if (captureIndex < 0) break;
+    const exportAfter = source.indexOf(exportMarker, captureIndex);
+    assert.ok(exportAfter > captureIndex, "手动抓取后必须紧跟一次导出");
+    assert.ok(
+      exportAfter - captureIndex < 400,
+      "手动同步必须在导出快照之前抓取覆盖代数"
+    );
+    checked += 1;
+    from = captureIndex + manualMarker.length;
+  }
+  assert.ok(checked >= 3, `手动同步应有至少 3 处抓取，实际 ${checked}`);
+};
+
 // ------------------------------------------------------- 覆盖清理按内容代数
 
 const readPending = (harness) =>
@@ -528,6 +586,8 @@ const run = () => {
   testRecoveryKeepsPendingForLegacyBaseline();
   testIntermediateBaselineUsesFingerprintInsteadOfConservativeDirty();
   testBaselineBindsToSyncedSnapshotGeneration();
+  testImportBasedActionsDoNotBindExportGeneration();
+  testCoveredGenerationIsCapturedBeforeSnapshotExport();
   testCoveredCleanupUsesContentGeneration();
   testCoveredCleanupRetainsWhenGenerationMissing();
   testDisplayUsesGenerationWhenFingerprintUnavailable();

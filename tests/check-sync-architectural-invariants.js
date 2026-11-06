@@ -302,6 +302,67 @@ const checkInv1DerivedNeedAuthority = () => {
     /const effectiveCoveredContentGeneration = \(\(\) => \{/,
     "INV-1：覆盖代数必须在 setSyncBaselineState 之前计算。"
   );
+  // 覆盖代数必须真的取自“读取快照时捕获的值”，不能被静默归零。
+  assert.match(
+    asSuccessBlock,
+    /Math\.max\(0, Math\.floor\(Number\(coveredLocalContentGeneration\) \|\| 0\)\)/,
+    "INV-1：覆盖代数必须取自 captureCoveredContentGeneration 的捕获值。"
+  );
+  // 导入类动作（拉取/合并）不得绑定导出前代数，否则每次拉取后立刻判脏。
+  assert.match(
+    asSuccessBlock,
+    /!isImportBasedSyncAction\(action\)/,
+    "INV-1：导入类动作必须排除在“绑定导出代数”之外。"
+  );
+  assert.match(
+    sliceBetween(
+      "const SYNC_IMPORT_BASED_ACTIONS = Object.freeze([",
+      "const isImportBasedSyncAction = (action = \"\") =>"
+    ),
+    /"pulled",[\s\S]{0,200}?"force_pulled",[\s\S]{0,200}?"merged_read_progress"/,
+    "INV-1：导入类动作清单必须覆盖 pulled / force_pulled / merged_read_progress。"
+  );
+
+  // 覆盖代数必须在“读取快照之前”捕获（exportLocalDataObject 内部有 await）。
+  // 逐处检查：每个 capture 之后必须在很近的位置紧跟一次导出。
+  const assertCapturePrecedesExport = (marker, exportMarker, minCount, label) => {
+    let from = 0;
+    let checked = 0;
+    while (true) {
+      const captureIndex = source.indexOf(marker, from);
+      if (captureIndex < 0) break;
+      const exportAfter = source.indexOf(exportMarker, captureIndex);
+      const exportBefore = source.lastIndexOf(exportMarker, captureIndex);
+      assert.ok(exportAfter > captureIndex, `${label}：抓取后必须紧跟导出调用`);
+      assert.ok(
+        exportAfter - captureIndex < 400,
+        `${label}：必须在导出快照之前抓取，` +
+          "否则导出 await 期间的写入会被误记为已覆盖。"
+      );
+      assert.ok(
+        captureIndex - exportBefore >= 400,
+        `${label}：不得在导出之后才抓取（那是被修复掉的 false-clean）。`
+      );
+      checked += 1;
+      from = captureIndex + marker.length;
+    }
+    assert.ok(
+      checked >= minCount,
+      `${label}：抓取点数量不足（期望 >= ${minCount}，实际 ${checked}）`
+    );
+  };
+  assertCapturePrecedesExport(
+    "captureCoveredContentGeneration();",
+    "exportLocalDataObject(",
+    2,
+    "自动同步"
+  );
+  assertCapturePrecedesExport(
+    "captureManualCoveredContentGeneration();",
+    "exportLocalDataObject()",
+    3,
+    "手动同步"
+  );
 
   // 合并式拉取：基线写入后必须推进代数，否则收敛推送会被门禁判干净。
   const mergePullBlock = sliceBetween(
