@@ -28886,6 +28886,19 @@
 
   // [ARCH-INV-1] 基线必须描述“真正被同步出去的内容”，而不是写基线那一刻的实时内容。
   // 同步期间的写入会把当前代数推进，若基线默认取当前代数，那些写入会被误记为已覆盖。
+  // [ARCH-INV-1] 只有“先导出本地快照、再推送该快照”的动作，基线才描述导出时的内容。
+  // 含导入的动作（拉取/强制拉取/合并回写）基线描述的是导入后的内容，
+  // 若绑定导出前代数，会让成功拉取后立刻判脏（每次拉取多跑一次同步）。
+  const SYNC_IMPORT_BASED_ACTIONS = Object.freeze([
+    "pulled",
+    "force_pulled",
+    "merged_read_progress",
+    "initial_pull_recover",
+    "manual_pull",
+  ]);
+  const isImportBasedSyncAction = (action = "") =>
+    SYNC_IMPORT_BASED_ACTIONS.includes(String(action || "").trim());
+
   const bindBaselineContentGeneration = (
     syncBaseline,
     coveredContentGeneration
@@ -33455,11 +33468,18 @@
         return Math.max(0, Math.floor(Number(coveredLocalContentGeneration) || 0));
       })();
       if (syncBaseline) {
+        // 导入类动作的基线描述导入后的本地内容，必须用写入时刻的代数；
+        // 只有“导出后原样推送”的动作才绑定导出时的代数。
+        const shouldBindCoveredGeneration =
+          !isImportBasedSyncAction(action) &&
+          effectiveCoveredContentGeneration > 0;
         setSyncBaselineState(
-          bindBaselineContentGeneration(
-            syncBaseline,
-            effectiveCoveredContentGeneration
-          )
+          shouldBindCoveredGeneration
+            ? bindBaselineContentGeneration(
+                syncBaseline,
+                effectiveCoveredContentGeneration
+              )
+            : syncBaseline
         );
       }
       recordSuccessfulRemoteWriteIfNeeded({
@@ -33585,11 +33605,12 @@
           source: resolvedTriggerSource,
           reason: "initial_push",
         });
+        // 同上：先抓代数，再在同一 tick 内读取快照。
+        captureCoveredContentGeneration();
         const localData = await runWithAutoSyncLockGuard(
           "export_local_data_initial_push",
           () => exportLocalDataObject(exportLocalDataOptions)
         );
-        captureCoveredContentGeneration();
         updateSyncDiagnosticsContext({
           localHash: shortHashForLog(localData.contentHash),
           baselineHash: shortHashForLog(getSyncBaselineState()?.contentHash),
@@ -33626,11 +33647,14 @@
         "validate_remote_data",
         () => migrateAndValidateRemoteData(rawRemoteData)
       );
+      // [ARCH-INV-1] 必须在同一 tick 内、读取快照之前抓取代数。
+      // exportLocalDataObject 内部在克隆内容之后还有 await（哈希计算），
+      // 若等它返回再抓，期间的写入会让“覆盖代数”比被推送的内容更新 → false-clean。
+      captureCoveredContentGeneration();
       const localDataObject = await runWithAutoSyncLockGuard(
         "export_local_data",
         () => exportLocalDataObject(exportLocalDataOptions)
       );
-      captureCoveredContentGeneration();
       const localDeltaClassification = classifyLocalSyncDelta({
         localDataObject,
         remoteDataObject: remote,
@@ -51612,6 +51636,14 @@
       : "";
   };
 
+  // [ARCH-INV-1] 手动同步同样存在“导出快照 → 网络推送（数秒）→ 写基线”的窗口，
+  // 期间的内容写入不得被基线误记为已覆盖。导出快照时抓取代数，写基线时绑定。
+  let manualCoveredContentGeneration = 0;
+  const captureManualCoveredContentGeneration = () => {
+    manualCoveredContentGeneration = getLocalContentGeneration();
+    return manualCoveredContentGeneration;
+  };
+
   const handleManualSync = async (
     suppressInitialMessage = false,
     isInitialSetup = false,
@@ -51794,6 +51826,9 @@
           localSyncDeviceId: getLocalSyncDeviceId(settings),
           ...overrides,
         });
+        const isManualPullOnlyAction = (action = "") =>
+          action === "manual_pull" || action === "initial_pull_recover";
+
         const noteManualSuccess = (
           action,
           syncBaseline = null,
@@ -51812,7 +51847,20 @@
             reason: "missing_sync_baseline",
           };
           if (syncBaseline) {
-            setSyncBaselineState(syncBaseline);
+            // 推送类动作的基线描述“导出后被推送出去的内容”，绑定导出时代数；
+            // 拉取类动作的基线描述导入后的本地内容，必须用写入时刻的代数。
+            const shouldBindManualGeneration =
+              !isManualPullOnlyAction(action) &&
+              manualCoveredContentGeneration > 0;
+            setSyncBaselineState(
+              shouldBindManualGeneration
+                ? bindBaselineContentGeneration(
+                    syncBaseline,
+                    manualCoveredContentGeneration
+                  )
+                : syncBaseline
+            );
+            manualCoveredContentGeneration = 0;
             foregroundPendingSettlement =
               settlePendingForegroundRemoteSyncRequestIfCovered(
                 pendingForegroundRemoteSyncAtStart,
@@ -52079,6 +52127,7 @@
                 }
                 showMessage("正在向云端推送数据...", null);
                 try {
+                  captureManualCoveredContentGeneration();
                   const localData = await runWithManualSyncLockGuard(
                     "export_local_data_initial_push",
                     () => exportLocalDataObject()
@@ -52161,6 +52210,7 @@
             "validate_remote_data",
             () => migrateAndValidateRemoteData(rawRemoteData)
           );
+          captureManualCoveredContentGeneration();
           const localDataObject = await runWithManualSyncLockGuard(
             "export_local_data",
             () => exportLocalDataObject()
@@ -52610,6 +52660,7 @@
                   return;
                 }
                 try {
+                  captureManualCoveredContentGeneration();
                   const localDataObjectForPush = await runWithManualSyncLockGuard(
                     "export_local_data_force_repair",
                     () => exportLocalDataObject()

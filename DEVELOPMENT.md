@@ -517,6 +517,12 @@ node tests/test-category-c-and-image-viewer-glass-css.js
   “本地改动时间 vs 上次同步时间”这类两次独立时间比较。
 - 这是**保守过近似**：写后又改回原值会多跑一次同步（随后算出 `no_change` 并 rebase）。
   false-dirty 只是浪费一次同步，false-clean 会真的丢推送，所以方向必须偏保守。
+- **覆盖代数必须在读取快照之前、同一 tick 内抓取**：`exportLocalDataObject` 克隆内容后
+  还有 `await`（哈希计算），等它返回再抓会让“覆盖代数”比被推送的内容更新，
+  导出期间的写入就会被误记为已覆盖。自动/手动路径都在调用导出之前抓取。
+- **导入类动作不绑定导出代数**：`pulled` / `force_pulled` / `merged_read_progress`
+  等动作的基线描述导入后的内容，必须用写入时刻的代数；否则每次成功拉取后都会立刻判脏
+  （多跑一次同步）。清单见 `SYNC_IMPORT_BASED_ACTIONS`。
 - **基线绑定被同步内容的代数**：`asSuccessResult` 在写基线前先确定
   `effectiveCoveredContentGeneration`（读取内容快照时抓取），再经
   `bindBaselineContentGeneration()` 写入基线。若基线默认取“写基线那一刻”的代数，
