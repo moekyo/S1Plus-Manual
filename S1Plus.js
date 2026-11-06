@@ -28989,6 +28989,7 @@
       return Object.freeze({
         dirty: true,
         known: false,
+        authority: "unknown",
         reason: "baseline_missing",
         currentGeneration,
         baselineGeneration: 0,
@@ -29002,9 +29003,27 @@
       ? Number(baseline.localContentGeneration)
       : NaN;
     if (!Number.isFinite(rawBaselineGeneration)) {
+      // 中间版本写过的基线：有业务指纹、没有代数。此时指纹本身就是内容权威，
+      // 用它可以避免“显示判干净、调度保守判脏”的不一致（否则每次触发都多跑一次同步）。
+      const fingerprintNeed =
+        typeof deriveSyncNeed === "function" ? deriveSyncNeed() : null;
+      if (fingerprintNeed && fingerprintNeed.available === true) {
+        const dirtyByFingerprint = fingerprintNeed.push.needed === true;
+        return Object.freeze({
+          dirty: dirtyByFingerprint,
+          known: true,
+          authority: "fingerprint",
+          reason: dirtyByFingerprint
+            ? "fingerprint_local_content_changed"
+            : "fingerprint_content_matches_baseline",
+          currentGeneration,
+          baselineGeneration: null,
+        });
+      }
       return Object.freeze({
         dirty: true,
         known: false,
+        authority: "unknown",
         reason: "baseline_generation_missing",
         currentGeneration,
         baselineGeneration: null,
@@ -29015,6 +29034,7 @@
     return Object.freeze({
       dirty,
       known: true,
+      authority: "generation",
       reason: dirty ? "local_content_changed_since_baseline" : "local_content_matches_baseline",
       currentGeneration,
       baselineGeneration,

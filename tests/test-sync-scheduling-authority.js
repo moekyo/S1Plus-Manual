@@ -307,6 +307,39 @@ const testRecoveryKeepsPendingForLegacyBaseline = () => {
   );
 };
 
+const testIntermediateBaselineUsesFingerprintInsteadOfConservativeDirty = () => {
+  // 中间版本写过的基线：有业务指纹、没有代数。
+  // 调度层必须用指纹（内容权威）而不是保守判脏，否则显示与调度会不一致。
+  const harness = createHarness();
+  writeProgress(harness, 10);
+  writeBaseline(harness, "h1");
+  const patched = { ...harness.store.get("s1p_sync_baseline_state") };
+  delete patched.localContentGeneration;
+  harness.store.set("s1p_sync_baseline_state", patched);
+
+  const cleanState = harness.hooks.isLocalContentDirtySinceBaseline();
+  assert.equal(cleanState.known, true, "有指纹时内容事实可得");
+  assert.equal(cleanState.authority, "fingerprint");
+  assert.equal(
+    cleanState.dirty,
+    false,
+    "内容等于基线时不得保守判脏（会与显示层不一致）"
+  );
+
+  writeProgress(harness, 14);
+  const dirtyState = harness.hooks.isLocalContentDirtySinceBaseline();
+  assert.equal(dirtyState.dirty, true, "内容变化后指纹必须判脏");
+  assert.equal(dirtyState.authority, "fingerprint");
+  assert.deepStrictEqual(
+    [
+      harness.hooks.deriveSyncNeed().push.needed,
+      dirtyState.dirty,
+    ],
+    [true, true],
+    "显示层与调度层必须一致"
+  );
+};
+
 // ------------------------------------------------------- 覆盖清理按内容代数
 
 const readPending = (harness) =>
@@ -446,6 +479,7 @@ const run = () => {
   testRecoveryKeepsPendingWhenContentDirty();
   testRecoveryClearsPendingWhenContentMatchesBaseline();
   testRecoveryKeepsPendingForLegacyBaseline();
+  testIntermediateBaselineUsesFingerprintInsteadOfConservativeDirty();
   testCoveredCleanupUsesContentGeneration();
   testCoveredCleanupRetainsWhenGenerationMissing();
   testDisplayUsesGenerationWhenFingerprintUnavailable();
