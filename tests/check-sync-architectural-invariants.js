@@ -50,20 +50,20 @@ const PENDING_INVARIANTS = Object.freeze([
     removalCriterion: "改用具备原子递增语义的存储或跨标签页写锁后移除。",
   },
   {
-    id: "INV-1-single-writer-by-alias",
+    id: "INV-3-import-entry-reachable",
     reason:
-      "“生产只有一个基线写入入口”目前由标识符计数 + 别名禁令守住；" +
-      "把写入逻辑复制/内联到别处仍可绕过（文本契约无法阻止复制）。",
+      "导入原语已从公开门面剥离（门面冻结且不再含 importFromSync），" +
+      "但 importLocalData 仍是模块级入口；单文件单作用域下无法让它物理不可达。",
     removalCriterion:
-      "把基线写入下沉到不可复制的边界（独立模块/构造器私有状态）后移除。",
+      "把 importLocalData 及其调用者移入独立闭包/模块，使只有边界可达后移除。",
   },
   {
     id: "INV-3-origin-declarative",
     reason:
-      "importFromSync / importLocalData 的 origin 是声明式参数，用于拦截缺省与显式化意图；" +
-      "它不是能力凭证，真正的远端校验边界是 applyRemoteSnapshotToLocal 的 brand 检查。",
+      "origin 是声明式参数（拦截缺省、显式化意图），不是能力凭证；" +
+      "真正的远端校验边界仍是 applyRemoteSnapshotToLocal 的 brand 检查。",
     removalCriterion:
-      "把导入原语改为只能接收品牌化快照（或独立模块私有）后移除本项。",
+      "把导入原语改为只能接收品牌化快照（或跨作用域不可伪造的令牌）后移除。",
   },
   {
     id: "INV-1-force-push-provenance-uncovered",
@@ -90,6 +90,7 @@ const LEGACY_FALLBACK = Object.freeze({
 });
 
 const countOccurrences = (needle) => source.split(needle).length - 1;
+const countOccurrencesIn = (text, needle) => String(text).split(needle).length - 1;
 
 // 严格切片：**两端锚点都必须存在**，且结束锚点必须在开始锚点之后。
 // 早期版本在找不到结束锚点时静默返回“文件剩余全部”，
@@ -193,7 +194,7 @@ const checkInv1DerivedNeedAuthority = () => {
       "const setSyncBaselineState = ({",
       "const getSyncDeltaSourceNames = (sources = {}) =>"
     ),
-    /hasExplicitFingerprint[\s\S]{0,1200}fingerprintSource: explicitFingerprintPair \? "snapshot" : "live"/,
+    /hasExplicitFingerprint[\s\S]{0,2400}fingerprintSource: explicitFingerprintPair \? "snapshot" : "live"/,
     "INV-1：基线必须补齐单侧指纹，并记录指纹来源（snapshot/live）。"
   );
 
@@ -434,6 +435,27 @@ const checkInv1DerivedNeedAuthority = () => {
     ),
     /if \(!isKnownLocalImportOrigin\(origin\)\) \{[\s\S]{0,200}?throw new TypeError/,
     "INV-3：importLocalData 必须拒绝缺省/未知来源。"
+  );
+  // 公开门面必须剥离导入原语：只保留捕获引用，新的调用点无法从门面取得它。
+  assert.match(
+    source,
+    /importFromSync: importFromSyncPrivate[\s\S]{0,200}?\} =\s*\n?\s*s1pCoreBusinessDataFacade/,
+    "INV-3：必须从公开门面剥离 importFromSync（保留捕获引用）。"
+  );
+  assert.match(
+    source,
+    /publicFacade: Object\.freeze\(publicFacade\)/,
+    "INV-3：剥离后的公开门面必须冻结。"
+  );
+  assert.match(
+    source,
+    /s1pSyncImportBoundary\.importPayload\(/,
+    "INV-3：导入必须使用捕获的私有引用。"
+  );
+  assert.equal(
+    countOccurrences("s1pCoreBusinessData.importFromSync"),
+    0,
+    "INV-3：生产代码不得再通过公开门面调用导入原语。"
   );
 
   // 合并式拉取：基线写入后必须推进代数，否则收敛推送会被门禁判干净。
@@ -729,12 +751,33 @@ const checkNoDeadBranchIdioms = () => {
     /\b(?:const|let|var)\s+\w+Alias\s*=\s*(?:setSyncBaselineState|bumpLocalContentGeneration|importFromSync|commitSyncedBaseline)/,
     "INV-6：关键写入函数不得被赋值给别名（绕过标识符计数）。"
   );
-  // 内部原语：只允许“声明 + commitSyncedBaseline 内部调用”两处标识符。
+  // [ARCH-INV-1] 基线写入原语封装在独立闭包：不得作为模块级标识符出现在闭包之外，
+  // 因此“外部代码别名/间接调用”在语法上不可能发生（这是物理隔离，不是文本约定）。
+  const baselineBoundaryBlock = sliceBetween(
+    "const syncBaselineBoundary = (() => {",
+    "const commitSyncedBaseline = syncBaselineBoundary.commitSyncedBaseline;"
+  );
+  const sourceOutsideBoundary = source.replace(baselineBoundaryBlock, "");
   assert.equal(
-    countOccurrences("setSyncBaselineState"),
-    2,
-    "INV-6：setSyncBaselineState 只能出现两次（声明 + 强制入口内部调用），" +
-      "任何别名/间接调用都会让计数变化。"
+    countOccurrencesIn(sourceOutsideBoundary, "setSyncBaselineState"),
+    0,
+    "INV-1：setSyncBaselineState 只能存在于 syncBaselineBoundary 闭包内；" +
+      "出现在外部即说明闭包隔离被破坏。"
+  );
+  assert.match(
+    baselineBoundaryBlock,
+    /const setSyncBaselineState = \(\{/,
+    "INV-1：原语必须定义在闭包内部（不是模块级）。"
+  );
+  assert.match(
+    baselineBoundaryBlock,
+    /return Object\.freeze\(\{\s*commitSyncedBaseline,/,
+    "INV-1：闭包只能导出 commitSyncedBaseline（冻结）。"
+  );
+  assert.match(
+    baselineBoundaryBlock,
+    /IS_S1P_TEST_MODE[\s\S]{0,160}?setSyncBaselineStateForTest:\s*setSyncBaselineState/,
+    "INV-1：内部原语只在测试模式下以 *_ForTest 名义暴露。"
   );
   // 声明 1 + 内容写入检查点 1 + 合并式拉取收敛 1 = 3；新增调用必须在这里显式声明。
   assert.equal(

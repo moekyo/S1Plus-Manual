@@ -21876,7 +21876,7 @@
       bindCrossTab,
     });
   };
-  const s1pCoreBusinessData = s1pCreateCoreBusinessData({
+  const s1pCoreBusinessDataFacade = s1pCreateCoreBusinessData({
     storageAdapter: s1pCreateCoreBusinessDataGmAdapter(),
     sourceId: SETTINGS_CROSS_TAB_SIGNAL_SOURCE_ID,
     invalidateLocalDataHash: () => invalidateLocalDataHashCache(),
@@ -21897,6 +21897,26 @@
       return Boolean(isCrossContextChange || signalPayload.sender);
     },
   });
+
+  // [ARCH-INV-3] 同步数据导入原语不再挂在公开门面上：
+  // 新的调用点无法再从公开门面取得导入原语，只能走 applyRemoteSnapshotToLocal 或
+  // 声明了 origin 的用户备份导入。
+  // 残余：`importLocalData` 仍是模块级入口（单文件单作用域下无法真正私有），
+  // 但它强制要求声明 origin。真正的能力隔离需要拆模块（见 PENDING_INVARIANTS）。
+  const s1pSyncImportBoundary = (() => {
+    const { importFromSync: importFromSyncPrivate, ...publicFacade } =
+      s1pCoreBusinessDataFacade;
+    if (typeof importFromSyncPrivate !== "function") {
+      throw new TypeError(
+        "S1 Plus (Sync): core business data 未提供 importFromSync 原语。"
+      );
+    }
+    return Object.freeze({
+      publicFacade: Object.freeze(publicFacade),
+      importPayload: importFromSyncPrivate,
+    });
+  })();
+  const s1pCoreBusinessData = s1pSyncImportBoundary.publicFacade;
   /*__S1P_TEST_HOOK_1__*/
   const getBlockedThreads = () => s1pCoreBusinessData.read("blockedThreads");
   const saveBlockedThreads = (threads, suppressSyncTrigger = false) =>
@@ -28378,7 +28398,8 @@
         );
       }
 
-      const coreBusinessDataImport = s1pCoreBusinessData.importFromSync(
+      // [ARCH-INV-3] 导入原语只能从这里取得（公开门面已不再暴露它）。
+      const coreBusinessDataImport = s1pSyncImportBoundary.importPayload(
         dataToImport,
         { suppressSyncTrigger, origin }
       );
@@ -29001,146 +29022,159 @@
   const isImportBasedSyncAction = (action = "") =>
     SYNC_IMPORT_BASED_ACTIONS.includes(String(action || "").trim());
 
-  const setSyncBaselineState = ({
-    contentHash = null,
-    localContentHash = null,
-    remoteContentHash = null,
-    remoteUpdatedAt = null,
-    localBaseFingerprint = "",
-    localProgressFingerprint = "",
-    localContentGeneration = null,
-  } = {}) => {
-    const normalizedContentHash =
-      typeof contentHash === "string" && contentHash ? contentHash : null;
-    const normalizedLocalContentHash =
-      typeof localContentHash === "string" && localContentHash
-        ? localContentHash
-        : null;
-    const normalizedRemoteContentHash =
-      typeof remoteContentHash === "string" && remoteContentHash
-        ? remoteContentHash
-        : null;
-    const nextContentHash =
-      normalizedContentHash ||
-      normalizedLocalContentHash ||
-      normalizedRemoteContentHash;
-    const nextLocalContentHash =
-      normalizedLocalContentHash || nextContentHash;
-    const nextRemoteContentHash =
-      normalizedRemoteContentHash || nextContentHash;
-    const nextRemoteUpdatedAt =
-      typeof remoteUpdatedAt === "string" && remoteUpdatedAt
-        ? remoteUpdatedAt
-        : null;
+  // [ARCH-INV-1] 基线写入被封装在独立闭包：内部原语不再是模块级标识符，
+  // 外部代码既无法调用、也无法别名/间接调用它——这是“物理不可达”，不是文本约定。
+  // 只有经 `commitSyncedBaseline`（覆盖代数必填）才能写入基线。
+  const syncBaselineBoundary = (() => {
+    // 内部原语：仅本闭包可见。
+    const setSyncBaselineState = ({
+        contentHash = null,
+        localContentHash = null,
+        remoteContentHash = null,
+        remoteUpdatedAt = null,
+        localBaseFingerprint = "",
+        localProgressFingerprint = "",
+        localContentGeneration = null,
+      } = {}) => {
+        const normalizedContentHash =
+          typeof contentHash === "string" && contentHash ? contentHash : null;
+        const normalizedLocalContentHash =
+          typeof localContentHash === "string" && localContentHash
+            ? localContentHash
+            : null;
+        const normalizedRemoteContentHash =
+          typeof remoteContentHash === "string" && remoteContentHash
+            ? remoteContentHash
+            : null;
+        const nextContentHash =
+          normalizedContentHash ||
+          normalizedLocalContentHash ||
+          normalizedRemoteContentHash;
+        const nextLocalContentHash =
+          normalizedLocalContentHash || nextContentHash;
+        const nextRemoteContentHash =
+          normalizedRemoteContentHash || nextContentHash;
+        const nextRemoteUpdatedAt =
+          typeof remoteUpdatedAt === "string" && remoteUpdatedAt
+            ? remoteUpdatedAt
+            : null;
 
-    // [ARCH-INV-1] 显式指纹优先（例如合并式拉取要用“云端内容”作为基线本地侧）；
-    // 否则以调用时刻的本地业务内容为准，这是“刚刚被同步出去的本地快照”语义。
-    const hasExplicitFingerprint = Boolean(
-      localBaseFingerprint || localProgressFingerprint
-    );
-    // 只给一侧指纹会让另一侧永远“变化”，产生永久待推送：缺的一侧现取补齐。
-    const explicitFingerprintPair = hasExplicitFingerprint
-      ? (() => {
-          const localPair =
-            getLocalSyncBusinessFingerprint() ||
-            Object.freeze({ baseFingerprint: "", progressFingerprint: "" });
-          return Object.freeze({
-            baseFingerprint: String(
-              localBaseFingerprint || localPair.baseFingerprint || ""
-            ),
-            progressFingerprint: String(
-              localProgressFingerprint || localPair.progressFingerprint || ""
-            ),
+        // [ARCH-INV-1] 显式指纹优先（例如合并式拉取要用“云端内容”作为基线本地侧）；
+        // 否则以调用时刻的本地业务内容为准，这是“刚刚被同步出去的本地快照”语义。
+        const hasExplicitFingerprint = Boolean(
+          localBaseFingerprint || localProgressFingerprint
+        );
+        // 只给一侧指纹会让另一侧永远“变化”，产生永久待推送：缺的一侧现取补齐。
+        const explicitFingerprintPair = hasExplicitFingerprint
+          ? (() => {
+              const localPair =
+                getLocalSyncBusinessFingerprint() ||
+                Object.freeze({ baseFingerprint: "", progressFingerprint: "" });
+              return Object.freeze({
+                baseFingerprint: String(
+                  localBaseFingerprint || localPair.baseFingerprint || ""
+                ),
+                progressFingerprint: String(
+                  localProgressFingerprint || localPair.progressFingerprint || ""
+                ),
+              });
+            })()
+          : null;
+        const resolvedFingerprintPair =
+          explicitFingerprintPair ||
+          getLocalSyncBusinessFingerprint() ||
+          Object.freeze({ baseFingerprint: "", progressFingerprint: "" });
+
+        GM_setValue(SYNC_BASELINE_STATE_KEY, {
+          contentHash: nextContentHash,
+          localContentHash: nextLocalContentHash,
+          remoteContentHash: nextRemoteContentHash,
+          remoteUpdatedAt: nextRemoteUpdatedAt,
+          localBaseFingerprint: resolvedFingerprintPair.baseFingerprint,
+          localProgressFingerprint: resolvedFingerprintPair.progressFingerprint,
+          // snapshot=真实快照对产出的指纹（可作引擎权威）；live=调用时现取（仅显示参考）
+          fingerprintSource: explicitFingerprintPair ? "snapshot" : "live",
+          // [ARCH-INV-1] 覆盖代数在**生产环境是必填**：缺省时不能用“此刻代数”冒充
+          // “被同步内容的代数”（那正是 false-clean 的来源）。缺省时保守写 0（=脏）并报错；
+          // 测试模式保留旧默认，避免与既有用例的“基线=当前内容”语义冲突。
+          localContentGeneration: (() => {
+            if (
+              localContentGeneration === null ||
+              localContentGeneration === undefined
+            ) {
+              // 测试模式保留旧默认（既有用例语义）；生产环境直接抛错，
+              // 因为“缺省 = 写 0”会和“0 = 缺失”的域定义冲突，且无法表达语义。
+              if (IS_S1P_TEST_MODE) {
+                return getLocalContentGeneration();
+              }
+              throw new TypeError(
+                "S1 Plus (Sync): 写同步基线时缺少覆盖内容代数（生产环境必须显式提供）。"
+              );
+            }
+            const parsed = Number(localContentGeneration);
+            return Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : 0;
+          })(),
+          savedAt: Date.now(),
+        });
+        if (nextRemoteUpdatedAt) {
+          setLastRemoteProbeInfo({
+            lastSyncedRemoteUpdatedAt: nextRemoteUpdatedAt,
           });
-        })()
-      : null;
-    const resolvedFingerprintPair =
-      explicitFingerprintPair ||
-      getLocalSyncBusinessFingerprint() ||
-      Object.freeze({ baseFingerprint: "", progressFingerprint: "" });
+          saveSyncDiagnostics({
+            ...mergeSyncDiagnosticsContext(getSyncDiagnostics(), {
+              baselineHash: shortHashForLog(nextContentHash),
+              baselineLocalHash: shortHashForLog(nextLocalContentHash),
+              baselineRemoteHash: shortHashForLog(nextRemoteContentHash),
+              lastAppliedContentHash: shortHashForLog(nextContentHash),
+            }),
+            lastAppliedContentHash: shortHashForLog(nextContentHash),
+            lastSyncedRemoteUpdatedAt: nextRemoteUpdatedAt,
+          });
+        }
+      };
 
-    GM_setValue(SYNC_BASELINE_STATE_KEY, {
-      contentHash: nextContentHash,
-      localContentHash: nextLocalContentHash,
-      remoteContentHash: nextRemoteContentHash,
-      remoteUpdatedAt: nextRemoteUpdatedAt,
-      localBaseFingerprint: resolvedFingerprintPair.baseFingerprint,
-      localProgressFingerprint: resolvedFingerprintPair.progressFingerprint,
-      // snapshot=真实快照对产出的指纹（可作引擎权威）；live=调用时现取（仅显示参考）
-      fingerprintSource: explicitFingerprintPair ? "snapshot" : "live",
-      // [ARCH-INV-1] 覆盖代数在**生产环境是必填**：缺省时不能用“此刻代数”冒充
-      // “被同步内容的代数”（那正是 false-clean 的来源）。缺省时保守写 0（=脏）并报错；
-      // 测试模式保留旧默认，避免与既有用例的“基线=当前内容”语义冲突。
-      localContentGeneration: (() => {
-        if (
-          localContentGeneration === null ||
-          localContentGeneration === undefined
-        ) {
-          // 测试模式保留旧默认（既有用例语义）；生产环境直接抛错，
-          // 因为“缺省 = 写 0”会和“0 = 缺失”的域定义冲突，且无法表达语义。
-          if (IS_S1P_TEST_MODE) {
-            return getLocalContentGeneration();
-          }
+    const commitSyncedBaseline = ({
+        syncBaseline = null,
+        coveredContentGeneration = undefined,
+        reason = "",
+      } = {}) => {
+        if (!isObjectRecord(syncBaseline)) {
           throw new TypeError(
-            "S1 Plus (Sync): 写同步基线时缺少覆盖内容代数（生产环境必须显式提供）。"
+            "S1 Plus (Sync): commitSyncedBaseline 需要基线对象。"
           );
         }
-        const parsed = Number(localContentGeneration);
-        return Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : 0;
-      })(),
-      savedAt: Date.now(),
-    });
-    if (nextRemoteUpdatedAt) {
-      setLastRemoteProbeInfo({
-        lastSyncedRemoteUpdatedAt: nextRemoteUpdatedAt,
-      });
-      saveSyncDiagnostics({
-        ...mergeSyncDiagnosticsContext(getSyncDiagnostics(), {
-          baselineHash: shortHashForLog(nextContentHash),
-          baselineLocalHash: shortHashForLog(nextLocalContentHash),
-          baselineRemoteHash: shortHashForLog(nextRemoteContentHash),
-          lastAppliedContentHash: shortHashForLog(nextContentHash),
-        }),
-        lastAppliedContentHash: shortHashForLog(nextContentHash),
-        lastSyncedRemoteUpdatedAt: nextRemoteUpdatedAt,
-      });
-    }
-  };
+        if (
+          coveredContentGeneration === null ||
+          coveredContentGeneration === undefined
+        ) {
+          throw new TypeError(
+            `S1 Plus (Sync): commitSyncedBaseline 缺少覆盖内容代数（reason=${
+              normalizeSyncDiagnosticText(reason, 60) || "unknown"
+            }）。`
+          );
+        }
+        const parsedGeneration = Number(coveredContentGeneration);
+        if (!Number.isFinite(parsedGeneration) || parsedGeneration < 1) {
+          throw new TypeError(
+            "S1 Plus (Sync): commitSyncedBaseline 的覆盖内容代数无效。"
+          );
+        }
+        setSyncBaselineState({
+          ...syncBaseline,
+          localContentGeneration: Math.floor(parsedGeneration),
+        });
+        return getSyncBaselineState();
+      };
 
-  // [ARCH-INV-1] 生产代码唯一的基线写入入口：覆盖代数必填。
-  // 缺省直接抛错，而不是悄悄用“此刻代数”认证当前内容。
-  const commitSyncedBaseline = ({
-    syncBaseline = null,
-    coveredContentGeneration = undefined,
-    reason = "",
-  } = {}) => {
-    if (!isObjectRecord(syncBaseline)) {
-      throw new TypeError(
-        "S1 Plus (Sync): commitSyncedBaseline 需要基线对象。"
-      );
-    }
-    if (
-      coveredContentGeneration === null ||
-      coveredContentGeneration === undefined
-    ) {
-      throw new TypeError(
-        `S1 Plus (Sync): commitSyncedBaseline 缺少覆盖内容代数（reason=${
-          normalizeSyncDiagnosticText(reason, 60) || "unknown"
-        }）。`
-      );
-    }
-    const parsedGeneration = Number(coveredContentGeneration);
-    if (!Number.isFinite(parsedGeneration) || parsedGeneration < 1) {
-      throw new TypeError(
-        "S1 Plus (Sync): commitSyncedBaseline 的覆盖内容代数无效。"
-      );
-    }
-    setSyncBaselineState({
-      ...syncBaseline,
-      localContentGeneration: Math.floor(parsedGeneration),
+    return Object.freeze({
+      commitSyncedBaseline,
+      // 仅测试模式暴露内部原语，供既有用例以“基线=当前内容”语义写入。
+      ...(IS_S1P_TEST_MODE
+        ? { setSyncBaselineStateForTest: setSyncBaselineState }
+        : {}),
     });
-    return getSyncBaselineState();
-  };
+  })();
+  const commitSyncedBaseline = syncBaselineBoundary.commitSyncedBaseline;
 
   // [ARCH-INV-1] 调度层唯一的“本地是否有内容待同步”判定。
   // 与基线代数相等即干净；缺失基线/缺失代数一律保守判脏，
