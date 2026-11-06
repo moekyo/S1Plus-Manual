@@ -177,13 +177,20 @@ const checkInv1DerivedNeedAuthority = () => {
     MANIFEST.contentGenerationBumpSites + 1,
     "INV-1：代数递增点数量变化，必须更新 MANIFEST.contentGenerationBumpSites。"
   );
+  const dirtyPredicateBlock = sliceBetween(
+    "const isLocalContentDirtySinceBaseline = () => {",
+    "const getSyncDeltaSourceNames = (sources = {}) =>"
+  );
   assert.match(
-    sliceBetween(
-      "const isLocalContentDirtySinceBaseline = () => {",
-      "const getSyncDeltaSourceNames = (sources = {}) =>"
-    ),
-    /baseline_generation_missing[\s\S]{0,200}dirty: true|dirty: true,[\s\S]{0,200}baseline_generation_missing/,
-    "INV-1：旧基线缺代数时必须保守判脏（禁止 false-clean）。"
+    dirtyPredicateBlock,
+    /dirty: true,\s*known: false,\s*authority: "unknown",\s*reason: "baseline_generation_missing"/,
+    "INV-1：旧基线缺代数且无指纹时必须保守判脏（禁止 false-clean）。"
+  );
+  // 中间版本基线（有指纹无代数）必须用指纹，避免显示/调度不一致。
+  assert.match(
+    dirtyPredicateBlock,
+    /if \(!Number\.isFinite\(rawBaselineGeneration\)\) \{[\s\S]{0,600}?fingerprintNeed\.available === true[\s\S]{0,200}?authority: "fingerprint"/,
+    "INV-1：缺代数但有业务指纹时，调度层必须回落到指纹权威。"
   );
 
   // 清洁门禁：不得再用“两次独立时间比较”作为权威。
