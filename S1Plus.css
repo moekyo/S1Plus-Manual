@@ -1692,6 +1692,93 @@
       overflow-wrap: anywhere;
       word-break: break-word;
     }
+    /* 最小面板高度（240px）下 42% 不足一屏：170px 保底让快照可读，
+       超出部分交给 pane 滚动；该区块不收缩，避免把诊断行压成 0 高。 */
+    #s1p-debug-unified-panel .s1p-debug-diagnostics-embed {
+      flex: 0 0 auto;
+      min-height: 0;
+      max-height: max(170px, 42%);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      padding: 0;
+    }
+    .s1p-debug-diagnostics-embed-head {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      min-width: 0;
+      margin: 0;
+      padding: 7px 10px;
+      border: 0;
+      background: transparent;
+      color: var(--s1p-t);
+      font: inherit;
+      font-size: 12px;
+      line-height: 1.4;
+      text-align: left;
+      cursor: pointer;
+    }
+    .s1p-debug-diagnostics-embed-head:focus {
+      outline: none;
+    }
+    .s1p-debug-diagnostics-embed-head:focus-visible {
+      outline: 2px solid var(--s1p-focus-ring);
+      outline-offset: -2px;
+    }
+    .s1p-debug-diagnostics-embed-title {
+      flex-shrink: 0;
+      font-weight: 600;
+    }
+    .s1p-debug-diagnostics-embed-meta {
+      min-width: 0;
+      overflow: hidden;
+      color: var(--s1p-desc-t);
+      font-size: 11px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .s1p-debug-diagnostics-embed-chevron {
+      flex-shrink: 0;
+      margin-left: auto;
+      color: var(--s1p-desc-t);
+      transition: transform 0.18s ease;
+    }
+    .s1p-debug-diagnostics-embed.is-collapsed .s1p-debug-diagnostics-embed-chevron {
+      transform: rotate(-90deg);
+    }
+    .s1p-debug-diagnostics-embed-body {
+      flex: 1 1 auto;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 0 10px 10px;
+    }
+    .s1p-debug-diagnostics-embed.is-collapsed .s1p-debug-diagnostics-embed-body {
+      display: none;
+    }
+    .s1p-debug-diagnostics-embed .s1p-debug-diagnostics-panel {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow: hidden auto;
+      scrollbar-color: var(--s1p-settings-scrollbar-thumb) transparent;
+      scrollbar-gutter: stable;
+    }
+    .s1p-debug-diagnostics-embed .s1p-debug-diagnostics-panel::-webkit-scrollbar {
+      width: 14px;
+    }
+    .s1p-debug-diagnostics-embed .s1p-debug-diagnostics-panel::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    .s1p-debug-diagnostics-embed .s1p-debug-diagnostics-panel::-webkit-scrollbar-thumb {
+      background-color: var(--s1p-settings-scrollbar-thumb);
+      background-clip: content-box;
+      border: 4px solid transparent;
+      border-radius: 999px;
+    }
     .s1p-debug-confirm-inline {
       display: flex;
       align-items: center;

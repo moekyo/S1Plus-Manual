@@ -114,16 +114,15 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 
 ### 2.6 右下角统一调试面板
 
-代码中保留了可复用的浮动调试面板框架，现整合为统一的 `#s1p-debug-unified-panel`，通过 tabs 组织四个子面板，默认不自动显示。
+代码中保留了可复用的浮动调试面板框架，现整合为统一的 `#s1p-debug-unified-panel`，通过 tabs 组织三个子面板，默认不自动显示。
 
-**入口方式**：设置弹窗底部版本号悬停 4s 出现小圆点后点击，打开统一面板；无其他入口。
+**入口方式**：设置弹窗底部版本号悬停 5s 出现小圆点后点击，打开统一面板；无其他入口。
 
 **面板结构**：
 
 | Tab | 内容 | 说明 |
 |-----|------|------|
-| 日志 | 调试控制台 | 常驻关键结构化事件，面板打开时额外捕获 console；支持级别/模块/操作/关键词筛选、操作摘要、复制/清空/展开、导出/合并和临时详细诊断；最多 1000 条及约 1 MiB，通过 sessionStorage 在同标签页刷新后恢复 |
-| 诊断信息 | 同步诊断 | 展示 `buildSyncDiagnosticsRows()` 的诊断行（最近动作/触发源/结果/阻断/哈希/探测等）；[刷新][复制诊断][重置诊断] 按钮 |
+| 日志与诊断 | 调试控制台 + 同步状态快照 | 顶部为默认折叠的“同步状态快照”，展示 `buildSyncDiagnosticsRows()` 的诊断行（最近动作/触发源/结果/阻断/哈希/探测等），带[刷新][复制快照][重置诊断]；下方为调试控制台：常驻关键结构化事件，面板打开时额外捕获 console；支持级别/模块/操作/关键词筛选、操作摘要、复制全部/复制日志/清空/展开、导出/合并和临时详细诊断；最多 1000 条及约 1 MiB，通过 sessionStorage 在同标签页刷新后恢复 |
 | 指示器调试 | 同步指示器调试 | 手动切换指示器 phase、选择 source/operation、播放固定转场 Demo（含 pending push/pull → running、probe → pull）；只覆盖导航栏指示器预览，不改真实同步状态 |
 | UI 组件 | 组件展示与弹窗预览 | 按类别展示按钮、开关、输入、列表、确认栏、tooltip 等组件；弹窗预览覆盖确认/输入/高级确认、版本欢迎、S1 NUX 推荐、手动同步选择、启动同步冲突、Token 过期提醒、Token 日期配置、阅读记录详情、图片查看器等场景 |
 
@@ -131,8 +130,9 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 
 - tab bar 复用 `s1p-tabs` 样式（与设置面板 tab 统一），靠左对齐，带 slider 高亮动画
 - 面板搜索框复用 `.s1p-input` 样式
-- 日志 tab 的 toolbar 布局为 head-actions 在上行、filter-bar 在下行
-- 诊断信息 tab 的重置操作使用内联确认栏而非原生 `confirm()` 弹窗
+- 日志与诊断 tab 的 toolbar 布局为 head-actions 在上行、filter-bar 在下行
+- 同步状态快照默认折叠（`is-collapsed`），折叠时日志区与整合前基本一致；点标题展开后优先显示快照（日志区被压缩），展开时限高 `max(170px, 42%)` 且不收缩，诊断行在区块内滚动；最小面板高度（240px）下改由 pane 整体滚动，避免行区被压成 0 高；重置操作使用内联确认栏而非原生 `confirm()` 弹窗
+- 复制入口保留三种粒度：“复制全部”= 同步快照 + 当前筛选日志，“复制快照”= 仅 `buildSyncDiagnosticsSummary()`，“复制日志”= 仅筛选日志；判断不了该复制哪个时默认用“复制全部”
 - 统一面板外层复用 `.s1p-glass-panel`，与设置面板共享同一套外壳磨砂参数；不要在调试面板选择器里另写 `background` / `backdrop-filter`
 - UI 组件 tab 的弹窗预览会在打开真实弹窗前挂载临时可读性测试背景，并清理旧的预览弹层、Token 配置弹窗、日期选择器和图片查看器状态；这只服务人工视觉回归，不应影响真实业务弹窗入口
 - 指示器调试 tab 的主体内容使用单一无边框浅底 surface 承托文字和按钮，避免文字直接落在复杂磨砂背景上；不要给内部说明/状态块再叠独立边框卡片
@@ -155,6 +155,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - 日志持久化：`s1p_log_buffer` 含 schemaVersion/entries/loss/展开状态；300ms 固定批次写入，持续事件不会无限推迟落盘；同步兼容摘要另以 1s 批次刷新，`getSyncDiagnostics()` 合并内存中的待刷摘要。pagehide 刷新两者，失败仅增加诊断损失计数，不影响同步结果
 - 日志收集器可在同页面会话内多次启停（通过 `startLogCollector` / `stopLogCollector`），每次启动捕获当前 console 引用，并在停止时只恢复 S1 Plus 自己安装的 wrapper，避免多轮 bind 嵌套或覆盖其他脚本后续安装的 console patch
 - 这套面板框架应优先作为通用调试容器复用，而非为每个功能再单独写一套浮动面板
+- 验证入口：`node tests/test-debug-merged-tab.js`（整合结构、折叠标记与复制入口，含空日志分支）、`node tests/test-debug-panel-collapse.js`（面板三态与 FAB）；CSS 断言不能替代浏览器截图验收，改动布局后需在实际论坛页面展开面板检查窄屏与深色模式
 
 ### 诊断事件与排查约定
 
