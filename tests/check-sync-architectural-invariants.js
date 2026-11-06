@@ -23,7 +23,10 @@ const MANIFEST = Object.freeze({
   mergedPayloadBrandAddSites: 1,
   // running 相位标记总数（常量/归一化/debug/内存运行态）。新增必须在此声明；
   // 若新增标记属于持久化写入，INV-5 检查会失败。
-  runningPhaseMarkers: 8,
+  // 8 → 11：单值展示政策收敛为 resolveSyncIndicatorDisplaySelection 后，
+  // running_lock / running_min_visible / running_write_in_flight 三个内存运行态
+  // 改为对象字面量表达（仍是内存态，不落盘）。
+  runningPhaseMarkers: 11,
   // 待推送水印/pending 键的读取点总数（新增即声明）。
   pendingKeyReferences: 6,
 });
