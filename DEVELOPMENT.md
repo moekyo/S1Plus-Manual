@@ -553,7 +553,11 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - 单值 `displayPhase` 只是兼容视图，不允许成为唯一信息源；
 - 消费方：导航栏 tooltip/标题在拉取已结算且推送仍活跃时合并表达两者（例如“云端更新已拉取；阅读进度待推送”）；导航栏暴露 `data-sync-pull` / `data-sync-push`；诊断快照新增“同步方向: 拉取=… | 推送=…”一行。
 
-这些约束由 `tests/check-sync-architectural-invariants.js` 的 INV-2 静态检查锁定（含“必须被消费者读取”的断言），并由 `tests/test-auto-sync-indicator-linkage.js` 的双向槽位用例覆盖。
+这些约束由 `tests/check-sync-architectural-invariants.js` 的 INV-2 静态检查
+（含“必须被消费者读取”的断言）与 `tests/test-auto-sync-indicator-linkage.js`
+的双向槽位用例共同覆盖。**静态检查是绊线而非语义证明**：它能拦住结构消失/文本改动，
+拦不住 `if (false)` 短路或别名绕过；无法被文本契约覆盖的残余风险记录在该文件的
+`PENDING_INVARIANTS` 中。
 
 #### 投影状态解析顺序
 `readSyncIndicatorStateProjection({ surface })` 会把持久化状态、运行时锁、pending 队列和视觉会话合成为指定 surface 的最终状态。Navbar 与 Title 共用以下优先级 implementation；`navbar` 保留外来后台锁与本地 pending 的反馈差异，`title` 额外应用 Live Runner 与 push-only 结果资格。

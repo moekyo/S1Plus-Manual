@@ -11381,6 +11381,15 @@
 
   const persistAutoSyncIndicatorState = (nextState) => {
     const normalized = normalizeAutoSyncIndicatorState(nextState);
+    // [ARCH-INV-5] 运行时守卫：运行态绝不落盘。
+    // 这条不变量此前只有静态文本检查，`phase:"running"` 之类的写法可以绕过；
+    // 现在由唯一写入点直接拒绝，任何调用方都无法把 RUNNING 持久化。
+    if (normalized.phase === AUTO_SYNC_INDICATOR_PHASE_RUNNING) {
+      console.warn(
+        "S1 Plus (Sync): 已阻止把运行态写入持久化指示器状态（运行态必须留在内存）。"
+      );
+      return autoSyncIndicatorRuntimeRunningState || normalized;
+    }
     invalidateAutoSyncIndicatorDisplayPhaseCache();
     autoSyncIndicatorWriteInFlightCount += 1;
     try {
@@ -12314,13 +12323,23 @@
     ) {
       return false;
     }
-    persistAutoSyncIndicatorState({
+    const nextState = {
       ...current,
       timestamp: Date.now(),
       source: nextSource,
       reason: nextReason,
       operation: normalizedOperation,
-    });
+    };
+    // [ARCH-INV-5] 运行态只存在内存：更新运行中的方向必须写运行时状态，
+    // 而不是走持久化边界（持久化边界会拒绝 RUNNING）。
+    if (autoSyncIndicatorRuntimeRunningState) {
+      autoSyncIndicatorRuntimeRunningState = nextState;
+      invalidateAutoSyncIndicatorDisplayPhaseCache();
+      renderNavbarAutoSyncIndicator(nextState);
+      notifyTitleSyncStatusUnifiedStateChanged("auto_sync_indicator_state");
+      return true;
+    }
+    persistAutoSyncIndicatorState(nextState);
     return true;
   };
 
@@ -18222,17 +18241,22 @@
     pending,
     { coveredLastModified = 0, coveredContentGeneration = 0 } = {}
   ) => {
-    const pendingGeneration = Number(pending?.dirtyGeneration);
-    const coveredGeneration = Number(coveredContentGeneration);
-    const hasGenerationInfo =
+    const pendingHasGeneration =
       pending?.dirtyGeneration !== null &&
       pending?.dirtyGeneration !== undefined &&
-      Number.isFinite(pendingGeneration) &&
-      Number.isFinite(coveredGeneration) &&
-      coveredGeneration > 0;
-    if (hasGenerationInfo) {
-      return pendingGeneration <= coveredGeneration;
+      Number.isFinite(Number(pending.dirtyGeneration));
+    const coveredGeneration = Number(coveredContentGeneration);
+    const coveredHasGeneration =
+      Number.isFinite(coveredGeneration) && coveredGeneration > 0;
+    if (pendingHasGeneration) {
+      // 待同步请求知道自己的代数，但本次同步没有代数证据 → 无法证明被覆盖，
+      // 保守保留（绝不能退回时间戳比较，那会断言“已覆盖”）。
+      if (!coveredHasGeneration) {
+        return false;
+      }
+      return Number(pending.dirtyGeneration) <= coveredGeneration;
     }
+    // 旧记录：两边都不知道代数，才退回时间戳（迁移期）。
     return (
       getPendingAutoSyncRequestMaxLastModified(pending) <=
       Number(coveredLastModified || 0)
@@ -18325,16 +18349,19 @@
     if (!state || state.generation !== coveredGeneration) {
       return false;
     }
-    const stateGeneration = Number(state.contentGeneration);
-    const syncGeneration = Number(coveredContentGeneration);
-    const hasGenerationInfo =
+    const stateHasGeneration =
       state.contentGeneration !== null &&
       state.contentGeneration !== undefined &&
-      Number.isFinite(stateGeneration) &&
-      Number.isFinite(syncGeneration) &&
-      syncGeneration > 0;
-    if (hasGenerationInfo) {
-      return stateGeneration <= syncGeneration;
+      Number.isFinite(Number(state.contentGeneration));
+    const syncGeneration = Number(coveredContentGeneration);
+    const coveredHasGeneration =
+      Number.isFinite(syncGeneration) && syncGeneration > 0;
+    if (stateHasGeneration) {
+      // 与待同步请求同理：无法证明被覆盖就保留。
+      if (!coveredHasGeneration) {
+        return false;
+      }
+      return Number(state.contentGeneration) <= syncGeneration;
     }
     return state.maxLastModified <= coveredLastModified;
   };
@@ -28593,15 +28620,21 @@
     remoteUpdatedAt = null,
     exportOptions = {},
   } = {}) => {
+    // [ARCH-INV-1] exportLocalDataObject 内部有 await（哈希）：必须与内容读取同一 tick
+    // 抓取代数，否则再导出期间落地的写入会被这条基线吸收成“已同步”。
+    const coveredContentGeneration = getLocalContentGeneration();
     const importedLocalDataObject = await exportLocalDataObject({
       ...(exportOptions || {}),
       useFreshSnapshot: true,
     });
-    return buildSyncBaselineStateForDataPair({
-      localDataObject: importedLocalDataObject,
-      remoteDataObject,
-      remoteUpdatedAt,
-    });
+    return {
+      ...buildSyncBaselineStateForDataPair({
+        localDataObject: importedLocalDataObject,
+        remoteDataObject,
+        remoteUpdatedAt,
+      }),
+      localContentGeneration: coveredContentGeneration,
+    };
   };
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -39736,6 +39769,8 @@
     showMessage("正在向云端推送数据...", null);
     try {
       assertManualSyncLockOwned("before_export_local_data");
+      // [ARCH-INV-1] 与内容读取同一 tick 抓取代数（导出内部有 await）。
+      const forcePushCoveredContentGeneration = getLocalContentGeneration();
       const localData = await exportLocalDataObject();
       recordSyncTraceEvent("force_push_export_done", {
         scope: "force_push",
@@ -39762,6 +39797,17 @@
       clearAutoSyncRuntimeQueue();
       clearAutoSyncConflictPause();
       GM_setValue("s1p_last_sync_timestamp", Date.now());
+      // [ARCH-INV-1] 成功推送即代表“被推送内容已同步”：写基线并绑定导出代数，
+      // 这样推送期间的写入仍会判脏（而不是把新内容吸收成已同步）。
+      setSyncBaselineState(
+        bindBaselineContentGeneration(
+          buildSyncBaselineStateForDataPair({
+            localDataObject: localData,
+            remoteUpdatedAt: forcePushResult?.updatedAt || null,
+          }),
+          forcePushCoveredContentGeneration
+        )
+      );
       setAutoSyncIndicatorResolvedPhase(AUTO_SYNC_INDICATOR_PHASE_SUCCESS, {
         source: AUTO_SYNC_INDICATOR_SOURCE_MANUAL_SYNC,
         reason: "force_push",

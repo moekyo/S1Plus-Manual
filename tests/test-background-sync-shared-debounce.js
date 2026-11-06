@@ -258,6 +258,7 @@ const testCoveredCompletionClearsPendingAndSharedState = () => {
   const result = tabA.scheduler.complete({
     status: "success",
     coveredLastModified: 601,
+    coveredLocalContentGeneration: 1,
   });
   assert.equal(result.pendingCleanup.status, "cleared");
   assert.equal(result.sharedDebounceCleanup.status, "cleared");
@@ -279,6 +280,7 @@ const testHashEqualCompletionSettlesWithoutFollowUp = () => {
     action: "no_change",
     reason: "hash_equal",
     coveredLastModified: 651,
+    coveredLocalContentGeneration: 1,
     coveredLocalLastUpdated: 651,
   });
 
@@ -311,6 +313,7 @@ const testConcurrentPendingCleanupDoesNotCreateFalseFollowUp = () => {
       action: "no_change",
       reason: "hash_equal",
       coveredLastModified: 671,
+      coveredLocalContentGeneration: 1,
       coveredLocalLastUpdated: 671,
     });
   } finally {
@@ -345,6 +348,7 @@ const testConcurrentSharedCleanupDoesNotCreateFalseFollowUp = () => {
       action: "no_change",
       reason: "hash_equal",
       coveredLastModified: 681,
+      coveredLocalContentGeneration: 1,
       coveredLocalLastUpdated: 681,
     });
   } finally {
@@ -515,6 +519,8 @@ const testCleanupRecoversDirtyWrittenDuringDeleteRace = () => {
       injected = true;
       clock.now += 1;
       store.set(LAST_MODIFIED_KEY, 1202);
+      // 生产中的真实写入一定会推进内容代数；同步覆盖的是 1，这里推进到 2。
+      store.set("s1p_local_content_generation", 2);
       store.set(LAST_DIRTY_PROVENANCE_KEY, {
         source: "read_progress",
         lastModified: 1202,
@@ -542,6 +548,7 @@ const testCleanupRecoversDirtyWrittenDuringDeleteRace = () => {
     result = tabA.scheduler.complete({
       status: "success",
       coveredLastModified: 1201,
+      coveredLocalContentGeneration: 1,
     });
   } finally {
     sandbox.GM_deleteValue = originalDeleteValue;
@@ -572,6 +579,8 @@ const testCleanupRecoversSharedDirtyWrittenDuringDeleteRace = () => {
       injected = true;
       clock.now += 1;
       store.set(LAST_MODIFIED_KEY, 1252);
+      // 生产中的真实写入一定会推进内容代数；同步覆盖的是 1，这里推进到 2。
+      store.set("s1p_local_content_generation", 2);
       store.set(DEBOUNCE_STATE_KEY, {
         version: 1,
         generation: 2,
@@ -595,6 +604,7 @@ const testCleanupRecoversSharedDirtyWrittenDuringDeleteRace = () => {
     result = tabA.scheduler.complete({
       status: "success",
       coveredLastModified: 1251,
+      coveredLocalContentGeneration: 1,
     });
   } finally {
     sandbox.GM_deleteValue = originalDeleteValue;

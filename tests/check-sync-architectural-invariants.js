@@ -1,11 +1,17 @@
 #!/usr/bin/env node
 "use strict";
 
-// [ARCH-INV-6] 唯一执行机制：把架构不变量固化为可执行的静态契约检查。
-// 本文件是唯一白名单：新增/绕过不变量必须修改这里，因此是一次评审可见的行为。
+// [ARCH-INV-6] 唯一的静态契约检查文件：本文件是唯一白名单，
+// 新增/绕过不变量必须修改这里，因此是一次评审可见的行为。
 //
-// 检查的是“结构”而不是行为。清单式数字（MANIFEST）不是风格约定，而是
-// “新增一个读取点/写入点就必须在这里显式声明”的强制声明点。
+// 能力边界（如实声明，避免过度声称）：
+// - 本文件是“存在性/形状/顺序”的绊线（tripwire），不是语义证明：
+//   它能拦住“结构消失/文本改动/计数漂移”，但拦不住把守卫短路成 `if (false)`、
+//   用别名/解构绕过计数、或在被扫描切片之外重新引入旧权威。
+// - 真正由结构保证的是：内容写入漏斗（commitWrite → invalidateLocalDataHashCache）、
+//   冻结的方向槽位、brand WeakSet、以及 persistAutoSyncIndicatorState 拒绝 RUNNING 的运行时守卫。
+// - 语义正确性由行为测试（test-sync-*-authority/derived-need/running-not-persisted）兜底，
+//   无法被文本契约覆盖的残余风险列在 PENDING_INVARIANTS 中。
 
 const assert = require("assert/strict");
 const fs = require("fs");
@@ -34,14 +40,37 @@ const MANIFEST = Object.freeze({
 });
 
 // 尚未落地的不变量：显式记录，不允许静默通过。
-const PENDING_INVARIANTS = Object.freeze([]);
+// 尚未落地/无法用文本契约真正强制的不变量：显式记录，避免过度声称。
+const PENDING_INVARIANTS = Object.freeze([
+  {
+    id: "INV-1-atomicity",
+    reason:
+      "内容代数是 GM 非原子读-改-写，且无跨标签页刷新：极端并发下可能丢一次递增（自愈）。",
+    removalCriterion: "改用带原子递增/多标签页同步的存储原语后移除。",
+  },
+  {
+    id: "INV-1-baseline-required-generation",
+    reason:
+      "setSyncBaselineState 在调用方未提供覆盖代数时会以当前代数兜底，新增调用方仍可“认证当前内容”。",
+    removalCriterion:
+      "把覆盖代数改为必填参数（无默认值）并为所有调用方接线后移除。",
+  },
+  {
+    id: "INV-3-import-from-sync",
+    reason:
+      "core 模块仍暴露 importFromSync，可绕过 applyRemoteSnapshotToLocal 的 brand 边界。",
+    removalCriterion: "把 importFromSync 收为边界私有后移除。",
+  },
+]);
 
 // 迁移期兼容：旧基线没有业务指纹时，仅“显示层”回退到水印判断。
 // 调度层（清洁门禁 / 待同步回收）已改为对缺失代数保守判脏，
 // 因此这条回退只剩视觉影响，不会再造成 false-clean 丢推送。
 const LEGACY_FALLBACK = Object.freeze({
   id: "INV-1-legacy-fallback",
-  scope: "display_only",
+  // 注意：显示层与调度层都会在“内容事实不可得”时使用旧基线的兜底，
+  // 调度层的具体做法是“缺代数但可用指纹 → 指纹权威；都缺 → 保守判脏”。
+  scope: "display_and_scheduling_conservative",
   appliesWhen:
     "基线缺少 localBaseFingerprint/localProgressFingerprint 或缺少 localContentGeneration（旧版本写入）",
   removalCriterion:
@@ -160,9 +189,9 @@ const checkInv1DerivedNeedAuthority = () => {
   );
   assert.equal(
     countOccurrences("bumpLocalContentGeneration()"),
-    2,
-    "INV-1：代数递增只允许“定义处 1 次 + 唯一写入检查点 1 次”两处；" +
-      "新增递增点会破坏单调性语义，必须在 MANIFEST 中显式声明。"
+    MANIFEST.contentGenerationBumpSites + 1,
+    "INV-1：代数递增只允许“定义处 1 次 + 唯一写入检查点 N 次”；" +
+      "新增递增点必须在 MANIFEST.contentGenerationBumpSites 中显式声明。"
   );
   assert.match(
     sliceBetween(
@@ -172,11 +201,7 @@ const checkInv1DerivedNeedAuthority = () => {
     /bumpLocalContentGeneration\(\)/,
     "INV-1：内容/设置写入必须经过唯一检查点推进代数（不依赖调用方打点）。"
   );
-  assert.equal(
-    countOccurrences("bumpLocalContentGeneration()"),
-    MANIFEST.contentGenerationBumpSites + 1,
-    "INV-1：代数递增点数量变化，必须更新 MANIFEST.contentGenerationBumpSites。"
-  );
+
   const dirtyPredicateBlock = sliceBetween(
     "const isLocalContentDirtySinceBaseline = () => {",
     "const getSyncDeltaSourceNames = (sources = {}) =>"
@@ -228,13 +253,19 @@ const checkInv1DerivedNeedAuthority = () => {
   // 覆盖清理：待同步请求的覆盖判定必须按内容代数，时间戳仅作旧记录迁移。
   const coveredCleanupBlock = sliceBetween(
     "const isPendingRequestCoveredBySync = (",
-    "const clearSharedBackgroundSyncDebounceIfCovered = ({"
+    "const isSharedDebounceStateCoveredBySync = ("
   );
   assert.match(
     coveredCleanupBlock,
     /pending\?\.dirtyGeneration !== null &&\s*[\s\S]{0,80}?pending\?\.dirtyGeneration !== undefined/,
     "INV-1：待同步请求的覆盖判定必须显式守卫“代数存在”，" +
       "缺失时不能假装有代数（0 是合法代数）。"
+  );
+  // 待同步请求带代数、同步侧没有代数证据时必须保守保留，不得退回时间戳断言已覆盖。
+  assert.match(
+    coveredCleanupBlock,
+    /if \(!coveredHasGeneration\) \{\s*return false;\s*\}/,
+    "INV-1：同步侧缺代数时覆盖判定必须保守返回“未覆盖”。"
   );
   assert.match(
     coveredCleanupBlock,
@@ -249,6 +280,31 @@ const checkInv1DerivedNeedAuthority = () => {
     sharedCoveredBlock,
     /state\.contentGeneration !== null &&\s*[\s\S]{0,80}?state\.contentGeneration !== undefined/,
     "INV-1：共享调度的覆盖判定必须显式守卫“代数存在”，缺失时退回时间戳。"
+  );
+  assert.match(
+    sharedCoveredBlock,
+    /if \(!coveredHasGeneration\) \{\s*return false;\s*\}/,
+    "INV-1：同步侧缺代数时共享调度覆盖判定必须保守返回“未覆盖”。"
+  );
+
+  // 导入类基线必须在“再导出之前”抓取代数（buildImportedSyncBaselineState 内部有 await）。
+  assert.match(
+    sliceBetween(
+      "const buildImportedSyncBaselineState = async ({",
+      "const sleep = (ms) =>"
+    ),
+    /const coveredContentGeneration = getLocalContentGeneration\(\);[\s\S]{0,400}?await exportLocalDataObject/,
+    "INV-1：导入类基线必须在再导出之前抓取代数。"
+  );
+
+  // 强制推送成功后必须写基线（否则“成功同步 ⇒ 干净”不成立）。
+  assert.match(
+    sliceBetween(
+      "const handleForcePush = async (",
+      "const handleForcePull = async ("
+    ),
+    /setSyncBaselineState\([\s\S]{0,400}?bindBaselineContentGeneration\(/,
+    "INV-1：强制推送成功后必须写绑定覆盖代数的基线。"
   );
   assert.match(
     sliceBetween(
@@ -623,11 +679,18 @@ const checkInv5RunningStateNotPersisted = () => {
     MANIFEST.runningPhaseMarkers,
     "INV-5：running 相位标记数量变化，必须在 MANIFEST.runningPhaseMarkers 中显式声明。"
   );
-  assert.deepStrictEqual(
-    PENDING_INVARIANTS.map((item) => item.id),
-    [],
-    "所有已声明不变量都已落地；新增待落地项必须更新 PENDING_INVARIANTS。"
+  assert.ok(
+    PENDING_INVARIANTS.length > 0,
+    "PENDING_INVARIANTS 必须显式列出尚未强制/无法文本强制的不变量，避免过度声称。"
   );
+  PENDING_INVARIANTS.forEach((item) => {
+    assert.equal(typeof item.id, "string");
+    assert.ok(item.id.length > 0);
+    assert.equal(typeof item.reason, "string");
+    assert.ok(item.reason.length > 0);
+    assert.equal(typeof item.removalCriterion, "string");
+    assert.ok(item.removalCriterion.length > 0);
+  });
 };
 
 const run = () => {

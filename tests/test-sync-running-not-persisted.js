@@ -124,10 +124,59 @@ const testTransientFactsDoNotBecomePersistedState = () => {
   );
 };
 
+const testPersistBoundaryRefusesRunningPhase = () => {
+  // [ARCH-INV-5] 运行时守卫：唯一持久化边界直接拒绝 RUNNING，
+  // 因此不论调用方怎么写（含 phase:"running" 字面量），运行态都无法落盘。
+  const harness = createHarness();
+  harness.hooks.persistAutoSyncIndicatorState({
+    phase: "running",
+    timestamp: Date.now(),
+    token: "forced-running-token",
+    source: "background_push",
+    reason: "forced_running",
+    operation: "push",
+  });
+  assert.equal(
+    harness.store.has(AUTO_SYNC_INDICATOR_STATE_KEY),
+    false,
+    "持久化边界必须拒绝运行态"
+  );
+  assert.notEqual(
+    toPlainObject(harness.hooks.getPersistedAutoSyncIndicatorState()).phase,
+    "running",
+    "持久化状态中不得出现 running"
+  );
+};
+
+const testRunningOperationUpdateStaysInMemory = () => {
+  // [ARCH-INV-5] 运行中更新同步方向必须写内存运行态；
+  // 若误走持久化边界（该边界拒绝 RUNNING），方向会丢失。
+  const harness = createHarness();
+  harness.hooks.startAutoSyncIndicatorCycle("foreground_resume", {
+    operation: "sync",
+    reason: "foreground_probe",
+  });
+  const updated = harness.hooks.setAutoSyncIndicatorActiveOperation("pull", {
+    source: "foreground_resume",
+    reason: "remote_changed_since_baseline",
+  });
+  assert.equal(updated, true, "运行中方向更新应成功");
+  const state = toPlainObject(harness.hooks.getAutoSyncIndicatorState());
+  assert.equal(state.phase, "running");
+  assert.equal(state.operation, "pull", "运行态方向必须被更新");
+  assert.equal(
+    harness.store.has(AUTO_SYNC_INDICATOR_STATE_KEY),
+    false,
+    "更新运行中方向不得触发持久化"
+  );
+};
+
 const run = () => {
   testRunningIsMemoryOnlyAndDiesWithThePage();
   testResolvedResultStillHandsOffAcrossPages();
   testTransientFactsDoNotBecomePersistedState();
+  testPersistBoundaryRefusesRunningPhase();
+  testRunningOperationUpdateStaysInMemory();
   console.log("[sync-running-not-persisted] INV-5 verified.");
 };
 
