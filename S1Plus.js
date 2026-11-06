@@ -5869,12 +5869,24 @@
 
   let dynamicallyHiddenThreads = {};
 
+  // [ARCH-INV-1] 业务指纹缓存与内容哈希缓存同寿命：任何数据/设置写入都必须让两者一起失效，
+  // 这样缓存只影响性能、不影响“是否需要同步”的答案。
+  let localSyncBusinessFingerprintCache = {
+    cacheKey: "",
+    value: null,
+  };
+
+  const invalidateLocalSyncBusinessFingerprintCache = () => {
+    localSyncBusinessFingerprintCache = { cacheKey: "", value: null };
+  };
+
   const invalidateLocalDataHashCache = () => {
     localDataHashCache = {
       cacheKey: null,
       contentHash: null,
       baseContentHash: null,
     };
+    invalidateLocalSyncBusinessFingerprintCache();
   };
 
   const SYNC_DIAGNOSTICS_DEFAULT = Object.freeze({
@@ -8306,6 +8318,55 @@
     return rows;
   };
 
+  const getSyncIndicatorDirectionalPhaseLabel = (phase = "") => {
+    switch (normalizeAutoSyncIndicatorPhase(phase, { allowRunning: true })) {
+      case AUTO_SYNC_INDICATOR_PHASE_RUNNING:
+        return "执行中";
+      case AUTO_SYNC_INDICATOR_PHASE_PENDING:
+        return "待处理";
+      case AUTO_SYNC_INDICATOR_PHASE_SUCCESS:
+        return "成功";
+      case AUTO_SYNC_INDICATOR_PHASE_FAILURE:
+        return "失败";
+      case AUTO_SYNC_INDICATOR_PHASE_CONFLICT:
+        return "冲突";
+      case AUTO_SYNC_INDICATOR_PHASE_IDLE:
+      default:
+        return "待命";
+    }
+  };
+
+  const describeSyncIndicatorDirectionalSlot = (slot = null) => {
+    if (!slot || slot.active !== true) {
+      return "待命";
+    }
+    const phaseLabel = getSyncIndicatorDirectionalPhaseLabel(slot.state);
+    const reason = String(slot.reason || "");
+    return reason ? `${phaseLabel}(${reason})` : phaseLabel;
+  };
+
+  // 实时方向行：诊断快照必须能同时看到拉取/推送两个方向，
+  // 否则“云端已拉取 + 待推送”这种组合在快照里会被单值状态吞掉。
+  const buildSyncIndicatorDirectionalDiagnosticRow = () => {
+    let projection = null;
+    try {
+      projection = s1pSyncSystem.readState({
+        surface: SYNC_INDICATOR_STATE_PROJECTION_SURFACE_NAVBAR,
+        allowCache: false,
+      });
+    } catch (error) {
+      projection = null;
+    }
+    const directional = projection?.directional;
+    if (!directional) {
+      return ["同步方向", "—"];
+    }
+    return [
+      "同步方向",
+      `拉取=${describeSyncIndicatorDirectionalSlot(directional.pull)} | 推送=${describeSyncIndicatorDirectionalSlot(directional.push)}`,
+    ];
+  };
+
   const buildSyncDiagnosticsSummary = () => {
     const diagnostics = getSyncDiagnostics();
     const lines = [
@@ -8314,6 +8375,10 @@
       ...buildSyncDiagnosticsRows(diagnostics).map(
         ([label, value]) => `${label}: ${value}`
       ),
+      (() => {
+        const [label, value] = buildSyncIndicatorDirectionalDiagnosticRow();
+        return `${label}: ${value}`;
+      })(),
     ];
     return lines.join("\n");
   };
@@ -10053,6 +10118,10 @@
     const lastResolvedReason =
       normalizeAutoSyncIndicatorReason(raw.lastResolvedReason) ||
       (isActivePhase ? "" : reason);
+    // [ARCH-INV-2] 结算方向是方向槽位的权威：拉取结果与推送待办必须能同时成立。
+    const lastResolvedOperation =
+      normalizeAutoSyncIndicatorOperation(raw.lastResolvedOperation) ||
+      (isActivePhase ? "" : operation);
 
     return {
       phase,
@@ -10065,13 +10134,37 @@
       lastResolvedTimestamp,
       lastResolvedSource,
       lastResolvedReason,
+      lastResolvedOperation,
     };
   };
 
-  const getAutoSyncIndicatorState = () =>
+  // [ARCH-INV-5] 运行态是“本进程的事实”，不落 GM：
+  // - persisted 只保存已结算结果（success/failure/conflict）供跨标签页交接；
+  // - running 只存在于内存，页面 reload 后自然消失，不存在“旧页面遗留 running”；
+  // - 其他标签页要判断是否有同步在跑，只能依据同步锁，而不是持久化的显示状态。
+  let autoSyncIndicatorRuntimeRunningState = null;
+
+  const getPersistedAutoSyncIndicatorState = () =>
     normalizeAutoSyncIndicatorState(
       GM_getValue(AUTO_SYNC_INDICATOR_STATE_KEY, null)
     );
+
+  const getAutoSyncIndicatorState = () =>
+    autoSyncIndicatorRuntimeRunningState ||
+    getPersistedAutoSyncIndicatorState();
+
+  // 仅供测试模拟“运行已经过了一段时间”；生产不可用。
+  const backdateAutoSyncIndicatorRuntimeRunningForTest = (ageMs = 0) => {
+    if (!IS_S1P_TEST_MODE || !autoSyncIndicatorRuntimeRunningState) {
+      return false;
+    }
+    autoSyncIndicatorRuntimeRunningState = {
+      ...autoSyncIndicatorRuntimeRunningState,
+      timestamp:
+        Date.now() - Math.max(0, Number(ageMs) || 0),
+    };
+    return true;
+  };
 
   const hasEnabledAutoSyncIndicatorPath = (settingsSnapshot = {}) =>
     Boolean(
@@ -10368,6 +10461,63 @@
       typeof getBackgroundSyncDebounceState === "function"
         ? getBackgroundSyncDebounceState()
         : null;
+    const pendingRequestForNeed =
+      typeof getPendingAutoSyncRequest === "function"
+        ? getPendingAutoSyncRequest()
+        : GM_getValue(PENDING_AUTO_SYNC_KEY, null);
+    // [ARCH-INV-1] 待推送 = 这次差异已被登记为待同步事件（调度事实）∧ 内容确实
+    // 异于基线（唯一真相）。
+    // - 内容等于基线 → 无论水印/调度状态多新鲜都不显示（消除陈旧的假 pending）；
+    // - 内容不同但从未登记同步（受抑制的内部写入）→ 不显示，保持旧行为；
+    // - 两者都成立 → 必须显示，不受共享调度所有权/水印新鲜度影响。
+    // 业务指纹比较可能较重，只在存在已登记同步事件时才计算。
+    const hasRegisteredSyncEvent = Boolean(
+      backgroundSyncRetryTimeout ||
+        hasPendingBackgroundSync ||
+        (pendingRequestForNeed && typeof pendingRequestForNeed === "object") ||
+        sharedState
+    );
+    const resolveForegroundPendingState = () => {
+      if (foregroundRetryPendingState) {
+        return foregroundRetryPendingState;
+      }
+      if (
+        foregroundPending &&
+        !isTerminalForegroundRemoteSyncSoftBlock(foregroundPending)
+      ) {
+        return {
+          hasPending: true,
+          source: AUTO_SYNC_INDICATOR_SOURCE_FOREGROUND_RESUME,
+          reason: "foreground_remote_update_pending",
+          operation: AUTO_SYNC_INDICATOR_OPERATION_SYNC,
+          sources: {},
+        };
+      }
+      return null;
+    };
+    if (hasRegisteredSyncEvent) {
+      const syncNeed =
+        typeof deriveSyncNeed === "function" ? deriveSyncNeed({ now }) : null;
+      if (syncNeed && syncNeed.available === true) {
+        if (syncNeed.push.needed === true) {
+          return {
+            hasPending: true,
+            source: AUTO_SYNC_INDICATOR_SOURCE_BACKGROUND,
+            reason: syncNeed.push.reason || "local_content_changed",
+            sources: syncNeed.push.sources,
+          };
+        }
+        // 内容已回到基线：本地推送方向不成立，但前台/云端方向的待处理事实仍然保留。
+        return (
+          resolveForegroundPendingState() || {
+            hasPending: false,
+            source: "",
+            reason: "",
+            sources: {},
+          }
+        );
+      }
+    }
     if (
       sharedState &&
       isAutoSyncIndicatorPendingTimestampFresh(
@@ -11233,6 +11383,186 @@
     };
   };
 
+  // [ARCH-INV-2] 同步是双通道：投影必须同时暴露 pull / push 两个独立槽位。
+  // 单值 displayPhase 只是兼容视图（由方向槽位与结果态共同派生），不再承担“哪个方向”的权威。
+  const buildSyncIndicatorDirectionalState = ({
+    state = null,
+    displayState = null,
+    pendingState = null,
+    runningState = null,
+    canShowPending = false,
+    now = Date.now(),
+  } = {}) => {
+    const displayPhase = normalizeAutoSyncIndicatorPhase(
+      displayState?.displayPhase,
+      { allowRunning: true }
+    ) || AUTO_SYNC_INDICATOR_PHASE_IDLE;
+    const displayOperation = normalizeAutoSyncIndicatorOperation(
+      displayState?.displayOperation
+    );
+    const displayDirection = normalizeAutoSyncIndicatorOperation(
+      displayState?.displayDominantDirection
+    );
+    const pendingSources = normalizeAutoSyncIndicatorLocalChangeSources(
+      pendingState?.sources
+    );
+    const resolveResultForDirection = (direction) => {
+      const currentPhase = normalizeAutoSyncIndicatorPhase(state?.phase, {
+        allowRunning: true,
+      });
+      const currentOperation = normalizeAutoSyncIndicatorOperation(
+        state?.operation
+      );
+      if (
+        isAutoSyncIndicatorResultPhase(currentPhase) &&
+        currentOperation === direction
+      ) {
+        return {
+          phase: currentPhase,
+          source: state?.source || "",
+          reason: state?.reason || "",
+          since: Number(state?.timestamp) || 0,
+        };
+      }
+      const lastPhase = normalizeAutoSyncIndicatorPhase(
+        state?.lastResolvedPhase
+      );
+      const lastOperation = normalizeAutoSyncIndicatorOperation(
+        state?.lastResolvedOperation
+      );
+      if (
+        isAutoSyncIndicatorResultPhase(lastPhase) &&
+        lastOperation === direction
+      ) {
+        return {
+          phase: lastPhase,
+          source: state?.lastResolvedSource || "",
+          reason: state?.lastResolvedReason || "",
+          since: Number(state?.lastResolvedTimestamp) || 0,
+        };
+      }
+      return null;
+    };
+    // 只有真正的“结果相位”才是结算结果；idle 不是结算结果，
+    // 否则空状态会被误判成“有结果”，让方向槽位永远 active。
+    const displayResultPhase = isAutoSyncIndicatorResultPhase(displayPhase)
+      ? displayPhase
+      : "";
+    const buildSlot = ({
+      active = false,
+      state = AUTO_SYNC_INDICATOR_PHASE_IDLE,
+      source = "",
+      reason = "",
+      operation = "",
+      sources = null,
+      since = 0,
+    } = {}) =>
+      Object.freeze({
+        active: active === true,
+        state,
+        source: normalizeAutoSyncIndicatorSource(source),
+        reason: normalizeAutoSyncIndicatorReason(reason),
+        operation: normalizeAutoSyncIndicatorOperation(operation),
+        sources: Object.freeze(
+          normalizeAutoSyncIndicatorLocalChangeSources(sources)
+        ),
+        since: Number(since) || 0,
+      });
+
+    const pushRunning =
+      runningState?.isRunning === true &&
+      runningState.operation !== AUTO_SYNC_INDICATOR_OPERATION_PULL;
+    const pullRunning =
+      runningState?.isRunning === true &&
+      runningState.operation === AUTO_SYNC_INDICATOR_OPERATION_PULL;
+    const pushPending =
+      canShowPending === true &&
+      !pushRunning &&
+      displayOperation !== AUTO_SYNC_INDICATOR_OPERATION_PULL;
+    const pullPending =
+      canShowPending === true &&
+      !pullRunning &&
+      displayOperation === AUTO_SYNC_INDICATOR_OPERATION_PULL;
+
+    // 结果槽位来自“已结算的方向”，而不是展示优先级：因此拉取成功与推送待办可同时存在。
+    const pushResult =
+      resolveResultForDirection(AUTO_SYNC_INDICATOR_OPERATION_PUSH) ||
+      (displayResultPhase &&
+      (displayDirection === AUTO_SYNC_INDICATOR_OPERATION_PUSH ||
+        displayOperation === AUTO_SYNC_INDICATOR_OPERATION_PUSH ||
+        (!displayDirection && !displayOperation))
+        ? {
+            phase: displayResultPhase,
+            source: displayState?.displaySource || "",
+            reason: displayState?.displayReason || "",
+            since: Number(displayState?.timestamp) || now,
+          }
+        : null);
+    const pullResult =
+      resolveResultForDirection(AUTO_SYNC_INDICATOR_OPERATION_PULL) ||
+      (displayResultPhase &&
+      (displayDirection === AUTO_SYNC_INDICATOR_OPERATION_PULL ||
+        displayOperation === AUTO_SYNC_INDICATOR_OPERATION_PULL)
+        ? {
+            phase: displayResultPhase,
+            source: displayState?.displaySource || "",
+            reason: displayState?.displayReason || "",
+            since: Number(displayState?.timestamp) || now,
+          }
+        : null);
+
+    return Object.freeze({
+      pull: buildSlot({
+        active: pullRunning || pullPending || Boolean(pullResult),
+        state: pullRunning
+          ? AUTO_SYNC_INDICATOR_PHASE_RUNNING
+          : pullPending
+            ? AUTO_SYNC_INDICATOR_PHASE_PENDING
+            : pullResult
+              ? pullResult.phase
+              : AUTO_SYNC_INDICATOR_PHASE_IDLE,
+        source: pullRunning || pullPending
+          ? runningState?.source || pendingState?.source || ""
+          : pullResult
+            ? pullResult.source
+            : "",
+        reason: pullRunning || pullPending
+          ? runningState?.reason || pendingState?.reason || ""
+          : pullResult
+            ? pullResult.reason
+            : "",
+        operation: AUTO_SYNC_INDICATOR_OPERATION_PULL,
+        sources: pullPending ? pendingSources : null,
+        since:
+          Number(pullResult?.since) || Number(displayState?.timestamp) || now,
+      }),
+      push: buildSlot({
+        active: pushRunning || pushPending || Boolean(pushResult),
+        state: pushRunning
+          ? AUTO_SYNC_INDICATOR_PHASE_RUNNING
+          : pushPending
+            ? AUTO_SYNC_INDICATOR_PHASE_PENDING
+            : pushResult
+              ? pushResult.phase
+              : AUTO_SYNC_INDICATOR_PHASE_IDLE,
+        source: pushRunning || pushPending
+          ? runningState?.source || pendingState?.source || ""
+          : pushResult
+            ? pushResult.source
+            : "",
+        reason: pushRunning || pushPending
+          ? runningState?.reason || pendingState?.reason || ""
+          : pushResult
+            ? pushResult.reason
+            : "",
+        operation: AUTO_SYNC_INDICATOR_OPERATION_PUSH,
+        sources: pushPending ? pendingSources : null,
+        since:
+          Number(pushResult?.since) || Number(displayState?.timestamp) || now,
+      }),
+    });
+  };
+
   const projectSyncIndicatorState = (
     stateInput = null,
     options = {}
@@ -11335,15 +11665,28 @@
       const visibleDisplayState = shouldSuppressDisplay
         ? buildSilentAutoSyncIndicatorIdleDisplayState(displayState)
         : displayState;
+      // [ARCH-INV-2] 双向槽位是投影的必填字段：拉取成功与推送待办可以同时成立。
+      const directionalState = buildSyncIndicatorDirectionalState({
+        state,
+        displayState: visibleDisplayState,
+        pendingState,
+        runningState,
+        canShowPending,
+        now,
+      });
+      const finalDisplayState = Object.freeze({
+        ...visibleDisplayState,
+        directional: directionalState,
+      });
       if (canUseCache) {
         autoSyncIndicatorDisplayPhaseCache = {
           expiresAt:
             Date.now() + AUTO_SYNC_INDICATOR_DISPLAY_PHASE_CACHE_TTL_MS,
           ttlProfile,
-          state: { ...visibleDisplayState },
+          state: { ...finalDisplayState },
         };
       }
-      return visibleDisplayState;
+      return finalDisplayState;
     };
 
     if (pendingState.isManualOverride === true) {
@@ -11707,6 +12050,10 @@
       lastResolvedTimestamp: now,
       lastResolvedSource: resolvedSource,
       lastResolvedReason: resolvedReason,
+      lastResolvedOperation:
+        normalizeAutoSyncIndicatorOperation(operation) ||
+        normalizeAutoSyncIndicatorOperation(current.operation) ||
+        "",
     };
   };
 
@@ -11775,7 +12122,7 @@
       .toString(36)
       .slice(2, 7)}`;
     clearAutoSyncIndicatorDeferredResolve();
-    persistAutoSyncIndicatorState({
+    autoSyncIndicatorRuntimeRunningState = {
       phase: AUTO_SYNC_INDICATOR_PHASE_RUNNING,
       timestamp: Date.now(),
       token,
@@ -11788,7 +12135,7 @@
           options.reason
         ),
       ...lastResolvedSnapshot,
-    });
+    };
     return token;
   };
 
@@ -11797,12 +12144,25 @@
       return false;
     }
     const current = getAutoSyncIndicatorState();
+    const persistedState = getPersistedAutoSyncIndicatorState();
+    // 运行期只有本进程知道；如果期间其他标签页已写入更新的结果，放弃本次收尾，
+    // 避免覆盖别人的结果（running 不落盘后仍需保留这条跨标签页仲裁）。
+    const persistedWasOverwrittenByOther =
+      autoSyncIndicatorRuntimeRunningState !== null &&
+      persistedState.token !== current.token &&
+      Number(persistedState.timestamp) > Number(current.timestamp);
+    if (persistedWasOverwrittenByOther) {
+      autoSyncIndicatorRuntimeRunningState = null;
+      return false;
+    }
     const requestedPhase = normalizeAutoSyncIndicatorPhase(phase, {
       allowRunning: false,
       allowPending: false,
     });
     const persistResolvedState = (persistToken) => {
       clearAutoSyncIndicatorDeferredResolve();
+      // [ARCH-INV-5] 收尾即结束运行态；结果态才落盘。
+      autoSyncIndicatorRuntimeRunningState = null;
       persistAutoSyncIndicatorState(
         buildAutoSyncIndicatorResolvedState({
           current,
@@ -11857,6 +12217,7 @@
   };
 
   const setAutoSyncIndicatorResolvedPhase = (phase, options = {}) => {
+    autoSyncIndicatorRuntimeRunningState = null;
     const resolvedPhase = normalizeAutoSyncIndicatorPhase(phase, {
       allowRunning: false,
       allowPending: false,
@@ -22366,6 +22727,22 @@
 
     return merged;
   };
+  // [ARCH-INV-3] 合并载荷同样只能由唯一生产者创建并打 brand，边界拒绝任何未 brand 的
+  // 合并载荷；brand 的写入点是本文件唯一一处（静态检查锁定），外部无法伪造。
+  const MERGED_SYNC_PAYLOAD_BRANDS = new WeakSet();
+  const brandMergedSyncPayload = (payload) => {
+    if (isObjectRecord(payload)) {
+      MERGED_SYNC_PAYLOAD_BRANDS.add(payload);
+    }
+    return payload;
+  };
+  const isBrandedMergedSyncPayload = (payload) =>
+    Boolean(
+      payload &&
+        typeof payload === "object" &&
+        MERGED_SYNC_PAYLOAD_BRANDS.has(payload)
+    );
+
   const buildMergedReadProgressPayload = async (
     localDataObject,
     remoteDataObject
@@ -22398,18 +22775,19 @@
       Date.now()
     );
     const mergedContentHash = await calculateDataHash(mergedData);
+    const mergedPayload = {
+      version: 5.0,
+      lastUpdated: mergedLastUpdated,
+      lastUpdatedFormatted: new Date(mergedLastUpdated).toLocaleString(
+        "zh-CN",
+        { hour12: false }
+      ),
+      data: mergedData,
+      contentHash: mergedContentHash,
+      baseContentHash: localDataObject?.baseContentHash || null,
+    };
     return {
-      payload: {
-        version: 5.0,
-        lastUpdated: mergedLastUpdated,
-        lastUpdatedFormatted: new Date(mergedLastUpdated).toLocaleString(
-          "zh-CN",
-          { hour12: false }
-        ),
-        data: mergedData,
-        contentHash: mergedContentHash,
-        baseContentHash: localDataObject?.baseContentHash || null,
-      },
+      payload: brandMergedSyncPayload(mergedPayload),
       contentHash: mergedContentHash,
     };
   };
@@ -27813,10 +28191,195 @@
     }
   };
 
+  // [ARCH-INV-1] 同步需求是“本地业务快照 vs 基线业务快照”的派生结果，不是可存储的
+  // 状态、也不是由时间水印推导。指纹只覆盖业务字段（阅读进度只取 page/floor/postId），
+  // 因此同层重写、provenance 时间戳变化都不会把内容判成“脏”。
+  const SYNC_BUSINESS_FINGERPRINT_VERSION = 1;
+
+  const projectReadProgressBusinessValue = (readProgress) => {
+    const source = sanitizeRecordObject(readProgress);
+    const projected = {};
+    Object.keys(source).forEach((threadId) => {
+      const record = source[threadId];
+      if (!isObjectRecord(record)) {
+        return;
+      }
+      projected[threadId] = {
+        postId: String(record.postId || ""),
+        page: String(record.page || ""),
+        lastReadFloor: String(record.lastReadFloor || ""),
+      };
+    });
+    return projected;
+  };
+
+  const computeSyncBusinessFingerprint = (value) => {
+    const text = JSON.stringify(deterministicSort(value === undefined ? {} : value));
+    let low = 0x811c9dc5;
+    let high = 0x01000193;
+    for (let index = 0; index < text.length; index += 1) {
+      const code = text.charCodeAt(index);
+      low = Math.imul(low ^ code, 16777619) >>> 0;
+      high = Math.imul(high ^ (code + index), 2246822519) >>> 0;
+    }
+    return `v${SYNC_BUSINESS_FINGERPRINT_VERSION}_${low
+      .toString(16)
+      .padStart(8, "0")}${high.toString(16).padStart(8, "0")}`;
+  };
+
+  const buildSyncBusinessFingerprintPair = (dataObject) => {
+    const data = isObjectRecord(dataObject) ? dataObject : {};
+    const { read_progress: readProgress, ...rest } = data;
+    return Object.freeze({
+      baseFingerprint: computeSyncBusinessFingerprint(rest),
+      progressFingerprint: computeSyncBusinessFingerprint(
+        projectReadProgressBusinessValue(readProgress)
+      ),
+    });
+  };
+
+  // 缓存只影响性能：cacheKey 失配时重算，不会返回错误答案。
+  const getLocalSyncBusinessFingerprint = ({ useFreshSnapshot = false } = {}) => {
+    const cacheKey = `${GM_getValue(LAST_LOCAL_MODIFIED_KEY, 0) || 0}:${
+      useFreshSnapshot ? "fresh" : "cached"
+    }`;
+    if (
+      localSyncBusinessFingerprintCache.cacheKey === cacheKey &&
+      localSyncBusinessFingerprintCache.value
+    ) {
+      return localSyncBusinessFingerprintCache.value;
+    }
+    let value;
+    try {
+      value = buildSyncBusinessFingerprintPair(
+        buildExportLocalDataSnapshot({ useFreshSnapshot })
+      );
+    } catch (error) {
+      value = null;
+    }
+    localSyncBusinessFingerprintCache = { cacheKey, value };
+    return value;
+  };
+
+  const getSyncNeedChangedSources = ({ baseChanged = false } = {}) => {
+    const provenance = getLastLocalDirtyProvenance();
+    const provenanceSource = normalizePendingAutoSyncSource(
+      provenance?.source
+    );
+    if (!baseChanged) {
+      return Object.freeze({ read_progress: 1 });
+    }
+    return Object.freeze({
+      [provenanceSource && provenanceSource !== "read_progress"
+        ? provenanceSource
+        : "general"]: 1,
+    });
+  };
+
+  // [ARCH-INV-1/INV-2] 唯一派生出口。返回冻结的双方向槽位结构，显示层只消费它。
+  const deriveSyncNeed = ({ now = Date.now(), dataObject = null } = {}) => {
+    const baseline = getSyncBaselineState();
+    const baselineBaseFingerprint = String(
+      baseline?.localBaseFingerprint || ""
+    );
+    const baselineProgressFingerprint = String(
+      baseline?.localProgressFingerprint || ""
+    );
+    const hasBaselineFingerprint = Boolean(
+      baselineBaseFingerprint || baselineProgressFingerprint
+    );
+    const fingerprintAuthority =
+      String(baseline?.fingerprintSource || "live") === "snapshot";
+    if (!baseline || !hasBaselineFingerprint) {
+      return Object.freeze({
+        version: SYNC_BUSINESS_FINGERPRINT_VERSION,
+        available: false,
+        authoritative: false,
+        reason: "baseline_fingerprint_missing",
+        localFingerprint: "",
+        baselineFingerprint: "",
+        push: Object.freeze({
+          needed: false,
+          reason: "baseline_fingerprint_missing",
+          sources: Object.freeze({}),
+          changed: Object.freeze({ base: false, progress: false }),
+        }),
+        pull: Object.freeze({
+          needed: false,
+          reason: "requires_remote_probe",
+        }),
+        now,
+      });
+    }
+    // 传入快照时用它（同步决策路径），否则用缓存的本机快照（渲染路径）。
+    const localFingerprint = isObjectRecord(dataObject)
+      ? buildSyncBusinessFingerprintPair(dataObject.data)
+      : getLocalSyncBusinessFingerprint();
+    if (!localFingerprint) {
+      return Object.freeze({
+        version: SYNC_BUSINESS_FINGERPRINT_VERSION,
+        available: false,
+        authoritative: false,
+        reason: "local_fingerprint_unavailable",
+        localFingerprint: "",
+        baselineFingerprint: `${baselineBaseFingerprint}|${baselineProgressFingerprint}`,
+        push: Object.freeze({
+          needed: false,
+          reason: "local_fingerprint_unavailable",
+          sources: Object.freeze({}),
+          changed: Object.freeze({ base: false, progress: false }),
+        }),
+        pull: Object.freeze({
+          needed: false,
+          reason: "requires_remote_probe",
+        }),
+        now,
+      });
+    }
+    const baseChanged =
+      localFingerprint.baseFingerprint !== baselineBaseFingerprint;
+    const progressChanged =
+      localFingerprint.progressFingerprint !== baselineProgressFingerprint;
+    const pushNeeded = baseChanged || progressChanged;
+    return Object.freeze({
+      version: SYNC_BUSINESS_FINGERPRINT_VERSION,
+      available: true,
+      authoritative: fingerprintAuthority,
+      reason: pushNeeded
+        ? baseChanged
+          ? "local_business_content_changed"
+          : "local_read_progress_changed"
+        : "local_content_matches_baseline",
+      localFingerprint: `${localFingerprint.baseFingerprint}|${localFingerprint.progressFingerprint}`,
+      baselineFingerprint: `${baselineBaseFingerprint}|${baselineProgressFingerprint}`,
+      push: Object.freeze({
+        needed: pushNeeded,
+        reason: pushNeeded
+          ? baseChanged
+            ? "local_business_content_changed"
+            : "local_read_progress_changed"
+          : "local_content_matches_baseline",
+        sources: pushNeeded
+          ? getSyncNeedChangedSources({ baseChanged })
+          : Object.freeze({}),
+        changed: Object.freeze({
+          base: baseChanged,
+          progress: progressChanged,
+        }),
+      }),
+      pull: Object.freeze({
+        needed: false,
+        reason: "requires_remote_probe",
+      }),
+      now,
+    });
+  };
+
   const buildSyncBaselineStateForDataPair = ({
     localDataObject = null,
     remoteDataObject = null,
     remoteUpdatedAt = null,
+    syncedDataObject = null,
   } = {}) => {
     const localContentHash =
       typeof localDataObject?.contentHash === "string" &&
@@ -27828,11 +28391,20 @@
         remoteDataObject.contentHash
         ? remoteDataObject.contentHash
         : localContentHash;
+    // syncedDataObject 表示“云端已确认拥有的业务内容”；合并式拉取后基线的本地侧
+    // 必须记录云端内容，才能让派生需求显式产出 push（INV-4）。
+    const fingerprintPair = buildSyncBusinessFingerprintPair(
+      isObjectRecord(syncedDataObject?.data)
+        ? syncedDataObject.data
+        : localDataObject?.data
+    );
     return {
       contentHash: localContentHash || remoteContentHash,
       localContentHash: localContentHash || remoteContentHash,
       remoteContentHash,
       remoteUpdatedAt,
+      localBaseFingerprint: fingerprintPair.baseFingerprint,
+      localProgressFingerprint: fingerprintPair.progressFingerprint,
     };
   };
 
@@ -28101,12 +28673,27 @@
       typeof saved.remoteContentHash === "string" && saved.remoteContentHash
         ? saved.remoteContentHash
         : contentHash;
+    // [ARCH-INV-1] 基线同时记录业务指纹（云端已确认的本地业务内容），缺失表示旧版基线，
+    // 此时派生需求不可用，显示层退回保守判断。
+    const localBaseFingerprint =
+      typeof saved.localBaseFingerprint === "string"
+        ? saved.localBaseFingerprint
+        : "";
+    const localProgressFingerprint =
+      typeof saved.localProgressFingerprint === "string"
+        ? saved.localProgressFingerprint
+        : "";
+    const fingerprintSource =
+      saved.fingerprintSource === "snapshot" ? "snapshot" : "live";
     return {
       contentHash,
       localContentHash,
       remoteContentHash,
       remoteUpdatedAt,
       savedAt,
+      localBaseFingerprint,
+      localProgressFingerprint,
+      fingerprintSource,
     };
   };
 
@@ -28115,6 +28702,8 @@
     localContentHash = null,
     remoteContentHash = null,
     remoteUpdatedAt = null,
+    localBaseFingerprint = "",
+    localProgressFingerprint = "",
   } = {}) => {
     const normalizedContentHash =
       typeof contentHash === "string" && contentHash ? contentHash : null;
@@ -28139,11 +28728,41 @@
         ? remoteUpdatedAt
         : null;
 
+    // [ARCH-INV-1] 显式指纹优先（例如合并式拉取要用“云端内容”作为基线本地侧）；
+    // 否则以调用时刻的本地业务内容为准，这是“刚刚被同步出去的本地快照”语义。
+    const hasExplicitFingerprint = Boolean(
+      localBaseFingerprint || localProgressFingerprint
+    );
+    // 只给一侧指纹会让另一侧永远“变化”，产生永久待推送：缺的一侧现取补齐。
+    const explicitFingerprintPair = hasExplicitFingerprint
+      ? (() => {
+          const localPair =
+            getLocalSyncBusinessFingerprint() ||
+            Object.freeze({ baseFingerprint: "", progressFingerprint: "" });
+          return Object.freeze({
+            baseFingerprint: String(
+              localBaseFingerprint || localPair.baseFingerprint || ""
+            ),
+            progressFingerprint: String(
+              localProgressFingerprint || localPair.progressFingerprint || ""
+            ),
+          });
+        })()
+      : null;
+    const resolvedFingerprintPair =
+      explicitFingerprintPair ||
+      getLocalSyncBusinessFingerprint() ||
+      Object.freeze({ baseFingerprint: "", progressFingerprint: "" });
+
     GM_setValue(SYNC_BASELINE_STATE_KEY, {
       contentHash: nextContentHash,
       localContentHash: nextLocalContentHash,
       remoteContentHash: nextRemoteContentHash,
       remoteUpdatedAt: nextRemoteUpdatedAt,
+      localBaseFingerprint: resolvedFingerprintPair.baseFingerprint,
+      localProgressFingerprint: resolvedFingerprintPair.progressFingerprint,
+      // snapshot=真实快照对产出的指纹（可作引擎权威）；live=调用时现取（仅显示参考）
+      fingerprintSource: explicitFingerprintPair ? "snapshot" : "live",
       savedAt: Date.now(),
     });
     if (nextRemoteUpdatedAt) {
@@ -28339,8 +28958,14 @@
         baselineState.localContentHash || baselineState.contentHash;
       const baselineRemoteContentHash =
         baselineState.remoteContentHash || baselineState.contentHash;
+      // [ARCH-INV-1] “本地是否有待推送变更”在引擎与显示之间共用同一份纯派生，
+      // 避免 contentHash（含阅读进度时间戳/来源等易变字段）成为第二套权威。
+      const localSyncNeed = deriveSyncNeed({ dataObject: localDataObject });
       const localChanged =
-        localDataObject.contentHash !== baselineLocalContentHash;
+        localSyncNeed.available === true &&
+        localSyncNeed.authoritative === true
+          ? localSyncNeed.push.needed
+          : localDataObject.contentHash !== baselineLocalContentHash;
       const remoteChangedByHash =
         typeof remoteDataObject.contentHash === "string" &&
           remoteDataObject.contentHash
@@ -31752,6 +32377,139 @@
    * @param {object} remoteGistObject - 从 Gist 拉取的原始对象
    * @returns {Promise<object>} 返回一个包含 data, version, contentHash, lastUpdated 的规范化对象
    */
+  // [ARCH-INV-3/INV-4] 远端快照进入本地的唯一入口。
+  // - 只有经 migrateAndValidateRemoteData 产出的快照带 brand，未 brand 的入参直接抛错，
+  //   新增同步路径无法绕过校验/合并策略；
+  // - pull 的普通拉取在边界内合并阅读进度（设备本地进度不被整体覆盖），
+  //   并在合并结果领先云端时显式产出收敛推送（INV-4），而不是等页面回写偶然触发。
+  const SYNC_REMOTE_APPLY_ORIGIN_PULL_MERGE = "pull_merge_progress";
+  const SYNC_REMOTE_APPLY_ORIGIN_OVERWRITE = "overwrite";
+  const SYNC_REMOTE_APPLY_ORIGIN_MERGED_PAYLOAD = "merged_payload";
+
+  const REMOTE_SYNC_SNAPSHOT_BRANDS = new WeakSet();
+
+  const isBrandedRemoteSyncSnapshot = (snapshot) =>
+    Boolean(
+      snapshot &&
+        typeof snapshot === "object" &&
+        REMOTE_SYNC_SNAPSHOT_BRANDS.has(snapshot)
+    );
+
+  const getRemoteSnapshotReadProgress = (remoteDataObject) => {
+    const data = isObjectRecord(remoteDataObject?.data)
+      ? remoteDataObject.data
+      : isObjectRecord(remoteDataObject?.full?.data)
+        ? remoteDataObject.full.data
+        : {};
+    return isObjectRecord(data.read_progress) ? data.read_progress : {};
+  };
+
+  const computeReadProgressBusinessFingerprint = (readProgress) =>
+    computeSyncBusinessFingerprint(
+      projectReadProgressBusinessValue(readProgress)
+    );
+
+  const applyRemoteSnapshotToLocal = ({
+    remoteDataObject = null,
+    origin = SYNC_REMOTE_APPLY_ORIGIN_OVERWRITE,
+    localDataObject = null,
+    mergedPayload = null,
+  } = {}) => {
+    let normalizedOrigin =
+      origin === SYNC_REMOTE_APPLY_ORIGIN_PULL_MERGE ||
+      origin === SYNC_REMOTE_APPLY_ORIGIN_MERGED_PAYLOAD
+        ? origin
+        : SYNC_REMOTE_APPLY_ORIGIN_OVERWRITE;
+    if (
+      normalizedOrigin === SYNC_REMOTE_APPLY_ORIGIN_MERGED_PAYLOAD &&
+      !isBrandedMergedSyncPayload(mergedPayload)
+    ) {
+      throw new TypeError(
+        "S1 Plus (Sync): 合并载荷必须由 buildMergedReadProgressPayload 产出，禁止直接应用。"
+      );
+    }
+    if (
+      normalizedOrigin !== SYNC_REMOTE_APPLY_ORIGIN_MERGED_PAYLOAD &&
+      !isBrandedRemoteSyncSnapshot(remoteDataObject)
+    ) {
+      throw new TypeError(
+        "S1 Plus (Sync): 远端快照必须来自 migrateAndValidateRemoteData，禁止直接应用原始快照。"
+      );
+    }
+    let appliedSnapshot = null;
+    let mergedReadProgressChanged = false;
+    let mergeFallback = "";
+    if (normalizedOrigin === SYNC_REMOTE_APPLY_ORIGIN_MERGED_PAYLOAD) {
+      appliedSnapshot = mergedPayload;
+    } else if (normalizedOrigin === SYNC_REMOTE_APPLY_ORIGIN_PULL_MERGE) {
+      // 只以 migrateAndValidateRemoteData 产出的规范化 data 为准（旧版扁平 gist 也已被
+      // 规范化到 data）。full 的原始形状不可信，直接拼 full.data 会误读/清空本地数据。
+      const remoteDataRecord = isObjectRecord(remoteDataObject?.data)
+        ? remoteDataObject.data
+        : null;
+      if (!remoteDataRecord) {
+        // 头部版本与载荷形状不一致（损坏/手改的 gist）：拒绝应用而不是退回覆盖，
+        // 覆盖会把“载荷里缺失的 kind”写成空值，属于数据丢失风险。
+        return {
+          success: false,
+          message:
+            "云端载荷形状与版本不一致，已中止应用以保护本地数据（请手动同步检查云端备份）。",
+          origin: SYNC_REMOTE_APPLY_ORIGIN_PULL_MERGE,
+          mergedReadProgressChanged: false,
+          mergeFallback: "unsupported_remote_shape",
+        };
+      } else {
+        const localReadProgress = isObjectRecord(
+          localDataObject?.data?.read_progress
+        )
+          ? localDataObject.data.read_progress
+          : getReadProgress();
+        const remoteReadProgress = isObjectRecord(
+          remoteDataRecord.read_progress
+        )
+          ? remoteDataRecord.read_progress
+          : {};
+        const mergedReadProgress = mergeReadProgressMaps(
+          localReadProgress,
+          remoteReadProgress
+        );
+        mergedReadProgressChanged =
+          computeReadProgressBusinessFingerprint(mergedReadProgress) !==
+          computeReadProgressBusinessFingerprint(remoteReadProgress);
+        appliedSnapshot = {
+          ...(isObjectRecord(remoteDataObject.full)
+            ? remoteDataObject.full
+            : {}),
+          // 固定走 v4 读取路径：导入的必须是规范化后的 data，而不是原始 gist 顶层字段。
+          version: 5.0,
+          data: { ...remoteDataRecord, read_progress: mergedReadProgress },
+        };
+      }
+    }
+    if (normalizedOrigin === SYNC_REMOTE_APPLY_ORIGIN_OVERWRITE) {
+      appliedSnapshot = remoteDataObject?.full || null;
+    }
+    if (!appliedSnapshot) {
+      return {
+        success: false,
+        message: "远端快照为空，未应用。",
+        origin: normalizedOrigin,
+        mergedReadProgressChanged: false,
+        mergeFallback,
+      };
+    }
+    const result = importLocalData(JSON.stringify(appliedSnapshot), {
+      suppressPostSync: true,
+    });
+    return {
+      ...result,
+      origin: normalizedOrigin,
+      mergedReadProgressChanged,
+      mergeFallback,
+      appliedSnapshot,
+    };
+  };
+
   const migrateAndValidateRemoteData = async (remoteGistObject) => {
     if (!remoteGistObject || typeof remoteGistObject !== "object") {
       throw new Error("远程数据为空或格式无效");
@@ -31808,7 +32566,7 @@
       baseContentHash = await calculateDataHash(dataForBaseHash);
     }
 
-    return {
+    const brandedRemoteSnapshot = {
       data,
       version,
       contentHash,
@@ -31818,6 +32576,9 @@
       lastWriter,
       full: remoteGistObject,
     };
+    // 唯一写入点：只有本函数能给远端快照打 brand（静态检查锁定 .add 调用次数）。
+    REMOTE_SYNC_SNAPSHOT_BRANDS.add(brandedRemoteSnapshot);
+    return brandedRemoteSnapshot;
   };
 
   const getRemoteSyncExecutionSkipResult = (settingsSnapshot) => {
@@ -32548,10 +33309,10 @@
         GM_setValue("s1p_last_sync_timestamp", Date.now());
         return asSuccessResult(
           "pushed_initial",
-          {
-            contentHash: localData.contentHash,
+          buildSyncBaselineStateForDataPair({
+            localDataObject: localData,
             remoteUpdatedAt: pushResult?.updatedAt || null,
-          },
+          }),
           {
             remoteUpdatedAt: pushResult?.updatedAt || null,
             remoteWriter: pushResult?.writerMetadata || null,
@@ -32696,16 +33457,17 @@
             })
         );
         assertAutoSyncLockOwned("apply_merged_payload");
-        importLocalData(JSON.stringify(mergedPayload), {
-          suppressPostSync: true,
+        applyRemoteSnapshotToLocal({
+          origin: SYNC_REMOTE_APPLY_ORIGIN_MERGED_PAYLOAD,
+          mergedPayload,
         });
         GM_setValue("s1p_last_sync_timestamp", Date.now());
         const result = asSuccessResult(
           "merged_read_progress",
-          {
-            contentHash: mergedContentHash,
+          buildSyncBaselineStateForDataPair({
+            localDataObject: mergedPayload,
             remoteUpdatedAt: pushResult?.updatedAt || null,
-          },
+          }),
           {
             reason: mergeReason,
             remoteUpdatedAt: pushResult?.updatedAt || null,
@@ -32776,8 +33538,9 @@
             }
           }
           assertAutoSyncLockOwned("apply_force_pull_remote_data");
-          importLocalData(JSON.stringify(remote.full), {
-            suppressPostSync: true,
+          applyRemoteSnapshotToLocal({
+            remoteDataObject: remote,
+            origin: SYNC_REMOTE_APPLY_ORIGIN_OVERWRITE,
           });
           const forcePullSyncBaseline = await runWithAutoSyncLockGuard(
             "export_imported_local_data_after_force_pull",
@@ -32819,20 +33582,49 @@
             }
           }
           assertAutoSyncLockOwned("apply_pull_remote_data");
-          importLocalData(JSON.stringify(remote.full), {
-            suppressPostSync: true,
+          const pullApplyResult = applyRemoteSnapshotToLocal({
+            remoteDataObject: remote,
+            origin: SYNC_REMOTE_APPLY_ORIGIN_PULL_MERGE,
+            localDataObject,
           });
-          const pullSyncBaseline = await runWithAutoSyncLockGuard(
-            "export_imported_local_data_after_pull",
-            () =>
-              buildImportedSyncBaselineState({
+          if (pullApplyResult.success !== true) {
+            if (pullApplyResult.mergeFallback) {
+              recordSyncTraceEvent("auto_sync_pull_merge_rejected", {
+                scope: "auto_sync",
+                status: "failure",
+                message: "远端载荷形状不支持合并，已拒绝应用以保护本地数据",
+                details: {
+                  mode: syncMode,
+                  reason: pullApplyResult.mergeFallback,
+                  remoteUpdatedAt: remoteMeta.updatedAt || "",
+                },
+              });
+            }
+            // 应用失败时必须中止，不能继续记录“云端内容”基线并登记回写任务，
+            // 否则下一轮会拿未应用的本地快照覆盖云端。
+            throw new Error(
+              pullApplyResult.message || "应用云端数据失败，已中止本次拉取。"
+            );
+          }
+          // [ARCH-INV-4] 合并式拉取保留了领先云端的本机阅读进度：基线记录“云端内容”，
+          // 派生需求会显式产出 push；同时在这里直接排队一次收敛推送，不依赖页面回写。
+          const pullSyncBaseline = pullApplyResult.mergedReadProgressChanged
+            ? buildSyncBaselineStateForDataPair({
+                localDataObject: remote,
                 remoteDataObject: remote,
                 remoteUpdatedAt: remoteMeta.updatedAt || null,
-                exportOptions: exportLocalDataOptions,
               })
-          );
+            : await runWithAutoSyncLockGuard(
+                "export_imported_local_data_after_pull",
+                () =>
+                  buildImportedSyncBaselineState({
+                    remoteDataObject: remote,
+                    remoteUpdatedAt: remoteMeta.updatedAt || null,
+                    exportOptions: exportLocalDataOptions,
+                  })
+              );
           GM_setValue("s1p_last_sync_timestamp", Date.now());
-          return asSuccessResult(
+          const pullResult = asSuccessResult(
             "pulled",
             pullSyncBaseline,
             {
@@ -32842,6 +33634,31 @@
               coveredLocalLastUpdated: localDataObject.lastUpdated,
             }
           );
+          if (pullApplyResult.mergedReadProgressChanged) {
+            // [ARCH-INV-4] 收敛推送必须“可跨刷新存活”：asSuccessResult 已经清掉旧的
+            // pending 请求，这里在它之后重新登记**持久化**的 pending + 共享调度，
+            // 而不是只排一个内存计时器（页面 3.2s 后自动刷新会把它带走）。
+            const mergedLastModified =
+              Number(GM_getValue(LAST_LOCAL_MODIFIED_KEY, 0)) || Date.now();
+            const outboundSchedule = debouncedTriggerRemoteSyncPush({
+              source: "read_progress",
+              lastModified: mergedLastModified,
+              threadId: getCurrentThreadId() || "",
+            });
+            recordSyncTraceEvent("auto_sync_merge_pull_outbound", {
+              scope: "auto_sync",
+              status: "scheduled",
+              message: "合并式拉取保留了本机阅读进度，已登记持久化回写任务",
+              details: {
+                mode: syncMode,
+                action: "merged_read_progress_outbound",
+                remoteUpdatedAt: remoteMeta.updatedAt || null,
+                outboundStatus: outboundSchedule?.status || "",
+                outboundReason: outboundSchedule?.reason || "",
+              },
+            });
+          }
+          return pullResult;
 
         case "merge_read_progress":
           recordSyncTraceEvent("auto_sync_read_progress_local_newer", {
@@ -32934,10 +33751,11 @@
             GM_setValue("s1p_last_sync_timestamp", Date.now());
             return asSuccessResult(
               "pushed",
-              {
-                contentHash: localDataObject.contentHash,
+              // [ARCH-INV-1] 基线必须描述“真正推出去的快照”，而不是推送期间又被改动的实时快照。
+              buildSyncBaselineStateForDataPair({
+                localDataObject,
                 remoteUpdatedAt: pushResult?.updatedAt || null,
-              },
+              }),
               {
                 remoteUpdatedAt: pushResult?.updatedAt || null,
                 remoteWriter: pushResult?.writerMetadata || null,
@@ -38757,8 +39575,9 @@
       const validatedRemote = await migrateAndValidateRemoteData(remoteData);
       assertManualSyncLockOwned("before_import_local_data");
       // [S1P-FIX] 调用导入时，传入 suppressPostSync 选项来阻止不必要的二次同步
-      const result = importLocalData(JSON.stringify(validatedRemote.full), {
-        suppressPostSync: true,
+      const result = applyRemoteSnapshotToLocal({
+        remoteDataObject: validatedRemote,
+        origin: SYNC_REMOTE_APPLY_ORIGIN_OVERWRITE,
       });
       assertManualSyncLockOwned("after_import_local_data");
       if (result.success) {
@@ -38957,6 +39776,35 @@
     const localChangeLabel = getAutoSyncIndicatorLocalChangeLabel(
       resolvedState.displayPendingSources
     );
+
+    // [ARCH-INV-2] 双通道消费：拉取已结算与推送待办可以同时成立。
+    // 单值 displayPhase 按优先级只会显示“待推送”，把“云端更新已拉取”完全遮蔽；
+    // 这里用方向槽位补回另一半，避免导航栏再次出现“刚说拉取完成却只显示待推送”。
+    const directionalSlots =
+      resolvedState && typeof resolvedState === "object"
+        ? resolvedState.directional
+        : null;
+    const pullSlot = directionalSlots?.pull || null;
+    const pushSlot = directionalSlots?.push || null;
+    if (
+      pullSlot &&
+      pushSlot &&
+      pushSlot.active === true &&
+      isAutoSyncIndicatorResultPhase(pullSlot.state) &&
+      isAutoSyncIndicatorActivePhase(pushSlot.state)
+    ) {
+      const pullLabel =
+        pullSlot.state === AUTO_SYNC_INDICATOR_PHASE_SUCCESS
+          ? "云端更新已拉取"
+          : pullSlot.state === AUTO_SYNC_INDICATOR_PHASE_CONFLICT
+            ? "云端更新有冲突"
+            : "云端更新拉取失败";
+      const pushLabel =
+        pushSlot.state === AUTO_SYNC_INDICATOR_PHASE_RUNNING
+          ? `${localChangeLabel}推送中`
+          : `${localChangeLabel}待推送`;
+      return `自动同步：${pullLabel}；${pushLabel}`;
+    }
 
     switch (phase) {
       case AUTO_SYNC_INDICATOR_PHASE_PENDING:
@@ -40497,6 +41345,14 @@
       normalizeAutoSyncIndicatorSource(resolvedState.displaySource) || "";
     indicatorLi.dataset.syncSession = resolvedState.displaySessionKind || "";
     indicatorLi.dataset.syncSubstate = resolvedState.displaySubstate || "";
+    // [ARCH-INV-2] 双通道可观测：单图标只能显示一个方向，但两个槽位都必须对外可见，
+    // 否则“拉取已成功但仍在待推送”这种组合在 DOM 和诊断里都无从查证。
+    indicatorLi.dataset.syncPull = resolvedState.directional?.pull?.state || "";
+    indicatorLi.dataset.syncPush = resolvedState.directional?.push?.state || "";
+    indicatorLi.dataset.syncPullActive =
+      resolvedState.directional?.pull?.active === true ? "yes" : "no";
+    indicatorLi.dataset.syncPushActive =
+      resolvedState.directional?.push?.active === true ? "yes" : "no";
     setCustomTooltip(indicatorLi, getAutoSyncIndicatorTooltip(resolvedState));
     if (isDebugPreviewActive) {
       stopNavbarAutoSyncIndicatorExpiryTimer();
@@ -50840,12 +51696,10 @@
                     "云端没有数据，无法恢复。"
                   );
 
-                  const result = importLocalData(
-                    JSON.stringify(latestRemoteDataObj.full),
-                    {
-                      suppressPostSync: true,
-                    }
-                  );
+                  const result = applyRemoteSnapshotToLocal({
+                    remoteDataObject: latestRemoteDataObj,
+                    origin: SYNC_REMOTE_APPLY_ORIGIN_OVERWRITE,
+                  });
                   if (result.success) {
                     const syncBaseline = await buildImportedSyncBaselineState({
                       remoteDataObject: latestRemoteDataObj,
@@ -50942,10 +51796,10 @@
                     action: "push",
                     timestamp: Date.now(),
                   });
-                  noteManualSuccess("initial_push_seed", {
-                    contentHash: localData.contentHash,
+                  noteManualSuccess("initial_push_seed", buildSyncBaselineStateForDataPair({
+                    localDataObject: localData,
                     remoteUpdatedAt: pushResult?.updatedAt || null,
-                  }, {
+                  }), {
                     remoteWriter: pushResult?.writerMetadata || null,
                   });
                   showMessage("推送成功！已初始化云端备份。", true);
@@ -51114,10 +51968,10 @@
               });
               noteManualSuccess(
                 "cleanup_shortcut_push",
-                {
-                  contentHash: localDataObject.contentHash,
+                buildSyncBaselineStateForDataPair({
+                  localDataObject,
                   remoteUpdatedAt: pushResult?.updatedAt || null,
-                },
+                }),
                 {
                   ...decisionDiagnostics,
                   remoteWriter: pushResult?.writerMetadata || null,
@@ -51173,10 +52027,10 @@
                 GM_setValue("s1p_last_sync_timestamp", Date.now());
                 noteManualSuccess(
                   "smart_progress_push",
-                  {
-                    contentHash: localDataObject.contentHash,
+                  buildSyncBaselineStateForDataPair({
+                    localDataObject,
                     remoteUpdatedAt: pushResult?.updatedAt || null,
-                  },
+                }),
                   {
                     ...decisionDiagnostics,
                     remoteWriter: pushResult?.writerMetadata || null,
@@ -51222,16 +52076,17 @@
                   })
               );
               assertManualSyncLockOwned("smart_merge_pull_import");
-              importLocalData(JSON.stringify(mergedPayload), {
-                suppressPostSync: true,
+              applyRemoteSnapshotToLocal({
+                origin: SYNC_REMOTE_APPLY_ORIGIN_MERGED_PAYLOAD,
+                mergedPayload,
               });
               GM_setValue("s1p_last_sync_timestamp", Date.now());
               noteManualSuccess(
                 "smart_merge_pull",
-                {
-                  contentHash: mergedContentHash,
+                buildSyncBaselineStateForDataPair({
+                  localDataObject: mergedPayload,
                   remoteUpdatedAt: pushResult?.updatedAt || null,
-                },
+                }),
                 {
                   ...decisionDiagnostics,
                   remoteWriter: pushResult?.writerMetadata || null,
@@ -51284,8 +52139,9 @@
                   "manual_pull_confirm",
                   "云端没有数据，无法拉取。"
                 );
-                const result = importLocalData(JSON.stringify(latestRemote.full), {
-                  suppressPostSync: true,
+                const result = applyRemoteSnapshotToLocal({
+                  remoteDataObject: latestRemote,
+                  origin: SYNC_REMOTE_APPLY_ORIGIN_OVERWRITE,
                 });
                 if (result.success) {
                   const syncBaseline = await buildImportedSyncBaselineState({
@@ -51360,10 +52216,10 @@
                 });
                 noteManualSuccess(
                   "manual_push",
-                  {
-                    contentHash: localDataObject.contentHash,
+                  buildSyncBaselineStateForDataPair({
+                    localDataObject,
                     remoteUpdatedAt: pushResult?.updatedAt || null,
-                  },
+                }),
                   {
                     ...decisionDiagnostics,
                     remoteWriter: pushResult?.writerMetadata || null,
@@ -51471,10 +52327,10 @@
                     action: "push",
                     timestamp: Date.now(),
                   });
-                  noteManualSuccess("manual_force_push_repair", {
-                    contentHash: localDataObjectForPush.contentHash,
+                  noteManualSuccess("manual_force_push_repair", buildSyncBaselineStateForDataPair({
+                    localDataObject: localDataObjectForPush,
                     remoteUpdatedAt: pushResult?.updatedAt || null,
-                  }, {
+                  }), {
                     remoteWriter: pushResult?.writerMetadata || null,
                   });
                   showMessage("推送成功！已使用本地数据修复云端备份。", true);

@@ -231,7 +231,7 @@ const testSourceAwareTitlesAndMappings = () => {
   );
 };
 
-const testIndicatorCyclePersistsSourceToResolvedState = () => {
+const testIndicatorCyclePersistsSourceToResolvedState = async () => {
   const { hooks, store } = createHarness();
   const token = hooks.startAutoSyncIndicatorCycle("daily_startup", {
     operation: "pull",
@@ -241,10 +241,14 @@ const testIndicatorCyclePersistsSourceToResolvedState = () => {
   assert.strictEqual(state.phase, "running");
   assert.strictEqual(state.source, "daily_startup");
   assert.strictEqual(state.operation, "pull");
-  store.set(AUTO_SYNC_INDICATOR_STATE_KEY, {
-    ...state,
-    timestamp: Date.now() - 1000,
-  });
+  // [ARCH-INV-5] running 只在内存中，不得写入 GM；跨标签页只认同步锁。
+  assert.strictEqual(
+    store.has(AUTO_SYNC_INDICATOR_STATE_KEY),
+    false,
+    "运行态不得持久化到 s1p_auto_sync_indicator_state"
+  );
+  // 等过 anti-flicker 最短运行时间后再收尾，避免被延迟结算。
+  await new Promise((resolve) => setTimeout(resolve, 700));
 
   hooks.finishAutoSyncIndicatorCycle(
     token,
@@ -322,11 +326,8 @@ const testForegroundFollowupRefreshKeepsDeferredSuccess = async () => {
       stopStartupSyncLockHeartbeat: () => {},
       releaseStartupSyncLock: () => {},
       performAutoSync: async () => {
-        const runningState = toPlainObject(hooks.getAutoSyncIndicatorState());
-        store.set(AUTO_SYNC_INDICATOR_STATE_KEY, {
-          ...runningState,
-          timestamp: Date.now() - 400,
-        });
+        // [ARCH-INV-5] running 不落盘：用测试钩子模拟“运行已过 400ms”。
+        hooks.backdateAutoSyncIndicatorRuntimeRunningForTest(400);
         return {
           status: "success",
           action: "pulled",
@@ -1248,11 +1249,7 @@ const testSuccessDisplayKeepsDirectionalCompletion = () => {
       operation: "push",
       reason: "read_progress",
     });
-    const runningState = toPlainObject(hooks.getAutoSyncIndicatorState());
-    store.set(AUTO_SYNC_INDICATOR_STATE_KEY, {
-      ...runningState,
-      timestamp: Date.now() - 1000,
-    });
+    hooks.backdateAutoSyncIndicatorRuntimeRunningForTest(1000);
     hooks.finishAutoSyncIndicatorCycle(token, "success", {
       source: "background_push",
       reason: "pushed",
@@ -1279,11 +1276,7 @@ const testSuccessDisplayKeepsDirectionalCompletion = () => {
       operation: "pull",
       reason: "pull",
     });
-    const runningState = toPlainObject(hooks.getAutoSyncIndicatorState());
-    store.set(AUTO_SYNC_INDICATOR_STATE_KEY, {
-      ...runningState,
-      timestamp: Date.now() - 1000,
-    });
+    hooks.backdateAutoSyncIndicatorRuntimeRunningForTest(1000);
     hooks.finishAutoSyncIndicatorCycle(token, "success", {
       source: "foreground_resume",
       reason: "pull",
@@ -1484,6 +1477,91 @@ const testBackgroundPushRunningRequiresCurrentLiveRunner = () => {
   assert.equal(
     hooks.getAutoSyncIndicatorTitle(resolvedState),
     "自动同步：阅读进度推送中"
+  );
+};
+
+const testDirectionalSlotsSurfacePullSuccessAlongsidePushPending = () => {
+  const { hooks, store } = createHarness();
+  const now = Date.now();
+  // 拉取已成功（已结算方向=pull），同时本地仍有新的阅读进度待推送。
+  store.set(AUTO_SYNC_INDICATOR_STATE_KEY, {
+    phase: "success",
+    timestamp: now - 500,
+    token: "",
+    source: "foreground_resume",
+    reason: "remote_changed_since_baseline",
+    operation: "pull",
+    lastResolvedPhase: "success",
+    lastResolvedTimestamp: now - 500,
+    lastResolvedSource: "foreground_resume",
+    lastResolvedReason: "remote_changed_since_baseline",
+    lastResolvedOperation: "pull",
+  });
+  store.set(PENDING_AUTO_SYNC_KEY, {
+    version: 1,
+    source: "read_progress",
+    lastModified: now,
+    maxLastModified: now,
+    createdAt: now,
+    firstDirtyAt: now,
+    lastDirtyAt: now,
+    sources: { read_progress: 1 },
+    threadIds: ["2293397"],
+  });
+
+  const resolvedState = toPlainObject(readNavbarProjection(hooks));
+  assert.equal(
+    resolvedState.directional.pull.state,
+    "success",
+    "拉取槽位必须保留已经结算的成功结果。"
+  );
+  assert.equal(resolvedState.directional.pull.active, true);
+  assert.equal(
+    resolvedState.directional.pull.operation,
+    "pull",
+    "拉取槽位的方向必须是 pull。"
+  );
+  assert.equal(
+    resolvedState.directional.push.state,
+    "pending",
+    "推送槽位必须独立表达本地待推送。"
+  );
+  assert.equal(resolvedState.directional.push.active, true);
+  assert.equal(resolvedState.directional.push.operation, "push");
+
+  // 单值兼容视图仍按旧优先级显示 pending，但双槽位已保留另一半信息。
+  assert.equal(resolvedState.displayPhase, "pending");
+  assert.equal(
+    hooks.getAutoSyncIndicatorTitle(resolvedState),
+    "自动同步：云端更新已拉取；阅读进度待推送",
+    "标题必须同时表达“拉取已完成”和“本地待推送”，不能再被单值状态吞掉。"
+  );
+  assert.match(
+    hooks.getAutoSyncIndicatorTooltip(resolvedState),
+    /云端更新已拉取/
+  );
+
+  const diagnosticsText = hooks.buildSyncDiagnosticsSummary();
+  assert.match(
+    diagnosticsText,
+    /同步方向: 拉取=成功\(remote_changed_since_baseline\) \| 推送=待处理\(read_progress\)/,
+    "诊断快照必须同时列出拉取与推送两个方向。"
+  );
+};
+
+const testDirectionalSlotsStayCleanWhenNothingPending = () => {
+  const { hooks, store } = createHarness();
+  store.delete(PENDING_AUTO_SYNC_KEY);
+  store.delete(BACKGROUND_SYNC_DEBOUNCE_STATE_KEY);
+  const resolvedState = toPlainObject(readNavbarProjection(hooks));
+  assert.equal(resolvedState.directional.pull.state, "idle");
+  assert.equal(resolvedState.directional.push.state, "idle");
+  assert.equal(resolvedState.directional.pull.active, false);
+  assert.equal(resolvedState.directional.push.active, false);
+  assert.equal(
+    hooks.getAutoSyncIndicatorTitle(resolvedState),
+    "自动同步：待命",
+    "两个方向都没有事实时不得伪造双通道文案。"
   );
 };
 
@@ -1705,7 +1783,7 @@ const testAutoSyncEntryPointsBindIndicatorSources = () => {
 (async () => {
   testIndicatorVisibilityCoversAllAutoPaths();
   testSourceAwareTitlesAndMappings();
-  testIndicatorCyclePersistsSourceToResolvedState();
+  await testIndicatorCyclePersistsSourceToResolvedState();
   await testDeferredResolvedPhaseKeepsOperation();
   await testForegroundFollowupRefreshKeepsDeferredSuccess();
   testSharedSchedulerAndLocksFeedUnifiedDisplayState();
@@ -1721,6 +1799,8 @@ const testAutoSyncEntryPointsBindIndicatorSources = () => {
   testStalePendingAutoSyncRequestDoesNotDisplay();
   testBackgroundPushRunningRequiresCurrentLiveRunner();
   testAutoSyncEntryPointsBindIndicatorSources();
+  testDirectionalSlotsSurfacePullSuccessAlongsidePushPending();
+  testDirectionalSlotsStayCleanWhenNothingPending();
 
   console.log("[auto-sync-indicator-linkage] Auto sync indicator linkage verified.");
 })().catch((error) => {
