@@ -4158,6 +4158,10 @@
   const BACKGROUND_OPEN_THREAD_HINTS_KEY = "s1p_background_open_thread_hints";
   const BACKGROUND_OPEN_THREAD_HINT_TTL_MS = 5 * 60 * 1000;
   const SYNC_BASELINE_STATE_KEY = "s1p_sync_baseline_state";
+  // [ARCH-INV-1] 本地内容单调递增代数：与基线代数相等即“内容与基线一致”。
+  // 这是调度层（清洁门禁 / 待同步回收 / 旧基线迁移）的唯一权威，
+  // 不再用 lastLocalMutationTs 与 lastSuccessfulSyncTs 两次独立时间比较。
+  const LOCAL_CONTENT_GENERATION_KEY = "s1p_local_content_generation";
   const REMOTE_PROBE_INFO_KEY = "s1p_last_remote_probe_info";
   const LAST_LOCAL_SESSION_REMOTE_WRITE_KEY =
     "s1p_last_local_session_remote_write";
@@ -5880,6 +5884,17 @@
     localSyncBusinessFingerprintCache = { cacheKey: "", value: null };
   };
 
+  const getLocalContentGeneration = () =>
+    Math.max(0, Math.floor(Number(GM_getValue(LOCAL_CONTENT_GENERATION_KEY, 0)) || 0));
+
+  // 唯一递增点：任何内容/设置写入都会经过 invalidateLocalDataHashCache，
+  // 因此“写入即推进代数”由结构保证，不依赖调用方记得打点。
+  const bumpLocalContentGeneration = () => {
+    const nextGeneration = getLocalContentGeneration() + 1;
+    GM_setValue(LOCAL_CONTENT_GENERATION_KEY, nextGeneration);
+    return nextGeneration;
+  };
+
   const invalidateLocalDataHashCache = () => {
     localDataHashCache = {
       cacheKey: null,
@@ -5887,6 +5902,7 @@
       baseContentHash: null,
     };
     invalidateLocalSyncBusinessFingerprintCache();
+    bumpLocalContentGeneration();
   };
 
   const SYNC_DIAGNOSTICS_DEFAULT = Object.freeze({
@@ -15210,10 +15226,18 @@
     const currentLastModified = GM_getValue(LAST_LOCAL_MODIFIED_KEY, 0);
     const effectiveLastModified = Math.max(pendingLastModified, currentLastModified);
     const lastSyncTs = GM_getValue("s1p_last_sync_timestamp", 0);
+    // [ARCH-INV-1] 只有“内容确实等于基线”才能丢弃待同步请求。
+    // 旧实现用 effectiveLastModified <= lastSyncTs 直接删除请求，
+    // 在时间戳漏打/回退时会把真实待推送内容静默丢掉。
+    const localDirtyState = isLocalContentDirtySinceBaseline();
 
-    if (effectiveLastModified <= lastSyncTs) {
+    if (localDirtyState.dirty !== true) {
       clearPendingAutoSyncRequest();
-      return { status: "cleared", reason: "already_synced" };
+      return {
+        status: "cleared",
+        reason: "already_synced",
+        localDirtyState,
+      };
     }
 
     const sharedDebounceCoverage = pendingDirtyScheduler.recoverPending(pending);
@@ -15245,6 +15269,9 @@
         currentLastModified,
         effectiveLastModified,
         lastSyncTs,
+        localDirtyReason: localDirtyState.reason,
+        localGeneration: localDirtyState.currentGeneration,
+        baselineGeneration: localDirtyState.baselineGeneration,
         delayMs: 600,
       },
     });
@@ -17507,8 +17534,16 @@
     ) {
       return { skip: false, reason: "background_debounce_state_exists", snapshot };
     }
-    if (snapshot.lastLocalMutationTs > lastSuccessfulSyncTs) {
-      return { skip: false, reason: "local_mutation_after_last_sync", snapshot };
+    // [ARCH-INV-1] 不再比较“本地改动时间 vs 上次同步时间”两个独立时钟，
+    // 改用“当前内容代数是否等于基线代数”——只有一个权威，无法被时钟偏移/漏打点绕过。
+    const localDirtyState = isLocalContentDirtySinceBaseline();
+    if (localDirtyState.dirty) {
+      return {
+        skip: false,
+        reason: localDirtyState.reason || "local_content_dirty_since_baseline",
+        snapshot,
+        localDirtyState,
+      };
     }
     if (
       normalizedDirection === "pull" &&
@@ -28665,6 +28700,12 @@
         : "";
     const fingerprintSource =
       saved.fingerprintSource === "snapshot" ? "snapshot" : "live";
+    // null 表示旧版基线没有代数信息（0 是合法代数，不能当哨兵）。
+    // 调度层对“缺失”保守判脏，对“相等”判干净。
+    const rawGeneration = Number(saved.localContentGeneration);
+    const localContentGeneration = Number.isFinite(rawGeneration)
+      ? Math.max(0, Math.floor(rawGeneration))
+      : null;
     return {
       contentHash,
       localContentHash,
@@ -28674,6 +28715,7 @@
       localBaseFingerprint,
       localProgressFingerprint,
       fingerprintSource,
+      localContentGeneration,
     };
   };
 
@@ -28684,6 +28726,7 @@
     remoteUpdatedAt = null,
     localBaseFingerprint = "",
     localProgressFingerprint = "",
+    localContentGeneration = null,
   } = {}) => {
     const normalizedContentHash =
       typeof contentHash === "string" && contentHash ? contentHash : null;
@@ -28743,6 +28786,14 @@
       localProgressFingerprint: resolvedFingerprintPair.progressFingerprint,
       // snapshot=真实快照对产出的指纹（可作引擎权威）；live=调用时现取（仅显示参考）
       fingerprintSource: explicitFingerprintPair ? "snapshot" : "live",
+      // 未显式指定时，基线以“写入此刻”的代数代表已同步内容。
+      // 注意 Number(null) === 0：必须先判断“未提供”，否则会把 0 当成显式代数。
+      localContentGeneration:
+        localContentGeneration === null || localContentGeneration === undefined
+          ? getLocalContentGeneration()
+          : Number.isFinite(Number(localContentGeneration))
+            ? Math.max(0, Math.floor(Number(localContentGeneration)))
+            : getLocalContentGeneration(),
       savedAt: Date.now(),
     });
     if (nextRemoteUpdatedAt) {
@@ -28760,6 +28811,49 @@
         lastSyncedRemoteUpdatedAt: nextRemoteUpdatedAt,
       });
     }
+  };
+
+  // [ARCH-INV-1] 调度层唯一的“本地是否有内容待同步”判定。
+  // 与基线代数相等即干净；缺失基线/缺失代数一律保守判脏，
+  // 因为 false-dirty 只会多跑一次同步（随后算出 no_change 并 rebase），
+  // 而 false-clean 会真正丢推送。
+  const isLocalContentDirtySinceBaseline = () => {
+    const baseline = getSyncBaselineState();
+    const currentGeneration = getLocalContentGeneration();
+    if (!baseline) {
+      return Object.freeze({
+        dirty: true,
+        known: false,
+        reason: "baseline_missing",
+        currentGeneration,
+        baselineGeneration: 0,
+      });
+    }
+    // 注意 Number(null) === 0：必须先判断“缺失”，否则旧基线会被当成代数 0。
+    const hasBaselineGeneration =
+      baseline.localContentGeneration !== null &&
+      baseline.localContentGeneration !== undefined;
+    const rawBaselineGeneration = hasBaselineGeneration
+      ? Number(baseline.localContentGeneration)
+      : NaN;
+    if (!Number.isFinite(rawBaselineGeneration)) {
+      return Object.freeze({
+        dirty: true,
+        known: false,
+        reason: "baseline_generation_missing",
+        currentGeneration,
+        baselineGeneration: null,
+      });
+    }
+    const baselineGeneration = Math.max(0, Math.floor(rawBaselineGeneration));
+    const dirty = currentGeneration !== baselineGeneration;
+    return Object.freeze({
+      dirty,
+      known: true,
+      reason: dirty ? "local_content_changed_since_baseline" : "local_content_matches_baseline",
+      currentGeneration,
+      baselineGeneration,
+    });
   };
 
   const getSyncDeltaSourceNames = (sources = {}) =>
@@ -33618,6 +33712,10 @@
             // [ARCH-INV-4] 收敛推送必须“可跨刷新存活”：asSuccessResult 已经清掉旧的
             // pending 请求，这里在它之后重新登记**持久化**的 pending + 共享调度，
             // 而不是只排一个内存计时器（页面 3.2s 后自动刷新会把它带走）。
+            //
+            // 同时必须推进本地内容代数：这一步之后“本地内容(合并结果) ≠ 基线(云端内容)”
+            // 是一个事实，若代数仍与基线相等，清洁门禁会把它判成干净并跳过回写。
+            bumpLocalContentGeneration();
             const mergedLastModified =
               Number(GM_getValue(LAST_LOCAL_MODIFIED_KEY, 0)) || Date.now();
             const outboundSchedule = debouncedTriggerRemoteSyncPush({

@@ -501,6 +501,30 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 > `Idle` ➞ `Running(probe)` ➞ *(metadata unchanged)* ➞ `Idle`
 > `Idle` ➞ `Running(probe)` ➞ *(metadata changed)* ➞ `Pending(probe)` 或 `Running(sync/pull)` ➞ `Success / Failure / Conflict / Idle`
 
+#### 本地内容代数 (dirty generation)
+
+调度层判断“本地是否有内容待同步”只有一个权威：**本地内容代数是否等于基线代数**。
+
+- `s1p_local_content_generation` 是单调递增整数；唯一递增点是 `invalidateLocalDataHashCache()`，
+  而它又是 `commitWrite`（业务数据写入）、`saveSettings`（设置写入）、`importLocalData`（导入）
+  的共同检查点——因此“写入即推进代数”由结构保证，不依赖调用方记得打点。
+- 基线（`s1p_sync_baseline_state.localContentGeneration`）记录“已同步内容所在的代数”；
+  缺失（旧版基线）用 `null` 表示，**0 是合法代数**，不能用 0 当哨兵。
+- 判定出口 `isLocalContentDirtySinceBaseline()`：`当前代数 === 基线代数` 即干净；
+  基线或代数缺失时**保守判脏**。O(1)，实测约 0.002ms（业务指纹约 160ms/3000 条）。
+- 消费方：清洁门禁 `shouldSkipAutoSyncDueToCleanState`、待同步回收
+  `recoverPendingBackgroundAutoSyncIfNeeded`。两者**不得**再用
+  “本地改动时间 vs 上次同步时间”这类两次独立时间比较。
+- 这是**保守过近似**：写后又改回原值会多跑一次同步（随后算出 `no_change` 并 rebase）。
+  false-dirty 只是浪费一次同步，false-clean 会真的丢推送，所以方向必须偏保守。
+- 合并式拉取写入基线后必须调用一次 `bumpLocalContentGeneration()`：
+  此时“本地(合并结果) ≠ 基线(云端内容)”是事实，否则收敛推送会被门禁判成干净。
+- 旧基线（缺代数）在调度层直接判脏，因此迁移窗口内不会 false-clean；
+  显示层仍有水印回退，但它只影响视觉，不影响推送正确性。
+
+这些约束由 `tests/check-sync-architectural-invariants.js` 的 INV-1 静态检查锁定
+（含“禁止回到时间戳权威”的反向断言），并由 `tests/test-sync-scheduling-authority.js` 覆盖。
+
 #### 双通道方向槽位 (directional)
 
 同步是**双通道**的：一次拉取成功不代表本地没有待推送，反之亦然。投影结果除兼容用的单值 `displayPhase` 外，必须同时携带 `directional: { pull, push }` 两个冻结槽位：
