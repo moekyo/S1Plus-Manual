@@ -5889,7 +5889,7 @@
     Math.max(1, Math.floor(Number(GM_getValue(LOCAL_CONTENT_GENERATION_KEY, 0)) || 0));
 
   // 唯一递增点：任何内容/设置写入都会经过 invalidateLocalDataHashCache，
-  // 因此“写入即推进代数”由结构保证，不依赖调用方记得打点。
+  // 因此“写入即推进代数”由写入漏斗保证，不依赖调用方记得打点。
   //
   // [ARCH-INV-1] GM 没有原子的 compare-and-set，这里用三点尽量逼近：
   // 1) 单调下限取 max(已读代数+1, now)，使两个标签页同一次递增不可能算出同一个值；
@@ -12976,12 +12976,13 @@
     }
     // [ARCH-INV-1] 待同步请求记录“登记时的内容代数”，供覆盖清理按内容判定；
     // 旧记录缺失时为 null，调用方必须保守地视为“未被覆盖”。
+    // 代数域 [1, ∞)：0/非数字/非法一律视为“缺失”（旧记录）。
     const rawDirtyGeneration = Number(value.dirtyGeneration);
     const dirtyGeneration =
       value.dirtyGeneration === null || value.dirtyGeneration === undefined
         ? null
-        : Number.isFinite(rawDirtyGeneration)
-          ? Math.max(0, Math.floor(rawDirtyGeneration))
+        : Number.isFinite(rawDirtyGeneration) && rawDirtyGeneration >= 1
+          ? Math.floor(rawDirtyGeneration)
           : null;
     return {
       version: 1,
@@ -17412,12 +17413,14 @@
       dueSource = "general";
     }
     // [ARCH-INV-1] 登记时的内容代数：覆盖清理按内容判定，缺失为 null（保守视为未覆盖）。
+    // 代数域 [1, ∞)：0/非数字/非法一律视为“缺失”。
     const rawContentGeneration = Number(value.contentGeneration);
     const contentGeneration =
-      value.contentGeneration === null || value.contentGeneration === undefined
+      value.contentGeneration === null ||
+      value.contentGeneration === undefined
         ? null
-        : Number.isFinite(rawContentGeneration)
-          ? Math.max(0, Math.floor(rawContentGeneration))
+        : Number.isFinite(rawContentGeneration) && rawContentGeneration >= 1
+          ? Math.floor(rawContentGeneration)
           : null;
     return {
       version: 1,
@@ -28964,7 +28967,7 @@
         : "";
     const fingerprintSource =
       saved.fingerprintSource === "snapshot" ? "snapshot" : "live";
-    // null 表示旧版基线没有代数信息（0 是合法代数，不能当哨兵）。
+    // null 表示旧版基线没有代数信息；代数域为 [1, ∞)，0/非数字一律视为缺失。
     // 调度层对“缺失”保守判脏，对“相等”判干净。
     const rawGeneration = Number(saved.localContentGeneration);
     // 代数域为 [1, ∞)：0/非数字都表示“旧基线没有代数信息”。
@@ -28985,8 +28988,6 @@
     };
   };
 
-  // [ARCH-INV-1] 基线必须描述“真正被同步出去的内容”，而不是写基线那一刻的实时内容。
-  // 同步期间的写入会把当前代数推进，若基线默认取当前代数，那些写入会被误记为已覆盖。
   // [ARCH-INV-1] 只有“先导出本地快照、再推送该快照”的动作，基线才描述导出时的内容。
   // 含导入的动作（拉取/强制拉取/合并回写）基线描述的是导入后的内容，
   // 若绑定导出前代数，会让成功拉取后立刻判脏（每次拉取多跑一次同步）。
@@ -28999,20 +29000,6 @@
   ]);
   const isImportBasedSyncAction = (action = "") =>
     SYNC_IMPORT_BASED_ACTIONS.includes(String(action || "").trim());
-
-  const bindBaselineContentGeneration = (
-    syncBaseline,
-    coveredContentGeneration
-  ) => {
-    const normalizedCovered = Math.max(
-      0,
-      Math.floor(Number(coveredContentGeneration) || 0)
-    );
-    if (!isObjectRecord(syncBaseline) || normalizedCovered <= 0) {
-      return syncBaseline;
-    }
-    return { ...syncBaseline, localContentGeneration: normalizedCovered };
-  };
 
   const setSyncBaselineState = ({
     contentHash = null,
@@ -29089,13 +29076,14 @@
           localContentGeneration === null ||
           localContentGeneration === undefined
         ) {
+          // 测试模式保留旧默认（既有用例语义）；生产环境直接抛错，
+          // 因为“缺省 = 写 0”会和“0 = 缺失”的域定义冲突，且无法表达语义。
           if (IS_S1P_TEST_MODE) {
             return getLocalContentGeneration();
           }
-          console.error(
-            "S1 Plus (Sync): 写同步基线时缺少覆盖内容代数，已按保守值 0 处理（会多跑一次同步）。"
+          throw new TypeError(
+            "S1 Plus (Sync): 写同步基线时缺少覆盖内容代数（生产环境必须显式提供）。"
           );
-          return 0;
         }
         const parsed = Number(localContentGeneration);
         return Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : 0;
@@ -29205,33 +29193,8 @@
         baselineGeneration: null,
       });
     }
-    if (rawBaselineGeneration < 1) {
-      const fingerprintNeedLow =
-        typeof deriveSyncNeed === "function" ? deriveSyncNeed() : null;
-      if (fingerprintNeedLow && fingerprintNeedLow.available === true) {
-        const dirtyByFingerprintLow =
-          fingerprintNeedLow.push.needed === true;
-        return Object.freeze({
-          dirty: dirtyByFingerprintLow,
-          known: true,
-          authority: "fingerprint",
-          reason: dirtyByFingerprintLow
-            ? "fingerprint_local_content_changed"
-            : "fingerprint_content_matches_baseline",
-          currentGeneration,
-          baselineGeneration: null,
-        });
-      }
-      return Object.freeze({
-        dirty: true,
-        known: false,
-        authority: "unknown",
-        reason: "baseline_generation_missing",
-        currentGeneration,
-        baselineGeneration: null,
-      });
-    }
-    const baselineGeneration = Math.max(1, Math.floor(rawBaselineGeneration));
+    // 解析层已把 <1 映射为 null，因此这里只会是 >= 1 的有限数。
+    const baselineGeneration = Math.floor(rawBaselineGeneration);
     const dirty = currentGeneration !== baselineGeneration;
     return Object.freeze({
       dirty,
@@ -33648,9 +33611,13 @@
         // [ARCH-INV-1] 覆盖代数必填：
         // - 推送类动作 = 导出快照时捕获的代数（之后写入不会被吸收）；
         // - 导入类动作 = 导入完成后的代数（基线描述导入内容）。
+        const baselineGenerationFromBuilder =
+          syncBaseline?.localContentGeneration;
         const baselineCoveredGeneration = isImportBasedSyncAction(action)
-          ? Number.isFinite(Number(syncBaseline?.localContentGeneration))
-            ? Number(syncBaseline.localContentGeneration)
+          ? baselineGenerationFromBuilder !== null &&
+            baselineGenerationFromBuilder !== undefined &&
+            Number.isFinite(Number(baselineGenerationFromBuilder))
+            ? Number(baselineGenerationFromBuilder)
             : getLocalContentGeneration()
           : effectiveCoveredContentGeneration;
         commitSyncedBaseline({
@@ -40110,13 +40077,16 @@
         clearAutoSyncRuntimeQueue();
         clearAutoSyncConflictPause();
         GM_setValue("s1p_last_sync_timestamp", Date.now());
+        const forcePullBaselineGeneration =
+          syncBaseline?.localContentGeneration;
         commitSyncedBaseline({
           syncBaseline,
-          coveredContentGeneration: Number.isFinite(
-            Number(syncBaseline?.localContentGeneration)
-          )
-            ? Number(syncBaseline.localContentGeneration)
-            : getLocalContentGeneration(),
+          coveredContentGeneration:
+            forcePullBaselineGeneration !== null &&
+            forcePullBaselineGeneration !== undefined &&
+            Number.isFinite(Number(forcePullBaselineGeneration))
+              ? Number(forcePullBaselineGeneration)
+              : getLocalContentGeneration(),
           reason: "force_pull",
         });
         settlePendingForegroundRemoteSyncRequestIfCovered(
@@ -52025,8 +51995,12 @@
           localSyncDeviceId: getLocalSyncDeviceId(settings),
           ...overrides,
         });
+        // 含导入的动作：拉取/初始恢复/合并回写。它们先推送合并结果、再把同一份
+        // 内容导入本地，因此基线必须使用“导入后的代数”。
         const isManualPullOnlyAction = (action = "") =>
-          action === "manual_pull" || action === "initial_pull_recover";
+          action === "manual_pull" ||
+          action === "initial_pull_recover" ||
+          action === "smart_merge_pull";
 
         const noteManualSuccess = (
           action,
@@ -52047,9 +52021,13 @@
           };
           if (syncBaseline) {
             // 推送类动作绑定导出时代数；拉取类使用导入后的代数。两者都必须显式提供。
+            const manualBaselineGenerationRaw =
+              syncBaseline?.localContentGeneration;
             const manualBaselineGeneration = isManualPullOnlyAction(action)
-              ? Number.isFinite(Number(syncBaseline?.localContentGeneration))
-                ? Number(syncBaseline.localContentGeneration)
+              ? manualBaselineGenerationRaw !== null &&
+                manualBaselineGenerationRaw !== undefined &&
+                Number.isFinite(Number(manualBaselineGenerationRaw))
+                ? Number(manualBaselineGenerationRaw)
                 : getLocalContentGeneration()
               : manualCoveredContentGeneration;
             commitSyncedBaseline({
