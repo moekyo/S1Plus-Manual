@@ -2,3 +2,5 @@
 *_files
 S1Plus-Local-*.user.js
 dist/
+.DS_Store
+diagnostics/
