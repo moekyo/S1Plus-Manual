@@ -59598,6 +59598,15 @@
     }
   };
 
+  // 队列状态（入队 / 开始上传 / 结束）变化时刷新“图片上传中”提示。
+  // 渲染函数在队列实例创建之后才定义，这里只做转发，避免初始化顺序耦合。
+  let s1pImagePasteQueueActivityListener = null;
+  const notifyS1pImagePasteQueueActivity = () => {
+    try {
+      s1pImagePasteQueueActivityListener?.();
+    } catch (_) { }
+  };
+
   const createS1pImagePasteQueue = (options) => {
     let uploading = false;
     const jobs = [];
@@ -59606,19 +59615,23 @@
       const job = jobs.shift();
       if (!job) return;
       uploading = true;
+      notifyS1pImagePasteQueueActivity();
       try {
         await runS1pImagePasteUploadJob(job, options);
       } finally {
         uploading = false;
+        notifyS1pImagePasteQueueActivity();
         if (jobs.length > 0) void process();
       }
     };
     return Object.freeze({
       enqueue(job) {
         jobs.push(job);
+        notifyS1pImagePasteQueueActivity();
         void process();
       },
       hasPending: () => uploading || jobs.length > 0,
+      pending: () => (uploading ? 1 : 0) + jobs.length,
       size: () => jobs.length,
     });
   };
@@ -59972,6 +59985,77 @@
     insert: insertS1pAdvancedEditorPasteResult,
   });
 
+  // --- 图片上传中的 Loading 提示 ---
+  // 慢网络下粘贴截图后的上传可能持续十几秒，期间编辑器没有任何变化，
+  // 容易被误判为上传失败而重复粘贴；队列有任务时显示一个轻量提示。
+  const S1P_IMAGE_PASTE_LOADING_ID = "s1p-image-paste-loading";
+  const S1P_IMAGE_PASTE_LOADING_TEXT = "图片上传中，请稍候…";
+  let s1pImagePasteLoadingElement = null;
+  let s1pImagePasteLoadingTextElement = null;
+
+  const getS1pImagePastePendingCount = () =>
+    (s1pReplyImagePasteUploadQueue.pending?.() || 0) +
+    (s1pAdvancedEditorPasteUploadQueue.pending?.() || 0);
+
+  const resolveS1pImagePasteLoadingState = (pendingCount) => {
+    const pending = Math.max(0, Math.floor(Number(pendingCount) || 0));
+    if (pending <= 0) {
+      return { visible: false, text: "" };
+    }
+    return {
+      visible: true,
+      text:
+        pending > 1
+          ? `${S1P_IMAGE_PASTE_LOADING_TEXT}（${pending} 张）`
+          : S1P_IMAGE_PASTE_LOADING_TEXT,
+    };
+  };
+
+  const ensureS1pImagePasteLoadingElement = () => {
+    if (
+      s1pImagePasteLoadingElement &&
+      s1pImagePasteLoadingElement.isConnected !== false
+    ) {
+      return s1pImagePasteLoadingElement;
+    }
+    const loading = document.createElement("div");
+    loading.id = S1P_IMAGE_PASTE_LOADING_ID;
+    loading.className = "s1p-image-paste-loading";
+    loading.setAttribute("role", "status");
+    loading.setAttribute("aria-live", "polite");
+    const spinner = document.createElement("span");
+    spinner.className = "s1p-image-paste-loading-spinner";
+    spinner.setAttribute("aria-hidden", "true");
+    const text = document.createElement("span");
+    text.className = "s1p-image-paste-loading-text";
+    loading.appendChild(spinner);
+    loading.appendChild(text);
+    getGlobalToastRoot().appendChild(loading);
+    s1pImagePasteLoadingElement = loading;
+    s1pImagePasteLoadingTextElement = text;
+    return loading;
+  };
+
+  const renderS1pImagePasteLoading = (pendingCount) => {
+    try {
+      const state = resolveS1pImagePasteLoadingState(pendingCount);
+      if (!state.visible) {
+        s1pImagePasteLoadingElement?.classList?.remove?.("visible");
+        return;
+      }
+      const loading = ensureS1pImagePasteLoadingElement();
+      if (s1pImagePasteLoadingTextElement) {
+        s1pImagePasteLoadingTextElement.textContent = state.text;
+      }
+      loading.classList?.add?.("visible");
+    } catch (_) { }
+  };
+
+  const refreshS1pImagePasteLoading = () =>
+    renderS1pImagePasteLoading(getS1pImagePastePendingCount());
+
+  s1pImagePasteQueueActivityListener = refreshS1pImagePasteLoading;
+
 
   const handleS1pAdvancedEditorPasteEvent = (event) => {
     try {
@@ -60084,6 +60168,13 @@
         return;
       }
     } else if (event.target !== form) {
+      return;
+    }
+    // 上传中的图片还没插入编辑器，此时提交会静默丢图；与回复弹窗保持一致先拦下。
+    if (hasS1pImagePasteUploadsInFlight()) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      showS1pReplyImagePasteMessage(S1P_IMAGE_PASTE_LOADING_TEXT, null);
       return;
     }
     reconcileS1pAdvancedEditorAttachFields();
@@ -60518,6 +60609,8 @@
   /*__S1P_TEST_HOOK_16__*/
 
   /*__S1P_TEST_HOOK_19__*/
+
+  /*__S1P_TEST_HOOK_21__*/
 
   const S1P_INIT_PHASES = Object.freeze({
     DOCUMENT_START: "document-start",

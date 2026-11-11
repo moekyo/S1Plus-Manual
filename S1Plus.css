@@ -4611,6 +4611,60 @@
       animation: s1p-toast-shake 0.5s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
     }
 
+    /* --- 图片粘贴上传中提示 --- */
+    @keyframes s1p-image-paste-loading-spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+    .s1p-image-paste-loading {
+      position: fixed;
+      left: 50%;
+      bottom: 64px;
+      z-index: 100121;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      max-width: calc(100vw - 32px);
+      padding: 8px 14px;
+      border-radius: 8px;
+      box-sizing: border-box;
+      font-size: 13px;
+      font-weight: 500;
+      line-height: 1.5;
+      color: var(--s1p-t);
+      background: var(--s1p-toast-glass-bg);
+      box-shadow: var(--s1p-toast-glass-shadow);
+      -webkit-backdrop-filter: var(--s1p-toast-glass-filter);
+      backdrop-filter: var(--s1p-toast-glass-filter);
+      opacity: 0;
+      transform: translate(-50%, 12px);
+      transition: opacity 0.2s ease-out, transform 0.2s ease-out;
+      pointer-events: none;
+    }
+    .s1p-image-paste-loading.visible {
+      opacity: 1;
+      transform: translate(-50%, 0);
+    }
+    .s1p-image-paste-loading-spinner {
+      flex: none;
+      width: 14px;
+      height: 14px;
+      border: 2px solid currentColor;
+      border-right-color: transparent;
+      border-radius: 50%;
+      animation: s1p-image-paste-loading-spin 0.8s linear infinite;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .s1p-image-paste-loading {
+        transition: none;
+      }
+      .s1p-image-paste-loading-spinner {
+        animation: none;
+        opacity: 0.75;
+      }
+    }
+
     /* --- 确认弹窗样式 --- */
     @keyframes s1p-fade-in {
       from {
