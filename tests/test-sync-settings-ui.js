@@ -514,8 +514,8 @@ assert.notEqual(
 
 [
   [
-    /\.s1p-manual-sync-attention\.is-playing\s*\{[\s\S]*?animation:\s*[\s\S]*?s1p-manual-sync-shake 0\.66s[^;]*,[\s\S]*?s1p-manual-sync-scale 2\.4s cubic-bezier\(0\.4, 0, 0\.2, 1\) 0\.36s/,
-    "晃动与缩放应作为两条动画同时声明，缩放通过 0.36s 延迟与晃动重叠。",
+    /\.s1p-manual-sync-attention\.is-playing\s*\{[\s\S]*?animation:\s*[\s\S]*?s1p-manual-sync-shake 0\.66s[^;]*,[\s\S]*?s1p-manual-sync-scale 2\.4s cubic-bezier\(0\.4, 0, 0\.2, 1\) 0\.2s/,
+    "晃动与缩放应作为两条动画同时声明，缩放通过 0.2s 延迟与晃动重叠。",
   ],
   [
     /@keyframes s1p-manual-sync-shake\s*\{[\s\S]*?translate:\s*-3px 0;[\s\S]*?translate:\s*3px 0;/,
@@ -572,15 +572,15 @@ const attentionShakeMs = Number(attentionShakeMsMatch[1]);
 const attentionScaleDelayMs = Number(attentionScaleDelayMsMatch[1]);
 const attentionScaleMs = Number(attentionScaleMsMatch[1]);
 assert.equal(attentionShakeMs, 660, "晃动时长应为 0.66s。");
-assert.equal(attentionScaleDelayMs, 360, "缩放应在 0.36s 时启动。");
+assert.equal(attentionScaleDelayMs, 200, "缩放应在 0.2s 时启动。");
 assert.equal(attentionScaleMs, 2400, "缩放时长应为 2.4s。");
 assert.ok(
   attentionScaleDelayMs < attentionShakeMs,
   "缩放必须在晃动结束前启动，两段时间区间需要有重叠，避免动画割裂。"
 );
 assert.ok(
-  attentionShakeMs - attentionScaleDelayMs >= 250,
-  "两段动画的纯重叠时间至少应有约 0.25s。"
+  attentionShakeMs - attentionScaleDelayMs >= 400,
+  "两段动画的纯重叠时间至少应有约 0.4s。"
 );
 
 assert.doesNotMatch(

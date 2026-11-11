@@ -47207,10 +47207,10 @@
     };
 
     const GIST_MIRROR_MANUAL_SYNC_ATTENTION_SCROLL_WAIT_MS = 520;
-    // 两段动画时间区间重叠：晃动从 0s 开始、0.66s 结束；缩放在 0.36s 启动、
-    // 持续 2.4s，因此有约 0.3s 重叠，衔接更连贯（与 CSS 时长保持一致）
+    // 两段动画时间区间重叠：晃动从 0s 开始、0.66s 结束；缩放在 0.2s 启动、
+    // 持续 2.4s，因此有约 0.46s 重叠，衔接更连贯（与 CSS 时长保持一致）
     const GIST_MIRROR_MANUAL_SYNC_ATTENTION_SHAKE_MS = 660;
-    const GIST_MIRROR_MANUAL_SYNC_ATTENTION_SCALE_DELAY_MS = 360;
+    const GIST_MIRROR_MANUAL_SYNC_ATTENTION_SCALE_DELAY_MS = 200;
     const GIST_MIRROR_MANUAL_SYNC_ATTENTION_SCALE_MS = 2400;
     const isManualSyncButtonFullyVisible = (button, modalBody) => {
       if (
