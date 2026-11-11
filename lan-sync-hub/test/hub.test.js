@@ -459,3 +459,122 @@ test("Gist 镜像：NAS 定时配置、种子写入、合并与冲突保护", as
   assert.equal(normalizedBody.gistMirror.dailyTime, "23:59");
   assert.equal(normalizedBody.gistMirror.enabled, true);
 });
+
+test("Gist 镜像：Hub 单侧核心改动安全快进，Gist 单侧改动才提示冲突", async (t) => {
+  const fakeGist = await startFakeGist();
+  const mirrorHub = await startHub({
+    HUB_GIST_MIRROR_GIST_ID: "gist-fast-forward",
+    HUB_GIST_MIRROR_TOKEN: "mirror-token",
+    HUB_GIST_API_BASE: fakeGist.base,
+  });
+  t.after(async () => {
+    mirrorHub.child.kill("SIGTERM");
+    await fs.rm(mirrorHub.dataDir, { recursive: true, force: true });
+    await fakeGist.close();
+  });
+
+  const base = mirrorHub.base;
+  const headers = auth();
+  const initialData = {
+    settings: { theme: "hub" },
+    blockedThreads: { t1: 1 },
+    blockedUsers: { u1: 1 },
+    read_progress: {
+      t1: { page: "2", lastReadFloor: "10", timestamp: 1000 },
+    },
+  };
+  const pushHub = async (data) => {
+    const current = await (await fetch(`${base}/snapshot`, { headers })).json();
+    const response = await fetch(`${base}/snapshot`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        baseVersion: current.version,
+        payload: buildSyncPayload(data),
+        deviceId: "lan-device",
+      }),
+    });
+    assert.equal(response.status, 200);
+  };
+  const runMirror = async () =>
+    (await fetch(`${base}/mirror/run`, { method: "POST", headers })).json();
+  const getMirrorStatus = async () =>
+    (await (await fetch(`${base}/mirror`, { headers })).json()).gistMirror;
+
+  await pushHub(initialData);
+  const seed = await runMirror();
+  assert.equal(seed.result.action, "seed");
+
+  // Gist 的 settings 与阅读进度可以先变，只要核心数据没变，Hub 的改动仍可安全快进。
+  fakeGist.setContent(
+    buildSyncPayload({
+      ...initialData,
+      settings: { theme: "gist" },
+      read_progress: {},
+    })
+  );
+
+  // Hub 单侧核心改动：用户取消屏蔽（blockedUsers 从 {u1} 变为空）。
+  const hubData = {
+    ...initialData,
+    blockedUsers: {},
+    read_progress: {
+      ...initialData.read_progress,
+      t2: { page: "1", lastReadFloor: "3", timestamp: 1500 },
+    },
+  };
+  await pushHub(hubData);
+
+  const fastForward = await runMirror();
+  assert.equal(fastForward.result.status, "success");
+  assert.equal(fastForward.result.action, "fast_forward");
+  const fastForwardData = fakeGist.getContent().data;
+  assert.deepEqual(
+    fastForwardData.blockedUsers,
+    {},
+    "Hub 取消屏蔽后应安全快进到 Gist"
+  );
+  assert.deepEqual(fastForwardData.blockedThreads, { t1: 1 });
+  assert.equal(
+    fastForwardData.settings.theme,
+    "gist",
+    "快进时保留 Gist 自己的 settings"
+  );
+  assert.equal(
+    fastForwardData.read_progress.t2.page,
+    "1",
+    "快进时阅读进度仍双向合并"
+  );
+  const fastForwardStatus = await getMirrorStatus();
+  assert.equal(fastForwardStatus.lastStatus, "success");
+  assert.match(fastForwardStatus.lastMessage, /快进/);
+
+  // Gist 单侧核心改动：不能自动覆盖，必须提示冲突并保留双方数据。
+  fakeGist.setContent(
+    buildSyncPayload({
+      ...fastForwardData,
+      blockedThreads: { t1: 1, t9: 9 },
+    })
+  );
+  const gistOnly = await runMirror();
+  assert.equal(gistOnly.result.status, "conflict");
+  const gistOnlyStatus = await getMirrorStatus();
+  assert.equal(gistOnlyStatus.lastStatus, "conflict");
+  assert.match(
+    gistOnlyStatus.lastMessage,
+    /Gist 的核心数据已被其他设备改动/
+  );
+  assert.deepEqual(
+    fakeGist.getContent().data.blockedThreads,
+    { t1: 1, t9: 9 },
+    "冲突时不能覆盖 Gist"
+  );
+
+  // 双端都改：提示文案应说明可以手动同步并选择向云端推送 / 从云端拉取。
+  await pushHub({ ...hubData, blockedUsers: { u2: 2 } });
+  const bothChanged = await runMirror();
+  assert.equal(bothChanged.result.status, "conflict");
+  const bothStatus = await getMirrorStatus();
+  assert.match(bothStatus.lastMessage, /都有新改动/);
+  assert.match(bothStatus.lastMessage, /向云端推送/);
+});

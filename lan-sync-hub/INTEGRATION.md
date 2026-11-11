@@ -86,7 +86,7 @@ const pushRemoteDataViaLan = async (dataObject, options) => {
 
 - 凭证：`HUB_GIST_MIRROR_GIST_ID` / `HUB_GIST_MIRROR_TOKEN` 只放 NAS `.env`（Token 需要 `gist` 权限），不会下发给浏览器，也不写日志；
 - 调度：设置页通过 `PUT /mirror/config` 保存 `{enabled, schedule: hourly|every6h|daily, dailyTime}`；Hub 进程内定时器执行，全部标签页关闭也照常运行；
-- 合并：读取 Hub 快照与 Gist `s1plus_sync.json` 并校验 hash；只有阅读进度差异时按“页 / 楼层 / 时间”逐条合并，写回 Gist 后把合并结果写回 Hub（版本 +1 并广播）；核心数据有差异则记录 `gist_mirror_conflict` 并跳过，绝不覆盖；
+- 合并：读取 Hub 快照与 Gist `s1plus_sync.json` 并校验 hash。只有阅读进度差异时按“页 / 楼层 / 时间”逐条合并，写回 Gist 后把合并结果写回 Hub（版本 +1 并广播）。核心数据不一致时先判断 Gist 自上次成功镜像后是否被改动：Gist 核心数据未变（Hub 单侧改动，例如局域网内取消屏蔽用户）则安全快进，把 Hub 核心数据写入 Gist（保留 Gist 自己的 settings）；Gist 与 Hub 都有核心数据改动才记录 `gist_mirror_conflict` 并跳过，绝不覆盖；
 - 手动：`POST /mirror/run` 立即执行一次；设置页“立即镜像到 Gist”调用该接口；
 - 状态：`GET /health` 的 `gistMirror` 字段（不含 token）与 `GET /mirror` 提供上次时间 / 结果，设置页直接展示；
 - 边界：Hub 在镜像期间收到新写入时，本轮只写 Gist，Hub 留到下一轮收敛；Gist 为旧版格式时提示先用浏览器同步一次。
