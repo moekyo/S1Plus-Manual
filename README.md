@@ -96,6 +96,7 @@ S1 Plus 是一个面向 Stage1st（S1）的用户脚本，目标是让论坛浏�
 
 - 本地导出/导入：完整备份/恢复
 - 远程同步：GitHub Gist
+- 局域网同步（LAN Hub）：同一局域网内的多台设备共用 NAS / 常开主机上的 Hub，自动同步优先走局域网（通常 1–2 秒），Gist 保留为手动备份与跨网兜底；NAS 可定时把局域网快照镜像到 Gist。部署、配置与故障排查见 [`LAN-SYNC-GUIDE.md`](./LAN-SYNC-GUIDE.md)，设置页「同步 → 局域网同步」内也有入口
 - 同步数据结构：`version 5.0`，包含 `contentHash` 与 `baseContentHash`
 - 启动同步 orchestrator：
   - 页面仍在新鲜窗口内时执行完整启动链路
@@ -282,9 +283,14 @@ S1 Plus 是一个面向 Stage1st（S1）的用户脚本，目标是让论坛浏�
 - 生成器会从当前 `S1Plus.js` 同步 `@match`、`@grant`、`@connect` 和 `@run-at`，并重新计算 `@require` / `@resource` 的本机路径
 - 重新安装本地 Loader 后再刷新论坛页面；生成文件不会进入 Git，因此不同设备只需各自运行一次生成命令
 
+### 局域网同步怎么部署？
+
+- 一台 NAS / 常开主机跑 `lan-sync-hub/` 里的 Hub 服务（Docker 或 Node 20），各设备在设置页「同步 → 局域网同步（LAN Hub）」填 Hub 地址和令牌即可；完整步骤、Gist 镜像与故障排查见 [`LAN-SYNC-GUIDE.md`](./LAN-SYNC-GUIDE.md)
+
 ### 同步异常怎么排查？
 
 - 检查 Token/Gist/网络
+- 使用局域网同步时，先确认 Hub 可访问：`curl http://NAS_IP:5180/health`；Hub 不可用时自动同步会失败提示，可临时用「手动同步」按 Gist 备份走一次
 - 打开设置面板后，在底部版本区域悬停 5 秒，点击出现的小点打开统一调试控制台；切到“日志与诊断” tab，展开顶部“同步状态快照”可看失败原因、阻断级别和哈希对照；点“复制全部”会把快照和当前筛选日志一起复制
 - 需要观察导航栏自动同步指示器动画或状态切换时，可执行 `window.__s1pAutoSyncIndicatorDebug.showPanel()` 直接打开“指示器调试”tab
 - 调试结束后可执行 `window.__s1pAutoSyncIndicatorDebug.hidePanel()` 隐藏面板，或执行 `window.__s1pAutoSyncIndicatorDebug.clear()` 清除预览覆盖并恢复真实指示器显示
@@ -293,6 +299,7 @@ S1 Plus 是一个面向 Stage1st（S1）的用户脚本，目标是让论坛浏�
 
 - 更新日志：[`CHANGELOG.md`](./CHANGELOG.md)
 - 开发文档：[`DEVELOPMENT.md`](./DEVELOPMENT.md)
+- 局域网同步部署与使用：[`LAN-SYNC-GUIDE.md`](./LAN-SYNC-GUIDE.md)
 - 多标签页同步重构总览：[`sync_multitab_review_and_redesign.md`](./archive/sync-across-multiple-tab/sync_multitab_review_and_redesign.md)
 - 覆盖矩阵：[`coverage_matrix.md`](./archive/sync-across-multiple-tab/sync_multitab_redesign/coverage_matrix.md)
 - 标题同步状态与运行中恢复边界：[`sync-title-status-handoff-review.md`](./docs/sync-title-status-handoff-review.md)

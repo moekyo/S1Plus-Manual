@@ -2542,6 +2542,10 @@
       /* [MODIFIED] 优化过渡动画曲线，使其更平滑 */
       transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     }
+    /* 链接形态的按钮（例如局域网同步指南入口）不显示下划线 */
+    a.s1p-btn {
+      text-decoration: none;
+    }
     .s1p-btn:focus,
     .s1p-confirm-btn:focus,
     .s1p-inline-toggle-btn:focus {

@@ -277,6 +277,14 @@ assert.doesNotMatch(
     "测试连接按钮或状态输出区域缺失。",
   ],
   [
+    /id="s1p-lan-sync-test-btn"[^>]*>测试连接<\/button>[\s\S]*?id="s1p-lan-sync-guide-link" class="s1p-btn s1p-lan-sync-guide-btn" href="https:\/\/github\.com\/moekyo\/S1Plus-Manual\/blob\/main\/LAN-SYNC-GUIDE\.md" target="_blank" rel="noopener noreferrer">部署与使用指南<\/a>/,
+    "局域网同步缺少「部署与使用指南」入口或跳转目标不正确。",
+  ],
+  [
+    /首次部署、镜像与常见问题请先阅读上方「部署与使用指南」/,
+    "局域网同步说明未引导到部署与使用指南。",
+  ],
+  [
     /开启后自动同步会优先走局域网 Hub，比 GitHub Gist 更快；GitHub Gist 保留为手动备份与跨网兜底，关闭后完全回到 Gist/,
     "局域网同步说明未表达 Hub 优先、Gist 兜底与关闭后回到 Gist。",
   ],
@@ -363,6 +371,28 @@ assert.ok(
   lanSectionHtml.indexOf('data-s1p-sync-section-body="lan"') <
     lanSectionHtml.indexOf('id="s1p-lan-sync-enabled-toggle"'),
   "局域网同步总开关必须位于折叠体内部，收起分组时随其他控件一起隐藏。"
+);
+
+// 指南入口必须指向仓库中真实存在的 Markdown 文件，避免发布后 404。
+const lanGuideHrefMatch = lanSectionHtml.match(
+  /id="s1p-lan-sync-guide-link"[^>]*href="([^"]+)"/
+);
+assert.ok(lanGuideHrefMatch, "局域网同步指南入口缺少跳转链接。");
+const lanGuideRepoPrefix = "https://github.com/moekyo/S1Plus-Manual/blob/main/";
+assert.equal(
+  lanGuideHrefMatch[1].startsWith(lanGuideRepoPrefix),
+  true,
+  "指南链接应指向仓库 main 分支。"
+);
+const lanGuideFile = lanGuideHrefMatch[1].slice(lanGuideRepoPrefix.length);
+assert.ok(
+  require("fs").existsSync(require("path").join(__dirname, "..", lanGuideFile)),
+  `指南链接指向的文件不存在：${lanGuideFile}`
+);
+assert.match(
+  sourceCode,
+  /a\.s1p-btn \{\s*text-decoration: none;/,
+  "链接形态的按钮应去掉下划线。"
 );
 
 // --- Gist 镜像（由 NAS 执行，脚本只做配置与状态展示） ----------------------
