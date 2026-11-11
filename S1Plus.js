@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         S1 Plus - Stage1st 体验增强套件
 // @namespace    http://tampermonkey.net/
-// @version      7.1.1
+// @version      7.2.0
 // @description  为Stage1st论坛提供帖子/用户/楼层屏蔽、导航栏自定义、自动签到、阅读进度跟踪、回复收藏、远程同步等多种功能，全方位优化你的论坛体验。
 // @author       moekyo
 // @match        https://stage1st.com/2b/*
@@ -28,8 +28,8 @@
   const IS_S1P_TEST_MODE =
     typeof globalThis !== "undefined" && globalThis.__S1P_TEST_MODE__ === true;
 
-  const SCRIPT_VERSION = "7.1.1";
-  const SCRIPT_RELEASE_DATE = "2026-11-05";
+  const SCRIPT_VERSION = "7.2.0";
+  const SCRIPT_RELEASE_DATE = "2026-11-11";
 
   const S1P_STATIC_DATA_RESOURCE_NAME = "s1p-static-data";
   const loadS1pStaticData = () => {
@@ -58906,7 +58906,9 @@
     // [OPTIMIZED] 优化HTML结构以改善文本布局和换行
     const bodyHtml = `
     <p>已更新至 v${SCRIPT_VERSION}！</p>
-    <p>优化了首屏加载的逻辑。</p>
+    <p>新增「局域网同步（LAN Hub）」：同一局域网多台设备可共用 NAS 上的 Hub，自动同步优先走局域网，通常 1–2 秒完成；Gist 保留为备份与跨网兜底，设置页内置部署与使用指南。</p>
+    <p>粘贴截图更顺手：上传期间显示「图片上传中」提示，并在完成前拦截保存/快捷键提交，避免重复粘贴或图片丢失。</p>
+    <p>列表与深色模式修复：屏蔽、标记列表支持搜索与匹配高亮；取消屏蔽按钮、标记勾选、同步分组标题等低对比控件已修正。</p>
   `;
 
     const buttons = [
