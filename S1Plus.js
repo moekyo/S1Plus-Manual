@@ -47207,6 +47207,9 @@
     };
 
     const GIST_MIRROR_MANUAL_SYNC_ATTENTION_SCROLL_WAIT_MS = 520;
+    // 两段动画分开处理：先快节奏晃动，再缓慢缩放回落（与 CSS 时长保持一致）
+    const GIST_MIRROR_MANUAL_SYNC_ATTENTION_SHAKE_MS = 600;
+    const GIST_MIRROR_MANUAL_SYNC_ATTENTION_SCALE_MS = 2400;
     const isManualSyncButtonFullyVisible = (button, modalBody) => {
       if (
         !(button instanceof HTMLElement) ||
@@ -47263,17 +47266,41 @@
       if (!modal.isConnected || !(manualSyncButton instanceof HTMLElement)) {
         return;
       }
-      manualSyncButton.classList.remove("s1p-manual-sync-attention");
+      const attentionToken = String(Date.now());
+      const isCurrentAttention = () =>
+        manualSyncButton.dataset.s1pAttentionToken === attentionToken;
+      const clearAttention = () => {
+        if (!isCurrentAttention()) {
+          return;
+        }
+        delete manualSyncButton.dataset.s1pAttentionToken;
+        manualSyncButton.classList.remove(
+          "s1p-manual-sync-attention",
+          "is-shaking",
+          "is-scaling"
+        );
+      };
+      manualSyncButton.dataset.s1pAttentionToken = attentionToken;
+      manualSyncButton.classList.remove("is-shaking", "is-scaling");
+      manualSyncButton.classList.add("s1p-manual-sync-attention");
       // 强制重排，保证重复触发时动画从头开始
       void manualSyncButton.offsetWidth;
-      manualSyncButton.classList.add("s1p-manual-sync-attention");
-      const clearAttention = () =>
-        manualSyncButton.classList.remove("s1p-manual-sync-attention");
-      manualSyncButton.addEventListener("animationend", clearAttention, {
-        once: true,
-      });
-      // prefers-reduced-motion 下 animation 被关闭，仍用兜底计时器移除高亮
-      window.setTimeout(clearAttention, 3800);
+      manualSyncButton.classList.add("is-shaking");
+      window.setTimeout(() => {
+        if (!modal.isConnected || !isCurrentAttention()) {
+          return;
+        }
+        manualSyncButton.classList.remove("is-shaking");
+        void manualSyncButton.offsetWidth;
+        manualSyncButton.classList.add("is-scaling");
+      }, GIST_MIRROR_MANUAL_SYNC_ATTENTION_SHAKE_MS);
+      // prefers-reduced-motion 下 animation 被关闭，靠计时器兜底清理静态描边
+      window.setTimeout(
+        clearAttention,
+        GIST_MIRROR_MANUAL_SYNC_ATTENTION_SHAKE_MS +
+          GIST_MIRROR_MANUAL_SYNC_ATTENTION_SCALE_MS +
+          120
+      );
     };
 
     const renderGistMirrorStatus = (status, options = {}) => {

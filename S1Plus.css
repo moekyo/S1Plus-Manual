@@ -4361,54 +4361,62 @@
       margin-bottom: 20px;
     }
 
-    /* NAS 镜像提示需要手动同步时：先滚动到“手动同步”按钮，再晃动 + 放大提示一次 */
+    /* NAS 镜像提示需要手动同步时：先滚动到“手动同步”按钮，
+       再按“快节奏晃动 → 缓慢缩放 → 恢复”两段动画提示一次 */
     .s1p-manual-sync-attention {
       position: relative;
       z-index: 1;
-      animation: s1p-manual-sync-attention 3.2s ease-in-out 1;
       transform-origin: center;
     }
-    @keyframes s1p-manual-sync-attention {
+    /* 第一段：参考 animate.css 的 shake 关键帧，缩短时长让晃动更利落 */
+    .s1p-manual-sync-attention.is-shaking {
+      animation: s1p-manual-sync-shake 0.6s cubic-bezier(0.4, 0, 0.2, 1) 1;
+    }
+    @keyframes s1p-manual-sync-shake {
+      0%,
+      100% {
+        transform: translate3d(0, -1px, 0);
+      }
+      10%,
+      30%,
+      50%,
+      70%,
+      90% {
+        transform: translate3d(-3px, -1px, 0);
+      }
+      20%,
+      40%,
+      60%,
+      80% {
+        transform: translate3d(3px, -1px, 0);
+      }
+    }
+    /* 第二段：用 Material 标准缓动缓慢放大并回落 */
+    .s1p-manual-sync-attention.is-scaling {
+      animation: s1p-manual-sync-scale 2.4s cubic-bezier(0.4, 0, 0.2, 1) 1;
+    }
+    @keyframes s1p-manual-sync-scale {
       0% {
-        transform: translate(0, -1px) scale(1);
-        box-shadow: 0 0 0 0 transparent;
+        transform: translate3d(0, -1px, 0) scale(1);
       }
-      8% {
-        transform: translate(-3px, -1px) scale(1);
+      45% {
+        transform: translate3d(0, -1px, 0) scale(1.1);
       }
-      16% {
-        transform: translate(3px, -1px) scale(1);
-      }
-      24% {
-        transform: translate(-2px, -1px) scale(1);
-      }
-      32% {
-        transform: translate(2px, -1px) scale(1);
-      }
-      40% {
-        transform: translate(-1px, -1px) scale(1);
-      }
-      50% {
-        transform: translate(0, -1px) scale(1);
-      }
-      68% {
-        transform: translate(0, -1px) scale(1.12);
-        box-shadow: 0 0 0 5px color-mix(in srgb, var(--s1p-sec) 18%, transparent);
-      }
-      84% {
-        transform: translate(0, -1px) scale(1.12);
-        box-shadow: 0 0 0 3px color-mix(in srgb, var(--s1p-sec) 10%, transparent);
+      62% {
+        transform: translate3d(0, -1px, 0) scale(1.1);
       }
       100% {
-        transform: translate(0, -1px) scale(1);
-        box-shadow: 0 0 0 0 transparent;
+        transform: translate3d(0, -1px, 0) scale(1);
       }
     }
     @media (prefers-reduced-motion: reduce) {
       .s1p-manual-sync-attention {
-        animation: none;
         outline: 2px solid var(--s1p-sec);
         outline-offset: 2px;
+      }
+      .s1p-manual-sync-attention.is-shaking,
+      .s1p-manual-sync-attention.is-scaling {
+        animation: none;
       }
     }
     .s1p-sync-textarea {

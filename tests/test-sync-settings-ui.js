@@ -495,36 +495,75 @@ assert.doesNotMatch(
   "测试连接实现不得在控制台输出令牌或请求详情。"
 );
 
+const attentionCssStart = sourceCode.indexOf(
+  "/* NAS 镜像提示需要手动同步时"
+);
+const attentionCssEnd = sourceCode.indexOf(
+  ".s1p-sync-textarea {",
+  attentionCssStart
+);
+const attentionCssBlock =
+  attentionCssStart >= 0 && attentionCssEnd > attentionCssStart
+    ? sourceCode.slice(attentionCssStart, attentionCssEnd)
+    : "";
+assert.notEqual(
+  attentionCssBlock.length,
+  0,
+  "缺少 NAS 镜像手动同步提示动画样式块。"
+);
+
 [
   [
-    /\.s1p-manual-sync-attention\s*\{[^}]*animation:\s*s1p-manual-sync-attention 3\.2s ease-in-out 1;/,
-    "手动同步提示动画应为缓慢柔和的 3.2s ease-in-out。",
+    /\.s1p-manual-sync-attention\.is-shaking\s*\{[^}]*animation:\s*s1p-manual-sync-shake 0\.6s cubic-bezier\(0\.4, 0, 0\.2, 1\) 1;/,
+    "第一阶段左右晃动应为更快的 0.6s 动画。",
   ],
   [
-    /@keyframes s1p-manual-sync-attention\s*\{[\s\S]*?translate\(-3px[\s\S]*?scale\(1\.12\)[\s\S]*?scale\(1\)/,
-    "手动同步提示动画应按“柔和晃动 → 放大 → 恢复原状”的顺序播放。",
+    /@keyframes s1p-manual-sync-shake\s*\{[\s\S]*?translate3d\(-3px, -1px, 0\)[\s\S]*?translate3d\(3px, -1px, 0\)/,
+    "第一阶段晃动关键帧应参考 animate.css shake 的左右交替模式。",
   ],
   [
-    /@media \(prefers-reduced-motion: reduce\)\s*\{\s*\.s1p-manual-sync-attention\s*\{[^}]*animation:\s*none/,
+    /\.s1p-manual-sync-attention\.is-scaling\s*\{[^}]*animation:\s*s1p-manual-sync-scale 2\.4s cubic-bezier\(0\.4, 0, 0\.2, 1\) 1;/,
+    "第二阶段缩放应为更慢的 2.4s 动画。",
+  ],
+  [
+    /@keyframes s1p-manual-sync-scale\s*\{[\s\S]*?scale\(1\.1\)[\s\S]*?scale\(1\)/,
+    "第二阶段应缓慢放大到 1.1 倍后恢复原状。",
+  ],
+  [
+    /@media \(prefers-reduced-motion: reduce\)\s*\{\s*\.s1p-manual-sync-attention\s*\{[^}]*outline:/,
+    "手动同步提示在 reduced-motion 下应改为静态描边提示。",
+  ],
+  [
+    /@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\.s1p-manual-sync-attention\.is-shaking,[\s\S]*?\.s1p-manual-sync-attention\.is-scaling\s*\{[^}]*animation:\s*none/,
     "手动同步提示动画缺少 reduced-motion 降级。",
+  ],
+  [
+    /const GIST_MIRROR_MANUAL_SYNC_ATTENTION_SHAKE_MS = 600;[\s\S]*?const GIST_MIRROR_MANUAL_SYNC_ATTENTION_SCALE_MS = 2400;/,
+    "两段动画时长常量应与 CSS 保持一致（600ms / 2400ms）。",
+  ],
+  [
+    /manualSyncButton\.classList\.add\("is-shaking"\)[\s\S]*?manualSyncButton\.classList\.add\("is-scaling"\)[\s\S]*?GIST_MIRROR_MANUAL_SYNC_ATTENTION_SHAKE_MS/,
+    "两段动画应分开处理：先播放 is-shaking，晃动结束后再切换 is-scaling。",
+  ],
+  [
+    /dataset\.s1pAttentionToken = attentionToken;[\s\S]*?clearAttention[\s\S]*?GIST_MIRROR_MANUAL_SYNC_ATTENTION_SCALE_MS[\s\S]*?120/,
+    "手动同步提示缺少 token 去重与总时长兜底清理。",
   ],
   [
     /const playGistMirrorManualSyncAttention = async \(status\) => \{[\s\S]*?modalBody\.scrollTo\(\{[\s\S]*?behavior: "smooth"/,
     "NAS 镜像需要手动同步时未自动滚动到“手动同步”按钮。",
   ],
   [
-    /manualSyncButton\.classList\.add\("s1p-manual-sync-attention"\)[\s\S]*?addEventListener\("animationend"/,
-    "手动同步提示动画未在结束后移除并恢复原状。",
-  ],
-  [
-    /prefers-reduced-motion 下 animation 被关闭[\s\S]*?window\.setTimeout\(clearAttention, 3800\)/,
-    "手动同步提示缺少 reduced-motion / 异常情况下的清理兜底。",
-  ],
-  [
     /const runGistMirrorOnHubFromControls = async \(\) => \{[\s\S]*?s1pRunGistMirrorOnHub\(\)[\s\S]*?status\.lastStatus === "conflict"[\s\S]*?playGistMirrorManualSyncAttention\(status\)/,
     "点击“立即镜像到 Gist”得到 conflict 后未触发手动同步提示动画。",
   ],
 ].forEach(([pattern, message]) => assert.match(sourceCode, pattern, message));
+
+assert.doesNotMatch(
+  attentionCssBlock,
+  /box-shadow/,
+  "手动同步提示动画不应使用光晕（box-shadow）。"
+);
 
 assert.equal(
   (sourceCode.match(/playGistMirrorManualSyncAttention/g) || []).length,
