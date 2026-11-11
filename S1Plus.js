@@ -47206,6 +47206,112 @@
       }
     };
 
+    const GIST_MIRROR_MANUAL_SYNC_ATTENTION_SCROLL_WAIT_MS = 460;
+    let gistMirrorManualSyncAttentionKey = "";
+    const isManualSyncButtonFullyVisible = (button, modalBody) => {
+      if (
+        !(button instanceof HTMLElement) ||
+        !(modalBody instanceof HTMLElement)
+      ) {
+        return false;
+      }
+      const bodyRect = modalBody.getBoundingClientRect();
+      const buttonRect = button.getBoundingClientRect();
+      return (
+        buttonRect.width > 0 &&
+        buttonRect.height > 0 &&
+        buttonRect.top >= bodyRect.top &&
+        buttonRect.bottom <= bodyRect.bottom
+      );
+    };
+    // NAS 镜像提示需要手动同步时：展开局域网分组、滚动到“手动同步”按钮，
+    // 再晃动 + 放大提示一次，结束后恢复原状。
+    const playGistMirrorManualSyncAttention = async (status) => {
+      if (!status || status.lastStatus !== "conflict") {
+        return;
+      }
+      if (activeSettingsTabKey !== "sync") {
+        return;
+      }
+      const attentionKey = String(status.lastAt || status.lastMessage || "");
+      if (!attentionKey || attentionKey === gistMirrorManualSyncAttentionKey) {
+        return;
+      }
+      const manualSyncButton = modal.querySelector(
+        "#s1p-remote-manual-sync-btn"
+      );
+      const modalBody = modal.querySelector(".s1p-modal-body");
+      if (
+        !(manualSyncButton instanceof HTMLButtonElement) ||
+        manualSyncButton.disabled ||
+        !(modalBody instanceof HTMLElement)
+      ) {
+        return;
+      }
+      gistMirrorManualSyncAttentionKey = attentionKey;
+
+      const lanSectionBody = modal.querySelector(
+        '[data-s1p-sync-section-body="lan"]'
+      );
+      if (lanSectionBody instanceof HTMLElement && lanSectionBody.hidden) {
+        setSyncSettingsSectionExpanded("lan", true);
+        await new Promise((resolve) => window.setTimeout(resolve, 260));
+      }
+      if (
+        !modal.isConnected ||
+        activeSettingsTabKey !== "sync" ||
+        !(manualSyncButton instanceof HTMLButtonElement) ||
+        manualSyncButton.disabled
+      ) {
+        return;
+      }
+      if (!isManualSyncButtonFullyVisible(manualSyncButton, modalBody)) {
+        // 只滚动设置面板的 modal-body，避免带动背后的论坛页面
+        const bodyRect = modalBody.getBoundingClientRect();
+        const buttonRect = manualSyncButton.getBoundingClientRect();
+        const targetScrollTop =
+          modalBody.scrollTop +
+          buttonRect.top -
+          bodyRect.top -
+          Math.max(0, (bodyRect.height - buttonRect.height) / 2);
+        modalBody.scrollTo({
+          top: Math.max(0, targetScrollTop),
+          behavior: "smooth",
+        });
+        await new Promise((resolve) =>
+          window.setTimeout(
+            resolve,
+            GIST_MIRROR_MANUAL_SYNC_ATTENTION_SCROLL_WAIT_MS
+          )
+        );
+      }
+      if (
+        !modal.isConnected ||
+        activeSettingsTabKey !== "sync" ||
+        !(manualSyncButton instanceof HTMLElement)
+      ) {
+        return;
+      }
+      const attentionToken = `${attentionKey}:${Date.now()}`;
+      manualSyncButton.dataset.s1pAttentionToken = attentionToken;
+      const clearAttention = () => {
+        if (manualSyncButton.dataset.s1pAttentionToken !== attentionToken) {
+          return;
+        }
+        delete manualSyncButton.dataset.s1pAttentionToken;
+        manualSyncButton.classList.remove("s1p-manual-sync-attention");
+      };
+      manualSyncButton.classList.remove("s1p-manual-sync-attention");
+      // 强制重排，保证重复触发时动画从头开始
+      void manualSyncButton.offsetWidth;
+      manualSyncButton.classList.add("s1p-manual-sync-attention");
+      manualSyncButton.addEventListener("animationend", clearAttention, {
+        once: true,
+      });
+      // prefers-reduced-motion 下 animation 被关闭，仍用兜底计时器移除高亮
+      window.setTimeout(clearAttention, 1800);
+    };
+
     const renderGistMirrorStatus = (status, options = {}) => {
       if (!gistMirrorStatus) {
         return;
@@ -47244,6 +47350,9 @@
           : status.lastStatus === "conflict" || status.lastStatus === "failure"
             ? "var(--s1p-red)"
             : "";
+      if (status.lastStatus === "conflict") {
+        void playGistMirrorManualSyncAttention(status);
+      }
     };
 
     const applyGistMirrorStatusToControls = (status) => {
@@ -51086,6 +51195,14 @@
         setActiveSettingsTab(normalizedTabKey);
         updateSettingsModalTabPerformanceHints(normalizedTabKey);
         updateObservedModalBodyTabContent();
+        if (normalizedTabKey === "sync") {
+          window.setTimeout(() => {
+            if (!modal.isConnected || activeSettingsTabKey !== "sync") {
+              return;
+            }
+            void refreshGistMirrorPanel();
+          }, 420);
+        }
       });
       moveTabSlider(settingsTabContainer);
       scheduleSettingsModalNeighborPrewarm(normalizedTabKey);

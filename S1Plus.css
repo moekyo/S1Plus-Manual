@@ -4360,6 +4360,52 @@
       gap: 8px;
       margin-bottom: 20px;
     }
+
+    /* NAS 镜像提示需要手动同步时：先滚动到“手动同步”按钮，再晃动 + 放大提示一次 */
+    .s1p-manual-sync-attention {
+      position: relative;
+      z-index: 1;
+      animation: s1p-manual-sync-attention 1.6s cubic-bezier(0.22, 1, 0.36, 1) 1;
+      transform-origin: center;
+    }
+    @keyframes s1p-manual-sync-attention {
+      0% {
+        transform: translate(0, -1px) scale(1);
+      }
+      10% {
+        transform: translate(-5px, -1px) scale(1);
+      }
+      20% {
+        transform: translate(5px, -1px) scale(1);
+      }
+      30% {
+        transform: translate(-4px, -1px) scale(1);
+      }
+      40% {
+        transform: translate(4px, -1px) scale(1);
+      }
+      50% {
+        transform: translate(-2px, -1px) scale(1);
+      }
+      62% {
+        transform: translate(0, -1px) scale(1);
+      }
+      78% {
+        transform: translate(0, -1px) scale(1.18);
+        box-shadow: 0 0 0 6px color-mix(in srgb, var(--s1p-sec) 24%, transparent);
+      }
+      100% {
+        transform: translate(0, -1px) scale(1);
+        box-shadow: 0 0 0 0 transparent;
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .s1p-manual-sync-attention {
+        animation: none;
+        outline: 2px solid var(--s1p-sec);
+        outline-offset: 2px;
+      }
+    }
     .s1p-sync-textarea {
       width: 100%;
       min-height: 80px;
