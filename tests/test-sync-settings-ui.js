@@ -595,4 +595,23 @@ assert.equal(
   "手动同步提示动画只应从“立即镜像到 Gist”的结果触发，不应在切换 tab / 普通刷新时播放。"
 );
 
+[
+  [
+    /const runGistMirrorAfterManualSyncPush = async \(manualSyncStartedAt\) => \{[\s\S]*?manualSyncInfo\.action !== "push"[\s\S]*?s1pRunGistMirrorOnHub\(\)[\s\S]*?renderGistMirrorStatus\(status\)/,
+    "手动同步推送成功后未自动补跑 NAS 镜像并刷新状态。",
+  ],
+  [
+    /const GIST_MIRROR_AUTO_RUN_AFTER_PUSH_KEY =[\s\S]*?"s1p_gist_mirror_auto_run_after_push_ts";[\s\S]*?GM_setValue\(GIST_MIRROR_AUTO_RUN_AFTER_PUSH_KEY, infoTimestamp\)/,
+    "手动同步后的自动镜像缺少按推送时间戳去重，可能重复触发。",
+  ],
+  [
+    /if \(status\?\.lastStatus === "conflict"\) \{[\s\S]*?manualPushAt > \(Number\(status\.lastAt\) \|\| 0\)[\s\S]*?runGistMirrorAfterManualSyncPush\(manualPushAt\)/,
+    "打开设置页发现旧冲突时，未在存在更新的人工推送后自动补跑镜像。",
+  ],
+  [
+    /const manualSyncStartedAt = Date\.now\(\);[\s\S]*?await runSettingsManualSync\(\);[\s\S]*?void runGistMirrorAfterManualSyncPush\(manualSyncStartedAt\)/,
+    "点击手动同步后未在完成后触发镜像状态刷新。",
+  ],
+].forEach(([pattern, message]) => assert.match(sourceCode, pattern, message));
+
 console.log("[sync-settings-ui] Sync settings restructure verified.");

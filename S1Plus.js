@@ -47370,6 +47370,21 @@
         renderGistMirrorStatus(status);
         setGistMirrorControlsDisabled(status?.configured !== true);
         updateGistMirrorDailyTimeVisibility();
+        if (status?.lastStatus === "conflict") {
+          const manualSyncInfo = GM_getValue(
+            "s1p_last_manual_sync_info",
+            {}
+          );
+          const manualPushAt =
+            manualSyncInfo &&
+            typeof manualSyncInfo === "object" &&
+            manualSyncInfo.action === "push"
+              ? Number(manualSyncInfo.timestamp) || 0
+              : 0;
+          if (manualPushAt > (Number(status.lastAt) || 0)) {
+            void runGistMirrorAfterManualSyncPush(manualPushAt);
+          }
+        }
       } catch (error) {
         setGistMirrorControlsDisabled(true);
         renderGistMirrorStatus(null, { supported: false });
@@ -47458,6 +47473,48 @@
         gistMirrorNowBtn.dataset.s1pBusy = "false";
         gistMirrorNowBtn.disabled = false;
         gistMirrorNowBtn.textContent = originalText;
+      }
+    };
+
+    const GIST_MIRROR_AUTO_RUN_AFTER_PUSH_KEY =
+      "s1p_gist_mirror_auto_run_after_push_ts";
+    // 手动同步“向云端推送”成功后，Gist 已更新，但 NAS 镜像状态仍是上一轮
+    // 的结果。这里自动补跑一次 NAS 镜像并刷新面板，避免提示停在旧冲突上。
+    const runGistMirrorAfterManualSyncPush = async (manualSyncStartedAt) => {
+      if (!gistMirrorStatus || !isLanSyncTransportActive()) {
+        return;
+      }
+      const manualSyncInfo = GM_getValue("s1p_last_manual_sync_info", {});
+      if (
+        !manualSyncInfo ||
+        typeof manualSyncInfo !== "object" ||
+        manualSyncInfo.action !== "push"
+      ) {
+        return;
+      }
+      const infoTimestamp = Number(manualSyncInfo.timestamp) || 0;
+      if (
+        infoTimestamp <= 0 ||
+        infoTimestamp < (Number(manualSyncStartedAt) || 0)
+      ) {
+        return;
+      }
+      const lastAutoRunAt =
+        Number(GM_getValue(GIST_MIRROR_AUTO_RUN_AFTER_PUSH_KEY, 0)) || 0;
+      if (infoTimestamp <= lastAutoRunAt) {
+        return;
+      }
+      try {
+        const status = await s1pRunGistMirrorOnHub();
+        if (!status) {
+          return;
+        }
+        applyGistMirrorStatusToControls(status);
+        renderGistMirrorStatus(status);
+        // 成功补跑后才记录时间戳；失败时下次打开设置页仍可重试
+        GM_setValue(GIST_MIRROR_AUTO_RUN_AFTER_PUSH_KEY, infoTimestamp);
+      } catch (_) {
+        // 手动同步本身已成功，镜像刷新失败不打断用户，等下次打开/定时镜像
       }
     };
 
@@ -52022,6 +52079,7 @@
           return;
         }
 
+        const manualSyncStartedAt = Date.now();
         const originalButtonText = manualSyncButton.textContent;
         manualSyncButton.disabled = true;
         manualSyncButton.textContent = "同步中...";
@@ -52038,6 +52096,7 @@
             saveButton.disabled = false;
           }
           updateRemoteSyncInputsState();
+          void runGistMirrorAfterManualSyncPush(manualSyncStartedAt);
         }
       }
 
