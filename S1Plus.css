@@ -137,6 +137,10 @@
       --s1p-secondary-text: #374151;
       --s1p-code-bg: #eee;
       --s1p-readprogress-bg: #b8d56f;
+      /* 阅读位置指示器文字：浅色主题用中等橄榄绿，保证 4.5:1 但不刺眼 */
+      --s1p-readprogress-text: #4c571f;
+      /* 彩色标记色块上的勾选：浅色块用暖褐勾，图形对比度 >= 3:1 */
+      --s1p-color-option-check-soft: #5a4a22;
 
       --s1p-list-item-status-bg: #dddddd;
       --s1p-list-item-status-text: #022c80;
@@ -1390,7 +1394,7 @@
       opacity: 1;
       background: var(--s1p-sec);
       border-color: var(--s1p-sec);
-      color: var(--s1p-white);
+      color: var(--s1p-sub-h-t);
       box-shadow: 0 0 0 2px color-mix(in srgb, var(--s1p-sec) 18%, transparent);
     }
     .s1p-debug-tab-content {
@@ -2250,7 +2254,7 @@
       border-radius: 4px;
     }
     .s1p-segmented-control-option.active {
-      color: var(--s1p-white);
+      color: var(--s1p-sub-h-t);
       font-weight: 500;
       cursor: default;
     }
@@ -2690,7 +2694,7 @@
     }
     .s1p-confirm-action-btn.s1p-confirm:hover {
       background-color: var(--s1p-confirm-hover-bg);
-      background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='2.5' stroke='%23ffffff'%3e%3cpath stroke-linecap='round' stroke-linejoin='round' d='M4.5 12.75l6 6 9-13.5' /%3e%3c/svg%3e");
+      background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='2.5' stroke='%23256b45'%3e%3cpath stroke-linecap='round' stroke-linejoin='round' d='M4.5 12.75l6 6 9-13.5' /%3e%3c/svg%3e");
     }
     .s1p-confirm-action-btn.s1p-cancel {
       background-color: transparent;
@@ -2698,7 +2702,7 @@
     }
     .s1p-confirm-action-btn.s1p-cancel:hover {
       background-color: var(--s1p-cancel-hover-bg);
-      background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='2.5' stroke='%23ffffff'%3e%3cpath stroke-linecap='round' stroke-linejoin='round' d='M6 18L18 6M6 6l12 12' /%3e%3c/svg%3e");
+      background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='2.5' stroke='%238a1f1f'%3e%3cpath stroke-linecap='round' stroke-linejoin='round' d='M6 18L18 6M6 6l12 12' /%3e%3c/svg%3e");
     }
 
     /* --- [MODIFIED] 统一确认菜单容器 (去除间距以统一高度) --- */
@@ -3348,7 +3352,7 @@
     }
     .s1p-dp-day.today:hover {
         background-color: var(--s1p-sec);
-        color: #fff;
+        color: var(--s1p-sub-h-t);
     }
     .s1p-dp-day.empty {
       pointer-events: none;
@@ -3631,6 +3635,17 @@
     .s1p-color-option[data-color="green"] { background-color: var(--s1p-tag-green); }
     .s1p-color-option[data-color="blue"] { background-color: var(--s1p-tag-blue); }
     .s1p-color-option[data-color="purple"] { background-color: var(--s1p-tag-purple); }
+
+    /* 浅色标签色（橙/绿/黄）上的白勾对比度不足，改用暖褐勾；红/蓝/紫仍用白勾 */
+    .s1p-color-option[data-color="orange"],
+    .s1p-color-option[data-color="green"],
+    .s1p-color-option[data-color="yellow"] {
+      color: var(--s1p-color-option-check-soft);
+    }
+    /* 深色主题会把标签色整体提亮，彩色色块统一改用暖褐勾 */
+    html.s1p-theme-dark .s1p-color-option[data-color]:not([data-color=""]) {
+      color: var(--s1p-color-option-check-soft);
+    }
 
     /* --- 历史标记列表样式 --- */
     .s1p-history-tags-container {
@@ -4326,9 +4341,12 @@
     }
     .s1p-unblock-btn:hover {
       background-color: var(--s1p-red-h);
+      /* 高亮背景为红色，文字固定用白色，避免深色主题下继承深色文字导致对比度不足 */
+      color: var(--s1p-white);
     }
     .s1p-unblock-post-btn:hover {
       background-color: var(--s1p-red-h);
+      color: var(--s1p-white);
     }
     .s1p-local-sync-desc {
       /* [优化] 调整描述文字样式，提升可读性 */
@@ -6663,7 +6681,7 @@
     }
     .s1p-bookmark-toggle:hover {
       background-color: var(--s1p-sec);
-      color: var(--s1p-white);
+      color: var(--s1p-sub-h-t);
       text-decoration: none;
       box-shadow: 0 2px 4px rgba(var(--s1p-shadow-color-rgb), 0.12);
     }
@@ -6676,7 +6694,7 @@
     }
     .s1p-bookmark-toggle:active {
       background-color: var(--s1p-sec-h);
-      color: var(--s1p-white);
+      color: var(--s1p-sub-h-t);
     }
     .s1p-bookmark-preview-only-hint {
       display: block;
@@ -6763,7 +6781,7 @@
       align-items: center;
       gap: 4px;
       background-color: var(--s1p-readprogress-bg);
-      color: var(--s1p-white);
+      color: var(--s1p-readprogress-text);
       padding: 3px 8px 4px; /* <-- [修改] 使用非对称内边距修正视觉重心 */
       border-radius: 16px;
       font-size: 11px;
@@ -6804,7 +6822,7 @@
     /* --- [新增] S1 NUX 推荐弹窗按钮专属样式 --- */
     .s1p-nux-recommend-modal .s1p-confirm-btn.s1p-confirm:hover {
       background-color: var(--s1p-sub-h);
-      color: var(--s1p-white);
+      color: var(--s1p-sub-h-t);
       border-color: transparent;
     }
     .s1p-nux-recommend-modal .s1p-confirm-btn.s1p-cancel:hover {
@@ -6818,6 +6836,8 @@
       html.s1p-theme-dark {
         /* 将阅读进度条背景改为更柔和的橄榄绿 */
         --s1p-readprogress-bg: #99a17a;
+        /* 深色主题的橄榄绿底更暗，文字需要比浅色主题再深一档才能保持 4.5:1 */
+        --s1p-readprogress-text: #2d3717;
         /* [移除] --s1p-list-item-status-bg 的覆写：该变量在系统深色模式但 NUX 禁用时会导致标识背景过深 */
         /* 深色模式下，高亮按钮/激活态背景会被 NUX 主题提亮，改用深色字提升可读性 */
         --s1p-sub-h-t: var(--icl, #111827);

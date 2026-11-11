@@ -43506,6 +43506,214 @@
     }
   }
 
+  // --- [NEW] 设置面板列表搜索：关键词解析、匹配与高亮 ---
+  function getSettingsModalSearchKeywords(rawQuery) {
+    return String(rawQuery || "")
+      .toLowerCase()
+      .trim()
+      .split(/\s+/)
+      .filter((keyword) => keyword.length > 0);
+  }
+
+  function buildSettingsModalSearchTextFromParts(parts) {
+    return (Array.isArray(parts) ? parts : [])
+      .map((part) => String(part ?? ""))
+      .join(" ")
+      .toLowerCase();
+  }
+
+  function matchesSettingsModalSearchKeywords(searchText, keywords) {
+    if (!Array.isArray(keywords) || keywords.length === 0) {
+      return true;
+    }
+    const normalizedSearchText = String(searchText || "").toLowerCase();
+    return keywords.every((keyword) => normalizedSearchText.includes(keyword));
+  }
+
+  function buildSettingsModalSearchHighlightRegex(keywords) {
+    if (!Array.isArray(keywords) || keywords.length === 0) {
+      return null;
+    }
+    return new RegExp(keywords.map(escapeRegExp).join("|"), "gi");
+  }
+
+  function highlightSettingsModalSearchMatches(scopeElement, selectors, keywords) {
+    const highlightRegex = buildSettingsModalSearchHighlightRegex(keywords);
+    if (
+      !highlightRegex ||
+      !scopeElement ||
+      typeof scopeElement.querySelectorAll !== "function" ||
+      !Array.isArray(selectors)
+    ) {
+      return;
+    }
+    selectors.forEach((selector) => {
+      if (!selector) {
+        return;
+      }
+      scopeElement.querySelectorAll(selector).forEach((node) => {
+        highlightTextInNode(node, highlightRegex);
+      });
+    });
+  }
+
+  function filterSettingsModalBookmarkItemsByKeywords(bookmarkItems, keywords) {
+    if (!Array.isArray(bookmarkItems) || bookmarkItems.length === 0) {
+      return [];
+    }
+    if (!Array.isArray(keywords) || keywords.length === 0) {
+      return bookmarkItems;
+    }
+    return bookmarkItems.filter((bookmarkItem) => {
+      const rawPostId = String(bookmarkItem?.postId ?? "");
+      const authorName = String(
+        bookmarkItem?.authorName || `用户 #${bookmarkItem?.authorId ?? "?"}`
+      );
+      const threadTitle = String(bookmarkItem?.threadTitle || "");
+      const localFullText = String(bookmarkItem?.postContent || "");
+      const previewText = String(bookmarkItem?.contentPreview || "");
+      return matchesSettingsModalSearchKeywords(
+        buildSettingsModalSearchTextFromParts([
+          rawPostId,
+          authorName,
+          threadTitle,
+          localFullText || previewText,
+        ]),
+        keywords
+      );
+    });
+  }
+
+  function buildSettingsModalBlockedUserSearchText(userId, blockedUser) {
+    return buildSettingsModalSearchTextFromParts([
+      userId,
+      blockedUser?.name || `用户 #${userId}`,
+      blockedUser?.remark || "",
+    ]);
+  }
+
+  function filterSettingsModalBlockedUserIds(blockedUsers, userIds, keywords) {
+    if (!Array.isArray(userIds) || userIds.length === 0) {
+      return [];
+    }
+    if (!Array.isArray(keywords) || keywords.length === 0) {
+      return userIds;
+    }
+    const safeBlockedUsers =
+      blockedUsers && typeof blockedUsers === "object" ? blockedUsers : {};
+    return userIds.filter((userId) =>
+      matchesSettingsModalSearchKeywords(
+        buildSettingsModalBlockedUserSearchText(
+          userId,
+          safeBlockedUsers[userId]
+        ),
+        keywords
+      )
+    );
+  }
+
+  function buildSettingsModalTagItemSearchText(tagItem) {
+    const userId = String(tagItem?.[0] ?? "");
+    const tagData =
+      tagItem?.[1] && typeof tagItem[1] === "object" ? tagItem[1] : {};
+    return buildSettingsModalSearchTextFromParts([
+      userId,
+      tagData.name || `用户 #${userId}`,
+      tagData.tag || "",
+    ]);
+  }
+
+  function filterSettingsModalTagItems(tagItems, keywords) {
+    if (!Array.isArray(tagItems) || tagItems.length === 0) {
+      return [];
+    }
+    if (!Array.isArray(keywords) || keywords.length === 0) {
+      return tagItems;
+    }
+    return tagItems.filter((tagItem) =>
+      matchesSettingsModalSearchKeywords(
+        buildSettingsModalTagItemSearchText(tagItem),
+        keywords
+      )
+    );
+  }
+
+  function buildSettingsModalManualThreadSearchText(threadId, blockedThread) {
+    return buildSettingsModalSearchTextFromParts([
+      threadId,
+      blockedThread?.title || "",
+      blockedThread?.reason || "",
+    ]);
+  }
+
+  function filterSettingsModalManualThreadIds(
+    blockedThreads,
+    threadIds,
+    keywords
+  ) {
+    if (!Array.isArray(threadIds) || threadIds.length === 0) {
+      return [];
+    }
+    if (!Array.isArray(keywords) || keywords.length === 0) {
+      return threadIds;
+    }
+    const safeBlockedThreads =
+      blockedThreads && typeof blockedThreads === "object"
+        ? blockedThreads
+        : {};
+    return threadIds.filter((threadId) =>
+      matchesSettingsModalSearchKeywords(
+        buildSettingsModalManualThreadSearchText(
+          threadId,
+          safeBlockedThreads[threadId]
+        ),
+        keywords
+      )
+    );
+  }
+
+  function buildSettingsModalBlockedPostSearchText(post) {
+    return buildSettingsModalSearchTextFromParts([
+      post?.postId,
+      post?.floor,
+      post?.authorName,
+      post?.authorId,
+    ]);
+  }
+
+  function filterSettingsModalBlockedPostThreadGroups(threadGroups, keywords) {
+    if (!Array.isArray(threadGroups) || threadGroups.length === 0) {
+      return [];
+    }
+    if (!Array.isArray(keywords) || keywords.length === 0) {
+      return threadGroups;
+    }
+    return threadGroups
+      .map((threadGroup) => {
+        const threadSearchText = buildSettingsModalSearchTextFromParts([
+          threadGroup?.threadId,
+          threadGroup?.threadTitle,
+        ]);
+        const posts = Array.isArray(threadGroup?.posts)
+          ? threadGroup.posts
+          : [];
+        const matchedPosts = posts.filter((post) =>
+          matchesSettingsModalSearchKeywords(
+            `${threadSearchText} ${buildSettingsModalBlockedPostSearchText(
+              post
+            )}`,
+            keywords
+          )
+        );
+        if (matchedPosts.length === 0) {
+          return null;
+        }
+        return { ...threadGroup, posts: matchedPosts };
+      })
+      .filter(Boolean);
+  }
+  /*__S1P_TEST_HOOK_20__*/
+
   // --- UI 创建 ---
   const formatDate = (timestamp) => new Date(timestamp).toLocaleString("zh-CN");
 
@@ -46231,46 +46439,134 @@
       BOOKMARKS: "bookmarks",
     });
     const settingsModalListPageState = new Map();
-    let settingsModalBookmarkSearchQuery = "";
-    let settingsModalBookmarkSearchTimer = 0;
-    let settingsModalBookmarkSearchComposing = false;
-    const SETTINGS_MODAL_BOOKMARK_SEARCH_DEBOUNCE_MS = 90;
-    const clearSettingsModalBookmarkSearchTimer = () => {
-      if (!settingsModalBookmarkSearchTimer) {
+    const SETTINGS_MODAL_SEARCH_DEBOUNCE_MS = 90;
+    const settingsModalSearchStates = new Map();
+    const getSettingsModalSearchState = (searchKey) => {
+      const normalizedSearchKey = String(searchKey || "");
+      if (!settingsModalSearchStates.has(normalizedSearchKey)) {
+        settingsModalSearchStates.set(normalizedSearchKey, {
+          query: "",
+          timer: 0,
+          composing: false,
+        });
+      }
+      return settingsModalSearchStates.get(normalizedSearchKey);
+    };
+    const getSettingsModalSearchQuery = (searchKey) =>
+      String(getSettingsModalSearchState(searchKey).query || "");
+    const clearSettingsModalSearchTimer = (searchKey) => {
+      const searchState = getSettingsModalSearchState(searchKey);
+      if (!searchState.timer) {
         return;
       }
-      window.clearTimeout(settingsModalBookmarkSearchTimer);
-      settingsModalBookmarkSearchTimer = 0;
+      window.clearTimeout(searchState.timer);
+      searchState.timer = 0;
     };
-    const getSettingsModalBookmarkSearchKeywords = (rawQuery) =>
-      String(rawQuery || "")
-        .toLowerCase()
-        .trim()
-        .split(/\s+/)
-        .filter((keyword) => keyword.length > 0);
-    const buildSettingsModalBookmarkSearchText = (bookmarkItem) => {
-      const rawPostId = String(bookmarkItem?.postId ?? "");
-      const authorName = String(
-        bookmarkItem?.authorName || `用户 #${bookmarkItem?.authorId ?? "?"}`
-      );
-      const threadTitle = String(bookmarkItem?.threadTitle || "");
-      const localFullText = String(bookmarkItem?.postContent || "");
-      const previewText = String(bookmarkItem?.contentPreview || "");
-      return [rawPostId, authorName, threadTitle, localFullText || previewText]
-        .join(" ")
-        .toLowerCase();
-    };
-    const filterSettingsModalBookmarkItemsByKeywords = (bookmarkItems, keywords) => {
-      if (!Array.isArray(bookmarkItems) || bookmarkItems.length === 0) {
-        return [];
-      }
-      if (!Array.isArray(keywords) || keywords.length === 0) {
-        return bookmarkItems;
-      }
-      return bookmarkItems.filter((bookmarkItem) => {
-        const searchText = buildSettingsModalBookmarkSearchText(bookmarkItem);
-        return keywords.every((keyword) => searchText.includes(keyword));
+    const clearAllSettingsModalSearchTimers = () => {
+      settingsModalSearchStates.forEach((searchState, searchKey) => {
+        clearSettingsModalSearchTimer(searchKey);
+        searchState.composing = false;
       });
+    };
+    const resetSettingsModalSearchState = (searchKey) => {
+      const searchState = getSettingsModalSearchState(searchKey);
+      clearSettingsModalSearchTimer(searchKey);
+      searchState.query = "";
+      searchState.composing = false;
+    };
+    const buildSettingsModalListSearchHtml = ({
+      inputId,
+      clearButtonId,
+      placeholder,
+      query,
+    }) => {
+      const safeQuery = String(query || "");
+      return `
+        <div class="s1p-settings-group s1p-settings-group-margin-bottom16">
+          <div class="s1p-search-input-wrapper">
+            <input type="text" id="${inputId}" class="s1p-input" placeholder="${escapeAttr(
+        placeholder
+      )}" autocomplete="off" value="${escapeAttr(safeQuery)}">
+            ${SVG_ICON_SEARCH}
+            <button id="${clearButtonId}" class="s1p-search-clear-btn s1p-has-tooltip${safeQuery ? "" : " hidden"}" data-full-tag="清空搜索" aria-label="清空搜索">
+              ${SVG_ICON_X_CIRCLE}
+            </button>
+          </div>
+        </div>`;
+    };
+    const bindSettingsModalListSearch = ({
+      searchKey,
+      tabKey,
+      inputSelector,
+      clearButtonSelector,
+      listKeys = [],
+      render,
+    }) => {
+      const normalizedTabKey = String(tabKey || "");
+      const panel = tabs[normalizedTabKey];
+      if (!(panel instanceof Element) || typeof render !== "function") {
+        return;
+      }
+      const searchState = getSettingsModalSearchState(searchKey);
+      const searchInput = panel.querySelector(inputSelector);
+      const clearSearchButton = panel.querySelector(clearButtonSelector);
+      const rerenderWithSearchQuery = (
+        nextQuery,
+        { preserveFocus = false, cursorPos = 0 } = {}
+      ) => {
+        searchState.query = String(nextQuery || "");
+        listKeys.forEach((listKey) =>
+          settingsModalListPageState.set(String(listKey || ""), 1)
+        );
+        render();
+        if (preserveFocus && activeSettingsTabKey === normalizedTabKey) {
+          const nextInput = tabs[normalizedTabKey]?.querySelector(inputSelector);
+          if (nextInput) {
+            nextInput.focus();
+            const safeCursorPos = Math.max(
+              0,
+              Math.min(Number(cursorPos) || 0, nextInput.value.length)
+            );
+            nextInput.setSelectionRange(safeCursorPos, safeCursorPos);
+          }
+        }
+      };
+      const scheduleSearchRerender = (nextValue, cursorPos) => {
+        clearSettingsModalSearchTimer(searchKey);
+        searchState.timer = window.setTimeout(() => {
+          searchState.timer = 0;
+          rerenderWithSearchQuery(nextValue, {
+            preserveFocus: true,
+            cursorPos,
+          });
+        }, SETTINGS_MODAL_SEARCH_DEBOUNCE_MS);
+      };
+      if (searchInput) {
+        searchInput.addEventListener("compositionstart", () => {
+          searchState.composing = true;
+          clearSettingsModalSearchTimer(searchKey);
+        });
+        searchInput.addEventListener("compositionend", (event) => {
+          searchState.composing = false;
+          const nextValue = String(event.target?.value || "");
+          const cursorPos = resolveInputCursorPosition(event.target, nextValue);
+          scheduleSearchRerender(nextValue, cursorPos);
+        });
+        searchInput.addEventListener("input", (event) => {
+          if (event.isComposing || searchState.composing) {
+            return;
+          }
+          const nextValue = String(event.target?.value || "");
+          const cursorPos = resolveInputCursorPosition(event.target, nextValue);
+          scheduleSearchRerender(nextValue, cursorPos);
+        });
+      }
+      if (clearSearchButton) {
+        clearSearchButton.addEventListener("click", () => {
+          resetSettingsModalSearchState(searchKey);
+          rerenderWithSearchQuery("", { preserveFocus: true, cursorPos: 0 });
+        });
+      }
     };
     const resolveInputCursorPosition = (inputElement, fallbackValue = "") => {
       const fallbackLength = String(fallbackValue || "").length;
@@ -47736,6 +48032,7 @@
 
     const renderTagsTab = (options = {}) => {
       markSettingsTabRendered("tags");
+      clearSettingsModalSearchTimer("tags");
       const editingUserId = options.editingUserId;
       const settings = getSettings();
       const isEnabled = settings.enableUserTagging;
@@ -47750,12 +48047,23 @@
       const tagItems = Object.entries(userTags).sort(
         ([, a], [, b]) => (b.timestamp || 0) - (a.timestamp || 0)
       );
+      const hasUserTags = tagItems.length > 0;
+      if (!hasUserTags) {
+        resetSettingsModalSearchState("tags");
+      }
+      const searchQuery = getSettingsModalSearchQuery("tags");
+      const searchKeywords = getSettingsModalSearchKeywords(searchQuery);
+      const hasSearchQuery = searchKeywords.length > 0;
+      const filteredTagItems = filterSettingsModalTagItems(
+        tagItems,
+        searchKeywords
+      );
       const normalizedEditingUserId =
         editingUserId === undefined || editingUserId === null
           ? ""
           : String(editingUserId);
       if (normalizedEditingUserId) {
-        const editingIndex = tagItems.findIndex(
+        const editingIndex = filteredTagItems.findIndex(
           ([id]) => String(id) === normalizedEditingUserId
         );
         if (editingIndex >= 0) {
@@ -47766,10 +48074,18 @@
         }
       }
       const tagsPagination = paginateSettingsModalList(
-        tagItems,
+        filteredTagItems,
         SETTINGS_MODAL_LIST_KEY.TAGS
       );
       const visibleTagItems = tagsPagination.visibleItems;
+      const searchBoxHtml = hasUserTags
+        ? buildSettingsModalListSearchHtml({
+          inputId: "s1p-tags-search-input",
+          clearButtonId: "s1p-tags-search-clear-btn",
+          placeholder: "搜索用户名、标记内容...",
+          query: searchQuery,
+        })
+        : "";
       tabs["tags"].innerHTML = `
                 ${toggleHTML}
                 <div class="s1p-feature-content ${isEnabled ? "expanded" : ""}">
@@ -47786,17 +48102,20 @@
                             <textarea id="s1p-tags-sync-textarea" class="s1p-input s1p-textarea s1p-sync-textarea" placeholder="在此粘贴导入数据或从此处复制导出数据..." autocomplete="off"></textarea>
                         </div>
 
+                        ${searchBoxHtml}
 		                        <div class="s1p-settings-group">
 		                            ${buildListSummaryHtml(
                                 "s1p-tags-list-summary",
-                                tagItems.length,
-                                "条用户标记"
+                                hasSearchQuery
+                                  ? filteredTagItems.length
+                                  : tagItems.length,
+                                hasSearchQuery ? "条匹配标记" : "条用户标记"
                               )}
 		                            <div id="s1p-tags-list-container"></div>
                                 ${buildSettingsModalListPaginationHtml(
                                   SETTINGS_MODAL_LIST_KEY.TAGS,
                                   tagsPagination,
-                                  "条用户标记"
+                                  hasSearchQuery ? "条匹配标记" : "条用户标记"
                                 )}
 		                        </div>
 		                    </div>
@@ -47809,6 +48128,11 @@
           const emptyEl = document.createElement("div");
           emptyEl.className = "s1p-empty";
           emptyEl.textContent = "暂无用户标记";
+          listContainer.appendChild(emptyEl);
+        } else if (filteredTagItems.length === 0) {
+          const emptyEl = document.createElement("div");
+          emptyEl.className = "s1p-empty";
+          emptyEl.textContent = "没有找到匹配的用户标记";
           listContainer.appendChild(emptyEl);
         } else {
           const listEl = document.createElement("div");
@@ -47946,6 +48270,28 @@
         }
       }
 
+      if (hasSearchQuery) {
+        highlightSettingsModalSearchMatches(
+          tabs["tags"],
+          [
+            "#s1p-tags-list-container .s1p-item-title",
+            "#s1p-tags-list-container .s1p-item-content",
+            "#s1p-tags-list-container .s1p-item-meta-id",
+          ],
+          searchKeywords
+        );
+      }
+      if (hasUserTags) {
+        bindSettingsModalListSearch({
+          searchKey: "tags",
+          tabKey: "tags",
+          inputSelector: "#s1p-tags-search-input",
+          clearButtonSelector: "#s1p-tags-search-clear-btn",
+          listKeys: [SETTINGS_MODAL_LIST_KEY.TAGS],
+          render: renderTagsTab,
+        });
+      }
+
       if (normalizedEditingUserId) {
         const textarea = tabs["tags"].querySelector(".s1p-tag-edit-area");
         if (textarea) {
@@ -47957,7 +48303,7 @@
     };
     const renderBookmarksTab = () => {
       markSettingsTabRendered("bookmarks");
-      clearSettingsModalBookmarkSearchTimer();
+      clearSettingsModalSearchTimer("bookmarks");
       const settings = getSettings();
       const isEnabled = settings.enableBookmarkReplies;
 
@@ -47972,11 +48318,10 @@
         (a, b) => b.timestamp - a.timestamp
       );
       if (bookmarkItems.length === 0) {
-        settingsModalBookmarkSearchQuery = "";
-        settingsModalBookmarkSearchComposing = false;
+        resetSettingsModalSearchState("bookmarks");
       }
-      const normalizedSearchQuery = String(settingsModalBookmarkSearchQuery || "");
-      const bookmarkSearchKeywords = getSettingsModalBookmarkSearchKeywords(
+      const normalizedSearchQuery = getSettingsModalSearchQuery("bookmarks");
+      const bookmarkSearchKeywords = getSettingsModalSearchKeywords(
         normalizedSearchQuery
       );
       const hasSearchQuery = bookmarkSearchKeywords.length > 0;
@@ -47997,12 +48342,8 @@
       const bookmarkSummaryLabel = hasSearchQuery
         ? "条匹配收藏"
         : "条收藏回复";
-      const bookmarkHighlightRegex = hasSearchQuery
-        ? new RegExp(
-          bookmarkSearchKeywords.map(escapeRegExp).join("|"),
-          "gi"
-        )
-        : null;
+      const bookmarkHighlightRegex =
+        buildSettingsModalSearchHighlightRegex(bookmarkSearchKeywords);
       tabs["bookmarks"].innerHTML = `
                 ${toggleHTML}
                 <div class="s1p-feature-content ${isEnabled ? "expanded" : ""}">
@@ -48181,69 +48522,14 @@
           bookmarksContainer.appendChild(listEl);
         }
       }
-      const searchInput = tabs["bookmarks"].querySelector("#s1p-bookmark-search-input");
-      const clearSearchButton = tabs["bookmarks"].querySelector(
-        "#s1p-bookmark-search-clear-btn"
-      );
-      const rerenderBookmarksWithSearch = (
-        nextQuery,
-        { preserveFocus = false, cursorPos = 0 } = {}
-      ) => {
-        settingsModalBookmarkSearchQuery = String(nextQuery || "");
-        settingsModalListPageState.set(SETTINGS_MODAL_LIST_KEY.BOOKMARKS, 1);
-        renderBookmarksTab();
-        if (preserveFocus && activeSettingsTabKey === "bookmarks") {
-          const nextInput = tabs["bookmarks"].querySelector(
-            "#s1p-bookmark-search-input"
-          );
-          if (nextInput) {
-            nextInput.focus();
-            const safeCursorPos = Math.max(
-              0,
-              Math.min(Number(cursorPos) || 0, nextInput.value.length)
-            );
-            nextInput.setSelectionRange(safeCursorPos, safeCursorPos);
-          }
-        }
-      };
-      if (searchInput) {
-        const scheduleBookmarksSearchRerender = (nextValue, cursorPos) => {
-          clearSettingsModalBookmarkSearchTimer();
-          settingsModalBookmarkSearchTimer = window.setTimeout(() => {
-            settingsModalBookmarkSearchTimer = 0;
-            rerenderBookmarksWithSearch(nextValue, {
-              preserveFocus: true,
-              cursorPos,
-            });
-          }, SETTINGS_MODAL_BOOKMARK_SEARCH_DEBOUNCE_MS);
-        };
-        searchInput.addEventListener("compositionstart", () => {
-          settingsModalBookmarkSearchComposing = true;
-          clearSettingsModalBookmarkSearchTimer();
-        });
-        searchInput.addEventListener("compositionend", (event) => {
-          settingsModalBookmarkSearchComposing = false;
-          const nextValue = String(event.target?.value || "");
-          const cursorPos = resolveInputCursorPosition(event.target, nextValue);
-          scheduleBookmarksSearchRerender(nextValue, cursorPos);
-        });
-        searchInput.addEventListener("input", (event) => {
-          if (event.isComposing || settingsModalBookmarkSearchComposing) {
-            return;
-          }
-          const nextValue = String(event.target?.value || "");
-          const cursorPos = resolveInputCursorPosition(event.target, nextValue);
-          scheduleBookmarksSearchRerender(nextValue, cursorPos);
-        });
-      }
-      if (clearSearchButton) {
-        clearSearchButton.addEventListener("click", () => {
-          settingsModalBookmarkSearchComposing = false;
-          clearSettingsModalBookmarkSearchTimer();
-          rerenderBookmarksWithSearch("", {
-            preserveFocus: true,
-            cursorPos: 0,
-          });
+      if (hasBookmarks) {
+        bindSettingsModalListSearch({
+          searchKey: "bookmarks",
+          tabKey: "bookmarks",
+          inputSelector: "#s1p-bookmark-search-input",
+          clearButtonSelector: "#s1p-bookmark-search-clear-btn",
+          listKeys: [SETTINGS_MODAL_LIST_KEY.BOOKMARKS],
+          render: renderBookmarksTab,
         });
       }
 
@@ -48495,6 +48781,7 @@
     };
     const renderUserTab = () => {
       markSettingsTabRendered("users");
+      clearSettingsModalSearchTimer("users");
       const settings = getSettings();
       const isEnabled = settings.enableUserBlocking;
 
@@ -48508,12 +48795,32 @@
       const userItemIds = Object.keys(blockedUsers).sort(
         (a, b) => blockedUsers[b].timestamp - blockedUsers[a].timestamp
       );
-      const blockedUsersPagination = paginateSettingsModalList(
+      const hasBlockedUsers = userItemIds.length > 0;
+      if (!hasBlockedUsers) {
+        resetSettingsModalSearchState("users");
+      }
+      const searchQuery = getSettingsModalSearchQuery("users");
+      const searchKeywords = getSettingsModalSearchKeywords(searchQuery);
+      const hasSearchQuery = searchKeywords.length > 0;
+      const filteredUserItemIds = filterSettingsModalBlockedUserIds(
+        blockedUsers,
         userItemIds,
+        searchKeywords
+      );
+      const blockedUsersPagination = paginateSettingsModalList(
+        filteredUserItemIds,
         SETTINGS_MODAL_LIST_KEY.BLOCKED_USERS
       );
       const visibleUserItemIds = blockedUsersPagination.visibleItems;
       const nativeBlacklistLinkHtml = `<a class="s1p-bookmark-thread-link s1p-has-tooltip" href="${NATIVE_BLACKLIST_VIEW_URL}" target="_blank" rel="noopener noreferrer" data-full-tag="论坛黑名单"><span class="s1p-bookmark-title-text">论坛黑名单</span>${SVG_ICON_EXTERNAL_LINK}</a>`;
+      const searchBoxHtml = hasBlockedUsers
+        ? buildSettingsModalListSearchHtml({
+          inputId: "s1p-blocked-user-search-input",
+          clearButtonId: "s1p-blocked-user-search-clear-btn",
+          placeholder: "搜索用户名、备注...",
+          query: searchQuery,
+        })
+        : "";
       const contentHTML = `
                 <div class="s1p-settings-group s1p-settings-group-compact">
                     <div class="s1p-settings-item">
@@ -48551,15 +48858,18 @@
 	                        输入用户名后，脚本会自动识别 UID，并支持填写备注后加入屏蔽列表。
 	                    </p>
 		                </div>
+	                ${searchBoxHtml}
 	                <div class="s1p-settings-group">
 	                    ${buildListSummaryHtml(
                         "s1p-blocked-user-list-summary",
-                        userItemIds.length,
-                        "位屏蔽用户"
+                        hasSearchQuery
+                          ? filteredUserItemIds.length
+                          : userItemIds.length,
+                        hasSearchQuery ? "位匹配用户" : "位屏蔽用户"
                       )}
 	                    <div id="s1p-blocked-user-list-container">
-			                        ${userItemIds.length === 0
-		          ? `<div class="s1p-empty">暂无屏蔽的用户</div>`
+			                        ${filteredUserItemIds.length === 0
+		          ? `<div class="s1p-empty">${hasSearchQuery ? "没有找到匹配的用户" : "暂无屏蔽的用户"}</div>`
 	          : `<div class="s1p-list">${visibleUserItemIds
 	            .map((id) => {
 	              const item = blockedUsers[id];
@@ -48612,7 +48922,7 @@
                         ${buildSettingsModalListPaginationHtml(
                           SETTINGS_MODAL_LIST_KEY.BLOCKED_USERS,
                           blockedUsersPagination,
-                          "位屏蔽用户"
+                          hasSearchQuery ? "位匹配用户" : "位屏蔽用户"
                         )}
 	                </div>
 	            `;
@@ -48669,9 +48979,31 @@
         );
         return true;
       };
+
+      if (hasSearchQuery) {
+        highlightSettingsModalSearchMatches(
+          tabs["users"],
+          [
+            ".s1p-blocked-user-item .s1p-item-title",
+            ".s1p-blocked-user-item .s1p-remark-text",
+          ],
+          searchKeywords
+        );
+      }
+      if (hasBlockedUsers) {
+        bindSettingsModalListSearch({
+          searchKey: "users",
+          tabKey: "users",
+          inputSelector: "#s1p-blocked-user-search-input",
+          clearButtonSelector: "#s1p-blocked-user-search-clear-btn",
+          listKeys: [SETTINGS_MODAL_LIST_KEY.BLOCKED_USERS],
+          render: renderUserTab,
+        });
+      }
     };
     const renderThreadTab = () => {
       markSettingsTabRendered("threads");
+      clearSettingsModalSearchTimer("threads");
       setSettingsModalDirtyState(SETTINGS_MODAL_DIRTY_TAB.THREAD_RULES, false);
       const settings = getSettings();
       const isEnabled = settings.enablePostBlocking;
@@ -48686,15 +49018,28 @@
       const manualItemIds = Object.keys(blockedThreads).sort(
         (a, b) => blockedThreads[b].timestamp - blockedThreads[a].timestamp
       );
-      const manualThreadsPagination = paginateSettingsModalList(
-        manualItemIds,
-        SETTINGS_MODAL_LIST_KEY.MANUAL_THREADS
-      );
-      const visibleManualItemIds = manualThreadsPagination.visibleItems;
       const blockedPosts = getBlockedPosts();
       const blockedPostIds = Object.keys(blockedPosts).sort(
         (a, b) => blockedPosts[b].timestamp - blockedPosts[a].timestamp
       );
+      const hasBlockedItems =
+        manualItemIds.length > 0 || blockedPostIds.length > 0;
+      if (!hasBlockedItems) {
+        resetSettingsModalSearchState("threads");
+      }
+      const searchQuery = getSettingsModalSearchQuery("threads");
+      const searchKeywords = getSettingsModalSearchKeywords(searchQuery);
+      const hasSearchQuery = searchKeywords.length > 0;
+      const filteredManualItemIds = filterSettingsModalManualThreadIds(
+        blockedThreads,
+        manualItemIds,
+        searchKeywords
+      );
+      const manualThreadsPagination = paginateSettingsModalList(
+        filteredManualItemIds,
+        SETTINGS_MODAL_LIST_KEY.MANUAL_THREADS
+      );
+      const visibleManualItemIds = manualThreadsPagination.visibleItems;
       const blockedPostThreadGroups = (() => {
         if (blockedPostIds.length === 0) {
           return [];
@@ -48714,8 +49059,17 @@
         });
         return Array.from(postsByThread.values());
       })();
+      const filteredBlockedPostThreadGroups =
+        filterSettingsModalBlockedPostThreadGroups(
+          blockedPostThreadGroups,
+          searchKeywords
+        );
+      const filteredBlockedPostCount = filteredBlockedPostThreadGroups.reduce(
+        (total, threadGroup) => total + threadGroup.posts.length,
+        0
+      );
       const blockedPostThreadGroupsPagination = paginateSettingsModalList(
-        blockedPostThreadGroups,
+        filteredBlockedPostThreadGroups,
         SETTINGS_MODAL_LIST_KEY.BLOCKED_POST_THREAD_GROUPS,
         SETTINGS_MODAL_BLOCKED_POST_GROUP_PAGE_SIZE
       );
@@ -48727,6 +49081,14 @@
       const initialTitleFilterRules = getTitleFilterRules();
       const keywordRuleCount = initialTitleFilterRules.length;
       const dynamicallyHiddenCount = Object.keys(dynamicallyHiddenThreads).length;
+      const searchBoxHtml = hasBlockedItems
+        ? buildSettingsModalListSearchHtml({
+          inputId: "s1p-threads-search-input",
+          clearButtonId: "s1p-threads-search-clear-btn",
+          placeholder: "搜索已屏蔽的帖子、楼层...",
+          query: searchQuery,
+        })
+        : "";
       const contentHTML = `
                 <div class="s1p-settings-group">
                     <div class="s1p-settings-group-title">标题关键字屏蔽规则</div>
@@ -48762,6 +49124,7 @@
                     </div>
                 </div>
 
+                ${searchBoxHtml}
                 <div class="s1p-settings-group">
                     <div id="s1p-manually-blocked-header" class="s1p-settings-group-title s1p-collapsible-header">
                         <span>手动屏蔽的帖子列表</span>
@@ -48773,11 +49136,13 @@
                     <div>
 		                    ${buildListSummaryHtml(
                             "s1p-manually-blocked-summary",
-                            manualItemIds.length,
-                            "条手动屏蔽帖子"
+                            hasSearchQuery
+                              ? filteredManualItemIds.length
+                              : manualItemIds.length,
+                            hasSearchQuery ? "条匹配帖子" : "条手动屏蔽帖子"
                           )}
-			                    ${manualItemIds.length === 0
-	          ? `<div class="s1p-empty">暂无手动屏蔽的帖子</div>`
+			                    ${filteredManualItemIds.length === 0
+	          ? `<div class="s1p-empty">${manualItemIds.length === 0 ? "暂无手动屏蔽的帖子" : "没有找到匹配的帖子"}</div>`
 	          : `<div class="s1p-list">${visibleManualItemIds
 	            .map((id) => {
 	              const item = blockedThreads[id];
@@ -48800,7 +49165,7 @@
                         ${buildSettingsModalListPaginationHtml(
                           SETTINGS_MODAL_LIST_KEY.MANUAL_THREADS,
                           manualThreadsPagination,
-                          "条手动屏蔽帖子"
+                          hasSearchQuery ? "条匹配帖子" : "条手动屏蔽帖子"
                         )}
 	                </div>
                 </div>
@@ -48812,12 +49177,17 @@
                     <div>
                         ${buildListSummaryHtml(
                           "s1p-blocked-posts-summary",
-                          blockedPostIds.length,
-                          "条屏蔽楼层"
+                          hasSearchQuery
+                            ? filteredBlockedPostCount
+                            : blockedPostIds.length,
+                          hasSearchQuery ? "条匹配楼层" : "条屏蔽楼层"
                         )}
                         ${(() => {
           if (blockedPostIds.length === 0) {
             return `<div class="s1p-empty">暂无屏蔽的楼层</div>`;
+          }
+          if (filteredBlockedPostThreadGroups.length === 0) {
+            return `<div class="s1p-empty">没有找到匹配的楼层</div>`;
           }
           return `<div class="s1p-thread-groups">${visibleBlockedPostThreadGroups
             .map((thread) => {
@@ -48830,7 +49200,7 @@
 	                                    <div class="s1p-thread-group" data-thread-id="${safeThreadIdAttr}">
 	                                        <div class="s1p-thread-header s1p-collapsible-header ${isCollapsed ? '' : 'expanded'}">
 	                                            <span class="s1p-thread-title">${safeThreadTitleText}</span>
-	                                            <span class="s1p-thread-count">(${thread.posts.length}个楼层)</span>
+	                                            <span class="s1p-thread-count">(${thread.posts.length}个${hasSearchQuery ? "匹配" : ""}楼层)</span>
 	                                            <span class="s1p-expander-arrow ${isCollapsed ? '' : 'expanded'}"></span>
 	                                        </div>
 	                                        <div class="s1p-thread-posts s1p-collapsible-content ${isCollapsed ? '' : 'expanded'}">
@@ -48866,6 +49236,20 @@
                     <div>${contentHTML}</div>
                 </div>
             `;
+
+      if (hasSearchQuery) {
+        highlightSettingsModalSearchMatches(
+          tabs["threads"],
+          [
+            "#s1p-manually-blocked-list-container .s1p-item-title",
+            "#s1p-manually-blocked-list-container .s1p-item-meta",
+            ".s1p-thread-title",
+            ".s1p-thread-posts .s1p-item-title",
+            ".s1p-thread-posts .s1p-item-meta",
+          ],
+          searchKeywords
+        );
+      }
 
       const createRuleEmptyMessage = () => {
         const emptyEl = document.createElement("div");
@@ -49184,6 +49568,20 @@
         }
         return false;
       };
+
+      if (hasBlockedItems) {
+        bindSettingsModalListSearch({
+          searchKey: "threads",
+          tabKey: "threads",
+          inputSelector: "#s1p-threads-search-input",
+          clearButtonSelector: "#s1p-threads-search-clear-btn",
+          listKeys: [
+            SETTINGS_MODAL_LIST_KEY.MANUAL_THREADS,
+            SETTINGS_MODAL_LIST_KEY.BLOCKED_POST_THREAD_GROUPS,
+          ],
+          render: renderThreadTab,
+        });
+      }
     };
     const renderGeneralSettingsTab = () => {
       markSettingsTabRendered("general-settings");
@@ -50745,8 +51143,7 @@
         observedModalBodyTabContent = null;
       }
       cancelSettingsModalNeighborPrewarm();
-      clearSettingsModalBookmarkSearchTimer();
-      settingsModalBookmarkSearchComposing = false;
+      clearAllSettingsModalSearchTimers();
       stopModalBodyHeightAnimation(modal.querySelector(".s1p-modal-body"), {
         resetToAuto: true,
       });
