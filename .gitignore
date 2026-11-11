@@ -1,4 +1,6 @@
 *.html
+# LAN Hub 的延迟测试页是部署必需文件，需要纳入仓库
+!lan-sync-hub/*.html
 *_files
 S1Plus-Local-*.user.js
 dist/

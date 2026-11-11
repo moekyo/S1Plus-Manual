@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>S1 Plus LAN Sync Hub · 延迟测试</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #10151c;
+        --panel: #171f29;
+        --line: #2a3644;
+        --text: #e6edf3;
+        --muted: #93a4b8;
+        --accent: #4f9cf9;
+        --ok: #3fb950;
+        --warn: #d29922;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--bg);
+        color: var(--text);
+        font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+        padding: 20px;
+      }
+      h1 { font-size: 18px; margin: 0 0 4px; font-weight: 600; }
+      .sub { color: var(--muted); margin: 0 0 16px; font-size: 12px; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+      section {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 14px;
+      }
+      section h2 { margin: 0 0 10px; font-size: 13px; color: var(--muted); font-weight: 600; }
+      label { display: block; font-size: 12px; color: var(--muted); margin: 8px 0 4px; }
+      input {
+        width: 100%;
+        background: #0d131a;
+        color: var(--text);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 7px 9px;
+        font: inherit;
+      }
+      input:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+      .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+      button {
+        background: #1d2836;
+        color: var(--text);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 7px 12px;
+        font: inherit;
+        cursor: pointer;
+      }
+      button:hover { border-color: var(--accent); }
+      button.primary { background: #1b3a5c; border-color: #2d5b8e; }
+      button.danger { background: #3a1f24; border-color: #6b2f38; }
+      button:disabled { opacity: 0.45; cursor: default; }
+      .stat { display: flex; justify-content: space-between; gap: 10px; padding: 4px 0; font-size: 13px; }
+      .stat span:first-child { color: var(--muted); }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+      #log {
+        height: 260px;
+        overflow: auto;
+        background: #0d131a;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 8px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12px;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+      .ok { color: var(--ok); }
+      .warn { color: var(--warn); }
+      .muted { color: var(--muted); }
+      table { width: 100%; border-collapse: collapse; font-size: 12px; }
+      th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line); }
+      th { color: var(--muted); font-weight: 500; }
+      #status { margin-top: 10px; font-size: 12px; color: var(--muted); }
+    </style>
+  </head>
+  <body>
+    <h1>S1 Plus LAN Sync Hub · 延迟测试</h1>
+    <p class="sub">
+      在两台设备上各打开一次本页，填同一个 token；“长轮询监听”保持开启，然后在另一台点“推送测试进度”，观察事件与端到端延迟。
+      页面由 hub 同源提供（http://NAS_IP:5180/）；默认不发 CORS 头，请通过 hub 地址打开，不要用 file:// 直接访问。
+    </p>
+
+    <div class="grid">
+      <section>
+        <h2>连接</h2>
+        <label for="hubUrl">Hub 地址</label>
+        <input id="hubUrl" placeholder="http://NAS_IP:5180" />
+        <label for="token">Token</label>
+        <input id="token" type="password" placeholder="HUB_TOKEN" />
+        <label for="deviceId">设备标识</label>
+        <input id="deviceId" />
+        <div class="row">
+          <button class="primary" id="btnPull">拉取快照</button>
+          <button id="btnPush">推送测试进度</button>
+        </div>
+        <div class="row">
+          <button class="primary" id="btnListen">开始长轮询监听</button>
+          <button class="danger" id="btnStop">停止监听</button>
+        </div>
+        <div id="status">未连接</div>
+      </section>
+
+      <section>
+        <h2>云端快照</h2>
+        <div class="stat"><span>版本</span><span id="stVersion" class="mono">-</span></div>
+        <div class="stat"><span>contentHash</span><span id="stHash" class="mono">-</span></div>
+        <div class="stat"><span>updatedAt</span><span id="stUpdated" class="mono">-</span></div>
+        <div class="stat"><span>收到事件</span><span id="stEvents" class="mono">0</span></div>
+        <div class="stat"><span>最近一次端到端延迟</span><span id="stLatency" class="mono">-</span></div>
+      </section>
+
+      <section>
+        <h2>在线设备（presence）</h2>
+        <div class="row" style="margin-top: 0">
+          <button id="btnPresence">上报 / 刷新</button>
+        </div>
+        <table>
+          <thead><tr><th>设备</th><th>版本</th><th>最后活跃</th></tr></thead>
+          <tbody id="presenceBody"><tr><td colspan="3" class="muted">-</td></tr></tbody>
+        </table>
+      </section>
+    </div>
+
+    <section style="margin-top: 12px">
+      <h2>事件日志</h2>
+      <div id="log"></div>
+    </section>
+
+    <script>
+      (() => {
+        "use strict";
+
+        const $ = (id) => document.getElementById(id);
+        const storageKey = (name) => `s1p-hub-test:${name}`;
+
+        const state = {
+          listening: false,
+          abort: null,
+          events: 0,
+          lastLatency: null,
+          version: 0,
+        };
+
+        $("hubUrl").value =
+          localStorage.getItem(storageKey("hubUrl")) ||
+          (location.protocol === "http:" || location.protocol === "https:" ? location.origin : "");
+        $("token").value = localStorage.getItem(storageKey("token")) || "";
+        $("deviceId").value =
+          localStorage.getItem(storageKey("deviceId")) ||
+          `web-${Math.random().toString(16).slice(2, 8)}`;
+
+        const log = (text, cls = "") => {
+          const line = document.createElement("div");
+          if (cls) line.className = cls;
+          const time = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+          line.textContent = `[${time}] ${text}`;
+          $("log").appendChild(line);
+          $("log").scrollTop = $("log").scrollHeight;
+        };
+
+        const setStatus = (text, cls = "") => {
+          $("status").textContent = text;
+          $("status").className = cls;
+        };
+
+        const persist = () => {
+          localStorage.setItem(storageKey("hubUrl"), $("hubUrl").value.trim());
+          localStorage.setItem(storageKey("token"), $("token").value);
+          localStorage.setItem(storageKey("deviceId"), $("deviceId").value.trim());
+        };
+
+        const hubBase = () => $("hubUrl").value.trim().replace(/\/+$/, "");
+        const headers = () => ({
+          Authorization: `Bearer ${$("token").value.trim()}`,
+          "Content-Type": "application/json",
+        });
+        const deviceId = () => $("deviceId").value.trim() || "web-unknown";
+
+        const formatTime = (ts) => (ts ? new Date(ts).toLocaleTimeString("zh-CN", { hour12: false }) : "-");
+
+        const renderMeta = (meta, source) => {
+          if (typeof meta.version === "number") {
+            state.version = meta.version;
+            $("stVersion").textContent = String(meta.version);
+          }
+          if (meta.contentHash) $("stHash").textContent = meta.contentHash;
+          if (meta.updatedAt) $("stUpdated").textContent = formatTime(meta.updatedAt);
+          if (source) {
+            log(`快照 ${source}: v${meta.version} ${meta.contentHash || ""}`.trim(), "muted");
+          }
+        };
+
+        const recordLatency = (payload) => {
+          const clientTs = payload && payload.__test && payload.__test.clientTs;
+          if (!clientTs) return;
+          const latency = Date.now() - Number(clientTs);
+          if (!Number.isFinite(latency) || latency < -2000 || latency > 15000) {
+            log(
+              `快照来自 ${Math.round(latency / 1000)}s 前（或两端时钟不同步），跳过延迟统计`,
+              "muted"
+            );
+            return;
+          }
+          state.lastLatency = latency;
+          $("stLatency").textContent = `${Math.max(0, latency)} ms`;
+          log(
+            `端到端延迟 ${Math.max(0, latency)} ms（来自 ${payload.__test.deviceId || "未知设备"}）`,
+            "ok"
+          );
+        };
+
+        const fetchSnapshot = async (since) => {
+          const query = typeof since === "number" ? `?since=${encodeURIComponent(since)}` : "";
+          const response = await fetch(`${hubBase()}/snapshot${query}`, { headers: headers() });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          return response.json();
+        };
+
+        const pull = async (reason = "手动") => {
+          try {
+            persist();
+            const data = await fetchSnapshot();
+            renderMeta(data, reason);
+            if (data.payload) recordLatency(data.payload);
+            setStatus(`已连接，云端 v${data.version}`, "ok");
+            return data;
+          } catch (error) {
+            setStatus(`拉取失败：${error.message}`, "warn");
+            log(`拉取失败：${error.message}`, "warn");
+            return null;
+          }
+        };
+
+        const push = async () => {
+          try {
+            persist();
+            const current = await fetchSnapshot();
+            const seq = (window.__s1pPushSeq = (window.__s1pPushSeq || 0) + 1);
+            const floor = String(100 + Math.floor(Math.random() * 900));
+            const payload = {
+              version: 5,
+              lastUpdated: Date.now(),
+              data: {
+                read_progress: {
+                  "1234567": {
+                    page: "2",
+                    lastReadFloor: floor,
+                    postId: "1",
+                    timestamp: Date.now(),
+                  },
+                },
+              },
+              __test: { clientTs: Date.now(), deviceId: deviceId(), seq },
+            };
+            const response = await fetch(`${hubBase()}/snapshot`, {
+              method: "POST",
+              headers: headers(),
+              body: JSON.stringify({
+                baseVersion: current.version,
+                deviceId: deviceId(),
+                payload,
+              }),
+            });
+            const result = await response.json();
+            if (response.status === 409) {
+              log(`写入冲突（云端 v${result.version}），重新拉取后重试`, "warn");
+              await pull("冲突后拉取");
+              return push();
+            }
+            if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+            log(`推送成功：v${result.version} 楼 ${floor}${result.deduped ? "（内容未变化）" : ""}`, "ok");
+            renderMeta(result, "推送返回");
+            await reportPresence();
+            return result;
+          } catch (error) {
+            setStatus(`推送失败：${error.message}`, "warn");
+            log(`推送失败：${error.message}`, "warn");
+          }
+        };
+
+        const reportPresence = async () => {
+          try {
+            const response = await fetch(`${hubBase()}/presence`, {
+              method: "POST",
+              headers: headers(),
+              body: JSON.stringify({ deviceId: deviceId(), version: state.version }),
+            });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            await loadPresence();
+          } catch (error) {
+            log(`presence 上报失败：${error.message}`, "warn");
+          }
+        };
+
+        const loadPresence = async () => {
+          try {
+            const response = await fetch(`${hubBase()}/presence`, { headers: headers() });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const data = await response.json();
+            const body = $("presenceBody");
+            body.replaceChildren();
+            if (!data.devices || data.devices.length === 0) {
+              const row = document.createElement("tr");
+              const cell = document.createElement("td");
+              cell.colSpan = 3;
+              cell.className = "muted";
+              cell.textContent = "-";
+              row.appendChild(cell);
+              body.appendChild(row);
+              return;
+            }
+            for (const device of data.devices) {
+              const row = document.createElement("tr");
+              const nameCell = document.createElement("td");
+              nameCell.textContent = device.deviceId;
+              const versionCell = document.createElement("td");
+              versionCell.textContent = String(device.version);
+              const timeCell = document.createElement("td");
+              timeCell.textContent = formatTime(device.at);
+              row.append(nameCell, versionCell, timeCell);
+              body.appendChild(row);
+            }
+          } catch (error) {
+            log(`presence 读取失败：${error.message}`, "warn");
+          }
+        };
+
+        const listen = async () => {
+          if (state.listening) return;
+          state.listening = true;
+          persist();
+          const controller = (state.abort = new AbortController());
+          setStatus("监听中…", "ok");
+          log("开始长轮询监听", "muted");
+          while (state.listening) {
+            try {
+              const query = `?since=${encodeURIComponent(state.version)}&timeout=25000`;
+              const response = await fetch(`${hubBase()}/wait${query}`, {
+                headers: headers(),
+                signal: controller.signal,
+              });
+              if (!response.ok) throw new Error(`HTTP ${response.status}`);
+              const event = await response.json();
+              if (event.timeout) continue;
+              if (typeof event.version === "number" && event.version > state.version) {
+                state.events += 1;
+                $("stEvents").textContent = String(state.events);
+                renderMeta(event, "事件");
+                // 注意：带 since=event.version 会拿到 {unchanged:true}（无 payload），
+                // 必须再取一次完整快照才能读到 __test 时间戳来计算延迟。
+                const data = await fetchSnapshot();
+                if (data.payload) recordLatency(data.payload);
+              }
+            } catch (error) {
+              if (!state.listening || error.name === "AbortError") break;
+              log(`监听中断：${error.message}，1.5s 后重试`, "warn");
+              await new Promise((resolve) => setTimeout(resolve, 1500));
+            }
+          }
+        };
+
+        const stop = () => {
+          state.listening = false;
+          if (state.abort) state.abort.abort();
+          state.abort = null;
+          setStatus("已停止监听");
+          log("停止监听", "muted");
+        };
+
+        $("btnPull").addEventListener("click", () => void pull("手动"));
+        $("btnPush").addEventListener("click", () => void push());
+        $("btnListen").addEventListener("click", () => void listen());
+        $("btnStop").addEventListener("click", () => stop());
+        $("btnPresence").addEventListener("click", () => void reportPresence());
+        for (const id of ["hubUrl", "token", "deviceId"]) {
+          $(id).addEventListener("change", persist);
+        }
+
+        void pull("初始");
+        void loadPresence();
+        setInterval(() => {
+          if ($("hubUrl").value.trim() && $("token").value.trim()) {
+            void reportPresence();
+          }
+        }, 10000);
+      })();
+    </script>
+  </body>
+</html>
