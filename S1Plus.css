@@ -66,6 +66,7 @@
       --s1p-toast-glass-filter: var(--s1p-floating-surface-filter);
       --s1p-toast-glass-shadow: var(--s1p-floating-surface-shadow);
       --s1p-toast-state-filter: blur(6px) saturate(1.18);
+      --s1p-toast-text: var(--s1p-t);
       --s1p-toast-success-bg: rgba(34, 197, 94, 0.9);
       --s1p-toast-error-bg: rgba(239, 68, 68, 0.9);
       --s1p-floating-control-glass-bg: rgba(255, 255, 255, 0.89);
@@ -4554,7 +4555,7 @@
       border-radius: 8px;
       font-size: 14px;
       font-weight: 500;
-      color: var(--s1p-t);
+      color: var(--s1p-toast-text);
       background: var(--s1p-toast-glass-bg);
       border: none;
       box-shadow: var(--s1p-toast-glass-shadow);
@@ -4621,7 +4622,6 @@
       position: fixed;
       left: 50%;
       bottom: 64px;
-      z-index: 100121;
       display: flex;
       align-items: center;
       gap: 8px;
@@ -4632,7 +4632,7 @@
       font-size: 13px;
       font-weight: 500;
       line-height: 1.5;
-      color: var(--s1p-t);
+      color: var(--s1p-toast-text);
       background: var(--s1p-toast-glass-bg);
       box-shadow: var(--s1p-toast-glass-shadow);
       -webkit-backdrop-filter: var(--s1p-toast-glass-filter);
@@ -4654,6 +4654,9 @@
       border-right-color: transparent;
       border-radius: 50%;
       animation: s1p-image-paste-loading-spin 0.8s linear infinite;
+    }
+    .s1p-image-paste-loading:not(.visible) .s1p-image-paste-loading-spinner {
+      animation: none;
     }
     @media (prefers-reduced-motion: reduce) {
       .s1p-image-paste-loading {
@@ -7021,6 +7024,8 @@
         --s1p-toast-glass-filter: var(--s1p-floating-surface-filter);
         --s1p-toast-glass-shadow: var(--s1p-floating-surface-shadow);
         --s1p-toast-state-filter: var(--s1p-toast-glass-filter);
+        /* 深色玻璃底上 --s1p-t 仍是深蓝，中性提示改用浅色文字保证可读 */
+        --s1p-toast-text: #e5e7eb;
         --s1p-toast-success-bg: rgba(22, 163, 74, 0.76);
         --s1p-toast-error-bg: rgba(185, 28, 28, 0.78);
         --s1p-floating-control-glass-bg: rgba(17, 24, 39, 0.91);

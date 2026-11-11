@@ -59153,6 +59153,7 @@
   const S1P_REPLY_IMAGE_PASTE_FORM_ID = "postform";
   const S1P_REPLY_IMAGE_PASTE_UPLOAD_TIMEOUT_MS = 30000;
   const S1P_REPLY_IMAGE_PASTE_MAX_QUEUE = 8;
+  const S1P_IMAGE_PASTE_UPLOADING_TEXT = "图片上传中，请稍候…";
   const S1P_REPLY_IMAGE_PASTE_ATTACH_FIELD_KEYS = Object.freeze(["description", "readperm", "price"]);
   const S1P_REPLY_IMAGE_PASTE_MIME_EXTENSIONS = Object.freeze({"image/png": "png", "image/jpeg": "jpg", "image/jpg": "jpg", "image/gif": "gif", "image/webp": "webp", "image/bmp": "bmp"});
   const S1P_REPLY_IMAGE_PASTE_UPLOAD_STATUS_MESSAGES = Object.freeze({1: "不支持此类扩展名", 2: "服务器限制无法上传那么大的附件", 3: "用户组限制无法上传那么大的附件", 4: "不支持此类扩展名", 5: "文件类型限制无法上传那么大的附件", 6: "今日您已无法上传更多的附件", 7: "请选择图片文件", 8: "附件文件无法保存", 9: "没有合法的文件被上传", 10: "非法操作", 11: "今日您已无法上传那么大的附件", 12: "因文件名包含敏感词而无法提交", 13: "服务器限制无法上传分辨率过高的附件"});
@@ -59609,17 +59610,39 @@
 
   const createS1pImagePasteQueue = (options) => {
     let uploading = false;
+    let activeJob = null;
     const jobs = [];
+    const isJobAlive = (job) => {
+      try {
+        return options.isAlive(job) !== false;
+      } catch (_) {
+        return false;
+      }
+    };
+    // 目标（弹窗 / 编辑器）已经关闭的任务不该再计入“上传中”：
+    // 否则关掉弹窗后重新打开，新回复会在旧任务结束前一直被拦下。
+    const countLiveJobs = () => {
+      let pending = 0;
+      if (uploading && activeJob && isJobAlive(activeJob)) {
+        pending += 1;
+      }
+      for (const job of jobs) {
+        if (isJobAlive(job)) pending += 1;
+      }
+      return pending;
+    };
     const process = async () => {
       if (uploading) return;
       const job = jobs.shift();
       if (!job) return;
       uploading = true;
+      activeJob = job;
       notifyS1pImagePasteQueueActivity();
       try {
         await runS1pImagePasteUploadJob(job, options);
       } finally {
         uploading = false;
+        activeJob = null;
         notifyS1pImagePasteQueueActivity();
         if (jobs.length > 0) void process();
       }
@@ -59630,8 +59653,8 @@
         notifyS1pImagePasteQueueActivity();
         void process();
       },
-      hasPending: () => uploading || jobs.length > 0,
-      pending: () => (uploading ? 1 : 0) + jobs.length,
+      hasPending: () => countLiveJobs() > 0,
+      pending: countLiveJobs,
       size: () => jobs.length,
     });
   };
@@ -59691,7 +59714,7 @@
     if (hasS1pImagePasteUploadsInFlight()) {
       event.preventDefault();
       event.stopImmediatePropagation();
-      showS1pReplyImagePasteMessage("图片上传中，请稍候…", null);
+      showS1pReplyImagePasteMessage(S1P_IMAGE_PASTE_UPLOADING_TEXT, null);
       return;
     }
     reconcileS1pReplyPopupAttachFields();
@@ -59795,6 +59818,9 @@
   const S1P_ADVANCED_EDITOR_IFRAME_ID = "e_iframe";
   const S1P_ADVANCED_EDITOR_TEXTAREA_ID = "e_textarea";
   const S1P_ADVANCED_EDITOR_BIND_RETRY_DELAYS = Object.freeze([0, 300, 1000, 2500]);
+  // 预览地址请求必须有上限：它挂在队列的 insert 步骤里，挂起会一直占着“上传中”
+  // 状态并拦住提交；超时后回退到本地 blob 预览即可。
+  const S1P_ADVANCED_EDITOR_PREVIEW_TIMEOUT_MS = 8000;
 
   let s1pAdvancedEditorPasteInitialized = false;
   let s1pAdvancedEditorPasteInitTimer = 0;
@@ -59871,17 +59897,30 @@
   };
 
   const resolveS1pAdvancedEditorPreviewSrc = async (aid, form) => {
+    const controller =
+      typeof AbortController === "function" ? new AbortController() : null;
+    const timer = controller
+      ? window.setTimeout(
+        () => controller.abort(),
+        S1P_ADVANCED_EDITOR_PREVIEW_TIMEOUT_MS
+      )
+      : 0;
     try {
       const fid = getS1pAdvancedEditorFid(form);
       const url =
         `forum.php?mod=ajax&action=attachlist&aids=${aid}` +
         (fid ? `&fid=${encodeURIComponent(fid)}` : "");
-      const response = await fetch(url, { credentials: "same-origin" });
+      const response = await fetch(url, {
+        credentials: "same-origin",
+        signal: controller?.signal,
+      });
       const html = await response.text();
       const src = extractS1pAdvancedEditorPreviewSrc(html, aid);
       return src ? new URL(src, location.href).href : "";
     } catch (_) {
       return "";
+    } finally {
+      if (timer) window.clearTimeout(timer);
     }
   };
 
@@ -59989,7 +60028,6 @@
   // 慢网络下粘贴截图后的上传可能持续十几秒，期间编辑器没有任何变化，
   // 容易被误判为上传失败而重复粘贴；队列有任务时显示一个轻量提示。
   const S1P_IMAGE_PASTE_LOADING_ID = "s1p-image-paste-loading";
-  const S1P_IMAGE_PASTE_LOADING_TEXT = "图片上传中，请稍候…";
   let s1pImagePasteLoadingElement = null;
   let s1pImagePasteLoadingTextElement = null;
 
@@ -60006,8 +60044,8 @@
       visible: true,
       text:
         pending > 1
-          ? `${S1P_IMAGE_PASTE_LOADING_TEXT}（${pending} 张）`
-          : S1P_IMAGE_PASTE_LOADING_TEXT,
+          ? `${S1P_IMAGE_PASTE_UPLOADING_TEXT}（${pending} 张）`
+          : S1P_IMAGE_PASTE_UPLOADING_TEXT,
     };
   };
 
@@ -60039,20 +60077,114 @@
   const renderS1pImagePasteLoading = (pendingCount) => {
     try {
       const state = resolveS1pImagePasteLoadingState(pendingCount);
-      if (!state.visible) {
-        s1pImagePasteLoadingElement?.classList?.remove?.("visible");
-        return;
-      }
-      const loading = ensureS1pImagePasteLoadingElement();
+      const loading = state.visible
+        ? ensureS1pImagePasteLoadingElement()
+        : s1pImagePasteLoadingElement;
+      if (!loading) return;
       if (s1pImagePasteLoadingTextElement) {
         s1pImagePasteLoadingTextElement.textContent = state.text;
       }
-      loading.classList?.add?.("visible");
+      if (state.visible) {
+        loading.removeAttribute("aria-hidden");
+        loading.classList?.add?.("visible");
+      } else {
+        // 隐藏时清空 live region 内容并退出无障碍树，避免读屏继续读到“上传中”。
+        loading.setAttribute("aria-hidden", "true");
+        loading.classList?.remove?.("visible");
+      }
     } catch (_) { }
   };
 
-  const refreshS1pImagePasteLoading = () =>
-    renderS1pImagePasteLoading(getS1pImagePastePendingCount());
+  // --- 上传中拦截论坛编辑器的提交快捷键 ---
+  // Discuz 编辑器把 keydown 绑在 WYSIWYG iframe 自己的 window 上（Chrome 在它的
+  // UA 判断里会走 firefox 分支），快捷键提交不会经过父文档的 keydown/submit 事件；
+  // 上传期间临时包一层页面全局 ctlent()，只拦 Ctrl+Enter / Alt+S 两个提交组合。
+  let s1pPasteSubmitShortcutGuard = null;
+
+  const getS1pPageGlobalScope = () => {
+    try {
+      if (typeof unsafeWindow !== "undefined" && unsafeWindow) {
+        return unsafeWindow;
+      }
+    } catch (_) { }
+    try {
+      const pageWindow = typeof window !== "undefined" ? window : null;
+      if (pageWindow?.wrappedJSObject) {
+        return pageWindow.wrappedJSObject;
+      }
+      return pageWindow;
+    } catch (_) {
+      return null;
+    }
+  };
+
+  const isS1pPasteSubmitShortcutEvent = (event) => {
+    if (!event) return false;
+    const keyCode = Number(event.keyCode) || 0;
+    const key = String(event.key || "");
+    const code = String(event.code || "");
+    const isEnter =
+      keyCode === 13 ||
+      key === "Enter" ||
+      key === "\r" ||
+      code === "Enter" ||
+      code === "NumpadEnter";
+    const isSKey =
+      keyCode === 83 || code === "KeyS" || key.toLowerCase() === "s";
+    return Boolean((event.ctrlKey && isEnter) || (event.altKey && isSKey));
+  };
+
+  const installS1pPasteSubmitShortcutGuard = () => {
+    if (s1pPasteSubmitShortcutGuard) return true;
+    const pageScope = getS1pPageGlobalScope();
+    const originalCtlent = pageScope?.ctlent;
+    if (typeof originalCtlent !== "function") return false;
+    const guardedCtlent = function (event) {
+      if (
+        hasS1pImagePasteUploadsInFlight() &&
+        isS1pPasteSubmitShortcutEvent(event)
+      ) {
+        try {
+          event.preventDefault?.();
+        } catch (_) { }
+        showS1pReplyImagePasteMessage(S1P_IMAGE_PASTE_UPLOADING_TEXT, null);
+        return;
+      }
+      return originalCtlent.apply(this, arguments);
+    };
+    try {
+      pageScope.ctlent = guardedCtlent;
+    } catch (_) {
+      return false;
+    }
+    s1pPasteSubmitShortcutGuard = { pageScope, originalCtlent, guardedCtlent };
+    return true;
+  };
+
+  const uninstallS1pPasteSubmitShortcutGuard = () => {
+    const guard = s1pPasteSubmitShortcutGuard;
+    if (!guard) return false;
+    s1pPasteSubmitShortcutGuard = null;
+    try {
+      guard.pageScope.ctlent = guard.originalCtlent;
+    } catch (_) { }
+    return true;
+  };
+
+  const syncS1pPasteSubmitShortcutGuard = (pendingCount) => {
+    const pending = Math.max(0, Math.floor(Number(pendingCount) || 0));
+    if (pending > 0) {
+      installS1pPasteSubmitShortcutGuard();
+      return;
+    }
+    uninstallS1pPasteSubmitShortcutGuard();
+  };
+
+  const refreshS1pImagePasteLoading = () => {
+    const pending = getS1pImagePastePendingCount();
+    renderS1pImagePasteLoading(pending);
+    syncS1pPasteSubmitShortcutGuard(pending);
+  };
 
   s1pImagePasteQueueActivityListener = refreshS1pImagePasteLoading;
 
@@ -60171,10 +60303,12 @@
       return;
     }
     // 上传中的图片还没插入编辑器，此时提交会静默丢图；与回复弹窗保持一致先拦下。
+    // 这里覆盖点击保存 / 原生 submit / 纯文本模式快捷键；富文本 iframe 内的
+    // 快捷键由上传期间临时包装的页面 ctlent() 拦截（见上）。
     if (hasS1pImagePasteUploadsInFlight()) {
       event.preventDefault();
       event.stopImmediatePropagation();
-      showS1pReplyImagePasteMessage(S1P_IMAGE_PASTE_LOADING_TEXT, null);
+      showS1pReplyImagePasteMessage(S1P_IMAGE_PASTE_UPLOADING_TEXT, null);
       return;
     }
     reconcileS1pAdvancedEditorAttachFields();

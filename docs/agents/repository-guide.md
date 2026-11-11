@@ -15,6 +15,7 @@ S1 Plus is a single-file Tampermonkey/Greasemonkey userscript that enhances the 
 - Core Business Data module test: `node tests/test-core-business-data-module.js`
 - Image Viewer interface test: `node tests/test-image-viewer-interface.js`
 - Reply popup image paste test: `node tests/test-reply-image-paste.js`
+- Image paste loading / submit guard test: `node tests/test-image-paste-loading.js`
 - Page Enhancement Projection test: `node tests/test-page-enhancement-projection.js`
 - Sync tests: run focused `node tests/test-*.js` files from `tests/`.
 - Test helper: `tests/s1plus-test-helpers.js` loads `S1Plus.js` in a `vm` sandbox with browser/GM stubs; test-only hook blocks live in `tests/s1plus-test-hooks.js` and are injected in memory so the published artifact stays hook-free.
