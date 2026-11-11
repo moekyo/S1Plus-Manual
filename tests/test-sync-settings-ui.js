@@ -644,4 +644,42 @@ assert.equal(
   ],
 ].forEach(([pattern, message]) => assert.match(sourceCode, pattern, message));
 
+// --- 同步分组折叠标题：默认色与悬停高亮都要适配深浅色 -----------------------
+const syncSectionTitleCss =
+  sourceCode.match(/\.s1p-sync-settings-section-title \{([\s\S]*?)\}/)?.[1] || "";
+assert.match(
+  syncSectionTitleCss,
+  /color:\s*var\(--s1p-dialog-text\)/,
+  "同步分组标题应使用主题自适应的正文色（--s1p-dialog-text），不能沿用未定义变量。"
+);
+assert.doesNotMatch(
+  syncSectionTitleCss,
+  /var\(--s1p-text\)/,
+  "同步分组标题不能使用未定义的 --s1p-text。"
+);
+const syncToggleCss =
+  sourceCode.match(
+    /\.s1p-sync-collapsible-section\s*> \.s1p-sync-section-toggle \{([\s\S]*?)\}/
+  )?.[1] || "";
+assert.match(
+  syncToggleCss,
+  /color:\s*var\(--s1p-dialog-text\)/,
+  "折叠标题按钮（含箭头）应使用主题自适应颜色。"
+);
+const syncToggleHoverCss =
+  sourceCode.match(
+    /\.s1p-sync-collapsible-section\s*> \.s1p-sync-section-toggle:hover[\s\S]*?\{([\s\S]*?)\}/
+  )?.[1] || "";
+assert.ok(
+  syncToggleHoverCss.includes(
+    "color-mix(in srgb, var(--s1p-sec) 68%, var(--s1p-dialog-text))"
+  ),
+  "折叠标题悬停高亮应按深浅主题混色（浅色深蓝 / 深色浅蓝）。"
+);
+assert.doesNotMatch(
+  syncToggleHoverCss,
+  /color:\s*var\(--s1p-pri\)/,
+  "折叠标题悬停不能使用 --s1p-pri（浅色 #d1d9c1 在浅底上对比度不足）。"
+);
+
 console.log("[sync-settings-ui] Sync settings restructure verified.");

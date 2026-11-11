@@ -4460,7 +4460,8 @@
       font-size: 14px;
       font-weight: 600;
       margin-bottom: 4px;
-      color: var(--s1p-text);
+      /* 设置面板正文颜色：浅色 #10234f / 深色 #f1f5f9，避免沿用未定义变量退化成继承色 */
+      color: var(--s1p-dialog-text);
     }
     .s1p-sync-settings-section-desc {
       margin-top: 0;
@@ -4482,7 +4483,7 @@
       padding: 0;
       border: 0;
       background: transparent;
-      color: inherit;
+      color: var(--s1p-dialog-text);
       font: inherit;
       text-align: left;
       cursor: pointer;
@@ -4498,7 +4499,10 @@
     .s1p-sync-collapsible-section
       > .s1p-sync-section-toggle:focus-visible
       .s1p-sync-settings-section-title {
-      color: var(--s1p-pri);
+      /* 悬停/聚焦高亮：按主题混色（浅色=深蓝，深色=浅蓝）。
+         不能直接用 --s1p-pri（浅色 #d1d9c1 / 深色未覆写），浅色下几乎看不清。 */
+      color: var(--s1p-sec);
+      color: color-mix(in srgb, var(--s1p-sec) 68%, var(--s1p-dialog-text));
     }
     .s1p-sync-section-chevron {
       flex: 0 0 auto;
