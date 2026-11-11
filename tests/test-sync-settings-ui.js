@@ -514,40 +514,36 @@ assert.notEqual(
 
 [
   [
-    /\.s1p-manual-sync-attention\.is-shaking\s*\{[^}]*animation:\s*s1p-manual-sync-shake 0\.6s cubic-bezier\(0\.4, 0, 0\.2, 1\) 1;/,
-    "第一阶段左右晃动应为更快的 0.6s 动画。",
+    /\.s1p-manual-sync-attention\.is-playing\s*\{[\s\S]*?animation:\s*[\s\S]*?s1p-manual-sync-shake 0\.66s[^;]*,[\s\S]*?s1p-manual-sync-scale 2\.4s cubic-bezier\(0\.4, 0, 0\.2, 1\) 0\.36s/,
+    "晃动与缩放应作为两条动画同时声明，缩放通过 0.36s 延迟与晃动重叠。",
   ],
   [
-    /@keyframes s1p-manual-sync-shake\s*\{[\s\S]*?translate3d\(-3px, -1px, 0\)[\s\S]*?translate3d\(3px, -1px, 0\)/,
-    "第一阶段晃动关键帧应参考 animate.css shake 的左右交替模式。",
+    /@keyframes s1p-manual-sync-shake\s*\{[\s\S]*?translate:\s*-3px 0;[\s\S]*?translate:\s*3px 0;/,
+    "晃动关键帧应使用独立的 translate 属性，才能在缩放同时叠加。",
   ],
   [
-    /\.s1p-manual-sync-attention\.is-scaling\s*\{[^}]*animation:\s*s1p-manual-sync-scale 2\.4s cubic-bezier\(0\.4, 0, 0\.2, 1\) 1;/,
-    "第二阶段缩放应为更慢的 2.4s 动画。",
-  ],
-  [
-    /@keyframes s1p-manual-sync-scale\s*\{[\s\S]*?scale\(1\.1\)[\s\S]*?scale\(1\)/,
-    "第二阶段应缓慢放大到 1.1 倍后恢复原状。",
+    /@keyframes s1p-manual-sync-scale\s*\{[\s\S]*?scale:\s*1\.1;[\s\S]*?scale:\s*1;/,
+    "缩放关键帧应使用独立的 scale 属性，才能与晃动同时叠加。",
   ],
   [
     /@media \(prefers-reduced-motion: reduce\)\s*\{\s*\.s1p-manual-sync-attention\s*\{[^}]*outline:/,
     "手动同步提示在 reduced-motion 下应改为静态描边提示。",
   ],
   [
-    /@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\.s1p-manual-sync-attention\.is-shaking,[\s\S]*?\.s1p-manual-sync-attention\.is-scaling\s*\{[^}]*animation:\s*none/,
+    /@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\.s1p-manual-sync-attention\.is-playing\s*\{[^}]*animation:\s*none/,
     "手动同步提示动画缺少 reduced-motion 降级。",
   ],
   [
-    /const GIST_MIRROR_MANUAL_SYNC_ATTENTION_SHAKE_MS = 600;[\s\S]*?const GIST_MIRROR_MANUAL_SYNC_ATTENTION_SCALE_MS = 2400;/,
-    "两段动画时长常量应与 CSS 保持一致（600ms / 2400ms）。",
+    /manualSyncButton\.classList\.add\("is-playing"\)/,
+    "两段动画应通过同一个 is-playing 状态同时启动。",
   ],
   [
-    /manualSyncButton\.classList\.add\("is-shaking"\)[\s\S]*?manualSyncButton\.classList\.add\("is-scaling"\)[\s\S]*?GIST_MIRROR_MANUAL_SYNC_ATTENTION_SHAKE_MS/,
-    "两段动画应分开处理：先播放 is-shaking，晃动结束后再切换 is-scaling。",
+    /GIST_MIRROR_MANUAL_SYNC_ATTENTION_SCALE_DELAY_MS \+[\s\S]*?GIST_MIRROR_MANUAL_SYNC_ATTENTION_SCALE_MS \+[\s\S]*?120/,
+    "手动同步提示缺少按“缩放延迟 + 缩放时长”计算的总时长兜底清理。",
   ],
   [
-    /dataset\.s1pAttentionToken = attentionToken;[\s\S]*?clearAttention[\s\S]*?GIST_MIRROR_MANUAL_SYNC_ATTENTION_SCALE_MS[\s\S]*?120/,
-    "手动同步提示缺少 token 去重与总时长兜底清理。",
+    /dataset\.s1pAttentionToken = attentionToken;[\s\S]*?clearAttention/,
+    "手动同步提示缺少 token 去重清理。",
   ],
   [
     /const playGistMirrorManualSyncAttention = async \(status\) => \{[\s\S]*?modalBody\.scrollTo\(\{[\s\S]*?behavior: "smooth"/,
@@ -558,6 +554,34 @@ assert.notEqual(
     "点击“立即镜像到 Gist”得到 conflict 后未触发手动同步提示动画。",
   ],
 ].forEach(([pattern, message]) => assert.match(sourceCode, pattern, message));
+
+const attentionShakeMsMatch = sourceCode.match(
+  /const GIST_MIRROR_MANUAL_SYNC_ATTENTION_SHAKE_MS = (\d+);/
+);
+const attentionScaleDelayMsMatch = sourceCode.match(
+  /const GIST_MIRROR_MANUAL_SYNC_ATTENTION_SCALE_DELAY_MS = (\d+);/
+);
+const attentionScaleMsMatch = sourceCode.match(
+  /const GIST_MIRROR_MANUAL_SYNC_ATTENTION_SCALE_MS = (\d+);/
+);
+assert.ok(
+  attentionShakeMsMatch && attentionScaleDelayMsMatch && attentionScaleMsMatch,
+  "缺少晃动 / 缩放延迟 / 缩放时长常量。"
+);
+const attentionShakeMs = Number(attentionShakeMsMatch[1]);
+const attentionScaleDelayMs = Number(attentionScaleDelayMsMatch[1]);
+const attentionScaleMs = Number(attentionScaleMsMatch[1]);
+assert.equal(attentionShakeMs, 660, "晃动时长应为 0.66s。");
+assert.equal(attentionScaleDelayMs, 360, "缩放应在 0.36s 时启动。");
+assert.equal(attentionScaleMs, 2400, "缩放时长应为 2.4s。");
+assert.ok(
+  attentionScaleDelayMs < attentionShakeMs,
+  "缩放必须在晃动结束前启动，两段时间区间需要有重叠，避免动画割裂。"
+);
+assert.ok(
+  attentionShakeMs - attentionScaleDelayMs >= 250,
+  "两段动画的纯重叠时间至少应有约 0.25s。"
+);
 
 assert.doesNotMatch(
   attentionCssBlock,

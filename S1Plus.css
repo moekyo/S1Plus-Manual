@@ -4361,52 +4361,51 @@
       margin-bottom: 20px;
     }
 
-    /* NAS 镜像提示需要手动同步时：先滚动到“手动同步”按钮，
-       再按“快节奏晃动 → 缓慢缩放 → 恢复”两段动画提示一次 */
+    /* NAS 镜像提示需要手动同步时：先滚动到“手动同步”按钮，再播放两段
+       时间区间互相重叠的提示动画（晃动 0.66s，缩放延迟 0.36s 启动、持续
+       2.4s，重叠约 0.3s，衔接更自然） */
     .s1p-manual-sync-attention {
       position: relative;
       z-index: 1;
       transform-origin: center;
     }
-    /* 第一段：参考 animate.css 的 shake 关键帧，缩短时长让晃动更利落 */
-    .s1p-manual-sync-attention.is-shaking {
-      animation: s1p-manual-sync-shake 0.6s cubic-bezier(0.4, 0, 0.2, 1) 1;
+    /* translate / scale 使用独立的变换属性，两段动画可以同时叠加播放 */
+    .s1p-manual-sync-attention.is-playing {
+      animation:
+        s1p-manual-sync-shake 0.66s cubic-bezier(0.36, 0.07, 0.19, 0.97) both,
+        s1p-manual-sync-scale 2.4s cubic-bezier(0.4, 0, 0.2, 1) 0.36s both;
     }
     @keyframes s1p-manual-sync-shake {
       0%,
       100% {
-        transform: translate3d(0, -1px, 0);
+        translate: 0 0;
       }
       10%,
       30%,
       50%,
       70%,
       90% {
-        transform: translate3d(-3px, -1px, 0);
+        translate: -3px 0;
       }
       20%,
       40%,
       60%,
       80% {
-        transform: translate3d(3px, -1px, 0);
+        translate: 3px 0;
       }
-    }
-    /* 第二段：用 Material 标准缓动缓慢放大并回落 */
-    .s1p-manual-sync-attention.is-scaling {
-      animation: s1p-manual-sync-scale 2.4s cubic-bezier(0.4, 0, 0.2, 1) 1;
     }
     @keyframes s1p-manual-sync-scale {
       0% {
-        transform: translate3d(0, -1px, 0) scale(1);
+        scale: 1;
       }
-      45% {
-        transform: translate3d(0, -1px, 0) scale(1.1);
+      42% {
+        scale: 1.1;
       }
-      62% {
-        transform: translate3d(0, -1px, 0) scale(1.1);
+      60% {
+        scale: 1.1;
       }
       100% {
-        transform: translate3d(0, -1px, 0) scale(1);
+        scale: 1;
       }
     }
     @media (prefers-reduced-motion: reduce) {
@@ -4414,8 +4413,7 @@
         outline: 2px solid var(--s1p-sec);
         outline-offset: 2px;
       }
-      .s1p-manual-sync-attention.is-shaking,
-      .s1p-manual-sync-attention.is-scaling {
+      .s1p-manual-sync-attention.is-playing {
         animation: none;
       }
     }

@@ -47207,8 +47207,10 @@
     };
 
     const GIST_MIRROR_MANUAL_SYNC_ATTENTION_SCROLL_WAIT_MS = 520;
-    // 两段动画分开处理：先快节奏晃动，再缓慢缩放回落（与 CSS 时长保持一致）
-    const GIST_MIRROR_MANUAL_SYNC_ATTENTION_SHAKE_MS = 600;
+    // 两段动画时间区间重叠：晃动从 0s 开始、0.66s 结束；缩放在 0.36s 启动、
+    // 持续 2.4s，因此有约 0.3s 重叠，衔接更连贯（与 CSS 时长保持一致）
+    const GIST_MIRROR_MANUAL_SYNC_ATTENTION_SHAKE_MS = 660;
+    const GIST_MIRROR_MANUAL_SYNC_ATTENTION_SCALE_DELAY_MS = 360;
     const GIST_MIRROR_MANUAL_SYNC_ATTENTION_SCALE_MS = 2400;
     const isManualSyncButtonFullyVisible = (button, modalBody) => {
       if (
@@ -47276,28 +47278,19 @@
         delete manualSyncButton.dataset.s1pAttentionToken;
         manualSyncButton.classList.remove(
           "s1p-manual-sync-attention",
-          "is-shaking",
-          "is-scaling"
+          "is-playing"
         );
       };
       manualSyncButton.dataset.s1pAttentionToken = attentionToken;
-      manualSyncButton.classList.remove("is-shaking", "is-scaling");
+      manualSyncButton.classList.remove("is-playing");
       manualSyncButton.classList.add("s1p-manual-sync-attention");
-      // 强制重排，保证重复触发时动画从头开始
+      // 强制重排，保证重复触发时两段动画都从头开始
       void manualSyncButton.offsetWidth;
-      manualSyncButton.classList.add("is-shaking");
-      window.setTimeout(() => {
-        if (!modal.isConnected || !isCurrentAttention()) {
-          return;
-        }
-        manualSyncButton.classList.remove("is-shaking");
-        void manualSyncButton.offsetWidth;
-        manualSyncButton.classList.add("is-scaling");
-      }, GIST_MIRROR_MANUAL_SYNC_ATTENTION_SHAKE_MS);
+      manualSyncButton.classList.add("is-playing");
       // prefers-reduced-motion 下 animation 被关闭，靠计时器兜底清理静态描边
       window.setTimeout(
         clearAttention,
-        GIST_MIRROR_MANUAL_SYNC_ATTENTION_SHAKE_MS +
+        GIST_MIRROR_MANUAL_SYNC_ATTENTION_SCALE_DELAY_MS +
           GIST_MIRROR_MANUAL_SYNC_ATTENTION_SCALE_MS +
           120
       );
