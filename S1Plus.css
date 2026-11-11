@@ -4362,8 +4362,7 @@
     }
 
     /* NAS 镜像提示需要手动同步时：先滚动到“手动同步”按钮，再播放两段
-       时间区间互相重叠的提示动画（晃动 0.66s，缩放延迟 0.2s 启动、持续
-       2.4s，重叠约 0.46s，衔接更自然） */
+       完全同时开始的提示动画（晃动 0.66s + 缩放 2.4s，晃动整段与缩放重叠） */
     .s1p-manual-sync-attention {
       position: relative;
       z-index: 1;
@@ -4373,7 +4372,7 @@
     .s1p-manual-sync-attention.is-playing {
       animation:
         s1p-manual-sync-shake 0.66s cubic-bezier(0.36, 0.07, 0.19, 0.97) both,
-        s1p-manual-sync-scale 2.4s cubic-bezier(0.4, 0, 0.2, 1) 0.2s both;
+        s1p-manual-sync-scale 2.4s cubic-bezier(0.4, 0, 0.2, 1) both;
     }
     @keyframes s1p-manual-sync-shake {
       0%,
