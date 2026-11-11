@@ -47430,15 +47430,25 @@
         if (status) {
           applyGistMirrorStatusToControls(status);
           renderGistMirrorStatus(status);
-          if (status.lastStatus === "conflict") {
-            void playGistMirrorManualSyncAttention(status);
-          }
         }
+        // 等镜像结果提示（成功 / 失败 / 冲突）真正消失后，再滚动并播放
+        // “手动同步”按钮的提示动画，避免动画被 toast 遮住。
+        const needsManualSyncAttention = status?.lastStatus === "conflict";
         showSettingsMessage(
           `NAS 镜像完成：${
             status?.lastMessage || status?.lastStatus || "已执行"
           }`,
-          status?.lastStatus !== "failure" && status?.lastStatus !== "conflict"
+          status?.lastStatus !== "failure" && status?.lastStatus !== "conflict",
+          needsManualSyncAttention
+            ? {
+                onDismiss: ({ reason }) => {
+                  if (reason === "replaced" || !modal.isConnected) {
+                    return;
+                  }
+                  void playGistMirrorManualSyncAttention(status);
+                },
+              }
+            : undefined
         );
       } catch (error) {
         showSettingsMessage(

@@ -550,8 +550,8 @@ assert.notEqual(
     "NAS 镜像需要手动同步时未自动滚动到“手动同步”按钮。",
   ],
   [
-    /const runGistMirrorOnHubFromControls = async \(\) => \{[\s\S]*?s1pRunGistMirrorOnHub\(\)[\s\S]*?status\.lastStatus === "conflict"[\s\S]*?playGistMirrorManualSyncAttention\(status\)/,
-    "点击“立即镜像到 Gist”得到 conflict 后未触发手动同步提示动画。",
+    /const runGistMirrorOnHubFromControls = async \(\) => \{[\s\S]*?s1pRunGistMirrorOnHub\(\)[\s\S]*?needsManualSyncAttention = status\?\.lastStatus === "conflict"[\s\S]*?onDismiss: \(\{ reason \}\) => \{[\s\S]*?reason === "replaced"[\s\S]*?playGistMirrorManualSyncAttention\(status\)/,
+    "镜像结果提示消失后未触发手动同步提示动画（应在 toast 的 onDismiss 里触发）。",
   ],
 ].forEach(([pattern, message]) => assert.match(sourceCode, pattern, message));
 
