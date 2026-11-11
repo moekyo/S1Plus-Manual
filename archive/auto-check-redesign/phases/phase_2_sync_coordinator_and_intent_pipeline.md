@@ -12,11 +12,11 @@
 
 ### 强烈建议补读
 
-- [S1Plus.js](S1Plus-Manual/S1Plus.js) 中当前 `performAutoSync`、后台 push 触发、恢复钩子和指示器驱动相关实现
+- [S1Plus.js](../../../S1Plus.js) 中当前 `performAutoSync`、后台 push 触发、恢复钩子和指示器驱动相关实现
 
 ### 选读
 
-- [architecture_principles.md](S1Plus-Manual/sync-across-multiple-tab/sync_multitab_redesign/architecture_principles.md)
+- [architecture_principles.md](../../sync-across-multiple-tab/sync_multitab_redesign/architecture_principles.md)
 
 ## 2. 目标
 

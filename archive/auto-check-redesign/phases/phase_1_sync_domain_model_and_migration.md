@@ -11,12 +11,12 @@
 
 ### 强烈建议补读
 
-- [DEVELOPMENT.md](S1Plus-Manual/DEVELOPMENT.md)
-- [same-device-unexpected-remote-update-findings-and-fix-plan.md](S1Plus-Manual/sync-across-multiple-tab/same-device-unexpected-remote-update-findings-and-fix-plan.md)
+- [DEVELOPMENT.md](../../../DEVELOPMENT.md)
+- [same-device-unexpected-remote-update-findings-and-fix-plan.md](../../sync-across-multiple-tab/same-device-unexpected-remote-update-findings-and-fix-plan.md)
 
 ### 选读
 
-- [S1Plus.js](S1Plus-Manual/S1Plus.js) 中当前 settings 归一化、默认值和同步入口相关实现
+- [S1Plus.js](../../../S1Plus.js) 中当前 settings 归一化、默认值和同步入口相关实现
 
 ## 2. 目标
 

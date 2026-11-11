@@ -14,8 +14,8 @@
 
 ### 强烈建议补读
 
-- [Phase 7 旧文档](S1Plus-Manual/sync-across-multiple-tab/sync_multitab_redesign/phases/phase_7_diagnostics_and_regression.md)
-- [same-device-unexpected-remote-update-findings-and-fix-plan.md](S1Plus-Manual/sync-across-multiple-tab/same-device-unexpected-remote-update-findings-and-fix-plan.md)
+- [Phase 7 旧文档](../../sync-across-multiple-tab/sync_multitab_redesign/phases/phase_7_diagnostics_and_regression.md)
+- [same-device-unexpected-remote-update-findings-and-fix-plan.md](../../sync-across-multiple-tab/same-device-unexpected-remote-update-findings-and-fix-plan.md)
 
 ### 选读
 

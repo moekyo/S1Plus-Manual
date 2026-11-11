@@ -31,20 +31,20 @@ _Thinking:_
 
 **Output:**
 ```
-S1Plus-Manual/auto-check-redesign/PLAN.md
-S1Plus-Manual/auto-check-redesign/regression_matrix.md
-S1Plus-Manual/auto-check-redesign/task_plan.md
-S1Plus-Manual/auto-check-redesign/progress.md
-S1Plus-Manual/auto-check-redesign/development_prompt.md
-S1Plus-Manual/auto-check-redesign/README.md
-S1Plus-Manual/auto-check-redesign/notes.md
-S1Plus-Manual/auto-check-redesign/phases/phase_3_auto_push_and_shared_lease.md
-S1Plus-Manual/auto-check-redesign/phases/phase_7_diagnostics_and_regression_matrix.md
-S1Plus-Manual/auto-check-redesign/phases/phase_4_safe_auto_pull_probe_and_reconcile.md
-S1Plus-Manual/auto-check-redesign/phases/phase_2_sync_coordinator_and_intent_pipeline.md
-S1Plus-Manual/auto-check-redesign/phases/phase_5_page_apply_and_refresh_policy.md
-S1Plus-Manual/auto-check-redesign/phases/phase_1_sync_domain_model_and_migration.md
-S1Plus-Manual/auto-check-redesign/phases/phase_6_settings_ui_and_status_hub.md
+auto-check-redesign/PLAN.md
+auto-check-redesign/regression_matrix.md
+auto-check-redesign/task_plan.md
+auto-check-redesign/progress.md
+auto-check-redesign/development_prompt.md
+auto-check-redesign/README.md
+auto-check-redesign/notes.md
+auto-check-redesign/phases/phase_3_auto_push_and_shared_lease.md
+auto-check-redesign/phases/phase_7_diagnostics_and_regression_matrix.md
+auto-check-redesign/phases/phase_4_safe_auto_pull_probe_and_reconcile.md
+auto-check-redesign/phases/phase_2_sync_coordinator_and_intent_pipeline.md
+auto-check-redesign/phases/phase_5_page_apply_and_refresh_policy.md
+auto-check-redesign/phases/phase_1_sync_domain_model_and_migration.md
+auto-check-redesign/phases/phase_6_settings_ui_and_status_hub.md
 ```
 
 ---
@@ -60,13 +60,13 @@ Let me read these documents to understand the review/analysis of the auto-sync a
 **Input:**
 ```json
 {
-  "filePath": "S1Plus-Manual/auto-check-redesign/README.md"
+  "filePath": "auto-check-redesign/README.md"
 }
 ```
 
 **Output:**
 ```
-<path>S1Plus-Manual/auto-check-redesign/README.md</path>
+<path>auto-check-redesign/README.md</path>
 <type>file</type>
 <content>
 1: # 自动检查云端更新重构交接文档
@@ -325,13 +325,13 @@ Let me read these documents to understand the review/analysis of the auto-sync a
 **Input:**
 ```json
 {
-  "filePath": "S1Plus-Manual/auto-check-redesign/PLAN.md"
+  "filePath": "auto-check-redesign/PLAN.md"
 }
 ```
 
 **Output:**
 ```
-<path>S1Plus-Manual/auto-check-redesign/PLAN.md</path>
+<path>auto-check-redesign/PLAN.md</path>
 <type>file</type>
 <content>
 1: # 自动同步统一架构重构计划
@@ -541,13 +541,13 @@ Let me read these documents to understand the review/analysis of the auto-sync a
 **Input:**
 ```json
 {
-  "filePath": "S1Plus-Manual/auto-check-redesign/regression_matrix.md"
+  "filePath": "auto-check-redesign/regression_matrix.md"
 }
 ```
 
 **Output:**
 ```
-<path>S1Plus-Manual/auto-check-redesign/regression_matrix.md</path>
+<path>auto-check-redesign/regression_matrix.md</path>
 <type>file</type>
 <content>
 1: # Phase 7 Regression Matrix: 自动同步诊断与回归基线
@@ -612,13 +612,13 @@ Let me read these documents to understand the review/analysis of the auto-sync a
 **Input:**
 ```json
 {
-  "filePath": "S1Plus-Manual/auto-check-redesign/notes.md"
+  "filePath": "auto-check-redesign/notes.md"
 }
 ```
 
 **Output:**
 ```
-<path>S1Plus-Manual/auto-check-redesign/notes.md</path>
+<path>auto-check-redesign/notes.md</path>
 <type>file</type>
 <content>
 1: # Notes: 自动同步统一架构重构
@@ -864,13 +864,13 @@ Let me also read the individual phase documents and the task/progress files to g
 **Input:**
 ```json
 {
-  "filePath": "S1Plus-Manual/auto-check-redesign/task_plan.md"
+  "filePath": "auto-check-redesign/task_plan.md"
 }
 ```
 
 **Output:**
 ```
-<path>S1Plus-Manual/auto-check-redesign/task_plan.md</path>
+<path>auto-check-redesign/task_plan.md</path>
 <type>file</type>
 <content>
 1: # Task Plan: 自动同步统一架构重构
@@ -944,13 +944,13 @@ Let me also read the individual phase documents and the task/progress files to g
 **Input:**
 ```json
 {
-  "filePath": "S1Plus-Manual/auto-check-redesign/progress.md"
+  "filePath": "auto-check-redesign/progress.md"
 }
 ```
 
 **Output:**
 ```
-<path>S1Plus-Manual/auto-check-redesign/progress.md</path>
+<path>auto-check-redesign/progress.md</path>
 <type>file</type>
 <content>
 1: # Progress: 自动同步统一架构重构
@@ -1352,13 +1352,13 @@ Let me also read the individual phase documents and the task/progress files to g
 **Input:**
 ```json
 {
-  "filePath": "S1Plus-Manual/auto-check-redesign/development_prompt.md"
+  "filePath": "auto-check-redesign/development_prompt.md"
 }
 ```
 
 **Output:**
 ```
-<path>S1Plus-Manual/auto-check-redesign/development_prompt.md</path>
+<path>auto-check-redesign/development_prompt.md</path>
 <type>file</type>
 <content>
 1: # 自动同步统一架构重构开发提示
@@ -1534,13 +1534,13 @@ Now I have a good understanding of the documentation. Let me also read the indiv
 **Input:**
 ```json
 {
-  "filePath": "S1Plus-Manual/auto-check-redesign/phases/phase_1_sync_domain_model_and_migration.md"
+  "filePath": "auto-check-redesign/phases/phase_1_sync_domain_model_and_migration.md"
 }
 ```
 
 **Output:**
 ```
-<path>S1Plus-Manual/auto-check-redesign/phases/phase_1_sync_domain_model_and_migration.md</path>
+<path>auto-check-redesign/phases/phase_1_sync_domain_model_and_migration.md</path>
 <type>file</type>
 <content>
 1: # Phase 1: 领域模型与设置迁移
@@ -1556,12 +1556,12 @@ Now I have a good understanding of the documentation. Let me also read the indiv
 11: 
 12: ### 强烈建议补读
 13: 
-14: - [DEVELOPMENT.md](S1Plus-Manual/DEVELOPMENT.md)
-15: - [same-device-unexpected-remote-update-findings-and-fix-plan.md](S1Plus-Manual/sync-across-multiple-tab/same-device-unexpected-remote-update-findings-and-fix-plan.md)
+14: - [DEVELOPMENT.md](../DEVELOPMENT.md)
+15: - [same-device-unexpected-remote-update-findings-and-fix-plan.md](sync-across-multiple-tab/same-device-unexpected-remote-update-findings-and-fix-plan.md)
 16: 
 17: ### 选读
 18: 
-19: - [S1Plus.js](S1Plus-Manual/S1Plus.js) 中当前 settings 归一化、默认值和同步入口相关实现
+19: - [S1Plus.js](../S1Plus.js) 中当前 settings 归一化、默认值和同步入口相关实现
 20: 
 21: ## 2. 目标
 22: 
@@ -1755,13 +1755,13 @@ Now I have a good understanding of the documentation. Let me also read the indiv
 **Input:**
 ```json
 {
-  "filePath": "S1Plus-Manual/auto-check-redesign/phases/phase_4_safe_auto_pull_probe_and_reconcile.md"
+  "filePath": "auto-check-redesign/phases/phase_4_safe_auto_pull_probe_and_reconcile.md"
 }
 ```
 
 **Output:**
 ```
-<path>S1Plus-Manual/auto-check-redesign/phases/phase_4_safe_auto_pull_probe_and_reconcile.md</path>
+<path>auto-check-redesign/phases/phase_4_safe_auto_pull_probe_and_reconcile.md</path>
 <type>file</type>
 <content>
 1: # Phase 4: 安全自动拉取、Probe 与 Reconcile
@@ -1780,12 +1780,12 @@ Now I have a good understanding of the documentation. Let me also read the indiv
 14: 
 15: ### 强烈建议补读
 16: 
-17: - [same-device-unexpected-remote-update-findings-and-fix-plan.md](S1Plus-Manual/sync-across-multiple-tab/same-device-unexpected-remote-update-findings-and-fix-plan.md)
-18: - [architecture_principles.md](S1Plus-Manual/sync-across-multiple-tab/sync_multitab_redesign/architecture_principles.md)
+17: - [same-device-unexpected-remote-update-findings-and-fix-plan.md](sync-across-multiple-tab/same-device-unexpected-remote-update-findings-and-fix-plan.md)
+18: - [architecture_principles.md](sync-across-multiple-tab/sync_multitab_redesign/architecture_principles.md)
 19: 
 20: ### 选读
 21: 
-22: - [S1Plus.js](S1Plus-Manual/S1Plus.js) 中当前 startup、恢复钩子、same-session / same-device 相关实现
+22: - [S1Plus.js](../S1Plus.js) 中当前 startup、恢复钩子、same-session / same-device 相关实现
 23: 
 24: ## 2. 目标
 25: 
@@ -1999,7 +1999,7 @@ Let me do targeted searches.
 ```json
 {
   "description": "Search sync architecture code",
-  "prompt": "Search the file `S1Plus-Manual/S1Plus.js` for the following patterns. For each pattern, return the line numbers where matches are found and a brief snippet of the context (2-3 lines around the match). Do NOT read the entire file, just use grep-like searching.\n\n1. Search for `syncPerLoadCheckEnabled` - all occurrences\n2. Search for `syncCheckOnReturnToForeground` - all occurrences  \n3. Search for `syncAutoFetchMode` - all occurrences\n4. Search for `SyncCoordinator` or `coordinator` - all occurrences (case insensitive)\n5. Search for `SyncIntent` - all occurrences\n6. Search for `safeToProbe` or `safe.to.probe` or `safeAutoPull` - all occurrences (case insensitive)\n7. Search for `probe.*reconcile` or `probeReconcile` - all occurrences (case insensitive)\n8. Search for `syncDeviceId` - all occurrences\n9. Search for `buildSyncDiagnosticsFactSnapshot` - all occurrences\n10. Search for `migrateLegacySettingsIfNeeded` - all occurrences\n11. Search for `per_load` - all occurrences\n12. Search for `daily_startup` - all occurrences\n13. Search for `triggerRemoteSyncPush` - all occurrences\n14. Search for `foreground_resume` - all occurrences (case insensitive)\n15. Search for `autoFetchResult` - all occurrences\n16. Search for `handleSafeAutoPullResult` - all occurrences\n\nFor each pattern found, report:\n- The line numbers\n- Whether the pattern drives runtime behavior or is just for migration/compatibility\n- A 2-3 line context snippet\n\nBe thorough - this is a research task, do NOT modify any files.",
+  "prompt": "Search the file `../S1Plus.js` for the following patterns. For each pattern, return the line numbers where matches are found and a brief snippet of the context (2-3 lines around the match). Do NOT read the entire file, just use grep-like searching.\n\n1. Search for `syncPerLoadCheckEnabled` - all occurrences\n2. Search for `syncCheckOnReturnToForeground` - all occurrences  \n3. Search for `syncAutoFetchMode` - all occurrences\n4. Search for `SyncCoordinator` or `coordinator` - all occurrences (case insensitive)\n5. Search for `SyncIntent` - all occurrences\n6. Search for `safeToProbe` or `safe.to.probe` or `safeAutoPull` - all occurrences (case insensitive)\n7. Search for `probe.*reconcile` or `probeReconcile` - all occurrences (case insensitive)\n8. Search for `syncDeviceId` - all occurrences\n9. Search for `buildSyncDiagnosticsFactSnapshot` - all occurrences\n10. Search for `migrateLegacySettingsIfNeeded` - all occurrences\n11. Search for `per_load` - all occurrences\n12. Search for `daily_startup` - all occurrences\n13. Search for `triggerRemoteSyncPush` - all occurrences\n14. Search for `foreground_resume` - all occurrences (case insensitive)\n15. Search for `autoFetchResult` - all occurrences\n16. Search for `handleSafeAutoPullResult` - all occurrences\n\nFor each pattern found, report:\n- The line numbers\n- Whether the pattern drives runtime behavior or is just for migration/compatibility\n- A 2-3 line context snippet\n\nBe thorough - this is a research task, do NOT modify any files.",
   "subagent_type": "explore"
 }
 ```
@@ -2009,7 +2009,7 @@ Let me do targeted searches.
 task_id: ses_23a5ed509ffezJuoSEG275AGQJ (for resuming to continue this task if needed)
 
 <task_result>
-以下是针对 `S1Plus-Manual/S1Plus.js` 中所有 16 个搜索模式的全面报告。
+以下是针对 `../S1Plus.js` 中所有 16 个搜索模式的全面报告。
 
 ---
 
@@ -2281,7 +2281,7 @@ Let me look more carefully at some of these to confirm. Let me read the key runt
 **Input:**
 ```json
 {
-  "filePath": "S1Plus-Manual/S1Plus.js",
+  "filePath": "../S1Plus.js",
   "offset": 36420,
   "limit": 60
 }
@@ -2289,7 +2289,7 @@ Let me look more carefully at some of these to confirm. Let me read the key runt
 
 **Output:**
 ```
-<path>S1Plus-Manual/S1Plus.js</path>
+<path>../S1Plus.js</path>
 <type>file</type>
 <content>
 36420: 
@@ -2362,7 +2362,7 @@ Let me look more carefully at some of these to confirm. Let me read the key runt
 **Input:**
 ```json
 {
-  "filePath": "S1Plus-Manual/S1Plus.js",
+  "filePath": "../S1Plus.js",
   "offset": 9050,
   "limit": 30
 }
@@ -2370,7 +2370,7 @@ Let me look more carefully at some of these to confirm. Let me read the key runt
 
 **Output:**
 ```
-<path>S1Plus-Manual/S1Plus.js</path>
+<path>../S1Plus.js</path>
 <type>file</type>
 <content>
 9050:     normalizeAutoSyncIndicatorState(
@@ -2413,7 +2413,7 @@ Let me look more carefully at some of these to confirm. Let me read the key runt
 **Input:**
 ```json
 {
-  "filePath": "S1Plus-Manual/S1Plus.js",
+  "filePath": "../S1Plus.js",
   "offset": 10100,
   "limit": 30
 }
@@ -2421,7 +2421,7 @@ Let me look more carefully at some of these to confirm. Let me read the key runt
 
 **Output:**
 ```
-<path>S1Plus-Manual/S1Plus.js</path>
+<path>../S1Plus.js</path>
 <type>file</type>
 <content>
 10100:   });
@@ -2464,7 +2464,7 @@ Let me look more carefully at some of these to confirm. Let me read the key runt
 **Input:**
 ```json
 {
-  "filePath": "S1Plus-Manual/S1Plus.js",
+  "filePath": "../S1Plus.js",
   "offset": 21400,
   "limit": 30
 }
@@ -2472,7 +2472,7 @@ Let me look more carefully at some of these to confirm. Let me read the key runt
 
 **Output:**
 ```
-<path>S1Plus-Manual/S1Plus.js</path>
+<path>../S1Plus.js</path>
 <type>file</type>
 <content>
 21400:     const finalizeResult = (result, extraOptions = {}) =>
@@ -2523,7 +2523,7 @@ Now I can see clearly. Let me also check the `migrateLegacySettingsIfNeeded` fun
 **Input:**
 ```json
 {
-  "filePath": "S1Plus-Manual/S1Plus.js",
+  "filePath": "../S1Plus.js",
   "limit": 100,
   "offset": 23447
 }
@@ -2531,7 +2531,7 @@ Now I can see clearly. Let me also check the `migrateLegacySettingsIfNeeded` fun
 
 **Output:**
 ```
-<path>S1Plus-Manual/S1Plus.js</path>
+<path>../S1Plus.js</path>
 <type>file</type>
 <content>
 23447:   const migrateLegacySettingsIfNeeded = () => {
@@ -2652,7 +2652,7 @@ Now I can see clearly. Let me also check the `migrateLegacySettingsIfNeeded` fun
 **Output:**
 ```
 Found 6 matches
-S1Plus-Manual/sync-across-multiple-tab/scripts/test-settings-migration.js:
+sync-across-multiple-tab/scripts/test-settings-migration.js:
   Line 253:     syncAutoFetchMode: "foreground",
 
   Line 279:     Object.prototype.hasOwnProperty.call(persistedSettings, "syncAutoFetchMode"),
@@ -2660,7 +2660,7 @@ S1Plus-Manual/sync-across-multiple-tab/scripts/test-settings-migration.js:
   Line 281:     "[legacy-key-persistence] 旧字段 syncAutoFetchMode 应在一次迁移后从存储中移除"
 
 
-S1Plus-Manual/S1Plus.js:
+S1Plus.js:
   Line 22154:     const resolvedSyncAutoCheckMode =
 
   Line 22162:       resolvedSyncAutoCheckMode === "per_load",
@@ -2682,7 +2682,7 @@ Now I have clear evidence. Let me also check the `buildNormalizedSettings` funct
 **Input:**
 ```json
 {
-  "filePath": "S1Plus-Manual/S1Plus.js",
+  "filePath": "../S1Plus.js",
   "limit": 80,
   "offset": 22140
 }
@@ -2690,7 +2690,7 @@ Now I have clear evidence. Let me also check the `buildNormalizedSettings` funct
 
 **Output:**
 ```
-<path>S1Plus-Manual/S1Plus.js</path>
+<path>../S1Plus.js</path>
 <type>file</type>
 <content>
 22140:         : settings.syncPerLoadCheckEnabled,
@@ -2791,7 +2791,7 @@ Now let me look at the UI section to see how the settings modal actually renders
 **Input:**
 ```json
 {
-  "filePath": "S1Plus-Manual/S1Plus.js",
+  "filePath": "../S1Plus.js",
   "limit": 80,
   "offset": 26420
 }
@@ -2799,7 +2799,7 @@ Now let me look at the UI section to see how the settings modal actually renders
 
 **Output:**
 ```
-<path>S1Plus-Manual/S1Plus.js</path>
+<path>../S1Plus.js</path>
 <type>file</type>
 <content>
 26420:               <div class="s1p-settings-item">
@@ -2940,14 +2940,14 @@ Let me also look at the test scripts to see if they test against code patterns t
 {
   "include": "*.js",
   "pattern": "syncAutoFetchMode|syncAutoPushEnabled|SyncCoordinator|SyncIntent|safeAutoPull",
-  "path": "S1Plus-Manual/sync-across-multiple-tab/scripts"
+  "path": "sync-across-multiple-tab/scripts"
 }
 ```
 
 **Output:**
 ```
 Found 3 matches
-S1Plus-Manual/sync-across-multiple-tab/scripts/test-settings-migration.js:
+sync-across-multiple-tab/scripts/test-settings-migration.js:
   Line 253:     syncAutoFetchMode: "foreground",
 
   Line 279:     Object.prototype.hasOwnProperty.call(persistedSettings, "syncAutoFetchMode"),
@@ -2961,7 +2961,7 @@ S1Plus-Manual/sync-across-multiple-tab/scripts/test-settings-migration.js:
 **Input:**
 ```json
 {
-  "filePath": "S1Plus-Manual/sync-across-multiple-tab/scripts/test-settings-migration.js",
+  "filePath": "sync-across-multiple-tab/scripts/test-settings-migration.js",
   "limit": 80,
   "offset": 230
 }
@@ -2969,7 +2969,7 @@ S1Plus-Manual/sync-across-multiple-tab/scripts/test-settings-migration.js:
 
 **Output:**
 ```
-<path>S1Plus-Manual/sync-across-multiple-tab/scripts/test-settings-migration.js</path>
+<path>sync-across-multiple-tab/scripts/test-settings-migration.js</path>
 <type>file</type>
 <content>
 230:       migrationReasons.includes(reason),
@@ -3147,23 +3147,23 @@ Let me see what test scripts actually exist.
 
 **Output:**
 ```
-S1Plus-Manual/sync-across-multiple-tab/scripts/test-visible-remote-polling.js
-S1Plus-Manual/sync-across-multiple-tab/scripts/test-sync-settings-ui.js
-S1Plus-Manual/sync-across-multiple-tab/scripts/test-foreground-trigger-integration.js
-S1Plus-Manual/sync-across-multiple-tab/scripts/test-safe-sync-execution.js
-S1Plus-Manual/sync-across-multiple-tab/scripts/test-settings-migration.js
-S1Plus-Manual/sync-across-multiple-tab/scripts/test-post-sync-refresh-policy.js
-S1Plus-Manual/sync-across-multiple-tab/scripts/test-remote-probe-state.js
-S1Plus-Manual/sync-across-multiple-tab/scripts/test-foreground-probe-diagnostics-feedback.js
-S1Plus-Manual/sync-across-multiple-tab/scripts/test-foreground-remote-probe.js
-S1Plus-Manual/sync-across-multiple-tab/scripts/test-foreground-same-session-remote-write.js
-S1Plus-Manual/sync-across-multiple-tab/scripts/test-foreground-probe-gate-retry.js
-S1Plus-Manual/sync-across-multiple-tab/scripts/test-auto-sync-indicator-linkage.js
-S1Plus-Manual/sync-across-multiple-tab/scripts/test-core-data-snapshot-resync.js
-S1Plus-Manual/sync-across-multiple-tab/scripts/test-background-open-passive-session.js
-S1Plus-Manual/sync-across-multiple-tab/scripts/s1plus-test-helpers.js
-S1Plus-Manual/sync-across-multiple-tab/scripts/test-phase6-interaction-copy.js
-S1Plus-Manual/sync-across-multiple-tab/scripts/test-cleanup-provenance-guard.js
+sync-across-multiple-tab/scripts/test-visible-remote-polling.js
+sync-across-multiple-tab/scripts/test-sync-settings-ui.js
+sync-across-multiple-tab/scripts/test-foreground-trigger-integration.js
+sync-across-multiple-tab/scripts/test-safe-sync-execution.js
+sync-across-multiple-tab/scripts/test-settings-migration.js
+sync-across-multiple-tab/scripts/test-post-sync-refresh-policy.js
+sync-across-multiple-tab/scripts/test-remote-probe-state.js
+sync-across-multiple-tab/scripts/test-foreground-probe-diagnostics-feedback.js
+sync-across-multiple-tab/scripts/test-foreground-remote-probe.js
+sync-across-multiple-tab/scripts/test-foreground-same-session-remote-write.js
+sync-across-multiple-tab/scripts/test-foreground-probe-gate-retry.js
+sync-across-multiple-tab/scripts/test-auto-sync-indicator-linkage.js
+sync-across-multiple-tab/scripts/test-core-data-snapshot-resync.js
+sync-across-multiple-tab/scripts/test-background-open-passive-session.js
+sync-across-multiple-tab/scripts/s1plus-test-helpers.js
+sync-across-multiple-tab/scripts/test-phase6-interaction-copy.js
+sync-across-multiple-tab/scripts/test-cleanup-provenance-guard.js
 ```
 
 ---
@@ -3434,7 +3434,7 @@ _Thinking:_
 **Input:**
 ```json
 {
-  "filePath": "S1Plus-Manual/S1Plus.js",
+  "filePath": "../S1Plus.js",
   "limit": 60,
   "offset": 21180
 }
@@ -3442,7 +3442,7 @@ _Thinking:_
 
 **Output:**
 ```
-<path>S1Plus-Manual/S1Plus.js</path>
+<path>../S1Plus.js</path>
 <type>file</type>
 <content>
 21180: 
@@ -3515,7 +3515,7 @@ _Thinking:_
 **Input:**
 ```json
 {
-  "filePath": "S1Plus-Manual/S1Plus.js",
+  "filePath": "../S1Plus.js",
   "limit": 60,
   "offset": 10960
 }
@@ -3523,7 +3523,7 @@ _Thinking:_
 
 **Output:**
 ```
-<path>S1Plus-Manual/S1Plus.js</path>
+<path>../S1Plus.js</path>
 <type>file</type>
 <content>
 10960: 
@@ -3627,7 +3627,7 @@ No files found
 **Output:**
 ```
 Found 44 matches
-S1Plus-Manual/S1Plus.js:
+S1Plus.js:
   Line 8000:     const sameSessionRemoteWrite = getMatchingLocalSessionRemoteWrite({
 
   Line 8004:     const sameDeviceRemoteWrite = Boolean(
@@ -3739,7 +3739,7 @@ Good. The existing code already has `sameSessionRemoteWrite` and `sameDeviceRemo
 **Output:**
 ```
 Found 10 matches
-S1Plus-Manual/S1Plus.js:
+S1Plus.js:
   Line 8245:     writerMatchKind = "",
 
   Line 8337:       lastProbeWriterMatchKind: normalizeSyncDiagnosticText(writerMatchKind, 80),
@@ -3775,7 +3775,7 @@ Good. Let me also look at the isWriterMatchAutoRefreshable function and the prob
 **Input:**
 ```json
 {
-  "filePath": "S1Plus-Manual/S1Plus.js",
+  "filePath": "../S1Plus.js",
   "limit": 80,
   "offset": 10640
 }
@@ -3783,7 +3783,7 @@ Good. Let me also look at the isWriterMatchAutoRefreshable function and the prob
 
 **Output:**
 ```
-<path>S1Plus-Manual/S1Plus.js</path>
+<path>../S1Plus.js</path>
 <type>file</type>
 <content>
 10640:             options.sameDeviceDeviceId,
@@ -3876,7 +3876,7 @@ Good. Let me also look at the isWriterMatchAutoRefreshable function and the prob
 **Input:**
 ```json
 {
-  "filePath": "S1Plus-Manual/S1Plus.js",
+  "filePath": "../S1Plus.js",
   "limit": 80,
   "offset": 7980
 }
@@ -3884,7 +3884,7 @@ Good. Let me also look at the isWriterMatchAutoRefreshable function and the prob
 
 **Output:**
 ```
-<path>S1Plus-Manual/S1Plus.js</path>
+<path>../S1Plus.js</path>
 <type>file</type>
 <content>
 7980:       recentWrite.remoteUpdatedAt === normalizedRemoteUpdatedAt
@@ -3996,7 +3996,7 @@ My new plan should focus on:
 **Input:**
 ```json
 {
-  "filePath": "S1Plus-Manual/S1Plus.js",
+  "filePath": "../S1Plus.js",
   "limit": 60,
   "offset": 36474
 }
@@ -4004,7 +4004,7 @@ My new plan should focus on:
 
 **Output:**
 ```
-<path>S1Plus-Manual/S1Plus.js</path>
+<path>../S1Plus.js</path>
 <type>file</type>
 <content>
 36474:   const handleStartupSync = async () => {
@@ -4077,7 +4077,7 @@ My new plan should focus on:
 **Input:**
 ```json
 {
-  "filePath": "S1Plus-Manual/S1Plus.js",
+  "filePath": "../S1Plus.js",
   "limit": 60,
   "offset": 19910
 }
@@ -4085,7 +4085,7 @@ My new plan should focus on:
 
 **Output:**
 ```
-<path>S1Plus-Manual/S1Plus.js</path>
+<path>../S1Plus.js</path>
 <type>file</type>
 <content>
 19910:             "检测到您在后台自动同步期间有本地操作，已暂停自动拉取以保护更改。请稍后发起全局手动同步。",
@@ -4158,7 +4158,7 @@ My new plan should focus on:
 **Input:**
 ```json
 {
-  "filePath": "S1Plus-Manual/S1Plus.js",
+  "filePath": "../S1Plus.js",
   "limit": 40,
   "offset": 7730
 }
@@ -4166,7 +4166,7 @@ My new plan should focus on:
 
 **Output:**
 ```
-<path>S1Plus-Manual/S1Plus.js</path>
+<path>../S1Plus.js</path>
 <type>file</type>
 <content>
 7730:         : typeof getSettings === "function"
@@ -4234,7 +4234,7 @@ Let me now write the plan document.
 **Input:**
 ```json
 {
-  "filePath": "S1Plus-Manual/sync-auto-check-fix-plan.md",
+  "filePath": "sync-auto-check-fix-plan.md",
   "content": "# 自动同步 & 自动拉取误报修复方案\n\n## 0. 背景与现有基线\n\n截至当前，`S1Plus.js` 中存在三条独立的自动同步入口：\n\n| 入口 | 函数 | 门控字段 | 频率 |\n| --- | --- | --- | --- |\n| 每页加载 | `handlePerLoadSyncCheck` (L36431) | `syncPerLoadCheckEnabled` | 每次页面加载 |\n| 每日首次 | `handleStartupSync` (L36474) | `syncDailyFirstLoad` | 每天一次 |\n| 前台恢复 | `runForegroundFollowUpAutoSyncCheckWithIndicator` | `syncCheckOnReturnToForeground` | 切回前台 / visible poll |\n\n此外还有 `triggerRemoteSyncPush` 负责后台推送本地变更。\n\n现有代码**已经**具备以下可用基础设施（不需要重建）：\n\n- `resolveRecentRemoteWriteMatch` (L7992)：按 `remoteUpdatedAt` + `deviceId` + 本地近期写记录判断 same-session / same-device 归因\n- `getRemoteWriteMatchKind` (L8022)：将归因分类为 `same_session_write` / `same_device_write` / `external_remote_change`\n- `isForegroundRemoteFreshnessCheckEnabled` (L10105)：前台探测的门控开关\n- `getAutoPullRefreshPlan` (L10670)：页面类型感知的刷新策略（thread 页 soft prompt / list 页 reload / settings dirty defer）\n- `shouldApplyAutoPullRefreshForSyncResult`：自动拉取后是否应刷新的判断\n- `resolveRecentRemoteWriteMatch` 中的 `LOCAL_SESSION_REMOTE_WRITE_TTL_MS` 本地近期写记录\n- `syncDeviceId` 的 lastWriter 追踪链（L7733–L7752）\n\n当前问题**不是**缺少基础设施，而是：\n1. `per_load` 入口噪声最高，每次页面加载都探测远端，但此时远端几乎不可能在两次浏览之间发生变化\n2. `updated_at` 变化被过度解读——远端时间戳变化直接链式触发全量同步 + 页面刷新\n3. 前台探测命中后，同机归因只是\"抑制文案\"，不能阻止实际拉取和刷新\n4. 缺乏一个简洁的\" freshness 命中后先冷静一下\"的节制机制\n\n## 1. 核心原则\n\n- **不改架构，只补齐 guard**：不引入 SyncCoordinator、SyncIntent、view model 等新抽象。\n- **以「抑制误动作」为核心目标**：宁可晚同步一次，也不误拉取一次。\n- **每一处改动独立生效**：不要求整体联动，允许只做部分步骤。\n- **保持现有能力无损**：`daily_startup`、`background_push`、`manual_sync` 不受影响。\n\n## 2. 修复步骤\n\n### Step 1: 给 `per_load` 入口增加 freshness 冷静期（最低成本，最大收益）\n\n**目标**：消除\"在两个页面加载之间远端不可能变化，但却触发同步检查\"的噪声。\n\n**具体**：在 `handlePerLoadSyncCheck` (L36431) 中，探测前先检查**本 session 内有没有发生过本地推送或本地拉取**。如果当前 session 内刚刚做过一次同步（无论是 push 还是 pull），且远端 `updated_at` 与上次同步时记录的 `updated_at` 相同，则直接 skip。\n\n**实现位置**：`handlePerLoadSyncCheck` 函数体开头，`runStartupModeAutoSyncCheckWithIndicator` 调用之前。\n\n```\n在 handlePerLoadSyncCheck 中：\n  if 本地有近期同步记录 (s1p_last_sync_timestamp / s1p_last_remote_updated_at)：\n    且 远端 metadata 的 updated_at 与上次记录一致：\n      return false  // 无变化，跳过\n```\n\n**影响范围**：仅 `per_load` 入口，不影响 `daily_startup` 和前台恢复。\n\n---\n\n### Step 2: 让同机归因不抑制文案，而是抑制拉取行为本身\n\n**目标**：同机另一标签页推送导致的远端变化，不再触发实际拉取 + 刷新。\n\n**现有行为**：`suppressMessage: result.sameSessionRemoteWrite === true` 只是抑制提示弹窗，但 `applyRefreshPolicyForSyncResult` 仍然会执行页面应用（对于非 thread 页意味着自动刷新）。\n\n**具体**：在 `shouldApplyAutoPullRefreshForSyncResult` 中增加一个条件——如果 `syncResult.sameSessionRemoteWrite === true` 或 `syncResult.sameDeviceRemoteWrite === true`，且本地数据和远端在内容上实质等价（hash 一致或仅阅读进度差异），则**不触发刷新**。只静默更新 metadata。\n\n**实现位置**：`shouldApplyAutoPullRefreshForSyncResult` 和相关调用点。\n\n```\n在 shouldApplyAutoPullRefreshForSyncResult 中：\n  if syncResult.sameSessionRemoteWrite === true：\n    if syncResult.action === \"no_change\" 或仅阅读进度差异：\n      return false  // 静默，不刷新\n  if syncResult.sameDeviceRemoteWrite === true：\n    if 远端无实质性内容变更（仅 metadata timestamp 不同）：\n      return false\n```\n\n**影响范围**：所有自动拉取入口（per_load、daily_startup、前台恢复、background_push 后的自动拉取）。\n\n---\n\n### Step 3: 将 `updated_at` fresh → sync → refresh 的链式放大改为\"先问，再看，再动\"\n\n**目标**：`updated_at` 变化不能直接触发全量同步 + 页面操作。\n\n**现有的三阶段实际上已经隐式存在**：\n1. probe（`triggerForegroundRemoteFreshnessProbe` / `runStartupModeAutoSyncCheckWithIndicator` 的 startupOptions 中）\n2. sync（`performAutoSync`）\n3. apply（`applyRefreshPolicyForSyncResult`）\n\n问题是这三个阶段耦合太紧——probe 命中后自动进 sync，sync 成功后自动进 apply。缺少一个\"判读层\"。\n\n**具体**：在 probe → sync 之间插入一个判断层。probe 只负责\"远端可能变了\"的信号，sync 的执行需要额外满足一个条件：**远端 contentHash 或 baseContentHash 与本地有实质性差异**。\n\n这其实在现有 `runStartupModeAutoSyncCheckWithIndicator` 的 startup 模式中已有雏形（`beforePerform` 回调），只需把这个判断逻辑提取出来，用于所有入口。\n\n**实现方式**：在 probe 的 follow-up sync 调用前增加一个轻量 check：\n- 获取远端 metadata（不拉完整 payload）\n- 对比 `remote.contentHash` 与本地 `s1p_last_sync_content_hash` / `baseContentHash`\n- 如果一致且 `sameSessionRemoteWrite` 或 `sameDeviceRemoteWrite` 命中，则 decrement 到\"无需 sync\"\n\n**最低侵入度做法**：不重构 probe→sync 流程，仅在 `runForegroundFollowUpAutoSyncCheckWithIndicator` 进入前，由调用方传入一个 `preSyncCheck`，检查返回 skip 则不执行后续 sync。\n\n---\n\n### Step 4: 防止后台标签页制造假脏写（已部分完成，加固即可）\n\n**目标**：后台打开的帖子页如果不被用户真实阅读，不应产生可同步的 `read_progress`。\n\n**现有防护**：`test-background-open-passive-session.js` 测试已覆盖此场景。\n\n**实际代码中**：需要确认 `s1p_readingProgress` 的写入入口是否有\"标签页是否为后台打开\"的判断。如果没有或不够严格，补充：标签页在首次获得用户交互（scroll / click / 手动编辑）之前，不应执行 `saveReadingProgress`。\n\n---\n\n### Step 5: 统一 `updated_at` 的决策权重\n\n**目标**：在整个同步链路中明确 `updated_at` 的语义，消除不一致。\n\n**具体**：将目前分散在 probe、sync、apply 各处的 `updated_at` 使用方式统一为：\n\n| 阶段 | `updated_at` 可以做什么 | 不能做什么 |\n| --- | --- | --- |\n| probe | 标记我们需要继续观察 | 直接触发 sync |\n| sync | 参与冲突判断的多项条件之一 | 单独决定 pull / push 方向 |\n| apply | 无直接用途（用 contentHash 判断） | 决定是否刷新 |\n\n**实现**：不新增代码，而是在现有相关函数的关键判断点用 `contentHash` / `baseContentHash` 替代仅靠 `updated_at` 的判断。如果某处只用 `updated_at` 做判断且无法替换，至少要求同时满足\"不是 same_session 或 same_device\"。\n\n---\n\n## 3. 不应做的事\n\n- 不要引入 `SyncCoordinator`、`SyncIntent`、`SyncStatusViewModel` 等新抽象层\n- 不要删除 `per_load` 入口（它是用户可配置项，删除属于 breaking change）\n- 不要重建设置 UI（现有 UI 功能完整，改动性价比低）\n- 不要实现 `auto-check-redesign/` 中的 7 阶段计划\n- 不要新增测试脚本（现有 Node harness 无法验证多标签时序，真实浏览器手测更有效）\n\n## 4. 实施顺序\n\n优先级从高到低：\n\n1. **Step 1（冷静期）**——一行改动，立刻消除最大噪声源\n2. **Step 2（同机归因抑制拉取）**——解决\"同机标签页误告警\"的核心场景\n3. **Step 3（probe→sync 断链）**——提升整体链路可靠性\n4. **Step 4（后台页假脏写）**——兜底\n5. **Step 5（统一决策权重）**——锦上添花\n\n每步均可独立实施和验证，不需要像 `auto-check-redesign/` 中那样要求完整 7 相联动。\n\n## 5. 验收场景\n\n完成所有步骤后，以下场景应不再出现误报：\n\n1. **单设备本地浏览**：正常浏览论坛，不弹出\"远端有更新\"\n2. **同机多标签正常推送**：标签 A 推送阅读进度后切到标签 B，B 不弹出\"云端有更新\"，最多静默更新\n3. **帖子页阅读中**：远端有变化时只在导航栏轻量提示，不自动刷新页面\n4. **两次快速浏览同一页面**：连续打开两个帖子页，不触发无意义同步检查\n5. **per_load 模式下冷静期生效**：同 session 内远端无变化时不重复同步\n\n## 6. 与旧文档的关系\n\n本方案替代 `auto-check-redesign/` 下的全部文档。旧文档的问题诊断有价值，但实施方案过度工程化，且从未在代码中实际落地。旧文档应作为**历史参考资料**保留归档，不再作为实施基线。\n"
 }
 ```
@@ -4413,13 +4413,13 @@ _Thinking:_
 **Input:**
 ```json
 {
-  "filePath": "S1Plus-Manual/sync-auto-check-fix-plan.md"
+  "filePath": "sync-auto-check-fix-plan.md"
 }
 ```
 
 **Output:**
 ```
-<path>S1Plus-Manual/sync-auto-check-fix-plan.md</path>
+<path>sync-auto-check-fix-plan.md</path>
 <type>file</type>
 <content>
 1: # 自动同步 & 自动拉取误报修复方案
@@ -4608,7 +4608,7 @@ Now let me update the document to incorporate:
 **Input:**
 ```json
 {
-  "filePath": "S1Plus-Manual/sync-auto-check-fix-plan.md",
+  "filePath": "sync-auto-check-fix-plan.md",
   "content": "# 自动同步 & 自动拉取误报修复方案\n\n## 0. 背景与现有基线\n\n### 0.1 三条独立的自动同步入口\n\n| 入口 | 函数 | 门控字段 | 频率 |\n| --- | --- | --- | --- |\n| 每页加载 | `handlePerLoadSyncCheck` (L36431) | `syncPerLoadCheckEnabled` | 每次页面加载 |\n| 每日首次 | `handleStartupSync` (L36474) | `syncDailyFirstLoad` | 每天一次 |\n| 前台恢复 | `runForegroundFollowUpAutoSyncCheckWithIndicator` | `syncCheckOnReturnToForeground` | 切回前台 / visible poll |\n\n此外还有 `triggerRemoteSyncPush` 负责后台推送本地变更。\n\n### 0.2 已经具备的基础设施（不需要重建）\n\n- `resolveRecentRemoteWriteMatch` (L7992)：按 `remoteUpdatedAt` + `deviceId` + 本地近期写记录判断 same-session / same-device 归因\n- `getRemoteWriteMatchKind` (L8022)：将归因分类为 `same_session_write` / `same_device_write` / `external_remote_change`\n- `isForegroundRemoteFreshnessCheckEnabled` (L10105)：前台探测的门控开关\n- `getAutoPullRefreshPlan` (L10670)：页面类型感知的刷新策略（thread 页 soft prompt / list 页 reload / settings dirty defer）\n- `shouldApplyAutoPullRefreshForSyncResult`：自动拉取后是否应刷新的判断\n- `LOCAL_SESSION_REMOTE_WRITE_TTL_MS`：本地近期写记录，用于 same-session 判定\n- `syncDeviceId` 的 lastWriter 追踪链（L7733–L7752）\n\n### 0.3 当前真正的痛点\n\n1. **解码点散落**：每个入口自己判断是否能同步，自己管 lock/retry/defer/suppress，逻辑重复且边界不一致\n2. **`per_load` 噪声最高**：每次页面加载都探测远端，但两次浏览之间远端几乎不可能变化\n3. **`updated_at` 被过度解读**：远端时间戳变化直接链式触发\"全量同步 → 页面刷新\"，中间没有节制\n4. **同机归因只抑制文案，不抑制拉取**：`suppressMessage` 静默了提示弹窗，但 `applyRefreshPolicyForSyncResult` 仍然会跑，非 thread 页仍会误刷新\n\n---\n\n## 1. 核心思路：集中决策点，而不是协调器大厦\n\n### 1.1 `auto-check-redesign/` 的\"统一协调器\"为什么不行\n\n`auto-check-redesign/` 的诊断是对的，但开出的药方有问题。它设想的 `SyncCoordinator` 依赖以下假设：\n\n**问题一：全局 lease/queue/circuit breaker 依赖 GM 存储的可靠性假设**\n\n```js\n// auto-check-redesign 设想的协调器需要跨标签读写：\n// - global lease state\n// - queue drain state\n// - circuit breaker state\n// - shared cooldown timestamps\n// 全部走 GM_setValue / GM_getValue\n```\n\nGM 存储不是数据库。跨标签写入无事务。你用 `GM_setValue(\"s1p_coordinator_lease\", {...})` 的那一刻，另一个标签页可能正在同时写同一个 key。这不是理论问题——现有代码里 `backgroundSyncLock` 和 `globalSyncLock` 本身就是通过 timestamp-based TTL 来做乐观锁，已经侧面说明没有真正的互斥。协调器越\"智能\"（queue 合并、优先级重排、circuit break），对状态一致性的假设就越强，在 GM 存储上就越容易出 bug。\n\n**问题二：过度抽象带来的排查成本**\n\n`auto-check-redesign/` 新增了 `SyncIntent`、`SyncCoordinatorState`、`SyncTabGuardState`、`SyncStatusViewModel` 四层模型，每层有自己的字段、生命周期、序列化/反序列化。37597 行的脚本再加这些，排查一个\"为什么这次没自动同步\"要从 trigger → intent → coordinator → queue → lease → probe → reconcile → apply 追 8 层。在生产环境里，这意味着每次出问题都是一次考古。\n\n**问题三：所有 phase 必须全部完成才生效**\n\n7 个 phase 相互依赖——phase 1 定义模型，phase 2 才能接入口，phase 4 依赖 phase 3 的 lease 包装，phase 6 依赖前 5 个 phase 的策略矩阵。任何一个 phase 没完成，整条链路就是半成品。而在现有代码的日常维护中，要求一次性完成 7 个阶段的改动几乎不可能。\n\n### 1.2 折中方案：一个集中的决策函数\n\n\"统一决策\"这个概念本身是好的。但实现方式不应该是建一座协调器大厦，而应该是**一个函数**：\n\n```js\nfunction decideWhatToDoWithRemoteChange(syncResult, context) {\n  // 1. 全局锁 / 冲突暂停检查（已有）\n  // 2. 本地脏状态检查（已有）\n  // 3. 同 session / 同 device 归因（已有，需加强——见 Step 2）\n  // 4. 页面类型 × 结果类型的策略矩阵（已有 getAutoPullRefreshPlan）\n  // 5. 冷静期检查（需新增——见 Step 1）\n\n  return {\n    shouldPull: ...,\n    shouldRefresh: ...,\n    shouldNotify: ...,\n    reason: \"...\"\n  };\n}\n```\n\n所有入口（per_load、daily_startup、前台恢复、background push 回写后）把 sync 结果丢进这个函数，按返回值统一行动。**集中的是决策逻辑，不是执行机制。**\n\n这与现有代码中散落在各处的 `switch` / `if` 差异化处理不同之处在于：\n- 决策逻辑只写一次，不复制粘贴\n- 策略变更只改一处\n- 每个入口的行为差异通过 `context` 参数表达（如 `{ source: \"per_load\", pageType: \"thread\" }`），而不是各自写一套独立分支\n\n---\n\n## 2. 修复步骤\n\n### Step 1: 给 `per_load` 入口增加 session 级冷静期\n\n**目标**：消除\"在同 session 内远端不可能变化时，却触发无意义同步检查\"的噪声。\n\n**具体**：在 `handlePerLoadSyncCheck` 中，探测前先检查**本 session 内是否有过近期同步记录**。如果当前 session 内刚刚做过一次同步（无论是 push 还是 pull），且远端 `updated_at` 与上次同步时记录的 `updated_at` 相同或相同 session 的写入记录显示远端就是本 session 写的，则直接 skip。\n\n**实现位置**：`handlePerLoadSyncCheck` 函数体开头，`runStartupModeAutoSyncCheckWithIndicator` 调用之前。\n\n```\nhandlePerLoadSyncCheck 中：\n  检查 LOCALSESSION_REMOTE_WRITE_TTL_MS 内的写入记录\n  如果有同 session 写入记录 且 远端 updated_at 与上次一致：\n    return false\n```\n\n**影响范围**：仅 `per_load` 入口，不影响 `daily_startup` 和前台恢复。\n\n**为什么不是直接删除 `per_load`**：它是用户显式可选的配置项，删除属于 breaking change。降噪比删除更安全。\n\n---\n\n### Step 2: 让同机归因抑制拉取行为本身，而不只是抑制提示\n\n**目标**：同机另一标签页推送导致的远端变化，不再触发实际拉取 + 刷新。\n\n**现有行为**：`suppressMessage: result.sameSessionRemoteWrite === true` 只抑制提示弹窗，但 `applyRefreshPolicyForSyncResult` 仍然会执行页面应用（对于非 thread 页意味着自动刷新）。等于\"不告诉你，但偷偷刷新了\"——静默误动作比告知误动作更危险。\n\n**具体**：在 `shouldApplyAutoPullRefreshForSyncResult` 中增加条件——如果归因为 same-session 或 same-device，且本地和远端内容实质上未发生业务级别的变化（contentHash 一致或仅阅读进度差异），则**不触发刷新**，只静默更新本地 metadata 记录。\n\n```\nshouldApplyAutoPullRefreshForSyncResult 中：\n  if syncResult.sameSessionRemoteWrite === true：\n    if syncResult.action === \"pulled\" 且不是 force_pulled：\n      检查实质差异\n      if 无实质差异或仅 read_progress 差异：\n        return false  // 只更新 metadata，不触发刷新\n  if syncResult.sameDeviceRemoteWrite === true：\n    同理降级\n```\n\n**影响范围**：所有自动拉取入口（per_load、daily_startup、前台恢复、background_push 后的自动拉取）。\n\n---\n\n### Step 3: 在 probe → sync → refresh 链路中插入节制层\n\n**目标**：`updated_at` 变化不能不受节制地直接触发全量同步 + 页面操作。\n\n**现有链路实际上已有三阶段**：\n1. probe（`triggerForegroundRemoteFreshnessProbe`）\n2. sync（`performAutoSync`）\n3. apply（`applyRefreshPolicyForSyncResult`）\n\n问题是三者**耦合太紧**——probe 命中后自动进 sync，sync 成功后自动进 apply。中间没有节制。\n\n**具体**：在 probe → sync 之间加一个判断：probe 只负责\"远端可能变了\"，sync 的执行需要额外确认**远端 contentHash 与本地有实质性差异**。\n\n最轻量的实现：在 `runForegroundFollowUpAutoSyncCheckWithIndicator` 调用前，由调用方执行一次轻量远端 metadata 拉取（不拉完整 payload），对比远端 `contentHash` 与本地记录。一致且归因为 same-session/same-device 的，直接回落为 `no_change`，不进入 sync。\n\n```\n在 probe 的 follow-up sync 调用前：\n  轻量拉取远端 metadata（仅 syncMeta + contentHash 摘要）\n  与本地 s1p_last_sync_content_hash 对比\n  if 一致 且 (sameSession || sameDevice)：\n    return { status: \"no_change\" }  // 不触发后续 sync\n```\n\n**实现收敛点**：这个判断逻辑最终可以作为 `decideWhatToDoWithRemoteChange` 的一部分（见 1.2 节）。\n\n---\n\n### Step 4: 防止后台标签页制造假脏写\n\n**目标**：后台打开的帖子页如果不被用户真实阅读，不应产生可同步的 `read_progress`。\n\n**现有防护**：`test-background-open-passive-session.js` 测试已覆盖此场景的数据流。\n\n**实际代码中**：需确认 `s1p_readingProgress` 的写入入口是否有\"标签页是否为后台打开\"的判断。如果没有或不够严格，补充：标签页在首次获得用户交互（scroll / click / 手动编辑）之前，不应执行 `saveReadingProgress`。\n\n---\n\n### Step 5: 统一 `updated_at` 在整条链路中的决策权重\n\n**目标**：消除不同入口对 `updated_at` 的解读不一致。\n\n**规则表**：\n\n| 阶段 | `updated_at` 可以做什么 | 不能做什么 |\n| --- | --- | --- |\n| probe | 标记\"需要继续观察\" | 直接触发 sync |\n| sync | 参与冲突判断的多项条件之一 | 单独决定 pull / push 方向 |\n| apply | 无直接用途（用 contentHash 判断） | 决定是否刷新 |\n\n**实现**：在现有相关函数中，用 `contentHash` / `baseContentHash` 替代仅靠 `updated_at` 的判断。如果某处只用 `updated_at` 做判断且无法替换，至少要求同时满足\"归因不是 same_session 或 same_device\"。\n\n---\n\n## 3. 实施顺序与依赖\n\n每步独立实施，但存在推荐顺序：\n\n1. **Step 5（统一决策权重）**：实际上是理清规则，不写很多代码，但为后续 step 提供判断依据\n2. **Step 1（冷静期）**：改一行，消除最大噪声源\n3. **Step 2（同机归因抑制拉取）**：解决核心的误刷场景\n4. **Step 3（probe→sync 节制层）**：提升整体链路可靠性\n5. **Step 4（后台假脏写）**：兜底\n\n推荐在 Step 1–3 完成后，将判断逻辑收敛到 `decideWhatToDoWithRemoteChange` 中，作为所有入口的统一决策点。\n\n---\n\n## 4. 收敛效果：集中决策点的具体形态\n\n完成后，所有自动同步入口的调用模式从：\n\n```\n入口 → 自己判锁 → 自己判脏 → 自己判归因 → 调 sync → 自己判要不要刷新\n```\n\n变为：\n\n```\n入口 → 调 sync → 调 decideWhatToDoWithRemoteChange(result, context) → 统一行动\n```\n\n其中 `decideWhatToDoWithRemoteChange` 内部：\n\n```\n1. 全局冲突暂停检查        ← 已有，集中到此处\n2. 同 session/device 归因   ← Step 2 加强\n3. session 内冷静期检查     ← Step 1 新增\n4. 页面类型 × 结果策略      ← 已有 getAutoPullRefreshPlan\n5. updated_at 在对应阶段的角色 ← Step 5 明确\n\n返回：{ shouldPull, shouldRefresh, shouldNotify, reason }\n```\n\n这不是一个类，不是一个状态机。就是一个纯函数。不写 GM 存储，不管理队列，不管锁生命周期。**只做判断，不做执行。**\n\n---\n\n## 5. 不应做的事\n\n- 不要引入 `SyncCoordinator`、`SyncIntent`、`SyncStatusViewModel` 等新抽象层——理由见 1.1 节\n- 不要实现跨标签的全局共享 lease/queue/circuit breaker——GM 存储不支持事务，此类抽象在用户脚本场景下不可靠\n- 不要删除 `per_load` 入口——它是用户可配置项，删除属于 breaking change\n- 不要重建设置 UI——现有 UI 功能完整，改动性价比低\n- 不要新增 Node 测试脚本——现有 harness 无法验证多标签时序，真实浏览器手测更有效\n\n---\n\n## 6. 验收场景\n\n1. **单设备本地浏览**：正常浏览论坛，不弹出\"远端有更新\"\n2. **同机多标签正常推送**：标签 A 推送阅读进度后切到标签 B，B 不弹出\"云端有更新\"，也不触发页面刷新\n3. **帖子页阅读中**：远端有变化时只在导航栏轻量提示，不自动刷新页面（现有 `getAutoPullRefreshPlan` 已做到 thread 页的 soft prompt，Step 2 加固后更可靠）\n4. **同 session 内快速浏览**：连续打开页面，`per_load` 入口因冷静期命中而 skip，不重复探测\n5. **per_load 模式下冷静期生效**：同 session 内远端无变化时不重复同步\n\n---\n\n## 7. 与 `auto-check-redesign/` 的关系\n\n- **保留**：`auto-check-redesign/` 作为历史参考归档，其中对旧链路问题的诊断是有价值的\n- **替代**：本方案替代 `auto-check-redesign/` 作为实施基线\n- **核心区别**：旧方案试图用一座完整的协调器架构解决问题，但过度工程化且在代码中从未落地；本方案只补齐关键 guard 并将决策逻辑集中化，每个 step 可独立实施和交付\n"
 }
 ```
@@ -4677,7 +4677,7 @@ _Thinking:_
 **Input:**
 ```json
 {
-  "filePath": "S1Plus-Manual/sync-auto-check-fix-plan.md",
+  "filePath": "sync-auto-check-fix-plan.md",
   "offset": 52,
   "limit": 50
 }
@@ -4685,7 +4685,7 @@ _Thinking:_
 
 **Output:**
 ```
-<path>S1Plus-Manual/sync-auto-check-fix-plan.md</path>
+<path>sync-auto-check-fix-plan.md</path>
 <type>file</type>
 <content>
 52: 
@@ -4772,7 +4772,7 @@ The user specifically said "五个问题", so they want all 5. Let me add the mi
 **Input:**
 ```json
 {
-  "filePath": "S1Plus-Manual/sync-auto-check-fix-plan.md",
+  "filePath": "sync-auto-check-fix-plan.md",
   "oldString": "**问题三：所有 phase 必须全部完成才生效**\n\n7 个 phase 相互依赖——phase 1 定义模型，phase 2 才能接入口，phase 4 依赖 phase 3 的 lease 包装，phase 6 依赖前 5 个 phase 的策略矩阵。任何一个 phase 没完成，整条链路就是半成品。而在现有代码的日常维护中，要求一次性完成 7 个阶段的改动几乎不可能。\n\n### 1.2 折中方案",
   "newString": "**问题三：所有 phase 必须全部完成才生效**\n\n7 个 phase 相互依赖——phase 1 定义模型，phase 2 才能接入口，phase 4 依赖 phase 3 的 lease 包装，phase 6 依赖前 5 个 phase 的策略矩阵。任何一个 phase 没完成，整条链路就是半成品。而在现有代码的日常维护中，要求一次性完成 7 个阶段的改动几乎不可能。\n\n**问题四：保守策略可能过于保守，导致自动同步悄悄失效**\n\n`auto-check-redesign/` 中 `safe_foreground` 模式设想了 cooldown、tab quiet window、pending recovery settle、core data snapshot resync 等一整套前置条件。真实浏览场景下——用户来回切标签、页面在加载中、随时产生阅读进度——这些条件可能**永远凑不齐**。结果不是\"安全地同步\"，而是\"安静地什么都不做\"。用户以为功能正常工作，实际上自动同步已经悄悄瘫痪了。相比误报，沉默失效更难被发现。\n\n**问题五：测试不可行**\n\n`auto-check-redesign/regression_matrix.md` 定义了多设备 × 多标签 × 4 路径 × 2 种 deviceId 模式共 12 类场景，并要求在真实浏览器 + Tampermonkey 环境中手测。Node harness 只能验证状态机、结果码和数据结构，无法模拟真实 GM API 的跨标签延迟、后台定时器节流、bfcache 恢复时序。更关键的是，这份回归矩阵要求自动同步和自动拉取已被整合进同一架构后才能开始验证——在此之前，没有任何一步能独立验收。\n\n**问题六：粗暴删除 `per_load` 入口会制造新问题**\n\n`auto-check-redesign/` 将 `per_load` 定性为\"高噪声触发源\"并直接移出设计。但现实中 `per_load` 是用户显式可选的设置项——有些用户就是偏好\"每次打开页面都检查一下远端\"。删除它不是消除噪声，而是把一个用户主动选择的行为模式替换成系统替用户做的保守判断。这不是修 bug，是改产品行为。更安全的做法是保留入口但降低其触发频率（如 session 级冷静期），让用户策略和系统节制共存。\n\n### 1.2 折中方案"
 }
@@ -4798,7 +4798,7 @@ Now let me also update the "不应做的事" section to reference these problems
 **Input:**
 ```json
 {
-  "filePath": "S1Plus-Manual/sync-auto-check-fix-plan.md",
+  "filePath": "sync-auto-check-fix-plan.md",
   "oldString": "## 5. 不应做的事\n\n- 不要引入 `SyncCoordinator`、`SyncIntent`、`SyncStatusViewModel` 等新抽象层——理由见 1.1 节\n- 不要实现跨标签的全局共享 lease/queue/circuit breaker——GM 存储不支持事务，此类抽象在用户脚本场景下不可靠\n- 不要删除 `per_load` 入口——它是用户可配置项，删除属于 breaking change\n- 不要重建设置 UI——现有 UI 功能完整，改动性价比低\n- 不要新增 Node 测试脚本——现有 harness 无法验证多标签时序，真实浏览器手测更有效",
   "newString": "## 5. 不应做的事\n\n- 不要引入 `SyncCoordinator`、`SyncIntent`、`SyncStatusViewModel` 等新抽象层——理由见 1.1 节问题一、二\n- 不要实现跨标签的全局共享 lease/queue/circuit breaker——GM 存储不支持事务，此类抽象在用户脚本场景下不可靠（见 1.1 问题一）\n- 不要让安全条件累积到\"永远凑不齐\"的程度——每多一个前置条件，自动同步就更靠近\"悄悄失效\"（见 1.1 问题四）\n- 不要删除 `per_load` 入口——它是用户可配置项，删除属于 breaking change。应保留入口但降低触发频率（见 1.1 问题六）\n- 不要重建设置 UI——现有 UI 功能完整，改动性价比低\n- 不要新增 Node 测试脚本作为主要验收手段——现有 harness 无法验证多标签时序和多设备网络（见 1.1 问题五）"
 }
@@ -4822,7 +4822,7 @@ Now let me verify the final document is complete and well-structured.
 **Input:**
 ```json
 {
-  "filePath": "S1Plus-Manual/sync-auto-check-fix-plan.md",
+  "filePath": "sync-auto-check-fix-plan.md",
   "offset": 40,
   "limit": 50
 }
@@ -4830,7 +4830,7 @@ Now let me verify the final document is complete and well-structured.
 
 **Output:**
 ```
-<path>S1Plus-Manual/sync-auto-check-fix-plan.md</path>
+<path>sync-auto-check-fix-plan.md</path>
 <type>file</type>
 <content>
 40: **问题一：全局 lease/queue/circuit breaker 依赖 GM 存储的可靠性假设**

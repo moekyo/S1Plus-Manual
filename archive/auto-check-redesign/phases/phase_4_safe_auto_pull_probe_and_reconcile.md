@@ -14,12 +14,12 @@
 
 ### 强烈建议补读
 
-- [same-device-unexpected-remote-update-findings-and-fix-plan.md](S1Plus-Manual/sync-across-multiple-tab/same-device-unexpected-remote-update-findings-and-fix-plan.md)
-- [architecture_principles.md](S1Plus-Manual/sync-across-multiple-tab/sync_multitab_redesign/architecture_principles.md)
+- [same-device-unexpected-remote-update-findings-and-fix-plan.md](../../sync-across-multiple-tab/same-device-unexpected-remote-update-findings-and-fix-plan.md)
+- [architecture_principles.md](../../sync-across-multiple-tab/sync_multitab_redesign/architecture_principles.md)
 
 ### 选读
 
-- [S1Plus.js](S1Plus-Manual/S1Plus.js) 中当前 startup、恢复钩子、same-session / same-device 相关实现
+- [S1Plus.js](../../../S1Plus.js) 中当前 startup、恢复钩子、same-session / same-device 相关实现
 
 ## 2. 目标
 

@@ -12,11 +12,11 @@
 
 ### 强烈建议补读
 
-- [S1Plus.js](S1Plus-Manual/S1Plus.js) 中当前 auto pull refresh policy、thread/list 页面判定和 dirty modal 保护相关实现
+- [S1Plus.js](../../../S1Plus.js) 中当前 auto pull refresh policy、thread/list 页面判定和 dirty modal 保护相关实现
 
 ### 选读
 
-- [background-open-unexpected-remote-update-investigation.md](S1Plus-Manual/sync-across-multiple-tab/background-open-unexpected-remote-update-investigation.md)
+- [background-open-unexpected-remote-update-investigation.md](../../sync-across-multiple-tab/background-open-unexpected-remote-update-investigation.md)
 
 ## 2. 目标
 

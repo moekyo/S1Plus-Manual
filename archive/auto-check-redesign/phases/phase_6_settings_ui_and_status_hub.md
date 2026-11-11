@@ -13,11 +13,11 @@
 
 ### 强烈建议补读
 
-- [S1Plus.js](S1Plus-Manual/S1Plus.js) 中当前同步设置页、导航栏状态指示器和手动同步交互
+- [S1Plus.js](../../../S1Plus.js) 中当前同步设置页、导航栏状态指示器和手动同步交互
 
 ### 选读
 
-- [DEVELOPMENT.md](S1Plus-Manual/DEVELOPMENT.md)
+- [DEVELOPMENT.md](../../../DEVELOPMENT.md)
 
 ## 2. 目标
 
