@@ -497,37 +497,39 @@ assert.doesNotMatch(
 
 [
   [
-    /\.s1p-manual-sync-attention\s*\{[^}]*animation:\s*s1p-manual-sync-attention/,
-    "缺少 NAS 镜像需要手动同步时的按钮提示动画样式。",
+    /\.s1p-manual-sync-attention\s*\{[^}]*animation:\s*s1p-manual-sync-attention 3\.2s ease-in-out 1;/,
+    "手动同步提示动画应为缓慢柔和的 3.2s ease-in-out。",
   ],
   [
-    /@keyframes s1p-manual-sync-attention\s*\{[\s\S]*?translate\(-5px[\s\S]*?scale\(1\.18\)[\s\S]*?scale\(1\)/,
-    "手动同步提示动画应按“晃动 → 放大 → 恢复原状”的顺序播放。",
+    /@keyframes s1p-manual-sync-attention\s*\{[\s\S]*?translate\(-3px[\s\S]*?scale\(1\.12\)[\s\S]*?scale\(1\)/,
+    "手动同步提示动画应按“柔和晃动 → 放大 → 恢复原状”的顺序播放。",
   ],
   [
     /@media \(prefers-reduced-motion: reduce\)\s*\{\s*\.s1p-manual-sync-attention\s*\{[^}]*animation:\s*none/,
     "手动同步提示动画缺少 reduced-motion 降级。",
   ],
   [
-    /const playGistMirrorManualSyncAttention = async \(status\) => \{[\s\S]*?activeSettingsTabKey !== "sync"[\s\S]*?modalBody\.scrollTo\(\{[\s\S]*?behavior: "smooth"/,
-    "NAS 镜像需要手动同步时未在同步 tab 自动滚动到“手动同步”按钮。",
+    /const playGistMirrorManualSyncAttention = async \(status\) => \{[\s\S]*?modalBody\.scrollTo\(\{[\s\S]*?behavior: "smooth"/,
+    "NAS 镜像需要手动同步时未自动滚动到“手动同步”按钮。",
   ],
   [
     /manualSyncButton\.classList\.add\("s1p-manual-sync-attention"\)[\s\S]*?addEventListener\("animationend"/,
     "手动同步提示动画未在结束后移除并恢复原状。",
   ],
   [
-    /prefers-reduced-motion 下 animation 被关闭[\s\S]*?window\.setTimeout\(clearAttention, 1800\)/,
+    /prefers-reduced-motion 下 animation 被关闭[\s\S]*?window\.setTimeout\(clearAttention, 3800\)/,
     "手动同步提示缺少 reduced-motion / 异常情况下的清理兜底。",
   ],
   [
-    /if \(status\.lastStatus === "conflict"\) \{\s*void playGistMirrorManualSyncAttention\(status\);\s*\}/,
-    "镜像状态为 conflict 时未触发手动同步提示动画。",
-  ],
-  [
-    /if \(normalizedTabKey === "sync"\) \{[\s\S]*?void refreshGistMirrorPanel\(\);/,
-    "切换到同步 tab 时未刷新 NAS 镜像状态。",
+    /const runGistMirrorOnHubFromControls = async \(\) => \{[\s\S]*?s1pRunGistMirrorOnHub\(\)[\s\S]*?status\.lastStatus === "conflict"[\s\S]*?playGistMirrorManualSyncAttention\(status\)/,
+    "点击“立即镜像到 Gist”得到 conflict 后未触发手动同步提示动画。",
   ],
 ].forEach(([pattern, message]) => assert.match(sourceCode, pattern, message));
+
+assert.equal(
+  (sourceCode.match(/playGistMirrorManualSyncAttention/g) || []).length,
+  2,
+  "手动同步提示动画只应从“立即镜像到 Gist”的结果触发，不应在切换 tab / 普通刷新时播放。"
+);
 
 console.log("[sync-settings-ui] Sync settings restructure verified.");

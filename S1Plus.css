@@ -4365,34 +4365,39 @@
     .s1p-manual-sync-attention {
       position: relative;
       z-index: 1;
-      animation: s1p-manual-sync-attention 1.6s cubic-bezier(0.22, 1, 0.36, 1) 1;
+      animation: s1p-manual-sync-attention 3.2s ease-in-out 1;
       transform-origin: center;
     }
     @keyframes s1p-manual-sync-attention {
       0% {
         transform: translate(0, -1px) scale(1);
+        box-shadow: 0 0 0 0 transparent;
       }
-      10% {
-        transform: translate(-5px, -1px) scale(1);
+      8% {
+        transform: translate(-3px, -1px) scale(1);
       }
-      20% {
-        transform: translate(5px, -1px) scale(1);
+      16% {
+        transform: translate(3px, -1px) scale(1);
       }
-      30% {
-        transform: translate(-4px, -1px) scale(1);
-      }
-      40% {
-        transform: translate(4px, -1px) scale(1);
-      }
-      50% {
+      24% {
         transform: translate(-2px, -1px) scale(1);
       }
-      62% {
+      32% {
+        transform: translate(2px, -1px) scale(1);
+      }
+      40% {
+        transform: translate(-1px, -1px) scale(1);
+      }
+      50% {
         transform: translate(0, -1px) scale(1);
       }
-      78% {
-        transform: translate(0, -1px) scale(1.18);
-        box-shadow: 0 0 0 6px color-mix(in srgb, var(--s1p-sec) 24%, transparent);
+      68% {
+        transform: translate(0, -1px) scale(1.12);
+        box-shadow: 0 0 0 5px color-mix(in srgb, var(--s1p-sec) 18%, transparent);
+      }
+      84% {
+        transform: translate(0, -1px) scale(1.12);
+        box-shadow: 0 0 0 3px color-mix(in srgb, var(--s1p-sec) 10%, transparent);
       }
       100% {
         transform: translate(0, -1px) scale(1);

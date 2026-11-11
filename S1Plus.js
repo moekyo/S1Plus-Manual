@@ -47206,8 +47206,7 @@
       }
     };
 
-    const GIST_MIRROR_MANUAL_SYNC_ATTENTION_SCROLL_WAIT_MS = 460;
-    let gistMirrorManualSyncAttentionKey = "";
+    const GIST_MIRROR_MANUAL_SYNC_ATTENTION_SCROLL_WAIT_MS = 520;
     const isManualSyncButtonFullyVisible = (button, modalBody) => {
       if (
         !(button instanceof HTMLElement) ||
@@ -47224,17 +47223,10 @@
         buttonRect.bottom <= bodyRect.bottom
       );
     };
-    // NAS 镜像提示需要手动同步时：展开局域网分组、滚动到“手动同步”按钮，
-    // 再晃动 + 放大提示一次，结束后恢复原状。
+    // 点击“立即镜像到 Gist”后，如果 NAS 返回仍需手动同步：滚动到“手动同步”
+    // 按钮，再柔和地左右晃动、放大，最后恢复原状。
     const playGistMirrorManualSyncAttention = async (status) => {
       if (!status || status.lastStatus !== "conflict") {
-        return;
-      }
-      if (activeSettingsTabKey !== "sync") {
-        return;
-      }
-      const attentionKey = String(status.lastAt || status.lastMessage || "");
-      if (!attentionKey || attentionKey === gistMirrorManualSyncAttentionKey) {
         return;
       }
       const manualSyncButton = modal.querySelector(
@@ -47245,23 +47237,6 @@
         !(manualSyncButton instanceof HTMLButtonElement) ||
         manualSyncButton.disabled ||
         !(modalBody instanceof HTMLElement)
-      ) {
-        return;
-      }
-      gistMirrorManualSyncAttentionKey = attentionKey;
-
-      const lanSectionBody = modal.querySelector(
-        '[data-s1p-sync-section-body="lan"]'
-      );
-      if (lanSectionBody instanceof HTMLElement && lanSectionBody.hidden) {
-        setSyncSettingsSectionExpanded("lan", true);
-        await new Promise((resolve) => window.setTimeout(resolve, 260));
-      }
-      if (
-        !modal.isConnected ||
-        activeSettingsTabKey !== "sync" ||
-        !(manualSyncButton instanceof HTMLButtonElement) ||
-        manualSyncButton.disabled
       ) {
         return;
       }
@@ -47285,31 +47260,20 @@
           )
         );
       }
-      if (
-        !modal.isConnected ||
-        activeSettingsTabKey !== "sync" ||
-        !(manualSyncButton instanceof HTMLElement)
-      ) {
+      if (!modal.isConnected || !(manualSyncButton instanceof HTMLElement)) {
         return;
       }
-      const attentionToken = `${attentionKey}:${Date.now()}`;
-      manualSyncButton.dataset.s1pAttentionToken = attentionToken;
-      const clearAttention = () => {
-        if (manualSyncButton.dataset.s1pAttentionToken !== attentionToken) {
-          return;
-        }
-        delete manualSyncButton.dataset.s1pAttentionToken;
-        manualSyncButton.classList.remove("s1p-manual-sync-attention");
-      };
       manualSyncButton.classList.remove("s1p-manual-sync-attention");
       // 强制重排，保证重复触发时动画从头开始
       void manualSyncButton.offsetWidth;
       manualSyncButton.classList.add("s1p-manual-sync-attention");
+      const clearAttention = () =>
+        manualSyncButton.classList.remove("s1p-manual-sync-attention");
       manualSyncButton.addEventListener("animationend", clearAttention, {
         once: true,
       });
       // prefers-reduced-motion 下 animation 被关闭，仍用兜底计时器移除高亮
-      window.setTimeout(clearAttention, 1800);
+      window.setTimeout(clearAttention, 3800);
     };
 
     const renderGistMirrorStatus = (status, options = {}) => {
@@ -47350,9 +47314,6 @@
           : status.lastStatus === "conflict" || status.lastStatus === "failure"
             ? "var(--s1p-red)"
             : "";
-      if (status.lastStatus === "conflict") {
-        void playGistMirrorManualSyncAttention(status);
-      }
     };
 
     const applyGistMirrorStatusToControls = (status) => {
@@ -47449,6 +47410,9 @@
         if (status) {
           applyGistMirrorStatusToControls(status);
           renderGistMirrorStatus(status);
+          if (status.lastStatus === "conflict") {
+            void playGistMirrorManualSyncAttention(status);
+          }
         }
         showSettingsMessage(
           `NAS 镜像完成：${
@@ -51195,14 +51159,6 @@
         setActiveSettingsTab(normalizedTabKey);
         updateSettingsModalTabPerformanceHints(normalizedTabKey);
         updateObservedModalBodyTabContent();
-        if (normalizedTabKey === "sync") {
-          window.setTimeout(() => {
-            if (!modal.isConnected || activeSettingsTabKey !== "sync") {
-              return;
-            }
-            void refreshGistMirrorPanel();
-          }, 420);
-        }
       });
       moveTabSlider(settingsTabContainer);
       scheduleSettingsModalNeighborPrewarm(normalizedTabKey);
