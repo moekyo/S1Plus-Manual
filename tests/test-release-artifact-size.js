@@ -26,11 +26,11 @@ const sourceBytes = Buffer.byteLength(source);
 
 assert.match(
   source,
-  /@resource\s+s1p-base-css\s+https:\/\/raw\.githubusercontent\.com\/moekyo\/S1Plus-Manual\/c60337a0537cb9e8dd60b81d7533ee929252d7c0\/S1Plus\.css/
+  /@resource\s+s1p-base-css\s+https:\/\/raw\.githubusercontent\.com\/moekyo\/S1Plus-Manual\/a9365b2665d0487ac55a796ad70de5c8783f9051\/S1Plus\.css/
 );
 assert.match(
   source,
-  /@resource\s+s1p-static-data\s+https:\/\/raw\.githubusercontent\.com\/moekyo\/S1Plus-Manual\/3eeacec2007c7a4c64345e37659f63a7f8fe2521\/S1Plus-static-data\.json/
+  /@resource\s+s1p-static-data\s+https:\/\/raw\.githubusercontent\.com\/moekyo\/S1Plus-Manual\/a9365b2665d0487ac55a796ad70de5c8783f9051\/S1Plus-static-data\.json/
 );
 assert.match(source, /@grant\s+GM_getResourceText/);
 assert.equal((source.match(/sourceMappingURL|sourceURL/g) || []).length, 0);

@@ -5,8 +5,8 @@
 // @description  为Stage1st论坛提供帖子/用户/楼层屏蔽、导航栏自定义、自动签到、阅读进度跟踪、回复收藏、远程同步等多种功能，全方位优化你的论坛体验。
 // @author       moekyo
 // @match        https://stage1st.com/2b/*
-// @resource     s1p-base-css https://raw.githubusercontent.com/moekyo/S1Plus-Manual/c60337a0537cb9e8dd60b81d7533ee929252d7c0/S1Plus.css
-// @resource     s1p-static-data https://raw.githubusercontent.com/moekyo/S1Plus-Manual/3eeacec2007c7a4c64345e37659f63a7f8fe2521/S1Plus-static-data.json
+// @resource     s1p-base-css https://raw.githubusercontent.com/moekyo/S1Plus-Manual/a9365b2665d0487ac55a796ad70de5c8783f9051/S1Plus.css
+// @resource     s1p-static-data https://raw.githubusercontent.com/moekyo/S1Plus-Manual/a9365b2665d0487ac55a796ad70de5c8783f9051/S1Plus-static-data.json
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_getResourceText
