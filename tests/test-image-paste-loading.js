@@ -171,8 +171,18 @@ class FakeElement {
 
 const fakeForm = new FakeElement("form");
 fakeForm.id = "postform";
+fakeForm.contains = () => true;
+const quickReplyTextarea = {
+  id: "fastpostmessage",
+  isConnected: true,
+  form: fakeForm,
+};
 sandbox.document.createElement = (tagName) => new FakeElement(tagName);
-sandbox.document.getElementById = (id) => (id === "postform" ? fakeForm : null);
+sandbox.document.getElementById = (id) => {
+  if (id === "postform" || id === "fastpostform") return fakeForm;
+  if (id === "fastpostmessage") return quickReplyTextarea;
+  return null;
+};
 
 const flushTick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -227,7 +237,36 @@ const flushTick = () => new Promise((resolve) => setTimeout(resolve, 0));
   // 真实队列联动：enqueue → 显示；目标失效 → 不再计入 pending 并隐藏。
   const advancedQueue = api.getAdvancedQueue();
   assert.ok(advancedQueue, "缺少高级编辑器上传队列测试 seam。");
+  const quickReplyQueue = api.getQuickReplyQueue();
+  assert.ok(quickReplyQueue, "缺少快速回复上传队列测试 seam。");
   assert.equal(advancedQueue.pending(), 0);
+  assert.equal(quickReplyQueue.pending(), 0);
+
+  // 快速回复框上传任务同样计入 pending / 提示；收尾后归零。
+  quickReplyQueue.enqueue({
+    file: { size: 2048 * 1024 + 1, type: "image/png" },
+    extension: "png",
+    textarea: quickReplyTextarea,
+    caret: { start: 0, end: 0 },
+  });
+  assert.equal(quickReplyQueue.pending(), 1, "快速回复任务应计入 pending。");
+  assert.equal(
+    api.getPendingCount(),
+    1,
+    "提示计数应包含快速回复队列。"
+  );
+  api.refresh();
+  assert.equal(
+    api.getElement().classList.contains("visible"),
+    true,
+    "快速回复上传中应显示提示。"
+  );
+  await flushTick();
+  assert.equal(
+    api.getPendingCount(),
+    0,
+    "快速回复任务收尾后提示计数应归零。"
+  );
 
   advancedQueue.enqueue({ file: { size: 10, type: "image/png" }, extension: "png" });
   assert.equal(advancedQueue.pending(), 1, "有存活任务时应计入 pending。");

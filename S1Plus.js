@@ -59145,14 +59145,20 @@
     return true;
   };
 
-  // --- 回复弹窗剪贴板图片上传兼容补丁 ---
+  // --- 剪贴板图片上传兼容补丁 ---
   // 论坛快速回复上传器把 paste 绑定在 document.body 上，并固定把附件代码写进
   // #fastpostmessage；浮动回复弹窗（#fwin_content_reply）的 #postmessage 没有自己的上传器。
-  // 这里只在“弹窗内粘贴图片”时接管：复用论坛上传接口与页面内的 uid/hash，
+  // 弹窗内粘贴图片时始终接管：复用论坛上传接口与页面内的 uid/hash，
   // 上传成功后把附件代码插入弹窗光标处，并把 attachnew 字段补进弹窗表单。
+  // 底部快速回复框（#fastpostmessage）仍由论坛原生上传器处理正常大小的图片；
+  // 只有超过论坛限制、原生上传器会直接报错的图片才由本脚本接管（压缩后再上传）。
   const S1P_REPLY_IMAGE_PASTE_POPUP_ID = "fwin_content_reply";
   const S1P_REPLY_IMAGE_PASTE_TEXTAREA_ID = "postmessage";
   const S1P_REPLY_IMAGE_PASTE_FORM_ID = "postform";
+  // 同一套快速回复结构也用于版块列表页的快速发帖框（forumdisplay_fastpost），
+  // 因此 #fastpostmessage / #fastpostform 的接管在那两个页面都会生效。
+  const S1P_QUICK_REPLY_IMAGE_PASTE_TEXTAREA_ID = "fastpostmessage";
+  const S1P_QUICK_REPLY_IMAGE_PASTE_FORM_ID = "fastpostform";
   const S1P_REPLY_IMAGE_PASTE_UPLOAD_TIMEOUT_MS = 30000;
   const S1P_REPLY_IMAGE_PASTE_MAX_QUEUE = 8;
   const S1P_IMAGE_PASTE_UPLOADING_TEXT = "图片上传中，请稍候…";
@@ -59304,6 +59310,53 @@
       const form =
         textarea.form || document.getElementById(S1P_REPLY_IMAGE_PASTE_FORM_ID);
       if (!form || !form.contains(textarea)) return false;
+      if (
+        typeof form.getClientRects === "function" &&
+        form.getClientRects().length === 0
+      ) {
+        return false;
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  };
+
+  // 快速回复框本身是论坛原生上传器的“主场”，正常大小的图片不抢；这里只负责
+  // 识别它，交给 handleS1pReplyImagePasteEvent 判断是否需要接管。
+  const findS1pQuickReplyImagePasteTextarea = (target) => {
+    try {
+      if (!target || typeof target.closest !== "function") {
+        return null;
+      }
+      const textarea = target.closest("textarea");
+      if (!textarea || textarea.id !== S1P_QUICK_REPLY_IMAGE_PASTE_TEXTAREA_ID) {
+        return null;
+      }
+      const form =
+        textarea.form ||
+        document.getElementById(S1P_QUICK_REPLY_IMAGE_PASTE_FORM_ID);
+      if (!form || typeof form.contains !== "function") return null;
+      return form.contains(textarea) ? textarea : null;
+    } catch (_) {
+      return null;
+    }
+  };
+
+  const isS1pQuickReplyImagePasteTargetAlive = (textarea) => {
+    try {
+      if (!textarea || textarea.isConnected !== true) return false;
+      if (
+        typeof textarea.getClientRects === "function" &&
+        textarea.getClientRects().length === 0
+      ) {
+        return false;
+      }
+      const form =
+        textarea.form ||
+        document.getElementById(S1P_QUICK_REPLY_IMAGE_PASTE_FORM_ID);
+      if (!form || typeof form.contains !== "function") return false;
+      if (!form.contains(textarea)) return false;
       if (
         typeof form.getClientRects === "function" &&
         form.getClientRects().length === 0
@@ -59511,8 +59564,9 @@
     }
   };
 
-  const insertS1pReplyImagePasteJob = async (job, aid) => {
-    if (!isS1pReplyImagePasteTargetAlive(job.textarea)) return false;
+  // 弹窗回复与快速回复框共用“把附件代码插入光标处 + 补 attachnew 字段”的落点逻辑，
+  // 区别只在存活判断和附件回收 scope（两个输入区可能同时存在，不能互相回收）。
+  const insertS1pImagePasteTagJob = (job, aid, scope) => {
     const activeRange =
       document.activeElement === job.textarea
         ? {
@@ -59525,8 +59579,26 @@
       job.caret.start = job.caret.end = job.textarea.selectionStart;
     }
     ensureS1pReplyImagePasteAttachFields(job.textarea.form, aid);
-    markS1pPasteAttachOwnedAid(aid);
+    markS1pPasteAttachOwnedAid(aid, scope);
     return true;
+  };
+
+  const insertS1pReplyImagePasteJob = (job, aid) => {
+    if (!isS1pReplyImagePasteTargetAlive(job.textarea)) return false;
+    return insertS1pImagePasteTagJob(
+      job,
+      aid,
+      S1P_PASTE_ATTACH_SCOPE_REPLY_POPUP
+    );
+  };
+
+  const insertS1pQuickReplyImagePasteJob = (job, aid) => {
+    if (!isS1pQuickReplyImagePasteTargetAlive(job.textarea)) return false;
+    return insertS1pImagePasteTagJob(
+      job,
+      aid,
+      S1P_PASTE_ATTACH_SCOPE_QUICK_REPLY
+    );
   };
 
   const runS1pImagePasteUploadJob = async (
@@ -59667,6 +59739,23 @@
     insert: insertS1pReplyImagePasteJob,
   });
 
+  const s1pQuickReplyImagePasteUploadQueue = createS1pImagePasteQueue({
+    module: "quick_reply_image_paste",
+    isAlive: (item) => isS1pQuickReplyImagePasteTargetAlive(item.textarea),
+    insert: insertS1pQuickReplyImagePasteJob,
+  });
+
+  // 只有“粘贴里至少有一张超过论坛限制”时才接管快速回复框：
+  // 未超限的图片继续走论坛原生上传器，保持原有上传列表、进度与附件行为。
+  // 限制值未知（maxSizeKb<=0）时不接管，避免用默认 2048 KB 误判论坛的真实限制。
+  const shouldS1pQuickReplyImagePasteTakeOver = (files, config) =>
+    Boolean(config) &&
+    Number(config.maxSizeKb) > 0 &&
+    Array.isArray(files) &&
+    files.some((entry) =>
+      needsS1pReplyImagePasteCompression(entry?.file, config)
+    );
+
 
   const collectS1pReplyImagePasteReferencedAidsFromText = (value) => {
     const referenced = new Set();
@@ -59704,57 +59793,147 @@
     );
   };
 
+  const reconcileS1pQuickReplyAttachFields = () => {
+    const textarea = document.getElementById(
+      S1P_QUICK_REPLY_IMAGE_PASTE_TEXTAREA_ID
+    );
+    if (!textarea) return;
+    const form =
+      textarea.form ||
+      document.getElementById(S1P_QUICK_REPLY_IMAGE_PASTE_FORM_ID);
+    if (!form) return;
+    reconcileS1pMarkedAttachFields(
+      form,
+      collectS1pReplyImagePasteReferencedAidsFromText(textarea.value)
+    );
+  };
+
   const hasS1pImagePasteUploadsInFlight = () =>
     s1pReplyImagePasteUploadQueue.hasPending() ||
+    s1pQuickReplyImagePasteUploadQueue.hasPending() ||
     s1pAdvancedEditorPasteUploadQueue.hasPending();
+
+  // 提交拦截只看当前输入区：弹窗在传图不应阻止快速回复框提交（反之亦然）。
+  const hasS1pImagePasteUploadsInFlightForScope = (scope) => {
+    if (scope === S1P_PASTE_ATTACH_SCOPE_QUICK_REPLY) {
+      return s1pQuickReplyImagePasteUploadQueue.hasPending();
+    }
+    if (scope === S1P_PASTE_ATTACH_SCOPE_REPLY_POPUP) {
+      return s1pReplyImagePasteUploadQueue.hasPending();
+    }
+    if (scope === S1P_PASTE_ATTACH_SCOPE_ADVANCED_EDITOR) {
+      return s1pAdvancedEditorPasteUploadQueue.hasPending();
+    }
+    return hasS1pImagePasteUploadsInFlight();
+  };
 
   const handleS1pReplyPopupSubmitEvent = (event) => {
     const isClick = event.type === "click";
-    if (isClick && !event.target?.closest?.("#postsubmit")) return;
+    if (
+      isClick &&
+      !event.target?.closest?.("#postsubmit, #fastpostsubmit")
+    ) {
+      return;
+    }
     const form = isClick ? event.target?.closest?.("form") : event.target;
-    if (!form || form.id !== S1P_REPLY_IMAGE_PASTE_FORM_ID) return;
-    if (hasS1pImagePasteUploadsInFlight()) {
+    if (!form) return;
+    const isQuickReplyForm = form.id === S1P_QUICK_REPLY_IMAGE_PASTE_FORM_ID;
+    if (!isQuickReplyForm && form.id !== S1P_REPLY_IMAGE_PASTE_FORM_ID) return;
+    const submitScope = isQuickReplyForm
+      ? S1P_PASTE_ATTACH_SCOPE_QUICK_REPLY
+      : S1P_PASTE_ATTACH_SCOPE_REPLY_POPUP;
+    if (hasS1pImagePasteUploadsInFlightForScope(submitScope)) {
       event.preventDefault();
       event.stopImmediatePropagation();
       showS1pReplyImagePasteMessage(S1P_IMAGE_PASTE_UPLOADING_TEXT, null);
       return;
     }
-    reconcileS1pReplyPopupAttachFields();
-    settleS1pPasteAttachments();
+    if (isQuickReplyForm) {
+      reconcileS1pQuickReplyAttachFields();
+    } else {
+      reconcileS1pReplyPopupAttachFields();
+    }
+    settleS1pPasteAttachments(submitScope);
+  };
+
+  const handleS1pQuickReplyImagePasteEvent = (event, textarea) => {
+    const files = collectS1pReplyImagePasteFiles(event.clipboardData);
+    if (files.length === 0) return false;
+    const uploadConfig = readS1pReplyImagePasteUploadConfig();
+    if (!uploadConfig) return false;
+    if (!shouldS1pQuickReplyImagePasteTakeOver(files, uploadConfig)) {
+      // 正常大小的图片继续交给论坛原生上传器（#fastpostmessage 的原有流程）。
+      return false;
+    }
+    const caret = {
+      start: textarea.selectionStart,
+      end: textarea.selectionEnd,
+    };
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    for (const entry of files) {
+      if (
+        s1pQuickReplyImagePasteUploadQueue.size() >=
+        S1P_REPLY_IMAGE_PASTE_MAX_QUEUE
+      ) {
+        showS1pReplyImagePasteMessage("图片上传排队已满，请稍后再试", false);
+        break;
+      }
+      s1pQuickReplyImagePasteUploadQueue.enqueue({
+        file: entry.file,
+        extension: entry.extension,
+        textarea,
+        caret,
+      });
+    }
+    return true;
   };
 
   const handleS1pReplyImagePasteEvent = (event) => {
     try {
       if (!event || event.defaultPrevented) return;
       const textarea = findS1pReplyImagePasteTextarea(event.target);
-      if (!textarea) return;
-      const files = collectS1pReplyImagePasteFiles(event.clipboardData);
-      if (files.length === 0) return;
-      if (!readS1pReplyImagePasteUploadConfig()) return;
-      const caret = {
-        start: textarea.selectionStart,
-        end: textarea.selectionEnd,
-      };
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      for (const entry of files) {
-        if (s1pReplyImagePasteUploadQueue.size() >= S1P_REPLY_IMAGE_PASTE_MAX_QUEUE) {
-          showS1pReplyImagePasteMessage("图片上传排队已满，请稍后再试", false);
-          break;
+      if (textarea) {
+        const files = collectS1pReplyImagePasteFiles(event.clipboardData);
+        if (files.length === 0) return;
+        if (!readS1pReplyImagePasteUploadConfig()) return;
+        const caret = {
+          start: textarea.selectionStart,
+          end: textarea.selectionEnd,
+        };
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        for (const entry of files) {
+          if (
+            s1pReplyImagePasteUploadQueue.size() >=
+            S1P_REPLY_IMAGE_PASTE_MAX_QUEUE
+          ) {
+            showS1pReplyImagePasteMessage(
+              "图片上传排队已满，请稍后再试",
+              false
+            );
+            break;
+          }
+          s1pReplyImagePasteUploadQueue.enqueue({
+            file: entry.file,
+            extension: entry.extension,
+            textarea,
+            caret,
+          });
         }
-        s1pReplyImagePasteUploadQueue.enqueue({
-          file: entry.file,
-          extension: entry.extension,
-          textarea,
-          caret,
-        });
+        return;
       }
+      const quickReplyTextarea = findS1pQuickReplyImagePasteTextarea(
+        event.target
+      );
+      if (!quickReplyTextarea) return;
+      handleS1pQuickReplyImagePasteEvent(event, quickReplyTextarea);
     } catch (error) {
       s1pRecordDiagnosticEvent("reply_image_paste.event_failed", {
         module: "reply-image-paste",
         level: "warn",
         status: "failure",
-        message: "处理回复弹窗粘贴事件失败",
+        message: "处理图片粘贴事件失败",
         details: { error },
       });
     }
@@ -59781,22 +59960,37 @@
         true
       );
       document.addEventListener("keydown", (event) => {
-        if (
-          !(event.ctrlKey && event.key === "Enter") &&
-          !(event.altKey && String(event.key).toLowerCase() === "s")
-        ) {
+        if (!isS1pPasteSubmitShortcutEvent(event)) return;
+        // 只在弹窗输入区 / 快速回复框内视为“发帖快捷键”，避免其他输入框误结算附件。
+        const popupTextarea = findS1pReplyImagePasteTextarea(event.target);
+        const quickReplyTextarea = popupTextarea
+          ? null
+          : findS1pQuickReplyImagePasteTextarea(event.target);
+        if (!popupTextarea && !quickReplyTextarea) return;
+        // 上传中的图片还没插入编辑器；键盘提交（快速回复走 seditor_ctlent →
+        // fastpostvalidate → form.submit()，不触发 submit 事件）必须先在按键阶段拦下，
+        // 也避免在未提交时就把附件结算掉。
+        const keydownScope = popupTextarea
+          ? S1P_PASTE_ATTACH_SCOPE_REPLY_POPUP
+          : S1P_PASTE_ATTACH_SCOPE_QUICK_REPLY;
+        if (hasS1pImagePasteUploadsInFlightForScope(keydownScope)) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          showS1pReplyImagePasteMessage(S1P_IMAGE_PASTE_UPLOADING_TEXT, null);
           return;
         }
-        // 只在弹窗输入区内视为“发帖快捷键”，避免其他输入框的快捷键误结算附件。
-        if (!findS1pReplyImagePasteTextarea(event.target)) return;
-        reconcileS1pReplyPopupAttachFields();
-        settleS1pPasteAttachments();
+        if (popupTextarea) {
+          reconcileS1pReplyPopupAttachFields();
+        } else {
+          reconcileS1pQuickReplyAttachFields();
+        }
+        settleS1pPasteAttachments(keydownScope);
       }, true);
       s1pReplyImagePasteInitialized = true;
       s1pRecordDiagnosticEvent("reply_image_paste.initialized", {
         module: "reply-image-paste",
         status: "success",
-        message: "回复弹窗图片粘贴兼容补丁已启用",
+        message: "回复弹窗与快速回复框图片粘贴兼容补丁已启用",
       });
       return true;
     } catch (error) {
@@ -59804,7 +59998,7 @@
         module: "reply-image-paste",
         level: "warn",
         status: "failure",
-        message: "启用回复弹窗图片粘贴兼容补丁失败",
+        message: "启用回复弹窗与快速回复框图片粘贴兼容补丁失败",
         details: { error },
       });
       return false;
@@ -60016,7 +60210,7 @@
       }
     }
     ensureS1pReplyImagePasteAttachFields(form, aid);
-    markS1pPasteAttachOwnedAid(aid);
+    markS1pPasteAttachOwnedAid(aid, S1P_PASTE_ATTACH_SCOPE_ADVANCED_EDITOR);
     return true;
   };
 
@@ -60035,6 +60229,7 @@
 
   const getS1pImagePastePendingCount = () =>
     (s1pReplyImagePasteUploadQueue.pending?.() || 0) +
+    (s1pQuickReplyImagePasteUploadQueue.pending?.() || 0) +
     (s1pAdvancedEditorPasteUploadQueue.pending?.() || 0);
 
   const resolveS1pImagePasteLoadingState = (pendingCount) => {
@@ -60314,7 +60509,7 @@
       return;
     }
     reconcileS1pAdvancedEditorAttachFields();
-    settleS1pPasteAttachments();
+    settleS1pPasteAttachments(S1P_PASTE_ATTACH_SCOPE_ADVANCED_EDITOR);
   };
 
   const initializeAdvancedEditorImagePaste = () => {
@@ -60394,9 +60589,11 @@
   const S1P_PASTE_ATTACH_RECYCLE_DELAY_MS = 1200;
   const S1P_PASTE_ATTACH_DELETE_TIMEOUT_MS = 15000;
   const S1P_PASTE_ATTACH_SCOPE_REPLY_POPUP = "reply-popup";
+  const S1P_PASTE_ATTACH_SCOPE_QUICK_REPLY = "quick-reply";
   const S1P_PASTE_ATTACH_SCOPE_ADVANCED_EDITOR = "advanced-editor";
 
   const s1pPasteAttachOwnedAids = new Set();
+  const s1pPasteAttachOwnedAidScopes = new Map();
   const s1pPasteAttachDeletedAids = new Set();
   const s1pPasteAttachSettledAids = new Set();
   const s1pPasteAttachAbandonedAids = new Set();
@@ -60411,7 +60608,7 @@
     return Number.isFinite(parsed) && parsed > 0 ? String(parsed) : "";
   };
 
-  const markS1pPasteAttachOwnedAid = (aid) => {
+  const markS1pPasteAttachOwnedAid = (aid, scope) => {
     const normalized = normalizeS1pPasteAttachAid(aid);
     if (!normalized) return false;
     if (
@@ -60421,7 +60618,17 @@
       return false;
     }
     s1pPasteAttachOwnedAids.add(normalized);
+    if (scope) {
+      s1pPasteAttachOwnedAidScopes.set(normalized, scope);
+    }
     return true;
+  };
+
+  // 弹窗回复和快速回复框会同时存在，各自回收自己的 aid；没有记录 scope 的
+  // aid（旧调用 / 测试）沿用原来的“所有 scope 都可回收”行为。
+  const isS1pPasteAttachOwnedAidInScope = (aid, scope) => {
+    const ownedScope = s1pPasteAttachOwnedAidScopes.get(aid);
+    return !ownedScope || ownedScope === scope;
   };
 
   const stripS1pPasteAttachTagFromText = (value, aid) => {
@@ -60439,11 +60646,33 @@
     }
   };
 
-  const buildS1pPasteAttachDeleteUrl = (aid, tid, pid) =>
-    "forum.php?mod=ajax&action=deleteattach&inajax=yes" +
-    `&tid=${/^\d+$/.test(String(tid)) ? tid : "0"}` +
-    `&pid=${/^\d+$/.test(String(pid)) ? pid : "0"}` +
-    `&aids[]=${normalizeS1pPasteAttachAid(aid)}`;
+  // 论坛 deleteattach 要求带上当前表单的 formhash（与 forum_post.js 的
+  // appendAttachDel 一致），否则服务端不会删除。
+  const normalizeS1pPasteAttachFormHash = (formhash) => {
+    const value = String(formhash ?? "").trim();
+    return /^[0-9a-zA-Z]{4,16}$/.test(value) ? value : "";
+  };
+
+  const readS1pPasteAttachFormHash = (form) => {
+    try {
+      const input = form?.querySelector?.('input[name="formhash"]');
+      const value = typeof input?.value === "string" ? input.value.trim() : "";
+      return normalizeS1pPasteAttachFormHash(value);
+    } catch (_) {
+      return "";
+    }
+  };
+
+  const buildS1pPasteAttachDeleteUrl = (aid, tid, pid, formhash) => {
+    const normalizedFormHash = normalizeS1pPasteAttachFormHash(formhash);
+    return (
+      "forum.php?mod=ajax&action=deleteattach&inajax=yes" +
+      (normalizedFormHash ? `&formhash=${normalizedFormHash}` : "") +
+      `&tid=${/^\d+$/.test(String(tid)) ? tid : "0"}` +
+      `&pid=${/^\d+$/.test(String(pid)) ? pid : "0"}` +
+      `&aids[]=${normalizeS1pPasteAttachAid(aid)}`
+    );
+  };
 
   // 论坛 deleteattach 返回 CDATA 包裹的实际删除数量。
   const parseS1pPasteAttachDeleteCount = (text) => {
@@ -60454,15 +60683,40 @@
     return /^\d+$/.test(trimmed) ? Number.parseInt(trimmed, 10) : NaN;
   };
 
-  const settleS1pPasteAttachments = () => {
-    s1pPasteAttachRecycleTimers.forEach((timer) => window.clearTimeout(timer));
-    s1pPasteAttachRecycleTimers.clear();
-    s1pPasteAttachConfirmTimers.forEach((timer) => window.clearTimeout(timer));
-    s1pPasteAttachConfirmTimers.clear();
-    s1pPasteAttachOwnedAids.forEach((aid) =>
-      s1pPasteAttachSettledAids.add(aid)
-    );
-    s1pPasteAttachOwnedAids.clear();
+  // 提交后不再自动删除已结算附件。scope 用于只结算当前输入区：
+  // 弹窗回复与快速回复框可能同时存在，一个入口提交不能跳过另一个入口的回收。
+  // 不传 scope 时结算全部（测试 seam 与未标 scope 的旧调用）。
+  const settleS1pPasteAttachments = (scope = "") => {
+    const settleScope = typeof scope === "string" ? scope : "";
+    if (settleScope) {
+      const recycleTimer = s1pPasteAttachRecycleTimers.get(settleScope);
+      if (recycleTimer) {
+        window.clearTimeout(recycleTimer);
+        s1pPasteAttachRecycleTimers.delete(settleScope);
+      }
+      const confirmTimer = s1pPasteAttachConfirmTimers.get(settleScope);
+      if (confirmTimer) {
+        window.clearTimeout(confirmTimer);
+        s1pPasteAttachConfirmTimers.delete(settleScope);
+      }
+    } else {
+      s1pPasteAttachRecycleTimers.forEach((timer) =>
+        window.clearTimeout(timer)
+      );
+      s1pPasteAttachRecycleTimers.clear();
+      s1pPasteAttachConfirmTimers.forEach((timer) =>
+        window.clearTimeout(timer)
+      );
+      s1pPasteAttachConfirmTimers.clear();
+    }
+    for (const aid of [...s1pPasteAttachOwnedAids]) {
+      if (settleScope && !isS1pPasteAttachOwnedAidInScope(aid, settleScope)) {
+        continue;
+      }
+      s1pPasteAttachSettledAids.add(aid);
+      s1pPasteAttachOwnedAids.delete(aid);
+      s1pPasteAttachOwnedAidScopes.delete(aid);
+    }
   };
 
   const deleteS1pPasteAttachment = async (aid, form) => {
@@ -60490,7 +60744,8 @@
       const url = buildS1pPasteAttachDeleteUrl(
         normalized,
         readS1pPasteAttachFormValue(form, "tid"),
-        readS1pPasteAttachFormValue(form, "pid")
+        readS1pPasteAttachFormValue(form, "pid"),
+        readS1pPasteAttachFormHash(form)
       );
       const response = await fetch(url, {
         method: "GET",
@@ -60502,6 +60757,7 @@
       if (response.ok && Number.isFinite(count) && count > 0) {
         s1pPasteAttachDeletedAids.add(normalized);
         s1pPasteAttachOwnedAids.delete(normalized);
+        s1pPasteAttachOwnedAidScopes.delete(normalized);
         s1pRecordDiagnosticEvent("reply_image_paste.attach_deleted", {
           module: "reply-image-paste",
           status: "success",
@@ -60553,6 +60809,25 @@
           form:
             textarea.form ||
             popup.querySelector(`#${S1P_REPLY_IMAGE_PASTE_FORM_ID}`),
+          textarea,
+          editableBody: null,
+          referenced: collectS1pReplyImagePasteReferencedAidsFromText(
+            textarea.value
+          ),
+        };
+      }
+      if (scope === S1P_PASTE_ATTACH_SCOPE_QUICK_REPLY) {
+        const textarea = document.getElementById(
+          S1P_QUICK_REPLY_IMAGE_PASTE_TEXTAREA_ID
+        );
+        if (!textarea) return null;
+        const form =
+          textarea.form ||
+          document.getElementById(S1P_QUICK_REPLY_IMAGE_PASTE_FORM_ID);
+        if (!form || typeof form.contains !== "function") return null;
+        if (!form.contains(textarea)) return null;
+        return {
+          form,
           textarea,
           editableBody: null,
           referenced: collectS1pReplyImagePasteReferencedAidsFromText(
@@ -60641,7 +60916,9 @@
     }
     if (options.submitted === true) return;
     const unreferenced = [...s1pPasteAttachOwnedAids].filter(
-      (aid) => !snapshot.referenced.has(aid)
+      (aid) =>
+        !snapshot.referenced.has(aid) &&
+        isS1pPasteAttachOwnedAidInScope(aid, scope)
     );
     if (unreferenced.length === 0) {
       clearS1pPasteAttachConfirm(scope);
@@ -60709,6 +60986,10 @@
     }
     if (textarea.id === S1P_ADVANCED_EDITOR_TEXTAREA_ID) {
       scheduleS1pPasteAttachReconcile(S1P_PASTE_ATTACH_SCOPE_ADVANCED_EDITOR);
+      return;
+    }
+    if (textarea.id === S1P_QUICK_REPLY_IMAGE_PASTE_TEXTAREA_ID) {
+      scheduleS1pPasteAttachReconcile(S1P_PASTE_ATTACH_SCOPE_QUICK_REPLY);
     }
   };
 
