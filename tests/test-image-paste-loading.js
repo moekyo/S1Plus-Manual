@@ -46,33 +46,12 @@ assert.ok(
 );
 // 深浅色主题都提供可读的 toast 文字色（深色玻璃底上不能沿用深蓝 --s1p-t）。
 assert.match(cssSource, /--s1p-toast-text:\s*var\(--s1p-t\)/);
-// 主题（S1 NUX）会同时覆盖 --s1p-bg 与 --s1p-t，但不覆盖 S1 Plus 的浮层变量；
-// toast、tooltip 以及标记/通用浮窗、日期选择器、确认菜单都共用浮层玻璃底变量，
-// 它必须跟随 --s1p-bg，否则会出现浅底浅字。
-const floatingSupportsIndex = cssSource.indexOf(
-  "@supports (color: color-mix(in srgb, red 50%, blue))"
-);
-const floatingFallbackIndex = cssSource.indexOf(
-  "--s1p-floating-surface-bg: rgba(255, 255, 255, 0.48)"
-);
-assert.ok(floatingSupportsIndex > 0, "缺少 @supports 的浮层玻璃底覆盖。");
-assert.ok(
-  floatingFallbackIndex > 0 && floatingFallbackIndex < floatingSupportsIndex,
-  "原浮层玻璃底回退必须写在 @supports 覆盖之前。"
-);
+// 浮层玻璃底保持浅色主题原值，深色由 html.s1p-theme-dark 的覆盖处理；
+// 深色判定本身由 S1 NUX palette 证据保证（见 test-nux-theme-authority.js）。
 assert.match(
   cssSource,
-  /@supports \(color: color-mix\(in srgb, red 50%, blue\)\)\s*\{\s*:root\s*\{\s*--s1p-floating-surface-bg:\s*color-mix\(in srgb, var\(--s1p-bg\) 82%, transparent\);/,
-  "浮层玻璃底应在 @supports 内跟随主题 --s1p-bg（自定义属性重复声明不会形成回退）。"
-);
-assert.equal(
-  (
-    cssSource.match(
-      /--s1p-floating-surface-bg:\s*color-mix\(in srgb, var\(--s1p-bg\)/g
-    ) || []
-  ).length,
-  1,
-  "浮层的 color-mix 玻璃底只应出现一次（在 @supports 里），不要写重复的根声明。"
+  /--s1p-floating-surface-bg:\s*rgba\(255, 255, 255, 0\.48\)/,
+  "浅色主题下浮层玻璃底应保持原值。"
 );
 assert.match(
   cssSource,

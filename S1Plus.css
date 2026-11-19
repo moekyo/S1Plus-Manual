@@ -188,17 +188,6 @@
       --s1p-post-toolbar-layer-z: 180;
 
     }
-    /* 浮层玻璃底跟随主题 --s1p-bg：主题会同时覆盖 --s1p-bg 与文字色 --s1p-t，
-       但不覆盖 S1 Plus 的浮层变量；此前文字变浅而玻璃底仍是浅色，深色页上难读。
-       这条派生同时覆盖 toast、tooltip、标记/通用浮窗、日期选择器、确认菜单等所有
-       使用 --s1p-floating-surface-bg 的组件。
-       必须用 @supports：自定义属性接受任意 token，重复声明会让后一条在所有浏览器
-       生效，旧浏览器反而失去玻璃底（var() 回退参数只在属性未定义时生效）。 */
-    @supports (color: color-mix(in srgb, red 50%, blue)) {
-      :root {
-        --s1p-floating-surface-bg: color-mix(in srgb, var(--s1p-bg) 82%, transparent);
-      }
-    }
     /* --- [新增的功能] 系统屏蔽楼层隐藏 --- */
     html.s1p-hide-system-blocked-enabled table.plhin:has(.locked) {
       display: none !important;
