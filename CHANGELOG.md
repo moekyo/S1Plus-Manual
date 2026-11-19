@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+### 🧩 楼层徽章对齐
+
+- **修正 S1 NUX 徽章位置**：S1 Plus 接管楼层头部布局后，取消 NUX `.authi::before` 的 `margin-top: -6px`；此前负边距配合 `.authi` 的 `overflow: hidden` 会裁掉徽章顶部 6px（28px 只剩 22px），现在徽章恢复完整高度，从楼层上边缘完整垂下。覆盖只作用于 `.s1p-authi-layout`，不影响未被接管的楼层。
+
 ## [v7.2.1] - 2026-11-19
 
 ### 🖼 快速回复框超限截图自动压缩

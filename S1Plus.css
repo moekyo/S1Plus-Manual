@@ -3409,6 +3409,12 @@
       white-space: nowrap !important;
     }
 
+    /* S1 NUX 的 .authi::before 徽章带 margin-top:-6px；脚本接管布局后 .authi
+       有 overflow:hidden，负边距会把徽章顶部裁掉 6px，无法从楼层上边缘完整垂下。 */
+    #postlist .plc .pi.s1p-authi-layout .authi.s1p-authi-layout::before {
+      margin-top: 0;
+    }
+
     /* 1. 最外层容器: flex布局，这是基础 */
     .s1p-authi-container {
       display: flex;
