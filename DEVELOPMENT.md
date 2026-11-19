@@ -288,6 +288,15 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - 图片查看器面板 `.s1p-image-viewer__panel` 只负责圆角裁切、阴影和动画，不铺背景、不做 `backdrop-filter`；工具栏和图片舞台分别用 `--s1p-image-viewer-toolbar-bg`、`--s1p-image-viewer-viewport-bg` 独立控制，避免父子透明背景叠加导致舞台调参互相牵连。图片舞台本体只铺稳定主题底色，`.s1p-image-viewer__viewport::before` 用 `--s1p-image-viewer-viewport-glass-bg` + `--s1p-image-viewer-viewport-glass-filter` 负责磨砂层；浅色和深色必须保持同一套“底色层 + 磨砂层”结构，避免只在某个主题下直接过滤原页面。图片查看器上一张/下一张按钮的默认态阴影使用 `--s1p-image-viewer-nav-btn-shadow`，只调默认阴影时不要改 hover shadow、背景或 blur。
 - 设置面板 `.s1p-modal-body` 负责滚动视口、圆角裁切、滚动条样式和固定内容底色，使用 `--s1p-settings-body-surface-bg`（浅色约 `color-mix(... 94%, transparent)`，深色约 `color-mix(... 98%, transparent)`）；`.s1p-tab-panels` 保持透明且不再持有圆角背景，避免滚动中右侧 scrollbar gutter 露出直角。S1 NUX 下滚动条 thumb 通过 `applyNuxSettingsScrollbarThemeFix()` 跟随 NUX 主题色，track 保持透明。
 
+### 4.9 主题判定（S1 NUX）
+
+- 运行时只维护一份 canonical theme state，并投影为 `html.s1p-theme-light` / `html.s1p-theme-dark`；组件与 CSS 覆盖只能消费这个投影，不要各自读取系统主题。
+- NUX 是否启用通过渲染后的 `NUXISENABLED` 标记重新读取，启用/停用两个方向都要收敛。
+- `--darktheme`：只有 `1` 是权威深色。S1 NUX 2026.11 起内置主题（含深色）都输出 `0`，因此 `0` 不再代表权威浅色，而是继续看 palette 证据。
+- palette 证据优先级：渲染后的 `--bg` / `--t`；缺失或不可解析时，退回实际生效的 `--s1p-bg` / `--s1p-t`（主题可覆盖 S1 Plus 根变量）。仍无法判定时按浅色（unknown）处理，不静默跟随系统主题。
+- `prefers-color-scheme` 只作为 NUX 自身 auto-theme 的同步触发；普通运行时不开 system fallback。
+- 回归：`node tests/test-nux-theme-authority.js` 覆盖 `--darktheme: 0` + 深色 palette、palette-only 深/浅、ambiguous 保守等用例。
+
 ## 5. 存储键说明（GM Key）
 
 ### 5.1 业务数据

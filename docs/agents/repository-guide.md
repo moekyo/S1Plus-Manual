@@ -14,8 +14,9 @@ S1 Plus is a single-file Tampermonkey/Greasemonkey userscript that enhances the 
 - Settings semantics test: `node tests/test-settings-semantics-module.js`
 - Core Business Data module test: `node tests/test-core-business-data-module.js`
 - Image Viewer interface test: `node tests/test-image-viewer-interface.js`
-- Reply popup image paste test: `node tests/test-reply-image-paste.js`
+- Reply popup / quick reply image paste test: `node tests/test-reply-image-paste.js`
 - Image paste loading / submit guard test: `node tests/test-image-paste-loading.js`
+- Theme authority test: `node tests/test-nux-theme-authority.js`
 - Page Enhancement Projection test: `node tests/test-page-enhancement-projection.js`
 - Sync tests: run focused `node tests/test-*.js` files from `tests/`.
 - Test helper: `tests/s1plus-test-helpers.js` loads `S1Plus.js` in a `vm` sandbox with browser/GM stubs; test-only hook blocks live in `tests/s1plus-test-hooks.js` and are injected in memory so the published artifact stays hook-free.
@@ -152,7 +153,7 @@ Current non-goals remain explicit action-driven convergence paths, including dat
 
 `S1 NUX.css` has a global rule like `*:not(.v-binder-follower-content) { transition-duration: .15s }`, which can override S1 Plus animation durations. Test with both standard and NUX themes. Critical transitions may need higher specificity or `!important`.
 
-Theme authority is singular end-to-end. S1 Plus maintains one canonical runtime theme state, then projects it onto `html.s1p-theme-light` / `html.s1p-theme-dark`; CSS and JS compatibility fixes consume that canonical state/projection rather than independently reading system theme. NUX availability is re-read from the rendered `NUXISENABLED` marker and must converge both enabled → disabled and disabled → enabled. When NUX is enabled, a valid computed `--darktheme: 0|1` is authoritative. If `--darktheme` is absent (notably NUX custom themes), infer the effective theme conservatively from the rendered NUX palette such as `--bg` / `--t`; ambiguous palettes remain explicit unknown and default light rather than silently following the OS. `prefers-color-scheme` is retained as a synchronization trigger for NUX's own auto-theme CSS, and may be used as a resolver fallback only when an independent signal proves NUX is actually in system-follow mode. The current NUX integration exposes no reliable `@autotheme` runtime signal, so ordinary runtime resolution does not enable that fallback.
+Theme authority is singular end-to-end. S1 Plus maintains one canonical runtime theme state, then projects it onto `html.s1p-theme-light` / `html.s1p-theme-dark`; CSS and JS compatibility fixes consume that canonical state/projection rather than independently reading system theme. NUX availability is re-read from the rendered `NUXISENABLED` marker and must converge both enabled → disabled and disabled → enabled. When NUX is enabled, only a computed `--darktheme: 1` is authoritative dark; `--darktheme: 0` is no longer authoritative because S1 NUX 2026.11 emits `0` for every built-in theme (including dark ones), so resolution falls through to palette evidence. Prefer the rendered NUX palette (`--bg` / `--t`); if it is absent or unparseable, fall back to the effective S1 Plus palette (`--s1p-bg` / `--s1p-t`, which the theme may override). Ambiguous palettes remain explicit unknown and default light rather than silently following the OS. `prefers-color-scheme` is retained as a synchronization trigger for NUX's own auto-theme CSS, and may be used as a resolver fallback only when an independent signal proves NUX is actually in system-follow mode. The current NUX integration exposes no reliable `@autotheme` runtime signal, so ordinary runtime resolution does not enable that fallback.
 
 ## Cross-Tab Synchronization
 
