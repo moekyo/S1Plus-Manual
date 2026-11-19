@@ -47,37 +47,43 @@ assert.ok(
 // 深浅色主题都提供可读的 toast 文字色（深色玻璃底上不能沿用深蓝 --s1p-t）。
 assert.match(cssSource, /--s1p-toast-text:\s*var\(--s1p-t\)/);
 // 主题（S1 NUX）会同时覆盖 --s1p-bg 与 --s1p-t，但不覆盖 S1 Plus 的浮层变量；
-// toast/上传提示的玻璃底必须跟随 --s1p-bg，否则会出现浅底浅字。
-const toastSupportsIndex = cssSource.indexOf(
+// toast、tooltip 以及标记/通用浮窗、日期选择器、确认菜单都共用浮层玻璃底变量，
+// 它必须跟随 --s1p-bg，否则会出现浅底浅字。
+const floatingSupportsIndex = cssSource.indexOf(
   "@supports (color: color-mix(in srgb, red 50%, blue))"
 );
-const toastFallbackIndex = cssSource.indexOf(
-  "--s1p-toast-glass-bg: var(--s1p-floating-surface-bg)"
+const floatingFallbackIndex = cssSource.indexOf(
+  "--s1p-floating-surface-bg: rgba(255, 255, 255, 0.48)"
 );
-assert.ok(toastSupportsIndex > 0, "缺少 @supports 的 toast 玻璃底覆盖。");
+assert.ok(floatingSupportsIndex > 0, "缺少 @supports 的浮层玻璃底覆盖。");
 assert.ok(
-  toastFallbackIndex > 0 && toastFallbackIndex < toastSupportsIndex,
+  floatingFallbackIndex > 0 && floatingFallbackIndex < floatingSupportsIndex,
   "原浮层玻璃底回退必须写在 @supports 覆盖之前。"
 );
 assert.match(
   cssSource,
-  /@supports \(color: color-mix\(in srgb, red 50%, blue\)\)\s*\{\s*:root\s*\{\s*--s1p-toast-glass-bg:\s*color-mix\(in srgb, var\(--s1p-bg\) 82%, transparent\);/,
-  "toast/上传提示的玻璃底应在 @supports 内跟随主题 --s1p-bg（自定义属性重复声明不会形成回退）。"
+  /@supports \(color: color-mix\(in srgb, red 50%, blue\)\)\s*\{\s*:root\s*\{\s*--s1p-floating-surface-bg:\s*color-mix\(in srgb, var\(--s1p-bg\) 82%, transparent\);/,
+  "浮层玻璃底应在 @supports 内跟随主题 --s1p-bg（自定义属性重复声明不会形成回退）。"
 );
 assert.equal(
   (
     cssSource.match(
-      /--s1p-toast-glass-bg:\s*color-mix\(in srgb, var\(--s1p-bg\)/g
+      /--s1p-floating-surface-bg:\s*color-mix\(in srgb, var\(--s1p-bg\)/g
     ) || []
   ).length,
   1,
-  "toast 的 color-mix 玻璃底只应出现一次（在 @supports 里），不要写重复的根声明。"
+  "浮层的 color-mix 玻璃底只应出现一次（在 @supports 里），不要写重复的根声明。"
+);
+assert.match(
+  cssSource,
+  /--s1p-toast-glass-bg:\s*var\(--s1p-floating-surface-bg\)/,
+  "toast 玻璃底应继续复用浮层变量。"
 );
 assert.ok(
-  /html\.s1p-theme-dark \{[\s\S]{0,16000}--s1p-toast-glass-bg:\s*var\(--s1p-floating-surface-bg\)/.test(
+  /html\.s1p-theme-dark \{[\s\S]{0,16000}--s1p-floating-surface-bg:\s*rgba\(17, 24, 39, 0\.82\)/.test(
     cssSource
   ),
-  "深色主题下 toast 玻璃底应继续使用深色浮层变量。"
+  "深色主题下浮层玻璃底应继续使用深色值。"
 );
 assert.match(
   cssSource,

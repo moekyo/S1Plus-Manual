@@ -5141,22 +5141,25 @@
     }
 
     const normalizedNuxDarkTheme = String(nuxDarkThemeRaw ?? "").trim();
-    if (normalizedNuxDarkTheme === "0" || normalizedNuxDarkTheme === "1") {
+    const normalizedRenderedTheme =
+      nuxRenderedTheme === "dark" || nuxRenderedTheme === "light"
+        ? nuxRenderedTheme
+        : "unknown";
+
+    // --darktheme 只有 1 是权威深色。2026.11 起的 S1 NUX 给所有内置主题都输出 0
+    // （深色实际由 palette / 媒体查询决定），因此 0 不能再直接当作“明确浅色”，
+    // 否则整套深色覆盖会失效（典型症状：深色页面上浅色浮层配浅色文字）。
+    if (normalizedNuxDarkTheme === "1") {
       return {
-        isDark: normalizedNuxDarkTheme === "1",
+        isDark: true,
         source: "nux-darktheme",
         nuxEnabled: true,
-        renderedTheme:
-          normalizedNuxDarkTheme === "1" ? "dark" : "light",
+        renderedTheme: "dark",
         renderedThemeEvidence: "darktheme-token",
         paletteSignature,
       };
     }
 
-    const normalizedRenderedTheme =
-      nuxRenderedTheme === "dark" || nuxRenderedTheme === "light"
-        ? nuxRenderedTheme
-        : "unknown";
     if (normalizedRenderedTheme !== "unknown") {
       return {
         isDark: normalizedRenderedTheme === "dark",
@@ -5165,6 +5168,18 @@
         renderedTheme: normalizedRenderedTheme,
         renderedThemeEvidence:
           String(nuxRenderedThemeEvidence || "").trim() || "rendered-palette",
+        paletteSignature,
+      };
+    }
+
+    // 0 只在没有任何其他证据时作为浅色兜底（旧版 NUX 的浅色主题行为）。
+    if (normalizedNuxDarkTheme === "0") {
+      return {
+        isDark: false,
+        source: "nux-darktheme",
+        nuxEnabled: true,
+        renderedTheme: "unknown",
+        renderedThemeEvidence: "darktheme-token",
         paletteSignature,
       };
     }
@@ -5217,6 +5232,35 @@
     return s1pSystemDarkMediaQuery;
   };
 
+  // 主题可能只暴露 S1 Plus 的 --s1p-* palette，而不提供 --darktheme / --bg / --t；
+  // 这时用实际生效的 --s1p-bg / --s1p-t 作为深色判定的兜底证据，避免整套深色覆盖失效。
+  const readS1pThemePaletteEvidence = () => {
+    try {
+      if (typeof window.getComputedStyle !== "function") {
+        return { theme: "unknown", evidence: "none" };
+      }
+      const candidates = [];
+      if (document.body) candidates.push(document.body);
+      if (document.documentElement) candidates.push(document.documentElement);
+      for (const element of candidates) {
+        const style = window.getComputedStyle(element);
+        const backgroundRaw = String(
+          style?.getPropertyValue("--s1p-bg") || ""
+        ).trim();
+        const textRaw = String(
+          style?.getPropertyValue("--s1p-t") || ""
+        ).trim();
+        if (!backgroundRaw && !textRaw) continue;
+        const evidence = resolveNuxRenderedThemeEvidence({
+          backgroundRaw,
+          textRaw,
+        });
+        if (evidence.theme !== "unknown") return evidence;
+      }
+    } catch (_) { }
+    return { theme: "unknown", evidence: "none" };
+  };
+
   const readS1pThemeState = () => {
     const nuxEnabled = readS1NuxAvailability();
     const rootElement = document.documentElement;
@@ -5229,10 +5273,14 @@
     const readRootProperty = (propertyName) =>
       String(rootStyle?.getPropertyValue(propertyName) || "").trim();
     const nuxDarkThemeRaw = readRootProperty("--darktheme");
-    const renderedThemeEvidence = resolveNuxRenderedThemeEvidence({
+    const rootRenderedThemeEvidence = resolveNuxRenderedThemeEvidence({
       backgroundRaw: readRootProperty("--bg"),
       textRaw: readRootProperty("--t"),
     });
+    const renderedThemeEvidence =
+      rootRenderedThemeEvidence.theme === "unknown" && nuxEnabled
+        ? readS1pThemePaletteEvidence()
+        : rootRenderedThemeEvidence;
     const paletteSignature = nuxEnabled
       ? S1P_NUX_PALETTE_PROPERTIES.map(
           (propertyName) => `${propertyName}=${readRootProperty(propertyName)}`

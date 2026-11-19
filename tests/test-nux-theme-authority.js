@@ -207,8 +207,19 @@ const assertProjectedTheme = (
   await flushThemeReconcile();
   assertProjectedTheme(controls, hooks, {
     isDark: false,
-    source: "nux-darktheme",
-    message: "C. NUX --darktheme 0 + system dark",
+    source: "nux-rendered-theme",
+    message: "C. NUX --darktheme 0 + light palette（0 不再权威压过 palette）",
+  });
+
+  // C2：2026.11 起 NUX 对深色主题也输出 --darktheme 0，必须跟随 palette 判定深色。
+  controls.setRootCssVariable("--bg", "#19212f");
+  controls.setRootCssVariable("--t", "#cbc9c4");
+  controls.triggerStyleMutation();
+  await flushThemeReconcile();
+  assertProjectedTheme(controls, hooks, {
+    isDark: true,
+    source: "nux-rendered-theme",
+    message: "C2. NUX --darktheme 0 + dark palette（新版 NUX）",
   });
 
   controls.setSystemPrefersDark(false);
@@ -230,8 +241,8 @@ const assertProjectedTheme = (
   await flushThemeReconcile();
   assertProjectedTheme(controls, hooks, {
     isDark: false,
-    source: "nux-darktheme",
-    message: "F. NUX 1 -> 0 without system change",
+    source: "nux-rendered-theme",
+    message: "F. NUX 1 -> 0 + light palette",
   });
 
   controls.setSystemPrefersDark(true);
@@ -276,6 +287,38 @@ const assertProjectedTheme = (
     isDark: false,
     source: "nux-rendered-unknown",
     message: "J. ambiguous rendered palette remains conservative",
+  });
+
+  // J2-J4：主题只暴露 S1 Plus palette（--s1p-bg/--s1p-t），不提供 --bg/--t 时，
+  // 用实际生效的 palette 判定深色，避免整套深色覆盖失效。
+  controls.setRootCssVariable("--s1p-bg", "#0f172a");
+  controls.setRootCssVariable("--s1p-t", "#d1d5db");
+  controls.triggerStyleMutation();
+  await flushThemeReconcile();
+  assertProjectedTheme(controls, hooks, {
+    isDark: true,
+    source: "nux-rendered-theme",
+    message: "J2. palette-only dark without --bg/--t",
+  });
+
+  controls.setRootCssVariable("--s1p-bg", "#f5f5f3");
+  controls.setRootCssVariable("--s1p-t", "#1f2937");
+  controls.triggerStyleMutation();
+  await flushThemeReconcile();
+  assertProjectedTheme(controls, hooks, {
+    isDark: false,
+    source: "nux-rendered-theme",
+    message: "J3. palette-only light",
+  });
+
+  controls.deleteRootCssVariable("--s1p-bg");
+  controls.deleteRootCssVariable("--s1p-t");
+  controls.triggerStyleMutation();
+  await flushThemeReconcile();
+  assertProjectedTheme(controls, hooks, {
+    isDark: false,
+    source: "nux-rendered-unknown",
+    message: "J4. palette missing remains conservative",
   });
 
   const compatibilityCountBeforeNoop =
