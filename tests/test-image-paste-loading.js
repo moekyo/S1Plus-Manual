@@ -46,6 +46,19 @@ assert.ok(
 );
 // 深浅色主题都提供可读的 toast 文字色（深色玻璃底上不能沿用深蓝 --s1p-t）。
 assert.match(cssSource, /--s1p-toast-text:\s*var\(--s1p-t\)/);
+// 主题（S1 NUX）在深色 palette 下只覆盖 --s1p-t，不覆盖 S1 Plus 的浮层变量；
+// toast/上传提示的玻璃底必须跟随 --s1p-bg，否则会出现浅底浅字。
+assert.match(
+  cssSource,
+  /--s1p-toast-glass-bg:\s*color-mix\(in srgb, var\(--s1p-bg\) 82%, transparent\)/,
+  "toast/上传提示的玻璃底应跟随主题 --s1p-bg。"
+);
+assert.ok(
+  /html\.s1p-theme-dark \{[\s\S]{0,16000}--s1p-toast-glass-bg:\s*var\(--s1p-floating-surface-bg\)/.test(
+    cssSource
+  ),
+  "深色主题下 toast 玻璃底应继续使用深色浮层变量。"
+);
 assert.match(
   cssSource,
   /html\.s1p-theme-dark \{[\s\S]{0,12000}--s1p-toast-text:\s*#e5e7eb/

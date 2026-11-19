@@ -62,7 +62,9 @@
       --s1p-inline-action-hover-bg: rgba(255, 255, 255, 0.32);
       --s1p-popover-solid-bg: var(--s1p-bg);
       --s1p-popover-solid-shadow: 0 10px 24px rgba(var(--s1p-shadow-color-rgb), 0.16);
+      /* 玻璃底跟随主题 --s1p-bg：主题只覆盖文字色（--s1p-t）时不会出现浅底浅字。 */
       --s1p-toast-glass-bg: var(--s1p-floating-surface-bg);
+      --s1p-toast-glass-bg: color-mix(in srgb, var(--s1p-bg) 82%, transparent);
       --s1p-toast-glass-filter: var(--s1p-floating-surface-filter);
       --s1p-toast-glass-shadow: var(--s1p-floating-surface-shadow);
       --s1p-toast-state-filter: blur(6px) saturate(1.18);
