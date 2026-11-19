@@ -26,7 +26,7 @@ const sourceBytes = Buffer.byteLength(source);
 
 assert.match(
   source,
-  /@resource\s+s1p-base-css\s+https:\/\/raw\.githubusercontent\.com\/moekyo\/S1Plus-Manual\/a9365b2665d0487ac55a796ad70de5c8783f9051\/S1Plus\.css/
+  /@resource\s+s1p-base-css\s+https:\/\/raw\.githubusercontent\.com\/moekyo\/S1Plus-Manual\/77e47a658337e3345210eebfd1e4dafd726eb64c\/S1Plus\.css/
 );
 assert.match(
   source,
