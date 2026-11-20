@@ -1,6 +1,6 @@
 # S1 Plus - Stage1st 体验增强套件
 
-> 当前文档基于当前 `main` 分支的 `S1Plus.js` 源码整理。脚本元数据版本为 `v7.2.1`（发布日期 `2026-11-19`）。
+> 当前文档基于当前 `main` 分支的 `S1Plus.js` 源码整理。脚本元数据版本为 `v7.2.2`（发布日期 `2026-11-20`）。
 
 ## 项目简介
 
@@ -8,15 +8,15 @@ S1 Plus 是一个面向 Stage1st（S1）的用户脚本，目标是让论坛浏�
 
 ## 当前版本速览
 
-- 代码基线：`v7.2.1`
-- 脚本版本字段：`7.2.1`
-- 最近发布日期：`2026-11-19`
+- 代码基线：`v7.2.2`
+- 脚本版本字段：`7.2.2`
+- 最近发布日期：`2026-11-20`
 - 脚本入口：`S1Plus.js`
 - 元数据匹配：`https://stage1st.com/2b/*`
 - 存储方式：Greasemonkey API（`GM_getValue` / `GM_setValue`）
 - 远程同步：GitHub Gist（`api.github.com` + `gist.githubusercontent.com`）；可选局域网同步（LAN Hub，自动同步优先走局域网）
 - 发行资源：`S1Plus.css`（样式）和 `S1Plus-static-data.json`（静态图标、设置模板与 UI Showcase 数据）
-- Greasy Fork 产物：由 `release-min` 分支发布压缩版（约 `1.4MB`）；仓库中的 `S1Plus.js` 保持可读，约 `2,234,345` bytes / `2,154,932` characters
+- Greasy Fork 产物：由 `release-min` 分支发布压缩版（约 `1.4MB`）；仓库中的 `S1Plus.js` 保持可读，约 `2,234,190` bytes / `2,154,869` characters
 
 ## 功能全景（按真实实现梳理）
 
