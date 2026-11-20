@@ -56,6 +56,9 @@ Run this workflow when the user gives a target version (for example `6.4.0`).
 9. Report completion.
    - Summarize changed files, commit hash, and tag.
    - Ask whether to push with `git push` and `git push --tags`.
+   - Publishing also fast-forwards the readable `release` branch and creates the
+     GitHub Release; both are owned by `userscript-release`. A pushed tag alone
+     does not update the Releases page.
 
 ## Guardrails
 
@@ -64,3 +67,4 @@ Run this workflow when the user gives a target version (for example `6.4.0`).
 - Re-read target files before editing when content may have changed.
 - Preserve changelog conventions (`Unreleased` on top, version sections below, `---` separators).
 - Do not push commits or tags unless the user explicitly confirms.
+- Do not report the release as complete until `userscript-release` has updated `release-min`, the `release` branch and the GitHub Release (or the user explicitly waives them).

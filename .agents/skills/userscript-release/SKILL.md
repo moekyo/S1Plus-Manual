@@ -18,7 +18,7 @@ Greasy Fork. No browser step is needed. `main` and `release` never contain the
 minified artifact.
 
 Load `s1plus-release` for the metadata workflow, then run these steps on top of
-it. Steps 1–8 repeat for every release; the setup section below ran once, for
+it. Steps 1–9 repeat for every release; the setup section below ran once, for
 v7.1.1.
 
 ## Facts that drive the steps
@@ -38,6 +38,11 @@ v7.1.1.
   message is `release: vX.Y.Z` by default.
 - The `@resource` pins live in the artifact's copied metadata header and point
   at immutable commits on `main`; `sync_identifier` points at `release-min`.
+- `release` is the readable-source mirror of each published release (never the
+  minified artifact). Fast-forward it to `main` when publishing; a stale
+  `release` branch makes the repo's release source look out of date.
+- GitHub Release objects are separate from git tags. Pushing a tag does not
+  create or update the Releases page; create the release explicitly.
 
 ## Setup — done once (v7.1.1)
 
@@ -102,7 +107,12 @@ Verify these hold before the first release that uses this flow:
    `vX.Y.Z`, then confirm the tag points at that commit.
 
 6. Push the readable source, after the user confirms: `git push origin main`,
-   then `git push origin vX.Y.Z`. Neither publishes.
+   then `git push origin vX.Y.Z`. Neither publishes. Also fast-forward the
+   readable-source mirror so the repo's release source matches the tag:
+
+   ```bash
+   git merge-base --is-ancestor origin/release main && git push origin main:release
+   ```
 
 7. Publish, after the user confirms — build from the tagged source and
    append the new commit to the generated branch:
@@ -146,6 +156,20 @@ Verify these hold before the first release that uses this flow:
    Read the response body in the delivery's Response tab. Report commit, tag,
    published `@version`, and delivery result.
 
+9. Create the GitHub Release (separate from the tag), after the user confirms:
+
+   ```bash
+   gh auth switch -u moekyo   # active account needs write access to the repo
+   gh release create vX.Y.Z --title "S1 Plus vX.Y.Z" --notes-file <notes.md> --latest
+   gh release list -L 3
+   gh auth switch -u <previous-account>
+   ```
+
+   Release notes should summarize this release and can mention a previous patch
+   that never got its own GitHub Release. Confirm the new release is marked
+   Latest. If `gh` is already active as the repo owner, skip the switch lines
+   and restore the original account afterwards.
+
 ## Diagnosing a publish that did not land
 
 - **403**: GitHub's secret and Greasy Fork's `webhook_secret` differ — regenerate
@@ -175,3 +199,8 @@ Verify these hold before the first release that uses this flow:
   lint worker) freezes on a ~2 MB file.
 - Greasy Fork being unreachable from this workstation does not block publishing —
   the callback is GitHub-to-Greasy Fork.
+- **404 on `POST /repos/.../releases`**: the active `gh` account lacks write
+  access (or its token belongs to another account). `gh auth status` shows the
+  active account; switch to the repo owner (`gh auth switch -u moekyo`) and
+  retry. `gh release list` may still work because public reads do not need
+  write access.
