@@ -4909,6 +4909,7 @@
   const NUX_THEME_SEC_SIGNATURE_TOLERANCE = 3;
   const S1P_THEME_DARK_CLASS = "s1p-theme-dark";
   const S1P_THEME_LIGHT_CLASS = "s1p-theme-light";
+  const S1P_NUX_ENABLED_CLASS = "s1p-nux-enabled";
   const S1P_THEME_SOURCE_ATTR = "data-s1p-theme-source";
   const S1P_NUX_MARKER_SELECTOR = '#flk a[href="archiver/"]';
   const S1P_NUX_MARKER_NODE_SELECTOR = 'a[href="archiver/"]';
@@ -5329,6 +5330,10 @@
     rootElement.classList.toggle(
       S1P_THEME_LIGHT_CLASS,
       themeState.isDark !== true
+    );
+    rootElement.classList.toggle(
+      S1P_NUX_ENABLED_CLASS,
+      themeState.nuxEnabled === true
     );
     rootElement.setAttribute?.(S1P_THEME_SOURCE_ATTR, themeState.source);
     return themeState;

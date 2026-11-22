@@ -2013,8 +2013,15 @@
       font-size: 0;
       white-space: nowrap;
     }
+    /* 默认主题的 #um 使用无单位 line-height（2.3），字号变化会同步放大行高；
+    * 这里改为继承父级字号，避免悬停时把自动高度的顶栏撑高。
+    */
     #um:hover #s1p-my-threads-link {
       margin-right: 8px;
+      font-size: inherit;
+    }
+    /* NUX 顶栏固定 36px、#um > p 固定 35px 行高，保持与原生展开项一致的 13px。 */
+    html.s1p-nux-enabled #um:hover #s1p-my-threads-link {
       font-size: 13px;
     }
 

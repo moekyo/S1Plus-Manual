@@ -348,6 +348,44 @@ assert.match(
   "回归应确认 S1 NUX 的 909px 快捷入口规则仍由 NUX 自己持有。"
 );
 
+// 顶栏“帖子”快捷入口的悬停展开不能改变顶栏高度：
+// 默认主题 #um 使用无单位 line-height，13px 字号会把行高放大到 29.9px；
+// NUX 的固定行高/固定顶栏高不受影响，因此只在 NUX 下保留 13px。
+const myThreadsStyleStart = sourceCode.indexOf(
+  "/* 顶栏“帖子”快捷入口"
+);
+const myThreadsStyleEnd = sourceCode.indexOf(
+  "/* --- 手动同步弹窗样式 --- */",
+  myThreadsStyleStart
+);
+assert.notEqual(myThreadsStyleStart, -1, "缺少顶栏“帖子”快捷入口样式。");
+assert.notEqual(myThreadsStyleEnd, -1, "无法解析顶栏“帖子”快捷入口样式边界。");
+const myThreadsStyleBlock = sourceCode.slice(
+  myThreadsStyleStart,
+  myThreadsStyleEnd
+);
+
+assert.match(
+  myThreadsStyleBlock,
+  /^\s*#um #s1p-my-threads-link\s*\{[^}]*font-size:\s*0;/m,
+  "“帖子”快捷入口默认应以零字号隐藏。"
+);
+assert.match(
+  myThreadsStyleBlock,
+  /^\s*#um:hover #s1p-my-threads-link\s*\{[^}]*font-size:\s*inherit;/m,
+  "默认主题悬停时必须继承父级字号，避免无单位 line-height 撑高顶栏。"
+);
+assert.doesNotMatch(
+  myThreadsStyleBlock,
+  /^\s*#um:hover #s1p-my-threads-link\s*\{[^}]*font-size:\s*13px;/m,
+  "默认主题悬停不得直接使用 13px 字号。"
+);
+assert.match(
+  myThreadsStyleBlock,
+  /^\s*html\.s1p-nux-enabled #um:hover #s1p-my-threads-link\s*\{[^}]*font-size:\s*13px;/m,
+  "NUX 下应保持与原生展开项一致的 13px 字号。"
+);
+
 console.log(
   "[navbar-responsive-overflow] custom-nav overflow and S1 NUX compatibility contracts verified."
 );

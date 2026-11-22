@@ -38,6 +38,11 @@ const assertProjectedTheme = (
     `${message}: root light projection`
   );
   assert.equal(
+    classes.has("s1p-nux-enabled"),
+    state.nuxEnabled === true,
+    `${message}: root NUX projection`
+  );
+  assert.equal(
     controls.getRootAttribute("data-s1p-theme-source"),
     source,
     `${message}: diagnostic source projection`
