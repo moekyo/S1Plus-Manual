@@ -114,7 +114,7 @@ node scripts/generate-local-loader.mjs
 
 ## 版本与发布
 
-- 当前发布：`v7.2.2`（2026-11-20）。
+- 当前发布：`v7.2.3`（2026-11-22）。
 - Greasy Fork 产物由 `release-min` 分支发布（压缩版，约 1.4MB）；`main` 保留可读源码，可能包含尚未发布的改动。
 
 ## 反馈
