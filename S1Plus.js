@@ -8441,6 +8441,18 @@
   };
   bindReadProgressWriteStatsPublish();
 
+  // 阅读进度观察器的运行计数：用来区分「没挂上楼层」「挂上但回调没来」「回调来了但楼层解析失败」
+  // 这三种沉默失败——它们都不会产生任何日志，排查时只能靠计数。
+  const s1pReadProgressObserverStats = {
+    observeCalls: 0,
+    callbacks: 0,
+    parseFailures: 0,
+  };
+  const buildReadProgressObserverStatsRow = () => [
+    "阅读进度观察器",
+    `挂载 ${s1pReadProgressObserverStats.observeCalls} 个楼层 / 回调 ${s1pReadProgressObserverStats.callbacks} 次 / 楼层解析失败 ${s1pReadProgressObserverStats.parseFailures} 次`,
+  ];
+
   const buildSyncDiagnosticsRows = (diagnostics) => {
     const schedulerSnapshot = getBackgroundSyncSchedulerDiagnosticsSnapshot();
     const schedulerOwner =
@@ -8661,6 +8673,7 @@
       ],
     ];
     rows.push(...buildReadProgressWriteStatsRows());
+    rows.push(buildReadProgressObserverStatsRow());
     const syncTraceEvents = Array.isArray(diagnostics.syncTraceEvents)
       ? diagnostics.syncTraceEvents.slice().reverse()
       : [];
@@ -55748,9 +55761,15 @@
     }
 
     const postId = getPostIdFromPostTable(postTable);
-    const floorElement = postId
-      ? postTable.querySelector(`#postnum${postId} em`)
-      : postTable.querySelector(".pi em");
+    // 楼层号就在 #postnum<pid> 上：普通楼层是 <em>2</em><sup>#</sup>，主楼是“楼主”文本。
+    // 不能回退到 .pi em——那里最先命中的是发帖时间（“发表于 2026-11-27 …”），
+    // 会被解析成 2026 楼，把该帖进度永久顶到无法再前进的位置。
+    const floorAnchor = postId
+      ? postTable.querySelector(`#postnum${postId}`)
+      : postTable.querySelector("#postnum");
+    const floorElement = floorAnchor
+      ? floorAnchor.querySelector("em") || floorAnchor
+      : null;
     const floorText = floorElement ? String(floorElement.textContent || "").trim() : "";
     const parsedFloor = parseInt(floorText, 10);
     if (Number.isFinite(parsedFloor) && parsedFloor > 0) {
@@ -56594,6 +56613,9 @@
       document.removeEventListener("touchstart", handleReadProgressTouchStart);
       document.removeEventListener("keydown", handleReadProgressKeydown);
       if (clearObservedMarkers) {
+        s1pReadProgressObserverStats.observeCalls = 0;
+        s1pReadProgressObserverStats.callbacks = 0;
+        s1pReadProgressObserverStats.parseFailures = 0;
         document
           .querySelectorAll('table[id^="pid"][data-s1p-observed]')
           .forEach((el) => {
@@ -56713,6 +56735,7 @@
         recordReadProgressTrackingDebugEvent("rp_observer_bound");
         pageObserver = new IntersectionObserver(
           (entries) => {
+            s1pReadProgressObserverStats.callbacks += 1;
             entries.forEach((entry) => {
               const record = getReadProgressRecordFromPostTable(entry.target, {
                 fallbackToFirstPostFloor: true,
@@ -56721,6 +56744,9 @@
               const postId = record?.postId || getPostIdFromPostTable(entry.target);
               if (!postId) {
                 return;
+              }
+              if (entry.isIntersecting && !record) {
+                s1pReadProgressObserverStats.parseFailures += 1;
               }
               if (entry.isIntersecting) {
                 if (record && record.floor > 0) {
@@ -56769,6 +56795,7 @@
       targetPostTables.forEach((el) => {
         // 使用一个自定义属性来避免重复添加监控
         if (!el.dataset.s1pObserved) {
+          s1pReadProgressObserverStats.observeCalls += 1;
           pageObserver.observe(el);
           el.dataset.s1pObserved = "true";
         }

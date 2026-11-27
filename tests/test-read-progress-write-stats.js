@@ -129,6 +129,10 @@ const testDiagnosticsSummaryIncludesTheStat = () => {
     summary.includes("阅读进度分片写入: 窗口 1 次更新 / 1 片（U/D≈1.0）"),
     "同步诊断快照应包含阅读进度写入统计。"
   );
+  assert.ok(
+    summary.includes("阅读进度观察器: 挂载 "),
+    "同步诊断快照应包含观察器计数，用来区分「没挂上 / 回调没来 / 解析失败」。"
+  );
 };
 
 const testRealFacadeWritesReachTheStats = () => {

@@ -23,7 +23,14 @@ const createEventTarget = () => {
 
 const installReadingProgressPage = (
   sandbox,
-  { postId = "1002", floor = 2, hasFocus = false, now = 1000 } = {}
+  {
+    postId = "1002",
+    floor = 2,
+    floorText = String(floor),
+    floorHasEm = true,
+    hasFocus = false,
+    now = 1000,
+  } = {}
 ) => {
   let currentNow = now;
   let focused = hasFocus;
@@ -38,9 +45,16 @@ const installReadingProgressPage = (
       this.dataset = {};
     }
 
+    // 真实结构：#postnum<pid> 里普通楼层是 <em>2</em><sup>#</sup>，主楼是“楼主”文本。
     querySelector(selector) {
-      if (selector === `#postnum${postId} em` || selector === ".pi em") {
-        return { textContent: String(floor) };
+      if (selector === `#postnum${postId}`) {
+        return {
+          textContent: floorText,
+          querySelector: (innerSelector) =>
+            floorHasEm && innerSelector === "em"
+              ? { textContent: floorText }
+              : null,
+        };
       }
       return null;
     }
@@ -117,14 +131,14 @@ const installReadingProgressPage = (
   };
 };
 
-const createHarness = ({ visibilityState = "visible" } = {}) => {
+const createHarness = ({ visibilityState = "visible", pageOptions = {} } = {}) => {
   const runtime = createBaseHarness({
     href: "https://stage1st.com/2b/thread-123456-1-1.html",
     search: "",
     visibilityState,
     hookErrorMessage: "未能从 S1Plus.js 暴露后台开帖被动会话测试钩子。",
   });
-  const page = installReadingProgressPage(runtime.sandbox);
+  const page = installReadingProgressPage(runtime.sandbox, pageOptions);
   return { ...runtime, page };
 };
 
@@ -164,6 +178,25 @@ const testBackgroundOpenHintLifecycle = () => {
   assert.ok(consumedHint, "线程页启动时应能消费对应的后台开帖提示。");
   assert.equal(consumedHint.sessionId, hint.sessionId);
   assert.equal(hooks.getBackgroundOpenThreadHints().length, 0);
+};
+
+const testOpPostFloorFallsBackToFirstPost = () => {
+  // 主楼的 #postnum 里是“楼主”，没有数字；修复前会退回 .pi em 命中发帖时间，
+  // 把 2026 当成楼层，导致该帖进度再也无法前进。
+  const { hooks, store, page } = createHarness({
+    pageOptions: { floorText: "楼主", floorHasEm: false },
+  });
+  const session = hooks.readingProgressSession;
+
+  session.attach();
+  observePost(page);
+  page.documentEvents.dispatch("wheel");
+  const result = session.handleLifecycle({ phase: "pagehide" });
+
+  assert.equal(result.status, "completed");
+  const storedRecord = readStoredProgress(store)["123456"];
+  assert.equal(storedRecord.lastReadFloor, "1");
+  assert.equal(storedRecord.page, "1");
 };
 
 const testVisibleSessionPersistsThroughPublicInterface = () => {
@@ -239,6 +272,7 @@ const testHiddenStartConfirmsAfterVisibleLifecycle = () => {
 
 const main = async () => {
   testBackgroundOpenHintLifecycle();
+  testOpPostFloorFallsBackToFirstPost();
   testVisibleSessionPersistsThroughPublicInterface();
   testPassiveBackgroundOpenWaitsForForegroundConfirmation();
   testHiddenStartConfirmsAfterVisibleLifecycle();
