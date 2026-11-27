@@ -100,7 +100,6 @@
   const LOG_BUFFER_MAX = 1000;
   const LOG_RENDER_MAX = 200;
   const LOG_COLLAPSED_MESSAGE_MAX_LENGTH = 180;
-  const VERSION_HOVER_REVEAL_MS = 5000;
   const DEBUG_CONSOLE_MIN_WIDTH = 320;
   const DEBUG_CONSOLE_MIN_HEIGHT = 240;
   // Keep reloads from restoring a stale near-bottom scroll position when
@@ -20405,6 +20404,30 @@
     };
   };
 
+  const DEBUG_DIAGNOSTICS_AUTO_REFRESH_MS = 2000;
+  let debugDiagnosticsAutoRefreshTimer = null;
+
+  const isDebugDiagnosticsPanelVisible = (panel) => {
+    if (!panel || panel.isConnected === false) return false;
+    const embed = panel.closest?.("[data-s1p-debug-diagnostics-embed]");
+    if (embed && embed.classList.contains("is-collapsed")) return false;
+    const unified = document.getElementById(DEBUG_UNIFIED_PANEL_ID);
+    if (unified && unified.classList.contains("s1p-hidden")) return false;
+    return true;
+  };
+
+  // 面板开着的时候每 2 秒自检一次：行内容不变不重绘，避免滚动时闪烁。
+  const scheduleDebugDiagnosticsAutoRefresh = () => {
+    if (debugDiagnosticsAutoRefreshTimer) return;
+    if (typeof setTimeout !== "function") return;
+    debugDiagnosticsAutoRefreshTimer = setTimeout(() => {
+      debugDiagnosticsAutoRefreshTimer = null;
+      const panel = document.getElementById(DEBUG_SYNC_DIAGNOSTICS_PANEL_ID);
+      if (!isDebugDiagnosticsPanelVisible(panel)) return;
+      updateSyncDiagnosticsPanel();
+    }, DEBUG_DIAGNOSTICS_AUTO_REFRESH_MS);
+  };
+
   // [NEW] 更新上次同步时间的显示
   const updateSyncDiagnosticsPanel = () => {
     const panel = document.getElementById(DEBUG_SYNC_DIAGNOSTICS_PANEL_ID);
@@ -20412,6 +20435,14 @@
 
     const diagnostics = getSyncDiagnostics();
     const rows = buildSyncDiagnosticsRows(diagnostics);
+    const signature = JSON.stringify(rows);
+    if (panel.dataset && panel.dataset.s1pDiagnosticsSignature === signature) {
+      scheduleDebugDiagnosticsAutoRefresh();
+      return;
+    }
+    if (panel.dataset) {
+      panel.dataset.s1pDiagnosticsSignature = signature;
+    }
 
     panel.textContent = "";
     rows.forEach(([label, value]) => {
@@ -20429,6 +20460,7 @@
       row.appendChild(valueEl);
       panel.appendChild(row);
     });
+    scheduleDebugDiagnosticsAutoRefresh();
   };
 
   const updateLastSyncTimeDisplay = () => {
@@ -46850,7 +46882,7 @@
             <div class="s1p-modal-body">
                 ${settingsModalTabsHtml.panelsHtml}
             </div>
-            <div class="s1p-modal-footer">版本: ${SCRIPT_VERSION} (${SCRIPT_RELEASE_DATE})</div>
+            <div class="s1p-modal-footer">版本: ${SCRIPT_VERSION} (${SCRIPT_RELEASE_DATE})<button type="button" class="s1p-debug-footer-entry" data-s1p-debug-entry="panel">调试面板</button></div>
         </div>`;
 
     const modalContent = modal.querySelector(".s1p-modal-content");
@@ -48445,28 +48477,13 @@
 
     const versionFooter = modal.querySelector(".s1p-modal-footer");
     if (versionFooter) {
-      let debugHoverTimer = null;
-      let debugHoverDot = null;
-      versionFooter.addEventListener("click", () => {
-        if (debugHoverDot && debugHoverDot.isConnected) {
-          debugHoverDot.remove();
-          debugHoverDot = null;
-          toggleDebugUnifiedPanel();
-          return;
-        }
-      });
-      versionFooter.addEventListener("mouseenter", () => {
-        if (debugHoverTimer) clearTimeout(debugHoverTimer);
-        debugHoverTimer = setTimeout(() => {
-          debugHoverDot = document.createElement("span");
-          debugHoverDot.className = "s1p-debug-console-dot";
-          versionFooter.appendChild(debugHoverDot);
-          debugHoverTimer = null;
-        }, VERSION_HOVER_REVEAL_MS);
-      });
-      versionFooter.addEventListener("mouseleave", () => {
-        if (debugHoverTimer) { clearTimeout(debugHoverTimer); debugHoverTimer = null; }
-        if (debugHoverDot) { debugHoverDot.remove(); debugHoverDot = null; }
+      // 直接入口：设置弹窗底部点「调试面板」即可打开，不再需要悬停 5 秒等圆点。
+      versionFooter.addEventListener("click", (event) => {
+        const entry = event.target.closest("[data-s1p-debug-entry='panel']");
+        if (!entry) return;
+        event.preventDefault();
+        event.stopPropagation();
+        toggleDebugUnifiedPanel();
       });
     }
 
