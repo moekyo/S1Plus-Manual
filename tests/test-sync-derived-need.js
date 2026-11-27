@@ -35,29 +35,38 @@ const IDLE_STATE = Object.freeze({
   lastResolvedReason: "",
 });
 
+let progressSeedSeq = 0;
 const makeProgressRecord = ({
   postId = "70000001",
   page = "1",
   floor = "12",
-  timestamp = 1700000000000,
+  timestamp = 0,
   saveReason = "user_interaction",
-} = {}) => ({
-  postId,
-  page,
-  lastReadFloor: floor,
-  timestamp,
-  provenance: {
-    sourceTabId: "s1p_tab_test",
-    threadId: "123456",
+} = {}) => {
+  // 每次种子给一个递增时间戳：同毫秒的旧键写回现在保留分片内容（见迁移 tie-break 用例），
+  // 同一个固定时间戳会让「后一次种子」输给分片里的旧值。
+  const recordTimestamp =
+    Number(timestamp) > 0
+      ? Number(timestamp)
+      : 1700000000000 + (progressSeedSeq += 1000);
+  return {
+    postId,
     page,
-    saveReason,
-    documentVisibilityState: "visible",
-    hadConfirmedVisiblePost: true,
-    createdAt: timestamp,
-    initiatedWhileHidden: false,
-    saveKind: "real_reading",
-  },
-});
+    lastReadFloor: floor,
+    timestamp: recordTimestamp,
+    provenance: {
+      sourceTabId: "s1p_tab_test",
+      threadId: "123456",
+      page,
+      saveReason,
+      documentVisibilityState: "visible",
+      hadConfirmedVisiblePost: true,
+      createdAt: recordTimestamp,
+      initiatedWhileHidden: false,
+      saveKind: "real_reading",
+    },
+  };
+};
 
 const seedReadProgress = (harness, progress) => {
   const { hooks, sandbox } = harness;
@@ -235,10 +244,11 @@ const testSameFloorProvenanceRewriteIsNotPending = () => {
   bumpLocalModified(harness.sandbox, 5000);
   setBaselineFromLive(harness);
 
+  // 第二次种子用更新的时间戳：迁移 tie-break 现在保留分片内容，同毫秒的同楼层重写会被丢弃。
   seedReadProgress(harness, {
     123456: makeProgressRecord({
       floor: "12",
-      timestamp: 1700000000000,
+      timestamp: 1700000001000,
       saveReason: "visibility_hidden_flush",
     }),
   });

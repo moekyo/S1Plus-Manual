@@ -116,7 +116,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 
 代码中保留了可复用的浮动调试面板框架，现整合为统一的 `#s1p-debug-unified-panel`，通过 tabs 组织三个子面板，默认不自动显示。
 
-**入口方式**：设置弹窗底部「调试面板」按钮，一次点击打开统一面板（旧的「版本号悬停 5s 出现圆点」入口已移除）。面板打开期间每 2s 自检一次，行内容变化时自动重绘（`DEBUG_DIAGNOSTICS_AUTO_REFRESH_MS`），行内容不变不重绘，避免滚读时看到旧值或闪烁。
+**入口方式**：设置弹窗底部「调试面板」按钮，一次点击打开统一面板（旧的「版本号悬停 5s 出现圆点」入口已移除）。「同步状态快照」区展开期间每 2s 自检一次，行内容变化时自动重绘（`DEBUG_DIAGNOSTICS_AUTO_REFRESH_MS`）；快照区默认折叠，折叠时自检停链，行内容不变不重绘，避免滚读时看到旧值或闪烁。
 
 **面板结构**：
 
@@ -311,7 +311,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - `s1p_title_filter_rules`
 - `s1p_read_progress`（逻辑键；实际落盘为 `s1p_read_progress#0..#31` 分片）
 
-`s1p_read_progress` 是唯一随阅读历史线性增长的业务数据，因此按分片落盘：物理键 `s1p_read_progress#<0..31>`，分片号由 threadId 的 FNV-1a 哈希决定（跨版本稳定）；`read()` 合并全部分片，`write()` 只写内容发生变化的分片。旧的单键在首次读取时按记录时间戳迁移（同毫秒以旧键内容为准，随后由归一化回写），迁移后写入 `null`，不再回写。落盘前还会压缩 `provenance`：只保留最近 7 天（`READ_PROGRESS_PROVENANCE_RETENTION_MS`），更早的记录剥掉该字段；压缩只在写入路径做，归一化不动它，否则记录一过期就会触发滚动回写。分片键不挂 `GM_addValueChangeListener`：分片只是整表的一部分，按分片归一化会把半张表当成整表；跨标签刷新统一由 `s1p_core_data_refresh_signal` 触发整表重读。回归：`node tests/test-core-business-data-module.js`。
+`s1p_read_progress` 是唯一随阅读历史线性增长的业务数据，因此按分片落盘：物理键 `s1p_read_progress#<0..31>`，分片号由 threadId 的 FNV-1a 哈希决定（跨版本稳定）；`read()` 合并全部分片，`write()` 只写内容发生变化的分片。旧的单键在首次读取时按记录时间戳迁移（同毫秒保留分片内容，避免旧标签页的旧值把进度回退一档），迁移后写入 `null`，不再回写。落盘前还会压缩 `provenance`：只保留最近 7 天（`READ_PROGRESS_PROVENANCE_RETENTION_MS`），更早的记录剥掉该字段；压缩只在写入路径做，归一化不动它，否则记录一过期就会触发滚动回写。分片键不挂 `GM_addValueChangeListener`：分片只是整表的一部分，按分片归一化会把半张表当成整表；跨标签刷新统一由 `s1p_core_data_refresh_signal` 触发整表重读。回归：`node tests/test-core-business-data-module.js`。
 
 `s1p_settings` 继续由 `defaultSettings`、`buildNormalizedSettings()`、`getSettings()`、`getSettingsForWrite()` 与 `saveSettings()` 管理。重复的每项设置语义集中在冻结的 `s1pSettingsSemantics`：`resolveChangedPaths()` 投影 full/lightweight/passive、运行时 effect intent 与设置面板 tab，`projectSyncModal()` / `buildSyncSettingsPatch()` 负责同步表单映射，`normalizeImageSettings()` 由既有 normalization 层调用。私有 catalog 不对外暴露；定制化 tab 布局继续由设置面板实现，一级 feature-toggle 的 DOM effects 统一经 `s1pPageEnhancementProjection` 投影。新增设置必须同时补齐默认值、归一化与语义定义。
 

@@ -130,7 +130,7 @@ const testDiagnosticsSummaryIncludesTheStat = () => {
     "同步诊断快照应包含阅读进度写入统计。"
   );
   assert.ok(
-    summary.includes("阅读进度观察器: 挂载 "),
+    summary.includes("阅读进度观察器: 累计挂载 "),
     "同步诊断快照应包含观察器计数，用来区分「没挂上 / 回调没来 / 解析失败」。"
   );
 };
@@ -154,6 +154,48 @@ const testRealFacadeWritesReachTheStats = () => {
   ]);
 };
 
+const STATS_STALE_MS = 8 * 86400000;
+
+const testStaleOtherTabRecordIsIgnored = () => {
+  const sharedStore = new Map();
+  sharedStore.set("s1p_read_progress_write_stats:OLD:zzz", {
+    updatedAt: Date.now() - STATS_STALE_MS,
+    operations: 5,
+    shardWrites: 5,
+    recent: [{ t: Date.now() - STATS_STALE_MS, s: [1] }],
+  });
+  const { hooks } = createStatsHarness({ sharedStore });
+  hooks.resetReadProgressWriteStats();
+
+  assert.deepEqual(readRows(hooks), [
+    ["阅读进度分片写入", "本页 尚无写入｜全体 尚无写入"],
+    ["阅读进度写入累计", "0 次 / 0 片次 · 0 个标签页（本页 0 次）"],
+  ]);
+};
+
+const testLongLivedTabKeySurvivesPublish = () => {
+  const sharedStore = new Map();
+  const oldKey = `s1p_read_progress_write_stats:${Date.now() - STATS_STALE_MS}:old`;
+  sharedStore.set(oldKey, {
+    updatedAt: Date.now() - STATS_STALE_MS,
+    operations: 3,
+    shardWrites: 3,
+    recent: [{ t: Date.now() - STATS_STALE_MS, s: [2] }],
+  });
+  const { hooks } = createStatsHarness({
+    sharedStore,
+    sessionStorageEntries: [["s1p_read_progress_write_stats_tab", oldKey]],
+  });
+
+  record(hooks, [2]);
+  hooks.publishReadProgressWriteStats();
+
+  const saved = sharedStore.get(oldKey);
+  assert.ok(saved, "发布后不应把自己刚写的键当成过期键删掉");
+  assert.equal(saved.operations, 4);
+  assert.ok(Date.now() - saved.updatedAt < 60 * 1000);
+};
+
 const main = () => {
   testWindowShowsUpdatesPerShard();
   testIgnoresOtherKindsAndEmptyWrites();
@@ -163,6 +205,8 @@ const main = () => {
   testSameTabContinuesAfterNavigation();
   testDiagnosticsSummaryIncludesTheStat();
   testRealFacadeWritesReachTheStats();
+  testStaleOtherTabRecordIsIgnored();
+  testLongLivedTabKeySurvivesPublish();
   console.log("[read-progress-write-stats] checks passed.");
 };
 

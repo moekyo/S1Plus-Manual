@@ -1806,16 +1806,6 @@
     #s1p-debug-unified-panel.s1p-debug-console-resizing {
       user-select: none;
     }
-    .s1p-debug-console-dot {
-      display: inline-block;
-      width: 4px;
-      height: 4px;
-      margin-left: 6px;
-      border-radius: 50%;
-      background: var(--s1p-desc-t);
-      opacity: 0.6;
-      vertical-align: middle;
-    }
     @media (prefers-reduced-motion: reduce) {
       #s1p-nav-auto-sync-indicator .s1p-nav-auto-sync-indicator-layer {
         animation: none !important;
@@ -3998,13 +3988,13 @@
     .s1p-debug-footer-entry {
       margin-left: 12px;
       padding: 2px 8px;
-      border: 1px solid var(--s1p-pri);
+      border: 1px solid var(--s1p-border);
       border-radius: 6px;
       background: transparent;
       color: inherit;
       font: inherit;
       line-height: 1.4;
-      opacity: 0.65;
+      opacity: 0.75;
       cursor: pointer;
     }
     .s1p-debug-footer-entry:hover,

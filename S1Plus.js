@@ -8252,6 +8252,23 @@
     return s1pReadProgressWriteStats;
   };
 
+  // 过期按记录里的 updatedAt 判断：键名里的时间戳是标签页「生成统计键」的时刻，
+  // 拿它当 TTL 会让活得久的标签页刚发布就被自己删掉，也会长期保留早已失联的旧键。
+  const isReadProgressWriteStatsStale = (key, record, now = Date.now()) => {
+    const updatedAt = Number(record?.updatedAt) || 0;
+    if (updatedAt > 0) {
+      return now - updatedAt > READ_PROGRESS_WRITE_STATS_RETENTION_MS;
+    }
+    const keyStamp = Number(
+      String(key)
+        .slice(READ_PROGRESS_WRITE_STATS_GM_PREFIX.length)
+        .split(":")[0]
+    );
+    return Number.isFinite(keyStamp) && keyStamp > 0
+      ? now - keyStamp > READ_PROGRESS_WRITE_STATS_RETENTION_MS
+      : false;
+  };
+
   const pruneStaleReadProgressWriteStats = () => {
     if (typeof GM_listValues !== "function") {
       return;
@@ -8262,7 +8279,7 @@
     } catch (_) {
       return;
     }
-    const cutoff = Date.now() - READ_PROGRESS_WRITE_STATS_RETENTION_MS;
+    const now = Date.now();
     keys
       .filter(
         (key) =>
@@ -8270,17 +8287,16 @@
           key.startsWith(READ_PROGRESS_WRITE_STATS_GM_PREFIX)
       )
       .forEach((key) => {
-        const stamp = Number(
-          key
-            .slice(READ_PROGRESS_WRITE_STATS_GM_PREFIX.length)
-            .split(":")[0]
+        const record = normalizeReadProgressWriteStatsRecord(
+          GM_getValue(key, null)
         );
-        if (!Number.isFinite(stamp) || stamp <= 0 || stamp < cutoff) {
-          try {
-            GM_deleteValue(key);
-          } catch (_) {
-            // 清理失败只影响键数量。
-          }
+        if (!isReadProgressWriteStatsStale(key, record, now)) {
+          return;
+        }
+        try {
+          GM_deleteValue(key);
+        } catch (_) {
+          // 清理失败只影响键数量。
         }
       });
   };
@@ -8348,6 +8364,7 @@
   const collectReadProgressWriteStats = () => {
     const own = getReadProgressWriteStats();
     const ownKey = getReadProgressWriteStatsTabKey();
+    const now = Date.now();
     const recent = own.recent.slice();
     let operations = own.operations;
     let shardWrites = own.shardWrites;
@@ -8371,6 +8388,9 @@
             GM_getValue(key, null)
           );
           if (record.operations <= 0) {
+            return;
+          }
+          if (isReadProgressWriteStatsStale(key, record, now)) {
             return;
           }
           operations += record.operations;
@@ -8460,7 +8480,7 @@
   };
   const buildReadProgressObserverStatsRow = () => [
     "阅读进度观察器",
-    `挂载 ${s1pReadProgressObserverStats.observeCalls} 个楼层 / 回调 ${s1pReadProgressObserverStats.callbacks} 次 / 楼层解析失败 ${s1pReadProgressObserverStats.parseFailures} 次`,
+    `累计挂载 ${s1pReadProgressObserverStats.observeCalls} 个楼层 / 回调 ${s1pReadProgressObserverStats.callbacks} 次 / 累计解析失败 ${s1pReadProgressObserverStats.parseFailures} 次`,
   ];
 
   const buildSyncDiagnosticsRows = (diagnostics) => {
@@ -20411,6 +20431,8 @@
     if (!panel || panel.isConnected === false) return false;
     const embed = panel.closest?.("[data-s1p-debug-diagnostics-embed]");
     if (embed && embed.classList.contains("is-collapsed")) return false;
+    const pane = panel.closest?.("[data-s1p-debug-tab-pane]");
+    if (pane && !pane.classList.contains("is-active")) return false;
     const unified = document.getElementById(DEBUG_UNIFIED_PANEL_ID);
     if (unified && unified.classList.contains("s1p-hidden")) return false;
     return true;
@@ -21623,6 +21645,20 @@
             delete normalizedRecord.lastReadFloor;
           }
         }
+        // 历史 bug 修复：主楼没有数字楼层时，旧解析把发帖时间（“发表于 2026-11-27 …”）
+        // 当成楼层，写出 page=1 / floor=2026 的记录，让该帖进度永远无法前进。
+        // 第 1 页不可能有 1990+ 楼，这类值只可能是年份，就地修回 1 楼（正常解析下主楼就是 1 楼）。
+        const repairedFloor = parseInt(normalizedRecord.lastReadFloor, 10);
+        const repairedPage = parseInt(String(normalizedRecord.page ?? ""), 10);
+        if (
+          repairedPage === 1 &&
+          Number.isFinite(repairedFloor) &&
+          repairedFloor >= 1990 &&
+          repairedFloor <= 2100
+        ) {
+          normalizedRecord.lastReadFloor = "1";
+          hasLegacyType = true;
+        }
         const normalizedProvenance = normalizeStoredReadProgressProvenance(
           normalizedRecord.provenance,
           { threadId, page: normalizedRecord.page }
@@ -22020,11 +22056,11 @@
             return;
           }
           const currentRecord = nextValue[recordKey];
-          // 时间戳相同视为“旧键这次写得更晚”：分片是新版自己写的，旧键只可能来自
-          // 尚未刷新的旧版本标签页；同毫秒内保留旧键内容，随后由归一化再回写一次。
+          // 同毫秒冲突时保留分片内容：分片是新版自己写的，旧键只可能来自尚未刷新的旧版本
+          // 标签页；让旧值覆盖会把进度回退一档，而且回退值已经是规范形态，归一化不会再改回来。
           if (
             !isObjectRecord(currentRecord) ||
-            getShardedRecordTimestamp(legacyRecord) >=
+            getShardedRecordTimestamp(legacyRecord) >
               getShardedRecordTimestamp(currentRecord)
           ) {
             nextValue[recordKey] = legacyRecord;

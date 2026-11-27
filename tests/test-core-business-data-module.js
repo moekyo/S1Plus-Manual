@@ -868,6 +868,63 @@ const testShardedWriteReportsWrittenShardIndices = () => {
   assert.equal(recorded.length, 1, "未分片的 kind 不记统计。");
 };
 
+const testLegacyMigrationKeepsShardRecordOnTimestampTie = () => {
+  const ts = 1760000000000;
+  const legacyRecord = { postId: "9002", page: "2", lastReadFloor: "50", timestamp: ts };
+  const shardRecord = { postId: "9001", page: "5", lastReadFloor: "200", timestamp: ts };
+  const { coreBusinessData, storageAdapter } = createModuleHarness({
+    s1p_read_progress: { 2294954: legacyRecord },
+  });
+
+  coreBusinessData.read("readProgress");
+  const afterMigration = toPlainObject(storageAdapter.snapshot());
+  const shardKey = Object.keys(afterMigration).find((key) =>
+    key.startsWith("s1p_read_progress#")
+  );
+  assert.ok(shardKey, "迁移后应存在分片键。");
+
+  storageAdapter.setValue(shardKey, { 2294954: shardRecord });
+  storageAdapter.setValue("s1p_read_progress", { 2294954: legacyRecord });
+
+  const merged = toPlainObject(
+    coreBusinessData.read("readProgress", { fresh: true })
+  );
+  assert.equal(merged["2294954"].page, "5", "同毫秒冲突应保留分片内容。");
+  assert.equal(merged["2294954"].lastReadFloor, "200");
+  assert.equal(
+    toPlainObject(storageAdapter.snapshot()).s1p_read_progress,
+    null,
+    "迁移应清空旧单键。"
+  );
+};
+
+const testImpossibleFirstPageFloorIsRepaired = () => {
+  const { coreBusinessData, storageAdapter } = createModuleHarness({
+    s1p_read_progress: {
+      2294954: {
+        postId: "70560222",
+        page: "1",
+        lastReadFloor: "2026",
+        timestamp: 1760000000000,
+      },
+    },
+  });
+
+  const value = toPlainObject(coreBusinessData.read("readProgress"));
+  assert.equal(
+    value["2294954"].lastReadFloor,
+    "1",
+    "第 1 页不可能有 2026 楼：应把年份误判修回主楼。"
+  );
+  assert.equal(
+    collectStoredReadProgressShards(toPlainObject(storageAdapter.snapshot()))[
+      "2294954"
+    ].lastReadFloor,
+    "1",
+    "修复结果应落盘。"
+  );
+};
+
 const main = () => {
   testEveryKindUsesOneReadWriteProjectionInterface();
   testSyncImportPrimitiveIsNotReachableFromTheFacade();
@@ -888,6 +945,8 @@ const main = () => {
   testReadProgressDropsAgedProvenanceOnPersist();
   testReadProgressReadPathNeverCompactsOrWrites();
   testShardedWriteReportsWrittenShardIndices();
+  testLegacyMigrationKeepsShardRecordOnTimestampTie();
+  testImpossibleFirstPageFloorIsRepaired();
   console.log("[core-business-data-module] checks passed.");
 };
 
