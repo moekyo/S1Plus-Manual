@@ -8167,63 +8167,142 @@
   // ---- 阅读进度分片写入统计（只读诊断） ----
   // 用途：判断「同一个分片是否被反复写入」（U/D）。U/D 越高，惰性压实（热写层）摊得越薄；
   // 接近 1 说明每次更新都落在不同分片，压实要重写的分片数和更新数一样多，收益趋近于零。
-  // 统计只写到 sessionStorage（同标签页跨页累计），不碰 GM 存储，也不参与任何业务判断。
-  const READ_PROGRESS_WRITE_STATS_SESSION_KEY = "s1p_read_progress_write_stats";
+  // 每个标签页把自己的统计落在独立 GM 键（隐藏/卸载时写一次），读取时跨标签页汇总；
+  // 只做诊断，不参与任何业务判断。
+  const READ_PROGRESS_WRITE_STATS_GM_PREFIX = "s1p_read_progress_write_stats:";
+  const READ_PROGRESS_WRITE_STATS_TAB_SESSION_KEY =
+    "s1p_read_progress_write_stats_tab";
+  const READ_PROGRESS_WRITE_STATS_RETENTION_MS = 7 * 86400000;
   const READ_PROGRESS_WRITE_STATS_WINDOW = 64;
   let s1pReadProgressWriteStats = null;
+  let s1pReadProgressWriteStatsTabKey = "";
 
-  const normalizeReadProgressWriteStats = (rawValue) => {
+  const normalizeReadProgressWriteStatsRecent = (rawRecent) =>
+    (Array.isArray(rawRecent) ? rawRecent : [])
+      .map((entry) => {
+        if (!isObjectRecord(entry)) {
+          return null;
+        }
+        const timestamp = Number(entry.t) || 0;
+        const shardIndices = (Array.isArray(entry.s) ? entry.s : [])
+          .map((index) => Number(index))
+          .filter((index) => Number.isInteger(index) && index >= 0);
+        return timestamp > 0 && shardIndices.length > 0
+          ? { t: timestamp, s: shardIndices }
+          : null;
+      })
+      .filter(Boolean)
+      .slice(-READ_PROGRESS_WRITE_STATS_WINDOW);
+
+  const normalizeReadProgressWriteStatsRecord = (rawValue) => {
     const source = isObjectRecord(rawValue) ? rawValue : {};
-    const recent = Array.isArray(source.recent) ? source.recent : [];
     return {
+      updatedAt: Number(source.updatedAt) || 0,
       operations: Math.max(0, Math.floor(Number(source.operations) || 0)),
       shardWrites: Math.max(0, Math.floor(Number(source.shardWrites) || 0)),
-      recent: recent
-        .slice(-READ_PROGRESS_WRITE_STATS_WINDOW)
-        .map((entry) =>
-          (Array.isArray(entry) ? entry : [])
-            .map((index) => Number(index))
-            .filter((index) => Number.isInteger(index) && index >= 0)
-        )
-        .filter((entry) => entry.length > 0),
+      recent: normalizeReadProgressWriteStatsRecent(source.recent),
     };
+  };
+
+  // 同一标签页跨页面用 sessionStorage 记住自己的统计键；落盘只写自己的键，互不覆盖。
+  const getReadProgressWriteStatsTabKey = () => {
+    if (s1pReadProgressWriteStatsTabKey) {
+      return s1pReadProgressWriteStatsTabKey;
+    }
+    let storedKey = "";
+    try {
+      storedKey = String(
+        window.sessionStorage?.getItem(
+          READ_PROGRESS_WRITE_STATS_TAB_SESSION_KEY
+        ) || ""
+      );
+    } catch (_) {
+      storedKey = "";
+    }
+    if (storedKey.startsWith(READ_PROGRESS_WRITE_STATS_GM_PREFIX)) {
+      s1pReadProgressWriteStatsTabKey = storedKey;
+      return storedKey;
+    }
+    const generatedKey = `${READ_PROGRESS_WRITE_STATS_GM_PREFIX}${Date.now()}:${Math.random()
+      .toString(36)
+      .slice(2, 10)}`;
+    try {
+      window.sessionStorage?.setItem(
+        READ_PROGRESS_WRITE_STATS_TAB_SESSION_KEY,
+        generatedKey
+      );
+    } catch (_) {
+      // sessionStorage 不可用时退化为每页一个键，由保留期清理兜底。
+    }
+    s1pReadProgressWriteStatsTabKey = generatedKey;
+    return generatedKey;
   };
 
   const getReadProgressWriteStats = () => {
     if (s1pReadProgressWriteStats) {
       return s1pReadProgressWriteStats;
     }
-    let restored = null;
-    try {
-      const rawText = window.sessionStorage?.getItem(
-        READ_PROGRESS_WRITE_STATS_SESSION_KEY
-      );
-      if (rawText) {
-        restored = normalizeReadProgressWriteStats(JSON.parse(rawText));
-      }
-    } catch (_) {
-      restored = null;
-    }
-    s1pReadProgressWriteStats = restored || {
-      operations: 0,
-      shardWrites: 0,
-      recent: [],
+    const saved = normalizeReadProgressWriteStatsRecord(
+      GM_getValue(getReadProgressWriteStatsTabKey(), null)
+    );
+    s1pReadProgressWriteStats = {
+      operations: saved.operations,
+      shardWrites: saved.shardWrites,
+      recent: saved.recent,
     };
     return s1pReadProgressWriteStats;
   };
 
-  const persistReadProgressWriteStats = () => {
-    if (!s1pReadProgressWriteStats) {
+  const pruneStaleReadProgressWriteStats = () => {
+    if (typeof GM_listValues !== "function") {
+      return;
+    }
+    let keys = [];
+    try {
+      keys = GM_listValues();
+    } catch (_) {
+      return;
+    }
+    const cutoff = Date.now() - READ_PROGRESS_WRITE_STATS_RETENTION_MS;
+    keys
+      .filter(
+        (key) =>
+          typeof key === "string" &&
+          key.startsWith(READ_PROGRESS_WRITE_STATS_GM_PREFIX)
+      )
+      .forEach((key) => {
+        const stamp = Number(
+          key
+            .slice(READ_PROGRESS_WRITE_STATS_GM_PREFIX.length)
+            .split(":")[0]
+        );
+        if (!Number.isFinite(stamp) || stamp <= 0 || stamp < cutoff) {
+          try {
+            GM_deleteValue(key);
+          } catch (_) {
+            // 清理失败只影响键数量。
+          }
+        }
+      });
+  };
+
+  // 只在隐藏/卸载时落盘一次，避免诊断统计本身变成写入来源。
+  const publishReadProgressWriteStats = () => {
+    const stats = getReadProgressWriteStats();
+    if (stats.operations <= 0) {
       return;
     }
     try {
-      window.sessionStorage?.setItem(
-        READ_PROGRESS_WRITE_STATS_SESSION_KEY,
-        JSON.stringify(s1pReadProgressWriteStats)
-      );
+      GM_setValue(getReadProgressWriteStatsTabKey(), {
+        updatedAt: Date.now(),
+        operations: stats.operations,
+        shardWrites: stats.shardWrites,
+        recent: stats.recent.slice(-READ_PROGRESS_WRITE_STATS_WINDOW),
+      });
     } catch (_) {
-      // 诊断统计落盘失败不影响业务写入。
+      return;
     }
+    pruneStaleReadProgressWriteStats();
   };
 
   const recordReadProgressShardWriteStats = ({
@@ -8244,14 +8323,13 @@
     const stats = getReadProgressWriteStats();
     stats.operations += 1;
     stats.shardWrites += indices.length;
-    stats.recent.push(indices);
+    stats.recent.push({ t: Date.now(), s: indices });
     if (stats.recent.length > READ_PROGRESS_WRITE_STATS_WINDOW) {
       stats.recent.splice(
         0,
         stats.recent.length - READ_PROGRESS_WRITE_STATS_WINDOW
       );
     }
-    persistReadProgressWriteStats();
   };
 
   const resetReadProgressWriteStats = () => {
@@ -8260,21 +8338,70 @@
       shardWrites: 0,
       recent: [],
     };
-    persistReadProgressWriteStats();
+    try {
+      GM_deleteValue(getReadProgressWriteStatsTabKey());
+    } catch (_) {
+      // 忽略清理失败。
+    }
+  };
+
+  // 汇总：本页内存 + 其他标签页已落盘的记录。
+  const collectReadProgressWriteStats = () => {
+    const own = getReadProgressWriteStats();
+    const ownKey = getReadProgressWriteStatsTabKey();
+    const recent = own.recent.slice();
+    let operations = own.operations;
+    let shardWrites = own.shardWrites;
+    let tabs = own.operations > 0 ? 1 : 0;
+    if (typeof GM_listValues === "function") {
+      let keys = [];
+      try {
+        keys = GM_listValues();
+      } catch (_) {
+        keys = [];
+      }
+      keys
+        .filter(
+          (key) =>
+            typeof key === "string" &&
+            key.startsWith(READ_PROGRESS_WRITE_STATS_GM_PREFIX) &&
+            key !== ownKey
+        )
+        .forEach((key) => {
+          const record = normalizeReadProgressWriteStatsRecord(
+            GM_getValue(key, null)
+          );
+          if (record.operations <= 0) {
+            return;
+          }
+          operations += record.operations;
+          shardWrites += record.shardWrites;
+          tabs += 1;
+          record.recent.forEach((entry) => recent.push(entry));
+        });
+    }
+    recent.sort((left, right) => left.t - right.t);
+    return {
+      operations,
+      shardWrites,
+      tabs,
+      ownOperations: own.operations,
+      recent: recent.slice(-READ_PROGRESS_WRITE_STATS_WINDOW),
+    };
   };
 
   const buildReadProgressWriteStatsRows = () => {
-    const stats = getReadProgressWriteStats();
+    const stats = collectReadProgressWriteStats();
     const windowOperations = stats.recent.length;
     if (windowOperations === 0) {
       return [
-        ["阅读进度分片写入", "—"],
-        ["阅读进度写入累计", "—"],
+        ["阅读进度分片写入", "尚无阅读进度写入记录"],
+        ["阅读进度写入累计", "尚无阅读进度写入记录"],
       ];
     }
     const distinctShards = new Set();
     stats.recent.forEach((entry) => {
-      entry.forEach((index) => distinctShards.add(index));
+      entry.s.forEach((index) => distinctShards.add(index));
     });
     const shardCount = distinctShards.size || 1;
     return [
@@ -8286,10 +8413,33 @@
       ],
       [
         "阅读进度写入累计",
-        `${stats.operations} 次更新 / ${stats.shardWrites} 片次`,
+        `${stats.operations} 次 / ${stats.shardWrites} 片次 · ${stats.tabs} 个标签页（本页 ${stats.ownOperations} 次）`,
       ],
     ];
   };
+
+  const bindReadProgressWriteStatsPublish = () => {
+    if (
+      typeof document === "undefined" ||
+      typeof document.addEventListener !== "function"
+    ) {
+      return;
+    }
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") {
+        publishReadProgressWriteStats();
+      }
+    });
+    if (
+      typeof window !== "undefined" &&
+      typeof window.addEventListener === "function"
+    ) {
+      window.addEventListener("pagehide", () => {
+        publishReadProgressWriteStats();
+      });
+    }
+  };
+  bindReadProgressWriteStatsPublish();
 
   const buildSyncDiagnosticsRows = (diagnostics) => {
     const schedulerSnapshot = getBackgroundSyncSchedulerDiagnosticsSnapshot();

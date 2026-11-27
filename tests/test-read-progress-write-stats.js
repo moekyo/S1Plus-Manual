@@ -30,7 +30,7 @@ const testWindowShowsUpdatesPerShard = () => {
 
   assert.deepEqual(readRows(hooks), [
     ["阅读进度分片写入", "窗口 3 次更新 / 2 片（U/D≈1.5）"],
-    ["阅读进度写入累计", "3 次更新 / 3 片次"],
+    ["阅读进度写入累计", "3 次 / 3 片次 · 1 个标签页（本页 3 次）"],
   ]);
 };
 
@@ -44,7 +44,7 @@ const testIgnoresOtherKindsAndEmptyWrites = () => {
 
   assert.deepEqual(readRows(hooks), [
     ["阅读进度分片写入", "窗口 1 次更新 / 2 片（U/D≈0.5）"],
-    ["阅读进度写入累计", "1 次更新 / 2 片次"],
+    ["阅读进度写入累计", "1 次 / 2 片次 · 1 个标签页（本页 1 次）"],
   ]);
 };
 
@@ -57,24 +57,65 @@ const testWindowKeepsLast64Operations = () => {
 
   assert.deepEqual(readRows(hooks), [
     ["阅读进度分片写入", "窗口 64 次更新 / 8 片（U/D≈8.0）"],
-    ["阅读进度写入累计", "70 次更新 / 70 片次"],
+    ["阅读进度写入累计", "70 次 / 70 片次 · 1 个标签页（本页 70 次）"],
   ]);
 };
 
-const testStatsSurviveNavigationThroughSessionStorage = () => {
-  const first = createStatsHarness();
+const testEmptyStateSaysNoRecords = () => {
+  const { hooks } = createStatsHarness();
+  hooks.resetReadProgressWriteStats();
+  assert.deepEqual(readRows(hooks), [
+    ["阅读进度分片写入", "尚无阅读进度写入记录"],
+    ["阅读进度写入累计", "尚无阅读进度写入记录"],
+  ]);
+};
+
+const testOtherTabRecordsAreAggregated = () => {
+  const sharedStore = new Map();
+  const first = createStatsHarness({ sharedStore });
   first.hooks.resetReadProgressWriteStats();
   record(first.hooks, [2]);
   record(first.hooks, [2]);
   record(first.hooks, [5]);
+  first.hooks.publishReadProgressWriteStats();
 
-  // 新页面只带 sessionStorage 过来，统计应继续累计（模拟跨页刷帖）。
+  // 另一个标签页：只共享 GM 存储，不共享 sessionStorage。
+  const second = createStatsHarness({ sharedStore });
+  assert.deepEqual(readRows(second.hooks), [
+    ["阅读进度分片写入", "窗口 3 次更新 / 2 片（U/D≈1.5）"],
+    ["阅读进度写入累计", "3 次 / 3 片次 · 1 个标签页（本页 0 次）"],
+  ]);
+
+  // 本页自己再写一次，汇总应把两个标签页加起来。
+  record(second.hooks, [9]);
+  assert.deepEqual(readRows(second.hooks), [
+    ["阅读进度分片写入", "窗口 4 次更新 / 3 片（U/D≈1.3）"],
+    ["阅读进度写入累计", "4 次 / 4 片次 · 2 个标签页（本页 1 次）"],
+  ]);
+};
+
+const testSameTabContinuesAfterNavigation = () => {
+  const sharedStore = new Map();
+  const first = createStatsHarness({ sharedStore });
+  first.hooks.resetReadProgressWriteStats();
+  record(first.hooks, [4]);
+  record(first.hooks, [4]);
+  first.hooks.publishReadProgressWriteStats();
+
+  // 同一标签页的新页面：GM 与 sessionStorage（含统计键）都跟着走。
   const second = createStatsHarness({
+    sharedStore,
     sessionStorageEntries: Array.from(first.sessionStore.entries()),
   });
   assert.deepEqual(readRows(second.hooks), [
+    ["阅读进度分片写入", "窗口 2 次更新 / 1 片（U/D≈2.0）"],
+    ["阅读进度写入累计", "2 次 / 2 片次 · 1 个标签页（本页 2 次）"],
+  ]);
+
+  record(second.hooks, [6]);
+  assert.deepEqual(readRows(second.hooks), [
     ["阅读进度分片写入", "窗口 3 次更新 / 2 片（U/D≈1.5）"],
-    ["阅读进度写入累计", "3 次更新 / 3 片次"],
+    ["阅读进度写入累计", "3 次 / 3 片次 · 1 个标签页（本页 3 次）"],
   ]);
 };
 
@@ -105,7 +146,7 @@ const testRealFacadeWritesReachTheStats = () => {
 
   assert.deepEqual(readRows(hooks), [
     ["阅读进度分片写入", "窗口 1 次更新 / 1 片（U/D≈1.0）"],
-    ["阅读进度写入累计", "1 次更新 / 1 片次"],
+    ["阅读进度写入累计", "1 次 / 1 片次 · 1 个标签页（本页 1 次）"],
   ]);
 };
 
@@ -113,7 +154,9 @@ const main = () => {
   testWindowShowsUpdatesPerShard();
   testIgnoresOtherKindsAndEmptyWrites();
   testWindowKeepsLast64Operations();
-  testStatsSurviveNavigationThroughSessionStorage();
+  testEmptyStateSaysNoRecords();
+  testOtherTabRecordsAreAggregated();
+  testSameTabContinuesAfterNavigation();
   testDiagnosticsSummaryIncludesTheStat();
   testRealFacadeWritesReachTheStats();
   console.log("[read-progress-write-stats] checks passed.");
