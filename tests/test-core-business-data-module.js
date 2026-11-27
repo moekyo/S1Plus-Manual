@@ -94,6 +94,32 @@ const expectedSyncProjection = {
   read_progress: canonicalValues.readProgress,
 };
 
+const READ_PROGRESS_SHARD_PREFIX = "s1p_read_progress#";
+
+// 阅读进度分片落盘：把 s1p_read_progress#0..#N-1 合并回逻辑上的整表。
+const collectStoredReadProgressShards = (stored) => {
+  const merged = {};
+  Object.keys(stored)
+    .filter((key) => key.startsWith(READ_PROGRESS_SHARD_PREFIX))
+    .forEach((key) => {
+      assert.ok(
+        stored[key] && typeof stored[key] === "object",
+        `${key} 应当是分片对象。`
+      );
+      Object.assign(merged, stored[key]);
+    });
+  const legacy = stored.s1p_read_progress;
+  if (legacy && typeof legacy === "object") {
+    Object.assign(merged, legacy);
+  }
+  return merged;
+};
+
+const getStoredReadProgressShardKeys = (stored) =>
+  Object.keys(stored).filter((key) =>
+    key.startsWith(READ_PROGRESS_SHARD_PREFIX)
+  );
+
 const testEveryKindUsesOneReadWriteProjectionInterface = () => {
   const { coreBusinessData, storageAdapter, mutations } = createModuleHarness();
 
@@ -128,7 +154,15 @@ const testEveryKindUsesOneReadWriteProjectionInterface = () => {
     stored.s1p_title_filter_rules,
     canonicalValues.titleFilterRules
   );
-  assert.deepStrictEqual(stored.s1p_read_progress, canonicalValues.readProgress);
+  assert.deepStrictEqual(
+    collectStoredReadProgressShards(stored),
+    canonicalValues.readProgress
+  );
+  assert.equal(
+    getStoredReadProgressShardKeys(stored).length,
+    1,
+    "只有一条阅读进度时只应落一片，不写空的其余分片。"
+  );
   assert.equal(stored.s1p_core_data_refresh_signal.key, "s1p_read_progress");
   assert.equal(stored.s1p_core_data_refresh_signal.sender, "test-tab");
 };
@@ -337,7 +371,11 @@ const testLegacyNormalizationPersistsThroughTheModule = () => {
 
   const stored = toPlainObject(storageAdapter.snapshot());
   assert.equal(stored.s1p_title_keywords, null);
-  assert.equal(stored.s1p_read_progress["101"].lastReadFloor, "3");
+  assert.equal(stored.s1p_read_progress, null);
+  assert.equal(
+    collectStoredReadProgressShards(stored)["101"].lastReadFloor,
+    "3"
+  );
   assert.equal(stored.s1p_user_tags["202"].tag, "legacy-tag");
   assert.deepStrictEqual(
     toPlainObject(mutations),
@@ -451,9 +489,15 @@ const testCanonicalImportPersistsEquivalentLegacyStorageShapes = () => {
     stored.s1p_blocked_posts,
     canonicalValues.blockedPosts
   );
-  assert.deepStrictEqual(stored.s1p_read_progress, canonicalValues.readProgress);
+  assert.deepStrictEqual(
+    collectStoredReadProgressShards(stored),
+    canonicalValues.readProgress
+  );
   assert.equal(typeof stored.s1p_blocked_posts[303].postId, "string");
-  assert.equal(typeof stored.s1p_read_progress[101].lastReadFloor, "string");
+  assert.equal(
+    typeof collectStoredReadProgressShards(stored)[101].lastReadFloor,
+    "string"
+  );
 };
 
 const testKindProjectionOwnsSyncCompaction = () => {
@@ -525,6 +569,305 @@ const testSettingsSignalBridgeRemainsBoundThroughTheModule = () => {
   assert.deepStrictEqual(bridgeRefreshes, ["s1p_settings_refresh_signal"]);
 };
 
+const testReadProgressWritesOnlyTheChangedShard = () => {
+  const { coreBusinessData, storageAdapter } = createModuleHarness();
+  const progress = {};
+  for (let index = 0; index < 320; index += 1) {
+    progress[String(100000 + index)] = {
+      postId: String(200000 + index),
+      page: "1",
+      lastReadFloor: "1",
+      timestamp: 1760000000000 + index,
+    };
+  }
+
+  coreBusinessData.write("readProgress", progress);
+  const before = toPlainObject(storageAdapter.snapshot());
+  const shardKeys = getStoredReadProgressShardKeys(before);
+  assert.equal(shardKeys.length, 32, "首次写入应铺满分片。");
+  assert.equal(
+    before.s1p_read_progress,
+    undefined,
+    "全新安装不应再写旧单键。"
+  );
+
+  const nextProgress = {
+    ...progress,
+    "100010": {
+      ...progress["100010"],
+      page: "2",
+      lastReadFloor: "40",
+      timestamp: 1760000001000,
+    },
+  };
+  coreBusinessData.write("readProgress", nextProgress);
+
+  const after = toPlainObject(storageAdapter.snapshot());
+  const changedShardKeys = shardKeys.filter(
+    (key) => JSON.stringify(before[key]) !== JSON.stringify(after[key])
+  );
+  assert.equal(
+    changedShardKeys.length,
+    1,
+    "单帖进度更新只应写入该帖所在的那一片。"
+  );
+  assert.ok(
+    Object.keys(after[changedShardKeys[0]]).length < 64,
+    "单片条目数应远小于总条数。"
+  );
+  assert.deepStrictEqual(
+    toPlainObject(coreBusinessData.read("readProgress")),
+    nextProgress
+  );
+};
+
+const testReadProgressMigratesLegacySingleKey = () => {
+  const legacyProgress = {
+    101: {
+      postId: "303",
+      page: "1",
+      lastReadFloor: "3",
+      timestamp: 1760000000000,
+    },
+    102: {
+      postId: "404",
+      page: "2",
+      lastReadFloor: "8",
+      timestamp: 1760000000500,
+    },
+  };
+  const { coreBusinessData, storageAdapter } = createModuleHarness({
+    s1p_read_progress: legacyProgress,
+  });
+
+  assert.deepStrictEqual(
+    toPlainObject(coreBusinessData.read("readProgress")),
+    legacyProgress
+  );
+
+  const migrated = toPlainObject(storageAdapter.snapshot());
+  assert.equal(
+    migrated.s1p_read_progress,
+    null,
+    "迁移后应清空旧单键，避免每次读取重复迁移。"
+  );
+  assert.deepStrictEqual(
+    collectStoredReadProgressShards(migrated),
+    legacyProgress
+  );
+
+  const nextProgress = {
+    103: {
+      postId: "505",
+      page: "1",
+      lastReadFloor: "1",
+      timestamp: 1760000001000,
+    },
+  };
+  coreBusinessData.write("readProgress", { ...legacyProgress, ...nextProgress });
+  const afterWrite = toPlainObject(storageAdapter.snapshot());
+  assert.equal(afterWrite.s1p_read_progress, null, "迁移后不再回写旧单键。");
+  assert.deepStrictEqual(
+    collectStoredReadProgressShards(afterWrite),
+    { ...legacyProgress, ...nextProgress }
+  );
+};
+
+const testReadProgressMigrationKeepsNewerShardRecord = () => {
+  const { coreBusinessData, storageAdapter } = createModuleHarness({
+    s1p_read_progress: {
+      101: {
+        postId: "303",
+        page: "1",
+        lastReadFloor: "3",
+        timestamp: 1760000000000,
+      },
+    },
+  });
+  coreBusinessData.read("readProgress");
+
+  // 旧版本标签页可能再次写回整表：更旧的记录不能盖掉分片里的新记录。
+  storageAdapter.setValue("s1p_read_progress", {
+    101: {
+      postId: "303",
+      page: "1",
+      lastReadFloor: "2",
+      timestamp: 1759999999000,
+    },
+    102: {
+      postId: "404",
+      page: "4",
+      lastReadFloor: "4",
+      timestamp: 1760000002000,
+    },
+  });
+
+  const mergedValue = toPlainObject(
+    coreBusinessData.read("readProgress", { fresh: true })
+  );
+  assert.equal(mergedValue["101"].lastReadFloor, "3");
+  assert.equal(mergedValue["102"].lastReadFloor, "4");
+};
+
+const testReadProgressCrossTabRefreshConvergesThroughSignal = () => {
+  const { createHarness: createBaseHarness } = require("./s1plus-test-helpers");
+  const harness = createBaseHarness({ hookErrorMessage: "h" });
+  const storageAdapter = harness.hooks.s1pCreateCoreBusinessDataMemoryAdapter({});
+  const refreshes = [];
+  const createTab = (sourceId, intents) =>
+    harness.hooks.s1pCreateCoreBusinessData({
+      storageAdapter,
+      now: () => 1760000000000,
+      random: () => 0.25,
+      sourceId,
+      publishRefreshIntents: (payload) => intents.push(payload),
+    });
+  const tabA = createTab("tab-a", []);
+  const tabB = createTab("tab-b", refreshes);
+  tabB.bindCrossTab();
+
+  assert.deepStrictEqual(toPlainObject(tabB.read("readProgress")), {});
+
+  // 另一个标签页写入后，本页没有分片监听，只能靠刷新信号重新读取整表。
+  tabA.write("readProgress", canonicalValues.readProgress);
+  assert.deepStrictEqual(
+    toPlainObject(tabB.read("readProgress")),
+    canonicalValues.readProgress
+  );
+  assert.deepStrictEqual(toPlainObject(refreshes.at(-1)), {
+    intents: ["read_progress"],
+    applyImmediately: false,
+  });
+};
+
+const testReadProgressDropsAgedProvenanceOnPersist = () => {
+  const { coreBusinessData, storageAdapter } = createModuleHarness();
+  const harnessNow = 1760000000000;
+  const buildProvenance = (threadId, createdAt) => ({
+    sourceTabId: "test-tab",
+    threadId,
+    page: "1",
+    saveReason: "visible_stable",
+    documentVisibilityState: "visible",
+    hadConfirmedVisiblePost: true,
+    createdAt,
+    initiatedWhileHidden: false,
+    saveKind: "real_reading",
+  });
+  const agedAt = harnessNow - 8 * 86400000;
+  const freshAt = harnessNow - 1000;
+  const progress = {
+    101: {
+      postId: "303",
+      page: "1",
+      lastReadFloor: "3",
+      timestamp: agedAt,
+      provenance: buildProvenance("101", agedAt),
+    },
+    102: {
+      postId: "404",
+      page: "2",
+      lastReadFloor: "8",
+      timestamp: freshAt,
+      provenance: buildProvenance("102", freshAt),
+    },
+  };
+
+  const first = coreBusinessData.write("readProgress", progress);
+  assert.equal(first.changed, true);
+  const stored = collectStoredReadProgressShards(
+    toPlainObject(storageAdapter.snapshot())
+  );
+  assert.equal(
+    stored["101"].provenance,
+    undefined,
+    "超过保留期的 provenance 不应落盘。"
+  );
+  assert.equal(stored["102"].provenance.sourceTabId, "test-tab");
+  assert.equal(
+    coreBusinessData.read("readProgress")["101"].provenance,
+    undefined,
+    "缓存与磁盘必须同形，否则每次写入都会被误判成变更。"
+  );
+
+  const second = coreBusinessData.write("readProgress", progress);
+  assert.equal(
+    second.changed,
+    false,
+    "同一份输入重复写入时，已压缩的记录不能再产生回写。"
+  );
+};
+
+const testReadProgressReadPathNeverCompactsOrWrites = () => {
+  const agedAt = 1760000000000 - 30 * 86400000;
+  const legacyShardValue = {
+    101: {
+      postId: "303",
+      page: "1",
+      lastReadFloor: "3",
+      timestamp: agedAt,
+      provenance: {
+        sourceTabId: "test-tab",
+        threadId: "101",
+        page: "1",
+        saveReason: "visible_stable",
+        documentVisibilityState: "visible",
+        hadConfirmedVisiblePost: true,
+        createdAt: agedAt,
+        initiatedWhileHidden: false,
+        saveKind: "real_reading",
+      },
+    },
+  };
+  const { coreBusinessData, storageAdapter } = createModuleHarness({
+    "s1p_read_progress#7": legacyShardValue,
+  });
+
+  const snapshotBefore = JSON.stringify(
+    toPlainObject(storageAdapter.snapshot())
+  );
+  const readValue = coreBusinessData.read("readProgress", { fresh: true });
+
+  assert.equal(
+    readValue["101"].provenance.sourceTabId,
+    "test-tab",
+    "读路径不得压缩 provenance：压缩只在写入路径做，否则记录一过期就滚动回写。"
+  );
+  assert.equal(
+    JSON.stringify(toPlainObject(storageAdapter.snapshot())),
+    snapshotBefore,
+    "纯读取不应产生任何存储写入。"
+  );
+};
+
+const testShardedWriteReportsWrittenShardIndices = () => {
+  const recorded = [];
+  const { coreBusinessData, storageAdapter } = createModuleHarness(
+    {},
+    { recordShardedWrite: (payload) => recorded.push(payload) }
+  );
+  const progress = {
+    101: { postId: "303", page: "1", lastReadFloor: "3", timestamp: 1760000000000 },
+  };
+
+  coreBusinessData.write("readProgress", progress);
+  assert.equal(recorded.length, 1);
+  assert.equal(recorded[0].kind, "readProgress");
+  assert.equal(recorded[0].writtenShardIndices.length, 1);
+  assert.ok(
+    toPlainObject(storageAdapter.snapshot())[
+      `s1p_read_progress#${recorded[0].writtenShardIndices[0]}`
+    ],
+    "上报的分片编号应当就是真正落盘的那一片。"
+  );
+
+  coreBusinessData.write("readProgress", progress);
+  assert.equal(recorded.length, 1, "没有真正写入时不应记统计。");
+
+  coreBusinessData.write("blockedThreads", canonicalValues.blockedThreads);
+  assert.equal(recorded.length, 1, "未分片的 kind 不记统计。");
+};
+
 const main = () => {
   testEveryKindUsesOneReadWriteProjectionInterface();
   testSyncImportPrimitiveIsNotReachableFromTheFacade();
@@ -538,6 +881,13 @@ const main = () => {
   testCanonicalImportPersistsEquivalentLegacyStorageShapes();
   testKindProjectionOwnsSyncCompaction();
   testSettingsSignalBridgeRemainsBoundThroughTheModule();
+  testReadProgressWritesOnlyTheChangedShard();
+  testReadProgressMigratesLegacySingleKey();
+  testReadProgressMigrationKeepsNewerShardRecord();
+  testReadProgressCrossTabRefreshConvergesThroughSignal();
+  testReadProgressDropsAgedProvenanceOnPersist();
+  testReadProgressReadPathNeverCompactsOrWrites();
+  testShardedWriteReportsWrittenShardIndices();
   console.log("[core-business-data-module] checks passed.");
 };
 

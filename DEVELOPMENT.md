@@ -152,6 +152,7 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - `running` 等状态的调试预览会跳过真实同步锁门控，仅用于人工观察 UI
 - 统一面板的显示状态持久化到 `s1p_debug_console_visible`（GM 存储，跨标签一致）；尺寸持久化到 `s1p_debug_console_size`（GM 存储）
 - 关键事件由 `s1pRecordDiagnosticEvent()` 常驻采集；console wrapper 仍只在面板开启时运行，隐藏时恢复原始 console。`s1pInitializeDiagnostics()` 在初始化入口绑定异常、pagehide 和 beforeunload 收尾，记录卸载前锁快照并与可选收集器避免重复记录同一异常
+- 阅读进度分片写入统计：同步诊断面板输出「窗口 N 次更新 / M 片（U/D≈x）」与累计值（`buildReadProgressWriteStatsRows()`）。数据只写 `sessionStorage` 的 `s1p_read_progress_write_stats`（同标签页跨页累计，不写 GM 存储、不参与业务判断），用于判断惰性压实（热写层）是否值得：U/D 接近 1 说明每次更新都落在不同分片，压实要重写的分片数和更新数一样多，收益趋零。回归：`node tests/test-read-progress-write-stats.js`
 - 日志持久化：`s1p_log_buffer` 含 schemaVersion/entries/loss/展开状态；300ms 固定批次写入，持续事件不会无限推迟落盘；同步兼容摘要另以 1s 批次刷新，`getSyncDiagnostics()` 合并内存中的待刷摘要。pagehide 刷新两者，失败仅增加诊断损失计数，不影响同步结果
 - 日志收集器可在同页面会话内多次启停（通过 `startLogCollector` / `stopLogCollector`），每次启动捕获当前 console 引用，并在停止时只恢复 S1 Plus 自己安装的 wrapper，避免多轮 bind 嵌套或覆盖其他脚本后续安装的 console patch
 - 这套面板框架应优先作为通用调试容器复用，而非为每个功能再单独写一套浮动面板
@@ -308,7 +309,9 @@ node tests/test-category-c-and-image-viewer-glass-css.js
 - `s1p_user_tags`
 - `s1p_bookmarked_replies`
 - `s1p_title_filter_rules`
-- `s1p_read_progress`
+- `s1p_read_progress`（逻辑键；实际落盘为 `s1p_read_progress#0..#31` 分片）
+
+`s1p_read_progress` 是唯一随阅读历史线性增长的业务数据，因此按分片落盘：物理键 `s1p_read_progress#<0..31>`，分片号由 threadId 的 FNV-1a 哈希决定（跨版本稳定）；`read()` 合并全部分片，`write()` 只写内容发生变化的分片。旧的单键在首次读取时按记录时间戳迁移（同毫秒以旧键内容为准，随后由归一化回写），迁移后写入 `null`，不再回写。落盘前还会压缩 `provenance`：只保留最近 7 天（`READ_PROGRESS_PROVENANCE_RETENTION_MS`），更早的记录剥掉该字段；压缩只在写入路径做，归一化不动它，否则记录一过期就会触发滚动回写。分片键不挂 `GM_addValueChangeListener`：分片只是整表的一部分，按分片归一化会把半张表当成整表；跨标签刷新统一由 `s1p_core_data_refresh_signal` 触发整表重读。回归：`node tests/test-core-business-data-module.js`。
 
 `s1p_settings` 继续由 `defaultSettings`、`buildNormalizedSettings()`、`getSettings()`、`getSettingsForWrite()` 与 `saveSettings()` 管理。重复的每项设置语义集中在冻结的 `s1pSettingsSemantics`：`resolveChangedPaths()` 投影 full/lightweight/passive、运行时 effect intent 与设置面板 tab，`projectSyncModal()` / `buildSyncSettingsPatch()` 负责同步表单映射，`normalizeImageSettings()` 由既有 normalization 层调用。私有 catalog 不对外暴露；定制化 tab 布局继续由设置面板实现，一级 feature-toggle 的 DOM effects 统一经 `s1pPageEnhancementProjection` 投影。新增设置必须同时补齐默认值、归一化与语义定义。
 

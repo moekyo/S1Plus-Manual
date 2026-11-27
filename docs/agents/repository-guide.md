@@ -68,9 +68,9 @@ Core Business Data keys (owned by the private `s1pCoreBusinessData` kind catalog
 - `s1p_user_tags`
 - `s1p_bookmarked_replies`
 - `s1p_title_filter_rules`
-- `s1p_read_progress`
+- `s1p_read_progress` (logical key; persisted as the threadId-hashed shard keys `s1p_read_progress#0..#31`)
 
-Callers use the five frozen module methods `read`, `write`, `projectForSync`, `syncFromStorage`, and `bindCrossTab` with logical kind names. `importFromSync` is deliberately absent from the facade: the factory is created inside a closed scope and the primitive is injected once into `importLocalData`, so new code cannot reach it. Do not read/write these keys directly, duplicate their sync field names or normalizers, or expose the catalog. The legacy `s1p_title_keywords` identity also stays private to the catalog and is retired by title-rule writes.
+Callers use the five frozen module methods `read`, `write`, `projectForSync`, `syncFromStorage`, and `bindCrossTab` with logical kind names. `importFromSync` is deliberately absent from the facade: the factory is created inside a closed scope and the primitive is injected once into `importLocalData`, so new code cannot reach it. Read progress is sharded so a single update writes roughly one thirty-second of the table: `read()` merges every shard, `write()` only writes shards whose content changed, and the legacy single key is migrated on first read and then retired. Shard keys deliberately have no per-key change listener; cross-tab refresh goes through the shared signal. Do not read/write these keys directly, duplicate their sync field names or normalizers, or expose the catalog. The legacy `s1p_title_keywords` identity also stays private to the catalog and is retired by title-rule writes.
 
 Sync and lock keys include:
 

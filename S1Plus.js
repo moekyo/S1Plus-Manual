@@ -4250,6 +4250,13 @@
   // 帖子页阅读进度持久化防抖：以内存批量累积为主，隐藏/卸载前仅提交已确认阅读会话的待写入。
   const READ_PROGRESS_PERSIST_DEBOUNCE_MS = 5 * 1000;
   const READ_PROGRESS_PERSIST_DEBOUNCE_LAN_MS = 1000;
+  // 阅读进度是唯一随“读过的帖子数”线性增长的业务数据。整表写入会让每次翻页
+  // 落盘 O(总条数) 字节；按 threadId 分片后，单次只写其中一片（约总条数的 1/32），
+  // 读路径仍是一次合并（32 次取值，整体走既有 1s 缓存）。
+  const READ_PROGRESS_STORAGE_SHARD_COUNT = 32;
+  // 阅读进度里的 provenance 只服务诊断（这条进度是怎么写进来的）。保留最近 7 天，
+  // 与同步锁回执同口径；更早的记录在落盘时剥掉，否则每条 365 B 里有 268 B 是历史调试字段。
+  const READ_PROGRESS_PROVENANCE_RETENTION_MS = 7 * 86400000;
   const READ_PROGRESS_STARTUP_SUMMARY_LIMIT = 8;
   // 同步诊断里保留最近几条阅读进度调试事件，便于复盘后台开帖页的生命周期。
   const READ_PROGRESS_DEBUG_EVENT_LIMIT = 12;
@@ -8157,6 +8164,133 @@
     };
   };
 
+  // ---- 阅读进度分片写入统计（只读诊断） ----
+  // 用途：判断「同一个分片是否被反复写入」（U/D）。U/D 越高，惰性压实（热写层）摊得越薄；
+  // 接近 1 说明每次更新都落在不同分片，压实要重写的分片数和更新数一样多，收益趋近于零。
+  // 统计只写到 sessionStorage（同标签页跨页累计），不碰 GM 存储，也不参与任何业务判断。
+  const READ_PROGRESS_WRITE_STATS_SESSION_KEY = "s1p_read_progress_write_stats";
+  const READ_PROGRESS_WRITE_STATS_WINDOW = 64;
+  let s1pReadProgressWriteStats = null;
+
+  const normalizeReadProgressWriteStats = (rawValue) => {
+    const source = isObjectRecord(rawValue) ? rawValue : {};
+    const recent = Array.isArray(source.recent) ? source.recent : [];
+    return {
+      operations: Math.max(0, Math.floor(Number(source.operations) || 0)),
+      shardWrites: Math.max(0, Math.floor(Number(source.shardWrites) || 0)),
+      recent: recent
+        .slice(-READ_PROGRESS_WRITE_STATS_WINDOW)
+        .map((entry) =>
+          (Array.isArray(entry) ? entry : [])
+            .map((index) => Number(index))
+            .filter((index) => Number.isInteger(index) && index >= 0)
+        )
+        .filter((entry) => entry.length > 0),
+    };
+  };
+
+  const getReadProgressWriteStats = () => {
+    if (s1pReadProgressWriteStats) {
+      return s1pReadProgressWriteStats;
+    }
+    let restored = null;
+    try {
+      const rawText = window.sessionStorage?.getItem(
+        READ_PROGRESS_WRITE_STATS_SESSION_KEY
+      );
+      if (rawText) {
+        restored = normalizeReadProgressWriteStats(JSON.parse(rawText));
+      }
+    } catch (_) {
+      restored = null;
+    }
+    s1pReadProgressWriteStats = restored || {
+      operations: 0,
+      shardWrites: 0,
+      recent: [],
+    };
+    return s1pReadProgressWriteStats;
+  };
+
+  const persistReadProgressWriteStats = () => {
+    if (!s1pReadProgressWriteStats) {
+      return;
+    }
+    try {
+      window.sessionStorage?.setItem(
+        READ_PROGRESS_WRITE_STATS_SESSION_KEY,
+        JSON.stringify(s1pReadProgressWriteStats)
+      );
+    } catch (_) {
+      // 诊断统计落盘失败不影响业务写入。
+    }
+  };
+
+  const recordReadProgressShardWriteStats = ({
+    kind = "",
+    writtenShardIndices = [],
+  } = {}) => {
+    if (kind !== "readProgress") {
+      return;
+    }
+    const indices = Array.isArray(writtenShardIndices)
+      ? writtenShardIndices.filter(
+          (index) => Number.isInteger(index) && index >= 0
+        )
+      : [];
+    if (indices.length === 0) {
+      return;
+    }
+    const stats = getReadProgressWriteStats();
+    stats.operations += 1;
+    stats.shardWrites += indices.length;
+    stats.recent.push(indices);
+    if (stats.recent.length > READ_PROGRESS_WRITE_STATS_WINDOW) {
+      stats.recent.splice(
+        0,
+        stats.recent.length - READ_PROGRESS_WRITE_STATS_WINDOW
+      );
+    }
+    persistReadProgressWriteStats();
+  };
+
+  const resetReadProgressWriteStats = () => {
+    s1pReadProgressWriteStats = {
+      operations: 0,
+      shardWrites: 0,
+      recent: [],
+    };
+    persistReadProgressWriteStats();
+  };
+
+  const buildReadProgressWriteStatsRows = () => {
+    const stats = getReadProgressWriteStats();
+    const windowOperations = stats.recent.length;
+    if (windowOperations === 0) {
+      return [
+        ["阅读进度分片写入", "—"],
+        ["阅读进度写入累计", "—"],
+      ];
+    }
+    const distinctShards = new Set();
+    stats.recent.forEach((entry) => {
+      entry.forEach((index) => distinctShards.add(index));
+    });
+    const shardCount = distinctShards.size || 1;
+    return [
+      [
+        "阅读进度分片写入",
+        `窗口 ${windowOperations} 次更新 / ${shardCount} 片（U/D≈${(
+          windowOperations / shardCount
+        ).toFixed(1)}）`,
+      ],
+      [
+        "阅读进度写入累计",
+        `${stats.operations} 次更新 / ${stats.shardWrites} 片次`,
+      ],
+    ];
+  };
+
   const buildSyncDiagnosticsRows = (diagnostics) => {
     const schedulerSnapshot = getBackgroundSyncSchedulerDiagnosticsSnapshot();
     const schedulerOwner =
@@ -8376,6 +8510,7 @@
           : "—",
       ],
     ];
+    rows.push(...buildReadProgressWriteStatsRows());
     const syncTraceEvents = Array.isArray(diagnostics.syncTraceEvents)
       ? diagnostics.syncTraceEvents.slice().reverse()
       : [];
@@ -20910,6 +21045,16 @@
     }
     return !areComparableValuesEqual(currentValue, nextValue);
   };
+  // 分片编号必须跨版本稳定：同一 threadId 永远落到同一片，否则迁移或并发写会丢记录。
+  const getCoreBusinessDataShardIndex = (recordKey, shardCount) => {
+    const text = String(recordKey);
+    let hash = 0x811c9dc5;
+    for (let index = 0; index < text.length; index += 1) {
+      hash ^= text.charCodeAt(index);
+      hash = Math.imul(hash, 0x01000193) >>> 0;
+    }
+    return hash % shardCount;
+  };
   // Core Business Data callers use one logical-kind interface; storage and
   // sync identities remain private in the factory's catalog below.
   const s1pCreateCoreBusinessDataGmAdapter = () => ({
@@ -20984,6 +21129,7 @@
     publishRefreshIntents = () => {},
     publishBridgeRefresh = () => {},
     recordSnapshotResync: recordSnapshotResyncFn = () => {},
+    recordShardedWrite = () => {},
     bridgeSignalKeys = [],
     shouldHandleBridgeSignal = (_key, _value, isCrossContextChange) =>
       Boolean(isCrossContextChange),
@@ -21399,6 +21545,37 @@
       };
     };
 
+    // 落盘前压缩阅读进度：只保留最近 7 天的 provenance。
+    // 归一化本身不动 provenance（否则记录一过期就会触发回写，形成滚动写风暴），
+    // 压缩只发生在写入路径，缓存与磁盘因此始终同形。
+    const compactReadProgressStoredValue = (progress) => {
+      if (!isObjectRecord(progress)) {
+        return progress;
+      }
+      const cutoff = now() - READ_PROGRESS_PROVENANCE_RETENTION_MS;
+      let compacted = null;
+      Object.keys(progress).forEach((threadId) => {
+        const record = progress[threadId];
+        if (
+          !isObjectRecord(record) ||
+          !Object.prototype.hasOwnProperty.call(record, "provenance")
+        ) {
+          return;
+        }
+        const recordTimestamp = Number(record.timestamp) || 0;
+        if (recordTimestamp <= 0 || recordTimestamp >= cutoff) {
+          return;
+        }
+        if (!compacted) {
+          compacted = { ...progress };
+        }
+        const nextRecord = { ...record };
+        delete nextRecord.provenance;
+        compacted[threadId] = nextRecord;
+      });
+      return compacted || progress;
+    };
+
     const kindCatalog = Object.freeze({
       blockedThreads: Object.freeze({
         storageKey: "s1p_blocked_threads",
@@ -21483,6 +21660,9 @@
       }),
       readProgress: Object.freeze({
         storageKey: "s1p_read_progress",
+        // 分片存储：物理键为 s1p_read_progress#<0..N-1>，逻辑键保持不变（信号、诊断、同步都用它）。
+        storageShardCount: READ_PROGRESS_STORAGE_SHARD_COUNT,
+        compactStoredValue: compactReadProgressStoredValue,
         syncKey: "read_progress",
         fallback: () => ({}),
         normalize: normalizeReadProgressValue,
@@ -21546,7 +21726,121 @@
         expiresAt: now() + COMPARABLE_STORED_VALUE_CACHE_TTL_MS,
       });
     };
+    const getStorageShardCount = (definition) => {
+      const shardCount = Number(definition?.storageShardCount);
+      return Number.isInteger(shardCount) && shardCount > 1 ? shardCount : 0;
+    };
+    const getStorageShardKeys = (definition, shardCount) =>
+      Array.from(
+        { length: shardCount },
+        (_unused, index) => `${definition.storageKey}#${index}`
+      );
+    const getShardedRecordTimestamp = (record) => {
+      if (!isObjectRecord(record)) {
+        return 0;
+      }
+      const timestamp = Number(record.timestamp);
+      if (Number.isFinite(timestamp) && timestamp > 0) {
+        return timestamp;
+      }
+      const provenanceCreatedAt = Number(record.provenance?.createdAt);
+      return Number.isFinite(provenanceCreatedAt) && provenanceCreatedAt > 0
+        ? provenanceCreatedAt
+        : 0;
+    };
+    const mergeShardedValue = (shardValues) => {
+      const merged = {};
+      shardValues.forEach((shardValue) => {
+        if (!isObjectRecord(shardValue)) {
+          return;
+        }
+        Object.keys(shardValue).forEach((recordKey) => {
+          merged[recordKey] = shardValue[recordKey];
+        });
+      });
+      return merged;
+    };
+    // 只写内容发生变化的分片：单次落盘 ≈ 总条数 / 分片数。
+    const writeShardedStoredValue = (
+      definition,
+      shardKeys,
+      nextValue,
+      previousValue
+    ) => {
+      const shardCount = shardKeys.length;
+      const nextBuckets = shardKeys.map(() => ({}));
+      const previousBuckets = shardKeys.map(() => ({}));
+      Object.keys(isObjectRecord(nextValue) ? nextValue : {}).forEach(
+        (recordKey) => {
+          nextBuckets[
+            getCoreBusinessDataShardIndex(recordKey, shardCount)
+          ][recordKey] = nextValue[recordKey];
+        }
+      );
+      Object.keys(isObjectRecord(previousValue) ? previousValue : {}).forEach(
+        (recordKey) => {
+          previousBuckets[
+            getCoreBusinessDataShardIndex(recordKey, shardCount)
+          ][recordKey] = previousValue[recordKey];
+        }
+      );
+      const writtenShardIndices = [];
+      nextBuckets.forEach((bucket, index) => {
+        if (areComparableValuesEqual(previousBuckets[index], bucket)) {
+          return;
+        }
+        storageAdapter.setValue(shardKeys[index], bucket);
+        writtenShardIndices.push(index);
+      });
+      return writtenShardIndices;
+    };
+    // 旧版单键在读取时迁移：同一条记录取时间戳更新的一份，只补写受影响的分片。
+    const readShardedStoredValue = (definition, shardCount) => {
+      const shardKeys = getStorageShardKeys(definition, shardCount);
+      const shardValues = shardKeys.map((shardKey) => {
+        const shardValue = storageAdapter.getValue(shardKey, null);
+        return isObjectRecord(shardValue) ? shardValue : null;
+      });
+      const merged = mergeShardedValue(shardValues);
+      const legacyValue = storageAdapter.getValue(definition.storageKey, null);
+      if (legacyValue === null || typeof legacyValue === "undefined") {
+        return merged;
+      }
+      const nextValue = { ...merged };
+      if (isObjectRecord(legacyValue)) {
+        Object.keys(legacyValue).forEach((recordKey) => {
+          const legacyRecord = legacyValue[recordKey];
+          if (!isObjectRecord(legacyRecord)) {
+            return;
+          }
+          const currentRecord = nextValue[recordKey];
+          // 时间戳相同视为“旧键这次写得更晚”：分片是新版自己写的，旧键只可能来自
+          // 尚未刷新的旧版本标签页；同毫秒内保留旧键内容，随后由归一化再回写一次。
+          if (
+            !isObjectRecord(currentRecord) ||
+            getShardedRecordTimestamp(legacyRecord) >=
+              getShardedRecordTimestamp(currentRecord)
+          ) {
+            nextValue[recordKey] = legacyRecord;
+          }
+        });
+      }
+      try {
+        writeShardedStoredValue(definition, shardKeys, nextValue, merged);
+        storageAdapter.setValue(definition.storageKey, null);
+      } catch (_) {
+        // 迁移写入失败时保留旧键，下次读取重试；本次仍返回合并后的结果。
+      }
+      return nextValue;
+    };
     const readStoredValue = (definition, { allowLegacy = false } = {}) => {
+      const storageShardCount = getStorageShardCount(definition);
+      if (storageShardCount) {
+        return {
+          rawValue: readShardedStoredValue(definition, storageShardCount),
+          usedLegacyValue: false,
+        };
+      }
       const fallbackValue = definition.fallback();
       if (!allowLegacy || !definition.legacyStorageKey) {
         return {
@@ -21626,10 +21920,15 @@
       { suppressSyncTrigger = false, forceWrite = false } = {}
     ) => {
       const normalized = normalizeKindValue(definition, value);
+      // 落盘视图：比较、写入、缓存都用同一份，避免“内存带调试字段、磁盘不带”被误判成变更。
+      const storedValue =
+        typeof definition.compactStoredValue === "function"
+          ? definition.compactStoredValue(normalized.value)
+          : normalized.value;
       const current = getComparableValue(kind, definition);
       const valueChanged = hasComparableValueChanged(
         current.value,
-        normalized.value
+        storedValue
       );
       if (
         !forceWrite &&
@@ -21637,20 +21936,44 @@
         !current.storageNeedsNormalization
       ) {
         clearLegacyStorageValue(definition);
-        setValueCache(kind, normalized.value);
+        setValueCache(kind, storedValue);
         return {
           changed: false,
-          value: normalized.value,
+          value: storedValue,
           normalizationChanged: normalized.changed === true,
         };
       }
 
       invalidateLocalDataHash();
-      storageAdapter.setValue(definition.storageKey, normalized.value);
+      const storageShardCount = getStorageShardCount(definition);
+      if (storageShardCount) {
+        // 落盘基线必须是“磁盘上的原样内容”。current.value 是归一化视图：
+        // 当磁盘上是旧格式（storageNeedsNormalization）或强制回写时，拿它做比较
+        // 会把“需要写”判成“没变化”，旧格式就永远写不下去；此时整片重写。
+        const shardedWriteBaseline =
+          forceWrite || current.storageNeedsNormalization === true
+            ? null
+            : current.value;
+        const writtenShardIndices = writeShardedStoredValue(
+          definition,
+          getStorageShardKeys(definition, storageShardCount),
+          storedValue,
+          shardedWriteBaseline
+        );
+        if (writtenShardIndices.length > 0) {
+          try {
+            recordShardedWrite({ kind, writtenShardIndices });
+          } catch (_) {
+            // 诊断统计不得影响业务写入。
+          }
+        }
+      } else {
+        storageAdapter.setValue(definition.storageKey, storedValue);
+      }
       clearLegacyStorageValue(definition);
       emitCrossTabSignal(definition);
-      setComparableCache(kind, normalized.value);
-      setValueCache(kind, normalized.value);
+      setComparableCache(kind, storedValue);
+      setValueCache(kind, storedValue);
       if (!suppressSyncTrigger) {
         if (definition.mutationSource === "read_progress") {
           recordLocalMutation("read_progress");
@@ -21660,7 +21983,7 @@
       }
       return {
         changed: true,
-        value: normalized.value,
+        value: storedValue,
         normalizationChanged: normalized.changed === true,
       };
     };
@@ -21872,6 +22195,11 @@
       }
       crossTabBound = true;
       kindEntries.forEach(([kind, definition]) => {
+        if (getStorageShardCount(definition)) {
+          // 分片只是整表的一部分，按分片归一化会把半张表当成整表；
+          // 分片变更统一由下面的刷新信号触发整表重读。
+          return;
+        }
         storageAdapter.addValueChangeListener(
           definition.storageKey,
           (_key, _oldValue, newValue, isCrossContextChange) => {
@@ -21941,6 +22269,7 @@
       publishCoreBusinessDataRefreshIntents(payload),
     publishBridgeRefresh: (key) => scheduleCoreDataCrossTabRefresh(key),
     recordSnapshotResync: (keys) => recordCoreDataSnapshotResync(keys),
+    recordShardedWrite: (payload) => recordReadProgressShardWriteStats(payload),
     bridgeSignalKeys: [SETTINGS_CROSS_TAB_SIGNAL_KEY],
     shouldHandleBridgeSignal: (_key, newValue, isCrossContextChange) => {
       const signalPayload = parseSettingsCrossTabSignalPayload(newValue);

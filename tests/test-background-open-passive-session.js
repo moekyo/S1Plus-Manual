@@ -135,7 +135,16 @@ const observePost = (page) => {
   observer.emit([{ target: page.postTable, isIntersecting: true }]);
 };
 
-const readStoredProgress = (store) => store.get("s1p_read_progress") || {};
+// 阅读进度按 threadId 分片落盘（s1p_read_progress#0..#31），旧单键只在迁移期存在。
+const readStoredProgress = (store) => {
+  const merged = {};
+  Array.from(store.keys())
+    .filter((key) => String(key).startsWith("s1p_read_progress#"))
+    .forEach((key) => Object.assign(merged, store.get(key) || {}));
+  const legacy = store.get("s1p_read_progress");
+  if (legacy && typeof legacy === "object") Object.assign(merged, legacy);
+  return merged;
+};
 
 const testBackgroundOpenHintLifecycle = () => {
   const { hooks } = createHarness();
