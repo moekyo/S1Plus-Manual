@@ -8386,30 +8386,41 @@
       shardWrites,
       tabs,
       ownOperations: own.operations,
+      ownRecent: own.recent.slice(-READ_PROGRESS_WRITE_STATS_WINDOW),
       recent: recent.slice(-READ_PROGRESS_WRITE_STATS_WINDOW),
     };
   };
 
+  const summarizeReadProgressRecentWrites = (recent) => {
+    const shardIndices = new Set();
+    (Array.isArray(recent) ? recent : []).forEach((entry) => {
+      entry.s.forEach((index) => shardIndices.add(index));
+    });
+    const operations = Array.isArray(recent) ? recent.length : 0;
+    const shards = shardIndices.size;
+    return {
+      operations,
+      shards,
+      ratio: shards > 0 ? operations / shards : 0,
+    };
+  };
+  const describeReadProgressRecentWrites = (summary) =>
+    summary.operations > 0
+      ? `${summary.operations} 次 / ${summary.shards} 片（U/D≈${summary.ratio.toFixed(1)}）`
+      : "尚无写入";
+
   const buildReadProgressWriteStatsRows = () => {
     const stats = collectReadProgressWriteStats();
-    const windowOperations = stats.recent.length;
-    if (windowOperations === 0) {
-      return [
-        ["阅读进度分片写入", "尚无阅读进度写入记录"],
-        ["阅读进度写入累计", "尚无阅读进度写入记录"],
-      ];
-    }
-    const distinctShards = new Set();
-    stats.recent.forEach((entry) => {
-      entry.s.forEach((index) => distinctShards.add(index));
-    });
-    const shardCount = distinctShards.size || 1;
+    // 本页窗口才是「惰性压实」的决策依据：压实由每个标签页各自触发，
+    // 把不同标签页的写入合并成一个窗口会人为压低 U/D。
+    const ownWindow = summarizeReadProgressRecentWrites(stats.ownRecent);
+    const allWindow = summarizeReadProgressRecentWrites(stats.recent);
     return [
       [
         "阅读进度分片写入",
-        `窗口 ${windowOperations} 次更新 / ${shardCount} 片（U/D≈${(
-          windowOperations / shardCount
-        ).toFixed(1)}）`,
+        `本页 ${describeReadProgressRecentWrites(
+          ownWindow
+        )}｜全体 ${describeReadProgressRecentWrites(allWindow)}`,
       ],
       [
         "阅读进度写入累计",
