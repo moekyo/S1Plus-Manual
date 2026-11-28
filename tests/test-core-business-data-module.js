@@ -377,14 +377,12 @@ const testLegacyNormalizationPersistsThroughTheModule = () => {
     "3"
   );
   assert.equal(stored.s1p_user_tags["202"].tag, "legacy-tag");
-  assert.deepStrictEqual(
-    toPlainObject(mutations),
-    [
-      ["general", { triggerSync: false }],
-      ["general", { triggerSync: false }],
-      ["read_progress", { triggerSync: false }],
-    ]
-  );
+  // 迁移现在直接把归一化后的值写进分片，不再触发一次单独的 read_progress 归一化回写，
+  // 所以这里只有两条 general 变更（用户标记、标题规则）。
+  assert.deepStrictEqual(toPlainObject(mutations), [
+    ["general", { triggerSync: false }],
+    ["general", { triggerSync: false }],
+  ]);
 };
 
 const testLegacySourceProjectionUsesKindImportRules = () => {
@@ -925,6 +923,80 @@ const testImpossibleFirstPageFloorIsRepaired = () => {
   );
 };
 
+const testLegacyMigrationWritesNormalizedShapeOnce = () => {
+  const harness = createHarness({ hookErrorMessage: "h" });
+  const base = harness.hooks.s1pCreateCoreBusinessDataMemoryAdapter({
+    s1p_read_progress: {
+      101: { postId: "303", page: "1", lastReadFloor: 3, timestamp: 1760000000000 },
+    },
+  });
+  let shardWrites = 0;
+  const adapter = {
+    getValue: (key, fallback) => base.getValue(key, fallback),
+    setValue: (key, value) => {
+      if (String(key).startsWith("s1p_read_progress#")) shardWrites += 1;
+      base.setValue(key, value);
+    },
+    addValueChangeListener: (key, listener) =>
+      base.addValueChangeListener(key, listener),
+  };
+  const core = harness.hooks.s1pCreateCoreBusinessData({
+    storageAdapter: adapter,
+    now: () => 1760000000000,
+    random: () => 0.25,
+    sourceId: "test-tab",
+  });
+
+  const value = toPlainObject(core.read("readProgress"));
+  assert.equal(value["101"].lastReadFloor, "3", "迁移应直接落归一化后的值");
+  assert.equal(shardWrites, 1, "首次读旧表只应写一次分片，不再被归一化重写一遍");
+
+  shardWrites = 0;
+  core.read("readProgress", { fresh: true });
+  assert.equal(shardWrites, 0, "再次读取不应再写分片");
+};
+
+const testEmptyingReadProgressClearsShards = () => {
+  const { coreBusinessData, storageAdapter } = createModuleHarness();
+  const progress = {};
+  for (let index = 0; index < 200; index += 1) {
+    progress[String(100000 + index)] = {
+      postId: String(200000 + index),
+      page: "1",
+      lastReadFloor: "1",
+      timestamp: 1760000000000,
+    };
+  }
+  coreBusinessData.write("readProgress", progress);
+  const filled = toPlainObject(storageAdapter.snapshot());
+  const filledShards = Object.keys(filled).filter((key) =>
+    key.startsWith("s1p_read_progress#")
+  );
+  assert.ok(filledShards.length > 8, "铺开的记录应覆盖多个分片");
+
+  coreBusinessData.write("readProgress", {});
+  const emptied = toPlainObject(storageAdapter.snapshot());
+  Object.keys(emptied)
+    .filter((key) => key.startsWith("s1p_read_progress#"))
+    .forEach((key) => {
+      assert.equal(emptied[key], null, `${key} 清空后应为 null，而不是空对象`);
+    });
+  assert.deepStrictEqual(toPlainObject(coreBusinessData.read("readProgress")), {});
+};
+
+const testCorruptShardIsResetOnRead = () => {
+  const { coreBusinessData, storageAdapter } = createModuleHarness({
+    "s1p_read_progress#3": "not-an-object",
+  });
+
+  assert.deepStrictEqual(toPlainObject(coreBusinessData.read("readProgress")), {});
+  assert.equal(
+    toPlainObject(storageAdapter.snapshot())["s1p_read_progress#3"],
+    null,
+    "被写坏的分片应在读取时清成 null"
+  );
+};
+
 const main = () => {
   testEveryKindUsesOneReadWriteProjectionInterface();
   testSyncImportPrimitiveIsNotReachableFromTheFacade();
@@ -947,6 +1019,9 @@ const main = () => {
   testShardedWriteReportsWrittenShardIndices();
   testLegacyMigrationKeepsShardRecordOnTimestampTie();
   testImpossibleFirstPageFloorIsRepaired();
+  testLegacyMigrationWritesNormalizedShapeOnce();
+  testEmptyingReadProgressClearsShards();
+  testCorruptShardIsResetOnRead();
   console.log("[core-business-data-module] checks passed.");
 };
 

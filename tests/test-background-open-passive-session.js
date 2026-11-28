@@ -67,6 +67,12 @@ const installReadingProgressPage = (
   }
 
   const postTable = new TestPostTable();
+  const createUnparseablePostTable = (id = "pid9999") => {
+    const table = new TestPostTable();
+    table.id = id;
+    table.querySelector = () => null;
+    return table;
+  };
   let observer = null;
   class TestIntersectionObserver {
     constructor(callback) {
@@ -120,6 +126,7 @@ const installReadingProgressPage = (
 
   return {
     postTable,
+    createUnparseablePostTable,
     documentEvents,
     getObserver: () => observer,
     advance(ms) {
@@ -178,6 +185,50 @@ const testBackgroundOpenHintLifecycle = () => {
   assert.ok(consumedHint, "线程页启动时应能消费对应的后台开帖提示。");
   assert.equal(consumedHint.sessionId, hint.sessionId);
   assert.equal(hooks.getBackgroundOpenThreadHints().length, 0);
+};
+
+const readObserverStats = (hooks) =>
+  JSON.parse(JSON.stringify(hooks.getReadProgressObserverStatsForTest()));
+
+const testObserverCountersTrackMountsCallbacksAndParseFailures = () => {
+  const { hooks, page } = createHarness();
+  const session = hooks.readingProgressSession;
+  session.reset({ clearObservedMarkers: true });
+  assert.deepEqual(readObserverStats(hooks), {
+    observeCalls: 0,
+    callbacks: 0,
+    parseFailures: 0,
+  });
+
+  session.attach();
+  assert.deepEqual(readObserverStats(hooks), {
+    observeCalls: 1,
+    callbacks: 0,
+    parseFailures: 0,
+  });
+
+  observePost(page);
+  assert.deepEqual(readObserverStats(hooks), {
+    observeCalls: 1,
+    callbacks: 1,
+    parseFailures: 0,
+  });
+
+  page.getObserver().emit([
+    { target: page.createUnparseablePostTable("pid9999"), isIntersecting: true },
+  ]);
+  assert.deepEqual(readObserverStats(hooks), {
+    observeCalls: 1,
+    callbacks: 2,
+    parseFailures: 1,
+  });
+
+  session.reset({ clearObservedMarkers: true });
+  assert.deepEqual(readObserverStats(hooks), {
+    observeCalls: 0,
+    callbacks: 0,
+    parseFailures: 0,
+  });
 };
 
 const testOpPostFloorFallsBackToFirstPost = () => {
@@ -272,6 +323,7 @@ const testHiddenStartConfirmsAfterVisibleLifecycle = () => {
 
 const main = async () => {
   testBackgroundOpenHintLifecycle();
+  testObserverCountersTrackMountsCallbacksAndParseFailures();
   testOpPostFloorFallsBackToFirstPost();
   testVisibleSessionPersistsThroughPublicInterface();
   testPassiveBackgroundOpenWaitsForForegroundConfirmation();

@@ -22031,7 +22031,11 @@
         if (areComparableValuesEqual(previousBuckets[index], bucket)) {
           return;
         }
-        storageAdapter.setValue(shardKeys[index], bucket);
+        // 空分片写 null 而不是 {}：删空记录后不会留下 32 个空对象，读取侧把 null 当缺失。
+        storageAdapter.setValue(
+          shardKeys[index],
+          Object.keys(bucket).length > 0 ? bucket : null
+        );
         writtenShardIndices.push(index);
       });
       return writtenShardIndices;
@@ -22041,7 +22045,18 @@
       const shardKeys = getStorageShardKeys(definition, shardCount);
       const shardValues = shardKeys.map((shardKey) => {
         const shardValue = storageAdapter.getValue(shardKey, null);
-        return isObjectRecord(shardValue) ? shardValue : null;
+        if (isObjectRecord(shardValue)) {
+          return shardValue;
+        }
+        if (shardValue !== null && typeof shardValue !== "undefined") {
+          // 分片键被外部写成非对象：清成 null，避免这半张表永远读不到、也永远不被重写。
+          try {
+            storageAdapter.setValue(shardKey, null);
+          } catch (_) {
+            // 清理失败时本次仍按空分片处理。
+          }
+        }
+        return null;
       });
       const merged = mergeShardedValue(shardValues);
       const legacyValue = storageAdapter.getValue(definition.storageKey, null);
@@ -22067,13 +22082,24 @@
           }
         });
       }
+      // 迁移时直接写入归一化后的形态：否则首次读旧表会先写一遍原始值，再被
+      // persistReadNormalization 整表重写一遍，大表首读的 I/O 会翻倍。
+      const normalizedNextValue =
+        typeof definition.normalize === "function"
+          ? normalizeKindValue(definition, nextValue).value
+          : nextValue;
       try {
-        writeShardedStoredValue(definition, shardKeys, nextValue, merged);
+        writeShardedStoredValue(
+          definition,
+          shardKeys,
+          normalizedNextValue,
+          merged
+        );
         storageAdapter.setValue(definition.storageKey, null);
       } catch (_) {
         // 迁移写入失败时保留旧键，下次读取重试；本次仍返回合并后的结果。
       }
-      return nextValue;
+      return normalizedNextValue;
     };
     const readStoredValue = (definition, { allowLegacy = false } = {}) => {
       const storageShardCount = getStorageShardCount(definition);
