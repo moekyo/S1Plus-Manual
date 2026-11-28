@@ -196,6 +196,50 @@ const testLongLivedTabKeySurvivesPublish = () => {
   assert.ok(Date.now() - saved.updatedAt < 60 * 1000);
 };
 
+const testOwnWindowDropsExpiredEntries = () => {
+  const sharedStore = new Map();
+  const ownKey = "s1p_read_progress_write_stats:OWN:tab";
+  sharedStore.set(ownKey, {
+    updatedAt: Date.now(),
+    operations: 3,
+    shardWrites: 3,
+    recent: [
+      { t: Date.now() - STATS_STALE_MS, s: [1] },
+      { t: Date.now() - 1000, s: [2] },
+    ],
+  });
+  const { hooks } = createStatsHarness({
+    sharedStore,
+    sessionStorageEntries: [["s1p_read_progress_write_stats_tab", ownKey]],
+  });
+
+  assert.deepEqual(readRows(hooks), [
+    ["阅读进度分片写入", "本页 1 次 / 1 片（U/D≈1.0）｜全体 1 次 / 1 片（U/D≈1.0）"],
+    ["阅读进度写入累计", "3 次 / 3 片次 · 1 个标签页（本页 3 次）"],
+  ]);
+};
+
+const testUnparseableStatsKeyIsPruned = () => {
+  const sharedStore = new Map();
+  const brokenKey = "s1p_read_progress_write_stats:not-a-timestamp:zzz";
+  sharedStore.set(brokenKey, {
+    operations: 2,
+    shardWrites: 2,
+    recent: [{ t: Date.now() - 1000, s: [1] }],
+  });
+  const { hooks } = createStatsHarness({ sharedStore });
+  hooks.resetReadProgressWriteStats();
+
+  record(hooks, [2]);
+  hooks.publishReadProgressWriteStats();
+
+  assert.equal(
+    sharedStore.has(brokenKey),
+    false,
+    "键名解析不出时间且没有 updatedAt 的统计键应当被清理"
+  );
+};
+
 const main = () => {
   testWindowShowsUpdatesPerShard();
   testIgnoresOtherKindsAndEmptyWrites();
@@ -207,6 +251,8 @@ const main = () => {
   testRealFacadeWritesReachTheStats();
   testStaleOtherTabRecordIsIgnored();
   testLongLivedTabKeySurvivesPublish();
+  testOwnWindowDropsExpiredEntries();
+  testUnparseableStatsKeyIsPruned();
   console.log("[read-progress-write-stats] checks passed.");
 };
 

@@ -35,6 +35,9 @@ const IDLE_STATE = Object.freeze({
   lastResolvedReason: "",
 });
 
+// 种子时间戳用「现在」附近的值：迁移会顺手剥掉超过 7 天的 provenance，
+// 用 2023 年的固定时间戳会让种子数据在迁移时就被压掉 provenance。
+const PROGRESS_TS_BASE = Date.now() - 60 * 1000;
 let progressSeedSeq = 0;
 const makeProgressRecord = ({
   postId = "70000001",
@@ -48,7 +51,7 @@ const makeProgressRecord = ({
   const recordTimestamp =
     Number(timestamp) > 0
       ? Number(timestamp)
-      : 1700000000000 + (progressSeedSeq += 1000);
+      : PROGRESS_TS_BASE + (progressSeedSeq += 1000);
   return {
     postId,
     page,
@@ -239,7 +242,7 @@ const testContentDiffWithoutRegisteredEventStaysIdle = () => {
 const testSameFloorProvenanceRewriteIsNotPending = () => {
   const harness = createHarness();
   seedReadProgress(harness, {
-    123456: makeProgressRecord({ floor: "12", timestamp: 1700000000000 }),
+    123456: makeProgressRecord({ floor: "12", timestamp: PROGRESS_TS_BASE }),
   });
   bumpLocalModified(harness.sandbox, 5000);
   setBaselineFromLive(harness);
@@ -248,7 +251,7 @@ const testSameFloorProvenanceRewriteIsNotPending = () => {
   seedReadProgress(harness, {
     123456: makeProgressRecord({
       floor: "12",
-      timestamp: 1700000001000,
+      timestamp: PROGRESS_TS_BASE + 1000,
       saveReason: "visibility_hidden_flush",
     }),
   });

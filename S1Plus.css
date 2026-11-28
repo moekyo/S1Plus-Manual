@@ -3985,21 +3985,23 @@
       background: transparent;
       border-top-color: transparent;
     }
+    /* 用 currentColor 描边：对比度跟随正文颜色，深浅色主题都不依赖单独的 token。 */
     .s1p-debug-footer-entry {
       margin-left: 12px;
-      padding: 2px 8px;
-      border: 1px solid var(--s1p-border);
+      padding: 2px 10px;
+      border: 1px solid currentColor;
       border-radius: 6px;
       background: transparent;
       color: inherit;
       font: inherit;
-      line-height: 1.4;
-      opacity: 0.75;
+      line-height: 1.5;
+      opacity: 0.85;
       cursor: pointer;
     }
     .s1p-debug-footer-entry:hover,
     .s1p-debug-footer-entry:focus-visible {
       opacity: 1;
+      background: var(--s1p-hover-overlay);
     }
     .s1p-settings-secondary-modal {
       position: absolute;

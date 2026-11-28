@@ -11,6 +11,7 @@ const AUTO_REFRESH_MS = 2000;
 const createClassList = () => {
   const names = new Set();
   return {
+    reset: () => names.clear(),
     add: (...values) => values.forEach((value) => names.add(value)),
     remove: (...values) => values.forEach((value) => names.delete(value)),
     toggle: (value, force) => {
@@ -34,7 +35,6 @@ const createFakeElement = ({ tag = "div", id = "", className = "" } = {}) => {
   const element = {
     tagName: String(tag).toUpperCase(),
     id,
-    className,
     dataset: {},
     classList: createClassList(),
     children: [],
@@ -86,9 +86,20 @@ const createFakeElement = ({ tag = "div", id = "", className = "" } = {}) => {
       }
     },
   });
-  if (className) {
-    className.split(/\s+/).filter(Boolean).forEach((name) => element.classList.add(name));
-  }
+  // className 与 classList 双向同步，避免夹具和真实 DOM 的语义偏
+  let classNameText = "";
+  Object.defineProperty(element, "className", {
+    get: () => classNameText,
+    set: (value) => {
+      classNameText = String(value ?? "");
+      element.classList.reset();
+      classNameText
+        .split(/\s+/)
+        .filter(Boolean)
+        .forEach((name) => element.classList.add(name));
+    },
+  });
+  element.className = className;
   return element;
 };
 
@@ -221,6 +232,32 @@ const testInactiveTabPaneStopsAutoRefresh = () => {
   assert.equal(ctx.timers.length, 0, "非激活 tab 不再续排");
 };
 
+const testHiddenUnifiedPanelStopsAutoRefresh = () => {
+  const ctx = createPanelHarness();
+  ctx.hooks.updateSyncDiagnosticsPanelForTest();
+  const panel = ctx.registry.get(PANEL_ID);
+  const renderSeq = panel.renderSeq;
+
+  ctx.unified.classList.add("s1p-hidden");
+  ctx.runPendingTimers();
+
+  assert.equal(panel.renderSeq, renderSeq, "统一面板隐藏时不应重绘");
+  assert.equal(ctx.timers.length, 0, "统一面板隐藏时不再续排");
+};
+
+const testDisconnectedPanelStopsAutoRefresh = () => {
+  const ctx = createPanelHarness();
+  ctx.hooks.updateSyncDiagnosticsPanelForTest();
+  const panel = ctx.registry.get(PANEL_ID);
+  const renderSeq = panel.renderSeq;
+
+  panel.isConnected = false;
+  ctx.runPendingTimers();
+
+  assert.equal(panel.renderSeq, renderSeq, "面板断连后不应重绘");
+  assert.equal(ctx.timers.length, 0, "面板断连后不再续排");
+};
+
 const main = () => {
   testRendersRowsAndSchedulesAutoRefresh();
   testUnchangedRowsAreNotRerendered();
@@ -228,6 +265,8 @@ const main = () => {
   testRebuiltPanelRendersAgain();
   testCollapsedPanelStopsAutoRefresh();
   testInactiveTabPaneStopsAutoRefresh();
+  testHiddenUnifiedPanelStopsAutoRefresh();
+  testDisconnectedPanelStopsAutoRefresh();
   console.log("[debug-diagnostics-refresh] checks passed.");
 };
 

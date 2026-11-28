@@ -377,11 +377,12 @@ const testLegacyNormalizationPersistsThroughTheModule = () => {
     "3"
   );
   assert.equal(stored.s1p_user_tags["202"].tag, "legacy-tag");
-  // 迁移现在直接把归一化后的值写进分片，不再触发一次单独的 read_progress 归一化回写，
-  // 所以这里只有两条 general 变更（用户标记、标题规则）。
+  // 迁移直接写归一化后的值、不再单独回写一遍，但归一化确实改了内容，
+  // 所以仍记一条 read_progress 来源（只记来源，不触发同步）。
   assert.deepStrictEqual(toPlainObject(mutations), [
     ["general", { triggerSync: false }],
     ["general", { triggerSync: false }],
+    ["read_progress", { triggerSync: false }],
   ]);
 };
 
@@ -997,6 +998,41 @@ const testCorruptShardIsResetOnRead = () => {
   );
 };
 
+const testLegacyMigrationCompactsAgedProvenance = () => {
+  const oldTimestamp = 1760000000000 - 30 * 86400000;
+  const { coreBusinessData, storageAdapter } = createModuleHarness({
+    s1p_read_progress: {
+      101: {
+        postId: "303",
+        page: "1",
+        lastReadFloor: "3",
+        timestamp: oldTimestamp,
+        provenance: {
+          sourceTabId: "tab",
+          threadId: "101",
+          page: "1",
+          saveReason: "visible_stable",
+          documentVisibilityState: "visible",
+          hadConfirmedVisiblePost: true,
+          createdAt: oldTimestamp,
+          initiatedWhileHidden: false,
+          saveKind: "real_reading",
+        },
+      },
+    },
+  });
+
+  coreBusinessData.read("readProgress");
+  const record = collectStoredReadProgressShards(
+    toPlainObject(storageAdapter.snapshot())
+  )["101"];
+  assert.equal(
+    record.provenance,
+    undefined,
+    "迁移应顺手剥掉超过保留期的 provenance，不必等下一次普通写入"
+  );
+};
+
 const main = () => {
   testEveryKindUsesOneReadWriteProjectionInterface();
   testSyncImportPrimitiveIsNotReachableFromTheFacade();
@@ -1022,6 +1058,7 @@ const main = () => {
   testLegacyMigrationWritesNormalizedShapeOnce();
   testEmptyingReadProgressClearsShards();
   testCorruptShardIsResetOnRead();
+  testLegacyMigrationCompactsAgedProvenance();
   console.log("[core-business-data-module] checks passed.");
 };
 

@@ -8244,10 +8244,14 @@
     const saved = normalizeReadProgressWriteStatsRecord(
       GM_getValue(getReadProgressWriteStatsTabKey(), null)
     );
+    // 自己键里的旧条目同样按保留期过滤，避免「本页窗口」混进 7 天前的样本。
+    const now = Date.now();
     s1pReadProgressWriteStats = {
       operations: saved.operations,
       shardWrites: saved.shardWrites,
-      recent: saved.recent,
+      recent: saved.recent.filter(
+        (entry) => now - entry.t <= READ_PROGRESS_WRITE_STATS_RETENTION_MS
+      ),
     };
     return s1pReadProgressWriteStats;
   };
@@ -8264,9 +8268,10 @@
         .slice(READ_PROGRESS_WRITE_STATS_GM_PREFIX.length)
         .split(":")[0]
     );
+    // 键名也解析不出时间：当作脏键清掉，避免这类键永远留在存储里。
     return Number.isFinite(keyStamp) && keyStamp > 0
       ? now - keyStamp > READ_PROGRESS_WRITE_STATS_RETENTION_MS
-      : false;
+      : true;
   };
 
   const pruneStaleReadProgressWriteStats = () => {
@@ -22084,22 +22089,34 @@
       }
       // 迁移时直接写入归一化后的形态：否则首次读旧表会先写一遍原始值，再被
       // persistReadNormalization 整表重写一遍，大表首读的 I/O 会翻倍。
-      const normalizedNextValue =
+      const normalizedResult =
         typeof definition.normalize === "function"
-          ? normalizeKindValue(definition, nextValue).value
-          : nextValue;
+          ? normalizeKindValue(definition, nextValue)
+          : { value: nextValue, changed: false };
+      // 迁移时顺手做一次落盘压缩：旧表里超过保留期的 provenance 不必等到
+      // 下一次普通写入才剥掉，否则升级后整表还会多背 7 天的旧字段。
+      const storedNextValue =
+        typeof definition.compactStoredValue === "function"
+          ? definition.compactStoredValue(normalizedResult.value)
+          : normalizedResult.value;
       try {
         writeShardedStoredValue(
           definition,
           shardKeys,
-          normalizedNextValue,
+          storedNextValue,
           merged
         );
         storageAdapter.setValue(definition.storageKey, null);
       } catch (_) {
         // 迁移写入失败时保留旧键，下次读取重试；本次仍返回合并后的结果。
       }
-      return normalizedNextValue;
+      // 迁移改写了磁盘内容：内容哈希必须失效；归一化确实改了东西时再记一条来源，
+      // 口径与 persistReadNormalization 一致（只记来源，不触发同步）。
+      invalidateLocalDataHash();
+      if (normalizedResult.changed) {
+        recordLocalMutation(definition.mutationSource, { triggerSync: false });
+      }
+      return storedNextValue;
     };
     const readStoredValue = (definition, { allowLegacy = false } = {}) => {
       const storageShardCount = getStorageShardCount(definition);
